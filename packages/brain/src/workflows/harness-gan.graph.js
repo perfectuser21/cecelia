@@ -27,7 +27,6 @@ import {
   Annotation,
   START,
   END,
-  MemorySaver,
 } from '@langchain/langgraph';
 
 const execFile = promisify(execFileCb);
@@ -514,7 +513,8 @@ export function buildGanContractGraph(nodes) {
  * @param {string} opts.worktreePath
  * @param {string} opts.githubToken
  * @param {number} [opts.budgetCapUsd=10]
- * @param {object} [opts.checkpointer]      PostgresSaver 实例，不传走 MemorySaver
+ * @param {object} opts.checkpointer        PostgresSaver 实例（必填）。v1.229.0 起删除 MemorySaver fallback：
+ *                                          PG 缺失必须 fail-fast，避免 brain 重启 state 丢光导致 ghost task。
  * @param {Function} [opts.readContractFile] 测试注入
  * @param {number} [opts.recursionLimit]
  * @returns {Promise<{contract_content:string, rounds:number, cost_usd:number}>}
@@ -531,13 +531,20 @@ export async function runGanContractGraph(opts) {
 
   if (!taskId) throw new Error('runGanContractGraph: taskId (thread_id) required');
   if (!executor) throw new Error('runGanContractGraph: executor required');
+  if (!checkpointer) {
+    throw new Error(
+      "runGanContractGraph: checkpointer is required (PostgresSaver). "
+      + "MemorySaver fallback removed in brain v1.229.0 — "
+      + "生产必须显式传 PG checkpointer 防止 brain restart 丢 state（ghost task 根因）。"
+    );
+  }
 
   const nodes = createGanContractNodes(executor, {
     taskId, initiativeId, sprintDir, worktreePath, githubToken,
     budgetCapUsd, readContractFile,
   });
   const graph = buildGanContractGraph(nodes);
-  const app = graph.compile({ checkpointer: checkpointer || new MemorySaver() });
+  const app = graph.compile({ checkpointer, durability: 'sync' });
 
   const finalState = await app.invoke(
     { prdContent, round: 0, costUsd: 0, feedback: null },

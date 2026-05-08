@@ -728,7 +728,7 @@ export function buildHarnessInitiativeGraph() {
 
 export async function compileHarnessInitiativeGraph() {
   const checkpointer = await getPgCheckpointer();
-  return buildHarnessInitiativeGraph().compile({ checkpointer });
+  return buildHarnessInitiativeGraph().compile({ checkpointer, durability: 'sync' });
 }
 
 // ─── Sprint 1: 全图（Phase A+B+C 一个 graph 跑到底） ─────────────────────
@@ -1379,5 +1379,5 @@ export function buildHarnessFullGraph() {
 
 export async function compileHarnessFullGraph() {
   const checkpointer = await getPgCheckpointer();
-  return buildHarnessFullGraph().compile({ checkpointer });
+  return buildHarnessFullGraph().compile({ checkpointer, durability: 'sync' });
 }

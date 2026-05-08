@@ -1,4 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
+import { MemorySaver } from '@langchain/langgraph';
 import {
   buildProposerPrompt,
   buildReviewerPrompt,
@@ -370,6 +371,9 @@ describe('runGanContractGraph', () => {
       githubToken: 'ghs_test',
       budgetCapUsd: 10,
       readContractFile: vi.fn(async () => '# Contract'),
+      // v1.229.0 起 checkpointer 必填（不再 fallback MemorySaver）。
+      // 单测里仍允许用 MemorySaver mock 替代真 PostgresSaver。
+      checkpointer: new MemorySaver(),
       ...overrides,
     };
   }
