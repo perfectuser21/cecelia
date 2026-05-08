@@ -142,4 +142,24 @@ describe('Workstream 3 — render report [BEHAVIOR]', () => {
     expect(updated.sla.caveat).toBeTruthy();
     await fs.rm(dir, { recursive: true });
   });
+
+  // R8 mitigation: renderAcceptanceReport 含 skippedInjections 时输出 R8 Cascade Skipped caveat 段
+  it('(R8) renderAcceptanceReport 含 skippedInjections 输出 R8 Cascade Skipped caveat 段含 reason', async () => {
+    const md = await renderAcceptanceReport({
+      ...SAMPLE_FIXTURE,
+      skippedInjections: [{
+        kind: 'C',
+        reason: 'no_running_initiative_run',
+        meta: { cascade_source: 'step5_abort', sql_rows_affected: 0 },
+      }],
+    });
+    expect(md).toMatch(/R8 Cascade Skipped|skipped/i);
+    expect(md).toContain('no_running_initiative_run');
+    expect(md).toContain('step5_abort');
+  });
+
+  it('(R8) renderAcceptanceReport 无 skippedInjections 时不渲染 R8 Cascade Skipped 段（happy path）', async () => {
+    const md = await renderAcceptanceReport(SAMPLE_FIXTURE);
+    expect(md).not.toMatch(/R8 Cascade Skipped/);
+  });
 });

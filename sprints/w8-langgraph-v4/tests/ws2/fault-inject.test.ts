@@ -10,6 +10,10 @@ import {
   assertWatchdogMarkedFailed,
   recordInjectionTimestamp,
   replayInjectionEvidence,
+  snapshotWorkspaceMount,
+  diffWorkspaceMounts,
+  checkCredentialInvalidEvent,
+  recordSkippedInjection,
 } from '../../../../scripts/acceptance/w8-v4/fault-inject.mjs';
 
 describe('Workstream 2 — fault injection helpers [BEHAVIOR]', () => {
@@ -68,12 +72,13 @@ describe('Workstream 2 — fault injection helpers [BEHAVIOR]', () => {
     expect(id).toBe('intr-001');
   });
 
-  it('injectInitiativeDeadlineOverdue 仅改 phase=running 行，0 行时抛错', async () => {
+  it('(R8) injectInitiativeDeadlineOverdue 仅改 phase=running 行，0 行时返回 0 不抛错（lenient 默认）', async () => {
     const query = vi.fn().mockResolvedValue({ rowCount: 0, rows: [] });
-    await expect(injectInitiativeDeadlineOverdue({
+    const n = await injectInitiativeDeadlineOverdue({
       query,
       initiativeId: 'harness-acceptance-v4-2026-05-08',
-    })).rejects.toThrow();
+    });
+    expect(n).toBe(0);
     expect(query.mock.calls[0][0]).toMatch(/phase\s*=\s*['"]running['"]/);
   });
 
@@ -173,5 +178,108 @@ describe('Workstream 2 — fault injection helpers [BEHAVIOR]', () => {
     );
     await expect(replayInjectionEvidence({ dir })).rejects.toThrow(/B|C|missing/);
     await fs.rm(dir, { recursive: true });
+  });
+
+  // R8 mitigation: replayInjectionEvidence 接受 inject-c-skipped.json fallback
+  it('(R8) replayInjectionEvidence 接受 inject-c-skipped.json 替代 inject-c.json 返回 status=skipped', async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'w8v4-r8-'));
+    await fs.writeFile(path.join(dir, 'inject-a.json'),
+      JSON.stringify({ kind: 'A', taskId: 't', injectTs: 1, target: 'x', meta: {} }), 'utf8');
+    await fs.writeFile(path.join(dir, 'inject-b.json'),
+      JSON.stringify({ kind: 'B', taskId: 't', injectTs: 2, target: 'y', meta: {} }), 'utf8');
+    await fs.writeFile(path.join(dir, 'inject-c-skipped.json'),
+      JSON.stringify({ kind: 'C', taskId: 't', injectTs: 3, reason: 'no_running_initiative_run', meta: {} }), 'utf8');
+    const replay = await replayInjectionEvidence({ dir });
+    expect(replay).toHaveLength(3);
+    const kindC = replay.find((r) => r.kind === 'C');
+    expect(kindC.status).toBe('skipped');
+    await fs.rm(dir, { recursive: true });
+  });
+
+  // R6 mitigation: workspace mount snapshot
+  it('(R6) snapshotWorkspaceMount 落盘 mount-${label}.txt 含 exec stdout', async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'w8v4-r6-'));
+    const exec = vi.fn().mockReturnValue('total 4\ndrwxr-xr-x 1 root root 0 May 8 09:00 .\ndrwxr-xr-x 1 root root 0 May 8 09:00 ..\n');
+    await snapshotWorkspaceMount({ exec, label: 'step2', dir });
+    const out = await fs.readFile(path.join(dir, 'mount-step2.txt'), 'utf8');
+    expect(out).toContain('total 4');
+    expect(exec).toHaveBeenCalledWith(expect.stringMatching(/docker exec brain ls.*\/workspace/));
+    await fs.rm(dir, { recursive: true });
+  });
+
+  it('(R6) snapshotWorkspaceMount 不存在的 dir 自动 mkdir -p', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'w8v4-r6-'));
+    const dir = path.join(root, 'nested/sub');
+    const exec = vi.fn().mockReturnValue('drwxr-xr-x\n');
+    await snapshotWorkspaceMount({ exec, label: 'step4', dir });
+    const exists = await fs.stat(path.join(dir, 'mount-step4.txt')).then(() => true).catch(() => false);
+    expect(exists).toBe(true);
+    await fs.rm(root, { recursive: true });
+  });
+
+  it('(R6) diffWorkspaceMounts 输出 added/removed 数组写到 outPath', async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'w8v4-r6-'));
+    const a = path.join(dir, 'a.txt');
+    const b = path.join(dir, 'b.txt');
+    const out = path.join(dir, 'diff.txt');
+    await fs.writeFile(a, 'line1\nline2\nline3\n', 'utf8');
+    await fs.writeFile(b, 'line1\nline2-changed\nline3\nline4\n', 'utf8');
+    const result = await diffWorkspaceMounts({ snapAPath: a, snapBPath: b, outPath: out });
+    expect(result.added).toContain('line2-changed');
+    expect(result.added).toContain('line4');
+    expect(result.removed).toContain('line2');
+    const diffContent = await fs.readFile(out, 'utf8');
+    expect(diffContent.length).toBeGreaterThan(0);
+    await fs.rm(dir, { recursive: true });
+  });
+
+  // R7 mitigation: credential_invalid event check
+  it('(R7) checkCredentialInvalidEvent 0 rows 返回 0 不抛错', async () => {
+    const query = vi.fn().mockResolvedValue({ rows: [{ count: '0' }] });
+    const n = await checkCredentialInvalidEvent({ query, taskId: 'tid', sinceTs: 0 });
+    expect(n).toBe(0);
+  });
+
+  it('(R7) checkCredentialInvalidEvent ≥1 rows 抛错信息含 credential_invalid: aborting acceptance', async () => {
+    const query = vi.fn().mockResolvedValue({ rows: [{ count: '2' }] });
+    await expect(checkCredentialInvalidEvent({
+      query, taskId: 'tid', sinceTs: 0,
+    })).rejects.toThrow(/credential_invalid: aborting acceptance/);
+  });
+
+  // R8 mitigation: recordSkippedInjection 写 inject-${kind}-skipped.json
+  it('(R8) recordSkippedInjection 写 ${dir}/inject-${kind}-skipped.json 含 reason 字段', async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'w8v4-r8-'));
+    await recordSkippedInjection({
+      kind: 'C',
+      dir,
+      taskId: 'tid',
+      reason: 'no_running_initiative_run',
+      injectTs: 1715140800,
+      meta: { cascade_source: 'step5_abort', sql_rows_affected: 0 },
+    });
+    const raw = await fs.readFile(path.join(dir, 'inject-c-skipped.json'), 'utf8');
+    const parsed = JSON.parse(raw);
+    expect(parsed.kind).toBe('C');
+    expect(parsed.reason).toBe('no_running_initiative_run');
+    expect(parsed.meta.cascade_source).toBe('step5_abort');
+    expect(parsed.injectTs).toBe(1715140800);
+    await fs.rm(dir, { recursive: true });
+  });
+
+  it('(R8) recordSkippedInjection 不存在的 dir 自动 mkdir -p', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'w8v4-r8-'));
+    const dir = path.join(root, 'auto/created');
+    await recordSkippedInjection({
+      kind: 'C',
+      dir,
+      taskId: 't',
+      reason: 'no_running_initiative_run',
+      injectTs: 1,
+      meta: {},
+    });
+    const exists = await fs.stat(path.join(dir, 'inject-c-skipped.json')).then(() => true).catch(() => false);
+    expect(exists).toBe(true);
+    await fs.rm(root, { recursive: true });
   });
 });

@@ -3,6 +3,7 @@ import {
   assertBrainImageInSync,
   registerAndDispatchAcceptance,
   waitFor14GraphNodeEvents,
+  monitorAcceptanceTaskHealth,
 } from '../../../../scripts/acceptance/w8-v4/lib.mjs';
 
 const FOURTEEN_NODES = [
@@ -79,5 +80,31 @@ describe('Workstream 1 — acceptance helper [BEHAVIOR]', () => {
       dispatchTs: 0,
       timeoutSec: 1,
     })).rejects.toThrow(/cp-harness-propose|propose_branch.*format/i);
+  });
+
+  // R5 mitigation: infrastructure_fail 区分（task 消失 / dispatched=false）
+  it('(R5) registerAndDispatchAcceptance dispatched=false 时抛错信息含 infrastructure_fail 字面量', async () => {
+    const fakeFetch = vi.fn()
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ task_id: '22222222-2222-2222-2222-222222222222' }) })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ dispatched: false }) });
+    await expect(registerAndDispatchAcceptance({ fetch: fakeFetch }))
+      .rejects.toThrow(/infrastructure_fail/);
+  });
+
+  it('(R5) monitorAcceptanceTaskHealth 0 rows 返回 status=missing', async () => {
+    const fakeQuery = vi.fn().mockResolvedValue({ rows: [], rowCount: 0 });
+    const r = await monitorAcceptanceTaskHealth({ query: fakeQuery, taskId: 'tid' });
+    expect(r.status).toBe('missing');
+    expect(r.taskRow).toBeUndefined();
+  });
+
+  it('(R5) monitorAcceptanceTaskHealth 1 row 返回 status=healthy 且 taskRow 含 status', async () => {
+    const fakeQuery = vi.fn().mockResolvedValue({
+      rows: [{ id: 'tid', status: 'in_progress' }],
+      rowCount: 1,
+    });
+    const r = await monitorAcceptanceTaskHealth({ query: fakeQuery, taskId: 'tid' });
+    expect(r.status).toBe('healthy');
+    expect(r.taskRow.status).toBe('in_progress');
   });
 });

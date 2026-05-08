@@ -5,26 +5,26 @@
   "tasks": [
     {
       "task_id": "ws1",
-      "title": "实现 acceptance helper 模块（部署校验 + 派发 + 14 节点事件流）",
-      "scope": "实现 scripts/acceptance/w8-v4/lib.mjs，导出 assertBrainImageInSync / registerAndDispatchAcceptance / waitFor14GraphNodeEvents 三个具名函数；含 14 节点期望列表常量与 PR #2837 修后的 propose_branch 严格正则（与合同顶部 INFER_BRANCH_RE 同源）。仅写函数与单元测试，不改 Brain/engine 源码（PRD 严令禁止）。",
+      "title": "实现 acceptance helper 模块（部署校验 + 派发 + 14 节点事件流 + R5 infra health monitor）",
+      "scope": "实现 scripts/acceptance/w8-v4/lib.mjs，导出 4 个具名函数：assertBrainImageInSync / registerAndDispatchAcceptance / waitFor14GraphNodeEvents / monitorAcceptanceTaskHealth；含 14 节点期望列表常量与 PR #2837 修后的 propose_branch 严格正则（与合同顶部 INFER_BRANCH_RE 同源）；R5 mitigation：registerAndDispatchAcceptance 在 dispatched=false 时抛错信息含字面量 'infrastructure_fail'；monitorAcceptanceTaskHealth 单次 query tasks 表，0 rows 返回 status='missing'，1 row 返回 status='healthy' 含 taskRow。仅写函数与单元测试，不改 Brain/engine 源码（PRD 严令禁止）。",
       "dod": [
-        "[BEHAVIOR] tests/ws1/acceptance-helper.test.ts 全 7 用例 PASS（含 brain HEAD mismatch 抛错、register+dispatch 两步成功、14 节点齐全、缺 inferTaskPlan 抛错、propose_branch 旧格式 cp-MMDDHHmm-* 抛错）",
-        "[ARTIFACT] scripts/acceptance/w8-v4/lib.mjs 文件存在且导出三个具名函数",
-        "[ARTIFACT] lib.mjs 内含 14 节点期望列表 + 严格 propose_branch 正则字面量"
+        "[BEHAVIOR] tests/ws1/acceptance-helper.test.ts 全 10 用例 PASS（R2 7 + R3 R5 新增 3：dispatched=false 抛 infrastructure_fail / monitor 0 rows 返回 missing / monitor 1 row 返回 healthy）",
+        "[ARTIFACT] scripts/acceptance/w8-v4/lib.mjs 文件存在且导出四个具名函数",
+        "[ARTIFACT] lib.mjs 内含 14 节点期望列表 + 严格 propose_branch 正则字面量 + 'infrastructure_fail' 字面量"
       ],
       "files": ["scripts/acceptance/w8-v4/lib.mjs", "sprints/w8-langgraph-v4/tests/ws1/acceptance-helper.test.ts"],
       "depends_on": [],
       "complexity": "M",
-      "estimated_minutes": 35
+      "estimated_minutes": 40
     },
     {
       "task_id": "ws2",
-      "title": "实现故障注入 A/B/C 自愈观测 helper 模块（含 R4 evidence 落盘+回放）",
-      "scope": "实现 scripts/acceptance/w8-v4/fault-inject.mjs，导出 7 个函数：findContainerForTask / pollLlmRetryEvents / pollHarnessInterruptPending / injectInitiativeDeadlineOverdue / assertWatchdogMarkedFailed / recordInjectionTimestamp / replayInjectionEvidence；含 LLM_RETRY cap=3 常量、UPDATE 必带 phase='running' 子句、watchdog_overdue 字面量校验；R4 cascade mitigation：recordInjectionTimestamp 写 ${dir}/inject-${kind.toLowerCase()}.json 含 kind/taskId/injectTs/target/meta；replayInjectionEvidence 读 inject-{a,b,c}.json 三件齐全返回数组。",
+      "title": "实现故障注入 A/B/C 自愈观测 helper 模块（含 R4 evidence 落盘+回放 + R6 mount snapshot + R7 cred check + R8 lenient/skipped）",
+      "scope": "实现 scripts/acceptance/w8-v4/fault-inject.mjs，导出 11 个函数：findContainerForTask / pollLlmRetryEvents / pollHarnessInterruptPending / injectInitiativeDeadlineOverdue (R8 lenient 默认) / assertWatchdogMarkedFailed / recordInjectionTimestamp / replayInjectionEvidence (R8 skipped fallback) / snapshotWorkspaceMount (R6) / diffWorkspaceMounts (R6) / checkCredentialInvalidEvent (R7) / recordSkippedInjection (R8)；含 LLM_RETRY cap=3 常量、UPDATE 必带 phase='running' 子句、watchdog_overdue 字面量校验；R4 cascade mitigation：recordInjectionTimestamp 写 ${dir}/inject-${kind.toLowerCase()}.json 含 kind/taskId/injectTs/target/meta；R8 lenient：injectInitiativeDeadlineOverdue rowCount=0 返回 0 不抛错；R8 skipped：recordSkippedInjection 写 inject-${kind}-skipped.json 含 reason/cascade_source；replayInjectionEvidence 接受 inject-c.json 或 inject-c-skipped.json 二者其一；R6：snapshotWorkspaceMount 调 docker exec brain ls -la /workspace + diffWorkspaceMounts line-by-line diff；R7：checkCredentialInvalidEvent SQL event_type='credential_invalid' 抛错信息含 'credential_invalid: aborting acceptance'。",
       "dod": [
-        "[BEHAVIOR] tests/ws2/fault-inject.test.ts 全 13 用例 PASS（原 9 + R4 新增 4：record 写 JSON、自动 mkdir、replay 三件、replay 缺件抛错）",
-        "[ARTIFACT] scripts/acceptance/w8-v4/fault-inject.mjs 导出 7 个具名函数",
-        "[ARTIFACT] 文件含 cap=3 常量与 phase='running' 字面量与 watchdog_overdue 字面量",
+        "[BEHAVIOR] tests/ws2/fault-inject.test.ts 全 ≥20 用例 PASS（R2 13 + R3 R6/R7/R8 新增 7：R8 lenient 改测 / replayInjectionEvidence skipped fallback / R6 snapshot 落盘 / R6 snapshot mkdir / R6 diff added/removed / R7 cred 0 rows / R7 cred ≥1 抛错 / R8 recordSkipped 写文件 / R8 recordSkipped mkdir）",
+        "[ARTIFACT] scripts/acceptance/w8-v4/fault-inject.mjs 导出 11 个具名函数",
+        "[ARTIFACT] 文件含 cap=3 常量 / phase='running' 字面量 / watchdog_overdue 字面量 / 'docker exec brain ls' + '/workspace' 字面量 / event_type='credential_invalid' 字面量 / 'credential_invalid: aborting acceptance' 字面量 / 'inject-c-skipped.json' 字面量",
         "[ARTIFACT] 文件含 inject-a.json/inject-b.json/inject-c.json 三个文件名字面量或 ['A','B','C'] 数组"
       ],
       "files": ["scripts/acceptance/w8-v4/fault-inject.mjs", "sprints/w8-langgraph-v4/tests/ws2/fault-inject.test.ts"],
@@ -34,10 +34,10 @@
     },
     {
       "task_id": "ws3",
-      "title": "实现 acceptance 报告 + lead 自验文件 渲染器 + R3 24h SLA helper",
-      "scope": "实现 scripts/acceptance/w8-v4/render-report.mjs，导出 4 个函数：renderAcceptanceReport / renderLeadEvidence / writeReportFiles / assertInterruptResumeSla；renderAcceptanceReport 普通 mode 输出 ≥ 2000 字节含 6 个关键章节，dryrun-nodes-only mode 输出含 14/14；含 slaCaveats 时输出 24h SLA caveat 段；renderLeadEvidence 含 5 个 lead 关键字；writeReportFiles 原子 mkdir + write；R3 mitigation：assertInterruptResumeSla delta < 86400s 写 happy 标记到 inject-b.json，≥ 86400s 写 caveat 但不抛错。",
+      "title": "实现 acceptance 报告 + lead 自验文件 渲染器 + R3 24h SLA helper + R8 skipped caveat 段",
+      "scope": "实现 scripts/acceptance/w8-v4/render-report.mjs，导出 4 个函数：renderAcceptanceReport / renderLeadEvidence / writeReportFiles / assertInterruptResumeSla；renderAcceptanceReport 普通 mode 输出 ≥ 2000 字节含 6 个关键章节，dryrun-nodes-only mode 输出含 14/14；含 slaCaveats 时输出 24h SLA caveat 段；R8 mitigation：renderAcceptanceReport 含 skippedInjections 数组时输出 '## R8 Cascade Skipped' caveat 段含 reason/cascade_source 字段；renderLeadEvidence 含 5 个 lead 关键字；writeReportFiles 原子 mkdir + write；R3 mitigation：assertInterruptResumeSla delta < 86400s 写 happy 标记到 inject-b.json，≥ 86400s 写 caveat 但不抛错。",
       "dod": [
-        "[BEHAVIOR] tests/ws3/render-report.test.ts 全 8 用例 PASS（原 5 + slaCaveats 段 + R3 SLA happy + R3 SLA exceeded）",
+        "[BEHAVIOR] tests/ws3/render-report.test.ts 全 ≥10 用例 PASS（R2 8 + R3 R8 新增 2：skippedInjections 渲染 caveat 段 / 无 skippedInjections happy path 不渲染）",
         "[ARTIFACT] scripts/acceptance/w8-v4/render-report.mjs 导出 4 个函数",
         "[ARTIFACT] 文件内含 6 个报告关键字与 5 个 lead 关键字字面量、含 mkdir+writeFile 顺序、含 86400 字面量与 inject-b.json 字面量"
       ],

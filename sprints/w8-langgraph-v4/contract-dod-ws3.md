@@ -38,3 +38,5 @@ journey_type: autonomous
 - `writeReportFiles` 给定不存在的嵌套路径时先创建目录再写文件，写入后内容可读回
 - **(R3)** `assertInterruptResumeSla` delta < 24h → withinSla=true 且写 happy 标记到 inject-b.json
 - **(R3)** `assertInterruptResumeSla` delta ≥ 24h → withinSla=false 写 caveat 字段到 inject-b.json 但不抛错
+- **(R8)** `renderAcceptanceReport` 含 skippedInjections 数组时输出 `## R8 Cascade Skipped` caveat 段含 reason/cascade_source 字段
+- **(R8)** `renderAcceptanceReport` 无 skippedInjections 时不渲染 R8 Cascade Skipped 段（happy path 无干扰）

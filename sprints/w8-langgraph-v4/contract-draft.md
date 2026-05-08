@@ -1,4 +1,4 @@
-# Sprint Contract Draft (Round 2)
+# Sprint Contract Draft (Round 3)
 
 > **Sprint**: W8 Acceptance v4 — LangGraph 14 节点端到端验证（post PR #2837 deploy）
 > **journey_type**: autonomous
@@ -15,6 +15,34 @@
 | test_is_red 加固 | Test Contract 表"预期红证据"列追加每个测试**首条 `expect()` 行号 + 断言原文**，让 Reviewer 一眼看出 Red 落在断言而非 import |
 | internal_consistency 加固 | E2E 脚本 Step 4 evidence 块加注释 `# 累计上限 9 = 单次 cap 3 × 3 个 LLM_RETRY 注入窗口`；inferTaskPlan 正则在脚本顶部以 `INFER_BRANCH_RE='^cp-harness-propose-r[1-9][0-9]*-[a-f0-9]{8}$'` 定义，Step 1（grep 校验源码）+ Step 3（校验运行时值）共用同一变量 |
 
+## R2 Reviewer 反馈处理（R3 修订摘要）
+
+R2 Reviewer 提了 4 条新关切，均使用 `**Risk** / **Mitigation** / **Detection**` 三行格式落地，使 reviewer 可逐条核验：
+
+### R5 — infrastructure_fail 区分（task 消失 / dispatched=false）
+
+**Risk**: acceptance run 中途若 task 在 DB 被外部清理（startup-recovery/manual cleanup）或 dispatch 静默 false，poll 循环会一直 sleep 直到 timeout，最终被误判为"acceptance 自身 fail"，无法区分基础设施问题。
+**Mitigation**: 新增 WS1 helper `monitorAcceptanceTaskHealth({query, taskId})` — 单次 poll 返回 `{status: 'healthy'|'missing'|'unhealthy', taskRow?}`；Step 3/5 的每轮 sleep 后必须调 monitor，`status='missing'` 立即抛错 `infrastructure_fail: task vanished` 并 abort 全 sprint；`registerAndDispatchAcceptance` 内部 `dispatched !== true` 时抛错 message 必须含字面量 `infrastructure_fail`。
+**Detection**: WS1 测试 `tests/ws1/acceptance-helper.test.ts` 加 ≥2 用例覆盖 healthy/missing 双路径；E2E 脚本 Step 3/5 的 poll loop 内插 `monitorAcceptanceTaskHealth`，infrastructure_fail 错误信息以 `infrastructure_fail:` 前缀，与 acceptance 业务 fail 在 stdout 中可正则区分。
+
+### R6 — docker /workspace mount 共享 race（acceptance 子任务挂同 worktree 导致状态污染）
+
+**Risk**: docker-executor mount `/workspace` 是 host 共享目录；acceptance 子 dev task 与外部并发任务（headless brain dispatch / 主理人手动操作）可能同时写入；race 期间 inject A `docker kill` 时容器 cwd 状态可能与 register 时不一致，故障注入信号被掩盖。
+**Mitigation**: Step 2 register 成功后立即 `docker exec brain ls -la /workspace` snapshot 落盘到 `$MOUNT_SNAPSHOT_DIR/mount-step2.txt`；Step 4 `docker kill` 之前再 snapshot 到 `$MOUNT_SNAPSHOT_DIR/mount-step4.txt`，并 `diff` 两文件写到 `$MOUNT_SNAPSHOT_DIR/mount-diff.txt`（即使 race 被掩盖也有可审 evidence）。WS2 新增 `snapshotWorkspaceMount({exec, label, dir})` + `diffWorkspaceMounts({snapAPath, snapBPath, outPath})` 两 helper。
+**Detection**: WS2 测试覆盖 snapshot 落盘存在性与 diff 输出格式；E2E 脚本 Step 4 在 kill 前必须先存在 `mount-step2.txt`、kill 后必须产出 `mount-diff.txt`，否则 FAIL（防止跳过 R6）。
+
+### R7 — Codex/Anthropic 凭据中途 401 误判为 W2 retry 耗尽
+
+**Risk**: 故障注入 A 期望 W6+W2 联动让 LLM_RETRY 自愈成功；但若中途 Codex/Anthropic 凭据失效（401），W2 也会触发 retry 并最终 cap 撞顶，acceptance 看到的"`llm_retry` 多但 task=failed"会被误判为 W2 联动失败，实际是凭据问题。
+**Mitigation**: WS2 新增 `checkCredentialInvalidEvent({query, taskId, sinceTs})` — query `task_events.event_type='credential_invalid'` 且时间 ≥ sinceTs，rows ≥ 1 抛错 message 含字面量 `credential_invalid: aborting acceptance`；Step 4 的 poll loop 每轮在 query llm_retry 后立即调用一次 cred check，命中即抛错让 evaluator 区分。Step 5 max_fix_rounds 触发前同样调一次（避免凭据失效让 final_evaluate 被误以为 max_fix_rounds 撞顶）。
+**Detection**: WS2 测试覆盖 0 rows（不抛）+ ≥1 rows（抛错信息含 `credential_invalid`）；E2E 脚本 Step 4/5 内 inline credential check，命中后整脚本 exit 1 而非进 Step 6。
+
+### R8 — Step 5 abort 后 Step 6 watchdog 0 行 UPDATE 误判为 fail
+
+**Risk**: Step 5 主理人 abort 后，initiative_run 进入终态（phase != running）；Step 6 `UPDATE initiative_runs SET deadline_at = NOW() - 1min WHERE phase='running'` 受影响 0 行，R2 版 helper 默认抛错让整 sprint FAIL，但其实是 R5 abort 的合法 cascade，应明示 skip 而非 fail。
+**Mitigation**: WS2 改 `injectInitiativeDeadlineOverdue` 默认行为 — `rowCount=0` 时不抛错，返回 0；调用方 Step 6 检查 rowCount=0 时调 WS2 新增 `recordSkippedInjection({kind:'C', reason:'no_running_initiative_run', dir, taskId, meta})` 写 `$INJECT_EVIDENCE_DIR/inject-c-skipped.json`，跳过 watchdog/attempt 校验（不当 fail）；Step 7 `replayInjectionEvidence` 接受 `inject-c.json` 或 `inject-c-skipped.json` 二者其一存在；WS3 `renderAcceptanceReport` 的 `skippedInjections` 数组渲染独立 caveat 段。
+**Detection**: WS2 测试覆盖 `rowCount=0` 返回 0（不抛）与 `recordSkippedInjection` 写文件含 reason 字段；WS3 测试覆盖 `skippedInjections` 入参 → md 含字面量 `skipped` 且 ≥ 200 字节 caveat 段；E2E 脚本 Step 6 inline 显式 if-else：`ROWS=0` 走 skipped 分支，`ROWS≥1` 走原校验分支，分支选择 stdout 可见 `[R8 PATH] skipped` 或 `[R8 PATH] watchdog`。
+
 ## Golden Path
 
 ```
@@ -24,7 +52,7 @@
 入口：执行者在 worker_machine（Cecelia Mac mini 主机）`docker exec brain` 可达。
 出口：`docs/superpowers/reports/2026-05-08-harness-langgraph-acceptance-v4.md` 写盘 + `tasks.status='completed'` + KR 管家闭环 ≥ 7/7。
 
-**全脚本顶部共享变量**（Step 1 / Step 3 / E2E 共用，单一来源防止漂移）：
+**全脚本顶部共享变量**（Step 1-7 / E2E 共用，单一来源防止漂移）：
 
 ```bash
 # inferTaskPlan propose_branch 正则；PR #2837 修复后 SKILL push 同格式
@@ -33,6 +61,10 @@ INFER_BRANCH_RE='^cp-harness-propose-r[1-9][0-9]*-[a-f0-9]{8}$'
 # 故障注入证据文件（R4 cascade mitigation：独立落盘）
 INJECT_EVIDENCE_DIR='/tmp/acc-v4-inject'
 mkdir -p "$INJECT_EVIDENCE_DIR"
+
+# R6 mitigation: workspace mount snapshot 目录（Step 2/4 race detection）
+MOUNT_SNAPSHOT_DIR='/tmp/acc-v4-mount'
+mkdir -p "$MOUNT_SNAPSHOT_DIR"
 ```
 
 ---
@@ -124,10 +156,22 @@ S=""; for i in $(seq 1 30); do
   [ "$S" = "in_progress" ] && break
   sleep 2
 done
-[ "$S" = "in_progress" ] || { echo "task not in_progress after 60s, got: $S"; exit 1; }
+[ "$S" = "in_progress" ] || { echo "infrastructure_fail: task not in_progress after 60s, got: $S"; exit 1; }
+
+# R6 mitigation: register 后立刻 snapshot /workspace mount 状态（与 Step 4 docker kill 前 snapshot 比对）
+MOUNT_SNAPSHOT_DIR='/tmp/acc-v4-mount'
+mkdir -p "$MOUNT_SNAPSHOT_DIR"
+node -e "
+  import('./scripts/acceptance/w8-v4/fault-inject.mjs').then(m => m.snapshotWorkspaceMount({
+    exec: (cmd) => require('node:child_process').execSync(cmd, { encoding: 'utf8' }),
+    label: 'step2',
+    dir: '$MOUNT_SNAPSHOT_DIR'
+  }));
+"
+[ -f "$MOUNT_SNAPSHOT_DIR/mount-step2.txt" ] || { echo "R6: mount-step2.txt missing after register"; exit 1; }
 ```
 
-**硬阈值**: task_id 为合法 UUID v4 格式；60s 内 status=in_progress；初始化时 initiative_id 在过去 7 天无冲突。
+**硬阈值**: task_id 为合法 UUID v4 格式；60s 内 status=in_progress；初始化时 initiative_id 在过去 7 天无冲突；`$MOUNT_SNAPSHOT_DIR/mount-step2.txt` 落盘（R6 mitigation）。
 
 ---
 
@@ -144,9 +188,25 @@ INFER_BRANCH_RE='^cp-harness-propose-r[1-9][0-9]*-[a-f0-9]{8}$'
 ACC_TASK_ID=$(cat /tmp/acc-v4-task-id.txt)
 DISPATCH_TS=$(psql "$DB" -t -c "SELECT extract(epoch FROM created_at)::bigint FROM tasks WHERE id='$ACC_TASK_ID'" | tr -d ' ')
 
+# R5 mitigation: 每轮 sleep 后通过 helper 区分 infrastructure_fail（task 消失）与 acceptance fail
 # 等待 graph 跑完（最多 25 分钟，poll 每 30s）
 for i in $(seq 1 50); do
-  STATE=$(psql "$DB" -t -c "SELECT status FROM tasks WHERE id='$ACC_TASK_ID'" | tr -d ' ')
+  HEALTH=$(node -e "
+    import('./scripts/acceptance/w8-v4/lib.mjs').then(async m => {
+      const r = await m.monitorAcceptanceTaskHealth({
+        query: async (sql, params) => {
+          const { Client } = await import('pg');
+          const c = new Client(); await c.connect();
+          const rs = await c.query(sql, params); await c.end(); return rs;
+        },
+        taskId: '$ACC_TASK_ID'
+      });
+      console.log(r.status + '|' + (r.taskRow ? r.taskRow.status : ''));
+    }).catch(e => { console.log('infrastructure_fail|' + e.message); process.exit(0); });
+  ")
+  HSTATUS=$(echo "$HEALTH" | cut -d'|' -f1)
+  [ "$HSTATUS" = "missing" ] && { echo "infrastructure_fail: acceptance task vanished from DB during Step 3 poll"; exit 1; }
+  STATE=$(echo "$HEALTH" | cut -d'|' -f2)
   [ "$STATE" = "completed" ] && break
   [ "$STATE" = "failed" ] && break
   sleep 30
@@ -211,8 +271,27 @@ node -e "
 ```bash
 set -e
 INJECT_EVIDENCE_DIR='/tmp/acc-v4-inject'
-mkdir -p "$INJECT_EVIDENCE_DIR"
+MOUNT_SNAPSHOT_DIR='/tmp/acc-v4-mount'
+mkdir -p "$INJECT_EVIDENCE_DIR" "$MOUNT_SNAPSHOT_DIR"
 ACC_TASK_ID=$(cat /tmp/acc-v4-task-id.txt)
+
+# R6 mitigation: docker kill 前 snapshot mount 状态 + 与 Step 2 snapshot 比对
+[ -f "$MOUNT_SNAPSHOT_DIR/mount-step2.txt" ] || { echo "R6: mount-step2.txt missing — Step 2 R6 snapshot was not run"; exit 1; }
+node -e "
+  import('./scripts/acceptance/w8-v4/fault-inject.mjs').then(async m => {
+    await m.snapshotWorkspaceMount({
+      exec: (cmd) => require('node:child_process').execSync(cmd, { encoding: 'utf8' }),
+      label: 'step4', dir: '$MOUNT_SNAPSHOT_DIR'
+    });
+    await m.diffWorkspaceMounts({
+      snapAPath: '$MOUNT_SNAPSHOT_DIR/mount-step2.txt',
+      snapBPath: '$MOUNT_SNAPSHOT_DIR/mount-step4.txt',
+      outPath: '$MOUNT_SNAPSHOT_DIR/mount-diff.txt'
+    });
+  });
+"
+[ -f "$MOUNT_SNAPSHOT_DIR/mount-step4.txt" ] || { echo "R6: mount-step4.txt missing"; exit 1; }
+[ -f "$MOUNT_SNAPSHOT_DIR/mount-diff.txt" ] || { echo "R6: mount-diff.txt missing"; exit 1; }
 
 # 找到为该 task 跑的 docker container（label 形式）
 TARGET=$(docker ps --filter "label=cecelia.task_id=$ACC_TASK_ID" --format '{{.Names}}' | head -1)
@@ -225,12 +304,12 @@ docker kill "$TARGET" >/dev/null
 node -e "
   import('./scripts/acceptance/w8-v4/fault-inject.mjs').then(m => m.recordInjectionTimestamp({
     kind: 'A', dir: '$INJECT_EVIDENCE_DIR', taskId: '$ACC_TASK_ID',
-    injectTs: $INJECT_TS, target: '$TARGET', meta: { node_hint: 'run_sub_task' }
+    injectTs: $INJECT_TS, target: '$TARGET', meta: { node_hint: 'run_sub_task', mount_diff: '$MOUNT_SNAPSHOT_DIR/mount-diff.txt' }
   }));
 "
 [ -f "$INJECT_EVIDENCE_DIR/inject-a.json" ] || { echo "evidence file inject-a.json not written"; exit 1; }
 
-# 5min 内出现 ≥1 条 llm_retry 事件
+# 5min 内出现 ≥1 条 llm_retry 事件；同时 R7 mitigation: 每轮检查 credential_invalid，命中即 abort
 RETRY_COUNT=0
 for i in $(seq 1 30); do
   RETRY_COUNT=$(psql "$DB" -t -c "
@@ -239,6 +318,14 @@ for i in $(seq 1 30); do
       AND event_type='llm_retry'
       AND extract(epoch FROM created_at) > $INJECT_TS
   " | tr -d ' ')
+  # R7: credential_invalid 优先（避免 W2 retry 耗尽被误判）
+  CRED=$(psql "$DB" -t -c "
+    SELECT count(*) FROM task_events
+    WHERE task_id='$ACC_TASK_ID'
+      AND event_type='credential_invalid'
+      AND extract(epoch FROM created_at) > $INJECT_TS
+  " | tr -d ' ')
+  [ "$CRED" -ge 1 ] && { echo "credential_invalid: aborting acceptance (R7 mitigation, $CRED event(s) detected)"; exit 1; }
   [ "$RETRY_COUNT" -ge 1 ] && break
   sleep 10
 done
@@ -248,10 +335,11 @@ done
 # task 没死（仍在跑或已完成，不能是 failed）
 sleep 90
 S=$(psql "$DB" -t -c "SELECT status FROM tasks WHERE id='$ACC_TASK_ID'" | tr -d ' ')
+[ -z "$S" ] && { echo "infrastructure_fail: task vanished from DB after kill"; exit 1; }
 [ "$S" = "in_progress" ] || [ "$S" = "completed" ] || { echo "task became $S after kill (expect in_progress/completed)"; exit 1; }
 ```
 
-**硬阈值**: 注入后 5 min 内 llm_retry events ≥ 1 且 ≤ 3；90s 后 task.status ∈ {in_progress, completed}；不接受 failed/cancelled；`inject-a.json` 必须落盘（含 INJECT_TS、target container、kind=A）。
+**硬阈值**: 注入后 5 min 内 llm_retry events ≥ 1 且 ≤ 3；90s 后 task.status ∈ {in_progress, completed}；不接受 failed/cancelled；`inject-a.json` 必须落盘（含 INJECT_TS、target container、kind=A、mount_diff 路径）；R6 `mount-step4.txt` 与 `mount-diff.txt` 落盘；R7 期间任意时刻 credential_invalid event ≥ 1 立即 abort。
 
 ---
 
@@ -268,9 +356,23 @@ ACC_TASK_ID=$(cat /tmp/acc-v4-task-id.txt)
 DISPATCH_TS=$(psql "$DB" -t -c "SELECT extract(epoch FROM created_at)::bigint FROM tasks WHERE id='$ACC_TASK_ID'" | tr -d ' ')
 
 # 等待 harness_interrupts pending 出现（最多 15 分钟，与 max_fix_rounds 触发时长配套）
+# R5: 每轮 sleep 后 health monitor 区分 infrastructure_fail
+# R7: 每轮检查 credential_invalid，避免凭据失效被误判为撞 max_fix_rounds
 PENDING_ID=""
 PENDING_CREATED_TS=""
 for i in $(seq 1 30); do
+  # R5 health
+  TROW=$(psql "$DB" -t -c "SELECT count(*) FROM tasks WHERE id='$ACC_TASK_ID'" | tr -d ' ')
+  [ "$TROW" -eq 0 ] && { echo "infrastructure_fail: task vanished during Step 5 poll"; exit 1; }
+  # R7 credential check
+  CRED=$(psql "$DB" -t -c "
+    SELECT count(*) FROM task_events
+    WHERE task_id='$ACC_TASK_ID'
+      AND event_type='credential_invalid'
+      AND extract(epoch FROM created_at) >= $DISPATCH_TS
+  " | tr -d ' ')
+  [ "$CRED" -ge 1 ] && { echo "credential_invalid: aborting acceptance (R7 mitigation Step 5, $CRED event(s))"; exit 1; }
+
   ROW=$(psql "$DB" -t -A -F '|' -c "
     SELECT id, extract(epoch FROM created_at)::bigint
     FROM harness_interrupts
@@ -344,9 +446,9 @@ TASK_FAILED=$(psql "$DB" -t -c "
 
 ---
 
-### Step 6: 故障注入 C — Deadline 逾期 watchdog → attempt N+1
+### Step 6: 故障注入 C — Deadline 逾期 watchdog → attempt N+1（含 R8 skipped 分支）
 
-**可观测行为**: `UPDATE initiative_runs.deadline_at = NOW() - 1min`，W3 watchdog 5 分钟内扫到 → 标 `phase=failed, failure_reason=watchdog_overdue`；下次 dispatch 同 initiative_id 时 W1 attempt N+1 fresh thread 启动；**注入证据独立落盘到 `$INJECT_EVIDENCE_DIR/inject-c.json`**（R4 mitigation）。
+**可观测行为**: `UPDATE initiative_runs.deadline_at = NOW() - 1min` WHERE phase='running'；若返回 rowCount ≥ 1，W3 watchdog 5 分钟内扫到 → 标 `phase=failed, failure_reason=watchdog_overdue`；下次 dispatch 同 initiative_id 时 W1 attempt N+1 fresh thread 启动；**rowCount=0（Step 5 abort 后 initiative_run 已不在 running 状态的合法 cascade）→ R8 skipped 分支：不抛错、写 `inject-c-skipped.json`、跳过 watchdog/attempt 校验、stdout 打印 `[R8 PATH] skipped`、报告 caveat 段说明**。**注入证据独立落盘到 `$INJECT_EVIDENCE_DIR/inject-c.json`（rowCount≥1）或 `$INJECT_EVIDENCE_DIR/inject-c-skipped.json`（rowCount=0）二者其一**（R4 + R8 mitigation）。
 
 **验证命令**:
 ```bash
@@ -356,65 +458,88 @@ mkdir -p "$INJECT_EVIDENCE_DIR"
 
 INJECT_TS=$(date -u +%s)
 
-# 注入：把 active phase=running 的 initiative_run.deadline_at 改成 1 分钟前
-ROWS=$(psql "$DB" -t -c "
-  UPDATE initiative_runs
-  SET deadline_at = NOW() - interval '1 minute'
-  WHERE initiative_id='harness-acceptance-v4-2026-05-08'
-    AND phase='running'
-  RETURNING id
-" | grep -c .)
-[ "$ROWS" -ge 1 ] || { echo "no running initiative_run to inject deadline on"; exit 1; }
+# R8 mitigation: helper 默认 lenient（rowCount=0 不抛错），调用方决策 inject-c.json vs inject-c-skipped.json
+ROWS=$(node -e "
+  import('./scripts/acceptance/w8-v4/fault-inject.mjs').then(async m => {
+    const n = await m.injectInitiativeDeadlineOverdue({
+      query: async (sql, params) => {
+        const { Client } = await import('pg');
+        const c = new Client(); await c.connect();
+        const rs = await c.query(sql, params); await c.end(); return rs;
+      },
+      initiativeId: 'harness-acceptance-v4-2026-05-08'
+    });
+    console.log(n);
+  });
+")
 
-# R4 mitigation: 独立 evidence
-node -e "
-  import('./scripts/acceptance/w8-v4/fault-inject.mjs').then(m => m.recordInjectionTimestamp({
-    kind: 'C', dir: '$INJECT_EVIDENCE_DIR', taskId: 'harness-acceptance-v4-2026-05-08',
-    injectTs: $INJECT_TS, target: 'initiative_runs.deadline_at',
-    meta: { rows_updated: $ROWS }
-  }));
-"
+if [ "$ROWS" -ge 1 ]; then
+  echo "[R8 PATH] watchdog (rowCount=$ROWS)"
 
-# 等 watchdog（≤ 5 min）
-PHASE=""
-for i in $(seq 1 30); do
-  PHASE=$(psql "$DB" -t -c "
-    SELECT phase FROM initiative_runs
+  # R4 mitigation: 独立 evidence
+  node -e "
+    import('./scripts/acceptance/w8-v4/fault-inject.mjs').then(m => m.recordInjectionTimestamp({
+      kind: 'C', dir: '$INJECT_EVIDENCE_DIR', taskId: 'harness-acceptance-v4-2026-05-08',
+      injectTs: $INJECT_TS, target: 'initiative_runs.deadline_at',
+      meta: { rows_updated: $ROWS }
+    }));
+  "
+
+  # 等 watchdog（≤ 5 min）
+  PHASE=""
+  for i in $(seq 1 30); do
+    PHASE=$(psql "$DB" -t -c "
+      SELECT phase FROM initiative_runs
+      WHERE initiative_id='harness-acceptance-v4-2026-05-08'
+        AND extract(epoch FROM updated_at) > $INJECT_TS
+      ORDER BY updated_at DESC LIMIT 1
+    " | tr -d ' ')
+    [ "$PHASE" = "failed" ] && break
+    sleep 15
+  done
+  [ "$PHASE" = "failed" ] || { echo "watchdog did not mark failed in 5min, got: $PHASE"; exit 1; }
+
+  # failure_reason 必须是 watchdog_overdue（区分自然 fail）
+  REASON=$(psql "$DB" -t -c "
+    SELECT failure_reason FROM initiative_runs
     WHERE initiative_id='harness-acceptance-v4-2026-05-08'
       AND extract(epoch FROM updated_at) > $INJECT_TS
     ORDER BY updated_at DESC LIMIT 1
   " | tr -d ' ')
-  [ "$PHASE" = "failed" ] && break
+  [ "$REASON" = "watchdog_overdue" ] || { echo "failure_reason wrong: '$REASON' (expect watchdog_overdue)"; exit 1; }
+
+  # attempt N+1：重派同 initiative_id
+  ATTEMPT_BEFORE=$(psql "$DB" -t -c "
+    SELECT max(attempt) FROM initiative_runs
+    WHERE initiative_id='harness-acceptance-v4-2026-05-08'
+  " | tr -d ' ')
+  curl -fsS -X POST localhost:5221/api/brain/dispatch \
+    -H "Content-Type: application/json" \
+    -d '{"initiative_id":"harness-acceptance-v4-2026-05-08"}' >/dev/null
   sleep 15
-done
-[ "$PHASE" = "failed" ] || { echo "watchdog did not mark failed in 5min, got: $PHASE"; exit 1; }
+  ATTEMPT_AFTER=$(psql "$DB" -t -c "
+    SELECT max(attempt) FROM initiative_runs
+    WHERE initiative_id='harness-acceptance-v4-2026-05-08'
+  " | tr -d ' ')
+  [ "$ATTEMPT_AFTER" -gt "$ATTEMPT_BEFORE" ] || { echo "attempt did not increment: $ATTEMPT_BEFORE → $ATTEMPT_AFTER"; exit 1; }
+else
+  echo "[R8 PATH] skipped (rowCount=0; Step 5 abort cascade left no running initiative_run)"
 
-# failure_reason 必须是 watchdog_overdue（区分自然 fail）
-REASON=$(psql "$DB" -t -c "
-  SELECT failure_reason FROM initiative_runs
-  WHERE initiative_id='harness-acceptance-v4-2026-05-08'
-    AND extract(epoch FROM updated_at) > $INJECT_TS
-  ORDER BY updated_at DESC LIMIT 1
-" | tr -d ' ')
-[ "$REASON" = "watchdog_overdue" ] || { echo "failure_reason wrong: '$REASON' (expect watchdog_overdue)"; exit 1; }
-
-# attempt N+1：重派同 initiative_id
-ATTEMPT_BEFORE=$(psql "$DB" -t -c "
-  SELECT max(attempt) FROM initiative_runs
-  WHERE initiative_id='harness-acceptance-v4-2026-05-08'
-" | tr -d ' ')
-curl -fsS -X POST localhost:5221/api/brain/dispatch \
-  -H "Content-Type: application/json" \
-  -d '{"initiative_id":"harness-acceptance-v4-2026-05-08"}' >/dev/null
-sleep 15
-ATTEMPT_AFTER=$(psql "$DB" -t -c "
-  SELECT max(attempt) FROM initiative_runs
-  WHERE initiative_id='harness-acceptance-v4-2026-05-08'
-" | tr -d ' ')
-[ "$ATTEMPT_AFTER" -gt "$ATTEMPT_BEFORE" ] || { echo "attempt did not increment: $ATTEMPT_BEFORE → $ATTEMPT_AFTER"; exit 1; }
+  # R8 mitigation: 写 skipped evidence，报告生成器读后渲染 caveat 段
+  node -e "
+    import('./scripts/acceptance/w8-v4/fault-inject.mjs').then(m => m.recordSkippedInjection({
+      kind: 'C', dir: '$INJECT_EVIDENCE_DIR',
+      taskId: 'harness-acceptance-v4-2026-05-08',
+      reason: 'no_running_initiative_run',
+      injectTs: $INJECT_TS,
+      meta: { cascade_source: 'step5_abort', sql_rows_affected: 0 }
+    }));
+  "
+  [ -f "$INJECT_EVIDENCE_DIR/inject-c-skipped.json" ] || { echo "R8: inject-c-skipped.json missing"; exit 1; }
+fi
 ```
 
-**硬阈值**: 5min 内 phase=failed；failure_reason='watchdog_overdue'；重派后 max(attempt) +1；`inject-c.json` 落盘。
+**硬阈值**: rowCount ≥ 1 路径 — 5min 内 phase=failed；failure_reason='watchdog_overdue'；重派后 max(attempt) +1；`inject-c.json` 落盘。rowCount = 0 路径 — `inject-c-skipped.json` 落盘且 reason='no_running_initiative_run'；不当 sprint fail。两条路径互斥；evaluator Step 7 `replayInjectionEvidence` 接受 `inject-c.json` 或 `inject-c-skipped.json` 二者其一存在。
 
 ---
 
@@ -432,15 +557,19 @@ ACC_TASK_ID=$(cat /tmp/acc-v4-task-id.txt)
 FINAL=$(psql "$DB" -t -c "SELECT status FROM tasks WHERE id='$ACC_TASK_ID'" | tr -d ' ')
 [ "$FINAL" = "completed" ] || { echo "task not completed: $FINAL"; exit 1; }
 
-# 2. R4 mitigation 闭环：3 个 evidence 文件齐全 + replay 解析无错
-for k in a b c; do
+# 2. R4 mitigation 闭环：3 个 evidence 文件齐全（含 R8 skipped 替代）+ replay 解析无错
+# R4 inject-a.json / inject-b.json 必有；R8: inject-c.json OR inject-c-skipped.json 二者其一
+for k in a b; do
   [ -f "$INJECT_EVIDENCE_DIR/inject-$k.json" ] \
     || { echo "missing inject-$k.json (R4 cascade may have masked failure)"; exit 1; }
 done
+# R8: kind C 接受 normal 或 skipped 两种 evidence
+[ -f "$INJECT_EVIDENCE_DIR/inject-c.json" ] || [ -f "$INJECT_EVIDENCE_DIR/inject-c-skipped.json" ] \
+  || { echo "R8: neither inject-c.json nor inject-c-skipped.json present (Step 6 was not run)"; exit 1; }
 node -e "
   import('./scripts/acceptance/w8-v4/fault-inject.mjs').then(async m => {
     const replay = await m.replayInjectionEvidence({ dir: '$INJECT_EVIDENCE_DIR' });
-    if (replay.length !== 3) { console.error('expected 3 evidence files, got ' + replay.length); process.exit(2); }
+    if (replay.length !== 3) { console.error('expected 3 evidence entries (incl skipped), got ' + replay.length); process.exit(2); }
     if (!replay.every(r => ['A','B','C'].includes(r.kind))) { console.error('kinds mismatch'); process.exit(3); }
   });
 "
@@ -498,12 +627,15 @@ SUB_PR=$(psql "$DB" -t -c "
 set -e
 export DB="${DB:-postgresql://localhost/cecelia}"
 
-# ===== R2 顶部共享变量（internal_consistency 加固）=====
+# ===== R2/R3 顶部共享变量（internal_consistency 加固）=====
 # inferTaskPlan propose_branch 严格正则；Step 1 校验源码 + Step 3 校验运行时值同源
 INFER_BRANCH_RE='^cp-harness-propose-r[1-9][0-9]*-[a-f0-9]{8}$'
 # 故障注入 evidence 目录（R4 cascade mitigation）
 INJECT_EVIDENCE_DIR='/tmp/acc-v4-inject'
 mkdir -p "$INJECT_EVIDENCE_DIR"
+# R6 workspace mount snapshot 目录
+MOUNT_SNAPSHOT_DIR='/tmp/acc-v4-mount'
+mkdir -p "$MOUNT_SNAPSHOT_DIR"
 
 # ---- Step 1: deploy 一致性 ----
 BRAIN_HEAD=$(docker exec brain git rev-parse HEAD)
@@ -525,13 +657,19 @@ node -e "import('./scripts/acceptance/w8-v4/lib.mjs').then(m => { if (typeof m.a
 ACC_TASK_ID=$(curl -fsS -X POST localhost:5221/api/brain/tasks -H "Content-Type: application/json" -d '{"task_type":"harness_initiative","priority":"P1","payload":{"initiative_id":"harness-acceptance-v4-2026-05-08","sprint_dir":"sprints/harness-acceptance-v4","timeout_sec":1800,"thin_feature":{"endpoint":"GET /api/brain/harness/health","expected_fields":["langgraph_version","last_attempt_at"]},"e2e_test_path":"tests/e2e/harness-acceptance-smoke.spec.ts"}}' | jq -r '.task_id // .id')
 echo "$ACC_TASK_ID" | grep -qE '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' || { echo "FAIL Step2 register"; exit 1; }
 echo "$ACC_TASK_ID" > /tmp/acc-v4-task-id.txt
-curl -fsS -X POST localhost:5221/api/brain/dispatch -H "Content-Type: application/json" -d "{\"task_id\":\"$ACC_TASK_ID\"}" | jq -e '.dispatched == true' >/dev/null
+curl -fsS -X POST localhost:5221/api/brain/dispatch -H "Content-Type: application/json" -d "{\"task_id\":\"$ACC_TASK_ID\"}" | jq -e '.dispatched == true' >/dev/null || { echo "FAIL Step2 infrastructure_fail: dispatched=false"; exit 1; }
 S=""; for i in $(seq 1 30); do S=$(psql "$DB" -t -c "SELECT status FROM tasks WHERE id='$ACC_TASK_ID'" | tr -d ' '); [ "$S" = "in_progress" ] && break; sleep 2; done
-[ "$S" = "in_progress" ] || { echo "FAIL Step2 dispatch"; exit 1; }
+[ "$S" = "in_progress" ] || { echo "FAIL Step2 dispatch (status=$S)"; exit 1; }
+# R6 mitigation: snapshot mount step2
+node -e "import('./scripts/acceptance/w8-v4/fault-inject.mjs').then(m => m.snapshotWorkspaceMount({ exec: (cmd) => require('node:child_process').execSync(cmd, { encoding: 'utf8' }), label: 'step2', dir: '$MOUNT_SNAPSHOT_DIR' }));"
+[ -f "$MOUNT_SNAPSHOT_DIR/mount-step2.txt" ] || { echo "FAIL Step2 R6 mount snapshot missing"; exit 1; }
 
 # ---- Step 3: 14-node 全过 ----
 DISPATCH_TS=$(psql "$DB" -t -c "SELECT extract(epoch FROM created_at)::bigint FROM tasks WHERE id='$ACC_TASK_ID'" | tr -d ' ')
 for i in $(seq 1 50); do
+  # R5 mitigation: 每轮检测 task 是否在 DB 消失
+  TROW=$(psql "$DB" -t -c "SELECT count(*) FROM tasks WHERE id='$ACC_TASK_ID'" | tr -d ' ')
+  [ "$TROW" -eq 0 ] && { echo "FAIL Step3 infrastructure_fail: task vanished"; exit 1; }
   STATE=$(psql "$DB" -t -c "SELECT status FROM tasks WHERE id='$ACC_TASK_ID'" | tr -d ' ')
   [ "$STATE" = "completed" ] || [ "$STATE" = "failed" ] && break
   sleep 30
@@ -546,6 +684,11 @@ INFER_BRANCH=$(psql "$DB" -t -c "SELECT payload->>'propose_branch' FROM task_eve
 echo "$INFER_BRANCH" | grep -qE "$INFER_BRANCH_RE" || { echo "FAIL Step3: inferTaskPlan branch=$INFER_BRANCH (expect $INFER_BRANCH_RE)"; exit 1; }
 
 # ---- Step 4-6: 故障注入（注：实际 acceptance run 中 Brain 自驱触发 LLM_RETRY，evaluator 这里仅观测被动证据） ----
+# R7 mitigation: 凭据失效优先于 retry cap 判断（避免 W2 联动失败被误判为凭据问题）
+CRED_TOTAL=$(psql "$DB" -t -c "SELECT count(*) FROM task_events WHERE task_id='$ACC_TASK_ID' AND event_type='credential_invalid' AND extract(epoch FROM created_at) >= $DISPATCH_TS" | tr -d ' ')
+[ "$CRED_TOTAL" -eq 0 ] || { echo "FAIL Step4 R7: $CRED_TOTAL credential_invalid event(s) — abort acceptance"; exit 1; }
+# R6 mitigation: mount snapshot Step 2 与 Step 4 必须都存在 + 已 diff
+[ -f "$MOUNT_SNAPSHOT_DIR/mount-step2.txt" ] && [ -f "$MOUNT_SNAPSHOT_DIR/mount-step4.txt" ] && [ -f "$MOUNT_SNAPSHOT_DIR/mount-diff.txt" ] || { echo "FAIL Step4 R6: mount snapshot/diff missing"; exit 1; }
 # Step 4 evidence — 累计上限 9 = 单次 cap 3 × 3 个 LLM_RETRY 注入窗口（A/B/C 三场景各最多 3 次）
 RETRY_AFTER=$(psql "$DB" -t -c "SELECT count(*) FROM task_events WHERE task_id='$ACC_TASK_ID' AND event_type='llm_retry' AND extract(epoch FROM created_at) >= $DISPATCH_TS" | tr -d ' ')
 [ "$RETRY_AFTER" -ge 1 ] && [ "$RETRY_AFTER" -le 9 ] || { echo "FAIL Step4: llm_retry count=$RETRY_AFTER (expect 1-9 across 3 injections)"; exit 1; }
@@ -560,19 +703,26 @@ if [ -n "$INTR_MAX_DELTA" ] && [ "$INTR_MAX_DELTA" -ge 86400 ]; then
   echo "WARN Step5: interrupt resume delta=${INTR_MAX_DELTA}s exceeds 24h SLA — likely W5 auto-abort, see report caveat"
 fi
 
-# Step 6 evidence
-WD=$(psql "$DB" -t -c "SELECT count(*) FROM initiative_runs WHERE initiative_id='harness-acceptance-v4-2026-05-08' AND failure_reason='watchdog_overdue'" | tr -d ' ')
-[ "$WD" -ge 1 ] || { echo "FAIL Step6: no watchdog_overdue row"; exit 1; }
-ATT_MAX=$(psql "$DB" -t -c "SELECT max(attempt) FROM initiative_runs WHERE initiative_id='harness-acceptance-v4-2026-05-08'" | tr -d ' ')
-[ "$ATT_MAX" -ge 2 ] || { echo "FAIL Step6: max attempt=$ATT_MAX (expect ≥2 after watchdog→reattempt)"; exit 1; }
+# Step 6 evidence — R8 mitigation: 接受 normal (inject-c.json) 或 skipped (inject-c-skipped.json) 二者其一
+if [ -f "$INJECT_EVIDENCE_DIR/inject-c-skipped.json" ]; then
+  echo "[R8 PATH] skipped — Step 5 abort cascade left no running initiative_run; watchdog/attempt 校验跳过（合法 caveat）"
+elif [ -f "$INJECT_EVIDENCE_DIR/inject-c.json" ]; then
+  WD=$(psql "$DB" -t -c "SELECT count(*) FROM initiative_runs WHERE initiative_id='harness-acceptance-v4-2026-05-08' AND failure_reason='watchdog_overdue'" | tr -d ' ')
+  [ "$WD" -ge 1 ] || { echo "FAIL Step6: no watchdog_overdue row"; exit 1; }
+  ATT_MAX=$(psql "$DB" -t -c "SELECT max(attempt) FROM initiative_runs WHERE initiative_id='harness-acceptance-v4-2026-05-08'" | tr -d ' ')
+  [ "$ATT_MAX" -ge 2 ] || { echo "FAIL Step6: max attempt=$ATT_MAX (expect ≥2 after watchdog→reattempt)"; exit 1; }
+else
+  echo "FAIL Step6 R8: neither inject-c.json nor inject-c-skipped.json present"; exit 1
+fi
 
 # ---- Step 7: 终态 + 报告 + lead 自验 + KR + R4 evidence replay ----
 FINAL=$(psql "$DB" -t -c "SELECT status FROM tasks WHERE id='$ACC_TASK_ID'" | tr -d ' ')
 [ "$FINAL" = "completed" ] || { echo "FAIL Step7: task=$FINAL"; exit 1; }
-# R4 evidence replay
-for k in a b c; do
+# R4 + R8 evidence replay
+for k in a b; do
   [ -f "$INJECT_EVIDENCE_DIR/inject-$k.json" ] || { echo "FAIL Step7: evidence inject-$k.json missing (R4 cascade unmasked)"; exit 1; }
 done
+[ -f "$INJECT_EVIDENCE_DIR/inject-c.json" ] || [ -f "$INJECT_EVIDENCE_DIR/inject-c-skipped.json" ] || { echo "FAIL Step7 R8: kind C evidence missing (neither normal nor skipped)"; exit 1; }
 node -e "import('./scripts/acceptance/w8-v4/fault-inject.mjs').then(async m => { const r = await m.replayInjectionEvidence({ dir: '$INJECT_EVIDENCE_DIR' }); if (r.length !== 3) process.exit(2); });"
 REPORT="docs/superpowers/reports/2026-05-08-harness-langgraph-acceptance-v4.md"
 [ -f "$REPORT" ] && [ "$(wc -c < "$REPORT")" -gt 2000 ]
@@ -596,14 +746,15 @@ echo "✅ W8 Acceptance v4 — Golden Path 7 Steps 全过；14/14 graph nodes；
 
 workstream_count: 3
 
-### Workstream 1: 部署校验 + acceptance v4 派发 + 14 节点事件流验证 helper
+### Workstream 1: 部署校验 + acceptance v4 派发 + 14 节点事件流验证 + R5 infra health monitor
 
-**范围**: 实现 `scripts/acceptance/w8-v4/lib.mjs`，导出三函数：
+**范围**: 实现 `scripts/acceptance/w8-v4/lib.mjs`，导出 4 函数：
 - `assertBrainImageInSync({exec})` — 抛错若 brain HEAD ≠ origin/main
-- `registerAndDispatchAcceptance({fetch, db})` — POST tasks + dispatch，返回 task_id
+- `registerAndDispatchAcceptance({fetch, db})` — POST tasks + dispatch，返回 task_id；dispatched !== true 时抛错信息含字面量 `infrastructure_fail`（R5 mitigation）
 - `waitFor14GraphNodeEvents({query, taskId, dispatchTs, timeoutSec})` — 轮询 task_events，返回 distinct node 列表（≤14 即返回，含 inferTaskPlan branch 校验，正则与 contract 顶部 INFER_BRANCH_RE 同源）
+- **`monitorAcceptanceTaskHealth({query, taskId})`** — R5 mitigation：单次 query `SELECT * FROM tasks WHERE id=$taskId`，返回 `{status: 'healthy'|'missing'|'unhealthy', taskRow?}`；调用方根据 status='missing' 自行抛 `infrastructure_fail`（不在 helper 内部抛错以便 caller 自行决定 abort 时机）
 
-**大小**: M（约 200 行 lib + 100 行测试）
+**大小**: M（约 240 行 lib + 130 行测试）
 **依赖**: 无
 
 **BEHAVIOR 覆盖测试文件**: `tests/ws1/acceptance-helper.test.ts`
@@ -613,18 +764,22 @@ workstream_count: 3
 
 ---
 
-### Workstream 2: 故障注入 A/B/C 自愈观测 helper（含 R4 evidence 落盘 + 回放）
+### Workstream 2: 故障注入 A/B/C 自愈观测 helper（含 R4 evidence 落盘 + 回放 + R6 mount snapshot + R7 cred check + R8 lenient/skipped）
 
 **范围**: 实现 `scripts/acceptance/w8-v4/fault-inject.mjs`，导出：
 - `findContainerForTask({docker, taskId})` — `docker ps --filter` 取第一个 container name
 - `pollLlmRetryEvents({query, taskId, sinceTs, capMax=3})` — 5min 内 poll，返回 retry 数；超过 cap 抛错
 - `pollHarnessInterruptPending({query, taskId, sinceTs, timeoutMin=15})` — poll harness_interrupts，返回 pending row id
-- `injectInitiativeDeadlineOverdue({db, initiativeId})` — 仅 UPDATE phase=running 行；返回受影响行数（必须 ≥1）
+- **`injectInitiativeDeadlineOverdue({db, initiativeId})`** — 仅 UPDATE phase=running 行；**默认 lenient（R8 mitigation）：rowCount=0 时返回 0 不抛错**；调用方据返回值决策 normal vs skipped 分支
 - `assertWatchdogMarkedFailed({db, initiativeId, sinceTs, timeoutMin=5})` — 校验 phase=failed + failure_reason=watchdog_overdue
-- **`recordInjectionTimestamp({kind, dir, taskId, injectTs, target, meta})`** — R4 mitigation：写 `${dir}/inject-${kind.toLowerCase()}.json`，含 kind/taskId/injectTs/target/meta 字段；mkdir -p；原子 write
-- **`replayInjectionEvidence({dir})`** — R4 mitigation：读 `${dir}/inject-{a,b,c}.json` 三个文件，校验 kind ∈ {A,B,C}，返回数组 `[{kind, taskId, injectTs, target, meta}, ...]`；缺文件抛错
+- `recordInjectionTimestamp({kind, dir, taskId, injectTs, target, meta})` — R4 mitigation：写 `${dir}/inject-${kind.toLowerCase()}.json`，含 kind/taskId/injectTs/target/meta 字段；mkdir -p；原子 write
+- `replayInjectionEvidence({dir})` — R4 + R8 mitigation：依次尝试读 `${dir}/inject-${k}.json`（k=a,b,c），kind C 缺失时 fallback 读 `${dir}/inject-c-skipped.json`；返回 3 项数组 `[{kind, taskId, injectTs, target, meta, status: 'normal'|'skipped'}, ...]`；任意 kind 两文件都缺则抛错
+- **`snapshotWorkspaceMount({exec, label, dir})`** — R6 mitigation：调 `exec("docker exec brain ls -la /workspace")` 落盘到 `${dir}/mount-${label}.txt`；mkdir -p；原子 write
+- **`diffWorkspaceMounts({snapAPath, snapBPath, outPath})`** — R6 mitigation：读两 snapshot 文件，简单 line-by-line diff（added/removed），写到 outPath；返回 `{added: [], removed: []}`
+- **`checkCredentialInvalidEvent({query, taskId, sinceTs})`** — R7 mitigation：query `task_events.event_type='credential_invalid'` AND `created_at >= sinceTs`；rows ≥ 1 抛错信息含字面量 `credential_invalid: aborting acceptance`
+- **`recordSkippedInjection({kind, dir, taskId, reason, injectTs, meta})`** — R8 mitigation：写 `${dir}/inject-${kind.toLowerCase()}-skipped.json`，含 kind/taskId/reason/injectTs/meta 字段；mkdir -p；原子 write
 
-**大小**: L（约 350 行 lib + 200 行测试）
+**大小**: L（约 480 行 lib + 320 行测试）
 **依赖**: Workstream 1 完成后（共享同一 DB query helper）
 
 **BEHAVIOR 覆盖测试文件**: `tests/ws2/fault-inject.test.ts`
@@ -634,16 +789,16 @@ workstream_count: 3
 
 ---
 
-### Workstream 3: 终态校验 + 报告生成器 + lead 自验文件骨架 + R3 SLA helper
+### Workstream 3: 终态校验 + 报告生成器 + lead 自验文件骨架 + R3 SLA helper + R8 skipped caveat 段
 
 **范围**: 实现 `scripts/acceptance/w8-v4/render-report.mjs`，导出：
-- `renderAcceptanceReport({taskId, dispatchTs, mode, db, slaCaveats})` — 拼接 Markdown，含 14 节点 SQL 输出 + v3→v4 diff 表 + 3 个故障注入时间线 + （若有）24h SLA caveat 段；mode='dryrun-nodes-only' 时只输出节点统计供 Step 3 校验
+- `renderAcceptanceReport({taskId, dispatchTs, mode, db, slaCaveats, skippedInjections, infrastructureFails})` — 拼接 Markdown，含 14 节点 SQL 输出 + v3→v4 diff 表 + 3 个故障注入时间线 + （若有）24h SLA caveat 段 + **（R8）`skippedInjections` 渲染独立 `## R8 Cascade Skipped` caveat 段含 reason/cascade_source 字段**；mode='dryrun-nodes-only' 时只输出节点统计供 Step 3 校验
 - `renderLeadEvidence({brainHead, mainHead, brainStatus, accTaskId, terminalStatus})` — 生成 `.agent-knowledge/harness-langgraph-14-node/lead-acceptance-w8-v4.md` 骨架，注入 5 项 lead 命令 stdout 摘录占位 + 必含 keyword
 - `writeReportFiles({reportPath, leadPath, content})` — 原子写盘（mkdir -p + write）
-- **`assertInterruptResumeSla({interruptId, deltaSec, slaSec=86400, evidenceDir})`** — R3 mitigation：delta < slaSec 写 happy 标记到 inject-b.json；≥ slaSec 写 sla-exceeded caveat 但不抛错（W5 自动 abort 也是合法路径）；返回 `{ withinSla: boolean, caveat: string|null }`
+- `assertInterruptResumeSla({interruptId, deltaSec, slaSec=86400, evidenceDir})` — R3 mitigation：delta < slaSec 写 happy 标记到 inject-b.json；≥ slaSec 写 sla-exceeded caveat 但不抛错（W5 自动 abort 也是合法路径）；返回 `{ withinSla: boolean, caveat: string|null }`
 
-**大小**: M（约 300 行 lib + 150 行测试）
-**依赖**: Workstream 2 完成后（render 时需读取 fault-inject 产物 + assertInterruptResumeSla 写 inject-b.json）
+**大小**: M（约 350 行 lib + 200 行测试）
+**依赖**: Workstream 2 完成后（render 时需读取 fault-inject 产物 + assertInterruptResumeSla 写 inject-b.json + skippedInjections 来自 inject-c-skipped.json）
 
 **BEHAVIOR 覆盖测试文件**: `tests/ws3/render-report.test.ts`
 
@@ -654,13 +809,13 @@ workstream_count: 3
 
 ---
 
-## Test Contract（R2 加固：每行含首条 expect 行号 + 断言原文）
+## Test Contract（R3 加固：每行含首条 expect 行号 + 断言原文 + R5/R6/R7/R8 红测试覆盖）
 
 | Workstream | Test File | BEHAVIOR 覆盖 | 预期红证据（首条 expect 行号 + 断言原文） |
 |---|---|---|---|
-| WS1 | `tests/ws1/acceptance-helper.test.ts` | assertBrainImageInSync 抛错；registerAndDispatchAcceptance 返回 task_id；waitFor14GraphNodeEvents 14 节点 + inferTaskPlan branch 校验 | 模块未实现 → vitest 报 `Cannot find module './scripts/acceptance/w8-v4/lib.mjs'`，**首条断言** `tests/ws1/acceptance-helper.test.ts:19 await expect(assertBrainImageInSync({ exec })).rejects.toThrow(/stale\|mismatch\|aaaaaaaa/i)` 直接 fail（非 import 错误而是断言落空） → **7 failures** |
-| WS2 | `tests/ws2/fault-inject.test.ts` | findContainerForTask 取第一个；pollLlmRetryEvents cap=3 抛错；pollHarnessInterruptPending 含 task_id；injectInitiativeDeadlineOverdue 仅改 running；assertWatchdogMarkedFailed 严格 reason；**recordInjectionTimestamp 写 JSON**；**replayInjectionEvidence 读 3 文件** | 模块未实现 → **首条断言** `tests/ws2/fault-inject.test.ts:19 expect(name).toBe('container-aaa')` 直接 fail → **R2 新增覆盖 R4 helpers 的红测试**（≥ 13 failures：原 9 + record 写 JSON + 自动 mkdir + replay 三件齐全 + replay 缺件抛错） |
-| WS3 | `tests/ws3/render-report.test.ts` | renderAcceptanceReport 6 章节；renderLeadEvidence 5 关键字；writeReportFiles 原子；**assertInterruptResumeSla 24h 边界** | 模块未实现 → **首条断言** `tests/ws3/render-report.test.ts:44 expect(md.length).toBeGreaterThanOrEqual(2000)` 直接 fail → **R2 新增覆盖 R3 SLA helper 红测试**（≥ 8 failures：原 5 + slaCaveats 段 + R3 SLA happy + R3 SLA exceeded） |
+| WS1 | `tests/ws1/acceptance-helper.test.ts` | assertBrainImageInSync 抛错；registerAndDispatchAcceptance 返回 task_id；waitFor14GraphNodeEvents 14 节点 + inferTaskPlan branch 校验；**(R5)** registerAndDispatchAcceptance 在 dispatched=false 时抛 `infrastructure_fail`；**(R5)** monitorAcceptanceTaskHealth 0 rows → status='missing'；monitorAcceptanceTaskHealth 1 row → status='healthy' | 模块未实现 → vitest 报 `Cannot find module './scripts/acceptance/w8-v4/lib.mjs'`，**首条断言** `tests/ws1/acceptance-helper.test.ts:19 await expect(assertBrainImageInSync({ exec })).rejects.toThrow(/stale\|mismatch\|aaaaaaaa/i)` 直接 fail → **R3 新增覆盖 R5 helpers**（≥ 10 failures：原 7 + R5 dispatched=false 抛 infrastructure_fail + R5 monitor missing + R5 monitor healthy） |
+| WS2 | `tests/ws2/fault-inject.test.ts` | findContainerForTask 取第一个；pollLlmRetryEvents cap=3 抛错；pollHarnessInterruptPending 含 task_id；**(R8 改)** injectInitiativeDeadlineOverdue rowCount=0 返回 0 不抛错（lenient 默认）；assertWatchdogMarkedFailed 严格 reason；recordInjectionTimestamp 写 JSON；replayInjectionEvidence 读 3 文件接受 skipped；**(R6)** snapshotWorkspaceMount 落盘；**(R6)** diffWorkspaceMounts 输出格式；**(R7)** checkCredentialInvalidEvent 0 rows 不抛/≥1 rows 抛 `credential_invalid`；**(R8)** recordSkippedInjection 写 inject-c-skipped.json | 模块未实现 → **首条断言** `tests/ws2/fault-inject.test.ts:19 expect(name).toBe('container-aaa')` 直接 fail → **R3 新增覆盖 R6/R7/R8 helpers**（≥ 20 failures：R2 13 + R8 lenient 改测 + R6 snapshot + R6 diff + R7 cred 0 rows + R7 cred ≥1 rows + R8 recordSkipped + replayInjectionEvidence skipped fallback） |
+| WS3 | `tests/ws3/render-report.test.ts` | renderAcceptanceReport 6 章节；renderLeadEvidence 5 关键字；writeReportFiles 原子；assertInterruptResumeSla 24h 边界；**(R8)** renderAcceptanceReport 含 skippedInjections 渲染 `## R8 Cascade Skipped` caveat 段；**(R8)** renderAcceptanceReport 含 reason 字段输出 | 模块未实现 → **首条断言** `tests/ws3/render-report.test.ts:44 expect(md.length).toBeGreaterThanOrEqual(2000)` 直接 fail → **R3 新增覆盖 R8 caveat**（≥ 10 failures：R2 8 + R8 skippedInjections 渲染 caveat + R8 reason 字段含字面量） |
 
 ---
 
@@ -677,3 +832,7 @@ workstream_count: 3
 7. **Step 1 deploy 校验**: 用 `docker exec brain grep` 命中具体修复指纹，而非比对 commit hash（commit hash 可能有 fast-forward 但代码尚未生效）；新增 2b 源码字面量同源校验（防 INFER_BRANCH_RE 与代码漂移）。
 8. **时间窗口**: 所有 SQL `count(*)` / `select` 都带 `extract(epoch FROM created_at) >= $DISPATCH_TS` 或 `created_at > NOW() - interval '...'`，防止匹配 v1/v2/v3 历史残留。
 9. **curl -f flag**: 所有 HTTP 调用都加 `-f`，HTTP 5xx 立即退出。
+10. **(R5) infrastructure_fail 区分**: Step 3/5 每轮 sleep 后必须 SELECT count(*) FROM tasks WHERE id=$ACC_TASK_ID；count=0 抛 `infrastructure_fail: task vanished`；E2E `dispatched != true` stdout 含 `infrastructure_fail` 字面量；error message 用前缀字面量与 acceptance 业务 fail 区分。
+11. **(R6) docker /workspace mount race**: Step 2 与 Step 4 必须各 snapshot 一次 `docker exec brain ls -la /workspace`；E2E 校验 `mount-step2.txt` / `mount-step4.txt` / `mount-diff.txt` 三文件齐全；diff 文件即使空也必须落盘作 evidence。
+12. **(R7) 凭据 401 优先于 retry cap**: Step 4 poll loop 内必须先 query `event_type='credential_invalid'`，命中即抛错含 `credential_invalid: aborting acceptance`；Step 5 max_fix_rounds 触发前同样查；E2E 入口先校验 `credential_invalid` count=0 才进 retry cap 校验，防止凭据失效被误归 W2 联动失败。
+13. **(R8) Step 6 lenient + skipped 分支**: `injectInitiativeDeadlineOverdue` 默认 lenient（rowCount=0 返回 0 不抛错）；调用方据返回值二选一：rowCount≥1 走 normal 写 `inject-c.json`；rowCount=0 走 R8 skipped 写 `inject-c-skipped.json` 且 stdout `[R8 PATH] skipped`；`replayInjectionEvidence` 接受两文件之一存在；`renderAcceptanceReport` 对 `skippedInjections` 数组渲染 `## R8 Cascade Skipped` caveat 段。
