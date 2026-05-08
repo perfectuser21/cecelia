@@ -1,4 +1,10 @@
-# Sprint Contract Draft (Round 1)
+# Sprint Contract Draft (Round 2)
+
+> **表名/字段约定（SSOT）**
+> - `checkpoints` — LangGraph PgCheckpointer 持久化表（按 `thread_id` 索引）
+> - `brain_tasks` — Brain 任务表；`brain_tasks.id` **即** Initiative / sub-task 的 `task_id`（本合同所有 SQL 用 `WHERE id='<task_id>'`）
+> - `dev_records` — 开发记录表（合同里所有「dev-records」描述指代该 SQL 真名）
+> - 任务流转中 `task_id` 永远等同 `brain_tasks.id`（UUID）
 
 ## Golden Path
 
@@ -6,7 +12,7 @@
   → [Step 1: 14 节点 happy path 全程命中]
   → [Step 2: PgCheckpointer 真持久化 14 节点链路]
   → [Step 3: kill brain → 同 thread_id resume，从最近 checkpoint 续跑]
-  → [出口: brain_tasks status ∈ {completed, failed} + dev-records ≥ 1 条]
+  → [出口: brain_tasks status ∈ {completed, failed} + dev_records ≥ 1 条]
 
 ---
 
@@ -78,9 +84,17 @@ grep -E "^PG_CHECKPOINTER_INJECTED: true$" /tmp/w8-traversal.log \
 
 ---
 
-### Step 3: kill-resume on 14-node graph（幂等 + 续跑）
+### Step 3: kill-resume on 14-node graph（精准 hook 触发 + 幂等 + 续跑）
 
-**可观测行为**：在 Step 1 跑到中段（约 `evaluate` 节点完成后）强制中断 brain 进程，然后用同 `thread_id` 重新 invoke，图从最近 checkpoint 恢复继续执行到终态；resume 不重复执行已完成节点的副作用（`brain_tasks` 表无重复 sub_task 行、`dev-records` 表本 initiative 仅 1 条）。
+**可观测行为**：在 Step 1 跑到 `evaluate` 节点 **exit 事件触发的那一刻**（用 LangGraph node enter/exit hook 精准触发，而非 `sleep N` 时间猜测），`kill-resume-runner` 对 brain 子进程发 SIGKILL，并 stdout 输出一行 `KILL_TIMING: evaluate` 便于事后复盘。然后用同 `thread_id` 重新 invoke，图从最近 checkpoint 恢复继续执行到终态；resume 不重复执行已完成节点的副作用（`brain_tasks` 表无重复 sub_task 行、`dev_records` 表本 initiative 仅 1 条）。
+
+**实现要求（写给 Generator）**：
+- runner 必须订阅 LangGraph 的节点事件流（`onNodeEnter` / `onNodeExit` / `streamMode: "updates"`），在指定 `killAfterNode` 的 exit 事件回调里发 `process.kill(child.pid, 'SIGKILL')`。
+- **禁止**用 `setTimeout(kill, N*1000)` 之类的时间近似——CI 抖动会让该方式假绿/假红。
+- runner stdout 必须按以下格式打印事件标记，使 reviewer 可以复盘 kill 时机：
+  - 收到 `evaluate` exit 事件后立即一行：`KILL_TIMING: evaluate`
+  - resume 跑到终态后一行：`RESUME_OK`
+  - 节点幂等检测通过一行：`NO_DUPLICATE_SIDE_EFFECT`
 
 **验证命令**：
 ```bash
@@ -92,24 +106,28 @@ node packages/brain/scripts/smoke/harness-initiative-kill-resume.mjs \
   --task-id "$TASK_ID" --thread-id "$THREAD_ID" \
   --kill-after-node evaluate 2>&1 | tee /tmp/w8-kill-resume.log
 
-# 3.2 确认 RESUME_OK 标记
+# 3.2 确认 kill 在 evaluate 节点 exit 事件触发（hook 精准触发，非 sleep 时间）
+grep -E "^KILL_TIMING: evaluate$" /tmp/w8-kill-resume.log \
+  || { echo "FAIL: smoke 未输出 KILL_TIMING: evaluate（runner 未走 hook 精准触发路径）"; exit 1; }
+
+# 3.3 确认 RESUME_OK 标记
 grep -E "^RESUME_OK$" /tmp/w8-kill-resume.log \
   || { echo "FAIL: smoke 未输出 RESUME_OK"; exit 1; }
 
-# 3.3 确认幂等（无副作用重复）
+# 3.4 确认幂等（无副作用重复）
 grep -E "^NO_DUPLICATE_SIDE_EFFECT$" /tmp/w8-kill-resume.log \
   || { echo "FAIL: smoke 检测到副作用重复（节点幂等门破损）"; exit 1; }
 
-# 3.4 DB 层复检：dev-records 表本 task_id 关联记录 = 1
+# 3.5 DB 层复检：dev_records 表本 task_id 关联记录 = 1
 DB="${DB_URL:-postgresql://cecelia:cecelia@localhost:5432/cecelia}"
 DEVREC_COUNT=$(psql "$DB" -t -A -c "
   SELECT count(*) FROM dev_records
   WHERE task_id='$TASK_ID'
     AND created_at > NOW() - interval '10 minutes'
 ")
-[ "$DEVREC_COUNT" -eq 1 ] || { echo "FAIL: dev-records 本 task_id 行数=$DEVREC_COUNT，期望恰好 1（幂等）"; exit 1; }
+[ "$DEVREC_COUNT" -eq 1 ] || { echo "FAIL: dev_records 本 task_id 行数=$DEVREC_COUNT，期望恰好 1（幂等）"; exit 1; }
 
-# 3.5 brain_tasks 终态
+# 3.6 brain_tasks 终态（brain_tasks.id 即 task_id）
 TASK_STATUS=$(psql "$DB" -t -A -c "SELECT status FROM brain_tasks WHERE id='$TASK_ID'")
 case "$TASK_STATUS" in
   completed|failed) echo "OK: task 终态=$TASK_STATUS" ;;
@@ -117,7 +135,7 @@ case "$TASK_STATUS" in
 esac
 ```
 
-**硬阈值**：smoke 输出 `RESUME_OK` + `NO_DUPLICATE_SIDE_EFFECT`；`dev_records` 本 task_id 行数 = 1（恰好 1，证明幂等）；`brain_tasks.status ∈ {completed, failed}`。
+**硬阈值**：smoke 输出 `KILL_TIMING: evaluate`（hook 精准触发证据） + `RESUME_OK` + `NO_DUPLICATE_SIDE_EFFECT`；`dev_records` 本 task_id 行数 = 1（恰好 1，证明幂等）；`brain_tasks.status ∈ {completed, failed}`（按 `id=$TASK_ID` 查询）。
 
 ---
 
@@ -134,7 +152,12 @@ set -e
 cd /workspace
 DB="${DB_URL:-postgresql://cecelia:cecelia@localhost:5432/cecelia}"
 
-# 0. 前置：docker-compose 起 Pg + Brain（若已起略过）
+# 0a. 前置：docker compose 服务名校验（防 brain/postgres vs cecelia-brain/cecelia-postgres 漂移）
+SERVICES=$(docker compose config --services 2>/dev/null || true)
+echo "$SERVICES" | grep -qE "^brain$"    || { echo "FAIL: docker compose 缺 'brain' 服务（实际：$SERVICES）"; exit 1; }
+echo "$SERVICES" | grep -qE "^postgres$" || { echo "FAIL: docker compose 缺 'postgres' 服务（实际：$SERVICES）"; exit 1; }
+
+# 0b. 前置：容器实际在跑
 docker compose ps brain | grep -qE "running|Up" \
   || { echo "FAIL: brain 容器未起，跑 docker compose up -d 后再试"; exit 1; }
 docker compose ps postgres | grep -qE "running|Up" \
@@ -170,13 +193,14 @@ DISTINCT_NODES=$(psql "$DB" -t -A -c "
 grep -n "MemorySaver" packages/brain/src/workflows/harness-initiative.graph.js \
   && { echo "FAIL: 源码仍引用 MemorySaver"; exit 1; } || true
 
-# 3. Step 3 — kill-resume
+# 3. Step 3 — kill-resume（hook 精准触发）
 TASK_ID_K=$(node -e "console.log(require('crypto').randomUUID())")
 THREAD_ID_K="harness-initiative-kr-${TASK_ID_K}"
 node packages/brain/scripts/smoke/harness-initiative-kill-resume.mjs \
   --task-id "$TASK_ID_K" --thread-id "$THREAD_ID_K" \
   --kill-after-node evaluate 2>&1 | tee /tmp/w8-kill-resume.log
 
+grep -E "^KILL_TIMING: evaluate$" /tmp/w8-kill-resume.log || { echo "FAIL: Step3 KILL_TIMING: evaluate 缺失（hook 精准触发未生效）"; exit 1; }
 grep -E "^RESUME_OK$" /tmp/w8-kill-resume.log || { echo "FAIL: Step3 RESUME_OK 缺失"; exit 1; }
 grep -E "^NO_DUPLICATE_SIDE_EFFECT$" /tmp/w8-kill-resume.log || { echo "FAIL: Step3 副作用重复"; exit 1; }
 
@@ -192,7 +216,7 @@ esac
 echo "OK: W8 Acceptance v7 Golden Path 全程通过"
 ```
 
-**通过标准**：脚本 exit 0；Step1 happy 节点 ≥ 12，Step2 checkpoints 行数 ≥ 14、distinct happy nodes ≥ 12、源码 MemorySaver 引用 = 0，Step3 RESUME_OK + NO_DUPLICATE_SIDE_EFFECT + dev_records = 1 + brain_tasks 终态。
+**通过标准**：脚本 exit 0；docker compose 服务名校验通过（brain + postgres）；Step1 happy 节点 ≥ 12，Step2 checkpoints 行数 ≥ 14、distinct happy nodes ≥ 12、源码 MemorySaver 引用 = 0，Step3 `KILL_TIMING: evaluate` + RESUME_OK + NO_DUPLICATE_SIDE_EFFECT + dev_records = 1 + brain_tasks 终态。
 
 ---
 
@@ -218,10 +242,10 @@ workstream_count: 3
 
 ---
 
-### Workstream 3: kill-resume on 14-node graph 验收
+### Workstream 3: kill-resume on 14-node graph 验收（hook 精准触发）
 
-**范围**：新增 kill-resume runner 助手模块（spawn brain 跑图 → 在指定节点完成后 SIGKILL → 同 thread_id 重新 invoke 续跑）+ smoke 脚本 + Vitest 验收测试，断言 RESUME_OK、节点幂等（无副作用重复）、dev_records 仅 1 条、brain_tasks 终态可达。
-**大小**：M（180–280 行：runner + smoke + 测试）
+**范围**：新增 kill-resume runner 助手模块（spawn brain 子进程跑图 → 订阅 LangGraph node enter/exit 事件流 → 在 `killAfterNode` 的 exit 回调发 SIGKILL（**禁用 sleep N 时间近似**）→ stdout 打印 `KILL_TIMING: <node>` → 同 thread_id 重新 invoke 续跑）+ smoke 脚本 + Vitest 验收测试，断言 KILL_TIMING + RESUME_OK + 节点幂等（无副作用重复）+ dev_records 仅 1 条 + brain_tasks 终态可达。
+**大小**：M（200–300 行：runner + smoke + 测试，新增 hook 订阅逻辑）
 **依赖**：Workstream 1 完成后（共享 observer 与 smoke 基础设施）
 **BEHAVIOR 覆盖测试文件**：`tests/ws3/acceptance-kill-resume.test.js`
 
@@ -229,8 +253,17 @@ workstream_count: 3
 
 ## Test Contract
 
-| Workstream | Test File | BEHAVIOR 覆盖 | 预期红证据 |
+| Workstream | Test File | BEHAVIOR 覆盖 | 预期红证据（具体 it 名 + 报错） |
 |---|---|---|---|
-| WS1 | `tests/ws1/acceptance-traversal.test.js` | 12 happy 节点全程命中 + retry/terminal_fail 合法跳过 + PgCheckpointer 自动注入观测 | import `acceptance/traversal-observer.js` 失败（模块不存在）→ vitest exit 1 |
-| WS2 | `tests/ws2/acceptance-pg-persistence.test.js` | checkpoints 表 ≥14 行 + ≥12 distinct happy node 写入 + 源码无 MemorySaver | import `acceptance/checkpoint-inspector.js` 失败 → vitest exit 1 |
-| WS3 | `tests/ws3/acceptance-kill-resume.test.js` | kill 中段 → resume 续跑到终态 + 节点幂等（dev_records=1）+ brain_tasks 终态 | import `acceptance/kill-resume-runner.js` 失败 → vitest exit 1 |
+| WS1 | `tests/ws1/acceptance-traversal.test.js` | 12 happy 节点全程命中 + retry/terminal_fail 合法跳过 + PgCheckpointer 自动注入观测 | `it('runWithTraversalObserver 跑完最小 Initiative 后，事件流含 12 个 happy path 节点 enter+exit 事件', ...)` 报 `Cannot find module '../../../../packages/brain/src/workflows/acceptance/traversal-observer.js'`；同文件 4 条 it 全部因 import 失败抛 ERR_MODULE_NOT_FOUND → vitest exit 1 |
+| WS2 | `tests/ws2/acceptance-pg-persistence.test.js` | checkpoints 表 ≥14 行 + ≥12 distinct happy node 写入 + 源码无 MemorySaver | `it('listCheckpointsByThread 在跑完 traversal smoke 后返回 ≥14 行（10 分钟时间窗内）', ...)` 报 `Cannot find module '../../../../packages/brain/src/workflows/acceptance/checkpoint-inspector.js'`；同文件 4 条 it 全部因 import 失败抛 ERR_MODULE_NOT_FOUND → vitest exit 1 |
+| WS3 | `tests/ws3/acceptance-kill-resume.test.js` | kill 中段（hook 精准触发，非 sleep）→ resume 续跑到终态 + 节点幂等（dev_records=1）+ brain_tasks 终态 | `it("在 'evaluate' 节点完成后中断子进程，再用同 threadId resume，最终 task 状态 ∈ {completed, failed}", ...)` 报 `Cannot find module '../../../../packages/brain/src/workflows/acceptance/kill-resume-runner.js'`；同文件 4 条 it 全部因 import 失败抛 ERR_MODULE_NOT_FOUND → vitest exit 1 |
+
+---
+
+## Round 2 修订日志（响应 Reviewer 反馈）
+
+- **R5 / docker compose 服务名漂移**：E2E 脚本顶部新增 `docker compose config --services` 校验段，确认存在 `brain` 与 `postgres` 服务名（防 `cecelia-brain` / `cecelia-postgres` 漂移）。
+- **internal_consistency 提升**：合同顶部新增「表名/字段约定（SSOT）」区块，统一 `dev_records` / `brain_tasks` / `checkpoints` 表名；显式声明 `brain_tasks.id` 即 `task_id`，所有 SQL 改用 `WHERE id='<task_id>'` 句式（Step 3.6 已对齐）。
+- **kill 时机精度（取代 sleep N 秒）**：Step 3 与 WS3 范围明确要求 runner 订阅 LangGraph node enter/exit 事件流，在 `evaluate` exit 回调发 SIGKILL；新增 `KILL_TIMING: evaluate` 标记行 + 验证命令 3.2 grep 校验；硬阈值与通过标准同步加入。
+- **test_is_red 提升**：Test Contract 表「预期红证据」列从模糊"import 失败"升级到指名具体 `it()` 描述串 + 期望 `Cannot find module '<path>'` 报错全文，使 reviewer 可直接复制断言名做反验。
