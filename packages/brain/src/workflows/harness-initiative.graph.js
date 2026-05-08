@@ -633,6 +633,11 @@ export async function runGanLoopNode(state, opts = {}) {
     const executor = opts.executor || spawn;
     const sprintDir = state.task?.payload?.sprint_dir || 'sprints';
     const budgetUsd = state.task?.payload?.budget_usd || DEFAULT_BUDGET_USD;
+    // LangGraph runtime 不会把父 graph 的 checkpointer 注入子节点 opts；
+    // 当 opts.checkpointer 缺失（生产实际场景）时，自己 getPgCheckpointer 兜底。
+    // Stream 2 v1.229.0 起 runGanContractGraph fail-fast if !checkpointer，
+    // 必须显式传，否则 ganLoop 直接 throw "checkpointer is required"。
+    const checkpointer = opts.checkpointer || await getPgCheckpointer();
     const ganResult = await runGanContractGraph({
       taskId: state.task.id,
       initiativeId: state.initiativeId,
@@ -642,7 +647,7 @@ export async function runGanLoopNode(state, opts = {}) {
       worktreePath: state.worktreePath,
       githubToken: state.githubToken,
       budgetCapUsd: budgetUsd,
-      checkpointer: opts.checkpointer,
+      checkpointer,
     });
     return { ganResult };
   } catch (err) {
