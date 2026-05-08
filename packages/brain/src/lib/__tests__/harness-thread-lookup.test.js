@@ -1,35 +1,75 @@
 /**
- * lib/harness-thread-lookup.test.js — LangGraph 修正 Sprint Stream 1
+ * lib/harness-thread-lookup.test.js — LangGraph 修正 Sprint Stream 5
  *
- * Stub 阶段单元测试。当前 lookupHarnessThread 永远返回 null（→ router 返回 404），
- * 真实 PG 查询逻辑在 Layer 3 spawn 节点重构时插入。
+ * Stream 1 起步是 stub，Stream 5 真实化为 PG 查询。
  *
- * 这些断言守住"接口契约"，下游 callback router 已按此 mock：
+ * 这些断言守住"接口契约"（callback router 按此 mock）：
  *   - 返回 null 表示找不到（router 应 404）
  *   - 返回 { compiledGraph, threadId } 表示成功
- *   - 不抛错、不依赖网络/PG（stub 阶段）
+ *   - 错误不抛（PG/compile 失败均 swallow → null）
  */
-import { describe, it, expect } from 'vitest';
-import { lookupHarnessThread } from '../harness-thread-lookup.js';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { MemorySaver } from '@langchain/langgraph';
 
-describe('lib/harness-thread-lookup (Stream 1 stub)', () => {
+// Mock db pool — 测试不能真连 PG
+const mockQuery = vi.fn();
+vi.mock('../../db.js', () => ({
+  default: { query: (...args) => mockQuery(...args) },
+}));
+
+// Mock pg-checkpointer — 用 MemorySaver 代替（compile graph 需要 checkpointer）
+vi.mock('../../orchestrator/pg-checkpointer.js', () => ({
+  getPgCheckpointer: vi.fn().mockResolvedValue(new MemorySaver()),
+}));
+
+import { lookupHarnessThread } from '../harness-thread-lookup.js';
+import { _resetCompiledForTests } from '../../workflows/walking-skeleton-1node.graph.js';
+
+describe('lib/harness-thread-lookup (Stream 5 真实 PG 查询)', () => {
+  beforeEach(() => {
+    mockQuery.mockReset();
+    _resetCompiledForTests();
+  });
+
   it('exports lookupHarnessThread 函数', () => {
     expect(typeof lookupHarnessThread).toBe('function');
   });
 
-  it('未知 containerId 返回 null（stub 阶段，不抛错）', async () => {
+  it('未知 containerId — PG 返回空 → null', async () => {
+    mockQuery.mockResolvedValueOnce({ rows: [] });
     const result = await lookupHarnessThread('any-container-id');
+    expect(result).toBeNull();
+    expect(mockQuery).toHaveBeenCalledTimes(1);
+  });
+
+  it('空字符串 / undefined → 直接 null（不打 PG）', async () => {
+    expect(await lookupHarnessThread('')).toBeNull();
+    expect(await lookupHarnessThread(undefined)).toBeNull();
+    expect(mockQuery).not.toHaveBeenCalled();
+  });
+
+  it('walking-skeleton-1node graph 命中 → 返回 { compiledGraph, threadId }', async () => {
+    mockQuery.mockResolvedValueOnce({
+      rows: [{ thread_id: 'thread-xyz', graph_name: 'walking-skeleton-1node' }],
+    });
+    const result = await lookupHarnessThread('container-abc');
+    expect(result).not.toBeNull();
+    expect(result.threadId).toBe('thread-xyz');
+    expect(result.compiledGraph).toBeDefined();
+    expect(typeof result.compiledGraph.invoke).toBe('function');
+  });
+
+  it('未知 graph_name → 返回 null（dispatch miss）', async () => {
+    mockQuery.mockResolvedValueOnce({
+      rows: [{ thread_id: 'thread-xyz', graph_name: 'unknown-graph' }],
+    });
+    const result = await lookupHarnessThread('container-abc');
     expect(result).toBeNull();
   });
 
-  it('空字符串 / undefined 也返回 null（stub 阶段不做参数校验）', async () => {
-    expect(await lookupHarnessThread('')).toBeNull();
-    expect(await lookupHarnessThread(undefined)).toBeNull();
-  });
-
-  it('返回的 Promise 不依赖网络/PG（stub 在 50ms 内 settle）', async () => {
-    const start = Date.now();
-    await lookupHarnessThread('xyz');
-    expect(Date.now() - start).toBeLessThan(50);
+  it('PG 查询抛错 → 返回 null（不向上传播）', async () => {
+    mockQuery.mockRejectedValueOnce(new Error('connection refused'));
+    const result = await lookupHarnessThread('container-abc');
+    expect(result).toBeNull();
   });
 });
