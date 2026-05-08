@@ -18,8 +18,9 @@ export PATH=/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:$PATH
 
 set -euo pipefail
 
-# 如果以 root 运行，重新以 administrator 身份执行（claude 拒绝 root + setsid 下的 --dangerously-skip-permissions）
-if [[ "$(id -u)" == "0" ]]; then
+# 如果以 root 运行（仅宿主环境），重新以 administrator 身份执行（claude 拒绝 root + setsid 下的 --dangerously-skip-permissions）
+# 容器内（/.dockerenv 存在 OR 没装 sudo）跳过切换：直接以 root 跑，brain 容器本就 root + 不需切 user
+if [[ "$(id -u)" == "0" ]] && [[ ! -f /.dockerenv ]] && command -v sudo >/dev/null 2>&1; then
   echo "[cecelia-run] 检测到 root 运行，切换到 administrator 重新执行..." >&2
   # 收集所有相关环境变量
   # Phase 7.3: bash 3.2 set -u compat — 如果 compgen 未命中任何变量，_env_args 保持空，

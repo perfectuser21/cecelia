@@ -87,23 +87,30 @@ assert "容器 root + 有 .dockerenv + 无 sudo → SKIPPED（容器跳过）" \
 assert "容器 root + 有 .dockerenv + 有 sudo → SKIPPED（dockerenv 兜底）" \
   "$(test_branch container-root-with-sudo 0 yes yes)" "SKIPPED"
 
-# 校验 cecelia-run.sh 实际源码 line 22 真的含新条件
+# 校验 cecelia-run.sh 源码：root detect if 行（非注释）必须含新条件
 echo ""
-echo "=== 源码 line 22 必须含新条件 ==="
-LINE_22=$(sed -n '22p' "$CECELIA_RUN")
-if echo "$LINE_22" | grep -q '\-f /.dockerenv'; then
-  echo "✓ cecelia-run.sh line 22 含 /.dockerenv 检查"
-  PASS_COUNT=$((PASS_COUNT + 1))
-else
-  echo "✗ cecelia-run.sh line 22 缺 /.dockerenv 检查 — 当前内容: $LINE_22"
+echo "=== 源码 root detect if 行必须含新条件 ==="
+# 找 if [[ "$(id -u)" == "0" ]] 那一行（去掉注释行 ^#）
+IF_LINE=$(grep -nE '^if \[\[ "\$\(id -u\)" == "0" \]\]' "$CECELIA_RUN" | head -1)
+if [ -z "$IF_LINE" ]; then
+  echo "✗ 找不到 root detect if 行"
   FAIL_COUNT=$((FAIL_COUNT + 1))
-fi
-if echo "$LINE_22" | grep -q 'command -v sudo'; then
-  echo "✓ cecelia-run.sh line 22 含 sudo 检查"
-  PASS_COUNT=$((PASS_COUNT + 1))
 else
-  echo "✗ cecelia-run.sh line 22 缺 sudo 检查 — 当前内容: $LINE_22"
-  FAIL_COUNT=$((FAIL_COUNT + 1))
+  echo "  found: $IF_LINE"
+  if echo "$IF_LINE" | grep -q '\-f /.dockerenv'; then
+    echo "✓ if 行含 /.dockerenv 检查"
+    PASS_COUNT=$((PASS_COUNT + 1))
+  else
+    echo "✗ if 行缺 /.dockerenv 检查"
+    FAIL_COUNT=$((FAIL_COUNT + 1))
+  fi
+  if echo "$IF_LINE" | grep -q 'command -v sudo'; then
+    echo "✓ if 行含 sudo 检查"
+    PASS_COUNT=$((PASS_COUNT + 1))
+  else
+    echo "✗ if 行缺 sudo 检查"
+    FAIL_COUNT=$((FAIL_COUNT + 1))
+  fi
 fi
 
 echo ""
