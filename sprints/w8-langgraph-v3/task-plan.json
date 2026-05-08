@@ -1,0 +1,110 @@
+{
+  "initiative_id": "harness-acceptance-v3-2026-05-07",
+  "journey_type": "autonomous",
+  "journey_type_reason": "主路径在 Brain 自驱（tick → harness graph → docker dispatch → 故障自愈），仅最终验证读 LiveMonitor，主体仍以 packages/brain 为起点；本 Initiative 不修 Brain 代码，只交付 acceptance 验证脚本与报告渲染器。",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "Pre-flight 校验 + Acceptance Initiative 派发脚本",
+      "scope": "实现 sprints/harness-acceptance-v3/scripts/01-preflight-and-dispatch.sh + sprints/harness-acceptance-v3/lib/preflight.mjs：校验 Brain 容器 git HEAD 与 origin/main 一致、status 非 emergency_brake、清理 vitest hang、注册 acceptance task（priority=P1, payload.timeout_sec>=1800, payload.initiative_id=harness-acceptance-v3-2026-05-07）并 dispatch，写出 .acceptance-task-id 文件",
+      "dod": [
+        "[BEHAVIOR] cd /workspace && npx vitest run sprints/w8-langgraph-v3/tests/ws1/ --reporter=verbose 2>&1 | grep -qE '4 passed|✓.*registerAndDispatchAcceptance.*payload'",
+        "[BEHAVIOR] test -x sprints/harness-acceptance-v3/scripts/01-preflight-and-dispatch.sh && head -5 sprints/harness-acceptance-v3/scripts/01-preflight-and-dispatch.sh | grep -q 'set -euo pipefail'",
+        "[ARTIFACT] sprints/harness-acceptance-v3/lib/preflight.mjs 导出 verifyDeployHead/assertNotEmergencyBrake/registerAndDispatchAcceptance"
+      ],
+      "files": [
+        "sprints/harness-acceptance-v3/scripts/01-preflight-and-dispatch.sh",
+        "sprints/harness-acceptance-v3/lib/preflight.mjs"
+      ],
+      "depends_on": [],
+      "complexity": "M",
+      "estimated_minutes": 45
+    },
+    {
+      "task_id": "ws2",
+      "title": "14 节点 graph_node_update 事件轮询与报告",
+      "scope": "实现 sprints/harness-acceptance-v3/scripts/02-verify-14-nodes.sh + sprints/harness-acceptance-v3/lib/14-nodes-report.mjs：轮询 task_events 表直到 14 distinct node_name 全部出现（≤60 分钟超时），落 sprints/harness-acceptance-v3/reports/14-nodes-report.json 包含 nodes×count×first_at/last_at",
+      "dod": [
+        "[BEHAVIOR] cd /workspace && npx vitest run sprints/w8-langgraph-v3/tests/ws2/ --reporter=verbose 2>&1 | grep -qE '3 passed|✓.*renderNodeReport.*14'",
+        "[BEHAVIOR] node -e \"const m=require('./sprints/harness-acceptance-v3/lib/14-nodes-report.mjs'); const r=m.renderNodeReport([{payload:{node_name:'prep'},created_at:'2026-05-07T12:00:00Z'}]); if(Object.keys(r.nodes).length!==14)process.exit(1); if(r.nodes.report.count!==0)process.exit(2)\"",
+        "[ARTIFACT] sprints/harness-acceptance-v3/lib/14-nodes-report.mjs 14 节点白名单写死"
+      ],
+      "files": [
+        "sprints/harness-acceptance-v3/scripts/02-verify-14-nodes.sh",
+        "sprints/harness-acceptance-v3/lib/14-nodes-report.mjs"
+      ],
+      "depends_on": ["ws1"],
+      "complexity": "M",
+      "estimated_minutes": 40
+    },
+    {
+      "task_id": "ws3",
+      "title": "故障注入 A — Docker SIGKILL 自愈验证",
+      "scope": "实现 sprints/harness-acceptance-v3/scripts/03-inject-docker-sigkill.sh + sprints/harness-acceptance-v3/lib/inject-docker-sigkill.mjs：用白名单 cecelia.task_id 标签锁定子任务容器、docker kill --signal=KILL、写 failure_injection task_event、轮询 ≤10 分钟期望 LLM_RETRY≤3 次 + sub_task_finalized.final_status=PASS",
+      "dod": [
+        "[BEHAVIOR] cd /workspace && npx vitest run sprints/w8-langgraph-v3/tests/ws3/ --reporter=verbose 2>&1 | grep -qE '4 passed|✓.*pickKillTarget.*infrastructure'",
+        "[BEHAVIOR] node -e \"const m=require('./sprints/harness-acceptance-v3/lib/inject-docker-sigkill.mjs'); try{m.pickKillTarget([])}catch(e){if(/empty|no.*container/i.test(e.message))process.exit(0)} process.exit(1)\"",
+        "[ARTIFACT] 脚本不允许出现 docker rm -f 或 docker kill brain"
+      ],
+      "files": [
+        "sprints/harness-acceptance-v3/scripts/03-inject-docker-sigkill.sh",
+        "sprints/harness-acceptance-v3/lib/inject-docker-sigkill.mjs"
+      ],
+      "depends_on": ["ws2"],
+      "complexity": "M",
+      "estimated_minutes": 50
+    },
+    {
+      "task_id": "ws4",
+      "title": "故障注入 B — max_fix_rounds → interrupt → resume(abort)",
+      "scope": "实现 sprints/harness-acceptance-v3/scripts/04-inject-max-fix-rounds.sh + sprints/harness-acceptance-v3/lib/evaluator-fail-injector.mjs：通过 evaluator override（API 优先，DB fallback）让 final_evaluate 持续 FAIL，轮询 harness_interrupts 出现 pending → POST /api/brain/harness-interrupts/:id/resume {action:'abort'}，校验 acceptance task 终态 failed/abort，trap 清理 override",
+      "dod": [
+        "[BEHAVIOR] cd /workspace && npx vitest run sprints/w8-langgraph-v3/tests/ws4/ --reporter=verbose 2>&1 | grep -qE '5 passed|✓.*resumeWithAbort.*action.*abort'",
+        "[BEHAVIOR] node -e \"const m=require('./sprints/harness-acceptance-v3/lib/evaluator-fail-injector.mjs'); const calls=[]; m.resumeWithAbort('iid', {fetch: async (u,o)=>{calls.push({u,b:JSON.parse(o.body)}); return {ok:true,json:async()=>({})}}}).then(()=>{if(calls[0].b.action!=='abort')process.exit(1); if(!/\\/harness-interrupts\\/iid\\/resume$/.test(calls[0].u))process.exit(2)})\"",
+        "[ARTIFACT] resume body 显式 action:abort；trap 清理 override"
+      ],
+      "files": [
+        "sprints/harness-acceptance-v3/scripts/04-inject-max-fix-rounds.sh",
+        "sprints/harness-acceptance-v3/lib/evaluator-fail-injector.mjs"
+      ],
+      "depends_on": ["ws3"],
+      "complexity": "L",
+      "estimated_minutes": 60
+    },
+    {
+      "task_id": "ws5",
+      "title": "故障注入 C — Deadline 逾期 → watchdog → fresh thread",
+      "scope": "实现 sprints/harness-acceptance-v3/scripts/05-inject-deadline-overdue.sh + sprints/harness-acceptance-v3/lib/inject-deadline-overdue.mjs：UPDATE initiative_runs.deadline_at 为过去时刻（强制 WHERE attempt= 限定）、写注入事件、轮询 ≤5 分钟等 watchdog 标 phase=failed/failure_reason=watchdog_overdue、重派同 initiative_id 验证 attempt+1 + thread_id 不同；trap 还原 deadline_at",
+      "dod": [
+        "[BEHAVIOR] cd /workspace && npx vitest run sprints/w8-langgraph-v3/tests/ws5/ --reporter=verbose 2>&1 | grep -qE '6 passed|✓.*nudgeDeadline.*wildcard'",
+        "[BEHAVIOR] node -e \"const m=require('./sprints/harness-acceptance-v3/lib/inject-deadline-overdue.mjs'); m.nudgeDeadline({initiativeId:'%',attempt:1}).then(()=>process.exit(1)).catch(()=>process.exit(0))\"",
+        "[ARTIFACT] UPDATE 语句必须含 WHERE attempt= 与 initiative_id= 单值约束"
+      ],
+      "files": [
+        "sprints/harness-acceptance-v3/scripts/05-inject-deadline-overdue.sh",
+        "sprints/harness-acceptance-v3/lib/inject-deadline-overdue.mjs"
+      ],
+      "depends_on": ["ws4"],
+      "complexity": "M",
+      "estimated_minutes": 50
+    },
+    {
+      "task_id": "ws6",
+      "title": "最终验证 + 报告生成 + KR 回写",
+      "scope": "实现 sprints/harness-acceptance-v3/scripts/06-final-report.sh + sprints/harness-acceptance-v3/lib/render-report.mjs：校验 /api/brain/harness/health（langgraph_version + last_attempt_at 新鲜度 ≤90 分钟）、子 dev task PR merged（gh api 真查）、KR 进度 +1%（幂等）、渲染 docs/superpowers/reports/2026-05-07-harness-langgraph-acceptance-v3.md（含 6 段章节 + 3 段时间线 + LiveMonitor URL）",
+      "dod": [
+        "[BEHAVIOR] cd /workspace && npx vitest run sprints/w8-langgraph-v3/tests/ws6/ --reporter=verbose 2>&1 | grep -qE '5 passed|✓.*renderReport.*timeline'",
+        "[BEHAVIOR] node -e \"const m=require('./sprints/harness-acceptance-v3/lib/render-report.mjs'); const md=m.renderReport({acceptanceTaskId:'t1',initiativeId:'i1',nodeReport:{nodes:{}},injections:{A:{injected_at:'a',reacted_at:'b',healed_state:'c'},B:{injected_at:'a',reacted_at:'b',healed_state:'c'},C:{injected_at:'a',reacted_at:'b',healed_state:'c'}}}); const tl=(md.match(/注入时刻|反应时刻|自愈终态/g)||[]).length; if(tl<9)process.exit(1); if(!md.includes('LiveMonitor'))process.exit(2)\"",
+        "[ARTIFACT] docs/superpowers/reports/2026-05-07-harness-langgraph-acceptance-v3.md 在脚本运行后存在"
+      ],
+      "files": [
+        "sprints/harness-acceptance-v3/scripts/06-final-report.sh",
+        "sprints/harness-acceptance-v3/lib/render-report.mjs",
+        "docs/superpowers/reports/2026-05-07-harness-langgraph-acceptance-v3.md"
+      ],
+      "depends_on": ["ws5"],
+      "complexity": "L",
+      "estimated_minutes": 60
+    }
+  ]
+}
