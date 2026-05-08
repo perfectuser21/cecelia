@@ -60,7 +60,7 @@ describe('inferTaskPlanNode git fetch [BEHAVIOR]', () => {
     setExecSyncImpl(null);
   });
 
-  it('git fetch origin <branch> 必须在 git show 之前 call', async () => {
+  it('git fetch origin <branch> 必须在 git show 之前 call（且用显式 refspec）', async () => {
     setExecSyncImpl((cmd) => {
       if (cmd.startsWith('git fetch')) return '';
       if (cmd.startsWith('git show')) return validTaskPlan;
@@ -68,7 +68,11 @@ describe('inferTaskPlanNode git fetch [BEHAVIOR]', () => {
     });
     const result = await inferTaskPlanNode(baseState);
     expect(execSyncCalls.length).toBeGreaterThanOrEqual(2);
-    expect(execSyncCalls[0].cmd).toBe('git fetch origin cp-harness-propose-r1-deadbeef');
+    // 必须用显式 refspec — `git fetch origin <branch>` 单独形式只更新 FETCH_HEAD，
+    // 不更新 refs/remotes/origin/<branch>，下面 git show 会失败（PR #2838 bug）
+    expect(execSyncCalls[0].cmd).toBe(
+      'git fetch origin cp-harness-propose-r1-deadbeef:refs/remotes/origin/cp-harness-propose-r1-deadbeef'
+    );
     expect(execSyncCalls[1].cmd).toContain('git show origin/cp-harness-propose-r1-deadbeef');
     expect(result.taskPlan).toBeDefined();
     expect(result.taskPlan.tasks.length).toBe(1);
