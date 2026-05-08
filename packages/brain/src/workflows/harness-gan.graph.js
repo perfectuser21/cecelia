@@ -177,15 +177,12 @@ export function extractProposeBranch(stdout) {
   return m ? m[1] : null;
 }
 
-// 生成 Shanghai 时区 MMDDHHmm 时间戳（与 worktree-manage.sh 创建分支风格一致）。
-// 用于 propose_branch 抽取失败时的 fallback：cp-MMDDHHmm-<taskIdSlice>。
-export function fallbackProposeBranch(taskId, now = new Date()) {
-  const parts = new Intl.DateTimeFormat('en-US', {
-    timeZone: 'Asia/Shanghai', month: '2-digit', day: '2-digit',
-    hour: '2-digit', minute: '2-digit', hour12: false,
-  }).formatToParts(now).reduce((a, p) => (a[p.type] = p.value, a), {});
-  const stamp = `${parts.month}${parts.day}${parts.hour}${parts.minute}`;
-  return `cp-${stamp}-${String(taskId || 'unknown').slice(0, 8)}`;
+// fallback：SKILL Step 4 实际 push 格式 cp-harness-propose-r{round}-{taskIdSlice}。
+// 跟 SKILL push 一致，即使 stdout 漏 JSON 也能命中真实分支。
+export function fallbackProposeBranch(taskId, round) {
+  const taskSlice = String(taskId || 'unknown').slice(0, 8);
+  const r = Number.isInteger(round) && round >= 1 ? round : 1;
+  return `cp-harness-propose-r${r}-${taskSlice}`;
 }
 
 export function buildProposerPrompt(prdContent, feedback, round) {
@@ -390,7 +387,7 @@ export function createGanContractNodes(executor, ctx) {
     // 解析 stdout 中的 propose_branch（proposer SKILL Step 3 输出 JSON 字面量）。
     // 即使本轮被打回，先把 branch 存下；后续轮次会覆写成新 branch（reducer 取最新）。
     // APPROVED 终态时即 approved contract 的 git branch。
-    const proposeBranch = extractProposeBranch(result.stdout) || fallbackProposeBranch(taskId);
+    const proposeBranch = extractProposeBranch(result.stdout) || fallbackProposeBranch(taskId, nextRound);
 
     // 防御：proposer SKILL 应每轮写 sprints/task-plan.json（v7.1.0+），缺失打 warn 给下游兜底
     const taskPlanPath = path.join(worktreePath, sprintDir, 'task-plan.json');
