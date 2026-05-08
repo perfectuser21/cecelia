@@ -1,7 +1,3 @@
-contract_branch: cp-harness-propose-r2-f3ffa465
-workstream_index: 1
-sprint_dir: sprints/w8-langgraph-v8
-
 ---
 skeleton: false
 journey_type: autonomous
