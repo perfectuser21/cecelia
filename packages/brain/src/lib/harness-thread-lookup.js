@@ -1,19 +1,20 @@
 /**
- * harness-thread-lookup.js — LangGraph 修正 Sprint Stream 1 + Stream 5
+ * harness-thread-lookup.js — LangGraph 修正 Sprint Stream 1 + Stream 5 + Layer 3
  *
  * 由 containerId 反查它对应的 LangGraph thread 与已编译 graph，
  * 给 callback router 用 `Command({resume:...})` 唤回 graph 续跑。
  *
- * Stream 5 起本函数真实化（之前 Stream 1 是 stub）：
+ * 表 walking_skeleton_thread_lookup 是通用的 harness thread mapping 表（命名遗留 Stream 5
+ * walking-skeleton 实证；schema 通用，graph_name 字段区分 graph 类型）：
+ *   - walking-skeleton-1node    Stream 5 端到端实证 graph
+ *   - harness-task              Layer 3 真实生产 sub-task graph（spawn detached + interrupt）
+ *
+ * 流程：
  *   1. 查 walking_skeleton_thread_lookup 表（containerId → thread_id, graph_name）
- *   2. 按 graph_name 拿对应 compiledGraph（当前只有 walking-skeleton-1node）
+ *   2. 按 graph_name dispatch compiledGraph
  *   3. 返回 { compiledGraph, threadId } 给 callback router
  *
- * Layer 3 真实 spawn 重构会扩展：
- *   - 加 harness-task / dev-task / pipeline 等 graph_name 的 dispatch
- *   - 把 walking-skeleton-1node 表换成更通用的 harness_callback_lookups 表
- *
- * 接口契约（callback router 已按此 mock）：
+ * 接口契约（callback router 按此实现）：
  *   lookupHarnessThread(containerId)
  *     → null 表示找不到（router 应返回 404）
  *     → { compiledGraph, threadId } 表示成功，router 用它执行 resume
@@ -21,11 +22,25 @@
 import pool from '../db.js';
 import { getPgCheckpointer } from '../orchestrator/pg-checkpointer.js';
 import { getCompiledWalkingSkeleton } from '../workflows/walking-skeleton-1node.graph.js';
+import { compileHarnessTaskGraph } from '../workflows/harness-task.graph.js';
+
+// 模块缓存 harness-task compiled graph（PG checkpointer 单例下，只编一次）
+let _compiledHarnessTask = null;
+async function getCompiledHarnessTask() {
+  if (_compiledHarnessTask) return _compiledHarnessTask;
+  _compiledHarnessTask = await compileHarnessTaskGraph();
+  return _compiledHarnessTask;
+}
+
+// 测试 hook
+export function _resetHarnessTaskCacheForTests() {
+  _compiledHarnessTask = null;
+}
 
 export async function lookupHarnessThread(containerId) {
   if (!containerId) return null;
 
-  // Step 1: 查 walking_skeleton_thread_lookup 表
+  // Step 1: 查 walking_skeleton_thread_lookup 表（通用 mapping 表）
   let row;
   try {
     const r = await pool.query(
@@ -48,12 +63,22 @@ export async function lookupHarnessThread(containerId) {
       const compiledGraph = await getCompiledWalkingSkeleton(checkpointer);
       return { compiledGraph, threadId };
     } catch (err) {
-      console.error(`[harness-thread-lookup] compile failed containerId=${containerId}: ${err.message}`);
+      console.error(`[harness-thread-lookup] compile walking-skeleton failed containerId=${containerId}: ${err.message}`);
       return null;
     }
   }
 
-  // Layer 3 future: harness-task / dev-task / pipeline 等
+  if (graphName === 'harness-task') {
+    try {
+      const compiledGraph = await getCompiledHarnessTask();
+      return { compiledGraph, threadId };
+    } catch (err) {
+      console.error(`[harness-thread-lookup] compile harness-task failed containerId=${containerId}: ${err.message}`);
+      return null;
+    }
+  }
+
+  // 未知 graph_name
   console.warn(`[harness-thread-lookup] unknown graph_name=${graphName} containerId=${containerId}`);
   return null;
 }

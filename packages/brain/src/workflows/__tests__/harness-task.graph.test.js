@@ -112,12 +112,15 @@ describe('spawnNode (Layer 3 spawn-and-interrupt)', () => {
     expect(spawnArg.env.GITHUB_TOKEN).toBe('ghp_x');
     expect(spawnArg.env.BRAIN_URL).toBe('http://host.docker.internal:5221');
     expect(spawnArg.containerId).toMatch(/^harness-task-sub-1-r0-/);
-    // thread_lookup INSERT
+    // thread_lookup INSERT — graph_name='harness-task' 在 SQL 字面量里
     const insertCall = mockPoolQuery.mock.calls.find(
-      (c) => /INSERT INTO walking_skeleton_thread_lookup/.test(c[0])
+      (c) => /INSERT INTO walking_skeleton_thread_lookup/.test(c[0]) &&
+             /'harness-task'/.test(c[0])
     );
     expect(insertCall).toBeDefined();
-    expect(insertCall[1][2]).toBe('harness-task'); // graph_name
+    // params: [container_id, thread_id]
+    expect(insertCall[1][0]).toBe(spawnArg.containerId);
+    expect(insertCall[1][1]).toBe('harness-task:init-1:sub-1');
     // delta
     expect(delta.containerId).toBe(spawnArg.containerId);
     expect(delta.worktreePath).toBe('/wt/abc');

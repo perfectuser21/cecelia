@@ -877,11 +877,58 @@ export function fanoutSubTasksNode(state) {
  */
 export async function fanoutPassthroughNode(_state) { return {}; }
 
+// Layer 3: sub-graph 现在用 interrupt()，必须传 checkpointer。否则 invoke() 抛
+// "No checkpointer set"。这里用 PG checkpointer（生产）；测试可以注 opts.compiledTaskGraph。
 let _taskGraphCompiledCache = null;
-function _getTaskGraphCompiled() {
+let _taskGraphCompilePromise = null;
+async function _getTaskGraphCompiled() {
   if (_taskGraphCompiledCache) return _taskGraphCompiledCache;
-  _taskGraphCompiledCache = _buildTaskGraph().compile();
-  return _taskGraphCompiledCache;
+  if (_taskGraphCompilePromise) return _taskGraphCompilePromise;
+  _taskGraphCompilePromise = (async () => {
+    const checkpointer = await getPgCheckpointer();
+    _taskGraphCompiledCache = _buildTaskGraph().compile({ checkpointer, durability: 'sync' });
+    return _taskGraphCompiledCache;
+  })();
+  return _taskGraphCompilePromise;
+}
+
+// 测试 hook
+export function _resetTaskGraphCacheForTests() {
+  _taskGraphCompiledCache = null;
+  _taskGraphCompilePromise = null;
+}
+
+/**
+ * Layer 3：sub-graph 现在是 spawn-and-interrupt 模式（spawn 节点 detached docker run -d 后
+ * await_callback 节点 interrupt() yield）。compiled.invoke() 返回时 sub-graph 通常停在
+ * await_callback（next=['await_callback']），此时 final.status 是 undefined。
+ *
+ * runSubTaskNode 必须等 callback router 收到容器 POST → Command(resume) 把 sub-graph
+ * 推到 END 才能拿到真实 final.status。这里走 polling getState 直到 next=[]。
+ *
+ * 超时：max 90 min（兼容老 executor 行为；env override CECELIA_SUBGRAPH_WAIT_MS）。
+ *
+ * 注意：runSubTaskNode 自己仍然是阻塞节点（在父 fanout 内 Send 派一个实例）。把父 graph
+ * 也改成 spawn-and-interrupt 是 Layer 4 范畴。Layer 3 只解决子 graph 层面 spawn 不阻塞 +
+ * brain restart 持久化（sub-graph 持久化在 PG checkpointer 上，runSubTaskNode 重启后会
+ * 重新 poll）。
+ */
+const SUBGRAPH_WAIT_MS = parseInt(process.env.CECELIA_SUBGRAPH_WAIT_MS || `${90 * 60 * 1000}`, 10);
+const SUBGRAPH_POLL_INTERVAL_MS = parseInt(process.env.CECELIA_SUBGRAPH_POLL_MS || '5000', 10);
+
+async function _waitForSubGraphCompletion(compiled, config, timeoutMs) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const state = await compiled.getState(config);
+    if (!state.next || state.next.length === 0) {
+      return state.values;
+    }
+    // 还在中间节点（通常 await_callback interrupt） — 等下一轮 poll
+    await new Promise((r) => setTimeout(r, SUBGRAPH_POLL_INTERVAL_MS));
+  }
+  // 超时 — 拿当前 state 当 final（status 可能 undefined → join 视作 failed）
+  const state = await compiled.getState(config);
+  return { ...(state.values || {}), status: state.values?.status || 'failed' };
 }
 
 export async function runSubTaskNode(state, opts = {}) {
@@ -898,10 +945,12 @@ export async function runSubTaskNode(state, opts = {}) {
       ...(fixCount > 0 && feedback ? { fix_round: fixCount, evaluator_feedback: feedback } : {}),
     },
   };
-  const compiled = opts.compiledTaskGraph || _getTaskGraphCompiled();
+  const compiled = opts.compiledTaskGraph || await _getTaskGraphCompiled();
+  const config = { configurable: { thread_id: `harness-task:${state.initiativeId}:${subTask.id}` }, recursionLimit: 200 };
+  const waitMs = opts.waitMs !== undefined ? opts.waitMs : SUBGRAPH_WAIT_MS;
   let final;
   try {
-    final = await compiled.invoke(
+    const firstResult = await compiled.invoke(
       {
         task: taskForGraph,
         initiativeId: state.initiativeId,
@@ -909,8 +958,16 @@ export async function runSubTaskNode(state, opts = {}) {
         githubToken: state.githubToken,
         contractBranch: state.contractBranch || state.ganResult?.propose_branch || null,
       },
-      { configurable: { thread_id: `harness-task:${state.initiativeId}:${subTask.id}` }, recursionLimit: 200 }
+      config
     );
+    // Layer 3：sub-graph 可能停在 await_callback interrupt — poll 直到 END
+    if (firstResult && firstResult.status && firstResult.status !== 'queued') {
+      // Sub-graph 直接走完（无 interrupt 路径，比如 mock spawn 立即返回 generator_output 时）
+      final = firstResult;
+    } else {
+      // sub-graph 大概率停在 await_callback interrupt — poll getState 等到 END
+      final = await _waitForSubGraphCompletion(compiled, config, waitMs);
+    }
   } catch (err) {
     final = { status: 'failed', error: { node: 'sub_graph', message: err.message } };
   }
