@@ -40,6 +40,7 @@ import { ensureHarnessWorktree } from '../harness-worktree.js';
 import { resolveGitHubToken } from '../harness-credentials.js';
 // Note: legacy `writeDockerCallback` import removed (Layer 3 uses callback router POST → Command(resume))
 import { spawnDockerDetached } from '../spawn/detached.js';
+import { resolveAccount } from '../spawn/middleware/account-rotation.js';
 import { checkPrStatus, executeMerge, classifyFailedChecks } from '../shepherd.js';
 import { parseDockerOutput, extractField } from '../harness-shared.js';
 import { buildGeneratorPrompt, extractWorkstreamIndex } from '../harness-utils.js';
@@ -134,6 +135,14 @@ export async function spawnNode(state, opts = {}) {
   // `harness-task:${initiativeId}:${subTaskId}` —— callback router 用此 lookup
   const threadId = `harness-task:${initiativeId}:${task.id}`;
 
+  // 关键：调 resolveAccount 选 claude account → 注入 CECELIA_CREDENTIALS + CECELIA_MODEL。
+  // buildDockerArgs 据此加 -v ~/.claude-accountN:/host-claude-config:ro mount。
+  // 漏调 → 容器内 claude CLI "Not logged in" → exit 1 → 0.5s 容器死 → graph 卡 await_callback。
+  // (Layer 3 部署 W8 v7 实证 — bug 直到 sub_task fanout 才暴露)
+  const acctOpts = { task: { ...task, task_type: 'harness_task' }, env: {} };
+  await resolveAccount(acctOpts, { taskId: task.id });
+  const accountEnv = acctOpts.env;
+
   // spawn detached（不 await 容器跑完）
   try {
     await spawnFn({
@@ -142,6 +151,8 @@ export async function spawnNode(state, opts = {}) {
       worktreePath,
       containerId: finalContainerId,
       env: {
+        // 上面 resolveAccount 注入的 CECELIA_CREDENTIALS + CECELIA_MODEL
+        ...accountEnv,
         CECELIA_TASK_TYPE: 'harness_task',
         HARNESS_NODE: 'generator',
         HARNESS_INITIATIVE_ID: initiativeId,
