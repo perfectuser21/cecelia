@@ -22,10 +22,10 @@ journey_type: autonomous
 - [ ] [ARTIFACT] 脚本不在 main 分支操作（保护 main）
   Test: ! grep -E 'git (checkout|switch) main' sprints/harness-acceptance-v3/scripts/01-preflight-and-dispatch.sh
 
-- [ ] [ARTIFACT] 脚本注册 task 时 payload 显式传入 `timeout_sec` 且 ≥ 1800
-  Test: grep -E '"timeout_sec"\s*:\s*(1800|2[0-9]{3}|[3-9][0-9]{3})' sprints/harness-acceptance-v3/scripts/01-preflight-and-dispatch.sh sprints/harness-acceptance-v3/lib/preflight.mjs
+- [ ] [ARTIFACT] 脚本注册 task 时 payload 显式传入 `timeout_sec`，设定值 = `TASK_TIMEOUT_SEC=2400`，最低阈值 = `TASK_TIMEOUT_MIN_SEC=1800`（设定值 ≥ 阈值，常量关系见合同顶部常量表）
+  Test: grep -E '"timeout_sec"\s*:\s*2400\b' sprints/harness-acceptance-v3/scripts/01-preflight-and-dispatch.sh sprints/harness-acceptance-v3/lib/preflight.mjs
 
-- [ ] [ARTIFACT] 脚本 initiative_id 硬编码为 PRD 指定值
+- [ ] [ARTIFACT] 脚本 initiative_id 硬编码为 PRD/合同 `INITIATIVE_ID` 常量值
   Test: grep -F 'harness-acceptance-v3-2026-05-07' sprints/harness-acceptance-v3/scripts/01-preflight-and-dispatch.sh sprints/harness-acceptance-v3/lib/preflight.mjs
 
 - [ ] [ARTIFACT] vitest hang 进程清理保护（数量上限，防误杀）
