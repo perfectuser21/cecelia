@@ -1,9 +1,9 @@
 /**
  * W8 Acceptance v7 — Workstream 3
- * BEHAVIOR：14 节点图上的 kill-resume 实证（resume 续跑 + 节点幂等 + brain_tasks 终态）
+ * BEHAVIOR：14 节点图上的 kill-resume 实证（resume 续跑 + 节点幂等 + brain_tasks 终态 + 60s timeout 不被视为合法旁路）
  *
  * 红阶段证据：import 'acceptance/kill-resume-runner.js' 失败（模块未实现）。
- * Generator 实现后必须满足以下 5 条 it()（含 hook 精准触发 BEHAVIOR）。
+ * Generator 实现后必须满足以下 6 条 it()（含 hook 精准触发 + R-A timeout 行为 BEHAVIOR）。
  */
 import { describe, it, expect } from 'vitest';
 
@@ -21,6 +21,7 @@ describe('W8 Acceptance v7 / WS3 — kill-resume runner on 14-node graph [BEHAVI
       minimal: true,
     });
     expect(result.resumed).toBe(true);
+    expect(result.timedOut).toBe(false);
     expect(TERMINAL_TASK_STATUSES.has(result.finalTaskStatus)).toBe(true);
   });
 
@@ -66,6 +67,7 @@ describe('W8 Acceptance v7 / WS3 — kill-resume runner on 14-node graph [BEHAVI
     expect(result.killTrigger).toBe('node-exit-hook');
     expect(result.killNode).toBe('evaluate');
     expect(result.killTimingLine).toBe('KILL_TIMING: evaluate');
+    expect(result.timedOut).toBe(false);
   });
 
   it('runWithKillAfterNode 在传入未知节点名时抛 UnknownNodeError（不静默通过）', async () => {
@@ -80,5 +82,29 @@ describe('W8 Acceptance v7 / WS3 — kill-resume runner on 14-node graph [BEHAVI
         minimal: true,
       })
     ).rejects.toThrow(/UnknownNodeError|unknown.*node/i);
+  });
+
+  it('R-A timeout 路径：60s 内未观测到 killAfterNode exit 时 result.timedOut === true 且 killTrigger === "timeout"，stdoutLines 含 "KILL_TIMING_TIMEOUT"，**该路径不视为合法旁路**（happy path 断言不被等价满足）', async () => {
+    const { runWithKillAfterNode } = await import(
+      '../../../../packages/brain/src/workflows/acceptance/kill-resume-runner.js'
+    );
+    // 用 simulateTimeout: true 强制走 60s timeout 兜底分支（生产路径不暴露此参数也可，由 fixture 注入）
+    const result = await runWithKillAfterNode({
+      taskId: '00000000-0000-0000-0000-000000000025',
+      threadId: 'ws3-kill-resume-timeout',
+      killAfterNode: 'evaluate',
+      minimal: true,
+      simulateTimeout: true,
+    });
+    expect(result.timedOut).toBe(true);
+    expect(result.killTrigger).toBe('timeout');
+    expect(Array.isArray(result.stdoutLines)).toBe(true);
+    expect(result.stdoutLines).toEqual(
+      expect.arrayContaining([expect.stringMatching(/^KILL_TIMING_TIMEOUT$/)])
+    );
+    // 关键：timeout 路径**不能**满足 happy path 的 killTrigger==='node-exit-hook' 断言，
+    // 也不能满足 RESUME_OK——即 timeout 是合同失败而非合法旁路。
+    expect(result.killTrigger).not.toBe('node-exit-hook');
+    expect(result.resumed).toBe(false);
   });
 });
