@@ -97,9 +97,55 @@ fi
 # —— 长 prompt（GAN Round N Reviewer 含完整合同历史）不会撞 OS argv 限制
 # （E2BIG: spawn argument list too long）。
 # 文件不在时 fallback 到 argv（backward compat，手动 docker run 仍可工作）。
+#
+# v1.229.0: 不再用 `exec claude` 直接接管进程。改为先在子进程跑 claude，
+# 拿到 exit code 后向 brain POST callback（让 LangGraph interrupt resume），
+# 再用同一 exit code 退出容器。HARNESS_NODE/CECELIA_TASK_ID 任一为空时
+# 走旧 exec 路径，保持非 harness 任务零变更。
 PROMPT_FILE="/tmp/cecelia-prompts/${CECELIA_TASK_ID:-UNSET}.prompt"
-if [[ -f "$PROMPT_FILE" ]]; then
-  exec claude -p --dangerously-skip-permissions --output-format json "${MODEL_FLAGS[@]}" < "$PROMPT_FILE"
-else
-  exec claude -p --dangerously-skip-permissions --output-format json "${MODEL_FLAGS[@]}" "$@"
+
+run_claude() {
+  if [[ -f "$PROMPT_FILE" ]]; then
+    claude -p --dangerously-skip-permissions --output-format json "${MODEL_FLAGS[@]}" < "$PROMPT_FILE"
+  else
+    claude -p --dangerously-skip-permissions --output-format json "${MODEL_FLAGS[@]}" "$@"
+  fi
+}
+
+# 非 harness 任务（如手动 docker run、self-drive 普通容器）走老 exec 路径
+if [[ -z "${CECELIA_TASK_ID:-}" || -z "${HARNESS_NODE:-}" ]]; then
+  if [[ -f "$PROMPT_FILE" ]]; then
+    exec claude -p --dangerously-skip-permissions --output-format json "${MODEL_FLAGS[@]}" < "$PROMPT_FILE"
+  else
+    exec claude -p --dangerously-skip-permissions --output-format json "${MODEL_FLAGS[@]}" "$@"
+  fi
 fi
+
+# Harness 任务路径：跑完 → POST callback → 用 claude exit code 退出
+# set -e 已开，必须临时关掉避免 claude 失败时跳过 callback
+set +e
+run_claude "$@"
+EXIT_CODE=$?
+set -e
+
+CONTAINER_ID="${HOSTNAME:-$(cat /etc/hostname 2>/dev/null || echo unknown)}"
+STDOUT_FILE="/tmp/cecelia-prompts/${CECELIA_TASK_ID}.stdout"
+STDOUT_CONTENT=""
+if [[ -f "$STDOUT_FILE" ]]; then
+  STDOUT_CONTENT=$(tail -c 4000 "$STDOUT_FILE" 2>/dev/null || echo "")
+fi
+# jq -Rs 把任意 stdout 安全编码成 JSON 字符串（含换行、引号）
+STDOUT_JSON=$(printf '%s' "$STDOUT_CONTENT" | jq -Rs . 2>/dev/null || echo '""')
+
+CALLBACK_BODY=$(printf '{"result":"completed","exit_code":%d,"stdout":%s}' "$EXIT_CODE" "$STDOUT_JSON")
+
+if curl -sf -m 10 -X POST \
+    "http://host.docker.internal:5221/api/brain/harness/callback/${CONTAINER_ID}" \
+    -H "Content-Type: application/json" \
+    -d "$CALLBACK_BODY" >/dev/null 2>&1; then
+  echo "[entrypoint] harness callback POST ok (container=${CONTAINER_ID} exit=${EXIT_CODE})"
+else
+  echo "[entrypoint] harness callback POST 失败（不阻塞容器退出）— exit=${EXIT_CODE}"
+fi
+
+exit "$EXIT_CODE"
