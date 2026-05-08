@@ -148,7 +148,7 @@ export async function getCompiledConsciousnessGraph() {
   if (!_initPromise) {
     _initPromise = (async () => {
       const checkpointer = await getPgCheckpointer();
-      _compiled = buildConsciousnessGraph().compile({ checkpointer });
+      _compiled = buildConsciousnessGraph().compile({ checkpointer, durability: 'sync' });
     })();
   }
   await _initPromise;
