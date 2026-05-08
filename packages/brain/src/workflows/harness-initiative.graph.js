@@ -825,6 +825,17 @@ export async function inferTaskPlanNode(state, _opts = {}) {
 
   try {
     const { execSync } = await import('child_process');
+    // 防御：proposer 在 task container 内 git push 后，brain 容器本地 origin tracking 不会自动更新
+    // 主动 fetch 该分支再 show；fetch 失败 graceful warn，让下面 show 的 catch 报具体错（show 错最直观）
+    try {
+      execSync(`git fetch origin ${proposeBranch}`, {
+        cwd: state.worktreePath,
+        encoding: 'utf8',
+        stdio: 'pipe',
+      });
+    } catch (fetchErr) {
+      console.warn(`[infer_task_plan] git fetch origin ${proposeBranch} failed: ${(fetchErr.message || '').slice(0, 200)}, continuing to git show`);
+    }
     const json = execSync(
       `git show origin/${proposeBranch}:${sprintDir}/task-plan.json`,
       { cwd: state.worktreePath, encoding: 'utf8' }

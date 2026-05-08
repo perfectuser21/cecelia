@@ -32,7 +32,7 @@ git config user.email "test@test"
 git config user.name "Test"
 
 # 验证：brain-side 此时 git show 应该 fail（没 fetch）
-if git show "origin/cp-harness-propose-r1-smokeABC:sprints/test-sprint/task-plan.json" 2>&1 | grep -q invalid; then
+if ! git show "origin/cp-harness-propose-r1-smokeABC:sprints/test-sprint/task-plan.json" >/dev/null 2>&1; then
   echo "✓ brain-side 起始状态：未 fetch → git show fail（符合预期）"
 else
   echo "FAIL: brain-side 起始状态意外能 git show，smoke 假设错"
