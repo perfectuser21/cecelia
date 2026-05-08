@@ -6,6 +6,7 @@ import {
   renderAcceptanceReport,
   renderLeadEvidence,
   writeReportFiles,
+  assertInterruptResumeSla,
 } from '../../../../scripts/acceptance/w8-v4/render-report.mjs';
 
 const SAMPLE_FIXTURE = {
@@ -57,6 +58,15 @@ describe('Workstream 3 — render report [BEHAVIOR]', () => {
     expect(md).toMatch(/13\/14|missing|缺/i);
   });
 
+  it('renderAcceptanceReport 含 slaCaveats 时报告输出 24h SLA caveat 段', async () => {
+    const md = await renderAcceptanceReport({
+      ...SAMPLE_FIXTURE,
+      slaCaveats: [{ interruptId: 'intr-1', deltaSec: 90000, slaSec: 86400 }],
+    });
+    expect(md).toMatch(/24h|SLA|caveat|超时/i);
+    expect(md).toContain('intr-1');
+  });
+
   it('renderLeadEvidence 输出 ≥ 1000 字节且含 5 个 lead 关键字', async () => {
     const lead = await renderLeadEvidence({
       brainHead: 'aaaaaaaa',
@@ -87,5 +97,49 @@ describe('Workstream 3 — render report [BEHAVIOR]', () => {
     expect(r).toBe('# REPORT');
     expect(l).toBe('# LEAD');
     await fs.rm(tmpRoot, { recursive: true });
+  });
+
+  // R3 mitigation: W5 interrupt 24h SLA 边界
+  it('assertInterruptResumeSla delta < 24h 返回 withinSla=true 且写 happy 标记到 inject-b.json', async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'w8v4-sla-'));
+    // 预置 inject-b.json（recordInjectionTimestamp 已写过的状态）
+    await fs.writeFile(
+      path.join(dir, 'inject-b.json'),
+      JSON.stringify({ kind: 'B', taskId: 't', injectTs: 1, target: 'intr-1', meta: {} }),
+      'utf8',
+    );
+    const result = await assertInterruptResumeSla({
+      interruptId: 'intr-1',
+      deltaSec: 3600,
+      slaSec: 86400,
+      evidenceDir: dir,
+    });
+    expect(result.withinSla).toBe(true);
+    expect(result.caveat).toBeNull();
+    const updated = JSON.parse(await fs.readFile(path.join(dir, 'inject-b.json'), 'utf8'));
+    expect(updated.sla).toBeDefined();
+    expect(updated.sla.withinSla).toBe(true);
+    await fs.rm(dir, { recursive: true });
+  });
+
+  it('assertInterruptResumeSla delta ≥ 24h 返回 withinSla=false 写 caveat 但不抛错', async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'w8v4-sla-'));
+    await fs.writeFile(
+      path.join(dir, 'inject-b.json'),
+      JSON.stringify({ kind: 'B', taskId: 't', injectTs: 1, target: 'intr-1', meta: {} }),
+      'utf8',
+    );
+    const result = await assertInterruptResumeSla({
+      interruptId: 'intr-1',
+      deltaSec: 90000,
+      slaSec: 86400,
+      evidenceDir: dir,
+    });
+    expect(result.withinSla).toBe(false);
+    expect(result.caveat).toMatch(/24h|SLA|超|exceed/i);
+    const updated = JSON.parse(await fs.readFile(path.join(dir, 'inject-b.json'), 'utf8'));
+    expect(updated.sla.withinSla).toBe(false);
+    expect(updated.sla.caveat).toBeTruthy();
+    await fs.rm(dir, { recursive: true });
   });
 });

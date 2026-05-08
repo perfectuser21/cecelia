@@ -6,7 +6,7 @@
     {
       "task_id": "ws1",
       "title": "实现 acceptance helper 模块（部署校验 + 派发 + 14 节点事件流）",
-      "scope": "实现 scripts/acceptance/w8-v4/lib.mjs，导出 assertBrainImageInSync / registerAndDispatchAcceptance / waitFor14GraphNodeEvents 三个具名函数；含 14 节点期望列表常量与 PR #2837 修后的 propose_branch 严格正则。仅写函数与单元测试，不改 Brain/engine 源码（PRD 严令禁止）。",
+      "scope": "实现 scripts/acceptance/w8-v4/lib.mjs，导出 assertBrainImageInSync / registerAndDispatchAcceptance / waitFor14GraphNodeEvents 三个具名函数；含 14 节点期望列表常量与 PR #2837 修后的 propose_branch 严格正则（与合同顶部 INFER_BRANCH_RE 同源）。仅写函数与单元测试，不改 Brain/engine 源码（PRD 严令禁止）。",
       "dod": [
         "[BEHAVIOR] tests/ws1/acceptance-helper.test.ts 全 7 用例 PASS（含 brain HEAD mismatch 抛错、register+dispatch 两步成功、14 节点齐全、缺 inferTaskPlan 抛错、propose_branch 旧格式 cp-MMDDHHmm-* 抛错）",
         "[ARTIFACT] scripts/acceptance/w8-v4/lib.mjs 文件存在且导出三个具名函数",
@@ -19,31 +19,32 @@
     },
     {
       "task_id": "ws2",
-      "title": "实现故障注入 A/B/C 自愈观测 helper 模块",
-      "scope": "实现 scripts/acceptance/w8-v4/fault-inject.mjs，导出 findContainerForTask / pollLlmRetryEvents / pollHarnessInterruptPending / injectInitiativeDeadlineOverdue / assertWatchdogMarkedFailed 五个函数；含 LLM_RETRY cap=3 常量、UPDATE 必带 phase='running' 子句、watchdog_overdue 字面量校验。",
+      "title": "实现故障注入 A/B/C 自愈观测 helper 模块（含 R4 evidence 落盘+回放）",
+      "scope": "实现 scripts/acceptance/w8-v4/fault-inject.mjs，导出 7 个函数：findContainerForTask / pollLlmRetryEvents / pollHarnessInterruptPending / injectInitiativeDeadlineOverdue / assertWatchdogMarkedFailed / recordInjectionTimestamp / replayInjectionEvidence；含 LLM_RETRY cap=3 常量、UPDATE 必带 phase='running' 子句、watchdog_overdue 字面量校验；R4 cascade mitigation：recordInjectionTimestamp 写 ${dir}/inject-${kind.toLowerCase()}.json 含 kind/taskId/injectTs/target/meta；replayInjectionEvidence 读 inject-{a,b,c}.json 三件齐全返回数组。",
       "dod": [
-        "[BEHAVIOR] tests/ws2/fault-inject.test.ts 全 9 用例 PASS（含 cap 超限抛错、interrupt 超时含 task_id、UPDATE 0 行抛错、watchdog reason 严格匹配）",
-        "[ARTIFACT] scripts/acceptance/w8-v4/fault-inject.mjs 导出 5 个具名函数",
-        "[ARTIFACT] 文件含 cap=3 常量与 phase='running' 字面量与 watchdog_overdue 字面量"
+        "[BEHAVIOR] tests/ws2/fault-inject.test.ts 全 13 用例 PASS（原 9 + R4 新增 4：record 写 JSON、自动 mkdir、replay 三件、replay 缺件抛错）",
+        "[ARTIFACT] scripts/acceptance/w8-v4/fault-inject.mjs 导出 7 个具名函数",
+        "[ARTIFACT] 文件含 cap=3 常量与 phase='running' 字面量与 watchdog_overdue 字面量",
+        "[ARTIFACT] 文件含 inject-a.json/inject-b.json/inject-c.json 三个文件名字面量或 ['A','B','C'] 数组"
       ],
       "files": ["scripts/acceptance/w8-v4/fault-inject.mjs", "sprints/w8-langgraph-v4/tests/ws2/fault-inject.test.ts"],
       "depends_on": ["ws1"],
       "complexity": "L",
-      "estimated_minutes": 50
+      "estimated_minutes": 60
     },
     {
       "task_id": "ws3",
-      "title": "实现 acceptance 报告 + lead 自验文件 渲染器",
-      "scope": "实现 scripts/acceptance/w8-v4/render-report.mjs，导出 renderAcceptanceReport / renderLeadEvidence / writeReportFiles 三个函数；renderAcceptanceReport 普通 mode 输出 ≥ 2000 字节含 6 个关键章节，dryrun-nodes-only mode 输出含 14/14；renderLeadEvidence 含 5 个 lead 关键字；writeReportFiles 原子 mkdir + write。",
+      "title": "实现 acceptance 报告 + lead 自验文件 渲染器 + R3 24h SLA helper",
+      "scope": "实现 scripts/acceptance/w8-v4/render-report.mjs，导出 4 个函数：renderAcceptanceReport / renderLeadEvidence / writeReportFiles / assertInterruptResumeSla；renderAcceptanceReport 普通 mode 输出 ≥ 2000 字节含 6 个关键章节，dryrun-nodes-only mode 输出含 14/14；含 slaCaveats 时输出 24h SLA caveat 段；renderLeadEvidence 含 5 个 lead 关键字；writeReportFiles 原子 mkdir + write；R3 mitigation：assertInterruptResumeSla delta < 86400s 写 happy 标记到 inject-b.json，≥ 86400s 写 caveat 但不抛错。",
       "dod": [
-        "[BEHAVIOR] tests/ws3/render-report.test.ts 全 5 用例 PASS（含 ≥2000 字节、6 章节、dryrun 14/14、缺节点 13/14、嵌套 mkdir 写盘）",
-        "[ARTIFACT] scripts/acceptance/w8-v4/render-report.mjs 导出 3 个函数",
-        "[ARTIFACT] 文件内含 6 个报告关键字与 5 个 lead 关键字字面量、含 mkdir+writeFile 顺序"
+        "[BEHAVIOR] tests/ws3/render-report.test.ts 全 8 用例 PASS（原 5 + slaCaveats 段 + R3 SLA happy + R3 SLA exceeded）",
+        "[ARTIFACT] scripts/acceptance/w8-v4/render-report.mjs 导出 4 个函数",
+        "[ARTIFACT] 文件内含 6 个报告关键字与 5 个 lead 关键字字面量、含 mkdir+writeFile 顺序、含 86400 字面量与 inject-b.json 字面量"
       ],
       "files": ["scripts/acceptance/w8-v4/render-report.mjs", "sprints/w8-langgraph-v4/tests/ws3/render-report.test.ts"],
       "depends_on": ["ws2"],
       "complexity": "M",
-      "estimated_minutes": 40
+      "estimated_minutes": 50
     }
   ]
 }

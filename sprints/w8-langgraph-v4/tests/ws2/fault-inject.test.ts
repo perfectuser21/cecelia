@@ -1,10 +1,15 @@
 import { describe, it, expect, vi } from 'vitest';
+import { promises as fs } from 'node:fs';
+import * as path from 'node:path';
+import * as os from 'node:os';
 import {
   findContainerForTask,
   pollLlmRetryEvents,
   pollHarnessInterruptPending,
   injectInitiativeDeadlineOverdue,
   assertWatchdogMarkedFailed,
+  recordInjectionTimestamp,
+  replayInjectionEvidence,
 } from '../../../../scripts/acceptance/w8-v4/fault-inject.mjs';
 
 describe('Workstream 2 — fault injection helpers [BEHAVIOR]', () => {
@@ -105,5 +110,68 @@ describe('Workstream 2 — fault injection helpers [BEHAVIOR]', () => {
       sinceTs: 0,
       timeoutMin: 1,
     })).resolves.toBeDefined();
+  });
+
+  // R4 cascade mitigation: 独立 INJECT_TS 文件落盘 + 回放
+  it('recordInjectionTimestamp 写 JSON 到 ${dir}/inject-${kind}.json 含 kind/taskId/injectTs/target/meta', async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'w8v4-r4-'));
+    await recordInjectionTimestamp({
+      kind: 'A',
+      dir,
+      taskId: 'task-1',
+      injectTs: 1715140800,
+      target: 'container-xxx',
+      meta: { node_hint: 'run_sub_task' },
+    });
+    const raw = await fs.readFile(path.join(dir, 'inject-a.json'), 'utf8');
+    const parsed = JSON.parse(raw);
+    expect(parsed.kind).toBe('A');
+    expect(parsed.taskId).toBe('task-1');
+    expect(parsed.injectTs).toBe(1715140800);
+    expect(parsed.target).toBe('container-xxx');
+    expect(parsed.meta.node_hint).toBe('run_sub_task');
+    await fs.rm(dir, { recursive: true });
+  });
+
+  it('recordInjectionTimestamp 不存在的 dir 自动 mkdir -p', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'w8v4-r4-'));
+    const dir = path.join(root, 'nested/sub');
+    await recordInjectionTimestamp({
+      kind: 'B',
+      dir,
+      taskId: 't',
+      injectTs: 1,
+      target: 'x',
+      meta: {},
+    });
+    const exists = await fs.stat(path.join(dir, 'inject-b.json')).then(() => true).catch(() => false);
+    expect(exists).toBe(true);
+    await fs.rm(root, { recursive: true });
+  });
+
+  it('replayInjectionEvidence 读取 inject-{a,b,c}.json 三件齐全返回数组', async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'w8v4-r4-'));
+    for (const kind of ['A', 'B', 'C']) {
+      await fs.writeFile(
+        path.join(dir, `inject-${kind.toLowerCase()}.json`),
+        JSON.stringify({ kind, taskId: 't', injectTs: 1, target: 'x', meta: {} }),
+        'utf8',
+      );
+    }
+    const replay = await replayInjectionEvidence({ dir });
+    expect(replay).toHaveLength(3);
+    expect(replay.map((r) => r.kind).sort()).toEqual(['A', 'B', 'C']);
+    await fs.rm(dir, { recursive: true });
+  });
+
+  it('replayInjectionEvidence 缺文件时抛错并指出哪个 kind 缺', async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'w8v4-r4-'));
+    await fs.writeFile(
+      path.join(dir, 'inject-a.json'),
+      JSON.stringify({ kind: 'A', taskId: 't', injectTs: 1, target: 'x', meta: {} }),
+      'utf8',
+    );
+    await expect(replayInjectionEvidence({ dir })).rejects.toThrow(/B|C|missing/);
+    await fs.rm(dir, { recursive: true });
   });
 });
