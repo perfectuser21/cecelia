@@ -238,17 +238,17 @@ describe('account-usage', () => {
     });
 
     it('部分账号被标记时应返回 false', () => {
+      // H14: ACCOUNTS=[account1, account2]，只 mark account1 → 部分 capped
       const futureTime = new Date(Date.now() + 7200000).toISOString();
       markSpendingCap('account1', futureTime);
-      markSpendingCap('account2', futureTime);
       expect(isAllAccountsSpendingCapped()).toBe(false);
     });
 
     it('所有账号都被标记时应返回 true', () => {
+      // H14: ACCOUNTS=[account1, account2]，全部 mark → 全 capped
       const futureTime = new Date(Date.now() + 7200000).toISOString();
       markSpendingCap('account1', futureTime);
       markSpendingCap('account2', futureTime);
-      markSpendingCap('account3', futureTime);
       expect(isAllAccountsSpendingCapped()).toBe(true);
     });
   });
@@ -258,10 +258,11 @@ describe('account-usage', () => {
   // ════════════════════════════════════════════════════════════════════════════
 
   describe('getSpendingCapStatus', () => {
-    it('应返回所有 3 个账号的状态', () => {
+    it('应返回所有 2 个账号的状态', () => {
+      // H14: ACCOUNTS=[account1, account2]
       const status = getSpendingCapStatus();
-      expect(status).toHaveLength(3);
-      expect(status.map(s => s.accountId)).toEqual(['account1', 'account2', 'account3']);
+      expect(status).toHaveLength(2);
+      expect(status.map(s => s.accountId)).toEqual(['account1', 'account2']);
     });
 
     it('未被标记的账号应返回 capped=false, resetTime=null', () => {
@@ -324,12 +325,11 @@ describe('account-usage', () => {
       mockPool.query.mockResolvedValue({ rows: [] });
 
       const usage = await getAccountUsage(true);
-      // 应该调用了 fetch（3 个账号）
-      expect(mockFetch).toHaveBeenCalledTimes(3);
+      // H14: ACCOUNTS=[account1, account2]，应调用 fetch 2 次
+      expect(mockFetch).toHaveBeenCalledTimes(2);
       // 所有账号都应有数据
       expect(usage.account1).toBeDefined();
       expect(usage.account2).toBeDefined();
-      expect(usage.account3).toBeDefined();
     });
 
     it('API 失败时应回退到过期缓存', async () => {
@@ -407,11 +407,11 @@ describe('account-usage', () => {
 
       await getAccountUsage(true);
 
-      // 应有 INSERT 调用（每个账号一次 upsertCache）
+      // H14: ACCOUNTS=[account1, account2]，2 个 INSERT
       const insertCalls = mockPool.query.mock.calls.filter(
         c => c[0].includes('INSERT INTO account_usage_cache')
       );
-      expect(insertCalls.length).toBe(3);
+      expect(insertCalls.length).toBe(2);
     });
 
     it('credentails 缺少 accessToken 时返回 null', async () => {
@@ -455,14 +455,14 @@ describe('account-usage', () => {
       });
 
       it('5h 用量超过 80% 的账号应被排除', async () => {
+        // H14: ACCOUNTS=[account1, account2]，account1 90% 被排除，account2 50% 通过
         setupUsageData({
           account1: { five_hour_pct: 90, seven_day_pct: 30, seven_day_sonnet_pct: 40, resets_at: null, extra_used: false },
-          account2: { five_hour_pct: 85, seven_day_pct: 10, seven_day_sonnet_pct: 10, resets_at: null, extra_used: false },
-          account3: { five_hour_pct: 50, seven_day_pct: 50, seven_day_sonnet_pct: 60, resets_at: null, extra_used: false },
+          account2: { five_hour_pct: 50, seven_day_pct: 10, seven_day_sonnet_pct: 10, resets_at: null, extra_used: false },
         });
 
         const result = await selectBestAccount();
-        expect(result).toEqual({ accountId: 'account3', model: 'sonnet', modelId: 'claude-sonnet-4-6' });
+        expect(result).toEqual({ accountId: 'account2', model: 'sonnet', modelId: 'claude-sonnet-4-6' });
       });
 
       it('sonnet 7d 在 95-99% 时仍选 Sonnet（新阈值 100%）', async () => {

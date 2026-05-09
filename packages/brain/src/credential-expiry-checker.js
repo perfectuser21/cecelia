@@ -23,7 +23,7 @@ import { createTask } from './actions.js';
 
 const ALERT_THRESHOLD_MS = 8 * 60 * 60 * 1000; // 8 小时（给更多响应窗口）
 const CRITICAL_THRESHOLD_MS = 3 * 60 * 60 * 1000; // 3 小时 — 触发升级 P0 告警
-const ACCOUNTS = ['account1', 'account2', 'account3'];
+const ACCOUNTS = ['account1', 'account2']; // H14: account3 退订（403），见 docs/learnings/cp-0510075509-h14-remove-account3.md
 
 /**
  * 读取单个账号的 OAuth token 状态
