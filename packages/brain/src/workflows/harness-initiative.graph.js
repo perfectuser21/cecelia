@@ -30,7 +30,7 @@ import { spawn } from '../spawn/index.js';
 import { parseDockerOutput, loadSkillContent } from '../harness-shared.js';
 import { parseTaskPlan, upsertTaskPlan } from '../harness-dag.js';
 import { runFinalE2E, attributeFailures } from '../harness-final-e2e.js';
-import { ensureHarnessWorktree, harnessTaskWorktreePath } from '../harness-worktree.js';
+import { ensureHarnessWorktree, harnessTaskWorktreePath, harnessSubTaskWorktreePath } from '../harness-worktree.js';
 import { resolveGitHubToken } from '../harness-credentials.js';
 import { fetchAndShowOriginFile } from '../lib/git-fence.js';
 // 走 C3 shim (../harness-gan-graph.js) 而非直连 workflows/harness-gan.graph.js，
@@ -1147,9 +1147,13 @@ export async function evaluateSubTaskNode(state, opts = {}) {
   const sprintDir = state.task?.payload?.sprint_dir || 'sprints';
   const workstreamN = (state.task_loop_index ?? 0) + 1;
   const journeyType = state.taskPlan?.journey_type || 'autonomous';
-  // H8: evaluator 必须 mount 跟 generator 同一个 sub-task worktree（PR #2851 后 generator 自起独立 worktree），
-  // 否则 evaluator 容器看不到 generator commit 的 acceptance-task-payload.json / 测试代码。
-  const taskWorktreePath = harnessTaskWorktreePath(state.task.id);
+  // H8 + H11: evaluator 必须 mount 跟 generator 同一个 sub-task worktree。
+  // sub-task worktree 路径 = task-<init8>-<logical> 复合（H11 修正 H8 误诊：H8 用
+  // harnessTaskWorktreePath(state.task.id)，但 task.id 是 initiative UUID 而非 sub_task logical id，
+  // 导致 evaluator mount 路径跟 generator 不一致）。
+  const taskWorktreePath = state.sub_task?.id
+    ? harnessSubTaskWorktreePath(state.initiativeId, state.sub_task.id)
+    : state.worktreePath;
 
   const skillContent = loadSkillContent('harness-evaluator');
   const prompt = `你是 harness-evaluator agent。按下面 SKILL 指令工作。
