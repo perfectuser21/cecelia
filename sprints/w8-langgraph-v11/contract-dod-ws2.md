@@ -2,7 +2,7 @@
 skeleton: false
 journey_type: autonomous
 ---
-# Contract DoD — Workstream 2: 终态写回验证脚本
+# Contract DoD — Workstream 2: 终态写回验证脚本（Round 3 R3 curl --retry 同步）
 
 **范围**: 在 `sprints/w8-langgraph-v11/scripts/verify-terminal-state.sh` 实现 Step 6 的终态查询脚本，断言 initiative task 终态字段完整、无孤儿 sub_task、无 callback 404。
 **大小**: S
@@ -18,6 +18,9 @@ journey_type: autonomous
 
 - [ ] [ARTIFACT] 脚本要求 TASK_ID 环境变量
   Test: node -e "const c=require('fs').readFileSync('sprints/w8-langgraph-v11/scripts/verify-terminal-state.sh','utf8');if(!c.match(/\\\${TASK_ID:\\?/))process.exit(1)"
+
+- [ ] [ARTIFACT] 脚本所有 curl 调用使用 -fsS --retry 3 --retry-delay 2（R3：抗 5xx 抖动）
+  Test: node -e "const c=require('fs').readFileSync('sprints/w8-langgraph-v11/scripts/verify-terminal-state.sh','utf8');const m=c.match(/curl -fsS --retry 3 --retry-delay 2/g);if(!m||m.length<3)process.exit(1)"
 
 - [ ] [ARTIFACT] 脚本断言 status ∈ {completed, failed} 终态枚举
   Test: node -e "const c=require('fs').readFileSync('sprints/w8-langgraph-v11/scripts/verify-terminal-state.sh','utf8');if(!(c.includes('completed')&&c.includes('failed')))process.exit(1)"

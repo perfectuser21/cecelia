@@ -4,6 +4,10 @@ import { existsSync, statSync } from 'node:fs';
 import { createServer, type Server } from 'node:http';
 import { join } from 'node:path';
 
+// Round 3 — 9 个 it 块（Round 2 的 7 + R1 SKIP fallback + R5 cascade_skip）
+// R4: startMockBrain 用 port=0 (OS ephemeral) + 每个 it 块通过 try/finally 独立 server 实例
+//     避免 vitest 并发场景下端口冲突
+
 const SCRIPT = join(__dirname, '..', '..', 'scripts', 'verify-pipeline-trace.sh');
 
 type FixtureOverrides = Partial<{
@@ -15,6 +19,7 @@ type FixtureOverrides = Partial<{
   contractVerdict: string;
   proposeBranchCount: number;
   generatorBranchInOrigin: boolean;
+  subTaskAllFailed: boolean;
 }>;
 
 function buildBrainFixture(overrides: FixtureOverrides = {}) {
@@ -27,6 +32,7 @@ function buildBrainFixture(overrides: FixtureOverrides = {}) {
     contractVerdict: overrides.contractVerdict ?? 'APPROVED',
     proposeBranchCount: overrides.proposeBranchCount ?? 1,
     generatorBranchInOrigin: overrides.generatorBranchInOrigin ?? true,
+    subTaskAllFailed: overrides.subTaskAllFailed ?? false,
   };
 }
 
@@ -38,6 +44,7 @@ function startMockBrain(fix: ReturnType<typeof buildBrainFixture>): Promise<{ se
       if (url.startsWith('/api/brain/tasks/sub-1') && !url.includes('?')) {
         return res.end(JSON.stringify({
           id: 'sub-1',
+          status: fix.subTaskAllFailed ? 'failed' : 'completed',
           payload: { branch_name: 'cp-gen-sub-1' },
           result: { branch: 'cp-gen-sub-1' },
         }));
@@ -51,7 +58,8 @@ function startMockBrain(fix: ReturnType<typeof buildBrainFixture>): Promise<{ se
         }));
       }
       if (url.startsWith('/api/brain/tasks?parent_task_id=') && url.includes('task_type=harness_generator')) {
-        return res.end(JSON.stringify({ tasks: [{ id: 'sub-1' }] }));
+        const subStatus = fix.subTaskAllFailed ? 'failed' : 'completed';
+        return res.end(JSON.stringify({ tasks: [{ id: 'sub-1', status: subStatus }] }));
       }
       if (url.includes('stage=planner')) {
         return res.end(JSON.stringify({ records: [{ stdout: fix.plannerStdout }] }));
@@ -160,6 +168,31 @@ describe('Workstream 1 — Pipeline-trace 验证脚本 [BEHAVIOR]', () => {
       });
       expect(r.status).not.toBe(0);
       expect(r.stderr + r.stdout).toMatch(/TASK_ID/);
+    } finally {
+      server.close();
+    }
+  });
+
+  // === Round 3 新增（R1 fresh-clone fallback）===
+  it('GIT_UNAVAILABLE=1 注入时仍 exit 0 且 stdout 含 "SKIP"（R1：fresh-clone 不应误判 FAIL）', async () => {
+    const { server, port } = await startMockBrain(buildBrainFixture());
+    try {
+      const r = runScript(port, { GIT_UNAVAILABLE: '1' });
+      expect(r.status).toBe(0);
+      expect(r.stdout).toMatch(/SKIP/);
+    } finally {
+      server.close();
+    }
+  });
+
+  // === Round 3 新增（R5 cascade_skip）===
+  it('全部 generator sub_task status=failed 时 exit 0 且 stdout 含 "cascade_skip" + "inconclusive"（R5：避免假绿）', async () => {
+    const { server, port } = await startMockBrain(buildBrainFixture({ subTaskAllFailed: true }));
+    try {
+      const r = runScript(port);
+      expect(r.status).toBe(0);
+      expect(r.stdout).toMatch(/cascade_skip/);
+      expect(r.stdout).toMatch(/inconclusive/);
     } finally {
       server.close();
     }
