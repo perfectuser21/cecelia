@@ -148,7 +148,7 @@ mkdir -p "$SPRINT_DIR"
 git checkout -b "cp-$(TZ=Asia/Shanghai date +%m%d%H%M)-harness-prd"
 git add "$SPRINT_DIR/sprint-prd.md"
 git commit -m "feat(harness): Initiative PRD — {目标}"
-git push origin HEAD
+git push origin HEAD 2>/dev/null || echo "[harness-planner] push skipped (no creds), commit retained on local branch"
 ```
 
 **最后一条消息**：
