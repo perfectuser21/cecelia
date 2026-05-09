@@ -48,13 +48,13 @@ describe('buildDockerArgs — prompt 不走 argv（防 E2BIG）', () => {
     expect(args[args.length - 1]).toBe('cecelia/runner:test-tag');
   });
 
-  it('prompt dir 仍挂载到容器 /tmp/cecelia-prompts:ro（entrypoint 从这里读）', () => {
+  it('prompt dir 挂载到容器 /tmp/cecelia-prompts:rw（H12: 让 H7 entrypoint tee STDOUT_FILE 写得了）', () => {
     const { args } = buildDockerArgs({
       task,
       prompt: 'hi',
       worktreePath: '/tmp/wt',
     });
     const flat = args.join(' ');
-    expect(flat).toMatch(/-v [^ ]+:\/tmp\/cecelia-prompts:ro/);
+    expect(flat).toMatch(/-v [^ ]+:\/tmp\/cecelia-prompts:rw/);
   });
 });
