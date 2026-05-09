@@ -30,7 +30,7 @@ import { spawn } from '../spawn/index.js';
 import { parseDockerOutput, loadSkillContent } from '../harness-shared.js';
 import { parseTaskPlan, upsertTaskPlan } from '../harness-dag.js';
 import { runFinalE2E, attributeFailures } from '../harness-final-e2e.js';
-import { ensureHarnessWorktree } from '../harness-worktree.js';
+import { ensureHarnessWorktree, harnessTaskWorktreePath } from '../harness-worktree.js';
 import { resolveGitHubToken } from '../harness-credentials.js';
 import { fetchAndShowOriginFile } from '../lib/git-fence.js';
 // 走 C3 shim (../harness-gan-graph.js) 而非直连 workflows/harness-gan.graph.js，
@@ -1147,6 +1147,9 @@ export async function evaluateSubTaskNode(state, opts = {}) {
   const sprintDir = state.task?.payload?.sprint_dir || 'sprints';
   const workstreamN = (state.task_loop_index ?? 0) + 1;
   const journeyType = state.taskPlan?.journey_type || 'autonomous';
+  // H8: evaluator 必须 mount 跟 generator 同一个 sub-task worktree（PR #2851 后 generator 自起独立 worktree），
+  // 否则 evaluator 容器看不到 generator commit 的 acceptance-task-payload.json / 测试代码。
+  const taskWorktreePath = harnessTaskWorktreePath(state.task.id);
 
   const skillContent = loadSkillContent('harness-evaluator');
   const prompt = `你是 harness-evaluator agent。按下面 SKILL 指令工作。
@@ -1167,7 +1170,7 @@ JOURNEY_TYPE=${journeyType}`;
     result = await executor({
       task: { ...state.task, task_type: 'harness_evaluate' },
       prompt,
-      worktreePath: state.worktreePath,
+      worktreePath: taskWorktreePath,
       env: {
         CECELIA_TASK_TYPE: 'harness_evaluate',
         HARNESS_NODE: 'evaluate',

@@ -6,7 +6,17 @@ import { makeCpBranchName, shortTaskId } from './harness-utils.js';
 
 const execFile = promisify(execFileCb);
 
-const DEFAULT_BASE_REPO = '/Users/administrator/perfect21/cecelia';
+export const DEFAULT_BASE_REPO = '/Users/administrator/perfect21/cecelia';
+
+/**
+ * 计算 harness sub-task worktree 路径（SSOT）。
+ *
+ * <baseRepo>/.claude/worktrees/harness-v2/task-<shortTaskId>
+ */
+export function harnessTaskWorktreePath(taskId, opts = {}) {
+  const baseRepo = opts.baseRepo || DEFAULT_BASE_REPO;
+  return path.join(baseRepo, '.claude', 'worktrees', 'harness-v2', `task-${shortTaskId(taskId)}`);
+}
 
 async function defaultStat(p) {
   try { await stat(p); return true; } catch { return false; }
@@ -57,9 +67,8 @@ export async function ensureHarnessWorktree(opts) {
   const rmFn = opts.rmFn || defaultRm;
   const logFn = opts.logFn || ((msg) => console.warn(msg));
 
-  const sid = shortTaskId(opts.taskId);
   const branch = makeCpBranchName(opts.taskId, { now: opts.now });
-  const wtPath = path.join(baseRepo, '.claude', 'worktrees', 'harness-v2', `task-${sid}`);
+  const wtPath = harnessTaskWorktreePath(opts.taskId, { baseRepo });
 
   if (await statFn(wtPath)) {
     // 状态机校验（修补 W7.3 cleanupStaleWorktrees race 留下的孤儿 dir）：
