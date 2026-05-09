@@ -536,6 +536,49 @@ async function callCortexForRca(failure) {
 }
 
 /**
+ * Dispatch an active absorption policy to its executor.
+ *
+ * 设计原则：诚实——只在真正完成执行时返回 applied=true。
+ * 没有可用执行器的 action 必须返回 applied=false 并附 reason，
+ * 调用方据此 fall-through 到 RCA，避免"触发但未执行"被静默当成"已处理"。
+ *
+ * @param {string} action - Action type from policy_json.action
+ * @param {Object} policy - Validated/normalized policy object
+ * @param {Object} _failure - Failure record (run_id, task_id, reason_code, ...)
+ * @returns {Promise<{applied: boolean, reason?: string, executor_details?: Object}>}
+ */
+async function executeActivePolicy(action, policy, _failure) {
+  switch (action) {
+    case 'skip':
+      // skip 的语义本身就是"接受这次失败，不重试不告警"——
+      // 写审计这一动作即等同于 action 已应用，无需调用其它执行器。
+      return {
+        applied: true,
+        executor_details: {
+          skip_reason: policy?.params?.reason || 'No reason provided'
+        }
+      };
+
+    case 'requeue':
+    case 'adjust_params':
+    case 'kill':
+      // 这些 action 的执行器尚未接通（见 immune-system P1/P2 路线）。
+      // 必须如实返回 not-applied，让上层 fall-through 到 RCA，
+      // 否则会重蹈"触发但未执行=条件不存在"的 bug。
+      return {
+        applied: false,
+        reason: 'executor_not_implemented'
+      };
+
+    default:
+      return {
+        applied: false,
+        reason: `unknown_action:${action}`
+      };
+  }
+}
+
+/**
  * Handler: Handle Failure Spike
  * 处置失败率激增
  */
@@ -592,37 +635,72 @@ async function handleFailureSpike(stats) {
       console.log(`[Immune] Found active policy: ${activePolicy.policy_id} (${activePolicy.policy_type})`);
       const startTime = Date.now();
 
+      // 诚实执行：先验证 policy_json，再分发到对应 action 执行器；
+      // 没有可用执行器时，必须如实记录 decision='skipped' 并 fall-through 到 RCA。
+      // 旧实现只 log 一句 "Executing policy" 就写 decision='applied' 并 continue 跳过 RCA，
+      // 导致"触发条件满足但未执行"等同于"条件不存在"，且 RCA 被压制 → 失败被静默吞掉。
+      let decision = 'skipped';
+      let actionType = 'unknown';
+      const detailsExtra = {
+        failure: {
+          reason_code: failure.reason_code,
+          layer: failure.layer,
+          step_name: failure.step_name
+        }
+      };
+
+      const validation = validatePolicyJson(activePolicy.policy_json, { strict: false });
+      if (!validation.valid) {
+        decision = 'failed';
+        detailsExtra.reason = 'policy_validation_failed';
+        detailsExtra.validation_errors = validation.errors;
+        console.warn(`[Immune] Active policy ${activePolicy.policy_id} validation failed, falling through to RCA`, validation.errors);
+      } else {
+        actionType = validation.normalized?.action || activePolicy.policy_json?.action || 'unknown';
+        try {
+          const result = await executeActivePolicy(actionType, validation.normalized || activePolicy.policy_json, failure);
+          decision = result.applied ? 'applied' : 'skipped';
+          detailsExtra.action_type = actionType;
+          if (!result.applied && result.reason) {
+            detailsExtra.reason = result.reason;
+          }
+          if (result.applied && result.executor_details) {
+            detailsExtra.executor_details = result.executor_details;
+          }
+          if (!result.applied) {
+            console.warn(`[Immune] Active policy ${activePolicy.policy_id} action=${actionType} not applied (reason=${result.reason || 'unknown'}), falling through to RCA`);
+          } else {
+            console.log(`[Immune] Active policy ${activePolicy.policy_id} action=${actionType} applied`);
+          }
+        } catch (execError) {
+          decision = 'failed';
+          detailsExtra.reason = 'execution_error';
+          detailsExtra.error = execError.message;
+          detailsExtra.action_type = actionType;
+          console.error(`[Immune] Active policy ${activePolicy.policy_id} execution error, falling through to RCA:`, execError.message);
+        }
+      }
+
       try {
-        // Execute policy (P0: just record for now, actual execution in P1)
-        console.log(`[Immune] Executing policy ${activePolicy.policy_id} (mode=enforce)`);
-
-        // FIXME-TRACKED: 实际策略执行逻辑（解析 policy_json 并执行 requeue/throttle/block 等动作） — 需要独立 dev task
-        // 当前 P0 阶段仅记录评估结果
-
         await recordPolicyEvaluation({
           policy_id: activePolicy.policy_id,
           run_id: failure.run_id,
           signature: signature,
           mode: 'enforce',
-          decision: 'applied',
-          verification_result: 'unknown', // FIXME-TRACKED: 策略执行后验证结果（依赖策略执行引擎实现） — 需要独立 dev task
+          decision,
+          verification_result: 'unknown',
           latency_ms: Date.now() - startTime,
-          details: {
-            failure: {
-              reason_code: failure.reason_code,
-              layer: failure.layer,
-              step_name: failure.step_name
-            }
-          }
+          details: detailsExtra
         });
+        console.log(`[Immune] Policy evaluation recorded: mode=enforce decision=${decision}`);
+      } catch (auditError) {
+        console.error(`[Immune] Failed to record policy evaluation:`, auditError.message);
+        // 即使审计失败也不能 swallow 失败：继续走 RCA 而不是 continue
+      }
 
-        console.log(`[Immune] Policy evaluation recorded: mode=enforce decision=applied`);
-
-        // Active policy handled it, skip RCA
+      // 只有真正应用了 policy 才短路 RCA；其它情况都 fall-through，避免失败被静默吞掉
+      if (decision === 'applied') {
         continue;
-      } catch (error) {
-        console.error(`[Immune] Policy execution failed:`, error.message);
-        // Fall through to RCA if policy fails
       }
     }
 
