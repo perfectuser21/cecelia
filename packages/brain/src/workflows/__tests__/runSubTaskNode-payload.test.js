@@ -14,9 +14,9 @@ describe('runSubTaskNode payload [BEHAVIOR]', () => {
   });
 
   it('不再传 state.worktreePath 给 sub-graph（让 sub-graph 自己建独立 worktree）', () => {
-    // 找 invoke 调用范围内不能含没注释的 worktreePath: state.worktreePath
-    const invokeBlock = code.match(/await compiled\.invoke\([\s\S]*?\),\s*config\s*\)/);
-    expect(invokeBlock).toBeTruthy();
-    expect(invokeBlock[0]).not.toMatch(/^\s*worktreePath:\s*state\.worktreePath/m);
+    // 直接源码 line 级查：不含未注释的 worktreePath: state.worktreePath 行
+    const lines = code.split('\n');
+    const offending = lines.filter((l) => /^[^/]*worktreePath:\s*state\.worktreePath/.test(l));
+    expect(offending).toEqual([]);
   });
 });
