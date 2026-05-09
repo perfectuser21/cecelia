@@ -831,7 +831,13 @@ describe('monitor-loop', () => {
   // =====================================================
 
   describe('handleFailureSpike - 存在 active policy', () => {
-    function setupWithActivePolicy() {
+    function setupWithActivePolicy(policyJson = {
+      action: 'skip',
+      params: { reason: 'benign timeout' },
+      expected_outcome: 'failure absorbed',
+      confidence: 0.9,
+      reasoning: 'test reason',
+    }) {
       let queryIndex = 0;
       mockPool.query.mockImplementation(() => {
         queryIndex++;
@@ -849,13 +855,20 @@ describe('monitor-loop', () => {
 
       mockFindActivePolicy.mockResolvedValue({
         policy_id: 'pol-001',
-        policy_type: 'requeue',
+        policy_type: 'auto',
         signature: 'abcd1234abcd1234',
+        policy_json: policyJson,
+      });
+      mockValidatePolicyJson.mockReturnValue({
+        valid: true,
+        errors: [],
+        warnings: [],
+        normalized: policyJson,
       });
     }
 
-    it('发现 active policy 时调用 recordPolicyEvaluation（enforce 模式）', async () => {
-      setupWithActivePolicy();
+    it('skip action 真正可执行时记录 decision=applied 并 短路 RCA', async () => {
+      setupWithActivePolicy(); // skip action by default
 
       startMonitorLoop();
       await flushCycle();
@@ -865,23 +878,81 @@ describe('monitor-loop', () => {
           policy_id: 'pol-001',
           mode: 'enforce',
           decision: 'applied',
+          details: expect.objectContaining({ action_type: 'skip' }),
         })
       );
-      vi.clearAllTimers();
-    });
-
-    it('active policy 处理后跳过 RCA（continue 分支）', async () => {
-      setupWithActivePolicy();
-
-      startMonitorLoop();
-      await flushCycle();
-
+      // applied=true → continue 跳过 RCA
+      expect(mockUpdateFailureSignature).not.toHaveBeenCalled();
       expect(mockPerformRCA).not.toHaveBeenCalled();
       vi.clearAllTimers();
     });
 
-    it('recordPolicyEvaluation 抛出异常时 fall-through 到 RCA', async () => {
-      setupWithActivePolicy();
+    it('requeue action 执行器未实现时记录 decision=skipped 并 fall-through 到 RCA', async () => {
+      // 这是 Cortex Insight 指出的核心 bug 防回归测试：
+      // "触发条件满足但未执行" 不能等同于 "条件不存在"——
+      // 必须如实记 skipped + 让 RCA 接管，而不是写假 applied + 吞掉失败。
+      setupWithActivePolicy({
+        action: 'requeue',
+        params: { delay_minutes: 30 },
+        expected_outcome: 'retry',
+        confidence: 0.8,
+        reasoning: 'test reason',
+      });
+      mockShouldAnalyzeFailure.mockResolvedValue({ should_analyze: true });
+
+      startMonitorLoop();
+      await flushCycle();
+
+      expect(mockRecordPolicyEvaluation).toHaveBeenCalledWith(
+        expect.objectContaining({
+          policy_id: 'pol-001',
+          mode: 'enforce',
+          decision: 'skipped',
+          details: expect.objectContaining({
+            action_type: 'requeue',
+            reason: 'executor_not_implemented',
+          }),
+        })
+      );
+      // fall-through: failure_signature 仍被更新，RCA 仍跑
+      expect(mockUpdateFailureSignature).toHaveBeenCalled();
+      vi.clearAllTimers();
+    });
+
+    it('policy_json 验证失败时记录 decision=failed 并 fall-through 到 RCA', async () => {
+      setupWithActivePolicy({ action: 'invalid_action' });
+      mockValidatePolicyJson.mockReturnValue({
+        valid: false,
+        errors: [{ field: 'action', message: 'invalid action' }],
+        warnings: [],
+        normalized: null,
+      });
+      mockShouldAnalyzeFailure.mockResolvedValue({ should_analyze: true });
+
+      startMonitorLoop();
+      await flushCycle();
+
+      expect(mockRecordPolicyEvaluation).toHaveBeenCalledWith(
+        expect.objectContaining({
+          policy_id: 'pol-001',
+          decision: 'failed',
+          details: expect.objectContaining({
+            reason: 'policy_validation_failed',
+          }),
+        })
+      );
+      expect(mockUpdateFailureSignature).toHaveBeenCalled();
+      vi.clearAllTimers();
+    });
+
+    it('recordPolicyEvaluation 抛出异常时仍 fall-through 到 RCA（审计失败不阻塞主流程）', async () => {
+      setupWithActivePolicy({
+        action: 'requeue',
+        params: { delay_minutes: 30 },
+        expected_outcome: 'retry',
+        confidence: 0.8,
+        reasoning: 'test',
+      });
       mockRecordPolicyEvaluation.mockRejectedValueOnce(new Error('DB error'));
       mockFindProbationPolicy.mockResolvedValue(null);
       mockShouldAnalyzeFailure.mockResolvedValue({ should_analyze: true });
