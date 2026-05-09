@@ -2,9 +2,9 @@
 skeleton: false
 journey_type: autonomous
 ---
-# Contract DoD — Workstream 1: 触发 + 等待 LangGraph pipeline 跑完
+# Contract DoD — Workstream 1: 触发 + 60s fail-fast + 等待 LangGraph pipeline 跑完
 
-**范围**: 实现 trigger 脚本，注册 `harness_initiative` 并轮询至 `status='completed'`。
+**范围**: 实现 trigger 脚本，注册 `harness_initiative`、60s 内 fail-fast 校验 `harness_initiatives` 行已派生、并轮询至 `status='completed'`。
 **大小**: S
 **依赖**: 无
 
@@ -19,6 +19,9 @@ journey_type: autonomous
 - [ ] [ARTIFACT] trigger.sh 把 INITIATIVE_TASK_ID 写入 /tmp/v14-initiative-task-id
   Test: node -e "const c=require('fs').readFileSync('sprints/w8-langgraph-v14/scripts/trigger.sh','utf8');if(!c.includes('/tmp/v14-initiative-task-id'))process.exit(1)"
 
+- [ ] [ARTIFACT] trigger.sh 含 60s consciousness loop fail-fast 校验（查 harness_initiatives 表）
+  Test: node -e "const c=require('fs').readFileSync('sprints/w8-langgraph-v14/scripts/trigger.sh','utf8');if(!c.includes('harness_initiatives'))process.exit(1);if(!/60|fail.?fast|consciousness/i.test(c))process.exit(1)"
+
 - [ ] [ARTIFACT] trigger.sh 含轮询逻辑等待 status=completed（grep 关键字）
   Test: node -e "const c=require('fs').readFileSync('sprints/w8-langgraph-v14/scripts/trigger.sh','utf8');if(!c.includes('completed'))process.exit(1);if(!/while|for/.test(c))process.exit(1)"
 
@@ -30,4 +33,5 @@ journey_type: autonomous
 见 `tests/ws1/trigger-and-wait.test.ts`，覆盖：
 - 脚本可执行性
 - 调用后返回合法 UUID 并落 /tmp/v14-initiative-task-id
+- 60s 内 harness_initiatives 派生行存在（fail-fast 真生效）
 - 轮询命中 status=completed 的最终态

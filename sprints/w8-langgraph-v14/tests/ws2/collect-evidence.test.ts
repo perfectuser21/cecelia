@@ -1,3 +1,6 @@
+// Round 2: 7 个 it() 用例覆盖 collect-evidence.sh 的全部 BEHAVIOR；
+// 不动代码跑（脚本未实现）→ 7 个全红，命令：
+//   npx vitest run sprints/w8-langgraph-v14/tests/ws2/ --reporter=verbose
 import { describe, it, expect } from 'vitest';
 import { existsSync, statSync, readFileSync } from 'node:fs';
 import { execSync } from 'node:child_process';
@@ -12,13 +15,15 @@ const REQUIRED_KEYS = [
   'node_durations',
 ];
 
-describe('Workstream 2 — collect evidence [BEHAVIOR]', () => {
+describe('Workstream 2 — collect evidence + anti-spoofing PR check [BEHAVIOR]', () => {
+  // L18 — 未实现红证据：existsSync(COLLECT) === false
   it('collect-evidence.sh 文件存在且可执行', () => {
     expect(existsSync(COLLECT)).toBe(true);
     const mode = statSync(COLLECT).mode;
     expect((mode & 0o111) !== 0).toBe(true);
   });
 
+  // L26 — 未实现红证据：readFileSync 抛 ENOENT
   it('collect-evidence.sh 含查 tasks / harness_state_transitions 表的 SQL', () => {
     const c = readFileSync(COLLECT, 'utf8');
     expect(c).toContain('tasks');
@@ -26,16 +31,21 @@ describe('Workstream 2 — collect evidence [BEHAVIOR]', () => {
     expect(c).toContain('harness_state_transitions');
   });
 
-  it('collect-evidence.sh 调 gh pr view 校验 PR 存在', () => {
+  // L34 — 未实现红证据：readFileSync 抛 ENOENT
+  it('collect-evidence.sh 调 gh pr view 校验 PR 真存在（反 result 字段假写 URL mitigation）', () => {
     const c = readFileSync(COLLECT, 'utf8');
     expect(c).toContain('gh pr view');
+    // 反造假语义：必须有 PR state 校验，不允许只 echo 不验证
+    expect(c).toMatch(/state|OPEN|MERGED/);
   });
 
+  // L40 — 未实现红证据：readFileSync 抛 ENOENT
   it('collect-evidence.sh 输出路径硬编码为 sprints/w8-langgraph-v14/run-evidence.md', () => {
     const c = readFileSync(COLLECT, 'utf8');
     expect(c).toContain('sprints/w8-langgraph-v14/run-evidence.md');
   });
 
+  // L47 — 未实现红证据：execSync ENOENT；evidence 文件不存在
   it('执行 collect-evidence.sh 后 run-evidence.md 含 5 个 key 且非占位', () => {
     execSync(`bash ${COLLECT}`, { stdio: 'inherit', timeout: 120_000 });
     expect(existsSync(EVIDENCE)).toBe(true);
@@ -50,10 +60,23 @@ describe('Workstream 2 — collect evidence [BEHAVIOR]', () => {
     expect(c).toMatch(/^gan_proposer_rounds:\s*[1-9][0-9]*/m);
   }, 120_000);
 
+  // L67 — 未实现红证据：evidence 文件不存在 → existsSync false
   it('run-evidence.md mtime 在最近 2 小时内（防 stale 文件造假）', () => {
     expect(existsSync(EVIDENCE)).toBe(true);
     const mtime = statSync(EVIDENCE).mtimeMs;
     const ageSec = (Date.now() - mtime) / 1000;
     expect(ageSec).toBeLessThan(7200);
+  });
+
+  // L75 — 未实现红证据：evidence 文件不存在 → readFileSync 抛 ENOENT；
+  //          即使存在但 PR 是假 URL → gh pr view 退非 0 → execSync 抛错
+  // 这条对应 Reviewer R2 反馈第 1 条：result 字段假写 URL mitigation 的实证
+  it('run-evidence.md 中 pr_url 经 gh pr view 校验真实存在（反造假实证）', () => {
+    const c = readFileSync(EVIDENCE, 'utf8');
+    const m = c.match(/^pr_url:\s*(https:\/\/github\.com\/[^\s]+\/pull\/(\d+))/m);
+    expect(m, 'pr_url 行缺失或形态非法').not.toBeNull();
+    const prNum = m![2];
+    const state = execSync(`gh pr view ${prNum} --json state --jq .state`, { encoding: 'utf8' }).trim();
+    expect(['OPEN', 'MERGED']).toContain(state);
   });
 });
