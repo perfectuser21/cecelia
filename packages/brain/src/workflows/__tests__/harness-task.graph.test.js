@@ -20,7 +20,11 @@ const mockPoolQuery = vi.fn();
 const mockSpawnDetached = vi.fn();
 
 vi.mock('../../spawn/index.js', () => ({ spawn: (...a) => mockSpawn(...a) }));
-vi.mock('../../harness-worktree.js', () => ({ ensureHarnessWorktree: (...a) => mockEnsureWorktree(...a) }));
+vi.mock('../../harness-worktree.js', () => ({
+  ensureHarnessWorktree: (...a) => mockEnsureWorktree(...a),
+  harnessSubTaskBranchName: (initiativeId, logical) => `cp-mock-${String(initiativeId).slice(0, 8)}-${logical}`,
+  harnessSubTaskWorktreePath: (initiativeId, logical) => `/mock-wt/task-${String(initiativeId).slice(0, 8)}-${logical}`,
+}));
 vi.mock('../../harness-credentials.js', () => ({ resolveGitHubToken: (...a) => mockResolveToken(...a) }));
 vi.mock('../../docker-executor.js', () => ({
   writeDockerCallback: (...a) => mockWriteCallback(...a),
@@ -103,7 +107,12 @@ describe('spawnNode (Layer 3 spawn-and-interrupt)', () => {
     };
     const delta = await spawnNode(state);
 
-    expect(mockEnsureWorktree).toHaveBeenCalledWith({ taskId: 'sub-1', initiativeId: 'init-1' });
+    expect(mockEnsureWorktree).toHaveBeenCalledWith({
+      taskId: 'sub-1',
+      initiativeId: 'init-1',
+      wtKey: 'init-1-sub-1',
+      branch: 'cp-mock-init-1-sub-1',
+    });
     expect(mockResolveToken).toHaveBeenCalled();
     expect(mockSpawnDetached).toHaveBeenCalledTimes(1);
     const spawnArg = mockSpawnDetached.mock.calls[0][0];
