@@ -10,6 +10,7 @@ vi.mock('../self-model.js', () => ({ updateSelfModel: mockUpdateSelfModel }));
 
 import {
   shouldRunConsolidation,
+  shouldRunByElapsed,
   hasTodayConsolidation,
   runDailyConsolidation,
   runDailyConsolidationIfNeeded,
@@ -17,57 +18,73 @@ import {
 
 // ─── Helper: mock pool ────────────────────────────────────────────────────────
 
-function makeMockPool(overrides = {}) {
+function makeMockPool() {
   const queryMock = vi.fn();
-  const pool = { query: queryMock };
-
-  // 默认：所有 query 返回空
+  // 默认所有 query 返回空 — 单独测试用 mockResolvedValueOnce 按调用顺序覆盖
   queryMock.mockResolvedValue({ rows: [] });
+  return { pool: { query: queryMock }, queryMock };
+}
 
-  if (overrides.hasTodayConsolidation !== undefined) {
-    // hasTodayConsolidation: SELECT id FROM daily_logs
-    queryMock.mockImplementationOnce(() =>
-      Promise.resolve({
-        rows: overrides.hasTodayConsolidation ? [{ id: 1 }] : [],
-      })
-    );
-  }
-
-  return { pool, queryMock };
+// 模拟 shouldRunByElapsed 第一次查询（SELECT max(created_at) FROM memory_stream ...）
+function mockElapsedQuery(queryMock, lastRun) {
+  queryMock.mockResolvedValueOnce({ rows: [{ last_run: lastRun }] });
 }
 
 // ─── Tests ────────────────────────────────────────────────────────────────────
 
-describe('shouldRunConsolidation', () => {
-  it('时间在 4h 周期窗口内（UTC 00:02）返回 true', () => {
-    const now = new Date('2026-03-02T00:02:00.000Z'); // 0 % 4 = 0, min=2 < 5
-    expect(shouldRunConsolidation(now)).toBe(true);
+describe('shouldRunConsolidation (deprecated 旧时间窗口闸门)', () => {
+  it('UTC 00:02 在窗口内返回 true', () => {
+    expect(shouldRunConsolidation(new Date('2026-03-02T00:02:00.000Z'))).toBe(true);
   });
 
-  it('时间在 4h 周期窗口内（UTC 08:03）返回 true', () => {
-    const now = new Date('2026-03-02T08:03:00.000Z'); // 8 % 4 = 0, min=3 < 5
-    expect(shouldRunConsolidation(now)).toBe(true);
-  });
-
-  it('时间在窗口外（UTC 10:00）返回 false', () => {
-    const now = new Date('2026-03-02T10:00:00.000Z'); // 10 % 4 = 2 ≠ 0
-    expect(shouldRunConsolidation(now)).toBe(false);
-  });
-
-  it('时间窗口边界：UTC 04:05 返回 false', () => {
-    const now = new Date('2026-03-02T04:05:00.000Z'); // 4 % 4 = 0 但 min=5 >= 5
-    expect(shouldRunConsolidation(now)).toBe(false);
+  it('UTC 10:00 在窗口外返回 false', () => {
+    expect(shouldRunConsolidation(new Date('2026-03-02T10:00:00.000Z'))).toBe(false);
   });
 });
 
-describe('hasTodayConsolidation', () => {
+describe('shouldRunByElapsed (新闸门)', () => {
+  it('从未合并过 → shouldRun=true reason=never_run', async () => {
+    const { pool, queryMock } = makeMockPool();
+    mockElapsedQuery(queryMock, null);
+    const result = await shouldRunByElapsed(pool);
+    expect(result.shouldRun).toBe(true);
+    expect(result.reason).toBe('never_run');
+    expect(result.last_run).toBeNull();
+  });
+
+  it('距上次合并 ≥ intervalHours → shouldRun=true reason=elapsed', async () => {
+    const { pool, queryMock } = makeMockPool();
+    const now = new Date('2026-03-02T12:00:00.000Z');
+    const lastRun = new Date('2026-03-02T07:00:00.000Z'); // 5h ago，超 4h 阈值
+    mockElapsedQuery(queryMock, lastRun);
+    const result = await shouldRunByElapsed(pool, now, 4);
+    expect(result.shouldRun).toBe(true);
+    expect(result.reason).toBe('elapsed');
+    expect(result.hours_elapsed).toBeCloseTo(5, 1);
+  });
+
+  it('距上次合并 < intervalHours → shouldRun=false reason=too_soon', async () => {
+    const { pool, queryMock } = makeMockPool();
+    const now = new Date('2026-03-02T12:00:00.000Z');
+    const lastRun = new Date('2026-03-02T10:00:00.000Z'); // 2h ago，未到 4h
+    mockElapsedQuery(queryMock, lastRun);
+    const result = await shouldRunByElapsed(pool, now, 4);
+    expect(result.shouldRun).toBe(false);
+    expect(result.reason).toBe('too_soon');
+    expect(result.hours_elapsed).toBeCloseTo(2, 1);
+  });
+});
+
+describe('hasTodayConsolidation (deprecated)', () => {
   it('今日无记录返回 false', async () => {
-    const { pool } = makeMockPool({ hasTodayConsolidation: false });
+    const { pool, queryMock } = makeMockPool();
+    queryMock.mockResolvedValueOnce({ rows: [] });
     expect(await hasTodayConsolidation(pool)).toBe(false);
   });
 
   it('今日有记录返回 true', async () => {
-    const { pool } = makeMockPool({ hasTodayConsolidation: true });
+    const { pool, queryMock } = makeMockPool();
+    queryMock.mockResolvedValueOnce({ rows: [{ id: 1 }] });
     expect(await hasTodayConsolidation(pool)).toBe(true);
   });
 });
@@ -81,35 +98,35 @@ describe('runDailyConsolidation', () => {
     mockUpdateSelfModel.mockResolvedValue('ok');
   });
 
-  it('今日已合并时跳过（不带 forceRun）', async () => {
+  it('too_soon 时跳过（不带 forceRun）', async () => {
     const { pool, queryMock } = makeMockPool();
-    // hasTodayConsolidation = true
-    queryMock.mockResolvedValueOnce({ rows: [{ id: 1 }] });
+    // shouldRunByElapsed: last_run 1 小时前 → too_soon
+    mockElapsedQuery(queryMock, new Date(Date.now() - 60 * 60 * 1000));
 
     const result = await runDailyConsolidation(pool);
     expect(result.skipped).toBe(true);
+    expect(result.reason).toBe('too_soon');
     expect(mockCallLLM).not.toHaveBeenCalled();
   });
 
-  it('forceRun=true 跳过防重复检查', async () => {
+  it('forceRun=true 跳过防重复检查（不查 shouldRunByElapsed）', async () => {
     const { pool, queryMock } = makeMockPool();
-    // hasTodayConsolidation query (skipped due to forceRun)
-    // gatherTodayData: 3 queries (memories, learnings, tasks)
-    queryMock.mockResolvedValue({ rows: [] }); // all queries return empty
-    // empty data case
+    // 不 mock shouldRunByElapsed query — forceRun=true 路径直接进入
+    // gatherTodayData: 3 queries (memories, learnings, tasks) 全空
+    queryMock.mockResolvedValue({ rows: [] });
     const result = await runDailyConsolidation(pool, { forceRun: true });
     expect(result.empty).toBe(true);
   });
 
-  it('空合并日也写入 memory_stream（PROBE_FAIL_CONSOLIDATION 回归）', async () => {
+  it('空合并日也写入 memory_stream（PROBE_FAIL_CONSOLIDATION 跨日 0 误报回归）', async () => {
     const { pool, queryMock } = makeMockPool();
-    // 1. hasTodayConsolidation = false
-    queryMock.mockResolvedValueOnce({ rows: [] });
+    // 1. shouldRunByElapsed: never_run
+    mockElapsedQuery(queryMock, null);
     // 2-4. gatherTodayData: memories/learnings/tasks 全空
     queryMock.mockResolvedValueOnce({ rows: [] });
     queryMock.mockResolvedValueOnce({ rows: [] });
     queryMock.mockResolvedValueOnce({ rows: [] });
-    // 5. INSERT memory_stream (空合并 — 修复前缺失这一步)
+    // 5. INSERT memory_stream (空合并 — #2825 修复，必须保留)
     queryMock.mockResolvedValueOnce({ rows: [] });
     // 6-7. markConsolidationDone: SELECT + INSERT
     queryMock.mockResolvedValueOnce({ rows: [] });
@@ -124,34 +141,29 @@ describe('runDailyConsolidation', () => {
     );
     expect(memCall).toBeTruthy();
     expect(memCall[1][0]).toContain('"empty":true');
-    // LLM 不应被调用（无活动数据走快速路径）
     expect(mockCallLLM).not.toHaveBeenCalled();
   });
 
   it('有数据时调用 LLM 并写入 memory_stream', async () => {
     const { pool, queryMock } = makeMockPool();
-    // hasTodayConsolidation = false
-    queryMock.mockResolvedValueOnce({ rows: [] });
-    // gatherTodayData: memories
+    // shouldRunByElapsed: never_run
+    mockElapsedQuery(queryMock, null);
+    // gatherTodayData
     queryMock.mockResolvedValueOnce({ rows: [{ content: '对话内容', source_type: 'feishu_chat', importance: 5, created_at: new Date() }] });
-    // learnings
     queryMock.mockResolvedValueOnce({ rows: [{ title: '洞察', content: '内容', category: 'code' }] });
-    // tasks
     queryMock.mockResolvedValueOnce({ rows: [{ title: '完成任务', task_type: 'dev', status: 'completed', ended_at: new Date() }] });
     // INSERT memory_stream
     queryMock.mockResolvedValueOnce({ rows: [] });
-    // updateSelfModel 内部 getSelfModel query
+    // updateSelfModel 内部
     queryMock.mockResolvedValueOnce({ rows: [{ content: 'seed' }] });
-    // updateSelfModel INSERT
     queryMock.mockResolvedValueOnce({ rows: [] });
-    // markConsolidationDone: SELECT + INSERT
-    queryMock.mockResolvedValueOnce({ rows: [] }); // no existing
-    queryMock.mockResolvedValueOnce({ rows: [] }); // insert
+    // markConsolidationDone
+    queryMock.mockResolvedValueOnce({ rows: [] });
+    queryMock.mockResolvedValueOnce({ rows: [] });
 
     const result = await runDailyConsolidation(pool);
     expect(result.done).toBe(true);
     expect(mockCallLLM).toHaveBeenCalledWith('cortex', expect.stringContaining('今日'), expect.any(Object));
-    // memory_stream 写入
     const insertCall = queryMock.mock.calls.find(c => String(c[0]).includes('daily_consolidation'));
     expect(insertCall).toBeTruthy();
   });
@@ -159,17 +171,11 @@ describe('runDailyConsolidation', () => {
   it('LLM 调用失败时仍完成合并（graceful fallback）', async () => {
     mockCallLLM.mockRejectedValue(new Error('LLM error'));
     const { pool, queryMock } = makeMockPool();
-    // hasTodayConsolidation = false
-    queryMock.mockResolvedValueOnce({ rows: [] });
-    // memories
+    mockElapsedQuery(queryMock, null);
     queryMock.mockResolvedValueOnce({ rows: [{ content: 'x', source_type: 'orchestrator_chat', importance: 5, created_at: new Date() }] });
-    // learnings
     queryMock.mockResolvedValueOnce({ rows: [] });
-    // tasks
     queryMock.mockResolvedValueOnce({ rows: [] });
-    // INSERT memory_stream (fallback summary)
     queryMock.mockResolvedValueOnce({ rows: [] });
-    // markConsolidationDone: SELECT + INSERT
     queryMock.mockResolvedValueOnce({ rows: [] });
     queryMock.mockResolvedValueOnce({ rows: [] });
 
@@ -183,13 +189,13 @@ describe('runDailyConsolidation', () => {
       '{"date":"2026-03-02","key_events":[],"new_learnings":[],"completed_goals":[],"mood_trajectory":"平稳","self_model_delta":{}}'
     );
     const { pool, queryMock } = makeMockPool();
-    queryMock.mockResolvedValueOnce({ rows: [] }); // hasTodayConsolidation
+    mockElapsedQuery(queryMock, null);
     queryMock.mockResolvedValueOnce({ rows: [{ content: 'x', source_type: 'feishu_chat', importance: 5, created_at: new Date() }] });
     queryMock.mockResolvedValueOnce({ rows: [] });
     queryMock.mockResolvedValueOnce({ rows: [] });
-    queryMock.mockResolvedValueOnce({ rows: [] }); // INSERT memory_stream
-    queryMock.mockResolvedValueOnce({ rows: [] }); // markConsolidationDone SELECT
-    queryMock.mockResolvedValueOnce({ rows: [] }); // markConsolidationDone INSERT
+    queryMock.mockResolvedValueOnce({ rows: [] });
+    queryMock.mockResolvedValueOnce({ rows: [] });
+    queryMock.mockResolvedValueOnce({ rows: [] });
 
     await runDailyConsolidation(pool);
     expect(mockUpdateSelfModel).not.toHaveBeenCalled();
@@ -197,15 +203,43 @@ describe('runDailyConsolidation', () => {
 });
 
 describe('runDailyConsolidationIfNeeded', () => {
-  it('在触发窗口外直接跳过（不查 DB）', async () => {
-    // 传入一个非触发时间
-    // 因为 shouldRunConsolidation 用 new Date()，我们通过环境不触发来测试
-    // 直接 mock 时间到非触发小时
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockCallLLM.mockResolvedValue(
+      '{"date":"2026-03-02","key_events":[],"new_learnings":[],"completed_goals":[],"mood_trajectory":"平稳","self_model_delta":{}}'
+    );
+  });
+
+  it('last_run=null（never_run）时执行合并而非"outside time window"', async () => {
     const { pool, queryMock } = makeMockPool();
-    // 如果 shouldRunConsolidation 返回 false，不会调用 pool.query
-    // 在测试环境中 UTC 小时不太可能是 19，所以这个测试通常会通过
-    // 但为了保险，我们只检查函数存在且返回对象
+    // shouldRunByElapsed in IfNeeded
+    mockElapsedQuery(queryMock, null);
+    // shouldRunByElapsed inside runDailyConsolidation
+    mockElapsedQuery(queryMock, null);
+    // gatherTodayData 全空 → 空合并路径
+    queryMock.mockResolvedValueOnce({ rows: [] });
+    queryMock.mockResolvedValueOnce({ rows: [] });
+    queryMock.mockResolvedValueOnce({ rows: [] });
+    // INSERT memory_stream
+    queryMock.mockResolvedValueOnce({ rows: [] });
+    // markConsolidationDone
+    queryMock.mockResolvedValueOnce({ rows: [] });
+    queryMock.mockResolvedValueOnce({ rows: [] });
+
     const result = await runDailyConsolidationIfNeeded(pool);
-    expect(typeof result).toBe('object');
+    expect(result.skipped).toBeFalsy();
+    expect(result.empty).toBe(true);
+  });
+
+  it('too_soon 时跳过且不查 gatherTodayData', async () => {
+    const { pool, queryMock } = makeMockPool();
+    const now = new Date('2026-03-02T12:00:00.000Z');
+    mockElapsedQuery(queryMock, new Date('2026-03-02T11:00:00.000Z')); // 1h ago
+
+    const result = await runDailyConsolidationIfNeeded(pool, now);
+    expect(result.skipped).toBe(true);
+    expect(result.reason).toBe('too_soon');
+    // 只调用了 1 次 query（shouldRunByElapsed），没去 gather/insert
+    expect(queryMock).toHaveBeenCalledTimes(1);
   });
 });
