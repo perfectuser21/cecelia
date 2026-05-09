@@ -36,7 +36,7 @@
 import { StateGraph, Annotation, START, END, interrupt } from '@langchain/langgraph';
 import crypto from 'node:crypto';
 // Note: legacy `spawn` import removed (Layer 3 uses spawnDockerDetached for fire-and-forget docker run -d)
-import { ensureHarnessWorktree } from '../harness-worktree.js';
+import { ensureHarnessWorktree, harnessSubTaskBranchName } from '../harness-worktree.js';
 import { resolveGitHubToken } from '../harness-credentials.js';
 // Note: legacy `writeDockerCallback` import removed (Layer 3 uses callback router POST → Command(resume))
 import { spawnDockerDetached } from '../spawn/detached.js';
@@ -117,7 +117,13 @@ export async function spawnNode(state, opts = {}) {
   let token = state.githubToken;
 
   try {
-    if (!worktreePath) worktreePath = await ensureWt({ taskId: task.id, initiativeId });
+    if (!worktreePath) {
+      // H11: sub-task 独立 worktree 用 <init8>-<logical> 复合 key（绕过 shortTaskId ≥8 限制）。
+      // 修 PR #2851 P0：之前调 ensureHarnessWorktree(taskId='ws1') 被 shortTaskId 拒 → spawn 从未真跑。
+      const wtKey = `${String(initiativeId).slice(0, 8)}-${task.id}`;
+      const branch = harnessSubTaskBranchName(initiativeId, task.id);
+      worktreePath = await ensureWt({ taskId: task.id, initiativeId, wtKey, branch });
+    }
     if (!token) token = await resolveTok();
   } catch (err) {
     return { error: { node: 'spawn', message: `prep: ${err.message}` } };

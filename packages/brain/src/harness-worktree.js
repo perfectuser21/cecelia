@@ -18,6 +18,43 @@ export function harnessTaskWorktreePath(taskId, opts = {}) {
   return path.join(baseRepo, '.claude', 'worktrees', 'harness-v2', `task-${shortTaskId(taskId)}`);
 }
 
+/**
+ * Sub-task 独立 worktree 路径：<base>/.claude/worktrees/harness-v2/task-<init8>-<logical>
+ *
+ * 用复合 key（initiativeId 前 8 + logical_task_id）：
+ * - 同 initiative 不同 sub_task 不碰撞（ws1/ws2/ws3）
+ * - 不同 initiative 同 logical_id 不碰撞（init A 的 ws1 vs init B 的 ws1）
+ *
+ * H11: 修 PR #2851 P0 — sub-graph spawnNode 之前调 ensureHarnessWorktree(taskId='ws1')
+ * 被 shortTaskId(≥8) 拒。新 helper 让 callers 用复合 key 直接绕过。
+ */
+export function harnessSubTaskWorktreePath(initiativeId, logicalTaskId, opts = {}) {
+  const baseRepo = opts.baseRepo || DEFAULT_BASE_REPO;
+  const init8 = String(initiativeId).slice(0, 8);
+  return path.join(baseRepo, '.claude', 'worktrees', 'harness-v2', `task-${init8}-${logicalTaskId}`);
+}
+
+/**
+ * Sub-task branch name：cp-<MMDDHHMM>-ws-<init8>-<logical>
+ *
+ * 不复用 makeCpBranchName（会丢 logical 区分度，同 initiative 不同 ws 拼出同 branch）。
+ * 直接拼时间戳 + init8 + logical，保证不同 sub_task 不撞 branch。
+ */
+export function harnessSubTaskBranchName(initiativeId, logicalTaskId, opts = {}) {
+  const now = opts.now instanceof Date
+    ? opts.now
+    : (typeof opts.now === 'number' ? new Date(opts.now) : new Date());
+  // 上海时间 MMDDHHMM（同 shanghaiMMDDHHMM 算法，避免循环 import）
+  const shifted = new Date(now.getTime() + 8 * 3600 * 1000);
+  const mm = String(shifted.getUTCMonth() + 1).padStart(2, '0');
+  const dd = String(shifted.getUTCDate()).padStart(2, '0');
+  const hh = String(shifted.getUTCHours()).padStart(2, '0');
+  const mi = String(shifted.getUTCMinutes()).padStart(2, '0');
+  const stamp = `${mm}${dd}${hh}${mi}`;
+  const init8 = String(initiativeId).slice(0, 8);
+  return `cp-${stamp}-ws-${init8}-${logicalTaskId}`;
+}
+
 async function defaultStat(p) {
   try { await stat(p); return true; } catch { return false; }
 }
@@ -67,8 +104,11 @@ export async function ensureHarnessWorktree(opts) {
   const rmFn = opts.rmFn || defaultRm;
   const logFn = opts.logFn || ((msg) => console.warn(msg));
 
-  const branch = makeCpBranchName(opts.taskId, { now: opts.now });
-  const wtPath = harnessTaskWorktreePath(opts.taskId, { baseRepo });
+  // H11: opts.wtKey + opts.branch 让 sub-task callers 用复合 key（绕过 shortTaskId ≥8 校验）。
+  // initiative-level callers（不传 wtKey/branch）走老路用 shortTaskId(taskId) + makeCpBranchName。
+  const wtKey = opts.wtKey || shortTaskId(opts.taskId);
+  const branch = opts.branch || makeCpBranchName(opts.taskId, { now: opts.now });
+  const wtPath = path.join(baseRepo, '.claude', 'worktrees', 'harness-v2', `task-${wtKey}`);
 
   if (await statFn(wtPath)) {
     // 状态机校验（修补 W7.3 cleanupStaleWorktrees race 留下的孤儿 dir）：
