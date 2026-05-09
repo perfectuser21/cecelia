@@ -1,0 +1,59 @@
+{
+  "initiative_id": "pending",
+  "journey_type": "autonomous",
+  "journey_type_reason": "全流程在 Brain 内部 LangGraph 上跑，无 dashboard UI、无外部 agent 远端协议变更、无 dev pipeline hooks 改动；脚本只读写 DB + 本地文件，纯自治观察。",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "scripts/v15-dispatch.mjs — 派发测试 harness Initiative",
+      "scope": "Node.js ESM 脚本，连 DATABASE_URL 用 pg INSERT 一行 task_type='harness_initiative' status='queued'，payload 含一个最小可批准的测试 PRD（targeting Golden Path ≤ 30min）。stdout 单行返回 INITIATIVE_ID。导出 buildPayload / buildTestPrd / INSERT_SQL 供单测引用。",
+      "dod": [
+        "[BEHAVIOR] vitest tests/ws1/dispatch.test.ts 4 个 case 全绿（buildPayload 返回结构、buildTestPrd 含 Golden Path、UUID 不重复、INSERT_SQL 含 RETURNING id）",
+        "[ARTIFACT] scripts/v15-dispatch.mjs 文件存在且 import 'pg'",
+        "[ARTIFACT] 脚本含字面量 'harness_initiative' 和 process.env.DATABASE_URL"
+      ],
+      "files": [
+        "scripts/v15-dispatch.mjs"
+      ],
+      "depends_on": [],
+      "complexity": "S",
+      "estimated_minutes": 30
+    },
+    {
+      "task_id": "ws2",
+      "title": "scripts/v15-watch.mjs — 阻塞观察 + timeline 落盘",
+      "scope": "Node.js ESM 脚本，每 5s 轮询 initiative_runs.phase + tasks.status，phase 变化追加写 .v15/timeline.log（行格式 `ISO\\tPHASE`）。直到 phase ∈ {done, failed} 或 30min 超时退出（超时时也 append TIMEOUT 行）。退出码 0=终态/1=超时/2=参数或连接错误。导出 isTerminalPhase / formatTimelineEntry。",
+      "dod": [
+        "[BEHAVIOR] vitest tests/ws2/watch.test.ts 4 个 case 全绿（isTerminalPhase 三种返回值 + formatTimelineEntry 格式）",
+        "[ARTIFACT] scripts/v15-watch.mjs 文件存在",
+        "[ARTIFACT] 脚本含 30min 超时常量、写路径 .v15/timeline.log、查询 initiative_runs"
+      ],
+      "files": [
+        "scripts/v15-watch.mjs"
+      ],
+      "depends_on": [
+        "ws1"
+      ],
+      "complexity": "M",
+      "estimated_minutes": 45
+    },
+    {
+      "task_id": "ws3",
+      "title": "scripts/v15-report.mjs — 生成 run-report.md（PASS/FAIL + 节点归因）",
+      "scope": "Node.js ESM 脚本，读取 .v15/timeline.log + DB（tasks / initiative_runs / sub-tasks / task_events），写出 sprints/w8-langgraph-v15/run-report.md，含 ## Verdict / ## Sprint Trinity Check / ## Timeline / ## Initiative State / ## Generated at；FAIL 路径含 ### Failure Node。Verdict = PASS 当且仅当 tasks.status='completed' AND initiative_runs.phase='done' AND 所有 sub-task status='completed'。导出 computeVerdict / extractFailureNode / renderReport。",
+      "dod": [
+        "[BEHAVIOR] vitest tests/ws3/report.test.ts 8 个 case 全绿（computeVerdict 5 路径 + extractFailureNode 2 路径 + renderReport 含全部段头）",
+        "[ARTIFACT] scripts/v15-report.mjs 文件存在",
+        "[ARTIFACT] 脚本含字面量 sprints/w8-langgraph-v15/run-report.md、## Verdict:、## Sprint Trinity Check、## Generated at:、task_events"
+      ],
+      "files": [
+        "scripts/v15-report.mjs"
+      ],
+      "depends_on": [
+        "ws2"
+      ],
+      "complexity": "M",
+      "estimated_minutes": 60
+    }
+  ]
+}
