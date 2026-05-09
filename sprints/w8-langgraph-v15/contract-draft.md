@@ -1,4 +1,8 @@
-# Sprint Contract Draft (Round 1)
+# Sprint Contract Draft (Round 2)
+
+> **Round 2 修订摘要**（响应 Reviewer 反馈）：
+> 1. 所有 SQL 终态查询新增绝对日期锚 `created_at >= '2026-05-09'`（与 60min 相对窗口共同生效，belt-and-suspenders 防跨 sprint 历史污染）。
+> 2. Test Contract 表后追加「WS1 测试预期红证据明细」段：列 4 个 `it()` 名 + 各自红失败模式 + 测试归属说明 + 复跑命令（满足 test_is_red ≥ 7 度量）。
 
 ## Golden Path
 
@@ -21,11 +25,12 @@ psql "${DB:-postgresql://localhost/cecelia}" -t -c "
 SELECT count(*) FROM tasks
 WHERE task_type='harness_initiative'
   AND payload->>'sprint_dir'='sprints/w8-langgraph-v15'
+  AND created_at >= '2026-05-09'
   AND created_at > NOW() - INTERVAL '60 minutes'"
 # 期望：count >= 1
 ```
 
-**硬阈值**: count ≥ 1，60 分钟时间窗口内写入（防止读到陈旧任务造假通过）。
+**硬阈值**: count ≥ 1，绝对日期锚 `>= '2026-05-09'` 加 60 分钟相对窗口同时生效（防止读到陈旧任务 / 历史 sprint 行造假通过）。
 
 ---
 
@@ -41,11 +46,12 @@ LOG_OK=$(docker logs cecelia-brain --since 60m 2>&1 | grep -cE "harness.*(graph 
 
 CKPT=$(psql "${DB:-postgresql://localhost/cecelia}" -t -c "
   SELECT count(*) FROM langgraph_checkpoints
-  WHERE created_at > NOW() - INTERVAL '60 minutes'" | tr -d ' ')
+  WHERE created_at >= '2026-05-09'
+    AND created_at > NOW() - INTERVAL '60 minutes'" | tr -d ' ')
 [ "$CKPT" -ge 1 ] || { echo "no checkpoint written"; exit 1; }
 ```
 
-**硬阈值**: 日志 ≥ 1 行 + checkpoint ≥ 1 条；60 分钟时间窗口。
+**硬阈值**: 日志 ≥ 1 行 + checkpoint ≥ 1 条；绝对日期锚 `>= '2026-05-09'` + 60 分钟相对窗口同时生效。
 
 ---
 
@@ -108,20 +114,22 @@ FAIL=$(echo "$LOGS" | grep -cE "evaluator.*verdict=FAIL.*sprint=w8-langgraph-v15
 DB="${DB:-postgresql://localhost/cecelia}"
 
 # 1) DB 终态：sub_task status=completed + result.pr_url 合规
+#    绝对日期锚 + 60 分钟窗口同时生效，避免捕到非本 sprint 的历史 completed sub_task
 COUNT=$(psql "$DB" -t -c "
   SELECT count(*) FROM tasks
   WHERE parent_task_id IS NOT NULL
     AND status='completed'
     AND result->>'pr_url' ~ '^https://github\.com/.+/pull/[0-9]+$'
+    AND created_at >= '2026-05-09'
     AND updated_at > NOW() - INTERVAL '60 minutes'" | tr -d ' ')
-[ "$COUNT" -ge 1 ] || { echo "no sub_task completed with pr_url in last 60m"; exit 1; }
+[ "$COUNT" -ge 1 ] || { echo "no sub_task completed with pr_url since 2026-05-09 within 60m"; exit 1; }
 
 # 2) callback 命中真实 endpoint（H7 修复后才有此日志）
 CB=$(docker logs cecelia-brain --since 60m 2>&1 | grep -cE "callback received.*sprint=w8-langgraph-v15|/api/brain/tasks/.+/callback" || echo 0)
 [ "$CB" -ge 1 ] || { echo "no real callback hit"; exit 1; }
 ```
 
-**硬阈值**: COUNT ≥ 1（带正则 + 60min 时间窗）+ callback 真实命中 ≥ 1；不可只有 DB 行没有 callback 日志（防止人工手改 DB 造假）。
+**硬阈值**: COUNT ≥ 1（带 pr_url 正则 + 绝对日期锚 `>= '2026-05-09'` + 60min 时间窗）+ callback 真实命中 ≥ 1；不可只有 DB 行没有 callback 日志（防止人工手改 DB 造假）。
 
 ---
 
@@ -133,12 +141,13 @@ CB=$(docker logs cecelia-brain --since 60m 2>&1 | grep -cE "callback received.*s
 ```bash
 DB="${DB:-postgresql://localhost/cecelia}"
 
-# A) SQL 行
+# A) SQL 行（绝对日期锚 + 60min 窗口）
 SQL_OK=$(psql "$DB" -t -c "
   SELECT count(*) FROM tasks
   WHERE parent_task_id IS NOT NULL
     AND status='completed'
     AND result->>'pr_url' IS NOT NULL
+    AND created_at >= '2026-05-09'
     AND updated_at > NOW() - INTERVAL '60 minutes'" | tr -d ' ')
 [ "$SQL_OK" -ge 1 ] || { echo "SQL fail"; exit 1; }
 
@@ -146,6 +155,7 @@ SQL_OK=$(psql "$DB" -t -c "
 PR_URL=$(psql "$DB" -t -c "
   SELECT result->>'pr_url' FROM tasks
   WHERE parent_task_id IS NOT NULL AND status='completed'
+    AND created_at >= '2026-05-09'
     AND updated_at > NOW() - INTERVAL '60 minutes' LIMIT 1" | tr -d ' ')
 PR_STATE=$(gh pr view "$PR_URL" --json state -q .state 2>/dev/null)
 [ "$PR_STATE" = "OPEN" ] || { echo "PR not OPEN: $PR_STATE (url=$PR_URL)"; exit 1; }
@@ -158,6 +168,7 @@ ERR=$(docker logs cecelia-brain --since 60m 2>&1 | grep -E "ERROR|Uncaught|unhan
 DUR=$(psql "$DB" -t -c "
   SELECT EXTRACT(EPOCH FROM (updated_at - created_at))::int FROM tasks
   WHERE parent_task_id IS NOT NULL AND status='completed'
+    AND created_at >= '2026-05-09'
     AND updated_at > NOW() - INTERVAL '60 minutes' LIMIT 1" | tr -d ' ')
 [ -n "$DUR" ] && [ "$DUR" -lt 1800 ] || { echo "run too slow: ${DUR}s (limit 1800s)"; exit 1; }
 ```
@@ -190,19 +201,22 @@ grep -q "journey_type" "$NOTES" && grep -q "dev_pipeline" "$NOTES" \
   || { echo "[FAIL] missing journey_type=dev_pipeline metadata"; exit 1; }
 
 # === B. SQL 终态：sub_task status='completed' + result.pr_url 合规 ===
+#       绝对日期锚 + 60min 窗口同时生效，避免捕到非本 sprint 历史 completed sub_task
 SQL_COUNT=$(psql "$DB" -t -c "
   SELECT count(*) FROM tasks
   WHERE parent_task_id IS NOT NULL
     AND status='completed'
     AND result->>'pr_url' ~ '^https://github\.com/.+/pull/[0-9]+$'
+    AND created_at >= '2026-05-09'
     AND updated_at > NOW() - INTERVAL '60 minutes'" | tr -d ' ')
 [ "$SQL_COUNT" -ge 1 ] \
-  || { echo "[FAIL] no completed sub_task with pr_url in last 60m"; exit 1; }
+  || { echo "[FAIL] no completed sub_task with pr_url since 2026-05-09 within 60m"; exit 1; }
 
 # === C. GitHub PR OPEN ===
 PR_URL=$(psql "$DB" -t -c "
   SELECT result->>'pr_url' FROM tasks
   WHERE parent_task_id IS NOT NULL AND status='completed'
+    AND created_at >= '2026-05-09'
     AND updated_at > NOW() - INTERVAL '60 minutes' LIMIT 1" | tr -d ' ')
 PR_STATE=$(gh pr view "$PR_URL" --json state -q .state)
 [ "$PR_STATE" = "OPEN" ] \
@@ -223,6 +237,7 @@ echo "$LOGS" | grep -qE "callback received|/api/brain/tasks/.+/callback" \
 DUR=$(psql "$DB" -t -c "
   SELECT EXTRACT(EPOCH FROM (updated_at - created_at))::int FROM tasks
   WHERE parent_task_id IS NOT NULL AND status='completed'
+    AND created_at >= '2026-05-09'
     AND updated_at > NOW() - INTERVAL '60 minutes' LIMIT 1" | tr -d ' ')
 [ -n "$DUR" ] && [ "$DUR" -lt 1800 ] \
   || { echo "[FAIL] run duration ${DUR}s exceeds 1800s"; exit 1; }
@@ -253,3 +268,39 @@ workstream_count: 1
 | Workstream | Test File | BEHAVIOR 覆盖 | 预期红证据 |
 |---|---|---|---|
 | WS1 | `tests/ws1/walking-skeleton.test.ts` | 文件可读且非空、首行包含 sprint 标识、metadata 含 journey_type=dev_pipeline、4 项实证字段占位齐全 | WS1 → 4 failures（generator 未写文件前 readFileSync 抛 ENOENT） |
+
+---
+
+## WS1 测试预期红证据明细（test_is_red ≥ 7 度量支撑）
+
+### 测试归属（消除"谁写测试"歧义）
+
+`tests/ws1/walking-skeleton.test.ts` 由**本 sprint 的 contract round 内一并产出**（即 proposer 在 round 1/2 push 的 propose branch 已含此文件），**不属于 generator 的 `严禁改运行时代码` 范围豁免**——它是 markdown 实证物的**契约文件**（contract-as-code），生成者是 proposer，消费者是 evaluator，generator 只负责让它由红转绿。任何对 `tests/ws1/walking-skeleton.test.ts` 的改动需通过新 contract round（修改后 reviewer 重新 APPROVED），generator 直接动测试文件视为越界、Evaluator 必须 FAIL。
+
+### 4 个 `it()` 名 + 各自红失败模式
+
+| # | `it()` 名（test name 原文） | 期望红失败模式（generator 未写文件前） |
+|---|---|---|
+| 1 | `'文件存在且 fs.readFileSync 不抛 ENOENT，内容长度 > 0'` | `existsSync(NOTES_PATH)` 返回 `false` → `expect(...).toBe(true)` AssertionError；继续执行 `readFileSync` 会抛 `ENOENT: no such file or directory, open '.../docs/learnings/w8-langgraph-v15-e2e.md'`（先触发的是 `toBe(true)` 的断言失败，断言失败本身已使该 `it` 红） |
+| 2 | `'首行（去掉 markdown header 前缀后）包含 sprint 标识 "W8 v15 LangGraph E2E 实证"'` | `readFileSync(NOTES_PATH, 'utf8')` 抛 `ENOENT.*w8-langgraph-v15-e2e.md` → `it` 红 |
+| 3 | `'文件含 journey_type=dev_pipeline 元数据声明'` | `readFileSync(NOTES_PATH, 'utf8')` 抛 `ENOENT.*w8-langgraph-v15-e2e.md` → `it` 红 |
+| 4 | `'文件含 4 项实证字段占位：node_durations / gan_proposer_rounds / pr_url / run_date'` | `readFileSync(NOTES_PATH, 'utf8')` 抛 `ENOENT.*w8-langgraph-v15-e2e.md` → `it` 红 |
+
+合计 **4 个 `it()` 全红**，红根因均收敛到「目标 markdown 文件 `docs/learnings/w8-langgraph-v15-e2e.md` 不存在」——这正是 walking-skeleton 物证缺失时应有的失败现象，符合 TDD Red→Green 纪律。
+
+### 未实现时复跑命令（Reviewer 可独立验证）
+
+```bash
+# 在 propose 分支 checkout 状态、generator 未写文件前执行，期望 vitest exit=1
+npx vitest run tests/ws1/walking-skeleton.test.ts --reporter=verbose 2>&1 | tee /tmp/ws1-red.log
+echo "EXIT_CODE=$?"
+
+# 期望：
+# 1) EXIT_CODE != 0（vitest 用 exit 1 表示有 failing test）
+# 2) /tmp/ws1-red.log 中可见 4 条 "✗" 或 "FAIL" 记录
+# 3) /tmp/ws1-red.log 中至少 3 条匹配 ENOENT.*w8-langgraph-v15-e2e.md 的报错
+grep -E "ENOENT.*w8-langgraph-v15-e2e\.md" /tmp/ws1-red.log | wc -l   # 期望 >= 3
+grep -cE "FAIL|✗|failed" /tmp/ws1-red.log                              # 期望 >= 4
+```
+
+generator 写完 `docs/learnings/w8-langgraph-v15-e2e.md` 后，再次跑同命令应 EXIT_CODE=0，4 个 `it` 全绿。这一红→绿翻转就是 WS1 generator 工作完成的**唯一行为型证据**（与 contract-dod-ws1.md 中的 ARTIFACT 静态条目互补）。
