@@ -103,12 +103,15 @@ fi
 # 再用同一 exit code 退出容器。HARNESS_NODE/CECELIA_TASK_ID 任一为空时
 # 走旧 exec 路径，保持非 harness 任务零变更。
 PROMPT_FILE="/tmp/cecelia-prompts/${CECELIA_TASK_ID:-UNSET}.prompt"
+STDOUT_FILE="/tmp/cecelia-prompts/${CECELIA_TASK_ID:-UNSET}.stdout"
 
 run_claude() {
   if [[ -f "$PROMPT_FILE" ]]; then
-    claude -p --dangerously-skip-permissions --output-format json "${MODEL_FLAGS[@]}" < "$PROMPT_FILE"
+    claude -p --dangerously-skip-permissions --output-format json "${MODEL_FLAGS[@]}" < "$PROMPT_FILE" 2>&1 | tee "$STDOUT_FILE"
+    return ${PIPESTATUS[0]}
   else
-    claude -p --dangerously-skip-permissions --output-format json "${MODEL_FLAGS[@]}" "$@"
+    claude -p --dangerously-skip-permissions --output-format json "${MODEL_FLAGS[@]}" "$@" 2>&1 | tee "$STDOUT_FILE"
+    return ${PIPESTATUS[0]}
   fi
 }
 
@@ -128,7 +131,6 @@ run_claude "$@"
 EXIT_CODE=$?
 set -e
 
-STDOUT_FILE="/tmp/cecelia-prompts/${CECELIA_TASK_ID}.stdout"
 STDOUT_CONTENT=""
 if [[ -f "$STDOUT_FILE" ]]; then
   STDOUT_CONTENT=$(tail -c 4000 "$STDOUT_FILE" 2>/dev/null || echo "")
