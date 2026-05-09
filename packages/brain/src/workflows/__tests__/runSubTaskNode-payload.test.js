@@ -14,9 +14,17 @@ describe('runSubTaskNode payload [BEHAVIOR]', () => {
   });
 
   it('不再传 state.worktreePath 给 sub-graph（让 sub-graph 自己建独立 worktree）', () => {
-    // 直接源码 line 级查：不含未注释的 worktreePath: state.worktreePath 行
-    const lines = code.split('\n');
-    const offending = lines.filter((l) => /^[^/]*worktreePath:\s*state\.worktreePath/.test(l));
-    expect(offending).toEqual([]);
+    // 锁定到 runSubTaskNode 函数体（不影响 spawnNode 等其他用 state.worktreePath 的节点）
+    const fnMatch = code.match(/export async function runSubTaskNode[\s\S]*?\n\}/);
+    expect(fnMatch).toBeTruthy();
+    const fnBody = fnMatch[0];
+    // runSubTaskNode 内不含未注释的 worktreePath: state.worktreePath
+    const lines = fnBody.split('\n');
+    const uncommented = lines.filter((l) => {
+      const trimmed = l.trim();
+      if (trimmed.startsWith('//')) return false;
+      return /worktreePath:\s*state\.worktreePath/.test(l);
+    });
+    expect(uncommented).toEqual([]);
   });
 });
