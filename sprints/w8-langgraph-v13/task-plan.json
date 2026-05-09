@@ -6,7 +6,7 @@
     {
       "task_id": "ws1",
       "title": "实现 sprints/w8-langgraph-v13/scripts/collect-evidence.sh — 触发后等待 + 抽 trace/db-snapshot/pr-link 三件证据",
-      "scope": "实现一个 bash 脚本，签名 `collect-evidence.sh <INITIATIVE_TASK_ID> <EVIDENCE_DIR>`，轮询 brain API 至 initiative 终态或 60min 超时；从 brain 容器最近 60 分钟日志按 7 节点（plan/propose/review/spawn/generator/evaluator/absorption）抽 trace.txt；从 tasks + langgraph_checkpoints 表抽 db-snapshot.json；从 absorption result 抽 PR URL（或 NO_CHANGE 说明）写 pr-link.txt。支持 DRY_RUN=1 干跑；缺参 exit 1 + usage。",
+      "scope": "实现一个 bash 脚本，签名 `collect-evidence.sh <INITIATIVE_TASK_ID> <EVIDENCE_DIR>`，轮询 brain API 至 initiative 终态或 60min 超时；从 brain 容器最近 60 分钟日志按 7 节点（plan/propose/review/spawn/generator/evaluator/absorption）抽 trace.txt；从 tasks + langgraph_checkpoints 表抽 db-snapshot.json；从 absorption result.applied/pr_url/reason（按 contract Field Contract 字段路径）抽 PR URL 或 NO_CHANGE 说明写 pr-link.txt。支持 DRY_RUN=1 干跑；缺参 exit 1 + usage。",
       "dod": [
         "[BEHAVIOR] tests/ws1/collect-evidence.test.ts 全部通过（脚本存在、可执行、缺参 usage、DRY_RUN 计划含三件产出物名）",
         "[ARTIFACT] sprints/w8-langgraph-v13/scripts/collect-evidence.sh 存在、可执行、首行 bash shebang、含 set -euo pipefail 与 7 节点签名常量"
@@ -20,20 +20,22 @@
     },
     {
       "task_id": "ws2",
-      "title": "实现 sprints/w8-langgraph-v13/scripts/judge-result.sh — 消费 evidence 写 result.md 与 H12 草案",
-      "scope": "实现一个 bash 脚本，签名 `judge-result.sh <INITIATIVE_TASK_ID> <EVIDENCE_DIR> <SPRINT_DIR>`，按 contract Step 2~7 硬阈值逐项判定 evidence；全部通过写 result.md 第一行 PASS；任一失败写第一行 FAIL — 卡在 step_n，并生成 h12-draft.md（含失败 step、破裂假设、修复方向草稿）。",
+      "title": "实现 sprints/w8-langgraph-v13/scripts/lib-checks.sh + judge-result.sh — 同源 check_step 函数库 + result.md / h12-draft.md 生成器",
+      "scope": "(a) lib-checks.sh：导出 check_step_2..check_step_8 七个函数，严格按 contract Field Contract 字段路径取值（result->>'verdict'、result->>'applied'、payload->>'logical_task_id'、evaluator_worktree_path 等），所有 SQL 含 `interval '60 minutes'` 时间窗口防造假；含 set -u（不要 -e 以免污染 source 它的脚本）。(b) judge-result.sh：签名 `judge-result.sh <INITIATIVE_TASK_ID> <EVIDENCE_DIR> <SPRINT_DIR>`，顶部 source lib-checks.sh，按顺序调 check_step_2..check_step_7，全部通过写 result.md 第一行 `PASS — W8 v13 端到端验证通过`；任一失败写 `FAIL — 卡在 step_<N>` 并生成 h12-draft.md（含失败 step、破裂假设、修复方向草稿）。E2E 验收脚本通过同样 source lib-checks.sh 实现 Step 验证同源、消除粘贴漂移。",
       "dod": [
         "[BEHAVIOR] tests/ws2/judge-result.test.ts 全部通过（脚本存在/可执行、缺参 usage、fixture-pass 写 ^PASS、fixture-fail 写 ^FAIL 且生成 h12-draft.md 非空）",
-        "[ARTIFACT] sprints/w8-langgraph-v13/scripts/judge-result.sh 存在、可执行、含 set -euo pipefail、含 PASS/FAIL/h12-draft.md 字面量"
+        "[ARTIFACT] sprints/w8-langgraph-v13/scripts/lib-checks.sh 存在、首行 bash shebang、含 set -u、导出 check_step_2..check_step_8、引用 Field Contract 关键字段、所有 SQL 含 60 分钟时间窗口",
+        "[ARTIFACT] sprints/w8-langgraph-v13/scripts/judge-result.sh 存在、可执行、含 set -euo pipefail、source lib-checks.sh、含 PASS/FAIL/h12-draft.md 字面量"
       ],
       "files": [
+        "sprints/w8-langgraph-v13/scripts/lib-checks.sh",
         "sprints/w8-langgraph-v13/scripts/judge-result.sh"
       ],
       "depends_on": [
         "ws1"
       ],
-      "complexity": "S",
-      "estimated_minutes": 30
+      "complexity": "M",
+      "estimated_minutes": 50
     }
   ]
 }
