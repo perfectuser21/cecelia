@@ -721,6 +721,21 @@ async function onBrainListening() {
     console.warn('[Server] Conversation Consolidator init failed (non-fatal):', e.message);
   }
 
+  // Initialize Daily Memory Consolidation (每 30 分钟轮询，内部 elapsed-time 闸门按 CONSOLIDATION_INTERVAL_HOURS 节流)
+  // Wave 2 重构后 tick-runner.js 已废弃，原 step 10.x 调用断点；此处恢复独立调度，修 PROBE_FAIL_CONSOLIDATION 真因
+  try {
+    const { runDailyConsolidationIfNeeded } = await import('./src/consolidation.js');
+    setTimeout(async () => {
+      try { await runDailyConsolidationIfNeeded(pool); } catch (e) { console.warn('[Server] Daily consolidation initial run failed:', e.message); }
+    }, 60 * 1000);
+    setInterval(async () => {
+      try { await runDailyConsolidationIfNeeded(pool); } catch (e) { console.warn('[Server] Daily consolidation failed:', e.message); }
+    }, 30 * 60 * 1000);
+    console.log('[Server] Daily Consolidation scheduled (30min poll, internal elapsed-time gate)');
+  } catch (e) {
+    console.warn('[Server] Daily Consolidation init failed (non-fatal):', e.message);
+  }
+
   // Initialize Promotion Job Loop (P1)
   const { startPromotionJobLoop } = await import('./src/promotion-job.js');
   startPromotionJobLoop();
