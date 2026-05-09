@@ -2,25 +2,25 @@
 
 ## 验收清单
 
-- [ ] [BEHAVIOR] harnessSubTaskWorktreePath(init, logical) 返回 task-<init8>-<logical> 路径
+- [x] [BEHAVIOR] harnessSubTaskWorktreePath(init, logical) 返回 task-<init8>-<logical> 路径
   Test: tests/brain/h11-subtask-worktree-key.test.js
 
-- [ ] [BEHAVIOR] ensureHarnessWorktree opts.wtKey 优先于 shortTaskId(taskId) 计算路径
+- [x] [BEHAVIOR] ensureHarnessWorktree opts.wtKey 优先于 shortTaskId(taskId) 计算路径
   Test: tests/brain/h11-subtask-worktree-key.test.js
 
-- [ ] [BEHAVIOR] ensureHarnessWorktree 配 wtKey 时接受短 taskId 不 throw
+- [x] [BEHAVIOR] ensureHarnessWorktree 配 wtKey 时接受短 taskId 不 throw
   Test: tests/brain/h11-subtask-worktree-key.test.js
 
-- [ ] [BEHAVIOR] sub-graph spawnNode 调 ensureWt 时 opts.wtKey = `<init8>-<logical>`
+- [x] [BEHAVIOR] sub-graph spawnNode 调 ensureWt 时 opts.wtKey = `<init8>-<logical>`
   Test: tests/brain/h11-subtask-worktree-key.test.js
 
-- [ ] [BEHAVIOR] evaluateSubTaskNode worktreePath = harnessSubTaskWorktreePath(initiativeId, sub_task.id)
+- [x] [BEHAVIOR] evaluateSubTaskNode worktreePath = harnessSubTaskWorktreePath(initiativeId, sub_task.id)
   Test: tests/brain/h11-subtask-worktree-key.test.js
 
-- [ ] [ARTIFACT] harness-worktree.js export harnessSubTaskWorktreePath + harnessSubTaskBranchName + ensureHarnessWorktree 含 wtKey
+- [x] [ARTIFACT] harness-worktree.js export harnessSubTaskWorktreePath + harnessSubTaskBranchName + ensureHarnessWorktree 含 wtKey
   Test: manual:node -e "const c=require('fs').readFileSync('packages/brain/src/harness-worktree.js','utf8');if(!/export function harnessSubTaskWorktreePath/.test(c))process.exit(1);if(!/export function harnessSubTaskBranchName/.test(c))process.exit(1);if(!/opts\.wtKey/.test(c))process.exit(1)"
 
-- [ ] [ARTIFACT] 测试文件存在
+- [x] [ARTIFACT] 测试文件存在
   Test: manual:node -e "require('fs').accessSync('tests/brain/h11-subtask-worktree-key.test.js')"
 
 ## Learning
