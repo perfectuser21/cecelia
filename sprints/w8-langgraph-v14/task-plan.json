@@ -5,30 +5,32 @@
   "tasks": [
     {
       "task_id": "ws1",
-      "title": "trigger.sh：注册 harness_initiative + 60s consciousness loop fail-fast + 轮询至 status=completed",
-      "scope": "在 sprints/w8-langgraph-v14/scripts/trigger.sh 写一个 bash 脚本：(1) curl POST localhost:5221/api/brain/tasks 注册 task_type=harness_initiative，PRD 内容是 '在 sprints/w8-langgraph-v14-demo/ 下创建 hello.txt 写 hello world'；(2) 把返回的 id 写入 /tmp/v14-initiative-task-id；(3) **60s 内 fail-fast 校验：每 5s 查 harness_initiatives 表 root_task_id 匹配行是否存在，不存在则 exit 2（防 cascade 失败：tasks 行成功但 Brain consciousness loop 未拉起 pipeline）**；(4) while 轮询 psql 直到 tasks 表对应行 status=completed（含 fail-fast 检测 status=failed），超时上限 90 分钟。不修改 packages/* 任何代码。",
+      "title": "trigger.sh：注册 harness_initiative + 60s consciousness loop fail-fast (R1) + GENERATOR 30min stall fail-fast (R5) + 轮询至 status=completed",
+      "scope": "在 sprints/w8-langgraph-v14/scripts/trigger.sh 写一个 bash 脚本：(1) curl POST localhost:5221/api/brain/tasks 注册 task_type=harness_initiative，PRD 内容是 '在 sprints/w8-langgraph-v14-demo/ 下创建 hello.txt 写 hello world'；(2) 把返回的 id 写入 /tmp/v14-initiative-task-id；(3) **R1 mitigation: 60s 内 fail-fast 校验（每 5s 查 harness_initiatives 表 root_task_id 匹配行是否存在，不存在则 exit 2）**；(4) while 轮询 psql 直到 tasks 表对应行 status=completed（含 fail-fast 检测 status=failed），超时上限 90 分钟；(5) **R5 mitigation: 轮询循环内每次检查 harness_state_transitions 表中最新一条 to_state='GENERATOR' 的 created_at，若距今 > 30min 且未离开 GENERATOR 节点 → exit 3 fail-fast（防 codex 凭据缺失死循环）**。不修改 packages/* 任何代码。",
       "dod": [
         "[BEHAVIOR] 执行 bash trigger.sh 后 /tmp/v14-initiative-task-id 含合法 UUID 且 tasks 表对应行最终 status=completed（见 tests/ws1/trigger-and-wait.test.ts）",
-        "[BEHAVIOR] trigger.sh 60s 内确认 harness_initiatives 派生行存在，未派生则 exit 2 fail-fast（见 tests/ws1/trigger-and-wait.test.ts L57）",
+        "[BEHAVIOR] trigger.sh 60s 内确认 harness_initiatives 派生行存在，未派生则 exit 2 fail-fast — R1（见 tests/ws1/trigger-and-wait.test.ts L57）",
+        "[BEHAVIOR] trigger.sh 含 GENERATOR 节点停留 > 30min 即 exit 3 fail-fast 段落 — R5（见 tests/ws1/trigger-and-wait.test.ts L80）",
         "[ARTIFACT] sprints/w8-langgraph-v14/scripts/trigger.sh 存在且可执行（chmod +x）",
-        "[ARTIFACT] trigger.sh 含 /api/brain/tasks + harness_initiative + /tmp/v14-initiative-task-id + harness_initiatives + 60s/fail-fast + 轮询关键字"
+        "[ARTIFACT] trigger.sh 含 /api/brain/tasks + harness_initiative + /tmp/v14-initiative-task-id + harness_initiatives + 60s/fail-fast + 轮询 + GENERATOR + harness_state_transitions + 30 + exit 3 关键字"
       ],
       "files": [
         "sprints/w8-langgraph-v14/scripts/trigger.sh"
       ],
       "depends_on": [],
       "complexity": "S",
-      "estimated_minutes": 35
+      "estimated_minutes": 45
     },
     {
       "task_id": "ws2",
-      "title": "collect-evidence.sh：从 DB + gh CLI 渲染 5 key 到 run-evidence.md（含 PR 反造假实证）",
-      "scope": "在 sprints/w8-langgraph-v14/scripts/collect-evidence.sh 写一个 bash 脚本：(1) 读 /tmp/v14-initiative-task-id 拿 INITIATIVE_TASK_ID；(2) 查 tasks 表拿最终 status；(3) 查 tasks 表 parent_task_id 拿 generator sub_task 的 result.pr_url；(4) **调 gh pr view 拿 PR state 校验真实存在并校验 state ∈ {OPEN,MERGED}（防 result 字段假写 URL 造假）**；(5) 查 harness_state_transitions 表统计节点耗时与 GAN proposer 轮数；(6) 渲染到 sprints/w8-langgraph-v14/run-evidence.md，必含 5 个 key（initiative_task_id / tasks_table_status / pr_url / gan_proposer_rounds / node_durations），格式 'key: value'。不修改 packages/* 任何代码。",
+      "title": "collect-evidence.sh：从 DB + gh CLI 渲染 6 key（含 evaluator_worktree_path — R4）到 run-evidence.md",
+      "scope": "在 sprints/w8-langgraph-v14/scripts/collect-evidence.sh 写一个 bash 脚本：(1) 读 /tmp/v14-initiative-task-id 拿 INITIATIVE_TASK_ID；(2) 查 tasks 表拿最终 status；(3) 查 tasks 表 parent_task_id 拿 generator sub_task 的 result.pr_url；(4) **R2 mitigation: 调 gh pr view 拿 PR state 校验真实存在（state ∈ {OPEN,MERGED}）**；(5) 查 harness_state_transitions 表统计节点耗时与 GAN proposer 轮数；(6) **R4 mitigation: 从 evaluator subtask 的 result/payload JSON 字段或 transition metadata 中读取 evaluator 实际工作的 worktree 路径（H8 修复后该路径必须是 generator 的 task worktree，命名前缀为 'task-'），写到 evaluator_worktree_path key**；(7) 渲染到 sprints/w8-langgraph-v14/run-evidence.md，必含 6 个 key（initiative_task_id / tasks_table_status / pr_url / gan_proposer_rounds / node_durations / evaluator_worktree_path），格式 'key: value'。不修改 packages/* 任何代码。",
       "dod": [
-        "[BEHAVIOR] 执行 bash collect-evidence.sh 后 run-evidence.md 含 5 key 全非占位且 mtime 在 2h 内（见 tests/ws2/collect-evidence.test.ts）",
-        "[BEHAVIOR] run-evidence.md 中 pr_url 经 gh pr view 校验真实存在且 state ∈ {OPEN,MERGED}（见 tests/ws2/collect-evidence.test.ts L75）",
+        "[BEHAVIOR] 执行 bash collect-evidence.sh 后 run-evidence.md 含 6 key 全非占位且 mtime 在 2h 内（见 tests/ws2/collect-evidence.test.ts L50）",
+        "[BEHAVIOR] run-evidence.md 中 pr_url 经 gh pr view 校验真实存在且 state ∈ {OPEN,MERGED} — R2（见 tests/ws2/collect-evidence.test.ts L75）",
+        "[BEHAVIOR] run-evidence.md 中 evaluator_worktree_path 含 task- 前缀 — R4（见 tests/ws2/collect-evidence.test.ts L86）",
         "[ARTIFACT] sprints/w8-langgraph-v14/scripts/collect-evidence.sh 存在且可执行",
-        "[ARTIFACT] collect-evidence.sh 含 tasks / parent_task_id / harness_state_transitions / gh pr view + state/OPEN/MERGED 关键字与硬编码输出路径"
+        "[ARTIFACT] collect-evidence.sh 含 tasks / parent_task_id / harness_state_transitions / gh pr view + state/OPEN/MERGED + evaluator_worktree_path + task- 关键字与硬编码输出路径"
       ],
       "files": [
         "sprints/w8-langgraph-v14/scripts/collect-evidence.sh",
@@ -36,7 +38,7 @@
       ],
       "depends_on": ["ws1"],
       "complexity": "S",
-      "estimated_minutes": 45
+      "estimated_minutes": 50
     }
   ]
 }
