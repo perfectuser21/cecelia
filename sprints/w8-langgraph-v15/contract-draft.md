@@ -1,8 +1,18 @@
-# Sprint Contract Draft (Round 1)
+# Sprint Contract Draft (Round 2)
 
 **Sprint**: W8 v15 真端到端验证（status=completed）
 **journey_type**: autonomous
 **Source PRD**: `sprints/w8-langgraph-v15/sprint-prd.md`
+
+---
+
+## Round 2 修订总结
+
+回应 Reviewer round 1 反馈：
+
+- **test_is_red 强化**：在 §E2E 验收 bash 最前面增加"测试红绿门"——`npx vitest run` 三个 WS 测试文件，红即 `exit 1`，把单测红绿绑进 exit code 链，不再只在 Test Contract 表格里文字声明。
+- **internal_consistency 强化**：Step 1 / Step 2 / Step 3 改为"段落级 DoD 摘要"（保留每步 1-2 行核心断言便于评估器节点级理解），完整 bash 只在 §E2E 验收 出现一次。摘要里的引用用 `(详见 §E2E 验收 — 步骤 ①/②/③ 第 NN-MM 行)`，避免双份维护。
+- 每个 WS 的"BEHAVIOR 覆盖测试文件"下增加"**未实现时跑 → exit=1，断言位置**"行，明示 Red 落点。
 
 ---
 
@@ -41,21 +51,11 @@ PRD 文字层面用了"`harness_initiatives` / `harness_tasks` 行 status='compl
 **可观测行为**：在 `tasks` 表新增一行 `task_type='harness_initiative'`，`status='queued'`，
 payload 含一个最小可批准的测试 PRD（约 3-5 行 Golden Path，能 ≤30min 跑完）。返回的 `INITIATIVE_ID` 是合法 UUID。
 
-**验证命令**：
-```bash
-INITIATIVE_ID=$(node scripts/v15-dispatch.mjs)
-# 期望：stdout 单行 UUID，scripts/v15-dispatch.mjs 进程 exit 0
-echo "$INITIATIVE_ID" | grep -Eq '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+**段落级 DoD 摘要**（核心断言，1-2 行）：
+- `INITIATIVE_ID` 匹配正则 `^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`
+- `tasks` 表存在该行，`task_type='harness_initiative'` 且 `created_at > NOW() - interval '5 minutes'`（防 stale）
 
-# DB 校验 — 该 task 真的刚刚被插入，task_type 正确，状态在合法集合内
-psql "$DATABASE_URL" -tAc "
-  SELECT 1 FROM tasks
-  WHERE id='$INITIATIVE_ID'
-    AND task_type='harness_initiative'
-    AND status IN ('queued','in_progress','completed','failed')
-    AND created_at > NOW() - interval '5 minutes'
-" | grep -q 1
-```
+**完整验证命令**：详见 §E2E 验收 — 步骤 ① 派发（第 130-140 行）。
 
 **硬阈值**：UUID 格式合法；DB 行存在；`created_at` 在最近 5 分钟内（防止用历史 INITIATIVE_ID 造假）；脚本耗时 < 30s。
 
@@ -66,27 +66,11 @@ psql "$DATABASE_URL" -tAc "
 **可观测行为**：脚本轮询 `initiative_runs.phase` 转换，记录每一阶段进入时间到 `.v15/timeline.log`；
 直到 phase ∈ {done, failed} 或 30min 超时退出。timeline 文件至少含 1 条 entry，超时也记录 `TIMEOUT` entry。
 
-**验证命令**：
-```bash
-# 阻塞执行（脚本内部超时 30min；退出码 0=终态正常达成、1=超时、2=参数/连接错误）
-node scripts/v15-watch.mjs "$INITIATIVE_ID"
-WATCH_EXIT=$?
-[ "$WATCH_EXIT" -eq 0 ] || [ "$WATCH_EXIT" -eq 1 ]  # 超时也是允许的可观测结果
+**段落级 DoD 摘要**（核心断言，1-2 行）：
+- `node scripts/v15-watch.mjs` 退出码 ∈ {0, 1}（0=终态正常，1=超时；2=连接/参数错误为不通过）
+- `.v15/timeline.log` 非空且至少含一行匹配 `\t(A_contract|B_task_loop|C_final_e2e|done|failed|TIMEOUT)$`
 
-# timeline.log 必须存在且非空
-[ -s .v15/timeline.log ]
-
-# timeline 必须含至少一条 phase entry，每行格式：ISO_TIMESTAMP\tPHASE
-grep -Eq '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}.*\t(A_contract|B_task_loop|C_final_e2e|done|failed|TIMEOUT)$' .v15/timeline.log
-
-# DB 终态校验 — initiative_runs 行已落库且 phase 是终态或仍在跑
-psql "$DATABASE_URL" -tAc "
-  SELECT phase FROM initiative_runs
-  WHERE initiative_id='$INITIATIVE_ID'
-    AND created_at > NOW() - interval '35 minutes'
-  ORDER BY created_at DESC LIMIT 1
-" | grep -Eq '^(A_contract|B_task_loop|C_final_e2e|done|failed)$'
-```
+**完整验证命令**：详见 §E2E 验收 — 步骤 ② 阻塞观察（第 142-153 行）。
 
 **硬阈值**：watch exit ∈ {0, 1}；timeline.log 非空且格式合法；DB 中 initiative_runs 行存在且 phase 在合法集合内。
 
@@ -102,40 +86,11 @@ psql "$DATABASE_URL" -tAc "
   （取自 `tasks.error_message`、`initiative_runs.failure_reason`、`task_events`，至少一条非空）
 - `## Generated at:` ISO timestamp
 
-**验证命令**：
-```bash
-node scripts/v15-report.mjs "$INITIATIVE_ID"
-[ "$?" -eq 0 ]
+**段落级 DoD 摘要**（核心断言，1-2 行）：
+- 报告文件 ≥ 500 bytes，且 `grep -cE '^## Verdict: (PASS|FAIL)$'` 恰好 = 1
+- `## Generated at:` 时间戳在最近 1 小时内（防陈旧报告）；Verdict=FAIL 时必含 `### Failure Node: <node_name>` 段
 
-# 报告文件存在且 ≥ 500 bytes（防空模板）
-[ -s sprints/w8-langgraph-v15/run-report.md ]
-[ "$(wc -c < sprints/w8-langgraph-v15/run-report.md)" -ge 500 ]
-
-# 必含 Verdict 行 — 恰好一行 PASS 或 FAIL
-VERDICT_COUNT=$(grep -cE '^## Verdict: (PASS|FAIL)$' sprints/w8-langgraph-v15/run-report.md)
-[ "$VERDICT_COUNT" -eq 1 ]
-
-# 必含 Generated at —— ISO timestamp，时间在最近 1 小时内（防陈旧报告）
-GEN_TS=$(grep -E '^## Generated at: ' sprints/w8-langgraph-v15/run-report.md | head -1 | sed 's/^## Generated at: //')
-[ -n "$GEN_TS" ]
-node -e "
-  const ts = new Date(process.argv[1]).getTime();
-  const now = Date.now();
-  if (isNaN(ts)) process.exit(1);
-  if (now - ts > 3600 * 1000) process.exit(1);  // > 1h 算陈旧
-" "$GEN_TS"
-
-# 三件齐全检查
-grep -qE '^## Sprint Trinity Check' sprints/w8-langgraph-v15/run-report.md
-[ -f sprints/w8-langgraph-v15/sprint-prd.md ]
-[ -f sprints/w8-langgraph-v15/sprint-contract.md ]
-[ -f sprints/w8-langgraph-v15/task-plan.json ]
-
-# 如 Verdict=FAIL 必须含 Failure Node 段且非空
-if grep -q '^## Verdict: FAIL$' sprints/w8-langgraph-v15/run-report.md; then
-  grep -qE '^### Failure Node: [A-Za-z_][A-Za-z0-9_]+' sprints/w8-langgraph-v15/run-report.md
-fi
-```
+**完整验证命令**：详见 §E2E 验收 — 步骤 ③ 报告（第 155-186 行）。
 
 **硬阈值**：报告 ≥500 bytes；Verdict 行恰好 1 条；Generated at 在最近 1 小时内；三件齐全；
 FAIL 时必含 Failure Node 段。
@@ -146,18 +101,33 @@ FAIL 时必含 Failure Node 段。
 
 **journey_type**: autonomous
 
-**完整验证脚本**：
+**完整验证脚本**（**全合同 bash 唯一出现处**，Step 1/2/3 段落级摘要不重复粘贴）：
+
 ```bash
 #!/bin/bash
 set -euo pipefail
 
 cd "${WORKSPACE_DIR:-$(pwd)}"  # 假定在 repo 根目录
 
+# ============================================================
+# 测试红绿门 — 实现前必红、实现后必绿
+# 把单测的红绿状态绑进 exit code 链，而不是只在 Test Contract 文字层声明。
+# 三个 WS 测试文件全 GREEN 才允许进入运行时 E2E；任一 RED 立即 exit 1。
+# ============================================================
+set +e
+npx vitest run \
+  sprints/w8-langgraph-v15/tests/ws1/dispatch.test.ts \
+  sprints/w8-langgraph-v15/tests/ws2/watch.test.ts \
+  sprints/w8-langgraph-v15/tests/ws3/report.test.ts
+TEST_RC=$?
+set -e
+[ "$TEST_RC" -eq 0 ] || { echo "FAIL: unit tests red, implementation incomplete (rc=$TEST_RC)"; exit 1; }
+
 # 0. 准备 — DATABASE_URL 必须可用
 [ -n "${DATABASE_URL:-}" ] || { echo "ERROR: DATABASE_URL not set"; exit 2; }
 psql "$DATABASE_URL" -tAc "SELECT 1" | grep -q 1 || { echo "ERROR: DB unreachable"; exit 2; }
 
-# 1. 派发
+# === 步骤 ① 派发 ===
 INITIATIVE_ID=$(node scripts/v15-dispatch.mjs)
 echo "$INITIATIVE_ID" | grep -Eq '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' \
   || { echo "FAIL: dispatch did not return valid UUID"; exit 1; }
@@ -169,7 +139,7 @@ psql "$DATABASE_URL" -tAc "
     AND created_at > NOW() - interval '5 minutes'
 " | grep -q 1 || { echo "FAIL: dispatch row stale or not found"; exit 1; }
 
-# 2. 阻塞观察（内部 30min 超时）
+# === 步骤 ② 阻塞观察（内部 30min 超时） ===
 set +e
 node scripts/v15-watch.mjs "$INITIATIVE_ID"
 WATCH_EXIT=$?
@@ -182,7 +152,7 @@ set -e
 grep -Eq '\t(A_contract|B_task_loop|C_final_e2e|done|failed|TIMEOUT)$' .v15/timeline.log \
   || { echo "FAIL: timeline.log no phase entry"; exit 1; }
 
-# 3. 报告
+# === 步骤 ③ 报告 ===
 node scripts/v15-report.mjs "$INITIATIVE_ID"
 
 [ -s sprints/w8-langgraph-v15/run-report.md ] || { echo "FAIL: report missing"; exit 1; }
@@ -224,6 +194,10 @@ echo "✅ Golden Path 验证通过"
 - v15 真实失败但报告诚实归因到具体节点（如 `### Failure Node: planner_node` + 错误日志摘要）→ 合同通过
 - 这与 PRD 的"如果 v15 失败，根因要被准确归到具体节点"完全一致
 
+**红绿门工作机制**：
+- **实现前**（Round 2 当前提交时刻）：`scripts/v15-{dispatch,watch,report}.mjs` 全不存在，三个 vitest 文件全 import 失败 → `TEST_RC≠0` → 红绿门 exit 1，整段 E2E 不会跑
+- **实现后**（Generator 写完三个 .mjs）：vitest GREEN → `TEST_RC=0` → 进入运行时 E2E
+
 ---
 
 ## Workstreams
@@ -247,6 +221,8 @@ workstream_count: 3
 - 失败必抛错（`process.exitCode = 2`）
 
 **BEHAVIOR 覆盖测试文件**：`tests/ws1/dispatch.test.ts`
+- **未实现时跑 → exit=1**（`scripts/v15-dispatch.mjs` 不存在，全部 4 个 it() 在 import 阶段 ERR_MODULE_NOT_FOUND）
+- **断言位置（实现后第一个变绿的关键断言）**：`expect(payload.initiative_id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/)`（dispatch.test.ts:13）
 
 ---
 
@@ -269,6 +245,8 @@ workstream_count: 3
 - TIMEOUT 也必须 append 一行到 timeline.log
 
 **BEHAVIOR 覆盖测试文件**：`tests/ws2/watch.test.ts`
+- **未实现时跑 → exit=1**（`scripts/v15-watch.mjs` 不存在，全部 4 个 it() 在 import 阶段 ERR_MODULE_NOT_FOUND）
+- **断言位置（实现后第一个变绿的关键断言）**：`expect(mod.isTerminalPhase('done')).toBe(true)`（watch.test.ts:11）
 
 ---
 
@@ -299,6 +277,8 @@ task_events），写出 `sprints/w8-langgraph-v15/run-report.md`，含：
 - 报告写完后 `process.exit(0)`，即使 Verdict=FAIL 也 exit 0（合同验证另判）
 
 **BEHAVIOR 覆盖测试文件**：`tests/ws3/report.test.ts`
+- **未实现时跑 → exit=1**（`scripts/v15-report.mjs` 不存在，全部 8 个 it() 在 import 阶段 ERR_MODULE_NOT_FOUND）
+- **断言位置（实现后第一个变绿的关键断言）**：`expect(v).toBe('PASS')`（report.test.ts:16，computeVerdict 全绿条件返回 'PASS'）
 
 ---
 
@@ -306,9 +286,12 @@ task_events），写出 `sprints/w8-langgraph-v15/run-report.md`，含：
 
 | Workstream | Test File | BEHAVIOR 覆盖 | 预期红证据 |
 |---|---|---|---|
-| WS1 | `tests/ws1/dispatch.test.ts` | 解析返回 UUID 格式合法；payload 结构含 initiative_id/prd/journey_type；缺 DATABASE_URL 时 exit 2 | WS1 → 4 failures（模块未实现） |
+| WS1 | `tests/ws1/dispatch.test.ts` | 解析返回 UUID 格式合法；payload 结构含 initiative_id/prd/journey_type；缺 DATABASE_URL 时 exit 2 | WS1 → 4 failures（模块未实现，import ERR_MODULE_NOT_FOUND） |
 | WS2 | `tests/ws2/watch.test.ts` | `isTerminalPhase('done')===true`；`isTerminalPhase('B_task_loop')===false`；timeline 行格式 `ISO\tPHASE`；超时退出码 1 | WS2 → 4 failures |
-| WS3 | `tests/ws3/report.test.ts` | `computeVerdict({task_status:'completed', phase:'done', sub_tasks:[completed,completed]})==='PASS'`；任一 FAIL 即 'FAIL'；`extractFailureNode(events)` 优先取最后 error 事件；markdown 含必要段头 | WS3 → 5 failures |
+| WS3 | `tests/ws3/report.test.ts` | `computeVerdict({task_status:'completed', phase:'done', sub_tasks:[completed,completed]})==='PASS'`；任一 FAIL 即 'FAIL'；`extractFailureNode(events)` 优先取最后 error 事件；markdown 含必要段头 | WS3 → 8 failures |
+
+**红绿门绑定**：上表"预期红证据"由 §E2E 验收 bash 顶部的 `npx vitest run` 直接跑出 `TEST_RC≠0`，
+进而触发 `exit 1`，使得"实现前 E2E 不可能 PASS"成为 exit code 链的硬约束（不依赖人读 Test Contract 文字）。
 
 ---
 
