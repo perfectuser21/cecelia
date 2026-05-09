@@ -947,6 +947,9 @@ export async function runSubTaskNode(state, opts = {}) {
     description: subTask.description,
     payload: {
       ...subTask.payload,
+      // 注入 logical_task_id（如 "ws1"）让 spawnNode extractWorkstreamIndex 解出 WORKSTREAM_INDEX。
+      // generator skill 检测到 WORKSTREAM_INDEX 空就 ABORT（dispatch 协议 fail）。
+      logical_task_id: subTask.id,
       ...(fixCount > 0 && feedback ? { fix_round: fixCount, evaluator_feedback: feedback } : {}),
     },
   };
@@ -959,7 +962,10 @@ export async function runSubTaskNode(state, opts = {}) {
       {
         task: taskForGraph,
         initiativeId: state.initiativeId,
-        worktreePath: state.worktreePath,
+        // 不传 state.worktreePath — initiative worktree HEAD 在 contract branch（GAN proposer push）。
+        // sub_task generator 期待 fresh worktree off main，让 sub-graph spawnNode 自己
+        // ensureHarnessWorktree 建独立 worktree（用 sub_task.id 作 key）。
+        // worktreePath: state.worktreePath,
         githubToken: state.githubToken,
         contractBranch: state.contractBranch || state.ganResult?.propose_branch || null,
       },

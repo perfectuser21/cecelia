@@ -1,7 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-const getPgCheckpointerMock = vi.fn();
-const runGanContractGraphMock = vi.fn();
+// 用 vi.hoisted 让 mock fn 在 vi.mock factory 内可用（vi.mock 被 hoisted 到顶部）
+const { getPgCheckpointerMock, runGanContractGraphMock } = vi.hoisted(() => ({
+  getPgCheckpointerMock: vi.fn(),
+  runGanContractGraphMock: vi.fn(),
+}));
 
 vi.mock('../../orchestrator/pg-checkpointer.js', () => ({
   getPgCheckpointer: getPgCheckpointerMock,
