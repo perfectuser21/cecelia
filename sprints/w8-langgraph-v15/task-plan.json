@@ -1,0 +1,24 @@
+{
+  "initiative_id": "pending",
+  "journey_type": "dev_pipeline",
+  "journey_type_reason": "任务跑的是 LangGraph harness 自身端到端链路（planner→proposer→reviewer→generator→evaluator），属 packages/engine + packages/brain 共同构成的开发流水线验证，目标是闭环 dev pipeline 自证可达 status=completed，不涉及 dashboard UI 也不涉及远端 agent 协议变更",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "写 Walking Skeleton noop 实证笔记 docs/learnings/w8-langgraph-v15-e2e.md",
+      "scope": "generator 节点产出 docs/learnings/w8-langgraph-v15-e2e.md 单一 markdown 文件：首行精确含 'W8 v15 LangGraph E2E 实证'，body 含 journey_type=dev_pipeline / W8 KR 对齐句 / H7-H13 修复链路引用（≥5 个 H 编号）/ 4 项实证字段占位（node_durations、gan_proposer_rounds、pr_url、run_date）。严禁改 packages/brain、packages/engine、packages/workflows 任何运行时代码或配置。",
+      "dod": [
+        "[BEHAVIOR] fs.readFileSync('docs/learnings/w8-langgraph-v15-e2e.md','utf8') 不抛 ENOENT 且首行含 'W8 v15 LangGraph E2E 实证'（tests/ws1/walking-skeleton.test.ts 第 1+2 个 it）",
+        "[BEHAVIOR] 文件 body 含 journey_type=dev_pipeline + 4 项实证字段占位（tests/ws1/walking-skeleton.test.ts 第 3+4 个 it）",
+        "[ARTIFACT] docs/learnings/w8-langgraph-v15-e2e.md 文件存在",
+        "[ARTIFACT] git diff origin/main...HEAD 不包含 packages/brain|engine|workflows 下任何文件改动"
+      ],
+      "files": [
+        "docs/learnings/w8-langgraph-v15-e2e.md"
+      ],
+      "depends_on": [],
+      "complexity": "S",
+      "estimated_minutes": 25
+    }
+  ]
+}
