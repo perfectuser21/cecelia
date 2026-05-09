@@ -88,6 +88,8 @@ function makeCtx(overrides = {}) {
     worktreePath: '/tmp/wt/conv',
     githubToken: 'ghs_test',
     readContractFile: vi.fn(async () => '# Contract content'),
+    // H10: reviewer 节点不调 fetchOriginFile，但 ctx DI 后默认会真跑 git，加 mock 防御。
+    fetchOriginFile: vi.fn(async () => '{"tasks":[]}'),
     ...overrides,
   };
 }
