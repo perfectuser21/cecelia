@@ -71,66 +71,72 @@ function runScript(brainPort: number, env: Record<string, string> = {}) {
 }
 
 describe('Workstream 2 — 终态写回验证脚本 [BEHAVIOR]', () => {
-  it('脚本文件存在且可执行', () => {
+  it('脚本文件存在且可执行 (chmod +x)', () => {
     expect(existsSync(SCRIPT)).toBe(true);
     expect(statSync(SCRIPT).mode & 0o111).toBeGreaterThan(0);
   });
 
-  it('status=completed + 字段完整 + 无孤儿 + 无 404 → exit 0', async () => {
+  it('status=completed + 字段完整 + 无孤儿 + 无 404 → exit 0 且 stdout 含 OK 标记', async () => {
     const { server, port } = await startMockBrain(buildFixture());
     try {
       const r = runScript(port);
       expect(r.status).toBe(0);
+      expect(r.stdout).toMatch(/OK|✅|completed/);
     } finally {
       server.close();
     }
   });
 
-  it('status=in_progress（非终态）时返回非 0', async () => {
+  it('status=in_progress（非终态）时 exit 1 且消息含 "非终态" 或 "not.*terminal"', async () => {
     const { server, port } = await startMockBrain(buildFixture({ status: 'in_progress' }));
     try {
       const r = runScript(port);
-      expect(r.status).not.toBe(0);
+      expect(r.status).toBe(1);
+      expect(r.stderr + r.stdout).toMatch(/非终态|not.*terminal|in_progress/);
     } finally {
       server.close();
     }
   });
 
-  it('completed_at 缺失时返回非 0', async () => {
+  it('completed_at 缺失时 exit 1 且消息含 "completed_at"', async () => {
     const { server, port } = await startMockBrain(buildFixture({ completedAt: null }));
     try {
       const r = runScript(port);
-      expect(r.status).not.toBe(0);
+      expect(r.status).toBe(1);
+      expect(r.stderr + r.stdout).toMatch(/completed_at/);
     } finally {
       server.close();
     }
   });
 
-  it('result.branch 缺失时返回非 0', async () => {
+  it('result.branch 缺失时 exit 1 且消息含 "branch"', async () => {
     const { server, port } = await startMockBrain(buildFixture({ resultBranch: null }));
     try {
       const r = runScript(port);
-      expect(r.status).not.toBe(0);
+      expect(r.status).toBe(1);
+      expect(r.stderr + r.stdout).toMatch(/branch/);
     } finally {
       server.close();
     }
   });
 
-  it('存在孤儿 in_progress sub_task 时返回非 0', async () => {
+  it('存在孤儿 in_progress sub_task 时 exit 1 且消息含 "孤儿" 或 "orphan"', async () => {
     const { server, port } = await startMockBrain(buildFixture({ orphanCount: 2 }));
     try {
       const r = runScript(port);
-      expect(r.status).not.toBe(0);
+      expect(r.status).toBe(1);
+      expect(r.stderr + r.stdout).toMatch(/孤儿|orphan/);
     } finally {
       server.close();
     }
   });
 
-  it('dev_record 含 callback 404 时返回非 0', async () => {
+  it('dev_record 含 callback 404 时 exit 1 且消息含 "404"', async () => {
     const { server, port } = await startMockBrain(buildFixture({ has404: true }));
     try {
       const r = runScript(port);
-      expect(r.status).not.toBe(0);
+      expect(r.status).toBe(1);
+      expect(r.stderr + r.stdout).toMatch(/404/);
     } finally {
       server.close();
     }

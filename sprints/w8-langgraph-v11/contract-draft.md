@@ -1,4 +1,10 @@
-# Sprint Contract Draft (Round 1)
+# Sprint Contract Draft (Round 2)
+
+> **Round 2 修订点**（响应 Reviewer R1 反馈）：
+> - Test Contract 表格下方新增"`it` 块断言伪代码"详列每个测试块的具体 `expect` 调用
+> - 合同末尾新增"测试执行命令 + 红证据声明"，明确 `npx vitest run ...` 在脚本未创建时必返回非 0 且 ≥12 个 `it` FAIL
+> - 测试文件 `tests/ws{1,2}/*.test.ts` 已强化每个负向 case 的 `expect(r.status).toBe(1)` + `expect(stderr+stdout).toMatch(...)` 双重断言（脚本缺失时 bash 退出 127 且无业务消息，所有 14 个 it 块全部 FAIL，已实测验证）
+
 
 ## Golden Path
 
@@ -329,5 +335,144 @@ workstream_count: 2
 
 | Workstream | Test File | BEHAVIOR 覆盖 | 预期红证据 |
 |---|---|---|---|
-| WS1 | `tests/ws1/pipeline-trace.test.ts` | (1) 脚本可执行存在且 chmod +x; (2) Brain API 200 时脚本断言通过; (3) generator stdout < 200 bytes 时脚本 exit 1; (4) planner stdout 含 "Cloning into" 时 exit 1; (5) evaluator cwd 不含 worktree 标志时 exit 1; (6) absorption_policy 非法状态时 exit 1 | WS1 → 6 failures（脚本未创建即所有 it 块 fail） |
-| WS2 | `tests/ws2/terminal-state.test.ts` | (1) 脚本可执行存在; (2) status='completed' + 字段完整时 exit 0; (3) status='in_progress'（非终态）时 exit 1; (4) result.branch 缺失时 exit 1; (5) 存在孤儿 in_progress sub_task 时 exit 1; (6) dev_record 含 callback 404 时 exit 1 | WS2 → 6 failures（脚本未创建即所有 it 块 fail） |
+| WS1 | `tests/ws1/pipeline-trace.test.ts` | 7 个 `it` 块（见下方伪代码） | WS1 → 7 failures（脚本未创建时 bash exit 127，`expect(r.status).toBe(1)` 与 `expect(...).toMatch(/具体消息/)` 同时不满足） |
+| WS2 | `tests/ws2/terminal-state.test.ts` | 7 个 `it` 块（见下方伪代码） | WS2 → 7 failures（同上）|
+
+**合计**: 14 个 `it` 块，脚本未创建时全部 FAIL（已实测，见末尾"红证据声明"）
+
+---
+
+### `it` 块断言伪代码（Reviewer R1 反馈：明确每个测试块的具体断言）
+
+#### `tests/ws1/pipeline-trace.test.ts` —— 7 个 it 块
+
+```ts
+import { describe, it, expect } from 'vitest';
+import { spawnSync } from 'node:child_process';
+import { existsSync, statSync } from 'node:fs';
+// 含一个 startMockBrain(fixture) 工厂：起本地 HTTP server 模拟 Brain API
+// 各 case 注入不同 fixture（generatorStdoutLen / plannerStdout / evaluatorCwd / absorptionStatus）
+
+it('脚本文件存在且可执行 (chmod +x)', () => {
+  expect(existsSync(SCRIPT)).toBe(true);
+  expect(statSync(SCRIPT).mode & 0o111).toBeGreaterThan(0);
+});
+
+it('全痕迹齐全场景: stdout 含 OK 标记且 exit 0', async () => {
+  const { port } = await startMockBrain(buildBrainFixture()); // 默认 fixture: 全部痕迹齐全
+  const r = runScript(port);
+  expect(r.status).toBe(0);
+  expect(r.stdout).toMatch(/OK|✅/);
+});
+
+it('generator stdout < 200 bytes 时 exit 1 且 stderr 含 "stdout.*<.*200"（H7 失效）', async () => {
+  const { port } = await startMockBrain(buildBrainFixture({ generatorStdoutLen: 50 }));
+  const r = runScript(port);
+  expect(r.status).toBe(1);
+  expect(r.stderr + r.stdout).toMatch(/stdout.*<.*200/);
+});
+
+it('planner stdout 含 "Cloning into" 时 exit 1 且消息含 "push 噪音"（H9 失效）', async () => {
+  const { port } = await startMockBrain(buildBrainFixture({ plannerStdout: 'Cloning into bare repo...\n' }));
+  const r = runScript(port);
+  expect(r.status).toBe(1);
+  expect(r.stderr + r.stdout).toMatch(/push.*噪音|push.*noise|Cloning/);
+});
+
+it('evaluator cwd 不含 worktree 标志时 exit 1 且消息含 "worktree"（H8 失效）', async () => {
+  const { port } = await startMockBrain(buildBrainFixture({ evaluatorCwd: '/srv/main-repo' }));
+  const r = runScript(port);
+  expect(r.status).toBe(1);
+  expect(r.stderr + r.stdout).toMatch(/worktree/);
+});
+
+it('absorption_policy 状态非法时 exit 1 且消息含 "absorption_policy"（H10 失效）', async () => {
+  const { port } = await startMockBrain(buildBrainFixture({ absorptionStatus: 'fake_applied' }));
+  const r = runScript(port);
+  expect(r.status).toBe(1);
+  expect(r.stderr + r.stdout).toMatch(/absorption_policy/);
+});
+
+it('缺失 TASK_ID 环境变量时 exit 非 0 且消息含 "TASK_ID"', async () => {
+  const r = spawnSync('bash', [SCRIPT], { env: { ...process.env, TASK_ID: '', BRAIN: `127.0.0.1:${port}` }, encoding: 'utf8' });
+  expect(r.status).not.toBe(0);
+  expect(r.stderr + r.stdout).toMatch(/TASK_ID/);
+});
+```
+
+#### `tests/ws2/terminal-state.test.ts` —— 7 个 it 块
+
+```ts
+it('脚本文件存在且可执行 (chmod +x)', () => {
+  expect(existsSync(SCRIPT)).toBe(true);
+  expect(statSync(SCRIPT).mode & 0o111).toBeGreaterThan(0);
+});
+
+it('status=completed + 字段完整 + 无孤儿 + 无 404 → exit 0 且 stdout 含 OK 标记', async () => {
+  const { port } = await startMockBrain(buildFixture()); // 默认终态完整
+  const r = runScript(port);
+  expect(r.status).toBe(0);
+  expect(r.stdout).toMatch(/OK|✅|completed/);
+});
+
+it('status=in_progress（非终态）时 exit 1 且消息含 "非终态" 或 "not.*terminal"', async () => {
+  const { port } = await startMockBrain(buildFixture({ status: 'in_progress' }));
+  const r = runScript(port);
+  expect(r.status).toBe(1);
+  expect(r.stderr + r.stdout).toMatch(/非终态|not.*terminal|in_progress/);
+});
+
+it('completed_at 缺失时 exit 1 且消息含 "completed_at"', async () => {
+  const { port } = await startMockBrain(buildFixture({ completedAt: null }));
+  const r = runScript(port);
+  expect(r.status).toBe(1);
+  expect(r.stderr + r.stdout).toMatch(/completed_at/);
+});
+
+it('result.branch 缺失时 exit 1 且消息含 "branch"', async () => {
+  const { port } = await startMockBrain(buildFixture({ resultBranch: null }));
+  const r = runScript(port);
+  expect(r.status).toBe(1);
+  expect(r.stderr + r.stdout).toMatch(/branch/);
+});
+
+it('存在孤儿 in_progress sub_task 时 exit 1 且消息含 "孤儿" 或 "orphan"', async () => {
+  const { port } = await startMockBrain(buildFixture({ orphanCount: 2 }));
+  const r = runScript(port);
+  expect(r.status).toBe(1);
+  expect(r.stderr + r.stdout).toMatch(/孤儿|orphan/);
+});
+
+it('dev_record 含 callback 404 时 exit 1 且消息含 "404"', async () => {
+  const { port } = await startMockBrain(buildFixture({ has404: true }));
+  const r = runScript(port);
+  expect(r.status).toBe(1);
+  expect(r.stderr + r.stdout).toMatch(/404/);
+});
+```
+
+---
+
+### 测试执行命令 + 红证据声明
+
+**执行命令**（Evaluator 与 CI 直接跑）:
+```bash
+npx vitest run sprints/w8-langgraph-v11/tests/ws1/ sprints/w8-langgraph-v11/tests/ws2/ --reporter=verbose
+```
+
+**Red 红证据保证**（脚本未创建时——即本合同 APPROVED 后 Generator 接手前的状态）:
+- 命令 exit code 必为非 0
+- 报告必显示 `Tests  14 failed (14)`（即至少 12 个 `it` FAIL，实际全部 14 个 FAIL）
+- 失败模式：bash 找不到 `scripts/verify-pipeline-trace.sh` / `scripts/verify-terminal-state.sh` → exit 127 → `expect(r.status).toBe(1)` 与 `expect(stderr+stdout).toMatch(/具体业务消息/)` 双断言均不满足
+
+**Green 绿证据保证**（脚本由 Generator 创建并实现后）:
+- 命令 exit 0
+- 14/14 PASS（每个 `it` 块的 mock fixture 与脚本期望的 Brain API 响应一致时，脚本应按合同 Step 1-6 的硬阈值给出对应 exit code 与消息）
+
+**Round-2 实测红证据**（本轮 Proposer 已运行验证，证明测试设计正确）:
+```
+$ npx vitest run sprints/w8-langgraph-v11/tests/ws1/ sprints/w8-langgraph-v11/tests/ws2/ --reporter=verbose
+ Test Files  2 failed (2)
+      Tests  14 failed (14)
+```
+脚本未创建时 14 个 `it` 块全部 FAIL，证明测试不会因为"什么都没写"而误判 PASS（防 Generator 写空脚本作弊）。
