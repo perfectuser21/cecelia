@@ -1,5 +1,35 @@
 # Cecelia Core Learnings
 
+### [2026-05-07] PROBE_FAIL_CONSOLIDATION — 窄时间窗口 + 按日去重导致永远无法自愈
+
+**背景**：`capability-probe.probeConsolidation` 检查 `memory_stream` 中 `source_type='daily_consolidation'` 在最近 48h 是否有记录。线上观测到 `48h_consolidations=0 last_run=never` 且持续无法恢复。
+
+**根因**：`consolidation.js` 的旧 `runDailyConsolidationIfNeeded` 使用两层闸门：
+1. `shouldRunConsolidation()` 仅在 UTC `0/4/8/12/16/20` 整时刻的前 5 分钟返回 true。Tick 间隔约 5 分钟，意味着每个窗口最多只有 1 次触发机会。任何错过（Brain 重启、tick 漂移、fire-and-forget 静默吞错）都得等 4 小时；
+2. `hasTodayConsolidation()` 按 UTC 日期对 `daily_logs` 去重，一旦当日错过任一窗口，整天再无补救机会。
+
+两者叠加 → 一次"窗口外重启"就会让 last_run 永远停留在 never。
+
+#### 修复
+
+`consolidation.js`：
+- 新增 `shouldRunByElapsed(pool, now, intervalHours)`：查询 `memory_stream` 中 `daily_consolidation` 的 `MAX(created_at)`，若为空或距今 ≥ intervalHours 即返回 `shouldRun=true`。与 `capability-probe` 同源，保证探针看到的"never"和闸门看到的"never"一致。
+- `runDailyConsolidationIfNeeded` 与 `runDailyConsolidation` 都改用上述 elapsed 判断；`shouldRunConsolidation` / `hasTodayConsolidation` 标记 deprecated 仅供历史用例。
+
+`vitest.config.js`：
+- `consolidation.test.js` 是纯 mock 单元测试（无 db.js 真连接），从 brain-unit exclude 列表移除，让 CI 能跑到。
+
+#### 证据规则
+
+> 任何依赖"特定时间窗口触发"的循环都必须有兜底；最简兜底是基于实际 last_run 的 elapsed 判断，而不是再加一层窗口。
+
+#### 下次预防
+
+- 见到 `last_run=never` + 探针周期足够长（>=2× 触发间隔）时，先怀疑闸门逻辑而非业务实现。
+- 任何"按日去重"的代码，若实际触发间隔 < 24h，必为 bug。
+
+---
+
 ### [2026-05-02] PROBE_FAIL_RUMINATION — invoke 心跳错误放置导致 budget_exhausted 误判为 loop_dead
 
 **背景**：`runRumination()` 的 `rumination_invoke` 心跳事件写在 `hasBudget()` 检查**之后**，导致预算耗尽时函数提前返回、心跳不写入，探针看到 `invocations_24h=0` 就错误诊断为 `loop_dead`（consciousness 禁用），而真实原因是 `budget_exhausted`（预算耗尽）。
