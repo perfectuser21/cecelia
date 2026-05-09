@@ -1,3 +1,5 @@
+# brain_boot_time_pre=2026-05-09T08:30:00Z
+# brain_boot_time_post=2026-05-09T08:30:00Z
 [fixture-fail] node=plan verdict=DONE
 [fixture-fail] node=propose verdict=PROPOSED
 [fixture-fail] node=review verdict=APPROVED

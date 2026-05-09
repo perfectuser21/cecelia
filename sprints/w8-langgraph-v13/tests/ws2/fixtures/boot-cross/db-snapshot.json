@@ -1,0 +1,16 @@
+{
+  "initiative": {
+    "id": "00000000-0000-0000-0000-000000000004",
+    "task_type": "harness_initiative",
+    "status": "in_progress",
+    "result": null
+  },
+  "review_approved_count": 1,
+  "max_rounds_hit": 0,
+  "subtasks_without_logical_task_id": 0,
+  "generator_stdout_nonempty_count": 1,
+  "evaluator_worktree_mismatch_count": 0,
+  "absorption": null,
+  "checkpoint_final_node": "spawn",
+  "inconclusive_reason": "brain container restarted mid-run; boot_time pre/post mismatch"
+}

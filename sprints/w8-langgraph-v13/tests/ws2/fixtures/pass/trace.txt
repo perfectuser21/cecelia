@@ -1,3 +1,5 @@
+# brain_boot_time_pre=2026-05-09T08:00:00Z
+# brain_boot_time_post=2026-05-09T08:00:00Z
 [fixture-pass] node=plan verdict=DONE branch=cp-pass-fixture sprint_dir=sprints/fixture
 [fixture-pass] node=propose verdict=PROPOSED propose_branch=cp-harness-propose-r1-deadbeef
 [fixture-pass] node=review verdict=APPROVED rounds=1

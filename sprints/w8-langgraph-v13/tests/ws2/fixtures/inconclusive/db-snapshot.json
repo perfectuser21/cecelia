@@ -1,0 +1,16 @@
+{
+  "initiative": {
+    "id": "00000000-0000-0000-0000-000000000003",
+    "task_type": "harness_initiative",
+    "status": "in_progress",
+    "result": null
+  },
+  "review_approved_count": 0,
+  "max_rounds_hit": 0,
+  "subtasks_without_logical_task_id": 0,
+  "generator_stdout_nonempty_count": 0,
+  "evaluator_worktree_mismatch_count": 0,
+  "absorption": null,
+  "checkpoint_final_node": "interrupted",
+  "inconclusive_reason": "cecelia-run circuit OPEN — credentials not found"
+}

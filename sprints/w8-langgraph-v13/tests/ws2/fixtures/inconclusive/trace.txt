@@ -1,0 +1,6 @@
+# brain_boot_time_pre=2026-05-09T09:00:00Z
+# brain_boot_time_post=2026-05-09T09:00:00Z
+[fixture-inconclusive] node=plan verdict=DONE
+[fixture-inconclusive] node=propose verdict=PROPOSED
+[fixture-inconclusive] cecelia-run circuit OPEN — credentials not found for default codex agent
+[fixture-inconclusive] aborting evidence collection per R5 mitigation

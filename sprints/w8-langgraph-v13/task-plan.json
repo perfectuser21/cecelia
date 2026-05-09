@@ -5,27 +5,27 @@
   "tasks": [
     {
       "task_id": "ws1",
-      "title": "实现 sprints/w8-langgraph-v13/scripts/collect-evidence.sh — 触发后等待 + 抽 trace/db-snapshot/pr-link 三件证据",
-      "scope": "实现一个 bash 脚本，签名 `collect-evidence.sh <INITIATIVE_TASK_ID> <EVIDENCE_DIR>`，轮询 brain API 至 initiative 终态或 60min 超时；从 brain 容器最近 60 分钟日志按 7 节点（plan/propose/review/spawn/generator/evaluator/absorption）抽 trace.txt；从 tasks + langgraph_checkpoints 表抽 db-snapshot.json；从 absorption result.applied/pr_url/reason（按 contract Field Contract 字段路径）抽 PR URL 或 NO_CHANGE 说明写 pr-link.txt。支持 DRY_RUN=1 干跑；缺参 exit 1 + usage。",
+      "title": "实现 sprints/w8-langgraph-v13/scripts/collect-evidence.sh — 触发后等待 + 抽 trace/db-snapshot/pr-link 三件证据 + R3 boot_time + R5 breaker OPEN abort",
+      "scope": "实现一个 bash 脚本，签名 `collect-evidence.sh <INITIATIVE_TASK_ID> <EVIDENCE_DIR>`，轮询 brain API 至 initiative 终态或 60min 超时；从 brain 容器最近 60 分钟日志按 7 节点（plan/propose/review/spawn/generator/evaluator/absorption）抽 trace.txt；trace.txt 头部写 R3 brain_boot_time_pre/post（前后各调一次 docker inspect 取容器 StartedAt）；从 tasks + langgraph_checkpoints 表抽 db-snapshot.json，所有 SQL 含 R4 标签硬过滤 `payload->'tags' ?| array['w8-v13']`；从 absorption result.applied/pr_url/reason（按 contract Field Contract 字段路径）抽 PR URL 或 NO_CHANGE 说明写 pr-link.txt；R5 breaker OPEN / cecelia-run circuit OPEN / credentials not found 关键字命中时写 inconclusive.flag（含命中行号 + 行内容）并以 exit 0 返回。支持 DRY_RUN=1 干跑（计划 stdout 须含 trace.txt/db-snapshot.json/pr-link.txt 三件名 + brain_boot_time + breaker OPEN 关键字）；缺参 exit 1 + usage。脚本顶部用 `set -uo pipefail`（不带 -e — R5 命中时仍要 exit 0 给 judge-result 接管）。",
       "dod": [
-        "[BEHAVIOR] tests/ws1/collect-evidence.test.ts 全部通过（脚本存在、可执行、缺参 usage、DRY_RUN 计划含三件产出物名）",
-        "[ARTIFACT] sprints/w8-langgraph-v13/scripts/collect-evidence.sh 存在、可执行、首行 bash shebang、含 set -euo pipefail 与 7 节点签名常量"
+        "[BEHAVIOR] tests/ws1/collect-evidence.test.ts 全部 5 项通过：脚本存在/可执行、缺参 usage、DRY_RUN 计划含三件产出物名、DRY_RUN 计划含 R3 brain_boot_time + R5 breaker OPEN 关键字",
+        "[ARTIFACT] sprints/w8-langgraph-v13/scripts/collect-evidence.sh 存在、可执行、首行 bash shebang、含 set -uo pipefail、含 7 节点签名常量、含 brain_boot_time_pre/post 字面量、含 inconclusive.flag/breaker/credentials 字面量、含 'w8-v13' 标签过滤"
       ],
       "files": [
         "sprints/w8-langgraph-v13/scripts/collect-evidence.sh"
       ],
       "depends_on": [],
       "complexity": "M",
-      "estimated_minutes": 45
+      "estimated_minutes": 55
     },
     {
       "task_id": "ws2",
-      "title": "实现 sprints/w8-langgraph-v13/scripts/lib-checks.sh + judge-result.sh — 同源 check_step 函数库 + result.md / h12-draft.md 生成器",
-      "scope": "(a) lib-checks.sh：导出 check_step_2..check_step_8 七个函数，严格按 contract Field Contract 字段路径取值（result->>'verdict'、result->>'applied'、payload->>'logical_task_id'、evaluator_worktree_path 等），所有 SQL 含 `interval '60 minutes'` 时间窗口防造假；含 set -u（不要 -e 以免污染 source 它的脚本）。(b) judge-result.sh：签名 `judge-result.sh <INITIATIVE_TASK_ID> <EVIDENCE_DIR> <SPRINT_DIR>`，顶部 source lib-checks.sh，按顺序调 check_step_2..check_step_7，全部通过写 result.md 第一行 `PASS — W8 v13 端到端验证通过`；任一失败写 `FAIL — 卡在 step_<N>` 并生成 h12-draft.md（含失败 step、破裂假设、修复方向草稿）。E2E 验收脚本通过同样 source lib-checks.sh 实现 Step 验证同源、消除粘贴漂移。",
+      "title": "实现 sprints/w8-langgraph-v13/scripts/lib-checks.sh + judge-result.sh — 同源 check_step 函数库 + 三态裁决（PASS/FAIL/INCONCLUSIVE）+ 全红 step 列表 + 首红入口",
+      "scope": "(a) lib-checks.sh：导出 check_step_2..check_step_8 七个函数，严格按 contract Field Contract 字段路径取值；所有 SQL 三联硬过滤（`parent_task_id` + `interval '60 minutes'` + `payload->'tags' ?| array['w8-v13']`）防 R4 并发污染；含 set -u（不要 -e 以保持 R1 cascade 防护——让 source 它的脚本可以收集 $?）；check_step_8 实现三态判决合规检查（INCONCLUSIVE / PASS / FAIL）。(b) judge-result.sh：签名 `judge-result.sh <INITIATIVE_TASK_ID> <EVIDENCE_DIR> <SPRINT_DIR>`，顶部 source lib-checks.sh，按三态裁决树写 result.md：①$EVIDENCE_DIR/inconclusive.flag 存在 → INCONCLUSIVE（R5）；②trace.txt 头 brain_boot_time_pre ≠ brain_boot_time_post → INCONCLUSIVE（R3）；③顺序调 check_step_2..check_step_7 收集每个返回码（不短路），全 0 → PASS；④任一非 0 → FAIL，列出全部红 step（Failed Steps: list）+ 生成 h12-draft.md 含 First Red Step 标注作为修复入口（R1）。INCONCLUSIVE/PASS 路径不生成 h12-draft.md。",
       "dod": [
-        "[BEHAVIOR] tests/ws2/judge-result.test.ts 全部通过（脚本存在/可执行、缺参 usage、fixture-pass 写 ^PASS、fixture-fail 写 ^FAIL 且生成 h12-draft.md 非空）",
-        "[ARTIFACT] sprints/w8-langgraph-v13/scripts/lib-checks.sh 存在、首行 bash shebang、含 set -u、导出 check_step_2..check_step_8、引用 Field Contract 关键字段、所有 SQL 含 60 分钟时间窗口",
-        "[ARTIFACT] sprints/w8-langgraph-v13/scripts/judge-result.sh 存在、可执行、含 set -euo pipefail、source lib-checks.sh、含 PASS/FAIL/h12-draft.md 字面量"
+        "[BEHAVIOR] tests/ws2/judge-result.test.ts 全部 6 项通过：脚本存在/可执行、缺参 usage、pass-fixture → ^PASS 且无 h12-draft.md、fail-fixture → ^FAIL 含 Failed Steps 列表 + h12-draft.md 含 First Red Step 标注、inconclusive-fixture(R5) → ^INCONCLUSIVE 且无 h12-draft.md、boot-cross-fixture(R3) → ^INCONCLUSIVE 且无 h12-draft.md",
+        "[ARTIFACT] sprints/w8-langgraph-v13/scripts/lib-checks.sh 存在、首行 bash shebang、含 set -u、导出 check_step_2..check_step_8、引用 Field Contract 关键字段、所有 SQL 含 60 分钟时间窗口 + 'w8-v13' 标签过滤、check_step_8 含 INCONCLUSIVE/inconclusive.flag/brain_boot_time_pre 字面量",
+        "[ARTIFACT] sprints/w8-langgraph-v13/scripts/judge-result.sh 存在、可执行、含 set -uo pipefail、source lib-checks.sh、含 PASS/FAIL/INCONCLUSIVE 三态字面量、含 h12-draft.md/First Red Step/Failed Steps 字面量、含 inconclusive.flag/brain_boot_time_pre/brain_boot_time_post 字面量"
       ],
       "files": [
         "sprints/w8-langgraph-v13/scripts/lib-checks.sh",
@@ -35,7 +35,7 @@
         "ws1"
       ],
       "complexity": "M",
-      "estimated_minutes": 50
+      "estimated_minutes": 60
     }
   ]
 }

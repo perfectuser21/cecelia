@@ -34,4 +34,18 @@ describe('Workstream 1 — collect-evidence.sh [BEHAVIOR]', () => {
     expect(out).toMatch(/db-snapshot\.json/);
     expect(out).toMatch(/pr-link\.txt/);
   });
+
+  it('DRY_RUN=1 plan mentions brain_boot_time and breaker OPEN check (R3+R5)', () => {
+    const r = spawnSync(
+      'bash',
+      [SCRIPT, '00000000-0000-0000-0000-000000000000', '/tmp/w8v13-evidence-dryrun'],
+      { encoding: 'utf8', env: { ...process.env, DRY_RUN: '1' } },
+    );
+    expect(r.status).toBe(0);
+    const out = (r.stdout || '') + (r.stderr || '');
+    // R3: 干跑计划必须提到 brain 容器启动时间抓取
+    expect(out).toMatch(/brain_boot_time/);
+    // R5: 干跑计划必须提到 breaker OPEN 关键字检测
+    expect(out).toMatch(/breaker\s+OPEN/i);
+  });
 });

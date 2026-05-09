@@ -1,0 +1,9 @@
+# brain_boot_time_pre=2026-05-09T10:00:00Z
+# brain_boot_time_post=2026-05-09T10:18:42Z
+[fixture-boot-cross] node=plan verdict=DONE
+[fixture-boot-cross] node=propose verdict=PROPOSED
+[fixture-boot-cross] node=review verdict=APPROVED rounds=2
+[fixture-boot-cross] node=spawn logical_task_id=ws1
+[fixture-boot-cross] node=generator stdout_bytes=2048 worktree=/wt/sub-aaaa
+[fixture-boot-cross] BRAIN CONTAINER RESTART DETECTED — boot_time changed mid-run
+[fixture-boot-cross] resume from checkpoint, but evidence may be incomplete

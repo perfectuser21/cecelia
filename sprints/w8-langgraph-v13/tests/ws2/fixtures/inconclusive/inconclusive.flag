@@ -1,0 +1,2 @@
+line=42 hit_keyword=cecelia-run circuit OPEN
+matched_line=[fixture-inconclusive] cecelia-run circuit OPEN — credentials not found for default codex agent
