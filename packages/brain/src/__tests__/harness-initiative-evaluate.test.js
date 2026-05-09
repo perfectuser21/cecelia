@@ -80,6 +80,8 @@ vi.mock('./harness-task.graph.js', () => ({
 
 vi.mock('../harness-worktree.js', () => ({
   ensureHarnessWorktree: vi.fn(),
+  harnessTaskWorktreePath: vi.fn((taskId) => `/mock-wt/task-${taskId}`),
+  DEFAULT_BASE_REPO: '/mock-base',
 }));
 
 vi.mock('../harness-credentials.js', () => ({
