@@ -1,0 +1,16 @@
+{
+  "initiative": {
+    "id": "00000000-0000-0000-0000-000000000002",
+    "task_type": "harness_initiative",
+    "status": "failed",
+    "result": null
+  },
+  "review_approved_count": 1,
+  "max_rounds_hit": 0,
+  "subtasks_without_logical_task_id": 0,
+  "generator_stdout_nonempty_count": 0,
+  "evaluator_worktree_mismatch_count": 2,
+  "absorption": null,
+  "checkpoint_final_node": "interrupted",
+  "failed_step": 6
+}

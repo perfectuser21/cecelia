@@ -1,0 +1,6 @@
+[fixture-fail] node=plan verdict=DONE
+[fixture-fail] node=propose verdict=PROPOSED
+[fixture-fail] node=review verdict=APPROVED
+[fixture-fail] node=spawn logical_task_id=ws1
+[fixture-fail] node=generator stdout_bytes=0 worktree=/wt/sub-aaaa
+[fixture-fail] node=evaluator worktree=/wt/init-root verdict=FAIL reason=worktree-mismatch

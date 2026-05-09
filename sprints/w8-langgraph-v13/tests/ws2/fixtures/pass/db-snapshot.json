@@ -1,0 +1,21 @@
+{
+  "initiative": {
+    "id": "00000000-0000-0000-0000-000000000001",
+    "task_type": "harness_initiative",
+    "status": "completed",
+    "result": {
+      "merged": true,
+      "pr_url": "https://github.com/perfectuser21/cecelia/pull/9999"
+    }
+  },
+  "review_approved_count": 1,
+  "max_rounds_hit": 0,
+  "subtasks_without_logical_task_id": 0,
+  "generator_stdout_nonempty_count": 1,
+  "evaluator_worktree_mismatch_count": 0,
+  "absorption": {
+    "applied": true,
+    "pr_url": "https://github.com/perfectuser21/cecelia/pull/9999"
+  },
+  "checkpoint_final_node": "complete"
+}
