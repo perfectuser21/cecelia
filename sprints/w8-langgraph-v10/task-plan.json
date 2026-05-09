@@ -1,0 +1,61 @@
+{
+  "initiative_id": "pending",
+  "journey_type": "autonomous",
+  "journey_type_reason": "起点是 Brain tick 派发 harness_initiative，按 tick > top task dispatch > bridge 取最靠前的 autonomous（PRD 已声明）",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "入口 fixture + 注入脚本（对应 Golden Path Step 2）",
+      "scope": "新增 sprints/w8-langgraph-v10/fixtures/initiative-payload.json（最小可信代码改动需求）+ scripts/inject-initiative.sh（往 brain_tasks INSERT pending 行并 stdout 输出 UUID）+ lib/inject-initiative.cjs（可被测试 import 的 Node module）。不改 brain 既有代码。",
+      "dod": [
+        "[BEHAVIOR] tests/ws1/inject-initiative.test.ts 全绿（injectInitiative 用 fake pgClient 插入并返回 UUID；缺 requirement 字段抛错）",
+        "[ARTIFACT] fixtures/initiative-payload.json 是合法 JSON 且含 task_type=harness_initiative + payload.requirement",
+        "[ARTIFACT] scripts/inject-initiative.sh 可执行，含 INSERT INTO brain_tasks 与 RETURNING id"
+      ],
+      "files": [
+        "sprints/w8-langgraph-v10/fixtures/initiative-payload.json",
+        "sprints/w8-langgraph-v10/scripts/inject-initiative.sh",
+        "sprints/w8-langgraph-v10/lib/inject-initiative.cjs"
+      ],
+      "depends_on": [],
+      "complexity": "S",
+      "estimated_minutes": 25
+    },
+    {
+      "task_id": "ws2",
+      "title": "监控 / 断言 lib + 健康预检（对应 Golden Path Step 1、3-8）",
+      "scope": "新增 sprints/w8-langgraph-v10/lib/pg-task-query.cjs（parseTaskRow / fetchTaskById / fetchSubTasks / waitForStatus）+ 三个 CLI 入口 wait-for-status.cjs / wait-for-substep.cjs / wait-generator-all.cjs。所有 polling 走真实 pg client，超时抛 TimeoutError。",
+      "dod": [
+        "[BEHAVIOR] tests/ws2/wait-lib.test.ts 全绿（parseTaskRow 解析驼峰；waitForStatus 立即 resolve / 超时抛错）",
+        "[ARTIFACT] 三个 CLI 入口接受 process.argv 并打印 success/timeout 状态码",
+        "[ARTIFACT] pg-task-query.cjs 导出 4 个核心函数"
+      ],
+      "files": [
+        "sprints/w8-langgraph-v10/lib/pg-task-query.cjs",
+        "sprints/w8-langgraph-v10/lib/wait-for-status.cjs",
+        "sprints/w8-langgraph-v10/lib/wait-for-substep.cjs",
+        "sprints/w8-langgraph-v10/lib/wait-generator-all.cjs"
+      ],
+      "depends_on": ["ws1"],
+      "complexity": "M",
+      "estimated_minutes": 50
+    },
+    {
+      "task_id": "ws3",
+      "title": "验证报告渲染器（对应 Golden Path Step 9）",
+      "scope": "新增 sprints/w8-langgraph-v10/lib/render-report.cjs（aggregatePhaseDurations + renderMarkdown）+ scripts/render-report.sh（CLI 入口，调 lib，写 verification-report.md）。报告含起止时间、4 阶段耗时表、子任务列表、最终 SQL 输出原文。",
+      "dod": [
+        "[BEHAVIOR] tests/ws3/render-report.test.ts 全绿（aggregatePhaseDurations 按 task_type 分桶；renderMarkdown 含 4 行阶段表 + 起止时间 + initiative_id + completed 字符串）",
+        "[ARTIFACT] scripts/render-report.sh 可执行，调用 lib 后 verification-report.md 落盘",
+        "[ARTIFACT] render-report.cjs 模板字符串含 起始时间 / 结束时间 / Planner / Contract GAN / Generator / Evaluator 6 个标签"
+      ],
+      "files": [
+        "sprints/w8-langgraph-v10/lib/render-report.cjs",
+        "sprints/w8-langgraph-v10/scripts/render-report.sh"
+      ],
+      "depends_on": ["ws2"],
+      "complexity": "S",
+      "estimated_minutes": 30
+    }
+  ]
+}
