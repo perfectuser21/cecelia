@@ -1,13 +1,21 @@
 /**
  * Daily Consolidation Loop（每日合并循环）
  *
- * 每天一次综合：把今日对话/learnings/任务 → 情节记忆 + self-model 演化
+ * 把对话/learnings/任务 → 情节记忆 + self-model 演化。
  *
  * 触发时机：
- *   - tick.js 步骤 10.9：每次 tick 检查时间窗口（UTC 19 = 北京凌晨 3 点）
- *   - 或外部调用 runDailyConsolidationIfNeeded(pool)
+ *   - tick.js 步骤 10.9：每次 tick 调用 runDailyConsolidationIfNeeded
+ *   - 或外部调用 runDailyConsolidation(pool, { forceRun: true })
  *
- * 防重复：daily_logs 表 type='consolidation'，同日只运行一次
+ * 防重复（基于 elapsed time，与 capability-probe 同源）：
+ *   查询 memory_stream 中 source_type='daily_consolidation' 的最近 created_at，
+ *   距今超过 CONSOLIDATION_INTERVAL_HOURS 才允许执行。
+ *
+ * 历史故障 PROBE_FAIL_CONSOLIDATION（48h_consolidations=0 last_run=never）原因：
+ *   旧实现用 shouldRunConsolidation() 检查"是否在 UTC 0/4/8/12/16/20 整时刻的前 5 分钟"，
+ *   每天仅 6 个 5 分钟窗口共 30 分钟。Tick 间隔与 Brain 重启都可能错过窗口；
+ *   再叠加 hasTodayConsolidation 按"日"去重，错过即整天没有补救机会，
+ *   导致 last_run 永远停留在 never。现已替换为 elapsed-time 判断。
  */
 
 import { callLLM } from './llm-caller.js';
@@ -29,37 +37,74 @@ const TRIGGER_WINDOW_MINUTES = 5;
 // ─── 公开 API ────────────────────────────────────────────────────────────────
 
 /**
- * 组合入口：时间窗口检查 + 防重复 → 按需运行
+ * 组合入口：基于 elapsed time 判断是否需要运行 → 按需运行。
  * 供 tick.js 每次 tick 时调用（fire-and-forget）。
  * @param {import('pg').Pool} pool
+ * @param {Date} [now] - 注入用于测试
  * @returns {Promise<object>}
  */
-export async function runDailyConsolidationIfNeeded(pool) {
-  if (!shouldRunConsolidation()) return { skipped: true, reason: 'outside time window' };
-  if (await hasTodayConsolidation(pool)) return { skipped: true, reason: 'already done today' };
-  return runDailyConsolidation(pool);
+export async function runDailyConsolidationIfNeeded(pool, now = new Date()) {
+  const check = await shouldRunByElapsed(pool, now, CONSOLIDATION_INTERVAL_HOURS);
+  if (!check.shouldRun) {
+    return {
+      skipped: true,
+      reason: check.reason,
+      last_run: check.last_run,
+      hours_elapsed: check.hours_elapsed,
+    };
+  }
+  return runDailyConsolidation(pool, { now });
 }
 
 /**
- * 判断当前是否在每日触发窗口内（UTC 19:00–19:05）
+ * 判断"距上次合并已过去 ≥ intervalHours"，是当前唯一的真实闸门。
+ *
+ * 查询 memory_stream（与 capability-probe 同源），保证：
+ *   - 探针看到 last_run=never 时本函数也会返回 shouldRun=true（自愈触发）。
+ *   - 探针看到 last_run=<recent>（48h 内有记录）时，本函数按 intervalHours 判断。
+ *
+ * @param {import('pg').Pool} pool
  * @param {Date} [now] - 注入用于测试
+ * @param {number} [intervalHours] - 触发间隔小时数（默认 CONSOLIDATION_INTERVAL_HOURS）
+ * @returns {Promise<{shouldRun:boolean, reason:string, last_run:Date|null, hours_elapsed:number|null}>}
+ */
+export async function shouldRunByElapsed(pool, now = new Date(), intervalHours = CONSOLIDATION_INTERVAL_HOURS) {
+  const { rows } = await pool.query(
+    `SELECT max(created_at) AS last_run
+     FROM memory_stream
+     WHERE source_type = 'daily_consolidation'`
+  );
+  const lastRun = rows[0]?.last_run ? new Date(rows[0].last_run) : null;
+
+  if (!lastRun) {
+    return { shouldRun: true, reason: 'never_run', last_run: null, hours_elapsed: null };
+  }
+
+  const hoursElapsed = (now.getTime() - lastRun.getTime()) / (60 * 60 * 1000);
+  if (hoursElapsed >= intervalHours) {
+    return { shouldRun: true, reason: 'elapsed', last_run: lastRun, hours_elapsed: hoursElapsed };
+  }
+  return { shouldRun: false, reason: 'too_soon', last_run: lastRun, hours_elapsed: hoursElapsed };
+}
+
+/**
+ * @deprecated 仅保留向后兼容：旧"窄时间窗口"判断已被 shouldRunByElapsed 取代
+ * （参见模块顶部 PROBE_FAIL_CONSOLIDATION 历史故障说明）。
+ * @param {Date} [now]
  * @returns {boolean}
  */
 export function shouldRunConsolidation(now = new Date()) {
   const utcHour = now.getUTCHours();
   const utcMinute = now.getUTCMinutes();
-  // 每 CONSOLIDATION_INTERVAL_HOURS 小时触发一次（在每个周期的前 5 分钟内）
   return (utcHour % CONSOLIDATION_INTERVAL_HOURS === 0) && utcMinute < TRIGGER_WINDOW_MINUTES;
 }
 
 /**
- * 查询今日是否已运行过合并
+ * @deprecated 仅保留向后兼容：旧"按日去重"已被 shouldRunByElapsed 取代。
  * @param {import('pg').Pool} pool
  * @returns {Promise<boolean>}
  */
 export async function hasTodayConsolidation(pool) {
-  // 改为检查最近 N 小时内是否已运行（而非仅检查今天）
-  const _intervalHours = CONSOLIDATION_INTERVAL_HOURS;
   const today = new Date().toISOString().split('T')[0];
   const { rows } = await pool.query(
     `SELECT id FROM daily_logs
@@ -73,15 +118,22 @@ export async function hasTodayConsolidation(pool) {
 /**
  * 主入口：运行每日合并
  * @param {import('pg').Pool} pool
- * @param {{ forceRun?: boolean }} [opts]
+ * @param {{ forceRun?: boolean, now?: Date }} [opts]
  */
 export async function runDailyConsolidation(pool, opts = {}) {
-  const { forceRun = false } = opts;
-  const today = new Date().toISOString().split('T')[0];
+  const { forceRun = false, now = new Date() } = opts;
+  const today = now.toISOString().split('T')[0];
 
-  if (!forceRun && await hasTodayConsolidation(pool)) {
-    console.log('[consolidation] 今日已合并，跳过');
-    return { skipped: true };
+  if (!forceRun) {
+    const check = await shouldRunByElapsed(pool, now, CONSOLIDATION_INTERVAL_HOURS);
+    if (!check.shouldRun) {
+      console.log(
+        `[consolidation] 跳过：${check.reason} ` +
+        `(last_run=${check.last_run?.toISOString() ?? 'never'} ` +
+        `hours_elapsed=${check.hours_elapsed?.toFixed(2) ?? 'n/a'})`
+      );
+      return { skipped: true, reason: check.reason };
+    }
   }
 
   console.log(`[consolidation] 开始每日合并 ${today}...`);
