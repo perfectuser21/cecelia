@@ -35,6 +35,8 @@
 
 import { StateGraph, Annotation, START, END, interrupt } from '@langchain/langgraph';
 import crypto from 'node:crypto';
+import { execFile as execFileCb } from 'node:child_process';
+import { promisify } from 'node:util';
 // Note: legacy `spawn` import removed (Layer 3 uses spawnDockerDetached for fire-and-forget docker run -d)
 import { ensureHarnessWorktree, harnessSubTaskBranchName } from '../harness-worktree.js';
 import { resolveGitHubToken } from '../harness-credentials.js';
@@ -46,6 +48,8 @@ import { parseDockerOutput, extractField } from '../harness-shared.js';
 import { buildGeneratorPrompt, extractWorkstreamIndex } from '../harness-utils.js';
 import { getPgCheckpointer } from '../orchestrator/pg-checkpointer.js';
 import pool from '../db.js';
+
+const execFileDefault = promisify(execFileCb);
 
 export const MAX_FIX_ROUNDS = 3;
 export const MAX_POLL_COUNT = 20;          // 90s × 20 = 30 min
@@ -60,6 +64,8 @@ export const TaskState = Annotation.Root({
   worktreePath:     Annotation({ reducer: (_o, n) => n, default: () => null }),
   githubToken:      Annotation({ reducer: (_o, n) => n, default: () => null }),
   contractBranch:   Annotation({ reducer: (_o, n) => n, default: () => null }),
+  // H13: 防 resume 时 spawn 节点重 import contract sprints/（git fetch 已花过 quota）
+  contractImported: Annotation({ reducer: (_o, n) => n, default: () => false }),
   // Layer 3: containerId 是 spawn 节点 spawn detached 容器的 docker --name，同时也是
   // walking_skeleton_thread_lookup 表 PRIMARY KEY，callback router 反查 thread_id 用。
   // fix_round loop 后 fixDispatchNode 必须 reset 让 spawn 节点重新 spawn fresh container。
@@ -106,6 +112,7 @@ export async function spawnNode(state, opts = {}) {
   const ensureWt = opts.ensureWorktree || ensureHarnessWorktree;
   const resolveTok = opts.resolveToken || resolveGitHubToken;
   const dbPool = opts.poolOverride || pool;
+  const execFile = opts.execFile || execFileDefault;
 
   const task = state.task;
   const payload = task?.payload || {};
@@ -127,6 +134,24 @@ export async function spawnNode(state, opts = {}) {
     if (!token) token = await resolveTok();
   } catch (err) {
     return { error: { node: 'spawn', message: `prep: ${err.message}` } };
+  }
+
+  // H13: 把 proposer 分支的合同物件（sprints/）checkout 到 generator worktree。
+  // proposer push 了 contract-dod-wsN.md / tests/wsN/ / task-plan.json 到 cp-harness-propose-r3-*，
+  // 但 generator worktree fresh off main 看不到。先 fetch + checkout，让 generator 容器内 SKILL
+  // 能 read 合同基于它干活；不做 'import contract' → generator 不知道 DoD 存在 → evaluator 永远 FAIL。
+  const contractBranch = state.contractBranch;
+  if (contractBranch && !state.contractImported) {
+    try {
+      await execFile('git', ['fetch', 'origin', `${contractBranch}:refs/remotes/origin/${contractBranch}`], { cwd: worktreePath });
+      await execFile('git', ['checkout', `origin/${contractBranch}`, '--', 'sprints/'], { cwd: worktreePath });
+      await execFile('git', ['add', 'sprints/'], { cwd: worktreePath });
+      // commit 失败（无变更）非阻塞 — generator 仍能在 worktree 里看到 sprints/
+      await execFile('git', ['commit', '-m', `chore(harness): import contract from ${contractBranch}`], { cwd: worktreePath })
+        .catch(() => null);
+    } catch (err) {
+      return { error: { node: 'spawn', message: `prep: import contract from ${contractBranch}: ${err.message}` } };
+    }
   }
 
   const prompt = buildGeneratorPrompt(task, { fixMode });
@@ -199,6 +224,7 @@ export async function spawnNode(state, opts = {}) {
     containerId: finalContainerId,
     worktreePath,
     githubToken: token,
+    ...(contractBranch ? { contractImported: true } : {}),
   };
 }
 
