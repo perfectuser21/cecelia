@@ -1,0 +1,41 @@
+{
+  "initiative_id": "pending",
+  "journey_type": "autonomous",
+  "journey_type_reason": "本 PRD 验证 Brain tick → harness 派发 → LangGraph 各层 → tasks.status=completed 的自主调度闭环；起点为 Brain tick，无 UI/无 engine hook/无远端 agent 协议改动",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "Pipeline-trace 验证脚本（H7/H8/H9/H10 痕迹检查）",
+      "scope": "在 sprints/w8-langgraph-v11/scripts/verify-pipeline-trace.sh 实现 Step 1-5 的 Brain API 痕迹查询脚本：拉取本 initiative 的 tasks/sub_tasks/dev_records，断言 (a) tick 已拾取 (b) planner stdout 无 push 噪音（H9）(c) GAN APPROVED + propose_branch 存在 (d) generator sub_task stdout ≥ 200 bytes 且 branch 推到 origin（H7）(e) evaluator cwd 含 .worktrees/ 或 worktree- 片段（H8）(f) absorption_policy 状态 ∈ {applied, not_applied, absent}（H10）。脚本 exit 0 = 全部痕迹齐全。",
+      "dod": [
+        "[BEHAVIOR] 脚本对 mock Brain API 全痕迹齐全场景返回 exit 0（见 tests/ws1/pipeline-trace.test.ts）",
+        "[BEHAVIOR] generator stdout < 200 bytes / planner stdout 含 push 噪音 / evaluator cwd 不含 worktree 标志 / absorption_policy 非法状态 / 缺失 TASK_ID 任一场景下脚本返回非 0",
+        "[ARTIFACT] sprints/w8-langgraph-v11/scripts/verify-pipeline-trace.sh 存在且可执行（chmod +x）",
+        "[ARTIFACT] 脚本声明 set -euo pipefail 并要求 TASK_ID 环境变量"
+      ],
+      "files": [
+        "sprints/w8-langgraph-v11/scripts/verify-pipeline-trace.sh"
+      ],
+      "depends_on": [],
+      "complexity": "M",
+      "estimated_minutes": 45
+    },
+    {
+      "task_id": "ws2",
+      "title": "终态写回验证脚本",
+      "scope": "在 sprints/w8-langgraph-v11/scripts/verify-terminal-state.sh 实现 Step 6 的终态查询脚本：通过 Brain API 拉取本 initiative task，断言 (a) status ∈ {completed, failed} (b) completed_at 非空 (c) result.branch 与 result.final_verdict（或同义字段）均存在 (d) 本 initiative 无孤儿 in_progress sub_task (e) 最近 30 min 无 callback 404 错误。脚本 exit 0 = 终态写回正确。",
+      "dod": [
+        "[BEHAVIOR] 脚本对 mock Brain API status='completed' + 字段完整 + 无孤儿 + 无 404 场景返回 exit 0（见 tests/ws2/terminal-state.test.ts）",
+        "[BEHAVIOR] status='in_progress' / completed_at 缺失 / result.branch 缺失 / 存在孤儿 in_progress sub_task / dev_record 含 callback 404 任一场景下脚本返回非 0",
+        "[ARTIFACT] sprints/w8-langgraph-v11/scripts/verify-terminal-state.sh 存在且可执行",
+        "[ARTIFACT] 脚本声明 set -euo pipefail 并要求 TASK_ID 环境变量"
+      ],
+      "files": [
+        "sprints/w8-langgraph-v11/scripts/verify-terminal-state.sh"
+      ],
+      "depends_on": ["ws1"],
+      "complexity": "S",
+      "estimated_minutes": 30
+    }
+  ]
+}
