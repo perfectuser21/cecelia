@@ -2,19 +2,19 @@
 
 ## 验收清单
 
-- [ ] [BEHAVIOR] account-usage.js ACCOUNTS 数组不含 'account3'
+- [x] [BEHAVIOR] account-usage.js ACCOUNTS 数组不含 'account3'
   Test: tests/brain/h14-remove-account3.test.js
 
-- [ ] [BEHAVIOR] credentials-health-scheduler.js CLAUDE_ACCOUNTS 数组不含 'account3'
+- [x] [BEHAVIOR] credentials-health-scheduler.js CLAUDE_ACCOUNTS 数组不含 'account3'
   Test: tests/brain/h14-remove-account3.test.js
 
-- [ ] [BEHAVIOR] credential-expiry-checker.js ACCOUNTS 数组不含 'account3'
+- [x] [BEHAVIOR] credential-expiry-checker.js ACCOUNTS 数组不含 'account3'
   Test: tests/brain/h14-remove-account3.test.js
 
-- [ ] [ARTIFACT] 3 src 文件不含 "'account3'" 字面量（仅 src/，不含 src/__tests__/）
+- [x] [ARTIFACT] 3 src 文件不含 "'account3'" 字面量（仅 src/，不含 src/__tests__/）
   Test: manual:node -e "const fs=require('fs');const files=['packages/brain/src/account-usage.js','packages/brain/src/credentials-health-scheduler.js','packages/brain/src/credential-expiry-checker.js'];for(const f of files){const c=fs.readFileSync(f,'utf8');if(c.includes(\"'account3'\"))process.exit(1)}"
 
-- [ ] [ARTIFACT] 测试文件存在
+- [x] [ARTIFACT] 测试文件存在
   Test: manual:node -e "require('fs').accessSync('tests/brain/h14-remove-account3.test.js')"
 
 ## Learning
