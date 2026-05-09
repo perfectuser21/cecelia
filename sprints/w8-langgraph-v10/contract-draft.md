@@ -1,4 +1,14 @@
-# Sprint Contract Draft (Round 1)
+# Sprint Contract Draft (Round 2)
+
+## Round 2 修订摘要（响应 Reviewer 反馈）
+
+1. **抽取 `lib/get-logical-id.sh`**：Step 5/6/7/8 与 E2E 验收脚本统一通过 `LOGICAL=$(bash sprints/.../lib/get-logical-id.sh "$INITIATIVE_ID")` 取 logical_task_id；后续若 schema 字段名变更只改 1 处，杜绝 4 处漏改。
+2. **抽取 `lib/assert-final-state.cjs`**：Step 8 三段最终断言（顶层 completed / 无 in_progress 子任务 / 无 NULL logical_task_id 子任务）合并到一个 Node CLI；Step 8 与 E2E 验收脚本调用同一行命令。
+3. **新增红证据采集器 `scripts/collect-red-evidence.sh`**：Test Contract 表后追加一行总命令，三个 ws 红证据 JSON 一次性聚合判定（exit 0 = 全部合法红，与 Test Contract 表声明的 WS1=2 / WS2=3 / WS3=2 一致）。
+4. **测试文件改用 `beforeAll + 动态 import` 红规约**：未实现时 numFailedTests 等于 it() 数（不是 suite-level fail），Reviewer 可机检 `numFailedTests == 期望值`；实现后切绿无变化。
+5. **WS2 lib 拆出 `parse-task-row.cjs`**：让 `parseTaskRow` 单独成模块（解决 Round 1 Reviewer `parse-task-row.cjs` 找不到的 MODULE_NOT_FOUND）；`pg-task-query.cjs` 仍负责 fetch / wait 系列，可 re-export `parseTaskRow`。
+
+---
 
 ## Golden Path
 
@@ -98,7 +108,7 @@ psql "$DB_URL" -t -c "
 **验证命令**:
 ```bash
 INITIATIVE_ID=$(cat /tmp/harness-initiative-id)
-LOGICAL=$(psql "$DB_URL" -t -c "SELECT logical_task_id FROM brain_tasks WHERE id='$INITIATIVE_ID'" | tr -d ' ')
+LOGICAL=$(bash sprints/w8-langgraph-v10/lib/get-logical-id.sh "$INITIATIVE_ID")
 
 # 等 contract GAN 终态
 node sprints/w8-langgraph-v10/lib/wait-for-substep.cjs "$INITIATIVE_ID" harness_contract_reviewer success 1800
@@ -122,7 +132,7 @@ TOTAL_ROUNDS=$(psql "$DB_URL" -t -c "SELECT count(*) FROM brain_tasks WHERE logi
 **验证命令**:
 ```bash
 INITIATIVE_ID=$(cat /tmp/harness-initiative-id)
-LOGICAL=$(psql "$DB_URL" -t -c "SELECT logical_task_id FROM brain_tasks WHERE id='$INITIATIVE_ID'" | tr -d ' ')
+LOGICAL=$(bash sprints/w8-langgraph-v10/lib/get-logical-id.sh "$INITIATIVE_ID")
 
 # 等所有 generator ws 子任务跑完（最多 60 分钟）
 node sprints/w8-langgraph-v10/lib/wait-generator-all.cjs "$INITIATIVE_ID" 3600
@@ -156,7 +166,7 @@ psql "$DB_URL" -t -c "
 **验证命令**:
 ```bash
 INITIATIVE_ID=$(cat /tmp/harness-initiative-id)
-LOGICAL=$(psql "$DB_URL" -t -c "SELECT logical_task_id FROM brain_tasks WHERE id='$INITIATIVE_ID'" | tr -d ' ')
+LOGICAL=$(bash sprints/w8-langgraph-v10/lib/get-logical-id.sh "$INITIATIVE_ID")
 
 node sprints/w8-langgraph-v10/lib/wait-for-substep.cjs "$INITIATIVE_ID" harness_evaluator success 1800
 
@@ -175,38 +185,21 @@ psql "$DB_URL" -t -c "
 
 ### Step 8: 顶层 brain_tasks.status = completed
 
-**可观测行为**: Evaluator success 后 ≤ 60 秒内，顶层 $INITIATIVE_ID 行 status 由 `in_progress` 转为 `completed`；completed_at 落值；无任何子任务残留 `in_progress`。
+**可观测行为**: Evaluator success 后 ≤ 60 秒内，顶层 $INITIATIVE_ID 行 status 由 `in_progress` 转为 `completed`；completed_at 落值；无任何子任务残留 `in_progress`；所有子任务都带 logical_task_id（W8 修复点）。
 
 **验证命令**:
 ```bash
 INITIATIVE_ID=$(cat /tmp/harness-initiative-id)
-LOGICAL=$(psql "$DB_URL" -t -c "SELECT logical_task_id FROM brain_tasks WHERE id='$INITIATIVE_ID'" | tr -d ' ')
 
 # 等顶层 completed
 node sprints/w8-langgraph-v10/lib/wait-for-status.cjs "$INITIATIVE_ID" completed 120
 
-# PRD 最终断言（一行 SQL，必须返回 1 行）
-psql "$DB_URL" -t -c "
-  SELECT id, status, completed_at FROM brain_tasks
-  WHERE id = '$INITIATIVE_ID' AND status = 'completed'
-" | grep -q "$INITIATIVE_ID"
-
-# 边界：无残留 in_progress 子任务（W8 之前的卡死 bug 已绝迹）
-psql "$DB_URL" -t -c "
-  SELECT count(*) FROM brain_tasks
-  WHERE logical_task_id='$LOGICAL'
-    AND status='in_progress'
-" | tr -d ' ' | grep -q '^0$'
-
-# 边界：所有子任务都带 logical_task_id（W8 修复点）
-psql "$DB_URL" -t -c "
-  SELECT count(*) FROM brain_tasks
-  WHERE parent_task_id='$INITIATIVE_ID'
-    AND logical_task_id IS NULL
-" | tr -d ' ' | grep -q '^0$'
+# Round 2：三段断言（顶层 completed / 无 in_progress 子任务 / 无 NULL logical_task_id 子任务）合并到一个 CLI
+# Step 8 与 E2E 验收脚本共用同一行命令，避免 4 处漏改
+node sprints/w8-langgraph-v10/lib/assert-final-state.cjs "$INITIATIVE_ID"
 ```
 
-**硬阈值**: 顶层 status=completed；无 in_progress 子任务；无 NULL logical_task_id 子任务。
+**硬阈值**: `assert-final-state.cjs` exit 0（其内部分别断言 PRD 终态 SQL 返回 1 行 + 无残留 in_progress 子任务 + 无 NULL logical_task_id 子任务，任一失败 exit 非 0 并打印失败原因）。
 
 ---
 
@@ -271,13 +264,9 @@ node sprints/w8-langgraph-v10/lib/wait-for-substep.cjs "$INITIATIVE_ID" harness_
 node sprints/w8-langgraph-v10/lib/wait-generator-all.cjs "$INITIATIVE_ID" 3600
 node sprints/w8-langgraph-v10/lib/wait-for-substep.cjs "$INITIATIVE_ID" harness_evaluator success 1800
 
-# Step 8: 顶层 completed + 边界
+# Step 8: 顶层 completed + 边界（与 Step 8 共用同一行命令）
 node sprints/w8-langgraph-v10/lib/wait-for-status.cjs "$INITIATIVE_ID" completed 120
-psql "$DB_URL" -t -c "SELECT id, status, completed_at FROM brain_tasks WHERE id = '$INITIATIVE_ID' AND status = 'completed'" | grep -q "$INITIATIVE_ID"
-
-LOGICAL=$(psql "$DB_URL" -t -c "SELECT logical_task_id FROM brain_tasks WHERE id='$INITIATIVE_ID'" | tr -d ' ')
-psql "$DB_URL" -t -c "SELECT count(*) FROM brain_tasks WHERE logical_task_id='$LOGICAL' AND status='in_progress'" | tr -d ' ' | grep -q '^0$'
-psql "$DB_URL" -t -c "SELECT count(*) FROM brain_tasks WHERE parent_task_id='$INITIATIVE_ID' AND logical_task_id IS NULL" | tr -d ' ' | grep -q '^0$'
+node sprints/w8-langgraph-v10/lib/assert-final-state.cjs "$INITIATIVE_ID"
 
 # Step 9: 报告产出
 bash sprints/w8-langgraph-v10/scripts/render-report.sh "$INITIATIVE_ID"
@@ -314,7 +303,7 @@ workstream_count: 3
 
 ### Workstream 2: 监控 / 断言 lib + 健康预检
 
-**范围**: 提供 Node.js polling lib（wait-for-status / wait-for-substep / wait-generator-all），各 lib 解析 PG 行为，覆盖 Step 1、Step 3–8 全部等待与断言逻辑。
+**范围**: 提供 Node.js polling lib（wait-for-status / wait-for-substep / wait-generator-all / parse-task-row / pg-task-query）+ 共享 helper（`lib/get-logical-id.sh` / `lib/assert-final-state.cjs`），覆盖 Step 1、Step 3–8 全部等待与断言逻辑。Round 2 拆分：`parse-task-row.cjs` 单独成模块，`pg-task-query.cjs` 负责 fetch / wait 系列；`get-logical-id.sh` 与 `assert-final-state.cjs` 让 Step 5–8 与 E2E 验收共用一处实现。
 **大小**: M（100–300 行）
 **依赖**: Workstream 1 完成后（共享 fixture 路径与 INITIATIVE_ID 协议）
 
@@ -336,6 +325,31 @@ workstream_count: 3
 
 | Workstream | Test File | BEHAVIOR 覆盖 | 预期红证据 |
 |---|---|---|---|
-| WS1 | `tests/ws1/inject-initiative.test.ts` | injectInitiative() 解析 fixtures payload；返回新插入 id；调用方提供 fake pg client | WS1 → 2 failures（模块未实现） |
-| WS2 | `tests/ws2/wait-lib.test.ts` | parseTaskRow() 区分 pending/in_progress/completed/failed；waitForStatus() 在终态时立即 resolve；超时抛错 | WS2 → 3 failures |
-| WS3 | `tests/ws3/render-report.test.ts` | aggregatePhaseDurations() 按 task_type 分桶；renderMarkdown() 含必备字段（起止时间/各阶段耗时表/最终 SQL 输出） | WS3 → 2 failures |
+| WS1 | `tests/ws1/inject-initiative.test.ts` | injectInitiative() 用 fake pgClient 插入并返回 UUID；缺 requirement / payload 文件不存在抛 ValidationError | numFailedTests=2 / numPassedTests=0 / success=false |
+| WS2 | `tests/ws2/wait-lib.test.ts` | parseTaskRow() 把 PG 行解析成驼峰；waitForStatus() 立即 resolve / 超时抛 TimeoutError | numFailedTests=3 / numPassedTests=0 / success=false |
+| WS3 | `tests/ws3/render-report.test.ts` | aggregatePhaseDurations() 按 task_type 分桶；renderMarkdown() 含起止时间块 + 4 行阶段表 + 最终 SQL 输出 + N/A 兜底 | numFailedTests=2 / numPassedTests=0 / success=false |
+
+**Round 2 红证据采集（Reviewer 一行命令机检）**:
+
+```bash
+bash sprints/w8-langgraph-v10/scripts/collect-red-evidence.sh
+# exit 0 = 三个 ws 全部"合法红"（数量与上表一致）；任一不符 exit 1
+```
+
+**单 ws 红证据明细命令**（Generator 实现前可独立运行）：
+
+```bash
+# WS1：期望 2 红
+npx vitest run sprints/w8-langgraph-v10/tests/ws1/inject-initiative.test.ts --reporter=json > /tmp/ws1-red.json 2>/dev/null
+jq -e '.success == false and .numFailedTests == 2 and .numPassedTests == 0' /tmp/ws1-red.json
+
+# WS2：期望 3 红
+npx vitest run sprints/w8-langgraph-v10/tests/ws2/wait-lib.test.ts --reporter=json > /tmp/ws2-red.json 2>/dev/null
+jq -e '.success == false and .numFailedTests == 3 and .numPassedTests == 0' /tmp/ws2-red.json
+
+# WS3：期望 2 红
+npx vitest run sprints/w8-langgraph-v10/tests/ws3/render-report.test.ts --reporter=json > /tmp/ws3-red.json 2>/dev/null
+jq -e '.success == false and .numFailedTests == 2 and .numPassedTests == 0' /tmp/ws3-red.json
+```
+
+**红 → 绿切换**：Generator 实现 lib 后，三组 jq 断言会失败（数量从 N → 0）；届时 CI 校验切换为 `numFailedTests == 0 and numPassedTests >= N and success == true`，由 Generator 仓库内 vitest 默认机制覆盖，本合同不再额外维护"绿命令"。

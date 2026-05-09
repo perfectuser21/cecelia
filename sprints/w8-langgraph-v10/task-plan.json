@@ -8,7 +8,7 @@
       "title": "入口 fixture + 注入脚本（对应 Golden Path Step 2）",
       "scope": "新增 sprints/w8-langgraph-v10/fixtures/initiative-payload.json（最小可信代码改动需求）+ scripts/inject-initiative.sh（往 brain_tasks INSERT pending 行并 stdout 输出 UUID）+ lib/inject-initiative.cjs（可被测试 import 的 Node module）。不改 brain 既有代码。",
       "dod": [
-        "[BEHAVIOR] tests/ws1/inject-initiative.test.ts 全绿（injectInitiative 用 fake pgClient 插入并返回 UUID；缺 requirement 字段抛错）",
+        "[BEHAVIOR] tests/ws1/inject-initiative.test.ts 全绿（injectInitiative 用 fake pgClient 插入并返回 UUID；缺 requirement 字段或文件不存在抛错）",
         "[ARTIFACT] fixtures/initiative-payload.json 是合法 JSON 且含 task_type=harness_initiative + payload.requirement",
         "[ARTIFACT] scripts/inject-initiative.sh 可执行，含 INSERT INTO brain_tasks 与 RETURNING id"
       ],
@@ -23,22 +23,27 @@
     },
     {
       "task_id": "ws2",
-      "title": "监控 / 断言 lib + 健康预检（对应 Golden Path Step 1、3-8）",
-      "scope": "新增 sprints/w8-langgraph-v10/lib/pg-task-query.cjs（parseTaskRow / fetchTaskById / fetchSubTasks / waitForStatus）+ 三个 CLI 入口 wait-for-status.cjs / wait-for-substep.cjs / wait-generator-all.cjs。所有 polling 走真实 pg client，超时抛 TimeoutError。",
+      "title": "监控 / 断言 lib + 共享 helper（对应 Golden Path Step 1、3-8）",
+      "scope": "新增 sprints/w8-langgraph-v10/lib/parse-task-row.cjs（独立导出 parseTaskRow，Round 2 拆出）+ lib/pg-task-query.cjs（fetchTaskById / fetchSubTasks / waitForStatus）+ 三个 CLI 入口 wait-for-status.cjs / wait-for-substep.cjs / wait-generator-all.cjs + 共享 helper lib/get-logical-id.sh（Step 5/6/7/8 与 E2E 共用）+ lib/assert-final-state.cjs（Step 8 三段断言合一）。所有 polling 走真实 pg client，超时抛 TimeoutError。",
       "dod": [
         "[BEHAVIOR] tests/ws2/wait-lib.test.ts 全绿（parseTaskRow 解析驼峰；waitForStatus 立即 resolve / 超时抛错）",
+        "[ARTIFACT] lib/parse-task-row.cjs 独立导出 parseTaskRow；pg-task-query.cjs 导出 fetchTaskById / fetchSubTasks / waitForStatus",
         "[ARTIFACT] 三个 CLI 入口接受 process.argv 并打印 success/timeout 状态码",
-        "[ARTIFACT] pg-task-query.cjs 导出 4 个核心函数"
+        "[ARTIFACT] lib/get-logical-id.sh 可执行，接 $1=initiative_id 输出 logical_task_id 到 stdout",
+        "[ARTIFACT] lib/assert-final-state.cjs 接 $1=initiative_id，按顺序断言顶层 completed / 无 in_progress 子任务 / 无 NULL logical_task_id 子任务，任一失败 exit 非 0 并打印原因"
       ],
       "files": [
+        "sprints/w8-langgraph-v10/lib/parse-task-row.cjs",
         "sprints/w8-langgraph-v10/lib/pg-task-query.cjs",
         "sprints/w8-langgraph-v10/lib/wait-for-status.cjs",
         "sprints/w8-langgraph-v10/lib/wait-for-substep.cjs",
-        "sprints/w8-langgraph-v10/lib/wait-generator-all.cjs"
+        "sprints/w8-langgraph-v10/lib/wait-generator-all.cjs",
+        "sprints/w8-langgraph-v10/lib/get-logical-id.sh",
+        "sprints/w8-langgraph-v10/lib/assert-final-state.cjs"
       ],
       "depends_on": ["ws1"],
       "complexity": "M",
-      "estimated_minutes": 50
+      "estimated_minutes": 60
     },
     {
       "task_id": "ws3",

@@ -1,12 +1,24 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeAll } from 'vitest';
 
 // Generator 实现路径：sprints/w8-langgraph-v10/lib/render-report.cjs
-// 当前未实现 → import 阶段即失败 → Red 证据
-// @ts-ignore — Red 阶段模块不存在
-import { aggregatePhaseDurations, renderMarkdown } from '../../lib/render-report.cjs';
+// 红阶段：动态 import 失败 → 每个 it() 在断言 importError 时失败 → numFailedTests == it 数
+// 绿阶段：mod 非 null → 测试体跑过 → numFailedTests == 0
+let mod: any = null;
+let importError: Error | null = null;
+
+beforeAll(async () => {
+  try {
+    // @ts-ignore — 红阶段模块不存在
+    mod = await import('../../lib/render-report.cjs');
+  } catch (e) {
+    importError = e as Error;
+  }
+});
 
 describe('Workstream 3 — render-report [BEHAVIOR]', () => {
   it('aggregatePhaseDurations() 按 task_type 分桶聚合 (created_at→completed_at) 耗时', () => {
+    expect(importError, 'lib/render-report.cjs 必须存在并可加载').toBeNull();
+    const { aggregatePhaseDurations } = mod;
     const t0 = new Date('2026-05-09T10:00:00Z');
     const t1 = new Date('2026-05-09T10:05:00Z');
     const t2 = new Date('2026-05-09T10:20:00Z');
@@ -25,6 +37,8 @@ describe('Workstream 3 — render-report [BEHAVIOR]', () => {
   });
 
   it('renderMarkdown() 输出含起止时间块 + 4 行阶段表 + 最终 SQL 输出，缺阶段时仍渲染 N/A', () => {
+    expect(importError, 'lib/render-report.cjs 必须存在并可加载').toBeNull();
+    const { renderMarkdown } = mod;
     const md = renderMarkdown({
       initiativeId: 'INI-XYZ',
       startedAt: '2026-05-09T10:00:00Z',
