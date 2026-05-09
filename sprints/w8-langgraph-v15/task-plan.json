@@ -21,12 +21,13 @@
     },
     {
       "task_id": "ws2",
-      "title": "scripts/v15-watch.mjs — 阻塞观察 + timeline 落盘",
-      "scope": "Node.js ESM 脚本，每 5s 轮询 initiative_runs.phase + tasks.status，phase 变化追加写 .v15/timeline.log（行格式 `ISO\\tPHASE`）。直到 phase ∈ {done, failed} 或 30min 超时退出（超时时也 append TIMEOUT 行）。退出码 0=终态/1=超时/2=参数或连接错误。导出 isTerminalPhase / formatTimelineEntry。",
+      "title": "scripts/v15-watch.mjs — 阻塞观察 + R1 dispatcher_pickup 探测 + R2 stall 探测 + timeline 落盘",
+      "scope": "Node.js ESM 脚本，每 5s 轮询 initiative_runs.phase + tasks.status + 是否存在 initiative_runs 行，phase 变化追加写 .v15/timeline.log（行格式 `ISO\\tPHASE`）。退出条件：phase ∈ {done,failed} → exit 0；首 60s queued+无 run 行 → 写 STUCK_QUEUED → exit 1；同 phase ≥ 10min → 写 STALL@<phase> → exit 1；30min 兜底超时 → 写 TIMEOUT → exit 1；参数/连接错误 → exit 2。导出 isTerminalPhase / formatTimelineEntry / detectStuckQueued / detectStall 四个纯函数。",
       "dod": [
-        "[BEHAVIOR] vitest tests/ws2/watch.test.ts 4 个 case 全绿（isTerminalPhase 三种返回值 + formatTimelineEntry 格式）",
+        "[BEHAVIOR] vitest tests/ws2/watch.test.ts 全部 case 全绿（isTerminalPhase 三种返回 + formatTimelineEntry 含 sentinel + detectStuckQueued 4 路径 + detectStall 2 路径）",
         "[ARTIFACT] scripts/v15-watch.mjs 文件存在",
-        "[ARTIFACT] 脚本含 30min 超时常量、写路径 .v15/timeline.log、查询 initiative_runs"
+        "[ARTIFACT] 脚本含 30min 超时常量、60s grace 阈值、10min stall 阈值、写路径 .v15/timeline.log、查询 initiative_runs",
+        "[ARTIFACT] 脚本含 TIMEOUT / STUCK_QUEUED / STALL 三个 sentinel 字面量"
       ],
       "files": [
         "scripts/v15-watch.mjs"
@@ -35,16 +36,16 @@
         "ws1"
       ],
       "complexity": "M",
-      "estimated_minutes": 45
+      "estimated_minutes": 50
     },
     {
       "task_id": "ws3",
-      "title": "scripts/v15-report.mjs — 生成 run-report.md（PASS/FAIL + 节点归因）",
-      "scope": "Node.js ESM 脚本，读取 .v15/timeline.log + DB（tasks / initiative_runs / sub-tasks / task_events），写出 sprints/w8-langgraph-v15/run-report.md，含 ## Verdict / ## Sprint Trinity Check / ## Timeline / ## Initiative State / ## Generated at；FAIL 路径含 ### Failure Node。Verdict = PASS 当且仅当 tasks.status='completed' AND initiative_runs.phase='done' AND 所有 sub-task status='completed'。导出 computeVerdict / extractFailureNode / renderReport。",
+      "title": "scripts/v15-report.mjs — 生成 run-report.md（PASS/FAIL + R1/R2 节点归因）",
+      "scope": "Node.js ESM 脚本，读取 .v15/timeline.log + DB（tasks / initiative_runs / sub-tasks / task_events），写出 sprints/w8-langgraph-v15/run-report.md，含 ## Verdict / ## Sprint Trinity Check / ## Timeline / ## Initiative State / ## Generated at；FAIL 路径含 ### Failure Node。Verdict = PASS 当且仅当 tasks.status='completed' AND initiative_runs.phase='done' AND 所有 sub-task status='completed'。Failure Node 提取优先级：timeline STUCK_QUEUED → dispatcher_pickup（R1）；timeline STALL@X → X（R2）；task_events error；failure_reason；error_message；unknown_node 兜底。导出 computeVerdict / extractFailureNode / renderReport。",
       "dod": [
-        "[BEHAVIOR] vitest tests/ws3/report.test.ts 8 个 case 全绿（computeVerdict 5 路径 + extractFailureNode 2 路径 + renderReport 含全部段头）",
+        "[BEHAVIOR] vitest tests/ws3/report.test.ts 全部 case 全绿（computeVerdict 5 路径 + extractFailureNode 兜底/events/R1/R2/timeline 优先 + renderReport 段头）",
         "[ARTIFACT] scripts/v15-report.mjs 文件存在",
-        "[ARTIFACT] 脚本含字面量 sprints/w8-langgraph-v15/run-report.md、## Verdict:、## Sprint Trinity Check、## Generated at:、task_events"
+        "[ARTIFACT] 脚本含字面量 sprints/w8-langgraph-v15/run-report.md、## Verdict:、## Sprint Trinity Check、## Generated at:、task_events、dispatcher_pickup、STUCK_QUEUED、STALL"
       ],
       "files": [
         "scripts/v15-report.mjs"
