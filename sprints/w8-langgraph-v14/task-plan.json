@@ -1,0 +1,40 @@
+{
+  "initiative_id": "pending",
+  "journey_type": "autonomous",
+  "journey_type_reason": "整链路由 Brain consciousness loop 自主驱动，无 UI、无远端 agent 协议改动；测试 = 触发 + 观测 DB 与 PR 状态。",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "trigger.sh：注册 harness_initiative 并轮询至 status=completed",
+      "scope": "在 sprints/w8-langgraph-v14/scripts/trigger.sh 写一个 bash 脚本：(1) curl POST localhost:5221/api/brain/tasks 注册 task_type=harness_initiative，PRD 内容是 '在 sprints/w8-langgraph-v14-demo/ 下创建 hello.txt 写 hello world'；(2) 把返回的 id 写入 /tmp/v14-initiative-task-id；(3) while 轮询 psql 直到 tasks 表对应行 status=completed（含 fail-fast 检测 status=failed），超时上限 90 分钟。不修改 packages/* 任何代码。",
+      "dod": [
+        "[BEHAVIOR] 执行 bash trigger.sh 后 /tmp/v14-initiative-task-id 含合法 UUID 且 tasks 表对应行最终 status=completed（见 tests/ws1/trigger-and-wait.test.ts）",
+        "[ARTIFACT] sprints/w8-langgraph-v14/scripts/trigger.sh 存在且可执行（chmod +x）",
+        "[ARTIFACT] trigger.sh 含 /api/brain/tasks + harness_initiative + /tmp/v14-initiative-task-id + 轮询关键字"
+      ],
+      "files": [
+        "sprints/w8-langgraph-v14/scripts/trigger.sh"
+      ],
+      "depends_on": [],
+      "complexity": "S",
+      "estimated_minutes": 30
+    },
+    {
+      "task_id": "ws2",
+      "title": "collect-evidence.sh：从 DB + gh CLI 渲染 5 key 到 run-evidence.md",
+      "scope": "在 sprints/w8-langgraph-v14/scripts/collect-evidence.sh 写一个 bash 脚本：(1) 读 /tmp/v14-initiative-task-id 拿 INITIATIVE_TASK_ID；(2) 查 tasks 表拿最终 status；(3) 查 tasks 表 parent_task_id 拿 generator sub_task 的 result.pr_url；(4) 调 gh pr view 拿 PR state；(5) 查 harness_state_transitions 表统计节点耗时与 GAN proposer 轮数；(6) 渲染到 sprints/w8-langgraph-v14/run-evidence.md，必含 5 个 key（initiative_task_id / tasks_table_status / pr_url / gan_proposer_rounds / node_durations），格式 'key: value'。不修改 packages/* 任何代码。",
+      "dod": [
+        "[BEHAVIOR] 执行 bash collect-evidence.sh 后 run-evidence.md 含 5 key 全非占位且 mtime 在 2h 内（见 tests/ws2/collect-evidence.test.ts）",
+        "[ARTIFACT] sprints/w8-langgraph-v14/scripts/collect-evidence.sh 存在且可执行",
+        "[ARTIFACT] collect-evidence.sh 含 tasks / parent_task_id / harness_state_transitions / gh pr view 关键字与硬编码输出路径"
+      ],
+      "files": [
+        "sprints/w8-langgraph-v14/scripts/collect-evidence.sh",
+        "sprints/w8-langgraph-v14/run-evidence.md"
+      ],
+      "depends_on": ["ws1"],
+      "complexity": "S",
+      "estimated_minutes": 45
+    }
+  ]
+}
