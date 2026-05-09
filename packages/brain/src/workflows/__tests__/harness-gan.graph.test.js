@@ -19,6 +19,8 @@ describe('GAN proposer node task-plan.json access 校验 [BEHAVIOR]', () => {
       const { proposer } = createGanContractNodes(fakeExecutor, {
         taskId: 'test-task', initiativeId: 'test-init', sprintDir: 'sprints',
         worktreePath: tmp, githubToken: 'fake', readContractFile: fakeReadContract,
+        // H10: mock fetchOriginFile 成功，避免默认 fetchAndShowOriginFile 真跑 git。
+        fetchOriginFile: vi.fn(async () => '{"tasks":[]}'),
       });
 
       const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
@@ -49,6 +51,8 @@ describe('GAN proposer node task-plan.json access 校验 [BEHAVIOR]', () => {
       const { proposer } = createGanContractNodes(fakeExecutor, {
         taskId: 'test-task', initiativeId: 'test-init', sprintDir: 'sprints',
         worktreePath: tmp, githubToken: 'fake', readContractFile: fakeReadContract,
+        // H10: mock fetchOriginFile 成功，避免默认 fetchAndShowOriginFile 真跑 git。
+        fetchOriginFile: vi.fn(async () => '{"tasks":[]}'),
       });
 
       const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});

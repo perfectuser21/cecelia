@@ -28,6 +28,8 @@ import {
   START,
   END,
 } from '@langchain/langgraph';
+import { fetchAndShowOriginFile } from '../lib/git-fence.js';
+import { LLM_RETRY } from './retry-policies.js';
 
 const execFile = promisify(execFileCb);
 
@@ -356,6 +358,7 @@ export function createGanContractNodes(executor, ctx) {
     taskId, initiativeId, sprintDir, worktreePath, githubToken,
     budgetCapUsd = 10,
     readContractFile = defaultReadContractFile,
+    fetchOriginFile = fetchAndShowOriginFile,
   } = ctx;
 
   async function proposer(state) {
@@ -394,6 +397,15 @@ export function createGanContractNodes(executor, ctx) {
       await access(taskPlanPath);
     } catch {
       console.warn(`[harness-gan] proposer round=${nextRound} missing ${sprintDir}/task-plan.json — inferTaskPlan 拿不到 DAG 时会 hard fail`);
+    }
+
+    // H10: brain 主动验证 proposer 容器真把 propose_branch + task-plan.json 推到 origin。
+    // docker exit_code=0 ≠ 节点 success（contract enforcement 第一层）。
+    // 失败时 throw → LangGraph retryPolicy: LLM_RETRY 自动重试 3 次。
+    try {
+      await fetchOriginFile(worktreePath, proposeBranch, `${sprintDir}/task-plan.json`);
+    } catch (err) {
+      throw new Error(`proposer_didnt_push: branch ${proposeBranch} 不存在或缺 task-plan.json: ${err.message}`);
     }
 
     return {
@@ -489,7 +501,7 @@ function reviewerRouter(state) {
  */
 export function buildGanContractGraph(nodes) {
   const graph = new StateGraph(GanContractState)
-    .addNode('proposer', nodes.proposer)
+    .addNode('proposer', nodes.proposer, { retryPolicy: LLM_RETRY })
     .addNode('reviewer', nodes.reviewer)
     .addEdge(START, 'proposer')
     .addEdge('proposer', 'reviewer')
@@ -526,6 +538,7 @@ export async function runGanContractGraph(opts) {
     budgetCapUsd = 10,
     checkpointer,
     readContractFile,
+    fetchOriginFile,
     recursionLimit = DEFAULT_RECURSION_LIMIT,
   } = opts;
 
@@ -541,7 +554,7 @@ export async function runGanContractGraph(opts) {
 
   const nodes = createGanContractNodes(executor, {
     taskId, initiativeId, sprintDir, worktreePath, githubToken,
-    budgetCapUsd, readContractFile,
+    budgetCapUsd, readContractFile, fetchOriginFile,
   });
   const graph = buildGanContractGraph(nodes);
   const app = graph.compile({ checkpointer, durability: 'sync' });

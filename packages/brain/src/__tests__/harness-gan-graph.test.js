@@ -169,6 +169,8 @@ describe('createGanContractNodes', () => {
       worktreePath: '/tmp/wt/demo',
       githubToken: 'ghs_test',
       readContractFile: vi.fn(async () => '# Contract content'),
+      // H10: 默认 fetchOriginFile = fetchAndShowOriginFile 会真跑 git；测试里 mock 为成功。
+      fetchOriginFile: vi.fn(async () => '{"tasks":[]}'),
       ...overrides,
     };
   }
@@ -371,6 +373,8 @@ describe('runGanContractGraph', () => {
       githubToken: 'ghs_test',
       budgetCapUsd: 10,
       readContractFile: vi.fn(async () => '# Contract'),
+      // H10: 注入成功 fetchOriginFile，避免默认 fetchAndShowOriginFile 真跑 git。
+      fetchOriginFile: vi.fn(async () => '{"tasks":[]}'),
       // v1.229.0 起 checkpointer 必填（不再 fallback MemorySaver）。
       // 单测里仍允许用 MemorySaver mock 替代真 PostgresSaver。
       checkpointer: new MemorySaver(),
