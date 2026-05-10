@@ -1,28 +1,46 @@
-# DoD: W7.3 Bug #E startup-recovery cleanupStaleWorktrees 加活跃 lock 保护
+contract_branch: cp-harness-propose-r3-eaf2a56f
+workstream_index: 1
+sprint_dir: sprints/w19-playground-sum
 
-## 概述
-5/6 startup-recovery 误清 4 个含活跃 dev-lock 的 cp-* worktree。修：cleanupStaleWorktrees
-删除前先检查 worktree 内是否含 24h 内修改的 .dev-lock 或 .dev-mode.<branch>，命中则跳过。
+---
+skeleton: false
+journey_type: autonomous
+---
+# Contract DoD — Workstream 1: playground 加 GET /sum
 
-## 验收
+**范围**：playground/server.js 加 `/sum` 路由 + playground/tests/server.test.js 加用例 + playground/README.md 更新端点段
+**大小**：S（< 100 行）
+**依赖**：无
 
-- [x] [ARTIFACT] startup-recovery.js 导出 hasActiveDevLock 函数
-  Test: manual:node -e "const m=await import('./packages/brain/src/startup-recovery.js');if(typeof m.hasActiveDevLock!=='function')process.exit(1)"
+## ARTIFACT 条目
 
-- [x] [BEHAVIOR] worktree 含活跃 .dev-lock → 不被清理（skipped_active_lock 计数 ≥1，目录还在）
-  Test: tests/integration/startup-recovery-active-lock.test.js
+- [ ] [ARTIFACT] `playground/server.js` 含 `/sum` 路由注册
+  Test: `node -e "const c=require('fs').readFileSync('playground/server.js','utf8');if(!/app\.get\(\s*['\"]\/sum['\"]/m.test(c))process.exit(1)"`
 
-- [x] [BEHAVIOR] worktree 含活跃 .dev-mode.cp-xyz → 不被清理
-  Test: tests/integration/startup-recovery-active-lock.test.js
+- [ ] [ARTIFACT] `playground/server.js` 仍保留 `/health` 路由（防误删）
+  Test: `node -e "const c=require('fs').readFileSync('playground/server.js','utf8');if(!/app\.get\(\s*['\"]\/health['\"]/m.test(c))process.exit(1)"`
 
-- [x] [BEHAVIOR] .dev-lock mtime 超过 24h → 视为残留，正常清理（保护 false negative 不发生）
-  Test: tests/integration/startup-recovery-active-lock.test.js
+- [ ] [ARTIFACT] `playground/tests/server.test.js` 含至少一个引用 `/sum` 的测试用例
+  Test: `node -e "const c=require('fs').readFileSync('playground/tests/server.test.js','utf8');if(!c.includes('/sum'))process.exit(1)"`
 
-- [x] [BEHAVIOR] worktree 无 lock → 正常清理（保护逻辑不破坏既有路径）
-  Test: tests/integration/startup-recovery-active-lock.test.js
+- [ ] [ARTIFACT] `playground/tests/server.test.js` 同时含 happy path（200 / sum 字段断言）+ error path（400 / error 字段断言）
+  Test: `node -e "const c=require('fs').readFileSync('playground/tests/server.test.js','utf8');if(!(/toBe\(200\)/.test(c)&&/toBe\(400\)/.test(c)))process.exit(1)"`
 
-- [x] [BEHAVIOR] enhanced 单测 26 个全过（含 5 个新加 + 5 个 hasActiveDevLock 直测）
-  Test: manual:bash -c "cd packages/brain && NODE_OPTIONS='--max-old-space-size=2048' npx vitest run src/__tests__/startup-recovery-enhanced.test.js"
+- [ ] [ARTIFACT] `playground/README.md` 已更新端点段，`/sum` 不再标记为"不在 bootstrap 范围"
+  Test: `node -e "const c=require('fs').readFileSync('playground/README.md','utf8');if(!c.includes('/sum')||/不在 bootstrap 范围/.test(c))process.exit(1)"`
 
-- [x] [ARTIFACT] Brain 版本 bump 到 1.228.3（package.json + .brain-versions + DEFINITION.md）
-  Test: manual:node -e "const v=require('./packages/brain/package.json').version;if(v!=='1.228.3')process.exit(1)"
+- [ ] [ARTIFACT] `playground/package.json` 未新增运行时依赖（dependencies 仅 express）
+  Test: `node -e "const p=require('./playground/package.json');const d=Object.keys(p.dependencies||{});if(d.length!==1||d[0]!=='express')process.exit(1)"`
+
+- [ ] [ARTIFACT] `playground/package.json` 未新增 devDependencies（仅 supertest + vitest）
+  Test: `node -e "const p=require('./playground/package.json');const d=Object.keys(p.devDependencies||{}).sort().join(',');if(d!=='supertest,vitest')process.exit(1)"`
+
+## BEHAVIOR 索引（实际测试在 sprints/w19-playground-sum/tests/ws1/）
+
+见 `sprints/w19-playground-sum/tests/ws1/sum.test.js`，覆盖：
+- GET `/sum?a=2&b=3` → 200 + body `{sum:5}`
+- GET `/sum?a=2`（缺 b） → 400 + body `.error` 非空字符串
+- GET `/sum?a=abc&b=3`（非数字） → 400 + `.error` 非空 + body 不含 `sum` 字段
+- GET `/sum?a=-1&b=1` → 200 + `{sum:0}`（负数合法）
+- GET `/sum?a=1.5&b=2.5` → 200 + `{sum:4}`（小数合法）
+- GET `/health` → 200 + `{ok:true}`（回归不破坏）
