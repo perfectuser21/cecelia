@@ -167,6 +167,18 @@ export async function ensureHarnessWorktree(opts) {
     '--branch', 'main', '--single-branch',
     baseRepo, wtPath,
   ]);
+
+  // H16: clone 后改 origin URL 到主仓库的 GitHub origin。
+  // clone --local 让 origin 默认指向 baseRepo 本地路径，导致 sub-task 节点 (H13) git fetch origin
+  // <propose-branch> 失败 — proposer push 到 GitHub origin，本地仓库没 cp-harness-propose-* 分支。
+  try {
+    const { stdout: githubUrl } = await execFn('git', ['-C', baseRepo, 'remote', 'get-url', 'origin']);
+    await execFn('git', ['-C', wtPath, 'remote', 'set-url', 'origin', githubUrl.trim()]);
+  } catch (err) {
+    logFn(`[harness-worktree] could not set origin URL to GitHub for ${wtPath}: ${err.message}`);
+    // 不抛 — 至少 clone 成功，后续可能某节点失败但 graph 能走更远
+  }
+
   await execFn('git', ['-C', wtPath, 'checkout', '-b', branch]);
 
   // 尝试 rebase origin/main，让 Generator 从最新 main 出发；

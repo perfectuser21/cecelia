@@ -115,8 +115,10 @@ describe('ensureHarnessWorktree .git 状态校验', () => {
     });
 
     expect(rmCalled).toBe(false);
-    // 没触发 remote 校验
-    expect(calls.some(c => c.includes('remote get-url'))).toBe(false);
+    // 没触发 orphan 校验（orphan 校验是 git -C <wtPath> remote get-url，跑在已存在 dir 路径上）
+    // H16 后 clone 路径也调 git -C <baseRepo> remote get-url —— 区别在 -C 后面是 baseRepo 不是 wtPath
+    const wtPath = '/tmp/cec/.claude/worktrees/harness-v2/task-aaaabbbb';
+    expect(calls.some(c => c.includes('remote get-url') && c.includes(wtPath))).toBe(false);
     // 走 clone
     expect(calls.some(c => c.startsWith('git clone'))).toBe(true);
   });
