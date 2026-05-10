@@ -70,21 +70,23 @@ describe('Heartbeat Inspector', () => {
 
   // D3: collectSystemSnapshot
   describe('collectSystemSnapshot', () => {
-    it('并行查询 4 张表返回结构化快照', async () => {
+    it('并行查询 5 张表返回结构化快照（含 active_goals）', async () => {
       mockPool.query
         .mockResolvedValueOnce({ rows: [{ status: 'in_progress', count: 3 }, { status: 'queued', count: 5 }] })
         .mockResolvedValueOnce({ rows: [{ event_type: 'tick', count: 100 }] })
         .mockResolvedValueOnce({ rows: [{ count: 2 }] })
-        .mockResolvedValueOnce({ rows: [{ title: 'KR1', progress: 50 }] });
+        .mockResolvedValueOnce({ rows: [{ title: 'KR1', progress: 50 }] })
+        .mockResolvedValueOnce({ rows: [{ cnt: 4 }] });
 
       const snapshot = await collectSystemSnapshot(mockPool);
 
-      expect(mockPool.query).toHaveBeenCalledTimes(4);
+      expect(mockPool.query).toHaveBeenCalledTimes(5);
       expect(snapshot.tasks_in_progress).toBe(3);
       expect(snapshot.tasks_queued).toBe(5);
       expect(snapshot.tasks_failed).toBe(0);
       expect(snapshot.pending_proposals).toBe(2);
       expect(snapshot.active_okrs).toEqual([{ title: 'KR1', progress: 50 }]);
+      expect(snapshot.active_goals).toBe(4);
       expect(typeof snapshot.current_hour).toBe('number');
       expect(typeof snapshot.day_of_week).toBe('number');
     });
@@ -102,6 +104,19 @@ describe('Heartbeat Inspector', () => {
       expect(calls[2]).toContain('pending_approval');
       expect(calls[3]).toContain('key_results');
       expect(calls[3]).toContain('in_progress');
+      expect(calls[4]).toContain('objectives');
+      expect(calls[4]).toContain('in_progress');
+    });
+
+    it('objectives 行为空时 active_goals=0', async () => {
+      mockPool.query
+        .mockResolvedValueOnce({ rows: [] })
+        .mockResolvedValueOnce({ rows: [] })
+        .mockResolvedValueOnce({ rows: [] })
+        .mockResolvedValueOnce({ rows: [] })
+        .mockResolvedValueOnce({ rows: [] });
+      const snapshot = await collectSystemSnapshot(mockPool);
+      expect(snapshot.active_goals).toBe(0);
     });
 
     it('cecelia_events 查询使用 event_type 列名（不是 type）', async () => {
@@ -126,6 +141,7 @@ describe('Heartbeat Inspector', () => {
         day_of_week: 1,
         active_okrs: [{ title: 'KR1', progress: 50 }],
         top_events_24h: [{ event_type: 'tick', count: 100 }],
+        active_goals: 2,
       };
       const prompt = buildHeartbeatPrompt('# 检查清单\n- 检查任务', snapshot);
 
@@ -140,6 +156,24 @@ describe('Heartbeat Inspector', () => {
       expect(prompt).toContain('tick:100');
       expect(prompt).toContain('自主权边界');
       expect(prompt).toContain('no_action');
+      expect(prompt).toContain('活跃目标: 2');
+    });
+
+    it('active_goals=0 prompt 含方向性崩溃前置信号告警标语', () => {
+      const snapshot = {
+        tasks_in_progress: 0,
+        tasks_queued: 0,
+        tasks_failed: 0,
+        pending_proposals: 0,
+        current_hour: 9,
+        day_of_week: 2,
+        active_okrs: [],
+        top_events_24h: [],
+        active_goals: 0,
+      };
+      const prompt = buildHeartbeatPrompt('# 清单', snapshot);
+      expect(prompt).toContain('活跃目标: 0');
+      expect(prompt).toContain('方向性崩溃');
     });
   });
 
@@ -167,12 +201,13 @@ describe('Heartbeat Inspector', () => {
       text: '```json\n{"action": "no_action", "rationale": "一切正常"}\n```',
     });
 
-    // mock snapshot queries
+    // mock snapshot queries（5：含 active_goals 非零，避免触发告警 INSERT）
     mockPool.query
       .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({ rows: [{ count: 0 }] })
-      .mockResolvedValueOnce({ rows: [] });
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [{ cnt: 5 }] });
 
     const result = await runHeartbeatInspection(mockPool, {
       heartbeatPath: new URL('../../../HEARTBEAT.md', import.meta.url).pathname,
@@ -194,7 +229,8 @@ describe('Heartbeat Inspector', () => {
       .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({ rows: [{ count: 0 }] })
-      .mockResolvedValueOnce({ rows: [] });
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [{ cnt: 5 }] });
 
     await runHeartbeatInspection(mockPool, {
       heartbeatPath: new URL('../../../HEARTBEAT.md', import.meta.url).pathname,
@@ -214,12 +250,13 @@ describe('Heartbeat Inspector', () => {
       text: '```json\n{"actions": [{"type": "heartbeat_finding", "params": {"msg": "任务卡住"}}], "rationale": "发现问题"}\n```',
     });
 
-    // mock snapshot queries (4) + event INSERT (1)
+    // mock snapshot queries (5) + event INSERT (1)
     mockPool.query
       .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({ rows: [{ count: 0 }] })
       .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [{ cnt: 5 }] })
       .mockResolvedValueOnce({ rows: [] }); // INSERT cecelia_events
 
     mockExecuteDecision.mockResolvedValueOnce({});
@@ -247,6 +284,7 @@ describe('Heartbeat Inspector', () => {
       .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({ rows: [{ count: 0 }] })
       .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [{ cnt: 5 }] })
       .mockResolvedValueOnce({ rows: [] }); // INSERT
 
     mockExecuteDecision.mockResolvedValueOnce({});
@@ -273,7 +311,8 @@ describe('Heartbeat Inspector', () => {
       .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({ rows: [{ count: 0 }] })
-      .mockResolvedValueOnce({ rows: [] });
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [{ cnt: 5 }] });
 
     const result = await runHeartbeatInspection(mockPool, {
       heartbeatPath: new URL('../../../HEARTBEAT.md', import.meta.url).pathname,
@@ -281,5 +320,60 @@ describe('Heartbeat Inspector', () => {
 
     expect(result.skipped).toBe(true);
     expect(result.reason).toBe('parse_error');
+  });
+
+  // active_goals=0 告警（PRD：方向性崩溃前置信号 → emit cecelia_event 告警）
+  describe('active_goals=0 告警', () => {
+    it('active_goals=0 → emit cecelia_event(active_goals_zero_alert)，独立于 LLM 决策', async () => {
+      mockCallLLM.mockResolvedValueOnce({
+        text: '{"action": "no_action", "rationale": "ok"}',
+      });
+      // 5 snapshot queries（active_goals=0）+ 告警 INSERT
+      mockPool.query
+        .mockResolvedValueOnce({ rows: [] })
+        .mockResolvedValueOnce({ rows: [] })
+        .mockResolvedValueOnce({ rows: [{ count: 0 }] })
+        .mockResolvedValueOnce({ rows: [] })
+        .mockResolvedValueOnce({ rows: [{ cnt: 0 }] })
+        .mockResolvedValueOnce({ rows: [] }); // INSERT active_goals_zero_alert
+
+      const result = await runHeartbeatInspection(mockPool, {
+        heartbeatPath: new URL('../../../HEARTBEAT.md', import.meta.url).pathname,
+      });
+
+      expect(result.alert).toEqual(expect.objectContaining({
+        type: 'active_goals_zero_alert',
+        active_goals: 0,
+      }));
+      // 必须存在一次 INSERT INTO cecelia_events 且 event_type='active_goals_zero_alert'
+      const insertCalls = mockPool.query.mock.calls.filter(c =>
+        typeof c[0] === 'string' && c[0].includes('INSERT INTO cecelia_events'));
+      const alertInsert = insertCalls.find(c => {
+        const payload = c[1] && c[1][0] ? JSON.parse(c[1][0]) : {};
+        return payload.alert_type === 'active_goals_zero_alert' || c[0].includes('active_goals_zero_alert');
+      });
+      expect(alertInsert).toBeTruthy();
+    });
+
+    it('active_goals>0 → 不 emit active_goals_zero_alert', async () => {
+      mockCallLLM.mockResolvedValueOnce({
+        text: '{"action": "no_action", "rationale": "ok"}',
+      });
+      mockPool.query
+        .mockResolvedValueOnce({ rows: [] })
+        .mockResolvedValueOnce({ rows: [] })
+        .mockResolvedValueOnce({ rows: [{ count: 0 }] })
+        .mockResolvedValueOnce({ rows: [] })
+        .mockResolvedValueOnce({ rows: [{ cnt: 3 }] });
+
+      const result = await runHeartbeatInspection(mockPool, {
+        heartbeatPath: new URL('../../../HEARTBEAT.md', import.meta.url).pathname,
+      });
+
+      expect(result.alert).toBeFalsy();
+      const insertCalls = mockPool.query.mock.calls.filter(c =>
+        typeof c[0] === 'string' && c[0].includes('active_goals_zero_alert'));
+      expect(insertCalls).toHaveLength(0);
+    });
   });
 });
