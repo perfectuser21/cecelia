@@ -723,15 +723,17 @@ async function onBrainListening() {
 
   // Initialize Daily Memory Consolidation (每 30 分钟轮询，内部 elapsed-time 闸门按 CONSOLIDATION_INTERVAL_HOURS 节流)
   // Wave 2 重构后 tick-runner.js 已废弃，原 step 10.x 调用断点；此处恢复独立调度，修 PROBE_FAIL_CONSOLIDATION 真因
+  // 初次 setTimeout 用 5s（小于 capability-probe 的 30s 首发延迟），避免 cold-start 上 probe 先于 consolidation 跑
+  // 而读到空 memory_stream / 空 daily_logs 时假阳报失败、再触发 auto-fix 反复派发 PROBE_FAIL_CONSOLIDATION 任务
   try {
     const { runDailyConsolidationIfNeeded } = await import('./src/consolidation.js');
     setTimeout(async () => {
       try { await runDailyConsolidationIfNeeded(pool); } catch (e) { console.warn('[Server] Daily consolidation initial run failed:', e.message); }
-    }, 60 * 1000);
+    }, 5 * 1000);
     setInterval(async () => {
       try { await runDailyConsolidationIfNeeded(pool); } catch (e) { console.warn('[Server] Daily consolidation failed:', e.message); }
     }, 30 * 60 * 1000);
-    console.log('[Server] Daily Consolidation scheduled (30min poll, internal elapsed-time gate)');
+    console.log('[Server] Daily Consolidation scheduled (5s initial + 30min poll, internal elapsed-time gate)');
   } catch (e) {
     console.warn('[Server] Daily Consolidation init failed (non-fatal):', e.message);
   }

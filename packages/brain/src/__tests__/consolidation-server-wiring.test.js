@@ -39,4 +39,18 @@ describe('server.js — runDailyConsolidationIfNeeded 接入（PROBE_FAIL_CONSOL
     const surroundings = serverContent.slice(Math.max(0, idx - 600), idx + 600);
     expect(surroundings).toMatch(/catch\s*\(/);
   });
+
+  it('初始 setTimeout 延迟 ≤ 10s（首发须早于 capability-probe 的 30s 首发，避免 cold-start 假阳）', () => {
+    const idx = serverContent.indexOf('runDailyConsolidationIfNeeded');
+    const surroundings = serverContent.slice(Math.max(0, idx - 200), idx + 600);
+
+    // setInterval 之前的 setTimeout 块内提取毫秒数（数字 * 1000 模式）
+    const setIntervalIdx = surroundings.indexOf('setInterval');
+    const beforeInterval = setIntervalIdx > 0 ? surroundings.slice(0, setIntervalIdx) : surroundings;
+    const initialDelayMatch = beforeInterval.match(/}\s*,\s*(\d+)\s*\*\s*1000\s*\)/);
+    expect(initialDelayMatch).not.toBeNull();
+    const seconds = parseInt(initialDelayMatch[1], 10);
+    expect(seconds).toBeGreaterThan(0);
+    expect(seconds).toBeLessThanOrEqual(10);
+  });
 });
