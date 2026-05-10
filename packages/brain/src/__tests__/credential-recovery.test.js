@@ -228,7 +228,7 @@ describe('checkAndAlertExpiringCredentials', () => {
 
     const result = await checkAndAlertExpiringCredentials(pool);
 
-    expect(result.alerted).toBe(3); // account1/2/3 全部告警
+    expect(result.alerted).toBe(2); // H14: ACCOUNTS={account1, account2}（account3 退订）
     expect(raise).toHaveBeenCalledWith(
       'P0',
       expect.stringContaining('credential_expiry_account'),
@@ -254,7 +254,7 @@ describe('checkAndAlertExpiringCredentials', () => {
 
     const result = await checkAndAlertExpiringCredentials(pool);
 
-    expect(result.alerted).toBe(3);
+    expect(result.alerted).toBe(2); // H14: ACCOUNTS={account1, account2}
     expect(raise).toHaveBeenCalledWith(
       'P1',
       expect.stringContaining('credential_expiry_account'),

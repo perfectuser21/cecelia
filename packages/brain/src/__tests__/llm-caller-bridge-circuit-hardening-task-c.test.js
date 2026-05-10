@@ -45,17 +45,18 @@ beforeEach(() => {
 });
 
 describe('proactiveTokenCheck 保护 api_error 熔断（Task C）', () => {
+  // H14: account3 退订；测试改用 account2 验证 proactiveTokenCheck 行为
   it('api_error 熔断 + token 有效 → 熔断保留（不清除）', async () => {
     const resetTime = new Date(Date.now() + 60 * 60 * 1000).toISOString();
-    markAuthFailure('account3', resetTime, 'api_error');
-    expect(isAuthFailed('account3')).toBe(true);
+    markAuthFailure('account2', resetTime, 'api_error');
+    expect(isAuthFailed('account2')).toBe(true);
 
     // 所有账号 token 文件都有效
     mockPool.query.mockClear();
     await proactiveTokenCheck();
 
     // api_error 熔断应保留
-    expect(isAuthFailed('account3')).toBe(true);
+    expect(isAuthFailed('account2')).toBe(true);
 
     // 不应触发 "is_auth_failed = false" 的 DB 清除 SQL
     const clearCalls = mockPool.query.mock.calls.filter(([sql]) =>
@@ -66,16 +67,17 @@ describe('proactiveTokenCheck 保护 api_error 熔断（Task C）', () => {
 
   it('token_expired 熔断 + token 有效 → 熔断清除（token 刷新场景）', async () => {
     const resetTime = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
-    markAuthFailure('account3', resetTime, 'token_expired');
-    expect(isAuthFailed('account3')).toBe(true);
+    markAuthFailure('account2', resetTime, 'token_expired');
+    expect(isAuthFailed('account2')).toBe(true);
 
     await proactiveTokenCheck();
 
     // token_expired 熔断应被清除（token 已刷新）
-    expect(isAuthFailed('account3')).toBe(false);
+    expect(isAuthFailed('account2')).toBe(false);
   });
 
-  it('混合场景：account1=api_error / account2=token_expired / account3 无熔断', async () => {
+  it('混合场景：account1=api_error / account2=token_expired', async () => {
+    // H14: account3 退订；2 账号语义保留：一个 api_error 保留 + 一个 token_expired 清除
     const apiErrReset = new Date(Date.now() + 60 * 60 * 1000).toISOString();
     const tokenExpReset = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
     markAuthFailure('account1', apiErrReset, 'api_error');
@@ -83,12 +85,10 @@ describe('proactiveTokenCheck 保护 api_error 熔断（Task C）', () => {
 
     expect(isAuthFailed('account1')).toBe(true);
     expect(isAuthFailed('account2')).toBe(true);
-    expect(isAuthFailed('account3')).toBe(false);
 
     await proactiveTokenCheck();
 
     expect(isAuthFailed('account1')).toBe(true);  // api_error 保留
     expect(isAuthFailed('account2')).toBe(false); // token_expired 清除
-    expect(isAuthFailed('account3')).toBe(false);
   });
 });

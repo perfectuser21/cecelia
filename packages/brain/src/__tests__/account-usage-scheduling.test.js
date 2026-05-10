@@ -91,7 +91,7 @@ async function clearAllSpendingCaps() {
   const mod = await import('../account-usage.js');
   // 直接设置过期时间清除
   const pastTime = new Date(Date.now() - 1000).toISOString();
-  ['account1', 'account2', 'account3'].forEach(id => {
+  ['account1', 'account2'].forEach(id => {
     // 如果有 spending cap，通过标记过期来清除
     if (mod.isSpendingCapped(id)) {
       mod.markSpendingCap(id, pastTime);
@@ -211,6 +211,7 @@ describe('S: selectBestAccount reset-aware 调度', () => {
 
   // ============================================================
   // S5: 5h ePct 相同时，按 seven_day_sonnet_pct 升序
+  // H14: ACCOUNTS=2，account3 退订；account2 持 sonnet=0% 应被选中
   // ============================================================
   it('S5: 5h ePct 相同时，按 seven_day_sonnet_pct 升序选择', async () => {
     vi.mock('../db.js', () => ({ default: { query: vi.fn() } }));
@@ -219,8 +220,7 @@ describe('S: selectBestAccount reset-aware 调度', () => {
     pool.query.mockImplementation((sql, params) => {
       const rows = [
         makeRow('account1', 0, 120, 53, 50),  // sonnet=50%
-        makeRow('account2', 0, 120, 37, 30),  // sonnet=30%
-        makeRow('account3', 0, 120, 0,  0),   // sonnet=0% ← 应被选中
+        makeRow('account2', 0, 120, 0,  0),   // sonnet=0% ← 应被选中
       ];
       if (typeof sql === 'string' && sql.includes('account_usage_cache') && params?.[0]) {
         return Promise.resolve({ rows: rows.filter(r => r.account_id === params[0]) });
@@ -230,7 +230,7 @@ describe('S: selectBestAccount reset-aware 调度', () => {
 
     const { selectBestAccount } = await import('../account-usage.js');
     const result = await selectBestAccount();
-    expect(result?.accountId).toBe('account3');
+    expect(result?.accountId).toBe('account2');
     expect(result?.model).toBe('sonnet');
   });
 });
@@ -316,8 +316,7 @@ describe('M: 三阶段模型降级链', () => {
     pool.query.mockImplementation((sql, params) => {
       const rows = [
         makeRow('account1', 20, 120, 70, 100),  // sonnet=100% → 全满
-        makeRow('account2', 30, 120, 60, 100),  // sonnet=100% → 全满
-        makeRow('account3', 10, 120, 50, 100),  // sonnet=100% → 全满，7d=50% < 95% ← Opus 候选
+        makeRow('account2', 30, 120, 50, 100),  // sonnet=100% → 全满，7d=50% 最低 ← Haiku 候选
       ];
       if (typeof sql === 'string' && sql.includes('account_usage_cache') && params?.[0]) {
         return Promise.resolve({ rows: rows.filter(r => r.account_id === params[0]) });
@@ -329,9 +328,10 @@ describe('M: 三阶段模型降级链', () => {
     const result = await selectBestAccount();
     expect(result).not.toBeNull();
     // 新逻辑：DEFAULT_CASCADE=['sonnet','haiku']，无 Opus
-    // Sonnet 全满(100%) → 降级 Haiku；account3 seven_day_pct=50% 最低 → 选中
+    // Sonnet 全满(100%) → 降级 Haiku；account2 seven_day_pct=50% 最低 → 选中
+    // H14: account3 退订，仅 account1/2
     expect(result?.model).toBe('haiku');
-    expect(result?.accountId).toBe('account3');
+    expect(result?.accountId).toBe('account2');
   });
 
   // ============================================================
@@ -343,9 +343,8 @@ describe('M: 三阶段模型降级链', () => {
     pool.query.mockReset();
     pool.query.mockImplementation((sql, params) => {
       const rows = [
-        makeRow('account1', 20, 120, 96, 100),  // sonnet满 + opus满
-        makeRow('account2', 30, 120, 97, 100),  // sonnet满 + opus满
-        makeRow('account3', 10, 120, 95, 100),  // sonnet满 + opus满（7d=95 ≥ 95），5h=10% 最低 ← 选
+        makeRow('account1', 30, 120, 97, 100),  // sonnet满 + opus满
+        makeRow('account2', 10, 120, 95, 100),  // sonnet满 + opus满（7d=95 ≥ 95），5h=10% 最低 ← 选
       ];
       if (typeof sql === 'string' && sql.includes('account_usage_cache') && params?.[0]) {
         return Promise.resolve({ rows: rows.filter(r => r.account_id === params[0]) });
@@ -357,7 +356,8 @@ describe('M: 三阶段模型降级链', () => {
     const result = await selectBestAccount();
     expect(result).not.toBeNull();
     expect(result?.model).toBe('haiku');
-    expect(result?.accountId).toBe('account3');
+    // H14: account3 退订，account2 持原 account3 角色（5h 最低）
+    expect(result?.accountId).toBe('account2');
   });
 
   // ============================================================
@@ -371,7 +371,6 @@ describe('M: 三阶段模型降级链', () => {
       const rows = [
         makeRow('account1', 20, 120, 30, 40),
         makeRow('account2', 10, 120, 20, 15),  // sonnet 7d 最低 → 选中
-        makeRow('account3', 30, 120, 40, 60),
       ];
       if (typeof sql === 'string' && sql.includes('account_usage_cache') && params?.[0]) {
         return Promise.resolve({ rows: rows.filter(r => r.account_id === params[0]) });
@@ -396,8 +395,7 @@ describe('M: 三阶段模型降级链', () => {
     pool.query.mockImplementation((sql, params) => {
       const rows = [
         makeRow('account1', 0, 120, 75, 100),  // sonnet=100% >= 95%
-        makeRow('account2', 10, 120, 89, 100),  // sonnet=100% >= 95%
-        makeRow('account3', 18, 120, 93, 98),   // sonnet=98% >= 95% → 也应排除
+        makeRow('account2', 18, 120, 93, 98),  // sonnet=98% < 100 → 唯一 Sonnet 候选
       ];
       if (typeof sql === 'string' && sql.includes('account_usage_cache') && params?.[0]) {
         return Promise.resolve({ rows: rows.filter(r => r.account_id === params[0]) });
@@ -410,10 +408,10 @@ describe('M: 三阶段模型降级链', () => {
     expect(result).not.toBeNull();
     // 新逻辑：Sonnet 阈值 100%
     // account1 sevenDaySonnetPct=100 → 不可用 Sonnet
-    // account2 sevenDaySonnetPct=100 → 不可用 Sonnet
-    // account3 sevenDaySonnetPct=98 < 100 → 可用 Sonnet → 唯一候选
+    // account2 sevenDaySonnetPct=98 < 100 → 可用 Sonnet → 唯一候选
+    // H14: account3 退订
     expect(result?.model).toBe('sonnet');
-    expect(result?.accountId).toBe('account3');
+    expect(result?.accountId).toBe('account2');
   });
 
   // ============================================================
@@ -425,9 +423,8 @@ describe('M: 三阶段模型降级链', () => {
     pool.query.mockReset();
     pool.query.mockImplementation((sql, params) => {
       const rows = [
-        makeRow('account1', 0, 120, 75, 100),  // sonnet=100% >= 95%
-        makeRow('account2', 10, 120, 89, 100),  // sonnet=100% >= 95%
-        makeRow('account3', 18, 120, 50, 94),   // sonnet=94% < 95% → Sonnet 候选！
+        makeRow('account1', 0, 120, 75, 100),   // sonnet=100% >= 95%
+        makeRow('account2', 18, 120, 50, 94),   // sonnet=94% < 95% → Sonnet 候选！
       ];
       if (typeof sql === 'string' && sql.includes('account_usage_cache') && params?.[0]) {
         return Promise.resolve({ rows: rows.filter(r => r.account_id === params[0]) });
@@ -439,7 +436,8 @@ describe('M: 三阶段模型降级链', () => {
     const result = await selectBestAccount();
     expect(result).not.toBeNull();
     expect(result?.model).toBe('sonnet');
-    expect(result?.accountId).toBe('account3');
+    // H14: account3 退订，account2 持原 account3 角色
+    expect(result?.accountId).toBe('account2');
   });
 });
 
@@ -621,9 +619,8 @@ describe('H: Haiku 独立模式', () => {
     const t0 = Date.now();
     pool.query.mockImplementation((sql, params) => {
       const rows = [
-        makeRow('account1', 20, 120, 90, 100, false, t0),  // sonnet 7d=100%，但 haiku 不管
-        makeRow('account2', 10, 120, 95, 100, false, t0),  // sonnet 7d=100%，5h=10% 最低
-        makeRow('account3', 30, 120, 50, 50, false, t0),
+        makeRow('account1', 20, 120, 90, 100, false, t0),  // sonnet 7d=100%，被 cap
+        makeRow('account2', 30, 120, 50, 50, false, t0),   // 7d=50%，deficit≈41% ← 被选
       ];
       if (typeof sql === 'string' && sql.includes('account_usage_cache') && params?.[0]) {
         return Promise.resolve({ rows: rows.filter(r => r.account_id === params[0]) });
@@ -632,13 +629,14 @@ describe('H: Haiku 独立模式', () => {
     });
 
     const { markSpendingCap, selectBestAccount } = await import('../account-usage.js');
-    // account2 用量最低但被 cap
-    markSpendingCap('account2', new Date(Date.now() + 2 * 60 * 60 * 1000).toISOString());
+    // account1 被 cap，account2 因 7d deficit 最大被选
+    markSpendingCap('account1', new Date(Date.now() + 2 * 60 * 60 * 1000).toISOString());
 
     const result = await selectBestAccount({ model: 'haiku' });
     // 新算法：按 sevenDayDeficit DESC 排序
-    // account2 被 cap 跳过 → account3（7d=50%，deficit≈41%）> account1（7d=90%，deficit≈2%）
-    expect(result?.accountId).toBe('account3');
+    // account1 被 cap 跳过 → account2（7d=50%，deficit≈41%）唯一候选
+    // H14: account3 退订，2 账号语义保留
+    expect(result?.accountId).toBe('account2');
     expect(result?.model).toBe('haiku');
   });
 
@@ -651,7 +649,6 @@ describe('H: Haiku 独立模式', () => {
       const rows = [
         makeRow('account1', 50, 120, 0, 0, false, t0),
         makeRow('account2', 10, 120, 0, 0, false, t0),
-        makeRow('account3', 30, 120, 0, 0, false, t0),
       ];
       if (typeof sql === 'string' && sql.includes('account_usage_cache')) {
         if (params?.[0]) {
@@ -663,8 +660,8 @@ describe('H: Haiku 独立模式', () => {
     });
 
     const { markSpendingCap, selectBestAccount } = await import('../account-usage.js');
-    // 清除 H1 遗留的 account2 spending cap（模块级 Map 跨测试保持状态）
-    markSpendingCap('account2', new Date(Date.now() - 1000).toISOString());
+    // 清除 H1 遗留的 account1 spending cap（模块级 Map 跨测试保持状态）
+    markSpendingCap('account1', new Date(Date.now() - 1000).toISOString());
     const result = await selectBestAccount({ model: 'haiku' });
     expect(result).toEqual({ accountId: 'account2', model: 'haiku', modelId: 'claude-haiku-4-5-20251001' });
   });
@@ -678,7 +675,6 @@ describe('H: Haiku 独立模式', () => {
       const rows = [
         makeRow('account1', 50, 120, 0, 0, false, t0),
         makeRow('account2', 10, 120, 0, 0, false, t0),
-        makeRow('account3', 30, 120, 0, 0, false, t0),
       ];
       if (typeof sql === 'string' && sql.includes('account_usage_cache')) {
         if (params?.[0]) {
@@ -690,8 +686,8 @@ describe('H: Haiku 独立模式', () => {
     });
 
     const { markSpendingCap, selectBestAccountForHaiku } = await import('../account-usage.js');
-    // 清除 H1/H2 遗留的 account2 spending cap（模块级 Map 跨测试保持状态）
-    markSpendingCap('account2', new Date(Date.now() - 1000).toISOString());
+    // 清除 H1/H2 遗留的 account1 spending cap（模块级 Map 跨测试保持状态）
+    markSpendingCap('account1', new Date(Date.now() - 1000).toISOString());
     const result = await selectBestAccountForHaiku();
     // 兼容别名：返回 string（不是对象）
     expect(typeof result).toBe('string');

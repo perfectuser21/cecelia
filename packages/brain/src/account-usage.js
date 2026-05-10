@@ -13,7 +13,7 @@ import { readFileSync } from 'fs';
 import { homedir } from 'os';
 import pool from './db.js';
 
-const ACCOUNTS = ['account1', 'account2', 'account3'];
+const ACCOUNTS = ['account1', 'account2']; // H14: account3 退订（403），见 docs/learnings/cp-0510075509-h14-remove-account3.md
 const CACHE_TTL_MINUTES = 3;
 const USAGE_THRESHOLD = 80;       // 5h 超过此百分比则跳过
 const SONNET_7D_THRESHOLD = 100;  // sonnet 7d 满载阈值（≥ 此值时不可用 Sonnet，尝试 Opus）
@@ -177,7 +177,7 @@ function _authBackoffHours(failureCount) {
 /**
  * 标记账号 auth 失败（内存 + 持久化到 DB）
  * 连续失败时自动指数退避：2h → 4h → 8h → 24h（封顶）
- * @param {string} accountId - 账号 ID（如 'account3'）
+ * @param {string} accountId - 账号 ID（如 'account2'）
  * @param {string|null} resetTimeISO - 恢复时间（ISO 8601），null 表示按退避策略计算
  * @param {'api_error'|'token_expired'} source - 熔断来源：api_error=API 401，token_expired=token 文件已过期
  */
