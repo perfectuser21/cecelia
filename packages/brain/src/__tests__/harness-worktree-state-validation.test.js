@@ -24,14 +24,19 @@ function makeExecFn(scenario) {
       return { stdout: 'cp-04240814-ws-abcdef12\n' };
     }
     if (joined.includes('remote get-url origin')) {
+      // H16: 区分 baseRepo 自己 (-C BASE) 和 wtPath (-C BASE/.claude/worktrees/...)
+      // baseRepo 自己 origin URL 永远是 baseRepo 主仓库的 GitHub URL（mock 固定）
+      const isBaseRepoQuery = args.includes('-C') && args[args.indexOf('-C') + 1] === BASE;
+      if (isBaseRepoQuery) {
+        return { stdout: 'https://github.com/perfectuser21/cecelia.git\n' };
+      }
+      // 否则查的是 wtPath origin，按 scenario 分支
       if (scenario === 'orphan') {
-        // 孤儿 repo 没有 origin remote
         const err = new Error("error: No such remote 'origin'");
         err.code = 2;
         throw err;
       }
       if (scenario === 'wrong-remote') {
-        // 有 remote 但指向其他地方（残留旧 clone）
         return { stdout: 'https://github.com/some/other-repo.git\n' };
       }
       // valid: 指向 baseRepo
@@ -115,8 +120,10 @@ describe('ensureHarnessWorktree .git 状态校验', () => {
     });
 
     expect(rmCalled).toBe(false);
-    // 没触发 remote 校验
-    expect(calls.some(c => c.includes('remote get-url'))).toBe(false);
+    // 没触发 orphan 校验（orphan 校验是 git -C <wtPath> remote get-url，跑在已存在 dir 路径上）
+    // H16 后 clone 路径也调 git -C <baseRepo> remote get-url —— 区别在 -C 后面是 baseRepo 不是 wtPath
+    const wtPath = '/tmp/cec/.claude/worktrees/harness-v2/task-aaaabbbb';
+    expect(calls.some(c => c.includes('remote get-url') && c.includes(wtPath))).toBe(false);
     // 走 clone
     expect(calls.some(c => c.startsWith('git clone'))).toBe(true);
   });

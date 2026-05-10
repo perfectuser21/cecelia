@@ -125,12 +125,20 @@ export async function ensureHarnessWorktree(opts) {
       if (String(inside || '').trim() !== 'true') {
         isOrphan = true;
       } else {
-        // 校验 origin remote URL 必须指向 baseRepo（绝对路径或仓库 URL 任一段匹配）
+        // 校验 origin remote URL 合法（兼容 H16：可以是 baseRepo 本地路径，也可以是
+        // baseRepo 主仓库的 GitHub URL — 后者是 H16 之后新 worktree 的状态）。
         try {
           const { stdout: remoteUrl } = await execFn('git', ['-C', wtPath, 'remote', 'get-url', 'origin']);
           const url = String(remoteUrl || '').trim();
-          if (!url || !url.includes(baseRepo)) {
-            logFn(`[harness-worktree] orphan worktree at ${wtPath}: origin='${url}' does not match baseRepo='${baseRepo}'; rebuilding`);
+          let baseRepoGithubUrl = '';
+          try {
+            const { stdout: gh } = await execFn('git', ['-C', baseRepo, 'remote', 'get-url', 'origin']);
+            baseRepoGithubUrl = String(gh || '').trim();
+          } catch { /* baseRepo 自己 origin 读不到，下面只校 baseRepo 路径 */ }
+          const matchesBaseRepo = url && url.includes(baseRepo);
+          const matchesGithub = baseRepoGithubUrl && url === baseRepoGithubUrl;
+          if (!matchesBaseRepo && !matchesGithub) {
+            logFn(`[harness-worktree] orphan worktree at ${wtPath}: origin='${url}' matches neither baseRepo='${baseRepo}' nor GitHub='${baseRepoGithubUrl}'; rebuilding`);
             isOrphan = true;
           }
         } catch (err) {
@@ -167,6 +175,18 @@ export async function ensureHarnessWorktree(opts) {
     '--branch', 'main', '--single-branch',
     baseRepo, wtPath,
   ]);
+
+  // H16: clone 后改 origin URL 到主仓库的 GitHub origin。
+  // clone --local 让 origin 默认指向 baseRepo 本地路径，导致 sub-task 节点 (H13) git fetch origin
+  // <propose-branch> 失败 — proposer push 到 GitHub origin，本地仓库没 cp-harness-propose-* 分支。
+  try {
+    const { stdout: githubUrl } = await execFn('git', ['-C', baseRepo, 'remote', 'get-url', 'origin']);
+    await execFn('git', ['-C', wtPath, 'remote', 'set-url', 'origin', githubUrl.trim()]);
+  } catch (err) {
+    logFn(`[harness-worktree] could not set origin URL to GitHub for ${wtPath}: ${err.message}`);
+    // 不抛 — 至少 clone 成功，后续可能某节点失败但 graph 能走更远
+  }
+
   await execFn('git', ['-C', wtPath, 'checkout', '-b', branch]);
 
   // 尝试 rebase origin/main，让 Generator 从最新 main 出发；
