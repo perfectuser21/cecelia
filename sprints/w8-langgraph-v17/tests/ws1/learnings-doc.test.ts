@@ -50,4 +50,11 @@ describe('Workstream 1 — walking skeleton learnings doc [BEHAVIOR]', () => {
     expect(lineCount).toBeGreaterThanOrEqual(5);
     expect(lineCount).toBeLessThanOrEqual(200);
   });
+
+  it('R1-R4 边界 mitigation 关键词段落齐全（thread_id / callback / retryPolicy / H11）', () => {
+    const content = readDoc();
+    for (const keyword of ['thread_id', 'callback', 'retryPolicy', 'H11']) {
+      expect(content, `mitigation 关键词 ${keyword} 缺失（对应 R1-R4 边界）`).toContain(keyword);
+    }
+  });
 });

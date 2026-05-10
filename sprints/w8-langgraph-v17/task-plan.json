@@ -5,21 +5,22 @@
   "tasks": [
     {
       "task_id": "ws1",
-      "title": "写 walking skeleton learnings doc 让 harness 跑通到 status=completed",
-      "scope": "在 docs/learnings/w8-langgraph-v17-e2e.md 创建 walking skeleton 实证文档：首行 'W8 v17 LangGraph' 标题，含 run_date / node_durations(五节点) / gan_proposer_rounds / pr_url 占位字段，自指 sprints/w8-langgraph-v17，含至少一条 DoD 列表条目引用 evaluator/PR/tasks。零运行时代码改动（不动 packages/brain | packages/engine | packages/workflows）。",
+      "title": "写 walking skeleton learnings doc 让 harness 跑通到 status=completed（含 R1-R4 边界 mitigation 实证段落）",
+      "scope": "在 docs/learnings/w8-langgraph-v17-e2e.md 创建 walking skeleton 实证文档：首行 'W8 v17 LangGraph' 标题，含 run_date / node_durations(五节点) / gan_proposer_rounds / pr_url 占位字段，自指 sprints/w8-langgraph-v17，含至少一条 DoD 列表条目引用 evaluator/PR/tasks，并含 R1-R4 边界 mitigation 关键词段落（thread_id / callback / retryPolicy / H11）。零运行时代码改动（不动 packages/brain | packages/engine | packages/workflows）。",
       "dod": [
         "[ARTIFACT] docs/learnings/w8-langgraph-v17-e2e.md 文件存在且首行包含 'W8 v17 LangGraph'",
         "[ARTIFACT] 文件含字段 run_date: / gan_proposer_rounds: / pr_url:，并在 node_durations 段下枚举 PLANNER/PROPOSER/REVIEWER/GENERATOR/EVALUATOR 五个节点",
         "[ARTIFACT] 文件自指 sprints/w8-langgraph-v17，含至少一条 DoD 列表条目引用 evaluator/PR/tasks 之一",
+        "[ARTIFACT] 文件含 R1-R4 边界 mitigation 段落（关键词 thread_id / callback / retryPolicy / H11 全到位）",
         "[ARTIFACT] PR 范围严格白名单：仅含 sprints/w8-langgraph-v17/ 与 docs/learnings/w8-langgraph-v17-e2e.md（git diff 验证）",
-        "[BEHAVIOR] tests/ws1/learnings-doc.test.ts 全绿（6/6），覆盖文件存在 / 标题正确 / 占位字段全 / 节点枚举全 / sprint 自指 / DoD 列表非空 / 长度 5~200 行"
+        "[BEHAVIOR] tests/ws1/learnings-doc.test.ts 全绿（7/7），覆盖文件存在 / 标题正确 / 占位字段全 / 节点枚举全 / sprint 自指 / DoD 列表非空 / 长度 5~200 行 / R1-R4 mitigation 关键词全"
       ],
       "files": [
         "docs/learnings/w8-langgraph-v17-e2e.md"
       ],
       "depends_on": [],
       "complexity": "S",
-      "estimated_minutes": 25
+      "estimated_minutes": 30
     }
   ]
 }
