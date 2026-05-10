@@ -1102,6 +1102,11 @@ export async function reportNode(state, opts = {}) {
   // 写 initiative_runs phase=done/failed
   try {
     const phase = state.final_e2e_verdict === 'PASS' ? 'done' : 'failed';
+    if (state.final_e2e_verdict === 'FAIL') {
+      // Bug 3 防御性日志 — 配合 executor.js computeHarnessInitiativeOk
+      // 让 task_events 留痕，方便日后排查"task=completed 但 final_evaluate=FAIL" 的回归
+      console.error(`[reportNode] final_e2e_verdict=FAIL initiative=${state.initiativeId} → 标 phase='failed'，executor 会标 task.status='failed'`);
+    }
     const reason = `Final E2E ${state.final_e2e_verdict}: ${(state.final_e2e_failed_scenarios || []).map(s => s.name).join('; ').slice(0, 500)}`;
     await dbPool.query(
       `UPDATE initiative_runs SET phase=$2, completed_at=NOW(), updated_at=NOW(),
