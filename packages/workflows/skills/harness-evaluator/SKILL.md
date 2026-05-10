@@ -4,9 +4,12 @@ description: |
   Harness Evaluator — 阶段 B 每个 Generator workstream 完成后触发真实 DoD 验证（模式 A），
   以及所有 workstream 完成后触发最终 E2E Golden Path 验证（模式 B）。
   读 journey_type 自动选验证方式；失败时带具体反馈打回 Generator；循环直至通过。
-version: 1.0.0
+version: 1.1.0
 created: 2026-05-06
-updated: 2026-05-06
+updated: 2026-05-10
+changelog:
+  - 1.1.0: 加反作弊 reflexive check — 禁止把 vitest "passed" 当 PASS 替代物（W19/W20 实证 sub-evaluator 漏判 schema drift 的根因）。强制每条 [BEHAVIOR] Test: 命令必须真执行；命令缺 jq -e 或自然语言期望直接 FAIL；vitest 输出存在但合同 [BEHAVIOR] 未真跑 → FAIL。对齐 Anthropic harness-design "evaluator 默认会过度通过，必须 prompt 工程严格化"
+  - 1.0.0: 初版 — Step A 模式 (DoD 验证) + Step B 模式 (E2E)，按 journey_type 选验证工具
 ---
 
 > **语言规则: 所有输出必须使用简体中文。严禁日语、韩语或其他语言。**
@@ -40,6 +43,20 @@ updated: 2026-05-06
 - **具体反馈**：FAIL 时的 `feedback` 必须指明具体失败原因 + 具体修复方向，严禁笼统输出"建议检查代码"
 - **输出格式**：最后一条消息必须是 **纯 JSON 对象**，不加 markdown 代码块
 - **角色边界**：FAIL 报告由 Brain 编排层接收，Brain 负责决定是否重新 dispatch Generator（最多 3 次）；Evaluator 本身无需计数轮次
+
+### 反作弊红线（v1.1 强制 — 不要让 evaluator 过度通过）
+
+对齐 Anthropic harness-design 2026-03 原话："Out of the box, Claude is a poor QA agent...even evaluator needs prompt engineering"。下面 4 条**违反任一直接 FAIL，禁止 PASS**：
+
+1. **禁止把 vitest 输出 grep "passed" 当 PASS 证据**。vitest 是 generator 自写的测试，不是 contract oracle。即便看到 "Tests 8 passed" 也不能给 PASS——必须真跑合同里 [BEHAVIOR] 的 `Test:` 命令逐条校验
+2. **禁止以"代码看起来对"给 PASS**。不能读 server.js 源码看到 `app.get('/sum')` 就 PASS——必须真起 server + 真 curl + jq 校验响应
+3. **缺 [BEHAVIOR] Test: 命令直接 FAIL**。如果合同 contract-dod-ws{N}.md 没有 [BEHAVIOR] 条目（数 < 1），输出 `{"verdict": "FAIL", "feedback": "DoD 缺 [BEHAVIOR] 条目"}`；这是 contract 阶段没 codify oracle 的问题，evaluator 不能猜
+4. **缺 jq -e 严匹配视为弱测试**。如果 [BEHAVIOR] Test: 命令只 `curl -f /xxx` 不带 jq 校验 body shape，记入 `feedback` 但本轮仍按命令 exit code 判（容忍但报告，让 reviewer 下轮严化）
+
+**特别针对 schema drift（W19/W20 根因）**：如果 PRD 写 response 必须 `{result, operation}` 但 generator 实际返 `{product}`：
+- 合同里若有 `jq -e '.result == 35'` → evaluator 真跑 → exit 1 → FAIL ✓ 抓住
+- 合同里若只有 `curl -f /multiply` 没 jq -e → evaluator 跑 → exit 0 → 假 PASS ❌ 漏判
+- → 这是 **contract reviewer 第 6 维 verification_oracle_completeness** 该卡的事，但 evaluator 看到 [BEHAVIOR] 命令缺 jq -e 时必须**在 feedback 里写明 "弱 oracle，schema drift 漏判风险"** 让上游知道
 
 ---
 

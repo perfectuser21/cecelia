@@ -4,10 +4,11 @@ description: |
   Harness Contract Proposer — Harness v5 GAN Layer 2a：
   读 PRD，GAN 对抗写 Golden Path 合同（每步含真实验证命令）；
   Reviewer APPROVED 后倒推拆 task-plan.json。
-version: 7.2.0
+version: 7.3.0
 created: 2026-04-08
-updated: 2026-05-08
+updated: 2026-05-10
 changelog:
+  - 7.3.0: 加 PRD Response Schema → jq -e codify 强制规则 — Step 2 验证命令写作规范新增"PRD response 字段必须 codify 成 jq -e 命令"段。配合 planner v8.1 新增的"## Response Schema"段 + reviewer v6.1 新增第 6 维 rubric verification_oracle_completeness 形成完整 schema oracle 链路。W19/W20 实证 generator schema drift 的根因消除
   - 7.2.0: 修 verdict JSON 输出限定 — Step 4 删 APPROVED-only 限定词，改成"每轮（含被 REVISION 打回轮）"；新增"输出契约"段明示 brain harness-gan.graph.js extractProposeBranch 用正则解析。配合 brain fallback 改格式 cp-harness-propose-r{round}-{taskIdSlice}，杜绝 propose_branch 协议 mismatch（W8 task 49dafaf4 实证）
   - 7.1.0: 修复 task-plan.json 永不生成 (#2819) — Step 3 改成每轮都生成（删 "仅 APPROVED 时执行" 门槛）；APPROVED 分支即最后一轮 proposer 的分支，inferTaskPlan 从此读取
   - 7.0.0: Golden Path 合同 — 格式从"Feature 1/Feature 2"改为 Golden Path Steps（每步含验证命令）；GAN 新增"验证命令可否造假"审查；合同 GAN 收敛后 Proposer 输出 task-plan.json（从 Golden Path 倒推）
@@ -183,6 +184,54 @@ workstream_count: {N}
 - 禁止 `echo "ok"` / `true` 假验证
 - curl 必须加 `-f` flag（HTTP 5xx 才返回非0 exit code）
 - Playwright 脚本必须含显式 `toBeVisible` / `toHaveText` 断言，不能只 navigate
+
+**Response Schema → jq -e codify 强制规则（v7.3 新增 — 配合 planner v8.1 + reviewer v6.1）**：
+
+PRD `## Response Schema` 段所有字段 + 禁用清单 + schema 完整性，**全部必须 codify 成 jq -e 命令**写进合同。Reviewer 第 6 维 verification_oracle_completeness 会按下表逐项审查；缺一项 → < 7 分 → REVISION：
+
+| PRD 段 | Contract 必须有的 jq -e 命令 |
+|---|---|
+| Success response 必填字段 `result (number)` | `curl -f /xxx \| jq -e '.result \| type == "number"'` 或 `jq -e '.result == <expected_value>'` |
+| Success response 必填字段 `operation (string字面量 "multiply")` | `curl -f /xxx \| jq -e '.operation == "multiply"'` |
+| Schema 完整性（顶层 keys 必须**完全等于** `["operation","result"]`）| `curl -f /xxx \| jq -e 'keys == ["operation","result"]'` |
+| 禁用字段名（`sum`/`product`/`value` 等）| `! curl -f /xxx \| jq -e 'has("product")'`（禁用字段不存在）|
+| Error response 必填字段 `error (string)` | `curl /xxx?bad=1 \| jq -e '.error \| type == "string"'` |
+
+**示例（W20 /multiply 严合规版）**：
+
+```bash
+# 启服务
+PLAYGROUND_PORT=3001 node server.js & SPID=$!
+sleep 2
+
+# 1. 字段值
+RESP=$(curl -fs "localhost:3001/multiply?a=7&b=5")
+echo "$RESP" | jq -e '.result == 35' || { echo FAIL; kill $SPID; exit 1; }
+echo "$RESP" | jq -e '.operation == "multiply"' || { echo FAIL; kill $SPID; exit 1; }
+
+# 2. Schema 完整性 — 不允许多 key 不允许少 key
+echo "$RESP" | jq -e 'keys == ["operation","result"]' || { echo FAIL; kill $SPID; exit 1; }
+
+# 3. 禁用字段反向检查 — generator 不许漂移到 product/sum
+echo "$RESP" | jq -e 'has("product") | not' || { echo "FAIL: 禁用字段 product 漏网"; kill $SPID; exit 1; }
+
+# 4. Error path
+ECODE=$(curl -s -o /dev/null -w "%{http_code}" "localhost:3001/multiply?a=foo")
+[ "$ECODE" = "400" ] || { echo "FAIL: 非数字未返 400"; kill $SPID; exit 1; }
+
+kill $SPID
+echo "✅ 合同 6 项 jq -e 全过"
+```
+
+**反例（W20 实证：合同太松导致 generator 漂移没被抓）**：
+
+```bash
+# ❌ 这样写 evaluator 跑了也不抓 schema drift
+RESP=$(curl -f localhost:3001/multiply?a=7&b=5)
+[ -n "$RESP" ] && echo "PASS"  # 只验"有响应"，generator 返 {product:35} 也过
+```
+
+**强约束总结**：PRD Response Schema 段每行字段约束 = 合同至少 1 条 jq -e 命令；禁用字段清单每个名 = 1 条 ! has() 反向检查；schema 完整性 = 1 条 keys == [...] 完整匹配。**少一条 reviewer 第 6 维就低于 7 → REVISION**。
 
 ---
 
