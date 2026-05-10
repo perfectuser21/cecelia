@@ -5,10 +5,11 @@ description: |
   读取 GAN 对抗已批准的 sprint-contract.md + tests/ws{N}/*.test.ts + contract-dod-ws{N}.md，按 TDD 纪律两次 commit（commit 1 = 测试 Red / commit 2 = 实现 Green）。
   融入 4 个 superpowers：test-driven-development / verification-before-completion / systematic-debugging / requesting-code-review。
   CONTRACT IS LAW：合同里有的全实现，合同外一字不加；**测试文件从合同原样复制，commit 1 后不可修改**（CI 强校验）。
-version: 6.0.0
+version: 6.1.0
 created: 2026-04-08
 updated: 2026-05-06
 changelog:
+  - 6.1.0: 加 Step 6.5 Contract Self-Verification — push 前自跑 contract-dod-ws*.md 所有 [BEHAVIOR] manual:bash 命令，任一 FAIL 不准 push 必须自修。配合 proposer v7.4 + reviewer v6.2 + evaluator v1.1 协议对齐。修 W19/W20/W21/W22 实证 generator 频繁推漂移实现给 evaluator 兜底的根因
   - 6.0.0: Working Skeleton — skeleton task 检测（is_skeleton）；允许 SKELETON STUB 注释；commit message 加 (Skeleton Red)/(Skeleton Green)；PR body 必须含 Stub 清单
   - 5.0.0: TDD × Superpowers 融合 — 两次 commit 纪律（commit 1 测试 Red / commit 2 实现 Green）+ 4 个 superpowers（test-driven-development / verification-before-completion / systematic-debugging / requesting-code-review）；测试文件从合同原样 checkout，commit 1 后不可修改；Mode 2 harness_fix 走 systematic-debugging
   - 4.3.0: contract-dod-ws 读取路径改为 ${SPRINT_DIR}/contract-dod-ws${WS_IDX}.md（与 Proposer 写入路径对齐）
@@ -289,6 +290,53 @@ git diff origin/main...HEAD -- . ':!DoD.md' ':!docs/learnings/'
 ```
 
 Review Summary 贴进 PR body。
+
+### Step 6.5: ★ Contract Self-Verification（v6.1 新增 — push 前必须自跑合同 [BEHAVIOR] 全过）
+
+**目的**：W19/W20/W21/W22 实证 generator 频繁推漂移实现给 evaluator 兜底，浪费 evaluator 跑 + retry 周期。本步骤强制 generator push 前自验所有 contract [BEHAVIOR] manual:bash 命令，**任一 FAIL 不准 push，必须自修**。
+
+```bash
+# 1. 提取 contract DoD 文件所有 [BEHAVIOR] Test: 命令
+DOD_FILE="${SPRINT_DIR}/contract-dod-ws${WS_IDX}.md"
+grep -E "^\s+Test: manual:" "$DOD_FILE" | sed 's/.*Test: manual://' > /tmp/contract-behavior-cmds.sh
+
+CMD_COUNT=$(wc -l < /tmp/contract-behavior-cmds.sh | tr -d ' ')
+echo "[contract-self-verify] 提取 $CMD_COUNT 条 [BEHAVIOR] manual:bash 命令"
+[ "$CMD_COUNT" -lt 1 ] && { echo "ERROR: contract DoD 缺 [BEHAVIOR] manual: 命令，proposer 应该被 reviewer 第 7 维卡住，不该到 generator 阶段。请回头让 proposer 重写"; exit 1; }
+
+# 2. 逐条真跑（用 bash -c 子 shell 执行，每条独立环境）
+PASS_COUNT=0
+FAIL_LOG=""
+while IFS= read -r cmd; do
+  echo "[contract-self-verify] 跑: $cmd"
+  if bash -c "$cmd" 2>&1; then
+    PASS_COUNT=$((PASS_COUNT + 1))
+  else
+    FAIL_LOG="${FAIL_LOG}FAIL: $cmd\n"
+  fi
+done < /tmp/contract-behavior-cmds.sh
+
+echo "[contract-self-verify] $PASS_COUNT / $CMD_COUNT PASS"
+
+# 3. 任一 FAIL → 不准 push
+if [ "$PASS_COUNT" -lt "$CMD_COUNT" ]; then
+  echo "❌ Contract 自验未全过，禁止 push："
+  echo -e "$FAIL_LOG"
+  echo ""
+  echo "下一步：检查实现是否漂移了 contract 字段名/HTTP code/error format。"
+  echo "禁止改 contract 来迁就实现（违反 CONTRACT IS LAW）。"
+  echo "禁止 push，自修后重新跑本 step。"
+  exit 1
+fi
+
+echo "✅ Contract 自验全过，可以 push"
+```
+
+**核心规则**：
+- generator 自验跟 evaluator 跑同一套 manual:bash 命令——所以"自验过 = evaluator 也会过"（除了环境差异）
+- 自验失败 → 自修代码（不改 contract）
+- 自修后重新跑 Step 6.5 直到全过
+- **禁止跳过 Step 6.5 直接 push**（W19/W20/W21/W22 教训）
 
 ### Step 7: Push + PR
 
