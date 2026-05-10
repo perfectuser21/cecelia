@@ -593,6 +593,6 @@ workstream_count: 1
 
 | Workstream | Test File | BEHAVIOR 覆盖（按 §8 T-ID） | 预期 Red 证据 |
 |---|---|---|---|
-| WS1 | `tests/ws1/divide.test.js` | 200 + {quotient:3}、oracle 严格相等、400 + 不含 quotient（缺参/strict/除零）、health/sum/multiply 仍正常 | **22 failures**（T1–T22 全 FAIL，T23/T24/T25/T26 PASS）→ 远超 Reviewer ≥ 5 阈值 |
+| WS1 | `tests/ws1/divide.test.js` | quotient、Number、除零兜底、缺 b、Infinity、health、W19、W20 | **22 failures**（T1–T22 全 FAIL，T23/T24/T25/T26 PASS）→ 远超 Reviewer ≥ 5 阈值 |
 
 **Red 证据采集命令**：见 §9 末尾「Proposer 自验命令」（本轮已实跑确认 `Tests 22 failed | 4 passed`）。

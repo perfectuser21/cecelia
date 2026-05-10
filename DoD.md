@@ -14,61 +14,61 @@ journey_type: autonomous
 
 ## ARTIFACT 条目
 
-- [ ] [ARTIFACT] `playground/server.js` 含 `/divide` 路由注册
+- [x] [ARTIFACT] `playground/server.js` 含 `/divide` 路由注册
   Test: manual:node -e "const c=require('fs').readFileSync('playground/server.js','utf8');if(!/app\.get\(\s*['\"]\/divide['\"]/m.test(c))process.exit(1)"
 
-- [ ] [ARTIFACT] `playground/server.js` 仍保留 `/health` 路由（防误删 bootstrap）
+- [x] [ARTIFACT] `playground/server.js` 仍保留 `/health` 路由（防误删 bootstrap）
   Test: manual:node -e "const c=require('fs').readFileSync('playground/server.js','utf8');if(!/app\.get\(\s*['\"]\/health['\"]/m.test(c))process.exit(1)"
 
-- [ ] [ARTIFACT] `playground/server.js` 仍保留 `/sum` 路由（防误删 W19）
+- [x] [ARTIFACT] `playground/server.js` 仍保留 `/sum` 路由（防误删 W19）
   Test: manual:node -e "const c=require('fs').readFileSync('playground/server.js','utf8');if(!/app\.get\(\s*['\"]\/sum['\"]/m.test(c))process.exit(1)"
 
-- [ ] [ARTIFACT] `playground/server.js` 仍保留 `/multiply` 路由（防误删 W20）
+- [x] [ARTIFACT] `playground/server.js` 仍保留 `/multiply` 路由（防误删 W20）
   Test: manual:node -e "const c=require('fs').readFileSync('playground/server.js','utf8');if(!/app\.get\(\s*['\"]\/multiply['\"]/m.test(c))process.exit(1)"
 
-- [ ] [ARTIFACT] `playground/server.js` 实现 `/divide` 时使用 `^-?\d+(\.\d+)?$` 完整匹配正则（防 Number()/parseFloat() 假绿，可与 /multiply 共享同一字面量）
+- [x] [ARTIFACT] `playground/server.js` 实现 `/divide` 时使用 `^-?\d+(\.\d+)?$` 完整匹配正则（防 Number()/parseFloat() 假绿，可与 /multiply 共享同一字面量）
   Test: manual:node -e "const c=require('fs').readFileSync('playground/server.js','utf8');if(!/\\^-\\?\\\\d\\+\\(\\\\\\.\\\\d\\+\\)\\?\\$/.test(c))process.exit(1)"
 
-- [ ] [ARTIFACT] `playground/server.js` 含显式除零判定（`Number(b) === 0` 或等价表达式），位置在 strict-schema 校验通过后、除法运算之前
+- [x] [ARTIFACT] `playground/server.js` 含显式除零判定（`Number(b) === 0` 或等价表达式），位置在 strict-schema 校验通过后、除法运算之前
   Test: manual:node -e "const c=require('fs').readFileSync('playground/server.js','utf8');if(!(/Number\(\s*b\s*\)\s*===\s*0/.test(c)||/Number\(\s*b\s*\)\s*==\s*0/.test(c)))process.exit(1)"
 
-- [ ] [ARTIFACT] `playground/server.js` 在 `/divide` 响应体中使用 `quotient` 字段名（不允许 `result` / `value` / `answer` 等漂移命名）
+- [x] [ARTIFACT] `playground/server.js` 在 `/divide` 响应体中使用 `quotient` 字段名（不允许 `result` / `value` / `answer` 等漂移命名）
   Test: manual:node -e "const c=require('fs').readFileSync('playground/server.js','utf8');const div=c.split(/app\.get\(\s*['\"]\/divide['\"]/)[1]||'';if(!/quotient/.test(div))process.exit(1)"
 
-- [ ] [ARTIFACT] `playground/tests/server.test.js` 含至少一个引用 `/divide` 的测试用例
+- [x] [ARTIFACT] `playground/tests/server.test.js` 含至少一个引用 `/divide` 的测试用例
   Test: manual:node -e "const c=require('fs').readFileSync('playground/tests/server.test.js','utf8');if(!c.includes('/divide'))process.exit(1)"
 
-- [ ] [ARTIFACT] `playground/tests/server.test.js` 同时含 `/divide` happy（200 + quotient）与 error（400）断言
+- [x] [ARTIFACT] `playground/tests/server.test.js` 同时含 `/divide` happy（200 + quotient）与 error（400）断言
   Test: manual:node -e "const c=require('fs').readFileSync('playground/tests/server.test.js','utf8');if(!(/toBe\(200\)/.test(c)&&/toBe\(400\)/.test(c)&&/quotient/.test(c)))process.exit(1)"
 
-- [ ] [ARTIFACT] `playground/tests/server.test.js` 显式覆盖除零兜底（`b: '0'` 或 `b=0` query），且断言 status === 400
+- [x] [ARTIFACT] `playground/tests/server.test.js` 显式覆盖除零兜底（`b: '0'` 或 `b=0` query），且断言 status === 400
   Test: manual:node -e "const c=require('fs').readFileSync('playground/tests/server.test.js','utf8');if(!(/b:\s*['\"]0['\"]/.test(c)&&/toBe\(400\)/.test(c)))process.exit(1)"
 
-- [ ] [ARTIFACT] `playground/tests/server.test.js` 至少 1 条 oracle 复算断言形如 `toBe(Number('...') / Number('...'))`（用同一表达式独立复算严格相等）
+- [x] [ARTIFACT] `playground/tests/server.test.js` 至少 1 条 oracle 复算断言形如 `toBe(Number('...') / Number('...'))`（用同一表达式独立复算严格相等）
   Test: manual:node -e "const c=require('fs').readFileSync('playground/tests/server.test.js','utf8');if(!/toBe\(\s*Number\(['\"][^'\"]+['\"]\)\s*\/\s*Number\(['\"][^'\"]+['\"]\)\s*\)/.test(c))process.exit(1)"
 
-- [ ] [ARTIFACT] `playground/tests/server.test.js` 显式覆盖 strict-schema 核心拒绝路径（科学计数法 `1e3` + `Infinity`）
+- [x] [ARTIFACT] `playground/tests/server.test.js` 显式覆盖 strict-schema 核心拒绝路径（科学计数法 `1e3` + `Infinity`）
   Test: manual:node -e "const c=require('fs').readFileSync('playground/tests/server.test.js','utf8');if(!(/1e3/.test(c)&&/Infinity/.test(c)))process.exit(1)"
 
-- [ ] [ARTIFACT] `playground/tests/server.test.js` 仍保留现有 `/health` / `/sum` / `/multiply` 用例（bootstrap + W19 + W20 回归）
+- [x] [ARTIFACT] `playground/tests/server.test.js` 仍保留现有 `/health` / `/sum` / `/multiply` 用例（bootstrap + W19 + W20 回归）
   Test: manual:node -e "const c=require('fs').readFileSync('playground/tests/server.test.js','utf8');if(!(c.includes('/health')&&c.includes('/sum')&&c.includes('/multiply')))process.exit(1)"
 
-- [ ] [ARTIFACT] `playground/README.md` 含 `/divide` 字符串
+- [x] [ARTIFACT] `playground/README.md` 含 `/divide` 字符串
   Test: manual:node -e "const c=require('fs').readFileSync('playground/README.md','utf8');if(!c.includes('/divide'))process.exit(1)"
 
-- [ ] [ARTIFACT] `playground/README.md` 给出 `/divide` 除零拒绝示例（含 `b=0` 字面量）
+- [x] [ARTIFACT] `playground/README.md` 给出 `/divide` 除零拒绝示例（含 `b=0` 字面量）
   Test: manual:node -e "const c=require('fs').readFileSync('playground/README.md','utf8');const idx=c.indexOf('/divide');if(idx<0||!/b=0/.test(c.slice(idx)))process.exit(1)"
 
-- [ ] [ARTIFACT] `playground/README.md` 给出 `/divide` strict-schema 拒绝示例（`1e3` 或 `Infinity` 任一）
+- [x] [ARTIFACT] `playground/README.md` 给出 `/divide` strict-schema 拒绝示例（`1e3` 或 `Infinity` 任一）
   Test: manual:node -e "const c=require('fs').readFileSync('playground/README.md','utf8');const idx=c.indexOf('/divide');if(idx<0||!(/1e3/.test(c.slice(idx))||/Infinity/.test(c.slice(idx))))process.exit(1)"
 
-- [ ] [ARTIFACT] `playground/README.md` 仍含 `/health` / `/sum` / `/multiply` 段（防误删）
+- [x] [ARTIFACT] `playground/README.md` 仍含 `/health` / `/sum` / `/multiply` 段（防误删）
   Test: manual:node -e "const c=require('fs').readFileSync('playground/README.md','utf8');if(!(c.includes('/health')&&c.includes('/sum')&&c.includes('/multiply')))process.exit(1)"
 
-- [ ] [ARTIFACT] `playground/package.json` 未新增运行时依赖（dependencies 仅 `express`）
+- [x] [ARTIFACT] `playground/package.json` 未新增运行时依赖（dependencies 仅 `express`）
   Test: manual:node -e "const p=require('./playground/package.json');const d=Object.keys(p.dependencies||{});if(d.length!==1||d[0]!=='express')process.exit(1)"
 
-- [ ] [ARTIFACT] `playground/package.json` 未新增 devDependencies（仅 `supertest` + `vitest`，无 zod/joi/ajv/decimal.js/bignumber.js）
+- [x] [ARTIFACT] `playground/package.json` 未新增 devDependencies（仅 `supertest` + `vitest`，无 zod/joi/ajv/decimal.js/bignumber.js）
   Test: manual:node -e "const p=require('./playground/package.json');const d=Object.keys(p.devDependencies||{}).sort().join(',');if(d!=='supertest,vitest')process.exit(1)"
 
 ## BEHAVIOR 索引（实际测试在 sprints/w21-playground-divide/tests/ws1/）
