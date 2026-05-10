@@ -1,0 +1,25 @@
+{
+  "initiative_id": "pending",
+  "journey_type": "autonomous",
+  "journey_type_reason": "Brain LangGraph 5 节点流水线自验证：纯 brain 内代码改动 + 离线 vitest，不涉及 dashboard UI、不依赖外部 agent。",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "新增 harness happy-path marker 模块 + BEHAVIOR 测试 (commit 1 Red / commit 2 Green)",
+      "scope": "新增 packages/brain/src/harness-happy-path-marker.js 导出 HARNESS_HAPPY_PATH_MARKER 常量与 verifyHarnessHappyPath() 函数；commit 1 把 sprints/tests/ws1/harness-happy-path-marker.test.js 原样复制到 packages/brain/tests/ws1/；commit 2 落实现让测试转 Green。What 不写 How（实现签名见 contract Step 2/3）。",
+      "dod": [
+        "[BEHAVIOR] cd packages/brain && NODE_OPTIONS='--max-old-space-size=2048' npx vitest run tests/ws1/harness-happy-path-marker.test.js --reporter=default 2>&1 | grep -qE 'Test Files\\s+1 passed'",
+        "[BEHAVIOR] node --input-type=module -e \"const m=await import('./packages/brain/src/harness-happy-path-marker.js'); if (m.HARNESS_HAPPY_PATH_MARKER!=='fe91ce26-5nodes-verified') process.exit(1); if (m.verifyHarnessHappyPath()!==m.HARNESS_HAPPY_PATH_MARKER) process.exit(1)\"",
+        "[ARTIFACT] node -e \"const fs=require('fs');if(!fs.existsSync('packages/brain/src/harness-happy-path-marker.js'))process.exit(1);const c=fs.readFileSync('packages/brain/src/harness-happy-path-marker.js','utf8');if(!/export\\s+const\\s+HARNESS_HAPPY_PATH_MARKER\\b/.test(c))process.exit(1);if(!/export\\s+function\\s+verifyHarnessHappyPath\\b/.test(c))process.exit(1)\"",
+        "[ARTIFACT] node -e \"const fs=require('fs');const p='packages/brain/tests/ws1/harness-happy-path-marker.test.js';if(!fs.existsSync(p))process.exit(1);const c=fs.readFileSync(p,'utf8');if(!c.includes('HARNESS_HAPPY_PATH_MARKER'))process.exit(1);if((c.match(/\\bit\\s*\\(/g)||[]).length<2)process.exit(1)\""
+      ],
+      "files": [
+        "packages/brain/src/harness-happy-path-marker.js",
+        "packages/brain/tests/ws1/harness-happy-path-marker.test.js"
+      ],
+      "depends_on": [],
+      "complexity": "S",
+      "estimated_minutes": 25
+    }
+  ]
+}
