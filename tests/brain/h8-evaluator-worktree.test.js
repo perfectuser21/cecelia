@@ -60,7 +60,8 @@ describe('H8 — evaluateSubTaskNode worktreePath 切到 sub-task worktree', () 
       githubToken: 'ghs_test',
       evaluate_verdict: null,
     };
-    await evaluateSubTaskNode(state, { executor: spy });
+    // H15: mock verifyEvaluator 通过，避免默认 verifyEvaluatorWorktree 真去 stat 不存在的 worktree
+    await evaluateSubTaskNode(state, { executor: spy, verifyEvaluator: async () => undefined });
     expect(spy.calls.length).toBe(1);
     const passedWtPath = spy.calls[0].worktreePath;
     expect(passedWtPath).toBe(harnessSubTaskWorktreePath(state.initiativeId, 'ws1'));

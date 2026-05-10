@@ -123,7 +123,8 @@ describe('H11 — evaluateSubTaskNode worktreePath 用 harnessSubTaskWorktreePat
       githubToken: 'gh',
       evaluate_verdict: null,
     };
-    await evaluateSubTaskNode(state, { executor: spy });
+    // H15: mock verifyEvaluator pass，避免 stat 不存在的 contract-dod
+    await evaluateSubTaskNode(state, { executor: spy, verifyEvaluator: async () => undefined });
     expect(calls.length).toBe(1);
     const got = calls[0].worktreePath;
     expect(got).toBe(harnessSubTaskWorktreePath(state.initiativeId, 'ws1'));

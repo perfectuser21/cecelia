@@ -1,4 +1,19 @@
 import { describe, it, expect, vi } from 'vitest';
+
+// H15: stub contract-verify so proposer/evaluator nodes don't shell out to git/gh.
+vi.mock('../lib/contract-verify.js', () => ({
+  ContractViolation: class extends Error {
+    constructor(message, details) {
+      super(message);
+      this.name = 'ContractViolation';
+      this.details = details || {};
+    }
+  },
+  verifyProposerOutput: vi.fn(async () => undefined),
+  verifyGeneratorOutput: vi.fn(async () => undefined),
+  verifyEvaluatorWorktree: vi.fn(async () => undefined),
+}));
+
 import { MemorySaver } from '@langchain/langgraph';
 import {
   buildProposerPrompt,
