@@ -1,7 +1,3 @@
-contract_branch: cp-harness-propose-r1-761dfe5f
-workstream_index: 1
-sprint_dir: sprints/w22-playground-power
-
 ---
 skeleton: false
 journey_type: autonomous
