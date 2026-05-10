@@ -1,0 +1,54 @@
+{
+  "initiative_id": "70b4a3ee-ca8b-47ce-81e3-5e21c2bdb404",
+  "journey_type": "autonomous",
+  "journey_type_reason": "playground 是独立 HTTP server 子项目，本次只动 server 路由 + 单测 + README，无 UI / 无 brain tick / 无 engine hook / 无远端 agent 协议，按规则归类为 autonomous（与 W19 /sum、W20 /multiply 同分类）。",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "playground 加 GET /divide 路由（strict-schema + 除零兜底 + oracle 单测）+ README 更新",
+      "scope": "在 playground/server.js 在 /multiply 之后、app.listen 之前新增 `GET /divide` 路由：(1) 缺参 → 400；(2) 用原生 RegExp `/^-?\\d+(\\.\\d+)?$/` 对 query a/b 做完整匹配 strict-schema 校验，与 /multiply 同款（可复用同一字面量或单独写一份，语义等价即可，禁止用 Number()/parseFloat() 替代）；(3) strict 通过后显式判定 `Number(b) === 0`，是则 400 + {error}（body 不含 quotient）；(4) 否则 200 + {quotient: Number(a)/Number(b)}（JS 原生除法结果，不做精度截断）。**任一拒绝路径 body 都必须不含 quotient 字段**。在 playground/tests/server.test.js 新增 `GET /divide` describe 块（与 /sum、/multiply describe 块平级），覆盖：happy 正/负/小数/被除数为 0 至少 4 条 + b=0 除零拒绝至少 2 条（含 a=0&b=0）+ strict 拒绝至少 5 条（科学计数法、Infinity、前导 +、缺参、十六进制）+ 至少 1 条 oracle 断言（`expect(res.body.quotient).toBe(Number('<a>')/Number('<b>'))`）。更新 playground/README.md 端点段加 /divide 示例（happy + 除零 + strict 拒绝 各 ≥1 条）。**不动 /health、/sum、/multiply 的实现/测试/README 段一个字符**。零新依赖（不引入 zod/joi/ajv/decimal.js）。",
+      "dod": [
+        "[BEHAVIOR] GET /divide?a=6&b=2 → HTTP 200 + body {\"quotient\":3}（数字类型严格相等）",
+        "[BEHAVIOR] GET /divide?a=1&b=3 → HTTP 200 + body.quotient === Number('1')/Number('3')（oracle：浮点严格相等，不做四舍五入）",
+        "[BEHAVIOR] GET /divide?a=-6&b=2 → HTTP 200 + body {\"quotient\":-3}（负被除数合法）",
+        "[BEHAVIOR] GET /divide?a=6&b=-2 → HTTP 200 + body {\"quotient\":-3}（负除数合法）",
+        "[BEHAVIOR] GET /divide?a=0&b=5 → HTTP 200 + body {\"quotient\":0}（被除数为 0 合法）",
+        "[BEHAVIOR] GET /divide?a=1.5&b=0.5 → HTTP 200 + body.quotient === Number('1.5')/Number('0.5')（小数合法 + oracle 复算）",
+        "[BEHAVIOR] GET /divide?a=5&b=0 → HTTP 400 + 非空 error，body 不含 quotient（除零兜底，核心 oracle 探针）",
+        "[BEHAVIOR] GET /divide?a=0&b=0 → HTTP 400 + 非空 error，body 不含 quotient（0/0 也必须拒）",
+        "[BEHAVIOR] GET /divide?a=6&b=0.0 → HTTP 400 + 非空 error，body 不含 quotient（b=0.0 也算零）",
+        "[BEHAVIOR] GET /divide?a=6（缺 b）→ HTTP 400 + 非空 error，body 不含 quotient",
+        "[BEHAVIOR] GET /divide?b=2（缺 a）→ HTTP 400 + 非空 error",
+        "[BEHAVIOR] GET /divide（双参数都缺）→ HTTP 400 + 非空 error",
+        "[BEHAVIOR] GET /divide?a=1e3&b=2（科学计数法 — 防 Number() 假绿）→ HTTP 400 + 非空 error，body 不含 quotient",
+        "[BEHAVIOR] GET /divide?a=Infinity&b=2 → HTTP 400 + 非空 error，body 不含 quotient",
+        "[BEHAVIOR] GET /divide?a=6&b=NaN → HTTP 400 + 非空 error",
+        "[BEHAVIOR] GET /divide?a=%2B6&b=2（前导正号 +6）→ HTTP 400 + 非空 error",
+        "[BEHAVIOR] GET /divide?a=.5&b=2（小数点缺整数部分）→ HTTP 400 + 非空 error",
+        "[BEHAVIOR] GET /divide?a=0xff&b=2（十六进制）→ HTTP 400 + 非空 error",
+        "[BEHAVIOR] GET /divide?a=&b=3（空字符串）→ HTTP 400 + 非空 error",
+        "[BEHAVIOR] GET /divide?a=abc&b=3（非数字）→ HTTP 400 + 非空 error，body 不含 quotient",
+        "[BEHAVIOR] GET /health 仍返回 200 + {\"ok\":true}（回归不破坏 bootstrap）",
+        "[BEHAVIOR] GET /sum?a=2&b=3 仍返回 200 + {\"sum\":5}（回归不破坏 W19）",
+        "[BEHAVIOR] GET /multiply?a=2&b=3 仍返回 200 + {\"product\":6}（回归不破坏 W20）",
+        "[BEHAVIOR] GET /multiply?a=1e3&b=2 仍返回 400（W20 strict 不被打回）",
+        "[ARTIFACT] playground/server.js 含 `app.get('/divide'` 路由，且仍含 `app.get('/health'`、`app.get('/sum'`、`app.get('/multiply'`（防误删）",
+        "[ARTIFACT] playground/server.js 含 `^-?\\d+(\\.\\d+)?$` 完整匹配正则字面量（可与 /multiply 共享同一常量，禁止 Number()/parseFloat() 假绿）",
+        "[ARTIFACT] playground/server.js 含显式除零判定（如 `Number(b) === 0` 或等价表达式），位置在 strict-schema 校验通过后、除法运算之前",
+        "[ARTIFACT] playground/tests/server.test.js 新增 `GET /divide` describe 块，含 `toBe(200)` + `toBe(400)` + `quotient` 断言；显式覆盖 b=0 拒绝 + 1e3 拒绝 + Infinity 拒绝",
+        "[ARTIFACT] playground/tests/server.test.js 至少 1 条 /divide oracle 断言形如 `toBe(Number('...')/Number('...'))`（用同一表达式独立复算）",
+        "[ARTIFACT] playground/tests/server.test.js 仍保留现有 /health、/sum、/multiply describe 块（W19 + W20 + bootstrap 回归）",
+        "[ARTIFACT] playground/README.md 含 `/divide` 字符串且给出 happy + 除零拒绝 + strict 拒绝 各 ≥1 条示例；仍含 /health、/sum、/multiply 段",
+        "[ARTIFACT] playground/package.json dependencies 仅 `express`、devDependencies 仅 `supertest`+`vitest`（零新依赖）"
+      ],
+      "files": [
+        "playground/server.js",
+        "playground/tests/server.test.js",
+        "playground/README.md"
+      ],
+      "depends_on": [],
+      "complexity": "S",
+      "estimated_minutes": 40
+    }
+  ]
+}
