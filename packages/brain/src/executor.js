@@ -2891,16 +2891,55 @@ export async function runHarnessInitiativeRouter(task, opts = {}) {
   }
 
   return {
-    ok: !final?.error,
+    ok: computeHarnessInitiativeOk(final),
+    error: computeHarnessInitiativeError(final),
     threadId,
     attemptN,
     finalState: {
       initiativeId,
       sub_tasks: final?.sub_tasks,
       final_e2e_verdict: final?.final_e2e_verdict,
+      final_e2e_failed_scenarios: final?.final_e2e_failed_scenarios,
       error: final?.error,
     },
   };
+}
+
+/**
+ * Bug 3 fix: 判断 harness initiative graph 是否成功完成
+ * verdict=FAIL 必须返 false（即便 error 字段没设）
+ *
+ * @param {object|null} final - graph 最终 state
+ * @returns {boolean} ok
+ */
+export function computeHarnessInitiativeOk(final) {
+  if (!final) return false;
+  if (final.error) return false;
+  if (final.final_e2e_verdict === 'FAIL') return false;
+  return true;
+}
+
+/**
+ * Bug 3 fix: 计算 harness initiative 失败时的 error_message
+ * 优先使用 final.error；其次从 final_e2e_verdict=FAIL 的 failed_scenarios 拼装
+ * 保证 ≤ 500 字符（DB 字段长度限制）
+ *
+ * @param {object|null} final - graph 最终 state
+ * @returns {string|null} error message or null if no error
+ */
+export function computeHarnessInitiativeError(final) {
+  if (!final) return 'harness graph returned no state (null final)';
+  if (final.error) {
+    if (typeof final.error === 'string') return final.error.slice(0, 500);
+    return (final.error.message || JSON.stringify(final.error)).slice(0, 500);
+  }
+  if (final.final_e2e_verdict === 'FAIL') {
+    const scenarios = (final.final_e2e_failed_scenarios || [])
+      .map((s) => s.name || s.failed_step || 'unknown')
+      .join('; ');
+    return `final_e2e_verdict=FAIL: ${scenarios}`.slice(0, 500);
+  }
+  return null;
 }
 
 /**

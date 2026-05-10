@@ -1,64 +1,52 @@
-# PRD — [CONFIG] harness skills Anthropic harness-design 对齐
+# PRD — fix(brain): executor.js verdict 传递修复（W20 Bug 3）
 
 ## 背景 / 问题
 
-W19 + W20 实证 harness pipeline 端到端跑通 status=completed，但**实际交付**有 schema drift：
+W20 实证：harness initiative task `b56c4e82` 的 final_evaluate 节点返 `final_e2e_verdict='FAIL'`（"现有 vitest 输出仅含 8 个 sum/health 用例，全无 multiply 测试名"），但 task.status 仍标 `completed`。
 
-- W19 PRD 写 `{result:5}`，generator 返 `{sum:5}`，sub-evaluator PASS（漏判）
-- W20 PRD 严写 `{result:35, operation:"multiply"}` 含禁用字段清单，generator 返 `{product:35}`，sub-evaluator PASS（漏判）
-
-3 层 audit 后定位 4 bug 中 3 个根因（Bug 1/2/4）位于 skill 层（planner 缺 schema 段 + reviewer 缺第 6 维 verification oracle 完整性 + evaluator 缺反作弊红线 + proposer 缺 schema codify 强制规则）。
-
-对齐 Anthropic 官方文章 [Harness design for long-running application development](https://www.anthropic.com/engineering/harness-design-long-running-apps)：
-> "separating the agent doing the work from the agent judging it proves to be a strong lever"
-> "the evaluator used the Playwright MCP to click through the running application the way a user would"
-
-我们 generator/evaluator 已分离，但 evaluator 默认信 vitest pass 当 verdict（vitest 是 generator 自写）→ 等于把 QA 的判定权交给开发员。本 PR 通过 4 个 skill 的 prompt 修订把 oracle 链条补齐：planner 必须写 schema → proposer 必须 codify schema 成 jq -e → reviewer 第 6 维审 codify 完整性 → evaluator 真跑 jq -e 不信 vitest。
+根因（audit 已查到）：
+- `packages/brain/src/executor.js:2894` `runHarnessInitiativeRouter()` 返回 `ok: !final?.error`
+- `final?.error` 为 undefined 当 final_e2e_verdict='FAIL' 但 graph 节点没设 error 字段时（line 1370-1379, 1422-1427 三个分支都不设 error）
+- → ok=true → line 2989 `if (result.ok) await updateTaskStatus(task.id, 'completed')` → task=completed 即使 verdict=FAIL
 
 ## 成功标准
 
-- **SC-001**: harness-planner SKILL.md 含"## Response Schema（API 任务必填）"模板段
-- **SC-002**: harness-contract-reviewer SKILL.md rubric 含第 6 维 `verification_oracle_completeness`，threshold 规则同步从 5 维改成 6 维
-- **SC-003**: harness-evaluator SKILL.md 含"反作弊红线"段，明示禁止把 vitest passed 当 PASS、缺 [BEHAVIOR] 直接 FAIL
-- **SC-004**: harness-contract-proposer SKILL.md 验证命令写作规范段含"Response Schema → jq -e codify 强制规则"表 + 完整严合规示例
-- **SC-005**: 4 个 skill version bump + changelog 写明对齐 Anthropic harness-design + W19/W20 实证根因
-- **SC-006**: 派 W21 严 schema /multiply 重测：generator 仍漂移 → reviewer 第 6 维卡住 REVISION → 或 evaluator jq -e exit 1 → FAIL（不再假 PASS）
+- **SC-001**: `final_e2e_verdict='FAIL'` 时 ok=false（不论 error 字段是否设置）
+- **SC-002**: `final_e2e_verdict='PASS_WITH_OVERRIDE'`（operator override）时 ok=true
+- **SC-003**: `final` 为 null/undefined 时 ok=false（防御）
+- **SC-004**: `error` 字段非空时 ok=false（保持原行为）
+- **SC-005**: error_message 在 FAIL verdict 时含 failed_scenarios names
+- **SC-006**: `reportNode` 在 FAIL verdict 时打 console.error 防御日志
+- **SC-007**: 18 个 unit test 全过 + executor 相邻 52 个测试不破坏
 
 ## 范围限定
 
 **在范围内**：
-- packages/workflows/skills/harness-planner/SKILL.md（v8.0 → v8.1）
-- packages/workflows/skills/harness-contract-reviewer/SKILL.md（v6.0 → v6.1）
-- packages/workflows/skills/harness-evaluator/SKILL.md（v1.0 → v1.1）
-- packages/workflows/skills/harness-contract-proposer/SKILL.md（v7.2 → v7.3）
+- packages/brain/src/executor.js 加 2 个 helper（computeHarnessInitiativeOk + computeHarnessInitiativeError）+ 用在 runHarnessInitiativeRouter 返回值
+- packages/brain/src/workflows/harness-initiative.graph.js reportNode 加 FAIL 防御日志
+- 单元测试覆盖
 
 **不在范围内**：
-- packages/brain/src/executor.js verdict 传递修复（Bug 3，单独 PR B）
-- 加 verify_deployment 节点（PR C，可选 P2）
-- 改 LangGraph 节点定义
-- packages/engine 任何文件
+- 改 finalEvaluateDispatchNode 设 error 字段
+- 加 verify_deployment 节点
+- 改 skill prompt（PR A 已合 #2879）
 
 ## 不做
 
-- 不改 Brain runtime 代码（.js）
-- 不改 LangGraph orchestrator
-- 不改 CI workflow
-- 不动 generator skill（v6.0 已 fully aligned per audit）
-- 不动 dev pipeline skills（engine-worktree 等）
+- 不改 verdict 计算逻辑
+- 不改 task_loop_index / sub_task verdict 路由
+- 不修 W19/W20 历史 task
 
 ## 测试策略
 
-- **Unit tests**: SKILL.md 是 Markdown 配置文件，无可单测的代码逻辑。Trivial wrapper exemption.
-- **Integration / E2E**: 派 W21 harness_initiative 真跑严 schema /multiply 任务作为 acceptance test
-  - 验 reviewer 第 6 维真起作用（contract 缺 jq -e → REVISION）
-  - 验 evaluator 反作弊真起作用（generator 漂移 → jq -e exit 1 → FAIL）
-- **smoke.sh**: N/A — packages/workflows/skills/ 不在 packages/brain/src/ 范围（v18.7.0 规则只适用 brain runtime）
+- **Unit**: `__tests__/executor-harness-initiative-ok.test.js` 18 case
+- **Integration**: 不需要（纯函数 helper），但 watchdog integration test 已覆盖 r.error undefined 协议
+- **E2E**: 派 W21 严 schema /multiply 验
+- **smoke.sh**: 不需要（commit type fix:）
 
 ## 受影响文件
 
-- `packages/workflows/skills/harness-planner/SKILL.md`
-- `packages/workflows/skills/harness-contract-reviewer/SKILL.md`
-- `packages/workflows/skills/harness-evaluator/SKILL.md`
-- `packages/workflows/skills/harness-contract-proposer/SKILL.md`
-- `docs/learnings/cp-0510203649-harness-skills-anthropic-align.md`
-- `PRD.md` + `DoD.md`（worktree 根 + packages/workflows/）
+- `packages/brain/src/executor.js`
+- `packages/brain/src/workflows/harness-initiative.graph.js`
+- `packages/brain/src/__tests__/executor-harness-initiative-ok.test.js`
+- `docs/learnings/cp-0510204528-brain-executor-final-evaluate-verdict-fix.md`
