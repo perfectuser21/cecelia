@@ -619,7 +619,8 @@ async function handleFailureSpike(stats) {
     findActivePolicy,
     findProbationPolicy,
     recordPolicyEvaluation,
-    shouldPromoteToProbation
+    shouldPromoteToProbation,
+    promoteDraftToProbation
   } = await import('./immune-system.js');
   const { generateErrorSignature } = await import('./rca-deduplication.js');
 
@@ -771,10 +772,19 @@ async function handleFailureSpike(stats) {
     console.log(`[Immune] No active policy, updating failure_signatures`);
     await updateFailureSignature(signature, failure);
 
-    // Check if should promote to probation
+    // Check if should promote to probation —— 真正把 cortex 写入的 draft 策略激活
     if (await shouldPromoteToProbation(signature)) {
       console.log(`[Immune] Signature ${signature} meets promotion criteria`);
-      // FIXME-TRACKED: 创建 probation 策略入口（需设计 createProbationPolicy API） — 需要独立 dev task
+      try {
+        const promoted = await promoteDraftToProbation(signature);
+        if (promoted) {
+          console.log(`[Immune] Activated draft policy ${promoted.policy_id} → probation for signature=${signature}`);
+        } else {
+          console.log(`[Immune] No draft policy to promote for signature=${signature} (or already probation/active)`);
+        }
+      } catch (promoteError) {
+        console.error(`[Immune] Failed to promote draft for signature=${signature}:`, promoteError.message);
+      }
     }
 
     // === Continue with existing RCA logic ===
