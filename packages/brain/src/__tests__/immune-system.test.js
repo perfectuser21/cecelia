@@ -31,6 +31,7 @@ import {
   getPolicyEvaluationStats,
   getTopFailureSignatures,
   parsePolicyAction,
+  promoteDraftToProbation,
 } from '../immune-system.js';
 
 describe('Immune System', () => {
@@ -399,6 +400,65 @@ describe('Immune System', () => {
       mockPool.query.mockRejectedValueOnce(new Error('DB error'));
 
       await expect(shouldPromoteToProbation('sig')).rejects.toThrow('DB error');
+    });
+  });
+
+  // ========================================
+  // promoteDraftToProbation
+  // ========================================
+  describe('promoteDraftToProbation', () => {
+    it('成功把最新 draft 升到 probation 并写审计', async () => {
+      const promotedRow = {
+        policy_id: 'policy-draft-1',
+        signature: 'sig-promote',
+        status: 'probation',
+      };
+      // 第 1 次：existing probation/active 检查（无）
+      mockPool.query.mockResolvedValueOnce({ rows: [] });
+      // 第 2 次：UPDATE ... RETURNING
+      mockPool.query.mockResolvedValueOnce({ rows: [promotedRow] });
+      // 第 3 次：INSERT policy_evaluations 审计
+      mockPool.query.mockResolvedValueOnce({ rows: [] });
+
+      const result = await promoteDraftToProbation('sig-promote');
+
+      expect(result).toEqual(promotedRow);
+      expect(mockPool.query).toHaveBeenCalledTimes(3);
+
+      const updateSql = mockPool.query.mock.calls[1][0];
+      expect(updateSql).toContain("status = 'probation'");
+      expect(updateSql).toContain("status = 'draft'");
+
+      const auditSql = mockPool.query.mock.calls[2][0];
+      expect(auditSql).toContain('policy_evaluations');
+      expect(auditSql).toContain("'promote'");
+      expect(auditSql).toContain("'applied'");
+    });
+
+    it('已存在同 signature 的 probation 策略时跳过升级', async () => {
+      mockPool.query.mockResolvedValueOnce({ rows: [{ '?column?': 1 }] });
+
+      const result = await promoteDraftToProbation('sig-existing');
+
+      expect(result).toBeNull();
+      // 仅查询了存量，不应触发 UPDATE / INSERT
+      expect(mockPool.query).toHaveBeenCalledTimes(1);
+    });
+
+    it('没有 draft 策略时返回 null 且不写审计', async () => {
+      mockPool.query.mockResolvedValueOnce({ rows: [] }); // 无存量
+      mockPool.query.mockResolvedValueOnce({ rows: [] }); // UPDATE 影响 0 行
+
+      const result = await promoteDraftToProbation('sig-no-draft');
+
+      expect(result).toBeNull();
+      expect(mockPool.query).toHaveBeenCalledTimes(2);
+    });
+
+    it('数据库报错时应抛出异常', async () => {
+      mockPool.query.mockRejectedValueOnce(new Error('DB down'));
+
+      await expect(promoteDraftToProbation('sig')).rejects.toThrow('DB down');
     });
   });
 

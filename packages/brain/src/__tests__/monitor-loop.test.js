@@ -80,6 +80,7 @@ const mockFindProbationPolicy = vi.hoisted(() => vi.fn());
 const mockRecordPolicyEvaluation = vi.hoisted(() => vi.fn());
 const mockShouldPromoteToProbation = vi.hoisted(() => vi.fn());
 const mockParsePolicyAction = vi.hoisted(() => vi.fn());
+const mockPromoteDraftToProbation = vi.hoisted(() => vi.fn());
 vi.mock('../immune-system.js', () => ({
   updateFailureSignature: mockUpdateFailureSignature,
   findActivePolicy: mockFindActivePolicy,
@@ -87,6 +88,7 @@ vi.mock('../immune-system.js', () => ({
   recordPolicyEvaluation: mockRecordPolicyEvaluation,
   shouldPromoteToProbation: mockShouldPromoteToProbation,
   parsePolicyAction: mockParsePolicyAction,
+  promoteDraftToProbation: mockPromoteDraftToProbation,
 }));
 
 // ─────────────────────────────────────────────────────────
@@ -188,6 +190,7 @@ function setupDefaultMocks() {
   mockUpdateFailureSignature.mockResolvedValue(undefined);
   mockRecordPolicyEvaluation.mockResolvedValue(undefined);
   mockShouldPromoteToProbation.mockResolvedValue(false);
+  mockPromoteDraftToProbation.mockResolvedValue(null);
   mockParsePolicyAction.mockReturnValue({
     type: 'requeue',
     params: { delay_minutes: 30 },
@@ -798,6 +801,43 @@ describe('monitor-loop', () => {
       expect(promotionLogs.length).toBeGreaterThanOrEqual(1);
 
       logSpy.mockRestore();
+      vi.clearAllTimers();
+    });
+
+    it('shouldPromoteToProbation 为 true 时调用 promoteDraftToProbation 把 draft 升到 probation', async () => {
+      setupFailureSpike();
+      mockFindActivePolicy.mockResolvedValue(null);
+      mockFindProbationPolicy.mockResolvedValue(null);
+      mockShouldAnalyzeFailure.mockResolvedValue({ should_analyze: false });
+      mockShouldPromoteToProbation.mockResolvedValue(true);
+      mockPromoteDraftToProbation.mockResolvedValue({
+        policy_id: 'policy-activated',
+        signature: 'sig-x',
+        status: 'probation',
+      });
+
+      startMonitorLoop();
+      await flushCycle();
+
+      expect(mockPromoteDraftToProbation).toHaveBeenCalled();
+      vi.clearAllTimers();
+    });
+
+    it('promoteDraftToProbation 抛出异常时不影响后续 RCA 流程', async () => {
+      setupFailureSpike();
+      mockFindActivePolicy.mockResolvedValue(null);
+      mockFindProbationPolicy.mockResolvedValue(null);
+      mockShouldAnalyzeFailure.mockResolvedValue({ should_analyze: true });
+      mockShouldPromoteToProbation.mockResolvedValue(true);
+      mockPromoteDraftToProbation.mockRejectedValue(new Error('promote failed'));
+
+      await expect(
+        (async () => {
+          startMonitorLoop();
+          await flushCycle();
+        })()
+      ).resolves.not.toThrow();
+
       vi.clearAllTimers();
     });
 

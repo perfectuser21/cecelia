@@ -214,6 +214,76 @@ export async function shouldPromoteToProbation(signature) {
 }
 
 /**
+ * Promote latest draft policy of a signature to probation.
+ *
+ * Cortex 写入 absorption_policies 时 status='draft'，但 monitor-loop 只查
+ * active/probation，promotion-job 也只做 probation→active；缺少 draft→probation
+ * 入口会让所有规则永远停在 draft，免疫系统形同虚设（learning 990580ea）。
+ *
+ * 该函数是 draft→probation 唯一入口：调用方先用 shouldPromoteToProbation
+ * 判断频率阈值，再调本函数把同 signature 下最新一条 draft 升到 probation，
+ * 并在 policy_evaluations 写一条 mode='promote' 审计。
+ *
+ * 幂等：若已存在同 signature 的 probation/active 规则，则不再升级 draft，
+ * 避免重复策略产生竞争。
+ *
+ * @param {string} signature - Error signature
+ * @returns {Promise<Object|null>} Promoted policy row or null when no draft / 已有同签名 probation+ 策略
+ */
+export async function promoteDraftToProbation(signature) {
+  try {
+    const existing = await pool.query(`
+      SELECT 1 FROM absorption_policies
+      WHERE signature = $1 AND status IN ('probation', 'active')
+      LIMIT 1
+    `, [signature]);
+
+    if (existing.rows.length > 0) {
+      return null;
+    }
+
+    const result = await pool.query(`
+      UPDATE absorption_policies
+      SET status = 'probation', updated_at = NOW()
+      WHERE policy_id = (
+        SELECT policy_id FROM absorption_policies
+        WHERE signature = $1 AND status = 'draft'
+        ORDER BY created_at DESC
+        LIMIT 1
+      )
+      RETURNING *
+    `, [signature]);
+
+    if (result.rows.length === 0) {
+      return null;
+    }
+
+    const promoted = result.rows[0];
+
+    await pool.query(`
+      INSERT INTO policy_evaluations (
+        policy_id, signature, mode, decision, details, created_at
+      ) VALUES ($1, $2, 'promote', 'applied', $3, NOW())
+    `, [
+      promoted.policy_id,
+      signature,
+      JSON.stringify({
+        from_status: 'draft',
+        to_status: 'probation',
+        reason: 'failure_signature_threshold_met',
+        promoted_at: new Date().toISOString()
+      })
+    ]);
+
+    console.log(`[Immune] Promoted draft policy ${promoted.policy_id} to probation (signature=${signature})`);
+    return promoted;
+  } catch (error) {
+    console.error('[Immune] Failed to promote draft to probation:', error.message);
+    throw error;
+  }
+}
+
+/**
  * Get policy evaluation statistics
  *
  * @param {string} policyId - Policy UUID
