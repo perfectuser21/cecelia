@@ -12,11 +12,6 @@ journey_type: autonomous
 **大小**：S（< 100 行）
 **依赖**：无
 
-## BEHAVIOR 条目
-
-- [x] [BEHAVIOR] `tests/ws1/sum.test.js` 全套 8 用例（/sum happy + 缺 b + 双缺 + 非数字 + 负数 + 小数 + 零 + /health 回归）通过
-  Test: manual:npm test --prefix playground
-
 ## ARTIFACT 条目
 
 - [x] [ARTIFACT] `playground/server.js` 含 `/sum` 路由注册
@@ -40,9 +35,9 @@ journey_type: autonomous
 - [x] [ARTIFACT] `playground/package.json` 未新增 devDependencies（仅 supertest + vitest）
   Test: manual:node -e "const p=require('./playground/package.json');const d=Object.keys(p.devDependencies||{}).sort().join(',');if(d!=='supertest,vitest')process.exit(1)"
 
-## BEHAVIOR 索引（实际测试在 sprints/w19-playground-sum/tests/ws1/）
+## [BEHAVIOR] 索引（实际测试在 sprints/w19-playground-sum/tests/ws1/）
 
-见 `sprints/w19-playground-sum/tests/ws1/sum.test.js`，覆盖：
+> v5.0 设计：`[BEHAVIOR]` 条目从 DoD 搬至测试文件。实际行为见 `sprints/w19-playground-sum/tests/ws1/sum.test.js`，覆盖：
 - GET `/sum?a=2&b=3` → 200 + body `{sum:5}`
 - GET `/sum?a=2`（缺 b） → 400 + body `.error` 非空字符串
 - GET `/sum?a=abc&b=3`（非数字） → 400 + `.error` 非空 + body 不含 `sum` 字段
