@@ -33,6 +33,7 @@ import { runFinalE2E, attributeFailures } from '../harness-final-e2e.js';
 import { ensureHarnessWorktree, harnessSubTaskWorktreePath } from '../harness-worktree.js';
 import { resolveGitHubToken } from '../harness-credentials.js';
 import { fetchAndShowOriginFile } from '../lib/git-fence.js';
+import { verifyEvaluatorWorktree, ContractViolation } from '../lib/contract-verify.js';
 // 走 C3 shim (../harness-gan-graph.js) 而非直连 workflows/harness-gan.graph.js，
 // 保持测试 vi.mock('../../harness-gan-graph.js') 路径兼容。
 // Phase C7 清 shim 前不改。
@@ -1154,6 +1155,17 @@ export async function evaluateSubTaskNode(state, opts = {}) {
   const taskWorktreePath = state.sub_task?.id
     ? harnessSubTaskWorktreePath(state.initiativeId, state.sub_task.id)
     : state.worktreePath;
+
+  // H15: spawn evaluator 前主动验 worktree 含必要 contract artifacts。
+  // 若 generator 容器没真把 contract-dod 落到 worktree → 现在 fail-fast 不再 silent 让 evaluator FAIL。
+  // ContractViolation propagate → LangGraph node retryPolicy（addNode evaluate retry: LLM_RETRY）接管。
+  if (state.sub_task?.id) {
+    const verifyEvaluator = opts.verifyEvaluator || verifyEvaluatorWorktree;
+    const expectedFiles = [
+      `${sprintDir}/contract-dod-${state.sub_task.id}.md`,
+    ];
+    await verifyEvaluator({ worktreePath: taskWorktreePath, expectedFiles });
+  }
 
   const skillContent = loadSkillContent('harness-evaluator');
   const prompt = `你是 harness-evaluator agent。按下面 SKILL 指令工作。

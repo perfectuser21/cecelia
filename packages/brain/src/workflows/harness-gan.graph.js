@@ -29,6 +29,7 @@ import {
   END,
 } from '@langchain/langgraph';
 import { fetchAndShowOriginFile } from '../lib/git-fence.js';
+import { verifyProposerOutput, ContractViolation } from '../lib/contract-verify.js';
 import { LLM_RETRY } from './retry-policies.js';
 
 const execFile = promisify(execFileCb);
@@ -359,6 +360,7 @@ export function createGanContractNodes(executor, ctx) {
     budgetCapUsd = 10,
     readContractFile = defaultReadContractFile,
     fetchOriginFile = fetchAndShowOriginFile,
+    verifyProposer = verifyProposerOutput,
   } = ctx;
 
   async function proposer(state) {
@@ -399,14 +401,11 @@ export function createGanContractNodes(executor, ctx) {
       console.warn(`[harness-gan] proposer round=${nextRound} missing ${sprintDir}/task-plan.json — inferTaskPlan 拿不到 DAG 时会 hard fail`);
     }
 
-    // H10: brain 主动验证 proposer 容器真把 propose_branch + task-plan.json 推到 origin。
+    // H10/H15: brain 主动验证 proposer 容器真把 propose_branch + task-plan.json 推到 origin。
     // docker exit_code=0 ≠ 节点 success（contract enforcement 第一层）。
+    // H15 重构：从 ad-hoc fetchOriginFile 改用 SSOT verifyProposerOutput（throws ContractViolation）。
     // 失败时 throw → LangGraph retryPolicy: LLM_RETRY 自动重试 3 次。
-    try {
-      await fetchOriginFile(worktreePath, proposeBranch, `${sprintDir}/task-plan.json`);
-    } catch (err) {
-      throw new Error(`proposer_didnt_push: branch ${proposeBranch} 不存在或缺 task-plan.json: ${err.message}`);
-    }
+    await verifyProposer({ worktreePath, branch: proposeBranch, sprintDir });
 
     return {
       round: nextRound,
