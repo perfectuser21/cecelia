@@ -116,12 +116,12 @@ describe('computeHarnessInitiativeError', () => {
     ).toBe('planner failed');
   });
 
-  it('PASS verdict → 返 null（无 error）', () => {
-    expect(computeHarnessInitiativeError({ final_e2e_verdict: 'PASS' })).toBeNull();
+  it('PASS verdict → 返 undefined（无 error，保持 r.error undefined 跟 integration 一致）', () => {
+    expect(computeHarnessInitiativeError({ final_e2e_verdict: 'PASS' })).toBeUndefined();
   });
 
-  it('PASS_WITH_OVERRIDE → 返 null', () => {
-    expect(computeHarnessInitiativeError({ final_e2e_verdict: 'PASS_WITH_OVERRIDE' })).toBeNull();
+  it('PASS_WITH_OVERRIDE → 返 undefined', () => {
+    expect(computeHarnessInitiativeError({ final_e2e_verdict: 'PASS_WITH_OVERRIDE' })).toBeUndefined();
   });
 
   it('final 为 null → 返默认信息', () => {

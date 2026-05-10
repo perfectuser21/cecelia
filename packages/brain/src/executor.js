@@ -2925,7 +2925,7 @@ export function computeHarnessInitiativeOk(final) {
  * 保证 ≤ 500 字符（DB 字段长度限制）
  *
  * @param {object|null} final - graph 最终 state
- * @returns {string|null} error message or null if no error
+ * @returns {string|undefined} error message or undefined if no error（保持 r.error undefined 跟现有 watchdog 集成测试一致）
  */
 export function computeHarnessInitiativeError(final) {
   if (!final) return 'harness graph returned no state (null final)';
@@ -2939,7 +2939,7 @@ export function computeHarnessInitiativeError(final) {
       .join('; ');
     return `final_e2e_verdict=FAIL: ${scenarios}`.slice(0, 500);
   }
-  return null;
+  return undefined;
 }
 
 /**
