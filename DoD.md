@@ -12,6 +12,11 @@ journey_type: autonomous
 **大小**：S（< 100 行）
 **依赖**：无
 
+## BEHAVIOR 条目
+
+- [x] [BEHAVIOR] `tests/ws1/sum.test.js` 全套 8 用例（/sum happy + 缺 b + 双缺 + 非数字 + 负数 + 小数 + 零 + /health 回归）通过
+  Test: manual:npm test --prefix playground
+
 ## ARTIFACT 条目
 
 - [x] [ARTIFACT] `playground/server.js` 含 `/sum` 路由注册
