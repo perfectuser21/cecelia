@@ -1,28 +1,38 @@
-# DoD: W7.3 Bug #E startup-recovery cleanupStaleWorktrees 加活跃 lock 保护
+contract_branch: cp-harness-propose-r2-fe91ce26
+workstream_index: 1
+sprint_dir: sprints
 
-## 概述
-5/6 startup-recovery 误清 4 个含活跃 dev-lock 的 cp-* worktree。修：cleanupStaleWorktrees
-删除前先检查 worktree 内是否含 24h 内修改的 .dev-lock 或 .dev-mode.<branch>，命中则跳过。
+---
+skeleton: false
+journey_type: autonomous
+---
+# Contract DoD — Workstream 1: harness happy path marker module
 
-## 验收
+**范围**：新增最小可观测目标模块（常量 + 函数）+ BEHAVIOR 测试。Generator 在 commit 1 落测试（Red），commit 2 落实现（Green）。
+**大小**：S（实现 + 测试合计 < 30 行）
+**依赖**：无
 
-- [x] [ARTIFACT] startup-recovery.js 导出 hasActiveDevLock 函数
-  Test: manual:node -e "const m=await import('./packages/brain/src/startup-recovery.js');if(typeof m.hasActiveDevLock!=='function')process.exit(1)"
+## ARTIFACT 条目
 
-- [x] [BEHAVIOR] worktree 含活跃 .dev-lock → 不被清理（skipped_active_lock 计数 ≥1，目录还在）
-  Test: tests/integration/startup-recovery-active-lock.test.js
+- [ ] [ARTIFACT] BEHAVIOR 测试文件存在于 `packages/brain/tests/ws1/harness-happy-path-marker.test.js`，内容含 `from 'vitest'` import 与至少 2 个 `it(` block，且引用 `HARNESS_HAPPY_PATH_MARKER` 标识符
+  Test: node -e "const fs=require('fs');const p='packages/brain/tests/ws1/harness-happy-path-marker.test.js';if(!fs.existsSync(p))process.exit(1);const c=fs.readFileSync(p,'utf8');const head=c.split('\n').slice(0,60).join('\n');if(!/from ['\"]vitest['\"]/.test(head))process.exit(1);const itCount=(c.match(/\bit\s*\(/g)||[]).length;if(itCount<2)process.exit(1);if(!c.includes('HARNESS_HAPPY_PATH_MARKER'))process.exit(1)"
 
-- [x] [BEHAVIOR] worktree 含活跃 .dev-mode.cp-xyz → 不被清理
-  Test: tests/integration/startup-recovery-active-lock.test.js
+- [ ] [ARTIFACT] 实现文件存在于 `packages/brain/src/harness-happy-path-marker.js`
+  Test: node -e "const fs=require('fs');if(!fs.existsSync('packages/brain/src/harness-happy-path-marker.js'))process.exit(1)"
 
-- [x] [BEHAVIOR] .dev-lock mtime 超过 24h → 视为残留，正常清理（保护 false negative 不发生）
-  Test: tests/integration/startup-recovery-active-lock.test.js
+- [ ] [ARTIFACT] 实现文件源码含 `export const HARNESS_HAPPY_PATH_MARKER` 声明
+  Test: node -e "const c=require('fs').readFileSync('packages/brain/src/harness-happy-path-marker.js','utf8');if(!/export\s+const\s+HARNESS_HAPPY_PATH_MARKER\b/.test(c))process.exit(1)"
 
-- [x] [BEHAVIOR] worktree 无 lock → 正常清理（保护逻辑不破坏既有路径）
-  Test: tests/integration/startup-recovery-active-lock.test.js
+- [ ] [ARTIFACT] 实现文件源码含 `export function verifyHarnessHappyPath` 声明
+  Test: node -e "const c=require('fs').readFileSync('packages/brain/src/harness-happy-path-marker.js','utf8');if(!/export\s+function\s+verifyHarnessHappyPath\b/.test(c))process.exit(1)"
 
-- [x] [BEHAVIOR] enhanced 单测 26 个全过（含 5 个新加 + 5 个 hasActiveDevLock 直测）
-  Test: manual:bash -c "cd packages/brain && NODE_OPTIONS='--max-old-space-size=2048' npx vitest run src/__tests__/startup-recovery-enhanced.test.js"
+- [ ] [ARTIFACT] 实现文件源码字面量含 `fe91ce26-5nodes-verified`（child task signature 防跨 PR 复用）
+  Test: node -e "const c=require('fs').readFileSync('packages/brain/src/harness-happy-path-marker.js','utf8');if(!c.includes('fe91ce26-5nodes-verified'))process.exit(1)"
 
-- [x] [ARTIFACT] Brain 版本 bump 到 1.228.3（package.json + .brain-versions + DEFINITION.md）
-  Test: manual:node -e "const v=require('./packages/brain/package.json').version;if(v!=='1.228.3')process.exit(1)"
+## BEHAVIOR 索引（实际测试在 packages/brain/tests/ws1/）
+
+见 `packages/brain/tests/ws1/harness-happy-path-marker.test.js`，覆盖：
+- `HARNESS_HAPPY_PATH_MARKER` 严格等于 `'fe91ce26-5nodes-verified'`
+- `verifyHarnessHappyPath()` 返回相同字符串
+
+测试由 Generator 从 `sprints/tests/ws1/harness-happy-path-marker.test.js` **原样复制**，commit 1 落地后 CI 强校验不可修改。
