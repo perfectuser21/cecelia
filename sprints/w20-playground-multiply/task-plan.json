@@ -1,0 +1,38 @@
+{
+  "initiative_id": "b56c4e82-fb02-425e-aa40-89983205d671",
+  "journey_type": "autonomous",
+  "journey_type_reason": "playground 是独立 HTTP server 子项目，本次只动 server 路由 + 单测 + README，无 UI / 无 brain tick / 无 engine hook / 无远端 agent 协议，按规则归类为 autonomous（与 W19 /sum 同分类）。",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "playground 加 GET /multiply 路由（strict-schema）+ 单测 + README 更新",
+      "scope": "在 playground/server.js 新增 `GET /multiply` 路由：用原生正则 `^-?\\d+(\\.\\d+)?$` 对 query a/b 做 strict-schema 校验 → 通过则 Number() 转换并相乘 → 返回 200 + {product} 或 400 + {error}。在 playground/tests/server.test.js 新增 /multiply 单测（happy + 多条 strict-schema 拒绝路径 + 边界），保持 /health 与 /sum 用例不动。更新 playground/README.md 端点段加 /multiply 示例。零新依赖（不引入 zod/joi/ajv）。不动 /health、/sum 的实现。",
+      "dod": [
+        "[BEHAVIOR] GET /multiply?a=2&b=3 → HTTP 200 + body {\"product\":6}（数字类型严格相等）",
+        "[BEHAVIOR] GET /multiply?a=0&b=5 → HTTP 200 + body {\"product\":0}（零参与乘法合法）",
+        "[BEHAVIOR] GET /multiply?a=-2&b=3 → HTTP 200 + body {\"product\":-6}（负数合法）",
+        "[BEHAVIOR] GET /multiply?a=1.5&b=2 → HTTP 200 + body {\"product\":3}（标准小数合法）",
+        "[BEHAVIOR] GET /multiply?a=1e3&b=2（科学计数法）→ HTTP 400 + 非空 error，body 不含 product 字段",
+        "[BEHAVIOR] GET /multiply?a=Infinity&b=2 → HTTP 400 + 非空 error，body 不含 product 字段",
+        "[BEHAVIOR] GET /multiply?a=%2B2&b=3（前导 + 号）→ HTTP 400 + 非空 error，body 不含 product 字段",
+        "[BEHAVIOR] GET /multiply?a=.5&b=2（小数点缺整数部分）→ HTTP 400 + 非空 error，body 不含 product 字段",
+        "[BEHAVIOR] GET /multiply?a=2（缺 b）→ HTTP 400 + 非空 error，body 不含 product 字段",
+        "[BEHAVIOR] GET /multiply?a=abc&b=3（非数字字符串）→ HTTP 400 + 非空 error，body 不含 product 字段",
+        "[BEHAVIOR] GET /health 仍返回 200 + {\"ok\":true}（回归不破坏）",
+        "[BEHAVIOR] GET /sum?a=2&b=3 仍返回 200 + {\"sum\":5}（回归不破坏 W19）",
+        "[ARTIFACT] playground/server.js 含 `app.get('/multiply'` 路由，且仍含 `app.get('/health'` 和 `app.get('/sum'`",
+        "[ARTIFACT] playground/tests/server.test.js 含 `/multiply` 字符串 + `toBe(200)` + `toBe(400)` 断言，且包含科学计数法（`1e3` 或类似）和 `Infinity` 的拒绝用例",
+        "[ARTIFACT] playground/README.md 含 `/multiply` 字符串且给出 happy + 至少 1 条 strict-schema 拒绝示例",
+        "[ARTIFACT] playground/package.json dependencies 仅 `express`、devDependencies 仅 `supertest`+`vitest`（零新依赖，不引入 zod/joi/ajv）"
+      ],
+      "files": [
+        "playground/server.js",
+        "playground/tests/server.test.js",
+        "playground/README.md"
+      ],
+      "depends_on": [],
+      "complexity": "S",
+      "estimated_minutes": 35
+    }
+  ]
+}
