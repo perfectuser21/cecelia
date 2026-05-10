@@ -532,6 +532,6 @@ workstream_count: 1
 
 | Workstream | Test File | BEHAVIOR 覆盖（按 §8 T-ID） | 预期 Red 证据 |
 |---|---|---|---|
-| WS1 | `tests/ws1/multiply.test.js` | T1–T16（happy + 边界 + 缺参 + strict-schema 10 类拒绝 + 非数字）+ T17–T18（/health + /sum 回归） | **16 failures**（T1–T16 全 FAIL，T17/T18 PASS）→ 远超 Reviewer ≥ 5 阈值 |
+| WS1 | `tests/ws1/multiply.test.js` | 200 + {product:6}、400 + 非空 error、1e3、Infinity、health 仍 200、200 + {sum:5} | **16 failures**（T1–T16 全 FAIL，T17/T18 PASS）→ 远超 Reviewer ≥ 5 阈值 |
 
 **Red 证据采集命令**：见 §9 末尾「Proposer 自验命令」。
