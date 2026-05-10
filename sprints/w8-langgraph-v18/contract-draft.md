@@ -1,8 +1,19 @@
-# Sprint Contract Draft (Round 1)
+# Sprint Contract Draft (Round 2)
 
 **Initiative**: W8 LangGraph v18 真端到端验证
 **Initiative Task ID**: 98aef732-ce7d-4469-a156-fddbf7df4747
 **journey_type**: autonomous
+
+---
+
+## Round 2 修订摘要（回应 Reviewer Round 1）
+
+| Reviewer 关注点 | Round 1 状态 | Round 2 修订 |
+|---|---|---|
+| Test 名应可读、能从名字反推断言 | 通用名（"frontmatter 含合法 UUID v4"） | 全部改为「主语 + 动作 + 期望」具体名（见 Test Contract 表） |
+| Red 证据需精确指出"为什么 5 个 it 不通过" | 仅写"loadReport throw" | 改用 `beforeAll` 集中加载 → ENOENT 时抛 `Cannot find harness-report.md at sprints/w8-langgraph-v18/ (errno=ENOENT)` → vitest 标 `Test Files 1 failed (1) / Tests 5 skipped (5)` 且 exit 1（已本地验证：见 §Test Evidence Protocol）|
+| 跑测命令 + commit 阶段 exit code 期望 | 缺失 | 见下方 §Test Evidence Protocol |
+| scope_match_prd（可选优化） | 7 = 阈值 | 维持 7（PRD"无人工干预"靠 Step 2/3 间接卡死，无 task_audit_log 表，不强加 DoD） |
 
 ---
 
@@ -28,7 +39,7 @@ curl -fsS "localhost:5221/api/brain/tasks/${INIT_ID}" \
   | jq -e '.task_type == "harness_initiative" and (.status | IN("queued","in_progress","completed"))'
 ```
 
-**硬阈值**: `child_initiative_id` 为合法 UUID v4 AND Brain API HTTP 200 AND `task_type='harness_initiative'` AND `status` ∈ {queued,in_progress,completed}（写报告时刻可能尚未终态，但终态由 Step 3 卡死）
+**硬阈值**: `child_initiative_id` 为合法 UUID v4 AND Brain API HTTP 200 AND `task_type='harness_initiative'` AND `status` ∈ {queued,in_progress,completed}（写报告时刻可能尚未终态，终态由 Step 3 卡死）
 
 ---
 
@@ -116,6 +127,39 @@ REPORT_PATH=$(echo "$ROW" | jq -r '.result.report_path // empty')
 
 ---
 
+## Test Evidence Protocol（Round 2 新增 — 钉死 TDD Red/Green 流程）
+
+**测试入口**：`sprints/w8-langgraph-v18/tests/ws1/harness-report-evidence.test.ts`
+**测试结构**：5 个 `it` 共享一个 `beforeAll`，`beforeAll` 内 `readFileSync(REPORT, 'utf8')`；缺文件时抛
+`Cannot find harness-report.md at sprints/w8-langgraph-v18/ (errno=ENOENT). Generator must write the real-run evidence report before evaluator runs this test.`
+
+**跑测命令（Evaluator + CI 强制使用）**：
+```bash
+npx vitest run sprints/w8-langgraph-v18/tests/ws1/harness-report-evidence.test.ts --reporter=verbose
+```
+
+**Commit 1 阶段（Red — 仅测试落盘，无 harness-report.md）**：
+- exit code = `1`
+- 输出末尾摘要严格为 `Test Files  1 failed (1)` + `Tests  5 skipped (5)`（vitest 在 `beforeAll` 抛错时的标准行为：suite-level 失败导致 5 个 `it` 不进入执行而被标 skipped；这是预期红，不是测试逃逸）
+- 错误信息含 `Cannot find harness-report.md at sprints/w8-langgraph-v18/ (errno=ENOENT)`（精确字符串，可 `grep -F` 匹配）
+- 已本地预演：proposer 在写测试前 `ls harness-report.md` 不存在 → 跑测命令真返回 exit 1 + 上述错误（输出存档于 `task-plan.json` 同分支历史可追）
+
+**Commit 2 阶段（Green — Generator 已写完真跑报告）**：
+- exit code = `0`
+- 5 个 `it` 全部 PASS（vitest 显示 `5 passed`），具体：
+  1. `child_initiative_id frontmatter is a valid UUID v4` PASS
+  2. `Final Status section contains completed` PASS
+  3. `Evaluator Verdict section contains APPROVED` PASS
+  4. `Report contains at least one https://github.com/.../pull/N URL` PASS
+  5. `Subtask Summary lists 4+ distinct harness_* completed types with no failed/stuck` PASS
+
+**为什么这个 Red→Green 切换是真验证而非走过场**：
+- Red 阶段失败原因唯一（`beforeAll` 抛 ENOENT），Generator 不可能"靠改测试名"骗过去
+- Green 阶段每条 `it` 名称即断言，Reviewer / 后续维护者读名即知期望，无需读实现
+- 5 条断言分别覆盖 PRD「Golden Path / 可观测结果」5 项关键事实，缺任一即 FAIL
+
+---
+
 ## E2E 验收（最终 Evaluator 跑）
 
 **journey_type**: autonomous
@@ -180,6 +224,9 @@ else
   echo "WARN: STDOUT_FILE 未提供，跳过关键词扫描" >&2
 fi
 
+# 9. BEHAVIOR 测试 5 个 it 全 PASS（与 §Test Evidence Protocol 一致）
+npx vitest run "${SPRINT_DIR}/tests/ws1/harness-report-evidence.test.ts" --reporter=verbose
+
 echo "✅ Golden Path 验证通过：W8 LangGraph v18 真端到端跑通到 status=completed + APPROVED"
 ```
 
@@ -205,6 +252,10 @@ workstream_count: 1
 5. **产出报告**：写 `sprints/w8-langgraph-v18/harness-report.md`，强制含 frontmatter 字段 `child_initiative_id` + 5 个章节（Final Status / Evaluator Verdict / Subtask Summary / Evidence / Residual Issues）。
 6. **commit + push** 一个 PR；不修改 `packages/brain/src/`。
 
+**TDD 纪律（Round 2 强化）**：
+- **commit 1**：仅落 `tests/ws1/harness-report-evidence.test.ts`（**禁止改测试**，从合同原样复制） + `contract-dod-ws1.md`。跑 `npx vitest run sprints/w8-langgraph-v18/tests/ws1/harness-report-evidence.test.ts --reporter=verbose` → exit 1，stderr 含 ENOENT，5 个 it 全 FAIL。截 stderr 前 30 行进 `harness-report.md` Evidence 段。
+- **commit 2**：写 `harness-report.md` + 必要的 commit/push 脚本产物。同命令再跑 → exit 0，5 个 it 全 PASS。截 stdout `Test Files 1 passed` 行进 Evidence 段。
+
 **大小**: M（脚本 + report 模板约 200 行 markdown/bash，无 brain 源码改动）
 **依赖**: 无
 
@@ -214,6 +265,6 @@ workstream_count: 1
 
 ## Test Contract
 
-| Workstream | Test File | BEHAVIOR 覆盖 | 预期红证据（commit 1 阶段） |
-|---|---|---|---|
-| WS1 | `tests/ws1/harness-report-evidence.test.ts` | (1) `child_initiative_id` 是合法 UUID v4；(2) Final Status 段含 `completed`；(3) Evaluator Verdict 段含 `APPROVED`；(4) 至少 1 条 `https://github.com/.../pull/N` 形式的 PR URL；(5) Subtask Summary 列出 ≥4 个 `harness_*` task_type 且全 completed | harness-report.md 不存在 → loadReport throw → 5 个 it 全 fail |
+| Workstream | Test File | `it` 名（具名断言） | Red 证据（commit 1） | Green 证据（commit 2） |
+|---|---|---|---|---|
+| WS1 | `tests/ws1/harness-report-evidence.test.ts` | (1) `child_initiative_id frontmatter is a valid UUID v4`<br/>(2) `Final Status section contains completed`<br/>(3) `Evaluator Verdict section contains APPROVED`<br/>(4) `Report contains at least one https://github.com/.../pull/N URL`<br/>(5) `Subtask Summary lists 4+ distinct harness_* completed types with no failed/stuck` | `npx vitest run sprints/w8-langgraph-v18/tests/ws1/harness-report-evidence.test.ts --reporter=verbose` → exit `1`；输出含 `Cannot find harness-report.md at sprints/w8-langgraph-v18/ (errno=ENOENT)`；末尾摘要 `Test Files 1 failed (1) / Tests 5 skipped (5)`（beforeAll suite 级失败的标准呈现） | 同命令 → exit `0`，末尾摘要 `Test Files 1 passed (1) / Tests 5 passed (5)`，5 个 it 名逐条 PASS |

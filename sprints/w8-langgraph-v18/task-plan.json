@@ -8,7 +8,7 @@
       "title": "触发最小子 harness_initiative + 监视 + 收证 + 写 harness-report.md",
       "scope": "在 Generator 容器内 POST /api/brain/tasks 创建一个最小子 harness_initiative（PRD 主体 = 在 docs/current/README.md 末尾追加一行 W8-v18 真跑验证脚注；账户配额受限时降级为在 sprints/ 下新增占位 .md），轮询直到终态或超时 4h，收集 4 类证据（子 Initiative tasks 行 JSON、子任务清单 SQL、PR URL HTTP 状态、Brain stdout 已知失败关键词扫描），写 sprints/w8-langgraph-v18/harness-report.md（frontmatter 含 child_initiative_id + 5 个章节 Final Status / Evaluator Verdict / Subtask Summary / Evidence / Residual Issues），commit + push 开 PR。**禁止修改 packages/brain/src/**。",
       "dod": [
-        "[BEHAVIOR] tests/ws1/harness-report-evidence.test.ts 5 个 it 全绿（child_initiative_id 是 UUID v4 / Final Status 含 completed / Evaluator Verdict 含 APPROVED / ≥1 条 PR URL / Subtask Summary ≥4 类 harness_* 全 completed）",
+        "[BEHAVIOR] npx vitest run sprints/w8-langgraph-v18/tests/ws1/harness-report-evidence.test.ts --reporter=verbose 退出 0，末尾摘要 'Test Files 1 passed (1) / Tests 5 passed (5)'，5 个具名 it 逐条 PASS：(1) child_initiative_id frontmatter is a valid UUID v4；(2) Final Status section contains completed；(3) Evaluator Verdict section contains APPROVED；(4) Report contains at least one https://github.com/.../pull/N URL；(5) Subtask Summary lists 4+ distinct harness_* completed types with no failed/stuck",
         "[ARTIFACT] sprints/w8-langgraph-v18/harness-report.md 存在",
         "[ARTIFACT] 报告 frontmatter 含 child_initiative_id（UUID v4）",
         "[ARTIFACT] 报告含 Final Status / Evaluator Verdict / Subtask Summary / Evidence / Residual Issues 5 个章节",
