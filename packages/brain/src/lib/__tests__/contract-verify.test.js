@@ -100,14 +100,16 @@ describe('H15 — verifyProposerOutput', () => {
   });
 });
 
-// -------- C. verifyGeneratorOutput (3 cases) --------
+// -------- C. verifyGeneratorOutput (6 cases) --------
 describe('H15 — verifyGeneratorOutput', () => {
-  test('happy: pr_url 非空 + gh pr view 不 throw → 不 throw', async () => {
+  test('happy: pr_url 非空 + gh pr view 不 throw + 无 requiredArtifacts → 不 throw（不调 gh pr diff）', async () => {
     const execFn = vi.fn().mockResolvedValue({ stdout: '{"number":1,"state":"OPEN"}', stderr: '' });
     await expect(
       verifyGeneratorOutput({ pr_url: 'https://github.com/x/y/pull/1', execFn }),
     ).resolves.toBeUndefined();
     expect(execFn).toHaveBeenCalledOnce();
+    expect(execFn.mock.calls[0][1][0]).toBe('pr');
+    expect(execFn.mock.calls[0][1][1]).toBe('view');
   });
 
   test('pr_url null → throw ContractViolation 含 no_pr_url', async () => {
@@ -125,6 +127,79 @@ describe('H15 — verifyGeneratorOutput', () => {
     await expect(
       verifyGeneratorOutput({ pr_url: 'https://github.com/x/y/pull/999', execFn }),
     ).rejects.toThrow(/pr_not_found/);
+  });
+
+  test('happy: requiredArtifacts 全部出现在 gh pr diff 输出 → 不 throw', async () => {
+    const diffOut = `diff --git a/packages/brain/src/foo.js b/packages/brain/src/foo.js
+index 0..1 100644
+--- a/packages/brain/src/foo.js
++++ b/packages/brain/src/foo.js
+@@ -1 +1 @@
+-old
++new
+diff --git a/packages/brain/src/bar.js b/packages/brain/src/bar.js
+@@ ...
+`;
+    const execFn = vi.fn().mockImplementation(async (cmd, args) => {
+      if (args[1] === 'view') return { stdout: '{"number":1,"state":"OPEN"}', stderr: '' };
+      if (args[1] === 'diff') return { stdout: diffOut, stderr: '' };
+      throw new Error(`unexpected: ${args.join(' ')}`);
+    });
+    await expect(
+      verifyGeneratorOutput({
+        pr_url: 'https://github.com/x/y/pull/1',
+        requiredArtifacts: ['packages/brain/src/foo.js', 'packages/brain/src/bar.js'],
+        execFn,
+      }),
+    ).resolves.toBeUndefined();
+    expect(execFn).toHaveBeenCalledTimes(2);
+  });
+
+  test('requiredArtifacts 1 个缺失 → throw ContractViolation 含 missing 路径', async () => {
+    const diffOut = `diff --git a/packages/brain/src/foo.js b/packages/brain/src/foo.js
+@@ ...
+`;
+    const execFn = vi.fn().mockImplementation(async (cmd, args) => {
+      if (args[1] === 'view') return { stdout: '{}', stderr: '' };
+      if (args[1] === 'diff') return { stdout: diffOut, stderr: '' };
+      throw new Error('unexpected');
+    });
+    await expect(
+      verifyGeneratorOutput({
+        pr_url: 'https://github.com/x/y/pull/1',
+        requiredArtifacts: ['packages/brain/src/foo.js', 'packages/brain/src/missing.js'],
+        execFn,
+      }),
+    ).rejects.toThrow(ContractViolation);
+    await expect(
+      verifyGeneratorOutput({
+        pr_url: 'https://github.com/x/y/pull/1',
+        requiredArtifacts: ['packages/brain/src/foo.js', 'packages/brain/src/missing.js'],
+        execFn,
+      }),
+    ).rejects.toThrow(/missing\.js/);
+  });
+
+  test('gh pr diff exec 失败 → throw ContractViolation 含 pr_diff_failed', async () => {
+    const execFn = vi.fn().mockImplementation(async (cmd, args) => {
+      if (args[1] === 'view') return { stdout: '{}', stderr: '' };
+      if (args[1] === 'diff') throw new Error('gh: server error');
+      throw new Error('unexpected');
+    });
+    await expect(
+      verifyGeneratorOutput({
+        pr_url: 'https://github.com/x/y/pull/1',
+        requiredArtifacts: ['packages/brain/src/foo.js'],
+        execFn,
+      }),
+    ).rejects.toThrow(ContractViolation);
+    await expect(
+      verifyGeneratorOutput({
+        pr_url: 'https://github.com/x/y/pull/1',
+        requiredArtifacts: ['packages/brain/src/foo.js'],
+        execFn,
+      }),
+    ).rejects.toThrow(/pr_diff_failed/);
   });
 });
 

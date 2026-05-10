@@ -48,6 +48,8 @@ import { parseDockerOutput, extractField } from '../harness-shared.js';
 import { buildGeneratorPrompt, extractWorkstreamIndex } from '../harness-utils.js';
 import { getPgCheckpointer } from '../orchestrator/pg-checkpointer.js';
 import pool from '../db.js';
+import { verifyGeneratorOutput } from '../lib/contract-verify.js';
+import { LLM_RETRY } from './retry-policies.js';
 
 const execFileDefault = promisify(execFileCb);
 
@@ -282,6 +284,24 @@ export async function parseCallbackNode(state) {
   return { pr_url, pr_branch };
 }
 
+/**
+ * H15 PRD 阶段 2 收尾：verify_generator 节点 — parse_callback 提到 pr_url 后主动验：
+ *   - PR 真存在 (gh pr view)
+ *   - opts.requiredArtifacts 出现在 PR diff (gh pr diff)
+ * 失败 throw ContractViolation → addNode retryPolicy: LLM_RETRY 自动 retry 3 次。
+ *
+ * 幂等门：state.poll_count > 0 → 已进入 poll 阶段，跳过（resume 时不重验）。
+ */
+export async function verifyGeneratorNode(state, opts = {}) {
+  if ((state.poll_count || 0) > 0) return {};
+  const verifyFn = opts.verifyGenerator || verifyGeneratorOutput;
+  await verifyFn({
+    pr_url: state.pr_url,
+    requiredArtifacts: opts.requiredArtifacts || [],
+  });
+  return {};
+}
+
 export async function pollCiNode(state, opts = {}) {
   const checkFn = opts.checkPr || checkPrStatus;
   const classifyFn = opts.classify || classifyFailedChecks;
@@ -382,6 +402,9 @@ export function buildHarnessTaskGraph() {
     .addNode('spawn', spawnNode)
     .addNode('await_callback', awaitCallbackNode)
     .addNode('parse_callback', parseCallbackNode)
+    // H15 PRD 阶段 2 收尾：verify_generator 在 parse_callback 提到 pr_url 后主动验副作用，
+    // 失败 throw ContractViolation → retryPolicy: LLM_RETRY retry 3 次后再爆。
+    .addNode('verify_generator', verifyGeneratorNode, { retryPolicy: LLM_RETRY })
     .addNode('poll_ci', pollCiNode)
     .addNode('merge_pr', mergePrNode)
     .addNode('fix_dispatch', fixDispatchNode)
@@ -389,8 +412,9 @@ export function buildHarnessTaskGraph() {
     .addEdge('spawn', 'await_callback')
     .addEdge('await_callback', 'parse_callback')
     .addConditionalEdges('parse_callback', routeAfterParse, {
-      end: END, no_pr: END, poll: 'poll_ci',
+      end: END, no_pr: END, poll: 'verify_generator',
     })
+    .addEdge('verify_generator', 'poll_ci')
     .addConditionalEdges('poll_ci', routeAfterPoll, {
       end: END, merge: 'merge_pr', fix: 'fix_dispatch', timeout: END, poll: 'poll_ci',
     })

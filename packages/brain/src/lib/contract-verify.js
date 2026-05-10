@@ -102,15 +102,16 @@ export async function verifyProposerOutput(opts) {
 }
 
 /**
- * 验 generator 节点真创了 PR。
+ * 验 generator 节点真创了 PR + diff 含 requiredArtifacts。
  *
  * @param {Object} opts
  * @param {string} opts.pr_url - 'https://github.com/perfectuser21/cecelia/pull/N'
+ * @param {string[]} [opts.requiredArtifacts] - 必须出现在 PR diff 里的相对路径列表（空/缺省则跳过 diff 校验）
  * @param {Function} [opts.execFn]
  * @throws {ContractViolation}
  */
 export async function verifyGeneratorOutput(opts) {
-  const { pr_url, execFn = execFile } = opts;
+  const { pr_url, requiredArtifacts = [], execFn = execFile } = opts;
   if (!pr_url || typeof pr_url !== 'string') {
     throw new ContractViolation(
       `generator_no_pr_url: pr_url is null/empty (容器 stdout 没解析到 PR URL)`,
@@ -125,6 +126,26 @@ export async function verifyGeneratorOutput(opts) {
       `generator_pr_not_found: gh pr view ${pr_url} 失败: ${err.message}`,
       { pr_url, stage: 'gh_view' },
     );
+  }
+  // gh pr diff 验 requiredArtifacts 真出现在 diff
+  if (Array.isArray(requiredArtifacts) && requiredArtifacts.length > 0) {
+    let diffOut;
+    try {
+      const { stdout } = await execFn('gh', ['pr', 'diff', pr_url]);
+      diffOut = stdout;
+    } catch (err) {
+      throw new ContractViolation(
+        `generator_pr_diff_failed: gh pr diff ${pr_url} 失败: ${err.message}`,
+        { pr_url, stage: 'gh_diff' },
+      );
+    }
+    const missing = requiredArtifacts.filter((p) => !diffOut.includes(p));
+    if (missing.length > 0) {
+      throw new ContractViolation(
+        `generator_missing_artifacts: PR ${pr_url} diff 缺 ${missing.length} file(s): ${missing.join(', ')}`,
+        { pr_url, missing, stage: 'artifacts_in_diff' },
+      );
+    }
   }
 }
 
