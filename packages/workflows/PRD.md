@@ -1,64 +1,60 @@
-# PRD — [CONFIG] harness skills Anthropic harness-design 对齐
+# PRD — [CONFIG] harness skills 协议对齐修订（W22 实证 5 处 skill 矛盾）
 
 ## 背景 / 问题
 
-W19 + W20 实证 harness pipeline 端到端跑通 status=completed，但**实际交付**有 schema drift：
+W22 实证 PR A 引入的 skill 修订**协议互相矛盾**：
+- proposer SKILL Step 2b（PR A 没改的部分）说 BEHAVIOR 放 `tests/ws*/*.test.ts`
+- evaluator SKILL v1.1 反作弊红线第 3 条（PR A 加的）说 "缺 [BEHAVIOR] Test 命令直接 FAIL"，evaluator 找的是 contract-dod-ws*.md 文件里的 [BEHAVIOR] 标签
 
-- W19 PRD 写 `{result:5}`，generator 返 `{sum:5}`，sub-evaluator PASS（漏判）
-- W20 PRD 严写 `{result:35, operation:"multiply"}` 含禁用字段清单，generator 返 `{product:35}`，sub-evaluator PASS（漏判）
+W22 sub-evaluator 4 次 FAIL，feedback 明确："contract-dod-ws1.md 含 25 条 [ARTIFACT] + 0 条 [BEHAVIOR] 标签"，"## BEHAVIOR 索引 区块（指向 vitest）但 0 条内嵌可独立执行的 [BEHAVIOR] Test 命令"。
 
-3 层 audit 后定位 4 bug 中 3 个根因（Bug 1/2/4）位于 skill 层（planner 缺 schema 段 + reviewer 缺第 6 维 verification oracle 完整性 + evaluator 缺反作弊红线 + proposer 缺 schema codify 强制规则）。
+**根因不是 LLM 漂移，是我 PR A 没回头对齐 proposer 跟 evaluator 协议**。User 反馈"你 skill 没写好"——架构没问题，是 skill 协议设计互相矛盾。
 
-对齐 Anthropic 官方文章 [Harness design for long-running application development](https://www.anthropic.com/engineering/harness-design-long-running-apps)：
-> "separating the agent doing the work from the agent judging it proves to be a strong lever"
-> "the evaluator used the Playwright MCP to click through the running application the way a user would"
-
-我们 generator/evaluator 已分离，但 evaluator 默认信 vitest pass 当 verdict（vitest 是 generator 自写）→ 等于把 QA 的判定权交给开发员。本 PR 通过 4 个 skill 的 prompt 修订把 oracle 链条补齐：planner 必须写 schema → proposer 必须 codify schema 成 jq -e → reviewer 第 6 维审 codify 完整性 → evaluator 真跑 jq -e 不信 vitest。
+同时观察到其他 skill 缺陷：
+- planner Response Schema 没强约束 query param 名 → W22 generator 用 a/b 不用 base/exp
+- reviewer 第 6 维只评 verification_oracle_completeness，不卡 [BEHAVIOR] 数量与位置 → W22 R1 直接 APPROVED 弱合同
+- generator 没要求 push 前自验 contract → 推弱实现给 evaluator 兜底
 
 ## 成功标准
 
-- **SC-001**: harness-planner SKILL.md 含"## Response Schema（API 任务必填）"模板段
-- **SC-002**: harness-contract-reviewer SKILL.md rubric 含第 6 维 `verification_oracle_completeness`，threshold 规则同步从 5 维改成 6 维
-- **SC-003**: harness-evaluator SKILL.md 含"反作弊红线"段，明示禁止把 vitest passed 当 PASS、缺 [BEHAVIOR] 直接 FAIL
-- **SC-004**: harness-contract-proposer SKILL.md 验证命令写作规范段含"Response Schema → jq -e codify 强制规则"表 + 完整严合规示例
-- **SC-005**: 4 个 skill version bump + changelog 写明对齐 Anthropic harness-design + W19/W20 实证根因
-- **SC-006**: 派 W21 严 schema /multiply 重测：generator 仍漂移 → reviewer 第 6 维卡住 REVISION → 或 evaluator jq -e exit 1 → FAIL（不再假 PASS）
+- **SC-001**: proposer SKILL v7.4 — DoD 分家规则改成 BEHAVIOR 放 contract-dod-ws*.md 内嵌 manual:bash（不放 vitest 索引）
+- **SC-002**: planner SKILL v8.2 — Response Schema 段新增 Query Parameters 子段
+- **SC-003**: reviewer SKILL v6.2 — rubric 加第 7 维 behavior_count_position（≥ 4 条 [BEHAVIOR]）
+- **SC-004**: generator SKILL v6.1 — 加 Step 6.5 Contract Self-Verification（push 前自跑 manual:bash 全过）
+- **SC-005**: 4 skill version bump + changelog 写明对齐 W22 实证 + 跟 PR A 协议互补
+- **SC-006**: 派 W23 严 schema acceptance test：
+  - 期望 A：generator 严守 contract → evaluator jq -e 全过 → task=completed
+  - 或期望 B：generator 漂移但 reviewer 第 7 维 catch 在合同层（REVISION），或 generator 自验失败不 push
+  - 不该出现的反模式：proposer 写 0 条 [BEHAVIOR] 还能 APPROVED（PR A 漏判）
 
 ## 范围限定
 
 **在范围内**：
-- packages/workflows/skills/harness-planner/SKILL.md（v8.0 → v8.1）
-- packages/workflows/skills/harness-contract-reviewer/SKILL.md（v6.0 → v6.1）
-- packages/workflows/skills/harness-evaluator/SKILL.md（v1.0 → v1.1）
-- packages/workflows/skills/harness-contract-proposer/SKILL.md（v7.2 → v7.3）
+- packages/workflows/skills/harness-contract-proposer/SKILL.md（v7.3 → v7.4）
+- packages/workflows/skills/harness-planner/SKILL.md（v8.1 → v8.2）
+- packages/workflows/skills/harness-contract-reviewer/SKILL.md（v6.1 → v6.2）
+- packages/workflows/skills/harness-generator/SKILL.md（v6.0 → v6.1）
 
 **不在范围内**：
-- packages/brain/src/executor.js verdict 传递修复（Bug 3，单独 PR B）
-- 加 verify_deployment 节点（PR C，可选 P2）
-- 改 LangGraph 节点定义
-- packages/engine 任何文件
+- evaluator SKILL v1.1（PR A 已改，本 PR 不动；新协议下 evaluator 找 DoD 文件 [BEHAVIOR] 是正确行为）
+- packages/brain/src/ 任何代码（PR B 已修 verdict 传递）
+- 加机器化 CI lint（属于 PR D 范围）
+- 改 LangGraph orchestrator
 
 ## 不做
 
-- 不改 Brain runtime 代码（.js）
-- 不改 LangGraph orchestrator
-- 不改 CI workflow
-- 不动 generator skill（v6.0 已 fully aligned per audit）
-- 不动 dev pipeline skills（engine-worktree 等）
+- 不改 evaluator SKILL（已对齐目标，proposer/reviewer/generator 跟它对齐）
+- 不改 brain runtime
+- 不动 W19/W20/W21/W22 历史合并 PR
 
 ## 测试策略
 
-- **Unit tests**: SKILL.md 是 Markdown 配置文件，无可单测的代码逻辑。Trivial wrapper exemption.
-- **Integration / E2E**: 派 W21 harness_initiative 真跑严 schema /multiply 任务作为 acceptance test
-  - 验 reviewer 第 6 维真起作用（contract 缺 jq -e → REVISION）
-  - 验 evaluator 反作弊真起作用（generator 漂移 → jq -e exit 1 → FAIL）
-- **smoke.sh**: N/A — packages/workflows/skills/ 不在 packages/brain/src/ 范围（v18.7.0 规则只适用 brain runtime）
+- **Unit**: SKILL.md 是配置文件，无可单测代码逻辑
+- **Integration / E2E**: 派 W23 harness_initiative 真跑严 schema 任务作为 acceptance test
+- **smoke.sh**: N/A（packages/workflows/ 不在 brain runtime 范围）
 
 ## 受影响文件
 
-- `packages/workflows/skills/harness-planner/SKILL.md`
-- `packages/workflows/skills/harness-contract-reviewer/SKILL.md`
-- `packages/workflows/skills/harness-evaluator/SKILL.md`
-- `packages/workflows/skills/harness-contract-proposer/SKILL.md`
-- `docs/learnings/cp-0510203649-harness-skills-anthropic-align.md`
-- `PRD.md` + `DoD.md`（worktree 根 + packages/workflows/）
+- 4 个 SKILL.md
+- PRD/DoD（worktree 根 + packages/workflows/）
+- docs/learnings/cp-0511074523-harness-skills-protocol-align.md

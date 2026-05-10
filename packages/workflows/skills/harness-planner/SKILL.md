@@ -4,10 +4,11 @@ description: |
   Harness Planner — Harness v5 阶段 A Layer 1：把用户需求展开为 Initiative PRD（Golden Path 格式）。
   输出 sprint-prd.md（What，不写 How），供 Proposer GAN 起草 Golden Path 合同。
   v8 起不再拆任务——任务 DAG 由 Proposer 在合同 GAN 确认后从 Golden Path 倒推。
-version: 8.1.0
+version: 8.2.0
 created: 2026-04-08
-updated: 2026-05-10
+updated: 2026-05-11
 changelog:
+  - 8.2.0: Response Schema 段加"Query Parameters"子段 — W22 实证 generator 漂移到 query 名 a/b（PRD 写 base/exp）。补充 query 名约束 + 禁用别名清单，配合 proposer v7.4 强制每个 query 1 条 [BEHAVIOR]
   - 8.1.0: 加"## Response Schema"段 — API 任务必填，强制 planner 把响应字段名/类型 codify 成可机检 oracle，避免 W19/W20 类 generator schema 漂移（{result→sum/product}）。Anthropic harness-design 推荐 contract is law；schema 在 PRD 阶段就锁死，proposer/generator/evaluator 全链下游有 ground truth
   - 8.0.0: Golden Path PRD — 去掉任务拆分（Step 3）；PRD 格式从"功能需求 FR-001"改为 Golden Path（入口→步骤→出口）；journey_type 保留写入 PRD 末尾
   - 7.0.0: Working Skeleton — Step 0.5 journey_type 推断（4 类）+ Skeleton Task 强制首位
@@ -134,6 +135,13 @@ mkdir -p "$SPRINT_DIR"
 
 ```
 ### Endpoint: GET /xxx
+
+**Query Parameters**（v8.2 新增 — 强制约束 query param 名，避免 generator 漂移到 a/b）:
+- `<必填 param 名>` (type, 必填): 用途说明
+- 例如: `base` (number-as-string, 必填), `exp` (number-as-string, 必填)
+- **禁用 query 名**: 列出 generator 容易用错的别名（如禁用 `a/b/x/y/p/q/n/m/input1/input2/v1/v2`）
+- **强约束**: generator 必须**字面用** PRD 列出的 query 名；用错 query 名 endpoint 应返 400 或 404
+
 **Success (HTTP 200)**:
 ```json
 {"result": <number>, "operation": "<string字面量 'multiply'>"}
@@ -153,6 +161,8 @@ mkdir -p "$SPRINT_DIR"
 ```
 
 非 API 任务（纯内部 Brain 改动 / 数据库迁移 / CI 流程）此段写 `N/A — 任务无 HTTP 响应`。
+
+**关键**：proposer SKILL v7.4 强制每个 Query Parameter 在合同里有 1 条 [BEHAVIOR] 验。Query 名漂移会被 evaluator jq -e + curl 抓住。
 
 ## 边界情况
 

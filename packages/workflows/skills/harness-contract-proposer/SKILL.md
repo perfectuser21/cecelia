@@ -4,10 +4,11 @@ description: |
   Harness Contract Proposer — Harness v5 GAN Layer 2a：
   读 PRD，GAN 对抗写 Golden Path 合同（每步含真实验证命令）；
   Reviewer APPROVED 后倒推拆 task-plan.json。
-version: 7.3.0
+version: 7.4.0
 created: 2026-04-08
-updated: 2026-05-10
+updated: 2026-05-11
 changelog:
+  - 7.4.0: 修 BEHAVIOR 位置协议矛盾（W22 sub-evaluator 4 次 FAIL 的根因）— DoD 分家规则改成 BEHAVIOR 内嵌 contract-dod-ws*.md 用 manual:bash（不是 vitest 索引）。Step 2b 模板示例改成至少 4 条 [BEHAVIOR] 严示例（schema 字段 + 完整性 + 禁用字段反向 + error path）。跟 evaluator v1.1 反作弊红线第 3 条对齐
   - 7.3.0: 加 PRD Response Schema → jq -e codify 强制规则 — Step 2 验证命令写作规范新增"PRD response 字段必须 codify 成 jq -e 命令"段。配合 planner v8.1 新增的"## Response Schema"段 + reviewer v6.1 新增第 6 维 rubric verification_oracle_completeness 形成完整 schema oracle 链路。W19/W20 实证 generator schema drift 的根因消除
   - 7.2.0: 修 verdict JSON 输出限定 — Step 4 删 APPROVED-only 限定词，改成"每轮（含被 REVISION 打回轮）"；新增"输出契约"段明示 brain harness-gan.graph.js extractProposeBranch 用正则解析。配合 brain fallback 改格式 cp-harness-propose-r{round}-{taskIdSlice}，杜绝 propose_branch 协议 mismatch（W8 task 49dafaf4 实证）
   - 7.1.0: 修复 task-plan.json 永不生成 (#2819) — Step 3 改成每轮都生成（删 "仅 APPROVED 时执行" 门槛）；APPROVED 分支即最后一轮 proposer 的分支，inferTaskPlan 从此读取
@@ -46,12 +47,19 @@ GAN 收敛（Reviewer APPROVED）后输出第 4 件：
 
 ---
 
-## DoD 分家规则
+## DoD 分家规则（v7.4 修订 — 跟 evaluator v1.1 协议对齐）
 
 | 类型 | 住哪 | 说明 |
 |---|---|---|
-| **[ARTIFACT]** | `contract-dod-ws{N}.md` | 静态产出物：文件/内容/配置 |
-| **[BEHAVIOR]** | `tests/ws{N}/*.test.ts` 的 `it()` 块 | 运行时行为：API 响应/函数返回 |
+| **[ARTIFACT]** | `contract-dod-ws{N}.md` 内 ARTIFACT 段 | 静态产出物：文件/内容/配置 |
+| **[BEHAVIOR]** | `contract-dod-ws{N}.md` 内 BEHAVIOR 段（**带 `manual:bash` 内嵌可执行命令**） | 运行时行为：API 响应/函数返回 |
+| 辅助单测 | `tests/ws{N}/*.test.ts` 的 `it()` 块 | generator 写代码用的 vitest，**不当 evaluator oracle**——evaluator 不读 vitest 输出，只跑 DoD 文件 BEHAVIOR 的 manual:bash 命令 |
+
+**关键变化（v7.4 vs v7.3）**：
+
+v7.3 错误把 BEHAVIOR 单独拆到 vitest 测试文件，但 evaluator v1.1 反作弊红线第 3 条要求"DoD 文件含 [BEHAVIOR] 标签 + manual: 命令"（不是 vitest 索引）。两个 skill 协议矛盾，W22 实证 4 次 sub-evaluator FAIL "缺 [BEHAVIOR]"。本版本统一：DoD 文件内嵌 [BEHAVIOR] 标签 + Test: manual:bash 命令，evaluator 直接执行。
+
+vitest 测试文件还要写（generator TDD red-green 用），但**不再被 evaluator 当 verdict 来源**。
 
 ---
 
@@ -235,7 +243,11 @@ RESP=$(curl -f localhost:3001/multiply?a=7&b=5)
 
 ---
 
-### Step 2b: 写 contract-dod-ws{N}.md
+### Step 2b: 写 contract-dod-ws{N}.md（v7.4 新结构）
+
+**关键变化**：BEHAVIOR 段不再是"索引指向 vitest"，而是**内嵌可独立执行的 manual:bash 命令**。Evaluator v1.1 直接跑这些命令判 PASS/FAIL，不读 vitest 输出。
+
+至少 1 条 [BEHAVIOR]（CI 已 lint）。如果 PRD 含 Response Schema 段，**每个字段必须 1 条 [BEHAVIOR] 验**（reviewer 第 6 维 verification_oracle_completeness 卡）。
 
 ```bash
 mkdir -p "${SPRINT_DIR}"
@@ -256,13 +268,34 @@ journey_type: {journey_type}
 - [ ] [ARTIFACT] {文件/配置存在}
   Test: node -e "const c=require('fs').readFileSync('{path}','utf8');if(!c.includes('{pattern}'))process.exit(1)"
 
-## BEHAVIOR 索引（实际测试在 tests/ws1/）
+## BEHAVIOR 条目（内嵌可执行 manual: 命令，禁止只索引 vitest）
 
-见 `tests/ws1/xxx.test.ts`，覆盖：
-- {行为1}
-- {行为2}
+- [ ] [BEHAVIOR] GET /endpoint?q=v 返 {result:N, operation:"X"} 严 schema
+  Test: manual:bash -c 'cd playground && PLAYGROUND_PORT=3001 node server.js & SPID=$!; sleep 2; RESP=$(curl -s "localhost:3001/endpoint?q=v"); R=$(echo "$RESP" | jq -e ".result == N and .operation == \"X\"" && echo OK); kill $SPID; [ -n "$R" ]'
+  期望: OK
+
+- [ ] [BEHAVIOR] response 严 schema 完整性 keys 恰好 [operation, result]
+  Test: manual:bash -c 'cd playground && PLAYGROUND_PORT=3002 node server.js & SPID=$!; sleep 2; RESP=$(curl -s "localhost:3002/endpoint?q=v"); R=$(echo "$RESP" | jq -e "keys == [\"operation\",\"result\"]" && echo OK); kill $SPID; [ -n "$R" ]'
+  期望: OK
+
+- [ ] [BEHAVIOR] 禁用字段 product/value/answer 反向不存在
+  Test: manual:bash -c 'cd playground && PLAYGROUND_PORT=3003 node server.js & SPID=$!; sleep 2; RESP=$(curl -s "localhost:3003/endpoint?q=v"); R=$(echo "$RESP" | jq -e "has(\"product\") | not" && echo OK); kill $SPID; [ -n "$R" ]'
+  期望: OK
+
+- [ ] [BEHAVIOR] error path /endpoint?q=foo 返 400
+  Test: manual:bash -c 'cd playground && PLAYGROUND_PORT=3004 node server.js & SPID=$!; sleep 2; CODE=$(curl -s -o /dev/null -w "%{http_code}" "localhost:3004/endpoint?q=foo"); kill $SPID; [ "$CODE" = "400" ]'
+  期望: exit 0
+
 DODEOF
 ```
+
+**核心规则**（违反 reviewer 第 6 维 + 7 维直接 REVISION）：
+
+- DoD 文件 BEHAVIOR 段**必须** ≥ 1 条 `[BEHAVIOR]` 标签 + 内嵌 `Test: manual:bash` 命令
+- **禁止**只写 `## BEHAVIOR 索引` 段指向 vitest（那是 v7.3 错误格式，evaluator 不读）
+- PRD 每个 response 字段 → 至少 1 条 [BEHAVIOR] 验
+- PRD 每个 query parameter → 至少 1 条 [BEHAVIOR] 验（用错 query 名 endpoint 应 404 也是验证）
+- error path → 至少 1 条 [BEHAVIOR] 验
 
 ---
 
