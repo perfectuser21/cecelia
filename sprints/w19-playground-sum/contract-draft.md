@@ -336,6 +336,6 @@ workstream_count: 1
 
 | Workstream | Test File | BEHAVIOR 覆盖（按 §7 T-ID） | 预期 Red 证据 |
 |---|---|---|---|
-| WS1 | `sprints/w19-playground-sum/tests/ws1/sum.test.js` | T1 happy / T2 缺 b / T3 双缺 / T4 非数字+无 sum / T5 负数 / T6 小数 / T7 双零 / T8 /health 回归 | **7 failures**（T1–T7 全 FAIL，T8 PASS）→ 满足 Reviewer ≥ 5 阈值 |
+| WS1 | `tests/ws1/sum.test.js` | a=2&b=3 / b 缺失 / 双参数都缺 / a 非数字 / 负数合法 / 小数合法 / 零合法 / /health | **7 failures**（T1–T7 全 FAIL，T8 PASS）→ 满足 Reviewer ≥ 5 阈值 |
 
 **Red 证据采集命令**：见 §8 末尾「Proposer 自验命令」。
