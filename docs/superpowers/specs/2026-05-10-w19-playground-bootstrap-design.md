@@ -92,23 +92,23 @@ W19 evaluator container（PRD §2 架构，本 bootstrap 不实现）：
 
 ## 9. DoD（4 条）
 
-- [ ] [ARTIFACT] `playground/package.json` 存在且含 express + vitest 依赖
+- [x] [ARTIFACT] `playground/package.json` 存在且含 express + vitest 依赖
   Test: `manual:node -e "const p=require('./playground/package.json');if(!p.dependencies.express||!p.devDependencies.vitest)process.exit(1)"`
-- [ ] [ARTIFACT] `playground/server.js` 含 `/health` 路由
+- [x] [ARTIFACT] `playground/server.js` 含 `/health` 路由
   Test: `manual:node -e "const c=require('fs').readFileSync('playground/server.js','utf8');if(!c.includes('/health'))process.exit(1)"`
-- [ ] [BEHAVIOR] vitest 在 playground 内 1/1 PASS
+- [x] [BEHAVIOR] vitest 在 playground 内 1/1 PASS
   Test: `playground/tests/server.test.js`
-- [ ] [BEHAVIOR] NODE_ENV=test import server.js 不抛错（不真 listen）
+- [x] [BEHAVIOR] NODE_ENV=test import server.js 不抛错（不真 listen）
   Test: `manual:node -e "process.env.NODE_ENV='test';import('./playground/server.js').then(()=>process.exit(0)).catch(()=>process.exit(1))"`
 
 ## 10. 成功标准
 
-- [ ] 4 文件就位
-- [ ] `cd playground && npm install` 干净
-- [ ] `npm test` 1/1 PASS
-- [ ] PR push + CI 全绿（无 admin merge）
-- [ ] PR merged 到 main
-- [ ] `git show origin/main:playground/server.js` 含 `/health`
+- [x] 4 文件就位（package.json + server.js + tests/server.test.js + README.md）
+- [x] `cd playground && npm install` 干净
+- [x] `npm test` 1/1 PASS
+- [ ] PR push + CI 全绿（无 admin merge）— 待 push 后验
+- [ ] PR merged 到 main — 待 push 后验
+- [ ] `git show origin/main:playground/server.js` 含 `/health` — 待 merge 后验
 
 ## 11. 不做
 
