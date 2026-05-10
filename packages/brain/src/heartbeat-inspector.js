@@ -3,6 +3,11 @@
  *
  * 读取用户定义的 HEARTBEAT.md 检查清单，结合系统快照，
  * 发给 L1 丘脑判断，结果走 Decision 流程。
+ *
+ * 关联 Cortex Insight（active_goals=0 P0 告警，方向性崩溃前置信号）：
+ *   - ec71a550 — 首次提出，落地于本文件 collectSystemSnapshot + raiseAlert（PR #2877）
+ *   - e41acc59-f1a8-44da-994f-dc4e5b0bc95c — 二次重复识别，已被同一实现覆盖
+ *   两个 learning_id 在此显式登记，避免 Cortex 反复派发同一 insight 修复任务。
  */
 
 import { readFileSync } from 'fs';
@@ -207,7 +212,8 @@ async function runHeartbeatInspection(pool, options = {}) {
   // 2. 收集系统快照
   const snapshot = await collectSystemSnapshot(pool);
 
-  // 2b. active_goals=0 → 方向性崩溃先兆，立即发 P0 告警（Cortex Insight ec71a550）。
+  // 2b. active_goals=0 → 方向性崩溃先兆，立即发 P0 告警
+  //     Cortex Insight: ec71a550（首次） / e41acc59（重复识别，同一实现覆盖）。
   // alerting.raise 自带 5 分钟限流，heartbeat 30 分钟一次不会触发限流；
   // 失败仅打日志，不阻塞巡检。
   if (snapshot.active_goals === 0) {
