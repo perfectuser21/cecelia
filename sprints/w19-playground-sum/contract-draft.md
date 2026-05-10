@@ -1,4 +1,4 @@
-# Sprint Contract Draft (Round 1)
+# Sprint Contract Draft (Round 2)
 
 > **Initiative**: W19 Walking Skeleton — playground 加 `GET /sum` endpoint
 > **Task ID**: eaf2a56f-695e-46bb-ab2f-04387f8427f4
@@ -7,234 +7,306 @@
 
 ---
 
-## Golden Path
+## 上轮 Reviewer 反馈处理（Round 1 → Round 2 diff）
+
+| 反馈 | 处理方式 | 新位置 |
+|---|---|---|
+| (1) 测试代码骨架可视化（≥ 6 个 test 块 + 关键 expect 断言行）+ 显式声明 Red 必失败的根因 | 把 `tests/ws1/sum.test.js` 的 8 个 `test()` 标题 + 关键 `expect` 断言行**原样内嵌**到本合同 §6；并在 §7 显式声明"当前 `playground/server.js` 不含 `/sum`，express 默认 404 → 所有 `expect(200)` / `expect(400)` 必 FAIL" | §6 §7 |
+| (2) Step 1-5 的 curl bash 块与 E2E 重复（internal_consistency=7 踩线） | **删除** Step 1-5 各自的 bash 块。统一抽到 §3 ASSERT 目录定义一次；Step 段只引用 ID + 期望；E2E 脚本（§5）作为 SSOT 实际执行形式，每行带 `# [ASSERT-*]` 注释回链 | §3 §4 §5 |
+
+---
+
+## §1 Golden Path
 
 [HTTP 客户端发 `GET /sum?a=2&b=3`] → [playground server 解析 query 求和] → [客户端收到 HTTP 200 + body `{ "sum": 5 }`]
 
-边界 / 副 Path（同一 endpoint 上的非 happy 路径，必须同样验证）：
-- 缺参 → 400 + `error` 字段
-- 非数字 → 400 + `error` 字段
+边界 / 副 path（同一 endpoint 上的非 happy 路径，必须同样验证）：
+- 缺参 → 400 + 非空 `error` 字段
+- 非数字 → 400 + 非空 `error` 字段，且 body 不含 `sum`
 - 负数 / 零 / 小数 → 200 + 算术结果
 - 现有 `GET /health` 行为不被破坏
 
 ---
 
+## §2 journey_type
+
+**autonomous** — playground 是独立 HTTP server 子项目，本次只动 server 路由 + 单测 + README，无 UI / 无 brain tick / 无 engine hook / 无远端 agent 协议。
+
+---
+
+## §3 ASSERT 目录（Single Source of Truth）
+
+> 每条 ASSERT 是一条独立可执行的 bash 断言，预设环境变量 `PORT`（默认 3000）已指向 spawn 起来的 playground server，且 `jq` / `curl` 可用。
+> Step 段只引用 `[ASSERT-ID]` + 期望；E2E 脚本（§5）按顺序串起这些 ASSERT 跑，每行注释回链 ID。
+> 任一 ASSERT 命令以非 0 退出即视为该断言失败 → Evaluator FAIL。
+
+| ID | 用途 | 命令 | 期望 |
+|---|---|---|---|
+| `[ASSERT-SUM-HAPPY]` | happy path：`a=2&b=3` → `{sum:5}` | `curl -fsS "http://127.0.0.1:$PORT/sum?a=2&b=3" \| jq -e '.sum == 5' >/dev/null` | exit 0 |
+| `[ASSERT-SUM-MISSING-B]` | 缺 b → 400 + 非空 error | `H=$(curl -s -o /tmp/sum-miss.json -w '%{http_code}' "http://127.0.0.1:$PORT/sum?a=2"); [ "$H" = "400" ] && jq -e '.error \| type == "string" and length > 0' /tmp/sum-miss.json >/dev/null` | exit 0 |
+| `[ASSERT-SUM-NAN]` | a 非数字 → 400 + 非空 error 且 body 不含 sum | `H=$(curl -s -o /tmp/sum-nan.json -w '%{http_code}' "http://127.0.0.1:$PORT/sum?a=abc&b=3"); [ "$H" = "400" ] && jq -e '.error \| type == "string" and length > 0' /tmp/sum-nan.json >/dev/null && jq -e 'has("sum") \| not' /tmp/sum-nan.json >/dev/null` | exit 0 |
+| `[ASSERT-SUM-NEG]` | 负数合法：`a=-1&b=1` → `{sum:0}` | `curl -fsS "http://127.0.0.1:$PORT/sum?a=-1&b=1" \| jq -e '.sum == 0' >/dev/null` | exit 0 |
+| `[ASSERT-SUM-FLOAT]` | 小数合法：`a=1.5&b=2.5` → `{sum:4}` | `curl -fsS "http://127.0.0.1:$PORT/sum?a=1.5&b=2.5" \| jq -e '.sum == 4' >/dev/null` | exit 0 |
+| `[ASSERT-SUM-ZERO]` | 双零合法：`a=0&b=0` → `{sum:0}` | `curl -fsS "http://127.0.0.1:$PORT/sum?a=0&b=0" \| jq -e '.sum == 0' >/dev/null` | exit 0 |
+| `[ASSERT-HEALTH-INTACT]` | 回归：`/health` 仍 200 + `{ok:true}` | `curl -fsS "http://127.0.0.1:$PORT/health" \| jq -e '.ok == true' >/dev/null` | exit 0 |
+| `[ASSERT-UNIT-PASSED]` | playground 单测套件全绿 | `cd playground && npm ci --silent && npm test -- --reporter=verbose 2>&1 \| tee /tmp/playground-unit.log; grep -E "Tests\s+[0-9]+ passed" /tmp/playground-unit.log && ! grep -E "Tests\s+[0-9]+ failed" /tmp/playground-unit.log` | exit 0 |
+| `[ASSERT-UNIT-COVERS-SUM]` | 单测确实覆盖了 `/sum` happy + error | `grep -E "GET /sum.*200" /tmp/playground-unit.log && grep -Ei "GET /sum.*(400\|missing\|invalid\|error)" /tmp/playground-unit.log` | exit 0 |
+
+**造假防御原则**（每条 ASSERT 都遵守）：
+- 所有 curl 带 `-f`：HTTP 非 2xx 自动退 22（防 "404 也算通过"）
+- 所有 JSON 断言用 `jq -e`：解析失败或表达式 false 即非 0 退出（防 "返回 HTML 也算通过"）
+- 严格相等用 `==`：防 `{"sum":"5"}` 字符串作弊
+- error 路径显式 `has("sum") | not`：防 `{"sum":NaN,"error":"..."}` 模糊态
+- 单测断言 `Tests N passed` 且 `not Tests N failed`：防 0-test 假绿
+
+---
+
+## §4 Golden Path Steps（每步只引用 ASSERT ID）
+
+> Step 段不再内嵌 bash。可执行形式见 §5 E2E 脚本。
+
 ### Step 1: 客户端发 `GET /sum?a=2&b=3`，收到 200 + `{ "sum": 5 }`
+- **可观测行为**：playground server 对合法整数 query 返回 HTTP 200，body 是含 `sum` 字段的 JSON，值等于算术和。
+- **断言**：`[ASSERT-SUM-HAPPY]`
+- **硬阈值**：HTTP 200 + body `.sum === 5`（数值类型严格）
 
-**可观测行为**：playground server（默认 :3000）对合法整数 query 返回 HTTP 200，body 是含 `sum` 字段的 JSON，值等于算术和。
+### Step 2: `GET /sum?a=2`（缺 b）→ 400 + 非空 `error`
+- **可观测行为**：缺任一参数 → 400 + JSON `error`，**不允许** 200 + `{sum:NaN}` 或 500。
+- **断言**：`[ASSERT-SUM-MISSING-B]`
+- **硬阈值**：HTTP 严格 400 + `.error` 是非空字符串
 
-**验证命令**（evaluator 在 spawn `npm start` 后执行）：
-```bash
-# 已 spawn server 监听在 $PORT（默认 3000）后
-RESP=$(curl -fsS "http://127.0.0.1:${PORT:-3000}/sum?a=2&b=3")
-# 期望：HTTP 200（curl -f 已保证），body 形如 {"sum":5}
-echo "$RESP" | jq -e '.sum == 5' >/dev/null
-# exit 0 即通过
-```
-
-**硬阈值**：
-- HTTP status = 200（`curl -f` 在非 2xx 时退出 22）
-- response body 是合法 JSON（`jq -e` 解析失败退出非 0）
-- `.sum == 5` 严格等于（数值类型，非字符串 "5"）
-
----
-
-### Step 2: 客户端发 `GET /sum?a=2`（缺 b），收到 400 + `error` 字段
-
-**可观测行为**：缺任一参数时 server 返回 HTTP 400，body 是 JSON 且含非空 `error` 字段。**不允许**返回 200 + `{"sum":NaN}` 或返回 500。
-
-**验证命令**：
-```bash
-HTTP_CODE=$(curl -s -o /tmp/sum-miss.json -w '%{http_code}' "http://127.0.0.1:${PORT:-3000}/sum?a=2")
-[ "$HTTP_CODE" = "400" ] || { echo "expected 400 got $HTTP_CODE"; exit 1; }
-jq -e '.error | type == "string" and length > 0' /tmp/sum-miss.json >/dev/null
-```
-
-**硬阈值**：
-- HTTP status 严格 = 400
-- body 是 JSON
-- `.error` 是非空字符串（`type=="string" and length>0` 防御 `{"error":null}` / `{"error":""}`）
-
----
-
-### Step 3: 客户端发 `GET /sum?a=abc&b=3`（非数字），收到 400 + `error` 字段
-
-**可观测行为**：任一参数无法解析为数字时返回 400 + JSON `error`，**不允许** `{"sum": NaN}` 或 200。
-
-**验证命令**：
-```bash
-HTTP_CODE=$(curl -s -o /tmp/sum-nan.json -w '%{http_code}' "http://127.0.0.1:${PORT:-3000}/sum?a=abc&b=3")
-[ "$HTTP_CODE" = "400" ] || { echo "expected 400 got $HTTP_CODE"; exit 1; }
-jq -e '.error | type == "string" and length > 0' /tmp/sum-nan.json >/dev/null
-# 防御"sum:NaN 也算通过"——不允许 body 含 sum 字段（应当是 error 路径）
-jq -e 'has("sum") | not' /tmp/sum-nan.json >/dev/null
-```
-
-**硬阈值**：
-- HTTP status = 400
-- `.error` 非空字符串
-- body 不含 `sum` 字段（防止实现为 `{"sum":NaN,"error":"..."}` 这种模糊态）
-
----
+### Step 3: `GET /sum?a=abc&b=3`（非数字）→ 400 + 非空 `error` 且 body 不含 `sum`
+- **可观测行为**：参数无法解析为数字 → 400 + JSON `error`，**不允许** 200 / `{"sum":NaN}` / `{"sum":NaN,"error":...}`。
+- **断言**：`[ASSERT-SUM-NAN]`
+- **硬阈值**：HTTP 400 + `.error` 非空 + `has("sum") == false`
 
 ### Step 4: 边界数值（负数 / 零 / 小数）正常求和
-
-**可观测行为**：负数、零、小数都视作合法数字，server 返回 200 + 正确算术和。
-
-**验证命令**：
-```bash
-# 负数 + 正数 = 0
-curl -fsS "http://127.0.0.1:${PORT:-3000}/sum?a=-1&b=1" | jq -e '.sum == 0' >/dev/null
-# 小数
-curl -fsS "http://127.0.0.1:${PORT:-3000}/sum?a=1.5&b=2.5" | jq -e '.sum == 4' >/dev/null
-# 双零
-curl -fsS "http://127.0.0.1:${PORT:-3000}/sum?a=0&b=0" | jq -e '.sum == 0' >/dev/null
-```
-
-**硬阈值**：三条命令全部 exit 0（`-f` + `jq -e` 串联，HTTP 非 2xx 或 JSON 断言失败任一即整体失败）。
-
----
+- **可观测行为**：负数、零、小数都视作合法数字，server 返回 200 + 正确算术和。
+- **断言**：`[ASSERT-SUM-NEG]` + `[ASSERT-SUM-FLOAT]` + `[ASSERT-SUM-ZERO]` 三条全 exit 0。
+- **硬阈值**：三条断言全部 exit 0。
 
 ### Step 5: 现有 `GET /health` 不被破坏
+- **可观测行为**：`/health` 仍返回 200 + `{ok:true}`。
+- **断言**：`[ASSERT-HEALTH-INTACT]`
+- **硬阈值**：HTTP 200 + `.ok === true`
 
-**可观测行为**：`/health` 仍然返回 200 + `{"ok":true}`。
-
-**验证命令**：
-```bash
-curl -fsS "http://127.0.0.1:${PORT:-3000}/health" | jq -e '.ok == true' >/dev/null
-```
-
-**硬阈值**：HTTP 200 且 body 严格等于 `{"ok":true}` 中的 `ok==true` 断言。
-
----
-
-### Step 6: 单测套件全绿（`npm test` 在 playground/ 内）
-
-**可观测行为**：`playground/tests/server.test.js` 含 `/sum` happy path + 至少一个 error case，且全部 pass；`/health` 测试不动仍 pass。
-
-**验证命令**：
-```bash
-cd playground
-npm ci --silent
-npm test -- --reporter=verbose 2>&1 | tee /tmp/playground-test.log
-# 必须有 /sum happy + /sum error 至少 2 条 pass
-grep -E "GET /sum.*200" /tmp/playground-test.log
-grep -Ei "GET /sum.*(400|missing|invalid|error)" /tmp/playground-test.log
-# 防御 0-test 假绿：vitest 输出必须含 "Tests" 行且失败数 = 0
-grep -E "Test Files\s+[0-9]+ passed" /tmp/playground-test.log
-grep -E "Tests\s+[0-9]+ passed" /tmp/playground-test.log
-! grep -E "Tests\s+[0-9]+ failed" /tmp/playground-test.log
-```
-
-**硬阈值**：
-- vitest 退出 0
-- 日志中能 grep 到至少一条 `/sum` 200 用例 + 至少一条 `/sum` 400/error 用例
-- 输出含 `Test Files N passed` 和 `Tests N passed`，**不含** `Tests N failed`
+### Step 6: 单测套件全绿（`npm test` 在 `playground/` 内）
+- **可观测行为**：`playground/tests/server.test.js` 含 `/sum` happy + 至少一个 error case 全部 pass；`/health` 用例继续 pass。
+- **断言**：`[ASSERT-UNIT-PASSED]` + `[ASSERT-UNIT-COVERS-SUM]`
+- **硬阈值**：vitest 退出 0，日志 grep 到 `/sum.*200` 与 `/sum.*(400|error|invalid|missing)` 各 ≥ 1 行，且不含 `Tests N failed`。
 
 ---
 
-## E2E 验收（最终 Evaluator 跑）
-
-**journey_type**: autonomous（HTTP server 单子项目，无 UI / 无 brain tick / 无远端 agent）
-
-**完整验证脚本**（evaluator 直接拷贝执行）：
+## §5 E2E 验收脚本（最终 Evaluator 直接跑 — SSOT 可执行形式）
 
 ```bash
 #!/bin/bash
+# Golden Path 端到端验收。每行末尾注释回链 §3 ASSERT ID。
+# 失败定位：set -e 下退非 0 行号 → 注释 ID → 直接对照 Step。
 set -euo pipefail
 
 cd "$(git rev-parse --show-toplevel)/playground"
 
-# 1. 装依赖 + 单测先过（覆盖 contract Step 6）
+# === 阶段 A: 单测套件 ===
 npm ci --silent
 npm test -- --reporter=verbose 2>&1 | tee /tmp/playground-unit.log
-grep -E "Tests\s+[0-9]+ passed" /tmp/playground-unit.log
-! grep -E "Tests\s+[0-9]+ failed" /tmp/playground-unit.log
+grep -E "Tests\s+[0-9]+ passed" /tmp/playground-unit.log                          # [ASSERT-UNIT-PASSED] (a)
+! grep -E "Tests\s+[0-9]+ failed" /tmp/playground-unit.log                        # [ASSERT-UNIT-PASSED] (b)
+grep -E "GET /sum.*200" /tmp/playground-unit.log                                  # [ASSERT-UNIT-COVERS-SUM] (a)
+grep -Ei "GET /sum.*(400|missing|invalid|error)" /tmp/playground-unit.log         # [ASSERT-UNIT-COVERS-SUM] (b)
 
-# 2. spawn 真 server，端口随机避开冲突
+# === 阶段 B: 真 server spawn + HTTP 端到端 ===
 export PLAYGROUND_PORT=${PLAYGROUND_PORT:-3789}
 PORT=$PLAYGROUND_PORT
 NODE_ENV=production node server.js &
 SERVER_PID=$!
 trap "kill $SERVER_PID 2>/dev/null || true" EXIT
 
-# 等 server 起来（最多 10s 探活）
+# 起活探测（最多 10s）
 for i in $(seq 1 20); do
   curl -fsS "http://127.0.0.1:$PORT/health" >/dev/null 2>&1 && break
   sleep 0.5
 done
-curl -fsS "http://127.0.0.1:$PORT/health" | jq -e '.ok == true' >/dev/null
 
-# 3. Step 1：happy path
-curl -fsS "http://127.0.0.1:$PORT/sum?a=2&b=3" | jq -e '.sum == 5' >/dev/null
+curl -fsS "http://127.0.0.1:$PORT/health" | jq -e '.ok == true' >/dev/null         # [ASSERT-HEALTH-INTACT] (起活探测复用)
 
-# 4. Step 2：缺参
-HTTP=$(curl -s -o /tmp/sum-miss.json -w '%{http_code}' "http://127.0.0.1:$PORT/sum?a=2")
-[ "$HTTP" = "400" ]
-jq -e '.error | type == "string" and length > 0' /tmp/sum-miss.json >/dev/null
+curl -fsS "http://127.0.0.1:$PORT/sum?a=2&b=3" | jq -e '.sum == 5' >/dev/null      # [ASSERT-SUM-HAPPY]
 
-# 5. Step 3：非数字
-HTTP=$(curl -s -o /tmp/sum-nan.json -w '%{http_code}' "http://127.0.0.1:$PORT/sum?a=abc&b=3")
-[ "$HTTP" = "400" ]
-jq -e '.error | type == "string" and length > 0' /tmp/sum-nan.json >/dev/null
-jq -e 'has("sum") | not' /tmp/sum-nan.json >/dev/null
+H=$(curl -s -o /tmp/sum-miss.json -w '%{http_code}' "http://127.0.0.1:$PORT/sum?a=2")
+[ "$H" = "400" ]                                                                   # [ASSERT-SUM-MISSING-B] (a)
+jq -e '.error | type == "string" and length > 0' /tmp/sum-miss.json >/dev/null     # [ASSERT-SUM-MISSING-B] (b)
 
-# 6. Step 4：负数 / 小数 / 零
-curl -fsS "http://127.0.0.1:$PORT/sum?a=-1&b=1"   | jq -e '.sum == 0' >/dev/null
-curl -fsS "http://127.0.0.1:$PORT/sum?a=1.5&b=2.5" | jq -e '.sum == 4' >/dev/null
-curl -fsS "http://127.0.0.1:$PORT/sum?a=0&b=0"     | jq -e '.sum == 0' >/dev/null
+H=$(curl -s -o /tmp/sum-nan.json -w '%{http_code}' "http://127.0.0.1:$PORT/sum?a=abc&b=3")
+[ "$H" = "400" ]                                                                   # [ASSERT-SUM-NAN] (a)
+jq -e '.error | type == "string" and length > 0' /tmp/sum-nan.json >/dev/null      # [ASSERT-SUM-NAN] (b)
+jq -e 'has("sum") | not' /tmp/sum-nan.json >/dev/null                              # [ASSERT-SUM-NAN] (c)
 
-# 7. Step 5：/health 不破坏（已在 step 2 起活时验过，再 explicit 一次）
-curl -fsS "http://127.0.0.1:$PORT/health" | jq -e '.ok == true' >/dev/null
+curl -fsS "http://127.0.0.1:$PORT/sum?a=-1&b=1"   | jq -e '.sum == 0' >/dev/null   # [ASSERT-SUM-NEG]
+curl -fsS "http://127.0.0.1:$PORT/sum?a=1.5&b=2.5" | jq -e '.sum == 4' >/dev/null  # [ASSERT-SUM-FLOAT]
+curl -fsS "http://127.0.0.1:$PORT/sum?a=0&b=0"     | jq -e '.sum == 0' >/dev/null  # [ASSERT-SUM-ZERO]
+
+curl -fsS "http://127.0.0.1:$PORT/health" | jq -e '.ok == true' >/dev/null         # [ASSERT-HEALTH-INTACT] (显式回归)
 
 echo "OK Golden Path 验证通过"
 ```
 
 **通过标准**：脚本 `set -e` 下 exit 0。
 
-**造假防御已写入**：
-- 所有 `curl` 带 `-f`：HTTP 非 2xx 自动失败（防 "404 也算通过"）
-- 所有 JSON 断言用 `jq -e`：解析失败 / 表达式 false 即非 0 退出（防 "返回 HTML 也算通过"）
-- happy path `.sum == 5` 严格相等（防 `{"sum":"5"}` 字符串作弊）
-- error 用例显式断言 `has("sum") | not`（防 `{"sum":NaN,"error":"..."}` 模糊实现）
-- 单测日志双重 grep（既要 passed N 又要 not failed N，防 0-test 跳过）
-- server spawn 随机端口 + 起活探测，避免端口被占致假阴
+---
+
+## §6 测试代码骨架（内嵌可视化 — 直接来自 `tests/ws1/sum.test.js`）
+
+> 完整文件位于 `sprints/w19-playground-sum/tests/ws1/sum.test.js`（共 8 个 `test()` 块，58 行）。
+> 下面**原样**列出每个 `test()` 标题 + 关键 `expect` 断言行（注：vitest 中 `test` 与 `it` 等价，本合同沿用 `test`）。
+> Reviewer 可直接据此判断"未实现时这些 expect 必 FAIL"。
+
+```javascript
+import { describe, test, expect } from 'vitest';
+import request from 'supertest';
+import app from '../../../../playground/server.js';
+
+describe('Workstream 1 — GET /sum [BEHAVIOR]', () => {
+  // T1
+  test('GET /sum?a=2&b=3 → 200 + {sum:5}', async () => {
+    const res = await request(app).get('/sum').query({ a: '2', b: '3' });
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ sum: 5 });
+    expect(typeof res.body.sum).toBe('number');
+  });
+
+  // T2
+  test('GET /sum?a=2 (b 缺失) → 400 + 非空 error 字段', async () => {
+    const res = await request(app).get('/sum').query({ a: '2' });
+    expect(res.status).toBe(400);
+    expect(typeof res.body.error).toBe('string');
+    expect(res.body.error.length).toBeGreaterThan(0);
+  });
+
+  // T3
+  test('GET /sum (双参数都缺) → 400 + 非空 error', async () => {
+    const res = await request(app).get('/sum');
+    expect(res.status).toBe(400);
+    expect(typeof res.body.error).toBe('string');
+    expect(res.body.error.length).toBeGreaterThan(0);
+  });
+
+  // T4
+  test('GET /sum?a=abc&b=3 (a 非数字) → 400 + error，且 body 不含 sum 字段', async () => {
+    const res = await request(app).get('/sum').query({ a: 'abc', b: '3' });
+    expect(res.status).toBe(400);
+    expect(typeof res.body.error).toBe('string');
+    expect(res.body.error.length).toBeGreaterThan(0);
+    expect(Object.prototype.hasOwnProperty.call(res.body, 'sum')).toBe(false);
+  });
+
+  // T5
+  test('GET /sum?a=-1&b=1 → 200 + {sum:0} (负数合法)', async () => {
+    const res = await request(app).get('/sum').query({ a: '-1', b: '1' });
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ sum: 0 });
+  });
+
+  // T6
+  test('GET /sum?a=1.5&b=2.5 → 200 + {sum:4} (小数合法)', async () => {
+    const res = await request(app).get('/sum').query({ a: '1.5', b: '2.5' });
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ sum: 4 });
+  });
+
+  // T7
+  test('GET /sum?a=0&b=0 → 200 + {sum:0} (零合法)', async () => {
+    const res = await request(app).get('/sum').query({ a: '0', b: '0' });
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ sum: 0 });
+  });
+
+  // T8
+  test('GET /health 仍 200 + {ok:true} (回归)', async () => {
+    const res = await request(app).get('/health');
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ ok: true });
+  });
+});
+```
 
 ---
 
-## Workstreams
+## §7 Red 证据来源声明（为什么这些 expect 必 FAIL）
+
+**当前主分支事实**（截至 round 2 起草时刻）：
+
+`playground/server.js` 实际内容（共 14 行）：
+```javascript
+import express from 'express';
+const app = express();
+const PORT = process.env.PLAYGROUND_PORT || 3000;
+app.get('/health', (req, res) => { res.json({ ok: true }); });   // 仅有 /health
+if (process.env.NODE_ENV !== 'test') {
+  app.listen(PORT, () => console.log(`playground listening on ${PORT}`));
+}
+export default app;
+```
+
+**关键事实**：**没有任何 `app.get('/sum', ...)` 注册**。Express 对未注册路由默认行为是返回 HTTP **404** + `Cannot GET /sum`（text/html）。
+
+**Red 失败矩阵**（在主分支 / proposer 分支当下跑 §6 测试时）：
+
+| Test ID | 期望状态 | 实际状态（无 /sum 路由） | 失败行 | 结论 |
+|---|---|---|---|---|
+| T1 | `expect(res.status).toBe(200)` | 404 | status 断言 | **FAIL** |
+| T2 | `expect(res.status).toBe(400)` | 404 | status 断言 | **FAIL** |
+| T3 | `expect(res.status).toBe(400)` | 404 | status 断言 | **FAIL** |
+| T4 | `expect(res.status).toBe(400)` | 404 | status 断言 | **FAIL** |
+| T5 | `expect(res.status).toBe(200)` | 404 | status 断言 | **FAIL** |
+| T6 | `expect(res.status).toBe(200)` | 404 | status 断言 | **FAIL** |
+| T7 | `expect(res.status).toBe(200)` | 404 | status 断言 | **FAIL** |
+| T8 | `expect(res.status).toBe(200)` | 200（`/health` 仍存在） | — | **PASS**（回归基线） |
+
+**预期 Red 总数**：**7 FAIL + 1 PASS**（≥ Reviewer 设定的 5 failures 阈值）。
+
+**Proposer 自验命令**（commit 前 Proposer 实跑确认 — 已实跑）：
+```bash
+cd playground
+# 复制时把"从 sprint dir 看 server.js"的 4 层相对路径改写成"从 playground/tests 看"的 1 层
+cp ../sprints/w19-playground-sum/tests/ws1/sum.test.js tests/_sum_red_probe.test.js
+sed -i 's|../../../../playground/server.js|../server.js|' tests/_sum_red_probe.test.js
+npx vitest run --reporter=verbose 2>&1 | tee /tmp/ws1-red.log || true
+rm -f tests/_sum_red_probe.test.js
+# 期望：Tests {N>=5} failed
+grep -E "Tests\s+[0-9]+ failed" /tmp/ws1-red.log
+```
+
+**Round 2 实跑结果**（本轮 Proposer 已执行）：
+
+```
+Test Files  1 failed | 1 passed (2)
+      Tests  7 failed | 2 passed (9)
+```
+
+7 FAIL（T1–T7 全 `expected 404 to be 200/400`）+ 2 PASS（T8 `/health` 回归 + 主测试文件原有 `/health`）→ 满足 Red ≥ 5 阈值。
+
+---
+
+## §8 Workstreams
 
 workstream_count: 1
 
 ### Workstream 1: 加 `GET /sum` 路由 + 单测 + README
 
-**范围**：
-- `playground/server.js`：在 `/health` 路由之后、`app.listen` 之前新增 `GET /sum` handler，处理 happy / 缺参 / 非数字 / 负数 / 小数 / 零，返回 JSON。
-- `playground/tests/server.test.js`：保留现有 `/health` 用例不动，新增 `/sum` happy + 至少 2 个 error case。
-- `playground/README.md`：把"端点"段把 `/sum` 从"不在 bootstrap 范围"改为已实现，给一个示例 curl + 响应。
-
-**大小**：S（< 100 行净增）
-
-**依赖**：无（单一 workstream）
-
-**BEHAVIOR 覆盖测试文件**：`tests/ws1/sum.test.js`（sprint dir 内 TDD Red 证据；Generator 阶段把这些 it/test 块原样合并到 `playground/tests/server.test.js`）
+- **范围**：
+  - `playground/server.js`：在 `/health` 路由之后、`app.listen` 之前新增 `GET /sum` handler，处理 happy / 缺参 / 非数字 / 负数 / 小数 / 零，返回 JSON。
+  - `playground/tests/server.test.js`：保留现有 `/health` 用例不动，新增 `/sum` happy + 至少 2 个 error case（Generator 阶段把 §6 的 8 个 `test()` 块原样合并进来）。
+  - `playground/README.md`：把"端点"段把 `/sum` 从"不在 bootstrap 范围"改为已实现，给一个示例 curl + 响应。
+- **大小**：S（< 100 行净增）
+- **依赖**：无
+- **BEHAVIOR 覆盖测试文件**：`sprints/w19-playground-sum/tests/ws1/sum.test.js`
 
 ---
 
-## Test Contract
+## §9 Test Contract
 
-| Workstream | Test File | BEHAVIOR 覆盖 | 预期红证据 |
+| Workstream | Test File | BEHAVIOR 覆盖（按 §6 T-ID） | 预期 Red 证据 |
 |---|---|---|---|
-| WS1 | `sprints/w19-playground-sum/tests/ws1/sum.test.js` | (1) GET `/sum?a=2&b=3` → 200 + `{sum:5}`<br>(2) 缺 b → 400 + error<br>(3) `a=abc` → 400 + error 且 body 不含 sum<br>(4) `a=-1&b=1` → `{sum:0}`<br>(5) `a=1.5&b=2.5` → `{sum:4}`<br>(6) `/health` 不破坏 | 5 failures（5 个 `/sum` 用例失败；`/health` 用例继续 pass） |
+| WS1 | `sprints/w19-playground-sum/tests/ws1/sum.test.js` | T1 happy / T2 缺 b / T3 双缺 / T4 非数字+无 sum / T5 负数 / T6 小数 / T7 双零 / T8 /health 回归 | **7 failures**（T1–T7 全 FAIL，T8 PASS）→ 满足 Reviewer ≥ 5 阈值 |
 
-**Red 证据采集命令**（Proposer 自验，commit 前必须看到 FAIL）：
-```bash
-cd playground
-# 把 sprint 红测试临时丢进 playground/tests 跑（不 commit），看 vitest Red
-cp ../sprints/w19-playground-sum/tests/ws1/sum.test.js tests/_sum_red_probe.test.js
-npx vitest run --reporter=verbose 2>&1 | tee /tmp/ws1-red.log || true
-rm -f tests/_sum_red_probe.test.js
-grep -E "FAIL|failed" /tmp/ws1-red.log
-```
-
-期望日志含 `FAIL` 且 failed 计数 ≥ 5（每条 `/sum` 行为各 1 个失败）。
+**Red 证据采集命令**：见 §7 末尾「Proposer 自验命令」。
