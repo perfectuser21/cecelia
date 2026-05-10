@@ -42,10 +42,14 @@ function readHeartbeatFile(filePath) {
 
 /**
  * 收集当前系统快照（给 L1 丘脑参考数据）
- * 4 个并行 SQL 查询：tasks / events / proposals / focus
+ * 5 个并行 SQL 查询：tasks / events / proposals / focus / active_goals
+ *
+ * active_goals = COUNT(objectives WHERE status='in_progress')
+ * 0 是方向性崩溃前置信号（learning_id ec71a550），runHeartbeatInspection
+ * 在归零时确定性 emit cecelia_event(active_goals_zero_alert)。
  */
 async function collectSystemSnapshot(pool) {
-  const [tasks, events, proposals, focus] = await Promise.all([
+  const [tasks, events, proposals, focus, activeGoals] = await Promise.all([
     pool.query(`
       SELECT status, COUNT(*)::int as count
       FROM tasks WHERE status IN ('in_progress', 'queued', 'failed')
@@ -68,6 +72,11 @@ async function collectSystemSnapshot(pool) {
       WHERE status IN ('active', 'in_progress')
       ORDER BY priority ASC LIMIT 3
     `),
+    pool.query(`
+      SELECT COUNT(*)::int AS cnt
+      FROM objectives
+      WHERE status = 'in_progress'
+    `),
   ]);
 
   return {
@@ -77,6 +86,7 @@ async function collectSystemSnapshot(pool) {
     top_events_24h: events.rows,
     pending_proposals: parseInt(proposals.rows[0]?.count || 0),
     active_okrs: focus.rows,
+    active_goals: parseInt(activeGoals.rows[0]?.cnt ?? 0, 10),
     current_hour: new Date().getHours(),
     day_of_week: new Date().getDay(), // 0=周日, 1=周一
   };
@@ -102,6 +112,7 @@ ${heartbeatMd}
 - 当前时间: ${snapshot.current_hour}:00, 星期${dayNames[snapshot.day_of_week]}
 - 活跃 OKR: ${snapshot.active_okrs.map(g => `${g.title}(${g.progress}%)`).join(', ') || '无'}
 - 24h 事件 TOP5: ${snapshot.top_events_24h.map(e => `${e.event_type}:${e.count}`).join(', ') || '无'}
+- 活跃目标: ${snapshot.active_goals ?? 0}${snapshot.active_goals === 0 ? ' ⚠️ 方向性崩溃前置信号（learning_id ec71a550）— 立即关注' : ''}
 
 ## 输出格式
 
@@ -197,6 +208,34 @@ async function runHeartbeatInspection(pool, options = {}) {
   // 2. 收集系统快照
   const snapshot = await collectSystemSnapshot(pool);
 
+  // 2b. active_goals=0 确定性告警（方向性崩溃前置信号 learning_id ec71a550）
+  // 独立于 LLM 决策：无论丘脑返回什么，都在 cecelia_events 留一条 alert 信号
+  // 供下游观察 / dashboard / 紧急响应消费。
+  let alert = null;
+  if (snapshot.active_goals === 0) {
+    alert = {
+      type: 'active_goals_zero_alert',
+      active_goals: 0,
+      severity: 'high',
+      learning_id: 'ec71a550-ca66-4263-8136-9732a7a2976f',
+      message: 'active_goals=0：方向性崩溃前置信号',
+    };
+    try {
+      await pool.query(`
+        INSERT INTO cecelia_events (event_type, payload)
+        VALUES ('active_goals_zero_alert', $1)
+      `, [JSON.stringify({
+        alert_type: 'active_goals_zero_alert',
+        active_goals: 0,
+        severity: 'high',
+        learning_id: alert.learning_id,
+        emitted_by: 'heartbeat_inspector',
+      })]);
+    } catch (alertErr) {
+      console.error('[heartbeat] Failed to emit active_goals_zero_alert (non-fatal):', alertErr.message);
+    }
+  }
+
   // 3. 构建 prompt，调用 L1 丘脑
   const prompt = buildHeartbeatPrompt(heartbeatContent, snapshot);
   const { text: responseText } = await callLLM('thalamus', prompt, { timeout: 90000 });
@@ -210,7 +249,7 @@ async function runHeartbeatInspection(pool, options = {}) {
 
   // 5. no_action → 静默返回
   if (decision.action === 'no_action') {
-    return { skipped: false, actions_count: 0, rationale: decision.rationale || '' };
+    return { skipped: false, actions_count: 0, rationale: decision.rationale || '', alert };
   }
 
   // 6. 应用硬约束白名单
@@ -241,6 +280,7 @@ async function runHeartbeatInspection(pool, options = {}) {
     skipped: false,
     actions_count: safeActions.length,
     rationale: decision.rationale || '',
+    alert,
   };
 }
 

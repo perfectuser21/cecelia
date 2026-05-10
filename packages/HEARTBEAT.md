@@ -10,6 +10,7 @@
 
 - 检查活跃 OKR 进度是否停滞（超过 3 天无进展）
 - 检查是否有优先级冲突
+- 检查 `active_goals`（in_progress objectives 数量）—— 0 是方向性崩溃前置信号（learning_id ec71a550），归零时 heartbeat 会自动 emit `active_goals_zero_alert` cecelia_event
 
 ## 系统健康
 
