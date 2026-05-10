@@ -769,6 +769,6 @@ workstream_count: 1
 
 | Workstream | Test File | BEHAVIOR 覆盖（按 §8 T-ID） | 预期 Red 证据 |
 |---|---|---|---|
-| WS1 | `tests/ws1/power.test.js` | power、Number(...) ** Number(...)、Object.keys schema、0^0 拒、0^负 拒、负^分 拒、溢出拒、缺 b、Infinity、health、W19、W20、W21 | **31 failures / 6 passed / 37 total**（happy + oracle + schema + 0^0 + 非有限 + 缺参 + strict 全 FAIL，回归 6 条 PASS）→ 远超 Reviewer ≥ 5 阈值 |
+| WS1 | `tests/ws1/power.test.js` | power、oracle、schema oracle、0^0、0^负、负^分、溢出、缺 b、Infinity、health、W19、W20、W21 | **31 failures / 6 passed / 37 total**（happy + oracle + schema + 0^0 + 非有限 + 缺参 + strict 全 FAIL，回归 6 条 PASS）→ 远超 Reviewer ≥ 5 阈值 |
 
 **Red 证据采集命令**：见 §9 末尾「Proposer 自验命令」（本轮已实跑确认 `Tests N failed | M passed`）。
