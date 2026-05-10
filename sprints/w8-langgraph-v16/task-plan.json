@@ -1,0 +1,22 @@
+{
+  "initiative_id": "pending",
+  "journey_type": "dev_pipeline",
+  "journey_type_reason": "Golden Path 完整经过 LangGraph harness 五节点（planner→proposer→reviewer→generator→evaluator），核心被验证对象就是 dev pipeline 自身，且修复点全部落在 packages/brain 与 packages/engine。",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "Walking Skeleton noop — 产出 docs/learnings/w8-langgraph-v16-e2e.md（generator 唯一交付）",
+      "scope": "在 generator 节点的 sub_task worktree 里产出唯一文件 docs/learnings/w8-langgraph-v16-e2e.md，记录五节点 duration、GAN proposer/reviewer 轮数、最终 PR URL；不允许触碰 packages/brain、packages/engine、packages/workflows 任何运行时代码（PRD 范围限定）。",
+      "dod": [
+        "[BEHAVIOR] DB 中 v16 initiative task 的 harness_generate sub_task 行 status='completed' 且 result.pr_url 是合法 GitHub PR URL；evaluator sub_task callback_at 与 generator.updated_at 漂移 ≤ 300s（证明 status 由 evaluator callback 写入，非任何人工 PATCH —— PRD 第 7 条硬保证）",
+        "[ARTIFACT] docs/learnings/w8-langgraph-v16-e2e.md 文件存在、size > 500 bytes，包含 5 节点 duration、GAN 轮数、PR URL 三类信息；diff 不触碰 packages/brain|engine|workflows 运行时代码"
+      ],
+      "files": [
+        "docs/learnings/w8-langgraph-v16-e2e.md"
+      ],
+      "depends_on": [],
+      "complexity": "S",
+      "estimated_minutes": 30
+    }
+  ]
+}
