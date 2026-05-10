@@ -33,6 +33,20 @@ app.get('/multiply', (req, res) => {
   return res.json({ product: Number(a) * Number(b) });
 });
 
+app.get('/divide', (req, res) => {
+  const { a, b } = req.query;
+  if (a === undefined || b === undefined) {
+    return res.status(400).json({ error: 'a 和 b 都是必填 query 参数' });
+  }
+  if (typeof a !== 'string' || typeof b !== 'string' || !STRICT_NUMBER.test(a) || !STRICT_NUMBER.test(b)) {
+    return res.status(400).json({ error: 'a 和 b 必须匹配 ^-?\\d+(\\.\\d+)?$（禁止科学计数法、Infinity、前导 +、十六进制等）' });
+  }
+  if (Number(b) === 0) {
+    return res.status(400).json({ error: '除数 b 不能为 0' });
+  }
+  return res.json({ quotient: Number(a) / Number(b) });
+});
+
 if (process.env.NODE_ENV !== 'test') {
   app.listen(PORT, () => console.log(`playground listening on ${PORT}`));
 }
