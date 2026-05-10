@@ -27,7 +27,7 @@ journey_type: dev_pipeline
 
 ## BEHAVIOR 索引（实际测试在 tests/ws1/）
 
-见 `tests/ws1/v16-e2e-completion.test.ts`，覆盖：
-- v16 initiative task 的 generator sub_task 行 `status='completed'` 由 evaluator callback 写入
-- generator sub_task `result.pr_url` 是合法 GitHub PR URL 字符串
-- generator.updated_at 与 evaluator.callback_at 时间漂移 ≤ 300s（强制证明非人工 PATCH —— PRD 第 7 条硬保证）
+见 `tests/ws1/v16-e2e-completion.test.ts`，三个 `it` 块严格对应 (a)(b)(c)：
+- (a) generator sub_task `status === 'completed'` 由 evaluator callback 写入
+- (b) generator sub_task `result.pr_url` 匹配 GitHub PR URL 正则
+- (c) generator.updated_at 与 evaluator.callback_at 漂移 ≤ 300s（强制证明非人工 PATCH —— PRD 第 7 条硬保证）
