@@ -10,6 +10,7 @@ import { resolve, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { callLLM } from './llm-caller.js';
 import { executeDecision } from './decision-executor.js';
+import { raise as raiseAlert } from './alerting.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const HEARTBEAT_PATH = resolve(__dirname, '../../HEARTBEAT.md');
@@ -42,10 +43,13 @@ function readHeartbeatFile(filePath) {
 
 /**
  * 收集当前系统快照（给 L1 丘脑参考数据）
- * 4 个并行 SQL 查询：tasks / events / proposals / focus
+ * 5 个并行 SQL 查询：tasks / events / proposals / focus / active_goals
+ *
+ * active_goals = COUNT(objectives WHERE status='in_progress')
+ *   归零是方向性崩溃前置信号（Cortex Insight ec71a550）。
  */
 async function collectSystemSnapshot(pool) {
-  const [tasks, events, proposals, focus] = await Promise.all([
+  const [tasks, events, proposals, focus, goals] = await Promise.all([
     pool.query(`
       SELECT status, COUNT(*)::int as count
       FROM tasks WHERE status IN ('in_progress', 'queued', 'failed')
@@ -68,6 +72,10 @@ async function collectSystemSnapshot(pool) {
       WHERE status IN ('active', 'in_progress')
       ORDER BY priority ASC LIMIT 3
     `),
+    pool.query(`
+      SELECT COUNT(*)::int as count FROM objectives
+      WHERE status = 'in_progress'
+    `),
   ]);
 
   return {
@@ -77,6 +85,7 @@ async function collectSystemSnapshot(pool) {
     top_events_24h: events.rows,
     pending_proposals: parseInt(proposals.rows[0]?.count || 0),
     active_okrs: focus.rows,
+    active_goals: parseInt(goals.rows[0]?.count || 0),
     current_hour: new Date().getHours(),
     day_of_week: new Date().getDay(), // 0=周日, 1=周一
   };
@@ -100,6 +109,7 @@ ${heartbeatMd}
 - 失败任务: ${snapshot.tasks_failed}
 - 待处理提案: ${snapshot.pending_proposals}
 - 当前时间: ${snapshot.current_hour}:00, 星期${dayNames[snapshot.day_of_week]}
+- 活跃 objectives (active_goals): ${snapshot.active_goals ?? 0}${snapshot.active_goals === 0 ? ' ⚠️ 方向性崩溃先兆（已发 P0 告警）' : ''}
 - 活跃 OKR: ${snapshot.active_okrs.map(g => `${g.title}(${g.progress}%)`).join(', ') || '无'}
 - 24h 事件 TOP5: ${snapshot.top_events_24h.map(e => `${e.event_type}:${e.count}`).join(', ') || '无'}
 
@@ -196,6 +206,21 @@ async function runHeartbeatInspection(pool, options = {}) {
 
   // 2. 收集系统快照
   const snapshot = await collectSystemSnapshot(pool);
+
+  // 2b. active_goals=0 → 方向性崩溃先兆，立即发 P0 告警（Cortex Insight ec71a550）。
+  // alerting.raise 自带 5 分钟限流，heartbeat 30 分钟一次不会触发限流；
+  // 失败仅打日志，不阻塞巡检。
+  if (snapshot.active_goals === 0) {
+    try {
+      await raiseAlert(
+        'P0',
+        'heartbeat_active_goals_zero',
+        'Heartbeat 检测到 active_goals=0：当前无 in_progress objective。这是方向性崩溃前置信号，需立即召开战略会议生成新 OKR。',
+      );
+    } catch (alertErr) {
+      console.error('[heartbeat] active_goals=0 alert failed (non-fatal):', alertErr.message);
+    }
+  }
 
   // 3. 构建 prompt，调用 L1 丘脑
   const prompt = buildHeartbeatPrompt(heartbeatContent, snapshot);

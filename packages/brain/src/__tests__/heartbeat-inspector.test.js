@@ -1,13 +1,15 @@
 /**
  * Heartbeat Inspector 主流程测试
  * 覆盖：D1, D2, D3, D4, D7, D8, D9, D10
+ *   + active_goals=0 P0 告警（Cortex Insight ec71a550）
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-const { mockPool, mockCallLLM, mockExecuteDecision } = vi.hoisted(() => ({
+const { mockPool, mockCallLLM, mockExecuteDecision, mockRaiseAlert } = vi.hoisted(() => ({
   mockPool: { query: vi.fn() },
   mockCallLLM: vi.fn(),
   mockExecuteDecision: vi.fn(),
+  mockRaiseAlert: vi.fn(),
 }));
 
 vi.mock('../db.js', () => ({ default: mockPool }));
@@ -16,6 +18,9 @@ vi.mock('../llm-caller.js', () => ({
 }));
 vi.mock('../decision-executor.js', () => ({
   executeDecision: (...args) => mockExecuteDecision(...args),
+}));
+vi.mock('../alerting.js', () => ({
+  raise: (...args) => mockRaiseAlert(...args),
 }));
 
 const {
@@ -70,26 +75,40 @@ describe('Heartbeat Inspector', () => {
 
   // D3: collectSystemSnapshot
   describe('collectSystemSnapshot', () => {
-    it('并行查询 4 张表返回结构化快照', async () => {
+    it('并行查询 5 张表返回结构化快照（含 active_goals）', async () => {
       mockPool.query
         .mockResolvedValueOnce({ rows: [{ status: 'in_progress', count: 3 }, { status: 'queued', count: 5 }] })
         .mockResolvedValueOnce({ rows: [{ event_type: 'tick', count: 100 }] })
         .mockResolvedValueOnce({ rows: [{ count: 2 }] })
-        .mockResolvedValueOnce({ rows: [{ title: 'KR1', progress: 50 }] });
+        .mockResolvedValueOnce({ rows: [{ title: 'KR1', progress: 50 }] })
+        .mockResolvedValueOnce({ rows: [{ count: 4 }] });
 
       const snapshot = await collectSystemSnapshot(mockPool);
 
-      expect(mockPool.query).toHaveBeenCalledTimes(4);
+      expect(mockPool.query).toHaveBeenCalledTimes(5);
       expect(snapshot.tasks_in_progress).toBe(3);
       expect(snapshot.tasks_queued).toBe(5);
       expect(snapshot.tasks_failed).toBe(0);
       expect(snapshot.pending_proposals).toBe(2);
       expect(snapshot.active_okrs).toEqual([{ title: 'KR1', progress: 50 }]);
+      expect(snapshot.active_goals).toBe(4);
       expect(typeof snapshot.current_hour).toBe('number');
       expect(typeof snapshot.day_of_week).toBe('number');
     });
 
-    it('SQL 查询包含正确的表名和条件', async () => {
+    it('active_goals 数据缺失时降级为 0', async () => {
+      mockPool.query
+        .mockResolvedValueOnce({ rows: [] })
+        .mockResolvedValueOnce({ rows: [] })
+        .mockResolvedValueOnce({ rows: [] })
+        .mockResolvedValueOnce({ rows: [] })
+        .mockResolvedValueOnce({ rows: [] });
+
+      const snapshot = await collectSystemSnapshot(mockPool);
+      expect(snapshot.active_goals).toBe(0);
+    });
+
+    it('SQL 查询包含正确的表名和条件（含 objectives）', async () => {
       mockPool.query.mockResolvedValue({ rows: [] });
       await collectSystemSnapshot(mockPool);
 
@@ -102,6 +121,8 @@ describe('Heartbeat Inspector', () => {
       expect(calls[2]).toContain('pending_approval');
       expect(calls[3]).toContain('key_results');
       expect(calls[3]).toContain('in_progress');
+      expect(calls[4]).toContain('objectives');
+      expect(calls[4]).toContain("status = 'in_progress'");
     });
 
     it('cecelia_events 查询使用 event_type 列名（不是 type）', async () => {
@@ -125,6 +146,7 @@ describe('Heartbeat Inspector', () => {
         current_hour: 10,
         day_of_week: 1,
         active_okrs: [{ title: 'KR1', progress: 50 }],
+        active_goals: 2,
         top_events_24h: [{ event_type: 'tick', count: 100 }],
       };
       const prompt = buildHeartbeatPrompt('# 检查清单\n- 检查任务', snapshot);
@@ -138,8 +160,26 @@ describe('Heartbeat Inspector', () => {
       expect(prompt).toContain('星期一');
       expect(prompt).toContain('KR1(50%)');
       expect(prompt).toContain('tick:100');
+      expect(prompt).toContain('active_goals): 2');
       expect(prompt).toContain('自主权边界');
       expect(prompt).toContain('no_action');
+    });
+
+    it('active_goals=0 时 prompt 含方向性崩溃先兆标记', () => {
+      const snapshot = {
+        tasks_in_progress: 0,
+        tasks_queued: 0,
+        tasks_failed: 0,
+        pending_proposals: 0,
+        current_hour: 10,
+        day_of_week: 1,
+        active_okrs: [],
+        active_goals: 0,
+        top_events_24h: [],
+      };
+      const prompt = buildHeartbeatPrompt('check', snapshot);
+      expect(prompt).toContain('active_goals): 0');
+      expect(prompt).toContain('方向性崩溃先兆');
     });
   });
 
@@ -167,12 +207,13 @@ describe('Heartbeat Inspector', () => {
       text: '```json\n{"action": "no_action", "rationale": "一切正常"}\n```',
     });
 
-    // mock snapshot queries
+    // mock snapshot queries (5: tasks/events/proposals/focus/objectives)
     mockPool.query
       .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({ rows: [{ count: 0 }] })
-      .mockResolvedValueOnce({ rows: [] });
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [{ count: 3 }] });
 
     const result = await runHeartbeatInspection(mockPool, {
       heartbeatPath: new URL('../../../HEARTBEAT.md', import.meta.url).pathname,
@@ -194,7 +235,8 @@ describe('Heartbeat Inspector', () => {
       .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({ rows: [{ count: 0 }] })
-      .mockResolvedValueOnce({ rows: [] });
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [{ count: 3 }] });
 
     await runHeartbeatInspection(mockPool, {
       heartbeatPath: new URL('../../../HEARTBEAT.md', import.meta.url).pathname,
@@ -214,12 +256,13 @@ describe('Heartbeat Inspector', () => {
       text: '```json\n{"actions": [{"type": "heartbeat_finding", "params": {"msg": "任务卡住"}}], "rationale": "发现问题"}\n```',
     });
 
-    // mock snapshot queries (4) + event INSERT (1)
+    // mock snapshot queries (5) + event INSERT (1)
     mockPool.query
       .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({ rows: [{ count: 0 }] })
       .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [{ count: 3 }] })
       .mockResolvedValueOnce({ rows: [] }); // INSERT cecelia_events
 
     mockExecuteDecision.mockResolvedValueOnce({});
@@ -247,6 +290,7 @@ describe('Heartbeat Inspector', () => {
       .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({ rows: [{ count: 0 }] })
       .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [{ count: 3 }] })
       .mockResolvedValueOnce({ rows: [] }); // INSERT
 
     mockExecuteDecision.mockResolvedValueOnce({});
@@ -273,7 +317,8 @@ describe('Heartbeat Inspector', () => {
       .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({ rows: [{ count: 0 }] })
-      .mockResolvedValueOnce({ rows: [] });
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [{ count: 3 }] });
 
     const result = await runHeartbeatInspection(mockPool, {
       heartbeatPath: new URL('../../../HEARTBEAT.md', import.meta.url).pathname,
@@ -281,5 +326,71 @@ describe('Heartbeat Inspector', () => {
 
     expect(result.skipped).toBe(true);
     expect(result.reason).toBe('parse_error');
+  });
+
+  // active_goals=0 P0 告警（Cortex Insight ec71a550）
+  describe('active_goals=0 P0 告警', () => {
+    it('active_goals=0 → 立即触发 P0 告警 (heartbeat_active_goals_zero)', async () => {
+      mockCallLLM.mockResolvedValueOnce({
+        text: '{"action": "no_action", "rationale": "ok"}',
+      });
+      // 5 snapshot queries：第 5 个 objectives 计数为 0
+      mockPool.query
+        .mockResolvedValueOnce({ rows: [] })
+        .mockResolvedValueOnce({ rows: [] })
+        .mockResolvedValueOnce({ rows: [{ count: 0 }] })
+        .mockResolvedValueOnce({ rows: [] })
+        .mockResolvedValueOnce({ rows: [{ count: 0 }] });
+
+      await runHeartbeatInspection(mockPool, {
+        heartbeatPath: new URL('../../../HEARTBEAT.md', import.meta.url).pathname,
+      });
+
+      expect(mockRaiseAlert).toHaveBeenCalledTimes(1);
+      const [level, eventType, message] = mockRaiseAlert.mock.calls[0];
+      expect(level).toBe('P0');
+      expect(eventType).toBe('heartbeat_active_goals_zero');
+      expect(message).toMatch(/active_goals=0/);
+    });
+
+    it('active_goals>0 → 不触发告警', async () => {
+      mockCallLLM.mockResolvedValueOnce({
+        text: '{"action": "no_action", "rationale": "ok"}',
+      });
+      mockPool.query
+        .mockResolvedValueOnce({ rows: [] })
+        .mockResolvedValueOnce({ rows: [] })
+        .mockResolvedValueOnce({ rows: [{ count: 0 }] })
+        .mockResolvedValueOnce({ rows: [] })
+        .mockResolvedValueOnce({ rows: [{ count: 2 }] });
+
+      await runHeartbeatInspection(mockPool, {
+        heartbeatPath: new URL('../../../HEARTBEAT.md', import.meta.url).pathname,
+      });
+
+      expect(mockRaiseAlert).not.toHaveBeenCalled();
+    });
+
+    it('告警函数抛异常时不阻塞巡检主流程（非致命）', async () => {
+      mockRaiseAlert.mockRejectedValueOnce(new Error('feishu down'));
+      mockCallLLM.mockResolvedValueOnce({
+        text: '{"action": "no_action", "rationale": "ok"}',
+      });
+      mockPool.query
+        .mockResolvedValueOnce({ rows: [] })
+        .mockResolvedValueOnce({ rows: [] })
+        .mockResolvedValueOnce({ rows: [{ count: 0 }] })
+        .mockResolvedValueOnce({ rows: [] })
+        .mockResolvedValueOnce({ rows: [{ count: 0 }] });
+
+      const result = await runHeartbeatInspection(mockPool, {
+        heartbeatPath: new URL('../../../HEARTBEAT.md', import.meta.url).pathname,
+      });
+
+      // 告警失败不阻塞，巡检仍走完 LLM 流程
+      expect(mockRaiseAlert).toHaveBeenCalledTimes(1);
+      expect(mockCallLLM).toHaveBeenCalledTimes(1);
+      expect(result.skipped).toBe(false);
+    });
   });
 });
