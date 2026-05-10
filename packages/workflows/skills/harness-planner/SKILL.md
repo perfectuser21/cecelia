@@ -4,10 +4,11 @@ description: |
   Harness Planner — Harness v5 阶段 A Layer 1：把用户需求展开为 Initiative PRD（Golden Path 格式）。
   输出 sprint-prd.md（What，不写 How），供 Proposer GAN 起草 Golden Path 合同。
   v8 起不再拆任务——任务 DAG 由 Proposer 在合同 GAN 确认后从 Golden Path 倒推。
-version: 8.0.0
+version: 8.1.0
 created: 2026-04-08
-updated: 2026-05-06
+updated: 2026-05-10
 changelog:
+  - 8.1.0: 加"## Response Schema"段 — API 任务必填，强制 planner 把响应字段名/类型 codify 成可机检 oracle，避免 W19/W20 类 generator schema 漂移（{result→sum/product}）。Anthropic harness-design 推荐 contract is law；schema 在 PRD 阶段就锁死，proposer/generator/evaluator 全链下游有 ground truth
   - 8.0.0: Golden Path PRD — 去掉任务拆分（Step 3）；PRD 格式从"功能需求 FR-001"改为 Golden Path（入口→步骤→出口）；journey_type 保留写入 PRD 末尾
   - 7.0.0: Working Skeleton — Step 0.5 journey_type 推断（4 类）+ Skeleton Task 强制首位
   - 6.0.0: Harness v2 M2 — 强制 4-5 Task
@@ -118,6 +119,40 @@ mkdir -p "$SPRINT_DIR"
 1. [触发条件]
 2. [系统处理]
 3. [可观测结果]
+
+## Response Schema（API 任务必填，其他任务标 N/A）
+
+> **目的**：把响应字段 codify 成 oracle，让 proposer 把每个字段转成 `jq -e` 命令，evaluator 真起服务真 curl 真校验。避免 generator 自由发挥 key 名（W19 result→sum / W20 result→product 实证）。
+>
+> **填法**：
+> - 列出所有 endpoint 的 success response shape（key 名/类型/必填性）
+> - 列出所有 endpoint 的 error response shape（HTTP code + body shape）
+> - 明确禁用字段名清单（避免 generator 用近义词替换）
+> - 不允许仅用自然语言描述（"返回结果对象"无效）；必须给字面 JSON 示例
+
+模板：
+
+```
+### Endpoint: GET /xxx
+**Success (HTTP 200)**:
+```json
+{"result": <number>, "operation": "<string字面量 'multiply'>"}
+```
+- `result` (number, 必填): 计算结果
+- `operation` (string, 必填): 字面量 `multiply`，禁用变体 `mul`/`multiplication`/`product`/`op`/`method`
+
+**Error (HTTP 400)**:
+```json
+{"error": "<string>"}
+```
+- 必有 `error` key，禁用 `message`/`msg`/`reason` 等替代
+
+**禁用响应字段名**: `sum`/`product`/`value`/`answer`/`data`/`payload`/`response`（generator 不得自由发挥）
+
+**Schema 完整性**: response 顶层 keys 必须**完全等于** `["operation", "result"]`，不允许多余字段
+```
+
+非 API 任务（纯内部 Brain 改动 / 数据库迁移 / CI 流程）此段写 `N/A — 任务无 HTTP 响应`。
 
 ## 边界情况
 
