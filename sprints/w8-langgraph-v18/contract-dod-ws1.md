@@ -10,53 +10,53 @@ journey_type: autonomous
 
 ## ARTIFACT 条目（仅静态产出物，运行时行为见 BEHAVIOR 索引）
 
-- [ ] [ARTIFACT] `sprints/w8-langgraph-v18/harness-report.md` 文件存在
-  Test: `test -f sprints/w8-langgraph-v18/harness-report.md`
+- [x] [ARTIFACT] `sprints/w8-langgraph-v18/harness-report.md` 文件存在
+  Test: manual:bash -c "test -f sprints/w8-langgraph-v18/harness-report.md"
 
-- [ ] [ARTIFACT] 报告 frontmatter 含合法 UUID v4 格式的 `child_initiative_id` 字段
-  Test: `awk '/^child_initiative_id:/ {print $2}' sprints/w8-langgraph-v18/harness-report.md | grep -E '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'`
+- [x] [ARTIFACT] 报告 frontmatter 含合法 UUID v4 格式的 `child_initiative_id` 字段
+  Test: manual:bash -c "awk '/^child_initiative_id:/ {print \$2}' sprints/w8-langgraph-v18/harness-report.md | grep -E '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'"
 
-- [ ] [ARTIFACT] 报告 frontmatter 含 `parent_initiative_id` 字段（非空，留待 E2E 比对 $TASK_ID）
-  Test: `awk '/^parent_initiative_id:/ {print $2}' sprints/w8-langgraph-v18/harness-report.md | grep -E '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'`
+- [x] [ARTIFACT] 报告 frontmatter 含 `parent_initiative_id` 字段（非空，留待 E2E 比对 $TASK_ID）
+  Test: manual:bash -c "awk '/^parent_initiative_id:/ {print \$2}' sprints/w8-langgraph-v18/harness-report.md | grep -E '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'"
 
-- [ ] [ARTIFACT] 报告 frontmatter 含 `stdout_file` 字段，值指向真实存在的文件（risk 4 mitigation）
-  Test: `path=$(awk '/^stdout_file:/ {print $2}' sprints/w8-langgraph-v18/harness-report.md); test -n "$path" && test -f "$path"`
+- [x] [ARTIFACT] 报告 frontmatter 含 `stdout_file` 字段，值指向真实存在的文件（risk 4 mitigation）
+  Test: manual:bash -c "p=\$(awk '/^stdout_file:/ {print \$2}' sprints/w8-langgraph-v18/harness-report.md); test -n \"\$p\" && test -f \"\$p\""
 
-- [ ] [ARTIFACT] 报告含 `## Final Status` 章节
-  Test: `grep -q '^## Final Status' sprints/w8-langgraph-v18/harness-report.md`
+- [x] [ARTIFACT] 报告含 `## Final Status` 章节
+  Test: manual:bash -c "grep -q '^## Final Status' sprints/w8-langgraph-v18/harness-report.md"
 
-- [ ] [ARTIFACT] 报告含 `## Evaluator Verdict` 章节
-  Test: `grep -q '^## Evaluator Verdict' sprints/w8-langgraph-v18/harness-report.md`
+- [x] [ARTIFACT] 报告含 `## Evaluator Verdict` 章节
+  Test: manual:bash -c "grep -q '^## Evaluator Verdict' sprints/w8-langgraph-v18/harness-report.md"
 
-- [ ] [ARTIFACT] 报告含 `## Subtask Summary` 章节
-  Test: `grep -q '^## Subtask Summary' sprints/w8-langgraph-v18/harness-report.md`
+- [x] [ARTIFACT] 报告含 `## Subtask Summary` 章节
+  Test: manual:bash -c "grep -q '^## Subtask Summary' sprints/w8-langgraph-v18/harness-report.md"
 
-- [ ] [ARTIFACT] 报告含 `## Evidence` 章节（指向 task JSON / 子任务 SQL / stdout 关键词扫描结果 / `gh pr view` 片段）
-  Test: `grep -q '^## Evidence' sprints/w8-langgraph-v18/harness-report.md`
+- [x] [ARTIFACT] 报告含 `## Evidence` 章节（指向 task JSON / 子任务 SQL / stdout 关键词扫描结果 / `gh pr view` 片段）
+  Test: manual:bash -c "grep -q '^## Evidence' sprints/w8-langgraph-v18/harness-report.md"
 
-- [ ] [ARTIFACT] 报告含 `## Residual Issues` 章节（哪怕本次"无残留"也强制写一段，禁止隐瞒）
-  Test: `grep -q '^## Residual Issues' sprints/w8-langgraph-v18/harness-report.md`
+- [x] [ARTIFACT] 报告含 `## Residual Issues` 章节（哪怕本次"无残留"也强制写一段，禁止隐瞒）
+  Test: manual:bash -c "grep -q '^## Residual Issues' sprints/w8-langgraph-v18/harness-report.md"
 
-- [ ] [ARTIFACT] 报告含至少 1 条 `https://github.com/.../pull/N` 形式的 PR URL
-  Test: `grep -oE 'https://github\.com/[^/]+/[^/]+/pull/[0-9]+' sprints/w8-langgraph-v18/harness-report.md | head -1`
+- [x] [ARTIFACT] 报告含至少 1 条 `https://github.com/.../pull/N` 形式的 PR URL
+  Test: manual:bash -c "grep -oE 'https://github\\.com/[^/]+/[^/]+/pull/[0-9]+' sprints/w8-langgraph-v18/harness-report.md | head -1 | grep -q ."
 
-- [ ] [ARTIFACT] `sprints/w8-langgraph-v18/child-prd.md` 文件存在（risk 1 mitigation）
-  Test: `test -f sprints/w8-langgraph-v18/child-prd.md`
+- [x] [ARTIFACT] `sprints/w8-langgraph-v18/child-prd.md` 文件存在（risk 1 mitigation）
+  Test: manual:bash -c "test -f sprints/w8-langgraph-v18/child-prd.md"
 
-- [ ] [ARTIFACT] child-prd.md 含 `## 场景描述` 段
-  Test: `grep -q '^## 场景描述' sprints/w8-langgraph-v18/child-prd.md`
+- [x] [ARTIFACT] child-prd.md 含 `## 场景描述` 段
+  Test: manual:bash -c "grep -q '^## 场景描述' sprints/w8-langgraph-v18/child-prd.md"
 
-- [ ] [ARTIFACT] child-prd.md 含 `## Golden Path` 段
-  Test: `grep -q '^## Golden Path' sprints/w8-langgraph-v18/child-prd.md`
+- [x] [ARTIFACT] child-prd.md 含 `## Golden Path` 段
+  Test: manual:bash -c "grep -q '^## Golden Path' sprints/w8-langgraph-v18/child-prd.md"
 
-- [ ] [ARTIFACT] child-prd.md 含 `## DoD 命令清单` 段
-  Test: `grep -q '^## DoD 命令清单' sprints/w8-langgraph-v18/child-prd.md`
+- [x] [ARTIFACT] child-prd.md 含 `## DoD 命令清单` 段
+  Test: manual:bash -c "grep -q '^## DoD 命令清单' sprints/w8-langgraph-v18/child-prd.md"
 
-- [ ] [ARTIFACT] child-prd.md `## DoD 命令清单` 段含 ≥1 个可执行 ```bash 代码块
-  Test: `awk '/^## DoD 命令清单/,/^## /' sprints/w8-langgraph-v18/child-prd.md | grep -q '^```bash'`
+- [x] [ARTIFACT] child-prd.md `## DoD 命令清单` 段含 ≥1 个可执行 ```bash 代码块
+  Test: manual:bash -c "awk '/^## DoD 命令清单/,/^## /' sprints/w8-langgraph-v18/child-prd.md | grep -q '^\`\`\`bash'"
 
-- [ ] [ARTIFACT] 本 Sprint 的 Generator 提交不修改 `packages/brain/src/`（只读约束）
-  Test: `git diff --name-only origin/main... -- 'packages/brain/src/' | (! read -r line)`
+- [x] [ARTIFACT] 本 Sprint 的 Generator 提交不修改 `packages/brain/src/`（只读约束）
+  Test: manual:bash -c "git diff --name-only origin/main... -- 'packages/brain/src/' | (! read -r line)"
 
 ## BEHAVIOR 索引（实际测试在 tests/ws1/）
 
