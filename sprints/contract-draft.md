@@ -1,4 +1,11 @@
-# Sprint Contract Draft (Round 1)
+# Sprint Contract Draft (Round 2)
+
+> **Round 2 修订要点**（响应 Round 1 Reviewer REVISION）
+> 1. **Step 3 前置失败分流**：在动态 import 前先 `fs.accessSync` 校验，区分"文件不存在"（commit 2 漏落）与"运行时错误"（实现 bug）两类失败原因
+> 2. **Red 证据样本锚定**：合同新增 "§ Red 证据样本（commit 1 (Red) 后跑 vitest 的预期失败输出）"，明确 `Test Files 1 failed (1)` + stderr 含 `Failed to resolve import` 是合规 Red
+> 3. **测试文件断言信号强度 ≥ 7**：测试文件含 import 顶层 + 2 个 it block + 显式 `expect(...).toBe('fe91ce26-5nodes-verified')` 字面量断言，无实现时 vitest 在 collect 阶段抛 `Failed to resolve import` 整文件 fail
+> 4. **测试文件全文锚定**：合同 § Test Contract 表格下增加测试文件全文内联（双方对参考；Generator 必须**逐字节**复制 sprints/tests/ws1/ 到 packages/brain/tests/ws1/）
+
 
 > **Initiative**: Brain LangGraph 5 节点流水线最小闭环验证
 > **Child task**: `fe91ce26-6f78-4f2e-93f5-d7cb6267fe56`
@@ -96,30 +103,48 @@ console.log('PASS Step 2: implementation file with both named exports');
 
 **可观测行为**：`import` 该模块后，`HARNESS_HAPPY_PATH_MARKER` 严格等于 `'fe91ce26-5nodes-verified'`，`verifyHarnessHappyPath()` 返回相同字符串。常量值含 child task short id (`fe91ce26`) 是关键防造假约束——即使 attacker 复用旧 PR 也无法通过此项。
 
+**失败分流前置（round 2 新增）**：在 import 之前先 `fs.accessSync` 显式校验文件存在，把"commit 2 漏落实现文件"（FILE_MISSING）从"实现存在但运行时错误"（RUNTIME_ERROR）里分流出来；二者在 `node --input-type=module` 下都会 exit 非 0，但错误消息含 `MODULE_NOT_FOUND` 时无法区分意图，所以提前 access。
+
 **验证命令**：
 ```bash
-# Step 3 验证：动态 import 跑实际 ESM 模块，断言值逐字相符
+# Step 3 验证：(a) 显式分流文件存在 → (b) 动态 import 真实 ESM module → (c) 断言值逐字相符
+# round 2 新增 (a) 段：accessSync 失败时打印 FAIL_REASON=FILE_MISSING，让 evaluator 明确知道是 commit 2 漏落
+node -e "
+require('fs').accessSync('packages/brain/src/harness-happy-path-marker.js');
+" 2>/dev/null || { echo 'FAIL Step 3 (FAIL_REASON=FILE_MISSING): packages/brain/src/harness-happy-path-marker.js not found — commit 2 (Green) 未落地'; exit 1; }
+
 node --input-type=module -e "
 const m = await import('./packages/brain/src/harness-happy-path-marker.js');
 const expected = 'fe91ce26-5nodes-verified';
 if (m.HARNESS_HAPPY_PATH_MARKER !== expected) {
-  console.error('FAIL: HARNESS_HAPPY_PATH_MARKER=' + JSON.stringify(m.HARNESS_HAPPY_PATH_MARKER) + ' expected=' + JSON.stringify(expected));
+  console.error('FAIL Step 3 (FAIL_REASON=RUNTIME_VALUE_MISMATCH): HARNESS_HAPPY_PATH_MARKER=' + JSON.stringify(m.HARNESS_HAPPY_PATH_MARKER) + ' expected=' + JSON.stringify(expected));
   process.exit(1);
 }
 if (typeof m.verifyHarnessHappyPath !== 'function') {
-  console.error('FAIL: verifyHarnessHappyPath is not a function (got ' + typeof m.verifyHarnessHappyPath + ')');
+  console.error('FAIL Step 3 (FAIL_REASON=RUNTIME_TYPE_MISMATCH): verifyHarnessHappyPath is not a function (got ' + typeof m.verifyHarnessHappyPath + ')');
   process.exit(1);
 }
 const ret = m.verifyHarnessHappyPath();
 if (ret !== expected) {
-  console.error('FAIL: verifyHarnessHappyPath() returned ' + JSON.stringify(ret) + ' expected ' + JSON.stringify(expected));
+  console.error('FAIL Step 3 (FAIL_REASON=RUNTIME_RETURN_MISMATCH): verifyHarnessHappyPath() returned ' + JSON.stringify(ret) + ' expected ' + JSON.stringify(expected));
   process.exit(1);
 }
 console.log('PASS Step 3: marker=' + m.HARNESS_HAPPY_PATH_MARKER + ', function returns same');
 "
 ```
 
-**硬阈值**：常量严格等于 `fe91ce26-5nodes-verified`；函数存在且返回相同字符串。
+**硬阈值**：
+- (a) `fs.accessSync` 不抛 → 文件存在
+- (b) 动态 import 不抛 → 模块可加载
+- (c) 常量严格等于 `fe91ce26-5nodes-verified`；函数 typeof === 'function' 且返回相同字符串
+
+**失败分流语义**：
+| FAIL_REASON              | 含义                                                  | Generator 应修        |
+|--------------------------|-------------------------------------------------------|-----------------------|
+| FILE_MISSING             | commit 2 (Green) 漏落实现文件                         | 补落实现 commit       |
+| RUNTIME_VALUE_MISMATCH   | 实现存在但常量字面值错（如打错字符）                  | 修正字符串            |
+| RUNTIME_TYPE_MISMATCH    | 实现存在但 verifyHarnessHappyPath 不是 function       | 修函数 export 形式    |
+| RUNTIME_RETURN_MISMATCH  | 函数存在但返回值不等于常量                            | 修函数实现            |
 
 ---
 
@@ -238,12 +263,17 @@ console.log('OK Step 2');
 "
 
 echo "=== Step 3: runtime values match child task signature ==="
+# round 2: 前置 accessSync 把 FILE_MISSING 与 RUNTIME_ERROR 分流
+node -e "require('fs').accessSync('packages/brain/src/harness-happy-path-marker.js')" 2>/dev/null || {
+  echo "FAIL Step 3 (FAIL_REASON=FILE_MISSING): packages/brain/src/harness-happy-path-marker.js not found"
+  exit 1
+}
 node --input-type=module -e "
 const m = await import('./packages/brain/src/harness-happy-path-marker.js');
 const expected = 'fe91ce26-5nodes-verified';
-if (m.HARNESS_HAPPY_PATH_MARKER !== expected) { console.error('FAIL: marker=' + JSON.stringify(m.HARNESS_HAPPY_PATH_MARKER)); process.exit(1); }
-if (typeof m.verifyHarnessHappyPath !== 'function') { console.error('FAIL: not a function'); process.exit(1); }
-if (m.verifyHarnessHappyPath() !== expected) { console.error('FAIL: function return mismatch'); process.exit(1); }
+if (m.HARNESS_HAPPY_PATH_MARKER !== expected) { console.error('FAIL Step 3 (FAIL_REASON=RUNTIME_VALUE_MISMATCH): marker=' + JSON.stringify(m.HARNESS_HAPPY_PATH_MARKER)); process.exit(1); }
+if (typeof m.verifyHarnessHappyPath !== 'function') { console.error('FAIL Step 3 (FAIL_REASON=RUNTIME_TYPE_MISMATCH): not a function'); process.exit(1); }
+if (m.verifyHarnessHappyPath() !== expected) { console.error('FAIL Step 3 (FAIL_REASON=RUNTIME_RETURN_MISMATCH): function return mismatch'); process.exit(1); }
 console.log('OK Step 3');
 "
 
@@ -292,7 +322,79 @@ workstream_count: 1
 
 | Workstream | Test File (PR HEAD)                                          | BEHAVIOR 覆盖                                                                                  | 预期 Red 证据（commit 1，无实现时） |
 |------------|--------------------------------------------------------------|------------------------------------------------------------------------------------------------|--------------------------------------|
-| WS1        | `packages/brain/tests/ws1/harness-happy-path-marker.test.js` | (1) 模块导出 `HARNESS_HAPPY_PATH_MARKER === 'fe91ce26-5nodes-verified'`<br>(2) `verifyHarnessHappyPath()` 返回相同字符串 | 2 failures（import 失败 → 整文件 fail） |
+| WS1        | `packages/brain/tests/ws1/harness-happy-path-marker.test.js` | (1) 模块导出 `HARNESS_HAPPY_PATH_MARKER === 'fe91ce26-5nodes-verified'`<br>(2) `verifyHarnessHappyPath()` 返回相同字符串 | vitest 输出 `Test Files 1 failed (1)` + stderr/stdout 含 `Failed to resolve import` 字样；2 个 it() 块在 collect 阶段全部跳过/失败（详见 § Red 证据样本）|
+
+### Red 证据样本（commit 1 (Red) 后跑 vitest 的预期失败输出）
+
+**触发场景**：Generator 已落 `packages/brain/tests/ws1/harness-happy-path-marker.test.js`（来自 sprints/tests/ws1/ 原样复制），但**尚未**落 `packages/brain/src/harness-happy-path-marker.js`（commit 2 还没发生）。
+
+**跑命令**：
+```bash
+cd packages/brain
+NODE_OPTIONS="--max-old-space-size=2048" npx vitest run tests/ws1/harness-happy-path-marker.test.js --reporter=default 2>&1
+```
+
+**预期 stderr/stdout 关键字段**：
+- 含子串 `Failed to resolve import "../../src/harness-happy-path-marker.js"`（vitest collect 阶段抛）
+- 末尾汇总行含 `Test Files  1 failed (1)`（注意 vitest reporter 默认空格数；用 `grep -qE 'Test Files\s+1 failed'` 匹配）
+- **不需要** `Tests  N failed (M)`——因为 collect 阶段失败时 vitest 不会进入 it() block，整文件作为 1 个 failed test file 计入；这正是预期 Red 形态
+- exit code = 1（vitest run 失败时）
+
+**Reviewer 验证 Red 是否合规的命令**（在 commit 1 HEAD 上跑）：
+```bash
+cd packages/brain && NODE_OPTIONS="--max-old-space-size=2048" npx vitest run tests/ws1/harness-happy-path-marker.test.js --reporter=default 2>&1 | tee /tmp/red-evidence.log; \
+grep -qE "Test Files\s+1 failed" /tmp/red-evidence.log && \
+grep -qE "Failed to resolve import.*harness-happy-path-marker" /tmp/red-evidence.log && \
+echo "RED OK" || echo "RED NOT WELL-FORMED"
+```
+
+**为什么这是合规 Red**：
+1. 测试文件顶层 `import { HARNESS_HAPPY_PATH_MARKER, verifyHarnessHappyPath } from '../../src/harness-happy-path-marker.js'` 在 src 文件不存在时让 vitest 在 collect 阶段抛 `Failed to resolve import`
+2. 整个测试文件被标记为 1 failed（不是 skipped），证明测试**确实 try 加载了实现**而非被忽略
+3. 两个 it() 都在 collect 阶段被打包失败，无法通过删 it 让套件假绿——这就是为什么 Step 1 的硬阈值要求 `it 数 ≥ 2` + 文件含 `HARNESS_HAPPY_PATH_MARKER` 标识符
+4. commit 2 落实现文件后，import 解析成功，2 个 it() 都跑通 → `Test Files 1 passed (1)` + `Tests 2 passed (2)` → 转 Green
+
+### 测试文件全文（Generator 必须 byte-for-byte 复制）
+
+下面是 `sprints/tests/ws1/harness-happy-path-marker.test.js` 的完整原文，是合同的一部分。Generator 在 commit 1 时**逐字节** copy 到 `packages/brain/tests/ws1/harness-happy-path-marker.test.js`，commit 1 之后任何对该文件的修改都视为合同违反（CI 强校验 sprints/tests/ws1/ 与 packages/brain/tests/ws1/ 无 diff）。
+
+```javascript
+// Workstream 1 — BEHAVIOR test for harness happy-path marker module.
+// Generator must copy this file VERBATIM into:
+//   packages/brain/tests/ws1/harness-happy-path-marker.test.js
+// (CI enforces no diff between sprints/tests/ws1/ and packages/brain/tests/ws1/.)
+//
+// Import path '../../src/...' assumes the test lives at packages/brain/tests/ws1/.
+// In sprints/tests/ws1/ the path resolves to a non-existent file → vitest reports
+// a load-time failure. That non-resolution IS the Red evidence in the proposer
+// phase; in PR HEAD the test resolves correctly and runs as Green.
+
+import { describe, it, expect } from 'vitest';
+import {
+  HARNESS_HAPPY_PATH_MARKER,
+  verifyHarnessHappyPath,
+} from '../../src/harness-happy-path-marker.js';
+
+describe('Workstream 1 — harness happy-path marker [BEHAVIOR]', () => {
+  it('exports HARNESS_HAPPY_PATH_MARKER carrying the child task signature', () => {
+    expect(HARNESS_HAPPY_PATH_MARKER).toBe('fe91ce26-5nodes-verified');
+  });
+
+  it('verifyHarnessHappyPath() returns the same marker string', () => {
+    expect(typeof verifyHarnessHappyPath).toBe('function');
+    expect(verifyHarnessHappyPath()).toBe('fe91ce26-5nodes-verified');
+  });
+});
+```
+
+**断言信号强度（Reviewer 关注的 test_is_red ≥ 7 计分依据）**：
+- (1) 顶层 named-import 两个标识符 → 实现缺失 → collect 阶段全文 fail
+- (2) `expect(HARNESS_HAPPY_PATH_MARKER).toBe('fe91ce26-5nodes-verified')` → 字面值断言无歧义，错一个字符即 fail
+- (3) `expect(typeof verifyHarnessHappyPath).toBe('function')` → 类型断言，值为 undefined / null / object 均 fail
+- (4) `expect(verifyHarnessHappyPath()).toBe('fe91ce26-5nodes-verified')` → 返回值字面断言
+- (5) describe + 2 个 it block → it 数 ≥ 2 满足合同 Step 1 硬阈值
+- (6) import 路径 `../../src/harness-happy-path-marker.js` 强绑定 commit 2 实现文件位置
+- (7) child task short id `fe91ce26` 字面写入断言 → 防跨 PR 复用
 
 ---
 
@@ -306,6 +408,8 @@ workstream_count: 1
 | BEHAVIOR 强约束| vitest `Test Files 1 passed` + `Tests N passed` 同时满足，单点失败 grep 直接命中                                                                                    |
 | 回归保护       | Step 5 限定 ws1 目录全量 vitest，`failed=0` & `passed>=2` 双约束，单测 it 数量 ≥ 2 防"删 it 让套件假绿"                                                              |
 | 时间戳/造假    | 不依赖 `count(*)` / 数据库——纯文件 + 模块行为，不存在时间窗口绕过；marker 字符串含 `fe91ce26` 防跨 PR 重放                                                          |
+| 失败分流（r2） | Step 3 前置 `fs.accessSync` 把 `FILE_MISSING`（commit 2 漏落）与 `RUNTIME_*_MISMATCH`（实现 bug）显式分开，避免 Generator 用同一报错欺骗 Evaluator                   |
+| Red 锚定（r2） | 合同内联完整测试文件原文 + 显式 `expect(...).toBe('fe91ce26-5nodes-verified')` 字面断言 + 锚定 `Test Files 1 failed (1)` + `Failed to resolve import` 作为合规 Red 证据 |
 
 ---
 
