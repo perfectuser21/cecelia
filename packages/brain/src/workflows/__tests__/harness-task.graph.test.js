@@ -46,6 +46,15 @@ vi.mock('../../harness-graph.js', () => ({
   },
 }));
 vi.mock('../../db.js', () => ({ default: { query: (...a) => mockPoolQuery(...a) } }));
+// H15 PRD 阶段 2 收尾：E2E test 不真跑 gh pr view（真 URL 不存在 → 真 retry 35s 超时）。
+// verifyGeneratorOutput stub 默认 resolve；ContractViolation 保留真类供 unit test new。
+vi.mock('../../lib/contract-verify.js', async (importOriginal) => {
+  const actual = await importOriginal();
+  return {
+    ...actual,
+    verifyGeneratorOutput: vi.fn().mockResolvedValue(undefined),
+  };
+});
 vi.mock('../../orchestrator/pg-checkpointer.js', () => ({
   getPgCheckpointer: vi.fn().mockResolvedValue({
     get: vi.fn().mockResolvedValue(null),
