@@ -46,6 +46,15 @@ vi.mock('../../harness-graph.js', () => ({
   },
 }));
 vi.mock('../../db.js', () => ({ default: { query: (...a) => mockPoolQuery(...a) } }));
+// H15 PRD 阶段 2 收尾：E2E test 不真跑 gh pr view（真 URL 不存在 → 真 retry 35s 超时）。
+// verifyGeneratorOutput stub 默认 resolve；ContractViolation 保留真类供 unit test new。
+vi.mock('../../lib/contract-verify.js', async (importOriginal) => {
+  const actual = await importOriginal();
+  return {
+    ...actual,
+    verifyGeneratorOutput: vi.fn().mockResolvedValue(undefined),
+  };
+});
 vi.mock('../../orchestrator/pg-checkpointer.js', () => ({
   getPgCheckpointer: vi.fn().mockResolvedValue({
     get: vi.fn().mockResolvedValue(null),
@@ -63,6 +72,7 @@ import {
   spawnGeneratorNode,
   awaitCallbackNode,
   parseCallbackNode,
+  verifyGeneratorNode,
   pollCiNode,
   mergePrNode,
   fixDispatchNode,
@@ -71,6 +81,7 @@ import {
   MAX_POLL_COUNT,
 } from '../harness-task.graph.js';
 import { MemorySaver, Command } from '@langchain/langgraph';
+import { ContractViolation } from '../../lib/contract-verify.js';
 
 describe('harness-task graph — structure', () => {
   it('TaskState 定义存在', () => {
@@ -220,6 +231,59 @@ describe('parseCallbackNode', () => {
       generator_output: 'IGNORED',
     });
     expect(delta.pr_url).toBe('https://existing/pull/1');
+  });
+});
+
+describe('verifyGeneratorNode (H15 PRD 阶段 2 收尾)', () => {
+  it('happy: pr_url 通过 verify → 不抛 + 不修 state', async () => {
+    const verifyFn = vi.fn().mockResolvedValue(undefined);
+    const delta = await verifyGeneratorNode(
+      { pr_url: 'https://github.com/x/y/pull/1' },
+      { verifyGenerator: verifyFn },
+    );
+    expect(verifyFn).toHaveBeenCalledOnce();
+    const arg = verifyFn.mock.calls[0][0];
+    expect(arg.pr_url).toBe('https://github.com/x/y/pull/1');
+    expect(delta).toEqual({});
+  });
+
+  it('verify throw ContractViolation → 该错误向上 propagate（让 LangGraph retryPolicy 接管）', async () => {
+    const verifyFn = vi.fn().mockRejectedValue(
+      new ContractViolation('generator_pr_not_found', { pr_url: 'fake' }),
+    );
+    await expect(
+      verifyGeneratorNode(
+        { pr_url: 'fake' },
+        { verifyGenerator: verifyFn },
+      ),
+    ).rejects.toThrow(ContractViolation);
+  });
+
+  it('idempotent: state.poll_count > 0 → 跳过 verify', async () => {
+    const verifyFn = vi.fn().mockResolvedValue(undefined);
+    await verifyGeneratorNode(
+      { pr_url: 'https://x/pull/1', poll_count: 1 },
+      { verifyGenerator: verifyFn },
+    );
+    expect(verifyFn).not.toHaveBeenCalled();
+  });
+
+  it('opts.requiredArtifacts 透传给 verify', async () => {
+    const verifyFn = vi.fn().mockResolvedValue(undefined);
+    await verifyGeneratorNode(
+      { pr_url: 'https://x/pull/1' },
+      { verifyGenerator: verifyFn, requiredArtifacts: ['a.js', 'b.js'] },
+    );
+    expect(verifyFn.mock.calls[0][0].requiredArtifacts).toEqual(['a.js', 'b.js']);
+  });
+});
+
+describe('harness-task graph topology (H15 verify_generator wiring)', () => {
+  it('graph compile 后含 verify_generator 节点', () => {
+    const g = buildHarnessTaskGraph();
+    const compiled = g.compile();
+    const nodes = Object.keys(compiled.nodes || {});
+    expect(nodes).toContain('verify_generator');
   });
 });
 
