@@ -1,6 +1,9 @@
 # Node.js
 node_modules/
 
+# Playground 子项目（W19 walking skeleton 测试床，独立子项目无需 lockfile 跟踪）
+playground/package-lock.json
+
 # Environment (ALL .env files except .env.example)
 .env
 .env.local
