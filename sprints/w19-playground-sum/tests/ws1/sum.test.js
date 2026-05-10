@@ -1,16 +1,8 @@
 import { describe, test, expect } from 'vitest';
 import request from 'supertest';
-import app from '../server.js';
+import app from '../../../../playground/server.js';
 
-describe('playground server', () => {
-  test('GET /health → 200 {ok: true}', async () => {
-    const res = await request(app).get('/health');
-    expect(res.status).toBe(200);
-    expect(res.body).toEqual({ ok: true });
-  });
-});
-
-describe('GET /sum', () => {
+describe('Workstream 1 — GET /sum [BEHAVIOR]', () => {
   test('GET /sum?a=2&b=3 → 200 + {sum:5}', async () => {
     const res = await request(app).get('/sum').query({ a: '2', b: '3' });
     expect(res.status).toBe(200);
@@ -18,7 +10,7 @@ describe('GET /sum', () => {
     expect(typeof res.body.sum).toBe('number');
   });
 
-  test('GET /sum?a=2 (b 缺失) → 400 + 非空 error', async () => {
+  test('GET /sum?a=2 (b 缺失) → 400 + 非空 error 字段', async () => {
     const res = await request(app).get('/sum').query({ a: '2' });
     expect(res.status).toBe(400);
     expect(typeof res.body.error).toBe('string');
@@ -32,7 +24,7 @@ describe('GET /sum', () => {
     expect(res.body.error.length).toBeGreaterThan(0);
   });
 
-  test('GET /sum?a=abc&b=3 (a 非数字) → 400 + error，body 不含 sum', async () => {
+  test('GET /sum?a=abc&b=3 (a 非数字) → 400 + error，且 body 不含 sum 字段', async () => {
     const res = await request(app).get('/sum').query({ a: 'abc', b: '3' });
     expect(res.status).toBe(400);
     expect(typeof res.body.error).toBe('string');
@@ -56,5 +48,11 @@ describe('GET /sum', () => {
     const res = await request(app).get('/sum').query({ a: '0', b: '0' });
     expect(res.status).toBe(200);
     expect(res.body).toEqual({ sum: 0 });
+  });
+
+  test('GET /health 仍 200 + {ok:true} (回归)', async () => {
+    const res = await request(app).get('/health');
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ ok: true });
   });
 });
