@@ -385,7 +385,7 @@ describe('GET /power (strict-schema + 0^0 拒 + 结果有限性兜底 + oracle)'
   test('GET /power?a=2&b=10 响应顶层 keys 严格等于 ["power"] (schema oracle)', async () => {
     const res = await request(app).get('/power').query({ a: '2', b: '10' });
     expect(res.status).toBe(200);
-    expect(Object.keys(res.body).sort()).toEqual(['power']);
+    expect(Object.keys(res.body)).toEqual(['power']);
   });
 
   // === 0^0 不定式拒（W22 主探针 #1）===

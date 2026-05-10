@@ -21,6 +21,7 @@ npm start           # 起 server（默认 :3000）
 - `GET /sum?a=N&b=M` → 返回 a+b 的算术和
 - `GET /multiply?a=N&b=M` → 返回 a×b 的乘积（**strict-schema**：拒绝科学计数法 / `Infinity` / 前导 `+` / 十六进制 等）
 - `GET /divide?a=N&b=M` → 返回 a÷b 的商（**strict-schema** + **除零兜底**：`b=0`/`b=0.0` → 400）
+- `GET /power?a=N&b=M` → 返回 a^b（**strict-schema** + **0^0 不定式拒** + **结果有限性兜底**：`Number.isFinite(result)===false` 时 400，覆盖 0^负 / 负^分数 / 溢出）
 
 ### `GET /sum` 示例
 
@@ -117,6 +118,62 @@ curl -s -o /dev/stderr -w 'HTTP %{http_code}\n' 'http://127.0.0.1:3000/divide?a=
 # HTTP 400
 
 curl -s -o /dev/stderr -w 'HTTP %{http_code}\n' 'http://127.0.0.1:3000/divide?a=6'
+# {"error":"a 和 b 都是必填 query 参数"}
+# HTTP 400
+```
+
+### `GET /power` 示例
+
+happy path（含小数指数 oracle 严格相等：JS 原生 `**` 结果，不做精度截断）：
+
+```bash
+curl -s 'http://127.0.0.1:3000/power?a=2&b=10'
+# {"power":1024}
+
+curl -s 'http://127.0.0.1:3000/power?a=4&b=0.5'
+# {"power":2}
+
+curl -s 'http://127.0.0.1:3000/power?a=-2&b=3'
+# {"power":-8}
+
+curl -s 'http://127.0.0.1:3000/power?a=2&b=-2'
+# {"power":0.25}
+
+curl -s 'http://127.0.0.1:3000/power?a=5&b=0'
+# {"power":1}
+```
+
+0^0 不定式拒绝（核心兜底：strict-schema 通过后显式 `Number(a)===0 && Number(b)===0` 判定，**不允许靠 JS `0**0===1` 滑过**）：
+
+```bash
+curl -s -o /dev/stderr -w 'HTTP %{http_code}\n' 'http://127.0.0.1:3000/power?a=0&b=0'
+# {"error":"0^0 是数学不定式，拒绝计算"}
+# HTTP 400
+```
+
+结果非有限拒绝（核心兜底：算式后显式 `Number.isFinite(result)===false` 判定，覆盖 0^负=Infinity / 负^分数=NaN / 溢出=Infinity）：
+
+```bash
+curl -s -o /dev/stderr -w 'HTTP %{http_code}\n' 'http://127.0.0.1:3000/power?a=0&b=-1'
+# HTTP 400 (0^-1 = Infinity)
+
+curl -s -o /dev/stderr -w 'HTTP %{http_code}\n' 'http://127.0.0.1:3000/power?a=-2&b=0.5'
+# HTTP 400 (负^分数 = NaN)
+
+curl -s -o /dev/stderr -w 'HTTP %{http_code}\n' 'http://127.0.0.1:3000/power?a=10&b=1000'
+# HTTP 400 (10^1000 = Infinity)
+```
+
+strict-schema 拒绝（与 `/multiply`、`/divide` 同款正则 `^-?\d+(\.\d+)?$`，禁 `Number()` 假绿）：
+
+```bash
+curl -s -o /dev/stderr -w 'HTTP %{http_code}\n' 'http://127.0.0.1:3000/power?a=1e3&b=2'
+# HTTP 400
+
+curl -s -o /dev/stderr -w 'HTTP %{http_code}\n' 'http://127.0.0.1:3000/power?a=Infinity&b=2'
+# HTTP 400
+
+curl -s -o /dev/stderr -w 'HTTP %{http_code}\n' 'http://127.0.0.1:3000/power?a=2'
 # {"error":"a 和 b 都是必填 query 参数"}
 # HTTP 400
 ```
