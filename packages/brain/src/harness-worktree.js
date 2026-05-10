@@ -125,12 +125,20 @@ export async function ensureHarnessWorktree(opts) {
       if (String(inside || '').trim() !== 'true') {
         isOrphan = true;
       } else {
-        // 校验 origin remote URL 必须指向 baseRepo（绝对路径或仓库 URL 任一段匹配）
+        // 校验 origin remote URL 合法（兼容 H16：可以是 baseRepo 本地路径，也可以是
+        // baseRepo 主仓库的 GitHub URL — 后者是 H16 之后新 worktree 的状态）。
         try {
           const { stdout: remoteUrl } = await execFn('git', ['-C', wtPath, 'remote', 'get-url', 'origin']);
           const url = String(remoteUrl || '').trim();
-          if (!url || !url.includes(baseRepo)) {
-            logFn(`[harness-worktree] orphan worktree at ${wtPath}: origin='${url}' does not match baseRepo='${baseRepo}'; rebuilding`);
+          let baseRepoGithubUrl = '';
+          try {
+            const { stdout: gh } = await execFn('git', ['-C', baseRepo, 'remote', 'get-url', 'origin']);
+            baseRepoGithubUrl = String(gh || '').trim();
+          } catch { /* baseRepo 自己 origin 读不到，下面只校 baseRepo 路径 */ }
+          const matchesBaseRepo = url && url.includes(baseRepo);
+          const matchesGithub = baseRepoGithubUrl && url === baseRepoGithubUrl;
+          if (!matchesBaseRepo && !matchesGithub) {
+            logFn(`[harness-worktree] orphan worktree at ${wtPath}: origin='${url}' matches neither baseRepo='${baseRepo}' nor GitHub='${baseRepoGithubUrl}'; rebuilding`);
             isOrphan = true;
           }
         } catch (err) {
