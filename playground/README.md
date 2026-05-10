@@ -18,5 +18,27 @@ npm start           # 起 server（默认 :3000）
 ## 端点
 
 - `GET /health` → `{ "ok": true }`
+- `GET /sum?a=N&b=M` → 返回 a+b 的算术和
 
-W19 task 会增加 `GET /sum?a=N&b=M`（不在 bootstrap 范围）。
+### `GET /sum` 示例
+
+happy path：
+
+```bash
+curl -s 'http://127.0.0.1:3000/sum?a=2&b=3'
+# {"sum":5}
+```
+
+参数缺失或非数字 → 400：
+
+```bash
+curl -s -o /dev/stderr -w 'HTTP %{http_code}\n' 'http://127.0.0.1:3000/sum?a=2'
+# {"error":"a 和 b 都是必填 query 参数"}
+# HTTP 400
+
+curl -s -o /dev/stderr -w 'HTTP %{http_code}\n' 'http://127.0.0.1:3000/sum?a=abc&b=3'
+# {"error":"a 和 b 必须是合法数字"}
+# HTTP 400
+```
+
+负数 / 零 / 小数视为合法数字。零依赖：仅 `express`（运行时）+ `vitest` / `supertest`（开发时）。

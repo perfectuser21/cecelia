@@ -1,7 +1,3 @@
-contract_branch: cp-harness-propose-r3-eaf2a56f
-workstream_index: 1
-sprint_dir: sprints/w19-playground-sum
-
 ---
 skeleton: false
 journey_type: autonomous
@@ -35,9 +31,9 @@ journey_type: autonomous
 - [x] [ARTIFACT] `playground/package.json` 未新增 devDependencies（仅 supertest + vitest）
   Test: manual:node -e "const p=require('./playground/package.json');const d=Object.keys(p.devDependencies||{}).sort().join(',');if(d!=='supertest,vitest')process.exit(1)"
 
-## [BEHAVIOR] 索引（实际测试在 sprints/w19-playground-sum/tests/ws1/）
+## BEHAVIOR 索引（实际测试在 sprints/w19-playground-sum/tests/ws1/）
 
-> v5.0 设计：`[BEHAVIOR]` 条目从 DoD 搬至测试文件。实际行为见 `sprints/w19-playground-sum/tests/ws1/sum.test.js`，覆盖：
+见 `sprints/w19-playground-sum/tests/ws1/sum.test.js`，覆盖：
 - GET `/sum?a=2&b=3` → 200 + body `{sum:5}`
 - GET `/sum?a=2`（缺 b） → 400 + body `.error` 非空字符串
 - GET `/sum?a=abc&b=3`（非数字） → 400 + `.error` 非空 + body 不含 `sum` 字段

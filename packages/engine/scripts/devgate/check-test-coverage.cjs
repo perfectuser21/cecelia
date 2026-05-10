@@ -56,7 +56,7 @@ function parseTestContract(content) {
   let inSection = false;
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
-    if (/^##+\s*Test Contract/.test(line)) {
+    if (/^##+\s*(?:§\d+\s+)?Test Contract/.test(line)) {
       inSection = true;
       continue;
     }
@@ -73,7 +73,7 @@ function parseTestContract(content) {
     // 取 backtick 里的路径
     const m = testFileRaw.match(/`([^`]+)`/);
     const testFile = m ? m[1] : testFileRaw;
-    if (!/\.test\.ts$/.test(testFile)) continue;
+    if (!/\.test\.(ts|js)$/.test(testFile)) continue;
     // behavior 覆盖用 '/' 分割
     const behaviors = behaviorsRaw
       .split(/[/,、]/)
@@ -106,10 +106,10 @@ function checkContract(contractPath) {
       continue;
     }
     const testContent = fs.readFileSync(testFilePath, "utf-8");
-    const itMatches = [...testContent.matchAll(/\bit\(['"]([^'"]+)['"]/g)];
+    const itMatches = [...testContent.matchAll(/\b(?:it|test)\(['"]([^'"]+)['"]/g)];
     const itNames = itMatches.map((m) => m[1]);
     if (itNames.length === 0) {
-      violations.push(`${row.ws}: ${testFilePath} 无 it() 块`);
+      violations.push(`${row.ws}: ${testFilePath} 无 it()/test() 块`);
       continue;
     }
     // 每个声明的 behavior 必须能在 itNames 里找到（子串匹配）
