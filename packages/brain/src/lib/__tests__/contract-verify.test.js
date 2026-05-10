@@ -9,7 +9,7 @@ import {
   verifyProposerOutput,
   verifyGeneratorOutput,
   verifyEvaluatorWorktree,
-} from '../../packages/brain/src/lib/contract-verify.js';
+} from '../contract-verify.js';
 
 // -------- A. ContractViolation class --------
 describe('H15 — ContractViolation class', () => {

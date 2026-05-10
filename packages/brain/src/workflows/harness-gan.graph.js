@@ -29,7 +29,7 @@ import {
   END,
 } from '@langchain/langgraph';
 import { fetchAndShowOriginFile } from '../lib/git-fence.js';
-import { verifyProposerOutput, ContractViolation } from '../lib/contract-verify.js';
+import { verifyProposerOutput } from '../lib/contract-verify.js';
 import { LLM_RETRY } from './retry-policies.js';
 
 const execFile = promisify(execFileCb);
@@ -359,9 +359,11 @@ export function createGanContractNodes(executor, ctx) {
     taskId, initiativeId, sprintDir, worktreePath, githubToken,
     budgetCapUsd = 10,
     readContractFile = defaultReadContractFile,
-    fetchOriginFile = fetchAndShowOriginFile,
+    fetchOriginFile: _fetchOriginFile = fetchAndShowOriginFile,
     verifyProposer = verifyProposerOutput,
   } = ctx;
+  // _fetchOriginFile 保留 ctx 兼容旧 caller（test 仍传 fetchOriginFile），H15 后 proposer 改走 verifyProposer。
+  void _fetchOriginFile;
 
   async function proposer(state) {
     const nextRound = (state.round || 0) + 1;

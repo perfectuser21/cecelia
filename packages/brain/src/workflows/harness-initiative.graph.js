@@ -33,7 +33,7 @@ import { runFinalE2E, attributeFailures } from '../harness-final-e2e.js';
 import { ensureHarnessWorktree, harnessSubTaskWorktreePath } from '../harness-worktree.js';
 import { resolveGitHubToken } from '../harness-credentials.js';
 import { fetchAndShowOriginFile } from '../lib/git-fence.js';
-import { verifyEvaluatorWorktree, ContractViolation } from '../lib/contract-verify.js';
+import { verifyEvaluatorWorktree } from '../lib/contract-verify.js';
 // 走 C3 shim (../harness-gan-graph.js) 而非直连 workflows/harness-gan.graph.js，
 // 保持测试 vi.mock('../../harness-gan-graph.js') 路径兼容。
 // Phase C7 清 shim 前不改。
