@@ -393,4 +393,17 @@ describe('Heartbeat Inspector', () => {
       expect(result.skipped).toBe(false);
     });
   });
+
+  // 闭环契约：active_goals=0 P0 告警的所有相关 Cortex Insight learning_id
+  // 必须在 heartbeat-inspector.js 源码中显式登记，
+  // 防止 Cortex 反复派发同一类 insight 修复任务（重复识别 e41acc59 已经发生过一次）。
+  describe('Cortex Insight learning_id 登记契约', () => {
+    it('heartbeat-inspector.js 源码同时引用 ec71a550 与 e41acc59 两个 learning_id', async () => {
+      const { readFileSync } = await import('fs');
+      const inspectorPath = new URL('../heartbeat-inspector.js', import.meta.url).pathname;
+      const src = readFileSync(inspectorPath, 'utf-8');
+      expect(src).toMatch(/ec71a550/);
+      expect(src).toMatch(/e41acc59/);
+    });
+  });
 });
