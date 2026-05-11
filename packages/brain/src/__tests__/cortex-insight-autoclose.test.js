@@ -1,10 +1,10 @@
 /**
  * cortex.js Insight → Task 自动闭合机制测试
  * 验证：
- * 1. 有代码修复信号的 insight 自动创建 dev task
- * 2. 无代码修复信号的 insight 不创建 task
- * 3. 同一 learning_id 已有 task 时不重复创建（去重）
- * 4. 创建 task 后标记 applied=true
+ * 1. 有代码修复信号的 insight 自动创建 dev task（priority=P1）
+ * 2. 无代码修复信号的 insight 仍创建 dev task（priority=P2，migration 271 起 loophole 关闭）
+ * 3. 同一 learning_id 已有 task 时不重复创建（去重，返回旧 task id）
+ * 4. 创建 task 后标记 applied=true，函数返回 task.id；createTask 失败时返回 null
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -74,7 +74,7 @@ describe('maybeCreateInsightTask', () => {
     vi.clearAllMocks();
   });
 
-  it('有代码修复信号时创建 dev task 并标记 applied=true', async () => {
+  it('有代码修复信号时创建 dev task（priority=P1），返回 task.id 并标记 applied=true', async () => {
     const learningId = 'learn-uuid-001';
     const content = '发现 bug：planner 在高负载下会崩溃';
     const event = { type: 'systemic_failure' };
@@ -86,18 +86,14 @@ describe('maybeCreateInsightTask', () => {
     // UPDATE learnings applied=true
     mockPool.query.mockResolvedValueOnce({ rowCount: 1 });
 
-    await maybeCreateInsightTask(learningId, content, event);
+    const taskId = await maybeCreateInsightTask(learningId, content, event);
+    expect(taskId).toBe('task-001');
 
-    // 应查询去重
-    expect(mockPool.query).toHaveBeenCalledWith(
-      expect.stringContaining('insight_learning_id'),
-      [learningId]
-    );
-
-    // 应调用 createTask
+    // 应调用 createTask，priority=P1（含 CODE_FIX_SIGNALS）
     expect(mockCreateTask).toHaveBeenCalledWith(expect.objectContaining({
       task_type: 'dev',
       trigger_source: 'cortex',
+      priority: 'P1',
       payload: expect.objectContaining({
         insight_learning_id: learningId,
       }),
@@ -109,19 +105,28 @@ describe('maybeCreateInsightTask', () => {
     expect(updateCall[1]).toContain(learningId);
   });
 
-  it('无代码修复信号时不创建 task', async () => {
+  it('无代码修复信号时仍创建 dev task（priority=P2，migration 271 起 loophole 关闭）', async () => {
     const learningId = 'learn-uuid-002';
     const content = '今日系统运行平稳，KR 进度正常';
     const event = { type: 'daily_summary' };
 
-    await maybeCreateInsightTask(learningId, content, event);
+    // 去重查询：无重复
+    mockPool.query.mockResolvedValueOnce({ rows: [] });
+    mockCreateTask.mockResolvedValueOnce({ success: true, task: { id: 'task-002' } });
+    mockPool.query.mockResolvedValueOnce({ rowCount: 1 });
 
-    // 不应查询 tasks，不应调用 createTask
-    expect(mockPool.query).not.toHaveBeenCalled();
-    expect(mockCreateTask).not.toHaveBeenCalled();
+    const taskId = await maybeCreateInsightTask(learningId, content, event);
+    expect(taskId).toBe('task-002');
+
+    // 关键断言：即便无 CODE_FIX_SIGNALS，仍调 createTask（priority 降为 P2）
+    expect(mockCreateTask).toHaveBeenCalledWith(expect.objectContaining({
+      priority: 'P2',
+      task_type: 'dev',
+      trigger_source: 'cortex',
+    }));
   });
 
-  it('已有对应 task（去重）时不重复创建', async () => {
+  it('已有对应 task（去重）时复用旧 task id，不重复创建', async () => {
     const learningId = 'learn-uuid-003';
     const content = '需要修复 memory 泄漏问题';
     const event = { type: 'rca_analysis' };
@@ -129,14 +134,14 @@ describe('maybeCreateInsightTask', () => {
     // 去重查询：已存在
     mockPool.query.mockResolvedValueOnce({ rows: [{ id: 'existing-task-id' }] });
 
-    await maybeCreateInsightTask(learningId, content, event);
+    const taskId = await maybeCreateInsightTask(learningId, content, event);
 
-    // 查了去重，但不应创建 task
+    expect(taskId).toBe('existing-task-id');
     expect(mockPool.query).toHaveBeenCalledTimes(1);
     expect(mockCreateTask).not.toHaveBeenCalled();
   });
 
-  it('createTask 失败时不抛出（静默错误）', async () => {
+  it('createTask 失败时不抛出且返回 null（供 bindActionTaskOrFlagUnbound 发 learning_unbound 告警）', async () => {
     const learningId = 'learn-uuid-004';
     const content = 'bug in executor.js crash loop';
     const event = { type: 'task_failed' };
@@ -146,7 +151,6 @@ describe('maybeCreateInsightTask', () => {
     // createTask 失败
     mockCreateTask.mockRejectedValueOnce(new Error('DB connection lost'));
 
-    // 不应抛出
-    await expect(maybeCreateInsightTask(learningId, content, event)).resolves.toBeUndefined();
+    await expect(maybeCreateInsightTask(learningId, content, event)).resolves.toBeNull();
   });
 });

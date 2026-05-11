@@ -253,6 +253,7 @@ router.post('/learnings-received', async (req, res) => {
 
     // 2. next_steps_suggested → 写 learnings 表（成长线）
     // 先批量插入（source_branch/source_pr/repo 立即填充），learning_type 异步补填
+    // 同时把 payload.task_id 持久化到 action_task_id（migration 271，闭环 Insight→Action）
     const insertedItems = [];
     for (const step of next_steps_suggested) {
       if (!step || typeof step !== 'string') continue;
@@ -261,11 +262,11 @@ router.post('/learnings-received', async (req, res) => {
         const { rows } = await pool.query(
           `INSERT INTO learnings
              (title, category, content, trigger_source, trigger_event, digested,
-              source_branch, source_pr, repo)
+              source_branch, source_pr, repo, action_task_id)
            VALUES ($1, 'dev_experience', $2, 'dev_workflow', 'learnings_received', false,
-                   $3, $4, $5)
+                   $3, $4, $5, $6)
            RETURNING id`,
-          [title, step, branch_name || null, pr_number ? String(pr_number) : null, repo]
+          [title, step, branch_name || null, pr_number ? String(pr_number) : null, repo, task_id || null]
         );
         if (rows[0]?.id) {
           results.learnings_inserted.push(rows[0].id);

@@ -898,17 +898,20 @@ async function recordLearnings(learnings, event) {
         summary,
       ]);
       recorded++;
-      // 自动闭合：若 insight 含代码修复信号，派发修复 task
+      // 自动闭合：每个 cortex_insight 都派发 action task，并把 action_task_id 写回 learning。
+      // Insight-to-Action 断裂修复（migration 271）：5 条 relevance_score=9 抽象类 insight
+      // 不含 CODE_FIX_SIGNALS 关键词被旧 gate 静默放过 → 8 天/106 次可预防失败。
       if (insertResult.rows.length > 0) {
         const learningId = insertResult.rows[0].id;
-        // 同次 session 抽取 dispatch_constraint，闭合 learning_id a4941b23 教训：
-        // rumination learnings 必须当场转化为约束，否则记录沦为噪声。
         await autoExtractAndPersist(learningId, content).catch(err =>
           console.warn('[cortex] insight-to-constraint failed:', err.message)
         );
-        await maybeCreateInsightTask(learningId, content, event).catch(err =>
-          console.error('[cortex] maybeCreateInsightTask failed:', err.message)
-        );
+        const actionTaskId = await maybeCreateInsightTask(learningId, content, event)
+          .catch(err => {
+            console.error('[cortex] maybeCreateInsightTask failed:', err.message);
+            return null;
+          });
+        await bindActionTaskOrFlagUnbound(learningId, actionTaskId);
       }
     } catch (err) {
       console.error('[cortex] Failed to record learning:', err.message);
@@ -942,29 +945,28 @@ function hasCodeFixSignal(content) {
  * @param {Object} event - 触发事件
  */
 async function maybeCreateInsightTask(learningId, content, event) {
-  if (!hasCodeFixSignal(content)) {
-    return; // 无代码修复信号，跳过
-  }
-
-  // 去重：同一 learning 是否已有对应 task
+  // 去重：同一 learning 是否已有对应 task（按反向链路 insight_learning_id 查）
   const dedup = await pool.query(
     `SELECT id FROM tasks WHERE payload->>'insight_learning_id' = $1 AND status != 'cancelled' LIMIT 1`,
     [learningId]
   );
   if (dedup.rows.length > 0) {
-    console.log(`[cortex] Insight task already exists for learning ${learningId}, skip`);
-    return;
+    console.log(`[cortex] Insight task already exists for learning ${learningId}, reuse`);
+    return dedup.rows[0].id;
   }
 
-  // 生成任务标题（截取 insight 首 120 字符）
+  // hasCodeFixSignal 只影响优先级，不再做"静默跳过"门禁
+  // —— 抽象类 insight（Gate 缺失、闭环断裂）也必须派发 action task（migration 271 闭环修复）
+  const priority = hasCodeFixSignal(content) ? 'P1' : 'P2';
+
   const shortContent = content.slice(0, 120).replace(/\n/g, ' ');
   const taskTitle = `[Insight修复] ${shortContent}`;
 
   try {
-    await createTask({
+    const result = await createTask({
       title: taskTitle,
       description: `由 Cortex Insight 自动生成的修复任务。\n\n原始 insight (learning_id: ${learningId}):\n${content}`,
-      priority: 'P2',
+      priority,
       task_type: 'dev',
       trigger_source: 'cortex',
       payload: {
@@ -972,15 +974,44 @@ async function maybeCreateInsightTask(learningId, content, event) {
         event_type: event.type || 'cortex_analysis',
       },
     });
+    const taskId = result?.task?.id || null;
 
-    // 标记 learning applied=true
     await pool.query(
       `UPDATE learnings SET applied = true, applied_at = NOW() WHERE id = $1`,
       [learningId]
     );
-    console.log(`[cortex] Auto-created dev task for insight learning ${learningId}`);
+    console.log(`[cortex] Auto-created dev task ${taskId} for insight learning ${learningId} (priority=${priority})`);
+    return taskId;
   } catch (err) {
     console.error(`[cortex] Failed to create insight task for learning ${learningId}:`, err.message);
+    return null;
+  }
+}
+
+/**
+ * 把 action_task_id 写回 learning；为空时发 learning_unbound 告警事件（巡检用）
+ * @param {string} learningId
+ * @param {string|null} actionTaskId
+ */
+async function bindActionTaskOrFlagUnbound(learningId, actionTaskId) {
+  try {
+    if (actionTaskId) {
+      await pool.query(
+        `UPDATE learnings SET action_task_id = $1 WHERE id = $2`,
+        [actionTaskId, learningId]
+      );
+      return;
+    }
+    await pool.query(
+      `INSERT INTO cecelia_events (event_type, source, payload) VALUES ('learning_unbound', 'cortex', $1)`,
+      [JSON.stringify({
+        learning_id: learningId,
+        reason: 'no_action_task_created',
+        recorded_at: new Date().toISOString(),
+      })]
+    );
+  } catch (err) {
+    console.warn(`[cortex] bindActionTaskOrFlagUnbound failed for learning ${learningId}:`, err.message);
   }
 }
 
