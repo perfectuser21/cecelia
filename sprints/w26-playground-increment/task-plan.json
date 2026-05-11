@@ -1,0 +1,48 @@
+{
+  "initiative_id": "pending",
+  "journey_type": "autonomous",
+  "journey_type_reason": "playground 是独立 HTTP server 子项目，本次只动 server 路由 + 单测 + README，无 UI / 无 brain tick / 无 engine hook / 无远端 agent 协议；与 W19~W25 同分类",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "playground/server.js 新增 GET /increment 路由 + tests/server.test.js GET /increment describe 块 + README.md /increment 段",
+      "scope": "在 playground/server.js 注册 GET /increment（query 名 value，strict-schema 整数正则 ^-?\\d+$，|Number(value)| > 9007199254740990 显式上界拒，Number(value)+1 算术，返回 {result: <number>, operation: \"increment\"}）；在 playground/tests/server.test.js 新增 describe('GET /increment', ...) 块（happy 9+ 含 0/-1 off-by-one + 精度上下界、上下界拒 3+、strict 拒 13+、schema 完整性 oracle 2+、禁用字段反向断言、错误体 keys=[error] 断言、错 query 名 400 断言、前导 0 happy、7 路由回归 1 条/路由）；在 playground/README.md 端点列表加 /increment 段（happy/上界拒/下界拒/strict 拒 示例 6+）。响应字段名严格字面照搬 PRD：result + operation（字面）+ \"increment\" 字面字符串；query 名严格 value；禁止任一禁用同义字段名 incremented/next/successor/n_plus_one/plus_one/succ/inc/incr/incrementation/value/input/output/data/payload/answer/sum/product/quotient/power/remainder/factorial/negation 出现在响应。零依赖；不动其他路由。",
+      "dod": [
+        "[ARTIFACT] playground/server.js 内含 app.get('/increment' 路由注册",
+        "[ARTIFACT] playground/server.js /increment 路由含 strict-schema 整数正则 ^-?\\d+$",
+        "[ARTIFACT] playground/server.js /increment 路由 query 名为 value（不复用 n/a/b）",
+        "[ARTIFACT] playground/server.js /increment 含上界判定数字 9007199254740990",
+        "[ARTIFACT] playground/server.js /increment 响应含字面 operation: \"increment\" 与字面 result 字段",
+        "[ARTIFACT] playground/tests/server.test.js 内含 describe('GET /increment' 独立 describe 块",
+        "[ARTIFACT] playground/README.md 端点列表含 /increment 段",
+        "[BEHAVIOR] GET /increment?value=5 → 200 + {result:6, operation:\"increment\"}（值复算）",
+        "[BEHAVIOR] GET /increment?value=5 顶层 keys 字面集合 == [operation, result]（schema 完整性）",
+        "[BEHAVIOR] GET /increment?value=5 响应不含任一禁用字段 incremented/next/successor/n_plus_one/plus_one/succ/inc/incr/incrementation/value/input/output/data/payload/answer/meta/sum/product/quotient/power/remainder/factorial/negation",
+        "[BEHAVIOR] GET /increment?value=0 → 200 + {result:1, operation:\"increment\"}（off-by-one 正侧）",
+        "[BEHAVIOR] GET /increment?value=-1 → 200 + {result:0, operation:\"increment\"}（off-by-one 负侧）",
+        "[BEHAVIOR] GET /increment?value=9007199254740990 → 200 + {result:9007199254740991, operation:\"increment\"}（精度上界 happy，===Number.MAX_SAFE_INTEGER）",
+        "[BEHAVIOR] GET /increment?value=-9007199254740990 → 200 + {result:-9007199254740989, operation:\"increment\"}（精度下界 happy）",
+        "[BEHAVIOR] GET /increment?value=9007199254740991 → 400（上界 +1 拒）",
+        "[BEHAVIOR] GET /increment?value=-9007199254740991 → 400（下界 -1 拒）",
+        "[BEHAVIOR] 上界拒错误体顶层 keys 字面集合 == [error] 且不含 result 也不含 operation",
+        "[BEHAVIOR] GET /increment?value=1.5 → 400（strict 拒小数）",
+        "[BEHAVIOR] GET /increment?value=1.0 → 400（strict 拒带小数点的整数）",
+        "[BEHAVIOR] GET /increment?value=1e2 → 400（strict 拒科学计数法）",
+        "[BEHAVIOR] GET /increment?value=abc → 400（strict 拒字母）",
+        "[BEHAVIOR] GET /increment?value=Infinity → 400（strict 拒 Infinity 字面）",
+        "[BEHAVIOR] GET /increment（缺 value 参数） → 400",
+        "[BEHAVIOR] GET /increment?n=5（错 query 名 n） → 400",
+        "[BEHAVIOR] GET /increment?value=01 → 200 + {result:2, operation:\"increment\"}（前导 0 happy，不许错用八进制）",
+        "[BEHAVIOR] 已有 7 路由 (/health /sum /multiply /divide /power /modulo /factorial) happy 用例回归全通过"
+      ],
+      "files": [
+        "playground/server.js",
+        "playground/tests/server.test.js",
+        "playground/README.md"
+      ],
+      "depends_on": [],
+      "complexity": "M",
+      "estimated_minutes": 45
+    }
+  ]
+}
