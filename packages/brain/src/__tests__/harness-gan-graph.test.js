@@ -28,9 +28,8 @@ import {
 describe('buildProposerPrompt', () => {
   it('round 1 without feedback: inline SKILL pattern (no slash command)', () => {
     const out = buildProposerPrompt('# PRD content', null, 1);
-    // Bug 6 修复：用 inline SKILL pattern，container 不再自解析 slash command
-    expect(out).toContain('你是 harness-contract-proposer agent');
-    expect(out).not.toContain('/harness-contract-proposer');
+    // Bug 6 修复：第一行不再是 slash command，是 inline agent 引导
+    expect(out.split('\n')[0]).toBe('你是 harness-contract-proposer agent。按下面 SKILL 指令工作。');
     // SKILL 真注入了（v7.4 关键词）
     expect(out).toContain('contract-dod-ws');
     expect(out).toContain('round: 1');
@@ -50,9 +49,8 @@ describe('buildProposerPrompt', () => {
 describe('buildReviewerPrompt', () => {
   it('round 1: inline SKILL (含 7 维 rubric) + 删 hardcoded 5 维 (Bug 6 fix)', () => {
     const out = buildReviewerPrompt('# PRD', '# Contract R1', 1);
-    // Bug 6 修复：用 inline SKILL pattern
-    expect(out).toContain('你是 harness-contract-reviewer agent');
-    expect(out).not.toContain('/harness-contract-reviewer');
+    // Bug 6 修复：第一行 inline agent 引导，不是 slash command
+    expect(out.split('\n')[0]).toBe('你是 harness-contract-reviewer agent。按下面 SKILL 指令工作。');
     // SKILL v6.2 真注入了（含 7 维）
     expect(out).toContain('dod_machineability');
     expect(out).toContain('scope_match_prd');
@@ -68,8 +66,8 @@ describe('buildReviewerPrompt', () => {
     expect(out).toContain('# Contract R1');
     // brain code 不再 hardcode 5 维 rubric（让 SKILL 做 SSOT）
     expect(out).not.toContain('按以下 5 个维度');
-    // skeptical persona 在 SKILL.md 里
-    expect(out).toContain('skeptical staff engineer');
+    // skeptical persona 在 SKILL.md 里（注意大写 S）
+    expect(out).toContain('Skeptical staff engineer');
   });
 });
 

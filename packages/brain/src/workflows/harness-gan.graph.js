@@ -31,6 +31,7 @@ import {
 import { fetchAndShowOriginFile } from '../lib/git-fence.js';
 import { verifyProposerOutput } from '../lib/contract-verify.js';
 import { LLM_RETRY } from './retry-policies.js';
+import { loadSkillContent } from '../harness-shared.js';
 
 const execFile = promisify(execFileCb);
 
@@ -187,9 +188,19 @@ export function fallbackProposeBranch(taskId, round) {
   return `cp-harness-propose-r${r}-${taskSlice}`;
 }
 
+/**
+ * Bug 6 fix: 用 inline SKILL pattern 替代 slash command + hardcoded rubric。
+ * 之前 brain code hardcoded 5-dim rubric 覆盖 SKILL.md v6.2 的 7-dim → reviewer 输出 5 dim。
+ * 现在直接 loadSkillContent 注入完整 SKILL，SKILL.md 是唯一 SSOT，改 SKILL 立即生效。
+ */
 export function buildProposerPrompt(prdContent, feedback, round) {
+  const skillContent = loadSkillContent('harness-contract-proposer');
   const parts = [
-    '/harness-contract-proposer',
+    '你是 harness-contract-proposer agent。按下面 SKILL 指令工作。',
+    '',
+    skillContent,
+    '',
+    '---',
     '',
     `round: ${round}`,
     '',
@@ -202,9 +213,19 @@ export function buildProposerPrompt(prdContent, feedback, round) {
   return parts.join('\n');
 }
 
+/**
+ * Bug 6 fix: 同 buildProposerPrompt — inline SKILL，删 hardcoded 5-dim rubric。
+ * SKILL.md v6.2 的 7-dim rubric (含 verification_oracle_completeness, behavior_count_position)
+ * 现在真正传到 reviewer LLM。
+ */
 export function buildReviewerPrompt(prdContent, contractContent, round) {
+  const skillContent = loadSkillContent('harness-contract-reviewer');
   return [
-    '/harness-contract-reviewer',
+    '你是 harness-contract-reviewer agent。按下面 SKILL 指令工作。',
+    '',
+    skillContent,
+    '',
+    '---',
     '',
     `round: ${round}`,
     '',
@@ -213,63 +234,6 @@ export function buildReviewerPrompt(prdContent, contractContent, round) {
     '',
     '## Proposer 当前合同草案',
     contractContent,
-    '',
-    '## 任务',
-    '',
-    '你是 **skeptical staff engineer**（对齐 Anthropic harness-design 2026-03：',
-    '"tuning a standalone evaluator to be **skeptical** turns out to be far more tractable'
-      + ' than making a generator critical of its own work"）。',
-    '',
-    '按以下 5 个维度**分别独立**打 0-10 分：',
-    '',
-    '1. **dod_machineability** (DoD 机检性)：每条 DoD 能否转成 `exit code` 命令？',
-    '   10 = 全部 DoD 是 `node -e / curl / psql / npx vitest run` 等非 0 退出即判红的机检命令',
-    '   0 = 全是 `echo` / `grep "..."` / 自然语言描述',
-    '2. **scope_match_prd** (范围匹配 PRD)：DoD 既不超出 User Story 也不漏掉',
-    '   10 = 1:1 覆盖 PRD，无额外膨胀',
-    '   0 = 合同讲的事 PRD 没有，或 PRD 关键 story 没对应 DoD',
-    '3. **test_is_red** (测试真红)：测试文件存在 + 未实现时必 FAIL',
-    '   10 = 显式列"测试文件在 xxx，不动代码跑→exit=1 with 具体断言位置"',
-    '   0 = 没列 test 文件路径，或无法判断"尚未实现时会 FAIL"',
-    '4. **internal_consistency** (内部一致)：合同本身术语/字段/命令无矛盾无重复定义',
-    '   10 = 每字段/命令只定义一次，引用用稳定 ID',
-    '   0 = 前后定义不一致，或命令多处粘贴可能漂移',
-    '5. **risk_registered** (风险登记)：Risks 栏列了且每条有 mitigation',
-    '   10 = ≥ 2 条具名 risk + mitigation（含 cascade 失败对策）',
-    '   0 = 无 Risks 栏，或只写"无已知风险"',
-    '',
-    '## 输出格式（严格遵守 — 外层代码解析 JSON 判 PASS，不信 VERDICT 文字）',
-    '',
-    '先输出评分块（```json fence 里 5 个 key 一个都不能少，值必须是 0-10 整数）：',
-    '',
-    '## RUBRIC SCORES',
-    '',
-    '```json',
-    '{"dod_machineability": 7, "scope_match_prd": 8, "test_is_red": 6, "internal_consistency": 7, "risk_registered": 5}',
-    '```',
-    '',
-    '然后每维度一句话证据：',
-    '',
-    '- **dod_machineability = 7**：[1 句话，为何不是 10 也不是 0]',
-    '- **scope_match_prd = 8**：...',
-    '- **test_is_red = 6**：...',
-    '- **internal_consistency = 7**：...',
-    '- **risk_registered = 5**：...',
-    '',
-    '低于阈值的具体修改建议（仅列低分维度）：',
-    '',
-    '**risk_registered = 5 → 目标 ≥ 7**：[具体怎么改]',
-    '**test_is_red = 6 → 目标 ≥ 7**：[具体怎么改]',
-    '',
-    '最后一行 `VERDICT: REVISION` 或 `VERDICT: APPROVED`（代码会忽略这行按 rubric 判，留着方便人读）。',
-    '',
-    '## 关键约束',
-    '',
-    '- rubric_scores JSON 必须在 ```json fence 里，5 个 key 齐全，值 0-10 整数',
-    '- 分数按上面定义**独立**给，不要自己汇总算 verdict',
-    '- 不要输出"风险 1 严重性 blocker"那种旧格式',
-    '- 阈值判 PASS 由代码做（Round 1-2 全 ≥ 7 / Round 3+ 全 ≥ 6）',
-    '- 你的任务是**客观打分 + 精准指出低分怎么改**，不是主观判 APPROVED/REVISION',
   ].join('\n');
 }
 
