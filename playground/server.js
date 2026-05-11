@@ -91,6 +91,17 @@ app.get('/increment', (req, res) => {
   return res.json({ result: n + 1, operation: 'increment' });
 });
 
+app.get('/decrement', (req, res) => {
+  // 成功 schema 字面: { result: <number>, operation: "decrement" }；strict ^-?\d+$；上界 |value| ≤ 9007199254740990；query 名锁死 value + 唯一性 Object.keys(req.query).length === 1
+  const STRICT_INT = /^-?\d+$/;
+  const v = req.query.value;
+  const n = Number(v);
+  if (Object.keys(req.query).length === 1 && typeof v === 'string' && STRICT_INT.test(v) && Math.abs(n) <= 9007199254740990) {
+    return res.json({ result: n - 1, operation: 'decrement' });
+  }
+  return res.status(400).json({ error: 'value 必须是唯一 query 名 + 匹配 ^-?\\d+$（仅整数；禁小数、前导 +、双重负号、科学计数法、十六进制、千分位、空格、Infinity、NaN、空串）+ |value| ≤ 9007199254740990' });
+});
+
 app.get('/factorial', (req, res) => {
   const { n } = req.query;
   if (n === undefined) {

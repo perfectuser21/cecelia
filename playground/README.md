@@ -25,6 +25,7 @@ npm start           # 起 server（默认 :3000）
 - `GET /modulo?a=N&b=M` → 返回 a%b 的余数（**strict-schema** + **除零兜底**：`b=0`/`b=0.0` → 400；**JS 原生 truncated 取模**：余数符号跟随被除数 a，与数学 floored mod 区分）
 - `GET /factorial?n=N` → 返回 n! 阶乘（**整数白名单 strict-schema** `^\d+$` + **上界 18 拒**：`n > 18` → 400（精度上界，避免超过 `Number.MAX_SAFE_INTEGER`）+ **迭代精确累积**：`for(i=2; i<=n; i++) acc *= i`，不引入 BigInt / Stirling / gamma 近似）
 - `GET /increment?value=N` → 返回 `{result: N+1, operation: "increment"}`（**整数白名单 strict-schema** `^-?\d+$` + **精度上下界拒**：`|Number(value)| > 9007199254740990` → 400（+1 后避免超过 `Number.MAX_SAFE_INTEGER`）+ **query 名锁死**：只接受 `value`，别名 `n/a/b/x/val/input/...` 全 400）
+- `GET /decrement?value=N` → 返回 `{result: N-1, operation: "decrement"}`（**整数白名单 strict-schema** `^-?\d+$` + **精度上下界拒**：`|Number(value)| > 9007199254740990` → 400（-1 后避免低于 `Number.MIN_SAFE_INTEGER`）+ **query 名锁死 + 唯一性**：`Object.keys(req.query).length === 1` 且只接受 `value`，缺参 / 别名 / 多余 query 全 400）
 
 ### `GET /sum` 示例
 
@@ -408,3 +409,87 @@ curl -s -o /dev/stderr -w 'HTTP %{http_code}\n' 'http://127.0.0.1:3000/increment
 ```
 
 响应 schema 完整性（成功响应顶层 keys 严格等于 `["operation","result"]`；不漂到禁用同义字段 `incremented`/`next`/`successor`/`n_plus_one`/`plus_one`/`succ`/`inc`/`incr`/`incrementation`，也不漂到 generic 字段 `value`/`input`/`output`/`data`/`payload`/`answer`/`meta`，错误体顶层 keys 严格等于 `["error"]`）。
+
+### `GET /decrement` 示例
+
+happy path（成功响应顶层 keys 严格等于 `["operation","result"]`，`operation` 字面 `"decrement"`，`result = Number(value) - 1`）：
+
+```bash
+curl -s 'http://127.0.0.1:3000/decrement?value=5'
+# {"result":4,"operation":"decrement"}
+
+curl -s 'http://127.0.0.1:3000/decrement?value=0'
+# {"result":-1,"operation":"decrement"}    # off-by-one 零边界，不许漂到 result=0
+
+curl -s 'http://127.0.0.1:3000/decrement?value=1'
+# {"result":0,"operation":"decrement"}     # off-by-one 1 边界，不许漂到 result=1
+
+curl -s 'http://127.0.0.1:3000/decrement?value=-1'
+# {"result":-2,"operation":"decrement"}    # 负数 happy
+
+curl -s 'http://127.0.0.1:3000/decrement?value=01'
+# {"result":0,"operation":"decrement"}     # 前导 0 happy（不许错用八进制 parseInt(value, 8)）
+
+curl -s 'http://127.0.0.1:3000/decrement?value=-0'
+# {"result":-1,"operation":"decrement"}    # PRD ASSUMPTION 可选择项，-0 字符串照 Number 化为 0 走算术
+```
+
+精度上下界拒（核心兜底：strict 通过后显式 `Math.abs(Number(value)) > 9007199254740990` 判定，避免 `-1` 后低于 `Number.MIN_SAFE_INTEGER` 造成精度漂移；不引入 BigInt 重写）：
+
+```bash
+curl -s 'http://127.0.0.1:3000/decrement?value=9007199254740990'
+# {"result":9007199254740989,"operation":"decrement"}   # 精度上界 happy（边界 inside）
+
+curl -s 'http://127.0.0.1:3000/decrement?value=-9007199254740990'
+# {"result":-9007199254740991,"operation":"decrement"}  # 精度下界 happy（=== Number.MIN_SAFE_INTEGER）
+
+curl -s -o /dev/stderr -w 'HTTP %{http_code}\n' 'http://127.0.0.1:3000/decrement?value=9007199254740991'
+# {"error":"value 必须是唯一 query 名 + 匹配 ^-?\\d+$ ... + |value| ≤ 9007199254740990"}
+# HTTP 400  (上界 +1 拒)
+
+curl -s -o /dev/stderr -w 'HTTP %{http_code}\n' 'http://127.0.0.1:3000/decrement?value=-9007199254740991'
+# HTTP 400  (下界 -1 拒)
+```
+
+strict-schema 拒（**整数白名单** `^-?\d+$`，与 `/increment` 同款思路；负号 / 小数 / 前导 + / 双重负号 / 科学计数法 / 十六进制 / 千分位 / 空格 / `Infinity` / `NaN` / 字母串 / 空串全 400）：
+
+```bash
+curl -s -o /dev/stderr -w 'HTTP %{http_code}\n' 'http://127.0.0.1:3000/decrement?value=1.5'
+# HTTP 400  (小数)
+
+curl -s -o /dev/stderr -w 'HTTP %{http_code}\n' 'http://127.0.0.1:3000/decrement?value=1.0'
+# HTTP 400  (带小数点的"整数")
+
+curl -s -o /dev/stderr -w 'HTTP %{http_code}\n' 'http://127.0.0.1:3000/decrement?value=1e2'
+# HTTP 400  (科学计数法)
+
+curl -s -o /dev/stderr -w 'HTTP %{http_code}\n' 'http://127.0.0.1:3000/decrement?value=0xff'
+# HTTP 400  (十六进制)
+
+curl -s -o /dev/stderr -w 'HTTP %{http_code}\n' 'http://127.0.0.1:3000/decrement?value=%2B5'
+# HTTP 400  (前导 +5 URL 编码)
+
+curl -s -o /dev/stderr -w 'HTTP %{http_code}\n' 'http://127.0.0.1:3000/decrement?value=--5'
+# HTTP 400  (双重负号)
+
+curl -s -o /dev/stderr -w 'HTTP %{http_code}\n' 'http://127.0.0.1:3000/decrement?value=Infinity'
+# HTTP 400  (Infinity 字面)
+
+curl -s -o /dev/stderr -w 'HTTP %{http_code}\n' 'http://127.0.0.1:3000/decrement?value='
+# HTTP 400  (空串)
+```
+
+query 名锁死 + 唯一性（只接受 `value=` 且 `Object.keys(req.query).length === 1`；缺参 / 别名 / 多余 query 全拒 400）：
+
+```bash
+curl -s -o /dev/stderr -w 'HTTP %{http_code}\n' 'http://127.0.0.1:3000/decrement'
+# HTTP 400  (缺 value)
+
+curl -s -o /dev/stderr -w 'HTTP %{http_code}\n' 'http://127.0.0.1:3000/decrement?n=5'
+# HTTP 400  (别名 n)
+
+curl -s -o /dev/stderr -w 'HTTP %{http_code}\n' 'http://127.0.0.1:3000/decrement?value=5&extra=1'
+# HTTP 400  (query 唯一性：多余 extra)
+```
+
+响应 schema 完整性（成功响应顶层 keys 严格等于 `["operation","result"]`；不漂到 PR-G 死规则继承的 34 个禁用响应字段名 `decremented`/`predecessor`/`prev`/`previous`/`n_minus_one`/`minus_one`/`pred`/`dec`/`decr`/`decrementation`/`subtraction`/`lower`/`lowered`/`before`/`earlier` 等，也不漂到 generic 字段 `value`/`input`/`output`/`data`/`payload`/`response`/`answer`/`out`/`meta`/`original`，也不复用其他 endpoint 字段名 `sum`/`product`/`quotient`/`power`/`remainder`/`factorial`/`negation`/`incremented`/`increment`，错误体顶层 keys 严格等于 `["error"]`，不含 `result`/`operation`/`message`/`msg`/`reason`/`detail`/`details`/`description`/`info`/`code` 等 10 个错误响应禁用字段）。
