@@ -171,8 +171,11 @@ async function selectBestBridge() {
     .sort((a, b) => a.avgPct - b.avgPct);
 
   if (healthy.length === 0) {
-    console.warn('[executor] 所有 Codex Bridge 不可用，降级到 XIAN_CODEX_BRIDGE_URL');
-    return XIAN_CODEX_BRIDGE_URL;
+    // learning fdf87ba0: 旧实现 fallback 到 XIAN_CODEX_BRIDGE_URL 会向已死端点派任务，
+    // 让任务卡在 in_progress 永远占据 Codex 并发池 slot。
+    // 改为返回 null，让调用方（triggerCodexBridge）跳过 dispatch，task 回 queued，slot 释放。
+    console.warn('[executor] 所有 Codex Bridge /health 失败 — 跳过 dispatch（避免向死端点派任务造成并发池死锁）');
+    return null;
   }
 
   const selected = healthy[0];
@@ -1130,13 +1133,14 @@ async function requeueTask(taskId, reason, evidence = {}) {
 
     if (existing.rows.length === 0) {
       await pool.query(`
-        INSERT INTO learnings (title, category, trigger_event, content, metadata, content_hash, version, is_latest, digested)
-        VALUES ($1, 'failure_pattern', 'watchdog_kill', $2, $3, $4, 1, true, false)
+        INSERT INTO learnings (title, category, trigger_event, content, metadata, content_hash, version, is_latest, digested, task_id)
+        VALUES ($1, 'failure_pattern', 'watchdog_kill', $2, $3, $4, 1, true, false, $5)
       `, [
         failureTitle,
         failureContent,
         JSON.stringify({ task_id: taskId, task_type: task_type || null, project_id: project_id || null }),
         contentHash,
+        taskId || null,
       ]);
     } else {
       console.log(`[executor] Skipping duplicate failure_pattern (hash=${contentHash})`);
@@ -2567,6 +2571,25 @@ async function triggerCodexBridge(task, forceBridgeUrl = null) {
     const injectedAccounts = await selectCodexAccounts();
 
     const bridgeUrl = forceBridgeUrl ?? await selectBestBridge();
+    if (!bridgeUrl) {
+      // selectBestBridge 返回 null 表示所有 bridge /health 都失败 — 直接放弃 dispatch，
+      // 让 dispatcher 把 task 回 queued，释放 Codex 并发池 slot（learning fdf87ba0 死锁防御）。
+      console.warn(`[executor] Codex Bridge 不可用 — task=${task.id} 跳过 dispatch`);
+      return { success: false, taskId: task.id, error: 'no_live_codex_bridge', executor: 'codex-bridge' };
+    }
+
+    // Dispatch 层 preflight 存活检查：forceBridgeUrl 路径绕过了 selectBestBridge 的健康过滤，
+    // 而 selectBestBridge 的结果也可能在选完后到这里的几毫秒间端点掉线。
+    // 派任务前做一次短超时存活探测，失败即放弃，避免 task 被死端点吞掉永远占 slot。
+    // 根因：learning fdf87ba0 — Codex 端点断联 8 天产生永久并发池死锁。
+    try {
+      const livenessRes = await fetch(`${bridgeUrl}/health`, { signal: AbortSignal.timeout(2000) });
+      if (!livenessRes.ok) throw new Error(`HTTP ${livenessRes.status}`);
+    } catch (preflightErr) {
+      console.warn(`[executor] Codex Bridge preflight 失败 ${bridgeUrl}: ${preflightErr.message} (task=${task.id})`);
+      return { success: false, taskId: task.id, error: `codex_bridge_preflight_failed: ${preflightErr.message}`, executor: 'codex-bridge' };
+    }
+
     const payload = buildCodexBridgePayload(task, promptContent, taskBranch, injectedAccounts, isCodexDev, isCrystallize);
     const response = await fetch(`${bridgeUrl}/run`, {
       method: 'POST',

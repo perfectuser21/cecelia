@@ -78,8 +78,8 @@ export async function recordLearning(analysis) {
 
     const summary = generateL0Summary(`${title} ${content}`);
     const result = await pool.query(`
-      INSERT INTO learnings (title, category, trigger_event, content, strategy_adjustments, metadata, content_hash, version, is_latest, summary)
-      VALUES ($1, $2, $3, $4, $5, $6, $7, 1, true, $8)
+      INSERT INTO learnings (title, category, trigger_event, content, strategy_adjustments, metadata, content_hash, version, is_latest, summary, task_id)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, 1, true, $8, $9)
       RETURNING *
     `, [
       title,
@@ -90,6 +90,7 @@ export async function recordLearning(analysis) {
       JSON.stringify({ task_id, confidence: analysis.confidence }),
       contentHash,
       summary,
+      task_id || null,
     ]);
 
     const learning = result.rows[0];
@@ -689,7 +690,7 @@ export async function extractConversationLearning(userMessage, reply, dbPool) {
  * @param {import('pg').Pool} [dbPool] - 可选，默认用全局 pool
  * @returns {Promise<{ id: string, upserted: boolean }>}
  */
-export async function upsertLearning({ title, content = '', category = 'general', triggerEvent = null }, dbPool) {
+export async function upsertLearning({ title, content = '', category = 'general', triggerEvent = null, taskId = null }, dbPool) {
   const p = dbPool || pool;
 
   const existing = await p.query(
@@ -711,10 +712,10 @@ export async function upsertLearning({ title, content = '', category = 'general'
   }
 
   const result = await p.query(
-    `INSERT INTO learnings (title, category, trigger_event, content, frequency_count, last_reinforced_at)
-     VALUES ($1, $2, $3, $4, 1, NOW())
+    `INSERT INTO learnings (title, category, trigger_event, content, frequency_count, last_reinforced_at, task_id)
+     VALUES ($1, $2, $3, $4, 1, NOW(), $5)
      RETURNING id`,
-    [title, category, triggerEvent, content]
+    [title, category, triggerEvent, content, taskId]
   );
   return { id: result.rows[0].id, upserted: true };
 }
