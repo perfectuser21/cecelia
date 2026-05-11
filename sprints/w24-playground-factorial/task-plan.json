@@ -5,24 +5,23 @@
   "tasks": [
     {
       "task_id": "ws1",
-      "title": "playground 加 GET /factorial（int-only strict-schema + 上界 18 拒 + 跨调用递推不变量 oracle + PR-D Bug 6 inline SKILL 真生效验收）",
-      "scope": "在 playground/server.js 的 /modulo 之后、app.listen 之前新增 GET /factorial 路由：用新的整数白名单 ^\\d+$（禁复用 STRICT_NUMBER 浮点）做 strict-schema，再做显式 Number(n) > 18 上界拒，再迭代 for(i=2; i<=Number(n); i++) result*=i 精确复算，200 返 {factorial: result}。同步在 playground/tests/server.test.js 新增 describe('GET /factorial') 块覆盖 happy 7+/上界拒 3+/strict 拒 8+/值 oracle 3+/跨调用递推 oracle 4+/schema 严等/错误体不含 factorial/query 别名锁/回归 6+。同步在 playground/README.md 端点段加 /factorial + 4 类示例（含跨调用递推示例）。零新依赖，不动旧 6 路由一字。",
+      "title": "playground 加 GET /factorial（strict-schema ^\\d+$ + 上界 18 拒 + 跨调用递推不变量 oracle + PR-D Bug 6 inline SKILL 真生效验收）",
+      "scope": "在 playground/server.js 的 /modulo 之后、app.listen 之前新增 GET /factorial 路由：用新的非负整数白名单正则 ^\\d+$（**禁复用** STRICT_NUMBER 浮点 regex 假绿）做 strict-schema 校验，再做显式 Number(n) > 18 上界拒，再用 for(let i=2; i<=Number(n); i++) result*=i 迭代精确复算（n=0 / n=1 短路 1），200 返 {factorial: result}。同步在 playground/tests/server.test.js 新增 describe('GET /factorial') 块覆盖：happy ≥ 7（含 n=0/1/2/5/10/12/18）+ 上界拒 ≥ 3（n=19/20/100）+ strict 拒 ≥ 8 类 + 值复算 oracle ≥ 3（含 n=18 边界）+ **跨调用递推 oracle ≥ 4**（含 f(5)=5*f(4) + f(18)=18*f(17) + f(10)=10*f(9) + f(2)=2*f(1)）+ schema 严等 keys=['factorial'] + 错误体 keys=['error'] + 失败 body 不含 factorial + query 别名锁 + 现有 6 路由回归 ≥ 6。同步在 playground/README.md 端点段加 /factorial + happy/上界拒/strict 拒/跨调用递推 各示例。零新依赖，不动旧 6 路由一字代码 / 一字 README 段。",
       "dod": [
-        "[BEHAVIOR] GET /factorial?n=5 返 200 + {factorial:120}，顶层 keys 严等 ['factorial']",
-        "[BEHAVIOR] GET /factorial?n=0 与 n=1 均返 {factorial:1}（数学边界 0!=1!=1）",
+        "[BEHAVIOR] GET /factorial?n=5 返 200 + {factorial:120}，顶层 keys 严等 ['factorial']，body 不含 product/result/value/fact/sum 等禁用字段",
+        "[BEHAVIOR] GET /factorial?n=0 与 n=1 均返 {factorial:1}（数学边界 0!=1!=1，防 off-by-one）",
         "[BEHAVIOR] GET /factorial?n=18 严等 6402373705728000 且 < Number.MAX_SAFE_INTEGER（精度上界）",
         "[BEHAVIOR] GET /factorial?n=19 / n=20 / n=100 均返 400 + {error:'<non-empty>'} body 不含 factorial（上界拒）",
-        "[BEHAVIOR] strict-schema 拒 -1/5.5/+5/1e2/0xff/abc/空串/Infinity/NaN/1,000 全 400",
-        "[BEHAVIOR] 跨调用递推不变量 f(5)===5*f(4) 与 f(18)===18*f(17) 严等（W24 核心 oracle）",
-        "[BEHAVIOR] query 参数名锁死 n：value/num/input/x/a 等别名全拒 400 且不含 factorial",
-        "[BEHAVIOR] 响应禁用 result/value/product/fact/answer/sum/quotient/power/remainder 等同义字段",
-        "[BEHAVIOR] 旧 6 路由 /health/sum/multiply/divide/power/modulo 回归全过",
-        "[BEHAVIOR] vitest 全套 NODE_ENV=test npx vitest run 退出码 0",
-        "[BEHAVIOR] PR diff 行级断言：playground/server.js 旧 6 路由 app.get 行零删除（r2 加固，根除 cascade 假绿）",
-        "[ARTIFACT] playground/server.js 含 app.get('/factorial' 路由 + 整数白名单 ^\\d+$ + 显式 Number(n) > 18 上界拒 + 不引入 BigInt / Number.isFinite / Stirling/gamma 近似",
-        "[ARTIFACT] playground/tests/server.test.js 含 describe('GET /factorial') 块，至少 7 条 happy + 3 条上界拒 + 8 条 strict 拒 + 3 条值 oracle + 2 条跨调用递推 oracle + schema 严等 + 错误体不含 factorial + 回归 6 条",
-        "[ARTIFACT] playground/README.md 端点段含 /factorial 与 happy/0!/上界拒/strict 拒/跨调用递推 各示例 ≥ 1",
-        "[ARTIFACT] playground/package.json dependencies 仅 express、devDependencies 仅 supertest+vitest（不引入 bignumber.js/decimal.js/mathjs/zod/joi/ajv）"
+        "[BEHAVIOR] strict-schema 拒 -1 / 5.5 / 5.0 / +5 / 1e2 / 0xff / abc / 空串 / Infinity / NaN 全 400（^\\d+$ 严格非负整数）",
+        "[BEHAVIOR] 跨调用递推不变量 f(5)===5*f(4) + f(18)===18*f(17) + f(10)===10*f(9) 严等（W24 核心 oracle，单 curl 单 oracle 范式首次扩展为双 curl join 关系断言）",
+        "[BEHAVIOR] query 参数名锁死 n：value=5 / num=5 / x=5 等别名全拒 400 不含 factorial",
+        "[BEHAVIOR] GET /factorial?n=abc 错误响应顶层 keys 严等 ['error']，body 不含 message/msg/reason/detail/factorial",
+        "[BEHAVIOR] 旧 6 路由 /health /sum /multiply /divide /power /modulo happy 全 200（回归）",
+        "[BEHAVIOR] PR diff 行级断言：playground/server.js 旧 6 路由 app.get 行零删除（防 cascade 假绿）",
+        "[ARTIFACT] playground/server.js 含 app.get('/factorial' 路由 + 字面量 ^\\d+$ 正则 + 显式 Number(n) > 18 上界拒 + 字段 `factorial`；不含 BigInt / lgamma / Lanczos / Stirling / Math.exp",
+        "[ARTIFACT] playground/tests/server.test.js 含 describe('GET /factorial') 块（与 W19~W23 平级），含 ≥ 3 条 toBe(独立迭代复算) 值 oracle + ≥ 3 条 toBe(N * res_(N-1).body.factorial) 跨调用递推 oracle + 1 条 Object.keys === ['factorial'] schema oracle",
+        "[ARTIFACT] playground/README.md 端点段含 /factorial 行 + happy（含 n=0 边界）/上界拒（n=19）/strict 拒/跨调用递推 各示例 ≥ 1",
+        "[ARTIFACT] playground/package.json dependencies 仅 express、devDependencies 仅 supertest+vitest（不引入 bignumber.js/decimal.js/mathjs/zod/joi/ajv 等）"
       ],
       "files": [
         "playground/server.js",

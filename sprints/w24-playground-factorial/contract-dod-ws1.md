@@ -2,187 +2,183 @@
 skeleton: false
 journey_type: autonomous
 ---
-# Contract DoD — Workstream 1: playground 加 GET /factorial（int-only · 上界 18 拒 · 跨调用递推 oracle · PR-D Bug 6 验收）
+# Contract DoD — Workstream 1: playground 加 GET /factorial（strict-schema `^\d+$` + 上界 18 拒 + 跨调用递推 oracle）
 
-**范围**：
-- `playground/server.js`：`/modulo` 之后、`app.listen` 之前新增 `GET /factorial` 路由。strict-schema 用**新的** `^\d+$` 整数白名单（**禁止**复用既有浮点 `STRICT_NUMBER`）；判定顺序 = 缺参 → strict regex → `Number(n) > 18` 上界拒 → 迭代 `for(i=2; i<=Number(n); i++) result*=i` 累积复算 → 200 返 `{factorial: result}`。
-- `playground/tests/server.test.js`：新增 `describe('GET /factorial')` 块，含 happy 7+（n=0/1/2/5/10/12/18）、上界拒 3+（19/20/100）、strict 拒 8+、值 oracle 3+（含 n=18 严等 6402373705728000）、**跨调用递推 oracle 2+**（k=5 与 k=18 同 it 内两次 supertest）、schema oracle 2+、错误体不含 factorial 1+、错误体 keys 严等 ["error"] 1+、回归断言 6+。
-- `playground/README.md`：端点列表 + happy（含 n=0）+ 上界拒 + strict 拒 + 跨调用递推 各示例 ≥ 1。
-
-**禁动**：旧 6 路由 `/health`/`/sum`/`/multiply`/`/divide`/`/power`/`/modulo` 实现与单测一字不动；不引入新依赖（含 BigInt 重写、bignumber.js、decimal.js、mathjs、zod、joi、ajv）；不引入 `Number.isFinite` 兜底（strict + `n ≤ 18` 已保证有限）；不支持负数 / 浮点 / 复数 / gamma 延拓阶乘。
-
-**大小**：M（server ≈ 12 行净增 + tests ≈ 220 行净增含递推用例 + README ≈ 35 行）
-**依赖**：无（playground 独立子项目；W19~W23 作回归基线）
-
----
+**范围**: `playground/server.js` 加 `/factorial` 路由（strict-schema `^\d+$` 校验 + 显式 `Number(n) > 18` 上界拒 + 迭代复算 + 字段锁死 `factorial`）+ `playground/tests/server.test.js` 加 `/factorial` describe 块 + `playground/README.md` 加 `/factorial` 段。**不动 `/health` / `/sum` / `/multiply` / `/divide` / `/power` / `/modulo` 的实现/测试/README 段**，零新依赖。
+**大小**: M（约 14 行 server.js 净增 + 约 240 行测试 + 约 35 行 README）
+**依赖**: 无（W19~W23 已合并，作为回归基线）
 
 ## ARTIFACT 条目
 
-- [x] [ARTIFACT] `playground/server.js` 含 `GET /factorial` 路由注册
+- [ ] [ARTIFACT] `playground/server.js` 含 `GET /factorial` 路由注册
   Test: manual:node -e "const c=require('fs').readFileSync('playground/server.js','utf8');if(!/app\.get\(\s*['\"]\/factorial['\"]/m.test(c))process.exit(1)"
 
-- [x] [ARTIFACT] `playground/server.js` 仍保留 `/health`（防误删 bootstrap）
-  Test: manual:node -e "const c=require('fs').readFileSync('playground/server.js','utf8');if(!/app\.get\(\s*['\"]\/health['\"]/m.test(c))process.exit(1)"
+- [ ] [ARTIFACT] `playground/server.js` 仍保留 `/health` `/sum` `/multiply` `/divide` `/power` `/modulo` 路由（防误删 W19~W23 + bootstrap）
+  Test: manual:node -e "const c=require('fs').readFileSync('playground/server.js','utf8');for(const r of ['/health','/sum','/multiply','/divide','/power','/modulo']){if(!c.includes(\"'\"+r+\"'\")&&!c.includes('\"'+r+'\"'))process.exit(1)}"
 
-- [x] [ARTIFACT] `playground/server.js` 仍保留 `/sum`（防误删 W19）
-  Test: manual:node -e "const c=require('fs').readFileSync('playground/server.js','utf8');if(!/app\.get\(\s*['\"]\/sum['\"]/m.test(c))process.exit(1)"
+- [ ] [ARTIFACT] `playground/server.js` 实现 `/factorial` 时使用 `^\\d+$` 完整匹配正则（非负整数白名单，与 W20~W23 的 `^-?\\d+(\\.\\d+)?$` 浮点 regex 字面不同）
+  Test: manual:node -e "const c=require('fs').readFileSync('playground/server.js','utf8');const seg=(c.split(/app\.get\(\s*['\"]\/factorial['\"]/)[1]||'').split(/app\.get\(/)[0];if(!/\\^\\\\d\\+\\$/.test(seg))process.exit(1)"
 
-- [x] [ARTIFACT] `playground/server.js` 仍保留 `/multiply`（防误删 W20）
-  Test: manual:node -e "const c=require('fs').readFileSync('playground/server.js','utf8');if(!/app\.get\(\s*['\"]\/multiply['\"]/m.test(c))process.exit(1)"
-
-- [x] [ARTIFACT] `playground/server.js` 仍保留 `/divide`（防误删 W21）
-  Test: manual:node -e "const c=require('fs').readFileSync('playground/server.js','utf8');if(!/app\.get\(\s*['\"]\/divide['\"]/m.test(c))process.exit(1)"
-
-- [x] [ARTIFACT] `playground/server.js` 仍保留 `/power`（防误删 W22）
-  Test: manual:node -e "const c=require('fs').readFileSync('playground/server.js','utf8');if(!/app\.get\(\s*['\"]\/power['\"]/m.test(c))process.exit(1)"
-
-- [x] [ARTIFACT] `playground/server.js` 仍保留 `/modulo`（防误删 W23）
-  Test: manual:node -e "const c=require('fs').readFileSync('playground/server.js','utf8');if(!/app\.get\(\s*['\"]\/modulo['\"]/m.test(c))process.exit(1)"
-
-- [x] [ARTIFACT] `playground/server.js` `/factorial` 段使用**整数严格白名单** `^\d+$`（不允许浮点 / 负号 / 前导 +），且不复用 `STRICT_NUMBER`
-  Test: manual:node -e "const c=require('fs').readFileSync('playground/server.js','utf8');const seg=(c.split(/app\.get\(\s*['\"]\/factorial['\"]/)[1]||'').split(/app\.get\(/)[0];if(!/\\^\\\\d\\+\\$/.test(seg))process.exit(1);if(/STRICT_NUMBER/.test(seg))process.exit(2)"
-
-- [x] [ARTIFACT] `playground/server.js` `/factorial` 段含显式 `Number(n) > 18` 上界拒判定（位置在 strict 通过后、计算之前）
+- [ ] [ARTIFACT] `playground/server.js` `/factorial` 含显式上界拒 `Number(n) > 18` 判定
   Test: manual:node -e "const c=require('fs').readFileSync('playground/server.js','utf8');const seg=(c.split(/app\.get\(\s*['\"]\/factorial['\"]/)[1]||'').split(/app\.get\(/)[0];if(!/Number\(\s*n\s*\)\s*>\s*18/.test(seg))process.exit(1)"
 
-- [x] [ARTIFACT] `playground/server.js` `/factorial` 段响应字段名为 `factorial`，禁用 `result`/`value`/`answer`/`fact`/`f`/`out`/`output`/`data`/`payload`/`response`/`product`/`sum`/`quotient`/`power`/`remainder` 等同义/复用字段
-  Test: manual:node -e "const c=require('fs').readFileSync('playground/server.js','utf8');const seg=(c.split(/app\.get\(\s*['\"]\/factorial['\"]/)[1]||'').split(/app\.get\(/)[0];if(!/factorial\s*:/.test(seg))process.exit(1);if(/\\b(result|value|answer|fact|f|out|output|data|payload|response|product|sum|quotient|power|remainder)\\s*:/.test(seg))process.exit(2)"
+- [ ] [ARTIFACT] `playground/server.js` `/factorial` 响应体严格使用字段名 `factorial`（不允许 `result`/`value`/`fact`/`f`/`output`/`product`/`sum`/`quotient`/`power`/`remainder` 等漂移）
+  Test: manual:node -e "const c=require('fs').readFileSync('playground/server.js','utf8');const seg=(c.split(/app\.get\(\s*['\"]\/factorial['\"]/)[1]||'').split(/app\.get\(/)[0];if(!/factorial\s*:/.test(seg))process.exit(1);if(/\\b(result|value|fact|output|product|sum|quotient|power|remainder|operation|data|payload|response)\\s*:/.test(seg))process.exit(2)"
 
-- [x] [ARTIFACT] `playground/server.js` `/factorial` 段不引入 `Number.isFinite` 兜底（strict + `n ≤ 18` 已保证结果有限，多余兜底视为合同违约）
-  Test: manual:node -e "const c=require('fs').readFileSync('playground/server.js','utf8');const seg=(c.split(/app\.get\(\s*['\"]\/factorial['\"]/)[1]||'').split(/app\.get\(/)[0];if(/Number\.isFinite/.test(seg))process.exit(1)"
-
-- [x] [ARTIFACT] `playground/server.js` `/factorial` 段不引入 BigInt（响应必须是 JS Number，不能是 BigInt 字符串）
+- [ ] [ARTIFACT] `playground/server.js` `/factorial` 不引入 BigInt 重写（响应必为 JS Number；strict + n≤18 已保证整数精度无损）
   Test: manual:node -e "const c=require('fs').readFileSync('playground/server.js','utf8');const seg=(c.split(/app\.get\(\s*['\"]\/factorial['\"]/)[1]||'').split(/app\.get\(/)[0];if(/BigInt/.test(seg))process.exit(1)"
 
-- [x] [ARTIFACT] `playground/server.js` `/factorial` 段不引入 Stirling / gamma / lgamma / Lanczos 近似实现（必须迭代精确累积）
-  Test: manual:node -e "const c=require('fs').readFileSync('playground/server.js','utf8');const seg=(c.split(/app\.get\(\s*['\"]\/factorial['\"]/)[1]||'').split(/app\.get\(/)[0];if(/(Stirling|stirling|gamma|lgamma|Lanczos|lanczos|Math\.exp|Math\.log)/.test(seg))process.exit(1)"
+- [ ] [ARTIFACT] `playground/server.js` `/factorial` 不引入 Stirling/Lanczos gamma 近似（严禁 Math.lgamma / Math.gamma / Math.exp 等近似算法字符串）
+  Test: manual:node -e "const c=require('fs').readFileSync('playground/server.js','utf8');const seg=(c.split(/app\.get\(\s*['\"]\/factorial['\"]/)[1]||'').split(/app\.get\(/)[0];if(/lgamma|gamma|Stirling|Lanczos|Math\.exp/.test(seg))process.exit(1)"
 
-- [x] [ARTIFACT] `playground/tests/server.test.js` 含 `describe('GET /factorial'` 块
-  Test: manual:node -e "const c=require('fs').readFileSync('playground/tests/server.test.js','utf8');if(c.indexOf(\"describe('GET /factorial\")===-1 && c.indexOf('describe(\"GET /factorial')===-1)process.exit(1)"
+- [ ] [ARTIFACT] `playground/tests/server.test.js` 含 `/factorial` describe 块
+  Test: manual:node -e "const c=require('fs').readFileSync('playground/tests/server.test.js','utf8');if(!c.includes('/factorial'))process.exit(1)"
 
-- [x] [ARTIFACT] `playground/tests/server.test.js` `/factorial` 段同时含 happy（toBe(200) + factorial）与 error（toBe(400)）断言
-  Test: manual:node -e "const c=require('fs').readFileSync('playground/tests/server.test.js','utf8');const i=c.indexOf('/factorial');if(i<0)process.exit(1);if(!(/toBe\(200\)/.test(c.slice(i))&&/toBe\(400\)/.test(c.slice(i))&&/factorial/.test(c.slice(i))))process.exit(2)"
+- [ ] [ARTIFACT] `playground/tests/server.test.js` `/factorial` 含 happy 200 + 错误 400 + 上界拒 + 跨调用递推 oracle 至少各 1 条
+  Test: manual:node -e "const c=require('fs').readFileSync('playground/tests/server.test.js','utf8');const idx=c.indexOf('/factorial');if(idx<0)process.exit(1);const seg=c.slice(idx);if(!(/toBe\(200\)/.test(seg)&&/toBe\(400\)/.test(seg)&&/n=19|n:\s*['\"]19['\"]/.test(seg)&&/n=17|n:\s*['\"]17['\"]/.test(seg)))process.exit(2)"
 
-- [x] [ARTIFACT] `playground/tests/server.test.js` `/factorial` 至少 7 条 happy（含 n=0/1/2/5/10/12/18）
-  Test: manual:node -e "const c=require('fs').readFileSync('playground/tests/server.test.js','utf8');const i=c.indexOf('/factorial');if(i<0)process.exit(1);const seg=c.slice(i);const must=['n:\\s*[\\'\"]0[\\'\"]','n:\\s*[\\'\"]1[\\'\"]','n:\\s*[\\'\"]2[\\'\"]','n:\\s*[\\'\"]5[\\'\"]','n:\\s*[\\'\"]10[\\'\"]','n:\\s*[\\'\"]12[\\'\"]','n:\\s*[\\'\"]18[\\'\"]'];for(const p of must){if(!new RegExp(p).test(seg)){console.error('miss '+p);process.exit(2)}}"
+- [ ] [ARTIFACT] `playground/tests/server.test.js` `/factorial` 至少 1 条 schema oracle `Object.keys(res.body)).toEqual(['factorial'])`
+  Test: manual:node -e "const c=require('fs').readFileSync('playground/tests/server.test.js','utf8');const idx=c.indexOf('/factorial');if(idx<0)process.exit(1);if(!/expect\(\s*Object\.keys\(\s*res\.body\s*\)[^)]*\)\.toEqual\(\s*\[\s*['\"]factorial['\"]\s*\]\s*\)/.test(c.slice(idx)))process.exit(2)"
 
-- [x] [ARTIFACT] `playground/tests/server.test.js` `/factorial` 显式断言 0! = 1 与 1! = 1（数学定义）
-  Test: manual:node -e "const c=require('fs').readFileSync('playground/tests/server.test.js','utf8');const i=c.indexOf('/factorial');if(i<0)process.exit(1);const seg=c.slice(i);if(!/n:\\s*['\"]0['\"][\\s\\S]{0,400}factorial:\\s*1\\b/.test(seg))process.exit(2);if(!/n:\\s*['\"]1['\"][\\s\\S]{0,400}factorial:\\s*1\\b/.test(seg))process.exit(3)"
+- [ ] [ARTIFACT] `playground/tests/server.test.js` 仍保留现有 `/health` / `/sum` / `/multiply` / `/divide` / `/power` / `/modulo` 用例（W19~W23 + bootstrap 回归）
+  Test: manual:node -e "const c=require('fs').readFileSync('playground/tests/server.test.js','utf8');for(const r of ['/health','/sum','/multiply','/divide','/power','/modulo']){if(!c.includes(r))process.exit(1)}"
 
-- [x] [ARTIFACT] `playground/tests/server.test.js` `/factorial` 显式断言 18! = 6402373705728000（精度上界字面量）
-  Test: manual:node -e "const c=require('fs').readFileSync('playground/tests/server.test.js','utf8');const i=c.indexOf('/factorial');if(i<0)process.exit(1);if(!/6402373705728000/.test(c.slice(i)))process.exit(2)"
+- [ ] [ARTIFACT] `playground/README.md` 含 `/factorial` 字符串 + happy 示例（含 `n=5` 或 `n=0` 或 `n=10` 或 `n=18` 任一字面量）
+  Test: manual:node -e "const c=require('fs').readFileSync('playground/README.md','utf8');if(!c.includes('/factorial'))process.exit(1);const idx=c.indexOf('/factorial');if(!/n=5|n=0|n=10|n=18/.test(c.slice(idx)))process.exit(2)"
 
-- [x] [ARTIFACT] `playground/tests/server.test.js` `/factorial` 至少 3 条上界拒（n=19、n=20、n=100），断言 status 400
-  Test: manual:node -e "const c=require('fs').readFileSync('playground/tests/server.test.js','utf8');const i=c.indexOf('/factorial');if(i<0)process.exit(1);const seg=c.slice(i);const must=['n:\\s*[\\'\"]19[\\'\"]','n:\\s*[\\'\"]20[\\'\"]','n:\\s*[\\'\"]100[\\'\"]'];for(const p of must){if(!new RegExp(p).test(seg)){console.error('miss '+p);process.exit(2)}};if(!/toBe\\(400\\)/.test(seg))process.exit(3)"
+- [ ] [ARTIFACT] `playground/README.md` `/factorial` 段给出上界拒示例（`n=19` 或 `n=20` 或 `n=100` 字面量）
+  Test: manual:node -e "const c=require('fs').readFileSync('playground/README.md','utf8');const idx=c.indexOf('/factorial');if(idx<0)process.exit(1);if(!(/n=19|n=20|n=100/.test(c.slice(idx))))process.exit(2)"
 
-- [x] [ARTIFACT] `playground/tests/server.test.js` `/factorial` 显式覆盖 strict-schema 核心拒绝路径（`-1` + `5.5` + `+5`（含前导正号）+ `1e2`（科学计数法）+ `0xff`（十六进制）+ `Infinity` + `NaN` + `abc`/空串 各至少 1 条）
-  Test: manual:node -e "const c=require('fs').readFileSync('playground/tests/server.test.js','utf8');const i=c.indexOf('/factorial');if(i<0)process.exit(1);const seg=c.slice(i);const must=['-1','5.5','+5','1e2','0xff','Infinity','NaN'];for(const m of must){if(!seg.includes(m)){console.error('miss '+m);process.exit(2)}}"
+- [ ] [ARTIFACT] `playground/README.md` 仍含 `/health` / `/sum` / `/multiply` / `/divide` / `/power` / `/modulo` 段（防误删）
+  Test: manual:node -e "const c=require('fs').readFileSync('playground/README.md','utf8');for(const r of ['/health','/sum','/multiply','/divide','/power','/modulo']){if(!c.includes(r))process.exit(1)}"
 
-- [x] [ARTIFACT] `playground/tests/server.test.js` `/factorial` 至少 3 条 oracle 值复算断言（独立 product 复算或字面量），其中至少 1 条覆盖 n=18 边界（断言 `6402373705728000`）
-  Test: manual:node -e "const c=require('fs').readFileSync('playground/tests/server.test.js','utf8');const i=c.indexOf('/factorial');if(i<0)process.exit(1);const seg=c.slice(i);const oracles=seg.match(/expect\\(\\s*res\\.body\\.factorial\\s*\\)\\.toBe\\(/g)||[];if(oracles.length<3)process.exit(2);if(!/6402373705728000/.test(seg))process.exit(3)"
-
-- [x] [ARTIFACT] `playground/tests/server.test.js` `/factorial` 至少 2 条**跨调用递推不变量** oracle：同 `it()` 内两次 `await request(app).get('/factorial')`，断言 `body_k.factorial === k * body_(k-1).factorial`，覆盖 k=5（小数）+ k=18（精度边界）
-  Test: manual:node -e "const c=require('fs').readFileSync('playground/tests/server.test.js','utf8');const i=c.indexOf('/factorial');if(i<0)process.exit(1);const seg=c.slice(i);const reqs=seg.match(/await\\s+request\\(\\s*app\\s*\\)\\s*\\.get\\(\\s*['\"]\\/factorial['\"]\\s*\\)/g)||[];if(reqs.length<14)process.exit(2);const recur=seg.match(/\\*\\s*[a-zA-Z0-9_.]*\\.body\\.factorial/g)||[];if(recur.length<2)process.exit(3);if(!/n:\\s*['\"]17['\"]/.test(seg))process.exit(4)"
-
-- [x] [ARTIFACT] `playground/tests/server.test.js` `/factorial` 至少 1 条 schema oracle：`expect(Object.keys(res.body)...).toEqual(['factorial'])` 严等
-  Test: manual:node -e "const c=require('fs').readFileSync('playground/tests/server.test.js','utf8');const i=c.indexOf('/factorial');if(i<0)process.exit(1);if(!/expect\\(\\s*Object\\.keys\\(\\s*res\\.body\\s*\\)[^)]*\\)\\.toEqual\\(\\s*\\[\\s*['\"]factorial['\"]\\s*\\]\\s*\\)/.test(c.slice(i)))process.exit(2)"
-
-- [x] [ARTIFACT] `playground/tests/server.test.js` `/factorial` 至少 1 条错误响应 schema oracle：`expect(Object.keys(res.body)...).toEqual(['error'])` 严等
-  Test: manual:node -e "const c=require('fs').readFileSync('playground/tests/server.test.js','utf8');const i=c.indexOf('/factorial');if(i<0)process.exit(1);if(!/expect\\(\\s*Object\\.keys\\(\\s*res\\.body\\s*\\)[^)]*\\)\\.toEqual\\(\\s*\\[\\s*['\"]error['\"]\\s*\\]\\s*\\)/.test(c.slice(i)))process.exit(2)"
-
-- [x] [ARTIFACT] `playground/tests/server.test.js` `/factorial` 至少 1 条断言错误响应 body 不含 factorial 字段（`not.toHaveProperty('factorial')` 或 `hasOwnProperty('factorial'))).toBe(false)`）
-  Test: manual:node -e "const c=require('fs').readFileSync('playground/tests/server.test.js','utf8');const i=c.indexOf('/factorial');if(i<0)process.exit(1);const seg=c.slice(i);if(!(/not\\.toHaveProperty\\(['\"]factorial['\"]\\)/.test(seg)||/hasOwnProperty[^)]*['\"]factorial['\"][^)]*\\)\\)\\.toBe\\(false\\)/.test(seg)))process.exit(2)"
-
-- [x] [ARTIFACT] `playground/tests/server.test.js` 仍保留 `/health` + `/sum` + `/multiply` + `/divide` + `/power` + `/modulo` 用例（W19~W23 回归基线）
-  Test: manual:node -e "const c=require('fs').readFileSync('playground/tests/server.test.js','utf8');if(!(c.includes('/health')&&c.includes('/sum')&&c.includes('/multiply')&&c.includes('/divide')&&c.includes('/power')&&c.includes('/modulo')))process.exit(1)"
-
-- [x] [ARTIFACT] `playground/README.md` 含 `/factorial` 字符串
-  Test: manual:node -e "const c=require('fs').readFileSync('playground/README.md','utf8');if(!c.includes('/factorial'))process.exit(1)"
-
-- [x] [ARTIFACT] `playground/README.md` 给出 `/factorial` happy 示例（含 `n=5` 或 `n=10` 或 `n=12` 字面量）
-  Test: manual:node -e "const c=require('fs').readFileSync('playground/README.md','utf8');const i=c.indexOf('/factorial');if(i<0||!(/n=5/.test(c.slice(i))||/n=10/.test(c.slice(i))||/n=12/.test(c.slice(i))))process.exit(1)"
-
-- [x] [ARTIFACT] `playground/README.md` 给出 `/factorial` 数学边界示例（含 `n=0` 字面量，证明 0!=1）
-  Test: manual:node -e "const c=require('fs').readFileSync('playground/README.md','utf8');const i=c.indexOf('/factorial');if(i<0||!/n=0/.test(c.slice(i)))process.exit(1)"
-
-- [x] [ARTIFACT] `playground/README.md` 给出 `/factorial` 上界拒示例（含 `n=19` 或 `n=20` 或 `n=100`）
-  Test: manual:node -e "const c=require('fs').readFileSync('playground/README.md','utf8');const i=c.indexOf('/factorial');if(i<0||!(/n=19/.test(c.slice(i))||/n=20/.test(c.slice(i))||/n=100/.test(c.slice(i))))process.exit(1)"
-
-- [x] [ARTIFACT] `playground/README.md` 给出 `/factorial` strict-schema 拒示例（`-1` 或 `5.5` 或 `1e2` 任一）
-  Test: manual:node -e "const c=require('fs').readFileSync('playground/README.md','utf8');const i=c.indexOf('/factorial');if(i<0||!(/n=-1/.test(c.slice(i))||/n=5\\.5/.test(c.slice(i))||/n=1e2/.test(c.slice(i))))process.exit(1)"
-
-- [x] [ARTIFACT] `playground/README.md` 给出 `/factorial` **跨调用递推不变量** 示例（含 `factorial(n) === n * factorial(n-1)` 或两次 curl `n=5` + `n=4` 演示）
-  Test: manual:node -e "const c=require('fs').readFileSync('playground/README.md','utf8');const i=c.indexOf('/factorial');if(i<0)process.exit(1);const seg=c.slice(i);if(!(/factorial\\(n\\)\\s*===\\s*n\\s*\\*\\s*factorial\\(n-1\\)/.test(seg)||/递推/.test(seg)))process.exit(2)"
-
-- [x] [ARTIFACT] `playground/README.md` 仍含 `/health` + `/sum` + `/multiply` + `/divide` + `/power` + `/modulo` 段（防误删）
-  Test: manual:node -e "const c=require('fs').readFileSync('playground/README.md','utf8');if(!(c.includes('/health')&&c.includes('/sum')&&c.includes('/multiply')&&c.includes('/divide')&&c.includes('/power')&&c.includes('/modulo')))process.exit(1)"
-
-- [x] [ARTIFACT] `playground/package.json` 未新增运行时依赖（dependencies 仅 `express`）
+- [ ] [ARTIFACT] `playground/package.json` 未新增运行时依赖（dependencies 仅 `express`）
   Test: manual:node -e "const p=require('./playground/package.json');const d=Object.keys(p.dependencies||{});if(d.length!==1||d[0]!=='express')process.exit(1)"
 
-- [x] [ARTIFACT] `playground/package.json` 未新增 devDependencies（仅 `supertest` + `vitest`，无 zod/joi/ajv/decimal.js/bignumber.js/mathjs）
+- [ ] [ARTIFACT] `playground/package.json` 未新增 devDependencies（仅 `supertest` + `vitest`，无 zod/joi/ajv/decimal.js/bignumber.js/mathjs）
   Test: manual:node -e "const p=require('./playground/package.json');const d=Object.keys(p.devDependencies||{}).sort().join(',');if(d!=='supertest,vitest')process.exit(1)"
 
----
+- [ ] [ARTIFACT] PR diff 行级断言 — 无旧路由 `app.get` 被删除（防 generator 改 server.js 时误删 W19~W23 任一）
+  Test: manual:bash -c 'cd /workspace && DEL=$(git diff origin/main -- playground/server.js 2>/dev/null | grep -E "^-\s*app\.get\(\s*[\x27\x22](\/health|\/sum|\/multiply|\/divide|\/power|\/modulo)[\x27\x22]" | wc -l); [ "$DEL" = "0" ]'
 
-## BEHAVIOR 条目（v7.4 内嵌可执行 manual:bash —— evaluator v1.1 直接跑，命令首词全在白名单 node/npm/curl/bash/psql + 安全工具 jq/kill/sleep/printf/[）
+## BEHAVIOR 条目（内嵌可执行 manual:bash 命令，v7.4 与 evaluator v1.1 协议对齐）
 
-- [x] [BEHAVIOR] GET /factorial?n=5 返 200 + `{factorial: 120}`，顶层 keys 严等 `["factorial"]`
-  Test: manual:bash -c 'cd playground && PLAYGROUND_PORT=3201 node server.js & SPID=$!; sleep 2; OK=$(curl -fs "localhost:3201/factorial?n=5" | jq -e ". == {factorial:120}" 2>/dev/null && printf OK); kill $SPID 2>/dev/null; [ "$OK" = "OK" ]'
+- [ ] [BEHAVIOR] GET /factorial?n=5 → 200 + body `.factorial == 120`
+  Test: manual:bash -c 'cd playground && PLAYGROUND_PORT=4101 node server.js > /dev/null 2>&1 & SPID=$!; sleep 2; curl -fs "http://127.0.0.1:4101/factorial?n=5" | jq -e ".factorial == 120"; RC=$?; kill $SPID 2>/dev/null; exit $RC'
+  期望: exit 0
 
-- [x] [BEHAVIOR] GET /factorial?n=5 响应 `.factorial` 类型为 number（防 BigInt 字符串）
-  Test: manual:bash -c 'cd playground && PLAYGROUND_PORT=3202 node server.js & SPID=$!; sleep 2; OK=$(curl -fs "localhost:3202/factorial?n=5" | jq -e ".factorial | type == \"number\"" 2>/dev/null && printf OK); kill $SPID 2>/dev/null; [ "$OK" = "OK" ]'
+- [ ] [BEHAVIOR] GET /factorial?n=10 → 200 + `.factorial == 3628800`（中位数 happy）
+  Test: manual:bash -c 'cd playground && PLAYGROUND_PORT=4102 node server.js > /dev/null 2>&1 & SPID=$!; sleep 2; curl -fs "http://127.0.0.1:4102/factorial?n=10" | jq -e ".factorial == 3628800"; RC=$?; kill $SPID 2>/dev/null; exit $RC'
+  期望: exit 0
 
-- [x] [BEHAVIOR] GET /factorial?n=0 返 200 + `{factorial: 1}`（数学定义 0!=1）
-  Test: manual:bash -c 'cd playground && PLAYGROUND_PORT=3203 node server.js & SPID=$!; sleep 2; OK=$(curl -fs "localhost:3203/factorial?n=0" | jq -e ". == {factorial:1}" 2>/dev/null && printf OK); kill $SPID 2>/dev/null; [ "$OK" = "OK" ]'
+- [ ] [BEHAVIOR] GET /factorial?n=12 → 200 + `.factorial == 479001600`
+  Test: manual:bash -c 'cd playground && PLAYGROUND_PORT=4103 node server.js > /dev/null 2>&1 & SPID=$!; sleep 2; curl -fs "http://127.0.0.1:4103/factorial?n=12" | jq -e ".factorial == 479001600"; RC=$?; kill $SPID 2>/dev/null; exit $RC'
+  期望: exit 0
 
-- [x] [BEHAVIOR] GET /factorial?n=1 返 200 + `{factorial: 1}`（1!=1，防 off-by-one）
-  Test: manual:bash -c 'cd playground && PLAYGROUND_PORT=3204 node server.js & SPID=$!; sleep 2; OK=$(curl -fs "localhost:3204/factorial?n=1" | jq -e ". == {factorial:1}" 2>/dev/null && printf OK); kill $SPID 2>/dev/null; [ "$OK" = "OK" ]'
+- [ ] [BEHAVIOR] GET /factorial?n=0 → 200 + `.factorial == 1`（数学定义 0! = 1，边界 #1）
+  Test: manual:bash -c 'cd playground && PLAYGROUND_PORT=4104 node server.js > /dev/null 2>&1 & SPID=$!; sleep 2; curl -fs "http://127.0.0.1:4104/factorial?n=0" | jq -e ".factorial == 1"; RC=$?; kill $SPID 2>/dev/null; exit $RC'
+  期望: exit 0
 
-- [x] [BEHAVIOR] GET /factorial?n=18 返 200 + `{factorial: 6402373705728000}`（精度上界精确整数，< MAX_SAFE_INTEGER）
-  Test: manual:bash -c 'cd playground && PLAYGROUND_PORT=3205 node server.js & SPID=$!; sleep 2; OK=$(curl -fs "localhost:3205/factorial?n=18" | jq -e ".factorial == 6402373705728000 and .factorial < 9007199254740991" 2>/dev/null && printf OK); kill $SPID 2>/dev/null; [ "$OK" = "OK" ]'
+- [ ] [BEHAVIOR] GET /factorial?n=1 → 200 + `.factorial == 1`（边界 #2）
+  Test: manual:bash -c 'cd playground && PLAYGROUND_PORT=4105 node server.js > /dev/null 2>&1 & SPID=$!; sleep 2; curl -fs "http://127.0.0.1:4105/factorial?n=1" | jq -e ".factorial == 1"; RC=$?; kill $SPID 2>/dev/null; exit $RC'
+  期望: exit 0
 
-- [x] [BEHAVIOR] GET /factorial?n=19 返 400（上界拒），错误体严等 `{error: "<non-empty>"}` 不含 factorial 字段
-  Test: manual:bash -c 'cd playground && PLAYGROUND_PORT=3206 node server.js & SPID=$!; sleep 2; CODE=$(curl -s -o /tmp/r19.json -w "%{http_code}" "localhost:3206/factorial?n=19"); OK=$(jq -e "(keys == [\"error\"]) and (.error | type == \"string\" and length > 0) and (has(\"factorial\") | not)" < /tmp/r19.json 2>/dev/null && printf OK); kill $SPID 2>/dev/null; [ "$CODE" = "400" ] && [ "$OK" = "OK" ]'
+- [ ] [BEHAVIOR] GET /factorial?n=18 → 200 + `.factorial == 6402373705728000`（精度上界，Number.MAX_SAFE_INTEGER 之下最大阶乘）
+  Test: manual:bash -c 'cd playground && PLAYGROUND_PORT=4106 node server.js > /dev/null 2>&1 & SPID=$!; sleep 2; curl -fs "http://127.0.0.1:4106/factorial?n=18" | jq -e ".factorial == 6402373705728000"; RC=$?; kill $SPID 2>/dev/null; exit $RC'
+  期望: exit 0
 
-- [x] [BEHAVIOR] GET /factorial?n=100 返 400（上界拒），错误体不含 factorial
-  Test: manual:bash -c 'cd playground && PLAYGROUND_PORT=3207 node server.js & SPID=$!; sleep 2; CODE=$(curl -s -o /tmp/r100.json -w "%{http_code}" "localhost:3207/factorial?n=100"); OK=$(jq -e "has(\"factorial\") | not" < /tmp/r100.json 2>/dev/null && printf OK); kill $SPID 2>/dev/null; [ "$CODE" = "400" ] && [ "$OK" = "OK" ]'
+- [ ] [BEHAVIOR] GET /factorial?n=05 → 200 + `.factorial == 120`（前导 0 strict 通过，与 n=5 等价）
+  Test: manual:bash -c 'cd playground && PLAYGROUND_PORT=4107 node server.js > /dev/null 2>&1 & SPID=$!; sleep 2; curl -fs "http://127.0.0.1:4107/factorial?n=05" | jq -e ".factorial == 120"; RC=$?; kill $SPID 2>/dev/null; exit $RC'
+  期望: exit 0
 
-- [x] [BEHAVIOR] strict-schema 拒：负数 / 小数 / 前导+ / 科学计数法 / 十六进制 / 字母 / 空串 全 400 不含 factorial
-  Test: manual:bash -c 'cd playground && PLAYGROUND_PORT=3208 node server.js & SPID=$!; sleep 2; FAIL=0; for Q in "n=-1" "n=5.5" "n=%2B5" "n=1e2" "n=0xff" "n=abc" "n="; do CODE=$(curl -s -o /tmp/s.json -w "%{http_code}" "localhost:3208/factorial?$Q"); [ "$CODE" = "400" ] || FAIL=1; jq -e "has(\"factorial\") | not" < /tmp/s.json >/dev/null 2>&1 || FAIL=1; done; kill $SPID 2>/dev/null; [ "$FAIL" = "0" ]'
+- [ ] [BEHAVIOR] GET /factorial?n=5 响应 `.factorial | type == "number"`（PRD Response Schema field type 验证）
+  Test: manual:bash -c 'cd playground && PLAYGROUND_PORT=4108 node server.js > /dev/null 2>&1 & SPID=$!; sleep 2; curl -fs "http://127.0.0.1:4108/factorial?n=5" | jq -e ".factorial | type == \"number\""; RC=$?; kill $SPID 2>/dev/null; exit $RC'
+  期望: exit 0
 
-- [x] [BEHAVIOR] strict-schema 拒：`Infinity` / `NaN` / `1,000` 千分位 / 缺参 全 400
-  Test: manual:bash -c 'cd playground && PLAYGROUND_PORT=3209 node server.js & SPID=$!; sleep 2; FAIL=0; for Q in "n=Infinity" "n=NaN" "n=1,000" ""; do CODE=$(curl -s -o /dev/null -w "%{http_code}" "localhost:3209/factorial?$Q"); [ "$CODE" = "400" ] || FAIL=1; done; kill $SPID 2>/dev/null; [ "$FAIL" = "0" ]'
+- [ ] [BEHAVIOR] GET /factorial?n=3 响应顶层 keys 严格等于 `["factorial"]`（PRD Response Schema 完整性验证）
+  Test: manual:bash -c 'cd playground && PLAYGROUND_PORT=4109 node server.js > /dev/null 2>&1 & SPID=$!; sleep 2; curl -fs "http://127.0.0.1:4109/factorial?n=3" | jq -e "keys == [\"factorial\"]"; RC=$?; kill $SPID 2>/dev/null; exit $RC'
+  期望: exit 0
 
-- [x] [BEHAVIOR] **跨调用递推不变量**: f(5) === 5 * f(4) === 120（W24 核心 oracle，shell 整数算术严等）
-  Test: manual:bash -c 'cd playground && PLAYGROUND_PORT=3210 node server.js & SPID=$!; sleep 2; F5=$(curl -fs "localhost:3210/factorial?n=5" | jq ".factorial"); F4=$(curl -fs "localhost:3210/factorial?n=4" | jq ".factorial"); kill $SPID 2>/dev/null; [ -n "$F5" ] && [ -n "$F4" ] && [ "$F5" = "$(( 5 * F4 ))" ] && [ "$F5" = "120" ]'
+- [ ] [BEHAVIOR] GET /factorial?n=4 响应不含禁用字段 `product`（W20 字段名复读漂移反向探针）
+  Test: manual:bash -c 'cd playground && PLAYGROUND_PORT=4110 node server.js > /dev/null 2>&1 & SPID=$!; sleep 2; curl -fs "http://127.0.0.1:4110/factorial?n=4" | jq -e "has(\"product\") | not"; RC=$?; kill $SPID 2>/dev/null; exit $RC'
+  期望: exit 0
 
-- [x] [BEHAVIOR] **跨调用递推不变量精度上界**: f(18) === 18 * f(17)（Stirling/Lanczos/浮点累积必断）
-  Test: manual:bash -c 'cd playground && PLAYGROUND_PORT=3211 node server.js & SPID=$!; sleep 2; F18=$(curl -fs "localhost:3211/factorial?n=18" | jq ".factorial"); F17=$(curl -fs "localhost:3211/factorial?n=17" | jq ".factorial"); kill $SPID 2>/dev/null; [ -n "$F18" ] && [ -n "$F17" ] && [ "$F18" = "$(( 18 * F17 ))" ] && [ "$F18" = "6402373705728000" ]'
+- [ ] [BEHAVIOR] GET /factorial?n=4 响应不含禁用字段 `result`（generic 漂移反向探针）
+  Test: manual:bash -c 'cd playground && PLAYGROUND_PORT=4111 node server.js > /dev/null 2>&1 & SPID=$!; sleep 2; curl -fs "http://127.0.0.1:4111/factorial?n=4" | jq -e "has(\"result\") | not"; RC=$?; kill $SPID 2>/dev/null; exit $RC'
+  期望: exit 0
 
-- [x] [BEHAVIOR] **跨调用递推不变量边界**: f(1) === 1 * f(0) === 1
-  Test: manual:bash -c 'cd playground && PLAYGROUND_PORT=3212 node server.js & SPID=$!; sleep 2; F1=$(curl -fs "localhost:3212/factorial?n=1" | jq ".factorial"); F0=$(curl -fs "localhost:3212/factorial?n=0" | jq ".factorial"); kill $SPID 2>/dev/null; [ "$F1" = "1" ] && [ "$F0" = "1" ] && [ "$F1" = "$(( 1 * F0 ))" ]'
+- [ ] [BEHAVIOR] GET /factorial?n=4 响应不含禁用字段 `value` / `fact` / `output` / `sum`（4 个同义反向探针一次跑）
+  Test: manual:bash -c 'cd playground && PLAYGROUND_PORT=4112 node server.js > /dev/null 2>&1 & SPID=$!; sleep 2; RESP=$(curl -fs "http://127.0.0.1:4112/factorial?n=4"); echo "$RESP" | jq -e "has(\"value\") | not" > /dev/null && echo "$RESP" | jq -e "has(\"fact\") | not" > /dev/null && echo "$RESP" | jq -e "has(\"output\") | not" > /dev/null && echo "$RESP" | jq -e "has(\"sum\") | not" > /dev/null; RC=$?; kill $SPID 2>/dev/null; exit $RC'
+  期望: exit 0
 
-- [x] [BEHAVIOR] **跨调用递推中段**: f(10) === 10 * f(9)（验证中等值的递推关系）
-  Test: manual:bash -c 'cd playground && PLAYGROUND_PORT=3213 node server.js & SPID=$!; sleep 2; F10=$(curl -fs "localhost:3213/factorial?n=10" | jq ".factorial"); F9=$(curl -fs "localhost:3213/factorial?n=9" | jq ".factorial"); kill $SPID 2>/dev/null; [ -n "$F10" ] && [ -n "$F9" ] && [ "$F10" = "$(( 10 * F9 ))" ] && [ "$F10" = "3628800" ]'
+- [ ] [BEHAVIOR] 跨调用递推不变量 `factorial(5) === 5 * factorial(4)` （W24 核心 oracle 探针）
+  Test: manual:bash -c 'cd playground && PLAYGROUND_PORT=4113 node server.js > /dev/null 2>&1 & SPID=$!; sleep 2; F5=$(curl -fs "http://127.0.0.1:4113/factorial?n=5" | jq -r ".factorial"); F4=$(curl -fs "http://127.0.0.1:4113/factorial?n=4" | jq -r ".factorial"); kill $SPID 2>/dev/null; [ "$F5" = "120" ] && [ "$F4" = "24" ] && [ "$((5 * F4))" = "$F5" ]'
+  期望: exit 0
 
-- [x] [BEHAVIOR] 响应禁用字段反向断言：禁 result / value / product / fact / answer / data / payload / sum / quotient / power / remainder
-  Test: manual:bash -c 'cd playground && PLAYGROUND_PORT=3214 node server.js & SPID=$!; sleep 2; OK=$(curl -fs "localhost:3214/factorial?n=5" | jq -e "(has(\"result\") | not) and (has(\"value\") | not) and (has(\"product\") | not) and (has(\"fact\") | not) and (has(\"answer\") | not) and (has(\"data\") | not) and (has(\"payload\") | not) and (has(\"sum\") | not) and (has(\"quotient\") | not) and (has(\"power\") | not) and (has(\"remainder\") | not)" 2>/dev/null && printf OK); kill $SPID 2>/dev/null; [ "$OK" = "OK" ]'
+- [ ] [BEHAVIOR] 跨调用递推不变量边界 `factorial(18) === 18 * factorial(17)` （精度上界 oracle）
+  Test: manual:bash -c 'cd playground && PLAYGROUND_PORT=4114 node server.js > /dev/null 2>&1 & SPID=$!; sleep 2; F18=$(curl -fs "http://127.0.0.1:4114/factorial?n=18" | jq -r ".factorial"); F17=$(curl -fs "http://127.0.0.1:4114/factorial?n=17" | jq -r ".factorial"); kill $SPID 2>/dev/null; [ "$F18" = "6402373705728000" ] && [ "$F17" = "355687428096000" ] && [ "$((18 * F17))" = "$F18" ]'
+  期望: exit 0
 
-- [x] [BEHAVIOR] query 参数名锁死 `n`：别名 `value` 应拒 400 且不含 factorial
-  Test: manual:bash -c 'cd playground && PLAYGROUND_PORT=3215 node server.js & SPID=$!; sleep 2; CODE=$(curl -s -o /tmp/a.json -w "%{http_code}" "localhost:3215/factorial?value=5"); OK=$(jq -e "has(\"factorial\") | not" < /tmp/a.json 2>/dev/null && printf OK); kill $SPID 2>/dev/null; [ "$CODE" = "400" ] && [ "$OK" = "OK" ]'
+- [ ] [BEHAVIOR] 跨调用递推不变量中段 `factorial(10) === 10 * factorial(9)` （中位数 oracle 加固）
+  Test: manual:bash -c 'cd playground && PLAYGROUND_PORT=4115 node server.js > /dev/null 2>&1 & SPID=$!; sleep 2; F10=$(curl -fs "http://127.0.0.1:4115/factorial?n=10" | jq -r ".factorial"); F9=$(curl -fs "http://127.0.0.1:4115/factorial?n=9" | jq -r ".factorial"); kill $SPID 2>/dev/null; [ "$F10" = "3628800" ] && [ "$F9" = "362880" ] && [ "$((10 * F9))" = "$F10" ]'
+  期望: exit 0
 
-- [x] [BEHAVIOR] query 别名 num / input / x / a / number / int / val / v / count / size 全拒 400
-  Test: manual:bash -c 'cd playground && PLAYGROUND_PORT=3216 node server.js & SPID=$!; sleep 2; FAIL=0; for K in num input x a number int val v count size length; do CODE=$(curl -s -o /dev/null -w "%{http_code}" "localhost:3216/factorial?${K}=5"); [ "$CODE" = "400" ] || FAIL=1; done; kill $SPID 2>/dev/null; [ "$FAIL" = "0" ]'
+- [ ] [BEHAVIOR] GET /factorial?n=19 → 400 + body 不含 `factorial`（上界拒 #1，> Number.MAX_SAFE_INTEGER 起点）
+  Test: manual:bash -c 'cd playground && PLAYGROUND_PORT=4116 node server.js > /dev/null 2>&1 & SPID=$!; sleep 2; CODE=$(curl -s -o /tmp/r4116.json -w "%{http_code}" "http://127.0.0.1:4116/factorial?n=19"); HAS=$(jq "has(\"factorial\")" < /tmp/r4116.json); kill $SPID 2>/dev/null; [ "$CODE" = "400" ] && [ "$HAS" = "false" ]'
+  期望: exit 0
 
-- [x] [BEHAVIOR] 前导 0 strict 通过且等价：n=05 返 `{factorial: 120}`
-  Test: manual:bash -c 'cd playground && PLAYGROUND_PORT=3217 node server.js & SPID=$!; sleep 2; OK=$(curl -fs "localhost:3217/factorial?n=05" | jq -e ". == {factorial:120}" 2>/dev/null && printf OK); kill $SPID 2>/dev/null; [ "$OK" = "OK" ]'
+- [ ] [BEHAVIOR] GET /factorial?n=20 → 400（上界拒 #2）
+  Test: manual:bash -c 'cd playground && PLAYGROUND_PORT=4117 node server.js > /dev/null 2>&1 & SPID=$!; sleep 2; CODE=$(curl -s -o /dev/null -w "%{http_code}" "http://127.0.0.1:4117/factorial?n=20"); kill $SPID 2>/dev/null; [ "$CODE" = "400" ]'
+  期望: exit 0
 
-- [x] [BEHAVIOR] 旧 6 路由回归无损 happy 全过
-  Test: manual:bash -c 'cd playground && PLAYGROUND_PORT=3218 node server.js & SPID=$!; sleep 2; FAIL=0; curl -fs "localhost:3218/health" | jq -e ".ok == true" >/dev/null 2>&1 || FAIL=1; curl -fs "localhost:3218/sum?a=2&b=3" | jq -e ".sum == 5" >/dev/null 2>&1 || FAIL=1; curl -fs "localhost:3218/multiply?a=2&b=3" | jq -e ".product == 6" >/dev/null 2>&1 || FAIL=1; curl -fs "localhost:3218/divide?a=6&b=2" | jq -e ".quotient == 3" >/dev/null 2>&1 || FAIL=1; curl -fs "localhost:3218/power?a=2&b=10" | jq -e ".power == 1024" >/dev/null 2>&1 || FAIL=1; curl -fs "localhost:3218/modulo?a=10&b=3" | jq -e ".remainder == 1" >/dev/null 2>&1 || FAIL=1; kill $SPID 2>/dev/null; [ "$FAIL" = "0" ]'
+- [ ] [BEHAVIOR] GET /factorial?n=100 → 400（上界拒 #3，远超上界）
+  Test: manual:bash -c 'cd playground && PLAYGROUND_PORT=4118 node server.js > /dev/null 2>&1 & SPID=$!; sleep 2; CODE=$(curl -s -o /dev/null -w "%{http_code}" "http://127.0.0.1:4118/factorial?n=100"); kill $SPID 2>/dev/null; [ "$CODE" = "400" ]'
+  期望: exit 0
 
-- [x] [BEHAVIOR] vitest 全套通过（generator TDD red→green 闭环）
-  Test: manual:bash -c 'cd playground && NODE_ENV=test npx vitest run --reporter=basic'
+- [ ] [BEHAVIOR] GET /factorial (无 query) → 400 + body 不含 `factorial`（缺参拒）
+  Test: manual:bash -c 'cd playground && PLAYGROUND_PORT=4119 node server.js > /dev/null 2>&1 & SPID=$!; sleep 2; CODE=$(curl -s -o /tmp/r4119.json -w "%{http_code}" "http://127.0.0.1:4119/factorial"); HAS=$(jq "has(\"factorial\")" < /tmp/r4119.json); kill $SPID 2>/dev/null; [ "$CODE" = "400" ] && [ "$HAS" = "false" ]'
+  期望: exit 0
 
-- [x] [BEHAVIOR] PR diff 行级断言：`playground/server.js` 旧 6 路由 `app.get('/(health|sum|multiply|divide|power|modulo)')` 注册行**零删除**（r2 新增，针对 r1 "cascade 失败但前 8 步假绿" 反馈，根除 generator 删旧路由腾位的退化路径）
-  Test: manual:bash -c 'git fetch origin main --depth=50 2>/dev/null || true; BASE=$(git merge-base HEAD origin/main 2>/dev/null || git merge-base HEAD main 2>/dev/null); [ -n "$BASE" ] || exit 1; DELETED=$(git diff "$BASE" -- playground/server.js | grep -cE "^-[[:space:]]*app\.get\(['\"]/(health|sum|multiply|divide|power|modulo)['\"]") || DELETED=0; [ "$DELETED" -eq 0 ]'
+- [ ] [BEHAVIOR] GET /factorial?value=5 → 400（PRD 禁用 query 名反向探针：generator 不许漂移到 `value`/`num`/`x` 等同义词）
+  Test: manual:bash -c 'cd playground && PLAYGROUND_PORT=4120 node server.js > /dev/null 2>&1 & SPID=$!; sleep 2; CODE=$(curl -s -o /dev/null -w "%{http_code}" "http://127.0.0.1:4120/factorial?value=5"); kill $SPID 2>/dev/null; [ "$CODE" = "400" ]'
+  期望: exit 0
+
+- [ ] [BEHAVIOR] GET /factorial?num=5 → 400（PRD 禁用 query 名反向探针 #2）
+  Test: manual:bash -c 'cd playground && PLAYGROUND_PORT=4121 node server.js > /dev/null 2>&1 & SPID=$!; sleep 2; CODE=$(curl -s -o /dev/null -w "%{http_code}" "http://127.0.0.1:4121/factorial?num=5"); kill $SPID 2>/dev/null; [ "$CODE" = "400" ]'
+  期望: exit 0
+
+- [ ] [BEHAVIOR] GET /factorial?n=-1 → 400（strict 拒负数）
+  Test: manual:bash -c 'cd playground && PLAYGROUND_PORT=4122 node server.js > /dev/null 2>&1 & SPID=$!; sleep 2; CODE=$(curl -s -o /dev/null -w "%{http_code}" "http://127.0.0.1:4122/factorial?n=-1"); kill $SPID 2>/dev/null; [ "$CODE" = "400" ]'
+  期望: exit 0
+
+- [ ] [BEHAVIOR] GET /factorial?n=5.5 → 400（strict 拒小数；防 generator 复用 `^-?\\d+(\\.\\d+)?$` 浮点 regex 假绿）
+  Test: manual:bash -c 'cd playground && PLAYGROUND_PORT=4123 node server.js > /dev/null 2>&1 & SPID=$!; sleep 2; CODE=$(curl -s -o /dev/null -w "%{http_code}" "http://127.0.0.1:4123/factorial?n=5.5"); kill $SPID 2>/dev/null; [ "$CODE" = "400" ]'
+  期望: exit 0
+
+- [ ] [BEHAVIOR] GET /factorial?n=5.0 → 400（strict 拒浮点形整数，"整数 only"严格）
+  Test: manual:bash -c 'cd playground && PLAYGROUND_PORT=4124 node server.js > /dev/null 2>&1 & SPID=$!; sleep 2; CODE=$(curl -s -o /dev/null -w "%{http_code}" "http://127.0.0.1:4124/factorial?n=5.0"); kill $SPID 2>/dev/null; [ "$CODE" = "400" ]'
+  期望: exit 0
+
+- [ ] [BEHAVIOR] GET /factorial?n=1e2 → 400（strict 拒科学计数法，防 Number("1e2")===100 假绿）
+  Test: manual:bash -c 'cd playground && PLAYGROUND_PORT=4125 node server.js > /dev/null 2>&1 & SPID=$!; sleep 2; CODE=$(curl -s -o /dev/null -w "%{http_code}" "http://127.0.0.1:4125/factorial?n=1e2"); kill $SPID 2>/dev/null; [ "$CODE" = "400" ]'
+  期望: exit 0
+
+- [ ] [BEHAVIOR] GET /factorial?n=0xff → 400（strict 拒十六进制）
+  Test: manual:bash -c 'cd playground && PLAYGROUND_PORT=4126 node server.js > /dev/null 2>&1 & SPID=$!; sleep 2; CODE=$(curl -s -o /dev/null -w "%{http_code}" "http://127.0.0.1:4126/factorial?n=0xff"); kill $SPID 2>/dev/null; [ "$CODE" = "400" ]'
+  期望: exit 0
+
+- [ ] [BEHAVIOR] GET /factorial?n=abc → 400 + body 不含 `factorial`
+  Test: manual:bash -c 'cd playground && PLAYGROUND_PORT=4127 node server.js > /dev/null 2>&1 & SPID=$!; sleep 2; CODE=$(curl -s -o /tmp/r4127.json -w "%{http_code}" "http://127.0.0.1:4127/factorial?n=abc"); HAS=$(jq "has(\"factorial\")" < /tmp/r4127.json); kill $SPID 2>/dev/null; [ "$CODE" = "400" ] && [ "$HAS" = "false" ]'
+  期望: exit 0
+
+- [ ] [BEHAVIOR] GET /factorial?n=Infinity → 400（strict 拒 Infinity 字面量，防 Number 隐式解析）
+  Test: manual:bash -c 'cd playground && PLAYGROUND_PORT=4128 node server.js > /dev/null 2>&1 & SPID=$!; sleep 2; CODE=$(curl -s -o /dev/null -w "%{http_code}" "http://127.0.0.1:4128/factorial?n=Infinity"); kill $SPID 2>/dev/null; [ "$CODE" = "400" ]'
+  期望: exit 0
+
+- [ ] [BEHAVIOR] 错误响应 schema 严格 — `keys == ["error"]` 且 `.error | type == "string" and length > 0`，body 不含 `factorial` 与 `message`
+  Test: manual:bash -c 'cd playground && PLAYGROUND_PORT=4129 node server.js > /dev/null 2>&1 & SPID=$!; sleep 2; RESP=$(curl -s "http://127.0.0.1:4129/factorial?n=abc"); echo "$RESP" | jq -e "keys == [\"error\"]" > /dev/null && echo "$RESP" | jq -e ".error | type == \"string\" and length > 0" > /dev/null && echo "$RESP" | jq -e "has(\"factorial\") | not" > /dev/null && echo "$RESP" | jq -e "has(\"message\") | not" > /dev/null; RC=$?; kill $SPID 2>/dev/null; exit $RC'
+  期望: exit 0
+
+- [ ] [BEHAVIOR] 现有 6 路由回归 — `/health` `/sum` `/multiply` `/divide` `/power` `/modulo` happy 全 200
+  Test: manual:bash -c 'cd playground && PLAYGROUND_PORT=4130 node server.js > /dev/null 2>&1 & SPID=$!; sleep 2; curl -fs "http://127.0.0.1:4130/health" | jq -e ".ok == true" > /dev/null && curl -fs "http://127.0.0.1:4130/sum?a=2&b=3" | jq -e ".sum == 5" > /dev/null && curl -fs "http://127.0.0.1:4130/multiply?a=2&b=3" | jq -e ".product == 6" > /dev/null && curl -fs "http://127.0.0.1:4130/divide?a=6&b=2" | jq -e ".quotient == 3" > /dev/null && curl -fs "http://127.0.0.1:4130/power?a=2&b=10" | jq -e ".power == 1024" > /dev/null && curl -fs "http://127.0.0.1:4130/modulo?a=5&b=3" | jq -e ".remainder == 2" > /dev/null; RC=$?; kill $SPID 2>/dev/null; exit $RC'
+  期望: exit 0
