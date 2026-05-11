@@ -1,9 +1,13 @@
-# Sprint Contract Draft (Round 2)
+# Sprint Contract Draft (Round 3)
 
 > **Sprint**: W29 Walking Skeleton P1 终验
 > **Initiative**: Walking Skeleton P1 关账（B1–B7 全链路联调）
 > **journey_type**: autonomous
 > **Round 1 → 2 关键变化**: 确立 SSOT — 所有"真验证命令"集中在 smoke 脚本（分段 echo 精确 PASS 标记），contract-dod-ws*.md 的 [BEHAVIOR] Test 字段 grep smoke stdout 完成 oracle 闭环。contract-draft.md 的 Step 验证命令段改成**引用** [BEHAVIOR id]，不再粘贴第二份 psql/node 命令。新增 Risk Register。补充 PRD Response Schema codify oracle。
+> **Round 2 → 3 关键变化**:
+> 1. 修 Reviewer R2 阻塞 issue#1（"PRD 字面值 vs 代码现实 schema drift 未显式入 Risk Register，不可默认沉默"）— 新增 **R11**（PRD `{events,count}`+outcome enum vs 代码 `{events,limit,total}`+event_type enum 漂移）显式 mitigation：WS4 acceptance-report.md 强制独立段 "PRD 字面值与代码现实差异清单" 作 W30 回归 trail
+> 2. 修 Reviewer R2 阻塞 issue#2（verification_oracle_completeness=6 < 7）— /dispatch/recent shape oracle 拆出 3 条粒度更细 BEHAVIOR：`ws1-b6-keys-strict`（jq -e 'keys == [...]' 严等）+ `ws1-b6-banned-reverse`（每个禁用字段独立 `! has(...)` 反向断言）+ `ws1-b6-error-path`（非法 query → 400/error key 存在）。smoke 输出标记契约同步新增 3 个 PASS 字面值
+> 3. 修 Reviewer R2 非阻塞 observation — WS4 新增 BEHAVIOR `ws4-prd-vs-code-diff` 强制 acceptance-report.md 含独立段列出 PRD 字面值与代码现实的 2 处差异点（response shape diff + event_type enum diff）+ 代码 LOC 引用 + W30 立项 follow-up 标识，避免未来回归挖出来时找不到 trail
 
 ---
 
@@ -31,6 +35,9 @@ generator 必须让 smoke 在对应段所有 assertion 真过后 `echo` 以下**
 | `[B3-IN] PASS — slot in_progress +1` | Step 2/3 | ws1-b3-slot-in |
 | `[B6-TABLE] PASS — dispatch_events +<N> 行 within 5min` | Step 2 | ws1-b6-table-write |
 | `[B6-EP] PASS — /dispatch/recent shape={events,limit,total} no_banned_keys=ok` | Step 2 | ws1-b6-endpoint-shape |
+| `[B6-KEYS] PASS — /dispatch/recent jq -e 'keys == ["events","limit","total"]' 严等` | Step 2 | ws1-b6-keys-strict |
+| `[B6-BANNED] PASS — /dispatch/recent banned_keys=∅ (data,results,payload,count,records,history)` | Step 2 | ws1-b6-banned-reverse |
+| `[B6-ERR] PASS — /dispatch/recent error path 非法 query 返 4xx + error string` | Step 2 | ws1-b6-error-path |
 | `[B6-ENUM] PASS — event_type ∈ {dispatched,failed_dispatch}` | Step 2 | ws1-b6-event-type-enum |
 | `[B5-A] PASS — task_A claimed_by 被释放` | Step 4 | ws2-b5-hol-task-a-claim-released |
 | `[B5-BC] PASS — dispatch_events 含 task_B event_type=dispatched within 5min`（或 `task_C`）| Step 4 | ws2-b5-task-bc-dispatched |
@@ -87,13 +94,16 @@ PRD `## Response Schema` 段为 `GET /api/brain/dispatch/recent` 字面写 `["ev
 
 ### Step 2: dispatcher 派发（B5 + B6 共同验入口）
 
-**可观测行为**: POST /api/brain/tick 后，dispatcher 对该 task 执行 dispatch；dispatch_events 表 5 分钟内多 ≥ 1 行 event_type ∈ `{dispatched, failed_dispatch}`（B6 invariant）。slot 计数 in_progress 在派发成功时 +1（B3 invariant）。GET /api/brain/dispatch/recent 响应 shape = `{events, limit, total}` 严格匹配代码现实，禁用字段反向不存在（B6 endpoint shape invariant）。
+**可观测行为**: POST /api/brain/tick 后，dispatcher 对该 task 执行 dispatch；dispatch_events 表 5 分钟内多 ≥ 1 行 event_type ∈ `{dispatched, failed_dispatch}`（B6 invariant）。slot 计数 in_progress 在派发成功时 +1（B3 invariant）。GET /api/brain/dispatch/recent 响应 shape = `{events, limit, total}` 严格匹配代码现实（jq -e 'keys==[…]' 严等 + 每个禁用字段独立 `! has(...)` 反向断言 + 非法 query 走 error path），禁用字段反向不存在（B6 endpoint shape invariant）。
 
-**硬阈值**: dispatch_events 5 分钟内 ≥ 1 行；/dispatch/recent 顶层 keys 严等 `["events","limit","total"]`；event_type ∈ enum；slot in_progress 相对基线 +1。
+**硬阈值**: dispatch_events 5 分钟内 ≥ 1 行；/dispatch/recent 顶层 keys 严等 `["events","limit","total"]`；每个禁用字段（data/results/payload/count/records/history）独立 `! has(...)` 真；非法 query 4xx + error key 存在；event_type ∈ enum；slot in_progress 相对基线 +1。
 
 **验证命令**: 见 contract-dod-ws1.md
 - [BEHAVIOR] [ws1-b6-table-write]
 - [BEHAVIOR] [ws1-b6-endpoint-shape]
+- [BEHAVIOR] [ws1-b6-keys-strict]
+- [BEHAVIOR] [ws1-b6-banned-reverse]
+- [BEHAVIOR] [ws1-b6-error-path]
 - [BEHAVIOR] [ws1-b6-event-type-enum]
 - [BEHAVIOR] [ws1-b3-slot-in]
 
@@ -224,6 +234,9 @@ grep -q '\[B3-IN\] PASS — slot in_progress +1' "$SMOKE" || { echo "FAIL: smoke
 grep -q '\[B3-OUT\] PASS — slot in_progress -1 after zombie reaped' "$SMOKE" || { echo "FAIL: smoke 缺 [B3-OUT] PASS"; exit 1; }
 grep -q '\[B6-TABLE\] PASS — dispatch_events' "$SMOKE" || { echo "FAIL: smoke 缺 [B6-TABLE] PASS"; exit 1; }
 grep -q '\[B6-EP\] PASS — /dispatch/recent shape={events,limit,total} no_banned_keys=ok' "$SMOKE" || { echo "FAIL: smoke 缺 [B6-EP] PASS"; exit 1; }
+grep -q '\[B6-KEYS\] PASS — /dispatch/recent jq -e' "$SMOKE" || { echo "FAIL: smoke 缺 [B6-KEYS] PASS"; exit 1; }
+grep -q '\[B6-BANNED\] PASS — /dispatch/recent banned_keys=∅' "$SMOKE" || { echo "FAIL: smoke 缺 [B6-BANNED] PASS"; exit 1; }
+grep -q '\[B6-ERR\] PASS — /dispatch/recent error path' "$SMOKE" || { echo "FAIL: smoke 缺 [B6-ERR] PASS"; exit 1; }
 grep -q '\[B6-ENUM\] PASS — event_type ∈ {dispatched,failed_dispatch}' "$SMOKE" || { echo "FAIL: smoke 缺 [B6-ENUM] PASS"; exit 1; }
 grep -q '\[B5-A\] PASS — task_A claimed_by 被释放' "$SMOKE" || { echo "FAIL: smoke 缺 [B5-A] PASS"; exit 1; }
 grep -q '\[B5-BC\] PASS — dispatch_events 含 task_' "$SMOKE" || { echo "FAIL: smoke 缺 [B5-BC] PASS"; exit 1; }
@@ -242,6 +255,12 @@ done
 grep -q 'walking-skeleton-p1-acceptance-smoke' "$REPORT" || { echo "FAIL: 报告未引 smoke 路径"; exit 1; }
 grep -qE 'real-env-smoke' "$REPORT" || { echo "FAIL: 报告缺 CI 集成说明"; exit 1; }
 grep -q '\[walking-skeleton-p1-终验\] PASS — 7 项 P1 修复全链路联调通过' "$REPORT" || { echo "FAIL: 报告缺 PASS signal"; exit 1; }
+# D2. R11 trail — PRD 字面值 vs 代码现实差异清单（必须独立段 + 2 处差异 + LOC 引用 + W30 follow-up 标识）
+grep -qE 'PRD 字面值与代码现实差异清单|PRD vs.*代码现实.*差异' "$REPORT" || { echo "FAIL: 报告缺 PRD 字面值与代码现实差异清单 段"; exit 1; }
+grep -qE 'count.*limit.*total|limit.*total.*count' "$REPORT" || { echo "FAIL: 报告缺 response shape diff (count vs limit+total)"; exit 1; }
+grep -qE 'skipped_hol|failed_dispatch' "$REPORT" || { echo "FAIL: 报告缺 event_type enum diff (4 字面值 vs 2 字面值)"; exit 1; }
+grep -qE 'dispatch\.js|dispatch-stats\.js' "$REPORT" || { echo "FAIL: 报告缺代码 LOC 引用 (dispatch.js/dispatch-stats.js)"; exit 1; }
+grep -qE 'W30|follow-up|后续' "$REPORT" || { echo "FAIL: 报告缺 W30 follow-up 标识"; exit 1; }
 
 # E. 真跑 smoke（无 env 走 SKIP exit 0；real-env-smoke 上跑真 e2e）
 OUT=/tmp/w29-acceptance-smoke.out
@@ -250,8 +269,8 @@ bash "$SMOKE" > "$OUT" 2>&1
 RC=$?
 [ $RC -eq 0 ] || { echo "FAIL: smoke exit $RC（非 0）"; head -50 "$OUT"; exit 1; }
 head -5 "$OUT" | grep -qE '^SKIP:' || {
-  # 没走 SKIP 退路 → 必须真打到 16 个分段 PASS 标记 + 整体 PASS
-  for tag in "\[B1\] PASS" "\[B2\] PASS" "\[B2-RET\] PASS" "\[B3-IN\] PASS" "\[B3-OUT\] PASS" "\[B4\] PASS" "\[B4-LOG\] PASS" "\[B5-A\] PASS" "\[B5-BC\] PASS" "\[B5-LOG\] PASS" "\[B6-TABLE\] PASS" "\[B6-EP\] PASS" "\[B6-ENUM\] PASS" "\[B7-SHAPE\] PASS" "\[B7-ENUM\] PASS" "\[walking-skeleton-p1-终验\] PASS"; do
+  # 没走 SKIP 退路 → 必须真打到 19 个分段 PASS 标记 + 整体 PASS（v3 新增 B6-KEYS / B6-BANNED / B6-ERR）
+  for tag in "\[B1\] PASS" "\[B2\] PASS" "\[B2-RET\] PASS" "\[B3-IN\] PASS" "\[B3-OUT\] PASS" "\[B4\] PASS" "\[B4-LOG\] PASS" "\[B5-A\] PASS" "\[B5-BC\] PASS" "\[B5-LOG\] PASS" "\[B6-TABLE\] PASS" "\[B6-EP\] PASS" "\[B6-KEYS\] PASS" "\[B6-BANNED\] PASS" "\[B6-ERR\] PASS" "\[B6-ENUM\] PASS" "\[B7-SHAPE\] PASS" "\[B7-ENUM\] PASS" "\[walking-skeleton-p1-终验\] PASS"; do
     grep -qE "^$tag" "$OUT" || { echo "FAIL: smoke stdout 缺标记 $tag"; head -100 "$OUT"; exit 1; }
   done
 }
@@ -334,6 +353,7 @@ workstream_count: 4
 | R8 | `set -euo pipefail` 跟某些 helpers 不兼容（如未设变量解引用 → 提前退出）→ smoke 在 happy path 上误退 | L | M | smoke 内部所有变量都 `${VAR:-default}` 形式或显式 default；CI 上跑全程一次作为冒烟基线；E2E 验收 Section E 直接跑 smoke 检 exit code | E2E 验收 Section E |
 | R9 | 整合 smoke 把多个独立 invariant 串行跑 → 单个 invariant fail 后续 fail 难定位 | L | M | smoke 内部每段 PASS 标记前打印 banner `=== Step N: <desc> ===` 便于断点；任意 assertion fail → set -e 立即终止 + 打印失败上下文 | smoke 内部（generator 实现细节） |
 | R10 | 本 sprint 假设 B4/B7 阈值已可配（env），但实际可能硬编码 → smoke 跑十几分钟超时 | L | H | DECISION_TTL_MIN 已验证可 env 覆盖（guidance.js:22-25）；HEARTBEAT_OFFLINE_GRACE_MIN 已验证可 env 覆盖（fleet-resource-cache.js:25-29）；如发现新硬编码，proposer 在合同 GAN 阶段允许 generator 小幅 patch 让其可测（PRD ASSUMPTION 已授权） | smoke 内部 export + dod-ws3 BEHAVIOR Test |
+| **R11** | **PRD `## Response Schema` 字面值（`{events, count}` + outcome enum `dispatched/skipped_hol/skipped_no_worker/failed`）与代码现实（`{events, limit, total}` + event_type enum `dispatched/failed_dispatch`）双重漂移**。本 sprint 决定按 PRD `[ASSUMPTION]` 条款以代码为准，但此 schema 漂移属于"PRD 是法律但法律自带例外条款时优先适用例外"的边界场景。如果未来 W30+ 回归出现：(a) 代码再次漂回 PRD 字面值，(b) PRD 没及时同步更新代码现实，(c) 第三方/上层依赖按 PRD 字面接 API 实现失配，将没有 trail 找到"为什么 contract 当时这样写"。**当前 sprint 范围之外但必须显式登记，不可默认沉默** | **M** | **H — 回归 trail 断点 / 上游依赖失配** | **(1) WS4 acceptance-report.md 强制独立段 `## PRD 字面值与代码现实差异清单` 列出 2 处差异点（response shape: PRD `count` ↔ 代码 `limit+total`；event_type enum: PRD 4 字面值 ↔ 代码 2 字面值）+ 每处对应代码 LOC 引用（`packages/brain/src/routes/dispatch.js:34-38` / `packages/brain/src/dispatch-stats.js:125-130`）+ 显式 W30 follow-up 标识（建议项："PRD 同步更新 PR" or "保留 PRD 历史/代码现实分流"，由 W30 立项决议）。(2) contract `ws1-b6-endpoint-shape` + `ws1-b6-keys-strict` + `ws1-b6-banned-reverse` + `ws1-b6-event-type-enum` 四条 BEHAVIOR 同时强制 jq -e 严等代码现实字面值——任何方向回归（代码漂回 PRD 字面 OR 代码引入新字段）smoke 都立即 fail 揪出来。(3) BEHAVIOR `ws4-prd-vs-code-diff` 强制 evaluator 真 grep 报告里两处差异点字面 keyword 存在，避免合并 PR 时被遗漏 trail 记录** | **dod-ws4 ws4-prd-vs-code-diff（trail 登记）+ dod-ws1 ws1-b6-keys-strict / ws1-b6-banned-reverse / ws1-b6-event-type-enum / ws1-b6-endpoint-shape（防止双向漂移）** |
 
 ---
 

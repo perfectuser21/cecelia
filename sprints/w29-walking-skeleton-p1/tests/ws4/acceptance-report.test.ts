@@ -47,4 +47,29 @@ describe('Workstream 4 — Acceptance report [BEHAVIOR via ARTIFACT shape]', () 
     const c = readFileSync(REPORT, 'utf8');
     expect(c).toMatch(/<smoke 输出>|<待回填>|<TBD>|```/);
   });
+
+  it('Round 3 R11 trail: 报告含独立段 "PRD 字面值与代码现实差异清单"', () => {
+    const c = readFileSync(REPORT, 'utf8');
+    expect(c).toMatch(/PRD 字面值与代码现实差异清单|PRD vs.*代码现实.*差异/);
+  });
+
+  it('Round 3 R11 trail: 报告含 response shape diff（count vs limit+total）', () => {
+    const c = readFileSync(REPORT, 'utf8');
+    expect(c).toMatch(/count.*limit.*total|limit.*total.*count/);
+  });
+
+  it('Round 3 R11 trail: 报告含 event_type enum diff（PRD 4 字面值 vs 代码 2 字面值）', () => {
+    const c = readFileSync(REPORT, 'utf8');
+    expect(c).toMatch(/skipped_hol|failed_dispatch/);
+  });
+
+  it('Round 3 R11 trail: 报告含代码 LOC 引用（dispatch.js / dispatch-stats.js）', () => {
+    const c = readFileSync(REPORT, 'utf8');
+    expect(c).toMatch(/dispatch\.js|dispatch-stats\.js/);
+  });
+
+  it('Round 3 R11 trail: 报告含 W30 follow-up 标识', () => {
+    const c = readFileSync(REPORT, 'utf8');
+    expect(c).toMatch(/W30|follow-up|后续/);
+  });
 });

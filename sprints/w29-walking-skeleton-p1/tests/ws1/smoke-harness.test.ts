@@ -61,6 +61,39 @@ describe('Workstream 1 — smoke harness + happy path (Steps 1-3) [BEHAVIOR via 
     expect(c).toContain('[B6-EP] PASS — /dispatch/recent shape={events,limit,total} no_banned_keys=ok');
   });
 
+  it('打印 [B6-KEYS] PASS 标记（/dispatch/recent jq -e keys 严等）— Round 3 R11 漂移防御', () => {
+    const c = readFileSync(SMOKE, 'utf8');
+    expect(c).toMatch(/\[B6-KEYS\] PASS — \/dispatch\/recent jq -e/);
+  });
+
+  it('打印 [B6-BANNED] PASS 标记（6 个禁用字段反向不存在）— Round 3 R11 漂移防御', () => {
+    const c = readFileSync(SMOKE, 'utf8');
+    expect(c).toMatch(/\[B6-BANNED\] PASS — \/dispatch\/recent banned_keys=∅/);
+  });
+
+  it('打印 [B6-ERR] PASS 标记（error path 非法 query 4xx）— Round 3 error path category', () => {
+    const c = readFileSync(SMOKE, 'utf8');
+    expect(c).toMatch(/\[B6-ERR\] PASS — \/dispatch\/recent error path/);
+  });
+
+  it('含 jq -e keys==[...] 严等断言', () => {
+    const c = readFileSync(SMOKE, 'utf8');
+    expect(c).toMatch(/jq\s+-e\s+.keys\s*==\s*\[/);
+  });
+
+  it('含 ≥ 4 个禁用字段反向 has() 检查', () => {
+    const c = readFileSync(SMOKE, 'utf8');
+    const banned = ['data', 'results', 'payload', 'count', 'records', 'history'];
+    const hitCount = banned.filter((k) => new RegExp(`has\\("${k}"\\)`).test(c)).length;
+    expect(hitCount).toBeGreaterThanOrEqual(4);
+  });
+
+  it('含 error path 段（非法 query + 期望 4xx 状态码）', () => {
+    const c = readFileSync(SMOKE, 'utf8');
+    expect(c).toMatch(/(limit=foo|limit=-1|\/recentXYZ|\/dispatch\/recent[^ ]*=[^0-9])/);
+    expect(c).toMatch(/(http_code|status.*[45][0-9][0-9])/);
+  });
+
   it('打印 [B6-ENUM] PASS 标记（event_type 枚举）', () => {
     const c = readFileSync(SMOKE, 'utf8');
     expect(c).toContain('[B6-ENUM] PASS — event_type ∈ {dispatched,failed_dispatch}');
