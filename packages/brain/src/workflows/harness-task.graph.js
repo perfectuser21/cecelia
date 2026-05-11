@@ -83,6 +83,8 @@ export const TaskState = Annotation.Root({
   cost_usd:         Annotation({ reducer: (c, n) => (c || 0) + (n || 0), default: () => 0 }),
   generator_output: Annotation({ reducer: (_o, n) => n, default: () => null }),
   error:            Annotation({ reducer: (_o, n) => n, default: () => null }),
+  evaluate_verdict: Annotation({ reducer: (_o, n) => n, default: () => null }),
+  evaluate_error:   Annotation({ reducer: (_o, n) => n, default: () => null }),
 });
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -384,13 +386,123 @@ function routeAfterParse(state) {
   if (!state.pr_url) return 'no_pr';
   return 'poll';
 }
-function routeAfterPoll(state) {
+export function routeAfterPoll(state) {
   if (state.error) return 'end';
-  if (state.ci_status === 'pass' || state.ci_status === 'merged') return 'merge';
+  if (state.ci_status === 'merged') return 'merge';      // already merged via external path — short-circuit
+  if (state.ci_status === 'pass')   return 'evaluate';   // NEW: insert pre-merge gate
   if (state.ci_status === 'fail') return 'fix';
   if (state.ci_status === 'timeout') return 'timeout';
   return 'poll'; // pending → loop
 }
+
+// Pre-merge gate router: post-evaluator verdict → merge or fix.
+export function routeAfterEvaluate(state) {
+  if (state.evaluate_verdict === 'PASS') return 'merge';
+  return 'fix';
+}
+
+// evaluateContractNode — Approach A pre-merge gate (PRD 2026-05-11).
+// Spawn a `harness_evaluate` sub-task (task-router:129 → /harness-evaluator skill);
+// evaluator container reads contract DoD + manual:bash commands, exits 0/1.
+// Verdict PASS → merge_pr; FAIL → fix_dispatch (do NOT merge into main).
+async function evaluateContractNode(state, opts = {}) {
+  const spawnFn = opts.spawnDetached || spawnDockerDetached;
+  const resolveTok = opts.resolveToken || resolveGitHubToken;
+  const dbPool = opts.poolOverride || pool;
+
+  const task = state.task;
+  const payload = task?.payload || {};
+  const initiativeId = state.initiativeId || payload.parent_task_id || payload.initiative_id || task?.id;
+
+  let token = state.githubToken;
+  try {
+    if (!token) token = await resolveTok();
+  } catch (err) {
+    return { evaluate_verdict: 'FAIL', evaluate_error: `prep: ${err.message}` };
+  }
+
+  const rand = crypto.randomUUID().slice(0, 8);
+  const safeId = String(task.id).replace(/[^a-zA-Z0-9-]/g, '');
+  const containerId = `harness-evaluate-${safeId}-r${state.fix_round || 0}-${rand}`;
+  const threadId = `harness-evaluate:${initiativeId}:${task.id}`;
+
+  const evaluatePrompt = [
+    `[harness-evaluator] Evaluate the contract DoD for task: ${task.title || task.id}`,
+    `PR URL: ${state.pr_url || '(none)'}`,
+    `Contract branch: ${state.contractBranch || payload.contract_branch || '(none)'}`,
+    `Worktree: ${state.worktreePath || '(none)'}`,
+    `ws_index: ${payload.ws_index ?? ''}`,
+  ].join('\n');
+
+  const acctOpts = { task: { ...task, task_type: 'harness_evaluate' }, env: {} };
+  try {
+    await resolveAccount(acctOpts, { taskId: task.id });
+  } catch (err) {
+    return { evaluate_verdict: 'FAIL', evaluate_error: `resolveAccount: ${err.message}` };
+  }
+  const accountEnv = acctOpts.env;
+
+  try {
+    await spawnFn({
+      task: { ...task, task_type: 'harness_evaluate' },
+      prompt: evaluatePrompt,
+      worktreePath: state.worktreePath,
+      containerId,
+      env: {
+        ...accountEnv,
+        CECELIA_TASK_TYPE: 'harness_evaluate',
+        HARNESS_NODE: 'evaluate_contract',
+        HARNESS_INITIATIVE_ID: initiativeId,
+        HARNESS_TASK_ID: task.id,
+        GITHUB_TOKEN: token,
+        CONTRACT_BRANCH: state.contractBranch || payload.contract_branch || '',
+        PR_URL: state.pr_url || '',
+        SPRINT_DIR: payload.sprint_dir || 'sprints',
+        BRAIN_URL: 'http://host.docker.internal:5221',
+        HARNESS_CALLBACK_URL: `http://host.docker.internal:5221/api/brain/harness/callback/${containerId}`,
+        WORKSTREAM_INDEX: extractWorkstreamIndex(payload),
+      },
+    });
+  } catch (err) {
+    return { evaluate_verdict: 'FAIL', evaluate_error: `spawn: ${err.message}` };
+  }
+
+  try {
+    await dbPool.query(
+      `INSERT INTO walking_skeleton_thread_lookup (container_id, thread_id, graph_name, status)
+       VALUES ($1, $2, 'harness-evaluate', 'spawning')
+       ON CONFLICT (container_id) DO NOTHING`,
+      [containerId, threadId]
+    );
+  } catch (err) {
+    console.warn(`[harness-task.graph] evaluate thread_lookup INSERT failed cid=${containerId}: ${err.message}`);
+  }
+
+  // Await callback via LangGraph interrupt (mirrors awaitCallbackNode pattern).
+  const callbackPayload = interrupt({
+    type: 'wait_harness_evaluate_callback',
+    containerId,
+  });
+
+  const cbPayload = callbackPayload || {};
+  const exitCode = cbPayload.exit_code !== undefined ? cbPayload.exit_code : 0;
+  const stdout = cbPayload.stdout || '';
+
+  if (exitCode !== 0) {
+    return {
+      evaluate_verdict: 'FAIL',
+      evaluate_error: cbPayload.error || `evaluator exit_code=${exitCode}`,
+    };
+  }
+
+  // Parse verdict from stdout (evaluator outputs verdict:PASS or verdict:FAIL)
+  const verdictMatch = stdout.match(/verdict:\s*(PASS|FAIL)/i);
+  const verdict = verdictMatch ? verdictMatch[1].toUpperCase() : 'FAIL';
+  const errorMsg = verdict === 'FAIL' ? (cbPayload.error || extractField(stdout, 'error') || 'evaluator returned FAIL') : null;
+
+  return { evaluate_verdict: verdict, evaluate_error: errorMsg };
+}
+
 function routeAfterFix(state) {
   if (state.error) return 'end';
   if (state.fix_round > MAX_FIX_ROUNDS) return 'failed';
@@ -406,6 +518,7 @@ export function buildHarnessTaskGraph() {
     // 失败 throw ContractViolation → retryPolicy: LLM_RETRY retry 3 次后再爆。
     .addNode('verify_generator', verifyGeneratorNode, { retryPolicy: LLM_RETRY })
     .addNode('poll_ci', pollCiNode)
+    .addNode('evaluate_contract', evaluateContractNode, { retryPolicy: LLM_RETRY })
     .addNode('merge_pr', mergePrNode)
     .addNode('fix_dispatch', fixDispatchNode)
     .addEdge(START, 'spawn')
@@ -416,8 +529,9 @@ export function buildHarnessTaskGraph() {
     })
     .addEdge('verify_generator', 'poll_ci')
     .addConditionalEdges('poll_ci', routeAfterPoll, {
-      end: END, merge: 'merge_pr', fix: 'fix_dispatch', timeout: END, poll: 'poll_ci',
+      end: END, merge: 'merge_pr', evaluate: 'evaluate_contract', fix: 'fix_dispatch', timeout: END, poll: 'poll_ci',
     })
+    .addConditionalEdges('evaluate_contract', routeAfterEvaluate, { merge: 'merge_pr', fix: 'fix_dispatch' })
     .addEdge('merge_pr', END)
     .addConditionalEdges('fix_dispatch', routeAfterFix, {
       end: END, failed: END, spawn: 'spawn',

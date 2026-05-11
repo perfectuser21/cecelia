@@ -1143,102 +1143,6 @@ export async function pickSubTaskNode(state) {
   };
 }
 
-export async function evaluateSubTaskNode(state, opts = {}) {
-  // 幂等门：节点重放时 short circuit。retry/advance 节点会把 evaluate_verdict reset 为 null，
-  // 因此 verdict 非 null 意味着本次 evaluate 已完成（避免重复 spawn evaluator container）。
-  if (state.evaluate_verdict) {
-    return { evaluate_verdict: state.evaluate_verdict, evaluate_feedback: state.evaluate_feedback };
-  }
-  const executor = opts.executor || spawn;
-  const sprintDir = state.task?.payload?.sprint_dir || 'sprints';
-  const workstreamN = (state.task_loop_index ?? 0) + 1;
-  const journeyType = state.taskPlan?.journey_type || 'autonomous';
-  // H8 + H11: evaluator 必须 mount 跟 generator 同一个 sub-task worktree。
-  // sub-task worktree 路径 = task-<init8>-<logical> 复合（H11 修正 H8 误诊：H8 用
-  // harnessTaskWorktreePath(state.task.id)，但 task.id 是 initiative UUID 而非 sub_task logical id，
-  // 导致 evaluator mount 路径跟 generator 不一致）。
-  const taskWorktreePath = state.sub_task?.id
-    ? harnessSubTaskWorktreePath(state.initiativeId, state.sub_task.id)
-    : state.worktreePath;
-
-  // H15: spawn evaluator 前主动验 worktree 含必要 contract artifacts。
-  // 若 generator 容器没真把 contract-dod 落到 worktree → 现在 fail-fast 不再 silent 让 evaluator FAIL。
-  // ContractViolation propagate → LangGraph node retryPolicy（addNode evaluate retry: LLM_RETRY）接管。
-  if (state.sub_task?.id) {
-    const verifyEvaluator = opts.verifyEvaluator || verifyEvaluatorWorktree;
-    const expectedFiles = [
-      `${sprintDir}/contract-dod-${state.sub_task.id}.md`,
-    ];
-    await verifyEvaluator({ worktreePath: taskWorktreePath, expectedFiles });
-  }
-
-  const skillContent = loadSkillContent('harness-evaluator');
-  const prompt = `你是 harness-evaluator agent。按下面 SKILL 指令工作。
-
-${skillContent}
-
----
-
-## 注入变量
-IS_FINAL_E2E=false
-SPRINT_DIR=${sprintDir}
-TASK_ID=${state.task?.id}
-WORKSTREAM_N=${workstreamN}
-JOURNEY_TYPE=${journeyType}`;
-
-  let result;
-  try {
-    result = await executor({
-      task: { ...state.task, task_type: 'harness_evaluate' },
-      prompt,
-      worktreePath: taskWorktreePath,
-      env: {
-        CECELIA_TASK_TYPE: 'harness_evaluate',
-        HARNESS_NODE: 'evaluate',
-        IS_FINAL_E2E: 'false',
-        SPRINT_DIR: sprintDir,
-        WORKSTREAM_N: String(workstreamN),
-        JOURNEY_TYPE: journeyType,
-        GITHUB_TOKEN: state.githubToken,
-      },
-    });
-  } catch (err) {
-    return { evaluate_verdict: 'FAIL', evaluate_feedback: `evaluator spawn failed: ${err.message}` };
-  }
-
-  if (result.exit_code !== 0 || result.timed_out) {
-    return {
-      evaluate_verdict: 'FAIL',
-      evaluate_feedback: `evaluator exit=${result.exit_code} timed_out=${result.timed_out}: ${(result.stderr || '').slice(-300)}`,
-    };
-  }
-
-  const stdout = parseDockerOutput(result.stdout);
-  // Parse last JSON object from stdout
-  let verdict = null;
-  const lines = stdout.split('\n').map(l => l.trim()).filter(l => l.startsWith('{'));
-  const lastJson = lines[lines.length - 1];
-  if (lastJson) {
-    try {
-      verdict = JSON.parse(lastJson);
-    } catch {
-      // ignore parse error
-    }
-  }
-
-  if (!verdict?.verdict) {
-    return {
-      evaluate_verdict: 'FAIL',
-      evaluate_feedback: `evaluator output missing 'verdict' field. Last 300 chars: ${stdout.slice(-300)}`,
-    };
-  }
-
-  return {
-    evaluate_verdict: verdict.verdict,   // 'PASS' or 'FAIL'
-    evaluate_feedback: verdict.feedback || null,
-  };
-}
-
 export async function advanceTaskIndexNode(state) {
   return {
     task_loop_index: (state.task_loop_index ?? 0) + 1,
@@ -1452,9 +1356,11 @@ function _routeAfterFinalE2E(state) {
 
 export function buildHarnessFullGraph() {
   // 节点级 RetryPolicy（W2）—— 见 packages/brain/src/workflows/retry-policies.js
-  // LLM_RETRY: planner / ganLoop / run_sub_task / evaluate / final_evaluate
+  // LLM_RETRY: planner / ganLoop / run_sub_task / final_evaluate
   // DB_RETRY:  dbUpsert / report
   // NO_RETRY:  prep / parsePrd / inferTaskPlan / pick_sub_task / advance / retry / terminal_fail
+  // NOTE: per-task `evaluate` 节点已下沉到 harness-task.graph.js 子图内（evaluate_contract 节点），
+  //       initiative graph 不再有 evaluate 节点。
   return new StateGraph(FullInitiativeState)
     .addNode('prep', prepInitiativeNode, { retryPolicy: NO_RETRY })
     .addNode('planner', runPlannerNode, { retryPolicy: LLM_RETRY })
@@ -1464,10 +1370,10 @@ export function buildHarnessFullGraph() {
     .addNode('dbUpsert', dbUpsertNode, { retryPolicy: DB_RETRY })
     .addNode('pick_sub_task', pickSubTaskNode, { retryPolicy: NO_RETRY })
     .addNode('run_sub_task', runSubTaskNode, { retryPolicy: LLM_RETRY })
-    .addNode('evaluate', evaluateSubTaskNode, { retryPolicy: LLM_RETRY })
     .addNode('advance', advanceTaskIndexNode, { retryPolicy: NO_RETRY })
     .addNode('retry', retryTaskNode, { retryPolicy: NO_RETRY })
     .addNode('terminal_fail', terminalFailNode, { retryPolicy: NO_RETRY })
+    // Golden Path 终验 — 跨 ws E2E 聚合验证，区别于 task 子图内的 evaluate_contract（per-task pre-merge gate）。
     .addNode('final_evaluate', finalEvaluateDispatchNode, { retryPolicy: LLM_RETRY })
     .addNode('report', reportNode, { retryPolicy: DB_RETRY })
     .addEdge(START, 'prep')
@@ -1478,8 +1384,7 @@ export function buildHarnessFullGraph() {
     .addConditionalEdges('inferTaskPlan', stateHasError, { error: END, ok: 'dbUpsert' })
     .addConditionalEdges('dbUpsert', stateHasError, { error: END, ok: 'pick_sub_task' })
     .addConditionalEdges('pick_sub_task', routeFromPickSubTask, { run_sub_task: 'run_sub_task', final_evaluate: 'final_evaluate', end: END })
-    .addEdge('run_sub_task', 'evaluate')
-    .addConditionalEdges('evaluate', routeAfterEvaluate, { advance: 'advance', retry: 'retry', final_evaluate: 'final_evaluate', terminal_fail: 'terminal_fail', end: END })
+    .addEdge('run_sub_task', 'advance')
     .addEdge('advance', 'pick_sub_task')
     .addEdge('retry', 'run_sub_task')
     .addConditionalEdges('terminal_fail', stateHasError, { error: END, ok: END })
