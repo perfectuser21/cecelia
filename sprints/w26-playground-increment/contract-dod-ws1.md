@@ -1,7 +1,3 @@
-contract_branch: cp-harness-propose-r3-e3ce6436
-workstream_index: 1
-sprint_dir: sprints/w26-playground-increment
-
 ---
 skeleton: false
 journey_type: autonomous
