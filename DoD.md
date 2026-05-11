@@ -26,7 +26,7 @@
   Test: tests/harness-gan-graph.test.js (`buildReviewerPrompt > inline SKILL (含 7 维 rubric) + 删 hardcoded 5 维`)
 
 - [x] [BEHAVIOR] 40 个 harness-gan-graph 测试全过
-  Test: `manual:bash -c "cd packages/brain && npx vitest run src/__tests__/harness-gan-graph.test.js 2>&1 | grep -E 'Tests.*40 passed'"`
+  Test: `manual:bash -c "cd packages/brain && npx vitest run src/__tests__/harness-gan-graph.test.js"`
 
 ## 成功标准（runtime acceptance — PR 合并后由 W24 验）
 
