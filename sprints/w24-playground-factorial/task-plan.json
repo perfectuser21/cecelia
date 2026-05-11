@@ -18,6 +18,7 @@
         "[BEHAVIOR] 响应禁用 result/value/product/fact/answer/sum/quotient/power/remainder 等同义字段",
         "[BEHAVIOR] 旧 6 路由 /health/sum/multiply/divide/power/modulo 回归全过",
         "[BEHAVIOR] vitest 全套 NODE_ENV=test npx vitest run 退出码 0",
+        "[BEHAVIOR] PR diff 行级断言：playground/server.js 旧 6 路由 app.get 行零删除（r2 加固，根除 cascade 假绿）",
         "[ARTIFACT] playground/server.js 含 app.get('/factorial' 路由 + 整数白名单 ^\\d+$ + 显式 Number(n) > 18 上界拒 + 不引入 BigInt / Number.isFinite / Stirling/gamma 近似",
         "[ARTIFACT] playground/tests/server.test.js 含 describe('GET /factorial') 块，至少 7 条 happy + 3 条上界拒 + 8 条 strict 拒 + 3 条值 oracle + 2 条跨调用递推 oracle + schema 严等 + 错误体不含 factorial + 回归 6 条",
         "[ARTIFACT] playground/README.md 端点段含 /factorial 与 happy/0!/上界拒/strict 拒/跨调用递推 各示例 ≥ 1",

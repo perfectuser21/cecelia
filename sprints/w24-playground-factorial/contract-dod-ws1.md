@@ -183,3 +183,6 @@ journey_type: autonomous
 
 - [x] [BEHAVIOR] vitest 全套通过（generator TDD red→green 闭环）
   Test: manual:bash -c 'cd playground && NODE_ENV=test npx vitest run --reporter=basic'
+
+- [x] [BEHAVIOR] PR diff 行级断言：`playground/server.js` 旧 6 路由 `app.get('/(health|sum|multiply|divide|power|modulo)')` 注册行**零删除**（r2 新增，针对 r1 "cascade 失败但前 8 步假绿" 反馈，根除 generator 删旧路由腾位的退化路径）
+  Test: manual:bash -c 'git fetch origin main --depth=50 2>/dev/null || true; BASE=$(git merge-base HEAD origin/main 2>/dev/null || git merge-base HEAD main 2>/dev/null); [ -n "$BASE" ] || exit 1; DELETED=$(git diff "$BASE" -- playground/server.js | grep -cE "^-[[:space:]]*app\.get\(['\"]/(health|sum|multiply|divide|power|modulo)['\"]") || DELETED=0; [ "$DELETED" -eq 0 ]'

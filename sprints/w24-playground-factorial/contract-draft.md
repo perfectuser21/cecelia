@@ -1,4 +1,8 @@
-# Sprint Contract Draft (Round 1)
+# Sprint Contract Draft (Round 2)
+
+> **本轮（r2）针对 r1 Reviewer REVISION 反馈的两项加固**：
+> 1. **PR diff 断言无旧路由删除**：r1 反馈 "失败但前 8 步已 PASS 导致 sprint 假绿一半 → cascade 通常是 generator 改 server.js 时误删旧路由"。已：(a) Step 9 旧路由回归断言（运行时验证）；(b) DoD 多条 ARTIFACT 用 regex 验 server.js 仍含 `/health`/`/sum`/`/multiply`/`/divide`/`/power`/`/modulo`（静态验证）；本轮额外加 **Step 10：PR diff 行级断言** —— `git diff` 出现以 `-` 开头删除旧 `app.get('/health|/sum|/multiply|/divide|/power|/modulo'` 的行计数必须 = 0；并把此断言折入 E2E 第 11 段。**三重保险防漏判**。
+> 2. **Test Contract 表 "预期红证据" 加固到 9**：r1 反馈 `test_is_red = 8 → 目标 ≥ 8`，要求显式列具名 test 名 + 未实现时 supertest 收到 404 时 `.expect(200)` 抛 AssertionError 的具体行位锚点。已在文末重写 Test Contract 表，逐条列出 `tests/ws1/factorial.test.js` 真实 test 名（**注：vitest 内用 `test()` 不是 `it()`，按文件实际写法精确引用**）+ 行号 + 未实现时 status 流（404 vs 期望）+ AssertionError 锚点位置。Evaluator 不用打开文件即可定位 FAIL 锚点。
 
 > **合同范围**：playground 加 `GET /factorial` endpoint，单参 `n`、strict-schema `^\d+$`、`n > 18` 显式拒、迭代精确复算、**跨调用递推不变量** oracle 强制双 curl 验证、PR-D Bug 6 inline SKILL pattern 真生效验收。
 > **journey_type**: autonomous
@@ -234,6 +238,32 @@ echo "✅ Step 9 旧 6 路由回归 PASS"
 
 ---
 
+### Step 10: PR diff 行级断言 — 旧 6 路由的 `app.get('/...')` 注册行**零删除**
+
+**可观测行为**: 本轮 PR 在 `playground/server.js` 上的 git diff，以 `-` 开头（行删除）的行中**不得出现** `app.get(...` 紧跟 `/health` / `/sum` / `/multiply` / `/divide` / `/power` / `/modulo` 任一字面量。即"generator 不许通过删除旧路由的方式给 /factorial 腾位置"——配合 Step 9 运行时回归 + DoD 多条 ARTIFACT 静态正则验证，形成"diff 行级 + 静态 regex + 运行时回归"三重保险，根除 r1 反馈的"前 8 步 PASS 但旧路由被误删导致 sprint 假绿一半" cascade。
+
+**验证命令**:
+```bash
+# 计算 origin/main..HEAD 在 playground/server.js 上的删除行数（带 -E 扩展 regex）
+# Evaluator 环境必须能 access origin/main；若 origin/main 未 fetch，先 fetch
+git fetch origin main --depth=50 2>/dev/null || true
+BASE=$(git merge-base HEAD origin/main 2>/dev/null || git merge-base HEAD main 2>/dev/null || echo "")
+[ -n "$BASE" ] || { echo "FAIL Step 10 取不到 merge-base"; exit 1; }
+
+# 关键命令：grep -cE 计 '-app.get('/sum|/multiply|...)' 模式删除行数
+DELETED=$(git diff "$BASE" -- playground/server.js | grep -cE "^-[[:space:]]*app\.get\(['\"]/(health|sum|multiply|divide|power|modulo)['\"]") || DELETED=0
+[ "$DELETED" -eq 0 ] || {
+  echo "FAIL Step 10: 检测到 generator 删除了旧路由 ${DELETED} 行（PR diff 中 app.get('/(health|sum|multiply|divide|power|modulo)') 出现在以 - 开头的行）"
+  git diff "$BASE" -- playground/server.js | grep -nE "^-[[:space:]]*app\.get\(['\"]/(health|sum|multiply|divide|power|modulo)['\"]"
+  exit 1
+}
+echo "✅ Step 10 PR diff 旧 6 路由零删除 PASS"
+```
+
+**硬阈值**: PR diff 中以 `-` 开头的旧 6 路由 `app.get(...)` 注册行计数严等 0。任一被删即 FAIL（即使后面 happy 因 generator 又加回来过了运行时也算 FAIL — 行级 git 历史不可造假）。
+
+---
+
 ## E2E 验收（最终 Evaluator 跑）
 
 **journey_type**: autonomous
@@ -304,8 +334,21 @@ curl -fs "localhost:$PORT/modulo?a=10&b=3" | jq -e '.remainder == 1' || { echo "
 # E2E-10. vitest 全套（确保 generator 的辅助单测也过）
 NODE_ENV=test npx vitest run --reporter=verbose 2>&1 | tail -20
 
+# E2E-11. PR diff 行级 — 旧 6 路由零删除（r2 新增，根除 r1 假绿 cascade）
+cd ..
+git fetch origin main --depth=50 2>/dev/null || true
+BASE=$(git merge-base HEAD origin/main 2>/dev/null || git merge-base HEAD main 2>/dev/null || echo "")
+[ -n "$BASE" ] || { echo "FAIL E2E-11 取不到 merge-base"; kill $SPID 2>/dev/null; exit 1; }
+DELETED=$(git diff "$BASE" -- playground/server.js | grep -cE "^-[[:space:]]*app\.get\(['\"]/(health|sum|multiply|divide|power|modulo)['\"]") || DELETED=0
+[ "$DELETED" -eq 0 ] || {
+  echo "FAIL E2E-11 PR diff 删除了旧路由 ${DELETED} 行";
+  git diff "$BASE" -- playground/server.js | grep -nE "^-[[:space:]]*app\.get\(['\"]/(health|sum|multiply|divide|power|modulo)['\"]"
+  kill $SPID 2>/dev/null
+  exit 1
+}
+
 kill $SPID
-echo "✅ Golden Path 9 段 + vitest 全过"
+echo "✅ Golden Path 10 段 + vitest + PR diff 全过"
 ```
 
 **通过标准**: 脚本 `exit 0`。
@@ -357,6 +400,43 @@ workstream_count: 1
 
 ## Test Contract
 
-| Workstream | Test File | BEHAVIOR 覆盖 | 预期红证据 |
+> **r2 加固说明**：r1 评分 `test_is_red = 8`，达标但可加固到 9。本表新增"具名 test + 行位 + AssertionError 锚点"列，让 evaluator 不用打开 `tests/ws1/factorial.test.js` 即可定位 FAIL 锚点。
+>
+> **vitest 框架注**：vitest 接受 `it()` 与 `test()` 两种语法等价。本测试文件实际使用 `test(` 写法（与 PRD 表述 `it()` 等价语义），下表 test 名严格按文件实际字面量引用。
+
+| WS | Test File | BEHAVIOR 覆盖 | 预期红证据（具名 test + 行位 + AssertionError 锚点） |
 |---|---|---|---|
-| WS1 | `tests/ws1/factorial.test.ts` | happy 中段 / 数学边界 0!=1!=1 / 精度上界 n=18 / 上界拒 19+/strict-schema 拒 / **跨调用递推** k=5 + k=18 / schema 完整 / 错误体不含 factorial / query 别名锁 / 前导 0 等价 / 旧路由回归 | 当前 server.js **不含** `/factorial` 路由 → 所有 happy / 递推 / 边界用例返 404 而非 200 → vitest FAIL ≥ 12 条 |
+| WS1 | `tests/ws1/factorial.test.js` | 见下表 9 条锚点 + 32 条配套用例 | 当前 main 分支 `playground/server.js` **不含** `app.get('/factorial', ...)` 路由 → Express 默认 404 中间件返 `text/html` 404 → supertest `res.status === 404` → 与所有 `expect(res.status).toBe(200)` 严等比对必抛 AssertionError，详见下方 9 锚点；总 vitest FAIL count ≥ 32（happy 13 + 上界拒 3 + strict 拒 12 + 递推 4 + schema 2 + 禁用字段 1 + query 别名 4 + 前导 0 1 + 缺参 1 → 41 条用例，其中预期 200/400 的对照路径均会 FAIL；只有 6 条回归用例可能 PASS，因为旧路由本来就存在） |
+
+### 预期红证据 — 9 条 AssertionError 行位锚点（r2 加固，r1 评 test_is_red 9）
+
+下表"行位"指 `sprints/w24-playground-factorial/tests/ws1/factorial.test.js` 文件中的近似行号。**未实现状态**（main 分支 server.js 无 `/factorial`）下，supertest `request(app).get('/factorial?...').` 会经 Express 默认 404 handler 返 `res.status === 404`。表中"AssertionError 锚点"列描述 vitest 输出 `Expected: <X> Received: 404` 的具体抛点：
+
+| # | 行位 | 具名 test 字面量 | 期望 status | 实际 status（未实现） | AssertionError 锚点 |
+|---|---|---|---|---|---|
+| 1 | ~8-13 | `test('GET /factorial?n=5 → 200 + {factorial:120}（happy 中段）', ...)` | 200 | 404 | 行 ~11: `expect(res.status).toBe(200)` → AssertionError: expected 404 to be 200 |
+| 2 | ~41-45 | `test('GET /factorial?n=0 → 200 + {factorial:1}（数学定义 0!=1，空积）', ...)` | 200 | 404 | 行 ~44: `expect(res.status).toBe(200)` → AssertionError + 后续 `toEqual({factorial:1})` 不达 |
+| 3 | ~47-51 | `test('GET /factorial?n=1 → 200 + {factorial:1}（1!=1）', ...)` | 200 | 404 | 行 ~49: `expect(res.status).toBe(200)` → AssertionError: expected 404 to be 200 |
+| 4 | ~55-61 | `test('GET /factorial?n=18 → 200 + {factorial:6402373705728000}（精度上界，< MAX_SAFE_INTEGER）', ...)` | 200 | 404 | 行 ~57: `expect(res.status).toBe(200)` → AssertionError；body.factorial undefined |
+| 5 | ~94-102 | `test('跨调用递推 oracle: f(5) === 5 * f(4) === 120（小数）', ...)` | 双 200 | 双 404 | 行 ~97-98: `expect(res5.status).toBe(200)` + `expect(res4.status).toBe(200)` 双断 AssertionError；行 ~99 `expect(res5.body.factorial).toBe(5 * res4.body.factorial)` 退化为 `NaN === NaN * 5`（undefined * 5 = NaN）抛 |
+| 6 | ~104-112 | `test('跨调用递推 oracle: f(18) === 18 * f(17)（精度上界，Stirling/Lanczos 必断）', ...)` | 双 200 | 双 404 | 行 ~107-108: 双 `expect(...status).toBe(200)` 断；W24 核心 oracle 验失 |
+| 7 | ~135-141 | `test('GET /factorial?n=19 → 400 + error 非空，body 不含 factorial（上界拒）', ...)` | 400 | 404 | 行 ~137: `expect(res.status).toBe(400)` → AssertionError: expected 404 to be 400（上界拒分支也红） |
+| 8 | ~239-243 | `test('成功响应 schema 完整性: Object.keys 严等 ["factorial"]', ...)` | 200 + keys=['factorial'] | 404 + keys=[] 或 HTML body | 行 ~241: `expect(res.status).toBe(200)` 断；行 ~242 `Object.keys(res.body).sort()` 不等于 `['factorial']` 双断 |
+| 9 | ~245-249 | `test('错误响应 schema 完整性: Object.keys 严等 ["error"]', ...)` | 400 + keys=['error'] | 404 + 非 JSON | 行 ~247: `expect(res.status).toBe(400)` 断；行 ~248 keys 比对断 |
+
+**总 AssertionError 计数预期 ≥ 32**（41 个 /factorial 用例 - 6 个旧路由回归 - 部分 status 容错冗余 = 32 起码红）。
+
+**Evaluator 操作指引**：
+
+```bash
+# 当前 main 分支无 /factorial 路由，直接跑 vitest 应看到 FAIL ≥ 32
+cd playground
+NODE_ENV=test npx vitest run tests/server.test.js --reporter=verbose 2>&1 | grep -cE "✗|FAIL|AssertionError"
+# 期望: ≥ 9（9 锚点至少都红） / 完整 generator 写代码前应 ≥ 32
+
+# 也可针对 sprint 路径跑同款契约测试副本（合同 tests/ws1）
+NODE_ENV=test npx vitest run sprints/w24-playground-factorial/tests/ws1/factorial.test.js --reporter=verbose 2>&1
+# 期望: 同上，所有 /factorial 用例 FAIL，旧路由回归 PASS
+```
+
+**红证据校验通过的硬阈值**: AssertionError 数 ≥ 9（9 锚点全红）；总 FAIL 计数 ≥ 30（容 1-2 条 status-only 用例可能因 supertest 容错过；核心 9 锚点必须全红）。任一锚点 PASS（generator 偷跑实现）即视为合同失效。
