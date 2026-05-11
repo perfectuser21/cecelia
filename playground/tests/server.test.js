@@ -174,76 +174,123 @@ describe('GET /multiply (strict-schema)', () => {
   });
 });
 
-describe('GET /divide (strict-schema + 除零兜底 + oracle)', () => {
-  test('GET /divide?a=6&b=2 → 200 + {quotient:3}', async () => {
+describe('GET /divide (strict-schema + 除零兜底 + oracle + W28 schema)', () => {
+  test('GET /divide?a=6&b=2 → 200 + {result:3, operation:"divide"}，keys 严格 ["operation","result"]', async () => {
     const res = await request(app).get('/divide').query({ a: '6', b: '2' });
     expect(res.status).toBe(200);
-    expect(res.body).toEqual({ quotient: 3 });
-    expect(typeof res.body.quotient).toBe('number');
+    expect(res.body.result).toBe(3);
+    expect(typeof res.body.result).toBe('number');
+    expect(res.body.operation).toBe('divide');
+    expect(Object.keys(res.body).sort()).toEqual(['operation', 'result']);
   });
 
-  test('GET /divide?a=1&b=3 → 200 + body.quotient === Number("1")/Number("3") (oracle 严格相等)', async () => {
+  test('GET /divide?a=1&b=3 → oracle 严格相等 .result === Number("1")/Number("3") + .operation === "divide"', async () => {
     const res = await request(app).get('/divide').query({ a: '1', b: '3' });
     expect(res.status).toBe(200);
-    expect(typeof res.body.quotient).toBe('number');
-    expect(res.body.quotient).toBe(Number('1') / Number('3'));
+    expect(typeof res.body.result).toBe('number');
+    expect(res.body.result).toBe(Number('1') / Number('3'));
+    expect(res.body.operation).toBe('divide');
   });
 
-  test('GET /divide?a=-6&b=2 → 200 + {quotient:-3} (负被除数合法)', async () => {
+  test('GET /divide?a=10&b=3 → oracle 严格相等 .result === Number("10")/Number("3") (不能整除浮点)', async () => {
+    const res = await request(app).get('/divide').query({ a: '10', b: '3' });
+    expect(res.status).toBe(200);
+    expect(res.body.result).toBe(Number('10') / Number('3'));
+    expect(res.body.operation).toBe('divide');
+    expect(Object.keys(res.body).sort()).toEqual(['operation', 'result']);
+  });
+
+  test('GET /divide?a=-6&b=2 → 200 + {result:-3, operation:"divide"} (负被除数合法)', async () => {
     const res = await request(app).get('/divide').query({ a: '-6', b: '2' });
     expect(res.status).toBe(200);
-    expect(res.body).toEqual({ quotient: -3 });
+    expect(res.body.result).toBe(-3);
+    expect(res.body.operation).toBe('divide');
   });
 
-  test('GET /divide?a=6&b=-2 → 200 + {quotient:-3} (负除数合法)', async () => {
+  test('GET /divide?a=6&b=-2 → 200 + {result:-3, operation:"divide"} (负除数合法)', async () => {
     const res = await request(app).get('/divide').query({ a: '6', b: '-2' });
     expect(res.status).toBe(200);
-    expect(res.body).toEqual({ quotient: -3 });
+    expect(res.body.result).toBe(-3);
+    expect(res.body.operation).toBe('divide');
   });
 
-  test('GET /divide?a=0&b=5 → 200 + {quotient:0} (被除数为 0 合法)', async () => {
+  test('GET /divide?a=-6&b=-2 → 200 + {result:3, operation:"divide"} (双负)', async () => {
+    const res = await request(app).get('/divide').query({ a: '-6', b: '-2' });
+    expect(res.status).toBe(200);
+    expect(res.body.result).toBe(3);
+    expect(res.body.operation).toBe('divide');
+  });
+
+  test('GET /divide?a=0&b=5 → 200 + {result:0, operation:"divide"} (被除数为 0 合法)', async () => {
     const res = await request(app).get('/divide').query({ a: '0', b: '5' });
     expect(res.status).toBe(200);
-    expect(res.body).toEqual({ quotient: 0 });
+    expect(res.body.result).toBe(0);
+    expect(res.body.operation).toBe('divide');
   });
 
-  test('GET /divide?a=1.5&b=0.5 → 200 + body.quotient === Number("1.5")/Number("0.5") (小数 + oracle)', async () => {
+  test('GET /divide?a=1.5&b=0.5 → oracle .result === Number("1.5")/Number("0.5") + operation', async () => {
     const res = await request(app).get('/divide').query({ a: '1.5', b: '0.5' });
     expect(res.status).toBe(200);
-    expect(typeof res.body.quotient).toBe('number');
-    expect(res.body.quotient).toBe(Number('1.5') / Number('0.5'));
+    expect(typeof res.body.result).toBe('number');
+    expect(res.body.result).toBe(Number('1.5') / Number('0.5'));
+    expect(res.body.operation).toBe('divide');
   });
 
-  test('GET /divide?a=5&b=0 → 400 + 非空 error，body 不含 quotient (除零兜底)', async () => {
+  test('GET /divide?a=6&b=2 响应 body 不含 W21 历史字段 quotient/同义/跨端点漂移名', async () => {
+    const res = await request(app).get('/divide').query({ a: '6', b: '2' });
+    expect(res.status).toBe(200);
+    for (const k of ['quotient', 'division', 'divided', 'div', 'ratio', 'share', 'value', 'dividend', 'divisor', 'sum', 'product', 'power', 'remainder', 'factorial']) {
+      expect(Object.prototype.hasOwnProperty.call(res.body, k)).toBe(false);
+    }
+  });
+
+  test('GET /divide?a=5&b=0 → 400 + {error: 非空 string}，keys 严格 ["error"]，body 不含 result/operation (除零兜底)', async () => {
     const res = await request(app).get('/divide').query({ a: '5', b: '0' });
     expect(res.status).toBe(400);
     expect(typeof res.body.error).toBe('string');
     expect(res.body.error.length).toBeGreaterThan(0);
-    expect(Object.prototype.hasOwnProperty.call(res.body, 'quotient')).toBe(false);
+    expect(Object.keys(res.body).sort()).toEqual(['error']);
+    expect(Object.prototype.hasOwnProperty.call(res.body, 'result')).toBe(false);
+    expect(Object.prototype.hasOwnProperty.call(res.body, 'operation')).toBe(false);
   });
 
-  test('GET /divide?a=0&b=0 → 400 + 非空 error，body 不含 quotient (0/0 也拒)', async () => {
+  test('GET /divide?a=0&b=0 → 400 + keys 严格 ["error"]，body 不含 result/operation', async () => {
     const res = await request(app).get('/divide').query({ a: '0', b: '0' });
     expect(res.status).toBe(400);
     expect(typeof res.body.error).toBe('string');
     expect(res.body.error.length).toBeGreaterThan(0);
-    expect(Object.prototype.hasOwnProperty.call(res.body, 'quotient')).toBe(false);
+    expect(Object.keys(res.body).sort()).toEqual(['error']);
+    expect(Object.prototype.hasOwnProperty.call(res.body, 'result')).toBe(false);
+    expect(Object.prototype.hasOwnProperty.call(res.body, 'operation')).toBe(false);
   });
 
-  test('GET /divide?a=6&b=0.0 → 400 + 非空 error，body 不含 quotient (b=0.0 也算零)', async () => {
+  test('GET /divide?a=6&b=0.0 → 400 + keys 严格 ["error"]，body 不含 result/operation', async () => {
     const res = await request(app).get('/divide').query({ a: '6', b: '0.0' });
     expect(res.status).toBe(400);
     expect(typeof res.body.error).toBe('string');
     expect(res.body.error.length).toBeGreaterThan(0);
-    expect(Object.prototype.hasOwnProperty.call(res.body, 'quotient')).toBe(false);
+    expect(Object.keys(res.body).sort()).toEqual(['error']);
+    expect(Object.prototype.hasOwnProperty.call(res.body, 'result')).toBe(false);
+    expect(Object.prototype.hasOwnProperty.call(res.body, 'operation')).toBe(false);
   });
 
-  test('GET /divide?a=6 (缺 b) → 400 + 非空 error，body 不含 quotient', async () => {
+  test('GET /divide?a=6&b=-0 → 400 + keys 严格 ["error"]，body 不含 result/operation', async () => {
+    const res = await request(app).get('/divide').query({ a: '6', b: '-0' });
+    expect(res.status).toBe(400);
+    expect(typeof res.body.error).toBe('string');
+    expect(res.body.error.length).toBeGreaterThan(0);
+    expect(Object.keys(res.body).sort()).toEqual(['error']);
+    expect(Object.prototype.hasOwnProperty.call(res.body, 'result')).toBe(false);
+    expect(Object.prototype.hasOwnProperty.call(res.body, 'operation')).toBe(false);
+  });
+
+  test('GET /divide?a=6 (缺 b) → 400 + body 不含 result/operation', async () => {
     const res = await request(app).get('/divide').query({ a: '6' });
     expect(res.status).toBe(400);
     expect(typeof res.body.error).toBe('string');
     expect(res.body.error.length).toBeGreaterThan(0);
-    expect(Object.prototype.hasOwnProperty.call(res.body, 'quotient')).toBe(false);
+    expect(Object.prototype.hasOwnProperty.call(res.body, 'result')).toBe(false);
+    expect(Object.prototype.hasOwnProperty.call(res.body, 'operation')).toBe(false);
   });
 
   test('GET /divide?b=2 (缺 a) → 400 + 非空 error', async () => {
@@ -251,6 +298,7 @@ describe('GET /divide (strict-schema + 除零兜底 + oracle)', () => {
     expect(res.status).toBe(400);
     expect(typeof res.body.error).toBe('string');
     expect(res.body.error.length).toBeGreaterThan(0);
+    expect(Object.prototype.hasOwnProperty.call(res.body, 'result')).toBe(false);
   });
 
   test('GET /divide (双参数都缺) → 400 + 非空 error', async () => {
@@ -260,20 +308,22 @@ describe('GET /divide (strict-schema + 除零兜底 + oracle)', () => {
     expect(res.body.error.length).toBeGreaterThan(0);
   });
 
-  test('GET /divide?a=1e3&b=2 (科学计数法) → 400 + 非空 error，body 不含 quotient', async () => {
+  test('GET /divide?a=1e3&b=2 (科学计数法) → 400 + body 不含 result/operation', async () => {
     const res = await request(app).get('/divide').query({ a: '1e3', b: '2' });
     expect(res.status).toBe(400);
     expect(typeof res.body.error).toBe('string');
     expect(res.body.error.length).toBeGreaterThan(0);
-    expect(Object.prototype.hasOwnProperty.call(res.body, 'quotient')).toBe(false);
+    expect(Object.prototype.hasOwnProperty.call(res.body, 'result')).toBe(false);
+    expect(Object.prototype.hasOwnProperty.call(res.body, 'operation')).toBe(false);
   });
 
-  test('GET /divide?a=Infinity&b=2 → 400 + 非空 error，body 不含 quotient', async () => {
+  test('GET /divide?a=Infinity&b=2 → 400 + body 不含 result/operation', async () => {
     const res = await request(app).get('/divide').query({ a: 'Infinity', b: '2' });
     expect(res.status).toBe(400);
     expect(typeof res.body.error).toBe('string');
     expect(res.body.error.length).toBeGreaterThan(0);
-    expect(Object.prototype.hasOwnProperty.call(res.body, 'quotient')).toBe(false);
+    expect(Object.prototype.hasOwnProperty.call(res.body, 'result')).toBe(false);
+    expect(Object.prototype.hasOwnProperty.call(res.body, 'operation')).toBe(false);
   });
 
   test('GET /divide?a=6&b=NaN → 400 + 非空 error', async () => {
@@ -283,7 +333,7 @@ describe('GET /divide (strict-schema + 除零兜底 + oracle)', () => {
     expect(res.body.error.length).toBeGreaterThan(0);
   });
 
-  test('GET /divide?a=+6&b=2 (前导正号 → URL 编码后 %2B6) → 400 + 非空 error', async () => {
+  test('GET /divide?a=+6&b=2 (前导正号 %2B6) → 400 + 非空 error', async () => {
     const res = await request(app).get('/divide').query({ a: '+6', b: '2' });
     expect(res.status).toBe(400);
     expect(typeof res.body.error).toBe('string');
@@ -297,8 +347,22 @@ describe('GET /divide (strict-schema + 除零兜底 + oracle)', () => {
     expect(res.body.error.length).toBeGreaterThan(0);
   });
 
+  test('GET /divide?a=6.&b=2 (小数点缺小数部分) → 400 + 非空 error', async () => {
+    const res = await request(app).get('/divide').query({ a: '6.', b: '2' });
+    expect(res.status).toBe(400);
+    expect(typeof res.body.error).toBe('string');
+    expect(res.body.error.length).toBeGreaterThan(0);
+  });
+
   test('GET /divide?a=0xff&b=2 (十六进制) → 400 + 非空 error', async () => {
     const res = await request(app).get('/divide').query({ a: '0xff', b: '2' });
+    expect(res.status).toBe(400);
+    expect(typeof res.body.error).toBe('string');
+    expect(res.body.error.length).toBeGreaterThan(0);
+  });
+
+  test('GET /divide?a=1,000&b=2 (千分位) → 400 + 非空 error', async () => {
+    const res = await request(app).get('/divide').query({ a: '1,000', b: '2' });
     expect(res.status).toBe(400);
     expect(typeof res.body.error).toBe('string');
     expect(res.body.error.length).toBeGreaterThan(0);
@@ -311,12 +375,13 @@ describe('GET /divide (strict-schema + 除零兜底 + oracle)', () => {
     expect(res.body.error.length).toBeGreaterThan(0);
   });
 
-  test('GET /divide?a=abc&b=3 (非数字) → 400 + error，body 不含 quotient', async () => {
+  test('GET /divide?a=abc&b=3 (非数字) → 400 + body 不含 result/operation', async () => {
     const res = await request(app).get('/divide').query({ a: 'abc', b: '3' });
     expect(res.status).toBe(400);
     expect(typeof res.body.error).toBe('string');
     expect(res.body.error.length).toBeGreaterThan(0);
-    expect(Object.prototype.hasOwnProperty.call(res.body, 'quotient')).toBe(false);
+    expect(Object.prototype.hasOwnProperty.call(res.body, 'result')).toBe(false);
+    expect(Object.prototype.hasOwnProperty.call(res.body, 'operation')).toBe(false);
   });
 });
 
@@ -1109,10 +1174,10 @@ describe('GET /factorial — int-only strict-schema + 上界 18 拒 + 跨调用�
     expect(res.body).toEqual({ product: 6 });
   });
 
-  test('回归 W21 /divide?a=6&b=2 → 200 + {quotient:3}', async () => {
+  test('回归 W21/W28 /divide?a=6&b=2 → 200 + {result:3, operation:"divide"}', async () => {
     const res = await request(app).get('/divide').query({ a: '6', b: '2' });
     expect(res.status).toBe(200);
-    expect(res.body).toEqual({ quotient: 3 });
+    expect(res.body).toEqual({ result: 3, operation: 'divide' });
   });
 
   test('回归 W22 /power?a=2&b=10 → 200 + {power:1024}', async () => {
@@ -1415,10 +1480,11 @@ describe('GET /increment — 7 已有路由回归 [BEHAVIOR]', () => {
     expect(res.body.product).toBe(6);
   });
 
-  test('GET /divide?a=6&b=3 → 200 {quotient:2}', async () => {
+  test('GET /divide?a=6&b=3 → 200 {result:2, operation:"divide"}', async () => {
     const res = await request(app).get('/divide').query({ a: '6', b: '3' });
     expect(res.status).toBe(200);
-    expect(res.body.quotient).toBe(2);
+    expect(res.body.result).toBe(2);
+    expect(res.body.operation).toBe('divide');
   });
 
   test('GET /power?a=2&b=3 → 200 {power:8}', async () => {

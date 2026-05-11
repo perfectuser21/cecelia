@@ -1,0 +1,38 @@
+{
+  "initiative_id": "6633ebbf-3dda-4a89-afab-1b46eaac1232",
+  "journey_type": "autonomous",
+  "journey_type_reason": "playground 是独立 HTTP server 子项目，本次只动 server 路由 + 单测 + README，无 UI / 无 brain tick / 无 engine hook / 无远端 agent 协议；按规则归类为 autonomous（与 W19~W26 同分类）。pre-merge gate 真验收发生在 harness 编排层 task 子图 poll_ci → evaluate_contract → merge_pr，不影响本端点本身的 journey 分类。",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "playground /divide 响应统一为 {result, operation:'divide'}（替换 W21 {quotient} 形态）+ schema 完整性 oracle + 7 端点回归 — W28 pre-merge gate 真验收任务",
+      "scope": "改 playground/server.js 中 app.get('/divide', ...) 路由的成功响应一行：res.json({ quotient: Number(a) / Number(b) }) → res.json({ result: Number(a) / Number(b), operation: 'divide' })，路由其余代码（缺参 / STRICT_NUMBER 复用 / Number(b)===0 除零拒 / 400 错误响应）字面不动。其余 7 条路由（/health, /sum, /multiply, /power, /modulo, /factorial, /increment）一字不动。改 playground/tests/server.test.js 中 describe('GET /divide ...) 块：把所有 res.body.quotient 断言字面替换为 res.body.result；新增 res.body.operation === 'divide' 字面断言、Object.keys(res.body).sort() === ['operation','result'] schema 完整性断言、错误响应 keys 字面集合 ['error'] 断言、错误响应不含 result/operation 断言；保留 happy（正/负/小数/被除数为 0 至少 4 条）+ 除零拒（含 b=0、a=0&b=0、b=0.0、b=-0 至少 3 条）+ strict 拒（科学计数法、Infinity、前导 +、缺参、十六进制、千分位、空串各 ≥1 条）；保留 ≥ 2 条 oracle 复算断言（res.body.result === Number(a)/Number(b)），含至少 1 条不能整除浮点（1/3 或 10/3）。其余 describe 块（health/sum/multiply/power/modulo/factorial/increment）一字不动。改 playground/README.md 中 `### GET /divide` 段示例响应：把 {\"quotient\": 3} 字面替换为 {\"result\": 3, \"operation\": \"divide\"}；其余端点段一字不动。零新依赖（playground/package.json 不动）。",
+      "dod": [
+        "[BEHAVIOR] GET /divide?a=6&b=2 → HTTP 200 + body 严 schema {result:3, operation:'divide'}，顶层 keys 字面集合 = ['operation','result']，且 body 不含禁用字段 quotient — 对应合同 Step 1 + DoD 第 1 条 BEHAVIOR",
+        "[BEHAVIOR] GET /divide?a=1&b=3 与 GET /divide?a=10&b=3 → 不能整除浮点 oracle 复算严格相等（.result === Number(a)/Number(b)）且 .operation == 'divide' — 对应合同 Step 2 + DoD 第 2 条 BEHAVIOR",
+        "[BEHAVIOR] GET /divide 成功响应顶层 keys 字面严格集合相等 ['operation','result']（不许 quotient/dividend/divisor/value 共存）— 对应合同 Step 1 + DoD 第 3 条 BEHAVIOR",
+        "[BEHAVIOR] GET /divide 成功响应 .operation 字面字符串严格等于 'divide'（不许 'div'/'division'/'divided' 等变体）— 对应合同 Step 1 + DoD 第 4 条 BEHAVIOR",
+        "[BEHAVIOR] 禁用字段反向 — /divide 响应不含 quotient/division/divided/divisor_result/divide_result/div/ratio/share/value/input/output/data/payload/response/answer/out/meta/dividend/divisor/numerator/denominator/sum/product/power/remainder/factorial — 对应合同 E2E + DoD 第 5 条 BEHAVIOR",
+        "[BEHAVIOR] error path b=0 — /divide?a=5&b=0 / ?a=0&b=0 / ?a=6&b=0.0 / ?a=6&b=-0 全返 400 + {error: 非空 string}，错误 keys 字面集合 ['error']，body 不含 result/operation 且不含 PRD 错误响应禁用替代名 message/msg/reason/detail/details/description/info/code/status/kind — 对应合同 Step 3 + DoD 第 6 条 BEHAVIOR",
+        "[BEHAVIOR] error path strict-schema 拒 — 科学计数法/Infinity/NaN/前导+/.5/6./0xff/千分位/空串/非数字/缺参 全返 400 + body 不含 result/operation 且不含 PRD 错误响应禁用替代名 message/msg/reason/detail/details/description/info/code/status/kind — 对应合同 Step 4 + DoD 第 7 条 BEHAVIOR",
+        "[BEHAVIOR] 回归不破坏 — /health, /sum, /multiply, /power, /modulo, /factorial, /increment 七端点 happy 响应字段名/值/keys 集合一字不变 — 对应合同 Step 5 + DoD 第 8 条 BEHAVIOR",
+        "[BEHAVIOR] vitest 单测全绿（cd playground && npm test exit 0）— 对应 DoD 第 9 条 BEHAVIOR",
+        "[ARTIFACT] playground/server.js /divide 路由成功响应字面含 result: 与 operation: 'divide'（或 \"divide\"），且字面不再含 quotient",
+        "[ARTIFACT] playground/server.js /divide 路由仍含 Number(b) === 0 显式除零判定（strict 通过后、除法前）",
+        "[ARTIFACT] playground/server.js /divide 路由仍含 strict-schema 校验（STRICT_NUMBER 常量引用 或 字面正则 ^-?\\d+(\\.\\d+)?$）",
+        "[ARTIFACT] playground/server.js 仍含全部 7 条其他路由 /health, /sum, /multiply, /power, /modulo, /factorial, /increment",
+        "[ARTIFACT] playground/tests/server.test.js GET /divide describe 块字面不再含 res.body.quotient 或 { quotient: 残留断言；改用 res.body.result + res.body.operation",
+        "[ARTIFACT] playground/README.md /divide 段示例响应字面含 \"result\" 与 \"operation\": \"divide\"，且字面不再含 \"quotient\"",
+        "[ARTIFACT] playground/package.json 仍零新依赖（dependencies 仅 express，devDependencies 仅 supertest + vitest）"
+      ],
+      "files": [
+        "playground/server.js",
+        "playground/tests/server.test.js",
+        "playground/README.md"
+      ],
+      "depends_on": [],
+      "complexity": "S",
+      "estimated_minutes": 35
+    }
+  ]
+}

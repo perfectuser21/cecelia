@@ -44,7 +44,7 @@ app.get('/divide', (req, res) => {
   if (Number(b) === 0) {
     return res.status(400).json({ error: '除数 b 不能为 0' });
   }
-  return res.json({ quotient: Number(a) / Number(b) });
+  return res.json({ result: Number(a) / Number(b), operation: 'divide' });
 });
 
 app.get('/power', (req, res) => {

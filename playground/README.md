@@ -20,7 +20,7 @@ npm start           # 起 server（默认 :3000）
 - `GET /health` → `{ "ok": true }`
 - `GET /sum?a=N&b=M` → 返回 a+b 的算术和
 - `GET /multiply?a=N&b=M` → 返回 a×b 的乘积（**strict-schema**：拒绝科学计数法 / `Infinity` / 前导 `+` / 十六进制 等）
-- `GET /divide?a=N&b=M` → 返回 a÷b 的商（**strict-schema** + **除零兜底**：`b=0`/`b=0.0` → 400）
+- `GET /divide?a=N&b=M` → 返回 `{"result": a/b, "operation": "divide"}`（**strict-schema** + **除零兜底**：`b=0`/`b=0.0` → 400）
 - `GET /power?a=N&b=M` → 返回 a^b（**strict-schema** + **0^0 不定式拒** + **结果有限性兜底**：`Number.isFinite(result)===false` 时 400，覆盖 0^负 / 负^分数 / 溢出）
 - `GET /modulo?a=N&b=M` → 返回 a%b 的余数（**strict-schema** + **除零兜底**：`b=0`/`b=0.0` → 400；**JS 原生 truncated 取模**：余数符号跟随被除数 a，与数学 floored mod 区分）
 - `GET /factorial?n=N` → 返回 n! 阶乘（**整数白名单 strict-schema** `^\d+$` + **上界 18 拒**：`n > 18` → 400（精度上界，避免超过 `Number.MAX_SAFE_INTEGER`）+ **迭代精确累积**：`for(i=2; i<=n; i++) acc *= i`，不引入 BigInt / Stirling / gamma 近似）
@@ -81,20 +81,20 @@ curl -s -o /dev/stderr -w 'HTTP %{http_code}\n' 'http://127.0.0.1:3000/multiply?
 
 ### `GET /divide` 示例
 
-happy path（含小数 oracle 严格相等：JS 原生除法结果，不做精度截断）：
+happy path（响应 schema 严格 `{result, operation:"divide"}`；含小数 oracle 严格相等：JS 原生除法结果，不做精度截断）：
 
 ```bash
 curl -s 'http://127.0.0.1:3000/divide?a=6&b=2'
-# {"quotient":3}
+# {"result":3,"operation":"divide"}
 
 curl -s 'http://127.0.0.1:3000/divide?a=-6&b=2'
-# {"quotient":-3}
+# {"result":-3,"operation":"divide"}
 
 curl -s 'http://127.0.0.1:3000/divide?a=1.5&b=0.5'
-# {"quotient":3}
+# {"result":3,"operation":"divide"}
 
 curl -s 'http://127.0.0.1:3000/divide?a=1&b=3'
-# {"quotient":0.3333333333333333}
+# {"result":0.3333333333333333,"operation":"divide"}
 ```
 
 除零拒绝（核心兜底：strict-schema 通过后显式 `Number(b) === 0` 判定，0/0 与 b=0.0 都拒）：

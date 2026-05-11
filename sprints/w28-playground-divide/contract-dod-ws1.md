@@ -1,7 +1,3 @@
-contract_branch: cp-harness-propose-r2-6633ebbf
-workstream_index: 1
-sprint_dir: sprints/w28-playground-divide
-
 ---
 skeleton: false
 journey_type: autonomous
