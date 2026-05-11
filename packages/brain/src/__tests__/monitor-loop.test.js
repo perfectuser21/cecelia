@@ -345,8 +345,10 @@ describe('monitor-loop', () => {
       vi.clearAllTimers();
     });
 
-    it('失败率低于 30% 时不调用 handleFailureSpike 路径', async () => {
-      // detectFailureSpike 返回低失败率
+    it('存在失败但失败率低于 spike 阈值时仍跑免疫系统 (Cortex Insight 81cba57d)', async () => {
+      // 回归防线：absorption_policy 是 signature 级别的规则——
+      // 不能用系统级 failure_rate (30%) 卡住免疫系统，否则单签名重复失败
+      // 永远不被计数、永远不晋升、永远不执行，制造"规则存在但不执行"的虚假安全感。
       let queryCount = 0;
       mockPool.query.mockImplementation(() => {
         queryCount++;
@@ -355,20 +357,47 @@ describe('monitor-loop', () => {
           return Promise.resolve({ rows: [] });
         }
         if (queryCount === 2) {
-          // detectFailureSpike
+          // detectFailureSpike: 1/20 = 5%, 远低于 30% 阈值
           return Promise.resolve({
             rows: [{ failed_count: '1', total_count: '20', failure_rate: '0.05' }],
           });
         }
-        // resource_snapshot write
+        if (queryCount === 3) {
+          // recent failures: 即使只有 1 条，也必须被 immune 处理
+          return Promise.resolve({ rows: [makeFailure()] });
+        }
         return Promise.resolve({ rows: [] });
       });
 
       startMonitorLoop();
       await flushCycle();
 
-      // immune-system 函数不应被调用（因为 failure_rate < 0.3）
+      // 关键断言：rate 低于 spike 阈值，但有失败存在 → immune 必须运行
+      expect(mockFindActivePolicy).toHaveBeenCalled();
+      expect(mockUpdateFailureSignature).toHaveBeenCalled();
+      vi.clearAllTimers();
+    });
+
+    it('failed_count 为 0 时跳过免疫系统（无 failure 可处理）', async () => {
+      let queryCount = 0;
+      mockPool.query.mockImplementation(() => {
+        queryCount++;
+        if (queryCount === 1) return Promise.resolve({ rows: [] });
+        if (queryCount === 2) {
+          // 完全无失败
+          return Promise.resolve({
+            rows: [{ failed_count: '0', total_count: '20', failure_rate: '0.00' }],
+          });
+        }
+        return Promise.resolve({ rows: [] });
+      });
+
+      startMonitorLoop();
+      await flushCycle();
+
+      // 无失败时不应触发 immune（避免空查询）
       expect(mockFindActivePolicy).not.toHaveBeenCalled();
+      expect(mockUpdateFailureSignature).not.toHaveBeenCalled();
       vi.clearAllTimers();
     });
 
