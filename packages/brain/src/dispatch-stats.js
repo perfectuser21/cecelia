@@ -89,17 +89,19 @@ export function computeWindow1h(events, now) {
 
 /**
  * 记录一次派发结果到 dispatch_stats（纯监控，不影响派发逻辑）
+ * 同时真写 dispatch_events 表，确保每条决策持久化可查询。
  * @param {object} pool - pg 连接池
  * @param {boolean} success - 是否成功派发
  * @param {string|null} reason - 失败原因（success=false 时提供）
  * @param {number} [nowMs] - 当前时间戳（可注入，便于测试）
+ * @param {string|null} [taskId] - 候选任务 ID（可选，便于关联诊断）
  */
-export async function recordDispatchResult(pool, success, reason = null, nowMs) {
+export async function recordDispatchResult(pool, success, reason = null, nowMs, taskId = null) {
   const now = nowMs !== undefined ? nowMs : Date.now();
   const ts = new Date(now).toISOString();
 
   try {
-    // 读取现有数据
+    // 读取现有数据（rolling stats in working_memory）
     const data = await readDispatchStats(pool);
 
     // 追加新事件
@@ -119,7 +121,15 @@ export async function recordDispatchResult(pool, success, reason = null, nowMs) 
       last_updated: ts
     };
 
-    // 写回 DB
+    // B6: 真写 dispatch_events 表（持久化每条调度决策）
+    const eventType = success ? 'dispatched' : 'failed_dispatch';
+    await pool.query(
+      `INSERT INTO dispatch_events (task_id, event_type, reason, created_at)
+       VALUES ($1, $2, $3, $4)`,
+      [taskId || null, eventType, reason || null, ts]
+    );
+
+    // 写回 DB（rolling stats）
     await writeDispatchStats(pool, data);
   } catch (err) {
     // 统计失败不影响主流程

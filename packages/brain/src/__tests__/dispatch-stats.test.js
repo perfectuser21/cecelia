@@ -262,11 +262,12 @@ describe('recordDispatchResult - DB 操作', () => {
   it('成功派发后：写入成功事件并更新 window_1h', async () => {
     mockPool.query
       .mockResolvedValueOnce({ rows: [] })   // readDispatchStats
+      .mockResolvedValueOnce({ rows: [] })   // INSERT dispatch_events (B6)
       .mockResolvedValueOnce({ rows: [] });   // writeDispatchStats
 
     await recordDispatchResult(mockPool, true, null, NOW);
 
-    const writeCall = mockPool.query.mock.calls[1];
+    const writeCall = mockPool.query.mock.calls[2];
     expect(writeCall[0]).toContain('INSERT INTO working_memory');
     const written = writeCall[1][1];
     expect(written.events).toHaveLength(1);
@@ -280,11 +281,12 @@ describe('recordDispatchResult - DB 操作', () => {
   it('失败派发后：写入正确的 reason 并更新 window_1h', async () => {
     mockPool.query
       .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [] })   // INSERT dispatch_events (B6)
       .mockResolvedValueOnce({ rows: [] });
 
     await recordDispatchResult(mockPool, false, 'circuit_breaker_open', NOW);
 
-    const writeCall = mockPool.query.mock.calls[1];
+    const writeCall = mockPool.query.mock.calls[2];
     const written = writeCall[1][1];
     expect(written.events[0].success).toBe(false);
     expect(written.events[0].reason).toBe('circuit_breaker_open');
@@ -295,11 +297,12 @@ describe('recordDispatchResult - DB 操作', () => {
   it('失败但 reason 为 null 时事件不包含 reason 字段', async () => {
     mockPool.query
       .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [] })   // INSERT dispatch_events (B6)
       .mockResolvedValueOnce({ rows: [] });
 
     await recordDispatchResult(mockPool, false, null, NOW);
 
-    const writeCall = mockPool.query.mock.calls[1];
+    const writeCall = mockPool.query.mock.calls[2];
     const written = writeCall[1][1];
     expect(written.events[0].success).toBe(false);
     expect(written.events[0]).not.toHaveProperty('reason');
@@ -313,11 +316,12 @@ describe('recordDispatchResult - DB 操作', () => {
     };
     mockPool.query
       .mockResolvedValueOnce({ rows: [{ value_json: { events: [expiredEvent] } }] })
+      .mockResolvedValueOnce({ rows: [] })   // INSERT dispatch_events (B6)
       .mockResolvedValueOnce({ rows: [] });
 
     await recordDispatchResult(mockPool, true, null, NOW);
 
-    const writeCall = mockPool.query.mock.calls[1];
+    const writeCall = mockPool.query.mock.calls[2];
     const written = writeCall[1][1];
     expect(written.events).toHaveLength(1);
     expect(written.events[0].success).toBe(true);
@@ -332,11 +336,12 @@ describe('recordDispatchResult - DB 操作', () => {
     };
     mockPool.query
       .mockResolvedValueOnce({ rows: [{ value_json: { events: [existingEvent] } }] })
+      .mockResolvedValueOnce({ rows: [] })   // INSERT dispatch_events (B6)
       .mockResolvedValueOnce({ rows: [] });
 
     await recordDispatchResult(mockPool, false, 'billing_pause', NOW);
 
-    const writeCall = mockPool.query.mock.calls[1];
+    const writeCall = mockPool.query.mock.calls[2];
     const written = writeCall[1][1];
     expect(written.events).toHaveLength(2);
     expect(written.window_1h.total).toBe(2);
@@ -354,13 +359,14 @@ describe('recordDispatchResult - DB 操作', () => {
   it('不传 nowMs 时使用 Date.now()', async () => {
     mockPool.query
       .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [] })   // INSERT dispatch_events (B6)
       .mockResolvedValueOnce({ rows: [] });
 
     const before = Date.now();
     await recordDispatchResult(mockPool, true);
     const after = Date.now();
 
-    const writeCall = mockPool.query.mock.calls[1];
+    const writeCall = mockPool.query.mock.calls[2];
     const written = writeCall[1][1];
     const eventTs = new Date(written.events[0].ts).getTime();
     expect(eventTs).toBeGreaterThanOrEqual(before);
@@ -370,11 +376,12 @@ describe('recordDispatchResult - DB 操作', () => {
   it('window_1h 包含 last_updated 字段', async () => {
     mockPool.query
       .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [] })   // INSERT dispatch_events (B6)
       .mockResolvedValueOnce({ rows: [] });
 
     await recordDispatchResult(mockPool, true, null, NOW);
 
-    const writeCall = mockPool.query.mock.calls[1];
+    const writeCall = mockPool.query.mock.calls[2];
     const written = writeCall[1][1];
     expect(written.window_1h.last_updated).toBe(new Date(NOW).toISOString());
   });
