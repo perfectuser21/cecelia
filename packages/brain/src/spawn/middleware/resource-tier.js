@@ -30,7 +30,6 @@ export const TASK_TYPE_TIER = {
   // light
   planner: 'light',
   sprint_planner: 'light',
-  harness_planner: 'light',
   report: 'light',
   sprint_report: 'light',
   harness_report: 'light',
