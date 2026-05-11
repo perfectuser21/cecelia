@@ -1,60 +1,51 @@
-# PRD — fix(brain): inline SKILL pattern in GAN prompt builders (Bug 6)
+# PRD — fix(brain): buildGeneratorPrompt inline SKILL pattern (Bug 7)
 
 ## 背景 / 问题
 
-W23 实证（用 cecelia-harness-debug + systematic-debugging skill 链路定位）：
+W24 实证 generator 字段名漂移（PRD `{result, operation}` → generator `{factorial}`）—— W19→W24 一致 5/5 漂移。
 
-reviewer LLM 输出只 5 维 rubric（dod_machineability/scope_match_prd/test_is_red/internal_consistency/risk_registered），**没** v6.1 第 6 维 `verification_oracle_completeness`，**没** v6.2 第 7 维 `behavior_count_position`。
+cecelia-harness-debug Layer 2 SKILL Discovery 排查锁定：
+- `harness-utils.js:147 buildGeneratorPrompt` 仍 slash command pattern
+- generator prompt 2806 bytes（vs reviewer/proposer inline 后 14-40KB）
+- prompt 含 "Step 6.5" 数 = 0
 
-但 `packages/workflows/skills/harness-contract-reviewer/SKILL.md` 是 v6.2（含 7 维）✓。
+generator SKILL.md v6.1 Step 6.5 完全没传到 generator LLM。
 
-**根因（systematic-debugging Phase 1+2 backward trace）**：
-- `packages/brain/src/workflows/harness-gan.graph.js:205-274` `buildReviewerPrompt` 用 slash command `/harness-contract-reviewer` + **hardcode 53 行 5 维 rubric** in prompt
-- LLM 同时收到 slash command（理论上指向 SKILL.md）+ 紧跟 hardcoded 5 维 rubric 指令
-- LLM 听更具体的 → 输出 5 维
-- → PR A v6.1 + PR C v6.2 SKILL.md 改动**被 brain code 覆盖**
-
-`buildProposerPrompt` 同样用 slash command pattern（虽无 hardcode rubric，但 SKILL discovery 也可能不一致）。
-
-对照 evaluator（一直工作正常）：`harness-initiative.graph.js` `evaluateNode` 用 `loadSkillContent('harness-evaluator')` + inline pattern，SKILL.md 是 SSOT。
+**根因**：PR D 修了 buildReviewerPrompt + buildProposerPrompt，**漏了 buildGeneratorPrompt**（在 harness-utils.js 不在 harness-gan.graph.js）。
 
 ## 成功标准
 
-- **SC-001**: `buildProposerPrompt` 第一行是 `'你是 harness-contract-proposer agent。按下面 SKILL 指令工作。'`，不是 `/harness-contract-proposer`
-- **SC-002**: `buildProposerPrompt` 含 `loadSkillContent('harness-contract-proposer')` 注入的 SKILL 完整内容
-- **SC-003**: `buildReviewerPrompt` 第一行是 `'你是 harness-contract-reviewer agent。按下面 SKILL 指令工作。'`
-- **SC-004**: `buildReviewerPrompt` 含 v6.2 SKILL 的 7 维 rubric（`verification_oracle_completeness` + `behavior_count_position`）
-- **SC-005**: `buildReviewerPrompt` 不再 hardcode `'按以下 5 个维度'` rubric 指令（删 53 行）
-- **SC-006**: 40 个 unit test 全过 + 相邻 harness 测试不破坏
-- **SC-007**: 派 W24 严 schema 任务：reviewer 输出 7 维 rubric → 卡住弱合同 REVISION
+- SC-001: buildGeneratorPrompt 第一行 inline agent 引导
+- SC-002: prompt 含 SKILL 完整内容（"Contract Self-Verification"）
+- SC-003: 任务数据嵌入
+- SC-004: fix_mode 时含 "FIX mode" 标记
+- SC-005: 10 unit test 全过
+- SC-006: 派 W25 验：generator prompt > 14KB，含 Step 6.5
 
 ## 范围限定
 
 **在范围内**：
-- packages/brain/src/workflows/harness-gan.graph.js: import + buildProposerPrompt + buildReviewerPrompt
-- packages/brain/src/__tests__/harness-gan-graph.test.js: TDD red→green
+- packages/brain/src/harness-utils.js: import loadSkillContent + 改 buildGeneratorPrompt
+- packages/brain/src/workflows/__tests__/harness-utils.test.js: TDD red→green
 
 **不在范围内**：
-- 改 SKILL.md（PR A + PR C 已改对，本 PR 让其真生效）
-- 改 evaluator buildEvaluatePrompt（已经是 inline pattern）
-- 改 generator prompt（buildGeneratorPrompt 在 harness-task.graph.js，单独评估）
-- 加 prompt cache 优化（功能正确优先）
+- 改 SKILL.md（v6.1 已对）
+- 改其他 4 个 builder
+- 抽 buildAgentPrompt helper（PR F）
 
 ## 不做
 
 - 不改 SKILL.md
-- 不动 contract-verify / extractVerdict 等 downstream 逻辑
-- 不修复 pre-existing harness-module-constants.test.js（unrelated）
+- 不抽通用 helper（PR F）
 
 ## 测试策略
 
-- **Unit**: `harness-gan-graph.test.js` TDD red→green 40 cases
-- **Integration**: 不需要（buildXxxPrompt 是纯函数）
-- **E2E**: 派 W24 严 schema 任务，看 reviewer 真用 7 维 rubric
-- **smoke.sh**: 不需要（commit type fix:）
+- Unit: harness-utils.test.js TDD red→green
+- E2E: 派 W25 验
+- smoke.sh: 不需要
 
 ## 受影响文件
 
-- `packages/brain/src/workflows/harness-gan.graph.js`
-- `packages/brain/src/__tests__/harness-gan-graph.test.js`
-- `docs/learnings/cp-0511090244-brain-gan-inline-skill.md`
+- `packages/brain/src/harness-utils.js`
+- `packages/brain/src/workflows/__tests__/harness-utils.test.js`
+- `docs/learnings/cp-0511125107-brain-generator-inline-skill.md`
