@@ -14,8 +14,8 @@ describe('resolveResourceTier()', () => {
   it('unknown task_type → normal', () => {
     expect(resolveResourceTier('something_new')).toEqual({ memoryMB: 1024, cpuCores: 1, timeoutMs: 5400000, tier: 'normal' });
   });
-  it('harness_planner → light (spec memory)', () => {
-    expect(resolveResourceTier('harness_planner').tier).toBe('light');
+  it('harness_planner → pipeline-heavy (PRD 2026-05-11 — Opus prompt cache > 1M token, OOM at 512m)', () => {
+    expect(resolveResourceTier('harness_planner').tier).toBe('pipeline-heavy');
   });
   it('harness_generator → heavy (spec memory)', () => {
     expect(resolveResourceTier('harness_generator').tier).toBe('heavy');
