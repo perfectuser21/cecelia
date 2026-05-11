@@ -1,0 +1,38 @@
+{
+  "initiative_id": "pending",
+  "journey_type": "autonomous",
+  "journey_type_reason": "playground 是独立 HTTP server 子项目，本次只动 server 路由 + 单测 + README，无 UI / 无 brain tick / 无 engine hook / 无远端 agent 协议；与 W19~W24 同分类。",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "playground 加 GET /negate（浮点 strict-schema 复用 STRICT_NUMBER + 一元负号 -Number(n) + 跨调用自反不变量 oracle + PR-E Bug 7 generator inline SKILL 真生效验收）",
+      "scope": "在 playground/server.js 的 /factorial 之后、app.listen 之前新增 GET /negate 路由：复用既有 STRICT_NUMBER 浮点白名单 ^-?\\d+(\\.\\d+)?$（禁复用 W24 ^\\d+$ 整数白名单）做 strict-schema 校验，再用一元负号 -Number(n) 取负（禁位运算 / 0-Number(n) / Math.abs / Math.sign / Number.isFinite 兜底 / String 字符串型转换），200 返 {negation: result}。同步在 playground/tests/server.test.js 新增 describe('GET /negate') 块覆盖 happy 8+/strict 拒 12+/值 oracle 4+/跨调用自反 oracle 3+/schema 严等 2+/错误体不含 negation/type 断言/query 别名锁 2+/回归 7+。同步在 playground/README.md 端点段加 /negate + 4 类示例（含负数 / 小数 / 零 / 自反 oracle 演示）。零新依赖，不动旧 7 路由一字。",
+      "dod": [
+        "[BEHAVIOR] GET /negate?n=5 返 200 + {negation:-5}，顶层 keys 严等 ['negation']，type === 'number'",
+        "[BEHAVIOR] GET /negate?n=-5 返 {negation:5}（负的负是正）",
+        "[BEHAVIOR] GET /negate?n=0 与 n=-0 与 n=0.0 与 n=-0.0 都返 {negation:0}（JSON 下负零规范）",
+        "[BEHAVIOR] GET /negate?n=3.14 返 {negation:-3.14}；GET /negate?n=-3.14 返 {negation:3.14}（位运算实现必断）",
+        "[BEHAVIOR] 跨调用自反不变量 f(f(5))===5 与 f(f(-3.14))===-3.14 与 f(f(0))===0（W25 核心 oracle，chained 双 supertest）",
+        "[BEHAVIOR] strict-schema 拒：缺参 / 前导 + / 双负号 / 5. / .5 / 1e2 / 0xff / 1,000 / 空串 / abc / Infinity / NaN 全 400 + body 不含 negation",
+        "[BEHAVIOR] query 参数名锁死 n：value/num/input/x/a/number/int 等 27 个别名全 400 且不含 negation",
+        "[BEHAVIOR] 响应禁用 result/value/answer/negated/inverse/opposite/sign_flipped/flipped/neg/minus/output/out/data/payload/response/sum/product/quotient/power/remainder/factorial 21 字段全清单（PR-E Bug 7 验收命门）",
+        "[BEHAVIOR] 错误体禁用 message/msg/reason/detail/details/description/info 7 字段全清单 + keys 严等 ['error']",
+        "[BEHAVIOR] 旧 7 路由 /health/sum/multiply/divide/power/modulo/factorial 回归全过",
+        "[BEHAVIOR] vitest 全套 NODE_ENV=test npx vitest run 退出码 0",
+        "[BEHAVIOR] PR diff 行级断言：playground/server.js 旧 7 路由 app.get 行零删除（根除 cascade 假绿）",
+        "[ARTIFACT] playground/server.js 含 app.get('/negate' 路由 + 复用 STRICT_NUMBER + 一元负号 -Number(n) + 不引入 BigInt / Number.isFinite / Math.abs / Math.sign / 位运算 / String 转换",
+        "[ARTIFACT] playground/tests/server.test.js 含 describe('GET /negate') 块，至少 8 条 happy + 12 条 strict 拒 + 4 条值 oracle + 3 条跨调用自反 oracle + 2 条 schema 严等 + 错误体不含 negation + 2 条 query 别名锁 + 7 条回归",
+        "[ARTIFACT] playground/README.md 端点段含 /negate 与 happy/负数/零/strict 拒/自反 oracle 各示例 ≥ 1",
+        "[ARTIFACT] playground/package.json dependencies 仅 express、devDependencies 仅 supertest+vitest（不引入 bignumber.js/decimal.js/mathjs/zod/joi/ajv）"
+      ],
+      "files": [
+        "playground/server.js",
+        "playground/tests/server.test.js",
+        "playground/README.md"
+      ],
+      "depends_on": [],
+      "complexity": "M",
+      "estimated_minutes": 45
+    }
+  ]
+}
