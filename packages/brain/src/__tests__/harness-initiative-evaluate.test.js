@@ -94,7 +94,6 @@ import { parseDockerOutput } from '../harness-shared.js';
 import {
   parsePrdNode,
   inferTaskPlanNode,
-  evaluateSubTaskNode,
   routeAfterEvaluate,
   pickSubTaskNode,
   advanceTaskIndexNode,
@@ -222,104 +221,11 @@ describe('inferTaskPlanNode — reads from propose branch via git show', () => {
   });
 });
 
-// ─── 3 & 4. evaluateSubTaskNode ───────────────────────────────────────────────
-
-describe('evaluateSubTaskNode', () => {
-  beforeEach(() => {
-    vi.resetAllMocks();
-    parseDockerOutput.mockImplementation((x) => x);
-  });
-
-  it('PASS: returns evaluate_verdict=PASS when executor outputs JSON with verdict=PASS', async () => {
-    const mockExecutor = vi.fn().mockResolvedValue({
-      exit_code: 0,
-      timed_out: false,
-      stdout: 'Some log line\n{"verdict": "PASS", "all_dod": "passed", "checked": 2}',
-      stderr: '',
-    });
-
-    const state = {
-      task: { id: 'task-1', payload: { sprint_dir: 'sprints' } },
-      taskPlan: { journey_type: 'autonomous', tasks: [{ id: 'sub-1', title: 'Sub Task 1' }] },
-      task_loop_index: 0,
-      worktreePath: '/tmp/wt',
-      githubToken: 'gh-token',
-    };
-
-    const result = await evaluateSubTaskNode(state, { executor: mockExecutor });
-
-    expect(result.evaluate_verdict).toBe('PASS');
-    expect(result.evaluate_feedback).toBeNull();
-    expect(mockExecutor).toHaveBeenCalledOnce();
-  });
-
-  it('FAIL: returns evaluate_verdict=FAIL with feedback when executor outputs verdict=FAIL', async () => {
-    const mockExecutor = vi.fn().mockResolvedValue({
-      exit_code: 0,
-      timed_out: false,
-      stdout: '{"verdict": "FAIL", "feedback": "specific error in test suite"}',
-      stderr: '',
-    });
-
-    const state = {
-      task: { id: 'task-1', payload: { sprint_dir: 'sprints' } },
-      taskPlan: { journey_type: 'autonomous', tasks: [] },
-      task_loop_index: 0,
-      worktreePath: '/tmp/wt',
-      githubToken: 'gh-token',
-    };
-
-    const result = await evaluateSubTaskNode(state, { executor: mockExecutor });
-
-    expect(result.evaluate_verdict).toBe('FAIL');
-    expect(result.evaluate_feedback).toBe('specific error in test suite');
-  });
-
-  it('FAIL: returns FAIL when executor exits with non-zero', async () => {
-    const mockExecutor = vi.fn().mockResolvedValue({
-      exit_code: 1,
-      timed_out: false,
-      stdout: '',
-      stderr: 'docker failed',
-    });
-
-    const state = {
-      task: { id: 'task-1', payload: { sprint_dir: 'sprints' } },
-      taskPlan: { journey_type: 'autonomous', tasks: [] },
-      task_loop_index: 0,
-      worktreePath: '/tmp/wt',
-      githubToken: 'gh-token',
-    };
-
-    const result = await evaluateSubTaskNode(state, { executor: mockExecutor });
-
-    expect(result.evaluate_verdict).toBe('FAIL');
-    expect(result.evaluate_feedback).toBeDefined();
-  });
-
-  it('FAIL: returns FAIL when executor output missing verdict field', async () => {
-    const mockExecutor = vi.fn().mockResolvedValue({
-      exit_code: 0,
-      timed_out: false,
-      stdout: '{"some": "output without verdict field"}',
-      stderr: '',
-    });
-
-    const state = {
-      task: { id: 'task-1', payload: { sprint_dir: 'sprints' } },
-      taskPlan: { journey_type: 'autonomous', tasks: [] },
-      task_loop_index: 0,
-      worktreePath: '/tmp/wt',
-      githubToken: 'gh-token',
-    };
-
-    const result = await evaluateSubTaskNode(state, { executor: mockExecutor });
-
-    expect(result.evaluate_verdict).toBe('FAIL');
-  });
-});
-
-// ─── 5. routeAfterEvaluate — 4 cases ─────────────────────────────────────────
+// ─── 3. routeAfterEvaluate — 4 cases ─────────────────────────────────────────
+// NOTE: evaluateSubTaskNode 在 cp-0511182214-harness-pre-merge-evaluator-gate
+// 分支被删除（per-task evaluation 下沉到 harness-task.graph.js 的 evaluate_contract
+// 子图节点）。原 evaluateSubTaskNode 单测随之移除。routeAfterEvaluate 函数仍 export
+// （legacy 多路由），保留其单测以防回归。
 
 describe('routeAfterEvaluate', () => {
   it('PASS + more tasks → advance', () => {

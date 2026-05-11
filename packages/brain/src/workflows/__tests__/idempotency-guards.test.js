@@ -73,7 +73,6 @@ const NODES_NEED_GUARD = [
   'finalE2eNode',
   'reportNode',
   'pickSubTaskNode',
-  'evaluateSubTaskNode',
   'terminalFailNode',
   'finalEvaluateDispatchNode',
 ];

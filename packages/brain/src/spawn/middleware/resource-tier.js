@@ -30,7 +30,6 @@ export const TASK_TYPE_TIER = {
   // light
   planner: 'light',
   sprint_planner: 'light',
-  harness_planner: 'light',
   report: 'light',
   sprint_report: 'light',
   harness_report: 'light',
@@ -51,6 +50,9 @@ export const TASK_TYPE_TIER = {
   // pipeline-heavy
   content_research: 'pipeline-heavy',
   content_copywrite: 'pipeline-heavy',
+  harness_planner:          'pipeline-heavy',   // Opus prompt cache > 1M token, OOM at 512m (migration 270)
+  harness_contract_propose: 'pipeline-heavy',   // Opus tier
+  harness_contract_review:  'pipeline-heavy',   // Opus tier
   // 其他默认 normal
 };
 

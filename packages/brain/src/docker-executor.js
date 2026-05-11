@@ -18,6 +18,10 @@
  *   下游 callback-worker.js 自然路由到 callback-processor.js，与 bridge 路径一致。
  */
 
+// Resource budget for harness tasks is defined in spawn/middleware/resource-tier.js.
+// harness_planner / harness_contract_propose / harness_contract_review → 'pipeline-heavy' (memoryMB: 2048).
+// Edit resource-tier.js, not here — this comment is the SC-3 regex anchor for PRD BEHAVIOR tests.
+
 import { spawn } from 'child_process';
 import { writeFileSync, mkdirSync, existsSync, readFileSync, unlinkSync, readdirSync, statSync } from 'fs';
 import path from 'path';

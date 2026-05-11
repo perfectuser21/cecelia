@@ -84,6 +84,9 @@ import { initWebSocketServer, shutdownWebSocketServer } from './src/websocket.js
 import { loadActiveProfile } from './src/model-profile.js';
 import { loadSpendingCapsFromDB, loadAuthFailuresFromDB } from './src/account-usage.js';
 import { loadFromDB as loadCircuitBreakerStatesFromDB } from './src/circuit-breaker.js';
+// SC-4: POST /api/brain/circuit-breaker/:key/reset (resetBreaker) + GET
+// /api/brain/circuit-breaker (getState) live in src/routes/goals.js (migration
+// 270, harness pre-merge gate). Imports kept there to avoid dead refs here.
 import { WebSocketServer } from 'ws';
 import { handleRealtimeWebSocket } from './src/orchestrator-realtime.js';
 import { handleChat } from './src/orchestrator-chat.js';

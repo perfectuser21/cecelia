@@ -79,6 +79,9 @@ import {
   TaskState,
   MAX_FIX_ROUNDS,
   MAX_POLL_COUNT,
+  // C2 impl 时需在 harness-task.graph.js export routeAfterEvaluate 和 routeAfterPoll
+  routeAfterEvaluate,
+  routeAfterPoll,
 } from '../harness-task.graph.js';
 import { MemorySaver, Command } from '@langchain/langgraph';
 import { ContractViolation } from '../../lib/contract-verify.js';
@@ -415,11 +418,13 @@ describe('harness-task graph — end-to-end (Layer 3 spawn-interrupt-resume)', (
    * 一直 resume 直到 graph 走到 END（poll_ci 节点不 interrupt，直接靠 mockCheckPr）。
    * 每次 await invoke 后 getState：
    *   next 含 'await_callback' → resume(callbackPayload)
+   *   next 含 'evaluate_contract' → resume(evaluatePayload) [C2: 新增 pre-merge gate 节点 interrupt]
    *   next 为空 → 结束
    *   recursionLimit 防死循环
    */
-  async function runUntilEnd(compiled, initialInput, config, callbackPayloads) {
+  async function runUntilEnd(compiled, initialInput, config, callbackPayloads, evaluatePayloads = []) {
     let payloads = [...callbackPayloads];
+    let evalPayloads = [...evaluatePayloads];
     await compiled.invoke(initialInput, config);
     let i = 0;
     while (i < 30) {
@@ -431,6 +436,11 @@ describe('harness-task graph — end-to-end (Layer 3 spawn-interrupt-resume)', (
         const next = payloads.shift();
         if (!next) throw new Error('callback payloads exhausted but graph still in await_callback');
         await compiled.invoke(new Command({ resume: next }), config);
+      } else if (state.next.includes('evaluate_contract')) {
+        // C2: evaluate_contract 节点 interrupt() 等 evaluator callback。
+        // 默认 PASS（stdout 含 verdict:PASS），可通过 evaluatePayloads 覆盖测试 FAIL 分支。
+        const evalNext = evalPayloads.shift() || { stdout: 'verdict:PASS', exit_code: 0 };
+        await compiled.invoke(new Command({ resume: evalNext }), config);
       } else {
         // 不该到这里 — 其它节点不该 interrupt
         throw new Error(`unexpected interrupt at ${state.next.join(',')}`);
@@ -453,7 +463,12 @@ describe('harness-task graph — end-to-end (Layer 3 spawn-interrupt-resume)', (
     );
     expect(final.status).toBe('merged');
     expect(final.pr_url).toBe('https://gh/p/1');
-    expect(mockSpawnDetached).toHaveBeenCalledTimes(1);
+    // C2: spawnDetached 至少被调用 2 次（1 generator + 1 evaluator）
+    expect(mockSpawnDetached.mock.calls.length).toBeGreaterThanOrEqual(2);
+    const generatorSpawn = mockSpawnDetached.mock.calls.find(c => /harness-task-/.test(c[0].containerId));
+    const evaluatorSpawn = mockSpawnDetached.mock.calls.find(c => /harness-evaluate-/.test(c[0].containerId));
+    expect(generatorSpawn).toBeDefined();
+    expect(evaluatorSpawn).toBeDefined();
     expect(mockMerge).toHaveBeenCalledTimes(1);
   });
 
@@ -476,10 +491,13 @@ describe('harness-task graph — end-to-end (Layer 3 spawn-interrupt-resume)', (
     );
     expect(final.status).toBe('merged');
     expect(final.fix_round).toBe(1);
-    expect(mockSpawnDetached).toHaveBeenCalledTimes(2);
-    // 验证两次 spawn 用了不同 containerId（round 0 vs round 1）
-    const cid0 = mockSpawnDetached.mock.calls[0][0].containerId;
-    const cid1 = mockSpawnDetached.mock.calls[1][0].containerId;
+    // C2: 2 generator spawns (round 0 + round 1) + 2 evaluator spawns = 4 total
+    expect(mockSpawnDetached).toHaveBeenCalledTimes(4);
+    // 验证两次 generator spawn 用了不同 containerId（round 0 vs round 1）
+    const generatorCalls = mockSpawnDetached.mock.calls.filter(c => /harness-task-/.test(c[0].containerId));
+    expect(generatorCalls).toHaveLength(2);
+    const cid0 = generatorCalls[0][0].containerId;
+    const cid1 = generatorCalls[1][0].containerId;
     expect(cid0).not.toBe(cid1);
     expect(cid0).toMatch(/-r0-/);
     expect(cid1).toMatch(/-r1-/);
@@ -509,5 +527,24 @@ describe('harness-task graph — end-to-end (Layer 3 spawn-interrupt-resume)', (
     expect(final.error).toBeTruthy();
     expect(final.error.node).toBe('await_callback');
     expect(mockMerge).not.toHaveBeenCalled();
+  });
+});
+
+// C1 RED: routeAfterEvaluate + routeAfterPoll (evaluate branch) 测试
+// C2 impl 时需在 harness-task.graph.js export routeAfterEvaluate（新增）和 routeAfterPoll（现存但未 export）
+describe('evaluate_contract pre-merge gate', () => {
+  it('routeAfterEvaluate: PASS verdict routes to merge', () => {
+    const state = { evaluate_verdict: 'PASS' };
+    expect(routeAfterEvaluate(state)).toBe('merge');
+  });
+
+  it('routeAfterEvaluate: FAIL verdict routes to fix', () => {
+    const state = { evaluate_verdict: 'FAIL', evaluate_error: 'schema mismatch on /increment' };
+    expect(routeAfterEvaluate(state)).toBe('fix');
+  });
+
+  it('routeAfterPoll: ci_status=pass now routes to evaluate (not merge)', () => {
+    const state = { ci_status: 'pass' };
+    expect(routeAfterPoll(state)).toBe('evaluate');
   });
 });

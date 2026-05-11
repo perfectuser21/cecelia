@@ -1,13 +1,17 @@
 ---
 id: harness-evaluator-skill
 description: |
-  Harness Evaluator — 阶段 B 每个 Generator workstream 完成后触发真实 DoD 验证（模式 A），
-  以及所有 workstream 完成后触发最终 E2E Golden Path 验证（模式 B）。
-  读 journey_type 自动选验证方式；失败时带具体反馈打回 Generator；循环直至通过。
-version: 1.1.0
+  Harness Evaluator — 阶段 B **pre-merge gate**（不是 merge 后）：
+  Generator 写完代码 push PR 后，CI 跑过基础卫生（lint/type/vitest mock/build），
+  evaluator 在 CI 绿之后、PR merge 之前真启服务 + 跑 contract 的 manual:bash 命令验真行为。
+  PASS → 允许 merge；FAIL → 不 merge，带反馈打回 Generator 在 PR 分支 fix loop（main 不变动）。
+  模式 A 跑 contract-dod-ws*.md BEHAVIOR；模式 B（所有 ws merge 后）跑 final E2E Golden Path。
+version: 1.3.0
 created: 2026-05-06
 updated: 2026-05-10
 changelog:
+  - 1.3.0: 明确 pre-merge gate 位置（反 2026-04-09 决策）— description 重写 + 加 "## 调用时机" 段，说明 evaluator 跑在 CI 绿后、PR merge 前。配套 brain 编排改动（harness-initiative.graph.js 把 evaluate 从 merge 后挪到 merge 前）由独立 PR 跟进
+  - 1.2.0: 修协议盲 — 加 Test: 字段 manual:bash/manual: 前缀处理段（proposer SKILL v7.4+ 写此格式，evaluator 必须 strip 后执行）
   - 1.1.0: 加反作弊 reflexive check — 禁止把 vitest "passed" 当 PASS 替代物（W19/W20 实证 sub-evaluator 漏判 schema drift 的根因）。强制每条 [BEHAVIOR] Test: 命令必须真执行；命令缺 jq -e 或自然语言期望直接 FAIL；vitest 输出存在但合同 [BEHAVIOR] 未真跑 → FAIL。对齐 Anthropic harness-design "evaluator 默认会过度通过，必须 prompt 工程严格化"
   - 1.0.0: 初版 — Step A 模式 (DoD 验证) + Step B 模式 (E2E)，按 journey_type 选验证工具
 ---
@@ -16,6 +20,37 @@ changelog:
 > **执行规则: 严格按照下面列出的步骤执行。不要搜索/查找其他 skill 文件，直接按本文档流程操作。**
 
 # /harness-evaluator — Harness v5 Evaluator（阶段 B · 验证层）
+
+## 调用时机（v1.3 — pre-merge gate）
+
+```
+generator 写代码 + push PR
+       ↓
+   CI 跑（cheap layer）— lint/type/vitest mock/build/secrets
+       ↓ CI 绿
+   ★ evaluator 跑（expensive layer）— 真启 server + curl + jq -e   ← 这就是我
+       ↓ evaluator PASS
+   PR auto-merge（branch protection 卡 evaluator status check）
+       ↓
+   final_evaluate 跑 Golden Path 端到端
+```
+
+**关键 invariant**：evaluator 不 PASS，main 不变动。
+
+**为什么 pre-merge 而非 post-merge**：
+- post-merge 跑 → FAIL 时 main 已污染，fix loop 在污染的 main 上跑（违反"评判从执行分离"）
+- pre-merge 跑 → FAIL 不 merge，fix loop 在 PR 分支，main 永远干净
+
+**为什么 CI + evaluator 双层不可省**：
+- CI（vitest mock）验"代码层正确"，秒级零成本
+- evaluator（manual:bash）验"启动 server 真发请求看响应"，1-2min + ~$0.5
+- 两层验不同事，不可替代
+- memory 实证：CI 全绿但真启动 SyntaxError / host.docker.internal 不解析 / migration 漏跑 → 这些只 evaluator 抓
+
+**注意（撤销 2026-04-09 决策）**：
+2026-04-09 决策曾说"CI 是机械执行器，砍 evaluator"。该决策已撤销，见 memory `harness-pipeline-evaluator-as-pre-merge-gate.md`。
+
+---
 
 **角色**: Evaluator（真实验证器）
 **对应 task_type**: `harness_evaluate`
@@ -105,6 +140,12 @@ Test: curl -s localhost:5221/api/brain/tasks/$TARGET_TASK_ID | jq -r '.status'
 对每条 `[BEHAVIOR]` 条目：
 
 1. 执行 `Test:` 字段中的命令（在真实环境，非 mock）
+**Test: 字段前缀处理（v1.2 — 修协议盲，proposer SKILL 写 manual:bash 前缀）**：
+- Test 命令若以 `manual:bash -c '<cmd>'` 开头 → strip `manual:bash -c '` 前缀和末尾 `'`，把里面的 `<cmd>` 整体用 `bash -c "<cmd>"` 执行
+- Test 命令若以 `manual:` 开头（无 bash -c）→ strip `manual:` 前缀，剩下原样 bash 执行
+- 不以 `manual:` 开头的（如 `node -e "..."` / `curl ...`） → 直接 bash 执行原文
+- 这是跟 proposer SKILL v7.4+ 协议约定的格式，evaluator 不能因看到 `manual:` 前缀就跳过命令
+
 2. 记录 stdout / stderr / exit code
 3. 将结果与 `期望:` 行对比（规则：`stdout` trim 后**包含**期望字符串即通过，大小写敏感）
 

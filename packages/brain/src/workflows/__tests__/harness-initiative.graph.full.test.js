@@ -172,7 +172,9 @@ describe('buildHarnessFullGraph wiring', () => {
     expect(nodes).toContain('inferTaskPlan');
     expect(nodes).toContain('pick_sub_task');
     expect(nodes).toContain('dbUpsert');
-    expect(nodes).toContain('evaluate');
+    // NOTE: 'evaluate' (per-sub-task evaluator) 节点已删 — per-task 评估下沉到
+    // harness-task.graph.js 的 evaluate_contract 子图。'final_evaluate' 保留作 Golden Path 终验。
+    expect(nodes).not.toContain('evaluate');
     expect(nodes).toContain('final_evaluate');
   });
 });

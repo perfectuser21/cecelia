@@ -5,10 +5,12 @@ description: |
   读取 GAN 对抗已批准的 sprint-contract.md + tests/ws{N}/*.test.ts + contract-dod-ws{N}.md，按 TDD 纪律两次 commit（commit 1 = 测试 Red / commit 2 = 实现 Green）。
   融入 4 个 superpowers：test-driven-development / verification-before-completion / systematic-debugging / requesting-code-review。
   CONTRACT IS LAW：合同里有的全实现，合同外一字不加；**测试文件从合同原样复制，commit 1 后不可修改**（CI 强校验）。
-version: 6.1.0
+version: 6.3.0
 created: 2026-04-08
 updated: 2026-05-06
 changelog:
+  - 6.3.0: 修字段名协议矛盾 — workstreams[].scope_files → tasks[].files（proposer SKILL v7.6+ 实际输出 schema 是 tasks[]，v6.2 段写错）
+  - 6.2.0: 修协议盲 — Step 1 后加 task-plan.json 必读字段段（proposer GAN 收敛后输出，含 workstreams scope_files 白名单）
   - 6.1.0: 加 Step 6.5 Contract Self-Verification — push 前自跑 contract-dod-ws*.md 所有 [BEHAVIOR] manual:bash 命令，任一 FAIL 不准 push 必须自修。配合 proposer v7.4 + reviewer v6.2 + evaluator v1.1 协议对齐。修 W19/W20/W21/W22 实证 generator 频繁推漂移实现给 evaluator 兜底的根因
   - 6.0.0: Working Skeleton — skeleton task 检测（is_skeleton）；允许 SKELETON STUB 注释；commit message 加 (Skeleton Red)/(Skeleton Green)；PR body 必须含 Stub 清单
   - 5.0.0: TDD × Superpowers 融合 — 两次 commit 纪律（commit 1 测试 Red / commit 2 实现 Green）+ 4 个 superpowers（test-driven-development / verification-before-completion / systematic-debugging / requesting-code-review）；测试文件从合同原样 checkout，commit 1 后不可修改；Mode 2 harness_fix 走 systematic-debugging
@@ -162,6 +164,30 @@ git ls-tree -r "origin/${CONTRACT_BRANCH}" -- "${SPRINT_DIR}/tests/ws${WS_IDX}/"
 ```
 
 **只读 sprint-contract.md，不读 contract-draft.md。**
+
+
+
+**v6.2 协议盲修复 — task-plan.json**：
+
+`${SPRINT_DIR}/task-plan.json` 由 proposer GAN 收敛后输出，含任务 DAG + workstream 边界。Generator 必读字段：
+
+| 字段 | 用途 |
+|---|---|
+| `tasks[].task_id` | 当前 `WORKSTREAM` 环境变量匹配的子任务（如 ws1 / ws2） |
+| `tasks[].files` | 允许改的文件白名单（**禁止跨 task 改文件**） |
+| `tasks[].depends_on` | 依赖的 task_id，必须先完成 |
+
+读取：
+```bash
+WS=${WORKSTREAM:-ws1}
+SCOPE=$(jq -r ".tasks[] | select(.task_id==\"$WS\") | .files[]" "${SPRINT_DIR}/task-plan.json")
+echo "本 task 可改文件: $SCOPE"
+```
+
+若 task-plan.json 不存在（老 contract）→ 退化到 contract-draft.md 的 ws 段推断。
+
+**v6.3 字段名对齐**：proposer SKILL v7.6+ 实际产出 schema 是 `tasks[]`（含 `task_id`/`files`/`depends_on`/`scope`/`dod`），不是 `workstreams[]`。本表已对齐。
+
 
 ### Step 2: 创建 cp-* 分支（强制仓库命名规约）
 
