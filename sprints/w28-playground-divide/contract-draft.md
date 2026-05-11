@@ -1,4 +1,8 @@
-# Sprint Contract Draft (Round 1) — W28 playground /divide 响应形态统一为 `{result, operation: "divide"}`（pre-merge gate 真验收）
+# Sprint Contract Draft (Round 2) — W28 playground /divide 响应形态统一为 `{result, operation: "divide"}`（pre-merge gate 真验收）
+
+> **Round 2 修订点**（响应 Reviewer round 1 REVISION 反馈）：
+> - 错误路径 oracle 新增 PRD 错误响应禁用替代名（`message`/`msg`/`reason`/`detail`/`details`/`description`/`info`/`code`/`status`/`kind`）反向不存在断言，覆盖 b=0 拒（Step 3）+ strict 拒（Step 4）+ E2E 全脚本
+> - 成功响应禁用字段反向断言补全 PRD 字面禁用清单：新增 `divisor_result` / `divide_result` / `numerator` / `denominator` / `input` / `response` / `out`
 
 ## Golden Path
 
@@ -23,6 +27,8 @@ echo "$RESP" | jq -e '.result == 3'                         || { echo "FAIL: res
 echo "$RESP" | jq -e '.operation == "divide"'               || { echo "FAIL: operation 不是字面 divide"; kill $SPID; exit 1; }
 echo "$RESP" | jq -e 'keys | sort == ["operation","result"]' || { echo "FAIL: keys 集合不等"; kill $SPID; exit 1; }
 echo "$RESP" | jq -e 'has("quotient") | not'                || { echo "FAIL: 禁用字段 quotient 漏网"; kill $SPID; exit 1; }
+echo "$RESP" | jq -e 'has("divisor_result") | not'          || { echo "FAIL: 禁用字段 divisor_result 漏网"; kill $SPID; exit 1; }
+echo "$RESP" | jq -e 'has("divide_result") | not'           || { echo "FAIL: 禁用字段 divide_result 漏网"; kill $SPID; exit 1; }
 kill $SPID
 echo "✅ Step 1 happy 通过"
 ```
@@ -91,15 +97,21 @@ for QUERY in "a=5&b=0" "a=0&b=0" "a=6&b=0.0" "a=6&b=-0"; do
   jq -e 'has("result") | not'    /tmp/divz.json || { echo "FAIL: $QUERY → 错误体含 result"; kill $SPID; exit 1; }
   jq -e 'has("operation") | not' /tmp/divz.json || { echo "FAIL: $QUERY → 错误体含 operation"; kill $SPID; exit 1; }
   jq -e 'keys | sort == ["error"]' /tmp/divz.json || { echo "FAIL: $QUERY → 错误 keys 集合不等"; kill $SPID; exit 1; }
+  # Round 2 新增：PRD 错误响应禁用替代名反向不存在
+  for K in message msg reason detail details description info code status kind; do
+    jq -e --arg k "$K" 'has($k) | not' /tmp/divz.json \
+      || { echo "FAIL: $QUERY → 错误 body 含 PRD 禁用替代名 $K"; kill $SPID; exit 1; }
+  done
 done
 kill $SPID
-echo "✅ Step 3 除零拒通过（4 种 b=0 变体全挡）"
+echo "✅ Step 3 除零拒通过（4 种 b=0 变体全挡 + 10 种禁用替代名反向全过）"
 ```
 
 **硬阈值**:
 - 4 种 b=0 变体（`b=0` / `a=0&b=0` / `b=0.0` / `b=-0`）全部返回 HTTP 400
 - 错误响应 `keys | sort == ["error"]`（不许多余字段）
 - 错误响应不含 `result`，不含 `operation`
+- 错误响应不含 PRD 错误响应禁用替代名（`message` / `msg` / `reason` / `detail` / `details` / `description` / `info` / `code` / `status` / `kind` 10 个）
 
 ---
 
@@ -134,14 +146,21 @@ for CASE in "${CASES[@]}"; do
     || { echo "FAIL: '$CASE' → error 不是非空 string"; kill $SPID; exit 1; }
   jq -e 'has("result") | not'    /tmp/divs.json || { echo "FAIL: '$CASE' → 错误体含 result"; kill $SPID; exit 1; }
   jq -e 'has("operation") | not' /tmp/divs.json || { echo "FAIL: '$CASE' → 错误体含 operation"; kill $SPID; exit 1; }
+  jq -e 'keys | sort == ["error"]' /tmp/divs.json || { echo "FAIL: '$CASE' → 错误 keys 集合不等"; kill $SPID; exit 1; }
+  # Round 2 新增：PRD 错误响应禁用替代名反向不存在
+  for K in message msg reason detail details description info code status kind; do
+    jq -e --arg k "$K" 'has($k) | not' /tmp/divs.json \
+      || { echo "FAIL: '$CASE' → 错误 body 含 PRD 禁用替代名 $K"; kill $SPID; exit 1; }
+  done
 done
 kill $SPID
-echo "✅ Step 4 strict-schema 拒 13 种变体全挡"
+echo "✅ Step 4 strict-schema 拒 13 种变体全挡 + 10 种禁用替代名反向全过"
 ```
 
 **硬阈值**:
 - 全部 13 种非法输入返回 HTTP 400
-- 全部错误响应满足 `error` 是非空 string + 不含 `result` + 不含 `operation`
+- 全部错误响应满足 `error` 是非空 string + `keys | sort == ["error"]` + 不含 `result` + 不含 `operation`
+- 全部错误响应不含 PRD 错误响应禁用替代名（`message` / `msg` / `reason` / `detail` / `details` / `description` / `info` / `code` / `status` / `kind` 10 个）
 
 ---
 
@@ -193,12 +212,12 @@ sleep 2
 
 BASE="localhost:${PLAYGROUND_PORT}"
 
-# 3. happy + schema 完整性 + operation 字面 + 禁用字段反向
+# 3. happy + schema 完整性 + operation 字面 + 禁用字段反向（Round 2 补全 PRD 字面禁用清单）
 RESP=$(curl -fs "$BASE/divide?a=6&b=2")
 echo "$RESP" | jq -e '.result == 3'                         || exit 1
 echo "$RESP" | jq -e '.operation == "divide"'               || exit 1
 echo "$RESP" | jq -e 'keys | sort == ["operation","result"]' || exit 1
-for FORBIDDEN in quotient division divided div ratio share value dividend divisor numerator denominator sum product power remainder factorial answer data payload output meta; do
+for FORBIDDEN in quotient division divided divisor_result divide_result div ratio share value input output data payload response answer out meta dividend divisor numerator denominator sum product power remainder factorial; do
   echo "$RESP" | jq -e --arg k "$FORBIDDEN" 'has($k) | not' || { echo "FAIL: 禁用字段 $FORBIDDEN 漏网"; exit 1; }
 done
 
@@ -213,21 +232,30 @@ curl -fs "$BASE/divide?a=6&b=-2"   | jq -e '.result == -3' || exit 1
 curl -fs "$BASE/divide?a=-6&b=-2"  | jq -e '.result == 3'  || exit 1
 curl -fs "$BASE/divide?a=0&b=5"    | jq -e '.result == 0'  || exit 1
 
-# 5. b=0 除零拒（4 变体）
+# 5. b=0 除零拒（4 变体）+ PRD 错误禁用替代名反向（Round 2 新增）
 for Q in "a=5&b=0" "a=0&b=0" "a=6&b=0.0" "a=6&b=-0"; do
   CODE=$(curl -s -o /tmp/e.json -w "%{http_code}" "$BASE/divide?$Q")
   [ "$CODE" = "400" ] || exit 1
   jq -e '.error | type == "string" and length > 0' /tmp/e.json || exit 1
-  jq -e 'has("result") | not and (has("operation") | not)' /tmp/e.json || exit 1
+  jq -e 'has("result") | not'    /tmp/e.json || exit 1
+  jq -e 'has("operation") | not' /tmp/e.json || exit 1
   jq -e 'keys | sort == ["error"]' /tmp/e.json || exit 1
+  for K in message msg reason detail details description info code status kind; do
+    jq -e --arg k "$K" 'has($k) | not' /tmp/e.json || { echo "FAIL: $Q 错误 body 含 PRD 禁用替代名 $K"; exit 1; }
+  done
 done
 
-# 6. strict-schema 拒（13 变体）
+# 6. strict-schema 拒（13 变体）+ PRD 错误禁用替代名反向（Round 2 新增）
 for Q in "a=1e3&b=2" "a=Infinity&b=2" "a=6&b=NaN" "a=%2B6&b=2" "a=.5&b=2" "a=6.&b=2" "a=0xff&b=2" "a=1%2C000&b=2" "a=&b=3" "a=abc&b=3" "a=6" "b=2" ""; do
   CODE=$(curl -s -o /tmp/e.json -w "%{http_code}" "$BASE/divide?$Q")
   [ "$CODE" = "400" ] || exit 1
   jq -e '.error | type == "string" and length > 0' /tmp/e.json || exit 1
-  jq -e 'has("result") | not and (has("operation") | not)' /tmp/e.json || exit 1
+  jq -e 'has("result") | not'    /tmp/e.json || exit 1
+  jq -e 'has("operation") | not' /tmp/e.json || exit 1
+  jq -e 'keys | sort == ["error"]' /tmp/e.json || exit 1
+  for K in message msg reason detail details description info code status kind; do
+    jq -e --arg k "$K" 'has($k) | not' /tmp/e.json || { echo "FAIL: $Q 错误 body 含 PRD 禁用替代名 $K"; exit 1; }
+  done
 done
 
 # 7. 回归 7 条端点
