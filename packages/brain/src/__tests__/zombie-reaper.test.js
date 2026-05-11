@@ -46,10 +46,12 @@ describe('reapZombies', () => {
     expect(selectCall).toMatch(/status\s*=\s*'in_progress'/);
     expect(selectCall).toMatch(/updated_at/);
 
-    // UPDATE 查询必须包含 failed 状态和 zombie reaped 消息
+    // UPDATE 查询必须包含 failed 状态
     const updateCall = pool.query.mock.calls[1][0];
     expect(updateCall).toMatch(/status\s*=\s*'failed'/);
-    expect(updateCall).toMatch(/zombie/i);
+    // error_message 参数（$1）必须含 zombie 关键词
+    const updateParams = pool.query.mock.calls[1][1];
+    expect(updateParams[0]).toMatch(/zombie/i);
 
     expect(result.reaped).toBe(1);
     expect(result.errors).toHaveLength(0);
