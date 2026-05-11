@@ -12,6 +12,8 @@ journey_type: autonomous
 
 **Round 2 SSOT 引用**: 禁用字段清单单源在 `sprints/w30-walking-skeleton-p1-v2/banned-keys.sh`（详见 contract-draft.md `## Stable IDs` 段）。本 DoD 文件 BEHAVIOR-11 与 BEHAVIOR-12 严格 source SSOT 文件并通过 `${BANNED_RESPONSE_KEYS[@]}` / `${BANNED_ERROR_KEYS[@]}` 引用，不再 inline 粘贴 34/10 字段名清单。
 
+**Round 3 风险登记联动**: contract-draft.md 新增 `## Risk Register` 段登记 12 类风险（R1~R12），其中 R12 数字边界对应本 DoD 新增 BEHAVIOR-11（`value=-0 → result=-1`），R1~R10 已映射到现有 BEHAVIOR-1 ~ BEHAVIOR-13 + ARTIFACT-1~9，R11 基础设施侧（P1 B1~B8 终验）属 out-of-contract 观测维度不在 DoD 范围。
+
 ---
 
 ## ARTIFACT 条目
@@ -85,6 +87,10 @@ journey_type: autonomous
 
 - [ ] [BEHAVIOR] GET /decrement?value=01 → 200 + {result:0, operation:"decrement"}（前导 0 happy；禁 generator 错用 parseInt(value, 8) 八进制）
   Test: manual:bash -c 'cd playground && PLAYGROUND_PORT=3310 node server.js & SPID=$!; sleep 2; R=$(curl -fs "localhost:3310/decrement?value=01" | jq -e ".result == 0 and .operation == \"decrement\"" >/dev/null && echo OK); kill $SPID 2>/dev/null; [ "$R" = OK ]'
+  期望: exit 0
+
+- [ ] [BEHAVIOR] GET /decrement?value=-0 → 200 + {result:-1, operation:"decrement"}（PRD ASSUMPTION 可选择项；round 3 R12 数字边界登记，挡 generator 把 strict regex 错改成 `^(0|-?[1-9]\d*)$` 拒掉 `-0` 字符串的漂移）
+  Test: manual:bash -c 'cd playground && PLAYGROUND_PORT=3314 node server.js & SPID=$!; sleep 2; R=$(curl -fs "localhost:3314/decrement?value=-0" | jq -e ".result == -1 and .operation == \"decrement\"" >/dev/null && echo OK); kill $SPID 2>/dev/null; [ "$R" = OK ]'
   期望: exit 0
 
 - [ ] [BEHAVIOR] 禁用响应字段反向：response 不含 SSOT BANNED_RESPONSE_KEYS 任一（PR-G 死规则继承；引用 sprints/w30-walking-skeleton-p1-v2/banned-keys.sh 单源，不 inline 粘贴 34 字段名清单）

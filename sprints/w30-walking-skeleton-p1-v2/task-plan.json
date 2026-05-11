@@ -27,6 +27,7 @@
         "[BEHAVIOR] strict-schema 拒非法输入（1.5/1e2/0xff/abc/空串/+5/--5/Infinity/NaN）全返 400",
         "[BEHAVIOR] query 唯一性约束：缺 value / 错 query 名 n / 多余 query extra 全返 400",
         "[BEHAVIOR] GET /decrement?value=01 → 200 + {result:0, operation:\"decrement\"}（前导 0 happy；禁错用 parseInt(value, 8)）",
+        "[BEHAVIOR] GET /decrement?value=-0 → 200 + {result:-1, operation:\"decrement\"}（PRD ASSUMPTION 可选择项；round 3 风险 R12 数字边界 spot check）",
         "[BEHAVIOR] 禁用字段反向：response 不含 decremented/predecessor/prev/sum/product/incremented 等 33 个禁用字段名任一（PR-G 死规则继承）",
         "[BEHAVIOR] 错误体 schema 完整性：keys 字面 [\"error\"]，不含 result/operation/message/msg/reason/detail/code",
         "[BEHAVIOR] 8 路由回归 happy：/health /sum /multiply /divide /power /modulo /factorial /increment 全过"

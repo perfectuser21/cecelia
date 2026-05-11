@@ -162,6 +162,12 @@ describe('Workstream 1 — GET /decrement 前导 0 happy [BEHAVIOR]', () => {
     expect(res.status).toBe(200);
     expect(res.body).toEqual({ result: -2, operation: 'decrement' });
   });
+
+  test('GET /decrement?value=-0 → 200 + result=-1（PRD ASSUMPTION 可选择项；round 3 风险 R12 spot check）', async () => {
+    const res = await request(app).get('/decrement').query({ value: '-0' });
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ result: -1, operation: 'decrement' });
+  });
 });
 
 describe('Workstream 1 — GET /decrement 禁用字段反向（PR-G 死规则继承）[BEHAVIOR]', () => {
