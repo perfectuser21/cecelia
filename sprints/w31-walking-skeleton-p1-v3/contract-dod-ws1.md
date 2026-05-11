@@ -1,7 +1,3 @@
-contract_branch: cp-harness-propose-r1-960e97e7
-workstream_index: 1
-sprint_dir: sprints/w31-walking-skeleton-p1-v3
-
 ---
 skeleton: false
 journey_type: autonomous
@@ -39,55 +35,7 @@ journey_type: autonomous
 - [x] [ARTIFACT] `playground/README.md` 端点列表含 `/decrement` 段
   Test: node -e "const c=require('fs').readFileSync('playground/README.md','utf8');if(!/\/decrement/.test(c))process.exit(1)"
 
-## BEHAVIOR 条目（v5.0 已搬到 sprints/w31-walking-skeleton-p1-v3/tests/ws1/decrement.test.js 27 个 it()；本节为 integrity 镜像）
+## BEHAVIOR 索引
 
-- [x] [BEHAVIOR] GET /decrement?value=5 → 200 + 严 schema `{result:4, operation:"decrement"}` + 顶层 keys 完整性 `["operation","result"]`
-  Test: tests/ws1/decrement.test.js
-
-- [x] [BEHAVIOR] GET /decrement?value=5 响应 `.operation != "increment"`（防 W26 模板漏改 — W31 独有最易踩坑）
-  Test: tests/ws1/decrement.test.js
-
-- [x] [BEHAVIOR] GET /decrement?value=5 响应不含任一禁用字段（30 个禁用名反向 has() | not）
-  Test: tests/ws1/decrement.test.js
-
-- [x] [BEHAVIOR] GET /decrement?value=0 → 200 + result==-1（off-by-one 零侧）
-  Test: tests/ws1/decrement.test.js
-
-- [x] [BEHAVIOR] GET /decrement?value=1 → 200 + result==0（off-by-one 严格 0 数字字面，非 null/undefined/false）
-  Test: tests/ws1/decrement.test.js
-
-- [x] [BEHAVIOR] GET /decrement?value=-1 → 200 + result==-2（off-by-one 负侧）
-  Test: tests/ws1/decrement.test.js
-
-- [x] [BEHAVIOR] GET /decrement?value=9007199254740990 → 200 + result==9007199254740989（精度上界 happy）
-  Test: tests/ws1/decrement.test.js
-
-- [x] [BEHAVIOR] GET /decrement?value=-9007199254740990 → 200 + result==-9007199254740991 (===Number.MIN_SAFE_INTEGER)（精度下界 happy）
-  Test: tests/ws1/decrement.test.js
-
-- [x] [BEHAVIOR] GET /decrement?value=9007199254740991 → 400 + 错误体 keys==["error"] + 不含 result/operation（上界 +1 拒）
-  Test: tests/ws1/decrement.test.js
-
-- [x] [BEHAVIOR] GET /decrement?value=-9007199254740991 → 400 + 错误体 keys==["error"]（下界 -1 拒）
-  Test: tests/ws1/decrement.test.js
-
-- [x] [BEHAVIOR] strict-schema 拒（1.5 / 1.0 / 1e2 / 0xff / abc / Infinity / NaN / 空串 / 仅负号 / 双重负号 / 前导+ / 千分位 / 尾部负号 共 13 类 → 全 400）
-  Test: tests/ws1/decrement.test.js
-
-- [x] [BEHAVIOR] GET /decrement（缺 value 参数） → 400
-  Test: tests/ws1/decrement.test.js
-
-- [x] [BEHAVIOR] 错 query 名（n/x/y/m/val/input/v/count/a/b 等 ≥ 10 个）一律 → 400
-  Test: tests/ws1/decrement.test.js
-
-- [x] [BEHAVIOR] GET /decrement?value=5&extra=x（多余 query）→ 400 + 错误体不含 result/operation
-  Test: tests/ws1/decrement.test.js
-
-- [x] [BEHAVIOR] GET /decrement?value=01 → 200 + result==0（前导 0 happy，非八进制错位）
-  Test: tests/ws1/decrement.test.js
-
-- [x] [BEHAVIOR] 已有 8 路由 (/health /sum /multiply /divide /power /modulo /factorial /increment) happy 用例回归全通过
-  Test: tests/ws1/decrement.test.js
-
-- [x] [BEHAVIOR] 上界拒错误体 schema 完整性 + 不含 result/operation 双联（独立断言巩固 Risk 8 错误体污染防御）
-  Test: tests/ws1/decrement.test.js
+> BEHAVIOR 条目按 v5.0 纯度规则搬到 `sprints/w31-walking-skeleton-p1-v3/tests/ws1/decrement.test.js`（27 个 it()），不在本 DoD 文件出现。
+> evaluator 跑 `npx vitest run sprints/w31-walking-skeleton-p1-v3/tests/ws1/decrement.test.js` 验证。

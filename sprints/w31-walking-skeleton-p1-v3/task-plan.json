@@ -1,0 +1,57 @@
+{
+  "initiative_id": "pending",
+  "journey_type": "autonomous",
+  "journey_type_reason": "playground 是独立 HTTP server 子项目，本次只动 server 路由 + 单测 + README，无 UI / 无 brain tick / 无 engine hook / 无远端 agent 协议；与 W19~W26 同分类。Pipeline 本身（B1-B9 修复联合验收）在 brain 内部跑，但代码 deliverable 限定在 playground，故 journey_type 维持 autonomous 而非 dev_pipeline。",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "playground/server.js 新增 GET /decrement 路由 + tests/server.test.js GET /decrement describe 块 + README.md /decrement 段",
+      "scope": "在 playground/server.js 在 /factorial 之后 app.listen 之前注册 GET /decrement（query 名 value，独立字面量 strict-schema 整数正则 ^-?\\d+$ 不复用 W26 STRICT_INT 常量，|Number(value)| > 9007199254740990 显式双侧上界拒，Number(value)-1 算术，返回 {result: <number>, operation: \"decrement\"}）；在 playground/tests/server.test.js 新增 describe('GET /decrement', ...) 块（happy 9+ 含 0/1/-1 off-by-one + 精度上下界、上下界拒 3+、strict 拒 13+、缺参/错 query 名/多余 query 拒、前导 0 happy、禁用字段反向、错误体 keys=[error] + 不含 result/operation 断言、operation != \"increment\" 防 W26 模板漏改、8 路由回归 1 条/路由）；在 playground/README.md 端点列表加 /decrement 段（happy/上界拒/下界拒/strict 拒 示例 7+）。响应字段名严格字面照搬 PRD：result + operation（字面）+ \"decrement\" 字面字符串（绝不漏改 W26 模板的 \"increment\"）；query 名严格 value；禁止任一禁用同义字段名 decremented/prev/previous/predecessor/pred/n_minus_one/minus_one/sub_one/subtracted/sub/dec/decr/decrementation/incremented/n_plus_one/successor/value/input/output/data/payload/answer/sum/product/quotient/power/remainder/factorial/negation 出现在响应。零依赖；不动其他 8 路由。",
+      "dod": [
+        "[ARTIFACT] playground/server.js 内含 app.get('/decrement' 路由注册",
+        "[ARTIFACT] playground/server.js /decrement 路由含 strict-schema 整数正则 ^-?\\d+$",
+        "[ARTIFACT] playground/server.js /decrement 路由 query 名为 value（不复用 n/a/b）",
+        "[ARTIFACT] playground/server.js /decrement 含双侧上界判定数字 9007199254740990",
+        "[ARTIFACT] playground/server.js /decrement 响应含字面 operation: \"decrement\" 与字面 result 字段，且块内不出现 operation: \"increment\"（防 W26 模板漏改）",
+        "[ARTIFACT] playground/tests/server.test.js 内含 describe('GET /decrement' 独立 describe 块",
+        "[ARTIFACT] playground/README.md 端点列表含 /decrement 段",
+        "[BEHAVIOR] GET /decrement?value=5 → 200 + {result:4, operation:\"decrement\"}（值复算）",
+        "[BEHAVIOR] GET /decrement?value=5 响应 .operation != \"increment\"（防 W26 模板漏改 — W31 独有最易踩坑）",
+        "[BEHAVIOR] GET /decrement?value=5 顶层 keys 字面集合 == [operation, result]（schema 完整性）",
+        "[BEHAVIOR] GET /decrement?value=5 响应不含任一禁用字段 decremented/prev/previous/predecessor/pred/n_minus_one/minus_one/sub_one/subtracted/sub/dec/decr/decrementation/incremented/n_plus_one/successor/value/input/output/data/payload/answer/out/meta/sum/product/quotient/power/remainder/factorial/negation",
+        "[BEHAVIOR] GET /decrement?value=0 → 200 + {result:-1, operation:\"decrement\"}（off-by-one 零侧，0 不被当 falsy 漏返）",
+        "[BEHAVIOR] GET /decrement?value=1 → 200 + {result:0, operation:\"decrement\"}（严格 0 数字字面）",
+        "[BEHAVIOR] GET /decrement?value=-1 → 200 + {result:-2, operation:\"decrement\"}（off-by-one 负侧）",
+        "[BEHAVIOR] GET /decrement?value=9007199254740990 → 200 + {result:9007199254740989, operation:\"decrement\"}（精度上界 happy）",
+        "[BEHAVIOR] GET /decrement?value=-9007199254740990 → 200 + {result:-9007199254740991, operation:\"decrement\"}（精度下界 happy，==Number.MIN_SAFE_INTEGER）",
+        "[BEHAVIOR] GET /decrement?value=9007199254740991 → 400（上界 +1 拒）",
+        "[BEHAVIOR] GET /decrement?value=-9007199254740991 → 400（下界 -1 拒）",
+        "[BEHAVIOR] 上界拒错误体顶层 keys 字面集合 == [error] 且不含 result 也不含 operation",
+        "[BEHAVIOR] GET /decrement?value=1.5 → 400（strict 拒小数）",
+        "[BEHAVIOR] GET /decrement?value=1.0 → 400（strict 拒带小数点的整数）",
+        "[BEHAVIOR] GET /decrement?value=1e2 → 400（strict 拒科学计数法）",
+        "[BEHAVIOR] GET /decrement?value=abc → 400（strict 拒字母）",
+        "[BEHAVIOR] GET /decrement?value=Infinity → 400（strict 拒 Infinity 字面）",
+        "[BEHAVIOR] GET /decrement?value= → 400（strict 拒空串）",
+        "[BEHAVIOR] GET /decrement?value=+5 → 400（strict 拒前导 +）",
+        "[BEHAVIOR] GET /decrement?value=--5 → 400（strict 拒双重负号）",
+        "[BEHAVIOR] GET /decrement?value=0xff → 400（strict 拒十六进制字面）",
+        "[BEHAVIOR] GET /decrement?value=5- → 400（strict 拒尾部负号）",
+        "[BEHAVIOR] GET /decrement（缺 value 参数） → 400",
+        "[BEHAVIOR] GET /decrement?n=5（错 query 名 n） → 400",
+        "[BEHAVIOR] GET /decrement?value=5&extra=x（多余 query） → 400 + 错误体不含 result/operation",
+        "[BEHAVIOR] GET /decrement?value=01 → 200 + {result:0, operation:\"decrement\"}（前导 0 happy，不许错用八进制）",
+        "[BEHAVIOR] GET /decrement?value=-01 → 200 + {result:-2, operation:\"decrement\"}",
+        "[BEHAVIOR] 已有 8 路由 (/health /sum /multiply /divide /power /modulo /factorial /increment) happy 用例回归全通过"
+      ],
+      "files": [
+        "playground/server.js",
+        "playground/tests/server.test.js",
+        "playground/README.md"
+      ],
+      "depends_on": [],
+      "complexity": "M",
+      "estimated_minutes": 45
+    }
+  ]
+}
