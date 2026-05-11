@@ -635,13 +635,14 @@ router.post('/execution-callback', async (req, res) => {
           );
           if (!existing.rows.length) {
             await pool.query(
-              `INSERT INTO learnings (title, category, trigger_event, content, metadata, content_hash, version, is_latest, digested)
-               VALUES ($1, 'task_completion', 'task_completed', $2, $3, $4, 1, true, false)`,
+              `INSERT INTO learnings (title, category, trigger_event, content, metadata, content_hash, version, is_latest, digested, task_id)
+               VALUES ($1, 'task_completion', 'task_completed', $2, $3, $4, 1, true, false, $5)`,
               [
                 `完成：${taskTitle}`,
                 learningContent,
                 JSON.stringify({ task_id, task_type: taskType, pr_url: pr_url || null }),
-                contentHash
+                contentHash,
+                task_id || null,
               ]
             );
             console.log(`[execution-callback] 任务完成写入 learnings: ${taskTitle}`);

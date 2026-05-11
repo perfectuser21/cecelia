@@ -312,15 +312,20 @@ const actionHandlers = {
    * 保存经验教训到 learnings 表
    */
   async create_learning(params, _context) {
-    const { content, tags = [], source_task_id = null } = params;
+    // task_id（兼容旧参数名 source_task_id）必填——洞察必须绑定到行动（migration 270）
+    const { content, tags = [] } = params;
+    const task_id = params.task_id ?? params.source_task_id ?? null;
     if (!content) {
       return { success: false, error: 'content 字段必填' };
     }
+    if (!task_id) {
+      return { success: false, error: 'task_id 必填（learning 必须绑定到 task）' };
+    }
     const result = await pool.query(
-      `INSERT INTO learnings (content, tags, source_task_id, created_at)
+      `INSERT INTO learnings (content, tags, task_id, created_at)
        VALUES ($1, $2, $3, NOW())
        RETURNING id`,
-      [content, JSON.stringify(tags), source_task_id]
+      [content, JSON.stringify(tags), task_id]
     );
     const id = result.rows[0]?.id;
     console.log(`[executor] create_learning: 已插入 learning ${id}`);
@@ -396,7 +401,7 @@ const actionHandlers = {
 
     const content = `task_type 建议修正：task ${task_id} 当前类型 ${current_type}，建议改为 ${suggested_type}。原因：${reason}`;
     const result = await pool.query(
-      `INSERT INTO learnings (content, tags, source_task_id, created_at)
+      `INSERT INTO learnings (content, tags, task_id, created_at)
        VALUES ($1, $2, $3, NOW())
        RETURNING id`,
       [content, JSON.stringify(['task_type', 'suggestion', 'warning']), task_id]

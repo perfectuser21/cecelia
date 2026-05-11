@@ -1130,13 +1130,14 @@ async function requeueTask(taskId, reason, evidence = {}) {
 
     if (existing.rows.length === 0) {
       await pool.query(`
-        INSERT INTO learnings (title, category, trigger_event, content, metadata, content_hash, version, is_latest, digested)
-        VALUES ($1, 'failure_pattern', 'watchdog_kill', $2, $3, $4, 1, true, false)
+        INSERT INTO learnings (title, category, trigger_event, content, metadata, content_hash, version, is_latest, digested, task_id)
+        VALUES ($1, 'failure_pattern', 'watchdog_kill', $2, $3, $4, 1, true, false, $5)
       `, [
         failureTitle,
         failureContent,
         JSON.stringify({ task_id: taskId, task_type: task_type || null, project_id: project_id || null }),
         contentHash,
+        taskId || null,
       ]);
     } else {
       console.log(`[executor] Skipping duplicate failure_pattern (hash=${contentHash})`);

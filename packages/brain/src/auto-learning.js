@@ -64,7 +64,7 @@ async function isDuplicateLearning(contentHash, dbPool = pool) {
 /**
  * 创建自动学习记录
  */
-async function createAutoLearning({ title, category, content, triggerEvent, metadata }, dbPool = pool) {
+async function createAutoLearning({ title, category, content, triggerEvent, metadata, taskId = null }, dbPool = pool) {
   // 预算检查
   if (!hasAutoLearningBudget()) {
     console.log(`[auto-learning] Daily budget exhausted (${DAILY_AUTO_LEARNING_BUDGET}), skipping learning creation`);
@@ -81,8 +81,8 @@ async function createAutoLearning({ title, category, content, triggerEvent, meta
 
   try {
     const result = await dbPool.query(`
-      INSERT INTO learnings (title, category, trigger_event, content, metadata, content_hash, version, is_latest, digested)
-      VALUES ($1, $2, $3, $4, $5, $6, 1, true, false)
+      INSERT INTO learnings (title, category, trigger_event, content, metadata, content_hash, version, is_latest, digested, task_id)
+      VALUES ($1, $2, $3, $4, $5, $6, 1, true, false, $7)
       RETURNING id, title
     `, [
       title,
@@ -90,7 +90,8 @@ async function createAutoLearning({ title, category, content, triggerEvent, meta
       triggerEvent,
       content,
       JSON.stringify(metadata || {}),
-      contentHash
+      contentHash,
+      taskId || metadata?.task_id || null,
     ]);
 
     // 更新计数器
@@ -163,6 +164,7 @@ export async function handleTaskCompletedLearning(task_id, taskType, status, res
     category: 'execution_result',
     content,
     triggerEvent: 'task_completed_auto',
+    taskId: task_id,
     metadata: {
       task_id,
       task_type: taskType,
@@ -196,6 +198,7 @@ export async function handleTaskFailedLearning(task_id, taskType, status, result
     category: 'failure_pattern',
     content,
     triggerEvent: 'task_failed_auto',
+    taskId: task_id,
     metadata: {
       task_id,
       task_type: taskType,
