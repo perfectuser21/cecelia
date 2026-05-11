@@ -186,3 +186,55 @@ journey_type: autonomous
 
 - [x] [BEHAVIOR] PR diff 行级断言：`playground/server.js` 旧 6 路由 `app.get('/(health|sum|multiply|divide|power|modulo)')` 注册行**零删除**（r2 新增，针对 r1 "cascade 失败但前 8 步假绿" 反馈，根除 generator 删旧路由腾位的退化路径）
   Test: manual:bash -c 'git fetch origin main --depth=50 2>/dev/null || true; BASE=$(git merge-base HEAD origin/main 2>/dev/null || git merge-base HEAD main 2>/dev/null); [ -n "$BASE" ] || exit 1; DELETED=$(git diff "$BASE" -- playground/server.js | grep -cE "^-[[:space:]]*app\.get\(['\"]/(health|sum|multiply|divide|power|modulo)['\"]") || DELETED=0; [ "$DELETED" -eq 0 ]'
+
+## r2 新增 BEHAVIOR（针对 verification_oracle_completeness=6 + behavior_count_position=6 加固，PRD 禁用清单 1:1 全覆盖）
+
+> 上面 20 条已覆盖核心场景；下面新增 13 条对 PRD `## Response Schema` 段所列的 **禁用 response 字段（12 个）** / **禁用 query 名（26 个）** / **错误体禁用字段（7 个）** 做 1:1 oracle 反向验证。每条独立 [BEHAVIOR] 标签 + 独立 manual:bash 命令，evaluator v1.1 可逐条执行判 PASS/FAIL。
+
+### 禁用 response 字段 1:1（PRD 列 12 个，已有 1 条 lumped；新增 5 条按"语义分组"细分）
+
+- [x] [BEHAVIOR] 响应禁用字段反向 #1: 禁 result（**generic 漂移防御**，W19/W20 实证 generator 倾向写 generic `result`）
+  Test: manual:bash -c 'cd playground && PLAYGROUND_PORT=3220 node server.js & SPID=$!; sleep 2; RESP=$(curl -fs "localhost:3220/factorial?n=4"); OK=$(echo "$RESP" | jq -e "has(\"result\") | not" 2>/dev/null && printf OK); kill $SPID 2>/dev/null; [ "$OK" = "OK" ]'
+
+- [x] [BEHAVIOR] 响应禁用字段反向 #2: 禁 product（**W20 字段复读防御**，generator 不许把 /multiply 模板复读到 /factorial）
+  Test: manual:bash -c 'cd playground && PLAYGROUND_PORT=3221 node server.js & SPID=$!; sleep 2; RESP=$(curl -fs "localhost:3221/factorial?n=4"); OK=$(echo "$RESP" | jq -e "has(\"product\") | not" 2>/dev/null && printf OK); kill $SPID 2>/dev/null; [ "$OK" = "OK" ]'
+
+- [x] [BEHAVIOR] 响应禁用字段反向 #3: 禁 sum / quotient / power / remainder（**W19/W21/W22/W23 字段复读防御**，4 个旧字段一次扫）
+  Test: manual:bash -c 'cd playground && PLAYGROUND_PORT=3222 node server.js & SPID=$!; sleep 2; RESP=$(curl -fs "localhost:3222/factorial?n=4"); OK=$(echo "$RESP" | jq -e "(has(\"sum\") | not) and (has(\"quotient\") | not) and (has(\"power\") | not) and (has(\"remainder\") | not)" 2>/dev/null && printf OK); kill $SPID 2>/dev/null; [ "$OK" = "OK" ]'
+
+- [x] [BEHAVIOR] 响应禁用字段反向 #4: 禁 value / answer / fact / f / out / output（**6 个 generic 同义词漂移防御**）
+  Test: manual:bash -c 'cd playground && PLAYGROUND_PORT=3223 node server.js & SPID=$!; sleep 2; RESP=$(curl -fs "localhost:3223/factorial?n=4"); OK=$(echo "$RESP" | jq -e "(has(\"value\") | not) and (has(\"answer\") | not) and (has(\"fact\") | not) and (has(\"f\") | not) and (has(\"out\") | not) and (has(\"output\") | not)" 2>/dev/null && printf OK); kill $SPID 2>/dev/null; [ "$OK" = "OK" ]'
+
+- [x] [BEHAVIOR] 响应禁用字段反向 #5: 禁 data / payload / response（**3 个包装词漂移防御**，generator 易把响应包成 `{data: {factorial: ...}}`）
+  Test: manual:bash -c 'cd playground && PLAYGROUND_PORT=3224 node server.js & SPID=$!; sleep 2; RESP=$(curl -fs "localhost:3224/factorial?n=4"); OK=$(echo "$RESP" | jq -e "(has(\"data\") | not) and (has(\"payload\") | not) and (has(\"response\") | not)" 2>/dev/null && printf OK); kill $SPID 2>/dev/null; [ "$OK" = "OK" ]'
+
+- [x] [BEHAVIOR] 响应 schema 完整性总闸 — 顶层 keys 严等 `["factorial"]`（即上面 12 个禁用字段一次性总闸）
+  Test: manual:bash -c 'cd playground && PLAYGROUND_PORT=3225 node server.js & SPID=$!; sleep 2; RESP=$(curl -fs "localhost:3225/factorial?n=7"); OK=$(echo "$RESP" | jq -e "keys == [\"factorial\"]" 2>/dev/null && printf OK); kill $SPID 2>/dev/null; [ "$OK" = "OK" ]'
+
+### 禁用 query 名 1:1（PRD 列 26 个，已有 2 条 lumped 覆盖 ~10；新增 3 条扫剩余 16）
+
+- [x] [BEHAVIOR] 禁用 query 名反向 #1: 单字母组 `x` / `y` / `m` / `k` / `i` / `j` / `p` / `q` 全拒 400 + 不含 factorial（8 个单字母）
+  Test: manual:bash -c 'cd playground && PLAYGROUND_PORT=3226 node server.js & SPID=$!; sleep 2; FAIL=0; for K in x y m k i j p q; do CODE=$(curl -s -o /tmp/q.json -w "%{http_code}" "localhost:3226/factorial?${K}=5"); [ "$CODE" = "400" ] || FAIL=1; jq -e "has(\"factorial\") | not" < /tmp/q.json > /dev/null 2>&1 || FAIL=1; done; kill $SPID 2>/dev/null; [ "$FAIL" = "0" ]'
+
+- [x] [BEHAVIOR] 禁用 query 名反向 #2: 双参 query 名 `a` / `b` 拒 400（防 generator 复读 W19~W23 双参模板）
+  Test: manual:bash -c 'cd playground && PLAYGROUND_PORT=3227 node server.js & SPID=$!; sleep 2; CODE_A=$(curl -s -o /dev/null -w "%{http_code}" "localhost:3227/factorial?a=5"); CODE_B=$(curl -s -o /dev/null -w "%{http_code}" "localhost:3227/factorial?b=5"); CODE_AB=$(curl -s -o /dev/null -w "%{http_code}" "localhost:3227/factorial?a=5&b=3"); kill $SPID 2>/dev/null; [ "$CODE_A" = "400" ] && [ "$CODE_B" = "400" ] && [ "$CODE_AB" = "400" ]'
+
+- [x] [BEHAVIOR] 禁用 query 名反向 #3: 长尾别名 `arg` / `arg1` / `input1` / `v1` / `len` / `length` 全拒（6 个长尾别名）
+  Test: manual:bash -c 'cd playground && PLAYGROUND_PORT=3228 node server.js & SPID=$!; sleep 2; FAIL=0; for K in arg arg1 input1 v1 len length; do CODE=$(curl -s -o /tmp/q.json -w "%{http_code}" "localhost:3228/factorial?${K}=5"); [ "$CODE" = "400" ] || FAIL=1; jq -e "has(\"factorial\") | not" < /tmp/q.json > /dev/null 2>&1 || FAIL=1; done; kill $SPID 2>/dev/null; [ "$FAIL" = "0" ]'
+
+### 错误体禁用字段 1:1（PRD 列 7 个，r1 未覆盖；新增 4 条 1:1 + 1 条 schema 总闸）
+
+- [x] [BEHAVIOR] 错误体禁用替代字段 #1: 禁 `message` / `msg`（generator 易把 `error` 写成 `message`，express 默认 error handler 也用 `message`，必须显式禁）
+  Test: manual:bash -c 'cd playground && PLAYGROUND_PORT=3229 node server.js & SPID=$!; sleep 2; FAIL=0; for QS in "n=abc" "n=19" ""; do curl -s "localhost:3229/factorial?${QS}" > /tmp/e.json; jq -e "has(\"message\") | not" < /tmp/e.json > /dev/null 2>&1 || FAIL=1; jq -e "has(\"msg\") | not" < /tmp/e.json > /dev/null 2>&1 || FAIL=1; done; kill $SPID 2>/dev/null; [ "$FAIL" = "0" ]'
+
+- [x] [BEHAVIOR] 错误体禁用替代字段 #2: 禁 `reason` / `detail` / `details`（3 个细节同义词）
+  Test: manual:bash -c 'cd playground && PLAYGROUND_PORT=3230 node server.js & SPID=$!; sleep 2; FAIL=0; for QS in "n=abc" "n=19" ""; do curl -s "localhost:3230/factorial?${QS}" > /tmp/e.json; jq -e "has(\"reason\") | not" < /tmp/e.json > /dev/null 2>&1 || FAIL=1; jq -e "has(\"detail\") | not" < /tmp/e.json > /dev/null 2>&1 || FAIL=1; jq -e "has(\"details\") | not" < /tmp/e.json > /dev/null 2>&1 || FAIL=1; done; kill $SPID 2>/dev/null; [ "$FAIL" = "0" ]'
+
+- [x] [BEHAVIOR] 错误体禁用替代字段 #3: 禁 `description` / `info`（2 个补充同义词）
+  Test: manual:bash -c 'cd playground && PLAYGROUND_PORT=3231 node server.js & SPID=$!; sleep 2; FAIL=0; for QS in "n=abc" "n=19" ""; do curl -s "localhost:3231/factorial?${QS}" > /tmp/e.json; jq -e "has(\"description\") | not" < /tmp/e.json > /dev/null 2>&1 || FAIL=1; jq -e "has(\"info\") | not" < /tmp/e.json > /dev/null 2>&1 || FAIL=1; done; kill $SPID 2>/dev/null; [ "$FAIL" = "0" ]'
+
+- [x] [BEHAVIOR] 错误体 schema 完整性总闸 — 顶层 keys 严等 `["error"]` 跨三类 error path（strict / 上界 / 缺参），且每类 body 不含 factorial（防"既报错又给值"混合污染）
+  Test: manual:bash -c 'cd playground && PLAYGROUND_PORT=3232 node server.js & SPID=$!; sleep 2; FAIL=0; for QS in "n=abc" "n=19" ""; do curl -s "localhost:3232/factorial?${QS}" > /tmp/e.json; jq -e "keys == [\"error\"]" < /tmp/e.json > /dev/null 2>&1 || FAIL=1; jq -e "has(\"factorial\") | not" < /tmp/e.json > /dev/null 2>&1 || FAIL=1; jq -e ".error | type == \"string\" and length > 0" < /tmp/e.json > /dev/null 2>&1 || FAIL=1; done; kill $SPID 2>/dev/null; [ "$FAIL" = "0" ]'
+
+- [x] [BEHAVIOR] 错误体三类 error path × 7 个禁用替代字段 7 × 3 = 21 项总扫（一次性兜底防漏）
+  Test: manual:bash -c 'cd playground && PLAYGROUND_PORT=3233 node server.js & SPID=$!; sleep 2; FAIL=0; for QS in "n=abc" "n=19" ""; do curl -s "localhost:3233/factorial?${QS}" > /tmp/e.json; for ALT in message msg reason detail details description info; do jq -e "has(\"${ALT}\") | not" < /tmp/e.json > /dev/null 2>&1 || FAIL=1; done; done; kill $SPID 2>/dev/null; [ "$FAIL" = "0" ]'
