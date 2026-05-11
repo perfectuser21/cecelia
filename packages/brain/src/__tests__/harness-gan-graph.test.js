@@ -26,9 +26,12 @@ import {
 } from '../harness-gan-graph.js';
 
 describe('buildProposerPrompt', () => {
-  it('round 1 without feedback: PRD only', () => {
+  it('round 1 without feedback: inline SKILL pattern (no slash command)', () => {
     const out = buildProposerPrompt('# PRD content', null, 1);
-    expect(out).toContain('/harness-contract-proposer');
+    // Bug 6 修复：第一行不再是 slash command，是 inline agent 引导
+    expect(out.split('\n')[0]).toBe('你是 harness-contract-proposer agent。按下面 SKILL 指令工作。');
+    // SKILL 真注入了（v7.4 关键词）
+    expect(out).toContain('contract-dod-ws');
     expect(out).toContain('round: 1');
     expect(out).toContain('## PRD');
     expect(out).toContain('# PRD content');
@@ -44,26 +47,27 @@ describe('buildProposerPrompt', () => {
 });
 
 describe('buildReviewerPrompt', () => {
-  it('round 1: PRD + contract + rubric scoring instruction', () => {
+  it('round 1: inline SKILL (含 7 维 rubric) + 删 hardcoded 5 维 (Bug 6 fix)', () => {
     const out = buildReviewerPrompt('# PRD', '# Contract R1', 1);
-    expect(out).toContain('/harness-contract-reviewer');
-    expect(out).toContain('round: 1');
-    expect(out).toContain('## Proposer 当前合同草案');
-    expect(out).toContain('# Contract R1');
-    // 必须含 5 维度名
+    // Bug 6 修复：第一行 inline agent 引导，不是 slash command
+    expect(out.split('\n')[0]).toBe('你是 harness-contract-reviewer agent。按下面 SKILL 指令工作。');
+    // SKILL v6.2 真注入了（含 7 维）
     expect(out).toContain('dod_machineability');
     expect(out).toContain('scope_match_prd');
     expect(out).toContain('test_is_red');
     expect(out).toContain('internal_consistency');
     expect(out).toContain('risk_registered');
-    // 必须含 rubric_scores JSON 示例（```json fence）
-    expect(out).toMatch(/```json[\s\S]*dod_machineability[\s\S]*```/);
-    // 必须含 skeptical persona 提示
-    expect(out).toContain('skeptical staff engineer');
-    // 必须含代码判阈值说明
-    expect(out).toContain('阈值判 PASS 由代码做');
-    // VERDICT 作为最后人类可读行保留
-    expect(out).toContain('VERDICT: REVISION');
+    // v6.1 第 6 维 + v6.2 第 7 维（关键 — Bug 6 修复后必有）
+    expect(out).toContain('verification_oracle_completeness');
+    expect(out).toContain('behavior_count_position');
+    // PRD/Contract 仍嵌入
+    expect(out).toContain('round: 1');
+    expect(out).toContain('## Proposer 当前合同草案');
+    expect(out).toContain('# Contract R1');
+    // brain code 不再 hardcode 5 维 rubric（让 SKILL 做 SSOT）
+    expect(out).not.toContain('按以下 5 个维度');
+    // skeptical persona 在 SKILL.md 里（注意大写 S）
+    expect(out).toContain('Skeptical staff engineer');
   });
 });
 

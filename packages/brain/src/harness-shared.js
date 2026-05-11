@@ -12,14 +12,23 @@
 import { readFileSync, existsSync } from 'fs';
 import path from 'path';
 import os from 'os';
+import { fileURLToPath } from 'url';
 
 // ─── Skill 内联加载 ──────────────────────────────────────────────────────────
 // Docker 容器里 Claude Code headless (-p) 模式不识别 `/skill-name` 语法，
 // 必须把 SKILL.md 原文内联到 prompt 里，Claude 才能按 skill 指令工作。
+//
+// 搜索顺序:
+// 1-3. host 上 ~/.claude*/skills 的 symlink（开发本机 + brain runtime）
+// 4. monorepo 内 packages/workflows/skills（CI / 任何 git checkout 都有，无 home 依赖）
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 const SKILL_SEARCH_DIRS = [
   path.join(os.homedir(), '.claude-account1', 'skills'),
   path.join(os.homedir(), '.claude-account2', 'skills'),
   path.join(os.homedir(), '.claude', 'skills'),
+  // packages/brain/src/ → packages/workflows/skills/
+  path.resolve(__dirname, '..', '..', 'workflows', 'skills'),
 ];
 
 const _skillCache = new Map();
