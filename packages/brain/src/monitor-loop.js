@@ -868,6 +868,111 @@ async function handleResourcePressure(stats) {
 }
 
 /**
+ * Detector: Persistent failure pattern
+ * 检测"持续性 pattern 失败"：同 reason_code 在近 3 周内失败 ≥ 3 次。
+ *
+ * 与 detectFailureSpike 互补：spike 捕捉短时间高频（>30%/1h），
+ * 这个捕捉慢速累积型 pattern（≥3 次 / 3 周）。后者不会成为 spike，
+ * 旧实现只在 spike 时跑 RCA→auto-fix，导致慢速累积失败被静默吞掉。
+ *
+ * 洞察 learning a7e564b3：持续性失败永远走 quarantine→rca→fix_task，
+ * 永远不 retry。命中本检测后由 handlePersistentPattern 强制走该路径。
+ */
+async function detectPersistentFailurePatterns() {
+  const query = `
+    SELECT
+      reason_code,
+      MAX(layer) AS layer,
+      MAX(step_name) AS step_name,
+      COUNT(*) AS occurrences,
+      MAX(task_id) AS latest_task_id,
+      MAX(run_id) AS latest_run_id,
+      MAX(ts_start) AS last_seen_at
+    FROM run_events
+    WHERE status = 'failed'
+      AND reason_code IS NOT NULL
+      AND ts_start > NOW() - INTERVAL '21 days'
+    GROUP BY reason_code
+    HAVING COUNT(*) >= 3
+    ORDER BY MAX(ts_start) DESC
+    LIMIT 10
+  `;
+  const result = await pool.query(query);
+  return result.rows;
+}
+
+/**
+ * Handler: Persistent failure pattern
+ * 强制路径：quarantine → rca → fix_task，永远不是 retry。
+ *
+ * 区别于 handleStuckRun（前两次 retry）和 handleFailureSpike（30% spike 阈值）：
+ * 当 pattern 已经累积 ≥3 次/3 周，retry 注定再失败，必须停止 retry 并强制
+ * 走 RCA + 修复任务。本函数严禁出现把任务 status 重置回 'queued' 的代码——
+ * 否则等于把任务送回 retry 循环，违反洞察。
+ *
+ * @param {Object} pattern - { reason_code, layer, step_name, occurrences,
+ *                             latest_task_id, latest_run_id }
+ */
+async function handlePersistentPattern(pattern) {
+  console.log(
+    `[Monitor] Persistent pattern: reason_code=${pattern.reason_code} ` +
+    `occurrences=${pattern.occurrences} latest_task=${pattern.latest_task_id}`
+  );
+
+  const failure = {
+    reason_code: pattern.reason_code,
+    layer: pattern.layer,
+    step_name: pattern.step_name,
+    task_id: pattern.latest_task_id,
+    run_id: pattern.latest_run_id,
+  };
+
+  // 1) 隔离最近一个相关任务（若它还在 retry 通道），切断 retry 循环
+  if (pattern.latest_task_id) {
+    try {
+      const { quarantineTask } = await import('./quarantine.js');
+      await quarantineTask(pattern.latest_task_id, 'persistent_pattern', {
+        reason_code: pattern.reason_code,
+        occurrences: pattern.occurrences,
+        layer: pattern.layer,
+        step_name: pattern.step_name,
+        failure_class: 'repeated_failure',
+      });
+    } catch (qErr) {
+      console.error(`[Monitor] quarantine for persistent pattern failed: ${qErr.message}`);
+    }
+  }
+
+  // 2) RCA（24h 同 signature 去重；走过就用缓存）
+  const { should_analyze, signature, cached_result } = await shouldAnalyzeFailure(failure);
+
+  let rcaResult = cached_result;
+  if (should_analyze) {
+    rcaResult = await callCortexForRca(failure);
+    await cacheRcaResult(failure, rcaResult);
+  }
+
+  if (!rcaResult) {
+    console.log(`[Monitor] No RCA result for persistent pattern ${signature}, skip fix dispatch`);
+    return;
+  }
+
+  // 3) 派发 fix_task（dispatchToDevSkill 内部有去重 + 最大 3 次尝试防死循环）
+  if (shouldAutoFix(rcaResult)) {
+    try {
+      const taskId = await dispatchToDevSkill(failure, rcaResult, signature);
+      if (taskId) {
+        console.log(`[Monitor] Persistent pattern fix_task created: ${taskId} (signature=${signature})`);
+      }
+    } catch (dispatchErr) {
+      console.error(`[Monitor] dispatchToDevSkill failed for persistent pattern: ${dispatchErr.message}`);
+    }
+  } else {
+    console.log(`[Monitor] RCA confidence too low for auto-fix (signature=${signature}), manual review needed`);
+  }
+}
+
+/**
  * Main monitoring loop
  */
 async function runMonitorCycle() {
@@ -899,7 +1004,18 @@ async function runMonitorCycle() {
     if (failureStats.failed_count > 0) {
       await handleFailureSpike(failureStats);
     }
-    
+
+    // 2.5 Detect persistent failure patterns (慢速累积型 ≥3 次/3 周，
+    // 与 failure spike 互补：spike 捕短时高频，这个捕慢速累积。
+    // learning a7e564b3：持续性 pattern 必须走 quarantine→rca→fix_task，永远不是 retry)
+    const persistentPatterns = await detectPersistentFailurePatterns();
+    if (persistentPatterns.length > 0) {
+      console.log(`[Monitor] Found ${persistentPatterns.length} persistent failure pattern(s)`);
+      for (const pattern of persistentPatterns) {
+        await handlePersistentPattern(pattern);
+      }
+    }
+
     // 3. Detect resource pressure
     const resourceStats = await detectResourcePressure();
     if (resourceStats.pressure > RESOURCE_PRESSURE_THRESHOLD) {
