@@ -10,6 +10,8 @@ journey_type: autonomous
 
 **依赖**: 无
 
+**Round 2 SSOT 引用**: 禁用字段清单单源在 `sprints/w30-walking-skeleton-p1-v2/banned-keys.sh`（详见 contract-draft.md `## Stable IDs` 段）。本 DoD 文件 BEHAVIOR-11 与 BEHAVIOR-12 严格 source SSOT 文件并通过 `${BANNED_RESPONSE_KEYS[@]}` / `${BANNED_ERROR_KEYS[@]}` 引用，不再 inline 粘贴 34/10 字段名清单。
+
 ---
 
 ## ARTIFACT 条目
@@ -37,6 +39,9 @@ journey_type: autonomous
 
 - [ ] [ARTIFACT] `playground/README.md` 端点列表含 `/decrement` 段
   Test: node -e "const c=require('fs').readFileSync('playground/README.md','utf8'); if(!/\/decrement/.test(c)) process.exit(1)"
+
+- [ ] [ARTIFACT] SSOT 单源文件 `sprints/w30-walking-skeleton-p1-v2/banned-keys.sh` 存在且可 source；BANNED_RESPONSE_KEYS 长度 34（按 PRD L103-L105 字面对齐 15+10+9），BANNED_ERROR_KEYS 长度 10
+  Test: bash -c 'source sprints/w30-walking-skeleton-p1-v2/banned-keys.sh && [ "${#BANNED_RESPONSE_KEYS[@]}" = "34" ] && [ "${#BANNED_ERROR_KEYS[@]}" = "10" ]'
 
 ---
 
@@ -82,13 +87,13 @@ journey_type: autonomous
   Test: manual:bash -c 'cd playground && PLAYGROUND_PORT=3310 node server.js & SPID=$!; sleep 2; R=$(curl -fs "localhost:3310/decrement?value=01" | jq -e ".result == 0 and .operation == \"decrement\"" >/dev/null && echo OK); kill $SPID 2>/dev/null; [ "$R" = OK ]'
   期望: exit 0
 
-- [ ] [BEHAVIOR] 禁用字段反向：response 不含 decremented/predecessor/prev/previous/n_minus_one/minus_one/pred/dec/decr/decrementation/subtraction/sum/product/quotient/power/remainder/factorial/negation/incremented/increment 任一（PR-G 死规则继承）
-  Test: manual:bash -c 'cd playground && PLAYGROUND_PORT=3311 node server.js & SPID=$!; sleep 2; RESP=$(curl -fs "localhost:3311/decrement?value=5"); FAIL=0; for BANNED in decremented predecessor prev previous n_minus_one minus_one pred dec decr decrementation subtraction lower lowered before earlier value input output data payload answer meta original sum product quotient power remainder factorial negation incremented increment; do echo "$RESP" | jq -e "has(\"${BANNED}\") | not" >/dev/null || { echo "禁用字段 ${BANNED} 出现"; FAIL=1; }; done; kill $SPID 2>/dev/null; [ "$FAIL" = "0" ]'
-  期望: exit 0（33 个禁用字段名 has() 反向断言全过）
+- [ ] [BEHAVIOR] 禁用响应字段反向：response 不含 SSOT BANNED_RESPONSE_KEYS 任一（PR-G 死规则继承；引用 sprints/w30-walking-skeleton-p1-v2/banned-keys.sh 单源，不 inline 粘贴 34 字段名清单）
+  Test: manual:bash -c 'source sprints/w30-walking-skeleton-p1-v2/banned-keys.sh; cd playground && PLAYGROUND_PORT=3311 node server.js & SPID=$!; sleep 2; RESP=$(curl -fs "localhost:3311/decrement?value=5"); FAIL=0; for BANNED in "${BANNED_RESPONSE_KEYS[@]}"; do echo "$RESP" | jq -e "has(\"${BANNED}\") | not" >/dev/null || { echo "禁用字段 ${BANNED} 出现"; FAIL=1; }; done; kill $SPID 2>/dev/null; [ "$FAIL" = "0" ]'
+  期望: exit 0（SSOT 中 34 个禁用字段名 has() 反向断言全过；SSOT 字段数变化时自动同步）
 
-- [ ] [BEHAVIOR] 错误体 schema 完整性：keys 字面 ["error"]，不含 result/operation/message/msg/reason/detail/code
-  Test: manual:bash -c 'cd playground && PLAYGROUND_PORT=3312 node server.js & SPID=$!; sleep 2; ERR=$(curl -s "localhost:3312/decrement?value=abc"); R1=$(echo "$ERR" | jq -e "keys | sort == [\"error\"]" >/dev/null && echo OK); R2=$(echo "$ERR" | jq -e ".error | type == \"string\" and length > 0" >/dev/null && echo OK); FAIL=0; for BANNED in result operation message msg reason detail details description info code; do echo "$ERR" | jq -e "has(\"${BANNED}\") | not" >/dev/null || { echo "错误体含禁用字段 ${BANNED}"; FAIL=1; }; done; kill $SPID 2>/dev/null; [ "$R1" = OK ] && [ "$R2" = OK ] && [ "$FAIL" = "0" ]'
-  期望: exit 0
+- [ ] [BEHAVIOR] 错误体 schema 完整性：keys 字面 ["error"]，不含 SSOT BANNED_ERROR_KEYS 任一（引用 sprints/w30-walking-skeleton-p1-v2/banned-keys.sh 单源，不 inline 粘贴 10 字段名清单）
+  Test: manual:bash -c 'source sprints/w30-walking-skeleton-p1-v2/banned-keys.sh; cd playground && PLAYGROUND_PORT=3312 node server.js & SPID=$!; sleep 2; ERR=$(curl -s "localhost:3312/decrement?value=abc"); R1=$(echo "$ERR" | jq -e "keys | sort == [\"error\"]" >/dev/null && echo OK); R2=$(echo "$ERR" | jq -e ".error | type == \"string\" and length > 0" >/dev/null && echo OK); FAIL=0; for BANNED in "${BANNED_ERROR_KEYS[@]}"; do echo "$ERR" | jq -e "has(\"${BANNED}\") | not" >/dev/null || { echo "错误体含禁用字段 ${BANNED}"; FAIL=1; }; done; kill $SPID 2>/dev/null; [ "$R1" = OK ] && [ "$R2" = OK ] && [ "$FAIL" = "0" ]'
+  期望: exit 0（SSOT 中 10 个错误响应禁用字段名 has() 反向断言全过）
 
 - [ ] [BEHAVIOR] 8 路由回归 happy：/health /sum /multiply /divide /power /modulo /factorial /increment 全过
   Test: manual:bash -c 'cd playground && PLAYGROUND_PORT=3313 node server.js & SPID=$!; sleep 2; FAIL=0; curl -fs "localhost:3313/health" | jq -e ".ok == true" >/dev/null || { echo health; FAIL=1; }; curl -fs "localhost:3313/sum?a=2&b=3" | jq -e ".sum == 5" >/dev/null || { echo sum; FAIL=1; }; curl -fs "localhost:3313/multiply?a=7&b=5" | jq -e ".product == 35" >/dev/null || { echo multiply; FAIL=1; }; curl -fs "localhost:3313/divide?a=10&b=2" | jq -e ".quotient == 5" >/dev/null || { echo divide; FAIL=1; }; curl -fs "localhost:3313/power?a=2&b=3" | jq -e ".power == 8" >/dev/null || { echo power; FAIL=1; }; curl -fs "localhost:3313/modulo?a=10&b=3" | jq -e ".remainder == 1" >/dev/null || { echo modulo; FAIL=1; }; curl -fs "localhost:3313/factorial?n=5" | jq -e ".factorial == 120" >/dev/null || { echo factorial; FAIL=1; }; curl -fs "localhost:3313/increment?value=5" | jq -e ".result == 6 and .operation == \"increment\"" >/dev/null || { echo increment; FAIL=1; }; kill $SPID 2>/dev/null; [ "$FAIL" = "0" ]'

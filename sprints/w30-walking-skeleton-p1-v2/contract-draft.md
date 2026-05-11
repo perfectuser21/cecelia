@@ -1,14 +1,45 @@
-# Sprint Contract Draft (Round 1)
+# Sprint Contract Draft (Round 2)
 
 Sprint: W30 Walking Skeleton P1 终验 round 2 — playground 加 GET /decrement endpoint
 Initiative: a69c58e4-6942-40bf-9a8e-370b936294e9
 journey_type: autonomous
 
+**Round 2 修订要点**（对应 Reviewer round 1 反馈 internal_consistency=6）:
+- 新增 `## Stable IDs` 段，把禁用字段名清单单源化到 `sprints/w30-walking-skeleton-p1-v2/banned-keys.sh`
+- Step 8 / Step 9 / E2E 脚本 / contract-dod-ws1.md BEHAVIOR-11 / BEHAVIOR-12 一律改成 `source ... && ${BANNED_RESPONSE_KEYS[@]}` / `${BANNED_ERROR_KEYS[@]}` 引用
+- 不再有任一处直接粘贴 34 字段名列表（粘贴一处 = SSOT drift 风险）
+- Round 1 漏的两个 PRD 字段名（`response`、`out`）按 SSOT 字面补齐到 34（PRD L104）
+
+---
+
+## Stable IDs（SSOT — 禁用字段名单源）
+
+**唯一文本源**: `sprints/w30-walking-skeleton-p1-v2/banned-keys.sh`
+
+该文件定义两个 bash 数组：
+
+| 数组名 | 长度 | 用途 | PRD 来源 |
+|---|---|---|---|
+| `BANNED_RESPONSE_KEYS` | 34 | 成功响应 body 顶层不许出现的字段名（PR-G 死规则继承） | sprint-prd.md L103-L105（15+10+9 字面照搬） |
+| `BANNED_ERROR_KEYS` | 10 | 错误响应 body 顶层不许出现的字段名 | sprint-prd.md L104 错误响应禁用清单 |
+
+**所有验证脚本必须**（不再粘贴 34/10 字段名清单 inline）:
+
+```bash
+source sprints/w30-walking-skeleton-p1-v2/banned-keys.sh
+# 然后用 "${BANNED_RESPONSE_KEYS[@]}" 或 "${BANNED_ERROR_KEYS[@]}" 引用
+```
+
+**SSOT 维护规则**:
+- 修改禁用清单 → 只改 `banned-keys.sh` 一处文本源
+- 改完一处即"全验证脚本同步生效"（不需要再搜索 4 处 inline 粘贴并改 4 次）
+- 任一处 inline 粘贴字段名清单 → 视为 SSOT drift 违约，reviewer 直接 REVISION
+
 ---
 
 ## Golden Path
 
-[HTTP 客户端发 `GET /decrement?value=<整数字符串>` 到 playground] → [server 做 query 唯一性 + strict-schema `^-?\d+$` + `|Number(value)| ≤ 9007199254740990` 校验] → [显式拒一切不通过 → 400 `{error:"..."}`；通过则计算 `Number(value)-1`] → [200 `{result:<Number(value)-1>, operation:"decrement"}`，顶层 keys 字面集合 == `["operation","result"]`，不含任一禁用字段]
+[HTTP 客户端发 `GET /decrement?value=<整数字符串>` 到 playground] → [server 做 query 唯一性 + strict-schema `^-?\d+$` + `|Number(value)| ≤ 9007199254740990` 校验] → [显式拒一切不通过 → 400 `{error:"..."}`；通过则计算 `Number(value)-1`] → [200 `{result:<Number(value)-1>, operation:"decrement"}`，顶层 keys 字面集合 == `["operation","result"]`，不含 `${BANNED_RESPONSE_KEYS[@]}` 任一]
 
 ---
 
@@ -152,43 +183,51 @@ kill $SPID
 
 ---
 
-### Step 8: 禁用字段名反向 — response 严禁出现任一禁用同义字段
+### Step 8: 禁用字段名反向 — response 严禁出现 `${BANNED_RESPONSE_KEYS[@]}` 任一（SSOT 引用，不 inline 粘贴）
 
-**可观测行为**: PR-G 死规则继承——response 顶层不能含 `decremented` / `predecessor` / `prev` / `previous` / `n_minus_one` / `minus_one` / `pred` / `dec` / `decr` / `decrementation` / `subtraction` / `lower` / `lowered` / `before` / `earlier` / `value` / `input` / `output` / `data` / `payload` / `answer` / `meta` / `original` / `sum` / `product` / `quotient` / `power` / `remainder` / `factorial` / `negation` / `incremented` / `increment` 任一。
+**可观测行为**: PR-G 死规则继承——response 顶层不能含任一禁用字段名。禁用清单 SSOT 单源在 `sprints/w30-walking-skeleton-p1-v2/banned-keys.sh::BANNED_RESPONSE_KEYS`（34 个；逐项字面照搬 PRD L103-L105）。
 
-**验证命令**:
+**验证命令**（脚本 source SSOT，不再 inline 粘贴 34 字段名）:
 ```bash
+# 注意：source 必须在 `&` 之前用 `;` 隔离（不要用 `&&`），否则整个 `&&` 链会进入背景子 shell，
+# source 不会作用到父 shell，BANNED_RESPONSE_KEYS 在父 shell 为空，for 循环零次迭代，假绿。
+source sprints/w30-walking-skeleton-p1-v2/banned-keys.sh
 cd playground && PLAYGROUND_PORT=3208 node server.js & SPID=$!
 sleep 2
 RESP=$(curl -fs "localhost:3208/decrement?value=5")
-for BANNED in decremented predecessor prev previous n_minus_one minus_one pred dec decr decrementation subtraction lower lowered before earlier value input output data payload answer meta original sum product quotient power remainder factorial negation incremented increment; do
-  echo "$RESP" | jq -e "has(\"${BANNED}\") | not" >/dev/null || { echo "FAIL: 禁用字段 ${BANNED} 出现在 /decrement 响应"; kill $SPID; exit 1; }
+for BANNED in "${BANNED_RESPONSE_KEYS[@]}"; do
+  echo "$RESP" | jq -e "has(\"${BANNED}\") | not" >/dev/null \
+    || { echo "FAIL: 禁用字段 ${BANNED} 出现在 /decrement 响应"; kill $SPID; exit 1; }
 done
+echo "✅ ${#BANNED_RESPONSE_KEYS[@]} 个禁用字段全部反向断言通过"
 kill $SPID
 ```
 
-**硬阈值**: 33 个禁用字段名 jq has() 反向断言全过（PR-G 死规则继承——字段名必须字面照搬 PRD，禁同义优化）。
+**硬阈值**: SSOT 中 `${#BANNED_RESPONSE_KEYS[@]}` 个禁用字段名 `jq has() | not` 反向断言全过（当前 SSOT 长度 = 34，按 PRD L103-L105 字面对齐：15 首要 + 10 泛 generic + 9 endpoint 复用）。当 SSOT 文件长度变化时，本 Step 自动用新长度，不需要改本 Step 的脚本一字符。
 
 ---
 
-### Step 9: error body schema 完整性 — 错误响应 keys 恰好 `["error"]`
+### Step 9: error body schema 完整性 — 错误响应 keys 恰好 `["error"]`，不含 `${BANNED_ERROR_KEYS[@]}` 任一
 
-**可观测行为**: 任一 400 错误响应顶层 keys 严格等于 `["error"]`；不允许 `message` / `msg` / `reason` / `detail` / `code` 等替代字段。
+**可观测行为**: 任一 400 错误响应顶层 keys 严格等于 `["error"]`；错误体不含 `${BANNED_ERROR_KEYS[@]}` 中任一字段（包括 `result`/`operation` 防混合污染，以及 `message`/`msg`/`reason`/`detail` 等替代字段名禁用）。
 
-**验证命令**:
+**验证命令**（脚本 source SSOT，不再 inline 粘贴 10 字段名）:
 ```bash
+source sprints/w30-walking-skeleton-p1-v2/banned-keys.sh
 cd playground && PLAYGROUND_PORT=3209 node server.js & SPID=$!
 sleep 2
 ERR=$(curl -s "localhost:3209/decrement?value=abc")
 echo "$ERR" | jq -e 'keys | sort == ["error"]' || { kill $SPID; exit 1; }
 echo "$ERR" | jq -e '.error | type == "string" and length > 0' || { kill $SPID; exit 1; }
-for BANNED in message msg reason detail details description info code result operation; do
-  echo "$ERR" | jq -e "has(\"${BANNED}\") | not" >/dev/null || { echo "FAIL: 错误响应含禁用字段 ${BANNED}"; kill $SPID; exit 1; }
+for BANNED in "${BANNED_ERROR_KEYS[@]}"; do
+  echo "$ERR" | jq -e "has(\"${BANNED}\") | not" >/dev/null \
+    || { echo "FAIL: 错误响应含禁用字段 ${BANNED}"; kill $SPID; exit 1; }
 done
+echo "✅ 错误体 keys=[error] + ${#BANNED_ERROR_KEYS[@]} 个错误响应禁用字段反向断言全过"
 kill $SPID
 ```
 
-**硬阈值**: 错误体顶层 keys 字面 `["error"]`，`error` 是非空字符串，不含 10 个禁用字段。
+**硬阈值**: 错误体顶层 keys 字面 `["error"]`，`error` 是非空字符串，不含 SSOT `${BANNED_ERROR_KEYS[@]}` 任一（当前长度 10）。
 
 ---
 
@@ -224,7 +263,11 @@ kill $SPID
 ```bash
 #!/bin/bash
 set -e
-cd "$(dirname "$0")/../playground"
+ROOT=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
+# 引用 SSOT 单源禁用清单 — 本 E2E 脚本不 inline 粘贴 34/10 字段名
+source "$ROOT/sprints/w30-walking-skeleton-p1-v2/banned-keys.sh"
+
+cd "$ROOT/playground"
 PLAYGROUND_PORT=3299 node server.js &
 SPID=$!
 trap "kill $SPID 2>/dev/null" EXIT
@@ -267,18 +310,23 @@ done
 curl -fs "localhost:3299/decrement?value=01" | jq -e '.result == 0' >/dev/null
 curl -fs "localhost:3299/decrement?value=-01" | jq -e '.result == -2' >/dev/null
 
-# 8. banned response field names
+# 8. banned response field names — 引用 SSOT BANNED_RESPONSE_KEYS（不 inline 粘贴）
 RESP=$(curl -fs "localhost:3299/decrement?value=5")
-for BANNED in decremented predecessor prev previous n_minus_one minus_one pred dec decr decrementation subtraction lower lowered before earlier value input output data payload answer meta original sum product quotient power remainder factorial negation incremented increment; do
-  echo "$RESP" | jq -e "has(\"${BANNED}\") | not" >/dev/null || { echo "FAIL: 禁用字段 ${BANNED} 出现"; exit 1; }
+for BANNED in "${BANNED_RESPONSE_KEYS[@]}"; do
+  echo "$RESP" | jq -e "has(\"${BANNED}\") | not" >/dev/null \
+    || { echo "FAIL: 禁用字段 ${BANNED} 出现"; exit 1; }
 done
+echo "  → ${#BANNED_RESPONSE_KEYS[@]} 个 response 禁用字段反向断言全过"
 
-# 9. error body purity
+# 9. error body purity — 引用 SSOT BANNED_ERROR_KEYS（不 inline 粘贴）
 ERR=$(curl -s "localhost:3299/decrement?value=abc")
 echo "$ERR" | jq -e 'keys | sort == ["error"]' >/dev/null
 echo "$ERR" | jq -e '.error | type == "string" and length > 0' >/dev/null
-echo "$ERR" | jq -e 'has("result") | not' >/dev/null
-echo "$ERR" | jq -e 'has("operation") | not' >/dev/null
+for BANNED in "${BANNED_ERROR_KEYS[@]}"; do
+  echo "$ERR" | jq -e "has(\"${BANNED}\") | not" >/dev/null \
+    || { echo "FAIL: 错误体含禁用字段 ${BANNED}"; exit 1; }
+done
+echo "  → ${#BANNED_ERROR_KEYS[@]} 个 error 禁用字段反向断言全过"
 
 # 10. regression 8 routes
 curl -fs "localhost:3299/health" | jq -e '.ok == true' >/dev/null
@@ -290,7 +338,7 @@ curl -fs "localhost:3299/modulo?a=10&b=3" | jq -e '.remainder == 1' >/dev/null
 curl -fs "localhost:3299/factorial?n=5" | jq -e '.factorial == 120' >/dev/null
 curl -fs "localhost:3299/increment?value=5" | jq -e '.result == 6 and .operation == "increment"' >/dev/null
 
-echo "✅ W30 Golden Path 验证通过（10 段）"
+echo "✅ W30 Golden Path 验证通过（10 段 + SSOT 引用零 inline 粘贴）"
 ```
 
 **通过标准**: 脚本 exit 0。
@@ -323,7 +371,7 @@ workstream_count: 1
 
 ## PR-G 死规则继承（v7.5 — Bug 8 修复）
 
-本合同 **字面照搬** PRD `## Response Schema` 段：
+本合同 **字面照搬** PRD `## Response Schema` 段（不许"语义化优化"）:
 
 | 元素 | PRD 法定 | 合同字面 |
 |---|---|---|
@@ -332,6 +380,15 @@ workstream_count: 1
 | `result` 字段类型 | `number` | `number` |
 | `operation` 字段字面值 | `"decrement"` | `"decrement"` |
 | 错误 response keys 集合 | `["error"]` | `["error"]` |
-| 禁用响应字段名 | `decremented`/`predecessor`/`prev`/`previous`/`n_minus_one`/`minus_one`/`pred`/`dec`/`decr`/`decrementation`/`subtraction`/`lower`/`lowered`/`before`/`earlier`/`value`/`input`/`output`/`data`/`payload`/`answer`/`meta`/`original`/`sum`/`product`/`quotient`/`power`/`remainder`/`factorial`/`negation`/`incremented`/`increment` | 全部字面照搬，jq has() 反向断言一一覆盖 |
+| 禁用响应字段名 | 见 PRD L103-L105（34 个；首要 15 + 泛 generic 10 + endpoint 复用 9）| 全部 SSOT 化到 `sprints/w30-walking-skeleton-p1-v2/banned-keys.sh::BANNED_RESPONSE_KEYS`，下游 4 处验证脚本一律 `source ... && ${BANNED_RESPONSE_KEYS[@]}` 引用 |
 
-**自查通过证据**：grep 对比 PRD 与本合同的字段名集合，字面相等。Contract response keys ⊆ PRD 允许列表（`result`, `operation`, `error`）；PRD 禁用列表里的字段名在本合同任何正向 jq -e 命令里**绝对不出现**（仅在反向 `! has(...)` 检查里出现）。
+**自查通过证据**:
+1. `bash -c 'source sprints/w30-walking-skeleton-p1-v2/banned-keys.sh && echo "${#BANNED_RESPONSE_KEYS[@]}"'` 输出 `34`（与 PRD L103-L105 字面对齐）
+2. `bash -c 'source sprints/w30-walking-skeleton-p1-v2/banned-keys.sh && echo "${#BANNED_ERROR_KEYS[@]}"'` 输出 `10`
+3. Contract response keys ⊆ PRD 允许列表（`result`, `operation`, `error`）；PRD 禁用清单字段名仅出现在 SSOT 文件与反向 `! has(...)` 断言里，**绝不在**正向 jq -e 命令出现
+4. Contract / DoD 文件 grep 不到任一处 inline 粘贴的 34/10 字段名列表（粘贴 = SSOT 违约）
+
+**SSOT 单源化的好处**:
+- 修改禁用清单 → 改一处（`banned-keys.sh`）即可，无需搜索 4 处 inline 粘贴并改 4 次
+- 内部一致性 100%：4 处验证脚本永远引用同一份字段名集合
+- 漏字段（如 round 1 漏 `response`、`out` 共 2 个）问题在 SSOT 层一改全到位

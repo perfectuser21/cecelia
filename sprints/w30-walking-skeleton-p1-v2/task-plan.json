@@ -16,6 +16,7 @@
         "[ARTIFACT] playground/server.js /decrement 含 query 唯一性约束（Object.keys(req.query).length === 1）",
         "[ARTIFACT] playground/tests/server.test.js 内含 describe('GET /decrement' 独立 describe 块",
         "[ARTIFACT] playground/README.md 端点列表含 /decrement 段",
+        "[ARTIFACT] sprints/w30-walking-skeleton-p1-v2/banned-keys.sh 存在；source 后 BANNED_RESPONSE_KEYS 长度 34、BANNED_ERROR_KEYS 长度 10（SSOT 单源，Reviewer round 1 内部一致性 6/10 修复）",
         "[BEHAVIOR] GET /decrement?value=5 → 200 + {result:4, operation:\"decrement\"}（值复算 + schema 完整性 + 字段名字面相等）",
         "[BEHAVIOR] GET /decrement?value=0 → 200 + {result:-1, operation:\"decrement\"}（off-by-one 零边界）",
         "[BEHAVIOR] GET /decrement?value=1 → 200 + {result:0, operation:\"decrement\"}（off-by-one 1 边界）",
@@ -33,7 +34,8 @@
       "files": [
         "playground/server.js",
         "playground/tests/server.test.js",
-        "playground/README.md"
+        "playground/README.md",
+        "sprints/w30-walking-skeleton-p1-v2/banned-keys.sh"
       ],
       "depends_on": [],
       "complexity": "M",
