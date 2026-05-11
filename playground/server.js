@@ -79,6 +79,22 @@ app.get('/modulo', (req, res) => {
   return res.json({ remainder: Number(a) % Number(b) });
 });
 
+app.get('/factorial', (req, res) => {
+  const { n } = req.query;
+  if (n === undefined) {
+    return res.status(400).json({ error: 'n 是必填 query 参数（仅 n，整数 0 ≤ n ≤ 18）' });
+  }
+  if (typeof n !== 'string' || !/^\d+$/.test(n)) {
+    return res.status(400).json({ error: 'n 必须匹配 ^\\d+$（仅非负整数；禁负号、小数、前导 +、科学计数法、十六进制、千分位、Infinity、NaN）' });
+  }
+  if (Number(n) > 18) {
+    return res.status(400).json({ error: 'n 必须 ≤ 18（精度上界，避免超过 Number.MAX_SAFE_INTEGER）' });
+  }
+  let acc = 1;
+  for (let i = 2; i <= Number(n); i++) acc *= i;
+  return res.json({ factorial: acc });
+});
+
 if (process.env.NODE_ENV !== 'test') {
   app.listen(PORT, () => console.log(`playground listening on ${PORT}`));
 }

@@ -23,6 +23,7 @@ npm start           # 起 server（默认 :3000）
 - `GET /divide?a=N&b=M` → 返回 a÷b 的商（**strict-schema** + **除零兜底**：`b=0`/`b=0.0` → 400）
 - `GET /power?a=N&b=M` → 返回 a^b（**strict-schema** + **0^0 不定式拒** + **结果有限性兜底**：`Number.isFinite(result)===false` 时 400，覆盖 0^负 / 负^分数 / 溢出）
 - `GET /modulo?a=N&b=M` → 返回 a%b 的余数（**strict-schema** + **除零兜底**：`b=0`/`b=0.0` → 400；**JS 原生 truncated 取模**：余数符号跟随被除数 a，与数学 floored mod 区分）
+- `GET /factorial?n=N` → 返回 n! 阶乘（**整数白名单 strict-schema** `^\d+$` + **上界 18 拒**：`n > 18` → 400（精度上界，避免超过 `Number.MAX_SAFE_INTEGER`）+ **迭代精确累积**：`for(i=2; i<=n; i++) acc *= i`，不引入 BigInt / Stirling / gamma 近似）
 
 ### `GET /sum` 示例
 
@@ -239,4 +240,89 @@ curl -s -o /dev/stderr -w 'HTTP %{http_code}\n' 'http://127.0.0.1:3000/modulo?a=
 curl -s -o /dev/stderr -w 'HTTP %{http_code}\n' 'http://127.0.0.1:3000/modulo?a=5'
 # {"error":"a 和 b 都是必填 query 参数"}
 # HTTP 400
+```
+
+### `GET /factorial` 示例
+
+happy path（含数学边界 0!=1、1!=1、精度上界 18! < `Number.MAX_SAFE_INTEGER`）：
+
+```bash
+curl -s 'http://127.0.0.1:3000/factorial?n=5'
+# {"factorial":120}
+
+curl -s 'http://127.0.0.1:3000/factorial?n=10'
+# {"factorial":3628800}
+
+curl -s 'http://127.0.0.1:3000/factorial?n=12'
+# {"factorial":479001600}
+
+curl -s 'http://127.0.0.1:3000/factorial?n=0'
+# {"factorial":1}        # 数学定义 0!=1（空积）
+
+curl -s 'http://127.0.0.1:3000/factorial?n=1'
+# {"factorial":1}
+
+curl -s 'http://127.0.0.1:3000/factorial?n=18'
+# {"factorial":6402373705728000}  # 精度上界，等于 18! 的精确整数值，< 2^53-1
+```
+
+跨调用递推不变量演示（核心 oracle：`factorial(n) === n * factorial(n-1)`，Stirling/Lanczos/浮点近似实现必断）：
+
+```bash
+# 演示 f(5) === 5 * f(4) === 120
+curl -s 'http://127.0.0.1:3000/factorial?n=4'   # {"factorial":24}
+curl -s 'http://127.0.0.1:3000/factorial?n=5'   # {"factorial":120}
+# 校验：120 === 5 * 24 ✓
+
+# 演示 f(18) === 18 * f(17)（精度边界递推，必须严等）
+curl -s 'http://127.0.0.1:3000/factorial?n=17'  # {"factorial":355687428096000}
+curl -s 'http://127.0.0.1:3000/factorial?n=18'  # {"factorial":6402373705728000}
+# 校验：6402373705728000 === 18 * 355687428096000 ✓
+```
+
+上界拒（核心兜底：strict 通过后显式 `Number(n) > 18` 判定，避免超过 `Number.MAX_SAFE_INTEGER` 造成精度漂移；不引入 BigInt 重写）：
+
+```bash
+curl -s -o /dev/stderr -w 'HTTP %{http_code}\n' 'http://127.0.0.1:3000/factorial?n=19'
+# {"error":"n 必须 ≤ 18（精度上界，避免超过 Number.MAX_SAFE_INTEGER）"}
+# HTTP 400
+
+curl -s -o /dev/stderr -w 'HTTP %{http_code}\n' 'http://127.0.0.1:3000/factorial?n=20'
+# HTTP 400
+
+curl -s -o /dev/stderr -w 'HTTP %{http_code}\n' 'http://127.0.0.1:3000/factorial?n=100'
+# HTTP 400
+```
+
+strict-schema 拒（**新的**整数白名单 `^\d+$`，**不复用** `/multiply` 系列的浮点 `^-?\d+(\.\d+)?$`；负号 / 小数 / 前导 + / 科学计数法 / 十六进制 / 千分位 / `Infinity` / `NaN` / 字母串 / 空串全 400）：
+
+```bash
+curl -s -o /dev/stderr -w 'HTTP %{http_code}\n' 'http://127.0.0.1:3000/factorial?n=-1'
+# HTTP 400  (负号)
+
+curl -s -o /dev/stderr -w 'HTTP %{http_code}\n' 'http://127.0.0.1:3000/factorial?n=5.5'
+# HTTP 400  (小数点)
+
+curl -s -o /dev/stderr -w 'HTTP %{http_code}\n' 'http://127.0.0.1:3000/factorial?n=1e2'
+# HTTP 400  (科学计数法)
+
+curl -s -o /dev/stderr -w 'HTTP %{http_code}\n' 'http://127.0.0.1:3000/factorial?n=0xff'
+# HTTP 400  (十六进制)
+
+curl -s -o /dev/stderr -w 'HTTP %{http_code}\n' 'http://127.0.0.1:3000/factorial?n=Infinity'
+# HTTP 400
+
+curl -s -o /dev/stderr -w 'HTTP %{http_code}\n' 'http://127.0.0.1:3000/factorial'
+# {"error":"n 是必填 query 参数（仅 n，整数 0 ≤ n ≤ 18）"}
+# HTTP 400  (缺参)
+```
+
+query 别名锁死（只接受 `n=`，别名 `value/num/x/input/a/b/...` 全拒 400）：
+
+```bash
+curl -s -o /dev/stderr -w 'HTTP %{http_code}\n' 'http://127.0.0.1:3000/factorial?value=5'
+# HTTP 400  (别名 value)
+
+curl -s -o /dev/stderr -w 'HTTP %{http_code}\n' 'http://127.0.0.1:3000/factorial?num=5'
+# HTTP 400  (别名 num)
 ```
