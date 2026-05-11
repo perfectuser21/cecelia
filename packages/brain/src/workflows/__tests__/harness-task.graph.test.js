@@ -79,6 +79,9 @@ import {
   TaskState,
   MAX_FIX_ROUNDS,
   MAX_POLL_COUNT,
+  // C2 impl 时需在 harness-task.graph.js export routeAfterEvaluate 和 routeAfterPoll
+  routeAfterEvaluate,
+  routeAfterPoll,
 } from '../harness-task.graph.js';
 import { MemorySaver, Command } from '@langchain/langgraph';
 import { ContractViolation } from '../../lib/contract-verify.js';
@@ -509,5 +512,24 @@ describe('harness-task graph — end-to-end (Layer 3 spawn-interrupt-resume)', (
     expect(final.error).toBeTruthy();
     expect(final.error.node).toBe('await_callback');
     expect(mockMerge).not.toHaveBeenCalled();
+  });
+});
+
+// C1 RED: routeAfterEvaluate + routeAfterPoll (evaluate branch) 测试
+// C2 impl 时需在 harness-task.graph.js export routeAfterEvaluate（新增）和 routeAfterPoll（现存但未 export）
+describe('evaluate_contract pre-merge gate', () => {
+  it('routeAfterEvaluate: PASS verdict routes to merge', () => {
+    const state = { evaluate_verdict: 'PASS' };
+    expect(routeAfterEvaluate(state)).toBe('merge');
+  });
+
+  it('routeAfterEvaluate: FAIL verdict routes to fix', () => {
+    const state = { evaluate_verdict: 'FAIL', evaluate_error: 'schema mismatch on /increment' };
+    expect(routeAfterEvaluate(state)).toBe('fix');
+  });
+
+  it('routeAfterPoll: ci_status=pass now routes to evaluate (not merge)', () => {
+    const state = { ci_status: 'pass' };
+    expect(routeAfterPoll(state)).toBe('evaluate');
   });
 });

@@ -530,3 +530,60 @@ describe('circuit-breaker', () => {
     });
   });
 });
+
+// C1 RED: failures cap + resetBreaker endpoint test
+// C3 impl 时需在 circuit-breaker.js HALF_OPEN 路径加 b.failures = Math.min(b.failures + 1, FAILURE_THRESHOLD * 2)
+import { resetBreaker } from '../circuit-breaker.js';
+
+const KEY_CAP = 'test-breaker-omelette';
+
+describe('circuit-breaker failures cap + reset (C1 red)', () => {
+  beforeEach(async () => {
+    reset(KEY_CAP);
+    vi.clearAllMocks();
+    vi.useRealTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    reset(KEY_CAP);
+  });
+
+  it('HALF_OPEN failures 累积不超过 FAILURE_THRESHOLD * 2 (cap)', async () => {
+    vi.useFakeTimers();
+
+    // Drive to OPEN
+    for (let i = 0; i < FAILURE_THRESHOLD; i++) {
+      await recordFailure(KEY_CAP);
+    }
+    expect(getState(KEY_CAP).state).toBe('OPEN');
+
+    // Wait for HALF_OPEN
+    vi.advanceTimersByTime(OPEN_DURATION_MS);
+    expect(getState(KEY_CAP).state).toBe('HALF_OPEN');
+
+    // Fail 50 more probes — without cap, failures would reach FAILURE_THRESHOLD + 50
+    // Each probe failure resets OPEN; we need to advance time each cycle to get back to HALF_OPEN
+    for (let i = 0; i < 50; i++) {
+      await recordFailure(KEY_CAP);
+      vi.advanceTimersByTime(OPEN_DURATION_MS);
+    }
+
+    const s = getState(KEY_CAP);
+    // C3 impl: failures should be capped at FAILURE_THRESHOLD * 2 = 16
+    expect(s.failures).toBeLessThanOrEqual(FAILURE_THRESHOLD * 2);
+  });
+
+  it('resetBreaker(key) sets in-memory state CLOSED + failures=0', async () => {
+    for (let i = 0; i < FAILURE_THRESHOLD; i++) {
+      await recordFailure(KEY_CAP);
+    }
+    expect(getState(KEY_CAP).state).toBe('OPEN');
+
+    await resetBreaker(KEY_CAP);
+
+    const s = getState(KEY_CAP);
+    expect(s.state).toBe('CLOSED');
+    expect(s.failures).toBe(0);
+  });
+});
