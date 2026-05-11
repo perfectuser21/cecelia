@@ -1,8 +1,3 @@
-contract_branch: cp-harness-propose-r2-385f2b20
-workstream_index: 1
-sprint_dir: sprints/w24-playground-factorial
-
----
 ---
 skeleton: false
 journey_type: autonomous
