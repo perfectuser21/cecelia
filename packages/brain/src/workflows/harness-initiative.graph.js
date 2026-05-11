@@ -1113,6 +1113,17 @@ export async function reportNode(state, opts = {}) {
        WHERE initiative_id=$1::uuid`,
       [state.initiativeId, phase, reason]
     );
+    // B1: 同时回写 tasks.status — 否则 task 永卡 in_progress（graph 不经 executor.js
+    // 这条 happy path，注释 line 1107 "executor 会标 task.status='failed'" 仅 FAIL 路径
+    // 的 ws-level fallback，PASS 路径无人回写）。W28 实证：13 个 checkpoint 全跑过
+    // prep→...→report 但 tasks.status 仍 in_progress。Walking Skeleton P1 修补点。
+    const taskStatus = state.final_e2e_verdict === 'PASS' ? 'completed' : 'failed';
+    await dbPool.query(
+      `UPDATE tasks SET status=$2::text, completed_at=NOW(), updated_at=NOW(),
+        error_message=CASE WHEN $2::text='failed' THEN $3::text ELSE error_message END
+       WHERE id=$1::uuid`,
+      [state.initiativeId, taskStatus, reason]
+    );
   } catch (err) {
     console.warn(`[harness-initiative.graph] reportNode db update failed: ${err.message}`);
   }
