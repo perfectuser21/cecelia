@@ -583,7 +583,11 @@ async function executeActivePolicy(action, policy, _failure) {
  * 处置失败率激增
  */
 async function handleFailureSpike(stats) {
-  console.log(`[Monitor] Failure spike detected: ${(stats.failure_rate * 100).toFixed(1)}% (${stats.failed_count}/${stats.total_count})`);
+  const isSpike = stats.failure_rate > FAILURE_SPIKE_THRESHOLD;
+  console.log(
+    `[Monitor] ${isSpike ? 'Failure spike' : 'Failures present'}: ` +
+    `${(stats.failure_rate * 100).toFixed(1)}% (${stats.failed_count}/${stats.total_count})`
+  );
 
   // Get recent failures for analysis (last hour)
   const failuresQuery = `
@@ -885,9 +889,14 @@ async function runMonitorCycle() {
       }
     }
     
-    // 2. Detect failure spike
+    // 2. Detect failures and run immune system
+    // 关键：absorption_policy 是 signature 级别的规则，不能用系统级 failure_rate
+    // 卡住免疫系统——单签名重复失败、整体 rate 不到 30% 时，规则永远不会被检查、
+    // 不会被计数、不会被晋升，制造"规则存在但不执行"的虚假安全感
+    // (Cortex Insight learning 81cba57d)。
+    // 只要有失败就跑免疫流程；failure_rate 仅作为日志/告警维度保留。
     const failureStats = await detectFailureSpike();
-    if (failureStats.failure_rate > FAILURE_SPIKE_THRESHOLD) {
+    if (failureStats.failed_count > 0) {
       await handleFailureSpike(failureStats);
     }
     
