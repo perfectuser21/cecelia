@@ -6,8 +6,9 @@
  *
  * 关联 Cortex Insight（active_goals=0 P0 告警，方向性崩溃前置信号）：
  *   - ec71a550 — 首次提出，落地于本文件 collectSystemSnapshot + raiseAlert（PR #2877）
- *   - e41acc59-f1a8-44da-994f-dc4e5b0bc95c — 二次重复识别，已被同一实现覆盖
- *   两个 learning_id 在此显式登记，避免 Cortex 反复派发同一 insight 修复任务。
+ *   - e41acc59-f1a8-44da-994f-dc4e5b0bc95c — 二次重复识别，已被同一实现覆盖（PR #2883）
+ *   - c17fae35-791b-4ca9-8ebf-e274dc9a887e — 三次重复识别，已被同一实现覆盖
+ *   三个 learning_id 在此显式登记，避免 Cortex 反复派发同一 insight 修复任务。
  */
 
 import { readFileSync } from 'fs';
