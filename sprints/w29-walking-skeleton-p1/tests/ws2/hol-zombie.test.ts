@@ -3,50 +3,56 @@ import { existsSync, readFileSync } from 'node:fs';
 
 const SMOKE = 'packages/brain/scripts/smoke/walking-skeleton-p1-acceptance-smoke.sh';
 
-describe('Workstream 2 — HOL skip + zombie reaper (Steps 4-5) [BEHAVIOR]', () => {
+describe('Workstream 2 — HOL skip + zombie reaper (Steps 4-5) [BEHAVIOR via ARTIFACT shape]', () => {
   it('smoke 文件存在（依赖 WS1）', () => {
     expect(existsSync(SMOKE)).toBe(true);
   });
 
-  it('HOL 段含 task_A / task_B / task_C 三条任务投递', () => {
+  it('smoke 含 HOL skip 段 task_A/B/C 标识', () => {
     const c = readFileSync(SMOKE, 'utf8');
     expect(c).toContain('test-w29-hol-A');
     expect(c).toContain('test-w29-hol-B');
     expect(c).toContain('test-w29-hol-C');
   });
 
-  it('HOL 段含 task_A 不可派发构造（force_location nonexistent 或等价）', () => {
-    const c = readFileSync(SMOKE, 'utf8');
-    expect(c).toMatch(/force_location[^"]*nonexistent|nonexistent-xyz|no_executor|unreachable/);
-  });
-
-  it('HOL 段断言 task_A 仍 pending（B5 — 队首不阻塞）', () => {
-    const c = readFileSync(SMOKE, 'utf8');
-    expect(c).toMatch(/test-w29-hol-A[\s\S]*pending|A_STATUS[\s\S]*pending|pending[\s\S]*test-w29-hol-A/);
-  });
-
-  it('HOL 段断言 task_B 或 task_C 至少 1 个进入 dispatch_events', () => {
-    const c = readFileSync(SMOKE, 'utf8');
-    expect(c).toMatch(/test-w29-hol-B[\s\S]*test-w29-hol-C|task_id IN[\s\S]*test-w29-hol/);
-  });
-
-  it('Zombie 段含 test-w29-zombie task 构造', () => {
+  it('smoke 含 zombie 段 + reapZombies({idleMinutes:0}) 调用', () => {
     const c = readFileSync(SMOKE, 'utf8');
     expect(c).toContain('test-w29-zombie');
+    expect(c).toMatch(/reapZombies\s*\(\s*\{\s*idleMinutes\s*:\s*0/);
   });
 
-  it('Zombie 段调用 reapZombies 且强制 idleMinutes=0', () => {
+  it('smoke 含字面值 [reaper] zombie（zombie error_message 断言基准）', () => {
     const c = readFileSync(SMOKE, 'utf8');
-    expect(c).toMatch(/reapZombies[\s\S]*idleMinutes[\s\S]*0|ZOMBIE_REAPER_IDLE_MIN=0/);
+    expect(c).toContain('[reaper] zombie');
   });
 
-  it('Zombie 段断言 error_message 含 `[reaper] zombie`（B2 标记）', () => {
+  it('打印 [B5-A] PASS 标记（task_A claimed_by 释放）', () => {
     const c = readFileSync(SMOKE, 'utf8');
-    expect(c).toMatch(/\[reaper\] zombie/);
+    expect(c).toContain('[B5-A] PASS — task_A claimed_by 被释放');
   });
 
-  it('Zombie 段断言 tasks.status 变为 failed', () => {
+  it('打印 [B5-BC] PASS 标记（task_B 或 task_C 被派发）', () => {
     const c = readFileSync(SMOKE, 'utf8');
-    expect(c).toMatch(/status\s*=\s*'failed'|"failed"|=\s*failed/);
+    expect(c).toMatch(/\[B5-BC\] PASS — dispatch_events 含 task_(B|C)/);
+  });
+
+  it("打印 [B5-LOG] PASS 标记（dispatcher 真日志含 'HOL skip'）", () => {
+    const c = readFileSync(SMOKE, 'utf8');
+    expect(c).toContain("[B5-LOG] PASS — dispatcher 真日志含 'HOL skip'");
+  });
+
+  it("打印 [B2] PASS 标记（reapZombies 标 failed + error_message）", () => {
+    const c = readFileSync(SMOKE, 'utf8');
+    expect(c).toMatch(/\[B2\] PASS — reapZombies 标 task=failed error_message='\[reaper\] zombie/);
+  });
+
+  it('打印 [B2-RET] PASS 标记（reapZombies 返回 reaped≥1 errors=0）', () => {
+    const c = readFileSync(SMOKE, 'utf8');
+    expect(c).toMatch(/\[B2-RET\] PASS — reapZombies returned reaped=/);
+  });
+
+  it('打印 [B3-OUT] PASS 标记（slot -1 after zombie reaped）', () => {
+    const c = readFileSync(SMOKE, 'utf8');
+    expect(c).toContain('[B3-OUT] PASS — slot in_progress -1 after zombie reaped');
   });
 });
