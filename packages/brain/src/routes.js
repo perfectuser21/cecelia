@@ -20,6 +20,7 @@ import topicsRouter from './routes/topics.js';
 // llm-service 在 server.js 里以 /api/brain/llm-service 独立挂载（带 internalAuth 中间件）
 import harnessRouter from './routes/harness.js';
 import kr3Router from './routes/kr3.js';
+import dispatchRouter from './routes/dispatch.js';
 
 export { triggerAutoRCA } from './routes/brain-meta.js';
 export { resolveRelatedFailureMemories } from './routes/shared.js';
@@ -49,5 +50,8 @@ router.use('/harness', harnessRouter);
 
 // KR3 小程序配置状态 — GET /kr3/check-config, POST /kr3/mark-wx-pay, POST /kr3/mark-admin-oid
 router.use('/kr3', kr3Router);
+
+// dispatch 诊断 — GET /dispatch/recent（B6: dispatch_events 可观察性）
+router.use('/', dispatchRouter);
 
 export default router;
