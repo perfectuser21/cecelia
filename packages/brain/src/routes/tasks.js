@@ -261,11 +261,11 @@ router.post('/learnings-received', async (req, res) => {
         const { rows } = await pool.query(
           `INSERT INTO learnings
              (title, category, content, trigger_source, trigger_event, digested,
-              source_branch, source_pr, repo)
+              source_branch, source_pr, repo, task_id)
            VALUES ($1, 'dev_experience', $2, 'dev_workflow', 'learnings_received', false,
-                   $3, $4, $5)
+                   $3, $4, $5, $6)
            RETURNING id`,
-          [title, step, branch_name || null, pr_number ? String(pr_number) : null, repo]
+          [title, step, branch_name || null, pr_number ? String(pr_number) : null, repo, task_id || null]
         );
         if (rows[0]?.id) {
           results.learnings_inserted.push(rows[0].id);

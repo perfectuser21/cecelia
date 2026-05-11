@@ -885,17 +885,19 @@ async function recordLearnings(learnings, event) {
       }
 
       const summary = generateL0Summary(`${title} ${content}`);
+      const eventTaskId = event.task_id || event.payload?.task_id || null;
       const insertResult = await pool.query(`
-        INSERT INTO learnings (title, category, trigger_event, content, strategy_adjustments, metadata, content_hash, version, is_latest, summary)
-        VALUES ($1, 'cortex_insight', $2, $3, '[]', $4, $5, 1, true, $6)
+        INSERT INTO learnings (title, category, trigger_event, content, strategy_adjustments, metadata, content_hash, version, is_latest, summary, task_id)
+        VALUES ($1, 'cortex_insight', $2, $3, '[]', $4, $5, 1, true, $6, $7)
         RETURNING id
       `, [
         title,
         triggerEvent,
         content,
-        JSON.stringify({ source: 'cortex', event_type: event.type, recorded_at: new Date().toISOString() }),
+        JSON.stringify({ source: 'cortex', event_type: event.type, task_id: eventTaskId, recorded_at: new Date().toISOString() }),
         contentHash,
         summary,
+        eventTaskId,
       ]);
       recorded++;
       // 自动闭合：若 insight 含代码修复信号，派发修复 task
