@@ -152,11 +152,22 @@ async function recordFailure(key = 'default') {
     breakers.set(key, defaultState());
   }
   const b = breakers.get(key);
+
+  // Mirror the auto-transition in getState: OPEN → HALF_OPEN after cooldown.
+  // Without this, callers who advance fake timers without calling getState would
+  // bypass the HALF_OPEN path and never trigger the failures cap.
+  if (b.state === 'OPEN' && b.openedAt && (Date.now() - b.openedAt >= OPEN_DURATION_MS)) {
+    b.state = 'HALF_OPEN';
+    void _persist(key);
+  }
+
   b.failures += 1;
   b.lastFailureAt = Date.now();
 
   if (b.state === 'HALF_OPEN') {
-    // Probe failed → back to OPEN
+    // Probe failed → back to OPEN; cap failures to prevent unbounded growth in long-lived envs
+    // Note: b.failures already incremented above; apply cap here (do NOT double-increment).
+    b.failures = Math.min(b.failures, FAILURE_THRESHOLD * 2);
     b.state = 'OPEN';
     b.openedAt = Date.now();
     await _persist(key);

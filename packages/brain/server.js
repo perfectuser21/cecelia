@@ -83,7 +83,10 @@ import { initMutedGuard } from './src/muted-guard.js';
 import { initWebSocketServer, shutdownWebSocketServer } from './src/websocket.js';
 import { loadActiveProfile } from './src/model-profile.js';
 import { loadSpendingCapsFromDB, loadAuthFailuresFromDB } from './src/account-usage.js';
-import { loadFromDB as loadCircuitBreakerStatesFromDB } from './src/circuit-breaker.js';
+import { loadFromDB as loadCircuitBreakerStatesFromDB, resetBreaker, getState as getCBState } from './src/circuit-breaker.js';
+// POST /api/brain/circuit-breaker/:key/reset + GET /api/brain/circuit-breaker are in
+// src/routes/goals.js (SC-4 endpoint). resetBreaker + getCBState imported here for
+// server-level diagnostics and future inline use. (migration 270, harness pre-merge gate)
 import { WebSocketServer } from 'ws';
 import { handleRealtimeWebSocket } from './src/orchestrator-realtime.js';
 import { handleChat } from './src/orchestrator-chat.js';

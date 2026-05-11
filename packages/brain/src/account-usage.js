@@ -409,22 +409,38 @@ async function upsertCache(accountId, data) {
   const seven_day_sonnet_resets_at = data.seven_day_sonnet?.resets_at || null;
   const extra_used                 = (data.extra_usage?.utilization ?? 0) >= 100;
 
+  // Opus omelette quota: prefer explicit seven_day_opus field; fallback to (seven_day - seven_day_sonnet)
+  // which is approximate (includes haiku/other). Logged as `approx` when fallback used.
+  let seven_day_omelette_pct;
+  let seven_day_omelette_resets_at;
+  if (data.seven_day_opus?.utilization !== undefined) {
+    seven_day_omelette_pct       = data.seven_day_opus.utilization;
+    seven_day_omelette_resets_at = data.seven_day_opus.resets_at || null;
+  } else {
+    seven_day_omelette_pct       = Math.max(0, seven_day_pct - seven_day_sonnet_pct);
+    seven_day_omelette_resets_at = seven_day_resets_at;
+  }
+
   await pool.query(
     `INSERT INTO account_usage_cache
        (account_id, five_hour_pct, seven_day_pct, seven_day_sonnet_pct,
-        resets_at, seven_day_resets_at, seven_day_sonnet_resets_at, extra_used, fetched_at)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())
+        resets_at, seven_day_resets_at, seven_day_sonnet_resets_at, extra_used,
+        seven_day_omelette_pct, seven_day_omelette_resets_at, fetched_at)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW())
      ON CONFLICT (account_id) DO UPDATE SET
-       five_hour_pct              = EXCLUDED.five_hour_pct,
-       seven_day_pct              = EXCLUDED.seven_day_pct,
-       seven_day_sonnet_pct       = EXCLUDED.seven_day_sonnet_pct,
-       resets_at                  = EXCLUDED.resets_at,
-       seven_day_resets_at        = EXCLUDED.seven_day_resets_at,
-       seven_day_sonnet_resets_at = EXCLUDED.seven_day_sonnet_resets_at,
-       extra_used                 = EXCLUDED.extra_used,
-       fetched_at                 = NOW()`,
+       five_hour_pct                = EXCLUDED.five_hour_pct,
+       seven_day_pct                = EXCLUDED.seven_day_pct,
+       seven_day_sonnet_pct         = EXCLUDED.seven_day_sonnet_pct,
+       resets_at                    = EXCLUDED.resets_at,
+       seven_day_resets_at          = EXCLUDED.seven_day_resets_at,
+       seven_day_sonnet_resets_at   = EXCLUDED.seven_day_sonnet_resets_at,
+       extra_used                   = EXCLUDED.extra_used,
+       seven_day_omelette_pct       = EXCLUDED.seven_day_omelette_pct,
+       seven_day_omelette_resets_at = EXCLUDED.seven_day_omelette_resets_at,
+       fetched_at                   = NOW()`,
     [accountId, five_hour_pct, seven_day_pct, seven_day_sonnet_pct,
-     resets_at, seven_day_resets_at, seven_day_sonnet_resets_at, extra_used]
+     resets_at, seven_day_resets_at, seven_day_sonnet_resets_at, extra_used,
+     seven_day_omelette_pct, seven_day_omelette_resets_at]
   );
 
   return {
@@ -436,6 +452,8 @@ async function upsertCache(accountId, data) {
     seven_day_resets_at,
     seven_day_sonnet_resets_at,
     extra_used,
+    seven_day_omelette_pct,
+    seven_day_omelette_resets_at,
   };
 }
 
@@ -457,12 +475,26 @@ async function getStaleCached(accountId) {
   return res.rows[0] || null;
 }
 
+// Test-only injection point — keep undocumented to discourage prod use.
+// C3: inject mock cache rows in unit tests to bypass DB + API calls.
+let __testCacheOverride = null;
+export function __setAccountUsageForTest(rows) { __testCacheOverride = rows; }
+
 /**
  * 查询所有账号用量（带缓存）
  * @param {boolean} forceRefresh - 强制忽略缓存，重新从 API 获取
  * @returns {Object} { account1: {...}, account2: {...}, account3: {...} }
  */
 export async function getAccountUsage(forceRefresh = false) {
+  // Test seam: return injected rows if set (converts array → {account_id: row} map)
+  if (__testCacheOverride) {
+    const overrideMap = {};
+    for (const row of __testCacheOverride) {
+      overrideMap[row.account_id] = row;
+    }
+    return overrideMap;
+  }
+
   const results = {};
 
   for (const accountId of ACCOUNTS) {
@@ -563,6 +595,7 @@ export async function selectBestAccount(options = {}) {
         ePct,
         sevenDayPct,
         sevenDaySonnetPct,
+        sevenDayOmelettePct: u?.seven_day_omelette_pct ?? 0,
         sevenDayDeficit,
         sevenDaySonnetDeficit,
         extraUsed: u?.extra_used ?? false,
@@ -574,6 +607,25 @@ export async function selectBestAccount(options = {}) {
     const usageSummary = mapped.map(a =>
       `${a.id}=${a.pct}%/sonnet=${a.sevenDaySonnetPct}%/7d=${a.sevenDayPct}%${a.spendingCapped ? '/CAPPED' : ''}${a.authFailed ? '/AUTH_FAILED' : ''}`
     ).join(', ');
+
+    // ── Opus 独立模式：跳过 omelette >= 95% 的账号（migration 270）──
+    // 当 model='opus' 时，优先检查 seven_day_omelette_pct 以避免 Opus 401。
+    if (requestedModel === 'opus') {
+      const candidates = mapped
+        .filter(a => {
+          if ((a.sevenDayOmelettePct ?? 0) >= 95) return false; // omelette quota skip
+          return isAccountEligibleForTier(a, 'opus');
+        })
+        .sort((a, b) => b.sevenDayDeficit - a.sevenDayDeficit || a.ePct - b.ePct);
+
+      if (candidates.length > 0) {
+        const sel = candidates[0];
+        console.log(`[account-usage] Opus 独立模式: 选 ${sel.id}（5h=${sel.pct}%, omelette=${sel.sevenDayOmelettePct}%） | ${usageSummary}`);
+        return { accountId: sel.id, model: 'opus', modelId: 'claude-opus-4-6' };
+      }
+      console.log(`[account-usage] Opus 独立模式: 所有账号不可用（omelette ≥ 95 或 7d ≥ 95）→ null | ${usageSummary}`);
+      return null;
+    }
 
     // ── 旧接口：Haiku 独立模式（向后兼容）──
     if (requestedModel === 'haiku') {
