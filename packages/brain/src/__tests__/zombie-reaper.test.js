@@ -111,6 +111,14 @@ describe('reapZombies', () => {
     expect(pool.query).toHaveBeenCalledTimes(3);
   });
 
+  it('(g) B8: exemptTypes 通过 SQL NOT IN 排除天然长跑 task_type', async () => {
+    pool.query.mockResolvedValueOnce({ rows: [], rowCount: 0 });
+    await reapZombies({ pool, idleMinutes: 60, exemptTypes: ['harness_initiative', 'harness_task'] });
+    const sqlCall = pool.query.mock.calls[0];
+    expect(sqlCall[0]).toMatch(/task_type\s*!=\s*ALL/);
+    expect(sqlCall[1]).toEqual([['harness_initiative', 'harness_task']]);
+  });
+
   it('(f) UPDATE 失败时记录 error 但继续处理下一个 zombie', async () => {
     const zombies = [
       { id: 'task-uuid-1', title: 'zombie 1' },
