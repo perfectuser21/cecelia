@@ -1,0 +1,46 @@
+{
+  "initiative_id": "a69c58e4-6942-40bf-9a8e-370b936294e9",
+  "journey_type": "autonomous",
+  "journey_type_reason": "playground 是独立 HTTP server 子项目，本次只动 server 路由 + 单测 + README，无 UI / 无 brain tick / 无 engine hook / 无远端 agent 协议；与 W19~W26 同分类。基础设施侧 P1 终验是观测维度，不是代码改动维度",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "playground 加 GET /decrement 路由 + 单测 + README（Walking Skeleton P1 终验 round 2 内容侧载体）",
+      "scope": "在 playground/server.js 注册 GET /decrement（query 名严格 value 且唯一，strict-schema 整数正则 ^-?\\d+$，|Number(value)| > 9007199254740990 显式上下界拒，Number(value)-1 算术，返回 {result: <number>, operation: \"decrement\"}）；在 playground/tests/server.test.js 新增 describe('GET /decrement', ...) 块（happy 9+ 含 0/1 off-by-one + 精度上下界、上下界拒 3+、strict 拒 13+、schema 完整性 oracle 2+、禁用字段反向断言、错误体 keys=[error] 断言、错 query 名 400 断言、query 唯一性 400 断言、前导 0 happy、8 路由回归 1 条/路由）；在 playground/README.md 端点列表加 /decrement 段（happy/上界拒/下界拒/strict 拒 示例 6+）。响应字段名严格字面照搬 PRD：result + operation（字面）+ \"decrement\" 字面字符串；query 名严格 value；禁止任一禁用同义字段名 decremented/predecessor/prev/previous/n_minus_one/minus_one/pred/dec/decr/decrementation/subtraction/lower/lowered/before/earlier/value/input/output/data/payload/answer/sum/product/quotient/power/remainder/factorial/negation/incremented/increment 出现在响应。零依赖；不动 /health /sum /multiply /divide /power /modulo /factorial /increment 八条已有路由。",
+      "dod": [
+        "[ARTIFACT] playground/server.js 内含 app.get('/decrement' 路由注册",
+        "[ARTIFACT] playground/server.js /decrement 路由含 strict-schema 整数正则 ^-?\\d+$",
+        "[ARTIFACT] playground/server.js /decrement 路由 query 名为 value（不复用 n/a/b/prev/pred）",
+        "[ARTIFACT] playground/server.js /decrement 含上界判定数字 9007199254740990",
+        "[ARTIFACT] playground/server.js /decrement 响应含字面 operation: \"decrement\" 与字面 result 字段",
+        "[ARTIFACT] playground/server.js /decrement 含 query 唯一性约束（Object.keys(req.query).length === 1）",
+        "[ARTIFACT] playground/tests/server.test.js 内含 describe('GET /decrement' 独立 describe 块",
+        "[ARTIFACT] playground/README.md 端点列表含 /decrement 段",
+        "[ARTIFACT] sprints/w30-walking-skeleton-p1-v2/banned-keys.sh 存在；source 后 BANNED_RESPONSE_KEYS 长度 34、BANNED_ERROR_KEYS 长度 10（SSOT 单源，Reviewer round 1 内部一致性 6/10 修复）",
+        "[BEHAVIOR] GET /decrement?value=5 → 200 + {result:4, operation:\"decrement\"}（值复算 + schema 完整性 + 字段名字面相等）",
+        "[BEHAVIOR] GET /decrement?value=0 → 200 + {result:-1, operation:\"decrement\"}（off-by-one 零边界）",
+        "[BEHAVIOR] GET /decrement?value=1 → 200 + {result:0, operation:\"decrement\"}（off-by-one 1 边界）",
+        "[BEHAVIOR] GET /decrement?value=-9007199254740990 → 200 + {result:-9007199254740991, operation:\"decrement\"}（精度下界 happy，===Number.MIN_SAFE_INTEGER）",
+        "[BEHAVIOR] GET /decrement?value=9007199254740990 → 200 + {result:9007199254740989, operation:\"decrement\"}（精度上界 happy）",
+        "[BEHAVIOR] GET /decrement?value=9007199254740991 → 400（上界 +1 拒）；body 不含 result 也不含 operation",
+        "[BEHAVIOR] GET /decrement?value=-9007199254740991 → 400（下界 -1 拒）",
+        "[BEHAVIOR] strict-schema 拒非法输入（1.5/1e2/0xff/abc/空串/+5/--5/Infinity/NaN）全返 400",
+        "[BEHAVIOR] query 唯一性约束：缺 value / 错 query 名 n / 多余 query extra 全返 400",
+        "[BEHAVIOR] GET /decrement?value=01 → 200 + {result:0, operation:\"decrement\"}（前导 0 happy；禁错用 parseInt(value, 8)）",
+        "[BEHAVIOR] GET /decrement?value=-0 → 200 + {result:-1, operation:\"decrement\"}（PRD ASSUMPTION 可选择项；round 3 风险 R12 数字边界 spot check）",
+        "[BEHAVIOR] 禁用字段反向：response 不含 decremented/predecessor/prev/sum/product/incremented 等 33 个禁用字段名任一（PR-G 死规则继承）",
+        "[BEHAVIOR] 错误体 schema 完整性：keys 字面 [\"error\"]，不含 result/operation/message/msg/reason/detail/code",
+        "[BEHAVIOR] 8 路由回归 happy：/health /sum /multiply /divide /power /modulo /factorial /increment 全过"
+      ],
+      "files": [
+        "playground/server.js",
+        "playground/tests/server.test.js",
+        "playground/README.md",
+        "sprints/w30-walking-skeleton-p1-v2/banned-keys.sh"
+      ],
+      "depends_on": [],
+      "complexity": "M",
+      "estimated_minutes": 45
+    }
+  ]
+}
