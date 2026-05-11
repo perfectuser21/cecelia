@@ -506,7 +506,7 @@ workstream_count: 1
 
 | Workstream | Test File | BEHAVIOR 覆盖 | 预期红证据 |
 |---|---|---|---|
-| WS1 | `sprints/w31-walking-skeleton-p1-v3/tests/ws1/decrement.test.js` | value=5 → 200 + result=4 + operation="decrement"；off-by-one 0/1/-1；精度上下界 ±9007199254740990 happy；上下界 ±9007199254740991 拒；strict 拒 13 类；缺参/错 query 名/多余 query 拒；前导 0 happy；schema 完整性 + 禁用字段反向；错误体不含 result/operation；防漏改 W26 operation="increment"；8 路由回归 | 现 playground/server.js 无 `/decrement` 路由 → 所有相关 supertest 断言 fail（Express 默认 404 → res.status===404 != 200） |
+| WS1 | `tests/ws1/decrement.test.js` | value=5 → result==4 / value=0 → result==-1 / value=1 → result==0 / value=-1 → result==-2 / 精度上界 / 精度下界 / 上界 +1 拒 / 下界 -1 拒 / 缺 value / 多余 query / 前导 0 happy / 禁用字段名 / operation 字面严等 / 回归： | 现 playground/server.js 无 `/decrement` 路由 → 所有相关 supertest 断言 fail（Express 默认 404 → res.status===404 != 200） |
 
 > 后缀说明：playground 子项目零依赖纯 JS（无 tsconfig），故 vitest 测试用 `.test.js`。与 SKILL 模板 `.test.ts` 不一致是被动适配 playground 子项目栈，不是合同违规（与 W26 一致）。
 
