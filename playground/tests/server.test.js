@@ -1439,3 +1439,258 @@ describe('GET /increment — 7 已有路由回归 [BEHAVIOR]', () => {
     expect(res.body.factorial).toBe(120);
   });
 });
+
+describe('GET /decrement — int-only strict-schema + 精度上下界拒 + -1 算术 + schema 完整性 [BEHAVIOR]', () => {
+  test('GET /decrement?value=5 → 200 + {result:4, operation:"decrement"}', async () => {
+    const res = await request(app).get('/decrement').query({ value: '5' });
+    expect(res.status).toBe(200);
+    expect(res.body.result).toBe(4);
+    expect(res.body.operation).toBe('decrement');
+  });
+
+  test('GET /decrement?value=0 → 200 + {result:-1, operation:"decrement"} (off-by-one 零侧，不被当 falsy 漏返)', async () => {
+    const res = await request(app).get('/decrement').query({ value: '0' });
+    expect(res.status).toBe(200);
+    expect(res.body.result).toBe(-1);
+    expect(typeof res.body.result).toBe('number');
+    expect(res.body.operation).toBe('decrement');
+  });
+
+  test('GET /decrement?value=1 → 200 + {result:0, operation:"decrement"} (off-by-one 严格 0 数字字面)', async () => {
+    const res = await request(app).get('/decrement').query({ value: '1' });
+    expect(res.status).toBe(200);
+    expect(res.body.result).toBe(0);
+    expect(typeof res.body.result).toBe('number');
+    expect(res.body.result).not.toBeNull();
+    expect(res.body.result).not.toBeUndefined();
+  });
+
+  test('GET /decrement?value=-1 → 200 + {result:-2, operation:"decrement"} (off-by-one 负侧)', async () => {
+    const res = await request(app).get('/decrement').query({ value: '-1' });
+    expect(res.status).toBe(200);
+    expect(res.body.result).toBe(-2);
+    expect(res.body.operation).toBe('decrement');
+  });
+
+  test('GET /decrement?value=-5 → 200 + {result:-6, operation:"decrement"}', async () => {
+    const res = await request(app).get('/decrement').query({ value: '-5' });
+    expect(res.status).toBe(200);
+    expect(res.body.result).toBe(-6);
+    expect(res.body.operation).toBe('decrement');
+  });
+
+  test('GET /decrement?value=100 → 200 + {result:99}', async () => {
+    const res = await request(app).get('/decrement').query({ value: '100' });
+    expect(res.status).toBe(200);
+    expect(res.body.result).toBe(99);
+  });
+
+  test('GET /decrement?value=-100 → 200 + {result:-101}', async () => {
+    const res = await request(app).get('/decrement').query({ value: '-100' });
+    expect(res.status).toBe(200);
+    expect(res.body.result).toBe(-101);
+  });
+
+  test('GET /decrement?value=9007199254740990 → 200 + {result:9007199254740989} (精度上界 happy)', async () => {
+    const res = await request(app).get('/decrement').query({ value: '9007199254740990' });
+    expect(res.status).toBe(200);
+    expect(res.body.result).toBe(9007199254740989);
+    expect(res.body.operation).toBe('decrement');
+  });
+
+  test('GET /decrement?value=-9007199254740990 → 200 + {result:-9007199254740991} === Number.MIN_SAFE_INTEGER (精度下界 happy)', async () => {
+    const res = await request(app).get('/decrement').query({ value: '-9007199254740990' });
+    expect(res.status).toBe(200);
+    expect(res.body.result).toBe(-9007199254740991);
+    expect(res.body.result).toBe(Number.MIN_SAFE_INTEGER);
+    expect(res.body.operation).toBe('decrement');
+  });
+});
+
+describe('GET /decrement — schema 完整性 + W26 模板漏改防御 [BEHAVIOR]', () => {
+  test('成功响应顶层 keys 严格等于 ["operation","result"]', async () => {
+    const res = await request(app).get('/decrement').query({ value: '5' });
+    expect(res.status).toBe(200);
+    expect(Object.keys(res.body).sort()).toEqual(['operation', 'result']);
+  });
+
+  test('operation 字面严等 "decrement"，绝不是 "increment"（防 W26 模板漏改）', async () => {
+    const res = await request(app).get('/decrement').query({ value: '5' });
+    expect(res.body.operation).toBe('decrement');
+    expect(res.body.operation).not.toBe('increment');
+    expect(res.body.operation).not.toBe('inc');
+    expect(res.body.operation).not.toBe('dec');
+    expect(res.body.operation).not.toBe('subtract');
+    expect(res.body.operation).not.toBe('minus_one');
+  });
+
+  test('result 字段类型为 number', async () => {
+    const res = await request(app).get('/decrement').query({ value: '5' });
+    expect(typeof res.body.result).toBe('number');
+  });
+
+  test('成功响应不含 decrement-同义禁用字段 decremented/prev/previous/predecessor/pred/n_minus_one/minus_one/sub_one/subtracted/sub/dec/decr/decrementation', async () => {
+    const res = await request(app).get('/decrement').query({ value: '5' });
+    for (const k of ['decremented', 'prev', 'previous', 'predecessor', 'pred', 'n_minus_one', 'minus_one', 'sub_one', 'subtracted', 'sub', 'dec', 'decr', 'decrementation']) {
+      expect(Object.prototype.hasOwnProperty.call(res.body, k)).toBe(false);
+    }
+  });
+
+  test('成功响应不含 increment-同义禁用字段 incremented/n_plus_one/successor（防 W26 模板漏改残留）', async () => {
+    const res = await request(app).get('/decrement').query({ value: '5' });
+    for (const k of ['incremented', 'n_plus_one', 'successor']) {
+      expect(Object.prototype.hasOwnProperty.call(res.body, k)).toBe(false);
+    }
+  });
+
+  test('成功响应不含 generic 禁用字段 value/input/output/data/payload/answer/out/meta', async () => {
+    const res = await request(app).get('/decrement').query({ value: '5' });
+    for (const k of ['value', 'input', 'output', 'data', 'payload', 'response', 'answer', 'out', 'meta']) {
+      expect(Object.prototype.hasOwnProperty.call(res.body, k)).toBe(false);
+    }
+  });
+
+  test('成功响应不含其他 endpoint 字段名 sum/product/quotient/power/remainder/factorial/negation', async () => {
+    const res = await request(app).get('/decrement').query({ value: '5' });
+    for (const k of ['sum', 'product', 'quotient', 'power', 'remainder', 'factorial', 'negation']) {
+      expect(Object.prototype.hasOwnProperty.call(res.body, k)).toBe(false);
+    }
+  });
+});
+
+describe('GET /decrement — 上界 / 下界拒 [BEHAVIOR]', () => {
+  test('GET /decrement?value=9007199254740991 → 400 (上界 +1 拒) + 错误体 keys==["error"] + 不含 result/operation', async () => {
+    const res = await request(app).get('/decrement').query({ value: '9007199254740991' });
+    expect(res.status).toBe(400);
+    expect(typeof res.body.error).toBe('string');
+    expect(res.body.error.length).toBeGreaterThan(0);
+    expect(Object.keys(res.body).sort()).toEqual(['error']);
+    expect(Object.prototype.hasOwnProperty.call(res.body, 'result')).toBe(false);
+    expect(Object.prototype.hasOwnProperty.call(res.body, 'operation')).toBe(false);
+  });
+
+  test('GET /decrement?value=-9007199254740991 → 400 (下界 -1 拒) + 错误体 keys==["error"]', async () => {
+    const res = await request(app).get('/decrement').query({ value: '-9007199254740991' });
+    expect(res.status).toBe(400);
+    expect(Object.keys(res.body).sort()).toEqual(['error']);
+    expect(Object.prototype.hasOwnProperty.call(res.body, 'result')).toBe(false);
+    expect(Object.prototype.hasOwnProperty.call(res.body, 'operation')).toBe(false);
+  });
+
+  test('GET /decrement?value=99999999999999999999 → 400 (远超上界拒)', async () => {
+    const res = await request(app).get('/decrement').query({ value: '99999999999999999999' });
+    expect(res.status).toBe(400);
+  });
+});
+
+describe('GET /decrement — strict-schema 拒 [BEHAVIOR]', () => {
+  test.each([
+    ['1.5', '小数'],
+    ['1.0', '带小数点的整数'],
+    ['1e2', '科学计数法'],
+    ['0xff', '十六进制'],
+    ['abc', '字母串'],
+    ['Infinity', 'Infinity 字面'],
+    ['NaN', 'NaN 字面'],
+    ['', '空串'],
+    ['-', '仅负号无数字'],
+    ['--5', '双重负号'],
+    ['+5', '前导 + 号'],
+    ['1,000', '千分位逗号'],
+    ['5-', '尾部负号'],
+  ])('GET /decrement?value=%s → 400 (strict 拒：%s)', async (input) => {
+    const res = await request(app).get('/decrement').query({ value: input });
+    expect(res.status).toBe(400);
+    expect(Object.prototype.hasOwnProperty.call(res.body, 'result')).toBe(false);
+    expect(Object.prototype.hasOwnProperty.call(res.body, 'operation')).toBe(false);
+  });
+});
+
+describe('GET /decrement — 缺参 / 错 query 名 / 多余 query [BEHAVIOR]', () => {
+  test('GET /decrement (缺 value 参数) → 400', async () => {
+    const res = await request(app).get('/decrement');
+    expect(res.status).toBe(400);
+  });
+
+  test.each(['n', 'x', 'y', 'm', 'k', 'val', 'num', 'input', 'v', 'a', 'b', 'count', 'size'])(
+    '错 query 名 ?%s=5 → 400',
+    async (badName) => {
+      const res = await request(app).get('/decrement').query({ [badName]: '5' });
+      expect(res.status).toBe(400);
+    },
+  );
+
+  test('多余 query ?value=5&extra=x → 400 + 错误体不含 result/operation', async () => {
+    const res = await request(app).get('/decrement').query({ value: '5', extra: 'x' });
+    expect(res.status).toBe(400);
+    expect(Object.prototype.hasOwnProperty.call(res.body, 'result')).toBe(false);
+    expect(Object.prototype.hasOwnProperty.call(res.body, 'operation')).toBe(false);
+  });
+});
+
+describe('GET /decrement — 前导 0 happy [BEHAVIOR]', () => {
+  test('GET /decrement?value=01 → 200 + result==0 (前导 0 happy，非八进制错位)', async () => {
+    const res = await request(app).get('/decrement').query({ value: '01' });
+    expect(res.status).toBe(200);
+    expect(res.body.result).toBe(0);
+    expect(res.body.operation).toBe('decrement');
+  });
+
+  test('GET /decrement?value=-01 → 200 + result==-2', async () => {
+    const res = await request(app).get('/decrement').query({ value: '-01' });
+    expect(res.status).toBe(200);
+    expect(res.body.result).toBe(-2);
+    expect(res.body.operation).toBe('decrement');
+  });
+});
+
+describe('GET /decrement — 8 已有路由回归 [BEHAVIOR]', () => {
+  test('回归：GET /health → 200 {ok:true}', async () => {
+    const res = await request(app).get('/health');
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ ok: true });
+  });
+
+  test('回归：GET /sum?a=2&b=3 → 200 {sum:5}', async () => {
+    const res = await request(app).get('/sum').query({ a: '2', b: '3' });
+    expect(res.status).toBe(200);
+    expect(res.body.sum).toBe(5);
+  });
+
+  test('回归：GET /multiply?a=2&b=3 → 200 {product:6}', async () => {
+    const res = await request(app).get('/multiply').query({ a: '2', b: '3' });
+    expect(res.status).toBe(200);
+    expect(res.body.product).toBe(6);
+  });
+
+  test('回归：GET /divide?a=6&b=3 → 200 {quotient:2}', async () => {
+    const res = await request(app).get('/divide').query({ a: '6', b: '3' });
+    expect(res.status).toBe(200);
+    expect(res.body.quotient).toBe(2);
+  });
+
+  test('回归：GET /power?a=2&b=3 → 200 {power:8}', async () => {
+    const res = await request(app).get('/power').query({ a: '2', b: '3' });
+    expect(res.status).toBe(200);
+    expect(res.body.power).toBe(8);
+  });
+
+  test('回归：GET /modulo?a=7&b=3 → 200 {remainder:1}', async () => {
+    const res = await request(app).get('/modulo').query({ a: '7', b: '3' });
+    expect(res.status).toBe(200);
+    expect(res.body.remainder).toBe(1);
+  });
+
+  test('回归：GET /factorial?n=5 → 200 {factorial:120}', async () => {
+    const res = await request(app).get('/factorial').query({ n: '5' });
+    expect(res.status).toBe(200);
+    expect(res.body.factorial).toBe(120);
+  });
+
+  test('回归：GET /increment?value=5 → 200 {result:6, operation:"increment"} (W26 字面 operation:"increment" 未被破坏)', async () => {
+    const res = await request(app).get('/increment').query({ value: '5' });
+    expect(res.status).toBe(200);
+    expect(res.body.result).toBe(6);
+    expect(res.body.operation).toBe('increment');
+  });
+});
