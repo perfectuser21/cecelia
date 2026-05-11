@@ -1,0 +1,87 @@
+{
+  "initiative_id": "pending",
+  "journey_type": "autonomous",
+  "journey_type_reason": "所有改动仅在 packages/brain/scripts/ + sprints/ + 报告文档，验证目标全部是 Brain 内部调度链路 invariant；不涉及 dashboard / remote agent / dev pipeline hooks",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "整合 smoke 骨架 + happy path (Steps 1-3)",
+      "scope": "创建 packages/brain/scripts/smoke/walking-skeleton-p1-acceptance-smoke.sh：含 shebang + set -euo pipefail + docker/brain 顶部可用性检测（不可用 SKIP exit 0）+ psql/curl helpers + assert helpers + test-w29 前缀隔离清理 + Steps 1-3（投 task、POST /api/brain/tick、断言 dispatch_events 带时间窗口、SQL 模拟 reportNode 回写、断言 tasks.status='completed' + task_events 'task_completed'）。What 为主，不展开实现细节",
+      "dod": [
+        "[ARTIFACT] packages/brain/scripts/smoke/walking-skeleton-p1-acceptance-smoke.sh 存在且可执行",
+        "[ARTIFACT] 文件顶部含 #!/usr/bin/env bash + set -euo pipefail",
+        "[BEHAVIOR] docker/brain 不可用时打印 'SKIP:...' 并 exit 0",
+        "[BEHAVIOR] dispatch_events 查询带 INTERVAL 时间窗口（防造假）",
+        "[BEHAVIOR] happy path 含 tasks.status='completed' 断言（B1 invariant）",
+        "[BEHAVIOR] happy path 含 task_events 'task_completed' 写入断言",
+        "[BEHAVIOR] bash 整脚本 exit 0（无环境时走 SKIP，有环境时跑 e2e）"
+      ],
+      "files": [
+        "packages/brain/scripts/smoke/walking-skeleton-p1-acceptance-smoke.sh"
+      ],
+      "depends_on": [],
+      "complexity": "M",
+      "estimated_minutes": 45
+    },
+    {
+      "task_id": "ws2",
+      "title": "HOL skip + zombie reaper 段 (Steps 4-5)",
+      "scope": "在 WS1 的 smoke 文件追加 Step 4（HOL skip：投 test-w29-hol-A/B/C，task_A 故意 force_location=nonexistent-xyz 不可派发；POST /tick；断言 task_A 仍 pending、task_B 或 task_C 进 dispatch_events 2 分钟时间窗口）+ Step 5（zombie reaper：构造 test-w29-zombie status='in_progress' updated_at NOW()-30min；node -e import reapZombies({ idleMinutes: 0 })；断言 tasks.status='failed' + error_message 含 '[reaper] zombie'）",
+      "dod": [
+        "[ARTIFACT] smoke 文件含 test-w29-hol-A/B/C 任务投递",
+        "[ARTIFACT] smoke 文件含 reapZombies 调用",
+        "[BEHAVIOR] task_A 维持 pending 断言（B5 队首不阻塞证据）",
+        "[BEHAVIOR] task_B/C 至少 1 个进入 dispatch_events 断言",
+        "[BEHAVIOR] reapZombies 强制 idleMinutes=0 调用",
+        "[BEHAVIOR] error_message 含字面值 '[reaper] zombie' 断言（B2 reaper 标记）",
+        "[BEHAVIOR] tasks.status 从 in_progress 变 'failed' 断言"
+      ],
+      "files": [
+        "packages/brain/scripts/smoke/walking-skeleton-p1-acceptance-smoke.sh"
+      ],
+      "depends_on": ["ws1"],
+      "complexity": "M",
+      "estimated_minutes": 40
+    },
+    {
+      "task_id": "ws3",
+      "title": "guidance TTL + heartbeat + 出口 PASS (Steps 6-8)",
+      "scope": "smoke 文件追加 Step 6（B4：INSERT brain_guidance 含 decision_id + updated_at NOW()-30min；node -e 调 getGuidance('strategy:global') 断言返回 null）+ Step 7（B7：node -e import fleet-resource-cache，startFleetRefresh 等 2s 后 getFleetStatus；断言每条记录含 offline_reason ∈ {null, 'fetch_failed', 'no_ping_grace_exceeded'} + last_ping_at 字段存在）+ Step 8（出口：echo '[walking-skeleton-p1-终验] PASS — 7 项 P1 修复全链路联调通过'；脚本整体 exit 0）",
+      "dod": [
+        "[ARTIFACT] smoke 文件含 brain_guidance INSERT + getGuidance 调用",
+        "[ARTIFACT] smoke 文件含 fleet-resource-cache 引用 + offline_reason 验证",
+        "[ARTIFACT] smoke 末尾含 'PASS — 7 项 P1 修复全链路联调通过' 字符串",
+        "[BEHAVIOR] guidance INSERT 含 decision_id + 30 分钟前 updated_at",
+        "[BEHAVIOR] getGuidance 断言返回 null（B4 TTL 短路证据）",
+        "[BEHAVIOR] offline_reason 枚举包含 no_ping_grace_exceeded 与 fetch_failed 字面值",
+        "[BEHAVIOR] 出口段 echo 终验 PASS 信号 + exit 0"
+      ],
+      "files": [
+        "packages/brain/scripts/smoke/walking-skeleton-p1-acceptance-smoke.sh"
+      ],
+      "depends_on": ["ws2"],
+      "complexity": "M",
+      "estimated_minutes": 40
+    },
+    {
+      "task_id": "ws4",
+      "title": "Acceptance report",
+      "scope": "新建 sprints/w29-walking-skeleton-p1/acceptance-report.md：W29 + Walking Skeleton P1 标题，B1–B7 全部 7 项修复列表（含修复 PR 号 + smoke 中对应 Step 号映射 + 关键 invariant 一句话描述），CI 集成方式说明（.github/workflows/ci.yml 的 real-env-smoke job 已通过 glob packages/brain/scripts/smoke/*.sh 自动包含本 smoke，PRD 'brain-ci.yml 增加 step' 的 intent 因此自动满足，无需额外 workflow 文件 step），smoke 输出片段占位（实际运行后补），终验 PASS 信号字符串引用",
+      "dod": [
+        "[ARTIFACT] sprints/w29-walking-skeleton-p1/acceptance-report.md 存在",
+        "[ARTIFACT] 标题含 W29 + Walking Skeleton P1 关键字",
+        "[BEHAVIOR] 报告覆盖 B1–B7 全部 7 项（每项 ≥ 1 次引用）",
+        "[BEHAVIOR] 引用 walking-skeleton-p1-acceptance-smoke 文件路径",
+        "[BEHAVIOR] 含 CI 集成说明（real-env-smoke 自动 glob 包含）",
+        "[BEHAVIOR] 含终验 PASS 信号字符串 'PASS — 7 项 P1 修复全链路联调通过'",
+        "[BEHAVIOR] 含 Step 号映射（Step 1-8 至少出现 1 次）"
+      ],
+      "files": [
+        "sprints/w29-walking-skeleton-p1/acceptance-report.md"
+      ],
+      "depends_on": ["ws3"],
+      "complexity": "S",
+      "estimated_minutes": 25
+    }
+  ]
+}
