@@ -457,7 +457,7 @@ workstream_count: 1
 
 | Workstream | Test File | BEHAVIOR 覆盖 | 预期红证据 |
 |---|---|---|---|
-| WS1 | `tests/ws1/increment.test.js` | happy 复算 / strict 拒 / 上下界拒 / schema 完整性 / 禁用字段反向 / operation 字面 / 错误体不含 result-operation / 错 query 名 400 / 前导 0 / 7 路由回归 | 现 playground/server.js 无 `/increment` 路由 → 所有相关 supertest 断言 fail（路由未注册 Express 默认 404）
+| WS1 | `tests/ws1/increment.test.js` | value=5 → 200, 拒小数, 上界 +1 拒, 下界 -1 拒, 顶层 keys 严格等于, 成功响应不含禁用字段, operation 字段字面值严格, 上界拒错误体不含 result, 错 query 名, value=01, {ok:true} | 现 playground/server.js 无 `/increment` 路由 → 所有相关 supertest 断言 fail（路由未注册 Express 默认 404）
 
 > 后缀说明：playground 子项目零依赖 + 纯 JS（无 tsconfig、无 TS 编译），故 vitest 测试用 `.test.js`。与 SKILL 模板 `.test.ts` 不一致是被动适配 playground 子项目栈，不是合同违规。
 
