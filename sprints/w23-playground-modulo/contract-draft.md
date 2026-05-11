@@ -1,4 +1,4 @@
-# Sprint Contract Draft (Round 1)
+# Sprint Contract Draft (Round 2)
 
 W23 Walking Skeleton — playground 新增 `GET /modulo` endpoint，引入 **被除数符号不变量**（sign-of-dividend invariant）作为 W19~W22 链路上首个 **语义不变量级** oracle 探针。
 
@@ -340,6 +340,84 @@ workstream_count: 1
 
 ## Test Contract
 
-| Workstream | Test File | BEHAVIOR 覆盖 | 预期红证据 |
+| Workstream | Test File | BEHAVIOR 覆盖 | 预期红 it() 清单（≥6 条具名）+ 未实现时失败原因 |
 |---|---|---|---|
-| WS1 | `sprints/w23-playground-modulo/tests/ws1/modulo.test.ts` | (1) happy 值复算 (2) 符号不变量 (3) 除零拒 (4) strict 拒 (5) 严 schema (6) 错误 body 不含 remainder | 实现前所有 it() 全 fail（端点不存在 → 404 vs 期望 200/400） |
+| WS1 | `sprints/w23-playground-modulo/tests/ws1/modulo.test.js` | (1) happy 值复算 (2) 符号不变量 (3) 除零拒 (4) strict-schema 拒 (5) 严 schema (6) 错误 body 不含 remainder (7) 5 条现有路由回归 | 见下方"预期红 it() 清单"段（10 条具名 test，全部对应到 `tests/ws1/modulo.test.js` 实际行号），实现前 vitest 全红 |
+
+### 预期红 it() 清单（evaluator 可直接 grep 验证 `tests/ws1/modulo.test.js` 字面量）
+
+> 全部 10 条均为 `tests/ws1/modulo.test.js` 中实际存在的 `test('...')` 字面量，evaluator 可用 `grep -c "test('GET /modulo"` + `grep -c "test('REG /"` 验证清单完整性，再跑 `vitest run` 验证未实现时全红。
+
+| # | 具名 test | 实测行号 | 未实现时失败原因 |
+|---|---|---|---|
+| 1 | `test('GET /modulo?a=5&b=3 → 200 + {remainder:2} (正正整数 happy)', ...)` | tests/ws1/modulo.test.js:8 | 端点不存在 → supertest 收 404，`expect(res.status).toBe(200)` fail |
+| 2 | `test('GET /modulo?a=-5&b=3 → 200 + {remainder:-2} (符号跟随被除数 -5，floored mod 实现必挂)', ...)` | tests/ws1/modulo.test.js:69 | 端点未实现 → 404；若 generator 用 floored mod `((a%b)+b)%b` → 返 1 而非 -2，`toEqual({remainder:-2})` fail |
+| 3 | `test('GET /modulo?a=-5&b=3 → Math.sign(remainder) === -1 (符号不变量探针 #1，负被除数)', ...)` | tests/ws1/modulo.test.js:75 | 端点未实现 → res.body.remainder undefined，`Math.sign(undefined)` 为 NaN，`toBe(-1)` fail；floored mod 实现 → Math.sign 返 1 而非 -1 → fail（**W23 核心符号不变量探针**） |
+| 4 | `test('GET /modulo?a=5&b=-3 → Math.sign(remainder) === 1 (符号不变量探针 #2，正被除数 + 负除数)', ...)` | tests/ws1/modulo.test.js:88 | 端点未实现 → fail；floored mod → Math.sign 返 -1 而非 1 → fail |
+| 5 | `test('GET /modulo?a=5&b=0 → 400 + 非空 error + body 不含 remainder (除零兜底)', ...)` | tests/ws1/modulo.test.js:124 | 端点未实现 → 404 而非 400，`toBe(400)` fail；若 generator 漏掉除零拒 → JS `5 % 0 === NaN` → 即使返 200/500 都和 toBe(400) 不符 → fail |
+| 6 | `test('GET /modulo?a=0&b=0 → 400 + 非空 error + body 不含 remainder (0%0 也归此分支)', ...)` | tests/ws1/modulo.test.js:132 | 端点未实现 → fail；漏除零分支 → fail（0%0 === NaN） |
+| 7 | `test('GET /modulo?a=1e3&b=2 (科学计数法) → 400 + body 不含 remainder', ...)` | tests/ws1/modulo.test.js:182 | 端点未实现 → fail；若 generator 用 `Number(a)`/`parseFloat` 而非 strict 正则 → 1e3 通过返 200 而非 400 → fail（strict-schema 探针） |
+| 8 | `test('GET /modulo?a=5&b=3 响应顶层 keys 严格等于 ["remainder"] (schema oracle)', ...)` | tests/ws1/modulo.test.js:103 | 端点未实现 → res.body 为 {} → `Object.keys` 为 [] → toEqual([\"remainder\"]) fail；若 generator 漂移到 `result`/加 `operation` → keys 不严格等于 → fail |
+| 9 | `test('GET /modulo?a=5&b=3 成功响应不含禁用同义字段 (反向 schema 完整性探针)', ...)` | tests/ws1/modulo.test.js:109 | 端点未实现 → fail；若 generator 把字段名漂移到 `result`/`mod`/`product`/`quotient` 等 25 个禁用字段任一 → `not.toHaveProperty` fail（**反向漂移防御探针**） |
+| 10 | `test('GET /modulo?a=foo&b=3 错误响应顶层 keys 严格等于 ["error"]', ...)` | tests/ws1/modulo.test.js:257 | 端点未实现 → fail；若 generator 错误响应用 `message`/`msg`/`reason`/`detail` 同义替代 → keys 不严格 → fail |
+
+**evaluator 验证脚本**（自动审查清单完整性 + Red evidence）：
+
+```bash
+TF=sprints/w23-playground-modulo/tests/ws1/modulo.test.js
+
+# 1. it() 清单存在性（≥10 条 test，远超阈值 6）
+COUNT=$(grep -cE "^\s*test\(" "$TF")
+[ "$COUNT" -ge 10 ] || { echo "FAIL: test() 数 $COUNT < 10"; exit 1; }
+
+# 2. 关键探针字面量存在（用 grep -F 避免正则转义）
+grep -qF "remainder: -2" "$TF" || { echo "FAIL: 缺 floored mod 探针 -5%3 (期望 remainder: -2)"; exit 1; }
+grep -qF "Math.sign(res.body.remainder)" "$TF" || { echo "FAIL: 缺符号不变量断言"; exit 1; }
+grep -qF "toEqual(['remainder'])" "$TF" || { echo "FAIL: 缺严 schema 断言 toEqual(['remainder'])"; exit 1; }
+grep -qF "not.toHaveProperty('remainder')" "$TF" || { echo "FAIL: 缺失败响应不含 remainder 断言"; exit 1; }
+grep -qF "toEqual(['error'])" "$TF" || { echo "FAIL: 缺错误响应严 schema toEqual(['error'])"; exit 1; }
+
+# 3. 实现前必红（端点不存在 → 404）
+cd playground && npx vitest run ../sprints/w23-playground-modulo/tests/ws1/modulo.test.js --reporter=verbose 2>&1 | tee /tmp/red.log
+grep -E "FAIL|✗|failed" /tmp/red.log || { echo "ERROR: 测试未产生 Red"; exit 1; }
+echo "✅ 预期红清单 + Red evidence 全过"
+```
+
+---
+
+## Risks & Mitigations（GAN Round 2 反馈强化）
+
+> Reviewer Round 1 反馈：合同需显式列举高风险失败模式 + 对应 mitigation 命令，evaluator 跑时不能因为前置 Step 红而误绿后续 Step。本段把 4 类 high-impact risk 写成"风险/影响/Mitigation 命令"三段式，每条 Mitigation 都对应到上面 Step 1-7 的具体可执行验证命令。
+
+### Risk 1: 除零兜底缺失（generator 漏掉 `b=0` 显式拒，导致 5%0 返 NaN 或 500）
+
+- **影响**: JS 原生 `5 % 0 === NaN`，若 generator 直接 `return {remainder: a%b}`，会返 `{remainder: null}` (JSON 不能序列化 NaN) 或 `{remainder: NaN}` 同时 status=200，违反"b=0 必拒 400"硬约束。
+- **Mitigation**: Step 3 验证 4 类 `b=0` 输入（`a=5&b=0` / `a=0&b=0` / `a=-5&b=0` / `a=5&b=0.0`）全返 400 + body 不含 `remainder`。E2E 脚本 [4/7] 段同款检查；任一 200 → exit 1。
+
+### Risk 2: floored mod 漂移（generator 错用 `((a%b)+b)%b` 而非 JS 原生 `%`）
+
+- **影响**: `-5%3` JS truncated 应返 -2，floored mod 会返 1（符号跟随除数 b 而非被除数 a），同时 `5%-3` floored 会返 -1 而非 2。**值正确但语义错**——若 evaluator 只跑标准 oracle（值复算）会被绕过；必须配 Math.sign 不变量两层断言才能抓住。
+- **Mitigation**: Step 5 双层断言——(1) 值复算 `jq -e '.remainder == -2'` (2) 符号不变量 `Math.sign(remainder) === Math.sign(a)` 当 a≠0；任一不过 exit 1。覆盖 `a=-5&b=3`（期望 sign=-1）+ `a=5&b=-3`（期望 sign=1）+ `a=-5&b=-3`（期望 sign=-1）三类。E2E 脚本 [2/7] 段同款。
+
+### Risk 3: cascade 失败（前置 Step 红但 evaluator 继续跑后续 Step，污染 verdict）
+
+- **影响**: 若 Step 1（入口端点存在）已 fail（404），Step 2-7 的 jq -e 断言会因 RESP 为空字符串而 silent skip 或假绿，导致 evaluator 输出"7/7 PASS"实际上 endpoint 没挂。
+- **Mitigation**: E2E 脚本顶 `set -e`（已在 contract-draft Line 237 注入），任一命令非 0 立即整脚本退出。每个 jq -e 失败都用 `|| { echo "FAIL: ..."; exit 1; }` 显式中断；Step 1-7 内部 for 循环里也都是 `kill $SPID; exit 1` 非 0 即退。
+
+### Risk 4: generator 漂移字段名（响应字段从 `remainder` 漂到 `result` / `mod` / `product` / `quotient` 等 W19~W22 同义名）
+
+- **影响**: W19 `/sum` → `sum`、W20 `/multiply` → `product`、W21 `/divide` → `quotient`、W22 `/power` → `power`，generator 倾向于把 `/modulo` 字段写成 generic `result` 或前序同义 `product`/`mod`/`rem`。若 evaluator 只验"值正确"会过；必须配 25 字段反向 `has(...) | not` 全检 + `keys == ["remainder"]` 严 schema 双层断言。
+- **Mitigation**: Step 4 列 25 个禁用字段（`result` / `value` / `answer` / `mod` / `modulo` / `rem` / `rest` / `residue` / `out` / `output` / `data` / `payload` / `response` / `sum` / `product` / `quotient` / `power` / `operation` / `a` / `b` / `input` / `dividend` / `divisor` / `numerator` / `denominator`）反向 `jq -e 'has("$f") | not'` 全检。E2E [3/7] 段同款；任一 has → exit 1。配对 `jq -e 'keys == ["remainder"]'` 严 schema 锁顶层 keys 严格唯一。错误响应另含 8 个禁用字段反向（`message` / `msg` / `reason` / `detail` / `details` / `description` / `info` / `remainder`）。
+
+---
+
+## Reviewer Round 1 反馈处理对照表
+
+| Reviewer 反馈 | 本轮处理位置 | 状态 |
+|---|---|---|
+| Risk 列表（含 4 个 Risk + Mitigation） | 本文件 ## Risks & Mitigations 段 | ✅ 新增 |
+| 值复算 + Math.sign 不变量两层断言 | Step 5 + Risk 2 + 测试 #69-99 | ✅ 已存（明确化）|
+| E2E 脚本顶 `set -e`（cascade 防御） | E2E 段 Line 237 + Risk 3 | ✅ 已存（明确化）|
+| 25 个禁用字段反向 `has(...) \| not` 全检 | Step 4 + E2E [3/7] + Risk 4 + DoD ARTIFACT #41 | ✅ 已存（明确化）|
+| Test Contract 加"预期红 it() 清单"列（≥6 条具名 it + 未实现失败原因） | 本文件 ### 预期红 it() 清单 段（10 条具名 test，超阈值 6）| ✅ 新增 |
+| evaluator 可 grep test 文件验证 it 存在 + 跑 vitest 必红 | 本文件 evaluator 验证脚本段 | ✅ 新增 |
