@@ -1,7 +1,3 @@
-contract_branch: cp-harness-propose-r1-e3bcad10
-workstream_index: 1
-sprint_dir: sprints/w25-playground-negate
-
 ---
 skeleton: false
 journey_type: autonomous

@@ -95,6 +95,17 @@ app.get('/factorial', (req, res) => {
   return res.json({ factorial: acc });
 });
 
+app.get('/negate', (req, res) => {
+  const { n } = req.query;
+  if (n === undefined) {
+    return res.status(400).json({ error: 'n 是必填 query 参数（单参取负；浮点白名单 ^-?\\d+(\\.\\d+)?$）' });
+  }
+  if (typeof n !== 'string' || !STRICT_NUMBER.test(n)) {
+    return res.status(400).json({ error: 'n 必须匹配 ^-?\\d+(\\.\\d+)?$（禁前导 +、双负号、科学计数法、十六进制、千分位、Infinity、NaN、空串、点前/后无数字）' });
+  }
+  return res.json({ negation: -Number(n) });
+});
+
 if (process.env.NODE_ENV !== 'test') {
   app.listen(PORT, () => console.log(`playground listening on ${PORT}`));
 }

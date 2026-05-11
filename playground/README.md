@@ -24,6 +24,7 @@ npm start           # 起 server（默认 :3000）
 - `GET /power?a=N&b=M` → 返回 a^b（**strict-schema** + **0^0 不定式拒** + **结果有限性兜底**：`Number.isFinite(result)===false` 时 400，覆盖 0^负 / 负^分数 / 溢出）
 - `GET /modulo?a=N&b=M` → 返回 a%b 的余数（**strict-schema** + **除零兜底**：`b=0`/`b=0.0` → 400；**JS 原生 truncated 取模**：余数符号跟随被除数 a，与数学 floored mod 区分）
 - `GET /factorial?n=N` → 返回 n! 阶乘（**整数白名单 strict-schema** `^\d+$` + **上界 18 拒**：`n > 18` → 400（精度上界，避免超过 `Number.MAX_SAFE_INTEGER`）+ **迭代精确累积**：`for(i=2; i<=n; i++) acc *= i`，不引入 BigInt / Stirling / gamma 近似）
+- `GET /negate?n=N` → 返回 `-N`（**浮点白名单 strict-schema** `^-?\d+(\.\d+)?$`（复用 `STRICT_NUMBER`，与 `/multiply`/`/divide`/`/power`/`/modulo` 同款）+ **一元负号 `-Number(n)` 实现**（不引入 `Math.abs` / 位运算 / `0-Number(n)` / `Number.isFinite` 兜底 / `BigInt`）+ **跨调用自反不变量** oracle：`negate(negate(n)) === Number(n)`，涵盖正整数 / 负数 / 零 / 正小数 / 负小数）
 
 ### `GET /sum` 示例
 
@@ -325,4 +326,86 @@ curl -s -o /dev/stderr -w 'HTTP %{http_code}\n' 'http://127.0.0.1:3000/factorial
 
 curl -s -o /dev/stderr -w 'HTTP %{http_code}\n' 'http://127.0.0.1:3000/factorial?num=5'
 # HTTP 400  (别名 num)
+```
+
+### `GET /negate` 示例
+
+happy path（含正整数、负数、零、小数；JSON 序列化下 `-0` 规范成 `0`）：
+
+```bash
+curl -s 'http://127.0.0.1:3000/negate?n=5'
+# {"negation":-5}
+
+curl -s 'http://127.0.0.1:3000/negate?n=-5'
+# {"negation":5}        # 负的负是正
+
+curl -s 'http://127.0.0.1:3000/negate?n=0'
+# {"negation":0}        # 零退化为身份
+
+curl -s 'http://127.0.0.1:3000/negate?n=-0'
+# {"negation":0}        # JSON 下 -0 规范成 0
+
+curl -s 'http://127.0.0.1:3000/negate?n=3.14'
+# {"negation":-3.14}    # 正小数（位运算实现会截断到 -3 → 必断）
+
+curl -s 'http://127.0.0.1:3000/negate?n=-3.14'
+# {"negation":3.14}     # 负小数
+
+curl -s 'http://127.0.0.1:3000/negate?n=100'
+# {"negation":-100}
+
+curl -s 'http://127.0.0.1:3000/negate?n=-100'
+# {"negation":100}
+```
+
+跨调用自反不变量 oracle（核心：`negate(negate(n)) === Number(n)`，即 `f(f(n)) === n`；involution 闭环涵盖正整数 / 负小数 / 零）：
+
+```bash
+# Case A：f(f(5)) === 5（正整数闭环）
+curl -s 'http://127.0.0.1:3000/negate?n=5'    # {"negation":-5}
+curl -s 'http://127.0.0.1:3000/negate?n=-5'   # {"negation":5}     ← 第二次 query 用第一次响应字段值
+# 校验：5 === Number("5") ✓
+
+# Case B：f(f(-3.14)) === -3.14（负小数闭环，位运算 / Math.abs 实现必断）
+curl -s 'http://127.0.0.1:3000/negate?n=-3.14'  # {"negation":3.14}
+curl -s 'http://127.0.0.1:3000/negate?n=3.14'   # {"negation":-3.14}
+# 校验：-3.14 === Number("-3.14") ✓
+
+# Case C：f(f(0)) === 0（零退化为身份；自反闭环仍成立）
+curl -s 'http://127.0.0.1:3000/negate?n=0'    # {"negation":0}
+curl -s 'http://127.0.0.1:3000/negate?n=0'    # {"negation":0}
+# 校验：0 === Number("0") ✓
+```
+
+strict-schema 拒（**浮点白名单** `^-?\d+(\.\d+)?$`，**不复用** `/factorial` 的整数 `^\d+$`——必须支持负数与小数；前导 + / 双负号 / 5. / .5 / 1e2 / 0xff / 1,000 / Infinity / NaN / 字母串 / 空串 / 缺参全 400）：
+
+```bash
+curl -s -o /dev/stderr -w 'HTTP %{http_code}\n' 'http://127.0.0.1:3000/negate?n=+5'
+# HTTP 400  (前导 +)
+
+curl -s -o /dev/stderr -w 'HTTP %{http_code}\n' 'http://127.0.0.1:3000/negate?n=1e2'
+# HTTP 400  (科学计数法)
+
+curl -s -o /dev/stderr -w 'HTTP %{http_code}\n' 'http://127.0.0.1:3000/negate?n=0xff'
+# HTTP 400  (十六进制)
+
+curl -s -o /dev/stderr -w 'HTTP %{http_code}\n' 'http://127.0.0.1:3000/negate?n=abc'
+# HTTP 400  (字母串)
+
+curl -s -o /dev/stderr -w 'HTTP %{http_code}\n' 'http://127.0.0.1:3000/negate?n=Infinity'
+# HTTP 400  (Infinity)
+
+curl -s -o /dev/stderr -w 'HTTP %{http_code}\n' 'http://127.0.0.1:3000/negate'
+# {"error":"n 是必填 query 参数（单参取负；浮点白名单 ^-?\\d+(\\.\\d+)?$）"}
+# HTTP 400  (缺参)
+```
+
+query 别名锁死（只接受 `n=`，别名 `value/num/x/input/v/...` 全拒 400 且 body 不含 `negation`）：
+
+```bash
+curl -s -o /dev/stderr -w 'HTTP %{http_code}\n' 'http://127.0.0.1:3000/negate?value=5'
+# HTTP 400  (别名 value)
+
+curl -s -o /dev/stderr -w 'HTTP %{http_code}\n' 'http://127.0.0.1:3000/negate?x=5'
+# HTTP 400  (别名 x)
 ```
