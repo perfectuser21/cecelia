@@ -104,6 +104,22 @@ journey_type: autonomous
   Test: manual:bash -c 'cd playground && PLAYGROUND_PORT=3717 NODE_ENV=production node server.js > /tmp/dod-b17.log 2>&1 & SPID=$!; sleep 2; CODE=$(curl -s -o /dev/null -w "%{http_code}" "http://localhost:3717/increment?value=Infinity"); kill $SPID 2>/dev/null; [ "$CODE" = "400" ]'
   期望: exit 0
 
+- [ ] [BEHAVIOR] GET /increment?value= 返 HTTP 400（strict 拒空串 — Round 2 reviewer 加固）
+  Test: manual:bash -c 'cd playground && PLAYGROUND_PORT=3722 NODE_ENV=production node server.js > /tmp/dod-b22.log 2>&1 & SPID=$!; sleep 2; CODE=$(curl -s -o /dev/null -w "%{http_code}" "http://localhost:3722/increment?value="); kill $SPID 2>/dev/null; [ "$CODE" = "400" ]'
+  期望: exit 0
+
+- [ ] [BEHAVIOR] GET /increment?value=%2B5（前导 +5 URL 编码）返 HTTP 400（strict regex `^-?\d+$` 不允许前导 + — Round 2 reviewer 加固）
+  Test: manual:bash -c 'cd playground && PLAYGROUND_PORT=3723 NODE_ENV=production node server.js > /tmp/dod-b23.log 2>&1 & SPID=$!; sleep 2; CODE=$(curl -s -o /dev/null -w "%{http_code}" "http://localhost:3723/increment?value=%2B5"); kill $SPID 2>/dev/null; [ "$CODE" = "400" ]'
+  期望: exit 0
+
+- [ ] [BEHAVIOR] GET /increment?value=--5 返 HTTP 400（strict 拒双重负号 — Round 2 reviewer 加固）
+  Test: manual:bash -c 'cd playground && PLAYGROUND_PORT=3724 NODE_ENV=production node server.js > /tmp/dod-b24.log 2>&1 & SPID=$!; sleep 2; CODE=$(curl -s -o /dev/null -w "%{http_code}" "http://localhost:3724/increment?value=--5"); kill $SPID 2>/dev/null; [ "$CODE" = "400" ]'
+  期望: exit 0
+
+- [ ] [BEHAVIOR] GET /increment?value=0xff 返 HTTP 400（strict 拒十六进制字面 — Round 2 reviewer 加固）
+  Test: manual:bash -c 'cd playground && PLAYGROUND_PORT=3725 NODE_ENV=production node server.js > /tmp/dod-b25.log 2>&1 & SPID=$!; sleep 2; CODE=$(curl -s -o /dev/null -w "%{http_code}" "http://localhost:3725/increment?value=0xff"); kill $SPID 2>/dev/null; [ "$CODE" = "400" ]'
+  期望: exit 0
+
 - [ ] [BEHAVIOR] GET /increment（缺 value）返 HTTP 400
   Test: manual:bash -c 'cd playground && PLAYGROUND_PORT=3718 NODE_ENV=production node server.js > /tmp/dod-b18.log 2>&1 & SPID=$!; sleep 2; CODE=$(curl -s -o /dev/null -w "%{http_code}" "http://localhost:3718/increment"); kill $SPID 2>/dev/null; [ "$CODE" = "400" ]'
   期望: exit 0

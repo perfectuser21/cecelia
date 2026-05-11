@@ -1,4 +1,4 @@
-# Sprint Contract Draft (Round 1) — W26 playground GET /increment
+# Sprint Contract Draft (Round 2) — W26 playground GET /increment
 
 > **PR-G 验收承诺**：本合同字段名严格字面照搬 PRD `## Response Schema` 段：
 > - response success keys = `result` + `operation`（字面，**不许漂到 `incremented`/`next`/`successor`/`n_plus_one`/`plus_one`/`succ`/`inc`/`incr`/`incrementation` 等任一禁用名**）
@@ -457,4 +457,57 @@ workstream_count: 1
 
 | Workstream | Test File | BEHAVIOR 覆盖 | 预期红证据 |
 |---|---|---|---|
-| WS1 | `tests/ws1/increment.test.ts` | happy 复算 / strict 拒 / 上下界拒 / schema 完整性 / 禁用字段反向 / operation 字面 / 错误体不含 result-operation / 错 query 名 400 / 前导 0 / 7 路由回归 | 现 playground/server.js 无 `/increment` 路由 → 所有相关 supertest 断言 fail（路由未注册 Express 默认 404）
+| WS1 | `tests/ws1/increment.test.js` | happy 复算 / strict 拒 / 上下界拒 / schema 完整性 / 禁用字段反向 / operation 字面 / 错误体不含 result-operation / 错 query 名 400 / 前导 0 / 7 路由回归 | 现 playground/server.js 无 `/increment` 路由 → 所有相关 supertest 断言 fail（路由未注册 Express 默认 404）
+
+> 后缀说明：playground 子项目零依赖 + 纯 JS（无 tsconfig、无 TS 编译），故 vitest 测试用 `.test.js`。与 SKILL 模板 `.test.ts` 不一致是被动适配 playground 子项目栈，不是合同违规。
+
+---
+
+## Risks（Round 2 新增 — 修 risk_registered=2/10）
+
+> Generator 实施时最易踩的坑 + 已布防对应 DoD oracle。Risks 不是"假设性问题"，是 W19~W25 实证过的真实漂移类型。
+
+### Risk 1: off-by-one（最高严重度）
+- **失败模式**：generator 误写 `return Number(value)` / `return Number(value) - 1` / `return Number(value) + 2` 等
+- **触发输入**：`value=0`（最敏感 — 期望 1，错位 0/2 一眼看出）、`value=-1`（期望 0，错位 -1/1）
+- **布防 DoD**：`[BEHAVIOR]` GET /increment?value=0 → result==1；GET /increment?value=-1 → result==0（独立两条断言，不与 `value=5` 共用）
+
+### Risk 2: 字段名漂移（PR-G 验收核心 risk）
+- **失败模式**：proposer 此版已字面照搬 PRD（contract `result`/`operation`/`"increment"`/`value`），但 generator 可能仍漂到 `{incremented:6}` / `{next:6}` / `{result:6, operation:"inc"}` / `req.query.n` 等任一禁用形态
+- **触发输入**：任一 happy GET
+- **布防 DoD**：3 条独立 [BEHAVIOR] 反向 `has("X") | not` 检查（首要禁用 9 个 + generic 禁用 7 个 + 其他 endpoint 字段 7 个）；1 条 keys 完整集合断言 `keys|sort==["operation","result"]`；1 条 `operation == "increment"` 字面严等
+
+### Risk 3: strict-schema 复用 W19~W24 旧 regex 假绿
+- **失败模式**：generator 复用 `STRICT_NUMBER` 浮点 regex `^-?\d+(\.\d+)?$` → `value=1.5` 漏拒；或复用 W24 `^\d+$` → `value=-5` 拒错（应通过）
+- **触发输入**：`value=1.5`（浮点 regex 会让它通过 → bug）、`value=-5`（W24 regex 拒它 → bug）
+- **布防 DoD**：[BEHAVIOR] value=1.5 → 400 + value=1.0 → 400 + value=-5 → 200 + value=-1 → 200
+
+### Risk 4: 精度上界判定漏写或写错（边界 off-by-one）
+- **失败模式**：generator 用 `> Number.MAX_SAFE_INTEGER`（=9007199254740991）做上界 → 漏拒；或用 `>= 9007199254740990` → 把 happy 上界 9007199254740990 误拒
+- **触发输入**：`value=9007199254740990`（happy 必通过）、`value=9007199254740991`（必拒）
+- **布防 DoD**：两条独立 [BEHAVIOR] 在边界两侧 ±1 测，精确卡住正确实现 `Math.abs(Number(value)) > 9007199254740990`
+
+### Risk 5: query 名漂移（v8.2 新增强约束）
+- **失败模式**：generator 复读 W24 `req.query.n` / W19~W23 `req.query.a/b` → 用 `value=5` 时拿不到参数返 undefined → 接 `Number(undefined)=NaN` → strict 拒（错走错误分支但 CODE=400 假绿）；或更糟 — generator 把 query 名注册成 `n` → DoD `value=5` 全 404
+- **触发输入**：`value=5`（必 happy 200）+ `n=5`（必 400）+ `x=5`（必 400）
+- **布防 DoD**：[BEHAVIOR] value=5 → result=6（正向）+ n=5 → 400（反向）；E2E 用 14 个错 query 名扫一遍
+
+### Risk 6: strict-schema 边界字符漏拒（Round 2 reviewer 加固）
+- **失败模式**：generator 用宽松 regex `\d+` 不带锚（`^...$`）→ `value=abc5` 含数字部分通过；或不显式拒 `+5` / `--5` / `0xff` / 空串 → 走 `parseInt` 后被 `Number(...)+1` 静默接受
+- **触发输入**：空串 `value=`、前导 `+5`、双重负号 `--5`、十六进制 `0xff`
+- **布防 DoD**（Round 2 新加 4 条独立 [BEHAVIOR]）：每类一条独立 [BEHAVIOR] manual:bash，evaluator 必跑
+
+### Risk 7: BigInt 重写诱惑
+- **失败模式**：generator 看到 "9007199254740990" 觉得大数应该用 BigInt，写成 `{result: BigInt(value)+1n}` → JSON.stringify 抛 `TypeError: Do not know how to serialize a BigInt`
+- **触发输入**：`value=9007199254740990` happy
+- **布防 DoD**：精度上界 happy [BEHAVIOR] 用 `jq -e '.result == 9007199254740991'`（数字字面比较，BigInt 序列化失败时 response 直接 500 / 解析失败）+ artifact 检查实现不含 BigInt 字面量
+
+### Risk 8: 错误响应混合污染
+- **失败模式**：generator 错误分支返 `{error:"bad",result:null,operation:"increment"}` → 错误体含禁用字段
+- **触发输入**：`value=9007199254740991`（上界拒）
+- **布防 DoD**：[BEHAVIOR] 上界拒错误体 `keys|sort==["error"]` + `has("result")|not` + `has("operation")|not` + `.error|type=="string" and length>0` 四联断言
+
+### Risk 9: 八进制误解析
+- **失败模式**：generator 用 `parseInt(value)`（无第二参） + ES5 旧引擎 → `parseInt("01")=1` 倒还对，但 `parseInt("08")=0`（旧 8 进制错误） → `value=08` happy 错位
+- **触发输入**：`value=01` / `value=-01`
+- **布防 DoD**：[BEHAVIOR] value=01 → result==2 严等；E2E 兼测 value=-01 → result==0
