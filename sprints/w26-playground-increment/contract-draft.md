@@ -449,7 +449,7 @@ workstream_count: 1
 
 **依赖**: 无
 
-**BEHAVIOR 覆盖测试文件**: `tests/ws1/increment.test.ts`
+**BEHAVIOR 覆盖测试文件**: `tests/ws1/increment.test.js`
 
 ---
 
