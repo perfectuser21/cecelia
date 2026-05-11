@@ -20,7 +20,9 @@ import {
   initSeed,
   updateSelfModel,
   SELF_MODEL_SEED,
+  SelfModelWriteDeniedError,
 } from '../self-model.js';
+import { attemptUnauthorizedWrite } from './fixtures/self-model-attacker.js';
 
 // ── 辅助 ──────────────────────────────────────────────────
 
@@ -148,6 +150,84 @@ describe('updateSelfModel', () => {
 
     const insertCall = mockQuery.mock.calls.find(c => String(c[0]).includes('INSERT'));
     expect(insertCall[0]).toContain("'self_model'");
+  });
+});
+
+describe('updateSelfModel caller allowlist（self_model 写入代码层锁）', () => {
+  it('SelfModelWriteDeniedError 是 Error 子类且 name 正确', () => {
+    const err = new SelfModelWriteDeniedError('test');
+    expect(err).toBeInstanceOf(Error);
+    expect(err.name).toBe('SelfModelWriteDeniedError');
+  });
+
+  it('未授权模块调用必须抛 SelfModelWriteDeniedError', async () => {
+    const pool = makePool();
+    mockQuery.mockResolvedValueOnce({ rows: [{ content: 'seed', created_at: new Date() }] });
+
+    await expect(attemptUnauthorizedWrite('恶意写入', pool))
+      .rejects.toThrow(SelfModelWriteDeniedError);
+  });
+
+  it('未授权调用必须 0 次 INSERT memory_stream', async () => {
+    const pool = makePool();
+    mockQuery.mockResolvedValueOnce({ rows: [{ content: 'seed', created_at: new Date() }] });
+
+    await expect(attemptUnauthorizedWrite('恶意写入', pool)).rejects.toThrow();
+
+    const insertCall = mockQuery.mock.calls.find(c => String(c[0]).includes('INSERT'));
+    expect(insertCall).toBeUndefined();
+  });
+
+  it('从 self-model.test.js 直接调用应被允许（test 文件白名单）', async () => {
+    const pool = makePool();
+    mockQuery.mockResolvedValueOnce({ rows: [{ content: 'seed', created_at: new Date() }] });
+    mockQuery.mockResolvedValueOnce({ rows: [] });
+
+    const result = await updateSelfModel('合法演化', pool);
+    expect(result).toContain('合法演化');
+  });
+});
+
+describe('updateSelfModel ttlDays option（thalamus L2 战略洞察 90 天过期）', () => {
+  it('默认 expires_at = NULL（永久）', async () => {
+    const pool = makePool();
+    mockQuery.mockResolvedValueOnce({ rows: [{ content: 'seed', created_at: new Date() }] });
+    mockQuery.mockResolvedValueOnce({ rows: [] });
+
+    await updateSelfModel('永久洞察', pool);
+
+    const insertCall = mockQuery.mock.calls.find(c => String(c[0]).includes('INSERT'));
+    expect(insertCall[0]).toMatch(/NULL\)/);
+    expect(insertCall[0]).not.toMatch(/INTERVAL/);
+  });
+
+  it('ttlDays=90 生成带 INTERVAL 90 days 的 SQL', async () => {
+    const pool = makePool();
+    mockQuery.mockResolvedValueOnce({ rows: [{ content: 'seed', created_at: new Date() }] });
+    mockQuery.mockResolvedValueOnce({ rows: [] });
+
+    await updateSelfModel('临时洞察', pool, { ttlDays: 90 });
+
+    const insertCall = mockQuery.mock.calls.find(c => String(c[0]).includes('INSERT'));
+    expect(insertCall[0]).toMatch(/NOW\(\)\s*\+\s*INTERVAL\s*'90 days'/);
+  });
+
+  it('ttlDays 非整数应拒绝（防 SQL 注入）', async () => {
+    const pool = makePool();
+    mockQuery.mockResolvedValueOnce({ rows: [{ content: 'seed', created_at: new Date() }] });
+
+    await expect(updateSelfModel('恶意', pool, { ttlDays: "1; DROP TABLE memory_stream" }))
+      .rejects.toThrow();
+
+    const insertCall = mockQuery.mock.calls.find(c => String(c[0]).includes('INSERT'));
+    expect(insertCall).toBeUndefined();
+  });
+
+  it('ttlDays 负数应拒绝', async () => {
+    const pool = makePool();
+    mockQuery.mockResolvedValueOnce({ rows: [{ content: 'seed', created_at: new Date() }] });
+
+    await expect(updateSelfModel('恶意', pool, { ttlDays: -1 })).rejects.toThrow();
   });
 });
 
