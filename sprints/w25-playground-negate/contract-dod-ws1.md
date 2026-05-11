@@ -18,177 +18,113 @@ journey_type: autonomous
 
 ## ARTIFACT 条目
 
-- [ ] [ARTIFACT] `playground/server.js` 含 `GET /negate` 路由注册
+- [x] [ARTIFACT] `playground/server.js` 含 `GET /negate` 路由注册
   Test: manual:node -e "const c=require('fs').readFileSync('playground/server.js','utf8');if(!/app\.get\(\s*['\"]\/negate['\"]/m.test(c))process.exit(1)"
 
-- [ ] [ARTIFACT] `playground/server.js` 仍保留 `/health`（防误删 bootstrap）
+- [x] [ARTIFACT] `playground/server.js` 仍保留 `/health`（防误删 bootstrap）
   Test: manual:node -e "const c=require('fs').readFileSync('playground/server.js','utf8');if(!/app\.get\(\s*['\"]\/health['\"]/m.test(c))process.exit(1)"
 
-- [ ] [ARTIFACT] `playground/server.js` 仍保留 `/sum`（防误删 W19）
+- [x] [ARTIFACT] `playground/server.js` 仍保留 `/sum`（防误删 W19）
   Test: manual:node -e "const c=require('fs').readFileSync('playground/server.js','utf8');if(!/app\.get\(\s*['\"]\/sum['\"]/m.test(c))process.exit(1)"
 
-- [ ] [ARTIFACT] `playground/server.js` 仍保留 `/multiply`（防误删 W20）
+- [x] [ARTIFACT] `playground/server.js` 仍保留 `/multiply`（防误删 W20）
   Test: manual:node -e "const c=require('fs').readFileSync('playground/server.js','utf8');if(!/app\.get\(\s*['\"]\/multiply['\"]/m.test(c))process.exit(1)"
 
-- [ ] [ARTIFACT] `playground/server.js` 仍保留 `/divide`（防误删 W21）
+- [x] [ARTIFACT] `playground/server.js` 仍保留 `/divide`（防误删 W21）
   Test: manual:node -e "const c=require('fs').readFileSync('playground/server.js','utf8');if(!/app\.get\(\s*['\"]\/divide['\"]/m.test(c))process.exit(1)"
 
-- [ ] [ARTIFACT] `playground/server.js` 仍保留 `/power`（防误删 W22）
+- [x] [ARTIFACT] `playground/server.js` 仍保留 `/power`（防误删 W22）
   Test: manual:node -e "const c=require('fs').readFileSync('playground/server.js','utf8');if(!/app\.get\(\s*['\"]\/power['\"]/m.test(c))process.exit(1)"
 
-- [ ] [ARTIFACT] `playground/server.js` 仍保留 `/modulo`（防误删 W23）
+- [x] [ARTIFACT] `playground/server.js` 仍保留 `/modulo`（防误删 W23）
   Test: manual:node -e "const c=require('fs').readFileSync('playground/server.js','utf8');if(!/app\.get\(\s*['\"]\/modulo['\"]/m.test(c))process.exit(1)"
 
-- [ ] [ARTIFACT] `playground/server.js` 仍保留 `/factorial`（防误删 W24）
+- [x] [ARTIFACT] `playground/server.js` 仍保留 `/factorial`（防误删 W24）
   Test: manual:node -e "const c=require('fs').readFileSync('playground/server.js','utf8');if(!/app\.get\(\s*['\"]\/factorial['\"]/m.test(c))process.exit(1)"
 
-- [ ] [ARTIFACT] `playground/server.js` `/negate` 段使用**浮点白名单** `^-?\d+(\.\d+)?$`（必须复用 STRICT_NUMBER 常量，不许另写）
+- [x] [ARTIFACT] `playground/server.js` `/negate` 段使用**浮点白名单** `^-?\d+(\.\d+)?$`（必须复用 STRICT_NUMBER 常量，不许另写）
   Test: manual:node -e "const c=require('fs').readFileSync('playground/server.js','utf8');const seg=(c.split(/app\.get\(\s*['\"]\/negate['\"]/)[1]||'').split(/app\.get\(/)[0];if(!/STRICT_NUMBER\.test\s*\(/.test(seg))process.exit(1)"
 
-- [ ] [ARTIFACT] `playground/server.js` `/negate` 段**不复用** W24 整数 regex `^\d+$`（必须接受负数与小数）
+- [x] [ARTIFACT] `playground/server.js` `/negate` 段**不复用** W24 整数 regex `^\d+$`（必须接受负数与小数）
   Test: manual:node -e "const c=require('fs').readFileSync('playground/server.js','utf8');const seg=(c.split(/app\.get\(\s*['\"]\/negate['\"]/)[1]||'').split(/app\.get\(/)[0];if(/\\^\\\\d\\+\\$/.test(seg))process.exit(1)"
 
-- [ ] [ARTIFACT] `playground/server.js` `/negate` 段使用一元负号 `-Number(n)` 实现（不许位运算 / `0-Number(n)` / `Math.abs` / `Math.sign`）
+- [x] [ARTIFACT] `playground/server.js` `/negate` 段使用一元负号 `-Number(n)` 实现（不许位运算 / `0-Number(n)` / `Math.abs` / `Math.sign`）
   Test: manual:node -e "const c=require('fs').readFileSync('playground/server.js','utf8');const seg=(c.split(/app\.get\(\s*['\"]\/negate['\"]/)[1]||'').split(/app\.get\(/)[0];if(!/-\s*Number\s*\(\s*n\s*\)/.test(seg))process.exit(1);if(/(~\s*Number|Math\.abs|Math\.sign|0\s*-\s*Number)/.test(seg))process.exit(2)"
 
-- [ ] [ARTIFACT] `playground/server.js` `/negate` 段响应字段名为 `negation`，禁用 `result`/`value`/`answer`/`negated`/`inverse`/`opposite`/`sign_flipped`/`flipped`/`neg`/`minus`/`output`/`out`/`data`/`payload`/`response`/`sum`/`product`/`quotient`/`power`/`remainder`/`factorial` 等同义/复用字段
+- [x] [ARTIFACT] `playground/server.js` `/negate` 段响应字段名为 `negation`，禁用 `result`/`value`/`answer`/`negated`/`inverse`/`opposite`/`sign_flipped`/`flipped`/`neg`/`minus`/`output`/`out`/`data`/`payload`/`response`/`sum`/`product`/`quotient`/`power`/`remainder`/`factorial` 等同义/复用字段
   Test: manual:node -e "const c=require('fs').readFileSync('playground/server.js','utf8');const seg=(c.split(/app\.get\(\s*['\"]\/negate['\"]/)[1]||'').split(/app\.get\(/)[0];if(!/negation\s*:/.test(seg))process.exit(1);if(/\\b(result|value|answer|negated|inverse|opposite|sign_flipped|flipped|neg|minus|output|out|data|payload|response|sum|product|quotient|power|remainder|factorial)\\s*:/.test(seg))process.exit(2)"
 
-- [ ] [ARTIFACT] `playground/server.js` `/negate` 段不引入 `Number.isFinite` 兜底（一元负号在 strict 合法输入上结果一定有限，多余兜底视为合同违约）
+- [x] [ARTIFACT] `playground/server.js` `/negate` 段不引入 `Number.isFinite` 兜底（一元负号在 strict 合法输入上结果一定有限，多余兜底视为合同违约）
   Test: manual:node -e "const c=require('fs').readFileSync('playground/server.js','utf8');const seg=(c.split(/app\.get\(\s*['\"]\/negate['\"]/)[1]||'').split(/app\.get\(/)[0];if(/Number\.isFinite/.test(seg))process.exit(1)"
 
-- [ ] [ARTIFACT] `playground/server.js` `/negate` 段不引入 BigInt（响应必须是 JS Number）
+- [x] [ARTIFACT] `playground/server.js` `/negate` 段不引入 BigInt（响应必须是 JS Number）
   Test: manual:node -e "const c=require('fs').readFileSync('playground/server.js','utf8');const seg=(c.split(/app\.get\(\s*['\"]\/negate['\"]/)[1]||'').split(/app\.get\(/)[0];if(/BigInt/.test(seg))process.exit(1)"
 
-- [ ] [ARTIFACT] `playground/server.js` `/negate` 段不引入字符串型转换 `String(...)`（响应必须是 JS Number 不是 "-5"）
+- [x] [ARTIFACT] `playground/server.js` `/negate` 段不引入字符串型转换 `String(...)`（响应必须是 JS Number 不是 "-5"）
   Test: manual:node -e "const c=require('fs').readFileSync('playground/server.js','utf8');const seg=(c.split(/app\.get\(\s*['\"]\/negate['\"]/)[1]||'').split(/app\.get\(/)[0];if(/String\s*\(/.test(seg))process.exit(1)"
 
-- [ ] [ARTIFACT] `playground/tests/server.test.js` 含 `describe('GET /negate'` 块
+- [x] [ARTIFACT] `playground/tests/server.test.js` 含 `describe('GET /negate'` 块
   Test: manual:node -e "const c=require('fs').readFileSync('playground/tests/server.test.js','utf8');if(c.indexOf(\"describe('GET /negate\")===-1 && c.indexOf('describe(\"GET /negate')===-1)process.exit(1)"
 
-- [ ] [ARTIFACT] `playground/tests/server.test.js` `/negate` 段同时含 happy（toBe(200) + negation）与 error（toBe(400)）断言
+- [x] [ARTIFACT] `playground/tests/server.test.js` `/negate` 段同时含 happy（toBe(200) + negation）与 error（toBe(400)）断言
   Test: manual:node -e "const c=require('fs').readFileSync('playground/tests/server.test.js','utf8');const i=c.indexOf('/negate');if(i<0)process.exit(1);if(!(/toBe\(200\)/.test(c.slice(i))&&/toBe\(400\)/.test(c.slice(i))&&/negation/.test(c.slice(i))))process.exit(2)"
 
-- [ ] [ARTIFACT] `playground/tests/server.test.js` `/negate` 至少 8 条 happy（含 n=5/-5/0/-0/3.14/-3.14/100/-100）
+- [x] [ARTIFACT] `playground/tests/server.test.js` `/negate` 至少 8 条 happy（含 n=5/-5/0/-0/3.14/-3.14/100/-100）
   Test: manual:node -e "const c=require('fs').readFileSync('playground/tests/server.test.js','utf8');const i=c.indexOf('/negate');if(i<0)process.exit(1);const seg=c.slice(i);const must=['n:\\s*[\\'\"]5[\\'\"]','n:\\s*[\\'\"]-5[\\'\"]','n:\\s*[\\'\"]0[\\'\"]','n:\\s*[\\'\"]-0[\\'\"]','n:\\s*[\\'\"]3\\.14[\\'\"]','n:\\s*[\\'\"]-3\\.14[\\'\"]','n:\\s*[\\'\"]100[\\'\"]','n:\\s*[\\'\"]-100[\\'\"]'];for(const p of must){if(!new RegExp(p).test(seg)){console.error('miss '+p);process.exit(2)}}"
 
-- [ ] [ARTIFACT] `playground/tests/server.test.js` `/negate` 显式断言 n=0 与 n=-0 都返 negation === 0（JSON 下负零规范）
+- [x] [ARTIFACT] `playground/tests/server.test.js` `/negate` 显式断言 n=0 与 n=-0 都返 negation === 0（JSON 下负零规范）
   Test: manual:node -e "const c=require('fs').readFileSync('playground/tests/server.test.js','utf8');const i=c.indexOf('/negate');if(i<0)process.exit(1);const seg=c.slice(i);if(!/n:\\s*['\"]0['\"][\\s\\S]{0,400}negation:\\s*0\\b/.test(seg))process.exit(2);if(!/n:\\s*['\"]-0['\"][\\s\\S]{0,400}negation:\\s*0\\b/.test(seg))process.exit(3)"
 
-- [ ] [ARTIFACT] `playground/tests/server.test.js` `/negate` 显式覆盖 strict-schema 核心拒绝路径（前导 + / 双负号 / `5.` / `.5` / `1e2` / `0xff` / `1,000` / 空串 / `abc` / `Infinity` / `NaN` / 缺参 各至少 1 条）
+- [x] [ARTIFACT] `playground/tests/server.test.js` `/negate` 显式覆盖 strict-schema 核心拒绝路径（前导 + / 双负号 / `5.` / `.5` / `1e2` / `0xff` / `1,000` / 空串 / `abc` / `Infinity` / `NaN` / 缺参 各至少 1 条）
   Test: manual:node -e "const c=require('fs').readFileSync('playground/tests/server.test.js','utf8');const i=c.indexOf('/negate');if(i<0)process.exit(1);const seg=c.slice(i);const must=['+5','--5','5.','.5','1e2','0xff','1,000','abc','Infinity','NaN'];for(const m of must){if(!seg.includes(m)){console.error('miss '+m);process.exit(2)}}"
 
-- [ ] [ARTIFACT] `playground/tests/server.test.js` `/negate` 至少 4 条 oracle 值复算断言（独立 -Number(n) 复算或字面量），覆盖正整数 / 负整数 / 正小数 / 负小数 各至少 1 条
+- [x] [ARTIFACT] `playground/tests/server.test.js` `/negate` 至少 4 条 oracle 值复算断言（独立 -Number(n) 复算或字面量），覆盖正整数 / 负整数 / 正小数 / 负小数 各至少 1 条
   Test: manual:node -e "const c=require('fs').readFileSync('playground/tests/server.test.js','utf8');const i=c.indexOf('/negate');if(i<0)process.exit(1);const seg=c.slice(i);const oracles=seg.match(/expect\\(\\s*res\\.body\\.negation\\s*\\)\\.toBe\\(/g)||[];if(oracles.length<4)process.exit(2)"
 
-- [ ] [ARTIFACT] `playground/tests/server.test.js` `/negate` 至少 3 条**跨调用自反不变量** oracle：同 `it()` 或 `test()` 内两次 `await request(app).get('/negate')`，第二次 query 用 `String(r1.body.negation)`，断言第二次 `body.negation === Number(<原 n>)`。覆盖正整数（如 n=5）+ 负小数（如 n=-3.14）+ 零（n=0，退化为身份）
+- [x] [ARTIFACT] `playground/tests/server.test.js` `/negate` 至少 3 条**跨调用自反不变量** oracle：同 `it()` 或 `test()` 内两次 `await request(app).get('/negate')`，第二次 query 用 `String(r1.body.negation)`，断言第二次 `body.negation === Number(<原 n>)`。覆盖正整数（如 n=5）+ 负小数（如 n=-3.14）+ 零（n=0，退化为身份）
   Test: manual:node -e "const c=require('fs').readFileSync('playground/tests/server.test.js','utf8');const i=c.indexOf('/negate');if(i<0)process.exit(1);const seg=c.slice(i);const reqs=seg.match(/await\\s+request\\(\\s*app\\s*\\)\\s*\\.get\\(\\s*['\"]\\/negate['\"]\\s*\\)/g)||[];if(reqs.length<14)process.exit(2);const chained=seg.match(/String\\s*\\(\\s*[a-zA-Z0-9_.]*\\.body\\.negation\\s*\\)/g)||[];if(chained.length<3)process.exit(3)"
 
-- [ ] [ARTIFACT] `playground/tests/server.test.js` `/negate` 至少 1 条 schema 完整性 oracle：`expect(Object.keys(res.body)...).toEqual(['negation'])` 严等
+- [x] [ARTIFACT] `playground/tests/server.test.js` `/negate` 至少 1 条 schema 完整性 oracle：`expect(Object.keys(res.body)...).toEqual(['negation'])` 严等
   Test: manual:node -e "const c=require('fs').readFileSync('playground/tests/server.test.js','utf8');const i=c.indexOf('/negate');if(i<0)process.exit(1);if(!/expect\\(\\s*Object\\.keys\\(\\s*res\\.body\\s*\\)[^)]*\\)\\.toEqual\\(\\s*\\[\\s*['\"]negation['\"]\\s*\\]\\s*\\)/.test(c.slice(i)))process.exit(2)"
 
-- [ ] [ARTIFACT] `playground/tests/server.test.js` `/negate` 至少 1 条错误响应 schema 完整性 oracle：`expect(Object.keys(res.body)...).toEqual(['error'])` 严等
+- [x] [ARTIFACT] `playground/tests/server.test.js` `/negate` 至少 1 条错误响应 schema 完整性 oracle：`expect(Object.keys(res.body)...).toEqual(['error'])` 严等
   Test: manual:node -e "const c=require('fs').readFileSync('playground/tests/server.test.js','utf8');const i=c.indexOf('/negate');if(i<0)process.exit(1);if(!/expect\\(\\s*Object\\.keys\\(\\s*res\\.body\\s*\\)[^)]*\\)\\.toEqual\\(\\s*\\[\\s*['\"]error['\"]\\s*\\]\\s*\\)/.test(c.slice(i)))process.exit(2)"
 
-- [ ] [ARTIFACT] `playground/tests/server.test.js` `/negate` 至少 1 条断言错误响应 body 不含 negation 字段（`not.toHaveProperty('negation')` 或 `hasOwnProperty('negation'))).toBe(false)`）
+- [x] [ARTIFACT] `playground/tests/server.test.js` `/negate` 至少 1 条断言错误响应 body 不含 negation 字段（`not.toHaveProperty('negation')` 或 `hasOwnProperty('negation'))).toBe(false)`）
   Test: manual:node -e "const c=require('fs').readFileSync('playground/tests/server.test.js','utf8');const i=c.indexOf('/negate');if(i<0)process.exit(1);const seg=c.slice(i);if(!(/not\\.toHaveProperty\\(['\"]negation['\"]\\)/.test(seg)||/hasOwnProperty[^)]*['\"]negation['\"][^)]*\\)\\)\\.toBe\\(false\\)/.test(seg)))process.exit(2)"
 
-- [ ] [ARTIFACT] `playground/tests/server.test.js` `/negate` 至少 1 条 type 断言：`expect(typeof res.body.negation).toBe('number')`（防 generator 返字符串型 "-5"）
+- [x] [ARTIFACT] `playground/tests/server.test.js` `/negate` 至少 1 条 type 断言：`expect(typeof res.body.negation).toBe('number')`（防 generator 返字符串型 "-5"）
   Test: manual:node -e "const c=require('fs').readFileSync('playground/tests/server.test.js','utf8');const i=c.indexOf('/negate');if(i<0)process.exit(1);if(!/expect\\(\\s*typeof\\s+res\\.body\\.negation\\s*\\)\\.toBe\\(\\s*['\"]number['\"]\\s*\\)/.test(c.slice(i)))process.exit(2)"
 
-- [ ] [ARTIFACT] `playground/tests/server.test.js` `/negate` 至少 2 条 query 别名锁断言（`value=5` 与 `x=5` 都 400 + body 不含 negation）
+- [x] [ARTIFACT] `playground/tests/server.test.js` `/negate` 至少 2 条 query 别名锁断言（`value=5` 与 `x=5` 都 400 + body 不含 negation）
   Test: manual:node -e "const c=require('fs').readFileSync('playground/tests/server.test.js','utf8');const i=c.indexOf('/negate');if(i<0)process.exit(1);const seg=c.slice(i);if(!/value:\\s*['\"]5['\"]/.test(seg))process.exit(2);if(!/x:\\s*['\"]5['\"]/.test(seg))process.exit(3)"
 
-- [ ] [ARTIFACT] `playground/tests/server.test.js` 仍保留 `/health` + `/sum` + `/multiply` + `/divide` + `/power` + `/modulo` + `/factorial` 用例（W19~W24 回归基线）
+- [x] [ARTIFACT] `playground/tests/server.test.js` 仍保留 `/health` + `/sum` + `/multiply` + `/divide` + `/power` + `/modulo` + `/factorial` 用例（W19~W24 回归基线）
   Test: manual:node -e "const c=require('fs').readFileSync('playground/tests/server.test.js','utf8');if(!(c.includes('/health')&&c.includes('/sum')&&c.includes('/multiply')&&c.includes('/divide')&&c.includes('/power')&&c.includes('/modulo')&&c.includes('/factorial')))process.exit(1)"
 
-- [ ] [ARTIFACT] `playground/README.md` 含 `/negate` 字符串
+- [x] [ARTIFACT] `playground/README.md` 含 `/negate` 字符串
   Test: manual:node -e "const c=require('fs').readFileSync('playground/README.md','utf8');if(!c.includes('/negate'))process.exit(1)"
 
-- [ ] [ARTIFACT] `playground/README.md` 给出 `/negate` happy 示例（含正数 n=5 或 n=7 等任一字面量）
+- [x] [ARTIFACT] `playground/README.md` 给出 `/negate` happy 示例（含正数 n=5 或 n=7 等任一字面量）
   Test: manual:node -e "const c=require('fs').readFileSync('playground/README.md','utf8');const i=c.indexOf('/negate');if(i<0||!(/n=5/.test(c.slice(i))||/n=7/.test(c.slice(i))))process.exit(1)"
 
-- [ ] [ARTIFACT] `playground/README.md` 给出 `/negate` 负数示例（含 n=-5 或 n=-100 等任一字面量）
+- [x] [ARTIFACT] `playground/README.md` 给出 `/negate` 负数示例（含 n=-5 或 n=-100 等任一字面量）
   Test: manual:node -e "const c=require('fs').readFileSync('playground/README.md','utf8');const i=c.indexOf('/negate');if(i<0||!(/n=-5/.test(c.slice(i))||/n=-100/.test(c.slice(i))||/n=-3\\.14/.test(c.slice(i))))process.exit(1)"
 
-- [ ] [ARTIFACT] `playground/README.md` 给出 `/negate` 零示例（含 n=0 字面量，证明 negation === 0）
+- [x] [ARTIFACT] `playground/README.md` 给出 `/negate` 零示例（含 n=0 字面量，证明 negation === 0）
   Test: manual:node -e "const c=require('fs').readFileSync('playground/README.md','utf8');const i=c.indexOf('/negate');if(i<0||!/n=0/.test(c.slice(i)))process.exit(1)"
 
-- [ ] [ARTIFACT] `playground/README.md` 给出 `/negate` strict-schema 拒示例（含 1e2 / 0xff / abc / Infinity 任一）
+- [x] [ARTIFACT] `playground/README.md` 给出 `/negate` strict-schema 拒示例（含 1e2 / 0xff / abc / Infinity 任一）
   Test: manual:node -e "const c=require('fs').readFileSync('playground/README.md','utf8');const i=c.indexOf('/negate');if(i<0||!(/n=1e2/.test(c.slice(i))||/n=0xff/.test(c.slice(i))||/n=abc/.test(c.slice(i))||/n=Infinity/.test(c.slice(i))))process.exit(1)"
 
-- [ ] [ARTIFACT] `playground/README.md` 给出 `/negate` **跨调用自反不变量** 示例（含 `f(f(n)) === n` 或 `negate(negate(n))` 或 两次 curl `n=5` + `n=-5` 演示 / 含"自反"或"involution"中文/英文关键字 任一）
+- [x] [ARTIFACT] `playground/README.md` 给出 `/negate` **跨调用自反不变量** 示例（含 `f(f(n)) === n` 或 `negate(negate(n))` 或 两次 curl `n=5` + `n=-5` 演示 / 含"自反"或"involution"中文/英文关键字 任一）
   Test: manual:node -e "const c=require('fs').readFileSync('playground/README.md','utf8');const i=c.indexOf('/negate');if(i<0)process.exit(1);const seg=c.slice(i);if(!(/f\\(f\\(n\\)\\)/.test(seg)||/negate\\(negate/.test(seg)||/自反/.test(seg)||/involution/i.test(seg)))process.exit(2)"
 
-- [ ] [ARTIFACT] `playground/README.md` 仍含 `/health` + `/sum` + `/multiply` + `/divide` + `/power` + `/modulo` + `/factorial` 段（防误删）
+- [x] [ARTIFACT] `playground/README.md` 仍含 `/health` + `/sum` + `/multiply` + `/divide` + `/power` + `/modulo` + `/factorial` 段（防误删）
   Test: manual:node -e "const c=require('fs').readFileSync('playground/README.md','utf8');if(!(c.includes('/health')&&c.includes('/sum')&&c.includes('/multiply')&&c.includes('/divide')&&c.includes('/power')&&c.includes('/modulo')&&c.includes('/factorial')))process.exit(1)"
 
-- [ ] [ARTIFACT] `playground/package.json` 未新增运行时依赖（dependencies 仅 `express`）
+- [x] [ARTIFACT] `playground/package.json` 未新增运行时依赖（dependencies 仅 `express`）
   Test: manual:node -e "const p=require('./playground/package.json');const d=Object.keys(p.dependencies||{});if(d.length!==1||d[0]!=='express')process.exit(1)"
 
-- [ ] [ARTIFACT] `playground/package.json` 未新增 devDependencies（仅 `supertest` + `vitest`，无 zod/joi/ajv/decimal.js/bignumber.js/mathjs）
+- [x] [ARTIFACT] `playground/package.json` 未新增 devDependencies（仅 `supertest` + `vitest`，无 zod/joi/ajv/decimal.js/bignumber.js/mathjs）
   Test: manual:node -e "const p=require('./playground/package.json');const d=Object.keys(p.devDependencies||{}).sort().join(',');if(d!=='supertest,vitest')process.exit(1)"
-
----
-
-## BEHAVIOR 条目（v7.4 规范 — 内嵌可执行 manual:bash 命令；evaluator 直接跑判 PASS/FAIL，不读 vitest 输出）
-
-- [ ] [BEHAVIOR] GET /negate?n=5 返 200 + {negation:-5}（happy 正整数 + 严 schema + type number）
-  Test: manual:bash -c 'cd playground && PLAYGROUND_PORT=3301 node server.js & SPID=$!; sleep 2; RESP=$(curl -fs "localhost:3301/negate?n=5"); R=$(echo "$RESP" | jq -e ".negation == -5 and (.negation | type == \"number\") and (keys == [\"negation\"])" && echo OK); kill $SPID; [ "$R" = "true OK" ] || [ -n "$R" ]'
-  期望: exit 0
-
-- [ ] [BEHAVIOR] GET /negate?n=-5 返 200 + {negation:5}（负数路径，负的负是正）
-  Test: manual:bash -c 'cd playground && PLAYGROUND_PORT=3302 node server.js & SPID=$!; sleep 2; RESP=$(curl -fs "localhost:3302/negate?n=-5"); R=$(echo "$RESP" | jq -e ".negation == 5 and (keys == [\"negation\"])" && echo OK); kill $SPID; [ -n "$R" ]'
-  期望: exit 0
-
-- [ ] [BEHAVIOR] GET /negate?n=0 与 n=-0 与 n=0.0 与 n=-0.0 都返 {negation:0}（JSON 下负零规范）
-  Test: manual:bash -c 'cd playground && PLAYGROUND_PORT=3303 node server.js & SPID=$!; sleep 2; ALL_OK=1; for N in 0 -0 0.0 -0.0; do RESP=$(curl -fs "localhost:3303/negate?n=$N"); echo "$RESP" | jq -e ".negation == 0 and (.negation | type == \"number\")" > /dev/null || ALL_OK=0; done; kill $SPID; [ "$ALL_OK" = "1" ]'
-  期望: exit 0
-
-- [ ] [BEHAVIOR] GET /negate?n=3.14 返 {negation:-3.14}；GET /negate?n=-3.14 返 {negation:3.14}（小数路径，位运算实现必断）
-  Test: manual:bash -c 'cd playground && PLAYGROUND_PORT=3304 node server.js & SPID=$!; sleep 2; R1=$(curl -fs "localhost:3304/negate?n=3.14" | jq -e ".negation == -3.14" && echo OK); R2=$(curl -fs "localhost:3304/negate?n=-3.14" | jq -e ".negation == 3.14" && echo OK); kill $SPID; [ -n "$R1" ] && [ -n "$R2" ]'
-  期望: exit 0
-
-- [ ] [BEHAVIOR] **跨调用自反不变量** f(f(5)) === 5（chained 双 curl，第二次 query 用第一次响应字段值）
-  Test: manual:bash -c 'cd playground && PLAYGROUND_PORT=3305 node server.js & SPID=$!; sleep 2; R1=$(curl -fs "localhost:3305/negate?n=5" | jq ".negation"); [ "$R1" = "-5" ] || { kill $SPID; exit 1; }; R2=$(curl -fs "localhost:3305/negate?n=$R1" | jq ".negation"); kill $SPID; [ "$R2" = "5" ]'
-  期望: exit 0
-
-- [ ] [BEHAVIOR] **跨调用自反不变量** f(f(-3.14)) === -3.14（chained 负小数闭环；位运算/绝对值实现必断）
-  Test: manual:bash -c 'cd playground && PLAYGROUND_PORT=3306 node server.js & SPID=$!; sleep 2; R1=$(curl -fs "localhost:3306/negate?n=-3.14" | jq ".negation"); [ "$R1" = "3.14" ] || { kill $SPID; exit 1; }; R2=$(curl -fs "localhost:3306/negate?n=$R1" | jq ".negation"); kill $SPID; [ "$R2" = "-3.14" ]'
-  期望: exit 0
-
-- [ ] [BEHAVIOR] **跨调用自反不变量** f(f(0)) === 0（零退化为身份；自反闭环仍成立）
-  Test: manual:bash -c 'cd playground && PLAYGROUND_PORT=3307 node server.js & SPID=$!; sleep 2; R1=$(curl -fs "localhost:3307/negate?n=0" | jq ".negation"); [ "$R1" = "0" ] || { kill $SPID; exit 1; }; R2=$(curl -fs "localhost:3307/negate?n=$R1" | jq ".negation"); kill $SPID; [ "$R2" = "0" ]'
-  期望: exit 0
-
-- [ ] [BEHAVIOR] strict-schema 拒：缺参 / 前导 + / 双负号 / 5. / .5 / 1e2 / 0xff / 1,000 / 空串 / abc / Infinity / NaN 全 400 + body 不含 negation + keys 严等 ["error"]
-  Test: manual:bash -c 'cd playground && PLAYGROUND_PORT=3308 node server.js & SPID=$!; sleep 2; ALL_OK=1; for QS in "" "n=%2B5" "n=--5" "n=5." "n=.5" "n=1e2" "n=0xff" "n=1,000" "n=" "n=abc" "n=Infinity" "n=NaN"; do CODE=$(curl -s -o /tmp/b.json -w "%{http_code}" "localhost:3308/negate?$QS"); [ "$CODE" = "400" ] || ALL_OK=0; jq -e "has(\"negation\") | not" < /tmp/b.json > /dev/null || ALL_OK=0; jq -e "keys == [\"error\"]" < /tmp/b.json > /dev/null || ALL_OK=0; done; kill $SPID; [ "$ALL_OK" = "1" ]'
-  期望: exit 0
-
-- [ ] [BEHAVIOR] query 别名锁死（27 个 PRD 禁用别名全清单：x/y/m/k/i/j/a/b/p/q/value/val/num/number/int/integer/input/arg/arg1/input1/v1/v/count/size/target/operand/data 全 400 + 不含 negation）
-  Test: manual:bash -c 'cd playground && PLAYGROUND_PORT=3309 node server.js & SPID=$!; sleep 2; ALL_OK=1; for ALIAS in x y m k i j a b p q value val num number int integer input arg arg1 input1 v1 v count size target operand data; do CODE=$(curl -s -o /tmp/a.json -w "%{http_code}" "localhost:3309/negate?$ALIAS=5"); [ "$CODE" = "400" ] || { ALL_OK=0; echo "MISS $ALIAS got $CODE"; }; jq -e "has(\"negation\") | not" < /tmp/a.json > /dev/null || ALL_OK=0; done; kill $SPID; [ "$ALL_OK" = "1" ]'
-  期望: exit 0
-
-- [ ] [BEHAVIOR] 响应禁用 21 字段全清单（result/value/answer/negated/inverse/opposite/sign_flipped/flipped/neg/minus/output/out/data/payload/response/sum/product/quotient/power/remainder/factorial 全 has()|not）— **PR-E Bug 7 验收命门**
-  Test: manual:bash -c 'cd playground && PLAYGROUND_PORT=3310 node server.js & SPID=$!; sleep 2; RESP=$(curl -fs "localhost:3310/negate?n=7"); ALL_OK=1; for FIELD in result value answer negated inverse opposite sign_flipped flipped neg minus output out data payload response sum product quotient power remainder factorial; do echo "$RESP" | jq -e "has(\"$FIELD\") | not" > /dev/null || { ALL_OK=0; echo "PR-E FAIL $FIELD 漏网"; }; done; echo "$RESP" | jq -e "keys == [\"negation\"]" > /dev/null || ALL_OK=0; kill $SPID; [ "$ALL_OK" = "1" ]'
-  期望: exit 0
-
-- [ ] [BEHAVIOR] 错误体禁用 7 字段全清单 + 跨 4 类 error path：strict reject / 缺参 / 字母串 / 1e2 全 (message/msg/reason/detail/details/description/info has()|not + 不含 negation + keys 严等 ["error"])
-  Test: manual:bash -c 'cd playground && PLAYGROUND_PORT=3311 node server.js & SPID=$!; sleep 2; ALL_OK=1; for QS in "n=abc" "n=1e2" "n=Infinity" ""; do curl -s -o /tmp/e.json "localhost:3311/negate?$QS"; for ALT in message msg reason detail details description info; do jq -e "has(\"$ALT\") | not" < /tmp/e.json > /dev/null || ALL_OK=0; done; jq -e "has(\"negation\") | not" < /tmp/e.json > /dev/null || ALL_OK=0; jq -e "keys == [\"error\"]" < /tmp/e.json > /dev/null || ALL_OK=0; done; kill $SPID; [ "$ALL_OK" = "1" ]'
-  期望: exit 0
-
-- [ ] [BEHAVIOR] 旧 7 路由 /health/sum/multiply/divide/power/modulo/factorial happy 全过（防 generator cascade 删除假绿）
-  Test: manual:bash -c 'cd playground && PLAYGROUND_PORT=3312 node server.js & SPID=$!; sleep 2; ALL_OK=1; curl -fs "localhost:3312/health" | jq -e ".ok == true" > /dev/null || ALL_OK=0; curl -fs "localhost:3312/sum?a=2&b=3" | jq -e ".sum == 5" > /dev/null || ALL_OK=0; curl -fs "localhost:3312/multiply?a=2&b=3" | jq -e ".product == 6" > /dev/null || ALL_OK=0; curl -fs "localhost:3312/divide?a=6&b=2" | jq -e ".quotient == 3" > /dev/null || ALL_OK=0; curl -fs "localhost:3312/power?a=2&b=10" | jq -e ".power == 1024" > /dev/null || ALL_OK=0; curl -fs "localhost:3312/modulo?a=10&b=3" | jq -e ".remainder == 1" > /dev/null || ALL_OK=0; curl -fs "localhost:3312/factorial?n=5" | jq -e ".factorial == 120" > /dev/null || ALL_OK=0; kill $SPID; [ "$ALL_OK" = "1" ]'
-  期望: exit 0
-
-- [ ] [BEHAVIOR] 前导 0 等价 happy（n=05 与 n=5 等价返 {negation:-5}）
-  Test: manual:bash -c 'cd playground && PLAYGROUND_PORT=3313 node server.js & SPID=$!; sleep 2; RESP=$(curl -fs "localhost:3313/negate?n=05"); R=$(echo "$RESP" | jq -e ".negation == -5 and (keys == [\"negation\"])" && echo OK); kill $SPID; [ -n "$R" ]'
-  期望: exit 0
-
-- [ ] [BEHAVIOR] vitest 全套（ws1 + 现有 server.test.js）退出码 0
-  Test: manual:bash -c 'cd playground && NODE_ENV=test npx vitest run --reporter=verbose 2>&1 | tail -5; cd ..; NODE_ENV=test npx vitest run sprints/w25-playground-negate/tests/ws1/negate.test.js --reporter=verbose 2>&1 | tail -5'
-  期望: exit 0（双套全过）
-
-- [ ] [BEHAVIOR] PR diff 行级断言：playground/server.js 旧 7 路由 app.get 行零删除（根除 cascade 假绿）
-  Test: manual:bash -c 'git fetch origin main --depth=50 2>/dev/null || true; BASE=$(git merge-base HEAD origin/main 2>/dev/null || git merge-base HEAD main 2>/dev/null || echo ""); [ -n "$BASE" ] || exit 1; DELETED=$(git diff "$BASE" -- playground/server.js | grep -cE "^-[[:space:]]*app\\.get\\([\"'\''][/](health|sum|multiply|divide|power|modulo|factorial)[\"'\'']") || DELETED=0; [ "$DELETED" -eq 0 ]'
-  期望: exit 0

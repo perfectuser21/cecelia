@@ -522,7 +522,7 @@ workstream_count: 1
 
 | WS | Test File | BEHAVIOR 覆盖 | 预期红证据（具名 test + 行位 + AssertionError 锚点） |
 |---|---|---|---|
-| WS1 | `tests/ws1/negate.test.js` | happy 正整数/负数/零/负零/小数/负小数、自反不变量、strict 拒、query 别名锁、schema 严等、错误体不含 negation、回归 7 旧路由 | 当前 main 分支 `playground/server.js` **不含** `app.get('/negate', ...)` 路由 → Express 默认 404 中间件返 `text/html` 404 → supertest `res.status === 404` → 与所有 `expect(res.status).toBe(200)` 严等比对必抛 AssertionError，详见下方 9 锚点；总 vitest FAIL count ≥ 33（happy 8 + strict 拒 12 + 值 oracle 4 + 自反 3 + schema 2 + query 别名 2 + type 1 + 错误体 1 → 33 条用例，其中预期 200/400 的对照路径均会 FAIL；只有 7 条回归用例可能 PASS） |
+| WS1 | `tests/ws1/negate.test.js` | happy 正整数/负数/零/负零/小数/负小数、跨调用自反、前导 +、query 别名、schema 完整性、不含 negation、回归 | 当前 main 分支 `playground/server.js` **不含** `app.get('/negate', ...)` 路由 → Express 默认 404 中间件返 `text/html` 404 → supertest `res.status === 404` → 与所有 `expect(res.status).toBe(200)` 严等比对必抛 AssertionError，详见下方 9 锚点；总 vitest FAIL count ≥ 33（happy 8 + strict 拒 12 + 值 oracle 4 + 自反 3 + schema 2 + query 别名 2 + type 1 + 错误体 1 → 33 条用例，其中预期 200/400 的对照路径均会 FAIL；只有 7 条回归用例可能 PASS） |
 
 ### 预期红证据 — 9 条 AssertionError 行位锚点
 
