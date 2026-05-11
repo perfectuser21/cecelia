@@ -1,0 +1,273 @@
+diff --git a/packages/workflows/skills/harness-contract-proposer/SKILL.md b/packages/workflows/skills/harness-contract-proposer/SKILL.md
+index 60c605ef8..3a58e7076 100644
+--- a/packages/workflows/skills/harness-contract-proposer/SKILL.md
++++ b/packages/workflows/skills/harness-contract-proposer/SKILL.md
+@@ -4,10 +4,11 @@ description: |
+   Harness Contract Proposer — Harness v5 GAN Layer 2a：
+   读 PRD，GAN 对抗写 Golden Path 合同（每步含真实验证命令）；
+   Reviewer APPROVED 后倒推拆 task-plan.json。
+-version: 7.5.0
++version: 7.6.0
+ created: 2026-04-08
+ updated: 2026-05-11
+ changelog:
++  - 7.6.0: 修 Bug 9 proposer 写 0 条 [BEHAVIOR] 借口"v5.0 严禁"（W26 实证 r3 proposer 在 contract-dod 末尾写"v5.0 [BEHAVIOR] 条目已搬迁到 vitest，DoD 纯度规则：本文件只装 [ARTIFACT]"）—（a）changelog v5.0 行标 [已废止]；（b）Step 2b 阈值提前并改成"必须 ≥ 4 条 [BEHAVIOR]"；（c）加"禁止借口"反例段；（d）自查 checklist 加第 5 条 grep -c BEHAVIOR ≥ 4 断言
+   - 7.5.0: 修 Bug 8 proposer 漂 PRD 字段名（W25 实证 proposer 把 PRD `{result,operation}` 改 `{negation}`）— Step 2 新增"死规则"段："PRD 是法律，proposer 是翻译，不许改字段名"。Contract response key 必须**字面**用 PRD 给的 key，禁用列表里的字段名 contract 严禁出现。加自查 checklist
+   - 7.4.0: 修 BEHAVIOR 位置协议矛盾（W22 sub-evaluator 4 次 FAIL 的根因）— DoD 分家规则改成 BEHAVIOR 内嵌 contract-dod-ws*.md 用 manual:bash（不是 vitest 索引）。Step 2b 模板示例改成至少 4 条 [BEHAVIOR] 严示例（schema 字段 + 完整性 + 禁用字段反向 + error path）。跟 evaluator v1.1 反作弊红线第 3 条对齐
+   - 7.3.0: 加 PRD Response Schema → jq -e codify 强制规则 — Step 2 验证命令写作规范新增"PRD response 字段必须 codify 成 jq -e 命令"段。配合 planner v8.1 新增的"## Response Schema"段 + reviewer v6.1 新增第 6 维 rubric verification_oracle_completeness 形成完整 schema oracle 链路。W19/W20 实证 generator schema drift 的根因消除
+@@ -15,7 +16,7 @@ changelog:
+   - 7.1.0: 修复 task-plan.json 永不生成 (#2819) — Step 3 改成每轮都生成（删 "仅 APPROVED 时执行" 门槛）；APPROVED 分支即最后一轮 proposer 的分支，inferTaskPlan 从此读取
+   - 7.0.0: Golden Path 合同 — 格式从"Feature 1/Feature 2"改为 Golden Path Steps（每步含验证命令）；GAN 新增"验证命令可否造假"审查；合同 GAN 收敛后 Proposer 输出 task-plan.json（从 Golden Path 倒推）
+   - 6.0.0: Working Skeleton — is_skeleton 检测；按 journey_type 切换 E2E test 模板（4 种）；contract-dod-ws0.md 加 YAML header
+-  - 5.0.0: TDD 融合 — 合同产出 3 份产物；Test Contract 索引表；严禁 contract-dod-ws 出现 [BEHAVIOR] 条目
++  - 5.0.0: [已废止 — v7.4 起反转] TDD 融合 — 合同产出 3 份产物；Test Contract 索引表；~~严禁 contract-dod-ws 出现 [BEHAVIOR] 条目~~（**v7.4 起反转：BEHAVIOR 必须留 contract-dod-ws*.md 内 + 带 manual:bash 命令；不要再按此条执行**）
+ ---
+ 
+ > **语言规则: 所有输出必须使用简体中文。严禁日语、韩语或其他语言。**
+@@ -217,8 +218,9 @@ PRD `## Response Schema` 段定义的字段名（key 字面值）是**不可改
+ 2. **提取 contract jq -e 字段名** → grep 出 contract-dod-ws*.md 里 `jq -e '.<key>'` 的字面 key 名
+ 3. **断言**：contract keys 集合 == PRD keys 集合（字面相等）
+ 4. **断言**：PRD 禁用列表里的字段名 **绝对不在** contract 任何 jq -e 命令的正向断言里出现（只能在反向 `! has(...)` 检查里）
++5. **断言（v7.6 新加 — Bug 9）**：`grep -c '^- \[ \] \[BEHAVIOR\]' contract-dod-ws*.md` ≥ 4。少于 4 → contract 作废，按 Step 2b 模板补齐到 ≥ 4 条不同场景（schema 字段 + keys 完整性 + 禁用字段反向 + error path 至少各 1）
+ 
+-任一断言 fail → contract 草案作废，**用 PRD 字面字段名重写**。
++任一断言 fail → contract 草案作废，**用 PRD 字面字段名 + ≥ 4 条 [BEHAVIOR] 重写**。
+ 
+ ---
+ 
+@@ -276,7 +278,30 @@ RESP=$(curl -f localhost:3001/multiply?a=7&b=5)
+ 
+ **关键变化**：BEHAVIOR 段不再是"索引指向 vitest"，而是**内嵌可独立执行的 manual:bash 命令**。Evaluator v1.1 直接跑这些命令判 PASS/FAIL，不读 vitest 输出。
+ 
+-至少 1 条 [BEHAVIOR]（CI 已 lint）。如果 PRD 含 Response Schema 段，**每个字段必须 1 条 [BEHAVIOR] 验**（reviewer 第 6 维 verification_oracle_completeness 卡）。
++### ⚠️ BEHAVIOR 数量硬阈值（v7.6 — 修 Bug 9）
++
++`contract-dod-ws{N}.md` **必须 ≥ 4 条** `- [ ] [BEHAVIOR]` 条目，至少覆盖 4 类场景各一条：
++
++1. **schema 字段值**（PRD Response Schema 每个字段一条 jq -e）
++2. **keys 完整性**（`jq -e 'keys == [...]'` 整体匹配）
++3. **禁用字段反向**（`! has("X")` 每个禁用名一条）
++4. **error path**（非法输入返 4xx + error 字段存在）
++
++如果 PRD 含 Response Schema 段，**每个字段还要额外 1 条** [BEHAVIOR] 验。Reviewer 第 7 维 behavior_count_position 会 grep 数量；< 4 直接 REVISION。
++
++### ❌ 禁止借口（v7.6 — Bug 9 实证）
++
++W26 r3 proposer 在 contract-dod 末尾写：
++> "v5.0 [BEHAVIOR] 条目已搬迁到 tests/ws1/*.test.js 的 51 个 test() 块中（DoD 纯度规则：本文件只装 [ARTIFACT]）"
++
++**这是错的**。下列借口**全部禁止**：
++
++- ❌ "DoD 纯度规则" — 不存在此规则。v7.4 起 DoD 必须含 [BEHAVIOR]
++- ❌ "v5.0 严禁 contract-dod-ws 出现 [BEHAVIOR]" — v5.0 已废止，见 changelog
++- ❌ "BEHAVIOR 已搬到 vitest" — vitest 不被 evaluator 读，evaluator 只跑 DoD 文件 manual:bash
++- ❌ "本任务行为简单，1 条够了" — 阈值是死的 ≥ 4 条不同场景
++
++只要看到 `[BEHAVIOR] 条目已搬迁` / `DoD 纯度规则` / `v5.0` 等字眼出现在 contract-dod 文件里 → 草案作废重写。
+ 
+ ```bash
+ mkdir -p "${SPRINT_DIR}"
+diff --git a/packages/workflows/skills/harness-contract-reviewer/SKILL.md b/packages/workflows/skills/harness-contract-reviewer/SKILL.md
+index 1527eb120..1c76c6dc2 100644
+--- a/packages/workflows/skills/harness-contract-reviewer/SKILL.md
++++ b/packages/workflows/skills/harness-contract-reviewer/SKILL.md
+@@ -6,10 +6,12 @@ description: |
+   而非"防作弊测试框架"。
+   核心职责：(1) spec 对齐用户真需求 (2) criteria 可量化无歧义 (3) happy + error + 边界场景全覆盖
+   GAN 对抗**多轮**直到双方达成共识。无硬轮数上限，但 Reviewer 真找不出实质 spec/产品漏洞时必须 APPROVED。
+-version: 6.2.0
++version: 6.4.0
+ created: 2026-04-08
+ updated: 2026-05-11
+ changelog:
++  - 6.4.0: 修自相矛盾死轮 cap — 删 line 86-88 "Round 1-2 阈值 7 / Round 3-4 阈值 6 / Round 5 force APPROVED" 死阶梯（违反 brain 代码 detectConvergenceTrend + 用户原话「无上限收敛」）；改成单轮阈值固定 7 + 趋势兜底，跟 harness-gan.graph.js 实际行为对齐。verdict 模板里同步删 round 阈值字样
++  - 6.3.0: 修协议盲 — 加 Golden Path 覆盖审查段（4 问题：端到端完整？验证命令真？User Story 1:1？step 间数据流自洽？）。reviewer 之前 0 处提 Golden Path
+   - 6.2.0: 加第 7 维 rubric `behavior_count_position` — W22 实证 R1 1 轮直接 APPROVED 弱合同（25 [ARTIFACT] + 0 [BEHAVIOR]），第 6 维只评"PRD response 字段被 codify"无法卡这种"BEHAVIOR 全跑 vitest 索引"的极端情况。第 7 维硬卡 contract-dod-ws*.md 必须含 ≥ 4 条 [BEHAVIOR] 标签 + 内嵌 manual:bash 命令。跟 proposer v7.4 + evaluator v1.1 协议对齐
+   - 6.1.0: 加第 6 维 rubric `verification_oracle_completeness` — 审查 contract 验证命令是否把 PRD response schema codify 成 jq -e oracle（W19/W20 实证 sub-evaluator 漏判 schema drift 的根因在 reviewer 阶段没卡住 schema codification 完整性）。Threshold 同步从"5 维 ≥ 7"升级为"6 维 ≥ 7"。
+   - 6.0.0: 对标官方 Anthropic Harness Design philosophy — 把对抗从"测试脚本防作弊 mutation testing"转到"产品/spec 质量审查"。删除 walker/AST 伪造攻击/it.skip 绕过等防作弊向量（那些应在 Evaluator 跑代码阶段被发现，不是合同阶段）；加强 spec 对齐 + 边界场景覆盖 + criteria 可量化检查。收敛条件：Reviewer 真找不出 spec/产品洞时 APPROVED。
+@@ -54,6 +56,18 @@ changelog:
+ 
+ ---
+ 
++
++## Golden Path 覆盖审查（v6.3 — 修协议盲，proposer SKILL 写 Golden Path 合同）
++
++Proposer 产出的 `contract-draft.md` 格式是 **Golden Path Steps**：每步 = `[触发] → [可观测行为] → [验证命令]`。Reviewer 必须按以下问题审：
++
++1. **Golden Path 是否端到端完整？** 从入口（用户请求/事件）到出口（终态/响应）有无断点？
++2. **每步验证命令真实可执行？** 不是占位符 `# TODO` 也不是无 jq -e 的弱断言
++3. **PRD 的每个 User Story → Golden Path 至少一个 step 对应？** 反之亦然（无多余 step）
++4. **Step 间数据流自洽？** 上一步输出格式 == 下一步输入格式
++
++少一项 → 第 2 维 scope_match_prd 或第 4 维 internal_consistency 扣分。Golden Path 断链 → 直接 REVISION 不打分。
++
+ ## 评分 Rubric（v6.2 — 7 维度，对齐 Anthropic "each criterion has hard threshold"）
+ 
+ **7 个评分维度，每维 0-10 打分。硬阈值由调用方 extractVerdict 代码判定，不让 LLM 主观汇总**。
+@@ -70,9 +84,26 @@ changelog:
+ 
+ ### 阈值规则（代码判，Reviewer 不主观综合）
+ 
+-- Round 1-2：**全部 7 维 ≥ 7 分 → APPROVED**；任何一维 < 7 → REVISION
+-- Round 3-4：**全部 7 维 ≥ 6 分 → APPROVED**（pivot 信号：标准放宽）
+-- Round 5：**外部硬 cap force APPROVED**（无论分数多少）
++**单轮阈值（不随 round 衰减）**：
++- 全部 7 维 ≥ 7 分 → APPROVED
++- 任何一维 < 7 分 → REVISION
++
++**收敛兜底（无轮数硬 cap）**：
++不设 MAX_ROUNDS。`harness-gan.graph.js` 调 `detectConvergenceTrend(rubricHistory)` 看最近 3 轮 7 维度走势：
++
++| trend | 含义 | brain 决策 |
++|---|---|---|
++| `converging` | 5+ 维持平或上升 | 继续 GAN，直到 Reviewer 真 APPROVED |
++| `diverging` | 任一维度连续 2 轮严格走低（a>b>c） | 外层 force APPROVED + `forcedApproval=true` + P1 alert |
++| `oscillating` | 最近 3 轮某维度高低高 / 低高低 | 同 diverging |
++| `insufficient_data` | < 3 轮历史 | 继续 GAN |
++
++**Reviewer 立场**：按 rubric 真实打分，不主动"赶工凑数 APPROVED"。是否 force 由 brain 代码看趋势判，Reviewer 不需要降标。预算保护用 `budgetCapUsd`（外部），质量收敛用趋势检测（外部），SKILL 内不设任何"第 N 轮放宽"。
++
++**用户原话锚点**（feedback_harness_gan_design）：
++> 我希望的是他能够就是无上限地去走，但是你得最终得有一个收敛，或者说你得有一个越来越小的一个方向，你不能说越来越大，越来越大。
++
++无上限 ≠ 5 轮死 cap。死 cap 违反用户原意。
+ 
+ ### BEHAVIOR 数量与位置审查清单（第 7 维硬阈值，0 分判定示例）
+ 
+@@ -177,8 +208,8 @@ internal_consistency / risk_registered）独立打 0-10 分。不要再按 v6 
+ 
+ ## VERDICT: {APPROVED or REVISION based on rubric threshold}
+ 
+-Round N, 阈值 X/10（Round 1-2 阈值 7，Round 3-4 阈值 6）。
+-维度 [内部一致 / 风险登记] 低于阈值 → REVISION。
++Round N, 阈值固定 7/10（不随 round 衰减）。
++维度 [...] < 7 → REVISION。外部 brain `detectConvergenceTrend` 看趋势决定是否 force（Reviewer 不参与该决策）。
+ 
+ ### 需要 Proposer 修的（只列 block 项，不列 nice-to-have）
+ 
+diff --git a/packages/workflows/skills/harness-evaluator/SKILL.md b/packages/workflows/skills/harness-evaluator/SKILL.md
+index a13786563..7dc705955 100644
+--- a/packages/workflows/skills/harness-evaluator/SKILL.md
++++ b/packages/workflows/skills/harness-evaluator/SKILL.md
+@@ -1,13 +1,17 @@
+ ---
+ id: harness-evaluator-skill
+ description: |
+-  Harness Evaluator — 阶段 B 每个 Generator workstream 完成后触发真实 DoD 验证（模式 A），
+-  以及所有 workstream 完成后触发最终 E2E Golden Path 验证（模式 B）。
+-  读 journey_type 自动选验证方式；失败时带具体反馈打回 Generator；循环直至通过。
+-version: 1.1.0
++  Harness Evaluator — 阶段 B **pre-merge gate**（不是 merge 后）：
++  Generator 写完代码 push PR 后，CI 跑过基础卫生（lint/type/vitest mock/build），
++  evaluator 在 CI 绿之后、PR merge 之前真启服务 + 跑 contract 的 manual:bash 命令验真行为。
++  PASS → 允许 merge；FAIL → 不 merge，带反馈打回 Generator 在 PR 分支 fix loop（main 不变动）。
++  模式 A 跑 contract-dod-ws*.md BEHAVIOR；模式 B（所有 ws merge 后）跑 final E2E Golden Path。
++version: 1.3.0
+ created: 2026-05-06
+ updated: 2026-05-10
+ changelog:
++  - 1.3.0: 明确 pre-merge gate 位置（反 2026-04-09 决策）— description 重写 + 加 "## 调用时机" 段，说明 evaluator 跑在 CI 绿后、PR merge 前。配套 brain 编排改动（harness-initiative.graph.js 把 evaluate 从 merge 后挪到 merge 前）由独立 PR 跟进
++  - 1.2.0: 修协议盲 — 加 Test: 字段 manual:bash/manual: 前缀处理段（proposer SKILL v7.4+ 写此格式，evaluator 必须 strip 后执行）
+   - 1.1.0: 加反作弊 reflexive check — 禁止把 vitest "passed" 当 PASS 替代物（W19/W20 实证 sub-evaluator 漏判 schema drift 的根因）。强制每条 [BEHAVIOR] Test: 命令必须真执行；命令缺 jq -e 或自然语言期望直接 FAIL；vitest 输出存在但合同 [BEHAVIOR] 未真跑 → FAIL。对齐 Anthropic harness-design "evaluator 默认会过度通过，必须 prompt 工程严格化"
+   - 1.0.0: 初版 — Step A 模式 (DoD 验证) + Step B 模式 (E2E)，按 journey_type 选验证工具
+ ---
+@@ -17,6 +21,37 @@ changelog:
+ 
+ # /harness-evaluator — Harness v5 Evaluator（阶段 B · 验证层）
+ 
++## 调用时机（v1.3 — pre-merge gate）
++
++```
++generator 写代码 + push PR
++       ↓
++   CI 跑（cheap layer）— lint/type/vitest mock/build/secrets
++       ↓ CI 绿
++   ★ evaluator 跑（expensive layer）— 真启 server + curl + jq -e   ← 这就是我
++       ↓ evaluator PASS
++   PR auto-merge（branch protection 卡 evaluator status check）
++       ↓
++   final_evaluate 跑 Golden Path 端到端
++```
++
++**关键 invariant**：evaluator 不 PASS，main 不变动。
++
++**为什么 pre-merge 而非 post-merge**：
++- post-merge 跑 → FAIL 时 main 已污染，fix loop 在污染的 main 上跑（违反"评判从执行分离"）
++- pre-merge 跑 → FAIL 不 merge，fix loop 在 PR 分支，main 永远干净
++
++**为什么 CI + evaluator 双层不可省**：
++- CI（vitest mock）验"代码层正确"，秒级零成本
++- evaluator（manual:bash）验"启动 server 真发请求看响应"，1-2min + ~$0.5
++- 两层验不同事，不可替代
++- memory 实证：CI 全绿但真启动 SyntaxError / host.docker.internal 不解析 / migration 漏跑 → 这些只 evaluator 抓
++
++**注意（撤销 2026-04-09 决策）**：
++2026-04-09 决策曾说"CI 是机械执行器，砍 evaluator"。该决策已撤销，见 memory `harness-pipeline-evaluator-as-pre-merge-gate.md`。
++
++---
++
+ **角色**: Evaluator（真实验证器）
+ **对应 task_type**: `harness_evaluate`
+ 
+@@ -105,6 +140,12 @@ Test: curl -s localhost:5221/api/brain/tasks/$TARGET_TASK_ID | jq -r '.status'
+ 对每条 `[BEHAVIOR]` 条目：
+ 
+ 1. 执行 `Test:` 字段中的命令（在真实环境，非 mock）
++**Test: 字段前缀处理（v1.2 — 修协议盲，proposer SKILL 写 manual:bash 前缀）**：
++- Test 命令若以 `manual:bash -c '<cmd>'` 开头 → strip `manual:bash -c '` 前缀和末尾 `'`，把里面的 `<cmd>` 整体用 `bash -c "<cmd>"` 执行
++- Test 命令若以 `manual:` 开头（无 bash -c）→ strip `manual:` 前缀，剩下原样 bash 执行
++- 不以 `manual:` 开头的（如 `node -e "..."` / `curl ...`） → 直接 bash 执行原文
++- 这是跟 proposer SKILL v7.4+ 协议约定的格式，evaluator 不能因看到 `manual:` 前缀就跳过命令
++
+ 2. 记录 stdout / stderr / exit code
+ 3. 将结果与 `期望:` 行对比（规则：`stdout` trim 后**包含**期望字符串即通过，大小写敏感）
+ 
+diff --git a/packages/workflows/skills/harness-generator/SKILL.md b/packages/workflows/skills/harness-generator/SKILL.md
+index 860bb3c91..08ef016c4 100644
+--- a/packages/workflows/skills/harness-generator/SKILL.md
++++ b/packages/workflows/skills/harness-generator/SKILL.md
+@@ -5,10 +5,12 @@ description: |
+   读取 GAN 对抗已批准的 sprint-contract.md + tests/ws{N}/*.test.ts + contract-dod-ws{N}.md，按 TDD 纪律两次 commit（commit 1 = 测试 Red / commit 2 = 实现 Green）。
+   融入 4 个 superpowers：test-driven-development / verification-before-completion / systematic-debugging / requesting-code-review。
+   CONTRACT IS LAW：合同里有的全实现，合同外一字不加；**测试文件从合同原样复制，commit 1 后不可修改**（CI 强校验）。
+-version: 6.1.0
++version: 6.3.0
+ created: 2026-04-08
+ updated: 2026-05-06
+ changelog:
++  - 6.3.0: 修字段名协议矛盾 — workstreams[].scope_files → tasks[].files（proposer SKILL v7.6+ 实际输出 schema 是 tasks[]，v6.2 段写错）
++  - 6.2.0: 修协议盲 — Step 1 后加 task-plan.json 必读字段段（proposer GAN 收敛后输出，含 workstreams scope_files 白名单）
+   - 6.1.0: 加 Step 6.5 Contract Self-Verification — push 前自跑 contract-dod-ws*.md 所有 [BEHAVIOR] manual:bash 命令，任一 FAIL 不准 push 必须自修。配合 proposer v7.4 + reviewer v6.2 + evaluator v1.1 协议对齐。修 W19/W20/W21/W22 实证 generator 频繁推漂移实现给 evaluator 兜底的根因
+   - 6.0.0: Working Skeleton — skeleton task 检测（is_skeleton）；允许 SKELETON STUB 注释；commit message 加 (Skeleton Red)/(Skeleton Green)；PR body 必须含 Stub 清单
+   - 5.0.0: TDD × Superpowers 融合 — 两次 commit 纪律（commit 1 测试 Red / commit 2 实现 Green）+ 4 个 superpowers（test-driven-development / verification-before-completion / systematic-debugging / requesting-code-review）；测试文件从合同原样 checkout，commit 1 后不可修改；Mode 2 harness_fix 走 systematic-debugging
+@@ -163,6 +165,30 @@ git ls-tree -r "origin/${CONTRACT_BRANCH}" -- "${SPRINT_DIR}/tests/ws${WS_IDX}/"
+ 
+ **只读 sprint-contract.md，不读 contract-draft.md。**
+ 
++
++
++**v6.2 协议盲修复 — task-plan.json**：
++
++`${SPRINT_DIR}/task-plan.json` 由 proposer GAN 收敛后输出，含任务 DAG + workstream 边界。Generator 必读字段：
++
++| 字段 | 用途 |
++|---|---|
++| `tasks[].task_id` | 当前 `WORKSTREAM` 环境变量匹配的子任务（如 ws1 / ws2） |
++| `tasks[].files` | 允许改的文件白名单（**禁止跨 task 改文件**） |
++| `tasks[].depends_on` | 依赖的 task_id，必须先完成 |
++
++读取：
++```bash
++WS=${WORKSTREAM:-ws1}
++SCOPE=$(jq -r ".tasks[] | select(.task_id==\"$WS\") | .files[]" "${SPRINT_DIR}/task-plan.json")
++echo "本 task 可改文件: $SCOPE"
++```
++
++若 task-plan.json 不存在（老 contract）→ 退化到 contract-draft.md 的 ws 段推断。
++
++**v6.3 字段名对齐**：proposer SKILL v7.6+ 实际产出 schema 是 `tasks[]`（含 `task_id`/`files`/`depends_on`/`scope`/`dod`），不是 `workstreams[]`。本表已对齐。
++
++
+ ### Step 2: 创建 cp-* 分支（强制仓库命名规约）
+ 
+ **为什么强制 cp-\***：仓库 `hooks/branch-protect.sh` 硬编码只接受 `^cp-[0-9]{8,10}-[a-z0-9][a-z0-9_-]*$`。任何其他命名（如 Brain worktree 默认的 `harness-v2/task-<uuid>`）在 CI 的 branch-naming check 上直接挂。
