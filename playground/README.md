@@ -24,6 +24,7 @@ npm start           # 起 server（默认 :3000）
 - `GET /power?a=N&b=M` → 返回 a^b（**strict-schema** + **0^0 不定式拒** + **结果有限性兜底**：`Number.isFinite(result)===false` 时 400，覆盖 0^负 / 负^分数 / 溢出）
 - `GET /modulo?a=N&b=M` → 返回 a%b 的余数（**strict-schema** + **除零兜底**：`b=0`/`b=0.0` → 400；**JS 原生 truncated 取模**：余数符号跟随被除数 a，与数学 floored mod 区分）
 - `GET /factorial?n=N` → 返回 n! 阶乘（**整数白名单 strict-schema** `^\d+$` + **上界 18 拒**：`n > 18` → 400（精度上界，避免超过 `Number.MAX_SAFE_INTEGER`）+ **迭代精确累积**：`for(i=2; i<=n; i++) acc *= i`，不引入 BigInt / Stirling / gamma 近似）
+- `GET /increment?value=N` → 返回 `{result: N+1, operation: "increment"}`（**整数白名单 strict-schema** `^-?\d+$` + **精度上下界拒**：`|Number(value)| > 9007199254740990` → 400（+1 后避免超过 `Number.MAX_SAFE_INTEGER`）+ **query 名锁死**：只接受 `value`，别名 `n/a/b/x/val/input/...` 全 400）
 
 ### `GET /sum` 示例
 
@@ -326,3 +327,84 @@ curl -s -o /dev/stderr -w 'HTTP %{http_code}\n' 'http://127.0.0.1:3000/factorial
 curl -s -o /dev/stderr -w 'HTTP %{http_code}\n' 'http://127.0.0.1:3000/factorial?num=5'
 # HTTP 400  (别名 num)
 ```
+
+### `GET /increment` 示例
+
+happy path（含数学边界 0+1=1、-1+1=0、精度上下界 |9007199254740990| 严等 ±MAX_SAFE_INTEGER∓1）：
+
+```bash
+curl -s 'http://127.0.0.1:3000/increment?value=5'
+# {"result":6,"operation":"increment"}
+
+curl -s 'http://127.0.0.1:3000/increment?value=0'
+# {"result":1,"operation":"increment"}        # off-by-one 正侧
+
+curl -s 'http://127.0.0.1:3000/increment?value=-1'
+# {"result":0,"operation":"increment"}        # off-by-one 负侧
+
+curl -s 'http://127.0.0.1:3000/increment?value=9007199254740990'
+# {"result":9007199254740991,"operation":"increment"}  # 精度上界，===Number.MAX_SAFE_INTEGER
+
+curl -s 'http://127.0.0.1:3000/increment?value=-9007199254740990'
+# {"result":-9007199254740989,"operation":"increment"} # 精度下界
+
+curl -s 'http://127.0.0.1:3000/increment?value=01'
+# {"result":2,"operation":"increment"}        # 前导 0 happy（不许错用八进制）
+```
+
+精度上下界拒（核心兜底：strict 通过后显式 `Math.abs(Number(value)) > 9007199254740990` 判定，避免 `+1` 后超过 `Number.MAX_SAFE_INTEGER` 造成精度漂移；不引入 BigInt 重写）：
+
+```bash
+curl -s -o /dev/stderr -w 'HTTP %{http_code}\n' 'http://127.0.0.1:3000/increment?value=9007199254740991'
+# {"error":"value 必须是唯一 query 名 + 匹配 ^-?\\d+$ ... + |value| ≤ 9007199254740990"}
+# HTTP 400  (上界 +1 拒)
+
+curl -s -o /dev/stderr -w 'HTTP %{http_code}\n' 'http://127.0.0.1:3000/increment?value=-9007199254740991'
+# HTTP 400  (下界 -1 拒)
+
+curl -s -o /dev/stderr -w 'HTTP %{http_code}\n' 'http://127.0.0.1:3000/increment?value=99999999999999999999'
+# HTTP 400  (远超上界拒)
+```
+
+strict-schema 拒（**整数白名单** `^-?\d+$`，与 `/factorial` 同款思路；负号 / 小数 / 前导 + / 双重负号 / 科学计数法 / 十六进制 / 千分位 / 空格 / `Infinity` / `NaN` / 字母串 / 空串全 400）：
+
+```bash
+curl -s -o /dev/stderr -w 'HTTP %{http_code}\n' 'http://127.0.0.1:3000/increment?value=1.5'
+# HTTP 400  (小数)
+
+curl -s -o /dev/stderr -w 'HTTP %{http_code}\n' 'http://127.0.0.1:3000/increment?value=1.0'
+# HTTP 400  (带小数点的"整数")
+
+curl -s -o /dev/stderr -w 'HTTP %{http_code}\n' 'http://127.0.0.1:3000/increment?value=1e2'
+# HTTP 400  (科学计数法)
+
+curl -s -o /dev/stderr -w 'HTTP %{http_code}\n' 'http://127.0.0.1:3000/increment?value=0xff'
+# HTTP 400  (十六进制)
+
+curl -s -o /dev/stderr -w 'HTTP %{http_code}\n' 'http://127.0.0.1:3000/increment?value=%2B5'
+# HTTP 400  (前导 +5 URL 编码)
+
+curl -s -o /dev/stderr -w 'HTTP %{http_code}\n' 'http://127.0.0.1:3000/increment?value=--5'
+# HTTP 400  (双重负号)
+
+curl -s -o /dev/stderr -w 'HTTP %{http_code}\n' 'http://127.0.0.1:3000/increment?value=Infinity'
+# HTTP 400  (Infinity 字面)
+
+curl -s -o /dev/stderr -w 'HTTP %{http_code}\n' 'http://127.0.0.1:3000/increment?value='
+# HTTP 400  (空串)
+
+curl -s -o /dev/stderr -w 'HTTP %{http_code}\n' 'http://127.0.0.1:3000/increment'
+# HTTP 400  (缺 value)
+```
+
+query 别名锁死（只接受 `value=`，别名 `n/x/val/input/a/b/...` 全拒 400）：
+
+```bash
+curl -s -o /dev/stderr -w 'HTTP %{http_code}\n' 'http://127.0.0.1:3000/increment?n=5'
+# HTTP 400  (别名 n)
+
+curl -s -o /dev/stderr -w 'HTTP %{http_code}\n' 'http://127.0.0.1:3000/increment?input=5'
+# HTTP 400  (别名 input)
+```
+
+响应 schema 完整性（成功响应顶层 keys 严格等于 `["operation","result"]`；不漂到禁用同义字段 `incremented`/`next`/`successor`/`n_plus_one`/`plus_one`/`succ`/`inc`/`incr`/`incrementation`，也不漂到 generic 字段 `value`/`input`/`output`/`data`/`payload`/`answer`/`meta`，错误体顶层 keys 严格等于 `["error"]`）。
