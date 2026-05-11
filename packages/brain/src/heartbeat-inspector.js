@@ -9,6 +9,13 @@
  *   - e41acc59-f1a8-44da-994f-dc4e5b0bc95c — 二次重复识别，已被同一实现覆盖（PR #2883）
  *   - c17fae35-791b-4ca9-8ebf-e274dc9a887e — 三次重复识别，已被同一实现覆盖
  *   三个 learning_id 在此显式登记，避免 Cortex 反复派发同一 insight 修复任务。
+ *
+ * 关联 Cortex Insight（「假平静」识别规则，退化态而非健康态）：
+ *   - 9290bfaf-ebe7-438a-97ed-20ac7d1c13db — tasks_in_progress=0 + recent_failures>0
+ *     不等于系统健康；更可能是系统停止工作（退化态）而非修复完成。
+ *     落地于本文件 collectSystemSnapshot（新增 recent_failures 24h 窗口）
+ *     + runHeartbeatInspection 的 P0 告警 heartbeat_false_calm
+ *     + buildHeartbeatPrompt 的「假平静先兆」提示。
  */
 
 import { readFileSync } from 'fs';
@@ -49,13 +56,16 @@ function readHeartbeatFile(filePath) {
 
 /**
  * 收集当前系统快照（给 L1 丘脑参考数据）
- * 5 个并行 SQL 查询：tasks / events / proposals / focus / active_goals
+ * 6 个并行 SQL 查询：tasks / events / proposals / focus / active_goals / recent_failures
  *
  * active_goals = COUNT(objectives WHERE status='in_progress')
  *   归零是方向性崩溃前置信号（Cortex Insight ec71a550）。
+ *
+ * recent_failures = COUNT(tasks WHERE status='failed' AND updated_at > NOW()-24h)
+ *   与 tasks_in_progress=0 共同触发「假平静」识别（Cortex Insight 9290bfaf）。
  */
 async function collectSystemSnapshot(pool) {
-  const [tasks, events, proposals, focus, goals] = await Promise.all([
+  const [tasks, events, proposals, focus, goals, recentFailures] = await Promise.all([
     pool.query(`
       SELECT status, COUNT(*)::int as count
       FROM tasks WHERE status IN ('in_progress', 'queued', 'failed')
@@ -82,6 +92,11 @@ async function collectSystemSnapshot(pool) {
       SELECT COUNT(*)::int as count FROM objectives
       WHERE status = 'in_progress'
     `),
+    pool.query(`
+      SELECT COUNT(*)::int as count FROM tasks
+      WHERE status = 'failed'
+        AND updated_at > NOW() - INTERVAL '24 hours'
+    `),
   ]);
 
   return {
@@ -92,6 +107,7 @@ async function collectSystemSnapshot(pool) {
     pending_proposals: parseInt(proposals.rows[0]?.count || 0),
     active_okrs: focus.rows,
     active_goals: parseInt(goals.rows[0]?.count || 0),
+    recent_failures: parseInt(recentFailures.rows[0]?.count || 0),
     current_hour: new Date().getHours(),
     day_of_week: new Date().getDay(), // 0=周日, 1=周一
   };
@@ -102,6 +118,8 @@ async function collectSystemSnapshot(pool) {
  */
 function buildHeartbeatPrompt(heartbeatMd, snapshot) {
   const dayNames = ['日', '一', '二', '三', '四', '五', '六'];
+  const recentFailures = snapshot.recent_failures ?? 0;
+  const isFalseCalm = snapshot.tasks_in_progress === 0 && recentFailures > 0;
   return `你是 Cecelia 的巡检模块。根据用户定义的检查清单和当前系统状态，判断需要采取什么行动。
 
 ## 用户定义的检查清单
@@ -110,9 +128,10 @@ ${heartbeatMd}
 
 ## 当前系统状态
 
-- 进行中任务: ${snapshot.tasks_in_progress}
+- 进行中任务: ${snapshot.tasks_in_progress}${isFalseCalm ? ' ⚠️ 「假平静」先兆（已发 P0 告警）：tasks_in_progress=0 且 recent_failures>0，更可能是系统停止工作（退化态）而非修复完成，禁止判定为 healthy' : ''}
 - 排队任务: ${snapshot.tasks_queued}
 - 失败任务: ${snapshot.tasks_failed}
+- 24h 近期失败 (recent_failures): ${recentFailures}
 - 待处理提案: ${snapshot.pending_proposals}
 - 当前时间: ${snapshot.current_hour}:00, 星期${dayNames[snapshot.day_of_week]}
 - 活跃 objectives (active_goals): ${snapshot.active_goals ?? 0}${snapshot.active_goals === 0 ? ' ⚠️ 方向性崩溃先兆（已发 P0 告警）' : ''}
@@ -226,6 +245,22 @@ async function runHeartbeatInspection(pool, options = {}) {
       );
     } catch (alertErr) {
       console.error('[heartbeat] active_goals=0 alert failed (non-fatal):', alertErr.message);
+    }
+  }
+
+  // 2c. tasks_in_progress=0 && recent_failures>0 → 「假平静」先兆，立即发 P0 告警
+  //     Cortex Insight: 9290bfaf-ebe7-438a-97ed-20ac7d1c13db
+  //     不等于系统健康；更可能是系统停止工作（退化态）而非修复完成。
+  //     与 active_goals=0 互不冲突，可同时触发不同 eventType 的 P0。
+  if (snapshot.tasks_in_progress === 0 && (snapshot.recent_failures ?? 0) > 0) {
+    try {
+      await raiseAlert(
+        'P0',
+        'heartbeat_false_calm',
+        `Heartbeat 检测到「假平静」：tasks_in_progress=0 且 recent_failures=${snapshot.recent_failures}（24h 内失败任务数 > 0）。这更可能是系统停止工作（退化态）而非修复完成，需立即人工排查任务调度是否卡死。`,
+      );
+    } catch (alertErr) {
+      console.error('[heartbeat] false_calm alert failed (non-fatal):', alertErr.message);
     }
   }
 
