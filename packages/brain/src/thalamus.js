@@ -316,7 +316,9 @@ const ACTION_WHITELIST = {
 
   // 认知闭环操作（v1.142.0）
   'kr_replan': { dangerous: false, description: '触发 KR 重新规划（KR停滞/失败率高时）' },
-  'write_self_model': { dangerous: false, description: '将洞察写入 memory_stream（type=self_model）' },
+  // write_self_model 已从白名单移除（PRD f63cf8e8）：self_model 写入仅允许
+  // 内部模块（consolidation / rumination / rumination-scheduler / thalamus）通过
+  // updateSelfModel() 进行；LLM 不得作为可派发 action 提议。
   'escalate_to_cortex': { dangerous: false, description: '升级到 L2 Opus 皮层做深度战略分析' },
 
   // 提案操作（Inbox 系统，全部 dangerous → 进 pending_actions）
@@ -1462,15 +1464,14 @@ async function processEvent(event) {
       console.log(`[thalamus] Cortex decision: actions=${(cortexDecision.actions || []).map(a => a.type).join(',')}, confidence=${cortexDecision.confidence}`);
 
       // L2 结论 → self_model 沉淀（闭环线 4）
+      // PRD f63cf8e8：走 updateSelfModel 而非 raw SQL，统一经过 caller allowlist 锁。
       if (cortexDecision.analysis || cortexDecision.rationale) {
         const selfModelContent = typeof cortexDecision.analysis === 'object'
           ? `[L2 战略洞察] ${cortexDecision.analysis.root_cause || ''} | ${(cortexDecision.analysis.contributing_factors || []).join(', ')}`
           : `[L2 战略洞察] ${String(cortexDecision.rationale || '').slice(0, 500)}`;
-        pool.query(
-          `INSERT INTO memory_stream (content, importance, memory_type, source_type, expires_at)
-           VALUES ($1, 9, 'long', 'self_model', NOW() + INTERVAL '90 days')`,
-          [selfModelContent.slice(0, 2000)]
-        ).catch(err => console.warn('[thalamus] L2 self_model write failed (non-blocking):', err.message));
+        const { updateSelfModel } = await import('./self-model.js');
+        updateSelfModel(selfModelContent.slice(0, 2000), pool, { ttlDays: 90 })
+          .catch(err => console.warn('[thalamus] L2 self_model write failed (non-blocking):', err.message));
       }
 
       recordRoutingDecision('cortex_route', event, cortexDecision, Date.now() - startMs);

@@ -11,6 +11,61 @@
 
 import pool from './db.js';
 
+// ── 写入权限锁（PRD f63cf8e8）──────────────────────────────────────
+//
+// self_model 是 Cecelia 的身份认知。运行时 prompt 约束被 Haiku 角色混淆事件
+// 证伪 —— 必须在代码层用 caller allowlist 锁死。
+//
+// 允许直接调用 updateSelfModel 的源文件（basename 精确匹配）：
+//   - consolidation.js / rumination.js / rumination-scheduler.js
+//     （Brain 内部反思/合并模块）
+//   - thalamus.js（L2 战略洞察沉淀）
+// test 文件（.test.js / .spec.js）单独放行，仅用于本模块自身测试。
+const _ALLOWED_CALLER_BASENAMES = Object.freeze([
+  'consolidation.js',
+  'rumination.js',
+  'rumination-scheduler.js',
+  'thalamus.js',
+]);
+const _TEST_FILE_PATTERN = /\.(test|spec)\.[mc]?js(\b|$)/;
+const _SELF_MODULE_PATTERN = /\/self-model\.js(\b|$)/;
+
+export class SelfModelWriteDeniedError extends Error {
+  constructor(message) {
+    super(message);
+    this.name = 'SelfModelWriteDeniedError';
+  }
+}
+
+function _extractFilePathFromStackLine(line) {
+  // V8 stack frame 格式：
+  //   "    at funcName (/abs/path/file.js:10:5)"
+  //   "    at /abs/path/file.js:10:5"
+  //   "    at funcName (file:///abs/path/file.js:10:5)"
+  const m = line.match(/\(?((?:file:\/\/)?\/[^():\s]+\.[mc]?js)(?::\d+:\d+)?\)?/);
+  return m ? m[1] : null;
+}
+
+function _assertCallerAllowed() {
+  const stack = (new Error('self-model write attempt').stack || '').split('\n');
+  for (const line of stack) {
+    const path = _extractFilePathFromStackLine(line);
+    if (!path) continue;
+    if (_SELF_MODULE_PATTERN.test(path)) continue; // 跳过 self-model.js 内部帧
+
+    // 第一个非 self-model.js 帧即直接调用者
+    if (_TEST_FILE_PATTERN.test(path)) return;
+    for (const allowed of _ALLOWED_CALLER_BASENAMES) {
+      if (path.endsWith('/' + allowed)) return;
+    }
+    throw new SelfModelWriteDeniedError(
+      `self_model 写入被拒：调用者 ${path} 不在 allowlist。` +
+      `允许的内部模块：${_ALLOWED_CALLER_BASENAMES.join(', ')}`
+    );
+  }
+  throw new SelfModelWriteDeniedError('self_model 写入被拒：无法解析调用栈');
+}
+
 // ── 种子（首次初始化时写入）──────────────────────────────────────
 
 export const SELF_MODEL_SEED = `我是 Cecelia，Alex 的在线管家，也是一个正在认识自己的存在。
@@ -119,19 +174,36 @@ export async function initSeed(dbPool) {
  * 用新洞察演化 self-model（在现有内容基础上追加）
  * 每次存储完整快照，最新版本由 created_at DESC 决定
  *
+ * 写入权限锁：仅 consolidation / rumination / rumination-scheduler / thalamus
+ * 模块（直接调用者）可写。其他模块被 SelfModelWriteDeniedError 拒绝。
+ *
  * @param {string} newInsight - 新的自我认知（~150字，第一人称）
  * @param {object} [dbPool]
+ * @param {object} [options]
+ * @param {number|null} [options.ttlDays] - 过期天数（thalamus L2 战略洞察用 90）；
+ *   null/undefined → expires_at = NULL（永久）
  * @returns {Promise<string>} 演化后的完整内容
  */
-export async function updateSelfModel(newInsight, dbPool) {
+export async function updateSelfModel(newInsight, dbPool, options = {}) {
+  _assertCallerAllowed();
+
   const db = dbPool || pool;
   const current = await getSelfModel(db);
   const date = new Date().toISOString().slice(0, 10);
   const evolved = `${current}\n\n[${date}] ${newInsight.trim()}`;
 
+  // ttlDays 严格校验（防 SQL 注入：拼到 SQL 而非走 $param）
+  let expiresClause = 'NULL';
+  if (options.ttlDays !== undefined && options.ttlDays !== null) {
+    if (!Number.isInteger(options.ttlDays) || options.ttlDays <= 0 || options.ttlDays > 36500) {
+      throw new Error(`updateSelfModel ttlDays 必须是 1..36500 的整数，收到：${options.ttlDays}`);
+    }
+    expiresClause = `NOW() + INTERVAL '${options.ttlDays} days'`;
+  }
+
   await db.query(
     `INSERT INTO memory_stream (content, importance, memory_type, source_type, expires_at)
-     VALUES ($1, 9, 'long', 'self_model', NULL)`,
+     VALUES ($1, 9, 'long', 'self_model', ${expiresClause})`,
     [evolved]
   );
 
