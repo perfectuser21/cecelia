@@ -1,5 +1,5 @@
 {
-  "initiative_id": "pending",
+  "initiative_id": "385f2b20-937a-4ee2-a085-4022a2f393b2",
   "journey_type": "autonomous",
   "journey_type_reason": "playground 是独立 HTTP server 子项目，本次只动 server 路由 + 单测 + README，无 UI / 无 brain tick / 无 engine hook / 无远端 agent 协议；与 W19~W23 同分类。",
   "tasks": [
