@@ -250,6 +250,27 @@ export async function dispatchNextTask(goalIds) {
     return { dispatched: false, reason: 'circuit_breaker_open', actions };
   }
 
+  // 2.6 Executor preflight — bridge ping 提到队首，
+  //     bridge 不可用时整波 dispatch 立刻退场：不抢 task、不写 in_progress、
+  //     不释放 claim。原 checkCeceliaRunAvailable 在 in_progress 标记之后才调，
+  //     bridge 离线时每个 tick 需要 4 次 DB 写 (claim/in_progress/revert/release)
+  //     才发现执行不了，1 小时断联累积数百次无谓 IO + 短暂 zombie 窗口。
+  //     Insight learning_id=c8b0160f-709b-483c-bc49-384df2691809：
+  //     "一次 ping 阻止整个断联期间的所有僵尸任务"。
+  //     第 5 步保留同款检查作 defense-in-depth（preflight 与 trigger 之间窗口）。
+  const executorPreflight = await checkCeceliaRunAvailable();
+  if (!executorPreflight.available) {
+    tickLog(`[dispatch] executor preflight failed: ${executorPreflight.error} — skip dispatch (no claim, no status write)`);
+    await recordDispatchResult(pool, false, 'executor_offline');
+    return {
+      dispatched: false,
+      reason: 'executor_offline',
+      detail: executorPreflight.error,
+      executor_url: executorPreflight.path,
+      actions,
+    };
+  }
+
   // 2.5 Drain retired harness tasks — 一次 SQL 把所有 queued retired 类型批量
   //     标 pipeline_terminal_failure。必须在 selectNextDispatchableTask 之前，
   //     防止 retired task 跟正常 P0/P1 队列竞争 — 在 bridge 不可用的环境（CI
