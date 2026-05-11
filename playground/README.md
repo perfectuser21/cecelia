@@ -22,6 +22,7 @@ npm start           # 起 server（默认 :3000）
 - `GET /multiply?a=N&b=M` → 返回 a×b 的乘积（**strict-schema**：拒绝科学计数法 / `Infinity` / 前导 `+` / 十六进制 等）
 - `GET /divide?a=N&b=M` → 返回 a÷b 的商（**strict-schema** + **除零兜底**：`b=0`/`b=0.0` → 400）
 - `GET /power?a=N&b=M` → 返回 a^b（**strict-schema** + **0^0 不定式拒** + **结果有限性兜底**：`Number.isFinite(result)===false` 时 400，覆盖 0^负 / 负^分数 / 溢出）
+- `GET /modulo?a=N&b=M` → 返回 a%b 的余数（**strict-schema** + **除零兜底**：`b=0`/`b=0.0` → 400；**JS 原生 truncated 取模**：余数符号跟随被除数 a，与数学 floored mod 区分）
 
 ### `GET /sum` 示例
 
@@ -174,6 +175,68 @@ curl -s -o /dev/stderr -w 'HTTP %{http_code}\n' 'http://127.0.0.1:3000/power?a=I
 # HTTP 400
 
 curl -s -o /dev/stderr -w 'HTTP %{http_code}\n' 'http://127.0.0.1:3000/power?a=2'
+# {"error":"a 和 b 都是必填 query 参数"}
+# HTTP 400
+```
+
+### `GET /modulo` 示例
+
+happy path（含整数 / 整除 / 浮点 / 0%N，全部走 JS 原生 `%`，不做精度截断）：
+
+```bash
+curl -s 'http://127.0.0.1:3000/modulo?a=5&b=3'
+# {"remainder":2}
+
+curl -s 'http://127.0.0.1:3000/modulo?a=10&b=3'
+# {"remainder":1}
+
+curl -s 'http://127.0.0.1:3000/modulo?a=6&b=2'
+# {"remainder":0}
+
+curl -s 'http://127.0.0.1:3000/modulo?a=5.5&b=2'
+# {"remainder":1.5}
+
+curl -s 'http://127.0.0.1:3000/modulo?a=0&b=5'
+# {"remainder":0}
+```
+
+符号不变量（核心：JS truncated 取模，余数符号跟随 **被除数 a**，与数学 floored mod 区分；floored 实现 `((a%b)+b)%b` 在以下用例必挂）：
+
+```bash
+curl -s 'http://127.0.0.1:3000/modulo?a=-5&b=3'
+# {"remainder":-2}        # 符号跟随被除数 -5；floored mod 会返 1
+
+curl -s 'http://127.0.0.1:3000/modulo?a=5&b=-3'
+# {"remainder":2}         # 符号跟随被除数 5；floored mod 会返 -1
+
+curl -s 'http://127.0.0.1:3000/modulo?a=-5&b=-3'
+# {"remainder":-2}        # 双负，符号仍跟随 a
+```
+
+除零拒绝（核心兜底：strict-schema 通过后显式 `Number(b) === 0` 判定，0%0 与 b=0.0 都拒）：
+
+```bash
+curl -s -o /dev/stderr -w 'HTTP %{http_code}\n' 'http://127.0.0.1:3000/modulo?a=5&b=0'
+# {"error":"除数 b 不能为 0"}
+# HTTP 400
+
+curl -s -o /dev/stderr -w 'HTTP %{http_code}\n' 'http://127.0.0.1:3000/modulo?a=0&b=0'
+# HTTP 400
+
+curl -s -o /dev/stderr -w 'HTTP %{http_code}\n' 'http://127.0.0.1:3000/modulo?a=5&b=0.0'
+# HTTP 400
+```
+
+strict-schema 拒绝（与 `/multiply`、`/divide`、`/power` 同款正则 `^-?\d+(\.\d+)?$`，禁 `Number()` 假绿）：
+
+```bash
+curl -s -o /dev/stderr -w 'HTTP %{http_code}\n' 'http://127.0.0.1:3000/modulo?a=1e3&b=2'
+# HTTP 400
+
+curl -s -o /dev/stderr -w 'HTTP %{http_code}\n' 'http://127.0.0.1:3000/modulo?a=Infinity&b=2'
+# HTTP 400
+
+curl -s -o /dev/stderr -w 'HTTP %{http_code}\n' 'http://127.0.0.1:3000/modulo?a=5'
 # {"error":"a 和 b 都是必填 query 参数"}
 # HTTP 400
 ```
