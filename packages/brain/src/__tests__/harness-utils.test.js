@@ -2,7 +2,7 @@
 // 覆盖 topologicalLayers / buildGeneratorPrompt / extractWorkstreamIndex
 
 import { describe, it, expect } from 'vitest';
-import { topologicalLayers, buildGeneratorPrompt, extractWorkstreamIndex } from '../../harness-utils.js';
+import { topologicalLayers, buildGeneratorPrompt, extractWorkstreamIndex } from '../harness-utils.js';
 
 describe('topologicalLayers', () => {
   it('扁平 DAG（无依赖） → 1 层', () => {
@@ -42,21 +42,28 @@ describe('topologicalLayers', () => {
 });
 
 describe('buildGeneratorPrompt', () => {
-  it('普通模式包含 task_id / DoD / files', () => {
+  it('普通模式 inline SKILL pattern (Bug 7 fix) + 含 task_id / DoD / files', () => {
     const p = buildGeneratorPrompt(
       { id: 't1', title: 'T', description: 'D', payload: { dod: ['x'], files: ['f.js'], parent_task_id: 'init' } },
       { fixMode: false }
     );
-    expect(p).toContain('/harness-generator');
+    // Bug 7 修复：第一行是 inline agent 引导，不是 slash command
+    expect(p.split('\n')[0]).toBe('你是 harness-generator agent。按下面 SKILL 指令工作。');
+    // SKILL v6.1 真注入了（Step 6.5 Contract Self-Verification 关键词必有）
+    expect(p).toContain('Contract Self-Verification');
+    // 任务数据仍嵌入
     expect(p).toContain('task_id: t1');
     expect(p).toContain('fix_mode: false');
     expect(p).toContain('- x');
     expect(p).toContain('- f.js');
   });
-  it('fix mode 头部加 (FIX mode)', () => {
+  it('fix mode inline pattern + 任务段含 (FIX mode) 标记', () => {
     const p = buildGeneratorPrompt({ id: 't1', payload: {} }, { fixMode: true });
-    expect(p).toContain('/harness-generator (FIX mode)');
+    expect(p.split('\n')[0]).toBe('你是 harness-generator agent。按下面 SKILL 指令工作。');
+    expect(p).toContain('FIX mode');
     expect(p).toContain('fix_mode: true');
+    // SKILL v6.1 Step 6.5 关键词必有
+    expect(p).toContain('Contract Self-Verification');
   });
 });
 

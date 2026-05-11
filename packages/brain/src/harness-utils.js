@@ -3,7 +3,10 @@
  *
  * 当前导出：
  *   - makeCpBranchName(taskId, { now }) — 生成符合 branch-protect 规约的分支名
+ *   - buildGeneratorPrompt — Bug 7 fix：inline SKILL pattern
  */
+
+import { loadSkillContent } from './harness-shared.js';
 
 /**
  * 返回上海时区（UTC+8）的 MMDDHHMM 8 位字符串。
@@ -137,8 +140,17 @@ export function extractWorkstreamIndex(payload) {
 }
 
 /**
- * 构造 /harness-generator prompt。
- * fixMode=true 时头部加 (FIX mode)，触发 Generator skill 走 fix 路径。
+ * 构造 harness-generator prompt（Bug 7 fix — inline SKILL pattern）。
+ *
+ * 历史问题：之前用 slash command `/harness-generator` 让 container 自解析 SKILL，
+ * 跟 W23 reviewer Bug 6 同模式 — container 解析到旧/缺失的 SKILL，generator
+ * 收不到 SKILL v6.1 Step 6.5 Contract Self-Verification 内容，没自验
+ * contract → 字段名漂移（W19→W24 一致 5/5）。
+ *
+ * 修法（同 PR D buildReviewerPrompt/buildProposerPrompt）：用 loadSkillContent
+ * 把 SKILL.md 完整内容 inline 注入 prompt，SKILL.md 是真 SSOT。
+ *
+ * fixMode=true 时任务段加 FIX mode 标记。
  *
  * @param {object} task   {id, title, description, payload: {dod[], files[], parent_task_id, logical_task_id}}
  * @param {{fixMode?: boolean}} opts
@@ -148,10 +160,16 @@ export function buildGeneratorPrompt(task, { fixMode = false } = {}) {
   const payload = task.payload || {};
   const dod = Array.isArray(payload.dod) ? payload.dod.join('\n- ') : '';
   const files = Array.isArray(payload.files) ? payload.files.join('\n- ') : '';
-  const header = fixMode ? '/harness-generator (FIX mode)' : '/harness-generator';
+  const skillContent = loadSkillContent('harness-generator');
+  const fixModeNotice = fixMode ? '**FIX mode**：本轮是 Brain 派 fix loop。按 SKILL 的 systematic-debugging 流程修上一轮 evaluator FAIL 反馈。\n\n' : '';
   return [
-    header,
+    '你是 harness-generator agent。按下面 SKILL 指令工作。',
     '',
+    skillContent,
+    '',
+    '---',
+    '',
+    fixModeNotice,
     `task_id: ${task.id}`,
     `initiative_id: ${payload.parent_task_id || ''}`,
     `logical_task_id: ${payload.logical_task_id || ''}`,
