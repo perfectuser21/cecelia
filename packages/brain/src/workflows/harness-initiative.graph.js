@@ -1119,8 +1119,8 @@ export async function reportNode(state, opts = {}) {
     // prep→...→report 但 tasks.status 仍 in_progress。Walking Skeleton P1 修补点。
     const taskStatus = state.final_e2e_verdict === 'PASS' ? 'completed' : 'failed';
     await dbPool.query(
-      `UPDATE tasks SET status=$2, completed_at=NOW(), updated_at=NOW(),
-        error_message=CASE WHEN $2='failed' THEN $3 ELSE error_message END
+      `UPDATE tasks SET status=$2::text, completed_at=NOW(), updated_at=NOW(),
+        error_message=CASE WHEN $2::text='failed' THEN $3::text ELSE error_message END
        WHERE id=$1::uuid`,
       [state.initiativeId, taskStatus, reason]
     );
