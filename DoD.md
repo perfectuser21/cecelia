@@ -24,31 +24,31 @@ journey_type: autonomous
 
 ## ARTIFACT 条目
 
-- [ ] [ARTIFACT] `playground/server.js` 含 `app.get('/decrement'` 路由注册
+- [x] [ARTIFACT] `playground/server.js` 含 `app.get('/decrement'` 路由注册
   Test: node -e "const c=require('fs').readFileSync('playground/server.js','utf8'); if(!/app\.get\(['\"]\/decrement['\"]/.test(c)) process.exit(1)"
 
-- [ ] [ARTIFACT] `playground/server.js` `/decrement` 路由含 strict-schema 整数正则 `^-?\d+$`
+- [x] [ARTIFACT] `playground/server.js` `/decrement` 路由含 strict-schema 整数正则 `^-?\d+$`
   Test: node -e "const c=require('fs').readFileSync('playground/server.js','utf8'); const idx=c.indexOf('/decrement'); const body=c.slice(idx, idx+1500); if(!/\\^-\\?\\\\d\\+\\\$/.test(body)) process.exit(1)"
 
-- [ ] [ARTIFACT] `playground/server.js` `/decrement` 路由 query 名为 `value`（字面照搬 PRD，禁 n/a/b/x/prev/pred）
+- [x] [ARTIFACT] `playground/server.js` `/decrement` 路由 query 名为 `value`（字面照搬 PRD，禁 n/a/b/x/prev/pred）
   Test: node -e "const c=require('fs').readFileSync('playground/server.js','utf8'); const idx=c.indexOf('/decrement'); const body=c.slice(idx, idx+1500); if(!/req\.query\.value/.test(body)) process.exit(1)"
 
-- [ ] [ARTIFACT] `playground/server.js` `/decrement` 含精度上界判定数字 `9007199254740990`
+- [x] [ARTIFACT] `playground/server.js` `/decrement` 含精度上界判定数字 `9007199254740990`
   Test: node -e "const c=require('fs').readFileSync('playground/server.js','utf8'); const idx=c.indexOf('/decrement'); const body=c.slice(idx, idx+1500); if(!/9007199254740990/.test(body)) process.exit(1)"
 
-- [ ] [ARTIFACT] `playground/server.js` `/decrement` 响应含字面 `operation: 'decrement'` 与字面 `result` 字段
+- [x] [ARTIFACT] `playground/server.js` `/decrement` 响应含字面 `operation: 'decrement'` 与字面 `result` 字段
   Test: node -e "const c=require('fs').readFileSync('playground/server.js','utf8'); const idx=c.indexOf('/decrement'); const body=c.slice(idx, idx+1500); if(!/operation:\s*['\"]decrement['\"]/.test(body) || !/result:/.test(body)) process.exit(1)"
 
-- [ ] [ARTIFACT] `playground/server.js` `/decrement` 含 query 唯一性约束（`Object.keys(req.query).length === 1`）
+- [x] [ARTIFACT] `playground/server.js` `/decrement` 含 query 唯一性约束（`Object.keys(req.query).length === 1`）
   Test: node -e "const c=require('fs').readFileSync('playground/server.js','utf8'); const idx=c.indexOf('/decrement'); const body=c.slice(idx, idx+1500); if(!/Object\.keys\(req\.query\)\.length\s*===\s*1/.test(body)) process.exit(1)"
 
-- [ ] [ARTIFACT] `playground/tests/server.test.js` 含 `describe('GET /decrement` 独立 describe 块
+- [x] [ARTIFACT] `playground/tests/server.test.js` 含 `describe('GET /decrement` 独立 describe 块
   Test: node -e "const c=require('fs').readFileSync('playground/tests/server.test.js','utf8'); if(!/describe\(['\"]GET \/decrement/.test(c)) process.exit(1)"
 
-- [ ] [ARTIFACT] `playground/README.md` 端点列表含 `/decrement` 段
+- [x] [ARTIFACT] `playground/README.md` 端点列表含 `/decrement` 段
   Test: node -e "const c=require('fs').readFileSync('playground/README.md','utf8'); if(!/\/decrement/.test(c)) process.exit(1)"
 
-- [ ] [ARTIFACT] SSOT 单源文件 `sprints/w30-walking-skeleton-p1-v2/banned-keys.sh` 存在且可 source；BANNED_RESPONSE_KEYS 长度 34（按 PRD L103-L105 字面对齐 15+10+9），BANNED_ERROR_KEYS 长度 10
+- [x] [ARTIFACT] SSOT 单源文件 `sprints/w30-walking-skeleton-p1-v2/banned-keys.sh` 存在且可 source；BANNED_RESPONSE_KEYS 长度 34（按 PRD L103-L105 字面对齐 15+10+9），BANNED_ERROR_KEYS 长度 10
   Test: bash -c 'source sprints/w30-walking-skeleton-p1-v2/banned-keys.sh && [ "${#BANNED_RESPONSE_KEYS[@]}" = "34" ] && [ "${#BANNED_ERROR_KEYS[@]}" = "10" ]'
 
 ---

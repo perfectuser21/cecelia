@@ -425,7 +425,7 @@ workstream_count: 1
 
 | Workstream | Test File | BEHAVIOR 覆盖 | 预期红证据 |
 |---|---|---|---|
-| WS1 | `sprints/w30-walking-skeleton-p1-v2/tests/ws1/decrement.test.js` | happy 减 1 / off-by-one 零边界 / 精度上下界 happy / 精度上下界拒 / strict 拒小数 / strict 拒前导 + / strict 拒科学计数法 / strict 拒十六进制 / strict 拒空串 / strict 拒字母 / strict 拒 Infinity / 错 query 名拒 / 缺 query 拒 / query 唯一性 / 前导 0 happy / schema 完整性 keys 集合 / operation 字面相等 / 禁用字段反向 / 错误体 keys=[error] / 错误体不含 result+operation / 8 路由回归 | 当前 server.js 无 `/decrement` 路由 → 所有 happy / strict 用例 404 → vitest FAIL |
+| WS1 | `tests/ws1/decrement.test.js` | value=5 → 200, value=0 → 200 + result=-1, value=1 → 200 + result=0, value=-1 → 200 + result=-2, 上界 happy, 下界 happy, 上界 +1 拒, 下界 -1 拒, 远超上界, 缺 value 参数, 错 query 名 n, 多余 query, value=01 → 200 + result=0, value=-0 → 200 + result=-1, 顶层 keys 字面集合, operation 字面字符串严格等于, 响应不含任一禁用字段, 错误体 keys 字面, 错误体不含 message, {ok:true}, {sum:5}, {product:35}, {quotient:5}, {power:8}, {remainder:1}, {factorial:120}, {result:6 | 当前 server.js 无 `/decrement` 路由 → 所有 happy 与 strict 用例 404 → vitest FAIL |
 
 ---
 
