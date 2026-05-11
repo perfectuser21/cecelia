@@ -342,7 +342,7 @@ workstream_count: 1
 
 | Workstream | Test File | BEHAVIOR 覆盖 | 预期红 it() 清单（≥6 条具名）+ 未实现时失败原因 |
 |---|---|---|---|
-| WS1 | `sprints/w23-playground-modulo/tests/ws1/modulo.test.js` | (1) happy 值复算 (2) 符号不变量 (3) 除零拒 (4) strict-schema 拒 (5) 严 schema (6) 错误 body 不含 remainder (7) 5 条现有路由回归 | 见下方"预期红 it() 清单"段（10 条具名 test，全部对应到 `tests/ws1/modulo.test.js` 实际行号），实现前 vitest 全红 |
+| WS1 | `tests/ws1/modulo.test.js` | modulo、oracle、符号不变量、除零兜底、反向 schema、不含 remainder、REG /health、REG /sum、REG /multiply、REG /divide、REG /power | 见下方"预期红 it() 清单"段（10 条具名 test，全部对应到 `tests/ws1/modulo.test.js` 实际行号），实现前 vitest 全红 |
 
 ### 预期红 it() 清单（evaluator 可直接 grep 验证 `tests/ws1/modulo.test.js` 字面量）
 
