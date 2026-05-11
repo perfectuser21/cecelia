@@ -542,7 +542,7 @@ workstream_count: 1
 
 | WS | Test File | BEHAVIOR 覆盖 | 预期红证据（具名 test + 行位 + AssertionError 锚点） |
 |---|---|---|---|
-| WS1 | `tests/ws1/factorial.test.js` | 见下表 9 条锚点 + 32 条配套用例 | 当前 main 分支 `playground/server.js` **不含** `app.get('/factorial', ...)` 路由 → Express 默认 404 中间件返 `text/html` 404 → supertest `res.status === 404` → 与所有 `expect(res.status).toBe(200)` 严等比对必抛 AssertionError，详见下方 9 锚点；总 vitest FAIL count ≥ 32（happy 13 + 上界拒 3 + strict 拒 12 + 递推 4 + schema 2 + 禁用字段 1 + query 别名 4 + 前导 0 1 + 缺参 1 → 41 条用例，其中预期 200/400 的对照路径均会 FAIL；只有 6 条回归用例可能 PASS，因为旧路由本来就存在） |
+| WS1 | `tests/ws1/factorial.test.js` | happy 中段、数学定义、精度上界、跨调用递推、上界拒、小数点、schema 完整性、query 别名锁死、回归 | 当前 main 分支 `playground/server.js` **不含** `app.get('/factorial', ...)` 路由 → Express 默认 404 中间件返 `text/html` 404 → supertest `res.status === 404` → 与所有 `expect(res.status).toBe(200)` 严等比对必抛 AssertionError，详见下方 9 锚点；总 vitest FAIL count ≥ 32（happy 13 + 上界拒 3 + strict 拒 12 + 递推 4 + schema 2 + 禁用字段 1 + query 别名 4 + 前导 0 1 + 缺参 1 → 41 条用例，其中预期 200/400 的对照路径均会 FAIL；只有 6 条回归用例可能 PASS，因为旧路由本来就存在） |
 
 ### 预期红证据 — 9 条 AssertionError 行位锚点（r2 加固，r1 评 test_is_red 9）
 
