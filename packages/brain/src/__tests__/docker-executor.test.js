@@ -57,8 +57,8 @@ describe('resolveResourceTier', () => {
     expect(resolveResourceTier('harness_generator').tier).toBe('heavy');
   });
 
-  it('harness_planner → light', () => {
-    expect(resolveResourceTier('harness_planner').tier).toBe('light');
+  it('harness_planner → pipeline-heavy (Opus prompt cache > 1M token)', () => {
+    expect(resolveResourceTier('harness_planner').tier).toBe('pipeline-heavy');
   });
 });
 

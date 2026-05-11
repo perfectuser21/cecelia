@@ -30,10 +30,9 @@ import { spawn } from '../spawn/index.js';
 import { parseDockerOutput, loadSkillContent } from '../harness-shared.js';
 import { parseTaskPlan, upsertTaskPlan } from '../harness-dag.js';
 import { runFinalE2E, attributeFailures } from '../harness-final-e2e.js';
-import { ensureHarnessWorktree, harnessSubTaskWorktreePath } from '../harness-worktree.js';
+import { ensureHarnessWorktree } from '../harness-worktree.js';
 import { resolveGitHubToken } from '../harness-credentials.js';
 import { fetchAndShowOriginFile } from '../lib/git-fence.js';
-import { verifyEvaluatorWorktree } from '../lib/contract-verify.js';
 // 走 C3 shim (../harness-gan-graph.js) 而非直连 workflows/harness-gan.graph.js，
 // 保持测试 vi.mock('../../harness-gan-graph.js') 路径兼容。
 // Phase C7 清 shim 前不改。
@@ -1371,8 +1370,10 @@ export function buildHarnessFullGraph() {
     .addNode('pick_sub_task', pickSubTaskNode, { retryPolicy: NO_RETRY })
     .addNode('run_sub_task', runSubTaskNode, { retryPolicy: LLM_RETRY })
     .addNode('advance', advanceTaskIndexNode, { retryPolicy: NO_RETRY })
-    .addNode('retry', retryTaskNode, { retryPolicy: NO_RETRY })
-    .addNode('terminal_fail', terminalFailNode, { retryPolicy: NO_RETRY })
+    // NOTE: 'retry' / 'terminal_fail' 节点删除 — 它们 originally 由 routeAfterEvaluate 路由进入，
+    // 但 per-task evaluator 下沉到 harness-task.graph.js 的 evaluate_contract 子图后，
+    // initiative 层的 evaluate 节点+routeAfterEvaluate 路由都被删除，这两个节点变成 orphan。
+    // retryTaskNode / terminalFailNode 函数定义保留（其他地方可能调用）。
     // Golden Path 终验 — 跨 ws E2E 聚合验证，区别于 task 子图内的 evaluate_contract（per-task pre-merge gate）。
     .addNode('final_evaluate', finalEvaluateDispatchNode, { retryPolicy: LLM_RETRY })
     .addNode('report', reportNode, { retryPolicy: DB_RETRY })
@@ -1386,8 +1387,6 @@ export function buildHarnessFullGraph() {
     .addConditionalEdges('pick_sub_task', routeFromPickSubTask, { run_sub_task: 'run_sub_task', final_evaluate: 'final_evaluate', end: END })
     .addEdge('run_sub_task', 'advance')
     .addEdge('advance', 'pick_sub_task')
-    .addEdge('retry', 'run_sub_task')
-    .addConditionalEdges('terminal_fail', stateHasError, { error: END, ok: END })
     .addEdge('final_evaluate', 'report')
     .addEdge('report', END);
 }
