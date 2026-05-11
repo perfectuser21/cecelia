@@ -424,7 +424,11 @@ async function evaluateContractNode(state, opts = {}) {
   const rand = crypto.randomUUID().slice(0, 8);
   const safeId = String(task.id).replace(/[^a-zA-Z0-9-]/g, '');
   const containerId = `harness-evaluate-${safeId}-r${state.fix_round || 0}-${rand}`;
-  const threadId = `harness-evaluate:${initiativeId}:${task.id}`;
+  // B10 (Walking Skeleton P1 cascade fix): evaluate_contract 节点本身在 harness-task
+  // graph 内运行，interrupt() 暂停的是 harness-task thread。spawn 写 thread_lookup
+  // 必须用 task graph 的 thread_id，否则 callback resume 打到 empty thread，真正
+  // interrupt 等待的 harness-task thread 永久卡（W31 实证：callback ok 但 graph 不推进）。
+  const threadId = `harness-task:${initiativeId}:${task.id}`;
 
   const evaluatePrompt = [
     `[harness-evaluator] Evaluate the contract DoD for task: ${task.title || task.id}`,
@@ -469,8 +473,11 @@ async function evaluateContractNode(state, opts = {}) {
 
   try {
     await dbPool.query(
+      // B10: graph_name='harness-task' (统一 namespace) — evaluate_contract 是 task graph 内的节点。
+      // lookup router 用 harness-task graph compile，callback resume 用同一 thread_id 才能找到
+      // 真正 interrupt 等待的 state。
       `INSERT INTO walking_skeleton_thread_lookup (container_id, thread_id, graph_name, status)
-       VALUES ($1, $2, 'harness-evaluate', 'spawning')
+       VALUES ($1, $2, 'harness-task', 'spawning')
        ON CONFLICT (container_id) DO NOTHING`,
       [containerId, threadId]
     );
