@@ -274,6 +274,17 @@ const LOCATION_MAP = {
 // Default location
 const DEFAULT_LOCATION = 'us';
 
+// Location → 提供的 capability tags（跨环境一致性验证用）
+// learning da78df62: dispatch 层必须验证目标环境兼容性 — 不再静默降级到 us-m4。
+// us       (US M4): 全能 — git worktree + Playwright/CDP + Claude Code
+// xian     (Xian M4): codex_bridge 提供 worktree git 访问 + Playwright CDP 控 PC 浏览器
+// xian_m1  (Xian M1): general-only Codex（无本地 worktree / 无 CDP）
+const LOCATION_CAPABILITIES = {
+  us: ['has_git', 'has_browser', 'general'],
+  xian: ['has_git', 'has_browser', 'general'],
+  xian_m1: ['general'],
+};
+
 // Capability requirements per task type (machine registry routing)
 // Tags: 'has_git' = needs code/git access (US M4 only)
 //       'general' = any available machine
@@ -400,6 +411,77 @@ function getTaskRequirements(taskType) {
     return ['has_git']; // default to most restrictive
   }
   return TASK_REQUIREMENTS[taskType.toLowerCase()] || ['has_git'];
+}
+
+// 内联 DoD 标注：在 description / prd_content 里写 `[env: has_browser]` 可加签 env 依赖
+const INLINE_ENV_TAG_RE = /\[env:\s*([a-zA-Z0-9_-]+)\s*\]/g;
+
+/**
+ * 合并 task_type 基线 + DoD 层显式标注，得到任务真正需要的 capability tags。
+ *
+ * 标注三处来源（按优先级合并去重）：
+ * 1. TASK_REQUIREMENTS[task_type] — type-baseline
+ * 2. task.payload.env_requires — 结构化 DoD 标注（推荐：程序化任务）
+ * 3. task.description / task.prd_content — 内联 `[env: <tag>]` 标注（推荐：markdown DoD）
+ *
+ * @param {Object} task - 任务对象（含 task_type / payload / description / prd_content）
+ * @returns {string[]} - 去重后的 required capability tags
+ */
+function extractEnvRequirements(task) {
+  const baseline = task?.task_type ? getTaskRequirements(task.task_type) : ['has_git'];
+  const tags = new Set(baseline);
+
+  const structured = task?.payload?.env_requires;
+  if (Array.isArray(structured)) {
+    for (const tag of structured) {
+      if (typeof tag === 'string' && tag.length > 0) tags.add(tag);
+    }
+  }
+
+  const sources = [task?.description, task?.prd_content].filter(
+    (s) => typeof s === 'string' && s.length > 0
+  );
+  for (const src of sources) {
+    for (const m of src.matchAll(INLINE_ENV_TAG_RE)) {
+      if (m[1]) tags.add(m[1]);
+    }
+  }
+
+  return Array.from(tags);
+}
+
+/**
+ * 验证任务在目标 location 上能否跑通（dispatch 前 fail-fast 用）。
+ *
+ * learning da78df62：跨环境一致性验证应在任务定义阶段完成（非执行阶段），
+ * 不再静默降级到 us-m4 掩盖配错。
+ *
+ * @param {Object} task - 任务对象
+ * @param {string} location - 目标 location（us / xian / xian_m1）
+ * @returns {{compatible: boolean, required: string[], available: string[], missing: string[], reason: string|null}}
+ */
+function verifyEnvCompatibility(task, location) {
+  const required = extractEnvRequirements(task);
+  const available = LOCATION_CAPABILITIES[location];
+
+  if (!Array.isArray(available)) {
+    return {
+      compatible: false,
+      required,
+      available: [],
+      missing: required,
+      reason: `unknown_location:${location}`,
+    };
+  }
+
+  const missing = required.filter((tag) => !available.includes(tag));
+  return {
+    compatible: missing.length === 0,
+    required,
+    available,
+    missing,
+    reason: missing.length === 0 ? null : `missing_tags:${missing.join(',')}`,
+  };
 }
 
 /**
@@ -880,6 +962,8 @@ export {
   identifyWorkType,
   getTaskLocation,
   getTaskRequirements,
+  extractEnvRequirements,
+  verifyEnvCompatibility,
   determineExecutionMode,
   getDomainSkillOverride,
   routeTaskCreate,
@@ -892,6 +976,7 @@ export {
   getLocationsForTaskTypes,
   diagnoseKR,
   LOCATION_MAP,
+  LOCATION_CAPABILITIES,
   TASK_REQUIREMENTS,
   SINGLE_TASK_PATTERNS,
   FEATURE_PATTERNS,
