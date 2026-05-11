@@ -8,6 +8,7 @@
 
 import { raise } from './alerting.js';
 import { loadActiveConstraints, evaluateConstraints } from './insight-constraints.js';
+import { getTaskLocation, verifyEnvCompatibility } from './task-router.js';
 
 // 24h 内累计 pre-flight cancel >= 阈值 → 从 P2 升级到 P0（飞书立即推送）
 export const PRE_FLIGHT_ALERT_THRESHOLD = 3;
@@ -129,6 +130,25 @@ export async function preFlightCheck(task, opts = {}) {
       issues.push('Description is too generic');
       suggestions.push('Provide specific details about what needs to be done');
     }
+  }
+
+  // Check 6.5: 跨环境一致性验证（learning da78df62）
+  // DoD 命令必须标注环境依赖（task_type baseline + payload.env_requires + 内联 [env: tag]），
+  // dispatch 层在派发前验证目标 location 提供所有 required tags；不兼容 → fail-fast，
+  // 不再让任务流到 executor 才发现环境配错（原 selectBestMachine 会静默降级到 us-m4）。
+  try {
+    const targetLocation = getTaskLocation(task.task_type);
+    const envCheck = verifyEnvCompatibility(task, targetLocation);
+    if (!envCheck.compatible) {
+      issues.push(
+        `env_incompatible: location=${targetLocation} missing tags=[${envCheck.missing.join(',')}] (required=[${envCheck.required.join(',')}])`
+      );
+      suggestions.push(
+        `任务类型 ${task.task_type} 路由到 ${targetLocation}，但缺少 capability tags=[${envCheck.missing.join(',')}]。检查 LOCATION_MAP / TASK_REQUIREMENTS / payload.env_requires / DoD 内联 [env: tag] 是否一致。`
+      );
+    }
+  } catch (envErr) {
+    console.warn('[pre-flight] env-compat verification failed (non-fatal):', envErr?.message || envErr);
   }
 
   // Check 6: Insight-derived dispatch constraints —
