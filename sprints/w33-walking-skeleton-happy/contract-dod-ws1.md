@@ -22,6 +22,9 @@ journey_type: autonomous
 - [ ] [ARTIFACT] `playground/server.js` 内 `/ping` 路由不含 query 校验（trivial spec 反画蛇添足）
   Test: node -e "const c=require('fs').readFileSync('playground/server.js','utf8');const m=c.match(/app\.get\(['\"]\/ping['\"][\s\S]*?\}\);/);if(!m)process.exit(1);if(/req\.query/.test(m[0])){console.error('/ping must not read req.query (trivial spec)');process.exit(1)};if(/status\(40[0-9]\)/.test(m[0])){console.error('/ping must not return 4xx (trivial spec)');process.exit(1)}"
 
+- [ ] [ARTIFACT] `playground/server.js` 末尾保留 `export default app`（tests/ws1/ping.test.js 依赖此 default export 做 supertest，generator 修改 server.js 时不许误删此行）
+  Test: node -e "const c=require('fs').readFileSync('playground/server.js','utf8');if(!/^export\s+default\s+app\s*;?\s*$/m.test(c)){console.error('missing: export default app');process.exit(1)}"
+
 - [ ] [ARTIFACT] `playground/tests/server.test.js` 新增 `describe('GET /ping'` 块（独立 describe，与其他 endpoint 平级）
   Test: node -e "const c=require('fs').readFileSync('playground/tests/server.test.js','utf8');if(!/describe\(['\"]GET \/ping/.test(c))process.exit(1)"
 

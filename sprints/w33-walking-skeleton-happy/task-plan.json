@@ -12,6 +12,7 @@
         "[ARTIFACT] playground/server.js /ping 响应含字面 pong 字段（不漂到 ping/status/ok/result/message 等禁用名）",
         "[ARTIFACT] playground/server.js /ping 响应字面含布尔 true（不漂到字符串 \"true\"/数字 1/字符串 \"ok\"）",
         "[ARTIFACT] playground/server.js /ping 路由不含 req.query 读取或 status(4xx) 调用（trivial spec 反画蛇添足）",
+        "[ARTIFACT] playground/server.js 末尾保留 `export default app`（tests/ws1/ping.test.js supertest 依赖；generator 编辑时不许误删）",
         "[ARTIFACT] playground/tests/server.test.js 内含 describe('GET /ping' 独立 describe 块",
         "[ARTIFACT] playground/README.md 端点列表含 /ping 段",
         "[BEHAVIOR] GET /ping → 200 + {pong: true}（字面布尔 true）",
