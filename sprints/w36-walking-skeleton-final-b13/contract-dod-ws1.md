@@ -1,7 +1,3 @@
-contract_branch: cp-harness-propose-r2-230fe8f9
-workstream_index: 1
-sprint_dir: sprints/w36-walking-skeleton-final-b13
-
 ---
 skeleton: false
 journey_type: autonomous
@@ -37,7 +33,7 @@ journey_type: autonomous
 
 ## BEHAVIOR 索引
 
-BEHAVIOR 测试已搬到 `sprints/w36-walking-skeleton-final-b13/tests/ws1/decrement.test.js`（v5.0 规则：BEHAVIOR 必须在 .test.ts/.test.js 文件里）。覆盖 9 个 describe 块、47 条 it()，包含：
+BEHAVIOR 测试已搬到 `tests/ws1/decrement.test.js`（v5.0 规则：BEHAVIOR 必须在 .test.ts/.test.js 文件里）。覆盖 9 个 describe 块、47 条 it()，包含：
 
 - happy 值复算 + schema 完整性（5 it）
 - off-by-one 防盲抄 W26 increment（3 it）
