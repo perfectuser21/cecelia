@@ -1,0 +1,37 @@
+{
+  "initiative_id": "pending",
+  "journey_type": "autonomous",
+  "journey_type_reason": "全部触发与可观测信号均在 Brain 内部（dispatcher / reaper / harness graph / dispatch_events 表 / fleet/slots 端点 / tasks 表），无 UI、无远端 agent 协议改动、无 dev pipeline hook 变化；本 Sprint 也不改 Brain 代码，仅产出验证脚本 + 报告。与 B1-B10 同分类",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "sprints/w32-walking-skeleton-p1-v4/verify-p1.sh + p1-final-acceptance.md 生成器",
+      "scope": "在 sprints/w32-walking-skeleton-p1-v4/ 内产出 verify-p1.sh：(a) 调 POST /api/brain/tasks 创建最简 harness_initiative 内层任务并捕获 id；(b) 反向调 POST /api/brain/tasks (缺 task_type) 验 400 + {error} schema；(c) 轮询 GET /api/brain/tasks/{id} 直到 status 收敛到 5 字面枚举之一（max 120 min）；(d) 采集 7 oracle 实测：(a) status==completed + result.verdict ∈ {PASS,FAIL} (b) SQL count(DISTINCT thread_id)==1 + 5 阶段 task_type 全覆盖 (c) GET /api/brain/dispatch/recent?initiative_id={id}&limit=50 keys==[count,events] + dispatched>=5 (d) SQL zombie (in_progress + last_heartbeat_at < NOW()-60min) 计数=0 + reaped→completed flipflop=0 (e) GET /api/brain/fleet/slots .in_use==.in_progress_task_count (f) dispatch_events 序列存在 skipped→dispatched 紧邻对 (g) heartbeat 不误杀（B7 反向）；(e) 渲染 p1-final-acceptance.md 含 ## Verdict: PASS|FAIL + ## Oracle a-g 实测 表格（7 行 a-g）+ ## Anomaly 段；字段名严格字面引 PRD（.status/.thread_id/.event_type/.in_use/.in_progress_task_count），禁用同义名 (.state/.task_state/.phase/.stage/.used/.busy/.active/.running_count/.task_count/message/msg/reason/detail) 不出现在正向断言；不修改 packages/brain/** 任何文件；不引入新 endpoint 不改 schema。",
+      "dod": [
+        "[ARTIFACT] sprints/w32-walking-skeleton-p1-v4/verify-p1.sh 文件存在且 chmod +x",
+        "[ARTIFACT] verify-p1.sh 含 curl POST /api/brain/tasks 创建 harness_initiative 段",
+        "[ARTIFACT] verify-p1.sh 用 dispatch/recent?initiative_id= 字面 query 名（无 iid/task/root_id/n）",
+        "[ARTIFACT] verify-p1.sh 调 /api/brain/fleet/slots + in_use==in_progress_task_count 不变量断言",
+        "[ARTIFACT] verify-p1.sh 含 SQL count(DISTINCT thread_id) 检查 thread 连续性",
+        "[ARTIFACT] verify-p1.sh 含 SQL last_heartbeat_at < NOW() - interval '60 minutes' zombie 反向（B8 阈值）",
+        "[ARTIFACT] verify-p1.sh 渲染 p1-final-acceptance.md 含 ## Verdict / ## Oracle a-g 实测 / ## Anomaly 三段",
+        "[ARTIFACT] verify-p1.sh 不写入 packages/brain/** 任何文件",
+        "[ARTIFACT] verify-p1.sh 使用 PRD 字面字段名（.status/.thread_id/.event_type/.in_use/.in_progress_task_count）不漂禁用同义名",
+        "[BEHAVIOR] POST /api/brain/tasks {task_type:harness_initiative,...} → 201 + {id,task_type:\"harness_initiative\",status:\"pending\"} 字面 schema + 禁用 state/task_state/phase/stage 反向不存在",
+        "[BEHAVIOR] POST /api/brain/tasks 缺 task_type → 400 + {error:<string>} schema + 禁用 message/msg/reason/detail 反向不存在",
+        "[BEHAVIOR] GET /api/brain/dispatch/recent?initiative_id=<uuid>&limit=50 → keys==[count,events] 严等 + events 是数组 + event_type ∈ {dispatched,skipped,completed,failed,reaped} 5 字面枚举",
+        "[BEHAVIOR] GET /api/brain/fleet/slots → {total_slots,in_use,in_progress_task_count} 字段字面 + 禁用 used/busy/active/running_count/task_count 反向 + in_use==in_progress_task_count 恒等",
+        "[BEHAVIOR] GET /api/brain/tasks/<刚创建uuid> → 7 必填字段字面（id/task_type/status/thread_id/parent_task_id/result/last_heartbeat_at）全存在 + status ∈ {pending,in_progress,completed,failed,skipped} 5 字面枚举 + 禁用 state/task_state/phase/stage 反向",
+        "[BEHAVIOR] bash verify-p1.sh 跑完后 p1-final-acceptance.md 存在含 ## Verdict: (PASS|FAIL) + ## Oracle a-g 实测 + ## Anomaly 三段字面",
+        "[BEHAVIOR] p1-final-acceptance.md 报告表格中字面字母 a/b/c/d/e/f/g 各占一行（无遗漏；禁用 oracle1/oracle_a 等同义名不出现）"
+      ],
+      "files": [
+        "sprints/w32-walking-skeleton-p1-v4/verify-p1.sh",
+        "sprints/w32-walking-skeleton-p1-v4/p1-final-acceptance.md"
+      ],
+      "depends_on": [],
+      "complexity": "M",
+      "estimated_minutes": 50
+    }
+  ]
+}
