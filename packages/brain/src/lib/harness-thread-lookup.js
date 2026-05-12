@@ -78,6 +78,21 @@ export async function lookupHarnessThread(containerId) {
     }
   }
 
+  // B9 (Walking Skeleton P1 cascade fix):
+  // PR #2901 加 evaluate_contract 节点（task sub-graph 内部）spawn evaluator container 时
+  // 写 graph_name='harness-evaluate'，但 lookup 当时只 dispatch walking-skeleton-1node / harness-task →
+  // unknown graph → 404 → callback 失配 → graph 永久卡 await_callback。W30 实证。
+  // 修：harness-evaluate dispatch 到同一 compiledHarnessTask（evaluate_contract 节点在 task graph 内部）。
+  if (graphName === 'harness-evaluate') {
+    try {
+      const compiledGraph = await getCompiledHarnessTask();
+      return { compiledGraph, threadId };
+    } catch (err) {
+      console.error(`[harness-thread-lookup] compile harness-evaluate (via task graph) failed containerId=${containerId}: ${err.message}`);
+      return null;
+    }
+  }
+
   // 未知 graph_name
   console.warn(`[harness-thread-lookup] unknown graph_name=${graphName} containerId=${containerId}`);
   return null;
