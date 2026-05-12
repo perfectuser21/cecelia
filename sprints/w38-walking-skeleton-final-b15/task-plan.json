@@ -6,7 +6,7 @@
     {
       "task_id": "ws1",
       "title": "playground 加 GET /abs 路由 + tests describe 块 + README 段（W38 — B15 verdict regex 修后 final happy 真验）",
-      "scope": "实现 Golden Path 全部 4 步：(Step 1) playground/server.js 新增 app.get('/abs', ...) 路由注册；(Step 2) 路由内 query 名严字面 value（PRD 禁用 9 变体 n/x/a/b/num/number/input/v/val 一律 400）+ strict-schema 整数正则 ^-?\\d+$ + 精度上下界 |Number(value)| ≤ 9007199254740990；(Step 3) 200 返 {result: Math.abs(Number(value)), operation: 'abs'} 严 schema（顶层 keys 仅 operation/result；operation 字面字符串，PRD 禁用 8 变体 absolute/absoluteValue/abs_value/magnitude/modulus/positive/absval/abs_val 不出现；禁用响应字段名 23 个 absolute/absoluteValue/abs_value/magnitude/modulus/positive/absval/abs_val/decremented/incremented/sum/product/quotient/power/remainder/factorial/negation/value/input/output/data/payload/answer/meta 反向不出现）；(Step 4) 400 返 {error:'<非空 string>'} 严错误体（顶层 keys 仅 error，禁用替代名 message/msg/reason/detail 反向不出现）。playground/tests/server.test.js 新增 describe('GET /abs', ...) 独立块（happy 0/1/-1/5/-5/上界/下界、上下界拒、strict 拒、schema 完整性 oracle、禁用字段反向、operation 8 变体反向、4 禁用错误名反向、错误体 keys=[error] 断言、9 禁用 query 名 loop 全 400、8 路由回归 1 条/路由）。playground/README.md 端点列表加 /abs 段（≥ 4 示例）。响应字段名严格字面：result + operation:\"abs\"；query 名严格 value。零依赖；不动其他路由代码或测试。",
+      "scope": "实现 Golden Path 全部 4 步：(Step 1) playground/server.js 新增 app.get('/abs', ...) 路由注册；(Step 2) 路由内 query 名严字面 value（PRD 禁用 9 变体 n/x/a/b/num/number/input/v/val 一律 400）+ strict-schema 整数正则 ^-?\\d+$ + 精度上下界 |Number(value)| ≤ 9007199254740990；(Step 3) 200 返 {result: Math.abs(Number(value)), operation: 'abs'} 严 schema（顶层 keys 仅 operation/result；operation 字面字符串，PRD 禁用 8 变体 absolute/absoluteValue/abs_value/magnitude/modulus/positive/absval/abs_val 不出现；禁用响应字段名 23 个 absolute/absoluteValue/abs_value/magnitude/modulus/positive/absval/abs_val/decremented/incremented/sum/product/quotient/power/remainder/factorial/negation/value/input/output/data/payload/answer/meta 反向不出现）；(Step 4) 400 返 {error:'<非空 string>'} 严错误体（顶层 keys 仅 error，禁用替代名 message/msg/reason/detail 反向不出现）。playground/tests/server.test.js 新增 describe('GET /abs', ...) 独立块（happy 0/1/-1/5/-5/上界/下界、上下界拒、strict 拒、schema 完整性 oracle、禁用字段反向、operation 8 变体反向、4 禁用错误名反向、错误体 keys=[error] 断言、9 禁用 query 名 loop 全 400、9 路由回归 1 条/路由）。playground/README.md 端点列表加 /abs 段（≥ 4 示例）。响应字段名严格字面：result + operation:\"abs\"；query 名严格 value。零依赖；不动其他路由代码或测试。",
       "dod": [
         "[ARTIFACT] playground/server.js 注册 app.get('/abs' 路由",
         "[ARTIFACT] playground/server.js /abs 路由 query 名 value（不复用 n/x/a/b/num/number/input/v/val 等 9 禁用名）+ strict-schema 整数正则 ^-?\\d+$ + 精度上界数字 9007199254740990",
@@ -19,11 +19,11 @@
         "[BEHAVIOR] success 响应 operation 字面 \"abs\"，PRD 禁用 8 变体 absolute/absoluteValue/abs_value/magnitude/modulus/positive/absval/abs_val 一律不等",
         "[BEHAVIOR] 错误路径 GET /abs?value=foo → 400 + 错误体 keys 严格等于 [error] 且不含 result/operation",
         "[BEHAVIOR] 错误体反向不含 4 个 PRD 禁用替代错误名 message/msg/reason/detail",
-        "[BEHAVIOR] 精度上下界 happy：value=9007199254740990 → 200 + {result:9007199254740990,operation:\"abs\"}；value=-9007199254740990 → 200 + {result:9007199254740990,operation:\"abs\"}",
+        "[BEHAVIOR] 精度上下界 happy：value=9007199254740990 → 200 + {result:9007199254740990,operation:\"abs\"}；value=-9007199254740990 → 200 + {result:9007199254740990,operation:\"abs\"}（abs 保模）",
         "[BEHAVIOR] 精度上下界拒：value=9007199254740991 / value=-9007199254740991 → 400",
         "[BEHAVIOR] strict-schema 非法输入 (1.5 / 1e2 / abc / +5 / 空串 / 缺 value) 全 → 400",
         "[BEHAVIOR] PRD 完整 9 个禁用 query 名 (n/x/a/b/num/number/input/v/val) 一律返 400",
-        "[BEHAVIOR] 8 路由回归 happy 全通过 (/health /sum /multiply /divide /power /modulo /increment /decrement /factorial)"
+        "[BEHAVIOR] 9 路由回归 happy 全通过 (/health /sum /multiply /divide /power /modulo /increment /decrement /factorial)"
       ],
       "files": [
         "playground/server.js",
