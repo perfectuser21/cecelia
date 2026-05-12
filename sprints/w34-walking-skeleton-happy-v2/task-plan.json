@@ -1,0 +1,49 @@
+{
+  "initiative_id": "fc59c8bc-73ee-486a-9695-ce491ffbe18d",
+  "journey_type": "autonomous",
+  "journey_type_reason": "playground 是独立 HTTP server 子项目，本次只动 server 路由 + 单测 + README，无 UI / 无 brain tick / 无 engine hook / 无远端 agent 协议；与 W19~W26 同分类（autonomous）",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "playground/server.js 新增 GET /uppercase 路由 + tests/server.test.js GET /uppercase describe 块 + README.md /uppercase 段（Walking Skeleton P1 happy path 端到端实证）",
+      "scope": "在 playground/server.js 注册 GET /uppercase（query 名严格 text，仅一个 query 名，strict-schema ASCII 字母正则 ^[A-Za-z]+$，text.toUpperCase() 算术，返回 {result: <text.toUpperCase()>, operation: \"uppercase\"}）；在 playground/tests/server.test.js 新增 describe('GET /uppercase', ...) 块（happy 5+ 含单字符 a/Z + 全小写 hello + 全大写 HELLO + 混合大小写 AbCdEf、strict 拒 9+ 含空串/数字/空格/标点/下划线/短横线/Unicode 字母/CJK、缺 text、错 query 名、多 query 名、schema 完整性 oracle 2+、禁用字段反向断言、错误体 keys=[error] 断言、八路由回归 8+ 条）；在 playground/README.md 端点列表加 /uppercase 段（happy/strict 拒/错 query 名 示例 5+）。响应字段名严格字面照搬 PRD：result + operation（字面）+ \"uppercase\" 字面字符串；query 名严格 text；禁止任一禁用同义字段名 uppercased/upper/upper_text/transformed/mapped/output/value/input/text/data/payload/answer/meta/original/sum/product/quotient/power/remainder/factorial/negation 出现在响应。零依赖；不动其他八条路由。",
+      "dod": [
+        "[ARTIFACT] playground/server.js 内含 app.get('/uppercase' 路由注册",
+        "[ARTIFACT] playground/server.js /uppercase 路由含 strict-schema ASCII 字母正则 ^[A-Za-z]+$",
+        "[ARTIFACT] playground/server.js /uppercase 路由 query 名为 text（不复用 a/b/n/value）",
+        "[ARTIFACT] playground/server.js /uppercase 响应含字面 operation: \"uppercase\" 与字面 result 字段",
+        "[ARTIFACT] playground/tests/server.test.js 内含 describe('GET /uppercase' 独立 describe 块",
+        "[ARTIFACT] playground/README.md 端点列表含 /uppercase 段",
+        "[BEHAVIOR] GET /uppercase?text=hello → 200 + {result:\"HELLO\", operation:\"uppercase\"}（happy 全小写）",
+        "[BEHAVIOR] GET /uppercase?text=HELLO → 200 + {result:\"HELLO\", operation:\"uppercase\"}（happy 已是大写，幂等）",
+        "[BEHAVIOR] GET /uppercase?text=AbCdEf → 200 + {result:\"ABCDEF\", operation:\"uppercase\"}（混合大小写）",
+        "[BEHAVIOR] GET /uppercase?text=a → 200 + {result:\"A\", operation:\"uppercase\"}（单字符 happy）",
+        "[BEHAVIOR] GET /uppercase?text=Z → 200 + {result:\"Z\", operation:\"uppercase\"}（单字符大写 happy）",
+        "[BEHAVIOR] GET /uppercase?text=hello 顶层 keys 字面集合 == [operation, result]（schema 完整性）",
+        "[BEHAVIOR] GET /uppercase?text=hello 响应不含任一禁用字段 uppercased/upper/upper_text/transformed/mapped/output/value/input/text/data/payload/answer/meta/original",
+        "[BEHAVIOR] GET /uppercase?text= → 400（strict 拒空串）",
+        "[BEHAVIOR] GET /uppercase?text=hello123 → 400（strict 拒含数字）",
+        "[BEHAVIOR] GET /uppercase?text=hello%20world → 400（strict 拒含空格）",
+        "[BEHAVIOR] GET /uppercase?text=hello-world → 400（strict 拒含短横线）",
+        "[BEHAVIOR] GET /uppercase?text=hello_world → 400（strict 拒含下划线）",
+        "[BEHAVIOR] GET /uppercase?text=hello! → 400（strict 拒含标点）",
+        "[BEHAVIOR] GET /uppercase?text=caf%C3%A9 → 400（strict 拒 Unicode 字母 é）",
+        "[BEHAVIOR] GET /uppercase?text=%E4%B8%AD%E6%96%87 → 400（strict 拒 CJK 中文）",
+        "[BEHAVIOR] GET /uppercase（缺 text 参数） → 400",
+        "[BEHAVIOR] GET /uppercase?value=hello（错 query 名 value） → 400",
+        "[BEHAVIOR] GET /uppercase?input=hello（错 query 名 input） → 400",
+        "[BEHAVIOR] GET /uppercase?text=hello&text=world（多 text query 名） → 400",
+        "[BEHAVIOR] strict 拒错误体顶层 keys 字面集合 == [error] 且不含 result 也不含 operation",
+        "[BEHAVIOR] 已有 8 路由 (/health /sum /multiply /divide /power /modulo /factorial /increment) happy 用例回归全通过"
+      ],
+      "files": [
+        "playground/server.js",
+        "playground/tests/server.test.js",
+        "playground/README.md"
+      ],
+      "depends_on": [],
+      "complexity": "S",
+      "estimated_minutes": 30
+    }
+  ]
+}
