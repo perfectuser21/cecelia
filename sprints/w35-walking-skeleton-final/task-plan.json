@@ -1,0 +1,52 @@
+{
+  "initiative_id": "c001a441-b52a-49bf-b9c2-feb9191bb1bd",
+  "journey_type": "autonomous",
+  "journey_type_reason": "playground 是独立 HTTP server 子项目，本次只动 server 路由 + 单测 + README，无 UI / 无 brain tick / 无 engine hook / 无远端 agent 协议；与 W19~W26 同分类",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "playground/server.js 新增 GET /subtract 路由 + tests/server.test.js GET /subtract describe 块 + README.md /subtract 段（W35 P1 final happy path 验，no restart）",
+      "scope": "在 playground/server.js 注册 GET /subtract（query 名 minuend + subtrahend，复用 STRICT_NUMBER 正则 ^-?\\d+(\\.\\d+)?$，Number(minuend) - Number(subtrahend) 算术，Number.isFinite 兜底，返回 {result: <number>, operation: \"subtract\"}）；在 playground/tests/server.test.js 新增 describe('GET /subtract', ...) 块（happy 9+ 含 minuend===subtrahend 反 off-by-one + 负结果 + 浮点、strict 拒 9+、缺参 3+、错 query 名 a/b 1+、值 oracle 3+、schema 完整性 oracle 2+、禁用字段反向断言、错误体 keys=[error] 断言、8 路由回归 1 条/路由）；在 playground/README.md 端点列表加 /subtract 段（happy/strict 拒/缺参 示例 6+）。响应字段名严格字面照搬 PRD：result + operation（字面）+ \"subtract\" 字面字符串；query 名严格 minuend + subtrahend；禁止任一禁用同义字段名 difference/diff/subtraction/minus/delta/sub_result/minus_result/sum/product/quotient/power/remainder/factorial/negation/value/input/output/data/payload/answer/meta 出现在响应。零依赖；不动其他 8 路由。",
+      "dod": [
+        "[ARTIFACT] playground/server.js 内含 app.get('/subtract' 路由注册",
+        "[ARTIFACT] playground/server.js /subtract 路由含 strict-schema 浮点正则 ^-?\\d+(\\.\\d+)?$（可复用 STRICT_NUMBER 常量）",
+        "[ARTIFACT] playground/server.js /subtract 路由 query 名为 minuend 和 subtrahend（不复用 a/b/n/value）",
+        "[ARTIFACT] playground/server.js /subtract 含 Number.isFinite 结果兜底",
+        "[ARTIFACT] playground/server.js /subtract 响应含字面 operation: \"subtract\" 与字面 result 字段",
+        "[ARTIFACT] playground/tests/server.test.js 内含 describe('GET /subtract' 独立 describe 块",
+        "[ARTIFACT] playground/README.md 端点列表含 /subtract 段",
+        "[BEHAVIOR] GET /subtract?minuend=10&subtrahend=3 → 200 + {result:7, operation:\"subtract\"}（值复算）",
+        "[BEHAVIOR] GET /subtract?minuend=10&subtrahend=3 顶层 keys 字面集合 == [operation, result]（schema 完整性）",
+        "[BEHAVIOR] GET /subtract?minuend=10&subtrahend=3 响应不含任一禁用字段 difference/diff/subtraction/minus/delta/sub_result/minus_result/value/input/output/data/payload/answer/meta/sum/product/quotient/power/remainder/factorial/negation",
+        "[BEHAVIOR] GET /subtract?minuend=0&subtrahend=0 → 200 + {result:0, operation:\"subtract\"}（零边界）",
+        "[BEHAVIOR] GET /subtract?minuend=5&subtrahend=5 → 200 + {result:0, operation:\"subtract\"}（minuend===subtrahend 反 off-by-one）",
+        "[BEHAVIOR] GET /subtract?minuend=5&subtrahend=10 → 200 + {result:-5, operation:\"subtract\"}（负结果）",
+        "[BEHAVIOR] GET /subtract?minuend=-5&subtrahend=-3 → 200 + {result:-2, operation:\"subtract\"}（双负）",
+        "[BEHAVIOR] GET /subtract?minuend=1.5&subtrahend=0.5 → 200 + {result:1, operation:\"subtract\"}（浮点）",
+        "[BEHAVIOR] GET /subtract?minuend=3.14&subtrahend=1.14 → 200 + {result:Number('3.14')-Number('1.14'), operation:\"subtract\"}（浮点独立复算）",
+        "[BEHAVIOR] GET /subtract?minuend=1e2&subtrahend=1 → 400（strict 拒科学计数法）",
+        "[BEHAVIOR] GET /subtract?minuend=+5&subtrahend=3 → 400（strict 拒前导 +）",
+        "[BEHAVIOR] GET /subtract?minuend=--5&subtrahend=3 → 400（strict 拒双重负号）",
+        "[BEHAVIOR] GET /subtract?minuend=0xff&subtrahend=1 → 400（strict 拒十六进制）",
+        "[BEHAVIOR] GET /subtract?minuend=abc&subtrahend=3 → 400（strict 拒字母）",
+        "[BEHAVIOR] GET /subtract?minuend=Infinity&subtrahend=1 → 400（strict 拒 Infinity 字面）",
+        "[BEHAVIOR] GET /subtract?minuend=NaN&subtrahend=1 → 400（strict 拒 NaN 字面）",
+        "[BEHAVIOR] GET /subtract?minuend=&subtrahend=3 → 400（strict 拒空串）",
+        "[BEHAVIOR] GET /subtract?minuend=10 → 400（缺 subtrahend）",
+        "[BEHAVIOR] GET /subtract?subtrahend=3 → 400（缺 minuend）",
+        "[BEHAVIOR] GET /subtract → 400（两参都缺）",
+        "[BEHAVIOR] GET /subtract?a=10&b=3 → 400（错 query 名 a/b 必须拒）",
+        "[BEHAVIOR] 错误响应顶层 keys 字面集合 == [error] 且不含 result 也不含 operation",
+        "[BEHAVIOR] 已有 8 路由 (/health /sum /multiply /divide /power /modulo /increment /factorial) happy 用例回归全通过"
+      ],
+      "files": [
+        "playground/server.js",
+        "playground/tests/server.test.js",
+        "playground/README.md"
+      ],
+      "depends_on": [],
+      "complexity": "M",
+      "estimated_minutes": 40
+    }
+  ]
+}
