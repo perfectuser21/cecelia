@@ -25,6 +25,7 @@ npm start           # 起 server（默认 :3000）
 - `GET /modulo?a=N&b=M` → 返回 a%b 的余数（**strict-schema** + **除零兜底**：`b=0`/`b=0.0` → 400；**JS 原生 truncated 取模**：余数符号跟随被除数 a，与数学 floored mod 区分）
 - `GET /factorial?n=N` → 返回 n! 阶乘（**整数白名单 strict-schema** `^\d+$` + **上界 18 拒**：`n > 18` → 400（精度上界，避免超过 `Number.MAX_SAFE_INTEGER`）+ **迭代精确累积**：`for(i=2; i<=n; i++) acc *= i`，不引入 BigInt / Stirling / gamma 近似）
 - `GET /increment?value=N` → 返回 `{result: N+1, operation: "increment"}`（**整数白名单 strict-schema** `^-?\d+$` + **精度上下界拒**：`|Number(value)| > 9007199254740990` → 400（+1 后避免超过 `Number.MAX_SAFE_INTEGER`）+ **query 名锁死**：只接受 `value`，别名 `n/a/b/x/val/input/...` 全 400）
+- `GET /ping` → `{ "pong": true }`（**Walking Skeleton trivial happy path**：无 query 参、无 strict-schema、无 error 分支、无 method 守卫——本 endpoint 在定义层面不存在拒绝路径；所有 `GET /ping` 请求一律 200 + 固定 body `{"pong": true}`，query 静默忽略）
 
 ### `GET /sum` 示例
 
@@ -408,3 +409,24 @@ curl -s -o /dev/stderr -w 'HTTP %{http_code}\n' 'http://127.0.0.1:3000/increment
 ```
 
 响应 schema 完整性（成功响应顶层 keys 严格等于 `["operation","result"]`；不漂到禁用同义字段 `incremented`/`next`/`successor`/`n_plus_one`/`plus_one`/`succ`/`inc`/`incr`/`incrementation`，也不漂到 generic 字段 `value`/`input`/`output`/`data`/`payload`/`answer`/`meta`，错误体顶层 keys 严格等于 `["error"]`）。
+
+### `GET /ping` 示例
+
+trivial happy path（W33 Walking Skeleton 验：单一固定响应、无任何 error 分支、无 query 解析）：
+
+```bash
+curl -s 'http://127.0.0.1:3000/ping'
+# {"pong":true}
+
+curl -s 'http://127.0.0.1:3000/ping?x=1'
+# {"pong":true}        # query 静默忽略
+
+curl -s 'http://127.0.0.1:3000/ping?pong=false'
+# {"pong":true}        # 同名 query 不影响响应
+
+curl -s -o /dev/stderr -w 'HTTP %{http_code}\n' 'http://127.0.0.1:3000/ping?garbage=xyz'
+# {"pong":true}
+# HTTP 200             # 任意 query 仍 200，本 endpoint 不存在拒绝路径
+```
+
+响应 schema 完整性（顶层 keys 严格等于 `["pong"]`，`.pong` 字面布尔 `true`；禁用同义字段名 `ping`/`status`/`ok`/`alive`/`healthy`/`result`/`message`/`data`/`payload`/`value`/`operation` 等出现）。响应是确定性的：连续多次请求返同一字节序 raw body，不含 `timestamp`/`uptime`/`request_id` 等时变字段。
