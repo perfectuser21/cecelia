@@ -84,7 +84,7 @@ journey_type: autonomous
   期望: exit 0
 
 - [x] [BEHAVIOR] 错误响应顶层 keys 字面集合等于 ["error"]，且 error 是非空字符串，body 不含 result 也不含 operation
-  Test: manual:bash -c 'cd playground && PLAYGROUND_PORT=3809 NODE_ENV=production node server.js > /tmp/w35-b9.log 2>&1 & SPID=$!; sleep 2; curl -s "http://localhost:3809/subtract?minuend=abc&subtrahend=3" -o /tmp/w35-b9-err.json; R=$(jq -e "keys | sort == [\"error\"] and (.error | type == \"string\" and length > 0) and (has(\"result\") | not) and (has(\"operation\") | not)" /tmp/w35-b9-err.json >/dev/null && echo OK); kill $SPID 2>/dev/null; [ "$R" = "OK" ]'
+  Test: manual:bash -c 'cd playground && PLAYGROUND_PORT=3809 NODE_ENV=production node server.js > /tmp/w35-b9.log 2>&1 & SPID=$!; sleep 2; curl -s "http://localhost:3809/subtract?minuend=abc&subtrahend=3" -o /tmp/w35-b9-err.json; R=$(jq -e "(keys | sort == [\"error\"]) and (.error | type == \"string\" and length > 0) and (has(\"result\") | not) and (has(\"operation\") | not)" /tmp/w35-b9-err.json >/dev/null && echo OK); kill $SPID 2>/dev/null; [ "$R" = "OK" ]'
   期望: exit 0
 
 ### 类型 5: 边界 happy（零边界 / off-by-one / 负结果 / 双负 / 浮点）

@@ -477,7 +477,7 @@ workstream_count: 1
 
 | Workstream | Test File | BEHAVIOR 覆盖 | 预期红证据 |
 |---|---|---|---|
-| WS1 | `tests/ws1/subtract.test.js` | minuend=10&subtrahend=3 → 200 + result=7 + operation="subtract", 零边界 0-0, minuend===subtrahend 反 off-by-one, 负结果 5-10, 双负 -5-(-3), 浮点 1.5-0.5, 顶层 keys 严格等于, 禁用字段反向, strict 拒 10+ 类, 缺参 3 类, 错 query 名 12+ 类, 错误体 keys=["error"] | 现 playground/server.js 无 `/subtract` 路由 → 所有相关 supertest 断言 fail（路由未注册 Express 默认 404） |
+| WS1 | `tests/ws1/subtract.test.js` | minuend=10&subtrahend=3 → 200, minuend=0&subtrahend=0, minuend===subtrahend 反 off-by-one, 负结果, 双负, 浮点, 顶层 keys, 禁用字段, strict 拒, 缺 subtrahend, 错 query 名, 错误响应顶层 keys | 现 playground/server.js 无 `/subtract` 路由 → 所有相关 supertest 断言 fail（路由未注册 Express 默认 404） |
 
 > 后缀说明：playground 子项目零依赖 + 纯 JS（无 tsconfig、无 TS 编译），故 vitest 测试用 `.test.js`。与 SKILL 模板 `.test.ts` 不一致是被动适配 playground 子项目栈，不是合同违规。
 
