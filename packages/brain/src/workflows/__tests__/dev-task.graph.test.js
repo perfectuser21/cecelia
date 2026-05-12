@@ -33,12 +33,21 @@ vi.mock('../../executor.js', () => ({
   preparePrompt: (...args) => mockPreparePrompt(...args),
 }));
 
+// Mock writeDockerCallback — runAgentNode 必须在 spawn 返回后写 callback_queue
+// 让下游 callback-worker → callback-processor 标 tasks.status，否则 task 永卡 in_progress
+const mockWriteDockerCallback = vi.fn();
+vi.mock('../../docker-executor.js', () => ({
+  writeDockerCallback: (...args) => mockWriteDockerCallback(...args),
+}));
+
 import { buildDevTaskGraph, compileDevTaskGraph, runAgentNode, DevTaskState } from '../dev-task.graph.js';
 
 describe('dev-task graph', () => {
   beforeEach(() => {
     mockSpawn.mockReset();
     mockPreparePrompt.mockReset();
+    mockWriteDockerCallback.mockReset();
+    mockWriteDockerCallback.mockResolvedValue(undefined);
   });
 
   it('buildDevTaskGraph returns StateGraph with run-agent node', () => {
@@ -110,5 +119,76 @@ describe('dev-task graph', () => {
     const { StateGraph } = await import('@langchain/langgraph');
     const graph = new StateGraph(DevTaskState);
     expect(graph).toBeDefined();
+  });
+
+  // ─── tasks.status 回写（Walking Skeleton P1 — 闭合 dev pipeline 0% 成功率 hole）─────────
+  // 历史 hole：graph 跑完 spawn 后 result/error 只存在 state，tasks.status 无人回写。
+  // dispatcher 是 fire-and-forget，spawn 完成后 task 永卡 in_progress 直到 zombie-reaper 30min 后标 failed。
+  // 修：runAgentNode 在 spawn 返回 / throw 后必须调 writeDockerCallback，让 callback-worker
+  // → callback-processor 走标准链路把 tasks.status 写完整（含 pr_url 提取 / failure_class 分类）。
+
+  it('runAgentNode spawn 成功 → 调 writeDockerCallback 入队 callback_queue (status=success)', async () => {
+    mockPreparePrompt.mockResolvedValueOnce('/dev\n\nPRD');
+    const spawnResult = { exit_code: 0, stdout: '{"type":"result","result":"pr_url: https://x/y/pull/1"}', stderr: '', timed_out: false, duration_ms: 1000 };
+    mockSpawn.mockResolvedValueOnce(spawnResult);
+    const state = { task: { id: '11111111-1111-1111-1111-111111111111', task_type: 'dev', description: 'PRD' } };
+
+    await runAgentNode(state);
+
+    expect(mockWriteDockerCallback).toHaveBeenCalledTimes(1);
+    const [task, runId, checkpointId, result] = mockWriteDockerCallback.mock.calls[0];
+    expect(task.id).toBe(state.task.id);
+    expect(typeof runId).toBe('string');
+    expect(runId.length).toBeGreaterThan(0);
+    expect(checkpointId).toBeNull();
+    expect(result).toEqual(spawnResult);
+  });
+
+  it('runAgentNode spawn 非零退出 → writeDockerCallback 透传 exit_code（status=failed 由 callback 决定）', async () => {
+    mockPreparePrompt.mockResolvedValueOnce('/dev\n\nPRD');
+    const spawnResult = { exit_code: 1, stdout: '', stderr: 'boom', timed_out: false, duration_ms: 500 };
+    mockSpawn.mockResolvedValueOnce(spawnResult);
+    const state = { task: { id: '22222222-2222-2222-2222-222222222222', task_type: 'dev' } };
+
+    await runAgentNode(state);
+
+    expect(mockWriteDockerCallback).toHaveBeenCalledTimes(1);
+    expect(mockWriteDockerCallback.mock.calls[0][3]).toEqual(spawnResult);
+  });
+
+  it('runAgentNode spawn throw → 构造合成 result 调 writeDockerCallback (exit_code=1 + stderr=err.message)', async () => {
+    mockPreparePrompt.mockResolvedValueOnce('/dev\n\nPRD');
+    mockSpawn.mockRejectedValueOnce(new Error('docker daemon unreachable'));
+    const state = { task: { id: '33333333-3333-3333-3333-333333333333', task_type: 'dev' } };
+
+    const delta = await runAgentNode(state);
+
+    expect(mockWriteDockerCallback).toHaveBeenCalledTimes(1);
+    const [, , , synthResult] = mockWriteDockerCallback.mock.calls[0];
+    expect(synthResult.exit_code).not.toBe(0);
+    expect(synthResult.stderr || synthResult.stdout || '').toMatch(/docker daemon unreachable/);
+    expect(synthResult.timed_out).toBe(false);
+    // delta 仍要返回 error 让 graph state 可见
+    expect(delta.error?.message).toBe('docker daemon unreachable');
+  });
+
+  it('runAgentNode writeDockerCallback 抛错不阻断 — 只 warn 不重抛', async () => {
+    mockPreparePrompt.mockResolvedValueOnce('/dev\n\nPRD');
+    mockSpawn.mockResolvedValueOnce({ exit_code: 0 });
+    mockWriteDockerCallback.mockRejectedValueOnce(new Error('callback_queue INSERT failed'));
+    const state = { task: { id: '44444444-4444-4444-4444-444444444444', task_type: 'dev' } };
+
+    // 不应 throw — 即使 writeback 失败也要让 graph 正常结束
+    const delta = await runAgentNode(state);
+    expect(delta.result).toBeDefined();
+  });
+
+  it('runAgentNode state.task 无 id → skip writeDockerCallback（防御性，不应崩）', async () => {
+    mockPreparePrompt.mockResolvedValueOnce('/dev\n\nPRD');
+    mockSpawn.mockResolvedValueOnce({ exit_code: 0 });
+    const state = { task: { description: 'no id task' } };
+
+    await runAgentNode(state);
+    expect(mockWriteDockerCallback).not.toHaveBeenCalled();
   });
 });

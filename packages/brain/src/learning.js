@@ -76,10 +76,16 @@ export async function recordLearning(analysis) {
       return existing.rows[0];
     }
 
+    // task_id 防御层（migration 271）：RCA learning 必须带 task_id（触发的 task）
+    // 缺失即告警，便于回溯 Insight-to-Action 断裂
+    if (!task_id) {
+      console.warn(`[learning] recordLearning called without task_id (title="${title.slice(0, 60)}") — RCA learning 应该总能回查到触发任务`);
+    }
+
     const summary = generateL0Summary(`${title} ${content}`);
     const result = await pool.query(`
-      INSERT INTO learnings (title, category, trigger_event, content, strategy_adjustments, metadata, content_hash, version, is_latest, summary)
-      VALUES ($1, $2, $3, $4, $5, $6, $7, 1, true, $8)
+      INSERT INTO learnings (title, category, trigger_event, content, strategy_adjustments, metadata, content_hash, version, is_latest, summary, task_id)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, 1, true, $8, $9)
       RETURNING *
     `, [
       title,
@@ -90,6 +96,7 @@ export async function recordLearning(analysis) {
       JSON.stringify({ task_id, confidence: analysis.confidence }),
       contentHash,
       summary,
+      task_id || null,
     ]);
 
     const learning = result.rows[0];

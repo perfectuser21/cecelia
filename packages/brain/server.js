@@ -755,6 +755,15 @@ async function onBrainListening() {
     console.warn('[Server] Dopamine system init failed (non-fatal):', e.message);
   }
 
+  // Initialize Zombie Reaper (自动清理 DB 层 zombie in_progress tasks)
+  try {
+    const { startZombieReaper } = await import('./src/zombie-reaper.js');
+    startZombieReaper();
+    console.log('[Server] Zombie Reaper started (5min interval) - auto-reap in_progress tasks idle >30min');
+  } catch (e) {
+    console.warn('[Server] Zombie Reaper init failed (non-fatal):', e.message);
+  }
+
   // Auto-start cecelia-bridge if not already running
   await startCeceliaBridge();
 

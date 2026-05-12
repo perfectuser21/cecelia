@@ -252,7 +252,25 @@ router.post('/learnings-received', async (req, res) => {
     }
 
     // 2. next_steps_suggested → 写 learnings 表（成长线）
-    // 先批量插入（source_branch/source_pr/repo 立即填充），learning_type 异步补填
+    // 先批量插入（source_branch/source_pr/repo + task_id 立即填充），learning_type 异步补填
+    //
+    // task_id 防御层（migration 271）：dev_workflow 入口必须带 task_id，
+    // 缺失即记录告警事件 → 防止 "Insight-to-Action 断裂" 再次重演。
+    const taskIdMissing = next_steps_suggested.length > 0 && !task_id;
+    if (taskIdMissing) {
+      console.warn(`[learnings-received] task_id missing (branch=${branch_name || 'unknown'}, pr=${pr_number || 'unknown'}) — learning 将无法回查到源任务`);
+      try {
+        await pool.query(
+          `INSERT INTO cecelia_events (event_type, source, payload) VALUES ($1, $2, $3)`,
+          ['learnings_received_missing_task_id', 'dev_workflow', JSON.stringify({
+            branch_name, pr_number, steps_count: next_steps_suggested.length,
+          })]
+        );
+      } catch (evtErr) {
+        console.warn('[learnings-received] missing-task-id event log failed (non-fatal):', evtErr.message);
+      }
+    }
+
     const insertedItems = [];
     for (const step of next_steps_suggested) {
       if (!step || typeof step !== 'string') continue;
@@ -261,11 +279,11 @@ router.post('/learnings-received', async (req, res) => {
         const { rows } = await pool.query(
           `INSERT INTO learnings
              (title, category, content, trigger_source, trigger_event, digested,
-              source_branch, source_pr, repo)
+              source_branch, source_pr, repo, task_id)
            VALUES ($1, 'dev_experience', $2, 'dev_workflow', 'learnings_received', false,
-                   $3, $4, $5)
+                   $3, $4, $5, $6)
            RETURNING id`,
-          [title, step, branch_name || null, pr_number ? String(pr_number) : null, repo]
+          [title, step, branch_name || null, pr_number ? String(pr_number) : null, repo, task_id || null]
         );
         if (rows[0]?.id) {
           results.learnings_inserted.push(rows[0].id);

@@ -279,15 +279,21 @@ export async function dispatchNextTask(goalIds) {
   }
 
   // 3. Select next task (with dependency check + pre-flight validation)
-  //    If pre-flight fails, skip that task and try the next candidate (max 5 retries)
+  //    If pre-flight fails, skip that task and try the next candidate (max 5 retries).
+  //    HOL fix: non-P0 codex tasks blocked by full pool → release claim, skip, try next.
+  //    Max MAX_SKIP_HEAD_FOR_BLOCKED HOL skips before giving up.
   const MAX_PRE_FLIGHT_RETRIES = 5;
+  const MAX_SKIP_HEAD_FOR_BLOCKED = 10;
   const preFlightFailedIds = [];
+  const holSkipIds = [];       // IDs skipped due to HOL blocking (codex pool full, non-P0)
   let nextTask = null;
 
   const { preFlightCheck, alertOnPreFlightFail } = await import('./pre-flight-check.js');
+  const claimerId = process.env.BRAIN_RUNNER_ID || `brain-tick-${process.pid}`;
 
   for (let attempt = 0; attempt <= MAX_PRE_FLIGHT_RETRIES; attempt++) {
-    const candidate = await selectNextDispatchableTask(goalIds, preFlightFailedIds, { priorityFilter: _quotaPriorityFilter });
+    const skipIds = [...preFlightFailedIds, ...holSkipIds];
+    const candidate = await selectNextDispatchableTask(goalIds, skipIds, { priorityFilter: _quotaPriorityFilter });
     if (!candidate) {
       return { dispatched: false, reason: 'no_dispatchable_task', actions };
     }
@@ -299,103 +305,130 @@ export async function dispatchNextTask(goalIds) {
 
     // 3b. Pre-flight Check — validate task quality before dispatch
     const checkResult = await preFlightCheck(candidate);
-    if (checkResult.passed) {
-      nextTask = candidate;
-      break;
+    if (!checkResult.passed) {
+      // Pre-flight failed — record and skip to next candidate
+      console.warn(`[dispatch] Pre-flight check failed for task ${candidate.id} (attempt ${attempt + 1}/${MAX_PRE_FLIGHT_RETRIES + 1}):`, checkResult.issues);
+      await pool.query(
+        `UPDATE tasks SET metadata = COALESCE(metadata, '{}'::jsonb) || $2::jsonb WHERE id = $1`,
+        [candidate.id, JSON.stringify({
+          pre_flight_failed: true,
+          pre_flight_issues: checkResult.issues,
+          pre_flight_suggestions: checkResult.suggestions,
+          failed_at: new Date().toISOString()
+        })]
+      );
+      await recordDispatchResult(pool, false, 'pre_flight_check_failed');
+      // C4: 通过飞书告警推送 pre-flight cancel，防止任务静默堆积（不抛异常，不影响 dispatch）
+      await alertOnPreFlightFail(pool, candidate, checkResult);
+      preFlightFailedIds.push(candidate.id);
+      continue;
     }
 
-    // Pre-flight failed — record and skip to next candidate
-    console.warn(`[dispatch] Pre-flight check failed for task ${candidate.id} (attempt ${attempt + 1}/${MAX_PRE_FLIGHT_RETRIES + 1}):`, checkResult.issues);
-    await pool.query(
-      `UPDATE tasks SET metadata = COALESCE(metadata, '{}'::jsonb) || $2::jsonb WHERE id = $1`,
-      [candidate.id, JSON.stringify({
-        pre_flight_failed: true,
-        pre_flight_issues: checkResult.issues,
-        pre_flight_suggestions: checkResult.suggestions,
-        failed_at: new Date().toISOString()
-      })]
+    // 3b'. Retired harness task_types — 不需要 executor，直接标 terminal_failure。
+    //      必须放在 checkCeceliaRunAvailable 之前，否则在 cecelia-bridge 不可用的环境
+    //      （CI / brain-only deploy）retired task 永远 revert 回 queued。
+    if (_RETIRED_HARNESS_TYPES_DISPATCH.has(candidate.task_type)) {
+      tickLog(`[dispatch] retired task_type=${candidate.task_type} task=${candidate.id} → marking pipeline_terminal_failure`);
+      try {
+        await pool.query(
+          `UPDATE tasks SET status='failed', completed_at=NOW(),
+            error_message=$2,
+            payload = COALESCE(payload, '{}'::jsonb) || jsonb_build_object('failure_class', 'pipeline_terminal_failure')
+           WHERE id=$1::uuid`,
+          [candidate.id, `task_type ${candidate.task_type} retired (subsumed by harness_initiative full graph)`]
+        );
+      } catch (err) {
+        console.error(`[dispatch] mark retired task failed: ${err.message}`);
+      }
+      await recordDispatchResult(pool, false, 'retired_task_type');
+      actions.push({
+        action: 'retire-task',
+        task_id: candidate.id,
+        title: candidate.title,
+        task_type: candidate.task_type,
+      });
+      return { dispatched: false, reason: 'retired_task_type', task_id: candidate.id, task_type: candidate.task_type, retired: true, actions };
+    }
+
+    // 3c. Initiative-level lock: 仅对 harness pipeline 类型生效，且只查同 project 的 harness blocker。
+    //     dev / talk / audit 等通用任务不进入这条分支，避免单 project 死锁（bb245cb4 教训）。
+    if (candidate.project_id && INITIATIVE_LOCK_TASK_TYPES.includes(candidate.task_type)) {
+      const lockCheck = await pool.query(
+        `SELECT id, title FROM tasks
+         WHERE project_id = $1
+           AND status = 'in_progress'
+           AND task_type = ANY($3::text[])
+           AND id != $2
+         LIMIT 1`,
+        [candidate.project_id, candidate.id, INITIATIVE_LOCK_TASK_TYPES]
+      );
+      if (lockCheck.rows.length > 0) {
+        const blocker = lockCheck.rows[0];
+        tickLog(`[dispatch] Initiative 已有进行中 harness 任务 (task_id: ${blocker.id})，跳过派发: ${candidate.title}`);
+        await recordDispatchResult(pool, false, 'initiative_locked');
+        return { dispatched: false, reason: 'initiative_locked', blocking_task_id: blocker.id, task_id: candidate.id, actions };
+      }
+    }
+
+    // 3c'. C1 Atomic claim: 确保没被其他 runner（如外部 autonomous agent）抢先 claim
+    //      放在 pre-flight / initiative lock 之后、mark in_progress 之前，
+    //      让 UPDATE...WHERE claimed_by IS NULL 的原子性承担"同一 task 只能派给一个 runner"的保证。
+    const claimResult = await pool.query(
+      `UPDATE tasks SET claimed_by = $1, claimed_at = NOW()
+       WHERE id = $2 AND claimed_by IS NULL
+       RETURNING id`,
+      [claimerId, candidate.id]
     );
-    await recordDispatchResult(pool, false, 'pre_flight_check_failed');
-    // C4: 通过飞书告警推送 pre-flight cancel，防止任务静默堆积（不抛异常，不影响 dispatch）
-    await alertOnPreFlightFail(pool, candidate, checkResult);
-    preFlightFailedIds.push(candidate.id);
+    if (claimResult.rows.length === 0) {
+      tickLog(`[dispatch] task ${candidate.id} already claimed by another runner, skipping`);
+      await recordDispatchResult(pool, false, 'already_claimed');
+      return { dispatched: false, reason: 'already_claimed', task_id: candidate.id, actions };
+    }
+
+    // 3d. Codex Pool D: check concurrent limit for Codex-native task types.
+    //     HOL fix: non-P0 codex tasks blocked by full pool → release claim, skip, try next.
+    //     P0 tasks stop the loop immediately (high-priority signal must not be bypassed).
+    const isCodexNativeTask = candidate.task_type === 'codex_qa' || candidate.task_type === 'codex_dev' || candidate.task_type === 'codex_test_gen';
+    if (isCodexNativeTask) {
+      const codexSlots = slotBudget?.codex;
+      if (codexSlots && !codexSlots.available) {
+        if (candidate.priority === 'P0') {
+          // P0 blocked: stop immediately — do not bypass P0 HOL signal
+          tickLog(`[dispatch] Codex pool full (${codexSlots.running}/${codexSlots.max}), P0 codex task ${candidate.id} stops dispatch`);
+          await pool.query(
+            `UPDATE tasks SET claimed_by = NULL, claimed_at = NULL WHERE id = $1`,
+            [candidate.id]
+          );
+          await recordDispatchResult(pool, false, 'codex_pool_full');
+          return { dispatched: false, reason: 'codex_pool_full', codex_running: codexSlots.running, codex_max: codexSlots.max, task_id: candidate.id, actions };
+        }
+
+        // Non-P0: HOL skip — release claim, add to holSkipIds, retry with next candidate
+        tickLog(`[dispatch] HOL skip: codex pool full (${codexSlots.running}/${codexSlots.max}), skipping ${candidate.priority} codex task ${candidate.id} (skip ${holSkipIds.length + 1}/${MAX_SKIP_HEAD_FOR_BLOCKED})`);
+        await pool.query(
+          `UPDATE tasks SET claimed_by = NULL, claimed_at = NULL WHERE id = $1`,
+          [candidate.id]
+        );
+        holSkipIds.push(candidate.id);
+
+        if (holSkipIds.length >= MAX_SKIP_HEAD_FOR_BLOCKED) {
+          tickLog(`[dispatch] HOL skip cap reached (${MAX_SKIP_HEAD_FOR_BLOCKED}), giving up`);
+          await recordDispatchResult(pool, false, 'hol_skip_cap_exceeded');
+          return { dispatched: false, reason: 'hol_skip_cap_exceeded', hol_skipped: holSkipIds.length, actions };
+        }
+        // HOL skip does not count against pre-flight attempt limit
+        attempt--;
+        continue;
+      }
+    }
+
+    // Passed all checks — this is the task to dispatch
+    nextTask = candidate;
+    break;
   }
 
   if (!nextTask) {
     return { dispatched: false, reason: 'all_candidates_failed_pre_flight', skipped: preFlightFailedIds.length, actions };
-  }
-
-  // 3b'. Retired harness task_types — 不需要 executor，直接标 terminal_failure。
-  //      必须放在 checkCeceliaRunAvailable 之前，否则在 cecelia-bridge 不可用的环境
-  //      （CI / brain-only deploy）retired task 永远 revert 回 queued。
-  if (_RETIRED_HARNESS_TYPES_DISPATCH.has(nextTask.task_type)) {
-    tickLog(`[dispatch] retired task_type=${nextTask.task_type} task=${nextTask.id} → marking pipeline_terminal_failure`);
-    try {
-      await pool.query(
-        `UPDATE tasks SET status='failed', completed_at=NOW(),
-          error_message=$2,
-          payload = COALESCE(payload, '{}'::jsonb) || jsonb_build_object('failure_class', 'pipeline_terminal_failure')
-         WHERE id=$1::uuid`,
-        [nextTask.id, `task_type ${nextTask.task_type} retired (subsumed by harness_initiative full graph)`]
-      );
-    } catch (err) {
-      console.error(`[dispatch] mark retired task failed: ${err.message}`);
-    }
-    await recordDispatchResult(pool, false, 'retired_task_type');
-    actions.push({
-      action: 'retire-task',
-      task_id: nextTask.id,
-      title: nextTask.title,
-      task_type: nextTask.task_type,
-    });
-    return { dispatched: false, reason: 'retired_task_type', task_id: nextTask.id, task_type: nextTask.task_type, retired: true, actions };
-  }
-
-  // 3c. Initiative-level lock: 仅对 harness pipeline 类型生效，且只查同 project 的 harness blocker。
-  //     dev / talk / audit 等通用任务不进入这条分支，避免单 project 死锁（bb245cb4 教训）。
-  if (nextTask.project_id && INITIATIVE_LOCK_TASK_TYPES.includes(nextTask.task_type)) {
-    const lockCheck = await pool.query(
-      `SELECT id, title FROM tasks
-       WHERE project_id = $1
-         AND status = 'in_progress'
-         AND task_type = ANY($3::text[])
-         AND id != $2
-       LIMIT 1`,
-      [nextTask.project_id, nextTask.id, INITIATIVE_LOCK_TASK_TYPES]
-    );
-    if (lockCheck.rows.length > 0) {
-      const blocker = lockCheck.rows[0];
-      tickLog(`[dispatch] Initiative 已有进行中 harness 任务 (task_id: ${blocker.id})，跳过派发: ${nextTask.title}`);
-      await recordDispatchResult(pool, false, 'initiative_locked');
-      return { dispatched: false, reason: 'initiative_locked', blocking_task_id: blocker.id, task_id: nextTask.id, actions };
-    }
-  }
-
-  // 3c'. C1 Atomic claim: 确保没被其他 runner（如外部 autonomous agent）抢先 claim
-  //      放在 pre-flight / initiative lock 之后、mark in_progress 之前，
-  //      让 UPDATE...WHERE claimed_by IS NULL 的原子性承担"同一 task 只能派给一个 runner"的保证。
-  const claimerId = process.env.BRAIN_RUNNER_ID || `brain-tick-${process.pid}`;
-  const claimResult = await pool.query(
-    `UPDATE tasks SET claimed_by = $1, claimed_at = NOW()
-     WHERE id = $2 AND claimed_by IS NULL
-     RETURNING id`,
-    [claimerId, nextTask.id]
-  );
-  if (claimResult.rows.length === 0) {
-    tickLog(`[dispatch] task ${nextTask.id} already claimed by another runner, skipping`);
-    await recordDispatchResult(pool, false, 'already_claimed');
-    return { dispatched: false, reason: 'already_claimed', task_id: nextTask.id, actions };
-  }
-
-  // 3d. Codex Pool D: check concurrent limit for Codex-native task types
-  const isCodexNativeTask = nextTask.task_type === 'codex_qa' || nextTask.task_type === 'codex_dev' || nextTask.task_type === 'codex_test_gen';
-  if (isCodexNativeTask) {
-    const codexSlots = slotBudget?.codex;
-    if (codexSlots && !codexSlots.available) {
-      tickLog(`[dispatch] Codex pool full (${codexSlots.running}/${codexSlots.max}), skipping codex task ${nextTask.id}`);
-      await recordDispatchResult(pool, false, 'codex_pool_full');
-      return { dispatched: false, reason: 'codex_pool_full', codex_running: codexSlots.running, codex_max: codexSlots.max, task_id: nextTask.id, actions };
-    }
   }
 
   // 4. Update task status to in_progress

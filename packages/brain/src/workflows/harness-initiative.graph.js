@@ -203,6 +203,7 @@ ${task.description || task.title || ''}
 
     // 建 initiative_contracts（approved 版，GAN 循环已产出 contract_content）
     // branch 列（migration 246）= GAN propose_branch，Phase B 用此分支创 PR。
+    // ON CONFLICT (B13): graph restart/resume 时 retry 必须幂等，避免 PK violation。
     const contractInsert = await client.query(
       `INSERT INTO initiative_contracts (
          initiative_id, version, status,
@@ -210,6 +211,15 @@ ${task.description || task.title || ''}
          budget_cap_usd, timeout_sec, branch, approved_at
        )
        VALUES ($1::uuid, 1, 'approved', $2, $3, $4, $5, $6, $7, NOW())
+       ON CONFLICT (initiative_id, version) DO UPDATE SET
+         status = EXCLUDED.status,
+         prd_content = EXCLUDED.prd_content,
+         contract_content = EXCLUDED.contract_content,
+         review_rounds = EXCLUDED.review_rounds,
+         budget_cap_usd = EXCLUDED.budget_cap_usd,
+         timeout_sec = EXCLUDED.timeout_sec,
+         branch = EXCLUDED.branch,
+         approved_at = NOW()
        RETURNING id`,
       [initiativeId, plannerOutput, ganResult.contract_content, ganResult.rounds, budgetUsd, timeoutSec, ganResult.propose_branch || null]
     );
@@ -669,6 +679,7 @@ export async function dbUpsertNode(state, opts = {}) {
       client,
       contractBranch: state.ganResult.propose_branch || null,
     });
+    // ON CONFLICT (B13): dbUpsertNode 是 graph 节点，restart resume 时 retry 必须幂等。
     const contractInsert = await client.query(
       `INSERT INTO initiative_contracts (
          initiative_id, version, status,
@@ -676,6 +687,15 @@ export async function dbUpsertNode(state, opts = {}) {
          budget_cap_usd, timeout_sec, branch, approved_at
        )
        VALUES ($1::uuid, 1, 'approved', $2, $3, $4, $5, $6, $7, NOW())
+       ON CONFLICT (initiative_id, version) DO UPDATE SET
+         status = EXCLUDED.status,
+         prd_content = EXCLUDED.prd_content,
+         contract_content = EXCLUDED.contract_content,
+         review_rounds = EXCLUDED.review_rounds,
+         budget_cap_usd = EXCLUDED.budget_cap_usd,
+         timeout_sec = EXCLUDED.timeout_sec,
+         branch = EXCLUDED.branch,
+         approved_at = NOW()
        RETURNING id`,
       [state.initiativeId, state.plannerOutput, state.ganResult.contract_content, state.ganResult.rounds, budgetUsd, timeoutSec, state.ganResult.propose_branch || null]
     );
@@ -1112,6 +1132,17 @@ export async function reportNode(state, opts = {}) {
         failure_reason=CASE WHEN $2='failed' THEN $3 ELSE failure_reason END
        WHERE initiative_id=$1::uuid`,
       [state.initiativeId, phase, reason]
+    );
+    // B1: 同时回写 tasks.status — 否则 task 永卡 in_progress（graph 不经 executor.js
+    // 这条 happy path，注释 line 1107 "executor 会标 task.status='failed'" 仅 FAIL 路径
+    // 的 ws-level fallback，PASS 路径无人回写）。W28 实证：13 个 checkpoint 全跑过
+    // prep→...→report 但 tasks.status 仍 in_progress。Walking Skeleton P1 修补点。
+    const taskStatus = state.final_e2e_verdict === 'PASS' ? 'completed' : 'failed';
+    await dbPool.query(
+      `UPDATE tasks SET status=$2::text, completed_at=NOW(), updated_at=NOW(),
+        error_message=CASE WHEN $2::text='failed' THEN $3::text ELSE error_message END
+       WHERE id=$1::uuid`,
+      [state.initiativeId, taskStatus, reason]
     );
   } catch (err) {
     console.warn(`[harness-initiative.graph] reportNode db update failed: ${err.message}`);
