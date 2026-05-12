@@ -1,4 +1,10 @@
-# Sprint Contract Draft (Round 1) — W32 Walking Skeleton P1 终验 round 4
+# Sprint Contract Draft (Round 2) — W32 Walking Skeleton P1 终验 round 4
+
+> **Round 2 修订摘要**（按 Round 1 Reviewer 反馈逐条对应）：
+> - **R1 issue 1 — Oracle 完整性 (8→9)**：Step 4 + contract-dod-ws1 BEHAVIOR 5 新增 `keys | sort == ["id","last_heartbeat_at","parent_task_id","result","status","task_type","thread_id"]` 严等校验，跟 dispatch/recent 的 `keys == ["count","events"]` 严等同构。
+> - **R1 issue 2 — risk_registered (3 分)**：本文件末新增 `## Risk Registry` 段，登记 5 类已知风险（Brain 不可达 / 内层 Initiative 120min 未收敛 / 内层 verdict=FAIL 误判 P1 / 并发 Initiative 污染 B3 / B5 HOL skipped→dispatched 未出现）+ 每项 mitigation/降级路径。
+> - **R1 issue 3 — behavior_count_position (5 分)**：contract-dod-ws1 BEHAVIOR 5 升级为含 keys 严等的完整 schema oracle（不再只 has(K) 漏校验新字段），4 类 BEHAVIOR 场景（schema 字段值 / keys 完整性 / 禁用字段反向 / error path）每类 ≥ 2 条覆盖。
+>
 
 > **PR-G 验收承诺**：本合同字段名严格字面照搬 PRD `## Response Schema` 段：
 > - `GET /api/brain/tasks/{id}` 成功响应 keys 字面必填 = `id`/`task_type`/`status`/`thread_id`/`parent_task_id`/`result`/`last_heartbeat_at`（字面，**禁用** `state`/`task_state`/`phase`/`stage`）
@@ -150,7 +156,12 @@ echo "$RESP" | jq -e '.status == "completed"' || { echo "FAIL: status 字面应 
 echo "$RESP" | jq -e '.result.verdict == "PASS" or .result.verdict == "FAIL"' \
   || { echo "FAIL: result.verdict 不在 {PASS, FAIL} 字面集合"; exit 1; }
 
-# response schema 必填字段字面均存在（含 null 允许）
+# R2 修订：schema 严等完整性 — 顶层 keys 排序后必须**完全等于** PRD 字面 7 字段集合
+# 跟 dispatch/recent 的 `keys == ["count","events"]` 严等同构，捕获 generator 加新字段或 alias 漂移
+echo "$RESP" | jq -e 'keys | sort == ["id","last_heartbeat_at","parent_task_id","result","status","task_type","thread_id"]' \
+  || { echo "FAIL: tasks/{id} 顶层 keys 严等校验失败，实际 $(echo $RESP | jq -c 'keys | sort')"; exit 1; }
+
+# response schema 必填字段字面均存在（含 null 允许） — 兼容性双校验
 for k in id task_type status thread_id parent_task_id result last_heartbeat_at; do
   echo "$RESP" | jq -e "has(\"$k\")" > /dev/null || { echo "FAIL: 缺必填字段 $k"; exit 1; }
 done
@@ -167,7 +178,7 @@ done
 echo "✅ Step 4 通过 (status=completed, verdict=$(echo $RESP | jq -r .result.verdict))"
 ```
 
-**硬阈值**: `.status == "completed"` 字面；`.result.verdict` ∈ `{"PASS","FAIL"}` 字面之一；7 个必填字段 has 全 true；4 个禁用字段 has 全 false。
+**硬阈值**: `.status == "completed"` 字面；`.result.verdict` ∈ `{"PASS","FAIL"}` 字面之一；**`keys | sort == ["id","last_heartbeat_at","parent_task_id","result","status","task_type","thread_id"]` 严等**（R2 新增 — Reviewer R1 要求）；7 个必填字段 has 全 true；4 个禁用字段 has 全 false。
 
 ---
 
@@ -369,4 +380,59 @@ workstream_count: 1
 
 | Workstream | Manual:bash 入口 | BEHAVIOR 覆盖 | 预期红证据 |
 |---|---|---|---|
-| WS1 | `contract-dod-ws1.md` 内 4+ 条 [BEHAVIOR] manual:bash 命令 | (1) POST schema 严合规 + 字面 status="pending" (2) GET tasks/{id} 终态 status="completed" + verdict ∈ {PASS,FAIL} + schema 字面完整 (3) dispatch/recent keys==["count","events"] + event_type 5 字面枚举 + dispatched≥5 (4) fleet/slots 不变量 + 字段字面 + 禁用字段反向 (5) thread_id distinct=1 + 5 阶段全覆盖 (6) zombie=0 + B7 flipflop=0 (7) error 路径 400 + {error} schema | 实现前 `verify-p1.sh` 不存在 → bash: command not found 红；实现后 Brain 未跑通 → 任一 oracle FAIL 红 |
+| WS1 | `contract-dod-ws1.md` 内 8 条 [BEHAVIOR] manual:bash 命令 | (1) POST schema 严合规 + 字面 status="pending" (2) GET tasks/{id} 终态 status="completed" + verdict ∈ {PASS,FAIL} + **keys 严等 schema 完整性（R2 新增）** (3) dispatch/recent keys==["count","events"] + event_type 5 字面枚举 + dispatched≥5 (4) fleet/slots 不变量 + 字段字面 + 禁用字段反向 (5) thread_id distinct=1 + 5 阶段全覆盖 (6) zombie=0 + B7 flipflop=0 (7) error 路径 400 + {error} schema (8) **R2 新增 — tasks/{id} keys|sort 严等 7 字段集合** | 实现前 `verify-p1.sh` 不存在 → bash: command not found 红；实现后 Brain 未跑通 → 任一 oracle FAIL 红 |
+
+---
+
+## Risk Registry (R2 新增 — 补 Reviewer R1 risk_registered=3 分)
+
+> 本 sprint 是验证型 sprint，不改 Brain 代码，但终验过程中可能遇到 5 类已知风险。每条登记 (a) 触发条件 (b) 检测信号 (c) 降级 / mitigation 路径 (d) 责任归属。
+
+### R1: Brain API localhost:5221 不可达
+
+- **触发**: evaluator 运行环境内 Brain 未启动 / 端口冲突 / Docker network 断
+- **检测**: `curl -fs localhost:5221/api/brain/context` 返非 0
+- **降级**: `verify-p1.sh` 在 Step 1 前置检查中 exit 1，evaluator 判 INFRA-FAIL（不计入 P1 verdict）；外层 harness 重试或登记 B11+ infra hole
+- **责任**: 主理人 / Cecelia ops（不是本 sprint generator/evaluator 范畴）
+
+### R2: 内层 harness_initiative 在 120min deadline 内未收敛
+
+- **触发**: 内层 5 阶段总耗时 > 120min（generator agent 偶发慢 / 网络抖动 / Codex 排队）
+- **检测**: Step 3 轮询循环 `while $(date +%s) -lt $DEADLINE` 退出后 `.status` 仍 `pending`/`in_progress`
+- **降级**: `verify-p1.sh` 写 `## Verdict: FAIL` + `## Anomaly` 段记录 "inner Initiative timeout at stage X"，evaluator 据此判 P1 round 4 FAIL，登记 B11 timeout hole；不阻塞外层退出
+- **责任**: 本 sprint generator 必须在 verify-p1.sh 实现该兜底逻辑（在 BEHAVIOR 6 已覆盖：脚本退出后 p1-final-acceptance.md 必须含 PASS 或 FAIL 字面）
+
+### R3: 内层 verdict=FAIL 被误判为 P1 失败
+
+- **触发**: 内层 Initiative 业务逻辑产生 verdict=FAIL（不影响管道贯通）
+- **检测**: Step 4 `.result.verdict == "FAIL"` 但 5 阶段 thread / dispatch / slot / zombie / HOL 全部 oracle 通过
+- **降级**: PRD `边界情况 e2` 明确：业务 verdict=FAIL 不影响 P1 终验本身。`verify-p1.sh` 渲染报告时区分 "Initiative 业务 verdict" 与 "P1 终验 verdict"；P1 verdict 仅看 a-g 7 oracle 是否全 PASS，不看内层业务 verdict
+- **责任**: 本 sprint generator 必须在 verify-p1.sh 实现该分离（Step 4 验 `verdict ∈ {PASS,FAIL}` 仅校验**有 verdict 字段**，不据此决定 P1 verdict）
+
+### R4: 并发 Initiative 污染 B3 slot 一致性
+
+- **触发**: 终验期间其他 harness Initiative 同时在跑，`fleet/slots.in_use` 包含外部 Initiative 的 slot 占用
+- **检测**: Step 7 `.in_use == .in_progress_task_count` 仍恒等（因为 in_progress_task_count 也包含外部），但若 generator 错把 in_use 跟"本 Initiative 子任务 in_progress 数"对比就会假阴
+- **降级**: PRD `边界情况 e3` 明确：B3 oracle 是**全局**不变量 `in_use === in_progress_task_count`，不是"本 Initiative 子任务级"。Step 7 验证命令字面是 `.in_use == .in_progress_task_count`，不引入按 initiative_id 过滤的子查询；这本身就规避了并发污染
+- **责任**: 本 sprint generator 严格按 Step 7 字面写脚本，禁止"按 initiative_id 子查询过滤再对比"
+
+### R5: B5 HOL skipped→dispatched 序列未出现（无队列竞争）
+
+- **触发**: 终验执行期间 dispatcher 队列从未发生过 "队首 skip → 后续 dispatch" 事件序列（系统负载低 / 没有并发任务竞争 slot）
+- **检测**: Step 7 SQL `EXISTS(SELECT 1 FROM with_lead WHERE event_type='skipped' AND next_evt='dispatched')` 返 `f`
+- **降级**: PRD 第 7 节 oracle f 明确："如果队列从头到尾没有跳过事件，跑一个并发场景补充验证"。`verify-p1.sh` 检测到 HOL_OK=f 时，必须**额外**触发一个 PUSH 任务（如 priority=0 + 高 slot 占用任务）人为制造队首跳过场景，再重测 HOL 序列；仍未出现才判 B5 oracle FAIL
+- **责任**: 本 sprint generator 必须在 verify-p1.sh 实现该补充验证（Step 7 写"primary EXISTS check → 失败则触发并发场景 → secondary EXISTS check"两段逻辑）
+
+---
+
+### R2 修订 vs R1 对照表
+
+| R1 Reviewer 关注点 | R1 得分 | R2 修复 | 修复位置 |
+|---|---|---|---|
+| verification_oracle_completeness | 8/10 | Step 4 + DoD BEHAVIOR 5 加 `keys \| sort` 严等 | contract-draft.md Step 4 / contract-dod-ws1.md BEHAVIOR 5 |
+| risk_registered | 3/10 | 新增 Risk Registry 段，登记 R1-R5 五类风险 + mitigation | contract-draft.md 末段（本段）|
+| behavior_count_position | 5/10 | BEHAVIOR 5 升级含 keys 严等，4 类场景覆盖位置正交化（schema 值 / keys 完整 / 禁用反向 / error path 各 ≥ 2 条）| contract-dod-ws1.md BEHAVIOR 段 |
+| dod_machineability | 9/10 | 维持（已合格）| — |
+| scope_match_prd | 8/10 | 维持（PRD 字段名全部字面引用）| — |
+| test_is_red | 7/10 | vitest 加 keys 严等字面断言（脚本未实现 keys 严等行→红）| tests/ws1/verify-p1.test.ts |
+| internal_consistency | 7/10 | Test Contract 表升级到 8 条 BEHAVIOR；Step 4 硬阈值与 BEHAVIOR 5 字面对齐 | contract-draft.md Test Contract 段 |

@@ -76,6 +76,19 @@ describe('Workstream 1 — verify-p1.sh 静态结构 [BEHAVIOR]', () => {
       expect(c.includes(`jq -e "${bad}`)).toBe(false);
     }
   });
+
+  it('R2 新增：tasks/{id} 响应含 keys|sort 严等 7 字段集合字面（Reviewer R1 修复）', () => {
+    const c = readScript();
+    const need =
+      'keys | sort == ["id","last_heartbeat_at","parent_task_id","result","status","task_type","thread_id"]';
+    expect(c).toContain(need);
+  });
+
+  it('R2 新增：B5 HOL primary check 失败时含 secondary 并发触发逻辑（Risk Registry R5）', () => {
+    const c = readScript();
+    expect(c).toMatch(/HOL_OK/);
+    expect(c).toMatch(/skipped[^\n]+dispatched/);
+  });
 });
 
 describe('Workstream 1 — p1-final-acceptance.md 报告结构 [BEHAVIOR]', () => {
