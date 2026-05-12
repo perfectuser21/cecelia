@@ -1,0 +1,30 @@
+{
+  "initiative_id": "78b3578b-3450-4ee7-9dce-2d9d5e19bb6c",
+  "journey_type": "autonomous",
+  "journey_type_reason": "仅动 playground 子项目，无 UI / 无 brain tick / 无 engine hook / 无远端 agent；与 W19~W26 同分类",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "playground 加 GET /decrement 路由 + tests describe 块 + README 段（B14 4 fix 后 final happy 真验）",
+      "scope": "playground/server.js 新增 GET /decrement（query 名 value，strict-schema 整数正则 ^-?\\d+$，|Number(value)| > 9007199254740990 显式上下界拒，Number(value)-1 算术，返回 {result:<number>, operation:\"decrement\"}）；playground/tests/server.test.js 新增 describe('GET /decrement', ...) 块（happy 含 0/1/-1/精度上下界，上下界拒，strict 拒，schema 完整性 oracle，禁用字段反向断言，错误体 keys=[error] 断言，错 query 名 400，7 路由回归 1 条/路由）；playground/README.md 端点列表加 /decrement 段（示例 ≥ 4）。响应字段名严格字面：result + operation:\"decrement\"；query 名严格 value；严禁任一禁用同义字段名出现在响应。零依赖；不动其他路由代码或测试。",
+      "dod": [
+        "[ARTIFACT] playground/server.js 内含 app.get('/decrement' 路由注册",
+        "[ARTIFACT] playground/server.js /decrement 路由 query 名为 value（不复用 n/a/b 等禁用名）且含 strict-schema 整数正则 ^-?\\d+$ 与上界数字 9007199254740990",
+        "[ARTIFACT] playground/tests/server.test.js 内含 describe('GET /decrement' 独立 describe 块",
+        "[BEHAVIOR] GET /decrement?value=5 → 200 + {result:4, operation:\"decrement\"}，顶层 keys 字面集合 == [operation, result]",
+        "[BEHAVIOR] GET /decrement?value=5 响应不含任一禁用字段 decremented/prev/predecessor/minus_one/sub_one/incremented/sum/product/quotient/power/remainder/factorial/negation/value/input/output/data/payload/answer/meta",
+        "[BEHAVIOR] GET /decrement?value=9007199254740990 → 200 + {result:9007199254740989, operation:\"decrement\"}（精度上界 happy）；GET /decrement?value=-9007199254740990 → 200 + {result:-9007199254740991, operation:\"decrement\"}（精度下界 happy）",
+        "[BEHAVIOR] GET /decrement?value=9007199254740991 → 400 且 GET /decrement?value=-9007199254740991 → 400（上下界拒），错误体顶层 keys 字面集合 == [error] 不含 result 也不含 operation",
+        "[BEHAVIOR] GET /decrement?value=1.5 / 1e2 / abc / +5 / 空串 / 缺 value / n=5（错 query 名）均 → 400；已有 8 路由 (/health /sum /multiply /divide /power /modulo /increment /factorial) happy 回归全通过"
+      ],
+      "files": [
+        "playground/server.js",
+        "playground/tests/server.test.js",
+        "playground/README.md"
+      ],
+      "depends_on": [],
+      "complexity": "S",
+      "estimated_minutes": 30
+    }
+  ]
+}
