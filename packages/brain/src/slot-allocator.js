@@ -394,11 +394,15 @@ async function calculateSlotBudget() {
   const resources = checkServerResources();
   const effectiveSlots = resources.effectiveSlots;
 
-  // Running processes = actual running count from DB
+  // Running processes = headed sessions (ps, accurate for real user sessions) +
+  // DB counts for dispatched tasks (authoritative truth for in_progress).
+  // Previously: Math.max(sessions.total, ceceliaUsed + autoDispatchUsed) also included
+  // orphaned/zombie headless processes whose DB tasks had already completed — this caused
+  // dispatcher deadlock when DB in_progress=0 but 8 zombie procs still visible in ps.
+  // Fix: use userSlotsUsed (headed only, no zombies) + DB task counts.
   const ceceliaUsed = await countCeceliaInProgress();
   const autoDispatchUsed = await countAutoDispatchInProgress();
-  // Conservative: take the higher of ps detection vs DB count to prevent over-dispatch
-  const totalRunning = Math.max(sessions.total, ceceliaUsed + autoDispatchUsed);
+  const totalRunning = userSlotsUsed + ceceliaUsed + autoDispatchUsed;
 
   // User reserve: 1 slot headroom when user is active
   const userReserve = userMode !== 'absent' ? USER_PRIORITY_HEADROOM : 0;
