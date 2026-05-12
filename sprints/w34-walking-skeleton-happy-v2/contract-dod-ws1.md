@@ -4,7 +4,7 @@ journey_type: autonomous
 ---
 # Contract DoD — Workstream 1: playground GET /uppercase 路由 + 单测 describe 块 + README 段
 
-**范围**: 在 `playground/server.js` 加 `GET /uppercase`（query 名严格 text，strict-schema `^[A-Za-z]+$`，`text.toUpperCase()` 算术，返回 `{result, operation: "uppercase"}`）+ 在 `playground/tests/server.test.js` 加 `describe('GET /uppercase', ...)` 块 + 在 `playground/README.md` 端点列表加 `/uppercase` 段。零依赖。不动其他八条路由的代码、单测、README 段。
+**范围**: 在 `playground/server.js` 加 `GET /uppercase`（query 名严格 text，strict-schema `^[A-Za-z]+$`，`text.toUpperCase()` 算术，返回 `{result, operation: "uppercase"}`）+ 在 `playground/tests/server.test.js` **末尾 append**（不动既有 1-1441 行）`describe('GET /uppercase', ...)` 块 + 在 `playground/README.md` 端点列表加 `/uppercase` 段。零依赖。不动其他八条路由的代码、单测、README 段。
 **大小**: S
 **依赖**: 无
 
@@ -15,14 +15,17 @@ journey_type: autonomous
 - [ ] [ARTIFACT] `playground/server.js` 注册 `app.get('/uppercase'`
   Test: node -e "const c=require('fs').readFileSync('playground/server.js','utf8');if(!/app\.get\(['\"]\/uppercase['\"]/.test(c))process.exit(1)"
 
-- [ ] [ARTIFACT] `playground/server.js` `/uppercase` 路由含 strict-schema ASCII 字母正则 `^[A-Za-z]+$`
-  Test: node -e "const c=require('fs').readFileSync('playground/server.js','utf8');if(!/\^\[A-Za-z\]\+\$/.test(c))process.exit(1)"
+- [ ] [ARTIFACT] `playground/server.js` `/uppercase` 路由含 strict-schema ASCII 字母正则 `^[A-Za-z]+$`（**R2 风险 R4 防御**：禁 Unicode 扩展 `\p{L}`）
+  Test: node -e "const c=require('fs').readFileSync('playground/server.js','utf8');if(!/\^\[A-Za-z\]\+\$/.test(c))process.exit(1);if(/\\\\p\{L\}/.test(c))process.exit(1)"
 
-- [ ] [ARTIFACT] `playground/server.js` `/uppercase` 路由响应字面包含 `operation: 'uppercase'` 与字面 `result`（按 PR-G 死规则字面字段名）
+- [ ] [ARTIFACT] `playground/server.js` `/uppercase` 路由响应字面包含 `operation: 'uppercase'` 与字面 `result`（按 PR-G 死规则字面字段名；**R2 风险 R2 防御**）
   Test: node -e "const c=require('fs').readFileSync('playground/server.js','utf8');if(!/operation\s*:\s*['\"]uppercase['\"]/.test(c))process.exit(1);if(!/\bresult\b/.test(c))process.exit(1)"
 
-- [ ] [ARTIFACT] `playground/tests/server.test.js` 含独立 `describe('GET /uppercase'` 块
+- [ ] [ARTIFACT] `playground/tests/server.test.js` 含独立 `describe('GET /uppercase'` 块（**R2 风险 R3 防御**：必须 append 不动既有 1-1441 行）
   Test: node -e "const c=require('fs').readFileSync('playground/tests/server.test.js','utf8');if(!/describe\(['\"]GET \/uppercase['\"]/.test(c))process.exit(1)"
+
+- [ ] [ARTIFACT] `playground/tests/server.test.js` 既有 1441 行原 describe 块未被修改（按行号 grep 锚）
+  Test: node -e "const c=require('fs').readFileSync('playground/tests/server.test.js','utf8');const lines=c.split('\n');const need=[\"describe('GET /power\",\"describe('GET /modulo\",\"describe('GET /factorial\",\"describe('GET /increment\"];for(const n of need){if(!lines.slice(0,1441).some(l=>l.includes(n))){console.error('既有 describe 缺失:',n);process.exit(1)}}"
 
 - [ ] [ARTIFACT] `playground/README.md` 端点列表含 `/uppercase` 段
   Test: node -e "const c=require('fs').readFileSync('playground/README.md','utf8');if(!/\/uppercase/.test(c))process.exit(1)"
@@ -38,11 +41,11 @@ journey_type: autonomous
   Test: manual:bash -c 'cd playground && PLAYGROUND_PORT=3201 node server.js & SPID=$!; sleep 2; RESP=$(curl -fs "http://localhost:3201/uppercase?text=hello"); RC=0; echo "$RESP" | jq -e ".result == \"HELLO\"" > /dev/null || RC=1; echo "$RESP" | jq -e ".operation == \"uppercase\"" > /dev/null || RC=1; echo "$RESP" | jq -e ".result | type == \"string\"" > /dev/null || RC=1; kill $SPID 2>/dev/null; exit $RC'
   期望: exit 0
 
-- [ ] [BEHAVIOR] GET /uppercase?text=hello 响应顶层 keys 字面集合 == ["operation","result"]（schema 完整性，禁多余字段）
+- [ ] [BEHAVIOR] GET /uppercase?text=hello 响应顶层 keys 字面集合 == ["operation","result"]（schema 完整性，禁多余字段；R2 风险 R2 防御）
   Test: manual:bash -c 'cd playground && PLAYGROUND_PORT=3202 node server.js & SPID=$!; sleep 2; RESP=$(curl -fs "http://localhost:3202/uppercase?text=hello"); RC=0; echo "$RESP" | jq -e "(keys | sort) == [\"operation\",\"result\"]" > /dev/null || RC=1; kill $SPID 2>/dev/null; exit $RC'
   期望: exit 0
 
-- [ ] [BEHAVIOR] GET /uppercase?text=hello 响应不含任一禁用字段名（uppercased / upper / transformed / mapped / output / value / input / text / data / payload / sum / product / quotient / power / remainder / factorial / negation）
+- [ ] [BEHAVIOR] GET /uppercase?text=hello 响应不含任一禁用字段名（uppercased / upper / transformed / mapped / output / value / input / text / data / payload / sum / product / quotient / power / remainder / factorial / negation；R2 风险 R2 防御）
   Test: manual:bash -c 'cd playground && PLAYGROUND_PORT=3203 node server.js & SPID=$!; sleep 2; RESP=$(curl -fs "http://localhost:3203/uppercase?text=hello"); RC=0; for BAD in uppercased upper upper_text transformed transformed_text mapped output value input text data payload response answer out meta original sum product quotient power remainder factorial negation; do if echo "$RESP" | jq -e "has(\"$BAD\")" > /dev/null 2>&1; then echo "FAIL: 禁用字段 $BAD"; RC=1; fi; done; kill $SPID 2>/dev/null; exit $RC'
   期望: exit 0
 
@@ -66,6 +69,10 @@ journey_type: autonomous
   Test: manual:bash -c 'cd playground && PLAYGROUND_PORT=3208 node server.js & SPID=$!; sleep 2; CODE=$(curl -s -o /tmp/w34_dod_b8 -w "%{http_code}" "http://localhost:3208/uppercase?text=hello&text=world"); RC=0; [ "$CODE" = "400" ] || RC=1; jq -e "(keys | sort) == [\"error\"]" < /tmp/w34_dod_b8 > /dev/null || RC=1; kill $SPID 2>/dev/null; exit $RC'
   期望: exit 0
 
-- [ ] [BEHAVIOR] 8 路由回归 happy 全过（/health /sum /multiply /divide /factorial /increment）+ vitest 全套绿
-  Test: manual:bash -c 'cd playground && PLAYGROUND_PORT=3209 node server.js & SPID=$!; sleep 2; RC=0; curl -fs "http://localhost:3209/health" | jq -e ".ok == true" > /dev/null || RC=1; curl -fs "http://localhost:3209/sum?a=2&b=3" | jq -e ".sum == 5" > /dev/null || RC=1; curl -fs "http://localhost:3209/multiply?a=7&b=5" | jq -e ".product == 35" > /dev/null || RC=1; curl -fs "http://localhost:3209/divide?a=10&b=2" | jq -e ".quotient == 5" > /dev/null || RC=1; curl -fs "http://localhost:3209/factorial?n=5" | jq -e ".factorial == 120" > /dev/null || RC=1; curl -fs "http://localhost:3209/increment?value=10" | jq -e ".result == 11 and .operation == \"increment\"" > /dev/null || RC=1; kill $SPID 2>/dev/null; [ $RC -eq 0 ] || exit 1; cd .. && npm --prefix playground test 2>&1 | tee /tmp/w34_vitest.log; grep -E "Test Files.*passed" /tmp/w34_vitest.log > /dev/null || exit 1; ! grep -E "Test Files.*failed|Tests.*failed" /tmp/w34_vitest.log > /dev/null'
+- [ ] [BEHAVIOR] 8 路由回归 happy 全过（每条含 jq 内容断言：/health .ok / /sum .sum / /multiply .product / /divide .quotient / /power .power / /modulo .remainder / /factorial .factorial / /increment .result+.operation）+ vitest 全套绿（R2 修：补 /power /modulo 内容断言；R2 风险 R3 防御）
+  Test: manual:bash -c 'cd playground && PLAYGROUND_PORT=3209 node server.js & SPID=$!; sleep 2; RC=0; curl -fs "http://localhost:3209/health" | jq -e ".ok == true" > /dev/null || RC=1; curl -fs "http://localhost:3209/sum?a=2&b=3" | jq -e ".sum == 5" > /dev/null || RC=1; curl -fs "http://localhost:3209/multiply?a=7&b=5" | jq -e ".product == 35" > /dev/null || RC=1; curl -fs "http://localhost:3209/divide?a=10&b=2" | jq -e ".quotient == 5" > /dev/null || RC=1; curl -fs "http://localhost:3209/power?a=2&b=3" | jq -e ".power == 8" > /dev/null || RC=1; curl -fs "http://localhost:3209/modulo?a=7&b=3" | jq -e ".remainder == 1" > /dev/null || RC=1; curl -fs "http://localhost:3209/factorial?n=5" | jq -e ".factorial == 120" > /dev/null || RC=1; curl -fs "http://localhost:3209/increment?value=10" | jq -e ".result == 11 and .operation == \"increment\"" > /dev/null || RC=1; kill $SPID 2>/dev/null; [ $RC -eq 0 ] || exit 1; cd .. && npm --prefix playground test 2>&1 | tee /tmp/w34_vitest.log; grep -E "Test Files.*passed" /tmp/w34_vitest.log > /dev/null || exit 1; ! grep -E "Test Files.*failed|Tests.*failed" /tmp/w34_vitest.log > /dev/null'
+  期望: exit 0
+
+- [ ] [BEHAVIOR] 位置锚 — `playground/tests/server.test.js` 末尾含 `describe('GET /uppercase'` 块且既有 1441 行未被改写（R2 修：行号位置 grep 锚；R2 风险 R3 防御）
+  Test: manual:bash -c 'F=playground/tests/server.test.js; LINES=$(wc -l < "$F"); [ "$LINES" -ge 1442 ] || { echo "FAIL 行数 $LINES < 1442"; exit 1; }; HEAD_HASH=$(head -n 1441 "$F" | sha256sum | awk "{print \$1}"); echo "head_1_1441_sha256=$HEAD_HASH"; grep -n "describe(.GET /uppercase." "$F" | head -1; ANCHOR_LINE=$(grep -n "describe(.GET /uppercase." "$F" | head -1 | cut -d: -f1); [ -n "$ANCHOR_LINE" ] && [ "$ANCHOR_LINE" -ge 1442 ] || { echo "FAIL describe(.GET /uppercase.) 不在 1442+ 行"; exit 1; }; echo "OK: describe at line $ANCHOR_LINE (≥1442)"'
   期望: exit 0
