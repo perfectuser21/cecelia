@@ -442,6 +442,23 @@ export async function evaluateContractNode(state, opts = {}) {
   }
   const accountEnv = acctOpts.env;
 
+  // B14: 把 PR 分支名传给 evaluator container（Step 0a git checkout 用）。
+  // 优先 state.pr_branch；fallback `gh pr view --json headRefName` 兜底（罕见路径）。
+  // 不传 PR_BRANCH → evaluator 永远跑 main → 看不见 generator 改 → 永远 FAIL（W19-W36 实证）。
+  let prBranchEnv = state.pr_branch || '';
+  if (!prBranchEnv && state.pr_url) {
+    try {
+      const { stdout } = await execFileDefault(
+        'gh',
+        ['pr', 'view', state.pr_url, '--json', 'headRefName', '-q', '.headRefName'],
+        { timeout: 10_000 }
+      );
+      prBranchEnv = stdout.trim();
+    } catch (err) {
+      console.warn(`[evaluate_contract] gh pr view fallback failed: ${err.message}`);
+    }
+  }
+
   try {
     await spawnFn({
       task: { ...task, task_type: 'harness_evaluate' },
@@ -457,6 +474,7 @@ export async function evaluateContractNode(state, opts = {}) {
         GITHUB_TOKEN: token,
         CONTRACT_BRANCH: state.contractBranch || payload.contract_branch || '',
         PR_URL: state.pr_url || '',
+        PR_BRANCH: prBranchEnv,
         SPRINT_DIR: payload.sprint_dir || 'sprints',
         BRAIN_URL: 'http://host.docker.internal:5221',
         HARNESS_CALLBACK_URL: `http://host.docker.internal:5221/api/brain/harness/callback/${containerId}`,
