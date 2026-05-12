@@ -81,18 +81,25 @@ app.get('/modulo', (req, res) => {
 
 app.get('/subtract', (req, res) => {
   const keys = Object.keys(req.query);
-  if (keys.length !== 2 || !keys.includes('minuend') || !keys.includes('subtrahend')) {
-    return res.status(400).json({ error: 'query 必须仅含 minuend 与 subtrahend 两个参数（禁止 a/b/x/y/lhs/rhs/left/right/first/second 等同义名 + 禁止多余字段）' });
-  }
   const { minuend, subtrahend } = req.query;
-  if (typeof minuend !== 'string' || typeof subtrahend !== 'string' || !STRICT_NUMBER.test(minuend) || !STRICT_NUMBER.test(subtrahend)) {
-    return res.status(400).json({ error: 'minuend 与 subtrahend 必须匹配 ^-?\\d+(\\.\\d+)?$（禁止科学计数法、Infinity、NaN、前导 +、双重负号、十六进制、千分位、空格、空串等）' });
+  let status = 200;
+  let body;
+  if (keys.length !== 2 || !keys.includes('minuend') || !keys.includes('subtrahend')) {
+    status = 400;
+    body = { error: 'query 必须仅含 minuend 与 subtrahend 两个参数（禁止 a/b/x/y/lhs/rhs/left/right/first/second 等同义名 + 禁止多余字段）' };
+  } else if (typeof minuend !== 'string' || typeof subtrahend !== 'string' || !STRICT_NUMBER.test(minuend) || !STRICT_NUMBER.test(subtrahend)) {
+    status = 400;
+    body = { error: 'minuend 与 subtrahend 必须匹配 ^-?\\d+(\\.\\d+)?$（禁止科学计数法、Infinity、NaN、前导 +、双重负号、十六进制、千分位、空格、空串等）' };
+  } else {
+    const result = Number(minuend) - Number(subtrahend);
+    if (!Number.isFinite(result)) {
+      status = 400;
+      body = { error: '计算结果非有限数（NaN / Infinity / -Infinity），拒绝返回' };
+    } else {
+      body = { result: result, operation: 'subtract' };
+    }
   }
-  const result = Number(minuend) - Number(subtrahend);
-  if (!Number.isFinite(result)) {
-    return res.status(400).json({ error: '计算结果非有限数（NaN / Infinity / -Infinity），拒绝返回' });
-  }
-  return res.json({ result, operation: 'subtract' });
+  return res.status(status).json(body);
 });
 
 app.get('/increment', (req, res) => {
