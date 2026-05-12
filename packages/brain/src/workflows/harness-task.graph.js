@@ -495,9 +495,13 @@ async function evaluateContractNode(state, opts = {}) {
     };
   }
 
-  // Parse verdict from stdout (evaluator outputs verdict:PASS or verdict:FAIL)
-  const verdictMatch = stdout.match(/verdict:\s*(PASS|FAIL)/i);
-  const verdict = verdictMatch ? verdictMatch[1].toUpperCase() : 'FAIL';
+  // Parse verdict from stdout. Evaluator 真输出是 JSON-escaped "verdict": "FAIL"/"PASS"
+  // 嵌套在 claude code result 字段里，老 regex /verdict:\s*(PASS|FAIL)/i 永远 NO MATCH
+  // → fallback 'FAIL' → W37 实证 evaluator 5 round 全误判 FAIL。
+  // 改用 extractField 复用 parse_callback 已验证的 JSON-aware 解析。
+  const verdictRaw = extractField(stdout, 'verdict');
+  const verdictUpper = verdictRaw ? String(verdictRaw).toUpperCase().trim() : '';
+  const verdict = (verdictUpper === 'PASS' || verdictUpper === 'FAIL') ? verdictUpper : 'FAIL';
   const errorMsg = verdict === 'FAIL' ? (cbPayload.error || extractField(stdout, 'error') || 'evaluator returned FAIL') : null;
 
   return { evaluate_verdict: verdict, evaluate_error: errorMsg };
