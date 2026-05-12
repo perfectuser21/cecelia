@@ -53,7 +53,15 @@ import { LLM_RETRY } from './retry-policies.js';
 
 const execFileDefault = promisify(execFileCb);
 
-export const MAX_FIX_ROUNDS = 3;
+// B11 (Walking Skeleton P1 cascade): GAN reviewer 是无硬 cap + 趋势收敛（PR #2901）。
+// 不对称设计：fix loop 之前硬 cap=3，3 轮没修好就 terminal_fail —— 质量优先原则下
+// 这是过早放弃。W33 实证：trivial spec (GET /hello) 4 round fix 仍未让 evaluator PASS
+// 不是因为真不收敛，是 3 round 给 generator 改 spec 漂移问题不够。
+// 改：MAX 调到 20（实际"无 cap"等价，30 min 单 round × 20 = 10 hr，sanity 兜底防极端 spec
+// 死循环占 slot；保留是因为质量优先但 brain 资源仍有限）。
+// 长期：参 reviewer SKILL 用 detectConvergenceTrend（state.fix_history[] 同 fail_type 连
+// 续 N 轮无 progress → 标 unconvergent_fail），独立 PR 升级。
+export const MAX_FIX_ROUNDS = parseInt(process.env.HARNESS_MAX_FIX_ROUNDS || '20', 10);
 export const MAX_POLL_COUNT = 20;          // 90s × 20 = 30 min
 export const POLL_INTERVAL_MS = 90 * 1000;
 
