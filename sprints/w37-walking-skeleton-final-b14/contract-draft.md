@@ -282,6 +282,6 @@ workstream_count: 1
 
 | Workstream | Test File (generator TDD) | Evaluator Oracle | 预期红证据 (commit-1) |
 |---|---|---|---|
-| WS1 | `tests/ws1/decrement.test.js`（24 test 块）| `contract-dod-ws1.md` 10 条 `[BEHAVIOR]` manual:bash 命令 | `/decrement` 未实现 → supertest 拿到 404 → 全部 assertion FAIL |
+| WS1 | `tests/ws1/decrement.test.js`（24 test 块）| value=5 → 200、schema 完整性、禁用字段名、operation 字面、错误体 keys、禁用替代错误名、精度上界 happy、精度下界 happy、精度上界拒、精度下界拒、strict-schema 拒、禁用 query 名 | `/decrement` 未实现 → supertest 拿到 404 → 全部 assertion FAIL |
 
 **关键澄清**: `tests/ws1/*.test.js` 是 generator 在 commit-1 push 的 TDD 红证据 + commit-2 push 的绿证据；`contract-dod-ws*.md` BEHAVIOR 段的 `manual:bash` 命令是 evaluator 的 verdict 源。两者不串。CI `dod-structure-purity` job 强校验：BEHAVIOR 段每条带 `Test: manual:bash` 内嵌命令而非"索引指向 vitest"措辞。
