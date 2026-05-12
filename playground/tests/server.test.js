@@ -1439,3 +1439,241 @@ describe('GET /increment — 7 已有路由回归 [BEHAVIOR]', () => {
     expect(res.body.factorial).toBe(120);
   });
 });
+
+describe('GET /subtract — happy path 严 schema + 值复算 [BEHAVIOR]', () => {
+  test('a=5,b=3 → 200 + {result:2, operation:"subtract"} 严等', async () => {
+    const res = await request(app).get('/subtract').query({ a: '5', b: '3' });
+    expect(res.status).toBe(200);
+    expect(res.body.result).toBe(2);
+    expect(res.body.operation).toBe('subtract');
+    expect(typeof res.body.result).toBe('number');
+  });
+
+  test('a=3,b=5 → result === -2（负结果）', async () => {
+    const res = await request(app).get('/subtract').query({ a: '3', b: '5' });
+    expect(res.status).toBe(200);
+    expect(res.body.result).toBe(-2);
+    expect(res.body.operation).toBe('subtract');
+  });
+
+  test('a=0,b=0 → result === 0（零边界）', async () => {
+    const res = await request(app).get('/subtract').query({ a: '0', b: '0' });
+    expect(res.status).toBe(200);
+    expect(res.body.result).toBe(0);
+  });
+
+  test('a=10,b=10 → result === 0（a===b）', async () => {
+    const res = await request(app).get('/subtract').query({ a: '10', b: '10' });
+    expect(res.status).toBe(200);
+    expect(res.body.result).toBe(0);
+  });
+
+  test('a=-5,b=3 → result === -8（负被减数）', async () => {
+    const res = await request(app).get('/subtract').query({ a: '-5', b: '3' });
+    expect(res.status).toBe(200);
+    expect(res.body.result).toBe(-8);
+  });
+
+  test('a=5,b=-3 → result === 8（负减数）', async () => {
+    const res = await request(app).get('/subtract').query({ a: '5', b: '-3' });
+    expect(res.status).toBe(200);
+    expect(res.body.result).toBe(8);
+  });
+
+  test('a=-5,b=-3 → result === -2（双负）', async () => {
+    const res = await request(app).get('/subtract').query({ a: '-5', b: '-3' });
+    expect(res.status).toBe(200);
+    expect(res.body.result).toBe(-2);
+  });
+
+  test('a=1.5,b=0.5 → result === 1（小数合法）', async () => {
+    const res = await request(app).get('/subtract').query({ a: '1.5', b: '0.5' });
+    expect(res.status).toBe(200);
+    expect(res.body.result).toBe(1);
+  });
+
+  test('a=100.5,b=0.5 → result === 100', async () => {
+    const res = await request(app).get('/subtract').query({ a: '100.5', b: '0.5' });
+    expect(res.status).toBe(200);
+    expect(res.body.result).toBe(100);
+  });
+});
+
+describe('GET /subtract — 浮点精度严等（禁容差）[BEHAVIOR]', () => {
+  test('a=0.3,b=0.1 → result === Number("0.3")-Number("0.1") === 0.19999999999999998', async () => {
+    const res = await request(app).get('/subtract').query({ a: '0.3', b: '0.1' });
+    expect(res.status).toBe(200);
+    expect(res.body.result).toBe(Number('0.3') - Number('0.1'));
+    expect(res.body.result).toBe(0.19999999999999998);
+  });
+});
+
+describe('GET /subtract — 值 oracle 复算 [BEHAVIOR]', () => {
+  test('a=7,b=4 → result === 3', async () => {
+    const res = await request(app).get('/subtract').query({ a: '7', b: '4' });
+    expect(res.body.result).toBe(7 - 4);
+  });
+
+  test('a=100,b=37 → result === 63', async () => {
+    const res = await request(app).get('/subtract').query({ a: '100', b: '37' });
+    expect(res.body.result).toBe(100 - 37);
+  });
+
+  test('a=-12,b=-8 → result === -4', async () => {
+    const res = await request(app).get('/subtract').query({ a: '-12', b: '-8' });
+    expect(res.body.result).toBe(-12 - -8);
+  });
+});
+
+describe('GET /subtract — schema 完整性 oracle [BEHAVIOR]', () => {
+  test('成功响应顶层 keys 字面集合等于 ["operation","result"]', async () => {
+    const res = await request(app).get('/subtract').query({ a: '7', b: '4' });
+    expect(res.status).toBe(200);
+    expect(Object.keys(res.body).sort()).toEqual(['operation', 'result']);
+  });
+
+  test('operation 字面字符串 "subtract"（严等）', async () => {
+    const res = await request(app).get('/subtract').query({ a: '8', b: '2' });
+    expect(res.body.operation).toBe('subtract');
+  });
+
+  test('result 类型必须是 number', async () => {
+    const res = await request(app).get('/subtract').query({ a: '6', b: '4' });
+    expect(typeof res.body.result).toBe('number');
+  });
+});
+
+describe('GET /subtract — 禁用字段反向不存在 [BEHAVIOR]', () => {
+  const FORBIDDEN = [
+    'difference', 'diff', 'minus', 'subtraction', 'sub', 'subtracted', 'delta', 'gap',
+    'value', 'input', 'output', 'data', 'payload', 'response', 'answer', 'out', 'meta',
+    'sum', 'product', 'quotient', 'power', 'remainder', 'factorial', 'negation', 'incremented', 'next', 'successor',
+    'a', 'b',
+  ];
+  test('成功响应不含 PRD 禁用清单中任一字段名', async () => {
+    const res = await request(app).get('/subtract').query({ a: '9', b: '2' });
+    expect(res.status).toBe(200);
+    for (const key of FORBIDDEN) {
+      expect(Object.prototype.hasOwnProperty.call(res.body, key)).toBe(false);
+    }
+  });
+});
+
+describe('GET /subtract — 错误体形状 [BEHAVIOR]', () => {
+  test('400 错误体顶层 keys 严格等于 ["error"]', async () => {
+    const res = await request(app).get('/subtract');
+    expect(res.status).toBe(400);
+    expect(Object.keys(res.body).sort()).toEqual(['error']);
+  });
+
+  test('400 错误体不含 result 也不含 operation', async () => {
+    const res = await request(app).get('/subtract').query({ a: 'abc', b: '3' });
+    expect(res.status).toBe(400);
+    expect(Object.prototype.hasOwnProperty.call(res.body, 'result')).toBe(false);
+    expect(Object.prototype.hasOwnProperty.call(res.body, 'operation')).toBe(false);
+  });
+});
+
+describe('GET /subtract — error path 缺参 [BEHAVIOR]', () => {
+  test('GET /subtract（无 query）→ 400 + keys=["error"] + 非空 error', async () => {
+    const res = await request(app).get('/subtract');
+    expect(res.status).toBe(400);
+    expect(Object.keys(res.body).sort()).toEqual(['error']);
+    expect(typeof res.body.error).toBe('string');
+    expect(res.body.error.length).toBeGreaterThan(0);
+  });
+
+  test('GET /subtract?a=5 (缺 b) → 400', async () => {
+    const res = await request(app).get('/subtract').query({ a: '5' });
+    expect(res.status).toBe(400);
+    expect(Object.keys(res.body).sort()).toEqual(['error']);
+  });
+
+  test('GET /subtract?b=3 (缺 a) → 400', async () => {
+    const res = await request(app).get('/subtract').query({ b: '3' });
+    expect(res.status).toBe(400);
+    expect(Object.keys(res.body).sort()).toEqual(['error']);
+  });
+});
+
+describe('GET /subtract — strict-schema 拒非法输入 [BEHAVIOR]', () => {
+  const BAD = [
+    { a: '1e3', b: '2', desc: '科学计数法' },
+    { a: 'Infinity', b: '2', desc: 'Infinity' },
+    { a: '2', b: 'NaN', desc: 'NaN' },
+    { a: '+5', b: '3', desc: '前导 +' },
+    { a: '.5', b: '2', desc: '缺整数部分' },
+    { a: '5.', b: '3', desc: '缺小数部分' },
+    { a: '0xff', b: '2', desc: '十六进制' },
+    { a: '1,000', b: '2', desc: '千分位' },
+    { a: '', b: '3', desc: '空串' },
+    { a: 'abc', b: '3', desc: '字母串' },
+    { a: '--5', b: '3', desc: '双重负号' },
+    { a: ' 5 ', b: '3', desc: '空格' },
+  ];
+  for (const { a, b, desc } of BAD) {
+    test(`a="${a}", b="${b}" (${desc}) → 400 + keys=["error"]`, async () => {
+      const res = await request(app).get('/subtract').query({ a, b });
+      expect(res.status).toBe(400);
+      expect(Object.keys(res.body).sort()).toEqual(['error']);
+    });
+  }
+});
+
+describe('GET /subtract — 错 query 名拒 [BEHAVIOR]', () => {
+  test('GET /subtract?x=5&y=3 → 400（按缺 a/b 分支）', async () => {
+    const res = await request(app).get('/subtract').query({ x: '5', y: '3' });
+    expect(res.status).toBe(400);
+    expect(Object.keys(res.body).sort()).toEqual(['error']);
+  });
+
+  test('GET /subtract?value1=5&value2=3 → 400', async () => {
+    const res = await request(app).get('/subtract').query({ value1: '5', value2: '3' });
+    expect(res.status).toBe(400);
+    expect(Object.keys(res.body).sort()).toEqual(['error']);
+  });
+});
+
+describe('GET /subtract — 8 路由回归（不动既有 endpoint）', () => {
+  test('GET /health → {ok:true}', async () => {
+    const res = await request(app).get('/health');
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ ok: true });
+  });
+  test('GET /sum?a=2&b=3 → {sum:5}', async () => {
+    const res = await request(app).get('/sum').query({ a: '2', b: '3' });
+    expect(res.status).toBe(200);
+    expect(res.body.sum).toBe(5);
+  });
+  test('GET /multiply?a=2&b=3 → {product:6}', async () => {
+    const res = await request(app).get('/multiply').query({ a: '2', b: '3' });
+    expect(res.status).toBe(200);
+    expect(res.body.product).toBe(6);
+  });
+  test('GET /divide?a=6&b=2 → {quotient:3}', async () => {
+    const res = await request(app).get('/divide').query({ a: '6', b: '2' });
+    expect(res.status).toBe(200);
+    expect(res.body.quotient).toBe(3);
+  });
+  test('GET /power?a=2&b=3 → {power:8}', async () => {
+    const res = await request(app).get('/power').query({ a: '2', b: '3' });
+    expect(res.status).toBe(200);
+    expect(res.body.power).toBe(8);
+  });
+  test('GET /modulo?a=10&b=3 → {remainder:1}', async () => {
+    const res = await request(app).get('/modulo').query({ a: '10', b: '3' });
+    expect(res.status).toBe(200);
+    expect(res.body.remainder).toBe(1);
+  });
+  test('GET /factorial?n=5 → {factorial:120}', async () => {
+    const res = await request(app).get('/factorial').query({ n: '5' });
+    expect(res.status).toBe(200);
+    expect(res.body.factorial).toBe(120);
+  });
+  test('GET /increment?value=5 → {result:6, operation:"increment"}', async () => {
+    const res = await request(app).get('/increment').query({ value: '5' });
+    expect(res.status).toBe(200);
+    expect(res.body.result).toBe(6);
+    expect(res.body.operation).toBe('increment');
+  });
+});

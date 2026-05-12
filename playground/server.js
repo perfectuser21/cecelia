@@ -107,6 +107,17 @@ app.get('/factorial', (req, res) => {
   return res.json({ factorial: acc });
 });
 
+app.get('/subtract', (req, res) => {
+  const { a, b } = req.query;
+  if (a === undefined || b === undefined) {
+    return res.status(400).json({ error: 'a 和 b 都是必填 query 参数' });
+  }
+  if (typeof a !== 'string' || typeof b !== 'string' || !STRICT_NUMBER.test(a) || !STRICT_NUMBER.test(b)) {
+    return res.status(400).json({ error: 'a 和 b 必须匹配 ^-?\\d+(\\.\\d+)?$（禁止科学计数法、Infinity、前导 +、十六进制等）' });
+  }
+  return res.json({ result: Number(a) - Number(b), operation: 'subtract' });
+});
+
 if (process.env.NODE_ENV !== 'test') {
   app.listen(PORT, () => console.log(`playground listening on ${PORT}`));
 }
