@@ -176,4 +176,4 @@ workstream_count: 1
 
 | Workstream | Test File | BEHAVIOR 覆盖 | 预期红证据 |
 |---|---|---|---|
-| WS1 | `tests/ws1/ping.test.js` | DoD B1-B7 全部映射：GET /ping 严 schema (`{pong: true}`, keys=[pong], pong is boolean, length=1) + query 静默忽略 + 确定性 + 禁用字段反向 + 8 路由回归 | WS1 → N failures (`/ping` 路由不存在前所有 ping 用例 FAIL) |
+| WS1 | `tests/ws1/ping.test.js` | GET /ping → 200, .pong 字面布尔 true, 顶层 keys 字面, 响应不含任一禁用字段名, 响应不含 timestamp, 带未定义 query 被静默忽略, 同名 query 不影响响应, 连续 3 次 GET /ping body 字面相等, GET /health, GET /sum, GET /multiply, GET /divide, GET /power, GET /modulo, GET /factorial, GET /increment | WS1 → 17 failures (`/ping` 路由不存在前所有 ping 用例 FAIL) |
