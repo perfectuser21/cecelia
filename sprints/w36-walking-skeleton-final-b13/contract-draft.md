@@ -1,9 +1,13 @@
-# Sprint Contract Draft (Round 1)
+# Sprint Contract Draft (Round 2)
 
 > **任务**: W36 Walking Skeleton P1 final happy 回归 — playground 新增 `GET /decrement` endpoint
 > **PRD**: `sprints/w36-walking-skeleton-final-b13/sprint-prd.md`
 > **journey_type**: autonomous
-> **GAN 角色**: Proposer 起草合同；本轮为 Round 1（初稿，未经过 reviewer 反馈）
+> **GAN 角色**: Proposer Round 2 修订（响应 Round 1 Reviewer 反馈：内部一致性 6 分）
+>
+> **Round 2 修订点**（响应 Reviewer 反馈 issues_count=2、internal_consistency=6 项）:
+> 1. **禁用字段反向硬阈值与脚本字面相等**：Step 8 + E2E 脚本 + DoD BEHAVIOR 3 的 for 循环字段名补齐到 PRD「禁用响应字段名」段完整并集去重 **35 项**（首要禁用 11 + 泛 generic 9 + 复用其他 endpoint 7 + 错误时禁用替代名 8 = 35），与硬阈值数字字面相等；以 PRD 段落为字面 SSOT，强化 PR-G 死规则覆盖
+> 2. 同步更新 `tests/ws1/decrement.test.js` 禁用字段断言为相同 35 项 SSOT 列表
 
 ---
 
@@ -261,9 +265,9 @@ cd playground
 PLAYGROUND_PORT=3107 node server.js & SPID=$!
 sleep 2
 
-# 禁用字段反向：32 个禁用字段名 has() 全 false
+# 禁用字段反向：35 个禁用字段名 has() 全 false（PRD「禁用响应字段名」段完整并集去重 SSOT：首要禁用 11 + 泛 generic 9 + 复用其他 endpoint 7 + 错误时禁用替代名 8 = 35）
 RESP=$(curl -fs "localhost:3107/decrement?value=5")
-for K in decremented previous prev predecessor n_minus_one minus_one pred dec decr decrementation subtraction value input output data payload response answer out meta sum product quotient power remainder factorial negation; do
+for K in decremented previous prev predecessor n_minus_one minus_one pred dec decr decrementation subtraction value input output data payload response answer out meta sum product quotient power remainder factorial negation message msg reason detail details description info code; do
   echo "$RESP" | jq -e --arg k "$K" 'has($k) | not' > /dev/null || { echo "FAIL: response 含禁用字段 $K"; kill $SPID 2>/dev/null; exit 1; }
 done
 
@@ -286,7 +290,7 @@ kill $SPID 2>/dev/null
 echo OK
 ```
 
-**硬阈值**: 32 项禁用字段反向 + 11 项 operation 变体反向 + 8 项路由回归全过。
+**硬阈值**: 35 项禁用字段反向（与 for 循环字段名字面相等） + 11 项 operation 变体反向 + 8 项路由回归全过。
 
 ---
 
@@ -358,9 +362,9 @@ curl -fs "localhost:3199/decrement?value=01" | jq -e '.result == 0 and .operatio
 curl -fs "localhost:3199/decrement?value=-01" | jq -e '.result == -2'
 curl -fs "localhost:3199/decrement?value=007" | jq -e '.result == 6'
 
-# Step 8: 禁用字段反向 + 8 路由回归
+# Step 8: 禁用字段反向（35 项 PRD SSOT 并集去重）+ 8 路由回归
 RESP=$(curl -fs "localhost:3199/decrement?value=5")
-for K in decremented previous prev predecessor n_minus_one minus_one pred dec decr decrementation subtraction value input output data payload response answer out meta sum product quotient power remainder factorial negation; do
+for K in decremented previous prev predecessor n_minus_one minus_one pred dec decr decrementation subtraction value input output data payload response answer out meta sum product quotient power remainder factorial negation message msg reason detail details description info code; do
   echo "$RESP" | jq -e --arg k "$K" 'has($k) | not' > /dev/null
 done
 curl -fs "localhost:3199/sum?a=3&b=4" | jq -e '.sum == 7'

@@ -41,8 +41,8 @@ journey_type: autonomous
   Test: manual:bash -c 'cd playground && PLAYGROUND_PORT=3202 node server.js & SPID=$!; sleep 2; RESP=$(curl -fs "localhost:3202/decrement?value=5"); echo "$RESP" | jq -e "keys | sort == [\"operation\",\"result\"]" > /dev/null; RC=$?; kill $SPID 2>/dev/null; exit $RC'
   期望: exit 0
 
-- [ ] [BEHAVIOR] `GET /decrement?value=5` 响应不含任一禁用字段名（PR-G 死规则黑名单反向 has() 全 false）
-  Test: manual:bash -c 'cd playground && PLAYGROUND_PORT=3203 node server.js & SPID=$!; sleep 2; RESP=$(curl -fs "localhost:3203/decrement?value=5"); FAIL=0; for K in decremented previous prev predecessor n_minus_one minus_one pred dec decr decrementation subtraction value input output data payload response answer out meta sum product quotient power remainder factorial negation; do echo "$RESP" | jq -e --arg k "$K" "has(\$k) | not" > /dev/null || FAIL=1; done; kill $SPID 2>/dev/null; [ "$FAIL" = "0" ]'
+- [ ] [BEHAVIOR] `GET /decrement?value=5` 响应不含任一禁用字段名（PR-G 死规则黑名单 PRD SSOT 并集去重 35 项反向 has() 全 false：首要禁用 11 + 泛 generic 9 + 复用其他 endpoint 7 + 错误时禁用替代名 8 = 35）
+  Test: manual:bash -c 'cd playground && PLAYGROUND_PORT=3203 node server.js & SPID=$!; sleep 2; RESP=$(curl -fs "localhost:3203/decrement?value=5"); FAIL=0; for K in decremented previous prev predecessor n_minus_one minus_one pred dec decr decrementation subtraction value input output data payload response answer out meta sum product quotient power remainder factorial negation message msg reason detail details description info code; do echo "$RESP" | jq -e --arg k "$K" "has(\$k) | not" > /dev/null || FAIL=1; done; kill $SPID 2>/dev/null; [ "$FAIL" = "0" ]'
   期望: exit 0
 
 - [ ] [BEHAVIOR] off-by-one 防盲抄 W26 increment：`value=0 → result=-1`、`value=1 → result=0`、`value=-1 → result=-2`（generator 抄 W26 `+1` 即 FAIL）
