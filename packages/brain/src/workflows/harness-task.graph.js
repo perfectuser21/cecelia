@@ -405,7 +405,7 @@ export function routeAfterEvaluate(state) {
 // Spawn a `harness_evaluate` sub-task (task-router:129 → /harness-evaluator skill);
 // evaluator container reads contract DoD + manual:bash commands, exits 0/1.
 // Verdict PASS → merge_pr; FAIL → fix_dispatch (do NOT merge into main).
-async function evaluateContractNode(state, opts = {}) {
+export async function evaluateContractNode(state, opts = {}) {
   const spawnFn = opts.spawnDetached || spawnDockerDetached;
   const resolveTok = opts.resolveToken || resolveGitHubToken;
   const dbPool = opts.poolOverride || pool;
