@@ -1,7 +1,3 @@
-contract_branch: cp-harness-propose-r2-48675f4d
-workstream_index: 1
-sprint_dir: sprints/w32-walking-skeleton-p1-v4
-
 ---
 skeleton: false
 journey_type: autonomous
