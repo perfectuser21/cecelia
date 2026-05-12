@@ -15,12 +15,22 @@ describe('Workstream 1 — GET /decrement [BEHAVIOR]', () => {
     expect(Object.keys(res.body).sort()).toEqual(['operation', 'result']);
   });
 
-  test('success 响应反向不含禁用字段名（decremented/prev/predecessor/minus_one/sub_one/incremented/sum/product/quotient/power/remainder/factorial/negation/value/input/output/data/payload/answer/meta）', async () => {
+  test('success 响应反向不含禁用字段名（PRD 完整 19 个）', async () => {
     const res = await request(app).get('/decrement').query({ value: '5' });
     expect(res.status).toBe(200);
     const forbidden = ['decremented','prev','predecessor','minus_one','sub_one','incremented','sum','product','quotient','power','remainder','factorial','negation','value','input','output','data','payload','answer','meta'];
     for (const k of forbidden) {
       expect(Object.prototype.hasOwnProperty.call(res.body, k)).toBe(false);
+    }
+  });
+
+  test('success 响应 operation 字面 "decrement"，PRD 禁用 8 变体一律不等（Round-2）', async () => {
+    const res = await request(app).get('/decrement').query({ value: '5' });
+    expect(res.status).toBe(200);
+    expect(res.body.operation).toBe('decrement');
+    const variants = ['dec','decr','decremented','prev','previous','predecessor','minus_one','sub_one'];
+    for (const v of variants) {
+      expect(res.body.operation).not.toBe(v);
     }
   });
 
@@ -32,6 +42,14 @@ describe('Workstream 1 — GET /decrement [BEHAVIOR]', () => {
     expect(res.body.error.length).toBeGreaterThan(0);
     expect(Object.prototype.hasOwnProperty.call(res.body, 'result')).toBe(false);
     expect(Object.prototype.hasOwnProperty.call(res.body, 'operation')).toBe(false);
+  });
+
+  test('错误体反向不含 4 个 PRD 禁用替代错误名 message/msg/reason/detail（Round-2）', async () => {
+    const res = await request(app).get('/decrement').query({ value: 'foo' });
+    expect(res.status).toBe(400);
+    for (const k of ['message','msg','reason','detail']) {
+      expect(Object.prototype.hasOwnProperty.call(res.body, k)).toBe(false);
+    }
   });
 
   test('精度上界 happy: value=9007199254740990 → 200 + {result:9007199254740989, operation:"decrement"}', async () => {
@@ -81,14 +99,27 @@ describe('Workstream 1 — GET /decrement [BEHAVIOR]', () => {
     expect(res.status).toBe(400);
   });
 
+  test('strict-schema 拒十六进制: value=0x10 → 400', async () => {
+    const res = await request(app).get('/decrement').query({ value: '0x10' });
+    expect(res.status).toBe(400);
+  });
+
+  test('strict-schema 拒 Infinity: value=Infinity → 400', async () => {
+    const res = await request(app).get('/decrement').query({ value: 'Infinity' });
+    expect(res.status).toBe(400);
+  });
+
   test('缺 value 参数 → 400', async () => {
     const res = await request(app).get('/decrement');
     expect(res.status).toBe(400);
   });
 
-  test('错 query 名 n=5（PRD 禁用列表）→ 400', async () => {
-    const res = await request(app).get('/decrement').query({ n: '5' });
-    expect(res.status).toBe(400);
+  test('PRD 完整 9 个禁用 query 名 → 全 400（Round-2 — Reviewer Issue 5）', async () => {
+    const badQueries = ['n','x','a','b','num','number','input','v','val'];
+    for (const q of badQueries) {
+      const res = await request(app).get('/decrement').query({ [q]: '5' });
+      expect(res.status).toBe(400);
+    }
   });
 
   test('value=0 → 200 + {result:-1, operation:"decrement"}', async () => {
