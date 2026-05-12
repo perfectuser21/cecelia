@@ -95,8 +95,11 @@ describe('harness-task graph — structure', () => {
     const compiled = g.compile();
     expect(typeof compiled.invoke).toBe('function');
   });
-  it('MAX_FIX_ROUNDS=3 / MAX_POLL_COUNT=20', () => {
-    expect(MAX_FIX_ROUNDS).toBe(3);
+  it('MAX_FIX_ROUNDS=20 (B11: 质量优先，sanity 兜底) / MAX_POLL_COUNT=20', () => {
+    // B11 (Walking Skeleton P1): GAN 无硬 cap + 趋势收敛（reviewer），fix loop 同款。
+    // 3 是过早放弃 — W33 实证 trivial spec 4 round 都没修好不是因为真不收敛。
+    // 20 是 sanity 兜底防极端死循环。env HARNESS_MAX_FIX_ROUNDS 可覆盖。
+    expect(MAX_FIX_ROUNDS).toBe(20);
     expect(MAX_POLL_COUNT).toBe(20);
   });
 });
