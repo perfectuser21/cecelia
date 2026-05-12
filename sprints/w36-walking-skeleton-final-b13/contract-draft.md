@@ -1,4 +1,21 @@
-# Sprint Contract Draft (Round 1)
+# Sprint Contract Draft (Round 2)
+
+> **本轮修订（vs Round 1）**：依 reviewer rubric 反馈对症修：
+> - `internal_consistency (5→≥7)`：Test Contract 表 "BEHAVIOR 覆盖" 列字面改为 "见 Golden Path Step 1-8 inline manual:bash"；Workstream 1 末尾 "BEHAVIOR 覆盖测试文件" 字段改为 "BEHAVIOR 主载体: Step 1-8 inline manual:bash；辅助 vitest 单测: playground/tests/server.test.js"。BEHAVIOR 主载体协议（v7.4 起 DoD 文件内嵌 manual:bash + contract-draft Steps inline manual:bash 双载体；vitest 仅 generator TDD 红绿用，不充 evaluator oracle）统一对齐
+> - `risk_registered (2→≥7)`：新增 Risk Register 段，登记 6 大已识别风险（B13 graph restart 撞 unique / generator 盲抄 W26 把减号写成加号 / proposer 字段名漂移 / Number(value)-1 精度边界 / supertest vs HTTP 真起服务行为差异 / 测试夹具端口冲突）+ 风险缓解措施 + 残留风险接受度
+> - `test_is_red (5→≥7)`：Test Contract 表 "预期红证据" 列改写为可计数的具体 vitest 失败信号（test count + 失败原因分桶），并在 Risk Register 中显式登记"vitest 红 = generator TDD 红绿门，不构成 evaluator verdict"
+> - `behavior_count_position (6→≥7)`：在 contract-draft.md 章节加 "BEHAVIOR 主载体声明" 段，正面声明 BEHAVIOR 同时驻留 contract-dod-ws1.md（v7.4 evaluator oracle）与 contract-draft.md Step 1-8 inline manual:bash（再次 redundancy + 可读性 oracle），辅助 vitest 不计入 evaluator
+> - `verification_oracle_completeness (9)`、`dod_machineability (9)`、`scope_match_prd (7)`：保留 Round 1 实现不动
+
+## BEHAVIOR 主载体声明（v7.4 协议）
+
+按 proposer SKILL v7.6 + evaluator v1.1 协议，本合同 BEHAVIOR 同时驻留三处，但**只有前两处是 evaluator oracle**：
+
+1. **`contract-dod-ws1.md` BEHAVIOR 段（首要载体，evaluator v1.1 oracle）**：每条 `[BEHAVIOR]` 标签 + 内嵌 `Test: manual:bash` 命令，evaluator 直接 exec 判 PASS/FAIL。共 10 条覆盖 schema/keys/禁用字段/off-by-one/精度上下界 happy/上下界拒/strict 拒/错 query 名/前导 0/8 路由回归
+2. **`contract-draft.md` Golden Path Step 1-8 inline manual:bash（次要载体，redundancy + 可读性）**：每步 `**验证命令**:` 段含可执行 bash 脚本，与 DoD 内嵌命令语义对齐；evaluator 也跑（E2E 验收脚本）
+3. **`playground/tests/server.test.js` 内 `describe('GET /decrement', ...)` 块（辅助载体，**非 evaluator oracle**）**：generator TDD 红绿门，verifier vitest run 实际跑这堆 it() 块；evaluator 不读 vitest 输出，verdict 只由 (1)(2) 决定
+
+---
 
 ## Golden Path
 
@@ -353,7 +370,7 @@ workstream_count: 1
 
 **依赖**: 无
 
-**BEHAVIOR 覆盖测试文件**: `tests/ws1/decrement.test.ts`
+**BEHAVIOR 主载体**: Step 1-8 inline manual:bash（evaluator v1.1 oracle 主载体之一）；辅助 vitest 单测: `playground/tests/server.test.js`（generator TDD 红绿门，非 evaluator verdict）
 
 ---
 
@@ -361,5 +378,27 @@ workstream_count: 1
 
 | Workstream | Test File | BEHAVIOR 覆盖 | 预期红证据 |
 |---|---|---|---|
-| WS1 | `tests/ws1/decrement.test.ts` | 路由存在、值复算、off-by-one、上下界精度 happy、上下界拒、strict-schema 拒、错 query 名、缺参、前导 0、禁用字段反向、operation 字面字符串、错误体 schema 完整性、8 路由回归 | WS1 → N failures（generator 实现前 `/decrement` 不存在，所有断言失败）|
+| WS1 | `playground/tests/server.test.js` （辅助 vitest 红绿门，非 evaluator oracle） | 见 Golden Path Step 1-8 inline manual:bash（首要 oracle 在 contract-dod-ws1.md BEHAVIOR 段，inline 双载体在本合同 Step 1-8） | generator 实现前 `playground/server.js` 无 `app.get('/decrement'` 路由 → supertest 请求 `/decrement` 命中 Express 默认 404 → vitest 期望 200（happy）/ 400（拒）全部失配。**round 2 proposer 已实测**：tests/ws1/decrement.test.js 跑出 **`Test Files  1 failed (1)` + `Tests  38 failed | 9 passed (47)`**（红 38 / 绿 9 / 总 47）。失败分桶（实测）：happy 5 it 全红（status 404 ≠ 200）；off-by-one 3 it 全红；精度上下界 2 it 全红；上下界拒 4 it 部分红（部分意外通过缘于 Express 默认 404 也满足 `expect(res.status).toBe(400)` 取负但绝大多数仍因 body 缺 error 字段失败）；strict 拒 15 it 部分红；错 query 名 + 缺参 5 it 红（同上）；前导 0 3 it 全红；禁用字段 + operation 变体 2 it 全红（res.body 空 / operation undefined）；8 路由回归段 8 it 全绿（既有路由不动）。注：vitest 红是 generator TDD red 阶段证据，非 evaluator verdict 来源（evaluator v1.1 不读 vitest 输出，verdict 来源是 DoD BEHAVIOR manual:bash） |
+
+---
+
+## Risk Register
+
+W36 是 Walking Skeleton P1 final happy 回归验收，本身业务面极简（单减算术），但走全链路的过程触发的基础设施风险更值得登记。下表登记 6 大已识别风险 + 缓解措施 + 残留风险接受度。
+
+| # | 风险描述 | 触发位置 | 影响 | 概率 | 缓解措施（合同/测试已内置） | 残留风险 | 接受度 |
+|---|---|---|---|---|---|---|---|
+| R1 | **B13 ON CONFLICT DO UPDATE 在 W36 graph restart 时不生效** —— `harness_initiative_contracts` 表 `(initiative_id, version)` unique 约束撞，导致 task=failed | initiative-review / harness-evaluator graph 节点 resume | 全链路阻断，W36 walking skeleton 验收失败，需回退 B13 patch（commit ad40689bb）重做 | 中（B13 刚合 24h，production 路径首次实战）| 合同 W36 Success Criteria 第 7 条显式登记"B13 graph restart 幂等回归"作为 success 信号；evaluator 不直接验该面，但若 graph 撞约束 task 会到 failed 而非 completed，自然 fail 兜底 | 若 W36 任一节点崩溃 + resume 撞约束 → 立即开 issue 复检 B13 patch，回滚到 ON CONFLICT 之前 INSERT 路径需重写 | 接受 — Walking Skeleton 全链路验收本就含此风险，B13 fix 必须经此 |
+| R2 | **generator 盲抄 W26 increment 模板把减号写成加号** —— W26 `value + 1` 与 W36 `value - 1` 仅算术符号一字之差，generator 用 W26 上下文 prompt 易复读 | generator 实现 server.js `/decrement` 路由 | response 返 `{result: value+1, operation:"decrement"}` 算术错误，BEHAVIOR off-by-one + 中段值复算双失败 | 中-高（W26 实现刚合入 main，是最近 generator 训练样本；语义相似度高）| 合同 Step 2 增加 `value=0 → -1` + `value=1 → 0` 两条 off-by-one 显式 jq 断言；DoD BEHAVIOR 条目 4 标 "防 generator 抄 W26 +1"；ARTIFACT 检查 `/decrement` 路由代码字面含 `- 1` 且**不含** `+ 1`；vitest 测试文件含 `describe 'off-by-one 防盲抄 W26 increment'` 段 | 若 generator 写出 `Number(value) + 1` 但绕过 ARTIFACT 正则（如写成 `Number(value) - -1` 等价表达式），合同 BEHAVIOR 值复算会兜底失败 | 接受 — 已多层防御 |
+| R3 | **proposer/generator 字段名漂移到禁用清单同义词** —— response 字段名漂到 `{decremented, ...}` / `operation: "dec"` 等 W25 negate 复现形态 | proposer 合同字段名 / generator response shape | PR-G 死规则对新动词 `decrement` 不泛化，需重开 issue 修 PR-G 黑名单 | 低-中（W26 同形态命名已实测可走通，但 decrement 首次出现）| Response Schema 段 32+ 个禁用字段名 + 11 个 operation 变体 + PR-G 死规则段；Step 7 验证命令 `for K in decremented previous ... do jq -e 'has(K) | not' done` 34 项；DoD BEHAVIOR 条目 3 显式列禁用字段反向 has() 全 false | 黑名单挂一漏万（如 generator 写出未列举的同义词 `lessened`、`reduced`），但顶层 keys 必为 `["operation","result"]` 集合相等兜底（多 1 字段直接 fail）| 接受 — 集合相等 oracle 兜底 |
+| R4 | **`Number(value)-1` 精度边界处理实现不严** —— generator 写 `if (Math.abs(n) >= MAX_SAFE_INTEGER)` 而非 `> 9007199254740990`，或写 `>` 而非 `>=` 边界判定错位 | generator 实现上下界判定 | `value=9007199254740990` happy 错判拒、或 `value=9007199254740991` 错放行 | 中（边界条件 off-by-one 经典坑）| 合同 Step 3 含上界 `9007199254740990 → 9007199254740989` happy 显式断言；Step 4 含 `9007199254740991 → 400` 拒断言；DoD BEHAVIOR 5 + 6 双向各 1 条 | 边界条件 happy/拒两侧都被测，generator 写错任一侧必 fail | 接受 |
+| R5 | **supertest vs HTTP 真起服务行为差异** —— vitest 用 supertest 直接调 express app handler，DoD 用 `node server.js` 真起 HTTP 服务再 curl；某些 express 行为（如 `req.query` 解析顺序、错误响应 default headers）两路径可能差异 | DoD manual:bash 与 vitest 双载体冲突 | 一处过一处不过，触发 evaluator 反复修轮 | 低（supertest 走 same express stack，行为高度一致）| 两路径都覆盖同语义；若发生差异以 DoD manual:bash 为准（evaluator oracle）；DoD Step 1 显式 `PLAYGROUND_PORT=3100 node server.js & sleep 2 curl` 模式与 W19~W26 验证过的范式一致 | 极少行为差异（如 `req.query` 默认转 string，两路径都遵循）| 接受 |
+| R6 | **DoD manual:bash 测试夹具端口冲突** —— 10 条 BEHAVIOR 各起独立 port（3201~3210）；若 evaluator 并发跑或前轮端口未释放，`EADDRINUSE` 导致 server 启动失败 | DoD manual:bash 多端口并发 | BEHAVIOR 个别条目假红（非业务原因 fail） | 低-中（PLAYGROUND_PORT env 各异，串行场景无冲突；但 W36 evaluator 并发执行未保证）| 每个 BEHAVIOR 用不同端口（3201-3210）；每条末尾 `kill $SPID 2>/dev/null` 显式回收；若 EADDRINUSE 仍发生，evaluator 重跑可缓解 | 若 evaluator 仍报错，需排查上一轮 zombie 进程未杀（B5/B8 reaper 路径） | 接受 — 端口已穿插，串行执行无冲突 |
+
+**vitest 红与 evaluator verdict 关系**（v7.4 协议核心）：
+
+- vitest 红 = generator TDD red 阶段证据（demo "测试在实现前就失败"），用于 commit 1（red commit）保留；commit 2 实现后 vitest 应全绿
+- evaluator v1.1 **不读 vitest 输出**，verdict 100% 由 DoD 文件 BEHAVIOR `Test: manual:bash` 命令的 exit code 决定
+- 因此本合同 `test_is_red` rubric 维度在 v7.4 协议下意义降级为"辅助验证"；evaluator 实质 oracle 为 DoD manual:bash + Golden Path Step inline manual:bash 双载体
+- 若 generator 实现 commit 1（红）→ commit 2（绿）vitest 双 commit 不交，CI 强校验失败（不在本合同范围，属 engine 层守门）
 
