@@ -79,6 +79,22 @@ app.get('/modulo', (req, res) => {
   return res.json({ remainder: Number(a) % Number(b) });
 });
 
+app.get('/subtract', (req, res) => {
+  const keys = Object.keys(req.query);
+  if (keys.length !== 2 || !keys.includes('minuend') || !keys.includes('subtrahend')) {
+    return res.status(400).json({ error: 'query 必须仅含 minuend 与 subtrahend 两个参数（禁止 a/b/x/y/lhs/rhs/left/right/first/second 等同义名 + 禁止多余字段）' });
+  }
+  const { minuend, subtrahend } = req.query;
+  if (typeof minuend !== 'string' || typeof subtrahend !== 'string' || !STRICT_NUMBER.test(minuend) || !STRICT_NUMBER.test(subtrahend)) {
+    return res.status(400).json({ error: 'minuend 与 subtrahend 必须匹配 ^-?\\d+(\\.\\d+)?$（禁止科学计数法、Infinity、NaN、前导 +、双重负号、十六进制、千分位、空格、空串等）' });
+  }
+  const result = Number(minuend) - Number(subtrahend);
+  if (!Number.isFinite(result)) {
+    return res.status(400).json({ error: '计算结果非有限数（NaN / Infinity / -Infinity），拒绝返回' });
+  }
+  return res.json({ result, operation: 'subtract' });
+});
+
 app.get('/increment', (req, res) => {
   // 成功 schema 字面: { result: <number>, operation: "increment" }；strict ^-?\d+$；上界 |value| ≤ 9007199254740990；query 名 req.query.value
   const STRICT_INT = /^-?\d+$/;

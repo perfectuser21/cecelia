@@ -25,6 +25,7 @@ npm start           # 起 server（默认 :3000）
 - `GET /modulo?a=N&b=M` → 返回 a%b 的余数（**strict-schema** + **除零兜底**：`b=0`/`b=0.0` → 400；**JS 原生 truncated 取模**：余数符号跟随被除数 a，与数学 floored mod 区分）
 - `GET /factorial?n=N` → 返回 n! 阶乘（**整数白名单 strict-schema** `^\d+$` + **上界 18 拒**：`n > 18` → 400（精度上界，避免超过 `Number.MAX_SAFE_INTEGER`）+ **迭代精确累积**：`for(i=2; i<=n; i++) acc *= i`，不引入 BigInt / Stirling / gamma 近似）
 - `GET /increment?value=N` → 返回 `{result: N+1, operation: "increment"}`（**整数白名单 strict-schema** `^-?\d+$` + **精度上下界拒**：`|Number(value)| > 9007199254740990` → 400（+1 后避免超过 `Number.MAX_SAFE_INTEGER`）+ **query 名锁死**：只接受 `value`，别名 `n/a/b/x/val/input/...` 全 400）
+- `GET /subtract?minuend=N&subtrahend=M` → 返回 `{result: N-M, operation: "subtract"}`（**浮点 strict-schema** `^-?\d+(\.\d+)?$` + **query 名锁死**：只接受 `minuend` + `subtrahend`，别名 `a/b/x/y/lhs/rhs/left/right/first/second/...` 全 400 + **结果有限性兜底**：`Number.isFinite(result)===false` 时 400）
 
 ### `GET /sum` 示例
 
@@ -408,3 +409,67 @@ curl -s -o /dev/stderr -w 'HTTP %{http_code}\n' 'http://127.0.0.1:3000/increment
 ```
 
 响应 schema 完整性（成功响应顶层 keys 严格等于 `["operation","result"]`；不漂到禁用同义字段 `incremented`/`next`/`successor`/`n_plus_one`/`plus_one`/`succ`/`inc`/`incr`/`incrementation`，也不漂到 generic 字段 `value`/`input`/`output`/`data`/`payload`/`answer`/`meta`，错误体顶层 keys 严格等于 `["error"]`）。
+
+### `GET /subtract` 示例
+
+happy path（`minuend - subtrahend`）：
+
+```bash
+curl -s 'http://127.0.0.1:3000/subtract?minuend=10&subtrahend=3'
+# {"result":7,"operation":"subtract"}
+
+curl -s 'http://127.0.0.1:3000/subtract?minuend=5&subtrahend=5'
+# {"result":0,"operation":"subtract"}   (minuend===subtrahend 反 off-by-one)
+
+curl -s 'http://127.0.0.1:3000/subtract?minuend=5&subtrahend=10'
+# {"result":-5,"operation":"subtract"}  (负结果，防参数颠倒)
+
+curl -s 'http://127.0.0.1:3000/subtract?minuend=-5&subtrahend=-3'
+# {"result":-2,"operation":"subtract"}  (双负)
+
+curl -s 'http://127.0.0.1:3000/subtract?minuend=1.5&subtrahend=0.5'
+# {"result":1,"operation":"subtract"}   (浮点)
+```
+
+strict-schema 拒（10+ 类非法输入）：
+
+```bash
+curl -s -o /dev/stderr -w 'HTTP %{http_code}\n' 'http://127.0.0.1:3000/subtract?minuend=1e2&subtrahend=1'
+# HTTP 400  (科学计数法)
+
+curl -s -o /dev/stderr -w 'HTTP %{http_code}\n' 'http://127.0.0.1:3000/subtract?minuend=0xff&subtrahend=1'
+# HTTP 400  (十六进制)
+
+curl -s -o /dev/stderr -w 'HTTP %{http_code}\n' 'http://127.0.0.1:3000/subtract?minuend=Infinity&subtrahend=1'
+# HTTP 400  (Infinity 字面)
+
+curl -s -o /dev/stderr -w 'HTTP %{http_code}\n' 'http://127.0.0.1:3000/subtract?minuend=NaN&subtrahend=1'
+# HTTP 400  (NaN 字面)
+
+curl -s -o /dev/stderr -w 'HTTP %{http_code}\n' 'http://127.0.0.1:3000/subtract?minuend=%2B5&subtrahend=3'
+# HTTP 400  (前导 +)
+
+curl -s -o /dev/stderr -w 'HTTP %{http_code}\n' 'http://127.0.0.1:3000/subtract?minuend=--5&subtrahend=3'
+# HTTP 400  (双重负号)
+```
+
+缺参 / 错 query 名（query 锁死，只接受 `minuend` + `subtrahend`）：
+
+```bash
+curl -s -o /dev/stderr -w 'HTTP %{http_code}\n' 'http://127.0.0.1:3000/subtract?minuend=10'
+# HTTP 400  (缺 subtrahend)
+
+curl -s -o /dev/stderr -w 'HTTP %{http_code}\n' 'http://127.0.0.1:3000/subtract?subtrahend=3'
+# HTTP 400  (缺 minuend)
+
+curl -s -o /dev/stderr -w 'HTTP %{http_code}\n' 'http://127.0.0.1:3000/subtract'
+# HTTP 400  (双参都缺)
+
+curl -s -o /dev/stderr -w 'HTTP %{http_code}\n' 'http://127.0.0.1:3000/subtract?a=10&b=3'
+# HTTP 400  (错 query 名 a/b)
+
+curl -s -o /dev/stderr -w 'HTTP %{http_code}\n' 'http://127.0.0.1:3000/subtract?lhs=10&rhs=3'
+# HTTP 400  (错 query 名 lhs/rhs)
+```
+
+响应 schema 完整性（成功响应顶层 keys 严格等于 `["operation","result"]`；不漂到禁用同义字段 `difference`/`diff`/`subtraction`/`sub_result`/`minus_result`/`minus`/`delta`，也不漂到 generic 字段 `value`/`input`/`output`/`data`/`payload`/`answer`/`meta`；错误体顶层 keys 严格等于 `["error"]`）。
