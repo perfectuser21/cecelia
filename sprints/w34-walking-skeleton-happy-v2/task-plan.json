@@ -1,0 +1,32 @@
+{
+  "initiative_id": "pending",
+  "journey_type": "autonomous",
+  "journey_type_reason": "playground 独立 HTTP server 子项目；只动 server.js 路由 + tests + README；无 UI、无 brain tick、无 engine hook、无远端 agent 协议——延续 W19~W26 同分类。",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "playground 加 GET /subtract 路由 + 单测 + README",
+      "scope": "在 playground/server.js 在 /factorial 之后 / app.listen 之前新增 GET /subtract 路由（≈10-12 行）：必填校验 req.query.a 与 req.query.b → 缺任一 400；复用既有 STRICT_NUMBER 常量校验 a 与 b → 任一不匹配 400；计算 Number(a)-Number(b)；返回 {result, operation: \"subtract\"}（顶层 keys 严格 [\"operation\",\"result\"]，operation 字面字符串 \"subtract\"）。在 playground/tests/server.test.js 新增 describe('GET /subtract', ...) 块覆盖 happy 9+ / 浮点精度 1+ / strict 拒 12+ / 缺参 3 / 错 query 名 2+ / 值 oracle 3+ / schema 完整性 3+ / 错误体形状 2+ / 8 路由回归 1/路由。在 playground/README.md 端点列表加 /subtract 至少 5 个示例。零新依赖。不动既有 8 路由实现与单测。",
+      "dod": [
+        "[BEHAVIOR] GET /subtract?a=5&b=3 返 200 + {result:2, operation:\"subtract\"} 严等；顶层 keys 严格 [\"operation\",\"result\"]；result 类型 number",
+        "[BEHAVIOR] GET /subtract?a=0.3&b=0.1 返 result === Number(\"0.3\")-Number(\"0.1\") === 0.19999999999999998 严等（禁容差）",
+        "[BEHAVIOR] GET /subtract 算术边界值复算严等（10-10=0、-5-3=-8、5-(-3)=8、-5-(-3)=-2、0-0=0）",
+        "[BEHAVIOR] GET /subtract 成功响应严禁出现 PRD 禁用清单字段名（difference/diff/minus/subtraction/sub/subtracted/delta/gap/value/input/output/data/payload/response/answer/out/meta/sum/product/quotient/power/remainder/factorial/negation/incremented/next/successor/a/b）",
+        "[BEHAVIOR] 缺参 / strict-schema 拒 / 错 query 名 全返 400 + 顶层 keys 严格 [\"error\"]；错误体不含 result 也不含 operation",
+        "[BEHAVIOR] 8 路由回归 — /health、/sum、/multiply、/divide、/power、/modulo、/factorial、/increment happy 用例全过",
+        "[ARTIFACT] playground/server.js 含 app.get('/subtract' 路由声明 + 字面 operation: 'subtract'",
+        "[ARTIFACT] playground/tests/server.test.js 含 describe('GET /subtract' 测试块",
+        "[ARTIFACT] playground/README.md 端点列表含 /subtract",
+        "[ARTIFACT] playground/package.json dependencies 仅含 express（零新依赖）"
+      ],
+      "files": [
+        "playground/server.js",
+        "playground/tests/server.test.js",
+        "playground/README.md"
+      ],
+      "depends_on": [],
+      "complexity": "S",
+      "estimated_minutes": 30
+    }
+  ]
+}

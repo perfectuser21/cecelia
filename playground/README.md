@@ -25,6 +25,7 @@ npm start           # 起 server（默认 :3000）
 - `GET /modulo?a=N&b=M` → 返回 a%b 的余数（**strict-schema** + **除零兜底**：`b=0`/`b=0.0` → 400；**JS 原生 truncated 取模**：余数符号跟随被除数 a，与数学 floored mod 区分）
 - `GET /factorial?n=N` → 返回 n! 阶乘（**整数白名单 strict-schema** `^\d+$` + **上界 18 拒**：`n > 18` → 400（精度上界，避免超过 `Number.MAX_SAFE_INTEGER`）+ **迭代精确累积**：`for(i=2; i<=n; i++) acc *= i`，不引入 BigInt / Stirling / gamma 近似）
 - `GET /increment?value=N` → 返回 `{result: N+1, operation: "increment"}`（**整数白名单 strict-schema** `^-?\d+$` + **精度上下界拒**：`|Number(value)| > 9007199254740990` → 400（+1 后避免超过 `Number.MAX_SAFE_INTEGER`）+ **query 名锁死**：只接受 `value`，别名 `n/a/b/x/val/input/...` 全 400）
+- `GET /subtract?a=N&b=M` → 返回 `{result: a-b, operation: "subtract"}`（**strict-schema** `^-?\d+(\.\d+)?$`：拒科学计数法 / `Infinity` / `NaN` / 前导 `+` / 十六进制 / 千分位 / 空串 / 字母串 / 双重负号 / 空格 等；浮点结果严等不容差，例如 `0.3-0.1 === 0.19999999999999998` 原样返回；响应顶层 keys 严格 `["operation","result"]`）
 
 ### `GET /sum` 示例
 
@@ -408,3 +409,88 @@ curl -s -o /dev/stderr -w 'HTTP %{http_code}\n' 'http://127.0.0.1:3000/increment
 ```
 
 响应 schema 完整性（成功响应顶层 keys 严格等于 `["operation","result"]`；不漂到禁用同义字段 `incremented`/`next`/`successor`/`n_plus_one`/`plus_one`/`succ`/`inc`/`incr`/`incrementation`，也不漂到 generic 字段 `value`/`input`/`output`/`data`/`payload`/`answer`/`meta`，错误体顶层 keys 严格等于 `["error"]`）。
+
+### `GET /subtract` 示例
+
+happy path（含负结果、负数、`a===b` 零边界，全部走 JS 原生减法，不做精度截断；响应顶层 keys 严格 `["operation","result"]`，`operation` 字面 `"subtract"`）：
+
+```bash
+curl -s 'http://127.0.0.1:3000/subtract?a=5&b=3'
+# {"result":2,"operation":"subtract"}
+
+curl -s 'http://127.0.0.1:3000/subtract?a=3&b=5'
+# {"result":-2,"operation":"subtract"}     # 负结果合法
+
+curl -s 'http://127.0.0.1:3000/subtract?a=10&b=10'
+# {"result":0,"operation":"subtract"}      # a===b → 0
+
+curl -s 'http://127.0.0.1:3000/subtract?a=-5&b=3'
+# {"result":-8,"operation":"subtract"}     # 负被减数
+
+curl -s 'http://127.0.0.1:3000/subtract?a=5&b=-3'
+# {"result":8,"operation":"subtract"}      # 负减数
+
+curl -s 'http://127.0.0.1:3000/subtract?a=1.5&b=0.5'
+# {"result":1,"operation":"subtract"}      # 小数合法
+```
+
+浮点精度严等（核心 oracle：JS 原生减法的 IEEE 754 精度损失原样返回，evaluator 用 `Number("0.3") - Number("0.1")` 独立复算后 jq 严等比较，**禁容差**）：
+
+```bash
+curl -s 'http://127.0.0.1:3000/subtract?a=0.3&b=0.1'
+# {"result":0.19999999999999998,"operation":"subtract"}  # IEEE 754 精度损失原样返回
+```
+
+缺参拒（核心：`req.query.a` 或 `req.query.b` 任一 `undefined` → 400 + 顶层 keys 严格 `["error"]`，body 不含 `result`/`operation`）：
+
+```bash
+curl -s -o /dev/stderr -w 'HTTP %{http_code}\n' 'http://127.0.0.1:3000/subtract'
+# {"error":"a 和 b 都是必填 query 参数"}
+# HTTP 400
+
+curl -s -o /dev/stderr -w 'HTTP %{http_code}\n' 'http://127.0.0.1:3000/subtract?a=5'
+# HTTP 400  (缺 b)
+
+curl -s -o /dev/stderr -w 'HTTP %{http_code}\n' 'http://127.0.0.1:3000/subtract?b=3'
+# HTTP 400  (缺 a)
+```
+
+错 query 名拒（按缺 `a`/`b` 分支：别名 `x/y/value1/value2/...` 全 400）：
+
+```bash
+curl -s -o /dev/stderr -w 'HTTP %{http_code}\n' 'http://127.0.0.1:3000/subtract?x=5&y=3'
+# HTTP 400  (别名 x/y)
+
+curl -s -o /dev/stderr -w 'HTTP %{http_code}\n' 'http://127.0.0.1:3000/subtract?value1=5&value2=3'
+# HTTP 400  (别名 value1/value2)
+```
+
+strict-schema 拒（与 `/multiply`、`/divide`、`/power`、`/modulo` 同款正则 `^-?\d+(\.\d+)?$`，禁 `Number()` 假绿）：
+
+```bash
+curl -s -o /dev/stderr -w 'HTTP %{http_code}\n' 'http://127.0.0.1:3000/subtract?a=1e3&b=2'
+# HTTP 400  (科学计数法)
+
+curl -s -o /dev/stderr -w 'HTTP %{http_code}\n' 'http://127.0.0.1:3000/subtract?a=Infinity&b=2'
+# HTTP 400  (Infinity)
+
+curl -s -o /dev/stderr -w 'HTTP %{http_code}\n' 'http://127.0.0.1:3000/subtract?a=2&b=NaN'
+# HTTP 400  (NaN)
+
+curl -s -o /dev/stderr -w 'HTTP %{http_code}\n' 'http://127.0.0.1:3000/subtract?a=%2B5&b=3'
+# HTTP 400  (前导 +)
+
+curl -s -o /dev/stderr -w 'HTTP %{http_code}\n' 'http://127.0.0.1:3000/subtract?a=0xff&b=2'
+# HTTP 400  (十六进制)
+
+curl -s -o /dev/stderr -w 'HTTP %{http_code}\n' 'http://127.0.0.1:3000/subtract?a=1%2C000&b=2'
+# HTTP 400  (千分位)
+
+curl -s -o /dev/stderr -w 'HTTP %{http_code}\n' 'http://127.0.0.1:3000/subtract?a=abc&b=3'
+# HTTP 400  (字母串)
+
+curl -s -o /dev/stderr -w 'HTTP %{http_code}\n' 'http://127.0.0.1:3000/subtract?a=--5&b=3'
+# HTTP 400  (双重负号)
+```
+
+响应 schema 完整性（成功响应顶层 keys 严格等于 `["operation","result"]`；不漂到禁用同义字段 `difference`/`diff`/`minus`/`subtraction`/`sub`/`subtracted`/`delta`/`gap` 也不漂到 generic 字段 `value`/`input`/`output`/`data`/`payload`/`response`/`answer`/`out`/`meta`/`a`/`b`，错误体顶层 keys 严格等于 `["error"]`）。
