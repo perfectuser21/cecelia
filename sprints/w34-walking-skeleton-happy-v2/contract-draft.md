@@ -299,7 +299,7 @@ workstream_count: 1
 
 | Workstream | Test File | BEHAVIOR 覆盖 | 预期红证据 |
 |---|---|---|---|
-| WS1 | `tests/ws1/subtract.test.ts` | happy 严 schema + 值复算 / 算术边界（a===b、混合正负号、0-0） / keys 完整性 / 禁用字段反向 / error path 400 + keys=["error"] / 错误体不含 result/operation / 浮点精度严等 | server.js 未加 `/subtract` 时全部 it 块 expect fail（404 而非 200 / 400 而非期望 keys） |
+| WS1 | `tests/ws1/subtract.test.ts` | → 200 + / 0.19999999999999998 / a===b / 双负 / 顶层 keys 字面集合等于 / 禁用清单 / operation 字面字符串 / 400 + keys= / 错误体规范 / 按缺 a / {ok:true} | server.js 未加 `/subtract` 时全部 it 块 expect fail（404 而非 200 / 400 而非期望 keys） |
 
 ---
 

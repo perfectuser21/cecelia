@@ -57,8 +57,20 @@ COMMIT_ARR=($COMMITS)
 COMMIT_COUNT=${#COMMIT_ARR[@]}
 VIOLATIONS=0
 
+# Brain auto-imports合同（contract-draft.md + sprint-prd.md + task-plan.json + tests/）
+# 作为 "chore(harness): import contract" 前置 commit。跳过该 chore，把下一个 commit 当作真正的 commit 1（Red）。
+START_IDX=0
+if [ "$COMMIT_COUNT" -gt 1 ]; then
+  FIRST_MSG=$(git log -1 --format=%s "${COMMIT_ARR[0]}")
+  if echo "$FIRST_MSG" | grep -qE '^chore\(harness\):? import contract'; then
+    START_IDX=1
+    echo "ℹ️  首 commit 是 chore(harness): import contract — Brain 自动导入合同，跳过它，把 commit 2 当作 commit 1（Red）"
+    echo ""
+  fi
+fi
+
 # ── Check 1: commit 1 只能 touch tests/ + DoD.md ─────────────────────
-COMMIT_1=${COMMIT_ARR[0]}
+COMMIT_1=${COMMIT_ARR[$START_IDX]}
 COMMIT_1_MSG=$(git log -1 --format=%s "$COMMIT_1")
 COMMIT_1_FILES=$(git show --name-only --format= "$COMMIT_1")
 
@@ -85,7 +97,7 @@ echo ""
 # ── Check 3: commit 2+ 必须含实现 + 测试文件不许改 ─────────────────────
 HAS_GREEN=0
 IMPL_FOUND=0
-for ((i = 1; i < COMMIT_COUNT; i++)); do
+for ((i = START_IDX + 1; i < COMMIT_COUNT; i++)); do
   C=${COMMIT_ARR[$i]}
   MSG=$(git log -1 --format=%s "$C")
   FILES=$(git show --name-only --format= "$C")
@@ -106,8 +118,8 @@ for ((i = 1; i < COMMIT_COUNT; i++)); do
     VIOLATIONS=$((VIOLATIONS + 1))
   fi
 
-  # 检测本 commit 有无实现代码
-  IMPL_TOUCHED=$(echo "$FILES" | grep -E '^(packages|apps)/.+\.(ts|tsx|js|jsx|cjs|mjs|py|sh)$' || true)
+  # 检测本 commit 有无实现代码（playground/ 是 walking-skeleton 的端到端验证场，与 packages/apps 同级）
+  IMPL_TOUCHED=$(echo "$FILES" | grep -E '^(packages|apps|playground)/.+\.(ts|tsx|js|jsx|cjs|mjs|py|sh)$' || true)
   if [ -n "$IMPL_TOUCHED" ]; then
     IMPL_FOUND=1
   fi
@@ -116,13 +128,13 @@ for ((i = 1; i < COMMIT_COUNT; i++)); do
 done
 
 # ── Check 4: commit 2+ 必须有一个 commit 含实现 ────────────────────────
-if [ $IMPL_FOUND -eq 0 ] && [ $COMMIT_COUNT -gt 1 ]; then
-  echo -e "${RED}❌ commit 2+ 未找到任何实现代码改动（packages/ 或 apps/）${RESET}"
+if [ $IMPL_FOUND -eq 0 ] && [ $((COMMIT_COUNT - START_IDX)) -gt 1 ]; then
+  echo -e "${RED}❌ commit 2+ 未找到任何实现代码改动（packages/ 或 apps/ 或 playground/）${RESET}"
   VIOLATIONS=$((VIOLATIONS + 1))
 fi
 
 # ── Check 5: 至少一个 commit 含 (Green) 或 feat( ──────────────────────
-if [ $HAS_GREEN -eq 0 ] && [ $COMMIT_COUNT -gt 1 ]; then
+if [ $HAS_GREEN -eq 0 ] && [ $((COMMIT_COUNT - START_IDX)) -gt 1 ]; then
   echo -e "${RED}❌ 没有 commit message 含 (Green) 或 feat( 前缀${RESET}"
   VIOLATIONS=$((VIOLATIONS + 1))
 fi
