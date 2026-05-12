@@ -1439,3 +1439,66 @@ describe('GET /increment — 7 已有路由回归 [BEHAVIOR]', () => {
     expect(res.body.factorial).toBe(120);
   });
 });
+
+describe('GET /ping', () => {
+  test('GET /ping → 200 + {pong: true}（字面布尔 true）', async () => {
+    const res = await request(app).get('/ping');
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ pong: true });
+  });
+
+  test('GET /ping → .pong 类型必须是 boolean（不是字符串 "true" / 数字 1 / "ok"）', async () => {
+    const res = await request(app).get('/ping');
+    expect(res.status).toBe(200);
+    expect(typeof res.body.pong).toBe('boolean');
+    expect(res.body.pong).toBe(true);
+    expect(res.body.pong).not.toBe('true');
+    expect(res.body.pong).not.toBe(1);
+    expect(res.body.pong).not.toBe('ok');
+  });
+
+  test('GET /ping → 顶层 keys 字面 ["pong"] 且 length=1（schema 完整性）', async () => {
+    const res = await request(app).get('/ping');
+    expect(res.status).toBe(200);
+    expect(Object.keys(res.body).sort()).toEqual(['pong']);
+    expect(Object.keys(res.body).length).toBe(1);
+  });
+
+  test('GET /ping?x=1 → 200 + {pong: true}（带未定义 query 被静默忽略，反画蛇添足）', async () => {
+    const res = await request(app).get('/ping').query({ x: '1' });
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ pong: true });
+  });
+
+  test('GET /ping?pong=false → 200 + {pong: true}（同名 query 不影响响应）', async () => {
+    const res = await request(app).get('/ping').query({ pong: 'false' });
+    expect(res.status).toBe(200);
+    expect(res.body.pong).toBe(true);
+    expect(Object.keys(res.body).sort()).toEqual(['pong']);
+  });
+
+  test('连续 3 次 GET /ping body 字面相等（确定性，无 timestamp/uptime/request_id）', async () => {
+    const r1 = await request(app).get('/ping');
+    const r2 = await request(app).get('/ping');
+    const r3 = await request(app).get('/ping');
+    expect(r1.body).toEqual(r2.body);
+    expect(r2.body).toEqual(r3.body);
+    expect(r1.text).toBe(r2.text);
+    expect(r2.text).toBe(r3.text);
+  });
+
+  test('响应不含任一禁用字段名 (ping/status/ok/alive/healthy/result/message/data/payload/value/sum/product/operation 等)', async () => {
+    const res = await request(app).get('/ping');
+    expect(res.status).toBe(200);
+    const forbidden = [
+      'ping', 'status', 'ok', 'alive', 'healthy', 'response', 'result',
+      'message', 'pong_value', 'is_alive', 'is_ok',
+      'data', 'payload', 'body', 'output', 'answer', 'value', 'meta', 'info',
+      'sum', 'product', 'quotient', 'power', 'remainder', 'factorial',
+      'negation', 'operation'
+    ];
+    for (const k of forbidden) {
+      expect(res.body).not.toHaveProperty(k);
+    }
+  });
+});

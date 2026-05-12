@@ -107,6 +107,10 @@ app.get('/factorial', (req, res) => {
   return res.json({ factorial: acc });
 });
 
+app.get('/ping', (req, res) => {
+  res.json({ pong: true });
+});
+
 if (process.env.NODE_ENV !== 'test') {
   app.listen(PORT, () => console.log(`playground listening on ${PORT}`));
 }

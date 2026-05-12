@@ -1,7 +1,3 @@
-contract_branch: cp-harness-propose-r2-ed20a544
-workstream_index: 1
-sprint_dir: sprints/w33-walking-skeleton-happy
-
 ---
 skeleton: false
 journey_type: autonomous

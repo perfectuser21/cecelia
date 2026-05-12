@@ -1,0 +1,37 @@
+{
+  "initiative_id": "pending",
+  "journey_type": "autonomous",
+  "journey_type_reason": "playground 是独立 HTTP server 子项目，本次只动 server 路由 + 单测 + README，无 UI / 无 brain tick / 无 engine hook / 无远端 agent 协议；与 W19~W26 同分类（autonomous）",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "playground/server.js 新增 GET /ping 路由 + tests/server.test.js GET /ping describe 块 + README.md /ping 段（Walking Skeleton trivial happy path）",
+      "scope": "在 playground/server.js 注册 GET /ping（单行 handler `(req, res) => res.json({ pong: true })`，不读 query、不加输入校验、不加 error 分支、不加 method 守卫——本 endpoint 在定义层面不存在拒绝路径）；在 playground/tests/server.test.js 新增 describe('GET /ping', ...) 块（happy 3+ + schema 完整性 oracle 1+ + 反画蛇添足 query 静默忽略 2+ + 确定性连续请求 1+ + 8 路由回归 8+）；在 playground/README.md 端点列表加 /ping 段（至少 1 个 happy 示例 `GET /ping → 200 {\"pong\": true}`）。响应字段名严格字面照搬 PRD：key 字面 `pong`、value 字面布尔 `true`；禁止任一禁用同义字段名 ping/status/ok/alive/healthy/result/message/data/payload/value/sum/product/operation 等出现在响应；不许加 strict-schema 校验、query param 校验、error 分支或 HTTP method 守卫（trivial spec 反画蛇添足）。零依赖；不动 /health /sum /multiply /divide /power /modulo /factorial /increment 任一已有路由的代码或单测。",
+      "dod": [
+        "[ARTIFACT] playground/server.js 内含 app.get('/ping' 路由注册",
+        "[ARTIFACT] playground/server.js /ping 响应含字面 pong 字段（不漂到 ping/status/ok/result/message 等禁用名）",
+        "[ARTIFACT] playground/server.js /ping 响应字面含布尔 true（不漂到字符串 \"true\"/数字 1/字符串 \"ok\"）",
+        "[ARTIFACT] playground/server.js /ping 路由不含 req.query 读取或 status(4xx) 调用（trivial spec 反画蛇添足）",
+        "[ARTIFACT] playground/server.js 末尾保留 `export default app`（tests/ws1/ping.test.js supertest 依赖；generator 编辑时不许误删）",
+        "[ARTIFACT] playground/tests/server.test.js 内含 describe('GET /ping' 独立 describe 块",
+        "[ARTIFACT] playground/README.md 端点列表含 /ping 段",
+        "[BEHAVIOR] GET /ping → 200 + {pong: true}（字面布尔 true）",
+        "[BEHAVIOR] GET /ping 响应 .pong 类型必须是 boolean（typeof === \"boolean\"）",
+        "[BEHAVIOR] GET /ping 响应顶层 keys 字面集合 == [\"pong\"] 且 length == 1（schema 完整性）",
+        "[BEHAVIOR] GET /ping 响应不含任一禁用字段名 ping/status/ok/alive/healthy/response/result/message/pong_value/is_alive/is_ok/data/payload/body/output/answer/value/meta/info/sum/product/quotient/power/remainder/factorial/negation/operation",
+        "[BEHAVIOR] GET /ping?x=1 → 200 + {pong: true}（query 静默忽略，反画蛇添足）",
+        "[BEHAVIOR] GET /ping?pong=false → 200 + {pong: true}（同名 query 不影响响应）",
+        "[BEHAVIOR] 连续 3 次 GET /ping 返同一 raw body（确定性，无 timestamp/uptime/request_id 时变字段）",
+        "[BEHAVIOR] 既有 8 路由 (/health /sum /multiply /divide /power /modulo /factorial /increment) happy 用例回归全通过"
+      ],
+      "files": [
+        "playground/server.js",
+        "playground/tests/server.test.js",
+        "playground/README.md"
+      ],
+      "depends_on": [],
+      "complexity": "S",
+      "estimated_minutes": 25
+    }
+  ]
+}
