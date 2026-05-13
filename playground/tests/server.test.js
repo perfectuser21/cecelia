@@ -1546,7 +1546,7 @@ describe('GET /decrement', () => {
   });
 });
 
-describe('GET /negate — int-only strict + 上下界拒 + -0 双保险规范化 + scope 锁死 [BEHAVIOR]', () => {
+describe('GET /negate', () => {
   test('GET /negate?value=5 → 200 + {result:-5, operation:"negate"}（字面严等）', async () => {
     const res = await request(app).get('/negate').query({ value: '5' });
     expect(res.status).toBe(200);
