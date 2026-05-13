@@ -1,7 +1,3 @@
-contract_branch: cp-harness-propose-r2-4271d19c
-workstream_index: 1
-sprint_dir: sprints/w41-walking-skeleton-final-b19
-
 ---
 skeleton: false
 journey_type: autonomous
@@ -25,3 +21,4 @@ journey_type: autonomous
 
 - [ ] [ARTIFACT] seed-output.json 含合法 demo_task_id (UUID v4) + injected_at (ISO 8601)
   Test: manual:bash -c 'jq -e ".demo_task_id | test(\"^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$\")" sprints/w41-walking-skeleton-final-b19/evidence/seed-output.json && jq -e ".injected_at | test(\"^[0-9]{4}-[0-9]{2}-[0-9]{2}T\")" sprints/w41-walking-skeleton-final-b19/evidence/seed-output.json'
+
