@@ -226,5 +226,5 @@ workstream_count: 2
 
 | WS | Test File | BEHAVIOR 覆盖 | 预期红证据 |
 |---|---|---|---|
-| WS1 | `tests/ws1/seed-and-drive.test.ts` | seed 导出 buildDemoTaskPayload + markerForFixLoop=true；drive 导出 collectEvidence + 5 文件键 + waitForCompletion | 模块未实现 → import 失败 |
-| WS2 | `tests/ws2/report-format.test.ts` | buildReport 输出 5 章节 + ## 结论 含 B19 + trace url 字面嵌入 | 模块未实现 → import 失败 |
+| WS1 | `tests/ws1/seed-and-drive.test.ts` | buildDemoTaskPayload / markerForFixLoop / collectEvidence / waitForCompletion | 模块未实现 → import 失败 |
+| WS2 | `tests/ws2/report-format.test.ts` | buildReport / 5 个指定 H2 章节标题 / ## 结论 段且引用 B19 / pr_url 字面值嵌入 | 模块未实现 → import 失败 |

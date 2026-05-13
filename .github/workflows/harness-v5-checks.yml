@@ -106,13 +106,15 @@ jobs:
         run: npm ci
       - name: Run sprint tests
         if: steps.check-tests.outputs.has_tests == 'true'
+        env:
+          TEST_FILES: ${{ steps.check-tests.outputs.test_files }}
         run: |
           set -euo pipefail
           echo "📋 跑这些测试文件："
-          echo "${{ steps.check-tests.outputs.test_files }}" | sed 's/^/  /'
+          echo "$TEST_FILES" | sed 's/^/  /'
           echo ""
-          # vitest 从 CLI 接受相对路径即可
-          npx vitest run ${{ steps.check-tests.outputs.test_files }} --reporter=verbose || {
+          # 多行文件列表转单行空格分隔，避免 GitHub Actions 插值换行变成独立 shell 命令
+          npx vitest run $(echo "$TEST_FILES" | tr '\n' ' ') --reporter=verbose || {
             echo "❌ 测试未通过（Green 阶段失败）"
             exit 1
           }
