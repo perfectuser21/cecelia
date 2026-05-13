@@ -103,6 +103,26 @@ app.get('/decrement', (req, res) => {
   return res.json({ result: n - 1, operation: 'decrement' });
 });
 
+app.get('/negate', (req, res) => {
+  // 成功 schema 字面: { result: <number>, operation: "negate" }；strict ^-?\d+$；上下界 |value| ≤ 9007199254740990；唯一 query 名 value
+  // r3 R1 mitigation 双保险：query 层 v === "-0" 短路 + 三元 n === 0 ? 0 : -n 规范化，杜绝 -0 漂移
+  const STRICT_INT = /^-?\d+$/;
+  const keys = Object.keys(req.query);
+  const v = req.query.value;
+  if (keys.length !== 1 || keys[0] !== 'value' || typeof v !== 'string' || !STRICT_INT.test(v)) {
+    return res.status(400).json({ error: 'value 必须是唯一 query 名 + 匹配 ^-?\\d+$（仅整数；禁小数、前导 +、双重负号、科学计数法、十六进制、千分位、空格、Infinity、NaN、空串）+ |value| ≤ 9007199254740990' });
+  }
+  if (v === "-0") {
+    return res.json({ result: 0, operation: 'negate' });
+  }
+  const n = Number(v);
+  if (Math.abs(n) > 9007199254740990) {
+    return res.status(400).json({ error: 'value 必须是唯一 query 名 + 匹配 ^-?\\d+$（仅整数；禁小数、前导 +、双重负号、科学计数法、十六进制、千分位、空格、Infinity、NaN、空串）+ |value| ≤ 9007199254740990' });
+  }
+  const r = n === 0 ? 0 : -n;
+  return res.json({ result: r, operation: 'negate' });
+});
+
 app.get('/factorial', (req, res) => {
   const { n } = req.query;
   if (n === undefined) {
