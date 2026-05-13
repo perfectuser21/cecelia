@@ -18,6 +18,29 @@ const mockMerge = vi.fn();
 const mockClassify = vi.fn();
 const mockPoolQuery = vi.fn();
 const mockSpawnDetached = vi.fn();
+// B21: mergePrNode 现在直接调 `gh pr merge` 通过 promisify(child_process.execFile)。
+// 在 E2E happy/fix-loop 路径里 mock child_process.execFile，避免真去跑 gh CLI。
+const mockExecFileImpl = vi.fn();
+vi.mock('node:child_process', async () => {
+  const actual = await vi.importActual('node:child_process');
+  // execFile 是 callback-style：(file, args, opts, cb) → cb(err, {stdout, stderr})
+  // promisify 把它转成 Promise。这里用 cb 风格让 promisify 走通。
+  return {
+    ...actual,
+    execFile: (file, args, opts, cb) => {
+      const callback = typeof opts === 'function' ? opts : cb;
+      try {
+        const out = mockExecFileImpl(file, args, opts);
+        Promise.resolve(out).then(
+          (val) => callback(null, val ?? { stdout: '', stderr: '' }),
+          (err) => callback(err),
+        );
+      } catch (err) {
+        callback(err);
+      }
+    },
+  };
+});
 
 vi.mock('../../spawn/index.js', () => ({ spawn: (...a) => mockSpawn(...a) }));
 vi.mock('../../harness-worktree.js', () => ({
@@ -357,23 +380,37 @@ describe('pollCiNode', () => {
 });
 
 describe('mergePrNode', () => {
-  beforeEach(() => { mockMerge.mockReset(); });
-  it('happy: 调 executeMerge 写 status=merged', async () => {
-    mockMerge.mockReturnValueOnce(true);
-    const delta = await mergePrNode({ pr_url: 'https://x/pull/1' });
-    expect(mockMerge).toHaveBeenCalledWith('https://x/pull/1');
+  // B21: mergePrNode 改用注入 execFile 直接调 `gh pr merge --auto --squash --delete-branch`，
+  // 不再委托 shepherd.executeMerge。失败时只写 merge_error，不再 set status=failed（让 graph END）。
+  it('happy: 调 gh pr merge --auto --squash 写 status=merged', async () => {
+    const execFile = vi.fn().mockResolvedValue({ stdout: '✓ merged', stderr: '' });
+    const delta = await mergePrNode({ pr_url: 'https://x/pull/1' }, { execFile });
+    expect(execFile).toHaveBeenCalledTimes(1);
+    const [bin, args] = execFile.mock.calls[0];
+    expect(bin).toBe('gh');
+    expect(args).toEqual(expect.arrayContaining(['pr', 'merge', 'https://x/pull/1', '--auto', '--squash', '--delete-branch']));
     expect(delta.status).toBe('merged');
+    expect(delta.ci_status).toBe('merged');
+    expect(delta.merge_command).toMatch(/gh pr merge/);
   });
-  it('merge 失败 → error', async () => {
-    mockMerge.mockImplementationOnce(() => { throw new Error('conflict'); });
-    const delta = await mergePrNode({ pr_url: 'x' });
-    expect(delta.error).toBeTruthy();
-    expect(delta.status).toBe('failed');
+  it('merge 失败 → 仅写 merge_error 不 set status=failed（让 graph END 不重试）', async () => {
+    const execFile = vi.fn().mockRejectedValue(new Error('conflict'));
+    const delta = await mergePrNode({ pr_url: 'x' }, { execFile });
+    expect(delta.merge_error).toMatch(/conflict/);
+    expect(delta.status).toBeUndefined();
+    expect(delta.error).toBeUndefined();
   });
   it('idempotent: status 已 merged → 跳过', async () => {
-    const delta = await mergePrNode({ pr_url: 'x', status: 'merged' });
-    expect(mockMerge).not.toHaveBeenCalled();
+    const execFile = vi.fn();
+    const delta = await mergePrNode({ pr_url: 'x', status: 'merged' }, { execFile });
+    expect(execFile).not.toHaveBeenCalled();
     expect(delta.status).toBe('merged');
+  });
+  it('no pr_url → 写 merge_error 短路', async () => {
+    const execFile = vi.fn();
+    const delta = await mergePrNode({}, { execFile });
+    expect(execFile).not.toHaveBeenCalled();
+    expect(delta.merge_error).toMatch(/no pr_url/);
   });
 });
 
@@ -417,6 +454,9 @@ describe('harness-task graph — end-to-end (Layer 3 spawn-interrupt-resume)', (
     mockClassify.mockReset();
     mockPoolQuery.mockReset();
     mockPoolQuery.mockResolvedValue({ rows: [] });
+    // B21: 默认 gh pr merge 成功，返回简单 stdout
+    mockExecFileImpl.mockReset();
+    mockExecFileImpl.mockReturnValue({ stdout: '✓ merged', stderr: '' });
   });
   afterEach(() => { delete process.env.HARNESS_POLL_INTERVAL_MS; });
 
@@ -459,7 +499,6 @@ describe('harness-task graph — end-to-end (Layer 3 spawn-interrupt-resume)', (
 
   it('happy: spawn → interrupt → resume(stdout) → parse → ci_pass → merge → END', async () => {
     mockCheckPr.mockReturnValue({ ciStatus: 'ci_passed', state: 'OPEN', mergeable: 'MERGEABLE', failedChecks: [] });
-    mockMerge.mockReturnValue(true);
 
     const compiled = buildHarnessTaskGraph().compile({ checkpointer: new MemorySaver() });
     const final = await runUntilEnd(
@@ -476,7 +515,10 @@ describe('harness-task graph — end-to-end (Layer 3 spawn-interrupt-resume)', (
     const evaluatorSpawn = mockSpawnDetached.mock.calls.find(c => /harness-evaluate-/.test(c[0].containerId));
     expect(generatorSpawn).toBeDefined();
     expect(evaluatorSpawn).toBeDefined();
-    expect(mockMerge).toHaveBeenCalledTimes(1);
+    // B21: mergePrNode 现在直接调 `gh pr merge` 通过 execFile
+    const mergeCall = mockExecFileImpl.mock.calls.find(c => c[0] === 'gh' && Array.isArray(c[1]) && c[1].includes('merge'));
+    expect(mergeCall).toBeDefined();
+    expect(mergeCall[1]).toEqual(expect.arrayContaining(['pr', 'merge', 'https://gh/p/1', '--auto', '--squash', '--delete-branch']));
   });
 
   it('fix loop: spawn → resume → ci_fail → fix → fresh spawn (round 2) → resume → ci_pass → merge', async () => {
@@ -484,7 +526,7 @@ describe('harness-task graph — end-to-end (Layer 3 spawn-interrupt-resume)', (
       .mockReturnValueOnce({ ciStatus: 'ci_failed', failedChecks: ['lint'] })
       .mockReturnValueOnce({ ciStatus: 'ci_passed', failedChecks: [] });
     mockClassify.mockReturnValue('lint');
-    mockMerge.mockReturnValue(true);
+    // B21: 不再用 mockMerge — mergePrNode 直接调 execFile 的 gh pr merge
 
     const compiled = buildHarnessTaskGraph().compile({ checkpointer: new MemorySaver() });
     const final = await runUntilEnd(
@@ -519,7 +561,9 @@ describe('harness-task graph — end-to-end (Layer 3 spawn-interrupt-resume)', (
       [{ stdout: 'no pr created', exit_code: 0 }]
     );
     expect(final.pr_url).toBeNull();
-    expect(mockMerge).not.toHaveBeenCalled();
+    // B21: 验证没有触发 gh pr merge
+    const mergeCalls = mockExecFileImpl.mock.calls.filter(c => c[0] === 'gh' && Array.isArray(c[1]) && c[1].includes('merge'));
+    expect(mergeCalls).toHaveLength(0);
     expect(mockCheckPr).not.toHaveBeenCalled();
   });
 
@@ -532,7 +576,9 @@ describe('harness-task graph — end-to-end (Layer 3 spawn-interrupt-resume)', (
       failed_checks: ['container exit_code=1'],
     };
     expect(routeAfterCallback(state)).toBe('fix');
-    expect(mockMerge).not.toHaveBeenCalled();
+    // B21: 路由测试不应触发 gh pr merge
+    const mergeCalls = mockExecFileImpl.mock.calls.filter(c => c[0] === 'gh' && Array.isArray(c[1]) && c[1].includes('merge'));
+    expect(mergeCalls).toHaveLength(0);
   });
 
   it('container exit_code == 0 → routeAfterCallback 走 parse_callback (B18 normal path)', () => {
