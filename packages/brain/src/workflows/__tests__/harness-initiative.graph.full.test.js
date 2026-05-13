@@ -262,6 +262,7 @@ describe('reportNode', () => {
   });
   it('FAIL → UPDATE phase=failed + failure_reason', async () => {
     mockPool.query.mockResolvedValueOnce({ rows: [] });
+    mockPool.query.mockResolvedValueOnce({ rows: [] });
     const delta = await reportNode({
       initiativeId: 'i', sub_tasks: [], final_e2e_verdict: 'FAIL',
       final_e2e_failed_scenarios: [{ name: 'sc1' }],
@@ -272,6 +273,48 @@ describe('reportNode', () => {
     const params = sqlArgs[1];
     expect(params).toContain('failed');
     expect(params.find(p => typeof p === 'string' && p.includes('sc1'))).toBeTruthy();
+  });
+
+  // ── B1 hole: tasks.status 回写（Walking Skeleton P1）─────────────────────
+  // 修补 reportNode 只更 initiative_runs，不回写 tasks.status；graph 走完到 END
+  // 但 task 永卡 in_progress。W28 实证：13 个 checkpoint 全跑过 prep→...→report，
+  // task.status 仍 in_progress。
+  it('PASS → 同时 UPDATE tasks SET status=completed (B1)', async () => {
+    mockPool.query.mockResolvedValueOnce({ rows: [] });
+    mockPool.query.mockResolvedValueOnce({ rows: [] });
+    await reportNode({
+      initiativeId: 'i', sub_tasks: [{ id: 's1' }], final_e2e_verdict: 'PASS',
+    });
+    expect(mockPool.query).toHaveBeenCalledTimes(2);
+    const taskUpdate = mockPool.query.mock.calls[1];
+    expect(taskUpdate[0]).toMatch(/UPDATE tasks/i);
+    expect(taskUpdate[0]).toMatch(/status\s*=\s*\$/);
+    const params = taskUpdate[1];
+    expect(params).toContain('i');
+    expect(params).toContain('completed');
+  });
+
+  it('FAIL → 同时 UPDATE tasks SET status=failed (B1)', async () => {
+    mockPool.query.mockResolvedValueOnce({ rows: [] });
+    mockPool.query.mockResolvedValueOnce({ rows: [] });
+    await reportNode({
+      initiativeId: 'i', sub_tasks: [], final_e2e_verdict: 'FAIL',
+      final_e2e_failed_scenarios: [{ name: 'sc1' }],
+    });
+    expect(mockPool.query).toHaveBeenCalledTimes(2);
+    const taskUpdate = mockPool.query.mock.calls[1];
+    expect(taskUpdate[0]).toMatch(/UPDATE tasks/i);
+    const params = taskUpdate[1];
+    expect(params).toContain('i');
+    expect(params).toContain('failed');
+  });
+
+  it('已 idempotent (state.report_path 已存) → 不再调 query (B1)', async () => {
+    const delta = await reportNode({
+      initiativeId: 'i', sub_tasks: [], final_e2e_verdict: 'PASS', report_path: 'already-set',
+    });
+    expect(mockPool.query).not.toHaveBeenCalled();
+    expect(delta.report_path).toBe('already-set');
   });
 });
 

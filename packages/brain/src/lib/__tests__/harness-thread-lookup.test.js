@@ -59,6 +59,17 @@ describe('lib/harness-thread-lookup (Stream 5 真实 PG 查询)', () => {
     expect(typeof result.compiledGraph.invoke).toBe('function');
   });
 
+  it('B9: harness-evaluate graph 命中 → dispatch to compiledHarnessTask 同 thread_id', async () => {
+    mockQuery.mockResolvedValueOnce({
+      rows: [{ thread_id: 'harness-evaluate:init-1:ws1', graph_name: 'harness-evaluate' }],
+    });
+    const result = await lookupHarnessThread('harness-evaluate-ws1-r0-abc');
+    expect(result).not.toBeNull();
+    expect(result.threadId).toBe('harness-evaluate:init-1:ws1');
+    expect(result.compiledGraph).toBeDefined();
+    expect(typeof result.compiledGraph.invoke).toBe('function');
+  });
+
   it('未知 graph_name → 返回 null（dispatch miss）', async () => {
     mockQuery.mockResolvedValueOnce({
       rows: [{ thread_id: 'thread-xyz', graph_name: 'unknown-graph' }],

@@ -79,10 +79,16 @@ async function createAutoLearning({ title, category, content, triggerEvent, meta
     return null;
   }
 
+  // task_id 防御层（migration 271）：handleTaskCompletedLearning / handleTaskFailedLearning
+  // 都把 task_id 塞在 metadata 里，这里从 metadata 提升为列，确保可索引、可反查。
+  const taskIdRaw = metadata?.task_id;
+  const taskIdValid = typeof taskIdRaw === 'string'
+    && /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(taskIdRaw);
+
   try {
     const result = await dbPool.query(`
-      INSERT INTO learnings (title, category, trigger_event, content, metadata, content_hash, version, is_latest, digested)
-      VALUES ($1, $2, $3, $4, $5, $6, 1, true, false)
+      INSERT INTO learnings (title, category, trigger_event, content, metadata, content_hash, version, is_latest, digested, task_id)
+      VALUES ($1, $2, $3, $4, $5, $6, 1, true, false, $7)
       RETURNING id, title
     `, [
       title,
@@ -90,7 +96,8 @@ async function createAutoLearning({ title, category, content, triggerEvent, meta
       triggerEvent,
       content,
       JSON.stringify(metadata || {}),
-      contentHash
+      contentHash,
+      taskIdValid ? taskIdRaw : null,
     ]);
 
     // 更新计数器
