@@ -117,12 +117,12 @@ workstream_count: 1
 
 ## Test Contract
 
-| Workstream | DoD red-bar 文件（Evaluator 确认 Red） | 生产测试文件（Generator 产出物） | BEHAVIOR 覆盖 | 红证据 |
-|---|---|---|---|---|
-| WS1 | `sprints/w43-walking-skeleton-real-autonomous/tests/ws1/ping.test.js` | `packages/brain/src/__tests__/ping.test.js` | pong值/ts类型/ts范围/keys完整性/禁用字段/405 error | 5 failures（/ping 路由未添加时返 404）|
+| Workstream | DoD red-bar 文件（Evaluator 确认 Red） | BEHAVIOR 覆盖 | 红证据 |
+|---|---|---|---|
+| WS1 | `tests/ws1/ping.test.js` | HTTP 200,pong 字段,Unix seconds,keys 恰好,禁用字段,405 且 error | 5 failures（/ping 路由未添加时返 404）|
 
 **阶段职责**：
-- **Red 阶段**：Evaluator 运行 `sprints/.../tests/ws1/ping.test.js`，确认 ≥5 failures
+- **Red 阶段**：Evaluator 运行 `tests/ws1/ping.test.js`，确认 ≥5 failures
 - **Green 阶段**：Generator 新建 `packages/brain/src/__tests__/ping.test.js`，实现路由后 vitest 全 PASS
 
 ---
