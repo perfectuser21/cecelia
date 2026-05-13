@@ -102,6 +102,23 @@ describe('Workstream 1 — GET /negate [BEHAVIOR]', () => {
     }
   });
 
+  test('scope 锁死 (r2): value 合法 + 任意额外 query 名（未知/已知/重复）一律 400', async () => {
+    // value=5 + 未知名 extra
+    const r1 = await request(app).get('/negate?value=5&extra=bar');
+    expect(r1.status).toBe(400);
+    // value=5 + 另一个未知名 foo
+    const r2 = await request(app).get('/negate?value=5&foo=1');
+    expect(r2.status).toBe(400);
+    // value=5 + 禁用清单内 neg
+    const r3 = await request(app).get('/negate?value=5&neg=9');
+    expect(r3.status).toBe(400);
+    // value=5 + value=10（唯一 query 名意味着不允许重复 key）
+    const r4 = await request(app).get('/negate?value=5&value=10');
+    expect(r4.status).toBe(400);
+    // 错误 body 仍走严 schema：keys 严等 [error]
+    expect(Object.keys(r1.body)).toEqual(['error']);
+  });
+
   test('error 路径 value=foo → 400 + error body keys 严等 [error]', async () => {
     const res = await request(app).get('/negate').query({ value: 'foo' });
     expect(res.status).toBe(400);

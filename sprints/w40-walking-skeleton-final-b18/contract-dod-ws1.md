@@ -60,6 +60,10 @@ journey_type: autonomous
   Test: manual:bash -c 'cd playground && PLAYGROUND_PORT=3308 node server.js & SPID=$!; sleep 2; RC=0; for q in n x a b num number input v val neg target; do C=$(curl -s -o /dev/null -w "%{http_code}" "localhost:3308/negate?$q=5"); [ "$C" = "400" ] || { echo "forbidden-query $q got $C"; RC=1; break; }; done; kill $SPID 2>/dev/null; exit $RC'
   期望: exit 0
 
+- [ ] [BEHAVIOR] scope 锁死：`value` 合法 + 任意额外 query 名（未知名 `extra=bar` / `foo=1`、禁用名 `neg=9`、重复 key `value=10`）一律 400（PRD 边界情况"多余 query → 400" — r2 新增）
+  Test: manual:bash -c 'cd playground && PLAYGROUND_PORT=3311 node server.js & SPID=$!; sleep 2; RC=0; for X in "extra=bar" "foo=1" "neg=9" "value=10"; do C=$(curl -s -o /dev/null -w "%{http_code}" "localhost:3311/negate?value=5&$X"); [ "$C" = "400" ] || { echo "value+$X got $C"; RC=1; break; }; done; if [ $RC -eq 0 ]; then BODY=$(curl -s "localhost:3311/negate?value=5&extra=bar"); echo "$BODY" | jq -e "(keys | sort) == [\"error\"]" > /dev/null || { echo "err keys not [error]"; RC=1; }; fi; kill $SPID 2>/dev/null; exit $RC'
+  期望: exit 0
+
 - [ ] [BEHAVIOR] strict-schema 非法字面（`1.5`/`1e2`/`abc`/`+5`/空串/`0x10`/`Infinity`/`NaN`）一律 400 + 缺 query 也 400
   Test: manual:bash -c 'cd playground && PLAYGROUND_PORT=3309 node server.js & SPID=$!; sleep 2; RC=0; for v in "1.5" "1e2" "abc" "+5" "" "0x10" "Infinity" "NaN"; do C=$(curl -s -o /dev/null -w "%{http_code}" --data-urlencode "value=$v" -G "localhost:3309/negate"); [ "$C" = "400" ] || { echo "bad $v got $C"; RC=1; break; }; done; CM=$(curl -s -o /dev/null -w "%{http_code}" "localhost:3309/negate"); [ "$CM" = "400" ] || { echo "missing got $CM"; RC=1; }; kill $SPID 2>/dev/null; exit $RC'
   期望: exit 0

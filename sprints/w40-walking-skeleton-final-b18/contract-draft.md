@@ -1,4 +1,13 @@
-# Sprint Contract Draft (Round 1)
+# Sprint Contract Draft (Round 2)
+
+## Round 2 修订摘要
+- 上轮 Reviewer 反馈 `scope_match_prd` 维度 7/10：要求显式锁死"value 在场但带额外未知 query 名也必须 400"的边界（PRD `边界情况` 段已写"多余 query → 400"，r1 只覆盖"禁用名单内的 11 个名"，**未覆盖"已知 `value` + 任意未知 extra"组合**）。
+- 本轮修订：(1) Step 1 验证命令新增 `value=5&extra=bar` 400 断言；(2) 合同新增 Step 1b "唯一 query 名 `value` — 任何额外 query 名（无论字面、不限于 11 禁用名单）一律 400"；(3) E2E 第 15 项新增"value=5&任意 extra → 400"；(4) contract-dod-ws1.md 新增 1 条 [BEHAVIOR]（共 11 条）；(5) vitest 新增对应 test 块；(6) task-plan dod 新增 1 条。
+- 其他维度（dod_machineability 9 / test_is_red 9 / verification_oracle_completeness 9 / behavior_count_position 7）r1 已 ≥ 7，本轮保持不变。
+
+---
+
+# Sprint Contract Draft
 
 ## Golden Path
 
@@ -27,6 +36,35 @@ kill $SPID
 ```
 
 **硬阈值**: happy 200，11 个禁用 query 名一律 400，非 `^-?\d+$` 字面一律 400。
+
+---
+
+### Step 1b: 唯一 query 名 `value` — value 在场 + 任意额外未知 query 名也必须 400（r2 新增）
+
+**可观测行为**: PRD `边界情况` 段明示"多余 query → 400"。本步骤显式锁死 scope：即便 `value=5` 字面合法，只要 query string 含**任何**第二个 key（无论 key 名是否在 11 禁用清单内、是否为字面随意字符串），服务端必须返 400 + error body。这把"扩展未来字段"漏洞堵死。
+
+**验证命令**:
+```bash
+cd playground && PLAYGROUND_PORT=3111 node server.js & SPID=$!; sleep 2
+# value 合法 + extra=bar（不在 11 禁用清单内的随意名）
+CODE_X1=$(curl -s -o /dev/null -w "%{http_code}" "localhost:3111/negate?value=5&extra=bar")
+[ "$CODE_X1" = "400" ] || { kill $SPID; echo "FAIL step1b extra=bar code=$CODE_X1"; exit 1; }
+# value 合法 + foo=1（再换一个不在清单内的）
+CODE_X2=$(curl -s -o /dev/null -w "%{http_code}" "localhost:3111/negate?value=5&foo=1")
+[ "$CODE_X2" = "400" ] || { kill $SPID; echo "FAIL step1b foo=1 code=$CODE_X2"; exit 1; }
+# value 合法 + 禁用名清单内 neg=9 同时出现（双重违规也必须 400）
+CODE_X3=$(curl -s -o /dev/null -w "%{http_code}" "localhost:3111/negate?value=5&neg=9")
+[ "$CODE_X3" = "400" ] || { kill $SPID; echo "FAIL step1b value+neg code=$CODE_X3"; exit 1; }
+# value 合法 + value=10 重复 key（也必须 400，唯一 query 名意味着不允许重复）
+CODE_X4=$(curl -s -o /dev/null -w "%{http_code}" "localhost:3111/negate?value=5&value=10")
+[ "$CODE_X4" = "400" ] || { kill $SPID; echo "FAIL step1b dup-value code=$CODE_X4"; exit 1; }
+# 错误 body 也走严 schema：keys 严等 [error]
+BODY=$(curl -s "localhost:3111/negate?value=5&extra=bar")
+echo "$BODY" | jq -e '(keys | sort) == ["error"]' || { kill $SPID; echo "FAIL step1b err-keys"; exit 1; }
+kill $SPID
+```
+
+**硬阈值**: 4 种"value 合法 + extra 在场"组合（含未知名 `extra=bar` / `foo=1`、清单内名 `neg=9`、重复 `value=10`）全部 400；error body keys 严等 `["error"]`。
 
 ---
 
@@ -181,6 +219,12 @@ for Q in n x a b num number input v val neg target; do
   [ "$CODE" = "400" ] || { echo "FAIL forbidden-query=$Q code=$CODE"; exit 1; }
 done
 
+# 11b. value 合法 + 额外 query 名（未知/已知/重复）一律 400（r2 新增 scope 锁死）
+for EXTRA in "extra=bar" "foo=1" "neg=9" "value=10"; do
+  CODE=$(curl -s -o /dev/null -w "%{http_code}" "localhost:3200/negate?value=5&$EXTRA")
+  [ "$CODE" = "400" ] || { echo "FAIL value+extra=$EXTRA code=$CODE"; exit 1; }
+done
+
 # 12. error body keys 严等 [error]
 ERR=$(curl -s "localhost:3200/negate?value=foo")
 echo "$ERR" | jq -e '(keys | sort) == ["error"] and (.error | type == "string" and length > 0)' >/dev/null
@@ -193,10 +237,10 @@ done
 # 14. vitest 也要全绿（generator self-verify 红线）
 npm test --silent 2>&1 | tail -20
 
-echo "✅ Golden Path 14 项全过"
+echo "✅ Golden Path 15 项全过"
 ```
 
-**通过标准**: 脚本 `exit 0` 且最后一行包含 `✅ Golden Path 14 项全过`。
+**通过标准**: 脚本 `exit 0` 且最后一行包含 `✅ Golden Path 15 项全过`。
 
 ---
 
@@ -222,4 +266,4 @@ workstream_count: 1
 
 | Workstream | Test File | BEHAVIOR 覆盖 | 预期红证据 |
 |---|---|---|---|
-| WS1 | `sprints/w40-walking-skeleton-final-b18/tests/ws1/negate.test.ts` | 路由命中 / strict-schema / -0 规范化 / 严 schema 出口 / 22+8 禁用名 / error 严等 / 6 错误反向名 | `app.get('/negate')` 未实现 → 404/无 result → vitest 多项 `expect(...).toBe(...)` 失败 |
+| WS1 | `sprints/w40-walking-skeleton-final-b18/tests/ws1/negate.test.ts` | 路由命中 / strict-schema / -0 规范化 / 严 schema 出口 / 22+8 禁用名 / error 严等 / 6 错误反向名 / **value+extra 400 (r2)** | `app.get('/negate')` 未实现 → 404/无 result → vitest 多项 `expect(...).toBe(...)` 失败 |
