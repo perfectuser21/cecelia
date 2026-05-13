@@ -82,6 +82,7 @@ import {
   // C2 impl 时需在 harness-task.graph.js export routeAfterEvaluate 和 routeAfterPoll
   routeAfterEvaluate,
   routeAfterPoll,
+  routeAfterCallback,
 } from '../harness-task.graph.js';
 import { MemorySaver, Command } from '@langchain/langgraph';
 import { ContractViolation } from '../../lib/contract-verify.js';
@@ -519,17 +520,21 @@ describe('harness-task graph — end-to-end (Layer 3 spawn-interrupt-resume)', (
     expect(mockCheckPr).not.toHaveBeenCalled();
   });
 
-  it('container exit_code != 0 → resume 把 error 写 state，graph 走 END (no merge)', async () => {
-    const compiled = buildHarnessTaskGraph().compile({ checkpointer: new MemorySaver() });
-    const final = await runUntilEnd(
-      compiled,
-      { task: { id: 'sub-err', payload: {} }, initiativeId: 'i' },
-      { configurable: { thread_id: 't-err' } },
-      [{ stdout: '', error: 'docker died', exit_code: 1 }]
-    );
-    expect(final.error).toBeTruthy();
-    expect(final.error.node).toBe('await_callback');
+  it('container exit_code != 0 → 设 ci_status=fail + ci_fail_type=container_exit 进 fix_dispatch retry (B18)', async () => {
+    // B18: container exit≠0 不再设 state.error → END，改进 fix_dispatch retry
+    // 测试 routeAfterCallback 真返 'fix' 而不是 'parse'
+    const state = {
+      ci_status: 'fail',
+      ci_fail_type: 'container_exit',
+      failed_checks: ['container exit_code=1'],
+    };
+    expect(routeAfterCallback(state)).toBe('fix');
     expect(mockMerge).not.toHaveBeenCalled();
+  });
+
+  it('container exit_code == 0 → routeAfterCallback 走 parse_callback (B18 normal path)', () => {
+    expect(routeAfterCallback({})).toBe('parse');
+    expect(routeAfterCallback({ ci_status: 'pending' })).toBe('parse');
   });
 });
 

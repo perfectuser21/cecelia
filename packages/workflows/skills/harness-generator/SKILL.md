@@ -499,3 +499,27 @@ commit 2: feat(harness): skeleton implementation (Skeleton Green)
 | "先让一个测试过，其他等 CI 告诉我" | 违反 verification-before-completion，必须本地先全绿 |
 | "合同写漏了一个功能，顺手加上" | 违反合同外不加，只能写进 PR description 上报 |
 | "跑测试挺慢，跳过这一步吧" | 违反 verification-before-completion，禁止"看起来应该过了"的假设 |
+
+---
+
+## GREEN commit 前真验合同 manual:bash（v6 — B18 新增 2026-05-13）
+
+GREEN commit + push 前**必须**真验合同行为：
+
+1. 读取 `${SPRINT_DIR}/contract-dod-ws${WORKSTREAM_INDEX}.md` 中所有 `[BEHAVIOR]` 行的 `Test: manual:bash -c '...'` 命令
+2. **真启服务 + 真跑这些命令**（不要用 vitest mock 代替）：
+   - 启动 server: `node playground/server.js &` 或 contract 指定方式
+   - 逐条执行 manual:bash 命令
+   - 检查每条 exit code == 0
+   - 跑完 kill 测试 server
+3. 全部 exit 0 才能 git push + 输出 verdict='DONE'
+4. verdict JSON 必须含 `all_behaviors_passed: true` 字段
+
+**反例（W19-W39 实证根因）**：generator 用 vitest mock + supertest 自验"11/11 PASS"，但 evaluator 真起 server + curl + jq 跑同样的 manual:bash 命令仍判 FAIL。LLM 解读差异导致 generator 觉得过了 evaluator 不过，fix loop 永不收敛。
+
+**verdict JSON 范例**：
+```
+{"verdict": "DONE", "pr_url": "https://github.com/x/y/pull/123", "all_behaviors_passed": true, "behaviors_run": 11, "behaviors_passed": 11}
+```
+
+`all_behaviors_passed=false` 时禁止 push — generator 必须先把代码改对让全部 manual:bash 过。
