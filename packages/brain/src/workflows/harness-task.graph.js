@@ -385,6 +385,14 @@ export async function fixDispatchNode(state) {
 // ──────────────────────────────────────────────────────────────────────────
 // 路由函数
 
+// B18: awaitCallback exit≠0 后 ci_status='fail' + ci_fail_type='container_exit'
+// 此时直接进 fix_dispatch（跟 ci_fail 同等），不走 parse_callback（否则 pr_url=null → END）
+function routeAfterCallback(state) {
+  if (state.error) return 'end';
+  if (state.ci_status === 'fail' && state.ci_fail_type === 'container_exit') return 'fix';
+  return 'parse';
+}
+
 function routeAfterParse(state) {
   if (state.error) return 'end';
   if (!state.pr_url) return 'no_pr';
@@ -528,7 +536,9 @@ export function buildHarnessTaskGraph() {
     .addNode('fix_dispatch', fixDispatchNode)
     .addEdge(START, 'spawn')
     .addEdge('spawn', 'await_callback')
-    .addEdge('await_callback', 'parse_callback')
+    .addConditionalEdges('await_callback', routeAfterCallback, {
+      fix: 'fix_dispatch', parse: 'parse_callback', end: END,
+    })
     .addConditionalEdges('parse_callback', routeAfterParse, {
       end: END, no_pr: END, poll: 'verify_generator',
     })

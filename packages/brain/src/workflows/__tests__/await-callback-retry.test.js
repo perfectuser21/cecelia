@@ -31,4 +31,14 @@ describe('B18: awaitCallback exit≠0 不设 error 走 ci_fail', () => {
     );
     expect(skillSrc).toMatch(/all_behaviors_passed|GREEN.*真验.*manual:bash|GREEN.*前.*合同.*manual/i);
   });
+
+  it('await_callback edge 是条件 edge（routeAfterCallback）— B18 wiring 修补', () => {
+    expect(src).toMatch(/addConditionalEdges\([\s\S]*['"]await_callback['"]\s*,\s*routeAfterCallback/);
+    expect(src).not.toMatch(/addEdge\(\s*['"]await_callback['"]\s*,\s*['"]parse_callback['"]\s*\)/);
+  });
+
+  it('routeAfterCallback 函数存在并区分 ci_fail container_exit', () => {
+    expect(src).toMatch(/function routeAfterCallback/);
+    expect(src).toMatch(/state\.ci_status\s*===\s*['"]fail['"][\s\S]*ci_fail_type[\s\S]*container_exit/);
+  });
 });
