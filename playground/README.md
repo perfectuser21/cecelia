@@ -26,6 +26,7 @@ npm start           # 起 server（默认 :3000）
 - `GET /factorial?n=N` → 返回 n! 阶乘（**整数白名单 strict-schema** `^\d+$` + **上界 18 拒**：`n > 18` → 400（精度上界，避免超过 `Number.MAX_SAFE_INTEGER`）+ **迭代精确累积**：`for(i=2; i<=n; i++) acc *= i`，不引入 BigInt / Stirling / gamma 近似）
 - `GET /increment?value=N` → 返回 `{result: N+1, operation: "increment"}`（**整数白名单 strict-schema** `^-?\d+$` + **精度上下界拒**：`|Number(value)| > 9007199254740990` → 400（+1 后避免超过 `Number.MAX_SAFE_INTEGER`）+ **query 名锁死**：只接受 `value`，别名 `n/a/b/x/val/input/...` 全 400）
 - `GET /decrement?value=N` → 返回 `{result: N-1, operation: "decrement"}`（**整数白名单 strict-schema** `^-?\d+$` + **精度上下界拒**：`|Number(value)| > 9007199254740990` → 400（-1 后避免超过 `Number.MIN_SAFE_INTEGER`）+ **query 名锁死**：只接受 `value`，PRD 禁用 9 个变体 `n/x/a/b/num/number/input/v/val` 全 400）
+- `GET /negate?value=N` → 返回 `{result: -N, operation: "negate"}`（**整数白名单 strict-schema** `^-?\d+$` + **精度上下界拒**：`|Number(value)| > 9007199254740990` → 400 + **唯一 query 名 `value`**：PRD 禁用 11 个变体 `n/x/a/b/num/number/input/v/val/neg/target` 一律 400 + **scope 锁死**：`value` 之外任何额外 query 名（含重复 `value` key）都 400 + **`-0` 双保险规范化**：query 层 `v === "-0"` 短路 + 三元 `n === 0 ? 0 : -n` 兜底，杜绝 `"result":-0` 字面漂移）
 
 ### `GET /sum` 示例
 
@@ -474,3 +475,90 @@ curl -s -o /dev/stderr -w 'HTTP %{http_code}\n' 'http://127.0.0.1:3000/decrement
 ```
 
 响应 schema 完整性（成功响应顶层 keys 严格等于 `["operation","result"]`；`operation` 字面字符串 `"decrement"`，不漂到 PRD 禁用 8 变体 `dec`/`decr`/`decremented`/`prev`/`previous`/`predecessor`/`minus_one`/`sub_one`；不漂到 PRD 禁用 19 个响应字段名 `decremented`/`prev`/`predecessor`/`minus_one`/`sub_one`/`incremented`/`sum`/`product`/`quotient`/`power`/`remainder`/`factorial`/`negation`/`value`/`input`/`output`/`data`/`payload`/`answer`/`meta`；错误体顶层 keys 严格等于 `["error"]`，不漂到禁用替代名 `message`/`msg`/`reason`/`detail`）。
+
+### `GET /negate` 示例
+
+happy path（**字面严等** `{result: -N, operation: "negate"}`，覆盖正/负/零/精度上下界 5 类，含 `-0` 规范化）：
+
+```bash
+curl -s 'http://127.0.0.1:3000/negate?value=5'
+# {"result":-5,"operation":"negate"}
+
+curl -s 'http://127.0.0.1:3000/negate?value=-7'
+# {"result":7,"operation":"negate"}
+
+curl -s 'http://127.0.0.1:3000/negate?value=0'
+# {"result":0,"operation":"negate"}        # 0 → 0（非 -0）
+
+curl -s 'http://127.0.0.1:3000/negate?value=-0'
+# {"result":0,"operation":"negate"}        # -0 → 0（query 层短路，杜绝 "result":-0 字面漂移）
+
+curl -s 'http://127.0.0.1:3000/negate?value=9007199254740990'
+# {"result":-9007199254740990,"operation":"negate"}  (精度上界)
+
+curl -s 'http://127.0.0.1:3000/negate?value=-9007199254740990'
+# {"result":9007199254740990,"operation":"negate"}   (精度下界)
+```
+
+`-0` 双保险规范化（核心兜底：r3 R1 mitigation 源码层落地——`v === "-0"` query 层短路 + `n === 0 ? 0 : -n` 三元规范化，双保险防 `JSON.stringify(-0)` 跨引擎差异漂移到 `"result":-0`）：
+
+```bash
+# 两条路径都返 result:0 且 raw text 不含 "result":-0
+curl -s 'http://127.0.0.1:3000/negate?value=0'  | grep -q '"result":-0' && echo "leaked" || echo "ok"
+curl -s 'http://127.0.0.1:3000/negate?value=-0' | grep -q '"result":-0' && echo "leaked" || echo "ok"
+# ok / ok
+```
+
+精度上下界拒（`|Number(value)| > 9007199254740990` → 400）：
+
+```bash
+curl -s -o /dev/stderr -w 'HTTP %{http_code}\n' 'http://127.0.0.1:3000/negate?value=9007199254740991'
+# HTTP 400  (上界 +1 拒)
+
+curl -s -o /dev/stderr -w 'HTTP %{http_code}\n' 'http://127.0.0.1:3000/negate?value=-9007199254740991'
+# HTTP 400  (下界 -1 拒)
+```
+
+strict-schema 拒（**整数白名单** `^-?\d+$`；小数 / 前导 + / 科学计数法 / 十六进制 / `Infinity` / `NaN` / 字母串 / 空串 / 缺 value 全 400）：
+
+```bash
+curl -s -o /dev/stderr -w 'HTTP %{http_code}\n' 'http://127.0.0.1:3000/negate?value=1.5'
+# HTTP 400  (小数)
+
+curl -s -o /dev/stderr -w 'HTTP %{http_code}\n' 'http://127.0.0.1:3000/negate?value=1e2'
+# HTTP 400  (科学计数法)
+
+curl -s -o /dev/stderr -w 'HTTP %{http_code}\n' 'http://127.0.0.1:3000/negate?value=%2B5'
+# HTTP 400  (前导 +)
+
+curl -s -o /dev/stderr -w 'HTTP %{http_code}\n' 'http://127.0.0.1:3000/negate?value=Infinity'
+# HTTP 400
+
+curl -s -o /dev/stderr -w 'HTTP %{http_code}\n' 'http://127.0.0.1:3000/negate?value='
+# HTTP 400  (空串)
+
+curl -s -o /dev/stderr -w 'HTTP %{http_code}\n' 'http://127.0.0.1:3000/negate'
+# HTTP 400  (缺 value)
+```
+
+PRD 完整 11 个禁用 query 名一律拒（**query 名锁死**，只接受 `value=`；别名 `n/x/a/b/num/number/input/v/val/neg/target` 全 400）：
+
+```bash
+curl -s -o /dev/stderr -w 'HTTP %{http_code}\n' 'http://127.0.0.1:3000/negate?neg=5'
+# HTTP 400  (禁用 neg)
+
+curl -s -o /dev/stderr -w 'HTTP %{http_code}\n' 'http://127.0.0.1:3000/negate?target=5'
+# HTTP 400  (禁用 target)
+```
+
+scope 锁死（`value=N` 合法时，任何额外 query 名包括重复 `value` 都 400）：
+
+```bash
+curl -s -o /dev/stderr -w 'HTTP %{http_code}\n' 'http://127.0.0.1:3000/negate?value=5&extra=bar'
+# HTTP 400  (未知名 extra)
+
+curl -s -o /dev/stderr -w 'HTTP %{http_code}\n' 'http://127.0.0.1:3000/negate?value=5&value=10'
+# HTTP 400  (重复 value key)
+```
+
+响应 schema 完整性（成功响应顶层 keys 严格等于 `["operation","result"]`；`operation` 字面字符串 `"negate"`，不漂到 PRD 禁用 8 变体 `negation`/`neg`/`negative`/`opposite`/`invert`/`flip`/`minus`/`unary_minus`；不漂到 PRD 禁用 22 个响应字段名 `negation`/`neg`/`negative`/`opposite`/`invert`/`inverted`/`minus`/`flipped`/`incremented`/`decremented`/`sum`/`product`/`quotient`/`power`/`remainder`/`factorial`/`value`/`input`/`output`/`data`/`payload`/`answer`/`meta`；错误体顶层 keys 严格等于 `["error"]`，不漂到禁用替代名 `message`/`msg`/`reason`/`detail`）。
