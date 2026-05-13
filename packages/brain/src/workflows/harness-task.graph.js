@@ -387,7 +387,7 @@ export async function fixDispatchNode(state) {
 
 // B18: awaitCallback exit≠0 后 ci_status='fail' + ci_fail_type='container_exit'
 // 此时直接进 fix_dispatch（跟 ci_fail 同等），不走 parse_callback（否则 pr_url=null → END）
-function routeAfterCallback(state) {
+export function routeAfterCallback(state) {
   if (state.error) return 'end';
   if (state.ci_status === 'fail' && state.ci_fail_type === 'container_exit') return 'fix';
   return 'parse';
