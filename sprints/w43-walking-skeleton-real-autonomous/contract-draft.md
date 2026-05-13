@@ -1,4 +1,4 @@
-# Sprint Contract Draft (Round 2)
+# Sprint Contract Draft (Round 3)
 
 ## Golden Path
 [客户端] → [GET /api/brain/ping] → [Brain status.js 路由处理（无 DB 操作）] → [HTTP 200 + {pong:true, ts:\<unix_seconds\>}]
@@ -96,21 +96,35 @@ echo "✅ Golden Path 验证通过"
 
 workstream_count: 1
 
-### Workstream 1: 添加 /ping 路由 + 单元测试
+### Workstream 1: 添加 /ping 路由 + 生产单元测试
 
-**范围**: `packages/brain/src/routes/status.js` 追加 `GET /ping`（返 `{pong:true,ts:<unix>}`）和 `ALL /ping`（405，error: "Method Not Allowed"）两条路由；`packages/brain/src/__tests__/ping.test.js` 新增单元测试套件
-**大小**: S（预估路由 ~25 行 + 测试 ~80 行，合计 ~105 行；涉及 2 文件 ≤ 3 文件阈值）
+**范围**:
+- `packages/brain/src/routes/status.js`：追加 `GET /ping`（返 `{pong:true,ts:<unix>}`）和 `ALL /ping`（405，error: "Method Not Allowed"）两条路由
+- `packages/brain/src/__tests__/ping.test.js`：Generator **新建**生产单元测试套件（覆盖 pong/ts/keys/禁用字段/405）
+
+**大小**: S（路由 ~25 行 + 测试 ~80 行，合计 ~105 行；2 文件 ≤ 3 文件阈值）
 **依赖**: 无
 
-**BEHAVIOR 覆盖测试文件**: `sprints/w43-walking-skeleton-real-autonomous/tests/ws1/ping.test.js`
+**两类测试文件说明**（v7.4 DoD 分家规则）：
+
+| 文件 | 路径 | 阶段 | 职责 |
+|---|---|---|---|
+| **DoD red-bar 文件** | `sprints/w43-walking-skeleton-real-autonomous/tests/ws1/ping.test.js` | Red（实现**前**） | **Evaluator 运行此文件确认红**：/ping 路由未添加时全返 404，5 个 it() FAIL |
+| **生产单元测试** | `packages/brain/src/__tests__/ping.test.js` | Green（实现**后**） | **Generator 产出物**：实现路由后由 Generator 新建，vitest 全 PASS |
+
+两类文件不能混用引用：合同 ARTIFACT DoD 只验生产测试文件存在性；DoD BEHAVIOR 的 `manual:bash` 命令对 Brain 运行时 curl，**不跑 vitest**。
 
 ---
 
 ## Test Contract
 
-| Workstream | Test File | BEHAVIOR 覆盖 | 预期红证据 |
-|---|---|---|---|
-| WS1 | `sprints/w43-walking-skeleton-real-autonomous/tests/ws1/ping.test.js` | pong值/ts类型/ts范围/keys完整/禁用字段/405精确error | 6 failures（`/ping` 路由不存在时全返 404） |
+| Workstream | DoD red-bar 文件（Evaluator 确认 Red） | 生产测试文件（Generator 产出物） | BEHAVIOR 覆盖 | 红证据 |
+|---|---|---|---|---|
+| WS1 | `sprints/w43-walking-skeleton-real-autonomous/tests/ws1/ping.test.js` | `packages/brain/src/__tests__/ping.test.js` | pong值/ts类型/ts范围/keys完整性/禁用字段/405 error | 5 failures（/ping 路由未添加时返 404）|
+
+**阶段职责**：
+- **Red 阶段**：Evaluator 运行 `sprints/.../tests/ws1/ping.test.js`，确认 ≥5 failures
+- **Green 阶段**：Generator 新建 `packages/brain/src/__tests__/ping.test.js`，实现路由后 vitest 全 PASS
 
 ---
 
