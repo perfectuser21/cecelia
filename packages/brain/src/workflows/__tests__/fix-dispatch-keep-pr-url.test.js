@@ -13,9 +13,13 @@ describe('B19: fixDispatchNode 保留 pr_url / pr_branch（同 PR push 新 commi
   );
 
   it('fixDispatchNode 函数体不再 reset pr_url = null', () => {
-    const fnMatch = src.match(/export async function fixDispatchNode[\s\S]{0,400}\n\}/);
-    expect(fnMatch).not.toBeNull();
-    const body = fnMatch[0];
+    const startIdx = src.indexOf('export async function fixDispatchNode');
+    expect(startIdx).toBeGreaterThan(-1);
+    // 找到函数体结束 (匹配下一个 `^}` 或下一个 `export `)
+    const restAfter = src.slice(startIdx);
+    const endRel = restAfter.search(/\n\}\n/);
+    expect(endRel).toBeGreaterThan(-1);
+    const body = restAfter.slice(0, endRel);
     expect(body).not.toMatch(/pr_url:\s*null/);
     expect(body).not.toMatch(/pr_branch:\s*null/);
   });
