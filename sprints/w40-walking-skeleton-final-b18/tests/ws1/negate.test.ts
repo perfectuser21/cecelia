@@ -1,4 +1,6 @@
 import { describe, test, expect } from 'vitest';
+import { readFileSync } from 'fs';
+import { resolve } from 'path';
 import request from 'supertest';
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-expect-error — playground server is plain ESM JS
@@ -135,5 +137,12 @@ describe('Workstream 1 — GET /negate [BEHAVIOR]', () => {
     for (const k of ['message', 'msg', 'reason', 'detail']) {
       expect(Object.prototype.hasOwnProperty.call(res.body, k)).toBe(false);
     }
+  });
+
+  test('R1 mitigation (r3): server.js 源码字面含 === "-0" 短路与 === 0 ? 0 : - 三元规范化', () => {
+    const serverPath = resolve(__dirname, '../../../../playground/server.js');
+    const src = readFileSync(serverPath, 'utf8');
+    expect(src).toContain('=== "-0"');
+    expect(src).toContain('=== 0 ? 0 : -');
   });
 });

@@ -26,6 +26,10 @@ journey_type: autonomous
   Test: manual:bash -c 'cd playground && npm test --silent 2>&1 | tail -5 | grep -E "Tests.*passed|Test Files.*passed" > /dev/null'
   期望: exit 0
 
+- [ ] [ARTIFACT] (r3 新增 — R1 mitigation 落地) `playground/server.js` 字面含 `=== "-0"`（query 层负零短路）与 `=== 0 ? 0 : -`（三元规范化），双保险防 `-0` 漂移
+  Test: node -e "const c=require('fs').readFileSync('playground/server.js','utf8'); if(!c.includes('=== \"-0\"'))process.exit(1); if(!c.includes('=== 0 ? 0 : -'))process.exit(1)"
+  期望: exit 0
+
 ## BEHAVIOR 条目（内嵌可执行 manual: 命令，evaluator 直接跑）
 
 - [ ] [BEHAVIOR] GET /negate?value=5 返 200 + `{result:-5, operation:"negate"}` 字面严等
@@ -70,4 +74,8 @@ journey_type: autonomous
 
 - [ ] [BEHAVIOR] error path：`value=foo` → 400 + body keys 严等 `["error"]` + error 是非空 string + 反向不含 result/operation/message/msg/reason/detail
   Test: manual:bash -c 'cd playground && PLAYGROUND_PORT=3310 node server.js & SPID=$!; sleep 2; CODE=$(curl -s -o /dev/null -w "%{http_code}" "localhost:3310/negate?value=foo"); [ "$CODE" = "400" ] || { kill $SPID; echo "code=$CODE"; exit 1; }; BODY=$(curl -s "localhost:3310/negate?value=foo"); RC=0; echo "$BODY" | jq -e "(keys | sort) == [\"error\"]" > /dev/null || { echo "keys not [error]"; RC=1; }; echo "$BODY" | jq -e ".error | type == \"string\" and length > 0" > /dev/null || { echo "error type/empty"; RC=1; }; for k in result operation message msg reason detail; do echo "$BODY" | jq -e --arg k "$k" "has(\$k) | not" > /dev/null || { echo "err leaked $k"; RC=1; break; }; done; kill $SPID 2>/dev/null; exit $RC'
+  期望: exit 0
+
+- [ ] [BEHAVIOR] (r3 新增 — R1 端到端校验) 在 r3 ARTIFACT-5 grep 源码字面之上加 runtime 双保险：`value=0` 与 `value=-0` 的响应 `text` 里 `"result":-0` 字面完全不出现，且响应 status==200
+  Test: manual:bash -c 'cd playground && PLAYGROUND_PORT=3312 node server.js & SPID=$!; sleep 2; RC=0; for V in "0" "-0"; do CODE=$(curl -s -o /dev/null -w "%{http_code}" "localhost:3312/negate?value=$V"); [ "$CODE" = "200" ] || { echo "value=$V got code=$CODE"; RC=1; break; }; BODY=$(curl -s "localhost:3312/negate?value=$V"); echo "$BODY" | grep -q "\"result\":-0" && { echo "raw -0 leaked from value=$V"; RC=1; break; }; done; kill $SPID 2>/dev/null; exit $RC'
   期望: exit 0
