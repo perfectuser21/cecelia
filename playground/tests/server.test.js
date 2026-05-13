@@ -1545,3 +1545,125 @@ describe('GET /decrement', () => {
     }
   });
 });
+
+describe('GET /negate', () => {
+  test('GET /negate?value=5 → 200 + {result:-5, operation:"negate"}（字面严等）', async () => {
+    const res = await request(app).get('/negate').query({ value: '5' });
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ result: -5, operation: 'negate' });
+  });
+
+  test('GET /negate?value=-5 → 200 + {result:5, operation:"negate"}', async () => {
+    const res = await request(app).get('/negate').query({ value: '-5' });
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ result: 5, operation: 'negate' });
+  });
+
+  test('GET /negate?value=0 → 200 + {result:0, operation:"negate"}（不漂 -0/0.0）', async () => {
+    const res = await request(app).get('/negate').query({ value: '0' });
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ result: 0, operation: 'negate' });
+    expect(Object.is(res.body.result, 0)).toBe(true);
+    expect(Object.is(res.body.result, -0)).toBe(false);
+    expect(res.text).not.toMatch(/"result":\s*-0\b/);
+    expect(res.text).not.toMatch(/"result":\s*-?0\.0/);
+  });
+
+  test('GET /negate?value=-1 → 200 + {result:1, operation:"negate"}', async () => {
+    const res = await request(app).get('/negate').query({ value: '-1' });
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ result: 1, operation: 'negate' });
+  });
+
+  test('精度上界 happy: value=9007199254740991 (MAX_SAFE) → 200 + {result:-9007199254740991, operation:"negate"}', async () => {
+    const res = await request(app).get('/negate').query({ value: '9007199254740991' });
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ result: -9007199254740991, operation: 'negate' });
+  });
+
+  test('精度下界 happy: value=-9007199254740991 (-MAX_SAFE) → 200 + {result:9007199254740991, operation:"negate"}', async () => {
+    const res = await request(app).get('/negate').query({ value: '-9007199254740991' });
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ result: 9007199254740991, operation: 'negate' });
+  });
+
+  test('精度上界拒: value=9007199254740992 (MAX_SAFE+1) → 400', async () => {
+    const res = await request(app).get('/negate').query({ value: '9007199254740992' });
+    expect(res.status).toBe(400);
+  });
+
+  test('精度下界拒: value=-9007199254740992 → 400', async () => {
+    const res = await request(app).get('/negate').query({ value: '-9007199254740992' });
+    expect(res.status).toBe(400);
+  });
+
+  test('success 响应顶层 keys 严格等于 [operation, result]', async () => {
+    const res = await request(app).get('/negate').query({ value: '7' });
+    expect(res.status).toBe(200);
+    expect(Object.keys(res.body).sort()).toEqual(['operation', 'result']);
+  });
+
+  test('success 响应反向不含 PRD 完整 24 个禁用字段名', async () => {
+    const res = await request(app).get('/negate').query({ value: '5' });
+    expect(res.status).toBe(200);
+    const forbidden = ['negation','negated','minus','opposite','flip','invert','inverse','incremented','decremented','prev','predecessor','sum','product','quotient','power','remainder','factorial','value','input','output','data','payload','answer','meta'];
+    for (const k of forbidden) {
+      expect(Object.prototype.hasOwnProperty.call(res.body, k)).toBe(false);
+    }
+  });
+
+  test('success 响应 operation 字面 "negate"，PRD 禁用 9 变体一律不等', async () => {
+    const res = await request(app).get('/negate').query({ value: '5' });
+    expect(res.status).toBe(200);
+    expect(res.body.operation).toBe('negate');
+    for (const v of ['neg','negation','negated','minus','opposite','flip','invert','inverse','unary_minus']) {
+      expect(res.body.operation).not.toBe(v);
+    }
+  });
+
+  test('错误路径 value=foo → 400 + 错误体 keys 严格等于 [error] 且不含 result/operation', async () => {
+    const res = await request(app).get('/negate').query({ value: 'foo' });
+    expect(res.status).toBe(400);
+    expect(Object.keys(res.body)).toEqual(['error']);
+    expect(typeof res.body.error).toBe('string');
+    expect(res.body.error.length).toBeGreaterThan(0);
+    expect(Object.prototype.hasOwnProperty.call(res.body, 'result')).toBe(false);
+    expect(Object.prototype.hasOwnProperty.call(res.body, 'operation')).toBe(false);
+  });
+
+  test('错误体反向不含 4 个 PRD 禁用替代错误名 message/msg/reason/detail', async () => {
+    const res = await request(app).get('/negate').query({ value: 'foo' });
+    expect(res.status).toBe(400);
+    for (const k of ['message', 'msg', 'reason', 'detail']) {
+      expect(Object.prototype.hasOwnProperty.call(res.body, k)).toBe(false);
+    }
+  });
+
+  test('strict-schema 非法输入全 400 (1.5 / 1e2 / abc / +5 / 0x10 / 空串 / 缺 value / Infinity / NaN / 1,000)', async () => {
+    for (const bad of ['1.5', '1e2', 'abc', '+5', '0x10', '', 'Infinity', 'NaN', '1,000']) {
+      const res = await request(app).get('/negate').query({ value: bad });
+      expect(res.status).toBe(400);
+    }
+    const missing = await request(app).get('/negate');
+    expect(missing.status).toBe(400);
+  });
+
+  test('PRD 完整 9 个禁用 query 名 (n/x/a/b/num/number/input/v/val) 全 400', async () => {
+    for (const q of ['n', 'x', 'a', 'b', 'num', 'number', 'input', 'v', 'val']) {
+      const res = await request(app).get('/negate').query({ [q]: '5' });
+      expect(res.status).toBe(400);
+    }
+  });
+
+  test('9 路由回归 happy (/health /sum /multiply /divide /power /modulo /increment /decrement /factorial)', async () => {
+    expect((await request(app).get('/health')).status).toBe(200);
+    expect((await request(app).get('/sum').query({ a: '2', b: '3' })).body.sum).toBe(5);
+    expect((await request(app).get('/multiply').query({ a: '7', b: '5' })).body.product).toBe(35);
+    expect((await request(app).get('/divide').query({ a: '10', b: '2' })).body.quotient).toBe(5);
+    expect((await request(app).get('/power').query({ a: '2', b: '10' })).body.power).toBe(1024);
+    expect((await request(app).get('/modulo').query({ a: '10', b: '3' })).body.remainder).toBe(1);
+    expect((await request(app).get('/increment').query({ value: '5' })).body).toEqual({ result: 6, operation: 'increment' });
+    expect((await request(app).get('/decrement').query({ value: '5' })).body).toEqual({ result: 4, operation: 'decrement' });
+    expect((await request(app).get('/factorial').query({ n: '5' })).body.factorial).toBe(120);
+  });
+});
