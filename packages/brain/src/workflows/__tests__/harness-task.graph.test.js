@@ -95,8 +95,11 @@ describe('harness-task graph — structure', () => {
     const compiled = g.compile();
     expect(typeof compiled.invoke).toBe('function');
   });
-  it('MAX_FIX_ROUNDS=3 / MAX_POLL_COUNT=20', () => {
-    expect(MAX_FIX_ROUNDS).toBe(3);
+  it('MAX_FIX_ROUNDS=20 (B11: 质量优先，sanity 兜底) / MAX_POLL_COUNT=20', () => {
+    // B11 (Walking Skeleton P1): GAN 无硬 cap + 趋势收敛（reviewer），fix loop 同款。
+    // 3 是过早放弃 — W33 实证 trivial spec 4 round 都没修好不是因为真不收敛。
+    // 20 是 sanity 兜底防极端死循环。env HARNESS_MAX_FIX_ROUNDS 可覆盖。
+    expect(MAX_FIX_ROUNDS).toBe(20);
     expect(MAX_POLL_COUNT).toBe(20);
   });
 });
@@ -546,5 +549,26 @@ describe('evaluate_contract pre-merge gate', () => {
   it('routeAfterPoll: ci_status=pass now routes to evaluate (not merge)', () => {
     const state = { ci_status: 'pass' };
     expect(routeAfterPoll(state)).toBe('evaluate');
+  });
+
+  // B10 (Walking Skeleton P1 cascade): evaluator spawn 写 thread_lookup 必须用
+  // task graph thread_id (harness-task: prefix)，不发明 harness-evaluate: prefix。
+  // W31 实证：harness-evaluate: thread_id 让 callback resume 打到空 thread，真正
+  // interrupt 等待的 harness-task thread 永久卡。
+  // 静态 source-level invariant（避免 runtime fixture 重布）。
+  it('B10: evaluateContractNode 源码 threadId 用 harness-task: 不用 harness-evaluate:', () => {
+    const fs = require('node:fs');
+    const path = require('node:path');
+    const src = fs.readFileSync(path.resolve(__dirname, '..', 'harness-task.graph.js'), 'utf8');
+    const evalFnMatch = src.match(/async function evaluateContractNode[\s\S]*?\n}\n/);
+    expect(evalFnMatch).not.toBeNull();
+    const body = evalFnMatch[0];
+    // 必须有 const threadId = `harness-task:${initiativeId}:${task.id}`
+    expect(body).toMatch(/const\s+threadId\s*=\s*`harness-task:\$\{/);
+    // 不能再有 const threadId = `harness-evaluate:${...}`
+    expect(body).not.toMatch(/const\s+threadId\s*=\s*`harness-evaluate:\$\{/);
+    // INSERT walking_skeleton_thread_lookup 用 graph_name='harness-task'
+    expect(body).toMatch(/INSERT INTO walking_skeleton_thread_lookup[\s\S]*'harness-task'/);
+    expect(body).not.toMatch(/INSERT INTO walking_skeleton_thread_lookup[\s\S]*'harness-evaluate'/);
   });
 });

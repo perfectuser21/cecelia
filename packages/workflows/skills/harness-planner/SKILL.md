@@ -34,6 +34,20 @@ changelog:
 
 ---
 
+## Thin Slice 字数硬上限（v8.X — B14 加，2026-05-12）
+
+为防 planner 把 thin slice 写成 medium thick spec（W36 实证 254 行 PRD）：
+
+- **thin slice PRD ≤ 50 行**（不含 OKR 对齐段和"为什么选这个 feature"叙事）
+- **thin slice DoD ≤ 8 条**（不分 BEHAVIOR/ARTIFACT 总数 ≤ 8）
+- 超 → planner 自审 reject + 强制砍范围 / 拆 multi-sprint
+
+**反例**：W36 planner 254 行 PRD + 32 DoD 条目，引用 W19-W26 全部历史 + B1-B13 全部 fix 上下文 → 不是 thin slice 是 medium thick。
+
+**正例**：W37 thin slice 应是 "playground 加 GET /ping 返 `{pong:true,ts:<unix>}`"，PRD < 30 行 + DoD ≤ 5 条。
+
+---
+
 ## 执行流程
 
 ### Step 0: 采集系统上下文（Brain API）

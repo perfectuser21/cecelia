@@ -180,6 +180,24 @@ workstream_count: {N}
 
 ---
 
+## Workstreams 切分硬规则（v7.7 — B14 加，2026-05-12）
+
+**死规则**：
+
+1. 单 workstream **≤ 200 行**净增 + **≤ 3 文件** — 超就强制再切
+2. 整 contract 净增 < 200 行时才允许 `workstream_count=1`
+3. proposer 自查 checklist 加第 6 条：算每 ws 预期 LoC，超 200 强制切
+
+**反例（W36 实证）**：planner 写"加 /decrement endpoint" PRD 254 行，proposer 没切，ws1 塞 `server.js + tests + README` 三文件 335 行 → fix loop 跑 3 round → FAIL。
+
+**正例**：W36 应切 3 ws：
+- ws1 `server.js` 路由 ~50 行 S
+- ws2 tests 套件 ~150 行 M
+- ws3 README ~70 行 S
+- ws2 依赖 ws1
+
+---
+
 ## Test Contract
 
 | Workstream | Test File | BEHAVIOR 覆盖 | 预期红证据 |

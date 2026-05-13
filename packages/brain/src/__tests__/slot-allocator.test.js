@@ -755,7 +755,7 @@ describe('边界条件', () => {
     expect(budget.taskPool.budget).toBe(100);
   });
 
-  it('双源计数: DB 计数大于 ps 检测时取 DB 值（保守）', async () => {
+  it('DB 授权计数: ps=0 但 DB ceceliaUsed=1 + autoDispatchUsed=4 → totalRunning=5', async () => {
     // ps 检测: 0 个进程（进程标题被覆盖等原因导致遗漏）
     execSync.mockReturnValue('');
     checkServerResources.mockReturnValue({
@@ -769,38 +769,40 @@ describe('边界条件', () => {
       .mockResolvedValueOnce({ rows: [{ count: '0' }] })  // getQueueDepth
       .mockResolvedValueOnce({ rows: [{ count: '0' }] }); // countCodexInProgress
     const budget = await calculateSlotBudget();
-    // totalRunning = max(0, 1+4) = 5
+    // totalRunning = DB: 1+4 = 5（DB 是唯一真值）
     // available = 12 - 5 - 0(absent) = 7
     expect(budget.taskPool.available).toBe(7);
     expect(budget.taskPool.budget).toBe(7 + 4); // available + autoDispatchUsed
   });
 
-  it('双源计数: ps 检测大于 DB 计数时取 ps 值', async () => {
-    // ps 检测: 6 个进程（3 headed + 3 headless）
+  it('DB 授权计数: orphan headless 不再膨胀 totalRunning', async () => {
+    // ps 检测: 6 个进程（3 headed + 3 孤儿 headless，任务已完成但进程未退出）
     execSync.mockReturnValue(
       '100 300 claude claude\n' +
       '200 300 claude claude\n' +
       '300 300 claude claude\n' +
-      '400 300 claude claude -p "task1"\n' +
-      '500 300 claude claude -p "task2"\n' +
-      '600 300 claude claude -p "task3"\n'
+      '400 300 claude claude -p "orphan1"\n' +
+      '500 300 claude claude -p "orphan2"\n' +
+      '600 300 claude claude -p "orphan3"\n'
     );
     checkServerResources.mockReturnValue({
       effectiveSlots: 12,
       metrics: { max_pressure: 0.1 },
     });
-    // DB: ceceliaUsed=0, autoDispatchUsed=2 → DB 合计=2（低于 ps 的 6）
+    // DB: ceceliaUsed=0, autoDispatchUsed=2（只有 2 个真实 in_progress）
     pool.query
       .mockResolvedValueOnce({ rows: [{ count: '0' }] })  // countCeceliaInProgress
       .mockResolvedValueOnce({ rows: [{ count: '2' }] })  // countAutoDispatchInProgress
       .mockResolvedValueOnce({ rows: [{ count: '0' }] })  // getQueueDepth
       .mockResolvedValueOnce({ rows: [{ count: '0' }] }); // countCodexInProgress
     const budget = await calculateSlotBudget();
-    // totalRunning = max(6, 0+2) = 6
+    // totalRunning = userSlotsUsed(3) + ceceliaUsed(0) + autoDispatchUsed(2) = 5
+    //   (3 orphan headless 不再被计入 — 消除 ps 膨胀)
     // userReserve = 1 (team mode, 3 headed)
-    // available = 12 - 6 - 1 = 5
-    expect(budget.taskPool.available).toBe(5);
-    expect(budget.taskPool.budget).toBe(5 + 2); // available + autoDispatchUsed
+    // available = 12 - 5 - 1 = 6
+    expect(budget.taskPool.available).toBe(6);
+    expect(budget.taskPool.budget).toBe(6 + 2); // available + autoDispatchUsed
+    expect(budget.dispatchAllowed).toBe(true);
   });
 });
 
