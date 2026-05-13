@@ -1,0 +1,55 @@
+{
+  "initiative_id": "pending",
+  "journey_type": "autonomous",
+  "journey_type_reason": "Brain 内部 task graph 端到端验证；无 UI/HTTP/远端 agent 协议改动，仅造演练任务驱动 harness-task graph 跑完并采集 DB+log 证据。",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "造演练 W 任务 + 端到端驱动 + 原始证据采集",
+      "scope": "写 packages/brain/scripts/seed-w41-demo-task.js 注入一个故意第 1 轮 FAIL 第 2 轮 PASS 的 harness W 任务（如 playground GET /factorial 第 1 轮漏 0! base case）；写 packages/brain/scripts/drive-w41-e2e.js 驱动 + 轮询直到 status=completed 或超时；从 brain logs / DB 抽取 5 类原始证据写入 sprints/w41-walking-skeleton-final-b19/evidence/。",
+      "dod": [
+        "[ARTIFACT] packages/brain/scripts/seed-w41-demo-task.js + drive-w41-e2e.js 存在且 node --check 通过",
+        "[ARTIFACT] sprints/w41-walking-skeleton-final-b19/evidence/ 含 5 个非空文件（seed-output.json / pr-url-trace.txt / evaluator-checkout-proof.txt / dispatch-events.csv / brain-log-excerpt.txt）",
+        "[BEHAVIOR] tasks 表内 demo_task_id 行 task_type LIKE 'harness_%' 且 created_at 在过去 24h 内",
+        "[BEHAVIOR] dispatch_events reason='harness_task' dispatched 事件 ≥ 2 次（fix_dispatch 触发 re-spawn generator）",
+        "[BEHAVIOR] dispatch_events reason='harness_evaluate' dispatched 事件 ≥ 2 次（final evaluate 在 fix 后跑了）",
+        "[BEHAVIOR] pr-url-trace.txt 跨轮 pr_url 字面全等且 pr_branch 字面全等且无空字段（B19 fix 真生效）",
+        "[BEHAVIOR] evaluator-checkout-proof.txt 中 evaluator_HEAD == origin/PR_BRANCH 且 ≠ origin/main HEAD",
+        "[BEHAVIOR] tasks.status='completed' + result.verdict 非空 + dev_records.pr_url 与 trace url 字面一致 + merged_at 非空"
+      ],
+      "files": [
+        "packages/brain/scripts/seed-w41-demo-task.js",
+        "packages/brain/scripts/drive-w41-e2e.js",
+        "sprints/w41-walking-skeleton-final-b19/evidence/seed-output.json",
+        "sprints/w41-walking-skeleton-final-b19/evidence/pr-url-trace.txt",
+        "sprints/w41-walking-skeleton-final-b19/evidence/evaluator-checkout-proof.txt",
+        "sprints/w41-walking-skeleton-final-b19/evidence/dispatch-events.csv",
+        "sprints/w41-walking-skeleton-final-b19/evidence/brain-log-excerpt.txt"
+      ],
+      "depends_on": [],
+      "complexity": "M",
+      "estimated_minutes": 55
+    },
+    {
+      "task_id": "ws2",
+      "title": "verification-report.md 写作（5 类证据章节 + 结论）",
+      "scope": "写 packages/brain/scripts/build-w41-report.js 提供 buildReport(evidence) 纯函数生成 markdown，并在 sprints/w41-walking-skeleton-final-b19/verification-report.md 落盘最终报告。报告含 5 个 H2 证据章节（B19 fix evidence / PR_BRANCH 传递 / evaluator 在 PR 分支 / fix 循环触发证据 / task completed 收敛）+ 末尾 ## 结论 段（含 B19 字面值 + 真生效/未生效 字面判定）。每章节引用 evidence/ 内具体文件 + 至少 1 个可点 PR URL（与 trace 字面一致）。",
+      "dod": [
+        "[ARTIFACT] packages/brain/scripts/build-w41-report.js 存在 + node --check 通过 + 导出 buildReport()",
+        "[ARTIFACT] sprints/w41-walking-skeleton-final-b19/verification-report.md 存在且非空，末尾含 ## 结论 段",
+        "[BEHAVIOR] report 含 5 个 H2 章节标题字面值（B19 fix evidence / PR_BRANCH 传递 / evaluator 在 PR 分支 / fix 循环触发证据 / task completed 收敛）",
+        "[BEHAVIOR] report 含至少 1 个匹配 https://github\\.com/.+/pull/[0-9]+ 的可点 PR URL",
+        "[BEHAVIOR] report 引用的 PR URL 与 evidence/pr-url-trace.txt 中 url 字面一致（防占位 URL）",
+        "[BEHAVIOR] report 含 evidence/evaluator-checkout-proof.txt 中的 evaluator_HEAD sha 字面值",
+        "[BEHAVIOR] ## 结论 段含 'B19' 字面值且含 (真生效|已生效|未生效|失效) 之一字面值"
+      ],
+      "files": [
+        "packages/brain/scripts/build-w41-report.js",
+        "sprints/w41-walking-skeleton-final-b19/verification-report.md"
+      ],
+      "depends_on": ["ws1"],
+      "complexity": "S",
+      "estimated_minutes": 30
+    }
+  ]
+}
