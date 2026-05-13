@@ -11,8 +11,9 @@
         "[ARTIFACT] packages/brain/scripts/seed-w41-demo-task.js + drive-w41-e2e.js 存在且 node --check 通过",
         "[ARTIFACT] sprints/w41-walking-skeleton-final-b19/evidence/ 含 5 个非空文件（seed-output.json / pr-url-trace.txt / evaluator-checkout-proof.txt / dispatch-events.csv / brain-log-excerpt.txt）",
         "[BEHAVIOR] tasks 表内 demo_task_id 行 task_type LIKE 'harness_%' 且 created_at 在过去 24h 内",
-        "[BEHAVIOR] dispatch_events 内 task_id 关联的 'harness_evaluate' dispatched 事件 ≥ 2 次（证 fix 循环真触发）",
-        "[BEHAVIOR] pr-url-trace.txt 跨轮 pr_url 字面全等且 pr_branch 字面全等且无空（B19 fix 真生效）",
+        "[BEHAVIOR] dispatch_events reason='harness_task' dispatched 事件 ≥ 2 次（fix_dispatch 触发 re-spawn generator）",
+        "[BEHAVIOR] dispatch_events reason='harness_evaluate' dispatched 事件 ≥ 2 次（final evaluate 在 fix 后跑了）",
+        "[BEHAVIOR] pr-url-trace.txt 跨轮 pr_url 字面全等且 pr_branch 字面全等且无空字段（B19 fix 真生效）",
         "[BEHAVIOR] evaluator-checkout-proof.txt 中 evaluator_HEAD == origin/PR_BRANCH 且 ≠ origin/main HEAD",
         "[BEHAVIOR] tasks.status='completed' + result.verdict 非空 + dev_records.pr_url 与 trace url 字面一致 + merged_at 非空"
       ],
