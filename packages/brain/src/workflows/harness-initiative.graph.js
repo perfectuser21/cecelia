@@ -33,6 +33,9 @@ import { runFinalE2E, attributeFailures } from '../harness-final-e2e.js';
 import { ensureHarnessWorktree } from '../harness-worktree.js';
 import { resolveGitHubToken } from '../harness-credentials.js';
 import { fetchAndShowOriginFile } from '../lib/git-fence.js';
+import { execFile as execFileCb } from 'node:child_process';
+import { promisify } from 'node:util';
+const execFileDefault = promisify(execFileCb);
 // 走 C3 shim (../harness-gan-graph.js) 而非直连 workflows/harness-gan.graph.js，
 // 保持测试 vi.mock('../../harness-gan-graph.js') 路径兼容。
 // Phase C7 清 shim 前不改。
@@ -1256,6 +1259,22 @@ export async function finalEvaluateDispatchNode(state, opts = {}) {
   const sprintDir = state.task?.payload?.sprint_dir || 'sprints';
   const journeyType = state.taskPlan?.journey_type || 'autonomous';
 
+  // B17: final_evaluate 也跑 PR 分支（generator 写的代码还在 PR 分支没 merge main）
+  const firstSubTaskPr = (state.sub_tasks || [])[0]?.pr_url || '';
+  let prBranchEnv = '';
+  if (firstSubTaskPr) {
+    try {
+      const { stdout } = await execFileDefault(
+        'gh',
+        ['pr', 'view', firstSubTaskPr, '--json', 'headRefName', '-q', '.headRefName'],
+        { timeout: 10_000 }
+      );
+      prBranchEnv = stdout.trim();
+    } catch (err) {
+      console.warn(`[final_evaluate] gh pr view fallback failed: ${err.message}`);
+    }
+  }
+
   const skillContent = loadSkillContent('harness-evaluator');
   const prompt = `你是 harness-evaluator agent。按下面 SKILL 指令工作。
 
@@ -1282,6 +1301,8 @@ JOURNEY_TYPE=${journeyType}`;
         SPRINT_DIR: sprintDir,
         JOURNEY_TYPE: journeyType,
         GITHUB_TOKEN: state.githubToken,
+        PR_URL: firstSubTaskPr,
+        PR_BRANCH: prBranchEnv,
       },
     });
   } catch (err) {
