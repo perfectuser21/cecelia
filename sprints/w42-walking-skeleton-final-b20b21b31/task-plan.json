@@ -1,0 +1,34 @@
+{
+  "initiative_id": "pending",
+  "journey_type": "autonomous",
+  "journey_type_reason": "playground 代码由 brain autonomous journey 全自动生成，无 UI/engine/远端 agent 参与",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "playground/server.js 新增 GET /negate 路由 + tests/server.test.js 新增测试块 + README 补充说明",
+      "scope": "在 playground/server.js 的已有路由（/increment /decrement 模式）末尾追加 GET /negate 路由；在 playground/tests/server.test.js 追加 describe('GET /negate') 测试块；在 playground/README.md 追加 /negate 说明段",
+      "dod": [
+        "[ARTIFACT] playground/server.js 包含 /negate 路由处理代码",
+        "[ARTIFACT] playground/tests/server.test.js 包含 describe('GET /negate') 测试块",
+        "[ARTIFACT] playground/README.md 包含 /negate 端点说明",
+        "[BEHAVIOR] GET /negate?value=5 返回 HTTP 200 + {result:-5, operation:\"negate\"}，result 为 number，operation 为字面量 negate",
+        "[BEHAVIOR] response keys 完整性恰好等于 [\"operation\",\"result\"]，禁止多余字段",
+        "[BEHAVIOR] 禁用字段 negated/negative/value/answer 反向不存在于 success response",
+        "[BEHAVIOR] error path: GET /negate?value=foo → HTTP 400 + {error: <非空 string>}，keys 恰好 [\"error\"]",
+        "[BEHAVIOR] value=0 → result=0（正零，tostring 为 '0' 非 '-0'）",
+        "[BEHAVIOR] value=-7（负数取反）→ result=7",
+        "[BEHAVIOR] value 缺失 → HTTP 400",
+        "[BEHAVIOR] value=1.5（小数）→ HTTP 400（strict ^-?\\d+$ 校验）",
+        "[BEHAVIOR] |value| > 9007199254740990 → HTTP 400（上界超限）"
+      ],
+      "files": [
+        "playground/server.js",
+        "playground/tests/server.test.js",
+        "playground/README.md"
+      ],
+      "depends_on": [],
+      "complexity": "S",
+      "estimated_minutes": 25
+    }
+  ]
+}
