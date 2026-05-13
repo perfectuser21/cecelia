@@ -1,4 +1,4 @@
-# Sprint Contract Draft (Round 3)
+# Sprint Contract Draft (Round 4)
 
 ## Golden Path
 [客户端] → [GET /api/brain/ping] → [Brain status.js 路由处理（无 DB 操作）] → [HTTP 200 + {pong:true, ts:\<unix_seconds\>}]
@@ -34,8 +34,7 @@ echo "$RESP" | jq -e 'keys == ["pong","ts"]' || { echo "FAIL: keys 不符合 sch
 CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST localhost:5221/api/brain/ping)
 [ "$CODE" = "405" ] || { echo "FAIL: POST 未返 405，got $CODE"; exit 1; }
 
-ERR_BODY=$(curl -s -X POST localhost:5221/api/brain/ping)
-echo "$ERR_BODY" | jq -e '.error == "Method Not Allowed"' || { echo "FAIL: error 字段不等于 'Method Not Allowed'"; exit 1; }
+curl -s -X POST localhost:5221/api/brain/ping | jq -e '.error == "Method Not Allowed"' || { echo "FAIL: error 字段不等于 'Method Not Allowed'"; exit 1; }
 ```
 
 **硬阈值**: HTTP 405，body `error` 字段字面值等于 `"Method Not Allowed"`
