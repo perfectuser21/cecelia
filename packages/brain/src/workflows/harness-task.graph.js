@@ -257,8 +257,12 @@ export async function awaitCallbackNode(state) {
 
   if (exitCode !== 0) {
     const errMsg = payload.error || payload.stderr || `container exit_code=${exitCode}`;
+    // B18: 不再设 state.error（fatal）→ 转 ci_fail 路径让 fix loop 继续重试
+    // 区分 docker daemon 死（true fatal，由 spawnNode throw 抓）vs 容器内业务 fail（应 retry）
     return {
-      error: { node: 'await_callback', message: errMsg },
+      ci_status: 'fail',
+      ci_fail_type: 'container_exit',
+      failed_checks: [errMsg],
     };
   }
 
@@ -505,7 +509,8 @@ async function evaluateContractNode(state, opts = {}) {
 
 function routeAfterFix(state) {
   if (state.error) return 'end';
-  if (state.fix_round > MAX_FIX_ROUNDS) return 'failed';
+  // B18: 不再 cap fix_round（用户决定不设硬上限）
+  // convergence 不是数轮次，是 verdict 真 PASS；MAX_FIX_ROUNDS 常量保留向后兼容
   return 'spawn';
 }
 
