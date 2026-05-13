@@ -1,0 +1,5 @@
+PR_BRANCH=cp-harness-propose-r2-4271d19c
+evaluator_HEAD=f7b100574a979e815a081c5230409e2a997cc0a8
+checked_at=2026-05-13T08:23:18.766Z
+demo_task_id=1a108d95-cf6e-4fcf-b148-6e9a87900bbd
+verdict=PASS
