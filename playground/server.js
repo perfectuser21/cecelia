@@ -103,6 +103,20 @@ app.get('/decrement', (req, res) => {
   return res.json({ result: n - 1, operation: 'decrement' });
 });
 
+app.get('/negate', (req, res) => {
+  // 成功 schema 字面: { result: <number>, operation: "negate" }；strict ^-?\d+$；精度上下界 |value| ≤ 9007199254740991 (MAX_SAFE_INTEGER)；query 名锁死 req.query.value
+  const STRICT_INT = /^-?\d+$/;
+  const keys = Object.keys(req.query);
+  const v = req.query.value;
+  const n = Number(v);
+  if (keys.length !== 1 || keys[0] !== 'value' || typeof v !== 'string' || !STRICT_INT.test(v) || Math.abs(n) > 9007199254740991) {
+    return res.status(400).json({ error: 'value 必须是唯一 query 名 + 匹配 ^-?\\d+$（仅整数；禁小数、前导 +、科学计数法、十六进制、千分位、空格、Infinity、NaN、空串）+ |value| ≤ 9007199254740991 (MAX_SAFE_INTEGER)' });
+  }
+  // value=0 时 -0 漂移防御：用条件分支保证返 +0
+  const result = n === 0 ? 0 : -n;
+  return res.json({ result, operation: 'negate' });
+});
+
 app.get('/factorial', (req, res) => {
   const { n } = req.query;
   if (n === undefined) {
