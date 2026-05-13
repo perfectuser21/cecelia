@@ -33,7 +33,7 @@ describe('Workstream 1 — GET /abs [BEHAVIOR]', () => {
     expect(Object.keys(res.body).sort()).toEqual(['operation', 'result']);
   });
 
-  test('success 响应反向不含禁用字段名（PRD 完整 23 个）', async () => {
+  test('success 响应反向不含禁用字段名 23 个（PRD 完整列表）', async () => {
     const res = await request(app).get('/abs').query({ value: '-5' });
     expect(res.status).toBe(200);
     const forbidden = ['absolute','absoluteValue','abs_value','magnitude','modulus','positive','absval','abs_val','decremented','incremented','sum','product','quotient','power','remainder','factorial','negation','value','input','output','data','payload','answer','meta'];
@@ -142,7 +142,7 @@ describe('Workstream 1 — GET /abs [BEHAVIOR]', () => {
 });
 
 describe('9 路由回归 happy（防止 /abs 改动撞坏其他路由）', () => {
-  test('/health → 200 {ok:true}', async () => {
+  test('9 路由回归 — /health → 200 {ok:true}', async () => {
     const res = await request(app).get('/health');
     expect(res.status).toBe(200);
     expect(res.body.ok).toBe(true);
