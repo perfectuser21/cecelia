@@ -1,0 +1,25 @@
+{
+  "initiative_id": "pending",
+  "journey_type": "autonomous",
+  "journey_type_reason": "只涉及 packages/brain/ 后端路由新增，无前端无 bridge，Brain 自测即可验证",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "在 status.js 添加 GET /ping + ALL /ping 路由，并写单元测试",
+      "scope": "packages/brain/src/routes/status.js 新增 GET /ping（返 {pong:true,ts:<unix>}）和 ALL /ping（405）；packages/brain/src/__tests__/ping.test.js 新增单元测试套件覆盖所有 BEHAVIOR 条目",
+      "dod": [
+        "[BEHAVIOR] GET /api/brain/ping 返 {pong:true, ts:<unix_seconds>}，keys 恰好 [\"pong\",\"ts\"]",
+        "[BEHAVIOR] POST /api/brain/ping → HTTP 405 + {error:\"Method Not Allowed\"}",
+        "[ARTIFACT] packages/brain/src/routes/status.js 含 router.get('/ping'",
+        "[ARTIFACT] packages/brain/src/__tests__/ping.test.js 存在且 vitest 全部通过"
+      ],
+      "files": [
+        "packages/brain/src/routes/status.js",
+        "packages/brain/src/__tests__/ping.test.js"
+      ],
+      "depends_on": [],
+      "complexity": "S",
+      "estimated_minutes": 25
+    }
+  ]
+}
