@@ -378,14 +378,17 @@ describe('mergePrNode', () => {
 });
 
 describe('fixDispatchNode', () => {
-  it('fix_round 当前=2 → 返回 3 + 清 generator_output/pr_url/poll_count/ci_status/containerId', async () => {
+  it('fix_round 当前=2 → 返回 3 + 清 generator_output/poll_count/ci_status/containerId（B19: 保留 pr_url）', async () => {
     const delta = await fixDispatchNode({
       fix_round: 2, generator_output: 'old', pr_url: 'p', poll_count: 7, ci_status: 'fail',
       containerId: 'old-cid',
     });
     expect(delta.fix_round).toBe(3);
     expect(delta.generator_output).toBeNull();
-    expect(delta.pr_url).toBeNull();
+    // B19: pr_url + pr_branch 不再被 reset（generator fix 同 PR push 新 commit，URL 不变）
+    // delta 不显式 set 这两字段 → reducer 保留旧值
+    expect(delta.pr_url).toBeUndefined();
+    expect(delta.pr_branch).toBeUndefined();
     expect(delta.poll_count).toBe(0);
     expect(delta.ci_status).toBe('pending');
     // Layer 3：fresh spawn 必须 reset containerId，否则 spawn 幂等门 short-circuit
