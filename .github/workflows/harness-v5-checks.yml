@@ -112,7 +112,9 @@ jobs:
           echo "${{ steps.check-tests.outputs.test_files }}" | sed 's/^/  /'
           echo ""
           # vitest 从 CLI 接受相对路径即可
-          npx vitest run ${{ steps.check-tests.outputs.test_files }} --reporter=verbose || {
+          # 注意：${{ ... }} 展开后多行文件名需先存入变量再 word-split，否则换行变成独立 shell 命令
+          TEST_FILES_LIST="${{ steps.check-tests.outputs.test_files }}"
+          npx vitest run $TEST_FILES_LIST --reporter=verbose || {
             echo "❌ 测试未通过（Green 阶段失败）"
             exit 1
           }
