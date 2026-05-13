@@ -1,0 +1,48 @@
+{
+  "initiative_id": "pending",
+  "journey_type": "autonomous",
+  "journey_type_reason": "只动 playground 子项目（server.js + tests + README），无 UI / 无 brain tick / 无 engine hook / 无远端 agent 协议，与 W19~W37 系列同分类",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "playground/server.js 新增 GET /choose 路由（strict-schema + 范围校验 + 迭代计算 C(n,k)）",
+      "scope": "在 /factorial 路由之后、app.listen 之前新增 GET /choose 路由：^\d+$ strict-schema 校验 n/k，n>20 → 400，k>n → 400，迭代计算 C(n,k) = ∏(n-i+1)/i（i=1..min(k,n-k)），返回 {choose: <integer>}",
+      "dod": [
+        "[BEHAVIOR] GET /choose?n=5&k=2 → 200 + {choose: 10}，jq -e '.choose == 10'",
+        "[BEHAVIOR] GET /choose?n=5&k=0 → 200 + {choose: 1}（W41 核心 k=0 oracle，依赖 0!=1）",
+        "[BEHAVIOR] GET /choose?n=0&k=0 → 200 + {choose: 1}（C(0,0)=1，0! 基底最小边界）",
+        "[BEHAVIOR] response keys 精确等于 ['choose']，jq -e 'keys == [\"choose\"]'",
+        "[BEHAVIOR] 禁用字段 result/answer/c 反向不存在，jq -e 'has(\"result\") | not'",
+        "[BEHAVIOR] n=21 → 400（hard cap），缺 k → 400，n=-1 → 400",
+        "[ARTIFACT] playground/server.js 含 app.get('/choose' 路由定义，约 +20 行"
+      ],
+      "files": [
+        "playground/server.js"
+      ],
+      "depends_on": [],
+      "complexity": "S",
+      "estimated_minutes": 25
+    },
+    {
+      "task_id": "ws2",
+      "title": "playground/tests/server.test.js 新增 describe('GET /choose') + playground/README.md 补端点文档",
+      "scope": "新增完整 describe('GET /choose') 块（happy 7+, k=0 oracle 3+, k=n 1+, 上界拒 2+, k>n 拒 2+, strict-schema 拒 6+, schema oracle 1+, 值 oracle 4+, 回归 5+）；README.md 端点列表加 /choose，给出 happy（含 k=0 边界）/ k>n 拒 / strict 拒示例各 1 个",
+      "dod": [
+        "[BEHAVIOR] GET /choose?n=5&k=0 → 200 + {choose: 1}（W41 核心 oracle）",
+        "[BEHAVIOR] GET /choose?n=0&k=0 → 200 + {choose: 1}（边界）",
+        "[BEHAVIOR] GET /choose?n=20&k=0 → 200 + {choose: 1}（上界 0! 基底）",
+        "[BEHAVIOR] GET /choose?n=5&k=5 → 200 + {choose: 1}（k=n 对称）",
+        "[BEHAVIOR] GET /choose?n=20&k=10 → 200 + {choose: 184756}（精度上界）",
+        "[ARTIFACT] playground/tests/server.test.js 含 describe('GET /choose' 块",
+        "[ARTIFACT] playground/README.md 含 /choose 端点文档"
+      ],
+      "files": [
+        "playground/tests/server.test.js",
+        "playground/README.md"
+      ],
+      "depends_on": ["ws1"],
+      "complexity": "M",
+      "estimated_minutes": 40
+    }
+  ]
+}
