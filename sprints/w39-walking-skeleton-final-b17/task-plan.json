@@ -1,0 +1,36 @@
+{
+  "initiative_id": "fd65b41a-196c-4cba-abb6-aa98ec2e8cf1",
+  "journey_type": "autonomous",
+  "journey_type_reason": "仅动 playground 子项目；无 UI、无 brain tick、无 engine hook、无远端 agent",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "playground 加 GET /negate 路由 + 测试 describe 块 + README 段",
+      "scope": "playground/server.js 新增 app.get('/negate') 路由（query 名严字面 value、strict-schema 整数 ^-?\\d+$、精度上下界 |value|≤MAX_SAFE_INTEGER=9007199254740991、返回 {result:-Number(value), operation:\"negate\"} 严 schema、value=0 不漂 -0/0.0、错误体 {error:string} 严 keys）；playground/tests/server.test.js 加 describe('GET /negate') 块覆盖 happy/边界/上下界/strict拒/9 禁用 query 名/21 禁用响应字段反向/9 operation 变体反向/错误体严 keys/4 禁用错误名反向；playground/README.md 加 /negate 段（≥4 示例：value=5/0/-1/MAX_SAFE）",
+      "dod": [
+        "[BEHAVIOR] GET /negate?value=5 → 200 + {result:-5, operation:\"negate\"}（严字面 schema，keys==[operation,result]）",
+        "[BEHAVIOR] GET /negate?value=0 → 200 + {result:0}（JSON 不漂 -0/-0.0/0.0）",
+        "[BEHAVIOR] GET /negate?value=9007199254740991 → 200 + {result:-9007199254740991, operation:\"negate\"}；value=-9007199254740991 → 200 + {result:9007199254740991}",
+        "[BEHAVIOR] GET /negate?value=9007199254740992 → 400；value=-9007199254740992 → 400（越 MAX_SAFE）",
+        "[BEHAVIOR] strict-schema 拒：value=1.5/1e2/+5/abc/0x10/Infinity/NaN/1,000/空串/缺参 一律 400",
+        "[BEHAVIOR] PRD 完整 9 个禁用 query 名（n/x/a/b/num/number/input/v/val）一律 400",
+        "[BEHAVIOR] success body 反向不含 21 禁用字段名（negation/negated/minus/opposite/flip/invert/inverse/incremented/decremented/prev/predecessor/sum/product/quotient/power/remainder/factorial/value/input/output/data/payload/answer/meta）",
+        "[BEHAVIOR] success body operation 字面 \"negate\"，9 PRD 变体（neg/negation/negated/minus/opposite/flip/invert/inverse/unary_minus）一律不等",
+        "[BEHAVIOR] error body keys 严格==[\"error\"]，4 PRD 禁用替代名（message/msg/reason/detail）反向不存在",
+        "[BEHAVIOR] 8 路由回归 happy 全通过（/health /sum /multiply /divide /power /modulo /increment /decrement /factorial）",
+        "[ARTIFACT] playground/server.js 含 app.get('/negate'... 注册",
+        "[ARTIFACT] playground/server.js 含 strict-schema 正则 ^-?\\d+$ 与精度上界 9007199254740991",
+        "[ARTIFACT] playground/tests/server.test.js 含 describe('GET /negate') 独立块",
+        "[ARTIFACT] playground/README.md 含 /negate 端点段"
+      ],
+      "files": [
+        "playground/server.js",
+        "playground/tests/server.test.js",
+        "playground/README.md"
+      ],
+      "depends_on": [],
+      "complexity": "S",
+      "estimated_minutes": 30
+    }
+  ]
+}
