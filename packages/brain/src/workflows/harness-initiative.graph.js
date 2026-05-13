@@ -25,6 +25,8 @@
  *           fix_round > MAX_FIX_ROUNDS → phase='failed'，写 failure_reason
  */
 
+import { execFile as execFileCb } from 'node:child_process';
+import { promisify } from 'node:util';
 import pool from '../db.js';
 import { spawn } from '../spawn/index.js';
 import { parseDockerOutput, loadSkillContent } from '../harness-shared.js';
@@ -33,9 +35,9 @@ import { runFinalE2E, attributeFailures } from '../harness-final-e2e.js';
 import { ensureHarnessWorktree } from '../harness-worktree.js';
 import { resolveGitHubToken } from '../harness-credentials.js';
 import { fetchAndShowOriginFile } from '../lib/git-fence.js';
-import { execFile as execFileCb } from 'node:child_process';
-import { promisify } from 'node:util';
+// B17 + B32: brain 代为 push 用 execFile（B17 加 final_evaluate PR_BRANCH fallback，B32 加 propose_branch fallback）
 const execFileDefault = promisify(execFileCb);
+const execFile = execFileDefault;
 // 走 C3 shim (../harness-gan-graph.js) 而非直连 workflows/harness-gan.graph.js，
 // 保持测试 vi.mock('../../harness-gan-graph.js') 路径兼容。
 // Phase C7 清 shim 前不改。
@@ -850,6 +852,37 @@ export async function inferTaskPlanNode(state, _opts = {}) {
   if (!proposeBranch) {
     console.warn('[infer_task_plan] no propose_branch in ganResult, cannot read task-plan.json');
     return {};
+  }
+
+  // B32: verify propose_branch 真在 origin。LLM 工艺不稳定（W42 proposer container
+  // exit=0 但 git push 没真跑），brain 必须 verify 关键 side effect。
+  // 如果 origin 没这个 branch，brain 代为 push（worktree 内 commits 已在）。
+  // 通用模式：LLM action + brain verify + brain fallback execute。
+  if (state.worktreePath) {
+    try {
+      const { stdout: lsRemote } = await execFile(
+        'git',
+        ['ls-remote', '--heads', 'origin', proposeBranch],
+        { cwd: state.worktreePath, timeout: 30_000 }
+      );
+      if (!lsRemote.trim()) {
+        console.warn(`[infer_task_plan] B32 propose_branch ${proposeBranch} 不在 origin，brain 代为 push`);
+        try {
+          await execFile(
+            'git',
+            ['push', 'origin', proposeBranch],
+            { cwd: state.worktreePath, timeout: 60_000 }
+          );
+          console.log(`[infer_task_plan] B32 brain 代 push 成功: ${proposeBranch}`);
+        } catch (pushErr) {
+          // push 失败（branch 不存在 / 权限等）→ 让 ContractViolation 走原路径
+          console.error(`[infer_task_plan] B32 brain 代 push 失败: ${pushErr.message}`);
+        }
+      }
+    } catch (lsErr) {
+      // ls-remote 失败（网络/credentials）→ silent fail，让原 fetchAndShowOriginFile 继续尝试
+      console.warn(`[infer_task_plan] B32 ls-remote 失败: ${lsErr.message}（继续尝试 fetch）`);
+    }
   }
 
   try {
