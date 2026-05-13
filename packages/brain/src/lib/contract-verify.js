@@ -27,17 +27,19 @@ export class ContractViolation extends Error {
 
 /**
  * 验 proposer 节点真把 propose_branch + sprintDir/task-plan.json push 到 origin。
+ * 若 branch 不在 origin 且传入 githubToken，brain 代为 git push（worktree commits 已存在）。
  *
  * @param {Object} opts
  * @param {string} opts.worktreePath - generator worktree（用来跑 git 命令）
  * @param {string} opts.branch - propose_branch 名
  * @param {string} opts.sprintDir - 'sprints/w8-langgraph-vN'
  * @param {string} [opts.baseRepo] - 主仓库（读 origin URL）
+ * @param {string} [opts.githubToken] - 若传入，branch 缺失时 brain 代为 push
  * @param {Function} [opts.execFn] - 测试注入
  * @throws {ContractViolation}
  */
 export async function verifyProposerOutput(opts) {
-  const { worktreePath, branch, sprintDir, execFn = execFile } = opts;
+  const { worktreePath, branch, sprintDir, githubToken, execFn = execFile } = opts;
   const baseRepo = opts.baseRepo || '/Users/administrator/perfect21/cecelia';
 
   // 显式从 baseRepo 读 GitHub URL（worktree 的 origin remote 可能是本地路径）
@@ -52,21 +54,53 @@ export async function verifyProposerOutput(opts) {
     );
   }
 
-  // 1. ls-remote 验 branch 真在 origin
+  // 1. ls-remote 验 branch 真在 origin；缺失时 brain 代为 push（B32）
+  let branchOnOrigin = false;
   try {
     const { stdout } = await execFn('git', ['ls-remote', githubUrl, branch]);
-    if (!stdout.trim()) {
+    branchOnOrigin = !!stdout.trim();
+  } catch (err) {
+    throw new ContractViolation(
+      `verifyProposerOutput: ls-remote failed for ${branch}: ${err.message}`,
+      { branch, stage: 'ls_remote_exec' },
+    );
+  }
+
+  if (!branchOnOrigin) {
+    if (githubToken) {
+      // B32: proposer 容器没跑 git push，但 worktree commits 已存在 → brain 代为 push
+      const pushUrl = githubUrl.replace(/^https:\/\//, `https://${githubToken}@`);
+      console.warn(`[contract-verify] branch '${branch}' missing on origin — brain pushing from worktree (B32)`);
+      try {
+        await execFn('git', ['-C', worktreePath, 'push', pushUrl, `${branch}:${branch}`]);
+      } catch (pushErr) {
+        throw new ContractViolation(
+          `proposer_didnt_push: brain fallback push failed for '${branch}': ${pushErr.message}`,
+          { branch, githubUrl, stage: 'brain_push' },
+        );
+      }
+      // 复验：push 后再确认 origin 有该 branch
+      try {
+        const { stdout: afterPush } = await execFn('git', ['ls-remote', githubUrl, branch]);
+        if (!afterPush.trim()) {
+          throw new ContractViolation(
+            `proposer_didnt_push: branch '${branch}' still missing after brain push`,
+            { branch, githubUrl, stage: 'ls_remote_after_push' },
+          );
+        }
+      } catch (err) {
+        if (err instanceof ContractViolation) throw err;
+        throw new ContractViolation(
+          `verifyProposerOutput: ls-remote (post-push) failed for ${branch}: ${err.message}`,
+          { branch, stage: 'ls_remote_after_push_exec' },
+        );
+      }
+    } else {
       throw new ContractViolation(
         `proposer_didnt_push: branch '${branch}' not found on origin (${githubUrl})`,
         { branch, githubUrl, stage: 'ls_remote' },
       );
     }
-  } catch (err) {
-    if (err instanceof ContractViolation) throw err;
-    throw new ContractViolation(
-      `verifyProposerOutput: ls-remote failed for ${branch}: ${err.message}`,
-      { branch, stage: 'ls_remote_exec' },
-    );
   }
 
   // 2. fetch 该 branch 然后 git show task-plan.json
