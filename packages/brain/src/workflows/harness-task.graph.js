@@ -43,7 +43,7 @@ import { resolveGitHubToken } from '../harness-credentials.js';
 // Note: legacy `writeDockerCallback` import removed (Layer 3 uses callback router POST → Command(resume))
 import { spawnDockerDetached } from '../spawn/detached.js';
 import { resolveAccount } from '../spawn/middleware/account-rotation.js';
-import { checkPrStatus, executeMerge, classifyFailedChecks } from '../shepherd.js';
+import { checkPrStatus, classifyFailedChecks } from '../shepherd.js';
 import { parseDockerOutput, extractField } from '../harness-shared.js';
 import { buildGeneratorPrompt, extractWorkstreamIndex } from '../harness-utils.js';
 import { getPgCheckpointer } from '../orchestrator/pg-checkpointer.js';
@@ -364,13 +364,41 @@ export async function pollCiNode(state, opts = {}) {
   return { ci_status: 'pending', poll_count: pollCount + 1 };
 }
 
-export async function mergePrNode(state) {
+export async function mergePrNode(state, opts = {}) {
   if (state.status === 'merged') return { status: 'merged' };
+  const execFn = opts.execFile || execFileDefault;
+  const prUrl = state?.pr_url;
+
+  if (!prUrl) {
+    return { merge_error: 'no pr_url available' };
+  }
+
+  // B21: evaluator PASS 后 brain 真调 gh pr merge --auto --squash 自动合并 PR。
+  // 不再依赖人工 merge button，也不依赖外层 shepherd。
+  // --auto 让 GitHub 等所有 required checks PASS 后再合（不强 admin bypass）；
+  // --delete-branch 合完自动删 head branch。
+  // merge 失败不 throw（避免 graph 走 error 通道触发重试导致重复 merge 风险），
+  // 而是写 merge_error 让 graph 退 END，由人工或 shepherd 补救。
   try {
-    executeMerge(state.pr_url);
-    return { status: 'merged', ci_status: 'merged' };
+    const { stdout } = await execFn(
+      'gh',
+      ['pr', 'merge', prUrl, '--auto', '--squash', '--delete-branch'],
+      { timeout: 30_000 }
+    );
+    const tail = (stdout || '').trim().slice(0, 200);
+    console.log(`[merge_pr] gh pr merge ok pr=${prUrl}: ${tail}`);
+    return {
+      status: 'merged',
+      ci_status: 'merged',
+      merged_at: new Date().toISOString(),
+      merge_command: 'gh pr merge --auto --squash',
+    };
   } catch (err) {
-    return { status: 'failed', error: { node: 'merge_pr', message: err.message } };
+    console.warn(`[merge_pr] gh pr merge failed pr=${prUrl}: ${err.message}`);
+    return {
+      merge_error: err.message,
+      // 不 set state.error（避免 graph END 走异常路径），让任务标 completed 不 failed
+    };
   }
 }
 
