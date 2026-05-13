@@ -37,6 +37,7 @@ import vpsMonitorRoutes from '../vps-monitor/routes.js';
 import n8nApiRoutes from '../n8n-api/routes.js';
 import analysisRoutes from '../analysis/routes.js';
 import clusterRoutes from '../cluster/routes.js';
+import agentOpsWechatRoutes from '../agent-ops/wechat.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -235,6 +236,9 @@ app.use('/api/watchdog', watchdogRoutes);
 
 // System status API routes (aggregated status from all subsystems)
 app.use('/api/system', systemRoutes);
+
+// Agent Ops — WeChat RPA + OpenRouter LLM (Path 4 Sprint 1)
+app.use('/api/agent-ops/wechat', agentOpsWechatRoutes);
 
 // Static frontend files (single frontend, theme switches by hostname in JS)
 // Frontend lives in apps/dashboard/ within this workspace
