@@ -1,0 +1,5 @@
+id,task_id,event_type,reason,created_at
+92d4b216-ba32-4242-a54a-d187cfeb7572,1a108d95-cf6e-4fcf-b148-6e9a87900bbd,dispatched,harness_task,2026-05-13T06:23:15.247Z
+2d3ad385-6369-41d5-bd48-d21fd7efb330,1a108d95-cf6e-4fcf-b148-6e9a87900bbd,dispatched,harness_evaluate,2026-05-13T06:53:15.250Z
+56af0470-5af8-4896-b5e5-73172b294172,1a108d95-cf6e-4fcf-b148-6e9a87900bbd,dispatched,harness_task,2026-05-13T07:23:15.251Z
+e5204fa9-c0b8-4fea-b527-d88fbc043bc8,1a108d95-cf6e-4fcf-b148-6e9a87900bbd,dispatched,harness_evaluate,2026-05-13T07:53:15.251Z
