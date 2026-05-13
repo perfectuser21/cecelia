@@ -370,8 +370,8 @@ export function createGanContractNodes(executor, ctx) {
     // H10/H15: brain 主动验证 proposer 容器真把 propose_branch + task-plan.json 推到 origin。
     // docker exit_code=0 ≠ 节点 success（contract enforcement 第一层）。
     // H15 重构：从 ad-hoc fetchOriginFile 改用 SSOT verifyProposerOutput（throws ContractViolation）。
-    // 失败时 throw → LangGraph retryPolicy: LLM_RETRY 自动重试 3 次。
-    await verifyProposer({ worktreePath, branch: proposeBranch, sprintDir });
+    // B32: 传 githubToken → 若 branch 缺失 brain 代为 push，不依赖 LLM 跑 git push。
+    await verifyProposer({ worktreePath, branch: proposeBranch, sprintDir, githubToken });
 
     return {
       round: nextRound,

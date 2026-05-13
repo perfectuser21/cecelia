@@ -23,7 +23,7 @@ describe('H15 — ContractViolation class', () => {
   });
 });
 
-// -------- B. verifyProposerOutput (5 cases) --------
+// -------- B. verifyProposerOutput (8 cases) --------
 describe('H15 — verifyProposerOutput', () => {
   const baseOpts = {
     worktreePath: '/tmp/wt',
@@ -33,15 +33,29 @@ describe('H15 — verifyProposerOutput', () => {
   };
 
   function makeExecFn(scenario) {
-    // scenario keys: getUrl, lsRemote, fetch, show
+    // scenario keys: getUrl, lsRemote, lsRemoteAfterPush, push, fetch, show
+    let lsRemoteCallCount = 0;
     return vi.fn().mockImplementation(async (cmd, args) => {
       if (cmd === 'git' && args.includes('remote') && args.includes('get-url')) {
         if (scenario.getUrl?.throw) throw new Error(scenario.getUrl.throw);
         return { stdout: scenario.getUrl?.stdout ?? 'https://github.com/perfectuser21/cecelia\n', stderr: '' };
       }
       if (cmd === 'git' && args[0] === 'ls-remote') {
-        if (scenario.lsRemote?.throw) throw new Error(scenario.lsRemote.throw);
-        return { stdout: scenario.lsRemote?.stdout ?? '', stderr: '' };
+        const callIndex = lsRemoteCallCount++;
+        // 第 2 次 ls-remote（push 后复验）用 lsRemoteAfterPush，否则用 lsRemote
+        const s = callIndex > 0 && scenario.lsRemoteAfterPush !== undefined
+          ? scenario.lsRemoteAfterPush
+          : scenario.lsRemote;
+        if (s?.throw) throw new Error(s.throw);
+        return { stdout: s?.stdout ?? '', stderr: '' };
+      }
+      if (cmd === 'git' && args.includes('push')) {
+        if (scenario.push?.throw) throw new Error(scenario.push.throw);
+        return { stdout: '', stderr: '' };
+      }
+      if (cmd === 'git' && args[0] === '-C' && args[2] === 'push') {
+        if (scenario.push?.throw) throw new Error(scenario.push.throw);
+        return { stdout: '', stderr: '' };
       }
       if (cmd === 'git' && args[0] === 'fetch') {
         if (scenario.fetch?.throw) throw new Error(scenario.fetch.throw);
@@ -63,13 +77,55 @@ describe('H15 — verifyProposerOutput', () => {
     await expect(verifyProposerOutput({ ...baseOpts, execFn })).resolves.toBeUndefined();
   });
 
-  test('branch missing: ls-remote 返 "" → throw ContractViolation(proposer_didnt_push, branch 名)', async () => {
+  test('branch missing 无 githubToken: ls-remote 返 "" → throw ContractViolation(proposer_didnt_push, branch 名)', async () => {
     const execFn = makeExecFn({
       lsRemote: { stdout: '' },
     });
     await expect(verifyProposerOutput({ ...baseOpts, execFn })).rejects.toThrow(ContractViolation);
     await expect(verifyProposerOutput({ ...baseOpts, execFn })).rejects.toThrow(/proposer_didnt_push/);
     await expect(verifyProposerOutput({ ...baseOpts, execFn })).rejects.toThrow(/cp-harness-propose-r1-task/);
+  });
+
+  // B32 新增：brain 代为 push
+  test('B32: branch missing + githubToken → brain push → ls-remote 复验 ok → 不 throw', async () => {
+    const execFn = makeExecFn({
+      lsRemote: { stdout: '' },
+      lsRemoteAfterPush: { stdout: 'def456\trefs/heads/cp-harness-propose-r1-task\n' },
+      show: { stdout: JSON.stringify({ tasks: [{ id: 'ws1' }] }) },
+    });
+    await expect(
+      verifyProposerOutput({ ...baseOpts, githubToken: 'ghp_test', execFn }),
+    ).resolves.toBeUndefined();
+    // 应调了 push（args 含 push + token URL）
+    const pushCall = execFn.mock.calls.find((c) => c[1]?.includes('push'));
+    expect(pushCall).toBeDefined();
+    expect(pushCall[1].some((a) => a.includes('ghp_test'))).toBe(true);
+  });
+
+  test('B32: branch missing + githubToken → brain push 失败 → throw ContractViolation(brain fallback push failed)', async () => {
+    const execFn = makeExecFn({
+      lsRemote: { stdout: '' },
+      push: { throw: 'Permission denied' },
+    });
+    await expect(
+      verifyProposerOutput({ ...baseOpts, githubToken: 'ghp_test', execFn }),
+    ).rejects.toThrow(ContractViolation);
+    await expect(
+      verifyProposerOutput({ ...baseOpts, githubToken: 'ghp_test', execFn }),
+    ).rejects.toThrow(/brain fallback push failed/);
+  });
+
+  test('B32: branch missing + githubToken → push ok → ls-remote 复验仍空 → throw ContractViolation', async () => {
+    const execFn = makeExecFn({
+      lsRemote: { stdout: '' },
+      lsRemoteAfterPush: { stdout: '' },
+    });
+    await expect(
+      verifyProposerOutput({ ...baseOpts, githubToken: 'ghp_test', execFn }),
+    ).rejects.toThrow(ContractViolation);
+    await expect(
+      verifyProposerOutput({ ...baseOpts, githubToken: 'ghp_test', execFn }),
+    ).rejects.toThrow(/proposer_didnt_push/);
   });
 
   test('task-plan 不存在: git show throw → throw ContractViolation 含 taskPlanPath', async () => {
