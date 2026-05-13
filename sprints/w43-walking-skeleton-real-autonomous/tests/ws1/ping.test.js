@@ -1,7 +1,14 @@
 /**
  * TDD Red 阶段：/ping endpoint 行为验证
- * 在 packages/brain/src/routes/status.js 尚未添加 /ping 路由时，所有测试失败（Red）
- * 实现后应全部通过（Green）
+ *
+ * 预期 Red 证据：/ping 路由尚未添加到 status.js 时，
+ * GET /api/brain/ping 返回 404（路由不存在），所有断言 FAIL：
+ *   - 期望 status=200，实际 404
+ *   - 期望 pong=true，实际 body 为 {}
+ *   - 期望 ts 是 number，实际 undefined
+ *   - 期望 keys=["pong","ts"]，实际 []
+ *   - 期望 POST 返 405，实际可能返 404
+ * Green 阶段：实现路由后全部通过
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -77,17 +84,14 @@ describe('GET /api/brain/ping', () => {
 
   it('禁用字段 ok/alive/status/timestamp/result/data 全部不存在', async () => {
     const res = await request(app).get('/api/brain/ping');
-    expect(res.body).not.toHaveProperty('ok');
-    expect(res.body).not.toHaveProperty('alive');
-    expect(res.body).not.toHaveProperty('status');
-    expect(res.body).not.toHaveProperty('timestamp');
-    expect(res.body).not.toHaveProperty('result');
-    expect(res.body).not.toHaveProperty('data');
+    for (const key of ['ok', 'alive', 'status', 'timestamp', 'result', 'data']) {
+      expect(res.body).not.toHaveProperty(key);
+    }
   });
 
-  it('POST /api/brain/ping → 405 + error 字段', async () => {
+  it('POST /api/brain/ping → 405 且 error 字段字面值等于 "Method Not Allowed"', async () => {
     const res = await request(app).post('/api/brain/ping');
     expect(res.status).toBe(405);
-    expect(typeof res.body.error).toBe('string');
+    expect(res.body.error).toBe('Method Not Allowed');
   });
 });
