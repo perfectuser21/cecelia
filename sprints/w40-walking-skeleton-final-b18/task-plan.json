@@ -1,0 +1,32 @@
+{
+  "initiative_id": "pending",
+  "journey_type": "autonomous",
+  "journey_type_reason": "仅动 playground 子项目，无 UI/brain/engine/远端 agent — 与 PRD journey_type 一致",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "playground 加 GET /negate 路由 + 测试 + README",
+      "scope": "playground/server.js 新增 app.get('/negate') 路由（strict-schema 整数 + 精度上下界 + 唯一 query 名 `value` + -0 规范化为 0）；playground/tests/server.test.js 新增 describe('GET /negate') 测试块（覆盖 happy / 精度上下界 / 22 禁用响应字段 / 8 禁用 operation 变体 / 11 禁用 query 名 / -0 规范化 / error keys 严等）；playground/README.md 补 /negate 段",
+      "dod": [
+        "[BEHAVIOR] GET /negate?value=5 → 200 + {result:-5, operation:\"negate\"} 字面严等（jq -e）",
+        "[BEHAVIOR] success 响应顶层 keys 严等 [\"operation\",\"result\"] — 不多不少",
+        "[BEHAVIOR] success 响应反向不含 22 个 PRD 禁用响应字段名（negation/neg/.../answer/meta）",
+        "[BEHAVIOR] -0 规范化：value=0 和 value=-0 都返 result:0，且 JSON 字面不含 \"result\":-0",
+        "[BEHAVIOR] 11 个禁用 query 名（n/x/a/b/num/number/input/v/val/neg/target）+ 非法字面（1.5/1e2/abc/+5/空串/0x10/Infinity/NaN）+ 精度超界（|n|>9007199254740990）+ 缺 query 一律 400",
+        "[BEHAVIOR] error path：400 + body keys 严等 [\"error\"] + 反向不含 result/operation/message/msg/reason/detail",
+        "[ARTIFACT] playground/server.js 包含字面字符串 `app.get('/negate'`",
+        "[ARTIFACT] playground/tests/server.test.js 包含字面字符串 `describe('GET /negate'`",
+        "[ARTIFACT] playground/README.md 包含字面字符串 `GET /negate`",
+        "[ARTIFACT] playground 内 `npm test` 全绿（B18 self-verify 红线）"
+      ],
+      "files": [
+        "playground/server.js",
+        "playground/tests/server.test.js",
+        "playground/README.md"
+      ],
+      "depends_on": [],
+      "complexity": "S",
+      "estimated_minutes": 30
+    }
+  ]
+}
