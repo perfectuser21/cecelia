@@ -26,6 +26,7 @@ npm start           # 起 server（默认 :3000）
 - `GET /factorial?n=N` → 返回 n! 阶乘（**整数白名单 strict-schema** `^\d+$` + **上界 18 拒**：`n > 18` → 400（精度上界，避免超过 `Number.MAX_SAFE_INTEGER`）+ **迭代精确累积**：`for(i=2; i<=n; i++) acc *= i`，不引入 BigInt / Stirling / gamma 近似）
 - `GET /increment?value=N` → 返回 `{result: N+1, operation: "increment"}`（**整数白名单 strict-schema** `^-?\d+$` + **精度上下界拒**：`|Number(value)| > 9007199254740990` → 400（+1 后避免超过 `Number.MAX_SAFE_INTEGER`）+ **query 名锁死**：只接受 `value`，别名 `n/a/b/x/val/input/...` 全 400）
 - `GET /decrement?value=N` → 返回 `{result: N-1, operation: "decrement"}`（**整数白名单 strict-schema** `^-?\d+$` + **精度上下界拒**：`|Number(value)| > 9007199254740990` → 400（-1 后避免超过 `Number.MIN_SAFE_INTEGER`）+ **query 名锁死**：只接受 `value`，PRD 禁用 9 个变体 `n/x/a/b/num/number/input/v/val` 全 400）
+- `GET /abs?value=N` → 返回 `{result: Math.abs(N), operation: "abs"}`（**整数白名单 strict-schema** `^-?\d+$` + **精度上下界拒**：`|Number(value)| > 9007199254740990` → 400 + **query 名锁死**：只接受 `value`，PRD 禁用 9 个变体 `n/x/a/b/num/number/input/v/val` 全 400 + **响应 operation 字面严等** `"abs"`，PRD 禁用 8 变体 `absolute`/`absoluteValue`/`abs_value`/`magnitude`/`modulus`/`positive`/`absval`/`abs_val` 一律不漂）
 
 ### `GET /sum` 示例
 
@@ -474,3 +475,68 @@ curl -s -o /dev/stderr -w 'HTTP %{http_code}\n' 'http://127.0.0.1:3000/decrement
 ```
 
 响应 schema 完整性（成功响应顶层 keys 严格等于 `["operation","result"]`；`operation` 字面字符串 `"decrement"`，不漂到 PRD 禁用 8 变体 `dec`/`decr`/`decremented`/`prev`/`previous`/`predecessor`/`minus_one`/`sub_one`；不漂到 PRD 禁用 19 个响应字段名 `decremented`/`prev`/`predecessor`/`minus_one`/`sub_one`/`incremented`/`sum`/`product`/`quotient`/`power`/`remainder`/`factorial`/`negation`/`value`/`input`/`output`/`data`/`payload`/`answer`/`meta`；错误体顶层 keys 严格等于 `["error"]`，不漂到禁用替代名 `message`/`msg`/`reason`/`detail`）。
+
+### `GET /abs` 示例
+
+happy path（**字面严等** `{result: Math.abs(N), operation: "abs"}`，覆盖正/零/负/精度上界/精度下界 5 类）：
+
+```bash
+curl -s 'http://127.0.0.1:3000/abs?value=-5'
+# {"result":5,"operation":"abs"}
+
+curl -s 'http://127.0.0.1:3000/abs?value=5'
+# {"result":5,"operation":"abs"}
+
+curl -s 'http://127.0.0.1:3000/abs?value=0'
+# {"result":0,"operation":"abs"}
+
+curl -s 'http://127.0.0.1:3000/abs?value=9007199254740990'
+# {"result":9007199254740990,"operation":"abs"}  (精度上界)
+
+curl -s 'http://127.0.0.1:3000/abs?value=-9007199254740990'
+# {"result":9007199254740990,"operation":"abs"}  (精度下界，abs 保模 → 上下界 result 同)
+```
+
+精度上下界拒（`|Number(value)| > 9007199254740990` → 400，避免超过 `Number.MAX_SAFE_INTEGER`）：
+
+```bash
+curl -s -o /dev/stderr -w 'HTTP %{http_code}\n' 'http://127.0.0.1:3000/abs?value=9007199254740991'
+# HTTP 400  (上界拒)
+
+curl -s -o /dev/stderr -w 'HTTP %{http_code}\n' 'http://127.0.0.1:3000/abs?value=-9007199254740991'
+# HTTP 400  (下界拒)
+```
+
+strict-schema 拒（**整数白名单** `^-?\d+$`，与 `/increment` / `/decrement` 同款；小数 / 前导 + / 科学计数法 / 十六进制 / 千分位 / `Infinity` / 字母串 / 空串 / 缺 value 全 400）：
+
+```bash
+curl -s -o /dev/stderr -w 'HTTP %{http_code}\n' 'http://127.0.0.1:3000/abs?value=1.5'
+# HTTP 400  (小数)
+
+curl -s -o /dev/stderr -w 'HTTP %{http_code}\n' 'http://127.0.0.1:3000/abs?value=1e2'
+# HTTP 400  (科学计数法)
+
+curl -s -o /dev/stderr -w 'HTTP %{http_code}\n' 'http://127.0.0.1:3000/abs?value=%2B5'
+# HTTP 400  (前导 +)
+
+curl -s -o /dev/stderr -w 'HTTP %{http_code}\n' 'http://127.0.0.1:3000/abs?value=abc'
+# HTTP 400  (非数字)
+
+curl -s -o /dev/stderr -w 'HTTP %{http_code}\n' 'http://127.0.0.1:3000/abs?value='
+# HTTP 400  (空串)
+
+curl -s -o /dev/stderr -w 'HTTP %{http_code}\n' 'http://127.0.0.1:3000/abs'
+# HTTP 400  (缺 value)
+```
+
+PRD 完整 9 个禁用 query 名一律拒（**query 名锁死**，只接受 `value=`；别名 `n/x/a/b/num/number/input/v/val` 全 400）：
+
+```bash
+curl -s -o /dev/stderr -w 'HTTP %{http_code}\n' 'http://127.0.0.1:3000/abs?n=5'
+# HTTP 400  (禁用 n)
+
+curl -s -o /dev/stderr -w 'HTTP %{http_code}\n' 'http://127.0.0.1:3000/abs?input=5'
+# HTTP 400  (禁用 input)
+```
+
+响应 schema 完整性（成功响应顶层 keys 严格等于 `["operation","result"]`；`operation` 字面字符串 `"abs"`，不漂到 PRD 禁用 8 变体 `absolute`/`absoluteValue`/`abs_value`/`magnitude`/`modulus`/`positive`/`absval`/`abs_val`；不漂到 PRD 禁用 23 个响应字段名 `absolute`/`absoluteValue`/`abs_value`/`magnitude`/`modulus`/`positive`/`absval`/`abs_val`/`decremented`/`incremented`/`sum`/`product`/`quotient`/`power`/`remainder`/`factorial`/`negation`/`value`/`input`/`output`/`data`/`payload`/`answer`/`meta`；错误体顶层 keys 严格等于 `["error"]`，不漂到禁用替代名 `message`/`msg`/`reason`/`detail`）。
