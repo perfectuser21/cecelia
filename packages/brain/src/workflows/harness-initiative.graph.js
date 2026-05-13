@@ -35,8 +35,6 @@ import { runFinalE2E, attributeFailures } from '../harness-final-e2e.js';
 import { ensureHarnessWorktree } from '../harness-worktree.js';
 import { resolveGitHubToken } from '../harness-credentials.js';
 import { fetchAndShowOriginFile } from '../lib/git-fence.js';
-import { execFile as execFileCb } from 'node:child_process';
-import { promisify } from 'node:util';
 // B17 + B32: brain 代为 push 用 execFile（B17 加 final_evaluate PR_BRANCH fallback，B32 加 propose_branch fallback）
 const execFileDefault = promisify(execFileCb);
 const execFile = execFileDefault;
