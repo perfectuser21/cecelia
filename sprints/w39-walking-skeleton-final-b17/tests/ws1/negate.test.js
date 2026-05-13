@@ -5,13 +5,13 @@ import app from '../../../../playground/server.js';
 describe('GET /negate (strict-schema + 精度上下界 MAX_SAFE_INTEGER + query 名严字面 value) [BEHAVIOR]', () => {
   // ━━━ Happy path ━━━
 
-  test('GET /negate?value=5 → 200 + {result:-5, operation:"negate"}（字段值字面）', async () => {
+  test('[value=5→200/-5] GET /negate?value=5 → 200 + {result:-5, operation:"negate"}（字段值字面）', async () => {
     const res = await request(app).get('/negate').query({ value: '5' });
     expect(res.status).toBe(200);
     expect(res.body).toEqual({ result: -5, operation: 'negate' });
   });
 
-  test('GET /negate?value=0 → 200 + {result:0, operation:"negate"}（不漂 -0）', async () => {
+  test('[value=0 不漂 -0] GET /negate?value=0 → 200 + {result:0, operation:"negate"}（不漂 -0）', async () => {
     const res = await request(app).get('/negate').query({ value: '0' });
     expect(res.status).toBe(200);
     expect(res.body).toEqual({ result: 0, operation: 'negate' });
@@ -29,13 +29,13 @@ describe('GET /negate (strict-schema + 精度上下界 MAX_SAFE_INTEGER + query 
     expect(res.body).toEqual({ result: 1, operation: 'negate' });
   });
 
-  test('GET /negate?value=9007199254740991 (MAX_SAFE) → 200 + {result:-9007199254740991, operation:"negate"}', async () => {
+  test('[精度上界 happy] GET /negate?value=9007199254740991 (MAX_SAFE) → 200 + {result:-9007199254740991, operation:"negate"}', async () => {
     const res = await request(app).get('/negate').query({ value: '9007199254740991' });
     expect(res.status).toBe(200);
     expect(res.body).toEqual({ result: -9007199254740991, operation: 'negate' });
   });
 
-  test('GET /negate?value=-9007199254740991 (-MAX_SAFE) → 200 + {result:9007199254740991, operation:"negate"}', async () => {
+  test('[精度下界 happy] GET /negate?value=-9007199254740991 (-MAX_SAFE) → 200 + {result:9007199254740991, operation:"negate"}', async () => {
     const res = await request(app).get('/negate').query({ value: '-9007199254740991' });
     expect(res.status).toBe(200);
     expect(res.body).toEqual({ result: 9007199254740991, operation: 'negate' });
@@ -43,13 +43,13 @@ describe('GET /negate (strict-schema + 精度上下界 MAX_SAFE_INTEGER + query 
 
   // ━━━ Schema 完整性 ━━━
 
-  test('success body 顶层 keys 严格等于 ["operation","result"]', async () => {
+  test('[schema 完整性] success body 顶层 keys 严格等于 ["operation","result"]', async () => {
     const res = await request(app).get('/negate').query({ value: '7' });
     expect(res.status).toBe(200);
     expect(Object.keys(res.body).sort()).toEqual(['operation', 'result']);
   });
 
-  test('success body 反向不含 PRD 完整 21 个禁用字段名', async () => {
+  test('[21 禁用字段名] success body 反向不含 PRD 完整 21 个禁用字段名', async () => {
     const res = await request(app).get('/negate').query({ value: '5' });
     expect(res.status).toBe(200);
     const forbidden = [
@@ -63,7 +63,7 @@ describe('GET /negate (strict-schema + 精度上下界 MAX_SAFE_INTEGER + query 
     }
   });
 
-  test('success body operation 字面字符串 "negate"，9 PRD 禁用变体一律不等', async () => {
+  test('[operation 字面 negate] [9 operation 变体] success body operation 字面字符串 "negate"，9 PRD 禁用变体一律不等', async () => {
     const res = await request(app).get('/negate').query({ value: '5' });
     expect(res.status).toBe(200);
     expect(res.body.operation).toBe('negate');
@@ -75,14 +75,14 @@ describe('GET /negate (strict-schema + 精度上下界 MAX_SAFE_INTEGER + query 
 
   // ━━━ 精度上下界拒 ━━━
 
-  test('GET /negate?value=9007199254740992 (MAX_SAFE+1) → 400', async () => {
+  test('[精度越界拒 上界] GET /negate?value=9007199254740992 (MAX_SAFE+1) → 400', async () => {
     const res = await request(app).get('/negate').query({ value: '9007199254740992' });
     expect(res.status).toBe(400);
     expect(typeof res.body.error).toBe('string');
     expect(res.body.error.length).toBeGreaterThan(0);
   });
 
-  test('GET /negate?value=-9007199254740992 (-MAX_SAFE-1) → 400', async () => {
+  test('[精度越界拒 下界] GET /negate?value=-9007199254740992 (-MAX_SAFE-1) → 400', async () => {
     const res = await request(app).get('/negate').query({ value: '-9007199254740992' });
     expect(res.status).toBe(400);
     expect(typeof res.body.error).toBe('string');
@@ -136,9 +136,22 @@ describe('GET /negate (strict-schema + 精度上下界 MAX_SAFE_INTEGER + query 
     expect(Object.keys(res.body)).toEqual(['error']);
   });
 
+  test('[9 禁用 query 名] PRD 完整 9 个禁用 query 别名 (n/x/a/b/num/number/input/v/val) 综合断言一律 400', async () => {
+    const badNames = [
+      { n: '5' }, { x: '5' }, { a: '5' }, { b: '5' },
+      { num: '5' }, { number: '5' }, { input: '5' },
+      { v: '5' }, { val: '5' },
+    ];
+    for (const q of badNames) {
+      const res = await request(app).get('/negate').query(q);
+      expect(res.status).toBe(400);
+      expect(Object.keys(res.body)).toEqual(['error']);
+    }
+  });
+
   // ━━━ Error body 严 schema ━━━
 
-  test('error body 顶层 keys 严格等于 ["error"]，且不含 4 PRD 禁用替代名', async () => {
+  test('[错误体 keys] [4 禁用错误名] error body 顶层 keys 严格等于 ["error"]，且不含 4 PRD 禁用替代名', async () => {
     const res = await request(app).get('/negate').query({ value: 'foo' });
     expect(res.status).toBe(400);
     expect(Object.keys(res.body)).toEqual(['error']);
