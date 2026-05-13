@@ -369,8 +369,9 @@ export async function fixDispatchNode(state) {
     generator_output: null,
     // Layer 3：必须 reset containerId 否则 spawn 节点幂等门 short-circuit，永远不会重 spawn
     containerId: null,
-    pr_url: null,
-    pr_branch: null,
+    // B19: 不 reset pr_url/pr_branch — generator fix mode 同 PR push 新 commit，URL 不变。
+    // W40 实证：reset 后 sub-task graph END 时 pr_url=null → finalEvaluate 拿不到
+    // PR_BRANCH → evaluator 跑 main 没新代码 → §1 happy FAIL（最后一公里 bug）。
     poll_count: 0,
     ci_status: 'pending',
     ci_fail_type: null,
