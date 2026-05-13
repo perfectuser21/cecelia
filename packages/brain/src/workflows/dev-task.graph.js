@@ -13,6 +13,11 @@ import { getPgCheckpointer } from '../orchestrator/pg-checkpointer.js';
 // 之前 dev-task graph 直接传 task.description 当 prompt，容器内 claude 拿到 11 行裸 PRD 看完
 // 没 /dev 指令直接 exit 0，task 被判 fail → quarantine（5/3 prod 实证）。
 import { preparePrompt } from '../executor.js';
+// writeDockerCallback 把 spawn 结果写 callback_queue，callback-worker → callback-processor
+// 走标准链路把 tasks.status 标 completed/failed（含 pr_url 提取 / failure_class 分类）。
+// 不调它 → graph 跑完没人回写 tasks.status → task 永卡 in_progress 直到 zombie-reaper
+// 30min 后标 failed（实测 24h 0% 成功率 12 条 [reaper] zombie 错误）。
+import { writeDockerCallback } from '../docker-executor.js';
 
 /**
  * dev-task workflow state：minimal — 进来一个 task，跑 spawn，存 result/error。
@@ -43,17 +48,50 @@ export async function runAgentNode(state) {
     const desc = state.task?.description || state.task?.title || '';
     prompt = `/dev\n\n${desc}`;
   }
+
+  let spawnResult = null;
+  let spawnError = null;
   try {
-    const result = await spawn({
+    spawnResult = await spawn({
       task: state.task,
       skill: '/dev',
       prompt,
       worktree: state.task?.worktree,
     });
-    return { result };
   } catch (err) {
-    return { error: { message: err.message, stack: err.stack } };
+    spawnError = err;
   }
+
+  // 回写 callback_queue → callback-worker → callback-processor 标 tasks.status。
+  // 不在 try/catch spawn 内部做这步，是为了 spawn throw 时也能合成 result 入队，
+  // 让任务从 in_progress 走出来（否则要等 zombie-reaper 30min 兜底）。
+  const taskId = state.task?.id;
+  if (taskId) {
+    const resultForCallback = spawnResult || {
+      exit_code: 1,
+      stdout: '',
+      stderr: spawnError?.message || 'spawn threw without error message',
+      duration_ms: 0,
+      timed_out: false,
+      container: null,
+      container_id: null,
+      started_at: new Date().toISOString(),
+      ended_at: new Date().toISOString(),
+    };
+    const runId = `dev-task-${taskId}-${Date.now()}`;
+    try {
+      await writeDockerCallback(state.task, runId, null, resultForCallback);
+    } catch (cbErr) {
+      // callback_queue INSERT 失败不阻断 graph — DLQ 已由 writeDockerCallback 内置兜底。
+      // 这里仅记日志，让 zombie-reaper 作为最后防线（与历史行为一致，不放大故障半径）。
+      console.warn(`[dev-task.graph] writeDockerCallback failed task=${taskId}: ${cbErr.message}`);
+    }
+  }
+
+  if (spawnError) {
+    return { error: { message: spawnError.message, stack: spawnError.stack } };
+  }
+  return { result: spawnResult };
 }
 
 /**

@@ -97,6 +97,24 @@ generator 写代码 + push PR
 
 ## 执行流程
 
+### Step 0a：切到 PR 分支（pre-merge gate 前置）
+
+evaluator 必须先切到 PR 分支才能跑 server 验真行为。模式 A 跑 generator 在 PR 分支写的代码，PR 分支名由 `$PR_BRANCH` env 提供（brain `evaluateContractNode` 透传 — B14 修复）。
+
+```bash
+if [ -n "$PR_BRANCH" ]; then
+  git fetch origin "$PR_BRANCH:$PR_BRANCH" 2>/dev/null || git fetch origin "$PR_BRANCH"
+  git checkout "$PR_BRANCH" || { echo "FATAL: checkout $PR_BRANCH failed"; exit 1; }
+  git reset --hard "origin/$PR_BRANCH" 2>/dev/null || true
+fi
+```
+
+模式 B（`IS_FINAL_E2E=true`）跑 main，不切。
+
+**反例**：跳过 Step 0a 直接跑 main 上的 server → generator 改动看不见 → 永远 FAIL（W19-W36 9 次实证）。
+
+---
+
 ### Step 0: 确认模式
 
 ```bash
