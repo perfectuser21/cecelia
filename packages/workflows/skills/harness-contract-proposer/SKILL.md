@@ -453,8 +453,8 @@ JSONEOF
 ### Step 4: 建分支 + push + 输出 verdict
 
 ```bash
-# $PROPOSE_BRANCH は Brain が env var として注入 — ローカル計算不要
-# Brain injects PROPOSE_BRANCH env var; value is cp-harness-propose-r${PROPOSE_ROUND}-${TASK_ID前8位}
+# $PROPOSE_BRANCH 由 Brain 通过 env var 注入，不需要本地计算
+# 格式：cp-harness-propose-r${PROPOSE_ROUND}-${TASK_ID 前 8 位}
 git checkout -b "${PROPOSE_BRANCH}" 2>/dev/null || git checkout "${PROPOSE_BRANCH}"
 
 git add "${SPRINT_DIR}/contract-draft.md" \
@@ -469,7 +469,7 @@ git push origin "${PROPOSE_BRANCH}"
 **结果文件写入**（每轮 — 含被 REVISION 打回轮）：
 
 ```bash
-# 結果ファイル書き込み（Brain はファイルを読む、stdout は読まない）
+# 写结果文件（Brain 读文件，不读 stdout）
 WORKSTREAM_COUNT=$(find "${SPRINT_DIR}" -name "contract-dod-ws*.md" 2>/dev/null | wc -l | tr -d ' ')
 cat > /workspace/.brain-result.json << BREOF
 {"propose_branch":"${PROPOSE_BRANCH}","workstream_count":${WORKSTREAM_COUNT},"task_plan_path":"${SPRINT_DIR}/task-plan.json"}
