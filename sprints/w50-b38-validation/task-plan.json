@@ -1,0 +1,39 @@
+{
+  "initiative_id": "pending",
+  "journey_type": "autonomous",
+  "journey_type_reason": "Brain 内部调度逻辑单元测试验证，无 UI 交互，无 HTTP endpoint",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "harness-initiative-b38.test.js 添加 @langchain/langgraph vi.mock",
+      "scope": "在 packages/brain/src/workflows/__tests__/harness-initiative-b38.test.js 顶部 vi.mock 区添加 vi.mock('@langchain/langgraph', ...) + vi.mock('@langchain/langgraph-checkpoint-postgres', ...) 块，确保测试不依赖包是否已安装",
+      "dod": [
+        "[ARTIFACT] harness-initiative-b38.test.js 顶部含 vi.mock('@langchain/langgraph', ...) 块",
+        "[BEHAVIOR] vitest run harness-initiative-b38.test.js 产出 3 passed，无 ERR_MODULE_NOT_FOUND"
+      ],
+      "files": [
+        "packages/brain/src/workflows/__tests__/harness-initiative-b38.test.js"
+      ],
+      "depends_on": [],
+      "complexity": "S",
+      "estimated_minutes": 20
+    },
+    {
+      "task_id": "ws2",
+      "title": "harness-initiative-b35/b36/b37.test.js 同步添加 @langchain/langgraph vi.mock",
+      "scope": "在 b35/b36/b37 三个测试文件顶部添加与 ws1 相同的 vi.mock('@langchain/langgraph', ...) 块，消除同类环境依赖",
+      "dod": [
+        "[ARTIFACT] b35/b36/b37 三文件均含 vi.mock('@langchain/langgraph') 块",
+        "[BEHAVIOR] vitest run b35/b36/b37 批量运行无 ERR_MODULE_NOT_FOUND，exit 0"
+      ],
+      "files": [
+        "packages/brain/src/workflows/__tests__/harness-initiative-b35.test.js",
+        "packages/brain/src/workflows/__tests__/harness-initiative-b36.test.js",
+        "packages/brain/src/workflows/__tests__/harness-initiative-b37.test.js"
+      ],
+      "depends_on": ["ws1"],
+      "complexity": "S",
+      "estimated_minutes": 20
+    }
+  ]
+}
