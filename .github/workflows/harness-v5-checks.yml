@@ -111,8 +111,8 @@ jobs:
           echo "📋 跑这些测试文件："
           echo "${{ steps.check-tests.outputs.test_files }}" | sed 's/^/  /'
           echo ""
-          # vitest 从 CLI 接受相对路径即可
-          npx vitest run ${{ steps.check-tests.outputs.test_files }} --reporter=verbose || {
+          # 用 helper 脚本把多行输出转换成空格分隔的参数，避免 GitHub Actions 内联展开把第二个文件当 shell 命令执行
+          bash packages/engine/scripts/devgate/run-vitest-files.sh "${{ steps.check-tests.outputs.test_files }}" || {
             echo "❌ 测试未通过（Green 阶段失败）"
             exit 1
           }
