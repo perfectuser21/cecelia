@@ -10,7 +10,7 @@ trap "rm -rf '$TMP_DIR'" EXIT
 
 node --input-type=module << NODEJS
 import { readBrainResult } from '$BRAIN_ROOT/src/harness-shared.js';
-import { writeFileSync } from 'fs';
+import { writeFileSync, rmSync } from 'fs';
 import { join } from 'path';
 const d = '$TMP_DIR';
 
@@ -25,7 +25,6 @@ if (r1.propose_branch !== 'cp-harness-propose-r1-test1234') process.exit(1);
 console.log('[smoke] PASS: proposer result read correctly');
 
 // Test 2: missing file → throws
-import { rmSync } from 'fs';
 rmSync(join(d, '.brain-result.json'));
 try {
   await readBrainResult(d, ['verdict']);
