@@ -89,7 +89,18 @@ Brain (Node.js, port 5221)
 
 ---
 
-## 5. 提交规则
+## 5. Dashboard 部署地址（CRITICAL）
+
+**Dashboard 访问地址：`http://perfect21:5211/`**（不是 localhost）
+
+- Brain API：`http://localhost:5221/`（本机内部调用用 localhost）
+- Dashboard 前端：`http://perfect21:5211/`（用户浏览器访问用此地址）
+- 每次 `npm run build` 后 dist 自动生效，无需重启容器
+- 新增页面/路由后必须同时在 `apps/api/features/*/index.ts` 注册路由 + 组件，否则路由不可达
+
+---
+
+## 6. 提交规则
 
 - 每个提交对应一个 Task
 - Version bump 遵循 semver

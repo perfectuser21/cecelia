@@ -1,6 +1,6 @@
 import { describe, test, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
-import SettingsPage from './SettingsPage';
+import BrainSystemTab from './BrainSystemTab';
 
 function mockFetch(consciousnessStatus: any, mutedStatus: any, patchResponses?: Record<string, any>) {
   return vi.spyOn(globalThis, 'fetch').mockImplementation((url: any, init?: any) => {
@@ -34,7 +34,7 @@ describe('SettingsPage', () => {
       { enabled: true, last_toggled_at: null, env_override: false },
       { enabled: false, last_toggled_at: null, env_override: false }
     );
-    render(<SettingsPage />);
+    render(<BrainSystemTab />);
     await waitFor(() => expect(screen.getByText(/意识开关/)).toBeInTheDocument());
     expect(screen.getByTestId('consciousness-toggle')).toHaveAttribute('aria-pressed', 'true');
   });
@@ -45,7 +45,7 @@ describe('SettingsPage', () => {
       { enabled: false, last_toggled_at: null, env_override: false },
       { consciousness: { enabled: false, last_toggled_at: '2026-04-21T00:00:00Z', env_override: false } }
     );
-    render(<SettingsPage />);
+    render(<BrainSystemTab />);
     await waitFor(() => screen.getByTestId('consciousness-toggle'));
     fireEvent.click(screen.getByTestId('consciousness-toggle'));
     await waitFor(() => {
@@ -61,7 +61,7 @@ describe('SettingsPage', () => {
       { enabled: false, last_toggled_at: null, env_override: true },
       { enabled: false, last_toggled_at: null, env_override: false }
     );
-    render(<SettingsPage />);
+    render(<BrainSystemTab />);
     await waitFor(() => screen.getByTestId('consciousness-env-override-warning'));
     expect(screen.getByTestId('consciousness-toggle')).toBeDisabled();
   });
@@ -71,7 +71,7 @@ describe('SettingsPage', () => {
       { enabled: true, last_toggled_at: null, env_override: false },
       { enabled: true, last_toggled_at: null, env_override: false }
     );
-    render(<SettingsPage />);
+    render(<BrainSystemTab />);
     await waitFor(() => expect(screen.getByText(/飞书静默开关/)).toBeInTheDocument());
     expect(screen.getByTestId('muted-toggle')).toHaveAttribute('aria-pressed', 'true');
   });
@@ -82,7 +82,7 @@ describe('SettingsPage', () => {
       { enabled: false, last_toggled_at: null, env_override: false },
       { muted: { enabled: true, last_toggled_at: '2026-04-21T00:00:00Z', env_override: false } }
     );
-    render(<SettingsPage />);
+    render(<BrainSystemTab />);
     await waitFor(() => screen.getByTestId('muted-toggle'));
     fireEvent.click(screen.getByTestId('muted-toggle'));
     await waitFor(() => {
@@ -98,7 +98,7 @@ describe('SettingsPage', () => {
       { enabled: true, last_toggled_at: null, env_override: false },
       { enabled: true, last_toggled_at: null, env_override: true }
     );
-    render(<SettingsPage />);
+    render(<BrainSystemTab />);
     await waitFor(() => screen.getByTestId('muted-env-override-warning'));
     expect(screen.getByTestId('muted-toggle')).toBeDisabled();
   });
