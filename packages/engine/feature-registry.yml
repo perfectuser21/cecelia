@@ -1054,3 +1054,11 @@ changelog:
       - "scripts/devgate/skeleton-shape-check.cjs"
       - "tests/devgate/skeleton-shape-check.test.ts"
       - "../../.github/workflows/harness-v5-checks.yml"
+  - version: "18.27.0"
+    date: "2026-05-14"
+    type: "feat"
+    summary: "B39 harness 协议重构 — 三个 SKILL 改为写 .brain-result.json，Brain 读文件替代 stdout 解析"
+    skills_changed:
+      - "harness-contract-proposer"
+      - "harness-contract-reviewer"
+      - "harness-evaluator"
