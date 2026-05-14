@@ -1055,6 +1055,11 @@ export async function runSubTaskNode(state, opts = {}) {
       // 注入 logical_task_id（如 "ws1"）让 spawnNode extractWorkstreamIndex 解出 WORKSTREAM_INDEX。
       // generator skill 检测到 WORKSTREAM_INDEX 空就 ABORT（dispatch 协议 fail）。
       logical_task_id: subTask.id,
+      // B38: 用 parsePrdNode/B37 修正后的 sprintDir 覆盖 subTask.payload.sprint_dir。
+      // subTask.payload.sprint_dir = 原始 payload 顶级值（如 "sprints"），未经 git diff 修正。
+      // generator spawnNode 读 task.payload.sprint_dir → SPRINT_DIR env，
+      // 不覆盖导致 generator 写到顶级 sprints/ 而非正确子目录（W49 实证 B38 根因）。
+      ...(state.sprintDir ? { sprint_dir: state.sprintDir } : {}),
       ...(fixCount > 0 && feedback ? { fix_round: fixCount, evaluator_feedback: feedback } : {}),
     },
   };

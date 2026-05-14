@@ -1,34 +1,29 @@
----
-id: task-f0828f8f
-type: task-card
-branch: cp-0411231056-f0828f8f-15fa-404d-b9c5-7f7ce4
-task_id: f0828f8f-15fa-404d-b9c5-7f7ce484fb27
-created: 2026-04-12
----
+# B38: runSubTaskNode 正确注入 sprintDir 到子任务 payload
 
-# Task Card: Dashboard KR5 阻断 Bug 清零 — 继续推进至可演示
+**类型**: fix
+**范围**: `packages/brain/src/workflows/harness-initiative.graph.js`
 
-## 根因分析（扫描结果）
+## 问题根因
 
-**Bug 1：KR 进度数据错误（P0，阻断演示）**
+`parsePrdNode`（B37）修正后的 `state.sprintDir`（如 `sprints/w49-b37-validation`）从未传递给 generator 容器。
+`runSubTaskNode` 构建 `taskForGraph` 时展开 `subTask.payload`（含原始 `sprint_dir: 'sprints'`），但未用
+`state.sprintDir` 覆盖，导致 generator `spawnNode` 读到 `SPRINT_DIR=sprints`（顶级目录），写文件到错误位置。
 
-- **现象**：LiveMonitor 和 Roadmap 两个页面中，KR1（AI自媒体线）显示 5%，KR2（AI私域线）显示 9%，ZenithJoy OKR 总进度约 39%（应为 77%）
-- **根因**：`task-goals.js` 的 `KR_SELECT` SQL 没有返回 `key_results.progress` 列（即手动设置的进度百分比）。该列在 DB 中已设置：KR1/KR2 均为 100，但前端只能拿到 `current_value`（5 和 9，是实际发布条数，不是百分比）
-- **涉及文件**：
-  - `packages/brain/src/routes/task-goals.js`（后端）
-  - `apps/dashboard/src/pages/live-monitor/LiveMonitorPage.tsx`（前端）
-  - `apps/dashboard/src/pages/roadmap/RoadmapPage.tsx`（前端）
+## 修复
 
-## 修复方案
+在 `taskForGraph.payload` 中追加 `...(state.sprintDir ? { sprint_dir: state.sprintDir } : {})`，
+确保 B37 修正值流向 generator `SPRINT_DIR` env var。
 
-1. **task-goals.js**：在 `KR_SELECT` 中添加 `COALESCE(progress, CASE WHEN target_value > 0 THEN ROUND(current_value::numeric / target_value::numeric * 100, 0) ELSE NULL END)::integer AS progress_pct`，在 `OBJ_SELECT` 中添加 `NULL::integer AS progress_pct`
+## DoD
 
-2. **LiveMonitorPage**：OKR progress 计算优先使用 `g.progress_pct`
+- [x] [ARTIFACT] `harness-initiative.graph.js` 含 `state.sprintDir ? { sprint_dir: state.sprintDir }` 注入逻辑
+  Test: node -e "const c=require('fs').readFileSync('packages/brain/src/workflows/harness-initiative.graph.js','utf8');if(!c.includes('state.sprintDir ? { sprint_dir: state.sprintDir }'))process.exit(1)"
 
-3. **RoadmapPage**：`normalizeGoalType` 优先使用 `g.progress_pct`
+- [x] [BEHAVIOR] `runSubTaskNode` 使用 `state.sprintDir` 覆盖 `subTask.payload.sprint_dir`（B37 修正值传到 generator）
+  Test: packages/brain/src/workflows/__tests__/harness-initiative-b38.test.js
 
-## 不做什么
+- [x] [BEHAVIOR] `state.sprintDir` 为 null 时保留 `subTask.payload.sprint_dir` 原值（无副作用）
+  Test: packages/brain/src/workflows/__tests__/harness-initiative-b38.test.js
 
-- 不新增功能
-- 不改样式
-- 不改 DB schema（只修改 SELECT 查询）
+- [x] [BEHAVIOR] `logical_task_id` 注入行为不受 B38 影响（向后兼容）
+  Test: packages/brain/src/workflows/__tests__/harness-initiative-b38.test.js
