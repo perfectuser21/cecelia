@@ -6,12 +6,13 @@
     {
       "task_id": "ws1",
       "title": "创建 B37 验证脚本 verify-b37.sh",
-      "scope": "在 sprints/w49-b37-validation/ 创建可执行验证脚本，含 4 项断言：(1) git diff 输出含目标路径 (2) sprint-prd.md 存在 (3) sprint-contract.md 存在 (4) Brain 日志无 ENOENT；脚本运行输出结构化结果并 exit 0",
+      "scope": "在 sprints/w49-b37-validation/ 创建可执行验证脚本，含 ≥4 条断言：(1) git diff 输出含目标路径 (2) sprint-prd.md 存在 (3) sprint-contract.md 存在 (4) Brain 日志无 ENOENT（动态查找容器名）；脚本运行 exit 0 输出 'B37 验证全部通过'",
       "dod": [
-        "[ARTIFACT] sprints/w49-b37-validation/verify-b37.sh 存在且含 ≥4 条 ✅ PASS 输出",
-        "[BEHAVIOR] sprint-contract.md 存在于正确目录（sprintDir 正确传递）",
-        "[BEHAVIOR] bash sprints/w49-b37-validation/verify-b37.sh 输出'B37 验证全部通过'且 exit 0",
-        "[BEHAVIOR] Brain Docker 日志无 ENOENT 关联 w49-b37-validation"
+        "[ARTIFACT] sprints/w49-b37-validation/verify-b37.sh 存在且含 ≥4 条 ✅ PASS 标记",
+        "[BEHAVIOR] git diff --name-only origin/main HEAD -- sprints/ 输出含 sprints/w49-b37-validation/ 路径",
+        "[BEHAVIOR] bash verify-b37.sh exit 0 且输出含 'B37 验证全部通过'",
+        "[BEHAVIOR] bash verify-b37.sh 输出 ≥4 条 ✅ PASS 断言",
+        "[BEHAVIOR] Brain Docker 日志（动态查找容器名）无 ENOENT 关联 w49-b37-validation"
       ],
       "files": [
         "sprints/w49-b37-validation/verify-b37.sh"
