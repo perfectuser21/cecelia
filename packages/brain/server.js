@@ -15,6 +15,7 @@ import traceRoutes from './src/trace-routes.js';
 import langfuseRoutes from './src/routes/langfuse.js';
 import memoryRoutes from './src/routes/memory.js';
 import settingsRoutes from './src/routes/settings.js';
+import janitorRoutes from './src/routes/janitor.js';
 import profileFactsRoutes from './src/routes/profile-facts.js';
 import clusterRoutes from './src/routes/cluster.js';
 import vpsMonitorRoutes from './src/routes/vps-monitor.js';
@@ -94,6 +95,7 @@ import { getScanStatus } from './src/task-generator-scheduler.js';
 import { waitForPortFree, listenWithRetry } from './src/startup-port-guard.js';
 
 const app = express();
+app.locals.pool = pool;
 const server = createServer(app);
 const PORT = process.env.PORT || process.env.BRAIN_PORT || 5221;
 
@@ -221,6 +223,7 @@ app.use(express.json({ limit: '4mb' }));
 // Mount memory routes (before brain routes to avoid conflicts)
 app.use('/api/brain/memory', memoryRoutes);
 app.use('/api/brain/settings', settingsRoutes);
+app.use('/api/brain/janitor', janitorRoutes);
 app.use('/api/brain/profile/facts', profileFactsRoutes);
 
 // Phase E1: Observer state monitoring
