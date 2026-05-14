@@ -35,6 +35,8 @@ import { runFinalE2E, attributeFailures } from '../harness-final-e2e.js';
 import { ensureHarnessWorktree } from '../harness-worktree.js';
 import { resolveGitHubToken } from '../harness-credentials.js';
 import { fetchAndShowOriginFile } from '../lib/git-fence.js';
+import { readFile, readdir } from 'node:fs/promises';
+import path from 'node:path';
 // B17 + B32: brain 代为 push 用 execFile（B17 加 final_evaluate PR_BRANCH fallback，B32 加 propose_branch fallback）
 const execFileDefault = promisify(execFileCb);
 const execFile = execFileDefault;
@@ -615,7 +617,7 @@ ${state.task.description || state.task.title || ''}
 }
 export async function parsePrdNode(state) {
   if (state.taskPlan && state.prdContent) {
-    return { taskPlan: state.taskPlan, prdContent: state.prdContent };
+    return { taskPlan: state.taskPlan, prdContent: state.prdContent, sprintDir: state.sprintDir };
   }
   let taskPlan = null;
   try {
@@ -628,19 +630,37 @@ export async function parsePrdNode(state) {
   if (taskPlan && (taskPlan.initiative_id === 'pending' || !taskPlan.initiative_id)) {
     taskPlan.initiative_id = state.initiativeId;
   }
-  const sprintDir = state.task?.payload?.sprint_dir || 'sprints';
+  let sprintDir = state.task?.payload?.sprint_dir || 'sprints';
   let prdContent = state.plannerOutput || '';
   try {
-    const fsPromises = await import('node:fs/promises');
-    const pathMod = (await import('node:path')).default;
-    prdContent = await fsPromises.readFile(
-      pathMod.join(state.worktreePath, sprintDir, 'sprint-prd.md'),
+    prdContent = await readFile(
+      path.join(state.worktreePath, sprintDir, 'sprint-prd.md'),
       'utf8'
     );
   } catch (err) {
-    console.error(`[harness-initiative-graph] read sprint-prd.md failed (${err.message}), falling back to planner stdout`);
+    // B34: defense-in-depth — planner may create sprints/{name}/ subdirectory.
+    try {
+      const entries = await readdir(path.join(state.worktreePath, sprintDir), { withFileTypes: true });
+      for (const entry of entries) {
+        if (!entry.isDirectory()) continue;
+        try {
+          prdContent = await readFile(
+            path.join(state.worktreePath, sprintDir, entry.name, 'sprint-prd.md'),
+            'utf8'
+          );
+          sprintDir = path.join(sprintDir, entry.name);
+          break;
+        } catch { /* keep scanning */ }
+      }
+      if (prdContent === state.plannerOutput || prdContent === '') {
+        // Still not found in subdir, log error and fallback
+        console.error(`[harness-initiative-graph] read sprint-prd.md failed in all subdirs, falling back to planner stdout`);
+      }
+    } catch (readdirErr) {
+      console.error(`[harness-initiative-graph] readdir failed (${readdirErr.message}), falling back to planner stdout`);
+    }
   }
-  return { taskPlan, prdContent };  // taskPlan may be null — that is OK
+  return { taskPlan, prdContent, sprintDir };  // taskPlan may be null — that is OK
 }
 export async function runGanLoopNode(state, opts = {}) {
   if (state.ganResult) return { ganResult: state.ganResult };
