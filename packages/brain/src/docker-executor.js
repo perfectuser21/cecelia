@@ -95,6 +95,66 @@ export function _resetDockerAvailability() {
 }
 
 /**
+ * 检查 Docker 镜像是否存在本地，不存在则自动从 docker/build.sh 重建。
+ *
+ * 根因：cecelia/runner:latest 仅本地 build，机器重启后镜像丢失（exit=125）。
+ * 方案：在 spawn 前先 inspect，缺失时自动触发 docker/build.sh 重建，最多等 10min。
+ *
+ * @param {string} image — e.g. 'cecelia/runner:latest'
+ * @returns {Promise<{ok:boolean, rebuilt:boolean, error?:string}>}
+ */
+export async function ensureDockerImage(image) {
+  // Step 1: check if image exists locally
+  const exists = await new Promise((resolve) => {
+    const proc = spawn('docker', ['image', 'inspect', image, '--format', '{{.Id}}'], {
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    proc.on('error', () => resolve(false));
+    proc.on('exit', (code) => resolve(code === 0));
+  });
+
+  if (exists) return { ok: true, rebuilt: false };
+
+  // Step 2: image missing — try to rebuild from docker/build.sh
+  // Only rebuild the default cecelia runner image (don't rebuild arbitrary images)
+  if (image !== DEFAULT_IMAGE) {
+    return { ok: false, rebuilt: false, error: `Image ${image} not found locally and is not the default runner (cannot auto-rebuild)` };
+  }
+
+  const scriptDir = path.resolve(process.env.CECELIA_REPO_ROOT || DEFAULT_WORKTREE_BASE, 'docker');
+  const buildScript = path.join(scriptDir, 'build.sh');
+
+  if (!existsSync(buildScript)) {
+    return { ok: false, rebuilt: false, error: `docker/build.sh not found at ${buildScript}` };
+  }
+
+  console.log(`[docker-executor] Image ${image} not found locally — auto-rebuilding from ${buildScript}`);
+
+  const built = await new Promise((resolve) => {
+    const proc = spawn('bash', [buildScript], {
+      stdio: ['ignore', 'pipe', 'pipe'],
+      timeout: 10 * 60 * 1000, // 10 min max
+    });
+    let stderr = '';
+    proc.stderr.on('data', (c) => { stderr += c.toString(); });
+    proc.stdout.on('data', (c) => { console.log('[docker-executor] build:', c.toString().trim()); });
+    proc.on('error', (err) => resolve({ ok: false, error: err.message }));
+    proc.on('exit', (code) => {
+      if (code === 0) resolve({ ok: true });
+      else resolve({ ok: false, error: stderr.slice(-500) });
+    });
+  });
+
+  if (!built.ok) {
+    console.error(`[docker-executor] Auto-rebuild failed: ${built.error}`);
+    return { ok: false, rebuilt: false, error: `Auto-rebuild failed: ${built.error}` };
+  }
+
+  console.log(`[docker-executor] Auto-rebuild succeeded: ${image}`);
+  return { ok: true, rebuilt: true };
+}
+
+/**
  * 把 prompt 写入临时文件（避免 argv 过长 / 引号转义陷阱）
  * 文件挂载到 container 的 /workspace/.cecelia-prompts/{file}.txt
  */
@@ -362,6 +422,28 @@ export async function executeInDocker(opts) {
   await resolveAccount(opts, { taskId });
 
   const { args, _envFinal, name, memoryMB, cpuCores, image, cidfile } = buildDockerArgs(opts);
+
+  // 镜像预检：机器重启后本地镜像丢失（exit=125）时自动触发 docker/build.sh 重建
+  const imgCheck = await ensureDockerImage(image);
+  if (!imgCheck.ok) {
+    const errMsg = `Docker image not available: ${imgCheck.error || image}`;
+    console.error(`[docker-executor] ${errMsg}`);
+    return {
+      exit_code: 125,
+      stdout: '',
+      stderr: errMsg,
+      duration_ms: 0,
+      container: name,
+      container_id: null,
+      command: `docker run ${image}`,
+      timed_out: false,
+      started_at: new Date().toISOString(),
+      ended_at: new Date().toISOString(),
+    };
+  }
+  if (imgCheck.rebuilt) {
+    console.log(`[docker-executor] Image was auto-rebuilt: ${image}`);
+  }
 
   // --cidfile 要求文件不存在；之前残留的 cidfile 会让 docker run 立即失败
   if (cidfile && existsSync(cidfile)) {
