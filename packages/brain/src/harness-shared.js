@@ -221,3 +221,37 @@ export async function readVerdictFile(worktreePath) {
     return null;
   }
 }
+
+/**
+ * 容器退出后从 worktree 读 .brain-result.json，验证 requiredFields 存在。
+ * 文件不存在 → 抛 ContractViolation: missing_result_file
+ * 字段缺失或为 null → 抛 ContractViolation: invalid_result_file: missing field {field}
+ *
+ * @param {string} worktreePath    worktree 根目录路径
+ * @param {string[]} requiredFields  必须存在且非 null 的字段名列表
+ * @returns {Promise<object>}      parsed .brain-result.json 对象
+ */
+export async function readBrainResult(worktreePath, requiredFields = []) {
+  const filePath = path.join(worktreePath, '.brain-result.json');
+  if (!existsSync(filePath)) {
+    const err = new Error(`ContractViolation: missing_result_file — ${filePath}`);
+    err.code = 'missing_result_file';
+    throw err;
+  }
+  let data;
+  try {
+    data = JSON.parse(readFileSync(filePath, 'utf8'));
+  } catch (e) {
+    const err = new Error(`ContractViolation: invalid_result_file — JSON parse failed: ${e.message}`);
+    err.code = 'invalid_result_file';
+    throw err;
+  }
+  for (const field of requiredFields) {
+    if (data[field] === null || data[field] === undefined) {
+      const err = new Error(`ContractViolation: invalid_result_file: missing field ${field}`);
+      err.code = 'invalid_result_file';
+      throw err;
+    }
+  }
+  return data;
+}

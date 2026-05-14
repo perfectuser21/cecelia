@@ -235,11 +235,20 @@ Round N, 阈值固定 7/10（不随 round 衰减）。
 - 换思路：xxx
 ```
 
-### Step 4: 产出 final JSON（字面量，runner 用来判）
+### Step 4: 写结果文件（Brain 读文件而非 stdout）
 
+**输出协议（v6.5.0+ — 文件协议）**：
+
+最终输出必须写入 `/workspace/.brain-result.json`，Brain 读文件不读 stdout：
+
+```bash
+# 写结果文件（Brain 读文件而非 stdout）
+cat > /workspace/.brain-result.json << BREOF
+{"verdict":"<APPROVED|REVISION>","rubric_scores":{"dod_machineability":X,"scope_match_prd":X,"test_is_red":X,"internal_consistency":X,"risk_registered":X,"verification_oracle_completeness":X,"behavior_count_position":X},"feedback":"<feedback text or empty>"}
+BREOF
 ```
-{"verdict": "APPROVED" 或 "REVISION", "rounds_observed": N, "issues_count": M, "rubric_scores": {"dod_machineability": X, "scope_match_prd": X, "test_is_red": X, "internal_consistency": X, "risk_registered": X, "verification_oracle_completeness": X, "behavior_count_position": X}, "pivot_signal": true|false}
-```
+
+REVISION 时 feedback 必须含具体修改方向。
 
 ---
 

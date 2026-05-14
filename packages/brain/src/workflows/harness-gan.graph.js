@@ -31,11 +31,9 @@ import {
 import { fetchAndShowOriginFile } from '../lib/git-fence.js';
 import { verifyProposerOutput } from '../lib/contract-verify.js';
 import { LLM_RETRY } from './retry-policies.js';
-import { loadSkillContent } from '../harness-shared.js';
+import { loadSkillContent, readBrainResult } from '../harness-shared.js';
 
 const execFile = promisify(execFileCb);
-
-const VERDICT_RE = /VERDICT:\s*(APPROVED|REVISION)/i;
 
 // 递归上限：GAN 对抗无轮次上限（budgetCapUsd 才是硬保护），但 LangGraph 默认 25 不够。
 // 100 = 50 轮 propose+review 预留一倍。
@@ -108,44 +106,11 @@ export function detectConvergenceTrend(rubricHistory) {
   return 'converging';
 }
 
-// ── 纯函数辅助（从 harness-gan-loop.js 搬移）──────────────────────────────
-
-export function extractVerdict(stdout) {
-  const m = String(stdout || '').match(VERDICT_RE);
-  return m ? m[1].toUpperCase() : 'REVISION';
-}
-
 // Round-based 阈值（对齐 Anthropic harness-design 2026-03 "each criterion has a hard threshold"）
 // Round 1-2 严格（7 分），Round 3-4 放宽（6 分），给 Reviewer 识别收敛但仍严肃的空间。
 export function thresholdForRound(round) {
   if (round <= 2) return 7;
   return 6; // Round 3+
-}
-
-// 从 Reviewer stdout 里解析 rubric_scores JSON（SKILL v7 产出格式）
-// 支持两种：
-//   1. final JSON 字面量：{"verdict":..., "rubric_scores":{"dod_machineability":X,...}, ...}
-//   2. markdown code fence：```json\n{"dod_machineability":X,...}\n```
-// 找不到或解析失败 → 返回 null，调用方 fallback 到 LLM 文本 verdict。
-export function extractRubricScores(stdout) {
-  const s = String(stdout || '');
-  // 优先匹配含 rubric_scores 嵌套的 final JSON
-  const finalJsonRe = /\{[^{}]*"rubric_scores"\s*:\s*(\{[^{}]+\})[^{}]*\}/;
-  const mFinal = s.match(finalJsonRe);
-  if (mFinal) {
-    try {
-      return JSON.parse(mFinal[1]);
-    } catch { /* fall through */ }
-  }
-  // Fallback：直接找 ```json ... ``` 里含 5 维度 key 的对象
-  const fenceRe = /```json\s*(\{[^`]*?"dod_machineability"[^`]*?\})\s*```/;
-  const mFence = s.match(fenceRe);
-  if (mFence) {
-    try {
-      return JSON.parse(mFence[1]);
-    } catch { /* ignore */ }
-  }
-  return null;
 }
 
 // 根据 rubric scores 和 round 计算权威 verdict（代码判 PASS，不信 LLM 文字）
@@ -163,29 +128,6 @@ export function computeVerdictFromRubric(scores, round) {
   if (nums.some((n) => n === null)) return null; // 维度不完整
   const allPass = nums.every((n) => n >= threshold);
   return allPass ? 'APPROVED' : 'REVISION';
-}
-
-export function extractFeedback(stdout) {
-  const s = String(stdout || '');
-  if (!s) return '';
-  return s.slice(-2000);
-}
-
-// 从 proposer 的 stdout 提取 propose_branch（SKILL Step 3 输出 JSON 字面量）。
-// 格式形如：{"verdict": "PROPOSED", "propose_branch": "cp-harness-propose-rN-XXXXXXXX", ...}
-// 找不到返回 null（兜底，不抛错）。
-const PROPOSE_BRANCH_RE = /"propose_branch"\s*:\s*"([^"]+)"/;
-export function extractProposeBranch(stdout) {
-  const m = String(stdout || '').match(PROPOSE_BRANCH_RE);
-  return m ? m[1] : null;
-}
-
-// fallback：SKILL Step 4 实际 push 格式 cp-harness-propose-r{round}-{taskIdSlice}。
-// 跟 SKILL push 一致，即使 stdout 漏 JSON 也能命中真实分支。
-export function fallbackProposeBranch(taskId, round) {
-  const taskSlice = String(taskId || 'unknown').slice(0, 8);
-  const r = Number.isInteger(round) && round >= 1 ? round : 1;
-  return `cp-harness-propose-r${r}-${taskSlice}`;
 }
 
 /**
@@ -344,13 +286,18 @@ export function createGanContractNodes(executor, ctx) {
 
   async function proposer(state) {
     const nextRound = (state.round || 0) + 1;
+    const computedBranch = `cp-harness-propose-r${nextRound}-${taskId.slice(0, 8)}`;
+
+    // 清理上轮残留结果文件，防止 executor 失败时读到旧数据
+    const { unlink } = await import('node:fs/promises');
+    try { await unlink(path.join(worktreePath, '.brain-result.json')); } catch { /* 首轮不存在，忽略 */ }
+
     const result = await executor({
       task: { id: taskId, task_type: 'harness_contract_propose' },
       prompt: buildProposerPrompt(state.prdContent, state.feedback, nextRound),
       worktreePath,
       timeoutMs: 1800000,
       env: {
-        // CECELIA_CREDENTIALS 不传 → executeInDocker middleware 走 selectBestAccount
         CECELIA_TASK_TYPE: 'harness_contract_propose',
         HARNESS_NODE: 'proposer',
         HARNESS_SPRINT_DIR: sprintDir,
@@ -360,6 +307,7 @@ export function createGanContractNodes(executor, ctx) {
         SPRINT_DIR: sprintDir,
         PLANNER_BRANCH: 'main',
         PROPOSE_ROUND: String(nextRound),
+        PROPOSE_BRANCH: computedBranch,
         GITHUB_TOKEN: githubToken,
       },
     });
@@ -367,10 +315,15 @@ export function createGanContractNodes(executor, ctx) {
       throw new Error(`proposer_failed: exit=${result?.exit_code} stderr=${(result?.stderr || '').slice(0, 300)}`);
     }
     const contractContent = await readContractFile(worktreePath, sprintDir);
-    // 解析 stdout 中的 propose_branch（proposer SKILL Step 3 输出 JSON 字面量）。
-    // 即使本轮被打回，先把 branch 存下；后续轮次会覆写成新 branch（reducer 取最新）。
-    // APPROVED 终态时即 approved contract 的 git branch。
-    const proposeBranch = extractProposeBranch(result.stdout) || fallbackProposeBranch(taskId, nextRound);
+
+    // 读容器写入的结果文件（双重验证：Brain 计算值 vs 容器写入值必须一致）
+    const resultData = await readBrainResult(worktreePath, ['propose_branch']);
+    if (resultData.propose_branch !== computedBranch) {
+      const err = new Error(`ContractViolation: propose_branch_mismatch — expected=${computedBranch} got=${resultData.propose_branch}`);
+      err.code = 'propose_branch_mismatch';
+      throw err;
+    }
+    const proposeBranch = computedBranch;
 
     // 防御：proposer SKILL 应每轮写 sprints/task-plan.json（v7.1.0+），缺失打 warn 给下游兜底
     const taskPlanPath = path.join(worktreePath, sprintDir, 'task-plan.json');
@@ -395,13 +348,16 @@ export function createGanContractNodes(executor, ctx) {
   }
 
   async function reviewer(state) {
+    // 清理上轮残留结果文件，防止 executor 失败时读到旧数据
+    const { unlink } = await import('node:fs/promises');
+    try { await unlink(path.join(worktreePath, '.brain-result.json')); } catch { /* 忽略 */ }
+
     const result = await executor({
       task: { id: taskId, task_type: 'harness_contract_review' },
       prompt: buildReviewerPrompt(state.prdContent, state.contractContent, state.round),
       worktreePath,
       timeoutMs: 1800000,
       env: {
-        // CECELIA_CREDENTIALS 不传 → executeInDocker middleware 走 selectBestAccount
         CECELIA_TASK_TYPE: 'harness_contract_review',
         HARNESS_NODE: 'reviewer',
         HARNESS_SPRINT_DIR: sprintDir,
@@ -421,25 +377,20 @@ export function createGanContractNodes(executor, ctx) {
     if (nextCost > budgetCapUsd) {
       throw new Error(`gan_budget_exceeded: spent=${nextCost.toFixed(3)} cap=${budgetCapUsd}`);
     }
-    // Verdict 决策优先级（对齐 Anthropic harness-design 2026-03 "each criterion has hard threshold"）：
-    //   1. rubric_scores 齐全 → 代码判阈值（权威 — LLM 只打分不判决）
-    //   2. rubric_scores 缺失 → fallback 到 LLM 文本 "VERDICT: X"（老逻辑）
-    //   3. 用 rubricHistory 走势检测 — diverging/oscillating 时 force APPROVED + P1 alert
-    //      （替代旧的轮数硬 cap：不限轮数，但发散自动收敛）
+
+    // 读容器写入的结果文件（rubric_scores + verdict + feedback）
     const currentRound = state.round || 0;
-    const rubricScores = extractRubricScores(result.stdout);
+    const resultData = await readBrainResult(worktreePath, ['verdict', 'rubric_scores']);
+    const rubricScores = resultData.rubric_scores;
     const rubricVerdict = computeVerdictFromRubric(rubricScores, currentRound);
-    const llmTextVerdict = extractVerdict(result.stdout);
-    // authoritative verdict：rubric 齐全优先，否则用 LLM 文本
-    let verdict = rubricVerdict || llmTextVerdict;
-    const verdictSource = rubricVerdict ? 'rubric' : 'llm_text';
-    if (rubricVerdict && rubricVerdict !== llmTextVerdict) {
-      console.warn(`[harness-gan] round=${currentRound} rubric_verdict=${rubricVerdict} ≠ llm_text=${llmTextVerdict} — 按 rubric 判（代码权威）`);
+    // rubric 代码判决优先；文件 verdict 作为 fallback（LLM 打分但代码判阈值）
+    let verdict = rubricVerdict || resultData.verdict;
+    const verdictSource = rubricVerdict ? 'rubric' : 'file_verdict';
+    if (rubricVerdict && rubricVerdict !== resultData.verdict) {
+      console.warn(`[harness-gan] round=${currentRound} rubric_verdict=${rubricVerdict} ≠ file_verdict=${resultData.verdict} — 按 rubric 判（代码权威）`);
     }
 
-    // 收敛检测：把当前轮 scores 拼到历史里，判最近 3 轮趋势。
-    // - converging / insufficient_data：按上面 verdict 走（不 force）
-    // - diverging / oscillating：force APPROVED + forcedApproval=true + P1 alert
+    // 收敛检测：把当前轮 scores 拼到历史里，判最近 3 轮趋势
     const newHistoryEntry = rubricScores ? { round: currentRound, scores: rubricScores } : null;
     const combinedHistory = newHistoryEntry
       ? [...(state.rubricHistory || []), newHistoryEntry]
@@ -447,18 +398,18 @@ export function createGanContractNodes(executor, ctx) {
     const trend = detectConvergenceTrend(combinedHistory);
     let forcedApproval = false;
     if (verdict !== 'APPROVED' && (trend === 'diverging' || trend === 'oscillating')) {
-      console.warn(`[harness-gan][P1] GAN ${trend} at round=${currentRound} — force APPROVED 进 Phase B (verdict_before=${verdict}, source=${verdictSource}, history_len=${combinedHistory.length})`);
+      console.warn(`[harness-gan][P1] GAN ${trend} at round=${currentRound} — force APPROVED (verdict_before=${verdict}, source=${verdictSource}, history_len=${combinedHistory.length})`);
       verdict = 'APPROVED';
       forcedApproval = true;
     }
 
     const patch = { costUsd: nextCost, verdict, forcedApproval };
     if (newHistoryEntry) {
-      // reducer 会 append，所以 patch 给单条新 entry。
+      // reducer 会 append，所以 patch 给单条新 entry
       patch.rubricHistory = [newHistoryEntry];
     }
     if (verdict !== 'APPROVED') {
-      patch.feedback = extractFeedback(result.stdout);
+      patch.feedback = resultData.feedback || '';
     }
     return patch;
   }

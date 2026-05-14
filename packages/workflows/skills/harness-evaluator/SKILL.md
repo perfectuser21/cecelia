@@ -183,15 +183,19 @@ fi
 ```bash
 DOD_FILE="${SPRINT_DIR}/contract-dod-ws${WORKSTREAM_N}.md"
 if [[ ! -f "$DOD_FILE" ]]; then
-  echo '{"verdict": "FAIL", "task_id": "'"$TASK_ID"'", "workstream": "ws'"$WORKSTREAM_N"'", "failed_items": [], "feedback": "DoD 文件不存在：'"$DOD_FILE"'，Generator 未产出合同 DoD，请检查 Proposer 是否已输出对应 workstream 的 DoD 文件"}'
+  cat > /workspace/.brain-result.json << BREOF
+{"verdict":"FAIL","task_id":"$TASK_ID","failed_step":"dod_missing","log_excerpt":null}
+BREOF
   exit 0
 fi
 cat "$DOD_FILE"
 ```
 
 若提取结果中 `[BEHAVIOR]` 条目数量为 0，输出 FAIL：
-```
-{"verdict": "FAIL", "task_id": "...", "workstream": "ws<N>", "failed_items": [], "feedback": "DoD 文件中无 [BEHAVIOR] 条目，无法验证，请检查合同格式"}
+```bash
+cat > /workspace/.brain-result.json << BREOF
+{"verdict":"FAIL","task_id":"$TASK_ID","failed_step":"no_behavior","log_excerpt":null}
+BREOF
 ```
 
 提取所有 `[BEHAVIOR]` 条目的 `Test:` 字段命令。格式示例：
@@ -230,14 +234,18 @@ Test: curl -s localhost:5221/api/brain/tasks/$TARGET_TASK_ID | jq -r '.status'
 
 **全部通过时**（所有 `[BEHAVIOR]` exit 0 且结果匹配期望）：
 
-```
-{"verdict": "PASS", "task_id": "<TASK_ID>", "workstream": "ws<WORKSTREAM_N>", "all_dod": "passed", "checked": <N>}
+```bash
+cat > /workspace/.brain-result.json << BREOF
+{"verdict":"PASS","task_id":"$TASK_ID","failed_step":null,"log_excerpt":null}
+BREOF
 ```
 
 **有任何失败时**：
 
-```
-{"verdict": "FAIL", "task_id": "<TASK_ID>", "workstream": "ws<WORKSTREAM_N>", "failed_items": [{"dod": "<原条目>", "command": "<执行的命令>", "got": "<实际输出>", "expected": "<期望值>"}], "feedback": "<具体失败原因，指明文件/函数/行为，附修复方向>"}
+```bash
+cat > /workspace/.brain-result.json << BREOF
+{"verdict":"FAIL","task_id":"$TASK_ID","failed_step":"<失败的 DoD 条目描述>","log_excerpt":"<实际输出 vs 期望值，具体修复方向>"}
+BREOF
 ```
 
 **`feedback` 写作规则**：
@@ -255,7 +263,9 @@ Test: curl -s localhost:5221/api/brain/tasks/$TARGET_TASK_ID | jq -r '.status'
 ```bash
 CONTRACT="${SPRINT_DIR}/contract-draft.md"
 if [[ ! -f "$CONTRACT" ]]; then
-  echo "{\"verdict\": \"FAIL\", \"task_id\": \"$TASK_ID\", \"mode\": \"e2e\", \"journey_type\": \"$JOURNEY_TYPE\", \"failed_step\": \"setup\", \"log_excerpt\": \"\", \"feedback\": \"合同文件不存在：$CONTRACT\"}"
+  cat > /workspace/.brain-result.json << BREOF
+{"verdict":"FAIL","task_id":"$TASK_ID","failed_step":"setup","log_excerpt":"合同文件不存在：$CONTRACT"}
+BREOF
   exit 0
 fi
 
@@ -264,7 +274,9 @@ awk '/^## E2E 验收/{found=1} found && /^```bash/{in_block=1; next} in_block &&
   "$CONTRACT" > /tmp/e2e-verify.sh
 
 if [[ ! -s /tmp/e2e-verify.sh ]]; then
-  echo "{\"verdict\": \"FAIL\", \"task_id\": \"$TASK_ID\", \"mode\": \"e2e\", \"journey_type\": \"$JOURNEY_TYPE\", \"failed_step\": \"setup\", \"log_excerpt\": \"\", \"feedback\": \"合同中未找到 ## E2E 验收 区块或区块内无 bash 脚本\"}"
+  cat > /workspace/.brain-result.json << BREOF
+{"verdict":"FAIL","task_id":"$TASK_ID","failed_step":"setup","log_excerpt":"合同中未找到 ## E2E 验收 区块或区块内无 bash 脚本"}
+BREOF
   exit 0
 fi
 chmod +x /tmp/e2e-verify.sh
@@ -285,7 +297,9 @@ chmod +x /tmp/e2e-verify.sh
 # B33 检测：扫描 e2e 脚本是否含 Brain API URL
 if grep -qE "localhost:5221/api/brain/|/api/brain/(ping|health|tasks|tick|status)" /tmp/e2e-verify.sh; then
   DRIFT_LINE=$(grep -E "localhost:5221/api/brain/|/api/brain/(ping|health|tasks|tick|status)" /tmp/e2e-verify.sh | head -1)
-  echo "{\"verdict\": \"FAIL\", \"task_id\": \"$TASK_ID\", \"mode\": \"e2e\", \"journey_type\": \"$JOURNEY_TYPE\", \"failed_step\": \"url_validation\", \"log_excerpt\": \"$DRIFT_LINE\", \"feedback\": \"planner_drift: e2e 脚本含 Brain API URL（/api/brain/），e2e 验收应针对 playground (localhost:3000) 而非 Brain (localhost:5221)。请修正合同 ## E2E 验收 区块，用 localhost:\\$PLAYGROUND_PORT 替换 localhost:5221/api/brain/ping 等 Brain 地址\"}"
+  cat > /workspace/.brain-result.json << BREOF
+{"verdict":"FAIL","task_id":"$TASK_ID","failed_step":"url_validation","log_excerpt":"$DRIFT_LINE"}
+BREOF
   exit 0
 fi
 ```
@@ -314,7 +328,9 @@ timeout 120 bash /tmp/e2e-verify.sh 2>&1 | tee /tmp/e2e-result.log
 EXIT_CODE=${PIPESTATUS[0]}
 # timeout 退出码 124 表示超时
 if [[ $EXIT_CODE -eq 124 ]]; then
-  echo '{"verdict": "FAIL", "task_id": "'"$TASK_ID"'", "mode": "e2e", "journey_type": "'"$JOURNEY_TYPE"'", "failed_step": "timeout", "log_excerpt": "", "feedback": "E2E 脚本执行超时（120 秒），请检查被测服务是否正常启动或脚本是否有无限等待"}'
+  cat > /workspace/.brain-result.json << BREOF
+{"verdict":"FAIL","task_id":"$TASK_ID","failed_step":"timeout","log_excerpt":"E2E 脚本执行超时（120 秒），请检查被测服务是否正常启动或脚本是否有无限等待"}
+BREOF
   exit 0
 fi
 ```
@@ -332,35 +348,47 @@ fi
 
 **脚本 exit 0（通过）**：
 
-```
-{"verdict": "PASS", "task_id": "<TASK_ID>", "mode": "e2e", "journey_type": "<JOURNEY_TYPE>"}
+```bash
+cat > /workspace/.brain-result.json << BREOF
+{"verdict":"PASS","task_id":"$TASK_ID","failed_step":null,"log_excerpt":null}
+BREOF
 ```
 
 **脚本 exit ≠ 0（失败）**：
 
 分析 `/tmp/e2e-result.log`，定位哪个步骤失败（对照合同的 Step 1 / Step 2 / Step 3）：
 
-```
-{"verdict": "FAIL", "task_id": "<TASK_ID>", "mode": "e2e", "journey_type": "<JOURNEY_TYPE>", "failed_step": "<Step N>", "log_excerpt": "<失败行前后 5 行>", "feedback": "<具体失败原因 + 对应 workstream 修复方向>"}
+```bash
+cat > /workspace/.brain-result.json << BREOF
+{"verdict":"FAIL","task_id":"$TASK_ID","failed_step":"<Step N>","log_excerpt":"<失败行前后 5 行 + 具体失败原因 + 修复方向>"}
+BREOF
 ```
 
 ---
 
 ## 输出规范
 
-**最后一条消息必须是纯 JSON**，示例：
+**输出协议（v1.5.0+ — 文件协议）**：最终结果写入 `/workspace/.brain-result.json`，Brain 读文件不读 stdout。
 
-```
-{"verdict": "PASS", "task_id": "abc123", "workstream": "ws2", "all_dod": "passed", "checked": 3}
+示例（PASS）：
+
+```bash
+cat > /workspace/.brain-result.json << BREOF
+{"verdict":"PASS","task_id":"$TASK_ID","failed_step":null,"log_excerpt":null}
+BREOF
 ```
 
-```
-{"verdict": "FAIL", "task_id": "abc123", "workstream": "ws2", "failed_items": [{"dod": "[BEHAVIOR] status = completed", "command": "curl -s localhost:5221/api/brain/tasks/abc123 | jq -r '.status'", "got": "in_progress", "expected": "completed"}], "feedback": "task-executor.js 未调用 updateTaskStatus，任务完成后状态未从 in_progress 变为 completed。修复：在 ws2 的任务完成回调中加 PATCH /api/brain/tasks/:id {status: 'completed'}"}
+示例（FAIL）：
+
+```bash
+cat > /workspace/.brain-result.json << BREOF
+{"verdict":"FAIL","task_id":"$TASK_ID","failed_step":"task-executor.js 未调用 updateTaskStatus，任务完成后状态未从 in_progress 变为 completed","log_excerpt":"got: in_progress, expected: completed"}
+BREOF
 ```
 
 **禁止**：
-- 输出 JSON 时加 markdown 代码块（```json）
-- 输出摘要/说明文字后再附 JSON（最后一条消息只有 JSON）
+- 用 echo 输出 verdict JSON 到 stdout（Brain 不读 stdout）
+- 输出摘要/说明文字代替写文件（必须真正写入 /workspace/.brain-result.json）
 
 ---
 

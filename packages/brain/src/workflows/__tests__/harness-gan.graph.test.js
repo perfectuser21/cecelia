@@ -1,19 +1,30 @@
 import { describe, it, expect, vi } from 'vitest';
 import path from 'node:path';
 import { mkdtemp, rm, writeFile, mkdir } from 'node:fs/promises';
+import { writeFileSync } from 'node:fs';
 import os from 'node:os';
 
 import { createGanContractNodes } from '../harness-gan.graph.js';
+
+// B39: 新协议要求 executor mock 写 .brain-result.json（propose_branch 字段）
+// computedBranch = cp-harness-propose-r{round}-{taskId.slice(0,8)}
+// taskId='test-task' → slice(0,8)='test-tas' → r1 branch='cp-harness-propose-r1-test-tas'
+function makeExecutorWithResultFile(worktreePath, overrides = {}) {
+  return vi.fn(async ({ env }) => {
+    const branch = env.PROPOSE_BRANCH;
+    writeFileSync(
+      path.join(worktreePath, '.brain-result.json'),
+      JSON.stringify({ propose_branch: branch, workstream_count: 1, ...overrides }),
+    );
+    return { exit_code: 0, stdout: '', cost_usd: 0.01 };
+  });
+}
 
 describe('GAN proposer node task-plan.json access 校验 [BEHAVIOR]', () => {
   it('proposer 跑完缺 sprints/task-plan.json 时应打 console.warn 不抛错', async () => {
     const tmp = await mkdtemp(path.join(os.tmpdir(), 'gan-proposer-test-'));
     try {
-      const fakeExecutor = vi.fn().mockResolvedValue({
-        exit_code: 0,
-        stdout: '{"verdict":"PROPOSED","propose_branch":"cp-test-r1-abc","workstream_count":1}',
-        cost_usd: 0.01,
-      });
+      const fakeExecutor = makeExecutorWithResultFile(tmp);
       const fakeReadContract = vi.fn().mockResolvedValue('# fake contract');
 
       const { proposer } = createGanContractNodes(fakeExecutor, {
@@ -28,7 +39,8 @@ describe('GAN proposer node task-plan.json access 校验 [BEHAVIOR]', () => {
       const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
       const result = await proposer({ round: 0, prdContent: 'x', feedback: null, costUsd: 0 });
 
-      expect(result).toMatchObject({ proposeBranch: 'cp-test-r1-abc', round: 1 });
+      // B39: proposeBranch 由 Brain 计算，格式 cp-harness-propose-r1-{taskId.slice(0,8)}
+      expect(result).toMatchObject({ proposeBranch: 'cp-harness-propose-r1-test-tas', round: 1 });
       const warnMsg = warnSpy.mock.calls.flat().join(' ');
       expect(warnMsg).toMatch(/missing.*task-plan\.json/i);
       warnSpy.mockRestore();
@@ -43,11 +55,7 @@ describe('GAN proposer node task-plan.json access 校验 [BEHAVIOR]', () => {
       await mkdir(path.join(tmp, 'sprints'), { recursive: true });
       await writeFile(path.join(tmp, 'sprints', 'task-plan.json'), '{"tasks":[]}');
 
-      const fakeExecutor = vi.fn().mockResolvedValue({
-        exit_code: 0,
-        stdout: '{"propose_branch":"cp-test-r1-abc"}',
-        cost_usd: 0.01,
-      });
+      const fakeExecutor = makeExecutorWithResultFile(tmp);
       const fakeReadContract = vi.fn().mockResolvedValue('# fake');
 
       const { proposer } = createGanContractNodes(fakeExecutor, {
