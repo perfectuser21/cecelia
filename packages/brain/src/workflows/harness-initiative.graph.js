@@ -651,7 +651,7 @@ export async function parsePrdNode(state) {
       path.join(state.worktreePath, sprintDir, 'sprint-prd.md'),
       'utf8'
     );
-  } catch (err) {
+  } catch {
     // B34: defense-in-depth — planner may create sprints/{name}/ subdirectory.
     try {
       const entries = await readdir(path.join(state.worktreePath, sprintDir), { withFileTypes: true });
