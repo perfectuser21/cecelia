@@ -29,7 +29,7 @@ import { execFile as execFileCb } from 'node:child_process';
 import { promisify } from 'node:util';
 import pool from '../db.js';
 import { spawn } from '../spawn/index.js';
-import { parseDockerOutput, loadSkillContent, readVerdictFile } from '../harness-shared.js';
+import { parseDockerOutput, loadSkillContent, readBrainResult } from '../harness-shared.js';
 import { parseTaskPlan, upsertTaskPlan } from '../harness-dag.js';
 import { runFinalE2E, attributeFailures } from '../harness-final-e2e.js';
 import { ensureHarnessWorktree } from '../harness-worktree.js';
@@ -1375,6 +1375,10 @@ SPRINT_DIR=${sprintDir}
 TASK_ID=${state.task?.id}
 JOURNEY_TYPE=${journeyType}`;
 
+  // 清理上轮残留结果文件，防止 executor 失败时读到旧数据
+  const { unlink: unlinkResultFile } = await import('node:fs/promises');
+  try { await unlinkResultFile(path.join(state.worktreePath, '.brain-result.json')); } catch { /* 忽略 */ }
+
   let result;
   try {
     result = await executor({
@@ -1403,42 +1407,27 @@ JOURNEY_TYPE=${journeyType}`;
       final_e2e_failed_scenarios: [{ name: `evaluator exit=${result.exit_code}`, error: (result.stderr || '').slice(-300) }],
     };
   } else {
-    // Protocol v2 Priority 1: 从约定文件读取 verdict，不依赖 LLM stdout 解析
-    const fileVerdict = await readVerdictFile(state.worktreePath);
-    if (fileVerdict) {
-      verdictDelta = fileVerdict.verdict === 'PASS'
-        ? { final_e2e_verdict: 'PASS', final_e2e_failed_scenarios: [] }
-        : {
-          final_e2e_verdict: 'FAIL',
-          final_e2e_failed_scenarios: [{
-            name: fileVerdict.feedback || 'E2E failed',
-            covered_tasks: [],
-            output: fileVerdict.feedback || '',
-            exitCode: 1,
-          }],
-        };
+    // 读容器写入的结果文件（替代 stdout 末行 JSON 解析）
+    let resultData;
+    try {
+      resultData = await readBrainResult(state.worktreePath, ['verdict']);
+    } catch (readErr) {
+      resultData = { verdict: 'FAIL', failed_step: 'result_file_missing', log_excerpt: readErr.message };
+    }
+
+    if (resultData.verdict === 'PASS') {
+      verdictDelta = { final_e2e_verdict: 'PASS', final_e2e_failed_scenarios: [] };
     } else {
-      // Protocol v1 Fallback: 解析 stdout
-      const stdout = parseDockerOutput(result.stdout);
-      let verdict = null;
-      const lines = stdout.split('\n').map(l => l.trim()).filter(l => l.startsWith('{'));
-      const lastJson = lines[lines.length - 1];
-      if (lastJson) {
-        try { verdict = JSON.parse(lastJson); } catch { /* ignore */ }
-      }
-      if (verdict?.verdict === 'PASS') {
-        verdictDelta = { final_e2e_verdict: 'PASS', final_e2e_failed_scenarios: [] };
-      } else {
-        verdictDelta = {
-          final_e2e_verdict: 'FAIL',
-          final_e2e_failed_scenarios: [{
-            name: verdict?.failed_step || 'E2E failed',
-            covered_tasks: [],
-            output: verdict?.log_excerpt || stdout.slice(-300),
-            exitCode: 1,
-          }],
-        };
-      }
+      verdictDelta = {
+        final_e2e_verdict: 'FAIL',
+        final_e2e_failed_scenarios: [{
+          name: resultData.failed_step || 'E2E failed',
+          covered_tasks: [],
+          output: resultData.log_excerpt || '',
+          exitCode: 1,
+        }],
+      };
+
     }
   }
 
