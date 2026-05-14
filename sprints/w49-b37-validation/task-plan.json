@@ -6,10 +6,11 @@
     {
       "task_id": "ws1",
       "title": "创建 B37 验证脚本 verify-b37.sh",
-      "scope": "在 sprints/w49-b37-validation/ 创建可执行验证脚本，覆盖 4 项断言：git diff 输出正确、sprint-prd.md 存在、sprint-contract.md 存在、Brain 日志无 ENOENT；运行脚本输出结构化结果",
+      "scope": "在 sprints/w49-b37-validation/ 创建可执行验证脚本，含 4 项断言：(1) git diff 输出含目标路径 (2) sprint-prd.md 存在 (3) sprint-contract.md 存在 (4) Brain 日志无 ENOENT；脚本运行输出结构化结果并 exit 0",
       "dod": [
         "[ARTIFACT] sprints/w49-b37-validation/verify-b37.sh 存在且含 ≥4 条 ✅ PASS 输出",
-        "[BEHAVIOR] bash sprints/w49-b37-validation/verify-b37.sh exit 0（git diff 断言通过）",
+        "[BEHAVIOR] sprint-contract.md 存在于正确目录（sprintDir 正确传递）",
+        "[BEHAVIOR] bash sprints/w49-b37-validation/verify-b37.sh 输出'B37 验证全部通过'且 exit 0",
         "[BEHAVIOR] Brain Docker 日志无 ENOENT 关联 w49-b37-validation"
       ],
       "files": [
