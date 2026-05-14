@@ -18,9 +18,6 @@ import { MemorySaver } from '@langchain/langgraph';
 import {
   buildProposerPrompt,
   buildReviewerPrompt,
-  extractVerdict,
-  extractFeedback,
-  extractRubricScores,
   computeVerdictFromRubric,
   thresholdForRound,
 } from '../harness-gan-graph.js';
@@ -71,33 +68,6 @@ describe('buildReviewerPrompt', () => {
   });
 });
 
-describe('extractVerdict', () => {
-  it('APPROVED from stdout', () => {
-    expect(extractVerdict('blah\nVERDICT: APPROVED\n')).toBe('APPROVED');
-  });
-  it('REVISION from stdout', () => {
-    expect(extractVerdict('blah\nVERDICT: REVISION\n')).toBe('REVISION');
-  });
-  it('fallback REVISION when no verdict match', () => {
-    expect(extractVerdict('no verdict here')).toBe('REVISION');
-  });
-  it('fallback REVISION for null/empty', () => {
-    expect(extractVerdict(null)).toBe('REVISION');
-    expect(extractVerdict('')).toBe('REVISION');
-  });
-});
-
-describe('extractFeedback', () => {
-  it('returns last 2000 chars of stdout', () => {
-    const s = 'x'.repeat(3000);
-    expect(extractFeedback(s)).toHaveLength(2000);
-  });
-  it('returns empty for null/empty', () => {
-    expect(extractFeedback(null)).toBe('');
-    expect(extractFeedback('')).toBe('');
-  });
-});
-
 describe('thresholdForRound', () => {
   it('round 1-2 阈值 7', () => {
     expect(thresholdForRound(1)).toBe(7);
@@ -107,38 +77,6 @@ describe('thresholdForRound', () => {
     expect(thresholdForRound(3)).toBe(6);
     expect(thresholdForRound(5)).toBe(6);
     expect(thresholdForRound(10)).toBe(6);
-  });
-});
-
-describe('extractRubricScores', () => {
-  it('解析 final JSON 含 rubric_scores', () => {
-    const stdout = 'analysis...\n{"verdict":"REVISION","rubric_scores":{"dod_machineability":8,"scope_match_prd":7,"test_is_red":9,"internal_consistency":6,"risk_registered":5},"pivot_signal":false}';
-    const scores = extractRubricScores(stdout);
-    expect(scores).toEqual({
-      dod_machineability: 8,
-      scope_match_prd: 7,
-      test_is_red: 9,
-      internal_consistency: 6,
-      risk_registered: 5,
-    });
-  });
-
-  it('解析 ```json fence 里的 rubric scores（v7 markdown 格式）', () => {
-    const stdout = '## RUBRIC SCORES\n\n```json\n{"dod_machineability": 8, "scope_match_prd": 7, "test_is_red": 9, "internal_consistency": 6, "risk_registered": 5}\n```\n\n## VERDICT: REVISION';
-    const scores = extractRubricScores(stdout);
-    expect(scores).toEqual({
-      dod_machineability: 8,
-      scope_match_prd: 7,
-      test_is_red: 9,
-      internal_consistency: 6,
-      risk_registered: 5,
-    });
-  });
-
-  it('无 rubric → null', () => {
-    expect(extractRubricScores('just text')).toBeNull();
-    expect(extractRubricScores('')).toBeNull();
-    expect(extractRubricScores(null)).toBeNull();
   });
 });
 
@@ -512,20 +450,3 @@ describe('runGanContractGraph', () => {
   });
 });
 
-describe('extractProposeBranch', () => {
-  it('提取 SKILL Step 3 字面量 JSON 中的 propose_branch', async () => {
-    const { extractProposeBranch } = await import('../harness-gan-graph.js');
-    const stdout = '...输出blah\n{"verdict": "PROPOSED", "contract_draft_path": "sprints/foo/contract-draft.md", "propose_branch": "cp-harness-propose-r2-12345678", "workstream_count": 4, "test_files_count": 4}\n';
-    expect(extractProposeBranch(stdout)).toBe('cp-harness-propose-r2-12345678');
-  });
-
-  it('未找到字段 → null', async () => {
-    const { extractProposeBranch } = await import('../harness-gan-graph.js');
-    expect(extractProposeBranch('no json')).toBeNull();
-    expect(extractProposeBranch('')).toBeNull();
-    expect(extractProposeBranch(null)).toBeNull();
-  });
-});
-
-// fallbackProposeBranch 测试已迁移到 src/workflows/__tests__/extract-and-fallback-propose-branch.test.js
-// 旧 cp-MMDDHHmm-<taskId8> 格式作废（2026-05-08 双修，跟 SKILL push 格式 cp-harness-propose-r{round}-XXX 对齐）。

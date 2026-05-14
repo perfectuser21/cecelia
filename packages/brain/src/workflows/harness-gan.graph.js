@@ -35,8 +35,6 @@ import { loadSkillContent, readBrainResult } from '../harness-shared.js';
 
 const execFile = promisify(execFileCb);
 
-const VERDICT_RE = /VERDICT:\s*(APPROVED|REVISION)/i;
-
 // 递归上限：GAN 对抗无轮次上限（budgetCapUsd 才是硬保护），但 LangGraph 默认 25 不够。
 // 100 = 50 轮 propose+review 预留一倍。
 export const DEFAULT_RECURSION_LIMIT = 100;
@@ -108,44 +106,11 @@ export function detectConvergenceTrend(rubricHistory) {
   return 'converging';
 }
 
-// ── 纯函数辅助（从 harness-gan-loop.js 搬移）──────────────────────────────
-
-export function extractVerdict(stdout) {
-  const m = String(stdout || '').match(VERDICT_RE);
-  return m ? m[1].toUpperCase() : 'REVISION';
-}
-
 // Round-based 阈值（对齐 Anthropic harness-design 2026-03 "each criterion has a hard threshold"）
 // Round 1-2 严格（7 分），Round 3-4 放宽（6 分），给 Reviewer 识别收敛但仍严肃的空间。
 export function thresholdForRound(round) {
   if (round <= 2) return 7;
   return 6; // Round 3+
-}
-
-// 从 Reviewer stdout 里解析 rubric_scores JSON（SKILL v7 产出格式）
-// 支持两种：
-//   1. final JSON 字面量：{"verdict":..., "rubric_scores":{"dod_machineability":X,...}, ...}
-//   2. markdown code fence：```json\n{"dod_machineability":X,...}\n```
-// 找不到或解析失败 → 返回 null，调用方 fallback 到 LLM 文本 verdict。
-export function extractRubricScores(stdout) {
-  const s = String(stdout || '');
-  // 优先匹配含 rubric_scores 嵌套的 final JSON
-  const finalJsonRe = /\{[^{}]*"rubric_scores"\s*:\s*(\{[^{}]+\})[^{}]*\}/;
-  const mFinal = s.match(finalJsonRe);
-  if (mFinal) {
-    try {
-      return JSON.parse(mFinal[1]);
-    } catch { /* fall through */ }
-  }
-  // Fallback：直接找 ```json ... ``` 里含 5 维度 key 的对象
-  const fenceRe = /```json\s*(\{[^`]*?"dod_machineability"[^`]*?\})\s*```/;
-  const mFence = s.match(fenceRe);
-  if (mFence) {
-    try {
-      return JSON.parse(mFence[1]);
-    } catch { /* ignore */ }
-  }
-  return null;
 }
 
 // 根据 rubric scores 和 round 计算权威 verdict（代码判 PASS，不信 LLM 文字）
@@ -163,29 +128,6 @@ export function computeVerdictFromRubric(scores, round) {
   if (nums.some((n) => n === null)) return null; // 维度不完整
   const allPass = nums.every((n) => n >= threshold);
   return allPass ? 'APPROVED' : 'REVISION';
-}
-
-export function extractFeedback(stdout) {
-  const s = String(stdout || '');
-  if (!s) return '';
-  return s.slice(-2000);
-}
-
-// 从 proposer 的 stdout 提取 propose_branch（SKILL Step 3 输出 JSON 字面量）。
-// 格式形如：{"verdict": "PROPOSED", "propose_branch": "cp-harness-propose-rN-XXXXXXXX", ...}
-// 找不到返回 null（兜底，不抛错）。
-const PROPOSE_BRANCH_RE = /"propose_branch"\s*:\s*"([^"]+)"/;
-export function extractProposeBranch(stdout) {
-  const m = String(stdout || '').match(PROPOSE_BRANCH_RE);
-  return m ? m[1] : null;
-}
-
-// fallback：SKILL Step 4 实际 push 格式 cp-harness-propose-r{round}-{taskIdSlice}。
-// 跟 SKILL push 一致，即使 stdout 漏 JSON 也能命中真实分支。
-export function fallbackProposeBranch(taskId, round) {
-  const taskSlice = String(taskId || 'unknown').slice(0, 8);
-  const r = Number.isInteger(round) && round >= 1 ? round : 1;
-  return `cp-harness-propose-r${r}-${taskSlice}`;
 }
 
 /**
