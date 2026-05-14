@@ -44,3 +44,8 @@ echo "=== Build complete ==="
 echo "  cecelia-brain:${VERSION}"
 echo "  cecelia-brain:latest"
 echo "  Size: $(docker images "cecelia-brain:${VERSION}" --format '{{.Size}}')"
+
+# Build 完成后清理 dangling 镜像，防止虚拟磁盘膨胀
+echo ""
+echo "=== 清理 dangling 镜像 ==="
+docker image prune -f --filter "dangling=true" 2>/dev/null || true
