@@ -177,12 +177,12 @@ ${task.description || task.title || ''}
       prdContent = await rfA(pathA.join(worktreePath, sprintDir, 'sprint-prd.md'), 'utf8');
     } catch (err) {
       console.error(`[harness-initiative-runner] read sprint-prd.md failed (${err.message}), scanning subdirs`);
-      const entries = await rdA(pathA.join(worktreePath, 'sprints'), { withFileTypes: true });
+      const entries = await rdA(pathA.join(worktreePath, sprintDir), { withFileTypes: true });
       for (const entry of entries) {
         if (!entry.isDirectory()) continue;
         try {
-          prdContent = await rfA(pathA.join(worktreePath, 'sprints', entry.name, 'sprint-prd.md'), 'utf8');
-          effectiveSprintDir = pathA.join('sprints', entry.name);
+          prdContent = await rfA(pathA.join(worktreePath, sprintDir, entry.name, 'sprint-prd.md'), 'utf8');
+          effectiveSprintDir = pathA.join(sprintDir, entry.name);
           console.log(`[harness-initiative-runner] found sprint-prd.md in ${effectiveSprintDir}`);
           break;
         } catch { /* keep scanning */ }
