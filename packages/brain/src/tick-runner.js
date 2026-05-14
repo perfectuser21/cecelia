@@ -118,6 +118,7 @@ import {
 import {
   isConsciousnessEnabled,
   reloadConsciousnessCache,
+  checkConsciousnessHeartbeat,
 } from './consciousness-guard.js';
 import { check48hReport } from './report-48h.js';
 import { dispatchNextTask } from './dispatcher.js';
@@ -365,6 +366,17 @@ async function executeTick() {
     Promise.resolve().then(() => reloadConsciousnessCache(pool))
       .catch(e => console.warn('[tick] consciousness reload failed:', e.message));
   }
+
+  // [Phase 3] Consciousness heartbeat check（内置节流：每小时最多触发一次）
+  // RCA#3 fix: 若 24h 内 rumination_run=0 → P2 告警 + 尝试直接 runRumination 自愈
+  // fire-and-forget，不阻塞 tick
+  Promise.resolve()
+    .then(async () => {
+      const alerting = await import('./alerting.js');
+      const rumination = await import('./rumination.js');
+      return checkConsciousnessHeartbeat(pool, alerting, rumination);
+    })
+    .catch(e => console.warn('[tick] consciousness heartbeat check failed (non-fatal):', e.message));
 
   // [感知] Pipeline-level Watchdog：每 30 分钟检测 pipeline 整体是否卡死（D1.7c plugin）
   // 与 pipeline-patrol 正交（patrol 看 stage 超时，watchdog 看 pipeline 整体 6h 无进展）

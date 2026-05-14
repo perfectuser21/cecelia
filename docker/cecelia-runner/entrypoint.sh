@@ -138,7 +138,18 @@ fi
 # jq -Rs 把任意 stdout 安全编码成 JSON 字符串（含换行、引号）
 STDOUT_JSON=$(printf '%s' "$STDOUT_CONTENT" | jq -Rs . 2>/dev/null || echo '""')
 
-CALLBACK_BODY=$(printf '{"result":"completed","exit_code":%d,"stdout":%s}' "$EXIT_CODE" "$STDOUT_JSON")
+# RCA#3 fix: 检测 claude "Not logged in" 认证失败 → 覆写为 failed + auth_not_logged_in
+# 原症：容器秒退但未发 callback，Brain 误以为容器在跑 → zombie reaper 60min 后强杀
+# 识别模式：claude 在未登录时输出 "Not logged in" 或 "Please run /login"
+CALLBACK_RESULT="completed"
+CALLBACK_ERROR_FIELD=""
+if printf '%s' "$STDOUT_CONTENT" | grep -qi "Not logged in\|Please run /login"; then
+  CALLBACK_RESULT="failed"
+  CALLBACK_ERROR_FIELD=',"error":"auth_not_logged_in"'
+  echo "[entrypoint] RCA#3: 检测到 Not logged in，强制 callback result=failed error=auth_not_logged_in"
+fi
+
+CALLBACK_BODY=$(printf '{"result":"%s","exit_code":%d,"stdout":%s%s}' "$CALLBACK_RESULT" "$EXIT_CODE" "$STDOUT_JSON" "$CALLBACK_ERROR_FIELD")
 
 # 优先用 Layer 3 spawnNode 传的 HARNESS_CALLBACK_URL（含完整 URL + --name 作 containerId），
 # fallback HOSTNAME（旧方式，但 Layer 3 spawn 给 docker 起的 --name ≠ HOSTNAME，会导致 callback router 找不到 thread_lookup）。

@@ -228,4 +228,55 @@ describe('writeDockerCallback — INSERT callback_queue', () => {
     expect(resultJson._meta.pr_url).toBeNull();
     expect(resultJson._meta.verdict).toBeNull();
   });
+
+  // RCA#3 — auth_not_logged_in 检测
+  it('stdout含"Not logged in" → status=failed / failure_class=auth_not_logged_in / _meta.auth_error', async () => {
+    await writeDockerCallback(baseTask, 'run-auth-1', null, {
+      exit_code: 1,
+      stdout: 'Not logged in · Please run /login to authenticate',
+      stderr: '',
+      duration_ms: 500,
+      container: 'cecelia-task-auth',
+      timed_out: false,
+      started_at: '2026-05-14T00:00:00Z',
+      ended_at: '2026-05-14T00:00:00Z',
+    });
+    const [, params] = mockPool.query.mock.calls[0];
+    expect(params[3]).toBe('failed');
+    expect(params[9]).toBe('auth_not_logged_in');
+    const resultJson = JSON.parse(params[4]);
+    expect(resultJson._meta.auth_error).toBe('not_logged_in');
+  });
+
+  it('stdout含"Please run /login" 大小写不敏感 → auth_not_logged_in', async () => {
+    await writeDockerCallback(baseTask, 'run-auth-2', null, {
+      exit_code: 0,
+      stdout: 'PLEASE RUN /login to continue',
+      stderr: '',
+      duration_ms: 200,
+      container: 'cecelia-task-auth2',
+      timed_out: false,
+      started_at: '2026-05-14T00:00:00Z',
+      ended_at: '2026-05-14T00:00:00Z',
+    });
+    const [, params] = mockPool.query.mock.calls[0];
+    expect(params[3]).toBe('failed');
+    expect(params[9]).toBe('auth_not_logged_in');
+  });
+
+  it('auth失败优先于 env_skill_missing 失败分类', async () => {
+    // 同时有 "Not logged in" 和 "Unknown skill" — auth 优先
+    await writeDockerCallback(baseTask, 'run-auth-3', null, {
+      exit_code: 0,
+      stdout: 'Not logged in\nUnknown skill: dev. Did you mean new?',
+      stderr: '',
+      duration_ms: 200,
+      container: 'cecelia-task-auth3',
+      timed_out: false,
+      started_at: '2026-05-14T00:00:00Z',
+      ended_at: '2026-05-14T00:00:00Z',
+    });
+    const [, params] = mockPool.query.mock.calls[0];
+    expect(params[9]).toBe('auth_not_logged_in');
+  });
 });
