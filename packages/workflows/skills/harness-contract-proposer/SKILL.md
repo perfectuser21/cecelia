@@ -453,8 +453,8 @@ JSONEOF
 ### Step 4: 建分支 + push + 输出 verdict
 
 ```bash
-TASK_ID_SHORT=$(echo "${TASK_ID}" | cut -c1-8)
-PROPOSE_BRANCH="cp-harness-propose-r${PROPOSE_ROUND}-${TASK_ID_SHORT}"
+# $PROPOSE_BRANCH は Brain が env var として注入 — ローカル計算不要
+# Brain injects PROPOSE_BRANCH env var; value is cp-harness-propose-r${PROPOSE_ROUND}-${TASK_ID前8位}
 git checkout -b "${PROPOSE_BRANCH}" 2>/dev/null || git checkout "${PROPOSE_BRANCH}"
 
 git add "${SPRINT_DIR}/contract-draft.md" \
@@ -466,17 +466,25 @@ git commit -m "feat(contract): round-${PROPOSE_ROUND} Golden Path draft + DoD + 
 git push origin "${PROPOSE_BRANCH}"
 ```
 
-**最后一条消息**（每轮 — 含被 REVISION 打回轮）：
+**结果文件写入**（每轮 — 含被 REVISION 打回轮）：
 
+```bash
+# 結果ファイル書き込み（Brain はファイルを読む、stdout は読まない）
+WORKSTREAM_COUNT=$(find "${SPRINT_DIR}" -name "contract-dod-ws*.md" 2>/dev/null | wc -l | tr -d ' ')
+cat > /workspace/.brain-result.json << BREOF
+{"propose_branch":"${PROPOSE_BRANCH}","workstream_count":${WORKSTREAM_COUNT},"task_plan_path":"${SPRINT_DIR}/task-plan.json"}
+BREOF
+echo "[proposer] .brain-result.json 写入完成 propose_branch=${PROPOSE_BRANCH}"
 ```
-{"verdict": "PROPOSED", "contract_draft_path": "${SPRINT_DIR}/contract-draft.md", "propose_branch": "cp-harness-propose-r${PROPOSE_ROUND}-${TASK_ID_SHORT}", "workstream_count": N, "test_files_count": M, "task_plan_path": "${SPRINT_DIR}/task-plan.json"}
-```
 
-**输出契约**（v7.2.0+ 强约束 — 漏写 brain 走 fallback 可能走错路）：
+**输出契约（v8.0.0+ — 文件协议）**：
 
-每轮 proposer 调用结束时 stdout **必须含一行 JSON 字面量**含 `verdict` + `propose_branch` 字段，brain 端 `harness-gan.graph.js` 的 `extractProposeBranch` 用正则 `/"propose_branch"\s*:\s*"([^"]+)"/` 解析。即使本轮被 Reviewer REVISION 打回也必须输出（brain 把每轮 propose_branch 都存下来用，不仅最后一轮）。
+proposer 调用结束时必须向 `/workspace/.brain-result.json` 写入 JSON：
+- `propose_branch`：Brain 注入的 `$PROPOSE_BRANCH` 值
+- `workstream_count`：contract-dod-ws*.md 文件数量
+- `task_plan_path`：`${SPRINT_DIR}/task-plan.json`
 
-漏写后果：brain 走 `fallbackProposeBranch(taskId, round)` 兜底，v7.2.0 起 fallback 改用 `cp-harness-propose-r{round}-{taskIdSlice}` 格式跟 SKILL push 一致——但 SKILL 实际取 `TASK_ID_SHORT` 算法跟 brain `taskId.slice(0,8)` 必须保持一致，否则即使 fallback 也可能命中错误分支。**SKILL 自己输出 verdict JSON 是首选**。
+Brain 读此文件获取结果，不解析 stdout。`$PROPOSE_BRANCH` 由 Brain 注入，proposer 直接使用。
 
 ---
 
