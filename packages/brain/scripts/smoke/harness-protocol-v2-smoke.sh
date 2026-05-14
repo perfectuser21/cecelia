@@ -18,7 +18,7 @@ const checks = [
   { name: 'harness-task.graph 导入 readPrFromGitState', src: taskGraph, regex: /readPrFromGitState/ },
   { name: 'harness-task.graph 调用 readPrFromGitState', src: taskGraph, regex: /await\s+readPrFromGitState/ },
   { name: 'harness-task.graph 调用 readVerdictFile', src: taskGraph, regex: /await\s+readVerdictFile/ },
-  { name: 'harness-initiative.graph 调用 readVerdictFile', src: initGraph, regex: /await\s+readVerdictFile/ },
+  { name: 'harness-initiative.graph 调用 readBrainResult (B39)', src: initGraph, regex: /await\s+readBrainResult/ },
 ];
 let fail = false;
 for (const c of checks) {
