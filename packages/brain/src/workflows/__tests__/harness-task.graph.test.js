@@ -482,7 +482,7 @@ describe('harness-task graph — end-to-end (Layer 3 spawn-interrupt-resume)', (
     // Protocol v2: git 调用（rev-parse）返回空分支，让 readPrFromGitState 回退到 stdout 解析，
     // 防止 catch-all mock 把 '✓ merged' 当作分支名/PR URL 污染 parseCallbackNode。
     mockExecFileImpl.mockReset();
-    mockExecFileImpl.mockImplementation((file, args) => {
+    mockExecFileImpl.mockImplementation((file, _args) => {
       if (file === 'git') return { stdout: '', stderr: '' };
       return { stdout: '✓ merged', stderr: '' };
     });
