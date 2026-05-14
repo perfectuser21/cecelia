@@ -47,6 +47,6 @@ CREATE INDEX IF NOT EXISTS idx_wechat_rpa_sessions_action_type
   ON wechat_rpa_sessions(action_type);
 
 INSERT INTO schema_version (version, description)
-VALUES ('273', 'wechat_rpa_sessions 表 — RPA 会话记录（action_type/outcome CHECK 约束，dryrun 标记）');
+VALUES ('275', 'wechat_rpa_sessions 表 — RPA 会话记录（action_type/outcome CHECK 约束，dryrun 标记）');
 
 COMMIT;

@@ -42,6 +42,6 @@ CREATE INDEX IF NOT EXISTS idx_agent_ops_agents_host
   ON agent_ops_agents(host_alias);
 
 INSERT INTO schema_version (version, description)
-VALUES ('272', 'agent_ops_agents 表 — Agent 注册表（type/status/host CHECK 约束）');
+VALUES ('274', 'agent_ops_agents 表 — Agent 注册表（type/status/host CHECK 约束）');
 
 COMMIT;
