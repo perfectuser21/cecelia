@@ -20,7 +20,7 @@ RUN_RESP=$(curl -sf -X POST "${BRAIN_URL}/api/brain/janitor/jobs/docker-prune/ru
 echo "$RUN_RESP" | grep -q '"run_id"' || { echo "[janitor-smoke] FAIL: 返回缺少 run_id"; exit 1; }
 
 sleep 3
-STATUS=$(curl -sf "${BRAIN_URL}/api/brain/janitor/jobs" | grep -o '"last_status":"[^"]*"' | head -1)
+STATUS=$(curl -sf "${BRAIN_URL}/api/brain/janitor/jobs" | grep -o '"status":"[^"]*"' | head -1)
 echo "[janitor-smoke] last_status: $STATUS"
 echo "$STATUS" | grep -qE '"success"|"failed"' || { echo "[janitor-smoke] FAIL: 未见执行结果"; exit 1; }
 
