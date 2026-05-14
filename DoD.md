@@ -1,64 +1,42 @@
-contract_branch: cp-harness-propose-r2-78b3578b
+contract_branch: cp-05141706-ws-ec8811e7-ws1
 workstream_index: 1
-sprint_dir: sprints/w37-walking-skeleton-final-b14
+sprint_dir: sprints/w49-b37-validation
 
 ---
 skeleton: false
-journey_type: autonomous
+journey_type: dev_pipeline
 ---
-# Contract DoD — Workstream 1: playground GET /decrement (Round 2)
+# Contract DoD — Workstream 1: 创建 verify-b37.sh 验证脚本
 
-**范围**: `playground/server.js` 加 `/decrement` 路由 + `playground/tests/server.test.js` 加 `describe('GET /decrement')` + `playground/README.md` 加 `/decrement` 段
-**大小**: S (<100 行净增 / ≤ 3 文件)
-**依赖**: 无
+**范围**: 在 `sprints/w49-b37-validation/` 创建 `verify-b37.sh`，含 ≥4 断言，脚本运行 exit 0 输出 "B37 验证全部通过"
+**大小**: S(<100行)
+**依赖**: 无（sprint-prd.md 由 Planner 提前创建，sprint-contract.md 由 Proposer 提前创建）
 
-**FIX 备注 (B14 fix-2)**: 上一轮把 BEHAVIOR 整段从 DoD.md 移除，结果 `harness-dod-integrity` 校验失败（CI 拉 origin contract-dod-ws1.md 对比本地 DoD.md，contract 仍有 11 条 BEHAVIOR，本地 0 条 → 11 missing）。本轮恢复 BEHAVIOR 描述行原文（与 contract 字面一致，integrity check pass），但 Test 字段从 `manual:bash` 改为 `tests/ws1/decrement.test.js`（指向已通过的 vitest 文件），确保 `dod-behavior-dynamic` 不触发（grep `manual:(curl|psql|bash|npm)` 无匹配 → has_dynamic=false → vacuously PASS）。本地 `sprints/w37-walking-skeleton-final-b14/contract-dod-ws1.md` 维持 BEHAVIOR-free（满足 `DoD 纯度检查 v5.0`，只扫该文件不扫 DoD.md）。
+## ARTIFACT 条目（预条件 + Generator 产出物）
 
-## ARTIFACT 条目
+- [x] [ARTIFACT] `sprints/w49-b37-validation/sprint-prd.md` 存在（planner 产出，验证起点预条件）
+  Test: node -e "require('fs').accessSync('sprints/w49-b37-validation/sprint-prd.md');console.log('OK')"
 
-- [x] [ARTIFACT] `playground/server.js` 注册 `app.get('/decrement'` 路由
-  Test: node -e "const c=require('fs').readFileSync('playground/server.js','utf8');if(!/app\.get\(\s*['\"]\/decrement['\"]/.test(c))process.exit(1)"
+- [x] [ARTIFACT] `sprints/w49-b37-validation/sprint-contract.md` 存在（proposer 产出，parsePrdNode B37 fix 生效的直接证明）
+  Test: node -e "require('fs').accessSync('sprints/w49-b37-validation/sprint-contract.md');console.log('OK')"
 
-- [x] [ARTIFACT] `playground/server.js` `/decrement` 路由含 strict-schema 整数正则 `^-?\d+$` 与精度上界数字 9007199254740990
-  Test: node -e "const c=require('fs').readFileSync('playground/server.js','utf8');if(!/9007199254740990/.test(c)||!/\^-\?\\\\d\+\$/.test(c))process.exit(1)"
+- [x] [ARTIFACT] `sprints/w49-b37-validation/verify-b37.sh` 存在（generator 产出；运行时 PASS 计数由 BEHAVIOR 3 校验）
+  Test: node -e "require('fs').accessSync('sprints/w49-b37-validation/verify-b37.sh');console.log('OK')"
 
-- [x] [ARTIFACT] `playground/tests/server.test.js` 含 `describe('GET /decrement'` 独立块
-  Test: node -e "const c=require('fs').readFileSync('playground/tests/server.test.js','utf8');if(!/describe\(\s*['\"]GET \/decrement/.test(c))process.exit(1)"
+## BEHAVIOR 条目（内嵌可独立执行的 manual:bash 命令，evaluator 直接执行）
 
-- [x] [ARTIFACT] `playground/README.md` 含 `/decrement` 端点段
-  Test: node -e "const c=require('fs').readFileSync('playground/README.md','utf8');if(!/\/decrement/.test(c))process.exit(1)"
+- [x] [BEHAVIOR] `git diff --name-only origin/main HEAD -- sprints/` 输出含 `sprints/w49-b37-validation/` 路径（B37 git diff 逻辑运行时验证）
+  Test: manual:bash -c 'git fetch --depth=1 origin main 2>/dev/null; diff=$(git diff --name-only origin/main HEAD -- sprints/ 2>/dev/null) && test "${diff#*sprints/w49-b37-validation/}" != "$diff" && printf OK || exit 1'
+  期望: OK
 
-## BEHAVIOR 条目（描述与 contract 字面一致供 integrity check；Test 指向 vitest 文件，不触发 dod-behavior-dynamic）
+- [x] [BEHAVIOR] `bash verify-b37.sh` exit 0 且 stdout 含 "B37 验证全部通过"（全链路运行时验证）
+  Test: manual:bash sprints/w49-b37-validation/verify-b37.sh
+  期望: exit 0
 
-- [x] [BEHAVIOR] `GET /decrement?value=5` 返 200 + `{result:4, operation:"decrement"}`（字段值字面）
-  Test: tests/ws1/decrement.test.js
+- [x] [BEHAVIOR] `bash verify-b37.sh` 输出 ≥4 条 `✅ PASS` 断言（脚本覆盖全部关键检查点）
+  Test: manual:bash -c 'out=$(bash sprints/w49-b37-validation/verify-b37.sh 2>&1) && n=0 && r="$out" && while [ "${r}" != "${r%%✅ PASS*}" ]; do n=$((n+1)); r="${r#*✅ PASS}"; done && [ $n -ge 4 ] && printf Ok || exit 1'
+  期望: Ok
 
-- [x] [BEHAVIOR] success 响应顶层 keys 严格等于 `["operation","result"]`（schema 完整性）
-  Test: tests/ws1/decrement.test.js
-
-- [x] [BEHAVIOR] success 响应反向不含任一禁用字段名（PRD 完整 19 个：`decremented`/`prev`/`predecessor`/`minus_one`/`sub_one`/`incremented`/`sum`/`product`/`quotient`/`power`/`remainder`/`factorial`/`negation`/`value`/`input`/`output`/`data`/`payload`/`answer`/`meta`）
-  Test: tests/ws1/decrement.test.js
-
-- [x] [BEHAVIOR] success 响应 `operation` 字面字符串 `"decrement"`，PRD 禁用 8 变体（`dec`/`decr`/`decremented`/`prev`/`previous`/`predecessor`/`minus_one`/`sub_one`）一律不等（Round-2 新增）
-  Test: tests/ws1/decrement.test.js
-
-- [x] [BEHAVIOR] 错误路径 `GET /decrement?value=foo` 返 400 + error body 顶层 keys 严格等于 `["error"]` 且不含 `result`/`operation`
-  Test: tests/ws1/decrement.test.js
-
-- [x] [BEHAVIOR] 错误体反向不含 4 个 PRD 禁用替代错误名（`message`/`msg`/`reason`/`detail`）
-  Test: tests/ws1/decrement.test.js
-
-- [x] [BEHAVIOR] 精度上下界 happy：`value=9007199254740990` → 200 + `{result:9007199254740989,operation:"decrement"}`；`value=-9007199254740990` → 200 + `{result:-9007199254740991,operation:"decrement"}`
-  Test: tests/ws1/decrement.test.js
-
-- [x] [BEHAVIOR] 精度上下界拒：`value=9007199254740991` → 400；`value=-9007199254740991` → 400
-  Test: tests/ws1/decrement.test.js
-
-- [x] [BEHAVIOR] strict-schema 全部非法输入返 400：`value=1.5` / `value=1e2` / `value=abc` / `value=+5` / `value=` / 缺 value
-  Test: tests/ws1/decrement.test.js
-
-- [x] [BEHAVIOR] PRD 完整 9 个禁用 query 名（`n`/`x`/`a`/`b`/`num`/`number`/`input`/`v`/`val`）一律返 400（Round-2 新增 — Reviewer Issue 5）
-  Test: tests/ws1/decrement.test.js
-
-- [x] [BEHAVIOR] 8 路由回归 happy 全通过（/health /sum /multiply /divide /power /modulo /increment /factorial）
-  Test: tests/ws1/decrement.test.js
+- [x] [BEHAVIOR] Brain Docker 日志（动态查找容器名）无 ENOENT 关联 w49-b37-validation（全程无目录查找失败）
+  Test: manual:bash -c 'node -e "const{spawnSync}=require(\"child_process\"),r=spawnSync(\"docker\",[\"ps\",\"--filter\",\"name=brain\",\"--format\",\"{{.Names}}\"],{encoding:\"utf8\"}),c=(r.stdout?r.stdout:\"\").trim().split(\"\\n\")[0],_=!c?(process.stdout.write(\"SKIP\"),process.exit(0)):null,l=spawnSync(\"docker\",[\"logs\",c],{encoding:\"utf8\",stdio:[\"pipe\",\"pipe\",\"pipe\"]}),m=((l.stderr?l.stderr:\"\")+(l.stdout?l.stdout:\"\")).match(/ENOENT.*w49-b37-validation/),__=m?process.exit(1):process.stdout.write(\"OK\")"'
+  期望: OK（或 SKIP 若容器未运行）
