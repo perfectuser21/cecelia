@@ -104,6 +104,50 @@ changelog:
 
 ---
 
+### Step 0.2: e2e 脚本位置词死规则（B33 — W35/W43 实证）
+
+**第二件事**：如果本 sprint 涉及 playground 端点（`/ping`/`/sum`/`/multiply` 等），在 PRD 末尾写 `## E2E 验收` 区块时，**必须执行如下位置词检查**：
+
+**位置词定义**：URL 前缀用于标识被测服务：
+- `localhost:3000/`（或 `localhost:$PLAYGROUND_PORT/`）→ playground（被测服务）✅
+- `localhost:5221/api/brain/` → Brain API（调度/决策层）❌ 不可出现在 playground 的 e2e 中
+
+**死规则**（违反 → evaluator 在运行时以 `planner_drift` 标签拦截，task=failed）：
+
+| 类别 | 严禁 ❌ | 必须 ✅ |
+|------|---------|---------|
+| playground 端点验证 | `curl localhost:5221/api/brain/ping` | `curl localhost:3000/ping` 或 `localhost:$PLAYGROUND_PORT/ping` |
+| 健康检查混用 | 在 playground sprint 的 e2e 里用 Brain `/api/brain/ping` 确认"服务存活" | 在 playground 自己的端口上测自己的端点 |
+| 端口混淆 | 5221（Brain 调度端口）出现在 playground e2e 命令 | 3000 / $PLAYGROUND_PORT（playground 端口）|
+
+**自查 checklist**（写完 `## E2E 验收` bash 脚本后必 grep）：
+
+```bash
+# 禁止项：playground sprint 的 e2e 里不得出现 Brain API URL
+! grep -qE "localhost:5221/api/brain/|/api/brain/(ping|health|tasks)" /tmp/e2e-draft.sh \
+  || { echo "FAIL: e2e 含 Brain URL，请改用 localhost:3000（planner_drift 将被 evaluator 拦截）"; exit 1; }
+```
+
+**违规示例**（W35-W43 根因，禁止重复）：
+
+```bash
+# ❌ playground sprint 里写 Brain ping 做 Step 1
+curl -f localhost:5221/api/brain/ping  # 这是 Brain 健康检查，不是 playground 验证
+```
+
+**正确示例**（playground sprint /ping 的 e2e）：
+
+```bash
+# ✅ 启 playground + 测自己的端点
+cd playground && PLAYGROUND_PORT=3001 node server.js & SPID=$!
+sleep 2
+curl -f localhost:3001/ping | jq -e '.pong == true'
+kill $SPID
+echo "✅ playground /ping 验证通过"
+```
+
+---
+
 ### Step 0.1: 采集系统上下文（Brain API）
 
 ```bash

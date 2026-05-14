@@ -10,33 +10,10 @@
  *   LANGFUSE_BASE_URL="http://100.86.118.99:3000"
  */
 
-import { readFileSync } from 'fs';
-import { homedir } from 'os';
-import { join } from 'path';
 import { randomUUID } from 'crypto';
+import { loadLangfuseConfig, _resetLangfuseConfig } from './lib/langfuse-config.js';
 
-let _config = null;
-let _initAttempted = false;
-
-function loadConfig() {
-  if (_initAttempted) return _config;
-  _initAttempted = true;
-  try {
-    const credPath = join(homedir(), '.credentials', 'langfuse.env');
-    const raw = readFileSync(credPath, 'utf-8');
-    const cfg = {};
-    for (const line of raw.split('\n')) {
-      const m = line.match(/^([A-Z_][A-Z0-9_]*)=["']?([^"'\n]+)["']?$/);
-      if (m) cfg[m[1]] = m[2];
-    }
-    if (cfg.LANGFUSE_PUBLIC_KEY && cfg.LANGFUSE_SECRET_KEY && cfg.LANGFUSE_BASE_URL) {
-      _config = cfg;
-    }
-  } catch {
-    // Missing file or unreadable — stay disabled.
-  }
-  return _config;
-}
+const loadConfig = loadLangfuseConfig;
 
 export function isEnabled() {
   return !!loadConfig();
@@ -115,6 +92,5 @@ export async function reportCall(opts) {
 }
 
 export function _reset() {
-  _config = null;
-  _initAttempted = false;
+  _resetLangfuseConfig();
 }

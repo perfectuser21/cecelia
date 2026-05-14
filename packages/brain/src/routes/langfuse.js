@@ -11,45 +11,19 @@
  *            body 为 { success:false, data:[], error:'...' }，避免前端白屏。
  */
 import { Router } from 'express';
-import { readFileSync } from 'fs';
-import { homedir } from 'os';
-import { join } from 'path';
+import { loadLangfuseConfig, _resetLangfuseConfig, _setLangfuseConfigForTesting } from '../lib/langfuse-config.js';
 
 const router = Router();
-
-let _config = null;
-let _initAttempted = false;
-
-function loadConfig() {
-  if (_initAttempted) return _config;
-  _initAttempted = true;
-  try {
-    const credPath = join(homedir(), '.credentials', 'langfuse.env');
-    const raw = readFileSync(credPath, 'utf-8');
-    const cfg = {};
-    for (const line of raw.split('\n')) {
-      const m = line.match(/^([A-Z_][A-Z0-9_]*)=["']?([^"'\n]+)["']?$/);
-      if (m) cfg[m[1]] = m[2];
-    }
-    if (cfg.LANGFUSE_PUBLIC_KEY && cfg.LANGFUSE_SECRET_KEY && cfg.LANGFUSE_BASE_URL) {
-      _config = cfg;
-    }
-  } catch {
-    // disabled
-  }
-  return _config;
-}
+const loadConfig = loadLangfuseConfig;
 
 // 仅测试用：reset cache（test 之间相互隔离）
 export function _resetConfigCache() {
-  _config = null;
-  _initAttempted = false;
+  _resetLangfuseConfig();
 }
 
 // 仅测试用：注入假 config，让测试在没有 ~/.credentials/langfuse.env 的环境（如 CI）下也能跑
 export function _setConfigForTesting(cfg) {
-  _config = cfg;
-  _initAttempted = true;
+  _setLangfuseConfigForTesting(cfg);
 }
 
 /**

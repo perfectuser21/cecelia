@@ -16,6 +16,7 @@ import { raise } from './alerting.js';
 import { handleTaskFailure } from './quarantine.js';
 import { updateDesireFromTask } from './desire-feedback.js';
 import { resolveRelatedFailureMemories } from './routes/shared.js';
+import { normalizeCallbackStatus, extractPrNumber, maybeMarkCompletedNoPr, buildExecMetaJson, buildFailureFields, extractFindingsValue, buildLastRunResult } from './lib/callback-utils.js';
 
 /**
  * processExecutionCallback(data, pool)
@@ -47,39 +48,10 @@ export async function processExecutionCallback(data, pool) {
   console.log(`[callback-processor] Processing callback for task ${task_id}, status: ${status}`);
 
   // 1. Status mapping
-  // 兼容两套 callback contract：
-  //   - bridge / cecelia-run.sh：'AI Done' / 'AI Failed' / 'AI Quota Exhausted'
-  //   - docker-executor.writeDockerCallback：'success' / 'failed' / 'timeout'
-  // docker-executor 与本处理器的 contract 不一致曾导致跑成功的容器任务卡在
-  // in_progress，60min 后被 tick 误判超时 → 三次失败 quarantine（修于本次）。
-  let newStatus;
-  if (status === 'AI Done' || status === 'success') {
-    newStatus = 'completed';
-  } else if (status === 'AI Failed' || status === 'failed' || status === 'timeout') {
-    newStatus = 'failed';
-  } else if (status === 'AI Quota Exhausted') {
-    newStatus = 'quota_exhausted';
-  } else {
-    newStatus = 'in_progress';
-  }
+  let newStatus = normalizeCallbackStatus(status);
 
   // P1-1: Dev task completed without PR → completed_no_pr
-  if (newStatus === 'completed' && !pr_url) {
-    try {
-      const taskRow = await pool.query('SELECT task_type, payload FROM tasks WHERE id = $1', [task_id]);
-      const taskType = taskRow.rows[0]?.task_type;
-      const isDecomposition = taskRow.rows[0]?.payload?.decomposition;
-      if (taskType === 'dev' && !isDecomposition) {
-        const isHarness = taskRow.rows[0]?.payload?.harness_mode;
-        if (!isHarness) {
-          newStatus = 'completed_no_pr';
-          console.warn(`[callback-processor] Dev task ${task_id} completed without PR → completed_no_pr`);
-        }
-      }
-    } catch (prCheckErr) {
-      console.error(`[callback-processor] PR check error (non-fatal): ${prCheckErr.message}`);
-    }
-  }
+  newStatus = await maybeMarkCompletedNoPr(newStatus, pr_url, task_id, pool, 'callback-processor');
 
   // P1-0: terminal failure guard — DB 查询失败直接抛错，不再降级（防 stale completed 覆盖 failed）。
   if (newStatus === 'completed') {
@@ -94,16 +66,7 @@ export async function processExecutionCallback(data, pool) {
   }
 
   // 2. Build update payload
-  const lastRunResult = {
-    run_id,
-    checkpoint_id,
-    status,
-    duration_ms,
-    iterations,
-    pr_url: pr_url || null,
-    completed_at: new Date().toISOString(),
-    result_summary: (result !== null && typeof result === 'object') ? result.result : result,
-  };
+  const lastRunResult = buildLastRunResult({ run_id, checkpoint_id, status, duration_ms, iterations, pr_url, result });
 
   // 3. ATOMIC transaction: task UPDATE + decision_log + progress step
   const client = await pool.connect();
@@ -112,63 +75,17 @@ export async function processExecutionCallback(data, pool) {
     await client.query('BEGIN');
 
     const isCompleted = newStatus === 'completed';
-
-    const findingsRaw = (result !== null && typeof result === 'object')
-      ? (result.findings || result.result || result)
-      : result;
-    findingsValue = findingsRaw
-      ? (typeof findingsRaw === 'string' ? findingsRaw : JSON.stringify(findingsRaw))
-      : null;
+    findingsValue = extractFindingsValue(result);
 
     if (!findingsValue && isCompleted) {
       console.warn(`[callback-processor] Task ${task_id} completed with empty findings/result`);
     }
 
-    let prNumber = null;
-    if (pr_url) {
-      const prMatch = pr_url.match(/\/pull\/(\d+)/);
-      prNumber = prMatch ? parseInt(prMatch[1], 10) : null;
-    }
+    const prNumber = extractPrNumber(pr_url);
 
-    const isFailed = newStatus === 'failed';
     const isQuotaExhausted = newStatus === 'quota_exhausted';
-    let errorMessage = null;
-    let blockedDetail = null;
-    if (isFailed) {
-      if (result === null) {
-        const ts = new Date().toISOString();
-        const exitCodeStr = exit_code != null ? exit_code : 'N/A';
-        let fallback = `[callback: result=null] task=${task_id} exit_code=${exitCodeStr} at ${ts} | callback received but result was null`;
-        const stderrTail = stderr ? String(stderr).slice(-300) : '';
-        if (stderrTail) fallback += ` | stderr: ${stderrTail}`;
-        errorMessage = fallback;
-      } else if (typeof result === 'object') {
-        errorMessage = result.result || result.error || result.stderr || JSON.stringify(result);
-      } else {
-        errorMessage = String(result);
-      }
-      errorMessage = errorMessage.slice(0, 2000);
-      const stderrSource = stderr
-        || (result !== null && typeof result === 'object' ? result.stderr : null)
-        || (typeof result === 'string' ? result : '');
-      blockedDetail = JSON.stringify({
-        exit_code: exit_code != null ? exit_code : 1,
-        stderr_tail: String(stderrSource || '').slice(-500),
-        timestamp: new Date().toISOString(),
-      });
-    }
-
-    // result 列存执行元数据（duration_ms 等），使用条件写入（仅 result 为空时写入）保证幂等性
-    const EXEC_META_KEYS = ['duration_ms', 'total_cost_usd', 'num_turns', 'input_tokens', 'output_tokens'];
-    let execMetaJson = null;
-    if (result !== null && typeof result === 'object') {
-      const hasAnyMetaKey = EXEC_META_KEYS.some(k => k in result);
-      if (hasAnyMetaKey) {
-        const execMeta = {};
-        for (const k of EXEC_META_KEYS) execMeta[k] = result[k] ?? 0;
-        execMetaJson = JSON.stringify(execMeta);
-      }
-    }
+    const { errorMessage, blockedDetail } = buildFailureFields(newStatus, result, stderr, exit_code, task_id);
+    const execMetaJson = buildExecMetaJson(result);
 
     await client.query(`
       UPDATE tasks

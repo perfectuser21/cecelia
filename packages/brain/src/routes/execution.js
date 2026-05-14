@@ -26,6 +26,7 @@ import {
   isBridgeSessionCrash,
   handleEvaluateSessionCrash,
 } from '../execution.js';
+import { normalizeCallbackStatus, extractPrNumber, maybeMarkCompletedNoPr, buildExecMetaJson, buildFailureFields, extractFindingsValue, buildLastRunResult } from '../lib/callback-utils.js';
 
 const router = Router();
 const execAsync = promisify(exec);
@@ -122,37 +123,10 @@ router.post('/execution-callback', async (req, res) => {
     }
 
     // 1. Determine new status
-    let newStatus;
-    if (status === 'AI Done') {
-      newStatus = 'completed';
-    } else if (status === 'AI Failed') {
-      newStatus = 'failed';
-    } else if (status === 'AI Quota Exhausted') {
-      // quota_exhausted: 配额耗尽，不计入 failure_count，不触发隔离
-      newStatus = 'quota_exhausted';
-    } else {
-      newStatus = 'in_progress'; // Unknown status, keep in progress
-    }
+    let newStatus = normalizeCallbackStatus(status);
 
     // P1-1: Dev task completed without PR → completed_no_pr
-    // Only dev tasks are expected to produce PRs. Decomposition tasks are exempt.
-    if (newStatus === 'completed' && !pr_url) {
-      try {
-        const taskRow = await pool.query('SELECT task_type, payload FROM tasks WHERE id = $1', [task_id]);
-        const taskType = taskRow.rows[0]?.task_type;
-        const isDecomposition = taskRow.rows[0]?.payload?.decomposition;
-        if (taskType === 'dev' && !isDecomposition) {
-          // Harness 模式的 dev task 不降级 — 由 harness_evaluate 验证，不需要 PR
-          const isHarness = taskRow.rows[0]?.payload?.harness_mode;
-          if (!isHarness) {
-            newStatus = 'completed_no_pr';
-            console.warn(`[execution-callback] Dev task ${task_id} completed without PR → completed_no_pr`);
-          }
-        }
-      } catch (prCheckErr) {
-        console.error(`[execution-callback] PR check error (non-fatal): ${prCheckErr.message}`);
-      }
-    }
+    newStatus = await maybeMarkCompletedNoPr(newStatus, pr_url, task_id, pool, 'execution-callback');
 
     // P1-0: terminal failure guard — 不允许 execution-callback 覆盖 pipeline_terminal_failure 终态
     // 场景：orchestrator 在 Xian 执行期间将 content-pipeline 设为 failed + failure_class=pipeline_terminal_failure，
@@ -174,101 +148,25 @@ router.post('/execution-callback', async (req, res) => {
     }
 
     // 2. Build the update payload
-    const lastRunResult = {
-      run_id,
-      checkpoint_id,
-      status,
-      duration_ms,
-      iterations,
-      pr_url: pr_url || null,
-      completed_at: new Date().toISOString(),
-      result_summary: (result !== null && typeof result === 'object') ? result.result : result
-    };
+    const lastRunResult = buildLastRunResult({ run_id, checkpoint_id, status, duration_ms, iterations, pr_url, result });
 
     // 3. ATOMIC: DB update + activeProcess cleanup in a single transaction
-    //    This eliminates the race window where tick could see stale state.
     const client = await pool.connect();
     try {
       await client.query('BEGIN');
 
-      // Update task in database (idempotency: only update if still in_progress)
-      // Note: $6 (isCompleted) avoids reusing $2 in CASE WHEN, which causes
-      // "inconsistent types deduced for parameter $2" (text vs character varying).
       const isCompleted = newStatus === 'completed';
-
-      // Extract findings from result for storage in payload.
-      // decomp-checker reads payload.findings to pass context to follow-up tasks.
-      // result can be a string (text output) or an object with a findings/result field.
-      const findingsRaw = (result !== null && typeof result === 'object')
-        ? (result.findings || result.result || result)
-        : result;
-      const findingsValue = findingsRaw
-        ? (typeof findingsRaw === 'string' ? findingsRaw : JSON.stringify(findingsRaw))
-        : null;
+      const findingsValue = extractFindingsValue(result);
 
       if (!findingsValue && isCompleted) {
         console.warn(`[execution-callback] Task ${task_id} completed with empty findings/result`);
       }
 
-      // Extract pr_number from pr_url for metadata tracking ($8)
-      let prNumber = null;
-      if (pr_url) {
-        const prMatch = pr_url.match(/\/pull\/(\d+)/);
-        prNumber = prMatch ? parseInt(prMatch[1], 10) : null;
-      }
+      const prNumber = extractPrNumber(pr_url);
 
-      // Extract error info for failure path ($9 errorMessage, $10 blockedDetail)
-      // Only populated when task fails; null on success so DB keeps existing values.
-      const isFailed = newStatus === 'failed';
       const isQuotaExhausted = newStatus === 'quota_exhausted';
-      let errorMessage = null;
-      let blockedDetail = null;
-      if (isFailed) {
-        // Build human-readable error message from result payload
-        if (result === null) {
-          // Fallback: cecelia-run crashed/killed before producing a result object
-          const ts = new Date().toISOString();
-          const exitCodeStr = exit_code != null ? exit_code : 'N/A';
-          let fallback = `[callback: result=null] task=${task_id} exit_code=${exitCodeStr} at ${ts} | callback received but result was null`;
-          const stderrTail = stderr ? String(stderr).slice(-300) : '';
-          if (stderrTail) {
-            fallback += ` | stderr: ${stderrTail}`;
-          }
-          errorMessage = fallback;
-        } else if (typeof result === 'object') {
-          errorMessage = result.result || result.error || result.stderr || JSON.stringify(result);
-        } else {
-          errorMessage = String(result);
-        }
-        errorMessage = errorMessage.slice(0, 2000); // cap at 2000 chars
-
-        // Build structured blocked_detail: { exit_code, stderr_tail, timestamp }
-        const stderrSource = stderr
-          || (result !== null && typeof result === 'object' ? result.stderr : null)
-          || (typeof result === 'string' ? result : '');
-        const blockedDetailObj = {
-          exit_code: exit_code != null ? exit_code : (isFailed ? 1 : 0),
-          stderr_tail: String(stderrSource || '').slice(-500),
-          timestamp: new Date().toISOString(),
-        };
-        blockedDetail = JSON.stringify(blockedDetailObj);
-      }
-
-      // Extract execution metadata from result object ($12).
-      // Feature 3 completeness constraint: if any of the 5 keys is present,
-      // all 5 must be written (missing keys default to 0).
-      const EXEC_META_KEYS = ['duration_ms', 'total_cost_usd', 'num_turns', 'input_tokens', 'output_tokens'];
-      let execMetaJson = null;
-      if (result !== null && typeof result === 'object') {
-        const hasAnyMetaKey = EXEC_META_KEYS.some(k => k in result);
-        if (hasAnyMetaKey) {
-          const execMeta = {};
-          for (const k of EXEC_META_KEYS) {
-            execMeta[k] = result[k] ?? 0;
-          }
-          execMetaJson = JSON.stringify(execMeta);
-        }
-      }
+      const { errorMessage, blockedDetail } = buildFailureFields(newStatus, result, stderr, exit_code, task_id);
+      const execMetaJson = buildExecMetaJson(result);
 
       await client.query(`
         UPDATE tasks

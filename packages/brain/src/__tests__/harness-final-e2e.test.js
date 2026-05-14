@@ -77,6 +77,45 @@ describe('runScenarioCommand', () => {
     expect(runScenarioCommand(null).exitCode).toBe(1);
     expect(runScenarioCommand({ cmd: 123 }).exitCode).toBe(1);
   });
+
+  // B33 — planner_drift 检测
+  it('B33: cmd 含 localhost:5221/api/brain/ → exitCode 1 + planner_drift 提示，不执行命令', () => {
+    let called = false;
+    const exec = () => { called = true; return 'ok'; };
+    const r = runScenarioCommand({ cmd: 'curl -f localhost:5221/api/brain/ping' }, { exec });
+    expect(r.exitCode).toBe(1);
+    expect(r.output).toMatch(/planner_drift/);
+    expect(r.output).toMatch(/api\/brain\//);
+    expect(called).toBe(false);
+  });
+
+  it('B33: cmd 含 /api/brain/health → exitCode 1 + planner_drift，不执行命令', () => {
+    let called = false;
+    const exec = () => { called = true; return 'ok'; };
+    const r = runScenarioCommand({ cmd: 'curl localhost:5221/api/brain/health' }, { exec });
+    expect(r.exitCode).toBe(1);
+    expect(r.output).toMatch(/planner_drift/);
+    expect(called).toBe(false);
+  });
+
+  it('B33: cmd 含 /api/brain/tasks → exitCode 1', () => {
+    const r = runScenarioCommand({ cmd: 'curl -s localhost:5221/api/brain/tasks/abc' });
+    expect(r.exitCode).toBe(1);
+    expect(r.output).toMatch(/planner_drift/);
+  });
+
+  it('B33: playground 正常 URL（localhost:3000）不触发 drift 检测', () => {
+    const exec = () => '{"pong":true}';
+    const r = runScenarioCommand({ cmd: 'curl -f localhost:3000/ping' }, { exec });
+    expect(r.exitCode).toBe(0);
+    expect(r.output).not.toMatch(/planner_drift/);
+  });
+
+  it('B33: localhost:5222/api/health（非 Brain /api/brain/ 路径）不触发检测', () => {
+    const exec = () => 'ok';
+    const r = runScenarioCommand({ cmd: 'curl localhost:5222/api/health' }, { exec });
+    expect(r.exitCode).toBe(0);
+  });
 });
 
 // ─── normalizeAcceptance ───────────────────────────────────────────────────

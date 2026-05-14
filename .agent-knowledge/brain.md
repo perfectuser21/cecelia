@@ -203,6 +203,8 @@ await initOtel();
 | `src/cron/daily-real-business-smoke.js` | B2 每日真业务 E2E smoke：每天北京时间 04:00（UTC 20:00）触发，创建 content-pipeline 任务（solo-company-case），后台轮询 30min，验收 export 完成 + 图片 ≥ 9，失败/超时→P0飞书告警+创建Brain dev任务。30天后自动 archive smoke 记录。 |
 | `scripts/cecelia-bridge.js` | +新增 `/notebook/auth-check` 端点：通过宿主机 notebooklm CLI 真调 API 验证 cookie 有效性，供 credentials-health-scheduler.js 的 checkNotebookLmAuth() 调用。 |
 | `scripts/cron/credentials-health-check.sh` | B1 Shell 脚本版本：可独立运行的宿主机凭据巡检，输出 JSON 到 stdout，含 NotebookLM CLI 调用、Claude credentials.json 解析、Codex wham/usage API 验证、发布器 Playwright state 文件检查。 |
+| `scripts/scan-code-dedup.mjs` | KR coding dedup Phase 1 扫描引擎：滑动窗口 hash（8行/30 token 阈值）扫描 Brain src 重复代码块。`--json` JSON输出，`--baseline` 保存基线到 dedup-baseline.json。基线（2026-05-14）：365文件，重复率 1.3%，122个重复块。 |
+| `scripts/dedup-baseline.json` | KR coding dedup 基线数据（2026-05-14）：duplication_pct=1.3%，duplicate_blocks=122，目标降至 <1.0%。Phase 2 重构参考：top offenders 为 callback-processor.js、routes/execution.js、decomposition-checker.js。 |
 | `scripts/smoke/gate5-b1-b2-smoke.sh` | Gate 5 B1+B2 真环境 smoke 验证脚本（CI real-env-smoke 跑）：检查文件存在 + 语法正确 + tick-runner 接入 + bridge 端点 + 时间窗口逻辑正确（6 项验证）。 |
 | `src/__tests__/credentials-health-scheduler.test.js` | B1 单元测试（25 个）：覆盖 isInCredentialsHealthWindow 窗口判断、checkClaudeCredentials 状态分级（ok/warning/critical/expired/missing/unknown/error）、checkNotebookLmAuth/checkCodexAuth、runCredentialsHealthCheck 主流程（窗口外/去重/各凭据失效→告警+任务）。 |
 | `src/cron/__tests__/daily-real-business-smoke.test.js` | B2 单元测试（31 个）：覆盖 isInSmokeWindow、hasTodaySmoke、createSmokeTask(ON CONFLICT)、findFailedStage、assertSmokeOutput、handleSmokeFailure、archiveOldSmokePipelines、runDailySmoke（触发/跳过/失败）、waitAndAssertSmoke（完成/failed/超时）。 |

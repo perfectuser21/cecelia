@@ -50,6 +50,19 @@ function makeProc() {
   return proc;
 }
 
+// ensureDockerImage calls spawn('docker image inspect …') before the actual docker run.
+// This returns a proc that exits 0 (image found) so executeInDocker proceeds normally.
+function makeInspectSuccessProc() {
+  const proc = makeProc();
+  const origOn = proc.on.bind(proc);
+  proc.on = (event: string, listener: (...args: unknown[]) => void) => {
+    const r = origOn(event, listener);
+    if (event === 'exit') Promise.resolve().then(() => proc.emit('exit', 0, null));
+    return r;
+  };
+  return proc;
+}
+
 const { executeInDocker } = await import('../../packages/brain/src/docker-executor.js');
 
 beforeEach(() => {
@@ -61,7 +74,8 @@ beforeEach(() => {
 describe('executeInDocker — OOM / external SIGKILL', () => {
   it('rejects within 100ms when container exits 137 (OOM killer)', async () => {
     const proc = makeProc();
-    mockSpawnFn.mockReturnValueOnce(proc);
+    // first spawn = docker image inspect (ensureDockerImage), second = docker run
+    mockSpawnFn.mockReturnValueOnce(makeInspectSuccessProc()).mockReturnValueOnce(proc);
 
     const tStart = Date.now();
     const p = executeInDocker({
@@ -86,7 +100,7 @@ describe('executeInDocker — OOM / external SIGKILL', () => {
 
   it('rejects when container exits with signal=SIGKILL (error message 含 SIGKILL)', async () => {
     const proc = makeProc();
-    mockSpawnFn.mockReturnValueOnce(proc);
+    mockSpawnFn.mockReturnValueOnce(makeInspectSuccessProc()).mockReturnValueOnce(proc);
 
     const p = executeInDocker({
       task: { id: '22222222-3333-4444-5555-666666666666', task_type: 'dev' },
@@ -109,7 +123,8 @@ describe('executeInDocker — OOM / external SIGKILL', () => {
     vi.useFakeTimers();
     const proc = makeProc();
     const killProc = makeProc();
-    mockSpawnFn.mockReturnValueOnce(proc).mockReturnValueOnce(killProc);
+    // first spawn = docker image inspect (ensureDockerImage), second = docker run, third = docker kill
+    mockSpawnFn.mockReturnValueOnce(makeInspectSuccessProc()).mockReturnValueOnce(proc).mockReturnValueOnce(killProc);
 
     const p = executeInDocker({
       task: { id: '33333333-4444-5555-6666-777777777777', task_type: 'dev' },

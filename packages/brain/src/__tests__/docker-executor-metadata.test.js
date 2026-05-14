@@ -70,13 +70,29 @@ describe('executeInDocker — WF-3 观察性元数据', () => {
     return await import('../docker-executor.js');
   }
 
+  // ensureDockerImage 会先 spawn docker image inspect，需拦截并返回成功 proc
+  function withInspectSuccess(runImpl) {
+    let inspected = false;
+    return function (cmd, args, opts) {
+      if (!inspected && Array.isArray(args) && args[0] === 'image') {
+        inspected = true;
+        const p = new EventEmitter();
+        p.stdout = new EventEmitter();
+        p.stderr = new EventEmitter();
+        queueMicrotask(() => p.emit('exit', 0, null));
+        return p;
+      }
+      return runImpl(cmd, args, opts);
+    };
+  }
+
   it('成功路径：container_id 从 --cidfile 读取（前 12 位），command 字段完整', async () => {
     const { executeInDocker, __test__ } = await loadExecutor();
     const taskId = 'task-meta-1';
     const cidfilePath = __test__.cidFilePath(taskId);
     const fakeFullId = 'abcdef0123456789fedcba9876543210fedcba9876543210fedcba9876543210';
 
-    mockSpawn.mockImplementation((cmd, args) => {
+    mockSpawn.mockImplementation(withInspectSuccess((cmd, args) => {
       // 校验：args 里应该有 --cidfile 参数
       expect(cmd).toBe('docker');
       expect(args).toContain('--cidfile');
@@ -88,7 +104,7 @@ describe('executeInDocker — WF-3 观察性元数据', () => {
         cidToWrite: fakeFullId,
         cidfilePath,
       });
-    });
+    }));
 
     const result = await executeInDocker({
       task: { id: taskId, task_type: 'planner' },
@@ -116,7 +132,7 @@ describe('executeInDocker — WF-3 观察性元数据', () => {
 
     // exit=1 是一般容器内业务失败，不是 OOM/SIGKILL，仍走 resolve 路径。
     // 137/SIGKILL 在 Harness W6 后改走 reject — 由下面单独 case 覆盖。
-    mockSpawn.mockImplementation(() =>
+    mockSpawn.mockImplementation(withInspectSuccess(() =>
       makeFakeDockerProc({
         stdout: '',
         stderr: 'task failed',
@@ -124,7 +140,7 @@ describe('executeInDocker — WF-3 观察性元数据', () => {
         cidToWrite: fakeId,
         cidfilePath,
       })
-    );
+    ));
 
     const result = await executeInDocker({
       task: { id: taskId, task_type: 'dev' },
@@ -143,7 +159,7 @@ describe('executeInDocker — WF-3 观察性元数据', () => {
     const cidfilePath = __test__.cidFilePath(taskId);
     const fakeId = 'aabbccddeeff0011';
 
-    mockSpawn.mockImplementation(() =>
+    mockSpawn.mockImplementation(withInspectSuccess(() =>
       makeFakeDockerProc({
         stdout: '',
         stderr: 'OOM killed',
@@ -151,7 +167,7 @@ describe('executeInDocker — WF-3 观察性元数据', () => {
         cidToWrite: fakeId,
         cidfilePath,
       })
-    );
+    ));
 
     const err = await executeInDocker({
       task: { id: taskId, task_type: 'dev' },
@@ -167,14 +183,14 @@ describe('executeInDocker — WF-3 观察性元数据', () => {
 
   it('cidfile 未写入（docker 启动失败）时 container_id 返回 null', async () => {
     const { executeInDocker } = await loadExecutor();
-    mockSpawn.mockImplementation(() =>
+    mockSpawn.mockImplementation(withInspectSuccess(() =>
       makeFakeDockerProc({
         stdout: '',
         stderr: 'image not found',
         code: 125,
         // 不写 cidfile
       })
-    );
+    ));
 
     const result = await executeInDocker({
       task: { id: 'task-meta-no-cid', task_type: 'planner' },
@@ -196,12 +212,12 @@ describe('executeInDocker — WF-3 观察性元数据', () => {
     expect(existsSync(cidfilePath)).toBe(true);
 
     let spawnCalled = false;
-    mockSpawn.mockImplementation(() => {
+    mockSpawn.mockImplementation(withInspectSuccess(() => {
       // executor 已经在 spawn 前删除 cidfile
       expect(existsSync(cidfilePath)).toBe(false);
       spawnCalled = true;
       return makeFakeDockerProc({ stdout: '', stderr: '', code: 0 });
-    });
+    }));
 
     await executeInDocker({
       task: { id: taskId, task_type: 'planner' },
@@ -212,13 +228,13 @@ describe('executeInDocker — WF-3 观察性元数据', () => {
 
   it('spawn error 时 command 字段仍然完整（forensic 价值）', async () => {
     const { executeInDocker } = await loadExecutor();
-    mockSpawn.mockImplementation(() => {
+    mockSpawn.mockImplementation(withInspectSuccess(() => {
       const proc = new EventEmitter();
       proc.stdout = new EventEmitter();
       proc.stderr = new EventEmitter();
       queueMicrotask(() => proc.emit('error', new Error('ENOENT: docker binary not found')));
       return proc;
-    });
+    }));
 
     const result = await executeInDocker({
       task: { id: 'task-meta-err', task_type: 'planner' },
