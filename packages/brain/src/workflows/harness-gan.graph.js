@@ -19,7 +19,7 @@
  */
 
 import path from 'node:path';
-import { readFile, access } from 'node:fs/promises';
+import { readFile, readdir, access } from 'node:fs/promises';
 import { execFile as execFileCb } from 'node:child_process';
 import { promisify } from 'node:util';
 import {
@@ -253,6 +253,19 @@ export async function defaultReadContractFile(worktreePath, sprintDir) {
       errors.push(`${p}: ${err.code || err.message}`);
     }
   }
+  // B34: defense-in-depth — planner may create sprints/{name}/ subdirectory.
+  try {
+    const entries = await readdir(path.join(worktreePath, sprintDir), { withFileTypes: true });
+    for (const entry of entries) {
+      if (!entry.isDirectory()) continue;
+      for (const name of ['contract-draft.md', 'sprint-contract.md']) {
+        const p = path.join(worktreePath, sprintDir, entry.name, name);
+        try {
+          return await readFile(p, 'utf8');
+        } catch { /* keep scanning */ }
+      }
+    }
+  } catch { /* sprintDir doesn't exist or readdir failed */ }
   try {
     const { stdout } = await execFile('git', [
       '-C', worktreePath, 'log', '--all', '--pretty=format:%H', '-S', 'Sprint Contract Draft', '--', `${sprintDir}/contract-draft.md`,
