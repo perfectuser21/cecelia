@@ -1,18 +1,18 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 // Mock node:fs/promises — must come before any import that uses it
-vi.mock('node:fs/promises', () => ({
-  default: {
+vi.mock('node:fs/promises', () => {
+  const mocks = {
     readFile: vi.fn(),
     readdir: vi.fn(),
     access: vi.fn(),
     mkdir: vi.fn(),
-  },
-  readFile: vi.fn(),
-  readdir: vi.fn(),
-  access: vi.fn(),
-  mkdir: vi.fn(),
-}));
+  };
+  return {
+    default: mocks,
+    ...mocks,
+  };
+});
 
 // Stub heavy deps so the graph files can be imported without side effects
 vi.mock('../db.js', () => ({ default: { connect: vi.fn(), query: vi.fn() } }));
