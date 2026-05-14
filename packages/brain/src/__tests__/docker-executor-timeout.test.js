@@ -7,10 +7,13 @@
  * Brain task: 3f32212a-adc2-436b-b828-51820a2379e6
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { EventEmitter } from 'events';
 
 // hoist mocks
 const mockPool = vi.hoisted(() => ({ query: vi.fn() }));
 const runDockerSpy = vi.hoisted(() => vi.fn());
+const mockChildSpawn = vi.hoisted(() => vi.fn());
+vi.mock('child_process', () => ({ spawn: (...args) => mockChildSpawn(...args) }));
 vi.mock('../db.js', () => ({ default: mockPool }));
 vi.mock('../spawn/middleware/docker-run.js', () => ({ runDocker: runDockerSpy }));
 vi.mock('../spawn/middleware/cost-cap.js', () => ({ checkCostCap: vi.fn().mockResolvedValue(undefined) }));
@@ -39,6 +42,21 @@ beforeEach(() => {
   runDockerSpy.mockReset();
   runDockerSpy.mockResolvedValue(stubResult);
   delete process.env.CECELIA_DOCKER_TIMEOUT_MS;
+  // ensureDockerImage calls spawn('docker image inspect …') before runDocker.
+  // Return a proc that exits 0 (image found) so executeInDocker proceeds to runDocker.
+  mockChildSpawn.mockReset();
+  mockChildSpawn.mockImplementation(() => {
+    const proc = new EventEmitter();
+    proc.stdout = new EventEmitter();
+    proc.stderr = new EventEmitter();
+    const origOn = proc.on.bind(proc);
+    proc.on = (event, listener) => {
+      const r = origOn(event, listener);
+      if (event === 'exit') Promise.resolve().then(() => proc.emit('exit', 0, null));
+      return r;
+    };
+    return proc;
+  });
 });
 
 describe('executeInDocker timeoutMs 优先级', () => {

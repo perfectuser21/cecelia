@@ -60,6 +60,6 @@ describe('kr3 router', () => {
     markKR3Milestone.mockResolvedValue({ ok: true, topic: 'kr3_cloud_functions_deployed' });
     const res = await request(makeApp()).post('/kr3/mark-cloud-functions-deployed');
     expect(res.status).toBe(200);
-    expect(markKR3Milestone).toHaveBeenCalledWith('kr3_cloud_functions_deployed', expect.any(String));
+    expect(markKR3Milestone).toHaveBeenCalledWith(undefined, 'kr3_cloud_functions_deployed', expect.any(String));
   });
 });

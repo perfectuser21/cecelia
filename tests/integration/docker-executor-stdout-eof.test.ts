@@ -48,6 +48,17 @@ function makeProc() {
   return proc;
 }
 
+function makeInspectSuccessProc() {
+  const proc = makeProc();
+  const origOn = proc.on.bind(proc);
+  proc.on = (event: string, listener: (...args: unknown[]) => void) => {
+    const r = origOn(event, listener);
+    if (event === 'exit') Promise.resolve().then(() => proc.emit('exit', 0, null));
+    return r;
+  };
+  return proc;
+}
+
 // 把 grace window 缩到 30ms 让测试快，docker-run 模块顶层读 env，需要 import 前 set。
 process.env.CECELIA_DOCKER_STDOUT_EOF_GRACE_MS = '30';
 
@@ -62,7 +73,7 @@ beforeEach(() => {
 describe('executeInDocker — stdout EOF without process exit', () => {
   it('rejects with STDOUT_EOF_NO_EXIT when stdout closes but exit never fires (hang scenario)', async () => {
     const proc = makeProc();
-    mockSpawnFn.mockReturnValueOnce(proc);
+    mockSpawnFn.mockReturnValueOnce(makeInspectSuccessProc()).mockReturnValueOnce(proc);
 
     const tStart = Date.now();
     const p = executeInDocker({
@@ -88,7 +99,7 @@ describe('executeInDocker — stdout EOF without process exit', () => {
 
   it('does NOT trigger STDOUT_EOF reject when exit fires before grace window expires', async () => {
     const proc = makeProc();
-    mockSpawnFn.mockReturnValueOnce(proc);
+    mockSpawnFn.mockReturnValueOnce(makeInspectSuccessProc()).mockReturnValueOnce(proc);
 
     const p = executeInDocker({
       task: { id: '55555555-6666-7777-8888-999999999999', task_type: 'dev' },

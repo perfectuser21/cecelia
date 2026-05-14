@@ -22,13 +22,13 @@ describe('llm-service router', () => {
   });
 
   it('POST /generate returns success with valid tier + prompt', async () => {
-    callLLM.mockResolvedValue('generated text');
+    callLLM.mockResolvedValue({ text: 'generated text', model: 'claude-haiku', provider: 'anthropic' });
     const res = await request(makeApp())
       .post('/llm-service/generate')
       .send({ tier: 'thalamus', prompt: 'Hello' });
     expect(res.status).toBe(200);
     expect(res.body.success).toBe(true);
-    expect(res.body.data).toBe('generated text');
+    expect(res.body.data.text).toBe('generated text');
   });
 
   it('POST /generate rejects invalid tier', async () => {
@@ -56,13 +56,11 @@ describe('llm-service router', () => {
   });
 
   it('POST /generate handles format=json', async () => {
-    callLLM.mockResolvedValue('{}');
+    callLLM.mockResolvedValue({ text: '{}', model: 'x', provider: 'y' });
     const res = await request(makeApp())
       .post('/llm-service/generate')
       .send({ tier: 'thalamus', prompt: 'give me json', format: 'json' });
     expect(res.status).toBe(200);
-    expect(callLLM).toHaveBeenCalledWith(expect.objectContaining({
-      prompt: expect.stringContaining('give me json'),
-    }));
+    expect(callLLM).toHaveBeenCalledWith('thalamus', expect.stringContaining('give me json'), expect.any(Object));
   });
 });
