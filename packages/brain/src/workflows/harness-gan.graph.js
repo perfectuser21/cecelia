@@ -406,13 +406,16 @@ export function createGanContractNodes(executor, ctx) {
   }
 
   async function reviewer(state) {
+    // 清理上轮残留结果文件，防止 executor 失败时读到旧数据
+    const { unlink } = await import('node:fs/promises');
+    try { await unlink(path.join(worktreePath, '.brain-result.json')); } catch { /* 忽略 */ }
+
     const result = await executor({
       task: { id: taskId, task_type: 'harness_contract_review' },
       prompt: buildReviewerPrompt(state.prdContent, state.contractContent, state.round),
       worktreePath,
       timeoutMs: 1800000,
       env: {
-        // CECELIA_CREDENTIALS 不传 → executeInDocker middleware 走 selectBestAccount
         CECELIA_TASK_TYPE: 'harness_contract_review',
         HARNESS_NODE: 'reviewer',
         HARNESS_SPRINT_DIR: sprintDir,
@@ -432,25 +435,20 @@ export function createGanContractNodes(executor, ctx) {
     if (nextCost > budgetCapUsd) {
       throw new Error(`gan_budget_exceeded: spent=${nextCost.toFixed(3)} cap=${budgetCapUsd}`);
     }
-    // Verdict 决策优先级（对齐 Anthropic harness-design 2026-03 "each criterion has hard threshold"）：
-    //   1. rubric_scores 齐全 → 代码判阈值（权威 — LLM 只打分不判决）
-    //   2. rubric_scores 缺失 → fallback 到 LLM 文本 "VERDICT: X"（老逻辑）
-    //   3. 用 rubricHistory 走势检测 — diverging/oscillating 时 force APPROVED + P1 alert
-    //      （替代旧的轮数硬 cap：不限轮数，但发散自动收敛）
+
+    // 读容器写入的结果文件（rubric_scores + verdict + feedback）
     const currentRound = state.round || 0;
-    const rubricScores = extractRubricScores(result.stdout);
+    const resultData = await readBrainResult(worktreePath, ['verdict', 'rubric_scores']);
+    const rubricScores = resultData.rubric_scores;
     const rubricVerdict = computeVerdictFromRubric(rubricScores, currentRound);
-    const llmTextVerdict = extractVerdict(result.stdout);
-    // authoritative verdict：rubric 齐全优先，否则用 LLM 文本
-    let verdict = rubricVerdict || llmTextVerdict;
-    const verdictSource = rubricVerdict ? 'rubric' : 'llm_text';
-    if (rubricVerdict && rubricVerdict !== llmTextVerdict) {
-      console.warn(`[harness-gan] round=${currentRound} rubric_verdict=${rubricVerdict} ≠ llm_text=${llmTextVerdict} — 按 rubric 判（代码权威）`);
+    // rubric 代码判决优先；文件 verdict 作为 fallback（LLM 打分但代码判阈值）
+    let verdict = rubricVerdict || resultData.verdict;
+    const verdictSource = rubricVerdict ? 'rubric' : 'file_verdict';
+    if (rubricVerdict && rubricVerdict !== resultData.verdict) {
+      console.warn(`[harness-gan] round=${currentRound} rubric_verdict=${rubricVerdict} ≠ file_verdict=${resultData.verdict} — 按 rubric 判（代码权威）`);
     }
 
-    // 收敛检测：把当前轮 scores 拼到历史里，判最近 3 轮趋势。
-    // - converging / insufficient_data：按上面 verdict 走（不 force）
-    // - diverging / oscillating：force APPROVED + forcedApproval=true + P1 alert
+    // 收敛检测：把当前轮 scores 拼到历史里，判最近 3 轮趋势
     const newHistoryEntry = rubricScores ? { round: currentRound, scores: rubricScores } : null;
     const combinedHistory = newHistoryEntry
       ? [...(state.rubricHistory || []), newHistoryEntry]
@@ -458,18 +456,18 @@ export function createGanContractNodes(executor, ctx) {
     const trend = detectConvergenceTrend(combinedHistory);
     let forcedApproval = false;
     if (verdict !== 'APPROVED' && (trend === 'diverging' || trend === 'oscillating')) {
-      console.warn(`[harness-gan][P1] GAN ${trend} at round=${currentRound} — force APPROVED 进 Phase B (verdict_before=${verdict}, source=${verdictSource}, history_len=${combinedHistory.length})`);
+      console.warn(`[harness-gan][P1] GAN ${trend} at round=${currentRound} — force APPROVED (verdict_before=${verdict}, source=${verdictSource}, history_len=${combinedHistory.length})`);
       verdict = 'APPROVED';
       forcedApproval = true;
     }
 
     const patch = { costUsd: nextCost, verdict, forcedApproval };
     if (newHistoryEntry) {
-      // reducer 会 append，所以 patch 给单条新 entry。
+      // reducer 会 append，所以 patch 给单条新 entry
       patch.rubricHistory = [newHistoryEntry];
     }
     if (verdict !== 'APPROVED') {
-      patch.feedback = extractFeedback(result.stdout);
+      patch.feedback = resultData.feedback || '';
     }
     return patch;
   }
