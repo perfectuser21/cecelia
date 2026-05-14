@@ -45,6 +45,16 @@ export function runScenarioCommand(command, opts = {}) {
     return { exitCode: 1, output: '(empty cmd)' };
   }
 
+  // B33 — planner drift 检测：e2e 命令不得调用 Brain API (localhost:5221/api/brain/)
+  // W35→W43 共 9 次失败根因：planner 在 playground sprint 的 e2e 生成了 /api/brain/ping
+  // 而非 playground 的 /ping (localhost:3000)。此处在执行前快速拦截，避免误判。
+  if (/localhost:5221\/api\/brain\/|\/api\/brain\/(ping|health|tasks|tick|status)/.test(command.cmd)) {
+    return {
+      exitCode: 1,
+      output: `[planner_drift] e2e 命令包含 Brain API URL（/api/brain/），应针对 playground (localhost:3000) 而非 Brain (localhost:5221)。命令: ${command.cmd.slice(0, 200)}`,
+    };
+  }
+
   try {
     const raw = exec(command.cmd, {
       encoding: 'utf8',

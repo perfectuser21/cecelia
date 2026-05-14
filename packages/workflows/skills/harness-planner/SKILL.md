@@ -4,10 +4,11 @@ description: |
   Harness Planner — Harness v5 阶段 A Layer 1：把用户需求展开为 Initiative PRD（Golden Path 格式）。
   输出 sprint-prd.md（What，不写 How），供 Proposer GAN 起草 Golden Path 合同。
   v8 起不再拆任务——任务 DAG 由 Proposer 在合同 GAN 确认后从 Golden Path 倒推。
-version: 8.3.0
+version: 8.4.0
 created: 2026-04-08
-updated: 2026-05-13
+updated: 2026-05-14
 changelog:
+  - 8.4.0: B33 e2e 脚本位置词死规则 — W35/W43 实证 planner 在 playground sprint 的 e2e 写了 Brain URL（localhost:5221/api/brain/ping）而非 playground URL（localhost:3000/ping）。新增 Step 0.2 位置词自查 checklist，evaluator 在运行时将以 planner_drift 标签拦截违规
   - 8.3.0: Step 0 thin_prd 主题死规则（B20 — W41 实证）— planner 把 task title 当主题导致 PRD 偏题，强制 thin_prd 关键词字面照搬到 sprint-prd.md，禁止用 task title 当主题
   - 8.2.0: Response Schema 段加"Query Parameters"子段 — W22 实证 generator 漂移到 query 名 a/b（PRD 写 base/exp）。补充 query 名约束 + 禁用别名清单，配合 proposer v7.4 强制每个 query 1 条 [BEHAVIOR]
   - 8.1.0: 加"## Response Schema"段 — API 任务必填，强制 planner 把响应字段名/类型 codify 成可机检 oracle，避免 W19/W20 类 generator schema 漂移（{result→sum/product}）。Anthropic harness-design 推荐 contract is law；schema 在 PRD 阶段就锁死，proposer/generator/evaluator 全链下游有 ground truth
@@ -75,6 +76,50 @@ changelog:
 **正确示例**：
 
 - thin_prd "/ping" → PRD 主题 "/ping endpoint 实现" ✅
+
+---
+
+### Step 0.2: e2e 脚本位置词死规则（B33 — W35/W43 实证）
+
+**第二件事**：如果本 sprint 涉及 playground 端点（`/ping`/`/sum`/`/multiply` 等），在 PRD 末尾写 `## E2E 验收` 区块时，**必须执行如下位置词检查**：
+
+**位置词定义**：URL 前缀用于标识被测服务：
+- `localhost:3000/`（或 `localhost:$PLAYGROUND_PORT/`）→ playground（被测服务）✅
+- `localhost:5221/api/brain/` → Brain API（调度/决策层）❌ 不可出现在 playground 的 e2e 中
+
+**死规则**（违反 → evaluator 在运行时以 `planner_drift` 标签拦截，task=failed）：
+
+| 类别 | 严禁 ❌ | 必须 ✅ |
+|------|---------|---------|
+| playground 端点验证 | `curl localhost:5221/api/brain/ping` | `curl localhost:3000/ping` 或 `localhost:$PLAYGROUND_PORT/ping` |
+| 健康检查混用 | 在 playground sprint 的 e2e 里用 Brain `/api/brain/ping` 确认"服务存活" | 在 playground 自己的端口上测自己的端点 |
+| 端口混淆 | 5221（Brain 调度端口）出现在 playground e2e 命令 | 3000 / $PLAYGROUND_PORT（playground 端口）|
+
+**自查 checklist**（写完 `## E2E 验收` bash 脚本后必 grep）：
+
+```bash
+# 禁止项：playground sprint 的 e2e 里不得出现 Brain API URL
+! grep -qE "localhost:5221/api/brain/|/api/brain/(ping|health|tasks)" /tmp/e2e-draft.sh \
+  || { echo "FAIL: e2e 含 Brain URL，请改用 localhost:3000（planner_drift 将被 evaluator 拦截）"; exit 1; }
+```
+
+**违规示例**（W35-W43 根因，禁止重复）：
+
+```bash
+# ❌ playground sprint 里写 Brain ping 做 Step 1
+curl -f localhost:5221/api/brain/ping  # 这是 Brain 健康检查，不是 playground 验证
+```
+
+**正确示例**（playground sprint /ping 的 e2e）：
+
+```bash
+# ✅ 启 playground + 测自己的端点
+cd playground && PLAYGROUND_PORT=3001 node server.js & SPID=$!
+sleep 2
+curl -f localhost:3001/ping | jq -e '.pong == true'
+kill $SPID
+echo "✅ playground /ping 验证通过"
+```
 
 ---
 
