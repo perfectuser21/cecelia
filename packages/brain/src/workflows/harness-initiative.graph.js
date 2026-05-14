@@ -648,6 +648,17 @@ export async function parsePrdNode(state) {
   // B35+B36: 从 planner verdict JSON 提取 sprint_dir，取最后一个（verdict 在输出末尾）
   const sprintDirMatches = [...(state.plannerOutput || '').matchAll(/"sprint_dir"\s*:\s*"([^"]+)"/g)];
   if (sprintDirMatches.length > 0) sprintDir = sprintDirMatches.at(-1)[1];
+  // B37: git diff 找 planner 实际新建的 sprint 目录（最可靠，覆盖 LLM 输出解析）
+  if (state.worktreePath) {
+    try {
+      const { stdout: diffOut } = await execFile('git',
+        ['diff', '--name-only', 'origin/main', 'HEAD', '--', 'sprints/'],
+        { cwd: state.worktreePath }
+      );
+      const newSprintMatch = diffOut.match(/sprints\/([^/\n]+)\//);
+      if (newSprintMatch) sprintDir = `sprints/${newSprintMatch[1]}`;
+    } catch { /* git diff 失败，保持已有 sprintDir */ }
+  }
   let prdContent = state.plannerOutput || '';
   try {
     prdContent = await readFile(
