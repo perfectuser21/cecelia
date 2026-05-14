@@ -1,0 +1,28 @@
+{
+  "initiative_id": "pending",
+  "journey_type": "autonomous",
+  "journey_type_reason": "仅动 playground 子项目，无 UI/brain/engine/远端 agent",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "playground/server.js 加 GET /negate 路由 + 测试 + README",
+      "scope": "在 playground/server.js 加入 GET /negate 端点，strict 校验 value 为整数（^-?\\d+$，|value| ≤ 9007199254740990，唯一 query 名 value）；playground/tests/server.test.js 加 describe('GET /negate') 覆盖 6 场景；playground/README.md 加 /negate 段说明 endpoint",
+      "dod": [
+        "[BEHAVIOR] GET /negate?value=5 → 200 + {result:-5, operation:'negate'}，keys == ['operation','result']",
+        "[BEHAVIOR] GET /negate?value=abc → 400 + {error: <非空string>}，keys == ['error']",
+        "[BEHAVIOR] 禁用字段 negated/negative/inverted 不在 response 中",
+        "[ARTIFACT] playground/server.js 含 app.get('/negate') 路由注册",
+        "[ARTIFACT] playground/tests/server.test.js 含 describe('GET /negate') 块",
+        "[ARTIFACT] playground/README.md 含 /negate 段"
+      ],
+      "files": [
+        "playground/server.js",
+        "playground/tests/server.test.js",
+        "playground/README.md"
+      ],
+      "depends_on": [],
+      "complexity": "S",
+      "estimated_minutes": 20
+    }
+  ]
+}
