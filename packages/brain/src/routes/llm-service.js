@@ -107,6 +107,57 @@ function classifyError(err) {
   return { code: 'LLM_CALL_FAILED', message: msg || 'LLM call failed' };
 }
 
+/**
+ * 校验并规范化 max_tokens 参数。
+ * 返回 { error } 或 { value }。
+ */
+function parseMaxTokens(raw, defaultVal) {
+  let value = raw ?? defaultVal;
+  if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) {
+    return { error: { code: 'INVALID_MAX_TOKENS', message: 'max_tokens 必须为正整数' } };
+  }
+  if (value > MAX_TOKENS_CEILING) {
+    return { error: { code: 'INVALID_MAX_TOKENS', message: `max_tokens 不得超过 ${MAX_TOKENS_CEILING}` } };
+  }
+  return { value: Math.floor(value) };
+}
+
+/**
+ * 校验并规范化 timeout（秒）参数。
+ * 返回 { error } 或 { valueMs }（毫秒）。
+ */
+function parseTimeoutSec(raw, defaultVal) {
+  const value = raw ?? defaultVal;
+  if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) {
+    return { error: { code: 'INVALID_TIMEOUT', message: 'timeout 必须为正数（秒）' } };
+  }
+  if (value > TIMEOUT_CEILING_SEC) {
+    return { error: { code: 'INVALID_TIMEOUT', message: `timeout 不得超过 ${TIMEOUT_CEILING_SEC} 秒` } };
+  }
+  return { valueMs: Math.floor(value * 1000) };
+}
+
+/**
+ * 校验 format 字段（可选）。
+ * 返回 null（合法）或 error 对象。
+ */
+function validateFormat(format) {
+  if (format != null && format !== 'text' && format !== 'json') {
+    return { code: 'INVALID_FORMAT', message: "format 必须是 'text' 或 'json'" };
+  }
+  return null;
+}
+
+/**
+ * 如果 format === 'json'，为 prompt 追加 JSON 输出 hint。
+ */
+function applyJsonHint(prompt, format) {
+  if (format === 'json') {
+    return `${prompt}\n\n请严格输出单个合法的 JSON 对象，不要附加任何解释文字或 Markdown 代码块标记。`;
+  }
+  return prompt;
+}
+
 router.post('/generate', async (req, res) => {
   const body = req.body || {};
   const { tier, prompt, format } = body;
@@ -147,68 +198,28 @@ router.post('/generate', async (req, res) => {
     });
   }
 
-  // max_tokens 归一化
-  let maxTokens = body.max_tokens ?? body.maxTokens ?? DEFAULT_MAX_TOKENS;
-  if (typeof maxTokens !== 'number' || !Number.isFinite(maxTokens) || maxTokens <= 0) {
-    return res.status(400).json({
-      success: false,
-      data: null,
-      error: { code: 'INVALID_MAX_TOKENS', message: 'max_tokens 必须为正整数' },
-    });
-  }
-  if (maxTokens > MAX_TOKENS_CEILING) {
-    return res.status(400).json({
-      success: false,
-      data: null,
-      error: {
-        code: 'INVALID_MAX_TOKENS',
-        message: `max_tokens 不得超过 ${MAX_TOKENS_CEILING}`,
-      },
-    });
-  }
-  maxTokens = Math.floor(maxTokens);
-
-  // timeout（秒）归一化
-  let timeoutSec = body.timeout ?? DEFAULT_TIMEOUT_SEC;
-  if (typeof timeoutSec !== 'number' || !Number.isFinite(timeoutSec) || timeoutSec <= 0) {
-    return res.status(400).json({
-      success: false,
-      data: null,
-      error: { code: 'INVALID_TIMEOUT', message: 'timeout 必须为正数（秒）' },
-    });
-  }
-  if (timeoutSec > TIMEOUT_CEILING_SEC) {
-    return res.status(400).json({
-      success: false,
-      data: null,
-      error: {
-        code: 'INVALID_TIMEOUT',
-        message: `timeout 不得超过 ${TIMEOUT_CEILING_SEC} 秒`,
-      },
-    });
-  }
-  const timeoutMs = Math.floor(timeoutSec * 1000);
-
-  // format（可选）
-  if (format != null && format !== 'text' && format !== 'json') {
-    return res.status(400).json({
-      success: false,
-      data: null,
-      error: { code: 'INVALID_FORMAT', message: "format 必须是 'text' 或 'json'" },
-    });
+  const maxTokensResult = parseMaxTokens(body.max_tokens ?? body.maxTokens, DEFAULT_MAX_TOKENS);
+  if (maxTokensResult.error) {
+    return res.status(400).json({ success: false, data: null, error: maxTokensResult.error });
   }
 
-  // 如果调用方要 json，追加 hint（callLLM 本身无 format 能力，走 prompt 诱导）
-  let finalPrompt = prompt;
-  if (format === 'json') {
-    finalPrompt = `${prompt}\n\n请严格输出单个合法的 JSON 对象，不要附加任何解释文字或 Markdown 代码块标记。`;
+  const timeoutResult = parseTimeoutSec(body.timeout, DEFAULT_TIMEOUT_SEC);
+  if (timeoutResult.error) {
+    return res.status(400).json({ success: false, data: null, error: timeoutResult.error });
   }
+
+  const formatError = validateFormat(format);
+  if (formatError) {
+    return res.status(400).json({ success: false, data: null, error: formatError });
+  }
+
+  const finalPrompt = applyJsonHint(prompt, format);
 
   // ===== 调用 callLLM =====
   try {
     const result = await callLLM(tier, finalPrompt, {
-      timeout: timeoutMs,
-      maxTokens,
+      timeout: timeoutResult.valueMs,
+      maxTokens: maxTokensResult.value,
     });
     // callLLM 返回 { text, model, provider, elapsed_ms, attempted_fallback? }
     const text = result?.text || '';
@@ -340,62 +351,22 @@ router.post('/vision', async (req, res) => {
     });
   }
 
-  // ===== max_tokens 归一化（vision 默认 1024）=====
-  let maxTokens = body.max_tokens ?? body.maxTokens ?? VISION_DEFAULT_MAX_TOKENS;
-  if (typeof maxTokens !== 'number' || !Number.isFinite(maxTokens) || maxTokens <= 0) {
-    return res.status(400).json({
-      success: false,
-      data: null,
-      error: { code: 'INVALID_MAX_TOKENS', message: 'max_tokens 必须为正整数' },
-    });
-  }
-  if (maxTokens > MAX_TOKENS_CEILING) {
-    return res.status(400).json({
-      success: false,
-      data: null,
-      error: {
-        code: 'INVALID_MAX_TOKENS',
-        message: `max_tokens 不得超过 ${MAX_TOKENS_CEILING}`,
-      },
-    });
-  }
-  maxTokens = Math.floor(maxTokens);
-
-  // ===== timeout 归一化（vision 默认 60 秒）=====
-  let timeoutSec = body.timeout ?? VISION_DEFAULT_TIMEOUT_SEC;
-  if (typeof timeoutSec !== 'number' || !Number.isFinite(timeoutSec) || timeoutSec <= 0) {
-    return res.status(400).json({
-      success: false,
-      data: null,
-      error: { code: 'INVALID_TIMEOUT', message: 'timeout 必须为正数（秒）' },
-    });
-  }
-  if (timeoutSec > TIMEOUT_CEILING_SEC) {
-    return res.status(400).json({
-      success: false,
-      data: null,
-      error: {
-        code: 'INVALID_TIMEOUT',
-        message: `timeout 不得超过 ${TIMEOUT_CEILING_SEC} 秒`,
-      },
-    });
-  }
-  const timeoutMs = Math.floor(timeoutSec * 1000);
-
-  // ===== format 校验（可选）=====
-  if (format != null && format !== 'text' && format !== 'json') {
-    return res.status(400).json({
-      success: false,
-      data: null,
-      error: { code: 'INVALID_FORMAT', message: "format 必须是 'text' 或 'json'" },
-    });
+  const maxTokensResult = parseMaxTokens(body.max_tokens ?? body.maxTokens, VISION_DEFAULT_MAX_TOKENS);
+  if (maxTokensResult.error) {
+    return res.status(400).json({ success: false, data: null, error: maxTokensResult.error });
   }
 
-  // json 时追加 hint（与 /generate 一致）
-  let finalPrompt = prompt;
-  if (format === 'json') {
-    finalPrompt = `${prompt}\n\n请严格输出单个合法的 JSON 对象，不要附加任何解释文字或 Markdown 代码块标记。`;
+  const timeoutResult = parseTimeoutSec(body.timeout, VISION_DEFAULT_TIMEOUT_SEC);
+  if (timeoutResult.error) {
+    return res.status(400).json({ success: false, data: null, error: timeoutResult.error });
   }
+
+  const formatError = validateFormat(format);
+  if (formatError) {
+    return res.status(400).json({ success: false, data: null, error: formatError });
+  }
+
+  const finalPrompt = applyJsonHint(prompt, format);
 
   // ===== 构造 Anthropic 多模态 imageContent =====
   const imageContent = [
@@ -419,8 +390,8 @@ router.post('/vision', async (req, res) => {
     || (visionProvider === 'anthropic' ? 'claude-sonnet-4-6' : undefined);
   try {
     const result = await callLLM(tier, finalPrompt, {
-      timeout: timeoutMs,
-      maxTokens,
+      timeout: timeoutResult.valueMs,
+      maxTokens: maxTokensResult.value,
       imageContent,
       provider: visionProvider,
       ...(visionModel ? { model: visionModel } : {}),

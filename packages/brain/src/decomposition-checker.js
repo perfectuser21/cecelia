@@ -33,6 +33,44 @@ const WIP_LIMITS = {
 // ───────────────────────────────────────────────────────────────────
 
 /**
+ * 构建 KR 拆解任务的标准描述文本。
+ * preamble 为函数特有的前置行（介绍 + 背景），共用的任务步骤和 API 调用说明由此函数统一输出。
+ */
+function buildKRDecompDescription(kr, preamble) {
+  return [
+    ...preamble,
+    '',
+    '你的任务：',
+    '1. 分析 KR，拆解为 1-2 个 Project（目标型工作容器，1周周期）',
+    '2. 每个 Project 下创建 3-4 个 Scope（功能边界分组，2-3天）',
+    '3. 每个 Scope 下创建 3-7 个 Initiative（1-2小时 pipeline）',
+    '4. 每个 Initiative 需要：方向描述 + 成功标准',
+    '5. 不需要创建 Task — Task 由 planner 按需创建',
+    '',
+    '层级：Project → Scope → Initiative（三层结构）',
+    '拆分技巧（SPIDR）：Spike/Path/Interface/Data/Rules 五种刀法',
+    '',
+    '调用 Brain API 创建：',
+    '  创建 Project: POST http://localhost:5221/api/brain/action/create-project',
+    `    Body: { "name": "...", "type": "project", "status": "active" }`,
+    '',
+    '  关联 KR: POST http://localhost:5221/api/brain/action/link-project-kr',
+    `    Body: { "project_id": "...", "kr_id": "${kr.id}" }`,
+    '',
+    '  创建 Scope: POST http://localhost:5221/api/brain/action/create-scope',
+    `    Body: { "name": "...", "parent_id": "<project_id>", "description": "..." }`,
+    '',
+    '  创建 Initiative: POST http://localhost:5221/api/brain/action/create-project',
+    `    Body: { "name": "...", "type": "initiative", "parent_id": "<scope_id>", "status": "active" }`,
+    '',
+    `KR ID: ${kr.id}`,
+    `KR 标题: ${kr.title}`,
+    `KR 描述: ${kr.description || '(无)'}`,
+    `优先级: ${kr.priority}`,
+  ].join('\n');
+}
+
+/**
  * Check if a decomposition task already exists for the given goal_id.
  */
 async function hasExistingDecompositionTask(goalId) {
@@ -138,37 +176,9 @@ async function checkPendingKRs() {
     // 创建拆解任务
     const task = await createDecompositionTask({
       title: `KR 拆解: ${kr.title}`,
-      description: [
+      description: buildKRDecompDescription(kr, [
         `请为 KR「${kr.title}」拆解出 Project、Scope 和 Initiative。`,
-        '',
-        '你的任务：',
-        '1. 分析 KR，拆解为 1-2 个 Project（目标型工作容器，1周周期）',
-        '2. 每个 Project 下创建 3-4 个 Scope（功能边界分组，2-3天）',
-        '3. 每个 Scope 下创建 3-7 个 Initiative（1-2小时 pipeline）',
-        '4. 每个 Initiative 需要：方向描述 + 成功标准',
-        '5. 不需要创建 Task — Task 由 planner 按需创建',
-        '',
-        '层级：Project → Scope → Initiative（三层结构）',
-        '拆分技巧（SPIDR）：Spike/Path/Interface/Data/Rules 五种刀法',
-        '',
-        '调用 Brain API 创建：',
-        '  创建 Project: POST http://localhost:5221/api/brain/action/create-project',
-        `    Body: { "name": "...", "type": "project", "status": "active" }`,
-        '',
-        '  关联 KR: POST http://localhost:5221/api/brain/action/link-project-kr',
-        `    Body: { "project_id": "...", "kr_id": "${kr.id}" }`,
-        '',
-        '  创建 Scope: POST http://localhost:5221/api/brain/action/create-scope',
-        `    Body: { "name": "...", "parent_id": "<project_id>", "description": "..." }`,
-        '',
-        '  创建 Initiative: POST http://localhost:5221/api/brain/action/create-project',
-        `    Body: { "name": "...", "type": "initiative", "parent_id": "<scope_id>", "status": "active" }`,
-        '',
-        `KR ID: ${kr.id}`,
-        `KR 标题: ${kr.title}`,
-        `KR 描述: ${kr.description || '(无)'}`,
-        `优先级: ${kr.priority}`,
-      ].join('\n'),
+      ]),
       goalId: kr.id,
       payload: { level: 'kr', kr_id: kr.id }
     });
@@ -298,39 +308,11 @@ async function checkKRWithoutProject() {
 
     const task = await createDecompositionTask({
       title: `KR 拆解（修复）: ${kr.title}`,
-      description: [
+      description: buildKRDecompDescription(kr, [
         `请为 KR「${kr.title}」拆解出 Project、Scope 和 Initiative（修复断点）。`,
         '',
         '背景：此 KR 已处于 ready/in_progress 状态但缺少 Project 链接，导致规划链断裂，需要重新拆解。',
-        '',
-        '你的任务：',
-        '1. 分析 KR，拆解为 1-2 个 Project（目标型工作容器，1周周期）',
-        '2. 每个 Project 下创建 3-4 个 Scope（功能边界分组，2-3天）',
-        '3. 每个 Scope 下创建 3-7 个 Initiative（1-2小时 pipeline）',
-        '4. 每个 Initiative 需要：方向描述 + 成功标准',
-        '5. 不需要创建 Task — Task 由 planner 按需创建',
-        '',
-        '层级：Project → Scope → Initiative（三层结构）',
-        '拆分技巧（SPIDR）：Spike/Path/Interface/Data/Rules 五种刀法',
-        '',
-        '调用 Brain API 创建：',
-        '  创建 Project: POST http://localhost:5221/api/brain/action/create-project',
-        `    Body: { "name": "...", "type": "project", "status": "active" }`,
-        '',
-        '  关联 KR: POST http://localhost:5221/api/brain/action/link-project-kr',
-        `    Body: { "project_id": "...", "kr_id": "${kr.id}" }`,
-        '',
-        '  创建 Scope: POST http://localhost:5221/api/brain/action/create-scope',
-        `    Body: { "name": "...", "parent_id": "<project_id>", "description": "..." }`,
-        '',
-        '  创建 Initiative: POST http://localhost:5221/api/brain/action/create-project',
-        `    Body: { "name": "...", "type": "initiative", "parent_id": "<scope_id>", "status": "active" }`,
-        '',
-        `KR ID: ${kr.id}`,
-        `KR 标题: ${kr.title}`,
-        `KR 描述: ${kr.description || '(无)'}`,
-        `优先级: ${kr.priority}`,
-      ].join('\n'),
+      ]),
       goalId: kr.id,
       payload: { level: 'kr', kr_id: kr.id, repair: true }
     });
