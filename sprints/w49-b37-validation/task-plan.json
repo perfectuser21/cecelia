@@ -1,0 +1,23 @@
+{
+  "initiative_id": "pending",
+  "journey_type": "dev_pipeline",
+  "journey_type_reason": "本次 sprint 验证的是 harness 开发流程引擎（parsePrdNode git diff 逻辑），属于开发管道自验证",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "创建 B37 验证脚本 verify-b37.sh",
+      "scope": "在 sprints/w49-b37-validation/ 创建可执行验证脚本，覆盖 4 项断言：git diff 输出正确、sprint-prd.md 存在、sprint-contract.md 存在、Brain 日志无 ENOENT；运行脚本输出结构化结果",
+      "dod": [
+        "[ARTIFACT] sprints/w49-b37-validation/verify-b37.sh 存在且含 ≥4 条 ✅ PASS 输出",
+        "[BEHAVIOR] bash sprints/w49-b37-validation/verify-b37.sh exit 0（git diff 断言通过）",
+        "[BEHAVIOR] Brain Docker 日志无 ENOENT 关联 w49-b37-validation"
+      ],
+      "files": [
+        "sprints/w49-b37-validation/verify-b37.sh"
+      ],
+      "depends_on": [],
+      "complexity": "S",
+      "estimated_minutes": 20
+    }
+  ]
+}
