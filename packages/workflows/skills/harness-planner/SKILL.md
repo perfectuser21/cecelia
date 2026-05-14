@@ -4,10 +4,11 @@ description: |
   Harness Planner — Harness v5 阶段 A Layer 1：把用户需求展开为 Initiative PRD（Golden Path 格式）。
   输出 sprint-prd.md（What，不写 How），供 Proposer GAN 起草 Golden Path 合同。
   v8 起不再拆任务——任务 DAG 由 Proposer 在合同 GAN 确认后从 Golden Path 倒推。
-version: 8.3.0
+version: 8.4.0
 created: 2026-04-08
-updated: 2026-05-13
+updated: 2026-05-14
 changelog:
+  - 8.4.0: Step 0 位置词死规则（B33 — W43 实证）— planner 把 playground 漂移到 brain route，强制 thin_prd 位置词原样映射到实现模块
   - 8.3.0: Step 0 thin_prd 主题死规则（B20 — W41 实证）— planner 把 task title 当主题导致 PRD 偏题，强制 thin_prd 关键词字面照搬到 sprint-prd.md，禁止用 task title 当主题
   - 8.2.0: Response Schema 段加"Query Parameters"子段 — W22 实证 generator 漂移到 query 名 a/b（PRD 写 base/exp）。补充 query 名约束 + 禁用别名清单，配合 proposer v7.4 强制每个 query 1 条 [BEHAVIOR]
   - 8.1.0: 加"## Response Schema"段 — API 任务必填，强制 planner 把响应字段名/类型 codify 成可机检 oracle，避免 W19/W20 类 generator schema 漂移（{result→sum/product}）。Anthropic harness-design 推荐 contract is law；schema 在 PRD 阶段就锁死，proposer/generator/evaluator 全链下游有 ground truth
@@ -75,6 +76,31 @@ changelog:
 **正确示例**：
 
 - thin_prd "/ping" → PRD 主题 "/ping endpoint 实现" ✅
+
+### 位置词死规则（B33 — W43 实证）
+
+**第二件事**：检查 thin_prd 是否含**位置词**（模块/目录名），保证实现落在正确模块。
+
+**死规则**：
+
+1. thin_prd 含 "playground" → 代码必须写在 `playground/server.js`，禁止放 `packages/brain/src/`
+2. thin_prd 含 "Brain" / "brain" / "Brain API" → 代码写在 `packages/brain/src/`
+3. thin_prd 含 "dashboard" → 代码写在 `apps/dashboard/`
+4. thin_prd 含 "apps/api" → 代码写在 `apps/api/`
+5. thin_prd 无明确位置词 → 遵循 Step 0.5 journey_type 推断
+
+**自查 checklist**（写完 sprint-prd.md 后必 grep）：
+
+- [ ] thin_prd 含哪个位置词 → PRD 的实现位置描述必须与之一致
+- [ ] 禁止跨模块漂移（playground → brain route / brain route → playground）
+
+**违规示例**（禁止）：
+
+- thin_prd "playground 加 GET /ping" → PRD 写 `packages/brain/src/routes/status.js` 加 `/api/brain/ping` ❌
+
+**正确示例**：
+
+- thin_prd "playground 加 GET /ping" → PRD 写 `playground/server.js` 加 `GET /ping` ✅
 
 ---
 
