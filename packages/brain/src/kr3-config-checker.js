@@ -264,3 +264,25 @@ export async function markAdminOidInitialized(dbPool, note = '已初始化') {
     [ADMIN_OID_READY_KEY, note]
   );
 }
+
+/**
+ * 通用 KR3 里程碑标记（upsert active decision）。
+ * 用于 kr3-progress-calculator 定义的 6 个进度里程碑。
+ *
+ * @param {import('pg').Pool} [dbPool]
+ * @param {string} topic - decisions.topic（见 KR3_MILESTONE_KEYS）
+ * @param {string} [note]
+ */
+export async function markKR3Milestone(dbPool, topic, note = '已完成') {
+  if (!dbPool) dbPool = (await import('./db.js')).default;
+  await dbPool.query(
+    `UPDATE decisions SET status = 'superseded', updated_at = NOW()
+     WHERE topic = $1 AND category = 'kr3-milestone' AND status = 'active'`,
+    [topic]
+  );
+  await dbPool.query(
+    `INSERT INTO decisions (topic, decision, category, status, made_by, created_at, updated_at)
+     VALUES ($1, $2, 'kr3-milestone', 'active', 'system', NOW(), NOW())`,
+    [topic, note]
+  );
+}
