@@ -177,6 +177,8 @@ describe('spawnNode (Layer 3 spawn-and-interrupt)', () => {
     expect(delta.error).toBeUndefined();
     // 不应再有 generator_output（要等 callback resume）
     expect(delta.generator_output).toBeUndefined();
+    // Protocol v2: HARNESS_BRANCH_NAME 必须被注入（Brain 预计算分支名）
+    expect(spawnArg.env.HARNESS_BRANCH_NAME).toBe('cp-mock-init-1-sub-1');
   });
 
   it('fix_round>0 → 注入 HARNESS_FIX_MODE=true 且 containerId 含 r{round}', async () => {
@@ -243,7 +245,7 @@ describe('spawnGeneratorNode (legacy compat)', () => {
 });
 
 describe('parseCallbackNode', () => {
-  it('提取 pr_url + pr_branch', async () => {
+  it('提取 pr_url + pr_branch（Protocol v1 fallback: stdout）', async () => {
     const delta = await parseCallbackNode({
       generator_output: 'foo\npr_url: https://x/pull/9\npr_branch: cp-foo\ncommit_sha: abc',
     });
@@ -261,6 +263,28 @@ describe('parseCallbackNode', () => {
       generator_output: 'IGNORED',
     });
     expect(delta.pr_url).toBe('https://existing/pull/1');
+  });
+  it('Protocol v2: git-state 优先于 stdout，worktreePath 有效时用 git 查 PR', async () => {
+    // execFile mock: git → branch; gh → pr_url
+    const execFile = vi.fn()
+      .mockResolvedValueOnce({ stdout: 'cp-0514-ws-abc\n', stderr: '' })
+      .mockResolvedValueOnce({ stdout: 'https://github.com/owner/repo/pull/77\n', stderr: '' });
+    const delta = await parseCallbackNode(
+      { worktreePath: '/wt/test', generator_output: 'pr_url: https://fake/pull/999' },
+      { execFile },
+    );
+    // 应取 git 查到的 URL，而非 stdout 的 fake URL
+    expect(delta.pr_url).toBe('https://github.com/owner/repo/pull/77');
+    expect(delta.pr_branch).toBe('cp-0514-ws-abc');
+  });
+  it('Protocol v2: git 查无结果时降级到 stdout 解析', async () => {
+    const execFile = vi.fn()
+      .mockResolvedValueOnce({ stdout: '', stderr: '' }); // git → 空分支
+    const delta = await parseCallbackNode(
+      { worktreePath: '/wt/test', generator_output: 'pr_url: https://x/pull/8' },
+      { execFile },
+    );
+    expect(delta.pr_url).toBe('https://x/pull/8');
   });
 });
 
@@ -454,9 +478,14 @@ describe('harness-task graph — end-to-end (Layer 3 spawn-interrupt-resume)', (
     mockClassify.mockReset();
     mockPoolQuery.mockReset();
     mockPoolQuery.mockResolvedValue({ rows: [] });
-    // B21: 默认 gh pr merge 成功，返回简单 stdout
+    // B21: 默认 gh pr merge 成功，返回简单 stdout。
+    // Protocol v2: git 调用（rev-parse）返回空分支，让 readPrFromGitState 回退到 stdout 解析，
+    // 防止 catch-all mock 把 '✓ merged' 当作分支名/PR URL 污染 parseCallbackNode。
     mockExecFileImpl.mockReset();
-    mockExecFileImpl.mockReturnValue({ stdout: '✓ merged', stderr: '' });
+    mockExecFileImpl.mockImplementation((file, args) => {
+      if (file === 'git') return { stdout: '', stderr: '' };
+      return { stdout: '✓ merged', stderr: '' };
+    });
   });
   afterEach(() => { delete process.env.HARNESS_POLL_INTERVAL_MS; });
 
