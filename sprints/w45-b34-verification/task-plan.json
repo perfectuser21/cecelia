@@ -1,0 +1,28 @@
+{
+  "initiative_id": "pending",
+  "journey_type": "dev_pipeline",
+  "journey_type_reason": "仅涉及 packages/brain/src/__tests__/ 中的 harness 测试基础设施，无 HTTP 端点、无 UI 交互",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "新增 harness-sprint-subdir-detection 集成测试（真实 fs）",
+      "scope": "在 packages/brain/src/__tests__/ 新增 harness-sprint-subdir-detection.integration.test.js；不 mock node:fs/promises；用 os.tmpdir() 构造真实目录树，调用 parsePrdNode + defaultReadContractFile 验证子目录检测全链路通过",
+      "dod": [
+        "[ARTIFACT] packages/brain/src/__tests__/harness-sprint-subdir-detection.integration.test.js 存在",
+        "[ARTIFACT] 文件不含 vi.mock('node:fs/promises')（真实 fs）",
+        "[ARTIFACT] import parsePrdNode 和 defaultReadContractFile",
+        "[BEHAVIOR] parsePrdNode 子目录 happy path — sprintDir 返回 'sprints/w45-b34-e2e'，prdContent 字面一致",
+        "[BEHAVIOR] defaultReadContractFile 子目录扫描返回正确合同内容",
+        "[BEHAVIOR] defaultReadContractFile 合同缺失 throw 含 'contract file not found'",
+        "[BEHAVIOR] parsePrdNode fallback 到 plannerOutput 当子目录无 sprint-prd.md",
+        "[BEHAVIOR] 全套 vitest 0 failed"
+      ],
+      "files": [
+        "packages/brain/src/__tests__/harness-sprint-subdir-detection.integration.test.js"
+      ],
+      "depends_on": [],
+      "complexity": "S",
+      "estimated_minutes": 30
+    }
+  ]
+}
