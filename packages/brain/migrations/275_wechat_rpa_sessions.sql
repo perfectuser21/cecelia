@@ -1,4 +1,4 @@
--- Migration: 273_wechat_rpa_sessions
+-- Migration: 275_wechat_rpa_sessions
 -- Purpose: Path 4 Sprint 1 — wechat-rpa Agent 的会话表
 --
 -- 背景：wechat-rpa handler 每次执行一个 RPA 动作（发消息、截图等）

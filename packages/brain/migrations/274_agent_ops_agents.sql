@@ -1,4 +1,4 @@
--- Migration: 272_agent_ops_agents
+-- Migration: 274_agent_ops_agents
 -- Purpose: Path 4 Sprint 1 — agent_ops 基础表 agents
 --
 -- 背景：agent_ops 路径引入 wechat-rpa / openrouter 等外部 Agent，
