@@ -169,20 +169,33 @@ ${task.description || task.title || ''}
   // ── Phase A — GAN 合同循环（PR-4）──────────────────────────────────────
   // plannerOutput 是 Planner stdout 元数据（含"Push failed"等废话），真 PRD 在 sprints/sprint-prd.md
   let prdContent = plannerOutput;
+  let effectiveSprintDir = sprintDir;
   try {
-    const fsPromises = await import('node:fs/promises');
-    const pathMod = (await import('node:path')).default;
-    prdContent = await fsPromises.readFile(pathMod.join(worktreePath, sprintDir, 'sprint-prd.md'), 'utf8');
-  } catch (err) {
-    console.error(`[harness-initiative-runner] read sprint-prd.md failed (${err.message}), falling back to planner stdout`);
-  }
+    const { readFile: rfA, readdir: rdA } = await import('node:fs/promises');
+    const { default: pathA } = await import('node:path');
+    try {
+      prdContent = await rfA(pathA.join(worktreePath, sprintDir, 'sprint-prd.md'), 'utf8');
+    } catch (err) {
+      console.error(`[harness-initiative-runner] read sprint-prd.md failed (${err.message}), scanning subdirs`);
+      const entries = await rdA(pathA.join(worktreePath, 'sprints'), { withFileTypes: true });
+      for (const entry of entries) {
+        if (!entry.isDirectory()) continue;
+        try {
+          prdContent = await rfA(pathA.join(worktreePath, 'sprints', entry.name, 'sprint-prd.md'), 'utf8');
+          effectiveSprintDir = pathA.join('sprints', entry.name);
+          console.log(`[harness-initiative-runner] found sprint-prd.md in ${effectiveSprintDir}`);
+          break;
+        } catch { /* keep scanning */ }
+      }
+    }
+  } catch { /* imports or readdir failed, fall back to planner stdout */ }
 
   let ganResult;
   try {
     ganResult = await runGanContractGraph({
       taskId: task.id,
       initiativeId,
-      sprintDir,
+      sprintDir: effectiveSprintDir,
       prdContent,
       executor,
       worktreePath,
@@ -549,6 +562,7 @@ export const InitiativeState = Annotation.Root({
   plannerOutput:  Annotation({ reducer: (_o, n) => n, default: () => null }),
   taskPlan:       Annotation({ reducer: (_o, n) => n, default: () => null }),
   prdContent:     Annotation({ reducer: (_o, n) => n, default: () => null }),
+  sprintDir:      Annotation({ reducer: (_o, n) => n, default: () => null }),
   ganResult:      Annotation({ reducer: (_o, n) => n, default: () => null }),
   result:         Annotation({ reducer: (_o, n) => n, default: () => null }),
   error:          Annotation({ reducer: (_o, n) => n, default: () => null }),
@@ -666,7 +680,7 @@ export async function runGanLoopNode(state, opts = {}) {
   if (state.ganResult) return { ganResult: state.ganResult };
   try {
     const executor = opts.executor || spawn;
-    const sprintDir = state.task?.payload?.sprint_dir || 'sprints';
+    const sprintDir = state.sprintDir || state.task?.payload?.sprint_dir || 'sprints';
     const budgetUsd = state.task?.payload?.budget_usd || DEFAULT_BUDGET_USD;
     // LangGraph runtime 不会把父 graph 的 checkpointer 注入子节点 opts；
     // 当 opts.checkpointer 缺失（生产实际场景）时，自己 getPgCheckpointer 兜底。
@@ -815,6 +829,7 @@ export const FullInitiativeState = Annotation.Root({
   plannerOutput:  Annotation({ reducer: (_o, n) => n, default: () => null }),
   taskPlan:       Annotation({ reducer: (_o, n) => n, default: () => null }),
   prdContent:     Annotation({ reducer: (_o, n) => n, default: () => null }),
+  sprintDir:      Annotation({ reducer: (_o, n) => n, default: () => null }),
   ganResult:      Annotation({ reducer: (_o, n) => n, default: () => null }),
   result:         Annotation({ reducer: (_o, n) => n, default: () => null }),
   error:          Annotation({ reducer: (_o, n) => n, default: () => null }),
@@ -867,7 +882,7 @@ export async function inferTaskPlanNode(state, _opts = {}) {
   }
 
   const proposeBranch = state?.ganResult?.propose_branch;
-  const sprintDir = state.task?.payload?.sprint_dir || 'sprints';
+  const sprintDir = state.sprintDir || state.task?.payload?.sprint_dir || 'sprints';
 
   if (!proposeBranch) {
     console.warn('[infer_task_plan] no propose_branch in ganResult, cannot read task-plan.json');
