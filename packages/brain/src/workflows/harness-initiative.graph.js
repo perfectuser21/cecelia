@@ -645,9 +645,9 @@ export async function parsePrdNode(state) {
     taskPlan.initiative_id = state.initiativeId;
   }
   let sprintDir = state.task?.payload?.sprint_dir || 'sprints';
-  // B35: 从 planner verdict JSON 提取 sprint_dir（精确，不靠文件扫描）
-  const sprintDirMatch = (state.plannerOutput || '').match(/"sprint_dir"\s*:\s*"([^"]+)"/);
-  if (sprintDirMatch) sprintDir = sprintDirMatch[1];
+  // B35+B36: 从 planner verdict JSON 提取 sprint_dir，取最后一个（verdict 在输出末尾）
+  const sprintDirMatches = [...(state.plannerOutput || '').matchAll(/"sprint_dir"\s*:\s*"([^"]+)"/g)];
+  if (sprintDirMatches.length > 0) sprintDir = sprintDirMatches.at(-1)[1];
   let prdContent = state.plannerOutput || '';
   try {
     prdContent = await readFile(
