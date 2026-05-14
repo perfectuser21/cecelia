@@ -44,7 +44,7 @@ import { resolveGitHubToken } from '../harness-credentials.js';
 import { spawnDockerDetached } from '../spawn/detached.js';
 import { resolveAccount } from '../spawn/middleware/account-rotation.js';
 import { checkPrStatus, classifyFailedChecks } from '../shepherd.js';
-import { parseDockerOutput, extractField } from '../harness-shared.js';
+import { parseDockerOutput, extractField, readPrFromGitState, readVerdictFile } from '../harness-shared.js';
 import { buildGeneratorPrompt, extractWorkstreamIndex } from '../harness-utils.js';
 import { getPgCheckpointer } from '../orchestrator/pg-checkpointer.js';
 import pool from '../db.js';
@@ -166,6 +166,10 @@ export async function spawnNode(state, opts = {}) {
     }
   }
 
+  // Protocol v2: Brain 预计算分支名并注入容器，不再依赖容器自报分支
+  // harnessSubTaskBranchName 是纯函数，幂等调用安全（ensureWt 也用了同参数调用）
+  const precomputedBranch = harnessSubTaskBranchName(initiativeId, task.id);
+
   const prompt = buildGeneratorPrompt(task, { fixMode });
 
   // containerId 必须唯一（fix_round loop 重 spawn 不撞 docker --name）
@@ -201,6 +205,8 @@ export async function spawnNode(state, opts = {}) {
         HARNESS_INITIATIVE_ID: initiativeId,
         HARNESS_TASK_ID: task.id,
         HARNESS_FIX_MODE: fixMode ? 'true' : 'false',
+        // Protocol v2: Brain 预计算分支名注入，容器直接 checkout 到此分支，无需自报
+        HARNESS_BRANCH_NAME: precomputedBranch,
         GITHUB_TOKEN: token,
         CONTRACT_BRANCH: payload.contract_branch || state.contractBranch || '',
         SPRINT_DIR: payload.sprint_dir || 'sprints',
@@ -286,11 +292,22 @@ export async function awaitCallbackNode(state) {
 // 但保留 export 防止外部 import 名失败。新代码不应再用。
 export const spawnGeneratorNode = spawnNode;
 
-export async function parseCallbackNode(state) {
+export async function parseCallbackNode(state, opts = {}) {
   // 幂等门：已有 pr_url 跳过
   if (state.pr_url) {
     return { pr_url: state.pr_url, pr_branch: state.pr_branch };
   }
+
+  const worktreePath = state.worktreePath;
+
+  // Protocol v2 Priority 1: 从 git 状态读取（Brain 自己算，不依赖 LLM stdout）
+  // Brain 预注入了 HARNESS_BRANCH_NAME，容器 push 到该分支后 Brain 直接查 GitHub
+  if (worktreePath) {
+    const gitResult = await readPrFromGitState(worktreePath, { execFile: opts.execFile });
+    if (gitResult?.pr_url) return gitResult;
+  }
+
+  // Protocol v1 Fallback: 解析 LLM stdout（旧协议兼容，容器未更新时降级）
   const out = state.generator_output || '';
   const parsed = parseDockerOutput(out);
   const pr_url = extractField(parsed, 'pr_url');
@@ -569,10 +586,20 @@ export async function evaluateContractNode(state, opts = {}) {
     };
   }
 
-  // Parse verdict from stdout. Evaluator 真输出是 JSON-escaped "verdict": "FAIL"/"PASS"
-  // 嵌套在 claude code result 字段里，老 regex /verdict:\s*(PASS|FAIL)/i 永远 NO MATCH
-  // → fallback 'FAIL' → W37 实证 evaluator 5 round 全误判 FAIL。
-  // 改用 extractField 复用 parse_callback 已验证的 JSON-aware 解析。
+  // Protocol v2 Priority 1: 从约定路径文件读取 verdict（不依赖 LLM stdout 解析）
+  // 容器写 ${worktreePath}/.cecelia/verdict.json → { verdict, feedback }
+  if (state.worktreePath) {
+    const fileVerdict = await readVerdictFile(state.worktreePath);
+    if (fileVerdict) {
+      return {
+        evaluate_verdict: fileVerdict.verdict,
+        evaluate_error: fileVerdict.verdict === 'FAIL' ? (fileVerdict.feedback || 'evaluator returned FAIL') : null,
+      };
+    }
+  }
+
+  // Protocol v1 Fallback: 从 stdout 解析 verdict（旧协议兼容）
+  // W37 实证：extractField 比 /verdict:\s*(PASS|FAIL)/i 更可靠（JSON-aware 解析）
   const verdictRaw = extractField(stdout, 'verdict');
   const verdictUpper = verdictRaw ? String(verdictRaw).toUpperCase().trim() : '';
   const verdict = (verdictUpper === 'PASS' || verdictUpper === 'FAIL') ? verdictUpper : 'FAIL';

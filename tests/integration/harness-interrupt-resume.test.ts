@@ -27,6 +27,8 @@ vi.mock('../../packages/brain/src/spawn/index.js', () => ({
 vi.mock('../../packages/brain/src/harness-shared.js', () => ({
   parseDockerOutput: (s: string) => s,
   loadSkillContent: () => 'SKILL_BODY',
+  // Protocol v2: readVerdictFile 返回 null → fallback 到 stdout 解析（测试走旧协议路径）
+  readVerdictFile: vi.fn().mockResolvedValue(null),
 }));
 vi.mock('../../packages/brain/src/harness-worktree.js', () => ({
   ensureHarnessWorktree: vi.fn().mockResolvedValue('/tmp/wt'),
