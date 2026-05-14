@@ -604,6 +604,15 @@ function buildAnalysisPrompt(probeResults, scanResults, existingTasks, perceptio
     ).join('\n');
   }
 
+  // KR3 外部阻断注记（防止 LLM 重复派 dev 任务）
+  const kr3BlockerNote = `
+### KR3 微信小程序 — 外部阻断说明（禁止再创建 KR3 dev 任务）
+KR3（微信小程序上线）代码已 100% 完成（PR#2329–#2359 + miniapp PR#1–#28 全量合并）。
+当前进度（60%+）卡在以下两个**外部阻断**，无法用代码解决：
+1. 云函数部署：需在 CN Mac mini 微信开发者工具手动上传，或通过 miniprogram-ci 脚本（已就绪但 WeChat Cloud 环境需先激活）
+2. WX Pay 商户号：需在微信商户平台申请 MCHID / V3_KEY / SERIAL_NO（外部审批流程）
+**结论：不要创建任何 KR3 dev 任务。如果 KR3 进度显示 < 60%，是 verifier 数据陈旧，非代码问题。**`.trim();
+
   // Build 任务执行效率 summary
   // auth_failed = API 凭据失效导致的基础设施失败，不计入成功率分母（避免恐慌死循环）
   const { completed = 0, failed = 0, auth_failed = 0, total = 0 } = taskStats;
@@ -666,6 +675,8 @@ ${projectsSummary}
 
 ### 已有待办任务
 ${tasksSummary}
+
+${kr3BlockerNote}
 
 ## 你的任务
 
