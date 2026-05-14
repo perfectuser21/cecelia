@@ -4,10 +4,12 @@ description: |
   Harness Planner — Harness v5 阶段 A Layer 1：把用户需求展开为 Initiative PRD（Golden Path 格式）。
   输出 sprint-prd.md（What，不写 How），供 Proposer GAN 起草 Golden Path 合同。
   v8 起不再拆任务——任务 DAG 由 Proposer 在合同 GAN 确认后从 Golden Path 倒推。
-version: 8.2.0
+version: 8.4.0
 created: 2026-04-08
-updated: 2026-05-11
+updated: 2026-05-14
 changelog:
+  - 8.4.0: Step 0 位置词死规则（B33 — W43 实证）— planner 把 playground 漂移到 brain route，强制 thin_prd 位置词原样映射到实现模块
+  - 8.3.0: Step 0 thin_prd 主题死规则（B20 — W41 实证）— planner 把 task title 当主题导致 PRD 偏题，强制 thin_prd 关键词字面照搬到 sprint-prd.md，禁止用 task title 当主题
   - 8.2.0: Response Schema 段加"Query Parameters"子段 — W22 实证 generator 漂移到 query 名 a/b（PRD 写 base/exp）。补充 query 名约束 + 禁用别名清单，配合 proposer v7.4 强制每个 query 1 条 [BEHAVIOR]
   - 8.1.0: 加"## Response Schema"段 — API 任务必填，强制 planner 把响应字段名/类型 codify 成可机检 oracle，避免 W19/W20 类 generator schema 漂移（{result→sum/product}）。Anthropic harness-design 推荐 contract is law；schema 在 PRD 阶段就锁死，proposer/generator/evaluator 全链下游有 ground truth
   - 8.0.0: Golden Path PRD — 去掉任务拆分（Step 3）；PRD 格式从"功能需求 FR-001"改为 Golden Path（入口→步骤→出口）；journey_type 保留写入 PRD 末尾
@@ -34,9 +36,75 @@ changelog:
 
 ---
 
+## Thin Slice 字数硬上限（v8.X — B14 加，2026-05-12）
+
+为防 planner 把 thin slice 写成 medium thick spec（W36 实证 254 行 PRD）：
+
+- **thin slice PRD ≤ 50 行**（不含 OKR 对齐段和"为什么选这个 feature"叙事）
+- **thin slice DoD ≤ 8 条**（不分 BEHAVIOR/ARTIFACT 总数 ≤ 8）
+- 超 → planner 自审 reject + 强制砍范围 / 拆 multi-sprint
+
+**反例**：W36 planner 254 行 PRD + 32 DoD 条目，引用 W19-W26 全部历史 + B1-B13 全部 fix 上下文 → 不是 thin slice 是 medium thick。
+
+**正例**：W37 thin slice 应是 "playground 加 GET /ping 返 `{pong:true,ts:<unix>}`"，PRD < 30 行 + DoD ≤ 5 条。
+
+---
+
 ## 执行流程
 
-### Step 0: 采集系统上下文（Brain API）
+### Step 0: thin_prd 主题死规则（B20 — W41 实证）
+
+**第一件事**：读 `task.payload.thin_prd`，把它当**产品法律**。sprint-prd.md 必须含 thin_prd 关键词字面。
+
+**死规则**：
+
+1. thin_prd 写 "加 /ping" → sprint-prd.md 主题必须含 "/ping" 字面，禁止改成 /decrement / /negate / 别的 endpoint
+2. **禁止把 task title 当 PRD 主题**（W41 实证：title "B19 修后真验"，planner 误当主题 → 偏题写"测 B19 演练"）
+3. task title 是元数据（任务标记），thin_prd 是产品意图，两者优先级 thin_prd > title
+
+**自查 checklist**（写完 sprint-prd.md 后必 grep）：
+
+- [ ] grep "## Golden Path" 段含 thin_prd 关键词字面
+- [ ] grep "## Response Schema" 或 endpoint 描述含 thin_prd 主题字面
+- [ ] 主题词字面相等（不能同义改写："/ping" 不能改成 "/health-check"）
+
+**违规示例**（禁止）：
+
+- thin_prd "/ping" → PRD 主题"测演练" ❌
+- thin_prd "/decrement" → PRD 主题 "/abs" ❌
+
+**正确示例**：
+
+- thin_prd "/ping" → PRD 主题 "/ping endpoint 实现" ✅
+
+### 位置词死规则（B33 — W43 实证）
+
+**第二件事**：检查 thin_prd 是否含**位置词**（模块/目录名），保证实现落在正确模块。
+
+**死规则**：
+
+1. thin_prd 含 "playground" → 代码必须写在 `playground/server.js`，禁止放 `packages/brain/src/`
+2. thin_prd 含 "Brain" / "brain" / "Brain API" → 代码写在 `packages/brain/src/`
+3. thin_prd 含 "dashboard" → 代码写在 `apps/dashboard/`
+4. thin_prd 含 "apps/api" → 代码写在 `apps/api/`
+5. thin_prd 无明确位置词 → 遵循 Step 0.5 journey_type 推断
+
+**自查 checklist**（写完 sprint-prd.md 后必 grep）：
+
+- [ ] thin_prd 含哪个位置词 → PRD 的实现位置描述必须与之一致
+- [ ] 禁止跨模块漂移（playground → brain route / brain route → playground）
+
+**违规示例**（禁止）：
+
+- thin_prd "playground 加 GET /ping" → PRD 写 `packages/brain/src/routes/status.js` 加 `/api/brain/ping` ❌
+
+**正确示例**：
+
+- thin_prd "playground 加 GET /ping" → PRD 写 `playground/server.js` 加 `GET /ping` ✅
+
+---
+
+### Step 0.1: 采集系统上下文（Brain API）
 
 ```bash
 curl localhost:5221/api/brain/context

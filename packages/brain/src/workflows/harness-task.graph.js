@@ -43,7 +43,7 @@ import { resolveGitHubToken } from '../harness-credentials.js';
 // Note: legacy `writeDockerCallback` import removed (Layer 3 uses callback router POST → Command(resume))
 import { spawnDockerDetached } from '../spawn/detached.js';
 import { resolveAccount } from '../spawn/middleware/account-rotation.js';
-import { checkPrStatus, executeMerge, classifyFailedChecks } from '../shepherd.js';
+import { checkPrStatus, classifyFailedChecks } from '../shepherd.js';
 import { parseDockerOutput, extractField } from '../harness-shared.js';
 import { buildGeneratorPrompt, extractWorkstreamIndex } from '../harness-utils.js';
 import { getPgCheckpointer } from '../orchestrator/pg-checkpointer.js';
@@ -53,7 +53,15 @@ import { LLM_RETRY } from './retry-policies.js';
 
 const execFileDefault = promisify(execFileCb);
 
-export const MAX_FIX_ROUNDS = 3;
+// B11 (Walking Skeleton P1 cascade): GAN reviewer 是无硬 cap + 趋势收敛（PR #2901）。
+// 不对称设计：fix loop 之前硬 cap=3，3 轮没修好就 terminal_fail —— 质量优先原则下
+// 这是过早放弃。W33 实证：trivial spec (GET /hello) 4 round fix 仍未让 evaluator PASS
+// 不是因为真不收敛，是 3 round 给 generator 改 spec 漂移问题不够。
+// 改：MAX 调到 20（实际"无 cap"等价，30 min 单 round × 20 = 10 hr，sanity 兜底防极端 spec
+// 死循环占 slot；保留是因为质量优先但 brain 资源仍有限）。
+// 长期：参 reviewer SKILL 用 detectConvergenceTrend（state.fix_history[] 同 fail_type 连
+// 续 N 轮无 progress → 标 unconvergent_fail），独立 PR 升级。
+export const MAX_FIX_ROUNDS = parseInt(process.env.HARNESS_MAX_FIX_ROUNDS || '20', 10);
 export const MAX_POLL_COUNT = 20;          // 90s × 20 = 30 min
 export const POLL_INTERVAL_MS = 90 * 1000;
 
@@ -257,8 +265,12 @@ export async function awaitCallbackNode(state) {
 
   if (exitCode !== 0) {
     const errMsg = payload.error || payload.stderr || `container exit_code=${exitCode}`;
+    // B18: 不再设 state.error（fatal）→ 转 ci_fail 路径让 fix loop 继续重试
+    // 区分 docker daemon 死（true fatal，由 spawnNode throw 抓）vs 容器内业务 fail（应 retry）
     return {
-      error: { node: 'await_callback', message: errMsg },
+      ci_status: 'fail',
+      ci_fail_type: 'container_exit',
+      failed_checks: [errMsg],
     };
   }
 
@@ -352,13 +364,41 @@ export async function pollCiNode(state, opts = {}) {
   return { ci_status: 'pending', poll_count: pollCount + 1 };
 }
 
-export async function mergePrNode(state) {
+export async function mergePrNode(state, opts = {}) {
   if (state.status === 'merged') return { status: 'merged' };
+  const execFn = opts.execFile || execFileDefault;
+  const prUrl = state?.pr_url;
+
+  if (!prUrl) {
+    return { merge_error: 'no pr_url available' };
+  }
+
+  // B21: evaluator PASS 后 brain 真调 gh pr merge --auto --squash 自动合并 PR。
+  // 不再依赖人工 merge button，也不依赖外层 shepherd。
+  // --auto 让 GitHub 等所有 required checks PASS 后再合（不强 admin bypass）；
+  // --delete-branch 合完自动删 head branch。
+  // merge 失败不 throw（避免 graph 走 error 通道触发重试导致重复 merge 风险），
+  // 而是写 merge_error 让 graph 退 END，由人工或 shepherd 补救。
   try {
-    executeMerge(state.pr_url);
-    return { status: 'merged', ci_status: 'merged' };
+    const { stdout } = await execFn(
+      'gh',
+      ['pr', 'merge', prUrl, '--auto', '--squash', '--delete-branch'],
+      { timeout: 30_000 }
+    );
+    const tail = (stdout || '').trim().slice(0, 200);
+    console.log(`[merge_pr] gh pr merge ok pr=${prUrl}: ${tail}`);
+    return {
+      status: 'merged',
+      ci_status: 'merged',
+      merged_at: new Date().toISOString(),
+      merge_command: 'gh pr merge --auto --squash',
+    };
   } catch (err) {
-    return { status: 'failed', error: { node: 'merge_pr', message: err.message } };
+    console.warn(`[merge_pr] gh pr merge failed pr=${prUrl}: ${err.message}`);
+    return {
+      merge_error: err.message,
+      // 不 set state.error（避免 graph END 走异常路径），让任务标 completed 不 failed
+    };
   }
 }
 
@@ -369,8 +409,9 @@ export async function fixDispatchNode(state) {
     generator_output: null,
     // Layer 3：必须 reset containerId 否则 spawn 节点幂等门 short-circuit，永远不会重 spawn
     containerId: null,
-    pr_url: null,
-    pr_branch: null,
+    // B19: 不 reset pr_url/pr_branch — generator fix mode 同 PR push 新 commit，URL 不变。
+    // W40 实证：reset 后 sub-task graph END 时 pr_url=null → finalEvaluate 拿不到
+    // PR_BRANCH → evaluator 跑 main 没新代码 → §1 happy FAIL（最后一公里 bug）。
     poll_count: 0,
     ci_status: 'pending',
     ci_fail_type: null,
@@ -380,6 +421,14 @@ export async function fixDispatchNode(state) {
 
 // ──────────────────────────────────────────────────────────────────────────
 // 路由函数
+
+// B18: awaitCallback exit≠0 后 ci_status='fail' + ci_fail_type='container_exit'
+// 此时直接进 fix_dispatch（跟 ci_fail 同等），不走 parse_callback（否则 pr_url=null → END）
+export function routeAfterCallback(state) {
+  if (state.error) return 'end';
+  if (state.ci_status === 'fail' && state.ci_fail_type === 'container_exit') return 'fix';
+  return 'parse';
+}
 
 function routeAfterParse(state) {
   if (state.error) return 'end';
@@ -405,7 +454,7 @@ export function routeAfterEvaluate(state) {
 // Spawn a `harness_evaluate` sub-task (task-router:129 → /harness-evaluator skill);
 // evaluator container reads contract DoD + manual:bash commands, exits 0/1.
 // Verdict PASS → merge_pr; FAIL → fix_dispatch (do NOT merge into main).
-async function evaluateContractNode(state, opts = {}) {
+export async function evaluateContractNode(state, opts = {}) {
   const spawnFn = opts.spawnDetached || spawnDockerDetached;
   const resolveTok = opts.resolveToken || resolveGitHubToken;
   const dbPool = opts.poolOverride || pool;
@@ -424,7 +473,11 @@ async function evaluateContractNode(state, opts = {}) {
   const rand = crypto.randomUUID().slice(0, 8);
   const safeId = String(task.id).replace(/[^a-zA-Z0-9-]/g, '');
   const containerId = `harness-evaluate-${safeId}-r${state.fix_round || 0}-${rand}`;
-  const threadId = `harness-evaluate:${initiativeId}:${task.id}`;
+  // B10 (Walking Skeleton P1 cascade fix): evaluate_contract 节点本身在 harness-task
+  // graph 内运行，interrupt() 暂停的是 harness-task thread。spawn 写 thread_lookup
+  // 必须用 task graph 的 thread_id，否则 callback resume 打到 empty thread，真正
+  // interrupt 等待的 harness-task thread 永久卡（W31 实证：callback ok 但 graph 不推进）。
+  const threadId = `harness-task:${initiativeId}:${task.id}`;
 
   const evaluatePrompt = [
     `[harness-evaluator] Evaluate the contract DoD for task: ${task.title || task.id}`,
@@ -442,6 +495,23 @@ async function evaluateContractNode(state, opts = {}) {
   }
   const accountEnv = acctOpts.env;
 
+  // B14: 把 PR 分支名传给 evaluator container（Step 0a git checkout 用）。
+  // 优先 state.pr_branch；fallback `gh pr view --json headRefName` 兜底（罕见路径）。
+  // 不传 PR_BRANCH → evaluator 永远跑 main → 看不见 generator 改 → 永远 FAIL（W19-W36 实证）。
+  let prBranchEnv = state.pr_branch || '';
+  if (!prBranchEnv && state.pr_url) {
+    try {
+      const { stdout } = await execFileDefault(
+        'gh',
+        ['pr', 'view', state.pr_url, '--json', 'headRefName', '-q', '.headRefName'],
+        { timeout: 10_000 }
+      );
+      prBranchEnv = stdout.trim();
+    } catch (err) {
+      console.warn(`[evaluate_contract] gh pr view fallback failed: ${err.message}`);
+    }
+  }
+
   try {
     await spawnFn({
       task: { ...task, task_type: 'harness_evaluate' },
@@ -457,6 +527,7 @@ async function evaluateContractNode(state, opts = {}) {
         GITHUB_TOKEN: token,
         CONTRACT_BRANCH: state.contractBranch || payload.contract_branch || '',
         PR_URL: state.pr_url || '',
+        PR_BRANCH: prBranchEnv,
         SPRINT_DIR: payload.sprint_dir || 'sprints',
         BRAIN_URL: 'http://host.docker.internal:5221',
         HARNESS_CALLBACK_URL: `http://host.docker.internal:5221/api/brain/harness/callback/${containerId}`,
@@ -469,8 +540,11 @@ async function evaluateContractNode(state, opts = {}) {
 
   try {
     await dbPool.query(
+      // B10: graph_name='harness-task' (统一 namespace) — evaluate_contract 是 task graph 内的节点。
+      // lookup router 用 harness-task graph compile，callback resume 用同一 thread_id 才能找到
+      // 真正 interrupt 等待的 state。
       `INSERT INTO walking_skeleton_thread_lookup (container_id, thread_id, graph_name, status)
-       VALUES ($1, $2, 'harness-evaluate', 'spawning')
+       VALUES ($1, $2, 'harness-task', 'spawning')
        ON CONFLICT (container_id) DO NOTHING`,
       [containerId, threadId]
     );
@@ -495,9 +569,13 @@ async function evaluateContractNode(state, opts = {}) {
     };
   }
 
-  // Parse verdict from stdout (evaluator outputs verdict:PASS or verdict:FAIL)
-  const verdictMatch = stdout.match(/verdict:\s*(PASS|FAIL)/i);
-  const verdict = verdictMatch ? verdictMatch[1].toUpperCase() : 'FAIL';
+  // Parse verdict from stdout. Evaluator 真输出是 JSON-escaped "verdict": "FAIL"/"PASS"
+  // 嵌套在 claude code result 字段里，老 regex /verdict:\s*(PASS|FAIL)/i 永远 NO MATCH
+  // → fallback 'FAIL' → W37 实证 evaluator 5 round 全误判 FAIL。
+  // 改用 extractField 复用 parse_callback 已验证的 JSON-aware 解析。
+  const verdictRaw = extractField(stdout, 'verdict');
+  const verdictUpper = verdictRaw ? String(verdictRaw).toUpperCase().trim() : '';
+  const verdict = (verdictUpper === 'PASS' || verdictUpper === 'FAIL') ? verdictUpper : 'FAIL';
   const errorMsg = verdict === 'FAIL' ? (cbPayload.error || extractField(stdout, 'error') || 'evaluator returned FAIL') : null;
 
   return { evaluate_verdict: verdict, evaluate_error: errorMsg };
@@ -505,7 +583,8 @@ async function evaluateContractNode(state, opts = {}) {
 
 function routeAfterFix(state) {
   if (state.error) return 'end';
-  if (state.fix_round > MAX_FIX_ROUNDS) return 'failed';
+  // B18: 不再 cap fix_round（用户决定不设硬上限）
+  // convergence 不是数轮次，是 verdict 真 PASS；MAX_FIX_ROUNDS 常量保留向后兼容
   return 'spawn';
 }
 
@@ -523,7 +602,9 @@ export function buildHarnessTaskGraph() {
     .addNode('fix_dispatch', fixDispatchNode)
     .addEdge(START, 'spawn')
     .addEdge('spawn', 'await_callback')
-    .addEdge('await_callback', 'parse_callback')
+    .addConditionalEdges('await_callback', routeAfterCallback, {
+      fix: 'fix_dispatch', parse: 'parse_callback', end: END,
+    })
     .addConditionalEdges('parse_callback', routeAfterParse, {
       end: END, no_pr: END, poll: 'verify_generator',
     })

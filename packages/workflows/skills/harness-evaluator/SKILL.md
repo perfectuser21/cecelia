@@ -97,6 +97,72 @@ generator 写代码 + push PR
 
 ## 执行流程
 
+### Step 0a：切到 PR 分支（pre-merge gate 前置）
+
+evaluator 必须先切到 PR 分支才能跑 server 验真行为。模式 A 跑 generator 在 PR 分支写的代码，PR 分支名由 `$PR_BRANCH` env 提供（brain `evaluateContractNode` 透传 — B14 修复）。
+
+```bash
+if [ -n "$PR_BRANCH" ]; then
+  git fetch origin "$PR_BRANCH:$PR_BRANCH" 2>/dev/null || git fetch origin "$PR_BRANCH"
+  git checkout "$PR_BRANCH" || { echo "FATAL: checkout $PR_BRANCH failed"; exit 1; }
+  git reset --hard "origin/$PR_BRANCH" 2>/dev/null || true
+fi
+```
+
+模式 B（`IS_FINAL_E2E=true`）跑 main，不切。
+
+**反例**：跳过 Step 0a 直接跑 main 上的 server → generator 改动看不见 → 永远 FAIL（W19-W36 9 次实证）。
+
+---
+
+### Step 0b：Cookie / Session 隔离（B31 — 多 evaluator 并发铁律）
+
+**每次 evaluator 跑必须新干净环境，不带前次 cookie / session 干扰**。Cecelia 多 W 任务并发或同任务 fix loop N round 后跑同 evaluator，旧 cookie 会污染下次结果。
+
+#### HTTP API 类 evaluator（curl/jq）
+- 每次跑都是新 process（docker --rm），自然隔离 cookie ✅
+- 无需特殊处理
+
+#### Web UI 类 evaluator（Playwright）
+
+**Playwright 默认配置（每 evaluator 独立环境，fresh context 每次新建）**：
+
+```javascript
+const browser = await chromium.launch();
+const context = await browser.newContext({
+  storageState: undefined,     // ★ 不加载历史 session
+  acceptDownloads: false,
+});
+const page = await context.newPage();
+// 跑测试...
+await context.close();
+await browser.close();
+```
+
+**临时 user-data-dir**（CLI 启动 Playwright 时）：
+```bash
+playwright test --browser-options='{"userDataDir":"/tmp/playwright-'"$TASK_ID"'"}'
+# 跑完 cleanup
+rm -rf /tmp/playwright-$TASK_ID
+```
+
+**如果需要预存 session 跳过登录**（B32 — session storageState 预存）：
+```javascript
+const context = await browser.newContext({
+  storageState: '/secure-store/auth-${target}.json',  // 主动加载预存的
+});
+```
+
+#### 严禁（违反 = evaluator 不可信）
+- ❌ 复用 `~/.config/chromium/Default` profile（带历史 cookies）
+- ❌ 不指定 `storageState` 而默认加载历史
+- ❌ 多次跑共享同一 `userDataDir`
+
+#### 反例（cookie 隔离失效场景）
+W41 fix loop 5 round 评测：如果用 chromium default profile，第 5 round evaluator 还能看到 R0 时残留的 localStorage / cookies → 验证结果不可信。**铁律：每次 evaluator 跑必须新干净环境**，session 隔离严格执行。
+
+---
+
 ### Step 0: 确认模式
 
 ```bash
