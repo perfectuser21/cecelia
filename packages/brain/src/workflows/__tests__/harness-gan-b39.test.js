@@ -71,3 +71,92 @@ describe('proposer 节点 — Brain 注入 PROPOSE_BRANCH', () => {
     }
   });
 });
+
+describe('reviewer 节点 — 读 .brain-result.json', () => {
+  it('容器写 APPROVED + rubric_scores → Brain 判 APPROVED', async () => {
+    const tmpDir = mkdtempSync(join(tmpdir(), 'gan-b39-reviewer-'));
+    try {
+      const mockExecutor = vi.fn(async ({ worktreePath }) => {
+        writeFileSync(join(worktreePath, '.brain-result.json'), JSON.stringify({
+          verdict: 'APPROVED',
+          rubric_scores: {
+            dod_machineability: 8,
+            scope_match_prd: 8,
+            test_is_red: 8,
+            internal_consistency: 8,
+            risk_registered: 8,
+          },
+          feedback: '',
+        }));
+        return { exit_code: 0, stdout: '', stderr: '', cost_usd: 0.1 };
+      });
+
+      const { reviewer } = createGanContractNodes(mockExecutor, {
+        taskId: TASK_ID,
+        initiativeId: 'init-test',
+        sprintDir: SPRINT_DIR,
+        worktreePath: tmpDir,
+        githubToken: 'mock-token',
+        readContractFile: async () => '# contract',
+        verifyProposer: async () => {},
+      });
+
+      const patch = await reviewer({
+        round: 1,
+        prdContent: '# PRD',
+        contractContent: '# contract',
+        costUsd: 0,
+        rubricHistory: [],
+        proposeBranch: 'cp-harness-propose-r1-f5a1db9c',
+      });
+
+      expect(patch.verdict).toBe('APPROVED');
+    } finally {
+      rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it('容器写 REVISION + 低分 → Brain 判 REVISION + feedback 存入 patch', async () => {
+    const tmpDir = mkdtempSync(join(tmpdir(), 'gan-b39-reviewer-'));
+    try {
+      const mockExecutor = vi.fn(async ({ worktreePath }) => {
+        writeFileSync(join(worktreePath, '.brain-result.json'), JSON.stringify({
+          verdict: 'REVISION',
+          rubric_scores: {
+            dod_machineability: 5,
+            scope_match_prd: 5,
+            test_is_red: 5,
+            internal_consistency: 5,
+            risk_registered: 5,
+          },
+          feedback: 'DoD 命令无法 exit non-zero，请修复',
+        }));
+        return { exit_code: 0, stdout: '', stderr: '', cost_usd: 0.1 };
+      });
+
+      const { reviewer } = createGanContractNodes(mockExecutor, {
+        taskId: TASK_ID,
+        initiativeId: 'init-test',
+        sprintDir: SPRINT_DIR,
+        worktreePath: tmpDir,
+        githubToken: 'mock-token',
+        readContractFile: async () => '# contract',
+        verifyProposer: async () => {},
+      });
+
+      const patch = await reviewer({
+        round: 1,
+        prdContent: '# PRD',
+        contractContent: '# contract',
+        costUsd: 0,
+        rubricHistory: [],
+        proposeBranch: 'cp-harness-propose-r1-f5a1db9c',
+      });
+
+      expect(patch.verdict).toBe('REVISION');
+      expect(patch.feedback).toContain('DoD 命令');
+    } finally {
+      rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+});
