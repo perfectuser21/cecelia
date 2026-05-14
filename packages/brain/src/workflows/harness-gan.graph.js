@@ -31,7 +31,7 @@ import {
 import { fetchAndShowOriginFile } from '../lib/git-fence.js';
 import { verifyProposerOutput } from '../lib/contract-verify.js';
 import { LLM_RETRY } from './retry-policies.js';
-import { loadSkillContent } from '../harness-shared.js';
+import { loadSkillContent, readBrainResult } from '../harness-shared.js';
 
 const execFile = promisify(execFileCb);
 
@@ -344,13 +344,18 @@ export function createGanContractNodes(executor, ctx) {
 
   async function proposer(state) {
     const nextRound = (state.round || 0) + 1;
+    const computedBranch = `cp-harness-propose-r${nextRound}-${taskId.slice(0, 8)}`;
+
+    // 清理上轮残留结果文件，防止 executor 失败时读到旧数据
+    const { unlink } = await import('node:fs/promises');
+    try { await unlink(path.join(worktreePath, '.brain-result.json')); } catch { /* 首轮不存在，忽略 */ }
+
     const result = await executor({
       task: { id: taskId, task_type: 'harness_contract_propose' },
       prompt: buildProposerPrompt(state.prdContent, state.feedback, nextRound),
       worktreePath,
       timeoutMs: 1800000,
       env: {
-        // CECELIA_CREDENTIALS 不传 → executeInDocker middleware 走 selectBestAccount
         CECELIA_TASK_TYPE: 'harness_contract_propose',
         HARNESS_NODE: 'proposer',
         HARNESS_SPRINT_DIR: sprintDir,
@@ -360,6 +365,7 @@ export function createGanContractNodes(executor, ctx) {
         SPRINT_DIR: sprintDir,
         PLANNER_BRANCH: 'main',
         PROPOSE_ROUND: String(nextRound),
+        PROPOSE_BRANCH: computedBranch,
         GITHUB_TOKEN: githubToken,
       },
     });
@@ -367,10 +373,15 @@ export function createGanContractNodes(executor, ctx) {
       throw new Error(`proposer_failed: exit=${result?.exit_code} stderr=${(result?.stderr || '').slice(0, 300)}`);
     }
     const contractContent = await readContractFile(worktreePath, sprintDir);
-    // 解析 stdout 中的 propose_branch（proposer SKILL Step 3 输出 JSON 字面量）。
-    // 即使本轮被打回，先把 branch 存下；后续轮次会覆写成新 branch（reducer 取最新）。
-    // APPROVED 终态时即 approved contract 的 git branch。
-    const proposeBranch = extractProposeBranch(result.stdout) || fallbackProposeBranch(taskId, nextRound);
+
+    // 读容器写入的结果文件（双重验证：Brain 计算值 vs 容器写入值必须一致）
+    const resultData = await readBrainResult(worktreePath, ['propose_branch']);
+    if (resultData.propose_branch !== computedBranch) {
+      const err = new Error(`ContractViolation: propose_branch_mismatch — expected=${computedBranch} got=${resultData.propose_branch}`);
+      err.code = 'propose_branch_mismatch';
+      throw err;
+    }
+    const proposeBranch = computedBranch;
 
     // 防御：proposer SKILL 应每轮写 sprints/task-plan.json（v7.1.0+），缺失打 warn 给下游兜底
     const taskPlanPath = path.join(worktreePath, sprintDir, 'task-plan.json');
