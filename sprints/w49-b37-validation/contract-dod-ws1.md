@@ -16,8 +16,8 @@ journey_type: dev_pipeline
 - [ ] [ARTIFACT] `sprints/w49-b37-validation/sprint-contract.md` 存在（proposer 产出，parsePrdNode B37 fix 生效的直接证明）
   Test: node -e "require('fs').accessSync('sprints/w49-b37-validation/sprint-contract.md');console.log('OK')"
 
-- [ ] [ARTIFACT] `sprints/w49-b37-validation/verify-b37.sh` 存在且含 ≥4 条 `✅ PASS` 标记（generator 产出）
-  Test: node -e "const c=require('fs').readFileSync('sprints/w49-b37-validation/verify-b37.sh','utf8');const n=(c.match(/✅ PASS/g)||[]).length;if(n<4){console.error('PASS 标记不足:',n);process.exit(1)}console.log('OK')"
+- [ ] [ARTIFACT] `sprints/w49-b37-validation/verify-b37.sh` 存在（generator 产出；运行时 PASS 计数由 [BEHAVIOR] 3 校验）
+  Test: node -e "require('fs').accessSync('sprints/w49-b37-validation/verify-b37.sh');console.log('OK')"
 
 ## BEHAVIOR 条目（内嵌可独立执行的 manual:bash 命令，evaluator 直接执行，禁止只索引 vitest）
 

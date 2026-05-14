@@ -1,4 +1,4 @@
-# Sprint Contract Draft (Round 3)
+# Sprint Contract Draft (Round 4)
 
 ## Golden Path
 [Planner commit sprint-prd.md] → [parsePrdNode git diff 提取 sprintDir] → [Proposer 写 sprint-contract.md 到正确目录] → [Generator 创建 verify-b37.sh] → [Evaluator 跑验证脚本，全程无 ENOENT]
@@ -38,16 +38,12 @@ echo "$DIFF_OUT" | grep -q "sprints/w49-b37-validation/" && echo "PASS: git diff
 # 1. 文件存在
 test -f sprints/w49-b37-validation/verify-b37.sh || { echo "FAIL: verify-b37.sh 缺失"; exit 1; }
 
-# 2. PASS 标记 ≥4 条
-PASS_COUNT=$(grep -c "✅ PASS" sprints/w49-b37-validation/verify-b37.sh || echo 0)
-[ "${PASS_COUNT}" -ge 4 ] || { echo "FAIL: PASS 标记不足 4 条，实际 $PASS_COUNT"; exit 1; }
-
-# 3. 脚本运行 exit 0 且输出预期字符串
+# 2. 脚本运行 exit 0 且输出预期字符串（运行时验证，取代静态 grep 计数）
 OUTPUT=$(bash sprints/w49-b37-validation/verify-b37.sh 2>&1)
 echo "$OUTPUT" | grep -q "B37 验证全部通过" && echo "PASS" || { echo "FAIL: 未输出预期摘要"; exit 1; }
 ```
 
-**硬阈值**: 文件存在 + PASS 标记 ≥4 + 脚本 exit 0 + 输出含 "B37 验证全部通过"
+**硬阈值**: 文件存在 + 脚本 exit 0 + 输出含 "B37 验证全部通过"（PASS 断言计数由 [BEHAVIOR] 3 运行时校验）
 
 ---
 
@@ -107,10 +103,13 @@ test -f sprints/w49-b37-validation/verify-b37.sh \
   || { echo "❌ FAIL: verify-b37.sh 缺失"; exit 1; }
 echo "✅ PASS: verify-b37.sh 存在"
 
-# Generator 任务 G2：verify-b37.sh 运行通过
+# Generator 任务 G2：verify-b37.sh 运行通过且输出预期字符串（与 Step 1 验证命令一致）
 echo "[G2] 运行 verify-b37.sh..."
-bash sprints/w49-b37-validation/verify-b37.sh \
-  || { echo "❌ FAIL: verify-b37.sh 运行失败"; exit 1; }
+G2_OUTPUT=$(bash sprints/w49-b37-validation/verify-b37.sh 2>&1) \
+  || { echo "❌ FAIL: verify-b37.sh 运行失败"; echo "$G2_OUTPUT"; exit 1; }
+echo "$G2_OUTPUT" | grep -q "B37 验证全部通过" \
+  || { echo "❌ FAIL: verify-b37.sh 未输出 'B37 验证全部通过'"; echo "$G2_OUTPUT"; exit 1; }
+echo "✅ PASS: verify-b37.sh 运行通过且含预期字符串"
 
 # Generator 任务 G3：Brain 日志无 ENOENT（动态查找容器名）
 echo "[G3] 验证 Brain 日志无 ENOENT..."
