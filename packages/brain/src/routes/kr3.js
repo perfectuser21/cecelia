@@ -1,11 +1,17 @@
 /**
  * KR3 小程序配置状态路由
  *
- * GET  /kr3/check-config              — 查询 KR3 前置配置状态（WX_PAY + AdminOID）
- * GET  /kr3/local-credentials-status  — 查看本地凭据文件配置状态（不暴露值）
- * POST /kr3/auto-mark-wx-pay          — 读本地凭据文件，若齐全则自动标记 DB
- * POST /kr3/mark-wx-pay               — 手动标记 WX_PAY 环境变量已配置完成
- * POST /kr3/mark-admin-oid            — 标记管理员 OpenID 已初始化
+ * GET  /kr3/check-config                       — 查询 KR3 前置配置状态（WX_PAY + AdminOID）
+ * GET  /kr3/local-credentials-status           — 查看本地凭据文件配置状态（不暴露值）
+ * GET  /kr3/progress                           — 查询 KR3 当前真实进度（calculator 计算）
+ * POST /kr3/auto-mark-wx-pay                   — 读本地凭据文件，若齐全则自动标记 DB
+ * POST /kr3/mark-wx-pay                        — 手动标记 WX_PAY 环境变量已配置完成
+ * POST /kr3/mark-admin-oid                     — 标记管理员 OpenID 已初始化
+ * POST /kr3/mark-cloud-functions-deployed      — 标记 9 个云函数已部署到生产（+10%）
+ * POST /kr3/mark-internal-test-started         — 标记内测已启动（+5%）
+ * POST /kr3/mark-real-device-bugs-cleared      — 标记真机 bug 清单已清零（+3%）
+ * POST /kr3/mark-trial-version-submitted       — 标记体验版已提交微信审核（+5%）
+ * POST /kr3/mark-audit-passed                  — 标记微信审核已通过（+12%）
  */
 
 import { Router } from 'express';
@@ -13,9 +19,11 @@ import {
   checkKR3ConfigDB,
   markWxPayConfigured,
   markAdminOidInitialized,
+  markKR3Milestone,
   readLocalPayCredentials,
   autoMarkKR3IfLocalCredentialsReady,
 } from '../kr3-config-checker.js';
+import { KR3_MILESTONE_KEYS, calculateAndWrite } from '../kr3-progress-calculator.js';
 
 const router = Router();
 
@@ -97,6 +105,94 @@ router.post('/mark-admin-oid', async (req, res) => {
     const { note } = req.body || {};
     await markAdminOidInitialized(undefined, note || '已初始化');
     res.json({ ok: true, message: '管理员 OpenID 初始化状态已标记' });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
+/**
+ * GET /kr3/progress
+ * 查询 KR3 当前真实进度（基于 calculator 里程碑计算，不依赖 key_results.progress 陈旧值）。
+ */
+router.get('/progress', async (req, res) => {
+  try {
+    const result = await calculateAndWrite();
+    res.json({ ok: true, ...result });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
+/**
+ * POST /kr3/mark-cloud-functions-deployed
+ * 标记 9 个云函数已部署到生产云环境 zenithjoycloud-8g4ca5pbb5b027e8（+10%）。
+ */
+router.post('/mark-cloud-functions-deployed', async (req, res) => {
+  try {
+    const { note } = req.body || {};
+    await markKR3Milestone(undefined, KR3_MILESTONE_KEYS.CLOUD_FUNCTIONS_DEPLOYED, note || '9 个云函数已部署');
+    const result = await calculateAndWrite();
+    res.json({ ok: true, message: '云函数部署已标记', ...result });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
+/**
+ * POST /kr3/mark-internal-test-started
+ * 标记内测已启动（5-10 人扫码）（+5%）。
+ */
+router.post('/mark-internal-test-started', async (req, res) => {
+  try {
+    const { note } = req.body || {};
+    await markKR3Milestone(undefined, KR3_MILESTONE_KEYS.INTERNAL_TEST_STARTED, note || '内测已启动');
+    const result = await calculateAndWrite();
+    res.json({ ok: true, message: '内测启动已标记', ...result });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
+/**
+ * POST /kr3/mark-real-device-bugs-cleared
+ * 标记真机 bug 清单（P0/P1）已全部修复（+3%）。
+ */
+router.post('/mark-real-device-bugs-cleared', async (req, res) => {
+  try {
+    const { note } = req.body || {};
+    await markKR3Milestone(undefined, KR3_MILESTONE_KEYS.REAL_DEVICE_BUGS_CLEARED, note || '真机 bug 已清零');
+    const result = await calculateAndWrite();
+    res.json({ ok: true, message: '真机 bug 清零已标记', ...result });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
+/**
+ * POST /kr3/mark-trial-version-submitted
+ * 标记已向微信平台提交体验版（+5%）。
+ */
+router.post('/mark-trial-version-submitted', async (req, res) => {
+  try {
+    const { note } = req.body || {};
+    await markKR3Milestone(undefined, KR3_MILESTONE_KEYS.TRIAL_VERSION_SUBMITTED, note || '体验版已提交');
+    const result = await calculateAndWrite();
+    res.json({ ok: true, message: '体验版提交已标记', ...result });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
+/**
+ * POST /kr3/mark-audit-passed
+ * 标记微信审核已通过（+12%）。
+ */
+router.post('/mark-audit-passed', async (req, res) => {
+  try {
+    const { note } = req.body || {};
+    await markKR3Milestone(undefined, KR3_MILESTONE_KEYS.AUDIT_PASSED, note || '审核已通过');
+    const result = await calculateAndWrite();
+    res.json({ ok: true, message: '微信审核通过已标记', ...result });
   } catch (err) {
     res.status(500).json({ ok: false, error: err.message });
   }
