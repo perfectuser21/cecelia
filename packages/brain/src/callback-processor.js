@@ -83,7 +83,6 @@ export async function processExecutionCallback(data, pool) {
 
     const prNumber = extractPrNumber(pr_url);
 
-    const isFailed = newStatus === 'failed';
     const isQuotaExhausted = newStatus === 'quota_exhausted';
     const { errorMessage, blockedDetail } = buildFailureFields(newStatus, result, stderr, exit_code, task_id);
     const execMetaJson = buildExecMetaJson(result);
