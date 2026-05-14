@@ -68,6 +68,16 @@ Brain (port 5221)
     └── src/guidance.js             brain_guidance 表 CRUD（Wave1 双层握手，migration 262）
 ```
 
+**Janitor 维护模块（2026-05-14，PR #2952）**：
+
+| 能力 | 实现 | 说明 |
+|------|------|------|
+| Janitor 调度器 | `src/janitor.js` + `src/janitor-jobs/docker-prune.js` | 统一维护任务注册/执行，首个 job：Docker 镜像清理 |
+| Janitor API | `src/routes/janitor.js` | GET /jobs、POST /jobs/:id/run、PATCH /jobs/:id/config、GET /jobs/:id/history |
+| DB 表 | migration 272（janitor_runs + janitor_config） | 执行历史记录 + 每 job 开关/schedule 配置 |
+| Settings 4-tab | `apps/dashboard/src/pages/settings/` | SettingsPage → BrainSystemTab / MaintenanceTab / NotificationsTab / AccountsTab |
+| brain-build.sh | 每次 build 后自动 docker image prune | 防磁盘被 dangling images 撑满 |
+
 **Wave1 新增能力（2026-05-04，PR #2750/#2751/#2748）**：
 
 | 能力 | 实现 | 说明 |
