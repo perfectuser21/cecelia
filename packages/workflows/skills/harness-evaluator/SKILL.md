@@ -6,10 +6,11 @@ description: |
   evaluator 在 CI 绿之后、PR merge 之前真启服务 + 跑 contract 的 manual:bash 命令验真行为。
   PASS → 允许 merge；FAIL → 不 merge，带反馈打回 Generator 在 PR 分支 fix loop（main 不变动）。
   模式 A 跑 contract-dod-ws*.md BEHAVIOR；模式 B（所有 ws merge 后）跑 final E2E Golden Path。
-version: 1.3.0
+version: 1.4.0
 created: 2026-05-06
-updated: 2026-05-10
+updated: 2026-05-14
 changelog:
+  - 1.4.0: B33 e2e URL 位置词检测 — W35/W43 实证 planner 在 playground sprint 的 e2e 生成了 /api/brain/ping 而非 playground /ping (localhost:3000)。Step B-1.5 加 pre-exec 扫描，含 /api/brain/ 的命令立即 FAIL 并标 planner_drift
   - 1.3.0: 明确 pre-merge gate 位置（反 2026-04-09 决策）— description 重写 + 加 "## 调用时机" 段，说明 evaluator 跑在 CI 绿后、PR merge 前。配套 brain 编排改动（harness-initiative.graph.js 把 evaluate 从 merge 后挪到 merge 前）由独立 PR 跟进
   - 1.2.0: 修协议盲 — 加 Test: 字段 manual:bash/manual: 前缀处理段（proposer SKILL v7.4+ 写此格式，evaluator 必须 strip 后执行）
   - 1.1.0: 加反作弊 reflexive check — 禁止把 vitest "passed" 当 PASS 替代物（W19/W20 实证 sub-evaluator 漏判 schema drift 的根因）。强制每条 [BEHAVIOR] Test: 命令必须真执行；命令缺 jq -e 或自然语言期望直接 FAIL；vitest 输出存在但合同 [BEHAVIOR] 未真跑 → FAIL。对齐 Anthropic harness-design "evaluator 默认会过度通过，必须 prompt 工程严格化"
@@ -267,6 +268,43 @@ if [[ ! -s /tmp/e2e-verify.sh ]]; then
   exit 0
 fi
 chmod +x /tmp/e2e-verify.sh
+```
+
+#### Step B-1.5: E2E 命令位置词验证（B33 — W35/W43 实证）
+
+**在执行 E2E 脚本前，必须先检查脚本是否包含 Brain API URL 漂移。**
+
+根因：W35→W43 共 9 次失败，错误均为 `final_e2e_verdict=FAIL: GET /api/brain/ping`。planner/proposer 在 playground sprint 的合同 e2e 脚本中错误写入了 Brain 健康检查 URL（`localhost:5221/api/brain/ping`）而非 playground 的真实端点（`localhost:3000/ping`）。
+
+**位置词死规则**：
+- `localhost:5221/api/brain/` → Brain API（调度/决策，不是被测服务）
+- `localhost:3000/` 或 `localhost:$PLAYGROUND_PORT/` → playground（被测服务）
+- 两者**不可混用**；playground sprint 的 e2e 里出现 Brain URL = planner_drift
+
+```bash
+# B33 检测：扫描 e2e 脚本是否含 Brain API URL
+if grep -qE "localhost:5221/api/brain/|/api/brain/(ping|health|tasks|tick|status)" /tmp/e2e-verify.sh; then
+  DRIFT_LINE=$(grep -E "localhost:5221/api/brain/|/api/brain/(ping|health|tasks|tick|status)" /tmp/e2e-verify.sh | head -1)
+  echo "{\"verdict\": \"FAIL\", \"task_id\": \"$TASK_ID\", \"mode\": \"e2e\", \"journey_type\": \"$JOURNEY_TYPE\", \"failed_step\": \"url_validation\", \"log_excerpt\": \"$DRIFT_LINE\", \"feedback\": \"planner_drift: e2e 脚本含 Brain API URL（/api/brain/），e2e 验收应针对 playground (localhost:3000) 而非 Brain (localhost:5221)。请修正合同 ## E2E 验收 区块，用 localhost:\\$PLAYGROUND_PORT 替换 localhost:5221/api/brain/ping 等 Brain 地址\"}"
+  exit 0
+fi
+```
+
+**反例**（直接导致 W35-W43 失败，禁止出现）：
+
+```bash
+# ❌ playground sprint 的 e2e 里调用 Brain ping
+curl -f localhost:5221/api/brain/ping  # 这是 Brain 健康检查，不是 playground 验证
+```
+
+**正例**（playground sprint 的 e2e 应如此）：
+
+```bash
+# ✅ 调用 playground 自己的端点
+cd playground && PLAYGROUND_PORT=3001 node server.js & SPID=$!
+sleep 2
+curl -f localhost:3001/ping | jq -e '.pong == true'
+kill $SPID
 ```
 
 #### Step B-2: 执行 E2E 脚本
