@@ -6,7 +6,7 @@
     {
       "task_id": "ws1",
       "title": "playground 加 GET /sum 路由 + 单测 + README 更新",
-      "scope": "在 playground/server.js 新增 `GET /sum` 路由（解析 query a/b → 校验 → 返回 200 + {sum} 或 400 + {error}）；在 playground/tests/server.test.js 新增 /sum happy + 至少 2 个 error 用例（保持 /health 用例不动）；更新 playground/README.md 端点段，把 /sum 从『不在 bootstrap 范围』改为已实现并给示例。零新依赖。",
+      "scope": "TDD 前置条件：playground/server.js 已有 /sum 路由（历史遗留），commit 1 须先移除现有 /sum 实现 + 将 sprint 测试模板合并入 playground/tests/server.test.js，运行 cd playground && npm test 确认 Red（/sum 返 404），再 commit 1；commit 2 加回 /sum 实现，全绿 commit 2。零新依赖。受影响文件：playground/server.js、playground/tests/server.test.js、playground/README.md。",
       "dod": [
         "[BEHAVIOR] GET /sum?a=2&b=3 → HTTP 200 + body {\"sum\":5}（数字类型严格相等）",
         "[BEHAVIOR] GET /sum?a=2（缺 b）→ HTTP 400 + body 含非空字符串 error 字段",

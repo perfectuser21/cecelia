@@ -1,4 +1,4 @@
-# Sprint Contract Draft (Round 1)
+# Sprint Contract Draft (Round 2)
 
 > **Initiative**: W19 Walking Skeleton — playground 加 `GET /sum` endpoint
 > **Source PRD**: `sprints/w19-playground-sum/sprint-prd.md`
@@ -21,6 +21,8 @@
 ## §2 journey_type
 
 **autonomous** — playground 是独立 HTTP server 子项目，本次只动 server 路由 + 单测 + README，无 UI / 无 brain tick / 无 engine hook / 无远端 agent 协议。
+
+**TDD 前置条件**：`playground/server.js` 当前已包含 `/sum` 路由（历史遗留，非本 sprint 实现）。Generator commit 1 前须先从 `playground/server.js` 中移除现有 `/sum` 路由块，并从 `playground/tests/server.test.js` 中移除现有 `/sum` 相关用例（如存在），再将 sprint 测试模板合并入 `playground/tests/server.test.js`，运行 `cd playground && npm test` 确认 Red（期望：`GET /sum` 相关用例因 404 而 FAIL），再 commit 1（Red 状态）。Commit 2 再加回 `/sum` 实现，`npm test` 全绿，commit 2（Green 状态）。
 
 ---
 
@@ -194,4 +196,4 @@ echo "✅ Golden Path 全部验证通过"
 
 | Workstream | Test File | BEHAVIOR 覆盖 | 预期 Red 证据 |
 |---|---|---|---|
-| WS1 | `sprints/w19-playground-sum/tests/ws1/sum.test.js` | sum 字段值 + schema 完整性 + error path | supertest 未在根目录安装 → module not found |
+| WS1 | `sprints/w19-playground-sum/tests/ws1/sum.test.js` | sum 字段值 + schema 完整性 + error path | Generator commit 1：移除 `/sum` 路由后，将测试模板并入 `playground/tests/server.test.js`，运行 `cd playground && npm test` → FAIL：`GET /sum?a=2&b=3 → 200 + {sum:5}` 处 `expect(res.status).toBe(200)` 收到 404，vitest 非 0 退出，错误定位到 sum 相关用例 |
