@@ -16,7 +16,7 @@ import { raise } from './alerting.js';
 import { handleTaskFailure } from './quarantine.js';
 import { updateDesireFromTask } from './desire-feedback.js';
 import { resolveRelatedFailureMemories } from './routes/shared.js';
-import { normalizeCallbackStatus, extractPrNumber, maybeMarkCompletedNoPr, buildExecMetaJson, buildFailureFields } from './lib/callback-utils.js';
+import { normalizeCallbackStatus, extractPrNumber, maybeMarkCompletedNoPr, buildExecMetaJson, buildFailureFields, extractFindingsValue, buildLastRunResult } from './lib/callback-utils.js';
 
 /**
  * processExecutionCallback(data, pool)
@@ -66,16 +66,7 @@ export async function processExecutionCallback(data, pool) {
   }
 
   // 2. Build update payload
-  const lastRunResult = {
-    run_id,
-    checkpoint_id,
-    status,
-    duration_ms,
-    iterations,
-    pr_url: pr_url || null,
-    completed_at: new Date().toISOString(),
-    result_summary: (result !== null && typeof result === 'object') ? result.result : result,
-  };
+  const lastRunResult = buildLastRunResult({ run_id, checkpoint_id, status, duration_ms, iterations, pr_url, result });
 
   // 3. ATOMIC transaction: task UPDATE + decision_log + progress step
   const client = await pool.connect();
@@ -84,13 +75,7 @@ export async function processExecutionCallback(data, pool) {
     await client.query('BEGIN');
 
     const isCompleted = newStatus === 'completed';
-
-    const findingsRaw = (result !== null && typeof result === 'object')
-      ? (result.findings || result.result || result)
-      : result;
-    findingsValue = findingsRaw
-      ? (typeof findingsRaw === 'string' ? findingsRaw : JSON.stringify(findingsRaw))
-      : null;
+    findingsValue = extractFindingsValue(result);
 
     if (!findingsValue && isCompleted) {
       console.warn(`[callback-processor] Task ${task_id} completed with empty findings/result`);

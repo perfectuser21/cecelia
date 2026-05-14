@@ -158,45 +158,62 @@ function applyJsonHint(prompt, format) {
   return prompt;
 }
 
+/**
+ * 校验 tier 字段。合法返回 null，非法返回 error 对象。
+ */
+function validateTier(tier, allowedTiers, label = 'tier') {
+  if (!tier || typeof tier !== 'string') {
+    return { code: 'INVALID_TIER', message: `${label} 必填（string）` };
+  }
+  if (!allowedTiers.has(tier)) {
+    return {
+      code: 'INVALID_TIER',
+      message: `${label} 非法，必须是 ${[...allowedTiers].join(' | ')}`,
+    };
+  }
+  return null;
+}
+
+/**
+ * 校验 prompt 字段。合法返回 null，非法返回 error 对象。
+ */
+function validatePrompt(prompt) {
+  if (!prompt || typeof prompt !== 'string' || !prompt.trim()) {
+    return { code: 'INVALID_PROMPT', message: 'prompt 必填（非空 string）' };
+  }
+  if (prompt.length > MAX_PROMPT_CHARS) {
+    return { code: 'PROMPT_TOO_LARGE', message: `prompt 超过 ${MAX_PROMPT_CHARS} 字符上限` };
+  }
+  return null;
+}
+
+/**
+ * 构建 LLM 调用成功响应体。
+ */
+function buildSuccessData(result, tier) {
+  const text = result?.text || '';
+  return {
+    text,
+    content: text,
+    model: result?.model || null,
+    provider: result?.provider || null,
+    tier,
+    elapsed_ms: result?.elapsed_ms ?? null,
+    tokens_used: { input: null, output: null },
+    account_id: null,
+    attempted_fallback: Boolean(result?.attempted_fallback),
+  };
+}
+
 router.post('/generate', async (req, res) => {
   const body = req.body || {};
   const { tier, prompt, format } = body;
 
-  // ===== 参数校验 =====
-  if (!tier || typeof tier !== 'string') {
-    return res.status(400).json({
-      success: false,
-      data: null,
-      error: { code: 'INVALID_TIER', message: 'tier 必填（string）' },
-    });
-  }
-  if (!ALLOWED_TIERS.has(tier)) {
-    return res.status(400).json({
-      success: false,
-      data: null,
-      error: {
-        code: 'INVALID_TIER',
-        message: `tier 非法，必须是 ${[...ALLOWED_TIERS].join(' | ')}`,
-      },
-    });
-  }
-  if (!prompt || typeof prompt !== 'string' || !prompt.trim()) {
-    return res.status(400).json({
-      success: false,
-      data: null,
-      error: { code: 'INVALID_PROMPT', message: 'prompt 必填（非空 string）' },
-    });
-  }
-  if (prompt.length > MAX_PROMPT_CHARS) {
-    return res.status(400).json({
-      success: false,
-      data: null,
-      error: {
-        code: 'PROMPT_TOO_LARGE',
-        message: `prompt 超过 ${MAX_PROMPT_CHARS} 字符上限`,
-      },
-    });
-  }
+  const tierError = validateTier(tier, ALLOWED_TIERS);
+  if (tierError) return res.status(400).json({ success: false, data: null, error: tierError });
+
+  const promptError = validatePrompt(prompt);
+  if (promptError) return res.status(400).json({ success: false, data: null, error: promptError });
 
   const maxTokensResult = parseMaxTokens(body.max_tokens ?? body.maxTokens, DEFAULT_MAX_TOKENS);
   if (maxTokensResult.error) {
@@ -209,46 +226,20 @@ router.post('/generate', async (req, res) => {
   }
 
   const formatError = validateFormat(format);
-  if (formatError) {
-    return res.status(400).json({ success: false, data: null, error: formatError });
-  }
+  if (formatError) return res.status(400).json({ success: false, data: null, error: formatError });
 
   const finalPrompt = applyJsonHint(prompt, format);
 
-  // ===== 调用 callLLM =====
   try {
     const result = await callLLM(tier, finalPrompt, {
       timeout: timeoutResult.valueMs,
       maxTokens: maxTokensResult.value,
     });
-    // callLLM 返回 { text, model, provider, elapsed_ms, attempted_fallback? }
-    const text = result?.text || '';
-    return res.json({
-      success: true,
-      data: {
-        text,
-        content: text, // 兼容 copywriting.py:83 等调用方
-        model: result?.model || null,
-        provider: result?.provider || null,
-        tier,
-        elapsed_ms: result?.elapsed_ms ?? null,
-        // callLLM 目前不返回 token 用量/账号，占位字段保持契约
-        tokens_used: { input: null, output: null },
-        account_id: null,
-        attempted_fallback: Boolean(result?.attempted_fallback),
-      },
-      error: null,
-    });
+    return res.json({ success: true, data: buildSuccessData(result, tier), error: null });
   } catch (err) {
     const classified = classifyError(err);
-    console.error(
-      `[llm-service] generate 失败 tier=${tier} code=${classified.code}: ${classified.message}`
-    );
-    return res.status(500).json({
-      success: false,
-      data: null,
-      error: classified,
-    });
+    console.error(`[llm-service] generate 失败 tier=${tier} code=${classified.code}: ${classified.message}`);
+    return res.status(500).json({ success: false, data: null, error: classified });
   }
 });
 
@@ -268,43 +259,15 @@ router.post('/vision', async (req, res) => {
   } = body;
   const imageMime = body.image_mime || body.imageMime || 'image/png';
 
-  // ===== tier 校验（vision 白名单 = generate 白名单的子集）=====
   if (!tier || typeof tier !== 'string') {
-    return res.status(400).json({
-      success: false,
-      data: null,
-      error: { code: 'INVALID_TIER', message: 'tier 必填（string）' },
-    });
+    return res.status(400).json({ success: false, data: null, error: { code: 'INVALID_TIER', message: 'tier 必填（string）' } });
   }
   if (!VISION_ALLOWED_TIERS.has(tier)) {
-    return res.status(400).json({
-      success: false,
-      data: null,
-      error: {
-        code: 'INVALID_TIER',
-        message: `vision tier 必须是 ${[...VISION_ALLOWED_TIERS].join(' | ')}（只有 Claude 级模型支持多模态）`,
-      },
-    });
+    return res.status(400).json({ success: false, data: null, error: { code: 'INVALID_TIER', message: `vision tier 必须是 ${[...VISION_ALLOWED_TIERS].join(' | ')}（只有 Claude 级模型支持多模态）` } });
   }
 
-  // ===== prompt 校验 =====
-  if (!prompt || typeof prompt !== 'string' || !prompt.trim()) {
-    return res.status(400).json({
-      success: false,
-      data: null,
-      error: { code: 'INVALID_PROMPT', message: 'prompt 必填（非空 string）' },
-    });
-  }
-  if (prompt.length > MAX_PROMPT_CHARS) {
-    return res.status(400).json({
-      success: false,
-      data: null,
-      error: {
-        code: 'PROMPT_TOO_LARGE',
-        message: `prompt 超过 ${MAX_PROMPT_CHARS} 字符上限`,
-      },
-    });
-  }
+  const promptError = validatePrompt(prompt);
+  if (promptError) return res.status(400).json({ success: false, data: null, error: promptError });
 
   // ===== image_base64 校验 =====
   if (!imageBase64 || typeof imageBase64 !== 'string' || !imageBase64.trim()) {
@@ -396,32 +359,11 @@ router.post('/vision', async (req, res) => {
       provider: visionProvider,
       ...(visionModel ? { model: visionModel } : {}),
     });
-    const text = result?.text || '';
-    return res.json({
-      success: true,
-      data: {
-        text,
-        content: text,
-        model: result?.model || null,
-        provider: result?.provider || null,
-        tier,
-        elapsed_ms: result?.elapsed_ms ?? null,
-        tokens_used: { input: null, output: null },
-        account_id: null,
-        attempted_fallback: Boolean(result?.attempted_fallback),
-      },
-      error: null,
-    });
+    return res.json({ success: true, data: buildSuccessData(result, tier), error: null });
   } catch (err) {
     const classified = classifyError(err);
-    console.error(
-      `[llm-service] vision 失败 tier=${tier} code=${classified.code}: ${classified.message}`
-    );
-    return res.status(500).json({
-      success: false,
-      data: null,
-      error: classified,
-    });
+    console.error(`[llm-service] vision 失败 tier=${tier} code=${classified.code}: ${classified.message}`);
+    return res.status(500).json({ success: false, data: null, error: classified });
   }
 });
 

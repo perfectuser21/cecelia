@@ -26,7 +26,7 @@ import {
   isBridgeSessionCrash,
   handleEvaluateSessionCrash,
 } from '../execution.js';
-import { normalizeCallbackStatus, extractPrNumber, maybeMarkCompletedNoPr, buildExecMetaJson, buildFailureFields } from '../lib/callback-utils.js';
+import { normalizeCallbackStatus, extractPrNumber, maybeMarkCompletedNoPr, buildExecMetaJson, buildFailureFields, extractFindingsValue, buildLastRunResult } from '../lib/callback-utils.js';
 
 const router = Router();
 const execAsync = promisify(exec);
@@ -148,43 +148,20 @@ router.post('/execution-callback', async (req, res) => {
     }
 
     // 2. Build the update payload
-    const lastRunResult = {
-      run_id,
-      checkpoint_id,
-      status,
-      duration_ms,
-      iterations,
-      pr_url: pr_url || null,
-      completed_at: new Date().toISOString(),
-      result_summary: (result !== null && typeof result === 'object') ? result.result : result
-    };
+    const lastRunResult = buildLastRunResult({ run_id, checkpoint_id, status, duration_ms, iterations, pr_url, result });
 
     // 3. ATOMIC: DB update + activeProcess cleanup in a single transaction
-    //    This eliminates the race window where tick could see stale state.
     const client = await pool.connect();
     try {
       await client.query('BEGIN');
 
-      // Update task in database (idempotency: only update if still in_progress)
-      // Note: $6 (isCompleted) avoids reusing $2 in CASE WHEN, which causes
-      // "inconsistent types deduced for parameter $2" (text vs character varying).
       const isCompleted = newStatus === 'completed';
-
-      // Extract findings from result for storage in payload.
-      // decomp-checker reads payload.findings to pass context to follow-up tasks.
-      // result can be a string (text output) or an object with a findings/result field.
-      const findingsRaw = (result !== null && typeof result === 'object')
-        ? (result.findings || result.result || result)
-        : result;
-      const findingsValue = findingsRaw
-        ? (typeof findingsRaw === 'string' ? findingsRaw : JSON.stringify(findingsRaw))
-        : null;
+      const findingsValue = extractFindingsValue(result);
 
       if (!findingsValue && isCompleted) {
         console.warn(`[execution-callback] Task ${task_id} completed with empty findings/result`);
       }
 
-      // Extract pr_number from pr_url for metadata tracking ($8)
       const prNumber = extractPrNumber(pr_url);
 
       const isFailed = newStatus === 'failed';

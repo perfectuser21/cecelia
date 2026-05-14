@@ -57,6 +57,34 @@ export async function maybeMarkCompletedNoPr(newStatus, pr_url, task_id, pool, p
   return newStatus;
 }
 
+/**
+ * 从 result 对象提取 findings 字符串（供 decomp-checker 读取）。
+ * result 可以是 string 或含 findings/result 字段的 object。
+ */
+export function extractFindingsValue(result) {
+  const raw = (result !== null && typeof result === 'object')
+    ? (result.findings || result.result || result)
+    : result;
+  if (!raw) return null;
+  return typeof raw === 'string' ? raw : JSON.stringify(raw);
+}
+
+/**
+ * 构建 last_run_result payload 对象（写入 tasks.payload）。
+ */
+export function buildLastRunResult({ run_id, checkpoint_id, status, duration_ms, iterations, pr_url, result }) {
+  return {
+    run_id,
+    checkpoint_id,
+    status,
+    duration_ms,
+    iterations,
+    pr_url: pr_url || null,
+    completed_at: new Date().toISOString(),
+    result_summary: (result !== null && typeof result === 'object') ? result.result : result,
+  };
+}
+
 export const EXEC_META_KEYS = ['duration_ms', 'total_cost_usd', 'num_turns', 'input_tokens', 'output_tokens'];
 
 /**
