@@ -119,6 +119,17 @@ app.get('/factorial', (req, res) => {
   return res.json({ factorial: acc });
 });
 
+app.get('/abs', (req, res) => {
+  const n = req.query.n;
+  if (n === undefined) {
+    return res.status(400).json({ error: 'n 是必填 query 参数' });
+  }
+  if (typeof n !== 'string' || !STRICT_NUMBER.test(n)) {
+    return res.status(400).json({ error: 'n 必须匹配 ^-?\\d+(\\.\\d+)?$（禁止科学计数法、Infinity、前导 +、十六进制等）' });
+  }
+  return res.json({ result: Math.abs(Number(n)), operation: 'abs' });
+});
+
 app.get('/echo', (req, res) => {
   if (req.query.msg === undefined) {
     return res.status(400).json({ error: 'msg 是必填 query 参数' });
