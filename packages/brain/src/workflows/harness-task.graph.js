@@ -395,9 +395,9 @@ export async function mergePrNode(state, opts = {}) {
     return { merge_error: 'no pr_url available' };
   }
 
-  // B21: evaluator PASS 后 brain 真调 gh pr merge --auto --squash 自动合并 PR。
+  // B21: evaluator PASS 后 brain 真调 gh pr merge --squash 自动合并 PR。
   // 不再依赖人工 merge button，也不依赖外层 shepherd。
-  // --auto 让 GitHub 等所有 required checks PASS 后再合（不强 admin bypass）；
+  // CI 在 poll_ci 节点已验绿，进入此节点时合并安全，无需 --auto 再等。
   // --delete-branch 合完自动删 head branch。
   // merge 失败不 throw（避免 graph 走 error 通道触发重试导致重复 merge 风险），
   // 而是写 merge_error 让 graph 退 END，由人工或 shepherd 补救。
