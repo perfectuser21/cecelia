@@ -1343,6 +1343,7 @@ export async function finalEvaluateDispatchNode(state, opts = {}) {
     return { final_e2e_verdict: state.final_e2e_verdict };
   }
   const executor = opts.executor || spawn;
+  const execFn = opts.execFile || execFile;
   const sprintDir = state.task?.payload?.sprint_dir || 'sprints';
   const journeyType = state.taskPlan?.journey_type || 'autonomous';
 
@@ -1378,6 +1379,21 @@ JOURNEY_TYPE=${journeyType}`;
   // 清理上轮残留结果文件，防止 executor 失败时读到旧数据
   const { unlink: unlinkResultFile } = await import('node:fs/promises');
   try { await unlinkResultFile(path.join(state.worktreePath, '.brain-result.json')); } catch { /* 忽略 */ }
+
+  // B41: Phase C 前把 playground/ 从 origin/main 同步到 initiative worktree。
+  // 根因：initiative worktree HEAD 停在 GAN 合同分支，playground 代码是旧的；
+  // Phase B PR 合并进 main 后，这里必须拉最新代码，否则 evaluator 测旧实现永远 FAIL。
+  if (state.worktreePath) {
+    try {
+      await execFn('git', ['fetch', 'origin', 'main'],
+        { cwd: state.worktreePath, timeout: 30_000 });
+      await execFn('git', ['checkout', 'origin/main', '--', 'playground/'],
+        { cwd: state.worktreePath, timeout: 15_000 });
+      console.log('[final_evaluate] playground synced from origin/main');
+    } catch (err) {
+      console.warn(`[final_evaluate] playground sync failed: ${err.message}`);
+    }
+  }
 
   let result;
   try {
