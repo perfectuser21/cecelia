@@ -1,4 +1,4 @@
-# Sprint Contract Draft (Round 2)
+# Sprint Contract Draft (Round 3)
 
 ## Golden Path
 
@@ -148,11 +148,9 @@ workstream_count: 1
 
 ### Workstream 1: GET /echo 端点实现
 
-**范围**: `playground/server.js` 新增 GET /echo 路由；`sprints/tests/ws1/echo.test.js` vitest 单元测试
+**范围**: `playground/server.js` 新增 GET /echo 路由；`playground/tests/echo.test.js` vitest 单元测试
 **大小**: S（< 100 行净增，≤ 2 文件）
 **依赖**: 无
-
-**BEHAVIOR 覆盖测试文件**: `sprints/tests/ws1/echo.test.js`
 
 ---
 
@@ -160,4 +158,4 @@ workstream_count: 1
 
 | Workstream | Test File | BEHAVIOR 覆盖 | Red 阶段验证命令（机器可执行） |
 |---|---|---|---|
-| WS1 | `sprints/tests/ws1/echo.test.js` | echo 字段值、keys 完整性、禁用字段反向、空字符串边界 | `cd /workspace && npx vitest run sprints/tests/ws1/echo.test.js; [ $? -ne 0 ]`（exit≠0 证明测试真红） |
+| WS1 | `playground/tests/echo.test.js` | echo 字段值、keys 完整性、禁用字段反向、空字符串边界 | `cd /workspace/playground && npm install && npx vitest run tests/echo.test.js; [ $? -ne 0 ]`（exit≠0 证明测试真红） |

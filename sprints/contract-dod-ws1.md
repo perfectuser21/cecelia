@@ -4,7 +4,7 @@ journey_type: autonomous
 ---
 # Contract DoD — Workstream 1: GET /echo 端点实现
 
-**范围**: `playground/server.js` 新增 GET /echo 路由，读取 `msg` query 参数原样回显；`sprints/tests/ws1/echo.test.js` vitest 单元测试
+**范围**: `playground/server.js` 新增 GET /echo 路由，读取 `msg` query 参数原样回显；`playground/tests/echo.test.js` vitest 单元测试
 **大小**: S（< 100 行净增，≤ 2 文件）
 **依赖**: 无
 
@@ -23,12 +23,12 @@ journey_type: autonomous
 - [ ] [ARTIFACT] `playground/server.js` `/echo` 路由使用 query 名 `msg`（不使用禁用名 text/input/message/q/str/value/content/m）
   Test: node -e "const c=require('fs').readFileSync('/workspace/playground/server.js','utf8');const m=c.match(/app\.get\(['\"]\/echo[\s\S]*?\}\);/);if(!m)process.exit(1);if(!/req\.query\.msg/.test(m[0]))process.exit(1)"
 
-- [ ] [ARTIFACT] `sprints/tests/ws1/echo.test.js` 文件存在
-  Test: node -e "require('fs').accessSync('/workspace/sprints/tests/ws1/echo.test.js')"
+- [ ] [ARTIFACT] `playground/tests/echo.test.js` 文件存在
+  Test: node -e "require('fs').accessSync('/workspace/playground/tests/echo.test.js')"
 
 - [ ] [ARTIFACT] TDD Red 阶段验证 — Generator commit 1（仅测试文件，无实现）时 vitest 必须 exit≠0（防止 Generator 写空实现绕过 Red 阶段）
   Test: bash -c 'cat /tmp/ws1-red.log 2>/dev/null | grep -qE "FAIL|failed|✗" || { echo "FAIL: 缺少 Red 证据日志，Generator 未执行 TDD Red 阶段"; exit 1; }'
-  说明: Generator 在 commit 1 后必须运行 `npx vitest run sprints/tests/ws1/ 2>&1 | tee /tmp/ws1-red.log`，exit code 非 0；Evaluator 核查此日志确认测试真红
+  说明: Generator 在 commit 1 后必须运行 `cd /workspace/playground && npm install && npx vitest run tests/echo.test.js 2>&1 | tee /tmp/ws1-red.log`，exit code 非 0；Evaluator 核查此日志确认测试真红
 
 ## BEHAVIOR 条目（内嵌可执行 manual:bash 命令，evaluator 直接执行）
 
