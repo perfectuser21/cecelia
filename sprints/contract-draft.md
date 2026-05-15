@@ -1,4 +1,4 @@
-# Sprint Contract Draft (Round 1)
+# Sprint Contract Draft (Round 2)
 
 ## Golden Path
 
@@ -14,6 +14,7 @@
 
 **验证命令**:
 ```bash
+pkill -f "PLAYGROUND_PORT=3191" 2>/dev/null || true; sleep 1
 cd /workspace/playground && PLAYGROUND_PORT=3191 node server.js & SPID=$!
 sleep 2
 RESP=$(curl -fs "localhost:3191/echo?msg=hello")
@@ -31,6 +32,7 @@ kill $SPID 2>/dev/null
 
 **验证命令**:
 ```bash
+pkill -f "PLAYGROUND_PORT=3192" 2>/dev/null || true; sleep 1
 cd /workspace/playground && PLAYGROUND_PORT=3192 node server.js & SPID=$!
 sleep 2
 RESP=$(curl -fs "localhost:3192/echo?msg=")
@@ -48,6 +50,7 @@ kill $SPID 2>/dev/null
 
 **验证命令**:
 ```bash
+pkill -f "PLAYGROUND_PORT=3193" 2>/dev/null || true; sleep 1
 cd /workspace/playground && PLAYGROUND_PORT=3193 node server.js & SPID=$!
 sleep 2
 RESP=$(curl -fs "localhost:3193/echo?msg=test")
@@ -65,6 +68,7 @@ kill $SPID 2>/dev/null
 
 **验证命令**:
 ```bash
+pkill -f "PLAYGROUND_PORT=3194" 2>/dev/null || true; sleep 1
 cd /workspace/playground && PLAYGROUND_PORT=3194 node server.js & SPID=$!
 sleep 2
 RESP=$(curl -fs "localhost:3194/echo?msg=hello")
@@ -92,6 +96,10 @@ kill $SPID 2>/dev/null
 ```bash
 #!/bin/bash
 set -e
+
+# 前置清理：防止残留进程占用端口
+pkill -f "PLAYGROUND_PORT=3195" 2>/dev/null || true
+sleep 1
 
 cd /workspace/playground
 
@@ -125,6 +133,15 @@ echo "✅ Golden Path 验证通过"
 
 ---
 
+## Risks
+
+| ID | 风险 | 概率 | 缓解措施 |
+|---|---|---|---|
+| R1 | 端口 3191-3195 被其他进程占用，server.js 启动失败 | 中 | 每条验证命令前置 `pkill -f "PLAYGROUND_PORT=319X" 2>/dev/null \|\| true; sleep 1`，E2E 脚本 set -e 提前退出暴露问题 |
+| R2 | `PLAYGROUND_PORT` env var 未生效（server.js 未读取该变量），服务仍监听默认端口导致验证命令端口不匹配 | 低 | Generator 在 commit 1 Red 阶段验证 `PLAYGROUND_PORT=3099 node server.js` 是否响应 `localhost:3099`；若失败需修 server.js 端口读取逻辑 |
+
+---
+
 ## Workstreams
 
 workstream_count: 1
@@ -141,6 +158,6 @@ workstream_count: 1
 
 ## Test Contract
 
-| Workstream | Test File | BEHAVIOR 覆盖 | 预期红证据 |
+| Workstream | Test File | BEHAVIOR 覆盖 | Red 阶段验证命令（机器可执行） |
 |---|---|---|---|
-| WS1 | `sprints/tests/ws1/echo.test.js` | echo 字段值、keys 完整性、禁用字段反向、空字符串边界 | /echo 路由不存在 → 4 failures (404) |
+| WS1 | `sprints/tests/ws1/echo.test.js` | echo 字段值、keys 完整性、禁用字段反向、空字符串边界 | `cd /workspace && npx vitest run sprints/tests/ws1/echo.test.js; [ $? -ne 0 ]`（exit≠0 证明测试真红） |

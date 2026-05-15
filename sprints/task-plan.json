@@ -13,7 +13,8 @@
         "[BEHAVIOR] response keys 完整性 == [\"echo\"]（不允许多余字段）",
         "[BEHAVIOR] 禁用 key 反向：message/result/response/data/output/text/reply/body/msg 均不存在",
         "[ARTIFACT] playground/server.js 内含 /echo 路由注册",
-        "[ARTIFACT] sprints/tests/ws1/echo.test.js 文件存在"
+        "[ARTIFACT] sprints/tests/ws1/echo.test.js 文件存在",
+        "[ARTIFACT] TDD Red 阶段验证：/tmp/ws1-red.log 存在且含 FAIL 证据（Generator commit 1 后 vitest exit≠0）"
       ],
       "files": [
         "playground/server.js",
