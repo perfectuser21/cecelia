@@ -44,7 +44,7 @@ import { resolveGitHubToken } from '../harness-credentials.js';
 import { spawnDockerDetached } from '../spawn/detached.js';
 import { resolveAccount } from '../spawn/middleware/account-rotation.js';
 import { checkPrStatus, classifyFailedChecks } from '../shepherd.js';
-import { parseDockerOutput, extractField, readPrFromGitState, readVerdictFile } from '../harness-shared.js';
+import { parseDockerOutput, extractField, readPrFromGitState, readVerdictFile, readBrainResult } from '../harness-shared.js';
 import { buildGeneratorPrompt, extractWorkstreamIndex } from '../harness-utils.js';
 import { getPgCheckpointer } from '../orchestrator/pg-checkpointer.js';
 import pool from '../db.js';
@@ -601,6 +601,23 @@ export async function evaluateContractNode(state, opts = {}) {
         evaluate_verdict: normV,
         evaluate_error: normV === 'FAIL' ? (fileVerdict.feedback || 'evaluator returned FAIL') : null,
       };
+    }
+  }
+
+  // Protocol v2.5 Fallback: 读 .brain-result.json（harness-evaluator skill 协议）
+  // harness-evaluator 写 .brain-result.json 而非 .cecelia/verdict.json，
+  // 文件不存在时 readBrainResult 抛异常，catch 后继续 Protocol v1
+  if (state.worktreePath) {
+    try {
+      const brainResult = await readBrainResult(state.worktreePath, ['verdict']);
+      const normV = normalizeVerdict(brainResult.verdict);
+      const feedback = brainResult.log_excerpt || brainResult.failed_step || null;
+      return {
+        evaluate_verdict: normV,
+        evaluate_error: normV === 'FAIL' ? (feedback || 'evaluator returned FAIL') : null,
+      };
+    } catch {
+      // .brain-result.json 不存在或字段缺失，继续 Protocol v1 fallback
     }
   }
 
