@@ -1,0 +1,28 @@
+{
+  "initiative_id": "pending",
+  "journey_type": "autonomous",
+  "journey_type_reason": "纯后端 playground 服务，无 UI 交互，无 Brain/engine/dashboard 依赖",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "playground/server.js 新增 GET /echo 端点",
+      "scope": "在 playground/server.js 新增 GET /echo 路由，读取 msg query 参数原样回显；在 playground/tests/echo.test.js 写 vitest 单元测试（TDD Red/Green）",
+      "dod": [
+        "[BEHAVIOR] GET /echo?msg=hello → HTTP 200 + {echo: \"hello\"}（字段值严格匹配）",
+        "[BEHAVIOR] GET /echo?msg= → HTTP 200 + {echo: \"\"}（空字符串非 null）",
+        "[BEHAVIOR] response keys 完整性 == [\"echo\"]（不允许多余字段）",
+        "[BEHAVIOR] 禁用 key 反向：message/result/response/data/output/text/reply/body/msg 均不存在",
+        "[ARTIFACT] playground/server.js 内含 /echo 路由注册",
+        "[ARTIFACT] playground/tests/echo.test.js 文件存在",
+        "[ARTIFACT] TDD Red 阶段验证：/tmp/ws1-red.log 存在且含 FAIL 证据（Generator commit 1 后 vitest exit≠0）"
+      ],
+      "files": [
+        "playground/server.js",
+        "playground/tests/echo.test.js"
+      ],
+      "depends_on": [],
+      "complexity": "S",
+      "estimated_minutes": 20
+    }
+  ]
+}
