@@ -1,4 +1,4 @@
-# Sprint Contract Draft (Round 1)
+# Sprint Contract Draft (Round 2)
 
 ## Golden Path
 
@@ -12,10 +12,10 @@
 
 **验证命令**:
 ```bash
-cd /workspace/playground && PLAYGROUND_PORT=3001 node server.js & SPID=$!
+cd /workspace/playground && PLAYGROUND_PORT=3099 node server.js & SPID=$!
 sleep 2
 
-RESP=$(curl -fs "localhost:3001/echo?msg=hello")
+RESP=$(curl -fs "localhost:3099/echo?msg=hello")
 echo "$RESP" | jq -e '.msg == "hello"' || { echo "FAIL: .msg 值错误"; kill $SPID; exit 1; }
 echo "$RESP" | jq -e 'keys == ["msg"]' || { echo "FAIL: keys 不完整"; kill $SPID; exit 1; }
 echo "$RESP" | jq -e 'has("echo") | not' || { echo "FAIL: 禁用字段 echo 漏网"; kill $SPID; exit 1; }
@@ -34,10 +34,10 @@ echo "✅ Step 1 验证通过"
 
 **验证命令**:
 ```bash
-cd /workspace/playground && PLAYGROUND_PORT=3002 node server.js & SPID=$!
+cd /workspace/playground && PLAYGROUND_PORT=3099 node server.js & SPID=$!
 sleep 2
 
-RESP=$(curl -fs "localhost:3002/echo?msg=")
+RESP=$(curl -fs "localhost:3099/echo?msg=")
 echo "$RESP" | jq -e '.msg == ""' || { echo "FAIL: 空字符串未正确回显"; kill $SPID; exit 1; }
 
 kill $SPID
@@ -54,10 +54,10 @@ echo "✅ Step 2 验证通过"
 
 **验证命令**:
 ```bash
-cd /workspace/playground && PLAYGROUND_PORT=3003 node server.js & SPID=$!
+cd /workspace/playground && PLAYGROUND_PORT=3099 node server.js & SPID=$!
 sleep 2
 
-CODE=$(curl -s -o /dev/null -w "%{http_code}" "localhost:3003/echo")
+CODE=$(curl -s -o /dev/null -w "%{http_code}" "localhost:3099/echo")
 [ "$CODE" = "400" ] || { echo "FAIL: 缺失 msg 未返 400，实际=$CODE"; kill $SPID; exit 1; }
 
 kill $SPID
@@ -70,15 +70,17 @@ echo "✅ Step 3 验证通过"
 
 ### Step 4: B39 harness 归一化验证（evaluator verdict → PASS）
 
-**可观测行为**: evaluator 输出 FIXED 或 APPROVED 时，harness 均识别为 PASS，不报 unknown verdict 错误
+**可观测行为**: evaluator 输出 FIXED 或 APPROVED 时，`normalizeVerdict()` 函数均返回 `'PASS'`，不报 unknown verdict 错误
 
 **验证命令**:
 ```bash
-grep -rE "FIXED|APPROVED" /workspace/packages/engine/scripts/ | grep -iE "pass|normaliz" | head -5
+grep -qE "FIXED.*PASS|APPROVED.*PASS|'PASS'.*'FIXED'.*'APPROVED'" \
+  /workspace/packages/brain/src/workflows/harness-task.graph.js || \
+  { echo "FAIL: 未找到 FIXED/APPROVED → PASS 归一化逻辑"; exit 1; }
 echo "✅ Step 4 静态检验通过（B39 #2968 已合并）"
 ```
 
-**硬阈值**: 源码含 FIXED/APPROVED → PASS 归一化逻辑
+**硬阈值**: 源码含 FIXED/APPROVED → PASS 归一化逻辑，grep -q 返回 exit 0
 
 ---
 
@@ -88,10 +90,26 @@ echo "✅ Step 4 静态检验通过（B39 #2968 已合并）"
 
 **验证命令**:
 ```bash
-grep -r "\-\-auto" /workspace/packages/engine/scripts/ 2>/dev/null && echo "FAIL: --auto 未移除" && exit 1 || echo "✅ --auto 已移除"
+grep -r "\-\-auto" /workspace/packages/engine/scripts/ 2>/dev/null && { echo "FAIL: --auto 未移除"; exit 1; } || echo "✅ --auto 已移除"
 ```
 
 **硬阈值**: 源码中无 `--auto` 标志
+
+---
+
+## Risks
+
+### Risk 1: normalizeVerdict 路径变更导致 Step 4 恒绿
+
+**描述**: 如果 B39 后 `normalizeVerdict` 函数被重命名或移入其他文件，Step 4 的 grep 路径会返回非 0 exit code，误判为 FAIL；若 grep pattern 不精确，也可能恒绿。
+
+**Mitigation**: Step 4 验证命令直接 grep 具体文件路径（`harness-task.graph.js`），pattern 同时匹配 Set 初始化语法 `'FIXED'.*'APPROVED'`，与函数实现绑定，减少漂移窗口。合同 Reviewer 检查 grep 可否造假。
+
+### Risk 2: playground 端口冲突导致 E2E 假绿
+
+**描述**: 若 3099 端口在 evaluator 运行时已被占用（上一个 playground 进程未正常退出），`node server.js` 启动失败但 `curl` 可能打到旧进程，返回旧 `echo` 字段，掩盖 schema 未修复的事实。
+
+**Mitigation**: E2E 脚本在启动前用 `lsof -ti:3099 | xargs kill -9 2>/dev/null || true` 清理残留进程；`curl -f` flag 确保 HTTP 5xx 会返回非 0 exit code；`jq -e` 精确匹配 `keys == ["msg"]` 捕获 schema 漂移。
 
 ---
 
@@ -103,6 +121,9 @@ grep -r "\-\-auto" /workspace/packages/engine/scripts/ 2>/dev/null && echo "FAIL
 ```bash
 #!/bin/bash
 set -e
+
+# 清理可能残留的 3099 端口进程
+lsof -ti:3099 | xargs kill -9 2>/dev/null || true
 
 cd /workspace/playground
 PLAYGROUND_PORT=3099 node server.js & SPID=$!
@@ -144,7 +165,7 @@ workstream_count: 1
 **大小**: S（< 20 行净改动，1 文件）
 **依赖**: 无
 
-**BEHAVIOR 覆盖测试文件**: `tests/ws1/echo.test.ts`
+**BEHAVIOR 覆盖测试文件**: `sprints/tests/ws1/echo.test.js`
 
 ---
 
@@ -158,4 +179,4 @@ workstream_count: 1
 
 | Workstream | Test File | BEHAVIOR 覆盖 | 预期红证据 |
 |---|---|---|---|
-| WS1 | `tests/ws1/echo.test.ts` | msg 字段值、schema 完整性、禁用字段 echo、空字符串、400 error path | 5 failures（echo 字段未改前） |
+| WS1 | `sprints/tests/ws1/echo.test.js` | msg 字段值、schema 完整性、禁用字段 echo、空字符串、400 error path | 5 failures（echo 字段未改前） |
