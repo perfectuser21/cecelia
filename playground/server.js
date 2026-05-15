@@ -120,8 +120,10 @@ app.get('/factorial', (req, res) => {
 });
 
 app.get('/echo', (req, res) => {
-  const msg = req.query.msg !== undefined ? String(req.query.msg) : '';
-  return res.json({ echo: msg });
+  if (req.query.msg === undefined) {
+    return res.status(400).json({ error: 'msg 是必填 query 参数' });
+  }
+  return res.json({ msg: String(req.query.msg) });
 });
 
 if (process.env.NODE_ENV !== 'test') {
