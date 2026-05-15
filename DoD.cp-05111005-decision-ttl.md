@@ -11,13 +11,13 @@
 ## Behaviors
 
 - [x] [BEHAVIOR] C1a: decision created 5 min ago — getGuidance 返回 value（新鲜）
-  - Test: tests/brain/decision-ttl.test.js
+  Test: bash -c 'npx vitest run packages/brain/src/__tests__/decision-ttl.test.js --reporter=verbose 2>&1'
 
 - [x] [BEHAVIOR] C1b: decision created 30 min ago — getGuidance 返回 null（TTL=15 超时）
-  - Test: tests/brain/decision-ttl.test.js
+  Test: bash -c 'npx vitest run packages/brain/src/__tests__/decision-ttl.test.js --reporter=verbose 2>&1'
 
 - [x] [BEHAVIOR] C1c: DECISION_TTL_MIN=60 env override — 30 min 的 decision 仍有效
-  - Test: tests/brain/decision-ttl.test.js
+  Test: bash -c 'npx vitest run packages/brain/src/__tests__/decision-ttl.test.js --reporter=verbose 2>&1'
 
 - [x] [BEHAVIOR] C1d: 非 decision value（无 decision_id）不受 TTL 限制
-  - Test: tests/brain/decision-ttl.test.js
+  Test: bash -c 'npx vitest run packages/brain/src/__tests__/decision-ttl.test.js --reporter=verbose 2>&1'

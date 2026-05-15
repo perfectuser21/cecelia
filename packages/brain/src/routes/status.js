@@ -915,6 +915,23 @@ router.get('/hello', async (req, res) => {
   }
 });
 
+// ==================== Ping API ====================
+
+/**
+ * GET /api/brain/ping
+ * 轻量健康检查端点：返回 {pong:true, ts:<unix_seconds>}
+ */
+router.get('/ping', (req, res) => {
+  res.json({ pong: true, ts: Math.floor(Date.now() / 1000) });
+});
+
+/**
+ * 非 GET 方法返回 405
+ */
+router.all('/ping', (req, res) => {
+  res.status(405).json({ error: 'Method Not Allowed' });
+});
+
 // ==================== Ping Extended API ====================
 
 /**
