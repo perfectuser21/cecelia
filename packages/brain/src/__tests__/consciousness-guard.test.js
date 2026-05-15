@@ -1,5 +1,8 @@
 import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
-import { isConsciousnessEnabled, logStartupDeclaration, GUARDED_MODULES, _resetDeprecationWarn } from '../consciousness-guard.js';
+import {
+  isConsciousnessEnabled, logStartupDeclaration, GUARDED_MODULES, _resetDeprecationWarn,
+  checkConsciousnessHeartbeat, _resetHeartbeatCheckForTest, _resetCacheForTest,
+} from '../consciousness-guard.js';
 
 describe('consciousness-guard', () => {
   const originalEnv = { ...process.env };
@@ -159,6 +162,101 @@ describe('consciousness-guard', () => {
       mockPool.query.mockResolvedValueOnce({ rows: [{ value_json: { enabled: false, last_toggled_at: '2026-04-20T01:00:00Z' } }] });
       await reloadConsciousnessCache(mockPool);
       expect(isConsciousnessEnabled()).toBe(false);
+    });
+  });
+
+  describe('checkConsciousnessHeartbeat (Phase 3 — RCA#3)', () => {
+    let mockPool;
+    let mockAlerting;
+
+    beforeEach(() => {
+      _resetHeartbeatCheckForTest();
+      _resetCacheForTest(); // 防 Phase 2 的 _cached 状态污染（setConsciousnessEnabled → enabled=false）
+      delete process.env.CONSCIOUSNESS_ENABLED;
+      delete process.env.BRAIN_QUIET_MODE;
+      delete process.env.BRAIN_MINIMAL_MODE;
+      mockPool = { query: vi.fn() };
+      mockAlerting = { raise: vi.fn().mockResolvedValue(undefined) };
+    });
+
+    test('skips check when throttled (called twice within 1 hour)', async () => {
+      mockPool.query.mockResolvedValueOnce({ rows: [{ cnt: '5' }] });
+      const first = await checkConsciousnessHeartbeat(mockPool, mockAlerting);
+      expect(first.checked).toBe(true);
+      const second = await checkConsciousnessHeartbeat(mockPool, mockAlerting);
+      expect(second.checked).toBe(false);
+      expect(mockPool.query).toHaveBeenCalledTimes(1);
+    });
+
+    test('returns heartbeats_24h count when rumination is healthy', async () => {
+      mockPool.query.mockResolvedValueOnce({ rows: [{ cnt: '12' }] });
+      const result = await checkConsciousnessHeartbeat(mockPool, mockAlerting);
+      expect(result.checked).toBe(true);
+      expect(result.heartbeats_24h).toBe(12);
+      expect(result.alerted).toBe(false);
+      expect(result.healed).toBe(false);
+      expect(mockAlerting.raise).not.toHaveBeenCalled();
+    });
+
+    test('skips when consciousness is disabled (CONSCIOUSNESS_ENABLED=false)', async () => {
+      process.env.CONSCIOUSNESS_ENABLED = 'false';
+      const result = await checkConsciousnessHeartbeat(mockPool, mockAlerting);
+      expect(result.checked).toBe(true);
+      expect(result.heartbeats_24h).toBe(-1);
+      expect(mockPool.query).not.toHaveBeenCalled();
+    });
+
+    test('raises P2 alert when heartbeats_24h=0', async () => {
+      mockPool.query.mockResolvedValueOnce({ rows: [{ cnt: '0' }] });
+      const result = await checkConsciousnessHeartbeat(mockPool, mockAlerting);
+      expect(result.checked).toBe(true);
+      expect(result.heartbeats_24h).toBe(0);
+      expect(result.alerted).toBe(true);
+      expect(mockAlerting.raise).toHaveBeenCalledWith(
+        'P2',
+        'consciousness_heartbeat_dead',
+        expect.stringContaining('heartbeats_24h=0')
+      );
+    });
+
+    test('self-heals by calling runRumination when heartbeats_24h=0 and no env override', async () => {
+      mockPool.query.mockResolvedValueOnce({ rows: [{ cnt: '0' }] });
+      const mockRumination = { runRumination: vi.fn().mockResolvedValue({ digested: 3 }) };
+      const result = await checkConsciousnessHeartbeat(mockPool, mockAlerting, mockRumination);
+      expect(result.healed).toBe(true);
+      expect(mockRumination.runRumination).toHaveBeenCalledWith(mockPool);
+    });
+
+    test('does not self-heal when BRAIN_MINIMAL_MODE=true', async () => {
+      process.env.BRAIN_MINIMAL_MODE = 'true';
+      mockPool.query.mockResolvedValueOnce({ rows: [{ cnt: '0' }] });
+      const mockRumination = { runRumination: vi.fn() };
+      const result = await checkConsciousnessHeartbeat(mockPool, mockAlerting, mockRumination);
+      expect(result.healed).toBe(false);
+      expect(mockRumination.runRumination).not.toHaveBeenCalled();
+    });
+
+    test('skips self-heal when consciousness disabled by BRAIN_QUIET_MODE (env_override path)', async () => {
+      // BRAIN_QUIET_MODE=true → consciousness disabled → early return (heartbeats_24h=-1)
+      // 即使有 heartbeats=0 也不会自愈，因为 isConsciousnessEnabled() 返回 false 时直接跳过
+      process.env.BRAIN_QUIET_MODE = 'true';
+      const mockRumination = { runRumination: vi.fn() };
+      const result = await checkConsciousnessHeartbeat(mockPool, mockAlerting, mockRumination);
+      expect(result.checked).toBe(true);
+      expect(result.heartbeats_24h).toBe(-1);
+      expect(result.alerted).toBe(false);
+      expect(result.healed).toBe(false);
+      expect(mockPool.query).not.toHaveBeenCalled(); // 不查 DB
+      expect(mockRumination.runRumination).not.toHaveBeenCalled();
+    });
+
+    test('handles DB query failure gracefully', async () => {
+      mockPool.query.mockRejectedValueOnce(new Error('DB connection lost'));
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      const result = await checkConsciousnessHeartbeat(mockPool, mockAlerting);
+      expect(result.checked).toBe(false);
+      expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('heartbeat query failed'), expect.any(String));
+      warnSpy.mockRestore();
     });
   });
 });

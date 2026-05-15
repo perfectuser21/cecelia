@@ -500,9 +500,13 @@ export async function writeDockerCallback(task, runId, checkpointId, result) {
   const skillMissingMatch = stdoutForCheck.match(/Unknown\s+skill\s*:\s*([\w-]+)/i);
   const isEnvBroken = !!skillMissingMatch;
 
+  // RCA#3 fix: 检测 claude "Not logged in" 认证失败 → 强制降级为 failed，避免 zombie
+  // 原症：容器以 Not logged in 秒退但未被正确分类，Brain 误以为还在运行
+  const isAuthFailed = /not\s+logged\s+in|please\s+run\s+\/login/i.test(stdoutForCheck);
+
   const status = result.timed_out
     ? 'timeout'
-    : (isEnvBroken ? 'failed' : (result.exit_code === 0 ? 'success' : 'failed'));
+    : (isEnvBroken || isAuthFailed ? 'failed' : (result.exit_code === 0 ? 'success' : 'failed'));
 
   // Harness v6 Phase B: 从 stdout 解析 pr_url / verdict 塞进 _meta，让 callback-worker
   // 下游 (routePrUrlToTasks) 能从 result_json._meta.pr_url 回填 tasks.pr_url，
@@ -533,15 +537,22 @@ export async function writeDockerCallback(task, runId, checkpointId, result) {
     resultJson._meta.env_broken_reason = 'unknown_skill';
   }
 
+  if (isAuthFailed) {
+    resultJson._meta.auth_error = 'not_logged_in';
+    console.warn(`[docker-executor] RCA#3: auth_not_logged_in detected task=${task.id} — forcing status=failed`);
+  }
+
   const stderrTail = result.stderr ? result.stderr.slice(-2000) : null;
   const isOomKilled = result.exit_code === EXIT_SIGKILL && !result.timed_out;
   const failureClass = result.timed_out
     ? 'docker_timeout'
-    : (isEnvBroken
-        ? 'env_skill_missing'
-        : (isOomKilled
-            ? 'docker_oom_killed'
-            : (result.exit_code !== 0 ? 'docker_nonzero_exit' : null)));
+    : (isAuthFailed
+        ? 'auth_not_logged_in'
+        : (isEnvBroken
+            ? 'env_skill_missing'
+            : (isOomKilled
+                ? 'docker_oom_killed'
+                : (result.exit_code !== 0 ? 'docker_nonzero_exit' : null))));
 
   // exit=137 Alert：cgroup OOM 杀容器（不是手动 timeout）→ 资源不够或任务超标。
   // P1 级别：单次失败不阻塞，但累积应该被关注。fire-and-forget 不阻塞 callback 写入。
