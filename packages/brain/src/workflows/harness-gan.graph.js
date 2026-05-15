@@ -135,7 +135,7 @@ export function computeVerdictFromRubric(scores, round) {
  * 之前 brain code hardcoded 5-dim rubric 覆盖 SKILL.md v6.2 的 7-dim → reviewer 输出 5 dim。
  * 现在直接 loadSkillContent 注入完整 SKILL，SKILL.md 是唯一 SSOT，改 SKILL 立即生效。
  */
-export function buildProposerPrompt(prdContent, feedback, round) {
+export function buildProposerPrompt(prdContent, feedback, round, proposeBranch) {
   const skillContent = loadSkillContent('harness-contract-proposer');
   const parts = [
     '你是 harness-contract-proposer agent。按下面 SKILL 指令工作。',
@@ -146,9 +146,14 @@ export function buildProposerPrompt(prdContent, feedback, round) {
     '',
     `round: ${round}`,
     '',
-    '## PRD',
-    prdContent,
   ];
+  if (proposeBranch) {
+    parts.push(
+      `**重要**: PROPOSE_BRANCH="${proposeBranch}"（由 Brain 注入的确定性值，你必须使用此值作为分支名，不得修改）`,
+      ''
+    );
+  }
+  parts.push('## PRD', prdContent);
   if (feedback) {
     parts.push('', '## 上轮 Reviewer 反馈（必须处理）', feedback);
   }
@@ -294,7 +299,7 @@ export function createGanContractNodes(executor, ctx) {
 
     const result = await executor({
       task: { id: taskId, task_type: 'harness_contract_propose' },
-      prompt: buildProposerPrompt(state.prdContent, state.feedback, nextRound),
+      prompt: buildProposerPrompt(state.prdContent, state.feedback, nextRound, computedBranch),
       worktreePath,
       timeoutMs: 1800000,
       env: {
@@ -316,14 +321,12 @@ export function createGanContractNodes(executor, ctx) {
     }
     const contractContent = await readContractFile(worktreePath, sprintDir);
 
-    // 读容器写入的结果文件（双重验证：Brain 计算值 vs 容器写入值必须一致）
+    // 读容器写入的结果文件；LLM 有时会自行计算分支名（不用 env var），改为 warn + 接受实际值
     const resultData = await readBrainResult(worktreePath, ['propose_branch']);
     if (resultData.propose_branch !== computedBranch) {
-      const err = new Error(`ContractViolation: propose_branch_mismatch — expected=${computedBranch} got=${resultData.propose_branch}`);
-      err.code = 'propose_branch_mismatch';
-      throw err;
+      console.warn(`[harness-gan] propose_branch mismatch — expected=${computedBranch} got=${resultData.propose_branch}, accepting got value`);
     }
-    const proposeBranch = computedBranch;
+    const proposeBranch = resultData.propose_branch || computedBranch;
 
     // 防御：proposer SKILL 应每轮写 sprints/task-plan.json（v7.1.0+），缺失打 warn 给下游兜底
     const taskPlanPath = path.join(worktreePath, sprintDir, 'task-plan.json');
