@@ -52,9 +52,7 @@ describe('finalEvaluateDispatchNode — B41 playground sync', () => {
       final_e2e_verdict: null,
     };
 
-    await expect(
-      finalEvaluateDispatchNode(state, { executor: mockExecutor, execFile: mockExecFile })
-    ).resolves.not.toThrow();
+    await finalEvaluateDispatchNode(state, { executor: mockExecutor, execFile: mockExecFile });
 
     // git 命令不应被调用
     expect(mockExecFile).not.toHaveBeenCalled();

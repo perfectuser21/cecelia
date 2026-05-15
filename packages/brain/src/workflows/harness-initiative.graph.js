@@ -1343,7 +1343,7 @@ export async function finalEvaluateDispatchNode(state, opts = {}) {
     return { final_e2e_verdict: state.final_e2e_verdict };
   }
   const executor = opts.executor || spawn;
-  const execFileOpt = opts.execFile || execFile;
+  const execFn = opts.execFile || execFile;
   const sprintDir = state.task?.payload?.sprint_dir || 'sprints';
   const journeyType = state.taskPlan?.journey_type || 'autonomous';
 
@@ -1385,9 +1385,9 @@ JOURNEY_TYPE=${journeyType}`;
   // Phase B PR 合并进 main 后，这里必须拉最新代码，否则 evaluator 测旧实现永远 FAIL。
   if (state.worktreePath) {
     try {
-      await execFileOpt('git', ['fetch', 'origin', 'main'],
+      await execFn('git', ['fetch', 'origin', 'main'],
         { cwd: state.worktreePath, timeout: 30_000 });
-      await execFileOpt('git', ['checkout', 'origin/main', '--', 'playground/'],
+      await execFn('git', ['checkout', 'origin/main', '--', 'playground/'],
         { cwd: state.worktreePath, timeout: 15_000 });
       console.log('[final_evaluate] playground synced from origin/main');
     } catch (err) {
