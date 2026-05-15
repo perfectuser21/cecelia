@@ -1,0 +1,20 @@
+dev
+branch: cp-0515215119-b42-propose-branch-mismatch-tolerance
+session_id: 6aa9aee5-071d-40ae-93f4-91ddbbf999b6
+started: 2026-05-15T21:51:20+08:00
+step_1_spec: pending
+harness_mode: false
+step_2_impl: done
+step_3_tests: done
+dod: |
+  [ARTIFACT] fix(harness-gan): buildProposerPrompt 接受 proposeBranch 参数并注入字面量
+  Test: manual:node -e "import('./packages/brain/src/workflows/harness-gan.graph.js').then(m=>{const p=m.buildProposerPrompt('prd',null,1,'cp-test-br');if(!p.includes('PROPOSE_BRANCH=\"cp-test-br\"'))process.exit(1);console.log('OK')})"
+  Status: [x]
+
+  [BEHAVIOR] mismatch 时 console.warn 而非 throw ContractViolation
+  Test: tests/packages/brain/src/workflows/__tests__/harness-gan-b42.test.js
+  Status: [x]
+
+  [BEHAVIOR] buildProposerPrompt 第 4 参数字面量注入到 prompt
+  Test: tests/packages/brain/src/workflows/__tests__/harness-gan-b42.test.js
+  Status: [x]
