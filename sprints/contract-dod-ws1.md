@@ -37,10 +37,10 @@ journey_type: dev_pipeline
   Test: manual:bash -c 'cd /workspace/playground && PLAYGROUND_PORT=3094 node server.js & SPID=$!; sleep 2; RESP=$(curl -fs "localhost:3094/abs?n=-5"); R=$(echo "$RESP" | jq -e "has(\"value\") | not" && echo "$RESP" | jq -e "has(\"answer\") | not" && echo OK); kill $SPID 2>/dev/null; [ "$R" = "OK" ]'
   期望: OK (exit 0)
 
-- [ ] [BEHAVIOR] error path — GET /abs?n=foo（非数字）返回 HTTP 400
-  Test: manual:bash -c 'cd /workspace/playground && PLAYGROUND_PORT=3095 node server.js & SPID=$!; sleep 2; CODE=$(curl -s -o /dev/null -w "%{http_code}" "localhost:3095/abs?n=foo"); kill $SPID 2>/dev/null; [ "$CODE" = "400" ]'
+- [ ] [BEHAVIOR] error path — GET /abs?n=foo（非数字）返回 HTTP 400 且 body 含 `error` 字段、禁用 `message`/`msg`/`reason`
+  Test: manual:bash -c 'cd /workspace/playground && PLAYGROUND_PORT=3095 node server.js & SPID=$!; sleep 2; curl -s -o /tmp/err_body_foo.json -w "%{http_code}" "localhost:3095/abs?n=foo" > /tmp/err_code_foo.txt; CODE=$(cat /tmp/err_code_foo.txt); kill $SPID 2>/dev/null; [ "$CODE" = "400" ] && jq -e "has(\"error\")" /tmp/err_body_foo.json && jq -e "has(\"message\") | not" /tmp/err_body_foo.json'
   期望: exit 0
 
-- [ ] [BEHAVIOR] error path — GET /abs（缺少 n 参数）返回 HTTP 400
-  Test: manual:bash -c 'cd /workspace/playground && PLAYGROUND_PORT=3096 node server.js & SPID=$!; sleep 2; CODE=$(curl -s -o /dev/null -w "%{http_code}" "localhost:3096/abs"); kill $SPID 2>/dev/null; [ "$CODE" = "400" ]'
+- [ ] [BEHAVIOR] error path — GET /abs（缺少 n 参数）返回 HTTP 400 且 body 含 `error` 字段、禁用 `message`/`msg`/`reason`
+  Test: manual:bash -c 'cd /workspace/playground && PLAYGROUND_PORT=3096 node server.js & SPID=$!; sleep 2; curl -s -o /tmp/err_body_no_n.json -w "%{http_code}" "localhost:3096/abs" > /tmp/err_code_no_n.txt; CODE=$(cat /tmp/err_code_no_n.txt); kill $SPID 2>/dev/null; [ "$CODE" = "400" ] && jq -e "has(\"error\")" /tmp/err_body_no_n.json && jq -e "has(\"message\") | not" /tmp/err_body_no_n.json'
   期望: exit 0
