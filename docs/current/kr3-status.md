@@ -1,9 +1,9 @@
 # KR3 微信小程序上线状态
 
-**更新时间**: 2026-04-15（post-PR#2359）
-**代码完成度**: ~97%（PR#2351-#2359 全量合并，仅剩外部商户号申请）
-**Brain OKR current_value**: 70
-**状态**: 🟡 代码就绪，WX Pay 外部阻断（待商户号申请），可并行推进灰度部署
+**更新时间**: 2026-05-14（post-PR#2956）
+**代码完成度**: 100%（miniapp PR#1-#28 + Brain PR#2329-#2359 全量合并）
+**Brain 进度算法**: milestone-based（60% 基线 + 里程碑叠加），PR#2956 修复 verifier 冲突
+**状态**: 🟡 代码就绪，阻断全为外部（云函数部署 + WX Pay 商户号申请）
 
 ---
 
@@ -11,6 +11,7 @@
 
 | PR | 内容 | 状态 |
 |----|------|------|
+| cecelia#2956 | migration 274：KR3 verifier SQL 改为里程碑 decisions 驱动；self-drive.js 注入外部阻断说明防止无效派发 | 🔄 OPEN |
 | cecelia#2359 | `scripts/kr3-setup-wx-pay.sh` 新增 `--mark-admin-oid`；Brain DB `kr3_admin_oid_initialized` 已标记 | ✅ MERGED |
 | cecelia#2358 | Brain `kr3-config-checker.js` 本地凭据自动检测 + 修复 env var 名称不匹配 | ✅ MERGED |
 | cecelia#2352 | 私钥 PKCS#8 转换 + setup 脚本增强 | ✅ MERGED |
