@@ -23,19 +23,19 @@ journey_type: dev_pipeline
 ## BEHAVIOR 条目（内嵌可执行 manual: 命令）
 
 - [x] [BEHAVIOR] GET /echo?msg=hello 返回 `{"msg":"hello"}` 严 schema 字段值
-  Test: manual:bash -c 'cd /workspace/playground && PLAYGROUND_PORT=3011 node server.js & SPID=$!; sleep 2; RESP=$(curl -fs "localhost:3011/echo?msg=hello"); echo "$RESP" | jq -e ".msg == \"hello\""; EC=$?; kill $SPID 2>/dev/null; exit $EC'
+  Test: manual:bash -c 'cd /workspace/playground && PLAYGROUND_PORT=3011 node server.js & SPID=$!; sleep 2; RESP=$(curl -fs "localhost:3011/echo?msg=hello"); jq -e ".msg == \"hello\"" <<< "$RESP"; EC=$?; kill $SPID 2>/dev/null; exit $EC'
   期望: OK (exit 0)
 
 - [x] [BEHAVIOR] GET /echo?msg=hello response keys 完整性恰好为 ["msg"]
-  Test: manual:bash -c 'cd /workspace/playground && PLAYGROUND_PORT=3012 node server.js & SPID=$!; sleep 2; RESP=$(curl -fs "localhost:3012/echo?msg=hello"); echo "$RESP" | jq -e "keys == [\"msg\"]"; EC=$?; kill $SPID 2>/dev/null; exit $EC'
+  Test: manual:bash -c 'cd /workspace/playground && PLAYGROUND_PORT=3012 node server.js & SPID=$!; sleep 2; RESP=$(curl -fs "localhost:3012/echo?msg=hello"); jq -e "keys == [\"msg\"]" <<< "$RESP"; EC=$?; kill $SPID 2>/dev/null; exit $EC'
   期望: OK (exit 0)
 
 - [x] [BEHAVIOR] 禁用字段 echo 反向 — response 中 has("echo") 必须为 false
-  Test: manual:bash -c 'cd /workspace/playground && PLAYGROUND_PORT=3013 node server.js & SPID=$!; sleep 2; RESP=$(curl -fs "localhost:3013/echo?msg=hello"); echo "$RESP" | jq -e "has(\"echo\") | not"; EC=$?; kill $SPID 2>/dev/null; exit $EC'
+  Test: manual:bash -c 'cd /workspace/playground && PLAYGROUND_PORT=3013 node server.js & SPID=$!; sleep 2; RESP=$(curl -fs "localhost:3013/echo?msg=hello"); jq -e "has(\"echo\") | not" <<< "$RESP"; EC=$?; kill $SPID 2>/dev/null; exit $EC'
   期望: OK (exit 0)
 
 - [x] [BEHAVIOR] 空字符串边界 GET /echo?msg= 返回 `{"msg":""}` 非 null
-  Test: manual:bash -c 'cd /workspace/playground && PLAYGROUND_PORT=3014 node server.js & SPID=$!; sleep 2; RESP=$(curl -fs "localhost:3014/echo?msg="); echo "$RESP" | jq -e ".msg == \"\""; EC=$?; kill $SPID 2>/dev/null; exit $EC'
+  Test: manual:bash -c 'cd /workspace/playground && PLAYGROUND_PORT=3014 node server.js & SPID=$!; sleep 2; RESP=$(curl -fs "localhost:3014/echo?msg="); jq -e ".msg == \"\"" <<< "$RESP"; EC=$?; kill $SPID 2>/dev/null; exit $EC'
   期望: OK (exit 0)
 
 - [x] [BEHAVIOR] error path — GET /echo（缺少 msg 参数）返回 HTTP 400
