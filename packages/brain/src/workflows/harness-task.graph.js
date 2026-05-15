@@ -65,6 +65,11 @@ export const MAX_FIX_ROUNDS = parseInt(process.env.HARNESS_MAX_FIX_ROUNDS || '20
 export const MAX_POLL_COUNT = 20;          // 90s × 20 = 30 min
 export const POLL_INTERVAL_MS = 90 * 1000;
 
+export function normalizeVerdict(raw) {
+  const upper = raw ? String(raw).toUpperCase().trim() : '';
+  return new Set(['PASS', 'FIXED', 'APPROVED']).has(upper) ? 'PASS' : 'FAIL';
+}
+
 /**
  * sub-graph state schema
  */
@@ -399,7 +404,7 @@ export async function mergePrNode(state, opts = {}) {
   try {
     const { stdout } = await execFn(
       'gh',
-      ['pr', 'merge', prUrl, '--auto', '--squash', '--delete-branch'],
+      ['pr', 'merge', prUrl, '--squash', '--delete-branch'],
       { timeout: 30_000 }
     );
     const tail = (stdout || '').trim().slice(0, 200);
@@ -408,7 +413,7 @@ export async function mergePrNode(state, opts = {}) {
       status: 'merged',
       ci_status: 'merged',
       merged_at: new Date().toISOString(),
-      merge_command: 'gh pr merge --auto --squash',
+      merge_command: 'gh pr merge --squash',
     };
   } catch (err) {
     console.warn(`[merge_pr] gh pr merge failed pr=${prUrl}: ${err.message}`);
@@ -591,9 +596,10 @@ export async function evaluateContractNode(state, opts = {}) {
   if (state.worktreePath) {
     const fileVerdict = await readVerdictFile(state.worktreePath);
     if (fileVerdict) {
+      const normV = normalizeVerdict(fileVerdict.verdict);
       return {
-        evaluate_verdict: fileVerdict.verdict,
-        evaluate_error: fileVerdict.verdict === 'FAIL' ? (fileVerdict.feedback || 'evaluator returned FAIL') : null,
+        evaluate_verdict: normV,
+        evaluate_error: normV === 'FAIL' ? (fileVerdict.feedback || 'evaluator returned FAIL') : null,
       };
     }
   }
@@ -601,8 +607,7 @@ export async function evaluateContractNode(state, opts = {}) {
   // Protocol v1 Fallback: 从 stdout 解析 verdict（旧协议兼容）
   // W37 实证：extractField 比 /verdict:\s*(PASS|FAIL)/i 更可靠（JSON-aware 解析）
   const verdictRaw = extractField(stdout, 'verdict');
-  const verdictUpper = verdictRaw ? String(verdictRaw).toUpperCase().trim() : '';
-  const verdict = (verdictUpper === 'PASS' || verdictUpper === 'FAIL') ? verdictUpper : 'FAIL';
+  const verdict = normalizeVerdict(verdictRaw);
   const errorMsg = verdict === 'FAIL' ? (cbPayload.error || extractField(stdout, 'error') || 'evaluator returned FAIL') : null;
 
   return { evaluate_verdict: verdict, evaluate_error: errorMsg };
@@ -624,7 +629,7 @@ export function buildHarnessTaskGraph() {
     // 失败 throw ContractViolation → retryPolicy: LLM_RETRY retry 3 次后再爆。
     .addNode('verify_generator', verifyGeneratorNode, { retryPolicy: LLM_RETRY })
     .addNode('poll_ci', pollCiNode)
-    .addNode('evaluate_contract', evaluateContractNode, { retryPolicy: LLM_RETRY })
+    .addNode('evaluate_contract', evaluateContractNode)
     .addNode('merge_pr', mergePrNode)
     .addNode('fix_dispatch', fixDispatchNode)
     .addEdge(START, 'spawn')
