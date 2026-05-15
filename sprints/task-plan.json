@@ -1,24 +1,22 @@
 {
   "initiative_id": "pending",
-  "journey_type": "autonomous",
-  "journey_type_reason": "纯后端 playground 服务，无 UI 交互，无 Brain/engine/dashboard 依赖",
+  "journey_type": "dev_pipeline",
+  "journey_type_reason": "本次 sprint 核心目标是验证 B39 evaluator 修复在真实 harness 流程中正确生效，playground /echo 是测试载体，属于 dev pipeline 验证场景",
   "tasks": [
     {
       "task_id": "ws1",
-      "title": "playground/server.js 新增 GET /echo 端点",
-      "scope": "在 playground/server.js 新增 GET /echo 路由，读取 msg query 参数原样回显；在 playground/tests/echo.test.js 写 vitest 单元测试（TDD Red/Green）",
+      "title": "修复 playground /echo 响应 schema：echo → msg，缺参返 400",
+      "scope": "playground/server.js 的 /echo handler：(1) 响应字段由 echo 改为 msg；(2) 缺少 msg query 参数时返回 HTTP 400 + {error: '...'}",
       "dod": [
-        "[BEHAVIOR] GET /echo?msg=hello → HTTP 200 + {echo: \"hello\"}（字段值严格匹配）",
-        "[BEHAVIOR] GET /echo?msg= → HTTP 200 + {echo: \"\"}（空字符串非 null）",
-        "[BEHAVIOR] response keys 完整性 == [\"echo\"]（不允许多余字段）",
-        "[BEHAVIOR] 禁用 key 反向：message/result/response/data/output/text/reply/body/msg 均不存在",
-        "[ARTIFACT] playground/server.js 内含 /echo 路由注册",
-        "[ARTIFACT] playground/tests/echo.test.js 文件存在",
-        "[ARTIFACT] TDD Red 阶段验证：/tmp/ws1-red.log 存在且含 FAIL 证据（Generator commit 1 后 vitest exit≠0）"
+        "[BEHAVIOR] GET /echo?msg=hello 返回 HTTP 200 + {msg:'hello'}，jq -e '.msg == \"hello\"' 通过",
+        "[BEHAVIOR] response keys 完整性恰好 ['msg']，jq -e 'keys == [\"msg\"]' 通过",
+        "[BEHAVIOR] 禁用字段 echo 不存在，jq -e 'has(\"echo\") | not' 通过",
+        "[BEHAVIOR] GET /echo?msg= 返回 {msg:''}（空字符串非 null）",
+        "[BEHAVIOR] GET /echo（无 msg 参数）返回 HTTP 400",
+        "[ARTIFACT] playground/server.js /echo handler 不含字面 echo: 字段"
       ],
       "files": [
-        "playground/server.js",
-        "playground/tests/echo.test.js"
+        "playground/server.js"
       ],
       "depends_on": [],
       "complexity": "S",

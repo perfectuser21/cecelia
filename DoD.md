@@ -1,64 +1,43 @@
-contract_branch: cp-harness-propose-r2-78b3578b
+contract_branch: cp-harness-propose-r5-59052fde
 workstream_index: 1
-sprint_dir: sprints/w37-walking-skeleton-final-b14
+sprint_dir: sprints
 
 ---
 skeleton: false
-journey_type: autonomous
+journey_type: dev_pipeline
 ---
-# Contract DoD — Workstream 1: playground GET /decrement (Round 2)
+# Contract DoD — Workstream 1: 修复 playground /echo schema
 
-**范围**: `playground/server.js` 加 `/decrement` 路由 + `playground/tests/server.test.js` 加 `describe('GET /decrement')` + `playground/README.md` 加 `/decrement` 段
-**大小**: S (<100 行净增 / ≤ 3 文件)
+**范围**: `playground/server.js` GET /echo 响应字段 `echo` → `msg`；缺失 msg 参数返回 400
+**大小**: S（< 20 行净改动，1 文件）
 **依赖**: 无
-
-**FIX 备注 (B14 fix-2)**: 上一轮把 BEHAVIOR 整段从 DoD.md 移除，结果 `harness-dod-integrity` 校验失败（CI 拉 origin contract-dod-ws1.md 对比本地 DoD.md，contract 仍有 11 条 BEHAVIOR，本地 0 条 → 11 missing）。本轮恢复 BEHAVIOR 描述行原文（与 contract 字面一致，integrity check pass），但 Test 字段从 `manual:bash` 改为 `tests/ws1/decrement.test.js`（指向已通过的 vitest 文件），确保 `dod-behavior-dynamic` 不触发（grep `manual:(curl|psql|bash|npm)` 无匹配 → has_dynamic=false → vacuously PASS）。本地 `sprints/w37-walking-skeleton-final-b14/contract-dod-ws1.md` 维持 BEHAVIOR-free（满足 `DoD 纯度检查 v5.0`，只扫该文件不扫 DoD.md）。
 
 ## ARTIFACT 条目
 
-- [x] [ARTIFACT] `playground/server.js` 注册 `app.get('/decrement'` 路由
-  Test: node -e "const c=require('fs').readFileSync('playground/server.js','utf8');if(!/app\.get\(\s*['\"]\/decrement['\"]/.test(c))process.exit(1)"
+- [x] [ARTIFACT] `playground/server.js` 的 /echo handler 响应中不含 `echo` key
+  Test: node -e "const c=require('fs').readFileSync('/workspace/playground/server.js','utf8');if(c.includes('echo: msg')||c.includes(\"{ echo:\"))process.exit(1);console.log('OK')"
 
-- [x] [ARTIFACT] `playground/server.js` `/decrement` 路由含 strict-schema 整数正则 `^-?\d+$` 与精度上界数字 9007199254740990
-  Test: node -e "const c=require('fs').readFileSync('playground/server.js','utf8');if(!/9007199254740990/.test(c)||!/\^-\?\\\\d\+\$/.test(c))process.exit(1)"
+- [x] [ARTIFACT] `playground/server.js` 的 /echo handler 响应中含字面量 `msg` key
+  Test: node -e "const c=require('fs').readFileSync('/workspace/playground/server.js','utf8');if(!c.includes('{ msg:')&&!c.includes('{msg:')&&!c.includes('msg: '))process.exit(1);console.log('OK')"
 
-- [x] [ARTIFACT] `playground/tests/server.test.js` 含 `describe('GET /decrement'` 独立块
-  Test: node -e "const c=require('fs').readFileSync('playground/tests/server.test.js','utf8');if(!/describe\(\s*['\"]GET \/decrement/.test(c))process.exit(1)"
+## BEHAVIOR 条目（内嵌可执行 manual: 命令）
 
-- [x] [ARTIFACT] `playground/README.md` 含 `/decrement` 端点段
-  Test: node -e "const c=require('fs').readFileSync('playground/README.md','utf8');if(!/\/decrement/.test(c))process.exit(1)"
+- [x] [BEHAVIOR] GET /echo?msg=hello 返回 `{"msg":"hello"}` 严 schema 字段值
+  Test: manual:bash -c 'cd /workspace/playground && PLAYGROUND_PORT=3011 node server.js & SPID=$!; sleep 2; RESP=$(curl -fs "localhost:3011/echo?msg=hello"); jq -e ".msg == \"hello\"" <<< "$RESP"; EC=$?; kill $SPID 2>/dev/null; exit $EC'
+  期望: OK (exit 0)
 
-## BEHAVIOR 条目（描述与 contract 字面一致供 integrity check；Test 指向 vitest 文件，不触发 dod-behavior-dynamic）
+- [x] [BEHAVIOR] GET /echo?msg=hello response keys 完整性恰好为 ["msg"]
+  Test: manual:bash -c 'cd /workspace/playground && PLAYGROUND_PORT=3012 node server.js & SPID=$!; sleep 2; RESP=$(curl -fs "localhost:3012/echo?msg=hello"); jq -e "keys == [\"msg\"]" <<< "$RESP"; EC=$?; kill $SPID 2>/dev/null; exit $EC'
+  期望: OK (exit 0)
 
-- [x] [BEHAVIOR] `GET /decrement?value=5` 返 200 + `{result:4, operation:"decrement"}`（字段值字面）
-  Test: tests/ws1/decrement.test.js
+- [x] [BEHAVIOR] 禁用字段 echo 反向 — response 中 has("echo") 必须为 false
+  Test: manual:bash -c 'cd /workspace/playground && PLAYGROUND_PORT=3013 node server.js & SPID=$!; sleep 2; RESP=$(curl -fs "localhost:3013/echo?msg=hello"); jq -e "has(\"echo\") | not" <<< "$RESP"; EC=$?; kill $SPID 2>/dev/null; exit $EC'
+  期望: OK (exit 0)
 
-- [x] [BEHAVIOR] success 响应顶层 keys 严格等于 `["operation","result"]`（schema 完整性）
-  Test: tests/ws1/decrement.test.js
+- [x] [BEHAVIOR] 空字符串边界 GET /echo?msg= 返回 `{"msg":""}` 非 null
+  Test: manual:bash -c 'cd /workspace/playground && PLAYGROUND_PORT=3014 node server.js & SPID=$!; sleep 2; RESP=$(curl -fs "localhost:3014/echo?msg="); jq -e ".msg == \"\"" <<< "$RESP"; EC=$?; kill $SPID 2>/dev/null; exit $EC'
+  期望: OK (exit 0)
 
-- [x] [BEHAVIOR] success 响应反向不含任一禁用字段名（PRD 完整 19 个：`decremented`/`prev`/`predecessor`/`minus_one`/`sub_one`/`incremented`/`sum`/`product`/`quotient`/`power`/`remainder`/`factorial`/`negation`/`value`/`input`/`output`/`data`/`payload`/`answer`/`meta`）
-  Test: tests/ws1/decrement.test.js
-
-- [x] [BEHAVIOR] success 响应 `operation` 字面字符串 `"decrement"`，PRD 禁用 8 变体（`dec`/`decr`/`decremented`/`prev`/`previous`/`predecessor`/`minus_one`/`sub_one`）一律不等（Round-2 新增）
-  Test: tests/ws1/decrement.test.js
-
-- [x] [BEHAVIOR] 错误路径 `GET /decrement?value=foo` 返 400 + error body 顶层 keys 严格等于 `["error"]` 且不含 `result`/`operation`
-  Test: tests/ws1/decrement.test.js
-
-- [x] [BEHAVIOR] 错误体反向不含 4 个 PRD 禁用替代错误名（`message`/`msg`/`reason`/`detail`）
-  Test: tests/ws1/decrement.test.js
-
-- [x] [BEHAVIOR] 精度上下界 happy：`value=9007199254740990` → 200 + `{result:9007199254740989,operation:"decrement"}`；`value=-9007199254740990` → 200 + `{result:-9007199254740991,operation:"decrement"}`
-  Test: tests/ws1/decrement.test.js
-
-- [x] [BEHAVIOR] 精度上下界拒：`value=9007199254740991` → 400；`value=-9007199254740991` → 400
-  Test: tests/ws1/decrement.test.js
-
-- [x] [BEHAVIOR] strict-schema 全部非法输入返 400：`value=1.5` / `value=1e2` / `value=abc` / `value=+5` / `value=` / 缺 value
-  Test: tests/ws1/decrement.test.js
-
-- [x] [BEHAVIOR] PRD 完整 9 个禁用 query 名（`n`/`x`/`a`/`b`/`num`/`number`/`input`/`v`/`val`）一律返 400（Round-2 新增 — Reviewer Issue 5）
-  Test: tests/ws1/decrement.test.js
-
-- [x] [BEHAVIOR] 8 路由回归 happy 全通过（/health /sum /multiply /divide /power /modulo /increment /factorial）
-  Test: tests/ws1/decrement.test.js
+- [x] [BEHAVIOR] error path — GET /echo（缺少 msg 参数）返回 HTTP 400
+  Test: manual:bash -c 'cd /workspace/playground && PLAYGROUND_PORT=3015 node server.js & SPID=$!; sleep 2; CODE=$(curl -s -o /dev/null -w "%{http_code}" "localhost:3015/echo"); kill $SPID; [ "$CODE" = "400" ]'
+  期望: exit 0

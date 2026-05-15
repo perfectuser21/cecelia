@@ -729,6 +729,11 @@ jobs:
       - name: Install Brain deps
         if: steps.detect.outputs.has_dynamic == 'true'
         run: cd packages/brain && npm ci
+      - name: Setup /workspace symlink + playground deps
+        if: steps.detect.outputs.has_dynamic == 'true'
+        run: |
+          sudo ln -sf "$GITHUB_WORKSPACE" /workspace
+          cd playground && npm install
       - name: Run Migrations
         if: steps.detect.outputs.has_dynamic == 'true'
         env:
