@@ -1,23 +1,23 @@
 {
   "initiative_id": "pending",
   "journey_type": "dev_pipeline",
-  "journey_type_reason": "本次 sprint 核心目标是验证 B39 evaluator 修复在真实 harness 流程中正确生效，playground /echo 是测试载体，属于 dev pipeline 验证场景",
+  "journey_type_reason": "本次 sprint 核心目标是验证 B42 propose_branch mismatch warn+fallback 修复在完整三阶段 harness pipeline（Phase A→B→C）中正确生效，playground /abs 作为运行载体",
   "tasks": [
     {
       "task_id": "ws1",
-      "title": "修复 playground /echo 响应 schema：echo → msg，缺参返 400",
-      "scope": "playground/server.js 的 /echo handler：(1) 响应字段由 echo 改为 msg；(2) 缺少 msg query 参数时返回 HTTP 400 + {error: '...'}",
+      "title": "playground/server.js 新增 GET /abs 端点",
+      "scope": "在 playground/server.js 新增 /abs 路由：query 参数 n（严格数字，使用 STRICT_NUMBER 正则），成功返回 {result: Math.abs(n), operation: 'abs'}，非法输入（非数字、缺少 n）返 HTTP 400 + {error: '...'}",
       "dod": [
-        "[BEHAVIOR] GET /echo?msg=hello 返回 HTTP 200 + {msg:'hello'}，jq -e '.msg == \"hello\"' 通过",
-        "[BEHAVIOR] response keys 完整性恰好 ['msg']，jq -e 'keys == [\"msg\"]' 通过",
-        "[BEHAVIOR] 禁用字段 echo 不存在，jq -e 'has(\"echo\") | not' 通过",
-        "[BEHAVIOR] GET /echo?msg= 返回 {msg:''}（空字符串非 null）",
-        "[BEHAVIOR] GET /echo（无 msg 参数）返回 HTTP 400",
-        "[ARTIFACT] playground/server.js /echo handler 不含字面 echo: 字段"
+        "[BEHAVIOR] GET /abs?n=-5 返回 {result:5, operation:'abs'}，result 类型为 number",
+        "[BEHAVIOR] GET /abs?n=0 返回 {result:0, operation:'abs'}",
+        "[BEHAVIOR] GET /abs?n=3 返回 {result:3, operation:'abs'}",
+        "[BEHAVIOR] schema keys 恰好为 ['operation','result']，无多余字段",
+        "[BEHAVIOR] 禁用字段 value/answer/data 不存在于 response",
+        "[BEHAVIOR] GET /abs?n=foo → HTTP 400 + body has('error') + body has('message')|not",
+        "[BEHAVIOR] GET /abs（无 n 参数）→ HTTP 400 + body has('error') + body has('message')|not",
+        "[ARTIFACT] playground/server.js 含 /abs 路由，query 参数名字面量 n"
       ],
-      "files": [
-        "playground/server.js"
-      ],
+      "files": ["playground/server.js"],
       "depends_on": [],
       "complexity": "S",
       "estimated_minutes": 20

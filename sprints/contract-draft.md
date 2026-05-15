@@ -1,115 +1,136 @@
-# Sprint Contract Draft (Round 5)
+# Sprint Contract Draft (Round 3)
 
 ## Golden Path
 
-[harness 启动 playground] → [GET /echo?msg=hello 返回 {"msg":"hello"}] → [evaluator 验证 schema 严格合规] → [evaluator 输出 FIXED 或 APPROVED] → [harness 归一化 FIXED/APPROVED → PASS] → [PR merge 无 --auto 标志错误，仅启动一个 playground 实例]
+[harness Phase A：Proposer GAN 产出合同，propose_branch 注入字面量值] → [Phase B：generator 在 playground/server.js 实现 GET /abs 端点] → [Phase C：evaluator 启动 playground，curl GET /abs?n=-5 验证响应严格 schema] → [evaluator 输出 PASS/DONE，pipeline 记录 completed，全程无 abort 阻断]
 
 ---
 
-### Step 1: playground /echo 端点返回正确 schema
+### Step 1: generator 在 playground/server.js 新增 GET /abs 端点
 
-**可观测行为**: GET /echo?msg=hello 返回 HTTP 200 + `{"msg":"hello"}`，顶层 keys 完全等于 `["msg"]`，禁用字段 `echo` 不存在
+**可观测行为**: `playground/server.js` 中存在 `/abs` 路由处理器，query 参数名字面量为 `n`，成功返回 `{"result": <number>, "operation": "abs"}`
 
 **验证命令**:
 ```bash
-cd /workspace/playground && PLAYGROUND_PORT=3099 node server.js & SPID=$!
-sleep 2
-
-RESP=$(curl -fs "localhost:3099/echo?msg=hello")
-echo "$RESP" | jq -e '.msg == "hello"' || { echo "FAIL: .msg 值错误"; kill $SPID; exit 1; }
-echo "$RESP" | jq -e 'keys == ["msg"]' || { echo "FAIL: keys 不完整"; kill $SPID; exit 1; }
-echo "$RESP" | jq -e 'has("echo") | not' || { echo "FAIL: 禁用字段 echo 漏网"; kill $SPID; exit 1; }
-
-kill $SPID
-echo "✅ Step 1 验证通过"
+grep -qE "app\.get\(['\"]\/abs" /workspace/playground/server.js || { echo "FAIL: /abs 路由不存在"; exit 1; }
+grep -qE "req\.query\.n" /workspace/playground/server.js || { echo "FAIL: query 参数名不是 n"; exit 1; }
+echo "✅ Step 1 静态验证通过"
 ```
 
-**硬阈值**: HTTP 200，`msg == "hello"`，`keys == ["msg"]`，`echo` key 不存在
+**硬阈值**: `/abs` 路由存在 + query 名为 `n`
 
 ---
 
-### Step 2: 空字符串边界验证
+### Step 2: GET /abs?n=-5 返回严格 schema `{"result":5,"operation":"abs"}`
 
-**可观测行为**: GET /echo?msg= 返回 `{"msg":""}` 而非 null 或 undefined
+**可观测行为**: 负数输入 n=-5 → `{"result":5,"operation":"abs"}`，类型 number + string，keys 完全等于 `["operation","result"]`
 
 **验证命令**:
 ```bash
-cd /workspace/playground && PLAYGROUND_PORT=3099 node server.js & SPID=$!
+cd /workspace/playground && PLAYGROUND_PORT=3091 node server.js & SPID=$!
 sleep 2
 
-RESP=$(curl -fs "localhost:3099/echo?msg=")
-echo "$RESP" | jq -e '.msg == ""' || { echo "FAIL: 空字符串未正确回显"; kill $SPID; exit 1; }
+RESP=$(curl -fs "localhost:3091/abs?n=-5")
+echo "$RESP" | jq -e '.result == 5' || { echo "FAIL: result 值错误"; kill $SPID; exit 1; }
+echo "$RESP" | jq -e '.operation == "abs"' || { echo "FAIL: operation 值错误"; kill $SPID; exit 1; }
+echo "$RESP" | jq -e '.result | type == "number"' || { echo "FAIL: result 类型非 number"; kill $SPID; exit 1; }
+echo "$RESP" | jq -e 'keys == ["operation","result"]' || { echo "FAIL: keys 不完整或有多余"; kill $SPID; exit 1; }
 
 kill $SPID
 echo "✅ Step 2 验证通过"
 ```
 
-**硬阈值**: `{"msg":""}` 精确返回
+**硬阈值**: `result == 5`（number），`operation == "abs"`，`keys == ["operation","result"]`
 
 ---
 
-### Step 3: 缺少必填参数 msg → 400
+### Step 3: 边界值验证（零、正数）
 
-**可观测行为**: GET /echo（无 msg 参数）返回 HTTP 400 + `{"error": "..."}`
+**可观测行为**: n=0 → `{"result":0,"operation":"abs"}`；n=3 → `{"result":3,"operation":"abs"}`
 
 **验证命令**:
 ```bash
-cd /workspace/playground && PLAYGROUND_PORT=3099 node server.js & SPID=$!
+cd /workspace/playground && PLAYGROUND_PORT=3092 node server.js & SPID=$!
 sleep 2
 
-CODE=$(curl -s -o /dev/null -w "%{http_code}" "localhost:3099/echo")
-[ "$CODE" = "400" ] || { echo "FAIL: 缺失 msg 未返 400，实际=$CODE"; kill $SPID; exit 1; }
+RESP0=$(curl -fs "localhost:3092/abs?n=0")
+echo "$RESP0" | jq -e '.result == 0 and .operation == "abs"' || { echo "FAIL: 零值边界失败"; kill $SPID; exit 1; }
+
+RESP3=$(curl -fs "localhost:3092/abs?n=3")
+echo "$RESP3" | jq -e '.result == 3 and .operation == "abs"' || { echo "FAIL: 正数边界失败"; kill $SPID; exit 1; }
 
 kill $SPID
 echo "✅ Step 3 验证通过"
 ```
 
-**硬阈值**: HTTP 400
+**硬阈值**: n=0 → result=0，n=3 → result=3，operation 均为 "abs"
 
 ---
 
-### Step 4: B39 harness 归一化验证（evaluator verdict → PASS）
+### Step 4: 禁用字段反向 + error path（含 body 格式验证）
 
-**可观测行为**: evaluator 输出 FIXED 或 APPROVED 时，`normalizeVerdict()` 函数均返回 `'PASS'`，不报 unknown verdict 错误
+**可观测行为**: response 中不存在 `value`/`answer`/`data` 等禁用字段；n=foo（非数字）→ HTTP 400 + `{"error":"<string>"}` 且 body **禁用** `message`/`msg`/`reason` 字段
 
 **验证命令**:
 ```bash
-grep -qE "FIXED.*PASS|APPROVED.*PASS|'PASS'.*'FIXED'.*'APPROVED'" \
-  /workspace/packages/brain/src/workflows/harness-task.graph.js || \
-  { echo "FAIL: 未找到 FIXED/APPROVED → PASS 归一化逻辑"; exit 1; }
-echo "✅ Step 4 静态检验通过（B39 #2968 已合并）"
+cd /workspace/playground && PLAYGROUND_PORT=3093 node server.js & SPID=$!
+sleep 2
+
+RESP=$(curl -fs "localhost:3093/abs?n=-5")
+echo "$RESP" | jq -e 'has("value") | not' || { echo "FAIL: 禁用字段 value 漏网"; kill $SPID; exit 1; }
+echo "$RESP" | jq -e 'has("answer") | not' || { echo "FAIL: 禁用字段 answer 漏网"; kill $SPID; exit 1; }
+echo "$RESP" | jq -e 'has("data") | not' || { echo "FAIL: 禁用字段 data 漏网"; kill $SPID; exit 1; }
+
+# error path — 验证 400 状态码 + body 含 error 字段 + 禁用 message 字段
+curl -s -o /tmp/err_body.json -w "%{http_code}" "localhost:3093/abs?n=foo" > /tmp/err_code.txt
+CODE=$(cat /tmp/err_code.txt)
+[ "$CODE" = "400" ] || { echo "FAIL: 非数字未返 400，实际=$CODE"; kill $SPID; exit 1; }
+jq -e 'has("error")' /tmp/err_body.json || { echo "FAIL: error body 缺 error 字段"; kill $SPID; exit 1; }
+jq -e 'has("message") | not' /tmp/err_body.json || { echo "FAIL: error body 含禁用字段 message"; kill $SPID; exit 1; }
+
+kill $SPID
+echo "✅ Step 4 验证通过"
 ```
 
-**硬阈值**: 源码含 FIXED/APPROVED → PASS 归一化逻辑，grep -q 返回 exit 0
+**硬阈值**: 禁用字段不存在；n=foo → HTTP 400 + `has("error")=true` + `has("message")=false`
 
 ---
 
-### Step 5: 无 --auto 标志、无并发容器爆炸
+### Step 5: propose_branch mismatch warn+fallback 验证（B42 验证点）
 
-**可观测行为**: harness 运行脚本不含 `--auto` 标志；单次运行只启动一个 playground 进程
+**可观测行为**: harness pipeline 源码中 propose_branch mismatch 处理为 warn+fallback 而非 abort
 
 **验证命令**:
 ```bash
-grep -r "\-\-auto" /workspace/packages/engine/scripts/ 2>/dev/null && { echo "FAIL: --auto 未移除"; exit 1; } || echo "✅ --auto 已移除"
+grep -rqE "(WARN|warn).*propose_branch|propose_branch.*(WARN|warn)|mismatch.*(warn|WARN)" \
+  /workspace/packages/brain/src/workflows/harness-gan.graph.js || \
+  { echo "FAIL: 未找到 warn+fallback 逻辑（B42 修复点）"; exit 1; }
+echo "✅ Step 5 B42 warn+fallback 存在"
 ```
 
-**硬阈值**: 源码中无 `--auto` 标志
+**硬阈值**: 源码含 warn+fallback 逻辑，grep 返回 exit 0
 
 ---
 
 ## Risks
 
-### Risk 1: normalizeVerdict 路径变更导致 Step 4 恒绿
+### Risk 1: Step 5 grep pattern 不够精确
 
-**描述**: 如果 B39 后 `normalizeVerdict` 函数被重命名或移入其他文件，Step 4 的 grep 路径会返回非 0 exit code，误判为 FAIL；若 grep pattern 不精确，也可能恒绿。
+**描述**: B42 warn 日志可能用不同大小写或格式记录 mismatch，grep pattern 可能漏匹配。
 
-**Mitigation**: Step 4 验证命令直接 grep 具体文件路径（`harness-task.graph.js`），pattern 同时匹配 Set 初始化语法 `'FIXED'.*'APPROVED'`，与函数实现绑定，减少漂移窗口。合同 Reviewer 检查 grep 可否造假。
+**Mitigation**: pattern 含 WARN/warn 双写 + propose_branch/mismatch 双路径，已足够覆盖常见实现风格；实测 harness-gan.graph.js:327 已匹配（`console.warn` + `propose_branch mismatch`）。
 
-### Risk 2: playground 端口冲突导致 E2E 假绿
+### Risk 2: playground 端口冲突
 
-**描述**: 若 3099 端口在 evaluator 运行时已被占用（上一个 playground 进程未正常退出），`node server.js` 启动失败但 `curl` 可能打到旧进程，返回旧 `echo` 字段，掩盖 schema 未修复的事实。
+**描述**: 多步骤使用不同端口（3091-3096），避免残留进程造成假绿。
 
-**Mitigation**: E2E 脚本在启动前用 `lsof -ti:3099 | xargs kill -9 2>/dev/null || true` 清理残留进程；`curl -f` flag 确保 HTTP 5xx 会返回非 0 exit code；`jq -e` 精确匹配 `keys == ["msg"]` 捕获 schema 漂移。
+**Mitigation**: 各步骤使用独立端口；E2E 脚本启动前清理端口残留；`curl -f` 确保 HTTP 5xx 非 0 exit。
+
+### Risk 3: error response body format 漂移
+
+**描述**: generator 实现 /abs 时可能将 400 错误响应字段命名为 `message`/`msg`/`reason` 而非 PRD 要求的 `error`，仅校验 HTTP 状态码无法检测此漂移（R1 实证漏洞）。
+
+**Mitigation**: DoD [BEHAVIOR]5 和 [BEHAVIOR]6 已补充 `jq -e 'has("error")'` 正向验 + `jq -e 'has("message") | not'` 反向禁用字段检查，两条断言同时过才 PASS。
 
 ---
 
@@ -122,33 +143,59 @@ grep -r "\-\-auto" /workspace/packages/engine/scripts/ 2>/dev/null && { echo "FA
 #!/bin/bash
 set -e
 
-# 清理可能残留的 3099 端口进程
-lsof -ti:3099 | xargs kill -9 2>/dev/null || true
+lsof -ti:3095 | xargs kill -9 2>/dev/null || true
 
 cd /workspace/playground
-PLAYGROUND_PORT=3099 node server.js & SPID=$!
+PLAYGROUND_PORT=3095 node server.js & SPID=$!
 sleep 2
 
-# 1. msg 字段值验证
-RESP=$(curl -fs "localhost:3099/echo?msg=hello")
-echo "$RESP" | jq -e '.msg == "hello"' || { echo "FAIL: .msg 值错误"; kill $SPID; exit 1; }
+# 1. result 字段值（负数）
+RESP=$(curl -fs "localhost:3095/abs?n=-5")
+echo "$RESP" | jq -e '.result == 5' || { echo "FAIL: result 值错误"; kill $SPID; exit 1; }
 
-# 2. schema 完整性 — keys 完全等于 ["msg"]
-echo "$RESP" | jq -e 'keys == ["msg"]' || { echo "FAIL: keys 不符"; kill $SPID; exit 1; }
+# 2. operation 字段值
+echo "$RESP" | jq -e '.operation == "abs"' || { echo "FAIL: operation 值错误"; kill $SPID; exit 1; }
 
-# 3. 禁用字段 echo 反向
-echo "$RESP" | jq -e 'has("echo") | not' || { echo "FAIL: 禁用字段 echo 仍存在"; kill $SPID; exit 1; }
+# 3. result 类型为 number
+echo "$RESP" | jq -e '.result | type == "number"' || { echo "FAIL: result 非 number 类型"; kill $SPID; exit 1; }
 
-# 4. 空字符串边界
-RESP2=$(curl -fs "localhost:3099/echo?msg=")
-echo "$RESP2" | jq -e '.msg == ""' || { echo "FAIL: 空字符串边界失败"; kill $SPID; exit 1; }
+# 4. schema 完整性 — keys 恰好 ["operation","result"]
+echo "$RESP" | jq -e 'keys == ["operation","result"]' || { echo "FAIL: schema keys 不符"; kill $SPID; exit 1; }
 
-# 5. 缺失 msg 返 400
-CODE=$(curl -s -o /dev/null -w "%{http_code}" "localhost:3099/echo")
-[ "$CODE" = "400" ] || { echo "FAIL: 缺失 msg 未返 400，实际=$CODE"; kill $SPID; exit 1; }
+# 5. 禁用字段 value/answer 反向
+echo "$RESP" | jq -e 'has("value") | not' || { echo "FAIL: 禁用字段 value 漏网"; kill $SPID; exit 1; }
+echo "$RESP" | jq -e 'has("answer") | not' || { echo "FAIL: 禁用字段 answer 漏网"; kill $SPID; exit 1; }
+
+# 6. 零值边界
+RESP0=$(curl -fs "localhost:3095/abs?n=0")
+echo "$RESP0" | jq -e '.result == 0 and .operation == "abs"' || { echo "FAIL: 零值边界失败"; kill $SPID; exit 1; }
+
+# 7. 正数边界
+RESP3=$(curl -fs "localhost:3095/abs?n=3")
+echo "$RESP3" | jq -e '.result == 3 and .operation == "abs"' || { echo "FAIL: 正数边界失败"; kill $SPID; exit 1; }
+
+# 8. error path — 非数字 → 400 + body {error:string} + 禁用 message 字段
+curl -s -o /tmp/e2e_err_foo.json -w "%{http_code}" "localhost:3095/abs?n=foo" > /tmp/e2e_code_foo.txt
+CODE=$(cat /tmp/e2e_code_foo.txt)
+[ "$CODE" = "400" ] || { echo "FAIL: 非数字未返 400，实际=$CODE"; kill $SPID; exit 1; }
+jq -e 'has("error")' /tmp/e2e_err_foo.json || { echo "FAIL: error body 缺 error 字段（非数字路径）"; kill $SPID; exit 1; }
+jq -e 'has("message") | not' /tmp/e2e_err_foo.json || { echo "FAIL: error body 含禁用字段 message（非数字路径）"; kill $SPID; exit 1; }
+
+# 9. error path — 缺少 n 参数 → 400 + body {error:string} + 禁用 message 字段
+curl -s -o /tmp/e2e_err_no_n.json -w "%{http_code}" "localhost:3095/abs" > /tmp/e2e_code_no_n.txt
+CODE2=$(cat /tmp/e2e_code_no_n.txt)
+[ "$CODE2" = "400" ] || { echo "FAIL: 缺少 n 未返 400，实际=$CODE2"; kill $SPID; exit 1; }
+jq -e 'has("error")' /tmp/e2e_err_no_n.json || { echo "FAIL: error body 缺 error 字段（缺 n 路径）"; kill $SPID; exit 1; }
+jq -e 'has("message") | not' /tmp/e2e_err_no_n.json || { echo "FAIL: error body 含禁用字段 message（缺 n 路径）"; kill $SPID; exit 1; }
 
 kill $SPID
-echo "✅ Golden Path 全部验证通过"
+
+# 10. B42 warn+fallback 静态验证（propose_branch mismatch 不 abort）
+grep -rqE "(WARN|warn).*propose_branch|propose_branch.*(WARN|warn)|mismatch.*(warn|WARN)" \
+  /workspace/packages/brain/src/workflows/harness-gan.graph.js || \
+  { echo "FAIL: B42 warn+fallback 逻辑不存在于 harness-gan.graph.js"; exit 1; }
+
+echo "✅ Golden Path 全部验证通过（含 B42 warn+fallback 静态核查）"
 ```
 
 **通过标准**: 脚本 exit 0
@@ -159,20 +206,20 @@ echo "✅ Golden Path 全部验证通过"
 
 workstream_count: 1
 
-### Workstream 1: 修复 playground /echo schema
+### Workstream 1: playground/server.js 新增 GET /abs 端点
 
-**范围**: `playground/server.js` 中 GET /echo 端点响应字段由 `echo` 改为 `msg`；缺失 msg 参数时返回 400
-**大小**: S（< 20 行净改动，1 文件）
+**范围**: `playground/server.js` 新增 `/abs` 路由：query 参数 `n`（严格数字），成功返回 `{"result": Math.abs(n), "operation": "abs"}`，非法输入返 400 + `{"error":"..."}`
+**大小**: S（< 50 行净增，1 文件）
 **依赖**: 无
 
-**Evaluator 路径**: `contract-dod-ws1.md` [BEHAVIOR]×5（manual:bash 内嵌命令，evaluator 直接执行）
-**TDD 参考测试（非 evaluator 路径）**: `sprints/tests/ws1/echo.test.js`（generator TDD red-green 用，evaluator 不读）
+**Evaluator 路径**: `sprints/contract-dod-ws1.md` [BEHAVIOR]×6 + [ARTIFACT]×4（manual:bash 内嵌命令，evaluator 直接执行）
+**TDD 参考测试（非 evaluator 路径）**: `sprints/tests/ws1/abs.test.ts`（generator TDD red-green 用，evaluator 不读）
 
 ---
 
 ## Workstream 切分硬规则自查
 
-- 净增 < 200 行（仅改 server.js 约 5 行）→ `workstream_count=1` ✓
+- 净增 < 200 行（仅改 server.js 约 30 行）→ `workstream_count=1` ✓
 
 ---
 
@@ -180,6 +227,22 @@ workstream_count: 1
 
 | Workstream | DoD 文件 / Evaluator 路径 | BEHAVIOR 覆盖 | 预期红证据 |
 |---|---|---|---|
-| WS1 | `contract-dod-ws1.md` [BEHAVIOR]×5（manual:bash 内嵌命令） | msg 字段值、schema 完整性、禁用字段 echo 反向、空字符串、400 error path | 修复前所有 5 条 manual:bash 命令 exit 1（playground 仍返 `{"echo":"hello"}`） |
+| WS1 | `sprints/contract-dod-ws1.md` [BEHAVIOR]×6 + [ARTIFACT]×4（manual:bash 内嵌命令） | result 字段值、operation 字段值、schema keys 完整性、禁用字段 value/answer 反向、error path 400+body{error}+禁用message（×2）、B42 warn+fallback 静态核查 | 修复前所有 6 条 manual:bash BEHAVIOR 命令 exit 1（server.js 无 /abs 路由）；B42 ARTIFACT grep 已通过（#2972 已合并） |
 
-> **注**：`sprints/tests/ws1/echo.test.js` 是 generator TDD red-green 参考测试，**不是** evaluator 执行路径。Evaluator 只执行 `contract-dod-ws1.md` 中各 [BEHAVIOR] 条目的 `Test: manual:bash` 命令。
+> **注**：`sprints/tests/ws1/abs.test.ts` 是 generator TDD red-green 参考测试，**不是** evaluator 执行路径。Evaluator 只执行 `sprints/contract-dod-ws1.md` 中各条目的 `Test:` 命令。
+
+---
+
+## proposer 自查 checklist 结果
+
+1. **PRD response 字段名**: `result`（number）、`operation`（string "abs"）
+2. **contract jq -e 字段名**: `.result`, `.operation` — 字面一致 ✓
+3. **断言 contract keys == PRD keys**: `["operation","result"]` 完全一致 ✓
+4. **PRD 禁用列表**: `value`/`answer`/`data`/`output`/`res`/`response`/`number` — contract 全用 `has("X") | not` 反向检查 ✓
+5. **[BEHAVIOR] 数量**: 6 条（≥4 阈值）✓ — 覆盖 schema 字段值、keys 完整性、禁用字段反向、error path（含 body 格式 has("error")+禁用 message）各至少 1 条
+6. **预期行数自查**: 净增约 30 行（1 文件）< 200 行阈值 → workstream_count=1 ✓
+7. **R3 修订点**（处理 R2 Reviewer 反馈）：
+   - R2 Reviewer：Step 5 grep 仅在合同 Golden Path，不在 evaluator 执行路径（DoD 无对应条目，E2E 无）
+   - R3 修复 A：contract-dod-ws1.md 新增 [ARTIFACT]4 — B42 warn+fallback 静态 grep 验证（evaluator 直接执行）
+   - R3 修复 B：E2E 脚本新增第 10 步 grep 核查（双路径覆盖，evaluator 必跑）
+   - grep pattern 实测通过（harness-gan.graph.js:327 `console.warn` + `propose_branch mismatch` 匹配）

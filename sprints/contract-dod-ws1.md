@@ -2,38 +2,48 @@
 skeleton: false
 journey_type: dev_pipeline
 ---
-# Contract DoD — Workstream 1: 修复 playground /echo schema
+# Contract DoD — Workstream 1: playground/server.js 新增 GET /abs 端点
 
-**范围**: `playground/server.js` GET /echo 响应字段 `echo` → `msg`；缺失 msg 参数返回 400
-**大小**: S（< 20 行净改动，1 文件）
+**范围**: `playground/server.js` 新增 `/abs` 路由；query 参数名 `n`（严格数字）；成功返回 `{"result": Math.abs(n), "operation": "abs"}`；非法输入返 400 + `{"error":"..."}`
+**大小**: S（< 50 行净增，1 文件）
 **依赖**: 无
 
 ## ARTIFACT 条目
 
-- [x] [ARTIFACT] `playground/server.js` 的 /echo handler 响应中不含 `echo` key
-  Test: node -e "const c=require('fs').readFileSync('/workspace/playground/server.js','utf8');if(c.includes('echo: msg')||c.includes(\"{ echo:\"))process.exit(1);console.log('OK')"
+- [x] [ARTIFACT] `playground/server.js` 含 `/abs` 路由处理器
+  Test: node -e "const c=require('fs').readFileSync('/workspace/playground/server.js','utf8');if(!c.includes('/abs'))process.exit(1);console.log('OK')"
 
-- [x] [ARTIFACT] `playground/server.js` 的 /echo handler 响应中含字面量 `msg` key
-  Test: node -e "const c=require('fs').readFileSync('/workspace/playground/server.js','utf8');if(!c.includes('{ msg:')&&!c.includes('{msg:')&&!c.includes('msg: '))process.exit(1);console.log('OK')"
+- [x] [ARTIFACT] `playground/server.js` 的 /abs handler 使用 `req.query.n` 读取参数（字面量 `n`）
+  Test: node -e "const c=require('fs').readFileSync('/workspace/playground/server.js','utf8');if(!c.includes('req.query.n'))process.exit(1);console.log('OK')"
 
-## BEHAVIOR 条目（内嵌可执行 manual: 命令）
+- [x] [ARTIFACT] `playground/server.js` 的 /abs handler 响应含字面量 `operation: 'abs'` 或 `operation: "abs"`
+  Test: node -e "const c=require('fs').readFileSync('/workspace/playground/server.js','utf8');if(!c.includes(\"'abs'\")&&!c.includes('\"abs\"'))process.exit(1);console.log('OK')"
 
-- [x] [BEHAVIOR] GET /echo?msg=hello 返回 `{"msg":"hello"}` 严 schema 字段值
-  Test: manual:bash -c 'cd /workspace/playground && PLAYGROUND_PORT=3011 node server.js & SPID=$!; sleep 2; RESP=$(curl -fs "localhost:3011/echo?msg=hello"); jq -e ".msg == \"hello\"" <<< "$RESP"; EC=$?; kill $SPID 2>/dev/null; exit $EC'
+- [x] [ARTIFACT] B42 warn+fallback 逻辑存在于 harness-gan.graph.js（propose_branch mismatch 改 warn 不 abort，#2972 修复点）
+  Test: grep -rqE "(WARN|warn).*propose_branch|propose_branch.*(WARN|warn)|mismatch.*(warn|WARN)" /workspace/packages/brain/src/workflows/harness-gan.graph.js
+
+## BEHAVIOR 条目（内嵌可执行 manual: 命令，禁止只索引 vitest）
+
+- [x] [BEHAVIOR] GET /abs?n=-5 返回 `{"result":5,"operation":"abs"}` — result 字段值严格校验
+  Test: manual:bash -c 'cd /workspace/playground && PLAYGROUND_PORT=3091 node server.js & SPID=$!; sleep 2; RESP=$(curl -fs "localhost:3091/abs?n=-5"); R=$(echo "$RESP" | jq -e ".result == 5" > /dev/null && echo OK); kill $SPID 2>/dev/null; [ "$R" = "OK" ]'
   期望: OK (exit 0)
 
-- [x] [BEHAVIOR] GET /echo?msg=hello response keys 完整性恰好为 ["msg"]
-  Test: manual:bash -c 'cd /workspace/playground && PLAYGROUND_PORT=3012 node server.js & SPID=$!; sleep 2; RESP=$(curl -fs "localhost:3012/echo?msg=hello"); jq -e "keys == [\"msg\"]" <<< "$RESP"; EC=$?; kill $SPID 2>/dev/null; exit $EC'
+- [x] [BEHAVIOR] GET /abs?n=-5 operation 字段字面量 "abs" — 禁用 absolute/absoluteValue/abs_value
+  Test: manual:bash -c 'cd /workspace/playground && PLAYGROUND_PORT=3092 node server.js & SPID=$!; sleep 2; RESP=$(curl -fs "localhost:3092/abs?n=-5"); R=$(echo "$RESP" | jq -e ".operation == \"abs\"" > /dev/null && echo OK); kill $SPID 2>/dev/null; [ "$R" = "OK" ]'
   期望: OK (exit 0)
 
-- [x] [BEHAVIOR] 禁用字段 echo 反向 — response 中 has("echo") 必须为 false
-  Test: manual:bash -c 'cd /workspace/playground && PLAYGROUND_PORT=3013 node server.js & SPID=$!; sleep 2; RESP=$(curl -fs "localhost:3013/echo?msg=hello"); jq -e "has(\"echo\") | not" <<< "$RESP"; EC=$?; kill $SPID 2>/dev/null; exit $EC'
+- [x] [BEHAVIOR] GET /abs?n=-5 schema 完整性 — keys 恰好等于 ["operation","result"]，不允许多余字段
+  Test: manual:bash -c 'cd /workspace/playground && PLAYGROUND_PORT=3093 node server.js & SPID=$!; sleep 2; RESP=$(curl -fs "localhost:3093/abs?n=-5"); R=$(echo "$RESP" | jq -e "keys == [\"operation\",\"result\"]" > /dev/null && echo OK); kill $SPID 2>/dev/null; [ "$R" = "OK" ]'
   期望: OK (exit 0)
 
-- [x] [BEHAVIOR] 空字符串边界 GET /echo?msg= 返回 `{"msg":""}` 非 null
-  Test: manual:bash -c 'cd /workspace/playground && PLAYGROUND_PORT=3014 node server.js & SPID=$!; sleep 2; RESP=$(curl -fs "localhost:3014/echo?msg="); jq -e ".msg == \"\"" <<< "$RESP"; EC=$?; kill $SPID 2>/dev/null; exit $EC'
+- [x] [BEHAVIOR] 禁用字段 value/answer/data 反向检查 — response 中均不存在
+  Test: manual:bash -c 'cd /workspace/playground && PLAYGROUND_PORT=3094 node server.js & SPID=$!; sleep 2; RESP=$(curl -fs "localhost:3094/abs?n=-5"); R=$(echo "$RESP" | jq -e "has(\"value\") | not" > /dev/null && echo "$RESP" | jq -e "has(\"answer\") | not" > /dev/null && echo OK); kill $SPID 2>/dev/null; [ "$R" = "OK" ]'
   期望: OK (exit 0)
 
-- [x] [BEHAVIOR] error path — GET /echo（缺少 msg 参数）返回 HTTP 400
-  Test: manual:bash -c 'cd /workspace/playground && PLAYGROUND_PORT=3015 node server.js & SPID=$!; sleep 2; CODE=$(curl -s -o /dev/null -w "%{http_code}" "localhost:3015/echo"); kill $SPID; [ "$CODE" = "400" ]'
+- [x] [BEHAVIOR] error path — GET /abs?n=foo（非数字）返回 HTTP 400 且 body 含 `error` 字段、禁用 `message`/`msg`/`reason`
+  Test: manual:bash -c 'cd /workspace/playground && PLAYGROUND_PORT=3095 node server.js & SPID=$!; sleep 2; curl -s -o /tmp/err_body_foo.json -w "%{http_code}" "localhost:3095/abs?n=foo" > /tmp/err_code_foo.txt; CODE=$(cat /tmp/err_code_foo.txt); kill $SPID 2>/dev/null; [ "$CODE" = "400" ] && jq -e "has(\"error\")" /tmp/err_body_foo.json && jq -e "has(\"message\") | not" /tmp/err_body_foo.json'
+  期望: exit 0
+
+- [x] [BEHAVIOR] error path — GET /abs（缺少 n 参数）返回 HTTP 400 且 body 含 `error` 字段、禁用 `message`/`msg`/`reason`
+  Test: manual:bash -c 'cd /workspace/playground && PLAYGROUND_PORT=3096 node server.js & SPID=$!; sleep 2; curl -s -o /tmp/err_body_no_n.json -w "%{http_code}" "localhost:3096/abs" > /tmp/err_code_no_n.txt; CODE=$(cat /tmp/err_code_no_n.txt); kill $SPID 2>/dev/null; [ "$CODE" = "400" ] && jq -e "has(\"error\")" /tmp/err_body_no_n.json && jq -e "has(\"message\") | not" /tmp/err_body_no_n.json'
   期望: exit 0
