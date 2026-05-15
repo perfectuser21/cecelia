@@ -119,10 +119,7 @@ app.get('/factorial', (req, res) => {
   return res.json({ factorial: acc });
 });
 
-app.get('/echo', (req, res) => {
-  const msg = req.query.msg !== undefined ? String(req.query.msg) : '';
-  return res.json({ echo: msg });
-});
+// echo route not yet implemented (TDD Red phase)
 
 if (process.env.NODE_ENV !== 'test') {
   app.listen(PORT, () => console.log(`playground listening on ${PORT}`));
