@@ -16,8 +16,11 @@ journey_type: dev_pipeline
 - [ ] [ARTIFACT] `playground/server.js` 的 /abs handler 使用 `req.query.n` 读取参数（字面量 `n`）
   Test: node -e "const c=require('fs').readFileSync('/workspace/playground/server.js','utf8');if(!c.includes('req.query.n'))process.exit(1);console.log('OK')"
 
-- [ ] [ARTIFACT] `playground/server.js` 的 /abs handler 响应含字面量 `operation: 'abs'` 或 `operation: \"abs\"`
+- [ ] [ARTIFACT] `playground/server.js` 的 /abs handler 响应含字面量 `operation: 'abs'` 或 `operation: "abs"`
   Test: node -e "const c=require('fs').readFileSync('/workspace/playground/server.js','utf8');if(!c.includes(\"'abs'\")&&!c.includes('\"abs\"'))process.exit(1);console.log('OK')"
+
+- [ ] [ARTIFACT] B42 warn+fallback 逻辑存在于 harness-gan.graph.js（propose_branch mismatch 改 warn 不 abort，#2972 修复点）
+  Test: grep -rqE "(WARN|warn).*propose_branch|propose_branch.*(WARN|warn)|mismatch.*(warn|WARN)" /workspace/packages/brain/src/workflows/harness-gan.graph.js
 
 ## BEHAVIOR 条目（内嵌可执行 manual: 命令，禁止只索引 vitest）
 

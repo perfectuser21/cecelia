@@ -1,4 +1,4 @@
-# Sprint Contract Draft (Round 2)
+# Sprint Contract Draft (Round 3)
 
 ## Golden Path
 
@@ -102,8 +102,8 @@ echo "✅ Step 4 验证通过"
 
 **验证命令**:
 ```bash
-grep -rqE "(WARN|warn).*propose_branch|propose_branch.*(WARN|warn)|mismatch.*(WARN|warn)|(WARN|warn).*mismatch" \
-  /workspace/packages/brain/src/workflows/ 2>/dev/null || \
+grep -rqE "(WARN|warn).*propose_branch|propose_branch.*(WARN|warn)|mismatch.*(warn|WARN)" \
+  /workspace/packages/brain/src/workflows/harness-gan.graph.js || \
   { echo "FAIL: 未找到 warn+fallback 逻辑（B42 修复点）"; exit 1; }
 echo "✅ Step 5 B42 warn+fallback 存在"
 ```
@@ -118,7 +118,7 @@ echo "✅ Step 5 B42 warn+fallback 存在"
 
 **描述**: B42 warn 日志可能用不同大小写或格式记录 mismatch，grep pattern 可能漏匹配。
 
-**Mitigation**: pattern 含 WARN/warn 双写 + propose_branch/mismatch 双路径，已足够覆盖常见实现风格。
+**Mitigation**: pattern 含 WARN/warn 双写 + propose_branch/mismatch 双路径，已足够覆盖常见实现风格；实测 harness-gan.graph.js:327 已匹配（`console.warn` + `propose_branch mismatch`）。
 
 ### Risk 2: playground 端口冲突
 
@@ -130,7 +130,7 @@ echo "✅ Step 5 B42 warn+fallback 存在"
 
 **描述**: generator 实现 /abs 时可能将 400 错误响应字段命名为 `message`/`msg`/`reason` 而非 PRD 要求的 `error`，仅校验 HTTP 状态码无法检测此漂移（R1 实证漏洞）。
 
-**Mitigation**: DoD [BEHAVIOR]5 和 [BEHAVIOR]6 已补充 `jq -e 'has("error")'` 正向验 + `jq -e 'has("message") | not'` 反向禁用字段检查，两条断言同时过才 PASS，generator 使用 `message` 字段时 evaluator 直接 FAIL。
+**Mitigation**: DoD [BEHAVIOR]5 和 [BEHAVIOR]6 已补充 `jq -e 'has("error")'` 正向验 + `jq -e 'has("message") | not'` 反向禁用字段检查，两条断言同时过才 PASS。
 
 ---
 
@@ -189,7 +189,13 @@ jq -e 'has("error")' /tmp/e2e_err_no_n.json || { echo "FAIL: error body 缺 erro
 jq -e 'has("message") | not' /tmp/e2e_err_no_n.json || { echo "FAIL: error body 含禁用字段 message（缺 n 路径）"; kill $SPID; exit 1; }
 
 kill $SPID
-echo "✅ Golden Path 全部验证通过"
+
+# 10. B42 warn+fallback 静态验证（propose_branch mismatch 不 abort）
+grep -rqE "(WARN|warn).*propose_branch|propose_branch.*(WARN|warn)|mismatch.*(warn|WARN)" \
+  /workspace/packages/brain/src/workflows/harness-gan.graph.js || \
+  { echo "FAIL: B42 warn+fallback 逻辑不存在于 harness-gan.graph.js"; exit 1; }
+
+echo "✅ Golden Path 全部验证通过（含 B42 warn+fallback 静态核查）"
 ```
 
 **通过标准**: 脚本 exit 0
@@ -206,7 +212,7 @@ workstream_count: 1
 **大小**: S（< 50 行净增，1 文件）
 **依赖**: 无
 
-**Evaluator 路径**: `sprints/contract-dod-ws1.md` [BEHAVIOR]×6（manual:bash 内嵌命令，evaluator 直接执行）
+**Evaluator 路径**: `sprints/contract-dod-ws1.md` [BEHAVIOR]×6 + [ARTIFACT]×4（manual:bash 内嵌命令，evaluator 直接执行）
 **TDD 参考测试（非 evaluator 路径）**: `sprints/tests/ws1/abs.test.ts`（generator TDD red-green 用，evaluator 不读）
 
 ---
@@ -221,9 +227,9 @@ workstream_count: 1
 
 | Workstream | DoD 文件 / Evaluator 路径 | BEHAVIOR 覆盖 | 预期红证据 |
 |---|---|---|---|
-| WS1 | `sprints/contract-dod-ws1.md` [BEHAVIOR]×6（manual:bash 内嵌命令） | result 字段值、operation 字段值、schema keys 完整性、禁用字段 value/answer 反向、error path 400+body{error}+禁用message（×2） | 修复前所有 6 条 manual:bash 命令 exit 1（server.js 无 /abs 路由） |
+| WS1 | `sprints/contract-dod-ws1.md` [BEHAVIOR]×6 + [ARTIFACT]×4（manual:bash 内嵌命令） | result 字段值、operation 字段值、schema keys 完整性、禁用字段 value/answer 反向、error path 400+body{error}+禁用message（×2）、B42 warn+fallback 静态核查 | 修复前所有 6 条 manual:bash BEHAVIOR 命令 exit 1（server.js 无 /abs 路由）；B42 ARTIFACT grep 已通过（#2972 已合并） |
 
-> **注**：`sprints/tests/ws1/abs.test.ts` 是 generator TDD red-green 参考测试，**不是** evaluator 执行路径。Evaluator 只执行 `sprints/contract-dod-ws1.md` 中各 [BEHAVIOR] 条目的 `Test: manual:bash` 命令。
+> **注**：`sprints/tests/ws1/abs.test.ts` 是 generator TDD red-green 参考测试，**不是** evaluator 执行路径。Evaluator 只执行 `sprints/contract-dod-ws1.md` 中各条目的 `Test:` 命令。
 
 ---
 
@@ -235,4 +241,8 @@ workstream_count: 1
 4. **PRD 禁用列表**: `value`/`answer`/`data`/`output`/`res`/`response`/`number` — contract 全用 `has("X") | not` 反向检查 ✓
 5. **[BEHAVIOR] 数量**: 6 条（≥4 阈值）✓ — 覆盖 schema 字段值、keys 完整性、禁用字段反向、error path（含 body 格式 has("error")+禁用 message）各至少 1 条
 6. **预期行数自查**: 净增约 30 行（1 文件）< 200 行阈值 → workstream_count=1 ✓
-7. **R2 修订点**：BEHAVIOR 5/6 从仅验 HTTP 状态码 → 补 jq-e error body 验证（修复 R1 reviewer 问题 1）；新增 Risk 3 覆盖 error body format drift（修复 R1 reviewer 问题 2）
+7. **R3 修订点**（处理 R2 Reviewer 反馈）：
+   - R2 Reviewer：Step 5 grep 仅在合同 Golden Path，不在 evaluator 执行路径（DoD 无对应条目，E2E 无）
+   - R3 修复 A：contract-dod-ws1.md 新增 [ARTIFACT]4 — B42 warn+fallback 静态 grep 验证（evaluator 直接执行）
+   - R3 修复 B：E2E 脚本新增第 10 步 grep 核查（双路径覆盖，evaluator 必跑）
+   - grep pattern 实测通过（harness-gan.graph.js:327 `console.warn` + `propose_branch mismatch` 匹配）
