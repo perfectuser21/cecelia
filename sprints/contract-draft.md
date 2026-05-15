@@ -1,4 +1,4 @@
-# Sprint Contract Draft (Round 2)
+# Sprint Contract Draft (Round 3)
 
 ## Golden Path
 
@@ -165,7 +165,8 @@ workstream_count: 1
 **大小**: S（< 20 行净改动，1 文件）
 **依赖**: 无
 
-**BEHAVIOR 覆盖测试文件**: `sprints/tests/ws1/echo.test.js`
+**Evaluator 路径**: `contract-dod-ws1.md` [BEHAVIOR]×5（manual:bash 内嵌命令，evaluator 直接执行）
+**TDD 参考测试（非 evaluator 路径）**: `sprints/tests/ws1/echo.test.js`（generator TDD red-green 用，evaluator 不读）
 
 ---
 
@@ -177,6 +178,8 @@ workstream_count: 1
 
 ## Test Contract
 
-| Workstream | Test File | BEHAVIOR 覆盖 | 预期红证据 |
+| Workstream | DoD 文件 / Evaluator 路径 | BEHAVIOR 覆盖 | 预期红证据 |
 |---|---|---|---|
-| WS1 | `sprints/tests/ws1/echo.test.js` | msg 字段值、schema 完整性、禁用字段 echo、空字符串、400 error path | 5 failures（echo 字段未改前） |
+| WS1 | `contract-dod-ws1.md` [BEHAVIOR]×5（manual:bash 内嵌命令） | msg 字段值、schema 完整性、禁用字段 echo 反向、空字符串、400 error path | 修复前所有 5 条 manual:bash 命令 exit 1（playground 仍返 `{"echo":"hello"}`） |
+
+> **注**：`sprints/tests/ws1/echo.test.js` 是 generator TDD red-green 参考测试，**不是** evaluator 执行路径。Evaluator 只执行 `contract-dod-ws1.md` 中各 [BEHAVIOR] 条目的 `Test: manual:bash` 命令。
