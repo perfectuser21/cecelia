@@ -1,0 +1,96 @@
+
+ RUN  v4.1.6 /workspace/playground
+
+ × tests/echo.test.js > GET /echo > GET /echo?msg=hello → 200 + {echo: "hello"} 38ms
+   → expected 404 to be 200 // Object.is equality
+ × tests/echo.test.js > GET /echo > GET /echo?msg= → 200 + {echo: ""}（空字符串非 null） 2ms
+   → expected 404 to be 200 // Object.is equality
+ × tests/echo.test.js > GET /echo > response keys 完整性 == ["echo"]（不允许多余字段） 1ms
+   → expected 404 to be 200 // Object.is equality
+ × tests/echo.test.js > GET /echo > 禁用 key 反向：message/result/response/data/output/text/reply/body/msg 均不存在 1ms
+   → expected 404 to be 200 // Object.is equality
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 4 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/echo.test.js > GET /echo > GET /echo?msg=hello → 200 + {echo: "hello"}
+AssertionError: expected 404 to be 200 // Object.is equality
+
+- Expected
++ Received
+
+- 200
++ 404
+
+ ❯ tests/echo.test.js:8:24
+      6|   test('GET /echo?msg=hello → 200 + {echo: "hello"}', async () => {
+      7|     const res = await request(app).get('/echo').query({ msg: 'hello' }…
+      8|     expect(res.status).toBe(200);
+       |                        ^
+      9|     expect(res.body).toEqual({ echo: 'hello' });
+     10|   });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/4]⎯
+
+ FAIL  tests/echo.test.js > GET /echo > GET /echo?msg= → 200 + {echo: ""}（空字符串非 null）
+AssertionError: expected 404 to be 200 // Object.is equality
+
+- Expected
++ Received
+
+- 200
++ 404
+
+ ❯ tests/echo.test.js:14:24
+     12|   test('GET /echo?msg= → 200 + {echo: ""}（空字符串非 null）', async () => {
+     13|     const res = await request(app).get('/echo').query({ msg: '' });
+     14|     expect(res.status).toBe(200);
+       |                        ^
+     15|     expect(res.body.echo).toBe('');
+     16|     expect(res.body.echo).not.toBeNull();
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/4]⎯
+
+ FAIL  tests/echo.test.js > GET /echo > response keys 完整性 == ["echo"]（不允许多余字段）
+AssertionError: expected 404 to be 200 // Object.is equality
+
+- Expected
++ Received
+
+- 200
++ 404
+
+ ❯ tests/echo.test.js:21:24
+     19|   test('response keys 完整性 == ["echo"]（不允许多余字段）', async () => {
+     20|     const res = await request(app).get('/echo').query({ msg: 'test' });
+     21|     expect(res.status).toBe(200);
+       |                        ^
+     22|     expect(Object.keys(res.body)).toEqual(['echo']);
+     23|   });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/4]⎯
+
+ FAIL  tests/echo.test.js > GET /echo > 禁用 key 反向：message/result/response/data/output/text/reply/body/msg 均不存在
+AssertionError: expected 404 to be 200 // Object.is equality
+
+- Expected
++ Received
+
+- 200
++ 404
+
+ ❯ tests/echo.test.js:27:24
+     25|   test('禁用 key 反向：message/result/response/data/output/text/reply/body/…
+     26|     const res = await request(app).get('/echo').query({ msg: 'hello' }…
+     27|     expect(res.status).toBe(200);
+       |                        ^
+     28|     const forbidden = ['message', 'result', 'response', 'data', 'outpu…
+     29|     for (const key of forbidden) {
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/4]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  4 failed (4)
+   Start at  03:19:46
+   Duration  202ms (transform 30ms, setup 0ms, import 98ms, tests 42ms, environment 0ms)
+

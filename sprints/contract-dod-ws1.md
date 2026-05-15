@@ -27,8 +27,8 @@ journey_type: autonomous
   Test: node -e "require('fs').accessSync('/workspace/playground/tests/echo.test.js')"
 
 - [x] [ARTIFACT] TDD Red 阶段验证 — Generator commit 1（仅测试文件，无实现）时 vitest 必须 exit≠0（防止 Generator 写空实现绕过 Red 阶段）
-  Test: bash -c 'cat /tmp/ws1-red.log 2>/dev/null | grep -qE "FAIL|failed|✗" || { echo "FAIL: 缺少 Red 证据日志，Generator 未执行 TDD Red 阶段"; exit 1; }'
-  说明: Generator 在 commit 1 后必须运行 `cd /workspace/playground && npm install && npx vitest run tests/echo.test.js 2>&1 | tee /tmp/ws1-red.log`，exit code 非 0；Evaluator 核查此日志确认测试真红
+  Test: bash -c 'cat /workspace/playground/.ws1-red.log 2>/dev/null | grep -qE "FAIL|failed|✗" || { echo "FAIL: 缺少 Red 证据日志，Generator 未执行 TDD Red 阶段"; exit 1; }'
+  说明: Generator 在 commit 1 后必须运行 `cd /workspace/playground && npm install && npx vitest run tests/echo.test.js 2>&1 | tee /workspace/playground/.ws1-red.log`，exit code 非 0；Evaluator 核查此日志确认测试真红（路径改为 /workspace/playground/.ws1-red.log 确保 Docker 环境可达，/tmp 在容器间隔离）
 
 ## BEHAVIOR 条目（内嵌可执行 manual:bash 命令，evaluator 直接执行）
 
