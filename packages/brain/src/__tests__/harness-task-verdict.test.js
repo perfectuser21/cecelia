@@ -62,7 +62,7 @@ vi.mock('../lib/contract-verify.js', () => ({
   verifyGeneratorOutput: vi.fn(),
 }));
 
-vi.mock('./retry-policies.js', () => ({
+vi.mock('../workflows/retry-policies.js', () => ({
   LLM_RETRY: { maxAttempts: 3 },
 }));
 
