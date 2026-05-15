@@ -18,3 +18,4 @@ dod: |
   [BEHAVIOR] buildProposerPrompt 第 4 参数字面量注入到 prompt
   Test: tests/packages/brain/src/workflows/__tests__/harness-gan-b42.test.js
   Status: [x]
+step_4_ship: done
