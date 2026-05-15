@@ -404,15 +404,17 @@ describe('pollCiNode', () => {
 });
 
 describe('mergePrNode', () => {
-  // B21: mergePrNode 改用注入 execFile 直接调 `gh pr merge --auto --squash --delete-branch`，
+  // B21: mergePrNode 改用注入 execFile 直接调 `gh pr merge --squash --delete-branch`，
   // 不再委托 shepherd.executeMerge。失败时只写 merge_error，不再 set status=failed（让 graph END）。
-  it('happy: 调 gh pr merge --auto --squash 写 status=merged', async () => {
+  // B39: 去掉 --auto（仓库未开启 auto-merge，CI 在 poll_ci 已验绿，--auto 多余且报错）。
+  it('happy: 调 gh pr merge --squash 写 status=merged', async () => {
     const execFile = vi.fn().mockResolvedValue({ stdout: '✓ merged', stderr: '' });
     const delta = await mergePrNode({ pr_url: 'https://x/pull/1' }, { execFile });
     expect(execFile).toHaveBeenCalledTimes(1);
     const [bin, args] = execFile.mock.calls[0];
     expect(bin).toBe('gh');
-    expect(args).toEqual(expect.arrayContaining(['pr', 'merge', 'https://x/pull/1', '--auto', '--squash', '--delete-branch']));
+    expect(args).toEqual(expect.arrayContaining(['pr', 'merge', 'https://x/pull/1', '--squash', '--delete-branch']));
+    expect(args).not.toContain('--auto');
     expect(delta.status).toBe('merged');
     expect(delta.ci_status).toBe('merged');
     expect(delta.merge_command).toMatch(/gh pr merge/);
@@ -547,7 +549,8 @@ describe('harness-task graph — end-to-end (Layer 3 spawn-interrupt-resume)', (
     // B21: mergePrNode 现在直接调 `gh pr merge` 通过 execFile
     const mergeCall = mockExecFileImpl.mock.calls.find(c => c[0] === 'gh' && Array.isArray(c[1]) && c[1].includes('merge'));
     expect(mergeCall).toBeDefined();
-    expect(mergeCall[1]).toEqual(expect.arrayContaining(['pr', 'merge', 'https://gh/p/1', '--auto', '--squash', '--delete-branch']));
+    expect(mergeCall[1]).toEqual(expect.arrayContaining(['pr', 'merge', 'https://gh/p/1', '--squash', '--delete-branch']));
+    expect(mergeCall[1]).not.toContain('--auto');
   });
 
   it('fix loop: spawn → resume → ci_fail → fix → fresh spawn (round 2) → resume → ci_pass → merge', async () => {
