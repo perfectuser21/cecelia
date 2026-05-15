@@ -1,22 +1,22 @@
 {
   "initiative_id": "pending",
-  "journey_type": "dev_pipeline",
-  "journey_type_reason": "本次 sprint 核心目标是验证 B39 evaluator 修复在真实 harness 流程中正确生效，playground /echo 是测试载体，属于 dev pipeline 验证场景",
+  "journey_type": "autonomous",
+  "journey_type_reason": "纯后端 harness 验证流程，无 UI 交互，evaluator 自动从 origin/main 同步 playground/ 并 curl 校验 /echo 端点",
   "tasks": [
     {
       "task_id": "ws1",
-      "title": "修复 playground /echo 响应 schema：echo → msg，缺参返 400",
-      "scope": "playground/server.js 的 /echo handler：(1) 响应字段由 echo 改为 msg；(2) 缺少 msg query 参数时返回 HTTP 400 + {error: '...'}",
+      "title": "修复 playground/tests/echo.test.js 验证正确 schema（{msg} 而非 {echo}）",
+      "scope": "playground/tests/echo.test.js：(1) response 期望从 {echo:'hello'} 改为 {msg:'hello'}；(2) keys assertion 从 ['echo'] 改为 ['msg']；(3) 移除 msg 出禁用 key 列表",
       "dod": [
         "[BEHAVIOR] GET /echo?msg=hello 返回 HTTP 200 + {msg:'hello'}，jq -e '.msg == \"hello\"' 通过",
         "[BEHAVIOR] response keys 完整性恰好 ['msg']，jq -e 'keys == [\"msg\"]' 通过",
         "[BEHAVIOR] 禁用字段 echo 不存在，jq -e 'has(\"echo\") | not' 通过",
-        "[BEHAVIOR] GET /echo?msg= 返回 {msg:''}（空字符串非 null）",
-        "[BEHAVIOR] GET /echo（无 msg 参数）返回 HTTP 400",
-        "[ARTIFACT] playground/server.js /echo handler 不含字面 echo: 字段"
+        "[BEHAVIOR] GET /echo?msg= 返回 {msg:''}（空字符串边界）",
+        "[BEHAVIOR] GET /echo（无 msg 参数）返回 HTTP 400 + error 字段",
+        "[ARTIFACT] playground/tests/echo.test.js 不含 { echo: 'hello' } 或 { echo: \"hello\" } 作为 response 期望"
       ],
       "files": [
-        "playground/server.js"
+        "playground/tests/echo.test.js"
       ],
       "depends_on": [],
       "complexity": "S",

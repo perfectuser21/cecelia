@@ -1,39 +1,39 @@
 ---
 skeleton: false
-journey_type: dev_pipeline
+journey_type: autonomous
 ---
-# Contract DoD — Workstream 1: 修复 playground /echo schema
+# Contract DoD — Workstream 1: 修复 playground/tests/echo.test.js 验证正确 schema
 
-**范围**: `playground/server.js` GET /echo 响应字段 `echo` → `msg`；缺失 msg 参数返回 400
-**大小**: S（< 20 行净改动，1 文件）
+**范围**: `playground/tests/echo.test.js` 将 `{echo:"hello"}` 期望改为 `{msg:"hello"}`；keys assertion 改为 `["msg"]`；移除 msg 出禁用列表
+**大小**: S（< 50 行改动，1 文件）
 **依赖**: 无
 
 ## ARTIFACT 条目
 
-- [x] [ARTIFACT] `playground/server.js` 的 /echo handler 响应中不含 `echo` key
-  Test: node -e "const c=require('fs').readFileSync('/workspace/playground/server.js','utf8');if(c.includes('echo: msg')||c.includes(\"{ echo:\"))process.exit(1);console.log('OK')"
+- [ ] [ARTIFACT] `playground/tests/echo.test.js` 不含字面量 `{ echo: 'hello' }` 或 `{ echo: "hello" }` 作为 response 期望
+  Test: node -e "const c=require('fs').readFileSync('/workspace/playground/tests/echo.test.js','utf8');if(/toEqual\\(\\s*\\{\\s*echo:/.test(c))process.exit(1);console.log('OK')"
 
-- [x] [ARTIFACT] `playground/server.js` 的 /echo handler 响应中含字面量 `msg` key
-  Test: node -e "const c=require('fs').readFileSync('/workspace/playground/server.js','utf8');if(!c.includes('{ msg:')&&!c.includes('{msg:')&&!c.includes('msg: '))process.exit(1);console.log('OK')"
+- [ ] [ARTIFACT] `playground/tests/echo.test.js` 含 `{ msg: 'hello' }` 或 `{ msg: "hello" }` 作为 response 期望
+  Test: node -e "const c=require('fs').readFileSync('/workspace/playground/tests/echo.test.js','utf8');if(!/toEqual\\(\\s*\\{\\s*msg:/.test(c))process.exit(1);console.log('OK')"
 
-## BEHAVIOR 条目（内嵌可执行 manual: 命令）
+## BEHAVIOR 条目（内嵌可执行 manual: 命令，禁止只索引 vitest）
 
-- [x] [BEHAVIOR] GET /echo?msg=hello 返回 `{"msg":"hello"}` 严 schema 字段值
-  Test: manual:bash -c 'cd /workspace/playground && PLAYGROUND_PORT=3011 node server.js & SPID=$!; sleep 2; RESP=$(curl -fs "localhost:3011/echo?msg=hello"); jq -e ".msg == \"hello\"" <<< "$RESP"; EC=$?; kill $SPID 2>/dev/null; exit $EC'
-  期望: OK (exit 0)
+- [ ] [BEHAVIOR] GET /echo?msg=hello 返回 {msg:"hello"} 严 schema 字段值（PRD 指定 msg key）
+  Test: manual:bash -c 'lsof -ti:3011 | xargs kill -9 2>/dev/null || true; cd /workspace/playground && PLAYGROUND_PORT=3011 node server.js & SPID=$!; sleep 2; RESP=$(curl -fs "localhost:3011/echo?msg=hello"); R=$(echo "$RESP" | jq -e ".msg == \"hello\"" && echo OK); kill $SPID 2>/dev/null; [ "$R" = "OK" ]'
+  期望: exit 0
 
-- [x] [BEHAVIOR] GET /echo?msg=hello response keys 完整性恰好为 ["msg"]
-  Test: manual:bash -c 'cd /workspace/playground && PLAYGROUND_PORT=3012 node server.js & SPID=$!; sleep 2; RESP=$(curl -fs "localhost:3012/echo?msg=hello"); jq -e "keys == [\"msg\"]" <<< "$RESP"; EC=$?; kill $SPID 2>/dev/null; exit $EC'
-  期望: OK (exit 0)
+- [ ] [BEHAVIOR] response 严 schema 完整性 keys 恰好等于 ["msg"]（不允许多 key 不允许少 key）
+  Test: manual:bash -c 'lsof -ti:3012 | xargs kill -9 2>/dev/null || true; cd /workspace/playground && PLAYGROUND_PORT=3012 node server.js & SPID=$!; sleep 2; RESP=$(curl -fs "localhost:3012/echo?msg=hello"); R=$(echo "$RESP" | jq -e "keys == [\"msg\"]" && echo OK); kill $SPID 2>/dev/null; [ "$R" = "OK" ]'
+  期望: exit 0
 
-- [x] [BEHAVIOR] 禁用字段 echo 反向 — response 中 has("echo") 必须为 false
-  Test: manual:bash -c 'cd /workspace/playground && PLAYGROUND_PORT=3013 node server.js & SPID=$!; sleep 2; RESP=$(curl -fs "localhost:3013/echo?msg=hello"); jq -e "has(\"echo\") | not" <<< "$RESP"; EC=$?; kill $SPID 2>/dev/null; exit $EC'
-  期望: OK (exit 0)
+- [ ] [BEHAVIOR] 禁用字段 echo 反向 — response 中 has("echo") 必须为 false
+  Test: manual:bash -c 'lsof -ti:3013 | xargs kill -9 2>/dev/null || true; cd /workspace/playground && PLAYGROUND_PORT=3013 node server.js & SPID=$!; sleep 2; RESP=$(curl -fs "localhost:3013/echo?msg=hello"); R=$(echo "$RESP" | jq -e "has(\"echo\") | not" && echo OK); kill $SPID 2>/dev/null; [ "$R" = "OK" ]'
+  期望: exit 0
 
-- [x] [BEHAVIOR] 空字符串边界 GET /echo?msg= 返回 `{"msg":""}` 非 null
-  Test: manual:bash -c 'cd /workspace/playground && PLAYGROUND_PORT=3014 node server.js & SPID=$!; sleep 2; RESP=$(curl -fs "localhost:3014/echo?msg="); jq -e ".msg == \"\"" <<< "$RESP"; EC=$?; kill $SPID 2>/dev/null; exit $EC'
-  期望: OK (exit 0)
+- [ ] [BEHAVIOR] 空字符串边界 GET /echo?msg= 返回 {msg:""} 非 null 非 undefined
+  Test: manual:bash -c 'lsof -ti:3014 | xargs kill -9 2>/dev/null || true; cd /workspace/playground && PLAYGROUND_PORT=3014 node server.js & SPID=$!; sleep 2; RESP=$(curl -fs "localhost:3014/echo?msg="); R=$(echo "$RESP" | jq -e ".msg == \"\"" && echo OK); kill $SPID 2>/dev/null; [ "$R" = "OK" ]'
+  期望: exit 0
 
-- [x] [BEHAVIOR] error path — GET /echo（缺少 msg 参数）返回 HTTP 400
-  Test: manual:bash -c 'cd /workspace/playground && PLAYGROUND_PORT=3015 node server.js & SPID=$!; sleep 2; CODE=$(curl -s -o /dev/null -w "%{http_code}" "localhost:3015/echo"); kill $SPID; [ "$CODE" = "400" ]'
+- [ ] [BEHAVIOR] error path — GET /echo（缺少 msg 参数）返回 HTTP 400 + error 字段类型为 string
+  Test: manual:bash -c 'lsof -ti:3015 | xargs kill -9 2>/dev/null || true; cd /workspace/playground && PLAYGROUND_PORT=3015 node server.js & SPID=$!; sleep 2; CODE=$(curl -s -o /dev/null -w "%{http_code}" "localhost:3015/echo"); RESP=$(curl -s "localhost:3015/echo"); kill $SPID; [ "$CODE" = "400" ] && echo "$RESP" | jq -e ".error | type == \"string\"" > /dev/null'
   期望: exit 0

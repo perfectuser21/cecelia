@@ -1,149 +1,158 @@
-# Sprint Contract Draft (Round 5)
+# Sprint Contract Draft (Round 1)
 
 ## Golden Path
 
-[harness 启动 playground] → [GET /echo?msg=hello 返回 {"msg":"hello"}] → [evaluator 验证 schema 严格合规] → [evaluator 输出 FIXED 或 APPROVED] → [harness 归一化 FIXED/APPROVED → PASS] → [PR merge 无 --auto 标志错误，仅启动一个 playground 实例]
+[harness Phase C 读取 origin/main playground/] → [playground server.js 含 GET /echo 端点] → [启动服务] → [GET /echo?msg=hello → {msg:"hello"} 严 schema] → [空字符串边界通过] → [缺失 msg → 400] → [evaluator 输出 PASS]
 
 ---
 
-### Step 1: playground /echo 端点返回正确 schema
+### Step 1: origin/main playground/ 包含正确 GET /echo 实现（静态验证）
 
-**可观测行为**: GET /echo?msg=hello 返回 HTTP 200 + `{"msg":"hello"}`，顶层 keys 完全等于 `["msg"]`，禁用字段 `echo` 不存在
+**可观测行为**: `playground/server.js` 含 `GET /echo` handler；handler 使用 `msg` 字段，不使用 `echo` 字段
 
 **验证命令**:
 ```bash
-cd /workspace/playground && PLAYGROUND_PORT=3099 node server.js & SPID=$!
-sleep 2
-
-RESP=$(curl -fs "localhost:3099/echo?msg=hello")
-echo "$RESP" | jq -e '.msg == "hello"' || { echo "FAIL: .msg 值错误"; kill $SPID; exit 1; }
-echo "$RESP" | jq -e 'keys == ["msg"]' || { echo "FAIL: keys 不完整"; kill $SPID; exit 1; }
-echo "$RESP" | jq -e 'has("echo") | not' || { echo "FAIL: 禁用字段 echo 漏网"; kill $SPID; exit 1; }
-
-kill $SPID
-echo "✅ Step 1 验证通过"
+# 验证 /echo 路由存在且返回 msg 字段
+node -e "const c=require('fs').readFileSync('/workspace/playground/server.js','utf8');if(!c.includes(\"app.get('/echo'\")&&!c.includes('app.get(\"/echo\"'))process.exit(1);if(c.match(/\\/echo.*\\{\\s*echo:/))process.exit(1);console.log('OK')"
 ```
 
-**硬阈值**: HTTP 200，`msg == "hello"`，`keys == ["msg"]`，`echo` key 不存在
+**硬阈值**: exit 0 + 输出 OK；源码含 `/echo` handler + 使用 `msg` 字段
 
 ---
 
-### Step 2: 空字符串边界验证
+### Step 2: 启动 playground 服务，GET /echo?msg=hello → {msg:"hello"} 字段值
 
-**可观测行为**: GET /echo?msg= 返回 `{"msg":""}` 而非 null 或 undefined
+**可观测行为**: 服务 HTTP 200 返回 `{"msg":"hello"}`，`.msg` 字段值等于 `"hello"`
 
 **验证命令**:
 ```bash
+lsof -ti:3099 | xargs kill -9 2>/dev/null || true
 cd /workspace/playground && PLAYGROUND_PORT=3099 node server.js & SPID=$!
 sleep 2
-
-RESP=$(curl -fs "localhost:3099/echo?msg=")
-echo "$RESP" | jq -e '.msg == ""' || { echo "FAIL: 空字符串未正确回显"; kill $SPID; exit 1; }
-
+RESP=$(curl -fs "localhost:3099/echo?msg=hello")
+echo "$RESP" | jq -e '.msg == "hello"' || { echo "FAIL: .msg 值错误"; kill $SPID; exit 1; }
 kill $SPID
 echo "✅ Step 2 验证通过"
 ```
 
-**硬阈值**: `{"msg":""}` 精确返回
+**硬阈值**: HTTP 200，`jq -e '.msg == "hello"'` exit 0
 
 ---
 
-### Step 3: 缺少必填参数 msg → 400
+### Step 3: response schema 完整性 — keys 完全等于 ["msg"]
 
-**可观测行为**: GET /echo（无 msg 参数）返回 HTTP 400 + `{"error": "..."}`
+**可观测行为**: `jq 'keys'` 输出精确等于 `["msg"]`，不允许多余字段
 
 **验证命令**:
 ```bash
-cd /workspace/playground && PLAYGROUND_PORT=3099 node server.js & SPID=$!
+lsof -ti:3098 | xargs kill -9 2>/dev/null || true
+cd /workspace/playground && PLAYGROUND_PORT=3098 node server.js & SPID=$!
 sleep 2
-
-CODE=$(curl -s -o /dev/null -w "%{http_code}" "localhost:3099/echo")
-[ "$CODE" = "400" ] || { echo "FAIL: 缺失 msg 未返 400，实际=$CODE"; kill $SPID; exit 1; }
-
+RESP=$(curl -fs "localhost:3098/echo?msg=hello")
+echo "$RESP" | jq -e 'keys == ["msg"]' || { echo "FAIL: keys 不符"; kill $SPID; exit 1; }
 kill $SPID
 echo "✅ Step 3 验证通过"
 ```
 
-**硬阈值**: HTTP 400
+**硬阈值**: `keys == ["msg"]` 精确匹配
 
 ---
 
-### Step 4: B39 harness 归一化验证（evaluator verdict → PASS）
+### Step 4: 禁用字段 echo 反向验证
 
-**可观测行为**: evaluator 输出 FIXED 或 APPROVED 时，`normalizeVerdict()` 函数均返回 `'PASS'`，不报 unknown verdict 错误
+**可观测行为**: response 中 `echo` 字段不存在（has("echo") 为 false）
 
 **验证命令**:
 ```bash
-grep -qE "FIXED.*PASS|APPROVED.*PASS|'PASS'.*'FIXED'.*'APPROVED'" \
-  /workspace/packages/brain/src/workflows/harness-task.graph.js || \
-  { echo "FAIL: 未找到 FIXED/APPROVED → PASS 归一化逻辑"; exit 1; }
-echo "✅ Step 4 静态检验通过（B39 #2968 已合并）"
+lsof -ti:3097 | xargs kill -9 2>/dev/null || true
+cd /workspace/playground && PLAYGROUND_PORT=3097 node server.js & SPID=$!
+sleep 2
+RESP=$(curl -fs "localhost:3097/echo?msg=hello")
+echo "$RESP" | jq -e 'has("echo") | not' || { echo "FAIL: 禁用字段 echo 漏网"; kill $SPID; exit 1; }
+kill $SPID
+echo "✅ Step 4 验证通过"
 ```
 
-**硬阈值**: 源码含 FIXED/APPROVED → PASS 归一化逻辑，grep -q 返回 exit 0
+**硬阈值**: `has("echo") | not` exit 0
 
 ---
 
-### Step 5: 无 --auto 标志、无并发容器爆炸
+### Step 5: 空字符串边界 — GET /echo?msg= → {msg:""}
 
-**可观测行为**: harness 运行脚本不含 `--auto` 标志；单次运行只启动一个 playground 进程
+**可观测行为**: `msg` 为空字符串时返回 `{"msg":""}` 而非 null 或 undefined
 
 **验证命令**:
 ```bash
-grep -r "\-\-auto" /workspace/packages/engine/scripts/ 2>/dev/null && { echo "FAIL: --auto 未移除"; exit 1; } || echo "✅ --auto 已移除"
+lsof -ti:3096 | xargs kill -9 2>/dev/null || true
+cd /workspace/playground && PLAYGROUND_PORT=3096 node server.js & SPID=$!
+sleep 2
+RESP=$(curl -fs "localhost:3096/echo?msg=")
+echo "$RESP" | jq -e '.msg == ""' || { echo "FAIL: 空字符串边界失败"; kill $SPID; exit 1; }
+kill $SPID
+echo "✅ Step 5 验证通过"
 ```
 
-**硬阈值**: 源码中无 `--auto` 标志
+**硬阈值**: `{msg:""}` 精确返回
 
 ---
 
-## Risks
+### Step 6: 缺失 msg 参数 → HTTP 400 + error 字段
 
-### Risk 1: normalizeVerdict 路径变更导致 Step 4 恒绿
+**可观测行为**: `GET /echo`（无 query 参数）返回 HTTP 400 + `{"error": "..."}`
 
-**描述**: 如果 B39 后 `normalizeVerdict` 函数被重命名或移入其他文件，Step 4 的 grep 路径会返回非 0 exit code，误判为 FAIL；若 grep pattern 不精确，也可能恒绿。
+**验证命令**:
+```bash
+lsof -ti:3095 | xargs kill -9 2>/dev/null || true
+cd /workspace/playground && PLAYGROUND_PORT=3095 node server.js & SPID=$!
+sleep 2
+CODE=$(curl -s -o /dev/null -w "%{http_code}" "localhost:3095/echo")
+[ "$CODE" = "400" ] || { echo "FAIL: 缺失 msg 未返 400，实际=$CODE"; kill $SPID; exit 1; }
+RESP=$(curl -s "localhost:3095/echo")
+echo "$RESP" | jq -e '.error | type == "string"' || { echo "FAIL: error 字段非 string"; kill $SPID; exit 1; }
+kill $SPID
+echo "✅ Step 6 验证通过"
+```
 
-**Mitigation**: Step 4 验证命令直接 grep 具体文件路径（`harness-task.graph.js`），pattern 同时匹配 Set 初始化语法 `'FIXED'.*'APPROVED'`，与函数实现绑定，减少漂移窗口。合同 Reviewer 检查 grep 可否造假。
-
-### Risk 2: playground 端口冲突导致 E2E 假绿
-
-**描述**: 若 3099 端口在 evaluator 运行时已被占用（上一个 playground 进程未正常退出），`node server.js` 启动失败但 `curl` 可能打到旧进程，返回旧 `echo` 字段，掩盖 schema 未修复的事实。
-
-**Mitigation**: E2E 脚本在启动前用 `lsof -ti:3099 | xargs kill -9 2>/dev/null || true` 清理残留进程；`curl -f` flag 确保 HTTP 5xx 会返回非 0 exit code；`jq -e` 精确匹配 `keys == ["msg"]` 捕获 schema 漂移。
+**硬阈值**: HTTP 400，`error` 字段类型为 string
 
 ---
 
 ## E2E 验收（最终 Evaluator 跑）
 
-**journey_type**: dev_pipeline
+**journey_type**: autonomous
 
 **完整验证脚本**:
 ```bash
 #!/bin/bash
 set -e
 
-# 清理可能残留的 3099 端口进程
+# 清理可能残留的端口
 lsof -ti:3099 | xargs kill -9 2>/dev/null || true
 
+# Step 1: 静态验证 origin/main playground/server.js 含 /echo + msg 字段
+grep -c "app.get.*echo" /workspace/playground/server.js || { echo "FAIL: /echo 路由不存在"; exit 1; }
+grep "{ msg:" /workspace/playground/server.js || { echo "FAIL: server.js 不含 msg 字段"; exit 1; }
+
+# 启动服务
 cd /workspace/playground
 PLAYGROUND_PORT=3099 node server.js & SPID=$!
 sleep 2
 
-# 1. msg 字段值验证
+# Step 2: .msg 字段值
 RESP=$(curl -fs "localhost:3099/echo?msg=hello")
 echo "$RESP" | jq -e '.msg == "hello"' || { echo "FAIL: .msg 值错误"; kill $SPID; exit 1; }
 
-# 2. schema 完整性 — keys 完全等于 ["msg"]
+# Step 3: keys 完整性
 echo "$RESP" | jq -e 'keys == ["msg"]' || { echo "FAIL: keys 不符"; kill $SPID; exit 1; }
 
-# 3. 禁用字段 echo 反向
-echo "$RESP" | jq -e 'has("echo") | not' || { echo "FAIL: 禁用字段 echo 仍存在"; kill $SPID; exit 1; }
+# Step 4: 禁用字段 echo 反向
+echo "$RESP" | jq -e 'has("echo") | not' || { echo "FAIL: 禁用字段 echo 漏网"; kill $SPID; exit 1; }
 
-# 4. 空字符串边界
+# Step 5: 空字符串边界
 RESP2=$(curl -fs "localhost:3099/echo?msg=")
 echo "$RESP2" | jq -e '.msg == ""' || { echo "FAIL: 空字符串边界失败"; kill $SPID; exit 1; }
 
-# 5. 缺失 msg 返 400
+# Step 6: error path
 CODE=$(curl -s -o /dev/null -w "%{http_code}" "localhost:3099/echo")
 [ "$CODE" = "400" ] || { echo "FAIL: 缺失 msg 未返 400，实际=$CODE"; kill $SPID; exit 1; }
 
@@ -159,20 +168,21 @@ echo "✅ Golden Path 全部验证通过"
 
 workstream_count: 1
 
-### Workstream 1: 修复 playground /echo schema
+### Workstream 1: 修复 playground/tests/echo.test.js 验证正确 schema
 
-**范围**: `playground/server.js` 中 GET /echo 端点响应字段由 `echo` 改为 `msg`；缺失 msg 参数时返回 400
-**大小**: S（< 20 行净改动，1 文件）
+**范围**: `playground/tests/echo.test.js` — 将测试期望从 `{echo:"hello"}` 改为 `{msg:"hello"}`；移除 `msg` 出禁用 key 列表；keys assertion 改为 `["msg"]`
+**大小**: S（< 50 行改动，1 文件）
 **依赖**: 无
 
-**Evaluator 路径**: `contract-dod-ws1.md` [BEHAVIOR]×5（manual:bash 内嵌命令，evaluator 直接执行）
-**TDD 参考测试（非 evaluator 路径）**: `sprints/tests/ws1/echo.test.js`（generator TDD red-green 用，evaluator 不读）
+**Evaluator 路径**: `contract-dod-ws1.md` 内嵌 [BEHAVIOR] manual:bash 命令（evaluator 直接执行）
+**TDD 参考测试（非 evaluator 路径）**: `sprints/tests/ws1/phase-c-verify.test.js`（当前 3 Red）
 
 ---
 
 ## Workstream 切分硬规则自查
 
-- 净增 < 200 行（仅改 server.js 约 5 行）→ `workstream_count=1` ✓
+- 净增 < 200 行（仅改 playground/tests/echo.test.js ~40 行）→ `workstream_count=1` ✓
+- 文件数 ≤ 3（1 文件）✓
 
 ---
 
@@ -180,6 +190,6 @@ workstream_count: 1
 
 | Workstream | DoD 文件 / Evaluator 路径 | BEHAVIOR 覆盖 | 预期红证据 |
 |---|---|---|---|
-| WS1 | `contract-dod-ws1.md` [BEHAVIOR]×5（manual:bash 内嵌命令） | msg 字段值、schema 完整性、禁用字段 echo 反向、空字符串、400 error path | 修复前所有 5 条 manual:bash 命令 exit 1（playground 仍返 `{"echo":"hello"}`） |
+| WS1 | `contract-dod-ws1.md` [BEHAVIOR]×5（manual:bash 内嵌命令） | msg 字段值、keys 完整性、echo 禁用反向、空字符串、400 error path | `sprints/tests/ws1/phase-c-verify.test.js` 3 failures（文件含 `{echo:` 期望） |
 
-> **注**：`sprints/tests/ws1/echo.test.js` 是 generator TDD red-green 参考测试，**不是** evaluator 执行路径。Evaluator 只执行 `contract-dod-ws1.md` 中各 [BEHAVIOR] 条目的 `Test: manual:bash` 命令。
+> **注**：`sprints/tests/ws1/phase-c-verify.test.js` 是 generator TDD red-green 参考测试（当前 3 Red），**不是** evaluator 执行路径。Evaluator 只执行 `contract-dod-ws1.md` 中各 [BEHAVIOR] 条目的 `Test: manual:bash` 命令。
