@@ -143,7 +143,7 @@ async function fetchTodayStats(pool) {
 }
 
 /**
- * 将统计写入 working_memory。
+ * 将统计写入 working_memory，同时 upsert publish_success_daily（每平台每天一行）。
  *
  * @param {import('pg').Pool} pool
  * @param {object} stats
@@ -155,6 +155,29 @@ async function writeStats(pool, stats) {
      ON CONFLICT (key) DO UPDATE SET value_json = $2, updated_at = NOW()`,
     [STATS_KEY, JSON.stringify(stats)]
   );
+
+  // 按平台写每日快照
+  const date = stats.date || new Date().toISOString().slice(0, 10);
+  const platformMap = stats.platforms || {};
+
+  for (const [platform, ps] of Object.entries(platformMap)) {
+    const total = (ps.queued || 0) + (ps.in_progress || 0) + (ps.completed || 0) + (ps.failed || 0);
+    const completed = ps.completed || 0;
+    const failed = ps.failed || 0;
+    const totalDone = completed + failed;
+    const successRate = totalDone > 0 ? Number(((completed / totalDone) * 100).toFixed(2)) : null;
+
+    await pool.query(
+      `INSERT INTO publish_success_daily (platform, date, total, completed, failed, success_rate)
+       VALUES ($1, $2, $3, $4, $5, $6)
+       ON CONFLICT (platform, date) DO UPDATE
+         SET total        = EXCLUDED.total,
+             completed    = EXCLUDED.completed,
+             failed       = EXCLUDED.failed,
+             success_rate = EXCLUDED.success_rate`,
+      [platform, date, total, completed, failed, successRate]
+    );
+  }
 }
 
 // ─── 主入口 ──────────────────────────────────────────────────────────────────

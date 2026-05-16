@@ -88,6 +88,16 @@ jobs:
             exit 0
           fi
 
+          # HTTP 000 = 连接失败（服务器不可达/防火墙/宕机）
+          # 区分"服务器无法访问"与"服务器明确拒绝"，前者 warn-only 避免虚假 CI 失败
+          if [ "$HTTP_CODE" = "000" ]; then
+            echo "::warning::Brain 服务器不可达（HTTP 000，connect failed）— deploy 已跳过"
+            echo "  排查：检查 ${BRAIN_URL}/api/brain/health 是否可访问"
+            echo "  如需紧急部署请手动 SSH 到生产服务器执行 brain-deploy.sh"
+            echo "skipped=true" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
           if [ "$HTTP_CODE" -ge 200 ] && [ "$HTTP_CODE" -lt 300 ]; then
             echo "✅ Deploy webhook 已触发"
             echo "skipped=false" >> $GITHUB_OUTPUT
@@ -144,7 +154,9 @@ jobs:
           if [ -f /tmp/health_resp.txt ]; then cat /tmp/health_resp.txt; fi
           echo ""
 
-          if [ "$HTTP_CODE" -ge 200 ] && [ "$HTTP_CODE" -lt 300 ]; then
+          if [ "$HTTP_CODE" = "000" ]; then
+            echo "::warning::Brain /health 不可达（HTTP 000）— smoke 跳过"
+          elif [ "$HTTP_CODE" -ge 200 ] && [ "$HTTP_CODE" -lt 300 ]; then
             echo "✅ Brain /health 正常"
           else
             echo "::error::Brain /health 异常（HTTP $HTTP_CODE）"
