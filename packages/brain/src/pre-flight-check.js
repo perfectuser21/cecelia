@@ -144,6 +144,17 @@ export async function preFlightCheck(task, opts = {}) {
     console.warn('[pre-flight] insight-constraint evaluation failed (non-fatal):', err.message);
   }
 
+  // Check 7: Repeated-failure guard — 阻断无限重试死循环
+  // 任务已被 quarantine（repeated_failure）但仍进入 dispatch 队列时，直接拒绝。
+  // 根因：thalamus L0 在 retry_count 未正确递增时会无限 retry_task，
+  // 使 repeated_failure 任务反复派发但每次必然失败（外部依赖缺失等结构性问题）。
+  const quarantineReason = task.payload?.quarantine_reason || task.metadata?.quarantine_reason;
+  const failureCount = task.payload?.failure_count || task.payload?.watchdog_retry_count || 0;
+  if (quarantineReason === 'repeated_failure' || failureCount >= 5) {
+    issues.push(`任务已标记为 repeated_failure（failure_count=${failureCount}），拒绝派发`);
+    suggestions.push('请人工排查根因（外部依赖缺失/执行路径错误），修复后手动 reset 任务状态');
+  }
+
   const passed = issues.length === 0;
 
   return {
