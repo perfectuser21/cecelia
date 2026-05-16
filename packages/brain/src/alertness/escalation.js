@@ -348,6 +348,7 @@ async function pauseLowPriorityTasks(priorities) {
           'sprint_generate', 'sprint_evaluate', 'sprint_fix', 'arch_review',
           'content-pipeline', 'content-research', 'content-copywriting',
           'content-copy-review', 'content-generate', 'content-image-review', 'content-export',
+          'content_publish',
           'harness_initiative', 'harness_task', 'harness_planner',
           'harness_contract_propose', 'harness_contract_review',
           'harness_generate', 'harness_evaluate', 'harness_fix',

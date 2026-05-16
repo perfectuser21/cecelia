@@ -558,6 +558,7 @@ async function cancelDuplicateTasks() {
   const client = await pool.connect();
   try {
     // 取消重复任务（保留最新的）
+    // content_publish 豁免：每日发布任务按 platform+date 创建，healing 不应干扰其调度
     const result = await client.query(`
       WITH duplicates AS (
         SELECT id,
@@ -567,6 +568,7 @@ async function cancelDuplicateTasks() {
                ) as rn
         FROM tasks
         WHERE status IN ('queued', 'pending')
+          AND task_type != 'content_publish'
       )
       UPDATE tasks
       SET status = 'canceled',
