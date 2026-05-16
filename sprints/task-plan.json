@@ -1,43 +1,67 @@
 {
   "initiative_id": "pending",
   "journey_type": "user_facing",
-  "journey_type_reason": "入口是 dashboard 详情页（apps/dashboard/），用户直接感知实时节点推进；frontend + SSE 均面向真实用户操作",
+  "journey_type_reason": "入口是 Dashboard /harness/:id 新页面（apps/dashboard/），核心场景以用户前台实时观察 pipeline 执行状态为起点",
   "tasks": [
     {
       "task_id": "ws1",
-      "title": "packages/brain/src/routes/harness.js 新增 GET /stream SSE 端点",
-      "scope": "在 harness.js 新增 router.get('/stream') 端点：(1) 验证 planner_task_id query 参数，缺少返 400 {error:string}，不存在返 404 {error:'pipeline not found'}；(2) 设置 text/event-stream 响应头；(3) 每 2s 轮询 task_events WHERE task_id=$planner_task_id AND event_type='graph_node_update' AND created_at > $lastSeen，推送 event: node_update data: {node:payload.nodeName, label:<mapped>, attempt:payload.attemptN, ts:created_at.toISOString()}；(4) 检测 task.status=completed/failed 时推 event: done data:{status,verdict}，关闭连接；(5) 每 30s 发 ': keepalive' comment 维持连接",
+      "title": "创建 initiative_run_events DB migration",
+      "scope": "新建 packages/brain/src/db/migrations/010-initiative-run-events.sql，包含 CREATE TABLE initiative_run_events DDL（6 列：event_id UUID PK、initiative_id UUID NOT NULL、node TEXT CHECK、status TEXT CHECK、payload JSONB DEFAULT {}、created_at TIMESTAMPTZ DEFAULT now()）+ 复合索引 (initiative_id, created_at)",
       "dod": [
-        "[BEHAVIOR] GET /stream?planner_task_id=<valid> 返回 HTTP 200 Content-Type: text/event-stream",
-        "[BEHAVIOR] node_update event data JSON keys == [attempt,label,node,ts]，无禁用字段 name/nodeName/timestamp/type",
-        "[BEHAVIOR] 缺少 planner_task_id → 400 {error:string}，无 message/msg",
-        "[BEHAVIOR] 未知 UUID → 404 {error:'pipeline not found'}",
-        "[ARTIFACT] harness.js 含 router.get('/stream') 路由"
+        "[ARTIFACT] packages/brain/src/db/migrations/010-initiative-run-events.sql 文件存在，包含 CREATE TABLE DDL + 复合索引",
+        "[BEHAVIOR] psql 查询确认 initiative_run_events 表存在，含 event_id/initiative_id/node/status/payload/created_at 全列",
+        "[BEHAVIOR] node CHECK 约束拒绝 'step' 等非法值（violates check constraint）",
+        "[BEHAVIOR] status CHECK 约束拒绝 'in_progress' 等禁用别名",
+        "[BEHAVIOR] 复合索引 (initiative_id, created_at) 存在于 pg_indexes"
+      ],
+      "files": [
+        "packages/brain/src/db/migrations/010-initiative-run-events.sql"
+      ],
+      "depends_on": [],
+      "complexity": "S",
+      "estimated_minutes": 20
+    },
+    {
+      "task_id": "ws2",
+      "title": "Brain 新增 SSE + REST harness pipeline 端点",
+      "scope": "在 packages/brain/src/routes/harness.js 末尾新增两个路由：(1) GET /pipeline/:initiative_id/stream — SSE 端点，Content-Type: text/event-stream，支持 after_event_id 断线重连，每 2s 轮询 initiative_run_events 推 event: node_update，每 30s 发 keepalive，pipeline 结束推 event: done {status, verdict}；(2) GET /pipeline/:initiative_id/events — REST 端点，返回 {events:[...]}",
+      "dod": [
+        "[ARTIFACT] harness.js 包含 /pipeline/:initiative_id/stream 路由（SSE）",
+        "[ARTIFACT] harness.js 包含 /pipeline/:initiative_id/events 路由（REST）",
+        "[BEHAVIOR] GET /events 返回 {\"events\":[...]} 顶层 keys == [\"events\"]（不含 data/result/items）",
+        "[BEHAVIOR] GET /events 返回 event 对象含全 6 字段（event_id/initiative_id/node/status/payload/ts）",
+        "[BEHAVIOR] GET /events 未知 initiative_id 返 HTTP 404 + {\"error\":\"...\"} (不含 message)",
+        "[BEHAVIOR] GET /stream 推 event: node_update 含全 6 字段（禁用 type/data/timestamp）",
+        "[BEHAVIOR] GET /stream 已完成 pipeline 推 event: done {status, verdict}（禁用 result）",
+        "[BEHAVIOR] GET /stream 支持 after_event_id 参数（不报 400）"
       ],
       "files": [
         "packages/brain/src/routes/harness.js"
       ],
-      "depends_on": [],
-      "complexity": "M",
-      "estimated_minutes": 45
-    },
-    {
-      "task_id": "ws2",
-      "title": "HarnessPipelineDetailPage.tsx 新增 EventSource hook + SSE 实时日志区",
-      "scope": "在 HarnessPipelineDetailPage.tsx 新增：(1) useEffect 中实例化 EventSource 连接到 /api/brain/harness/stream?planner_task_id={id}，query 参数名必须是字面量 planner_task_id；(2) 监听 node_update 事件，追加日志行（节点 label + ts）到状态数组；(3) 监听 done 事件，显示'Pipeline 已完成 ✅'或'Pipeline 失败 ❌'；(4) cleanup: useEffect return () => es.close()；(5) 日志容器加 data-testid='sse-log'",
-      "dod": [
-        "[BEHAVIOR] EventSource URL 含 planner_task_id= query 参数（Playwright route 拦截验证）",
-        "[BEHAVIOR] [data-testid='sse-log'] 在详情页 toBeVisible",
-        "[BEHAVIOR] node_update 事件后日志区 toContainText('Proposer')",
-        "[BEHAVIOR] done 事件后页面含 'Pipeline 已完成' toBeVisible",
-        "[ARTIFACT] HarnessPipelineDetailPage.tsx 含 data-testid='sse-log'"
-      ],
-      "files": [
-        "apps/dashboard/src/pages/harness-pipeline/HarnessPipelineDetailPage.tsx"
-      ],
       "depends_on": ["ws1"],
       "complexity": "M",
-      "estimated_minutes": 40
+      "estimated_minutes": 50
+    },
+    {
+      "task_id": "ws3",
+      "title": "Dashboard HarnessStreamPage 实时流页面 + 路由注册",
+      "scope": "新建 apps/dashboard/src/pages/harness/HarnessStreamPage.tsx：用 useParams 读 id（initiative_id），创建 EventSource 连接 /api/brain/harness/pipeline/{id}/stream，处理 event: node_update 更新节点状态卡片（pending→running→completed/failed），处理 event: done 关闭连接；在 apps/api/features/system-hub/index.ts routes 数组新增 { path: '/harness/:id', component: 'HarnessStreamPage' }",
+      "dod": [
+        "[ARTIFACT] apps/dashboard/src/pages/harness/HarnessStreamPage.tsx 文件存在",
+        "[ARTIFACT] apps/api/features/system-hub/index.ts 包含 /harness/:id → HarnessStreamPage 路由",
+        "[BEHAVIOR] TypeScript 编译 HarnessStreamPage.tsx 无类型错误（tsc --noEmit）",
+        "[BEHAVIOR] HarnessStreamPage.tsx 包含 new EventSource( 调用",
+        "[BEHAVIOR] HarnessStreamPage.tsx 处理 node_update 事件",
+        "[BEHAVIOR] HarnessStreamPage.tsx 处理 done 事件并调用 .close()",
+        "[BEHAVIOR] HarnessStreamPage.tsx SSE URL 含 harness/pipeline 路径，不含禁用参数 planner_task_id"
+      ],
+      "files": [
+        "apps/dashboard/src/pages/harness/HarnessStreamPage.tsx",
+        "apps/api/features/system-hub/index.ts"
+      ],
+      "depends_on": ["ws2"],
+      "complexity": "M",
+      "estimated_minutes": 45
     }
   ]
 }
