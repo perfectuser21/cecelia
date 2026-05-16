@@ -122,6 +122,66 @@ router.post('/publish-jobs/retry/:id', async (req, res) => {
 });
 
 /**
+ * GET /api/brain/publish/success-rate
+ * 每日发布成功率趋势（来自 publish_success_daily 快照表）
+ * Query: days (default 7, max 90), platform (optional, default all)
+ * Returns: [{date, success_rate, total, completed, failed}, ...]
+ */
+router.get('/success-rate', async (req, res) => {
+  try {
+    const days = Math.min(Math.max(Number(req.query.days) || 7, 1), 90);
+    const { platform } = req.query;
+
+    let rows;
+    if (platform) {
+      const result = await pool.query(
+        `SELECT
+           date::text,
+           total,
+           completed,
+           failed,
+           success_rate
+         FROM publish_success_daily
+         WHERE platform = $1
+           AND date >= CURRENT_DATE - ($2 - 1) * INTERVAL '1 day'
+         ORDER BY date ASC`,
+        [platform, days]
+      );
+      rows = result.rows;
+    } else {
+      const result = await pool.query(
+        `SELECT
+           date::text,
+           SUM(total)::int                                                      AS total,
+           SUM(completed)::int                                                   AS completed,
+           SUM(failed)::int                                                      AS failed,
+           CASE WHEN SUM(total) > 0
+             THEN ROUND(SUM(completed)::numeric / SUM(total) * 100, 2)
+             ELSE NULL
+           END                                                                   AS success_rate
+         FROM publish_success_daily
+         WHERE date >= CURRENT_DATE - ($1 - 1) * INTERVAL '1 day'
+         GROUP BY date
+         ORDER BY date ASC`,
+        [days]
+      );
+      rows = result.rows;
+    }
+
+    res.json(rows.map(r => ({
+      date:         r.date,
+      success_rate: r.success_rate !== null ? Number(r.success_rate) : null,
+      total:        Number(r.total),
+      completed:    Number(r.completed),
+      failed:       Number(r.failed),
+    })));
+  } catch (err) {
+    console.error('[publish] /success-rate 失败:', err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+/**
  * GET /api/brain/publish/stats
  * 返回今日发布统计：成功率、覆盖平台数、各平台状态
  */

@@ -81,10 +81,9 @@ get_task_error() {
 check_publish_log() {
   local task_id="$1"
   curl -sf --max-time 5 \
-    "$BRAIN/api/brain/publish-results?platform=wechat&limit=5" 2>/dev/null \
-    | jq -r --arg tag "$SMOKE_TAG" \
-      '[.[] | select(.metadata.smoke_tag == $tag or (.task_id == $ARGS.positional[0]))] | length' \
-      --args "$task_id" 2>/dev/null || echo "0"
+    "$BRAIN/api/brain/publish-results?platform=wechat&limit=10" 2>/dev/null \
+    | jq -r --arg task_id "$task_id" \
+      '[.results[] | select(.task_id == $task_id)] | length' 2>/dev/null || echo "0"
 }
 
 # ─── 主流程 ───────────────────────────────────────────────────────────────────
@@ -147,6 +146,14 @@ main() {
   [[ -n "$final_error" ]] && printf " 错误信息  : %s\n" "$final_error"
 
   if [[ "$final_status" == "completed" ]]; then
+    # 验证 publish_results 有回写记录（soft check）
+    local log_count
+    log_count=$(check_publish_log "$task_id")
+    if [[ "${log_count}" -gt 0 ]]; then
+      printf " 发布记录  : publish_results 已写入 (%s 条)\n" "$log_count"
+    else
+      printf " 发布记录  : [WARN] publish_results 暂无记录（可能延迟写入）\n"
+    fi
     echo "════════════════════════════════════════════════════════"
     echo " ✅ 冒烟测试通过 — wechat-publisher 端到端可用"
     echo "════════════════════════════════════════════════════════"

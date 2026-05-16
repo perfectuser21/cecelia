@@ -9,6 +9,7 @@ changelog:
   - 1.0.0: ✅ 2026-02-12 完成 - 三种类型全部验证通过（zenithjoy）
   - 1.1.0: 迁移脚本到 cecelia（已废弃）
   - 1.2.0: ✅ 2026-04-11 统一到 zenithjoy - 脚本迁移至 services/creator/scripts/publishers/douyin-publisher/
+  - 1.2.0: 补充 Brain content_publish 任务回调规范（platform_post_id）
 ---
 
 # Douyin Publisher
@@ -112,6 +113,31 @@ export NODE_PATH=/Users/administrator/perfect21/zenithjoy/services/creator/scrip
 
 ---
 
-**版本**: 1.1.0
+## Brain 任务回调（platform_post_id）
+
+当本 skill 作为 Brain `content_publish` 任务（`platform=douyin`）执行时，发布成功后**必须**将 platform_post_id 写回 Brain。
+
+### 提取规则
+
+| 脚本 | 输出样本 | 提取正则 |
+|------|---------|---------|
+| `publish-douyin-image.cjs` | `作品 ID: 7605807641759875624` | `/作品 ID:\s*(\S+)/` |
+| `publish-douyin-video.cjs` | `作品 ID: 7605807641759875624` | `/作品 ID:\s*(\S+)/` |
+
+### 任务 result 格式
+
+发布完成后，在 execution-callback `result` 中包含：
+
+```json
+{
+  "platform_post_id": "7605807641759875624"
+}
+```
+
+Brain 的 `execution.js` 会读取此字段并写入 `zenithjoy.publish_logs.platform_post_id`，供 KR1（非微信7日成功率）统计。
+
+---
+
+**版本**: 1.2.0
 **状态**: ✅ **zenithjoy 统一管理** - 脚本位于 zenithjoy/services/creator/scripts/publishers/douyin-publisher/
 **架构**: Mac mini → xian-mac SCP → Windows CDP → 抖音

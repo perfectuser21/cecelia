@@ -154,6 +154,39 @@ export NODE_PATH=/Users/administrator/perfect21/zenithjoy/services/creator/scrip
 
 ---
 
+## Brain 任务回调（platform_post_id）
+
+当本 skill 作为 Brain `content_publish` 任务（`platform=kuaishou`）执行时，发布成功后**必须**将 platform_post_id 写回 Brain。
+
+### 脚本 JSON 输出格式
+
+`publish-kuaishou-api.cjs` 发布成功后末尾会输出一行机器可读 JSON：
+
+```
+{"ok":true,"platform":"kuaishou","platform_post_id":"<作品ID>","postUrl":"<管理链接>"}
+```
+
+失败时输出：`{"ok":false,"error":"<原因>"}`（通过 exit code 1 或 2 体现）
+
+### 任务完成时必须回写 result（CRITICAL）
+
+agent 在调用 `PATCH /api/brain/tasks/{task_id}` 标记 `completed` 时，**必须**将 `platform_post_id` 包含在 `result` 字段中：
+
+```json
+{
+  "status": "completed",
+  "result": {
+    "platform_post_id": "<作品ID，从脚本 JSON 输出中提取>"
+  }
+}
+```
+
+这是数据回流的关键：Brain 的 `execution.js` 会从 `result` 提取 `platform_post_id` 并写入 `zenithjoy.publish_logs`，供 KR2 验收。
+
+`platform_post_id` 可为 null（如脚本未能提取），Brain 允许空值。
+
+---
+
 **版本**: 1.4.0
 **状态**: ✅ 图文发布 + 视频发布 + OAuth 会话检查 + 批量发布
 **架构**: Mac mini → CDP → Windows PC 浏览器 Cookie → 快手 API

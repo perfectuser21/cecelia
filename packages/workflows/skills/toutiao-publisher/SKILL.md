@@ -208,6 +208,41 @@ ssh mac-mini 'bash ~/scheduler.sh'
 
 ---
 
+## Brain 任务回调（platform_post_id）
+
+当本 skill 作为 Brain `content_publish` 任务（`platform=toutiao`）执行时，发布成功后**必须**将 platform_post_id 写回 Brain。
+
+### 脚本 JSON 输出格式
+
+`publish-toutiao-article.cjs` 无论成功失败，末尾都会输出一行机器可读 JSON：
+
+```
+{"ok":true,"platform":"toutiao","platform_post_id":"<pgc_id>"}
+```
+
+- 文章发布：`platform_post_id` 为 pgc_id（从 URL 参数提取，可能为 null）
+- 视频发布：`platform_post_id` 为 null（功能开发中）
+- 微头条：`platform_post_id` 为 null（浏览器自动化无返回值）
+
+### 任务完成时必须回写 result（CRITICAL）
+
+agent 在调用 `PATCH /api/brain/tasks/{task_id}` 标记 `completed` 时，**必须**将 `platform_post_id` 包含在 `result` 字段中：
+
+```json
+{
+  "status": "completed",
+  "result": {
+    "platform_post_id": "<pgc_id，从脚本 JSON 输出中提取，可为 null>"
+  }
+}
+```
+
+这是数据回流的关键：Brain 的 `execution.js` 会从 `result` 提取 `platform_post_id` 并写入 `zenithjoy.publish_logs`，供 KR2 验收。
+
+`platform_post_id` 允许为 null，Brain 不会因为 null 值报错。
+
+---
+
 **版本**: 8.0.0 (最终版)
 **状态**：✅ **生产就绪** - 微头条/文章/视频三种类型完整验证通过
 **架构**：NAS → Mac mini 调度器 → Windows PC → 今日头条
