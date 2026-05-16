@@ -94,3 +94,17 @@ journey_type: user_facing
     echo "$ERR_BODY" | jq -e '"'"'.error | type == "string"'"'"' || { echo "FAIL: error 字段缺失"; exit 1; }
   '
   期望: exit 0
+
+- [ ] [BEHAVIOR] event: done data 含 status/verdict 字段，status 为 completed 或 failed，无禁用字段 result/type
+  Test: manual:bash -c '
+    DB="${DATABASE_URL:-postgresql://cecelia@localhost/cecelia}"
+    TASK_ID=$(psql "$DB" -t -c "INSERT INTO tasks (task_type, status, payload, result) VALUES ('"'"'harness_dod_b7'"'"', '"'"'completed'"'"', '"'"'{}'"'"'::jsonb, '"'"'{"verdict":"PASS"}'"'"'::jsonb) RETURNING id" | tr -d '"'"' \n'"'"')
+    STREAM=$(curl -N -s --max-time 6 "localhost:5221/api/brain/harness/stream?planner_task_id=$TASK_ID")
+    psql "$DB" -c "DELETE FROM tasks WHERE id='"'"'$TASK_ID'"'"'" >/dev/null 2>&1 || true
+    echo "$STREAM" | grep -q "event: done" || { echo "FAIL: 无 event: done"; exit 1; }
+    DONE_DATA=$(echo "$STREAM" | grep -A1 "event: done" | grep "^data:" | head -1 | sed '"'"'s/^data: //'"'"')
+    echo "$DONE_DATA" | jq -e '"'"'.status == "completed" or .status == "failed"'"'"' || { echo "FAIL: done.status 不合规"; exit 1; }
+    echo "$DONE_DATA" | jq -e '"'"'has("result") | not'"'"' || { echo "FAIL: 禁用字段 result 出现"; exit 1; }
+    echo "$DONE_DATA" | jq -e '"'"'has("type") | not'"'"' || { echo "FAIL: 禁用字段 type 出现"; exit 1; }
+  '
+  期望: exit 0
