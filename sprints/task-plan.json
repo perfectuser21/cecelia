@@ -30,6 +30,7 @@
         "[BEHAVIOR] [data-testid='sse-log'] 在详情页 toBeVisible",
         "[BEHAVIOR] node_update 事件后日志区 toContainText('Proposer')",
         "[BEHAVIOR] done 事件后页面含 'Pipeline 已完成' toBeVisible",
+        "[BEHAVIOR] done.verdict='PASS' 时页面含 'PASS' 文本 toBeVisible（Playwright expect 断言）",
         "[ARTIFACT] HarnessPipelineDetailPage.tsx 含 data-testid='sse-log'"
       ],
       "files": [

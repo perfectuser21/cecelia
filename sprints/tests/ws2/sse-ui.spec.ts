@@ -94,4 +94,10 @@ test.describe('WS2 — SSE 实时日志区 [BEHAVIOR]', () => {
     await page.goto(`/pipeline/${MOCK_TASK_ID}`);
     await expect(page.getByText(/Pipeline 已完成/)).toBeVisible({ timeout: 15_000 });
   });
+
+  test('verdict 显示 — done.verdict="PASS" 时页面含 "PASS" 文本', async ({ page }) => {
+    // SSE_MOCK_BODY 中 done event data 含 "verdict":"PASS"，UI 必须渲染该文本
+    await page.goto(`/pipeline/${MOCK_TASK_ID}`);
+    await expect(page.getByText(/PASS/)).toBeVisible({ timeout: 15_000 });
+  });
 });
