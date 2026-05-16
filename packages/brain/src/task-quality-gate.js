@@ -27,6 +27,12 @@ const ACTION_KEYWORDS = [
 const MIN_DESCRIPTION_LENGTH = 100;
 
 /**
+ * 需要明确指定执行位置（location 字段）的任务类型。
+ * 这些类型依赖外部执行节点，未指定 location 时容易路由到不可用节点后无限重试。
+ */
+const LOCATION_REQUIRED_TASK_TYPES = ['codex_dev', 'arch_review', 'architecture_design', 'architecture_scan'];
+
+/**
  * 验证任务描述质量。
  *
  * @param {string} description - 任务描述
@@ -57,4 +63,32 @@ export function validateTaskDescription(description) {
   };
 }
 
-export { MIN_DESCRIPTION_LENGTH, ACTION_KEYWORDS };
+/**
+ * 验证任务执行环境依赖（拆分标准检查）。
+ *
+ * codex_dev / arch_review 等类型依赖外部执行节点，拆解时必须明确指定执行位置，
+ * 否则路由到不可用节点后会进入 repeated_failure 死循环。
+ * 根因来自 2025-05-16 任务失败分析（task 76effb76 / 3b81416b）。
+ *
+ * @param {{ task_type?: string, location?: string, payload?: object }} task
+ * @returns {{ valid: boolean, reasons: string[] }}
+ */
+export function validateExecutionDependencies(task) {
+  const reasons = [];
+  if (!task || typeof task !== 'object') return { valid: true, reasons: [] };
+
+  const taskType = task.task_type || '';
+  if (LOCATION_REQUIRED_TASK_TYPES.includes(taskType)) {
+    const location = task.location || task.payload?.location;
+    if (!location) {
+      reasons.push(
+        `task_type=${taskType} 需要明确指定 location 字段（如 xian/local），` +
+        '未指定时路由失败将导致 repeated_failure 死循环'
+      );
+    }
+  }
+
+  return { valid: reasons.length === 0, reasons };
+}
+
+export { MIN_DESCRIPTION_LENGTH, ACTION_KEYWORDS, LOCATION_REQUIRED_TASK_TYPES };
