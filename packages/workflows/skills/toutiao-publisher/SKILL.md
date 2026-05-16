@@ -208,6 +208,34 @@ ssh mac-mini 'bash ~/scheduler.sh'
 
 ---
 
+## Brain 任务回调（platform_post_id）
+
+当本 skill 作为 Brain `content_publish` 任务（`platform=toutiao`）执行时，发布成功后**必须**将 platform_post_id 写回 Brain。
+
+### 提取规则
+
+| 类型 | 输出样本 | 提取正则 |
+|------|---------|---------|
+| 文章（article） | `pgc_id: 7605807641759875624` | `/pgc_id[:\s]+(\d+)/` |
+| 视频（video） | `ItemId: 7605807289903595520` | `/ItemId[:\s]+(\d+)/` |
+| 微头条（weitoutiao） | 无 post ID（浏览器自动化无返回值） | 发布成功即可，platform_post_id 置 null |
+
+### 任务 result 格式
+
+发布完成后，在 execution-callback `result` 中包含：
+
+```json
+{
+  "platform_post_id": "7605807641759875624"
+}
+```
+
+微头条无法提取 ID 时，`platform_post_id` 可省略（Brain 允许为 null）。
+
+Brain 的 `execution.js` 会读取此字段并写入 `zenithjoy.publish_logs.platform_post_id`。
+
+---
+
 **版本**: 8.0.0 (最终版)
 **状态**：✅ **生产就绪** - 微头条/文章/视频三种类型完整验证通过
 **架构**：NAS → Mac mini 调度器 → Windows PC → 今日头条

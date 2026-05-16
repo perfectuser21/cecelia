@@ -607,17 +607,23 @@ router.post('/execution-callback', async (req, res) => {
             return;
           }
 
+          // 从 task result 提取 platform_post_id（优先级：platform_post_id > msg_id > media_id > url）
+          const platformPostId = (result !== null && typeof result === 'object')
+            ? (result.platform_post_id || result.msg_id || result.media_id || result.url || null)
+            : null;
+
           await pool.query(
             `INSERT INTO zenithjoy.publish_logs
-               (work_id, platform, status, published_at, response)
-             VALUES ($1, $2, 'published', NOW(), $3)`,
+               (work_id, platform, status, published_at, response, platform_post_id)
+             VALUES ($1, $2, 'published', NOW(), $3, $4)`,
             [
               workId,
               platform,
-              JSON.stringify({ task_id, pipeline_keyword: pipeline_keyword || null, parent_pipeline_id: parent_pipeline_id || null })
+              JSON.stringify({ task_id, pipeline_keyword: pipeline_keyword || null, parent_pipeline_id: parent_pipeline_id || null }),
+              platformPostId
             ]
           );
-          console.log(`[execution-callback] publish_logs 写入成功: work_id=${workId} platform=${platform} keyword=${pipeline_keyword}`);
+          console.log(`[execution-callback] publish_logs 写入成功: work_id=${workId} platform=${platform} keyword=${pipeline_keyword} platform_post_id=${platformPostId}`);
         } catch (plErr) {
           console.warn(`[execution-callback] publish_logs 写入失败（非致命）: ${plErr.message}`);
         }

@@ -154,6 +154,32 @@ export NODE_PATH=/Users/administrator/perfect21/zenithjoy/services/creator/scrip
 
 ---
 
+## Brain 任务回调（platform_post_id）
+
+当本 skill 作为 Brain `content_publish` 任务（`platform=kuaishou`）执行时，发布成功后**必须**将 platform_post_id 写回 Brain。
+
+### 提取规则
+
+| 脚本 | 输出样本 | 提取正则 |
+|------|---------|---------|
+| `publish-kuaishou-api.cjs` | `作品 ID: 7605807641759875624` | `/作品 ID:\s*(\S+)/` |
+| `publish-kuaishou-image.cjs` | `作品 ID: 7605807641759875624` | `/作品 ID:\s*(\S+)/` |
+| `publish-kuaishou-video.cjs` | `作品 ID: 7605807641759875624` | `/作品 ID:\s*(\S+)/` |
+
+### 任务 result 格式
+
+发布完成后，在 execution-callback `result` 中包含：
+
+```json
+{
+  "platform_post_id": "7605807641759875624"
+}
+```
+
+Brain 的 `execution.js` 会读取此字段并写入 `zenithjoy.publish_logs.platform_post_id`。
+
+---
+
 **版本**: 1.4.0
 **状态**: ✅ 图文发布 + 视频发布 + OAuth 会话检查 + 批量发布
 **架构**: Mac mini → CDP → Windows PC 浏览器 Cookie → 快手 API
