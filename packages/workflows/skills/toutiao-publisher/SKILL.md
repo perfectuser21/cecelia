@@ -212,27 +212,34 @@ ssh mac-mini 'bash ~/scheduler.sh'
 
 当本 skill 作为 Brain `content_publish` 任务（`platform=toutiao`）执行时，发布成功后**必须**将 platform_post_id 写回 Brain。
 
-### 提取规则
+### 脚本 JSON 输出格式
 
-| 类型 | 输出样本 | 提取正则 |
-|------|---------|---------|
-| 文章（article） | `pgc_id: 7605807641759875624` | `/pgc_id[:\s]+(\d+)/` |
-| 视频（video） | `ItemId: 7605807289903595520` | `/ItemId[:\s]+(\d+)/` |
-| 微头条（weitoutiao） | 无 post ID（浏览器自动化无返回值） | 发布成功即可，platform_post_id 置 null |
+`publish-toutiao-article.cjs` 无论成功失败，末尾都会输出一行机器可读 JSON：
 
-### 任务 result 格式
+```
+{"ok":true,"platform":"toutiao","platform_post_id":"<pgc_id>"}
+```
 
-发布完成后，在 execution-callback `result` 中包含：
+- 文章发布：`platform_post_id` 为 pgc_id（从 URL 参数提取，可能为 null）
+- 视频发布：`platform_post_id` 为 null（功能开发中）
+- 微头条：`platform_post_id` 为 null（浏览器自动化无返回值）
+
+### 任务完成时必须回写 result（CRITICAL）
+
+agent 在调用 `PATCH /api/brain/tasks/{task_id}` 标记 `completed` 时，**必须**将 `platform_post_id` 包含在 `result` 字段中：
 
 ```json
 {
-  "platform_post_id": "7605807641759875624"
+  "status": "completed",
+  "result": {
+    "platform_post_id": "<pgc_id，从脚本 JSON 输出中提取，可为 null>"
+  }
 }
 ```
 
-微头条无法提取 ID 时，`platform_post_id` 可省略（Brain 允许为 null）。
+这是数据回流的关键：Brain 的 `execution.js` 会从 `result` 提取 `platform_post_id` 并写入 `zenithjoy.publish_logs`，供 KR2 验收。
 
-Brain 的 `execution.js` 会读取此字段并写入 `zenithjoy.publish_logs.platform_post_id`。
+`platform_post_id` 允许为 null，Brain 不会因为 null 值报错。
 
 ---
 

@@ -158,25 +158,32 @@ export NODE_PATH=/Users/administrator/perfect21/zenithjoy/services/creator/scrip
 
 当本 skill 作为 Brain `content_publish` 任务（`platform=kuaishou`）执行时，发布成功后**必须**将 platform_post_id 写回 Brain。
 
-### 提取规则
+### 脚本 JSON 输出格式
 
-| 脚本 | 输出样本 | 提取正则 |
-|------|---------|---------|
-| `publish-kuaishou-api.cjs` | `作品 ID: 7605807641759875624` | `/作品 ID:\s*(\S+)/` |
-| `publish-kuaishou-image.cjs` | `作品 ID: 7605807641759875624` | `/作品 ID:\s*(\S+)/` |
-| `publish-kuaishou-video.cjs` | `作品 ID: 7605807641759875624` | `/作品 ID:\s*(\S+)/` |
+`publish-kuaishou-api.cjs` 发布成功后末尾会输出一行机器可读 JSON：
 
-### 任务 result 格式
+```
+{"ok":true,"platform":"kuaishou","platform_post_id":"<作品ID>","postUrl":"<管理链接>"}
+```
 
-发布完成后，在 execution-callback `result` 中包含：
+失败时输出：`{"ok":false,"error":"<原因>"}`（通过 exit code 1 或 2 体现）
+
+### 任务完成时必须回写 result（CRITICAL）
+
+agent 在调用 `PATCH /api/brain/tasks/{task_id}` 标记 `completed` 时，**必须**将 `platform_post_id` 包含在 `result` 字段中：
 
 ```json
 {
-  "platform_post_id": "7605807641759875624"
+  "status": "completed",
+  "result": {
+    "platform_post_id": "<作品ID，从脚本 JSON 输出中提取>"
+  }
 }
 ```
 
-Brain 的 `execution.js` 会读取此字段并写入 `zenithjoy.publish_logs.platform_post_id`。
+这是数据回流的关键：Brain 的 `execution.js` 会从 `result` 提取 `platform_post_id` 并写入 `zenithjoy.publish_logs`，供 KR2 验收。
+
+`platform_post_id` 可为 null（如脚本未能提取），Brain 允许空值。
 
 ---
 
