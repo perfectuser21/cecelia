@@ -1,4 +1,4 @@
--- Migration 010: initiative_run_events — initiative 执行事件追踪表
+-- Migration 276: initiative_run_events — initiative 执行事件追踪表
 -- 记录 harness initiative 执行过程中各节点状态变更事件
 
 CREATE TABLE IF NOT EXISTS initiative_run_events (
