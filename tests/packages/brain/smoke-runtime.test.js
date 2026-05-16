@@ -33,7 +33,7 @@ describe('smoke-runtime.sh 结构验证', () => {
       // agent
       'agent-execution', 'executor-status', 'cluster-status', 'session-scan', 'session-kill',
       // tick
-      'self-drive', 'tick-loop', 'tick-cleanup-zombie', 'recurring-tasks',
+      'tick-loop', 'tick-cleanup-zombie', 'recurring-tasks',
       'tick-disable', 'tick-enable', 'tick-drain', 'tick-drain-cancel',
       'tick-drain-status', 'tick-execute', 'tick-startup-errors',
     ];

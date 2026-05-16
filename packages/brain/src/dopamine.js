@@ -17,7 +17,6 @@ import pool from './db.js';
 const REWARD_INTENSITY = {
   task_completed: { P0: 1.0, P1: 0.7, P2: 0.5 },
   task_failed: -0.5,
-  self_drive_success: 2.0, // 自驱任务成功 → 双倍基础奖赏
   probe_all_pass: 0.3,
 };
 
@@ -31,7 +30,7 @@ const DECAY_HALF_LIFE_HOURS = 6;
  * 记录一条奖赏信号
  *
  * @param {string} taskId - 关联的任务 ID（可为 null）
- * @param {'task_completed'|'task_failed'|'self_drive_success'|'probe_all_pass'} rewardType
+ * @param {'task_completed'|'task_failed'|'probe_all_pass'} rewardType
  * @param {number} intensity - 奖赏强度（正=正向，负=惩罚）
  * @param {object} [meta={}] - 附加元数据（priority, taskType, skill 等）
  * @returns {Promise<{id: number, intensity: number}>}
@@ -54,7 +53,7 @@ export async function recordReward(taskId, rewardType, intensity, meta = {}, dbP
 
   // 如果是成功类奖赏，检查是否需要强化习惯 pattern
   if (
-    (rewardType === 'task_completed' || rewardType === 'self_drive_success') &&
+    rewardType === 'task_completed' &&
     meta.taskType &&
     meta.skill
   ) {
@@ -181,7 +180,7 @@ async function _checkAndReinforce(taskType, skill) {
   if (rows.length < HABIT_THRESHOLD) return false;
 
   const allSuccess = rows.every(
-    (r) => r.reward_type === 'task_completed' || r.reward_type === 'self_drive_success'
+    (r) => r.reward_type === 'task_completed'
   );
   if (!allSuccess) return false;
 
@@ -447,10 +446,9 @@ export function initDopamineListeners() {
 
       for (const task of result.rows) {
         if (task.status === 'completed') {
-          const isSelfDrive = task.trigger_source === 'self_drive';
-          const rewardType = isSelfDrive ? 'self_drive_success' : 'task_completed';
+          const rewardType = 'task_completed';
           const baseIntensity = REWARD_INTENSITY.task_completed[task.priority] || 0.5;
-          const intensity = isSelfDrive ? baseIntensity * 2 : baseIntensity;
+          const intensity = baseIntensity;
           await recordReward(task.id, rewardType, intensity, {
             title: task.title,
             task_type: task.task_type,
