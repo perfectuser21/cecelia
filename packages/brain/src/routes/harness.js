@@ -721,6 +721,118 @@ async function buildLangGraphInfo(taskId) {
   };
 }
 
+// nodeName → 人类可读 label 映射
+const NODE_LABEL_MAP = {
+  planner: 'Planner',
+  proposer: 'Proposer',
+  reviewer: 'Reviewer',
+  generator: 'Generator',
+  evaluator: 'Evaluator',
+  report: 'Report',
+};
+
+/**
+ * GET /stream?planner_task_id=<uuid>
+ * SSE 实时推送 harness pipeline 节点进度
+ *
+ * event: node_update  data: {attempt, label, node, ts}
+ * event: done         data: {status, verdict}
+ * : keepalive         （每 30s 一次）
+ */
+router.get('/stream', async (req, res) => {
+  const { planner_task_id } = req.query;
+
+  if (!planner_task_id) {
+    return res.status(400).json({ error: 'planner_task_id is required' });
+  }
+
+  let taskRow;
+  try {
+    const { rows } = await pool.query(
+      'SELECT id, status, result FROM tasks WHERE id = $1::uuid LIMIT 1',
+      [planner_task_id]
+    );
+    taskRow = rows[0] || null;
+  } catch {
+    taskRow = null;
+  }
+
+  if (!taskRow) {
+    return res.status(404).json({ error: 'pipeline not found' });
+  }
+
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+  res.flushHeaders();
+
+  let lastSeen = new Date(0);
+  let closed = false;
+  let pollTimer = null;
+  let keepaliveTimer = null;
+
+  const cleanup = () => {
+    closed = true;
+    if (pollTimer) clearInterval(pollTimer);
+    if (keepaliveTimer) clearInterval(keepaliveTimer);
+  };
+
+  res.on('close', cleanup);
+
+  const poll = async () => {
+    if (closed) return;
+    try {
+      const { rows: events } = await pool.query(
+        `SELECT payload, created_at FROM task_events
+         WHERE task_id = $1::uuid AND event_type = 'graph_node_update' AND created_at > $2
+         ORDER BY created_at ASC`,
+        [planner_task_id, lastSeen]
+      );
+
+      for (const evt of events) {
+        if (closed) return;
+        const p = evt.payload;
+        const data = {
+          attempt: p.attemptN,
+          label: NODE_LABEL_MAP[p.nodeName] || p.nodeName || '',
+          node: p.nodeName,
+          ts: new Date(evt.created_at).toISOString(),
+        };
+        res.write(`event: node_update\ndata: ${JSON.stringify(data)}\n\n`);
+        lastSeen = new Date(evt.created_at);
+      }
+
+      const { rows: taskRows } = await pool.query(
+        'SELECT status, result FROM tasks WHERE id = $1::uuid LIMIT 1',
+        [planner_task_id]
+      );
+
+      if (taskRows.length > 0) {
+        const task = taskRows[0];
+        if (task.status === 'completed' || task.status === 'failed') {
+          if (!closed) {
+            const verdict = task.result?.verdict ?? null;
+            res.write(`event: done\ndata: ${JSON.stringify({ status: task.status, verdict })}\n\n`);
+            res.end();
+            cleanup();
+          }
+        }
+      }
+    } catch (err) {
+      console.error('[SSE /stream] poll error:', err.message);
+    }
+  };
+
+  await poll();
+
+  if (!closed) {
+    pollTimer = setInterval(poll, 2000);
+    keepaliveTimer = setInterval(() => {
+      if (!closed) res.write(': keepalive\n\n');
+    }, 30000);
+  }
+});
+
 /**
  * GET /stats
  * Pipeline 统计：最近 30 天的完成率、平均 GAN 轮次、平均耗时
