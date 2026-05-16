@@ -1,49 +1,66 @@
 ---
 skeleton: false
-journey_type: dev_pipeline
+journey_type: user_facing
 ---
-# Contract DoD — Workstream 1: playground/server.js 新增 GET /abs 端点
+# Contract DoD — Workstream 1: Backend SSE stream 端点
 
-**范围**: `playground/server.js` 新增 `/abs` 路由；query 参数名 `n`（严格数字）；成功返回 `{"result": Math.abs(n), "operation": "abs"}`；非法输入返 400 + `{"error":"..."}`
-**大小**: S（< 50 行净增，1 文件）
+**范围**: `packages/brain/src/routes/harness.js` 新增 `GET /stream` 端点；query 参数 `planner_task_id`（UUID）；每 2s 轮询 `task_events` 表推送 `event: node_update`；pipeline 完成/失败时推 `event: done`（含 verdict，keys 恰好 ["status","verdict"]）；每 30s 发 `: keepalive` comment；错误返 400/404
+**大小**: M（100-150 行净增，1 文件）
 **依赖**: 无
+
+## Risks
+
+| # | 风险 | 触发条件 | 缓解 |
+|---|---|---|---|
+| R1 | `task_events` 索引缺失导致 2s 全表扫描 | `task_events` 无 `(task_id, event_type, created_at)` 复合索引 | Generator 实现前确认索引；无则 fallback 5s |
+| R2 | Vite proxy 未路由 SSE 路径截断连接 | `vite.config.ts` proxy 未含 `/api/brain/harness/stream` | CI E2E 直连 `localhost:5221`，绕过 proxy |
+| R3 | SSE 断连 cascade — 并发重连累积 DB 轮询负载 | 网络抖动 + 多用户同时查看 | `res.on('close')` 清理 timer；前端重连加 5s debounce |
+| R4 | 旧浏览器无 EventSource 原生支持 | IE / 旧版 Safari | CI 用 Chromium；生产仅支持现代浏览器 |
 
 ## ARTIFACT 条目
 
-- [x] [ARTIFACT] `playground/server.js` 含 `/abs` 路由处理器
-  Test: node -e "const c=require('fs').readFileSync('/workspace/playground/server.js','utf8');if(!c.includes('/abs'))process.exit(1);console.log('OK')"
+- [x] [ARTIFACT] `packages/brain/src/routes/harness.js` 含 `router.get('/stream'` 路由
+  Test: node -e "const c=require('fs').readFileSync('/workspace/packages/brain/src/routes/harness.js','utf8');if(!c.includes(\"router.get('/stream'\")&&!c.includes('router.get(\"/stream\"'))process.exit(1);console.log('OK')"
 
-- [x] [ARTIFACT] `playground/server.js` 的 /abs handler 使用 `req.query.n` 读取参数（字面量 `n`）
-  Test: node -e "const c=require('fs').readFileSync('/workspace/playground/server.js','utf8');if(!c.includes('req.query.n'))process.exit(1);console.log('OK')"
+- [x] [ARTIFACT] `GET /stream` 路由使用 query 参数名 `planner_task_id`（不含禁用名 id/taskId/task_id/pipeline_id/tid）
+  Test: node -e "const c=require('fs').readFileSync('/workspace/packages/brain/src/routes/harness.js','utf8');const s=c.slice(c.indexOf('/stream'));if(!s.includes('planner_task_id'))process.exit(1);if(/req\.query\.(id|taskId|task_id|pipeline_id|tid)[^_]/.test(s))process.exit(2);console.log('OK')"
 
-- [x] [ARTIFACT] `playground/server.js` 的 /abs handler 响应含字面量 `operation: 'abs'` 或 `operation: "abs"`
-  Test: node -e "const c=require('fs').readFileSync('/workspace/playground/server.js','utf8');if(!c.includes(\"'abs'\")&&!c.includes('\"abs\"'))process.exit(1);console.log('OK')"
+- [x] [ARTIFACT] SSE 响应头正确设置（Content-Type: text/event-stream，Cache-Control: no-cache，Connection: keep-alive）
+  Test: node -e "const c=require('fs').readFileSync('/workspace/packages/brain/src/routes/harness.js','utf8');if(!c.includes('text/event-stream'))process.exit(1);console.log('OK')"
 
-- [x] [ARTIFACT] B42 warn+fallback 逻辑存在于 harness-gan.graph.js（propose_branch mismatch 改 warn 不 abort，#2972 修复点）
-  Test: grep -rqE "(WARN|warn).*propose_branch|propose_branch.*(WARN|warn)|mismatch.*(warn|WARN)" /workspace/packages/brain/src/workflows/harness-gan.graph.js
+- [x] [ARTIFACT] 路由实现含 `res.on('close'` 或 `req.on('close'` 清理 setInterval（防 R3 断连 cascade）
+  Test: node -e "const c=require('fs').readFileSync('/workspace/packages/brain/src/routes/harness.js','utf8');if(!c.includes('.on(\"close\"')&&!c.includes(\"on('close'\"))process.exit(1);console.log('OK')"
 
 ## BEHAVIOR 条目（内嵌可执行 manual: 命令，禁止只索引 vitest）
 
-- [x] [BEHAVIOR] GET /abs?n=-5 返回 `{"result":5,"operation":"abs"}` — result 字段值严格校验
-  Test: manual:bash -c 'cd /workspace/playground && PLAYGROUND_PORT=3091 node server.js & SPID=$!; sleep 2; RESP=$(curl -fs "localhost:3091/abs?n=-5"); R=$(echo "$RESP" | jq -e ".result == 5" > /dev/null && echo OK); kill $SPID 2>/dev/null; [ "$R" = "OK" ]'
+- [x] [BEHAVIOR] GET /stream?planner_task_id=<valid> 返回 HTTP 200 Content-Type: text/event-stream
+  Test: manual:bash -c 'TEST_ID=$(PGPASSWORD=cecelia_test PGUSER=cecelia PGHOST=localhost psql -d cecelia_test -t -c "INSERT INTO tasks (task_type,status,payload,title,created_at) VALUES ('"'"'harness_task'"'"','"'"'in_progress'"'"','"'"'{}'"'"','"'"'B1 Conn Test'"'"',NOW()) RETURNING id" | tr -d " \n"); TEST_ID=${TEST_ID%%INSERT*}; curl -sI --max-time 3 "localhost:5221/api/brain/harness/stream?planner_task_id=$TEST_ID" > /tmp/b1h.txt; node -e "const h=require(\"fs\").readFileSync(\"/tmp/b1h.txt\",\"utf8\").toLowerCase();if(!h.includes(\"content-type: text/event-stream\"))process.exit(1);process.stdout.write(\"OK\\n\")"'
   期望: OK (exit 0)
 
-- [x] [BEHAVIOR] GET /abs?n=-5 operation 字段字面量 "abs" — 禁用 absolute/absoluteValue/abs_value
-  Test: manual:bash -c 'cd /workspace/playground && PLAYGROUND_PORT=3092 node server.js & SPID=$!; sleep 2; RESP=$(curl -fs "localhost:3092/abs?n=-5"); R=$(echo "$RESP" | jq -e ".operation == \"abs\"" > /dev/null && echo OK); kill $SPID 2>/dev/null; [ "$R" = "OK" ]'
+- [x] [BEHAVIOR] node_update event — `node` 字段值等于 task_events.payload.nodeName（"proposer"），`attempt` 等于 attemptN（1）
+  Test: manual:bash -c 'DB=cecelia_test; TEST_ID=$(PGPASSWORD=cecelia_test PGUSER=cecelia PGHOST=localhost psql -d $DB -t -c "INSERT INTO tasks (task_type,status,payload,title,created_at) VALUES ('"'"'harness_task'"'"','"'"'completed'"'"','"'"'{}'"'"','"'"'B2 NodeVal'"'"',NOW()) RETURNING id" | tr -d " \n"); TEST_ID=${TEST_ID%%INSERT*}; PGPASSWORD=cecelia_test PGUSER=cecelia PGHOST=localhost psql -d $DB -c "INSERT INTO task_events (task_id,event_type,payload,created_at) VALUES ('"'"'$TEST_ID'"'"','"'"'graph_node_update'"'"','"'"'{\"initiativeId\":\"t\",\"threadId\":\"t\",\"nodeName\":\"proposer\",\"attemptN\":1,\"payloadSummary\":{}}'"'"'::jsonb, NOW()-interval '"'"'1 second'"'"')"; timeout 8 curl -sN -H "Accept: text/event-stream" "localhost:5221/api/brain/harness/stream?planner_task_id=$TEST_ID" > /tmp/b2.txt 2>&1 || true; node -e "const fs=require(\"fs\");const lines=fs.readFileSync(\"/tmp/b2.txt\",\"utf8\").split(\"\\n\");const d=lines.filter(l=>l.startsWith(\"data:\")).map(l=>{try{return JSON.parse(l.slice(6))}catch(e){return null}}).filter(Boolean).find(o=>\"node\" in o);if(!d){process.stdout.write(\"FAIL: no node_update\\n\");process.exit(1);}if(d.node!==\"proposer\"||d.attempt!==1){process.stdout.write(\"FAIL\\n\");process.exit(1);}process.stdout.write(\"OK\\n\")"'
   期望: OK (exit 0)
 
-- [x] [BEHAVIOR] GET /abs?n=-5 schema 完整性 — keys 恰好等于 ["operation","result"]，不允许多余字段
-  Test: manual:bash -c 'cd /workspace/playground && PLAYGROUND_PORT=3093 node server.js & SPID=$!; sleep 2; RESP=$(curl -fs "localhost:3093/abs?n=-5"); R=$(echo "$RESP" | jq -e "keys == [\"operation\",\"result\"]" > /dev/null && echo OK); kill $SPID 2>/dev/null; [ "$R" = "OK" ]'
+- [x] [BEHAVIOR] node_update event — `label` 类型 string，`ts` 类型 string，keys 恰好 ["attempt","label","node","ts"]
+  Test: manual:bash -c 'node -e "const fs=require(\"fs\");const lines=fs.readFileSync(\"/tmp/b2.txt\",\"utf8\").split(\"\\n\");const d=lines.filter(l=>l.startsWith(\"data:\")).map(l=>{try{return JSON.parse(l.slice(6))}catch(e){return null}}).filter(Boolean).find(o=>\"node\" in o);if(!d){process.stdout.write(\"FAIL: no node_update (run B2 first)\\n\");process.exit(1);}if(typeof d.label!==\"string\"||typeof d.ts!==\"string\"){process.stdout.write(\"FAIL: type\\n\");process.exit(1);}const k=Object.keys(d).sort().join(\",\");if(k!==\"attempt,label,node,ts\"){process.stdout.write(\"FAIL keys: \"+k+\"\\n\");process.exit(1);}process.stdout.write(\"OK\\n\")"'
   期望: OK (exit 0)
 
-- [x] [BEHAVIOR] 禁用字段 value/answer/data 反向检查 — response 中均不存在
-  Test: manual:bash -c 'cd /workspace/playground && PLAYGROUND_PORT=3094 node server.js & SPID=$!; sleep 2; RESP=$(curl -fs "localhost:3094/abs?n=-5"); R=$(echo "$RESP" | jq -e "has(\"value\") | not" > /dev/null && echo "$RESP" | jq -e "has(\"answer\") | not" > /dev/null && echo OK); kill $SPID 2>/dev/null; [ "$R" = "OK" ]'
+- [x] [BEHAVIOR] node_update event — 全部 PRD 禁用字段均不存在：`name`/`nodeName`/`step`/`phase`/`stage`/`time`/`timestamp`/`type`
+  Test: manual:bash -c 'node -e "const fs=require(\"fs\");const lines=fs.readFileSync(\"/tmp/b2.txt\",\"utf8\").split(\"\\n\");const d=lines.filter(l=>l.startsWith(\"data:\")).map(l=>{try{return JSON.parse(l.slice(6))}catch(e){return null}}).filter(Boolean).find(o=>\"node\" in o);if(!d){process.stdout.write(\"FAIL: no node_update\\n\");process.exit(1);}const banned=[\"name\",\"nodeName\",\"step\",\"phase\",\"stage\",\"time\",\"timestamp\",\"type\"];const found=banned.filter(k=>k in d);if(found.length){process.stdout.write(\"FAIL: banned fields: \"+found.join(\",\")+\"\\n\");process.exit(1);}process.stdout.write(\"OK\\n\")"'
   期望: OK (exit 0)
 
-- [x] [BEHAVIOR] error path — GET /abs?n=foo（非数字）返回 HTTP 400 且 body 含 `error` 字段、禁用 `message`/`msg`/`reason`
-  Test: manual:bash -c 'cd /workspace/playground && PLAYGROUND_PORT=3095 node server.js & SPID=$!; sleep 2; curl -s -o /tmp/err_body_foo.json -w "%{http_code}" "localhost:3095/abs?n=foo" > /tmp/err_code_foo.txt; CODE=$(cat /tmp/err_code_foo.txt); kill $SPID 2>/dev/null; [ "$CODE" = "400" ] && jq -e "has(\"error\")" /tmp/err_body_foo.json && jq -e "has(\"message\") | not" /tmp/err_body_foo.json'
-  期望: exit 0
+- [x] [BEHAVIOR] done event — `verdict` 字段值 ∈ {PASS, FAIL, null}，且 keys 恰好 ["status","verdict"]（不多不少）
+  Test: manual:bash -c 'node -e "const fs=require(\"fs\");const lines=fs.readFileSync(\"/tmp/b2.txt\",\"utf8\").split(\"\\n\");let doneData=null;for(let i=0;i<lines.length;i++){if(lines[i]===\"event: done\"&&lines[i+1]&&lines[i+1].startsWith(\"data:\")){try{doneData=JSON.parse(lines[i+1].slice(6))}catch(e){}break;}}if(!doneData){process.stdout.write(\"FAIL: no event: done\\n\");process.exit(1);}const v=doneData.verdict;if(v!==\"PASS\"&&v!==\"FAIL\"&&v!==null){process.stdout.write(\"FAIL: bad verdict\\n\");process.exit(1);}const k=Object.keys(doneData).sort().join(\",\");if(k!==\"status,verdict\"){process.stdout.write(\"FAIL: done keys: \"+k+\"\\n\");process.exit(1);}process.stdout.write(\"OK\\n\")"'
+  期望: OK (exit 0)
 
-- [x] [BEHAVIOR] error path — GET /abs（缺少 n 参数）返回 HTTP 400 且 body 含 `error` 字段、禁用 `message`/`msg`/`reason`
-  Test: manual:bash -c 'cd /workspace/playground && PLAYGROUND_PORT=3096 node server.js & SPID=$!; sleep 2; curl -s -o /tmp/err_body_no_n.json -w "%{http_code}" "localhost:3096/abs" > /tmp/err_code_no_n.txt; CODE=$(cat /tmp/err_code_no_n.txt); kill $SPID 2>/dev/null; [ "$CODE" = "400" ] && jq -e "has(\"error\")" /tmp/err_body_no_n.json && jq -e "has(\"message\") | not" /tmp/err_body_no_n.json'
-  期望: exit 0
+- [x] [BEHAVIOR] error path — GET /stream（缺少 planner_task_id）返回 HTTP 400，body 含 `error` 字段（string），无 `message`/`msg` 禁用字段
+  Test: manual:bash -c 'CODE=$(curl -s -o /tmp/b6_err.json -w "%{http_code}" "localhost:5221/api/brain/harness/stream"); [ "$CODE" = "400" ] || { printf "FAIL: expected 400 got %s\n" "$CODE"; exit 1; }; jq -e '"'"'has("error") and (.error | type == "string")'"'"' /tmp/b6_err.json && jq -e '"'"'has("message") | not'"'"' /tmp/b6_err.json && jq -e '"'"'has("msg") | not'"'"' /tmp/b6_err.json && printf "OK\n" || exit 1'
+  期望: OK (exit 0)
+
+- [x] [BEHAVIOR] error path — GET /stream?planner_task_id=00000000-0000-0000-0000-000000000000（不存在 UUID）返回 HTTP 404，body `.error == "pipeline not found"`
+  Test: manual:bash -c 'FAKE=00000000-0000-0000-0000-000000000000; CODE=$(curl -s -o /tmp/b7_nf.json -w "%{http_code}" "localhost:5221/api/brain/harness/stream?planner_task_id=$FAKE"); [ "$CODE" = "404" ] || { printf "FAIL: expected 404 got %s\n" "$CODE"; exit 1; }; jq -e '"'"'.error == "pipeline not found"'"'"' /tmp/b7_nf.json && printf "OK\n" || exit 1'
+  期望: OK (exit 0)
+
+- [x] [BEHAVIOR] keepalive — in_progress pipeline 保持连接 32s 内收到至少 1 行 `: keepalive` SSE comment
+  Test: manual:bash -c 'ALIVE_ID=$(PGPASSWORD=cecelia_test PGUSER=cecelia PGHOST=localhost psql -d cecelia_test -t -c "INSERT INTO tasks (task_type,status,payload,title,created_at) VALUES ('"'"'harness_task'"'"','"'"'in_progress'"'"','"'"'{}'"'"','"'"'KA B8'"'"',NOW()) RETURNING id" | tr -d " \n"); ALIVE_ID=${ALIVE_ID%%INSERT*}; timeout 32 curl -sN -H "Accept: text/event-stream" "localhost:5221/api/brain/harness/stream?planner_task_id=$ALIVE_ID" > /tmp/b8_ka.txt 2>&1 || true; node -e "const c=require(\"fs\").readFileSync(\"/tmp/b8_ka.txt\",\"utf8\");if(!c.split(\"\\n\").some(l=>l===\":  keepalive\"||l===\": keepalive\")){process.stdout.write(\"FAIL: no keepalive\\n\");process.exit(1);}process.stdout.write(\"OK\\n\")"'
+  期望: OK (exit 0)

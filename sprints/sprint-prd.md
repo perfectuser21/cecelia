@@ -1,101 +1,94 @@
-# Sprint PRD — B42 验证重跑：完整 harness pipeline（Phase A→B→C）
+# Sprint PRD — Harness Pipeline 实时 Streaming 前台可见性
 
 ## OKR 对齐
 
-- **对应 KR**：N/A（Brain API 不可达，跳过 OKR 关联）
-- **当前进度**：N/A
-- **本次推进预期**：验证 B42 修复后 propose_branch mismatch 不再阻断 harness pipeline
+- **对应 KR**：KR-3（Harness 可靠性 — pipeline 可观测性）
+- **当前进度**：N/A（Brain API 不可达）
+- **本次推进预期**：dashboard 用户无需手动刷新即可看到 harness pipeline 节点实时执行状态
 
 ## 背景
 
-B42 修复已合并（#2972）：propose_branch mismatch 从 abort 改为 warn+fallback，buildProposerPrompt 注入确定性字面量分支名。
-本 sprint 以 playground GET /abs 端点为载体，触发完整三阶段 harness pipeline（Phase A GAN → Phase B generator → Phase C evaluator），验证 mismatch 容错机制在真实流程中正确生效。
+Harness pipeline 执行时，`executor.js` 已通过 `emitGraphNodeUpdate` 将每个图节点完成事件写入 `task_events` 表（`event_type='graph_node_update'`）。但 dashboard 的 `HarnessPipelineDetailPage` 仅在页面加载时获取一次数据，`HarnessPipelinePage` 每 15 秒轮询一次。用户无法实时看到节点推进，debug 体验差。
 
 ## Golden Path（核心场景）
 
-系统从 [harness pipeline 启动，Brain 触发 Phase A Proposer GAN] → 经过 [Phase B generator 实现 /abs 端点，Phase C evaluator 验证响应 schema] → 到达 [pipeline 输出 DONE，全程无 propose_branch mismatch abort]
+用户打开运行中 pipeline 的详情页 → 页面自动建立 SSE 连接 → 每当一个 harness 图节点执行完成，日志区实时追加一行（节点名 + 时间戳 + 简要 payload）→ pipeline 结束时 SSE 自动关闭，日志区显示"Pipeline 已完成"。
 
-具体：
-1. harness Phase A：planner PRD 传给 proposer，proposer GAN 产出 sprint 合同，propose_branch 注入字面量值
-2. Phase A propose_branch 若发生 mismatch → 记录 warn 日志，fallback 继续，不 abort
-3. harness Phase B：generator 在 `playground/server.js` 实现 GET /abs 端点
-4. harness Phase C：evaluator 启动 playground，curl GET /abs?n=-5 → 验证响应 `{"result":5,"operation":"abs"}`
-5. evaluator 输出 PASS/DONE，pipeline 记录 completed，无 abort 阻断
+具体步骤：
+1. 用户打开 `/pipeline/:id`，`HarnessPipelineDetailPage` 发起 `EventSource` 连接到 `GET /api/brain/harness/stream?planner_task_id={id}`
+2. Brain SSE 端点从 `task_events` 表按 `created_at` 轮询新 `graph_node_update` 行（每 2s 一次），以 `data:` 格式推送
+3. 前端收到事件 → 追加到页面"实时日志"区，显示节点名（中文标签）和时间
+4. pipeline 对应 task 状态变为 `completed`/`failed` 时，SSE 发送 `event: done` 然后服务端关闭连接
+5. 用户看到"Pipeline 已完成 ✅"或"Pipeline 失败 ❌"，日志区停止滚动
 
 ## Response Schema
 
-### Endpoint: GET /abs
+### Endpoint: GET /api/brain/harness/stream
 
 **Query Parameters**:
-- `n` (number-as-string, 必填): 待取绝对值的数字（可为负数、零、正数）
-- **禁用 query 名**: `num`, `value`, `x`, `input`, `number`, `val`, `a`, `v`
-- **强约束**: generator 必须字面用 `n` 作为 query param 名；用错 query 名 endpoint 应返 400 或 NaN
+- `planner_task_id` (string, 必填): pipeline 的 planner task ID（UUID）
+- **禁用 query 名**: `id`/`taskId`/`task_id`/`pipeline_id`/`tid`
 
-**Success (HTTP 200)**:
-```json
-{"result": 5, "operation": "abs"}
+**SSE Event Stream（Content-Type: text/event-stream）**:
+
+普通节点更新事件（`event: node_update`）:
 ```
-- `result` (number, 必填): 输入数字的绝对值（`Math.abs(n)`），类型为 number 非 string
-- `operation` (string, 必填): 字面量 `abs`，禁用变体 `absolute`/`absoluteValue`/`abs_value`/`op`/`method`
-- **禁用响应字段名**: `value`/`answer`/`data`/`output`/`res`/`response`/`number`
+event: node_update
+data: {"node":"proposer","label":"Proposer","attempt":1,"ts":"2026-05-16T10:00:00Z"}
+```
+- `node` (string, 必填): 节点英文名（如 `planner`/`proposer`/`reviewer`/`generator`/`evaluator`/`report`）
+- `label` (string, 必填): 节点中文标签
+- `attempt` (number, 必填): 第几次尝试（≥1）
+- `ts` (string, 必填): ISO 8601 时间戳
+- **禁用字段名**: `name`/`nodeName`/`step`/`phase`/`stage`/`time`/`timestamp`
 
-**Error (HTTP 400)**:
+完成事件（`event: done`）:
+```
+event: done
+data: {"status":"completed","verdict":"PASS"}
+```
+- `status`: `completed` | `failed`
+- `verdict`: `PASS` | `FAIL` | `null`
+
+错误事件（HTTP 400/404）:
 ```json
 {"error": "<string>"}
 ```
-- 必有 `error` key，禁用 `message`/`msg`/`reason` 等替代
+- 必有 `error` key，禁用 `message`/`msg`
 
-**Schema 完整性**: response 顶层 keys 必须**完全等于** `["result", "operation"]`，不允许多余字段
+**禁用响应字段名**: `data`/`payload`/`result`/`event_type`/`type`（SSE `event:` 行已表达类型）
+
+**Keepalive**: 每 30s 发一行 `: keepalive` comment（空事件，维持连接）
 
 ## 边界情况
 
-- `n=-5` → `{"result":5,"operation":"abs"}`（负数正常取绝对值）
-- `n=0` → `{"result":0,"operation":"abs"}`（零不变）
-- `n=3` → `{"result":3,"operation":"abs"}`（正数不变）
-- propose_branch mismatch 发生时 → 日志含 `[WARN]` 标记，pipeline 继续运行不 abort
-- Phase A 到 Phase C 全程无 process.exit / throw 阻断
+- `planner_task_id` 不存在 → HTTP 404 `{"error":"pipeline not found"}`
+- pipeline 已完成 → 推送所有历史 `graph_node_update` 事件后立即发 `event: done` 关闭
+- SSE 断连 → 前端 EventSource 自动重连（浏览器原生行为；后端无需额外处理）
+- 同一 pipeline 无新事件 → 保持连接 + 30s keepalive comment
 
 ## 范围限定
 
 **在范围内**：
-- `playground/server.js` 新增 GET /abs 端点
-- 完整运行 harness Phase A（planner+proposer GAN）→ Phase B（generator）→ Phase C（evaluator）
-- 验证 propose_branch mismatch warn+fallback 机制（B42 验证点）
+- `packages/brain/src/routes/harness.js` 新增 `GET /stream` 端点
+- `apps/dashboard/src/pages/harness-pipeline/HarnessPipelineDetailPage.tsx` 新增实时日志区（EventSource）
 
 **不在范围内**：
-- 修改 harness pipeline 核心逻辑（B42 已完成）
-- 新增其他 playground 端点
-- 修改 evaluator 判断逻辑
+- 修改 `emitGraphNodeUpdate` 写入逻辑
+- WebSocket 推送（已有 ws 系统不纳入，SSE 已足够）
+- pipeline 列表页（`HarnessPipelinePage.tsx`）的 15s 轮询改造
+- 历史 pipeline 回放 UI（复杂交互，不在本 sprint）
 
 ## 假设
 
-- [ASSUMPTION: Brain API 不可达，OKR 关联跳过]
-- [ASSUMPTION: B42 修复已在 #2972 合并，pipeline 代码已包含 warn+fallback]
-- [ASSUMPTION: playground 目录可写，server.js 可正常扩展新端点]
+- [ASSUMPTION: `task_events` 表有索引 `(task_id, event_type, created_at)`，2s 轮询不会造成性能问题]
+- [ASSUMPTION: Brain API 在 `localhost:5221` 上运行，dashboard 通过 Vite proxy 访问]
+- [ASSUMPTION: dashboard 已有 EventSource polyfill 或目标浏览器原生支持]
 
 ## 预期受影响文件
 
-- `playground/server.js`: 新增 GET /abs 端点实现
+- `packages/brain/src/routes/harness.js`: 新增 SSE stream 端点 `/stream`
+- `apps/dashboard/src/pages/harness-pipeline/HarnessPipelineDetailPage.tsx`: 新增实时日志区 + EventSource hook
 
-## E2E 验收
-
-```bash
-# ✅ 启 playground + 测 /abs 端点（不使用 Brain 端口 5221）
-cd playground && PLAYGROUND_PORT=3001 node server.js & SPID=$!
-sleep 2
-
-# 验证负数
-curl -f "localhost:3001/abs?n=-5" | jq -e '.result == 5 and .operation == "abs"'
-
-# 验证零
-curl -f "localhost:3001/abs?n=0" | jq -e '.result == 0 and .operation == "abs"'
-
-# 验证正数
-curl -f "localhost:3001/abs?n=3" | jq -e '.result == 3 and .operation == "abs"'
-
-kill $SPID
-echo "✅ playground /abs 验证通过"
-```
-
-## journey_type: dev_pipeline
-## journey_type_reason: 主要目标是验证 harness pipeline B42 修复（propose_branch mismatch warn+fallback）在三阶段流程中正确生效，playground /abs 作为运行载体
+## journey_type: user_facing
+## journey_type_reason: 入口是 dashboard 详情页（`apps/dashboard/`），用户直接感知实时节点推进
