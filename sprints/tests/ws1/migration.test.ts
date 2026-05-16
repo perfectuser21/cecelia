@@ -1,61 +1,70 @@
 /**
- * WS1 TDD Red Phase — initiative_run_events DB migration
- * 迁移文件尚未创建，以下所有 test 应 FAIL
- * Generator 执行 migration 后变 Green
+ * WS1: DB Migration — initiative_run_events 表
+ * TDD Red: 测试 migration 文件存在且 DDL 符合 PRD schema
+ * Generator 创建 packages/brain/migrations/276_initiative_run_events.sql 后变 Green
  */
 import { describe, it, expect } from 'vitest';
-import { readFileSync, existsSync } from 'node:fs';
-import { join } from 'node:path';
+import { existsSync, readFileSync } from 'fs';
+import { resolve } from 'path';
 
-const REPO_ROOT = join(import.meta.dirname, '../../../');
-const MIGRATION_FILE = join(REPO_ROOT, 'packages/brain/src/db/migrations/010-initiative-run-events.sql');
+const MIGRATION_PATH = resolve('packages/brain/migrations/276_initiative_run_events.sql');
 
-describe('WS1 — initiative_run_events migration [BEHAVIOR]', () => {
-  it('migration 文件存在', () => {
-    expect(existsSync(MIGRATION_FILE), `文件不存在: ${MIGRATION_FILE}`).toBe(true);
+describe('Workstream 1 — DB Migration [BEHAVIOR]', () => {
+  it('[ARTIFACT] migration 文件 276_initiative_run_events.sql 存在', () => {
+    expect(existsSync(MIGRATION_PATH)).toBe(true);
   });
 
-  it('DDL 包含 CREATE TABLE initiative_run_events', () => {
-    const content = readFileSync(MIGRATION_FILE, 'utf-8');
-    expect(content).toContain('CREATE TABLE initiative_run_events');
+  it('[ARTIFACT] migration 包含 CREATE TABLE initiative_run_events', () => {
+    const sql = readFileSync(MIGRATION_PATH, 'utf-8');
+    expect(sql).toContain('CREATE TABLE initiative_run_events');
   });
 
-  it('DDL 包含 event_id UUID PRIMARY KEY', () => {
-    const content = readFileSync(MIGRATION_FILE, 'utf-8');
-    expect(content).toMatch(/event_id\s+UUID.*PRIMARY KEY/i);
+  it('[ARTIFACT] migration DDL 包含 id uuid PRIMARY KEY（PRD: id 非 event_id）', () => {
+    const sql = readFileSync(MIGRATION_PATH, 'utf-8');
+    expect(sql).toMatch(/\bid\b.*uuid.*PRIMARY KEY|PRIMARY KEY.*gen_random_uuid/i);
+    expect(sql).not.toMatch(/\bevent_id\b.*PRIMARY KEY/);
   });
 
-  it('DDL 包含 initiative_id UUID NOT NULL 列', () => {
-    const content = readFileSync(MIGRATION_FILE, 'utf-8');
-    expect(content).toContain('initiative_id');
-    expect(content).toMatch(/initiative_id\s+UUID\s+NOT NULL/i);
+  it('[ARTIFACT] migration DDL 包含 initiative_id uuid NOT NULL', () => {
+    const sql = readFileSync(MIGRATION_PATH, 'utf-8');
+    expect(sql).toContain('initiative_id');
+    expect(sql).toMatch(/initiative_id\s+uuid\s+NOT NULL/i);
   });
 
-  it('DDL 包含 node CHECK 约束枚举值', () => {
-    const content = readFileSync(MIGRATION_FILE, 'utf-8');
-    expect(content).toContain('planner');
-    expect(content).toContain('proposer');
-    expect(content).toContain('reviewer');
-    expect(content).toContain('generator');
-    expect(content).toContain('evaluator');
-    expect(content).toContain('report');
+  it('[ARTIFACT] migration DDL 包含 node varchar NOT NULL', () => {
+    const sql = readFileSync(MIGRATION_PATH, 'utf-8');
+    expect(sql).toMatch(/node\s+varchar/i);
+    expect(sql).toMatch(/node.*NOT NULL/i);
   });
 
-  it('DDL 包含 status CHECK 约束枚举值（含 failed，禁用 in_progress）', () => {
-    const content = readFileSync(MIGRATION_FILE, 'utf-8');
-    expect(content).toContain('pending');
-    expect(content).toContain('running');
-    expect(content).toContain('completed');
-    expect(content).toContain('failed');
-    // 不应包含禁用别名
-    expect(content).not.toContain('in_progress');
-    expect(content).not.toContain("'done'");
+  it('[ARTIFACT] migration DDL 包含 status varchar NOT NULL', () => {
+    const sql = readFileSync(MIGRATION_PATH, 'utf-8');
+    expect(sql).toMatch(/status\s+varchar/i);
+    expect(sql).toMatch(/status.*NOT NULL/i);
   });
 
-  it('DDL 包含复合索引 (initiative_id, created_at)', () => {
-    const content = readFileSync(MIGRATION_FILE, 'utf-8');
-    expect(content).toContain('initiative_id');
-    expect(content).toContain('created_at');
-    expect(content).toMatch(/CREATE INDEX.*initiative_run_events/i);
+  it('[ARTIFACT] migration DDL 包含 payload jsonb', () => {
+    const sql = readFileSync(MIGRATION_PATH, 'utf-8');
+    expect(sql).toContain('payload');
+    expect(sql).toContain('jsonb');
+  });
+
+  it('[ARTIFACT] migration DDL 包含 created_at timestamptz NOT NULL DEFAULT NOW()', () => {
+    const sql = readFileSync(MIGRATION_PATH, 'utf-8');
+    expect(sql).toContain('created_at');
+    expect(sql).toMatch(/timestamptz|timestamp with time zone/i);
+    expect(sql).toMatch(/created_at.*NOT NULL/i);
+  });
+
+  it('[ARTIFACT] migration 包含复合索引 (initiative_id, created_at)', () => {
+    const sql = readFileSync(MIGRATION_PATH, 'utf-8');
+    expect(sql).toContain('CREATE INDEX');
+    expect(sql).toMatch(/initiative_id.*created_at|created_at.*initiative_id/);
+  });
+
+  it('[BEHAVIOR] migration 不含额外 CHECK 约束（PRD DDL 无 CHECK）', () => {
+    const sql = readFileSync(MIGRATION_PATH, 'utf-8');
+    const checkCount = (sql.match(/CHECK\s*\(/gi) || []).length;
+    expect(checkCount).toBe(0);
   });
 });
