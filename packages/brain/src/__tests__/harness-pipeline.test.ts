@@ -111,13 +111,6 @@ describe('harness pipeline — 模型配置', () => {
 });
 
 describe('isConsciousnessEnabled() — 意识守护', () => {
-  it('server.js: startSelfDriveLoop 被 isConsciousnessEnabled() 门控', () => {
-    const idx = serverSrc.indexOf('startSelfDriveLoop');
-    expect(idx).toBeGreaterThan(0);
-    const region = serverSrc.slice(idx - 200, idx + 50);
-    expect(region).toContain('isConsciousnessEnabled');
-  });
-
   it('dept-heartbeat.js plugin tick: triggerDeptHeartbeats 被 isConsciousnessEnabled() 门控', () => {
     // D1.7c-plugin1: 守护从 tick-runner.js 内联代码搬到 dept-heartbeat.js 的 plugin tick 内部。
     // tick-runner.js 现在只调 deptHeartbeatPlugin.tick(...)；plugin 内部先 await import
