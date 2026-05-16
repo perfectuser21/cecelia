@@ -118,7 +118,9 @@ export async function runSelfCheck(pool, opts = {}) {
     record('Core Tables', false, err.message);
   }
 
-  // 5. Schema version matches expected (only pure numeric migration versions, ignore dirty data)
+  // 5. Schema version gate: EXPECTED_SCHEMA_VERSION is the minimum acceptable version.
+  //    DB ahead of code (DB > expected) = forward-compatible, warn but pass.
+  //    DB behind code (DB < expected) = true error, fail.
   try {
     const { rows } = await pool.query(
       `SELECT MAX(version) AS max_ver FROM schema_version WHERE version ~ '^[0-9]{1,4}$'`
@@ -126,7 +128,11 @@ export async function runSelfCheck(pool, opts = {}) {
     const maxVer = rows[0]?.max_ver;
     const dbVerNum = parseInt(maxVer, 10);
     const expectedVerNum = parseInt(EXPECTED_SCHEMA_VERSION, 10);
-    const versionOk = !isNaN(dbVerNum) && dbVerNum >= expectedVerNum;
+    const dbValid = !isNaN(dbVerNum);
+    const versionOk = dbValid && dbVerNum >= expectedVerNum;
+    if (dbValid && dbVerNum > expectedVerNum) {
+      console.warn(`  [WARN] Schema Version: DB="${maxVer}" is ahead of code expected="${EXPECTED_SCHEMA_VERSION}" — forward-compatible, but consider updating EXPECTED_SCHEMA_VERSION`);
+    }
     record(
       'Schema Version',
       versionOk,

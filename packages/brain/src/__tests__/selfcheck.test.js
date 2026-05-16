@@ -151,12 +151,26 @@ describe('selfcheck', () => {
     expect(EXPECTED_SCHEMA_VERSION).toBe('275');
   });
 
-  it('should pass when DB schema version is ahead of expected (>= check)', async () => {
+  it('should pass (with warn) when DB schema version is ahead of expected', async () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const pool = makeMockPool({
       'schema_version': { rows: [{ max_ver: '999' }] },
     });
     const ok = await runSelfCheck(pool, { envRegion: 'us' });
     expect(ok).toBe(true);
+    const warnLines = warnSpy.mock.calls.flat().filter(s => typeof s === 'string' && s.includes('is ahead of code expected'));
+    expect(warnLines.length).toBeGreaterThan(0);
+    warnSpy.mockRestore();
+  });
+
+  it('should pass without warn when DB schema version exactly matches expected', async () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const pool = makeMockPool();
+    const ok = await runSelfCheck(pool, { envRegion: 'us' });
+    expect(ok).toBe(true);
+    const schemaWarnLines = warnSpy.mock.calls.flat().filter(s => typeof s === 'string' && s.includes('is ahead of code expected'));
+    expect(schemaWarnLines.length).toBe(0);
+    warnSpy.mockRestore();
   });
 
   describe('Watchdog RSS Sanity Check', () => {
