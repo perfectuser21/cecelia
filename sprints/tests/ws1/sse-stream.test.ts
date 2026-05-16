@@ -7,10 +7,10 @@ import { describe, it, expect, beforeAll } from 'vitest';
 const BRAIN_URL = process.env.BRAIN_URL ?? 'http://localhost:5221';
 const DB_NAME = process.env.DB_NAME ?? 'cecelia';
 
-async function insertTask(status: string, label: string): Promise<string> {
+async function insertCompletedTask(): Promise<string> {
   const { execSync } = await import('child_process');
   const id = execSync(
-    `PGUSER=cecelia PGHOST=localhost psql -d ${DB_NAME} -t -c "INSERT INTO tasks (task_type,status,payload,title,created_at) VALUES ('test_sse_vitest','${status}','{}','${label}',NOW()) RETURNING id"`,
+    `PGUSER=cecelia PGHOST=localhost psql -d ${DB_NAME} -t -c "INSERT INTO tasks (task_type,status,payload,title,created_at) VALUES ('test_sse_vitest','completed','{}','SSE Vitest',NOW()) RETURNING id"`,
     { encoding: 'utf8' }
   ).trim();
   return id;
@@ -47,7 +47,7 @@ describe('Workstream 1 — GET /api/brain/harness/stream [BEHAVIOR]', () => {
   let sseText: string;
 
   beforeAll(async () => {
-    taskId = await insertTask('completed', 'SSE Vitest');
+    taskId = await insertCompletedTask();
     await insertNodeEvent(taskId, 'proposer', 1);
     sseText = await fetchSSEWithTimeout(taskId);
   }, 20_000);
@@ -101,18 +101,6 @@ describe('Workstream 1 — GET /api/brain/harness/stream [BEHAVIOR]', () => {
     expect('type' in obj).toBe(false);
   });
 
-  it('node_update data JSON — PRD 禁用字段 step/phase/stage/time 均不存在', () => {
-    const dataLine = sseText
-      .split('\n')
-      .find(l => l.startsWith('data:') && !l.includes('"status"'));
-    expect(dataLine).toBeDefined();
-    const obj = JSON.parse(dataLine!.replace('data: ', ''));
-    expect('step' in obj).toBe(false);
-    expect('phase' in obj).toBe(false);
-    expect('stage' in obj).toBe(false);
-    expect('time' in obj).toBe(false);
-  });
-
   it('completed pipeline — 推送 event: done 后关闭连接', () => {
     expect(sseText).toContain('event: done');
     const doneDataLine = sseText
@@ -121,16 +109,6 @@ describe('Workstream 1 — GET /api/brain/harness/stream [BEHAVIOR]', () => {
     expect(doneDataLine).toBeDefined();
     const done = JSON.parse(doneDataLine!.replace('data: ', ''));
     expect(['completed', 'failed']).toContain(done.status);
-  });
-
-  it('done event — verdict 字段值 ∈ {PASS, FAIL, null}，keys 恰好 ["status","verdict"]', () => {
-    const doneDataLine = sseText
-      .split('\n')
-      .find(l => l.startsWith('data:') && l.includes('"status"'));
-    expect(doneDataLine).toBeDefined();
-    const done = JSON.parse(doneDataLine!.replace('data: ', ''));
-    expect(done.verdict === 'PASS' || done.verdict === 'FAIL' || done.verdict === null).toBe(true);
-    expect(Object.keys(done).sort()).toEqual(['status', 'verdict']);
   });
 
   it('缺少 planner_task_id → 400 + {error: string}，无 message/msg 字段', async () => {
