@@ -33,7 +33,7 @@ while IFS= read -r sha; do
   [ -z "$sha" ] && continue
   CHANGED=$(git diff-tree --no-commit-id --name-only -r "$sha" 2>/dev/null || true)
 
-  HAS_TEST=$(echo "$CHANGED" | grep -E '\.(test|spec)\.js$|/__tests__/' || true)
+  HAS_TEST=$(echo "$CHANGED" | grep -E '\.(test|spec)\.(js|ts)$|/__tests__/' || true)
   HAS_SRC=$(echo "$CHANGED" \
     | grep -E '^packages/brain/src/.*\.js$' \
     | grep -vE '\.(test|spec)\.js$|/__tests__/' \
