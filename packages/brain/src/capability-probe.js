@@ -403,8 +403,19 @@ async function probeRumination() {
           loopDeadContext += ` self_heal_fail=${healErr.message.slice(0, 60)}`;
           console.warn('[Probe] rumination self-heal failed:', healErr.message);
         }
+        // Wave 2: consciousness loop 由 consciousness-loop.js 调度 rumination，
+        // 重新启用 consciousness 后必须同步重启该 loop，否则 loop timer 仍为 null
+        try {
+          const { startConsciousnessLoop } = await import('./consciousness-loop.js');
+          startConsciousnessLoop();
+          loopDeadContext += ' self_heal=consciousness_loop_restarted';
+          console.log('[Probe] rumination loop_dead self-heal: consciousness loop restarted');
+        } catch (loopErr) {
+          loopDeadContext += ` self_heal_loop_fail=${loopErr.message.slice(0, 40)}`;
+          console.warn('[Probe] rumination consciousness loop restart failed:', loopErr.message);
+        }
       } else {
-        // Case B: consciousness 已启用但 runRumination 未被调用 → 直接运行解堵
+        // Case B: consciousness 已启用但 runRumination 未被调用 → 直接运行解堵 + 重启 loop
         try {
           const { runRumination } = await import('./rumination.js');
           const healResult = await runRumination(pool);
@@ -414,6 +425,16 @@ async function probeRumination() {
         } catch (healErr) {
           loopDeadContext += ` self_heal_fail=${healErr.message.slice(0, 60)}`;
           console.warn('[Probe] rumination self-heal direct_run failed:', healErr.message);
+        }
+        // Wave 2: consciousness loop 可能也未启动 → 尝试重启
+        try {
+          const { startConsciousnessLoop } = await import('./consciousness-loop.js');
+          startConsciousnessLoop();
+          loopDeadContext += ' self_heal=consciousness_loop_restarted';
+          console.log('[Probe] rumination loop_dead self-heal: consciousness loop restarted (Case B)');
+        } catch (loopErr) {
+          loopDeadContext += ` self_heal_loop_fail=${loopErr.message.slice(0, 40)}`;
+          console.warn('[Probe] rumination consciousness loop restart failed (Case B):', loopErr.message);
         }
       }
     }
