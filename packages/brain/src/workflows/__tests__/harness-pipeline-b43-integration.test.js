@@ -57,8 +57,9 @@ vi.mock('../../lib/git-fence.js', () => ({
   ),
 }));
 vi.mock('node:fs/promises', () => ({
-  default: { readFile: (...a) => mockReadFile(...a) },
+  default: { readFile: (...a) => mockReadFile(...a), readdir: vi.fn().mockResolvedValue([]) },
   readFile: (...a) => mockReadFile(...a),
+  readdir: vi.fn().mockResolvedValue([]),
 }));
 vi.mock('../../orchestrator/pg-checkpointer.js', () => ({
   getPgCheckpointer: vi.fn().mockResolvedValue(new MemorySaver()),

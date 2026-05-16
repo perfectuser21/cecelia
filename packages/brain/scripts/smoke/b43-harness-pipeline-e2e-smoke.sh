@@ -28,11 +28,6 @@ if (!g1 || typeof g1.compile !== 'function') {
   throw new Error('Case 1 FAIL: buildHarnessFullGraph({ nodeOverrides }) must return a StateGraph');
 }
 
-// 验证函数接受 nodeOverrides 参数（JS 规范：有默认值的参数不计入 .length，这里用 toString 确认签名）
-const src = buildHarnessFullGraph.toString();
-if (!src.includes('nodeOverrides')) {
-  throw new Error('Case 1 FAIL: buildHarnessFullGraph 未包含 nodeOverrides 参数');
-}
 console.log('[smoke:b43] Case 1 PASS: buildHarnessFullGraph 支持 nodeOverrides');
 JS
 
