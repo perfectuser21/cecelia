@@ -1,201 +1,183 @@
-# Sprint Contract Draft (Round 3)
+# Sprint Contract Draft (Round 1)
 
 ## Golden Path
 
-[harness Phase A：Proposer GAN 产出合同，propose_branch 注入字面量值] → [Phase B：generator 在 playground/server.js 实现 GET /abs 端点] → [Phase C：evaluator 启动 playground，curl GET /abs?n=-5 验证响应严格 schema] → [evaluator 输出 PASS/DONE，pipeline 记录 completed，全程无 abort 阻断]
+[用户打开 `/pipeline/:id`] → [页面建立 SSE 连接到 `/api/brain/harness/stream?planner_task_id={id}`] → [Backend 每 2s 轮询 task_events 推送 `event: node_update`] → [前端实时日志区追加节点名+时间] → [pipeline 完成时 SSE 推 `event: done`，前端显示"Pipeline 已完成 ✅"]
 
 ---
 
-### Step 1: generator 在 playground/server.js 新增 GET /abs 端点
+### Step 1: 用户打开详情页，建立 SSE 连接
 
-**可观测行为**: `playground/server.js` 中存在 `/abs` 路由处理器，query 参数名字面量为 `n`，成功返回 `{"result": <number>, "operation": "abs"}`
+**可观测行为**: `HarnessPipelineDetailPage` 向 `GET /api/brain/harness/stream?planner_task_id={id}` 发起 EventSource 连接；服务端返回 `Content-Type: text/event-stream`，HTTP 200
 
 **验证命令**:
 ```bash
-grep -qE "app\.get\(['\"]\/abs" /workspace/playground/server.js || { echo "FAIL: /abs 路由不存在"; exit 1; }
-grep -qE "req\.query\.n" /workspace/playground/server.js || { echo "FAIL: query 参数名不是 n"; exit 1; }
-echo "✅ Step 1 静态验证通过"
+TEST_ID=$(PGUSER=cecelia PGHOST=localhost psql -d cecelia -t -c \
+  "INSERT INTO tasks (task_type,status,payload,title,created_at) VALUES ('test_sse_probe','in_progress','{}','SSE Conn Test',NOW()) RETURNING id" \
+  | tr -d ' \n')
+# 后台连接，取 HTTP 响应头中的状态码
+HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" --max-time 3 \
+  -H "Accept: text/event-stream" \
+  "localhost:5221/api/brain/harness/stream?planner_task_id=$TEST_ID") || true
+[ "$HTTP_CODE" = "200" ] || { echo "FAIL: HTTP $HTTP_CODE (expected 200)"; exit 1; }
+echo "✅ Step 1 验证通过"
 ```
 
-**硬阈值**: `/abs` 路由存在 + query 名为 `n`
+**硬阈值**: HTTP 200, Content-Type: text/event-stream
 
 ---
 
-### Step 2: GET /abs?n=-5 返回严格 schema `{"result":5,"operation":"abs"}`
+### Step 2: Backend 每 2s 轮询 task_events，推送 node_update 事件
 
-**可观测行为**: 负数输入 n=-5 → `{"result":5,"operation":"abs"}`，类型 number + string，keys 完全等于 `["operation","result"]`
+**可观测行为**: Brain 从 `task_events` 表读取 `event_type='graph_node_update'` 行，转换并推送 `event: node_update` SSE 事件；payload 含 `node`/`label`/`attempt`/`ts` 4 个字段，无禁用字段名
 
 **验证命令**:
 ```bash
-cd /workspace/playground && PLAYGROUND_PORT=3091 node server.js & SPID=$!
-sleep 2
-
-RESP=$(curl -fs "localhost:3091/abs?n=-5")
-echo "$RESP" | jq -e '.result == 5' || { echo "FAIL: result 值错误"; kill $SPID; exit 1; }
-echo "$RESP" | jq -e '.operation == "abs"' || { echo "FAIL: operation 值错误"; kill $SPID; exit 1; }
-echo "$RESP" | jq -e '.result | type == "number"' || { echo "FAIL: result 类型非 number"; kill $SPID; exit 1; }
-echo "$RESP" | jq -e 'keys == ["operation","result"]' || { echo "FAIL: keys 不完整或有多余"; kill $SPID; exit 1; }
-
-kill $SPID
+TEST_ID=$(PGUSER=cecelia PGHOST=localhost psql -d cecelia -t -c \
+  "INSERT INTO tasks (task_type,status,payload,title,created_at) VALUES ('test_sse_probe','completed','{}','SSE Schema Test',NOW()) RETURNING id" \
+  | tr -d ' \n')
+PGUSER=cecelia PGHOST=localhost psql -d cecelia -c "
+  INSERT INTO task_events (task_id,event_type,payload,created_at)
+  VALUES ('$TEST_ID','graph_node_update',
+    '{\"initiativeId\":\"test\",\"threadId\":\"t1\",\"nodeName\":\"proposer\",\"attemptN\":1,\"payloadSummary\":{}}'::jsonb,
+    NOW() - interval '1 second')"
+timeout 8 curl -sN -H "Accept: text/event-stream" \
+  "localhost:5221/api/brain/harness/stream?planner_task_id=$TEST_ID" > /tmp/sse_step2.txt 2>&1 || true
+DATA=$(grep "^data:" /tmp/sse_step2.txt | grep -v '"status"' | head -1 | sed 's/^data: //')
+[ -n "$DATA" ] || { echo "FAIL: 未收到 node_update 事件"; cat /tmp/sse_step2.txt; exit 1; }
+echo "$DATA" | jq -e '.node == "proposer"' || { echo "FAIL: node 字段"; exit 1; }
+echo "$DATA" | jq -e '.label | type == "string"' || { echo "FAIL: label 类型"; exit 1; }
+echo "$DATA" | jq -e '.attempt == 1' || { echo "FAIL: attempt 字段"; exit 1; }
+echo "$DATA" | jq -e '.ts | type == "string"' || { echo "FAIL: ts 类型"; exit 1; }
 echo "✅ Step 2 验证通过"
 ```
 
-**硬阈值**: `result == 5`（number），`operation == "abs"`，`keys == ["operation","result"]`
+**硬阈值**: `node`/`label`/`attempt`/`ts` 字段全部存在且类型正确
 
 ---
 
-### Step 3: 边界值验证（零、正数）
+### Step 3: node_update 事件 Schema 完整性 + 禁用字段反向校验
 
-**可观测行为**: n=0 → `{"result":0,"operation":"abs"}`；n=3 → `{"result":3,"operation":"abs"}`
+**可观测行为**: `event: node_update` 的 `data:` JSON 顶层 keys 恰好为 `["attempt","label","node","ts"]`（字母序），不含 `name`/`nodeName`/`timestamp`/`step`/`phase`/`type` 等禁用字段
 
 **验证命令**:
 ```bash
-cd /workspace/playground && PLAYGROUND_PORT=3092 node server.js & SPID=$!
-sleep 2
-
-RESP0=$(curl -fs "localhost:3092/abs?n=0")
-echo "$RESP0" | jq -e '.result == 0 and .operation == "abs"' || { echo "FAIL: 零值边界失败"; kill $SPID; exit 1; }
-
-RESP3=$(curl -fs "localhost:3092/abs?n=3")
-echo "$RESP3" | jq -e '.result == 3 and .operation == "abs"' || { echo "FAIL: 正数边界失败"; kill $SPID; exit 1; }
-
-kill $SPID
+DATA=$(grep "^data:" /tmp/sse_step2.txt | grep -v '"status"' | head -1 | sed 's/^data: //')
+[ -n "$DATA" ] || { echo "FAIL: 无缓存 SSE 数据（先跑 Step 2）"; exit 1; }
+echo "$DATA" | jq -e 'keys == ["attempt","label","node","ts"]' || { echo "FAIL: keys 不完整或有多余"; exit 1; }
+echo "$DATA" | jq -e 'has("name") | not' || { echo "FAIL: 禁用字段 name 漏网"; exit 1; }
+echo "$DATA" | jq -e 'has("nodeName") | not' || { echo "FAIL: 禁用字段 nodeName 漏网"; exit 1; }
+echo "$DATA" | jq -e 'has("timestamp") | not' || { echo "FAIL: 禁用字段 timestamp 漏网"; exit 1; }
 echo "✅ Step 3 验证通过"
 ```
 
-**硬阈值**: n=0 → result=0，n=3 → result=3，operation 均为 "abs"
+**硬阈值**: `keys == ["attempt","label","node","ts"]`，3 个禁用字段均不存在
 
 ---
 
-### Step 4: 禁用字段反向 + error path（含 body 格式验证）
+### Step 4: pipeline 完成时推 `event: done` 并关闭连接
 
-**可观测行为**: response 中不存在 `value`/`answer`/`data` 等禁用字段；n=foo（非数字）→ HTTP 400 + `{"error":"<string>"}` 且 body **禁用** `message`/`msg`/`reason` 字段
+**可观测行为**: 当 task.status = `completed`，SSE 推送所有历史事件后发送 `event: done` + `data: {"status":"completed","verdict":...}`，服务端关闭连接
 
 **验证命令**:
 ```bash
-cd /workspace/playground && PLAYGROUND_PORT=3093 node server.js & SPID=$!
-sleep 2
-
-RESP=$(curl -fs "localhost:3093/abs?n=-5")
-echo "$RESP" | jq -e 'has("value") | not' || { echo "FAIL: 禁用字段 value 漏网"; kill $SPID; exit 1; }
-echo "$RESP" | jq -e 'has("answer") | not' || { echo "FAIL: 禁用字段 answer 漏网"; kill $SPID; exit 1; }
-echo "$RESP" | jq -e 'has("data") | not' || { echo "FAIL: 禁用字段 data 漏网"; kill $SPID; exit 1; }
-
-# error path — 验证 400 状态码 + body 含 error 字段 + 禁用 message 字段
-curl -s -o /tmp/err_body.json -w "%{http_code}" "localhost:3093/abs?n=foo" > /tmp/err_code.txt
-CODE=$(cat /tmp/err_code.txt)
-[ "$CODE" = "400" ] || { echo "FAIL: 非数字未返 400，实际=$CODE"; kill $SPID; exit 1; }
-jq -e 'has("error")' /tmp/err_body.json || { echo "FAIL: error body 缺 error 字段"; kill $SPID; exit 1; }
-jq -e 'has("message") | not' /tmp/err_body.json || { echo "FAIL: error body 含禁用字段 message"; kill $SPID; exit 1; }
-
-kill $SPID
+grep -q "^event: done" /tmp/sse_step2.txt || { echo "FAIL: 未收到 event: done"; cat /tmp/sse_step2.txt; exit 1; }
+DONE_DATA=$(grep -A1 "^event: done" /tmp/sse_step2.txt | grep "^data:" | sed 's/^data: //')
+echo "$DONE_DATA" | jq -e '.status == "completed" or .status == "failed"' || { echo "FAIL: done.status 非法值"; exit 1; }
 echo "✅ Step 4 验证通过"
 ```
 
-**硬阈值**: 禁用字段不存在；n=foo → HTTP 400 + `has("error")=true` + `has("message")=false`
+**硬阈值**: `event: done` 存在，`data.status ∈ {completed, failed}`
 
 ---
 
-### Step 5: propose_branch mismatch warn+fallback 验证（B42 验证点）
+### Step 5: 前端实时日志区显示节点名+时间，完成时显示"Pipeline 已完成 ✅"
 
-**可观测行为**: harness pipeline 源码中 propose_branch mismatch 处理为 warn+fallback 而非 abort
+**可观测行为**: Playwright 打开详情页，模拟 SSE 注入 node_update + done 事件，验证：(a) `[data-testid="sse-log"]` 可见；(b) 日志行含节点 label 文本；(c) 完成消息含"Pipeline 已完成"
 
 **验证命令**:
 ```bash
-grep -rqE "(WARN|warn).*propose_branch|propose_branch.*(WARN|warn)|mismatch.*(warn|WARN)" \
-  /workspace/packages/brain/src/workflows/harness-gan.graph.js || \
-  { echo "FAIL: 未找到 warn+fallback 逻辑（B42 修复点）"; exit 1; }
-echo "✅ Step 5 B42 warn+fallback 存在"
+lsof -i:5211 2>/dev/null | grep LISTEN || \
+  (cd /workspace/apps/dashboard && npm run dev -- --port 5211 > /tmp/dashboard.log 2>&1 & sleep 8)
+cd /workspace && npx playwright test /workspace/sprints/tests/ws2/sse-ui.spec.ts \
+  --project=chromium --base-url http://localhost:5211 --timeout=60000 2>&1
+echo "✅ Step 5 验证通过"
 ```
 
-**硬阈值**: 源码含 warn+fallback 逻辑，grep 返回 exit 0
-
----
-
-## Risks
-
-### Risk 1: Step 5 grep pattern 不够精确
-
-**描述**: B42 warn 日志可能用不同大小写或格式记录 mismatch，grep pattern 可能漏匹配。
-
-**Mitigation**: pattern 含 WARN/warn 双写 + propose_branch/mismatch 双路径，已足够覆盖常见实现风格；实测 harness-gan.graph.js:327 已匹配（`console.warn` + `propose_branch mismatch`）。
-
-### Risk 2: playground 端口冲突
-
-**描述**: 多步骤使用不同端口（3091-3096），避免残留进程造成假绿。
-
-**Mitigation**: 各步骤使用独立端口；E2E 脚本启动前清理端口残留；`curl -f` 确保 HTTP 5xx 非 0 exit。
-
-### Risk 3: error response body format 漂移
-
-**描述**: generator 实现 /abs 时可能将 400 错误响应字段命名为 `message`/`msg`/`reason` 而非 PRD 要求的 `error`，仅校验 HTTP 状态码无法检测此漂移（R1 实证漏洞）。
-
-**Mitigation**: DoD [BEHAVIOR]5 和 [BEHAVIOR]6 已补充 `jq -e 'has("error")'` 正向验 + `jq -e 'has("message") | not'` 反向禁用字段检查，两条断言同时过才 PASS。
+**硬阈值**: Playwright 全部断言通过（exit 0）
 
 ---
 
 ## E2E 验收（最终 Evaluator 跑）
 
-**journey_type**: dev_pipeline
+**journey_type**: user_facing
 
 **完整验证脚本**:
 ```bash
 #!/bin/bash
 set -e
+DB=cecelia
 
-lsof -ti:3095 | xargs kill -9 2>/dev/null || true
+# === 准备测试数据 ===
+echo "[e2e] 创建 completed planner task..."
+TEST_ID=$(PGUSER=cecelia PGHOST=localhost psql -d $DB -t -c \
+  "INSERT INTO tasks (task_type,status,payload,title,created_at)
+   VALUES ('test_sse_e2e','completed','{}'::jsonb,'SSE E2E',NOW())
+   RETURNING id" | tr -d ' \n')
+[ -n "$TEST_ID" ] || { echo "FAIL: DB 插入失败"; exit 1; }
+echo "[e2e] task_id=$TEST_ID"
 
-cd /workspace/playground
-PLAYGROUND_PORT=3095 node server.js & SPID=$!
-sleep 2
+PGUSER=cecelia PGHOST=localhost psql -d $DB -c "
+  INSERT INTO task_events (task_id,event_type,payload,created_at) VALUES
+  ('$TEST_ID','graph_node_update',
+   '{\"initiativeId\":\"test\",\"threadId\":\"t1\",\"nodeName\":\"proposer\",\"attemptN\":1,\"payloadSummary\":{}}'::jsonb,
+   NOW() - interval '2 seconds'),
+  ('$TEST_ID','graph_node_update',
+   '{\"initiativeId\":\"test\",\"threadId\":\"t1\",\"nodeName\":\"generator\",\"attemptN\":1,\"payloadSummary\":{}}'::jsonb,
+   NOW() - interval '1 second')"
 
-# 1. result 字段值（负数）
-RESP=$(curl -fs "localhost:3095/abs?n=-5")
-echo "$RESP" | jq -e '.result == 5' || { echo "FAIL: result 值错误"; kill $SPID; exit 1; }
+# === 验证 Backend SSE ===
+echo "[e2e] 验证 SSE 端点..."
+timeout 10 curl -sN -H "Accept: text/event-stream" \
+  "localhost:5221/api/brain/harness/stream?planner_task_id=$TEST_ID" > /tmp/sse_e2e.txt 2>&1 || true
 
-# 2. operation 字段值
-echo "$RESP" | jq -e '.operation == "abs"' || { echo "FAIL: operation 值错误"; kill $SPID; exit 1; }
+NODE_DATA=$(grep "^data:" /tmp/sse_e2e.txt | grep -v '"status"' | head -1 | sed 's/^data: //')
+[ -n "$NODE_DATA" ] || { echo "FAIL: 未收到 node_update 事件"; cat /tmp/sse_e2e.txt; exit 1; }
 
-# 3. result 类型为 number
-echo "$RESP" | jq -e '.result | type == "number"' || { echo "FAIL: result 非 number 类型"; kill $SPID; exit 1; }
+echo "$NODE_DATA" | jq -e '.node == "proposer"' || { echo "FAIL: node 字段错误"; exit 1; }
+echo "$NODE_DATA" | jq -e '.label | type == "string"' || { echo "FAIL: label 非 string"; exit 1; }
+echo "$NODE_DATA" | jq -e '.attempt == 1' || { echo "FAIL: attempt 错误"; exit 1; }
+echo "$NODE_DATA" | jq -e '.ts | type == "string"' || { echo "FAIL: ts 非 string"; exit 1; }
+echo "$NODE_DATA" | jq -e 'keys == ["attempt","label","node","ts"]' || { echo "FAIL: keys 不完整"; exit 1; }
+echo "$NODE_DATA" | jq -e 'has("name") | not' || { echo "FAIL: 禁用字段 name"; exit 1; }
+echo "$NODE_DATA" | jq -e 'has("nodeName") | not' || { echo "FAIL: 禁用字段 nodeName"; exit 1; }
+echo "$NODE_DATA" | jq -e 'has("timestamp") | not' || { echo "FAIL: 禁用字段 timestamp"; exit 1; }
+grep -q "^event: done" /tmp/sse_e2e.txt || { echo "FAIL: 未收到 event: done"; exit 1; }
+DONE_DATA=$(grep -A1 "^event: done" /tmp/sse_e2e.txt | grep "^data:" | sed 's/^data: //')
+echo "$DONE_DATA" | jq -e '.status == "completed"' || { echo "FAIL: done.status 非 completed"; exit 1; }
 
-# 4. schema 完整性 — keys 恰好 ["operation","result"]
-echo "$RESP" | jq -e 'keys == ["operation","result"]' || { echo "FAIL: schema keys 不符"; kill $SPID; exit 1; }
+# error path — 缺少 planner_task_id → 400
+ERR_CODE=$(curl -s -o /tmp/sse_err.json -w "%{http_code}" "localhost:5221/api/brain/harness/stream")
+[ "$ERR_CODE" = "400" ] || { echo "FAIL: 缺参数未返 400 (got $ERR_CODE)"; exit 1; }
+jq -e 'has("error")' /tmp/sse_err.json || { echo "FAIL: 400 body 无 error 字段"; exit 1; }
+jq -e 'has("message") | not' /tmp/sse_err.json || { echo "FAIL: 400 body 含禁用字段 message"; exit 1; }
 
-# 5. 禁用字段 value/answer 反向
-echo "$RESP" | jq -e 'has("value") | not' || { echo "FAIL: 禁用字段 value 漏网"; kill $SPID; exit 1; }
-echo "$RESP" | jq -e 'has("answer") | not' || { echo "FAIL: 禁用字段 answer 漏网"; kill $SPID; exit 1; }
+# error path — 未知 UUID → 404
+FAKE_ID="00000000-0000-0000-0000-000000000000"
+NF_CODE=$(curl -s -o /tmp/sse_nf.json -w "%{http_code}" \
+  "localhost:5221/api/brain/harness/stream?planner_task_id=$FAKE_ID")
+[ "$NF_CODE" = "404" ] || { echo "FAIL: 未知 ID 未返 404 (got $NF_CODE)"; exit 1; }
+jq -e '.error == "pipeline not found"' /tmp/sse_nf.json || { echo "FAIL: 404 error 消息不符"; exit 1; }
 
-# 6. 零值边界
-RESP0=$(curl -fs "localhost:3095/abs?n=0")
-echo "$RESP0" | jq -e '.result == 0 and .operation == "abs"' || { echo "FAIL: 零值边界失败"; kill $SPID; exit 1; }
+# === 验证 Frontend（Playwright）===
+echo "[e2e] 验证前端日志区..."
+lsof -i:5211 2>/dev/null | grep LISTEN || \
+  (cd /workspace/apps/dashboard && npm run dev -- --port 5211 > /tmp/dashboard.log 2>&1 & sleep 8)
+cd /workspace && npx playwright test /workspace/sprints/tests/ws2/sse-ui.spec.ts \
+  --project=chromium --base-url http://localhost:5211 --timeout=60000
 
-# 7. 正数边界
-RESP3=$(curl -fs "localhost:3095/abs?n=3")
-echo "$RESP3" | jq -e '.result == 3 and .operation == "abs"' || { echo "FAIL: 正数边界失败"; kill $SPID; exit 1; }
-
-# 8. error path — 非数字 → 400 + body {error:string} + 禁用 message 字段
-curl -s -o /tmp/e2e_err_foo.json -w "%{http_code}" "localhost:3095/abs?n=foo" > /tmp/e2e_code_foo.txt
-CODE=$(cat /tmp/e2e_code_foo.txt)
-[ "$CODE" = "400" ] || { echo "FAIL: 非数字未返 400，实际=$CODE"; kill $SPID; exit 1; }
-jq -e 'has("error")' /tmp/e2e_err_foo.json || { echo "FAIL: error body 缺 error 字段（非数字路径）"; kill $SPID; exit 1; }
-jq -e 'has("message") | not' /tmp/e2e_err_foo.json || { echo "FAIL: error body 含禁用字段 message（非数字路径）"; kill $SPID; exit 1; }
-
-# 9. error path — 缺少 n 参数 → 400 + body {error:string} + 禁用 message 字段
-curl -s -o /tmp/e2e_err_no_n.json -w "%{http_code}" "localhost:3095/abs" > /tmp/e2e_code_no_n.txt
-CODE2=$(cat /tmp/e2e_code_no_n.txt)
-[ "$CODE2" = "400" ] || { echo "FAIL: 缺少 n 未返 400，实际=$CODE2"; kill $SPID; exit 1; }
-jq -e 'has("error")' /tmp/e2e_err_no_n.json || { echo "FAIL: error body 缺 error 字段（缺 n 路径）"; kill $SPID; exit 1; }
-jq -e 'has("message") | not' /tmp/e2e_err_no_n.json || { echo "FAIL: error body 含禁用字段 message（缺 n 路径）"; kill $SPID; exit 1; }
-
-kill $SPID
-
-# 10. B42 warn+fallback 静态验证（propose_branch mismatch 不 abort）
-grep -rqE "(WARN|warn).*propose_branch|propose_branch.*(WARN|warn)|mismatch.*(warn|WARN)" \
-  /workspace/packages/brain/src/workflows/harness-gan.graph.js || \
-  { echo "FAIL: B42 warn+fallback 逻辑不存在于 harness-gan.graph.js"; exit 1; }
-
-echo "✅ Golden Path 全部验证通过（含 B42 warn+fallback 静态核查）"
+echo ""
+echo "✅ Golden Path E2E 全部验证通过"
 ```
 
 **通过标准**: 脚本 exit 0
@@ -204,45 +186,25 @@ echo "✅ Golden Path 全部验证通过（含 B42 warn+fallback 静态核查）
 
 ## Workstreams
 
-workstream_count: 1
+workstream_count: 2
 
-### Workstream 1: playground/server.js 新增 GET /abs 端点
+### Workstream 1: Backend SSE stream 端点
 
-**范围**: `playground/server.js` 新增 `/abs` 路由：query 参数 `n`（严格数字），成功返回 `{"result": Math.abs(n), "operation": "abs"}`，非法输入返 400 + `{"error":"..."}`
-**大小**: S（< 50 行净增，1 文件）
+**范围**: `packages/brain/src/routes/harness.js` 新增 `GET /stream` 端点；每 2s 轮询 `task_events`；推送 node_update + done + 30s keepalive；错误返 400/404
+**大小**: M（100-150 行净增，1 文件）
 **依赖**: 无
 
-**Evaluator 路径**: `sprints/contract-dod-ws1.md` [BEHAVIOR]×6 + [ARTIFACT]×4（manual:bash 内嵌命令，evaluator 直接执行）
-**TDD 参考测试（非 evaluator 路径）**: `sprints/tests/ws1/abs.test.ts`（generator TDD red-green 用，evaluator 不读）
+### Workstream 2: 前端实时日志区 + EventSource
 
----
-
-## Workstream 切分硬规则自查
-
-- 净增 < 200 行（仅改 server.js 约 30 行）→ `workstream_count=1` ✓
+**范围**: `apps/dashboard/src/pages/harness-pipeline/HarnessPipelineDetailPage.tsx` 新增 EventSource hook + SSE 日志区 UI；`data-testid="sse-log"`；完成消息"Pipeline 已完成 ✅"或"Pipeline 失败 ❌"
+**大小**: M（80-120 行净增，1 文件）
+**依赖**: Workstream 1 完成后
 
 ---
 
 ## Test Contract
 
-| Workstream | DoD 文件 / Evaluator 路径 | BEHAVIOR 覆盖 | 预期红证据 |
+| Workstream | Test File | BEHAVIOR 覆盖 | 预期红证据 |
 |---|---|---|---|
-| WS1 | `sprints/contract-dod-ws1.md` [BEHAVIOR]×6 + [ARTIFACT]×4（manual:bash 内嵌命令） | result 字段值、operation 字段值、schema keys 完整性、禁用字段 value/answer 反向、error path 400+body{error}+禁用message（×2）、B42 warn+fallback 静态核查 | 修复前所有 6 条 manual:bash BEHAVIOR 命令 exit 1（server.js 无 /abs 路由）；B42 ARTIFACT grep 已通过（#2972 已合并） |
-
-> **注**：`sprints/tests/ws1/abs.test.ts` 是 generator TDD red-green 参考测试，**不是** evaluator 执行路径。Evaluator 只执行 `sprints/contract-dod-ws1.md` 中各条目的 `Test:` 命令。
-
----
-
-## proposer 自查 checklist 结果
-
-1. **PRD response 字段名**: `result`（number）、`operation`（string "abs"）
-2. **contract jq -e 字段名**: `.result`, `.operation` — 字面一致 ✓
-3. **断言 contract keys == PRD keys**: `["operation","result"]` 完全一致 ✓
-4. **PRD 禁用列表**: `value`/`answer`/`data`/`output`/`res`/`response`/`number` — contract 全用 `has("X") | not` 反向检查 ✓
-5. **[BEHAVIOR] 数量**: 6 条（≥4 阈值）✓ — 覆盖 schema 字段值、keys 完整性、禁用字段反向、error path（含 body 格式 has("error")+禁用 message）各至少 1 条
-6. **预期行数自查**: 净增约 30 行（1 文件）< 200 行阈值 → workstream_count=1 ✓
-7. **R3 修订点**（处理 R2 Reviewer 反馈）：
-   - R2 Reviewer：Step 5 grep 仅在合同 Golden Path，不在 evaluator 执行路径（DoD 无对应条目，E2E 无）
-   - R3 修复 A：contract-dod-ws1.md 新增 [ARTIFACT]4 — B42 warn+fallback 静态 grep 验证（evaluator 直接执行）
-   - R3 修复 B：E2E 脚本新增第 10 步 grep 核查（双路径覆盖，evaluator 必跑）
-   - grep pattern 实测通过（harness-gan.graph.js:327 `console.warn` + `propose_branch mismatch` 匹配）
+| WS1 | `tests/ws1/sse-stream.test.ts` | SSE schema + keys + 禁用字段 + error path | WS1 → 6 failures（端点未实现） |
+| WS2 | `tests/ws2/sse-ui.spec.ts` | log 区 visible + 事件追加 + 完成消息 | WS2 → 3 failures（组件未改动） |
