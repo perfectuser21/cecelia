@@ -676,6 +676,61 @@ function LangGraphSection({ info }: { info: LangGraphInfo }) {
   );
 }
 
+// ─── Types: SSE Log ─────────────────────────────────────────────────────────
+
+interface SseLogEntry {
+  label: string;
+  ts: string;
+}
+
+interface SseDoneData {
+  status: string;
+  verdict?: string | null;
+}
+
+// ─── Section: SSE Real-time Log ──────────────────────────────────────────────
+
+function SseLogSection({
+  logs,
+  done,
+}: {
+  logs: SseLogEntry[];
+  done: SseDoneData | null;
+}) {
+  return (
+    <div className="mb-6 border border-blue-200 dark:border-blue-900/50 rounded-lg overflow-hidden">
+      <div className="px-3 py-2 bg-blue-50 dark:bg-blue-950/30 border-b border-blue-200 dark:border-blue-900/50">
+        <span className="text-xs font-semibold text-blue-700 dark:text-blue-300 uppercase tracking-wide">
+          实时执行日志
+        </span>
+      </div>
+      <div
+        data-testid="sse-log"
+        className="p-3 max-h-[300px] overflow-y-auto bg-white dark:bg-slate-900/50 font-mono text-xs space-y-1"
+      >
+        {logs.length === 0 && !done && (
+          <div className="text-slate-400 dark:text-slate-500 italic">等待节点推进...</div>
+        )}
+        {logs.map((entry, i) => (
+          <div key={i} className="text-slate-700 dark:text-slate-300">
+            <span className="text-slate-400 dark:text-slate-500 mr-2">
+              {new Date(entry.ts).toLocaleTimeString()}
+            </span>
+            <span>{entry.label}</span>
+          </div>
+        ))}
+        {done && (
+          <div className={`mt-2 font-semibold ${done.status === 'completed' ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400'}`}>
+            {done.status === 'completed'
+              ? `Pipeline 已完成 ✅${done.verdict ? ` ${done.verdict}` : ''}`
+              : `Pipeline 失败 ❌${done.verdict ? ` ${done.verdict}` : ''}`}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ─── Main Component ─────────────────────────────────────────────────────────
 
 export default function HarnessPipelineDetailPage() {
@@ -684,6 +739,8 @@ export default function HarnessPipelineDetailPage() {
   const [data, setData] = useState<PipelineDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [sseLogs, setSseLogs] = useState<SseLogEntry[]>([]);
+  const [sseDone, setSseDone] = useState<SseDoneData | null>(null);
 
   const fetchDetail = useCallback(async () => {
     if (!id) return;
@@ -704,6 +761,34 @@ export default function HarnessPipelineDetailPage() {
   useEffect(() => {
     fetchDetail();
   }, [fetchDetail]);
+
+  useEffect(() => {
+    if (!id) return;
+    const es = new EventSource(`/api/brain/harness/stream?planner_task_id=${encodeURIComponent(id)}`);
+
+    es.addEventListener('node_update', (e: MessageEvent) => {
+      try {
+        const d = JSON.parse(e.data) as { label: string; ts: string };
+        setSseLogs(prev => [...prev, { label: d.label, ts: d.ts }]);
+      } catch {
+        // ignore malformed event data
+      }
+    });
+
+    es.addEventListener('done', (e: MessageEvent) => {
+      try {
+        const d = JSON.parse(e.data) as SseDoneData;
+        setSseDone(d);
+      } catch {
+        // ignore malformed event data
+      }
+      es.close();
+    });
+
+    return () => {
+      es.close();
+    };
+  }, [id]);
 
   if (loading && !data) {
     return (
@@ -769,6 +854,9 @@ export default function HarnessPipelineDetailPage() {
           </button>
         </div>
       </div>
+
+      {/* SSE 实时日志区 */}
+      <SseLogSection logs={sseLogs} done={sseDone} />
 
       {/* LangGraph 时间轴（仅在走了 LangGraph 路径时渲染） */}
       {data.langgraph?.enabled && <LangGraphSection info={data.langgraph} />}
