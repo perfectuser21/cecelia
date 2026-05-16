@@ -20,8 +20,74 @@ const MAX_RETRY = 3;
 /** 重试退避基数（秒）。第 N 次重试等待 RETRY_BACKOFF_BASE_SEC * 2^(N-1) 秒，最长 30 分钟 */
 const RETRY_BACKOFF_BASE_SEC = 30;
 
+/** rate_limit 退避倍数（相对于标准退避） */
+const RATE_LIMIT_BACKOFF_MULTIPLIER = 2;
+
 /** working_memory key：今日发布统计 */
 const STATS_KEY = 'daily_publish_stats';
+
+// ─── failure_type 分类 ────────────────────────────────────────────────────────
+
+/** 发布失败类型枚举 */
+export const PUBLISH_FAILURE_TYPE = {
+  AUTH_FAIL: 'auth_fail',       // 认证失败 → 不重试，直接告警
+  RATE_LIMIT: 'rate_limit',     // 限流 → 2x 退避重试
+  NETWORK: 'network',           // 网络错误 → 标准退避重试
+  CONTENT_REJECT: 'content_reject', // 内容违规审核拒绝 → 不重试，直接告警
+  UNKNOWN: 'unknown',           // 未识别 → 标准退避重试
+};
+
+const AUTH_FAIL_PATTERNS = [
+  /unauthorized|access\s+denied|forbidden/i,
+  /auth.*fail|login.*fail/i,
+  /登录.*失败|账号.*失效|账号.*封禁/,
+  /token.*invalid|invalid.*token|token.*expired|expired.*token/i,
+  /凭据.*失效|credential.*invalid|invalid.*credential/i,
+  /not\s+authorized|authentication\s+failed/i,
+];
+
+const RATE_LIMIT_PATTERNS = [
+  /rate\s+limit|ratelimit/i,
+  /too\s+many\s+requests/i,
+  /429/,
+  /频率|限流|请求.*过.*多/,
+  /quota\s+exceeded|daily\s+limit|hourly\s+limit/i,
+];
+
+const CONTENT_REJECT_PATTERNS = [
+  /content.*reject|reject.*content/i,
+  /审核.*不通过|违规|内容.*违禁/,
+  /community.*guideline|policy.*violation/i,
+  /内容.*不符|不符合.*规范/,
+  /sensitive.*content|inappropriate.*content/i,
+];
+
+const NETWORK_PATTERNS = [
+  /ECONNREFUSED|ETIMEDOUT|ENOTFOUND|ENETUNREACH|ECONNRESET/i,
+  /connection\s+refused|connection\s+reset|connection\s+timeout/i,
+  /network\s+error|socket\s+hang\s+up/i,
+  /service\s+unavailable|bad\s+gateway|gateway\s+timeout/i,
+  /timeout|超时|网络.*错误|连接.*失败/,
+];
+
+/**
+ * 从 error_message 识别发布失败类型。
+ * 优先级：auth_fail > content_reject > rate_limit > network > unknown
+ *
+ * @param {string|null|undefined} errorMessage
+ * @returns {string} PUBLISH_FAILURE_TYPE 之一
+ */
+export function classifyPublishFailure(errorMessage) {
+  if (!errorMessage) return PUBLISH_FAILURE_TYPE.UNKNOWN;
+  const msg = String(errorMessage);
+
+  if (AUTH_FAIL_PATTERNS.some(p => p.test(msg))) return PUBLISH_FAILURE_TYPE.AUTH_FAIL;
+  if (CONTENT_REJECT_PATTERNS.some(p => p.test(msg))) return PUBLISH_FAILURE_TYPE.CONTENT_REJECT;
+  if (RATE_LIMIT_PATTERNS.some(p => p.test(msg))) return PUBLISH_FAILURE_TYPE.RATE_LIMIT;
+  if (NETWORK_PATTERNS.some(p => p.test(msg))) return PUBLISH_FAILURE_TYPE.NETWORK;
+
+  return PUBLISH_FAILURE_TYPE.UNKNOWN;
+}
 
 // ─── DB 查询 ──────────────────────────────────────────────────────────────────
 
@@ -34,7 +100,7 @@ const STATS_KEY = 'daily_publish_stats';
  */
 async function fetchRetryableTasks(pool) {
   const { rows } = await pool.query(
-    `SELECT id, title, retry_count, payload
+    `SELECT id, title, retry_count, payload, error_message
      FROM tasks
      WHERE task_type = 'content_publish'
        AND status = 'failed'
@@ -74,15 +140,44 @@ async function isAlreadyPublished(pool, task) {
 }
 
 /**
- * 重置 task 为 queued 状态并增加 retry_count，同时写入指数退避时间。
+ * 将 failure_type 写入 task payload（不改变状态），用于不重试的失败类型。
+ *
+ * @param {import('pg').Pool} pool
+ * @param {string} taskId
+ * @param {string} failureType
+ */
+async function persistFailureType(pool, taskId, failureType) {
+  await pool.query(
+    `UPDATE tasks
+     SET payload    = COALESCE(payload, '{}'::jsonb) || $2::jsonb,
+         updated_at = NOW()
+     WHERE id = $1`,
+    [taskId, JSON.stringify({ failure_type: failureType })]
+  );
+}
+
+/**
+ * 计算退避秒数（含 failure_type 倍数）。
+ *
+ * @param {number} currentRetry
+ * @param {string} failureType
+ * @returns {number}
+ */
+export function calcPublishBackoffSec(currentRetry, failureType) {
+  const multiplier = failureType === PUBLISH_FAILURE_TYPE.RATE_LIMIT ? RATE_LIMIT_BACKOFF_MULTIPLIER : 1;
+  return Math.min(RETRY_BACKOFF_BASE_SEC * multiplier * Math.pow(2, currentRetry), 1800);
+}
+
+/**
+ * 重置 task 为 queued 状态并增加 retry_count，写入退避时间和 failure_type。
  *
  * @param {import('pg').Pool} pool
  * @param {string} taskId
  * @param {number} currentRetry
+ * @param {string} [failureType]
  */
-async function retryTask(pool, taskId, currentRetry) {
-  // 指数退避：30s * 2^currentRetry，最长 1800s（30 分钟）
-  const backoffSec = Math.min(RETRY_BACKOFF_BASE_SEC * Math.pow(2, currentRetry), 1800);
+async function retryTask(pool, taskId, currentRetry, failureType = PUBLISH_FAILURE_TYPE.UNKNOWN) {
+  const backoffSec = calcPublishBackoffSec(currentRetry, failureType);
   const nextRunAt = new Date(Date.now() + backoffSec * 1000).toISOString();
 
   await pool.query(
@@ -95,7 +190,7 @@ async function retryTask(pool, taskId, currentRetry) {
          updated_at = NOW(),
          payload = COALESCE(payload, '{}'::jsonb) || $3::jsonb
      WHERE id = $1`,
-    [taskId, currentRetry + 1, JSON.stringify({ next_run_at: nextRunAt })]
+    [taskId, currentRetry + 1, JSON.stringify({ next_run_at: nextRunAt, failure_type: failureType })]
   );
 }
 
@@ -197,6 +292,18 @@ export async function monitorPublishQueue(pool) {
     const retryable = await fetchRetryableTasks(pool);
     for (const task of retryable) {
       try {
+        const platform = task.payload?.platform || 'unknown';
+        const failureType = classifyPublishFailure(task.error_message);
+
+        // auth_fail / content_reject：写入 failure_type，不重试，直接告警
+        if (failureType === PUBLISH_FAILURE_TYPE.AUTH_FAIL || failureType === PUBLISH_FAILURE_TYPE.CONTENT_REJECT) {
+          await persistFailureType(pool, task.id, failureType);
+          console.error(
+            `[publish-monitor][ALERT] ${platform} 任务 ${task.id} failure_type=${failureType}，跳过重试，需人工介入。error=${String(task.error_message || '').slice(0, 200)}`
+          );
+          continue;
+        }
+
         // 幂等保护：若同 pipeline_id+platform 已有 completed 记录，跳过重试直接标记完成
         const alreadyDone = await isAlreadyPublished(pool, task);
         if (alreadyDone) {
@@ -205,16 +312,14 @@ export async function monitorPublishQueue(pool) {
              WHERE id = $1 AND status = 'failed'`,
             [task.id]
           );
-          const platform = task.payload?.platform || 'unknown';
           console.log(`[publish-monitor] 跳过重试 ${platform}：pipeline_id=${task.payload?.pipeline_id} 已在该平台成功发布，直接标记 completed`);
           continue;
         }
 
-        await retryTask(pool, task.id, task.retry_count);
+        await retryTask(pool, task.id, task.retry_count, failureType);
         retried++;
-        const platform = task.payload?.platform || 'unknown';
-        const backoffSec = Math.min(RETRY_BACKOFF_BASE_SEC * Math.pow(2, task.retry_count), 1800);
-        console.log(`[publish-monitor] 重试 content_publish: ${platform} (retry ${task.retry_count + 1}/${MAX_RETRY}, 退避 ${backoffSec}s)`);
+        const backoffSec = calcPublishBackoffSec(task.retry_count, failureType);
+        console.log(`[publish-monitor] 重试 content_publish: ${platform} (retry ${task.retry_count + 1}/${MAX_RETRY}, failure_type=${failureType}, 退避 ${backoffSec}s)`);
       } catch (err) {
         console.error(`[publish-monitor] 重试任务 ${task.id} 失败: ${err.message}`);
       }
