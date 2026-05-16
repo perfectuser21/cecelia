@@ -45,3 +45,4 @@ console.log('[smoke:ws3] Case 4 PASS: 索引定义存在');
 
 echo "✅ [smoke:ws3] All 4 cases PASS (initiative_run_events migration 结构验证)"
 exit 0
+# ws3 initiative-run-events migration smoke (v2)
