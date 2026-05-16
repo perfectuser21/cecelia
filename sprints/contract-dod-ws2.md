@@ -2,48 +2,76 @@
 skeleton: false
 journey_type: user_facing
 ---
-# Contract DoD — Workstream 2: Brain SSE 端点 — GET /api/brain/initiatives/:id/events
+# Contract DoD — Workstream 2: Dashboard 实时日志区
 
-**范围**: 新增 `packages/brain/src/routes/initiative-events-routes.js`（SSE 端点：历史 flush + 实时推送 + 404 处理）；更新 `packages/brain/server.js` 注册路由
-**大小**: M（~160 行净增，2 文件）
-**依赖**: Workstream 1 完成后（initiative_run_events 表存在）
+**范围**: 在 `apps/dashboard/src/pages/harness-pipeline/HarnessPipelineDetailPage.tsx` 新增 EventSource hook + 实时日志区渲染
+**大小**: M (100-150 行)
+**依赖**: Workstream 1 完成后
 
 ## ARTIFACT 条目
 
-- [ ] [ARTIFACT] `packages/brain/src/routes/initiative-events-routes.js` 文件存在
-  Test: node -e "require('fs').accessSync('packages/brain/src/routes/initiative-events-routes.js')"
+- [ ] [ARTIFACT] HarnessPipelineDetailPage.tsx 含 EventSource 构造（含 `new EventSource(` 字符串）
+  Test: node -e "const c=require('fs').readFileSync('apps/dashboard/src/pages/harness-pipeline/HarnessPipelineDetailPage.tsx','utf8');if(!c.includes('new EventSource('))process.exit(1)"
 
-- [ ] [ARTIFACT] route 文件设置 `Content-Type: text/event-stream` 响应头
-  Test: node -e "const c=require('fs').readFileSync('packages/brain/src/routes/initiative-events-routes.js','utf8');if(!c.includes('text/event-stream'))process.exit(1)"
+- [ ] [ARTIFACT] EventSource URL 使用 `planner_task_id` query param（不用禁用名）
+  Test: node -e "const c=require('fs').readFileSync('apps/dashboard/src/pages/harness-pipeline/HarnessPipelineDetailPage.tsx','utf8');if(!c.includes('planner_task_id'))process.exit(1)"
 
-- [ ] [ARTIFACT] route 文件包含 `/:id/events` 路由定义
-  Test: node -e "const c=require('fs').readFileSync('packages/brain/src/routes/initiative-events-routes.js','utf8');if(!c.includes('/events')&&!c.includes('events'))process.exit(1)"
+- [ ] [ARTIFACT] 组件处理 `event: done`（含 `onmessage`/`addEventListener('done'` 模式）
+  Test: node -e "const c=require('fs').readFileSync('apps/dashboard/src/pages/harness-pipeline/HarnessPipelineDetailPage.tsx','utf8');if(!c.includes('done')&&!c.includes('onmessage'))process.exit(1)"
 
-- [ ] [ARTIFACT] `packages/brain/server.js` 包含 `initiative-events-routes` 导入
-  Test: node -e "const c=require('fs').readFileSync('packages/brain/server.js','utf8');if(!c.includes('initiative-events-routes'))process.exit(1)"
+## BEHAVIOR 条目（内嵌可执行 manual: 命令）
 
-## BEHAVIOR 条目（内嵌可执行 manual: 命令，禁止只索引 vitest）
+- [ ] [BEHAVIOR] 组件文件 EventSource URL 使用 planner_task_id（非禁用参数名 task_id/taskId/id）
+  Test: manual:bash -c '
+    FILE="apps/dashboard/src/pages/harness-pipeline/HarnessPipelineDetailPage.tsx"
+    grep -q "planner_task_id" "$FILE" || { echo "FAIL: 未使用 planner_task_id"; exit 1; }
+    grep -qE "EventSource.*[?&](taskId|task_id|pipeline_id|tid)=" "$FILE" \
+      && { echo "FAIL: 使用了禁用 query param"; exit 1; } || true
+  '
+  期望: exit 0
 
-- [ ] [BEHAVIOR] SSE data.event 严格等于字面量 "node_update"（PRD response schema 字段值验证）
-  Test: manual:bash -c 'DB="${DATABASE_URL:-postgresql://cecelia@localhost/cecelia}"; IID="b0000002-0000-0000-0000-000000000001"; psql "$DB" -c "INSERT INTO initiative_runs (initiative_id, phase) VALUES ('"'"'$IID'"'"'::uuid, '"'"'done'"'"')" 2>/dev/null||true; psql "$DB" -c "INSERT INTO initiative_run_events (initiative_id, node, status) VALUES ('"'"'$IID'"'"'::uuid, '"'"'planner'"'"', '"'"'done'"'"')" 2>/dev/null||true; SSE=$(timeout 6 curl -N -s -H "Accept: text/event-stream" "localhost:5221/api/brain/initiatives/$IID/events" 2>/dev/null||true); DATA=$(echo "$SSE"|grep "^data:"|head -1|sed '"'"'s/^data: //'"'"'); echo "$DATA"|jq -e '"'"'.event == "node_update"'"'"'||{echo "FAIL: event != node_update";exit 1;};echo "PASS: event=node_update"'
-  期望: PASS: event=node_update
+- [ ] [BEHAVIOR] 组件文件中不含禁用字段名作为 SSE data 属性访问（nodeName/timestamp/name 等）
+  Test: manual:bash -c '
+    FILE="apps/dashboard/src/pages/harness-pipeline/HarnessPipelineDetailPage.tsx"
+    for BANNED in ".nodeName" ".timestamp" ".step" ".phase" ".stage"; do
+      grep -q "$BANNED" "$FILE" && { echo "FAIL: 使用了禁用字段 $BANNED"; exit 1; } || true
+    done
+    echo "OK"
+  '
+  期望: exit 0
 
-- [ ] [BEHAVIOR] SSE data keys 恰好等于 ["event","node","status","ts"]（schema 完整性）
-  Test: manual:bash -c 'DB="${DATABASE_URL:-postgresql://cecelia@localhost/cecelia}"; IID="b0000002-0000-0000-0000-000000000001"; SSE=$(timeout 6 curl -N -s -H "Accept: text/event-stream" "localhost:5221/api/brain/initiatives/$IID/events" 2>/dev/null||true); DATA=$(echo "$SSE"|grep "^data:"|head -1|sed '"'"'s/^data: //'"'"'); echo "$DATA"|jq -e '"'"'keys == ["event","node","status","ts"]'"'"'||{echo "FAIL: keys 不符 PRD schema";exit 1;};echo "PASS: keys 完整"'
-  期望: PASS: keys 完整
+- [ ] [BEHAVIOR] TypeScript 编译通过，dashboard 无类型错误
+  Test: manual:bash -c '
+    cd apps/dashboard && npx tsc --noEmit --strict 2>&1 | head -20
+    cd apps/dashboard && npx tsc --noEmit --strict
+  '
+  期望: exit 0
 
-- [ ] [BEHAVIOR] SSE data 禁用字段 timestamp/time/created_at/t 不存在（禁用 ts 别名反向）
-  Test: manual:bash -c 'DB="${DATABASE_URL:-postgresql://cecelia@localhost/cecelia}"; IID="b0000002-0000-0000-0000-000000000001"; SSE=$(timeout 6 curl -N -s -H "Accept: text/event-stream" "localhost:5221/api/brain/initiatives/$IID/events" 2>/dev/null||true); DATA=$(echo "$SSE"|grep "^data:"|head -1|sed '"'"'s/^data: //'"'"'); for f in timestamp time created_at t; do echo "$DATA"|jq -e --arg f "$f" '"'"'has($f)|not'"'"'||{echo "FAIL: 禁用字段 $f 存在";exit 1;};done; echo "PASS: 无禁用 ts 别名"'
-  期望: PASS: 无禁用 ts 别名
+- [ ] [BEHAVIOR] 组件处理 node_update 事件，正确读取 .node/.label/.attempt/.ts 字段
+  Test: manual:bash -c '
+    FILE="apps/dashboard/src/pages/harness-pipeline/HarnessPipelineDetailPage.tsx"
+    grep -q "\.node\b\|\.label\b\|\.attempt\b\|\.ts\b" "$FILE" \
+      || { echo "FAIL: 组件未读取 node/label/attempt/ts 字段"; exit 1; }
+    echo "OK"
+  '
+  期望: exit 0
 
-- [ ] [BEHAVIOR] error path — 未知 initiative_id 返回 HTTP 404 + body 含 error 字段（禁用 message/msg/reason）
-  Test: manual:bash -c 'UNKNOWN="99999999-9999-9999-9999-999999999999"; CODE=$(curl -sf -o /tmp/sse_404_ws2.json -w "%{http_code}" "localhost:5221/api/brain/initiatives/$UNKNOWN/events" --max-time 3 2>/dev/null||echo "000"); [ "$CODE" = "404" ]||{echo "FAIL: 期望 404 实际 $CODE";exit 1;}; jq -e '"'"'.error|type=="string"'"'"' /tmp/sse_404_ws2.json||{echo "FAIL: 404 body 缺 error 字段";exit 1;}; for f in message msg reason; do jq -e --arg f "$f" '"'"'has($f)|not'"'"' /tmp/sse_404_ws2.json||{echo "FAIL: 禁用字段 $f 在 404 body";exit 1;};done; echo "PASS: 404 error path 正确"'
-  期望: PASS: 404 error path 正确
+- [ ] [BEHAVIOR] 组件实现 done 事件处理，关闭 EventSource 并显示完成状态
+  Test: manual:bash -c '
+    FILE="apps/dashboard/src/pages/harness-pipeline/HarnessPipelineDetailPage.tsx"
+    grep -q "done\|close\(\)" "$FILE" \
+      || { echo "FAIL: 未实现 done 事件处理"; exit 1; }
+    grep -q "已完成\|失败\|completed\|failed" "$FILE" \
+      || { echo "FAIL: 未显示 pipeline 完成状态"; exit 1; }
+    echo "OK"
+  '
+  期望: exit 0
 
-- [ ] [BEHAVIOR] SSE data.ts 是 number 类型（Unix 毫秒时间戳，不是字符串）
-  Test: manual:bash -c 'DB="${DATABASE_URL:-postgresql://cecelia@localhost/cecelia}"; IID="b0000002-0000-0000-0000-000000000001"; SSE=$(timeout 6 curl -N -s -H "Accept: text/event-stream" "localhost:5221/api/brain/initiatives/$IID/events" 2>/dev/null||true); DATA=$(echo "$SSE"|grep "^data:"|head -1|sed '"'"'s/^data: //'"'"'); echo "$DATA"|jq -e '"'"'.ts|type=="number"'"'"'||{echo "FAIL: ts 不是 number";exit 1;}; echo "$DATA"|jq -e '"'"'.ts>1700000000000'"'"'||{echo "FAIL: ts 不是合理 Unix 毫秒";exit 1;}; echo "PASS: ts 是 number"'
-  期望: PASS: ts 是 number
-
-- [ ] [BEHAVIOR] SSE data.node 严格属于 PRD 枚举（planner/proposer/reviewer/generator/evaluator/e2e）
-  Test: manual:bash -c 'DB="${DATABASE_URL:-postgresql://cecelia@localhost/cecelia}"; IID="b0000002-0000-0000-0000-000000000001"; SSE=$(timeout 6 curl -N -s -H "Accept: text/event-stream" "localhost:5221/api/brain/initiatives/$IID/events" 2>/dev/null||true); DATA=$(echo "$SSE"|grep "^data:"|head -1|sed '"'"'s/^data: //'"'"'); echo "$DATA"|jq -e '"'"'.node|test("^(planner|proposer|reviewer|generator|evaluator|e2e)$")'"'"'||{echo "FAIL: 非法 node 值";exit 1;}; echo "$DATA"|jq -e '"'"'.node|IN("agent","step","phase")|not'"'"'||{echo "FAIL: 禁用 node 别名";exit 1;}; echo "PASS: node 枚举合规"'
-  期望: PASS: node 枚举合规
+- [ ] [BEHAVIOR] EventSource 连接在组件卸载时正确关闭（useEffect cleanup）
+  Test: manual:bash -c '
+    FILE="apps/dashboard/src/pages/harness-pipeline/HarnessPipelineDetailPage.tsx"
+    grep -q "\.close()\|es\.close\|eventSource\.close" "$FILE" \
+      || { echo "FAIL: 缺少 EventSource cleanup（内存泄漏）"; exit 1; }
+    echo "OK"
+  '
+  期望: exit 0

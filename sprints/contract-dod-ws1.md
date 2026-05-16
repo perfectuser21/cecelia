@@ -2,44 +2,95 @@
 skeleton: false
 journey_type: user_facing
 ---
-# Contract DoD — Workstream 1: DB Migration — initiative_run_events 表
+# Contract DoD — Workstream 1: Brain SSE 端点 — GET /api/brain/harness/stream
 
-**范围**: 创建 `packages/brain/migrations/276_initiative_run_events.sql`，DDL 严格按 PRD schema
-**大小**: S（<35 行，1 文件）
-**依赖**: 无
+**范围**: 在 `packages/brain/src/routes/harness.js` 新增 `GET /stream` SSE 端点
+**大小**: M (100-130 行)
+**依赖**: 无（task_events 表已存在）
 
 ## ARTIFACT 条目
 
-- [ ] [ARTIFACT] `packages/brain/migrations/276_initiative_run_events.sql` 文件存在
-  Test: node -e "require('fs').accessSync('packages/brain/migrations/276_initiative_run_events.sql')"
+- [ ] [ARTIFACT] harness.js 新增 `/stream` 路由（含 `router.get('/stream', ...)` 行）
+  Test: node -e "const c=require('fs').readFileSync('packages/brain/src/routes/harness.js','utf8');if(!c.includes(\"router.get('/stream'\"))process.exit(1)"
 
-- [ ] [ARTIFACT] migration 文件包含 `CREATE TABLE initiative_run_events` DDL
-  Test: node -e "const c=require('fs').readFileSync('packages/brain/migrations/276_initiative_run_events.sql','utf8');if(!c.includes('CREATE TABLE initiative_run_events'))process.exit(1)"
+- [ ] [ARTIFACT] SSE 端点读取 `task_events` 表（含 `event_type='graph_node_update'` 过滤条件）
+  Test: node -e "const c=require('fs').readFileSync('packages/brain/src/routes/harness.js','utf8');if(!c.includes('graph_node_update'))process.exit(1)"
 
-- [ ] [ARTIFACT] migration 文件包含 PRD DDL 所有必填列（id/initiative_id/node/status/created_at）
-  Test: node -e "const c=require('fs').readFileSync('packages/brain/migrations/276_initiative_run_events.sql','utf8');['id','initiative_id','node','status','created_at'].forEach(col=>{if(!c.includes(col))process.exit(1)})"
+- [ ] [ARTIFACT] 节点中文标签映射对象存在（含 `planner`/`proposer`/`reviewer`/`generator`/`evaluator` 等 key）
+  Test: node -e "const c=require('fs').readFileSync('packages/brain/src/routes/harness.js','utf8');if(!/planner.*规划师|proposer.*提案者/s.test(c))process.exit(1)"
 
-- [ ] [ARTIFACT] migration 文件包含复合索引 `(initiative_id, created_at)` 定义
-  Test: node -e "const c=require('fs').readFileSync('packages/brain/migrations/276_initiative_run_events.sql','utf8');if(!c.includes('initiative_id')&&!c.includes('created_at'))process.exit(1)"
+- [ ] [ARTIFACT] keepalive comment 实现（含 `: keepalive` 字符串）
+  Test: node -e "const c=require('fs').readFileSync('packages/brain/src/routes/harness.js','utf8');if(!c.includes(': keepalive'))process.exit(1)"
 
-## BEHAVIOR 条目（内嵌可执行 manual: 命令，禁止只索引 vitest）
+## BEHAVIOR 条目（内嵌可执行 manual: 命令）
 
-- [ ] [BEHAVIOR] 执行 migration 后 `initiative_run_events` 表存在于 DB
-  Test: manual:bash -c 'DB="${DATABASE_URL:-postgresql://cecelia@localhost/cecelia}"; RESULT=$(psql "$DB" -t -c "\dt initiative_run_events" 2>/dev/null); echo "$RESULT" | grep -q "initiative_run_events" || { echo "FAIL: 表不存在"; exit 1; }; echo "PASS: 表存在"'
-  期望: PASS: 表存在
+- [ ] [BEHAVIOR] GET /stream?planner_task_id={id} 推送 node_update 事件，data.node 为 string
+  Test: manual:bash -c '
+    DB="${DATABASE_URL:-postgresql://cecelia@localhost/cecelia}"
+    TASK_ID=$(psql "$DB" -t -c "INSERT INTO tasks (task_type, status, payload) VALUES ('"'"'harness_dod_b1'"'"', '"'"'completed'"'"', '"'"'{}'"'"'::jsonb) RETURNING id" | tr -d '"'"' \n'"'"')
+    psql "$DB" -c "INSERT INTO task_events (task_id, event_type, payload, created_at) VALUES ('"'"'$TASK_ID'"'"', '"'"'graph_node_update'"'"', '"'"'{"nodeName":"proposer","attemptN":1,"payloadSummary":{}}'"'"'::jsonb, NOW() - interval '"'"'2 seconds'"'"')" >/dev/null
+    EVENT_DATA=$(curl -N -s --max-time 6 "localhost:5221/api/brain/harness/stream?planner_task_id=$TASK_ID" | grep "^data:" | grep -v "event: done" | head -1 | sed '"'"'s/^data: //'"'"')
+    psql "$DB" -c "DELETE FROM task_events WHERE task_id='"'"'$TASK_ID'"'"'; DELETE FROM tasks WHERE id='"'"'$TASK_ID'"'"'" >/dev/null 2>&1 || true
+    [ -n "$EVENT_DATA" ] || exit 1
+    echo "$EVENT_DATA" | jq -e '"'"'.node | type == "string"'"'"' || exit 1
+  '
+  期望: exit 0
 
-- [ ] [BEHAVIOR] 表包含全部 PRD 必填列（id/initiative_id/node/status/created_at）
-  Test: manual:bash -c 'DB="${DATABASE_URL:-postgresql://cecelia@localhost/cecelia}"; COLS=$(psql "$DB" -t -c "SELECT column_name FROM information_schema.columns WHERE table_name='"'"'initiative_run_events'"'"' ORDER BY column_name" 2>/dev/null); for col in id initiative_id node status created_at; do echo "$COLS" | grep -q "$col" || { echo "FAIL: 缺列 $col"; exit 1; }; done; echo "PASS: 列完整"'
-  期望: PASS: 列完整
+- [ ] [BEHAVIOR] data.label 为 string（节点中文标签，如"提案者"/"生成器"）
+  Test: manual:bash -c '
+    DB="${DATABASE_URL:-postgresql://cecelia@localhost/cecelia}"
+    TASK_ID=$(psql "$DB" -t -c "INSERT INTO tasks (task_type, status, payload) VALUES ('"'"'harness_dod_b2'"'"', '"'"'completed'"'"', '"'"'{}'"'"'::jsonb) RETURNING id" | tr -d '"'"' \n'"'"')
+    psql "$DB" -c "INSERT INTO task_events (task_id, event_type, payload, created_at) VALUES ('"'"'$TASK_ID'"'"', '"'"'graph_node_update'"'"', '"'"'{"nodeName":"generator","attemptN":1,"payloadSummary":{}}'"'"'::jsonb, NOW() - interval '"'"'2 seconds'"'"')" >/dev/null
+    EVENT_DATA=$(curl -N -s --max-time 6 "localhost:5221/api/brain/harness/stream?planner_task_id=$TASK_ID" | grep "^data:" | grep -v "event: done" | head -1 | sed '"'"'s/^data: //'"'"')
+    psql "$DB" -c "DELETE FROM task_events WHERE task_id='"'"'$TASK_ID'"'"'; DELETE FROM tasks WHERE id='"'"'$TASK_ID'"'"'" >/dev/null 2>&1 || true
+    [ -n "$EVENT_DATA" ] || exit 1
+    echo "$EVENT_DATA" | jq -e '"'"'.label | type == "string"'"'"' || exit 1
+    echo "$EVENT_DATA" | jq -e '"'"'.attempt >= 1'"'"' || exit 1
+    echo "$EVENT_DATA" | jq -e '"'"'.ts | type == "string"'"'"' || exit 1
+  '
+  期望: exit 0
 
-- [ ] [BEHAVIOR] 有效数据可成功插入（node=planner, status=done）并返回 id
-  Test: manual:bash -c 'DB="${DATABASE_URL:-postgresql://cecelia@localhost/cecelia}"; RES=$(psql "$DB" -t -c "INSERT INTO initiative_run_events (initiative_id, node, status) VALUES ('"'"'a0000001-0000-0000-0000-000000000001'"'"'::uuid, '"'"'planner'"'"', '"'"'done'"'"') RETURNING id" 2>/dev/null); echo "$RES" | grep -qE "[0-9a-f]{8}-[0-9a-f]{4}" || { echo "FAIL: 插入失败或未返回 uuid id"; exit 1; }; echo "PASS: 插入成功"'
-  期望: PASS: 插入成功
+- [ ] [BEHAVIOR] response keys 完整性 — 顶层 keys 恰好为 ["attempt","label","node","ts"]
+  Test: manual:bash -c '
+    DB="${DATABASE_URL:-postgresql://cecelia@localhost/cecelia}"
+    TASK_ID=$(psql "$DB" -t -c "INSERT INTO tasks (task_type, status, payload) VALUES ('"'"'harness_dod_b3'"'"', '"'"'completed'"'"', '"'"'{}'"'"'::jsonb) RETURNING id" | tr -d '"'"' \n'"'"')
+    psql "$DB" -c "INSERT INTO task_events (task_id, event_type, payload, created_at) VALUES ('"'"'$TASK_ID'"'"', '"'"'graph_node_update'"'"', '"'"'{"nodeName":"evaluator","attemptN":1,"payloadSummary":{}}'"'"'::jsonb, NOW() - interval '"'"'2 seconds'"'"')" >/dev/null
+    EVENT_DATA=$(curl -N -s --max-time 6 "localhost:5221/api/brain/harness/stream?planner_task_id=$TASK_ID" | grep "^data:" | grep -v "event: done" | head -1 | sed '"'"'s/^data: //'"'"')
+    psql "$DB" -c "DELETE FROM task_events WHERE task_id='"'"'$TASK_ID'"'"'; DELETE FROM tasks WHERE id='"'"'$TASK_ID'"'"'" >/dev/null 2>&1 || true
+    [ -n "$EVENT_DATA" ] || exit 1
+    echo "$EVENT_DATA" | jq -e '"'"'keys == ["attempt","label","node","ts"]'"'"' || exit 1
+  '
+  期望: exit 0
 
-- [ ] [BEHAVIOR] error path — initiative_id 为 NULL 触发 NOT NULL 约束拒绝
-  Test: manual:bash -c 'DB="${DATABASE_URL:-postgresql://cecelia@localhost/cecelia}"; ERR=$(psql "$DB" -c "INSERT INTO initiative_run_events (node, status) VALUES ('"'"'planner'"'"', '"'"'done'"'"')" 2>&1); echo "$ERR" | grep -qi "null value\|not-null\|violates" || { echo "FAIL: NOT NULL 约束未生效"; exit 1; }; echo "PASS: NOT NULL 拒绝 null initiative_id"'
-  期望: PASS: NOT NULL 拒绝 null initiative_id
+- [ ] [BEHAVIOR] 禁用字段 nodeName/timestamp/name/type/payload/result 不出现在 data 中
+  Test: manual:bash -c '
+    DB="${DATABASE_URL:-postgresql://cecelia@localhost/cecelia}"
+    TASK_ID=$(psql "$DB" -t -c "INSERT INTO tasks (task_type, status, payload) VALUES ('"'"'harness_dod_b4'"'"', '"'"'completed'"'"', '"'"'{}'"'"'::jsonb) RETURNING id" | tr -d '"'"' \n'"'"')
+    psql "$DB" -c "INSERT INTO task_events (task_id, event_type, payload, created_at) VALUES ('"'"'$TASK_ID'"'"', '"'"'graph_node_update'"'"', '"'"'{"nodeName":"planner","attemptN":1,"payloadSummary":{}}'"'"'::jsonb, NOW() - interval '"'"'2 seconds'"'"')" >/dev/null
+    EVENT_DATA=$(curl -N -s --max-time 6 "localhost:5221/api/brain/harness/stream?planner_task_id=$TASK_ID" | grep "^data:" | grep -v "event: done" | head -1 | sed '"'"'s/^data: //'"'"')
+    psql "$DB" -c "DELETE FROM task_events WHERE task_id='"'"'$TASK_ID'"'"'; DELETE FROM tasks WHERE id='"'"'$TASK_ID'"'"'" >/dev/null 2>&1 || true
+    [ -n "$EVENT_DATA" ] || exit 1
+    for BANNED in nodeName name timestamp time step phase stage type payload result event_type; do
+      echo "$EVENT_DATA" | jq -e "has(\"$BANNED\") | not" || { echo "FAIL: 禁用字段 $BANNED 出现"; exit 1; }
+    done
+  '
+  期望: exit 0
 
-- [ ] [BEHAVIOR] 复合索引 `(initiative_id, created_at)` 存在于 DB
-  Test: manual:bash -c 'DB="${DATABASE_URL:-postgresql://cecelia@localhost/cecelia}"; IDX=$(psql "$DB" -t -c "SELECT indexname FROM pg_indexes WHERE tablename='"'"'initiative_run_events'"'"'" 2>/dev/null); [ -n "$IDX" ] || { echo "FAIL: 无任何索引"; exit 1; }; echo "PASS: 索引存在 ($IDX)"'
-  期望: PASS: 索引存在
+- [ ] [BEHAVIOR] error path — 缺 planner_task_id → 400，body 含 error key 不含 message
+  Test: manual:bash -c '
+    CODE=$(curl -s -o /dev/null -w "%{http_code}" "localhost:5221/api/brain/harness/stream")
+    [ "$CODE" = "400" ] || { echo "FAIL: 应 400，实返 $CODE"; exit 1; }
+    ERR_BODY=$(curl -s "localhost:5221/api/brain/harness/stream")
+    echo "$ERR_BODY" | jq -e '"'"'.error | type == "string"'"'"' || { echo "FAIL: error 字段缺失"; exit 1; }
+    echo "$ERR_BODY" | jq -e '"'"'has("message") | not'"'"' || { echo "FAIL: 禁用字段 message 出现"; exit 1; }
+  '
+  期望: exit 0
+
+- [ ] [BEHAVIOR] error path — 未知 planner_task_id → 404，body 含 error key
+  Test: manual:bash -c '
+    CODE=$(curl -s -o /dev/null -w "%{http_code}" "localhost:5221/api/brain/harness/stream?planner_task_id=00000000-0000-0000-0000-000000000000")
+    [ "$CODE" = "404" ] || { echo "FAIL: 未知 ID 应 404，实返 $CODE"; exit 1; }
+    ERR_BODY=$(curl -s "localhost:5221/api/brain/harness/stream?planner_task_id=00000000-0000-0000-0000-000000000000")
+    echo "$ERR_BODY" | jq -e '"'"'.error | type == "string"'"'"' || { echo "FAIL: error 字段缺失"; exit 1; }
+  '
+  期望: exit 0

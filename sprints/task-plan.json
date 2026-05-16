@@ -1,85 +1,43 @@
 {
   "initiative_id": "pending",
   "journey_type": "user_facing",
-  "journey_type_reason": "主入口是用户在 Dashboard 浏览器访问 /harness/:id 页面，核心价值在前端实时可视化 — 不是 Brain 内部 tick，不是 CLI，是用户主动发起的可视化会话",
+  "journey_type_reason": "主入口是用户在 Dashboard 浏览器访问 /pipeline/:id 详情页，核心价值在前端实时日志区自动推进——不是 Brain 内部 tick，是用户主动发起的可视化会话",
   "tasks": [
     {
       "task_id": "ws1",
-      "title": "DB Migration: 创建 initiative_run_events 表",
-      "scope": "新增 packages/brain/migrations/276_initiative_run_events.sql，DDL 严格按 PRD：id uuid PK, initiative_id uuid NOT NULL, node varchar(32) NOT NULL, status varchar(16) NOT NULL, payload jsonb, created_at timestamptz NOT NULL DEFAULT NOW()，复合索引 (initiative_id, created_at)",
+      "title": "Brain SSE 端点: 在 harness.js 新增 GET /stream",
+      "scope": "在 packages/brain/src/routes/harness.js 新增 GET /stream SSE 端点：从 task_events 表每 2s 轮询 graph_node_update 行，映射字段 (nodeName→node, attemptN→attempt, created_at→ts) + 中文标签 label；task completed/failed 发 event: done；每 30s 发 keepalive comment；缺参数 400，未知 ID 404",
       "dod": [
-        "[ARTIFACT] packages/brain/migrations/276_initiative_run_events.sql 文件存在",
-        "[ARTIFACT] 文件包含 CREATE TABLE initiative_run_events（含 PRD 全部列）",
-        "[ARTIFACT] 文件包含复合索引 (initiative_id, created_at)",
-        "[BEHAVIOR] 执行后表存在于 DB，有效插入（node=planner, status=done）成功",
-        "[BEHAVIOR] initiative_id NOT NULL 约束拒绝空值插入"
+        "[BEHAVIOR] GET /stream?planner_task_id={id} 推送 event: node_update，data JSON 含 node/label/attempt/ts 字段，keys 恰好为 [\"attempt\",\"label\",\"node\",\"ts\"]",
+        "[BEHAVIOR] 禁用字段 nodeName/timestamp/name/type/payload/result 不出现在 data 中",
+        "[BEHAVIOR] task completed/failed 后发送 event: done，data.status 为 completed 或 failed",
+        "[BEHAVIOR] 缺 planner_task_id → 400 + error key（非 message）；未知 UUID → 404 + error key",
+        "[ARTIFACT] packages/brain/src/routes/harness.js 含 router.get('/stream' 路由及 graph_node_update 过滤"
       ],
       "files": [
-        "packages/brain/migrations/276_initiative_run_events.sql"
+        "packages/brain/src/routes/harness.js"
       ],
       "depends_on": [],
-      "complexity": "S",
-      "estimated_minutes": 20
-    },
-    {
-      "task_id": "ws2",
-      "title": "Brain SSE 端点: GET /api/brain/initiatives/:id/events",
-      "scope": "新增 packages/brain/src/routes/initiative-events-routes.js 实现 SSE 端点：检查 initiative 存在性（404 若无），flush 已有 initiative_run_events 历史行，保持连接推送新事件，initiative done/failed 时关闭；SSE data 严格格式 {event:'node_update',node,status,ts}，keys 恰好 ['event','node','status','ts']；更新 server.js 注册路由",
-      "dod": [
-        "[ARTIFACT] packages/brain/src/routes/initiative-events-routes.js 文件存在",
-        "[ARTIFACT] route 文件设置 Content-Type: text/event-stream",
-        "[ARTIFACT] server.js 导入并注册 initiative-events-routes",
-        "[BEHAVIOR] SSE data.event === 'node_update'（字面量，禁用 update/change/status_change）",
-        "[BEHAVIOR] SSE data keys 恰好为 ['event','node','status','ts']（schema 完整性）",
-        "[BEHAVIOR] SSE data.ts 是 Unix 毫秒 number（禁用 timestamp/time/created_at/t 别名字段）",
-        "[BEHAVIOR] error path: 未知 initiative_id 返回 HTTP 404 + {error:'initiative not found'}（禁用 message/msg/reason）"
-      ],
-      "files": [
-        "packages/brain/src/routes/initiative-events-routes.js",
-        "packages/brain/server.js"
-      ],
-      "depends_on": ["ws1"],
-      "complexity": "M",
-      "estimated_minutes": 45
-    },
-    {
-      "task_id": "ws3",
-      "title": "harness-initiative.graph.js 各节点写入 initiative_run_events",
-      "scope": "更新 packages/brain/src/workflows/harness-initiative.graph.js，在 planner/proposer/reviewer/generator/evaluator/e2e 各节点执行前后写入 initiative_run_events 事件行；node 字段严格使用 PRD 枚举，status 使用 started/running/done/failed；created_at 由 DB DEFAULT NOW() 生成，SSE 端点负责转换为 ts 毫秒",
-      "dod": [
-        "[ARTIFACT] harness-initiative.graph.js 包含 initiative_run_events INSERT 语句",
-        "[ARTIFACT] 写入 node 字段使用 PRD 枚举（含 planner）",
-        "[ARTIFACT] 写入 status 字段使用 started/running/done/failed",
-        "[BEHAVIOR] graph.js 不使用禁用 node 别名（agent/step/phase）",
-        "[BEHAVIOR] graph.js 不使用禁用 status 别名（success/completed/in_progress/pending）",
-        "[BEHAVIOR] error path: 节点失败时写入 status=failed 的事件行"
-      ],
-      "files": [
-        "packages/brain/src/workflows/harness-initiative.graph.js"
-      ],
-      "depends_on": ["ws1"],
       "complexity": "M",
       "estimated_minutes": 40
     },
     {
-      "task_id": "ws4",
-      "title": "Dashboard HarnessRunPage.tsx + /harness/:id 路由注册",
-      "scope": "新建 apps/dashboard/src/pages/harness/HarnessRunPage.tsx：useParams 读取 id，new EventSource('/api/brain/initiatives/:id/events') 建立连接，onmessage 解析 data JSON 更新节点列表（node + status + ts），useEffect cleanup 调用 .close()；更新 apps/dashboard/src/App.tsx DynamicRouter 注册 /harness/:id 静态路由",
+      "task_id": "ws2",
+      "title": "Dashboard 实时日志区: HarnessPipelineDetailPage 新增 EventSource hook",
+      "scope": "在 apps/dashboard/src/pages/harness-pipeline/HarnessPipelineDetailPage.tsx 新增实时日志区：useEffect 内建立 EventSource 连接到 GET /api/brain/harness/stream?planner_task_id={id}，监听 node_update 事件追加日志条目（label + ts），监听 done 事件显示完成状态，组件卸载时 close()",
       "dod": [
-        "[ARTIFACT] apps/dashboard/src/pages/harness/HarnessRunPage.tsx 文件存在",
-        "[ARTIFACT] 文件使用 EventSource 连接 /api/brain/initiatives/:id/events",
-        "[ARTIFACT] App.tsx 注册 /harness/:id 路由指向 HarnessRunPage",
-        "[BEHAVIOR] 处理 node_update 事件，渲染 node/status 字段",
-        "[BEHAVIOR] 不引用禁用字段名（timestamp/agent/step 等）",
-        "[BEHAVIOR] cleanup 时调用 EventSource.close()"
+        "[BEHAVIOR] EventSource URL 使用 planner_task_id query param（非禁用名 task_id/taskId/pipeline_id）",
+        "[BEHAVIOR] 组件读取 data.node / data.label / data.attempt / data.ts 字段（不用 nodeName/timestamp）",
+        "[BEHAVIOR] done 事件触发后显示"Pipeline 已完成 ✅"或"Pipeline 失败 ❌"文案",
+        "[BEHAVIOR] useEffect cleanup 调用 eventSource.close()（无内存泄漏）",
+        "[ARTIFACT] apps/dashboard/src/pages/harness-pipeline/HarnessPipelineDetailPage.tsx 含 new EventSource( 构造及实时日志区渲染"
       ],
       "files": [
-        "apps/dashboard/src/pages/harness/HarnessRunPage.tsx",
-        "apps/dashboard/src/App.tsx"
+        "apps/dashboard/src/pages/harness-pipeline/HarnessPipelineDetailPage.tsx"
       ],
-      "depends_on": ["ws2"],
+      "depends_on": ["ws1"],
       "complexity": "M",
-      "estimated_minutes": 50
+      "estimated_minutes": 45
     }
   ]
 }
