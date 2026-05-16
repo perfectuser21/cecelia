@@ -56,7 +56,6 @@ import conversationCapturesRoutes from './src/routes/conversation-captures.js';
 import captureAtomsRoutes from './src/routes/capture-atoms.js';
 import contentPipelineRoutes from './src/routes/content-pipeline.js';
 import canRunRoutes from './src/routes/can-run.js';
-import selfDriveRoutes from './src/routes/self-drive.js';
 import okrHierarchyRoutes from './src/routes/okr-hierarchy.js';
 import strategyTreeRoutes from './src/routes/strategy-tree.js';
 import krConvergenceRoutes from './src/routes/kr-convergence.js';
@@ -285,7 +284,6 @@ app.use('/api/brain', brainRoutes);
 app.use('/api/brain', canRunRoutes);
 app.use('/api/brain/pipelines', contentPipelineRoutes);
 app.use('/api/brain', contentPipelineRoutes); // /api/brain/content-types
-app.use('/api/brain/self-drive', selfDriveRoutes);
 app.use('/api/brain/publish', publishJobsRoutes);
 app.use('/api/brain/okr', okrHierarchyRoutes);
 app.use('/api/brain/context', contextRoutes);
@@ -622,15 +620,6 @@ async function onBrainListening() {
   startScanLoop();
   console.log('[Server] Capability Scanner started (6h interval) - island detection for unused capabilities');
 
-  // Initialize Self-Drive Engine (自驱 — 看到体检报告后自主创建任务)
-  // CONSCIOUSNESS_ENABLED=false 时跳过
-  if (isConsciousnessEnabled()) {
-    const { startSelfDriveLoop } = await import('./src/self-drive.js');
-    startSelfDriveLoop();
-    console.log('[Server] Self-Drive Engine started (12h interval) - autonomous task creation from health data');
-  } else {
-    console.log('[Server] Self-Drive Engine SKIPPED (CONSCIOUSNESS_ENABLED=false)');
-  }
 
   // Initialize Evolution Scanner (进化追踪 — 扫描自身代码演进)
   // CONSCIOUSNESS_ENABLED=false 时跳过

@@ -274,11 +274,6 @@ features:
     tests:
       unit:
         - packages/brain/src/__tests__/distilled-docs.test.js
-        - packages/brain/src/__tests__/routes/self-drive.test.js
-        - packages/brain/src/__tests__/self-drive-config.test.js
-        - packages/brain/src/__tests__/self-drive-routes.test.js
-        - packages/brain/src/__tests__/self-drive-state-reader.test.ts
-        - packages/brain/src/__tests__/self-drive.test.js
         - packages/brain/src/__tests__/self-model.test.js
         - packages/brain/src/__tests__/self-report-collector.test.js
         - packages/brain/src/__tests__/selfcheck.test.js
@@ -293,11 +288,6 @@ features:
         tests:
           unit:
             - packages/brain/src/__tests__/distilled-docs.test.js
-            - packages/brain/src/__tests__/routes/self-drive.test.js
-            - packages/brain/src/__tests__/self-drive-config.test.js
-            - packages/brain/src/__tests__/self-drive-routes.test.js
-            - packages/brain/src/__tests__/self-drive-state-reader.test.ts
-            - packages/brain/src/__tests__/self-drive.test.js
             - packages/brain/src/__tests__/self-model.test.js
             - packages/brain/src/__tests__/self-report-collector.test.js
             - packages/brain/src/__tests__/selfcheck.test.js

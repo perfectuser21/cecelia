@@ -244,13 +244,6 @@ tests:
     ci_layer: L3
     status: active
 
-  - test_id: self_drive_state_reader
-    file: packages/brain/src/__tests__/self-drive-state-reader.test.ts
-    type: unit
-    covers_feature: memory_distilled_docs
-    ci_layer: L3
-    status: active
-
   # ============================================================
   # Unit 测试 - Engine DevGate
   # ============================================================

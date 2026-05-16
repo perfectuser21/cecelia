@@ -7,7 +7,7 @@ export const GUARDED_MODULES = [
   'diary-scheduler', 'conversation-digest', 'conversation-consolidator',
   'capture-digestion', 'self-report', 'notebook-feeder',
   'proactive-mouth', 'evolution-scanner', 'evolution-synthesizer',
-  'desire-system', 'suggestion-cycle', 'self-drive',
+  'desire-system', 'suggestion-cycle',
   'dept-heartbeat', 'pending-followups',
 ];
 

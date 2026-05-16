@@ -81,9 +81,7 @@ export default defineConfig({
       'src/__tests__/routes/memory.test.js',
       'src/__tests__/rumination-dedup.test.js',
       'src/__tests__/rumination-scheduler.test.js',
-      // self-drive.test.js uses vi.mock(db.js) — 纯单元测试，已移回 include
-      // 'src/__tests__/self-drive.test.js',
-      'src/__tests__/services/memory-service.test.js',
+'src/__tests__/services/memory-service.test.js',
       'src/__tests__/startup-recovery.test.js',
       'src/__tests__/stats.test.js',
       'src/__tests__/suggestion-integration.test.js',
