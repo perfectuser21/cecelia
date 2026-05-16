@@ -45,10 +45,16 @@ vi.mock('../../harness-dag.js', () => ({
 vi.mock('../../harness-gan-graph.js', () => ({
   runGanContractGraph: (...a) => mockRunGan(...a),
 }));
-vi.mock('../../harness-graph.js', () => ({
+vi.mock('../../harness-shared.js', () => ({
   parseDockerOutput: (s) => s,
   loadSkillContent: () => 'SKILL',
   extractField: () => null,
+  readBrainResult: vi.fn().mockResolvedValue({ verdict: 'PASS', failed_scenarios: [] }),
+}));
+vi.mock('../../lib/git-fence.js', () => ({
+  fetchAndShowOriginFile: vi.fn().mockResolvedValue(
+    JSON.stringify({ tasks: [{ id: 'ws1', title: 'T1', dod: [], files: [] }] })
+  ),
 }));
 vi.mock('node:fs/promises', () => ({
   default: { readFile: (...a) => mockReadFile(...a) },
@@ -71,6 +77,7 @@ describe('B43 — harness pipeline A→B→C regression guard', () => {
   beforeEach(() => {
     [mockSpawn, mockEnsureWt, mockResolveTok, mockParseTaskPlan, mockUpsertTaskPlan,
       mockRunGan, mockReadFile, mockPool.query, mockClient.query, mockClient.release,
+      mockPool.connect,
     ].forEach((m) => m.mockReset());
     mockClient.release.mockReturnValue(undefined);
     mockClient.query.mockResolvedValue({ rows: [] });
@@ -128,5 +135,5 @@ describe('B43 — harness pipeline A→B→C regression guard', () => {
     expect(final.final_e2e_verdict).toBe('PASS');
     expect(final.final_e2e_failed_scenarios).toEqual([]);
     expect(final.report_path).toBeTruthy();
-  }, 15000);
+  }, 8000);
 });
