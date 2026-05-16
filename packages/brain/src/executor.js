@@ -2349,9 +2349,11 @@ async function triggerCodexReview(task) {
       env: { ...process.env, TASK_ID: task.id, RUN_ID: runId, BRAIN_URL: process.env.BRAIN_URL || 'http://localhost:5221' },
     });
 
-    // 收集 stdout，解析审查结果后回调 Brain
+    // 收集 stdout + stderr，解析审查结果后回调 Brain
     let stdout = '';
+    let stderr = '';
     child.stdout?.on('data', (d) => { stdout += d.toString(); });
+    child.stderr?.on('data', (d) => { stderr += d.toString(); });
 
     child.on('error', async (err) => {
       console.error(`[executor] codex spawn error: ${err.message} task=${task.id}`);
@@ -2377,17 +2379,23 @@ async function triggerCodexReview(task) {
     child.on('exit', async (code) => {
       try { unlinkSync(lockFile); } catch {}
       console.log(`[executor] codex review exit code=${code} task=${task.id}`);
+      if (code !== 0 && stderr) {
+        console.error(`[executor] codex review stderr task=${task.id}: ${stderr.slice(-500)}`);
+      }
 
       // 尝试从输出中提取 JSON verdict 并回调 Brain
       try {
         const jsonMatch = stdout.match(/\{[\s\S]*"verdict"\s*:\s*"(PASS|FAIL)"[\s\S]*\}/);
         const verdict = jsonMatch ? JSON.parse(jsonMatch[0]) : null;
         const brainUrl = process.env.BRAIN_URL || 'http://localhost:5221';
+        const summary = code !== 0 && !verdict
+          ? `exit_code=${code}\nstderr: ${stderr.slice(-300)}\nstdout: ${stdout.slice(-200)}`
+          : stdout.slice(-500);
         const payload = {
           task_id: task.id,
           run_id: runId,
           status: code === 0 ? 'AI Done' : 'AI Failed',
-          result: verdict || { verdict: code === 0 ? 'PASS' : 'FAIL', summary: stdout.slice(-500) },
+          result: verdict || { verdict: code === 0 ? 'PASS' : 'FAIL', summary },
           coding_type: 'codex-review',
         };
         await fetch(`${brainUrl}/api/brain/execution-callback`, {

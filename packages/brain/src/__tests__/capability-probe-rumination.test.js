@@ -148,6 +148,13 @@ describe('probeRumination — loop_dead 自愈机制（PROBE_FAIL_RUMINATION cp-
     expect(ruminationFn).toContain('direct_run');
   });
 
+  it('Wave 2: Case A 和 Case B 自愈后都重启 consciousness loop（rumination 现由 consciousness-loop 调度）', () => {
+    expect(ruminationFn).toContain("import('./consciousness-loop.js')");
+    expect(ruminationFn).toContain('startConsciousnessLoop()');
+    expect(ruminationFn).toContain('consciousness_loop_restarted');
+    expect(ruminationFn).toContain('self_heal_loop_fail=');
+  });
+
   it('minimal_mode 启用时不触发自愈（人工开关优先）', () => {
     expect(ruminationFn).toContain('!minimalMode');
   });
