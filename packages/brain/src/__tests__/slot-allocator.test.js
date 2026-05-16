@@ -1251,7 +1251,7 @@ describe('Backpressure', () => {
 // P0 Harness Backpressure Bypass — whitelist + getBackpressureState({task})
 // ============================================================
 describe('shouldBypassBackpressure: P0 harness whitelist', () => {
-  it('exports BACKPRESSURE_BYPASS_TASK_TYPES with 9 types (8 harness + dev)', async () => {
+  it('exports BACKPRESSURE_BYPASS_TASK_TYPES with 10 types (8 harness + dev + content_publish)', async () => {
     const { BACKPRESSURE_BYPASS_TASK_TYPES } = await import('../slot-allocator.js');
     expect(BACKPRESSURE_BYPASS_TASK_TYPES).toEqual([
       'harness_initiative',
@@ -1263,6 +1263,7 @@ describe('shouldBypassBackpressure: P0 harness whitelist', () => {
       'harness_ci_watch',
       'harness_deploy_watch',
       'dev',
+      'content_publish',
     ]);
   });
 
@@ -1291,6 +1292,16 @@ describe('shouldBypassBackpressure: P0 harness whitelist', () => {
   it('P1 harness_task → false (priority 不匹配)', async () => {
     const { shouldBypassBackpressure } = await import('../slot-allocator.js');
     expect(shouldBypassBackpressure({ priority: 'P1', task_type: 'harness_task' })).toBe(false);
+  });
+
+  it('P0 content_publish → true (P0 发布任务在 Pool C 满时不被 deny)', async () => {
+    const { shouldBypassBackpressure } = await import('../slot-allocator.js');
+    expect(shouldBypassBackpressure({ priority: 'P0', task_type: 'content_publish' })).toBe(true);
+  });
+
+  it('P1 content_publish → false (非 P0 发布任务不享受 bypass)', async () => {
+    const { shouldBypassBackpressure } = await import('../slot-allocator.js');
+    expect(shouldBypassBackpressure({ priority: 'P1', task_type: 'content_publish' })).toBe(false);
   });
 
   it('P0 content-pipeline → false (task_type 不在白名单)', async () => {
@@ -1345,6 +1356,30 @@ describe('getBackpressureState: task bypass behavior', () => {
     const state = getBackpressureState({ queue_depth: 200 });
     expect(state.active).toBe(true);
     expect(state.override_burst_limit).toBe(3);
+  });
+
+  // RCA: content_publish P0 在 Pool C 满时被 deny 导致永久积压
+  it('Pool C 满（queue_depth=200）+ P0 content_publish → active=false, bypassed=true', async () => {
+    const { getBackpressureState } = await import('../slot-allocator.js');
+    const state = getBackpressureState({
+      queue_depth: 200,
+      task: { priority: 'P0', task_type: 'content_publish' },
+    });
+    expect(state.active).toBe(false);
+    expect(state.override_burst_limit).toBeNull();
+    expect(state.bypassed).toBe(true);
+    expect(state.queue_depth).toBe(200);
+  });
+
+  it('Pool C 满 + P1 content_publish → active=true (非 P0 不 bypass)', async () => {
+    const { getBackpressureState } = await import('../slot-allocator.js');
+    const state = getBackpressureState({
+      queue_depth: 200,
+      task: { priority: 'P1', task_type: 'content_publish' },
+    });
+    expect(state.active).toBe(true);
+    expect(state.override_burst_limit).toBe(3);
+    expect(state.bypassed).toBeUndefined();
   });
 });
 
