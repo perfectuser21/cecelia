@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # b43-harness-pipeline-e2e-smoke.sh
 # B43 regression guard：harness pipeline A→B→C 静态 + routing 函数验证
-# Case 1: buildHarnessFullGraph 支持 nodeOverrides（Task 2 后补）
+# Case 1: buildHarnessFullGraph 支持 nodeOverrides（B43 新增参数）
 # Case 2: routeFromPickSubTask 路由逻辑正确（纯函数，不需要服务）
 # Case 3: compileHarnessFullGraph export 存在（静态 grep）
 set -euo pipefail
@@ -10,6 +10,31 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 BRAIN_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
 cd "$BRAIN_ROOT"
+
+# ── Case 1: buildHarnessFullGraph 支持 nodeOverrides ─────────────────────────
+echo "[smoke:b43] Case 1: buildHarnessFullGraph 接受 nodeOverrides 参数"
+node --input-type=module << 'JS'
+import { buildHarnessFullGraph } from './src/workflows/harness-initiative.graph.js';
+
+// 验证无参数调用（默认值）返回 StateGraph
+const g0 = buildHarnessFullGraph();
+if (!g0 || typeof g0.compile !== 'function') {
+  throw new Error('Case 1 FAIL: buildHarnessFullGraph() must return a StateGraph');
+}
+
+// 验证传入 nodeOverrides 也返回 StateGraph
+const g1 = buildHarnessFullGraph({ runSubTaskFn: async () => ({}), finalEvaluateFn: async () => ({}) });
+if (!g1 || typeof g1.compile !== 'function') {
+  throw new Error('Case 1 FAIL: buildHarnessFullGraph({ nodeOverrides }) must return a StateGraph');
+}
+
+// 验证函数接受 nodeOverrides 参数（JS 规范：有默认值的参数不计入 .length，这里用 toString 确认签名）
+const src = buildHarnessFullGraph.toString();
+if (!src.includes('nodeOverrides')) {
+  throw new Error('Case 1 FAIL: buildHarnessFullGraph 未包含 nodeOverrides 参数');
+}
+console.log('[smoke:b43] Case 1 PASS: buildHarnessFullGraph 支持 nodeOverrides');
+JS
 
 # ── Case 2: routeFromPickSubTask routing logic ────────────────────────────────
 echo "[smoke:b43] Case 2: routeFromPickSubTask routing 正确"
@@ -36,6 +61,5 @@ if ! grep -q 'export async function compileHarnessFullGraph' src/workflows/harne
 fi
 echo "[smoke:b43] Case 3 PASS: compileHarnessFullGraph 已 export"
 
-echo "⚠️  [smoke:b43] Case 1 (nodeOverrides) 待 Task 2 补充"
-echo "✅ [smoke:b43] Cases 2-3 PASS"
+echo "✅ [smoke:b43] All 3 cases PASS (nodeOverrides + routing + export)"
 exit 0
