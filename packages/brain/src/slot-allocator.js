@@ -55,10 +55,11 @@ const MEMORY_PRESSURE_THRESHOLD_MB = 600;   // 系统可用内存低于此值时
 // ============================================================
 // Backpressure Bypass Whitelist (P0 harness / Brain 自修复 优先派发)
 // ============================================================
-// 9 个类型在 priority=P0 时跳过 backpressure burst limit，
+// 10 个类型在 priority=P0 时跳过 backpressure burst limit，
 // 避免被 P1 content-pipeline 积压拖累。
 // 'dev' 在列：Brain 自修复 PR 多为 dev 类型，若被卡住会形成"修 dispatcher 的
 // 任务被 dispatcher 卡住"的死循环（RCA: 2026-04-25-24h-business-failures §6）。
+// 'content_publish' 在列：P0 发布任务在 Pool C 满时被 deny 会永久积压（RCA: backpressure 根因）。
 const BACKPRESSURE_BYPASS_TASK_TYPES = [
   'harness_initiative',
   'harness_task',
@@ -69,6 +70,7 @@ const BACKPRESSURE_BYPASS_TASK_TYPES = [
   'harness_ci_watch',
   'harness_deploy_watch',
   'dev',
+  'content_publish',
 ];
 
 /**
