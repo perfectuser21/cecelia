@@ -1513,7 +1513,11 @@ function _routeAfterFinalE2E(state) {
   return 'report';
 }
 
-export function buildHarnessFullGraph() {
+export function buildHarnessFullGraph(nodeOverrides = {}) {
+  const {
+    runSubTaskFn = runSubTaskNode,
+    finalEvaluateFn = finalEvaluateDispatchNode,
+  } = nodeOverrides;
   // 节点级 RetryPolicy（W2）—— 见 packages/brain/src/workflows/retry-policies.js
   // LLM_RETRY: planner / ganLoop / run_sub_task / final_evaluate
   // DB_RETRY:  dbUpsert / report
@@ -1528,14 +1532,14 @@ export function buildHarnessFullGraph() {
     .addNode('inferTaskPlan', inferTaskPlanNode, { retryPolicy: NO_RETRY })
     .addNode('dbUpsert', dbUpsertNode, { retryPolicy: DB_RETRY })
     .addNode('pick_sub_task', pickSubTaskNode, { retryPolicy: NO_RETRY })
-    .addNode('run_sub_task', runSubTaskNode, { retryPolicy: LLM_RETRY })
+    .addNode('run_sub_task', runSubTaskFn, { retryPolicy: LLM_RETRY })
     .addNode('advance', advanceTaskIndexNode, { retryPolicy: NO_RETRY })
     // NOTE: 'retry' / 'terminal_fail' 节点删除 — 它们 originally 由 routeAfterEvaluate 路由进入，
     // 但 per-task evaluator 下沉到 harness-task.graph.js 的 evaluate_contract 子图后，
     // initiative 层的 evaluate 节点+routeAfterEvaluate 路由都被删除，这两个节点变成 orphan。
     // retryTaskNode / terminalFailNode 函数定义保留（其他地方可能调用）。
     // Golden Path 终验 — 跨 ws E2E 聚合验证，区别于 task 子图内的 evaluate_contract（per-task pre-merge gate）。
-    .addNode('final_evaluate', finalEvaluateDispatchNode, { retryPolicy: LLM_RETRY })
+    .addNode('final_evaluate', finalEvaluateFn, { retryPolicy: LLM_RETRY })
     .addNode('report', reportNode, { retryPolicy: DB_RETRY })
     .addEdge(START, 'prep')
     .addConditionalEdges('prep', stateHasError, { error: END, ok: 'planner' })
