@@ -65,6 +65,24 @@ const RESPONSE_ACTIONS = {
 };
 
 // ============================================================
+// 取消豁免任务类型
+// content_publish（下划线）是实际 task_type，区别于旧的 content-publish（连字符）
+// 见 migration 211 根因注释 + fix #1893
+// ============================================================
+
+export const CANCEL_EXEMPT_TYPES = [
+  'research', 'suggestion_plan',
+  'content-pipeline', 'content-research', 'content-copywriting',
+  'content-copy-review', 'content-generate', 'content-image-review',
+  'content-export', 'content_publish',
+  'sprint_planner', 'sprint_contract_propose', 'sprint_contract_review',
+  'sprint_generate', 'sprint_evaluate', 'sprint_fix', 'arch_review',
+  'harness_planner', 'harness_contract_propose', 'harness_contract_review',
+  'harness_generate', 'harness_evaluate', 'harness_fix',
+  'harness_ci_watch', 'harness_deploy_watch', 'harness_report',
+];
+
+// ============================================================
 // 升级状态管理
 // ============================================================
 
@@ -359,17 +377,7 @@ async function cancelPendingTasks(keepCritical) {
       SET status = 'canceled',
           updated_at = NOW()
       WHERE status IN ('queued', 'pending')
-        AND task_type NOT IN (
-          'research', 'suggestion_plan',
-          'content-pipeline', 'content-research', 'content-copywriting',
-          'content-copy-review', 'content-generate', 'content-image-review',
-          'content-export', 'content_publish',
-          'sprint_planner', 'sprint_contract_propose', 'sprint_contract_review',
-          'sprint_generate', 'sprint_evaluate', 'sprint_fix', 'arch_review',
-          'harness_planner', 'harness_contract_propose', 'harness_contract_review',
-          'harness_generate', 'harness_evaluate', 'harness_fix',
-          'harness_ci_watch', 'harness_deploy_watch', 'harness_report'
-        )
+        AND NOT (task_type = ANY($1))
     `;
 
     if (keepCritical) {
@@ -378,7 +386,7 @@ async function cancelPendingTasks(keepCritical) {
 
     query += ` RETURNING id`;
 
-    const result = await client.query(query);
+    const result = await client.query(query, [CANCEL_EXEMPT_TYPES]);
     console.log(`[Escalation] Canceled ${result.rowCount} pending tasks`);
     return result.rowCount;
   } finally {
