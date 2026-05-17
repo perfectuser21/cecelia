@@ -763,7 +763,7 @@ export default function HarnessPipelineDetailPage() {
   }, [fetchDetail]);
 
   useEffect(() => {
-    if (!id) return;
+    if (!id || typeof EventSource === 'undefined') return;
     const es = new EventSource(`/api/brain/harness/stream?planner_task_id=${encodeURIComponent(id)}`);
 
     es.addEventListener('node_update', (e: MessageEvent) => {
