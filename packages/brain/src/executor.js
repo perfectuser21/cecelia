@@ -3635,10 +3635,11 @@ async function syncOrphanTasksOnStartup() {
   let requeued = 0;
   let rebuilt = 0;
 
+  // LangGraph 任务（harness_initiative）无 OS 子进程，不走孤儿检测路径。
+  // Brain 重启后以 resume_from_checkpoint=true 重排队，让 dispatcher 下次 tick 从 checkpoint 续跑。
+  const LANGGRAPH_TYPES = new Set(['harness_initiative']);
+
   for (const task of result.rows) {
-    // LangGraph 任务（harness_initiative）无 OS 子进程，不走孤儿检测路径。
-    // Brain 重启后以 resume_from_checkpoint=true 重排队，让 dispatcher 下次 tick 从 checkpoint 续跑。
-    const LANGGRAPH_TYPES = new Set(['harness_initiative']);
     if (LANGGRAPH_TYPES.has(task.task_type)) {
       await pool.query(
         `UPDATE tasks SET
