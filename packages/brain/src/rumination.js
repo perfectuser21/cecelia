@@ -16,6 +16,94 @@ import { buildMemoryContext } from './memory-retriever.js';
 import { queryNotebook, addTextSource } from './notebook-adapter.js';
 import { updateSelfModel } from './self-model.js';
 import { processEvent, EVENT_TYPES } from './thalamus.js';
+import { createTask } from './actions.js';
+
+// ── Insight-to-Action 强制闭环 ─────────────────────────────
+// meta-pattern hard-code：每次反刍若不产生 coding task，就留下新断裂点。
+// 任何含代码修复信号的洞察必须在此被直接转为 dev task，不经丘脑路由。
+
+const CODE_FIX_SIGNALS = [
+  'bug', 'fix', 'repair', 'patch', 'crash', 'error', 'exception',
+  '修复', '修改', '改进', '重构', '代码', '实现', '问题', '异常', '崩溃',
+  '优化代码', '代码问题', '需要改', '应该改', '可以改', '建议修', '断裂', '闭环',
+];
+
+/**
+ * 强制 Insight-to-Action 闭环：
+ * 1. 将洞察持久化到 learnings 表（category='rumination_insight'）
+ * 2. 若含代码修复信号，直接创建 dev task（跳过丘脑路由的 research 降级）
+ *
+ * @param {string} insight - 反刍洞察文本
+ * @param {Array} learnings - 本次消化的 learnings 列表
+ * @param {object} db - 数据库连接池
+ */
+async function forceInsightToAction(insight, learnings, db) {
+  const title = `Rumination Insight: ${insight.slice(0, 100).replace(/\n/g, ' ')}`;
+  const contentHash = crypto.createHash('sha256').update(`${title}\n${insight}`).digest('hex').slice(0, 16);
+
+  // 1. 去重：同一洞察不重复写入 learnings
+  let learningId;
+  try {
+    const { rows: existing } = await db.query(
+      'SELECT id FROM learnings WHERE content_hash = $1 AND is_latest = true LIMIT 1',
+      [contentHash]
+    );
+    if (existing.length > 0) {
+      return; // 已存在，跳过
+    }
+    const { rows } = await db.query(
+      `INSERT INTO learnings (title, category, trigger_event, content, strategy_adjustments, metadata, content_hash, version, is_latest, summary)
+       VALUES ($1, 'rumination_insight', 'rumination_digest', $2, '[]', $3, $4, 1, true, $5)
+       RETURNING id`,
+      [
+        title, insight,
+        JSON.stringify({ source: 'rumination', digested_ids: learnings.map(l => l.id), at: new Date().toISOString() }),
+        contentHash,
+        insight.slice(0, 200),
+      ]
+    );
+    learningId = rows[0]?.id;
+  } catch (err) {
+    console.warn('[rumination] forceInsightToAction: learnings write failed:', err.message);
+    return;
+  }
+
+  if (!learningId) return;
+
+  // 2. 检测代码修复信号
+  const lower = insight.toLowerCase();
+  const hasCodeSignal = CODE_FIX_SIGNALS.some(s => lower.includes(s.toLowerCase()));
+  if (!hasCodeSignal) return;
+
+  // 3. 去重：同一 learning 已有对应 task 时跳过
+  try {
+    const { rows: dedup } = await db.query(
+      `SELECT id FROM tasks WHERE payload->>'insight_learning_id' = $1 AND status != 'cancelled' LIMIT 1`,
+      [learningId]
+    );
+    if (dedup.length > 0) return;
+  } catch { /* non-blocking */ }
+
+  // 4. 强制创建 dev task — 硬编码闭环
+  const shortContent = insight.slice(0, 120).replace(/\n/g, ' ');
+  try {
+    await createTask({
+      title: `[Insight修复] ${shortContent}`,
+      description: `由 Rumination Insight 自动生成的修复任务（强制闭环）。\n\n原始洞察 (learning_id: ${learningId}):\n${insight}`,
+      priority: 'P2',
+      task_type: 'dev',
+      trigger_source: 'rumination',
+      payload: { insight_learning_id: learningId, event_type: 'rumination_digest' },
+    });
+    await db.query(
+      `UPDATE learnings SET applied = true, applied_at = NOW() WHERE id = $1`,
+      [learningId]
+    );
+    console.log(`[rumination] forced closed-loop: created dev task for insight learning ${learningId}`);
+  } catch (err) {
+    console.error(`[rumination] forceInsightToAction: createTask failed for learning ${learningId}:`, err.message);
+  }
+}
 
 // ── 配置 ──────────────────────────────────────────────────
 export const DAILY_BUDGET = 100; // 基础预算（从 20 提到 100，向后兼容，内部逻辑请使用 getDailyBudget()）
@@ -442,8 +530,11 @@ async function digestLearnings(db, learnings) {
         workingNotebookId
       ).catch(err => console.warn('[rumination] NotebookLM write-back failed (non-blocking):', err.message));
 
-      // 4.1 检测 actionable 洞察 → 收集 [ACTION:] 标记，统一发给丘脑 L1 处理
-      // （丘脑 RUMINATION_RESULT L0 handler 会创建 research 任务）
+      // 4.2 强制 Insight-to-Action 闭环（meta-pattern hard-code）
+      // 无论丘脑路由结果如何，含代码修复信号的洞察必须产生 dev task
+      await forceInsightToAction(insight.trim(), learnings, db).catch(err =>
+        console.warn('[rumination] forceInsightToAction failed (non-blocking):', err.message)
+      );
     }
 
     // 4.2 检测好奇心信号 → 写入 working_memory curiosity_topics（环2：自主学习驱动）
