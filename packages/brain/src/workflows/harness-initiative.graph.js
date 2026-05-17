@@ -35,7 +35,7 @@ import { runFinalE2E, attributeFailures } from '../harness-final-e2e.js';
 import { ensureHarnessWorktree } from '../harness-worktree.js';
 import { resolveGitHubToken } from '../harness-credentials.js';
 import { fetchAndShowOriginFile } from '../lib/git-fence.js';
-import { readFile, readdir } from 'node:fs/promises';
+import { readFile, readdir, access } from 'node:fs/promises';
 import path from 'node:path';
 // B17 + B32: brain 代为 push 用 execFile（B17 加 final_evaluate PR_BRANCH fallback，B32 加 propose_branch fallback）
 const execFileDefault = promisify(execFileCb);
@@ -658,6 +658,20 @@ export async function parsePrdNode(state) {
       const newSprintMatch = diffOut.match(/sprints\/([^/\n]+)\//);
       if (newSprintMatch) sprintDir = `sprints/${newSprintMatch[1]}`;
     } catch { /* git diff 失败，保持已有 sprintDir */ }
+  }
+  // B39: 无论 sprintDir 来源（B35/B36 LLM 提取 或 B37 git-diff 推断），
+  // 都必须验证 sprint-prd.md 存在。B37 会因 sprints/tests/ 下的测试文件
+  // 把 sprintDir 误设为 'sprints/tests'，且当 Planner 输出无 sprint_dir 字段时
+  // 旧条件 sprintDirMatches.length > 0 不成立，导致 B39 被跳过。
+  // 修：始终验证（只要 worktreePath 可访问）。
+  if (state.worktreePath) {
+    try {
+      await access(path.join(state.worktreePath, sprintDir, 'sprint-prd.md'));
+    } catch {
+      const payloadDir = state.task?.payload?.sprint_dir || 'sprints';
+      console.warn(`[harness-initiative-graph] parsePrd: B39 "${sprintDir}/sprint-prd.md" not found, falling back to "${payloadDir}"`);
+      sprintDir = payloadDir;
+    }
   }
   let prdContent = state.plannerOutput || '';
   try {
