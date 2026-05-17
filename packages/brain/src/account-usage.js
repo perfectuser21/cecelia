@@ -589,6 +589,7 @@ export async function selectBestAccount(options = {}) {
         sevenDayDeficit = targetPct - sevenDayPct;
         sevenDaySonnetDeficit = targetPct - sevenDaySonnetPct;
       }
+      const { minsRemaining: sessionMinsRemaining } = getTokenExpiryInfo(id);
       return {
         id,
         pct,
@@ -601,6 +602,7 @@ export async function selectBestAccount(options = {}) {
         extraUsed: u?.extra_used ?? false,
         spendingCapped: isSpendingCapped(id),
         authFailed: isAuthFailed(id),
+        sessionMinsRemaining,
       };
     });
 
@@ -613,8 +615,12 @@ export async function selectBestAccount(options = {}) {
     if (requestedModel === 'opus') {
       const candidates = mapped
         .filter(a => {
-          if ((a.sevenDayOmelettePct ?? 0) >= 95) return false; // omelette quota skip
-          return isAccountEligibleForTier(a, 'opus');
+          if ((a.sevenDayOmelettePct ?? 0) >= 95) return false;
+          if (!isAccountEligibleForTier(a, 'opus')) return false;
+          if (options.minSessionHours != null && a.sessionMinsRemaining !== null) {
+            if (a.sessionMinsRemaining < options.minSessionHours * 60) return false;
+          }
+          return true;
         })
         .sort((a, b) => b.sevenDayDeficit - a.sevenDayDeficit || a.ePct - b.ePct);
 
@@ -630,7 +636,13 @@ export async function selectBestAccount(options = {}) {
     // ── 旧接口：Haiku 独立模式（向后兼容）──
     if (requestedModel === 'haiku') {
       const candidates = mapped
-        .filter(a => isAccountEligibleForTier(a, 'haiku'))
+        .filter(a => {
+          if (!isAccountEligibleForTier(a, 'haiku')) return false;
+          if (options.minSessionHours != null && a.sessionMinsRemaining !== null) {
+            if (a.sessionMinsRemaining < options.minSessionHours * 60) return false;
+          }
+          return true;
+        })
         .sort((a, b) => b.sevenDayDeficit - a.sevenDayDeficit || a.ePct - b.ePct);
 
       if (candidates.length > 0) {
@@ -655,7 +667,17 @@ export async function selectBestAccount(options = {}) {
 
       // 找出所有可用此 tier 的账号，按进度对齐（deficit）从高到低排序（最落后的先用）
       const candidates = mapped
-        .filter(a => isAccountEligibleForTier(a, tier))
+        .filter(a => {
+          if (!isAccountEligibleForTier(a, tier)) return false;
+          if (options.minSessionHours != null && a.sessionMinsRemaining !== null) {
+            const requiredMins = options.minSessionHours * 60;
+            if (a.sessionMinsRemaining < requiredMins) {
+              console.log(`[account-usage] ${a.id}: session 剩余 ${Math.floor(a.sessionMinsRemaining)}min < 要求 ${requiredMins}min，跳过`);
+              return false;
+            }
+          }
+          return true;
+        })
         .sort((a, b) => {
           if (tier === 'sonnet') return b.sevenDaySonnetDeficit - a.sevenDaySonnetDeficit || a.ePct - b.ePct;
           return b.sevenDayDeficit - a.sevenDayDeficit || a.ePct - b.ePct;

@@ -22,7 +22,15 @@ export async function resolveAccount(opts, ctx = {}) {
     const authFailed = explicit ? isAuthFailed(explicit) : false;
     const needsFallback = !explicit || capped || authFailed;
     if (!needsFallback) return;
-    const selection = await selectBestAccount({ cascade: opts.cascade });
+    // harness 类型任务要求 session ≥ 4h（防止 OAuth token 中途失效）
+    const HARNESS_TASK_TYPES = new Set([
+      'harness_generate', 'harness_fix', 'harness_task',
+      'harness_contract_propose', 'harness_contract_review',
+      'harness_report', 'harness_initiative',
+    ]);
+    const isHarness = HARNESS_TASK_TYPES.has(opts.task?.task_type);
+    const minSessionHours = isHarness ? 4 : undefined;
+    const selection = await selectBestAccount({ cascade: opts.cascade, minSessionHours });
     if (!selection || !selection.accountId) return;
     const taskId = ctx.taskId || opts.task?.id || 'unknown';
     if (explicit && explicit !== selection.accountId) {
