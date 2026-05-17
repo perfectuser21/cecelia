@@ -109,16 +109,30 @@ describe('maybeCreateInsightTask', () => {
     expect(updateCall[1]).toContain(learningId);
   });
 
-  it('无代码修复信号时不创建 task', async () => {
+  it('无代码修复信号时仍强制创建 task（强制绑定，不依赖关键词）', async () => {
     const learningId = 'learn-uuid-002';
     const content = '今日系统运行平稳，KR 进度正常';
     const event = { type: 'daily_summary' };
 
+    // 去重查询：无重复
+    mockPool.query.mockResolvedValueOnce({ rows: [] });
+    // createTask 成功
+    mockCreateTask.mockResolvedValueOnce({ success: true, task: { id: 'task-002' } });
+    // UPDATE learnings applied=true
+    mockPool.query.mockResolvedValueOnce({ rowCount: 1 });
+
     await maybeCreateInsightTask(learningId, content, event);
 
-    // 不应查询 tasks，不应调用 createTask
-    expect(mockPool.query).not.toHaveBeenCalled();
-    expect(mockCreateTask).not.toHaveBeenCalled();
+    // 即使无代码修复信号，也应查询去重并强制创建 task
+    expect(mockPool.query).toHaveBeenCalledWith(
+      expect.stringContaining('insight_learning_id'),
+      [learningId]
+    );
+    expect(mockCreateTask).toHaveBeenCalledWith(expect.objectContaining({
+      task_type: 'dev',
+      trigger_source: 'cortex',
+      payload: expect.objectContaining({ insight_learning_id: learningId }),
+    }));
   });
 
   it('已有对应 task（去重）时不重复创建', async () => {

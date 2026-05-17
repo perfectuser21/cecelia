@@ -935,17 +935,13 @@ function hasCodeFixSignal(content) {
 }
 
 /**
- * 若 insight 含代码修复信号，自动创建 dev task（含去重）
- * 同一 learning 已有对应 task 时跳过，task 创建后标记 applied=true
+ * 强制为 cortex insight 创建 dev task（强制绑定，不依赖关键词检测）
+ * 同一 learning 已有对应 task 时跳过（去重），task 创建后标记 applied=true
  * @param {string} learningId - learnings.id
  * @param {string} content - insight 内容
  * @param {Object} event - 触发事件
  */
 async function maybeCreateInsightTask(learningId, content, event) {
-  if (!hasCodeFixSignal(content)) {
-    return; // 无代码修复信号，跳过
-  }
-
   // 去重：同一 learning 是否已有对应 task
   const dedup = await pool.query(
     `SELECT id FROM tasks WHERE payload->>'insight_learning_id' = $1 AND status != 'cancelled' LIMIT 1`,
