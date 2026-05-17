@@ -104,6 +104,7 @@ journey_type: user_facing
     echo "$STREAM" | grep -q "event: done" || { echo "FAIL: 无 event: done"; exit 1; }
     DONE_DATA=$(echo "$STREAM" | grep -A1 "event: done" | grep "^data:" | head -1 | sed '"'"'s/^data: //'"'"')
     echo "$DONE_DATA" | jq -e '"'"'.status == "completed" or .status == "failed"'"'"' || { echo "FAIL: done.status 不合规"; exit 1; }
+    echo "$DONE_DATA" | jq -e '"'"'has("verdict")'"'"' || { echo "FAIL: done data 缺 verdict 字段（PRD 必填）"; exit 1; }
     echo "$DONE_DATA" | jq -e '"'"'has("result") | not'"'"' || { echo "FAIL: 禁用字段 result 出现"; exit 1; }
     echo "$DONE_DATA" | jq -e '"'"'has("type") | not'"'"' || { echo "FAIL: 禁用字段 type 出现"; exit 1; }
   '
