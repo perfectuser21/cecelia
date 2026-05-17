@@ -127,7 +127,7 @@ router.post('/publish-jobs/retry/:id', async (req, res) => {
  * Query: days (default 7, max 90), platform (optional, default all)
  * Returns: [{date, success_rate, total, completed, failed}, ...]
  */
-router.get('/success-rate', async (req, res) => {
+router.get('/publish/success-rate', async (req, res) => {
   try {
     const days = Math.min(Math.max(Number(req.query.days) || 7, 1), 90);
     const { platform } = req.query;
@@ -185,7 +185,7 @@ router.get('/success-rate', async (req, res) => {
  * GET /api/brain/publish/stats
  * 返回今日发布统计：成功率、覆盖平台数、各平台状态
  */
-router.get('/stats', async (_req, res) => {
+router.get('/publish/stats', async (_req, res) => {
   try {
     const cached = await getPublishStats(pool);
 

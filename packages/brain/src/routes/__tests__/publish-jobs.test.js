@@ -6,10 +6,10 @@ import { dirname, resolve } from 'node:path';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const srcPath = resolve(__dirname, '../publish-jobs.js');
 
-describe('routes/publish-jobs — /success-rate 端点', () => {
-  it('publish-jobs.js 含 /success-rate 路由定义', () => {
+describe('routes/publish-jobs — /publish/success-rate 端点', () => {
+  it('publish-jobs.js 含 /publish/success-rate 路由定义', () => {
     const src = fs.readFileSync(srcPath, 'utf8');
-    expect(src).toMatch(/router\.get\s*\(\s*['"]\/success-rate['"]/);
+    expect(src).toMatch(/router\.get\s*\(\s*['"]\/publish\/success-rate['"]/);
   });
 
   it('publish-jobs.js 查询 publish_success_daily 表', () => {
