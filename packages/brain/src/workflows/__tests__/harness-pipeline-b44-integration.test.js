@@ -132,15 +132,17 @@ describe('B44 — harness pipeline A→B→C: phase=done DB writeback', () => {
     expect(mockRunSubTaskFn).toHaveBeenCalledTimes(1);
     expect(mockFinalEvaluateFn).toHaveBeenCalledTimes(1);
     expect(final.final_e2e_verdict).toBe('PASS');
+    expect(final.report_path).toBeTruthy();
 
-    // B44-specific: assert reportNode called pool.query with phase='done'
+    // B44-specific: assert reportNode called pool.query updating initiative_runs phase='done'
     const phaseCalls = mockPool.query.mock.calls.filter(
       ([sql, params]) =>
         typeof sql === 'string' &&
+        sql.includes('initiative_runs') &&
         sql.includes('phase') &&
         Array.isArray(params) &&
         params.includes('done')
     );
-    expect(phaseCalls.length).toBeGreaterThan(0);
+    expect(phaseCalls.length).toBe(1);
   }, 8000);
 });

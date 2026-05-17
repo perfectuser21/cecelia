@@ -8,6 +8,7 @@ echo "[b44-smoke] Checking test file exists..."
 [ -f "$TEST_FILE" ] || { echo "FAIL: $TEST_FILE not found"; exit 1; }
 
 echo "[b44-smoke] Checking phase+done assertion present..."
+grep -q "sql.includes.*initiative_runs" "$TEST_FILE" || { echo "FAIL: initiative_runs filter missing"; exit 1; }
 grep -q "sql.includes.*phase" "$TEST_FILE" || { echo "FAIL: phase assertion missing"; exit 1; }
 grep -q "params.includes.*done" "$TEST_FILE" || { echo "FAIL: done param assertion missing"; exit 1; }
 
