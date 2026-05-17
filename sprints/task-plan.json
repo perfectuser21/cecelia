@@ -1,5 +1,5 @@
 {
-  "initiative_id": "pending",
+  "initiative_id": "9d693319-2577-487c-9420-79a7420624be",
   "journey_type": "user_facing",
   "journey_type_reason": "入口是用户在 Dashboard 浏览器打开 /harness/:id 页面，核心价值在前端 EventSource 实时日志区自动追加节点推进——用户直接感知",
   "tasks": [
