@@ -88,7 +88,10 @@ while IFS= read -r file; do
         NEED_BRAIN=true
     fi
     # apps/dashboard/ 直接改动，或 apps/api/（被 dashboard vite alias 引用）均需重建 dashboard
-    [[ "$file" == apps/dashboard/* || "$file" == apps/api/* ]] && NEED_DASHBOARD=true
+    # schedule 触发时 changed_paths 是目录级 "apps/"，glob 不匹配纯目录名，需额外匹配
+    if [[ "$file" == apps/dashboard/* || "$file" == apps/api/* || "$file" == "apps/" || "$file" == "apps" ]]; then
+        NEED_DASHBOARD=true
+    fi
     # workflow skills 变更 → 重新部署软链接
     [[ "$file" == packages/workflows/skills/* ]] && NEED_WORKFLOW_SKILLS=true
 done <<< "$CHANGED_FILES"
