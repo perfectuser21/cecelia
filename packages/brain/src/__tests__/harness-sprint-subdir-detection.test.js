@@ -109,3 +109,70 @@ describe('parsePrdNode: subdir scan (B34)', () => {
     expect(result.sprintDir).toBe('sprints');
   });
 });
+
+// ── parsePrdNode B39 ────────────────────────────────────────────────────────
+
+describe('parsePrdNode: B39 LLM-derived sprintDir validation', () => {
+  it('B39: LLM 提取的 sprintDir 目录不存在时，回退到 payload 值并读平铺文件', async () => {
+    // B35 从 plannerOutput 提取 "sprints/tests"，但该目录不存在 → B39 回退
+    fsPromises.access.mockRejectedValueOnce(ENOENT);  // access('sprints/tests') 失败
+    fsPromises.readFile.mockResolvedValueOnce('# PRD from flat sprints/');  // 读 sprints/sprint-prd.md 成功
+
+    const state = {
+      task: { payload: { sprint_dir: 'sprints' } },
+      plannerOutput: '{"sprint_dir": "sprints/tests", "verdict": "DONE"}',
+      worktreePath: '/repo',
+      initiativeId: 'init-b39-fallback',
+    };
+    const result = await parsePrdNode(state);
+    expect(result.sprintDir).toBe('sprints');  // 回退到 payload 值
+    expect(result.prdContent).toBe('# PRD from flat sprints/');
+  });
+
+  it('B39: LLM 提取的 sprintDir 目录存在时保持不变', async () => {
+    // access 成功 → B39 不回退，sprintDir 保持 LLM 值
+    fsPromises.access.mockResolvedValueOnce(undefined);
+    fsPromises.readFile.mockResolvedValueOnce('# PRD in sprints/tests/');
+
+    const state = {
+      task: { payload: { sprint_dir: 'sprints' } },
+      plannerOutput: '{"sprint_dir": "sprints/tests", "verdict": "DONE"}',
+      worktreePath: '/repo',
+      initiativeId: 'init-b39-keep',
+    };
+    const result = await parsePrdNode(state);
+    expect(result.sprintDir).toBe('sprints/tests');
+    expect(result.prdContent).toBe('# PRD in sprints/tests/');
+  });
+
+  it('B39: 无 worktreePath 时不触发 access 校验，sprintDir 保持 LLM 值', async () => {
+    fsPromises.readFile.mockRejectedValue(ENOENT);
+    fsPromises.readdir.mockRejectedValue(ENOENT);
+
+    const state = {
+      task: { payload: { sprint_dir: 'sprints' } },
+      plannerOutput: '{"sprint_dir": "sprints/tests", "verdict": "DONE"}',
+      worktreePath: null,
+      initiativeId: 'init-b39-no-wt',
+    };
+    const result = await parsePrdNode(state);
+    // 无 worktreePath → B39 不执行 → sprintDir = LLM 值
+    expect(result.sprintDir).toBe('sprints/tests');
+    expect(fsPromises.access).not.toHaveBeenCalled();
+  });
+
+  it('B39: 无 plannerOutput sprint_dir 时不触发（非 LLM 来源）', async () => {
+    // plannerOutput 无 sprint_dir 字段 → _sprintDirFromLlm = false → B39 不执行
+    fsPromises.readFile.mockResolvedValueOnce('# PRD content');
+
+    const state = {
+      task: { payload: { sprint_dir: 'sprints/custom' } },
+      plannerOutput: 'some output without sprint_dir key',
+      worktreePath: '/repo',
+      initiativeId: 'init-b39-no-llm',
+    };
+    const result = await parsePrdNode(state);
+    expect(result.sprintDir).toBe('sprints/custom');  // payload 值直接使用，无 B39
+    expect(fsPromises.access).not.toHaveBeenCalled();
+  });
+});

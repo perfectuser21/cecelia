@@ -3625,7 +3625,7 @@ async function probeTaskLiveness() {
  */
 async function syncOrphanTasksOnStartup() {
   const result = await pool.query(`
-    SELECT id, title, payload, started_at, error_message
+    SELECT id, title, task_type, payload, started_at, error_message
     FROM tasks
     WHERE status = 'in_progress'
   `);
@@ -3666,6 +3666,13 @@ async function syncOrphanTasksOnStartup() {
       // should always be requeued rather than quarantined, because no process
       // actually died; the task was simply running inline when Brain stopped.
       if (!runId) {
+        const inlinePatch = { watchdog_retry_count: 0 };
+        // harness_initiative 使用 LangGraph PG checkpointer 持久化进度；
+        // 重入队时设 resume_from_checkpoint=true，让 runHarnessInitiativeRouter
+        // 从已有 checkpoint 续跑，而非升 attemptN 重头开始。
+        if (task.task_type === 'harness_initiative') {
+          inlinePatch.resume_from_checkpoint = true;
+        }
         await pool.query(
           `UPDATE tasks SET
             status = 'queued',
@@ -3673,10 +3680,10 @@ async function syncOrphanTasksOnStartup() {
             payload = COALESCE(payload, '{}'::jsonb) || $2::jsonb,
             updated_at = NOW()
           WHERE id = $1`,
-          [task.id, JSON.stringify({ watchdog_retry_count: 0 })]
+          [task.id, JSON.stringify(inlinePatch)]
         );
         requeued++;
-        console.log(`[startup-sync] Inline task requeued (no process): task=${task.id} title="${task.title}"`);
+        console.log(`[startup-sync] Inline task requeued (no process): task=${task.id} type=${task.task_type} title="${task.title}"`);
         continue;
       }
 

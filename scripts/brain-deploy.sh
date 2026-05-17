@@ -212,25 +212,28 @@ if [[ "$DEPLOY_MODE" == "docker" ]]; then
         exit 0
     fi
 
-    # 删掉 stopped/created 状态的旧容器，避免 docker compose up 因命名冲突卡在 Created 状态
-    docker ps -a --filter "name=cecelia-node-brain" --filter "status=exited" -q | xargs -r docker rm -f 2>/dev/null || true
-    docker ps -a --filter "name=cecelia-node-brain" --filter "status=created" -q | xargs -r docker rm -f 2>/dev/null || true
+    # 删掉所有非 running 状态的旧容器，避免 docker compose up 因命名冲突失败
+    # exited/created/paused/restarting/dead 均可导致容器名占用
+    for _ctr_status in exited created paused restarting dead; do
+        docker ps -a --filter "name=cecelia-node-brain" --filter "status=${_ctr_status}" -q \
+          | xargs -r docker rm -f 2>/dev/null || true
+    done
 
     if [[ "$DRY_RUN" == true ]]; then
-        echo "  [dry-run] docker compose up -d cecelia-brain:${VERSION}"
+        echo "  [dry-run] docker compose up -d node-brain (cecelia-brain:${VERSION})"
     elif ! BRAIN_VERSION="${VERSION}" ENV_REGION="${ENV_REGION}" \
-      docker compose -f "$ROOT_DIR/docker-compose.yml" up -d; then
+      docker compose -f "$ROOT_DIR/docker-compose.yml" up -d node-brain; then
         echo ""
         echo "[FAIL] docker compose up -d failed. Rolling back..."
         if [ -f "$VERSIONS_FILE" ] && [ "$(wc -l < "$VERSIONS_FILE")" -ge 2 ]; then
             PREV_VERSION=$(tail -2 "$VERSIONS_FILE" | head -1)
             echo "  Rolling back to v${PREV_VERSION}..."
             BRAIN_VERSION="${PREV_VERSION}" ENV_REGION="${ENV_REGION}" \
-              docker compose -f "$ROOT_DIR/docker-compose.yml" up -d || true
+              docker compose -f "$ROOT_DIR/docker-compose.yml" up -d node-brain || true
             echo "  Rolled back to v${PREV_VERSION}"
         else
             echo "  No previous version found. Stopping container."
-            docker compose -f "$ROOT_DIR/docker-compose.yml" down || true
+            docker compose -f "$ROOT_DIR/docker-compose.yml" stop node-brain || true
         fi
         exit 1
     fi

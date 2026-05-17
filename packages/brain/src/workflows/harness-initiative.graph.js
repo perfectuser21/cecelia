@@ -35,7 +35,7 @@ import { runFinalE2E, attributeFailures } from '../harness-final-e2e.js';
 import { ensureHarnessWorktree } from '../harness-worktree.js';
 import { resolveGitHubToken } from '../harness-credentials.js';
 import { fetchAndShowOriginFile } from '../lib/git-fence.js';
-import { readFile, readdir } from 'node:fs/promises';
+import { readFile, readdir, access } from 'node:fs/promises';
 import path from 'node:path';
 // B17 + B32: brain 代为 push 用 execFile（B17 加 final_evaluate PR_BRANCH fallback，B32 加 propose_branch fallback）
 const execFileDefault = promisify(execFileCb);
@@ -645,9 +645,13 @@ export async function parsePrdNode(state) {
     taskPlan.initiative_id = state.initiativeId;
   }
   let sprintDir = state.task?.payload?.sprint_dir || 'sprints';
+  let _sprintDirFromLlm = false;
   // B35+B36: 从 planner verdict JSON 提取 sprint_dir，取最后一个（verdict 在输出末尾）
   const sprintDirMatches = [...(state.plannerOutput || '').matchAll(/"sprint_dir"\s*:\s*"([^"]+)"/g)];
-  if (sprintDirMatches.length > 0) sprintDir = sprintDirMatches.at(-1)[1];
+  if (sprintDirMatches.length > 0) {
+    sprintDir = sprintDirMatches.at(-1)[1];
+    _sprintDirFromLlm = true;
+  }
   // B37: git diff 找 planner 实际新建的 sprint 目录（最可靠，覆盖 LLM 输出解析）
   if (state.worktreePath) {
     try {
@@ -656,8 +660,23 @@ export async function parsePrdNode(state) {
         { cwd: state.worktreePath }
       );
       const newSprintMatch = diffOut.match(/sprints\/([^/\n]+)\//);
-      if (newSprintMatch) sprintDir = `sprints/${newSprintMatch[1]}`;
+      if (newSprintMatch) {
+        sprintDir = `sprints/${newSprintMatch[1]}`;
+        _sprintDirFromLlm = false;  // B37 git diff 已证实，无需 B39 二次校验
+      }
     } catch { /* git diff 失败，保持已有 sprintDir */ }
+  }
+  // B39: B35/B36 从 LLM 输出提取的 sprintDir 未经 B37 证实时，校验目录是否存在。
+  // 场景：Planner 写到 sprints/（平铺）但 LLM stdout 包含错误的 sprint_dir 值，
+  // 导致 Proposer 读取 sprints/<wrong>/ 时 ENOENT。回退到 payload 原始值。
+  if (_sprintDirFromLlm && state.worktreePath) {
+    try {
+      await access(path.join(state.worktreePath, sprintDir));
+    } catch {
+      const payloadDir = state.task?.payload?.sprint_dir || 'sprints';
+      console.warn(`[harness-initiative-graph] parsePrd: B39 sprintDir "${sprintDir}" not found, falling back to "${payloadDir}"`);
+      sprintDir = payloadDir;
+    }
   }
   let prdContent = state.plannerOutput || '';
   try {
