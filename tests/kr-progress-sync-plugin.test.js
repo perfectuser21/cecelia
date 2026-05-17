@@ -1,1 +1,0 @@
-../packages/brain/src/__tests__/kr-progress-sync-plugin.test.js
