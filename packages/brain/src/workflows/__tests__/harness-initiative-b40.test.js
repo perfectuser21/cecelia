@@ -120,7 +120,7 @@ describe('B40: parsePrdNode git log fallback + dbUpsertNode sprint_dir 写回', 
         },
         { pool: mockPool }
       );
-    } catch (_) { /* mock 不完整可能抛，忽略 */ }
+    } catch { /* mock 不完整可能抛，忽略 */ }
 
     const sprintDirUpdate = mockClient.query.mock.calls.find(
       call => typeof call[0] === 'string' &&
