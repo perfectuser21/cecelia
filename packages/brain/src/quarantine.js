@@ -21,6 +21,7 @@ import { promisify } from 'util';
 import pool from './db.js';
 import { emit } from './event-bus.js';
 import { upsertLearning } from './learning.js';
+import { createTask } from './actions.js';
 import { hasActiveSignal } from './quarantine-active-signal.js';
 import { resolveResourceTier } from './spawn/middleware/resource-tier.js';
 
@@ -252,12 +253,44 @@ async function quarantineTask(taskId, reason, details = {}) {
 
         if (analysisResult && analysisResult.text) {
           // 写入 learnings 表（upsertLearning 去重，同 title 只保留一行并递增 frequency_count）
-          await upsertLearning({
+          const learningResult = await upsertLearning({
             title: `隔离分析：${task.title}`,
             content: analysisResult.text.trim(),
             category: 'quarantine_pattern',
             triggerEvent: 'quarantine',
           });
+
+          // 强制绑定：quarantine_pattern 新学习必须触发 dev task（Insight-to-Action 闭环）
+          // 任务 3+ 次失败说明存在系统性问题，需要代码层面修复
+          if (learningResult.upserted) {
+            try {
+              const taskDedup = await pool.query(
+                `SELECT id FROM tasks WHERE payload->>'insight_learning_id' = $1 AND status != 'cancelled' LIMIT 1`,
+                [learningResult.id]
+              );
+              if (taskDedup.rows.length === 0) {
+                await createTask({
+                  title: `[隔离修复] ${task.title}`,
+                  description: `任务「${task.title}」连续 ${quarantineInfo.failure_count} 次失败，已进入隔离区。\n\n隔离分析（learning_id: ${learningResult.id}）：\n${analysisResult.text.trim()}`,
+                  priority: 'P1',
+                  task_type: 'dev',
+                  trigger_source: 'quarantine',
+                  payload: {
+                    insight_learning_id: learningResult.id,
+                    quarantined_task_id: taskId,
+                    event_type: 'quarantine_pattern',
+                  },
+                });
+                await pool.query(
+                  `UPDATE learnings SET applied = true, applied_at = NOW() WHERE id = $1`,
+                  [learningResult.id]
+                );
+                console.log(`[quarantine] Auto-created dev task for quarantine learning ${learningResult.id}`);
+              }
+            } catch (taskErr) {
+              console.warn(`[quarantine] Failed to create dev task for learning ${learningResult.id} (non-fatal):`, taskErr.message);
+            }
+          }
 
           console.log(`[quarantine] LLM analysis completed for task ${taskId}`);
         }
