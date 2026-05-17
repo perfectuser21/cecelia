@@ -1,8 +1,9 @@
 #!/bin/bash
 set -e
+SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 node -e "
 const fs = require('fs');
-const src = fs.readFileSync('scripts/brain-deploy.sh', 'utf8');
+const src = fs.readFileSync('${SCRIPT_DIR}/../brain-deploy.sh', 'utf8');
 if (src.includes('--filter \"status=exited\"')) {
   console.log('FAIL: 仍有 status=exited filter');
   process.exit(1);
