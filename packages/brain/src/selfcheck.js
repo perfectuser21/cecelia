@@ -118,7 +118,8 @@ export async function runSelfCheck(pool, opts = {}) {
     record('Core Tables', false, err.message);
   }
 
-  // 5. Schema version matches expected (only pure numeric migration versions, ignore dirty data)
+  // 5. Schema version: DB must be >= EXPECTED_SCHEMA_VERSION.
+  //    DB > expected = forward-compatible (warn). DB < expected = real error (fail).
   try {
     const { rows } = await pool.query(
       `SELECT MAX(version) AS max_ver FROM schema_version WHERE version ~ '^[0-9]{1,4}$'`
@@ -127,6 +128,9 @@ export async function runSelfCheck(pool, opts = {}) {
     const dbVerNum = parseInt(maxVer, 10);
     const expectedVerNum = parseInt(EXPECTED_SCHEMA_VERSION, 10);
     const versionOk = !isNaN(dbVerNum) && dbVerNum >= expectedVerNum;
+    if (versionOk && dbVerNum > expectedVerNum) {
+      console.warn(`  [WARN] Schema Version: DB="${maxVer}" > expected="${EXPECTED_SCHEMA_VERSION}" — DB leads code (forward-compatible, OK)`);
+    }
     record(
       'Schema Version',
       versionOk,
