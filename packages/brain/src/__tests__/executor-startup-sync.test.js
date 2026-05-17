@@ -77,13 +77,13 @@ describe('syncOrphanTasksOnStartup requeue 行为', () => {
   });
 
   it('可重试孤儿（watchdog_retry_count=0, no error_message）→ requeue', async () => {
-    // SELECT in_progress tasks — 返回一个可重试孤儿
+    // SELECT in_progress tasks — 返回一个可重试孤儿（有 run_id，走普通孤儿检测路径）
     mockQuery
       .mockResolvedValueOnce({
         rows: [{
           id: 'retryable-orphan-1',
           title: 'retryable task',
-          payload: { current_run_id: null, watchdog_retry_count: 0 },
+          payload: { current_run_id: 'run-retryable-1', watchdog_retry_count: 0 },
           started_at: new Date().toISOString(),
           error_message: null,
         }]
@@ -114,13 +114,13 @@ describe('syncOrphanTasksOnStartup requeue 行为', () => {
   });
 
   it('超重试限制（watchdog_retry_count >= 2）→ status=failed', async () => {
-    // SELECT in_progress tasks — 返回一个已超重试限制的孤儿
+    // SELECT in_progress tasks — 返回一个已超重试限制的孤儿（有 run_id，走普通孤儿检测路径）
     mockQuery
       .mockResolvedValueOnce({
         rows: [{
           id: 'exhausted-orphan-1',
           title: 'exhausted task',
-          payload: { current_run_id: null, watchdog_retry_count: 2 },
+          payload: { current_run_id: 'run-exhausted-1', watchdog_retry_count: 2 },
           started_at: new Date().toISOString(),
           error_message: null,
         }]
@@ -149,13 +149,13 @@ describe('syncOrphanTasksOnStartup requeue 行为', () => {
   });
 
   it('已有 error_message 的孤儿 → status=failed', async () => {
-    // SELECT in_progress tasks — 已有 error_message（说明之前已知失败）
+    // SELECT in_progress tasks — 已有 error_message（说明之前已知失败，有 run_id）
     mockQuery
       .mockResolvedValueOnce({
         rows: [{
           id: 'pre-error-orphan-1',
           title: 'pre-error task',
-          payload: { current_run_id: null, watchdog_retry_count: 0 },
+          payload: { current_run_id: 'run-pre-error-1', watchdog_retry_count: 0 },
           started_at: new Date().toISOString(),
           error_message: 'previous failure reason',
         }]
@@ -186,7 +186,7 @@ describe('syncOrphanTasksOnStartup requeue 行为', () => {
         rows: [{
           id: 'oom-orphan-1',
           title: 'OOM killed task',
-          payload: { current_run_id: null, watchdog_retry_count: 2 },
+          payload: { current_run_id: 'run-oom-1', watchdog_retry_count: 2 },
           started_at: new Date().toISOString(),
           error_message: null,
         }]
@@ -239,5 +239,42 @@ describe('syncOrphanTasksOnStartup requeue 行为', () => {
     const result2 = await syncOrphanTasksOnStartup();
     expect(result2.requeued).toBe(0);
     expect(result2.orphans_found).toBe(0);
+  });
+
+  it('harness_initiative 任务 → requeued with resume_from_checkpoint=true，不走 failed', async () => {
+    // SELECT 返回一个 harness_initiative in_progress 任务
+    mockQuery.mockResolvedValueOnce({
+      rows: [{
+        id: 'harness-init-1',
+        title: 'harness initiative test task',
+        payload: { watchdog_retry_count: 0 },
+        started_at: new Date().toISOString(),
+        error_message: null,
+        task_type: 'harness_initiative',
+      }]
+    });
+    mockQuery.mockResolvedValue({ rows: [], rowCount: 1 });
+
+    const { syncOrphanTasksOnStartup } = await import('../executor.js');
+    const result = await syncOrphanTasksOnStartup();
+
+    // 应该被 requeue（不是 orphan_fixed）
+    expect(result.requeued).toBe(1);
+
+    // 必须有 status='queued' 的 UPDATE
+    const requeueCall = mockQuery.mock.calls.find(
+      call => typeof call[0] === 'string' && call[0].includes("status = 'queued'")
+    );
+    expect(requeueCall).toBeTruthy();
+
+    // payload 必须含 resume_from_checkpoint: true
+    const payloadPatch = JSON.parse(requeueCall[1][1]);
+    expect(payloadPatch.resume_from_checkpoint).toBe(true);
+
+    // 不能有 status='failed' 的 UPDATE
+    const failedCall = mockQuery.mock.calls.find(
+      call => typeof call[0] === 'string' && call[0].includes("status = 'failed'")
+    );
+    expect(failedCall).toBeUndefined();
   });
 });

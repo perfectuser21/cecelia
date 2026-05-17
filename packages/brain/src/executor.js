@@ -3625,7 +3625,7 @@ async function probeTaskLiveness() {
  */
 async function syncOrphanTasksOnStartup() {
   const result = await pool.query(`
-    SELECT id, title, payload, started_at, error_message
+    SELECT id, title, payload, started_at, error_message, task_type
     FROM tasks
     WHERE status = 'in_progress'
   `);
@@ -3635,7 +3635,25 @@ async function syncOrphanTasksOnStartup() {
   let requeued = 0;
   let rebuilt = 0;
 
+  // LangGraph 任务（harness_initiative）无 OS 子进程，不走孤儿检测路径。
+  // Brain 重启后以 resume_from_checkpoint=true 重排队，让 dispatcher 下次 tick 从 checkpoint 续跑。
+  const LANGGRAPH_TYPES = new Set(['harness_initiative']);
+
   for (const task of result.rows) {
+    if (LANGGRAPH_TYPES.has(task.task_type)) {
+      await pool.query(
+        `UPDATE tasks SET
+          status = 'queued',
+          payload = COALESCE(payload, '{}'::jsonb) || $2::jsonb,
+          updated_at = NOW()
+        WHERE id = $1`,
+        [task.id, JSON.stringify({ resume_from_checkpoint: true })]
+      );
+      requeued++;
+      console.log(`[startup-sync] LangGraph task re-queued for checkpoint resume: task=${task.id} type=${task.task_type} title="${task.title}"`);
+      continue;
+    }
+
     const runId = task.payload?.current_run_id;
 
     // Check if process exists (task_id is in cecelia-run command line)

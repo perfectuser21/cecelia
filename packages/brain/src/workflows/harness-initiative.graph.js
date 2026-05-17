@@ -648,16 +648,34 @@ export async function parsePrdNode(state) {
   // B35+B36: 从 planner verdict JSON 提取 sprint_dir，取最后一个（verdict 在输出末尾）
   const sprintDirMatches = [...(state.plannerOutput || '').matchAll(/"sprint_dir"\s*:\s*"([^"]+)"/g)];
   if (sprintDirMatches.length > 0) sprintDir = sprintDirMatches.at(-1)[1];
-  // B37: git diff 找 planner 实际新建的 sprint 目录（最可靠，覆盖 LLM 输出解析）
+  // B37+B40: 检测 planner 实际新建的 sprint 目录
+  // git log 覆盖 origin/main..HEAD 整条历史（比 git diff HEAD 更可靠，HEAD 可能是 GAN propose 分支）
   if (state.worktreePath) {
     try {
-      const { stdout: diffOut } = await execFile('git',
-        ['diff', '--name-only', 'origin/main', 'HEAD', '--', 'sprints/'],
+      const { stdout: logOut } = await execFile('git',
+        ['log', '--diff-filter=A', '--name-only', '--format=', 'origin/main..HEAD', '--', 'sprints/'],
         { cwd: state.worktreePath }
       );
-      const newSprintMatch = diffOut.match(/sprints\/([^/\n]+)\//);
-      if (newSprintMatch) sprintDir = `sprints/${newSprintMatch[1]}`;
-    } catch { /* git diff 失败，保持已有 sprintDir */ }
+      const allMatches = [...logOut.matchAll(/sprints\/([^/\n]+)\//g)];
+      const newSprintMatch = allMatches.at(-1);
+      if (newSprintMatch) {
+        sprintDir = `sprints/${newSprintMatch[1]}`;
+      } else if (!logOut.trim()) {
+        // B40: git log 无新增文件（未 commit），fallback 到文件系统检测
+        try {
+          const { stdout: findOut } = await execFile('find',
+            [path.join(state.worktreePath, 'sprints'), '-maxdepth', '1', '-mindepth', '1', '-type', 'd'],
+            { cwd: state.worktreePath }
+          );
+          const dirs = findOut.trim().split('\n').filter(Boolean);
+          if (dirs.length === 1) {
+            sprintDir = path.relative(state.worktreePath, dirs[0]);
+          } else if (dirs.length > 1) {
+            console.warn(`[parsePrdNode] B40: found ${dirs.length} sprint subdirs, cannot auto-detect. Keeping ${sprintDir}`);
+          }
+        } catch { /* sprints/ 子目录未找到，保持已有 sprintDir */ }
+      }
+    } catch { /* git log 失败，保持已有 sprintDir */ }
   }
   let prdContent = state.plannerOutput || '';
   try {
@@ -732,6 +750,16 @@ export async function dbUpsertNode(state, opts = {}) {
       client,
       contractBranch: state.ganResult.propose_branch || null,
     });
+    // B40: 把运行时检测到的 sprint_dir 写入子任务 payload，确保 Brain 重启后 dispatcher 从 DB dispatch 时路径正确
+    const effectiveSprintDir = state.sprintDir || state.task?.payload?.sprint_dir || 'sprints';
+    if (insertedTaskIds?.length > 0 && effectiveSprintDir !== 'sprints') {
+      await client.query(
+        `UPDATE tasks
+         SET payload = COALESCE(payload, '{}'::jsonb) || $2::jsonb
+         WHERE id = ANY($1::uuid[])`,
+        [insertedTaskIds, JSON.stringify({ sprint_dir: effectiveSprintDir })]
+      );
+    }
     // ON CONFLICT (B13): dbUpsertNode 是 graph 节点，restart resume 时 retry 必须幂等。
     const contractInsert = await client.query(
       `INSERT INTO initiative_contracts (
