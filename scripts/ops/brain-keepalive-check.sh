@@ -5,6 +5,8 @@ CONTAINER_NAME="cecelia-node-brain"
 STATE_FILE="/tmp/brain-keepalive.alerting"
 WEBHOOK_URL="${FEISHU_BOT_WEBHOOK:-}"
 LOG_PREFIX="[brain-keepalive]"
+REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+COMPOSE_FILE="$REPO_ROOT/docker-compose.yml"
 
 send_feishu() {
   local msg="$1"
@@ -22,11 +24,20 @@ STATUS=$(docker inspect "$CONTAINER_NAME" --format '{{.State.Status}}' 2>/dev/nu
 
 if [[ "$STATUS" != "running" ]]; then
   if [[ ! -f "$STATE_FILE" ]]; then
-    echo "$LOG_PREFIX ALERT: $CONTAINER_NAME status=$STATUS — sending P0"
-    send_feishu "🚨 [P0] Brain 容器已停止（status=${STATUS}）\n需立即检查：docker compose up -d node-brain"
-    touch "$STATE_FILE"
+    echo "$LOG_PREFIX Brain not running (status=$STATUS), attempting restart..."
+    docker compose -f "$COMPOSE_FILE" up -d node-brain 2>&1 || true
+    sleep 15
+    NEW_STATUS=$(docker inspect "$CONTAINER_NAME" --format '{{.State.Status}}' 2>/dev/null || echo "not_found")
+    if [[ "$NEW_STATUS" == "running" ]]; then
+      echo "$LOG_PREFIX AUTO-RESTARTED: $CONTAINER_NAME is now running"
+      send_feishu "✅ Brain 容器已自动重启恢复"
+    else
+      echo "$LOG_PREFIX ALERT: restart failed, $CONTAINER_NAME still $NEW_STATUS — sending P0"
+      send_feishu "🚨 [P0] Brain 容器已停止且自动重启失败（status=${NEW_STATUS}）\n请手动检查：docker compose -f $COMPOSE_FILE up -d node-brain"
+      touch "$STATE_FILE"
+    fi
   else
-    echo "$LOG_PREFIX SILENCED: already alerted, container still $STATUS"
+    echo "$LOG_PREFIX SILENCED: restart already attempted, container still $STATUS"
   fi
 else
   if [[ -f "$STATE_FILE" ]]; then
