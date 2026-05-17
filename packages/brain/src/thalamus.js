@@ -840,6 +840,108 @@ function createFallbackDecision(event, reason) {
 }
 
 // ============================================================
+// 持续性外部依赖故障检测
+// 同 fingerprint ≥ 3 次 → 立即 quarantine+rca，永不 retry
+// ============================================================
+
+// 外部依赖故障的内联模式匹配（避免引入循环依赖）
+const _EXT_DEP_PATTERNS = [
+  // 网络类
+  { re: /ECONNREFUSED|ETIMEDOUT|ENOTFOUND|ENETUNREACH|ECONNRESET/i, class: 'network' },
+  { re: /connection\s+refused|connection\s+reset|network\s+error|socket\s+hang\s+up/i, class: 'network' },
+  { re: /service\s+unavailable|bad\s+gateway|upstream\s+connect/i, class: 'network' },
+  { re: /5\d{2}\s+error|internal\s+server\s+error/i, class: 'network' },
+  // 限流类
+  { re: /too\s+many\s+requests|rate\s+limit|429|overloaded|quota\s+exceeded/i, class: 'rate_limit' },
+  // 账单上限
+  { re: /spending\s+cap|cap\s+reached|billing.*limit|usage.*limit.*reached/i, class: 'billing_cap' },
+  // 认证类
+  { re: /permission\s+denied|access\s+denied|unauthorized|EACCES|EPERM|forbidden/i, class: 'auth' },
+  { re: /authentication\s+failed|auth\s+error|invalid.*api.*key/i, class: 'auth' },
+  // 资源类
+  { re: /ENOMEM|out\s+of\s+memory|disk\s+full|no\s+space\s+left|ENOSPC/i, class: 'resource' },
+];
+
+const EXTERNAL_DEP_FAILURE_CLASSES = new Set([
+  'network', 'rate_limit', 'billing_cap', 'resource', 'auth',
+]);
+
+const PERSISTENT_EXT_DEP_THRESHOLD = 3;
+const PERSISTENT_EXT_DEP_WINDOW_MINUTES = 30;
+
+/**
+ * 用内联模式匹配判断错误信息是否属于外部依赖故障类型
+ * @param {string} errorMsg
+ * @returns {string|null} failure class 或 null
+ */
+function _classifyExtDepError(errorMsg) {
+  if (!errorMsg) return null;
+  for (const { re, class: cls } of _EXT_DEP_PATTERNS) {
+    if (re.test(errorMsg)) return cls;
+  }
+  return null;
+}
+
+/**
+ * 检测持续性外部依赖故障（同 fingerprint ≥ PERSISTENT_EXT_DEP_THRESHOLD 次）
+ *
+ * 时序：execution.js 在事务 COMMIT 后才发出 task_failed 事件，tasks.error_message 已写入；
+ *       但 tasks.payload.failure_class 在事件发出后才由 handleTaskFailure 写入。
+ * 因此：用 tasks.error_message 获取当前任务的故障类型（已写入），
+ *       用 tasks.payload->>'failure_class'（其他任务，已完成完整失败处理流程）统计跨任务次数。
+ *
+ * @param {Object} event - TASK_FAILED 事件
+ * @returns {Promise<{ isPersistent: boolean, failureClass?: string, count?: number, fingerprint?: string }>}
+ */
+async function detectPersistentExtDepFailure(event) {
+  try {
+    // Step 1: 获取当前任务的 error_message 和 payload.failure_class
+    const taskResult = await pool.query(
+      `SELECT error_message,
+              payload->>'failure_class' AS payload_failure_class
+       FROM tasks WHERE id = $1`,
+      [event.task_id]
+    );
+
+    const row = taskResult.rows[0];
+    if (!row) return { isPersistent: false };
+
+    // 优先使用 payload.failure_class（若已写入），否则从 error_message 内联分类
+    const failureClass = row.payload_failure_class ||
+      _classifyExtDepError(row.error_message || '');
+
+    if (!failureClass || !EXTERNAL_DEP_FAILURE_CLASSES.has(failureClass)) {
+      return { isPersistent: false };
+    }
+
+    // Step 2: 统计 WINDOW 内其他任务同类外部依赖失败次数（payload.failure_class 已完整写入）
+    const countResult = await pool.query(
+      `SELECT COUNT(*)::int AS cnt
+       FROM tasks
+       WHERE id != $1
+         AND payload->>'failure_class' = $2
+         AND status IN ('failed', 'quarantined', 'blocked')
+         AND updated_at > NOW() - INTERVAL '${PERSISTENT_EXT_DEP_WINDOW_MINUTES} minutes'`,
+      [event.task_id, failureClass]
+    );
+
+    // +1 计入当前任务
+    const count = (countResult.rows[0]?.cnt || 0) + 1;
+
+    if (count >= PERSISTENT_EXT_DEP_THRESHOLD) {
+      const fingerprint = `ext_dep:${failureClass}`;
+      console.log(`[thalamus] 持续性外部依赖故障：failure_class=${failureClass} count=${count} ≥ ${PERSISTENT_EXT_DEP_THRESHOLD}，触发立即隔离+RCA`);
+      return { isPersistent: true, failureClass, count, fingerprint };
+    }
+
+    return { isPersistent: false };
+  } catch (err) {
+    console.warn('[thalamus] detectPersistentExtDepFailure 查询失败（不影响主路径）:', err.message);
+    return { isPersistent: false };
+  }
+}
+
+// ============================================================
 // 快速路由（不调用 LLM 的简单规则）
 // ============================================================
 
@@ -1434,6 +1536,43 @@ async function processEvent(event) {
   console.log(`[thalamus] Processing event: ${event.type}`);
   const startMs = Date.now();
 
+  // 持续性外部依赖故障快速路径（优先于 quickRoute）
+  // 同 fingerprint ≥ PERSISTENT_EXT_DEP_THRESHOLD 次 → 立即 quarantine+rca，永不 retry
+  if (event.type === EVENT_TYPES.TASK_FAILED && event.task_id) {
+    const extDepCheck = await detectPersistentExtDepFailure(event);
+    if (extDepCheck.isPersistent) {
+      const extDepDecision = {
+        level: 0,
+        actions: [
+          {
+            type: 'quarantine_task',
+            params: {
+              task_id: event.task_id,
+              reason: 'persistent_external_dependency',
+              failure_class: extDepCheck.failureClass,
+              fingerprint: extDepCheck.fingerprint,
+              fingerprint_count: extDepCheck.count,
+            },
+          },
+          {
+            type: 'trigger_rca',
+            params: {
+              task_id: event.task_id,
+              failure_class: extDepCheck.failureClass,
+              fingerprint: extDepCheck.fingerprint,
+              occurrence_count: extDepCheck.count,
+            },
+          },
+        ],
+        rationale: `持续性外部依赖故障（${extDepCheck.failureClass}，同 fingerprint ${extDepCheck.count} 次 ≥ ${PERSISTENT_EXT_DEP_THRESHOLD}），立即隔离+RCA，永不重试`,
+        confidence: 0.95,
+        safety: false,
+      };
+      recordRoutingDecision('persistent_ext_dep_route', event, extDepDecision, Date.now() - startMs);
+      return extDepDecision;
+    }
+  }
+
   // 1. 尝试快速路由 (Level 0)
   const quickDecision = quickRoute(event);
   if (quickDecision) {
@@ -1648,6 +1787,13 @@ export {
   callThalamusLLM,
   callThalamLLM,
   _resetThalamusMinimaxKey,
+
+  // 持续性外部依赖故障检测（测试可用）
+  detectPersistentExtDepFailure,
+  _classifyExtDepError,
+  EXTERNAL_DEP_FAILURE_CLASSES,
+  PERSISTENT_EXT_DEP_THRESHOLD,
+  PERSISTENT_EXT_DEP_WINDOW_MINUTES,
 
   // 常量
   EVENT_TYPES,
