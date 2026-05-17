@@ -6,11 +6,14 @@
  * 每次 Tick 调用 monitorPublishQueue()：
  *   1. 自动重试 failed 的 content_publish 任务（retry_count < MAX_RETRY）
  *   2. 统计今日发布状态，写入 working_memory key='daily_publish_stats'
+ *   3. 检测微信 content_publish 连续 auth_fail ≥2 次 → 飞书 P0 告警
  *
  * 设计原则：
  *   - fire-and-forget 友好：内部捕获所有异常，不抛出
  *   - 幂等：多次调用结果一致
  */
+
+import { raise } from './alerting.js';
 
 // ─── 常量 ─────────────────────────────────────────────────────────────────────
 
@@ -25,6 +28,15 @@ const RATE_LIMIT_BACKOFF_MULTIPLIER = 2;
 
 /** working_memory key：今日发布统计 */
 const STATS_KEY = 'daily_publish_stats';
+
+/** 微信官方 access_token 失效错误码（公众号平台） */
+const WECHAT_TOKEN_ERROR_CODES = new Set(['40001', '40014', '42001']);
+
+/** 连续 auth_fail 触发飞书告警的阈值 */
+const WECHAT_AUTH_FAIL_ALERT_THRESHOLD = 2;
+
+/** publish_success_daily 保证写入的平台（即使当日无任务） */
+const GUARANTEED_STAT_PLATFORMS = ['wechat'];
 
 // ─── failure_type 分类 ────────────────────────────────────────────────────────
 
@@ -195,6 +207,30 @@ async function retryTask(pool, taskId, currentRetry, failureType = PUBLISH_FAILU
 }
 
 /**
+ * 查询今日微信发布 auth_fail 任务列表。
+ * 条件：wechat 平台 + status=failed + (failure_type=auth_fail 或 payload.error_code 为微信 token 失效码)
+ *
+ * @param {import('pg').Pool} pool
+ * @returns {Promise<Array>}
+ */
+async function fetchWechatAuthFailsToday(pool) {
+  const { rows } = await pool.query(
+    `SELECT id, title, payload
+     FROM tasks
+     WHERE task_type = 'content_publish'
+       AND payload->>'platform' = 'wechat'
+       AND status = 'failed'
+       AND DATE(created_at AT TIME ZONE 'UTC') = CURRENT_DATE
+       AND (
+         payload->>'failure_type' = 'auth_fail'
+         OR payload->>'error_code' = ANY($1::text[])
+       )`,
+    [[...WECHAT_TOKEN_ERROR_CODES]]
+  );
+  return rows;
+}
+
+/**
  * 统计今日 content_publish tasks 的各状态数量。
  *
  * @param {import('pg').Pool} pool
@@ -255,6 +291,11 @@ async function writeStats(pool, stats) {
   const date = stats.date || new Date().toISOString().slice(0, 10);
   const platformMap = stats.platforms || {};
 
+  // 确保 GUARANTEED_STAT_PLATFORMS 中的平台始终有统计行（即使当日无任务）
+  for (const p of GUARANTEED_STAT_PLATFORMS) {
+    if (!platformMap[p]) platformMap[p] = { queued: 0, in_progress: 0, completed: 0, failed: 0 };
+  }
+
   for (const [platform, ps] of Object.entries(platformMap)) {
     const total = (ps.queued || 0) + (ps.in_progress || 0) + (ps.completed || 0) + (ps.failed || 0);
     const completed = ps.completed || 0;
@@ -295,6 +336,18 @@ export async function monitorPublishQueue(pool) {
         const platform = task.payload?.platform || 'unknown';
         const failureType = classifyPublishFailure(task.error_message);
 
+        // 微信平台：payload.error_code 为 token 失效码 → 强制 auth_fail
+        if (platform === 'wechat') {
+          const errorCode = String(task.payload?.error_code ?? '');
+          if (errorCode && WECHAT_TOKEN_ERROR_CODES.has(errorCode)) {
+            await persistFailureType(pool, task.id, PUBLISH_FAILURE_TYPE.AUTH_FAIL);
+            console.error(
+              `[publish-monitor][ALERT] wechat 任务 ${task.id} error_code=${errorCode}（token 失效），跳过重试，需人工刷新 access_token`
+            );
+            continue;
+          }
+        }
+
         // auth_fail / content_reject：写入 failure_type，不重试，直接告警
         if (failureType === PUBLISH_FAILURE_TYPE.AUTH_FAIL || failureType === PUBLISH_FAILURE_TYPE.CONTENT_REJECT) {
           await persistFailureType(pool, task.id, failureType);
@@ -334,6 +387,18 @@ export async function monitorPublishQueue(pool) {
     if (stats.total > 0) {
       const rate = stats.success_rate !== null ? `${stats.success_rate}%` : 'N/A';
       console.log(`[publish-monitor] 今日发布统计: 总数=${stats.total} 完成=${stats.completed} 成功率=${rate} 覆盖平台=${stats.coverage}`);
+    }
+
+    // 4. 微信 token 失效检测：连续 auth_fail ≥ 阈值 → 飞书 P0 告警
+    const wechatFails = await fetchWechatAuthFailsToday(pool);
+    if (wechatFails.length >= WECHAT_AUTH_FAIL_ALERT_THRESHOLD) {
+      const accountNames = [...new Set(
+        wechatFails.map(t => t.payload?.account_name || t.payload?.account_id || t.title).filter(Boolean)
+      )].join('、');
+      const msg = `微信公众号 access_token 可能已失效，需手动刷新。账号：${accountNames || '（未知）'}（今日连续失败 ${wechatFails.length} 次）`;
+      raise('P0', 'wechat_access_token_expired', msg).catch(e =>
+        console.error('[publish-monitor] 飞书告警发送失败:', e.message)
+      );
     }
   } catch (err) {
     console.error(`[publish-monitor] 监控异常: ${err.message}`);
