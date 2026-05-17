@@ -732,6 +732,101 @@ const NODE_LABEL_MAP = {
 };
 
 /**
+ * GET /pipeline/:initiative_id/stream
+ * SSE 实时推送 initiative_run_events 节点状态（HarnessStreamPage 消费）
+ *
+ * event: node_update  data: {node_id, status, title, updated_at}
+ * event: done
+ * : keepalive
+ */
+router.get('/pipeline/:initiative_id/stream', async (req, res) => {
+  const { initiative_id } = req.params;
+
+  let runRow;
+  try {
+    const { rows } = await pool.query(
+      `SELECT id, phase FROM initiative_runs WHERE initiative_id = $1::uuid LIMIT 1`,
+      [initiative_id]
+    );
+    runRow = rows[0] || null;
+  } catch {
+    runRow = null;
+  }
+
+  if (!runRow) {
+    return res.status(404).json({ error: 'initiative not found' });
+  }
+
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+  res.flushHeaders();
+
+  let lastSeenId = 0;
+  let closed = false;
+  let pollTimer = null;
+  let keepaliveTimer = null;
+
+  const cleanup = () => {
+    closed = true;
+    if (pollTimer) clearInterval(pollTimer);
+    if (keepaliveTimer) clearInterval(keepaliveTimer);
+  };
+
+  res.on('close', cleanup);
+
+  const STATUS_MAP = { running: 'running', done: 'completed', failed: 'failed' };
+
+  const poll = async () => {
+    if (closed) return;
+    try {
+      const { rows: events } = await pool.query(
+        `SELECT id, node, status, attempt, ts FROM initiative_run_events
+         WHERE initiative_id = $1::uuid AND id > $2
+         ORDER BY id ASC`,
+        [initiative_id, lastSeenId]
+      );
+
+      for (const evt of events) {
+        if (closed) return;
+        const data = {
+          node_id: evt.node,
+          status: STATUS_MAP[evt.status] ?? evt.status,
+          title: NODE_LABEL_MAP[evt.node] ?? evt.node,
+          updated_at: new Date(Number(evt.ts) * 1000).toISOString(),
+        };
+        res.write(`event: node_update\ndata: ${JSON.stringify(data)}\n\n`);
+        lastSeenId = evt.id;
+      }
+
+      const { rows: runRows } = await pool.query(
+        `SELECT phase FROM initiative_runs WHERE initiative_id = $1::uuid LIMIT 1`,
+        [initiative_id]
+      );
+      const phase = runRows[0]?.phase;
+      if (phase === 'done' || phase === 'failed') {
+        if (!closed) {
+          res.write(`event: done\ndata: ${JSON.stringify({ phase })}\n\n`);
+          res.end();
+          cleanup();
+        }
+      }
+    } catch (err) {
+      console.error('[SSE /pipeline/:id/stream] poll error:', err.message);
+    }
+  };
+
+  await poll();
+
+  if (!closed) {
+    pollTimer = setInterval(poll, 2000);
+    keepaliveTimer = setInterval(() => {
+      if (!closed) res.write(': keepalive\n\n');
+    }, 30000);
+  }
+});
+
+/**
  * GET /stream?planner_task_id=<uuid>
  * SSE 实时推送 harness pipeline 节点进度
  *

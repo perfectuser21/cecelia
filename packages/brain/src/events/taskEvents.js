@@ -38,6 +38,17 @@ export async function emitGraphNodeUpdate({
      VALUES ($1, 'graph_node_update', $2::jsonb, NOW())`,
     [taskId, JSON.stringify({ initiativeId, threadId, nodeName, attemptN, payloadSummary })]
   );
+  if (initiativeId) {
+    try {
+      await dbp.query(
+        `INSERT INTO initiative_run_events (initiative_id, node, status, attempt, ts)
+         VALUES ($1::uuid, $2, 'done', $3, EXTRACT(EPOCH FROM NOW())::BIGINT)`,
+        [initiativeId, nodeName, attemptN || 1]
+      );
+    } catch {
+      // non-fatal: table may not exist yet during migration
+    }
+  }
 }
 
 /**
