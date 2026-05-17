@@ -1,0 +1,106 @@
+{
+  "name": "template-simple-claude-call",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "simple-claude",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "webhook-trigger",
+      "name": "Webhook Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [240, 300],
+      "webhookId": "simple-claude-call"
+    },
+    {
+      "parameters": {
+        "jsCode": "// 从 webhook body 提取参数\nconst body = $json.body || $json;\nconst userPrompt = body.prompt || body.task || 'Hello, Claude!';\n\n// 构建完整的 Claude 命令 prompt\nconst prompt = `\n${userPrompt}\n\n请返回结构化的 JSON 结果。\n`;\n\nreturn {\n  prompt: prompt.trim(),\n  task_id: body.task_id || 'task-' + Date.now(),\n  timestamp: new Date().toISOString()\n};"
+      },
+      "id": "prepare-prompt",
+      "name": "Prepare Prompt",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "authentication": "none",
+        "command": "=/bin/bash -c 'claude -p \"{{ $json.prompt }}\" --output-format json'",
+        "options": {}
+      },
+      "id": "call-claude",
+      "name": "Call Claude",
+      "type": "n8n-nodes-base.ssh",
+      "typeVersion": 1,
+      "position": [680, 300],
+      "credentials": {
+        "sshPassword": {
+          "id": "1",
+          "name": "localhost"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// 解析 Claude 的 JSON 输出\nconst stdout = $json.stdout || '{}';\nlet result;\n\ntry {\n  result = JSON.parse(stdout);\n} catch (e) {\n  result = { raw_output: stdout, parse_error: e.message };\n}\n\nreturn {\n  success: true,\n  task_id: $('Prepare Prompt').item.json.task_id,\n  result: result,\n  executed_at: $('Prepare Prompt').item.json.timestamp\n};"
+      },
+      "id": "parse-result",
+      "name": "Parse Result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [900, 300]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}"
+      },
+      "id": "respond",
+      "name": "Respond",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [1120, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// 错误处理\nconst error = $json.stderr || $json.error || 'Unknown error';\n\nreturn {\n  success: false,\n  error: error,\n  task_id: $('Prepare Prompt').item.json.task_id,\n  timestamp: new Date().toISOString()\n};"
+      },
+      "id": "handle-error",
+      "name": "Handle Error",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [900, 500]
+    }
+  ],
+  "connections": {
+    "Webhook Trigger": {
+      "main": [[{"node": "Prepare Prompt", "type": "main", "index": 0}]]
+    },
+    "Prepare Prompt": {
+      "main": [[{"node": "Call Claude", "type": "main", "index": 0}]]
+    },
+    "Call Claude": {
+      "main": [[{"node": "Parse Result", "type": "main", "index": 0}]],
+      "error": [[{"node": "Handle Error", "type": "main", "index": 0}]]
+    },
+    "Parse Result": {
+      "main": [[{"node": "Respond", "type": "main", "index": 0}]]
+    },
+    "Handle Error": {
+      "main": [[{"node": "Respond", "type": "main", "index": 0}]]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "meta": {
+    "description": "最简单的无头 Claude 调用模板",
+    "usage": "POST /webhook/simple-claude with JSON body: {\"prompt\": \"your task here\"}",
+    "author": "Cecelia Workflows"
+  }
+}

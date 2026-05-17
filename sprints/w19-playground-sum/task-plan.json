@@ -1,0 +1,32 @@
+{
+  "initiative_id": "pending",
+  "journey_type": "autonomous",
+  "journey_type_reason": "playground 是独立 HTTP server 子项目，本次只动 server 路由 + 单测 + README，无 UI / 无 brain tick / 无 engine hook / 无远端 agent 协议，按规则归类为 autonomous。",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "playground 加 GET /sum 路由 + 单测 + README 更新",
+      "scope": "在 playground/server.js 新增 `GET /sum` 路由（解析 query a/b → 校验 → 返回 200 + {sum} 或 400 + {error}）；在 playground/tests/server.test.js 新增 /sum happy + 至少 2 个 error 用例（保持 /health 用例不动）；更新 playground/README.md 端点段，把 /sum 从『不在 bootstrap 范围』改为已实现并给示例。零新依赖。",
+      "dod": [
+        "[BEHAVIOR] GET /sum?a=2&b=3 → HTTP 200 + body {\"sum\":5}（数字类型严格相等）",
+        "[BEHAVIOR] GET /sum?a=2（缺 b）→ HTTP 400 + body 含非空字符串 error 字段",
+        "[BEHAVIOR] GET /sum?a=abc&b=3（非数字）→ HTTP 400 + 非空 error 且 body 不含 sum 字段",
+        "[BEHAVIOR] GET /sum?a=-1&b=1 → 200 + {\"sum\":0}（负数合法）",
+        "[BEHAVIOR] GET /sum?a=1.5&b=2.5 → 200 + {\"sum\":4}（小数合法）",
+        "[BEHAVIOR] GET /health 仍返回 200 + {\"ok\":true}（回归不破坏）",
+        "[ARTIFACT] playground/server.js 含 `app.get('/sum'` 路由且仍含 `app.get('/health'`",
+        "[ARTIFACT] playground/tests/server.test.js 含 `/sum` 字符串 + `toBe(200)` + `toBe(400)` 断言",
+        "[ARTIFACT] playground/README.md 含 `/sum` 字符串且不再含『不在 bootstrap 范围』",
+        "[ARTIFACT] playground/package.json dependencies 仅 `express`、devDependencies 仅 `supertest`+`vitest`（零新依赖）"
+      ],
+      "files": [
+        "playground/server.js",
+        "playground/tests/server.test.js",
+        "playground/README.md"
+      ],
+      "depends_on": [],
+      "complexity": "S",
+      "estimated_minutes": 30
+    }
+  ]
+}

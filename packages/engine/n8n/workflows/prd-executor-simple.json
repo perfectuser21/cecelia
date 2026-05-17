@@ -1,0 +1,239 @@
+{
+  "name": "PRD Executor - Simple (HTTP)",
+  "active": true,
+  "nodes": [
+    {
+      "id": "trigger",
+      "name": "Webhook Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [200, 300],
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "cecilia-exec",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "webhookId": "cecilia-exec-webhook"
+    },
+    {
+      "id": "set-params",
+      "name": "Set Parameters",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [400, 300],
+      "parameters": {
+        "mode": "manual",
+        "duplicateItem": false,
+        "assignments": {
+          "assignments": [
+            {
+              "id": "prd_path",
+              "name": "prd_path",
+              "value": "={{ $json.body.prd_path }}",
+              "type": "string"
+            },
+            {
+              "id": "work_dir",
+              "name": "work_dir",
+              "value": "={{ $json.body.work_dir || '/home/xx/dev' }}",
+              "type": "string"
+            },
+            {
+              "id": "checkpoint_id",
+              "name": "checkpoint_id",
+              "value": "={{ $json.body.checkpoint_id || '' }}",
+              "type": "string"
+            },
+            {
+              "id": "run_all",
+              "name": "run_all",
+              "value": "={{ $json.body.run_all || false }}",
+              "type": "boolean"
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "exec-cecilia",
+      "name": "Execute Cecilia",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [600, 300],
+      "parameters": {
+        "method": "POST",
+        "url": "http://localhost:8899/",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"prd_path\": \"{{ $json.prd_path }}\",\n  \"work_dir\": \"{{ $json.work_dir }}\",\n  \"checkpoint_id\": \"{{ $json.checkpoint_id }}\",\n  \"run_all\": {{ $json.run_all }}\n}",
+        "options": {
+          "timeout": 600000
+        }
+      }
+    },
+    {
+      "id": "check-success",
+      "name": "Check Success",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [800, 300],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "success-check",
+              "leftValue": "={{ $json.success }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "success-output",
+      "name": "Success Output",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [1000, 200],
+      "parameters": {
+        "mode": "manual",
+        "duplicateItem": false,
+        "assignments": {
+          "assignments": [
+            {
+              "id": "status",
+              "name": "status",
+              "value": "success",
+              "type": "string"
+            },
+            {
+              "id": "message",
+              "name": "message",
+              "value": "=Execution completed successfully",
+              "type": "string"
+            },
+            {
+              "id": "result",
+              "name": "result",
+              "value": "={{ $json }}",
+              "type": "object"
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "failure-output",
+      "name": "Failure Output",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [1000, 400],
+      "parameters": {
+        "mode": "manual",
+        "duplicateItem": false,
+        "assignments": {
+          "assignments": [
+            {
+              "id": "status",
+              "name": "status",
+              "value": "failed",
+              "type": "string"
+            },
+            {
+              "id": "error",
+              "name": "error",
+              "value": "={{ $json.error || 'Unknown error' }}",
+              "type": "string"
+            },
+            {
+              "id": "result",
+              "name": "result",
+              "value": "={{ $json }}",
+              "type": "object"
+            }
+          ]
+        },
+        "options": {}
+      }
+    }
+  ],
+  "connections": {
+    "trigger": {
+      "main": [
+        [
+          {
+            "node": "set-params",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "set-params": {
+      "main": [
+        [
+          {
+            "node": "exec-cecilia",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "exec-cecilia": {
+      "main": [
+        [
+          {
+            "node": "check-success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "check-success": {
+      "main": [
+        [
+          {
+            "node": "success-output",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "failure-output",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "meta": {
+    "instanceId": "zenithjoy-engine-simple-http"
+  },
+  "tags": [
+    {
+      "name": "cecilia",
+      "id": "cecilia-tag"
+    }
+  ]
+}

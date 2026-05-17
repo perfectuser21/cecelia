@@ -1,0 +1,12 @@
+{
+  "branch": "cp-02221818-heartbeat-inspector",
+  "head_sha": "9e5acec",
+  "timestamp": "2026-02-22T10:31:09Z",
+  "note": "Quality 只汇总，不判定。CI 是最终裁判。",
+  "tests": {
+    "heartbeat-inspector": "15/15 passed",
+    "heartbeat-whitelist": "8/8 passed",
+    "heartbeat-tick": "4/4 passed",
+    "total": "27/27 passed"
+  }
+}

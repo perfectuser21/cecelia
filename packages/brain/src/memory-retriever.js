@@ -1,0 +1,1217 @@
+/**
+ * Memory Retriever - 统一记忆检索器
+ *
+ * 四层记忆模型：
+ * - Layer 2 蒸馏文档 (Distilled): SOUL + SELF_MODEL 每次必注入（预算外），chat 模式追加 USER_PROFILE + WORLD_STATE
+ * - 语义记忆 (Semantic): tasks + learnings + capabilities 的向量搜索
+ * - 事件记忆 (Episodic): cecelia_events 时间窗口 + type 过滤
+ * - 画像配置 (Profile): OKR 目标 + 能力摘要（不衰减）
+ *
+ * 统一入口：buildMemoryContext({query, mode, tokenBudget, pool})
+ * 替代 thalamus 原有的双注入逻辑（learningBlock + memoryBlock）
+ */
+
+import SimilarityService from './similarity.js';
+import { searchRelevantLearnings } from './learning.js';
+import { routeMemory } from './memory-router.js';
+import { generateL0Summary } from './memory-utils.js';
+import { generateEmbedding } from './openai-client.js';
+import { getDoc } from './distilled-docs.js';
+
+// ============================================================
+// 常量配置
+// ============================================================
+
+/** 各数据源的时间衰减半衰期（天） */
+export const HALF_LIFE = {
+  task: 30,
+  learning: 90,
+  event: 1,
+  conversation: 7,
+  okr: Infinity,
+  capability: Infinity,
+  kr: Infinity,
+  initiative: 180,
+  project: Infinity,
+};
+
+/** 各模式下各数据源的权重 */
+export const MODE_WEIGHT = {
+  task:         { plan: 1.0, execute: 1.2, debug: 1.0, chat: 0.8 },
+  learning:     { plan: 0.8, execute: 1.0, debug: 1.5, chat: 0.6 },
+  event:        { plan: 0.5, execute: 0.8, debug: 1.5, chat: 0.3 },
+  conversation: { plan: 0.3, execute: 0.3, debug: 0.3, chat: 1.5 },
+  okr:          { plan: 1.5, execute: 0.5, debug: 0.3, chat: 1.0 },
+  capability:   { plan: 1.0, execute: 0.8, debug: 0.5, chat: 0.5 },
+  kr:           { plan: 1.5, execute: 0.8, debug: 0.3, chat: 1.2 },
+  initiative:   { plan: 1.2, execute: 1.5, debug: 0.5, chat: 1.3 },
+  project:      { plan: 1.3, execute: 0.6, debug: 0.3, chat: 1.0 },
+};
+
+/** 默认 token 预算 */
+const DEFAULT_TOKEN_BUDGET = 800;
+
+/**
+ * salience_score 加权因子
+ * finalScore × (1 + salience_score × SALIENCE_WEIGHT)
+ * salience=1.0 时最多提升 50% 评分；salience=0 时不影响评分（向后兼容）
+ */
+export const SALIENCE_WEIGHT = 0.5;
+
+/** Chat 模式 token 预算（对话场景需要更丰富的上下文） */
+export const CHAT_TOKEN_BUDGET = 2500;
+
+/**
+ * Source 配额约束
+ * - min: 至少注入 N 条（有候选时保证）
+ * - max: 最多注入 N 条（防止某一类型占满）
+ */
+export const SOURCE_QUOTA = {
+  conversation: { max: 4 },
+  task:         { min: 2 },
+  learning:     { min: 2 },
+  kr:           { max: 3 },
+  initiative:   { max: 3 },
+  project:      { max: 2 },
+};
+
+/**
+ * 意图类型 → 动态权重倍数（叠加在 MODE_WEIGHT 之上）
+ * 消息关键词分类后，对应 source 的 finalScore 乘以该倍数
+ */
+export const INTENT_WEIGHT_MULTIPLIER = {
+  task_focused: {
+    task: 1.5, okr: 1.5, kr: 1.5, initiative: 1.5, project: 1.2, conversation: 0.6,
+  },
+  emotion_focused: {
+    conversation: 1.5, learning: 1.2, task: 0.6,
+  },
+  learning_focused: {
+    learning: 2.0, conversation: 0.8,
+  },
+  default: {},
+};
+
+/**
+ * 意图分类关键词
+ */
+const INTENT_KEYWORDS = {
+  task_focused: ['任务', 'kr', 'okr', '进展', '目标', '工作', '完成', '派发', '执行', '进度', '截止', '计划', '项目', '开发', '实现'],
+  emotion_focused: ['感受', '情绪', '想法', '心情', '觉得', '开心', '难过', '压力', '焦虑', '高兴', '失落', '担心', '开心', '疲惫'],
+  learning_focused: ['学到', '记录', '经验', '总结', '教训', '发现', '洞察', '反思', '收获', '体会', '学习', '成长'],
+};
+
+/**
+ * 根据当前查询和最近对话历史，判断话题深度
+ * 0 = 首次提及；1 = 延伸讨论（已聊过）；2 = 深度下钻（多轮连续）
+ * @param {string} query - 当前查询
+ * @param {Array} conversationEntries - loadConversationHistory 返回的 entries
+ * @returns {0|1|2}
+ */
+export function computeTopicDepth(query, conversationEntries) {
+  if (!conversationEntries || conversationEntries.length === 0) return 0;
+
+  const queryTokens = new Set(tokenize(query));
+  if (queryTokens.size === 0) return 0;
+
+  const recent = conversationEntries.slice(0, 5);
+  let matchCount = 0;
+
+  for (const entry of recent) {
+    // 只比对用户消息部分（entry.title 是 "[对话] userMsg前60字"，去掉前缀）
+    // 不含 Cecelia 回复，避免回复文本撑大 union 导致 Jaccard 偏低
+    const userPart = entry.title
+      ? entry.title.replace(/^\[对话\]\s*/, '')
+      : (entry.text || '').split('\nCecelia:')[0].replace(/^Alex:\s*/, '');
+    const entryText = userPart || `${entry.title || ''} ${entry.description || ''}`;
+    const entryTokens = new Set(tokenize(entryText));
+    if (entryTokens.size === 0) continue;
+
+    const intersection = [...queryTokens].filter(t => entryTokens.has(t)).length;
+    const union = new Set([...queryTokens, ...entryTokens]).size;
+    if (intersection / union >= 0.15) matchCount++;
+  }
+
+  if (matchCount >= 3) return 2;
+  if (matchCount >= 1) return 1;
+  return 0;
+}
+
+/**
+ * 根据查询文本分类意图
+ * @param {string} query - 查询文本
+ * @returns {'task_focused'|'emotion_focused'|'learning_focused'|'default'} 意图类型
+ */
+export function classifyQueryIntent(query) {
+  if (!query) return 'default';
+  const lower = query.toLowerCase();
+
+  for (const [intent, keywords] of Object.entries(INTENT_KEYWORDS)) {
+    if (keywords.some(kw => lower.includes(kw))) {
+      return intent;
+    }
+  }
+  return 'default';
+}
+
+/**
+ * Quota-aware 候选选择
+ *
+ * 两阶段选择：
+ * 1. 保证每个 source 的最小配额（从原始 scored 列表中补充）
+ * 2. 剩余空间按 finalScore 填充，但 conversation 不超过 max
+ *
+ * @param {Array} deduped - MMR 重排后的候选（多样性最优）
+ * @param {Array} scored - 所有评分候选（用于补充最小配额）
+ * @returns {Array} 经过配额约束的候选列表
+ */
+export function quotaAwareSelect(deduped, scored) {
+  const quotaCount = {};
+  const selectedIds = new Set();
+  const result = [];
+
+  // Phase 1: 从 deduped 列表依次添加，跳过超 max 配额的
+  for (const item of deduped) {
+    const src = item.source;
+    const count = quotaCount[src] || 0;
+    const quota = SOURCE_QUOTA[src];
+    if (quota && quota.max !== undefined && count >= quota.max) continue;
+    quotaCount[src] = count + 1;
+    selectedIds.add(item.id);
+    result.push(item);
+  }
+
+  // Phase 2: 检查每个有最小配额的 source 是否已满足
+  for (const [source, quota] of Object.entries(SOURCE_QUOTA)) {
+    if (!quota.min) continue;
+    const current = quotaCount[source] || 0;
+    if (current >= quota.min) continue;
+
+    // 需要从 scored 里补充
+    const needed = quota.min - current;
+    const extras = scored
+      .filter(s => s.source === source && !selectedIds.has(s.id))
+      .sort((a, b) => b.finalScore - a.finalScore)
+      .slice(0, needed);
+
+    for (const item of extras) {
+      selectedIds.add(item.id);
+      result.push(item);
+    }
+  }
+
+  return result;
+}
+
+// ============================================================
+// 内部辅助：错误分类 + 禁用占位
+// ============================================================
+
+/**
+ * 根据错误信息分类 fetchStatus
+ * @param {Error} err
+ * @returns {'pool_exhausted'|'db_error'}
+ */
+function _classifyError(err) {
+  const msg = (err && err.message) || '';
+  if (msg.includes('too many clients')) return 'pool_exhausted';
+  return 'db_error';
+}
+
+/**
+ * 当某路查询被 strategy 禁用时返回的占位结果
+ * @returns {{ entries: Array, meta: Object }}
+ */
+function _disabledResult() {
+  return {
+    entries: [],
+    meta: { requestedLimit: 0, fetchedCount: 0, fetchStatus: 'disabled', candidateCount: 0 },
+  };
+}
+
+/** 事件记忆中感兴趣的 event types */
+const RELEVANT_EVENT_TYPES = [
+  'task_failed',
+  'task_completed',
+  'alert',
+  'layer2_health',
+  'escalation',
+  'llm_api_error',
+  'llm_bad_output',
+  'orchestrator_chat',
+];
+
+// ============================================================
+// 核心函数
+// ============================================================
+
+/**
+ * 时间衰减函数
+ * decay(age) = exp(-age_days * ln(2) / half_life)
+ * @param {string|Date} createdAt - 创建时间
+ * @param {number} halfLifeDays - 半衰期天数（Infinity = 不衰减）
+ * @returns {number} 0-1 之间的衰减因子
+ */
+export function timeDecay(createdAt, halfLifeDays) {
+  if (!halfLifeDays || halfLifeDays === Infinity || !createdAt) return 1;
+  const ageDays = (Date.now() - new Date(createdAt).getTime()) / 86400000;
+  if (ageDays <= 0) return 1;
+  return Math.exp(-ageDays * Math.LN2 / halfLifeDays);
+}
+
+/**
+ * 简单 Jaccard 去重：高分优先，后续候选与已选结果 Jaccard > threshold 的丢弃
+ * （Phase 1 遗留，保留向后兼容；Phase 3 主流程已改用 mmrRerank）
+ * @param {Array} scored - 已评分的候选列表（需有 text 和 finalScore）
+ * @param {number} threshold - Jaccard 阈值（默认 0.8）
+ * @returns {Array} 去重后的列表
+ */
+export function simpleDedup(scored, threshold = 0.8) {
+  const sorted = [...scored].sort((a, b) => b.finalScore - a.finalScore);
+  const result = [];
+  for (const item of sorted) {
+    const isDuplicate = result.some(r => jaccardSimilarity(r.text, item.text) > threshold);
+    if (!isDuplicate) result.push(item);
+  }
+  return result;
+}
+
+/**
+ * MMR (Maximal Marginal Relevance) 重排
+ *
+ * 平衡相关性和多样性：
+ * MMR(i) = lambda * relevance(i) - (1 - lambda) * max_similarity(i, selected)
+ *
+ * @param {Array} candidates - 已评分的候选列表（需有 text 和 finalScore）
+ * @param {number} topK - 返回的最大条数
+ * @param {number} lambda - 平衡因子（0-1，越大越偏相关性，默认 0.7）
+ * @returns {Array} MMR 重排后的列表
+ */
+export function mmrRerank(candidates, topK, lambda = 0.7) {
+  if (!candidates || candidates.length === 0) return [];
+  if (topK <= 0) return [];
+
+  const selected = [];
+  const remaining = [...candidates];
+
+  // 归一化 finalScore 到 0-1（避免不同数据源分数量纲差异）
+  const maxScore = Math.max(...remaining.map(r => r.finalScore), 0.001);
+
+  while (selected.length < topK && remaining.length > 0) {
+    let bestIdx = 0;
+    let bestMMR = -Infinity;
+
+    for (let i = 0; i < remaining.length; i++) {
+      const relevance = remaining[i].finalScore / maxScore;
+      const maxSim = selected.length > 0
+        ? Math.max(...selected.map(s => jaccardSimilarity(s.text, remaining[i].text)))
+        : 0;
+      const mmr = lambda * relevance - (1 - lambda) * maxSim;
+
+      if (mmr > bestMMR) {
+        bestMMR = mmr;
+        bestIdx = i;
+      }
+    }
+
+    selected.push(remaining.splice(bestIdx, 1)[0]);
+  }
+
+  return selected;
+}
+
+/**
+ * 计算两段文本的 Jaccard 相似度
+ * @param {string} textA
+ * @param {string} textB
+ * @returns {number} 0-1
+ */
+export function jaccardSimilarity(textA, textB) {
+  if (!textA || !textB) return 0;
+  const tokensA = new Set(tokenize(textA));
+  const tokensB = new Set(tokenize(textB));
+  if (tokensA.size === 0 && tokensB.size === 0) return 0;
+
+  let intersection = 0;
+  for (const t of tokensA) {
+    if (tokensB.has(t)) intersection++;
+  }
+  const union = new Set([...tokensA, ...tokensB]).size;
+  return union > 0 ? intersection / union : 0;
+}
+
+/**
+ * 简单分词（中英文混合）
+ */
+function tokenize(text) {
+  if (!text) return [];
+  const cleaned = text.toLowerCase().replace(/[^\w\s\u4e00-\u9fa5]/g, ' ');
+  const tokens = [];
+  // 英文/数字：按空格切分，过滤长度 > 1
+  for (const word of cleaned.split(/\s+/)) {
+    if (!word) continue;
+    if (/[\u4e00-\u9fa5]/.test(word)) {
+      // 中文：逐字符切分（避免整段变一个大 token 导致 Jaccard 退化）
+      for (const ch of word) {
+        if (/[\u4e00-\u9fa5]/.test(ch)) tokens.push(ch);
+      }
+    } else if (word.length > 1) {
+      tokens.push(word);
+    }
+  }
+  return tokens;
+}
+
+/**
+ * 简单 token 估算：中英文混合文本约 2.5 字符/token
+ * @param {string} text
+ * @returns {number}
+ */
+export function estimateTokens(text) {
+  if (!text) return 0;
+  return Math.ceil(text.length / 2.5);
+}
+
+/**
+ * 判断查询是否与 OKR/任务/项目相关，用于决定是否注入 WORLD_STATE
+ * @param {string} query
+ * @returns {boolean}
+ */
+export function isWorldStateQuery(query) {
+  if (!query) return false;
+  return /OKR|目标|KR|关键结果|项目|任务|计划|平台|进度|完成|执行|initiative|objective|key result|project|task/i.test(query);
+}
+
+const SOURCE_LABEL = {
+  task: '任务',
+  learning: '经验',
+  event: '事件',
+  capability: '能力',
+  kr: 'KR目标',
+  initiative: 'Initiative',
+  project: '项目容器',
+  okr: 'OKR',
+};
+
+function _buildExtras(item) {
+  const extras = [];
+  if (item.task_count != null) extras.push(`关联任务 ${item.task_count} 个`);
+  if (item.parent_kr_title) extras.push(`所属KR: ${item.parent_kr_title}`);
+  return extras;
+}
+
+function _getPreviewBase(item, depth) {
+  if (depth === 0) return (item.description || item.text || '').slice(0, 80);
+  if (depth === 1) return (item.description || item.text || '').slice(0, 250);
+  return item.full_content || item.description || item.text || '';
+}
+
+/**
+ * 格式化单条记忆项
+ * @param {Object} item - 候选记忆
+ * @param {0|1|2} [depth=0] - 对话深度：0=L0简短，1=L1详情，2=全文
+ * @returns {string}
+ */
+function formatItem(item, depth = 0) {
+  const label = SOURCE_LABEL[item.source] || item.source;
+  const title = (item.title || '').slice(0, 80);
+  const statusHint = item.status ? ` (${item.status})` : '';
+  const base = _getPreviewBase(item, depth);
+  const extras = depth === 0 ? [] : _buildExtras(item);
+  const preview = extras.length ? `${base} [${extras.join('，')}]` : base;
+  return `- [${label}] **${title}**${statusHint}: ${preview}`;
+}
+
+// ============================================================
+// 数据源适配器
+// ============================================================
+
+/**
+ * 语义记忆检索：tasks + learnings（向量/Jaccard 混合搜索）
+ * @param {Object} pool - pg pool
+ * @param {string} query - 搜索文本
+ * @param {string} mode - 模式
+ * @returns {Promise<{entries: Array, meta: Object}>}
+ */
+async function searchSemanticMemory(pool, query, _mode) {
+  const candidates = [];
+  const meta = { requestedLimit: 30, fetchedCount: 0, fetchStatus: 'ok', candidateCount: 0 };
+
+  // 1. 搜索 tasks + capabilities（向量搜索）
+  try {
+    const similarity = new SimilarityService(pool);
+    const results = await similarity.searchWithVectors(query, {
+      topK: 20,
+      fallbackToJaccard: true,
+    });
+    for (const m of (results.matches || [])) {
+      candidates.push({
+        id: m.id,
+        source: m.level === 'capability' ? 'capability' : 'task',
+        title: m.title || '',
+        description: m.description || '',
+        text: `${m.title || ''} ${m.description || ''}`,
+        relevance: m.score || 0,
+        created_at: m.created_at || null,
+        status: m.status,
+      });
+    }
+    meta.fetchedCount += (results.matches || []).length;
+  } catch (err) {
+    console.warn('[memory-retriever] Semantic search failed (graceful fallback):', err.message);
+    if (meta.fetchStatus === 'ok') meta.fetchStatus = _classifyError(err);
+  }
+
+  // 2. 搜索 learnings（当前关键词匹配，Phase 2 升级为向量）
+  try {
+    const learnings = await searchRelevantLearnings({
+      description: query,
+      task_type: null,
+      failure_class: null,
+      event_type: null,
+    }, 10);
+    for (const l of learnings) {
+      const fullContent = typeof l.content === 'string' ? l.content : JSON.stringify(l.content || '');
+      candidates.push({
+        id: l.id,
+        source: 'learning',
+        title: l.title || '',
+        description: fullContent.slice(0, 300),
+        full_content: fullContent,
+        text: `${l.title || ''} ${l.content || ''}`,
+        relevance: (l.relevance_score || 0) / 30,
+        created_at: l.created_at || null,
+      });
+    }
+    meta.fetchedCount += learnings.length;
+  } catch (err) {
+    console.warn('[memory-retriever] Learnings search failed (graceful fallback):', err.message);
+    if (meta.fetchStatus === 'ok') meta.fetchStatus = _classifyError(err);
+  }
+
+  // 3. 搜索 goals（KR/OKR）— Jaccard 关键词匹配
+  try {
+    const queryTokens = new Set(
+      query.toLowerCase().replace(/[^\w\s\u4e00-\u9fa5]/g, ' ').split(/\s+/).filter(t => t.length > 1)
+    );
+    if (queryTokens.size > 0) {
+      // 迁移：goals → objectives UNION key_results
+      const goalResults = await pool.query(
+        `SELECT id, title, description, 'area_okr' AS type, status, created_at
+         FROM objectives
+         WHERE status NOT IN ('completed', 'cancelled')
+         UNION ALL
+         SELECT id, title, description, 'area_kr' AS type, status, created_at
+         FROM key_results
+         WHERE status NOT IN ('completed', 'cancelled')
+         ORDER BY created_at DESC
+         LIMIT 30`
+      );
+      for (const g of goalResults.rows) {
+        const text = `${g.title || ''} ${g.description || ''}`.toLowerCase()
+          .replace(/[^\w\s\u4e00-\u9fa5]/g, ' ');
+        const textTokens = new Set(text.split(/\s+/).filter(t => t.length > 1));
+        const intersection = [...queryTokens].filter(t => textTokens.has(t)).length;
+        if (intersection > 0) {
+          const union = new Set([...queryTokens, ...textTokens]).size;
+          candidates.push({
+            id: g.id,
+            source: (g.type === 'area_okr' || g.type === 'global_kr' || g.type === 'area_kr') ? 'kr' : 'okr',
+            title: g.title || '',
+            description: (g.description || '').slice(0, 300),
+            full_content: g.description || '',
+            text: `${g.title || ''} ${g.description || ''}`,
+            relevance: intersection / union,
+            created_at: g.created_at || null,
+            status: g.status,
+          });
+        }
+      }
+      meta.fetchedCount += goalResults.rows.length;
+    }
+  } catch (err) {
+    console.warn('[memory-retriever] Goals search failed (graceful fallback):', err.message);
+    if (meta.fetchStatus === 'ok') meta.fetchStatus = _classifyError(err);
+  }
+
+  // 4. 搜索 projects（Project/Initiative）— Jaccard 关键词匹配
+  try {
+    const queryTokens = new Set(
+      query.toLowerCase().replace(/[^\w\s\u4e00-\u9fa5]/g, ' ').split(/\s+/).filter(t => t.length > 1)
+    );
+    if (queryTokens.size > 0) {
+      // 迁移：projects → okr_projects UNION okr_initiatives（name → title）
+      const projectResults = await pool.query(
+        `SELECT id, title AS name, description, 'project' AS type, created_at
+         FROM okr_projects
+         UNION ALL
+         SELECT id, title AS name, description, 'initiative' AS type, created_at
+         FROM okr_initiatives
+         ORDER BY created_at DESC
+         LIMIT 30`
+      );
+      for (const p of projectResults.rows) {
+        const text = `${p.name || ''} ${p.description || ''}`.toLowerCase()
+          .replace(/[^\w\s\u4e00-\u9fa5]/g, ' ');
+        const textTokens = new Set(text.split(/\s+/).filter(t => t.length > 1));
+        const intersection = [...queryTokens].filter(t => textTokens.has(t)).length;
+        if (intersection > 0) {
+          const union = new Set([...queryTokens, ...textTokens]).size;
+          candidates.push({
+            id: p.id,
+            source: p.type === 'initiative' ? 'initiative' : 'project',
+            title: p.name || '',
+            description: (p.description || '').slice(0, 300),
+            full_content: p.description || '',
+            text: `${p.name || ''} ${p.description || ''}`,
+            relevance: intersection / union,
+            created_at: p.created_at || null,
+            status: null,
+          });
+        }
+      }
+      meta.fetchedCount += projectResults.rows.length;
+    }
+  } catch (err) {
+    console.warn('[memory-retriever] Projects search failed (graceful fallback):', err.message);
+    if (meta.fetchStatus === 'ok') meta.fetchStatus = _classifyError(err);
+  }
+
+  if (meta.fetchedCount === 0 && meta.fetchStatus === 'ok') meta.fetchStatus = 'no_results';
+  meta.candidateCount = candidates.length;
+  return { entries: candidates, meta };
+}
+
+// ============================================================
+// 深度感知 enrichment：为 goals/projects 批量补充 task_count / parent_kr_title
+// ============================================================
+
+/**
+ * 批量为 goals/projects 候选补充 task_count 和 parent_kr_title（depth>=1 时调用）
+ * 直接 mutate 传入的 candidates 数组
+ * @param {Object} pool - pg pool
+ * @param {Array} candidates - semanticResults
+ */
+async function _enrichStructuredCandidates(pool, candidates) {
+  const goalIds = candidates.filter(c => c.source === 'kr' || c.source === 'okr').map(c => c.id);
+  const projectIds = candidates.filter(c => c.source === 'initiative' || c.source === 'project').map(c => c.id);
+  const initiativeIds = candidates.filter(c => c.source === 'initiative').map(c => c.id);
+
+  try {
+    // task_count for goals via okr_projects.kr_id
+    if (goalIds.length > 0) {
+      const res = await pool.query(
+        `SELECT op.kr_id as goal_id, COUNT(t.id)::int as task_count
+         FROM tasks t
+         JOIN okr_initiatives oi ON oi.id = t.project_id
+         JOIN okr_scopes os ON oi.scope_id = os.id
+         JOIN okr_projects op ON op.id = os.project_id
+         WHERE op.kr_id = ANY($1) AND t.status NOT IN ('completed','cancelled','quarantined')
+         GROUP BY op.kr_id`,
+        [goalIds]
+      );
+      const countMap = Object.fromEntries(res.rows.map(r => [r.goal_id, r.task_count]));
+      for (const c of candidates) {
+        if ((c.source === 'kr' || c.source === 'okr') && countMap[c.id] !== undefined) {
+          c.task_count = countMap[c.id];
+        }
+      }
+    }
+
+    // task_count for projects/initiatives
+    if (projectIds.length > 0) {
+      const res = await pool.query(
+        `SELECT project_id, COUNT(id)::int as task_count
+         FROM tasks
+         WHERE project_id = ANY($1) AND status NOT IN ('completed','cancelled','quarantined')
+         GROUP BY project_id`,
+        [projectIds]
+      );
+      const countMap = Object.fromEntries(res.rows.map(r => [r.project_id, r.task_count]));
+      for (const c of candidates) {
+        if ((c.source === 'initiative' || c.source === 'project') && countMap[c.id] !== undefined) {
+          c.task_count = countMap[c.id];
+        }
+      }
+    }
+
+    // parent_kr_title for initiatives（通过 okr_scopes → okr_projects.kr_id → key_results）
+    if (initiativeIds.length > 0) {
+      const res = await pool.query(
+        `SELECT oi.id as initiative_id, kr.title as kr_title
+         FROM key_results kr
+         JOIN okr_projects op ON op.kr_id = kr.id
+         JOIN okr_scopes os ON os.project_id = op.id
+         JOIN okr_initiatives oi ON oi.scope_id = os.id
+         WHERE oi.id = ANY($1)`,
+        [initiativeIds]
+      );
+      const krMap = Object.fromEntries(res.rows.map(r => [r.initiative_id, r.kr_title]));
+      for (const c of candidates) {
+        if (c.source === 'initiative' && krMap[c.id]) {
+          c.parent_kr_title = krMap[c.id];
+        }
+      }
+    }
+  } catch (err) {
+    console.warn('[memory-retriever] Enrichment failed (graceful fallback):', err.message);
+  }
+}
+
+// ============================================================
+// L0/L1 分层记忆工具
+// ============================================================
+
+// generateL0Summary 来自 memory-utils.js（避免循环依赖）
+export { generateL0Summary };
+
+/**
+ * 片段记忆检索（Episodic Memory）：向量优先，Jaccard 降级
+ *
+ * 向量路径（优先）：
+ *   1. 生成 query embedding
+ *   2. pgvector cosine 相似度检索 memory_stream（embedding IS NOT NULL）
+ *   3. L1 展开：token 预算截断
+ *
+ * Jaccard 降级（无 OPENAI_API_KEY 或无向量数据时）：
+ *   L0: summary/content 前100字 Jaccard 过滤
+ *   L1: 展开 content，token 截断
+ *
+ * @param {Object} pool - pg pool
+ * @param {string} query - 搜索文本
+ * @param {number} [tokenBudget=300] - token 预算
+ * @returns {Promise<Array>} 候选列表（source='episodic'）
+ */
+export async function searchEpisodicMemory(pool, query, tokenBudget = 300) {
+  if (!pool || !query) return _disabledResult();
+
+  const meta = { requestedLimit: 20, fetchedCount: 0, fetchStatus: 'ok', candidateCount: 0 };
+
+  try {
+    // ── 向量路径（OPENAI_API_KEY 存在时尝试）──────────────────
+    if (process.env.OPENAI_API_KEY) {
+      try {
+        const queryEmbedding = await generateEmbedding(query.substring(0, 2000));
+        const embStr = '[' + queryEmbedding.join(',') + ']';
+
+        const vectorResult = await pool.query(`
+          SELECT id, content, summary, l1_content, importance, memory_type, created_at,
+                 salience_score,
+                 1 - (embedding <=> $1::vector) AS vector_score
+          FROM memory_stream
+          WHERE embedding IS NOT NULL
+            AND (source_type IS NULL OR source_type != 'self_model')
+            AND (expires_at IS NULL OR expires_at > NOW())
+          ORDER BY embedding <=> $1::vector
+          LIMIT 20
+        `, [embStr]);
+
+        if (vectorResult.rows.length > 0) {
+          const results = [];
+          let usedTokens = 0;
+          for (const row of vectorResult.rows) {
+            if ((row.vector_score || 0) < 0.3) continue;
+            const description = row.l1_content || (row.content || '').slice(0, 200);
+            const lineTokens = estimateTokens(description);
+            if (usedTokens + lineTokens > tokenBudget) break;
+            results.push({
+              id: row.id,
+              source: 'episodic',
+              title: `[片段记忆] ${(row.content || '').slice(0, 50)}`,
+              description,
+              text: row.content || '',
+              relevance: 0.4 + (row.vector_score || 0) * 0.6,
+              created_at: row.created_at,
+              importance: row.importance,
+              salience_score: row.salience_score || 0,
+            });
+            usedTokens += lineTokens;
+          }
+          if (results.length > 0) {
+            meta.fetchedCount = vectorResult.rows.length;
+            meta.fetchStatus = 'ok';
+            meta.candidateCount = results.length;
+            return { entries: results, meta };
+          }
+          // 向量结果为空（所有分数 < 0.3）→ 继续降级到 Jaccard
+        }
+      } catch (_embErr) {
+        console.warn('[memory-retriever] Episodic vector search failed, falling back to Jaccard:', _embErr.message);
+        // 降级继续，fetchStatus 后续由 Jaccard 路径决定
+      }
+    }
+
+    // ── Jaccard 降级路径（无 API key 或向量路径失败/无数据）──
+    meta.fetchStatus = 'fallback_jaccard';
+    const result = await pool.query(`
+      SELECT id, content, summary, l1_content, importance, memory_type, created_at, salience_score
+      FROM memory_stream
+      WHERE (source_type IS NULL OR source_type != 'self_model')
+        AND (expires_at IS NULL OR expires_at > NOW())
+      ORDER BY created_at DESC
+      LIMIT 30
+    `);
+
+    const rows = result.rows;
+    meta.fetchedCount = rows.length;
+    if (rows.length === 0) {
+      meta.fetchStatus = 'no_results';
+      return { entries: [], meta };
+    }
+
+    const queryTokens = new Set(query.toLowerCase().replace(/[^\w\s\u4e00-\u9fa5]/g, ' ').split(/\s+/).filter(t => t.length > 1));
+
+    const relevant = [];
+    for (const row of rows) {
+      const l0Text = row.summary || generateL0Summary(row.content);
+      const l0Tokens = new Set(l0Text.toLowerCase().replace(/[^\w\s\u4e00-\u9fa5]/g, ' ').split(/\s+/).filter(t => t.length > 1));
+
+      if (queryTokens.size === 0 || l0Tokens.size === 0) {
+        relevant.push({ ...row, l0Score: 0.1 });
+        continue;
+      }
+
+      let intersection = 0;
+      for (const t of queryTokens) {
+        if (l0Tokens.has(t)) intersection++;
+      }
+      const union = new Set([...queryTokens, ...l0Tokens]).size;
+      const jaccard = union > 0 ? intersection / union : 0;
+
+      if (jaccard >= 0.05 || relevant.length < 3) {
+        relevant.push({ ...row, l0Score: jaccard });
+      }
+    }
+
+    relevant.sort((a, b) => b.l0Score - a.l0Score);
+    const topCandidates = relevant.slice(0, 10);
+
+    const results = [];
+    let usedTokens = 0;
+    for (const row of topCandidates) {
+      const description = row.l1_content || (row.content || '').slice(0, 200);
+      const lineTokens = estimateTokens(description);
+      if (usedTokens + lineTokens > tokenBudget) break;
+      results.push({
+        id: row.id,
+        source: 'episodic',
+        title: `[片段记忆] ${(row.content || '').slice(0, 50)}`,
+        description,
+        text: row.content || '',
+        relevance: 0.5 + row.l0Score,
+        created_at: row.created_at,
+        importance: row.importance,
+        salience_score: row.salience_score || 0,
+      });
+      usedTokens += lineTokens;
+    }
+
+    meta.candidateCount = results.length;
+    return { entries: results, meta };
+  } catch (err) {
+    console.warn('[memory-retriever] Episodic memory search failed (graceful fallback):', err.message);
+    meta.fetchStatus = _classifyError(err);
+    return { entries: [], meta };
+  }
+}
+
+/**
+ * 事件记忆检索：时间窗口 + type 过滤（不做向量搜索）
+ * @param {Object} pool - pg pool
+ * @param {string} _query - 搜索文本（暂未使用，预留）
+ * @param {string} mode - 模式
+ * @returns {Promise<{entries: Array, meta: Object}>}
+ */
+async function loadRecentEvents(pool, _query, mode) {
+  const hours = (mode === 'debug' || mode === 'chat') ? 72 : 24;
+  const meta = { requestedLimit: 10, fetchedCount: 0, fetchStatus: 'ok', candidateCount: 0 };
+
+  try {
+    const result = await pool.query(`
+      SELECT id, event_type, source, payload, created_at
+      FROM cecelia_events
+      WHERE created_at > NOW() - INTERVAL '${hours} hours'
+        AND event_type = ANY($1)
+      ORDER BY created_at DESC
+      LIMIT 10
+    `, [RELEVANT_EVENT_TYPES]);
+
+    const entries = result.rows.map(r => {
+      const payloadStr = typeof r.payload === 'string' ? r.payload : JSON.stringify(r.payload || {});
+      return {
+        id: r.id,
+        source: 'event',
+        title: `[${r.event_type}] ${r.source || ''}`,
+        description: payloadStr.slice(0, 200),
+        text: `${r.event_type} ${r.source || ''} ${payloadStr.slice(0, 200)}`,
+        relevance: 0.5,
+        created_at: r.created_at,
+      };
+    });
+    meta.fetchedCount = entries.length;
+    meta.fetchStatus = entries.length === 0 ? 'no_results' : 'ok';
+    meta.candidateCount = entries.length;
+    return { entries, meta };
+  } catch (err) {
+    console.warn('[memory-retriever] Events search failed (graceful fallback):', err.message);
+    meta.fetchStatus = _classifyError(err);
+    return { entries: [], meta };
+  }
+}
+
+/**
+ * 对话历史检索：主路径从 memory_stream 查 conversation_turn（带 embedding 语义），
+ * 空时 fallback 到 cecelia_events（向后兼容）
+ * @param {Object} pool - pg pool
+ * @param {number} [limit=15] - 最多返回条数
+ * @returns {Promise<{entries: Array, meta: Object}>}
+ */
+async function loadConversationHistory(pool, limit = 15) {
+  const meta = { requestedLimit: limit, fetchedCount: 0, fetchStatus: 'ok', candidateCount: 0 };
+
+  // 主路径：从 memory_stream 查 source_type='conversation_turn'（带 embedding 可语义检索）
+  try {
+    const msResult = await pool.query(`
+      SELECT id, content, salience_score, created_at
+      FROM memory_stream
+      WHERE source_type = 'conversation_turn' AND status = 'active'
+      ORDER BY created_at DESC
+      LIMIT $1
+    `, [limit]);
+
+    if (msResult.rows.length > 0) {
+      const entries = msResult.rows.map(r => ({
+        id: r.id,
+        source: 'conversation',
+        title: `[对话] ${(r.content || '').slice(0, 60)}`,
+        description: (r.content || '').slice(0, 200),
+        text: r.content || '',
+        relevance: r.salience_score || 0.5,
+        created_at: r.created_at,
+      }));
+      meta.fetchedCount = entries.length;
+      meta.fetchStatus = 'ok';
+      meta.candidateCount = entries.length;
+      return { entries, meta };
+    }
+  } catch (err) {
+    console.warn('[memory-retriever] memory_stream conversation load failed, falling back:', err.message);
+  }
+
+  // Fallback：cecelia_events（向后兼容，无 embedding）
+  try {
+    const result = await pool.query(`
+      SELECT id, payload, created_at
+      FROM cecelia_events
+      WHERE event_type = 'orchestrator_chat'
+      ORDER BY created_at DESC
+      LIMIT $1
+    `, [limit]);
+
+    const entries = result.rows.map(r => {
+      const payload = typeof r.payload === 'string' ? JSON.parse(r.payload) : (r.payload || {});
+      const userMsg = (payload.user_message || '').slice(0, 150);
+      const replyMsg = (payload.reply || '').slice(0, 150);
+      const text = `Alex: ${userMsg}\nCecelia: ${replyMsg}`;
+      return {
+        id: r.id,
+        source: 'conversation',
+        title: `[对话] ${userMsg.slice(0, 60)}`,
+        description: replyMsg.slice(0, 200),
+        text,
+        relevance: 0.6,
+        created_at: r.created_at,
+      };
+    });
+    meta.fetchedCount = entries.length;
+    meta.fetchStatus = entries.length === 0 ? 'no_results' : 'ok';
+    meta.candidateCount = entries.length;
+    return { entries, meta };
+  } catch (err) {
+    console.warn('[memory-retriever] Conversation history load failed (graceful fallback):', err.message);
+    meta.fetchStatus = _classifyError(err);
+    return { entries: [], meta };
+  }
+}
+
+/**
+ * 画像配置加载：主人 Facts（第0层）+ 当前 OKR 焦点（不参与评分排序）
+ * @param {Object} pool - pg pool
+ * @param {string} mode - 模式
+ * @returns {Promise<{snippet: string, meta: Object}>}
+ */
+async function loadActiveProfile(pool, mode) {
+  void mode;
+
+  const snippets = [];
+  const meta = { fetchStatus: 'ok' };
+
+  try {
+    const factsResult = await pool.query(`
+      SELECT content FROM user_profile_facts
+      WHERE user_id = 'owner'
+      ORDER BY created_at DESC
+      LIMIT 10
+    `);
+    if (factsResult.rows.length > 0) {
+      const factsText = factsResult.rows.map(r => `- ${r.content}`).join('\n');
+      snippets.push(`## 关于主人（Alex）\n${factsText}\n`);
+    }
+  } catch (err) {
+    console.warn('[memory-retriever] Owner facts load failed (graceful fallback):', err.message);
+    if (meta.fetchStatus === 'ok') meta.fetchStatus = _classifyError(err);
+  }
+
+  try {
+    // 迁移：goals → objectives（area_okr type）
+    const goals = await pool.query(`
+      SELECT title, status, 0 AS progress FROM objectives
+      WHERE status IN ('in_progress', 'pending', 'active')
+      ORDER BY priority ASC, updated_at DESC
+      LIMIT 3
+    `);
+
+    if (goals.rows.length > 0) {
+      let snippet = '## 当前 OKR 焦点\n';
+      for (const g of goals.rows) {
+        snippet += `- ${g.title} (${g.status}, ${g.progress || 0}%)\n`;
+      }
+      snippets.push(snippet);
+    }
+  } catch (err) {
+    console.warn('[memory-retriever] Profile load failed (graceful fallback):', err.message);
+    if (meta.fetchStatus === 'ok') meta.fetchStatus = _classifyError(err);
+  }
+
+  const snippet = snippets.join('\n');
+  if (!snippet && meta.fetchStatus === 'ok') meta.fetchStatus = 'no_results';
+  return { snippet, meta };
+}
+
+// ============================================================
+// 主入口
+// ============================================================
+
+/**
+ * 统一记忆检索入口
+ *
+ * @param {Object} options
+ * @param {string} options.query - 搜索查询文本
+ * @param {string} [options.mode='execute'] - 模式：'plan' | 'execute' | 'debug' | 'chat'
+ * @param {number} [options.tokenBudget=800] - token 上限
+ * @param {Object} options.pool - pg pool
+ * @returns {Promise<{block: string, meta: Object}>} 格式化的 context block + 元数据
+ */
+export async function buildMemoryContext({ query, mode = 'execute', tokenBudget = DEFAULT_TOKEN_BUDGET, pool: dbPool }) {
+  if (!query || !dbPool) {
+    return { block: '', meta: { candidates: 0, injected: 0, tokenUsed: 0 } };
+  }
+
+  // 0. 记忆路由：根据意图决定激活哪类记忆（chat 模式启用）
+  const { strategy } = mode === 'chat'
+    ? routeMemory(query, mode)
+    : { strategy: { semantic: true, episodic: false, events: true, episodicBudget: 0, semanticBudget: tokenBudget * 0.7, eventsBudget: tokenBudget * 0.3 } };
+
+  // 0b. Layer 2 蒸馏文档检索（与其他检索并行）
+  // WORLD_STATE 仅在 chat 模式且查询与 OKR/任务/项目相关时注入，避免闲聊浪费 token
+  const distilledTypes = mode === 'chat'
+    ? (isWorldStateQuery(query)
+        ? ['SOUL', 'SELF_MODEL', 'USER_PROFILE', 'WORLD_STATE']
+        : ['SOUL', 'SELF_MODEL', 'USER_PROFILE'])
+    : ['SOUL', 'SELF_MODEL'];
+
+  // 1. 并行检索多路数据（统一 5 路 + Layer 2 蒸馏文档）
+  const [semanticResult, eventResult, profileResult, convResult, episodicResult, ...distilledDocs] =
+    await Promise.all([
+      strategy.semantic !== false ? searchSemanticMemory(dbPool, query, mode) : _disabledResult(),
+      strategy.events  !== false ? loadRecentEvents(dbPool, query, mode)      : _disabledResult(),
+      loadActiveProfile(dbPool, mode),
+      mode === 'chat' ? loadConversationHistory(dbPool) : _disabledResult(),
+      mode === 'chat' && strategy.episodic
+        ? searchEpisodicMemory(dbPool, query, strategy.episodicBudget || 300)
+        : _disabledResult(),
+      ...distilledTypes.map(t => getDoc(t, dbPool)),
+    ]);
+
+  const semanticResults     = semanticResult.entries;
+  const semanticMeta        = semanticResult.meta;
+  const eventResults        = eventResult.entries;
+  const eventsMeta          = eventResult.meta;
+  const profileSnippet      = profileResult.snippet || '';
+  const profileMeta         = profileResult.meta;
+  const conversationResults = convResult.entries;
+  const convMeta            = convResult.meta;
+  const episodicResults     = episodicResult.entries;
+  const episodicMeta        = episodicResult.meta;
+
+  // 1b. 对话深度检测（用于记忆分层返回）
+  const depth = computeTopicDepth(query, conversationResults);
+
+  // 1c. depth >= 1 时为 goals/projects 批量查询 task_count 和父级 KR
+  if (depth >= 1 && semanticResults.length > 0) {
+    await _enrichStructuredCandidates(dbPool, semanticResults);
+  }
+
+  // 2. 统一评分（语义 + 事件 + 对话 + 片段记忆混合，profile 不参与）
+  const candidates = [
+    ...semanticResults,
+    ...eventResults,
+    ...conversationResults,
+    ...episodicResults,
+  ];
+
+  // 2a. 意图分类 → 动态权重倍数
+  const intentType = classifyQueryIntent(query);
+  const dynamicMultipliers = INTENT_WEIGHT_MULTIPLIER[intentType] || {};
+
+  const scored = candidates.map(c => {
+    const source = c.source || 'task';
+    const halfLife = HALF_LIFE[source] || 30;
+    const modeW = (MODE_WEIGHT[source] && MODE_WEIGHT[source][mode]) || 1.0;
+    const dynW = dynamicMultipliers[source] || 1.0;
+    // salience_score 加权：来自 IN filter（PR9）标记的高价值记忆获得加分
+    // salience_score 为 null/undefined 时降级为 0（向后兼容）
+    const salienceBoost = 1 + (c.salience_score || 0) * SALIENCE_WEIGHT;
+    return {
+      ...c,
+      finalScore: c.relevance * timeDecay(c.created_at, halfLife) * modeW * dynW * salienceBoost,
+    };
+  });
+
+  // 3. MMR 重排（平衡相关性与多样性）
+  const deduped = mmrRerank(scored, Math.min(scored.length, 20));
+
+  // 3a. Quota-aware 选择（保证 source 最小配额，限制 conversation 上限）
+  const quotaSelected = quotaAwareSelect(deduped, scored);
+
+  // 4. Token 预算截断，同时按 source 统计注入量
+  quotaSelected.sort((a, b) => b.finalScore - a.finalScore);
+
+  let block = '';
+  let tokenUsed = 0;
+
+  // 4a. Layer 2 蒸馏文档注入（预算外，优先保证身份锚点）
+  // USER_PROFILE + WORLD_STATE 合计上限 1200 tokens，超出截断
+  const DISTILLED_BUDGET_TOKENS = 1200;
+  const DISTILLED_BUDGET_TYPES = new Set(['USER_PROFILE', 'WORLD_STATE']);
+  const distilledMap = {};
+  let distilledBudgetUsed = 0;
+  for (let i = 0; i < distilledTypes.length; i++) {
+    if (distilledDocs[i] && distilledDocs[i].content) {
+      const docType = distilledTypes[i];
+      let content = distilledDocs[i].content;
+      if (DISTILLED_BUDGET_TYPES.has(docType)) {
+        const contentTokens = estimateTokens(content);
+        const remaining = DISTILLED_BUDGET_TOKENS - distilledBudgetUsed;
+        if (remaining <= 0) continue;
+        if (contentTokens > remaining) {
+          const maxChars = Math.floor(remaining * 2.5);
+          content = content.slice(0, maxChars);
+        }
+        distilledBudgetUsed += estimateTokens(content);
+      }
+      distilledMap[docType] = content;
+      block += content + '\n\n';
+    }
+  }
+
+  // block 总长度检查：超过 32000 字符（约 8000 tokens）时发出警告
+  if (block.length > 32000) {
+    console.warn('[memory] block size exceeded 32000 chars', { blockLength: block.length, mode, query: query.slice(0, 100) });
+  }
+
+  if (profileSnippet) {
+    block += profileSnippet + '\n';
+    tokenUsed += estimateTokens(profileSnippet);
+  }
+
+  block += '\n## 相关历史上下文\n';
+  tokenUsed += 10;
+
+  let injectedCount = 0;
+  const sourceStats = {};
+
+  for (const item of quotaSelected) {
+    const line = formatItem(item, depth);
+    const lineTokens = estimateTokens(line);
+    if (tokenUsed + lineTokens > tokenBudget) break;
+    block += line + '\n';
+    tokenUsed += lineTokens;
+    injectedCount++;
+
+    // 按 source 统计注入量
+    const src = item.source;
+    if (!sourceStats[src]) sourceStats[src] = { selectedCount: 0, selectedTokens: 0 };
+    sourceStats[src].selectedCount++;
+    sourceStats[src].selectedTokens += lineTokens;
+  }
+
+  // 5. 构建 errors 列表（仅记录真正的失败，排除 ok / no_results / disabled）
+  const errors = [];
+  const fetchMetas = { semantic: semanticMeta, events: eventsMeta, conversation: convMeta, episodic: episodicMeta };
+  for (const [name, fm] of Object.entries(fetchMetas)) {
+    if (fm && fm.fetchStatus !== 'ok' && fm.fetchStatus !== 'no_results' && fm.fetchStatus !== 'disabled' && fm.fetchStatus !== 'fallback_jaccard') {
+      errors.push(`${name}:${fm.fetchStatus}`);
+    }
+  }
+
+  // 6. 结构化 log —— 每次对话的记忆检索仪表盘
+  const logMeta = {
+    tag: 'memory_selection',
+    intentType,
+    topicDepth: depth,
+    tokenBudget,
+    tokenUsed,
+    candidateTotal: candidates.length,
+    injectedTotal: injectedCount,
+    embeddingMode: process.env.OPENAI_API_KEY ? 'openai' : 'jaccard',
+    distilledDocs: distilledTypes.reduce((acc, t, i) => {
+      acc[t] = distilledDocs[i] ? 'injected' : 'missing';
+      return acc;
+    }, {}),
+    fetch: {
+      semantic:     semanticMeta,
+      events:       eventsMeta,
+      conversation: convMeta,
+      episodic:     episodicMeta,
+      profile:      { fetchStatus: profileMeta.fetchStatus },
+    },
+    selected: sourceStats,
+    errors,
+  };
+  console.log('[memory]', JSON.stringify(logMeta));
+
+  // 如果没有注入任何记忆（包含蒸馏文档也算注入），返回空 block
+  const hasSoulOrDistilled = Object.keys(distilledMap).length > 0;
+  if (injectedCount === 0 && !profileSnippet && !hasSoulOrDistilled) {
+    return { block: '', meta: { candidates: candidates.length, injected: 0, tokenUsed: 0, tokenBudget, intentType } };
+  }
+
+  return {
+    block,
+    meta: {
+      candidates: candidates.length,
+      injected: injectedCount,
+      tokenUsed,
+      tokenBudget,
+      intentType,
+      distilledDocs: logMeta.distilledDocs,
+      sources: quotaSelected.slice(0, injectedCount).map(i => i.source),
+    },
+  };
+}
+
+// ============================================================
+// Exports（测试用）
+// ============================================================
+
+export {
+  searchSemanticMemory as _searchSemanticMemory,
+  loadRecentEvents as _loadRecentEvents,
+  loadConversationHistory as _loadConversationHistory,
+  loadActiveProfile as _loadActiveProfile,
+  formatItem as _formatItem,
+  tokenize as _tokenize,
+  RELEVANT_EVENT_TYPES,
+  DEFAULT_TOKEN_BUDGET,
+};

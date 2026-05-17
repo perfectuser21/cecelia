@@ -1,0 +1,545 @@
+{
+  "name": "[Flow] 夜间任务调度器",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 19 * * *"
+            }
+          ]
+        }
+      },
+      "id": "schedule-trigger",
+      "name": "Schedule Trigger",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        250,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "init-results",
+              "name": "results",
+              "value": "=[]",
+              "type": "array"
+            },
+            {
+              "id": "init-workflows",
+              "name": "workflows",
+              "value": "=[{\"id\": \"wqeeHpnTcJolnse4\", \"name\": \"health-check\"}, {\"id\": \"yy68TG62AgjWkWmf\", \"name\": \"log-triage\"}, {\"id\": \"70DVZ55roILCGAMM\", \"name\": \"backup\"}, {\"id\": \"wOg5NRZ2yx0D18nY\", \"name\": \"cleanup\"}]",
+              "type": "array"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "init-state",
+      "name": "Initialize State",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        450,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "wqeeHpnTcJolnse4",
+          "mode": "id"
+        }
+      },
+      "id": "exec-health-check",
+      "name": "Execute: health-check",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.1,
+      "position": [
+        650,
+        300
+      ],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "jsCode": "const workflowName = \"health-check\";\nconst success = !$input.item.error;\nconst results = $(\"Initialize State\").item.json.results || [];\nresults.push({\n  workflow: workflowName,\n  success: success,\n  error: success ? null : ($input.item.error?.message || \"Unknown error\"),\n  attempt: 1,\n  timestamp: new Date().toISOString()\n});\nreturn { results };"
+      },
+      "id": "record-health-check",
+      "name": "Record: health-check",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        850,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "70DVZ55roILCGAMM",
+          "mode": "id"
+        }
+      },
+      "id": "exec-backup",
+      "name": "Execute: backup",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.1,
+      "position": [
+        1850,
+        300
+      ],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "jsCode": "const workflowName = \"backup\";\nconst success = !$input.item.error;\nconst results = $(\"Record: health-check\").item.json.results || [];\nresults.push({\n  workflow: workflowName,\n  success: success,\n  error: success ? null : ($input.item.error?.message || \"Unknown error\"),\n  attempt: 1,\n  timestamp: new Date().toISOString()\n});\nreturn { results };"
+      },
+      "id": "record-backup",
+      "name": "Record: backup",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2050,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "wOg5NRZ2yx0D18nY",
+          "mode": "id"
+        }
+      },
+      "id": "exec-cleanup",
+      "name": "Execute: cleanup",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.1,
+      "position": [
+        2250,
+        300
+      ],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "jsCode": "const workflowName = \"cleanup\";\nconst success = !$input.item.error;\nconst results = $(\"Record: backup\").item.json.results || [];\nresults.push({\n  workflow: workflowName,\n  success: success,\n  error: success ? null : ($input.item.error?.message || \"Unknown error\"),\n  attempt: 1,\n  timestamp: new Date().toISOString()\n});\nreturn { results };"
+      },
+      "id": "record-cleanup",
+      "name": "Record: cleanup",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2450,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const results = $input.item.json.results || [];\nconst failures = results.filter(r => !r.success);\nreturn { \n  results, \n  failures,\n  hasFailures: failures.length > 0,\n  totalWorkflows: results.length,\n  failedWorkflows: failures.length\n};"
+      },
+      "id": "check-failures",
+      "name": "Check Failures",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2250,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "has-failures-condition",
+              "leftValue": "={{ $json.hasFailures }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-has-failures",
+      "name": "Has Failures?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.1,
+      "position": [
+        2450,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.notion.com/v1/pages",
+        "authentication": "headerAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Notion-Version",
+              "value": "2022-06-28"
+            },
+            {
+              "name": "Authorization",
+              "value": "Bearer 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"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ {\n  \"parent\": { \"database_id\": \"2ad53f413ec580f5a868f136b432a8a3\" },\n  \"properties\": {\n    \"Name\": {\n      \"title\": [\n        {\n          \"text\": {\n            \"content\": \"Nightly Scheduler Failed - \" + new Date().toISOString()\n          }\n        }\n      ]\n    },\n    \"Status\": {\n      \"status\": { \"name\": \"Failed\" }\n    },\n    \"Failed Workflows\": {\n      \"rich_text\": [\n        {\n          \"text\": {\n            \"content\": $json.failures.map(f => f.workflow + \": \" + f.error).join(\"\\n\")\n          }\n        }\n      ]\n    },\n    \"Timestamp\": {\n      \"date\": {\n        \"start\": new Date().toISOString()\n      }\n    }\n  }\n} }}",
+        "options": {}
+      },
+      "id": "write-to-notion",
+      "name": "Write to Notion",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2650,
+        150
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Get current time in Beijing timezone (UTC+8)\nconst now = new Date();\nconst beijingTime = new Date(now.toLocaleString(\"en-US\", { timeZone: \"Asia/Shanghai\" }));\nconst hours = beijingTime.getHours();\nconst minutes = beijingTime.getMinutes();\nconst currentMinutes = hours * 60 + minutes;\n\n// Working hours: 07:30 - 18:30 Beijing time\nconst workStartMinutes = 7 * 60 + 30;  // 07:30 = 450 minutes\nconst workEndMinutes = 18 * 60 + 30;    // 18:30 = 1110 minutes\n\nconst isWorkingHours = currentMinutes >= workStartMinutes && currentMinutes < workEndMinutes;\n\n// Calculate wait time until 07:30 if outside working hours\nlet waitUntil = null;\nif (!isWorkingHours) {\n  const tomorrow = new Date(beijingTime);\n  if (currentMinutes >= workEndMinutes) {\n    // After 18:30, wait until tomorrow 07:30\n    tomorrow.setDate(tomorrow.getDate() + 1);\n  }\n  tomorrow.setHours(7, 30, 0, 0);\n  waitUntil = tomorrow.toISOString();\n}\n\nreturn {\n  ...($input.item.json),\n  isWorkingHours,\n  beijingTimeStr: beijingTime.toLocaleString(\"zh-CN\", { timeZone: \"Asia/Shanghai\" }),\n  waitUntil\n};"
+      },
+      "id": "check-beijing-time",
+      "name": "Check Beijing Time",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2850,
+        150
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "is-working-hours",
+              "leftValue": "={{ $json.isWorkingHours }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "is-working-hours",
+      "name": "Is Working Hours?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.1,
+      "position": [
+        3050,
+        150
+      ]
+    },
+    {
+      "parameters": {
+        "unit": "specificDate",
+        "dateTime": "={{ $json.waitUntil }}"
+      },
+      "id": "wait-until-morning",
+      "name": "Wait Until Morning",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        3250,
+        250
+      ],
+      "webhookId": "wait-until-730am"
+    },
+    {
+      "parameters": {
+        "jsCode": "const failures = $(\"Check Failures\").item.json.failures || [];\nconst workflows = $(\"Initialize State\").item.json.workflows;\nconst retryResults = [];\n\nfor (const failure of failures) {\n  const workflowInfo = workflows.find(w => w.name === failure.workflow);\n  if (!workflowInfo) continue;\n  \n  let success = false;\n  let error = failure.error;\n  \n  // Retry up to 2 times\n  for (let attempt = 2; attempt <= 3; attempt++) {\n    try {\n      // Note: This is pseudo-code. In real n8n, you would need separate Execute Workflow nodes\n      // This code node documents the retry logic\n      retryResults.push({\n        workflow: failure.workflow,\n        workflowId: workflowInfo.id,\n        attempt: attempt,\n        needsRetry: true\n      });\n    } catch (e) {\n      error = e.message;\n    }\n    \n    if (success) break;\n  }\n}\n\nreturn { \n  retryNeeded: retryResults,\n  originalFailures: failures\n};"
+      },
+      "id": "prepare-retries",
+      "name": "Prepare Retries",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3450,
+        150
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const checkResults = $(\"Check Failures\").item.json;\nconst retryData = $input.item.json;\nconst timeData = $(\"Check Beijing Time\").item.json;\n\nlet message = `🌙 Nightly Scheduler Report\\n\\n`;\nmessage += `Time: ${timeData.beijingTimeStr} (Beijing)\\n`;\nmessage += `Total Workflows: ${checkResults.totalWorkflows}\\n`;\nmessage += `Failed (Initial): ${checkResults.failedWorkflows}\\n\\n`;\n\nif (retryData && retryData.retryNeeded && retryData.retryNeeded.length > 0) {\n  message += `⚠️ Retry Required for:\\n`;\n  retryData.retryNeeded.forEach(r => {\n    message += `- ${r.workflow}\\n`;\n  });\n} else if (checkResults.hasFailures) {\n  message += `❌ Failed Workflows:\\n`;\n  checkResults.failures.forEach(f => {\n    message += `- ${f.workflow}: ${f.error}\\n`;\n  });\n} else {\n  message += `✅ All workflows completed successfully`;\n}\n\nif (!timeData.isWorkingHours) {\n  message += `\\n\\n⏰ Notification delayed until 07:30`;\n}\n\nreturn {\n  msg_type: \"text\",\n  content: {\n    text: message\n  }\n};"
+      },
+      "id": "format-notification",
+      "name": "Format Notification",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3650,
+        150
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://open.feishu.cn/open-apis/bot/v2/hook/5bde68e0-9879-4a45-88ed-461a88229136",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $json }}",
+        "options": {}
+      },
+      "id": "send-feishu-notification",
+      "name": "Send Feishu Notification",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3850,
+        150
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "return { \n  status: \"completed\",\n  message: \"All workflows executed successfully, no failures to report\",\n  results: $(\"Check Failures\").item.json.results\n};"
+      },
+      "id": "success-summary",
+      "name": "Success Summary",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2650,
+        400
+      ]
+    }
+  ],
+  "connections": {
+    "Schedule Trigger": {
+      "main": [
+        [
+          {
+            "node": "Initialize State",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Initialize State": {
+      "main": [
+        [
+          {
+            "node": "Execute: health-check",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Execute: health-check": {
+      "main": [
+        [
+          {
+            "node": "Record: health-check",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Record: health-check": {
+      "main": [
+        [
+          {
+            "node": "Execute: backup",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Execute: backup": {
+      "main": [
+        [
+          {
+            "node": "Record: backup",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Record: backup": {
+      "main": [
+        [
+          {
+            "node": "Execute: cleanup",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Execute: cleanup": {
+      "main": [
+        [
+          {
+            "node": "Record: cleanup",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Record: cleanup": {
+      "main": [
+        [
+          {
+            "node": "Check Failures",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Failures": {
+      "main": [
+        [
+          {
+            "node": "Has Failures?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has Failures?": {
+      "main": [
+        [
+          {
+            "node": "Write to Notion",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Success Summary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Write to Notion": {
+      "main": [
+        [
+          {
+            "node": "Check Beijing Time",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Beijing Time": {
+      "main": [
+        [
+          {
+            "node": "Is Working Hours?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is Working Hours?": {
+      "main": [
+        [
+          {
+            "node": "Prepare Retries",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Wait Until Morning",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait Until Morning": {
+      "main": [
+        [
+          {
+            "node": "Prepare Retries",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Retries": {
+      "main": [
+        [
+          {
+            "node": "Format Notification",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Notification": {
+      "main": [
+        [
+          {
+            "node": "Send Feishu Notification",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": true
+  },
+  "staticData": {
+    "node:Schedule Trigger": {
+      "recurrenceRules": []
+    }
+  },
+  "active": true
+}

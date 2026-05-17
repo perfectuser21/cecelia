@@ -1,0 +1,139 @@
+# == Production Environment ==
+# Uses pre-built immutable image (brain/Dockerfile).
+# Build first: bash scripts/brain-build.sh
+# Deploy:      bash scripts/brain-deploy.sh
+
+services:
+  node-brain:
+    image: cecelia-brain:${BRAIN_VERSION:-latest}
+    container_name: cecelia-node-brain
+    # macOS/OrbStack: network_mode:host 不支持，用 bridge + port forward
+    ports:
+      - "5221:5221"
+    read_only: true
+    tmpfs:
+      - /tmp:size=100M
+    volumes:
+      # Docker socket: Brain 调 dockerd spawn 兄弟 pipeline 容器
+      - /var/run/docker.sock:/var/run/docker.sock
+      # Skills + cecelia-run (read-only)
+      - /Users/administrator/.claude:/Users/administrator/.claude:ro
+      # Credentials + Claude accounts — 保持宿主路径不 remap
+      # HOST_HOME=/Users/administrator + Dockerfile ENV HOME 也对齐宿主路径，
+      # 这样 Brain os.homedir() 和 docker-executor 构造的子容器 mount 源都能解析。
+      - /Users/administrator/.credentials:/Users/administrator/.credentials:ro
+      - /Users/administrator/.claude-account1:/Users/administrator/.claude-account1:ro
+      - /Users/administrator/.claude-account2:/Users/administrator/.claude-account2:ro
+      - /Users/administrator/.claude-account3:/Users/administrator/.claude-account3:ro
+      # Codex CLI auth (~/.codex-team1/auth.json)：容器内 triggerCodexReview spawn 时需要凭据
+      - /Users/administrator/.codex-team1:/Users/administrator/.codex-team1:ro
+      # Workflows: staff + skills + agents (read-only for staff/skills-registry API)
+      - /Users/administrator/perfect21/cecelia/packages/workflows:/Users/administrator/perfect21/cecelia/packages/workflows:ro
+      # Config: OKR validation spec (read-only, mounted at /config for validate-okr-structure.js)
+      - /Users/administrator/perfect21/cecelia/packages/config:/config:ro
+      # HEARTBEAT.md (read-write for GET/PUT API)
+      - /Users/administrator/perfect21/cecelia/HEARTBEAT.md:/HEARTBEAT.md:rw
+      # workers.config.json (read-write for PUT /staff/workers API)
+      - /Users/administrator/perfect21/cecelia/packages/workflows/staff/workers.config.json:/Users/administrator/perfect21/cecelia/packages/workflows/staff/workers.config.json:rw
+      # Worktree 根目录（Brain spawn harness/pipeline 容器时要 mount 宿主 worktree）
+      - /Users/administrator/perfect21/cecelia/.claude/worktrees:/Users/administrator/perfect21/cecelia/.claude/worktrees:rw
+      - /Users/administrator/worktrees:/Users/administrator/worktrees:rw
+      # Content pipeline 产物目录（docker-executor existsFn 检查要求 Brain 可见宿主该路径，
+      # 否则不挂给 pipeline container，产物写到 ephemeral 空间 --rm 丢失。见 PR #2527 后续修）
+      - /Users/administrator/content-output:/Users/administrator/content-output:rw
+      - /Users/administrator/claude-output:/Users/administrator/claude-output:rw
+      # SSH：pipeline-export.sh 跑 "ssh nas" 上传 NAS，docker-executor 挂给 pipeline container
+      - /Users/administrator/.ssh:/Users/administrator/.ssh:ro
+      # Git + gh config（harness / pipeline container 做 git commit / gh pr 需要）
+      - /Users/administrator/.gitconfig:/Users/administrator/.gitconfig:ro
+      - /Users/administrator/.config/gh:/Users/administrator/.config/gh:ro
+      # 主仓库全目录（deploy webhook 需要 git pull/tag + scripts/ — rw 允许写 .git）
+      - /Users/administrator/perfect21/cecelia:/Users/administrator/perfect21/cecelia:rw
+      # Prompt 文件目录：Brain 写 prompt 文件这里（docker-executor writePromptFile），
+      # 子容器 mount 源必须由宿主 docker daemon 解析 → 必须宿主路径。compose 里 bind-mount
+      # 宿主 ~/claude-output/cecelia-prompts → Brain 容器 /tmp/cecelia-prompts，
+      # 配合 HOST_PROMPT_DIR env 让 docker-executor 构造子容器 mount 走宿主路径。
+      - /Users/administrator/claude-output/cecelia-prompts:/tmp/cecelia-prompts:rw
+      # Timezone (read-only)
+      - /etc/localtime:/etc/localtime:ro
+    env_file:
+      - .env.docker
+    environment:
+      - TZ=Asia/Shanghai
+      - ENV_REGION=${ENV_REGION:-us}
+      # host.docker.internal: OrbStack 原生支持，容器内此地址到宿主 127.0.0.1
+      - DB_HOST=${DB_HOST:-host.docker.internal}
+      - DB_PORT=${DB_PORT:-5432}
+      - DB_NAME=${DB_NAME:-cecelia}
+      - DB_USER=${DB_USER:-cecelia}
+      - DB_PASSWORD=${DB_PASSWORD:-cecelia}
+      - BRAIN_PORT=5221
+      - CECELIA_TICK_ENABLED=${CECELIA_TICK_ENABLED:-true}
+      # Concurrency: auto-calculated from hardware (CPU/memory) via slot-allocator.js
+      # CECELIA_MAX_SEATS: hard cap on concurrent slots (overrides auto-calc, set 0 to disable)
+      - CECELIA_MAX_SEATS=10
+      # CECELIA_BUDGET_SLOTS: budget-layer cap (< MAX_SEATS), reserves 3 slots for burst buffer + INTERACTIVE_RESERVE
+      - CECELIA_BUDGET_SLOTS=7
+      - CECELIA_TICK_INTERVAL_MS=${CECELIA_TICK_INTERVAL_MS:-5000}
+      - DISPATCH_TIMEOUT_MINUTES=${DISPATCH_TIMEOUT_MINUTES:-60}
+      - FEISHU_BOT_WEBHOOK=${FEISHU_BOT_WEBHOOK:-}
+      - CECELIA_RUN_PATH=/Users/administrator/perfect21/cecelia/packages/brain/scripts/cecelia-run.sh
+      - HOST_HOME=/Users/administrator
+      - REPO_ROOT=/Users/administrator/perfect21/cecelia
+      # Codex CLI 容器内位置（由 Dockerfile npm install -g @openai/codex 装到 /usr/local/bin/codex）
+      # 覆盖 executor.js 默认值 /opt/homebrew/bin/codex（host 路径，容器里不存在）
+      - CODEX_BIN=/usr/local/bin/codex
+      # Codex CLI 找凭据用 $CODEX_HOME/auth.json（mount 自 host ~/.codex-team1）
+      - CODEX_HOME=/Users/administrator/.codex-team1
+      # Brain 容器里 /tmp/cecelia-prompts 对应的宿主路径（docker-executor 用它构造子容器 mount 源）
+      - HOST_PROMPT_DIR=/Users/administrator/claude-output/cecelia-prompts
+      # OPENAI_API_KEY is provided via env_file (.env.docker) — do NOT override here
+      # Overriding with ${OPENAI_API_KEY} causes empty string when host shell has no export
+      # FEISHU_OWNER_OPEN_IDS is provided via env_file (.env.docker) — same reason, do NOT override here
+    # compose standalone cgroup 限额（deploy.resources 只在 Docker Swarm 模式生效）
+    mem_limit: 1g
+    mem_reservation: 512m
+    cpus: 2.0
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+          cpus: '2'
+        reservations:
+          memory: 512M
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5221/api/brain/tick/status"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  frontend:
+    image: node:20-alpine
+    container_name: cecelia-frontend
+    network_mode: host
+    working_dir: /app
+    volumes:
+      - ./apps/dashboard/dist:/app
+      - /Users/administrator/perfect21/cecelia/apps/dashboard/dist:/Users/administrator/perfect21/cecelia/apps/dashboard/dist:ro
+      - ./frontend-proxy.js:/frontend-proxy.js:ro
+    command: node /frontend-proxy.js
+    depends_on:
+      node-brain:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+    restart: unless-stopped
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "5m"
+        max-file: "2"

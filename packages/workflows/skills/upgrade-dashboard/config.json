@@ -1,0 +1,14 @@
+{
+  "name": "upgrade-dashboard",
+  "version": "1.0.0",
+  "description": "Cecelia Dashboard 前端升级流程指南",
+  "author": "Claude Code",
+  "triggers": [
+    "/upgrade-dashboard",
+    "升级dashboard",
+    "更新前端",
+    "dashboard升级"
+  ],
+  "tags": ["frontend", "deployment", "cecelia", "dashboard"],
+  "bypassPermissions": false
+}

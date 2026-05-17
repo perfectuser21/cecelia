@@ -1,0 +1,177 @@
+{
+  "summary": {
+    "total": 8,
+    "covered": 8,
+    "uncovered": 0,
+    "percentage": 100
+  },
+  "entries": [
+    {
+      "type": "skill",
+      "path": "skills/qa/SKILL.md",
+      "name": "/qa",
+      "covered": true,
+      "coveredBy": [
+        "C1-008",
+        "C3-005"
+      ]
+    },
+    {
+      "type": "skill",
+      "path": "skills/dev/SKILL.md",
+      "name": "/dev",
+      "covered": true,
+      "coveredBy": [
+        "C1-001",
+        "C3-001",
+        "C3-002",
+        "C3-003",
+        "C3-004",
+        "C3-005",
+        "C3-006"
+      ]
+    },
+    {
+      "type": "skill",
+      "path": "skills/audit/SKILL.md",
+      "name": "/audit",
+      "covered": true,
+      "coveredBy": [
+        "C1-009"
+      ]
+    },
+    {
+      "type": "skill",
+      "path": "skills/assurance/SKILL.md",
+      "name": "/assurance",
+      "covered": true,
+      "coveredBy": [
+        "C1-010"
+      ]
+    },
+    {
+      "type": "script",
+      "path": "scripts/run-regression.sh",
+      "name": "run-regression",
+      "covered": true,
+      "coveredBy": [
+        "C3-004"
+      ]
+    },
+    {
+      "type": "script",
+      "path": "scripts/qa-report.sh",
+      "name": "qa-report",
+      "covered": true,
+      "coveredBy": [
+        "C3-005"
+      ]
+    },
+    {
+      "type": "script",
+      "path": "scripts/release-check.sh",
+      "name": "release-check",
+      "covered": true,
+      "coveredBy": [
+        "C3-006"
+      ]
+    },
+    {
+      "type": "script",
+      "path": "scripts/install-hooks.sh",
+      "name": "install-hooks",
+      "covered": true,
+      "coveredBy": [
+        "C3-003",
+        "C6-002"
+      ]
+    }
+  ],
+  "contracts": [
+    {
+      "id": "C1-001",
+      "name": "/dev 流程可启动"
+    },
+    {
+      "id": "C1-002",
+      "name": "分支自动创建"
+    },
+    {
+      "id": "C1-003",
+      "name": "DoD 自动生成"
+    },
+    {
+      "id": "C1-004",
+      "name": "Loop 1 循环（质检失败后回退）"
+    },
+    {
+      "id": "C1-005",
+      "name": "CI 失败后循环"
+    },
+    {
+      "id": "C1-006",
+      "name": "模式检测 - new"
+    },
+    {
+      "id": "C1-007",
+      "name": "模式检测 - continue"
+    },
+    {
+      "id": "C1-008",
+      "name": "/qa Skill 加载"
+    },
+    {
+      "id": "C1-009",
+      "name": "/audit Skill 加载"
+    },
+    {
+      "id": "C1-010",
+      "name": "/assurance Skill 加载"
+    },
+    {
+      "id": "C2-001",
+      "name": "CI 运行 npm run qa"
+    },
+    {
+      "id": "C2-002",
+      "name": "版本号必须递增（PR to develop）"
+    },
+    {
+      "id": "C2-003",
+      "name": "CHANGELOG 必须更新（PR to main）"
+    },
+    {
+      "id": "C3-001",
+      "name": "metrics.sh 输出指标"
+    },
+    {
+      "id": "C3-002",
+      "name": "snapshot-prd-dod.sh 保存快照"
+    },
+    {
+      "id": "C3-003",
+      "name": "install-hooks.sh 安装成功"
+    },
+    {
+      "id": "C3-004",
+      "name": "run-regression.sh 执行回归测试"
+    },
+    {
+      "id": "C3-005",
+      "name": "qa-report.sh 生成报告"
+    },
+    {
+      "id": "C3-006",
+      "name": "release-check.sh 发布检查"
+    },
+    {
+      "id": "C6-001",
+      "name": "完整开发流程"
+    },
+    {
+      "id": "C6-002",
+      "name": "安装与部署链路"
+    }
+  ],
+  "generated_at": "2026-01-23T08:54:07.464Z"
+}

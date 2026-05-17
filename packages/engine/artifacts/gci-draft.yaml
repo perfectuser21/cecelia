@@ -1,0 +1,37 @@
+# GCI Draft - 自动生成
+# 生成时间: 2026-01-23T08:26:18.059Z
+# 请审核后手动合并到 contracts/gate-contract.yaml
+
+drafts:
+
+  - id: "G5-NEW"
+    name: "新增 draft-gci 功能"
+    priority: P1
+    trigger: [PR, Release]
+    scenario:
+      given: "scripts/devgate/draft-gci.cjs 文件存在"
+      when: "调用 Contract/require 函数"
+      then: "验证逻辑正确执行"
+    reason: "scripts/devgate/draft-gci.cjs 有改动，需要确保 命令安全 行为不变"
+    # === 元信息（审核后删除） ===
+    # file: scripts/devgate/draft-gci.cjs
+    # changeType: 新增
+    # addedLines: 240
+    # removedLines: 0
+    # functions: [Contract, require, fs, path, GATE_PATTERNS, CATEGORY_MAP, isGateFile, some, getCategory, for, if, getChangedFiles, output, trim, split, analyzeDiff, result, diff, lines, content, push, funcMatch, funcName, generateDraft, fileName, slice, formatYaml, join, main, args, changedFiles, gateFiles, drafts, yaml, dir, mkdirSync, writeFileSync, log, exit]
+
+  - id: "G1-NEW"
+    name: "新增 draft-gci.test 功能"
+    priority: P1
+    trigger: [PR, Release]
+    scenario:
+      given: "tests/gate/draft-gci.test.ts 文件存在"
+      when: "调用 require/describe 函数"
+      then: "验证逻辑正确执行"
+    reason: "tests/gate/draft-gci.test.ts 有改动，需要确保 Gate 测试 行为不变"
+    # === 元信息（审核后删除） ===
+    # file: tests/gate/draft-gci.test.ts
+    # changeType: 新增
+    # addedLines: 97
+    # removedLines: 0
+    # functions: [require, describe, it, expect, result, diff, draft]

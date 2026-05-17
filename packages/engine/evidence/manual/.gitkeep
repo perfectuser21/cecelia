@@ -1,0 +1,9 @@
+# Manual Evidence Directory
+#
+# 存放手动验证的证据文件。
+#
+# 命名规则：<EVIDENCE_ID>.md 或 <EVIDENCE_ID>.png
+#
+# 示例：
+#   template-review.md - 模板审核记录
+#   rci-review.md - 回归契约审核记录

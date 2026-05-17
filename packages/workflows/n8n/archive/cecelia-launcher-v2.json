@@ -1,0 +1,133 @@
+{
+  "name": "cecelia-launcher-v2",
+  "nodes": [
+    {
+      "parameters": {
+        "path": "cecelia-start",
+        "httpMethod": "POST",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "WebhookStart",
+      "name": "Webhook Start (Launcher)",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [260, 240]
+    },
+    {
+      "parameters": {
+        "keepOnlySet": true,
+        "values": {
+          "string": [
+            { "name": "cfg.webhook_callback_path", "value": "cecelia-callback" },
+            { "name": "cfg.datastore_name", "value": "cecelia_tasks" },
+            { "name": "cfg.ssh_work_dir", "value": "/home/xx/dev/zenithjoy-core" },
+            { "name": "cfg.remote_prompt_dir", "value": "/tmp/cecelia-prompts" },
+            { "name": "cfg.cecelia_bin", "value": "/home/xx/bin/cecelia" }
+          ],
+          "number": [
+            { "name": "cfg.max_concurrent", "value": 3 }
+          ],
+          "json": [
+            {
+              "name": "cfg.checkpoints",
+              "value": "[\"CP-001\",\"CP-002\"]"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "Config",
+      "name": "Config (Edit me)",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 2,
+      "position": [520, 240]
+    },
+    {
+      "parameters": {
+        "jsCode": "const cfg = $json.cfg;\n\n// Expect body: { project, prd, extra_context? }\nconst body = $json.body || $json;\nconst project = body.project || 'cecelia-task';\nconst prd = body.prd || '';\nconst extra = body.extra_context || {};\n\nconst d = new Date();\nconst y = d.getFullYear();\nconst m = String(d.getMonth()+1).padStart(2,'0');\nconst day = String(d.getDate()).padStart(2,'0');\nconst dateStr = `${y}${m}${day}`;\nconst execId = $execution.id || 'noexec';\nconst rand = Math.random().toString(16).slice(2,6);\nconst task_id = `${project}-${dateStr}-${execId}-${rand}`;\n\nconst checkpoints = Array.isArray(cfg.checkpoints) ? cfg.checkpoints : JSON.parse(cfg.checkpoints);\n\nconst taskContext = {\n  task_id,\n  project,\n  created_at: new Date().toISOString(),\n  status: 'running',\n  current_index: 0,\n  checkpoints,\n  prd,\n  extra_context: extra,\n  results: {}\n};\n\nreturn {\n  cfg,\n  task_id,\n  project,\n  prd,\n  extra_context: extra,\n  checkpoints,\n  checkpoint_id: checkpoints[0],\n  taskContext\n};"
+      },
+      "id": "InitTask",
+      "name": "Init Task (task_id + context)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [760, 240]
+    },
+    {
+      "parameters": {
+        "operation": "set",
+        "dataStore": "={{$json.cfg.datastore_name}}",
+        "key": "={{$json.task_id}}",
+        "value": "={{JSON.stringify($json.taskContext)}}"
+      },
+      "id": "DSSet",
+      "name": "Data Store Set (task context)",
+      "type": "n8n-nodes-base.dataStore",
+      "typeVersion": 1,
+      "position": [1010, 240]
+    },
+    {
+      "parameters": {
+        "jsCode": "const cfg = $json.cfg;\nconst task_id = $json.task_id;\nconst checkpoint_id = $json.checkpoint_id;\nconst prd = $json.prd;\nconst extra = $json.extra_context;\n\nconst prompt = [\n  `TASK_ID: ${task_id}`,\n  `CHECKPOINT: ${checkpoint_id}`,\n  `\\n=== PRD ===\\n${prd}`,\n  `\\n=== EXTRA_CONTEXT(JSON) ===\\n${JSON.stringify(extra, null, 2)}`,\n  `\\n=== INSTRUCTION ===\\nPlease execute ${checkpoint_id}. Output machine-readable JSON.`\n].join('\\n');\n\nreturn { ...$json, prompt };"
+      },
+      "id": "BuildPrompt",
+      "name": "Build Prompt (CP-001)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1240, 240]
+    },
+    {
+      "parameters": {
+        "command": "={{(\n`set -euo pipefail\\n`+\n`cd ${$json.cfg.ssh_work_dir}\\n`+\n`mkdir -p ${$json.cfg.remote_prompt_dir}\\n`+\n`PROMPT_FILE=\\\"${$json.cfg.remote_prompt_dir}/${$json.task_id}-${$json.checkpoint_id}.prompt\\\"\\n`+\n`cat > \\\"$PROMPT_FILE\\\" <<'CECELIA_PROMPT_EOF'\\n`+\n`${$json.prompt}\\n`+\n`CECELIA_PROMPT_EOF\\n`+\n`BASE_URL=\\\"${$env.N8N_WEBHOOK_BASE_URL || 'https://YOUR-N8N-DOMAIN'}\\\"\\n`+\n`WEBHOOK_URL=\\\"$BASE_URL/webhook/${$json.cfg.webhook_callback_path}\\\"\\n`+\n`export WEBHOOK_URL\\n`+\n`export MAX_CONCURRENT=${$json.cfg.max_concurrent}\\n`+\n`export CECELIA_WEBHOOK_TOKEN=\\\"${$env.CECELIA_WEBHOOK_TOKEN || ''}\\\"\\n`+\n`${$json.cfg.cecelia_bin} \\\"${$json.task_id}\\\" \\\"${$json.checkpoint_id}\\\" \\\"$PROMPT_FILE\\\"\\n`\n)}}"
+      },
+      "id": "SSHRun",
+      "name": "SSH (run cecelia CP-001) - heredoc",
+      "type": "n8n-nodes-base.ssh",
+      "typeVersion": 1,
+      "position": [1490, 240],
+      "credentials": {
+        "ssh": {
+          "id": "YOUR_SSH_CREDENTIAL_ID",
+          "name": "YOUR_SSH_CREDENTIAL_NAME"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{({ ok: true, task_id: $json.task_id, checkpoint_id: $json.checkpoint_id, note: 'CP-001 dispatched. Callback workflow will continue via webhook.' })}}",
+        "options": {}
+      },
+      "id": "Respond",
+      "name": "Respond (task_id)",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [1730, 240]
+    }
+  ],
+  "connections": {
+    "Webhook Start (Launcher)": {
+      "main": [[{ "node": "Config (Edit me)", "type": "main", "index": 0 }]]
+    },
+    "Config (Edit me)": {
+      "main": [[{ "node": "Init Task (task_id + context)", "type": "main", "index": 0 }]]
+    },
+    "Init Task (task_id + context)": {
+      "main": [[{ "node": "Data Store Set (task context)", "type": "main", "index": 0 }]]
+    },
+    "Data Store Set (task context)": {
+      "main": [[{ "node": "Build Prompt (CP-001)", "type": "main", "index": 0 }]]
+    },
+    "Build Prompt (CP-001)": {
+      "main": [[{ "node": "SSH (run cecelia CP-001) - heredoc", "type": "main", "index": 0 }]]
+    },
+    "SSH (run cecelia CP-001) - heredoc": {
+      "main": [[{ "node": "Respond (task_id)", "type": "main", "index": 0 }]]
+    }
+  },
+  "settings": {
+    "timezone": "America/Los_Angeles",
+    "executionOrder": "v1"
+  },
+  "active": false
+}

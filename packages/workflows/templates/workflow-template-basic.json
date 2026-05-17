@@ -1,0 +1,187 @@
+{
+  "name": "Template: Basic Workflow",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "start",
+      "name": "Start",
+      "type": "n8n-nodes-base.start",
+      "typeVersion": 1,
+      "position": [250, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://localhost:5221/api/brain/execution-callback",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "workflowId",
+              "value": "={{$workflow.id}}"
+            },
+            {
+              "name": "executionId",
+              "value": "={{$execution.id}}"
+            },
+            {
+              "name": "status",
+              "value": "started"
+            },
+            {
+              "name": "timestamp",
+              "value": "={{$now.toISO()}}"
+            }
+          ]
+        }
+      },
+      "id": "callback-start",
+      "name": "Report Start",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 3,
+      "position": [450, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Main workflow logic goes here\nconst items = $input.all();\n\n// Process items\nfor (const item of items) {\n  // Your processing logic\n  console.log('Processing item:', item.json);\n}\n\n// Return results\nreturn items;"
+      },
+      "id": "main-logic",
+      "name": "Main Logic",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [650, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://localhost:5221/api/brain/execution-callback",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "workflowId",
+              "value": "={{$workflow.id}}"
+            },
+            {
+              "name": "executionId",
+              "value": "={{$execution.id}}"
+            },
+            {
+              "name": "status",
+              "value": "completed"
+            },
+            {
+              "name": "result",
+              "value": "={{$json}}"
+            },
+            {
+              "name": "timestamp",
+              "value": "={{$now.toISO()}}"
+            }
+          ]
+        }
+      },
+      "id": "callback-complete",
+      "name": "Report Complete",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 3,
+      "position": [850, 300],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://localhost:5221/api/brain/execution-callback",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "workflowId",
+              "value": "={{$workflow.id}}"
+            },
+            {
+              "name": "executionId",
+              "value": "={{$execution.id}}"
+            },
+            {
+              "name": "status",
+              "value": "failed"
+            },
+            {
+              "name": "error",
+              "value": "={{$json.error}}"
+            },
+            {
+              "name": "timestamp",
+              "value": "={{$now.toISO()}}"
+            }
+          ]
+        }
+      },
+      "id": "callback-error",
+      "name": "Report Error",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 3,
+      "position": [650, 500],
+      "continueOnFail": true
+    }
+  ],
+  "connections": {
+    "Start": {
+      "main": [
+        [
+          {
+            "node": "Report Start",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Report Start": {
+      "main": [
+        [
+          {
+            "node": "Main Logic",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Main Logic": {
+      "main": [
+        [
+          {
+            "node": "Report Complete",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Report Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner",
+    "errorWorkflow": ""
+  },
+  "staticData": null,
+  "tags": [
+    {
+      "name": "template",
+      "createdAt": "2024-02-15T00:00:00.000Z"
+    }
+  ],
+  "triggerCount": 0,
+  "updatedAt": "2024-02-15T00:00:00.000Z",
+  "versionId": "1.0.0"
+}

@@ -1,0 +1,35 @@
+# Learning: 记忆系统 PR12 — RPE 闭环实现
+
+**Branch**: cp-03251048-rpe-feedback-loop
+**Date**: 2026-03-25
+
+## 变更摘要
+
+在 `task-weight.js` 中实现了 RPE（奖赏预测误差）闭环，使 dopamine 系统记录的 rpe_signal 事件真正影响任务调度权重。
+
+### 根本原因
+
+PR5 实现了 computeRPE 和 rpe_signal 事件记录，但未建立从 rpe_signal → 调度决策的反馈通路。
+信号写入数据库后从未被读取，RPE 闭环设计上是断开的——只有写入侧，没有读取侧。
+task-weight.js 是完全同步的纯函数模块，没有任何数据库查询能力，无法感知历史 RPE 状态。
+
+### 设计决策
+
+1. **保持同步函数不变**：`calculateTaskWeight` 签名和行为零改动，向后兼容所有调用方（tick.js、routes/tasks.js、routes/ops.js）
+2. **新增异步函数**：`calculateTaskWeightAsync` 叠加 RPE bonus，调用方按需选择
+3. **容错优先**：`getTaskRPEAdjustment` 在 DB 异常、无数据、null taskType 时均返回 0，不影响现有排序逻辑
+4. **scale/cap 参数化**：`RPE_WEIGHT_SCALE=4`、`RPE_WEIGHT_CAP=10`，导出为常量方便调整
+
+### 遇到的问题
+
+**问题**：task-weight.js 新增 `import pool from './db.js'` 后，现有 `task-weight.test.js` 崩溃（CJS/ESM 互操作问题），因为该测试文件未 mock db.js。
+
+**原因**：task-weight.js 原来是纯函数无 DB 依赖，现有测试未加 `vi.mock('../db.js')`。添加 top-level import 后，测试加载 task-weight.js 时会触发 db.js 的 PostgreSQL pool 初始化，在 CI 环境中无数据库连接而崩溃。
+
+**修复**：在 task-weight.test.js 顶部加 `vi.mock('../db.js', ...)` mock，同时修复了该文件预存在的 `afterEach` 未导入 bug。
+
+## 下次预防
+
+- [ ] 当给纯函数模块添加 DB 依赖时，必须同步更新所有现有测试文件添加 vi.mock('../db.js')
+- [ ] 保持"可选 dbPool 参数"模式（`const db = dbPool || pool`），方便测试注入 mock pool
+- [ ] 新增 async 函数时优先考虑保持现有同步 API 不变，在其基础上叠加异步版本

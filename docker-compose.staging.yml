@@ -1,0 +1,75 @@
+# == Staging Environment ==
+# Brain staging 实例，端口 5222，独立 DB（cecelia_staging）。
+# Tick 禁用，防止 staging 与 production 竞争任务派发。
+#
+# 部署: bash scripts/staging-deploy.sh
+# 验证: bash scripts/staging-verify.sh
+
+services:
+  node-brain-staging:
+    image: cecelia-brain:${BRAIN_VERSION:-latest}
+    container_name: cecelia-node-brain-staging
+    network_mode: host
+    pid: host
+    read_only: true
+    tmpfs:
+      - /tmp:size=100M
+    volumes:
+      # Skills + cecelia-run (read-only)
+      - /home/xx/.claude:/home/xx/.claude:ro
+      - /home/xx/bin:/home/xx/bin:ro
+      # Credentials (read-only)
+      - /home/xx/.credentials:/home/cecelia/.credentials:ro
+      # Claude account credentials
+      - /home/xx/.claude-account1:/home/cecelia/.claude-account1:ro
+      - /home/xx/.claude-account2:/home/cecelia/.claude-account2:ro
+      - /home/xx/.claude-account3:/home/cecelia/.claude-account3:ro
+      # Workflows (read-only)
+      - /home/xx/perfect21/cecelia/packages/workflows:/home/xx/perfect21/cecelia/packages/workflows:ro
+      # Config (read-only)
+      - /home/xx/perfect21/cecelia/packages/config:/config:ro
+      # HEARTBEAT.md (read-write)
+      - /home/xx/perfect21/cecelia/HEARTBEAT.md:/HEARTBEAT.md:rw
+      # workers.config.json (read-write)
+      - /home/xx/perfect21/cecelia/packages/workflows/staff/workers.config.json:/home/xx/perfect21/cecelia/packages/workflows/staff/workers.config.json:rw
+      # Timezone
+      - /etc/localtime:/etc/localtime:ro
+      - /etc/timezone:/etc/timezone:ro
+    env_file:
+      - .env.staging
+    environment:
+      - TZ=Asia/Shanghai
+      - ENV_REGION=${ENV_REGION:-us}
+      - DB_HOST=${DB_HOST:-localhost}
+      - DB_PORT=${DB_PORT:-5432}
+      - DB_NAME=cecelia_staging
+      - DB_USER=${DB_USER:-cecelia}
+      - DB_PASSWORD=${DB_PASSWORD:-cecelia}
+      - BRAIN_PORT=5222
+      # Staging: 禁用 tick，防止抢 production 任务
+      - CECELIA_TICK_ENABLED=false
+      - CECELIA_MAX_SEATS=3
+      - CECELIA_BUDGET_SLOTS=2
+      - CECELIA_TICK_INTERVAL_MS=5000
+      - DISPATCH_TIMEOUT_MINUTES=60
+      - FEISHU_BOT_WEBHOOK=${FEISHU_BOT_WEBHOOK:-}
+      - CECELIA_RUN_PATH=/home/xx/bin/cecelia-run
+      - HOST_HOME=/home/xx
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+        reservations:
+          memory: 256M
+    restart: "no"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5222/api/brain/tick/status"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "5m"
+        max-file: "2"

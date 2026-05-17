@@ -1,0 +1,140 @@
+{
+  "scanned_at": "2026-05-14T04:36:26.443Z",
+  "scan_dirs": [
+    "packages/brain/src"
+  ],
+  "total_files": 365,
+  "total_normalized_lines": 64508,
+  "duplicate_lines": 865,
+  "duplication_pct": 1.3,
+  "duplicate_blocks": 122,
+  "top_duplicates": [
+    {
+      "count": 2,
+      "preview": "newStatus = 'failed';",
+      "locations": [
+        "packages/brain/src/callback-processor.js:59",
+        "packages/brain/src/routes/execution.js:129"
+      ]
+    },
+    {
+      "count": 2,
+      "preview": "} else if (status === 'AI Quota Exhausted') {",
+      "locations": [
+        "packages/brain/src/callback-processor.js:60",
+        "packages/brain/src/routes/execution.js:130"
+      ]
+    },
+    {
+      "count": 2,
+      "preview": "newStatus = 'quota_exhausted';",
+      "locations": [
+        "packages/brain/src/callback-processor.js:61",
+        "packages/brain/src/routes/execution.js:132"
+      ]
+    },
+    {
+      "count": 2,
+      "preview": "} else {",
+      "locations": [
+        "packages/brain/src/callback-processor.js:62",
+        "packages/brain/src/routes/execution.js:133"
+      ]
+    },
+    {
+      "count": 2,
+      "preview": "newStatus = 'in_progress';",
+      "locations": [
+        "packages/brain/src/callback-processor.js:63",
+        "packages/brain/src/routes/execution.js:134"
+      ]
+    },
+    {
+      "count": 2,
+      "preview": "if (newStatus === 'completed' && !pr_url) {",
+      "locations": [
+        "packages/brain/src/callback-processor.js:67",
+        "packages/brain/src/routes/execution.js:139"
+      ]
+    },
+    {
+      "count": 2,
+      "preview": "try {",
+      "locations": [
+        "packages/brain/src/callback-processor.js:68",
+        "packages/brain/src/routes/execution.js:140"
+      ]
+    },
+    {
+      "count": 2,
+      "preview": "let prNumber = null;",
+      "locations": [
+        "packages/brain/src/callback-processor.js:127",
+        "packages/brain/src/routes/execution.js:214"
+      ]
+    },
+    {
+      "count": 2,
+      "preview": "if (pr_url) {",
+      "locations": [
+        "packages/brain/src/callback-processor.js:128",
+        "packages/brain/src/routes/execution.js:215"
+      ]
+    },
+    {
+      "count": 2,
+      "preview": "const prMatch = pr_url.match(/\\/pull\\/(\\d+)/);",
+      "locations": [
+        "packages/brain/src/callback-processor.js:129",
+        "packages/brain/src/routes/execution.js:216"
+      ]
+    }
+  ],
+  "top_files_by_duplication": [
+    {
+      "file": "packages/brain/src/routes/execution.js",
+      "dupLines": 376
+    },
+    {
+      "file": "packages/brain/src/callback-processor.js",
+      "dupLines": 280
+    },
+    {
+      "file": "packages/brain/src/decomposition-checker.js",
+      "dupLines": 256
+    },
+    {
+      "file": "packages/brain/src/routes/llm-service.js",
+      "dupLines": 176
+    },
+    {
+      "file": "packages/brain/src/workflows/harness-initiative.graph.js",
+      "dupLines": 144
+    },
+    {
+      "file": "packages/brain/src/project-compare.js",
+      "dupLines": 96
+    },
+    {
+      "file": "packages/brain/src/templates.js",
+      "dupLines": 96
+    },
+    {
+      "file": "packages/brain/src/langfuse-reporter.js",
+      "dupLines": 72
+    },
+    {
+      "file": "packages/brain/src/routes/langfuse.js",
+      "dupLines": 72
+    },
+    {
+      "file": "packages/brain/src/rumination.js",
+      "dupLines": 48
+    }
+  ],
+  "coverage": {
+    "passed": true,
+    "issues": [],
+    "coverage_pct": 100
+  }
+}

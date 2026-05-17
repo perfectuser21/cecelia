@@ -1,0 +1,77 @@
+name: Quality Check (Web Profile)
+
+on:
+  pull_request:
+    branches: [main, develop]
+  push:
+    branches: [main, develop]
+
+jobs:
+  quality:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          submodules: true  # If using cecelia-quality as submodule
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run quality checks (web profile)
+        run: |
+          # Option 1: If cecelia-quality is a submodule
+          # ./cecelia-quality/run.sh check --profile=web
+
+          # Option 2: If using standalone installation
+          npx cecelia-quality check --profile=web
+
+      - name: Build check
+        run: npm run build
+
+      - name: TypeScript check
+        run: npx tsc --noEmit
+
+      - name: Export quality status
+        if: always()
+        run: |
+          # Export quality status for dashboard
+          ./cecelia-quality/run.sh export --profile=web --export-path=./quality-status.json
+
+      - name: Upload quality status
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: quality-status
+          path: quality-status.json
+          retention-days: 30
+
+  # Optional: Deploy quality status to dashboard
+  deploy-status:
+    needs: quality
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop'
+
+    steps:
+      - name: Download quality status
+        uses: actions/download-artifact@v4
+        with:
+          name: quality-status
+
+      - name: Deploy to dashboard
+        env:
+          DASHBOARD_API_URL: ${{ secrets.DASHBOARD_API_URL }}
+          DASHBOARD_API_TOKEN: ${{ secrets.DASHBOARD_API_TOKEN }}
+        run: |
+          # Send quality status to dashboard API
+          curl -X POST "$DASHBOARD_API_URL/api/quality-status" \
+            -H "Authorization: Bearer $DASHBOARD_API_TOKEN" \
+            -H "Content-Type: application/json" \
+            -d @quality-status.json

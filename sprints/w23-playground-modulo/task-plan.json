@@ -1,0 +1,35 @@
+{
+  "initiative_id": "pending",
+  "journey_type": "autonomous",
+  "journey_type_reason": "playground 是独立 HTTP server 子项目，本次只动 server 路由 + 单测 + README，无 UI / 无 brain tick / 无 engine hook / 无远端 agent 协议（与 W19/W20/W21/W22 同分类）",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "playground 加 GET /modulo (strict-schema + 除零拒 + 符号不变量 oracle)",
+      "scope": "在 playground/server.js 的 /power 路由之后、app.listen 之前新增 GET /modulo 路由：复用 STRICT_NUMBER 正则做 strict-schema 校验，strict 通过后显式判 Number(b) === 0 返 400，否则用 JS 原生 % 算子计算并返 {remainder: Number(a) % Number(b)}。同步在 playground/tests/server.test.js 新增 GET /modulo describe 块（happy ≥6 + 除零拒 ≥2 + strict 拒 ≥7 类 + 值 oracle ≥2（含负被除数）+ 符号不变量 oracle ≥2（含负 + 正）+ schema oracle + 失败 body 不含 remainder + 5 条现有路由回归各 1 条）。在 playground/README.md 端点段加 /modulo 行 + happy / 除零拒 / 符号语义 / strict 拒 各 ≥1 示例。零新依赖。",
+      "dod": [
+        "[BEHAVIOR] GET /modulo?a=5&b=3 → 200 + {remainder:2}，body.remainder === Number('5') % Number('3') 严格相等",
+        "[BEHAVIOR] GET /modulo?a=-5&b=3 → 200 + {remainder:-2}，且 Math.sign(res.body.remainder) === Math.sign(Number('-5')) === -1（W23 核心符号不变量探针，floored mod 实现必挂在此）",
+        "[BEHAVIOR] GET /modulo?a=5&b=-3 → 200 + {remainder:2}，且 Math.sign === 1（符号跟随被除数，正被除数 + 负除数）",
+        "[BEHAVIOR] GET /modulo?a=5&b=0 → 400 + 非空 error + body 不含 remainder（除零兜底，复用 W21 范式）",
+        "[BEHAVIOR] GET /modulo?a=0&b=0 → 400（0%0 也归除零分支）",
+        "[BEHAVIOR] GET /modulo?a=1e3&b=2 → 400 + body 不含 remainder（strict-schema 拒科学计数法）",
+        "[BEHAVIOR] GET /modulo?a=5&b=3 响应顶层 keys 严格等于 ['remainder']（schema 完整性，禁止多余字段如 operation/result/sum/product/quotient/power）",
+        "[BEHAVIOR] GET /modulo?a=foo&b=3 错误响应顶层 keys 严格等于 ['error']，body 不含 remainder/message/msg/reason/detail",
+        "[BEHAVIOR] 现有 /health /sum /multiply /divide /power 5 条路由 happy 各 1 用例仍 200（回归）",
+        "[ARTIFACT] playground/server.js 含 /modulo 路由注册 + 显式 Number(b) === 0 判 + JS 原生 % 算子（无 floored mod 包装、无 Number.isFinite 多余兜底）",
+        "[ARTIFACT] playground/tests/server.test.js 含 /modulo describe 块（与 W19/W20/W21/W22 平级），含 ≥2 条 toBe(Number('...')%Number('...')) 值 oracle + ≥2 条 Math.sign(...) 符号不变量 oracle + 1 条 Object.keys === ['remainder'] schema oracle",
+        "[ARTIFACT] playground/README.md 端点列表加 /modulo 行 + 含 happy / b=0 拒 / 符号语义示例 / strict 拒 各 ≥1 个 curl 示例",
+        "[ARTIFACT] playground/package.json 未新增任何 dependencies/devDependencies（保持仅 express + supertest + vitest 三个）"
+      ],
+      "files": [
+        "playground/server.js",
+        "playground/tests/server.test.js",
+        "playground/README.md"
+      ],
+      "depends_on": [],
+      "complexity": "M",
+      "estimated_minutes": 45
+    }
+  ]
+}

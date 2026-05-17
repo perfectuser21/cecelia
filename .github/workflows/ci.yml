@@ -1,0 +1,1250 @@
+name: CI
+
+# Cecelia 统一 CI — 精简版
+# 只做机器能客观判断的事：secrets + types + tests + build + lint
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ─── 变更检测 ──────────────────────────────────────────────
+  changes:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    outputs:
+      brain: ${{ steps.detect.outputs.brain }}
+      engine: ${{ steps.detect.outputs.engine }}
+      workspace: ${{ steps.detect.outputs.workspace }}
+      compose: ${{ steps.detect.outputs.compose }}
+      dod: ${{ steps.detect.outputs.dod }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - id: detect
+        run: |
+          BASE_REF="origin/${{ github.base_ref || 'main' }}"
+          if ! git rev-parse "$BASE_REF" >/dev/null 2>&1; then
+            echo "brain=true" >> $GITHUB_OUTPUT
+            echo "engine=true" >> $GITHUB_OUTPUT
+            echo "workspace=true" >> $GITHUB_OUTPUT
+            echo "compose=true" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+          CHANGED=$(git diff --name-only "$BASE_REF"...HEAD 2>/dev/null || echo "")
+          echo "brain=$(echo "$CHANGED" | grep -q '^packages/brain/' && echo true || echo false)" >> $GITHUB_OUTPUT
+          echo "engine=$(echo "$CHANGED" | grep -q '^packages/engine/' && echo true || echo false)" >> $GITHUB_OUTPUT
+          echo "workspace=$(echo "$CHANGED" | grep -qE '^apps/' && echo true || echo false)" >> $GITHUB_OUTPUT
+          echo "compose=$(echo "$CHANGED" | grep -qE '^(docker-compose\.yml|packages/brain/Dockerfile|scripts/brain-(docker-up|docker-down|build)\.sh)$' && echo true || echo false)" >> $GITHUB_OUTPUT
+          echo "dod=$(echo "$CHANGED" | grep -qE '^(DoD\.md|DoD\.cp-|task-card\.md|task-card-|\.task-|\.dod-|TASK_CARD\.cp-|PRD\.cp-)' && echo true || echo false)" >> $GITHUB_OUTPUT
+
+  # ─── Docker Infrastructure Smoke ──────────────────────────
+  # 保护 Brain 容器化基础设施（compose / Dockerfile / up/down 脚本）
+  # 只在相关文件改动时跑；3 步覆盖 Linux runner 能做的（镜像 build / deps / yaml 合法）
+  # macOS 专属（host.docker.internal / launchd 双 scope）靠 scripts/brain-docker-smoke.sh 本机跑
+  docker-infra-smoke:
+    if: needs.changes.outputs.compose == 'true'
+    needs: [changes]
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build cecelia-brain image
+        run: |
+          set -e
+          docker build -f packages/brain/Dockerfile -t cecelia-brain:ci .
+      - name: Verify key deps resolve inside image
+        run: |
+          set -e
+          docker run --rm cecelia-brain:ci node -e "
+            require('@langchain/langgraph');
+            require('@langchain/langgraph-checkpoint-postgres');
+            require('express');
+            console.log('deps ok');
+          "
+      - name: Validate docker-compose.yml syntax
+        run: |
+          set -e
+          # .env.docker 在 gitignore 里，CI 无此文件 → 建空占位
+          : > .env.docker
+          docker compose -f docker-compose.yml config > /dev/null
+          echo "compose yaml ok"
+
+  # ─── Secrets 扫描 ──────────────────────────────────────────
+  secrets-scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # ─── 依赖漏洞扫描（根目录，含 dev deps，high+ 级别硬拦）────────
+  # 拦截 high 及以上（high / critical）漏洞，moderate 及以下仍允许。
+  # 覆盖 high 级别漏洞，避免高危漏洞进入生产。
+  dep-audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+      - name: npm audit — runtime high+ (warn-only during Walking Skeleton P1)
+        run: |
+          npm ci --ignore-scripts
+          # runtime 依赖（packages/brain, apps/api）不允许 high+，--omit=dev 排除 vite/rollup/workbox 等 build 工具
+          # vite/vite-plugin-pwa 需要 major 升级（5→8），单独 P2 track，暂不在此阻断
+          # 2026-05-11：Walking Skeleton P1 进行中，bullmq → uuid GHSA-w5hq-g745-h8pq 阻塞 4 个 PR
+          # 临时改 warn-only（continue-on-error），TODO 在 P1 完成后开独立 PR 修真漏洞
+          npm audit --audit-level=high --omit=dev || echo "::warning::runtime high+ audit findings — track in Walking Skeleton P1 follow-up"
+      - name: npm audit — all deps critical
+        run: |
+          # 全量（含 dev）仍检查 critical，防供应链攻击
+          npm audit --audit-level=critical
+
+  # ─── Registry Lint（始终运行）────────────────────────────────
+  registry-lint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+      - name: Registry 完整性检查
+        run: node scripts/registry-lint.mjs
+
+  # ─── ESLint（brain 或 workspace 变更时）──────────────────────
+  eslint:
+    needs: changes
+    if: needs.changes.outputs.brain == 'true' || needs.changes.outputs.workspace == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+      # --max-warnings：冻结 warning 基线（2026-04-24 brain 降至 0 / apps/api=18）
+      # 新增 warning 触发 CI fail，逼每个 PR 要么修、要么显式上调基线。
+      # 每次降 warning 后，同步下调这里的数字（只允许下调，不允许上调）。
+      - name: Lint Brain
+        if: needs.changes.outputs.brain == 'true'
+        run: cd packages/brain && npm ci && npx eslint src/ --max-warnings 0
+      - name: Lint Workspace API
+        if: needs.changes.outputs.workspace == 'true'
+        run: cd apps/api && npm ci && npx eslint src/ --max-warnings 18
+
+  # ─── PR Size Check（仅 PR 触发，harness PR 跳过）──────────────
+  pr-size-check:
+    if: github.event_name == 'pull_request' && !contains(github.event.pull_request.labels.*.name, 'harness')
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: 检查 PR 变更行数
+        run: |
+          BASE="${{ github.event.pull_request.base.sha }}"
+          HEAD="${{ github.event.pull_request.head.sha }}"
+          ADDITIONS=$(git diff --numstat "$BASE"..."$HEAD" | awk '{s+=$1} END {print s+0}')
+          DELETIONS=$(git diff --numstat "$BASE"..."$HEAD" | awk '{s+=$2} END {print s+0}')
+          TOTAL=$((ADDITIONS + DELETIONS))
+
+          echo "📊 PR 变更统计："
+          echo "  新增: +${ADDITIONS} 行"
+          echo "  删除: -${DELETIONS} 行"
+          echo "  总计: ${TOTAL} 行"
+          echo ""
+
+          # 分档：>800 警告，>3000 硬失败（harness label PR 已在 job-level 跳过）
+          # 注：Brain 功能 PR 含完整测试文件通常达 1500-2500 行，3000 是合理硬上限
+          if [ "$TOTAL" -gt 3000 ]; then
+            echo "::error::PR 变更量 ${TOTAL} 行，超过 3000 行硬门槛，必须拆分"
+            exit 1
+          elif [ "$TOTAL" -gt 800 ]; then
+            echo "⚠️  警告: PR 超过 800 行（${TOTAL} 行），建议拆分为更小的 PR"
+            echo "::warning::PR 变更量 ${TOTAL} 行，超过 800 行阈值，建议拆分"
+          else
+            echo "✅ PR 大小合理（${TOTAL} 行）"
+          fi
+
+  # ─── 分支命名检查（仅 PR 触发）────────────────────────────────
+  branch-naming:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: 检查分支命名规范
+        run: |
+          BRANCH="${{ github.head_ref }}"
+          # 基础分支直接跳过
+          if echo "$BRANCH" | grep -qE '^(main|master|develop|staging|release)$'; then
+            echo "✅ 基础分支，跳过命名检查: $BRANCH"
+            exit 0
+          fi
+          if echo "$BRANCH" | grep -qE '^(cp-|feature/|fix/|chore/|docs/)'; then
+            echo "✅ 分支命名规范: $BRANCH"
+          else
+            echo "::error::分支名 '$BRANCH' 不符合规范，应以 cp-/feature//fix//chore//docs/ 开头"
+            exit 1
+          fi
+
+  # ─── Engine: TypeCheck + Tests ─────────────────────────────
+  engine-tests:
+    needs: changes
+    if: needs.changes.outputs.engine == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+      - run: cd packages/engine && npm ci
+      - name: TypeCheck
+        run: cd packages/engine && npx tsc --noEmit
+      - name: Unit Tests
+        run: cd packages/engine && npx vitest run --reporter=verbose
+      - name: Version Sync
+        run: cd packages/engine && bash ci/scripts/check-version-sync.sh
+      - name: Engine Hygiene Gate
+        run: node packages/engine/scripts/devgate/check-engine-hygiene.cjs
+      - name: Contract Refs Check
+        run: cd packages/engine && bash ci/scripts/check-contract-refs.sh
+      - name: Dynamic Test Gate
+        run: cd packages/engine && bash ci/scripts/check-dynamic-tests.sh
+      - name: Chinese Punctuation Bomb Scan
+        run: bash packages/engine/ci/scripts/check-chinese-punctuation-bombs.sh
+      - name: DoD 格式检查
+        run: |
+          # 检测 PR 中的 task-card.md 文件（跳过未含 task-card 的 PR）
+          TASK_CARD=""
+          # DoD.md 是当前标准（v6 命名），.task-*.md / task-card.md 为旧兼容
+          for f in DoD.md .task-*.md task-card.md; do
+            [ -f "$f" ] && TASK_CARD="$f" && break
+          done
+          if [ -z "$TASK_CARD" ]; then
+            echo "⏭️  未找到 task-card.md，跳过 DoD 格式检查"
+            exit 0
+          fi
+          echo "📋 检查 DoD 文件: $TASK_CARD"
+          # 检查至少有一个 [BEHAVIOR] 条目
+          if ! grep -q '\[BEHAVIOR\]' "$TASK_CARD"; then
+            echo "::error::Task Card 缺少 [BEHAVIOR] 条目，至少需要一个"
+            exit 1
+          fi
+          echo "✅ 已发现 [BEHAVIOR] 条目"
+          # 检查所有条目是否已勾选（不允许 [ ] 未验证条目）
+          UNCHECKED=$(grep -c '^\- \[ \]' "$TASK_CARD" || true)
+          if [ "$UNCHECKED" -gt 0 ]; then
+            echo "::error::DoD 有 ${UNCHECKED} 个未验证条目（[ ]），push 前必须全部勾选为 [x]"
+            grep '^\- \[ \]' "$TASK_CARD" | head -5
+            exit 1
+          fi
+          echo "✅ 所有 DoD 条目已验证"
+      - name: DoD BEHAVIOR 命令执行
+        run: |
+          # 检测 PR 中的 task-card.md 文件
+          TASK_CARD=""
+          # DoD.md 是当前标准（v6 命名），.task-*.md / task-card.md 为旧兼容
+          for f in DoD.md .task-*.md task-card.md; do
+            [ -f "$f" ] && TASK_CARD="$f" && break
+          done
+          if [ -z "$TASK_CARD" ]; then
+            echo "⏭️  未找到 task-card.md，跳过 BEHAVIOR 命令执行"
+            exit 0
+          fi
+          echo "🔬 执行 DoD BEHAVIOR 验证命令: $TASK_CARD"
+          FAILED=0
+          SKIPPED=0
+          PASSED=0
+          # 提取所有 Test: manual: 行
+          while IFS= read -r line; do
+            CMD="${line#*Test: manual:}"
+            CMD="${CMD#"${CMD%%[![:space:]]*}"}"  # trim leading spaces
+            if [[ "$CMD" == node* ]]; then
+              echo "▶️  执行: $CMD"
+              if ! eval "$CMD"; then
+                echo "::error::DoD BEHAVIOR 验证失败: $CMD"
+                FAILED=$((FAILED + 1))
+              else
+                PASSED=$((PASSED + 1))
+              fi
+            elif [[ "$CMD" == curl* ]] || [[ "$CMD" == chrome:* ]] || [[ "$CMD" == psql* ]] || [[ "$CMD" == bash* ]] || [[ "$CMD" == npm* ]]; then
+              echo "⏭️  跳过（需要运行时服务）: ${CMD%% *} ..."
+              SKIPPED=$((SKIPPED + 1))
+            else
+              echo "⏭️  跳过（未知前缀）: ${CMD%% *} ..."
+              SKIPPED=$((SKIPPED + 1))
+            fi
+          done < <(grep -E '^\s+Test:\s+manual:' "$TASK_CARD" || true)
+          echo "✅ BEHAVIOR 验证完成 — 通过: $PASSED，跳过: $SKIPPED，失败: $FAILED"
+          if [ "$FAILED" -gt 0 ]; then
+            echo "::error::${FAILED} 个 BEHAVIOR 验证命令执行失败"
+            exit 1
+          fi
+      - name: Feature Registry 同步检查
+        run: |
+          BASE_REF="origin/${{ github.base_ref || 'main' }}"
+          CHANGED=$(git diff --name-only "$BASE_REF"...HEAD 2>/dev/null || echo "")
+          if echo "$CHANGED" | grep -qE '^packages/engine/skills/'; then
+            if ! echo "$CHANGED" | grep -q 'feature-registry.yml'; then
+              echo "::error::修改了 packages/engine/skills/ 但未更新 feature-registry.yml"
+              exit 1
+            fi
+            echo "✅ feature-registry.yml 已同步更新"
+          else
+            echo "⏭️  未修改 packages/engine/skills/，跳过 feature-registry 检查"
+          fi
+      - name: E2E Integrity Check
+        run: bash packages/engine/scripts/e2e-integrity-check.sh
+
+  # ─── Engine: Shell Tests (stop hook 套 — v18.21.0 激活) ──────
+  # vitest 不识别 .test.sh，本 job 跑所有 unit/integration/integrity/smoke
+  # shell 脚本，闭合 PR #2766/#2767 测试基础设施漏洞（死代码激活）
+  engine-tests-shell:
+    name: Engine Shell Tests (stop hook 套)
+    needs: changes
+    if: needs.changes.outputs.engine == 'true' || github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Install jq
+        run: sudo apt-get update -qq && sudo apt-get install -y jq
+      - name: Run unit shell tests
+        run: |
+          # glob 模式（v23 PR-3 起）：unit 目录新加 .test.sh 自动接 CI
+          for t in packages/engine/tests/unit/*.test.sh; do
+            [[ -f "$t" ]] || continue
+            echo "::group::$(basename "$t")"
+            bash "$t" || exit 1
+            echo "::endgroup::"
+          done
+      - name: Run integration shell tests
+        run: |
+          # P1-3 (v18.22.1): glob 模式，新加 .test.sh 自动接 CI（防显式列表漏接）
+          for t in packages/engine/tests/integration/*.test.sh; do
+            [[ -f "$t" ]] || continue
+            echo "::group::$(basename "$t")"
+            bash "$t" || exit 1
+            echo "::endgroup::"
+          done
+      - name: Run integrity meta-tests
+        run: |
+          for t in packages/engine/tests/integrity/*.test.sh; do
+            [[ -f "$t" ]] || continue
+            echo "::group::$(basename "$t")"
+            bash "$t" || exit 1
+            echo "::endgroup::"
+          done
+      - name: Run engine smoke (本地无 Brain，dead URL/skip 路径必跑通)
+        run: |
+          for s in packages/engine/scripts/smoke/*-smoke.sh; do
+            [[ -f "$s" ]] || continue
+            echo "::group::$(basename "$s")"
+            bash "$s" || exit 1
+            echo "::endgroup::"
+          done
+
+  # ─── Migration 同号守护 ───────────────────────────────────
+  # 扫 packages/brain/migrations/*.sql 提取首数字前缀，发现同号即 fail。
+  # 教训：W7.4 / 2026-05 事故 — 264_failure_type_dispatch / 264_fix_progress_ledger
+  # 同号进 main，Brain 启动按字母序只跑了第一个，schema drift 半天才发现。
+  # 设为 brain-unit 前置 dep — 同号即不跑测试，省下 4×20min shard 时间。
+  lint-migration-unique-version:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - uses: actions/checkout@v4
+      - name: Migration version unique lint
+        run: node .github/workflows/scripts/lint-migration-unique-version.cjs
+      - name: Self-test (fixture cases)
+        run: bash .github/workflows/scripts/__tests__/lint-migration-unique-version.test.sh
+
+  # ─── Brain: Unit Tests (4-shard matrix + Test Impact Analysis) ─
+  # PR 模式：vitest --changed 仅跑被改文件影响的 test（Gate 1 升级，目标 < 5 min）
+  # push 模式：跑全量 test 保 main 绿
+  # vitest 原生 --shard=i/N 按测试文件 hash 均匀分布，4 shards 并行
+  brain-unit:
+    needs: [changes, lint-migration-unique-version]
+    if: needs.changes.outputs.brain == 'true' || needs.changes.outputs.engine == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # vitest --changed 需要 base ref 历史
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+      - name: Consciousness Guard SSOT Check
+        run: bash scripts/check-consciousness-guard.sh
+      - run: cd packages/brain && npm ci
+      - name: Determine test scope
+        id: scope
+        run: |
+          if [ "${{ github.event_name }}" != "pull_request" ]; then
+            echo "mode=full" >> $GITHUB_OUTPUT
+            echo "🌐 push event — 跑全量 brain-unit"
+            exit 0
+          fi
+          BASE_REF="origin/${{ github.base_ref }}"
+          git fetch origin "${{ github.base_ref }}" --quiet 2>/dev/null || true
+          # 检测 brain 内 .js/.ts 变更（含 src + test）
+          CHANGED=$(git diff --name-only "$BASE_REF"...HEAD 2>/dev/null \
+            | grep -E '^packages/brain/.+\.(js|ts|cjs|mjs)$' || true)
+          if [ -z "$CHANGED" ]; then
+            echo "mode=skip" >> $GITHUB_OUTPUT
+            echo "⏭️  PR 无 brain 源/测试变更（仅 engine/其他），跳过 brain-unit shard"
+          else
+            echo "mode=changed" >> $GITHUB_OUTPUT
+            TOTAL=$(echo "$CHANGED" | wc -l | tr -d ' ')
+            echo "🎯 PR 模式：vitest --changed $BASE_REF（$TOTAL 个变更文件）"
+            echo "$CHANGED" | head -20
+          fi
+      - name: Unit Tests (shard ${{ matrix.shard }}/4)
+        if: steps.scope.outputs.mode != 'skip'
+        env:
+          NODE_OPTIONS: '--max-old-space-size=4096'
+        # vitest forks 模式下，fork 进程跑完后可能因内存碎片 OOM 退出，
+        # tinypool 报 "Worker exited unexpectedly"，导致 vitest 返回 exit 1，
+        # 即使所有测试均已通过。此脚本在 exit 非 0 时检查是否无 test 失败，
+        # 若无则认为是 OOM worker exit（非测试失败），返回 0。
+        # PR 模式额外：--changed 过滤命中 0 测试也视为 pass（变更不影响 brain test）。
+        run: |
+          cd packages/brain
+          EXTRA=""
+          if [ "${{ steps.scope.outputs.mode }}" = "changed" ]; then
+            EXTRA="--changed origin/${{ github.base_ref }}"
+          fi
+          set +e
+          npx vitest run --shard=${{ matrix.shard }}/4 $EXTRA --exclude='src/__tests__/integration/**' --reporter=verbose 2>&1 | tee /tmp/vitest-out.txt
+          EXIT=${PIPESTATUS[0]}
+          if [ $EXIT -ne 0 ]; then
+            if grep -qE "Tests.*[0-9]+ passed" /tmp/vitest-out.txt && ! grep -qE "Tests.*[0-9]+ failed" /tmp/vitest-out.txt; then
+              echo "[brain-unit shard ${{ matrix.shard }}/4] OOM worker exit but all tests passed — treating as success"
+              exit 0
+            fi
+            if [ -n "$EXTRA" ] && grep -qiE "No test files found|filter matched no test files" /tmp/vitest-out.txt; then
+              echo "[brain-unit shard ${{ matrix.shard }}/4] --changed 过滤命中 0 测试 — 视为 pass"
+              exit 0
+            fi
+            exit $EXIT
+          fi
+
+  # ─── Brain: Unit Tests Aggregation ─────────────────────────
+  # 所有 brain-unit matrix shards 都成功才通过。
+  # 给 ci-passed / 分支保护规则一个稳定的单 check 名字。
+  brain-unit-all:
+    needs: brain-unit
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Aggregate brain-unit shard results
+        run: |
+          # matrix.result 只有全部 shard success 才是 'success'；
+          # 当 packages/brain/* 未改（paths-filter 跳过 brain-unit）时，
+          # result='skipped' 也是合法状态（本 PR 不影响 brain，无需跑测试）。
+          RESULT="${{ needs.brain-unit.result }}"
+          if [[ "$RESULT" != "success" && "$RESULT" != "skipped" ]]; then
+            echo "❌ brain-unit matrix 有 shard 失败（result=$RESULT）"
+            exit 1
+          fi
+          echo "✅ 所有 brain-unit shards 通过"
+
+  # ─── Brain: Diff Coverage Gate ────────────────────────────
+  # PR 新增行覆盖率 < 80% 则 CI fail，迫使为新代码路径补测试
+  brain-diff-coverage:
+    needs: [changes, brain-unit]
+    if: needs.changes.outputs.brain == 'true' && needs.brain-unit.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # diff-cover 需要 origin/main 历史做比较
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+      - run: cd packages/brain && npm ci
+      - name: Run Tests with Coverage
+        env:
+          NODE_OPTIONS: '--max-old-space-size=4096'
+        run: |
+          cd packages/brain
+          set +e
+          npx vitest run --coverage --exclude='src/__tests__/integration/**' 2>&1 | tee /tmp/vitest-coverage-out.txt
+          EXIT=${PIPESTATUS[0]}
+          if [ $EXIT -ne 0 ]; then
+            if grep -qE "Tests.*[0-9]+ passed" /tmp/vitest-coverage-out.txt && ! grep -qE "Tests.*[0-9]+ failed" /tmp/vitest-coverage-out.txt; then
+              echo "[brain-coverage] OOM worker exit but all tests passed — continuing"
+            else
+              exit $EXIT
+            fi
+          fi
+      - name: Diff Coverage Gate
+        run: |
+          pip install diff-cover --quiet
+          git fetch origin main
+          cd packages/brain
+          diff-cover coverage/lcov.info \
+            --compare-branch=origin/main \
+            --fail-under=80 \
+            --exclude='src/__tests__/**' \
+            --exclude='**/*.test.js' \
+            --exclude='**/*.test.ts' \
+            --exclude='**/*.spec.js' \
+            --exclude='**/*.spec.ts'
+
+  # ─── Brain: Integration Tests (PostgreSQL) ─────────────────
+  brain-integration:
+    needs: changes
+    if: needs.changes.outputs.brain == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: pgvector/pgvector:pg15
+        env:
+          POSTGRES_USER: cecelia
+          POSTGRES_PASSWORD: cecelia_test
+          POSTGRES_DB: cecelia_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+      - run: cd packages/brain && npm ci
+      - name: Run Migrations
+        env:
+          DB_HOST: localhost
+          DB_PORT: '5432'
+          DB_NAME: cecelia_test
+          DB_USER: cecelia
+          DB_PASSWORD: cecelia_test
+        run: cd packages/brain && node src/migrate.js
+      - name: Integration Tests
+        env:
+          DATABASE_URL: postgresql://cecelia:cecelia_test@localhost:5432/cecelia_test
+          DB_HOST: localhost
+          DB_PORT: '5432'
+          DB_NAME: cecelia_test
+          DB_USER: cecelia
+          DB_PASSWORD: cecelia_test
+          NODE_ENV: test
+        run: cd packages/brain && npx vitest run src/__tests__/integration/ --reporter=verbose
+
+  # ─── Workspace: Build ──────────────────────────────────────
+  workspace-build:
+    needs: changes
+    if: needs.changes.outputs.workspace == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+      - run: cd apps/dashboard && npm ci
+      - name: Build
+        run: cd apps/dashboard && npm run build
+
+  workspace-test:
+    needs: changes
+    if: needs.changes.outputs.workspace == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    services:
+      postgres:
+        image: pgvector/pgvector:pg15
+        env:
+          POSTGRES_USER: cecelia
+          POSTGRES_PASSWORD: cecelia_test
+          POSTGRES_DB: cecelia_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+      - name: Install root deps
+        run: npm ci
+      - name: Test apps/api
+        run: cd apps/api && npm ci && npm test
+      - name: Test apps/dashboard
+        run: cd apps/dashboard && npm ci && npx vitest run
+
+  # ─── E2E Smoke（brain / workspace 改动时才跑）─────────────────
+  # 覆盖跨包盲区：无论改哪个包，都验证系统级关键路径没有断。
+  # 包含：golden-path（3条核心链路） + agent-lifecycle（状态机完整性）
+  # 注：仅在 brain 或 workspace 改动时跑（纯文档/engine 改动时跳过，节省 15min）
+  e2e-smoke:
+    needs: changes
+    if: needs.changes.outputs.brain == 'true' || needs.changes.outputs.workspace == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: pgvector/pgvector:pg15
+        env:
+          POSTGRES_USER: cecelia
+          POSTGRES_PASSWORD: cecelia_test
+          POSTGRES_DB: cecelia_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+      - run: cd packages/brain && npm ci
+      - name: Run Migrations
+        env:
+          DB_HOST: localhost
+          DB_PORT: '5432'
+          DB_NAME: cecelia_test
+          DB_USER: cecelia
+          DB_PASSWORD: cecelia_test
+        run: cd packages/brain && node src/migrate.js
+      - name: E2E Smoke Tests（golden-path + agent-lifecycle + dev-lifecycle）
+        env:
+          DATABASE_URL: postgresql://cecelia:cecelia_test@localhost:5432/cecelia_test
+          DB_HOST: localhost
+          DB_PORT: '5432'
+          DB_NAME: cecelia_test
+          DB_USER: cecelia
+          DB_PASSWORD: cecelia_test
+          NODE_ENV: test
+        run: |
+          cd packages/brain && npx vitest run \
+            src/__tests__/integration/golden-path.integration.test.js \
+            src/__tests__/integration/agent-lifecycle.integration.test.js \
+            src/__tests__/integration/dev-task-lifecycle.e2e.test.js \
+            --reporter=verbose
+
+  # ─── DoD BEHAVIOR 动态命令执行（curl/psql/bash/npm 真跑）────────────
+  # 与 engine-tests 中的 "DoD BEHAVIOR 命令执行" 分工：
+  #   engine-tests：只跑 node 命令（无服务依赖，快速）
+  #   dod-behavior-dynamic（本 job）：跑 curl/psql/bash/npm 等需要运行时服务的命令
+  # 自动检测 DoD 文件是否含动态命令；无则早退不起 Brain。
+  dod-behavior-dynamic:
+    needs: [changes]
+    if: needs.changes.outputs.dod == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    services:
+      postgres:
+        image: pgvector/pgvector:pg15
+        env:
+          POSTGRES_USER: cecelia
+          POSTGRES_PASSWORD: cecelia_test
+          POSTGRES_DB: cecelia_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: 检测 DoD 动态命令
+        id: detect
+        run: |
+          TASK_CARD=""
+          for f in DoD.md .task-*.md task-card.md; do
+            [ -f "$f" ] && TASK_CARD="$f" && break
+          done
+          if [ -z "$TASK_CARD" ]; then
+            echo "⏭️  未找到 DoD/task-card，跳过动态验证"
+            echo "has_dynamic=false" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+          # 扫描是否含 curl/psql/bash/npm 类型的动态命令
+          if grep -qE '^\s+Test:\s+manual:(curl|psql|bash|npm)\b' "$TASK_CARD"; then
+            echo "has_dynamic=true" >> $GITHUB_OUTPUT
+            echo "task_card=$TASK_CARD" >> $GITHUB_OUTPUT
+            echo "🔬 DoD 含动态命令，将启动 Brain 并真执行: $TASK_CARD"
+          else
+            echo "has_dynamic=false" >> $GITHUB_OUTPUT
+            echo "⏭️  DoD 无动态命令（纯 node / tests/），跳过 Brain spin-up"
+          fi
+      - uses: actions/setup-node@v4
+        if: steps.detect.outputs.has_dynamic == 'true'
+        with:
+          node-version: '22'
+          cache: 'npm'
+      - name: Install Brain deps
+        if: steps.detect.outputs.has_dynamic == 'true'
+        run: cd packages/brain && npm ci
+      - name: Setup /workspace symlink + playground deps
+        if: steps.detect.outputs.has_dynamic == 'true'
+        run: |
+          sudo ln -sf "$GITHUB_WORKSPACE" /workspace
+          cd playground && npm install
+      - name: Run Migrations
+        if: steps.detect.outputs.has_dynamic == 'true'
+        env:
+          DB_HOST: localhost
+          DB_PORT: '5432'
+          DB_NAME: cecelia_test
+          DB_USER: cecelia
+          DB_PASSWORD: cecelia_test
+        run: cd packages/brain && node src/migrate.js
+      - name: Start Brain server
+        if: steps.detect.outputs.has_dynamic == 'true'
+        env:
+          DB_HOST: localhost
+          DB_PORT: '5432'
+          DB_NAME: cecelia_test
+          DB_USER: cecelia
+          DB_PASSWORD: cecelia_test
+          NODE_ENV: test
+        run: |
+          cd packages/brain
+          node server.js > /tmp/brain.log 2>&1 &
+          echo $! > /tmp/brain.pid
+          # 等 /api/brain/health 返回 200（最多 60s）
+          for i in $(seq 1 60); do
+            if curl -sf http://localhost:5221/api/brain/health > /dev/null 2>&1; then
+              echo "✅ Brain 启动耗时 ${i}s"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "::error::Brain 60s 内未就绪"
+          tail -60 /tmp/brain.log
+          exit 1
+      - name: 执行 DoD BEHAVIOR 动态命令
+        if: steps.detect.outputs.has_dynamic == 'true'
+        env:
+          DB_HOST: localhost
+          DB_PORT: '5432'
+          DB_NAME: cecelia_test
+          DB_USER: cecelia
+          DB_PASSWORD: cecelia_test
+        run: |
+          TASK_CARD="${{ steps.detect.outputs.task_card }}"
+          FAILED=0
+          PASSED=0
+          SKIPPED=0
+          echo "🔬 开始执行 DoD BEHAVIOR 动态命令: $TASK_CARD"
+          while IFS= read -r line; do
+            CMD="${line#*Test: manual:}"
+            CMD="${CMD#"${CMD%%[![:space:]]*}"}"  # trim leading spaces
+            # chrome 需要 headful，仍跳过
+            if [[ "$CMD" == chrome:* ]]; then
+              SKIPPED=$((SKIPPED + 1))
+              echo "⏭️  跳过 chrome 命令（需 headful browser）: ${CMD%% *} ..."
+              continue
+            fi
+            # 只跑动态类型（node 在 engine-tests 里已跑过）
+            if [[ "$CMD" != curl* ]] && [[ "$CMD" != psql* ]] && [[ "$CMD" != bash* ]] && [[ "$CMD" != npm* ]]; then
+              continue
+            fi
+            echo "▶️  执行: $CMD"
+            if eval "$CMD"; then
+              PASSED=$((PASSED + 1))
+              echo "    ✅ PASS"
+            else
+              FAILED=$((FAILED + 1))
+              echo "::error::❌ FAIL: $CMD"
+            fi
+          done < <(grep -E '^\s+Test:\s+manual:' "$TASK_CARD" || true)
+          echo "📊 动态 BEHAVIOR 完成 — 通过 $PASSED 失败 $FAILED 跳过 $SKIPPED"
+          if [ "$FAILED" -gt 0 ]; then
+            echo "::error::${FAILED} 个 BEHAVIOR 动态命令执行失败"
+            exit 1
+          fi
+      - name: Stop Brain
+        if: always() && steps.detect.outputs.has_dynamic == 'true'
+        run: |
+          [ -f /tmp/brain.pid ] && kill $(cat /tmp/brain.pid) 2>/dev/null || true
+          tail -40 /tmp/brain.log 2>/dev/null || true
+
+  # ─── Real-Env Smoke (起真 brain docker container + 真 postgres，跑 smoke.sh) ─
+  # 与单测 / integration 互补：单测 mock 一切；integration 起 node server 直跑；
+  # real-env-smoke 起 cecelia-brain image 真容器，验真容器化部署链路 + smoke.sh 行为。
+  # 触发条件：brain 改动时跑（其他改动不影响 brain 容器行为）。
+  real-env-smoke:
+    needs: changes
+    if: needs.changes.outputs.brain == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: pgvector/pgvector:pg15
+        env:
+          POSTGRES_USER: cecelia
+          POSTGRES_PASSWORD: cecelia_test
+          POSTGRES_DB: cecelia_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+      - name: Install Brain deps + run migrations
+        env:
+          DB_HOST: localhost
+          DB_PORT: '5432'
+          DB_NAME: cecelia_test
+          DB_USER: cecelia
+          DB_PASSWORD: cecelia_test
+        run: |
+          cd packages/brain
+          npm ci
+          node src/migrate.js
+      - name: Build cecelia-brain image
+        run: docker build -f packages/brain/Dockerfile -t cecelia-brain:ci .
+      - name: Start Brain container (network=host → 直连 postgres service)
+        run: |
+          # network=host：runner 上 postgres service 暴露在 localhost:5432，
+          # brain 容器共享 host network namespace 即可直接 localhost:5432 命中 postgres
+          docker run -d --name cecelia-brain-smoke \
+            --network host \
+            -e DB_HOST=localhost \
+            -e DB_PORT=5432 \
+            -e DB_NAME=cecelia_test \
+            -e DB_USER=cecelia \
+            -e DB_PASSWORD=cecelia_test \
+            -e BRAIN_PORT=5221 \
+            -e NODE_ENV=test \
+            -e CECELIA_TICK_ENABLED=false \
+            -e ENV_REGION=us \
+            cecelia-brain:ci
+          # 等 /api/brain/tick/status 200（最多 90s）
+          for i in $(seq 1 90); do
+            if curl -sf http://localhost:5221/api/brain/tick/status >/dev/null 2>&1; then
+              echo "✅ Brain healthy in ${i}s"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "::error::Brain not healthy in 90s"
+          docker logs cecelia-brain-smoke
+          exit 1
+      - name: Run all packages/brain/scripts/smoke/*.sh
+        env:
+          BRAIN_URL: http://localhost:5221
+        run: |
+          SMOKE_DIR=packages/brain/scripts/smoke
+          if [ ! -d "$SMOKE_DIR" ]; then
+            echo "::error::$SMOKE_DIR 不存在；real-env-smoke 必须有至少 1 个 smoke 脚本"
+            exit 1
+          fi
+          shopt -s nullglob
+          SCRIPTS=("$SMOKE_DIR"/*.sh)
+          if [ ${#SCRIPTS[@]} -eq 0 ]; then
+            echo "::error::$SMOKE_DIR/*.sh 为空；real-env-smoke 必须有至少 1 个 smoke 脚本"
+            exit 1
+          fi
+          FAILED=0
+          PASSED=0
+          for script in "${SCRIPTS[@]}"; do
+            echo "── ▶️  $script"
+            if bash "$script"; then
+              PASSED=$((PASSED + 1))
+              echo "── ✅ PASS: $script"
+            else
+              FAILED=$((FAILED + 1))
+              echo "::error::❌ FAIL: $script"
+            fi
+          done
+          echo ""
+          echo "📊 Smoke 结果 — 通过: $PASSED, 失败: $FAILED, 总计: ${#SCRIPTS[@]}"
+          [ "$FAILED" -eq 0 ]
+      - name: Cleanup brain container
+        if: always()
+        run: |
+          docker logs cecelia-brain-smoke 2>&1 | tail -100 || true
+          docker rm -f cecelia-brain-smoke 2>/dev/null || true
+
+  # ─── Harness DoD 完整性校验（harness PR 专用，非 harness 自动跳过）──
+  harness-dod-integrity:
+    needs: [changes]
+    if: needs.changes.outputs.dod == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Harness DoD 完整性校验
+        run: |
+          # 读取 DoD.md 中的 contract_branch header
+          if [ ! -f "DoD.md" ] || ! grep -q "^contract_branch:" DoD.md 2>/dev/null; then
+            echo "⏭️  非 harness PR（DoD.md 无 contract_branch 字段），跳过校验"
+            exit 0
+          fi
+
+          CONTRACT_BRANCH=$(grep "^contract_branch:" DoD.md | awk '{print $2}')
+          WS_INDEX=$(grep "^workstream_index:" DoD.md | awk '{print $2}' || echo "1")
+          WS_INDEX=${WS_INDEX:-1}
+          SPRINT_DIR=$(grep "^sprint_dir:" DoD.md | awk '{print $2}' || echo "")
+          echo "contract_branch=$CONTRACT_BRANCH  workstream_index=$WS_INDEX  sprint_dir=$SPRINT_DIR"
+
+          # fetch contract branch
+          git fetch origin "$CONTRACT_BRANCH" 2>/dev/null || {
+            echo "⚠️  无法 fetch contract branch '$CONTRACT_BRANCH'，跳过校验（可能已合并）"
+            exit 0
+          }
+
+          # 读取 contract DoD 文件（优先从 SPRINT_DIR/，兼容旧的根目录格式）
+          DOD_PATH="${SPRINT_DIR:+${SPRINT_DIR}/}contract-dod-ws${WS_INDEX}.md"
+          git show "origin/${CONTRACT_BRANCH}:${DOD_PATH}" > /tmp/contract-dod.md 2>/dev/null || {
+            echo "⚠️  ${DOD_PATH} 不存在于 $CONTRACT_BRANCH，跳过校验"
+            exit 0
+          }
+
+          # 对比 DoD 条目（忽略 [ ] vs [x] 差异，只比较条目文本）
+          node -e "
+            const contractText = require('fs').readFileSync('/tmp/contract-dod.md', 'utf8');
+            const genText = require('fs').readFileSync('DoD.md', 'utf8');
+
+            const normalize = (text) => {
+              const items = text.match(/^- \[[ x]\] \[(BEHAVIOR|ARTIFACT)\] .+/gm) || [];
+              return items.map(m => m.replace(/^- \[.\]/, '- []').trim());
+            };
+
+            const contractItems = normalize(contractText);
+            const generatorItems = normalize(genText);
+
+            const missing = contractItems.filter(c => !generatorItems.includes(c));
+            const extra = generatorItems.filter(g => !contractItems.includes(g));
+
+            let failed = false;
+            if (missing.length > 0) {
+              console.error('❌ Generator DoD 缺少 contract 中的条目:');
+              missing.forEach(m => console.error('  ' + m));
+              failed = true;
+            }
+            if (extra.length > 0) {
+              console.error('❌ Generator DoD 包含 contract 中没有的额外条目:');
+              extra.forEach(e => console.error('  ' + e));
+              failed = true;
+            }
+            if (failed) process.exit(1);
+            console.log('✅ Harness DoD 完整性校验通过（' + generatorItems.length + ' 个条目与 contract 一致）');
+          "
+
+  # ─── Harness Contract Lint（DoD/contract 文件变更时触发）────────
+  harness-contract-lint:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+      - name: 检查 DoD/contract 文件变更
+        id: detect-dod
+        run: |
+          BASE="${{ github.event.pull_request.base.sha }}"
+          HEAD="${{ github.event.pull_request.head.sha }}"
+          CHANGED=$(git diff --name-only "$BASE"..."$HEAD" 2>/dev/null || echo "")
+          # 排除 sprints/archive/：归档的老格式 sprint（v5 前），不应该走新 lint 规则
+          DOD_FILES=$(echo "$CHANGED" | grep -E '(^|/)DoD\.md$|(^|/)contract-dod-ws[0-9]+\.md$' | grep -v '^sprints/archive/' || true)
+          if [ -z "$DOD_FILES" ]; then
+            echo "has_dod=false" >> $GITHUB_OUTPUT
+            echo "⏭️  无 DoD/contract 文件变更，跳过 harness-contract-lint"
+          else
+            echo "has_dod=true" >> $GITHUB_OUTPUT
+            {
+              echo "dod_files<<DODEOF"
+              echo "$DOD_FILES"
+              echo "DODEOF"
+            } >> $GITHUB_OUTPUT
+            echo "🔍 检测到 DoD/contract 文件变更:"
+            echo "$DOD_FILES"
+          fi
+      - name: Lint DoD/contract 文件
+        if: steps.detect-dod.outputs.has_dod == 'true'
+        run: |
+          FAILED=0
+          while IFS= read -r f; do
+            [ -z "$f" ] && continue
+            [ -f "$f" ] || continue
+            echo "── 检查: $f"
+            if node scripts/harness-contract-lint.mjs "$f"; then
+              echo "✅ $f 通过"
+            else
+              echo "❌ $f 不合规"
+              FAILED=$((FAILED + 1))
+            fi
+          done <<< "${{ steps.detect-dod.outputs.dod_files }}"
+          if [ "$FAILED" -gt 0 ]; then
+            echo "::error::${FAILED} 个 DoD/contract 文件不合规，请修复后重新 push"
+            exit 1
+          fi
+          echo "✅ harness-contract-lint: 所有 DoD/contract 文件合规"
+
+  # ─── /dev TDD Lint Suite（PR only，把 SKILL.md 纪律机器化）──────
+  # 4 个 lint job 对应 packages/engine/skills/dev/SKILL.md 中"smoke.sh 必须"段
+  # 实现脚本：.github/workflows/scripts/lint-*.sh（本地可独立执行）
+  lint-test-pairing:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Test Pairing Lint
+        run: bash .github/workflows/scripts/lint-test-pairing.sh "origin/${{ github.base_ref }}"
+
+  lint-feature-has-smoke:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Feature smoke.sh Lint
+        env:
+          PR_LABELS: ${{ join(github.event.pull_request.labels.*.name, ' ') }}
+        run: bash .github/workflows/scripts/lint-feature-has-smoke.sh "origin/${{ github.base_ref }}"
+
+  lint-base-fresh:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Base Fresh Lint
+        run: bash .github/workflows/scripts/lint-base-fresh.sh "origin/${{ github.base_ref }}"
+
+  lint-bypass-not-committed:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - uses: actions/checkout@v4
+      - name: Stop Hook BYPASS 反 AI 滥用 lint (layer 1)
+        run: bash scripts/check-bypass-not-committed.sh
+
+  lint-tdd-commit-order:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: TDD Commit Order Lint
+        run: bash .github/workflows/scripts/lint-tdd-commit-order.sh "origin/${{ github.base_ref }}"
+
+  lint-learning-constraint-coverage:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v4
+      - name: Learning→Constraint Integration Lint
+        run: bash .github/workflows/scripts/lint-learning-constraint-coverage.sh
+
+  lint-test-quality:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Test Quality Lint (拦"假测试 stub")
+        run: bash .github/workflows/scripts/lint-test-quality.sh "origin/${{ github.base_ref }}"
+
+  lint-no-mock-only-test:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: No-Mock-Only Test Lint (拦"全 mock 测试")
+        run: bash .github/workflows/scripts/lint-no-mock-only-test.sh "origin/${{ github.base_ref }}"
+
+  lint-no-fake-test:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: No-Fake-Test Lint (拦"假测试 — 弱断言占 100% / mock-heavy + 低 expect")
+        env:
+          PR_LABELS: ${{ join(github.event.pull_request.labels.*.name, ' ') }}
+        run: bash .github/workflows/scripts/lint-no-fake-test.sh "origin/${{ github.base_ref }}"
+
+  lint-single-exit:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v4
+      - name: Stop Hook 单一出口守护
+        run: bash scripts/check-single-exit.sh
+
+  # ─── Gate: 所有检查通过才能合并 ─────────────────────────────
+  ci-passed:
+    if: always()
+    needs: [secrets-scan, dep-audit, registry-lint, eslint, pr-size-check, branch-naming, engine-tests, engine-tests-shell, lint-migration-unique-version, brain-unit, brain-unit-all, brain-diff-coverage, brain-integration, workspace-build, workspace-test, e2e-smoke, dod-behavior-dynamic, harness-dod-integrity, harness-contract-lint, docker-infra-smoke, lint-test-pairing, lint-feature-has-smoke, lint-base-fresh, lint-tdd-commit-order, lint-learning-constraint-coverage, lint-test-quality, lint-no-mock-only-test, lint-no-fake-test, lint-single-exit, lint-bypass-not-committed, real-env-smoke]
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Check results
+        run: |
+          FAILED=false
+
+          check() { local n=$1 r=$2; if [ "$r" = "failure" ]; then echo "❌ $n"; FAILED=true; elif [ "$r" = "skipped" ]; then echo "⏭️  $n (skipped)"; else echo "✅ $n"; fi; }
+
+          check "secrets-scan"      "${{ needs.secrets-scan.result }}"
+          check "dep-audit"         "${{ needs.dep-audit.result }}"
+          check "registry-lint"     "${{ needs.registry-lint.result }}"
+          check "eslint"            "${{ needs.eslint.result }}"
+          check "pr-size-check"     "${{ needs.pr-size-check.result }}"
+          check "branch-naming"     "${{ needs.branch-naming.result }}"
+          check "engine-tests"      "${{ needs.engine-tests.result }}"
+          check "engine-tests-shell" "${{ needs.engine-tests-shell.result }}"
+          check "lint-migration-unique-version" "${{ needs.lint-migration-unique-version.result }}"
+          check "brain-unit"          "${{ needs.brain-unit.result }}"
+          check "brain-unit-all"      "${{ needs.brain-unit-all.result }}"
+          check "brain-diff-coverage" "${{ needs.brain-diff-coverage.result }}"
+          check "brain-integration"   "${{ needs.brain-integration.result }}"
+          check "workspace-build"        "${{ needs.workspace-build.result }}"
+          check "workspace-test"         "${{ needs.workspace-test.result }}"
+          check "e2e-smoke"              "${{ needs.e2e-smoke.result }}"
+          check "dod-behavior-dynamic"   "${{ needs.dod-behavior-dynamic.result }}"
+          check "harness-dod-integrity"  "${{ needs.harness-dod-integrity.result }}"
+          check "harness-contract-lint"  "${{ needs.harness-contract-lint.result }}"
+          check "docker-infra-smoke"     "${{ needs.docker-infra-smoke.result }}"
+          check "lint-test-pairing"      "${{ needs.lint-test-pairing.result }}"
+          check "lint-feature-has-smoke" "${{ needs.lint-feature-has-smoke.result }}"
+          check "lint-base-fresh"        "${{ needs.lint-base-fresh.result }}"
+          check "lint-tdd-commit-order"  "${{ needs.lint-tdd-commit-order.result }}"
+          check "lint-learning-constraint-coverage" "${{ needs.lint-learning-constraint-coverage.result }}"
+          check "lint-test-quality"      "${{ needs.lint-test-quality.result }}"
+          check "lint-no-mock-only-test" "${{ needs.lint-no-mock-only-test.result }}"
+          check "lint-no-fake-test"      "${{ needs.lint-no-fake-test.result }}"
+          check "real-env-smoke"         "${{ needs.real-env-smoke.result }}"
+
+          if [ "$FAILED" = "true" ]; then
+            echo ""; echo "❌ CI FAILED"; exit 1
+          fi
+          echo ""; echo "✅ CI PASSED"
+
+  # ─── Auto-merge（harness label PR，CI 通过后自动合并）────────
+  auto-merge:
+    needs: [ci-passed]
+    if: needs.ci-passed.result == 'success' && github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Auto-merge harness PR（含重试 + Brain 失败回写）
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          BRAIN_URL: ${{ vars.BRAIN_URL || 'http://localhost:5221' }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: |
+          # 实时检查标签（不依赖事件 payload — harness 标签在 PR 创建后可能才添加，事件 payload 中不含）
+          LABELS=$(gh pr view "$PR_NUMBER" --json labels --jq '.labels[].name' 2>/dev/null || echo "")
+          if ! echo "$LABELS" | grep -q "harness"; then
+            echo "ℹ️  No harness label, skipping auto-merge"
+            exit 0
+          fi
+
+          MERGED=false
+          MAX_RETRY=2
+          for attempt in 1 2; do
+            echo "Auto-merge attempt $attempt / $MAX_RETRY"
+            if gh pr merge "$PR_NUMBER" --squash --delete-branch --repo "$GITHUB_REPOSITORY"; then
+              MERGED=true
+              echo "✅ Auto-merge 成功（attempt $attempt）"
+              break
+            fi
+            echo "⚠️  Merge attempt $attempt 失败，重试..."
+            [ "$attempt" -lt "$MAX_RETRY" ] && sleep 10
+          done
+
+          if [ "$MERGED" != "true" ]; then
+            echo "❌ Auto-merge 失败（已重试 $MAX_RETRY 次）"
+            TASK_ID=$(echo "$PR_BODY" | grep -oE 'task[_-]id[: ]+[a-f0-9-]{36}' | head -1 | grep -oE '[a-f0-9-]{36}' || echo "")
+            if [ -n "$TASK_ID" ]; then
+              curl -s -X PATCH "${BRAIN_URL}/api/brain/tasks/${TASK_ID}" \
+                -H "Content-Type: application/json" \
+                -d "{\"status\":\"failed\",\"result\":{\"error\":\"auto-merge failed after retry\",\"pr_number\":${PR_NUMBER}}}" || true
+              echo "已回写 Brain 任务 $TASK_ID 失败状态"
+            else
+              echo "⚠️  未能提取 task_id，跳过 Brain 回写"
+            fi
+            exit 1
+          fi

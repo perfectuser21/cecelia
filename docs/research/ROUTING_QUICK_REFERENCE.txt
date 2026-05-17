@@ -1,0 +1,181 @@
+================================================================================
+CECELIA CORE 任务路由系统 - 快速参考卡
+================================================================================
+
+【核心文件位置】
+
+1. 任务路由 (Task Router)
+   📍 /home/xx/perfect21/cecelia/core/brain/src/task-router.js (212 行)
+   🔧 LOCATION_MAP, SINGLE_TASK_PATTERNS, FEATURE_PATTERNS
+   → identifyWorkType(), getTaskLocation(), routeTaskCreate()
+
+2. 规划器 (Planner)
+   📍 /home/xx/perfect21/cecelia/core/brain/src/planner.js (545 行)
+   🔧 scoreKRs(), selectTargetKR(), planNextTask()
+   → KR 评分 + 任务选择算法
+
+3. 执行器 (Executor)
+   📍 /home/xx/perfect21/cecelia/core/brain/src/executor.js (1661 行)
+   🔧 资源管理、派发执行
+   → 动态座位分配、CPU/内存阈值
+
+4. 丘脑 (Thalamus)
+   📍 /home/xx/perfect21/cecelia/core/brain/src/thalamus.js (~600+ 行)
+   🔧 ACTION_WHITELIST (30+), 决策验证
+   → LLM 决策的"指令白名单"
+
+5. 意图识别 (Intent)
+   📍 /home/xx/perfect21/cecelia/core/brain/src/intent.js (~700+ 行)
+   🔧 9 种意图类型、关键词模式
+   → CREATE_PROJECT, CREATE_FEATURE, FIX_BUG, etc.
+
+================================================================================
+
+【任务类型速查表】
+
+task_type    | 位置  | Agent        | 模型      | 说明
+─────────────┼───────┼──────────────┼──────────┼──────────────────
+dev          | US    | /dev         | Opus     | 编程 (Caramel)
+review       | US    | /review      | Sonnet   | 代码审查
+qa           | US    | /qa          | Sonnet   | 测试 (小检)
+audit        | US    | /audit       | Sonnet   | 审计 (小审)
+exploratory  | US    | /exploratory | Opus     | 探索性验证
+talk         | HK    | /talk        | MiniMax  | 对话任务
+research     | HK    | null         | -        | 调研 (需人工)
+data         | HK    | N8N          | -        | 数据处理
+
+================================================================================
+
+【KR 评分公式】(planner.js 第45-78行)
+
+  score = 0
+  + (在焦点中 ? 100 : 0)
+  + (P0 ? 30 : P1 ? 20 : P2 ? 10 : 0)
+  + ((100 - progress) × 0.2)
+  + (截止<7天 ? 40 : 截止<14天 ? 20 : 0)
+  + (队列任务数 × 15)
+
+  最终选择: 得分最高的 KR
+
+================================================================================
+
+【常见修改】
+
+修改任务路由规则
+└─ /home/xx/perfect21/cecelia/core/brain/src/task-router.js
+   ├─ LOCATION_MAP (行 42-53)
+   ├─ SINGLE_TASK_PATTERNS (行 10-24)
+   └─ FEATURE_PATTERNS (行 26-40)
+
+添加新 task_type (需改 3 处)
+├─ task-router.js: LOCATION_MAP
+├─ tick.js: TASK_TYPE_AGENT_MAP (行 42-48)
+└─ actions.js: isSystemTask() (如需要)
+
+修改调度评分
+└─ planner.js: scoreKRs() 函数 (行 45-78)
+
+添加新 Action (需改 3 处)
+├─ thalamus.js: ACTION_WHITELIST (行 142-187)
+├─ decision-executor.js: actionHandlers
+└─ actions.js: 实现具体逻辑
+
+================================================================================
+
+【丘脑 Action 白名单分类】(30+ 个)
+
+任务操作 (8):    dispatch_task, create_task, cancel_task, retry_task,
+                  reprioritize_task, pause_task, resume_task, mark_task_blocked,
+                  quarantine_task
+
+OKR 操作 (3):    create_okr, update_okr_progress, assign_to_autumnrice
+
+通知/日志 (2):   notify_user, log_event
+
+升级 (2):        escalate_to_brain, request_human_review
+
+分析 (2):        analyze_failure, predict_progress
+
+规划 (1):        create_proposal
+
+学习 (3):        create_learning, update_learning, trigger_rca
+
+生命周期 (3):    update_task_prd, archive_task, defer_task
+
+系统 (2):        no_action, fallback_to_tick
+
+================================================================================
+
+【意图识别体系】(9 种)
+
+CREATE_PROJECT  → "我想做一个 GMV Dashboard"
+CREATE_FEATURE  → "给登录页面加一个忘记密码功能"
+CREATE_GOAL     → "创建一个 P0 目标"
+CREATE_TASK     → "添加任务：修复登录超时"
+FIX_BUG         → "修复购物车页面的价格问题"
+REFACTOR        → "重构用户模块代码"
+EXPLORE         → "帮我看看这个 API 怎么用"
+QUERY_STATUS    → "当前有哪些任务？"
+QUESTION        → "为什么这里会报错？"
+
+================================================================================
+
+【调度流程】(planner.js 第 302-391 行)
+
+1. 查询全局状态 (getGlobalState)
+2. 检查 PR Plans (skipPrPlans = false)
+   ├─ 按 sequence 排序
+   ├─ 检查依赖关系 (depends_on)
+   └─ 返回第一个可执行的 PR Plan
+3. 传统 KR 调度 (无可用 PR Plan 时)
+   ├─ scoreKRs: 给 KR 评分
+   ├─ selectTargetKR: 选择得分最高的 KR
+   ├─ selectTargetProject: 选择与 KR 关联的项目
+   └─ generateNextTask: 获取下一个待执行任务
+4. 返回规划结果
+
+================================================================================
+
+【资源管理阈值】(executor.js 第 127-143 行)
+
+CPU_CORES            = 实际 CPU 核数
+TOTAL_MEM_MB         = 实际总内存 (MB)
+MEM_PER_TASK_MB      = 500         (每个任务预估内存)
+CPU_PER_TASK         = 0.5         (每个任务预估核数)
+INTERACTIVE_RESERVE  = 2           (为用户留 2 个席位)
+USABLE_MEM_MB        = TOTAL * 0.8
+USABLE_CPU           = CPU_CORES * 0.8
+LOAD_THRESHOLD       = CPU_CORES * 0.85 - (2 × 0.5)
+MEM_AVAILABLE_MIN_MB = TOTAL * 0.15 + (2 × 500)
+SWAP_USED_MAX_PCT    = 70
+
+===============================================================================
+
+【三大优化方向】
+
+A. 能力匹配系统 (Capability Matching)
+   现状: 固定 task_type → 固定 agent
+   目标: 动态选择最适合的 agent
+   关键: capabilities 表、task 属性扩展、动态评分
+
+B. 依赖感知调度 (Dependency-Aware Scheduling)
+   现状: 只有 PR Plans 支持依赖
+   目标: 全链路依赖管理 + 容量规划
+   关键: tasks.depends_on、容量预测、风险评分
+
+C. 动态 Action Registry (Dynamic Actions)
+   现状: Action 白名单硬编码
+   目标: 数据库驱动的 action registry
+   关键: action_registry 表、历史决策融合
+
+================================================================================
+
+【详细文档】
+
+完整研究报告: /home/xx/perfect21/cecelia/core/ROUTING_RESEARCH.md (628 行)
+快速参考指南: /home/xx/perfect21/cecelia/core/ROUTING_RESEARCH_SUMMARY.md (197 行)
+本参考卡:    /home/xx/perfect21/cecelia/core/ROUTING_QUICK_REFERENCE.txt
+
+================================================================================
+研究完成时间: 2026-02-18
+================================================================================

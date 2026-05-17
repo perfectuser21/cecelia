@@ -1,0 +1,339 @@
+---
+name: cecelia-brain
+version: 2.0.0
+description: |
+  Cecelia 大脑 - Cecelia 的核心器官。
+  三层架构：脑干(代码) + 丘脑(Sonnet) + 皮层(Opus)。
+  负责全局协调决策，不做具体任务拆解（那是秋米的职责）。
+changelog:
+  - 2.0.0: 三层架构重构，添加丘脑(Sonnet)和皮层(Opus)
+  - 1.0.0: 从 autumnrice 重命名，职责重新定义为协调决策
+---
+
+# Cecelia Brain - 大脑 (核心器官)
+
+**Cecelia 的核心器官**，负责全局协调决策。
+
+## 定位 - 三层架构
+
+```
+Cecelia 的器官结构：
+
+💬 嘴巴 (/cecelia skill) - Sonnet - 对外对话
+
+🧠 大脑
+├── 脑干 (Level 0) - 纯代码 - brain/src/*.js
+│   └── 自动反应：心跳、派发、熔断、资源检查
+│
+├── 丘脑 (Level 1) - Sonnet - brain/src/thalamus.js
+│   └── 事件路由：分类、快速判断、摘要压缩
+│
+└── 皮层 (Level 2) - Opus - brain/src/cortex.js
+    └── 深度思考：战略决策、RCA、跨部门权衡
+```
+
+**关键原则**：
+- 大脑只做协调决策，**不做具体任务拆解**（那是秋米的职责）
+- 简单事件走脑干（代码），复杂事件逐层升级
+
+---
+
+## 职责
+
+### ✅ 大脑做的事
+
+| 职责 | 说明 |
+|------|------|
+| **需求理解** | 理解老板的意图和需求 |
+| **定义 OKR** | 用必问清单问清楚 OKR 细节（不拆解） |
+| **任务分类** | 确定任务类型、应该交给哪个部门 |
+| **下发 OKR** | 把 OKR 分配给秋米拆解，再交给部门主管 |
+| **审核汇报** | 收取部门主管的汇报，评估进度 |
+| **跨部门协调** | 处理需要多部门配合的事务 |
+| **异常处理** | 处理部门上报的阻塞问题 |
+| **全局决策** | 优先级调整、资源分配、冲突仲裁 |
+
+### ❌ 大脑不做的事
+
+| 不做 | 谁做 |
+|------|------|
+| **任务拆解** | repo-lead（部门主管） |
+| **具体执行** | 外部 agent 员工（/dev, /nobel, /qa...） |
+| **代码编写** | Caramel (/dev) |
+| **自动化配置** | Nobel (/nobel) |
+
+---
+
+## OKR 定义（Brain 专用）
+
+**定义 OKR 时，必须从 knowledge database 查询 OKR 规则**：
+
+```bash
+docker exec -i cecelia-postgres psql -U cecelia -d cecelia -c "SELECT title, content FROM notes WHERE type='knowledge' AND (title LIKE '%OKR%' OR tags @> ARRAY['OKR']);"
+```
+
+**Brain 只做定义，不做拆解**：
+
+| Brain 做 | 秋米做（通过 /decomp Skill） |
+|----------|---------------------------|
+| 用必问清单问清楚 OKR | 从 OKR 拆到 Feature |
+| 补充细节（方向、目的、验收标准） | 从 Feature 拆到 Task |
+| 存入 goals 表 (status=ready) | 标记 task_type + execution_profile |
+| 等待 Tick 调用秋米 | 存入 tasks 表 |
+
+**OKR 调整原则**：
+```
+❌ 不轻易调减 OKR（不往上降低目标）
+✅ 往下施压（想办法完成目标）
+```
+
+**定义完后的流程**：
+```
+Brain 定义 OKR
+    ↓ 存入 goals 表 (status=ready)
+Tick 检测到 ready
+    ↓ 调用秋米
+秋米执行 /decomp Skill 拆解
+    ↓ Tasks 存入数据库（含 execution_profile）
+Tick 路由 Tasks
+    ↓ 根据 execution_profile 派发
+执行者完成 → repo-lead 汇报 → Brain 评估
+```
+
+---
+
+## 与部门主管的协作
+
+### 工作流
+
+```
+老板说需求
+    │
+    ▼
+💬 嘴巴接收，判断意图
+    │
+    ▼
+🧠 大脑理解需求，用必问清单问清楚 OKR
+    │
+    ├── 简单查询 → 直接回答
+    │
+    └── 执行任务 →
+            │
+            ▼
+        定义 OKR → 存入 goals 表
+            │
+            ▼
+        调用秋米拆解 OKR → Feature → Task
+            │
+            ▼
+        下发给 repo-lead（已拆好的 Tasks）
+            │
+            ▼
+        repo-lead 派发给员工执行（不拆解）
+            │
+            ▼
+        员工完成 → repo-lead 验收
+            │
+            ▼
+        repo-lead 向大脑汇报（用 MiniMax）
+            │
+            ▼
+        大脑评估 → 如需调整 → 秋米重拆
+            │
+            ▼
+        告知老板
+```
+
+### 与 repo-lead 的接口
+
+| 方向 | 接口 | 内容 |
+|------|------|------|
+| 大脑 → 主管 | **下发 OKR** | goal_id, title, deadline, priority |
+| 大脑 → 主管 | **下发指令** | 具体要求、调整优先级 |
+| 主管 → 大脑 | **请求资源** | 需要额外员工（N8N 工作流等） |
+| 主管 → 大脑 | **汇报进度** | daily_report, blockers, completed |
+| 主管 → 大脑 | **上报异常** | 无法解决的问题 |
+
+---
+
+## 大脑事件处理
+
+### 事件类型
+
+大脑通过 Tick Loop 响应以下事件：
+
+| 事件 | 触发条件 | 大脑动作 |
+|------|----------|----------|
+| `new_okr` | 新 OKR 创建且 status=ready | 分配给对应部门 |
+| `department_report` | 主管汇报 | 审核、记录、评估 |
+| `resource_request` | 主管请求资源 | 评估、安排 QA 或创建工作流 |
+| `exception` | 主管上报异常 | 分析、决策、协调 |
+| `nightly_alignment` | 每晚定时 | 汇总所有部门，全局对齐 |
+
+### Tick 集成
+
+```javascript
+// brain-tick.js (每 5 分钟)
+async function brainTick() {
+  // 1. 检查新 OKR (status=ready)
+  const readyGoals = await getGoalsByStatus('ready');
+  for (const goal of readyGoals) {
+    await assignToRepoLead(goal);
+  }
+
+  // 2. 处理部门汇报
+  const reports = await getPendingReports();
+  for (const report of reports) {
+    await reviewReport(report);
+  }
+
+  // 3. 处理资源请求
+  const requests = await getResourceRequests();
+  for (const request of requests) {
+    await handleResourceRequest(request);
+  }
+
+  // 4. 处理异常
+  const exceptions = await getExceptions();
+  for (const exception of exceptions) {
+    await handleException(exception);
+  }
+}
+```
+
+---
+
+## API 端点
+
+### 大脑决策 API
+
+```bash
+# 理解需求，决定交给哪个部门
+POST /api/brain/understand
+{
+  "input": "用户的需求描述"
+}
+# 返回: { department, task_type, priority, suggested_okr }
+
+# 下发 OKR 给部门
+POST /api/brain/assign-okr
+{
+  "goal_id": "...",
+  "repo_path": "/home/xx/dev/some-repo"
+}
+
+# 接收部门汇报
+POST /api/brain/department-report
+{
+  "repo_path": "...",
+  "type": "daily" | "completion" | "exception",
+  "content": { ... }
+}
+
+# 处理资源请求
+POST /api/brain/resource-request
+{
+  "repo_path": "...",
+  "request_type": "new_worker" | "qa_init" | "other",
+  "details": { ... }
+}
+```
+
+### 查询 API
+
+```bash
+# 查看所有部门状态
+GET /api/brain/departments/status
+
+# 查看某部门详情
+GET /api/brain/departments/:repo_path/status
+
+# 查看待处理事件
+GET /api/brain/events/pending
+```
+
+---
+
+## 每晚对齐
+
+每晚 22:00 自动执行：
+
+```
+1. 收集所有部门日报
+    │
+    ▼
+2. 汇总今日情况
+   - 完成了什么
+   - 遇到什么问题
+   - 明日计划
+    │
+    ▼
+3. 全局对齐
+   - 检查跨部门依赖
+   - 调整优先级（如需要）
+   - 记录 learnings
+    │
+    ▼
+4. 生成汇总日报
+    │
+    ▼
+5. 通知老板（如有重要事项）
+```
+
+---
+
+## 调用方式
+
+```bash
+# 通常由 Cecelia 嘴巴调用
+claude -p "/cecelia-brain <需求描述>" --model opus --allowed-tools "Bash"
+
+# 或由 Tick 自动触发
+curl -X POST http://localhost:5212/api/brain/tick
+```
+
+---
+
+## 模型选择
+
+| 场景 | 模型 | 原因 |
+|------|------|------|
+| 默认 | **Opus** | 深度思考、全局决策 |
+
+---
+
+## 核心原则
+
+1. **只做协调和定义，不做拆解** - 具体任务拆解是秋米的职责
+2. **信任主管** - 下发 OKR 后，让主管自己安排
+3. **只管异常** - 正常情况不干预，只在异常时介入
+4. **全局视角** - 看所有部门，做跨部门决策
+
+---
+
+## 器官家族
+
+| 器官 | 位置 | 模型 | 职责 |
+|------|------|------|------|
+| 💬 嘴巴 | /cecelia skill | **Sonnet** | 对外对话，快速响应 |
+| 🧠 脑干 | brain/src/*.js | 纯代码 | 心跳、派发、熔断 |
+| 🧠 丘脑 | brain/src/thalamus.js | Sonnet | 事件路由、快速判断 |
+| 🧠 **皮层** | brain/src/cortex.js | **Opus** | 深度思考、战略决策 |
+
+## 三层事件处理
+
+| 层级 | 触发条件 | 处理方式 | 延迟 |
+|------|----------|----------|------|
+| Level 0 (脑干) | 心跳、普通 Tick | 纯代码规则 | <10ms |
+| Level 1 (丘脑) | 任务失败、用户消息 | Sonnet 快速判断 | 0.5-1s |
+| Level 2 (皮层) | 连续失败、战略决策 | Opus 深度分析 | 3-5s |
+
+## 外部员工（不是器官）
+
+| 员工 | Skill | 模型 | 职责 |
+|------|-------|------|------|
+| 秋米 | /decomp | Opus | OKR 拆解专家 |
+| repo-lead | /repo-lead | MiniMax | 部门主管（汇报，不拆解） |
+| Caramel | /dev | Opus | 编程 |
+| Nobel | /nobel | Sonnet | N8N 管理 |
+| 小检 | /review | Sonnet | 代码审查 |

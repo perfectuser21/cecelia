@@ -1,0 +1,44 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Cecelia Task Schema",
+  "description": "Standard format for all tasks entering the Cecelia system",
+  "type": "object",
+  "required": ["taskId", "source", "intent", "payload", "priority"],
+  "properties": {
+    "taskId": {
+      "type": "string",
+      "description": "Unique identifier for the task (UUID)",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+    },
+    "source": {
+      "type": "string",
+      "enum": ["cloudcode", "notion", "chat", "n8n", "webhook", "heartbeat"],
+      "description": "Origin of the task"
+    },
+    "intent": {
+      "type": "string",
+      "enum": ["runQA", "fixBug", "refactor", "review", "summarize", "optimizeSelf"],
+      "description": "What action should be taken"
+    },
+    "payload": {
+      "type": "object",
+      "description": "Task-specific data (e.g., PRD content, repo path, branch name)",
+      "properties": {
+        "project": {"type": "string"},
+        "branch": {"type": "string"},
+        "prd": {"type": "string"},
+        "scope": {"type": "string"}
+      }
+    },
+    "priority": {
+      "type": "string",
+      "enum": ["P0", "P1", "P2"],
+      "description": "Task priority for queue ordering"
+    },
+    "createdAt": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO 8601 timestamp when task was created"
+    }
+  }
+}

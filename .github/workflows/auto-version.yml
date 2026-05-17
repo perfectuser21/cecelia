@@ -1,0 +1,153 @@
+name: Auto Version
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'packages/brain/**'
+
+jobs:
+  bump:
+    name: Auto Bump Version
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: Check if commit is auto-version
+        id: check
+        run: |
+          MSG=$(git log -1 --pretty=%s)
+          if echo "$MSG" | grep -q "chore(brain): auto-version"; then
+            echo "skip=true" >> $GITHUB_OUTPUT
+          else
+            echo "skip=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Determine bump type from commit message
+        if: steps.check.outputs.skip == 'false'
+        id: bump
+        run: |
+          MSG=$(git log -1 --pretty=%s)
+          echo "Commit message: $MSG"
+
+          if echo "$MSG" | grep -qE '^feat(\(.+\))?!:|^BREAKING'; then
+            echo "type=major" >> $GITHUB_OUTPUT
+          elif echo "$MSG" | grep -qE '^feat(\(.+\))?:'; then
+            echo "type=minor" >> $GITHUB_OUTPUT
+          elif echo "$MSG" | grep -qE '^fix(\(.+\))?:'; then
+            echo "type=patch" >> $GITHUB_OUTPUT
+          else
+            echo "type=none" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Bump version
+        if: steps.check.outputs.skip == 'false' && steps.bump.outputs.type != 'none'
+        run: |
+          BUMP_TYPE="${{ steps.bump.outputs.type }}"
+          echo "Bump type: $BUMP_TYPE"
+
+          # Read current version
+          CURRENT=$(node -e "process.stdout.write(require('./packages/brain/package.json').version)")
+          echo "Current version: $CURRENT"
+
+          # Split version
+          IFS='.' read -r MAJOR MINOR PATCH <<< "$CURRENT"
+
+          # Bump
+          case "$BUMP_TYPE" in
+            major)
+              MAJOR=$((MAJOR + 1))
+              MINOR=0
+              PATCH=0
+              ;;
+            minor)
+              MINOR=$((MINOR + 1))
+              PATCH=0
+              ;;
+            patch)
+              PATCH=$((PATCH + 1))
+              ;;
+          esac
+
+          NEW_VERSION="${MAJOR}.${MINOR}.${PATCH}"
+          echo "New version: $NEW_VERSION"
+
+          # 1. Update packages/brain/package.json
+          node -e "
+            const fs = require('fs');
+            const pkg = JSON.parse(fs.readFileSync('packages/brain/package.json', 'utf8'));
+            pkg.version = '$NEW_VERSION';
+            fs.writeFileSync('packages/brain/package.json', JSON.stringify(pkg, null, 2) + '\n');
+          "
+
+          # 2. Update packages/brain/package-lock.json (top-level + packages[""] entry)
+          if [ -f "packages/brain/package-lock.json" ]; then
+            node -e "
+              const fs = require('fs');
+              const lock = JSON.parse(fs.readFileSync('packages/brain/package-lock.json', 'utf8'));
+              lock.version = '$NEW_VERSION';
+              if (lock.packages && lock.packages['']) {
+                lock.packages[''].version = '$NEW_VERSION';
+              }
+              fs.writeFileSync('packages/brain/package-lock.json', JSON.stringify(lock, null, 2) + '\n');
+            "
+          fi
+
+          # 3. Update .brain-versions
+          echo "$NEW_VERSION" > .brain-versions
+
+          # 4. Update DEFINITION.md "Brain 版本" line
+          if [ -f "DEFINITION.md" ]; then
+            sed -i "s/\*\*Brain 版本\*\*: .*/\*\*Brain 版本\*\*: $NEW_VERSION/" DEFINITION.md
+          fi
+
+          # 5. Update packages/brain/VERSION
+          if [ -f "packages/brain/VERSION" ]; then
+            echo "$NEW_VERSION" > packages/brain/VERSION
+          fi
+
+      - name: Create version bump PR
+        if: steps.check.outputs.skip == 'false' && steps.bump.outputs.type != 'none'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git diff --cached --quiet && exit 0
+
+          NEW_VERSION=$(node -e "process.stdout.write(require('./packages/brain/package.json').version)")
+          BRANCH_NAME="auto-version-bump-${NEW_VERSION}"
+
+          # Delete remote branch if it exists (from a previous failed run)
+          git push origin --delete "$BRANCH_NAME" 2>/dev/null || true
+
+          git checkout -b "$BRANCH_NAME"
+          git commit -m "chore(brain): auto-version ${{ steps.bump.outputs.type }} bump to ${NEW_VERSION}"
+          git push -u origin "$BRANCH_NAME"
+
+          BUMP_TYPE="${{ steps.bump.outputs.type }}"
+          PR_TITLE="chore(brain): auto-version ${BUMP_TYPE} bump to ${NEW_VERSION}"
+          PR_BODY="Automated version bump to ${NEW_VERSION}."
+
+          # Create PR (idempotent: if PR already exists for this branch, fetch existing URL)
+          PR_URL=$(gh pr create \
+            --base main \
+            --head "$BRANCH_NAME" \
+            --title "$PR_TITLE" \
+            --body "$PR_BODY" \
+            2>&1) \
+            || PR_URL=$(gh pr view "$BRANCH_NAME" --json url -q '.url' 2>/dev/null \
+               || echo "PR creation failed and no existing PR found")
+
+          echo "PR URL: $PR_URL"
+
+          # Request auto-merge (|| true so workflow succeeds even if auto-merge unavailable)
+          gh pr merge "$BRANCH_NAME" --squash --auto --delete-branch \
+            || echo "Note: auto-merge request failed (CI may not have started yet). PR: $PR_URL"

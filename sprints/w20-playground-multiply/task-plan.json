@@ -1,0 +1,46 @@
+{
+  "initiative_id": "b56c4e82-fb02-425e-aa40-89983205d671",
+  "journey_type": "autonomous",
+  "journey_type_reason": "playground 是独立 HTTP server 子项目，本次只动 server 路由 + 单测 + README，无 UI / 无 brain tick / 无 engine hook / 无远端 agent 协议，按规则归类为 autonomous（与 W19 /sum 同分类）。",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "playground 加 GET /multiply 路由（strict-schema）+ 单测 + README 更新",
+      "scope": "在 playground/server.js 在 /sum 之后、app.listen 之前新增 `GET /multiply` 路由：用原生 RegExp `/^-?\\d+(\\.\\d+)?$/` 对 query a/b 做完整匹配 strict-schema 校验（不能用 Number()/parseFloat() 替代，否则 1e3/Infinity 等会假绿）；通过则 Number() 转换并相乘 → 200 + {product}；任一不通过或缺参 → 400 + {error}（body 不含 product 字段）。把 sprints/w20-playground-multiply/tests/ws1/multiply.test.js 的 18 个 test() 块原样合并到 playground/tests/server.test.js（路径相对引用从 4 层改为 1 层），与现有 /sum describe 块共存。更新 playground/README.md 端点段加 /multiply 示例（happy + ≥1 条 strict 拒绝示例）。**不动 /health 与 /sum 的实现/测试/README 段**。零新依赖（不引入 zod/joi/ajv）。",
+      "dod": [
+        "[BEHAVIOR] GET /multiply?a=2&b=3 → HTTP 200 + body {\"product\":6}（数字类型严格相等）",
+        "[BEHAVIOR] GET /multiply?a=0&b=5 → HTTP 200 + body {\"product\":0}（零参与合法）",
+        "[BEHAVIOR] GET /multiply?a=-2&b=3 → HTTP 200 + body {\"product\":-6}（负数合法）",
+        "[BEHAVIOR] GET /multiply?a=1.5&b=2 → HTTP 200 + body {\"product\":3}（标准小数合法）",
+        "[BEHAVIOR] GET /multiply?a=2（缺 b）→ HTTP 400 + 非空 error，body 不含 product",
+        "[BEHAVIOR] GET /multiply（双参数都缺）→ HTTP 400 + 非空 error",
+        "[BEHAVIOR] GET /multiply?a=1e3&b=2（科学计数法 — 核心 strict 探针，防 Number() 假绿）→ HTTP 400 + 非空 error，body 不含 product",
+        "[BEHAVIOR] GET /multiply?a=Infinity&b=2（防 Number.isFinite 路径滑过）→ HTTP 400 + 非空 error，body 不含 product",
+        "[BEHAVIOR] GET /multiply?a=NaN&b=2 → HTTP 400 + 非空 error",
+        "[BEHAVIOR] GET /multiply?a=%2B2&b=3（前导正号 +2）→ HTTP 400 + 非空 error",
+        "[BEHAVIOR] GET /multiply?a=.5&b=2（小数点缺整数部分）→ HTTP 400 + 非空 error",
+        "[BEHAVIOR] GET /multiply?a=5.&b=2（小数点缺小数部分）→ HTTP 400 + 非空 error",
+        "[BEHAVIOR] GET /multiply?a=0xff&b=2（十六进制）→ HTTP 400 + 非空 error",
+        "[BEHAVIOR] GET /multiply?a=1,000&b=2（千分位）→ HTTP 400 + 非空 error",
+        "[BEHAVIOR] GET /multiply?a=&b=3（空字符串）→ HTTP 400 + 非空 error",
+        "[BEHAVIOR] GET /multiply?a=abc&b=3（非数字字符串）→ HTTP 400 + 非空 error，body 不含 product",
+        "[BEHAVIOR] GET /health 仍返回 200 + {\"ok\":true}（回归不破坏 bootstrap）",
+        "[BEHAVIOR] GET /sum?a=2&b=3 仍返回 200 + {\"sum\":5}（回归不破坏 W19）",
+        "[ARTIFACT] playground/server.js 含 `app.get('/multiply'` 路由，且仍含 `app.get('/health'` 与 `app.get('/sum'`（防误删）",
+        "[ARTIFACT] playground/server.js 含 `^-?\\d+(\\.\\d+)?$` 完整匹配正则字面量（防 Number()/parseFloat() 假绿）",
+        "[ARTIFACT] playground/tests/server.test.js 含 `/multiply` 字符串 + `toBe(200)` + `toBe(400)` + `product` 断言，且显式覆盖 `1e3` 与 `Infinity` 拒绝用例",
+        "[ARTIFACT] playground/tests/server.test.js 仍保留现有 `/sum` 与 `/health` 用例（W19 + bootstrap 回归）",
+        "[ARTIFACT] playground/README.md 含 `/multiply` 字符串且给出 happy + ≥1 条 strict-schema 拒绝示例（`1e3` 或 `Infinity` 任一）；仍含 `/sum` 与 `/health` 段",
+        "[ARTIFACT] playground/package.json dependencies 仅 `express`、devDependencies 仅 `supertest`+`vitest`（零新依赖，不引入 zod/joi/ajv）"
+      ],
+      "files": [
+        "playground/server.js",
+        "playground/tests/server.test.js",
+        "playground/README.md"
+      ],
+      "depends_on": [],
+      "complexity": "S",
+      "estimated_minutes": 35
+    }
+  ]
+}

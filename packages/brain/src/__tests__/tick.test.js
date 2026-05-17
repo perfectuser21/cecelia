@@ -1,0 +1,70 @@
+/**
+ * Tick Tests
+ * Tests for task routing and tick functionality
+ */
+
+import { describe, it, expect } from 'vitest';
+// Phase D Part 1.6: routeTask + TASK_TYPE_AGENT_MAP 已搬到 tick-helpers.js
+import { routeTask, TASK_TYPE_AGENT_MAP } from '../tick-helpers.js';
+import { MAX_NEW_DISPATCHES_PER_TICK } from '../tick.js';
+
+describe('routeTask', () => {
+  it('should route dev tasks to /dev', () => {
+    const task = { task_type: 'dev' };
+    expect(routeTask(task)).toBe('/dev');
+  });
+
+  it('should route talk tasks to /talk', () => {
+    const task = { task_type: 'talk' };
+    expect(routeTask(task)).toBe('/talk');
+  });
+
+  it('should route qa tasks to /code-review', () => {
+    const task = { task_type: 'qa' };
+    expect(routeTask(task)).toBe('/code-review');
+  });
+
+  it('should route audit tasks to /code-review', () => {
+    const task = { task_type: 'audit' };
+    expect(routeTask(task)).toBe('/code-review');
+  });
+
+  it('should return null for research tasks (requires manual handling)', () => {
+    const task = { task_type: 'research' };
+    expect(routeTask(task)).toBeNull();
+  });
+
+  it('should default to /dev when task_type is missing', () => {
+    const task = {};
+    expect(routeTask(task)).toBe('/dev');
+  });
+
+  it('should default to /dev for unknown task_type', () => {
+    const task = { task_type: 'unknown_type' };
+    expect(routeTask(task)).toBe('/dev');
+  });
+});
+
+describe('MAX_NEW_DISPATCHES_PER_TICK', () => {
+  it('should be 2 (default burst limiter cap)', () => {
+    expect(MAX_NEW_DISPATCHES_PER_TICK).toBe(2);
+  });
+});
+
+describe('TASK_TYPE_AGENT_MAP', () => {
+  it('should have all expected task types', () => {
+    expect(TASK_TYPE_AGENT_MAP).toHaveProperty('dev');
+    expect(TASK_TYPE_AGENT_MAP).toHaveProperty('talk');
+    expect(TASK_TYPE_AGENT_MAP).toHaveProperty('qa');
+    expect(TASK_TYPE_AGENT_MAP).toHaveProperty('audit');
+    expect(TASK_TYPE_AGENT_MAP).toHaveProperty('research');
+  });
+
+  it('should map to correct agent skills', () => {
+    expect(TASK_TYPE_AGENT_MAP.dev).toBe('/dev');
+    expect(TASK_TYPE_AGENT_MAP.talk).toBe('/talk');
+    expect(TASK_TYPE_AGENT_MAP.qa).toBe('/code-review');
+    expect(TASK_TYPE_AGENT_MAP.audit).toBe('/code-review');
+    expect(TASK_TYPE_AGENT_MAP.research).toBeNull();
+  });
+});

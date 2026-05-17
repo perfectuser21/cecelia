@@ -1,0 +1,29 @@
+services:
+  ai-gateway:
+    image: node:20-alpine
+    container_name: ai-gateway
+    restart: always
+    working_dir: /app
+    command: node ai-gateway.js
+    ports:
+      - "9876:9876"
+    environment:
+      - GATEWAY_PORT=9876
+      # 美国: claude-code, 香港: minimax
+      - AI_MODE=${AI_MODE:-claude-code}
+      # MiniMax 配置 (香港使用)
+      - MINIMAX_API_KEY=${MINIMAX_API_KEY:-}
+      - MINIMAX_GROUP_ID=${MINIMAX_GROUP_ID:-}
+    volumes:
+      - ./ai-gateway.js:/app/ai-gateway.js:ro
+      # Claude Code 需要访问主机的 claude 命令
+      - /usr/local/bin/claude:/usr/local/bin/claude:ro
+      - /home/xx/.claude:/home/xx/.claude:ro
+      - /tmp:/tmp
+    networks:
+      - n8n-network
+
+networks:
+  n8n-network:
+    external: true
+    name: archived_n8n-network

@@ -1,0 +1,72 @@
+# Content Type: Promotional Copy
+# 推广文案 — 产品/服务推广内容类型配置
+content_type: promo-copy
+title: 推广文案（产品/服务推广）
+version: "1.0"
+description: 面向产品/服务推广的多平台文案，含卖点提炼/转化钩子/落地页文案，强调 ROI。
+
+# 图片配置
+images:
+  count: 5
+  format: svg
+  size: "1080x1080"
+  style: "product-showcase"
+  nas_path: "zenithjoy-creator/content/promo-copy"
+
+# 内容模板配置
+template:
+  research_prompt: |
+    调研 {keyword}（产品/服务）的目标用户痛点与竞品定位。
+    重点收集：用户购买决策路径、核心痛点/渴望、竞品文案弱点、高转化评价关键词。
+    来源：电商评论、竞品落地页、用户问答。
+  generate_prompt: |
+    基于调研，生成以下内容：
+    1. 5张产品图（卖点图/使用场景图/对比图/评价截图风/行动号召图）
+    2. 核心卖点文案（3个差异化卖点，每个30字内）
+    3. 小红书种草文案（500-700字，真实体验感，软推广）
+    4. 朋友圈推广文（100字内，带行动号召）
+    5. 标题A/B测试组（各3个备选）
+  review_prompt: |
+    审查文案是否符合以下标准：
+    1. 卖点聚焦，不超过3个核心卖点
+    2. 有具体数字或对比佐证（不能只说"很好用"）
+    3. 行动号召明确（购买/咨询/领优惠）
+    4. 无夸大虚假宣传词汇
+
+# AI 审查规则
+review_rules:
+  - id: "focused_selling_points"
+    description: "核心卖点不超过3个，每个必须有具体证据支撑"
+    severity: "blocking"
+  - id: "clear_cta"
+    description: "每篇文案必须有清晰的行动号召（不能模糊引导）"
+    severity: "blocking"
+  - id: "no_exaggeration"
+    description: "禁止使用无依据的极限词（最好/第一/绝对）"
+    severity: "blocking"
+  - id: "social_proof"
+    description: "建议包含数字化社会证明（用户数/好评率/销量）"
+    severity: "warning"
+
+# 文案规则
+copy_rules:
+  platform_tone:
+    xiaohongshu: "真实测评体，第一人称分享，软广感，结尾附购买建议"
+    wechat: "朋友圈信任感，简洁价值主张，附限时优惠钩子"
+    douyin: "痛点开场，产品出镜，数据背书，最后3秒行动号召"
+  hashtags:
+    base: ["好物推荐", "种草", "真实测评"]
+    content_type_specific: ["推广", "优惠", "限时"]
+  min_word_count:
+    short_copy: 100
+    long_form: 500
+
+# 产出物定义
+outputs:
+  - type: "images"
+    count: 5
+    format: "svg"
+  - type: "short_copy"
+    platforms: ["xiaohongshu", "wechat", "douyin"]
+  - type: "manifest"
+    format: "json"

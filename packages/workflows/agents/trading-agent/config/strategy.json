@@ -1,0 +1,28 @@
+{
+  "name": "Growth Stock Strategy v1.0",
+  "description": "高质量成长股筛选策略",
+  "screening_criteria": {
+    "fundamentals": {
+      "pe_ratio_max": 30,
+      "eps_growth_min": 15,
+      "roe_min": 15,
+      "market_cap_min": 1000000000
+    },
+    "technical": {
+      "rsi_oversold": 30,
+      "rsi_overbought": 70,
+      "macd_signal": "bullish_cross"
+    }
+  },
+  "position_sizing": {
+    "max_positions": 5,
+    "max_position_size": 0.2,
+    "cash_reserve": 0.2
+  },
+  "risk_management": {
+    "stop_loss": 0.05,
+    "take_profit": 0.10,
+    "trailing_stop": 0.03
+  },
+  "rebalance_frequency": "weekly"
+}

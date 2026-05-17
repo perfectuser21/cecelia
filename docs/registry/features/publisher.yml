@@ -1,0 +1,412 @@
+# 发布系统 (publisher) - Feature 详情
+# 更新时间: 2026-04-03
+# Schema: v2.0.0
+
+system_id: publisher
+system_name: 发布系统
+features:
+  - feature_id: publisher_douyin
+    name: 抖音发布
+    purpose: 发布视频内容到抖音平台
+    maturity: 1
+    code:
+      root: packages/workflows/skills/douyin-publisher
+      entry_files:
+        - packages/workflows/skills/douyin-publisher
+      language: javascript
+      runtime: node
+    docs:
+      prd: null
+      dod: null
+      adr: null
+      api_doc: null
+      runbook: null
+    skills:
+      - skill_id: douyin_publisher
+        command: /douyin-publisher
+        entry_file: packages/workflows/skills/douyin-publisher/SKILL.md
+        version: "1.1.0"
+        status: active
+    apis: []
+    tests:
+      unit: []
+      integration: []
+      e2e: []
+      regression: []
+    capabilities:
+      - id: publisher_douyin_publish
+        name: 抖音内容发布
+        entry_file: packages/workflows/skills/douyin-publisher
+        maturity: 2
+        tests:
+          unit:
+              integration: []
+          e2e: []
+        status: active
+    ci:
+      jobs: []
+      layers:
+        - L3
+    runtime: {}
+  - feature_id: publisher_xiaohongshu
+    name: 小红书发布
+    purpose: 发布图文内容到小红书平台
+    maturity: 1
+    code:
+      root: packages/workflows/skills/xiaohongshu-publisher
+      entry_files:
+        - packages/workflows/skills/xiaohongshu-publisher
+      language: javascript
+      runtime: node
+    docs:
+      prd: null
+      dod: null
+      adr: null
+      api_doc: null
+      runbook: null
+    skills:
+      - skill_id: xiaohongshu_publisher
+        command: /xiaohongshu-publisher
+        entry_file: packages/workflows/skills/xiaohongshu-publisher/SKILL.md
+        version: "1.0.0"
+        status: active
+    apis: []
+    tests:
+      unit: []
+      integration: []
+      e2e: []
+      regression: []
+    capabilities:
+      - id: publisher_xiaohongshu_publish
+        name: 小红书内容发布
+        entry_file: packages/workflows/skills/xiaohongshu-publisher
+        maturity: 2
+        tests:
+          unit:
+                      integration: []
+          e2e: []
+        status: active
+    ci:
+      jobs: []
+      layers:
+        - L3
+    runtime: {}
+  - feature_id: publisher_wechat
+    name: 微信公众号发布
+    purpose: 发布文章到微信公众号
+    maturity: 1
+    code:
+      root: packages/workflows/skills/wechat-publisher
+      entry_files:
+        - packages/workflows/skills/wechat-publisher
+      language: javascript
+      runtime: node
+    docs:
+      prd: null
+      dod: null
+      adr: null
+      api_doc: null
+      runbook: null
+    skills:
+      - skill_id: wechat_publisher
+        command: /wechat-publisher
+        entry_file: packages/workflows/skills/wechat-publisher/SKILL.md
+        version: "1.0.0"
+        status: active
+    apis: []
+    tests:
+      unit: []
+      integration: []
+      e2e: []
+      regression: []
+    capabilities:
+      - id: publisher_wechat_publish
+        name: 微信公众号内容发布
+        entry_file: packages/workflows/skills/wechat-publisher
+        maturity: 2
+        tests:
+          unit:
+              integration: []
+          e2e: []
+        status: active
+    ci:
+      jobs: []
+      layers:
+        - L3
+    runtime: {}
+  - feature_id: publisher_kuaishou
+    name: 快手发布
+    purpose: 发布视频到快手平台
+    maturity: 1
+    code:
+      root: packages/workflows/skills/kuaishou-publisher
+      entry_files:
+        - packages/workflows/skills/kuaishou-publisher
+      language: javascript
+      runtime: node
+    docs:
+      prd: null
+      dod: null
+      adr: null
+      api_doc: null
+      runbook: null
+    skills:
+      - skill_id: kuaishou_publisher
+        command: /kuaishou-publisher
+        entry_file: packages/workflows/skills/kuaishou-publisher/SKILL.md
+        version: "1.4.0"
+        status: active
+    apis: []
+    tests:
+      unit: []
+      integration: []
+      e2e: []
+      regression: []
+    capabilities:
+      - id: publisher_kuaishou_publish
+        name: 快手内容发布
+        entry_file: packages/workflows/skills/kuaishou-publisher
+        maturity: 2
+        tests:
+          unit:
+                      integration: []
+          e2e: []
+        status: active
+    ci:
+      jobs: []
+      layers:
+        - L3
+    runtime: {}
+  - feature_id: publisher_weibo
+    name: 微博发布
+    purpose: 发布推文到微博平台
+    maturity: 1
+    code:
+      root: packages/workflows/skills/weibo-publisher
+      entry_files:
+        - packages/workflows/skills/weibo-publisher
+      language: javascript
+      runtime: node
+    docs:
+      prd: null
+      dod: null
+      adr: null
+      api_doc: null
+      runbook: null
+    skills:
+      - skill_id: weibo_publisher
+        command: /weibo-publisher
+        entry_file: packages/workflows/skills/weibo-publisher/SKILL.md
+        version: "1.0.0"
+        status: active
+    apis: []
+    tests:
+      unit: []
+      integration: []
+      e2e: []
+      regression: []
+    capabilities:
+      - id: publisher_weibo_publish
+        name: 微博内容发布
+        entry_file: packages/workflows/skills/weibo-publisher
+        maturity: 2
+        tests:
+          unit:
+                          integration: []
+          e2e: []
+        status: active
+    ci:
+      jobs: []
+      layers:
+        - L3
+    runtime: {}
+  - feature_id: publisher_zhihu
+    name: 知乎发布
+    purpose: 发布文章到知乎平台
+    maturity: 1
+    code:
+      root: packages/workflows/skills/zhihu-publisher
+      entry_files:
+        - packages/workflows/skills/zhihu-publisher
+      language: javascript
+      runtime: node
+    docs:
+      prd: null
+      dod: null
+      adr: null
+      api_doc: null
+      runbook: null
+    skills:
+      - skill_id: zhihu_publisher
+        command: /zhihu-publisher
+        entry_file: packages/workflows/skills/zhihu-publisher/SKILL.md
+        version: "1.0.0"
+        status: active
+    apis: []
+    tests:
+      unit: []
+      integration: []
+      e2e: []
+      regression: []
+    capabilities:
+      - id: publisher_zhihu_publish
+        name: 知乎内容发布
+        entry_file: packages/workflows/skills/zhihu-publisher
+        maturity: 2
+        tests:
+          unit:
+                  integration: []
+          e2e: []
+        status: active
+    ci:
+      jobs: []
+      layers:
+        - L3
+    runtime: {}
+  - feature_id: daily_publish_scheduler
+    name: 每日发布调度
+    purpose: 每日 UTC 03:00 触发发布队列，按优先级分配到各平台
+    maturity: 2
+    code:
+      root: packages/brain/src
+      entry_files:
+        - packages/brain/src/daily-publish-scheduler.js
+      language: javascript
+      runtime: node
+    docs:
+      prd: null
+      dod: null
+      adr: null
+      api_doc: null
+      runbook: null
+    skills: []
+    apis: []
+    tests:
+      unit:
+        - packages/brain/src/__tests__/daily-publish-scheduler.test.js
+        - packages/workflows/n8n/workflows/media/__tests__/flow-content-publish.test.cjs
+        - packages/workflows/scripts/__tests__/validate-schedule-json.test.cjs
+      integration: []
+      e2e: []
+      regression: []
+    capabilities:
+      - id: daily_publish_scheduler_schedule
+        name: 每日发布调度
+        entry_file: packages/brain/src/daily-publish-scheduler.js
+        maturity: 2
+        tests:
+          unit:
+            - packages/brain/src/__tests__/daily-publish-scheduler.test.js
+            - packages/workflows/n8n/workflows/media/__tests__/flow-content-publish.test.cjs
+            - packages/workflows/scripts/__tests__/validate-schedule-json.test.cjs
+          integration: []
+          e2e: []
+        status: active
+    ci:
+      jobs: []
+      layers:
+        - L3
+    runtime: {}
+  - feature_id: publish_monitor
+    name: 发布监控重试
+    purpose: 监控发布队列，失败任务自动重试最多3次
+    maturity: 2
+    code:
+      root: packages/brain/src
+      entry_files:
+        - packages/brain/src/publish-monitor.js
+      language: javascript
+      runtime: node
+    docs:
+      prd: null
+      dod: null
+      adr: null
+      api_doc: null
+      runbook: null
+    skills: []
+    apis:
+      - method: GET
+        path: /api/brain/publish-jobs
+        service: brain
+        purpose: 查询发布任务列表（支持按 platform/status 过滤）
+        code_file: packages/brain/src/routes/publish-jobs.js
+        auth: none
+      - method: POST
+        path: /api/brain/publish-jobs
+        service: brain
+        purpose: 创建发布任务
+        code_file: packages/brain/src/routes/publish-jobs.js
+        auth: none
+      - method: PATCH
+        path: /api/brain/publish-jobs/:id
+        service: brain
+        purpose: 更新发布任务状态
+        code_file: packages/brain/src/routes/publish-jobs.js
+        auth: none
+    tests:
+      unit:
+        - packages/brain/src/__tests__/platform-utils.test.js
+        - packages/brain/src/__tests__/post-publish-data-collector.test.ts
+      integration: []
+      e2e: []
+      regression: []
+    capabilities:
+      - id: publish_monitor_retry
+        name: 发布监控重试
+        entry_file: packages/brain/src/publish-monitor.js
+        maturity: 2
+        tests:
+          unit:
+            - packages/brain/src/__tests__/platform-utils.test.js
+            - packages/brain/src/__tests__/post-publish-data-collector.test.ts
+          integration: []
+          e2e: []
+        status: active
+    ci:
+      jobs: []
+      layers:
+        - L3
+    runtime: {}
+  - feature_id: publisher_toutiao
+    name: 今日头条发布
+    purpose: 发布微头条/文章/视频到今日头条
+    maturity: 1
+    code:
+      root: packages/workflows/skills/toutiao-publisher
+      entry_files:
+        - packages/workflows/skills/toutiao-publisher
+      language: javascript
+      runtime: node
+    docs:
+      prd: null
+      dod: null
+      adr: null
+      api_doc: null
+      runbook: null
+    skills:
+      - skill_id: toutiao_publisher
+        command: /toutiao-publisher
+        entry_file: packages/workflows/skills/toutiao-publisher/SKILL.md
+        version: "1.0.0"
+        status: active
+    apis: []
+    tests:
+      unit: []
+      integration: []
+      e2e: []
+      regression: []
+    capabilities:
+      - id: publisher_toutiao_publish
+        name: 今日头条内容发布
+        entry_file: packages/workflows/skills/toutiao-publisher
+        maturity: 2
+        tests:
+          unit:
+              integration: []
+          e2e: []
+        status: active
+    ci:
+      jobs: []
+      layers:
+        - L3
+    runtime: {}

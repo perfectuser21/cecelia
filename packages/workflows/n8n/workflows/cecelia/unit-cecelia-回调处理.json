@@ -1,0 +1,51 @@
+{
+  "name": "[Unit] Cecelia 回调处理",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "cecelia-callback",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "webhook-1",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        240,
+        300
+      ],
+      "webhookId": "cecelia-callback-webhook"
+    },
+    {
+      "parameters": {
+        "jsCode": "const body = $json.body || $json;\nconst task_id = body.task_id || 'unknown';\nconst status = body.status || 'unknown';\nconst checkpoint_id = body.checkpoint_id || '';\nconst output = body.output || '';\nconst error = body.error || '';\n\nconsole.log(`[Cecelia Callback] Task: ${task_id}, Status: ${status}, CP: ${checkpoint_id}`);\n\n// 根据状态做不同处理\nif (status === 'completed') {\n  console.log('✅ Task completed successfully');\n} else if (status === 'failed') {\n  console.error('❌ Task failed:', error);\n} else {\n  console.log('⏳ Task in progress');\n}\n\nreturn {\n  json: {\n    ok: true,\n    received_at: new Date().toISOString(),\n    task_id,\n    status,\n    checkpoint_id,\n    has_output: !!output,\n    has_error: !!error\n  }\n};"
+      },
+      "id": "code-1",
+      "name": "Process Callback",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        460,
+        300
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Process Callback",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {},
+  "staticData": {},
+  "active": true
+}

@@ -1,0 +1,227 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "QA Evidence",
+  "description": "每个 repo 产出的质检证据统一格式",
+  "type": "object",
+  "required": ["repo_id", "run_id", "scope", "started_at", "completed_at", "status", "results"],
+  "properties": {
+    "repo_id": {
+      "type": "string",
+      "description": "Repo ID（来自 repo-registry.yaml）",
+      "example": "cecelia-workspace"
+    },
+    "run_id": {
+      "type": "string",
+      "description": "本次运行的唯一 ID",
+      "example": "run-20260127-100000"
+    },
+    "scope": {
+      "type": "string",
+      "enum": ["pr", "release", "nightly"],
+      "description": "运行场景"
+    },
+    "commit_type": {
+      "type": "string",
+      "description": "Commit 类型（可选）",
+      "example": "feat"
+    },
+    "branch": {
+      "type": "string",
+      "description": "分支名（可选）",
+      "example": "cp-26012710-add-feature"
+    },
+    "started_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "开始时间"
+    },
+    "completed_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "完成时间"
+    },
+    "duration": {
+      "type": "integer",
+      "description": "执行时间（秒）",
+      "example": 120
+    },
+    "status": {
+      "type": "string",
+      "enum": ["pass", "fail", "partial"],
+      "description": "整体状态"
+    },
+    "results": {
+      "type": "object",
+      "required": ["L1", "rci"],
+      "properties": {
+        "L1": {
+          "type": "object",
+          "description": "L1 自动化测试结果",
+          "required": ["status", "tests"],
+          "properties": {
+            "status": {
+              "type": "string",
+              "enum": ["pass", "fail"]
+            },
+            "tests": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": ["name", "status"],
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "example": "typecheck"
+                  },
+                  "status": {
+                    "type": "string",
+                    "enum": ["pass", "fail"]
+                  },
+                  "duration": {
+                    "type": "integer",
+                    "description": "秒"
+                  },
+                  "error": {
+                    "type": "string",
+                    "description": "错误信息（如果 fail）"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "rci": {
+          "type": "object",
+          "description": "RCI 执行结果",
+          "required": ["status", "items"],
+          "properties": {
+            "status": {
+              "type": "string",
+              "enum": ["pass", "fail", "partial"]
+            },
+            "total": {
+              "type": "integer",
+              "description": "总 RCI 数"
+            },
+            "pass": {
+              "type": "integer",
+              "description": "通过数量"
+            },
+            "fail": {
+              "type": "integer",
+              "description": "失败数量"
+            },
+            "items": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": ["id", "status"],
+                "properties": {
+                  "id": {
+                    "type": "string",
+                    "example": "RCI-F-001"
+                  },
+                  "desc": {
+                    "type": "string",
+                    "example": "飞书登录必须可用"
+                  },
+                  "status": {
+                    "type": "string",
+                    "enum": ["pass", "fail", "skip"]
+                  },
+                  "duration": {
+                    "type": "integer",
+                    "description": "秒"
+                  },
+                  "error": {
+                    "type": "string",
+                    "description": "错误信息（如果 fail）"
+                  },
+                  "test_cmd": {
+                    "type": "string",
+                    "example": "npm run test -- tests/auth/feishu-login.test.ts"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "gp": {
+          "type": "object",
+          "description": "Golden Path 执行结果（可选）",
+          "properties": {
+            "status": {
+              "type": "string",
+              "enum": ["pass", "fail", "partial", "skip"]
+            },
+            "total": {
+              "type": "integer"
+            },
+            "pass": {
+              "type": "integer"
+            },
+            "fail": {
+              "type": "integer"
+            },
+            "items": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": ["id", "status"],
+                "properties": {
+                  "id": {
+                    "type": "string",
+                    "example": "GP-AUTH-001"
+                  },
+                  "desc": {
+                    "type": "string"
+                  },
+                  "status": {
+                    "type": "string",
+                    "enum": ["pass", "fail", "skip"]
+                  },
+                  "duration": {
+                    "type": "integer"
+                  },
+                  "error": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "L2A": {
+          "type": "object",
+          "description": "Audit 结果（可选）",
+          "properties": {
+            "decision": {
+              "type": "string",
+              "enum": ["PASS", "FAIL"]
+            },
+            "blockers": {
+              "type": "integer",
+              "description": "L1+L2 问题数量"
+            }
+          }
+        }
+      }
+    },
+    "logs": {
+      "type": "object",
+      "description": "日志路径",
+      "properties": {
+        "full": {
+          "type": "string",
+          "description": "完整日志路径",
+          "example": ".qa-logs/run-20260127-100000.log"
+        },
+        "summary": {
+          "type": "string",
+          "description": "摘要日志",
+          "example": "L1: pass, RCI: 5/5 pass, GP: skip"
+        }
+      }
+    }
+  }
+}

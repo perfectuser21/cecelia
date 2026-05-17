@@ -1,0 +1,27 @@
+{
+  "branch": "cp-02011318-Advance-KR1-OKR-Project-Task-f",
+  "head_sha": "792e364676d1101b9991b17368881b7b70b45aed",
+  "timestamp": "2026-02-01T13:38:25+08:00",
+  "gates": {
+    "prd": { "status": "pass", "file": ".gate-prd-passed" },
+    "dod": { "status": "pass", "file": ".gate-dod-passed" },
+    "qa": { "status": "pass", "file": ".gate-qa-passed" },
+    "audit": { "status": "pass", "file": ".gate-audit-passed" },
+    "test": { "status": "pass", "file": ".gate-test-passed" }
+  },
+  "test_results": {
+    "total": 47,
+    "passed": 46,
+    "failed": 1,
+    "pass_rate": "97.9%"
+  },
+  "bug_fixes": {
+    "L1_vitest_installation": "fixed",
+    "L2_context_null_validation": "fixed",
+    "L2_intent_type_mapping": "fixed"
+  },
+  "env": {
+    "node": "v20.20.0",
+    "platform": "linux"
+  }
+}

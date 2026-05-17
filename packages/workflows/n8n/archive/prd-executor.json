@@ -1,0 +1,428 @@
+{
+  "name": "PRD Executor - Cecelia",
+  "nodes": [
+    {
+      "id": "trigger",
+      "name": "Webhook Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [200, 300],
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "prd-executor",
+        "responseMode": "onReceived",
+        "responseData": "allEntries"
+      },
+      "webhookId": "prd-executor-webhook"
+    },
+    {
+      "id": "load-prd",
+      "name": "Load PRD",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 1,
+      "position": [400, 300],
+      "parameters": {
+        "values": {
+          "string": [
+            {
+              "name": "prd_path",
+              "value": "={{ $json.prd_path }}"
+            },
+            {
+              "name": "work_dir",
+              "value": "={{ $json.work_dir }}"
+            },
+            {
+              "name": "run_id",
+              "value": "={{ $json.run_id || '' }}"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "create-run",
+      "name": "Create Dashboard Run",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [600, 300],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.DASHBOARD_URL }}/runs",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "prd_id",
+              "value": "={{ $json.prd_path }}"
+            },
+            {
+              "name": "repo",
+              "value": "={{ $json.repo || 'unknown' }}"
+            },
+            {
+              "name": "feature_branch",
+              "value": "={{ $json.feature_branch || 'unknown' }}"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "read-prd",
+      "name": "Read PRD File",
+      "type": "n8n-nodes-base.ssh",
+      "typeVersion": 1,
+      "position": [800, 300],
+      "parameters": {
+        "command": "cat {{ $json.prd_path }}",
+        "credentials": {
+          "sshPassword": {
+            "id": "ssh-credentials",
+            "name": "VPS SSH"
+          }
+        }
+      }
+    },
+    {
+      "id": "parse-checkpoints",
+      "name": "Parse Checkpoints",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 1,
+      "position": [1000, 300],
+      "parameters": {
+        "jsCode": "const prd = JSON.parse($input.first().json.stdout);\nconst checkpoints = prd.checkpoints.filter(cp => cp.status === 'pending');\n\nreturn checkpoints.map(cp => ({\n  json: {\n    ...cp,\n    prd_path: $('Load PRD').first().json.prd_path,\n    work_dir: $('Load PRD').first().json.work_dir,\n    run_id: $('Create Dashboard Run').first().json.id\n  }\n}));"
+      }
+    },
+    {
+      "id": "check-dependency",
+      "name": "Check Dependency",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [1200, 300],
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{ $json.depends_on }}",
+              "operation": "isEmpty"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "execute-checkpoint",
+      "name": "Execute Checkpoint (SSH)",
+      "type": "n8n-nodes-base.ssh",
+      "typeVersion": 1,
+      "position": [1400, 300],
+      "parameters": {
+        "command": "cd {{ $json.work_dir }} && cecelia -p {{ $json.prd_path }} -c {{ $json.id }} --callback {{ $env.DASHBOARD_URL }}",
+        "credentials": {
+          "sshPassword": {
+            "id": "ssh-credentials",
+            "name": "VPS SSH"
+          }
+        }
+      }
+    },
+    {
+      "id": "parse-result",
+      "name": "Parse Result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 1,
+      "position": [1600, 300],
+      "parameters": {
+        "jsCode": "const stdout = $input.first().json.stdout;\nlet result;\n\ntry {\n  result = JSON.parse(stdout);\n} catch (e) {\n  result = {\n    success: false,\n    error: 'Failed to parse Cecelia output: ' + e.message,\n    output: stdout\n  };\n}\n\nreturn [{ json: { ...result, checkpoint_id: $input.first().json.id } }];"
+      }
+    },
+    {
+      "id": "check-success",
+      "name": "Check Success",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [1800, 300],
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{ $json.success }}",
+              "value2": true
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "update-success",
+      "name": "Update Status (Success)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [2000, 200],
+      "parameters": {
+        "method": "PATCH",
+        "url": "={{ $env.DASHBOARD_URL }}/checkpoints/{{ $json.checkpoint_id }}",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "status",
+              "value": "done"
+            },
+            {
+              "name": "pr_url",
+              "value": "={{ $json.pr_url || '' }}"
+            },
+            {
+              "name": "tokens_used",
+              "value": "={{ $json.tokens_used || 0 }}"
+            },
+            {
+              "name": "cost",
+              "value": "={{ $json.cost || 0 }}"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "update-failed",
+      "name": "Update Status (Failed)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [2000, 400],
+      "parameters": {
+        "method": "PATCH",
+        "url": "={{ $env.DASHBOARD_URL }}/checkpoints/{{ $json.checkpoint_id }}",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "status",
+              "value": "failed"
+            },
+            {
+              "name": "error",
+              "value": "={{ $json.error }}"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "notify-failure",
+      "name": "Notify Failure",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [2200, 400],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.NOTIFICATION_WEBHOOK }}",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "text",
+              "value": "Checkpoint {{ $json.checkpoint_id }} failed: {{ $json.error }}"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "all-done-check",
+      "name": "All Done Check",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 1,
+      "position": [2200, 200],
+      "parameters": {
+        "jsCode": "// This runs after each successful checkpoint\n// In a real workflow, you'd check if all checkpoints are done\n// For now, just pass through\nreturn $input.all();"
+      }
+    },
+    {
+      "id": "notify-complete",
+      "name": "Notify Complete",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [2400, 200],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.NOTIFICATION_WEBHOOK }}",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "text",
+              "value": "PRD execution completed successfully!"
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "connections": {
+    "trigger": {
+      "main": [
+        [
+          {
+            "node": "load-prd",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "load-prd": {
+      "main": [
+        [
+          {
+            "node": "create-run",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "create-run": {
+      "main": [
+        [
+          {
+            "node": "read-prd",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "read-prd": {
+      "main": [
+        [
+          {
+            "node": "parse-checkpoints",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "parse-checkpoints": {
+      "main": [
+        [
+          {
+            "node": "check-dependency",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "check-dependency": {
+      "main": [
+        [
+          {
+            "node": "execute-checkpoint",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "execute-checkpoint",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "execute-checkpoint": {
+      "main": [
+        [
+          {
+            "node": "parse-result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "parse-result": {
+      "main": [
+        [
+          {
+            "node": "check-success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "check-success": {
+      "main": [
+        [
+          {
+            "node": "update-success",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "update-failed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "update-success": {
+      "main": [
+        [
+          {
+            "node": "all-done-check",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "update-failed": {
+      "main": [
+        [
+          {
+            "node": "notify-failure",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "all-done-check": {
+      "main": [
+        [
+          {
+            "node": "notify-complete",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "meta": {
+    "instanceId": "zenithjoy-engine-template"
+  },
+  "tags": [
+    {
+      "name": "cecelia",
+      "id": "cecelia-tag"
+    },
+    {
+      "name": "prd-executor",
+      "id": "prd-executor-tag"
+    }
+  ]
+}

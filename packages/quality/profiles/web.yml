@@ -1,0 +1,63 @@
+# Web Profile - Lightweight quality config for frontend projects
+# Used by: zenithjoy-autopilot, dashboards, static sites
+
+profile:
+  name: web
+  type: frontend
+  strictness: light
+
+# Required gates (minimal)
+gates:
+  - id: G1
+    name: "No console errors"
+    check: auto
+    blocking: true
+
+  - id: G2
+    name: "Build succeeds"
+    check: auto
+    blocking: true
+
+  - id: G3
+    name: "No TypeScript errors"
+    check: auto
+    blocking: false  # Warning only
+
+# No PRD/DoD required for web projects
+workflow:
+  require_prd: false
+  require_dod: false
+  require_qa: false
+  require_audit: false
+
+# Simple branching (main only or main+develop)
+branches:
+  protected: ["main"]
+  require_pr: true
+
+# Hooks (minimal)
+hooks:
+  pre_commit:
+    - check_ts_errors
+  pre_push:
+    - run_build
+  session_end: false  # No session QA for web
+
+# CI checks
+ci:
+  required_checks:
+    - build
+    - type-check
+  optional_checks:
+    - lighthouse
+    - bundle-size
+
+# RCI not applicable for web
+regression_contracts:
+  enabled: false
+
+# Evidence collection (optional)
+evidence:
+  screenshots: true  # Screenshot visual changes
+  lighthouse_report: true
+  bundle_stats: true

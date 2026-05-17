@@ -1,0 +1,269 @@
+#!/usr/bin/env bash
+# =============================================================================
+# write-current-state.sh — 写入系统健康状态到 .agent-knowledge/CURRENT_STATE.md
+#
+# 功能：
+# - 读取最新 capability-probe 结果（来自 DB 的 cecelia_events 表）
+# - 读取 Brain 健康状态（alertness、active tasks）
+# - 读取最近 5 个 PR（dev-records）
+# - 读取 P0 阻塞任务列表
+# - 读取最近 CI 状态（来自 gh run list）
+# - 写到主仓库 .agent-knowledge/CURRENT_STATE.md
+#
+# 调用时机：/dev Stage 4 Ship 阶段（PR 合并后）
+# 调用方式：bash scripts/write-current-state.sh
+# =============================================================================
+
+set -euo pipefail
+
+BRAIN_URL="${BRAIN_API_URL:-http://localhost:5221}"
+TIMESTAMP=$(TZ=Asia/Shanghai date "+%Y-%m-%d %H:%M:%S %Z" 2>/dev/null || date "+%Y-%m-%d %H:%M:%S")
+
+# ─── 找到主仓库路径 ───────────────────────────────────────────────────────────
+# 从 worktree 或主仓库均可正确解析
+GIT_COMMON=$(git rev-parse --git-common-dir 2>/dev/null || echo ".git")
+if [[ "$GIT_COMMON" == ".git" ]]; then
+    MAIN_REPO=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
+else
+    MAIN_REPO=$(dirname "$GIT_COMMON")
+fi
+
+# 支持 CURRENT_STATE_OUTPUT_FILE 环境变量覆盖（主要用于测试，避免并发竞争）
+OUTPUT_FILE="${CURRENT_STATE_OUTPUT_FILE:-${MAIN_REPO}/.agent-knowledge/CURRENT_STATE.md}"
+mkdir -p "$(dirname "$OUTPUT_FILE")"
+
+echo "[write-current-state] 主仓库: $MAIN_REPO"
+echo "[write-current-state] 输出文件: $OUTPUT_FILE"
+
+# ─── 读取 Brain 警觉等级 ──────────────────────────────────────────────────────
+ALERTNESS_JSON=$(curl -s --max-time 5 "${BRAIN_URL}/api/brain/alertness" 2>/dev/null || echo "{}")
+ALERTNESS_LEVEL=$(echo "$ALERTNESS_JSON" | python3 -c "
+import sys, json
+try:
+    d = json.load(sys.stdin)
+    print(d.get('levelName', 'UNKNOWN'))
+except:
+    print('UNKNOWN')
+" 2>/dev/null || echo "UNKNOWN")
+ALERTNESS_NUM=$(echo "$ALERTNESS_JSON" | python3 -c "
+import sys, json
+try:
+    d = json.load(sys.stdin)
+    print(d.get('level', '?'))
+except:
+    print('?')
+" 2>/dev/null || echo "?")
+
+# ─── 读取最新 Capability Probe 结果（DB） ────────────────────────────────────
+PROBE_DATA=$(PGPASSWORD="${PGPASSWORD:-cecelia}" psql -h localhost -U "${PGUSER:-cecelia}" -d cecelia -t -c "
+SELECT payload::text
+FROM cecelia_events
+WHERE event_type = 'capability_probe'
+ORDER BY created_at DESC
+LIMIT 1;
+" 2>/dev/null | tr -d ' \n' | head -c 10000 || echo "")
+
+PROBE_SECTION=""
+if [[ -n "$PROBE_DATA" && "$PROBE_DATA" != "" ]]; then
+    PROBE_SECTION=$(echo "$PROBE_DATA" | python3 -c "
+import sys, json
+try:
+    raw = sys.stdin.read().strip()
+    d = json.loads(raw)
+    ts = d.get('timestamp', '?')[:19].replace('T', ' ')
+    total = d.get('total', 0)
+    passed = d.get('passed', 0)
+    failed = d.get('failed', 0)
+    probes = d.get('probes', [])
+
+    lines = []
+    lines.append(f'> 最后探针时间：{ts} UTC | 总计：{total} | ✅ 通过：{passed} | ❌ 失败：{failed}')
+    lines.append('')
+    lines.append('| 探针名 | 描述 | 状态 | 耗时 |')
+    lines.append('|--------|------|------|------|')
+    for p in probes:
+        status = '✅' if p.get('ok') else '❌'
+        name = p.get('name', '?')
+        desc = p.get('description', '')
+        latency = p.get('latency_ms', '?')
+        detail = p.get('detail', '') or p.get('error', '') or ''
+        detail_short = (detail[:50] + '...') if len(detail) > 50 else detail
+        row_extra = f' ({detail_short})' if detail_short and not p.get('ok') else ''
+        lines.append(f'| \`{name}\` | {desc}{row_extra} | {status} | {latency}ms |')
+    print('\n'.join(lines))
+except Exception as e:
+    print(f'（解析失败：{e}）')
+" 2>/dev/null || echo "（DB 查询失败，无探针数据）")
+else
+    PROBE_SECTION="（尚无探针数据，Brain 启动 30s 后首次探针）"
+fi
+
+# ─── 读取进行中任务 ────────────────────────────────────────────────────────────
+TASKS_JSON=$(curl -s --max-time 5 "${BRAIN_URL}/api/brain/tasks?status=in_progress&limit=8" 2>/dev/null || echo "[]")
+TASKS_SECTION=$(echo "$TASKS_JSON" | python3 -c "
+import sys, json
+try:
+    tasks = json.load(sys.stdin)
+    if not tasks:
+        print('（无进行中任务）')
+    else:
+        lines = []
+        for t in tasks[:8]:
+            title = t.get('title', '?')[:60]
+            prio = t.get('priority', '')
+            ttype = t.get('task_type', '')
+            lines.append(f'- [{prio}] {title} ({ttype})')
+        print('\n'.join(lines))
+except:
+    print('（查询失败）')
+" 2>/dev/null || echo "（查询失败）")
+
+# ─── 读取 Brain 健康状态 ────────────────────────────────────────────────────
+HEALTH_JSON=$(curl -s --max-time 5 "${BRAIN_URL}/api/brain/health" 2>/dev/null || echo "{}")
+HEALTH_STATUS=$(echo "$HEALTH_JSON" | python3 -c "
+import sys, json
+try:
+    d = json.load(sys.stdin)
+    print(d.get('status', 'unknown'))
+except:
+    print('unknown')
+" 2>/dev/null || echo "unknown")
+
+# ─── 读取最近 5 个 PR ──────────────────────────────────────────────────────────
+RECORDS_JSON=$(curl -s --max-time 5 "${BRAIN_URL}/api/brain/dev-records?limit=5" 2>/dev/null || echo "{}")
+PR_SECTION=$(echo "$RECORDS_JSON" | python3 -c "
+import sys, json
+try:
+    data = json.load(sys.stdin)
+    records = data.get('data', data) if isinstance(data, dict) else data
+    if not isinstance(records, list) or not records:
+        print('（无 PR 记录）')
+    else:
+        lines = []
+        for r in records[:5]:
+            title = (r.get('pr_title') or '?')[:60]
+            url = r.get('pr_url') or ''
+            merged = r.get('merged_at') or ''
+            merged_short = merged[:10] if merged else '未合并'
+            if url:
+                lines.append(f'- [{merged_short}] [{title}]({url})')
+            else:
+                lines.append(f'- [{merged_short}] {title}')
+        print('\n'.join(lines))
+except Exception as e:
+    print(f'（查询失败：{e}）')
+" 2>/dev/null || echo "（查询失败）")
+
+# ─── 读取 P0 阻塞/失败任务 ────────────────────────────────────────────────────
+P0_BLOCKED_JSON=$(curl -s --max-time 5 "${BRAIN_URL}/api/brain/tasks?priority=P0&status=blocked&limit=10" 2>/dev/null || echo "[]")
+P0_FAILED_JSON=$(curl -s --max-time 5 "${BRAIN_URL}/api/brain/tasks?priority=P0&status=failed&limit=10" 2>/dev/null || echo "[]")
+P0_SECTION=$(P0_BLOCKED="$P0_BLOCKED_JSON" P0_FAILED="$P0_FAILED_JSON" python3 -c "
+import sys, json, os
+try:
+    blocked_raw = os.environ.get('P0_BLOCKED', '[]')
+    failed_raw = os.environ.get('P0_FAILED', '[]')
+    blocked = json.loads(blocked_raw) if blocked_raw else []
+    failed = json.loads(failed_raw) if failed_raw else []
+    if not isinstance(blocked, list): blocked = []
+    if not isinstance(failed, list): failed = []
+    issues = blocked + failed
+    if not issues:
+        print('（无 P0 阻塞/失败任务）')
+    else:
+        lines = []
+        for t in issues[:10]:
+            title = (t.get('title') or '?')[:60]
+            status = t.get('status', '?')
+            reason = (t.get('blocked_reason') or t.get('error_message') or '')[:50]
+            lines.append(f'- \u274c [{status}] {title}' + (f' \u2014 {reason}' if reason else ''))
+        print('\n'.join(lines))
+except Exception as e:
+    print(f'（解析失败：{e}）')
+" 2>/dev/null || echo "（查询失败）")
+
+# ─── 读取最近 CI 状态 ─────────────────────────────────────────────────────────
+CI_SECTION=""
+if command -v gh &>/dev/null; then
+    CI_RAW=$(gh run list --repo perfectuser21/cecelia --limit 5 --json status,conclusion,name,createdAt,headBranch 2>/dev/null || echo "[]")
+    CI_SECTION=$(echo "$CI_RAW" | python3 -c "
+import sys, json
+try:
+    runs = json.load(sys.stdin)
+    if not runs:
+        print('（无 CI 记录）')
+    else:
+        lines = ['| 状态 | 结论 | 工作流 | 分支 | 时间 |', '|------|------|--------|------|------|']
+        for r in runs[:5]:
+            status = r.get('status', '?')
+            conclusion = r.get('conclusion') or '-'
+            name = (r.get('name') or '?')[:30]
+            branch = (r.get('headBranch') or '?')[:25]
+            created = (r.get('createdAt') or '')[:16].replace('T', ' ')
+            icon = '✅' if conclusion == 'success' else ('❌' if conclusion == 'failure' else '🔄')
+            lines.append(f'| {icon} {status} | {conclusion} | {name} | {branch} | {created} |')
+        print('\n'.join(lines))
+except Exception as e:
+    print(f'（解析失败：{e}）')
+" 2>/dev/null || echo "（CI 数据解析失败）")
+else
+    CI_SECTION="（gh CLI 不可用，跳过 CI 状态查询）"
+fi
+
+# ─── 写入 CURRENT_STATE.md ────────────────────────────────────────────────────
+cat > "$OUTPUT_FILE" <<STATEOF
+---
+generated: ${TIMESTAMP}
+source: write-current-state.sh
+---
+
+# Cecelia 系统当前状态
+
+> 由 \`/dev\` Stage 4 自动生成，每次 PR 合并后更新。
+> 生成时间：${TIMESTAMP}
+
+---
+
+## 系统健康
+
+| 指标 | 状态 |
+|------|------|
+| Brain API | ${HEALTH_STATUS} |
+| 警觉等级 | ${ALERTNESS_NUM} - ${ALERTNESS_LEVEL} |
+
+---
+
+## Capability Probe（能力链路探针）
+
+${PROBE_SECTION}
+
+---
+
+## 进行中任务
+
+${TASKS_SECTION}
+
+---
+
+## 最近 PR
+
+${PR_SECTION}
+
+---
+
+## P0 Issues
+
+${P0_SECTION}
+
+---
+
+## 最近 CI 状态
+
+${CI_SECTION}
+
+---
+
+> 要查最新状态：\`curl localhost:5221/api/brain/health\`
+> 要触发探针：Brain 每小时自动运行，或重启 Brain 触发。
+STATEOF
+
+echo "[write-current-state] ✅ CURRENT_STATE.md 已写入: $OUTPUT_FILE"

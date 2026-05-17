@@ -1,0 +1,184 @@
+{
+  "name": "template-claude-batch-processor",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "claude-batch",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "webhook-trigger",
+      "name": "Webhook Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [240, 300],
+      "webhookId": "claude-batch-processor"
+    },
+    {
+      "parameters": {
+        "jsCode": "// 接收批量任务列表\nconst body = $json.body || $json;\nconst tasks = body.tasks || [];\nconst batchId = body.batch_id || 'batch-' + Date.now();\n\n// 转换为多个执行项\nreturn tasks.map((task, index) => ({\n  batch_id: batchId,\n  task_index: index,\n  task_id: `${batchId}-${index}`,\n  prompt: task.prompt || task.task || '',\n  metadata: task.metadata || {}\n}));"
+      },
+      "id": "split-tasks",
+      "name": "Split Tasks",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "batchSize": 3,
+        "options": {
+          "reset": false
+        }
+      },
+      "id": "batch-limit",
+      "name": "Batch Limit (并发 3)",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [680, 300]
+    },
+    {
+      "parameters": {
+        "authentication": "none",
+        "command": "=/bin/bash -c 'echo \"{{ $json.prompt }}\" > /tmp/prompt-{{ $json.task_id }}.txt && claude -p \"$(cat /tmp/prompt-{{ $json.task_id }}.txt)\" --output-format json'",
+        "options": {
+          "timeout": 600000
+        }
+      },
+      "id": "execute-claude",
+      "name": "Execute Claude",
+      "type": "n8n-nodes-base.ssh",
+      "typeVersion": 1,
+      "position": [900, 300],
+      "credentials": {
+        "sshPassword": {
+          "id": "1",
+          "name": "localhost"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const stdout = $json.stdout || '{}';\nlet result;\n\ntry {\n  result = JSON.parse(stdout);\n} catch (e) {\n  result = { raw_output: stdout };\n}\n\nreturn {\n  batch_id: $json.batch_id,\n  task_id: $json.task_id,\n  task_index: $json.task_index,\n  success: true,\n  result: result,\n  metadata: $json.metadata\n};"
+      },
+      "id": "collect-result",
+      "name": "Collect Result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1120, 300]
+    },
+    {
+      "parameters": {
+        "authentication": "none",
+        "command": "=/bin/bash -c 'rm -f /tmp/prompt-{{ $json.task_id }}.txt'",
+        "options": {}
+      },
+      "id": "cleanup-temp",
+      "name": "Cleanup Temp File",
+      "type": "n8n-nodes-base.ssh",
+      "typeVersion": 1,
+      "position": [1340, 300],
+      "credentials": {
+        "sshPassword": {
+          "id": "1",
+          "name": "localhost"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{ $('Batch Limit (并发 3)').isLastBatch() }}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "id": "check-last-batch",
+      "name": "是否最后一批？",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1560, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// 聚合所有结果\nconst allResults = $input.all();\n\nreturn {\n  batch_id: allResults[0]?.json.batch_id,\n  total_tasks: allResults.length,\n  successful: allResults.filter(r => r.json.success).length,\n  results: allResults.map(r => r.json)\n};"
+      },
+      "id": "aggregate-results",
+      "name": "Aggregate Results",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1780, 200]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}"
+      },
+      "id": "respond-final",
+      "name": "Respond Final",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [2000, 200]
+    },
+    {
+      "parameters": {},
+      "id": "no-action",
+      "name": "继续下一批",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [1780, 400]
+    }
+  ],
+  "connections": {
+    "Webhook Trigger": {
+      "main": [[{"node": "Split Tasks", "type": "main", "index": 0}]]
+    },
+    "Split Tasks": {
+      "main": [[{"node": "Batch Limit (并发 3)", "type": "main", "index": 0}]]
+    },
+    "Batch Limit (并发 3)": {
+      "main": [[{"node": "Execute Claude", "type": "main", "index": 0}]]
+    },
+    "Execute Claude": {
+      "main": [[{"node": "Collect Result", "type": "main", "index": 0}]]
+    },
+    "Collect Result": {
+      "main": [[{"node": "Cleanup Temp File", "type": "main", "index": 0}]]
+    },
+    "Cleanup Temp File": {
+      "main": [[{"node": "是否最后一批？", "type": "main", "index": 0}]]
+    },
+    "是否最后一批？": {
+      "main": [
+        [{"node": "Aggregate Results", "type": "main", "index": 0}],
+        [{"node": "继续下一批", "type": "main", "index": 0}]
+      ]
+    },
+    "Aggregate Results": {
+      "main": [[{"node": "Respond Final", "type": "main", "index": 0}]]
+    },
+    "继续下一批": {
+      "main": [[{"node": "Batch Limit (并发 3)", "type": "main", "index": 0}]]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "meta": {
+    "description": "批量处理模板 - 并发控制，批量执行多个 Claude 任务",
+    "usage": "POST /webhook/claude-batch with: {\"tasks\": [{\"prompt\": \"task1\"}, {\"prompt\": \"task2\"}]}",
+    "features": [
+      "批量任务处理",
+      "并发控制（每批 3 个）",
+      "自动聚合结果",
+      "临时文件自动清理"
+    ],
+    "author": "Cecelia Workflows"
+  }
+}

@@ -1,0 +1,198 @@
+name: Brain CI Deploy (Gate 3)
+
+# Gate 3: brain 文件变更自动触发 HTTP 部署
+#
+# 与 deploy.yml 的区别：
+#   deploy.yml  — 全量 release（brain + workspace），手动/定时，Safe/Fast Lane
+#   brain-ci-deploy.yml — brain 专用，push 触发，Fast Lane only，cancel-in-progress:true
+#
+# 历史教训（brain-deploy.yml PR #2675）：
+#   ❌ SSH 方案 → BRAIN_DEPLOY_SSH_KEY 为空立即失败
+#   ✅ 本 workflow 使用 DEPLOY_TOKEN + Brain HTTP API（与 deploy.yml 相同机制）
+#
+# 并发策略：cancel-in-progress:true（多次连续 merge 只跑最新的）
+#   独立 group "brain-autodeploy"，绝不使用 "deploy-production"（与 deploy.yml 冲突）
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'packages/brain/**'
+      - 'scripts/brain-deploy.sh'
+
+concurrency:
+  group: brain-autodeploy
+  cancel-in-progress: true
+
+jobs:
+  # ─── Gate 3: Brain HTTP 自动部署 ─────────────────────────────────────────
+  deploy:
+    name: Deploy Brain (Gate 3)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      BRAIN_URL: ${{ secrets.BRAIN_DEPLOY_URL || 'http://38.23.47.81:5221' }}
+      DEPLOY_TOKEN: ${{ secrets.DEPLOY_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: 计算变更路径
+        id: paths
+        run: |
+          BEFORE="${{ github.event.before }}"
+          AFTER="${{ github.event.after }}"
+
+          if [ "$BEFORE" = "0000000000000000000000000000000000000000" ]; then
+            CHANGED="packages/brain/"
+          else
+            CHANGED=$(git diff --name-only "$BEFORE" "$AFTER" 2>/dev/null \
+              | grep -E "^packages/brain/|^scripts/brain-deploy\.sh" | tr '\n' ' ' || echo "packages/brain/")
+          fi
+
+          echo "changed_paths=$CHANGED" >> $GITHUB_OUTPUT
+          echo "Brain 变更路径: $CHANGED"
+
+      - name: 触发 Brain HTTP Deploy
+        id: trigger
+        run: |
+          if [ -z "$DEPLOY_TOKEN" ]; then
+            echo "::error::DEPLOY_TOKEN secret 未配置"
+            exit 1
+          fi
+
+          CHANGED_PATHS="${{ steps.paths.outputs.changed_paths }}"
+          JSON_PATHS=$(echo "$CHANGED_PATHS" | tr ' ' '\n' | grep -v '^$' | jq -R . | jq -sc .)
+
+          echo "触发 Brain HTTP 部署..."
+          echo "  URL: ${BRAIN_URL}/api/brain/deploy"
+          echo "  变更路径: $CHANGED_PATHS"
+          echo ""
+
+          HTTP_CODE=$(curl -s -o /tmp/deploy_resp.txt -w "%{http_code}" \
+            -X POST "${BRAIN_URL}/api/brain/deploy" \
+            -H "Authorization: Bearer ${DEPLOY_TOKEN}" \
+            -H "Content-Type: application/json" \
+            -d "{\"changed_paths\": ${JSON_PATHS}}" \
+            --connect-timeout 30 --max-time 60 2>/dev/null || echo "000")
+
+          echo "HTTP 状态: $HTTP_CODE"
+          if [ -f /tmp/deploy_resp.txt ]; then cat /tmp/deploy_resp.txt; fi
+          echo ""
+
+          # 409 = deploy 正在进行（deploy.yml 或另一个 Gate 3 实例）→ 跳过，非失败
+          if [ "$HTTP_CODE" = "409" ]; then
+            echo "::warning::Brain deploy 已在进行中（409），跳过本次（变更已包含在进行中的 deploy 里）"
+            echo "skipped=true" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
+          if [ "$HTTP_CODE" -ge 200 ] && [ "$HTTP_CODE" -lt 300 ]; then
+            echo "✅ Deploy webhook 已触发"
+            echo "skipped=false" >> $GITHUB_OUTPUT
+          else
+            echo "::error::Deploy webhook 失败（HTTP $HTTP_CODE）"
+            exit 1
+          fi
+
+      - name: 等待 Deploy 完成
+        if: steps.trigger.outputs.skipped != 'true'
+        run: |
+          echo "轮询 /api/brain/deploy/status（最多 300s）..."
+          MAX_WAIT=300
+          INTERVAL=10
+          ELAPSED=0
+
+          while [ $ELAPSED -lt $MAX_WAIT ]; do
+            STATUS_JSON=$(curl -s --connect-timeout 10 --max-time 15 \
+              "${BRAIN_URL}/api/brain/deploy/status" 2>/dev/null \
+              || echo '{"status":"unknown"}')
+            STATUS=$(echo "$STATUS_JSON" | jq -r '.status // "unknown"' 2>/dev/null || echo "unknown")
+
+            echo "  [${ELAPSED}s] status=$STATUS"
+
+            if [ "$STATUS" = "success" ]; then
+              ELAPSED_MS=$(echo "$STATUS_JSON" | jq -r '.elapsed_ms // "?"' 2>/dev/null || echo "?")
+              echo "✅ Deploy 成功（${ELAPSED_MS}ms）"
+              exit 0
+            elif [ "$STATUS" = "failed" ]; then
+              ERR=$(echo "$STATUS_JSON" | jq -r '.error // "未知错误"' 2>/dev/null || echo "未知错误")
+              echo "::error::Deploy 失败: $ERR"
+              exit 1
+            elif [ "$STATUS" = "idle" ] && [ $ELAPSED -gt 30 ]; then
+              echo "::warning::Deploy status idle（${ELAPSED}s 后）— 可能无变更，视为成功"
+              exit 0
+            fi
+
+            sleep $INTERVAL
+            ELAPSED=$((ELAPSED + INTERVAL))
+          done
+
+          echo "::warning::Deploy status 轮询超时（${MAX_WAIT}s）— webhook 已接受，结果未知"
+
+      - name: Smoke — Brain /health 检查
+        if: steps.trigger.outputs.skipped != 'true'
+        run: |
+          echo "Brain /health smoke..."
+          sleep 5
+
+          HTTP_CODE=$(curl -s -o /tmp/health_resp.txt -w "%{http_code}" \
+            "${BRAIN_URL}/api/brain/health" \
+            --connect-timeout 15 --max-time 30 2>/dev/null || echo "000")
+
+          if [ -f /tmp/health_resp.txt ]; then cat /tmp/health_resp.txt; fi
+          echo ""
+
+          if [ "$HTTP_CODE" -ge 200 ] && [ "$HTTP_CODE" -lt 300 ]; then
+            echo "✅ Brain /health 正常"
+          else
+            echo "::error::Brain /health 异常（HTTP $HTTP_CODE）"
+            exit 1
+          fi
+
+  # ─── Gate 2: 部署失败时创建 Brain P0 任务 ────────────────────────────────
+  on_deploy_failure:
+    name: Gate 2 — P0 Alert on Failure
+    needs: deploy
+    if: failure()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      BRAIN_URL: ${{ secrets.BRAIN_DEPLOY_URL || 'http://38.23.47.81:5221' }}
+      DEPLOY_TOKEN: ${{ secrets.DEPLOY_TOKEN }}
+    steps:
+      - name: 创建 Brain P0 告警任务
+        run: |
+          FAILED_SHA="${{ github.sha }}"
+          FAILED_SHA_SHORT="${FAILED_SHA:0:7}"
+          RUN_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          COMMIT_MSG=$(curl -s "https://api.github.com/repos/${{ github.repository }}/commits/${FAILED_SHA}" \
+            -H "Authorization: Bearer ${{ github.token }}" 2>/dev/null \
+            | jq -r '.commit.message | split("\n")[0]' 2>/dev/null || echo "未知提交")
+
+          echo "[Gate 2] Brain CI Deploy 失败 — 创建 P0 告警任务"
+          echo "  commit: $FAILED_SHA_SHORT ($COMMIT_MSG)"
+          echo "  run: $RUN_URL"
+          echo ""
+
+          HTTP_CODE=$(curl -s -o /tmp/task_resp.txt -w "%{http_code}" \
+            -X POST "${BRAIN_URL}/api/brain/tasks" \
+            -H "Content-Type: application/json" \
+            -d "{
+              \"title\": \"[P0] Brain CI Deploy 失败 — ${FAILED_SHA_SHORT}\",
+              \"description\": \"Gate 3 自动部署失败。\n\n**Commit**: \`${FAILED_SHA}\`\n**消息**: ${COMMIT_MSG}\n**Workflow**: ${RUN_URL}\n\n请检查 Brain deploy 日志，确定是否需要 revert。\",
+              \"priority\": \"p0\",
+              \"status\": \"todo\",
+              \"task_type\": \"hotfix\",
+              \"labels\": [\"deploy-failure\", \"gate3\", \"p0\"]
+            }" \
+            --connect-timeout 30 --max-time 60 2>/dev/null || echo "000")
+
+          if [ "$HTTP_CODE" -ge 200 ] && [ "$HTTP_CODE" -lt 300 ]; then
+            echo "✅ Brain P0 告警任务已创建"
+            if [ -f /tmp/task_resp.txt ]; then cat /tmp/task_resp.txt; fi
+          else
+            echo "::warning::Brain P0 任务创建失败（HTTP $HTTP_CODE）— Brain 可能已宕机，请手动检查"
+            echo "  手动排查: curl ${BRAIN_URL}/api/brain/health"
+          fi

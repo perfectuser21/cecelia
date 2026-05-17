@@ -1,0 +1,185 @@
+# B1 Regression Contract - Cecelia Semantic Brain
+# 定义 Brain 服务的回归测试契约
+
+# --------------------------------------------------------------------------
+# B1: Brain Core API (P0 - 核心功能)
+# --------------------------------------------------------------------------
+- id: B1-001
+  feature: B1
+  name: "Brain API 健康检查"
+  scope: brain
+  priority: P0
+  trigger: [PR, Release]
+  method: auto
+  tags: [brain, health, api]
+  owner: infra
+  steps:
+    given: "Brain 服务运行在 5220 端口"
+    when: "GET /health"
+    then: "返回 200 状态码和 healthy 状态"
+  evidence:
+    type: command
+    run: "curl -s http://localhost:5220/health"
+    contains: '"status":"healthy"'
+  test: "tests/test_api.py::TestAPI::test_health_endpoint"
+
+- id: B1-002
+  feature: B1
+  name: "语义搜索 API"
+  scope: brain
+  priority: P0
+  trigger: [PR, Release]
+  method: auto
+  tags: [brain, fusion, search, api]
+  owner: infra
+  steps:
+    given: "Brain 服务已初始化向量数据库"
+    when: "POST /fusion 带有效查询"
+    then: "返回搜索结果列表"
+  evidence:
+    type: command
+    run: 'curl -s -X POST http://localhost:5220/fusion -H "Content-Type: application/json" -d ''{"query":"test","top_k":5}'''
+    contains: '"results"'
+  test: "tests/test_api.py::TestAPI::test_fusion_endpoint_success"
+
+# --------------------------------------------------------------------------
+# B1: Intelligence Layer API (P1 - 智能层)
+# --------------------------------------------------------------------------
+- id: B1-003
+  feature: B1
+  name: "Parser API 意图解析"
+  scope: brain
+  priority: P1
+  trigger: [PR, Release]
+  method: auto
+  tags: [brain, parser, intelligence, api]
+  owner: infra
+  steps:
+    given: "ParserService 已初始化"
+    when: "POST /parse 带有效意图"
+    then: "返回解析后的任务列表和依赖图"
+  evidence:
+    type: command
+    run: 'curl -s -X POST http://localhost:5220/parse -H "Content-Type: application/json" -d ''{"intent":"create a new feature"}'''
+    contains: '"tasks"'
+  test: "tests/test_intelligence/test_parse_api.py"
+
+- id: B1-004
+  feature: B1
+  name: "Scheduler API 任务调度"
+  scope: brain
+  priority: P1
+  trigger: [PR, Release]
+  method: auto
+  tags: [brain, scheduler, intelligence, api]
+  owner: infra
+  steps:
+    given: "SchedulerService 已初始化"
+    when: "POST /schedule 带任务列表"
+    then: "返回执行计划和阶段"
+  evidence:
+    type: command
+    run: 'curl -s -X POST http://localhost:5220/schedule -H "Content-Type: application/json" -d ''{"tasks":[{"id":"t1","priority":"P1"}]}'''
+    contains: '"execution_plan"'
+  test: "tests/test_intelligence/test_schedule_api.py"
+
+- id: B1-005
+  feature: B1
+  name: "Execution Planner API"
+  scope: brain
+  priority: P1
+  trigger: [PR, Release]
+  method: auto
+  tags: [brain, planner, intelligence, api]
+  owner: infra
+  steps:
+    given: "ExecutionPlanner 已初始化"
+    when: "POST /plan 带任务列表"
+    then: "返回执行计划、瓶颈分析和时间估算"
+  evidence:
+    type: command
+    run: 'curl -s -X POST http://localhost:5220/plan -H "Content-Type: application/json" -d ''{"tasks":[{"id":"t1","priority":"P1","status":"queued"}]}'''
+    contains: '"current_tasks"'
+  test: "tests/test_intelligence/test_planner_api.py"
+
+- id: B1-006
+  feature: B1
+  name: "Detector API 状态检查"
+  scope: brain
+  priority: P1
+  trigger: [PR, Release]
+  method: auto
+  tags: [brain, detector, intelligence, api]
+  owner: infra
+  steps:
+    given: "DetectorService 已初始化"
+    when: "GET /detector/status"
+    then: "返回所有监控器状态"
+  evidence:
+    type: command
+    run: "curl -s http://localhost:5220/detector/status"
+    contains: '"monitors"'
+  test: "tests/test_intelligence/test_detector_api.py"
+
+# --------------------------------------------------------------------------
+# B1: Monitoring API (P1 - 监控层)
+# --------------------------------------------------------------------------
+- id: B1-007
+  feature: B1
+  name: "Agent Monitor API"
+  scope: brain
+  priority: P1
+  trigger: [PR, Release]
+  method: auto
+  tags: [brain, agent, monitor, api]
+  owner: infra
+  steps:
+    given: "Database 连接正常"
+    when: "GET /api/agents/runs"
+    then: "返回 agent runs 列表"
+  evidence:
+    type: command
+    run: "curl -s http://localhost:5220/api/agents/runs"
+    contains: '"runs"'
+  test: "tests/test_agent_monitor.py::TestListRunsEndpoint"
+
+- id: B1-008
+  feature: B1
+  name: "Patrol API 停滞检测"
+  scope: brain
+  priority: P1
+  trigger: [PR, Release]
+  method: auto
+  tags: [brain, patrol, monitor, api]
+  owner: infra
+  steps:
+    given: "Database 连接正常"
+    when: "GET /api/patrol/stale"
+    then: "返回停滞任务列表"
+  evidence:
+    type: command
+    run: "curl -s http://localhost:5220/api/patrol/stale"
+    contains: '"tasks"'
+  test: "tests/test_patrol_api.py"
+
+# --------------------------------------------------------------------------
+# B1: State Management API (P2 - 状态管理)
+# --------------------------------------------------------------------------
+- id: B1-009
+  feature: B1
+  name: "Brain State API"
+  scope: brain
+  priority: P2
+  trigger: [Release]
+  method: auto
+  tags: [brain, state, focus, tick, goals, queue, api]
+  owner: infra
+  steps:
+    given: "Database 连接正常"
+    when: "GET /api/brain/tick/status"
+    then: "返回 Tick 状态"
+  evidence:
+    type: command
+    run: "curl -s http://localhost:5220/api/brain/tick/status"
+    contains: '"enabled"'
+  test: "tests/test_tick_api.py"

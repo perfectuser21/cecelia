@@ -1,0 +1,1452 @@
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import {
+  Target,
+  RefreshCw,
+  XCircle,
+  Clock,
+  ChevronDown,
+  ChevronRight,
+  ListTodo,
+  AlertTriangle,
+  Unlock,
+  Filter,
+  Crosshair,
+  GripVertical,
+  ArrowUpDown,
+  ArrowUp,
+  ArrowDown,
+  LayoutList,
+  Columns,
+} from 'lucide-react';
+import type { DropResult } from '@hello-pangea/dnd';
+import { DragDropContext, Droppable, Draggable } from '@hello-pangea/dnd';
+import { formatRelativeTime } from '../../shared/utils/formatters';
+
+// ── Types ──────────────────────────────────────────────
+
+interface Goal {
+  id: string;
+  parent_id: string | null;
+  title: string;
+  status: string;
+  priority: string;
+  progress: number;
+  type: string;
+  description: string | null;
+}
+
+interface Task {
+  id: string;
+  goal_id: string | null;
+  title: string;
+  status: string;
+  priority: string;
+  task_type: string;
+  created_at: string;
+  completed_at: string | null;
+  project_id?: string | null;
+}
+
+interface Project {
+  id: string;
+  name: string;
+  repo_path?: string;
+  parent_id?: string | null;
+}
+
+interface QuarantineTask {
+  id: string;
+  title: string;
+  reason: string;
+  quarantined_at: string;
+  priority: string;
+}
+
+interface FocusData {
+  focus: {
+    objective: {
+      id: string;
+      title: string;
+      priority: string;
+      progress: number;
+      status: string;
+    };
+    key_results: Array<{
+      id: string;
+      title: string;
+      progress: number;
+      status: string;
+    }>;
+  };
+}
+
+// ── Constants ──────────────────────────────────────────
+
+type ViewMode = 'table' | 'board';
+type GroupBy = 'none' | 'status' | 'priority' | 'project' | 'month';
+type SortField = 'title' | 'status' | 'priority' | 'project' | 'task_type' | 'created_at';
+type SortDir = 'asc' | 'desc';
+type PresetView = 'all' | 'today' | 'tomorrow' | 'next7' | 'next30' | 'pending' | 'in_progress' | 'completed';
+
+const PRIORITIES = ['P0', 'P1', 'P2'] as const;
+const TASK_STATUSES = ['queued', 'in_progress', 'completed', 'cancelled'] as const;
+const BOARD_COLUMNS: { key: string; label: string }[] = [
+  { key: 'queued', label: 'Queued' },
+  { key: 'in_progress', label: 'In Progress' },
+  { key: 'completed', label: 'Completed' },
+];
+
+const PRIORITY_ORDER: Record<string, number> = { P0: 0, P1: 1, P2: 2 };
+const STATUS_ORDER: Record<string, number> = { queued: 0, in_progress: 1, completed: 2, cancelled: 3 };
+
+// ── Date Helpers ───────────────────────────────────────
+
+function isToday(date: Date): boolean {
+  const today = new Date();
+  return date.toDateString() === today.toDateString();
+}
+
+function isTomorrow(date: Date): boolean {
+  const tomorrow = new Date();
+  tomorrow.setDate(tomorrow.getDate() + 1);
+  return date.toDateString() === tomorrow.toDateString();
+}
+
+function isWithinDays(date: Date, days: number): boolean {
+  const now = new Date();
+  const future = new Date();
+  future.setDate(future.getDate() + days);
+  return date >= now && date <= future;
+}
+
+// ── Preset Views ───────────────────────────────────────
+
+const PRESET_VIEWS: Array<{ key: PresetView; label: string; filter: (task: Task) => boolean }> = [
+  { key: 'all', label: 'All', filter: () => true },
+  { key: 'today', label: 'Today', filter: (t) => isToday(new Date(t.created_at)) },
+  { key: 'tomorrow', label: 'Tomorrow', filter: (t) => isTomorrow(new Date(t.created_at)) },
+  { key: 'next7', label: 'Next 7 days', filter: (t) => isWithinDays(new Date(t.created_at), 7) },
+  { key: 'next30', label: 'Next 30 days', filter: (t) => isWithinDays(new Date(t.created_at), 30) },
+  { key: 'pending', label: 'Pending', filter: (t) => t.status === 'queued' },
+  { key: 'in_progress', label: 'In Progress', filter: (t) => t.status === 'in_progress' },
+  { key: 'completed', label: 'Completed', filter: (t) => t.status === 'completed' },
+];
+
+// ── Helpers ────────────────────────────────────────────
+
+async function fetchJson<T>(url: string): Promise<T> {
+  const r = await fetch(url);
+  if (!r.ok) throw new Error(`${r.status}`);
+  return r.json();
+}
+
+async function patchEntity(type: 'tasks' | 'goals', id: string, data: Record<string, string>): Promise<void> {
+  const r = await fetch(`/api/tasks/${type}/${id}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data),
+  });
+  if (!r.ok) {
+    const err = await r.json().catch(() => ({ error: `HTTP ${r.status}` }));
+    throw new Error(err.error || err.details || 'Failed to update');
+  }
+}
+
+// Notion-style color system with inline styles
+function getPriorityStyle(p: string): React.CSSProperties {
+  const colors = {
+    P0: { backgroundColor: 'rgba(212, 76, 71, 0.1)', color: 'rgb(212, 76, 71)' },
+    P1: { backgroundColor: 'rgba(233, 168, 0, 0.1)', color: 'rgb(233, 168, 0)' },
+    P2: { backgroundColor: 'rgba(0, 135, 107, 0.1)', color: 'rgb(0, 135, 107)' },
+  };
+  return colors[p as keyof typeof colors] || { backgroundColor: 'rgba(206, 205, 202, 0.5)', color: 'rgba(55, 53, 47, 0.6)' };
+}
+
+function getStatusStyle(s: string): React.CSSProperties {
+  const colors = {
+    completed: { backgroundColor: 'rgba(0, 135, 107, 0.1)', color: 'rgb(0, 135, 107)' },
+    in_progress: { backgroundColor: 'rgba(35, 131, 226, 0.1)', color: 'rgb(35, 131, 226)' },
+    queued: { backgroundColor: 'rgba(206, 205, 202, 0.5)', color: 'rgba(55, 53, 47, 0.6)' },
+    cancelled: { backgroundColor: 'rgba(212, 76, 71, 0.05)', color: 'rgba(212, 76, 71, 0.6)' },
+  };
+  return colors[s as keyof typeof colors] || { backgroundColor: 'rgba(206, 205, 202, 0.5)', color: 'rgba(55, 53, 47, 0.6)' };
+}
+
+// Keep old functions for backward compatibility (now just return empty string)
+function priorityColor(p: string) {
+  return '';
+}
+
+function statusColor(s: string) {
+  return '';
+}
+
+function getMonthKey(dateStr: string): string {
+  const d = new Date(dateStr);
+  if (isNaN(d.getTime())) return 'Unknown';
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+}
+
+// ── Main Component ─────────────────────────────────────
+
+function TaskDatabaseList() {
+  const [tasks, setTasks] = useState<Task[]>([]);
+  const [goals, setGoals] = useState<Goal[]>([]);
+  const [projects, setProjects] = useState<Project[]>([]);
+  const [quarantine, setQuarantine] = useState<QuarantineTask[]>([]);
+  const [focus, setFocus] = useState<FocusData | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [lastUpdate, setLastUpdate] = useState<Date | null>(null);
+
+  // View state
+  const [viewMode, setViewMode] = useState<ViewMode>('table');
+  const [groupBy, setGroupBy] = useState<GroupBy>('none');
+  const [sortField, setSortField] = useState<SortField>('created_at');
+  const [sortDir, setSortDir] = useState<SortDir>('desc');
+  const [showQuarantine, setShowQuarantine] = useState(true);
+
+  // Preset view state (localStorage)
+  const [activeView, setActiveView] = useState<PresetView>(() => {
+    try {
+      const saved = localStorage.getItem('taskdb_active_view');
+      return (saved as PresetView) || 'all';
+    } catch { return 'all'; }
+  });
+
+  // Row order (localStorage)
+  const [rowOrder, setRowOrder] = useState<string[]>(() => {
+    try {
+      const saved = localStorage.getItem('taskdb_row_order');
+      return saved ? JSON.parse(saved) : [];
+    } catch { return []; }
+  });
+
+  // Pagination
+  const [currentPage, setCurrentPage] = useState(1);
+  const [pageSize, setPageSize] = useState<number>(() => {
+    try {
+      const saved = localStorage.getItem('taskdb_page_size');
+      return saved ? Number(saved) : 20;
+    } catch { return 20; }
+  });
+
+  // Toast
+  const [toast, setToast] = useState<{ msg: string; type: 'error' | 'success' } | null>(null);
+  const showToast = useCallback((msg: string, type: 'error' | 'success' = 'error') => {
+    setToast({ msg, type });
+    setTimeout(() => setToast(null), 3000);
+  }, []);
+
+  // Expanded groups (Notion style - default all expanded)
+  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(() => new Set());
+
+  // ── Data fetching ───────────────────────────────────
+
+  const fetchAll = useCallback(async () => {
+    try {
+      // 核心数据必须成功
+      const [t, g, p] = await Promise.all([
+        fetchJson<Task[]>('/api/tasks/tasks'),
+        fetchJson<Goal[]>('/api/tasks/goals'),
+        fetchJson<Project[]>('/api/tasks/projects'),
+      ]);
+
+      setTasks(t);
+      setGoals(g);
+      setProjects(p);
+
+      // Brain 数据可选，失败不影响整体显示
+      try {
+        const q = await fetchJson<{ success: boolean; tasks: QuarantineTask[] }>('/api/brain/quarantine');
+        setQuarantine(q.tasks || []);
+      } catch {
+        setQuarantine([]);
+      }
+
+      try {
+        const f = await fetchJson<FocusData>('/api/brain/focus');
+        setFocus(f);
+      } catch {
+        setFocus(null);
+      }
+
+      setError(null);
+      setLastUpdate(new Date());
+    } catch (e: any) {
+      setError(e.message);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchAll();
+    const id = setInterval(fetchAll, 30000);
+    return () => clearInterval(id);
+  }, [fetchAll]);
+
+  // Persist activeView
+  useEffect(() => {
+    try {
+      localStorage.setItem('taskdb_active_view', activeView);
+    } catch {}
+  }, [activeView]);
+
+  // Persist row order
+  useEffect(() => {
+    if (rowOrder.length > 0) {
+      localStorage.setItem('taskdb_row_order', JSON.stringify(rowOrder));
+    }
+  }, [rowOrder]);
+
+  // Persist pageSize
+  useEffect(() => {
+    localStorage.setItem('taskdb_page_size', String(pageSize));
+  }, [pageSize]);
+
+  // Reset to page 1 when groupBy changes
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [groupBy]);
+
+  // ── Lookup maps ─────────────────────────────────────
+
+  const projectMap = useMemo(() => {
+    const m = new Map<string, Project>();
+    projects.forEach(p => m.set(p.id, p));
+    return m;
+  }, [projects]);
+
+  const goalMap = useMemo(() => {
+    const m = new Map<string, Goal>();
+    goals.forEach(g => m.set(g.id, g));
+    return m;
+  }, [goals]);
+
+  // ── Stats ───────────────────────────────────────────
+
+  const stats = useMemo(() => {
+    const s = { queued: 0, in_progress: 0, completed: 0, total: tasks.length };
+    tasks.forEach(t => {
+      if (t.status === 'queued') s.queued++;
+      else if (t.status === 'in_progress') s.in_progress++;
+      else if (t.status === 'completed') s.completed++;
+    });
+    return s;
+  }, [tasks]);
+
+  // ── Sorting ─────────────────────────────────────────
+
+  const getProjectName = useCallback((t: Task): string => {
+    if (t.project_id) return projectMap.get(t.project_id)?.name || '';
+    if (t.goal_id) {
+      const goal = goalMap.get(t.goal_id);
+      if (goal?.parent_id) {
+        const parent = goalMap.get(goal.parent_id);
+        return parent?.title || '';
+      }
+      return goal?.title || '';
+    }
+    return '';
+  }, [projectMap, goalMap]);
+
+  const sortedTasks = useMemo(() => {
+    // Apply preset view filter
+    const viewFilter = PRESET_VIEWS.find(v => v.key === activeView)?.filter || (() => true);
+    const list = tasks.filter(viewFilter);
+
+    // If custom row order and no active sort/group, use stored order
+    if (groupBy === 'none' && rowOrder.length > 0 && sortField === 'created_at' && sortDir === 'desc') {
+      const orderMap = new Map(rowOrder.map((id, i) => [id, i]));
+      list.sort((a, b) => {
+        const ai = orderMap.get(a.id);
+        const bi = orderMap.get(b.id);
+        if (ai !== undefined && bi !== undefined) return ai - bi;
+        if (ai !== undefined) return -1;
+        if (bi !== undefined) return 1;
+        return 0;
+      });
+      return list;
+    }
+
+    list.sort((a, b) => {
+      let cmp = 0;
+      switch (sortField) {
+        case 'title':
+          cmp = a.title.localeCompare(b.title);
+          break;
+        case 'status':
+          cmp = (STATUS_ORDER[a.status] ?? 99) - (STATUS_ORDER[b.status] ?? 99);
+          break;
+        case 'priority':
+          cmp = (PRIORITY_ORDER[a.priority] ?? 99) - (PRIORITY_ORDER[b.priority] ?? 99);
+          break;
+        case 'project':
+          cmp = getProjectName(a).localeCompare(getProjectName(b));
+          break;
+        case 'task_type':
+          cmp = (a.task_type || '').localeCompare(b.task_type || '');
+          break;
+        case 'created_at':
+          cmp = new Date(a.created_at).getTime() - new Date(b.created_at).getTime();
+          break;
+      }
+      return sortDir === 'asc' ? cmp : -cmp;
+    });
+    return list;
+  }, [tasks, sortField, sortDir, groupBy, rowOrder, getProjectName, activeView]);
+
+  // ── Grouping ────────────────────────────────────────
+
+  const groupedTasks = useMemo(() => {
+    if (groupBy === 'none') return [{ key: 'all', label: 'All Tasks', tasks: sortedTasks }];
+
+    const groups = new Map<string, Task[]>();
+    sortedTasks.forEach(t => {
+      let key: string;
+      switch (groupBy) {
+        case 'status': key = t.status; break;
+        case 'priority': key = t.priority; break;
+        case 'project': key = getProjectName(t) || 'No Project'; break;
+        case 'month': key = getMonthKey(t.created_at); break;
+        default: key = 'all';
+      }
+      const list = groups.get(key) || [];
+      list.push(t);
+      groups.set(key, list);
+    });
+
+    return Array.from(groups.entries()).map(([key, tasks]) => ({
+      key,
+      label: key,
+      tasks,
+    }));
+  }, [sortedTasks, groupBy, getProjectName]);
+
+  // Auto-expand all groups when groupBy changes (Notion behavior)
+  useEffect(() => {
+    if (groupBy !== 'none') {
+      const allKeys = groupedTasks.map(g => g.key);
+      setExpandedGroups(new Set(allKeys));
+    }
+  }, [groupBy, groupedTasks]);
+
+  // ── Pagination ──────────────────────────────────────
+
+  const paginatedGroups = useMemo(() => {
+    if (groupBy === 'none') {
+      const start = (currentPage - 1) * pageSize;
+      const end = start + pageSize;
+      return [{ key: 'all', label: 'All Tasks', tasks: sortedTasks.slice(start, end) }];
+    }
+    // 对分组后的结果分页
+    return groupedTasks;
+  }, [groupedTasks, sortedTasks, groupBy, currentPage, pageSize]);
+
+  const totalPages = Math.ceil(sortedTasks.length / pageSize);
+  const startIndex = (currentPage - 1) * pageSize + 1;
+  const endIndex = Math.min(currentPage * pageSize, sortedTasks.length);
+
+  // ── Inline edit ─────────────────────────────────────
+
+  const updateTaskField = useCallback(async (id: string, field: 'priority' | 'status', value: string) => {
+    const prev = tasks.find(t => t.id === id);
+    if (!prev) return;
+    setTasks(ts => ts.map(t => t.id === id ? { ...t, [field]: value } : t));
+    try {
+      await patchEntity('tasks', id, { [field]: value });
+      showToast(`Updated ${field}`, 'success');
+    } catch (e: any) {
+      setTasks(ts => ts.map(t => t.id === id ? { ...t, [field]: prev[field] } : t));
+      showToast(e.message);
+    }
+  }, [tasks, showToast]);
+
+  // ── Drag & drop ─────────────────────────────────────
+
+  const handleDragEnd = useCallback((result: DropResult) => {
+    const { source, destination, draggableId } = result;
+    if (!destination) return;
+
+    if (viewMode === 'board') {
+      // Board: cross-column = change status
+      const newStatus = destination.droppableId;
+      if (newStatus !== source.droppableId) {
+        updateTaskField(draggableId, 'status', newStatus);
+      }
+    } else {
+      // Table: reorder rows
+      if (source.droppableId === destination.droppableId && source.index !== destination.index) {
+        const currentIds = sortedTasks.map(t => t.id);
+        const [removed] = currentIds.splice(source.index, 1);
+        currentIds.splice(destination.index, 0, removed);
+        setRowOrder(currentIds);
+        // Reset sort to default so custom order takes effect
+        setSortField('created_at');
+        setSortDir('desc');
+      }
+    }
+  }, [viewMode, sortedTasks, updateTaskField]);
+
+  // ── Sort toggle ─────────────────────────────────────
+
+  const handleSort = useCallback((field: SortField) => {
+    if (sortField === field) {
+      setSortDir(d => d === 'asc' ? 'desc' : 'asc');
+    } else {
+      setSortField(field);
+      setSortDir('asc');
+    }
+    // Clear custom row order when sorting explicitly
+    setRowOrder([]);
+  }, [sortField]);
+
+  // ── Group collapse ──────────────────────────────────
+
+  const toggleGroup = useCallback((key: string) => {
+    setExpandedGroups(prev => {
+      const next = new Set(prev);
+      next.has(key) ? next.delete(key) : next.add(key);
+      return next;
+    });
+  }, []);
+
+  // ── Quarantine ──────────────────────────────────────
+
+  const releaseFromQuarantine = async (taskId: string) => {
+    try {
+      await fetch(`/api/brain/quarantine/${taskId}/release`, { method: 'POST' });
+      fetchAll();
+    } catch { /* silent */ }
+  };
+
+  // ── Render ──────────────────────────────────────────
+
+  if (loading && tasks.length === 0) {
+    return (
+      <div className="flex items-center justify-center h-64">
+        <RefreshCw className="w-8 h-8 text-blue-500 animate-spin" />
+      </div>
+    );
+  }
+
+  if (error && tasks.length === 0) {
+    return (
+      <div className="bg-red-900/20 border border-red-800 rounded-xl p-6 text-center">
+        <XCircle className="w-12 h-12 text-red-500 mx-auto mb-3" />
+        <p className="text-red-400">Failed to load: {error}</p>
+        <button onClick={fetchAll} className="mt-4 px-4 py-2 bg-red-900/30 text-red-400 rounded-lg hover:bg-red-900/50 transition-colors">
+          Retry
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-4 p-3">
+      {/* Header */}
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-4">
+          <div className="p-3 bg-gradient-to-br from-violet-500 to-purple-600 rounded-xl">
+            <Target className="w-8 h-8 text-white" />
+          </div>
+          <div>
+            <h1 className="text-2xl font-bold text-white">Task Database</h1>
+            <p className="text-gray-400">{stats.total} tasks</p>
+          </div>
+        </div>
+        <div className="flex items-center gap-3">
+          {focus?.focus?.objective && (
+            <div className="flex items-center gap-2 px-3 py-1.5 bg-blue-500/10 border border-blue-500/20 rounded-lg">
+              <Crosshair className="w-4 h-4 text-blue-400" />
+              <span className="text-xs text-blue-400 truncate max-w-[200px]">
+                {focus.focus.objective.title}
+              </span>
+            </div>
+          )}
+          {lastUpdate && (
+            <span className="text-sm text-gray-500 flex items-center gap-1">
+              <Clock className="w-4 h-4" />
+              {lastUpdate.toLocaleTimeString('zh-CN')}
+            </span>
+          )}
+          <button onClick={fetchAll} className="p-2 text-gray-400 hover:text-white hover:bg-slate-700 rounded-lg transition-colors">
+            <RefreshCw className={`w-5 h-5 ${loading ? 'animate-spin' : ''}`} />
+          </button>
+        </div>
+      </div>
+
+      {/* Preset View Tabs */}
+      <div className="flex flex-wrap gap-2">
+        {PRESET_VIEWS.map(view => (
+          <button
+            key={view.key}
+            onClick={() => setActiveView(view.key)}
+            className={`px-4 py-2 text-sm font-medium rounded-lg transition-all duration-200 ${
+              activeView === view.key
+                ? 'bg-blue-500/20 text-blue-300 border border-blue-500/30'
+                : 'bg-slate-700/50 text-gray-400 border border-slate-600/50 hover:bg-slate-700 hover:text-gray-300 hover:border-slate-500'
+            }`}
+            style={{ transition: 'all 0.02s ease-in' }}
+          >
+            {view.label}
+          </button>
+        ))}
+      </div>
+
+      {/* Toolbar: Stats + View + Group */}
+      <div className="flex items-center gap-4 flex-wrap">
+        {/* Stats */}
+        <div className="flex items-center gap-3">
+          <StatBadge label="Queued" count={stats.queued} color="text-gray-400" bg="bg-slate-700" />
+          <StatBadge label="In Progress" count={stats.in_progress} color="text-blue-400" bg="bg-blue-500/20" />
+          <StatBadge label="Done" count={stats.completed} color="text-emerald-400" bg="bg-emerald-500/20" />
+        </div>
+        <div className="flex-1" />
+
+        {/* Group By */}
+        <div className="flex items-center gap-2">
+          <Filter className="w-4 h-4 text-gray-500" />
+          <select
+            value={groupBy}
+            onChange={e => setGroupBy(e.target.value as GroupBy)}
+            disabled={viewMode === 'board'}
+            className="bg-slate-700 text-sm text-gray-300 rounded-lg border border-slate-600 focus:outline-none focus:border-blue-500 disabled:opacity-40 disabled:cursor-not-allowed"
+            style={{
+              padding: '6px 12px',
+              fontWeight: 500,
+              transition: 'background 0.02s ease-in'
+            }}
+          >
+            <option value="none">No Grouping</option>
+            <option value="status">By Status</option>
+            <option value="priority">By Priority</option>
+            <option value="project">By Project</option>
+            <option value="month">By Month</option>
+          </select>
+        </div>
+
+        {/* View Toggle */}
+        <div className="flex gap-1 bg-slate-800 rounded-lg p-0.5 border border-slate-700">
+          <button
+            onClick={() => setViewMode('table')}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${
+              viewMode === 'table' ? 'bg-slate-600 text-white' : 'text-gray-400 hover:text-white'
+            }`}
+          >
+            <LayoutList className="w-3.5 h-3.5" /> Table
+          </button>
+          <button
+            onClick={() => setViewMode('board')}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${
+              viewMode === 'board' ? 'bg-slate-600 text-white' : 'text-gray-400 hover:text-white'
+            }`}
+          >
+            <Columns className="w-3.5 h-3.5" /> Board
+          </button>
+        </div>
+      </div>
+
+      {/* Content */}
+      <DragDropContext onDragEnd={handleDragEnd}>
+        {viewMode === 'table' ? (
+          <TaskTableView
+            groupedTasks={paginatedGroups}
+            groupBy={groupBy}
+            sortField={sortField}
+            sortDir={sortDir}
+            onSort={handleSort}
+            expandedGroups={expandedGroups}
+            onToggleGroup={toggleGroup}
+            getProjectName={getProjectName}
+            onTaskUpdate={updateTaskField}
+          />
+        ) : (
+          <TaskBoardView
+            tasks={paginatedGroups[0]?.tasks || []}
+            getProjectName={getProjectName}
+            onTaskUpdate={updateTaskField}
+          />
+        )}
+      </DragDropContext>
+
+      {/* Pagination */}
+      {groupBy === 'none' && totalPages > 1 && (
+        <div className="flex items-center justify-between px-4 py-3 bg-slate-800/50 rounded-lg border border-slate-700">
+          <div className="text-sm text-gray-400">
+            显示 {startIndex}-{endIndex} / 共 {sortedTasks.length} 个任务
+          </div>
+          <div className="flex items-center gap-3">
+            <button
+              onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+              disabled={currentPage === 1}
+              className="px-3 py-1.5 text-sm bg-slate-700 text-gray-300 rounded-lg hover:bg-slate-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+            >
+              上一页
+            </button>
+            <span className="text-sm text-gray-400">
+              第 {currentPage} / {totalPages} 页
+            </span>
+            <button
+              onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
+              disabled={currentPage === totalPages}
+              className="px-3 py-1.5 text-sm bg-slate-700 text-gray-300 rounded-lg hover:bg-slate-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+            >
+              下一页
+            </button>
+            <select
+              value={pageSize}
+              onChange={e => { setPageSize(Number(e.target.value)); setCurrentPage(1); }}
+              className="px-3 py-1.5 text-sm bg-slate-700 text-gray-300 rounded-lg border border-slate-600 focus:outline-none focus:border-blue-500 transition-colors"
+            >
+              <option value={10}>10/页</option>
+              <option value={20}>20/页</option>
+              <option value={50}>50/页</option>
+              <option value={100}>100/页</option>
+            </select>
+          </div>
+        </div>
+      )}
+
+      {/* Quarantine */}
+      {quarantine.length > 0 && (
+        <div className="bg-slate-800 rounded-xl border border-amber-500/30">
+          <button
+            onClick={() => setShowQuarantine(!showQuarantine)}
+            className="w-full flex items-center justify-between p-4 text-left"
+          >
+            <div className="flex items-center gap-2">
+              <AlertTriangle className="w-5 h-5 text-amber-400" />
+              <span className="font-medium text-white">Quarantine</span>
+              <span className="text-sm text-amber-400">{quarantine.length} tasks</span>
+            </div>
+            {showQuarantine ? <ChevronDown className="w-4 h-4 text-gray-500" /> : <ChevronRight className="w-4 h-4 text-gray-500" />}
+          </button>
+          {showQuarantine && (
+            <div className="border-t border-slate-700 divide-y divide-slate-700/50">
+              {quarantine.map(qt => (
+                <div key={qt.id} className="flex items-center justify-between p-3 px-4">
+                  <div className="flex-1 min-w-0">
+                    <div className="text-sm text-white truncate">{qt.title}</div>
+                    <div className="text-xs text-amber-400">{qt.reason}</div>
+                  </div>
+                  <button
+                    onClick={() => releaseFromQuarantine(qt.id)}
+                    className="flex items-center gap-1 px-3 py-1 text-xs bg-amber-500/10 text-amber-400 rounded-lg hover:bg-amber-500/20 transition-colors ml-3"
+                  >
+                    <Unlock className="w-3 h-3" /> Release
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Toast */}
+      {toast && (
+        <div className={`fixed bottom-6 right-6 z-50 px-4 py-2.5 rounded-lg text-sm font-medium shadow-lg transition-all ${
+          toast.type === 'error' ? 'bg-red-500/90 text-white' : 'bg-emerald-500/90 text-white'
+        }`}>
+          {toast.msg}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Table View ─────────────────────────────────────────
+
+function TaskTableView({
+  groupedTasks,
+  groupBy,
+  sortField,
+  sortDir,
+  onSort,
+  expandedGroups,
+  onToggleGroup,
+  getProjectName,
+  onTaskUpdate,
+}: {
+  groupedTasks: { key: string; label: string; tasks: Task[] }[];
+  groupBy: GroupBy;
+  sortField: SortField;
+  sortDir: SortDir;
+  onSort: (field: SortField) => void;
+  expandedGroups: Set<string>;
+  onToggleGroup: (key: string) => void;
+  getProjectName: (t: Task) => string;
+  onTaskUpdate: (id: string, field: 'priority' | 'status', value: string) => void;
+}) {
+  return (
+    <div className="bg-slate-800 rounded-xl overflow-hidden">
+      {/* Header */}
+      <div className="flex items-center border-b border-slate-700 bg-slate-800/80 text-xs font-medium text-gray-400 uppercase tracking-wider">
+        <div className="w-8 flex-shrink-0" />
+        <SortableHeader field="title" label="Title" flex="flex-1" sortField={sortField} sortDir={sortDir} onSort={onSort} />
+        <SortableHeader field="status" label="Status" width="w-[120px]" sortField={sortField} sortDir={sortDir} onSort={onSort} />
+        <SortableHeader field="priority" label="Priority" width="w-[80px]" sortField={sortField} sortDir={sortDir} onSort={onSort} />
+        <SortableHeader field="project" label="Project" width="w-[150px]" sortField={sortField} sortDir={sortDir} onSort={onSort} />
+        <SortableHeader field="task_type" label="Type" width="w-[100px]" sortField={sortField} sortDir={sortDir} onSort={onSort} />
+        <SortableHeader field="created_at" label="Created" width="w-[120px]" sortField={sortField} sortDir={sortDir} onSort={onSort} />
+      </div>
+
+      {/* Body */}
+      {groupedTasks.map(group => (
+        <div key={group.key}>
+          {/* Group header */}
+          {groupBy !== 'none' && (
+            <button
+              onClick={() => onToggleGroup(group.key)}
+              className="w-full flex items-center gap-2 px-4 py-2 bg-slate-750 border-b border-slate-700/50 text-left cursor-pointer"
+              style={{ transition: 'background 0.02s ease-in' }}
+              onMouseEnter={(e) => e.currentTarget.style.backgroundColor = 'rgba(51, 65, 85, 0.5)'}
+              onMouseLeave={(e) => e.currentTarget.style.backgroundColor = ''}
+            >
+              {expandedGroups.has(group.key) ? (
+                <ChevronDown className="w-3.5 h-3.5 text-gray-500 transition-transform duration-200" />
+              ) : (
+                <ChevronRight className="w-3.5 h-3.5 text-gray-500 transition-transform duration-200" />
+              )}
+              <span className="text-sm font-medium text-gray-300">{group.label}</span>
+              <span className="text-xs text-gray-500">{group.tasks.length}</span>
+            </button>
+          )}
+
+          {/* Task rows */}
+          {expandedGroups.has(group.key) && (
+            <Droppable droppableId={`table-${group.key}`}>
+              {(provided) => (
+                <div ref={provided.innerRef} {...provided.droppableProps}>
+                  {group.tasks.map((task, index) => (
+                    <Draggable key={task.id} draggableId={task.id} index={index}>
+                      {(provided, snapshot) => (
+                        <div
+                          ref={provided.innerRef}
+                          {...provided.draggableProps}
+                          className={`group flex items-center border-b border-slate-700/30 cursor-pointer ${
+                            snapshot.isDragging ? 'bg-slate-700/40 shadow-xl scale-[1.02] rounded-lg' : ''
+                          }`}
+                          style={{
+                            ...provided.draggableProps.style,
+                            transition: 'background 0.02s ease-in',
+                            backgroundColor: snapshot.isDragging ? '' : 'transparent'
+                          }}
+                          onMouseEnter={(e) => !snapshot.isDragging && (e.currentTarget.style.backgroundColor = 'rgba(0, 0, 0, 0.03)')}
+                          onMouseLeave={(e) => !snapshot.isDragging && (e.currentTarget.style.backgroundColor = 'transparent')}
+                        >
+                          {/* Drag handle */}
+                          <div {...provided.dragHandleProps} className="w-8 flex items-center justify-center flex-shrink-0 cursor-grab active:cursor-grabbing">
+                            <GripVertical className="w-3.5 h-3.5 text-gray-600 opacity-0 group-hover:opacity-100 transition-opacity duration-200" />
+                          </div>
+                          {/* Title */}
+                          <div className="flex-1 min-w-0 px-3 py-3">
+                            <span className="text-sm text-gray-200 truncate block">{task.title}</span>
+                          </div>
+                          {/* Status */}
+                          <div className="w-[120px] flex-shrink-0 px-2">
+                            <EditableStatus status={task.status} options={TASK_STATUSES} onChange={v => onTaskUpdate(task.id, 'status', v)} />
+                          </div>
+                          {/* Priority */}
+                          <div className="w-[80px] flex-shrink-0 px-2">
+                            <EditablePriority priority={task.priority} onChange={v => onTaskUpdate(task.id, 'priority', v)} />
+                          </div>
+                          {/* Project */}
+                          <div className="w-[150px] flex-shrink-0 px-2">
+                            <span className="text-xs text-gray-500 truncate block">{getProjectName(task)}</span>
+                          </div>
+                          {/* Type */}
+                          <div className="w-[100px] flex-shrink-0 px-2">
+                            {task.task_type && (
+                              <span className="px-1.5 py-0.5 text-xs rounded bg-slate-700 text-gray-400">{task.task_type}</span>
+                            )}
+                          </div>
+                          {/* Created */}
+                          <div className="w-[120px] flex-shrink-0 px-2">
+                            <span className="text-xs text-gray-500">{formatRelativeTime(task.created_at)}</span>
+                          </div>
+                        </div>
+                      )}
+                    </Draggable>
+                  ))}
+                  {provided.placeholder}
+                </div>
+              )}
+            </Droppable>
+          )}
+        </div>
+      ))}
+
+      {/* Empty */}
+      {groupedTasks.every(g => g.tasks.length === 0) && (
+        <div className="p-8 text-center text-gray-500">
+          <Target className="w-12 h-12 mx-auto mb-3 opacity-30" />
+          <p>No tasks found</p>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Board View ─────────────────────────────────────────
+
+function TaskBoardView({
+  tasks,
+  getProjectName,
+  onTaskUpdate,
+}: {
+  tasks: Task[];
+  getProjectName: (t: Task) => string;
+  onTaskUpdate: (id: string, field: 'priority' | 'status', value: string) => void;
+}) {
+  const columnTasks = useMemo(() => {
+    const m = new Map<string, Task[]>();
+    BOARD_COLUMNS.forEach(c => m.set(c.key, []));
+    tasks.forEach(t => {
+      const list = m.get(t.status);
+      if (list) list.push(t);
+    });
+    return m;
+  }, [tasks]);
+
+  return (
+    <div className="flex gap-4 overflow-x-auto pb-2">
+      {BOARD_COLUMNS.map(col => {
+        const colTasks = columnTasks.get(col.key) || [];
+        return (
+          <div key={col.key} className="flex-1 min-w-[280px]">
+            {/* Column header */}
+            <div className="flex items-center gap-2 px-3 py-2 mb-2">
+              <div className={`w-2 h-2 rounded-full ${
+                col.key === 'queued' ? 'bg-cyan-400' : col.key === 'in_progress' ? 'bg-blue-400' : 'bg-emerald-400'
+              }`} />
+              <span className="text-sm font-medium text-gray-300">{col.label}</span>
+              <span className="text-xs text-gray-500">{colTasks.length}</span>
+            </div>
+
+            {/* Droppable column */}
+            <Droppable droppableId={col.key}>
+              {(provided, snapshot) => (
+                <div
+                  ref={provided.innerRef}
+                  {...provided.droppableProps}
+                  className={`space-y-2 min-h-[200px] p-2 rounded-xl border transition-colors ${
+                    snapshot.isDraggingOver
+                      ? 'bg-slate-700/40 border-blue-500/30'
+                      : 'bg-slate-800/50 border-slate-700/50'
+                  }`}
+                >
+                  {colTasks.map((task, index) => (
+                    <Draggable key={task.id} draggableId={task.id} index={index}>
+                      {(provided, snapshot) => (
+                        <div
+                          ref={provided.innerRef}
+                          {...provided.draggableProps}
+                          {...provided.dragHandleProps}
+                        >
+                          <BoardCard
+                            task={task}
+                            isDragging={snapshot.isDragging}
+                            projectName={getProjectName(task)}
+                            onTaskUpdate={onTaskUpdate}
+                          />
+                        </div>
+                      )}
+                    </Draggable>
+                  ))}
+                  {provided.placeholder}
+                  {colTasks.length === 0 && !snapshot.isDraggingOver && (
+                    <div className="text-center py-8 text-gray-600 text-xs">
+                      No tasks
+                    </div>
+                  )}
+                </div>
+              )}
+            </Droppable>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+// ── Board Card ─────────────────────────────────────────
+
+function BoardCard({
+  task,
+  isDragging,
+  projectName,
+  onTaskUpdate,
+}: {
+  task: Task;
+  isDragging: boolean;
+  projectName: string;
+  onTaskUpdate: (id: string, field: 'priority' | 'status', value: string) => void;
+}) {
+  return (
+    <div className={`p-3 rounded-lg border bg-slate-800 transition-all duration-200 ${
+      isDragging ? 'border-blue-500/50 shadow-xl shadow-blue-500/10 scale-[1.02]' : 'border-slate-700 hover:border-slate-600'
+    }`}>
+      <div className="text-sm text-gray-200 mb-2 leading-relaxed">{task.title}</div>
+      <div className="flex items-center gap-2 flex-wrap">
+        <EditablePriority priority={task.priority} small onChange={v => onTaskUpdate(task.id, 'priority', v)} />
+        {task.task_type && (
+          <span className="px-1.5 py-0.5 text-xs rounded bg-slate-700 text-gray-400">{task.task_type}</span>
+        )}
+        {projectName && (
+          <span className="text-xs text-gray-500 truncate max-w-[120px]">{projectName}</span>
+        )}
+      </div>
+      <div className="text-xs text-gray-600 mt-2">{formatRelativeTime(task.created_at)}</div>
+    </div>
+  );
+}
+
+// ── Sortable Header ────────────────────────────────────
+
+function SortableHeader({
+  field,
+  label,
+  flex,
+  width,
+  sortField,
+  sortDir,
+  onSort,
+}: {
+  field: SortField;
+  label: string;
+  flex?: string;
+  width?: string;
+  sortField: SortField;
+  sortDir: SortDir;
+  onSort: (field: SortField) => void;
+}) {
+  const active = sortField === field;
+  return (
+    <button
+      onClick={() => onSort(field)}
+      className={`${flex || ''} ${width || ''} flex items-center gap-1 px-3 py-2.5 text-left hover:text-gray-200 transition-colors flex-shrink-0 ${
+        active ? 'text-gray-200' : ''
+      }`}
+    >
+      <span>{label}</span>
+      {active ? (
+        sortDir === 'asc' ? <ArrowUp className="w-3 h-3" /> : <ArrowDown className="w-3 h-3" />
+      ) : (
+        <ArrowUpDown className="w-3 h-3 opacity-30" />
+      )}
+    </button>
+  );
+}
+
+// ── Stat Badge ─────────────────────────────────────────
+
+function StatBadge({ label, count, color, bg }: { label: string; count: number; color: string; bg: string }) {
+  return (
+    <div className={`flex items-center gap-2 px-3 py-1.5 rounded-lg ${bg}`}>
+      <span className={`text-lg font-bold ${color}`}>{count}</span>
+      <span className="text-xs text-gray-400">{label}</span>
+    </div>
+  );
+}
+
+// ── Inline Editable Priority ───────────────────────────
+
+function EditablePriority({ priority, small, onChange }: { priority: string; small?: boolean; onChange: (v: string) => void }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const handler = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [open]);
+
+  const style = getPriorityStyle(priority);
+
+  return (
+    <div ref={ref} className="relative flex-shrink-0">
+      <button
+        onClick={e => { e.stopPropagation(); setOpen(!open); }}
+        className={`${small ? 'px-1.5 py-0.5 text-xs' : 'px-2 py-0.5 text-xs'} rounded cursor-pointer inline-flex items-center`}
+        style={{
+          ...style,
+          borderRadius: '3px',
+          fontSize: '14px',
+          fontWeight: 400,
+          transition: 'background 0.02s ease-in',
+          padding: small ? '2px 4px' : '2px 6px'
+        }}
+      >
+        {priority}
+      </button>
+      {open && (
+        <div className="absolute right-0 top-full mt-1 z-50 bg-slate-800 border border-slate-600 rounded-lg shadow-xl overflow-hidden min-w-[60px] animate-in fade-in slide-in-from-top-2 duration-200">
+          {PRIORITIES.map(p => (
+            <button
+              key={p}
+              onClick={e => { e.stopPropagation(); onChange(p); setOpen(false); }}
+              className={`w-full px-3 py-1.5 text-xs text-left hover:bg-slate-700 ${p === priority ? 'font-bold' : ''}`}
+              style={{ transition: 'background 0.02s ease-in', ...getPriorityStyle(p) }}
+            >
+              {p}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Inline Editable Status ─────────────────────────────
+
+function EditableStatus({ status, options, onChange }: { status: string; options: readonly string[]; onChange: (v: string) => void }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const handler = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [open]);
+
+  const style = getStatusStyle(status);
+
+  return (
+    <div ref={ref} className="relative flex-shrink-0">
+      <button
+        onClick={e => { e.stopPropagation(); setOpen(!open); }}
+        className="px-2 py-0.5 text-xs rounded cursor-pointer inline-flex items-center"
+        style={{
+          ...style,
+          borderRadius: '3px',
+          fontSize: '14px',
+          fontWeight: 400,
+          transition: 'background 0.02s ease-in',
+          padding: '2px 6px'
+        }}
+      >
+        {status}
+      </button>
+      {open && (
+        <div className="absolute right-0 top-full mt-1 z-50 bg-slate-800 border border-slate-600 rounded-lg shadow-xl overflow-hidden min-w-[100px] animate-in fade-in slide-in-from-top-2 duration-200">
+          {options.map(s => (
+            <button
+              key={s}
+              onClick={e => { e.stopPropagation(); onChange(s); setOpen(false); }}
+              className={`w-full px-3 py-1.5 text-xs text-left hover:bg-slate-700 ${s === status ? 'font-bold' : ''}`}
+              style={{ transition: 'background 0.02s ease-in', ...getStatusStyle(s) }}
+            >
+              {s}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ══════════════════════════════════════════════════════════
+// 分组视图：按 Area → Initiative 展示 queued/in_progress 任务
+// ══════════════════════════════════════════════════════════
+
+interface GoalForGroup {
+  id: string;
+  title: string;
+  type: string;
+  status: string;
+  priority: string;
+  parent_id: string | null;
+}
+
+interface ProjectForGroup {
+  id: string;
+  name: string;
+  type: string;
+  status: string;
+  parent_id?: string | null;
+  kr_id?: string | null;
+  goal_id?: string | null;
+}
+
+interface TaskForGroup {
+  id: string;
+  title: string;
+  status: string;
+  priority: string;
+  task_type: string;
+  created_at: string;
+  project_id?: string | null;
+  goal_id?: string | null;
+}
+
+function TaskGroupedView() {
+  const [goals, setGoals] = useState<GoalForGroup[]>([]);
+  const [projects, setProjects] = useState<ProjectForGroup[]>([]);
+  const [tasks, setTasks] = useState<TaskForGroup[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [expandedAreas, setExpandedAreas] = useState<Set<string>>(new Set());
+  const [expandedInits, setExpandedInits] = useState<Set<string>>(new Set());
+
+  useEffect(() => {
+    Promise.all([
+      fetch('/api/tasks/goals').then(r => r.json()),
+      fetch('/api/tasks/projects').then(r => r.json()),
+      fetch('/api/tasks/tasks?limit=500').then(r => r.json()),
+    ]).then(([g, p, t]) => {
+      setGoals(Array.isArray(g) ? g : []);
+      setProjects(Array.isArray(p) ? p : []);
+      setTasks(Array.isArray(t) ? t : []);
+      // 默认展开所有 area
+      const areas = (Array.isArray(g) ? g : []).filter((x: GoalForGroup) => x.type === 'area_okr');
+      setExpandedAreas(new Set(areas.map((a: GoalForGroup) => a.id)));
+    }).catch(console.error).finally(() => setLoading(false));
+  }, []);
+
+  const toggleArea = (id: string) => {
+    setExpandedAreas(prev => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
+  };
+  const toggleInit = (id: string) => {
+    setExpandedInits(prev => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
+  };
+
+  // 数据处理
+  const areaOkrs = goals
+    .filter(g => g.type === 'area_okr')
+    .sort((a, b) => ({ P0: 0, P1: 1, P2: 2 }[a.priority] ?? 9) - ({ P0: 0, P1: 1, P2: 2 }[b.priority] ?? 9));
+
+  const krs = goals.filter(g => g.type === 'kr');
+  const krMap: Record<string, GoalForGroup> = {};
+  for (const k of krs) krMap[k.id] = k;
+
+  const initiatives = projects.filter(p => p.type === 'initiative' && p.status !== 'archived');
+  const initMap: Record<string, ProjectForGroup> = {};
+  for (const i of initiatives) initMap[i.id] = i;
+
+  // 找 initiative 归属的 area
+  const allProjectsMap: Record<string, ProjectForGroup> = {};
+  for (const p of projects) allProjectsMap[p.id] = p;
+
+  function getInitiativeArea(init: ProjectForGroup): string | null {
+    // initiative → parent project → kr_id/goal_id → kr → parent_id → area
+    if (init.parent_id) {
+      const parentProj = allProjectsMap[init.parent_id];
+      if (parentProj) {
+        const krId = parentProj.kr_id || parentProj.goal_id;
+        if (krId) {
+          const kr = krMap[krId];
+          if (kr?.parent_id) return kr.parent_id;
+        }
+      }
+    }
+    return null;
+  }
+
+  // 活跃任务
+  const activeTasks = tasks.filter(t => t.status === 'queued' || t.status === 'in_progress');
+
+  // task → initiative 映射
+  const tasksByInit: Record<string, TaskForGroup[]> = {};
+  const ungroupedTasks: TaskForGroup[] = [];
+
+  for (const task of activeTasks) {
+    if (task.project_id && initMap[task.project_id]) {
+      if (!tasksByInit[task.project_id]) tasksByInit[task.project_id] = [];
+      tasksByInit[task.project_id].push(task);
+    } else {
+      ungroupedTasks.push(task);
+    }
+  }
+
+  // initiative → area 映射
+  const initsByArea: Record<string, ProjectForGroup[]> = {};
+  const orphanInits: ProjectForGroup[] = [];
+
+  for (const init of initiatives) {
+    if (!tasksByInit[init.id]) continue; // 没有活跃任务的跳过
+    const areaId = getInitiativeArea(init);
+    if (areaId) {
+      if (!initsByArea[areaId]) initsByArea[areaId] = [];
+      initsByArea[areaId].push(init);
+    } else {
+      orphanInits.push(init);
+    }
+  }
+
+  if (loading) {
+    return (
+      <div className="space-y-3 p-4">
+        {[1, 2, 3].map(i => (
+          <div key={i} className="bg-slate-800 rounded-xl p-4 animate-pulse">
+            <div className="h-4 bg-slate-700 rounded w-1/2" />
+          </div>
+        ))}
+      </div>
+    );
+  }
+
+  const priorityBadge = (p: string) => {
+    const cls = p === 'P0' ? 'bg-red-500/20 text-red-400' : p === 'P1' ? 'bg-amber-500/20 text-amber-400' : 'bg-slate-700 text-slate-400';
+    return <span className={`px-1.5 py-0.5 rounded text-xs font-bold ${cls}`}>{p}</span>;
+  };
+
+  const statusStyle = (s: string) => {
+    if (s === 'in_progress') return 'text-blue-400';
+    if (s === 'queued') return 'text-slate-400';
+    return 'text-slate-500';
+  };
+
+  return (
+    <div className="space-y-3 p-3">
+      {areaOkrs.map(area => {
+        const areaInits = initsByArea[area.id] || [];
+        if (areaInits.length === 0) return null;
+        const totalTasks = areaInits.reduce((s, i) => s + (tasksByInit[i.id]?.length || 0), 0);
+        const isOpen = expandedAreas.has(area.id);
+
+        return (
+          <div key={area.id} className="bg-slate-800/80 rounded-xl border border-slate-700 overflow-hidden">
+            <button
+              onClick={() => toggleArea(area.id)}
+              className="w-full flex items-center gap-3 px-4 py-3 hover:bg-slate-700/50 transition-colors text-left"
+            >
+              {isOpen ? <ChevronDown className="w-4 h-4 text-slate-400" /> : <ChevronRight className="w-4 h-4 text-slate-400" />}
+              <span className="font-semibold text-white flex-1 truncate text-sm">{area.title}</span>
+              {priorityBadge(area.priority)}
+              <span className="text-xs text-slate-400">{areaInits.length} initiatives · {totalTasks} 任务</span>
+            </button>
+
+            {isOpen && (
+              <div className="px-3 pb-3 space-y-2">
+                {areaInits.map(init => {
+                  const initTasks = tasksByInit[init.id] || [];
+                  const isInitOpen = expandedInits.has(init.id);
+                  const queued = initTasks.filter(t => t.status === 'queued').length;
+                  const inProg = initTasks.filter(t => t.status === 'in_progress').length;
+
+                  return (
+                    <div key={init.id} className="bg-slate-700/50 rounded-lg overflow-hidden">
+                      <button
+                        onClick={() => toggleInit(init.id)}
+                        className="w-full flex items-center gap-2 px-3 py-2 hover:bg-slate-700 transition-colors text-left"
+                      >
+                        {isInitOpen ? <ChevronDown className="w-3.5 h-3.5 text-slate-400" /> : <ChevronRight className="w-3.5 h-3.5 text-slate-400" />}
+                        <span className="text-sm text-slate-200 flex-1 truncate">{init.name}</span>
+                        <div className="flex items-center gap-2 text-xs shrink-0">
+                          {inProg > 0 && <span className="text-blue-400">{inProg} 进行中</span>}
+                          {queued > 0 && <span className="text-slate-400">{queued} 排队</span>}
+                        </div>
+                      </button>
+
+                      {isInitOpen && (
+                        <div className="px-3 pb-2 space-y-1">
+                          {initTasks.map(task => (
+                            <div key={task.id} className="flex items-center gap-2 py-1.5 px-2 rounded hover:bg-slate-600/50 transition-colors">
+                              <span className={`text-xs ${statusStyle(task.status)} shrink-0`}>
+                                {task.status === 'in_progress' ? '▶' : '·'}
+                              </span>
+                              <span className="text-sm text-slate-300 flex-1 truncate">{task.title}</span>
+                              <div className="flex items-center gap-1.5 shrink-0">
+                                {priorityBadge(task.priority)}
+                                {task.task_type && (
+                                  <span className="text-xs text-slate-500 bg-slate-700 px-1.5 py-0.5 rounded">
+                                    {task.task_type}
+                                  </span>
+                                )}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        );
+      })}
+
+      {/* 未归属任务 */}
+      {ungroupedTasks.length > 0 && (
+        <div className="bg-slate-800/60 rounded-xl border border-slate-700/50 overflow-hidden">
+          <div className="px-4 py-3 flex items-center gap-2">
+            <ListTodo className="w-4 h-4 text-slate-400" />
+            <span className="text-sm text-slate-400 font-medium">未分组 ({ungroupedTasks.length})</span>
+          </div>
+          <div className="px-3 pb-3 space-y-1">
+            {ungroupedTasks.map(task => (
+              <div key={task.id} className="flex items-center gap-2 py-1.5 px-2 rounded hover:bg-slate-700/50 transition-colors">
+                <span className="text-xs text-slate-500 shrink-0">{task.status === 'in_progress' ? '▶' : '·'}</span>
+                <span className="text-sm text-slate-300 flex-1 truncate">{task.title}</span>
+                <span className="text-xs text-slate-500">{task.task_type || ''}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {areaOkrs.every(a => !initsByArea[a.id]?.length) && ungroupedTasks.length === 0 && (
+        <div className="text-center py-12 text-slate-500">
+          <ListTodo className="w-10 h-10 mx-auto mb-3 opacity-30" />
+          <p>暂无活跃任务</p>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ══════════════════════════════════════════════════════════
+// 包装器：提供分组/列表视图切换
+// ══════════════════════════════════════════════════════════
+
+export default function TaskDatabase() {
+  const [viewType, setViewType] = useState<'grouped' | 'list'>('grouped');
+
+  return (
+    <div>
+      {/* 视图切换 */}
+      <div className="flex items-center gap-1 px-3 pt-3 pb-1">
+        <button
+          onClick={() => setViewType('grouped')}
+          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${
+            viewType === 'grouped'
+              ? 'bg-blue-500/20 text-blue-300 border border-blue-500/30'
+              : 'bg-slate-700/50 text-slate-400 border border-slate-600/50 hover:text-slate-200'
+          }`}
+        >
+          <Columns className="w-4 h-4" />
+          分组视图
+        </button>
+        <button
+          onClick={() => setViewType('list')}
+          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${
+            viewType === 'list'
+              ? 'bg-blue-500/20 text-blue-300 border border-blue-500/30'
+              : 'bg-slate-700/50 text-slate-400 border border-slate-600/50 hover:text-slate-200'
+          }`}
+        >
+          <LayoutList className="w-4 h-4" />
+          列表视图
+        </button>
+      </div>
+
+      {viewType === 'grouped' ? <TaskGroupedView /> : <TaskDatabaseList />}
+    </div>
+  );
+}

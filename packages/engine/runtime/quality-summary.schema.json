@@ -1,0 +1,90 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "quality-summary.schema.json",
+  "title": "Quality Summary",
+  "description": "本地质检汇总结账单（只汇总，不判定）",
+  "type": "object",
+  "required": ["branch", "head_sha", "timestamp", "commands", "gates"],
+  "properties": {
+    "branch": {
+      "type": "string",
+      "description": "当前分支名"
+    },
+    "head_sha": {
+      "type": "string",
+      "description": "HEAD commit SHA"
+    },
+    "timestamp": {
+      "type": "string",
+      "format": "date-time",
+      "description": "生成时间 (ISO 8601)"
+    },
+    "commands": {
+      "type": "object",
+      "description": "命令执行结果",
+      "properties": {
+        "typecheck": { "$ref": "#/$defs/commandResult" },
+        "test": { "$ref": "#/$defs/commandResult" },
+        "build": { "$ref": "#/$defs/commandResult" },
+        "lint": { "$ref": "#/$defs/commandResult" }
+      }
+    },
+    "gates": {
+      "type": "object",
+      "description": "Gate 状态",
+      "properties": {
+        "prd": { "$ref": "#/$defs/gateResult" },
+        "dod": { "$ref": "#/$defs/gateResult" },
+        "audit": { "$ref": "#/$defs/gateResult" },
+        "test": { "$ref": "#/$defs/gateResult" }
+      }
+    },
+    "env": {
+      "type": "object",
+      "description": "运行环境",
+      "properties": {
+        "node": { "type": "string" },
+        "platform": { "type": "string" }
+      }
+    }
+  },
+  "$defs": {
+    "commandResult": {
+      "type": "object",
+      "required": ["status"],
+      "properties": {
+        "status": {
+          "type": "string",
+          "enum": ["pass", "fail", "skip"]
+        },
+        "duration": {
+          "type": "string",
+          "description": "执行时间"
+        },
+        "error": {
+          "type": "string",
+          "description": "错误信息（如果失败）"
+        }
+      }
+    },
+    "gateResult": {
+      "type": "object",
+      "required": ["status"],
+      "properties": {
+        "status": {
+          "type": "string",
+          "enum": ["pass", "fail", "pending"]
+        },
+        "file": {
+          "type": "string",
+          "description": "Gate 文件路径"
+        },
+        "time": {
+          "type": "string",
+          "format": "date-time",
+          "description": "通过时间"
+        }
+      }
+    }
+  }
+}
