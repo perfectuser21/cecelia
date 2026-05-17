@@ -117,13 +117,15 @@ DONE_DATA=$(echo "$STREAM" | grep -A1 "event: done" \
   | grep "^data:" | head -1 | sed 's/^data: //')
 echo "$DONE_DATA" | jq -e '.status == "completed" or .status == "failed"' \
   || { echo "FAIL: done data.status 不合规"; exit 1; }
+echo "$DONE_DATA" | jq -e 'has("verdict")' \
+  || { echo "FAIL: done data 缺 verdict 字段（PRD 必填）"; exit 1; }
 echo "$DONE_DATA" | jq -e 'has("result") | not' \
   || { echo "FAIL: 禁用字段 result 出现在 done data"; exit 1; }
 psql "$DB" -c "DELETE FROM tasks WHERE id='$TASK_ID'" >/dev/null 2>&1 || true
 echo "Step 4 OK"
 ```
 
-**硬阈值**: 含 `event: done`，data.status 合规，无禁用字段 `result`
+**硬阈值**: 含 `event: done`，data.status 合规，data.verdict 存在，无禁用字段 `result`
 
 ---
 
@@ -225,6 +227,8 @@ DONE_DATA=$(echo "$STREAM" | grep -A1 "event: done" \
   | grep "^data:" | head -1 | sed 's/^data: //')
 echo "$DONE_DATA" | jq -e '.status == "completed" or .status == "failed"' \
   || { echo "FAIL: done.status 不合规"; exit 1; }
+echo "$DONE_DATA" | jq -e 'has("verdict")' \
+  || { echo "FAIL: done data 缺 verdict 字段"; exit 1; }
 
 # 10. error path
 CODE400=$(curl -s -o /dev/null -w "%{http_code}" \
