@@ -1,44 +1,78 @@
 {
   "initiative_id": "pending",
   "journey_type": "user_facing",
-  "journey_type_reason": "入口是用户在 Dashboard 浏览器打开 /pipeline/:id 页面，核心价值在前端 EventSource 实时日志区自动追加节点推进——用户直接感知",
+  "journey_type_reason": "入口是用户在 Dashboard 浏览器打开 /harness/:id 页面，核心价值在前端 EventSource 实时日志区自动追加节点推进——用户直接感知",
   "tasks": [
     {
       "task_id": "ws1",
-      "title": "Brain SSE 端点 GET /api/brain/harness/stream",
-      "scope": "packages/brain/src/routes/harness.js 新增 GET /stream SSE 端点（planner_task_id 参数校验，从 task_events 表 2s 轮询 event_type=graph_node_update 行，映射 nodeName→node/attemptN→attempt/created_at→ts，30s keepalive，task.status=completed/failed 时推 event: done）",
+      "title": "DB Migration — initiative_run_events 表",
+      "scope": "新建 initiative_run_events 表 migration SQL 文件，含 initiative_id/node/label/attempt/ts/status/verdict 字段和 (initiative_id, ts) 复合索引",
       "dod": [
-        "[ARTIFACT] packages/brain/src/routes/harness.js 含 /stream 路由，text/event-stream Content-Type，planner_task_id 参数",
-        "[BEHAVIOR] GET /stream?planner_task_id={id} 推 event: node_update，data keys 恰好为 [attempt,label,node,ts]",
-        "[BEHAVIOR] 禁用字段 name/nodeName/step/timestamp 不存在于 node_update data",
-        "[BEHAVIOR] 未知 planner_task_id → 404 {error: string}（禁用 message/msg）",
-        "[BEHAVIOR] 缺 planner_task_id → 400 {error: string}",
-        "[BEHAVIOR] task.status=completed → event: done，data 含 status/verdict"
+        "[ARTIFACT] packages/brain/migrations/ 含 initiative_run_events migration 文件，包含 CREATE TABLE 和 CREATE INDEX",
+        "[BEHAVIOR] psql 可查到表结构（含 node/label/attempt/ts/status/verdict 列），INSERT node_update 行成功返回 id"
       ],
       "files": [
-        "packages/brain/src/routes/harness.js"
+        "packages/brain/migrations/YYYYMMDD_initiative_run_events.sql"
       ],
       "depends_on": [],
-      "complexity": "M",
-      "estimated_minutes": 45
+      "complexity": "S",
+      "estimated_minutes": 20
     },
     {
       "task_id": "ws2",
-      "title": "Dashboard HarnessPipelineDetailPage 实时日志区",
-      "scope": "apps/dashboard/src/pages/harness-pipeline/HarnessPipelineDetailPage.tsx 新增实时日志区（EventSource 连接到 /api/brain/harness/stream?planner_task_id=:id，data-testid=realtime-log，节点行 data-testid=log-entry，完成状态文字）",
+      "title": "Brain SSE 端点 GET /api/brain/harness/stream",
+      "scope": "packages/brain/src/routes/harness.js 新增 GET /stream SSE 端点（initiative_id 参数校验，2s 轮询 initiative_run_events，30s keepalive `: keepalive`）；packages/brain/src/events/initiativeRunEvents.js 提供 writeInitiativeRunEvent helper",
       "dod": [
-        "[ARTIFACT] HarnessPipelineDetailPage.tsx 含 EventSource，URL 使用 planner_task_id 参数（禁用 initiative_id/taskId/task_id）",
-        "[ARTIFACT] HarnessPipelineDetailPage.tsx 含 data-testid=realtime-log 和 data-testid=log-entry",
-        "[BEHAVIOR] /pipeline/:id 页面渲染，data-testid=realtime-log 可见",
-        "[BEHAVIOR] 收到 node_update 后日志区追加 log-entry 节点行",
-        "[BEHAVIOR] pipeline 完成后显示 Pipeline 已完成 / Pipeline 失败 状态文字"
+        "[ARTIFACT] packages/brain/src/routes/harness.js 含 /stream 路由，text/event-stream Content-Type",
+        "[ARTIFACT] packages/brain/src/events/initiativeRunEvents.js 导出 writeInitiativeRunEvent 函数",
+        "[BEHAVIOR] GET /stream?initiative_id={id} 推 event: node_update，data keys 恰好为 [attempt,label,node,ts]",
+        "[BEHAVIOR] 禁用字段 name/step/timestamp 不存在于 node_update data",
+        "[BEHAVIOR] 未知 initiative_id → 404 {error: string}（禁用 message/msg）",
+        "[BEHAVIOR] 缺 initiative_id → 400 {error: string}",
+        "[BEHAVIOR] status=done 行 → event: done，data 含 status/verdict"
       ],
       "files": [
-        "apps/dashboard/src/pages/harness-pipeline/HarnessPipelineDetailPage.tsx"
+        "packages/brain/src/routes/harness.js",
+        "packages/brain/src/events/initiativeRunEvents.js"
       ],
       "depends_on": ["ws1"],
       "complexity": "M",
       "estimated_minutes": 45
+    },
+    {
+      "task_id": "ws3",
+      "title": "executor.js 写入 initiative_run_events",
+      "scope": "packages/brain/src/executor.js 内 emitGraphNodeUpdate 同步调用 writeInitiativeRunEvent，节点完成时写入 initiative_run_events（node/label/attempt/initiativeId 字段）",
+      "dod": [
+        "[ARTIFACT] executor.js import writeInitiativeRunEvent 且函数体内含调用",
+        "[BEHAVIOR] writeInitiativeRunEvent 调用后 1 分钟内 initiative_run_events 有对应行，node/attempt 字段值正确"
+      ],
+      "files": [
+        "packages/brain/src/executor.js"
+      ],
+      "depends_on": ["ws1", "ws2"],
+      "complexity": "S",
+      "estimated_minutes": 25
+    },
+    {
+      "task_id": "ws4",
+      "title": "Dashboard HarnessDetailPage /harness/:id",
+      "scope": "apps/dashboard/src/pages/harness/HarnessDetailPage.tsx 新建页面（含 EventSource 连接到 /api/brain/harness/stream?initiative_id=:id，实时日志区 data-testid=realtime-log，节点行 data-testid=log-entry，完成状态文字）+ router 注册 /harness/:id",
+      "dod": [
+        "[ARTIFACT] HarnessDetailPage.tsx 含 EventSource，URL 使用 initiative_id 参数（禁用 taskId/id/planner_task_id）",
+        "[ARTIFACT] HarnessDetailPage.tsx 含 data-testid=realtime-log 和 data-testid=log-entry",
+        "[ARTIFACT] router 含 /harness/:id → HarnessDetailPage 路由",
+        "[BEHAVIOR] /harness/:id 页面渲染，data-testid=realtime-log 可见",
+        "[BEHAVIOR] 收到 node_update 后日志区追加 log-entry 节点行",
+        "[BEHAVIOR] pipeline 完成后显示 Pipeline 已完成 / Pipeline 失败 状态文字"
+      ],
+      "files": [
+        "apps/dashboard/src/pages/harness/HarnessDetailPage.tsx",
+        "apps/dashboard/src/config/routes.tsx"
+      ],
+      "depends_on": ["ws2"],
+      "complexity": "M",
+      "estimated_minutes": 50
     }
   ]
 }
