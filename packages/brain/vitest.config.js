@@ -103,7 +103,6 @@ export default defineConfig({
       // Mock 不完整或代码逻辑变更导致失败（pre-existing issue）
       // content-pipeline-{executors,llm,error-message,etc}.test.js 全部已删除
       // （in-Brain content-pipeline 编排搬到 ZJ pipeline-worker，PR zenithjoy#216）
-      'src/__tests__/executor-startup-sync.test.js',
       'src/__tests__/startup-sync.test.js',
       // content_type 注册表加载缺少 content_type 字段 — 预先存在（main 上已失败）
       'src/__tests__/content-type-registry.test.js',

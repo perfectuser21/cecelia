@@ -240,4 +240,41 @@ describe('syncOrphanTasksOnStartup requeue 行为', () => {
     expect(result2.requeued).toBe(0);
     expect(result2.orphans_found).toBe(0);
   });
+
+  it('harness_initiative 任务 → requeued with resume_from_checkpoint=true，不走 failed', async () => {
+    // SELECT 返回一个 harness_initiative in_progress 任务
+    mockQuery.mockResolvedValueOnce({
+      rows: [{
+        id: 'harness-init-1',
+        title: 'harness initiative test task',
+        payload: { watchdog_retry_count: 0 },
+        started_at: new Date().toISOString(),
+        error_message: null,
+        task_type: 'harness_initiative',
+      }]
+    });
+    mockQuery.mockResolvedValue({ rows: [], rowCount: 1 });
+
+    const { syncOrphanTasksOnStartup } = await import('../executor.js');
+    const result = await syncOrphanTasksOnStartup();
+
+    // 应该被 requeue（不是 orphan_fixed）
+    expect(result.requeued).toBe(1);
+
+    // 必须有 status='queued' 的 UPDATE
+    const requeueCall = mockQuery.mock.calls.find(
+      call => typeof call[0] === 'string' && call[0].includes("status = 'queued'")
+    );
+    expect(requeueCall).toBeTruthy();
+
+    // payload 必须含 resume_from_checkpoint: true
+    const payloadPatch = JSON.parse(requeueCall[1][1]);
+    expect(payloadPatch.resume_from_checkpoint).toBe(true);
+
+    // 不能有 status='failed' 的 UPDATE
+    const failedCall = mockQuery.mock.calls.find(
+      call => typeof call[0] === 'string' && call[0].includes("status = 'failed'")
+    );
+    expect(failedCall).toBeUndefined();
+  });
 });
