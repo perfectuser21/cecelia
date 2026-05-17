@@ -2,76 +2,48 @@
 skeleton: false
 journey_type: user_facing
 ---
-# Contract DoD — Workstream 2: Dashboard 实时日志区
+# Contract DoD — Workstream 2: Brain SSE 端点
 
-**范围**: 在 `apps/dashboard/src/pages/harness-pipeline/HarnessPipelineDetailPage.tsx` 新增 EventSource hook + 实时日志区渲染
-**大小**: M (100-150 行)
-**依赖**: Workstream 1 完成后
+**范围**: `packages/brain/src/routes/harness.js` GET /stream + `packages/brain/src/events/initiativeRunEvents.js` 事件写入 helper
+**大小**: M
+**依赖**: Workstream 1
 
 ## ARTIFACT 条目
 
-- [ ] [ARTIFACT] HarnessPipelineDetailPage.tsx 含 EventSource 构造（含 `new EventSource(` 字符串）
-  Test: node -e "const c=require('fs').readFileSync('apps/dashboard/src/pages/harness-pipeline/HarnessPipelineDetailPage.tsx','utf8');if(!c.includes('new EventSource('))process.exit(1)"
+- [ ] [ARTIFACT] packages/brain/src/routes/harness.js 存在且含 /stream 路由注册
+  Test: node -e "const c=require('fs').readFileSync('packages/brain/src/routes/harness.js','utf8');if(!c.includes('/stream'))process.exit(1)"
 
-- [ ] [ARTIFACT] EventSource URL 使用 `planner_task_id` query param（不用禁用名）
-  Test: node -e "const c=require('fs').readFileSync('apps/dashboard/src/pages/harness-pipeline/HarnessPipelineDetailPage.tsx','utf8');if(!c.includes('planner_task_id'))process.exit(1)"
+- [ ] [ARTIFACT] packages/brain/src/events/initiativeRunEvents.js 存在且导出 writeInitiativeRunEvent 函数
+  Test: node -e "try{const m=require('./packages/brain/src/events/initiativeRunEvents.js');if(typeof m.writeInitiativeRunEvent!=='function')process.exit(1)}catch(e){process.exit(1)}"
 
-- [ ] [ARTIFACT] 组件处理 `event: done`（含 `onmessage`/`addEventListener('done'` 模式）
-  Test: node -e "const c=require('fs').readFileSync('apps/dashboard/src/pages/harness-pipeline/HarnessPipelineDetailPage.tsx','utf8');if(!c.includes('done')&&!c.includes('onmessage'))process.exit(1)"
+- [ ] [ARTIFACT] harness.js 含 text/event-stream Content-Type 设置
+  Test: node -e "const c=require('fs').readFileSync('packages/brain/src/routes/harness.js','utf8');if(!c.includes('text/event-stream'))process.exit(1)"
 
-## BEHAVIOR 条目（内嵌可执行 manual: 命令）
+- [ ] [ARTIFACT] harness.js 含 initiative_id 参数校验（非 id/taskId/task_id 等禁用参数名）
+  Test: node -e "const c=require('fs').readFileSync('packages/brain/src/routes/harness.js','utf8');if(!c.includes('initiative_id'))process.exit(1);if(c.includes('req.query.taskId')||c.includes('req.query.task_id')||c.includes('req.query.id'))process.exit(1)"
 
-- [ ] [BEHAVIOR] 组件文件 EventSource URL 使用 planner_task_id（非禁用参数名 task_id/taskId/id）
-  Test: manual:bash -c '
-    FILE="apps/dashboard/src/pages/harness-pipeline/HarnessPipelineDetailPage.tsx"
-    grep -q "planner_task_id" "$FILE" || { echo "FAIL: 未使用 planner_task_id"; exit 1; }
-    grep -qE "EventSource.*[?&](taskId|task_id|pipeline_id|tid)=" "$FILE" \
-      && { echo "FAIL: 使用了禁用 query param"; exit 1; } || true
-  '
-  期望: exit 0
+## BEHAVIOR 条目（内嵌可执行 manual: 命令，禁止只索引 vitest）
 
-- [ ] [BEHAVIOR] 组件文件中不含禁用字段名作为 SSE data 属性访问（nodeName/timestamp/name 等）
-  Test: manual:bash -c '
-    FILE="apps/dashboard/src/pages/harness-pipeline/HarnessPipelineDetailPage.tsx"
-    for BANNED in ".nodeName" ".timestamp" ".step" ".phase" ".stage"; do
-      grep -q "$BANNED" "$FILE" && { echo "FAIL: 使用了禁用字段 $BANNED"; exit 1; } || true
-    done
-    echo "OK"
-  '
-  期望: exit 0
+- [ ] [BEHAVIOR] GET /api/brain/harness/stream?initiative_id={id} 推 event: node_update，data 含 node/label/attempt/ts 字段（类型正确）
+  Test: manual:bash -c 'DB="${DATABASE_URL:-postgresql://localhost/cecelia}"; IAID="bbbbbbbb-cccc-dddd-eeee-ff0000000001"; psql "$DB" -c "INSERT INTO initiative_run_events (initiative_id, node, label, attempt) VALUES ('"'"'$IAID'"'"', '"'"'proposer'"'"', '"'"'Proposer'"'"', 1) ON CONFLICT DO NOTHING" 2>/dev/null; SSE=$(curl -s --max-time 6 "localhost:5221/api/brain/harness/stream?initiative_id=$IAID" 2>&1 || true); DATA=$(echo "$SSE" | grep "^data:" | grep -v "keepalive" | head -1 | sed "s/^data: //"); echo "$DATA" | jq -e ".node | type == \"string\"" && echo "$DATA" | jq -e ".label | type == \"string\"" && echo "$DATA" | jq -e ".attempt | type == \"number\"" && echo "$DATA" | jq -e ".ts | type == \"string\"" && echo OK'
+  期望: OK
 
-- [ ] [BEHAVIOR] TypeScript 编译通过，dashboard 无类型错误
-  Test: manual:bash -c '
-    cd apps/dashboard && npx tsc --noEmit --strict 2>&1 | head -20
-    cd apps/dashboard && npx tsc --noEmit --strict
-  '
-  期望: exit 0
+- [ ] [BEHAVIOR] node_update data keys 完整性恰好等于 [attempt, label, node, ts]，不多不少
+  Test: manual:bash -c 'DB="${DATABASE_URL:-postgresql://localhost/cecelia}"; IAID="bbbbbbbb-cccc-dddd-eeee-ff0000000002"; psql "$DB" -c "INSERT INTO initiative_run_events (initiative_id, node, label, attempt) VALUES ('"'"'$IAID'"'"', '"'"'proposer'"'"', '"'"'Proposer'"'"', 1) ON CONFLICT DO NOTHING" 2>/dev/null; SSE=$(curl -s --max-time 6 "localhost:5221/api/brain/harness/stream?initiative_id=$IAID" 2>&1 || true); DATA=$(echo "$SSE" | grep "^data:" | grep -v "keepalive" | head -1 | sed "s/^data: //"); echo "$DATA" | jq -e "keys | sort == [\"attempt\",\"label\",\"node\",\"ts\"]" && echo OK'
+  期望: OK
 
-- [ ] [BEHAVIOR] 组件处理 node_update 事件，正确读取 .node/.label/.attempt/.ts 字段
-  Test: manual:bash -c '
-    FILE="apps/dashboard/src/pages/harness-pipeline/HarnessPipelineDetailPage.tsx"
-    grep -q "\.node\b\|\.label\b\|\.attempt\b\|\.ts\b" "$FILE" \
-      || { echo "FAIL: 组件未读取 node/label/attempt/ts 字段"; exit 1; }
-    echo "OK"
-  '
-  期望: exit 0
+- [ ] [BEHAVIOR] 禁用字段 name/step/timestamp 不存在于 node_update data
+  Test: manual:bash -c 'DB="${DATABASE_URL:-postgresql://localhost/cecelia}"; IAID="bbbbbbbb-cccc-dddd-eeee-ff0000000003"; psql "$DB" -c "INSERT INTO initiative_run_events (initiative_id, node, label, attempt) VALUES ('"'"'$IAID'"'"', '"'"'proposer'"'"', '"'"'Proposer'"'"', 1) ON CONFLICT DO NOTHING" 2>/dev/null; SSE=$(curl -s --max-time 6 "localhost:5221/api/brain/harness/stream?initiative_id=$IAID" 2>&1 || true); DATA=$(echo "$SSE" | grep "^data:" | grep -v "keepalive" | head -1 | sed "s/^data: //"); echo "$DATA" | jq -e "has(\"name\") | not" && echo "$DATA" | jq -e "has(\"step\") | not" && echo "$DATA" | jq -e "has(\"timestamp\") | not" && echo OK'
+  期望: OK
 
-- [ ] [BEHAVIOR] 组件实现 done 事件处理，关闭 EventSource 并显示完成状态
-  Test: manual:bash -c '
-    FILE="apps/dashboard/src/pages/harness-pipeline/HarnessPipelineDetailPage.tsx"
-    grep -q "done\|close\(\)" "$FILE" \
-      || { echo "FAIL: 未实现 done 事件处理"; exit 1; }
-    grep -q "已完成\|失败\|completed\|failed" "$FILE" \
-      || { echo "FAIL: 未显示 pipeline 完成状态"; exit 1; }
-    echo "OK"
-  '
-  期望: exit 0
+- [ ] [BEHAVIOR] initiative_id 不存在时返 HTTP 404，body 含 error 字段（string），禁用字段 message/msg 不存在
+  Test: manual:bash -c 'CODE=$(curl -s -o /tmp/err404_ws2.json -w "%{http_code}" "localhost:5221/api/brain/harness/stream?initiative_id=00000000-0000-0000-0000-000000000000"); [ "$CODE" = "404" ] && jq -e ".error | type == \"string\"" /tmp/err404_ws2.json && jq -e "has(\"message\") | not" /tmp/err404_ws2.json && jq -e "has(\"msg\") | not" /tmp/err404_ws2.json && echo OK'
+  期望: OK
 
-- [ ] [BEHAVIOR] EventSource 连接在组件卸载时正确关闭（useEffect cleanup）
-  Test: manual:bash -c '
-    FILE="apps/dashboard/src/pages/harness-pipeline/HarnessPipelineDetailPage.tsx"
-    grep -q "\.close()\|es\.close\|eventSource\.close" "$FILE" \
-      || { echo "FAIL: 缺少 EventSource cleanup（内存泄漏）"; exit 1; }
-    echo "OK"
-  '
-  期望: exit 0
+- [ ] [BEHAVIOR] 缺少 initiative_id query 参数时返 HTTP 400，body 含 error 字段
+  Test: manual:bash -c 'CODE=$(curl -s -o /tmp/err400_ws2.json -w "%{http_code}" "localhost:5221/api/brain/harness/stream"); [ "$CODE" = "400" ] && jq -e ".error | type == \"string\"" /tmp/err400_ws2.json && echo OK'
+  期望: OK
+
+- [ ] [BEHAVIOR] status=done 行存在时 SSE 推 event: done，data 含 status/verdict 字段
+  Test: manual:bash -c 'DB="${DATABASE_URL:-postgresql://localhost/cecelia}"; IAID="bbbbbbbb-cccc-dddd-eeee-ff0000000004"; psql "$DB" -c "INSERT INTO initiative_run_events (initiative_id, node, label, attempt, status, verdict) VALUES ('"'"'$IAID'"'"', '"'"'report'"'"', '"'"'Report'"'"', 1, '"'"'done'"'"', '"'"'PASS'"'"') ON CONFLICT DO NOTHING" 2>/dev/null; SSE=$(curl -s --max-time 8 "localhost:5221/api/brain/harness/stream?initiative_id=$IAID" 2>&1 || true); DONE_DATA=$(echo "$SSE" | grep -A1 "event: done" | grep "^data:" | head -1 | sed "s/^data: //"); echo "$DONE_DATA" | jq -e ".status | . == \"completed\" or . == \"failed\"" && echo "$DONE_DATA" | jq -e ".verdict | . == \"PASS\" or . == \"FAIL\" or . == null" && echo OK'
+  期望: OK
