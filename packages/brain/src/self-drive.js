@@ -196,13 +196,15 @@ export async function runSelfDrive() {
         continue;
       }
 
-      // Check queued/in_progress/recently-quarantined tasks for similar titles
+      // Check queued/in_progress/recently-quarantined/recently-completed tasks for similar titles
       // 覆盖近24h quarantined：防止 account3 auth失败时诊断任务被反复创建放大
+      // 覆盖近7天 completed：防止同一 KR 诊断任务完成后再次被反复创建（KR3 历史 bug）
       const similar = await pool.query(
         `SELECT id FROM tasks
          WHERE (
            status IN ('queued', 'in_progress')
            OR (status = 'quarantined' AND updated_at > NOW() - INTERVAL '24 hours')
+           OR (status = 'completed' AND completed_at > NOW() - INTERVAL '7 days')
          )
            AND LOWER(title) LIKE $1
          LIMIT 1`,
@@ -415,8 +417,11 @@ async function getExistingAutoTasks() {
     const result = await pool.query(
       `SELECT id, title, status FROM tasks
        WHERE (tags::text LIKE '%self-drive%' OR tags::text LIKE '%auto-fix%')
-         AND status IN ('queued', 'in_progress')
-       ORDER BY created_at DESC LIMIT 20`
+         AND (
+           status IN ('queued', 'in_progress')
+           OR (status = 'completed' AND completed_at > NOW() - INTERVAL '7 days')
+         )
+       ORDER BY created_at DESC LIMIT 40`
     );
     return result.rows;
   } catch {
