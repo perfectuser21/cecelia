@@ -733,15 +733,90 @@ const NODE_LABEL_MAP = {
 
 /**
  * GET /stream?planner_task_id=<uuid>
- * SSE 实时推送 harness pipeline 节点进度
+ * SSE 实时推送 harness pipeline 节点进度（planner_task_id 模式）
  *
  * event: node_update  data: {attempt, label, node, ts}
  * event: done         data: {status, verdict}
  * : keepalive         （每 30s 一次）
+ *
+ * GET /stream?initiative_id=<uuid>
+ * SSE 实时推送 initiative_run_events（initiative_id 模式，ws3 DoD）
+ *
+ * event: node_update   data: {node, status, attempt, ts}
+ * event: run_completed data: {status}
+ * : keepalive          （每 30s 一次）
  */
 router.get('/stream', async (req, res) => {
-  const { planner_task_id } = req.query;
+  const { planner_task_id, initiative_id } = req.query;
 
+  // ── initiative_id 模式（ws3 DoD）──────────────────────────────────────────
+  if (initiative_id) {
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+    res.flushHeaders();
+
+    let lastId = 0;
+    let closed = false;
+    let pollTimer = null;
+    let keepaliveTimer = null;
+
+    const cleanup = () => {
+      closed = true;
+      if (pollTimer) clearInterval(pollTimer);
+      if (keepaliveTimer) clearInterval(keepaliveTimer);
+    };
+
+    res.on('close', cleanup);
+
+    const pollInitiative = async () => {
+      if (closed) return;
+      try {
+        const { rows } = await pool.query(
+          `SELECT id, node, status, attempt, ts
+           FROM initiative_run_events
+           WHERE initiative_id = $1::uuid AND id > $2
+           ORDER BY id ASC`,
+          [initiative_id, lastId]
+        );
+
+        for (const row of rows) {
+          if (closed) return;
+          const data = { node: row.node, status: row.status, attempt: row.attempt, ts: Number(row.ts) };
+          res.write(`event: node_update\ndata: ${JSON.stringify(data)}\n\n`);
+          lastId = row.id;
+        }
+
+        // 检查 initiative 任务是否已结束
+        const { rows: taskRows } = await pool.query(
+          `SELECT status FROM tasks WHERE id = $1::uuid AND task_type = 'harness_initiative' LIMIT 1`,
+          [initiative_id]
+        );
+        if (taskRows.length > 0 && (taskRows[0].status === 'completed' || taskRows[0].status === 'failed')) {
+          if (!closed) {
+            const runStatus = taskRows[0].status === 'completed' ? 'done' : 'failed';
+            res.write(`event: run_completed\ndata: ${JSON.stringify({ status: runStatus })}\n\n`);
+            res.end();
+            cleanup();
+          }
+        }
+      } catch (err) {
+        console.error('[SSE /stream initiative_id] poll error:', err.message);
+      }
+    };
+
+    await pollInitiative();
+
+    if (!closed) {
+      pollTimer = setInterval(pollInitiative, 3000);
+      keepaliveTimer = setInterval(() => {
+        if (!closed) res.write(': keepalive\n\n');
+      }, 30000);
+    }
+    return;
+  }
+
+  // ── planner_task_id 模式（原有逻辑）──────────────────────────────────────
   if (!planner_task_id) {
     return res.status(400).json({ error: 'planner_task_id is required' });
   }

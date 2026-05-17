@@ -31,6 +31,7 @@ import { updateTaskStatus, updateTaskProgress as _updateTaskProgress } from './t
 import { traceStep, LAYER, STATUS, EXECUTOR_HOSTS } from './trace.js';
 import { getAccountUsage } from './account-usage.js';
 import { writeDockerCallback, resolveResourceTier, isDockerAvailable } from './docker-executor.js';
+import { writeInitiativeRunEvent } from './events/initiativeRunEvents.js';
 import { spawn as spawnDocker } from './spawn/index.js';
 import {
   sampleCpuUsage as platformSampleCpuUsage,
@@ -2865,6 +2866,11 @@ export async function runHarnessInitiativeRouter(task, opts = {}) {
             });
           } catch (emitErr) {
             console.warn(`[executor] emitGraphNodeUpdate failed (non-fatal): ${emitErr.message}`);
+          }
+          try {
+            await writeInitiativeRunEvent({ initiativeId, node: nodeName, status: 'done', attempt: attemptN });
+          } catch (ireErr) {
+            console.warn(`[executor] writeInitiativeRunEvent failed (non-fatal): ${ireErr.message}`);
           }
           nodeCount++;
         }
