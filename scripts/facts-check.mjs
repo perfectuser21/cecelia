@@ -281,7 +281,9 @@ function checkMigrationConflicts() {
 }
 
 /**
- * 检查 selfcheck.js 的 EXPECTED_SCHEMA_VERSION 是否等于 migrations/ 最高编号
+ * 检查 selfcheck.js 的 EXPECTED_SCHEMA_VERSION 是否 <= migrations/ 最高编号。
+ * EXPECTED_SCHEMA_VERSION 表示最低可接受版本（>= 语义），DB 允许超前。
+ * 只在 EXPECTED_SCHEMA_VERSION 超过最高 migration 时报错（代码声明了不存在的依赖）。
  */
 function checkSelfcheckVersionSync() {
   const migrationsDir = resolve(ROOT, 'packages/brain/migrations');
@@ -385,13 +387,18 @@ if (migrationConflicts.length === 0) {
   }
 }
 
-// Check 2: selfcheck.js version vs highest migration
+// Check 2: selfcheck.js EXPECTED_SCHEMA_VERSION <= highest migration (minimum-version semantics)
 const { selfcheckVersion, highestMigration } = checkSelfcheckVersionSync();
-if (selfcheckVersion === highestMigration) {
-  console.log(`  ✓ selfcheck_version_sync: EXPECTED_SCHEMA_VERSION = '${selfcheckVersion}' matches highest migration`);
+const selfcheckVerNum = selfcheckVersion ? parseInt(selfcheckVersion, 10) : NaN;
+const highestVerNum = parseInt(highestMigration, 10);
+const versionSyncOk = !isNaN(selfcheckVerNum) && selfcheckVerNum <= highestVerNum;
+if (versionSyncOk) {
+  const ahead = highestVerNum - selfcheckVerNum;
+  const note = ahead > 0 ? ` (DB ahead by ${ahead})` : '';
+  console.log(`  ✓ selfcheck_version_sync: EXPECTED_SCHEMA_VERSION='${selfcheckVersion}' <= highest migration='${highestMigration}'${note}`);
 } else {
   integrityFailure = true;
-  console.log(`  ✗ selfcheck_version_sync: selfcheck.js='${selfcheckVersion}' but highest migration='${highestMigration}' — update EXPECTED_SCHEMA_VERSION in packages/brain/src/selfcheck.js`);
+  console.log(`  ✗ selfcheck_version_sync: EXPECTED_SCHEMA_VERSION='${selfcheckVersion}' > highest migration='${highestMigration}' — code requires a migration that does not exist yet`);
 }
 
 // Check 3: LLM fetch timeouts
