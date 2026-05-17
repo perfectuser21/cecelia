@@ -1,0 +1,44 @@
+{
+  "initiative_id": "pending",
+  "journey_type": "user_facing",
+  "journey_type_reason": "入口是 dashboard 详情页（apps/dashboard/），用户直接感知实时节点推进，非 autonomous/dev_pipeline 类型",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "Brain 新增 SSE stream 端点 GET /api/brain/harness/stream",
+      "scope": "在 packages/brain/src/routes/harness.js 新增 GET /stream 路由：验证 planner_task_id（缺参数 400，UUID 不存在 404）；查询 tasks 表确认 pipeline 存在；每 2s 轮询 task_events 表拉取 graph_node_update 新行；将 payload.nodeName→node、payload.attemptN→attempt、created_at→ts、中文标签→label 映射后以 event: node_update + data: JSON 推送；task.status 为 completed/failed 时推 event: done {status, verdict} 并关闭连接；每 30s 写 ': keepalive' comment；Content-Type: text/event-stream",
+      "dod": [
+        "[BEHAVIOR] GET /stream?planner_task_id={id} 推送含 node/label/attempt/ts 四字段 node_update data，keys 精确等于 [\"attempt\",\"label\",\"node\",\"ts\"]",
+        "[BEHAVIOR] 禁用字段 nodeName/timestamp/name/type 不出现在 SSE data JSON",
+        "[BEHAVIOR] 缺 planner_task_id 返 400 + {error: string}（无 message 字段）；未知 UUID 返 404",
+        "[BEHAVIOR] pipeline completed/failed 时推 event: done {status, verdict}，不含禁用字段 result",
+        "[ARTIFACT] harness.js 含 router.get('/stream'... 路由声明 + keepalive comment + 中文标签 MAP"
+      ],
+      "files": [
+        "packages/brain/src/routes/harness.js"
+      ],
+      "depends_on": [],
+      "complexity": "M",
+      "estimated_minutes": 40
+    },
+    {
+      "task_id": "ws2",
+      "title": "Dashboard HarnessPipelineDetailPage 新增实时日志区 + EventSource hook",
+      "scope": "在 apps/dashboard/src/pages/harness-pipeline/HarnessPipelineDetailPage.tsx 新增：(1) useEffect 中创建 EventSource 连接 /api/brain/harness/stream?planner_task_id={id}（用 useParams 或 props 获取 id）；(2) 监听 message 事件追加 {node, label, attempt, ts} 到日志列表状态；(3) 监听 done 事件关闭 EventSource 并显示 Pipeline 已完成 ✅ 或 Pipeline 失败 ❌；(4) return 清理函数调用 EventSource.close()；(5) 渲染"实时日志"区块展示 label + ts",
+      "dod": [
+        "[BEHAVIOR] EventSource URL 使用 planner_task_id query param，不含禁用名 taskId/pipeline_id/tid",
+        "[BEHAVIOR] 读取 data.node 和 data.label（不使用 .nodeName/.name）",
+        "[BEHAVIOR] 处理 done 事件并显示已完成/失败文案",
+        "[BEHAVIOR] 卸载时调用 EventSource.close()（防内存泄漏）",
+        "[BEHAVIOR] 读取 data.ts 时间字段（不使用 .timestamp/.time）",
+        "[ARTIFACT] HarnessPipelineDetailPage.tsx 含 new EventSource( 构造"
+      ],
+      "files": [
+        "apps/dashboard/src/pages/harness-pipeline/HarnessPipelineDetailPage.tsx"
+      ],
+      "depends_on": ["ws1"],
+      "complexity": "M",
+      "estimated_minutes": 45
+    }
+  ]
+}
