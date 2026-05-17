@@ -85,7 +85,7 @@ async function retryTask(pool, taskId, currentRetry) {
   const backoffSec = Math.min(RETRY_BACKOFF_BASE_SEC * Math.pow(2, currentRetry), 1800);
   const nextRunAt = new Date(Date.now() + backoffSec * 1000).toISOString();
 
-  await pool.query(
+  const res = await pool.query(
     `UPDATE tasks
      SET status = 'queued',
          claimed_by = NULL,
@@ -94,9 +94,12 @@ async function retryTask(pool, taskId, currentRetry) {
          started_at = NULL,
          updated_at = NOW(),
          payload = COALESCE(payload, '{}'::jsonb) || $3::jsonb
-     WHERE id = $1`,
+     WHERE id = $1 AND status = 'failed'`,
     [taskId, currentRetry + 1, JSON.stringify({ next_run_at: nextRunAt })]
   );
+  if (res.rowCount === 0) {
+    console.log(`[publish-monitor] retryTask skip: task ${taskId} 已被其他 tick 处理`);
+  }
 }
 
 /**

@@ -63,6 +63,10 @@ router.post('/publish-jobs', async (req, res) => {
     if (!platform) {
       return res.status(400).json({ success: false, error: 'platform 字段必填' });
     }
+    const VALID_PLATFORMS = ['douyin', 'kuaishou', 'xiaohongshu', 'toutiao', 'weibo', 'shipinhao', 'zhihu', 'wechat'];
+    if (!VALID_PLATFORMS.includes(platform)) {
+      return res.status(400).json({ success: false, error: `platform 无效，允许值: ${VALID_PLATFORMS.join('/')}` });
+    }
     if (!content_type) {
       return res.status(400).json({ success: false, error: 'content_type 字段必填' });
     }
@@ -105,13 +109,23 @@ router.post('/publish-jobs/retry/:id', async (req, res) => {
       `UPDATE content_publish_jobs
        SET status = 'pending', error_message = NULL, started_at = NULL,
            completed_at = NULL, updated_at = NOW()
-       WHERE id = $1
+       WHERE id = $1 AND status = 'failed'
        RETURNING id, platform, content_type, status, updated_at`,
       [id]
     );
 
     if (result.rows.length === 0) {
-      return res.status(404).json({ success: false, error: `job ${id} 不存在` });
+      const check = await pool.query(
+        `SELECT status FROM content_publish_jobs WHERE id = $1`,
+        [id]
+      );
+      if (check.rows.length === 0) {
+        return res.status(404).json({ success: false, error: `job ${id} 不存在` });
+      }
+      return res.status(409).json({
+        success: false,
+        error: `job ${id} 当前状态为 ${check.rows[0].status}，只有 failed 状态可重试`,
+      });
     }
 
     res.json({ success: true, ...result.rows[0] });

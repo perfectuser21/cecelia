@@ -10,7 +10,7 @@
 
 import { Router } from 'express';
 import { readFile } from 'fs/promises';
-import { execSync } from 'child_process';
+import { execFileSync } from 'child_process';
 import { join } from 'path';
 import { homedir } from 'os';
 import pool from '../db.js';
@@ -262,12 +262,12 @@ async function readSprintFiles(sprintDir) {
  */
 function fetchFileFromBranch(branch, filePath) {
   try {
-    execSync('git fetch origin', { cwd: REPO_ROOT, stdio: 'pipe' });
+    execFileSync('git', ['fetch', 'origin'], { cwd: REPO_ROOT, stdio: 'pipe' });
   } catch {
     // fetch 失败不阻塞
   }
   try {
-    return execSync(`git show origin/${branch}:${filePath}`, {
+    return execFileSync('git', ['show', `origin/${branch}:${filePath}`], {
       cwd: REPO_ROOT,
       encoding: 'utf-8',
       stdio: 'pipe',
