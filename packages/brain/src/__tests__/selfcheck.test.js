@@ -159,6 +159,30 @@ describe('selfcheck', () => {
     expect(ok).toBe(true);
   });
 
+  it('should warn when DB schema version is ahead of expected (forward-compat warning)', async () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const pool = makeMockPool({
+      'schema_version': { rows: [{ max_ver: '999' }] },
+    });
+    await runSelfCheck(pool, { envRegion: 'us' });
+    const warnLines = warnSpy.mock.calls.flat().filter(
+      s => typeof s === 'string' && s.includes('ahead of') && s.includes('EXPECTED_SCHEMA_VERSION')
+    );
+    expect(warnLines.length).toBeGreaterThan(0);
+    warnSpy.mockRestore();
+  });
+
+  it('should NOT warn when DB schema version exactly matches expected', async () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const pool = makeMockPool(); // defaults to EXPECTED_SCHEMA_VERSION
+    await runSelfCheck(pool, { envRegion: 'us' });
+    const schemaWarnLines = warnSpy.mock.calls.flat().filter(
+      s => typeof s === 'string' && s.includes('ahead of') && s.includes('EXPECTED_SCHEMA_VERSION')
+    );
+    expect(schemaWarnLines.length).toBe(0);
+    warnSpy.mockRestore();
+  });
+
   describe('Watchdog RSS Sanity Check', () => {
     it('should log INFO when thresholds are normal', async () => {
       const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
