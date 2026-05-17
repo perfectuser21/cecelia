@@ -1,0 +1,70 @@
+name: CI L3 — Publisher 发布成功率 Gate
+
+# 仅在 packages/workflows/skills/*-publisher/** 有改动时触发。
+# 核心逻辑：publisher skill 改动必须通过发布成功率≥90% 验收方可合并。
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ci-l3-code-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ─── 变更检测 ──────────────────────────────────────────────────────────────
+  changes:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    outputs:
+      publisher: ${{ steps.detect.outputs.publisher }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - id: detect
+        run: |
+          BASE_REF="origin/${{ github.base_ref || 'main' }}"
+          if ! git rev-parse "$BASE_REF" >/dev/null 2>&1; then
+            echo "publisher=false" >> $GITHUB_OUTPUT
+            echo "⏭️  无法解析 base ref，跳过 publisher 检测"
+            exit 0
+          fi
+          CHANGED=$(git diff --name-only "$BASE_REF"...HEAD 2>/dev/null || echo "")
+          if echo "$CHANGED" | grep -qE '^packages/workflows/skills/[^/]+-publisher/'; then
+            echo "publisher=true" >> $GITHUB_OUTPUT
+            echo "🔍 检测到 publisher skill 改动:"
+            echo "$CHANGED" | grep -E '^packages/workflows/skills/[^/]+-publisher/'
+          else
+            echo "publisher=false" >> $GITHUB_OUTPUT
+            echo "⏭️  无 publisher 改动，跳过成功率 gate"
+          fi
+
+  # ─── 发布成功率 Gate ───────────────────────────────────────────────────────
+  # 只有 publisher skill 有改动时才运行。
+  # 调用 Brain API 查询近7日发布成功率，< 90% 则 CI 失败、阻止合并。
+  publish-success-rate-gate:
+    needs: changes
+    if: needs.changes.outputs.publisher == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: 安装依赖（jq）
+        run: |
+          command -v jq &>/dev/null && echo "jq already installed" || \
+            (sudo apt-get update -qq && sudo apt-get install -y jq)
+      - name: 发布成功率 Gate（publisher 改动须达标方可合并）
+        env:
+          BRAIN_URL: ${{ vars.BRAIN_URL }}
+          THRESHOLD: '90'
+        run: |
+          if [ -z "${BRAIN_URL}" ]; then
+            echo "::error::vars.BRAIN_URL 未配置"
+            echo "请在 GitHub repo Settings → Variables → Actions 中添加 BRAIN_URL，"
+            echo "指向可访问的 Brain 服务（如 http://your-brain-host:5221）"
+            exit 1
+          fi
+          echo "▶️  BRAIN_URL=${BRAIN_URL}  THRESHOLD=${THRESHOLD}%"
+          bash scripts/verify-publish-krs.sh
