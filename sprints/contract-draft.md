@@ -88,7 +88,7 @@ m.writeInitiativeRunEvent({initiativeId:'$IAID',node:'proposer',label:'Proposer'
   .catch(e=>{console.error(e.message);process.exit(1);});
 "
 COUNT=$(psql "$DB" -t -c "SELECT count(*) FROM initiative_run_events \
-  WHERE initiative_id='$IAID' AND created_at > NOW() - interval '1 minute'" | tr -d ' ')
+  WHERE initiative_id='$IAID' AND ts > NOW() - interval '1 minute'" | tr -d ' ')
 [ "$COUNT" -ge 1 ] && echo "DB_ROW_OK"
 ```
 
