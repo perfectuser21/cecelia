@@ -212,9 +212,13 @@ if [[ "$DEPLOY_MODE" == "docker" ]]; then
         exit 0
     fi
 
-    # 删掉 stopped/created 状态的旧容器，避免 docker compose up 因命名冲突卡在 Created 状态
-    docker ps -a --filter "name=cecelia-node-brain" --filter "status=exited" -q | xargs -r docker rm -f 2>/dev/null || true
-    docker ps -a --filter "name=cecelia-node-brain" --filter "status=created" -q | xargs -r docker rm -f 2>/dev/null || true
+    # 无条件清理所有名为 cecelia-node-brain 的容器（任意状态），避免命名冲突
+    # 使用精确名称 ^/cecelia-node-brain$ 防止前缀误匹配其他容器
+    EXISTING_IDS=$(docker ps -a --filter "name=^/cecelia-node-brain$" -q 2>/dev/null || true)
+    if [[ -n "$EXISTING_IDS" ]]; then
+        echo "  Removing existing cecelia-node-brain container(s) before recreate..."
+        echo "$EXISTING_IDS" | xargs docker rm -f 2>/dev/null || true
+    fi
 
     if [[ "$DRY_RUN" == true ]]; then
         echo "  [dry-run] docker compose up -d cecelia-brain:${VERSION}"
