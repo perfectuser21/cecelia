@@ -324,6 +324,30 @@ export async function dispatchNextTask(goalIds) {
       continue;
     }
 
+    // 3b''. Viability Gate — 执行依赖可行性检查（外部服务、payload 完整性、账号 auth）
+    //       必须在 pre-flight 之后、initiative lock / atomic claim 之前，
+    //       确保不可行任务不占用 claim 锁，且可与 preFlightFailedIds 共用跳过逻辑。
+    {
+      const { checkDispatchViability, alertOnViabilityBlock } = await import('./viability-gate.js');
+      const viabilityResult = await checkDispatchViability(candidate, pool);
+      if (!viabilityResult.viable) {
+        console.warn(`[dispatch] Viability gate blocked task ${candidate.id} (attempt ${attempt + 1}/${MAX_PRE_FLIGHT_RETRIES + 1}): ${viabilityResult.reason}`);
+        await pool.query(
+          `UPDATE tasks SET metadata = COALESCE(metadata, '{}'::jsonb) || $2::jsonb WHERE id = $1`,
+          [candidate.id, JSON.stringify({
+            viability_blocked: true,
+            viability_check: viabilityResult.check,
+            viability_reason: viabilityResult.reason,
+            blocked_at: new Date().toISOString(),
+          })],
+        );
+        await recordDispatchResult(pool, false, 'viability_gate_blocked');
+        await alertOnViabilityBlock(pool, candidate, viabilityResult);
+        preFlightFailedIds.push(candidate.id);
+        continue;
+      }
+    }
+
     // 3b'. Retired harness task_types — 不需要 executor，直接标 terminal_failure。
     //      必须放在 checkCeceliaRunAvailable 之前，否则在 cecelia-bridge 不可用的环境
     //      （CI / brain-only deploy）retired task 永远 revert 回 queued。
