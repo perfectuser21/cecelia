@@ -82,8 +82,7 @@ describe('B44 — harness pipeline A→B→C: phase=done DB writeback', () => {
     ].forEach((m) => m.mockReset());
     mockClient.release.mockReturnValue(undefined);
     mockClient.query.mockResolvedValue({ rows: [] });
-    // NOTE: mockPool.query fallback intentionally omitted — RED: reportNode throws when
-    // pool.query returns undefined → test fails to prove assertion is load-bearing.
+    mockPool.query.mockResolvedValue({ rows: [] });
     mockPool.connect.mockResolvedValue(mockClient);
   });
 
