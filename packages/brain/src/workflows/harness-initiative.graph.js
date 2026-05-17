@@ -656,7 +656,8 @@ export async function parsePrdNode(state) {
         ['log', '--diff-filter=A', '--name-only', '--format=', 'origin/main..HEAD', '--', 'sprints/'],
         { cwd: state.worktreePath }
       );
-      const newSprintMatch = logOut.match(/sprints\/([^/\n]+)\//);
+      const allMatches = [...logOut.matchAll(/sprints\/([^/\n]+)\//g)];
+      const newSprintMatch = allMatches.at(-1);
       if (newSprintMatch) {
         sprintDir = `sprints/${newSprintMatch[1]}`;
       } else if (!logOut.trim()) {
@@ -669,6 +670,8 @@ export async function parsePrdNode(state) {
           const dirs = findOut.trim().split('\n').filter(Boolean);
           if (dirs.length === 1) {
             sprintDir = path.relative(state.worktreePath, dirs[0]);
+          } else if (dirs.length > 1) {
+            console.warn(`[parsePrdNode] B40: found ${dirs.length} sprint subdirs, cannot auto-detect. Keeping ${sprintDir}`);
           }
         } catch { /* sprints/ 子目录未找到，保持已有 sprintDir */ }
       }
