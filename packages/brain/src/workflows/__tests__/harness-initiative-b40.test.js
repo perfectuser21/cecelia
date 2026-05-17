@@ -40,6 +40,7 @@ vi.mock('node:fs/promises', () => ({
 
 import { parsePrdNode, dbUpsertNode } from '../harness-initiative.graph.js';
 import * as fsPromises from 'node:fs/promises';
+import * as harnessdag from '../../harness-dag.js';
 
 describe('B40: parsePrdNode git log fallback + dbUpsertNode sprint_dir 写回', () => {
   beforeEach(() => {
@@ -91,10 +92,15 @@ describe('B40: parsePrdNode git log fallback + dbUpsertNode sprint_dir 写回', 
   });
 
   it('B40-3: dbUpsertNode 把 state.sprintDir 写回 insertedTaskIds 的 payload', async () => {
+    // vi.resetAllMocks() 会清掉顶部 mock 的 return value，需重新设置
+    vi.mocked(harnessdag.upsertTaskPlan).mockResolvedValue({ idMap: {}, insertedTaskIds: ['task-uuid-1', 'task-uuid-2'] });
     const mockClient = {
       query: vi.fn().mockImplementation((sql) => {
         if (typeof sql === 'string' && sql.includes('INSERT INTO initiative_contracts')) {
           return Promise.resolve({ rows: [{ id: 'contract-uuid-1' }], rowCount: 1 });
+        }
+        if (typeof sql === 'string' && sql.includes('INSERT INTO initiative_runs')) {
+          return Promise.resolve({ rows: [{ id: 'run-uuid-1' }], rowCount: 1 });
         }
         return Promise.resolve({ rows: [], rowCount: 0 });
       }),
