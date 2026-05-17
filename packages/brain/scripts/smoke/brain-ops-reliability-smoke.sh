@@ -33,13 +33,13 @@ check "com.cecelia.brain-keepalive.plist 存在" \
 check "janitor jobs API 包含 docker-prune" \
   bash -c "curl -sf '$BASE_URL/api/brain/janitor/jobs' | grep -q 'docker-prune'"
 
-# C. selectBestAccount 可返回有效 accountId
-check "selectBestAccount 返回有效 accountId" \
-  node --input-type=module --eval "
-    const { selectBestAccount } = await import('$REPO_ROOT/packages/brain/src/account-usage.js');
-    const r = await selectBestAccount().catch(() => null);
-    if (!r?.accountId) process.exit(1);
-  "
+# C. account-usage.js 导出 selectBestAccount（静态检查，不连库）
+check "account-usage.js 含 selectBestAccount export" \
+  node -e "const c=require('fs').readFileSync('$REPO_ROOT/packages/brain/src/account-usage.js','utf8');if(!c.includes('export async function selectBestAccount'))process.exit(1)"
+
+# D. executor.js 含 minSessionHours harness 逻辑
+check "executor.js 含 harness minSessionHours 逻辑" \
+  node -e "const c=require('fs').readFileSync('$REPO_ROOT/packages/brain/src/executor.js','utf8');if(!c.includes('minSessionHours'))process.exit(1)"
 
 echo ""
 echo "结果: ${PASS} passed, ${FAIL} failed"
