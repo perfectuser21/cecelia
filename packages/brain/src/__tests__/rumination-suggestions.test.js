@@ -87,10 +87,10 @@ describe('rumination → L1 丘脑信号', () => {
     mockProcessEvent.mockResolvedValue({ level: 0, actions: [], rationale: 'ok', confidence: 0.8, safety: false });
   });
 
-  describe('DOD-1: [ACTION:] 洞察 → RUMINATION_RESULT 事件含 actions', () => {
-    it('DOD-1: 有 [ACTION:] 标记时，processEvent 的 event.actions 包含行动标题', async () => {
+  describe('DOD-1: JSON actions → RUMINATION_RESULT 事件含 actions', () => {
+    it('DOD-1: JSON actions 时，processEvent 的 event.actions 包含行动标题', async () => {
       mockCallLLM.mockResolvedValueOnce({
-        text: '深度分析结论 [ACTION: 研究 React Server Components]',
+        text: '{"insight":"深度分析结论，React Server Components 改变了前端渲染模式。","actions":[{"title":"研究 React Server Components","create_task":true,"task_type":"research"}]}',
       });
 
       setupIdleAndLearnings([
@@ -105,9 +105,9 @@ describe('rumination → L1 丘脑信号', () => {
       }));
     });
 
-    it('DOD-1: 无 [ACTION:] 标记时，event.actions 为空数组', async () => {
+    it('DOD-1: JSON actions 为空时，event.actions 为空数组', async () => {
       mockCallLLM.mockResolvedValueOnce({
-        text: '这是一条普通洞察，没有行动建议',
+        text: '{"insight":"这是一条普通洞察，没有行动建议，仅作记录。","actions":[]}',
       });
 
       setupIdleAndLearnings([
@@ -124,9 +124,9 @@ describe('rumination → L1 丘脑信号', () => {
   });
 
   describe('DOD-2: 不再直接调用 createTask 或 createSuggestion', () => {
-    it('DOD-2: 3 个 [ACTION:] 标记 → processEvent 收到 3 个 actions', async () => {
+    it('DOD-2: 3 个 JSON actions → processEvent 收到 3 个 actions', async () => {
       mockCallLLM.mockResolvedValueOnce({
-        text: '分析结论 [ACTION: 行动一] 另外 [ACTION: 行动二] 还有 [ACTION: 行动三]',
+        text: '{"insight":"分析前端技术趋势，发现三个可执行方向。","actions":[{"title":"行动一","create_task":true},{"title":"行动二","create_task":true},{"title":"行动三","create_task":true}]}',
       });
 
       setupIdleAndLearnings([
@@ -142,9 +142,9 @@ describe('rumination → L1 丘脑信号', () => {
       expect(callArgs.actions).toContain('行动三');
     });
 
-    it('DOD-2: 恰好 2 个 [ACTION:] → processEvent 收到 2 个 actions', async () => {
+    it('DOD-2: 2 个 JSON actions → processEvent 收到 2 个 actions', async () => {
       mockCallLLM.mockResolvedValueOnce({
-        text: '洞察 [ACTION: 第一行动] 以及 [ACTION: 第二行动]',
+        text: '{"insight":"洞察内容，发现两个可执行方向值得跟进。","actions":[{"title":"第一行动","create_task":true},{"title":"第二行动","create_task":true}]}',
       });
 
       setupIdleAndLearnings([
@@ -161,7 +161,7 @@ describe('rumination → L1 丘脑信号', () => {
   describe('DOD-3: processEvent 失败不影响消化流程', () => {
     it('DOD-3: processEvent 抛出异常时消化仍成功', async () => {
       mockCallLLM.mockResolvedValueOnce({
-        text: '洞察 [ACTION: 测试行动]',
+        text: '{"insight":"洞察内容，触发行动测试场景。","actions":[{"title":"测试行动","create_task":true}]}',
       });
       mockProcessEvent.mockRejectedValueOnce(new Error('thalamus error'));
 

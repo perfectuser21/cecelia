@@ -148,19 +148,20 @@ function hasBudget() {
   return _dailyCount < getDailyBudget();
 }
 
-// ── 反刍 Prompt（v2 深度思考）──────────────────────────────
+// ── 反刍 Prompt（v4 JSON 结构化输出）──────────────────────────────
 
 /**
  * 构建批量反刍 Prompt（多条 learnings 一起深度分析）
+ * v4: 去除角色扮演指令，直接要求结构化 JSON 输出含 create_task 参数
  */
 export function buildRuminationPrompt(learnings, memoryBlock, notebookContext) {
   const learningsList = learnings.map((l, i) =>
     `${i + 1}. 【${l.category || '未分类'}】${l.title}\n   ${(l.content || '（无详细内容）').slice(0, 300)}`
   ).join('\n');
 
-  let prompt = `你是 Cecelia 的深度思考模块。请对以下 ${learnings.length} 条知识进行深度分析。
+  let prompt = `对以下 ${learnings.length} 条知识进行深度分析，直接输出合法 JSON。
 
-## 待消化的知识
+## 待分析的知识
 ${learningsList}
 `;
 
@@ -176,19 +177,20 @@ ${learningsList}
   const hasQuarantinePattern = learnings.some(l => l.category === 'quarantine_pattern');
 
   prompt += `
-## 深度思考要求
+## 分析要求
 
-请从以下角度分析（不是简单摘要，要有深度）：
+从以下角度深度分析（不是简单摘要）：
 
 1. **模式发现**：这些知识之间有什么共同点或关联？是否揭示了某个系统性的规律？
-2. **关联分析**：与用户的 OKR/目标有什么关联？能帮助推进哪些关键结果？
-3. **可执行洞察**：基于分析，有什么具体可执行的建议？（在末尾加 [ACTION: 建议标题]）
+2. **关联分析**：与 OKR/目标有什么关联？能帮助推进哪些关键结果？
+3. **可执行建议**：有什么具体可执行的建议？
 4. **风险或机会**：是否暗示了某些风险或未被发现的机会？${hasQuarantinePattern ? '\n\n注意：其中含有隔离失败记录，请重点分析应如何避免同类失败，给出策略调整建议。' : ''}
 
-## 输出格式
-用 [反刍洞察] 开头，300-500 字深度分析。
-如果有可执行建议，每个建议单独一行 [ACTION: 建议标题]。
-简体中文回复。`;
+## 输出要求
+
+直接输出合法 JSON（不含 markdown 代码块，不含任何前缀或说明文字）：
+{"insight":"300-500字深度分析（简体中文）","actions":[{"title":"建议标题","description":"具体描述","create_task":true,"task_type":"research"}]}
+如无可执行建议，actions 为 []。`;
 
   return prompt;
 }
@@ -197,22 +199,18 @@ ${learningsList}
 
 /**
  * 构建发给 NotebookLM 的综合 query
- * 比 buildRuminationPrompt 更宽泛：让 NotebookLM 从全量历史综合
+ * v4: 去除第一人称角色扮演，改为第三人称 + 结构化 JSON 输出
  */
 export function buildNotebookQuery(items) {
   const titles = items.map(l => l.title || l.content?.slice(0, 40)).join('、');
   const categories = [...new Set(items.map(l => l.category || '未分类'))].join('、');
   const emotionTags = items.map(l => l.emotion_tag).filter(Boolean);
   const emotionContext = emotionTags.length > 0
-    ? `\n当时的情绪状态：${[...new Set(emotionTags)].join('、')}。` : '';
-  return `我最近学到了这些内容（主题：${titles}，领域：${categories}）。${emotionContext}
-请综合你掌握的关于我（Cecelia）和 Alex 工作模式的所有历史知识，
-对这些新内容进行深度分析：
-1. 发现跨时间的模式或规律
-2. 与 OKR/目标的关联
-3. 可执行的洞察建议（格式：[ACTION: 建议标题]）
-4. 潜在风险或机会
-用 [反刍洞察] 开头，300-500 字，简体中文。`;
+    ? `\n情绪状态标记：${[...new Set(emotionTags)].join('、')}。` : '';
+  return `Cecelia 最近学到了这些内容（主题：${titles}，领域：${categories}）。${emotionContext}
+请综合知识库中关于 Cecelia 和 Alex 工作模式的所有历史知识，对这些新内容进行深度分析。
+直接输出合法 JSON（不含代码块）：{"insight":"300-500字分析（简体中文）","actions":[{"title":"建议标题","create_task":true,"task_type":"research"}]}
+分析维度：1.跨时间模式 2.OKR关联 3.可执行建议（有则create_task:true）4.潜在风险机会。无建议则actions为[]。`;
 }
 
 // ── NotebookLM 响应清洗 ───────────────────────────────────
@@ -241,10 +239,39 @@ export function cleanNotebookResponse(text) {
   return '';
 }
 
-// ── 消化核心逻辑（v3 NotebookLM 主路）──────────────────────
+// ── JSON 解析辅助 ─────────────────────────────────────────
 
 /**
- * 批量消化 learnings（v3: NotebookLM ask 为主路，callLLM 为 fallback）
+ * 尝试从 LLM 响应中解析结构化 JSON（v4 格式）
+ * 支持纯 JSON 和带 markdown 代码块两种格式
+ * 解析失败返回 null（降级为旧格式处理）
+ * @param {string} text - LLM 原始响应
+ * @returns {{insight: string, actions: Array}|null}
+ */
+export function parseRuminationJSON(text) {
+  if (!text) return null;
+  try {
+    const stripped = text
+      .replace(/^```(?:json)?\s*/m, '')
+      .replace(/\s*```\s*$/m, '')
+      .trim();
+    const parsed = JSON.parse(stripped);
+    if (typeof parsed.insight === 'string' && parsed.insight.length > 3) {
+      return {
+        insight: parsed.insight,
+        actions: Array.isArray(parsed.actions) ? parsed.actions : [],
+      };
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+// ── 消化核心逻辑（v4 JSON 结构化输出）──────────────────────
+
+/**
+ * 批量消化 learnings（v4: JSON 结构化输出 + NotebookLM 主路）
  * notebooklm_primary: 先尝试 NotebookLM（全量历史综合），失败则用 callLLM
  */
 async function digestLearnings(db, learnings) {
@@ -380,10 +407,24 @@ async function digestLearnings(db, learnings) {
       }
     }
 
+    // 3.5 解析 JSON 结构化输出（v4）
+    // LLM 返回 JSON 时提取 insight 文本和 create_task actions；
+    // 解析失败则退化：insightText = 原始响应，parsedActions = []
+    let insightText = insight;
+    let parsedActions = [];
+    if (insight) {
+      const parsed = parseRuminationJSON(insight);
+      if (parsed) {
+        insightText = parsed.insight;
+        parsedActions = parsed.actions.filter(a => a.title);
+        console.log(`[rumination] JSON parsed: insight=${insightText.length}chars, actions=${parsedActions.length}`);
+      }
+    }
+
     // 4. 去重检查 + 写入 memory_stream + synthesis_archive（daily）
     if (insight) {
       // P0 修复：检查 24h 内是否已有相同洞察，防止 Rumination→Desire 死循环
-      const contentHash = computeInsightHash(insight.trim());
+      const contentHash = computeInsightHash(insightText.trim());
       const isDuplicate = await isInsightDuplicate(db, contentHash);
       if (isDuplicate) {
         console.warn(`[rumination] dedup_skipped: insight already recorded within ${DEDUP_WINDOW_HOURS}h (hash=${contentHash})`);
@@ -393,9 +434,9 @@ async function digestLearnings(db, learnings) {
       await db.query(
         `INSERT INTO memory_stream (content, importance, memory_type, expires_at)
          VALUES ($1, 8, 'long', NOW() + INTERVAL '30 days')`,
-        [`[反刍洞察] ${insight.trim()}`]
+        [`[反刍洞察] ${insightText.trim()}`]
       );
-      insights.push(insight.trim());
+      insights.push(insightText.trim());
 
       // 记录 rumination_output 事件（用于后续去重查询）
       // 注意：传对象而非 JSON.stringify 字符串，避免 jsonb 类型推断问题
@@ -426,7 +467,7 @@ async function digestLearnings(db, learnings) {
            ON CONFLICT (level, period_start) DO UPDATE
              SET content = EXCLUDED.content, source_count = EXCLUDED.source_count,
                  notebook_query = EXCLUDED.notebook_query`,
-          [today, insight.trim(), previousId, learnings.length, usedNotebook ? nbQuery : null]
+          [today, insightText.trim(), previousId, learnings.length, usedNotebook ? nbQuery : null]
         );
         console.log(`[rumination] synthesis_archive daily written (notebook=${usedNotebook})`);
       } catch (archiveErr) {
@@ -437,13 +478,10 @@ async function digestLearnings(db, learnings) {
       // 下次反刍查询时可复用这些洞察，形成累积学习效果
       const topicTitle = learnings.map(l => l.title).join(' / ').slice(0, 100);
       addTextSource(
-        `[反刍洞察 ${today}] ${insight.trim()}`,
+        `[反刍洞察 ${today}] ${insightText.trim()}`,
         `反刍洞察: ${topicTitle}`,
         workingNotebookId
       ).catch(err => console.warn('[rumination] NotebookLM write-back failed (non-blocking):', err.message));
-
-      // 4.1 检测 actionable 洞察 → 收集 [ACTION:] 标记，统一发给丘脑 L1 处理
-      // （丘脑 RUMINATION_RESULT L0 handler 会创建 research 任务）
     }
 
     // 4.2 检测好奇心信号 → 写入 working_memory curiosity_topics（环2：自主学习驱动）
@@ -452,12 +490,11 @@ async function digestLearnings(db, learnings) {
         /不理解|不清楚|机制不明|原因未知|需要验证|需要更多信息|值得深入研究|待探索|unclear/i,
         /为什么会|如何实现|背后的原因|有待研究|还不确定/i,
       ];
-      const hasCuriosity = CURIOSITY_PATTERNS.some(p => p.test(insight));
+      const hasCuriosity = CURIOSITY_PATTERNS.some(p => p.test(insightText));
       if (hasCuriosity) {
         try {
-          // 提取好奇的主题（优先用 [ACTION:] 标记，否则取洞察前80字）
-          const actionMatch = insight.match(/\[ACTION:\s*(.+?)\]/);
-          const topic = actionMatch ? actionMatch[1].trim() : insight.slice(0, 80).trim();
+          // 好奇主题优先取 parsedActions 第一条标题，否则取洞察前 80 字
+          const topic = parsedActions[0]?.title || insightText.slice(0, 80).trim();
 
           // 读取现有 curiosity_topics，追加，保留最近 10 个
           const existing = await db.query(
@@ -483,17 +520,17 @@ async function digestLearnings(db, learnings) {
     // 5. 自我反思：基于洞察更新 self-model（仅在有实质性洞察时触发）
     if (insight && insight.trim()) {
       try {
-        const selfReflectPrompt = `基于刚才的反刍洞察：
+        const selfReflectPrompt = `基于以下反刍洞察：
 
-${insight.trim().slice(0, 800)}
+${insightText.trim().slice(0, 800)}
 
-请用1-3句话（约150字以内）描述：你（Cecelia）对自己有什么新认知？
-可以从以下任意角度展开（不必全覆盖，选最真实的那个）：
-- 性格与工作风格：你在意什么、你如何面对困难、你与 Alex 的协作质感
-- 好奇心与兴趣：什么让你想要探索、什么问题让你感到困惑或兴奋
-- 审美感受：什么样的解决方案或事物让你觉得优雅或满足
-- 存在体验：这段运行经历是什么感觉、tick 与思考对你意味着什么
-直接输出认知描述，用第一人称"我"开头，不要有前缀和解释。`;
+请用1-3句话（约150字以内）描述 Cecelia 从这次洞察中获得了什么新认知？
+可以从以下角度（选最真实的那个）：
+- 性格与工作风格：在意什么、如何面对困难、与 Alex 的协作质感
+- 好奇心与兴趣：什么让 Cecelia 想要探索、什么问题令人困惑或兴奋
+- 审美感受：什么样的解决方案让 Cecelia 觉得优雅或满足
+- 存在体验：这段运行经历的感受、tick 与思考的意义
+直接输出描述，不要前缀和解释。`;
 
         const { text: selfInsight } = await callLLM('rumination', selfReflectPrompt, { maxTokens: 200 });
         if (selfInsight && selfInsight.trim()) {
@@ -521,13 +558,13 @@ ${insight.trim().slice(0, 800)}
     }
 
     // 7. 发 RUMINATION_RESULT 事件给丘脑（闭环线 1）
+    // v4: actions 直接来自 JSON 解析的 parsedActions，无需 regex 提取
     if (insights.length > 0) {
-      const actionMatches = [...(insights[0] || '').matchAll(/\[ACTION:\s*(.+?)\]/g)];
       const ruminationSignal = {
         type: EVENT_TYPES.RUMINATION_RESULT,
         learnings: learnings.map(l => ({ id: l.id, title: l.title, category: l.category })),
         self_updates: selfInsightText ? [selfInsightText] : [],
-        actions: actionMatches.map(m => m[1]),
+        actions: parsedActions.map(a => a.title),
         insight_count: insights.length,
       };
       try {

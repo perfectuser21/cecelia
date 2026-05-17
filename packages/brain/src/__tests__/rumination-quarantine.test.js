@@ -62,7 +62,7 @@ describe('反刍系统隔离模式检测', () => {
     // 验证基本内容存在
     expect(prompt).toContain('正常学习记录');
     expect(prompt).toContain('另一个正常记录');
-    expect(prompt).toContain('深度思考要求');
+    expect(prompt).toContain('分析要求');
     expect(prompt).toContain('模式发现');
   });
 
@@ -102,7 +102,7 @@ describe('反刍系统隔离模式检测', () => {
 
     // 验证基本结构存在
     expect(prompt).toContain('0 条知识进行深度分析');
-    expect(prompt).toContain('深度思考要求');
+    expect(prompt).toContain('分析要求');
   });
 
   it('无记忆上下文和NotebookLM上下文时应正常工作', () => {
@@ -126,7 +126,7 @@ describe('反刍系统隔离模式检测', () => {
 
     // 验证基本内容存在
     expect(prompt).toContain('隔离分析：测试任务');
-    expect(prompt).toContain('深度思考要求');
+    expect(prompt).toContain('分析要求');
   });
 
   it('category为undefined或null的记录应被忽略', () => {

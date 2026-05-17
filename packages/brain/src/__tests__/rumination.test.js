@@ -57,7 +57,7 @@ vi.mock('../thalamus.js', () => ({
 import {
   runRumination, runManualRumination, runRuminationForce, getRuminationStatus,
   getUndigestedCount, _resetState, _setDailyCount, DAILY_BUDGET, MAX_PER_TICK, COOLDOWN_MS,
-  buildRuminationPrompt, buildNotebookQuery, getDailyBudget,
+  buildRuminationPrompt, buildNotebookQuery, parseRuminationJSON, getDailyBudget,
 } from '../rumination.js';
 
 // ── Mock DB pool ──────────────────────────────────────────
@@ -307,9 +307,9 @@ describe('rumination', () => {
   });
 
   describe('actionable 洞察', () => {
-    it('检测 [ACTION:] 标记 → processEvent 发 RUMINATION_RESULT 含 actions', async () => {
+    it('JSON actions → processEvent 发 RUMINATION_RESULT 含 actions', async () => {
       mockCallLLM.mockResolvedValueOnce({
-        text: '这个技术值得深入研究 [ACTION: 研究 React Server Components]',
+        text: '{"insight":"这个技术值得深入研究，React Server Components 改变了渲染模式。","actions":[{"title":"研究 React Server Components","description":"深入调研 RSC 的实现原理","create_task":true,"task_type":"research"}]}',
       });
 
       setupIdleAndLearnings(pool, [{ id: 'l1', title: 'RSC', content: 'React Server Components', category: 'tech' }]);
@@ -323,8 +323,10 @@ describe('rumination', () => {
       }));
     });
 
-    it('无 [ACTION:] 标记时不创建 task', async () => {
-      mockCallLLM.mockResolvedValueOnce({ text: '一条普通洞察，没有行动建议' });
+    it('JSON actions 为空时不发送 actions', async () => {
+      mockCallLLM.mockResolvedValueOnce({
+        text: '{"insight":"一条普通洞察，没有行动建议，仅做记录。","actions":[]}',
+      });
 
       setupIdleAndLearnings(pool, [{ id: 'l1', title: '测试', content: '内容', category: 'u' }]);
 
@@ -332,9 +334,9 @@ describe('rumination', () => {
       expect(mockCreateTask).not.toHaveBeenCalled();
     });
 
-    it('多个 [ACTION:] 标记 → processEvent 收到全部 actions', async () => {
+    it('JSON 多个 actions → processEvent 收到全部 actions', async () => {
       mockCallLLM.mockResolvedValueOnce({
-        text: '深度分析结论 [ACTION: 调研 React Server Components] 另外 [ACTION: 升级 Vite 到 v5] 还有 [ACTION: 编写性能基准测试]',
+        text: '{"insight":"深度分析前端技术趋势，发现三个可执行方向。","actions":[{"title":"调研 React Server Components","create_task":true,"task_type":"research"},{"title":"升级 Vite 到 v5","create_task":true,"task_type":"dev"},{"title":"编写性能基准测试","create_task":true,"task_type":"dev"}]}',
       });
 
       setupIdleAndLearnings(pool, [{ id: 'l1', title: '前端技术', content: '内容', category: 'tech' }]);
@@ -342,7 +344,7 @@ describe('rumination', () => {
       const result = await runRumination(pool);
       expect(result.digested).toBe(1);
 
-      // 3 个 [ACTION:] 标记 → processEvent 收到 3 个 actions
+      // 3 个 actions → processEvent 收到 3 个 actions
       expect(mockProcessEvent).toHaveBeenCalledWith(expect.objectContaining({
         type: 'rumination_result',
         actions: expect.arrayContaining(['调研 React Server Components', '升级 Vite 到 v5', '编写性能基准测试']),
@@ -351,9 +353,9 @@ describe('rumination', () => {
       expect(callArgs.actions).toHaveLength(3);
     });
 
-    it('createTask 失败不影响消化', async () => {
+    it('非 JSON 响应降级：parsedActions 为空，消化仍正常完成', async () => {
       mockCallLLM.mockResolvedValueOnce({
-        text: '洞察 [ACTION: 测试任务]',
+        text: '洞察文本（旧格式，无法解析为 JSON）',
       });
       mockCreateTask.mockRejectedValueOnce(new Error('DB error'));
 
@@ -379,7 +381,7 @@ describe('rumination', () => {
       expect(prompt).toContain('Concurrent features');
       expect(prompt).toContain('Composition API');
 
-      // 包含深度思考要求
+      // 包含深度分析要求
       expect(prompt).toContain('模式发现');
       expect(prompt).toContain('关联分析');
 
@@ -389,6 +391,10 @@ describe('rumination', () => {
 
       // 包含数量标注
       expect(prompt).toContain('2 条知识');
+
+      // v4：不含角色扮演指令，要求 JSON 输出
+      expect(prompt).not.toContain('你是 Cecelia');
+      expect(prompt).toContain('create_task');
     });
 
     it('无记忆上下文和 NotebookLM 时正常构建', () => {
@@ -439,16 +445,57 @@ describe('rumination', () => {
       expect(query).toContain('Vue 3');
     });
 
-    it('包含 ACTION 格式说明', () => {
+    it('要求 JSON 输出格式，不含第一人称角色扮演', () => {
       const learnings = [{ title: 'CI Fix', content: 'x', category: 'ci' }];
       const query = buildNotebookQuery(learnings);
-      expect(query).toContain('[ACTION:');
+      expect(query).toContain('create_task');
+      expect(query).not.toContain('我最近学到了');
+      expect(query).not.toContain('[ACTION:');
     });
 
     it('类别为空时显示"未分类"', () => {
       const learnings = [{ title: 'X', content: 'x', category: '' }];
       const query = buildNotebookQuery(learnings);
       expect(query).toContain('未分类');
+    });
+  });
+
+  describe('parseRuminationJSON', () => {
+    it('解析标准 JSON 格式', () => {
+      const text = '{"insight":"深度分析结论","actions":[{"title":"调研方向","create_task":true,"task_type":"research"}]}';
+      const result = parseRuminationJSON(text);
+      expect(result).not.toBeNull();
+      expect(result.insight).toBe('深度分析结论');
+      expect(result.actions).toHaveLength(1);
+      expect(result.actions[0].title).toBe('调研方向');
+    });
+
+    it('解析含 markdown 代码块的 JSON', () => {
+      const text = '```json\n{"insight":"分析内容","actions":[]}\n```';
+      const result = parseRuminationJSON(text);
+      expect(result).not.toBeNull();
+      expect(result.insight).toBe('分析内容');
+    });
+
+    it('非 JSON 文本返回 null', () => {
+      expect(parseRuminationJSON('普通文本内容')).toBeNull();
+      expect(parseRuminationJSON('[反刍洞察] 某些分析')).toBeNull();
+      expect(parseRuminationJSON('')).toBeNull();
+      expect(parseRuminationJSON(null)).toBeNull();
+    });
+
+    it('缺少 insight 字段返回 null', () => {
+      expect(parseRuminationJSON('{"actions":[]}')).toBeNull();
+    });
+
+    it('insight 过短返回 null', () => {
+      expect(parseRuminationJSON('{"insight":"短"}')).toBeNull();
+    });
+
+    it('actions 非数组时返回空数组', () => {
+      const result = parseRuminationJSON('{"insight":"足够长的分析内容用于测试","actions":null}');
+      expect(result).not.toBeNull();
+      expect(result.actions).toEqual([]);
     });
   });
 
@@ -682,10 +729,10 @@ describe('rumination', () => {
       expect(result.insights.length).toBeGreaterThan(0);
     });
 
-    it('selfReflectPrompt 包含好奇心/审美/存在三个非工作反思维度，maxTokens=200', async () => {
+    it('selfReflectPrompt 包含好奇心/审美/存在三个非工作反思维度，maxTokens=200，无第一人称指令', async () => {
       mockCallLLM
-        .mockResolvedValueOnce({ text: '[反刍洞察] 系统架构设计模式分析。' }) // 主反刍
-        .mockResolvedValueOnce({ text: '我对简洁的代码设计有一种美学上的偏好。' }); // 自我反思
+        .mockResolvedValueOnce({ text: '{"insight":"系统架构设计模式分析，模块化思维贯穿全流程。","actions":[]}' }) // 主反刍 JSON
+        .mockResolvedValueOnce({ text: 'Cecelia 对简洁的代码设计有一种美学上的偏好。' }); // 自我反思
 
       setupIdleAndLearnings(pool, [{
         id: 'l1', title: '架构设计', content: '模块化设计的重要性。', category: 'tech',
@@ -706,6 +753,10 @@ describe('rumination', () => {
       expect(prompt).toContain('好奇心');
       expect(prompt).toContain('审美');
       expect(prompt).toContain('存在');
+
+      // v4：无第一人称角色扮演指令
+      expect(prompt).not.toContain('用第一人称');
+      expect(prompt).not.toContain('"我"开头');
 
       // 验证 maxTokens 保持 200（简洁）
       expect(opts?.maxTokens).toBe(200);
