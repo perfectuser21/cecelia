@@ -106,8 +106,27 @@ NODE_PATH=/Users/administrator/perfect21/zenithjoy/services/creator/scripts/publ
 1. **加载凭据** — 读取 `~/.credentials/wechat.env`（APPID + APPSECRET）
 2. **获取 Access Token** — 缓存到 `/tmp/wechat_token.json`，过期自动刷新
 3. **上传封面图片**（可选）— `POST /cgi-bin/media/uploadimg`
-4. **创建草稿** — `POST /cgi-bin/draft/add`，返回 `media_id`
-5. **提交发布** — `POST /cgi-bin/freepublish/submit`，传入 `media_id`
+4. **上传图文素材** — `POST /cgi-bin/media/uploadnews`，返回 `media_id`
+5. **群发给所有粉丝** — `POST /cgi-bin/message/mass/sendall`，返回 `msg_id`
+
+### 任务完成时必须回写 result（CRITICAL）
+
+脚本末尾会输出一行 JSON：`{"ok":true,"platform":"wechat","media_id":"...","msg_id":"..."}`
+
+agent 在调用 `PATCH /api/brain/tasks/{task_id}` 标记 `completed` 时，**必须**将 `msg_id` 和 `media_id` 包含在 `result` 字段中：
+
+```json
+{
+  "status": "completed",
+  "result": {
+    "platform_post_id": "<msg_id>",
+    "media_id": "<media_id>",
+    "msg_id": "<msg_id>"
+  }
+}
+```
+
+这是数据回流的关键：Brain 的 `execution.js` 会从 `result` 提取 `platform_post_id` 并写入 `zenithjoy.publish_logs`，供 KR2 验收。
 
 ### 为什么用官方 API
 

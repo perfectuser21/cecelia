@@ -6,6 +6,7 @@ version: 1.3.0
 created: 2026-03-08
 updated: 2026-03-19
 changelog:
+  - 1.4.0: 补充 Brain content_publish 任务回调规范（platform_post_id）
   - 1.3.0: 新增视频发布脚本 publish-xiaohongshu-video.cjs（CDP 端口 19225）
   - 1.2.0: 清理废弃旧脚本（publish-xhs-image.cjs + batch-publish-xhs.sh）
   - 1.1.0: N8N flow 完整接通 Node.js 脚本，生产就绪
@@ -145,3 +146,28 @@ ls -la /tmp/xiaohongshu-publish-screenshots/
 C:\Users\xuxia\xiaohongshu-media\{date}\{content-dir-name}\*.jpg
 ```
 与 Mac mini 的 `contentDir` 结构对应，通过 Tailscale 文件共享或手动同步。
+
+---
+
+## Brain 任务回调（platform_post_id）
+
+当本 skill 作为 Brain `content_publish` 任务（`platform=xiaohongshu`）执行时，发布成功后**必须**将 platform_post_id 写回 Brain。
+
+### 提取规则
+
+| 脚本 | 输出样本 | 提取正则 |
+|------|---------|---------|
+| `publish-xiaohongshu-image.cjs` | `笔记 ID: 6605abc123def456` | `/笔记 ID:\s*(\S+)/` |
+| `publish-xiaohongshu-video.cjs` | `笔记 ID: 6605abc123def456` | `/笔记 ID:\s*(\S+)/` |
+
+### 任务 result 格式
+
+发布完成后，在 execution-callback `result` 中包含：
+
+```json
+{
+  "platform_post_id": "6605abc123def456"
+}
+```
+
+Brain 的 `execution.js` 会读取此字段并写入 `zenithjoy.publish_logs.platform_post_id`，供 KR1（非微信7日成功率）统计。

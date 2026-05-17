@@ -43,15 +43,14 @@ if (!src.includes('success_rate')) {
 console.log('writeStats 含 publish_success_daily upsert 逻辑 ✓');
 "
 
-echo "[publish-success-daily-smoke] 3. 验证 selfcheck.js EXPECTED_SCHEMA_VERSION 已更新为 276"
+echo "[publish-success-daily-smoke] 3. 验证 selfcheck.js EXPECTED_SCHEMA_VERSION >= 276"
 node -e "
 const fs = require('fs');
 const src = fs.readFileSync('packages/brain/src/selfcheck.js', 'utf8');
-if (!src.includes(\"EXPECTED_SCHEMA_VERSION = '276'\")) {
-  console.error('FAIL: selfcheck.js EXPECTED_SCHEMA_VERSION 未更新为 276');
-  process.exit(1);
-}
-console.log('EXPECTED_SCHEMA_VERSION = 276 ✓');
+const m = src.match(/EXPECTED_SCHEMA_VERSION\s*=\s*'(\d+)'/);
+if (!m) { console.error('FAIL: 未找到 EXPECTED_SCHEMA_VERSION'); process.exit(1); }
+if (parseInt(m[1]) < 276) { console.error('FAIL: EXPECTED_SCHEMA_VERSION = ' + m[1] + ' 未升至 >= 276'); process.exit(1); }
+console.log('EXPECTED_SCHEMA_VERSION = ' + m[1] + ' (>= 276) ✓');
 "
 
 echo "[publish-success-daily-smoke] 4. 验证 slot-allocator.js content_publish 在背压白名单"

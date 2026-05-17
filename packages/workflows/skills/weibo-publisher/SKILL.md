@@ -135,3 +135,36 @@ curl http://100.97.242.124:19227/json
 ### 微博登录失效
 
 在 Windows PC 的 Chrome（19227）上重新登录微博账号。
+
+---
+
+## Brain 任务回调（platform_post_id）
+
+当本 skill 作为 Brain `content_publish` 任务（`platform=weibo`）执行时，发布成功后**必须**将 platform_post_id 写回 Brain。
+
+### 脚本 JSON 输出格式
+
+`publish-weibo-api.cjs` 发布成功后末尾会输出一行机器可读 JSON：
+
+```
+{"ok":true,"platform":"weibo","platform_post_id":"<微博ID>","postUrl":"<链接>"}
+```
+
+微博 ID 为 URL 片段（如 `4Fz8kKqXY0`，即 `weibo.com/detail/{id}`），非纯数字。
+
+### 任务完成时必须回写 result（CRITICAL）
+
+agent 在调用 `PATCH /api/brain/tasks/{task_id}` 标记 `completed` 时，**必须**将 `platform_post_id` 包含在 `result` 字段中：
+
+```json
+{
+  "status": "completed",
+  "result": {
+    "platform_post_id": "<微博ID，从脚本 JSON 输出中提取>"
+  }
+}
+```
+
+这是数据回流的关键：Brain 的 `execution.js` 会从 `result` 提取 `platform_post_id` 并写入 `zenithjoy.publish_logs`，供 KR2 验收。
+
+`platform_post_id` 可为 null（如脚本未能提取），Brain 允许空值。

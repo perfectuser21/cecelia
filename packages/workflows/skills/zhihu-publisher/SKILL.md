@@ -6,6 +6,7 @@ version: 1.0.0
 created: 2026-03-10
 updated: 2026-03-10
 changelog:
+  - 1.1.0: 补充 Brain content_publish 任务回调规范（platform_post_id）
   - 1.0.0: 初始版本 - CDP 自动化发布 + 批量调度脚本
 ---
 
@@ -155,6 +156,33 @@ node /Users/administrator/perfect21/zenithjoy/services/creator/scripts/publisher
 
 ---
 
-**版本**: 1.0.0
+---
+
+## Brain 任务回调（platform_post_id）
+
+当本 skill 作为 Brain `content_publish` 任务（`platform=zhihu`）执行时，发布成功后**必须**将 platform_post_id 写回 Brain。
+
+### 提取规则
+
+| 脚本 | 输出样本 | 提取正则 |
+|------|---------|---------|
+| `publish-zhihu-article.cjs` | `文章 URL: https://zhuanlan.zhihu.com/p/1234567890` | `/zhihu\.com\/p\/(\d+)/` |
+
+### 任务 result 格式
+
+发布完成后，在 execution-callback `result` 中包含：
+
+```json
+{
+  "platform_post_id": "1234567890",
+  "url": "https://zhuanlan.zhihu.com/p/1234567890"
+}
+```
+
+Brain 的 `execution.js` 会读取此字段并写入 `zenithjoy.publish_logs.platform_post_id`，供 KR1（非微信7日成功率）统计。
+
+---
+
+**版本**: 1.1.0
 **状态**：✅ **生产就绪**
 **架构**：队列目录 → batch 脚本 → CJS 发布脚本 → Windows CDP → 知乎
