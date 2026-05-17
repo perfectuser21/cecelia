@@ -20,16 +20,17 @@ describe('Workstream 1 — DB Migration: initiative_run_events [BEHAVIOR]', () =
     expect(content).toContain('initiative_run_events');
   });
 
-  it('migration SQL 含 node/label/attempt/status/verdict 列', () => {
+  it('migration SQL 含 node/status/attempt/verdict 列，ts 为 BIGINT，无 label 列', () => {
     const files = readdirSync('packages/brain/migrations').filter(f =>
       f.includes('initiative_run_events')
     );
     const content = readFileSync(`packages/brain/migrations/${files[0]}`, 'utf8');
     expect(content).toContain('node');
-    expect(content).toContain('label');
+    expect(content).not.toContain('label');
     expect(content).toContain('attempt');
     expect(content).toContain('status');
     expect(content).toContain('verdict');
+    expect(content).toMatch(/ts\s+BIGINT/i);
   });
 
   it('migration SQL 含 (initiative_id, ts) 复合索引', () => {

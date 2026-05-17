@@ -36,6 +36,6 @@ journey_type: user_facing
   Test: manual:bash -c 'npx playwright test sprints/tests/ws4/harness-detail-page.test.ts --grep "appends log-entry" 2>&1 | grep -q "passed" && echo OK'
   期望: OK
 
-- [ ] [BEHAVIOR] pipeline 完成后页面显示 "Pipeline 已完成" 或 "Pipeline 失败" 状态文字
+- [ ] [BEHAVIOR] run_completed 事件后页面显示 "Pipeline 已完成" 或 "Pipeline 失败" 状态文字（监听 run_completed 非 done）
   Test: manual:bash -c 'npx playwright test sprints/tests/ws4/harness-detail-page.test.ts --grep "shows completion" 2>&1 | grep -q "passed" && echo OK'
   期望: OK

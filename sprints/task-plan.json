@@ -6,10 +6,10 @@
     {
       "task_id": "ws1",
       "title": "DB Migration — initiative_run_events 表",
-      "scope": "新建 initiative_run_events 表 migration SQL 文件，含 initiative_id/node/label/attempt/ts/status/verdict 字段和 (initiative_id, ts) 复合索引",
+      "scope": "新建 initiative_run_events 表 migration SQL 文件，含 initiative_id/node/status/attempt/verdict/ts(BIGINT) 字段（无 label 列）和 (initiative_id, ts) 复合索引",
       "dod": [
         "[ARTIFACT] packages/brain/migrations/ 含 initiative_run_events migration 文件，包含 CREATE TABLE 和 CREATE INDEX",
-        "[BEHAVIOR] psql 可查到表结构（含 node/label/attempt/ts/status/verdict 列），INSERT node_update 行成功返回 id"
+        "[BEHAVIOR] psql 可查到表结构（含 node/status/attempt/ts 列，无 label 列），INSERT node_update 行（含 ts BIGINT）成功返回 id"
       ],
       "files": [
         "packages/brain/migrations/YYYYMMDD_initiative_run_events.sql"
@@ -25,11 +25,11 @@
       "dod": [
         "[ARTIFACT] packages/brain/src/routes/harness.js 含 /stream 路由，text/event-stream Content-Type",
         "[ARTIFACT] packages/brain/src/events/initiativeRunEvents.js 导出 writeInitiativeRunEvent 函数",
-        "[BEHAVIOR] GET /stream?initiative_id={id} 推 event: node_update，data keys 恰好为 [attempt,label,node,ts]",
-        "[BEHAVIOR] 禁用字段 name/step/timestamp 不存在于 node_update data",
-        "[BEHAVIOR] 未知 initiative_id → 404 {error: string}（禁用 message/msg）",
+        "[BEHAVIOR] GET /stream?initiative_id={id} 推 event: node_update，data keys 恰好为 [attempt,node,status,ts]，ts 为 number",
+        "[BEHAVIOR] 禁用字段 name/step/timestamp/label 不存在于 node_update data",
+        "[BEHAVIOR] 未知 initiative_id → 404 {error: string}（禁用 message/msg/reason）",
         "[BEHAVIOR] 缺 initiative_id → 400 {error: string}",
-        "[BEHAVIOR] status=done 行 → event: done，data 含 status/verdict"
+        "[BEHAVIOR] status=run_completed 行 → event: run_completed，data 含 initiative_run_id/verdict/ts（无 status 字段）"
       ],
       "files": [
         "packages/brain/src/routes/harness.js",
@@ -41,11 +41,11 @@
     },
     {
       "task_id": "ws3",
-      "title": "executor.js 写入 initiative_run_events",
-      "scope": "packages/brain/src/executor.js 内 emitGraphNodeUpdate 同步调用 writeInitiativeRunEvent，节点完成时写入 initiative_run_events（node/label/attempt/initiativeId 字段）",
+      "title": "executor 写入 initiative_run_events",
+      "scope": "harness executor 相关文件新增 writeInitiativeRunEvent 调用，节点入口（status=running）/出口（status=done/failed）写入 initiative_run_events（无 label 字段）",
       "dod": [
-        "[ARTIFACT] executor.js import writeInitiativeRunEvent 且函数体内含调用",
-        "[BEHAVIOR] writeInitiativeRunEvent 调用后 1 分钟内 initiative_run_events 有对应行，node/attempt 字段值正确"
+        "[ARTIFACT] executor 文件 import writeInitiativeRunEvent 且函数体内含调用",
+        "[BEHAVIOR] writeInitiativeRunEvent({initiativeId, node, status, attempt}) 调用后 initiative_run_events 有对应行，ts 字段为 BIGINT（≥ 1000000000）"
       ],
       "files": [
         "packages/brain/src/executor.js"
@@ -57,14 +57,14 @@
     {
       "task_id": "ws4",
       "title": "Dashboard HarnessDetailPage /harness/:id",
-      "scope": "apps/dashboard/src/pages/harness/HarnessDetailPage.tsx 新建页面（含 EventSource 连接到 /api/brain/harness/stream?initiative_id=:id，实时日志区 data-testid=realtime-log，节点行 data-testid=log-entry，完成状态文字）+ router 注册 /harness/:id",
+      "scope": "apps/dashboard/src/pages/harness/HarnessDetailPage.tsx 新建页面（含 EventSource 连接到 /api/brain/harness/stream?initiative_id=:id，实时日志区 data-testid=realtime-log，节点行 data-testid=log-entry，监听 run_completed 事件显示完成状态）+ router 注册 /harness/:id",
       "dod": [
-        "[ARTIFACT] HarnessDetailPage.tsx 含 EventSource，URL 使用 initiative_id 参数（禁用 taskId/id/planner_task_id）",
+        "[ARTIFACT] HarnessDetailPage.tsx 含 EventSource，URL 使用 initiative_id 参数（禁用 taskId/id/task_id）",
         "[ARTIFACT] HarnessDetailPage.tsx 含 data-testid=realtime-log 和 data-testid=log-entry",
         "[ARTIFACT] router 含 /harness/:id → HarnessDetailPage 路由",
         "[BEHAVIOR] /harness/:id 页面渲染，data-testid=realtime-log 可见",
         "[BEHAVIOR] 收到 node_update 后日志区追加 log-entry 节点行",
-        "[BEHAVIOR] pipeline 完成后显示 Pipeline 已完成 / Pipeline 失败 状态文字"
+        "[BEHAVIOR] run_completed 事件（非 done）后显示 Pipeline 已完成 / Pipeline 失败 状态文字"
       ],
       "files": [
         "apps/dashboard/src/pages/harness/HarnessDetailPage.tsx",

@@ -13,7 +13,7 @@ describe('Workstream 4 — Dashboard HarnessDetailPage [BEHAVIOR]', () => {
     expect(content).toContain('EventSource');
   });
 
-  it('EventSource URL 含 initiative_id 参数（禁用 taskId/task_id/planner_task_id）', () => {
+  it('EventSource URL 含 initiative_id 参数（禁用 taskId/task_id/planner_task_id/id）', () => {
     const content = readFileSync(PAGE_PATH, 'utf8');
     expect(content).toContain('initiative_id');
     expect(content).not.toContain('taskId=');
@@ -29,6 +29,17 @@ describe('Workstream 4 — Dashboard HarnessDetailPage [BEHAVIOR]', () => {
   it('HarnessDetailPage.tsx 含 data-testid="log-entry"', () => {
     const content = readFileSync(PAGE_PATH, 'utf8');
     expect(content).toContain('log-entry');
+  });
+
+  it('HarnessDetailPage.tsx 监听 run_completed 事件（不是 done）', () => {
+    const content = readFileSync(PAGE_PATH, 'utf8');
+    expect(content).toContain('run_completed');
+    expect(content).not.toMatch(/'done'|"done"/);
+  });
+
+  it('HarnessDetailPage.tsx 显示 Pipeline 已完成 / Pipeline 失败 状态文字', () => {
+    const content = readFileSync(PAGE_PATH, 'utf8');
+    expect(content).toMatch(/Pipeline 已完成|Pipeline 失败|已完成|失败/);
   });
 
   it('router 注册 /harness/:id → HarnessDetailPage', () => {
