@@ -109,24 +109,33 @@ NODE_PATH=/Users/administrator/perfect21/zenithjoy/services/creator/scripts/publ
 4. **上传图文素材** — `POST /cgi-bin/media/uploadnews`，返回 `media_id`
 5. **群发给所有粉丝** — `POST /cgi-bin/message/mass/sendall`，返回 `msg_id`
 
-### 任务完成时必须回写 result（CRITICAL）
+## Brain 任务回调（platform_post_id）
 
-脚本末尾会输出一行 JSON：`{"ok":true,"platform":"wechat","media_id":"...","msg_id":"..."}`
+当本 skill 作为 Brain `content_publish` 任务（`platform=wechat`）执行时，发布成功后**必须**将 platform_post_id 写回 Brain。
 
-agent 在调用 `PATCH /api/brain/tasks/{task_id}` 标记 `completed` 时，**必须**将 `msg_id` 和 `media_id` 包含在 `result` 字段中：
+### 提取规则
+
+| 脚本 | 输出样本 | 提取字段 |
+|------|---------|---------|
+| `publish-wechat-article.cjs` | `{"ok":true,"platform":"wechat","media_id":"...","msg_id":"..."}` | `msg_id`（优先）或 `media_id` |
+
+脚本末尾输出一行 JSON：`{"ok":true,"platform":"wechat","media_id":"...","msg_id":"..."}`
+
+### 任务 result 格式
+
+发布完成后，在 execution-callback `result` 中包含：
 
 ```json
 {
-  "status": "completed",
-  "result": {
-    "platform_post_id": "<msg_id>",
-    "media_id": "<media_id>",
-    "msg_id": "<msg_id>"
-  }
+  "platform_post_id": "<msg_id>",
+  "media_id": "<media_id>",
+  "msg_id": "<msg_id>"
 }
 ```
 
-这是数据回流的关键：Brain 的 `execution.js` 会从 `result` 提取 `platform_post_id` 并写入 `zenithjoy.publish_logs`，供 KR2 验收。
+Brain 的 `execution.js` 会读取此字段并写入 `zenithjoy.publish_logs.platform_post_id`，供 KR2 验收。
+
+> **注意**：docker executor 路径下，`execution.js` 会自动从 `raw_stdout_tail` 解析上述 JSON，无需 agent 手动回写。非 docker 路径（agent 直接调用）则 agent 须显式 PATCH。
 
 ### 为什么用官方 API
 

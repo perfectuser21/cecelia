@@ -608,9 +608,22 @@ router.post('/execution-callback', async (req, res) => {
           }
 
           // 从 task result 提取 platform_post_id（优先级：platform_post_id > msg_id > media_id > url）
-          const platformPostId = (result !== null && typeof result === 'object')
-            ? (result.platform_post_id || result.msg_id || result.media_id || result.url || null)
-            : null;
+          // docker executor 路径：publisher 脚本输出存于 raw_stdout_tail，顶层无这些字段，需 fallback 解析
+          let platformPostId = null;
+          if (result !== null && typeof result === 'object') {
+            platformPostId = result.platform_post_id || result.msg_id || result.media_id || result.url || null;
+            if (!platformPostId && typeof result.raw_stdout_tail === 'string') {
+              for (const line of result.raw_stdout_tail.split('\n')) {
+                try {
+                  const parsed = JSON.parse(line.trim());
+                  if (parsed && parsed.ok === true) {
+                    platformPostId = parsed.platform_post_id || parsed.msg_id || parsed.media_id || parsed.url || null;
+                    if (platformPostId) break;
+                  }
+                } catch { /* 非 JSON 行，跳过 */ }
+              }
+            }
+          }
 
           await pool.query(
             `INSERT INTO zenithjoy.publish_logs
