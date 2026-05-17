@@ -25,6 +25,12 @@ STATUS=$(docker inspect "$CONTAINER_NAME" --format '{{.State.Status}}' 2>/dev/nu
 if [[ "$STATUS" != "running" ]]; then
   if [[ ! -f "$STATE_FILE" ]]; then
     echo "$LOG_PREFIX Brain not running (status=$STATUS), attempting restart..."
+    if ! docker info >/dev/null 2>&1; then
+      echo "$LOG_PREFIX WARN: docker daemon unavailable, cannot restart"
+      send_feishu "🚨 [P0] Brain 容器已停止且 Docker daemon 不可用，需人工介入"
+      touch "$STATE_FILE"
+      exit 0
+    fi
     docker compose -f "$COMPOSE_FILE" up -d node-brain 2>&1 || true
     sleep 15
     NEW_STATUS=$(docker inspect "$CONTAINER_NAME" --format '{{.State.Status}}' 2>/dev/null || echo "not_found")
