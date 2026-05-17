@@ -4,7 +4,14 @@ import {
   calcPublishBackoffSec,
   PUBLISH_FAILURE_TYPE,
   monitorPublishQueue,
+  checkWechatAuthFail,
 } from '../publish-monitor.js';
+
+vi.mock('../alerting.js', () => ({
+  raise: vi.fn().mockResolvedValue(undefined),
+}));
+
+import { raise } from '../alerting.js';
 
 // ─── classifyPublishFailure ────────────────────────────────────────────────────
 
@@ -178,5 +185,141 @@ describe('monitorPublishQueue - failure_type 路由', () => {
     const nextRunAt = new Date(payloadArg.next_run_at).getTime();
     expect(nextRunAt - Date.now()).toBeGreaterThan(28 * 1000);
     expect(nextRunAt - Date.now()).toBeLessThan(32 * 1000);
+  });
+});
+
+// ─── 微信 error_code 识别 ──────────────────────────────────────────────────────
+
+describe('classifyPublishFailure - 微信 error_code', () => {
+  it('payload.error_code=40001 → auth_fail', () => {
+    expect(classifyPublishFailure(null, { error_code: 40001 })).toBe('auth_fail');
+    expect(classifyPublishFailure('', { error_code: 40001 })).toBe('auth_fail');
+    expect(classifyPublishFailure('some error', { error_code: 40001 })).toBe('auth_fail');
+  });
+
+  it('payload.error_code=40014/42001/42007 → auth_fail', () => {
+    expect(classifyPublishFailure(null, { error_code: 40014 })).toBe('auth_fail');
+    expect(classifyPublishFailure(null, { error_code: 42001 })).toBe('auth_fail');
+    expect(classifyPublishFailure(null, { error_code: 42007 })).toBe('auth_fail');
+  });
+
+  it('payload.error_code 字符串形式也能识别', () => {
+    expect(classifyPublishFailure(null, { error_code: '40001' })).toBe('auth_fail');
+  });
+
+  it('payload.error_code 非微信特征码 → 走普通 error_message 分类', () => {
+    expect(classifyPublishFailure('some random error', { error_code: 99999 })).toBe('unknown');
+    expect(classifyPublishFailure('rate limit exceeded', { error_code: 99999 })).toBe('rate_limit');
+  });
+
+  it('无 payload 时不影响原有分类逻辑', () => {
+    expect(classifyPublishFailure('unauthorized')).toBe('auth_fail');
+    expect(classifyPublishFailure('too many requests')).toBe('rate_limit');
+    expect(classifyPublishFailure('ECONNREFUSED')).toBe('network');
+  });
+});
+
+// ─── checkWechatAuthFail ────────────────────────────────────────────────────
+
+describe('checkWechatAuthFail', () => {
+  let mockPool;
+  let queryMock;
+
+  beforeEach(() => {
+    queryMock = vi.fn();
+    mockPool = { query: queryMock };
+    vi.clearAllMocks();
+  });
+
+  it('≥2 条连续 auth_fail → raise P0 告警，返回连续次数', async () => {
+    queryMock.mockResolvedValueOnce({
+      rows: [
+        { id: 't1', title: '公众号A', payload: { platform: 'wechat', failure_type: 'auth_fail', account_name: '公众号A' } },
+        { id: 't2', title: '公众号A', payload: { platform: 'wechat', failure_type: 'auth_fail', account_name: '公众号A' } },
+        { id: 't3', title: '公众号A', payload: { platform: 'wechat', failure_type: 'auth_fail' } },
+      ],
+    });
+
+    const count = await checkWechatAuthFail(mockPool);
+
+    expect(count).toBe(3);
+    expect(raise).toHaveBeenCalledWith(
+      'P0',
+      'wechat_auth_fail',
+      expect.stringContaining('公众号A')
+    );
+    expect(raise).toHaveBeenCalledWith(
+      'P0',
+      'wechat_auth_fail',
+      expect.stringContaining('3')
+    );
+  });
+
+  it('payload.error_code=40001 识别为 auth_fail → 满足阈值触发告警', async () => {
+    queryMock.mockResolvedValueOnce({
+      rows: [
+        { id: 't1', title: '测试公众号', payload: { platform: 'wechat', error_code: 40001 } },
+        { id: 't2', title: '测试公众号', payload: { platform: 'wechat', error_code: 40001 } },
+      ],
+    });
+
+    const count = await checkWechatAuthFail(mockPool);
+
+    expect(count).toBe(2);
+    expect(raise).toHaveBeenCalledWith('P0', 'wechat_auth_fail', expect.stringContaining('access_token'));
+  });
+
+  it('只有 1 次 auth_fail → 不触发告警', async () => {
+    queryMock.mockResolvedValueOnce({
+      rows: [
+        { id: 't1', title: '公众号B', payload: { platform: 'wechat', failure_type: 'auth_fail' } },
+      ],
+    });
+
+    const count = await checkWechatAuthFail(mockPool);
+
+    expect(count).toBe(1);
+    expect(raise).not.toHaveBeenCalled();
+  });
+
+  it('连续中断（中间有 network failure）→ 不触发告警', async () => {
+    queryMock.mockResolvedValueOnce({
+      rows: [
+        { id: 't1', title: '公众号C', payload: { platform: 'wechat', failure_type: 'auth_fail' } },
+        { id: 't2', title: '公众号C', payload: { platform: 'wechat', failure_type: 'network' } },
+        { id: 't3', title: '公众号C', payload: { platform: 'wechat', failure_type: 'auth_fail' } },
+      ],
+    });
+
+    const count = await checkWechatAuthFail(mockPool);
+
+    expect(count).toBe(1);
+    expect(raise).not.toHaveBeenCalled();
+  });
+
+  it('无失败记录 → 返回 0，不告警', async () => {
+    queryMock.mockResolvedValueOnce({ rows: [] });
+
+    const count = await checkWechatAuthFail(mockPool);
+
+    expect(count).toBe(0);
+    expect(raise).not.toHaveBeenCalled();
+  });
+
+  it('告警消息含账号名（优先 payload.account_name，降级 title）', async () => {
+    queryMock.mockResolvedValueOnce({
+      rows: [
+        { id: 't1', title: 'title-fallback', payload: { platform: 'wechat', failure_type: 'auth_fail' } },
+        { id: 't2', title: 'title-fallback', payload: { platform: 'wechat', failure_type: 'auth_fail' } },
+      ],
+    });
+
+    await checkWechatAuthFail(mockPool);
+
+    expect(raise).toHaveBeenCalledWith(
+      'P0',
+      'wechat_auth_fail',
+      expect.stringContaining('title-fallback')
+    );
   });
 });

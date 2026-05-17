@@ -12,6 +12,8 @@
  *   - 幂等：多次调用结果一致
  */
 
+import { raise } from './alerting.js';
+
 // ─── 常量 ─────────────────────────────────────────────────────────────────────
 
 /** 最大重试次数（超过则不再重试，需人工介入） */
@@ -25,6 +27,12 @@ const RATE_LIMIT_BACKOFF_MULTIPLIER = 2;
 
 /** working_memory key：今日发布统计 */
 const STATS_KEY = 'daily_publish_stats';
+
+/** 微信 access_token 失效特征错误码（errcode），连续 ≥2 次触发飞书 P0 告警 */
+const WECHAT_AUTH_ERROR_CODES = new Set([40001, 40014, 42001, 42007]);
+
+/** 微信平台连续 auth_fail 告警阈值 */
+const WECHAT_AUTH_FAIL_THRESHOLD = 2;
 
 // ─── failure_type 分类 ────────────────────────────────────────────────────────
 
@@ -71,13 +79,20 @@ const NETWORK_PATTERNS = [
 ];
 
 /**
- * 从 error_message 识别发布失败类型。
+ * 从 error_message 及 payload 识别发布失败类型。
  * 优先级：auth_fail > content_reject > rate_limit > network > unknown
  *
  * @param {string|null|undefined} errorMessage
+ * @param {object} [payload={}] - 任务 payload（用于检测微信 errcode 等平台特有特征）
  * @returns {string} PUBLISH_FAILURE_TYPE 之一
  */
-export function classifyPublishFailure(errorMessage) {
+export function classifyPublishFailure(errorMessage, payload = {}) {
+  // 微信 errcode 优先判断：40001/40014/42001/42007 → access_token 失效
+  const errorCode = Number(payload?.error_code);
+  if (!Number.isNaN(errorCode) && errorCode > 0 && WECHAT_AUTH_ERROR_CODES.has(errorCode)) {
+    return PUBLISH_FAILURE_TYPE.AUTH_FAIL;
+  }
+
   if (!errorMessage) return PUBLISH_FAILURE_TYPE.UNKNOWN;
   const msg = String(errorMessage);
 
@@ -275,6 +290,68 @@ async function writeStats(pool, stats) {
   }
 }
 
+// ─── 微信 auth_fail 告警 ──────────────────────────────────────────────────────
+
+/**
+ * 查询最近 N 条微信 content_publish 失败任务（按 updated_at 降序），用于判断连续失败。
+ *
+ * @param {import('pg').Pool} pool
+ * @returns {Promise<Array>}
+ */
+async function fetchWechatRecentFailed(pool) {
+  const { rows } = await pool.query(
+    `SELECT id, title, payload
+     FROM tasks
+     WHERE task_type = 'content_publish'
+       AND payload->>'platform' = 'wechat'
+       AND status = 'failed'
+     ORDER BY updated_at DESC
+     LIMIT 10`
+  );
+  return rows;
+}
+
+/**
+ * 检测微信平台连续 auth_fail ≥ WECHAT_AUTH_FAIL_THRESHOLD，满足则触发飞书 P0 告警。
+ * 告警内容包含账号名，提示手动刷新 access_token。
+ *
+ * @param {import('pg').Pool} pool
+ * @returns {Promise<number>} 连续 auth_fail 次数
+ */
+export async function checkWechatAuthFail(pool) {
+  const rows = await fetchWechatRecentFailed(pool);
+
+  let consecutiveCount = 0;
+  let accountName = null;
+
+  for (const row of rows) {
+    const failureType = row.payload?.failure_type;
+    const errorCode = Number(row.payload?.error_code);
+    const isAuthFail =
+      failureType === PUBLISH_FAILURE_TYPE.AUTH_FAIL ||
+      (!Number.isNaN(errorCode) && errorCode > 0 && WECHAT_AUTH_ERROR_CODES.has(errorCode));
+
+    if (isAuthFail) {
+      consecutiveCount++;
+      if (!accountName) {
+        accountName = row.payload?.account_name || row.title || '（未知账号）';
+      }
+    } else {
+      break;
+    }
+  }
+
+  if (consecutiveCount >= WECHAT_AUTH_FAIL_THRESHOLD) {
+    await raise(
+      'P0',
+      'wechat_auth_fail',
+      `微信公众号 access_token 可能失效，需手动刷新。账号：${accountName}，连续 auth_fail ${consecutiveCount} 次`
+    );
+  }
+
+  return consecutiveCount;
+}
+
 // ─── 主入口 ──────────────────────────────────────────────────────────────────
 
 /**
@@ -293,7 +370,7 @@ export async function monitorPublishQueue(pool) {
     for (const task of retryable) {
       try {
         const platform = task.payload?.platform || 'unknown';
-        const failureType = classifyPublishFailure(task.error_message);
+        const failureType = classifyPublishFailure(task.error_message, task.payload);
 
         // auth_fail / content_reject：写入 failure_type，不重试，直接告警
         if (failureType === PUBLISH_FAILURE_TYPE.AUTH_FAIL || failureType === PUBLISH_FAILURE_TYPE.CONTENT_REJECT) {
@@ -325,10 +402,13 @@ export async function monitorPublishQueue(pool) {
       }
     }
 
-    // 2. 统计今日状态
+    // 2. 检测微信连续 auth_fail → 飞书告警
+    await checkWechatAuthFail(pool);
+
+    // 3. 统计今日状态
     stats = await fetchTodayStats(pool);
 
-    // 3. 写入 working_memory
+    // 4. 写入 working_memory
     await writeStats(pool, stats);
 
     if (stats.total > 0) {
