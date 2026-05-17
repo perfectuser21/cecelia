@@ -113,8 +113,8 @@ export default defineConfig({
       'src/__tests__/watchdog-crisis-min-rss.test.js',
       // harness-module-constants: imports ../harness.js，已被 6fa2c9460 移走到 harness-router.js 但 test 未同步
       'src/__tests__/harness-module-constants.test.js',
-      // 需要真实 PostgreSQL 连接的集成测试
-      'src/__tests__/integration/pipeline-rescue.integration.test.js',
+      // 需要真实 PostgreSQL 连接的集成测试（本地无 DB 时跳过，CI brain-integration job 运行）
+      'src/__tests__/integration/**',
     ],
     coverage: {
       provider: 'v8',
