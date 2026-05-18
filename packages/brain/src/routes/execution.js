@@ -299,7 +299,7 @@ router.post('/execution-callback', async (req, res) => {
         }
       } catch { /* non-fatal */ }
 
-      const exitStatus = status === 'AI Done' ? 'success' : 'failed';
+      const exitStatus = (newStatus === 'completed' || newStatus === 'completed_no_pr') ? 'success' : 'failed';
 
       await pool.query(`
         INSERT INTO task_run_metrics (
@@ -368,7 +368,7 @@ router.post('/execution-callback', async (req, res) => {
       const { cleanupMetrics } = await import('../watchdog.js');
       await cleanupMetrics(task_id, pool, {
         runId: run_id || null,
-        exitStatus: status === 'AI Done' ? 'success' : 'failed',
+        exitStatus: (newStatus === 'completed' || newStatus === 'completed_no_pr') ? 'success' : 'failed',
       });
     } catch { /* ignore */ }
 
