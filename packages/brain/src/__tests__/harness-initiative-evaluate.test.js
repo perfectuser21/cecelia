@@ -261,14 +261,14 @@ describe('routeAfterEvaluate', () => {
     expect(routeAfterEvaluate(state)).toBe('retry');
   });
 
-  it('FAIL + count >= 3 → terminal_fail', () => {
+  it('FAIL + count >= 3 → retry (no cap)', () => {
     const state = {
       evaluate_verdict: 'FAIL',
       task_loop_index: 0,
       task_loop_fix_count: 3,
       taskPlan: { tasks: [{ id: 't1' }] },
     };
-    expect(routeAfterEvaluate(state)).toBe('terminal_fail');
+    expect(routeAfterEvaluate(state)).toBe('retry');
   });
 
   it('null verdict → retry (treated as FAIL)', () => {
@@ -458,7 +458,7 @@ describe('finalEvaluateDispatchNode — fix loop', () => {
     expect(result.task_loop_index).toBe(0);
   });
 
-  it('FAIL + final_e2e_fix_count=2 (< MAX 3) → returns fix_count:3 + task_loop_index:0', async () => {
+  it('FAIL + final_e2e_fix_count=2 → returns fix_count:3 + task_loop_index:0', async () => {
     const mockSpawnFn = vi.fn().mockResolvedValue({
       exit_code: 1,
       timed_out: false,
@@ -505,7 +505,7 @@ describe('finalEvaluateDispatchNode — fix loop', () => {
     expect(result.final_e2e_fix_count).toBeUndefined();
   });
 
-  it('FAIL + final_e2e_fix_count=3 (>= MAX) → returns error (自动终止，不等人工)', async () => {
+  it('FAIL + final_e2e_fix_count=3 (>= old MAX) → continues retrying (no cap)', async () => {
     const mockSpawnFn = vi.fn().mockResolvedValue({
       exit_code: 1,
       timed_out: false,
@@ -523,13 +523,42 @@ describe('finalEvaluateDispatchNode — fix loop', () => {
       githubToken: 'tok',
     };
 
-    // fix rounds 用尽 → 直接返回含 error 的 delta，自动终止，不走 interrupt
     const result = await finalEvaluateDispatchNode(state, {
       executor: mockSpawnFn,
       execFile: vi.fn().mockResolvedValue({ stdout: '' }),
     });
 
-    expect(result.error).toBeDefined();
-    expect(result.error.node).toBe('final_evaluate');
+    expect(result.error).toBeUndefined();
+    expect(result.final_e2e_verdict).toBe('FAIL');
+    expect(result.final_e2e_fix_count).toBe(4);
+    expect(result.task_loop_index).toBe(0);
+  });
+
+  it('FAIL + final_e2e_fix_count=10 → continues retrying (count becomes 11)', async () => {
+    const mockSpawnFn = vi.fn().mockResolvedValue({
+      exit_code: 1,
+      timed_out: false,
+      stderr: 'still failing',
+    });
+
+    const state = {
+      final_e2e_fix_count: 10,
+      task_loop_index: 0,
+      task: { id: 'task-1', payload: { sprint_dir: 'sprints' } },
+      taskPlan: { journey_type: 'autonomous' },
+      worktreePath: '/tmp/wt',
+      sub_tasks: [],
+      initiativeId: 'init-1',
+      githubToken: 'tok',
+    };
+
+    const result = await finalEvaluateDispatchNode(state, {
+      executor: mockSpawnFn,
+      execFile: vi.fn().mockResolvedValue({ stdout: '' }),
+    });
+
+    expect(result.error).toBeUndefined();
+    expect(result.final_e2e_fix_count).toBe(11);
+    expect(result.task_loop_index).toBe(0);
   });
 });
