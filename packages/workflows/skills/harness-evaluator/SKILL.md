@@ -6,10 +6,12 @@ description: |
   evaluator 在 CI 绿之后、PR merge 之前真启服务 + 跑 contract 的 manual:bash 命令验真行为。
   PASS → 允许 merge；FAIL → 不 merge，带反馈打回 Generator 在 PR 分支 fix loop（main 不变动）。
   模式 A 跑 contract-dod-ws*.md BEHAVIOR；模式 B（所有 ws merge 后）跑 final E2E Golden Path。
-version: 1.4.0
+version: 1.6.0
 created: 2026-05-06
-updated: 2026-05-14
+updated: 2026-05-18
 changelog:
+  - 1.6.0: 修复 B33 误伤真实功能 sprint — B33 URL 检测改为 playground 感知：playground sprint（playground/server.js 存在）禁止出现 Brain API URL；真实功能 sprint（autonomous journey_type）反向要求 E2E 脚本必须含 Brain API URL，缺失直接 FAIL（防止 playground 命令混入真实 sprint）
+  - 1.5.0: Rule 4 弱 oracle 改 FAIL — 命令缺 jq -e 值校验不再"容忍但报告"，直接输出 FAIL feedback 拒绝通过；中间态在 GAN 已收敛后无意义（proposer v7.8 配套）
   - 1.4.0: B33 e2e URL 位置词检测 — W35/W43 实证 planner 在 playground sprint 的 e2e 生成了 /api/brain/ping 而非 playground /ping (localhost:3000)。Step B-1.5 加 pre-exec 扫描，含 /api/brain/ 的命令立即 FAIL 并标 planner_drift
   - 1.3.0: 明确 pre-merge gate 位置（反 2026-04-09 决策）— description 重写 + 加 "## 调用时机" 段，说明 evaluator 跑在 CI 绿后、PR merge 前。配套 brain 编排改动（harness-initiative.graph.js 把 evaluate 从 merge 后挪到 merge 前）由独立 PR 跟进
   - 1.2.0: 修协议盲 — 加 Test: 字段 manual:bash/manual: 前缀处理段（proposer SKILL v7.4+ 写此格式，evaluator 必须 strip 后执行）
@@ -87,7 +89,7 @@ generator 写代码 + push PR
 1. **禁止把 vitest 输出 grep "passed" 当 PASS 证据**。vitest 是 generator 自写的测试，不是 contract oracle。即便看到 "Tests 8 passed" 也不能给 PASS——必须真跑合同里 [BEHAVIOR] 的 `Test:` 命令逐条校验
 2. **禁止以"代码看起来对"给 PASS**。不能读 server.js 源码看到 `app.get('/sum')` 就 PASS——必须真起 server + 真 curl + jq 校验响应
 3. **缺 [BEHAVIOR] Test: 命令直接 FAIL**。如果合同 contract-dod-ws{N}.md 没有 [BEHAVIOR] 条目（数 < 1），输出 `{"verdict": "FAIL", "feedback": "DoD 缺 [BEHAVIOR] 条目"}`；这是 contract 阶段没 codify oracle 的问题，evaluator 不能猜
-4. **缺 jq -e 严匹配视为弱测试**。如果 [BEHAVIOR] Test: 命令只 `curl -f /xxx` 不带 jq 校验 body shape，记入 `feedback` 但本轮仍按命令 exit code 判（容忍但报告，让 reviewer 下轮严化）
+4. **缺 jq -e 严匹配直接 FAIL**。如果 [BEHAVIOR] Test: 命令只 `curl -f /xxx` 不带 jq 校验 body shape，输出 `{"verdict":"FAIL","feedback":"命令缺 jq -e 严匹配，属弱 oracle，schema drift 无法被抓，拒绝通过；请在 contract-dod 里补充 jq -e 值校验命令后重新提交"}` — 禁止"容忍但报告"的中间态，GAN 已收敛后不存在"下轮 reviewer 再严化"的机会
 
 **特别针对 schema drift（W19/W20 根因）**：如果 PRD 写 response 必须 `{result, operation}` 但 generator 实际返 `{product}`：
 - 合同里若有 `jq -e '.result == 35'` → evaluator 真跑 → exit 1 → FAIL ✓ 抓住
@@ -282,44 +284,49 @@ fi
 chmod +x /tmp/e2e-verify.sh
 ```
 
-#### Step B-1.5: E2E 命令位置词验证（B33 — W35/W43 实证）
+#### Step B-1.5: E2E 命令位置词验证（B33 v1.6 — playground-aware）
 
-**在执行 E2E 脚本前，必须先检查脚本是否包含 Brain API URL 漂移。**
+**在执行 E2E 脚本前，先判断是 playground sprint 还是真实功能 sprint，然后做方向相反的检测。**
 
-根因：W35→W43 共 9 次失败，错误均为 `final_e2e_verdict=FAIL: GET /api/brain/ping`。planner/proposer 在 playground sprint 的合同 e2e 脚本中错误写入了 Brain 健康检查 URL（`localhost:5221/api/brain/ping`）而非 playground 的真实端点（`localhost:3000/ping`）。
-
-**位置词死规则**：
-- `localhost:5221/api/brain/` → Brain API（调度/决策，不是被测服务）
-- `localhost:3000/` 或 `localhost:$PLAYGROUND_PORT/` → playground（被测服务）
-- 两者**不可混用**；playground sprint 的 e2e 里出现 Brain URL = planner_drift
+根因（原始 B33）：W35→W43 共 9 次失败，playground sprint 的 e2e 脚本错误混入 Brain API URL。
+根因（v1.6 修复）：原 B33 无差别拦截所有 Brain API URL，导致真实功能 sprint（autonomous）的 E2E 脚本被误判为 planner_drift——而真实功能 sprint 的 E2E **必须** 调用 Brain API。
 
 ```bash
-# B33 检测：扫描 e2e 脚本是否含 Brain API URL
-if grep -qE "localhost:5221/api/brain/|/api/brain/(ping|health|tasks|tick|status)" /tmp/e2e-verify.sh; then
-  DRIFT_LINE=$(grep -E "localhost:5221/api/brain/|/api/brain/(ping|health|tasks|tick|status)" /tmp/e2e-verify.sh | head -1)
-  cat > /workspace/.brain-result.json << BREOF
-{"verdict":"FAIL","task_id":"$TASK_ID","failed_step":"url_validation","log_excerpt":"$DRIFT_LINE"}
+# B33 v1.6：先判断 sprint 类型，再做方向相反的 URL 检测
+IS_PLAYGROUND_SPRINT=false
+if [ -d "playground" ] && [ -f "playground/server.js" ]; then
+  IS_PLAYGROUND_SPRINT=true
+fi
+
+if [[ "$IS_PLAYGROUND_SPRINT" == "true" ]]; then
+  # playground sprint：Brain API URL = planner_drift（原 B33 逻辑，保留）
+  if grep -qE "localhost:5221/api/brain/|/api/brain/(ping|health|tasks|tick|status)" /tmp/e2e-verify.sh; then
+    DRIFT_LINE=$(grep -E "localhost:5221/api/brain/|/api/brain/(ping|health|tasks|tick|status)" /tmp/e2e-verify.sh | head -1)
+    cat > /workspace/.brain-result.json << BREOF
+{"verdict":"FAIL","task_id":"$TASK_ID","failed_step":"url_validation","log_excerpt":"playground sprint 禁止调用 Brain API：$DRIFT_LINE"}
 BREOF
-  exit 0
+    exit 0
+  fi
+else
+  # 真实功能 sprint：autonomous journey_type 必须包含真实 Brain API URL
+  if [[ "$JOURNEY_TYPE" == "autonomous" ]]; then
+    if ! grep -qE "localhost:5221/api/brain/|psql.*cecelia" /tmp/e2e-verify.sh; then
+      cat > /workspace/.brain-result.json << BREOF
+{"verdict":"FAIL","task_id":"$TASK_ID","failed_step":"url_validation","log_excerpt":"autonomous sprint 的 E2E 脚本未测真实 Brain API (localhost:5221) 或 DB，检测到可能测了 playground 或未知目标，请改为 curl localhost:5221/api/brain/... 验证真实行为"}
+BREOF
+      exit 0
+    fi
+  fi
 fi
 ```
 
-**反例**（直接导致 W35-W43 失败，禁止出现）：
+**位置词死规则（v1.6）**：
 
-```bash
-# ❌ playground sprint 的 e2e 里调用 Brain ping
-curl -f localhost:5221/api/brain/ping  # 这是 Brain 健康检查，不是 playground 验证
-```
-
-**正例**（playground sprint 的 e2e 应如此）：
-
-```bash
-# ✅ 调用 playground 自己的端点
-cd playground && PLAYGROUND_PORT=3001 node server.js & SPID=$!
-sleep 2
-curl -f localhost:3001/ping | jq -e '.pong == true'
-kill $SPID
-```
+| sprint 类型 | Brain API URL (5221) | playground URL (3xxx) |
+|---|---|---|
+| playground sprint（`playground/server.js` 存在）| ❌ FAIL（planner_drift）| ✅ 必须有 |
+| 真实功能 sprint autonomous | ✅ 必须有 | ❌ FAIL（错误目标）|
+| 真实功能 sprint user_facing | ✅ 需要（API 验后端）| ❌ 无意义 |
 
 #### Step B-2: 执行 E2E 脚本
 
