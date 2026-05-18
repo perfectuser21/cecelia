@@ -24,7 +24,7 @@ POLL_INTERVAL="${POLL_INTERVAL:-60}"
 MAX_WAIT="${MAX_WAIT:-5400}"
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/../../../.." && pwd)"
 
 # ── Skip guard ──────────────────────────────────────────────────────────────
 
