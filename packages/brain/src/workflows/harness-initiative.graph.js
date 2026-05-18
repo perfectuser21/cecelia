@@ -923,6 +923,7 @@ export const FullInitiativeState = Annotation.Root({
   task_loop_fix_count: Annotation({ reducer: (_o, n) => n, default: () => 0 }),
   evaluate_verdict:   Annotation({ reducer: (_o, n) => n, default: () => null }),
   evaluate_feedback:  Annotation({ reducer: (_o, n) => n, default: () => null }),
+  final_e2e_fix_count: Annotation({ reducer: (_o, n) => n, default: () => 0 }),
 });
 
 /**
@@ -1499,7 +1500,7 @@ JOURNEY_TYPE=${journeyType}`;
   }
 
   // W5 — fix_round 用尽 + FAIL → interrupt() 问主理人
-  const fixRound = state.task_loop_fix_count ?? 0;
+  const fixRound = state.final_e2e_fix_count ?? 0;
   if (verdictDelta.final_e2e_verdict === 'FAIL' && fixRound >= MAX_FIX_ROUNDS) {
     let decision;
     try {
@@ -1516,11 +1517,11 @@ JOURNEY_TYPE=${journeyType}`;
       });
     } catch (err) {
       // GraphInterrupt 是 LangGraph 暂停信号 — 不在此 catch（retryOn 已排除），但兜底返 verdictDelta
-      if (err?.name === 'GraphInterrupt' || /interrupt/i.test(String(err?.message || ''))) {
+      if (err?.name === 'GraphInterrupt') {
         throw err;
       }
       console.warn(`[finalEvaluateDispatchNode] interrupt() unexpected error: ${err.message}`);
-      return verdictDelta;
+      return { ...verdictDelta, error: { node: 'final_evaluate', message: 'max fix rounds exhausted, interrupt failed' } };
     }
 
     if (decision?.action === 'abort') {
@@ -1533,7 +1534,7 @@ JOURNEY_TYPE=${journeyType}`;
       // 把 fix count 重置为 0 让 graph 路由回 retry 再跑（caller 需从 evaluate 路径再来）
       return {
         ...verdictDelta,
-        task_loop_fix_count: 0,
+        final_e2e_fix_count: 0,
         fix_rounds_extended: (state.fix_rounds_extended || 0) + 3,
         operator_decision: decision,
       };
@@ -1548,6 +1549,11 @@ JOURNEY_TYPE=${journeyType}`;
     // 未知 action — 保留原 verdict
   }
 
+  // FAIL + fix rounds 未耗尽 → 重置 task_loop_index，routing 函数送回 pick_sub_task
+  if (verdictDelta.final_e2e_verdict === 'FAIL' && fixRound < MAX_FIX_ROUNDS) {
+    return { ...verdictDelta, final_e2e_fix_count: fixRound + 1, task_loop_index: 0 };
+  }
+
   return verdictDelta;
 }
 
@@ -1559,9 +1565,10 @@ function _routeAfterJoin(state) {
   return 'final_e2e'; // 即便 FAIL 也进 final_e2e（短路 verdict=FAIL，不再跑 scenarios）
 }
 
-function _routeAfterFinalE2E(state) {
-  if (state.error) return 'end';
-  return 'report';
+export function _routeAfterFinalE2E(state) {
+  if (state.error) return 'report';
+  if (state.final_e2e_verdict === 'PASS' || state.final_e2e_verdict === 'PASS_WITH_OVERRIDE') return 'report';
+  return 'pick_sub_task'; // FAIL → 重跑所有 sub-tasks
 }
 
 export function buildHarnessFullGraph(nodeOverrides = {}) {
@@ -1602,7 +1609,7 @@ export function buildHarnessFullGraph(nodeOverrides = {}) {
     .addConditionalEdges('pick_sub_task', routeFromPickSubTask, { run_sub_task: 'run_sub_task', final_evaluate: 'final_evaluate', end: END })
     .addEdge('run_sub_task', 'advance')
     .addEdge('advance', 'pick_sub_task')
-    .addEdge('final_evaluate', 'report')
+    .addConditionalEdges('final_evaluate', _routeAfterFinalE2E, { report: 'report', pick_sub_task: 'pick_sub_task' })
     .addEdge('report', END);
 }
 
