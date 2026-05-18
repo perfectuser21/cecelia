@@ -596,6 +596,11 @@ main() {
   SESSION_UUID=$(python3 -c 'import uuid; print(uuid.uuid4())')
   echo "[cecelia-run] session_id=$SESSION_UUID (resume 支持已启用)" >&2
 
+  # 写 session UUID 到 worktree，供 Brain 重启后 reconnect
+  if [[ -n "$ACTUAL_WORK_DIR" ]]; then
+    echo "$SESSION_UUID" > "$ACTUAL_WORK_DIR/.cecelia-session-uuid" 2>/dev/null || true
+  fi
+
   while [[ $attempt -le $MAX_RETRIES ]]; do
     echo "[cecelia-run] Attempt $attempt/$MAX_RETRIES" >&2
 
