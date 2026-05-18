@@ -1335,7 +1335,6 @@ export function routeAfterEvaluate(state) {
   if (state.error) return 'end';
   const tasks = state.taskPlan?.tasks || [];
   const idx = state.task_loop_index ?? 0;
-  const fixCount = state.task_loop_fix_count ?? 0;
 
   if (state.evaluate_verdict === 'PASS') {
     if (idx + 1 >= tasks.length) return 'final_evaluate';
