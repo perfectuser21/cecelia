@@ -6,7 +6,7 @@
  *   - fix-loop：1 sub_task ci_fail 后 ci_pass merged → final_e2e PASS
  *   - resume：MemorySaver 同 thread_id 续上 mid-loop
  */
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach, beforeAll } from 'vitest';
 import { MemorySaver } from '@langchain/langgraph';
 
 const {
@@ -460,6 +460,43 @@ describe('full graph e2e', () => {
     expect(final.final_e2e_verdict).toBe('PASS');
     expect(evaluateCallCount).toBe(2);  // FAIL + PASS
   }, 30000);  // skipped — Layer 3 smoke covers
+});
+
+// ─── Final E2E fix loop — routing 验证 ─────────────────────────────────────
+
+describe('Final E2E fix loop — _routeAfterFinalE2E routing', () => {
+  let route;
+
+  beforeAll(async () => {
+    const mod = await import('../harness-initiative.graph.js');
+    route = mod._routeAfterFinalE2E;
+  });
+
+  it('FAIL + no error → pick_sub_task (fix rounds remaining)', () => {
+    expect(route({ final_e2e_verdict: 'FAIL', final_e2e_fix_count: 1 })).toBe('pick_sub_task');
+  });
+
+  it('FAIL + error set (max rounds exhausted) → report', () => {
+    expect(route({
+      final_e2e_verdict: 'FAIL',
+      final_e2e_fix_count: 3,
+      error: { node: 'final_evaluate', message: 'max fix rounds exhausted, interrupt failed' },
+    })).toBe('report');
+  });
+
+  it('PASS → report', () => {
+    expect(route({ final_e2e_verdict: 'PASS', final_e2e_fix_count: 1 })).toBe('report');
+  });
+
+  it('PASS_WITH_OVERRIDE → report', () => {
+    expect(route({ final_e2e_verdict: 'PASS_WITH_OVERRIDE', final_e2e_fix_count: 2 })).toBe('report');
+  });
+
+  it('buildHarnessFullGraph accepts finalEvaluateFn nodeOverride', async () => {
+    const { buildHarnessFullGraph } = await import('../harness-initiative.graph.js');
+    const mockFn = async () => ({ final_e2e_verdict: 'PASS' });
+    expect(() => buildHarnessFullGraph({ finalEvaluateFn: mockFn })).not.toThrow();
+  });
 });
 
 describe('full graph resume', () => {
