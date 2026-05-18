@@ -78,7 +78,7 @@ describe('finalEvaluateDispatchNode interrupt() (W5)', () => {
     expect(out.operator_decision).toBeUndefined();
   });
 
-  it('verdict=FAIL & final_e2e_fix_count>=3 → 自动终止，error 字段被设置（不调 interrupt）', async () => {
+  it('verdict=FAIL & final_e2e_fix_count=3 → continues retrying (no cap)', async () => {
     const failExecutor = vi.fn(async () => ({ exit_code: 0, timed_out: false, stdout: '{"verdict":"FAIL","failed_step":"e2e fail"}', stderr: '' }));
 
     const out = await finalEvaluateDispatchNode(
@@ -94,11 +94,11 @@ describe('finalEvaluateDispatchNode interrupt() (W5)', () => {
       { executor: failExecutor }
     );
 
-    // fix_count=3 >= MAX_FIX_ROUNDS(3) → 自动终止，error 字段被设置
-    expect(out.error).toBeDefined();
-    expect(out.error.node).toBe('final_evaluate');
-    expect(out.error.message).toContain('3');
-    // 不应有 operator_decision（interrupt 已移除）
+    // fix_count=3 → 无上限，始终重试，不自动终止
+    expect(out.error).toBeUndefined();
+    expect(out.final_e2e_verdict).toBe('FAIL');
+    expect(out.final_e2e_fix_count).toBe(4);
+    expect(out.task_loop_index).toBe(0);
     expect(out.operator_decision).toBeUndefined();
   }, 15000);
 });
