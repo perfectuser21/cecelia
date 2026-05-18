@@ -505,7 +505,7 @@ describe('finalEvaluateDispatchNode — fix loop', () => {
     expect(result.final_e2e_fix_count).toBeUndefined();
   });
 
-  it('FAIL + final_e2e_fix_count=3 (>= MAX) → returns error (interrupt fail path)', async () => {
+  it('FAIL + final_e2e_fix_count=3 (>= MAX) → returns error (自动终止，不等人工)', async () => {
     const mockSpawnFn = vi.fn().mockResolvedValue({
       exit_code: 1,
       timed_out: false,
@@ -523,9 +523,7 @@ describe('finalEvaluateDispatchNode — fix loop', () => {
       githubToken: 'tok',
     };
 
-    // interrupt() 不可用（非 LangGraph 执行上下文），抛非 GraphInterrupt 错误
-    // 期望节点返回含 error 字段的 delta（防止无限循环）
-    // RED 测试：当前实现在 interrupt() 失败时返回 verdictDelta（无 error 字段），期望修复后返回带 error 的 delta
+    // fix rounds 用尽 → 直接返回含 error 的 delta，自动终止，不走 interrupt
     const result = await finalEvaluateDispatchNode(state, {
       executor: mockSpawnFn,
       execFile: vi.fn().mockResolvedValue({ stdout: '' }),

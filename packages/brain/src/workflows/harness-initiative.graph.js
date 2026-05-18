@@ -1499,59 +1499,16 @@ JOURNEY_TYPE=${journeyType}`;
     }
   }
 
-  // W5 — fix_round 用尽 + FAIL → interrupt() 问主理人
   const fixRound = state.final_e2e_fix_count ?? 0;
-  if (verdictDelta.final_e2e_verdict === 'FAIL' && fixRound >= MAX_FIX_ROUNDS) {
-    let decision;
-    try {
-      decision = interrupt({
-        type: 'final_e2e_failed_max_fix',
-        initiative_id: state.initiativeId,
-        task_id: state.task?.id,
-        failed_scenarios: verdictDelta.final_e2e_failed_scenarios || [],
-        fix_rounds_used: fixRound,
-        message:
-          'Final E2E 已重试 ' + fixRound + ' 次仍失败。请决定：' +
-          '(a) action=abort 终止 (b) action=extend_fix_rounds 增加 fix_round 限额再试 ' +
-          '(c) action=accept_failed 标 sprint failed 但接受',
-      });
-    } catch (err) {
-      // GraphInterrupt 是 LangGraph 暂停信号 — 不在此 catch（retryOn 已排除），但兜底返 verdictDelta
-      if (err?.name === 'GraphInterrupt') {
-        throw err;
-      }
-      console.warn(`[finalEvaluateDispatchNode] interrupt() unexpected error: ${err.message}`);
-      return { ...verdictDelta, error: { node: 'final_evaluate', message: 'max fix rounds exhausted, interrupt failed' } };
-    }
-
-    if (decision?.action === 'abort') {
-      return {
-        ...verdictDelta,
-        error: { node: 'final_evaluate', message: 'aborted by operator', operator_decision: decision },
-      };
-    }
-    if (decision?.action === 'extend_fix_rounds') {
-      // 把 fix count 重置为 0 让 graph 路由回 retry 再跑（caller 需从 evaluate 路径再来）
-      return {
-        ...verdictDelta,
-        final_e2e_fix_count: 0,
-        fix_rounds_extended: (state.fix_rounds_extended || 0) + 3,
-        operator_decision: decision,
-      };
-    }
-    if (decision?.action === 'accept_failed') {
-      return {
-        ...verdictDelta,
-        final_e2e_verdict: 'PASS_WITH_OVERRIDE',
-        operator_decision: decision,
-      };
-    }
-    // 未知 action — 保留原 verdict
-  }
 
   // FAIL + fix rounds 未耗尽 → 重置 task_loop_index，routing 函数送回 pick_sub_task
   if (verdictDelta.final_e2e_verdict === 'FAIL' && fixRound < MAX_FIX_ROUNDS) {
     return { ...verdictDelta, final_e2e_fix_count: fixRound + 1, task_loop_index: 0 };
+  }
+
+  // FAIL + fix rounds 用尽 → 自动标 failed，不等人工介入
+  if (verdictDelta.final_e2e_verdict === 'FAIL' && fixRound >= MAX_FIX_ROUNDS) {
+    return { ...verdictDelta, error: { node: 'final_evaluate', message: `Final E2E 已重试 ${fixRound} 次仍失败，自动终止` } };
   }
 
   return verdictDelta;
