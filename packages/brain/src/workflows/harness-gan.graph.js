@@ -266,11 +266,6 @@ export const GanContractState = Annotation.Root({
     default: () => ({}),
   }),
 });
-// 为测试提供 .reducer 别名（LangGraph 内部把 reducer 存为 .operator）
-Object.defineProperty(GanContractState.spec.session_map, 'reducer', {
-  get() { return this.operator; },
-  configurable: true,
-});
 
 // ── 节点工厂 ─────────────────────────────────────────────────────────────
 
