@@ -16,6 +16,7 @@ import { buildMemoryContext } from './memory-retriever.js';
 import { queryNotebook, addTextSource } from './notebook-adapter.js';
 import { updateSelfModel } from './self-model.js';
 import { processEvent, EVENT_TYPES } from './thalamus.js';
+import { createTask } from './actions.js';
 
 // ── 配置 ──────────────────────────────────────────────────
 export const DAILY_BUDGET = 100; // 基础预算（从 20 提到 100，向后兼容，内部逻辑请使用 getDailyBudget()）
@@ -242,6 +243,45 @@ export function cleanNotebookResponse(text) {
 }
 
 // ── 消化核心逻辑（v3 NotebookLM 主路）──────────────────────
+
+/**
+ * 洞察→task 绑定：为 learnings 表中的单条记录创建 dev task（去重，幂等）
+ * 仅处理 source='learning' 的条目；memory_stream 会话条目不创建 task。
+ * 镜像 cortex.maybeCreateInsightTask，使用传入的 db 连接而非 cortex 模块级 pool。
+ */
+async function maybeCreateRuminationTask(db, learning, insight) {
+  try {
+    const { rows } = await db.query(
+      `SELECT id FROM tasks WHERE payload->>'insight_learning_id' = $1 AND status != 'cancelled' LIMIT 1`,
+      [learning.id]
+    );
+    if (rows.length > 0) {
+      console.log(`[rumination] insight task already exists for learning ${learning.id}, skip`);
+      return;
+    }
+
+    const titleText = learning.title || insight.slice(0, 80).replace(/\n/g, ' ');
+    await createTask({
+      title: `[Insight修复] ${titleText.slice(0, 120)}`,
+      description: `由 Rumination 自动生成的修复任务。\n\n原始 insight (learning_id: ${learning.id}):\n${insight.slice(0, 500)}`,
+      priority: 'P2',
+      task_type: 'dev',
+      trigger_source: 'rumination',
+      payload: {
+        insight_learning_id: learning.id,
+        event_type: 'rumination_result',
+      },
+    });
+
+    await db.query(
+      `UPDATE learnings SET applied = true, applied_at = NOW() WHERE id = $1`,
+      [learning.id]
+    );
+    console.log(`[rumination] auto-created dev task for insight learning ${learning.id}`);
+  } catch (err) {
+    console.warn(`[rumination] maybeCreateRuminationTask failed for ${learning.id}:`, err.message);
+  }
+}
 
 /**
  * 批量消化 learnings（v3: NotebookLM ask 为主路，callLLM 为 fallback）
@@ -516,6 +556,12 @@ ${insight.trim().slice(0, 800)}
       }
 
       _dailyCount += learnings.length;
+
+      // 6.1 洞察→task 绑定：为 learnings 表记录创建 dev task（memory_stream 条目跳过）
+      for (const learning of learnings) {
+        if (learning.source !== 'learning') continue;
+        await maybeCreateRuminationTask(db, learning, insight);
+      }
     } else {
       console.warn(`[rumination] no insight produced (LLM all failed) — leaving ${learnings.length} learnings undigested for retry`);
     }

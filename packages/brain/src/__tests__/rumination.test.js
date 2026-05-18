@@ -80,6 +80,12 @@ function setupIdleAndLearnings(pool, learnings) {
     for (let i = 0; i < learnings.length; i++) {
       mockQuery.mockResolvedValueOnce({ rows: [] }); // UPDATE digested
     }
+    // 6.1 洞察→task 绑定：每条 learning 需要 dedup SELECT + applied UPDATE
+    // source='memory_stream' 的条目跳过，只有 source='learning'（runRumination 注入）触发
+    for (let i = 0; i < learnings.length; i++) {
+      mockQuery.mockResolvedValueOnce({ rows: [] }); // SELECT dedup（���已有 task）
+      mockQuery.mockResolvedValueOnce({ rows: [] }); // UPDATE applied=true
+    }
   }
 }
 
@@ -93,6 +99,11 @@ function setupLearningsOnly(pool, learnings) {
     mockQuery.mockResolvedValueOnce({ rows: [] }); // INSERT memory_stream
     for (let i = 0; i < learnings.length; i++) {
       mockQuery.mockResolvedValueOnce({ rows: [] }); // UPDATE digested
+    }
+    // 6.1 洞察→task 绑定（同上）
+    for (let i = 0; i < learnings.length; i++) {
+      mockQuery.mockResolvedValueOnce({ rows: [] }); // SELECT dedup
+      mockQuery.mockResolvedValueOnce({ rows: [] }); // UPDATE applied=true
     }
   }
 }
@@ -150,6 +161,8 @@ describe('rumination', () => {
     vi.resetAllMocks(); // resetAllMocks 清除 mockResolvedValueOnce 队列
     _resetState();
     pool = createMockPool();
+    // 默认 fallback：所有未明确 queue 的 db.query 返回 { rows: [] }，防止中间 DB 调用耗尽队列
+    mockQuery.mockResolvedValue({ rows: [] });
     mockCallLLM.mockResolvedValue({ text: '这是一条测试洞察' });
     mockBuildMemoryContext.mockResolvedValue({ block: '相关记忆', meta: {} });
     mockQueryNotebook.mockResolvedValue({ ok: true, text: 'NotebookLM 补充' });
@@ -323,13 +336,20 @@ describe('rumination', () => {
       }));
     });
 
-    it('无 [ACTION:] 标记时不创建 task', async () => {
+    it('无 [ACTION:] 标记时不创建 research task（但 maybeCreateRuminationTask 创建 dev task）', async () => {
       mockCallLLM.mockResolvedValueOnce({ text: '一条普通洞察，没有行动建议' });
 
       setupIdleAndLearnings(pool, [{ id: 'l1', title: '测试', content: '内容', category: 'u' }]);
 
       await runRumination(pool);
-      expect(mockCreateTask).not.toHaveBeenCalled();
+      // 无 [ACTION:] → processEvent 不携带 actions（不创建 research task）
+      expect(mockProcessEvent).toHaveBeenCalledWith(expect.objectContaining({ actions: [] }));
+      // 但 maybeCreateRuminationTask 仍为 learnings 表记录创建 dev task
+      expect(mockCreateTask).toHaveBeenCalledWith(expect.objectContaining({
+        task_type: 'dev',
+        trigger_source: 'rumination',
+        payload: expect.objectContaining({ insight_learning_id: 'l1' }),
+      }));
     });
 
     it('多个 [ACTION:] 标记 → processEvent 收到全部 actions', async () => {
@@ -361,6 +381,89 @@ describe('rumination', () => {
 
       const result = await runRumination(pool);
       expect(result.digested).toBe(1);
+    });
+  });
+
+  describe('洞察→task 绑定（maybeCreateRuminationTask）', () => {
+    it('消化 learnings 表记录时自动创建 dev task', async () => {
+      setupIdleAndLearnings(pool, [
+        { id: 'l-bind-1', title: '洞察标题', content: '洞察内容', category: 'user_shared' },
+      ]);
+
+      await runRumination(pool);
+
+      expect(mockCreateTask).toHaveBeenCalledWith(expect.objectContaining({
+        title: expect.stringContaining('[Insight修复]'),
+        task_type: 'dev',
+        priority: 'P2',
+        trigger_source: 'rumination',
+        payload: expect.objectContaining({
+          insight_learning_id: 'l-bind-1',
+          event_type: 'rumination_result',
+        }),
+      }));
+    });
+
+    it('同一 learning 已有 task 时去重跳过', async () => {
+      // 用 mockImplementation 精确匹配 dedup SELECT（队列顺序不可靠，因中间有其他 DB 调用）
+      mockQuery.mockImplementation((sql) => {
+        if (typeof sql === 'string' && sql.includes('insight_learning_id')) {
+          return Promise.resolve({ rows: [{ id: 'existing-task-id' }] }); // 已有 task → 去重
+        }
+        if (typeof sql === 'string' && sql.includes('in_progress') && sql.includes('queued')) {
+          return Promise.resolve({ rows: [{ in_progress: '0', queued: '0' }] }); // idle
+        }
+        if (typeof sql === 'string' && sql.includes('FROM learnings') && sql.includes('digested = false')) {
+          return Promise.resolve({ rows: [{ id: 'l-dedup', title: '已绑定', content: '内容', category: 'u' }] });
+        }
+        return Promise.resolve({ rows: [] }); // default
+      });
+
+      await runRumination(pool);
+
+      expect(mockCreateTask).not.toHaveBeenCalled();
+    });
+
+    it('memory_stream 来源的条目不创建 task', async () => {
+      // 直接测试 digestLearnings 接收 source='memory_stream' 条目的行为：
+      // runRumination 主路取 memory_stream 条目时 source='memory_stream'，不触发绑定
+      // 这里通过验证只有 source='learning' 才会触发 mockCreateTask 来间接验证
+      mockQuery
+        .mockResolvedValueOnce({ rows: [] })                                   // rumination_invoke INSERT
+        .mockResolvedValueOnce({ rows: [{ in_progress: '0', queued: '0' }] }) // idle check
+        .mockResolvedValueOnce({ rows: [] });                                  // learnings（空）
+
+      // memory_stream 补充（fetchMemoryStreamItems mock）
+      mockQuery.mockResolvedValueOnce({
+        rows: [{ id: 'ms-1', content: '对话内容', salience_score: 0.8, source_type: 'conversation_turn' }],
+      }); // memory_stream SELECT
+
+      // memory_stream 条目消化：INSERT memory_stream + UPDATE digested（memory_stream 条目 UPDATE 是 no-op）
+      mockQuery.mockResolvedValueOnce({ rows: [] }); // INSERT memory_stream（洞察写入）
+      mockQuery.mockResolvedValueOnce({ rows: [] }); // UPDATE digested（无 learnings 表记录，no-op）
+      mockQuery.mockResolvedValueOnce({ rows: [] }); // UPDATE memory_stream.status='ruminated'
+
+      await runRumination(pool);
+
+      // source='memory_stream' 条目不应创建 task
+      expect(mockCreateTask).not.toHaveBeenCalled();
+    });
+
+    it('多条 learnings 各自创建独立 dev task', async () => {
+      setupIdleAndLearnings(pool, [
+        { id: 'l-multi-1', title: '知识1', content: '内容1', category: 'tech' },
+        { id: 'l-multi-2', title: '知识2', content: '内容2', category: 'tech' },
+      ]);
+
+      await runRumination(pool);
+
+      expect(mockCreateTask).toHaveBeenCalledTimes(2);
+      expect(mockCreateTask).toHaveBeenCalledWith(expect.objectContaining({
+        payload: expect.objectContaining({ insight_learning_id: 'l-multi-1' }),
+      }));
+      expect(mockCreateTask).toHaveBeenCalledWith(expect.objectContaining({
+        payload: expect.objectContaining({ insight_learning_id: 'l-multi-2' }),
+      }));
     });
   });
 
