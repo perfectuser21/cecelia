@@ -1,219 +1,181 @@
-# Sprint Contract Draft (Round 1)
+# Sprint Contract Draft (Round 2)
 
 ## Golden Path
 
-[用户打开 `/harness/{initiative_id}`] → [页面建立 `EventSource` 到 `/api/brain/harness/pipeline/:initiative_id/stream`] → [Brain flush 历史 `initiative_run_events` 事件（catchup）] → [Brain 每 2s 轮询新事件实时推 `event: node_update`] → [pipeline 完成推 `event: done` 并关闭连接]
+[外部调用方] → [GET /api/brain/version] → [Brain handler 读 package.json + selfcheck.js] → [返回 HTTP 200 `{"version":"<semver>","schema_version":"<str>"}`]
 
 ---
 
-### Step 1: 用户打开 Dashboard `/harness/{initiative_id}` 页面
+### Step 1: 调用方发送 GET /api/brain/version
 
-**可观测行为**: 浏览器加载 `HarnessStreamPage`，页面向 `GET /api/brain/harness/pipeline/{initiative_id}/stream` 发起 `EventSource` 连接，服务端返回 HTTP 200 + `Content-Type: text/event-stream`
+**可观测行为**: Brain 接收请求，无需任何认证或参数，立即返回 HTTP 200。
 
 **验证命令**:
 ```bash
-TEST_ID="00000000-0000-0000-0000-000000000001"
-CT=$(curl -sI -H "Accept: text/event-stream" \
-  "localhost:5221/api/brain/harness/pipeline/${TEST_ID}/stream" --max-time 3 \
-  | grep -i "content-type" | head -1)
-echo "$CT" | grep -iq "text/event-stream" || { echo "FAIL: Content-Type 不是 text/event-stream"; exit 1; }
-echo "✅ Step 1: SSE 握手通过"
+HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" localhost:5221/api/brain/version)
+[ "$HTTP_CODE" = "200" ] || { echo "FAIL: HTTP $HTTP_CODE (期望 200)"; exit 1; }
+echo "✅ Step 1: HTTP 200 通过"
 ```
 
-**硬阈值**: HTTP 200，Content-Type: text/event-stream
+**硬阈值**: HTTP 200，响应时间 < 1s
 
 ---
 
-### Step 2: Brain catchup flush 历史事件
+### Step 2: Brain 读取 package.json version 与 EXPECTED_SCHEMA_VERSION，返回实际值
 
-**可观测行为**: SSE 连接建立后，Brain 立即按 `created_at` 升序 flush 已存在的 `initiative_run_events` 历史记录，每条推送格式为 `event: node_update\ndata: {event_id,initiative_id,node,status,payload,ts}\n\n`
+**可观测行为**: 响应 body 含 `version`（semver string，值与 packages/brain/package.json 一致）和 `schema_version`（string，值与 selfcheck.js `EXPECTED_SCHEMA_VERSION` 一致）。
 
 **验证命令**:
 ```bash
-TEST_ID="00000000-0000-0000-0000-000000000001"
-DB="${DATABASE_URL:-postgresql://cecelia@localhost/cecelia}"
-psql "$DB" -c "
-  INSERT INTO initiative_run_events (event_id, initiative_id, node, status, payload)
-  VALUES ('11111111-0000-0000-0000-000000000001', '${TEST_ID}', 'planner', 'completed', '{}')
-  ON CONFLICT (event_id) DO NOTHING;
-" 2>/dev/null || true
-DATA=$(timeout 5 curl -N -sf -H "Accept: text/event-stream" \
-  "localhost:5221/api/brain/harness/pipeline/${TEST_ID}/stream" 2>/dev/null \
-  | grep "^data:" | head -1 | sed 's/^data: //')
-echo "$DATA" | jq -e 'has("event_id") and has("initiative_id") and has("node") and has("status") and has("payload") and has("ts")' \
-  || { echo "FAIL: node_update data 字段不完整"; exit 1; }
-echo "✅ Step 2: catchup 事件 schema 通过"
+RESP=$(curl -sf localhost:5221/api/brain/version)
+
+# 字段类型检查
+echo "$RESP" | jq -e '.version | type == "string"' || { echo "FAIL: version 不是 string"; exit 1; }
+echo "$RESP" | jq -e '.schema_version | type == "string"' || { echo "FAIL: schema_version 不是 string"; exit 1; }
+
+# 值来源 oracle — version 必须与 package.json 实际值一致（防止 generator 硬编码）
+EXPECTED_VERSION=$(node -e "process.stdout.write(JSON.parse(require('fs').readFileSync('packages/brain/package.json','utf8')).version)")
+echo "$RESP" | jq -e ".version == \"$EXPECTED_VERSION\"" \
+  || { echo "FAIL: version 与 package.json 不一致（expected=$EXPECTED_VERSION）"; exit 1; }
+
+# 值来源 oracle — schema_version 必须与 selfcheck.js EXPECTED_SCHEMA_VERSION 一致
+EXPECTED_SCHEMA=$(sed -n "s/.*EXPECTED_SCHEMA_VERSION = '\([^']*\)'.*/\1/p" packages/brain/src/selfcheck.js)
+echo "$RESP" | jq -e ".schema_version == \"$EXPECTED_SCHEMA\"" \
+  || { echo "FAIL: schema_version 与 selfcheck.js 不一致（expected=$EXPECTED_SCHEMA）"; exit 1; }
+
+# semver 格式检查
+echo "$RESP" | jq -r '.version' | grep -E '^[0-9]+\.[0-9]+\.[0-9]+$' \
+  || { echo "FAIL: version 不是 semver 格式 x.y.z"; exit 1; }
+
+echo "✅ Step 2: 字段类型 + 值 oracle + semver 格式通过"
 ```
 
-**硬阈值**: 每条 data 包含 event_id/initiative_id/node/status/payload/ts 全 6 个必填字段
+**硬阈值**: 两字段存在，类型 string，值与静态源一致，version 符合 semver x.y.z
 
 ---
 
-### Step 3: Brain 实时推送新事件（2s 轮询）
+### Step 3: 响应 schema 完整，无禁用字段名
 
-**可观测行为**: 新事件写入 `initiative_run_events` 后，REST 端点可立即返回；SSE 客户端在下一轮轮询（≤ 2s）后收到对应推送
+**可观测行为**: 顶层 keys 完全等于 `["schema_version","version"]`（jq 字母排序），7 个禁用字段名均不出现。
 
 **验证命令**:
 ```bash
-TEST_ID="00000000-0000-0000-0000-000000000002"
-DB="${DATABASE_URL:-postgresql://cecelia@localhost/cecelia}"
-psql "$DB" -c "INSERT INTO initiative_run_events (initiative_id, node, status) VALUES ('${TEST_ID}', 'proposer', 'running')" 2>/dev/null || true
-RESP=$(curl -sf "localhost:5221/api/brain/harness/pipeline/${TEST_ID}/events")
-echo "$RESP" | jq -e '.events | length > 0' || { echo "FAIL: 写入后 REST /events 未返回事件"; exit 1; }
-echo "✅ Step 3: 实时写入可被读取"
+RESP=$(curl -sf localhost:5221/api/brain/version)
+
+echo "$RESP" | jq -e 'keys == ["schema_version","version"]' \
+  || { echo "FAIL: keys 不完全等于 [schema_version,version]"; exit 1; }
+
+for BANNED in ver v pkg_version db_version build tag release; do
+  echo "$RESP" | jq -e "has(\"$BANNED\") | not" \
+    || { echo "FAIL: 禁用字段 $BANNED 出现在响应中"; exit 1; }
+done
+
+echo "✅ Step 3: Schema 完整性 + 禁用字段检查通过"
 ```
 
-**硬阈值**: 事件写入后通过 REST 端点即时可见；SSE 端点 ≤ 4s 推送
+**硬阈值**: keys 完全等于 `["schema_version","version"]`，7 个禁用字段均不存在
 
 ---
 
-### Step 4: node 和 status 枚举严格验证
+### Step 4: 多余 query 参数被忽略，不影响正常响应
 
-**可观测行为**: `node_update` 事件的 `node` 字段严格为 `planner|proposer|reviewer|generator|evaluator|report`；`status` 严格为 `pending|running|completed|failed`；禁用别名（如 `in_progress/done/step`）不出现
+**可观测行为**: GET /api/brain/version?foo=bar&baz=qux 仍返回 HTTP 200，body 与无参数版本相同。PRD 规定"多余参数忽略，不报错"。
 
 **验证命令**:
 ```bash
-TEST_ID="00000000-0000-0000-0000-000000000001"
-RESP=$(curl -sf "localhost:5221/api/brain/harness/pipeline/${TEST_ID}/events")
-STATUS=$(echo "$RESP" | jq -r '.events[0].status')
-echo "$STATUS" | grep -qE '^(pending|running|completed|failed)$' \
-  || { echo "FAIL: 非法 status 值 $STATUS"; exit 1; }
-NODE=$(echo "$RESP" | jq -r '.events[0].node')
-echo "$NODE" | grep -qE '^(planner|proposer|reviewer|generator|evaluator|report)$' \
-  || { echo "FAIL: 非法 node 值 $NODE"; exit 1; }
-echo "$RESP" | jq -e '.events[0] | has("type") | not' || { echo "FAIL: 禁用字段 type 存在"; exit 1; }
-echo "✅ Step 4: 枚举和禁用字段验证通过"
+CODE=$(curl -s -o /dev/null -w "%{http_code}" "localhost:5221/api/brain/version?foo=bar&baz=qux")
+[ "$CODE" = "200" ] || { echo "FAIL: 多余 query 参数未被忽略，期望 200 得 $CODE"; exit 1; }
+echo "✅ Step 4: 多余 query 参数忽略通过"
 ```
 
-**硬阈值**: status/node 枚举合规；禁用字段 type/data/body/result 不存在于 node_update data
+**硬阈值**: HTTP 200（多余参数不报错）
 
 ---
 
-### Step 5: pipeline 完成后推 `event: done` 并关闭连接
+## E2E 验收（final-e2e — target_environment: local_api）
 
-**可观测行为**: Brain 确认 pipeline 终结后推 `event: done\ndata: {"status":"completed","verdict":"PASS"}\n\n`，SSE 连接随后关闭；done data 严格含 `status` 和 `verdict`，禁用 `result/outcome/state/message`
+**journey_type**: autonomous
+**target_environment**: local_api
 
-**验证命令**:
-```bash
-TEST_ID="00000000-0000-0000-0000-000000000001"
-# 已完成 pipeline 的 SSE 应 flush 历史 + 推 done 后关闭
-OUT=$(timeout 8 curl -N -sf -H "Accept: text/event-stream" \
-  "localhost:5221/api/brain/harness/pipeline/${TEST_ID}/stream" 2>&1 || true)
-echo "$OUT" | grep -q "event: done" || { echo "FAIL: 未收到 done 事件"; exit 1; }
-DONE_DATA=$(echo "$OUT" | grep -A1 "event: done" | grep "^data:" | head -1 | sed 's/^data: //')
-echo "$DONE_DATA" | jq -e 'has("status") and has("verdict")' || { echo "FAIL: done data 字段缺失"; exit 1; }
-echo "$DONE_DATA" | jq -e 'has("result") | not' || { echo "FAIL: 禁用字段 result 出现在 done data"; exit 1; }
-echo "$DONE_DATA" | jq -e 'has("message") | not' || { echo "FAIL: 禁用字段 message 出现在 done data"; exit 1; }
-echo "✅ Step 5: done 事件 schema 通过"
-```
-
-**硬阈值**: event: done 推送后连接关闭；data keys ⊆ {status, verdict}
-
----
-
-## E2E 验收（最终 Evaluator 跑）
-
-**journey_type**: user_facing
-
-**完整验证脚本**:
 ```bash
 #!/bin/bash
 set -e
 
-DB="${DATABASE_URL:-postgresql://cecelia@localhost/cecelia}"
-TEST_ID="00000000-0000-0000-0000-000000000001"
-UNKNOWN_ID="99999999-9999-9999-9999-999999999999"
+# 确认 Brain 运行
+curl -sf localhost:5221/api/brain/status > /dev/null \
+  || { echo "FAIL: Brain 未运行在 localhost:5221"; exit 1; }
 
-# 1. 预置历史事件（幂等）
-psql "$DB" -c "
-  INSERT INTO initiative_run_events (event_id, initiative_id, node, status, payload)
-  VALUES ('11111111-0000-0000-0000-000000000001', '${TEST_ID}', 'planner', 'completed', '{}')
-  ON CONFLICT (event_id) DO NOTHING;
-" 2>/dev/null || true
+RESP=$(curl -sf localhost:5221/api/brain/version)
+[ -n "$RESP" ] || { echo "FAIL: 空响应"; exit 1; }
 
-# 2. REST /events 字段完整性（event_id/initiative_id/node/status/payload/ts 全 6 项）
-RESP=$(curl -sf "localhost:5221/api/brain/harness/pipeline/${TEST_ID}/events")
-echo "$RESP" | jq -e '.events | length > 0' || { echo "FAIL: /events 返回空"; exit 1; }
-echo "$RESP" | jq -e '.events[0] | has("event_id") and has("initiative_id") and has("node") and has("status") and has("payload") and has("ts")' \
-  || { echo "FAIL: /events 事件字段不完整"; exit 1; }
+# 1. 字段类型
+echo "$RESP" | jq -e '.version | type == "string"' \
+  || { echo "FAIL: version 不是 string"; exit 1; }
+echo "$RESP" | jq -e '.schema_version | type == "string"' \
+  || { echo "FAIL: schema_version 不是 string"; exit 1; }
 
-# 3. REST /events 顶层 schema 完整性 — keys 恰好 == ["events"]
-echo "$RESP" | jq -e 'keys == ["events"]' || { echo "FAIL: /events 顶层 keys 不合规"; exit 1; }
+# 2. 值来源 oracle — 防止 generator 硬编码任意 semver 通过类型检查
+EXPECTED_VERSION=$(node -e "process.stdout.write(JSON.parse(require('fs').readFileSync('packages/brain/package.json','utf8')).version)")
+echo "$RESP" | jq -e ".version == \"$EXPECTED_VERSION\"" \
+  || { echo "FAIL: version=$( echo "$RESP" | jq -r .version) 与 package.json 不一致（expected=$EXPECTED_VERSION）"; exit 1; }
 
-# 4. 禁用顶层字段不存在（data/result/items/records/rows）
-echo "$RESP" | jq -e 'has("data") | not' || { echo "FAIL: 禁用顶层字段 data 存在"; exit 1; }
-echo "$RESP" | jq -e 'has("result") | not' || { echo "FAIL: 禁用顶层字段 result 存在"; exit 1; }
-echo "$RESP" | jq -e 'has("items") | not' || { echo "FAIL: 禁用顶层字段 items 存在"; exit 1; }
+EXPECTED_SCHEMA=$(sed -n "s/.*EXPECTED_SCHEMA_VERSION = '\([^']*\)'.*/\1/p" packages/brain/src/selfcheck.js)
+echo "$RESP" | jq -e ".schema_version == \"$EXPECTED_SCHEMA\"" \
+  || { echo "FAIL: schema_version 与 selfcheck.js 不一致（expected=$EXPECTED_SCHEMA）"; exit 1; }
 
-# 5. node_update 事件禁用字段不存在（type/data/body/event_type）
-echo "$RESP" | jq -e '.events[0] | has("type") | not' || { echo "FAIL: 禁用字段 type 存在"; exit 1; }
-echo "$RESP" | jq -e '.events[0] | has("data") | not' || { echo "FAIL: 禁用字段 data 存在"; exit 1; }
-echo "$RESP" | jq -e '.events[0] | has("timestamp") | not' || { echo "FAIL: 禁用字段 timestamp 存在（应用 ts）"; exit 1; }
+# 3. semver 格式（x.y.z）
+echo "$RESP" | jq -r '.version' | grep -E '^[0-9]+\.[0-9]+\.[0-9]+$' \
+  || { echo "FAIL: version 不是 semver 格式"; exit 1; }
 
-# 6. SSE /stream 推送 event: node_update
-SSE_OUT=$(timeout 6 curl -N -sf -H "Accept: text/event-stream" \
-  "localhost:5221/api/brain/harness/pipeline/${TEST_ID}/stream" 2>&1 || true)
-echo "$SSE_OUT" | grep -q "event: node_update" || { echo "FAIL: SSE 未推 node_update"; exit 1; }
+# 4. Schema 完整性（keys 完全匹配）
+echo "$RESP" | jq -e 'keys == ["schema_version","version"]' \
+  || { echo "FAIL: keys 不完全等于 [schema_version,version]"; exit 1; }
 
-# 7. SSE node_update data 字段完整性
-SSE_DATA=$(echo "$SSE_OUT" | grep "^data:" | head -1 | sed 's/^data: //')
-echo "$SSE_DATA" | jq -e 'has("event_id") and has("initiative_id") and has("node") and has("status") and has("payload") and has("ts")' \
-  || { echo "FAIL: SSE node_update data 字段不完整"; exit 1; }
+# 5. 禁用字段反向检查
+for BANNED in ver v pkg_version db_version build tag release; do
+  echo "$RESP" | jq -e "has(\"$BANNED\") | not" \
+    || { echo "FAIL: 禁用字段 $BANNED 出现在响应中"; exit 1; }
+done
 
-# 8. 404 路径 — 不存在 initiative_id 返 404 + {"error":"..."}
-CODE=$(curl -sf -o /tmp/err404.json -w "%{http_code}" \
-  "localhost:5221/api/brain/harness/pipeline/${UNKNOWN_ID}/events" 2>/dev/null || echo "404")
-[ "$CODE" = "404" ] || { echo "FAIL: 未知 id 应返 404，实际 $CODE"; exit 1; }
-cat /tmp/err404.json | jq -e 'has("error")' || { echo "FAIL: 404 body 缺 error 字段"; exit 1; }
-cat /tmp/err404.json | jq -e 'has("message") | not' || { echo "FAIL: 禁用字段 message 出现在 404 body"; exit 1; }
+# 6. 多余 query 参数被忽略
+CODE_WITH_PARAMS=$(curl -s -o /dev/null -w "%{http_code}" "localhost:5221/api/brain/version?foo=bar")
+[ "$CODE_WITH_PARAMS" = "200" ] || { echo "FAIL: 多余 query 参数导致非 200 响应"; exit 1; }
 
-# 9. after_event_id 断线重连参数不报错（有效性验证）
-LAST_EID=$(echo "$RESP" | jq -r '.events[-1].event_id // empty')
-if [ -n "$LAST_EID" ]; then
-  CODE2=$(curl -sf -o /dev/null -w "%{http_code}" --max-time 3 \
-    -H "Accept: text/event-stream" \
-    "localhost:5221/api/brain/harness/pipeline/${TEST_ID}/stream?after_event_id=${LAST_EID}" 2>/dev/null || echo "200")
-  [ "$CODE2" != "400" ] || { echo "FAIL: after_event_id 参数被拒绝 400"; exit 1; }
-fi
-
-echo "✅ E2E Golden Path 全部 9 项验证通过"
+echo "✅ Golden Path 全程验证通过"
+echo "   version=$(echo $RESP | jq -r .version)"
+echo "   schema_version=$(echo $RESP | jq -r .schema_version)"
 ```
 
 **通过标准**: 脚本 exit 0
 
 ---
 
+## Risks
+
+| # | 风险 | 影响 | 缓解措施 |
+|---|---|---|---|
+| R1 | `EXPECTED_SCHEMA_VERSION` 在 selfcheck.js 中未 export（仅为内部常量）→ 路由 `import` 失败，端点注册时抛 SyntaxError，Brain 启动报错 | High：Brain 无法启动 | ARTIFACT 条目强制验证 selfcheck.js 含 `export const EXPECTED_SCHEMA_VERSION`；selfcheck.js 当前已 export（见 `export const EXPECTED_SCHEMA_VERSION = '279'`），BEHAVIOR 7 通过 schema_version 值 oracle 确认值已正确传递 |
+| R2 | package.json 路径解析问题：路由 handler 内 `readFileSync` 相对路径与工作目录不一致 → 每次请求 ENOENT，端点恒返 500 | Medium：功能不可用 | 合同要求使用 `new URL('../../package.json', import.meta.url)` 方式（同模块顶层已有的 `pkg` 加载方式），BEHAVIOR 1（HTTP 200）+ BEHAVIOR 7（值 oracle）双重验证路径解析正确 |
+
+---
+
 ## Workstreams
 
-workstream_count: 3
+workstream_count: 1
 
-### Workstream 1: DB Migration — initiative_run_events 表
+### Workstream 1: 新增 GET /api/brain/version 路由
 
-**范围**: 创建 `packages/brain/src/db/migrations/010-initiative-run-events.sql`，建表 DDL + 复合索引
-**大小**: S（<30 行，1 文件）
+**范围**: 在 `packages/brain/src/routes/status.js` 新增 GET /version 路由。路由 handler 内部使用独立 `try-catch` + `fs.readFileSync`（不使用模块顶层 `pkg` 缓存变量）读取 package.json version，从 selfcheck.js import `EXPECTED_SCHEMA_VERSION`，返回固定 2 字段 JSON。package.json 不可读时返回 HTTP 500 + `{"error":"version read failed"}`。
+**大小**: S（净增 ~25 行）
 **依赖**: 无
 
-**BEHAVIOR 覆盖测试文件**: `tests/ws1/migration.test.ts`
+**BEHAVIOR 覆盖测试文件**: `tests/ws1/version-endpoint.test.ts`
 
 ---
 
-### Workstream 2: Brain SSE + REST 端点
+## Workstreams 切分确认
 
-**范围**: 在 `packages/brain/src/routes/harness.js` 新增 `/pipeline/:initiative_id/stream`（SSE）和 `/pipeline/:initiative_id/events`（REST）
-**大小**: M（150-180 行净增，1 文件）
-**依赖**: Workstream 1 完成后
-
-**BEHAVIOR 覆盖测试文件**: `tests/ws2/brain-endpoints.test.ts`
-
----
-
-### Workstream 3: Dashboard HarnessStreamPage + 路由注册
-
-**范围**: 新建 `apps/dashboard/src/pages/harness/HarnessStreamPage.tsx`；在 `apps/api/features/system-hub/index.ts` 新增 `/harness/:id` 路由
-**大小**: M（120-150 行净增，2 文件）
-**依赖**: Workstream 2 完成后
-
-**BEHAVIOR 覆盖测试文件**: `tests/ws3/harness-stream-page.test.ts`
+整 contract 净增 < 100 行（仅新增 ~25 行路由代码）→ `workstream_count=1` 合规 ✓
 
 ---
 
@@ -221,6 +183,4 @@ workstream_count: 3
 
 | Workstream | Test File | BEHAVIOR 覆盖 | 预期红证据 |
 |---|---|---|---|
-| WS1 | `tests/ws1/migration.test.ts` | 表结构/列/索引/CHECK 约束 | 4 failures（表不存在）|
-| WS2 | `tests/ws2/brain-endpoints.test.ts` | REST schema/SSE 格式/404/禁用字段/done 事件 | 6 failures（路由不存在）|
-| WS3 | `tests/ws3/harness-stream-page.test.ts` | 文件存在/路由注册/EventSource 引用 | 3 failures（文件不存在）|
+| WS1 | `tests/ws1/version-endpoint.test.ts` | HTTP 200、version 类型、schema_version 类型、keys 完整性、禁用字段缺席、值 oracle（与 package.json 一致）、semver 格式、error path 500、多余 query 参数忽略 | 端点未实现 → fetch 返 404 → ≥ 6 failures |

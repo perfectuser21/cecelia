@@ -1,45 +1,61 @@
 ---
 skeleton: false
-journey_type: user_facing
+journey_type: autonomous
 ---
-# Contract DoD — Workstream 1: DB Migration — initiative_run_events 表
+# Contract DoD — Workstream 1: GET /api/brain/version 路由
 
-**范围**: 创建 `packages/brain/src/db/migrations/010-initiative-run-events.sql`，建表 DDL + 复合索引
-**大小**: S（<30 行，1 文件）
+**范围**: 在 `packages/brain/src/routes/status.js` 新增 GET /version 路由，handler 内部独立 readFileSync + try-catch，返回 `{version, schema_version}`
+**大小**: S（净增 ~25 行）
 **依赖**: 无
 
 ## ARTIFACT 条目
 
-- [x] [ARTIFACT] `packages/brain/src/db/migrations/010-initiative-run-events.sql` 文件存在
-  Test: node -e "require('fs').accessSync('packages/brain/src/db/migrations/010-initiative-run-events.sql')"
+- [x] [ARTIFACT] `packages/brain/src/routes/status.js` 包含 `/version` 路由注册
+  Test: node -e "const c=require('fs').readFileSync('packages/brain/src/routes/status.js','utf8');if(!c.includes('/version'))process.exit(1);console.log('OK')"
 
-- [x] [ARTIFACT] migration 文件包含 `CREATE TABLE initiative_run_events` DDL
-  Test: node -e "const c=require('fs').readFileSync('packages/brain/src/db/migrations/010-initiative-run-events.sql','utf8');if(!c.includes('CREATE TABLE initiative_run_events'))process.exit(1)"
+- [x] [ARTIFACT] `/version` 路由使用 `EXPECTED_SCHEMA_VERSION` 来自 selfcheck.js 导入
+  Test: node -e "const c=require('fs').readFileSync('packages/brain/src/routes/status.js','utf8');if(!c.includes('EXPECTED_SCHEMA_VERSION'))process.exit(1);console.log('OK')"
 
-- [x] [ARTIFACT] migration 文件包含 `event_id UUID PRIMARY KEY` 定义
-  Test: node -e "const c=require('fs').readFileSync('packages/brain/src/db/migrations/010-initiative-run-events.sql','utf8');if(!c.includes('event_id') || !c.includes('UUID PRIMARY KEY'))process.exit(1)"
+- [x] [ARTIFACT] `selfcheck.js` 含 `export const EXPECTED_SCHEMA_VERSION`（风险 R1 验证）
+  Test: node -e "const c=require('fs').readFileSync('packages/brain/src/selfcheck.js','utf8');if(!c.includes('export const EXPECTED_SCHEMA_VERSION'))process.exit(1);console.log('OK')"
 
-- [x] [ARTIFACT] migration 文件包含复合索引 `(initiative_id, created_at)`
-  Test: node -e "const c=require('fs').readFileSync('packages/brain/src/db/migrations/010-initiative-run-events.sql','utf8');if(!c.includes('initiative_id') || !c.includes('created_at'))process.exit(1)"
+- [x] [ARTIFACT] `/version` 路由 handler 包含 try-catch + HTTP 500（支持 error path）
+  Test: node -e "const c=require('fs').readFileSync('packages/brain/src/routes/status.js','utf8');if(!c.match(/try\s*\{/)||!c.match(/500/))process.exit(1);console.log('OK')"
 
-## BEHAVIOR 条目（内嵌可执行 manual: 命令）
+## BEHAVIOR 条目
 
-- [x] [BEHAVIOR] 执行 migration 后 `initiative_run_events` 表存在于 DB
-  Test: manual:bash -c 'DB="${DATABASE_URL:-postgresql://cecelia@localhost/cecelia}"; psql "$DB" -c "\d initiative_run_events" > /tmp/ws1_tbl.txt 2>&1; node -e "const c=require(\"fs\").readFileSync(\"/tmp/ws1_tbl.txt\",\"utf8\");if(c.toLowerCase().includes(\"does not exist\")||c.toLowerCase().includes(\"error\")){process.stderr.write(\"FAIL: 表不存在\n\");process.exit(1);}process.stdout.write(\"PASS: 表存在\n\")"'
-  期望: PASS: 表存在
+- [x] [BEHAVIOR] GET /api/brain/version 返回 HTTP 200，`version` 字段类型为 string
+  Test: manual:bash -c 'curl -sf localhost:5221/api/brain/version | jq -e '"'"'.version | type == "string"'"'"' || { printf "%s\n" "FAIL: version 不是 string"; exit 1; }; printf "%s\n" "OK"'
+  期望: OK
 
-- [x] [BEHAVIOR] 表包含全部必填列（event_id/initiative_id/node/status/payload/created_at）
-  Test: manual:bash -c 'DB="${DATABASE_URL:-postgresql://cecelia@localhost/cecelia}"; psql "$DB" -t -c "SELECT column_name FROM information_schema.columns WHERE table_name='"'"'initiative_run_events'"'"' ORDER BY column_name" > /tmp/ws1_cols.txt 2>/dev/null; node -e "const c=require(\"fs\").readFileSync(\"/tmp/ws1_cols.txt\",\"utf8\");const miss=[\"event_id\",\"initiative_id\",\"node\",\"status\",\"payload\",\"created_at\"].filter(col=>!c.includes(col));if(miss.length){process.stderr.write(\"FAIL: 缺列 \"+miss.join(\",\")+\"\n\");process.exit(1);}process.stdout.write(\"PASS: 列完整\n\")"'
-  期望: PASS: 列完整
+- [x] [BEHAVIOR] GET /api/brain/version 返回 `schema_version` 字段类型为 string
+  Test: manual:bash -c 'curl -sf localhost:5221/api/brain/version | jq -e '"'"'.schema_version | type == "string"'"'"' || { printf "%s\n" "FAIL: schema_version 不是 string"; exit 1; }; printf "%s\n" "OK"'
+  期望: OK
 
-- [x] [BEHAVIOR] node CHECK 约束拒绝无效枚举值（如 'step'）
-  Test: manual:bash -c 'DB="${DATABASE_URL:-postgresql://cecelia@localhost/cecelia}"; psql "$DB" -c "INSERT INTO initiative_run_events (initiative_id, node, status) VALUES ('"'"'00000000-0000-0000-0000-000000000000'"'"', '"'"'step'"'"', '"'"'running'"'"')" > /tmp/ws1_chk1.txt 2>&1; node -e "const c=require(\"fs\").readFileSync(\"/tmp/ws1_chk1.txt\",\"utf8\").toLowerCase();if(!c.includes(\"violates check constraint\")){process.stderr.write(\"FAIL: CHECK 约束未生效\n\");process.exit(1);}process.stdout.write(\"PASS: CHECK 约束拒绝非法 node\n\")"'
-  期望: PASS: CHECK 约束拒绝非法 node
+- [x] [BEHAVIOR] 响应 keys 完全等于 `["schema_version","version"]`，不多不少
+  Test: manual:bash -c 'curl -sf localhost:5221/api/brain/version | jq -e '"'"'keys == ["schema_version","version"]'"'"' || { printf "%s\n" "FAIL: keys schema drift"; exit 1; }; printf "%s\n" "OK"'
+  期望: OK
 
-- [x] [BEHAVIOR] status CHECK 约束拒绝禁用别名（如 'in_progress'）
-  Test: manual:bash -c 'DB="${DATABASE_URL:-postgresql://cecelia@localhost/cecelia}"; psql "$DB" -c "INSERT INTO initiative_run_events (initiative_id, node, status) VALUES ('"'"'00000000-0000-0000-0000-000000000000'"'"', '"'"'planner'"'"', '"'"'in_progress'"'"')" > /tmp/ws1_chk2.txt 2>&1; node -e "const c=require(\"fs\").readFileSync(\"/tmp/ws1_chk2.txt\",\"utf8\").toLowerCase();if(!c.includes(\"violates check constraint\")){process.stderr.write(\"FAIL: CHECK 约束未拒绝 in_progress\n\");process.exit(1);}process.stdout.write(\"PASS: status CHECK 约束正常\n\")"'
-  期望: PASS: status CHECK 约束正常
+- [x] [BEHAVIOR] 禁用字段 `ver`/`v`/`pkg_version`/`db_version`/`build`/`tag`/`release` 均不出现在响应中
+  Test: manual:bash -c 'RESP=$(curl -sf localhost:5221/api/brain/version); for BANNED in ver v pkg_version db_version build tag release; do printf "%s" "$RESP" | jq -e "has(\"$BANNED\") | not" || { printf "%s\n" "FAIL: 禁用字段 $BANNED 出现"; exit 1; }; done; printf "%s\n" "OK"'
+  期望: OK
 
-- [x] [BEHAVIOR] 复合索引 `(initiative_id, created_at)` 存在于 DB
-  Test: manual:bash -c 'DB="${DATABASE_URL:-postgresql://cecelia@localhost/cecelia}"; psql "$DB" -t -c "SELECT indexname FROM pg_indexes WHERE tablename='"'"'initiative_run_events'"'"'" > /tmp/ws1_idx.txt 2>/dev/null; node -e "const c=require(\"fs\").readFileSync(\"/tmp/ws1_idx.txt\",\"utf8\");if(!c.includes(\"initiative_run_events\")){process.stderr.write(\"FAIL: 索引不存在\n\");process.exit(1);}process.stdout.write(\"PASS: 索引存在\n\")"'
-  期望: PASS: 索引存在
+- [x] [BEHAVIOR] package.json 不可读时 GET /api/brain/version 返回 HTTP 500，body 含 `error` 字段（string 类型）
+  Test: manual:bash -c 'ORIG=$(stat -c "%a" packages/brain/package.json 2>/dev/null); ORIG=${ORIG:-644}; chmod 000 packages/brain/package.json; CODE=$(curl -s -o /tmp/ver-err.json -w "%{http_code}" localhost:5221/api/brain/version); chmod "$ORIG" packages/brain/package.json; [ "$CODE" = "500" ] || { printf "%s\n" "FAIL: error path 期望 HTTP 500，得 $CODE（路由须在 handler 内 readFileSync，不可用模块级缓存 pkg）"; exit 1; }; jq -e '"'"'.error | type == "string"'"'"' /tmp/ver-err.json || { printf "%s\n" "FAIL: error body 缺 error 字段"; exit 1; }; printf "%s\n" "OK"'
+  期望: OK
+
+- [x] [BEHAVIOR] 多余 query 参数被忽略，GET /api/brain/version?foo=bar 仍返回 HTTP 200
+  Test: manual:bash -c 'CODE=$(curl -s -o /dev/null -w "%{http_code}" "localhost:5221/api/brain/version?foo=bar&baz=qux"); [ "$CODE" = "200" ] || { printf "%s\n" "FAIL: 多余 query 参数未被忽略，期望 200 得 $CODE"; exit 1; }; printf "%s\n" "OK"'
+  期望: OK
+
+- [x] [BEHAVIOR] `version` 值与 packages/brain/package.json 实际值一致（值来源 oracle，防止 generator 硬编码）
+  Test: manual:bash -c 'EXPECTED=$(node -e "process.stdout.write(JSON.parse(require('"'"'fs'"'"').readFileSync('"'"'packages/brain/package.json'"'"','"'"'utf8'"'"')).version)"); RESP=$(curl -sf localhost:5221/api/brain/version); printf "%s" "$RESP" | jq -e ".version == \"$EXPECTED\"" || { printf "%s\n" "FAIL: version 与 package.json 不一致（expected=$EXPECTED）"; exit 1; }; printf "%s\n" "OK"'
+  期望: OK
+
+- [x] [BEHAVIOR] `version` 字段符合 semver 格式 x.y.z（数字点数字点数字）
+  Test: manual:bash -c 'curl -sf localhost:5221/api/brain/version | jq -e '"'"'.version | test("^[0-9]+\\.[0-9]+\\.[0-9]+$")'"'"' || { printf "%s\n" "FAIL: version 不是 semver x.y.z 格式"; exit 1; }; printf "%s\n" "OK"'
+  期望: OK
+
+- [x] [BEHAVIOR] `schema_version` 值与 selfcheck.js `EXPECTED_SCHEMA_VERSION` 一致（值来源 oracle）
+  Test: manual:bash -c 'EXPECTED=$(node -e "const c=require('"'"'fs'"'"').readFileSync('"'"'packages/brain/src/selfcheck.js'"'"','"'"'utf8'"'"');const m=c.match(/EXPECTED_SCHEMA_VERSION = '"'"'([^'"'"']+)'"'"'/);process.stdout.write(m[1])"); RESP=$(curl -sf localhost:5221/api/brain/version); printf "%s" "$RESP" | jq -e ".schema_version == \"$EXPECTED\"" || { printf "%s\n" "FAIL: schema_version 与 selfcheck.js 不一致（expected=$EXPECTED）"; exit 1; }; printf "%s\n" "OK"'
+  期望: OK

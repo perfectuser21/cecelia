@@ -1,44 +1,65 @@
-contract_branch: cp-harness-propose-r2-9d693319
-workstream_index: 2
+contract_branch: cp-harness-propose-r2-517ef7cd
+workstream_index: 1
 sprint_dir: sprints
 
 ---
 skeleton: false
-journey_type: user_facing
+journey_type: autonomous
 ---
-# Contract DoD — Workstream 2: 前端 EventSource 实时日志区
+# Contract DoD — Workstream 1: GET /api/brain/version 路由
 
-**范围**: `apps/dashboard/src/pages/harness-pipeline/HarnessPipelineDetailPage.tsx` 新增 EventSource hook 连接 `/api/brain/harness/stream?planner_task_id={id}`；新增实时日志区（`data-testid="sse-log"`）；追加 node_update 日志行；done 事件后显示"Pipeline 已完成 ✅ PASS"或"Pipeline 失败 ❌ FAIL"（含 verdict 文本）
-**大小**: M（80-120 行净增，1 文件）
-**依赖**: Workstream 1（Backend SSE 端点存在）
+**范围**: 在 `packages/brain/src/routes/status.js` 新增 GET /version 路由，handler 内部独立 readFileSync + try-catch，返回 `{version, schema_version}`
+**大小**: S（净增 ~25 行）
+**依赖**: 无
 
 ## ARTIFACT 条目
 
-- [x] [ARTIFACT] `HarnessPipelineDetailPage.tsx` 使用 `EventSource` API（含字面量）
-  Test: node -e "const c=require('fs').readFileSync('/workspace/apps/dashboard/src/pages/harness-pipeline/HarnessPipelineDetailPage.tsx','utf8');if(!c.includes('EventSource'))process.exit(1);console.log('OK')"
+- [x] [ARTIFACT] `packages/brain/src/routes/status.js` 包含 `/version` 路由注册
+  Test: node -e "const c=require('fs').readFileSync('packages/brain/src/routes/status.js','utf8');if(!c.includes('/version'))process.exit(1);console.log('OK')"
 
-- [x] [ARTIFACT] EventSource URL 使用 query 参数名字面量 `planner_task_id`（不含禁用名 id/taskId/task_id/pipeline_id/tid）
-  Test: node -e "const c=require('fs').readFileSync('/workspace/apps/dashboard/src/pages/harness-pipeline/HarnessPipelineDetailPage.tsx','utf8');if(!c.includes('planner_task_id'))process.exit(1);if(/[\"']id[\"']|taskId|[?&]task_id[^_]|pipeline_id|[\"']tid[\"']/.test(c.slice(c.indexOf('EventSource'))))process.exit(2);console.log('OK')"
+- [x] [ARTIFACT] `/version` 路由使用 `EXPECTED_SCHEMA_VERSION` 来自 selfcheck.js 导入
+  Test: node -e "const c=require('fs').readFileSync('packages/brain/src/routes/status.js','utf8');if(!c.includes('EXPECTED_SCHEMA_VERSION'))process.exit(1);console.log('OK')"
 
-- [x] [ARTIFACT] JSX 含 `data-testid="sse-log"` 属性的日志容器元素
-  Test: node -e "const c=require('fs').readFileSync('/workspace/apps/dashboard/src/pages/harness-pipeline/HarnessPipelineDetailPage.tsx','utf8');if(!c.includes('data-testid=\"sse-log\"'))process.exit(1);console.log('OK')"
+- [x] [ARTIFACT] `selfcheck.js` 含 `export const EXPECTED_SCHEMA_VERSION`（风险 R1 验证）
+  Test: node -e "const c=require('fs').readFileSync('packages/brain/src/selfcheck.js','utf8');if(!c.includes('export const EXPECTED_SCHEMA_VERSION'))process.exit(1);console.log('OK')"
 
-- [x] [ARTIFACT] `useEffect` cleanup 含 `es.close()` 或等效方式防止 SSE 断连 cascade（对应 R3）
-  Test: node -e "const c=require('fs').readFileSync('/workspace/apps/dashboard/src/pages/harness-pipeline/HarnessPipelineDetailPage.tsx','utf8');if(!c.includes('.close()'))process.exit(1);console.log('OK')"
+- [x] [ARTIFACT] `/version` 路由 handler 包含 try-catch + HTTP 500（支持 error path）
+  Test: node -e "const c=require('fs').readFileSync('packages/brain/src/routes/status.js','utf8');if(!c.match(/try\s*\{/)||!c.match(/500/))process.exit(1);console.log('OK')"
 
 ## BEHAVIOR 条目
 
-- [x] [BEHAVIOR] EventSource 连接 URL 含 `planner_task_id=` query 参数（Playwright 路由拦截验证，禁用 id/taskId 等）
-  Test: bash -c 'curl -sf http://localhost:5211/ > /dev/null 2>&1 || (cd /workspace/apps/dashboard && npm run dev -- --port 5211 > /tmp/dash.log 2>&1 & sleep 10); cd /workspace && LD_LIBRARY_PATH=/tmp/arm64-libs/extracted:$LD_LIBRARY_PATH npx playwright test sprints/tests/ws2/sse-ui.spec.ts --grep "EventSource URL" --project=chromium --timeout=60000 2>&1'
+- [x] [BEHAVIOR] GET /api/brain/version 返回 HTTP 200，`version` 字段类型为 string
+  Test: manual:bash -c 'curl -sf localhost:5221/api/brain/version | jq -e '"'"'.version | type == "string"'"'"' || { printf "%s\n" "FAIL: version 不是 string"; exit 1; }; printf "%s\n" "OK"'
+  期望: OK
 
-- [x] [BEHAVIOR] `[data-testid="sse-log"]` 日志区在 pipeline 详情页可见（toBeVisible，SSE mock 注入后）
-  Test: bash -c 'curl -sf http://localhost:5211/ > /dev/null 2>&1 || (cd /workspace/apps/dashboard && npm run dev -- --port 5211 > /tmp/dash.log 2>&1 & sleep 10); cd /workspace && LD_LIBRARY_PATH=/tmp/arm64-libs/extracted:$LD_LIBRARY_PATH npx playwright test sprints/tests/ws2/sse-ui.spec.ts --grep "SSE 日志区可见" --project=chromium --timeout=60000 2>&1'
+- [x] [BEHAVIOR] GET /api/brain/version 返回 `schema_version` 字段类型为 string
+  Test: manual:bash -c 'curl -sf localhost:5221/api/brain/version | jq -e '"'"'.schema_version | type == "string"'"'"' || { printf "%s\n" "FAIL: schema_version 不是 string"; exit 1; }; printf "%s\n" "OK"'
+  期望: OK
 
-- [x] [BEHAVIOR] node_update 事件追加日志行，日志区含节点 label 文本（toContainText "Proposer" + "Generator"）
-  Test: bash -c 'curl -sf http://localhost:5211/ > /dev/null 2>&1 || (cd /workspace/apps/dashboard && npm run dev -- --port 5211 > /tmp/dash.log 2>&1 & sleep 10); cd /workspace && LD_LIBRARY_PATH=/tmp/arm64-libs/extracted:$LD_LIBRARY_PATH npx playwright test sprints/tests/ws2/sse-ui.spec.ts --grep "日志行含节点" --project=chromium --timeout=60000 2>&1'
+- [x] [BEHAVIOR] 响应 keys 完全等于 `["schema_version","version"]`，不多不少
+  Test: manual:bash -c 'curl -sf localhost:5221/api/brain/version | jq -e '"'"'keys == ["schema_version","version"]'"'"' || { printf "%s\n" "FAIL: keys schema drift"; exit 1; }; printf "%s\n" "OK"'
+  期望: OK
 
-- [x] [BEHAVIOR] event: done 后页面含"Pipeline 已完成"文本（toBeVisible + toContainText，非仅 navigate）
-  Test: bash -c 'curl -sf http://localhost:5211/ > /dev/null 2>&1 || (cd /workspace/apps/dashboard && npm run dev -- --port 5211 > /tmp/dash.log 2>&1 & sleep 10); cd /workspace && LD_LIBRARY_PATH=/tmp/arm64-libs/extracted:$LD_LIBRARY_PATH npx playwright test sprints/tests/ws2/sse-ui.spec.ts --grep "完成消息" --project=chromium --timeout=60000 2>&1'
+- [x] [BEHAVIOR] 禁用字段 `ver`/`v`/`pkg_version`/`db_version`/`build`/`tag`/`release` 均不出现在响应中
+  Test: manual:bash -c 'RESP=$(curl -sf localhost:5221/api/brain/version); for BANNED in ver v pkg_version db_version build tag release; do printf "%s" "$RESP" | jq -e "has(\"$BANNED\") | not" || { printf "%s\n" "FAIL: 禁用字段 $BANNED 出现"; exit 1; }; done; printf "%s\n" "OK"'
+  期望: OK
 
-- [x] [BEHAVIOR] done.verdict="PASS" 时页面渲染"PASS"文本（toBeVisible，对应 Playwright mock 注入的 verdict 字段）
-  Test: bash -c 'curl -sf http://localhost:5211/ > /dev/null 2>&1 || (cd /workspace/apps/dashboard && npm run dev -- --port 5211 > /tmp/dash.log 2>&1 & sleep 10); cd /workspace && LD_LIBRARY_PATH=/tmp/arm64-libs/extracted:$LD_LIBRARY_PATH npx playwright test sprints/tests/ws2/sse-ui.spec.ts --grep "verdict 显示" --project=chromium --timeout=60000 2>&1'
+- [x] [BEHAVIOR] package.json 不可读时 GET /api/brain/version 返回 HTTP 500，body 含 `error` 字段（string 类型）
+  Test: manual:bash -c 'ORIG=$(stat -c "%a" packages/brain/package.json 2>/dev/null); ORIG=${ORIG:-644}; chmod 000 packages/brain/package.json; CODE=$(curl -s -o /tmp/ver-err.json -w "%{http_code}" localhost:5221/api/brain/version); chmod "$ORIG" packages/brain/package.json; [ "$CODE" = "500" ] || { printf "%s\n" "FAIL: error path 期望 HTTP 500，得 $CODE（路由须在 handler 内 readFileSync，不可用模块级缓存 pkg）"; exit 1; }; jq -e '"'"'.error | type == "string"'"'"' /tmp/ver-err.json || { printf "%s\n" "FAIL: error body 缺 error 字段"; exit 1; }; printf "%s\n" "OK"'
+  期望: OK
+
+- [x] [BEHAVIOR] 多余 query 参数被忽略，GET /api/brain/version?foo=bar 仍返回 HTTP 200
+  Test: manual:bash -c 'CODE=$(curl -s -o /dev/null -w "%{http_code}" "localhost:5221/api/brain/version?foo=bar&baz=qux"); [ "$CODE" = "200" ] || { printf "%s\n" "FAIL: 多余 query 参数未被忽略，期望 200 得 $CODE"; exit 1; }; printf "%s\n" "OK"'
+  期望: OK
+
+- [x] [BEHAVIOR] `version` 值与 packages/brain/package.json 实际值一致（值来源 oracle，防止 generator 硬编码）
+  Test: manual:bash -c 'EXPECTED=$(node -e "process.stdout.write(JSON.parse(require('"'"'fs'"'"').readFileSync('"'"'packages/brain/package.json'"'"','"'"'utf8'"'"')).version)"); RESP=$(curl -sf localhost:5221/api/brain/version); printf "%s" "$RESP" | jq -e ".version == \"$EXPECTED\"" || { printf "%s\n" "FAIL: version 与 package.json 不一致（expected=$EXPECTED）"; exit 1; }; printf "%s\n" "OK"'
+  期望: OK
+
+- [x] [BEHAVIOR] `version` 字段符合 semver 格式 x.y.z（数字点数字点数字）
+  Test: manual:bash -c 'curl -sf localhost:5221/api/brain/version | jq -e '"'"'.version | test("^[0-9]+\\.[0-9]+\\.[0-9]+$")'"'"' || { printf "%s\n" "FAIL: version 不是 semver x.y.z 格式"; exit 1; }; printf "%s\n" "OK"'
+  期望: OK
+
+- [x] [BEHAVIOR] `schema_version` 值与 selfcheck.js `EXPECTED_SCHEMA_VERSION` 一致（值来源 oracle）
+  Test: manual:bash -c 'EXPECTED=$(node -e "const c=require('"'"'fs'"'"').readFileSync('"'"'packages/brain/src/selfcheck.js'"'"','"'"'utf8'"'"');const m=c.match(/EXPECTED_SCHEMA_VERSION = '"'"'([^'"'"']+)'"'"'/);process.stdout.write(m[1])"); RESP=$(curl -sf localhost:5221/api/brain/version); printf "%s" "$RESP" | jq -e ".schema_version == \"$EXPECTED\"" || { printf "%s\n" "FAIL: schema_version 与 selfcheck.js 不一致（expected=$EXPECTED）"; exit 1; }; printf "%s\n" "OK"'
+  期望: OK
