@@ -549,7 +549,7 @@ export async function runPhaseCIfReady(initiativeTaskId, opts = {}) {
 // 每节点首句幂等门防 LangGraph resume 重 spawn（C6 smoke 教训）。
 // PRD: docs/superpowers/specs/2026-04-25-c8a-harness-initiative-graph-design.md
 
-import { StateGraph, Annotation, START, END, interrupt } from '@langchain/langgraph';
+import { StateGraph, Annotation, START, END } from '@langchain/langgraph';
 import { getPgCheckpointer } from '../orchestrator/pg-checkpointer.js';
 import { LLM_RETRY, DB_RETRY, NO_RETRY } from './retry-policies.js';
 // 注：上方 imports 已含 spawn / parseDockerOutput / loadSkillContent / parseTaskPlan /
