@@ -47,7 +47,7 @@ if [[ "$STATUS" != "running" ]]; then
   fi
 
   # Docker daemon 可用 — 清除 daemon state
-  rm -f "$DAEMON_STATE_FILE" 2>/dev/null || true
+  rm -f "$DAEMON_STATE_FILE"
 
   # SILENCED TTL 检查：STATE_FILE 存在且未过期 → 继续静默
   if [[ -f "$STATE_FILE" ]] && [[ $(file_age_seconds "$STATE_FILE") -le $SILENCED_TTL ]]; then
@@ -82,5 +82,5 @@ else
   else
     echo "$LOG_PREFIX OK: $CONTAINER_NAME is running"
   fi
-  rm -f "$DAEMON_STATE_FILE" 2>/dev/null || true
+  rm -f "$DAEMON_STATE_FILE"
 fi
