@@ -93,6 +93,11 @@ fi
 # ===== 判断是否需要保护 =====
 NEEDS_PROTECTION=false
 
+# ===== project /skills/ 下 .md 文件明确放行（SKILL 文档不需分支保护）=====
+if [[ "$FILE_PATH" == *"/skills/"* && "${FILE_PATH##*.}" == "md" ]]; then
+    exit 0
+fi
+
 # 1. 重要目录
 if [[ "$FILE_PATH" == *"/skills/"* ]] || \
    [[ "$FILE_PATH" == *"/hooks/"* ]] || \
