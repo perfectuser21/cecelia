@@ -29,6 +29,7 @@ vi.mock('../../packages/brain/src/harness-shared.js', () => ({
   loadSkillContent: () => 'SKILL_BODY',
   // Protocol v2: readVerdictFile 返回 null → fallback 到 stdout 解析（测试走旧协议路径）
   readVerdictFile: vi.fn().mockResolvedValue(null),
+  readBrainResult: vi.fn().mockResolvedValue({ verdict: 'FAIL', failed_step: 'e2e fail' }),
 }));
 vi.mock('../../packages/brain/src/harness-worktree.js', () => ({
   ensureHarnessWorktree: vi.fn().mockResolvedValue('/tmp/wt'),
@@ -77,58 +78,29 @@ describe('finalEvaluateDispatchNode interrupt() (W5)', () => {
     expect(out.operator_decision).toBeUndefined();
   });
 
-  it('verdict=FAIL & fix_round>=3 → 在真实 graph 内 interrupt() 暂停（GraphInterrupt 抛出 / interrupt 状态）', async () => {
-    // 用 MemorySaver compile 一个最小 graph，进 final_evaluate 节点
-    const Anno = Annotation.Root({
-      task: Annotation<any>({ reducer: (_o: any, n: any) => n, default: () => null }),
-      initiativeId: Annotation<any>({ reducer: (_o: any, n: any) => n, default: () => null }),
-      worktreePath: Annotation<any>({ reducer: (_o: any, n: any) => n, default: () => null }),
-      githubToken: Annotation<any>({ reducer: (_o: any, n: any) => n, default: () => null }),
-      task_loop_fix_count: Annotation<number>({ reducer: (_o: any, n: any) => n, default: () => 0 }),
-      taskPlan: Annotation<any>({ reducer: (_o: any, n: any) => n, default: () => ({ journey_type: 'autonomous' }) }),
-      final_e2e_verdict: Annotation<any>({ reducer: (_o: any, n: any) => n, default: () => null }),
-      final_e2e_failed_scenarios: Annotation<any>({ reducer: (_o: any, n: any) => n, default: () => [] }),
-      operator_decision: Annotation<any>({ reducer: (_o: any, n: any) => n, default: () => null }),
-      error: Annotation<any>({ reducer: (_o: any, n: any) => n, default: () => null }),
-    });
-
-    // mock executor 让 final_evaluate 返 FAIL verdict
+  it('verdict=FAIL & final_e2e_fix_count>=3 → 自动终止，error 字段被设置（不调 interrupt）', async () => {
     const failExecutor = vi.fn(async () => ({ exit_code: 0, timed_out: false, stdout: '{"verdict":"FAIL","failed_step":"e2e fail"}', stderr: '' }));
-    const wrappedNode = async (state: any) => finalEvaluateDispatchNode(state, { executor: failExecutor });
 
-    const checkpointer = new MemorySaver();
-    const g = new StateGraph(Anno)
-      .addNode('final_evaluate', wrappedNode)
-      .addEdge(START, 'final_evaluate')
-      .addEdge('final_evaluate', END)
-      .compile({ checkpointer });
-
-    const threadId = `harness-initiative:test:1`;
-    const config = { configurable: { thread_id: threadId } };
-
-    // 第一次 invoke — 进 final_evaluate, fix_round=3 → interrupt 触发
-    const result1 = await g.invoke(
+    const out = await finalEvaluateDispatchNode(
       {
         task: { id: 't1', payload: { sprint_dir: 'sprints' } },
         initiativeId: 'init-1',
-        task_loop_fix_count: 3,
+        worktreePath: '/tmp/wt',
+        githubToken: 'gh',
+        final_e2e_fix_count: 3,
+        task_loop_fix_count: 0,
         taskPlan: { journey_type: 'autonomous' },
       },
-      config
+      { executor: failExecutor }
     );
 
-    // LangGraph 1.x: interrupt() 让 graph 暂停，state 内含 __interrupt__ 元数据
-    // result1 状态：节点未真正完成，graph 在等 Command({resume})
-    const stateNow = await g.getState(config);
-    expect(stateNow.tasks).toBeDefined();
-    // 必须有 pending interrupt（next 指向 final_evaluate）或 tasks 上有 interrupts
-    const hasInterrupt = (stateNow.tasks || []).some((t: any) => Array.isArray(t.interrupts) && t.interrupts.length > 0);
-    expect(hasInterrupt).toBe(true);
-
-    // 验证 result1 不含 final_e2e_verdict='FAIL' 和 'PASS'（被 interrupt 暂停了）
-    // result1 可能含部分 state（reducers 已应用），关键是 graph 状态已停在 final_evaluate
-    expect(result1).toBeDefined();
-  }, 30000);
+    // fix_count=3 >= MAX_FIX_ROUNDS(3) → 自动终止，error 字段被设置
+    expect(out.error).toBeDefined();
+    expect(out.error.node).toBe('final_evaluate');
+    expect(out.error.message).toContain('3');
+    // 不应有 operator_decision（interrupt 已移除）
+    expect(out.operator_decision).toBeUndefined();
+  }, 15000);
 });
 
 describe('/api/brain/harness-interrupts route (W5)', () => {
