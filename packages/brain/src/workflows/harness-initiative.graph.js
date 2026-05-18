@@ -29,6 +29,7 @@ import { execFile as execFileCb } from 'node:child_process';
 import { promisify } from 'node:util';
 import pool from '../db.js';
 import { spawn } from '../spawn/index.js';
+import { reconnectOrSpawn, makeSessionRecord } from '../harness-session-bridge.js';
 import { parseDockerOutput, loadSkillContent, readBrainResult } from '../harness-shared.js';
 import { parseTaskPlan, upsertTaskPlan } from '../harness-dag.js';
 import { runFinalE2E, attributeFailures } from '../harness-final-e2e.js';
@@ -566,6 +567,8 @@ export const InitiativeState = Annotation.Root({
   ganResult:      Annotation({ reducer: (_o, n) => n, default: () => null }),
   result:         Annotation({ reducer: (_o, n) => n, default: () => null }),
   error:          Annotation({ reducer: (_o, n) => n, default: () => null }),
+  planner_session:   Annotation({ reducer: (_o, n) => n, default: () => null }),
+  evaluator_session: Annotation({ reducer: (_o, n) => n, default: () => null }),
 });
 
 // 节点 stub — Task 2-6 逐个填充。
@@ -581,7 +584,7 @@ export async function prepInitiativeNode(state) {
   }
 }
 export async function runPlannerNode(state, opts = {}) {
-  if (state.plannerOutput) return { plannerOutput: state.plannerOutput };
+  if (state.plannerOutput && !state.planner_session) return { plannerOutput: state.plannerOutput };
   try {
     const executor = opts.executor || spawn;
     const sprintDir = state.task?.payload?.sprint_dir || 'sprints';
@@ -605,7 +608,7 @@ ${state.task.description || state.task.title || ''}
 2. 在 stdout 末尾输出 task-plan.json
 3. task-plan.json 必须被 \`\`\`json ... \`\`\` 代码块包裹便于提取`;
 
-    const result = await executor({
+    const taskArg = {
       task: { ...state.task, task_type: 'harness_planner' },
       prompt,
       worktreePath: state.worktreePath,
@@ -616,15 +619,35 @@ ${state.task.description || state.task.title || ''}
         HARNESS_INITIATIVE_ID: state.initiativeId,
         GITHUB_TOKEN: state.githubToken,
       },
+    };
+
+    const result = await reconnectOrSpawn({
+      nodeKey: 'planner_session',
+      state,
+      executor,
+      taskArg,
+      worktreePath: state.worktreePath,
+      async readOutput(wt) {
+        try {
+          const { readFile: rf } = await import('node:fs/promises');
+          const content = await rf(`${wt}/${sprintDir}/sprint-prd.md`, 'utf8');
+          return { plannerOutput: content };
+        } catch { return null; }
+      },
     });
+
+    if (result.plannerOutput) {
+      // reconnected path: readOutput 已经返回了 plannerOutput
+      return { plannerOutput: result.plannerOutput, planner_session: makeSessionRecord(result) };
+    }
     if (result.exit_code !== 0 || result.timed_out) {
       const msg = result.timed_out
         ? 'Docker timeout'
         : `Docker exit=${result.exit_code}: ${(result.stderr || '').slice(-500)}`;
       return { error: { node: 'planner', message: msg } };
     }
-    const plannerOutput = parseDockerOutput(result.stdout);
-    return { plannerOutput };
+    const plannerOutput = parseDockerOutput(result.stdout ?? '');
+    return { plannerOutput, planner_session: makeSessionRecord(result) };
   } catch (err) {
     return { error: { node: 'planner', message: err.message } };
   }

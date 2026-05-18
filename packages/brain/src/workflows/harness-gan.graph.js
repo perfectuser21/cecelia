@@ -32,6 +32,7 @@ import { fetchAndShowOriginFile } from '../lib/git-fence.js';
 import { verifyProposerOutput } from '../lib/contract-verify.js';
 import { LLM_RETRY } from './retry-policies.js';
 import { loadSkillContent, readBrainResult } from '../harness-shared.js';
+import { reconnectOrSpawn, makeSessionRecord } from '../harness-session-bridge.js';
 
 const execFile = promisify(execFileCb);
 
@@ -260,6 +261,10 @@ export const GanContractState = Annotation.Root({
     },
     default: () => [],
   }),
+  session_map: Annotation({
+    reducer: (old, neu) => ({ ...(old ?? {}), ...(neu ?? {}) }),
+    default: () => ({}),
+  }),
 });
 
 // ── 节点工厂 ─────────────────────────────────────────────────────────────
@@ -297,7 +302,9 @@ export function createGanContractNodes(executor, ctx) {
     const { unlink } = await import('node:fs/promises');
     try { await unlink(path.join(worktreePath, '.brain-result.json')); } catch { /* 首轮不存在，忽略 */ }
 
-    const result = await executor({
+    const roundSession = state.session_map?.[nextRound] ?? null;
+
+    const taskArg = {
       task: { id: taskId, task_type: 'harness_contract_propose' },
       prompt: buildProposerPrompt(state.prdContent, state.feedback, nextRound, computedBranch),
       worktreePath,
@@ -315,15 +322,29 @@ export function createGanContractNodes(executor, ctx) {
         PROPOSE_BRANCH: computedBranch,
         GITHUB_TOKEN: githubToken,
       },
+    };
+
+    const result = await reconnectOrSpawn({
+      nodeKey: '_session',
+      state: { _session: roundSession },
+      executor,
+      taskArg,
+      worktreePath,
+      async readOutput(wt) {
+        try {
+          const contractContent = await readContractFile(wt, sprintDir);
+          const resultData = await readBrainResult(wt, ['propose_branch']);
+          return { _reconnected: true, contractContent, propose_branch: resultData.propose_branch };
+        } catch { return null; }
+      },
     });
-    if (!result || result.exit_code !== 0) {
+
+    if (!result || (result.exit_code !== undefined && result.exit_code !== 0)) {
       throw new Error(`proposer_failed: exit=${result?.exit_code} stderr=${(result?.stderr || '').slice(0, 300)}`);
     }
-    const contractContent = await readContractFile(worktreePath, sprintDir);
-
-    // 读容器写入的结果文件；LLM 有时会自行计算分支名（不用 env var），改为 warn + 接受实际值
-    const resultData = await readBrainResult(worktreePath, ['propose_branch']);
-    if (resultData.propose_branch !== computedBranch) {
+    const contractContent = result.contractContent ?? await readContractFile(worktreePath, sprintDir);
+    const resultData = result._reconnected ? result : await readBrainResult(worktreePath, ['propose_branch']);
+    if (resultData.propose_branch !== computedBranch && resultData.propose_branch) {
       console.warn(`[harness-gan] propose_branch mismatch — expected=${computedBranch} got=${resultData.propose_branch}, accepting got value`);
     }
     const proposeBranch = resultData.propose_branch || computedBranch;
@@ -340,13 +361,16 @@ export function createGanContractNodes(executor, ctx) {
     // docker exit_code=0 ≠ 节点 success（contract enforcement 第一层）。
     // H15 重构：从 ad-hoc fetchOriginFile 改用 SSOT verifyProposerOutput（throws ContractViolation）。
     // 失败时 throw → LangGraph retryPolicy: LLM_RETRY 自动重试 3 次。
-    await verifyProposer({ worktreePath, branch: proposeBranch, sprintDir });
+    if (!result._reconnected) {
+      await verifyProposer({ worktreePath, branch: proposeBranch, sprintDir });
+    }
 
     return {
       round: nextRound,
       costUsd: (state.costUsd || 0) + Number(result.cost_usd || 0),
       contractContent,
       proposeBranch,
+      session_map: { [nextRound]: makeSessionRecord(result) },
     };
   }
 
@@ -355,9 +379,12 @@ export function createGanContractNodes(executor, ctx) {
     const { unlink } = await import('node:fs/promises');
     try { await unlink(path.join(worktreePath, '.brain-result.json')); } catch { /* 忽略 */ }
 
-    const result = await executor({
+    const currentRound = state.round || 0;
+    const roundSession = state.session_map?.[currentRound] ?? null;
+
+    const taskArg = {
       task: { id: taskId, task_type: 'harness_contract_review' },
-      prompt: buildReviewerPrompt(state.prdContent, state.contractContent, state.round),
+      prompt: buildReviewerPrompt(state.prdContent, state.contractContent, currentRound),
       worktreePath,
       timeoutMs: 1800000,
       env: {
@@ -365,15 +392,30 @@ export function createGanContractNodes(executor, ctx) {
         HARNESS_NODE: 'reviewer',
         HARNESS_SPRINT_DIR: sprintDir,
         HARNESS_INITIATIVE_ID: initiativeId,
-        HARNESS_REVIEW_ROUND: String(state.round),
+        HARNESS_REVIEW_ROUND: String(currentRound),
         TASK_ID: taskId,
         SPRINT_DIR: sprintDir,
         PLANNER_BRANCH: 'main',
-        REVIEW_ROUND: String(state.round),
+        REVIEW_ROUND: String(currentRound),
         GITHUB_TOKEN: githubToken,
       },
+    };
+
+    const result = await reconnectOrSpawn({
+      nodeKey: '_session',
+      state: { _session: roundSession },
+      executor,
+      taskArg,
+      worktreePath,
+      async readOutput(wt) {
+        try {
+          const data = await readBrainResult(wt, ['verdict', 'rubric_scores', 'feedback']);
+          return { _reconnected: true, ...data };
+        } catch { return null; }
+      },
     });
-    if (!result || result.exit_code !== 0) {
+
+    if (!result || (result.exit_code !== undefined && result.exit_code !== 0)) {
       throw new Error(`reviewer_failed: exit=${result?.exit_code}`);
     }
     const nextCost = (state.costUsd || 0) + Number(result.cost_usd || 0);
@@ -382,8 +424,7 @@ export function createGanContractNodes(executor, ctx) {
     }
 
     // 读容器写入的结果文件（rubric_scores + verdict + feedback）
-    const currentRound = state.round || 0;
-    const resultData = await readBrainResult(worktreePath, ['verdict', 'rubric_scores']);
+    const resultData = result._reconnected ? result : await readBrainResult(worktreePath, ['verdict', 'rubric_scores']);
     const rubricScores = resultData.rubric_scores;
     const rubricVerdict = computeVerdictFromRubric(rubricScores, currentRound);
     // rubric 代码判决优先；文件 verdict 作为 fallback（LLM 打分但代码判阈值）
@@ -406,7 +447,7 @@ export function createGanContractNodes(executor, ctx) {
       forcedApproval = true;
     }
 
-    const patch = { costUsd: nextCost, verdict, forcedApproval };
+    const patch = { costUsd: nextCost, verdict, forcedApproval, session_map: { [currentRound]: makeSessionRecord(result) } };
     if (newHistoryEntry) {
       // reducer 会 append，所以 patch 给单条新 entry
       patch.rubricHistory = [newHistoryEntry];
