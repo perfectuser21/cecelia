@@ -57,5 +57,5 @@ journey_type: autonomous
   期望: OK
 
 - [x] [BEHAVIOR] `schema_version` 值与 selfcheck.js `EXPECTED_SCHEMA_VERSION` 一致（值来源 oracle）
-  Test: manual:bash -c 'EXPECTED=$(node -e "const c=require('"'"'fs'"'"').readFileSync('"'"'packages/brain/src/selfcheck.js'"'"','"'"'utf8'"'"');const m=c.match(/EXPECTED_SCHEMA_VERSION = '"'"''"'"'([^'"'"''"'"']+)'"'"''"'"'/);process.stdout.write(m[1])"); RESP=$(curl -sf localhost:5221/api/brain/version); printf "%s" "$RESP" | jq -e ".schema_version == \"$EXPECTED\"" || { printf "%s\n" "FAIL: schema_version 与 selfcheck.js 不一致（expected=$EXPECTED）"; exit 1; }; printf "%s\n" "OK"'
+  Test: manual:bash -c 'EXPECTED=$(node -e "const c=require('"'"'fs'"'"').readFileSync('"'"'packages/brain/src/selfcheck.js'"'"','"'"'utf8'"'"');const m=c.match(/EXPECTED_SCHEMA_VERSION = '"'"'([^'"'"']+)'"'"'/);process.stdout.write(m[1])"); RESP=$(curl -sf localhost:5221/api/brain/version); printf "%s" "$RESP" | jq -e ".schema_version == \"$EXPECTED\"" || { printf "%s\n" "FAIL: schema_version 与 selfcheck.js 不一致（expected=$EXPECTED）"; exit 1; }; printf "%s\n" "OK"'
   期望: OK
