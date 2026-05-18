@@ -40,5 +40,94 @@ if [[ ! -f "$PRD_PATH" ]]; then
 fi
 
 log "前置 OK — Brain 健康, PRD 存在"
-log "（骨架 smoke 到此结束，完整轮询逻辑待实现）"
-exit 0
+
+# ── 创建 harness_initiative 任务 ─────────────────────────────────────────────
+
+log "创建 harness_initiative 任务 (sprint_dir=${SPRINT_DIR})..."
+
+TASK_JSON=$(curl -sf -X POST "${BRAIN_URL}/api/brain/tasks" \
+  -H "Content-Type: application/json" \
+  -d "{
+    \"task_type\": \"harness_initiative\",
+    \"title\": \"[smoke] harness-pipeline-lifecycle $(date +%Y%m%d-%H%M%S)\",
+    \"payload\": {
+      \"sprint_dir\": \"${SPRINT_DIR}\",
+      \"smoke_test\": true
+    }
+  }" 2>/dev/null) || fail "POST /api/brain/tasks 失败"
+
+# 提取 task id（兼容 jq 不存在的环境）
+if command -v jq >/dev/null 2>&1; then
+  TASK_ID=$(echo "$TASK_JSON" | jq -r '.id // empty')
+else
+  TASK_ID=$(echo "$TASK_JSON" | grep -o '"id":"[^"]*"' | head -1 | cut -d'"' -f4)
+fi
+
+[[ -z "$TASK_ID" || "$TASK_ID" == "null" ]] && fail "无法解析 task id，响应: ${TASK_JSON}"
+
+log "任务已创建: task_id=${TASK_ID}"
+log "开始轮询 (每 ${POLL_INTERVAL}s，最多 ${MAX_WAIT}s)..."
+
+# ── 轮询 status ──────────────────────────────────────────────────────────────
+
+START_TIME=$(date +%s)
+CONSECUTIVE_ERRORS=0
+
+while true; do
+  ELAPSED=$(( $(date +%s) - START_TIME ))
+  if (( ELAPSED >= MAX_WAIT )); then
+    LAST_JSON=$(curl -sf "${BRAIN_URL}/api/brain/tasks/${TASK_ID}" 2>/dev/null || echo '{}')
+    if command -v jq >/dev/null 2>&1; then
+      LAST_STATUS=$(echo "$LAST_JSON" | jq -r '.status // "unknown"')
+    else
+      LAST_STATUS=$(echo "$LAST_JSON" | grep -o '"status":"[^"]*"' | head -1 | cut -d'"' -f4)
+    fi
+    fail "超时（${MAX_WAIT}s），pipeline 疑似卡死。最后 status=${LAST_STATUS}, task_id=${TASK_ID}"
+  fi
+
+  TASK_JSON=$(curl -sf "${BRAIN_URL}/api/brain/tasks/${TASK_ID}" 2>/dev/null || echo "")
+  if [[ -z "$TASK_JSON" ]]; then
+    CONSECUTIVE_ERRORS=$(( CONSECUTIVE_ERRORS + 1 ))
+    log "⚠ curl 失败 (${CONSECUTIVE_ERRORS}/5)，Brain 可能在重启..."
+    if (( CONSECUTIVE_ERRORS >= 5 )); then
+      fail "连续 5 次 curl 失败，Brain 已失联 (task_id=${TASK_ID})"
+    fi
+    sleep "$POLL_INTERVAL"
+    continue
+  fi
+
+  CONSECUTIVE_ERRORS=0
+
+  if command -v jq >/dev/null 2>&1; then
+    STATUS=$(echo "$TASK_JSON" | jq -r '.status // "unknown"')
+    FAILURE_REASON=$(echo "$TASK_JSON" | jq -r '.result.failure_reason // empty' 2>/dev/null || echo "")
+  else
+    STATUS=$(echo "$TASK_JSON" | grep -o '"status":"[^"]*"' | head -1 | cut -d'"' -f4)
+    FAILURE_REASON=""
+  fi
+
+  log "  elapsed=${ELAPSED}s  status=${STATUS}"
+
+  case "$STATUS" in
+    completed)
+      log "PASS — pipeline 跑完 (status=completed, task_id=${TASK_ID})"
+      exit 0
+      ;;
+    failed)
+      [[ -n "$FAILURE_REASON" ]] && log "  failure_reason: ${FAILURE_REASON}"
+      log "PASS — pipeline 跑完 (status=failed，不卡死即为通过, task_id=${TASK_ID})"
+      exit 0
+      ;;
+    cancelled|error)
+      fail "非预期终止 status=${STATUS} (task_id=${TASK_ID})"
+      ;;
+    queued|in_progress|"")
+      # 继续等
+      ;;
+    *)
+      log "⚠ 未知 status=${STATUS}，继续等..."
+      ;;
+  esac
+
+  sleep "$POLL_INTERVAL"
+done
