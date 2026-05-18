@@ -22,7 +22,7 @@
  *   3. 调 runFinalE2E → verdict PASS | FAIL
  *   4. PASS → initiative_runs.phase='done' + completed_at=NOW()
  *   5. FAIL → attributeFailures → 为每个可疑 Task 建 harness_task(fix mode) + fix_round++
- *           fix_round > MAX_FIX_ROUNDS → phase='failed'，写 failure_reason
+ *           fix_round 超出上限 → phase='failed'，写 failure_reason
  */
 
 import { execFile as execFileCb } from 'node:child_process';
@@ -48,7 +48,6 @@ import { runGanContractGraph } from '../harness-gan-graph.js';
 
 const DEFAULT_TIMEOUT_SEC = 21600; // 6h，对齐 initiative_contracts.timeout_sec 默认
 const DEFAULT_BUDGET_USD = 10;
-const MAX_FIX_ROUNDS = 3; // fix_round > 3 → phase='failed'（PRD §6.3）
 
 /**
  * 运行一个 Initiative 的阶段 A：规划 + 合同起草 + 运行态登记。
@@ -361,13 +360,12 @@ export async function createFixTask({
  * 语义：
  *   - not_ready: 子任务未全完成，tick 稍后重试
  *   - e2e_pass : Final E2E 全绿，initiative_runs.phase='done'
- *   - e2e_fail : 部分 scenario 失败，建 fix 子任务；若 fix_round > MAX_FIX_ROUNDS 则 phase='failed'
+ *   - e2e_fail : 部分 scenario 失败，建 fix 子任务；若 fix_round 超出上限则 phase='failed'
  *
  * @param {string} initiativeTaskId   parent harness_initiative task UUID
  * @param {object} [opts]
  * @param {object} [opts.pool]         pg pool 注入（测试用）
  * @param {Function} [opts.runE2E]     runFinalE2E 替换（测试用）
- * @param {number} [opts.maxFixRounds=3]
  * @param {object} [opts.now]          Date 替换（测试用，不常用）
  * @returns {Promise<{
  *   status: 'not_ready'|'e2e_pass'|'e2e_fail'|'e2e_failed_terminal'|'no_contract'|'error',
@@ -384,7 +382,7 @@ export async function runPhaseCIfReady(initiativeTaskId, opts = {}) {
 
   const dbPool = opts.pool || pool;
   const runE2E = opts.runE2E || runFinalE2E;
-  const maxFixRounds = Number.isFinite(opts.maxFixRounds) ? opts.maxFixRounds : MAX_FIX_ROUNDS;
+  // maxFixRounds 已移除上限，始终重试
 
   const client = await dbPool.connect();
   try {
@@ -459,8 +457,6 @@ export async function runPhaseCIfReady(initiativeTaskId, opts = {}) {
     const fixTaskIds = [];
     const failureAttribution = [];
 
-    let anyExceededRounds = false;
-
     for (const [failedTaskId, info] of attribution.entries()) {
       // 取当前 fix_round：从 original task 查现存 fix 子任务计数
       const roundQ = await client.query(
@@ -479,10 +475,7 @@ export async function runPhaseCIfReady(initiativeTaskId, opts = {}) {
         nextRound,
       });
 
-      if (nextRound > maxFixRounds) {
-        anyExceededRounds = true;
-        continue; // 不再建 fix task（terminal fail 已触发）
-      }
+      // 无上限：始终创建 fix task，不检查轮次上限
 
       const newId = await createFixTask({
         initiativeId,
@@ -495,28 +488,7 @@ export async function runPhaseCIfReady(initiativeTaskId, opts = {}) {
       fixTaskIds.push(newId);
     }
 
-    if (anyExceededRounds) {
-      const reason = `Final E2E FAIL: ${failureAttribution
-        .map((a) => `task=${a.task_id}(r=${a.nextRound})`)
-        .join(', ')}`;
-      await client.query(
-        `UPDATE initiative_runs
-         SET phase='failed', failure_reason=$1, completed_at=NOW(), updated_at=NOW()
-         WHERE id=$2::uuid`,
-        [reason, runId]
-      );
-      return {
-        status: 'e2e_failed_terminal',
-        initiativeId,
-        runId,
-        verdict: 'FAIL',
-        fixTaskIds,
-        failureAttribution,
-        error: reason,
-      };
-    }
-
-    // 未超 fix round：退回到 B_task_loop 等 fix task 走完
+    // 始终重试：退回到 B_task_loop 等 fix task 走完
     await client.query(
       `UPDATE initiative_runs
        SET phase='B_task_loop', updated_at=NOW()
@@ -1337,7 +1309,7 @@ export async function terminalFailNode(state, opts = {}) {
   // 重入会再次刷 completed_at，不必要的 DB 负载）。
   if (state.error?.node === 'terminal_fail') return { error: state.error };
   const dbPool = opts.pool || pool;
-  const reason = `Evaluator FAIL after ${MAX_FIX_ROUNDS} retries on task index ${state.task_loop_index ?? 0}: ${(state.evaluate_feedback || '').slice(0, 300)}`;
+  const reason = `Evaluator FAIL on task index ${state.task_loop_index ?? 0}: ${(state.evaluate_feedback || '').slice(0, 300)}`;
   try {
     await dbPool.query(
       `UPDATE initiative_runs SET phase='failed', failure_reason=$1, completed_at=NOW(), updated_at=NOW() WHERE initiative_id=$2::uuid`,
@@ -1370,7 +1342,6 @@ export function routeAfterEvaluate(state) {
     return 'advance';
   }
   // FAIL (or null/unexpected verdict — treated as FAIL to prevent silent skip)
-  if (fixCount >= MAX_FIX_ROUNDS) return 'terminal_fail';
   return 'retry';
 }
 
@@ -1378,7 +1349,7 @@ export function routeAfterEvaluate(state) {
 
 /**
  * W5 — 关键决策点 interrupt()。
- * 当 final E2E verdict='FAIL' 且 fix_round 已达 MAX_FIX_ROUNDS 时，调 interrupt()
+ * 当 final E2E verdict='FAIL' 且 fix_round 超出上限时，调 interrupt()
  * 暂停 graph，由主理人通过 routes/harness-interrupts.js POST resume 决策：
  *   - abort:              终止 graph，写 error
  *   - extend_fix_rounds:  允许再 fix 3 轮（fix_rounds_extended=3）
@@ -1501,14 +1472,9 @@ JOURNEY_TYPE=${journeyType}`;
 
   const fixRound = state.final_e2e_fix_count ?? 0;
 
-  // FAIL + fix rounds 未耗尽 → 重置 task_loop_index，routing 函数送回 pick_sub_task
-  if (verdictDelta.final_e2e_verdict === 'FAIL' && fixRound < MAX_FIX_ROUNDS) {
+  // FAIL → 始终重试，无上限
+  if (verdictDelta.final_e2e_verdict === 'FAIL') {
     return { ...verdictDelta, final_e2e_fix_count: fixRound + 1, task_loop_index: 0 };
-  }
-
-  // FAIL + fix rounds 用尽 → 自动标 failed，不等人工介入
-  if (verdictDelta.final_e2e_verdict === 'FAIL' && fixRound >= MAX_FIX_ROUNDS) {
-    return { ...verdictDelta, error: { node: 'final_evaluate', message: `Final E2E 已重试 ${fixRound} 次仍失败，自动终止` } };
   }
 
   return verdictDelta;
