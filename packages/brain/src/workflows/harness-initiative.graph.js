@@ -29,6 +29,7 @@ import { execFile as execFileCb } from 'node:child_process';
 import { promisify } from 'node:util';
 import pool from '../db.js';
 import { spawn } from '../spawn/index.js';
+import { reconnectOrSpawn, makeSessionRecord } from '../harness-session-bridge.js';
 import { parseDockerOutput, loadSkillContent, readBrainResult } from '../harness-shared.js';
 import { parseTaskPlan, upsertTaskPlan } from '../harness-dag.js';
 import { runFinalE2E, attributeFailures } from '../harness-final-e2e.js';
@@ -566,6 +567,8 @@ export const InitiativeState = Annotation.Root({
   ganResult:      Annotation({ reducer: (_o, n) => n, default: () => null }),
   result:         Annotation({ reducer: (_o, n) => n, default: () => null }),
   error:          Annotation({ reducer: (_o, n) => n, default: () => null }),
+  planner_session:   Annotation({ reducer: (_o, n) => n, default: () => null }),
+  evaluator_session: Annotation({ reducer: (_o, n) => n, default: () => null }),
 });
 
 // 节点 stub — Task 2-6 逐个填充。
