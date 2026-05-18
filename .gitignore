@@ -95,4 +95,7 @@ frontend/test-results/
 packages/quality/.test-phase1/
 
 # Ralph Loop 模式 dev session 状态（项目根，永远不进 git）
-.cecelia/dev-active-*.json
+.cecelia/
+
+# Auto-generated code review reports（不进 git）
+docs/reviews/
