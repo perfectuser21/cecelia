@@ -926,7 +926,7 @@ router.get('/version', (req, res) => {
   try {
     const pkgData = JSON.parse(readFileSync(new URL('../../package.json', import.meta.url), 'utf8'));
     res.json({ schema_version: EXPECTED_SCHEMA_VERSION, version: pkgData.version });
-  } catch (err) {
+  } catch {
     res.status(500).json({ error: 'version read failed' });
   }
 });
