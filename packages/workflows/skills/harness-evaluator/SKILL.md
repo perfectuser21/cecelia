@@ -6,10 +6,11 @@ description: |
   evaluator 在 CI 绿之后、PR merge 之前真启服务 + 跑 contract 的 manual:bash 命令验真行为。
   PASS → 允许 merge；FAIL → 不 merge，带反馈打回 Generator 在 PR 分支 fix loop（main 不变动）。
   模式 A 跑 contract-dod-ws*.md BEHAVIOR；模式 B（所有 ws merge 后）跑 final E2E Golden Path。
-version: 1.6.0
+version: 1.7.0
 created: 2026-05-06
 updated: 2026-05-18
 changelog:
+  - 1.7.0: windows_native 拆分为 windows_cloud + windows_local — windows_cloud 触发 GitHub Actions windows-latest runner（ZenithJoy Agent 等连公网产品，每次全新干净 VM，免费）；windows_local SSH 到 xian-pc Windows Sandbox（需访问 Tailscale 内网的产品）；TARGET_ENV 注入变量表同步更新
   - 1.6.0: 修复 B33 误伤真实功能 sprint — B33 URL 检测改为 playground 感知：playground sprint（playground/server.js 存在）禁止出现 Brain API URL；真实功能 sprint（autonomous journey_type）反向要求 E2E 脚本必须含 Brain API URL，缺失直接 FAIL（防止 playground 命令混入真实 sprint）
   - 1.5.0: Rule 4 弱 oracle 改 FAIL — 命令缺 jq -e 值校验不再"容忍但报告"，直接输出 FAIL feedback 拒绝通过；中间态在 GAN 已收敛后无意义（proposer v7.8 配套）
   - 1.4.0: B33 e2e URL 位置词检测 — W35/W43 实证 planner 在 playground sprint 的 e2e 生成了 /api/brain/ping 而非 playground /ping (localhost:3000)。Step B-1.5 加 pre-exec 扫描，含 /api/brain/ 的命令立即 FAIL 并标 planner_drift
@@ -69,7 +70,7 @@ generator 写代码 + push PR
 | `TASK_ID` | Brain 中当前 evaluate task 的 UUID |
 | `WORKSTREAM_N` | 当前 workstream 编号（如 `1`），仅模式 A 用 |
 | `JOURNEY_TYPE` | `user_facing` / `autonomous` / `dev_pipeline` / `agent_remote` |
-| `TARGET_ENV` | `mac_web` / `windows_native` / `linux_server` / `local_api` / `playground`（来自 PRD `target_environment` 字段）|
+| `TARGET_ENV` | `mac_web` / `windows_cloud` / `windows_local` / `linux_server` / `local_api` / `playground`（来自 PRD `target_environment` 字段）|
 | `DB` | PostgreSQL 连接串，如 `postgresql://localhost/cecelia` |
 
 **注**：DoD 文件中的 `Test:` 命令若引用 `$TARGET_TASK_ID`，该 ID 来自 DoD 文件内部（合同写入时硬编码或由 Generator 写入），Evaluator 直接执行 DoD 中的命令原文，不需单独注入。
@@ -364,12 +365,54 @@ case "$TARGET_ENV" in
     EXIT_CODE=${PIPESTATUS[0]}
     ;;
 
-  windows_native)
-    # SSH 到 xian-pc 或 xian-rog 执行 PowerShell 脚本
-    # 合同 e2e 脚本必须是 .ps1 格式（见 proposer windows_native 模板）
-    WINDOWS_HOST="${WINDOWS_E2E_HOST:-xian-pc}"
-    scp /tmp/e2e-verify.ps1 "$WINDOWS_HOST:/tmp/cecelia-e2e.ps1" 2>&1
-    timeout 300 ssh "$WINDOWS_HOST" \
+  windows_cloud)
+    # GitHub Actions windows-latest runner（ZenithJoy Agent 等连公网产品）
+    # 每次触发都是全新干净 VM，免费（public repo），适合下载安装包/连云端 endpoint
+    # 合同 e2e 脚本必须是 .ps1 格式（见 proposer windows_cloud 模板）
+    # 等待结果：轮询 run 状态，最长 10 分钟
+    REPO="${GITHUB_REPO:-perfectuser21/cecelia}"
+    WORKFLOW="${WINDOWS_CLOUD_WORKFLOW:-e2e-windows.yml}"
+    gh workflow run "$WORKFLOW" \
+      --repo "$REPO" \
+      -f task_id="$TASK_ID" \
+      -f sprint_dir="$SPRINT_DIR" \
+      2>&1 | tee /tmp/e2e-trigger.log
+    TRIGGER_EXIT=$?
+    if [[ $TRIGGER_EXIT -ne 0 ]]; then
+      cat > /workspace/.brain-result.json << BREOF
+{"verdict":"FAIL","task_id":"$TASK_ID","failed_step":"gh_trigger","log_excerpt":"GitHub Actions 触发失败，检查 gh auth 状态和 repo 权限"}
+BREOF
+      exit 0
+    fi
+    # 等 Actions 完成（最长 10 分钟，每 30 秒轮询一次）
+    sleep 10
+    for i in $(seq 1 20); do
+      RUN_STATUS=$(gh run list --repo "$REPO" --workflow "$WORKFLOW" --limit 1 \
+        --json status,conclusion --jq '.[0].status' 2>/dev/null)
+      RUN_CONCLUSION=$(gh run list --repo "$REPO" --workflow "$WORKFLOW" --limit 1 \
+        --json status,conclusion --jq '.[0].conclusion' 2>/dev/null)
+      if [[ "$RUN_STATUS" == "completed" ]]; then
+        break
+      fi
+      sleep 30
+    done
+    if [[ "$RUN_CONCLUSION" == "success" ]]; then
+      EXIT_CODE=0
+    else
+      EXIT_CODE=1
+      gh run list --repo "$REPO" --workflow "$WORKFLOW" --limit 1 \
+        --json url --jq '.[0].url' > /tmp/e2e-result.log 2>&1
+      echo "conclusion: $RUN_CONCLUSION" >> /tmp/e2e-result.log
+    fi
+    ;;
+
+  windows_local)
+    # SSH 到 xian-pc Windows Sandbox（需访问 Tailscale 内网的产品）
+    # Windows Sandbox 完全隔离，退出自动销毁，适合本地/内网 endpoint 测试
+    # 合同 e2e 脚本必须是 .ps1 格式（见 proposer windows_local 模板）
+    # 前置要求：xian-pc 已开启 Containers-DisposableClientVM（需一次性 Enable-WindowsOptionalFeature）
+    scp /tmp/e2e-verify.ps1 "xian-pc:/tmp/cecelia-e2e.ps1" 2>&1
+    timeout 300 ssh xian-pc \
       "powershell -ExecutionPolicy Bypass -File /tmp/cecelia-e2e.ps1" \
       2>&1 | tee /tmp/e2e-result.log
     EXIT_CODE=${PIPESTATUS[0]}
@@ -398,10 +441,21 @@ case "$TARGET_ENV" in
 esac
 ```
 
-**SSH 前置条件**（`windows_native` / `linux_server` 必须满足）：
-- `~/.ssh/config` 已配置 `xian-pc` / `xian-rog` / `hk-vps` / `us-vps` 别名
-- SSH 无密码免密登录已配置（Brain 所在机器的 key 已部署到目标机器）
-- 目标机器上 `playwright` / `node` / `powershell` 已安装
+**前置条件**：
+
+`windows_cloud`：
+- `gh` CLI 已登录（`gh auth status` 验证），PAT 有 `workflow` write scope
+- 目标 repo 有 `e2e-windows.yml` workflow（含 `workflow_dispatch` 触发器）
+- GitHub Actions 使用 `windows-latest` runner，免费（public repo）
+
+`windows_local`：
+- `~/.ssh/config` 已配置 `xian-pc` 别名，SSH 免密登录已配置
+- xian-pc 已开启 Windows Sandbox（`Enable-WindowsOptionalFeature -Online -FeatureName "Containers-DisposableClientVM"`）
+- xian-pc 上 `powershell` 可用（默认满足）
+
+`linux_server`：
+- `~/.ssh/config` 已配置 `hk-vps` / `us-vps` 别名，SSH 免密登录已配置
+- 目标机器上 `node` / `bash` 已安装
 
 #### Step B-3: 判断结果
 

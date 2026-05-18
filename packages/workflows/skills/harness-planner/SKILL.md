@@ -180,24 +180,28 @@ else（无路径线索）→ 默认 autonomous
 
 **target_environment**（决定"在哪台机器跑 E2E"）：
 
-| 场景 | target_environment | 说明 |
-|---|---|---|
-| Cecelia Dashboard / 任何 Web UI 功能 | `mac_web` | 本机 Playwright，localhost:5174 |
-| ZenithJoy Windows 客户端 / 原生 Windows 应用 | `windows_native` | SSH 到 xian-pc 或 xian-rog 执行 |
-| 生产环境 API / 部署验证 | `linux_server` | SSH 到 hk-vps 或 us-vps 执行 |
-| Brain 内部任务 / 纯后端 API 功能 | `local_api` | curl localhost:5221 + psql，本地执行 |
-| playground 训练 sprint（`is_skeleton: true`）| `playground` | node playground/server.js 本地执行 |
+| 场景 | target_environment | 执行位置 | 说明 |
+|---|---|---|---|
+| Cecelia Dashboard / Web UI | `mac_web` | xian-m4 本机 | Playwright localhost:5174，context 原生隔离 |
+| **公网 Windows 产品**（ZenithJoy Agent 等连公网服务的 App）| **`windows_cloud`** | **GitHub Actions windows-latest** | 完全干净 VM，public repo 免费无限次，永远无历史状态 |
+| 内网 Windows 产品（需访问 Tailscale / localhost）| `windows_local` | SSH xian-pc（Win 11 Pro + Sandbox）| Sandbox 隔离，每次全新 |
+| 生产 API 验证 | `linux_server` | SSH hk-vps / us-vps | curl + psql |
+| Brain 内部 / 纯后端 | `local_api` | 本地 evaluator | curl localhost:5221 + psql |
+| playground 训练 sprint | `playground` | 本地 | node playground/server.js |
 
 **推断规则**：
 
 ```
-if journey_type=user_facing and 涉及 apps/dashboard/ → mac_web
-if journey_type=user_facing and 涉及 Windows 原生 / ZenithJoy agent → windows_native
-if journey_type=autonomous and 仅 packages/brain/ → local_api
-if journey_type=autonomous and 涉及生产部署 / hk-vps → linux_server
+if 涉及 apps/dashboard/ → mac_web
+if Windows App + 后端是公网 URL (https://...) → windows_cloud   ← ZenithJoy/中台优先选这个
+if Windows App + 后端是内网/localhost → windows_local
+if 仅 packages/brain/ → local_api
+if 涉及生产部署 → linux_server
 if is_skeleton=true or thin_prd 含 "playground" → playground
 else → local_api（默认）
 ```
+
+**windows_cloud vs windows_local 判断标准（一句话）**：被测 App 连的是公网 URL → `windows_cloud`；连的是 Tailscale 内网 → `windows_local`。
 
 记录：`journey_type: <值>` + `target_environment: <值>`，写入 PRD 末尾。两个字段**缺一不可**，proposer 和 evaluator 都依赖这两个字段。
 
@@ -317,8 +321,8 @@ mkdir -p "$SPRINT_DIR"
 
 ## journey_type: autonomous|user_facing|dev_pipeline|agent_remote
 ## journey_type_reason: {1 句推断依据}
-## target_environment: mac_web|windows_native|linux_server|local_api|playground
-## target_environment_reason: {1 句推断依据，含目标机器名（如 xian-pc、hk-vps、localhost:5174）}
+## target_environment: mac_web|windows_cloud|windows_local|linux_server|local_api|playground
+## target_environment_reason: {1 句推断依据，含目标机器名（如 GitHub Actions、xian-pc、hk-vps、localhost:5174）}
 ```
 
 ---

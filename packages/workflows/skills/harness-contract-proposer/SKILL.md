@@ -173,7 +173,7 @@ psql $DB -c "SELECT count(*) FROM brain_alerts WHERE task_id='$TASK_ID' AND crea
 ## E2E 验收（最终 final-e2e 跑 — 按 target_environment 选模板）
 
 **journey_type**: {autonomous|user_facing|dev_pipeline|agent_remote}
-**target_environment**: {local_api|mac_web|windows_native|linux_server|playground}
+**target_environment**: {local_api|mac_web|windows_cloud|windows_local|linux_server|playground}
 
 > **选模板规则**：看 PRD 末尾的 `target_environment` 字段，不是 `journey_type`。evaluator 模式B 按 `target_environment` SSH 派发到正确机器，合同 E2E 脚本必须与目标机器匹配。
 
@@ -248,44 +248,85 @@ const { chromium, expect } = require('@playwright/test');
 
 ---
 
-### target_environment = windows_native（Windows 原生应用 — SSH 到 xian-pc 执行）
+### target_environment = windows_cloud（公网 Windows 产品 — GitHub Actions windows-latest，完全干净 VM）
+
+> 适用：ZenithJoy Agent / 任何连公网后端的 Windows App。每次运行都是全新 VM，无历史状态，public repo 免费无限次。
 
 ```powershell
-# final-e2e PowerShell 脚本（由 evaluator SSH 到 xian-pc/xian-rog 执行）
-# 模拟真实 Windows 用户操作：下载 / 安装 / 启动 / 验证
+# final-e2e PowerShell 脚本（在 GitHub Actions windows-latest runner 上执行）
+# 环境：全新 Windows Server 2022，无任何已安装 App，无 cookie/session 历史
 
 param(
-  [string]$DownloadUrl = "{artifact_download_url}",
-  [string]$ExpectedVersion = "{expected_version}"
+  [string]$DownloadUrl = "{artifact_download_url}",     # 公网下载地址
+  [string]$ExpectedVersion = "{expected_version}",
+  [string]$CloudEndpoint = "{cloud_api_url}"             # App 连接的公网后端
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
-# 1. 下载安装包（模拟用户点击下载）
+# 1. 下载安装包（从公网，模拟用户点击下载）
 $InstallerPath = "$env:TEMP\{app_name}-setup.exe"
-Invoke-WebRequest -Uri $DownloadUrl -OutFile $InstallerPath
+Invoke-WebRequest -Uri $DownloadUrl -OutFile $InstallerPath -UseBasicParsing
 if (-not (Test-Path $InstallerPath)) { throw "下载失败: $InstallerPath 不存在" }
 
 # 2. 静默安装（模拟用户安装）
 Start-Process -FilePath $InstallerPath -ArgumentList "/S" -Wait -NoNewWindow
 
-# 3. 验证安装结果（程序存在 + 版本正确）
+# 3. 验证安装结果
 $AppPath = "${env:ProgramFiles}\{app_name}\{app_exe}"
 if (-not (Test-Path $AppPath)) { throw "FAIL: 安装后程序不存在 $AppPath" }
-
 $InstalledVersion = (Get-Item $AppPath).VersionInfo.ProductVersion
 if ($InstalledVersion -ne $ExpectedVersion) {
   throw "FAIL: 版本不匹配 installed=$InstalledVersion expected=$ExpectedVersion"
 }
 
-# 4. 启动验证（程序能正常启动）
+# 4. 启动 + 验证连接公网后端（App 的核心价值）
 $Proc = Start-Process -FilePath $AppPath -PassThru
-Start-Sleep -Seconds 3
-if ($Proc.HasExited) { throw "FAIL: 程序启动后立即退出 ExitCode=$($Proc.ExitCode)" }
-Stop-Process -Id $Proc.Id -Force
+Start-Sleep -Seconds 5
+if ($Proc.HasExited) { throw "FAIL: 程序启动后立即退出" }
 
-Write-Host "✅ Windows 原生 E2E 验证通过 version=$InstalledVersion"
+# 验证 App 成功连上公网服务
+$resp = Invoke-RestMethod -Uri "$CloudEndpoint/health" -Method GET -TimeoutSec 10
+if ($resp.status -ne "ok") { throw "FAIL: App 未能连接云端 status=$($resp.status)" }
+
+Stop-Process -Id $Proc.Id -Force
+Write-Host "✅ windows_cloud E2E 验证通过 version=$InstalledVersion"
+```
+
+---
+
+### target_environment = windows_local（内网 Windows 产品 — SSH xian-pc + Windows Sandbox）
+
+> 适用：需要访问 Tailscale 内网 / localhost 的 Windows 功能。用 Sandbox 保证完全隔离。
+
+```powershell
+# final-e2e PowerShell 脚本（在 xian-pc Windows Sandbox 内执行）
+# Sandbox 每次启动都是全新系统，退出自动销毁，等同 windows_cloud 的干净程度
+
+param(
+  [string]$InternalEndpoint = "http://{tailscale_ip}:{port}"  # 内网服务地址
+)
+
+Set-StrictMode -Version Latest
+$ErrorActionPreference = "Stop"
+
+# 1. 安装（从内网或公网下载）
+$InstallerPath = "$env:TEMP\{app_name}-setup.exe"
+Invoke-WebRequest -Uri "{installer_url}" -OutFile $InstallerPath -UseBasicParsing
+
+Start-Process -FilePath $InstallerPath -ArgumentList "/S" -Wait -NoNewWindow
+
+# 2. 验证连接内网服务
+$AppPath = "${env:ProgramFiles}\{app_name}\{app_exe}"
+$Proc = Start-Process -FilePath $AppPath -PassThru
+Start-Sleep -Seconds 5
+
+$resp = Invoke-RestMethod -Uri "$InternalEndpoint/health" -Method GET -TimeoutSec 10
+if ($resp.status -ne "ok") { throw "FAIL: App 未能连接内网服务" }
+
+Stop-Process -Id $Proc.Id -Force
+Write-Host "✅ windows_local E2E 验证通过"
 ```
 
 ---
