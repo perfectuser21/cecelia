@@ -66,6 +66,7 @@ vi.mock('../orchestrator/pg-checkpointer.js', () => ({
 vi.mock('../harness-shared.js', () => ({
   parseDockerOutput: vi.fn((x) => x),
   loadSkillContent: vi.fn(() => 'SKILL_CONTENT'),
+  readBrainResult: vi.fn().mockResolvedValue({ verdict: 'PASS' }),
 }));
 
 vi.mock('../spawn/index.js', () => ({
@@ -89,7 +90,7 @@ vi.mock('../harness-credentials.js', () => ({
 }));
 
 import { parseTaskPlan } from '../harness-dag.js';
-import { parseDockerOutput } from '../harness-shared.js';
+import { parseDockerOutput, readBrainResult } from '../harness-shared.js';
 
 import {
   parsePrdNode,
@@ -429,6 +430,8 @@ describe('_routeAfterFinalE2E', () => {
 describe('finalEvaluateDispatchNode — fix loop', () => {
   beforeEach(() => {
     vi.resetAllMocks();
+    // readBrainResult default: PASS（exit_code=0 路径调用；exit_code=1 路径不调用）
+    vi.mocked(readBrainResult).mockResolvedValue({ verdict: 'PASS' });
   });
 
   it('FAIL + final_e2e_fix_count=0 → returns fix_count:1 + task_loop_index:0', async () => {
@@ -500,5 +503,35 @@ describe('finalEvaluateDispatchNode — fix loop', () => {
     expect(result.final_e2e_verdict).toBe('PASS');
     expect(result.task_loop_index).toBeUndefined();
     expect(result.final_e2e_fix_count).toBeUndefined();
+  });
+
+  it('FAIL + final_e2e_fix_count=3 (>= MAX) → returns error (interrupt fail path)', async () => {
+    const mockSpawnFn = vi.fn().mockResolvedValue({
+      exit_code: 1,
+      timed_out: false,
+      stderr: 'e2e fail max',
+    });
+
+    const state = {
+      final_e2e_fix_count: 3,
+      task_loop_index: 2,
+      task: { id: 'task-1', payload: { sprint_dir: 'sprints' } },
+      taskPlan: { journey_type: 'autonomous' },
+      worktreePath: '/tmp/wt',
+      sub_tasks: [],
+      initiativeId: 'init-1',
+      githubToken: 'tok',
+    };
+
+    // interrupt() 不可用（非 LangGraph 执行上下文），抛非 GraphInterrupt 错误
+    // 期望节点返回含 error 字段的 delta（防止无限循环）
+    // RED 测试：当前实现在 interrupt() 失败时返回 verdictDelta（无 error 字段），期望修复后返回带 error 的 delta
+    const result = await finalEvaluateDispatchNode(state, {
+      executor: mockSpawnFn,
+      execFile: vi.fn().mockResolvedValue({ stdout: '' }),
+    });
+
+    expect(result.error).toBeDefined();
+    expect(result.error.node).toBe('final_evaluate');
   });
 });
