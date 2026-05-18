@@ -56,7 +56,8 @@ attempt_restart() {
   # Fallback: 杀掉旧进程，直接 spawn
   pkill -f "cecelia-bridge.cjs" 2>/dev/null || true
   sleep 1
-  nohup /opt/homebrew/bin/node "$BRIDGE_SCRIPT" >> "$BRIDGE_LOG" 2>&1 &
+  NODE_BIN="$(command -v node || echo /opt/homebrew/bin/node)"
+  nohup "$NODE_BIN" "$BRIDGE_SCRIPT" >> "$BRIDGE_LOG" 2>&1 &
   sleep "$RESTART_WAIT"
   if is_bridge_healthy; then
     echo "$LOG_PREFIX RESTARTED via direct spawn"
