@@ -4,10 +4,13 @@ description: |
   Harness Contract Proposer — Harness v5 GAN Layer 2a：
   读 PRD，GAN 对抗写 Golden Path 合同（每步含真实验证命令）；
   Reviewer APPROVED 后倒推拆 task-plan.json。
-version: 7.6.0
+version: 7.9.0
 created: 2026-04-08
-updated: 2026-05-11
+updated: 2026-05-18
 changelog:
+  - 7.9.0: 删除 windows_local 模板 — 所有 Windows 测试统一走 windows_cloud（GitHub Actions），Cecelia 走 mac_web/local_api；target_environment 枚举值同步缩减
+  - 7.8.0: 两层验证架构强制规则 — 修复假阳性根因：BEHAVIOR 命令按 journey_type 分两层：模式A(evaluator 逐ws) = API-level（autonomous→curl Brain 5221/psql；user_facing→Playwright API assertions）；模式B(final-e2e) = UI-level（user_facing→Playwright browser 真实操作，autonomous→curl+psql Golden Path 全程）。禁止 autonomous BEHAVIOR 命令测 playground（只能测真实 Brain/DB）。删除禁止事项 #3 遗留 v5.0 矛盾规则
+  - 7.7.0: Step 2 Workstreams 切分硬规则（B14 加）— 单 ws ≤ 200 行净增 + ≤ 3 文件；整 contract 净增 < 200 行才允许 ws_count=1
   - 7.6.0: 修 Bug 9 proposer 写 0 条 [BEHAVIOR] 借口"v5.0 严禁"（W26 实证 r3 proposer 在 contract-dod 末尾写"v5.0 [BEHAVIOR] 条目已搬迁到 vitest，DoD 纯度规则：本文件只装 [ARTIFACT]"）—（a）changelog v5.0 行标 [已废止]；（b）Step 2b 阈值提前并改成"必须 ≥ 4 条 [BEHAVIOR]"；（c）加"禁止借口"反例段；（d）自查 checklist 加第 5 条 grep -c BEHAVIOR ≥ 4 断言
   - 7.5.0: 修 Bug 8 proposer 漂 PRD 字段名（W25 实证 proposer 把 PRD `{result,operation}` 改 `{negation}`）— Step 2 新增"死规则"段："PRD 是法律，proposer 是翻译，不许改字段名"。Contract response key 必须**字面**用 PRD 给的 key，禁用列表里的字段名 contract 严禁出现。加自查 checklist
   - 7.4.0: 修 BEHAVIOR 位置协议矛盾（W22 sub-evaluator 4 次 FAIL 的根因）— DoD 分家规则改成 BEHAVIOR 内嵌 contract-dod-ws*.md 用 manual:bash（不是 vitest 索引）。Step 2b 模板示例改成至少 4 条 [BEHAVIOR] 严示例（schema 字段 + 完整性 + 禁用字段反向 + error path）。跟 evaluator v1.1 反作弊红线第 3 条对齐
@@ -46,6 +49,34 @@ GAN 收敛（Reviewer APPROVED）后输出第 4 件：
 - Reviewer 审合同是否覆盖 Golden Path 全程
 - Reviewer 审验证命令是否能造假通过（核心新增）
 - GAN 轮次无上限，直到 Reviewer APPROVED
+
+---
+
+## ⚡ 两层验证架构（v7.8 强制 — 假阳性根因修复）
+
+**每个合同必须写两层验证命令，缺一层 Reviewer 直接 REVISION：**
+
+```
+Generator 写代码 + vitest 单元测试
+        ↓
+【模式 A — evaluator 逐 workstream 跑】
+  autonomous:   curl localhost:5221/api/brain/... + psql（真实 Brain/DB）
+  user_facing:  curl localhost:5221/api/brain/... + Playwright API assertions
+        ↓ 模式 A 全 PASS
+【模式 B — final-e2e 跑 Golden Path 端到端】
+  autonomous:   curl + psql 全程链路（触发入口 → 验终态）
+  user_facing:  Playwright 打开真实前端（localhost:5174）→ 模拟用户操作 → 验 UI 响应
+```
+
+**死规则（违反 → Reviewer 打回，evaluator FAIL）**：
+
+| 场景 | 禁止 ❌ | 必须 ✅ |
+|---|---|---|
+| autonomous BEHAVIOR 命令 | `cd playground && node server.js`（测玩具服务器）| `curl localhost:5221/api/brain/...`（测真实 Brain）|
+| user_facing 模式B E2E | 只跑 curl（无 UI 验证）| Playwright 打开 `localhost:5174`，断言 DOM |
+| 任意 journey_type | `echo "ok"` / `true` 假命令 | 真实 exit code 驱动的断言 |
+
+**playground sprint 例外**（`is_skeleton: true` 且 PRD 明确写"playground 训练 sprint"）：BEHAVIOR 命令可用 `node playground/server.js`，但 final-e2e 不能混用 Brain API（evaluator B33 检测）。
 
 ---
 
@@ -140,26 +171,158 @@ psql $DB -c "SELECT count(*) FROM brain_alerts WHERE task_id='$TASK_ID' AND crea
 
 ---
 
-## E2E 验收（最终 Evaluator 跑）
+## E2E 验收（最终 final-e2e 跑 — 按 target_environment 选模板）
 
 **journey_type**: {autonomous|user_facing|dev_pipeline|agent_remote}
+**target_environment**: {local_api|mac_web|windows_cloud|linux_server|playground}
 
-**完整验证脚本**:
+> **选模板规则**：看 PRD 末尾的 `target_environment` 字段，不是 `journey_type`。evaluator 模式B 按 `target_environment` SSH 派发到正确机器，合同 E2E 脚本必须与目标机器匹配。
+
+---
+
+### target_environment = local_api（autonomous — curl+psql 全程链路，本地执行）
+
 ```bash
 #!/bin/bash
 set -e
 
-# 1. 注入测试数据 / 触发入口
-TASK_ID=$(psql $DB -t -c "INSERT INTO tasks (task_type, status, payload) VALUES ('test_event', 'queued', '{}') RETURNING id" | tr -d ' ')
+# 1. 注入测试数据 / 触发入口（操作真实 Brain API）
+TARGET_TASK_ID=$(psql $DB -t -c "INSERT INTO tasks (task_type, status, payload) VALUES ('{task_type}', 'queued', '{}') RETURNING id" | tr -d ' ')
 
-# 2. 触发处理（或等待 tick）
-curl -f -X POST localhost:5221/api/brain/scan-timeout
+# 2. 触发处理（tick 或主动 POST）
+curl -f -X POST localhost:5221/api/brain/{trigger_endpoint}
 
-# 3. 验证终态（带时间窗口防造假）
-COUNT=$(psql $DB -t -c "SELECT count(*) FROM brain_alerts WHERE task_id='$TASK_ID' AND created_at > NOW() - interval '5 minutes'" | tr -d ' ')
-[ "$COUNT" -ge 1 ] || exit 1
+# 3. 等待处理（最多 30 秒，带时间窗口防止利用历史数据造假）
+MAX_WAIT=30
+for i in $(seq 1 $MAX_WAIT); do
+  STATUS=$(curl -sf localhost:5221/api/brain/tasks/$TARGET_TASK_ID | jq -r '.status')
+  [ "$STATUS" = "completed" ] && break
+  [ "$i" = "$MAX_WAIT" ] && { echo "FAIL: 超时 status=$STATUS"; exit 1; }
+  sleep 1
+done
+
+# 4. 验证副作用（DB 状态，带时间窗口）
+COUNT=$(psql $DB -t -c "SELECT count(*) FROM {result_table} WHERE task_id='$TARGET_TASK_ID' AND created_at > NOW() - interval '5 minutes'" | tr -d ' ')
+[ "$COUNT" -ge 1 ] || { echo "FAIL: DB 无记录"; exit 1; }
 
 echo "✅ Golden Path 验证通过"
+```
+
+---
+
+### target_environment = mac_web（user_facing — Playwright 本机真实浏览器，localhost:5174）
+
+```javascript
+// final-e2e Playwright 脚本（在 Mac 本机执行）
+const { chromium, expect } = require('@playwright/test');
+
+(async () => {
+  const browser = await chromium.launch();
+  const context = await browser.newContext({ storageState: undefined }); // 每次新干净环境
+  const page = await context.newPage();
+
+  // 1. 导航到功能页（真实 Cecelia Dashboard）
+  await page.goto('http://localhost:5174/{feature_path}');
+  await page.waitForLoadState('networkidle');
+
+  // 2. 模拟用户操作（填表 / 点击 / 选择）
+  await page.fill('[data-testid="{input_field}"]', '{test_value}');
+  await page.click('[data-testid="{submit_button}"]');
+
+  // 3. 断言 UI 响应（必须含显式断言，禁止只 navigate 不断言）
+  await expect(page.locator('[data-testid="{result_element}"]')).toBeVisible({ timeout: 10000 });
+  await expect(page.locator('[data-testid="{result_element}"]')).toHaveText('{expected_text}');
+
+  // 4. 交叉验证后端状态（防止前端撒谎）
+  const apiResp = await page.request.get('http://localhost:5221/api/brain/{verify_endpoint}');
+  const data = await apiResp.json();
+  if (data['{field}'] !== '{expected_value}') {
+    console.error('FAIL: Brain 后端状态不匹配', data);
+    process.exit(1);
+  }
+
+  await context.close();
+  await browser.close();
+  console.log('✅ Golden Path UI 验证通过');
+})();
+```
+
+---
+
+### target_environment = windows_cloud（公网 Windows 产品 — GitHub Actions windows-latest，完全干净 VM）
+
+> 适用：ZenithJoy Agent / 任何连公网后端的 Windows App。每次运行都是全新 VM，无历史状态，public repo 免费无限次。
+
+```powershell
+# final-e2e PowerShell 脚本（在 GitHub Actions windows-latest runner 上执行）
+# 环境：全新 Windows Server 2022，无任何已安装 App，无 cookie/session 历史
+
+param(
+  [string]$DownloadUrl = "{artifact_download_url}",     # 公网下载地址
+  [string]$ExpectedVersion = "{expected_version}",
+  [string]$CloudEndpoint = "{cloud_api_url}"             # App 连接的公网后端
+)
+
+Set-StrictMode -Version Latest
+$ErrorActionPreference = "Stop"
+
+# 1. 下载安装包（从公网，模拟用户点击下载）
+$InstallerPath = "$env:TEMP\{app_name}-setup.exe"
+Invoke-WebRequest -Uri $DownloadUrl -OutFile $InstallerPath -UseBasicParsing
+if (-not (Test-Path $InstallerPath)) { throw "下载失败: $InstallerPath 不存在" }
+
+# 2. 静默安装（模拟用户安装）
+Start-Process -FilePath $InstallerPath -ArgumentList "/S" -Wait -NoNewWindow
+
+# 3. 验证安装结果
+$AppPath = "${env:ProgramFiles}\{app_name}\{app_exe}"
+if (-not (Test-Path $AppPath)) { throw "FAIL: 安装后程序不存在 $AppPath" }
+$InstalledVersion = (Get-Item $AppPath).VersionInfo.ProductVersion
+if ($InstalledVersion -ne $ExpectedVersion) {
+  throw "FAIL: 版本不匹配 installed=$InstalledVersion expected=$ExpectedVersion"
+}
+
+# 4. 启动 + 验证连接公网后端（App 的核心价值）
+$Proc = Start-Process -FilePath $AppPath -PassThru
+Start-Sleep -Seconds 5
+if ($Proc.HasExited) { throw "FAIL: 程序启动后立即退出" }
+
+# 验证 App 成功连上公网服务
+$resp = Invoke-RestMethod -Uri "$CloudEndpoint/health" -Method GET -TimeoutSec 10
+if ($resp.status -ne "ok") { throw "FAIL: App 未能连接云端 status=$($resp.status)" }
+
+Stop-Process -Id $Proc.Id -Force
+Write-Host "✅ windows_cloud E2E 验证通过 version=$InstalledVersion"
+```
+
+---
+
+### target_environment = linux_server（生产 API — SSH 到 hk-vps 执行）
+
+```bash
+#!/bin/bash
+# final-e2e 脚本（由 evaluator SSH 到 hk-vps/us-vps 执行）
+set -e
+
+REMOTE_BRAIN_URL="${REMOTE_BRAIN_URL:-https://{production_domain}}"
+
+# 1. 验证服务健康
+curl -sf "$REMOTE_BRAIN_URL/api/brain/health" | jq -e '.status == "ok"' || { echo "FAIL: 服务不健康"; exit 1; }
+
+# 2. 触发 + 验证 Golden Path
+TARGET_TASK_ID=$(curl -sf -X POST "$REMOTE_BRAIN_URL/api/brain/tasks" \
+  -H "Content-Type: application/json" \
+  -d '{"task_type":"{task_type}","payload":{}}' | jq -r '.id')
+
+MAX_WAIT=60
+for i in $(seq 1 $MAX_WAIT); do
+  STATUS=$(curl -sf "$REMOTE_BRAIN_URL/api/brain/tasks/$TARGET_TASK_ID" | jq -r '.status')
+  [ "$STATUS" = "completed" ] && break
+  [ "$i" = "$MAX_WAIT" ] && { echo "FAIL: 超时"; exit 1; }
+  sleep 2
+done
+
+echo "✅ 生产环境 Golden Path 验证通过"
 ```
 
 **通过标准**: 脚本 exit 0
@@ -340,23 +503,39 @@ journey_type: {journey_type}
 - [ ] [ARTIFACT] {文件/配置存在}
   Test: node -e "const c=require('fs').readFileSync('{path}','utf8');if(!c.includes('{pattern}'))process.exit(1)"
 
-## BEHAVIOR 条目（内嵌可执行 manual: 命令，禁止只索引 vitest）
+## BEHAVIOR 条目（内嵌可执行 manual: 命令，按 journey_type 选模板）
 
-- [ ] [BEHAVIOR] GET /endpoint?q=v 返 {result:N, operation:"X"} 严 schema
-  Test: manual:bash -c 'cd playground && PLAYGROUND_PORT=3001 node server.js & SPID=$!; sleep 2; RESP=$(curl -s "localhost:3001/endpoint?q=v"); R=$(echo "$RESP" | jq -e ".result == N and .operation == \"X\"" && echo OK); kill $SPID; [ -n "$R" ]'
+### journey_type = autonomous 时的 BEHAVIOR 模板（测真实 Brain/DB）
+
+- [ ] [BEHAVIOR] {功能触发后} task 状态变 completed
+  Test: manual:bash -c 'RESP=$(curl -sf localhost:5221/api/brain/tasks/$TARGET_TASK_ID); echo "$RESP" | jq -e ".status == \"completed\"" || exit 1; echo OK'
   期望: OK
 
-- [ ] [BEHAVIOR] response 严 schema 完整性 keys 恰好 [operation, result]
-  Test: manual:bash -c 'cd playground && PLAYGROUND_PORT=3002 node server.js & SPID=$!; sleep 2; RESP=$(curl -s "localhost:3002/endpoint?q=v"); R=$(echo "$RESP" | jq -e "keys == [\"operation\",\"result\"]" && echo OK); kill $SPID; [ -n "$R" ]'
+- [ ] [BEHAVIOR] {副作用} DB 写入记录（带时间窗口防造假）
+  Test: manual:bash -c 'COUNT=$(psql $DB -t -c "SELECT count(*) FROM {table} WHERE task_id='"'"'$TARGET_TASK_ID'"'"' AND created_at > NOW() - interval '"'"'5 minutes'"'"'" | tr -d " "); [ "$COUNT" -ge 1 ] || exit 1; echo OK'
   期望: OK
 
-- [ ] [BEHAVIOR] 禁用字段 product/value/answer 反向不存在
-  Test: manual:bash -c 'cd playground && PLAYGROUND_PORT=3003 node server.js & SPID=$!; sleep 2; RESP=$(curl -s "localhost:3003/endpoint?q=v"); R=$(echo "$RESP" | jq -e "has(\"product\") | not" && echo OK); kill $SPID; [ -n "$R" ]'
-  期望: OK
-
-- [ ] [BEHAVIOR] error path /endpoint?q=foo 返 400
-  Test: manual:bash -c 'cd playground && PLAYGROUND_PORT=3004 node server.js & SPID=$!; sleep 2; CODE=$(curl -s -o /dev/null -w "%{http_code}" "localhost:3004/endpoint?q=foo"); kill $SPID; [ "$CODE" = "400" ]'
+- [ ] [BEHAVIOR] {API endpoint} 返回预期 schema 字段
+  Test: manual:bash -c 'curl -sf localhost:5221/api/brain/{endpoint}/$TARGET_TASK_ID | jq -e ".{field} == \"{expected_value}\""'
   期望: exit 0
+
+- [ ] [BEHAVIOR] error path — 非法输入返 4xx + error 字段存在
+  Test: manual:bash -c 'CODE=$(curl -s -o /dev/null -w "%{http_code}" "localhost:5221/api/brain/{endpoint}/invalid"); [ "$CODE" = "400" ] || [ "$CODE" = "404" ] || exit 1; echo OK'
+  期望: OK
+
+### journey_type = user_facing 时的 BEHAVIOR 模板（模式A：API-level；模式B：Playwright）
+
+模式A BEHAVIOR（evaluator 逐 ws 跑，API-level，测 Brain 后端逻辑）：
+
+- [ ] [BEHAVIOR] 用户操作触发的 Brain 任务状态变更
+  Test: manual:bash -c 'RESP=$(curl -sf localhost:5221/api/brain/tasks/$TARGET_TASK_ID); echo "$RESP" | jq -e ".status == \"completed\""'
+  期望: exit 0
+
+- [ ] [BEHAVIOR] 操作结果持久化到 DB
+  Test: manual:bash -c 'COUNT=$(psql $DB -t -c "SELECT count(*) FROM {table} WHERE user_id='"'"'$TEST_USER_ID'"'"' AND created_at > NOW() - interval '"'"'5 minutes'"'"'" | tr -d " "); [ "$COUNT" -ge 1 ] || exit 1'
+  期望: exit 0
+
+模式B E2E（final-e2e 跑，UI-level，Playwright 真实浏览器）写在 ## E2E 验收 区块（见下方）。
 
 DODEOF
 ```
@@ -503,5 +682,6 @@ Brain 读此文件获取结果，不解析 stdout。`$PROPOSE_BRANCH` 由 Brain 
 
 1. **合同格式用 `## Feature 1 / ## Feature 2`** → v7 必须改为 Golden Path Steps
 2. **验证命令用 `echo "ok"` / `true`** → 假验证，Reviewer 必须打回
-3. **在 contract-dod-ws{N}.md 出现 [BEHAVIOR] 条目** → CI `dod-structure-purity` 会 exit 1
-4. **禁止在 main 分支操作**
+3. **autonomous BEHAVIOR 命令测 playground 服务器** → `cd playground && node server.js` 等只能出现在明确标注 `is_skeleton: true` 的 playground 训练 sprint 里；真实功能 sprint 必须测 `localhost:5221`（Brain）
+4. **user_facing 模式B E2E 不含 Playwright 断言** → 只有 curl 没有 `toBeVisible/toHaveText` 等 UI 断言 = 假 E2E，Reviewer 打回
+5. **禁止在 main 分支操作**
