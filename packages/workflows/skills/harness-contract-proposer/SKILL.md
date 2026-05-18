@@ -4,10 +4,11 @@ description: |
   Harness Contract Proposer — Harness v5 GAN Layer 2a：
   读 PRD，GAN 对抗写 Golden Path 合同（每步含真实验证命令）；
   Reviewer APPROVED 后倒推拆 task-plan.json。
-version: 7.8.0
+version: 7.9.0
 created: 2026-04-08
 updated: 2026-05-18
 changelog:
+  - 7.9.0: 删除 windows_local 模板 — 所有 Windows 测试统一走 windows_cloud（GitHub Actions），Cecelia 走 mac_web/local_api；target_environment 枚举值同步缩减
   - 7.8.0: 两层验证架构强制规则 — 修复假阳性根因：BEHAVIOR 命令按 journey_type 分两层：模式A(evaluator 逐ws) = API-level（autonomous→curl Brain 5221/psql；user_facing→Playwright API assertions）；模式B(final-e2e) = UI-level（user_facing→Playwright browser 真实操作，autonomous→curl+psql Golden Path 全程）。禁止 autonomous BEHAVIOR 命令测 playground（只能测真实 Brain/DB）。删除禁止事项 #3 遗留 v5.0 矛盾规则
   - 7.7.0: Step 2 Workstreams 切分硬规则（B14 加）— 单 ws ≤ 200 行净增 + ≤ 3 文件；整 contract 净增 < 200 行才允许 ws_count=1
   - 7.6.0: 修 Bug 9 proposer 写 0 条 [BEHAVIOR] 借口"v5.0 严禁"（W26 实证 r3 proposer 在 contract-dod 末尾写"v5.0 [BEHAVIOR] 条目已搬迁到 vitest，DoD 纯度规则：本文件只装 [ARTIFACT]"）—（a）changelog v5.0 行标 [已废止]；（b）Step 2b 阈值提前并改成"必须 ≥ 4 条 [BEHAVIOR]"；（c）加"禁止借口"反例段；（d）自查 checklist 加第 5 条 grep -c BEHAVIOR ≥ 4 断言
@@ -173,7 +174,7 @@ psql $DB -c "SELECT count(*) FROM brain_alerts WHERE task_id='$TASK_ID' AND crea
 ## E2E 验收（最终 final-e2e 跑 — 按 target_environment 选模板）
 
 **journey_type**: {autonomous|user_facing|dev_pipeline|agent_remote}
-**target_environment**: {local_api|mac_web|windows_cloud|windows_local|linux_server|playground}
+**target_environment**: {local_api|mac_web|windows_cloud|linux_server|playground}
 
 > **选模板规则**：看 PRD 末尾的 `target_environment` 字段，不是 `journey_type`。evaluator 模式B 按 `target_environment` SSH 派发到正确机器，合同 E2E 脚本必须与目标机器匹配。
 
@@ -292,41 +293,6 @@ if ($resp.status -ne "ok") { throw "FAIL: App 未能连接云端 status=$($resp.
 
 Stop-Process -Id $Proc.Id -Force
 Write-Host "✅ windows_cloud E2E 验证通过 version=$InstalledVersion"
-```
-
----
-
-### target_environment = windows_local（内网 Windows 产品 — SSH xian-pc + Windows Sandbox）
-
-> 适用：需要访问 Tailscale 内网 / localhost 的 Windows 功能。用 Sandbox 保证完全隔离。
-
-```powershell
-# final-e2e PowerShell 脚本（在 xian-pc Windows Sandbox 内执行）
-# Sandbox 每次启动都是全新系统，退出自动销毁，等同 windows_cloud 的干净程度
-
-param(
-  [string]$InternalEndpoint = "http://{tailscale_ip}:{port}"  # 内网服务地址
-)
-
-Set-StrictMode -Version Latest
-$ErrorActionPreference = "Stop"
-
-# 1. 安装（从内网或公网下载）
-$InstallerPath = "$env:TEMP\{app_name}-setup.exe"
-Invoke-WebRequest -Uri "{installer_url}" -OutFile $InstallerPath -UseBasicParsing
-
-Start-Process -FilePath $InstallerPath -ArgumentList "/S" -Wait -NoNewWindow
-
-# 2. 验证连接内网服务
-$AppPath = "${env:ProgramFiles}\{app_name}\{app_exe}"
-$Proc = Start-Process -FilePath $AppPath -PassThru
-Start-Sleep -Seconds 5
-
-$resp = Invoke-RestMethod -Uri "$InternalEndpoint/health" -Method GET -TimeoutSec 10
-if ($resp.status -ne "ok") { throw "FAIL: App 未能连接内网服务" }
-
-Stop-Process -Id $Proc.Id -Force
-Write-Host "✅ windows_local E2E 验证通过"
 ```
 
 ---

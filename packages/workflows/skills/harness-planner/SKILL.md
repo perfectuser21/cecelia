@@ -4,11 +4,12 @@ description: |
   Harness Planner — Harness v5 阶段 A Layer 1：把用户需求展开为 Initiative PRD（Golden Path 格式）。
   输出 sprint-prd.md（What，不写 How），供 Proposer GAN 起草 Golden Path 合同。
   v8 起不再拆任务——任务 DAG 由 Proposer 在合同 GAN 确认后从 Golden Path 倒推。
-version: 8.5.0
+version: 8.6.0
 created: 2026-04-08
 updated: 2026-05-18
 changelog:
-  - 8.5.0: 加 target_environment 字段 — Step 0.5 新增推断规则（5 种环境），PRD 模板末尾新增 target_environment 行；evaluator 模式B 按此字段 SSH 派发到正确机器执行 E2E（mac_web→Playwright本机 / windows_native→SSH xian-pc / linux_server→SSH hk-vps / local_api→curl localhost:5221）
+  - 8.6.0: 删除 windows_local — 所有 Windows 测试统一走 windows_cloud（GitHub Actions windows-latest）；Cecelia 是内网产品走 mac_web/local_api，无需 windows_local；target_environment 从 6 种缩减为 5 种
+  - 8.5.0: 加 target_environment 字段 — Step 0.5 新增推断规则，PRD 模板末尾新增 target_environment 行；evaluator 模式B 按此字段派发到正确机器执行 E2E
   - 8.4.0: Step 0 位置词死规则（B33 — W43 实证）— planner 把 playground 漂移到 brain route，强制 thin_prd 位置词原样映射到实现模块
   - 8.3.0: Step 0 thin_prd 主题死规则（B20 — W41 实证）— planner 把 task title 当主题导致 PRD 偏题，强制 thin_prd 关键词字面照搬到 sprint-prd.md，禁止用 task title 当主题
   - 8.2.0: Response Schema 段加"Query Parameters"子段 — W22 实证 generator 漂移到 query 名 a/b（PRD 写 base/exp）。补充 query 名约束 + 禁用别名清单，配合 proposer v7.4 强制每个 query 1 条 [BEHAVIOR]
@@ -182,9 +183,8 @@ else（无路径线索）→ 默认 autonomous
 
 | 场景 | target_environment | 执行位置 | 说明 |
 |---|---|---|---|
-| Cecelia Dashboard / Web UI | `mac_web` | xian-m4 本机 | Playwright localhost:5174，context 原生隔离 |
-| **公网 Windows 产品**（ZenithJoy Agent 等连公网服务的 App）| **`windows_cloud`** | **GitHub Actions windows-latest** | 完全干净 VM，public repo 免费无限次，永远无历史状态 |
-| 内网 Windows 产品（需访问 Tailscale / localhost）| `windows_local` | SSH xian-pc（Win 11 Pro + Sandbox）| Sandbox 隔离，每次全新 |
+| Cecelia Dashboard / Web UI | `mac_web` | 本机 Playwright | localhost:5174，context 原生隔离 |
+| **Windows 产品**（ZenithJoy Agent 等）| **`windows_cloud`** | **GitHub Actions windows-latest** | 完全干净 VM，public repo 免费无限次，永远无历史状态 |
 | 生产 API 验证 | `linux_server` | SSH hk-vps / us-vps | curl + psql |
 | Brain 内部 / 纯后端 | `local_api` | 本地 evaluator | curl localhost:5221 + psql |
 | playground 训练 sprint | `playground` | 本地 | node playground/server.js |
@@ -193,15 +193,12 @@ else（无路径线索）→ 默认 autonomous
 
 ```
 if 涉及 apps/dashboard/ → mac_web
-if Windows App + 后端是公网 URL (https://...) → windows_cloud   ← ZenithJoy/中台优先选这个
-if Windows App + 后端是内网/localhost → windows_local
+if Windows App → windows_cloud（GitHub Actions，无论连公网还是内网）
 if 仅 packages/brain/ → local_api
 if 涉及生产部署 → linux_server
 if is_skeleton=true or thin_prd 含 "playground" → playground
 else → local_api（默认）
 ```
-
-**windows_cloud vs windows_local 判断标准（一句话）**：被测 App 连的是公网 URL → `windows_cloud`；连的是 Tailscale 内网 → `windows_local`。
 
 记录：`journey_type: <值>` + `target_environment: <值>`，写入 PRD 末尾。两个字段**缺一不可**，proposer 和 evaluator 都依赖这两个字段。
 
@@ -321,8 +318,8 @@ mkdir -p "$SPRINT_DIR"
 
 ## journey_type: autonomous|user_facing|dev_pipeline|agent_remote
 ## journey_type_reason: {1 句推断依据}
-## target_environment: mac_web|windows_cloud|windows_local|linux_server|local_api|playground
-## target_environment_reason: {1 句推断依据，含目标机器名（如 GitHub Actions、xian-pc、hk-vps、localhost:5174）}
+## target_environment: mac_web|windows_cloud|linux_server|local_api|playground
+## target_environment_reason: {1 句推断依据，含目标机器名（如 GitHub Actions、hk-vps、localhost:5174）}
 ```
 
 ---
