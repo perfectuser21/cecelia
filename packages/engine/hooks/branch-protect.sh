@@ -75,15 +75,16 @@ if [[ "$REAL_FILE_PATH" == "$HOME_DIR/.claude/skills/"* ]] || \
     exit 0
 fi
 
+# ===== project /skills/ 下 .md 文件明确放行（SKILL 文档不需分支保护）=====
+if [[ "$FILE_PATH" == *"/skills/"* && "${FILE_PATH##*.}" == "md" ]]; then
+    exit 0
+fi
+
 # ===== 判断是否需要保护 =====
 NEEDS_PROTECTION=false
-if [[ "$FILE_PATH" == *"/skills/"* ]]; then
-    # .md 文件（SKILL 文档）不需要分支保护
-    if [[ "${FILE_PATH##*.}" != "md" ]]; then
-        NEEDS_PROTECTION=true
-    fi
-elif [[ "$FILE_PATH" == *"/hooks/"* ]] || \
-     [[ "$FILE_PATH" == *"/.github/"* ]]; then
+if [[ "$FILE_PATH" == *"/skills/"* ]] || \
+   [[ "$FILE_PATH" == *"/hooks/"* ]] || \
+   [[ "$FILE_PATH" == *"/.github/"* ]]; then
     NEEDS_PROTECTION=true
 fi
 EXT="${FILE_PATH##*.}"
