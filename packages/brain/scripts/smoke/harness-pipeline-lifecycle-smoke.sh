@@ -28,6 +28,9 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/../../../.." && pwd)"
 
 # ── Skip guard ──────────────────────────────────────────────────────────────
 
+# 此脚本设计用于手动/定时运行（最长 90 分钟），不适合 CI 短跑
+[[ "${CI:-}" == "true" ]] && skip "CI 环境不跑此脚本（耗时最长 90min，设计为手动/定时触发）"
+
 command -v curl >/dev/null 2>&1 || skip "curl 未安装"
 
 if ! curl -sf -m 5 "${BRAIN_URL}/api/brain/health" -o /dev/null 2>&1; then
