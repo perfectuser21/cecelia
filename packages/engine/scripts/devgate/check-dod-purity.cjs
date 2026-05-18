@@ -3,7 +3,7 @@
  * check-dod-purity.cjs — Harness v5 CI check
  *
  * 规则：
- *   contract-dod-ws{N}.md 只能装 [ARTIFACT] 条目，严禁 [BEHAVIOR] 条目
+ *   contract-dod-ws{N}.md 必须含 [BEHAVIOR] 条目（v7.4+），Test 字段必须用 manual:bash 内嵌命令
  *   Test 字段只允许白名单：node / npm / curl / bash / psql / tests/ / manual: / contract:
  *
  * 扫描范围：
@@ -59,14 +59,20 @@ function checkFile(filePath) {
   const lines = content.split("\n");
   const violations = [];
 
-  // Rule 1: 禁 [BEHAVIOR] 条目
-  // 允许的：`## BEHAVIOR 索引`（标题）
-  // 禁止的：`- [ ] [BEHAVIOR] ...` 或 `- [x] [BEHAVIOR] ...`
+  // Rule 1: [BEHAVIOR] 条目必须含 manual:bash 命令（v7.4+ 协议）
+  // 禁止：[BEHAVIOR] 条目的 Test: 字段只引用 vitest 文件（老格式）
   for (let i = 0; i < lines.length; i++) {
     if (/^\s*-\s*\[[\sxX]\]\s*\[BEHAVIOR\]/.test(lines[i])) {
-      violations.push(
-        `L${i + 1}: 禁止 [BEHAVIOR] 条目 — BEHAVIOR 必须搬到 tests/ws{N}/*.test.ts：\n    ${lines[i].trim()}`
-      );
+      let testLine = '';
+      for (let j = i + 1; j < Math.min(i + 5, lines.length); j++) {
+        const m = lines[j].match(/^\s*Test:\s*(.+)$/);
+        if (m) { testLine = m[1].trim(); break; }
+      }
+      if (testLine && /^tests\//.test(testLine) && !/manual:/.test(testLine)) {
+        violations.push(
+          `L${i + 1}: [BEHAVIOR] Test: 字段不能只引用 vitest 文件，必须用 manual:bash 内嵌命令（v7.4+）：\n    ${lines[i].trim()}`
+        );
+      }
     }
   }
 
