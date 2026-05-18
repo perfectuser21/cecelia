@@ -30,7 +30,7 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 
 command -v curl >/dev/null 2>&1 || skip "curl 未安装"
 
-if ! curl -sf "${BRAIN_URL}/api/brain/health" -o /dev/null 2>&1; then
+if ! curl -sf -m 5 "${BRAIN_URL}/api/brain/health" -o /dev/null 2>&1; then
   skip "Brain ${BRAIN_URL} 不健康"
 fi
 
@@ -45,7 +45,7 @@ log "前置 OK — Brain 健康, PRD 存在"
 
 log "创建 harness_initiative 任务 (sprint_dir=${SPRINT_DIR})..."
 
-TASK_JSON=$(curl -sf -X POST "${BRAIN_URL}/api/brain/tasks" \
+TASK_JSON=$(curl -sf -m 10 -X POST "${BRAIN_URL}/api/brain/tasks" \
   -H "Content-Type: application/json" \
   -d "{
     \"task_type\": \"harness_initiative\",
@@ -76,7 +76,7 @@ CONSECUTIVE_ERRORS=0
 while true; do
   ELAPSED=$(( $(date +%s) - START_TIME ))
   if (( ELAPSED >= MAX_WAIT )); then
-    LAST_JSON=$(curl -sf "${BRAIN_URL}/api/brain/tasks/${TASK_ID}" 2>/dev/null || echo '{}')
+    LAST_JSON=$(curl -sf -m 10 "${BRAIN_URL}/api/brain/tasks/${TASK_ID}" 2>/dev/null || echo '{}')
     if command -v jq >/dev/null 2>&1; then
       LAST_STATUS=$(echo "$LAST_JSON" | jq -r '.status // "unknown"')
     else
@@ -85,7 +85,7 @@ while true; do
     fail "超时（${MAX_WAIT}s），pipeline 疑似卡死。最后 status=${LAST_STATUS}, task_id=${TASK_ID}"
   fi
 
-  TASK_JSON=$(curl -sf "${BRAIN_URL}/api/brain/tasks/${TASK_ID}" 2>/dev/null || echo "")
+  TASK_JSON=$(curl -sf -m 10 "${BRAIN_URL}/api/brain/tasks/${TASK_ID}" 2>/dev/null || echo "")
   if [[ -z "$TASK_JSON" ]]; then
     CONSECUTIVE_ERRORS=$(( CONSECUTIVE_ERRORS + 1 ))
     log "⚠ curl 失败 (${CONSECUTIVE_ERRORS}/5)，Brain 可能在重启..."
