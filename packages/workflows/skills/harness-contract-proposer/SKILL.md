@@ -170,13 +170,16 @@ psql $DB -c "SELECT count(*) FROM brain_alerts WHERE task_id='$TASK_ID' AND crea
 
 ---
 
-## E2E 验收（最终 final-e2e 跑 — 按 journey_type 选模板）
+## E2E 验收（最终 final-e2e 跑 — 按 target_environment 选模板）
 
 **journey_type**: {autonomous|user_facing|dev_pipeline|agent_remote}
+**target_environment**: {local_api|mac_web|windows_native|linux_server|playground}
+
+> **选模板规则**：看 PRD 末尾的 `target_environment` 字段，不是 `journey_type`。evaluator 模式B 按 `target_environment` SSH 派发到正确机器，合同 E2E 脚本必须与目标机器匹配。
 
 ---
 
-### autonomous E2E 模板（curl + psql 全程链路）
+### target_environment = local_api（autonomous — curl+psql 全程链路，本地执行）
 
 ```bash
 #!/bin/bash
@@ -188,7 +191,7 @@ TARGET_TASK_ID=$(psql $DB -t -c "INSERT INTO tasks (task_type, status, payload) 
 # 2. 触发处理（tick 或主动 POST）
 curl -f -X POST localhost:5221/api/brain/{trigger_endpoint}
 
-# 3. 等待处理（最多 N 秒，带时间窗口防止利用历史数据造假）
+# 3. 等待处理（最多 30 秒，带时间窗口防止利用历史数据造假）
 MAX_WAIT=30
 for i in $(seq 1 $MAX_WAIT); do
   STATUS=$(curl -sf localhost:5221/api/brain/tasks/$TARGET_TASK_ID | jq -r '.status')
@@ -206,33 +209,34 @@ echo "✅ Golden Path 验证通过"
 
 ---
 
-### user_facing E2E 模板（Playwright 真实浏览器操作）
+### target_environment = mac_web（user_facing — Playwright 本机真实浏览器，localhost:5174）
 
 ```javascript
-// final-e2e Playwright 脚本
-const { chromium } = require('playwright');
+// final-e2e Playwright 脚本（在 Mac 本机执行）
+const { chromium, expect } = require('@playwright/test');
 
 (async () => {
   const browser = await chromium.launch();
-  const context = await browser.newContext({ storageState: undefined });
+  const context = await browser.newContext({ storageState: undefined }); // 每次新干净环境
   const page = await context.newPage();
 
-  // 1. 导航到功能页
+  // 1. 导航到功能页（真实 Cecelia Dashboard）
   await page.goto('http://localhost:5174/{feature_path}');
+  await page.waitForLoadState('networkidle');
 
-  // 2. 模拟用户操作
+  // 2. 模拟用户操作（填表 / 点击 / 选择）
   await page.fill('[data-testid="{input_field}"]', '{test_value}');
   await page.click('[data-testid="{submit_button}"]');
 
-  // 3. 断言 UI 响应（必须含显式 toBeVisible / toHaveText，不能只 navigate）
-  await expect(page.locator('[data-testid="{result_element}"]')).toBeVisible();
+  // 3. 断言 UI 响应（必须含显式断言，禁止只 navigate 不断言）
+  await expect(page.locator('[data-testid="{result_element}"]')).toBeVisible({ timeout: 10000 });
   await expect(page.locator('[data-testid="{result_element}"]')).toHaveText('{expected_text}');
 
-  // 4. 验证后端状态（防止 UI 撒谎）
+  // 4. 交叉验证后端状态（防止前端撒谎）
   const apiResp = await page.request.get('http://localhost:5221/api/brain/{verify_endpoint}');
   const data = await apiResp.json();
-  if (data.{field} !== '{expected_value}') {
-    console.error('FAIL: Brain 状态不匹配', data);
+  if (data['{field}'] !== '{expected_value}') {
+    console.error('FAIL: Brain 后端状态不匹配', data);
     process.exit(1);
   }
 
@@ -240,6 +244,78 @@ const { chromium } = require('playwright');
   await browser.close();
   console.log('✅ Golden Path UI 验证通过');
 })();
+```
+
+---
+
+### target_environment = windows_native（Windows 原生应用 — SSH 到 xian-pc 执行）
+
+```powershell
+# final-e2e PowerShell 脚本（由 evaluator SSH 到 xian-pc/xian-rog 执行）
+# 模拟真实 Windows 用户操作：下载 / 安装 / 启动 / 验证
+
+param(
+  [string]$DownloadUrl = "{artifact_download_url}",
+  [string]$ExpectedVersion = "{expected_version}"
+)
+
+Set-StrictMode -Version Latest
+$ErrorActionPreference = "Stop"
+
+# 1. 下载安装包（模拟用户点击下载）
+$InstallerPath = "$env:TEMP\{app_name}-setup.exe"
+Invoke-WebRequest -Uri $DownloadUrl -OutFile $InstallerPath
+if (-not (Test-Path $InstallerPath)) { throw "下载失败: $InstallerPath 不存在" }
+
+# 2. 静默安装（模拟用户安装）
+Start-Process -FilePath $InstallerPath -ArgumentList "/S" -Wait -NoNewWindow
+
+# 3. 验证安装结果（程序存在 + 版本正确）
+$AppPath = "${env:ProgramFiles}\{app_name}\{app_exe}"
+if (-not (Test-Path $AppPath)) { throw "FAIL: 安装后程序不存在 $AppPath" }
+
+$InstalledVersion = (Get-Item $AppPath).VersionInfo.ProductVersion
+if ($InstalledVersion -ne $ExpectedVersion) {
+  throw "FAIL: 版本不匹配 installed=$InstalledVersion expected=$ExpectedVersion"
+}
+
+# 4. 启动验证（程序能正常启动）
+$Proc = Start-Process -FilePath $AppPath -PassThru
+Start-Sleep -Seconds 3
+if ($Proc.HasExited) { throw "FAIL: 程序启动后立即退出 ExitCode=$($Proc.ExitCode)" }
+Stop-Process -Id $Proc.Id -Force
+
+Write-Host "✅ Windows 原生 E2E 验证通过 version=$InstalledVersion"
+```
+
+---
+
+### target_environment = linux_server（生产 API — SSH 到 hk-vps 执行）
+
+```bash
+#!/bin/bash
+# final-e2e 脚本（由 evaluator SSH 到 hk-vps/us-vps 执行）
+set -e
+
+REMOTE_BRAIN_URL="${REMOTE_BRAIN_URL:-https://{production_domain}}"
+
+# 1. 验证服务健康
+curl -sf "$REMOTE_BRAIN_URL/api/brain/health" | jq -e '.status == "ok"' || { echo "FAIL: 服务不健康"; exit 1; }
+
+# 2. 触发 + 验证 Golden Path
+TARGET_TASK_ID=$(curl -sf -X POST "$REMOTE_BRAIN_URL/api/brain/tasks" \
+  -H "Content-Type: application/json" \
+  -d '{"task_type":"{task_type}","payload":{}}' | jq -r '.id')
+
+MAX_WAIT=60
+for i in $(seq 1 $MAX_WAIT); do
+  STATUS=$(curl -sf "$REMOTE_BRAIN_URL/api/brain/tasks/$TARGET_TASK_ID" | jq -r '.status')
+  [ "$STATUS" = "completed" ] && break
+  [ "$i" = "$MAX_WAIT" ] && { echo "FAIL: 超时"; exit 1; }
+  sleep 2
+done
+
+echo "✅ 生产环境 Golden Path 验证通过"
 ```
 
 **通过标准**: 脚本 exit 0

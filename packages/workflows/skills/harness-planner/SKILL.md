@@ -4,10 +4,11 @@ description: |
   Harness Planner — Harness v5 阶段 A Layer 1：把用户需求展开为 Initiative PRD（Golden Path 格式）。
   输出 sprint-prd.md（What，不写 How），供 Proposer GAN 起草 Golden Path 合同。
   v8 起不再拆任务——任务 DAG 由 Proposer 在合同 GAN 确认后从 Golden Path 倒推。
-version: 8.4.0
+version: 8.5.0
 created: 2026-04-08
-updated: 2026-05-14
+updated: 2026-05-18
 changelog:
+  - 8.5.0: 加 target_environment 字段 — Step 0.5 新增推断规则（5 种环境），PRD 模板末尾新增 target_environment 行；evaluator 模式B 按此字段 SSH 派发到正确机器执行 E2E（mac_web→Playwright本机 / windows_native→SSH xian-pc / linux_server→SSH hk-vps / local_api→curl localhost:5221）
   - 8.4.0: Step 0 位置词死规则（B33 — W43 实证）— planner 把 playground 漂移到 brain route，强制 thin_prd 位置词原样映射到实现模块
   - 8.3.0: Step 0 thin_prd 主题死规则（B20 — W41 实证）— planner 把 task title 当主题导致 PRD 偏题，强制 thin_prd 关键词字面照搬到 sprint-prd.md，禁止用 task title 当主题
   - 8.2.0: Response Schema 段加"Query Parameters"子段 — W22 实证 generator 漂移到 query 名 a/b（PRD 写 base/exp）。补充 query 名约束 + 禁用别名清单，配合 proposer v7.4 强制每个 query 1 条 [BEHAVIOR]
@@ -164,9 +165,9 @@ curl localhost:5221/api/brain/context
 
 ---
 
-### Step 0.5: 推断 journey_type
+### Step 0.5: 推断 journey_type + target_environment
 
-根据用户请求描述和涉及文件判断：
+**journey_type**（决定"测什么"）：
 
 ```
 if 涉及 apps/dashboard/ → user_facing
@@ -177,7 +178,28 @@ elif 同时命中多个 → 取起点最靠前（UI > tick > task dispatch > bri
 else（无路径线索）→ 默认 autonomous
 ```
 
-记录：`journey_type: <值>，推断依据：<1 句话>`，写入 PRD 末尾。
+**target_environment**（决定"在哪台机器跑 E2E"）：
+
+| 场景 | target_environment | 说明 |
+|---|---|---|
+| Cecelia Dashboard / 任何 Web UI 功能 | `mac_web` | 本机 Playwright，localhost:5174 |
+| ZenithJoy Windows 客户端 / 原生 Windows 应用 | `windows_native` | SSH 到 xian-pc 或 xian-rog 执行 |
+| 生产环境 API / 部署验证 | `linux_server` | SSH 到 hk-vps 或 us-vps 执行 |
+| Brain 内部任务 / 纯后端 API 功能 | `local_api` | curl localhost:5221 + psql，本地执行 |
+| playground 训练 sprint（`is_skeleton: true`）| `playground` | node playground/server.js 本地执行 |
+
+**推断规则**：
+
+```
+if journey_type=user_facing and 涉及 apps/dashboard/ → mac_web
+if journey_type=user_facing and 涉及 Windows 原生 / ZenithJoy agent → windows_native
+if journey_type=autonomous and 仅 packages/brain/ → local_api
+if journey_type=autonomous and 涉及生产部署 / hk-vps → linux_server
+if is_skeleton=true or thin_prd 含 "playground" → playground
+else → local_api（默认）
+```
+
+记录：`journey_type: <值>` + `target_environment: <值>`，写入 PRD 末尾。两个字段**缺一不可**，proposer 和 evaluator 都依赖这两个字段。
 
 ---
 
@@ -295,6 +317,8 @@ mkdir -p "$SPRINT_DIR"
 
 ## journey_type: autonomous|user_facing|dev_pipeline|agent_remote
 ## journey_type_reason: {1 句推断依据}
+## target_environment: mac_web|windows_native|linux_server|local_api|playground
+## target_environment_reason: {1 句推断依据，含目标机器名（如 xian-pc、hk-vps、localhost:5174）}
 ```
 
 ---

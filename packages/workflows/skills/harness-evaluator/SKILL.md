@@ -69,6 +69,7 @@ generator 写代码 + push PR
 | `TASK_ID` | Brain 中当前 evaluate task 的 UUID |
 | `WORKSTREAM_N` | 当前 workstream 编号（如 `1`），仅模式 A 用 |
 | `JOURNEY_TYPE` | `user_facing` / `autonomous` / `dev_pipeline` / `agent_remote` |
+| `TARGET_ENV` | `mac_web` / `windows_native` / `linux_server` / `local_api` / `playground`（来自 PRD `target_environment` 字段）|
 | `DB` | PostgreSQL 连接串，如 `postgresql://localhost/cecelia` |
 
 **注**：DoD 文件中的 `Test:` 命令若引用 `$TARGET_TASK_ID`，该 ID 来自 DoD 文件内部（合同写入时硬编码或由 Generator 写入），Evaluator 直接执行 DoD 中的命令原文，不需单独注入。
@@ -342,14 +343,65 @@ BREOF
 fi
 ```
 
-按 `journey_type` 补充验证逻辑：
+按 `target_environment` 选择执行方式（v1.6 — 机器感知派发）：
 
-| journey_type | E2E 验证方式 |
-|---|---|
-| `autonomous` | 直接跑合同 bash 脚本（curl/psql 链路） |
-| `user_facing` | 合同 bash 脚本 + chrome MCP Playwright 界面点击验证 |
-| `dev_pipeline` | 合同 bash 脚本 + `gh pr view` 验证 callback 到达 |
-| `agent_remote` | 合同 bash 脚本 + 检查 bridge 回调 + DB 状态 |
+```bash
+# 读取 target_environment（从 PRD 或注入变量）
+TARGET_ENV="${TARGET_ENV:-local_api}"
+
+case "$TARGET_ENV" in
+
+  local_api)
+    # Brain 本地部署，curl + psql
+    timeout 120 bash /tmp/e2e-verify.sh 2>&1 | tee /tmp/e2e-result.log
+    EXIT_CODE=${PIPESTATUS[0]}
+    ;;
+
+  mac_web)
+    # Playwright 本机浏览器（Cecelia Dashboard，localhost:5174）
+    # e2e 脚本必须是 Node.js + @playwright/test
+    timeout 180 node /tmp/e2e-verify.js 2>&1 | tee /tmp/e2e-result.log
+    EXIT_CODE=${PIPESTATUS[0]}
+    ;;
+
+  windows_native)
+    # SSH 到 xian-pc 或 xian-rog 执行 PowerShell 脚本
+    # 合同 e2e 脚本必须是 .ps1 格式（见 proposer windows_native 模板）
+    WINDOWS_HOST="${WINDOWS_E2E_HOST:-xian-pc}"
+    scp /tmp/e2e-verify.ps1 "$WINDOWS_HOST:/tmp/cecelia-e2e.ps1" 2>&1
+    timeout 300 ssh "$WINDOWS_HOST" \
+      "powershell -ExecutionPolicy Bypass -File /tmp/cecelia-e2e.ps1" \
+      2>&1 | tee /tmp/e2e-result.log
+    EXIT_CODE=${PIPESTATUS[0]}
+    ;;
+
+  linux_server)
+    # SSH 到 hk-vps 或 us-vps 执行 bash 脚本
+    LINUX_HOST="${LINUX_E2E_HOST:-hk-vps}"
+    scp /tmp/e2e-verify.sh "$LINUX_HOST:/tmp/cecelia-e2e.sh" 2>&1
+    timeout 180 ssh "$LINUX_HOST" "bash /tmp/cecelia-e2e.sh" \
+      2>&1 | tee /tmp/e2e-result.log
+    EXIT_CODE=${PIPESTATUS[0]}
+    ;;
+
+  playground)
+    # playground 训练 sprint，本地执行
+    timeout 60 bash /tmp/e2e-verify.sh 2>&1 | tee /tmp/e2e-result.log
+    EXIT_CODE=${PIPESTATUS[0]}
+    ;;
+
+  *)
+    echo "WARN: 未知 TARGET_ENV=$TARGET_ENV，回退到 local_api"
+    timeout 120 bash /tmp/e2e-verify.sh 2>&1 | tee /tmp/e2e-result.log
+    EXIT_CODE=${PIPESTATUS[0]}
+    ;;
+esac
+```
+
+**SSH 前置条件**（`windows_native` / `linux_server` 必须满足）：
+- `~/.ssh/config` 已配置 `xian-pc` / `xian-rog` / `hk-vps` / `us-vps` 别名
+- SSH 无密码免密登录已配置（Brain 所在机器的 key 已部署到目标机器）
+- 目标机器上 `playwright` / `node` / `powershell` 已安装
 
 #### Step B-3: 判断结果
 
