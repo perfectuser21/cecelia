@@ -152,7 +152,7 @@ export async function runReviewerSchemaLoop(spawnFn, schema, budgetCap, accumula
       continue;
     }
 
-    return { ...parsed.data, cost_usd: raw?.cost_usd, _raw: raw };
+    return { ...parsed.data, cost_usd: accumulatedCost, _raw: raw };
   }
 }
 
@@ -484,7 +484,9 @@ export function createGanContractNodes(executor, ctx) {
           if (!retryResult || (retryResult.exit_code !== undefined && retryResult.exit_code !== 0)) {
             throw new Error(`reviewer_failed: exit=${retryResult?.exit_code}`);
           }
-          const raw = await readBrainResult(worktreePath, ['verdict', 'rubric_scores', 'feedback']);
+          const raw = retryResult._reconnected
+            ? retryResult
+            : await readBrainResult(worktreePath, ['verdict', 'rubric_scores', 'feedback']);
           return { ...raw, cost_usd: retryResult.cost_usd || 0 };
         },
         ReviewerOutputSchema,
