@@ -44,7 +44,7 @@ import { resolveGitHubToken } from '../harness-credentials.js';
 import { spawnDockerDetached } from '../spawn/detached.js';
 import { resolveAccount } from '../spawn/middleware/account-rotation.js';
 import { checkPrStatus, classifyFailedChecks } from '../shepherd.js';
-import { parseDockerOutput, extractField, readPrFromGitState, readVerdictFile, readBrainResult } from '../harness-shared.js';
+import { parseDockerOutput, extractField, readPrFromGitState, readVerdictFile, readBrainResult, EvaluatorOutputSchema } from '../harness-shared.js';
 import { buildGeneratorPrompt, extractWorkstreamIndex } from '../harness-utils.js';
 import { getPgCheckpointer } from '../orchestrator/pg-checkpointer.js';
 import pool from '../db.js';
@@ -611,14 +611,23 @@ export async function evaluateContractNode(state, opts = {}) {
   if (state.worktreePath) {
     try {
       const brainResult = await readBrainResult(state.worktreePath, ['verdict']);
-      const normV = normalizeVerdict(brainResult.verdict);
-      const feedback = brainResult.log_excerpt || brainResult.failed_step || null;
+      const parsed = EvaluatorOutputSchema.safeParse(brainResult);
+      if (!parsed.success) {
+        const issues = parsed.error.issues.map(i => `${i.path.join('.')}: ${i.message}`).join('; ');
+        console.warn(`[evaluator] schema_mismatch, propagating: ${issues}`);
+        const err = new Error(`ContractViolation: schema_mismatch — ${issues}`);
+        err.code = 'schema_mismatch';
+        throw err;
+      }
+      const normV = normalizeVerdict(parsed.data.verdict);
+      const feedback = parsed.data.feedback || brainResult.log_excerpt || brainResult.failed_step || null;
       return {
         evaluate_verdict: normV,
         evaluate_error: normV === 'FAIL' ? (feedback || 'evaluator returned FAIL') : null,
       };
-    } catch {
-      // .brain-result.json 不存在或字段缺失，继续 Protocol v1 fallback
+    } catch (e) {
+      if (e.code === 'schema_mismatch') throw e;  // 重新抛出，不被 fallback 吞掉
+      // .brain-result.json 不存在或其他错误，继续 Protocol v1 fallback
     }
   }
 
