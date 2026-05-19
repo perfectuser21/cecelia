@@ -1,5 +1,5 @@
 /**
- * harness-shared.js — 跨模块共享的 docker output parsing 工具。
+ * harness-shared.js — 跨模块共享的 docker output parsing 工具与 Zod 输出 Schema。
  *
  * 这 3 个函数原定义在 harness-graph.js（6 节点 GAN pipeline 主文件）。
  * 该 pipeline 已退役（PR retire-harness-planner），但 docker-executor /
@@ -7,6 +7,11 @@
  * Claude `--output-format json` 容器输出，故抽到本模块独立保留。
  *
  * 函数语义与 harness-graph.js 原版完全一致，仅 module 路径切换。
+ *
+ * 额外导出：
+ * - ReviewerOutputSchema — Zod schema，校验 harness-contract-reviewer 输出结构
+ * - EvaluatorOutputSchema — Zod schema，校验 harness-evaluator 输出结构（verdict: PASS|FIXED|FAIL）
+ * - readAndValidateBrainResult — 读取 .brain-result.json 并用给定 schema 校验，校验失败抛 schema_mismatch
  */
 
 import { readFileSync, existsSync } from 'fs';

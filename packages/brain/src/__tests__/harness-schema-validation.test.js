@@ -76,6 +76,10 @@ describe('EvaluatorOutputSchema', () => {
     expect(EvaluatorOutputSchema.safeParse({ verdict: 'APPROVED', feedback: 'ok' }).success).toBe(false);
   });
 
+  it('接受 FAIL verdict', () => {
+    expect(EvaluatorOutputSchema.safeParse({ verdict: 'FAIL', feedback: 'ci failed' }).success).toBe(true);
+  });
+
   it('task_id 可选', () => {
     expect(EvaluatorOutputSchema.safeParse({ verdict: 'PASS', feedback: 'ok' }).success).toBe(true);
     expect(EvaluatorOutputSchema.safeParse({ verdict: 'PASS', task_id: 'abc', feedback: 'ok' }).success).toBe(true);
