@@ -458,16 +458,59 @@ async function probeEvolution() {
   };
 }
 
+// 探针内部查询超时（10s）：防止 memory_stream/daily_logs 在 DB 高负载时挂住，
+// 导致外层 30s probe timeout 吞掉有效错误信息。
+const CONSOLIDATION_QUERY_TIMEOUT_MS = 10_000;
+
+/**
+ * 带超时的 pool.query 包装，超时后 reject 并携带 'query_timeout' 标记。
+ * 注意：PostgreSQL 侧查询仍会继续运行；此处仅在 JS 层快速失败，避免
+ * 占满 probe 30s 窗口。如需彻底取消服务端查询，需改用 statement_timeout。
+ */
+function queryWithTimeout(sql) {
+  return Promise.race([
+    pool.query(sql),
+    new Promise((_, reject) =>
+      setTimeout(
+        () => reject(Object.assign(new Error('query_timeout'), { isQueryTimeout: true })),
+        CONSOLIDATION_QUERY_TIMEOUT_MS
+      )
+    ),
+  ]);
+}
+
 async function probeConsolidation() {
+  let lastRun;
+  let cnt = 0;
+
   // 主路径：48h 内 memory_stream 是否有 daily_consolidation 记录
-  const result = await pool.query(
-    `SELECT count(*) AS cnt, max(created_at) AS last_run
-     FROM memory_stream
-     WHERE source_type = 'daily_consolidation'
-       AND created_at > NOW() - INTERVAL '48 hours'`
-  );
-  const cnt = parseInt(result.rows[0]?.cnt || 0);
-  const lastRun = result.rows[0]?.last_run;
+  try {
+    const result = await queryWithTimeout(
+      `SELECT count(*) AS cnt, max(created_at) AS last_run
+       FROM memory_stream
+       WHERE source_type = 'daily_consolidation'
+         AND created_at > NOW() - INTERVAL '48 hours'`
+    );
+    cnt = parseInt(result.rows[0]?.cnt || 0);
+    lastRun = result.rows[0]?.last_run;
+  } catch (err) {
+    if (err.isQueryTimeout) {
+      // DB 负载过高时快速失败，携带有效 detail；
+      // 同时触发自愈（fire-and-forget），可能让下次探针看到记录
+      import('./consolidation.js')
+        .then(({ runDailyConsolidationIfNeeded }) =>
+          runDailyConsolidationIfNeeded(pool)
+        )
+        .catch(healErr =>
+          console.warn('[Probe] consolidation query_timeout self-heal failed:', healErr.message)
+        );
+      return {
+        ok: false,
+        detail: `memory_stream_query=timeout(>${CONSOLIDATION_QUERY_TIMEOUT_MS}ms) self_heal=triggered`,
+      };
+    }
+    throw err;
+  }
 
   if (cnt > 0) {
     return {
@@ -479,14 +522,26 @@ async function probeConsolidation() {
   // 兜底路径：memory_stream 为空，但 daily_logs 有近期 consolidation 记录
   // 适用场景：旧版 consolidation 在"空闲日"只写 daily_logs（修复前的历史数据）
   // 此时 consolidation 循环健康，只是 memory_stream 表存量未恢复，不应误报失败
-  const logsResult = await pool.query(
-    `SELECT count(*) AS cnt, max(date) AS last_date
-     FROM daily_logs
-     WHERE type = 'consolidation'
-       AND date >= (NOW() - INTERVAL '48 hours')::date`
-  );
-  const logsCnt = parseInt(logsResult.rows[0]?.cnt || 0);
-  const lastDate = logsResult.rows[0]?.last_date;
+  let logsCnt = 0;
+  let lastDate;
+  try {
+    const logsResult = await queryWithTimeout(
+      `SELECT count(*) AS cnt, max(date) AS last_date
+       FROM daily_logs
+       WHERE type = 'consolidation'
+         AND date >= (NOW() - INTERVAL '48 hours')::date`
+    );
+    logsCnt = parseInt(logsResult.rows[0]?.cnt || 0);
+    lastDate = logsResult.rows[0]?.last_date;
+  } catch (err) {
+    if (err.isQueryTimeout) {
+      return {
+        ok: false,
+        detail: `48h_consolidations=0 last_run=${lastRun || 'never'} daily_logs_query=timeout(>${CONSOLIDATION_QUERY_TIMEOUT_MS}ms)`,
+      };
+    }
+    throw err;
+  }
 
   if (logsCnt > 0) {
     return {
@@ -495,9 +550,19 @@ async function probeConsolidation() {
     };
   }
 
+  // loop_dead 自愈：直接触发一次合并（fire-and-forget），让下次探针有机会看到记录
+  console.log('[Probe] consolidation loop_dead detected, triggering self-heal via runDailyConsolidationIfNeeded');
+  import('./consolidation.js')
+    .then(({ runDailyConsolidationIfNeeded }) =>
+      runDailyConsolidationIfNeeded(pool)
+    )
+    .catch(healErr =>
+      console.warn('[Probe] consolidation loop_dead self-heal failed:', healErr.message)
+    );
+
   return {
     ok: false,
-    detail: `48h_consolidations=0 last_run=${lastRun || 'never'} daily_logs_48h=0 (loop_dead)`,
+    detail: `48h_consolidations=0 last_run=${lastRun || 'never'} daily_logs_48h=0 (loop_dead) self_heal=triggered`,
   };
 }
 
