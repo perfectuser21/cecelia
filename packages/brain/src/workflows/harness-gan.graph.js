@@ -31,7 +31,7 @@ import {
 import { fetchAndShowOriginFile } from '../lib/git-fence.js';
 import { verifyProposerOutput } from '../lib/contract-verify.js';
 import { LLM_RETRY } from './retry-policies.js';
-import { loadSkillContent, readBrainResult } from '../harness-shared.js';
+import { loadSkillContent, readBrainResult, ReviewerOutputSchema } from '../harness-shared.js';
 import { reconnectOrSpawn, makeSessionRecord } from '../harness-session-bridge.js';
 
 const execFile = promisify(execFileCb);
@@ -129,6 +129,31 @@ export function computeVerdictFromRubric(scores, round) {
   if (nums.some((n) => n === null)) return null; // 维度不完整
   const allPass = nums.every((n) => n >= threshold);
   return allPass ? 'APPROVED' : 'REVISION';
+}
+
+/**
+ * Reviewer spawn + schema 验证循环。
+ * 不合格 → warn + 继续循环；budget 超 → throw gan_budget_exceeded。
+ * 导出供测试使用。
+ */
+export async function runReviewerSchemaLoop(spawnFn, schema, budgetCap, accumulatedCost = 0) {
+  while (true) {
+    const raw = await spawnFn();
+    accumulatedCost += Number(raw?.cost_usd || 0);
+
+    if (accumulatedCost > budgetCap) {
+      throw new Error(`gan_budget_exceeded: spent=${accumulatedCost.toFixed(3)} cap=${budgetCap}`);
+    }
+
+    const parsed = schema.safeParse(raw);
+    if (!parsed.success) {
+      const issues = parsed.error.issues.map(i => `${i.path.join('.')}: ${i.message}`).join('; ');
+      console.warn(`[harness-gan] schema_mismatch, retrying: ${issues}`);
+      continue;
+    }
+
+    return { ...parsed.data, cost_usd: raw?.cost_usd, _raw: raw };
+  }
 }
 
 /**
@@ -424,7 +449,19 @@ export function createGanContractNodes(executor, ctx) {
     }
 
     // 读容器写入的结果文件（rubric_scores + verdict + feedback）
-    const resultData = result._reconnected ? result : await readBrainResult(worktreePath, ['verdict', 'rubric_scores']);
+    let resultData;
+    if (result._reconnected) {
+      resultData = result;
+    } else {
+      const raw = await readBrainResult(worktreePath, ['verdict', 'rubric_scores']);
+      const parsed = ReviewerOutputSchema.safeParse(raw);
+      if (!parsed.success) {
+        const issues = parsed.error.issues.map(i => `${i.path.join('.')}: ${i.message}`).join('; ');
+        console.warn(`[harness-gan] reviewer schema_mismatch, will retry: ${issues}`);
+        throw new Error(`ContractViolation: schema_mismatch — ${issues}`);
+      }
+      resultData = parsed.data;
+    }
     const rubricScores = resultData.rubric_scores;
     const rubricVerdict = computeVerdictFromRubric(rubricScores, currentRound);
     // rubric 代码判决优先；文件 verdict 作为 fallback（LLM 打分但代码判阈值）

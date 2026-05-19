@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { ReviewerOutputSchema, EvaluatorOutputSchema, readAndValidateBrainResult } from '../harness-shared.js';
 import { LLM_RETRY } from '../workflows/retry-policies.js';
+import { runReviewerSchemaLoop } from '../workflows/harness-gan.graph.js';
 import { mkdtempSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import path from 'path';
@@ -134,5 +135,43 @@ describe('retry-policies schema_mismatch', () => {
   it('普通 LLM 错误仍被重试', () => {
     const err = new Error('503 Service Unavailable');
     expect(LLM_RETRY.retryOn(err)).toBe(true);
+  });
+});
+
+describe('reviewer schema retry 逻辑', () => {
+  it('前两次 schema 不合格第三次合格 — 返回合格数据', async () => {
+    const validData = {
+      verdict: 'APPROVED',
+      rubric_scores: {
+        dod_machineability: 8, scope_match_prd: 7, test_is_red: 9,
+        internal_consistency: 8, risk_registered: 7,
+      },
+      feedback: 'good',
+      cost_usd: 0.05,
+    };
+    const invalidData = { verdict: 'APPROVED', rubric_scores: { dod_machineability: 8 }, feedback: 'bad', cost_usd: 0.05 };
+
+    let callCount = 0;
+    const mockSpawn = async () => {
+      callCount++;
+      return callCount < 3 ? invalidData : validData;
+    };
+
+    const result = await runReviewerSchemaLoop(mockSpawn, ReviewerOutputSchema, 100);
+    expect(result.verdict).toBe('APPROVED');
+    expect(result.rubric_scores.test_is_red).toBe(9);
+    expect(callCount).toBe(3);
+  });
+
+  it('budget 耗尽时 throw gan_budget_exceeded', async () => {
+    const mockSpawn = async () => ({
+      verdict: 'APPROVED',
+      rubric_scores: { dod_machineability: 8 },  // 永远缺维度
+      feedback: 'bad',
+      cost_usd: 60,  // 每次消耗 60，超过 100 cap
+    });
+
+    await expect(runReviewerSchemaLoop(mockSpawn, ReviewerOutputSchema, 100))
+      .rejects.toThrow('gan_budget_exceeded');
   });
 });
