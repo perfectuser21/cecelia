@@ -127,8 +127,7 @@ describe('readAndValidateBrainResult', () => {
 describe('retry-policies schema_mismatch', () => {
   it('schema_mismatch 错误不被 LLM_RETRY 重试', () => {
     const err = new Error('ContractViolation: schema_mismatch — rubric_scores.test_is_red: Required');
-    err.code = 'schema_mismatch';
-    // retryOn 返回 false 表示不重试
+    // retryOn 匹配 err.message，schema_mismatch 在消息中命中 PERMANENT_ERROR_RE
     expect(LLM_RETRY.retryOn(err)).toBe(false);
   });
 
