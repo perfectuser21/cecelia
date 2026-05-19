@@ -274,17 +274,41 @@ BREOF
   exit 0
 fi
 
-# 提取 "## E2E 验收" 区块内第一个 bash 代码块
-awk '/^## E2E 验收/{found=1} found && /^```bash/{in_block=1; next} in_block && /^```/{in_block=0; exit} in_block{print}' \
-  "$CONTRACT" > /tmp/e2e-verify.sh
+# 读取 target_environment（注入变量优先，fallback PRD 文件）
+TARGET_ENV="${TARGET_ENV:-local_api}"
 
-if [[ ! -s /tmp/e2e-verify.sh ]]; then
-  cat > /workspace/.brain-result.json << BREOF
+if [[ "$TARGET_ENV" == "windows_cloud" ]]; then
+  # windows_cloud：提取 ps1/powershell 代码块写到 sprint_dir/e2e-verify.ps1，供 GHA runner 使用
+  awk '/^## E2E 验收/{found=1} found && /^```(powershell|ps1)/{in_block=1; next} in_block && /^```/{in_block=0; exit} in_block{print}' \
+    "$CONTRACT" > /tmp/e2e-verify.ps1
+  if [[ ! -s /tmp/e2e-verify.ps1 ]]; then
+    # fallback：尝试 bash 块（兼容旧合同格式）
+    awk '/^## E2E 验收/{found=1} found && /^```bash/{in_block=1; next} in_block && /^```/{in_block=0; exit} in_block{print}' \
+      "$CONTRACT" > /tmp/e2e-verify.ps1
+  fi
+  if [[ ! -s /tmp/e2e-verify.ps1 ]]; then
+    cat > /workspace/.brain-result.json << BREOF
+{"verdict":"FAIL","task_id":"$TASK_ID","failed_step":"setup","log_excerpt":"windows_cloud 合同中未找到 ## E2E 验收 区块或区块内无 ps1/powershell 脚本"}
+BREOF
+    exit 0
+  fi
+  # 写入 sprint_dir 并 push 到 PR 分支，GHA workflow checkout 后直接运行
+  cp /tmp/e2e-verify.ps1 "${SPRINT_DIR}/e2e-verify.ps1"
+  git add "${SPRINT_DIR}/e2e-verify.ps1" 2>/dev/null || true
+  git commit -m "chore(harness): add e2e-verify.ps1 for windows_cloud runner" --no-verify 2>/dev/null || true
+  git push origin HEAD 2>/dev/null || true
+else
+  # 提取 "## E2E 验收" 区块内第一个 bash 代码块
+  awk '/^## E2E 验收/{found=1} found && /^```bash/{in_block=1; next} in_block && /^```/{in_block=0; exit} in_block{print}' \
+    "$CONTRACT" > /tmp/e2e-verify.sh
+  if [[ ! -s /tmp/e2e-verify.sh ]]; then
+    cat > /workspace/.brain-result.json << BREOF
 {"verdict":"FAIL","task_id":"$TASK_ID","failed_step":"setup","log_excerpt":"合同中未找到 ## E2E 验收 区块或区块内无 bash 脚本"}
 BREOF
-  exit 0
+    exit 0
+  fi
+  chmod +x /tmp/e2e-verify.sh
 fi
-chmod +x /tmp/e2e-verify.sh
 ```
 
 #### Step B-1.5: E2E 命令位置词验证（B33 v1.6 — playground-aware）
@@ -371,12 +395,14 @@ case "$TARGET_ENV" in
     # 每次触发都是全新干净 VM，免费（public repo），适合下载安装包/连云端 endpoint
     # 合同 e2e 脚本必须是 .ps1 格式（见 proposer windows_cloud 模板）
     # 等待结果：轮询 run 状态，最长 10 分钟
+    # GITHUB_REPO 由 harness-initiative.graph.js 注入，base_repo 含 zenithjoy → perfectuser21/zenithjoy-workspace
     REPO="${GITHUB_REPO:-perfectuser21/cecelia}"
     WORKFLOW="${WINDOWS_CLOUD_WORKFLOW:-e2e-windows.yml}"
     gh workflow run "$WORKFLOW" \
       --repo "$REPO" \
       -f task_id="$TASK_ID" \
       -f sprint_dir="$SPRINT_DIR" \
+      -f pr_branch="${PR_BRANCH:-}" \
       2>&1 | tee /tmp/e2e-trigger.log
     TRIGGER_EXIT=$?
     if [[ $TRIGGER_EXIT -ne 0 ]]; then
