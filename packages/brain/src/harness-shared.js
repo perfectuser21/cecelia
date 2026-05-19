@@ -14,6 +14,7 @@ import { readFile } from 'node:fs/promises';
 import path from 'path';
 import os from 'os';
 import { fileURLToPath } from 'url';
+import { z } from 'zod';
 
 // ─── Skill 内联加载 ──────────────────────────────────────────────────────────
 // Docker 容器里 Claude Code headless (-p) 模式不识别 `/skill-name` 语法，
@@ -254,4 +255,42 @@ export async function readBrainResult(worktreePath, requiredFields = []) {
     }
   }
   return data;
+}
+
+// ─── Zod Output Schemas（自研 Structured Output 验证层）───────────────────────
+
+export const ReviewerOutputSchema = z.object({
+  verdict: z.enum(['APPROVED', 'REVISION']),
+  rubric_scores: z.object({
+    dod_machineability:   z.number().min(1).max(10),
+    scope_match_prd:      z.number().min(1).max(10),
+    test_is_red:          z.number().min(1).max(10),
+    internal_consistency: z.number().min(1).max(10),
+    risk_registered:      z.number().min(1).max(10),
+  }),
+  feedback: z.string(),
+});
+
+export const EvaluatorOutputSchema = z.object({
+  verdict:  z.enum(['PASS', 'FAIL', 'FIXED']),
+  task_id:  z.string().optional(),
+  feedback: z.string(),
+});
+
+/**
+ * readBrainResult + Zod schema 深度验证。
+ * 失败时 throw Error with code='schema_mismatch'。
+ */
+export async function readAndValidateBrainResult(worktreePath, schema) {
+  const data = await readBrainResult(worktreePath);
+  const result = schema.safeParse(data);
+  if (!result.success) {
+    const issues = result.error.issues
+      .map(i => `${i.path.join('.')}: ${i.message}`)
+      .join('; ');
+    const err = new Error(`ContractViolation: schema_mismatch — ${issues}`);
+    err.code = 'schema_mismatch';
+    throw err;
+  }
+  return result.data;
 }
