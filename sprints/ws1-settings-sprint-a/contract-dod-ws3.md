@@ -17,17 +17,17 @@ journey_type: user_facing
 
 ## ARTIFACT 条目
 
-- [ ] [ARTIFACT] `inbox/index.ts` 不含 `{ id: 'inbox'` navGroup 声明
+- [x] [ARTIFACT] `inbox/index.ts` 不含 `{ id: 'inbox'` navGroup 声明
   Test: node -e "const c=require('fs').readFileSync('/workspace/apps/api/features/inbox/index.ts','utf8');if(c.includes(\"{ id: 'inbox'\"))process.exit(1);console.log('OK')"
 
-- [ ] [ARTIFACT] `inbox/index.ts` 含 navItem.group 值 'dashboard'
+- [x] [ARTIFACT] `inbox/index.ts` 含 navItem.group 值 'dashboard'
   Test: node -e "const c=require('fs').readFileSync('/workspace/apps/api/features/inbox/index.ts','utf8');if(!c.includes(\"group: 'dashboard'\"))process.exit(1);console.log('OK')"
 
 ---
 
 ## BEHAVIOR 条目
 
-- [ ] [BEHAVIOR] inbox navGroup 独立声明已移除（navGroups 数组为空或已删除）
+- [x] [BEHAVIOR] inbox navGroup 独立声明已移除（navGroups 数组为空或已删除）
   Test: manual:bash -c 'python3 -c "
 import re, sys
 content = open(\"/workspace/apps/api/features/inbox/index.ts\").read()
@@ -40,11 +40,11 @@ print(\"OK\")
 "'
   期望: OK
 
-- [ ] [BEHAVIOR] inbox navItem.group 已改为 'dashboard'（条目归入 dashboard 分组）
-  Test: manual:bash -c 'grep -q "group: '"'"'dashboard'"'"'" /workspace/apps/api/features/inbox/index.ts || { echo "FAIL: inbox navItem.group 未改为 dashboard"; exit 1; }; echo OK'
+- [x] [BEHAVIOR] inbox navItem.group 已改为 'dashboard'（条目归入 dashboard 分组）
+  Test: node -e "const c=require('fs').readFileSync('/workspace/apps/api/features/inbox/index.ts','utf8');if(!c.includes(\"group: 'dashboard'\"))process.exit(1);console.log('OK')"
   期望: OK
 
-- [ ] [BEHAVIOR] 合并后全局 navGroup 唯一 id 数量 ≤ 5（WS1+WS2+WS3 全部完成后）
+- [x] [BEHAVIOR] 合并后全局 navGroup 唯一 id 数量 ≤ 5（WS1+WS2+WS3 全部完成后）
   Test: manual:bash -c 'python3 -c "
 import re, glob, sys
 ids = set()
@@ -62,10 +62,10 @@ print(\"OK\")
 "'
   期望: OK
 
-- [ ] [BEHAVIOR] inbox navGroup id='inbox' 已不在任何 manifest navGroups 声明中出现
-  Test: manual:bash -c 'for f in /workspace/apps/api/features/*/index.ts; do grep -q "id: '"'"'inbox'"'"'" "$f" && { echo "FAIL: $f 仍有 id=inbox 的 navGroup 声明"; exit 1; }; done; echo OK'
+- [x] [BEHAVIOR] inbox navGroup id='inbox' 已不在任何 manifest navGroups 声明中出现
+  Test: node -e "const fs=require('fs');const path=require('path');const dir='/workspace/apps/api/features';fs.readdirSync(dir).forEach(f=>{const fp=path.join(dir,f,'index.ts');if(!fs.existsSync(fp))return;const c=fs.readFileSync(fp,'utf8');if(c.includes(\"id: 'inbox'\")){console.error('FAIL: '+fp);process.exit(1)}});console.log('OK')"
   期望: OK
 
-- [ ] [BEHAVIOR] error path — TypeScript 编译无新增错误（inbox 修改不破坏类型）
-  Test: manual:bash -c 'cd /workspace/apps/dashboard && npx tsc --noEmit 2>&1 | grep -c "error TS" | xargs sh -c '"'"'[ $0 -eq 0 ] && echo OK || { echo "FAIL: TS errors=$0"; exit 1; }'"'"''
+- [x] [BEHAVIOR] error path — TypeScript 编译无新增错误（inbox 修改不破坏类型）
+  Test: node -e "const {execSync}=require('child_process');try{execSync('npx tsc --noEmit',{cwd:'/workspace/apps/dashboard',stdio:'pipe'})}catch(e){const out=(e.stdout||Buffer.from('')).toString()+(e.stderr||Buffer.from('')).toString();const n=(out.match(/error TS/g)||[]).length;if(n>0){process.stderr.write('FAIL: TS errors='+n+'\n');process.exit(1)}}console.log('OK')"
   期望: OK
