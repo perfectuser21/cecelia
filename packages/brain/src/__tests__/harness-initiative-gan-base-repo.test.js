@@ -124,9 +124,8 @@ describe('createGanContractNodes — baseRepo 透传到 verifyProposer', () => {
     const nodes = createGanContractNodes(executor, ctx);
     await nodes.proposer({ round: 0 }).catch(() => {});
 
-    if (mockVerifyProposer.mock.calls.length > 0) {
-      const callOpts = mockVerifyProposer.mock.calls[0][0];
-      expect(callOpts.baseRepo).toBeUndefined();
-    }
+    expect(mockVerifyProposer).toHaveBeenCalledOnce();
+    const callOpts = mockVerifyProposer.mock.calls[0][0];
+    expect(callOpts.baseRepo).toBeUndefined();
   });
 });

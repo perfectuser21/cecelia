@@ -497,6 +497,7 @@ export function buildGanContractGraph(nodes) {
  * @param {Function} opts.executor          docker-executor.executeInDocker
  * @param {string} opts.worktreePath
  * @param {string} opts.githubToken
+ * @param {string} [opts.baseRepo]            外部 repo 路径（默认 cecelia）
  * @param {number} [opts.budgetCapUsd=10]
  * @param {object} opts.checkpointer        PostgresSaver 实例（必填）。v1.229.0 起删除 MemorySaver fallback：
  *                                          PG 缺失必须 fail-fast，避免 brain 重启 state 丢光导致 ghost task。
