@@ -277,10 +277,15 @@ export const ReviewerOutputSchema = z.object({
 });
 
 export const EvaluatorOutputSchema = z.object({
-  verdict:  z.enum(['PASS', 'FAIL', 'FIXED']),
-  task_id:  z.string().optional(),
-  feedback: z.string(),
-});
+  verdict:     z.enum(['PASS', 'FAIL', 'FIXED']),
+  task_id:     z.string().optional(),
+  feedback:    z.string().optional(),    // evaluator v2 format
+  failed_step: z.string().optional(),    // evaluator v1 format（FAIL 详情）
+  log_excerpt: z.string().optional(),    // evaluator v1 format（FAIL 日志）
+}).refine(
+  d => d.verdict === 'PASS' || d.feedback || d.failed_step || d.log_excerpt,
+  { message: 'FAIL/FIXED verdict requires at least one of: feedback, failed_step, log_excerpt' }
+);
 
 /**
  * readBrainResult + Zod schema 深度验证。
