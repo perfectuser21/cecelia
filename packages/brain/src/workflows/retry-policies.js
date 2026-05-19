@@ -15,7 +15,8 @@
  */
 
 // 永久错关键词（命中后不重试）：401/403 鉴权、schema/parse 校验、GraphInterrupt（用户暂停）、AbortError（watchdog）
-const PERMANENT_ERROR_RE = /\b(401|403|invalid api key|invalid_api_key|schema|parse error|parse failed|validation failed|GraphInterrupt|AbortError)\b/i;
+// schema_mismatch 单独列出（schema_mismatch 含下划线，\bschema\b 无法匹配），节点层重试负责处理此错
+const PERMANENT_ERROR_RE = /\b(401|403|invalid api key|invalid_api_key|schema_mismatch|schema|parse error|parse failed|validation failed|GraphInterrupt|AbortError)\b/i;
 
 export const LLM_RETRY = {
   maxAttempts: 3,

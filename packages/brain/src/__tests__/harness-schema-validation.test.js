@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { ReviewerOutputSchema, EvaluatorOutputSchema, readAndValidateBrainResult } from '../harness-shared.js';
+import { LLM_RETRY } from '../workflows/retry-policies.js';
 import { mkdtempSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import path from 'path';
@@ -120,5 +121,19 @@ describe('readAndValidateBrainResult', () => {
   it('文件不存在时 throw（来自 readBrainResult）', async () => {
     await expect(readAndValidateBrainResult('/nonexistent/path', ReviewerOutputSchema))
       .rejects.toThrow();
+  });
+});
+
+describe('retry-policies schema_mismatch', () => {
+  it('schema_mismatch 错误不被 LLM_RETRY 重试', () => {
+    const err = new Error('ContractViolation: schema_mismatch — rubric_scores.test_is_red: Required');
+    err.code = 'schema_mismatch';
+    // retryOn 返回 false 表示不重试
+    expect(LLM_RETRY.retryOn(err)).toBe(false);
+  });
+
+  it('普通 LLM 错误仍被重试', () => {
+    const err = new Error('503 Service Unavailable');
+    expect(LLM_RETRY.retryOn(err)).toBe(true);
   });
 });
