@@ -175,3 +175,23 @@ describe('reviewer schema retry 逻辑', () => {
       .rejects.toThrow('gan_budget_exceeded');
   });
 });
+
+describe('EvaluatorOutputSchema 验证（readAndValidateBrainResult）', () => {
+  function makeTmpDir2(content) {
+    const dir = mkdtempSync(path.join(tmpdir(), 'eval-result-'));
+    writeFileSync(path.join(dir, '.brain-result.json'), JSON.stringify(content));
+    return dir;
+  }
+
+  it('缺 feedback 字段时 throw schema_mismatch', async () => {
+    const dir = makeTmpDir2({ verdict: 'PASS' });  // 缺 feedback
+    await expect(readAndValidateBrainResult(dir, EvaluatorOutputSchema))
+      .rejects.toMatchObject({ code: 'schema_mismatch' });
+  });
+
+  it('完整 evaluator 输出正常返回', async () => {
+    const dir = makeTmpDir2({ verdict: 'PASS', feedback: 'all checks passed', task_id: 'ws1' });
+    const result = await readAndValidateBrainResult(dir, EvaluatorOutputSchema);
+    expect(result.verdict).toBe('PASS');
+  });
+});
