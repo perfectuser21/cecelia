@@ -1,5 +1,41 @@
 # Development Learnings
 
+## [2026-05-19] PROBE_FAIL_CONSOLIDATION — 探针 DB 查询挂起触发 probe timeout（probe-fail-consolidation-timeout）
+
+### 根本原因
+
+`probeConsolidation` 直接 `await pool.query()` 查询 `memory_stream` 表，没有内部超时保护。
+当 DB 在高负载下（多个探针/tick 并发、autovacuum 等）查询挂起时，`pool.query` 不会自动报错（`connectionTimeoutMillis=5s` 仅作用于连接获取，不限制查询执行时间），函数会阻塞到 30s 外层 probe timeout 触发。
+
+结果：
+- 探针 latency=30298ms，error='probe timeout'（无诊断信息）
+- 实际 DB 查询可能只是慢，不代表 consolidation 真的挂了
+
+### 修复内容
+
+**`packages/brain/src/capability-probe.js`**：
+1. 增加 `CONSOLIDATION_QUERY_TIMEOUT_MS = 10_000`（10s）内部查询超时（`queryWithTimeout` 包装）
+   - DB 挂起 10s 内快速失败，携带 `query_timeout` detail
+   - 给外层 30s probe window 保留 20s 余量，避免误触 rollback
+2. 新增 `loop_dead` 自愈：双表均无 48h 记录时，fire-and-forget `runDailyConsolidationIfNeeded`
+3. `query_timeout` 路径同样触发自愈（DB 恢复后可立即写入记录）
+
+### 测试覆盖
+
+新增 `capability-probe-consolidation.test.js`（3 用例）：
+- 48h 内有记录 → ok=true
+- memory_stream 查询 hang（never resolve）→ fake timers 推进 → ok=false detail=query_timeout
+- loop_dead（双表均空）→ ok=false detail 含 self_heal=triggered，验证 `runDailyConsolidationIfNeeded` 被调用
+
+### 教训
+
+- **probe 的 DB 查询必须有内部超时**，不能依赖外层 probe timeout 兜底（外层超时不携带诊断信息，且容易触发 rollback 阈值）
+- `connectionTimeoutMillis` 只限制连接获取，不限制查询执行 —— 二者容易混淆
+- 参照 `probeGeoWebsite` 用 `AbortSignal.timeout(10000)` 的模式，探针内 I/O 操作都应加独立超时
+- **自愈机制参考 `probeRumination`**：检测到故障时直接触发 producer 运行，让下次探针能看到记录
+
+---
+
 ## [2026-05-07] PROBE_FAIL_CONSOLIDATION — 空合并日只写 daily_logs 不写 memory_stream (cp-05071456)
 
 ### 根本原因
