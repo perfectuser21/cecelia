@@ -203,6 +203,7 @@ ${task.description || task.title || ''}
       githubToken,
       budgetCapUsd: budgetUsd,
       checkpointer: opts.checkpointer,
+      baseRepo,
     });
   } catch (err) {
     console.error(`[harness-initiative-runner] GAN failed task=${task.id}: ${err.message}`);
@@ -726,6 +727,7 @@ export async function runGanLoopNode(state, opts = {}) {
       githubToken: state.githubToken,
       budgetCapUsd: budgetUsd,
       checkpointer,
+      baseRepo: state.task?.payload?.base_repo || undefined,
     });
     return { ganResult };
   } catch (err) {

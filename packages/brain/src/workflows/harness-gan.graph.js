@@ -285,7 +285,7 @@ export const GanContractState = Annotation.Root({
  */
 export function createGanContractNodes(executor, ctx) {
   const {
-    taskId, initiativeId, sprintDir, worktreePath, githubToken,
+    taskId, initiativeId, sprintDir, worktreePath, githubToken, baseRepo,
     budgetCapUsd = 10,
     readContractFile = defaultReadContractFile,
     fetchOriginFile: _fetchOriginFile = fetchAndShowOriginFile,
@@ -362,7 +362,7 @@ export function createGanContractNodes(executor, ctx) {
     // H15 重构：从 ad-hoc fetchOriginFile 改用 SSOT verifyProposerOutput（throws ContractViolation）。
     // 失败时 throw → LangGraph retryPolicy: LLM_RETRY 自动重试 3 次。
     if (!result._reconnected) {
-      await verifyProposer({ worktreePath, branch: proposeBranch, sprintDir });
+      await verifyProposer({ worktreePath, branch: proposeBranch, sprintDir, baseRepo });
     }
 
     return {
@@ -507,7 +507,7 @@ export function buildGanContractGraph(nodes) {
 export async function runGanContractGraph(opts) {
   const {
     taskId, initiativeId, sprintDir, prdContent,
-    executor, worktreePath, githubToken,
+    executor, worktreePath, githubToken, baseRepo,
     budgetCapUsd = 10,
     checkpointer,
     readContractFile,
@@ -526,7 +526,7 @@ export async function runGanContractGraph(opts) {
   }
 
   const nodes = createGanContractNodes(executor, {
-    taskId, initiativeId, sprintDir, worktreePath, githubToken,
+    taskId, initiativeId, sprintDir, worktreePath, githubToken, baseRepo,
     budgetCapUsd, readContractFile, fetchOriginFile,
   });
   const graph = buildGanContractGraph(nodes);
