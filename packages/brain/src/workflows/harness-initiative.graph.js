@@ -110,8 +110,9 @@ ${task.description || task.title || ''}
   // ── Prep：挂载 worktree + 注入 GitHub token（Harness v2 container mount）──
   let worktreePath;
   let githubToken;
+  let baseRepo;
   try {
-    const baseRepo = task.payload?.base_repo || undefined;
+    baseRepo = task.payload?.base_repo || undefined;
     worktreePath = await ensureHarnessWorktree({ taskId: task.id, initiativeId, baseRepo });
     githubToken = await resolveGitHubToken();
   } catch (err) {
