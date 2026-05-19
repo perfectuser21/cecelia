@@ -1,15 +1,13 @@
 import { FeatureManifest } from '../types';
 
 const manifest: FeatureManifest = {
-  id: 'cecelia',
   name: 'Cecelia',
+  id: 'cecelia',
   version: '1.3.0',
   source: 'core',
   instances: ['core'],
 
-  navGroups: [
-    { id: 'cecelia', label: '', icon: 'Brain', order: 0.5 },
-  ],
+  navGroups: [],
 
   routes: [
     {
@@ -18,7 +16,7 @@ const manifest: FeatureManifest = {
       navItem: {
         label: 'Cecelia',
         icon: 'Brain',
-        group: 'cecelia',
+        group: 'system',
         children: [
           { path: '/cecelia/chat', label: '意识', icon: 'Eye', order: 1 },
           { path: '/cecelia/diary', label: '日记', icon: 'BookOpen', order: 2 },
