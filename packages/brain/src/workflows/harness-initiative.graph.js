@@ -1374,6 +1374,9 @@ export async function finalEvaluateDispatchNode(state, opts = {}) {
   const execFn = opts.execFile || execFile;
   const sprintDir = state.task?.payload?.sprint_dir || 'sprints';
   const journeyType = state.taskPlan?.journey_type || 'autonomous';
+  const targetEnv = (state.prdContent || '').match(/^##\s*target_environment:\s*(\S+)/m)?.[1] || 'local_api';
+  const _baseRepo = (state.task?.payload?.base_repo || '').toLowerCase();
+  const githubRepo = _baseRepo.includes('zenithjoy') ? 'perfectuser21/zenithjoy-workspace' : 'perfectuser21/cecelia';
 
   // B17: final_evaluate 也跑 PR 分支（generator 写的代码还在 PR 分支没 merge main）
   const firstSubTaskPr = (state.sub_tasks || [])[0]?.pr_url || '';
@@ -1402,7 +1405,9 @@ ${skillContent}
 IS_FINAL_E2E=true
 SPRINT_DIR=${sprintDir}
 TASK_ID=${state.task?.id}
-JOURNEY_TYPE=${journeyType}`;
+JOURNEY_TYPE=${journeyType}
+TARGET_ENV=${targetEnv}
+GITHUB_REPO=${githubRepo}`;
 
   // 清理上轮残留结果文件，防止 executor 失败时读到旧数据
   const { unlink: unlinkResultFile } = await import('node:fs/promises');
@@ -1435,6 +1440,8 @@ JOURNEY_TYPE=${journeyType}`;
         IS_FINAL_E2E: 'true',
         SPRINT_DIR: sprintDir,
         JOURNEY_TYPE: journeyType,
+        TARGET_ENV: targetEnv,
+        GITHUB_REPO: githubRepo,
         GITHUB_TOKEN: state.githubToken,
         PR_URL: firstSubTaskPr,
         PR_BRANCH: prBranchEnv,
