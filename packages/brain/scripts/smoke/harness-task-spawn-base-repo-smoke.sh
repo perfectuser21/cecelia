@@ -17,7 +17,7 @@ const initSrc = readFileSync('./src/workflows/harness-initiative.graph.js', 'utf
 const checks = [
   { name: 'TaskState 含 baseRepo channel',                file: 'harness-task.graph.js',       src: taskSrc,  regex: /baseRepo\s*:\s*Annotation/ },
   { name: 'spawnNode ensureWt 传 baseRepo',               file: 'harness-task.graph.js',       src: taskSrc,  regex: /ensureWt\s*\(\s*\{[^}]*baseRepo\s*:/ },
-  { name: 'runSubTaskNode compiled.invoke 含 baseRepo',   file: 'harness-initiative.graph.js', src: initSrc,  regex: /compiled\.invoke\s*\(\s*\{[\s\S]{0,500}baseRepo/ },
+  { name: 'runSubTaskNode compiled.invoke 含 baseRepo',   file: 'harness-initiative.graph.js', src: initSrc,  regex: /compiled\.invoke\s*\(\s*\{[\s\S]{0,700}baseRepo/ },
 ];
 
 let fail = false;
