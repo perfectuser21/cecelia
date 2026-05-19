@@ -66,11 +66,11 @@ describe('ReviewerOutputSchema', () => {
 });
 
 describe('EvaluatorOutputSchema', () => {
-  it('接受 PASS verdict', () => {
-    expect(EvaluatorOutputSchema.safeParse({ verdict: 'PASS', feedback: 'ok' }).success).toBe(true);
+  it('接受 PASS verdict（无需 feedback）', () => {
+    expect(EvaluatorOutputSchema.safeParse({ verdict: 'PASS' }).success).toBe(true);
   });
 
-  it('接受 FIXED verdict', () => {
+  it('接受 FIXED verdict with feedback', () => {
     expect(EvaluatorOutputSchema.safeParse({ verdict: 'FIXED', feedback: 'ok' }).success).toBe(true);
   });
 
@@ -78,13 +78,28 @@ describe('EvaluatorOutputSchema', () => {
     expect(EvaluatorOutputSchema.safeParse({ verdict: 'APPROVED', feedback: 'ok' }).success).toBe(false);
   });
 
-  it('接受 FAIL verdict', () => {
+  it('接受 FAIL verdict with feedback（v2 format）', () => {
     expect(EvaluatorOutputSchema.safeParse({ verdict: 'FAIL', feedback: 'ci failed' }).success).toBe(true);
   });
 
+  it('接受 FAIL verdict with failed_step+log_excerpt（v1 真实格式）', () => {
+    // 这是真实 evaluator skill 输出的格式，必须通过
+    const real = {
+      verdict: 'FAIL',
+      task_id: '9a6a6c97-105e-4198-9acf-bb76ddd1036f',
+      failed_step: 'WS1+WS2 实现缺失',
+      log_excerpt: '[Step1] navigation.config.ts 未重构 → exit 1',
+    };
+    expect(EvaluatorOutputSchema.safeParse(real).success).toBe(true);
+  });
+
+  it('拒绝 FAIL verdict 且无任何 feedback/failed_step/log_excerpt', () => {
+    expect(EvaluatorOutputSchema.safeParse({ verdict: 'FAIL', task_id: 'abc' }).success).toBe(false);
+  });
+
   it('task_id 可选', () => {
-    expect(EvaluatorOutputSchema.safeParse({ verdict: 'PASS', feedback: 'ok' }).success).toBe(true);
-    expect(EvaluatorOutputSchema.safeParse({ verdict: 'PASS', task_id: 'abc', feedback: 'ok' }).success).toBe(true);
+    expect(EvaluatorOutputSchema.safeParse({ verdict: 'PASS' }).success).toBe(true);
+    expect(EvaluatorOutputSchema.safeParse({ verdict: 'PASS', task_id: 'abc' }).success).toBe(true);
   });
 });
 
@@ -183,15 +198,27 @@ describe('EvaluatorOutputSchema 验证（readAndValidateBrainResult）', () => {
     return dir;
   }
 
-  it('缺 feedback 字段时 throw schema_mismatch', async () => {
-    const dir = makeTmpDir2({ verdict: 'PASS' });  // 缺 feedback
+  it('FAIL 无任何 feedback 字段时 throw schema_mismatch', async () => {
+    const dir = makeTmpDir2({ verdict: 'FAIL' });  // FAIL 但无 feedback/failed_step/log_excerpt
     await expect(readAndValidateBrainResult(dir, EvaluatorOutputSchema))
       .rejects.toMatchObject({ code: 'schema_mismatch' });
   });
 
-  it('完整 evaluator 输出正常返回', async () => {
-    const dir = makeTmpDir2({ verdict: 'PASS', feedback: 'all checks passed', task_id: 'ws1' });
+  it('PASS 无 feedback 正常返回', async () => {
+    const dir = makeTmpDir2({ verdict: 'PASS' });
     const result = await readAndValidateBrainResult(dir, EvaluatorOutputSchema);
     expect(result.verdict).toBe('PASS');
+  });
+
+  it('真实 v1 格式（failed_step+log_excerpt）正常返回', async () => {
+    const dir = makeTmpDir2({
+      verdict: 'FAIL',
+      task_id: '9a6a6c97',
+      failed_step: 'WS1+WS2 实现缺失',
+      log_excerpt: '[Step1] exit 1',
+    });
+    const result = await readAndValidateBrainResult(dir, EvaluatorOutputSchema);
+    expect(result.verdict).toBe('FAIL');
+    expect(result.failed_step).toBe('WS1+WS2 实现缺失');
   });
 });

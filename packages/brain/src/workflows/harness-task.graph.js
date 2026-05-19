@@ -620,7 +620,7 @@ export async function evaluateContractNode(state, opts = {}) {
         throw err;
       }
       const normV = normalizeVerdict(parsed.data.verdict);
-      const feedback = parsed.data.feedback || brainResult.log_excerpt || brainResult.failed_step || null;
+      const feedback = parsed.data.feedback || parsed.data.log_excerpt || parsed.data.failed_step || null;
       return {
         evaluate_verdict: normV,
         evaluate_error: normV === 'FAIL' ? (feedback || 'evaluator returned FAIL') : null,
