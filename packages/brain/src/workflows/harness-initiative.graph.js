@@ -1107,6 +1107,7 @@ export async function runSubTaskNode(state, opts = {}) {
         // worktreePath: state.worktreePath,
         githubToken: state.githubToken,
         contractBranch: state.contractBranch || state.ganResult?.propose_branch || null,
+        baseRepo: state.task?.payload?.base_repo || undefined,
       },
       config
     );

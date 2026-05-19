@@ -79,6 +79,7 @@ export const TaskState = Annotation.Root({
   worktreePath:     Annotation({ reducer: (_o, n) => n, default: () => null }),
   githubToken:      Annotation({ reducer: (_o, n) => n, default: () => null }),
   contractBranch:   Annotation({ reducer: (_o, n) => n, default: () => null }),
+  baseRepo:         Annotation({ reducer: (_o, n) => n, default: () => null }),
   // H13: 防 resume 时 spawn 节点重 import contract sprints/（git fetch 已花过 quota）
   contractImported: Annotation({ reducer: (_o, n) => n, default: () => false }),
   // Layer 3: containerId 是 spawn 节点 spawn detached 容器的 docker --name，同时也是
@@ -146,7 +147,7 @@ export async function spawnNode(state, opts = {}) {
       // 修 PR #2851 P0：之前调 ensureHarnessWorktree(taskId='ws1') 被 shortTaskId 拒 → spawn 从未真跑。
       const wtKey = `${String(initiativeId).slice(0, 8)}-${task.id}`;
       const branch = harnessSubTaskBranchName(initiativeId, task.id);
-      worktreePath = await ensureWt({ taskId: task.id, initiativeId, wtKey, branch });
+      worktreePath = await ensureWt({ taskId: task.id, initiativeId, wtKey, branch, baseRepo: state.baseRepo || undefined });
     }
     if (!token) token = await resolveTok();
   } catch (err) {
