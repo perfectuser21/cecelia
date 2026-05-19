@@ -18,33 +18,24 @@ journey_type: user_facing
 
 ## ARTIFACT 条目
 
-- [ ] [ARTIFACT] `knowledge/index.ts` navGroup label 为英文 'Knowledge'
+- [x] [ARTIFACT] `knowledge/index.ts` navGroup label 为英文 'Knowledge'
   Test: node -e "const c=require('fs').readFileSync('/workspace/apps/api/features/knowledge/index.ts','utf8');if(!c.includes(\"label: 'Knowledge'\"))process.exit(1);console.log('OK')"
 
-- [ ] [ARTIFACT] `cecelia/index.ts` 不含独立 navGroup 声明（navGroups 数组为空或已删除）
+- [x] [ARTIFACT] `cecelia/index.ts` 不含独立 navGroup 声明（navGroups 数组为空或已删除）
   Test: node -e "const c=require('fs').readFileSync('/workspace/apps/api/features/cecelia/index.ts','utf8');const m=c.match(/navGroups:\s*\[([\s\S]*?)\]/);if(m&&m[1].trim()!=='')process.exit(1);console.log('OK')"
 
-- [ ] [ARTIFACT] `execution/index.ts` 不含 navGroup label '执行'
+- [x] [ARTIFACT] `execution/index.ts` 不含 navGroup label '执行'
   Test: node -e "const c=require('fs').readFileSync('/workspace/apps/api/features/execution/index.ts','utf8');if(c.includes(\"label: '\\u6267\\u884c'\"))process.exit(1);console.log('OK')"
 
 ---
 
 ## BEHAVIOR 条目
 
-- [ ] [BEHAVIOR] knowledge navGroup label 已改为英文 'Knowledge'（'知识库' 不再出现于 navGroup 声明）
-  Test: manual:bash -c 'FILE=/workspace/apps/api/features/knowledge/index.ts; grep -q "label: '"'"'Knowledge'"'"'" "$FILE" || { echo "FAIL: Knowledge label 不存在"; exit 1; }; python3 -c "
-c = open(\"$FILE\").read()
-import re
-blocks = re.findall(r\"navGroups:\\s*\\[(.*?)\\]\", c, re.DOTALL)
-for b in blocks:
-    if \"\\u77e5\\u8bc6\\u5e93\" in b:
-        print(\"FAIL: 知识库 仍在 navGroups 声明中\")
-        import sys; sys.exit(1)
-print(\"OK\")
-"'
+- [x] [BEHAVIOR] knowledge navGroup label 已改为英文 'Knowledge'（'知识库' 不再出现于 navGroup 声明）
+  Test: node -e "const c=require('fs').readFileSync('/workspace/apps/api/features/knowledge/index.ts','utf8');const b=(c.match(/navGroups:\s*\[(.*?)\]/s)||['',''])[1];if(!c.includes(\"label: 'Knowledge'\"))process.exit(1);if(b.includes('知识库'))process.exit(1);console.log('OK')"
   期望: OK
 
-- [ ] [BEHAVIOR] cecelia navGroups 声明已移除（id='cecelia' 消失，不新增 id='system' 声明）
+- [x] [BEHAVIOR] cecelia navGroups 声明已移除（id='cecelia' 消失，不新增 id='system' 声明）
   Test: manual:bash -c 'FILE=/workspace/apps/api/features/cecelia/index.ts; python3 -c "
 import re, sys
 content = open(\"$FILE\").read()
@@ -57,11 +48,11 @@ print(\"OK\")
 "'
   期望: OK
 
-- [ ] [BEHAVIOR] cecelia navItem.group 已改为 'system'（归入 system-hub 已声明的 system 组）
-  Test: manual:bash -c 'grep -q "group: '"'"'system'"'"'" /workspace/apps/api/features/cecelia/index.ts || { echo "FAIL: cecelia navItem.group 未改为 system"; exit 1; }; echo OK'
+- [x] [BEHAVIOR] cecelia navItem.group 已改为 'system'（归入 system-hub 已声明的 system 组）
+  Test: node -e "const c=require('fs').readFileSync('/workspace/apps/api/features/cecelia/index.ts','utf8');if(!c.includes(\"group: 'system'\"))process.exit(1);console.log('OK')"
   期望: OK
 
-- [ ] [BEHAVIOR] execution navGroup label '执行' 已消失（不再在 navGroups 声明中）
+- [x] [BEHAVIOR] execution navGroup label '执行' 已消失（不再在 navGroups 声明中）
   Test: manual:bash -c 'python3 -c "
 import re, sys
 content = open(\"/workspace/apps/api/features/execution/index.ts\").read()
@@ -74,15 +65,15 @@ print(\"OK\")
 "'
   期望: OK
 
-- [ ] [BEHAVIOR] execution navItem.group 已改为 'system'（execution 的 navItem 归入 system 组）
-  Test: manual:bash -c 'FILE=/workspace/apps/api/features/execution/index.ts; COUNT=$(grep -c "group: '"'"'system'"'"'" "$FILE"); [ "$COUNT" -ge 1 ] || { echo "FAIL: execution navItem.group 未指向 system, count=$COUNT"; exit 1; }; echo "OK count=$COUNT"'
+- [x] [BEHAVIOR] execution navItem.group 已改为 'system'（execution 的 navItem 归入 system 组）
+  Test: node -e "const c=require('fs').readFileSync('/workspace/apps/api/features/execution/index.ts','utf8');const m=(c.match(/group:\s*'system'/g)||[]);if(m.length<1)process.exit(1);console.log('OK count='+m.length)"
   期望: OK
 
-- [ ] [BEHAVIOR] requireSuperAdmin 过滤逻辑已保留（filterNavGroups 函数仍含 requireSuperAdmin 检查）
-  Test: manual:bash -c 'grep -q "requireSuperAdmin" /workspace/apps/dashboard/src/config/navigation.config.ts || { echo "FAIL: filterNavGroups 中 requireSuperAdmin 检查已丢失"; exit 1; }; echo OK'
+- [x] [BEHAVIOR] requireSuperAdmin 过滤逻辑已保留（filterNavGroups 函数仍含 requireSuperAdmin 检查）
+  Test: node -e "const c=require('fs').readFileSync('/workspace/apps/dashboard/src/config/navigation.config.ts','utf8');if(!c.includes('requireSuperAdmin'))process.exit(1);console.log('OK')"
   期望: OK
 
-- [ ] [BEHAVIOR] error path — 全局无中文 navGroup label（knowledge/cecelia/execution 全部修复）
+- [x] [BEHAVIOR] error path — 全局无中文 navGroup label（knowledge/cecelia/execution 全部修复）
   Test: manual:bash -c 'for f in /workspace/apps/api/features/*/index.ts; do python3 -c "
 import re, sys
 content = open(\"$f\").read()
