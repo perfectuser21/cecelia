@@ -110,8 +110,9 @@ ${task.description || task.title || ''}
   // ── Prep：挂载 worktree + 注入 GitHub token（Harness v2 container mount）──
   let worktreePath;
   let githubToken;
+  let baseRepo;
   try {
-    const baseRepo = task.payload?.base_repo || undefined;
+    baseRepo = task.payload?.base_repo || undefined;
     worktreePath = await ensureHarnessWorktree({ taskId: task.id, initiativeId, baseRepo });
     githubToken = await resolveGitHubToken();
   } catch (err) {
@@ -203,6 +204,7 @@ ${task.description || task.title || ''}
       githubToken,
       budgetCapUsd: budgetUsd,
       checkpointer: opts.checkpointer,
+      baseRepo,
     });
   } catch (err) {
     console.error(`[harness-initiative-runner] GAN failed task=${task.id}: ${err.message}`);
@@ -726,6 +728,7 @@ export async function runGanLoopNode(state, opts = {}) {
       githubToken: state.githubToken,
       budgetCapUsd: budgetUsd,
       checkpointer,
+      baseRepo: state.task?.payload?.base_repo || undefined,
     });
     return { ganResult };
   } catch (err) {

@@ -285,7 +285,7 @@ export const GanContractState = Annotation.Root({
  */
 export function createGanContractNodes(executor, ctx) {
   const {
-    taskId, initiativeId, sprintDir, worktreePath, githubToken,
+    taskId, initiativeId, sprintDir, worktreePath, githubToken, baseRepo,
     budgetCapUsd = 10,
     readContractFile = defaultReadContractFile,
     fetchOriginFile: _fetchOriginFile = fetchAndShowOriginFile,
@@ -362,7 +362,7 @@ export function createGanContractNodes(executor, ctx) {
     // H15 重构：从 ad-hoc fetchOriginFile 改用 SSOT verifyProposerOutput（throws ContractViolation）。
     // 失败时 throw → LangGraph retryPolicy: LLM_RETRY 自动重试 3 次。
     if (!result._reconnected) {
-      await verifyProposer({ worktreePath, branch: proposeBranch, sprintDir });
+      await verifyProposer({ worktreePath, branch: proposeBranch, sprintDir, baseRepo });
     }
 
     return {
@@ -497,6 +497,7 @@ export function buildGanContractGraph(nodes) {
  * @param {Function} opts.executor          docker-executor.executeInDocker
  * @param {string} opts.worktreePath
  * @param {string} opts.githubToken
+ * @param {string} [opts.baseRepo]            外部 repo 路径（默认 cecelia）
  * @param {number} [opts.budgetCapUsd=10]
  * @param {object} opts.checkpointer        PostgresSaver 实例（必填）。v1.229.0 起删除 MemorySaver fallback：
  *                                          PG 缺失必须 fail-fast，避免 brain 重启 state 丢光导致 ghost task。
@@ -507,7 +508,7 @@ export function buildGanContractGraph(nodes) {
 export async function runGanContractGraph(opts) {
   const {
     taskId, initiativeId, sprintDir, prdContent,
-    executor, worktreePath, githubToken,
+    executor, worktreePath, githubToken, baseRepo,
     budgetCapUsd = 10,
     checkpointer,
     readContractFile,
@@ -526,7 +527,7 @@ export async function runGanContractGraph(opts) {
   }
 
   const nodes = createGanContractNodes(executor, {
-    taskId, initiativeId, sprintDir, worktreePath, githubToken,
+    taskId, initiativeId, sprintDir, worktreePath, githubToken, baseRepo,
     budgetCapUsd, readContractFile, fetchOriginFile,
   });
   const graph = buildGanContractGraph(nodes);
