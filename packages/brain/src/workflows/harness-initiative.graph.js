@@ -111,7 +111,8 @@ ${task.description || task.title || ''}
   let worktreePath;
   let githubToken;
   try {
-    worktreePath = await ensureHarnessWorktree({ taskId: task.id, initiativeId });
+    const baseRepo = task.payload?.base_repo || undefined;
+    worktreePath = await ensureHarnessWorktree({ taskId: task.id, initiativeId, baseRepo });
     githubToken = await resolveGitHubToken();
   } catch (err) {
     console.error(`[harness-initiative-runner] prep failed task=${task.id}: ${err.message}`);
@@ -548,7 +549,8 @@ export async function prepInitiativeNode(state) {
   if (state.worktreePath) return { worktreePath: state.worktreePath };
   try {
     const initiativeId = state.task?.payload?.initiative_id || state.task?.initiative_id || state.task?.id;
-    const worktreePath = await ensureHarnessWorktree({ taskId: state.task.id, initiativeId });
+    const baseRepo = state.task?.payload?.base_repo || undefined;
+    const worktreePath = await ensureHarnessWorktree({ taskId: state.task.id, initiativeId, baseRepo });
     const githubToken = await resolveGitHubToken();
     return { worktreePath, githubToken, initiativeId };
   } catch (err) {
