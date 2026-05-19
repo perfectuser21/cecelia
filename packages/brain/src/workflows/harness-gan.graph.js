@@ -426,6 +426,7 @@ export function createGanContractNodes(executor, ctx) {
       },
     };
 
+    // 初始 spawn（获取 result，处理 reconnect 路径）
     const result = await reconnectOrSpawn({
       nodeKey: '_session',
       state: { _session: roundSession },
@@ -443,25 +444,57 @@ export function createGanContractNodes(executor, ctx) {
     if (!result || (result.exit_code !== undefined && result.exit_code !== 0)) {
       throw new Error(`reviewer_failed: exit=${result?.exit_code}`);
     }
-    const nextCost = (state.costUsd || 0) + Number(result.cost_usd || 0);
-    if (nextCost > budgetCapUsd) {
-      throw new Error(`gan_budget_exceeded: spent=${nextCost.toFixed(3)} cap=${budgetCapUsd}`);
-    }
 
     // 读容器写入的结果文件（rubric_scores + verdict + feedback）
+    // _reconnected 路径：直接使用已恢复的数据，跳过 schema 循环
+    // 正常路径：用 runReviewerSchemaLoop 做 while(true) 重试（schema 不合格时重新 spawn，不抛错）
     let resultData;
+    let spawnCostUsd;
     if (result._reconnected) {
       resultData = result;
+      spawnCostUsd = Number(result.cost_usd || 0);
     } else {
-      const raw = await readBrainResult(worktreePath, ['verdict', 'rubric_scores']);
-      const parsed = ReviewerOutputSchema.safeParse(raw);
-      if (!parsed.success) {
-        const issues = parsed.error.issues.map(i => `${i.path.join('.')}: ${i.message}`).join('; ');
-        console.warn(`[harness-gan] reviewer schema_mismatch, will retry: ${issues}`);
-        throw new Error(`ContractViolation: schema_mismatch — ${issues}`);
-      }
-      resultData = parsed.data;
+      // 首次 spawn 已完成，从文件读取并验证；schema 不合格时重新 spawn reviewer
+      // spawnFn 包含 spawn + read 两步，runReviewerSchemaLoop 负责循环和 budget 检查
+      let firstCall = true;
+      const loopResult = await runReviewerSchemaLoop(
+        async () => {
+          if (firstCall) {
+            // 首次：直接读已完成的 spawn 输出文件，无需重新 spawn
+            firstCall = false;
+            const raw = await readBrainResult(worktreePath, ['verdict', 'rubric_scores', 'feedback']);
+            return { ...raw, cost_usd: result.cost_usd || 0 };
+          }
+          // 后续：schema 不合格，清除旧结果文件并重新 spawn reviewer
+          const { unlink } = await import('node:fs/promises');
+          try { await unlink(path.join(worktreePath, '.brain-result.json')); } catch { /* 忽略 */ }
+          const retryResult = await reconnectOrSpawn({
+            nodeKey: '_session',
+            state: { _session: null },
+            executor,
+            taskArg,
+            worktreePath,
+            async readOutput(wt) {
+              try {
+                const data = await readBrainResult(wt, ['verdict', 'rubric_scores', 'feedback']);
+                return { _reconnected: true, ...data };
+              } catch { return null; }
+            },
+          });
+          if (!retryResult || (retryResult.exit_code !== undefined && retryResult.exit_code !== 0)) {
+            throw new Error(`reviewer_failed: exit=${retryResult?.exit_code}`);
+          }
+          const raw = await readBrainResult(worktreePath, ['verdict', 'rubric_scores', 'feedback']);
+          return { ...raw, cost_usd: retryResult.cost_usd || 0 };
+        },
+        ReviewerOutputSchema,
+        budgetCapUsd,
+        state.costUsd || 0,
+      );
+      resultData = loopResult;
+      spawnCostUsd = Number(loopResult.cost_usd || 0);
     }
+    const nextCost = (state.costUsd || 0) + spawnCostUsd;
     const rubricScores = resultData.rubric_scores;
     const rubricVerdict = computeVerdictFromRubric(rubricScores, currentRound);
     // rubric 代码判决优先；文件 verdict 作为 fallback（LLM 打分但代码判阈值）
