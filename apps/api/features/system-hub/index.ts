@@ -8,6 +8,7 @@ const manifest: FeatureManifest = {
   instances: ['core'],
 
   navGroups: [
+    { id: 'content', label: 'Content', icon: 'Scissors', order: 4 },
     { id: 'system', label: 'System', icon: 'Monitor', order: 5 },
   ],
 
@@ -34,7 +35,6 @@ const manifest: FeatureManifest = {
           { path: '/viral-analysis', label: '爆款分析', icon: 'TrendingUp', order: 13 },
           { path: '/okr-roadmap', label: 'OKR Roadmap', icon: 'MapPin', order: 10 },
           { path: '/reports', label: 'Reports', icon: 'FileText', order: 14 },
-          { path: '/clips', label: 'Content Clips', icon: 'Scissors', order: 17 },
           { path: '/system/team', label: 'Team', icon: 'Users', order: 11 },
           { path: '/settings', label: '设置', icon: 'Settings', order: 20 },
         ],
@@ -60,7 +60,7 @@ const manifest: FeatureManifest = {
     { path: '/harness/:id', component: 'HarnessDetailPage' },
     { path: '/collection-dashboard', component: 'CollectionDashboardPage' },
     { path: '/viral-analysis', component: 'ViralAnalysisPage' },
-    { path: '/clips', component: 'ContentClipsPage' },
+    { path: '/clips', component: 'ContentClipsPage', navItem: { label: 'Content Clips', icon: 'Scissors', group: 'content', order: 1 } },
     { path: '/clips/:id', component: 'ContentClipDetailPage' },
     { path: '/okr-roadmap', component: 'OKRRoadmap' },
     { path: '/account-usage', component: 'AccountUsagePage' },
