@@ -40,14 +40,25 @@ assert_exit_code() {
 
 run_stop_dev() {
     local cwd="$1"
-    local hook_session_id="${2:-}"  # v22: 可选 hook payload session_id
+    local hook_session_id="${2:-}"  # v24: session_id 通过 CLAUDE_HOOK_SESSION_ID env var 传入
     # stop-dev.sh 用 CLAUDE_HOOK_CWD env（stop.sh 路由解析 stdin JSON 后 export）
     if [[ -n "$hook_session_id" ]]; then
-        echo "{\"session_id\":\"$hook_session_id\",\"hook_event_name\":\"Stop\"}" | CLAUDE_HOOK_CWD="$cwd" bash "$STOP_DEV" 2>&1
+        CLAUDE_HOOK_CWD="$cwd" CLAUDE_HOOK_SESSION_ID="$hook_session_id" bash "$STOP_DEV" </dev/null 2>&1
     else
-        echo '{}' | CLAUDE_HOOK_CWD="$cwd" bash "$STOP_DEV" 2>&1
+        CLAUDE_HOOK_CWD="$cwd" bash "$STOP_DEV" </dev/null 2>&1
     fi
     echo "EXIT:$?"
+}
+
+# v24 辅助：在主仓库注入 mock devloop-check.sh，classify_session 返回 blocked
+inject_classify_blocked() {
+    local main_repo="$1"
+    mkdir -p "$main_repo/packages/engine/lib"
+    cat > "$main_repo/packages/engine/lib/devloop-check.sh" <<'MOCK'
+#!/usr/bin/env bash
+classify_session() { echo '{"status":"blocked","reason":"mock blocked","action":"mock action"}'; return 0; }
+log_hook_decision() { :; }
+MOCK
 }
 
 # Case A: .cecelia/dev-active 不存在 → 普通对话放行（exit 0）
@@ -67,8 +78,10 @@ mkdir -p "$B_REPO/.cecelia/lights"
 ( cd "$B_REPO" && git init -q -b main && git -c user.email=t@t -c user.name=t commit -q --allow-empty -m init && git worktree add "$B_WT" -b cp-test-b 2>/dev/null )
 # v23: 写灯文件（mtime 新鲜 = 刚 touch）
 cat > "$B_REPO/.cecelia/lights/${B_SID_SHORT}-cp-test-b.live" <<EOF
-{"session_id":"$B_SESSION","branch":"cp-test-b","worktree":"$B_WT"}
+{"session_id":"$B_SESSION","branch":"cp-test-b","worktree":"$B_WT","guardian_pid":99999}
 EOF
+# v24: 注入 classify_session mock（灯亮时 hook 调 classify_session，需返回 blocked）
+inject_classify_blocked "$B_REPO"
 out=$(run_stop_dev "$B_WT" "$B_SESSION")
 assert_contains "Case B 灯亮 → block" "decision" "$out"
 

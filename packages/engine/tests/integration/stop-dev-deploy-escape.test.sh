@@ -36,26 +36,38 @@ SESSION_NEW="sessnew1-full-uuid"
 SID_OLD="${SESSION_OLD:0:8}"
 SID_NEW="${SESSION_NEW:0:8}"
 
-# Case 1: 老灯（mtime > TTL 300s）→ 放行
+# v24 辅助：在 testRepo 注入 mock devloop-check.sh，classify_session 返回指定 status
+inject_classify_mock() {
+    local repo="$1" status="$2"
+    mkdir -p "$repo/packages/engine/lib"
+    cat > "$repo/packages/engine/lib/devloop-check.sh" <<MOCK
+#!/usr/bin/env bash
+classify_session() { echo '{"status":"${status}","reason":"mock-${status}","action":"mock action"}'; return 0; }
+log_hook_decision() { :; }
+MOCK
+}
+
+# Case 1: 老灯（mtime > TTL 300s）→ 放行（TTL 过期，不调 classify_session）
 TMP=$(build_main)
 LIGHT="$TMP/.cecelia/lights/${SID_OLD}-cp-old.live"
 echo '{"session_id":"sessold1-full-uuid","branch":"cp-old"}' > "$LIGHT"
 old_mtime_1h "$LIGHT"
-out=$(echo "{\"session_id\":\"${SESSION_OLD}\"}" | CLAUDE_HOOK_CWD="$TMP" bash "$STOP_HOOK" 2>&1 || true)
+out=$(CLAUDE_HOOK_CWD="$TMP" CLAUDE_HOOK_SESSION_ID="$SESSION_OLD" bash "$STOP_HOOK" </dev/null 2>&1 || true)
 if ! echo "$out" | grep -q '"decision".*block'; then
     pass "Case 1: 老灯（1h mtime）→ release"
 else
-    fail "Case 1: 老灯误 block"
+    fail "Case 1: 老灯误 block，output=[$out]"
 fi
 rm -rf "$TMP"
 
-# Case 2: 新灯（刚 touch）→ block
+# Case 2: 新灯（刚 touch）+ classify=blocked → block
 TMP=$(build_main)
 LIGHT="$TMP/.cecelia/lights/${SID_NEW}-cp-new.live"
-echo '{"session_id":"sessnew1-full-uuid","branch":"cp-new"}' > "$LIGHT"
-out=$(echo "{\"session_id\":\"${SESSION_NEW}\"}" | CLAUDE_HOOK_CWD="$TMP" bash "$STOP_HOOK" 2>&1 || true)
+echo '{"session_id":"sessnew1-full-uuid","branch":"cp-new","guardian_pid":99999}' > "$LIGHT"
+inject_classify_mock "$TMP" "blocked"
+out=$(CLAUDE_HOOK_CWD="$TMP" CLAUDE_HOOK_SESSION_ID="$SESSION_NEW" bash "$STOP_HOOK" </dev/null 2>&1 || true)
 if echo "$out" | grep -q '"decision".*block'; then
-    pass "Case 2: 新灯（刚 touch）→ block"
+    pass "Case 2: 新灯（刚 touch）+ classify=blocked → block"
 else
     fail "Case 2: 新灯未 block，output=[$out]"
 fi
@@ -68,7 +80,7 @@ SID_CFG="${SESSION_CFG:0:8}"
 LIGHT="$TMP/.cecelia/lights/${SID_CFG}-cp-cfg.live"
 echo '{"session_id":"sesscfg1-full-uuid","branch":"cp-cfg"}' > "$LIGHT"
 old_mtime_5min "$LIGHT"
-out=$(echo "{\"session_id\":\"${SESSION_CFG}\"}" | STOP_HOOK_LIGHT_TTL_SEC=60 CLAUDE_HOOK_CWD="$TMP" bash "$STOP_HOOK" 2>&1 || true)
+out=$(STOP_HOOK_LIGHT_TTL_SEC=60 CLAUDE_HOOK_CWD="$TMP" CLAUDE_HOOK_SESSION_ID="$SESSION_CFG" bash "$STOP_HOOK" </dev/null 2>&1 || true)
 if ! echo "$out" | grep -q '"decision".*block'; then
     pass "Case 3: TTL_SEC=60 + 5 分钟老灯 → release"
 else
@@ -76,13 +88,13 @@ else
 fi
 rm -rf "$TMP"
 
-# Case 4: 各种杂文件（dev-active, fail-counter）→ stop-hook 不崩
+# Case 4: 各种杂文件（dev-active, fail-counter）→ stop-hook 不崩（无 session_id → 放行）
 TMP=$(build_main)
 cat > "$TMP/.cecelia/dev-active-cp-deploy-fail.json" <<EOF
 {"branch":"cp-deploy-fail","worktree":"/tmp/wt","session_id":"sess-d"}
 EOF
 echo "3" > "$TMP/.cecelia/deploy-fail-count-cp-deploy-fail"
-out=$(echo '{}' | CLAUDE_HOOK_CWD="$TMP" bash "$STOP_HOOK" 2>&1 || true)
+out=$(CLAUDE_HOOK_CWD="$TMP" bash "$STOP_HOOK" </dev/null 2>&1 || true)
 # hook 不应崩（exit 非 2/99），结果不论 block/release
 echo "ℹ️  Case 4 output: $out" | head -3
 pass "Case 4: 杂文件存在 → stop-hook 不崩"
