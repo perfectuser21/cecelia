@@ -453,7 +453,7 @@ jobs:
             EXTRA="--changed origin/${{ github.base_ref }}"
           fi
           set +e
-          npx vitest run --shard=${{ matrix.shard }}/4 $EXTRA --exclude='src/__tests__/integration/**' --reporter=verbose 2>&1 | tee /tmp/vitest-out.txt
+          npx vitest run --shard=${{ matrix.shard }}/4 $EXTRA --exclude='src/__tests__/integration/**' --reporter=verbose --coverage --coverage.reporter=lcov --coverage.reportsDirectory=coverage/shard-${{ matrix.shard }} 2>&1 | tee /tmp/vitest-out.txt
           EXIT=${PIPESTATUS[0]}
           if [ $EXIT -ne 0 ]; then
             if grep -qE "Tests.*[0-9]+ passed" /tmp/vitest-out.txt && ! grep -qE "Tests.*[0-9]+ failed" /tmp/vitest-out.txt; then
@@ -466,6 +466,15 @@ jobs:
             fi
             exit $EXIT
           fi
+
+      - name: Upload coverage artifact (shard 1 only)
+        if: matrix.shard == 1 && steps.scope.outputs.mode != 'skip'
+        uses: actions/upload-artifact@v4
+        with:
+          name: brain-coverage-lcov
+          path: packages/brain/coverage/shard-1/lcov.info
+          retention-days: 1
+          if-no-files-found: ignore
 
   # ─── Brain: Unit Tests Aggregation ─────────────────────────
   # 所有 brain-unit matrix shards 都成功才通过。
@@ -490,35 +499,21 @@ jobs:
 
   # ─── Brain: Diff Coverage Gate ────────────────────────────
   # PR 新增行覆盖率 < 80% 则 CI fail，迫使为新代码路径补测试
+  # 使用 shard 1 的 lcov artifact（不重跑 vitest，节省 ~35min）
   brain-diff-coverage:
-    needs: [changes, brain-unit]
-    if: needs.changes.outputs.brain == 'true' && needs.brain-unit.result == 'success'
+    needs: [changes, brain-unit-all]
+    if: needs.changes.outputs.brain == 'true' && needs.brain-unit-all.result == 'success' && github.event_name == 'pull_request'
     runs-on: ubuntu-latest
-    timeout-minutes: 35
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 0   # diff-cover 需要 origin/main 历史做比较
-      - uses: actions/setup-node@v4
+          fetch-depth: 0
+      - name: Download coverage artifact
+        uses: actions/download-artifact@v4
         with:
-          node-version: '22'
-          cache: 'npm'
-      - run: cd packages/brain && npm ci
-      - name: Run Tests with Coverage
-        env:
-          NODE_OPTIONS: '--max-old-space-size=4096'
-        run: |
-          cd packages/brain
-          set +e
-          npx vitest run --coverage --exclude='src/__tests__/integration/**' 2>&1 | tee /tmp/vitest-coverage-out.txt
-          EXIT=${PIPESTATUS[0]}
-          if [ $EXIT -ne 0 ]; then
-            if grep -qE "Tests.*[0-9]+ passed" /tmp/vitest-coverage-out.txt && ! grep -qE "Tests.*[0-9]+ failed" /tmp/vitest-coverage-out.txt; then
-              echo "[brain-coverage] OOM worker exit but all tests passed — continuing"
-            else
-              exit $EXIT
-            fi
-          fi
+          name: brain-coverage-lcov
+          path: packages/brain/coverage/
       - name: Diff Coverage Gate
         run: |
           pip install diff-cover --quiet
