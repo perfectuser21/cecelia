@@ -94,6 +94,7 @@ export const TaskState = Annotation.Root({
   ci_fail_type:     Annotation({ reducer: (_o, n) => n, default: () => null }),
   failed_checks:    Annotation({ reducer: (_o, n) => n, default: () => [] }),
   status:           Annotation({ reducer: (_o, n) => n, default: () => 'queued' }),
+  rebase_attempted: Annotation({ reducer: (_o, n) => n, default: () => 0 }),
   cost_usd:         Annotation({ reducer: (c, n) => (c || 0) + (n || 0), default: () => 0 }),
   generator_output: Annotation({ reducer: (_o, n) => n, default: () => null }),
   error:            Annotation({ reducer: (_o, n) => n, default: () => null }),
@@ -387,21 +388,17 @@ export async function pollCiNode(state, opts = {}) {
   return { ci_status: 'pending', poll_count: pollCount + 1 };
 }
 
+const BEHIND_RE = /behind|out of date|outdated|head ref is out of date|must be up to date|not mergeable/i;
+
 export async function mergePrNode(state, opts = {}) {
   if (state.status === 'merged') return { status: 'merged' };
   const execFn = opts.execFile || execFileDefault;
   const prUrl = state?.pr_url;
 
   if (!prUrl) {
-    return { merge_error: 'no pr_url available' };
+    return { error: { node: 'merge_pr', message: 'no pr_url available' } };
   }
 
-  // B21: evaluator PASS 后 brain 真调 gh pr merge --squash 自动合并 PR。
-  // 不再依赖人工 merge button，也不依赖外层 shepherd。
-  // CI 在 poll_ci 节点已验绿，进入此节点时合并安全，无需 --auto 再等。
-  // --delete-branch 合完自动删 head branch。
-  // merge 失败不 throw（避免 graph 走 error 通道触发重试导致重复 merge 风险），
-  // 而是写 merge_error 让 graph 退 END，由人工或 shepherd 补救。
   try {
     const { stdout } = await execFn(
       'gh',
@@ -417,12 +414,35 @@ export async function mergePrNode(state, opts = {}) {
       merge_command: 'gh pr merge --squash',
     };
   } catch (err) {
-    console.warn(`[merge_pr] gh pr merge failed pr=${prUrl}: ${err.message}`);
-    return {
-      merge_error: err.message,
-      // 不 set state.error（避免 graph END 走异常路径），让任务标 completed 不 failed
-    };
+    const msg = err.message || '';
+
+    if (state.rebase_attempted) {
+      console.error(`[merge_pr] merge failed after rebase pr=${prUrl}: ${msg}`);
+      return { error: { node: 'merge_pr', message: `merge failed after rebase: ${msg}` } };
+    }
+
+    if (!BEHIND_RE.test(msg)) {
+      console.error(`[merge_pr] non-recoverable merge error pr=${prUrl}: ${msg}`);
+      return { error: { node: 'merge_pr', message: msg } };
+    }
+
+    console.warn(`[merge_pr] branch behind, calling update-branch pr=${prUrl}`);
+    try {
+      await execFn('gh', ['pr', 'update-branch', prUrl, '--rebase'], { timeout: 30_000 });
+      console.log(`[merge_pr] update-branch ok, re-queuing CI poll pr=${prUrl}`);
+      return { ci_status: 'pending', rebase_attempted: 1 };
+    } catch (updateErr) {
+      console.error(`[merge_pr] update-branch failed pr=${prUrl}: ${updateErr.message}`);
+      return { error: { node: 'merge_pr', message: `update-branch failed: ${updateErr.message}` } };
+    }
   }
+}
+
+export function routeAfterMergePr(state) {
+  if (state.status === 'merged') return 'end';
+  if (state.error) return 'end';
+  if (state.ci_status === 'pending') return 'poll';
+  return 'end';
 }
 
 export async function fixDispatchNode(state) {
@@ -672,7 +692,7 @@ export function buildHarnessTaskGraph() {
       end: END, merge: 'merge_pr', evaluate: 'evaluate_contract', fix: 'fix_dispatch', timeout: END, poll: 'poll_ci',
     })
     .addConditionalEdges('evaluate_contract', routeAfterEvaluate, { merge: 'merge_pr', fix: 'fix_dispatch' })
-    .addEdge('merge_pr', END)
+    .addConditionalEdges('merge_pr', routeAfterMergePr, { end: END, poll: 'poll_ci' })
     .addConditionalEdges('fix_dispatch', routeAfterFix, {
       end: END, failed: END, spawn: 'spawn',
     });
