@@ -68,6 +68,14 @@ while IFS= read -r sha; do
     fi
   fi
 
+  # Walking Skeleton 外层 test-first：smoke script 添加 = 外环测试先行，满足要求
+  HAS_SMOKE=$(echo "$CHANGED" \
+    | grep -E '^\.github/workflows/scripts/smoke/.+\.sh$|^packages/brain/scripts/smoke/.+\.sh$' \
+    || true)
+  if [ -n "$HAS_SMOKE" ]; then
+    SEEN_TEST=1
+  fi
+
   if [ -n "$HAS_SRC" ] && [ "$SEEN_TEST" -eq 0 ]; then
     FIRST_BAD_SHA="$sha"
     FIRST_BAD_FILES="$HAS_SRC"
