@@ -134,20 +134,20 @@ jobs:
         with:
           node-version: '22'
           cache: 'npm'
-      - name: npm audit — runtime high+ (warn-only during Walking Skeleton P1)
+      - name: npm audit — runtime high+
         run: |
           npm ci --ignore-scripts
           # runtime 依赖（packages/brain, apps/api）不允许 high+，--omit=dev 排除 vite/rollup/workbox 等 build 工具
-          # vite/vite-plugin-pwa 需要 major 升级（5→8），单独 P2 track，暂不在此阻断
-          # 2026-05-11：Walking Skeleton P1 进行中，bullmq → uuid GHSA-w5hq-g745-h8pq 阻塞 4 个 PR
-          # 临时改 warn-only（continue-on-error），TODO 在 P1 完成后开独立 PR 修真漏洞
-          npm audit --audit-level=high --omit=dev || echo "::warning::runtime high+ audit findings — track in Walking Skeleton P1 follow-up"
+          # 已知待修漏洞（Walking Skeleton P1 结束后，warn-only 豁免撤销，恢复硬失败）：
+          #   GHSA-q7rr-3cgh-j5r3: @opentelemetry/sdk-node ≤0.216.0 — fix 需 major 升级 0.218.0，独立 P2 track
+          #   protobufjs ≤7.5.7 — npm audit fix 可修（non-breaking），TODO: 开独立 PR
+          # 若此步骤失败：运行 npm audit --audit-level=high --omit=dev 查看具体 advisory，升级对应包
+          npm audit --audit-level=high --omit=dev
       - name: npm audit — all deps critical
         run: |
-          # 全量（含 dev）仍检查 critical，防供应链攻击
-          # 2026-05-19：GHSA-gx6x-v325-85g4 (size-sensor/echarts-for-react) 新入 advisory DB，
-          # 属 dashboard UI dev dep，非 runtime；改 warn-only，待上游修复后恢复 hard fail
-          npm audit --audit-level=critical || echo "::warning::critical audit findings — track GHSA-gx6x-v325-85g4 echarts-for-react/size-sensor fix"
+          # 全量（含 dev）检查 critical，防供应链攻击
+          # GHSA-gx6x-v325-85g4 (size-sensor/echarts-for-react) 属 dev dep，已被 --audit-level=critical 过滤
+          npm audit --audit-level=critical
 
   # ─── Registry Lint（始终运行）────────────────────────────────
   registry-lint:
