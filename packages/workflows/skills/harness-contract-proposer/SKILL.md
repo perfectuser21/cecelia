@@ -4,10 +4,11 @@ description: |
   Harness Contract Proposer — Harness v5 GAN Layer 2a：
   读 PRD，GAN 对抗写 Golden Path 合同（每步含真实验证命令）；
   Reviewer APPROVED 后倒推拆 task-plan.json。
-version: 7.9.0
+version: 7.10.0
 created: 2026-04-08
-updated: 2026-05-18
+updated: 2026-05-20
 changelog:
+  - 7.10.0: depends_on 串行死规则 — 修 W52 step6 并行根因：migration ws 必须是后续所有 ws 的前置依赖，`depends_on: []` 只允许 ws1；自查 checklist 第 7 条 python3 断言
   - 7.9.0: 删除 windows_local 模板 — 所有 Windows 测试统一走 windows_cloud（GitHub Actions），Cecelia 走 mac_web/local_api；target_environment 枚举值同步缩减
   - 7.8.0: 两层验证架构强制规则 — 修复假阳性根因：BEHAVIOR 命令按 journey_type 分两层：模式A(evaluator 逐ws) = API-level（autonomous→curl Brain 5221/psql；user_facing→Playwright API assertions）；模式B(final-e2e) = UI-level（user_facing→Playwright browser 真实操作，autonomous→curl+psql Golden Path 全程）。禁止 autonomous BEHAVIOR 命令测 playground（只能测真实 Brain/DB）。删除禁止事项 #3 遗留 v5.0 矛盾规则
   - 7.7.0: Step 2 Workstreams 切分硬规则（B14 加）— 单 ws ≤ 200 行净增 + ≤ 3 文件；整 contract 净增 < 200 行才允许 ws_count=1
@@ -626,6 +627,60 @@ JSONEOF
 - `estimated_minutes`: 20 ≤ n ≤ 60
 - `dod`: 至少 1 个 `[BEHAVIOR]`
 - `depends_on`: 线性链（ws2 depends_on ws1 即可）
+
+---
+
+### ⚠️ depends_on 串行死规则（v7.10 — 修并行根因）
+
+**只要满足以下任一条件，必须在 `depends_on` 显式声明前置 ws：**
+
+| 依赖类型 | 说明 | 并行后果 |
+|---|---|---|
+| schema 依赖 | ws 的 BEHAVIOR 验证需要某 migration 已在 DB 里 | evaluator 验 column 不存在 → FAIL |
+| 数据依赖 | ws 功能依赖前置 ws 写入的行 | 数据不存在 → FAIL |
+| 接口依赖 | ws 路由层依赖前置 ws 的 service 函数 | import 报错 → FAIL |
+
+**强制串行链（Reviewer 第 8 维检查）**：
+
+```
+ws1（migration）: depends_on: []          ← 唯一可以为空
+ws2（service）:   depends_on: ["ws1"]     ← migration 必须先进 DB
+ws3（routes）:    depends_on: ["ws2"]     ← service 必须先存在
+ws4（smoke）:     depends_on: ["ws3"]     ← 全链路最后跑
+```
+
+**禁止**：`depends_on: []` 出现在 ws1 以外的任何 ws。
+
+**反例（W52 step6 实证）**：
+
+```json
+// ❌ 全部 depends_on: [] → Brain 并发 dispatch → ws2 evaluator 验
+//    publish_status 列但 ws1 migration 未合并 → FAIL → 无限 fix loop
+{ "task_id": "ws1", "depends_on": [] },
+{ "task_id": "ws2", "depends_on": [] },
+{ "task_id": "ws3", "depends_on": [] },
+{ "task_id": "ws4", "depends_on": [] }
+```
+
+**自查 checklist 第 7 条（v7.10 新增）**：写完 task-plan.json 后必跑：
+
+```bash
+python3 - << 'PYEOF'
+import json
+plan = json.load(open("${SPRINT_DIR}/task-plan.json"))
+tasks = plan["tasks"]
+for i, t in enumerate(tasks):
+    if i == 0:
+        assert t["depends_on"] == [], f"FAIL: ws1.depends_on 应为 []，实际 {t['depends_on']}"
+    else:
+        prev = tasks[i-1]["task_id"]
+        assert prev in t["depends_on"], \
+            f"FAIL: {t['task_id']}.depends_on 缺少前置 {prev}（并行根因！）"
+print("✅ depends_on 串行链验证通过")
+PYEOF
+```
+
+断言 fail → task-plan.json 作废，补全后重写。
 
 ---
 
