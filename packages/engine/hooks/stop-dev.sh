@@ -181,8 +181,8 @@ if [[ -z "$REASON_CODE" ]]; then
                 not-dev|*)
                     REASON_CODE="classify_not_dev_or_error"
                     _classify_reason=$(echo "$_session_result" | jq -r '.reason // ""' 2>/dev/null || echo "")
-                    # 输出 classify reason 到 stdout（T15 验证 classify_session 被调用）
-                    [[ -n "$_classify_reason" ]] && echo "{\"decision\":\"release\",\"reason_code\":\"classify_not_dev\",\"reason\":\"$_classify_reason\"}"
+                    # 写 stderr 供测试验证（stdout 不输出任何 JSON for release — Claude Code schema 只接受 block）
+                    [[ -n "$_classify_reason" ]] && echo "{\"reason_code\":\"classify_not_dev\",\"reason\":\"$_classify_reason\"}" >&2
                     ;;
             esac
         else
@@ -198,8 +198,9 @@ type log_hook_decision &>/dev/null && \
 if [[ "$DECISION" == "block" ]]; then
     jq -n --arg r "$BLOCK_REASON" '{"decision":"block","reason":$r}'
 else
-    # release：也输出 JSON，让 T15/T16 能验证 reason_code
-    jq -n --arg rc "${REASON_CODE:-release}" '{"decision":"release","reason_code":$rc}'
+    # release：stdout 不输出任何内容（Claude Code Stop hook schema 不接受 "release"）
+    # 诊断信息写 stderr 供测试验证
+    echo "{\"reason_code\":\"${REASON_CODE:-release}\"}" >&2
 fi
 
 exit 0
