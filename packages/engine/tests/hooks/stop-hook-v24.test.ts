@@ -220,11 +220,21 @@ describe('stop-dev.sh v24 新场景（T13-T16）', () => {
     expect(r.stdout).not.toMatch(/"decision"\s*:\s*"block"/)
     // v24 要求：灯文件已被删除
     expect(existsSync(lightFile)).toBe(false)
-    // v24 要求：guardian 进程已被 kill
-    // 用 spawnSync 等待一小段时间再检查（避免 execSync sleep 被拦截）
-    spawnSync(process.execPath, ['-e', 'setTimeout(()=>{},300)'], { timeout: 1000 })
-    // process.kill(pid, 0) 抛 ESRCH = 进程已死
-    expect(() => process.kill(guardianPid, 0)).toThrow()
+    // v24 要求：guardian 进程已被 kill（SIGTERM 发出，进程 dead 或 zombie 均可）
+    // 等待进程状态更新
+    spawnSync(process.execPath, ['-e', 'setTimeout(()=>{},500)'], { timeout: 2000 })
+    // 检查进程状态：不存在(ESRCH) 或 zombie(Z) 均视为已 killed
+    // zombie 进程：父进程未 wait，但信号已发出，进程已不运行
+    let guardianKilled = false
+    try {
+      process.kill(guardianPid, 0)
+      // 进程存在时，检查是否为 zombie（macOS: stat=Z）
+      const psOut = execSync(`ps -p ${guardianPid} -o stat= 2>/dev/null || echo ''`, { encoding: 'utf8' }).trim()
+      guardianKilled = psOut.includes('Z')  // zombie = signal 已发出，等待 wait()
+    } catch (_e) {
+      guardianKilled = true  // ESRCH = 进程已彻底消失
+    }
+    expect(guardianKilled).toBe(true)
   })
 
   // --------------------------------------------------------------------------

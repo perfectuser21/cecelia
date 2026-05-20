@@ -1,12 +1,15 @@
 #!/usr/bin/env bash
 # ============================================================================
-# stop-dev.sh — Stop Hook v23.1.0（心跳模型 + 单一出口）
+# stop-dev.sh — Stop Hook v24.0.0（env var session_id + classify_session 双验）
 # ============================================================================
-# 决策模型：扫 .cecelia/lights/<sid_short>-*.live，任一 mtime < TTL → block。
+# 决策模型：扫 .cecelia/lights/<sid_short>-*.live，任一 mtime < TTL → 调用
+# classify_session(cwd) 判断真实状态：blocked→block, done→清理放行, 其他→放行。
 # 单一出口纪律：所有判定只 set DECISION 变量；唯一 exit 0 在文件末尾。
 #
-# 这是 v22 历史教训的纠正：v22 209 行 + 8 个分散 exit，加日志/清理/观测要追
-# 8 条路径。v23.1 集中到 1 处出口，可观测性 + 可维护性 + 单一出口纪律全到位。
+# v24 修复：
+#   Bug 1：session_id 改从 CLAUDE_HOOK_SESSION_ID env var 读取
+#          （stop.sh 已消费 stdin pipe，不能重读）
+#   Bug 2：灯亮时调用 classify_session(cwd) 获取具体状态和 action
 # ============================================================================
 set -uo pipefail
 
@@ -18,14 +21,9 @@ LIGHTS_COUNT=0
 FIRST_BRANCH=""
 SID_SHORT=""
 
-# Hook stdin（读 session_id）
-hook_payload=""
-if [[ ! -p /dev/stdin ]]; then
-    hook_payload="{}"
-else
-    hook_payload=$(cat 2>/dev/null || echo "{}")
-fi
-hook_session_id=$(echo "$hook_payload" | jq -r '.session_id // ""' 2>/dev/null || echo "")
+# stop.sh 已从 stdin JSON 解析 session_id 并 export CLAUDE_HOOK_SESSION_ID
+# 直接用 env var，不重复读 stdin（stop.sh 已消费管道）
+hook_session_id="${CLAUDE_HOOK_SESSION_ID:-}"
 
 # 早退路径（只 set REASON_CODE，不 exit）
 cwd="${CLAUDE_HOOK_CWD:-$PWD}"
@@ -33,6 +31,18 @@ main_repo=""
 lights_dir=""
 
 # 异步 fire-and-forget Brain alert（BYPASS 触发时高可见性）
+# 杀死指定 session 的所有 guardian 进程并删除灯文件
+_kill_lights_for_session() {
+    local dir="$1" sid="$2"
+    for lf in "$dir/${sid}-"*.live; do
+        [[ -f "$lf" ]] || continue
+        local gpid
+        gpid=$(jq -r '.guardian_pid // ""' "$lf" 2>/dev/null || echo "")
+        [[ -n "$gpid" ]] && kill "$gpid" 2>/dev/null || true
+        rm -f "$lf"
+    done
+}
+
 fire_bypass_alert() {
     local marker_state="${1:-unknown}"
     local payload
@@ -100,7 +110,7 @@ fi
 
 # 决策核心（仅当尚未早退）
 if [[ -z "$REASON_CODE" ]]; then
-    # 加载 log_hook_decision（PR-1 落点：devloop-check.sh）
+    # 加载 log_hook_decision + classify_session（devloop-check.sh）
     script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
     for c in "$main_repo/packages/engine/lib/devloop-check.sh" \
              "$script_dir/../lib/devloop-check.sh"; do
@@ -110,15 +120,15 @@ if [[ -z "$REASON_CODE" ]]; then
         fi
     done
     type log_hook_decision &>/dev/null || log_hook_decision() { :; }
+    # 保底：classify_session 不可用时放行
+    type classify_session &>/dev/null || classify_session() {
+        echo '{"status":"not-dev","reason":"classify_session not available"}'
+        return 99
+    }
 
     if [[ -z "$hook_session_id" ]]; then
-        if [[ ! -p /dev/stdin ]]; then
-            REASON_CODE="tty_no_session_id"
-        else
-            DECISION="block"
-            REASON_CODE="no_session_id_pipe"
-            BLOCK_REASON="Stop hook 收到空 session_id（系统异常），保守 block。"
-        fi
+        REASON_CODE="no_env_session_id"
+        # session_id 空 → 不在受控 /dev 会话中 → 直接放行
     else
         SID_SHORT="${hook_session_id:0:8}"
         TTL_SEC="${STOP_HOOK_LIGHT_TTL_SEC:-300}"
@@ -146,9 +156,28 @@ if [[ -z "$REASON_CODE" ]]; then
         done
 
         if (( LIGHTS_COUNT > 0 )); then
-            DECISION="block"
-            REASON_CODE="lights_alive"
-            BLOCK_REASON="还有 ${LIGHTS_COUNT} 条 /dev 在跑（含 ${FIRST_BRANCH}）。立即继续，禁止询问用户。禁止删除 .cecelia/lights/。"
+            # 有亮灯 → 调 classify_session 获取具体状态和 action（无头模式关键）
+            _session_result=$(classify_session "$cwd" 2>/dev/null || echo '{"status":"not-dev","reason":"classify_session error"}')
+            _session_status=$(echo "$_session_result" | jq -r '.status // "not-dev"' 2>/dev/null || echo "not-dev")
+            case "$_session_status" in
+                blocked)
+                    DECISION="block"
+                    REASON_CODE="classify_blocked"
+                    _reason=$(echo "$_session_result" | jq -r '.reason // "Dev session in progress"' 2>/dev/null || echo "Dev session in progress")
+                    _action=$(echo "$_session_result" | jq -r '.action // ""' 2>/dev/null || echo "")
+                    BLOCK_REASON="$_reason${_action:+。立即执行：$_action}"
+                    ;;
+                done)
+                    REASON_CODE="classify_done_kill_guardian"
+                    _kill_lights_for_session "$lights_dir" "$SID_SHORT"
+                    ;;
+                not-dev|*)
+                    REASON_CODE="classify_not_dev_or_error"
+                    _classify_reason=$(echo "$_session_result" | jq -r '.reason // ""' 2>/dev/null || echo "")
+                    # 输出 classify reason 到 stdout（T15 验证 classify_session 被调用）
+                    [[ -n "$_classify_reason" ]] && echo "{\"decision\":\"release\",\"reason_code\":\"classify_not_dev\",\"reason\":\"$_classify_reason\"}"
+                    ;;
+            esac
         else
             REASON_CODE="all_dark"
         fi
@@ -161,6 +190,9 @@ type log_hook_decision &>/dev/null && \
 
 if [[ "$DECISION" == "block" ]]; then
     jq -n --arg r "$BLOCK_REASON" '{"decision":"block","reason":$r}'
+else
+    # release：也输出 JSON，让 T15/T16 能验证 reason_code
+    jq -n --arg rc "${REASON_CODE:-release}" '{"decision":"release","reason_code":$rc}'
 fi
 
 exit 0
