@@ -223,16 +223,28 @@ describe('stop-dev.sh v24 新场景（T13-T16）', () => {
     // v24 要求：灯文件已被删除
     expect(existsSync(lightFile)).toBe(false)
     // v24 要求：guardian 进程已被 kill（SIGTERM 发出，进程 dead 或 zombie 均可）
-    // 等待进程状态更新
+    // 等待进程状态更新（spawnSync 阻塞事件循环，SIGCHLD pending，zombie 不被立即回收）
     spawnSync(process.execPath, ['-e', 'setTimeout(()=>{},500)'], { timeout: 2000 })
     // 检查进程状态：不存在(ESRCH) 或 zombie(Z) 均视为已 killed
-    // zombie 进程：父进程未 wait，但信号已发出，进程已不运行
+    // 在此容器环境 ps 不可用，改用 /proc/PID/status（Linux）或 ps（macOS）检测 zombie
     let guardianKilled = false
     try {
       process.kill(guardianPid, 0)
-      // 进程存在时，检查是否为 zombie（macOS: stat=Z）
-      const psOut = execSync(`ps -p ${guardianPid} -o stat= 2>/dev/null || echo ''`, { encoding: 'utf8' }).trim()
-      guardianKilled = psOut.includes('Z')  // zombie = signal 已发出，等待 wait()
+      // 进程仍在 process table（可能是 zombie）
+      // Linux: 通过 /proc/PID/status 检测 zombie（ps 在容器内不可用）
+      // macOS: 通过 ps -p PID -o stat= 检测 zombie
+      if (process.platform === 'linux') {
+        try {
+          const { readFileSync } = require('fs') as typeof import('fs')
+          const procStatus = readFileSync(`/proc/${guardianPid}/status`, 'utf8')
+          guardianKilled = /^State:\s+Z/m.test(procStatus)
+        } catch (_procErr) {
+          guardianKilled = true  // /proc entry 消失 = 进程已彻底消失
+        }
+      } else {
+        const psOut = execSync(`ps -p ${guardianPid} -o stat= 2>/dev/null || echo ''`, { encoding: 'utf8' }).trim()
+        guardianKilled = psOut.includes('Z')
+      }
     } catch (_e) {
       guardianKilled = true  // ESRCH = 进程已彻底消失
     }
