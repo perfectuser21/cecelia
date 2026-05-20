@@ -116,6 +116,21 @@ features:
 # Changelog（细粒度改动历史）
 # ============================================================================
 changelog:
+  - version: "18.27.1"
+    date: "2026-05-20"
+    change: "fix+test"
+    description: "Stop Hook v24 完整实现（cp-05201600）— 补全 PR #3061 未覆盖的 classify_session 完整路由：blocked→reason+action 组合透传、done→kill guardian+rm灯文件+exit 0、not-dev→stdout reason 输出（T15 验证调用）。classify_session 不可用时保底 not-dev（原 #3061 保底为 block）。新增 T13-T16 测试覆盖完整决策路径。更新 T1-T12 配套 classify mock 防止 hook 默认 not-dev 影响旧期望。"
+    files:
+      - "packages/engine/hooks/stop-dev.sh (classify_session 完整路由 blocked/done/not-dev)"
+      - "packages/engine/skills/dev/scripts/cleanup.sh (done 路径 SIGTERM guardian + rm .live 灯文件)"
+      - "packages/engine/tests/hooks/stop-hook-v24.test.ts (新建 T13-T16)"
+      - "packages/engine/tests/hooks/stop-hook-v23-decision.test.ts (加 setupMockClassifyBlocked beforeEach)"
+      - "packages/engine/tests/hooks/stop-hook-bypass-3layer.test.ts (加 classify mock)"
+      - "packages/engine/tests/hooks/stop-hook-v23-routing.test.ts (加 classify mock + 更新语义)"
+      - "packages/engine/tests/integration/ralph-loop-mode.test.sh (加 inject_classify_blocked)"
+      - "packages/engine/tests/integration/stop-dev-deploy-escape.test.sh (加 inject_classify_mock)"
+      - "Engine 6 处版本文件 18.27.0 → 18.27.1"
+
   - version: "18.26.0"
     date: "2026-05-07"
     change: "feat+security"
