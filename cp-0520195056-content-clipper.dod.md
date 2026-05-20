@@ -15,8 +15,8 @@
 - [x] [BEHAVIOR] extractClip 调用 content-service proxy 并传递 callback_url
   Test: packages/brain/src/__tests__/clips-extractor.test.js
 
-- [x] [ARTIFACT] migration 010-content-clips.sql 存在
-  Test: manual:node -e "require('fs').accessSync('database/migrations/010-content-clips.sql')"
+- [x] [ARTIFACT] migration 280_content_clips.sql 存在（Brain migrations 目录）
+  Test: manual:node -e "require('fs').accessSync('packages/brain/migrations/280_content_clips.sql')"
 
 - [x] [ARTIFACT] packages/brain/src/routes/clips.js 存在
   Test: manual:node -e "require('fs').accessSync('packages/brain/src/routes/clips.js')"
