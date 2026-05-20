@@ -48,6 +48,8 @@ describe('POST /api/brain/clips — create clip', () => {
     expect(res.status).toBe(201);
     expect(res.body.id).toBe('uuid-1');
     expect(res.body.status).toBe('pending');
+    expect(extractClip).toHaveBeenCalledOnce();
+    expect(extractClip).toHaveBeenCalledWith('uuid-1', 'https://v.douyin.com/xxx');
   });
 
   it('returns 400 if url is missing', async () => {
@@ -62,7 +64,9 @@ describe('POST /api/brain/clips — create clip', () => {
   it('returns 409 if url already exists (unique constraint)', async () => {
     const err = new Error('duplicate key value violates unique constraint');
     err.code = '23505';
-    pool.query.mockRejectedValueOnce(err);
+    pool.query
+      .mockRejectedValueOnce(err)  // first call: INSERT throws 23505
+      .mockResolvedValueOnce({ rows: [{ id: 'existing-uuid', status: 'done' }] }); // second call: SELECT existing
     const { default: router } = await import('../clips.js');
     const app = makeApp();
     app.use('/api/brain/clips', router);
@@ -71,6 +75,7 @@ describe('POST /api/brain/clips — create clip', () => {
       .post('/api/brain/clips')
       .send({ url: 'https://v.douyin.com/duplicate' });
     expect(res.status).toBe(409);
+    expect(res.body.error).toBe('already_exists');
   });
 });
 
