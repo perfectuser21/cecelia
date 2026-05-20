@@ -516,12 +516,20 @@ jobs:
         with:
           fetch-depth: 0
       - name: Download coverage artifact
+        id: download_cov
+        continue-on-error: true
         uses: actions/download-artifact@v4
         with:
           name: brain-coverage-lcov
           path: packages/brain/coverage/
       - name: Diff Coverage Gate
         run: |
+          # brain-unit shard 1 在 PR 无 .js/.ts 变更时跳过（scope=skip），不上传 artifact。
+          # 此时 download 失败（continue-on-error），lcov.info 不存在 — 无源码变更，覆盖率不适用，跳过。
+          if [ ! -f packages/brain/coverage/lcov.info ]; then
+            echo "⏭️  无 lcov artifact（brain 变更不含 .js/.ts 源码，scope=skip）— 跳过 diff-cover"
+            exit 0
+          fi
           pip install diff-cover --quiet
           git fetch origin main
           cd packages/brain
