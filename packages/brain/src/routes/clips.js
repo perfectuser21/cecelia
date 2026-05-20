@@ -12,7 +12,7 @@ router.post('/webhook', async (req, res) => {
     if (secret && req.headers['x-webhook-secret'] !== secret) {
       return res.status(401).json({ error: 'unauthorized' });
     }
-    const { url, platform: bodyPlatform, title, transcript, text, images, note } = req.body;
+    const { url, platform: bodyPlatform, title, transcript, text, images } = req.body;
     if (!url) return res.status(400).json({ error: 'url required' });
 
     const platform = bodyPlatform || detectPlatform(url);
@@ -62,7 +62,7 @@ router.post('/:id/retry', async (req, res) => {
 /** POST /:id/callback — internal: content-service posts result here */
 router.post('/:id/callback', async (req, res) => {
   try {
-    const { success, title, transcript, images, platform, author, author_id,
+    const { success, title, transcript, images, author, author_id,
             like_count, comment_count, share_count, cover_url, video_url,
             raw_response, error } = req.body;
 
