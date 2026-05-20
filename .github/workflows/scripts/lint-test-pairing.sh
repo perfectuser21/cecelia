@@ -76,6 +76,16 @@ if [ -z "$ADDED_SRC" ]; then
   exit 0
 fi
 
+# Walking Skeleton thin PR 豁免：PR 新增 smoke script = 骨架阶段，不要求 unit test 配对
+# 注：仅 golden-path-* 触发豁免（代表新 Journey 骨架），非 golden-path smoke 需要正常 test-pairing
+NEW_SMOKE=$(git diff --name-only --diff-filter=A "${BASE_REF}...HEAD" 2>/dev/null \
+  | grep -E '^\.github/workflows/scripts/smoke/golden-path-.+\.sh$|^packages/brain/scripts/smoke/golden-path-.+\.sh$' \
+  || true)
+if [ -n "$NEW_SMOKE" ]; then
+  echo "⏭️  Walking Skeleton thin PR (new smoke: ${NEW_SMOKE}) — test-pairing 豁免"
+  exit 0
+fi
+
 # PR 自身已添加/修改的测试文件（diff 内可见）
 PR_TESTS=$(git diff --name-only --diff-filter=AM "${BASE_REF}...HEAD" 2>/dev/null \
   | grep -E '\.(test|spec)\.js$|/__tests__/' \
