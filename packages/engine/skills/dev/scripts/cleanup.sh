@@ -637,6 +637,24 @@ if [[ -f "$DEV_MODE_FILE" ]] && [[ "${VALIDATION_PASSED:-true}" == "true" ]]; th
                 echo "cleanup_done: true" >> "$target_file"
             fi
         fi
+        # v24 Bug 2 fix：done 时 SIGTERM guardian + rm 灯文件
+        # 最佳努力（|| true），stop-dev.sh classify=done 是第二道保险
+        local _branch_kill="${BRANCH:-$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo '')}"
+        if [[ -n "$_branch_kill" ]]; then
+            local _main_repo_kill
+            _main_repo_kill=$(git rev-parse --show-toplevel 2>/dev/null || echo "")
+            if [[ -n "$_main_repo_kill" ]]; then
+                local _lights_kill="$_main_repo_kill/.cecelia/lights"
+                for _lf_kill in "$_lights_kill/"*"-${_branch_kill}.live"; do
+                    [[ -f "$_lf_kill" ]] || continue
+                    local _gpid_kill
+                    _gpid_kill=$(jq -r '.guardian_pid // ""' "$_lf_kill" 2>/dev/null || echo "")
+                    [[ -n "$_gpid_kill" ]] && kill "$_gpid_kill" 2>/dev/null || true
+                    rm -f "$_lf_kill"
+                    echo "[cleanup] v24: 已 kill guardian PID=${_gpid_kill}，灯已灭：$(basename "$_lf_kill")" >&2
+                done
+            fi
+        fi
     }
 
     if [[ -n "$LOCK_UTILS" ]] && type atomic_append_dev_mode &>/dev/null; then
@@ -665,33 +683,6 @@ if [[ -f "$DEV_MODE_FILE" ]] && [[ "${VALIDATION_PASSED:-true}" == "true" ]]; th
     echo ""
     echo -e "   ${YELLOW}注意: .dev-mode、.dev-lock 和 sentinel 将由 Stop Hook 在工作流完成后自动删除${NC}"
     echo -e "   ${YELLOW}      cleanup.sh 只负责标记 step_4_ship: done + cleanup_done: true${NC}"
-fi
-
-# ========================================
-# 10.6 SIGTERM guardian + 删除 .live 文件（v24）
-# ========================================
-# cleanup.sh 完成 = /dev 业务真正结束，停止心跳守护 + 熄灯
-echo ""
-echo "[10.6] 停止心跳 guardian + 删除 .live 文件..."
-_MAIN_WT_LIGHTS=$(git worktree list 2>/dev/null | head -1 | awk '{print $1}')
-if [[ -n "$_MAIN_WT_LIGHTS" && -d "$_MAIN_WT_LIGHTS/.cecelia/lights" ]]; then
-    _LIVE_COUNT=0
-    for _live_file in "$_MAIN_WT_LIGHTS/.cecelia/lights/"*"-${CP_BRANCH}.live"; do
-        [[ -f "$_live_file" ]] || continue
-        _guardian_pid=$(jq -r '.guardian_pid // ""' "$_live_file" 2>/dev/null || echo "")
-        if [[ -n "$_guardian_pid" && "$_guardian_pid" =~ ^[0-9]+$ ]]; then
-            kill -TERM "$_guardian_pid" 2>/dev/null || true
-        fi
-        rm -f "$_live_file"
-        _LIVE_COUNT=$((_LIVE_COUNT + 1))
-    done
-    if [[ "$_LIVE_COUNT" -gt 0 ]]; then
-        echo -e "   ${GREEN}[OK] 已删除 ${_LIVE_COUNT} 个 .live 文件，guardian SIGTERM 已发送${NC}"
-    else
-        echo -e "   ${GREEN}[OK] 无 .live 文件（已自行熄灯）${NC}"
-    fi
-else
-    echo -e "   ${YELLOW}[WARN] 无法定位 .cecelia/lights/，跳过 guardian 清理${NC}"
 fi
 
 # ========================================
