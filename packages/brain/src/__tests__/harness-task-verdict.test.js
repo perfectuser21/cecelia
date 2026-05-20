@@ -68,7 +68,7 @@ vi.mock('../workflows/retry-policies.js', () => ({
 
 // ─── Import SUT after mocks ────────────────────────────────────────────────────
 
-import { normalizeVerdict, mergePrNode } from '../workflows/harness-task.graph.js';
+import { normalizeVerdict, mergePrNode, routeAfterMergePr } from '../workflows/harness-task.graph.js';
 
 describe('normalizeVerdict — Protocol v1 + v2 统一标准化', () => {
   it('"FIXED" → "PASS"', () => {
@@ -112,5 +112,73 @@ describe('mergePrNode — 合并命令不含 --auto', () => {
     expect(captured).not.toContain('--auto');
     expect(captured).toContain('--squash');
     expect(captured).toContain('--delete-branch');
+  });
+});
+
+describe('mergePrNode — branch-behind retry', () => {
+  const PR_URL = 'https://github.com/perfectuser21/cecelia/pull/999';
+
+  it('behind 错误首次 → update-branch + 返回 ci_status=pending rebase_attempted=1', async () => {
+    const calls = [];
+    const execFn = async (_cmd, args) => {
+      calls.push([...args]);
+      if (args.includes('merge')) throw new Error('branch is behind the base branch by 2 commits');
+      return { stdout: '' };
+    };
+    const result = await mergePrNode({ pr_url: PR_URL, rebase_attempted: 0 }, { execFile: execFn });
+    expect(calls[0]).toContain('merge');
+    expect(calls[1]).toContain('update-branch');
+    expect(calls[1]).toContain('--rebase');
+    expect(result.ci_status).toBe('pending');
+    expect(result.rebase_attempted).toBe(1);
+    expect(result.error).toBeUndefined();
+  });
+
+  it('behind 错误但 rebase_attempted=1 → 返回 error（已重试过）', async () => {
+    const execFn = async () => { throw new Error('must be up to date with the base branch'); };
+    const result = await mergePrNode({ pr_url: PR_URL, rebase_attempted: 1 }, { execFile: execFn });
+    expect(result.error).toBeDefined();
+    expect(result.error.node).toBe('merge_pr');
+    expect(result.error.message).toMatch(/after rebase/i);
+  });
+
+  it('behind 错误 update-branch 也失败 → 返回 error', async () => {
+    const execFn = async (_cmd, args) => {
+      if (args.includes('merge')) throw new Error('head ref is out of date');
+      throw new Error('merge conflict: cannot rebase');
+    };
+    const result = await mergePrNode({ pr_url: PR_URL, rebase_attempted: 0 }, { execFile: execFn });
+    expect(result.error).toBeDefined();
+    expect(result.error.node).toBe('merge_pr');
+    expect(result.error.message).toMatch(/update-branch failed/i);
+  });
+
+  it('非 behind 错误 → 返回 error（不再是 merge_error）', async () => {
+    const execFn = async () => { throw new Error('GraphQL: Permission denied to merge'); };
+    const result = await mergePrNode({ pr_url: PR_URL, rebase_attempted: 0 }, { execFile: execFn });
+    expect(result.error).toBeDefined();
+    expect(result.error.node).toBe('merge_pr');
+    expect(result.merge_error).toBeUndefined();
+  });
+
+  it('no pr_url → 返回 error（不再是 merge_error）', async () => {
+    const result = await mergePrNode({ pr_url: null, rebase_attempted: 0 }, { execFile: async () => ({}) });
+    expect(result.error).toBeDefined();
+    expect(result.error.node).toBe('merge_pr');
+    expect(result.merge_error).toBeUndefined();
+  });
+});
+
+describe('routeAfterMergePr', () => {
+  it('status=merged → end', () => {
+    expect(routeAfterMergePr({ status: 'merged' })).toBe('end');
+  });
+
+  it('ci_status=pending（rebase done）→ poll', () => {
+    expect(routeAfterMergePr({ ci_status: 'pending', rebase_attempted: 1 })).toBe('poll');
+  });
+
+  it('error set → end', () => {
+    expect(routeAfterMergePr({ error: { node: 'merge_pr', message: 'x' } })).toBe('end');
   });
 });
