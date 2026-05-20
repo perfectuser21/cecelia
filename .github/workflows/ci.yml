@@ -90,6 +90,38 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+  # ─── DoD 格式检查（独立，所有 PR 必跑）────────────────────────────────
+  # 从 engine-tests 移出，确保 Brain/Workspace PR 的 DoD 也被检查
+  dod-format-check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v4
+      - name: DoD 格式检查
+        run: |
+          TASK_CARD=""
+          # DoD.md 是当前标准（v6 命名），.task-*.md / task-card.md 为旧兼容
+          for f in DoD.md .task-*.md task-card.md; do
+            [ -f "$f" ] && TASK_CARD="$f" && break
+          done
+          if [ -z "$TASK_CARD" ]; then
+            echo "⏭️  未找到 DoD 文件，跳过格式检查"
+            exit 0
+          fi
+          echo "📋 检查 DoD 文件: $TASK_CARD"
+          if ! grep -q '\[BEHAVIOR\]' "$TASK_CARD"; then
+            echo "::error::DoD 缺少 [BEHAVIOR] 条目，至少需要一个"
+            exit 1
+          fi
+          echo "✅ 已发现 [BEHAVIOR] 条目"
+          UNCHECKED=$(grep -c '^\- \[ \]' "$TASK_CARD" || true)
+          if [ "$UNCHECKED" -gt 0 ]; then
+            echo "::error::DoD 有 ${UNCHECKED} 个未验证条目（[ ]），push 前必须全部勾选为 [x]"
+            grep '^\- \[ \]' "$TASK_CARD" | head -5
+            exit 1
+          fi
+          echo "✅ DoD 格式检查通过"
+
   # ─── 依赖漏洞扫描（根目录，含 dev deps，high+ 级别硬拦）────────
   # 拦截 high 及以上（high / critical）漏洞，moderate 及以下仍允许。
   # 覆盖 high 级别漏洞，避免高危漏洞进入生产。
@@ -237,33 +269,6 @@ jobs:
         run: cd packages/engine && bash ci/scripts/check-dynamic-tests.sh
       - name: Chinese Punctuation Bomb Scan
         run: bash packages/engine/ci/scripts/check-chinese-punctuation-bombs.sh
-      - name: DoD 格式检查
-        run: |
-          # 检测 PR 中的 task-card.md 文件（跳过未含 task-card 的 PR）
-          TASK_CARD=""
-          # DoD.md 是当前标准（v6 命名），.task-*.md / task-card.md 为旧兼容
-          for f in DoD.md .task-*.md task-card.md; do
-            [ -f "$f" ] && TASK_CARD="$f" && break
-          done
-          if [ -z "$TASK_CARD" ]; then
-            echo "⏭️  未找到 task-card.md，跳过 DoD 格式检查"
-            exit 0
-          fi
-          echo "📋 检查 DoD 文件: $TASK_CARD"
-          # 检查至少有一个 [BEHAVIOR] 条目
-          if ! grep -q '\[BEHAVIOR\]' "$TASK_CARD"; then
-            echo "::error::Task Card 缺少 [BEHAVIOR] 条目，至少需要一个"
-            exit 1
-          fi
-          echo "✅ 已发现 [BEHAVIOR] 条目"
-          # 检查所有条目是否已勾选（不允许 [ ] 未验证条目）
-          UNCHECKED=$(grep -c '^\- \[ \]' "$TASK_CARD" || true)
-          if [ "$UNCHECKED" -gt 0 ]; then
-            echo "::error::DoD 有 ${UNCHECKED} 个未验证条目（[ ]），push 前必须全部勾选为 [x]"
-            grep '^\- \[ \]' "$TASK_CARD" | head -5
-            exit 1
-          fi
-          echo "✅ 所有 DoD 条目已验证"
       - name: DoD BEHAVIOR 命令执行
         run: |
           # 检测 PR 中的 task-card.md 文件
@@ -1158,7 +1163,7 @@ jobs:
   # ─── Gate: 所有检查通过才能合并 ─────────────────────────────
   ci-passed:
     if: always()
-    needs: [secrets-scan, dep-audit, registry-lint, eslint, pr-size-check, branch-naming, engine-tests, engine-tests-shell, lint-migration-unique-version, brain-unit, brain-unit-all, brain-diff-coverage, brain-integration, workspace-build, workspace-test, e2e-smoke, dod-behavior-dynamic, harness-dod-integrity, harness-contract-lint, docker-infra-smoke, lint-test-pairing, lint-feature-has-smoke, lint-base-fresh, lint-tdd-commit-order, lint-learning-constraint-coverage, lint-test-quality, lint-no-mock-only-test, lint-no-fake-test, lint-single-exit, lint-bypass-not-committed, real-env-smoke]
+    needs: [secrets-scan, dod-format-check, dep-audit, registry-lint, eslint, pr-size-check, branch-naming, engine-tests, engine-tests-shell, lint-migration-unique-version, brain-unit, brain-unit-all, brain-diff-coverage, brain-integration, workspace-build, workspace-test, e2e-smoke, dod-behavior-dynamic, harness-dod-integrity, harness-contract-lint, docker-infra-smoke, lint-test-pairing, lint-feature-has-smoke, lint-base-fresh, lint-tdd-commit-order, lint-learning-constraint-coverage, lint-test-quality, lint-no-mock-only-test, lint-no-fake-test, lint-single-exit, lint-bypass-not-committed, real-env-smoke]
     runs-on: ubuntu-latest
     timeout-minutes: 2
     steps:
@@ -1169,6 +1174,7 @@ jobs:
           check() { local n=$1 r=$2; if [ "$r" = "failure" ]; then echo "❌ $n"; FAILED=true; elif [ "$r" = "skipped" ]; then echo "⏭️  $n (skipped)"; else echo "✅ $n"; fi; }
 
           check "secrets-scan"      "${{ needs.secrets-scan.result }}"
+          check "dod-format-check"  "${{ needs.dod-format-check.result }}"
           check "dep-audit"         "${{ needs.dep-audit.result }}"
           check "registry-lint"     "${{ needs.registry-lint.result }}"
           check "eslint"            "${{ needs.eslint.result }}"
