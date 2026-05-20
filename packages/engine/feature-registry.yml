@@ -36,15 +36,16 @@ features:
   - id: stop-hook
     name: Stop Hook（/dev 流程守门）
     status: stable
-    since: "2026-04-21"  # PR #2503 cwd-as-key 切线（v22）；2026-05-07 v23 心跳模型 #2826 全面重写
+    since: "2026-04-21"  # PR #2503 cwd-as-key 切线（v22）；2026-05-07 v23 心跳模型 #2826；2026-05-20 v24 修复
     owner: engine
     description: |
       Cecelia /dev 流程的核心守门 — 每次 assistant 想 stop turn 时触发。
       v23（2026-05-07）心跳模型：扫 .cecelia/lights/<sid_short>-*.live mtime，
       新鲜（< TTL=300s）→ block 让 ralph loop 续命；全黑 → release 下班。
-      OS mtime 替代 v22 软件状态机；与 Brain 完全解耦；多 session × 多 worktree
-      天然不串。/dev 完成由 engine-ship → ship-finalize.sh 写 done-marker +
-      SIGTERM guardian → 灯熄。
+      v24（2026-05-20）三项 bug 修复：1) stop-dev.sh 改用 CLAUDE_HOOK_SESSION_ID
+      env var（stop.sh 从 stdin 解析后 export，不再二次读空 stdin）；
+      2) 灯亮时调 classify_session(cwd) 获取具体 action 透传给 Claude；
+      3) cleanup.sh 完成时 SIGTERM guardian + rm .live 文件（熄灯职责下移到 cleanup.sh）。
     entry_points:
       - packages/engine/hooks/stop-dev.sh        # v23 心跳决策（单一出口）
       - packages/engine/hooks/dev-mode-tool-guard.sh  # PreToolUse 拦 ScheduleWakeup + Bash bg
@@ -63,9 +64,10 @@ features:
       - main_repo/.cecelia/aborted/{sid_short}-{branch}.aborted    # 中止审计标记
       - worktree/.dev-mode.{branch}                    # worktree 元数据缓存
       - worktree/.dev-lock.{branch}                    # session_id + owner_session
-    contract_url: https://www.notion.so/Stop-Hook-Contract-v18-22-2-357c40c2ba6381b893c7e251707d1252
+    contract_url: https://www.notion.so/Stop-Hook-v24-2026-05-20-366c40c2ba6381038adcd7e763e9bd63
+    contract_url_v23: https://www.notion.so/Stop-Hook-Contract-v18-22-2-357c40c2ba6381b893c7e251707d1252
     contract_url_legacy: https://www.notion.so/35753f413ec581d9b607f61e4e90ce0b  # 月升 frozen，留作历史快照
-    invariants_count: 18  # L1-L18 详见 contract，integrity 元测试 grep 验证
+    invariants_count: 21  # L1-L21 + L22-L24（v24 新增），integrity 元测试 grep 验证
     state_machine:
       stages:
         - P1 PR 未创建 → block: 立即 push + gh pr create

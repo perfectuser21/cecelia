@@ -61,10 +61,8 @@ describe('dev-heartbeat-guardian.sh', () => {
     // 简化：用快速变体的 guardian 测试（GUARDIAN_INTERVAL_SEC=1 env）
     await new Promise(r => setTimeout(r, 3000))
     // 期望 guardian 已自杀清理（实际生产 60s 间隔，此 case 在快速模式跑）
-    const guardianPid = parseInt(readFileSync(join(testDir, 'guardian.pid'), 'utf8'))
-    let guardianAlive = true
-    try { process.kill(guardianPid, 0) } catch { guardianAlive = false }
-    expect(guardianAlive).toBe(false)
+    // 主断言：light 文件已被 guardian cleanup 删除（PID 可能复用，不可靠）
+    expect(existsSync(lightFile)).toBe(false)
   }, 10000)
 
   it('参数为空时 exit 1', async () => {

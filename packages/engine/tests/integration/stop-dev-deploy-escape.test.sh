@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
-# stop-dev-deploy-escape.test.sh — v23 心跳模型 mtime TTL + 鲁棒性
-# 原 BUG-4 场景（v22 auto-rm dev-active）已由 v23 灯 mtime 自然过期替代。
-# 本文件保留语义等价的 v23 版本：
+# stop-dev-deploy-escape.test.sh — v24 CLAUDE_HOOK_SESSION_ID env var + mtime TTL + 鲁棒性
+# v24: session_id 改由 CLAUDE_HOOK_SESSION_ID env var 传入（不再通过 stdin pipe）
 #   Case 1: 老灯（1h 前 mtime）→ hook release（灯熄 → 放行）
 #   Case 2: 新灯（刚 touch）→ hook block（灯亮）
 #   Case 3: TTL=1min + 5 分钟老灯 → hook release（TTL 可配置）
@@ -41,7 +40,8 @@ TMP=$(build_main)
 LIGHT="$TMP/.cecelia/lights/${SID_OLD}-cp-old.live"
 echo '{"session_id":"sessold1-full-uuid","branch":"cp-old"}' > "$LIGHT"
 old_mtime_1h "$LIGHT"
-out=$(echo "{\"session_id\":\"${SESSION_OLD}\"}" | CLAUDE_HOOK_CWD="$TMP" bash "$STOP_HOOK" 2>&1 || true)
+# v24: 通过 CLAUDE_HOOK_SESSION_ID env var 传入 session_id
+out=$(CLAUDE_HOOK_SESSION_ID="${SESSION_OLD}" CLAUDE_HOOK_CWD="$TMP" bash "$STOP_HOOK" </dev/null 2>&1 || true)
 if ! echo "$out" | grep -q '"decision".*block'; then
     pass "Case 1: 老灯（1h mtime）→ release"
 else
@@ -53,7 +53,8 @@ rm -rf "$TMP"
 TMP=$(build_main)
 LIGHT="$TMP/.cecelia/lights/${SID_NEW}-cp-new.live"
 echo '{"session_id":"sessnew1-full-uuid","branch":"cp-new"}' > "$LIGHT"
-out=$(echo "{\"session_id\":\"${SESSION_NEW}\"}" | CLAUDE_HOOK_CWD="$TMP" bash "$STOP_HOOK" 2>&1 || true)
+# v24: 通过 CLAUDE_HOOK_SESSION_ID env var 传入 session_id
+out=$(CLAUDE_HOOK_SESSION_ID="${SESSION_NEW}" CLAUDE_HOOK_CWD="$TMP" bash "$STOP_HOOK" </dev/null 2>&1 || true)
 if echo "$out" | grep -q '"decision".*block'; then
     pass "Case 2: 新灯（刚 touch）→ block"
 else
@@ -68,7 +69,8 @@ SID_CFG="${SESSION_CFG:0:8}"
 LIGHT="$TMP/.cecelia/lights/${SID_CFG}-cp-cfg.live"
 echo '{"session_id":"sesscfg1-full-uuid","branch":"cp-cfg"}' > "$LIGHT"
 old_mtime_5min "$LIGHT"
-out=$(echo "{\"session_id\":\"${SESSION_CFG}\"}" | STOP_HOOK_LIGHT_TTL_SEC=60 CLAUDE_HOOK_CWD="$TMP" bash "$STOP_HOOK" 2>&1 || true)
+# v24: 通过 CLAUDE_HOOK_SESSION_ID env var 传入 session_id
+out=$(CLAUDE_HOOK_SESSION_ID="${SESSION_CFG}" STOP_HOOK_LIGHT_TTL_SEC=60 CLAUDE_HOOK_CWD="$TMP" bash "$STOP_HOOK" </dev/null 2>&1 || true)
 if ! echo "$out" | grep -q '"decision".*block'; then
     pass "Case 3: TTL_SEC=60 + 5 分钟老灯 → release"
 else
@@ -82,7 +84,7 @@ cat > "$TMP/.cecelia/dev-active-cp-deploy-fail.json" <<EOF
 {"branch":"cp-deploy-fail","worktree":"/tmp/wt","session_id":"sess-d"}
 EOF
 echo "3" > "$TMP/.cecelia/deploy-fail-count-cp-deploy-fail"
-out=$(echo '{}' | CLAUDE_HOOK_CWD="$TMP" bash "$STOP_HOOK" 2>&1 || true)
+out=$(CLAUDE_HOOK_CWD="$TMP" bash "$STOP_HOOK" </dev/null 2>&1 || true)
 # hook 不应崩（exit 非 2/99），结果不论 block/release
 echo "ℹ️  Case 4 output: $out" | head -3
 pass "Case 4: 杂文件存在 → stop-hook 不崩"

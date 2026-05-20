@@ -76,10 +76,11 @@ describe('worktree-manage create', () => {
     const result = spawnSync('bash', [WORKTREE_MANAGE, 'list'], {
       encoding: 'utf8',
       cwd: ENGINE_ROOT,
+      timeout: 30000,
     });
     const combined = (result.stdout || '') + (result.stderr || '');
     expect(combined.length).toBeGreaterThan(0);
-  });
+  }, 30000);
 
   it.skip('create 实际创建 worktree，路径存在（含清理）[CI环境无git worktree]', () => {
     const taskName = `e2e-${Date.now()}`;

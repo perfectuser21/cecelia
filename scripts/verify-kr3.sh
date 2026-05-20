@@ -104,7 +104,7 @@ echo ""
 if fetch_from_brain_api; then
   info "数据来源: Brain API ($BRAIN_URL/api/brain/kr3/progress)"
 elif fetch_from_db; then
-  warn "Brain API 不可达，降级查询 DB（$DB_CONTAINER）"
+  warn "Brain API 不可达，降级查询 DB（${DB_CONTAINER}）"
 else
   echo -e "${RED}❌ Brain API 和 DB 均不可达，无法验收${NC}"
   echo ""

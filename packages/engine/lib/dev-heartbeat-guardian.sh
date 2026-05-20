@@ -30,7 +30,7 @@ touch "$LIGHT" 2>/dev/null || { echo "[guardian] cannot create $LIGHT" >&2; exit
 while true; do
     # ppid 自检 — 跨平台（ORPHAN_MODE=1 时跳过，nohup+disown 启动的合法孤儿进程）
     if [[ "$ORPHAN_MODE" != "1" ]]; then
-        current_ppid=$(ps -o ppid= -p $$ 2>/dev/null | tr -d ' ' || echo 1)
+        current_ppid=$(ps -o ppid= -p $$ 2>/dev/null | tr -d ' ' || awk '/^PPid:/{print $2}' /proc/$$/status 2>/dev/null || echo 1)
         if [[ "$current_ppid" != "$ORIGINAL_PPID" ]]; then
             cleanup
         fi

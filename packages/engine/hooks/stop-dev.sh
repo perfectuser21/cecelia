@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
 # ============================================================================
-# stop-dev.sh — Stop Hook v23.1.0（心跳模型 + 单一出口）
+# stop-dev.sh — Stop Hook v24.0.0（心跳模型 + 单一出口 + classify_session 增强）
 # ============================================================================
 # 决策模型：扫 .cecelia/lights/<sid_short>-*.live，任一 mtime < TTL → block。
 # 单一出口纪律：所有判定只 set DECISION 变量；唯一 exit 0 在文件末尾。
 #
-# 这是 v22 历史教训的纠正：v22 209 行 + 8 个分散 exit，加日志/清理/观测要追
-# 8 条路径。v23.1 集中到 1 处出口，可观测性 + 可维护性 + 单一出口纪律全到位。
+# v24 修复：
+#   1) session_id 改从 CLAUDE_HOOK_SESSION_ID env var 读取（stop.sh 从 stdin 解析后 export）
+#   2) 灯亮时调 classify_session(cwd) 获取具体 action 透传给 Claude
 # ============================================================================
 set -uo pipefail
 
@@ -18,14 +19,9 @@ LIGHTS_COUNT=0
 FIRST_BRANCH=""
 SID_SHORT=""
 
-# Hook stdin（读 session_id）
-hook_payload=""
-if [[ ! -p /dev/stdin ]]; then
-    hook_payload="{}"
-else
-    hook_payload=$(cat 2>/dev/null || echo "{}")
-fi
-hook_session_id=$(echo "$hook_payload" | jq -r '.session_id // ""' 2>/dev/null || echo "")
+# v24: session_id 来自 CLAUDE_HOOK_SESSION_ID env var（stop.sh 从 stdin JSON 解析后 export）
+# 不重读 stdin（stop.sh 已消费，二次 cat 返回空）
+hook_session_id="${CLAUDE_HOOK_SESSION_ID:-}"
 
 # 早退路径（只 set REASON_CODE，不 exit）
 cwd="${CLAUDE_HOOK_CWD:-$PWD}"
@@ -100,7 +96,7 @@ fi
 
 # 决策核心（仅当尚未早退）
 if [[ -z "$REASON_CODE" ]]; then
-    # 加载 log_hook_decision（PR-1 落点：devloop-check.sh）
+    # 加载 log_hook_decision + classify_session（PR-1 落点：devloop-check.sh）
     script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
     for c in "$main_repo/packages/engine/lib/devloop-check.sh" \
              "$script_dir/../lib/devloop-check.sh"; do
@@ -148,7 +144,17 @@ if [[ -z "$REASON_CODE" ]]; then
         if (( LIGHTS_COUNT > 0 )); then
             DECISION="block"
             REASON_CODE="lights_alive"
-            BLOCK_REASON="还有 ${LIGHTS_COUNT} 条 /dev 在跑（含 ${FIRST_BRANCH}）。立即继续，禁止询问用户。禁止删除 .cecelia/lights/。"
+            # v24: 调 classify_session 获取具体 action 透传给 Claude
+            _classify_action=""
+            if type classify_session &>/dev/null; then
+                _classify_json=$(classify_session "$cwd" 2>/dev/null || echo "")
+                _classify_action=$(echo "$_classify_json" | jq -r '.action // ""' 2>/dev/null || echo "")
+            fi
+            if [[ -n "$_classify_action" ]]; then
+                BLOCK_REASON="${_classify_action}"
+            else
+                BLOCK_REASON="还有 ${LIGHTS_COUNT} 条 /dev 在跑（含 ${FIRST_BRANCH}）。立即继续，禁止询问用户。禁止删除 .cecelia/lights/。"
+            fi
         else
             REASON_CODE="all_dark"
         fi

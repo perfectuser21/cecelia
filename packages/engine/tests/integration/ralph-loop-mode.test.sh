@@ -40,12 +40,12 @@ assert_exit_code() {
 
 run_stop_dev() {
     local cwd="$1"
-    local hook_session_id="${2:-}"  # v22: 可选 hook payload session_id
-    # stop-dev.sh 用 CLAUDE_HOOK_CWD env（stop.sh 路由解析 stdin JSON 后 export）
+    local hook_session_id="${2:-}"  # v24: CLAUDE_HOOK_SESSION_ID env var
+    # v24: stop-dev.sh 从 CLAUDE_HOOK_SESSION_ID env var 读 session_id（不重读 stdin）
     if [[ -n "$hook_session_id" ]]; then
-        echo "{\"session_id\":\"$hook_session_id\",\"hook_event_name\":\"Stop\"}" | CLAUDE_HOOK_CWD="$cwd" bash "$STOP_DEV" 2>&1
+        CLAUDE_HOOK_SESSION_ID="$hook_session_id" CLAUDE_HOOK_CWD="$cwd" bash "$STOP_DEV" </dev/null 2>&1
     else
-        echo '{}' | CLAUDE_HOOK_CWD="$cwd" bash "$STOP_DEV" 2>&1
+        CLAUDE_HOOK_CWD="$cwd" bash "$STOP_DEV" </dev/null 2>&1
     fi
     echo "EXIT:$?"
 }

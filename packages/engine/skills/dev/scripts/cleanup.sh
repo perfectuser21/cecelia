@@ -668,6 +668,33 @@ if [[ -f "$DEV_MODE_FILE" ]] && [[ "${VALIDATION_PASSED:-true}" == "true" ]]; th
 fi
 
 # ========================================
+# 10.6 SIGTERM guardian + 删除 .live 文件（v24）
+# ========================================
+# cleanup.sh 完成 = /dev 业务真正结束，停止心跳守护 + 熄灯
+echo ""
+echo "[10.6] 停止心跳 guardian + 删除 .live 文件..."
+_MAIN_WT_LIGHTS=$(git worktree list 2>/dev/null | head -1 | awk '{print $1}')
+if [[ -n "$_MAIN_WT_LIGHTS" && -d "$_MAIN_WT_LIGHTS/.cecelia/lights" ]]; then
+    _LIVE_COUNT=0
+    for _live_file in "$_MAIN_WT_LIGHTS/.cecelia/lights/"*"-${CP_BRANCH}.live"; do
+        [[ -f "$_live_file" ]] || continue
+        _guardian_pid=$(jq -r '.guardian_pid // ""' "$_live_file" 2>/dev/null || echo "")
+        if [[ -n "$_guardian_pid" && "$_guardian_pid" =~ ^[0-9]+$ ]]; then
+            kill -TERM "$_guardian_pid" 2>/dev/null || true
+        fi
+        rm -f "$_live_file"
+        _LIVE_COUNT=$((_LIVE_COUNT + 1))
+    done
+    if [[ "$_LIVE_COUNT" -gt 0 ]]; then
+        echo -e "   ${GREEN}[OK] 已删除 ${_LIVE_COUNT} 个 .live 文件，guardian SIGTERM 已发送${NC}"
+    else
+        echo -e "   ${GREEN}[OK] 无 .live 文件（已自行熄灯）${NC}"
+    fi
+else
+    echo -e "   ${YELLOW}[WARN] 无法定位 .cecelia/lights/，跳过 guardian 清理${NC}"
+fi
+
+# ========================================
 # 10.5 触发 worktree GC（后台，不阻塞）
 # ========================================
 # v12.57.0: cleanup.sh 完成后自动触发 worktree-gc，不再靠别人
