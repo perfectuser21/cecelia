@@ -233,10 +233,14 @@ jobs:
             echo "✅ 基础分支，跳过命名检查: $BRANCH"
             exit 0
           fi
-          if echo "$BRANCH" | grep -qE '^(cp-|feature/|fix/|chore/|docs/)'; then
+          # 兼容 8 位 (MMDDHHNN) 与 10 位 (MMDDHHMMSS) 时间戳
+          if echo "$BRANCH" | grep -qE '^cp-[0-9]{8,10}-[a-z0-9-]+$'; then
             echo "✅ 分支命名规范: $BRANCH"
           else
-            echo "::error::分支名 '$BRANCH' 不符合规范，应以 cp-/feature//fix//chore//docs/ 开头"
+            echo "::error::分支名 '$BRANCH' 不符合 /dev 工作流规范"
+            echo "  当前分支: $BRANCH"
+            echo "  要求格式: cp-XXXXXXXX-task-name（8 或 10 位时间戳）"
+            echo "  所有代码改动必须通过 /dev 工作流创建分支"
             exit 1
           fi
 
