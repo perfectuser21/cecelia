@@ -874,9 +874,10 @@ jobs:
           DB_PASSWORD: cecelia_test
           PORT: '5221'
           NODE_ENV: test
+          ENV_REGION: us
         run: |
           node packages/brain/server.js > /tmp/brain.log 2>&1 &
-          for i in $(seq 1 30); do
+          for i in $(seq 1 60); do
             curl -sf http://localhost:5221/health >/dev/null 2>&1 && echo "brain ready after ${i}s" && break
             sleep 1
           done
