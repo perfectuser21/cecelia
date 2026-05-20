@@ -827,6 +827,107 @@ jobs:
           [ -f /tmp/brain.pid ] && kill $(cat /tmp/brain.pid) 2>/dev/null || true
           tail -40 /tmp/brain.log 2>/dev/null || true
 
+  # ─── Workspace API Smoke（跨包边界验证：apps/api ↔ packages/brain）─────────
+  # 验证 apps/api (5211) 代理到 brain (5221) 的跨包链路完整。
+  # 不依赖 Docker image，直接起两个 Node.js 进程，验 HTTP 边界。
+  workspace-api-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    services:
+      postgres:
+        image: pgvector/pgvector:pg15
+        env:
+          POSTGRES_USER: cecelia
+          POSTGRES_PASSWORD: cecelia_test
+          POSTGRES_DB: cecelia_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: Install brain deps + run migrations
+        env:
+          DB_HOST: localhost
+          DB_PORT: '5432'
+          DB_NAME: cecelia_test
+          DB_USER: cecelia
+          DB_PASSWORD: cecelia_test
+        run: |
+          cd packages/brain && npm ci
+          node src/migrate.js
+
+      - name: Start brain (port 5221)
+        env:
+          DB_HOST: localhost
+          DB_PORT: '5432'
+          DB_NAME: cecelia_test
+          DB_USER: cecelia
+          DB_PASSWORD: cecelia_test
+          PORT: '5221'
+          NODE_ENV: test
+        run: |
+          node packages/brain/server.js > /tmp/brain.log 2>&1 &
+          for i in $(seq 1 30); do
+            curl -sf http://localhost:5221/health >/dev/null 2>&1 && echo "brain ready after ${i}s" && break
+            sleep 1
+          done
+          curl -sf http://localhost:5221/health || (cat /tmp/brain.log && exit 1)
+
+      - name: Install apps/api deps + build
+        run: cd apps/api && npm ci && npm run build
+
+      - name: Start apps/api (port 5211)
+        env:
+          PORT: '5211'
+          BRAIN_API: http://localhost:5221
+          BRAIN_NODE_API: http://localhost:5221
+          DB_HOST: localhost
+          DB_PORT: '5432'
+          DB_NAME: cecelia_test
+          DB_USER: cecelia
+          DB_PASSWORD: cecelia_test
+          NODE_ENV: test
+        run: |
+          node apps/api/dist/dashboard/server.js > /tmp/api.log 2>&1 &
+          for i in $(seq 1 30); do
+            curl -sf http://localhost:5211/api/cecelia/health >/dev/null 2>&1 && echo "apps/api ready after ${i}s" && break
+            sleep 1
+          done
+          curl -sf http://localhost:5211/api/cecelia/health || (cat /tmp/api.log && exit 1)
+
+      - name: Cross-package proxy smoke
+        run: |
+          echo "=== 1/3 apps/api 自身健康 ==="
+          curl -sf http://localhost:5211/api/cecelia/health | python3 -c "import sys,json; d=json.load(sys.stdin); print(d)"
+
+          echo "=== 2/3 brain 直接健康 ==="
+          curl -sf http://localhost:5221/health | python3 -c "import sys,json; d=json.load(sys.stdin); print(d)"
+
+          echo "=== 3/3 跨包代理：apps/api → brain ==="
+          PROXY_RESP=$(curl -sf http://localhost:5211/api/brain/health)
+          echo "$PROXY_RESP"
+          echo "$PROXY_RESP" | python3 -c "
+          import sys, json
+          d = json.load(sys.stdin)
+          assert d.get('status') == 'running', f'brain proxy health check failed: {d}'
+          print('✅ 跨包代理通过')
+          "
+
+      - name: Dump logs on failure
+        if: failure()
+        run: |
+          echo "=== brain.log ===" && cat /tmp/brain.log || true
+          echo "=== api.log ===" && cat /tmp/api.log || true
+
   # ─── Real-Env Smoke (起真 brain docker container + 真 postgres，跑 smoke.sh) ─
   # 与单测 / integration 互补：单测 mock 一切；integration 起 node server 直跑；
   # real-env-smoke 起 cecelia-brain image 真容器，验真容器化部署链路 + smoke.sh 行为。
@@ -1169,7 +1270,7 @@ jobs:
   # ─── Gate: 所有检查通过才能合并 ─────────────────────────────
   ci-passed:
     if: always()
-    needs: [secrets-scan, dod-format-check, dep-audit, registry-lint, eslint, pr-size-check, branch-naming, engine-tests, engine-tests-shell, lint-migration-unique-version, brain-unit, brain-unit-all, brain-diff-coverage, brain-integration, workspace-build, workspace-test, e2e-smoke, dod-behavior-dynamic, harness-dod-integrity, harness-contract-lint, docker-infra-smoke, lint-test-pairing, lint-feature-has-smoke, lint-base-fresh, lint-tdd-commit-order, lint-learning-constraint-coverage, lint-test-quality, lint-no-mock-only-test, lint-no-fake-test, lint-single-exit, lint-bypass-not-committed, real-env-smoke]
+    needs: [secrets-scan, dod-format-check, dep-audit, registry-lint, eslint, pr-size-check, branch-naming, engine-tests, engine-tests-shell, lint-migration-unique-version, brain-unit, brain-unit-all, brain-diff-coverage, brain-integration, workspace-build, workspace-test, e2e-smoke, dod-behavior-dynamic, harness-dod-integrity, harness-contract-lint, docker-infra-smoke, lint-test-pairing, lint-feature-has-smoke, lint-base-fresh, lint-tdd-commit-order, lint-learning-constraint-coverage, lint-test-quality, lint-no-mock-only-test, lint-no-fake-test, lint-single-exit, lint-bypass-not-committed, real-env-smoke, workspace-api-smoke]
     runs-on: ubuntu-latest
     timeout-minutes: 2
     steps:
@@ -1209,6 +1310,7 @@ jobs:
           check "lint-no-mock-only-test" "${{ needs.lint-no-mock-only-test.result }}"
           check "lint-no-fake-test"      "${{ needs.lint-no-fake-test.result }}"
           check "real-env-smoke"         "${{ needs.real-env-smoke.result }}"
+          check "workspace-api-smoke"    "${{ needs.workspace-api-smoke.result }}"
 
           if [ "$FAILED" = "true" ]; then
             echo ""; echo "❌ CI FAILED"; exit 1
