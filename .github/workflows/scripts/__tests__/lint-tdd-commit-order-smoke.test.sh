@@ -55,6 +55,19 @@ git add .
 git commit -q -m "feat: add another feature without test"
 assert_fail "brain/src commit with no test before it → FAIL" bash "$SCRIPT" "HEAD~1"
 
+# Case 3: packages/brain/scripts/smoke path → same behavior as .github path
+git checkout -q main
+git checkout -q -b pr-case3
+mkdir -p packages/brain/scripts/smoke
+echo '#!/bin/bash' > packages/brain/scripts/smoke/golden-path-2-test.sh
+git add .
+git commit -q -m "test: add brain smoke script"
+mkdir -p packages/brain/src
+echo "const z = 3;" > packages/brain/src/yetAnother.js
+git add .
+git commit -q -m "feat: add yet another feature"
+assert_pass "brain/scripts/smoke commit before brain/src commit → PASS" bash "$SCRIPT" "HEAD~2"
+
 cd - >/dev/null
 rm -rf "$TMPDIR"
 

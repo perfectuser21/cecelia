@@ -4,6 +4,7 @@
 #
 # 算法：按时间顺序扫描 PR commits（旧→新）
 #   - 先看本 commit 是否含 *.test.js / __tests__/ 改动 → 标记 SEEN_TEST=1
+#   - 或含 smoke/*.sh 脚本（Walking Skeleton 外层 test-first）→ 标记 SEEN_TEST=1
 #   - 再看本 commit 是否含 brain/src/*.js 改动（非 test）
 #     - 若有 src 改动且 SEEN_TEST=0 → 失败（src 跑在 test 前）
 #
