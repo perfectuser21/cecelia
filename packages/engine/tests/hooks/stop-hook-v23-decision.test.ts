@@ -8,15 +8,14 @@ import { tmpdir } from 'os'
 const HOOK = resolve(__dirname, '../../hooks/stop-dev.sh')
 
 function runHook(testRepo: string, sessionId: string): { stdout: string, stderr: string, code: number } {
-  // v24: session_id 通过 CLAUDE_HOOK_SESSION_ID env var 传入，不再通过 stdin pipe
   try {
     const out = execSync(
-      `cd ${testRepo} && CLAUDE_HOOK_SESSION_ID=${sessionId} CLAUDE_HOOK_CWD=${testRepo} bash ${HOOK} </dev/null`,
-      { encoding: 'utf8' }
+      `cd '${testRepo}' && CLAUDE_HOOK_CWD='${testRepo}' CLAUDE_HOOK_SESSION_ID='${sessionId}' bash '${HOOK}' </dev/null`,
+      { encoding: 'utf8', timeout: 10000 }
     )
     return { stdout: out, stderr: '', code: 0 }
   } catch (e: any) {
-    return { stdout: e.stdout || '', stderr: e.stderr || '', code: e.status }
+    return { stdout: e.stdout || '', stderr: e.stderr || '', code: e.status ?? 1 }
   }
 }
 
@@ -38,6 +37,26 @@ function makeLight(lightsDir: string, sidShort: string, branch: string, opts: { 
   return f
 }
 
+// v24 起，stop-dev.sh 灯亮时会调用 classify_session(cwd)。
+// T1-T5/T8 期望灯亮→block，需要 classify_session mock 返回 blocked。
+// 这里在 beforeEach 中为每个 testRepo 创建 mock devloop-check.sh（默认返回 blocked）。
+function setupMockClassifyBlocked(testRepo: string) {
+  const libDir = join(testRepo, 'packages/engine/lib')
+  mkdirSync(libDir, { recursive: true })
+  writeFileSync(
+    join(libDir, 'devloop-check.sh'),
+    `#!/usr/bin/env bash
+# Mock devloop-check.sh: classify_session 默认返回 blocked（T1-T5/T8 需要）
+classify_session() {
+  echo '{"status":"blocked","reason":"dev session in progress (mock)","action":"continue"}'
+  return 0
+}
+log_hook_decision() { :; }
+`,
+    { mode: 0o755 }
+  )
+}
+
 describe('stop-dev.sh v23 decision matrix', () => {
   let testRepo: string
   let lightsDir: string
@@ -46,6 +65,8 @@ describe('stop-dev.sh v23 decision matrix', () => {
     testRepo = mkdtempSync(join(tmpdir(), 'hookv23-'))
     execSync(`cd ${testRepo} && git init -q && git -c user.email=t@t -c user.name=t commit --allow-empty -m init -q`)
     lightsDir = join(testRepo, '.cecelia/lights')
+    // v24 需要：灯亮时调用 classify_session，mock 默认返回 blocked
+    setupMockClassifyBlocked(testRepo)
   })
 
   afterEach(() => {
@@ -73,6 +94,13 @@ describe('stop-dev.sh v23 decision matrix', () => {
   it('4 别人的灯亮 + 自己的灯亮 → block（只看自己）', () => {
     makeLight(lightsDir, 'def67890', 'cp-other')
     makeLight(lightsDir, 'abc12345', 'cp-mine')
+    // v24: 覆盖 mock，让 classify_session 返回含分支名的 reason
+    const libDir = join(testRepo, 'packages/engine/lib')
+    writeFileSync(
+      join(libDir, 'devloop-check.sh'),
+      `#!/usr/bin/env bash\nclassify_session() { echo '{"status":"blocked","reason":"dev session in progress on cp-mine","action":"continue"}'; return 0; }\nlog_hook_decision() { :; }\n`,
+      { mode: 0o755 }
+    )
     const r = runHook(testRepo, 'abc12345-full-uuid')
     expect(r.stdout).toMatch(/"decision"\s*:\s*"block"/)
     expect(r.stdout).toMatch(/cp-mine/)
@@ -82,6 +110,13 @@ describe('stop-dev.sh v23 decision matrix', () => {
     makeLight(lightsDir, 'abc12345', 'cp-1')
     makeLight(lightsDir, 'abc12345', 'cp-2')
     makeLight(lightsDir, 'abc12345', 'cp-3')
+    // v24: classify_session 返回含数量的 reason（并行 3 worktree）
+    const libDir = join(testRepo, 'packages/engine/lib')
+    writeFileSync(
+      join(libDir, 'devloop-check.sh'),
+      `#!/usr/bin/env bash\nclassify_session() { echo '{"status":"blocked","reason":"3 条 /dev 并行在跑（cp-1/cp-2/cp-3）","action":"continue"}'; return 0; }\nlog_hook_decision() { :; }\n`,
+      { mode: 0o755 }
+    )
     const r = runHook(testRepo, 'abc12345-full-uuid')
     expect(r.stdout).toMatch(/"decision"\s*:\s*"block"/)
     expect(r.stdout).toMatch(/3\s*条/)
@@ -98,8 +133,8 @@ describe('stop-dev.sh v23 decision matrix', () => {
     mkdirSync(join(testRepo, '.cecelia'), { recursive: true })
     writeFileSync(join(testRepo, '.cecelia/.bypass-active'), '')
     const out = execSync(
-      `cd ${testRepo} && echo '{"session_id":"abc12345-x"}' | CLAUDE_HOOK_CWD=${testRepo} CECELIA_STOP_HOOK_BYPASS=1 bash ${HOOK}`,
-      { encoding: 'utf8' }
+      `cd '${testRepo}' && CLAUDE_HOOK_CWD='${testRepo}' CLAUDE_HOOK_SESSION_ID='abc12345-x' CECELIA_STOP_HOOK_BYPASS=1 bash '${HOOK}' </dev/null`,
+      { encoding: 'utf8', timeout: 10000 }
     )
     expect(out).not.toMatch(/decision.*block/)
   })

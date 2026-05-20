@@ -6,6 +6,20 @@ import { tmpdir } from 'os'
 
 const HOOK = resolve(__dirname, '../../hooks/stop-dev.sh')
 
+// v24：在 testRepo 创建 mock devloop-check.sh，让 classify_session 返回 blocked
+// （stop-dev.sh 先在 main_repo/packages/engine/lib/ 查找 devloop-check.sh）
+function setupClassifyMock(repo: string, status: 'blocked' | 'not-dev' = 'blocked'): void {
+  const libDir = join(repo, 'packages/engine/lib')
+  mkdirSync(libDir, { recursive: true })
+  const mockPayload = status === 'blocked'
+    ? '{"status":"blocked","reason":"mock dev session in progress"}'
+    : '{"status":"not-dev","reason":"mock not dev"}'
+  writeFileSync(join(libDir, 'devloop-check.sh'), `#!/usr/bin/env bash
+classify_session() { echo '${mockPayload}'; return 0; }
+log_hook_decision() { :; }
+`)
+}
+
 function setupRepo(): string {
   const repo = mkdtempSync(join(tmpdir(), 'bypass3l-'))
   execSync(`cd ${repo} && git init -q && git config user.email t@t && git config user.name t && git commit --allow-empty -m init -q`)
@@ -19,11 +33,12 @@ function setupRepo(): string {
 }
 
 function runHook(repo: string, env: Record<string, string> = {}): string {
-  // v24: session_id 通过 CLAUDE_HOOK_SESSION_ID env var 传入，不再通过 stdin pipe
-  const envStr = Object.entries({ CLAUDE_HOOK_SESSION_ID: 'abc12345-x', ...env }).map(([k, v]) => `${k}=${v}`).join(' ')
+  // v24：session_id 从 CLAUDE_HOOK_SESSION_ID env var 读取，不再从 stdin 解析
+  const allEnv = { CLAUDE_HOOK_SESSION_ID: 'abc12345-x', CLAUDE_HOOK_CWD: repo, ...env }
+  const envStr = Object.entries(allEnv).map(([k, v]) => `${k}=${v}`).join(' ')
   try {
     return execSync(
-      `cd ${repo} && ${envStr} CLAUDE_HOOK_CWD=${repo} bash ${HOOK} </dev/null`,
+      `cd ${repo} && ${envStr} bash ${HOOK}`,
       { encoding: 'utf8' }
     )
   } catch (e: any) {
@@ -36,6 +51,8 @@ describe('BYPASS 三层防滥用 — 双因子触发', () => {
 
   beforeEach(() => {
     repo = setupRepo()
+    // v24：灯亮后走 classify_session，需 mock 返回 blocked 才会 block
+    setupClassifyMock(repo, 'blocked')
   })
 
   afterEach(() => {
@@ -44,10 +61,10 @@ describe('BYPASS 三层防滥用 — 双因子触发', () => {
 
   it('C1 env=1 + 无 marker → 不 bypass（走正常决策，灯亮 → block）', () => {
     const out = runHook(repo, { CECELIA_STOP_HOOK_BYPASS: '1' })
-    // 应该 block（灯亮）而不是 release
+    // 应该 block（灯亮 + classify_session=blocked）而不是 release
     expect(out).toMatch(/"decision"\s*:\s*"block"/)
-    // reason_code 应该是 lights_alive 而不是 bypass
-    expect(out).toMatch(/lights_alive|还有.*条/)
+    // v24：block 时 reason 字段来自 classify_session 的 reason
+    expect(out).toMatch(/mock dev session|Dev session in progress/)
   })
 
   it('C2 env=1 + fresh marker → bypass release', () => {
