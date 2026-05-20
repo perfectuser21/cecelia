@@ -405,7 +405,7 @@ describe('pollCiNode', () => {
 
 describe('mergePrNode', () => {
   // B21: mergePrNode 改用注入 execFile 直接调 `gh pr merge --squash --delete-branch`，
-  // 不再委托 shepherd.executeMerge。失败时只写 merge_error，不再 set status=failed（让 graph END）。
+  // 不再委托 shepherd.executeMerge。失败时写 error.node=merge_pr，不 set status=failed（让 graph END）。
   // B39: 去掉 --auto（仓库未开启 auto-merge，CI 在 poll_ci 已验绿，--auto 多余且报错）。
   it('happy: 调 gh pr merge --squash 写 status=merged', async () => {
     const execFile = vi.fn().mockResolvedValue({ stdout: '✓ merged', stderr: '' });
@@ -419,12 +419,13 @@ describe('mergePrNode', () => {
     expect(delta.ci_status).toBe('merged');
     expect(delta.merge_command).toMatch(/gh pr merge/);
   });
-  it('merge 失败 → 仅写 merge_error 不 set status=failed（让 graph END 不重试）', async () => {
+  it('merge 失败 → 写 error.node=merge_pr + error.message，不 set status=failed', async () => {
     const execFile = vi.fn().mockRejectedValue(new Error('conflict'));
     const delta = await mergePrNode({ pr_url: 'x' }, { execFile });
-    expect(delta.merge_error).toMatch(/conflict/);
+    expect(delta.error).toBeDefined();
+    expect(delta.error.node).toBe('merge_pr');
+    expect(delta.error.message).toMatch(/conflict/);
     expect(delta.status).toBeUndefined();
-    expect(delta.error).toBeUndefined();
   });
   it('idempotent: status 已 merged → 跳过', async () => {
     const execFile = vi.fn();
@@ -432,11 +433,13 @@ describe('mergePrNode', () => {
     expect(execFile).not.toHaveBeenCalled();
     expect(delta.status).toBe('merged');
   });
-  it('no pr_url → 写 merge_error 短路', async () => {
+  it('no pr_url → 写 error.node=merge_pr 短路', async () => {
     const execFile = vi.fn();
     const delta = await mergePrNode({}, { execFile });
     expect(execFile).not.toHaveBeenCalled();
-    expect(delta.merge_error).toMatch(/no pr_url/);
+    expect(delta.error).toBeDefined();
+    expect(delta.error.node).toBe('merge_pr');
+    expect(delta.error.message).toMatch(/no pr_url/);
   });
 });
 
