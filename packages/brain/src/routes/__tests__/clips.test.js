@@ -99,7 +99,10 @@ describe('GET /api/brain/clips — list', () => {
 });
 
 describe('POST /api/brain/clips/:id/callback — content-service result', () => {
-  beforeEach(() => vi.clearAllMocks());
+  beforeEach(() => {
+    vi.clearAllMocks();
+    delete process.env.CLIPS_WEBHOOK_SECRET;
+  });
 
   it('updates clip to done and returns 200', async () => {
     pool.query.mockResolvedValueOnce({ rows: [{ id: 'uuid-1', status: 'done' }] });
@@ -112,5 +115,50 @@ describe('POST /api/brain/clips/:id/callback — content-service result', () => 
       .send({ success: true, title: 'Test Video', transcript: 'hello world', platform: 'douyin' });
 
     expect(res.status).toBe(200);
+  });
+
+  it('returns 401 when CLIPS_WEBHOOK_SECRET set and header missing', async () => {
+    process.env.CLIPS_WEBHOOK_SECRET = 'test-secret';
+    const { default: router } = await import('../clips.js');
+    const app = makeApp();
+    app.use('/api/brain/clips', router);
+
+    const res = await request(app)
+      .post('/api/brain/clips/uuid-1/callback')
+      .send({ success: true, title: 'Test Video' });
+
+    expect(res.status).toBe(401);
+    expect(res.body.error).toBe('unauthorized');
+  });
+
+  it('returns 401 when CLIPS_WEBHOOK_SECRET set and header wrong', async () => {
+    process.env.CLIPS_WEBHOOK_SECRET = 'test-secret';
+    const { default: router } = await import('../clips.js');
+    const app = makeApp();
+    app.use('/api/brain/clips', router);
+
+    const res = await request(app)
+      .post('/api/brain/clips/uuid-1/callback')
+      .set('x-webhook-secret', 'wrong-secret')
+      .send({ success: true, title: 'Test Video' });
+
+    expect(res.status).toBe(401);
+    expect(res.body.error).toBe('unauthorized');
+  });
+
+  it('passes auth and updates clip when correct secret provided', async () => {
+    process.env.CLIPS_WEBHOOK_SECRET = 'test-secret';
+    pool.query.mockResolvedValueOnce({ rows: [{ id: 'uuid-1', status: 'done' }] });
+    const { default: router } = await import('../clips.js');
+    const app = makeApp();
+    app.use('/api/brain/clips', router);
+
+    const res = await request(app)
+      .post('/api/brain/clips/uuid-1/callback')
+      .set('x-webhook-secret', 'test-secret')
+      .send({ success: true, title: 'Test Video', transcript: 'hello world' });
+
+    expect(res.status).toBe(200);
+    expect(res.body.ok).toBe(true);
   });
 });
