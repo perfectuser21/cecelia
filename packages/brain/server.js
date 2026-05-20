@@ -72,6 +72,7 @@ import initiativesRoutes from './src/routes/initiatives.js';
 import backupRoutes from './src/routes/backup.js';
 import llmServiceRoutes from './src/routes/llm-service.js';
 import featuresRoutes from './src/routes/features.js';
+import clipsRoutes from './src/routes/clips.js';
 import { internalAuth } from './src/middleware/internal-auth.js';
 import createAutonomousRouter from './src/routes/autonomous.js';
 import { initTickLoop } from './src/tick.js';
@@ -307,6 +308,7 @@ app.use('/api/brain/backup', backupRoutes);
 // 鉴权仅在此路径生效：env CECELIA_INTERNAL_TOKEN 未设置时 dev 放行
 // 独立 body parser limit 4MB：vision 端点要传 image_base64，单张图 500KB-2MB 是常态，
 // 全局 256kb 限制会让 vision 请求直接 413 request entity too large。
+app.use('/api/brain/clips', clipsRoutes);
 app.use('/api/brain/llm-service', internalAuth, express.json({ limit: '4mb' }), llmServiceRoutes);
 
 app.get('/api/brain/autonomous/sessions', createAutonomousRouter(join(dirname(fileURLToPath(import.meta.url)), '.')));
