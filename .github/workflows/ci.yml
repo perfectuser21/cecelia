@@ -627,13 +627,10 @@ jobs:
       - name: Test apps/dashboard
         run: cd apps/dashboard && npm ci && npx vitest run
 
-  # ─── E2E Smoke（brain / workspace 改动时才跑）─────────────────
-  # 覆盖跨包盲区：无论改哪个包，都验证系统级关键路径没有断。
+  # ─── E2E Smoke（永久 gate，所有 PR 必跑）──────────────────────
+  # 保护已建立的 Walking Skeleton 路径，任何 PR 都不能绕过 E2E 检查。
   # 包含：golden-path（3条核心链路） + agent-lifecycle（状态机完整性）
-  # 注：仅在 brain 或 workspace 改动时跑（纯文档/engine 改动时跳过，节省 15min）
   e2e-smoke:
-    needs: changes
-    if: needs.changes.outputs.brain == 'true' || needs.changes.outputs.workspace == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     services:
