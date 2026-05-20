@@ -9,6 +9,10 @@ export default defineConfig({
       'tests/**/*.{test,spec}.?(c|m)[jt]s?(x)',
       '../../tests/packages/brain/**/*.{test,spec}.?(c|m)[jt]s?(x)',
       '../../tests/integration/**/*.{test,spec}.?(c|m)[jt]s?(x)',
+      // 根目录遗留测试（多 repo 合并产物，已清归脑测试）
+      '../../tests/*.{test,spec}.?(c|m)[jt]s?(x)',
+      '../../tests/brain/**/*.{test,spec}.?(c|m)[jt]s?(x)',
+      '../../tests/alertness/**/*.{test,spec}.?(c|m)[jt]s?(x)',
     ],
     // 以下测试需要真实 PostgreSQL 连接或有其他 CI 环境 pre-existing 失败
     // brain-unit 跑纯单元测试（有 vi.mock('db.js') 的），集成测试走 brain-integration
