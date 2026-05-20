@@ -25,6 +25,7 @@ jobs:
       workspace: ${{ steps.detect.outputs.workspace }}
       compose: ${{ steps.detect.outputs.compose }}
       dod: ${{ steps.detect.outputs.dod }}
+      quality: ${{ steps.detect.outputs.quality }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -909,6 +910,23 @@ jobs:
           echo "=== brain.log ===" && cat /tmp/brain.log || true
           echo "=== api.log ===" && cat /tmp/api.log || true
 
+
+  # ─── Quality Package Tests ───────────────────────────────────────────
+  # packages/quality 自身的 QA 测试（gateway/worker/heartbeat/queue/devgate hooks）
+  quality-tests:
+    needs: changes
+    if: needs.changes.outputs.quality == 'true' || needs.changes.outputs.engine == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+      - name: Quality Package Tests
+        run: cd packages/quality && npm ci && npm test
+
   # ─── Real-Env Smoke (起真 brain docker container + 真 postgres，跑 smoke.sh) ─
   # 与单测 / integration 互补：单测 mock 一切；integration 起 node server 直跑；
   # real-env-smoke 起 cecelia-brain image 真容器，验真容器化部署链路 + smoke.sh 行为。
@@ -1251,7 +1269,7 @@ jobs:
   # ─── Gate: 所有检查通过才能合并 ─────────────────────────────
   ci-passed:
     if: always()
-    needs: [secrets-scan, dod-format-check, dep-audit, registry-lint, eslint, pr-size-check, branch-naming, engine-tests, engine-tests-shell, lint-migration-unique-version, brain-unit, brain-unit-all, brain-diff-coverage, brain-integration, workspace-build, workspace-test, e2e-smoke, dod-behavior-dynamic, harness-dod-integrity, harness-contract-lint, docker-infra-smoke, lint-test-pairing, lint-feature-has-smoke, lint-base-fresh, lint-tdd-commit-order, lint-learning-constraint-coverage, lint-test-quality, lint-no-mock-only-test, lint-no-fake-test, lint-single-exit, lint-bypass-not-committed, real-env-smoke, workspace-api-smoke]
+    needs: [secrets-scan, dod-format-check, dep-audit, registry-lint, eslint, pr-size-check, branch-naming, engine-tests, engine-tests-shell, lint-migration-unique-version, brain-unit, brain-unit-all, brain-diff-coverage, brain-integration, workspace-build, workspace-test, e2e-smoke, dod-behavior-dynamic, harness-dod-integrity, harness-contract-lint, docker-infra-smoke, lint-test-pairing, lint-feature-has-smoke, lint-base-fresh, lint-tdd-commit-order, lint-learning-constraint-coverage, lint-test-quality, lint-no-mock-only-test, lint-no-fake-test, lint-single-exit, lint-bypass-not-committed, real-env-smoke, workspace-api-smoke, quality-tests]
     runs-on: ubuntu-latest
     timeout-minutes: 2
     steps:
@@ -1292,6 +1310,7 @@ jobs:
           check "lint-no-fake-test"      "${{ needs.lint-no-fake-test.result }}"
           check "real-env-smoke"         "${{ needs.real-env-smoke.result }}"
           check "workspace-api-smoke"    "${{ needs.workspace-api-smoke.result }}"
+          check "quality-tests"         "${{ needs.quality-tests.result }}"
 
           if [ "$FAILED" = "true" ]; then
             echo ""; echo "❌ CI FAILED"; exit 1
