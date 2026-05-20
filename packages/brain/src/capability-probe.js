@@ -409,6 +409,18 @@ async function probeRumination() {
           loopDeadContext += ` self_heal_loop_fail=${loopErr.message.slice(0, 40)}`;
           console.warn('[Probe] rumination consciousness loop restart failed:', loopErr.message);
         }
+        // Wave 3 (Case A): consciousness 已重新启用 → 立即运行一次 runRumination 解除积压
+        // loop 每 20min 才触发，probe 监控周期远短于此；不立即消化则下次 probe 仍失败
+        try {
+          const { runRumination } = await import('./rumination.js');
+          const healResult = await runRumination(pool);
+          const healDigested = healResult?.digested ?? 0;
+          loopDeadContext += ` self_heal=direct_run digested=${healDigested}`;
+          console.log(`[Probe] rumination Case A self-heal: direct_run digested=${healDigested}`);
+        } catch (healErr) {
+          loopDeadContext += ` self_heal_fail=${healErr.message.slice(0, 60)}`;
+          console.warn('[Probe] rumination Case A self-heal direct_run failed:', healErr.message);
+        }
       } else {
         // Case B: consciousness 已启用但 runRumination 未被调用 → 直接运行解堵 + 重启 loop
         try {
