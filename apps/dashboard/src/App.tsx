@@ -13,6 +13,9 @@ import { Link, useLocation, Route } from 'react-router-dom';
 const TaskPrdPage = lazy(() => import('./pages/tasks/TaskPrdPage'));
 // ws4: HarnessDetailPage — /harness/:id initiative 实时 Streaming 详情页
 const HarnessDetailPage = lazy(() => import('./pages/harness/HarnessDetailPage'));
+// clips: 静态路由，不依赖动态配置加载
+const ContentClipsPage = lazy(() => import('./pages/clips/ContentClipsPage'));
+const ContentClipDetailPage = lazy(() => import('./pages/clips/ContentClipDetailPage'));
 import { PanelLeftClose, PanelLeft, Sun, Moon, Monitor, Circle } from 'lucide-react';
 import * as LucideIcons from 'lucide-react';
 import CollapsibleNavItem from './components/CollapsibleNavItem';
@@ -287,6 +290,23 @@ function AppContent() {
               element={
                 <Suspense fallback={<div className="p-8 text-center text-gray-500">Loading…</div>}>
                   <HarnessDetailPage />
+                </Suspense>
+              }
+            />
+            {/* clips: Content Clips 管理页 — 静态路由，不依赖 coreConfig */}
+            <Route
+              path="/clips"
+              element={
+                <Suspense fallback={<div className="p-8 text-center text-gray-500">Loading…</div>}>
+                  <ContentClipsPage />
+                </Suspense>
+              }
+            />
+            <Route
+              path="/clips/:id"
+              element={
+                <Suspense fallback={<div className="p-8 text-center text-gray-500">Loading…</div>}>
+                  <ContentClipDetailPage />
                 </Suspense>
               }
             />
