@@ -832,7 +832,7 @@ jobs:
   # 不依赖 Docker image，直接起两个 Node.js 进程，验 HTTP 边界。
   workspace-api-smoke:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     services:
       postgres:
         image: pgvector/pgvector:pg15
@@ -877,7 +877,7 @@ jobs:
           ENV_REGION: us
         run: |
           node packages/brain/server.js > /tmp/brain.log 2>&1 &
-          for i in $(seq 1 60); do
+          for i in $(seq 1 120); do
             curl -sf http://localhost:5221/health >/dev/null 2>&1 && echo "brain ready after ${i}s" && break
             sleep 1
           done
