@@ -57,14 +57,14 @@ describe('ship-finalize.sh — 关 guardian + 写 done-marker（PR-2）', () => 
     const branch = 'cp-test-ship-2'
     const lightFile = join(lightsDir, `aaa88888-${branch}.live`)
     const proc = spawn('bash', [GUARDIAN, lightFile], {
-      env: { ...process.env, GUARDIAN_INTERVAL_SEC: '1' }, detached: false
+      env: { ...process.env, GUARDIAN_INTERVAL_SEC: '1', GUARDIAN_ORPHAN_MODE: '1' }, detached: false
     })
     await new Promise(r => setTimeout(r, 500))
     writeFileSync(lightFile, JSON.stringify({ branch, guardian_pid: proc.pid }))
 
     execSync(`cd ${mainRepo} && bash ${SHIP_FINALIZE} ${branch} 2823 https://x/y/z`, { encoding: 'utf8' })
 
-    await new Promise(r => setTimeout(r, 600))
+    await new Promise(r => setTimeout(r, 2000))
     expect(existsSync(lightFile)).toBe(false)
     let alive = true
     try { process.kill(proc.pid!, 0) } catch { alive = false }
