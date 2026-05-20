@@ -21,6 +21,13 @@ LIGHTS_COUNT=0
 FIRST_BRANCH=""
 SID_SHORT=""
 
+# classify_session 结果字段（在主逻辑中赋值）
+_session_result=""
+_session_status=""
+_reason=""
+_action=""
+_classify_reason=""
+
 # stop.sh 已从 stdin JSON 解析 session_id 并 export CLAUDE_HOOK_SESSION_ID
 # 直接用 env var，不重复读 stdin（stop.sh 已消费管道）
 hook_session_id="${CLAUDE_HOOK_SESSION_ID:-}"
