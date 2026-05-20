@@ -12,8 +12,11 @@ router.post('/webhook', async (req, res) => {
     if (secret && req.headers['x-webhook-secret'] !== secret) {
       return res.status(401).json({ error: 'unauthorized' });
     }
-    const { url, platform, title, transcript, text, images, note } = req.body;
+    const { url, platform: bodyPlatform, title, transcript, text, images, note } = req.body;
     if (!url) return res.status(400).json({ error: 'url required' });
+
+    const platform = bodyPlatform || detectPlatform(url);
+    if (!platform) return res.status(400).json({ error: 'unrecognized platform URL' });
 
     // Upsert: if URL exists, update fields; otherwise insert
     const { rows } = await pool.query(
@@ -27,7 +30,7 @@ router.post('/webhook', async (req, res) => {
          processed_at = NOW(),
          updated_at = NOW()
        RETURNING id, status`,
-      [url, platform || detectPlatform(url), title || null, transcript || text || null, JSON.stringify(images || [])]
+      [url, platform, title || null, transcript || text || null, JSON.stringify(images || [])]
     );
     res.json({ success: true, id: rows[0].id });
   } catch (err) {
@@ -41,10 +44,10 @@ router.post('/:id/retry', async (req, res) => {
   try {
     const { rows } = await pool.query(
       `UPDATE clips SET status='pending', retry_count=retry_count+1, error_msg=NULL, updated_at=NOW()
-       WHERE id=$1 RETURNING id, status, url`,
+       WHERE id=$1 AND status IN ('failed', 'pending') RETURNING id, status, url`,
       [req.params.id]
     );
-    if (rows.length === 0) return res.status(404).json({ error: 'not found' });
+    if (rows.length === 0) return res.status(409).json({ error: 'clip is not in a retryable state' });
     // Re-trigger extraction (non-blocking)
     extractClip(rows[0].id, rows[0].url).catch(e =>
       console.error('[clips] retry extractClip error:', e.message)
@@ -85,7 +88,7 @@ router.post('/:id/callback', async (req, res) => {
         transcript || null,
         JSON.stringify(images || []),
         author || null, author_id || null,
-        like_count || null, comment_count || null, share_count || null,
+        like_count ?? null, comment_count ?? null, share_count ?? null,
         cover_url || null, video_url || null,
         raw_response ? JSON.stringify(raw_response) : null,
       ]
@@ -107,6 +110,7 @@ router.post('/', async (req, res) => {
     }
 
     const platform = detectPlatform(url);
+    if (!platform) return res.status(400).json({ error: 'unrecognized platform URL (must be douyin or xiaohongshu)' });
     const { rows } = await pool.query(
       `INSERT INTO clips (url, platform, requested_by, metadata)
        VALUES ($1, $2, $3, $4)
@@ -123,8 +127,12 @@ router.post('/', async (req, res) => {
   } catch (err) {
     if (err.code === '23505') {
       // Unique constraint violation — URL already exists
-      const existing = await pool.query('SELECT id, status FROM clips WHERE url=$1', [req.body.url]);
-      return res.status(409).json({ error: 'already_exists', id: existing.rows[0]?.id });
+      try {
+        const existing = await pool.query('SELECT id, status FROM clips WHERE url=$1', [req.body.url.trim()]);
+        return res.status(409).json({ error: 'already_exists', id: existing.rows[0]?.id });
+      } catch {
+        return res.status(409).json({ error: 'already_exists' });
+      }
     }
     console.error('[clips] POST / error:', err.message);
     res.status(500).json({ error: err.message });
@@ -163,11 +171,13 @@ router.get('/', async (req, res) => {
       params
     );
 
-    const countParams = conditions.length ? params.slice(2) : [];
-    const { rows: countRows } = await pool.query(
-      `SELECT count(*) FROM clips ${where}`,
-      countParams
-    );
+    const countParams = [];
+    const countConditions = [];
+    if (req.query.platform) { countParams.push(req.query.platform); countConditions.push(`platform = $${countParams.length}`); }
+    if (req.query.status)   { countParams.push(req.query.status);   countConditions.push(`status = $${countParams.length}`); }
+    if (req.query.since)    { countParams.push(req.query.since);     countConditions.push(`created_at >= $${countParams.length}`); }
+    const countWhere = countConditions.length ? `WHERE ${countConditions.join(' AND ')}` : '';
+    const { rows: countRows } = await pool.query(`SELECT count(*) FROM clips ${countWhere}`, countParams);
 
     res.json({ success: true, data: rows, total: parseInt(countRows[0].count) });
   } catch (err) {
@@ -191,7 +201,7 @@ router.get('/:id', async (req, res) => {
 function detectPlatform(url) {
   if (url.includes('douyin.com') || url.includes('v.douyin.com')) return 'douyin';
   if (url.includes('xiaohongshu.com') || url.includes('xhslink.com')) return 'xiaohongshu';
-  return 'douyin'; // fallback
+  return null;
 }
 
 export default router;
