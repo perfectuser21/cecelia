@@ -50,17 +50,20 @@ describe('stop-dev.sh v23 routing & 特殊场景', () => {
 
   it('2 session_id 缺（CLAUDE_HOOK_SESSION_ID 未设置）→ release（v24 新语义：非受控 /dev 会话放行）', () => {
     makeLight(lightsDir, 'abc12345', 'cp-test')
-    let out = ''
-    try {
-      out = execSync(
-        // v24：session_id 从 env var 读，不设 CLAUDE_HOOK_SESSION_ID → no_env_session_id → release
-        `cd ${testRepo} && CLAUDE_HOOK_CWD=${testRepo} bash ${HOOK}`,
-        { encoding: 'utf8' }
-      )
-    } catch (e: any) { out = e.stdout || '' }
-    // v24 新语义：session_id 空 = 非受控 /dev 会话 = 直接放行（不 block）
-    expect(out).toMatch(/"decision"\s*:\s*"release"/)
-    expect(out).toMatch(/no_env_session_id/)
+    // v24：release 时 stdout 不输出任何 JSON（Claude Code Stop hook schema 不接受 "release"）
+    // 诊断信息写 stderr，用 spawnSync 捕获
+    const { spawnSync } = require('child_process') as typeof import('child_process')
+    const result = spawnSync('bash', [HOOK], {
+      env: { ...process.env, CLAUDE_HOOK_CWD: testRepo },
+      cwd: testRepo,
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+    })
+    // v24 新语义：session_id 空 = 非受控 /dev 会话 = 直接放行（stdout 空 = 无 block）
+    expect(result.stdout).not.toMatch(/"decision"\s*:\s*"block"/)
+    expect(result.status).toBe(0)
+    // 诊断 reason_code 在 stderr
+    expect(result.stderr).toMatch(/no_env_session_id/)
   })
 
   it('3 cwd drift 到主仓库 main：仍 block 自己 session 的灯', () => {

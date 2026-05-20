@@ -18,7 +18,7 @@
 // ============================================================================
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
-import { execSync } from 'child_process'
+import { execSync, spawnSync } from 'child_process'
 import { writeFileSync, mkdirSync, rmSync, mkdtempSync, utimesSync, existsSync } from 'fs'
 import { resolve, join } from 'path'
 import { tmpdir } from 'os'
@@ -27,31 +27,33 @@ const HOOK = resolve(__dirname, '../../hooks/stop-dev.sh')
 
 // ============================================================================
 // v24 接口：session_id 通过 env var 传入，不 pipe stdin
+// spawnSync 捕获 stderr（release 时诊断信息写 stderr，不写 stdout）
 // ============================================================================
 function runHookV24(
   testRepo: string,
   sessionId: string,
   extraEnv: Record<string, string> = {}
 ): { stdout: string; stderr: string; code: number } {
-  // 构造 env 字符串；sessionId 空时不设置 CLAUDE_HOOK_SESSION_ID
-  const envParts: string[] = [`CLAUDE_HOOK_CWD='${testRepo}'`]
+  const envObj: Record<string, string> = { ...(process.env as Record<string, string>), CLAUDE_HOOK_CWD: testRepo }
   if (sessionId !== '') {
-    envParts.push(`CLAUDE_HOOK_SESSION_ID='${sessionId}'`)
+    envObj.CLAUDE_HOOK_SESSION_ID = sessionId
   }
   for (const [k, v] of Object.entries(extraEnv)) {
-    envParts.push(`${k}='${v}'`)
+    envObj[k] = v
   }
-  const envStr = envParts.join(' ')
 
-  // 不 pipe stdin（用 </dev/null），模拟真实无 pipe 场景
-  try {
-    const out = execSync(
-      `cd '${testRepo}' && ${envStr} bash '${HOOK}' </dev/null`,
-      { encoding: 'utf8', timeout: 10000 }
-    )
-    return { stdout: out, stderr: '', code: 0 }
-  } catch (e: any) {
-    return { stdout: e.stdout || '', stderr: e.stderr || '', code: e.status ?? 1 }
+  const result = spawnSync('bash', [HOOK], {
+    env: envObj,
+    cwd: testRepo,
+    encoding: 'utf8',
+    timeout: 10000,
+    stdio: ['ignore', 'pipe', 'pipe'],
+  })
+
+  return {
+    stdout: result.stdout || '',
+    stderr: result.stderr || '',
+    code: result.status ?? 0,
   }
 }
 
@@ -249,7 +251,7 @@ describe('stop-dev.sh v24 新场景（T13-T16）', () => {
   //   classify_session 从未被调用 → stdout 中不会含 "主分支放行"
   //   → expect(r.stdout).toMatch(/主分支放行/) 失败
   // --------------------------------------------------------------------------
-  it('T15: 灯亮 + classify=not-dev → exit 0 + stdout 含 classify reason', () => {
+  it('T15: 灯亮 + classify=not-dev → exit 0 + stderr 含 classify reason', () => {
     makeLight(lightsDir, 'abc12345', 'cp-test')
     mockClassifySession(
       testRepo,
@@ -260,11 +262,11 @@ describe('stop-dev.sh v24 新场景（T13-T16）', () => {
 
     // v24 要求：exit 0
     expect(r.code).toBe(0)
-    // v24 要求：不 block
+    // v24 要求：不 block（stdout 空 = Claude Code Stop hook 正常放行）
     expect(r.stdout).not.toMatch(/"decision"\s*:\s*"block"/)
-    // v24 要求：stdout 含 classify_session 的 reason（证明 classify_session 被调用了）
-    // v23 不调用 classify_session，此断言必然失败
-    expect(r.stdout).toMatch(/主分支放行/)
+    // v24 要求：stderr 含 classify_session 的 reason（证明 classify_session 被调用了）
+    // release 时诊断写 stderr，不写 stdout（避免 Claude Code Stop hook JSON 验证失败）
+    expect(r.stderr).toMatch(/主分支放行/)
   })
 
   // --------------------------------------------------------------------------
@@ -281,7 +283,7 @@ describe('stop-dev.sh v24 新场景（T13-T16）', () => {
   //
   // 注意：v24 需要在 hook stdout 输出新的 reason_code（通过 log_hook_decision 或 jq 块）
   // --------------------------------------------------------------------------
-  it('T16: session_id 空（无 env var）→ exit 0，stdout 含 no_env_session_id reason', () => {
+  it('T16: session_id 空（无 env var）→ exit 0，stderr 含 no_env_session_id reason', () => {
     // 即使有灯，空 session_id 也应该直接放行
     makeLight(lightsDir, 'abc12345', 'cp-test')
     mockClassifySession(
@@ -294,11 +296,11 @@ describe('stop-dev.sh v24 新场景（T13-T16）', () => {
 
     // v24 要求：exit 0
     expect(r.code).toBe(0)
-    // v24 要求：不 block
+    // v24 要求：不 block（stdout 空 = Claude Code Stop hook 正常放行）
     expect(r.stdout).not.toMatch(/"decision"\s*:\s*"block"/)
-    // v24 要求：stdout 含新 reason_code "no_env_session_id"（v24 专属，v23 没有这个）
-    // 这确保 v24 hook 真正实现了 env-var 接口，而不是碰巧走了 v23 的 tty 早退路径
-    expect(r.stdout).toMatch(/no_env_session_id/)
+    // v24 要求：stderr 含 reason_code "no_env_session_id"（v24 专属，v23 没有这个）
+    // release 时诊断写 stderr，不写 stdout（避免 Claude Code Stop hook JSON 验证失败）
+    expect(r.stderr).toMatch(/no_env_session_id/)
     // v24 要求：classify_session 不应被调用
     expect(r.stdout + r.stderr).not.toMatch(/这不应该被调用/)
   })
