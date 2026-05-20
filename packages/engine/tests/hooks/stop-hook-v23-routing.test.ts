@@ -35,7 +35,8 @@ describe('stop-dev.sh v23 routing & 特殊场景', () => {
     expect(true).toBe(true)
   })
 
-  it('2 session_id 缺 + 非 tty (空 payload via pipe) → block', () => {
+  it('2 session_id 缺 + 非 tty (空 stdin via pipe) → block', () => {
+    // v24: CLAUDE_HOOK_SESSION_ID 未设，stdin 是 pipe → no_session_id_pipe → block
     makeLight(lightsDir, 'abc12345', 'cp-test')
     let out = ''
     try {
@@ -50,20 +51,22 @@ describe('stop-dev.sh v23 routing & 特殊场景', () => {
 
   it('3 cwd drift 到主仓库 main：仍 block 自己 session 的灯', () => {
     // 模拟：CLAUDE_HOOK_CWD=主仓库（非 worktree）；lights/ 在主仓库 .cecelia/
+    // v24: session_id 通过 CLAUDE_HOOK_SESSION_ID env var 传入
     makeLight(lightsDir, 'abc12345', 'cp-x')
     const out = execSync(
-      `cd ${testRepo} && CLAUDE_HOOK_CWD=${testRepo} echo '{"session_id":"abc12345-x"}' | bash ${HOOK}`,
+      `cd ${testRepo} && CLAUDE_HOOK_SESSION_ID=abc12345-x CLAUDE_HOOK_CWD=${testRepo} bash ${HOOK} </dev/null`,
       { encoding: 'utf8' }
     )
     expect(out).toMatch(/"decision"\s*:\s*"block"/)
   })
 
   it('4 不在 git 仓库 → release（普通系统目录）', () => {
+    // v24: session_id 通过 CLAUDE_HOOK_SESSION_ID env var 传入
     const noGitDir = mkdtempSync(join(tmpdir(), 'nogit-'))
     let out = ''
     try {
       out = execSync(
-        `cd ${noGitDir} && CLAUDE_HOOK_CWD=${noGitDir} echo '{"session_id":"abc12345-x"}' | bash ${HOOK}`,
+        `cd ${noGitDir} && CLAUDE_HOOK_SESSION_ID=abc12345-x CLAUDE_HOOK_CWD=${noGitDir} bash ${HOOK} </dev/null`,
         { encoding: 'utf8' }
       )
     } catch (e: any) { out = e.stdout || '' }
@@ -72,10 +75,11 @@ describe('stop-dev.sh v23 routing & 特殊场景', () => {
   })
 
   it('5 hook 决策日志写入 ~/.claude/hook-logs/stop-dev.jsonl', () => {
+    // v24: session_id 通过 CLAUDE_HOOK_SESSION_ID env var 传入
     makeLight(lightsDir, 'abc12345', 'cp-test')
     const fakeHome = mkdtempSync(join(tmpdir(), 'hooklog-'))
     execSync(
-      `cd ${testRepo} && echo '{"session_id":"abc12345-x"}' | HOME=${fakeHome} CLAUDE_HOOK_CWD=${testRepo} bash ${HOOK}`,
+      `cd ${testRepo} && CLAUDE_HOOK_SESSION_ID=abc12345-x HOME=${fakeHome} CLAUDE_HOOK_CWD=${testRepo} bash ${HOOK} </dev/null`,
       { encoding: 'utf8' }
     )
     const logFile = join(fakeHome, '.claude/hook-logs/stop-dev.jsonl')

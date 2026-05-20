@@ -19,11 +19,11 @@ function setupRepo(): string {
 }
 
 function runHook(repo: string, env: Record<string, string> = {}): string {
-  // env 必须放在 pipe 后的 bash 前，否则只对 echo 起作用
-  const envStr = Object.entries(env).map(([k, v]) => `${k}=${v}`).join(' ')
+  // v24: session_id 通过 CLAUDE_HOOK_SESSION_ID env var 传入，不再通过 stdin pipe
+  const envStr = Object.entries({ CLAUDE_HOOK_SESSION_ID: 'abc12345-x', ...env }).map(([k, v]) => `${k}=${v}`).join(' ')
   try {
     return execSync(
-      `cd ${repo} && echo '{"session_id":"abc12345-x"}' | ${envStr} CLAUDE_HOOK_CWD=${repo} bash ${HOOK}`,
+      `cd ${repo} && ${envStr} CLAUDE_HOOK_CWD=${repo} bash ${HOOK} </dev/null`,
       { encoding: 'utf8' }
     )
   } catch (e: any) {

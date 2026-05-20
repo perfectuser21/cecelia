@@ -122,13 +122,14 @@ else
     fail "L17: engine-tests-shell 仍是显式列表"
 fi
 
-# L18: feature-registry.yml 含 stop-hook feature 注册 + contract_url 指向 ZenithJoy（v18.22.3 升级）
+# L18: feature-registry.yml 含 stop-hook feature 注册 + contract_url 有效（v24 升级后检查 v24 URL）
+# v24: contract_url 更新为 v24 设计文档；v23 URL 保留在 contract_url_v23 字段
 if grep -qE '^  - id: stop-hook$' "$REPO_ROOT/packages/engine/feature-registry.yml" && \
    grep -q 'name: Stop Hook' "$REPO_ROOT/packages/engine/feature-registry.yml" && \
-   grep -qE 'contract_url:.*357c40c2[-]?ba63[-]?81b8' "$REPO_ROOT/packages/engine/feature-registry.yml"; then
-    pass "L18: feature-registry 含 stop-hook 完整 feature 注册（含 ZenithJoy contract_url）"
+   grep -qE 'contract_url[_v0-9]*:.*366c40c2|contract_url[_v0-9]*:.*357c40c2' "$REPO_ROOT/packages/engine/feature-registry.yml"; then
+    pass "L18: feature-registry 含 stop-hook 完整 feature 注册（含有效 contract_url）"
 else
-    fail "L18: stop-hook feature 未注册或 contract_url 未指向 ZenithJoy（357c40c2-ba63-81b8）"
+    fail "L18: stop-hook feature 未注册或 contract_url 缺失"
 fi
 
 # L19 [v23 BYPASS-3-layer]: stop-dev.sh 含 fire_bypass_alert 调用（layer 2 Brain alert）
@@ -150,6 +151,32 @@ if grep -E 'needs:.*lint-bypass-not-committed' "$REPO_ROOT/.github/workflows/ci.
     pass "L21: lint-bypass-not-committed 在 ci-passed needs[]（BYPASS layer 1 git lint 真阻止合并）"
 else
     fail "L21: lint-bypass-not-committed 未在 ci-passed needs[]，layer 1 fail 不阻止 merge"
+fi
+
+# ============================================================================
+# v24 invariant L22-L24（Stop Hook v24 三项修复验证）
+# ============================================================================
+
+# L22 [v24]: stop-dev.sh 改用 CLAUDE_HOOK_SESSION_ID env var（不重读 stdin）
+if grep -q 'CLAUDE_HOOK_SESSION_ID' "$REPO_ROOT/packages/engine/hooks/stop-dev.sh"; then
+    pass "L22 [v24]: stop-dev.sh 使用 CLAUDE_HOOK_SESSION_ID env var（不重读 stdin）"
+else
+    fail "L22 [v24]: stop-dev.sh 未使用 CLAUDE_HOOK_SESSION_ID，session_id 读取路径未修复"
+fi
+
+# L23 [v24]: cleanup.sh 完成时 SIGTERM guardian + rm .live 文件
+if grep -qE 'SIGTERM|kill -TERM' "$REPO_ROOT/packages/engine/skills/dev/scripts/cleanup.sh" && \
+   grep -q '\.live' "$REPO_ROOT/packages/engine/skills/dev/scripts/cleanup.sh"; then
+    pass "L23 [v24]: cleanup.sh 含 SIGTERM guardian + 删除 .live 文件逻辑"
+else
+    fail "L23 [v24]: cleanup.sh 缺 guardian SIGTERM 或 .live 文件清理"
+fi
+
+# L24 [v24]: stop-dev.sh 灯亮时调 classify_session 获取具体 action
+if grep -q 'classify_session' "$REPO_ROOT/packages/engine/hooks/stop-dev.sh"; then
+    pass "L24 [v24]: stop-dev.sh 灯亮时调 classify_session 获取具体 action"
+else
+    fail "L24 [v24]: stop-dev.sh 缺 classify_session 调用，block reason 不够具体"
 fi
 
 echo ""

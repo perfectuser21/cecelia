@@ -8,10 +8,10 @@ import { tmpdir } from 'os'
 const HOOK = resolve(__dirname, '../../hooks/stop-dev.sh')
 
 function runHook(testRepo: string, sessionId: string): { stdout: string, stderr: string, code: number } {
-  const payload = JSON.stringify({ session_id: sessionId })
+  // v24: session_id 通过 CLAUDE_HOOK_SESSION_ID env var 传入，不再通过 stdin pipe
   try {
     const out = execSync(
-      `cd ${testRepo} && CLAUDE_HOOK_CWD=${testRepo} echo '${payload}' | bash ${HOOK}`,
+      `cd ${testRepo} && CLAUDE_HOOK_SESSION_ID=${sessionId} CLAUDE_HOOK_CWD=${testRepo} bash ${HOOK} </dev/null`,
       { encoding: 'utf8' }
     )
     return { stdout: out, stderr: '', code: 0 }
