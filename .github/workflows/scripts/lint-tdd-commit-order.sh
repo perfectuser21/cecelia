@@ -70,6 +70,7 @@ while IFS= read -r sha; do
   fi
 
   # Walking Skeleton 外层 test-first：smoke script 添加 = 外环测试先行，满足要求
+  # 注：任意 smoke/*.sh 均满足（比 test-pairing 豁免范围更宽，因为任何 smoke 都是测试先行的证据）
   HAS_SMOKE=$(echo "$CHANGED" \
     | grep -E '^\.github/workflows/scripts/smoke/.+\.sh$|^packages/brain/scripts/smoke/.+\.sh$' \
     || true)

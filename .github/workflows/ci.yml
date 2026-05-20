@@ -504,6 +504,8 @@ jobs:
   # ─── Brain: Diff Coverage Gate ────────────────────────────
   # PR 新增行覆盖率 < 80% 则 CI fail，迫使为新代码路径补测试
   # 使用 shard 1 的 lcov artifact（不重跑 vitest，节省 ~35min）
+  # 注：shard 1 只覆盖约 25% test 文件，diff-cover 80% 门禁为近似值（非全量）
+  # 权衡：CI 速度提升 vs 覆盖精度；若 gate 误报，可临时将 --fail-under=80 降低或切回全量
   brain-diff-coverage:
     needs: [changes, brain-unit-all]
     if: needs.changes.outputs.brain == 'true' && needs.brain-unit-all.result == 'success' && github.event_name == 'pull_request'
