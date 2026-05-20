@@ -857,19 +857,10 @@ jobs:
       - name: Start stub brain (port 5221)
         # 真实 brain 初始化 >120s（consciousness guard + tick loop），不适合 smoke。
         # stub 只验代理路由；brain 真实行为由 real-env-smoke + brain-unit 覆盖。
+        # 单行避免 YAML block scalar 缩进断裂。
         run: |
-          python3 -c "
-import http.server, json
-class H(http.server.BaseHTTPRequestHandler):
-    def do_GET(self):
-        self.send_response(200)
-        self.send_header('Content-Type','application/json')
-        self.end_headers()
-        body = json.dumps({'service':'cecelia-brain','status':'running','port':5221})
-        self.wfile.write(body.encode())
-    def log_message(self,*a): pass
-http.server.HTTPServer(('',5221),H).serve_forever()
-" > /tmp/stub-brain.log 2>&1 &
+          python3 -c "import http.server,json;http.server.HTTPServer(('',5221),type('H',(http.server.BaseHTTPRequestHandler,),{'do_GET':lambda s:(s.send_response(200),s.send_header('Content-Type','application/json'),s.end_headers(),s.wfile.write(json.dumps({'service':'cecelia-brain','status':'running','port':5221}).encode())),'log_message':lambda*a:None})).serve_forever()" > /tmp/stub-brain.log 2>&1 &
+          sleep 1
           curl -sf http://localhost:5221/health && echo "stub brain ready" || (cat /tmp/stub-brain.log && exit 1)
 
       - name: Install apps/api deps + build
