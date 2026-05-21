@@ -1385,7 +1385,9 @@ export async function finalEvaluateDispatchNode(state, opts = {}) {
   if (state.task?.payload?.base_repo && state.task?.id) {
     const existsFn = opts.existsSync || (await import('node:fs')).existsSync;
     const cpFn = opts.fsCp || (await import('node:fs/promises')).cp;
-    const subWtPath = harnessSubTaskWorktreePath(state.task.id, 'ws1');
+    const subWtPath = opts.subTaskWorktreePath !== undefined
+      ? opts.subTaskWorktreePath
+      : harnessSubTaskWorktreePath(state.task.id, 'ws1');
     if (existsFn(subWtPath)) {
       try {
         const sprintSrc = path.join(state.worktreePath, sprintDir);

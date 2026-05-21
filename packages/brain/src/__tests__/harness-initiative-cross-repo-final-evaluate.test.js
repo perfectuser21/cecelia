@@ -141,6 +141,7 @@ describe('finalEvaluateDispatchNode — cross-repo worktree selection', () => {
       execFile: vi.fn().mockResolvedValue({ stdout: '' }),
       existsSync: vi.fn().mockReturnValue(true),
       fsCp: mockCp,
+      subTaskWorktreePath: '/mock-wt/task-fc0dcc8d-ws1',
     });
 
     expect(mockSpawn).toHaveBeenCalledOnce();
@@ -210,6 +211,7 @@ describe('finalEvaluateDispatchNode — cross-repo worktree selection', () => {
       execFile: vi.fn().mockResolvedValue({ stdout: '' }),
       existsSync: vi.fn().mockReturnValue(true),
       fsCp: vi.fn().mockResolvedValue(undefined),
+      subTaskWorktreePath: '/mock-wt/task-fc0dcc8d-ws1',
     });
 
     // readBrainResult should be called with sub-task worktree path
