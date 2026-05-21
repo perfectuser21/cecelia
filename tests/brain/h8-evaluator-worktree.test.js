@@ -28,11 +28,10 @@ describe('H8 — harnessTaskWorktreePath helper', () => {
     expect(harnessTaskWorktreePath(taskId)).toBe(expected);
   });
 
-  test('opts.baseRepo override 生效', () => {
+  test('opts.baseRepo 不影响 wtPath — 始终在 DEFAULT_BASE_REPO 下', () => {
     const taskId = 'aaaa-bbbb-cccc';
-    const custom = '/tmp/custom-base';
-    const got = harnessTaskWorktreePath(taskId, { baseRepo: custom });
-    expect(got.startsWith(custom)).toBe(true);
+    const got = harnessTaskWorktreePath(taskId, { baseRepo: '/tmp/custom-base' });
+    expect(got.startsWith(DEFAULT_BASE_REPO)).toBe(true);
     expect(got.endsWith(`task-${shortTaskId(taskId)}`)).toBe(true);
   });
 });
