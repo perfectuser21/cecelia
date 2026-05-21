@@ -169,21 +169,35 @@ export async function ensureHarnessWorktree(opts) {
     await rmFn(wtPath);
   }
 
-  await execFn('git', [
-    'clone', '--local', '--no-hardlinks',
-    '--branch', 'main', '--single-branch',
-    cloneSource, wtPath,
-  ]);
+  // H17: 当 cloneSource 是远端 URL（GitHub/SSH）时跳过 --local --no-hardlinks。
+  // --local 仅对本地路径有意义（hardlink 优化）；远端 URL 传 --local 部分 git 版本会 fatal。
+  const cloneSourceIsLocal = await statFn(cloneSource).catch(() => false);
+  if (cloneSourceIsLocal) {
+    await execFn('git', [
+      'clone', '--local', '--no-hardlinks',
+      '--branch', 'main', '--single-branch',
+      cloneSource, wtPath,
+    ]);
+  } else {
+    await execFn('git', [
+      'clone',
+      '--branch', 'main', '--single-branch',
+      cloneSource, wtPath,
+    ]);
+  }
 
   // H16: clone 后改 origin URL 到主仓库的 GitHub origin。
   // clone --local 让 origin 默认指向 baseRepo 本地路径，导致 sub-task 节点 (H13) git fetch origin
   // <propose-branch> 失败 — proposer push 到 GitHub origin，本地仓库没 cp-harness-propose-* 分支。
-  try {
-    const { stdout: githubUrl } = await execFn('git', ['-C', cloneSource, 'remote', 'get-url', 'origin']);
-    await execFn('git', ['-C', wtPath, 'remote', 'set-url', 'origin', githubUrl.trim()]);
-  } catch (err) {
-    logFn(`[harness-worktree] could not set origin URL to GitHub for ${wtPath}: ${err.message}`);
-    // 不抛 — 至少 clone 成功，后续可能某节点失败但 graph 能走更远
+  // H17: cloneSource 已是远端 URL 时 origin 已正确设置，跳过 set-url 步骤。
+  if (cloneSourceIsLocal) {
+    try {
+      const { stdout: githubUrl } = await execFn('git', ['-C', cloneSource, 'remote', 'get-url', 'origin']);
+      await execFn('git', ['-C', wtPath, 'remote', 'set-url', 'origin', githubUrl.trim()]);
+    } catch (err) {
+      logFn(`[harness-worktree] could not set origin URL to GitHub for ${wtPath}: ${err.message}`);
+      // 不抛 — 至少 clone 成功，后续可能某节点失败但 graph 能走更远
+    }
   }
 
   await execFn('git', ['-C', wtPath, 'checkout', '-b', branch]);
