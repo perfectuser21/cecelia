@@ -3028,26 +3028,7 @@ async function triggerCeceliaRun(task) {
   if (task.task_type === 'harness_initiative') {
     console.log(`[executor] 路由决策: task_type=${task.task_type} → Harness Full Graph (A+B+C)`);
 
-    // Pre-check：至少一个账号 session ≥ 4h，否则置 paused 等账号恢复
-    try {
-      const { selectBestAccount } = await import('./account-usage.js');
-      const accountCheck = await selectBestAccount({ minSessionHours: 4 });
-      if (!accountCheck) {
-        console.warn(`[executor] harness_initiative ${task.id}: 无满足 session≥4h 的账号，置 paused`);
-        await pool.query(
-          `UPDATE tasks SET status='paused', updated_at=NOW() WHERE id=$1`,
-          [task.id]
-        );
-        import('./alerting.js').then(({ raise }) =>
-          raise('P1', `no_account_harness_${task.id}`,
-            `⚠️ 所有账号均不满足 harness 任务 ${task.id} session ≥ 4h 要求，任务已暂停，待账号恢复后自动重试`
-          ).catch(() => {})
-        ).catch(() => {});
-        return { success: true, taskId: task.id, initiative: true, paused: true, reason: 'no_account_available' };
-      }
-    } catch (checkErr) {
-      console.warn(`[executor] harness pre-check 失败（非阻塞继续）: ${checkErr.message}`);
-    }
+    // OAuth token 自动刷新，无需 session ≥ 4h 的 pre-check
 
     try {
       const result = await runHarnessInitiativeRouter(task);

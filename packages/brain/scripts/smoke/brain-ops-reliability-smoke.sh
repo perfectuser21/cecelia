@@ -37,9 +37,9 @@ check "janitor jobs API 包含 docker-prune" \
 check "account-usage.js 含 selectBestAccount export" \
   node -e "const c=require('fs').readFileSync('$REPO_ROOT/packages/brain/src/account-usage.js','utf8');if(!c.includes('export async function selectBestAccount'))process.exit(1)"
 
-# D. executor.js 含 minSessionHours harness 逻辑
-check "executor.js 含 harness minSessionHours 逻辑" \
-  node -e "const c=require('fs').readFileSync('$REPO_ROOT/packages/brain/src/executor.js','utf8');if(!c.includes('minSessionHours'))process.exit(1)"
+# D. executor.js 不含 minSessionHours harness 逻辑（OAuth 自动刷新，已删除错误限制）
+check "executor.js 已移除 harness minSessionHours 限制" \
+  node -e "const c=require('fs').readFileSync('$REPO_ROOT/packages/brain/src/executor.js','utf8');if(c.includes('minSessionHours'))process.exit(1)"
 
 echo ""
 echo "结果: ${PASS} passed, ${FAIL} failed"
