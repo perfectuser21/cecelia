@@ -116,6 +116,14 @@ features:
 # Changelog（细粒度改动历史）
 # ============================================================================
 changelog:
+  - version: "18.27.2"
+    date: "2026-05-21"
+    change: "fix"
+    description: "stop-dev.sh block 路径改为 exit 2，修复 v24 回归导致 PR 提交后立即 X0"
+    files:
+      - "packages/engine/hooks/stop-dev.sh (block case 改 exit 2)"
+      - "packages/engine/tests/hooks/stop-hook-v24.test.ts (验证 block → exit 2)"
+
   - version: "18.27.1"
     date: "2026-05-20"
     change: "fix+test"
