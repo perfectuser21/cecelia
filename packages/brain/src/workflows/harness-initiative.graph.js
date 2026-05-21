@@ -33,7 +33,7 @@ import { reconnectOrSpawn, makeSessionRecord } from '../harness-session-bridge.j
 import { parseDockerOutput, loadSkillContent, readBrainResult } from '../harness-shared.js';
 import { parseTaskPlan, upsertTaskPlan } from '../harness-dag.js';
 import { runFinalE2E, attributeFailures } from '../harness-final-e2e.js';
-import { ensureHarnessWorktree } from '../harness-worktree.js';
+import { ensureHarnessWorktree, harnessSubTaskWorktreePath } from '../harness-worktree.js';
 import { resolveGitHubToken } from '../harness-credentials.js';
 import { fetchAndShowOriginFile } from '../lib/git-fence.js';
 import { readFile, readdir } from 'node:fs/promises';
@@ -1378,6 +1378,27 @@ export async function finalEvaluateDispatchNode(state, opts = {}) {
   const _baseRepo = (state.task?.payload?.base_repo || '').toLowerCase();
   const githubRepo = _baseRepo.includes('zenithjoy') ? 'perfectuser21/zenithjoy-workspace' : 'perfectuser21/cecelia';
 
+  // Cross-repo sprints: evaluator 需要在 sub-task worktree（外部仓库克隆）里运行，
+  // 才能通过 ARTIFACT 检查（implementation 文件在外部 repo，不在 Cecelia）。
+  // 修正：把 sprint 文件从 initiative worktree 复制到 sub-task worktree，然后挂载后者。
+  let evalWorktreePath = state.worktreePath;
+  if (state.task?.payload?.base_repo && state.task?.id) {
+    const existsFn = opts.existsSync || (await import('node:fs')).existsSync;
+    const cpFn = opts.fsCp || (await import('node:fs/promises')).cp;
+    const subWtPath = harnessSubTaskWorktreePath(state.task.id, 'ws1');
+    if (existsFn(subWtPath)) {
+      try {
+        const sprintSrc = path.join(state.worktreePath, sprintDir);
+        const sprintDst = path.join(subWtPath, sprintDir);
+        await cpFn(sprintSrc, sprintDst, { recursive: true, force: true });
+        evalWorktreePath = subWtPath;
+        console.log(`[final_evaluate] cross-repo: using sub-task worktree ${subWtPath}`);
+      } catch (err) {
+        console.warn(`[final_evaluate] cross-repo worktree sync failed, falling back to initiative worktree: ${err.message}`);
+      }
+    }
+  }
+
   // B17: final_evaluate 也跑 PR 分支（generator 写的代码还在 PR 分支没 merge main）
   const firstSubTaskPr = (state.sub_tasks || [])[0]?.pr_url || '';
   let prBranchEnv = '';
@@ -1411,12 +1432,13 @@ GITHUB_REPO=${githubRepo}`;
 
   // 清理上轮残留结果文件，防止 executor 失败时读到旧数据
   const { unlink: unlinkResultFile } = await import('node:fs/promises');
-  try { await unlinkResultFile(path.join(state.worktreePath, '.brain-result.json')); } catch { /* 忽略 */ }
+  try { await unlinkResultFile(path.join(evalWorktreePath, '.brain-result.json')); } catch { /* 忽略 */ }
 
-  // B41: Phase C 前把 playground/ 从 origin/main 同步到 initiative worktree。
+  // B41: Phase C 前把 playground/ 从 origin/main 同步到 initiative worktree（仅同仓库 sprint）。
   // 根因：initiative worktree HEAD 停在 GAN 合同分支，playground 代码是旧的；
   // Phase B PR 合并进 main 后，这里必须拉最新代码，否则 evaluator 测旧实现永远 FAIL。
-  if (state.worktreePath) {
+  // cross-repo sprint（evalWorktreePath !== state.worktreePath）跳过此步，外部 repo 无 playground/。
+  if (evalWorktreePath === state.worktreePath && state.worktreePath) {
     try {
       await execFn('git', ['fetch', 'origin', 'main'],
         { cwd: state.worktreePath, timeout: 30_000 });
@@ -1433,7 +1455,7 @@ GITHUB_REPO=${githubRepo}`;
     result = await executor({
       task: { ...state.task, task_type: 'harness_evaluate' },
       prompt,
-      worktreePath: state.worktreePath,
+      worktreePath: evalWorktreePath,
       env: {
         CECELIA_TASK_TYPE: 'harness_evaluate',
         HARNESS_NODE: 'final_evaluate',
@@ -1461,7 +1483,7 @@ GITHUB_REPO=${githubRepo}`;
     // 读容器写入的结果文件（替代 stdout 末行 JSON 解析）
     let resultData;
     try {
-      resultData = await readBrainResult(state.worktreePath, ['verdict']);
+      resultData = await readBrainResult(evalWorktreePath, ['verdict']);
     } catch (readErr) {
       resultData = { verdict: 'FAIL', failed_step: 'result_file_missing', log_excerpt: readErr.message };
     }
