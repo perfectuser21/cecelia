@@ -97,7 +97,7 @@ async function defaultRm(p) {
  */
 export async function ensureHarnessWorktree(opts) {
   const cloneSource = opts.baseRepo || DEFAULT_BASE_REPO;
-  const wtHostRepo = DEFAULT_BASE_REPO;
+  const wtHostRepo = DEFAULT_BASE_REPO; // worktree 物理位置始终是 cecelia，不随 cloneSource 变化
   const execFn = opts.execFn || defaultExec;
   const statFn = opts.statFn || defaultStat;
   const rmFn = opts.rmFn || defaultRm;
