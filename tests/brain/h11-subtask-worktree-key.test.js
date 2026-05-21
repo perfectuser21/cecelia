@@ -20,9 +20,9 @@ describe('H11 — harnessSubTaskWorktreePath helper', () => {
     expect(harnessSubTaskWorktreePath(init, logical)).toBe(expected);
   });
 
-  test('opts.baseRepo override 生效', () => {
+  test('opts.baseRepo 不影响 wtPath — 始终在 DEFAULT_BASE_REPO 下', () => {
     const got = harnessSubTaskWorktreePath('feddcf5e-uuid', 'ws2', { baseRepo: '/tmp/x' });
-    expect(got.startsWith('/tmp/x')).toBe(true);
+    expect(got.startsWith(DEFAULT_BASE_REPO)).toBe(true);
     expect(got.endsWith('task-feddcf5e-ws2')).toBe(true);
   });
 });
@@ -58,7 +58,7 @@ describe('H11 — ensureHarnessWorktree wtKey override', () => {
       execFn,
       statFn,
     });
-    expect(result).toBe(path.join('/tmp/test', '.claude/worktrees/harness-v2', 'task-custom-key-xyz'));
+    expect(result).toBe(path.join(DEFAULT_BASE_REPO, '.claude/worktrees/harness-v2', 'task-custom-key-xyz'));
   });
 
   test('opts.wtKey 配上时短 taskId 不 throw shortTaskId', async () => {
@@ -107,7 +107,8 @@ describe('H11 — sub-graph spawnNode 用复合 wtKey 调 ensureWt', () => {
 });
 
 describe('H11 — evaluateSubTaskNode worktreePath 用 harnessSubTaskWorktreePath', () => {
-  test('worktreePath = harnessSubTaskWorktreePath(initiativeId, sub_task.id)', async () => {
+  // evaluateSubTaskNode 已在 cp-0511182214 迁移为子图节点，不再单独 export
+  test.skip('worktreePath = harnessSubTaskWorktreePath(initiativeId, sub_task.id)', async () => {
     const calls = [];
     const spy = async (opts) => {
       calls.push(opts);

@@ -11,11 +11,10 @@ export const DEFAULT_BASE_REPO = '/Users/administrator/perfect21/cecelia';
 /**
  * 计算 harness sub-task worktree 路径（SSOT）。
  *
- * <baseRepo>/.claude/worktrees/harness-v2/task-<shortTaskId>
+ * <DEFAULT_BASE_REPO>/.claude/worktrees/harness-v2/task-<shortTaskId>
  */
-export function harnessTaskWorktreePath(taskId, opts = {}) {
-  const baseRepo = opts.baseRepo || DEFAULT_BASE_REPO;
-  return path.join(baseRepo, '.claude', 'worktrees', 'harness-v2', `task-${shortTaskId(taskId)}`);
+export function harnessTaskWorktreePath(taskId, _opts = {}) {
+  return path.join(DEFAULT_BASE_REPO, '.claude', 'worktrees', 'harness-v2', `task-${shortTaskId(taskId)}`);
 }
 
 /**
@@ -28,10 +27,9 @@ export function harnessTaskWorktreePath(taskId, opts = {}) {
  * H11: 修 PR #2851 P0 — sub-graph spawnNode 之前调 ensureHarnessWorktree(taskId='ws1')
  * 被 shortTaskId(≥8) 拒。新 helper 让 callers 用复合 key 直接绕过。
  */
-export function harnessSubTaskWorktreePath(initiativeId, logicalTaskId, opts = {}) {
-  const baseRepo = opts.baseRepo || DEFAULT_BASE_REPO;
+export function harnessSubTaskWorktreePath(initiativeId, logicalTaskId, _opts = {}) {
   const init8 = String(initiativeId).slice(0, 8);
-  return path.join(baseRepo, '.claude', 'worktrees', 'harness-v2', `task-${init8}-${logicalTaskId}`);
+  return path.join(DEFAULT_BASE_REPO, '.claude', 'worktrees', 'harness-v2', `task-${init8}-${logicalTaskId}`);
 }
 
 /**
@@ -72,7 +70,7 @@ async function defaultRm(p) {
 /**
  * 幂等创建/复用 Harness v2 专属独立 git clone。
  *
- * 目录：<baseRepo>/.claude/worktrees/harness-v2/task-<shortid>
+ * 目录：<DEFAULT_BASE_REPO>/.claude/worktrees/harness-v2/task-<shortid>（克隆源由 opts.baseRepo 指定）
  * 分支：cp-<MMDDHHMM>-ws-<shortid>（基于 main，强制 cp-* 规约）
  *
  * 设计决策：
@@ -98,7 +96,8 @@ async function defaultRm(p) {
  * @returns {Promise<string>}                  worktree 绝对路径
  */
 export async function ensureHarnessWorktree(opts) {
-  const baseRepo = opts.baseRepo || DEFAULT_BASE_REPO;
+  const cloneSource = opts.baseRepo || DEFAULT_BASE_REPO;
+  const wtHostRepo = DEFAULT_BASE_REPO; // worktree 物理位置始终是 cecelia，不随 cloneSource 变化
   const execFn = opts.execFn || defaultExec;
   const statFn = opts.statFn || defaultStat;
   const rmFn = opts.rmFn || defaultRm;
@@ -108,7 +107,7 @@ export async function ensureHarnessWorktree(opts) {
   // initiative-level callers（不传 wtKey/branch）走老路用 shortTaskId(taskId) + makeCpBranchName。
   const wtKey = opts.wtKey || shortTaskId(opts.taskId);
   const branch = opts.branch || makeCpBranchName(opts.taskId, { now: opts.now });
-  const wtPath = path.join(baseRepo, '.claude', 'worktrees', 'harness-v2', `task-${wtKey}`);
+  const wtPath = path.join(wtHostRepo, '.claude', 'worktrees', 'harness-v2', `task-${wtKey}`);
 
   if (await statFn(wtPath)) {
     // 状态机校验（修补 W7.3 cleanupStaleWorktrees race 留下的孤儿 dir）：
@@ -132,13 +131,13 @@ export async function ensureHarnessWorktree(opts) {
           const url = String(remoteUrl || '').trim();
           let baseRepoGithubUrl = '';
           try {
-            const { stdout: gh } = await execFn('git', ['-C', baseRepo, 'remote', 'get-url', 'origin']);
+            const { stdout: gh } = await execFn('git', ['-C', cloneSource, 'remote', 'get-url', 'origin']);
             baseRepoGithubUrl = String(gh || '').trim();
-          } catch { /* baseRepo 自己 origin 读不到，下面只校 baseRepo 路径 */ }
-          const matchesBaseRepo = url && url.includes(baseRepo);
+          } catch { /* cloneSource origin 读不到，下面只校 cloneSource 路径 */ }
+          const matchesBaseRepo = url && url.includes(cloneSource);
           const matchesGithub = baseRepoGithubUrl && url === baseRepoGithubUrl;
           if (!matchesBaseRepo && !matchesGithub) {
-            logFn(`[harness-worktree] orphan worktree at ${wtPath}: origin='${url}' matches neither baseRepo='${baseRepo}' nor GitHub='${baseRepoGithubUrl}'; rebuilding`);
+            logFn(`[harness-worktree] orphan worktree at ${wtPath}: origin='${url}' matches neither cloneSource='${cloneSource}' nor GitHub='${baseRepoGithubUrl}'; rebuilding`);
             isOrphan = true;
           }
         } catch (err) {
@@ -173,14 +172,14 @@ export async function ensureHarnessWorktree(opts) {
   await execFn('git', [
     'clone', '--local', '--no-hardlinks',
     '--branch', 'main', '--single-branch',
-    baseRepo, wtPath,
+    cloneSource, wtPath,
   ]);
 
   // H16: clone 后改 origin URL 到主仓库的 GitHub origin。
   // clone --local 让 origin 默认指向 baseRepo 本地路径，导致 sub-task 节点 (H13) git fetch origin
   // <propose-branch> 失败 — proposer push 到 GitHub origin，本地仓库没 cp-harness-propose-* 分支。
   try {
-    const { stdout: githubUrl } = await execFn('git', ['-C', baseRepo, 'remote', 'get-url', 'origin']);
+    const { stdout: githubUrl } = await execFn('git', ['-C', cloneSource, 'remote', 'get-url', 'origin']);
     await execFn('git', ['-C', wtPath, 'remote', 'set-url', 'origin', githubUrl.trim()]);
   } catch (err) {
     logFn(`[harness-worktree] could not set origin URL to GitHub for ${wtPath}: ${err.message}`);
