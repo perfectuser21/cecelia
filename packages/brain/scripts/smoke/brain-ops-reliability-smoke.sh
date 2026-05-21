@@ -41,6 +41,10 @@ check "account-usage.js 含 selectBestAccount export" \
 check "executor.js 已移除 harness minSessionHours 限制" \
   node -e "const c=require('fs').readFileSync('$REPO_ROOT/packages/brain/src/executor.js','utf8');if(c.includes('minSessionHours'))process.exit(1)"
 
+# E. harness-worktree.js H17 — 含 cloneSourceIsLocal 远端 URL 支持逻辑
+check "harness-worktree.js 含 H17 cloneSourceIsLocal 远端 URL 支持" \
+  node -e "const c=require('fs').readFileSync('$REPO_ROOT/packages/brain/src/harness-worktree.js','utf8');if(!c.includes('cloneSourceIsLocal'))process.exit(1)"
+
 echo ""
 echo "结果: ${PASS} passed, ${FAIL} failed"
 [[ $FAIL -eq 0 ]]
