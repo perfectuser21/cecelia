@@ -6,7 +6,7 @@
  */
 
 import { useState, useMemo, lazy, Suspense, useEffect } from 'react';
-import { Link, useLocation, Route } from 'react-router-dom';
+import { Link, useLocation, Route, Routes } from 'react-router-dom';
 
 // A1 (Day 2 Epic A): Task PRD viewer at /tasks/:id/prd
 // 用户从 PR body 的 "📋 PRD: <link>" 点进来，看任务的 PRD 全文
@@ -274,43 +274,48 @@ function AppContent() {
       {/* 主内容区域 - 配置驱动路由 */}
       <main className={isAuthenticated ? `flex-1 overflow-hidden flex flex-col ${collapsed ? 'ml-16' : 'ml-64'} pt-16 transition-all duration-300` : "flex-1 overflow-hidden flex flex-col"}>
         <div key={location.pathname} className={isAuthenticated ? (isFullHeightRoute(location.pathname) ? "flex-1 min-h-0 overflow-hidden page-fade-in" : "flex-1 min-h-0 overflow-y-auto p-8 page-fade-in") : ""}>
-          <DynamicRouter>
-            {/* A1: PRD viewer 静态路由（不进 navigation，仅通过 URL/PR link 访问） */}
-            <Route
-              path="/tasks/:id/prd"
-              element={
-                <Suspense fallback={<div className="p-8 text-center text-gray-500">Loading…</div>}>
-                  <TaskPrdPage />
-                </Suspense>
-              }
-            />
-            {/* ws4: HarnessDetailPage — /harness/:id initiative 实时 Streaming 详情页 */}
-            <Route
-              path="/harness/:id"
-              element={
-                <Suspense fallback={<div className="p-8 text-center text-gray-500">Loading…</div>}>
-                  <HarnessDetailPage />
-                </Suspense>
-              }
-            />
-            {/* clips: Content Clips 管理页 — 静态路由，不依赖 coreConfig */}
-            <Route
-              path="/clips"
-              element={
-                <Suspense fallback={<div className="p-8 text-center text-gray-500">Loading…</div>}>
-                  <ContentClipsPage />
-                </Suspense>
-              }
-            />
-            <Route
-              path="/clips/:id"
-              element={
-                <Suspense fallback={<div className="p-8 text-center text-gray-500">Loading…</div>}>
-                  <ContentClipDetailPage />
-                </Suspense>
-              }
-            />
-          </DynamicRouter>
+          {location.pathname.startsWith('/clips') ? (
+            // clips 独立 Routes：不走 DynamicRouter，彻底绕过其 catch-all → Navigate to="/"
+            <Routes>
+              <Route
+                path="/clips"
+                element={
+                  <Suspense fallback={<div className="p-8 text-center text-gray-500">Loading…</div>}>
+                    <ContentClipsPage />
+                  </Suspense>
+                }
+              />
+              <Route
+                path="/clips/:id"
+                element={
+                  <Suspense fallback={<div className="p-8 text-center text-gray-500">Loading…</div>}>
+                    <ContentClipDetailPage />
+                  </Suspense>
+                }
+              />
+            </Routes>
+          ) : (
+            <DynamicRouter>
+              {/* A1: PRD viewer 静态路由（不进 navigation，仅通过 URL/PR link 访问） */}
+              <Route
+                path="/tasks/:id/prd"
+                element={
+                  <Suspense fallback={<div className="p-8 text-center text-gray-500">Loading…</div>}>
+                    <TaskPrdPage />
+                  </Suspense>
+                }
+              />
+              {/* ws4: HarnessDetailPage — /harness/:id initiative 实时 Streaming 详情页 */}
+              <Route
+                path="/harness/:id"
+                element={
+                  <Suspense fallback={<div className="p-8 text-center text-gray-500">Loading…</div>}>
+                    <HarnessDetailPage />
+                  </Suspense>
+                }
+              />
+            </DynamicRouter>
+          )}
         </div>
       </main>
 

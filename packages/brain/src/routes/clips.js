@@ -81,7 +81,7 @@ router.post('/:id/callback', async (req, res) => {
          like_count=$7, comment_count=$8, share_count=$9,
          cover_url=$10, video_url=$11,
          raw_response=$12, processed_at=NOW(), updated_at=NOW()
-       WHERE id=$1 RETURNING id, status`,
+       WHERE id=$1 RETURNING id, status, url, platform`,
       [
         req.params.id,
         title || null,
@@ -94,6 +94,10 @@ router.post('/:id/callback', async (req, res) => {
       ]
     );
     if (rows.length === 0) return res.status(404).json({ error: 'clip not found' });
+    // Push to Notion Knowledge_ Reference (non-blocking)
+    pushClipToNotion(rows[0], title, transcript).catch(e =>
+      console.error('[clips] Notion push error:', e.message)
+    );
     res.json({ ok: true, status: 'done' });
   } catch (err) {
     console.error('[clips] POST /:id/callback error:', err.message);
@@ -202,6 +206,51 @@ function detectPlatform(url) {
   if (url.includes('douyin.com') || url.includes('v.douyin.com')) return 'douyin';
   if (url.includes('xiaohongshu.com') || url.includes('xhslink.com')) return 'xiaohongshu';
   return null;
+}
+
+async function pushClipToNotion(clip, title, transcript) {
+  const token = process.env.NOTION_API_KEY;
+  if (!token) return;
+  const dbId = process.env.NOTION_KNOWLEDGE_REF_DB_ID || '770c40c2-ba63-83ea-86d0-01eba832c218';
+  const today = new Date().toISOString().split('T')[0];
+
+  const properties = {
+    '标题': { title: [{ text: { content: (title || '未命名').substring(0, 2000) } }] },
+    '链接': { url: clip.url || null },
+    '日期': { date: { start: today } },
+    '状态': { status: { name: '未使用' } },
+  };
+  if (clip.platform) properties['平台'] = { select: { name: clip.platform } };
+
+  const children = [];
+  if (transcript?.trim()) {
+    children.push({ object: 'block', type: 'heading_2', heading_2: { rich_text: [{ type: 'text', text: { content: '转写文案' } }] } });
+    for (let i = 0; i < transcript.length && children.length < 95; i += 1900) {
+      children.push({ object: 'block', type: 'paragraph', paragraph: { rich_text: [{ type: 'text', text: { content: transcript.substring(i, i + 1900) } }] } });
+    }
+  }
+
+  const resp = await fetch('https://api.notion.com/v1/pages', {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${token}`,
+      'Notion-Version': '2022-06-28',
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      parent: { database_id: dbId },
+      properties,
+      children: children.length > 0 ? children : undefined,
+    }),
+    signal: AbortSignal.timeout(15000),
+  });
+
+  if (!resp.ok) {
+    const err = await resp.json().catch(() => ({}));
+    throw new Error(`Notion API ${resp.status}: ${err.message || 'unknown'}`);
+  }
+  const page = await resp.json();
+  console.log(`[clips] Notion push OK: ${page.id} for clip ${clip.id}`);
 }
 
 export default router;

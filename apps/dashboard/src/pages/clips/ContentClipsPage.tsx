@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Scissors, RefreshCw, ExternalLink } from 'lucide-react';
+import { Scissors, RefreshCw, ExternalLink, Plus, CheckCircle, AlertCircle, Link } from 'lucide-react';
 
 interface Clip {
   id: string;
@@ -46,6 +46,10 @@ export default function ContentClipsPage() {
   const [page, setPage] = useState(0);
   const pageSize = 20;
 
+  const [submitUrl, setSubmitUrl] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+  const [submitResult, setSubmitResult] = useState<{ type: 'success' | 'error' | 'duplicate'; msg: string } | null>(null);
+
   const fetchClips = useCallback(async () => {
     setLoading(true);
     try {
@@ -64,6 +68,44 @@ export default function ContentClipsPage() {
   }, [platform, status, page]);
 
   useEffect(() => { fetchClips(); }, [fetchClips]);
+
+  // Extract first http/https URL from pasted share text (handles XHS/Douyin share copy)
+  const extractUrl = (text: string): string => {
+    const m = text.match(/https?:\/\/[^\s一-鿿【】，。、！？]+/);
+    return m ? m[0].replace(/[.,;:!?）)]+$/, '') : text.trim();
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const url = extractUrl(submitUrl);
+    if (!url) return;
+    setSubmitting(true);
+    setSubmitResult(null);
+    try {
+      const resp = await fetch('/api/brain/clips', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url }),
+      });
+      const data = await resp.json();
+      if (resp.status === 201) {
+        setSubmitResult({ type: 'success', msg: '已提交，正在采集...' });
+        setSubmitUrl('');
+        fetchClips();
+      } else if (resp.status === 409) {
+        setSubmitResult({ type: 'duplicate', msg: '该链接已存在，即将跳转...' });
+        if (data.id) {
+          setTimeout(() => navigate(`/clips/${data.id}`), 1200);
+        }
+      } else {
+        setSubmitResult({ type: 'error', msg: data.error || '提交失败' });
+      }
+    } catch {
+      setSubmitResult({ type: 'error', msg: '网络错误，请重试' });
+    } finally {
+      setSubmitting(false);
+    }
+  };
 
   const handleRetry = async (id: string, e: React.MouseEvent) => {
     e.stopPropagation();
@@ -89,6 +131,40 @@ export default function ContentClipsPage() {
         >
           <RefreshCw className="w-4 h-4" /> 刷新
         </button>
+      </div>
+
+      {/* Submit URL */}
+      <div className="mb-6 p-4 bg-white dark:bg-slate-800/60 rounded-xl border border-gray-200 dark:border-gray-700">
+        <form onSubmit={handleSubmit} className="flex gap-2">
+          <div className="flex-1 relative">
+            <Link className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+            <input
+              type="text"
+              value={submitUrl}
+              onChange={e => { setSubmitUrl(e.target.value); setSubmitResult(null); }}
+              placeholder="粘贴抖音 / 小红书分享文字或链接..."
+              className="w-full pl-9 pr-3 py-2.5 text-sm rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-slate-700 text-gray-900 dark:text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500/40 focus:border-blue-500"
+            />
+          </div>
+          <button
+            type="submit"
+            disabled={submitting || !submitUrl.trim()}
+            className="flex items-center gap-1.5 px-4 py-2.5 text-sm font-medium rounded-lg bg-blue-500 hover:bg-blue-600 text-white disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+          >
+            <Plus className="w-4 h-4" />
+            {submitting ? '提交中...' : '采集'}
+          </button>
+        </form>
+        {submitResult && (
+          <div className={`mt-2 flex items-center gap-1.5 text-sm ${
+            submitResult.type === 'success' ? 'text-green-600 dark:text-green-400' :
+            submitResult.type === 'duplicate' ? 'text-yellow-600 dark:text-yellow-400' :
+            'text-red-600 dark:text-red-400'
+          }`}>
+            {submitResult.type === 'success' ? <CheckCircle className="w-4 h-4" /> : <AlertCircle className="w-4 h-4" />}
+            {submitResult.msg}
+          </div>
+        )}
       </div>
 
       {/* Filters */}
@@ -124,7 +200,7 @@ export default function ContentClipsPage() {
         <div className="text-center py-16 text-gray-400 dark:text-gray-500">
           <Scissors className="w-12 h-12 mx-auto mb-3 opacity-30" />
           <p className="text-base">还没有采集记录</p>
-          <p className="text-sm mt-1">通过 API 提交第一个链接开始采集</p>
+          <p className="text-sm mt-1">粘贴抖音或小红书链接，点击「采集」开始</p>
         </div>
       ) : (
         <>
