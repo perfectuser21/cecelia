@@ -70,4 +70,14 @@ describe('resolveAccount() account-rotation middleware', () => {
       console.log = origLog;
     }
   });
+
+  it('harness_initiative 任务不传 minSessionHours（OAuth 自动刷新）', async () => {
+    let capturedOpts;
+    const deps = makeDeps({
+      selectBestAccount: async (o) => { capturedOpts = o; return { accountId: 'account2', model: 'sonnet', modelId: 'claude-sonnet-4-5' }; },
+    });
+    const opts = { env: {}, task: { task_type: 'harness_initiative' } };
+    await resolveAccount(opts, { deps });
+    expect(capturedOpts.minSessionHours).toBeUndefined();
+  });
 });
