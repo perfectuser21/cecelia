@@ -21,7 +21,8 @@ describe('H16 — ensureHarnessWorktree clone 后 origin URL 改 GitHub', () => 
       }
       return { stdout: '', stderr: '' };
     });
-    const statFn = vi.fn(async () => false); // dir 不存在 → 走 clone 路径
+    // wtPath 不存在（false）但 cloneSource('/mock-base') 是本地路径（true）→ H16 set-url 触发
+    const statFn = vi.fn(async (p) => p === '/mock-base');
 
     await ensureHarnessWorktree({
       taskId: 'feddcf5e11111111',
@@ -56,7 +57,8 @@ describe('H16 — ensureHarnessWorktree clone 后 origin URL 改 GitHub', () => 
       }
       return { stdout: '', stderr: '' };
     });
-    const statFn = vi.fn(async () => false);
+    // cloneSource('/mock-base') 是本地路径 → H16 被触发 + get-url 抛错 → logFn 警告
+    const statFn = vi.fn(async (p) => p === '/mock-base');
     const logFn = vi.fn((msg) => {
       logged += msg + '\n';
     });
