@@ -20,7 +20,7 @@ describe('ensureHarnessWorktree', () => {
       execFn, statFn,
       logFn: () => {},
     });
-    expect(p).toBe('/tmp/cec/.claude/worktrees/harness-v2/task-abcdef12');
+    expect(p).toBe('/Users/administrator/perfect21/cecelia/.claude/worktrees/harness-v2/task-abcdef12');
     expect(calls.some(c => c.includes('clone'))).toBe(false);
     expect(calls.some(c => c.includes('worktree add'))).toBe(false);
   });
@@ -39,7 +39,7 @@ describe('ensureHarnessWorktree', () => {
       execFn, statFn,
       logFn: () => {},
     });
-    expect(p).toBe('/tmp/cec/.claude/worktrees/harness-v2/task-beefcafe');
+    expect(p).toBe('/Users/administrator/perfect21/cecelia/.claude/worktrees/harness-v2/task-beefcafe');
     const cloneCall = calls.find(c => c.startsWith('git clone'));
     expect(cloneCall).toBeTruthy();
     expect(cloneCall).toContain('--local');
@@ -47,7 +47,7 @@ describe('ensureHarnessWorktree', () => {
     expect(cloneCall).toContain('--branch main');
     expect(cloneCall).toContain('--single-branch');
     expect(cloneCall).toContain('/tmp/cec');
-    expect(cloneCall).toContain('/tmp/cec/.claude/worktrees/harness-v2/task-beefcafe');
+    expect(cloneCall).toContain('/Users/administrator/perfect21/cecelia/.claude/worktrees/harness-v2/task-beefcafe');
     const checkoutCall = calls.find(c => c.includes('checkout -b'));
     expect(checkoutCall).toBeTruthy();
     // 分支名改为 cp-* 规约（符合 branch-protect.sh 正则 + CI branch-naming）
