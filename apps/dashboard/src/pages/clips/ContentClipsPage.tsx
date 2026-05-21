@@ -69,9 +69,15 @@ export default function ContentClipsPage() {
 
   useEffect(() => { fetchClips(); }, [fetchClips]);
 
+  // Extract first http/https URL from pasted share text (handles XHS/Douyin share copy)
+  const extractUrl = (text: string): string => {
+    const m = text.match(/https?:\/\/[^\s一-鿿【】，。、！？]+/);
+    return m ? m[0].replace(/[.,;:!?）)]+$/, '') : text.trim();
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    const url = submitUrl.trim();
+    const url = extractUrl(submitUrl);
     if (!url) return;
     setSubmitting(true);
     setSubmitResult(null);
@@ -133,10 +139,10 @@ export default function ContentClipsPage() {
           <div className="flex-1 relative">
             <Link className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
             <input
-              type="url"
+              type="text"
               value={submitUrl}
               onChange={e => { setSubmitUrl(e.target.value); setSubmitResult(null); }}
-              placeholder="粘贴抖音 / 小红书链接..."
+              placeholder="粘贴抖音 / 小红书分享文字或链接..."
               className="w-full pl-9 pr-3 py-2.5 text-sm rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-slate-700 text-gray-900 dark:text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500/40 focus:border-blue-500"
             />
           </div>
