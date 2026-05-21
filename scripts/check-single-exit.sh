@@ -28,24 +28,26 @@ check_count() {
     fi
 }
 
-# v23 心跳模型协议（v23.1.0+）：
-#   - stop-dev.sh 单一出口：禁 exit 2 / exit 99，仅一个 exit 0
+# v24.0.1 exit code 协议：
+#   - stop-dev.sh block 路径必须 exit 2（Claude Code Stop Hook 靠 exit code 判断 block）
+#   - stop-dev.sh release 路径必须 exit 0（单一 exit 0）
+#   - exit 99 禁用（stop.sh 三态协议：0=done, 99=not-applicable, 2=blocked）
 #   - 必须读 .cecelia/lights/ + 用 stat mtime 判定灯新鲜度
 #
 # 注：hooks/ 是 symlink → packages/engine/hooks/，物理同一文件
-check_count "$REPO_ROOT/packages/engine/hooks/stop-dev.sh" '\bexit 2\b' 0 "stop-dev.sh exit 2 (Ralph 禁用)"
-check_count "$REPO_ROOT/packages/engine/hooks/stop-dev.sh" '\bexit 99\b' 0 "stop-dev.sh exit 99 (Ralph 禁用)"
-check_count "$REPO_ROOT/hooks/stop-dev.sh" '\bexit 2\b' 0 "hooks/stop-dev.sh exit 2 (Ralph 禁用)"
-check_count "$REPO_ROOT/hooks/stop-dev.sh" '\bexit 99\b' 0 "hooks/stop-dev.sh exit 99 (Ralph 禁用)"
+check_count "$REPO_ROOT/packages/engine/hooks/stop-dev.sh" '\bexit 2\b' 1 "stop-dev.sh exit 2: 必须恰好 1 个（block 路径）"
+check_count "$REPO_ROOT/packages/engine/hooks/stop-dev.sh" '\bexit 99\b' 0 "stop-dev.sh exit 99 (禁用)"
+check_count "$REPO_ROOT/hooks/stop-dev.sh" '\bexit 2\b' 1 "hooks/stop-dev.sh exit 2: 必须恰好 1 个（block 路径）"
+check_count "$REPO_ROOT/hooks/stop-dev.sh" '\bexit 99\b' 0 "hooks/stop-dev.sh exit 99 (禁用)"
 
-# v23.1: 单一出口纪律 — stop-dev.sh 必须只有 1 个 'exit 0'
+# v24.0.1: block=exit 2, release=exit 0，各有 1 个
 exit0_count=$(sed 's/#.*//' "$REPO_ROOT/packages/engine/hooks/stop-dev.sh" | grep -cE '\bexit\s+0\b' || true)
 exit0_count="${exit0_count:-0}"
 if [[ "$exit0_count" -ne 1 ]]; then
-    echo "❌ stop-dev.sh exit 0 纪律: 出现 ${exit0_count} 次（期望 1）— 单一出口违反"
+    echo "❌ stop-dev.sh exit 0: 出现 ${exit0_count} 次（期望 1，在 release 分支）"
     ERR=1
 else
-    echo "✅ stop-dev.sh exit 0 纪律: ${exit0_count} / 1（单一出口）"
+    echo "✅ stop-dev.sh exit 0: ${exit0_count} / 1（release 分支）"
 fi
 
 # devloop-check.sh：classify_session + devloop_check + log_hook_decision = 3 函数末尾各 1 return 0

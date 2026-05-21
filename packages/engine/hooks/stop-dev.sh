@@ -10,6 +10,7 @@
 #   Bug 1：session_id 改从 CLAUDE_HOOK_SESSION_ID env var 读取
 #          （stop.sh 已消费 stdin pipe，不能重读）
 #   Bug 2：灯亮时调用 classify_session(cwd) 获取具体状态和 action
+# v24.0.1 修复：block 路径改为 exit 2（v24.0.0 单一出口重构遗漏）
 # ============================================================================
 set -uo pipefail
 
@@ -197,10 +198,10 @@ type log_hook_decision &>/dev/null && \
 
 if [[ "$DECISION" == "block" ]]; then
     jq -n --arg r "$BLOCK_REASON" '{"decision":"block","reason":$r}'
+    exit 2
 else
     # release：stdout 不输出任何内容（Claude Code Stop hook schema 不接受 "release"）
     # 诊断信息写 stderr 供测试验证
     echo "{\"reason_code\":\"${REASON_CODE:-release}\"}" >&2
+    exit 0
 fi
-
-exit 0

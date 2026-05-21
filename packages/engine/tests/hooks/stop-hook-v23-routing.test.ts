@@ -71,11 +71,14 @@ describe('stop-dev.sh v23 routing & 特殊场景', () => {
     makeLight(lightsDir, 'abc12345', 'cp-x')
     // v24：需要 mock classify_session 返回 blocked
     setupClassifyMock(testRepo, 'blocked')
-    const out = execSync(
-      // v24：session_id 改从 CLAUDE_HOOK_SESSION_ID env var 读取
-      `cd ${testRepo} && CLAUDE_HOOK_SESSION_ID=abc12345-x CLAUDE_HOOK_CWD=${testRepo} bash ${HOOK}`,
-      { encoding: 'utf8' }
-    )
+    // v24.0.1：block 路径 exit 2，execSync 会抛异常；从 error.stdout 读取输出
+    let out = ''
+    try {
+      out = execSync(
+        `cd ${testRepo} && CLAUDE_HOOK_SESSION_ID=abc12345-x CLAUDE_HOOK_CWD=${testRepo} bash ${HOOK}`,
+        { encoding: 'utf8' }
+      )
+    } catch (e: any) { out = e.stdout || '' }
     expect(out).toMatch(/"decision"\s*:\s*"block"/)
   })
 
@@ -105,11 +108,13 @@ describe('stop-dev.sh v23 routing & 特殊场景', () => {
       realContent + '\n# v24 test mock override\nclassify_session() { echo \'{"status":"blocked","reason":"mock dev session in progress"}\'; return 0; }\n'
     )
     const fakeHome = mkdtempSync(join(tmpdir(), 'hooklog-'))
-    execSync(
-      // v24：session_id 改从 CLAUDE_HOOK_SESSION_ID env var 读取
-      `cd ${testRepo} && CLAUDE_HOOK_SESSION_ID=abc12345-x HOME=${fakeHome} CLAUDE_HOOK_CWD=${testRepo} bash ${HOOK}`,
-      { encoding: 'utf8' }
-    )
+    // v24.0.1：block 路径 exit 2，execSync 会抛异常；日志仍然写入，忽略异常继续验证
+    try {
+      execSync(
+        `cd ${testRepo} && CLAUDE_HOOK_SESSION_ID=abc12345-x HOME=${fakeHome} CLAUDE_HOOK_CWD=${testRepo} bash ${HOOK}`,
+        { encoding: 'utf8' }
+      )
+    } catch { /* block 路径 exit 2 是预期行为，继续验证日志文件 */ }
     const logFile = join(fakeHome, '.claude/hook-logs/stop-dev.jsonl')
     const log = require('fs').readFileSync(logFile, 'utf8').trim()
     const last = JSON.parse(log.split('\n').pop()!)
