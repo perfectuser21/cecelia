@@ -73,3 +73,29 @@ describe('dev-registry CHECK 约束实际拒绝非法值', () => {
     ).rejects.toThrow();
   });
 });
+
+describe('dev-registry 扫描脚本填充', () => {
+  it('api_registry 行数 > 0（扫描后）', async () => {
+    const { rows } = await pool.query('SELECT COUNT(*)::int AS cnt FROM api_registry');
+    expect(rows[0].cnt).toBeGreaterThan(0);
+  });
+
+  it('db_schema_registry 包含 tasks 表', async () => {
+    const { rows } = await pool.query(
+      "SELECT table_name FROM db_schema_registry WHERE table_name='tasks'",
+    );
+    expect(rows).toHaveLength(1);
+  });
+
+  it('test_registry 行数 > 0（扫描后）', async () => {
+    const { rows } = await pool.query('SELECT COUNT(*)::int AS cnt FROM test_registry');
+    expect(rows[0].cnt).toBeGreaterThan(0);
+  });
+
+  it('system_registry 包含 skill 类型记录（扫描后）', async () => {
+    const { rows } = await pool.query(
+      "SELECT COUNT(*)::int AS cnt FROM system_registry WHERE type='skill'",
+    );
+    expect(rows[0].cnt).toBeGreaterThan(0);
+  });
+});
