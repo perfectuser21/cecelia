@@ -721,6 +721,17 @@ async function onBrainListening() {
     console.warn('[Server] Conversation Consolidator init failed (non-fatal):', e.message);
   }
 
+  // Initialize Notion Push Sync (每 5 分钟扫描 notion_synced_at=NULL，推送到 Notion)
+  try {
+    const { runNotionPushSync } = await import('./src/notion-push-sync.js');
+    setInterval(async () => {
+      try { await runNotionPushSync(pool); } catch (e) { console.warn('[Server] Notion push sync failed:', e.message); }
+    }, 5 * 60 * 1000);
+    console.log('[Server] Notion Push Sync scheduled (5min interval)');
+  } catch (e) {
+    console.warn('[Server] Notion Push Sync init failed (non-fatal):', e.message);
+  }
+
   // Initialize Daily Memory Consolidation (每 30 分钟轮询，内部 elapsed-time 闸门按 CONSOLIDATION_INTERVAL_HOURS 节流)
   // Wave 2 重构后 tick-runner.js 已废弃，原 step 10.x 调用断点；此处恢复独立调度，修 PROBE_FAIL_CONSOLIDATION 真因
   // 初次 setTimeout 用 5s（小于 capability-probe 的 30s 首发延迟），避免 cold-start 上 probe 先于 consolidation 跑
