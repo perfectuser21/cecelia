@@ -2403,6 +2403,25 @@ ${resultStr.substring(0, 2000)}
               console.warn(`[execution-callback] harness: smoke test failed (non-fatal): ${smokeErr.message}`);
             }
 
+            // Step 3.5: 回写 Feature thickness（thin → medium）
+            const featureId = harnessPayload.feature_id;
+            if (featureId) {
+              try {
+                const patchResp = await fetch(`http://localhost:5221/api/brain/journey_features/${featureId}`, {
+                  method: 'PATCH',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ thickness: 'medium' }),
+                });
+                if (patchResp.ok) {
+                  console.log(`[execution-callback] harness: Feature ${featureId} thickness → medium (evaluator PASS)`);
+                } else {
+                  console.warn(`[execution-callback] harness: thickness PATCH failed ${patchResp.status} (non-fatal)`);
+                }
+              } catch (thickErr) {
+                console.warn(`[execution-callback] harness: thickness PATCH error (non-fatal): ${thickErr.message}`);
+              }
+            }
+
             // Step 4: 创建 Report
             await createHarnessTask({
               title: `[Report] ${plannerShort}`,

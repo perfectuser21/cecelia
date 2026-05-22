@@ -69,8 +69,8 @@ describe('execution.js harness_evaluate PASS — thickness write-back', () => {
     // 验证有 if (featureId) 守卫
     const passSection = src.indexOf("evalVerdict === 'PASS'");
     expect(passSection).toBeGreaterThan(0);
-    // 从 PASS 分支开始往后2000字符内应该有 if (featureId)
-    const passCode = src.slice(passSection, passSection + 2000);
+    // 从 PASS 分支开始往后5000字符内应该有 if (featureId)
+    const passCode = src.slice(passSection, passSection + 5000);
     expect(passCode).toContain('if (featureId)');
   });
 });
