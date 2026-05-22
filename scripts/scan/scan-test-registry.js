@@ -53,24 +53,27 @@ function scanDir(dir) {
 }
 
 async function main() {
-  const scanDirs = ['packages', 'apps', 'sprints'];
-  const files = [];
-  for (const d of scanDirs) files.push(...scanDir(path.join(REPO_ROOT, d)));
+  try {
+    const scanDirs = ['packages', 'apps', 'sprints'];
+    const files = [];
+    for (const d of scanDirs) files.push(...scanDir(path.join(REPO_ROOT, d)));
 
-  console.log(`扫描到 ${files.length} 个测试文件`);
+    console.log(`扫描到 ${files.length} 个测试文件`);
 
-  for (const f of files) {
-    await pool.query(
-      `INSERT INTO test_registry (file_path, test_count, covered_behaviors, area, test_type)
-       VALUES ($1, $2, $3, $4, $5)
-       ON CONFLICT (file_path) DO UPDATE
-         SET test_count=$2, covered_behaviors=$3, area=$4, test_type=$5,
-             scanned_at=NOW(), updated_at=NOW()`,
-      [f.file_path, f.test_count, f.covered_behaviors, f.area, f.test_type],
-    );
+    for (const f of files) {
+      await pool.query(
+        `INSERT INTO test_registry (file_path, test_count, covered_behaviors, area, test_type)
+         VALUES ($1, $2, $3, $4, $5)
+         ON CONFLICT (file_path) DO UPDATE
+           SET test_count=$2, covered_behaviors=$3, area=$4, test_type=$5,
+               scanned_at=NOW(), updated_at=NOW()`,
+        [f.file_path, f.test_count, f.covered_behaviors, f.area, f.test_type],
+      );
+    }
+    console.log('test_registry 填充完成');
+  } finally {
+    await pool.end();
   }
-  console.log('test_registry 填充完成');
-  await pool.end();
 }
 
 main().catch(e => { console.error(e); process.exit(1); });

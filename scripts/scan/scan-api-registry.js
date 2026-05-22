@@ -27,7 +27,7 @@ function scanDir(dir) {
   if (!fs.existsSync(dir)) return results;
   for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
     const full = path.join(dir, entry.name);
-    if (entry.isDirectory()) {
+    if (entry.isDirectory() && !entry.name.includes('node_modules')) {
       results.push(...scanDir(full));
     } else if (entry.isFile() && /\.(js|ts)$/.test(entry.name) && !entry.name.includes('.test.')) {
       const content = fs.readFileSync(full, 'utf8');
@@ -51,23 +51,26 @@ function scanDir(dir) {
 }
 
 async function main() {
-  const routes = [];
-  for (const dir of SCAN_DIRS) {
-    routes.push(...scanDir(path.join(REPO_ROOT, dir)));
-  }
-  console.log(`扫描到 ${routes.length} 条路由`);
+  try {
+    const routes = [];
+    for (const dir of SCAN_DIRS) {
+      routes.push(...scanDir(path.join(REPO_ROOT, dir)));
+    }
+    console.log(`扫描到 ${routes.length} 条路由`);
 
-  for (const r of routes) {
-    await pool.query(
-      `INSERT INTO api_registry (method, path, file_path, line_number, area)
-       VALUES ($1, $2, $3, $4, $5)
-       ON CONFLICT (method, path) DO UPDATE
-         SET file_path=$3, line_number=$4, area=$5, scanned_at=NOW(), updated_at=NOW()`,
-      [r.method, r.path, r.file_path, r.line_number, r.area],
-    );
+    for (const r of routes) {
+      await pool.query(
+        `INSERT INTO api_registry (method, path, file_path, line_number, area)
+         VALUES ($1, $2, $3, $4, $5)
+         ON CONFLICT (method, path) DO UPDATE
+           SET file_path=$3, line_number=$4, area=$5, scanned_at=NOW(), updated_at=NOW()`,
+        [r.method, r.path, r.file_path, r.line_number, r.area],
+      );
+    }
+    console.log('api_registry 填充完成');
+  } finally {
+    await pool.end();
   }
-  console.log('api_registry 填充完成');
-  await pool.end();
 }
 
 main().catch(e => { console.error(e); process.exit(1); });

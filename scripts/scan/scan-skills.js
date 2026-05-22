@@ -6,10 +6,21 @@ const pg = require('pg');
 
 const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL || 'postgresql://localhost/cecelia' });
 
+// 动态查找最新 superpowers 版本目录（避免版本升级后静默失效）
+const superpowersBase = path.join(process.env.HOME, '.claude-account1', 'plugins', 'cache',
+  'superpowers-marketplace', 'superpowers');
+
 const SKILL_DIRS = [
   path.join(process.env.HOME, '.claude', 'skills'),
-  path.join(process.env.HOME, '.claude-account1', 'plugins', 'cache', 'superpowers-marketplace', 'superpowers', '5.0.7', 'skills'),
 ];
+
+if (fs.existsSync(superpowersBase)) {
+  const versions = fs.readdirSync(superpowersBase)
+    .filter(v => fs.statSync(path.join(superpowersBase, v)).isDirectory())
+    .sort();
+  const latestVersion = versions.pop();
+  if (latestVersion) SKILL_DIRS.push(path.join(superpowersBase, latestVersion, 'skills'));
+}
 
 function scanSkillDir(dir) {
   const results = [];
@@ -31,21 +42,24 @@ function scanSkillDir(dir) {
 }
 
 async function main() {
-  const skills = [];
-  for (const dir of SKILL_DIRS) skills.push(...scanSkillDir(dir));
-  console.log(`扫描到 ${skills.length} 个 skill`);
+  try {
+    const skills = [];
+    for (const dir of SKILL_DIRS) skills.push(...scanSkillDir(dir));
+    console.log(`扫描到 ${skills.length} 个 skill`);
 
-  for (const s of skills) {
-    await pool.query(
-      `INSERT INTO system_registry (type, name, location, description, status)
-       VALUES ('skill', $1, $2, $3, 'active')
-       ON CONFLICT (type, name) DO UPDATE
-         SET location=$2, description=$3, updated_at=NOW()`,
-      [s.name, s.location, s.description],
-    );
+    for (const s of skills) {
+      await pool.query(
+        `INSERT INTO system_registry (type, name, location, description, status)
+         VALUES ('skill', $1, $2, $3, 'active')
+         ON CONFLICT (type, name) DO UPDATE
+           SET location=$2, description=$3, status='active', updated_at=NOW()`,
+        [s.name, s.location, s.description],
+      );
+    }
+    console.log('skill_registry (system_registry) 填充完成');
+  } finally {
+    await pool.end();
   }
-  console.log('skill_registry (system_registry) 填充完成');
-  await pool.end();
 }
 
 main().catch(e => { console.error(e); process.exit(1); });
