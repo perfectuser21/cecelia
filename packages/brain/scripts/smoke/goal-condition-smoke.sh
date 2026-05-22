@@ -4,20 +4,17 @@
 set -euo pipefail
 
 BRAIN_SRC="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../src" && pwd)"
+DB_URL="${DATABASE_URL:-postgresql://postgres@localhost:5432/cecelia}"
+
 echo "[smoke:goal-condition] starting..."
 
 # 1. goal_condition 列存在（需要先跑 migration 281）
-node -e "
-const {Pool} = require('pg');
-const pool = new Pool({database:'cecelia',host:'localhost',port:5432,user:'postgres'});
-pool.query(\"SELECT column_name FROM information_schema.columns WHERE table_name='tasks' AND column_name='goal_condition'\")
-  .then(r => {
-    if (r.rows.length === 0) { console.error('[smoke] FAIL: goal_condition column missing'); process.exit(1); }
-    console.log('[smoke] goal_condition column exists ✓');
-    return pool.end();
-  })
-  .catch(e => { console.error('[smoke] FAIL:', e.message); process.exit(1); });
-"
+COL=$(psql "$DB_URL" -tAc "SELECT column_name FROM information_schema.columns WHERE table_name='tasks' AND column_name='goal_condition'" 2>/dev/null || echo "")
+if [ -z "$COL" ]; then
+  echo "[smoke] FAIL: goal_condition column missing or DB unreachable"
+  exit 1
+fi
+echo "[smoke] goal_condition column exists ✓"
 
 # 2. buildGoalSettings 导出 + 结构正确
 node -e "

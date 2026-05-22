@@ -44,7 +44,10 @@ describe('stop.sh routing — post goal-hook refactor', () => {
   it('stop.sh exits 0 in plain session (no lock files)', () => {
     const testDir = mkdtempSync(join(tmpdir(), 'stop-sh-plain-'));
     try {
-      execSync('git init -q && git commit --allow-empty -m "init"', { cwd: testDir, stdio: 'pipe' });
+      execSync(
+        'git init -q && git config user.email "ci@test" && git config user.name "CI" && git commit --allow-empty -m "init"',
+        { cwd: testDir, stdio: 'pipe' }
+      );
       const result = spawnSync('bash', [STOP_SH], {
         cwd: testDir,
         env: {

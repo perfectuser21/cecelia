@@ -5,10 +5,12 @@
 
 import { describe, it, expect } from 'vitest';
 import fs from 'fs';
+import { fileURLToPath } from 'url';
 import path from 'path';
 
-const TICK_PATH = path.resolve('packages/brain/src/tick.js');
-const DIGEST_PATH = path.resolve('packages/brain/src/conversation-digest.js');
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const TICK_PATH = path.resolve(__dirname, '../packages/brain/src/tick.js');
+const DIGEST_PATH = path.resolve(__dirname, '../packages/brain/src/conversation-digest.js');
 
 describe('conversation-digest tick integration', () => {
   it('tick.js 引用了 conversation-digest.js', () => {
