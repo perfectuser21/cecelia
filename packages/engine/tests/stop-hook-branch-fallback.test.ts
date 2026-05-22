@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
-import { execSync } from 'child_process'
+import { execSync, spawnSync } from 'child_process'
 import { writeFileSync, mkdirSync, rmSync, mkdtempSync } from 'fs'
 import { join } from 'path'
 import { tmpdir } from 'os'
@@ -35,9 +35,10 @@ describe('stop-dev.sh — Fix 3：branch 名兜底扫描', () => {
 
     // 故意用错误前缀命名 light（模拟 executor 注入 Brain task UUID 的情况）
     const lightFile = join(lightsDir, `wrongsid0-${branch}.live`)
+    const fakePid = 2147483647  // INT_MAX，在正常系统不会是真实 PID
     writeFileSync(lightFile, JSON.stringify({
       branch,
-      guardian_pid: 99999,
+      guardian_pid: fakePid,
       session_id: 'wrongsid0-mock',
       session_id_short: 'wrongsid0',
       stage: 'stage_1_spec',
@@ -46,8 +47,6 @@ describe('stop-dev.sh — Fix 3：branch 名兜底扫描', () => {
     // 用不匹配的真实 session ID（前8位 aabbccdd，与 wrongsid0 不同）
     const realSessionId = 'aabbccdd-1234-5678-90ab-cdef01234567'
 
-    // 使用 spawnSync 确保无论 exit code 是什么都能捕获 stderr
-    const { spawnSync } = require('child_process')
     const result = spawnSync('bash', [STOP_DEV], {
       encoding: 'utf8',
       env: {
@@ -62,7 +61,6 @@ describe('stop-dev.sh — Fix 3：branch 名兜底扫描', () => {
 
     // Fix 3 实现前：session 前缀不匹配 → LIGHTS_COUNT=0 → all_dark
     // Fix 3 实现后：branch 兜底找到 light → LIGHTS_COUNT=1 → classify_session → classify_not_dev
-    // 本测试此时应该 FAIL（因为还没实现 Fix 3，会看到 all_dark）
     expect(stderr).not.toContain('"reason_code":"all_dark"')
   })
 })
