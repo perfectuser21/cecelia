@@ -1470,6 +1470,39 @@ function getPermissionModeForTaskType(taskType) {
   return modeMap[taskType] || 'bypassPermissions';
 }
 
+// 各 harness 阶段的预定义 goal conditions（task.goal_condition 为空时作为 fallback）
+const HARNESS_GOAL_CONDITIONS = {
+  'harness_spec':  'The spec document has been written and committed to docs/superpowers/specs/',
+  'harness_code':  'All implementation is complete, all tests pass, and changes are committed to git',
+  'harness_prci':  'A pull request has been created and pushed to GitHub, PR URL is shown in the conversation',
+  'harness_ship':  'The pull request has been merged and all CI checks have passed',
+  'spec':          'The spec document has been written and committed to docs/superpowers/specs/',
+  'code':          'All implementation is complete, all tests pass, and changes are committed to git',
+  'prci':          'A pull request has been created and pushed to GitHub, PR URL is shown in the conversation',
+  'ship':          'The pull request has been merged and all CI checks have passed',
+  'generic':       'The task described in the prompt has been completed successfully',
+};
+
+/**
+ * 生成 Claude Code --settings prompt-based stop hook JSON。
+ * @param {string|null} goalCondition
+ * @returns {string|null} JSON 字符串；goalCondition 为空时返回 null
+ */
+function buildGoalSettings(goalCondition) {
+  if (!goalCondition) return null;
+  return JSON.stringify({
+    hooks: {
+      Stop: [{
+        hooks: [{
+          type: 'prompt',
+          prompt: `Has the following goal been achieved based on the conversation? Goal: ${goalCondition}\n\nAnswer YES only if you can confirm from the conversation that the goal is met. Answer NO otherwise.`,
+          model: 'claude-haiku-4-5-20251001'
+        }]
+      }]
+    }
+  });
+}
+
 /**
  * 获取特定 task_type 需要注入的额外环境变量。
  * 这些变量会通过 cecelia-bridge → cecelia-run → claude 进程传递，
@@ -3221,6 +3254,13 @@ async function triggerCeceliaRun(task) {
       extraEnv.CECELIA_CREDENTIALS = credentials;
     }
 
+    // goal-based stop hook: inject --settings JSON for tasks with goal_condition
+    const _goalCond = task.goal_condition || HARNESS_GOAL_CONDITIONS[taskType] || null;
+    const _goalSettings = buildGoalSettings(_goalCond);
+    if (_goalSettings) {
+      extraEnv.CECELIA_GOAL_SETTINGS = _goalSettings;
+    }
+
     // ── Docker Sandbox 分支（HARNESS_DOCKER_ENABLED=true）───────────────────
     // 用 Docker container 替换 cecelia-run.sh + worktree spawn 的脆弱模式。
     // 完成后写 callback_queue，下游 callback-worker 与 bridge 路径一致。
@@ -3867,6 +3907,9 @@ export {
   SAFETY_MARGIN,
   // v13: code-review env isolation
   getExtraEnvForTaskType,
+  // v18: goal-based stop hook
+  buildGoalSettings,
+  HARNESS_GOAL_CONDITIONS,
   // v14: Input validation for shell commands
   assertSafeId,
   assertSafePid,
