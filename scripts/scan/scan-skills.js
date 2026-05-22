@@ -30,7 +30,7 @@ function scanSkillDir(dir) {
     const skillMd = path.join(dir, entry.name, 'SKILL.md');
     if (!fs.existsSync(skillMd)) continue;
     const content = fs.readFileSync(skillMd, 'utf8');
-    const nameMatch = content.match(/^name:\s*(.+)$/m);
+    const nameMatch = content.match(/^name:\s*(.+)$/m) || content.match(/^id:\s*(.+)$/m);
     const descMatch = content.match(/^description:\s*([\s\S]+?)(?=\n---|\n##)/m);
     results.push({
       name: nameMatch ? nameMatch[1].trim() : entry.name,
