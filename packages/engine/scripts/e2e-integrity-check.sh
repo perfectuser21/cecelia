@@ -97,7 +97,7 @@ STOP_DEV="$PROJECT_ROOT/packages/engine/hooks/stop-dev.sh"
 if [[ ! -f "$STOP_DEV" ]]; then
     _pass "stop-dev.sh 已删除（goal-based stop hook 替代架构，v23+）"
 else
-    _fail "stop-dev.sh 仍存在（应已被 goal-based hook 替代，请删除：$STOP_DEV）"
+    _fail "stop-dev.sh 仍存在（应已被 goal-based hook 替代，请删除：${STOP_DEV}）"
 fi
 
 # ─── 检测 7：manual: 命令白名单校验脚本存在 ────────────────────
