@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { readFileSync, existsSync } from 'fs';
 import { resolve } from 'path';
 
-const SCRIPT = resolve(process.cwd(), 'scripts/run-post-merge-scan.sh');
+const SCRIPT = resolve(process.cwd(), '../../scripts/run-post-merge-scan.sh');
 
 describe('run-post-merge-scan.sh', () => {
   it('脚本文件存在', () => {
