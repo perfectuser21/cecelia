@@ -15,7 +15,6 @@ const WORKTREE_MANAGE = resolve(
   PROJECT_ROOT,
   "skills/dev/scripts/worktree-manage.sh"
 );
-const STOP_DEV = resolve(PROJECT_ROOT, "hooks/stop-dev.sh");
 const CLEANUP = resolve(PROJECT_ROOT, "skills/dev/scripts/cleanup.sh");
 const GITIGNORE = resolve(PROJECT_ROOT, ".gitignore");
 const VITEST_CONFIG = resolve(PROJECT_ROOT, "vitest.config.ts");
@@ -54,15 +53,6 @@ describe("Worktree path migration", () => {
       const content = readFileSync(WORKTREE_MANAGE, "utf-8");
       expect(content).toContain('mkdir -p "$(dirname "$worktree_path")"');
     });
-  });
-
-  describe("stop-dev.sh", () => {
-    it("should pass syntax check", () => {
-      expect(() => {
-        execSync(`bash -n "${STOP_DEV}"`, { encoding: "utf-8" });
-      }).not.toThrow();
-    });
-
   });
 
   describe("cleanup.sh", () => {

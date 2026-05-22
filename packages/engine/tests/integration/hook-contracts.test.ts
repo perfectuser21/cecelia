@@ -1,11 +1,10 @@
 /**
  * Hook 契约集成测试
  *
- * 测试 branch-protect.sh、stop-dev.sh 之间的隐式契约：
+ * 测试 branch-protect.sh 的隐式契约：
  *   1. .dev-mode 文件格式契约
  *   2. Worktree 检测契约
- *   3. CI 状态 JSON 契约
- *   4. hook-utils 共享函数契约
+ *   3. hook-utils 共享函数契约
  *
  * 这些测试在真实的 git repo + worktree 环境中运行，
  * 确保修改一个 hook 不会破坏另一个。
@@ -91,11 +90,6 @@ function patchHookStdin(hookPath: string): void {
     /^INPUT=\$\(cat\)$/m,
     'INPUT="${HOOK_INPUT:-$(cat)}"'
   );
-  // stop-dev: HOOK_INPUT=$(cat)
-  content = content.replace(
-    /^HOOK_INPUT=\$\(cat\)$/m,
-    'HOOK_INPUT="${HOOK_INPUT:-$(cat)}"'
-  );
   fs.writeFileSync(hookPath, content);
 }
 
@@ -129,7 +123,7 @@ function createTestEnv(name: string): TestEnv {
   // Copy and patch hooks
   const hookDir = path.join(worktree, "packages/engine/hooks");
   fs.mkdirSync(hookDir, { recursive: true });
-  for (const f of ["branch-protect.sh", "stop-dev.sh"]) {
+  for (const f of ["branch-protect.sh"]) {
     const src = path.resolve(ENGINE_ROOT, "hooks", f);
     if (fs.existsSync(src)) {
       fs.copyFileSync(src, path.join(hookDir, f));
@@ -208,7 +202,7 @@ function copyEngineFiles(targetDir: string): void {
     const src = path.resolve(ENGINE_ROOT, "lib", f);
     if (fs.existsSync(src)) fs.copyFileSync(src, path.join(libDir, f));
   }
-  for (const f of ["branch-protect.sh", "stop-dev.sh"]) {
+  for (const f of ["branch-protect.sh"]) {
     const src = path.resolve(ENGINE_ROOT, "hooks", f);
     if (fs.existsSync(src)) {
       fs.copyFileSync(src, path.join(hookDir, f));
@@ -256,7 +250,7 @@ describe("Contract 1: .dev-mode 格式契约", () => {
     }
   });
 
-  it("stop-dev 读取 branch 字段与 branch-protect 写入格式一致", () => {
+  it(".dev-mode branch 字段格式验证", () => {
     writeDevMode(env.worktree, env.branch);
 
     const devModeContent = fs.readFileSync(path.join(env.worktree, `.dev-mode.${env.branch}`), "utf-8");
@@ -273,7 +267,7 @@ describe("Contract 1: .dev-mode 格式契约", () => {
     expect(tcLine).toContain("true");
   });
 
-  it("stop-dev 正确解析 retry_count 字段", () => {
+  it("retry_count 字段格式验证", () => {
     writeDevMode(env.worktree, env.branch, { retry_count: "5" });
     const content = fs.readFileSync(path.join(env.worktree, `.dev-mode.${env.branch}`), "utf-8");
     const match = content.match(/^retry_count:\s*(\d+)/m);
@@ -281,7 +275,7 @@ describe("Contract 1: .dev-mode 格式契约", () => {
     expect(parseInt(match![1], 10)).toBe(5);
   });
 
-  it("cleanup_done: true 格式能被 stop-dev 正确识别", () => {
+  it("cleanup_done: true 格式验证", () => {
     writeDevMode(env.worktree, env.branch, { cleanup_done: "true" });
     const content = fs.readFileSync(path.join(env.worktree, `.dev-mode.${env.branch}`), "utf-8");
     expect(content).toMatch(/cleanup_done: true/);
