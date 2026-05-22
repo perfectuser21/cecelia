@@ -53,7 +53,7 @@ describe('ship-finalize.sh — 关 guardian + 写 done-marker（PR-2）', () => 
     })
   }, 5000)
 
-  it('2 ship-finalize 杀 guardian → 灯文件被清', async () => {
+  it('2 ship-finalize 不杀 guardian → guardian 继续存活（Fix 1）', async () => {
     const branch = 'cp-test-ship-2'
     const lightFile = join(lightsDir, `aaa88888-${branch}.live`)
     const proc = spawn('bash', [GUARDIAN, lightFile], {
@@ -64,11 +64,16 @@ describe('ship-finalize.sh — 关 guardian + 写 done-marker（PR-2）', () => 
 
     execSync(`cd ${mainRepo} && bash ${SHIP_FINALIZE} ${branch} 2823 https://x/y/z`, { encoding: 'utf8' })
 
-    await new Promise(r => setTimeout(r, 2000))
-    expect(existsSync(lightFile)).toBe(false)
+    // Fix 1: ship-finalize 不再 SIGTERM guardian，guardian 应继续存活，灯文件继续存在
+    // 正确清理路径：stop hook classify_session→done → _kill_lights_for_session
+    await new Promise(r => setTimeout(r, 500))
     let alive = true
     try { process.kill(proc.pid!, 0) } catch { alive = false }
-    expect(alive).toBe(false)
+    expect(alive).toBe(true)
+    expect(existsSync(lightFile)).toBe(true)
+
+    // 清理
+    proc.kill()
   }, 5000)
 
   it('3 ship-finalize 找不到匹配灯：退出 1，不报内部错', () => {

@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# ship-finalize.sh — engine-ship 调用：写 done-marker + SIGTERM guardian
+# ship-finalize.sh — engine-ship 调用：写 done-marker（guardian 由 stop hook 自行清理）
 # 用法：ship-finalize.sh <branch> <pr_number> <pr_url>
 #
 # 行为：
-#   1. 找 .cecelia/lights/<sid_short>-<branch>.live
-#   2. 读 guardian_pid，发 SIGTERM（guardian trap 自删 light）
-#   3. 写 .cecelia/done-markers/<sid_short>-<branch>.done
+#   1. 找 .cecelia/lights/<sid_short>-<branch>.live，读 guardian_pid（写入 done-marker）
+#   2. 写 .cecelia/done-markers/<sid_short>-<branch>.done
+#   注：guardian 不再由此脚本杀死，改由 stop hook classify_session→done 后清理
 set -uo pipefail
 
 BRANCH="${1:-}"
@@ -51,13 +51,5 @@ cat > "$MARKER" <<EOF
 }
 EOF
 echo "[ship-finalize] done-marker written: $MARKER" >&2
-
-if [[ -n "${PID:-}" && "$PID" =~ ^[0-9]+$ ]]; then
-    if kill -SIGTERM "$PID" 2>/dev/null; then
-        echo "[ship-finalize] SIGTERM sent to guardian pid=$PID" >&2
-    else
-        echo "[ship-finalize] guardian pid=$PID 已死或不存在" >&2
-    fi
-fi
 
 exit 0
