@@ -1764,6 +1764,7 @@ ${resultStr.substring(0, 2000)}
                 planner_task_id: task_id,
                 planner_branch: plannerBranch,
                 propose_round: 1,
+                feature_id: harnessPayload.feature_id || null,
                 harness_mode: true
               }
             });
@@ -1835,6 +1836,7 @@ ${resultStr.substring(0, 2000)}
                 propose_task_id: task_id,
                 propose_branch: proposeBranch,   // Reviewer 读 contract-draft 所需
                 propose_round: proposeRound,
+                feature_id: harnessPayload.feature_id || null,
                 harness_mode: true
               }
             });
@@ -1957,6 +1959,7 @@ ${resultStr.substring(0, 2000)}
                 propose_round: nextRound,
                 review_feedback_task_id: task_id,
                 review_branch: reviewBranch,    // Proposer 读反馈所需
+                feature_id: harnessPayload.feature_id || null,
                 harness_mode: true
               }
             });
@@ -2157,6 +2160,7 @@ ${resultStr.substring(0, 2000)}
                   planner_branch: harnessPayload.planner_branch || null,
                   contract_branch: harnessPayload.contract_branch,
                   project_id: harnessTask.project_id,
+                  feature_id: harnessPayload.feature_id || null,
                   eval_round: 1,
                   harness_mode: true
                 }
@@ -2241,6 +2245,7 @@ ${resultStr.substring(0, 2000)}
                 planner_task_id: harnessPayload.planner_task_id,
                 planner_branch: harnessPayload.planner_branch || null,
                 contract_branch: harnessPayload.contract_branch,
+                feature_id: harnessPayload.feature_id || null,
                 eval_round: evalRound + 1,
                 harness_mode: true
               }
@@ -2396,6 +2401,25 @@ ${resultStr.substring(0, 2000)}
               }
             } catch (smokeErr) {
               console.warn(`[execution-callback] harness: smoke test failed (non-fatal): ${smokeErr.message}`);
+            }
+
+            // Step 3.5: 回写 Feature thickness（thin → medium）
+            const featureId = harnessPayload.feature_id;
+            if (featureId) {
+              try {
+                const patchResp = await fetch(`http://localhost:5221/api/brain/journey_features/${featureId}`, {
+                  method: 'PATCH',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ thickness: 'medium' }),
+                });
+                if (patchResp.ok) {
+                  console.log(`[execution-callback] harness: Feature ${featureId} thickness → medium (evaluator PASS)`);
+                } else {
+                  console.warn(`[execution-callback] harness: thickness PATCH failed ${patchResp.status} (non-fatal)`);
+                }
+              } catch (thickErr) {
+                console.warn(`[execution-callback] harness: thickness PATCH error (non-fatal): ${thickErr.message}`);
+              }
             }
 
             // Step 4: 创建 Report
