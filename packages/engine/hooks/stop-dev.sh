@@ -163,6 +163,27 @@ if [[ -z "$REASON_CODE" ]]; then
             fi
         done
 
+        # 兜底：session ID 错位时按 branch 名反扫（headless 无头模式）
+        if (( LIGHTS_COUNT == 0 )) && [[ -n "$hook_session_id" ]]; then
+            _fb_branch=$(git -C "$cwd" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
+            if [[ -n "$_fb_branch" && "$_fb_branch" != "main" && "$_fb_branch" != "HEAD" ]]; then
+                for _fb_light in "$lights_dir"/*-"${_fb_branch}".live; do
+                    [[ -f "$_fb_light" ]] || continue
+                    if [[ "$(uname)" == "Darwin" ]]; then
+                        _fb_mtime=$(stat -f %m "$_fb_light" 2>/dev/null || echo 0)
+                    else
+                        _fb_mtime=$(stat -c %Y "$_fb_light" 2>/dev/null || echo 0)
+                    fi
+                    _fb_age=$(( now - _fb_mtime ))
+                    if (( _fb_age <= TTL_SEC )); then
+                        LIGHTS_COUNT=$((LIGHTS_COUNT + 1))
+                        FIRST_BRANCH="$_fb_branch"
+                        break
+                    fi
+                done
+            fi
+        fi
+
         if (( LIGHTS_COUNT > 0 )); then
             # 有亮灯 → 调 classify_session 获取具体状态和 action（无头模式关键）
             _session_result=$(classify_session "$cwd" 2>/dev/null || echo '{"status":"not-dev","reason":"classify_session error"}')
