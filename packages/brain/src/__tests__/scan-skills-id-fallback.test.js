@@ -3,8 +3,7 @@ import { describe, it, expect } from 'vitest';
 // 提取 scanSkillDir 的 name 解析逻辑成纯函数测试
 describe('scan-skills name 解析', () => {
   function parseName(content, dirName) {
-    // 当前 scan-skills.js 只匹配 name:，不认 id:（bug 所在）
-    const nameMatch = content.match(/^name:\s*(.+)$/m);
+    const nameMatch = content.match(/^name:\s*(.+)$/m) || content.match(/^id:\s*(.+)$/m);
     return nameMatch ? nameMatch[1].trim() : dirName;
   }
 
