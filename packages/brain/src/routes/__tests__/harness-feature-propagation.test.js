@@ -48,3 +48,29 @@ describe('execution.js feature_id 传播 — 代码审查测试', () => {
     expect(nearbyCode).toContain('feature_id');
   });
 });
+
+describe('execution.js harness_evaluate PASS — thickness write-back', () => {
+  const src = readFileSync(
+    resolve(process.cwd(), 'packages/brain/src/routes/execution.js'),
+    'utf8'
+  );
+
+  it('PASS 分支含 thickness write-back 代码', () => {
+    expect(src).toContain("Feature thickness");
+    expect(src).toContain("thickness: 'medium'");
+  });
+
+  it('thickness PATCH 有 graceful 错误处理', () => {
+    expect(src).toContain("thickErr");
+    expect(src).toContain("non-fatal");
+  });
+
+  it('feature_id 不存在时不调用 PATCH', () => {
+    // 验证有 if (featureId) 守卫
+    const passSection = src.indexOf("evalVerdict === 'PASS'");
+    expect(passSection).toBeGreaterThan(0);
+    // 从 PASS 分支开始往后2000字符内应该有 if (featureId)
+    const passCode = src.slice(passSection, passSection + 2000);
+    expect(passCode).toContain('if (featureId)');
+  });
+});
