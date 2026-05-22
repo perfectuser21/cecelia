@@ -89,19 +89,15 @@ else
     _fail "branch-protect.sh 不存在：$BRANCH_PROTECT"
 fi
 
-# ─── 检测 6：cwd-as-key 架构（v19.0.0，替代老的 _collect_search_dirs 扫描）──
-# 老设计要求 stop-dev.sh 扫所有 worktree 找 .dev-lock → 组合爆炸 99 commit 不收敛。
-# 新设计：只看 cwd → worktree → .dev-mode.<branch> 存在性。必须检出 CLAUDE_HOOK_CWD。
+# ─── 检测 6：goal-based stop hook 架构（v23+，替代 stop-dev.sh cwd-as-key 设计）──
+# 旧设计（v19 cwd-as-key）：stop-dev.sh 229 行 + devloop-check.sh 559 行，文件系统传状态。
+# 新设计（goal-based）：Claude Code --settings 注入 prompt-based stop hook，Haiku 评估目标条件。
+# stop-dev.sh 已删除，检测其不存在是架构正确性的保证。
 STOP_DEV="$PROJECT_ROOT/packages/engine/hooks/stop-dev.sh"
-if [[ -f "$STOP_DEV" ]]; then
-    CONTENT=$(cat "$STOP_DEV")
-    if echo "$CONTENT" | grep -q 'CLAUDE_HOOK_CWD'; then
-        _pass "stop-dev.sh 使用 cwd-as-key 架构（v19.0.0 CLAUDE_HOOK_CWD）"
-    else
-        _fail "stop-dev.sh 未使用 cwd-as-key 架构（缺 CLAUDE_HOOK_CWD 导入）"
-    fi
+if [[ ! -f "$STOP_DEV" ]]; then
+    _pass "stop-dev.sh 已删除（goal-based stop hook 替代架构，v23+）"
 else
-    _fail "stop-dev.sh 不存在：$STOP_DEV"
+    _fail "stop-dev.sh 仍存在（应已被 goal-based hook 替代，请删除：$STOP_DEV）"
 fi
 
 # ─── 检测 7：manual: 命令白名单校验脚本存在 ────────────────────

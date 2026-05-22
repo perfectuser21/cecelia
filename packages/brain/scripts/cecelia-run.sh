@@ -448,6 +448,8 @@ main() {
         fi
       fi
     fi
+    # 清理 goal-based stop hook 临时设置文件
+    [[ -n "${_goal_settings_tmp:-}" ]] && rm -f "$_goal_settings_tmp" 2>/dev/null || true
   }
   trap cleanup EXIT
 
