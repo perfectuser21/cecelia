@@ -16,13 +16,13 @@ export const RECURRING_TASKS_NOTION_DB_ID = '1a6c98cd-012c-4136-8763-8b1b6c4485f
 
 // ─── Notion API 工具 ──────────────────────────────────────────
 
-function getToken() {
+export function getToken() {
   const token = process.env.NOTION_API_KEY;
   if (!token) throw new Error('NOTION_API_KEY 未配置');
   return token;
 }
 
-async function notionReq(token, path, method = 'GET', body = null) {
+export async function notionReq(token, path, method = 'GET', body = null) {
   const opts = {
     method,
     headers: {

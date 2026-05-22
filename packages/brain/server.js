@@ -73,6 +73,7 @@ import backupRoutes from './src/routes/backup.js';
 import llmServiceRoutes from './src/routes/llm-service.js';
 import featuresRoutes from './src/routes/features.js';
 import clipsRoutes from './src/routes/clips.js';
+import journeysRouter from './src/routes/journeys.js';
 import { internalAuth } from './src/middleware/internal-auth.js';
 import createAutonomousRouter from './src/routes/autonomous.js';
 import { initTickLoop } from './src/tick.js';
@@ -299,6 +300,7 @@ app.use('/api/brain/registry', registryRoutes);
 // 但保险起见仍按照先 specific 后 generic 的顺序排列。
 app.use('/api/brain', harnessCallbackRouter);
 app.use('/api/brain', walkingSkeletonRouter);
+app.use('/api/brain', journeysRouter);
 app.use('/api/brain/harness', harnessRoutes);
 app.use('/api/brain/harness-interrupts', harnessInterruptsRouter);
 app.use('/api/brain/initiatives', initiativesRoutes);
