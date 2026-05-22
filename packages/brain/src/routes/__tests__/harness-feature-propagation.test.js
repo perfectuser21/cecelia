@@ -33,8 +33,8 @@ describe('execution.js feature_id 传播 — 代码审查测试', () => {
   });
 
   it('harness_evaluate（generate 完成后，eval_round: 1）payload 含 feature_id 字段', () => {
-    // project_id: harnessTask.project_id + eval_round: 1 是 generate→evaluate 的特征
-    const idx = src.indexOf('project_id: harnessTask.project_id,\n                  eval_round: 1,');
+    // project_id: harnessTask.project_id 后紧接 feature_id 然后 eval_round: 1 是 generate→evaluate 的特征
+    const idx = src.indexOf('project_id: harnessTask.project_id,\n                  feature_id: harnessPayload.feature_id || null,\n                  eval_round: 1,');
     expect(idx).toBeGreaterThan(0);
     const nearbyCode = src.slice(Math.max(0, idx - 200), idx + 600);
     expect(nearbyCode).toContain('feature_id');
