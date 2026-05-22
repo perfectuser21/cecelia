@@ -14,9 +14,7 @@ describe('POST /api/brain/journeys', () => {
       journey_type: 'dev_pipeline',
       notion_synced_at: null,
     };
-    // areas lookup（name→id）
-    mockQuery.mockResolvedValueOnce({ rows: [] }); // no area found → area_id NULL
-    // INSERT
+    // INSERT（no area in body → area lookup skipped）
     mockQuery.mockResolvedValueOnce({ rows: [fakeRow] });
 
     const { default: router } = await import('../routes/journeys.js');
@@ -94,8 +92,7 @@ describe('POST /api/brain/journey_features', () => {
 
   it('写入 journey_features，notion_synced_at=NULL', async () => {
     const fakeRow = { id: 'feat-uuid', name: 'Feature A', thickness: 'thin', notion_synced_at: null };
-    mockQuery.mockResolvedValueOnce({ rows: [] }); // journey lookup
-    mockQuery.mockResolvedValueOnce({ rows: [] }); // area lookup
+    // INSERT（no journey_id or area in body → both lookups skipped）
     mockQuery.mockResolvedValueOnce({ rows: [fakeRow] }); // insert
 
     const { default: router } = await import('../routes/journeys.js');

@@ -15,9 +15,12 @@ router.post('/journeys', async (req, res) => {
     return res.status(400).json({ error: `journey_type must be one of: ${VALID_JOURNEY_TYPES.join(',')}` });
   }
 
-  // area name → area_id lookup（always run so callers can pass area or omit it）
-  const areaResult = await pool.query('SELECT id FROM areas WHERE name=$1 LIMIT 1', [area || '']);
-  const areaId = areaResult.rows.length > 0 ? areaResult.rows[0].id : null;
+  // area name → area_id lookup
+  let areaId = null;
+  if (area) {
+    const { rows } = await pool.query('SELECT id FROM areas WHERE name=$1 LIMIT 1', [area]);
+    if (rows.length > 0) areaId = rows[0].id;
+  }
 
   const { rows } = await pool.query(
     `INSERT INTO journeys
@@ -65,15 +68,21 @@ router.post('/journey_features', async (req, res) => {
     return res.status(400).json({ error: `thickness must be one of: ${VALID_THICKNESS.join(',')}` });
   }
 
-  // journey_id lookup（always run — resolves UUID or notion_id）
-  const journeyResult = await pool.query(
-    'SELECT id FROM journeys WHERE id=$1 OR notion_id=$1 LIMIT 1', [journey_id || '']
-  );
-  const journeyUuid = journeyResult.rows.length ? journeyResult.rows[0].id : null;
+  // journey_id lookup（resolves UUID or notion_id）
+  let journeyUuid = null;
+  if (journey_id) {
+    const { rows: jr } = await pool.query(
+      'SELECT id FROM journeys WHERE id=$1 OR notion_id=$1 LIMIT 1', [journey_id]
+    );
+    journeyUuid = jr.length ? jr[0].id : null;
+  }
 
-  // area name → area_id lookup（always run）
-  const areaResult = await pool.query('SELECT id FROM areas WHERE name=$1 LIMIT 1', [area || '']);
-  const areaId = areaResult.rows.length ? areaResult.rows[0].id : null;
+  // area name → area_id lookup
+  let areaId = null;
+  if (area) {
+    const { rows: ar } = await pool.query('SELECT id FROM areas WHERE name=$1 LIMIT 1', [area]);
+    if (ar.length) areaId = ar[0].id;
+  }
 
   const { rows } = await pool.query(
     `INSERT INTO journey_features
