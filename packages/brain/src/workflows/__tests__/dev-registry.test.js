@@ -99,3 +99,27 @@ describe('dev-registry 扫描脚本填充', () => {
     expect(rows[0].cnt).toBeGreaterThan(0);
   });
 });
+
+describe('dev-registry Notion 反向拉取', () => {
+  it('journeys 行数 > 0（Notion 拉取后）', async () => {
+    const { rows } = await pool.query('SELECT COUNT(*)::int AS cnt FROM journeys');
+    expect(rows[0].cnt).toBeGreaterThan(0);
+  });
+
+  it('journey_steps 行数 > 0（Notion 拉取后）', async () => {
+    const { rows } = await pool.query('SELECT COUNT(*)::int AS cnt FROM journey_steps');
+    expect(rows[0].cnt).toBeGreaterThan(0);
+  });
+
+  it('issues 行数 > 0（Notion 拉取后）', async () => {
+    const { rows } = await pool.query('SELECT COUNT(*)::int AS cnt FROM issues');
+    expect(rows[0].cnt).toBeGreaterThan(0);
+  });
+
+  it('journey notion_id 不为空', async () => {
+    const { rows } = await pool.query(
+      'SELECT COUNT(*)::int AS cnt FROM journeys WHERE notion_id IS NOT NULL',
+    );
+    expect(rows[0].cnt).toBeGreaterThan(0);
+  });
+});
