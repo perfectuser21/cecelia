@@ -1,11 +1,11 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { execSync, spawnSync } from 'child_process'
 import { writeFileSync, mkdirSync, rmSync, readdirSync } from 'fs'
-import { join } from 'path'
+import { join, resolve } from 'path'
 import { mkdtempSync } from 'fs'
 import { tmpdir } from 'os'
 
-const SHIP_FINALIZE = require('path').resolve(__dirname, '../../scripts/ship-finalize.sh')
+const SHIP_FINALIZE = resolve(__dirname, '../../scripts/ship-finalize.sh')
 
 describe('ship-finalize.sh — Fix 1：guardian 在 ship-finalize 后仍存活', () => {
   let mainRepo: string

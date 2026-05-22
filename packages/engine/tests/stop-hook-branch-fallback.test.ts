@@ -1,10 +1,10 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { execSync, spawnSync } from 'child_process'
 import { writeFileSync, mkdirSync, rmSync, mkdtempSync } from 'fs'
-import { join } from 'path'
+import { join, resolve } from 'path'
 import { tmpdir } from 'os'
 
-const STOP_DEV = require('path').resolve(__dirname, '../hooks/stop-dev.sh')
+const STOP_DEV = resolve(__dirname, '../hooks/stop-dev.sh')
 
 describe('stop-dev.sh — Fix 3：branch 名兜底扫描', () => {
   let mainRepo: string
