@@ -44,3 +44,32 @@ describe('dev-registry migration — 7 张表存在', () => {
     expect(rows.length).toBeGreaterThan(0);
   });
 });
+
+describe('dev-registry CHECK 约束实际拒绝非法值', () => {
+  it('journeys.journey_type 拒绝非法值', async () => {
+    await expect(
+      pool.query(
+        `INSERT INTO journeys (name, journey_type)
+         VALUES ('test-invalid-type', 'invalid_type')`,
+      ),
+    ).rejects.toThrow();
+  });
+
+  it('journey_features.thickness 拒绝非法值', async () => {
+    await expect(
+      pool.query(
+        `INSERT INTO journey_features (name, thickness)
+         VALUES ('test-invalid-thickness', 'super_thick')`,
+      ),
+    ).rejects.toThrow();
+  });
+
+  it('issues.priority 拒绝非法值', async () => {
+    await expect(
+      pool.query(
+        `INSERT INTO issues (title, priority)
+         VALUES ('test-invalid-priority', 'P9')`,
+      ),
+    ).rejects.toThrow();
+  });
+});
