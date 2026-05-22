@@ -11,6 +11,7 @@ function loadNotionKey() {
   const env = {};
   fs.readFileSync(credPath, 'utf8').split('\n')
     .forEach(l => { const m = l.match(/^([^=]+)=(.+)/); if (m) env[m[1]] = m[2]; });
+  if (!env.NOTION_API_KEY) throw new Error('NOTION_API_KEY not found in ~/.credentials/notion.env');
   return env.NOTION_API_KEY;
 }
 
@@ -71,6 +72,9 @@ async function main() {
         if (journeyNotionId) {
           const { rows } = await pool.query('SELECT id FROM journeys WHERE notion_id=$1', [journeyNotionId]);
           journeyId = rows[0]?.id || null;
+          if (!journeyId) {
+            console.warn(`  ⚠ feature "${name}" 的关联 journey (${journeyNotionId}) 在 DB 中未找到，journey_id 设为 null`);
+          }
         }
         if (stepNotionId) {
           const { rows } = await pool.query('SELECT id FROM journey_steps WHERE notion_id=$1', [stepNotionId]);

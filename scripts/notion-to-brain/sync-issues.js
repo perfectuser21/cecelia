@@ -11,6 +11,7 @@ function loadNotionKey() {
   const env = {};
   fs.readFileSync(credPath, 'utf8').split('\n')
     .forEach(l => { const m = l.match(/^([^=]+)=(.+)/); if (m) env[m[1]] = m[2]; });
+  if (!env.NOTION_API_KEY) throw new Error('NOTION_API_KEY not found in ~/.credentials/notion.env');
   return env.NOTION_API_KEY;
 }
 
@@ -39,6 +40,7 @@ function extractText(prop) {
   return null;
 }
 
+// issues.status 为自由文本，与 Notion status 值对齐（不加 CHECK 约束，因 Notion status 可扩展）
 const ISSUES_DB = 'a17c40c2-ba63-82fb-9888-8152cefe29ec';
 const VALID_PRIORITY = new Set(['P0', 'P1', 'P2', 'P3']);
 
