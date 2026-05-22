@@ -498,6 +498,12 @@ export function routeAfterEvaluate(state) {
 // evaluator container reads contract DoD + manual:bash commands, exits 0/1.
 // Verdict PASS → merge_pr; FAIL → fix_dispatch (do NOT merge into main).
 export async function evaluateContractNode(state, opts = {}) {
+  // 幂等门：Brain 重启或 outer graph 重进时，evaluate_verdict 已存在则直接返回，不重复 spawn。
+  if (state.evaluate_verdict) {
+    console.log(`[evaluator] idempotent passthrough verdict=${state.evaluate_verdict}`);
+    return { evaluate_verdict: state.evaluate_verdict };
+  }
+
   const spawnFn = opts.spawnDetached || spawnDockerDetached;
   const resolveTok = opts.resolveToken || resolveGitHubToken;
   const dbPool = opts.poolOverride || pool;
