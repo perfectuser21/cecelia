@@ -28,7 +28,7 @@
 
 # NOTE: version 需要与 package.json 保持同步
 # 更新 package.json 时同步更新此处
-version: 18.27.2
+version: 18.27.3
 updated: 2026-05-21
 
 # ============================================================================
@@ -152,28 +152,6 @@ hooks:
       contains: "没有活跃的 /dev 会话"
     test: "manual:bash -n packages/engine/hooks/branch-protect.sh"
 
-  - id: H1-013
-    feature: H1
-    name: "Stop Hook 合并前必须完成 Step 10 LEARNINGS（v12.35.8）"
-    scope: hook
-    priority: P1
-    trigger: [PR, Release]
-    method: auto
-    tags: [stop-hook, learnings, step-order, double-pr]
-    owner: infra
-    steps:
-      given: "CI 通过，PR 未合并，step_4_ship=pending"
-      when: "Stop Hook condition 3 触发"
-      then: "阻止合并，reason 指示先执行 Stage 4 Ship"
-    evidence:
-      type: code
-      file: "hooks/stop-dev.sh"
-      contains: "Stage 4 Ship 未完成"
-    test: "manual:bash -c \"grep -q 'step_4_ship\\|step_4_learning' packages/engine/hooks/stop-dev.sh\""
-
-  # --------------------------------------------------------------------------
-  # H1-014~H1-016: v12.96.0 State Machine 强制层 (verify-step.sh)
-  # --------------------------------------------------------------------------
   - id: H1-014
     feature: H1
     name: "Step 验证门禁：step_1_spec done 时验证 Task Card 无假 Test 命令"
@@ -268,46 +246,6 @@ hooks:
       run: "bash hooks/verify-step.sh step1"
       contains: "dev-seal"
 
-  - id: H1-019
-    feature: H1
-    name: "Stop Hook 验签兜底：step_N done 无 seal → exit 2"
-    scope: hook
-    priority: P0
-    trigger: [PR, Release]
-    method: auto
-    tags: [stop-dev, seal, state-machine, triple-defense]
-    owner: infra
-    steps:
-      given: ".dev-mode 中 step_N 标记为 done 但 .dev-seal 文件中无对应验签"
-      when: "Stop Hook 执行完成条件检查"
-      then: "输出验签缺失警告并 exit 2 强制补验"
-    evidence:
-      type: code
-      run: "bash hooks/stop-dev.sh"
-      contains: "dev-seal"
-
-  # --------------------------------------------------------------------------
-  # H7: stop.sh - 循环控制器
-  # --------------------------------------------------------------------------
-  - id: H7-001
-    feature: H7
-    name: "Stop Hook 检测 .dev-mode 文件"
-    scope: hook
-    priority: P0
-    trigger: [PR, Release]
-    method: auto
-    tags: [stop, loop, dev-mode, json-api]
-    owner: infra
-    steps:
-      given: "会话尝试结束"
-      when: "Stop Hook 触发"
-      then: "检测 .dev-mode 文件，存在则检查完成条件，使用 JSON API 强制循环"
-    evidence:
-      type: code
-      file: "hooks/stop.sh"
-      contains: ".dev-mode"
-    test: "tests/hooks/stop-hook.test.ts"
-
   - id: H7-002
     feature: H7
     name: "Stop Hook 检查完成条件"
@@ -326,44 +264,6 @@ hooks:
       file: "hooks/stop.sh"
       contains: "gh pr list"
     test: "tests/hooks/stop-hook-retry.test.ts"
-
-  - id: H7-004
-    feature: H7
-    name: "Stop Hook JSON API 强制循环"
-    scope: hook
-    priority: P0
-    trigger: [PR, Release]
-    method: auto
-    tags: [stop, loop, continue, json-api]
-    owner: infra
-    steps:
-      given: ".dev-mode 存在且完成条件未满足"
-      when: "Stop Hook 检查结果"
-      then: "返回 JSON API (decision: block, reason: ...) + exit 0 强制循环"
-    evidence:
-      type: code
-      file: "hooks/stop.sh"
-      contains: "decision.*block"
-    test: "tests/hooks/stop-hook-exit.test.ts"
-
-  - id: H7-005
-    feature: H7
-    name: "Stop Hook 会话隔离（分支匹配检查）"
-    scope: hook
-    priority: P0
-    trigger: [PR, Release]
-    method: auto
-    tags: [stop, session, isolation]
-    owner: infra
-    steps:
-      given: ".dev-mode 中的 branch 与当前分支不匹配"
-      when: "Stop Hook 执行分支匹配检查"
-      then: "exit 0 忽略该 .dev-mode（不属于当前会话）"
-    evidence:
-      type: code
-      file: "hooks/stop.sh"
-      contains: "BRANCH_IN_FILE"
-    test: "tests/hooks/stop-hook.test.ts"
 
   - id: H7-006
     feature: H7
@@ -401,25 +301,6 @@ hooks:
       file: "lib/lock-utils.sh"
       contains: "atomic_write_dev_mode"
 
-  - id: H7-008
-    feature: H7
-    name: "Stop Hook TTY 隔离（有头模式按 terminal 隔离）"
-    scope: hook
-    priority: P0
-    trigger: [PR, Release]
-    method: auto
-    tags: [stop, session, isolation, tty]
-    owner: infra
-    steps:
-      given: ".dev-mode 中的 tty 字段与当前 terminal TTY 不匹配"
-      when: "Stop Hook 执行 TTY 检查"
-      then: "exit 0 忽略该 .dev-mode（不属于当前 terminal）"
-    evidence:
-      type: code
-      file: "hooks/stop.sh"
-      contains: "TTY_IN_FILE"
-    test: "tests/hooks/stop-hook.test.ts"
-
   - id: H7-009
     feature: H7
     name: "SubagentStop Hook - 子 agent 循环控制"
@@ -437,25 +318,6 @@ hooks:
       type: code
       file: "hooks/subagent-stop.sh"
       contains: "decision.*block"
-
-  - id: H7-010
-    feature: H7
-    name: "Stop Hook exit 代码修复 - block 决策必须 exit 2"
-    scope: hook
-    priority: P0
-    trigger: [PR, Release]
-    method: auto
-    tags: [stop, exit-code, bug-fix, loop]
-    owner: infra
-    steps:
-      given: "Stop Hook 检测到未完成条件（PR 未创建/CI 进行中/PR 未合并等）"
-      when: "输出 JSON API decision: block"
-      then: "必须返回 exit 2 阻止会话结束，而不是 exit 0"
-    evidence:
-      type: code
-      file: "hooks/stop-dev.sh"
-      contains: "exit 2"
-    test: "tests/hooks/stop-hook-exit-codes.test.ts"
 
   - id: H7-011
     feature: H7
@@ -494,61 +356,6 @@ hooks:
       file: "skills/dev/steps/03-branch.md"
       contains: "session-$SESSION_ID.json"
     test: "tests/skills/session-registration.test.ts"
-
-  - id: H7-013
-    feature: H7
-    name: "Stop Hook 强制清理 worktree（兜底）"
-    scope: hook
-    priority: P1
-    trigger: [PR, Release]
-    method: manual
-    tags: [stop-hook, worktree, cleanup]
-    owner: infra
-    steps:
-      given: "Stop Hook 检测到退出条件（cleanup_done/15次重试/PR合并）"
-      when: ".dev-mode 中有 branch 字段且对应 worktree 存在"
-      then: "force_cleanup_worktree 自动删除 worktree 并 prune"
-    evidence:
-      type: code
-      file: "hooks/stop-dev.sh"
-      contains: "force_cleanup_worktree"
-
-  - id: H7-014
-    feature: H7
-    name: "Stop Hook 路由器无头绕过删除 - 无头模式与有头模式同等强制"
-    scope: hook
-    priority: P0
-    trigger: [PR, Release]
-    method: auto
-    tags: [stop-hook, headless, bypass, bug-fix]
-    owner: infra
-    steps:
-      given: "CECELIA_HEADLESS=true 的无头会话，且存在 .dev-mode 文件"
-      when: "Stop Hook（stop.sh 路由器）触发"
-      then: "不绕过检查，正常调用 stop-dev.sh 执行完成条件验证"
-    evidence:
-      type: code
-      file: "hooks/stop.sh"
-      not_contains: "CECELIA_HEADLESS"
-    test: "tests/hooks/stop-hook.test.ts"
-
-  - id: H7-015
-    feature: H7
-    name: "Stop Hook 已合并 PR 跳过 CI 检查"
-    scope: hook
-    priority: P0
-    trigger: [PR, Release]
-    method: auto
-    tags: [stop-hook, ci-check, merged-pr, bug-fix]
-    owner: infra
-    steps:
-      given: "PR 已合并（PR_STATE=merged），分支可能已被删除"
-      when: "Stop Hook 检查 CI 条件"
-      then: "跳过 CI 查询（合并意味着 CI 必然已通过），不卡死"
-    evidence:
-      type: code
-      file: "hooks/stop-dev.sh"
-      contains: "PR_STATE.*merged"
 
   - id: H7-016
     feature: H7
@@ -623,24 +430,6 @@ hooks:
       file: "skills/dev/scripts/cleanup.sh"
       contains: "_mark_cleanup_done"
 
-  - id: H7-020
-    feature: H7
-    name: "stop-dev.sh 无头模式分支名 fallback"
-    scope: hook
-    priority: P0
-    trigger: [PR, Release]
-    method: auto
-    tags: [stop-hook, headless, lock-matching, bug-fix]
-    owner: infra
-    steps:
-      given: "stop-dev.sh 扫描 per-branch lock 文件"
-      when: "TTY 和 session_id 都为空（纯无头模式）"
-      then: "用当前分支名匹配 lock 中的 branch 字段"
-    evidence:
-      type: code
-      file: "hooks/stop-dev.sh"
-      contains: "_branch_in_lock\" == \"$CURRENT_BRANCH\""
-
   - id: H7-021
     feature: H7
     name: "worktree-gc.sh 删除前检查脏状态"
@@ -658,24 +447,6 @@ hooks:
       type: code
       file: "skills/dev/scripts/worktree-gc.sh"
       contains: "git -C \"$WT_PATH\" status --porcelain"
-
-  - id: H7-022
-    feature: H7
-    name: "stop-dev.sh 孤儿状态重试上限"
-    scope: hook
-    priority: P1
-    trigger: [PR, Release]
-    method: auto
-    tags: [stop-hook, infinite-loop, orphan, bug-fix]
-    owner: infra
-    steps:
-      given: "sentinel 或 .dev-lock 孤儿存在"
-      when: "重试超过 5 次"
-      then: "清理孤儿文件并 exit 0（防止无限循环）"
-    evidence:
-      type: code
-      file: "hooks/stop-dev.sh"
-      contains: ".dev-orphan-retry"
 
   - id: H7-023
     feature: H7
@@ -731,24 +502,6 @@ hooks:
       file: "skills/dev/scripts/cleanup.sh"
       contains: "IS_WORKTREE"
 
-  - id: H7-026
-    feature: H7
-    name: "stop-dev.sh FD 冲突修复"
-    scope: hook
-    priority: P1
-    trigger: [PR, Release]
-    method: auto
-    tags: [stop-hook, fd-conflict, bug-fix]
-    owner: infra
-    steps:
-      given: "stop-dev.sh 使用 flock 更新 retry_count"
-      when: "同时 lock-utils.sh 也使用 flock"
-      then: "使用不同的 FD（202 vs 200），不冲突"
-    evidence:
-      type: code
-      file: "hooks/stop-dev.sh"
-      contains: "flock -x 202"
-
   - id: H7-027
     feature: H7
     name: "worktree-gc.sh 路径安全精确匹配"
@@ -767,27 +520,63 @@ hooks:
       file: "skills/dev/scripts/worktree-gc.sh"
       contains: "worktree_dir"
 
-  - id: H7-028
+  - id: H7-029
     feature: H7
-    name: "stop-dev.sh orphan retry 分离 + 清理"
-    scope: hook
+    name: "executor.js 注入 CECELIA_GOAL_SETTINGS 到 extraEnv"
+    scope: executor
     priority: P1
     trigger: [PR, Release]
     method: auto
-    tags: [stop-hook, orphan, cleanup, bug-fix]
+    tags: [goal-hook, executor, harness, stop-hook]
     owner: infra
     steps:
-      given: "sentinel 和 lock 孤儿各自触发重试"
-      when: "使用独立计数器文件追踪重试次数"
-      then: "正常退出时清理所有 orphan retry 文件"
+      given: "task.goal_condition 非空或 taskType 有对应 HARNESS_GOAL_CONDITIONS"
+      when: "executor.js 构建任务环境变量"
+      then: "extraEnv.CECELIA_GOAL_SETTINGS 被设置，包含序列化的目标条件"
     evidence:
       type: code
-      file: "hooks/stop-dev.sh"
-      contains: ".dev-orphan-retry-sentinel"
+      file: "../../brain/src/executor.js"
+      contains: "CECELIA_GOAL_SETTINGS"
+    test: "../../brain/src/__tests__/goal-settings-serializer.test.js"
 
-  # --------------------------------------------------------------------------
-  # H2: pr-gate-v2
-  # --------------------------------------------------------------------------
+  - id: H7-030
+    feature: H7
+    name: "cecelia-bridge.js 透传 CECELIA_GOAL_SETTINGS（不加 SKILLENV_ 前缀）"
+    scope: bridge
+    priority: P1
+    trigger: [PR, Release]
+    method: auto
+    tags: [goal-hook, bridge, json-passthrough]
+    owner: infra
+    steps:
+      given: "executor 在 extraEnv 中设置了 CECELIA_GOAL_SETTINGS"
+      when: "cecelia-bridge.js 构建 claude 命令"
+      then: "CECELIA_GOAL_SETTINGS 使用单引号包裹，JSON 内容完整保留，不被 quote-stripping 破坏"
+    evidence:
+      type: code
+      file: "../../brain/scripts/cecelia-bridge.js"
+      contains: "CECELIA_GOAL_SETTINGS"
+    test: "tests/integration/goal-injection-chain.test.ts"
+
+  - id: H7-031
+    feature: H7
+    name: "cecelia-run.sh 将 CECELIA_GOAL_SETTINGS 写入临时文件并以 --settings 传给 claude"
+    scope: runner
+    priority: P1
+    trigger: [PR, Release]
+    method: auto
+    tags: [goal-hook, runner, settings-flag]
+    owner: infra
+    steps:
+      given: "CECELIA_GOAL_SETTINGS 环境变量存在"
+      when: "cecelia-run.sh 启动 claude 进程"
+      then: "临时文件被创建，claude 命令包含 --settings <tmpfile>，目标条件被注入为 hooks"
+    evidence:
+      type: code
+      file: "../../brain/scripts/cecelia-run.sh"
+      contains: "CECELIA_GOAL_SETTINGS"
+    test: "tests/integration/goal-injection-chain.test.ts"
+
   - id: H2-001
     feature: H2
     name: "PR Gate 拦截 gh pr create"
@@ -1538,27 +1327,6 @@ workflow:
       file: "skills/dev/scripts/cleanup.sh"
       contains: "git branch --merged"
 
-  - id: W6-006
-    feature: W6
-    name: "stop-dev.sh 泄漏路径 worktree 清理（v12.30.3）"
-    scope: workflow
-    priority: P1
-    trigger: [PR, Release]
-    method: manual
-    tags: [dev, stop-hook, worktree, leak-detection]
-    owner: workflow
-    steps:
-      given: ".dev-lock 不存在但 .dev-mode 存在（泄漏状态）"
-      when: "Stop Hook 检测到泄漏"
-      then: "先调 force_cleanup_worktree() 清理孤立 worktree，再删除 .dev-mode"
-    evidence:
-      type: code
-      file: "hooks/stop-dev.sh"
-      contains: "force_cleanup_worktree"
-
-  # --------------------------------------------------------------------------
-  # W7: Ralph Loop 自动化
-  # --------------------------------------------------------------------------
   - id: W7-001
     feature: W7
     name: "Ralph Loop 统一完成条件（v2.2.0）"

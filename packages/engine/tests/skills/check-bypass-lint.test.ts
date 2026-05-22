@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { execSync } from 'child_process'
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'fs'
+import { mkdtempSync, writeFileSync, rmSync } from 'fs'
 import { resolve, join } from 'path'
 import { tmpdir } from 'os'
 
@@ -32,16 +32,4 @@ describe('check-bypass-not-committed.sh', () => {
     expect(code).toBe(1)
   })
 
-  it('豁免（hooks/stop-dev.sh）含 BYPASS=1 → exit 0', () => {
-    // 模拟豁免文件
-    mkdirSync(join(repo, 'packages/engine/hooks'), { recursive: true })
-    writeFileSync(
-      join(repo, 'packages/engine/hooks/stop-dev.sh'),
-      '# 合法引用\n[[ "${CECELIA_STOP_HOOK_BYPASS:-}" == "1" ]] && something\n'
-    )
-    execSync(`cd ${repo} && git add packages && git commit -q -m x`)
-
-    const out = execSync(`cd ${repo} && bash ${LINT}`, { encoding: 'utf8' })
-    expect(out).toMatch(/✅|pass/i)
-  })
 })

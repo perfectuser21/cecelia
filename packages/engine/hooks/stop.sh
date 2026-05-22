@@ -3,16 +3,14 @@
 # Stop Hook 路由器 v19.0.0
 # ============================================================================
 # 支持的模式：
-# - .dev-mode.<branch>  → stop-dev.sh    (/dev 工作流，cwd-as-key)
 # - .architect-lock.*   → stop-architect.sh (/architect 架构设计)
 # - .decomp-mode        → stop-decomp.sh (/decomp 拆解流程)
 # - .quality-mode       → stop-quality.sh (/quality 质检流程) [将来]
 #
-# v19.0.0 简化（配合 stop-dev.sh v19 cwd-as-key 切线）：
-#   删除 L84-112 的 .dev-lock session_id 精确匹配路由段。
-#   stop-dev.sh 改为 cwd-as-key：由 stop-dev.sh 自行判断当前 cwd 是否在 /dev 流程。
-#   stop.sh 无条件调用 stop-dev.sh，不再依赖 .dev-lock 文件存在性做路由。
-#   设计文档：docs/superpowers/specs/2026-04-21-stop-hook-final-design.md
+# v19.0.0 简化（配合 goal-based hook 替代）：
+#   删除 stop-dev.sh 路由段。
+#   /dev 工作流改用 goal-based hook 处理。
+#   stop.sh 仅保留 architect/decomp 路由。
 # ============================================================================
 
 set -euo pipefail
@@ -41,21 +39,6 @@ export CLAUDE_HOOK_STDIN_JSON="$_STOP_HOOK_STDIN"
 # ===== 获取项目根目录 =====
 PROJECT_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-
-# ===== v19.0.0: 无条件调用 stop-dev.sh（cwd-as-key，由 stop-dev.sh 自判）=====
-# stop-dev.sh 用 CLAUDE_HOOK_CWD（已由上方解析）确定 worktree + branch
-# v20.1.0 三态退出码：
-#   0  → done（继续走 architect/decomp/cleanup chain，最终 exit 0）
-#   99 → not-applicable（pass-through，继续走 architect/decomp chain）
-#   2  → blocked（直接传给 Claude Code，让 assistant 继续干活）
-#   其他 → 异常，原样传出
-# 关键：set -e 会在任何非 0 退出时立即 abort，所以必须用 || 兜住才能拿到 $?
-_stop_dev_exit=0
-bash "$SCRIPT_DIR/stop-dev.sh" || _stop_dev_exit=$?
-case "$_stop_dev_exit" in
-    0|99) ;;  # done 或 not-applicable → fall-through 到下方 architect/decomp 路由
-    *)    exit "$_stop_dev_exit" ;;
-esac
 
 # ===== 检查 .architect-lock.* → 调用 stop-architect.sh =====
 _ARCHITECT_LOCK_FOUND=false
