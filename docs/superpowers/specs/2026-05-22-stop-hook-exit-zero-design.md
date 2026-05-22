@@ -107,11 +107,11 @@ fi
 
 ## DoD
 
-- [ ] `[ARTIFACT]` `packages/engine/scripts/ship-finalize.sh` 不含 `kill -SIGTERM` 行
+- [x] `[ARTIFACT]` `packages/engine/scripts/ship-finalize.sh` 不含 `kill -SIGTERM` 行
   - `Test: manual:node -e "const c=require('fs').readFileSync('packages/engine/scripts/ship-finalize.sh','utf8');if(c.includes('kill -SIGTERM'))process.exit(1)"`
-- [ ] `[ARTIFACT]` `packages/brain/src/executor.js` 不含 `CLAUDE_SESSION_ID = task.id`
+- [x] `[ARTIFACT]` `packages/brain/src/executor.js` 不含 `CLAUDE_SESSION_ID = task.id`
   - `Test: manual:node -e "const c=require('fs').readFileSync('packages/brain/src/executor.js','utf8');if(c.includes('CLAUDE_SESSION_ID = task.id'))process.exit(1)"`
-- [ ] `[BEHAVIOR]` stop-dev.sh branch 兜底：session ID 错位时仍能 block
+- [x] `[BEHAVIOR]` stop-dev.sh branch 兜底：session ID 错位时仍能 block
   - `Test: tests/stop-hook-branch-fallback.test.ts`
-- [ ] `[BEHAVIOR]` ship-finalize.sh 执行后 guardian 进程仍存活
+- [x] `[BEHAVIOR]` ship-finalize.sh 执行后 guardian 进程仍存活
   - `Test: tests/ship-finalize-guardian-alive.test.ts`
