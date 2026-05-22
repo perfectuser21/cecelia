@@ -1,8 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-// mock pool
 const mockQuery = vi.fn();
-vi.mock('../db.js', () => ({ default: { query: mockQuery } }));
+vi.mock('../../db.js', () => ({ default: { query: mockQuery } }));
 
 describe('POST /api/brain/journeys', () => {
   beforeEach(() => { mockQuery.mockReset(); });
@@ -14,10 +13,9 @@ describe('POST /api/brain/journeys', () => {
       journey_type: 'dev_pipeline',
       notion_synced_at: null,
     };
-    // INSERT（no area in body → area lookup skipped）
     mockQuery.mockResolvedValueOnce({ rows: [fakeRow] });
 
-    const { default: router } = await import('../routes/journeys.js');
+    const { default: router } = await import('../journeys.js');
     const express = await import('express');
     const app = express.default();
     app.use(express.default.json());
@@ -34,7 +32,7 @@ describe('POST /api/brain/journeys', () => {
   });
 
   it('name 缺失时返回 400', async () => {
-    const { default: router } = await import('../routes/journeys.js');
+    const { default: router } = await import('../journeys.js');
     const express = await import('express');
     const app = express.default();
     app.use(express.default.json());
@@ -49,7 +47,7 @@ describe('POST /api/brain/journeys', () => {
   });
 
   it('journey_type 非法值返回 400', async () => {
-    const { default: router } = await import('../routes/journeys.js');
+    const { default: router } = await import('../journeys.js');
     const express = await import('express');
     const app = express.default();
     app.use(express.default.json());
@@ -71,7 +69,7 @@ describe('POST /api/brain/issues', () => {
     const fakeRow = { id: 'issue-uuid', title: 'Bug', priority: 'P2', notion_synced_at: null };
     mockQuery.mockResolvedValueOnce({ rows: [fakeRow] });
 
-    const { default: router } = await import('../routes/journeys.js');
+    const { default: router } = await import('../journeys.js');
     const express = await import('express');
     const app = express.default();
     app.use(express.default.json());
@@ -92,10 +90,9 @@ describe('POST /api/brain/journey_features', () => {
 
   it('写入 journey_features，notion_synced_at=NULL', async () => {
     const fakeRow = { id: 'feat-uuid', name: 'Feature A', thickness: 'thin', notion_synced_at: null };
-    // INSERT（no journey_id or area in body → both lookups skipped）
-    mockQuery.mockResolvedValueOnce({ rows: [fakeRow] }); // insert
+    mockQuery.mockResolvedValueOnce({ rows: [fakeRow] });
 
-    const { default: router } = await import('../routes/journeys.js');
+    const { default: router } = await import('../journeys.js');
     const express = await import('express');
     const app = express.default();
     app.use(express.default.json());
