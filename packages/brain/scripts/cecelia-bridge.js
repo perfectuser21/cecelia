@@ -38,7 +38,15 @@ const server = http.createServer((req, res) => {
         if (provider) envVars += ` CECELIA_PROVIDER="${provider}"`;
         // extra_env: 逐键注入为 CECELIA_XXX 形式，供 cecelia-run 透传给 claude
         if (extra_env && typeof extra_env === 'object') {
+          // Special case: CECELIA_GOAL_SETTINGS is a JSON string containing double quotes.
+          // Bypass quote-stripping and SKILLENV_ prefix — use single-quote wrapping.
+          if (extra_env.CECELIA_GOAL_SETTINGS) {
+            const jsonStr = String(extra_env.CECELIA_GOAL_SETTINGS);
+            const escaped = jsonStr.replace(/'/g, "'\\''");
+            envVars += ` CECELIA_GOAL_SETTINGS='${escaped}'`;
+          }
           for (const [k, v] of Object.entries(extra_env)) {
+            if (k === 'CECELIA_GOAL_SETTINGS') continue;
             const safeKey = String(k).replace(/[^a-zA-Z0-9_]/g, '_');
             const safeVal = String(v).replace(/['"]/g, '');
             envVars += ` CECELIA_SKILLENV_${safeKey}="${safeVal}"`;
