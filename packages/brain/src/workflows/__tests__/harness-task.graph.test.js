@@ -645,6 +645,18 @@ describe('evaluate_contract pre-merge gate', () => {
   // W31 实证：harness-evaluate: thread_id 让 callback resume 打到空 thread，真正
   // interrupt 等待的 harness-task thread 永久卡。
   // 静态 source-level invariant（避免 runtime fixture 重布）。
+  it('幂等门: evaluate_verdict 已存在时直接返回，不重复 spawn evaluator', async () => {
+    const { evaluateContractNode } = await import('../harness-task.graph.js');
+    const spawnDetached = vi.fn();
+    const state = {
+      evaluate_verdict: 'PASS',
+      task: { id: 'test-task', payload: {} },
+    };
+    const result = await evaluateContractNode(state, { spawnDetached });
+    expect(result).toEqual({ evaluate_verdict: 'PASS' });
+    expect(spawnDetached).not.toHaveBeenCalled();
+  });
+
   it('B10: evaluateContractNode 源码 threadId 用 harness-task: 不用 harness-evaluate:', () => {
     const fs = require('node:fs');
     const path = require('node:path');
