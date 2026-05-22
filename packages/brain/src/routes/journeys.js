@@ -104,7 +104,7 @@ router.post('/journey_features', async (req, res) => {
     let journeyUuid = null;
     if (journey_id) {
       const { rows: jr } = await pool.query(
-        'SELECT id FROM journeys WHERE id=$1 OR notion_id=$1 LIMIT 1', [journey_id]
+        'SELECT id FROM journeys WHERE id::text=$1 OR notion_id=$1 LIMIT 1', [journey_id]
       );
       journeyUuid = jr.length ? jr[0].id : null;
     }
