@@ -1,11 +1,11 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
-import { execSync, spawnSync } from 'child_process'
+import { execSync, spawnSync, spawn } from 'child_process'
 import { writeFileSync, mkdirSync, rmSync, readdirSync } from 'fs'
 import { join, resolve } from 'path'
 import { mkdtempSync } from 'fs'
 import { tmpdir } from 'os'
 
-const SHIP_FINALIZE = resolve(__dirname, '../../scripts/ship-finalize.sh')
+const SHIP_FINALIZE = resolve(__dirname, '../scripts/ship-finalize.sh')
 
 describe('ship-finalize.sh — Fix 1：guardian 在 ship-finalize 后仍存活', () => {
   let mainRepo: string
@@ -32,9 +32,10 @@ describe('ship-finalize.sh — Fix 1：guardian 在 ship-finalize 后仍存活',
 
     let gpid: number | null = null
     try {
-      // 启动 mock guardian（sleep 进程）
-      const sleepResult = execSync('bash -c "sleep 60 & echo $!"', { encoding: 'utf8' })
-      gpid = parseInt(sleepResult.trim())
+      // 启动 mock guardian（使用 spawn detached 真正后台运行，避免 execSync 阻塞等待）
+      const guardian = spawn('sleep', ['60'], { detached: true, stdio: 'ignore' })
+      guardian.unref()
+      gpid = guardian.pid!
       guardianPid = gpid  // 备份给 afterEach
 
       // 写 light 文件
