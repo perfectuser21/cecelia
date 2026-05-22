@@ -158,37 +158,26 @@ curl "localhost:5221/api/brain/memory/search" -X POST -H "Content-Type: applicat
 
 ---
 
-## 8. 修复前必须创建 Notion Issue（CRITICAL）
+## 8. 系统性问题记录到 Notion Issues
 
-**任何修复（bug fix / 行为改动）开始写代码前，必须先运行**：
+**触发条件**（满足其一即建 issue，不是每次 fix 都建）：
+- 对话中发现某个地方被反复修（stop hook、evaluator、health check 等）
+- 和用户商量后识别出设计缺陷或架构问题
+- 同一根因导致多次 CI/pipeline 失败
 
+**创建命令**：
 ```bash
 node scripts/notion-create-issue.js \
   --title "<问题简述>" \
   --priority <P0|P1|P2|P3> \
-  --sub-area <brain|engine|dashboard|zenithjoy|multi-agent|geo|investment> \
-  --project <cecelia|zenithjoy|dashboard> \
+  --sub-area <brain|engine|dashboard|zenithjoy|multi-agent> \
   --body "<根因描述>"
 ```
 
-Sub Area 推断规则（不确定时按改动文件判断）：
-- `packages/brain/` → `brain`
-- `packages/engine/` → `engine`
-- `apps/dashboard/`（Cecelia）→ `dashboard`
-- `apps/api/`（ZenithJoy）→ `zenithjoy`
-- `packages/workflows/` → `multi-agent`
+Sub Area 对应关系：`packages/brain/` → brain，`packages/engine/` → engine，
+`apps/dashboard/`(Cecelia) → dashboard，`apps/api/`(ZenithJoy) → zenithjoy
 
-**修复完成后**，用 `--pr-url` 把 PR 链接追加进去，并把 issue 状态更新为 Closed：
-
-```bash
-node -e "
-const fs=require('fs'),env={};
-fs.readFileSync(process.env.HOME+'/.credentials/notion.env','utf8').split('\n').forEach(l=>{const m=l.match(/^([^=]+)=(.+)/);if(m)env[m[1]]=m[2];});
-fetch('https://api.notion.com/v1/pages/<ISSUE_PAGE_ID>',{method:'PATCH',headers:{'Authorization':'Bearer '+env.NOTION_API_KEY,'Notion-Version':'2022-06-28','Content-Type':'application/json'},body:JSON.stringify({properties:{'Status':{status:{name:'Closed'}}}})}).then(r=>r.json()).then(()=>console.log('closed'));
-"
-```
-
-**不需要用户提醒**，这是每次修复任务的标准动作。
+**修复完成后**更新 issue 状态为 Closed，附 PR 链接。
 
 ---
 
