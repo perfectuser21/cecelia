@@ -69,6 +69,28 @@ router.get('/journeys/:id', async (req, res) => {
   }
 });
 
+// GET /api/brain/journey_features
+router.get('/journey_features', async (req, res) => {
+  try {
+    const { journey_id, area, status, limit = 100 } = req.query;
+    const params = [];
+    const clauses = [];
+    if (journey_id) { params.push(journey_id); clauses.push(`journey_id=$${params.length}`); }
+    if (area)       { params.push(area);       clauses.push(`area_id=(SELECT id FROM areas WHERE name=$${params.length} LIMIT 1)`); }
+    if (status)     { params.push(status);     clauses.push(`status=$${params.length}`); }
+    params.push(parseInt(limit, 10) || 100);
+    const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
+    const { rows } = await pool.query(
+      `SELECT * FROM journey_features ${where} ORDER BY created_at DESC LIMIT $${params.length}`,
+      params
+    );
+    res.json(rows);
+  } catch (err) {
+    console.error('[journeys] GET /journey_features error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // POST /api/brain/journey_features
 router.post('/journey_features', async (req, res) => {
   try {
