@@ -4,10 +4,11 @@ description: |
   Harness Contract Proposer — Harness v5 GAN Layer 2a：
   读 PRD，GAN 对抗写 Golden Path 合同（每步含真实验证命令）；
   Reviewer APPROVED 后倒推拆 task-plan.json。
-version: 7.10.0
+version: 7.11.0
 created: 2026-04-08
-updated: 2026-05-20
+updated: 2026-05-23
 changelog:
+  - 7.11.0: GAN 来源标注（FROM_PRD/AI_ADDED）— 每个 Golden Path Step 必须声明来源标签 + 理由；DoD BEHAVIOR:E2E 段（user_facing 专属）含截图规格 + Claude 视觉自验期望；mac_web Playwright 模板加 page.screenshot() 在关键操作前后
   - 7.10.0: depends_on 串行死规则 — 修 W52 step6 并行根因：migration ws 必须是后续所有 ws 的前置依赖，`depends_on: []` 只允许 ws1；自查 checklist 第 7 条 python3 断言
   - 7.9.0: 删除 windows_local 模板 — 所有 Windows 测试统一走 windows_cloud（GitHub Actions），Cecelia 走 mac_web/local_api；target_environment 枚举值同步缩减
   - 7.8.0: 两层验证架构强制规则 — 修复假阳性根因：BEHAVIOR 命令按 journey_type 分两层：模式A(evaluator 逐ws) = API-level（autonomous→curl Brain 5221/psql；user_facing→Playwright API assertions）；模式B(final-e2e) = UI-level（user_facing→Playwright browser 真实操作，autonomous→curl+psql Golden Path 全程）。禁止 autonomous BEHAVIOR 命令测 playground（只能测真实 Brain/DB）。删除禁止事项 #3 遗留 v5.0 矛盾规则
@@ -136,6 +137,7 @@ fi
 [入口] → [步骤1] → [步骤2] → [出口]
 
 ### Step 1: {触发描述}
+**来源**: `[FROM_PRD]` — PRD 第 X 行/段直接定义（可在 PRD 原文找到对应意图）
 
 **可观测行为**: {外部可见的结果，不写实现}
 
@@ -151,6 +153,7 @@ curl -f localhost:5221/api/brain/tasks/$TASK_ID | jq '.status'
 ---
 
 ### Step 2: {系统处理描述}
+**来源**: `[AI_ADDED]` — GAN Round N Reviewer/Proposer 加入，理由：{一句话防造假/健壮性理由}
 
 **可观测行为**: {...}
 
@@ -165,6 +168,7 @@ psql $DB -c "SELECT count(*) FROM brain_alerts WHERE task_id='$TASK_ID' AND crea
 ---
 
 ### Step N: {出口描述}
+**来源**: `[FROM_PRD]` 或 `[AI_ADDED]` — {理由}
 
 **可观测行为**: {...}
 **验证命令**: `...`
@@ -227,12 +231,15 @@ const { chromium, expect } = require('@playwright/test');
   await page.waitForLoadState('networkidle');
 
   // 2. 模拟用户操作（填表 / 点击 / 选择）
+  await page.screenshot({ path: 'screenshots/01-initial.png' });
   await page.fill('[data-testid="{input_field}"]', '{test_value}');
   await page.click('[data-testid="{submit_button}"]');
+  await page.screenshot({ path: 'screenshots/02-action.png' });
 
   // 3. 断言 UI 响应（必须含显式断言，禁止只 navigate 不断言）
   await expect(page.locator('[data-testid="{result_element}"]')).toBeVisible({ timeout: 10000 });
   await expect(page.locator('[data-testid="{result_element}"]')).toHaveText('{expected_text}');
+  await page.screenshot({ path: 'screenshots/03-result.png' });
 
   // 4. 交叉验证后端状态（防止前端撒谎）
   const apiResp = await page.request.get('http://localhost:5221/api/brain/{verify_endpoint}');
@@ -376,6 +383,21 @@ workstream_count: {N}
 - 禁止 `echo "ok"` / `true` 假验证
 - curl 必须加 `-f` flag（HTTP 5xx 才返回非0 exit code）
 - Playwright 脚本必须含显式 `toBeVisible` / `toHaveText` 断言，不能只 navigate
+
+### ⚠️ GAN 来源标注规则（v7.11.0 — 来源透明性）
+
+每个 Golden Path Step **必须**在步骤标题行之后立即声明 `**来源**:` 标签：
+
+**规则**：
+- `[FROM_PRD]`：能在 PRD 里找到对应原文/意图（必须引用 PRD 具体行号或段落名称）
+- `[AI_ADDED]`：proposer/reviewer 为健壮性/防造假/架构需要添加的，**必须附一句理由**（如"防止 generator 利用历史记录绕过时间窗口验证"）
+- Reviewer 审查 Step 来源标签是否正确（`[FROM_PRD]` 标注的内容必须能在 PRD 原文找到）
+- GAN 收敛后 harness-report 向 Notion AI Notes 写入 GAN 标注表（两列：FROM_PRD 来源步骤 | AI_ADDED 步骤+理由）
+
+**反例（Reviewer 必须打回）**：
+- `[FROM_PRD]` 标了但 PRD 里找不到对应文字 → REVISION
+- `[AI_ADDED]` 没附理由 → REVISION
+- 整个合同没有任何 `[AI_ADDED]` 标注但明显有 GAN 加的防造假逻辑 → REVISION（说明 proposer 没诚实标注）
 
 ### ⚠️ 死规则（v7.5 — 修 Bug 8 proposer 漂 PRD 字段名）
 
@@ -537,6 +559,15 @@ journey_type: {journey_type}
   期望: exit 0
 
 模式B E2E（final-e2e 跑，UI-level，Playwright 真实浏览器）写在 ## E2E 验收 区块（见下方）。
+
+## BEHAVIOR:E2E 条目（user_facing 专属，Mode B final-e2e 跑）
+
+- [ ] [BEHAVIOR:E2E] 用户完整走完 Golden Path，截图可视化验证
+  Screenshots:
+    - 01-initial.png   期望：{页面正常加载，描述关键 UI 元素可见}
+    - 02-action.png    期望：{用户操作后状态变化，描述关键变化}
+    - 03-result.png    期望：{最终结果页面，描述成功标志元素}
+  期望：所有截图与期望描述一致，Claude Read 图自验通过
 
 DODEOF
 ```
