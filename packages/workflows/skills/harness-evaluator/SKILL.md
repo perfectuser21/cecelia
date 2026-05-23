@@ -6,10 +6,11 @@ description: |
   evaluator 在 CI 绿之后、PR merge 之前真启服务 + 跑 contract 的 manual:bash 命令验真行为。
   PASS → 允许 merge；FAIL → 不 merge，带反馈打回 Generator 在 PR 分支 fix loop（main 不变动）。
   模式 A 跑 contract-dod-ws*.md BEHAVIOR；模式 B（所有 ws merge 后）跑 final E2E Golden Path。
-version: 1.8.0
+version: 1.9.0
 created: 2026-05-06
-updated: 2026-05-18
+updated: 2026-05-23
 changelog:
+  - 1.9.0: Step B-2.5 截图处理（mac_web 专属）— 复制 screenshots/*.png 到 ~/claude-output/harness-screenshots/$SPRINT/；Claude Read 每张 PNG 视觉自验（对照 BEHAVIOR:E2E 期望描述）；生成公网 URL（38.23.47.81:9998）；PASS brain-result.json 增加 screenshots 字段
   - 1.8.0: 删除 windows_local case — 所有 Windows 测试统一走 windows_cloud（GitHub Actions），无需维护 xian-pc/xian-rog 本地 Windows 机器；TARGET_ENV 枚举同步缩减
   - 1.7.0: windows_native 拆分为 windows_cloud + windows_local（已被 1.8.0 合并）
   - 1.6.0: 修复 B33 误伤真实功能 sprint — B33 URL 检测改为 playground 感知：playground sprint（playground/server.js 存在）禁止出现 Brain API URL；真实功能 sprint（autonomous journey_type）反向要求 E2E 脚本必须含 Brain API URL，缺失直接 FAIL（防止 playground 命令混入真实 sprint）
@@ -468,13 +469,49 @@ esac
 - `~/.ssh/config` 已配置 `hk-vps` / `us-vps` 别名，SSH 免密登录已配置
 - 目标机器上 `node` / `bash` 已安装
 
+#### Step B-2.5: 截图处理（仅 mac_web）
+
+```bash
+if [[ "$TARGET_ENV" == "mac_web" ]]; then
+  SPRINT_BASENAME=$(basename "$SPRINT_DIR")
+  SCREENSHOT_DEST="$HOME/claude-output/harness-screenshots/$SPRINT_BASENAME"
+  mkdir -p "$SCREENSHOT_DEST"
+
+  # 1. 复制截图到公网目录
+  if ls screenshots/*.png 2>/dev/null | head -1 > /dev/null; then
+    cp screenshots/*.png "$SCREENSHOT_DEST/"
+  fi
+
+  # 2. Claude Read 每张截图自验（视觉确认）
+  # evaluator 必须用 Read tool 读取 $SCREENSHOT_DEST 下每张 PNG，
+  # 对照 DoD [BEHAVIOR:E2E] 期望描述逐一确认画面内容：
+  # - 01-initial.png：页面是否正常加载，关键 UI 元素是否可见？
+  # - 02-action.png：用户操作后状态是否符合期望描述？
+  # - 03-result.png：最终结果是否显示成功标志元素？
+  # 如果任意截图与期望描述不符 → 输出 FAIL，feedback 说明哪张图与期望不符
+
+  # 3. 生成公网链接列表
+  SCREENSHOT_URLS=()
+  for f in "$SCREENSHOT_DEST"/*.png; do
+    [ -f "$f" ] || continue
+    BASENAME=$(basename "$f")
+    SCREENSHOT_URLS+=("http://38.23.47.81:9998/harness-screenshots/$SPRINT_BASENAME/$BASENAME")
+  done
+  SCREENSHOTS_JSON=$(printf '%s\n' "${SCREENSHOT_URLS[@]}" | jq -R . | jq -s .)
+else
+  SCREENSHOTS_JSON="[]"
+fi
+```
+
+---
+
 #### Step B-3: 判断结果
 
 **脚本 exit 0（通过）**：
 
 ```bash
 cat > /workspace/.brain-result.json << BREOF
-{"verdict":"PASS","task_id":"$TASK_ID","failed_step":null,"log_excerpt":null}
+{"verdict":"PASS","task_id":"$TASK_ID","failed_step":null,"log_excerpt":null,"screenshots":${SCREENSHOTS_JSON:-[]}}
 BREOF
 ```
 
