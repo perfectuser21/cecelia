@@ -346,10 +346,11 @@ describe('reportNode', () => {
   it('PASS → 同时 UPDATE tasks SET status=completed (B1)', async () => {
     mockPool.query.mockResolvedValueOnce({ rows: [] });
     mockPool.query.mockResolvedValueOnce({ rows: [] });
+    mockPool.query.mockResolvedValueOnce({ rows: [] }); // INSERT harness_report
     await reportNode({
       initiativeId: 'i', sub_tasks: [{ id: 's1' }], final_e2e_verdict: 'PASS',
     });
-    expect(mockPool.query).toHaveBeenCalledTimes(2);
+    expect(mockPool.query).toHaveBeenCalledTimes(3);
     const taskUpdate = mockPool.query.mock.calls[1];
     expect(taskUpdate[0]).toMatch(/UPDATE tasks/i);
     expect(taskUpdate[0]).toMatch(/status\s*=\s*\$/);
@@ -361,11 +362,12 @@ describe('reportNode', () => {
   it('FAIL → 同时 UPDATE tasks SET status=failed (B1)', async () => {
     mockPool.query.mockResolvedValueOnce({ rows: [] });
     mockPool.query.mockResolvedValueOnce({ rows: [] });
+    mockPool.query.mockResolvedValueOnce({ rows: [] }); // INSERT harness_report
     await reportNode({
       initiativeId: 'i', sub_tasks: [], final_e2e_verdict: 'FAIL',
       final_e2e_failed_scenarios: [{ name: 'sc1' }],
     });
-    expect(mockPool.query).toHaveBeenCalledTimes(2);
+    expect(mockPool.query).toHaveBeenCalledTimes(3);
     const taskUpdate = mockPool.query.mock.calls[1];
     expect(taskUpdate[0]).toMatch(/UPDATE tasks/i);
     const params = taskUpdate[1];
