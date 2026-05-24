@@ -4,6 +4,8 @@
  *
  * 规则：
  *   contract-dod-ws{N}.md 只能装 [ARTIFACT] 条目，严禁 [BEHAVIOR] 条目
+ *   例外：frontmatter 含 journey_type: user_facing 时允许 [BEHAVIOR] 条目
+ *         （user_facing 任务需要 manual:bash 命令供 evaluator 做浏览器/UI 级验证）
  *   Test 字段只允许白名单：node / npm / curl / bash / psql / tests/ / manual: / contract:
  *
  * 扫描范围：
@@ -51,6 +53,17 @@ function listFiles() {
 }
 
 /**
+ * 从 YAML frontmatter 中提取 journey_type 值
+ */
+function getJourneyType(content) {
+  const m = content.match(/^---\s*\n([\s\S]*?)\n---/);
+  if (!m) return null;
+  const fm = m[1];
+  const jt = fm.match(/journey_type:\s*(\S+)/);
+  return jt ? jt[1] : null;
+}
+
+/**
  * 检查单个 contract-dod-ws 文件
  * @returns {string[]} 违规信息数组（空数组 = 通过）
  */
@@ -60,13 +73,18 @@ function checkFile(filePath) {
   const violations = [];
 
   // Rule 1: 禁 [BEHAVIOR] 条目
+  // 例外：journey_type=user_facing 的合同允许 [BEHAVIOR]（evaluator 需要 manual:bash 验证 UI）
   // 允许的：`## BEHAVIOR 索引`（标题）
-  // 禁止的：`- [ ] [BEHAVIOR] ...` 或 `- [x] [BEHAVIOR] ...`
-  for (let i = 0; i < lines.length; i++) {
-    if (/^\s*-\s*\[[\sxX]\]\s*\[BEHAVIOR\]/.test(lines[i])) {
-      violations.push(
-        `L${i + 1}: 禁止 [BEHAVIOR] 条目 — BEHAVIOR 必须搬到 tests/ws{N}/*.test.ts：\n    ${lines[i].trim()}`
-      );
+  // 禁止的（非 user_facing）：`- [ ] [BEHAVIOR] ...` 或 `- [x] [BEHAVIOR] ...`
+  const journeyType = getJourneyType(content);
+  const isUserFacing = journeyType === "user_facing";
+  if (!isUserFacing) {
+    for (let i = 0; i < lines.length; i++) {
+      if (/^\s*-\s*\[[\sxX]\]\s*\[BEHAVIOR\]/.test(lines[i])) {
+        violations.push(
+          `L${i + 1}: 禁止 [BEHAVIOR] 条目 — BEHAVIOR 必须搬到 tests/ws{N}/*.test.ts：\n    ${lines[i].trim()}`
+        );
+      }
     }
   }
 
