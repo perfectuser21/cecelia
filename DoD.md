@@ -1,22 +1,78 @@
-# DoD — Cecelia 统一 CI 改造
+contract_branch: cp-harness-propose-r3-fb5c3fe5
+workstream_index: 3
+sprint_dir: sprints/cecelia-harness-viz
 
-- [x] [ARTIFACT] `.github/workflows/scripts/lint-tdd-commit-order.sh` 含 smoke 识别逻辑
-  Test: `manual:node -e "const c=require('fs').readFileSync('.github/workflows/scripts/lint-tdd-commit-order.sh','utf8');if(!c.includes('scripts/smoke'))process.exit(1)"`
+---
+skeleton: false
+journey_type: user_facing
+---
+# Contract DoD — Workstream 3: Dashboard UI + 状态图标 + 渲染测试
 
-- [x] [ARTIFACT] `.github/workflows/scripts/lint-test-pairing.sh` 含 thin PR 豁免逻辑
-  Test: `manual:node -e "const c=require('fs').readFileSync('.github/workflows/scripts/lint-test-pairing.sh','utf8');if(!c.includes('Walking Skeleton thin PR'))process.exit(1)"`
+**范围**: `apps/dashboard/src/pages/harness-pipeline/HarnessPipelinePage.tsx` 在 PipelineCard 内加 WsProgressSection（含所有 4 条 status→图标映射）；新建 `apps/dashboard/src/pages/harness-pipeline/__tests__/WsProgress.test.tsx` + `apps/dashboard/src/pages/harness-pipeline/__tests__/WsStatusIcon.test.tsx`
+**大小**: M (130-160 行，3 文件)
+**依赖**: Workstream 2
 
-- [x] [ARTIFACT] `.github/workflows/ci.yml` 有独立 `dod-format-check` job
-  Test: `manual:node -e "const c=require('fs').readFileSync('.github/workflows/ci.yml','utf8');if(!c.includes('dod-format-check:'))process.exit(1)"`
+## ARTIFACT 条目
 
-- [x] [BEHAVIOR] e2e-smoke job 无 `if: brain || workspace` 条件，所有 PR 必跑
-  Test: `manual:node -e "const c=require('fs').readFileSync('.github/workflows/ci.yml','utf8');const i=c.indexOf('e2e-smoke:');const seg=c.slice(i,i+300);if(seg.includes('changes.outputs.brain'))process.exit(1)"`
+- [ ] [ARTIFACT] HarnessPipelinePage.tsx 含 ws-progress-section data-testid 属性
+  Test: node -e "const c=require('fs').readFileSync('apps/dashboard/src/pages/harness-pipeline/HarnessPipelinePage.tsx','utf8');if(!c.includes('ws-progress-section'))process.exit(1);console.log('OK')"
 
-- [x] [BEHAVIOR] brain-diff-coverage 不重跑 vitest，改为 artifact 模式
-  Test: `manual:node -e "const c=require('fs').readFileSync('.github/workflows/ci.yml','utf8');const i=c.indexOf('brain-diff-coverage:');const seg=c.slice(i,i+1500);if(seg.includes('npx vitest run --coverage') && !seg.includes('download-artifact'))process.exit(1)"`
+- [ ] [ARTIFACT] HarnessPipelinePage.tsx 含 ws-progress-row data-testid 属性
+  Test: node -e "const c=require('fs').readFileSync('apps/dashboard/src/pages/harness-pipeline/HarnessPipelinePage.tsx','utf8');if(!c.includes('ws-progress-row'))process.exit(1);console.log('OK')"
 
-- [x] [BEHAVIOR] dep-audit 无 warn-only，硬失败
-  Test: `manual:node -e "const c=require('fs').readFileSync('.github/workflows/ci.yml','utf8');if(c.includes('warn-only during Walking Skeleton'))process.exit(1)"`
+- [ ] [ARTIFACT] WsProgress.test.tsx 文件存在于 PRD 指定路径
+  Test: node -e "require('fs').accessSync('apps/dashboard/src/pages/harness-pipeline/__tests__/WsProgress.test.tsx');console.log('OK')"
 
-- [x] [BEHAVIOR] branch-naming 只允许 cp-\d{8,10}-* 格式
-  Test: `manual:node -e "const c=require('fs').readFileSync('.github/workflows/ci.yml','utf8');if(c.includes('feature/|fix/|chore/|docs/'))process.exit(1)"`
+- [ ] [ARTIFACT] WsStatusIcon.test.tsx 文件存在于 PRD 指定路径
+  Test: node -e "require('fs').accessSync('apps/dashboard/src/pages/harness-pipeline/__tests__/WsStatusIcon.test.tsx');console.log('OK')"
+
+## BEHAVIOR 条目（内嵌 manual:bash 命令，journey_type=user_facing 模式A：API-level + UI 结构验证）
+
+- [ ] [BEHAVIOR] UI 源码引用所有 PRD workstream 字段（ws_id/title/status/evaluate_verdict/pr_url/fix_round/container_id）
+  Test: manual:bash -c 'node -e "const c=require('"'"'fs'"'"').readFileSync('"'"'apps/dashboard/src/pages/harness-pipeline/HarnessPipelinePage.tsx'"'"','"'"'utf8'"'"');const req=['"'"'ws_id'"'"','"'"'title'"'"','"'"'status'"'"','"'"'evaluate_verdict'"'"','"'"'pr_url'"'"','"'"'fix_round'"'"','"'"'container_id'"'"'];const miss=req.filter(f=>!c.includes(f));if(miss.length>0){console.error('"'"'FAIL:缺字段'"'"',miss);process.exit(1);}console.log('"'"'OK'"'"')"'
+  期望: OK
+
+- [ ] [BEHAVIOR] 禁用字段名（steps/phases/stages/data/ws_list）不出现在 UI 代码数据解构中（禁用字段反向检查）
+  Test: manual:bash -c 'node -e "const c=require('"'"'fs'"'"').readFileSync('"'"'apps/dashboard/src/pages/harness-pipeline/HarnessPipelinePage.tsx'"'"','"'"'utf8'"'"');const banned=['"'"'\.steps\b'"'"','"'"'\.phases\b'"'"','"'"'\.ws_list\b'"'"'];const found=banned.filter(f=>new RegExp(f).test(c));if(found.length>0){console.error('"'"'FAIL:禁用字段'"'"',found);process.exit(1);}console.log('"'"'OK'"'"')"'
+  期望: OK
+
+- [ ] [BEHAVIOR] status=null && container_id 非空 → UI 源码含对应分支（🔄 运行中，PRD 边界规则 1）
+  Test: manual:bash -c 'node -e "const c=require('"'"'fs'"'"').readFileSync('"'"'apps/dashboard/src/pages/harness-pipeline/HarnessPipelinePage.tsx'"'"','"'"'utf8'"'"');if(!c.includes('"'"'container_id'"'"'))process.exit(1);console.log('"'"'OK container_id 运行中分支存在'"'"')"'
+  期望: OK container_id 运行中分支存在
+
+- [ ] [BEHAVIOR] status=null && container_id=null → UI 源码含对应分支（⬜ 待开始，PRD 边界规则 2）
+  Test: manual:bash -c 'node -e "const c=require('"'"'fs'"'"').readFileSync('"'"'apps/dashboard/src/pages/harness-pipeline/HarnessPipelinePage.tsx'"'"','"'"'utf8'"'"');const hasBranch=c.includes('"'"'待开始'"'"')||c.includes('"'"'not-started'"'"')||c.includes('"'"'pending'"'"');if(!hasBranch)process.exit(1);console.log('"'"'OK 待开始分支存在'"'"')"'
+  期望: OK 待开始分支存在
+
+- [ ] [BEHAVIOR] status=merged → UI 源码含 merged 分支（✅ MERGED，PRD 边界规则 3）
+  Test: manual:bash -c 'node -e "const c=require('"'"'fs'"'"').readFileSync('"'"'apps/dashboard/src/pages/harness-pipeline/HarnessPipelinePage.tsx'"'"','"'"'utf8'"'"');if(!c.includes('"'"'merged'"'"'))process.exit(1);console.log('"'"'OK merged 分支存在'"'"')"'
+  期望: OK merged 分支存在
+
+- [ ] [BEHAVIOR] status=running/spawning → UI 源码含对应分支（🔄 运行中，PRD 边界规则 4）
+  Test: manual:bash -c 'node -e "const c=require('"'"'fs'"'"').readFileSync('"'"'apps/dashboard/src/pages/harness-pipeline/HarnessPipelinePage.tsx'"'"','"'"'utf8'"'"');const hasBranch=c.includes('"'"'running'"'"')||c.includes('"'"'spawning'"'"');if(!hasBranch)process.exit(1);console.log('"'"'OK running/spawning 分支存在'"'"')"'
+  期望: OK running/spawning 分支存在
+
+- [ ] [BEHAVIOR] WsProgress.test.tsx vitest 渲染测试通过（WsProgressSection 基本渲染 + 空 workstreams 处理）
+  Test: manual:bash -c 'cd /workspace && npx vitest run apps/dashboard/src/pages/harness-pipeline/__tests__/WsProgress.test.tsx'
+  期望: exit 0（所有渲染测试通过）
+
+- [ ] [BEHAVIOR] WsStatusIcon.test.tsx vitest 测试通过（4 条 status→图标映射规则全覆盖）
+  Test: manual:bash -c 'cd /workspace && npx vitest run apps/dashboard/src/pages/harness-pipeline/__tests__/WsStatusIcon.test.tsx'
+  期望: exit 0（4 条图标映射测试全通过）
+
+- [ ] [BEHAVIOR] UI 源码含标题 ≤30 字截断逻辑（slice/substring/substr 截取，PRD「ws_id | 标题（≤30字）」要求）
+  Test: manual:bash -c 'node -e "const c=require('"'"'fs'"'"').readFileSync('"'"'apps/dashboard/src/pages/harness-pipeline/HarnessPipelinePage.tsx'"'"','"'"'utf8'"'"');const hasTrunc=c.includes('"'"'.slice(0,30)'"'"')||c.includes('"'"'.substring(0,30)'"'"')||c.includes('"'"'.substr(0,30)'"'"');if(!hasTrunc){console.error('"'"'FAIL: 缺标题截断逻辑 .slice(0,30)'"'"');process.exit(1);}console.log('"'"'OK 含标题截断逻辑'"'"')"'
+  期望: OK 含标题截断逻辑
+
+- [ ] [BEHAVIOR] UI 源码含 data-testid=ws-verdict-badge 属性（PRD「verdict badge」UI 约束）
+  Test: manual:bash -c 'node -e "const c=require('"'"'fs'"'"').readFileSync('"'"'apps/dashboard/src/pages/harness-pipeline/HarnessPipelinePage.tsx'"'"','"'"'utf8'"'"');if(!c.includes('"'"'ws-verdict-badge'"'"')){console.error('"'"'FAIL: 缺 data-testid=ws-verdict-badge'"'"');process.exit(1);}console.log('"'"'OK ws-verdict-badge 存在'"'"')"'
+  期望: OK ws-verdict-badge 存在
+
+## BEHAVIOR:E2E 条目（user_facing 专属，Mode B final-e2e 跑）
+
+- [ ] [BEHAVIOR:E2E] WS 进度行在实际浏览器中正确渲染，截图可视化验证
+  Screenshots:
+    - 01-initial.png   期望：/pipeline 页面加载完成，pipeline 卡片列表可见，页面无报错红框
+    - 02-ws-progress-visible.png    期望：in_progress pipeline card 内 ws-progress-section 区块显示，WS 进度行含状态图标和 ws_id 标签
+    - 03-result.png    期望：整体页面最终状态，WS 进度区块已渲染，API 交叉验证通过
+  期望：所有截图与期望描述一致，Claude Read 图自验通过
