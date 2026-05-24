@@ -66,6 +66,16 @@ interface HarnessPipelinesResponse {
   total: number;
 }
 
+interface WsProgressItem {
+  ws_id: string;
+  title: string;
+  status: string | null;
+  evaluate_verdict: string | null;
+  pr_url: string | null;
+  fix_round: number;
+  container_id: string | null;
+}
+
 // ─── 常量 ─────────────────────────────────────────────────────────────────────
 
 const STATUS_ICON: Record<string, string> = {
@@ -188,6 +198,67 @@ export function formatLangGraphSummary(lg: LangGraphSummary, status: string): st
   if (lg.gan_rounds > 0) parts.push(`GAN ${lg.gan_rounds} 轮`);
   if (lg.fix_rounds > 0) parts.push(`Fix ${lg.fix_rounds} 轮`);
   return parts.join(' · ');
+}
+
+// ─── 工具：WS 状态图标（4 条映射规则）───────────────────────────────────────────
+
+export function wsStatusIcon(status: string | null, container_id: string | null): string {
+  if (status === 'merged') return '✅';
+  if (status === 'running' || status === 'spawning') return '🔄';
+  if (status === null && container_id) return '🔄';
+  return '⬜';
+}
+
+// ─── 组件：WS 进度区块 ────────────────────────────────────────────────────────
+
+function WsProgressSection({ initiativeId }: { initiativeId: string }) {
+  const [workstreams, setWorkstreams] = useState<WsProgressItem[]>([]);
+
+  useEffect(() => {
+    fetch(`/api/brain/harness/initiative/${initiativeId}/ws-progress`)
+      .then(r => r.ok ? r.json() : { workstreams: [] })
+      .then(data => setWorkstreams(data.workstreams ?? []))
+      .catch(() => {});
+  }, [initiativeId]);
+
+  if (workstreams.length === 0) return null;
+
+  return (
+    <div data-testid="ws-progress-section" className="mt-2 pt-2 border-t border-slate-100 dark:border-slate-700">
+      <div className="text-[10px] font-semibold text-slate-400 dark:text-slate-500 uppercase tracking-wide mb-1">
+        WS 进度
+      </div>
+      {workstreams.map(ws => (
+        <div key={ws.ws_id} data-testid="ws-progress-row" className="flex items-center gap-2 text-xs py-0.5">
+          <span className="font-mono text-slate-400 shrink-0">{ws.ws_id}</span>
+          <span className="text-slate-700 dark:text-slate-200 truncate">
+            {ws.title.slice(0,30)}{ws.title.length > 30 ? '…' : ''}
+          </span>
+          <span className="shrink-0">{wsStatusIcon(ws.status, ws.container_id)}</span>
+          <span
+            data-testid="ws-verdict-badge"
+            className="text-[10px] font-medium text-slate-500 dark:text-slate-400 shrink-0"
+          >
+            {ws.evaluate_verdict ?? '—'}
+          </span>
+          {ws.fix_round > 0 && (
+            <span className="text-[10px] text-orange-500 shrink-0">Fix {ws.fix_round}</span>
+          )}
+          {ws.pr_url && (
+            <a
+              href={ws.pr_url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-blue-500 hover:underline shrink-0"
+              onClick={e => e.stopPropagation()}
+            >
+              PR ↗
+            </a>
+          )}
+        </div>
+      ))}
+    </div>
+  );
 }
 
 // ─── 组件：单阶段徽章 ─────────────────────────────────────────────────────────
@@ -343,6 +414,8 @@ function PipelineCard({ pipeline }: { pipeline: Pipeline }) {
             <StageBadge key={stage.task_type} stage={stage} />
           ))}
         </div>
+        {/* WS 进度区块 */}
+        <WsProgressSection initiativeId={pipeline.pipeline_id} />
       </div>
 
       {/* 展开详情 */}
