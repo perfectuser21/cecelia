@@ -1399,7 +1399,9 @@ export async function finalEvaluateDispatchNode(state, opts = {}) {
   const execFn = opts.execFile || execFile;
   const sprintDir = state.task?.payload?.sprint_dir || 'sprints';
   const journeyType = state.taskPlan?.journey_type || 'autonomous';
-  const targetEnv = (state.prdContent || '').match(/^##\s*target_environment:\s*(\S+)/m)?.[1] || 'local_api';
+  const targetEnv = (state.prdContent || '').match(/^##\s*target_environment:\s*(\S+)/m)?.[1]
+    || state.task?.payload?.target_environment
+    || 'local_api';
   const _baseRepo = (state.task?.payload?.base_repo || '').toLowerCase();
   const githubRepo = _baseRepo.includes('zenithjoy') ? 'perfectuser21/zenithjoy-workspace' : 'perfectuser21/cecelia';
 
