@@ -1,64 +1,108 @@
-# Sprint PRD — Brain Version Endpoint
+# Sprint PRD — License 系统
 
-## OKR 对齐
+## 产品目标
 
-- **对应 KR**：KR（系统可观测性 / 运维健康）
-- **当前进度**：N/A（Brain API 上下文不可达，本地推断）
-- **本次推进预期**：新增 1 个可机检版本查询端点，提升系统可观测性
+为 Cecelia 平台建设一套完整的 License 管理系统，让管理员可以创建、分配和管理许可证，客户可以查看自己的授权状态和使用情况，同时确保系统部署流程自动化、可重复。目标用户包括：平台管理员（负责 License 分配与管控）和企业客户（查看自己的授权与用量）。
 
-## 背景
+## 功能清单
 
-外部工具（evaluator、dashboard、CI 脚本）需要查询当前运行 Brain 的版本号与 schema 版本，
-目前只能解析 package.json 或调用 /api/brain/status（返回字段噪音多）。
-新增 GET /api/brain/version 端点，提供轻量、字段固定、可机检的版本信息接口。
+### 后端 API
+- [ ] Feature 1: License 创建 — 管理员可以创建不同类型（试用/正式/企业）的 License，设置有效期和功能权限
+- [ ] Feature 2: License 查询 — 支持按用户、状态、类型检索 License 列表
+- [ ] Feature 3: License 激活/停用 — 管理员可以激活或停用某个 License
+- [ ] Feature 4: License 使用量上报 — 客户端调用 API 上报使用数据，系统记录并聚合
+- [ ] Feature 5: License 校验端点 — 外部系统可通过 API Key 校验 License 有效性
 
-## Golden Path（核心场景）
+### Dashboard 客户面板
+- [ ] Feature 6: 我的 License — 客户登录后可查看自己当前持有的所有 License 及其状态
+- [ ] Feature 7: 授权详情 — 客户可查看单个 License 的到期日、功能权限列表、当前用量
+- [ ] Feature 8: 用量趋势图 — 客户可看到最近 30 天的 API 调用/使用量走势图
+- [ ] Feature 9: 到期提醒 — License 到期前 7 天在 Dashboard 显示醒目提示
 
-外部调用方从 [GET /api/brain/version] → 经过 [Brain 读取 package.json version + EXPECTED_SCHEMA_VERSION] → 到达 [返回 JSON 含 version 和 schema_version]
+### Admin 后台
+- [ ] Feature 10: License 管理列表 — 管理员查看全部 License，支持筛选/搜索/排序
+- [ ] Feature 11: 批量创建 License — 管理员可一次性批量生成多个 License 并绑定到客户账号
+- [ ] Feature 12: 客户授权分配 — 管理员将 License 分配给指定客户（按邮箱/账号 ID）
+- [ ] Feature 13: License 审计日志 — 管理员可查看每个 License 的激活/使用/变更历史
+- [ ] Feature 14: 数据统计看板 — 管理员可查看全局 License 发放数量、活跃数、到期数汇总
 
-具体：
-1. 调用方发送 `GET /api/brain/version`，无需任何参数
-2. Brain 从 package.json 读取 `version` 字段，从 selfcheck.js 读取 `EXPECTED_SCHEMA_VERSION`
-3. 返回 HTTP 200，body 为 `{"version":"<semver>","schema_version":"<str>"}`
+### CI 部署
+- [ ] Feature 15: 自动化测试门禁 — 每次 PR 合并前自动跑 License 模块的单元测试与集成测试
+- [ ] Feature 16: 数据库迁移自动化 — 部署时自动执行 schema migration，无需人工介入
+- [ ] Feature 17: 环境变量配置校验 — CI 流水线校验必要的 License 相关环境变量已配置
+- [ ] Feature 18: 健康检查端点 — 部署后自动探测 License API `/health` 端点，失败则回滚
 
-## Response Schema
+## 验收标准（用户视角）
 
-### Endpoint: GET /api/brain/version
+### Feature 1 — License 创建
+- 管理员填写类型、有效期、权限范围后点击"创建"，系统生成唯一 License Key 并展示
+- 创建成功后，License 立即出现在管理列表中，状态为"待激活"
 
-**Query Parameters**: 无
+### Feature 2 — License 查询
+- 管理员在搜索框输入客户邮箱或 License Key，系统在 1 秒内返回匹配结果
+- 支持按"状态（激活/停用/到期）"筛选，结果实时刷新
 
-**Success (HTTP 200)**:
-```json
-{"version": "1.230.10", "schema_version": "279"}
-```
-- `version` (string, 必填): semver 格式，来自 packages/brain/package.json `.version`
-- `schema_version` (string, 必填): 来自 `EXPECTED_SCHEMA_VERSION` 常量，字符串形式
-- **禁用响应字段名**: `ver`/`v`/`pkg_version`/`db_version`/`build`/`tag`/`release`
-- **Schema 完整性**: 顶层 keys 必须完全等于 `["version", "schema_version"]`，不允许多余字段
+### Feature 3 — License 激活/停用
+- 管理员点击"激活"后，License 状态立即变为"有效"，客户端校验接口随即可通过
+- 点击"停用"后，客户端再次校验该 License 时收到"已停用"响应
 
-**Error**: 此端点为纯只读常量读取，不预期 4xx/5xx；若出现则返回标准 `{"error":"<string>"}`
+### Feature 4 — License 使用量上报
+- 外部系统每次调用后向 `/api/license/usage` 上报用量，系统累加并持久化
+- 管理员和客户均可在各自面板看到最新用量数据（延迟不超过 5 分钟）
 
-## 边界情况
+### Feature 5 — License 校验端点
+- 外部系统携带 License Key 调用校验接口，有效时返回 `{valid: true, features: [...]}`
+- 无效/过期/停用时返回对应错误码和说明
 
-- package.json 不可读：返回 HTTP 500，`{"error":"version read failed"}`
-- 不接受任何 query 参数（多余参数忽略，不报错）
+### Feature 6 — 我的 License（客户面板）
+- 客户登录后首页展示自己名下的 License 卡片列表，每张卡片显示类型、状态、到期日
 
-## 范围限定
+### Feature 7 — 授权详情
+- 客户点击某个 License 卡片，进入详情页，看到功能权限列表和当月已用量/上限
 
-**在范围内**：GET /api/brain/version 端点实现（只读，无 DB 查询）
-**不在范围内**：POST/PUT/DELETE、版本比较逻辑、自动更新触发、/status 端点改造
+### Feature 8 — 用量趋势图
+- 详情页下方显示折线图，X 轴为日期，Y 轴为调用次数，可切换 7 天/30 天视图
 
-## 假设
+### Feature 9 — 到期提醒
+- 距到期 ≤ 7 天的 License 在客户面板顶部出现黄色横幅提示，点击可直接联系续费
 
-- [ASSUMPTION: EXPECTED_SCHEMA_VERSION 常量从 selfcheck.js 导入]
-- [ASSUMPTION: 端点注册在现有 status router 或 brain-meta router 下]
+### Feature 10 — License 管理列表（Admin）
+- 管理员进入 Admin 后台 License 页，看到分页表格，每行显示 Key 前缀、所属客户、状态、到期日
+- 支持按列排序（点击列头），按状态筛选
 
-## 预期受影响文件
+### Feature 11 — 批量创建
+- 管理员填写数量（1-100）和参数模板，点击"批量生成"，系统输出可下载的 CSV 文件，含所有生成的 License Key
 
-- `packages/brain/src/routes/status.js`: 新增 GET /version 路由
-- `packages/brain/src/selfcheck.js`: 导出 EXPECTED_SCHEMA_VERSION（若当前未 export）
+### Feature 12 — 客户授权分配
+- 管理员在 License 详情页输入客户邮箱后点击"分配"，该客户登录后即可在面板看到此 License
 
-## journey_type: autonomous
-## journey_type_reason: 仅涉及 packages/brain/ 内部路由，无 UI / 无外部 agent 协议
-## target_environment: local_api
-## target_environment_reason: 纯 Brain 内部端点，evaluator 在本地 curl localhost:5221/api/brain/version 验证
+### Feature 13 — 审计日志
+- 管理员点击某 License 的"日志"按钮，看到时间线，记录每次状态变更、使用上报、分配操作及操作人
+
+### Feature 14 — 数据统计看板
+- Admin 首页展示 4 个数字卡片：总发放数、当前激活数、本月到期数、本月新增数
+
+### Feature 15 — 自动化测试门禁
+- PR 提交后 CI 自动运行，测试失败时 PR 无法合并，失败原因显示在 PR 评论中
+
+### Feature 16 — 数据库迁移自动化
+- 部署到任意环境时，migration 脚本自动执行，成功后应用启动，失败则部署终止并报警
+
+### Feature 17 — 环境变量校验
+- CI 运行时若缺少必要变量（如 `LICENSE_SECRET_KEY`），流水线在最早阶段失败并打印缺失变量名
+
+### Feature 18 — 健康检查端点
+- 部署完成 60 秒内，CI 探测 `/api/license/health`，返回 `{status: "ok"}` 视为部署成功，否则触发回滚通知
+
+## AI 集成点（如适用）
+
+- **License 异常检测**：对使用量骤增（超过历史均值 3 倍）的 License 自动标记，供管理员审查（防刷/滥用）
+- **续费预测**：根据用量趋势预测客户是否可能需要升级套餐，Admin 看板给出提示
+
+## 不在范围内
+
+- 支付/计费系统（License 定价和收款由外部系统处理，本 sprint 不涉及）
+- 多租户隔离架构改造（当前单租户架构不变）
+- License 模板市场（预设模板管理为后续 sprint）
+- 移动端 App 适配（本 sprint 仅 Web）
+- 第三方 SSO 集成（使用现有登录体系）
