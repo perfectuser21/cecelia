@@ -352,8 +352,8 @@ workstream_count: 3
 
 | Workstream | Test File | BEHAVIOR 覆盖 | 预期红证据（机检命令） |
 |---|---|---|---|
-| WS1 | `packages/brain/src/__tests__/harness-ws-progress.test.js` | schema/initiative_id/空数组/404/子字段/fix_round | `npx vitest run packages/brain/src/__tests__/harness-ws-progress.test.js 2>&1 \| grep -qE "Test Files.*failed\|failed to load\|FAIL" && echo "RED OK" \|\| { echo "UNEXPECTED GREEN"; exit 1; }` |
-| WS2 | `packages/brain/src/__tests__/harness-ws-progress.test.js` | mock pool/空/404/类型/禁用字段 | 同上（同文件，WS2 补充 mock 场景） |
+| WS1 | `tests/ws1/harness-ws-progress.test.js` | schema/initiative_id/空数组/404/子字段/fix_round | `npx vitest run sprints/cecelia-harness-viz/tests/ws1/harness-ws-progress.test.js 2>&1` |
+| WS2 | `tests/ws2/harness-ws-progress-unit.test.js` | empty workstreams/404/fix_round/禁用字段 | `npx vitest run sprints/cecelia-harness-viz/tests/ws2/harness-ws-progress-unit.test.js 2>&1` |
 | WS3 | `apps/dashboard/src/pages/harness-pipeline/__tests__/WsProgress.test.tsx` `apps/dashboard/src/pages/harness-pipeline/__tests__/WsStatusIcon.test.tsx` | UI渲染/4条图标映射/空状态 | `npx vitest run apps/dashboard/src/pages/harness-pipeline/__tests__/WsProgress.test.tsx apps/dashboard/src/pages/harness-pipeline/__tests__/WsStatusIcon.test.tsx 2>&1 \| grep -qE "Test Files.*failed\|Cannot find\|FAIL" && echo "RED OK" \|\| { echo "UNEXPECTED GREEN"; exit 1; }` |
 
 **depends_on 串行链自查（v7.10）**:

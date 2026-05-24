@@ -14,17 +14,28 @@ journey_type: user_facing
 
 ## ARTIFACT 条目
 
-- [ ] [ARTIFACT] harness.js 含 `initiative/:id/ws-progress` 路由定义
+- [x] [ARTIFACT] harness.js 含 `initiative/:id/ws-progress` 路由定义
   Test: node -e "const c=require('fs').readFileSync('packages/brain/src/routes/harness.js','utf8');if(!c.includes('ws-progress'))process.exit(1);console.log('OK')"
 
-- [ ] [ARTIFACT] 路由使用 checkpoint_blobs 表查询（含 thread_id LIKE 'harness-task:%:ws%' 过滤）
+- [x] [ARTIFACT] 路由使用 checkpoint_blobs 表查询（含 thread_id LIKE 'harness-task:%:ws%' 过滤）
   Test: node -e "const c=require('fs').readFileSync('packages/brain/src/routes/harness.js','utf8');if(!c.includes('checkpoint_blobs'))process.exit(1);console.log('OK')"
 
 ## BEHAVIOR 条目
 
-- [ ] [BEHAVIOR] ws-progress API 返回顶层 keys 精确等于 ["initiative_id","workstreams"]
-- [ ] [BEHAVIOR] initiative_id 字段值等于请求路径中的 id
-- [ ] [BEHAVIOR] workstreams 是数组且不包含禁用字段
-- [ ] [BEHAVIOR] 无 WS checkpoint 的 initiative 返回 workstreams=[]
-- [ ] [BEHAVIOR] 不存在的 initiative_id 返回 HTTP 404 + error 字段
-- [ ] [BEHAVIOR] workstream 子对象 fix_round 是 number 类型
+- [x] [BEHAVIOR] ws-progress API 返回顶层 keys 精确等于 ["initiative_id","workstreams"]（schema 完整性）
+  Test: bash -c 'npx vitest run sprints/cecelia-harness-viz/tests/ws1/harness-ws-progress.test.js 2>/dev/null'
+
+- [x] [BEHAVIOR] initiative_id 字段值等于请求路径中的 id（字段值正确）
+  Test: bash -c 'npx vitest run sprints/cecelia-harness-viz/tests/ws1/harness-ws-progress.test.js 2>/dev/null'
+
+- [x] [BEHAVIOR] workstreams 是数组且不包含禁用字段（keys 完整性 + 禁用字段反向检查）
+  Test: bash -c 'npx vitest run sprints/cecelia-harness-viz/tests/ws1/harness-ws-progress.test.js 2>/dev/null'
+
+- [x] [BEHAVIOR] 无 WS checkpoint 的 initiative 返回 workstreams=[]（空数组边界）
+  Test: bash -c 'npx vitest run sprints/cecelia-harness-viz/tests/ws1/harness-ws-progress.test.js 2>/dev/null'
+
+- [x] [BEHAVIOR] 不存在的 initiative_id 返回 HTTP 404 + error 字段（error path）
+  Test: bash -c 'npx vitest run sprints/cecelia-harness-viz/tests/ws1/harness-ws-progress.test.js 2>/dev/null'
+
+- [x] [BEHAVIOR] workstream 子对象 fix_round 是 number 类型（字段类型校验）
+  Test: bash -c 'npx vitest run sprints/cecelia-harness-viz/tests/ws1/harness-ws-progress.test.js 2>/dev/null'

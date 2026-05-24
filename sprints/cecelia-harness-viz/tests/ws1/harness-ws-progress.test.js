@@ -1,48 +1,115 @@
-/**
- * WS1 Red Test — Brain API ws-progress 路由
- * 验证 GET /api/brain/harness/initiative/:id/ws-progress 端点尚不存在（红证据）
- */
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi, beforeEach, beforeAll } from 'vitest';
 import express from 'express';
 import request from 'supertest';
 
+// Mock db.js before importing router (vi.mock is hoisted automatically)
+const mockPool = vi.hoisted(() => ({ query: vi.fn() }));
+vi.mock('../../../../packages/brain/src/db.js', () => ({ default: mockPool }));
+
+let router;
+
+beforeAll(async () => {
+  vi.resetModules();
+  const mod = await import('../../../../packages/brain/src/routes/harness.js');
+  router = mod.default;
+});
+
+function createApp() {
+  const app = express();
+  app.use(express.json());
+  app.use('/', router);
+  return app;
+}
+
 describe('Brain API — GET /initiative/:id/ws-progress [BEHAVIOR]', () => {
-  it('路由存在（harness.js 含 ws-progress 定义）', async () => {
-    const { readFileSync } = await import('fs');
-    const src = readFileSync('packages/brain/src/routes/harness.js', 'utf8');
-    expect(src).toContain('ws-progress');
+  beforeEach(() => {
+    vi.clearAllMocks();
   });
 
-  it('路由返回 initiative_id + workstreams 顶层 keys（schema 完整性）', async () => {
-    const { readFileSync } = await import('fs');
-    const src = readFileSync('packages/brain/src/routes/harness.js', 'utf8');
-    // 路由实现必须引用 initiative_id
-    expect(src).toContain('initiative_id');
-    // 路由实现必须引用 workstreams
-    expect(src).toContain('workstreams');
+  it('schema 完整性: 返回顶层 keys 精确等于 ["initiative_id","workstreams"]', async () => {
+    const testId = '11111111-1111-1111-1111-111111111111';
+    mockPool.query
+      .mockResolvedValueOnce({ rows: [{ id: testId }] })  // initiative exists
+      .mockResolvedValueOnce({ rows: [] });                // no checkpoints
+
+    const app = createApp();
+    const res = await request(app).get(`/initiative/${testId}/ws-progress`);
+
+    expect(res.status).toBe(200);
+    expect(Object.keys(res.body).sort()).toEqual(['initiative_id', 'workstreams']);
   });
 
-  it('路由查询 checkpoint_blobs 表（数据来源正确）', async () => {
-    const { readFileSync } = await import('fs');
-    const src = readFileSync('packages/brain/src/routes/harness.js', 'utf8');
-    expect(src).toContain('checkpoint_blobs');
+  it('initiative_id 字段值等于请求路径中的 id', async () => {
+    const testId = '22222222-2222-2222-2222-222222222222';
+    mockPool.query
+      .mockResolvedValueOnce({ rows: [{ id: testId }] })
+      .mockResolvedValueOnce({ rows: [] });
+
+    const app = createApp();
+    const res = await request(app).get(`/initiative/${testId}/ws-progress`);
+
+    expect(res.status).toBe(200);
+    expect(res.body.initiative_id).toBe(testId);
   });
 
-  it('路由实现对不存在 initiative 返回 404（error path）', async () => {
-    const { readFileSync } = await import('fs');
-    const src = readFileSync('packages/brain/src/routes/harness.js', 'utf8');
-    expect(src).toContain('404');
-    expect(src).toContain('initiative not found');
+  it('空数组边界: 无 WS checkpoint 的 initiative 返回 workstreams=[]', async () => {
+    const testId = '33333333-3333-3333-3333-333333333333';
+    mockPool.query
+      .mockResolvedValueOnce({ rows: [{ id: testId }] })
+      .mockResolvedValueOnce({ rows: [] });
+
+    const app = createApp();
+    const res = await request(app).get(`/initiative/${testId}/ws-progress`);
+
+    expect(res.status).toBe(200);
+    expect(res.body.workstreams).toEqual([]);
   });
 
-  it('路由响应不含禁用字段（禁用字段反向检查）', async () => {
-    const { readFileSync } = await import('fs');
-    const src = readFileSync('packages/brain/src/routes/harness.js', 'utf8');
-    // 在 ws-progress route handler 内不应有 steps/phases/stages/ws_list 作为响应 key
-    const routeSection = src.split('ws-progress')[1]?.split('router.')[0] ?? '';
-    expect(routeSection).not.toMatch(/"steps"\s*:/);
-    expect(routeSection).not.toMatch(/"phases"\s*:/);
-    expect(routeSection).not.toMatch(/"stages"\s*:/);
-    expect(routeSection).not.toMatch(/"ws_list"\s*:/);
+  it('404 error path: 不存在 initiative_id 返回 HTTP 404 + error 字段', async () => {
+    mockPool.query.mockResolvedValueOnce({ rows: [] });
+
+    const app = createApp();
+    const res = await request(app).get('/initiative/00000000-0000-0000-0000-000000000000/ws-progress');
+
+    expect(res.status).toBe(404);
+    expect(res.body.error).toBe('initiative not found');
+  });
+
+  it('子字段 schema: workstream 子对象含 ws_id/title/status/evaluate_verdict/pr_url/fix_round/container_id', async () => {
+    const testId = '44444444-4444-4444-4444-444444444444';
+    mockPool.query
+      .mockResolvedValueOnce({ rows: [{ id: testId }] })
+      .mockResolvedValueOnce({ rows: [{ thread_id: `harness-task:${testId}:ws1` }] })
+      .mockResolvedValueOnce({ rows: [] })  // blob rows
+      .mockResolvedValueOnce({ rows: [] }); // thread_lookup fallback
+
+    const app = createApp();
+    const res = await request(app).get(`/initiative/${testId}/ws-progress`);
+
+    expect(res.status).toBe(200);
+    expect(res.body.workstreams).toHaveLength(1);
+    const ws = res.body.workstreams[0];
+    expect(ws).toHaveProperty('ws_id');
+    expect(ws).toHaveProperty('title');
+    expect(ws).toHaveProperty('status');
+    expect(ws).toHaveProperty('evaluate_verdict');
+    expect(ws).toHaveProperty('pr_url');
+    expect(ws).toHaveProperty('fix_round');
+    expect(ws).toHaveProperty('container_id');
+  });
+
+  it('fix_round 字段类型: workstream 子对象 fix_round 是 number 类型', async () => {
+    const testId = '55555555-5555-5555-5555-555555555555';
+    mockPool.query
+      .mockResolvedValueOnce({ rows: [{ id: testId }] })
+      .mockResolvedValueOnce({ rows: [{ thread_id: `harness-task:${testId}:ws1` }] })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [] });
+
+    const app = createApp();
+    const res = await request(app).get(`/initiative/${testId}/ws-progress`);
+
+    expect(res.status).toBe(200);
+    expect(typeof res.body.workstreams[0].fix_round).toBe('number');
   });
 });
