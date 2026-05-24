@@ -34,6 +34,100 @@ const HARNESS_MERMAID = `graph TD
   Report --> End([END])`;
 
 /**
+ * GET /initiative/:id/ws-progress
+ * 返回该 initiative 下所有 WS 的进度状态
+ * 从 checkpoint_blobs 表查询 thread_id LIKE 'harness-task:{id}:ws%' 的记录
+ */
+router.get('/initiative/:id/ws-progress', async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    // Verify initiative exists in tasks table
+    const { rows: initRows } = await pool.query(
+      `SELECT id FROM tasks WHERE id::text = $1 AND task_type = 'harness_initiative' LIMIT 1`,
+      [id]
+    );
+    if (initRows.length === 0) {
+      return res.status(404).json({ error: 'initiative not found' });
+    }
+
+    // Find distinct WS thread_ids from checkpoint_blobs
+    const { rows: threadRows } = await pool.query(
+      `SELECT DISTINCT thread_id
+       FROM checkpoint_blobs
+       WHERE thread_id LIKE $1
+       ORDER BY thread_id ASC`,
+      [`harness-task:${id}:ws%`]
+    );
+
+    if (threadRows.length === 0) {
+      return res.json({ initiative_id: id, workstreams: [] });
+    }
+
+    // Build workstream entries from checkpoint state
+    const workstreams = await Promise.all(threadRows.map(async ({ thread_id }) => {
+      const ws_id = thread_id.split(':').slice(2).join(':');
+
+      let status = null;
+      let evaluate_verdict = null;
+      let pr_url = null;
+      let fix_round = 0;
+      let title = ws_id;
+      let container_id = null;
+
+      // Read state channels from checkpoint_blobs
+      try {
+        const { rows: blobRows } = await pool.query(
+          `SELECT DISTINCT ON (channel) channel, type, blob
+           FROM checkpoint_blobs
+           WHERE thread_id = $1
+             AND channel IN ('status', 'evaluate_verdict', 'pr_url', 'fix_round', 'containerId', 'task')
+             AND type = 'json'
+           ORDER BY channel, version DESC`,
+          [thread_id]
+        );
+
+        for (const row of blobRows) {
+          if (!row.blob) continue;
+          let val;
+          try {
+            val = JSON.parse(Buffer.from(row.blob).toString('utf8'));
+          } catch { continue; }
+
+          switch (row.channel) {
+            case 'status':           status = typeof val === 'string' ? val : null; break;
+            case 'evaluate_verdict': evaluate_verdict = typeof val === 'string' ? val : null; break;
+            case 'pr_url':           pr_url = typeof val === 'string' ? val : null; break;
+            case 'fix_round':        fix_round = typeof val === 'number' ? val : 0; break;
+            case 'containerId':      container_id = typeof val === 'string' ? val : null; break;
+            case 'task':             title = (val && val.title) ? val.title : ws_id; break;
+          }
+        }
+      } catch { /* use defaults on error */ }
+
+      // Fallback: get container_id from thread_lookup if not in checkpoint state
+      if (!container_id) {
+        try {
+          const { rows: luRows } = await pool.query(
+            `SELECT container_id FROM walking_skeleton_thread_lookup
+             WHERE thread_id = $1 ORDER BY created_at DESC LIMIT 1`,
+            [thread_id]
+          );
+          container_id = luRows[0]?.container_id || null;
+        } catch { /* table may not exist */ }
+      }
+
+      return { ws_id, title, status, evaluate_verdict, pr_url, fix_round, container_id };
+    }));
+
+    res.json({ initiative_id: id, workstreams });
+  } catch (err) {
+    console.error('[GET /harness/initiative/ws-progress]', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
  * GET /pipeline/:planner_task_id
  * 返回该 planner 下所有 harness/sprint 任务（含 planner 自身）
  */

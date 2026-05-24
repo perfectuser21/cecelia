@@ -1,22 +1,30 @@
-# DoD — Cecelia 统一 CI 改造
+contract_branch: cp-harness-propose-r3-fb5c3fe5
+workstream_index: 1
+sprint_dir: sprints/cecelia-harness-viz
 
-- [x] [ARTIFACT] `.github/workflows/scripts/lint-tdd-commit-order.sh` 含 smoke 识别逻辑
-  Test: `manual:node -e "const c=require('fs').readFileSync('.github/workflows/scripts/lint-tdd-commit-order.sh','utf8');if(!c.includes('scripts/smoke'))process.exit(1)"`
+---
+skeleton: false
+journey_type: user_facing
+---
+# Contract DoD — Workstream 1: Brain API ws-progress 端点
 
-- [x] [ARTIFACT] `.github/workflows/scripts/lint-test-pairing.sh` 含 thin PR 豁免逻辑
-  Test: `manual:node -e "const c=require('fs').readFileSync('.github/workflows/scripts/lint-test-pairing.sh','utf8');if(!c.includes('Walking Skeleton thin PR'))process.exit(1)"`
+**范围**: `packages/brain/src/routes/harness.js` 新增 `GET /initiative/:id/ws-progress`，查询 checkpoint_blobs 表读取 WS 进度
+**大小**: S (<100 行)
+**依赖**: 无
 
-- [x] [ARTIFACT] `.github/workflows/ci.yml` 有独立 `dod-format-check` job
-  Test: `manual:node -e "const c=require('fs').readFileSync('.github/workflows/ci.yml','utf8');if(!c.includes('dod-format-check:'))process.exit(1)"`
+## ARTIFACT 条目
 
-- [x] [BEHAVIOR] e2e-smoke job 无 `if: brain || workspace` 条件，所有 PR 必跑
-  Test: `manual:node -e "const c=require('fs').readFileSync('.github/workflows/ci.yml','utf8');const i=c.indexOf('e2e-smoke:');const seg=c.slice(i,i+300);if(seg.includes('changes.outputs.brain'))process.exit(1)"`
+- [ ] [ARTIFACT] harness.js 含 `initiative/:id/ws-progress` 路由定义
+  Test: node -e "const c=require('fs').readFileSync('packages/brain/src/routes/harness.js','utf8');if(!c.includes('ws-progress'))process.exit(1);console.log('OK')"
 
-- [x] [BEHAVIOR] brain-diff-coverage 不重跑 vitest，改为 artifact 模式
-  Test: `manual:node -e "const c=require('fs').readFileSync('.github/workflows/ci.yml','utf8');const i=c.indexOf('brain-diff-coverage:');const seg=c.slice(i,i+1500);if(seg.includes('npx vitest run --coverage') && !seg.includes('download-artifact'))process.exit(1)"`
+- [ ] [ARTIFACT] 路由使用 checkpoint_blobs 表查询（含 thread_id LIKE 'harness-task:%:ws%' 过滤）
+  Test: node -e "const c=require('fs').readFileSync('packages/brain/src/routes/harness.js','utf8');if(!c.includes('checkpoint_blobs'))process.exit(1);console.log('OK')"
 
-- [x] [BEHAVIOR] dep-audit 无 warn-only，硬失败
-  Test: `manual:node -e "const c=require('fs').readFileSync('.github/workflows/ci.yml','utf8');if(c.includes('warn-only during Walking Skeleton'))process.exit(1)"`
+## BEHAVIOR 条目
 
-- [x] [BEHAVIOR] branch-naming 只允许 cp-\d{8,10}-* 格式
-  Test: `manual:node -e "const c=require('fs').readFileSync('.github/workflows/ci.yml','utf8');if(c.includes('feature/|fix/|chore/|docs/'))process.exit(1)"`
+- [ ] [BEHAVIOR] ws-progress API 返回顶层 keys 精确等于 ["initiative_id","workstreams"]
+- [ ] [BEHAVIOR] initiative_id 字段值等于请求路径中的 id
+- [ ] [BEHAVIOR] workstreams 是数组且不包含禁用字段
+- [ ] [BEHAVIOR] 无 WS checkpoint 的 initiative 返回 workstreams=[]
+- [ ] [BEHAVIOR] 不存在的 initiative_id 返回 HTTP 404 + error 字段
+- [ ] [BEHAVIOR] workstream 子对象 fix_round 是 number 类型
