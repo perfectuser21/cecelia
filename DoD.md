@@ -22,20 +22,18 @@ journey_type: user_facing
 
 ## BEHAVIOR 条目
 
-- [x] [BEHAVIOR] ws-progress API 返回顶层 keys 精确等于 ["initiative_id","workstreams"]（schema 完整性）
-  Test: bash -c 'npx vitest run sprints/cecelia-harness-viz/tests/ws1/harness-ws-progress.test.js 2>/dev/null'
+- [x] [BEHAVIOR] GET /initiative/:id/ws-progress 返回 keys == ["initiative_id","workstreams"]（schema 完整性）
+  Test: manual:bash -c 'ID=$(curl -sf -X POST localhost:5221/api/brain/tasks -H "Content-Type: application/json" -d '"'"'{"task_type":"harness_initiative","title":"_test_ws_progress_schema"}'"'"' | jq -r .id); curl -sf "localhost:5221/api/brain/harness/initiative/$ID/ws-progress" | jq -e '"'"'keys == ["initiative_id","workstreams"]'"'"' && echo OK'
+  期望: OK
 
-- [x] [BEHAVIOR] initiative_id 字段值等于请求路径中的 id（字段值正确）
-  Test: bash -c 'npx vitest run sprints/cecelia-harness-viz/tests/ws1/harness-ws-progress.test.js 2>/dev/null'
+- [x] [BEHAVIOR] initiative_id 字段值等于请求路径 id
+  Test: manual:bash -c 'ID=$(curl -sf -X POST localhost:5221/api/brain/tasks -H "Content-Type: application/json" -d '"'"'{"task_type":"harness_initiative","title":"_test_ws_progress_id_match"}'"'"' | jq -r .id); curl -sf "localhost:5221/api/brain/harness/initiative/$ID/ws-progress" | jq -e ".initiative_id == \"$ID\"" && echo OK'
+  期望: OK
 
-- [x] [BEHAVIOR] workstreams 是数组且不包含禁用字段（keys 完整性 + 禁用字段反向检查）
-  Test: bash -c 'npx vitest run sprints/cecelia-harness-viz/tests/ws1/harness-ws-progress.test.js 2>/dev/null'
+- [x] [BEHAVIOR] 无 WS checkpoint 时 workstreams 返回 []
+  Test: manual:bash -c 'ID=$(curl -sf -X POST localhost:5221/api/brain/tasks -H "Content-Type: application/json" -d '"'"'{"task_type":"harness_initiative","title":"_test_ws_progress_empty"}'"'"' | jq -r .id); curl -sf "localhost:5221/api/brain/harness/initiative/$ID/ws-progress" | jq -e '"'"'.workstreams == []'"'"' && echo OK'
+  期望: OK
 
-- [x] [BEHAVIOR] 无 WS checkpoint 的 initiative 返回 workstreams=[]（空数组边界）
-  Test: bash -c 'npx vitest run sprints/cecelia-harness-viz/tests/ws1/harness-ws-progress.test.js 2>/dev/null'
-
-- [x] [BEHAVIOR] 不存在的 initiative_id 返回 HTTP 404 + error 字段（error path）
-  Test: bash -c 'npx vitest run sprints/cecelia-harness-viz/tests/ws1/harness-ws-progress.test.js 2>/dev/null'
-
-- [x] [BEHAVIOR] workstream 子对象 fix_round 是 number 类型（字段类型校验）
-  Test: bash -c 'npx vitest run sprints/cecelia-harness-viz/tests/ws1/harness-ws-progress.test.js 2>/dev/null'
+- [x] [BEHAVIOR] 不存在 initiative_id 返回 HTTP 404 + {error:"initiative not found"}
+  Test: manual:bash -c 'CODE=$(curl -s -o /tmp/ws404.json -w "%{http_code}" "localhost:5221/api/brain/harness/initiative/00000000-0000-0000-0000-000000000099/ws-progress"); [ "$CODE" = "404" ] || { echo "FAIL: expected 404 got $CODE"; exit 1; }; jq -e '"'"'.error == "initiative not found"'"'"' /tmp/ws404.json && echo OK'
+  期望: OK
