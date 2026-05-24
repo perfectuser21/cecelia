@@ -505,6 +505,38 @@ fi
 
 ---
 
+#### Step B-2.6: windows_cloud artifact 下载 + 视觉验证
+
+```bash
+if [[ "$TARGET_ENV" == "windows_cloud" ]]; then
+  REPO="${GITHUB_REPO:-perfectuser21/zenithjoy-workspace}"
+  WORKFLOW="${WINDOWS_CLOUD_WORKFLOW:-e2e-windows.yml}"
+
+  # 获取最新 run ID（触发后等 10s 再查，避免拿到上一次 run）
+  RUN_ID=$(gh run list --repo "$REPO" --workflow "$WORKFLOW" \
+    --limit 1 --json databaseId --jq '.[0].databaseId' 2>/dev/null)
+
+  if [[ -n "$RUN_ID" ]]; then
+    # 下载 screenshots artifact（GHA workflow 需上传 artifact name="screenshots"）
+    mkdir -p /tmp/windows-cloud-screenshots
+    gh run download "$RUN_ID" \
+      --repo "$REPO" \
+      --name "screenshots" \
+      --dir /tmp/windows-cloud-screenshots 2>/dev/null || true
+
+    # evaluator 必须用 Read tool 读取每张 PNG，对照 DoD [BEHAVIOR:E2E] 逐一视觉确认：
+    # - 截图是否展示了期望的界面元素？
+    # - 操作结果是否与 DoD 描述一致？
+    # 如有截图与期望不符 → 输出 FAIL，feedback 说明哪张图有问题
+    ls /tmp/windows-cloud-screenshots/*.png 2>/dev/null | head -20
+  fi
+
+  SCREENSHOTS_JSON="[]"
+fi
+```
+
+---
+
 #### Step B-3: 判断结果
 
 **脚本 exit 0（通过）**：
