@@ -981,4 +981,96 @@ router.get('/stats', async (req, res) => {
   }
 });
 
+// GET /api/brain/harness/initiative/:id/ws-progress
+// 返回 initiative 下各 workstream 的实时进度（从 checkpoint_blobs + tasks 表聚合）
+router.get('/initiative/:id/ws-progress', async (req, res) => {
+  const { id } = req.params;
+
+  // UUID 格式校验
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)) {
+    return res.status(404).json({ error: 'initiative not found' });
+  }
+
+  try {
+    // 验证 initiative 存在
+    const { rows: initRows } = await pool.query(
+      `SELECT id FROM tasks WHERE id = $1::uuid AND task_type = 'harness_initiative'`,
+      [id]
+    );
+    if (initRows.length === 0) {
+      return res.status(404).json({ error: 'initiative not found' });
+    }
+
+    // 查询 checkpoint_blobs 获取 WS 线程记录（thread_id 格式: harness-task:{initiative_id}:ws%）
+    let cbThreadIds = [];
+    try {
+      const { rows: cbRows } = await pool.query(
+        `SELECT DISTINCT thread_id
+         FROM checkpoint_blobs
+         WHERE thread_id LIKE $1
+         ORDER BY thread_id ASC`,
+        [`harness-task:${id}:ws%`]
+      );
+      cbThreadIds = cbRows.map((r) => r.thread_id);
+    } catch (_cbErr) {
+      // checkpoint_blobs 表可能不存在或无数据，降级处理
+    }
+
+    // 查询 harness_generate / harness_fix 子任务获取完整进度信息
+    const { rows: taskRows } = await pool.query(
+      `SELECT
+         payload->>'logical_task_id'   AS ws_id,
+         title,
+         status,
+         payload->>'evaluate_verdict'  AS evaluate_verdict,
+         payload->>'pr_url'            AS pr_url,
+         COALESCE((payload->>'fix_round')::int, 0) AS fix_round,
+         payload->>'container_id'      AS container_id
+       FROM tasks
+       WHERE payload->>'parent_task_id' = $1
+         AND task_type IN ('harness_generate', 'harness_fix', 'harness_evaluate')
+       ORDER BY created_at ASC`,
+      [id]
+    );
+
+    // 合并 checkpoint_blobs 线程 ID 与 tasks 数据
+    const wsMap = new Map();
+    for (const t of taskRows) {
+      if (t.ws_id) {
+        wsMap.set(t.ws_id, {
+          ws_id: t.ws_id,
+          title: t.title || '',
+          status: t.status || null,
+          evaluate_verdict: t.evaluate_verdict || null,
+          pr_url: t.pr_url || null,
+          fix_round: t.fix_round || 0,
+          container_id: t.container_id || null,
+        });
+      }
+    }
+
+    // 补充 checkpoint_blobs 线程中未在 tasks 出现的 ws 条目
+    for (const threadId of cbThreadIds) {
+      const wsMatch = threadId.match(/harness-task:[^:]+:(ws\d+)$/);
+      if (wsMatch && !wsMap.has(wsMatch[1])) {
+        wsMap.set(wsMatch[1], {
+          ws_id: wsMatch[1],
+          title: '',
+          status: null,
+          evaluate_verdict: null,
+          pr_url: null,
+          fix_round: 0,
+          container_id: null,
+        });
+      }
+    }
+
+    const workstreams = Array.from(wsMap.values());
+    return res.json({ initiative_id: id, workstreams });
+  } catch (err) {
+    console.error('[GET /harness/initiative/:id/ws-progress]', err.message);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
 export default router;

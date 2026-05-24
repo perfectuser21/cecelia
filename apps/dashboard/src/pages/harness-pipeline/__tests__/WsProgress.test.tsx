@@ -3,9 +3,10 @@
  */
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'fs';
+import { join } from 'path';
 
 describe('WsProgressSection 渲染测试 [BEHAVIOR]', () => {
-  const PAGE_FILE = 'apps/dashboard/src/pages/harness-pipeline/HarnessPipelinePage.tsx';
+  const PAGE_FILE = join(import.meta.dirname, '../HarnessPipelinePage.tsx');
 
   it('WsProgressSection 基本渲染 — data-testid 存在', () => {
     const src = readFileSync(PAGE_FILE, 'utf8');
