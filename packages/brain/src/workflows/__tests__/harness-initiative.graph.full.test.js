@@ -95,6 +95,7 @@ import {
   reportNode,
   buildHarnessFullGraph,
   inferTaskPlanNode,
+  runPlannerNode,   // ← 新增
 } from '../harness-initiative.graph.js';
 
 // ─── 5 节点单测 ────────────────────────────────────────────────────────────
@@ -245,6 +246,69 @@ describe('finalE2eNode', () => {
   });
 });
 
+describe('runPlannerNode — prep_prd_body 注入', () => {
+  it('prompt 含 prep_prd_body 内容', async () => {
+    const capturedArgs = [];
+    mockSpawn.mockImplementation(async (taskArg) => {
+      capturedArgs.push(taskArg);
+      return { exit_code: 0, stdout: 'plannerOutput', stderr: '' };
+    });
+    mockResolveTok.mockResolvedValue('gh-token');
+    mockEnsureWt.mockResolvedValue('/wt');
+    mockReadFile.mockRejectedValue(new Error('no file'));
+
+    await runPlannerNode({
+      task: {
+        id: 'task-1',
+        title: 'test feature',
+        description: 'test desc',
+        payload: {
+          sprint_dir: 'sprints/test',
+          prep_prd_body: '# PrepPRD\n## Journey 当前状态\n- ✅ Step A',
+          journey_id: 'journey-uuid-123',
+        },
+      },
+      initiativeId: 'init-1',
+      worktreePath: '/wt',
+      githubToken: 'gh-token',
+    });
+
+    expect(capturedArgs.length).toBeGreaterThan(0);
+    const prompt = capturedArgs[0].prompt;
+    expect(prompt).toContain('PrepPRD');
+    expect(prompt).toContain('Journey 当前状态');
+  });
+
+  it('env 含 CECELIA_JOURNEY_ID', async () => {
+    const capturedArgs = [];
+    mockSpawn.mockImplementation(async (taskArg) => {
+      capturedArgs.push(taskArg);
+      return { exit_code: 0, stdout: 'plannerOutput', stderr: '' };
+    });
+    mockResolveTok.mockResolvedValue('gh-token');
+    mockEnsureWt.mockResolvedValue('/wt');
+    mockReadFile.mockRejectedValue(new Error('no file'));
+
+    await runPlannerNode({
+      task: {
+        id: 'task-1',
+        title: 'test',
+        description: 'test',
+        payload: {
+          sprint_dir: 'sprints/test',
+          journey_id: 'journey-uuid-456',
+        },
+      },
+      initiativeId: 'init-1',
+      worktreePath: '/wt',
+      githubToken: 'gh-token',
+    });
+
+    const env = capturedArgs[0].env;
+    expect(env.CECELIA_JOURNEY_ID).toBe('journey-uuid-456');
+  });
+});
+
 describe('reportNode', () => {
   beforeEach(() => { mockPool.query.mockReset(); });
 
@@ -315,6 +379,24 @@ describe('reportNode', () => {
     });
     expect(mockPool.query).not.toHaveBeenCalled();
     expect(delta.report_path).toBe('already-set');
+  });
+
+  it('PASS → 第 3 次 query 是 INSERT INTO tasks (harness_report spawn)', async () => {
+    mockPool.query.mockResolvedValue({ rows: [] });
+    await reportNode({
+      initiativeId: 'i-spawn',
+      sub_tasks: [{ id: 's1', cost_usd: 0.1 }],
+      final_e2e_verdict: 'PASS',
+      sprintDir: 'sprints/test',
+      task: {
+        title: 'test feature',
+        payload: { journey_id: 'j1', feature_id: 'f1' },
+      },
+    });
+    expect(mockPool.query).toHaveBeenCalledTimes(3);
+    const insertCall = mockPool.query.mock.calls[2];
+    expect(insertCall[0]).toMatch(/INSERT INTO tasks/i);
+    expect(insertCall[0]).toContain('harness_report');
   });
 });
 
