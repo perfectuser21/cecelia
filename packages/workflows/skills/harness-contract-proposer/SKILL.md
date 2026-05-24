@@ -305,6 +305,63 @@ Write-Host "✅ windows_cloud E2E 验证通过 version=$InstalledVersion"
 
 ---
 
+#### windows_cloud 变体 B：Playwright dryrun（ZenithJoy publisher 验证）
+
+> 适用：sprint 目标是验证 `publish-{platform}-{type}-dryrun.cjs` 在 GitHub Actions windows-latest 上执行，非安装包交付。
+> 典型场景：`zj-douyin-article-agent-port`、任何 publisher dryrun sprint。
+
+**E2E 验收步骤（写入 `sprints/.../e2e-verify.ps1`）**：
+
+```powershell
+# final-e2e 验证脚本 — ZenithJoy publisher dryrun（windows-latest）
+param(
+  [string]$Platform = "{platform}",
+  [string]$PublishType = "{type}",
+  [string]$QueueJson = "$PSScriptRoot\test-queue.json"
+)
+
+Set-StrictMode -Version Latest
+$ErrorActionPreference = "Stop"
+
+# 1. 安装依赖
+Set-Location "$PSScriptRoot\..\.."
+npm ci --prefer-offline 2>&1 | Select-Object -Last 5
+npx playwright install chromium 2>&1 | Select-Object -Last 5
+
+# 2. 创建测试队列文件
+$queue = @([PSCustomObject]@{
+  title   = "测试文章标题"
+  content = "测试正文内容，用于 dryrun 验证。"
+  cover   = ""
+})
+$queue | ConvertTo-Json -Depth 5 | Out-File -FilePath $QueueJson -Encoding utf8
+
+# 3. 执行 dryrun 脚本
+$scriptPath = "services\agent\publishers\$Platform-publisher\publish-$Platform-$PublishType-dryrun.cjs"
+$output = node $scriptPath $QueueJson 2>&1
+$lastLine = ($output | Where-Object { $_ -match '^\{' } | Select-Object -Last 1)
+
+if (-not $lastLine) {
+  Write-Error "FAIL: 脚本无 JSON 输出"
+  exit 1
+}
+
+$result = $lastLine | ConvertFrom-Json
+if (-not $result.ok -or -not $result.dryRun) {
+  Write-Error "FAIL: ok=$($result.ok) dryRun=$($result.dryRun)"
+  exit 1
+}
+
+Write-Host "✅ dryrun 验证通过: ok=$($result.ok) dryRun=$($result.dryRun)"
+exit 0
+```
+
+**PASS 标准**：脚本 exit 0 + stdout JSON `ok:true, dryRun:true`
+**FAIL 标准**：exit 1 OR `ok:false` OR timeout 15min
+**GHA workflow**：`.github/workflows/e2e-windows.yml`（`workflow_dispatch` + `windows-latest`）
+
+---
+
 ### target_environment = linux_server（生产 API — SSH 到 hk-vps 执行）
 
 ```bash
