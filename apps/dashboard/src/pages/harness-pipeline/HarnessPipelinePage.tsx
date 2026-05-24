@@ -41,9 +41,20 @@ interface LangGraphSummary {
   ws_verdicts?: Array<string | null>;
 }
 
+interface WsWorkstream {
+  ws_id: string;
+  title: string;
+  status: string;
+  evaluate_verdict: string | null;
+  pr_url: string | null;
+  fix_round: number;
+  container_id: string | null;
+}
+
 interface Pipeline {
   pipeline_id: string;
   planner_task_id: string | null;
+  task_type?: string;
   sprint_dir: string | null;
   title: string;
   description?: string;
@@ -188,6 +199,74 @@ export function formatLangGraphSummary(lg: LangGraphSummary, status: string): st
   if (lg.gan_rounds > 0) parts.push(`GAN ${lg.gan_rounds} 轮`);
   if (lg.fix_rounds > 0) parts.push(`Fix ${lg.fix_rounds} 轮`);
   return parts.join(' · ');
+}
+
+// ─── 组件：WS 进度区块 ────────────────────────────────────────────────────────
+
+const VERDICT_BADGE: Record<string, string> = {
+  PASS: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300',
+  FAIL: 'bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300',
+  FIXED: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300',
+};
+
+function WsProgressSection({ initiativeId }: { initiativeId: string }) {
+  const [workstreams, setWorkstreams] = useState<WsWorkstream[] | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetch(`/api/brain/harness/initiative/${initiativeId}/ws-progress`)
+      .then(r => r.ok ? r.json() : null)
+      .then(data => { if (!cancelled && data) setWorkstreams(data.workstreams); })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [initiativeId]);
+
+  if (!workstreams || workstreams.length === 0) return null;
+
+  return (
+    <div className="mt-2 border-t border-slate-100 dark:border-slate-700 pt-2" data-testid="ws-progress-section">
+      <div className="text-[10px] font-semibold text-slate-400 dark:text-slate-500 uppercase tracking-wide mb-1.5">
+        Workstreams
+      </div>
+      <div className="space-y-1">
+        {workstreams.map(ws => {
+          const s = normalizeStatus(ws.status);
+          const prMatch = ws.pr_url?.match(/\/pull\/(\d+)/);
+          const prNo = prMatch?.[1];
+          return (
+            <div key={ws.ws_id} className="flex items-center gap-2 text-xs">
+              <span className="shrink-0">{STATUS_ICON[s] ?? '—'}</span>
+              <span className={`font-mono text-[10px] shrink-0 ${STATUS_COLOR[s] ?? STATUS_COLOR.not_started}`}>
+                {ws.ws_id}
+              </span>
+              <span className="text-slate-600 dark:text-slate-300 truncate flex-1 min-w-0">
+                {ws.title || ws.ws_id}
+              </span>
+              {ws.evaluate_verdict && (
+                <span className={`text-[10px] font-bold px-1 py-0.5 rounded shrink-0 ${VERDICT_BADGE[ws.evaluate_verdict] ?? 'bg-slate-100 text-slate-600 dark:bg-slate-700 dark:text-slate-300'}`}>
+                  {ws.evaluate_verdict}
+                </span>
+              )}
+              {ws.fix_round > 0 && (
+                <span className="text-[10px] text-slate-400 shrink-0">Fix×{ws.fix_round}</span>
+              )}
+              {prNo && ws.pr_url && (
+                <a
+                  href={ws.pr_url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-[10px] text-blue-500 hover:underline shrink-0"
+                  onClick={e => e.stopPropagation()}
+                >
+                  PR #{prNo}
+                </a>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
 }
 
 // ─── 组件：单阶段徽章 ─────────────────────────────────────────────────────────
@@ -336,13 +415,16 @@ function PipelineCard({ pipeline }: { pipeline: Pipeline }) {
         </div>
       </div>
 
-      {/* 阶段徽章栏 */}
+      {/* 阶段徽章栏 + WS 进度 */}
       <div className="px-4 pb-3">
         <div className="flex flex-wrap gap-1.5">
           {stages.map(stage => (
             <StageBadge key={stage.task_type} stage={stage} />
           ))}
         </div>
+        {pipeline.task_type === 'harness_initiative' && (
+          <WsProgressSection initiativeId={pipeline.pipeline_id} />
+        )}
       </div>
 
       {/* 展开详情 */}
