@@ -49,11 +49,11 @@ journey_type: user_facing
   期望: OK running/spawning 分支存在
 
 - [x] [BEHAVIOR] WsProgress.test.tsx vitest 渲染测试通过（WsProgressSection 基本渲染 + 空 workstreams 处理）
-  Test: manual:bash -c 'cd /workspace && npx vitest run apps/dashboard/src/pages/harness-pipeline/__tests__/WsProgress.test.tsx'
+  Test: manual:bash -c 'cd /workspace/apps/dashboard && npx vitest run src/pages/harness-pipeline/__tests__/WsProgress.test.tsx'
   期望: exit 0（所有渲染测试通过）
 
 - [x] [BEHAVIOR] WsStatusIcon.test.tsx vitest 测试通过（4 条 status→图标映射规则全覆盖）
-  Test: manual:bash -c 'cd /workspace && npx vitest run apps/dashboard/src/pages/harness-pipeline/__tests__/WsStatusIcon.test.tsx'
+  Test: manual:bash -c 'cd /workspace/apps/dashboard && npx vitest run src/pages/harness-pipeline/__tests__/WsStatusIcon.test.tsx'
   期望: exit 0（4 条图标映射测试全通过）
 
 - [x] [BEHAVIOR] UI 源码含标题 ≤30 字截断逻辑（slice/substring/substr 截取，PRD「ws_id | 标题（≤30字）」要求）
