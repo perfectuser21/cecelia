@@ -23,25 +23,25 @@ journey_type: user_facing
 ## BEHAVIOR 条目（manual:bash 真环境验证，psql 使用 $DB_HOST/$DB_USER/$DB_PASSWORD/$DB_NAME 单独变量）
 
 - [x] [BEHAVIOR] ws-progress API 返回顶层 keys 精确等于 ["initiative_id","workstreams"]（schema 完整性）
-  Test: manual:bash -c 'INIT_ID=$(PGPASSWORD=$DB_PASSWORD psql -h $DB_HOST -U $DB_USER -d $DB_NAME -t -c "SELECT id FROM tasks WHERE task_type='"'"'harness_initiative'"'"' LIMIT 1" | tr -d " "); [ -z "$INIT_ID" ] && { echo "SKIP: no harness_initiative data in test DB"; exit 0; }; RESP=$(curl -sf localhost:5221/api/brain/harness/initiative/$INIT_ID/ws-progress); echo "$RESP" | jq -e '"'"'keys == ["initiative_id","workstreams"]'"'"' || exit 1; echo OK'
+  Test: manual:bash -c 'INIT_ID=$(PGPASSWORD=$DB_PASSWORD psql -h $DB_HOST -U $DB_USER -d $DB_NAME -t -A -c "SELECT id FROM tasks WHERE task_type='"'"'harness_initiative'"'"' LIMIT 1" | tr -d " \n"); [ -z "$INIT_ID" ] && exit 0; RESP=$(curl -sf localhost:5221/api/brain/harness/initiative/$INIT_ID/ws-progress); jq -e '"'"'keys == ["initiative_id","workstreams"]'"'"' <<< "$RESP" || exit 1'
   期望: OK
 
 - [x] [BEHAVIOR] initiative_id 字段值等于请求路径中的 id（字段值正确）
-  Test: manual:bash -c 'INIT_ID=$(PGPASSWORD=$DB_PASSWORD psql -h $DB_HOST -U $DB_USER -d $DB_NAME -t -c "SELECT id FROM tasks WHERE task_type='"'"'harness_initiative'"'"' LIMIT 1" | tr -d " "); [ -z "$INIT_ID" ] && { echo "SKIP: no harness_initiative data in test DB"; exit 0; }; RESP=$(curl -sf localhost:5221/api/brain/harness/initiative/$INIT_ID/ws-progress); echo "$RESP" | jq -e --arg id "$INIT_ID" '"'"'.initiative_id == $id'"'"' || exit 1; echo OK'
+  Test: manual:bash -c 'INIT_ID=$(PGPASSWORD=$DB_PASSWORD psql -h $DB_HOST -U $DB_USER -d $DB_NAME -t -A -c "SELECT id FROM tasks WHERE task_type='"'"'harness_initiative'"'"' LIMIT 1" | tr -d " \n"); [ -z "$INIT_ID" ] && exit 0; RESP=$(curl -sf localhost:5221/api/brain/harness/initiative/$INIT_ID/ws-progress); jq -e --arg id "$INIT_ID" '"'"'.initiative_id == $id'"'"' <<< "$RESP" || exit 1'
   期望: OK
 
 - [x] [BEHAVIOR] workstreams 是数组且不包含禁用字段（keys 完整性 + 禁用字段反向检查）
-  Test: manual:bash -c 'INIT_ID=$(PGPASSWORD=$DB_PASSWORD psql -h $DB_HOST -U $DB_USER -d $DB_NAME -t -c "SELECT id FROM tasks WHERE task_type='"'"'harness_initiative'"'"' LIMIT 1" | tr -d " "); [ -z "$INIT_ID" ] && { echo "SKIP: no harness_initiative data in test DB"; exit 0; }; RESP=$(curl -sf localhost:5221/api/brain/harness/initiative/$INIT_ID/ws-progress); echo "$RESP" | jq -e '"'"'.workstreams | type == "array"'"'"' || exit 1; for f in steps phases stages result data ws_list; do echo "$RESP" | jq -e "has(\"$f\") | not" || exit 1; done; echo OK'
+  Test: manual:bash -c 'INIT_ID=$(PGPASSWORD=$DB_PASSWORD psql -h $DB_HOST -U $DB_USER -d $DB_NAME -t -A -c "SELECT id FROM tasks WHERE task_type='"'"'harness_initiative'"'"' LIMIT 1" | tr -d " \n"); [ -z "$INIT_ID" ] && exit 0; RESP=$(curl -sf localhost:5221/api/brain/harness/initiative/$INIT_ID/ws-progress); jq -e '"'"'.workstreams | type == "array"'"'"' <<< "$RESP" || exit 1; for f in steps phases stages result data ws_list; do jq -e "has(\"$f\") | not" <<< "$RESP" || exit 1; done'
   期望: OK
 
 - [x] [BEHAVIOR] 无 WS checkpoint 的 initiative 返回 workstreams=[]（空数组边界）
-  Test: manual:bash -c 'NEW_ID=$(PGPASSWORD=$DB_PASSWORD psql -h $DB_HOST -U $DB_USER -d $DB_NAME -t -c "INSERT INTO tasks (task_type,status,title) VALUES ('"'"'harness_initiative'"'"','"'"'queued'"'"','"'"'test-empty-ws-dod'"'"') RETURNING id" | tr -d " "); RESP=$(curl -sf localhost:5221/api/brain/harness/initiative/$NEW_ID/ws-progress); PGPASSWORD=$DB_PASSWORD psql -h $DB_HOST -U $DB_USER -d $DB_NAME -c "DELETE FROM tasks WHERE id='"'"'$NEW_ID'"'"'" >/dev/null; echo "$RESP" | jq -e '"'"'.workstreams == []'"'"' || exit 1; echo OK'
+  Test: manual:bash -c 'CR=$(curl -sf -X POST localhost:5221/api/brain/tasks -H '"'"'Content-Type: application/json'"'"' -d '"'"'{"task_type":"harness_initiative","status":"queued","title":"test-empty-ws-dod"}'"'"'); NEW_ID=$(node -e "process.stdout.write(JSON.parse(require('"'"'fs'"'"').readFileSync('"'"'/dev/stdin'"'"','"'"'utf8'"'"')).id)" <<< "$CR"); RESP=$(curl -sf localhost:5221/api/brain/harness/initiative/$NEW_ID/ws-progress); PGPASSWORD=$DB_PASSWORD psql -h $DB_HOST -U $DB_USER -d $DB_NAME -c "DELETE FROM tasks WHERE id='"'"'$NEW_ID'"'"'" >/dev/null; jq -e '"'"'.workstreams == []'"'"' <<< "$RESP" || exit 1'
   期望: OK
 
 - [x] [BEHAVIOR] 不存在的 initiative_id 返回 HTTP 404 + error 字段（error path）
-  Test: manual:bash -c 'CODE=$(curl -s -o /dev/null -w "%{http_code}" "localhost:5221/api/brain/harness/initiative/00000000-0000-0000-0000-000000000000/ws-progress"); [ "$CODE" = "404" ] || exit 1; BODY=$(curl -s "localhost:5221/api/brain/harness/initiative/00000000-0000-0000-0000-000000000000/ws-progress"); echo "$BODY" | jq -e '"'"'.error == "initiative not found"'"'"' || exit 1; echo OK'
+  Test: manual:bash -c 'CODE=$(curl -s -o /dev/null -w "%{http_code}" "localhost:5221/api/brain/harness/initiative/00000000-0000-0000-0000-000000000000/ws-progress"); [ "$CODE" = "404" ] || exit 1; jq -e '"'"'.error == "initiative not found"'"'"' <<< "$(curl -s localhost:5221/api/brain/harness/initiative/00000000-0000-0000-0000-000000000000/ws-progress)" || exit 1'
   期望: OK
 
 - [x] [BEHAVIOR] workstream 子对象 fix_round 是 number 类型（字段类型校验）
-  Test: manual:bash -c 'INIT_ID=$(PGPASSWORD=$DB_PASSWORD psql -h $DB_HOST -U $DB_USER -d $DB_NAME -t -c "SELECT t.id FROM tasks t INNER JOIN checkpoint_blobs cb ON cb.thread_id LIKE '"'"'harness-task:'"'"' || t.id::text || '"'"':ws%'"'"' WHERE t.task_type='"'"'harness_initiative'"'"' LIMIT 1" | tr -d " "); [ -z "$INIT_ID" ] && { echo "SKIP: no initiative with checkpoints"; exit 0; }; RESP=$(curl -sf localhost:5221/api/brain/harness/initiative/$INIT_ID/ws-progress); echo "$RESP" | jq -e '"'"'.workstreams[0].fix_round | type == "number"'"'"' || exit 1; echo OK'
+  Test: manual:bash -c 'INIT_ID=$(PGPASSWORD=$DB_PASSWORD psql -h $DB_HOST -U $DB_USER -d $DB_NAME -t -A -c "SELECT t.id FROM tasks t INNER JOIN checkpoint_blobs cb ON cb.thread_id LIKE '"'"'harness-task:'"'"' || t.id::text || '"'"':ws%'"'"' WHERE t.task_type='"'"'harness_initiative'"'"' LIMIT 1" | tr -d " \n"); [ -z "$INIT_ID" ] && exit 0; RESP=$(curl -sf localhost:5221/api/brain/harness/initiative/$INIT_ID/ws-progress); jq -e '"'"'.workstreams[0].fix_round | type == "number"'"'"' <<< "$RESP" || exit 1'
   期望: OK
