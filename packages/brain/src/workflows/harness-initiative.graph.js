@@ -579,6 +579,9 @@ ${skillContent}
 ## 任务描述
 ${state.task.description || state.task.title || ''}
 
+## PrepPRD（产品语言，用户确认过的需求文档）
+${state.task?.payload?.prep_prd_body || '（未提供，Planner 从 sprint-prd.md 推断）'}
+
 ## 输出要求（v2）
 1. 生成 ${sprintDir}/sprint-prd.md（What，不写 How）
 2. 在 stdout 末尾输出 task-plan.json
@@ -593,6 +596,7 @@ ${state.task.description || state.task.title || ''}
         HARNESS_NODE: 'planner',
         HARNESS_SPRINT_DIR: sprintDir,
         HARNESS_INITIATIVE_ID: state.initiativeId,
+        CECELIA_JOURNEY_ID: state.task?.payload?.journey_id || '',
         GITHUB_TOKEN: state.githubToken,
       },
     };
@@ -1266,6 +1270,27 @@ export async function reportNode(state, opts = {}) {
     );
   } catch (err) {
     console.warn(`[harness-initiative.graph] reportNode db update failed: ${err.message}`);
+  }
+  // 派 harness_report 子任务（6 步交付：Notion / 飞书 / harness-report.md）
+  try {
+    await dbPool.query(
+      `INSERT INTO tasks (title, description, task_type, status, priority, payload)
+       VALUES ($1, $2, 'harness_report', 'queued', 'P2', $3::jsonb)`,
+      [
+        `[Harness Report] ${state.task?.title || state.initiativeId}`,
+        `Auto-spawned by reportNode for initiative ${state.initiativeId}`,
+        JSON.stringify({
+          initiative_id: state.initiativeId,
+          final_e2e_verdict: state.final_e2e_verdict,
+          sprint_dir: state.sprintDir,
+          journey_id: state.task?.payload?.journey_id,
+          feature_id: state.task?.payload?.feature_id,
+          sub_tasks: state.sub_tasks || [],
+        }),
+      ]
+    );
+  } catch (err) {
+    console.warn(`[harness-initiative.graph] reportNode spawn harness_report failed: ${err.message}`);
   }
   return { report_path: reportContent };
 }

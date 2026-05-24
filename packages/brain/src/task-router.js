@@ -53,6 +53,7 @@ const VALID_TASK_TYPES = [
   'harness_initiative',    // 阶段 A 入口（一个 Initiative 一条）
   'harness_task',          // 阶段 B 单 Task（内部状态机，不派 agent）
   'harness_final_e2e',     // 阶段 C 最终 E2E 验收
+  'harness_evaluate',    // Evaluator 对抗性功能验收（已在 SKILL_WHITELIST）
 ];
 
 // 支持 P2P 异步回调的任务类型
@@ -269,6 +270,7 @@ const LOCATION_MAP = {
   'harness_initiative': 'us',     // 阶段 A 入口（复用 planner skill 运行 /dev）
   'harness_task': 'us',           // 阶段 B 单 Task（tick 内部，US Brain 处理）
   'harness_final_e2e': 'us',      // 阶段 C 最终 E2E（复用 evaluator skill）
+  'harness_evaluate': 'us',      // Layer 3e: Evaluator 对抗性功能验收 → US
 };
 
 // Default location
