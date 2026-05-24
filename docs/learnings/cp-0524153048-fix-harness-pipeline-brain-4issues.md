@@ -1,5 +1,7 @@
 # Learning — cp-0524153048-fix-harness-pipeline-brain-4issues
 
+## Harness Pipeline Brain 三处断链修复（2026-05-24）
+
 ### 根本原因
 
 task-router.js 有两张独立的路由表（VALID_TASK_TYPES + LOCATION_MAP），两者互不自动同步。harness_evaluate 在 SKILL_WHITELIST 中已注册，但因未双写另两张表导致路由校验失败。
