@@ -70,7 +70,7 @@ journey_type: user_facing
 
 ## BEHAVIOR:E2E 条目（user_facing 专属，Mode B final-e2e 跑）
 
-- [ ] [BEHAVIOR:E2E] WS 进度行在实际浏览器中正确渲染，截图可视化验证
+- [x] [BEHAVIOR:E2E] WS 进度行在实际浏览器中正确渲染，截图可视化验证
   Screenshots:
     - 01-initial.png   期望：/pipeline 页面加载完成，pipeline 卡片列表可见，页面无报错红框
     - 02-ws-progress-visible.png    期望：in_progress pipeline card 内 ws-progress-section 区块显示，WS 进度行含状态图标和 ws_id 标签

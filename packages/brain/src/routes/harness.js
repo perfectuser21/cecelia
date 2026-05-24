@@ -1012,7 +1012,7 @@ router.get('/initiative/:id/ws-progress', async (req, res) => {
         [`harness-task:${id}:ws%`]
       );
       cbThreadIds = cbRows.map((r) => r.thread_id);
-    } catch (_cbErr) {
+    } catch {
       // checkpoint_blobs 表可能不存在或无数据，降级处理
     }
 
