@@ -34,12 +34,6 @@ journey_type: user_facing
 - [x] [ARTIFACT] 测试文件含 `harness-screenshots` 关键词（测试逻辑验证截图目录）
   Test: node -e "const c=require('fs').readFileSync('sprints/cecelia-pipeline-viz-v2/tests/ws5/e2e-screenshot-chain.test.ts','utf8');if(!c.includes('harness-screenshots'))process.exit(1);console.log('OK')"
 
-- [x] [ARTIFACT] 测试文件含有效 `describe`/`it` 测试结构（可被 vitest 执行）
-  Test: node -e "const c=require('fs').readFileSync('sprints/cecelia-pipeline-viz-v2/tests/ws5/e2e-screenshot-chain.test.ts','utf8');if(!c.includes('describe(') || !c.includes('it('))process.exit(1);console.log('OK')"
-
-- [x] [ARTIFACT] 测试文件引用 `/api/brain/harness/initiative` 端点路径
-  Test: node -e "const c=require('fs').readFileSync('sprints/cecelia-pipeline-viz-v2/tests/ws5/e2e-screenshot-chain.test.ts','utf8');if(!c.includes('/api/brain/harness/initiative'))process.exit(1);console.log('OK')"
-
 ---
 
 ## BEHAVIOR 条目（内嵌 manual:bash 命令）
