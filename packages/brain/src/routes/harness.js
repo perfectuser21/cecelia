@@ -50,14 +50,20 @@ router.get('/initiative/:id/detail', async (req, res) => {
       return res.status(404).json({ error: 'initiative not found' });
     }
 
-    const { rows: contractRows } = await pool.query(
-      `SELECT prd_content, contract_content, review_rounds
-       FROM initiative_contracts
-       WHERE initiative_id::text = $1
-       ORDER BY version DESC LIMIT 1`,
-      [id]
-    );
-    const contract = contractRows[0] || null;
+    let contract = null;
+    try {
+      const { rows: contractRows } = await pool.query(
+        `SELECT prd_content, contract_content, review_rounds
+         FROM initiative_contracts
+         WHERE initiative_id::text = $1
+         ORDER BY version DESC LIMIT 1`,
+        [id]
+      );
+      contract = contractRows[0] || null;
+    } catch (colErr) {
+      // R2a: column not found (42703) → treat as null; re-throw anything else
+      if (colErr.code !== '42703') throw colErr;
+    }
 
     const { rows: eventRows } = await pool.query(
       `SELECT payload, created_at
@@ -66,21 +72,30 @@ router.get('/initiative/:id/detail', async (req, res) => {
        ORDER BY created_at ASC`,
       [id]
     );
-    const step_timing = eventRows.map(row => ({
-      node: row.payload?.nodeName || 'unknown',
-      ts: row.created_at,
-    }));
+    const step_timing = eventRows.map((row, i) => {
+      const next = eventRows[i + 1];
+      const started_at = row.created_at;
+      const ended_at = next ? next.created_at : null;
+      const duration_ms = ended_at ? new Date(ended_at) - new Date(started_at) : null;
+      return { node: row.payload?.nodeName || 'unknown', started_at, ended_at, duration_ms };
+    });
 
-    const { rows: blobRows } = await pool.query(
-      `SELECT blob FROM checkpoint_blobs
-       WHERE thread_id LIKE $1 AND channel = 'screenshot_url' AND type = 'json'`,
-      [`harness-task:${id}:%`]
-    );
-    const screenshot_urls = blobRows
-      .map(row => {
-        try { return JSON.parse(Buffer.from(row.blob).toString('utf8')); } catch { return null; }
-      })
-      .filter(url => typeof url === 'string');
+    let screenshot_urls = [];
+    try {
+      const { rows: blobRows } = await pool.query(
+        `SELECT blob FROM checkpoint_blobs
+         WHERE thread_id LIKE $1 AND channel = 'screenshot_url' AND type = 'json'`,
+        [`harness-task:${id}:%`]
+      );
+      screenshot_urls = blobRows
+        .map(row => {
+          try { return JSON.parse(Buffer.from(row.blob).toString('utf8')); } catch { return null; }
+        })
+        .filter(url => typeof url === 'string');
+    } catch (blobErr) {
+      // R2b: table does not exist (42P01) → empty array; re-throw anything else
+      if (blobErr.code !== '42P01') throw blobErr;
+    }
 
     res.json({
       initiative_id: String(id),
