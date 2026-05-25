@@ -8,7 +8,7 @@ sprint_dir: sprints/cecelia-pipeline-viz-v2
 
 ## ARTIFACT
 
-- [ ] HarnessPipelinePage.tsx 含 `initiative-detail-panel` data-testid
-- [ ] HarnessPipelinePage.tsx 含 `initiative-prd-content` data-testid
-- [ ] HarnessPipelinePage.tsx 含 `initiative-step-timeline` data-testid
-- [ ] HarnessPipelinePage.tsx 含 `initiative-card` data-testid（点击入口）
+- [x] HarnessPipelinePage.tsx 含 `initiative-detail-panel` data-testid
+- [x] HarnessPipelinePage.tsx 含 `initiative-prd-content` data-testid
+- [x] HarnessPipelinePage.tsx 含 `initiative-step-timeline` data-testid
+- [x] HarnessPipelinePage.tsx 含 `initiative-card` data-testid（点击入口）

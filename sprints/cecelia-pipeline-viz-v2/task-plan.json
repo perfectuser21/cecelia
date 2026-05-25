@@ -1,0 +1,100 @@
+{
+  "initiative_id": "pending",
+  "journey_type": "user_facing",
+  "journey_type_reason": "WS3 涉及 apps/dashboard/ React UI，initiative 详情面板是用户交互核心；target_environment=mac_web（本机 Playwright localhost:5174 验收）",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "SKILL.md mac_web 合约模板注入截图 DoD 条目",
+      "scope": "在 packages/workflows/skills/harness-contract-proposer/SKILL.md 的 mac_web 合约模板区块末尾添加 [BEHAVIOR:E2E:screenshot] 条目，格式：evaluator 验收后截图存 screenshots/<ws_id>-<step>.png，复制到 ~/claude-output/harness-screenshots/",
+      "dod": [
+        "[ARTIFACT] SKILL.md 含 [BEHAVIOR:E2E:screenshot] 截图条目文字",
+        "[ARTIFACT] 截图条目包含 ~/claude-output/harness-screenshots/ 目标路径",
+        "[BEHAVIOR] grep -c [BEHAVIOR:E2E:screenshot] SKILL.md ≥ 1",
+        "[BEHAVIOR] 截图条目位于 mac_web 合约模板区块内"
+      ],
+      "files": [
+        "packages/workflows/skills/harness-contract-proposer/SKILL.md"
+      ],
+      "depends_on": [],
+      "complexity": "S",
+      "estimated_minutes": 20
+    },
+    {
+      "task_id": "ws2",
+      "title": "Brain API 新增 GET /api/brain/harness/initiative/:id/detail 端点",
+      "scope": "在 packages/brain/src/routes/harness.js 添加 GET /initiative/:id/detail 路由，从 tasks + initiative_contracts + task_events + checkpoint_blobs 组装响应 {initiative_id, prd_content, contract_content, gan_rounds, step_timing, screenshot_urls}；step_timing 从 graph_node_update 事件推算；新建 packages/brain/src/__tests__/harness-detail.test.js 含 mock pool 单测",
+      "dod": [
+        "[ARTIFACT] harness.js 含 /initiative/:id/detail 路由",
+        "[ARTIFACT] harness-detail.test.js 含单测",
+        "[BEHAVIOR] HTTP 200 + initiative_id(string) + step_timing(array) + screenshot_urls(array)",
+        "[BEHAVIOR] prd_content(string|null) + contract_content(string|null) + gan_rounds(number|null) 类型正确",
+        "[BEHAVIOR] 顶层 keys 完整性等于 PRD 定义集合",
+        "[BEHAVIOR] 禁用字段 steps/timeline/result/data/details/info 不出现",
+        "[BEHAVIOR] 404 + error string（initiative 不存在）"
+      ],
+      "files": [
+        "packages/brain/src/routes/harness.js",
+        "packages/brain/src/__tests__/harness-detail.test.js"
+      ],
+      "depends_on": ["ws1"],
+      "complexity": "M",
+      "estimated_minutes": 45
+    },
+    {
+      "task_id": "ws3",
+      "title": "Dashboard initiative 详情面板（侧栏/抽屉展示 PRD/合约/时间线/截图）",
+      "scope": "在 apps/dashboard/src/pages/harness-pipeline/HarnessPipelinePage.tsx 添加侧栏/抽屉组件：点击 initiative card → 调 /api/brain/harness/initiative/:id/detail → 渲染 PRD 全文 Markdown（initiative-prd-content）/ 步骤时间线（initiative-step-timeline）/ 截图 section（screenshot_urls 非空时）。添加 data-testid：initiative-card / initiative-detail-panel / initiative-prd-content / initiative-step-timeline / step-timeline-item",
+      "dod": [
+        "[ARTIFACT] HarnessPipelinePage.tsx 含 initiative-detail-panel / initiative-prd-content / initiative-step-timeline / initiative-card 四个 data-testid",
+        "[BEHAVIOR] npx tsc --noEmit 无 TypeScript 编译错误（组件非空壳）",
+        "[BEHAVIOR] 组件源码引用 /harness/initiative 路径（API 接入验证）",
+        "[BEHAVIOR] 组件含 screenshot_urls 条件渲染逻辑 + initiative-prd-content 渲染区块",
+        "[BEHAVIOR] 组件含 onClick + useState/useReducer + step_timing 驱动 initiative-step-timeline 渲染"
+      ],
+      "files": [
+        "apps/dashboard/src/pages/harness-pipeline/HarnessPipelinePage.tsx"
+      ],
+      "depends_on": ["ws2"],
+      "complexity": "M",
+      "estimated_minutes": 50
+    },
+    {
+      "task_id": "ws4",
+      "title": "reportNode 增强：新增 step_timing / ws_issues / ws_costs 三字段",
+      "scope": "在 packages/brain/src/workflows/harness-initiative.graph.js 的 reportNode 函数中，在构建 reportContent JSON 时新增三字段：step_timing（从 task_events 推算，同 /detail 端点逻辑）/ ws_issues（来自 sub_tasks 的 evaluator_feedback + ci_fail_type）/ ws_costs（来自 sub_tasks 的 ws_id + cost_usd）；禁止使用 timings/timing/issues/costs/breakdown 字段名。存储模型：reportContent 存为 tasks.result->'report_content'（JSONB 嵌套对象，不是文件路径）",
+      "dod": [
+        "[ARTIFACT] reportNode 的 reportContent 含 step_timing / ws_issues / ws_costs 字段名",
+        "[ARTIFACT] reportNode 使用 report_content 键写入 tasks.result（不使用 report_path）",
+        "[ARTIFACT] 禁用字段 timings/timing/issues/costs/breakdown 不出现在 reportContent 对象键",
+        "[BEHAVIOR] tasks.result->'report_content' 含 step_timing array",
+        "[BEHAVIOR] tasks.result->'report_content' 含 ws_issues array（元素含 ws_id/feedback/ci_fail_type）",
+        "[BEHAVIOR] tasks.result->'report_content' 含 ws_costs array（元素含 ws_id/cost_usd）",
+        "[BEHAVIOR] 禁用字段反向：report_content JSON 无 timings/timing/issues/costs/breakdown"
+      ],
+      "files": [
+        "packages/brain/src/workflows/harness-initiative.graph.js"
+      ],
+      "depends_on": ["ws3"],
+      "complexity": "S",
+      "estimated_minutes": 30
+    },
+    {
+      "task_id": "ws5",
+      "title": "E2E 截图链路验证（端到端验收 WS1-WS4 联动）",
+      "scope": "写 sprints/cecelia-pipeline-viz-v2/tests/ws5/e2e-screenshot-chain.test.ts，验证 harness-screenshots 目录有新 PNG + /detail API 端到端可访问 + Brain 健康；同时确认 ~/claude-output/harness-screenshots/ 目录创建逻辑",
+      "dod": [
+        "[ARTIFACT] e2e-screenshot-chain.test.ts 含 harness-screenshots 目录验证",
+        "[BEHAVIOR] ~/claude-output/harness-screenshots/ 目录可创建",
+        "[BEHAVIOR] /detail 端点返回 200 或 404（非 500 非 connection refused）",
+        "[BEHAVIOR] E2E 跑后 screenshots 目录有 ≥1 个新 PNG（带时间窗口）"
+      ],
+      "files": [
+        "sprints/cecelia-pipeline-viz-v2/tests/ws5/e2e-screenshot-chain.test.ts"
+      ],
+      "depends_on": ["ws4"],
+      "complexity": "S",
+      "estimated_minutes": 25
+    }
+  ]
+}
