@@ -79,6 +79,17 @@ app.get('/modulo', (req, res) => {
   return res.json({ remainder: Number(a) % Number(b) });
 });
 
+app.get('/subtract', (req, res) => {
+  const { a, b } = req.query;
+  if (a === undefined || b === undefined) {
+    return res.status(400).json({ error: 'a 和 b 都是必填 query 参数' });
+  }
+  if (typeof a !== 'string' || typeof b !== 'string' || !STRICT_NUMBER.test(a) || !STRICT_NUMBER.test(b)) {
+    return res.status(400).json({ error: 'a 和 b 必须匹配 ^-?\\d+(\\.\\d+)?$（禁止科学计数法、Infinity、前导 +、十六进制等）' });
+  }
+  return res.json({ result: Number(a) - Number(b), operation: 'subtract' });
+});
+
 app.get('/increment', (req, res) => {
   // 成功 schema 字面: { result: <number>, operation: "increment" }；strict ^-?\d+$；上界 |value| ≤ 9007199254740990；query 名 req.query.value
   const STRICT_INT = /^-?\d+$/;
