@@ -78,3 +78,60 @@ describe('runNotionPushSync', () => {
     expect(updateCall).toBeUndefined();
   });
 });
+
+describe('runNotionPushSync — new push functions', () => {
+  beforeEach(() => {
+    mockQuery.mockReset();
+    mockNotionReq.mockReset();
+    // default: no unsync'd rows
+    mockQuery.mockResolvedValue({ rows: [] });
+  });
+
+  it('calls pushSkillRegistry — queries skill_registry WHERE notion_synced_at IS NULL', async () => {
+    const { runNotionPushSync } = await import('../notion-push-sync.js');
+    await runNotionPushSync({ query: mockQuery });
+    const calls = mockQuery.mock.calls.map(c => c[0]);
+    const skillQuery = calls.find(q => q && q.includes('skill_registry') && q.includes('notion_synced_at IS NULL'));
+    expect(skillQuery).toBeTruthy();
+  });
+
+  it('calls pushJourneySteps — queries journey_steps WHERE notion_synced_at IS NULL', async () => {
+    const { runNotionPushSync } = await import('../notion-push-sync.js');
+    await runNotionPushSync({ query: mockQuery });
+    const calls = mockQuery.mock.calls.map(c => c[0]);
+    const stepsQuery = calls.find(q => q && q.includes('journey_steps') && q.includes('notion_synced_at IS NULL'));
+    expect(stepsQuery).toBeTruthy();
+  });
+
+  it('calls pushJourneyStepLinks — queries journey_step_links WHERE notion_synced_at IS NULL', async () => {
+    const { runNotionPushSync } = await import('../notion-push-sync.js');
+    await runNotionPushSync({ query: mockQuery });
+    const calls = mockQuery.mock.calls.map(c => c[0]);
+    const linksQuery = calls.find(q => q && q.includes('journey_step_links') && q.includes('notion_synced_at IS NULL'));
+    expect(linksQuery).toBeTruthy();
+  });
+
+  it('pushes skill to Notion skill_registry DB when notion_synced_at is null', async () => {
+    const mockSkill = {
+      id: 'skill-1', name: '/dev', description: 'dev skill',
+      status: 'active', location: null, notion_id: null,
+    };
+    mockNotionReq.mockResolvedValue({ id: 'notion-page-1' });
+    mockQuery
+      .mockResolvedValueOnce({ rows: [mockSkill] })  // skill_registry select
+      .mockResolvedValue({ rows: [] });               // other selects + update
+
+    const { runNotionPushSync } = await import('../notion-push-sync.js');
+    await runNotionPushSync({ query: mockQuery });
+
+    expect(mockNotionReq).toHaveBeenCalledWith(
+      'fake-token', '/pages', 'POST',
+      expect.objectContaining({
+        parent: { database_id: '353c40c2-ba63-81bf-ae3e-f0e6fa3753d7' },
+        properties: expect.objectContaining({
+          Name: expect.any(Object),
+        }),
+      })
+    );
+  });
+});
