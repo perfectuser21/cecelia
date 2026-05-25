@@ -9,6 +9,7 @@ name: Harness v5 Checks
 #   - packages/workflows/skills/harness-generator/SKILL.md
 
 on:
+  workflow_dispatch:
   pull_request:
     paths:
       - 'sprints/**/contract-draft.md'
