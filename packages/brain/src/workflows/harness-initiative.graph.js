@@ -1330,7 +1330,7 @@ export async function reportNode(state, opts = {}) {
       node: s.node, started_at: s.started_at, ended_at: s.ended_at,
       duration_ms: new Date(s.ended_at) - new Date(s.started_at),
     }));
-  } catch (_err) { /* non-critical */ }
+  } catch { /* non-critical */ }
   const subTasks = state.sub_tasks || [];
   const ws_costs = subTasks.map(s => ({ ws_id: s.ws_id, cost_usd: s.cost_usd ?? 0 }));
   const ws_issues = subTasks
