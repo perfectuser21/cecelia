@@ -1059,15 +1059,92 @@ export function _resetTaskGraphCacheForTests() {
 const SUBGRAPH_WAIT_MS = parseInt(process.env.CECELIA_SUBGRAPH_WAIT_MS || `${90 * 60 * 1000}`, 10);
 const SUBGRAPH_POLL_INTERVAL_MS = parseInt(process.env.CECELIA_SUBGRAPH_POLL_MS || '5000', 10);
 
-async function _waitForSubGraphCompletion(compiled, config, timeoutMs) {
+// 默认每 12 次 poll（12 × 5s = 60s）做一次容器 liveness check
+const LIVENESS_CHECK_EVERY_N = parseInt(process.env.CECELIA_LIVENESS_CHECK_N || '12', 10);
+
+/**
+ * 检查 Docker 容器是否仍在 running。
+ * 如果容器 exited / dead，或 docker inspect 失败（容器不存在），视为死亡返回非空错误字符串。
+ * 容器仍在 running 返回 null。
+ *
+ * @param {string} containerId
+ * @returns {Promise<string|null>}  死亡原因描述 or null（还活着）
+ */
+async function _checkContainerLiveness(containerId) {
+  try {
+    const { execa } = await import('execa');
+    const { stdout } = await execa('docker', [
+      'inspect', '--format', '{{.State.Status}}', containerId,
+    ]);
+    const status = stdout.trim();
+    if (status === 'exited' || status === 'dead') {
+      return `container_${status}_without_callback`;
+    }
+    return null; // running / paused / restarting → 还活着
+  } catch (dockerErr) {
+    // docker inspect 失败：容器不存在（已被删）
+    return `container_inspect_failed: ${dockerErr.message}`;
+  }
+}
+
+/**
+ * 等待 sub-graph 完成（轮询 getState 直到 next=[]）。
+ *
+ * 增加容器活性检测（B2/B3 修复）：每 livenessCheckEveryN 次 poll 检查一次
+ * sub-graph state 里的 containerId 是否仍在 running。如果容器已死亡（exited/dead/不存在），
+ * 主动通过 compiled.invoke({resume:{status:'failed',...}}, config) 唤醒 sub-graph，
+ * 避免傻等 90min 超时。
+ *
+ * @param {object} compiled          LangGraph compiled graph
+ * @param {object} config            LangGraph config（含 thread_id）
+ * @param {number} timeoutMs         最长等待时间（默认 90min）
+ * @param {object} [opts]            测试注入选项
+ * @param {number} [opts.pollIntervalMs]     轮询间隔（默认 SUBGRAPH_POLL_INTERVAL_MS）
+ * @param {number} [opts.livenessCheckEveryN] 每 N 次 poll 做一次 liveness check（默认 12）
+ */
+export async function _waitForSubGraphCompletion(compiled, config, timeoutMs, opts = {}) {
+  const pollIntervalMs = opts.pollIntervalMs ?? SUBGRAPH_POLL_INTERVAL_MS;
+  const livenessCheckEveryN = opts.livenessCheckEveryN ?? LIVENESS_CHECK_EVERY_N;
+
   const deadline = Date.now() + timeoutMs;
+  let pollCount = 0;
+
   while (Date.now() < deadline) {
     const state = await compiled.getState(config);
     if (!state.next || state.next.length === 0) {
       return state.values;
     }
+
+    // ── 容器活性检测（B2/B3）──────────────────────────────────────────────
+    // 每 livenessCheckEveryN 次 poll 检查一次容器是否还活着
+    if (pollCount % livenessCheckEveryN === 0) {
+      const containerId = state.values?.containerId;
+      if (containerId) {
+        const deathReason = await _checkContainerLiveness(containerId);
+        if (deathReason) {
+          // 容器已死，主动 resume sub-graph 走 failure 路径
+          console.warn(
+            `[harness-liveness] Container ${containerId} died (${deathReason}), resuming sub-graph with failure`
+          );
+          try {
+            await compiled.invoke(
+              { resume: { status: 'failed', error: deathReason } },
+              config
+            );
+          } catch (resumeErr) {
+            // resume 失败时记录警告（sub-graph 可能已经在 END 了）
+            console.warn(`[harness-liveness] resume invoke failed: ${resumeErr.message}`);
+          }
+          // resume 后 getState 拿最新状态
+          const finalState = await compiled.getState(config);
+          return { ...(finalState.values || {}), status: finalState.values?.status || 'failed' };
+        }
+      }
+    }
+
+    pollCount++;
     // 还在中间节点（通常 await_callback interrupt） — 等下一轮 poll
-    await new Promise((r) => setTimeout(r, SUBGRAPH_POLL_INTERVAL_MS));
+    await new Promise((r) => setTimeout(r, pollIntervalMs));
   }
   // 超时 — 拿当前 state 当 final（status 可能 undefined → join 视作 failed）
   const state = await compiled.getState(config);
@@ -1121,7 +1198,8 @@ export async function runSubTaskNode(state, opts = {}) {
       final = firstResult;
     } else {
       // sub-graph 大概率停在 await_callback interrupt — poll getState 等到 END
-      final = await _waitForSubGraphCompletion(compiled, config, waitMs);
+      // opts.waitOpts 供测试注入 pollIntervalMs / livenessCheckEveryN
+      final = await _waitForSubGraphCompletion(compiled, config, waitMs, opts.waitOpts || {});
     }
   } catch (err) {
     final = { status: 'failed', error: { node: 'sub_graph', message: err.message } };
