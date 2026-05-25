@@ -1,64 +1,58 @@
-# Sprint PRD — Brain Version Endpoint
+# Sprint PRD — playground 加 GET /subtract endpoint（B1）
 
 ## OKR 对齐
 
-- **对应 KR**：KR（系统可观测性 / 运维健康）
-- **当前进度**：N/A（Brain API 上下文不可达，本地推断）
-- **本次推进预期**：新增 1 个可机检版本查询端点，提升系统可观测性
+- **对应 KR**：Cecelia harness pipeline 端到端验证（接续 W26 /increment）
+- **本次推进预期**：Bug 10（proposer 假绿）+ Bug 11（reviewer 结果文件）修复后管道验证
 
 ## 背景
 
-外部工具（evaluator、dashboard、CI 脚本）需要查询当前运行 Brain 的版本号与 schema 版本，
-目前只能解析 package.json 或调用 /api/brain/status（返回字段噪音多）。
-新增 GET /api/brain/version 端点，提供轻量、字段固定、可机检的版本信息接口。
+B1 是 Bug 10 (#3110) + Bug 11 (#3111) 修复后第一个验证 sprint，用最简双参减法端点跑通完整管道，确认两个 bug 均真生效。
 
 ## Golden Path（核心场景）
 
-外部调用方从 [GET /api/brain/version] → 经过 [Brain 读取 package.json version + EXPECTED_SCHEMA_VERSION] → 到达 [返回 JSON 含 version 和 schema_version]
+HTTP 客户端从 [发起 `GET /subtract?a=10&b=3`] → 经过 [playground server strict-schema 校验 + 计算] → 到达 [200 响应 `{"result":7,"operation":"subtract"}`]
 
 具体：
-1. 调用方发送 `GET /api/brain/version`，无需任何参数
-2. Brain 从 package.json 读取 `version` 字段，从 selfcheck.js 读取 `EXPECTED_SCHEMA_VERSION`
-3. 返回 HTTP 200，body 为 `{"version":"<semver>","schema_version":"<str>"}`
+1. 发送 `GET /subtract?a=10&b=3`
+2. server 校验 a、b 存在且匹配 `^-?\d+(\.\d+)?$`
+3. 返回 HTTP 200：`{"result":7,"operation":"subtract"}`
 
 ## Response Schema
 
-### Endpoint: GET /api/brain/version
+### Endpoint: GET /subtract
 
-**Query Parameters**: 无
+**Query Parameters**: `a`（被减数，必填）、`b`（减数，必填），匹配 `^-?\d+(\.\d+)?$`；禁用 `x/y/p/q/n/m/v1/v2`
 
 **Success (HTTP 200)**:
 ```json
-{"version": "1.230.10", "schema_version": "279"}
+{"result": 7, "operation": "subtract"}
 ```
-- `version` (string, 必填): semver 格式，来自 packages/brain/package.json `.version`
-- `schema_version` (string, 必填): 来自 `EXPECTED_SCHEMA_VERSION` 常量，字符串形式
-- **禁用响应字段名**: `ver`/`v`/`pkg_version`/`db_version`/`build`/`tag`/`release`
-- **Schema 完整性**: 顶层 keys 必须完全等于 `["version", "schema_version"]`，不允许多余字段
+- `result` (number): `Number(a) - Number(b)`
+- `operation` (string): 字面量 `subtract`；禁用 `difference`/`diff`/`sub`/`minus`
+- **禁用响应字段**: `difference`/`diff`/`value`/`answer`/`data`
+- **Schema 完整性**: 顶层 keys 完全等于 `["operation","result"]`
 
-**Error**: 此端点为纯只读常量读取，不预期 4xx/5xx；若出现则返回标准 `{"error":"<string>"}`
+**Error (HTTP 400)**: `{"error":"<string>"}` — 缺参或非法格式
 
 ## 边界情况
 
-- package.json 不可读：返回 HTTP 500，`{"error":"version read failed"}`
-- 不接受任何 query 参数（多余参数忽略，不报错）
+- 缺参 → 400；非法格式（`1e5`/`Inf`/`+1`/`0xFF`）→ 400；结果负数（a=3,b=10 → -7）正常返回
 
 ## 范围限定
 
-**在范围内**：GET /api/brain/version 端点实现（只读，无 DB 查询）
-**不在范围内**：POST/PUT/DELETE、版本比较逻辑、自动更新触发、/status 端点改造
+**在范围内**：`playground/server.js` 新增 GET /subtract（strict-schema 双参减法）
+**不在范围内**：其他端点修改、overflow/浮点精度
 
 ## 假设
 
-- [ASSUMPTION: EXPECTED_SCHEMA_VERSION 常量从 selfcheck.js 导入]
-- [ASSUMPTION: 端点注册在现有 status router 或 brain-meta router 下]
+- [ASSUMPTION: playground/server.js 已有 `STRICT_NUMBER` regex 可复用]
 
 ## 预期受影响文件
 
-- `packages/brain/src/routes/status.js`: 新增 GET /version 路由
-- `packages/brain/src/selfcheck.js`: 导出 EXPECTED_SCHEMA_VERSION（若当前未 export）
+- `playground/server.js`: 新增 GET /subtract 路由
 
 ## journey_type: autonomous
-## journey_type_reason: 仅涉及 packages/brain/ 内部路由，无 UI / 无外部 agent 协议
-## target_environment: local_api
-## target_environment_reason: 纯 Brain 内部端点，evaluator 在本地 curl localhost:5221/api/brain/version 验证
+## journey_type_reason: 仅涉及 playground/server.js，无 UI / 无外部 agent 协议
+## target_environment: playground
+## target_environment_reason: evaluator 在本地 localhost:3000（或 $PLAYGROUND_PORT）验证

@@ -22,7 +22,7 @@ journey_type: autonomous
 - [x] [ARTIFACT] 禁用字段 timings/timing/issues/costs/breakdown 不作为 reportContent 顶层键出现
   Test: manual:bash -c 'node -e "const c=require(\"fs\").readFileSync(\"packages/brain/src/workflows/harness-initiative.graph.js\",\"utf8\");const start=c.indexOf(\"export async function reportNode\");const slice=c.slice(start,start+3000);const banned=[\"timings\",\"timing\",\"issues\",\"costs\",\"breakdown\"];banned.forEach(f=>{const rx=new RegExp(\"[\\\"\\x27]\"+f+\"[\\\"\\x27]\\\\s*:\");if(rx.test(slice)){console.error(\"FAIL:\",f);process.exit(1);}});console.log(\"OK\");"'
 
-## BEHAVIOR 条目
+## BEHAVIOR 条目（内嵌 manual:bash 命令）
 
 - [x] [BEHAVIOR] reportNode 源码含三字段（step_timing/ws_issues/ws_costs），WS4 未实现时 grep 返回 exit 1 → 真红
   Test: manual:bash -c 'node -e "const c=require(\"fs\").readFileSync(\"packages/brain/src/workflows/harness-initiative.graph.js\",\"utf8\");const fields=[\"step_timing\",\"ws_issues\",\"ws_costs\"];fields.forEach(f=>{if(!c.includes(f)){console.error(\"FAIL: reportNode 缺字段\",f);process.exit(1);}});console.log(\"OK\")"'

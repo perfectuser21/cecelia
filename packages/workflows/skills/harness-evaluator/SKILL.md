@@ -214,13 +214,28 @@ Test: curl -s localhost:5221/api/brain/tasks/$TARGET_TASK_ID | jq -r '.status'
 
 #### Step A-2: 逐条执行验证命令
 
+**B22 — Docker 环境 URL 替换（执行任何 Test 命令前必须完成）**：
+
+当 evaluator 在 Docker 容器内运行时，`localhost:5221` 无法连接到宿主的 Brain API，必须替换为 `host.docker.internal:5221`。执行每条 Test 命令前，检查并替换：
+
+```bash
+# 若 BRAIN_URL 已设为非 localhost 地址（说明在 Docker 容器内）
+if [ -n "$BRAIN_URL" ] && [ "$BRAIN_URL" != "http://localhost:5221" ]; then
+  BRAIN_HOST_PORT=$(echo "$BRAIN_URL" | sed 's|http://||')
+  # 在 Test 命令字符串中替换 localhost:5221 → host.docker.internal:5221
+  TEST_CMD=$(echo "$TEST_CMD" | sed "s|localhost:5221|$BRAIN_HOST_PORT|g")
+fi
+```
+
+将替换后的 `$TEST_CMD` 传给 `bash -c "$TEST_CMD"` 执行。
+
 对每条 `[BEHAVIOR]` 条目：
 
 1. 执行 `Test:` 字段中的命令（在真实环境，非 mock）
 **Test: 字段前缀处理（v1.2 — 修协议盲，proposer SKILL 写 manual:bash 前缀）**：
-- Test 命令若以 `manual:bash -c '<cmd>'` 开头 → strip `manual:bash -c '` 前缀和末尾 `'`，把里面的 `<cmd>` 整体用 `bash -c "<cmd>"` 执行
-- Test 命令若以 `manual:` 开头（无 bash -c）→ strip `manual:` 前缀，剩下原样 bash 执行
-- 不以 `manual:` 开头的（如 `node -e "..."` / `curl ...`） → 直接 bash 执行原文
+- Test 命令若以 `manual:bash -c '<cmd>'` 开头 → strip `manual:bash -c '` 前缀和末尾 `'`，把里面的 `<cmd>` 整体用 `bash -c "<cmd>"` 执行；执行前先做 B22 URL 替换
+- Test 命令若以 `manual:` 开头（无 bash -c）→ strip `manual:` 前缀，剩下原样 bash 执行；执行前先做 B22 URL 替换
+- 不以 `manual:` 开头的（如 `node -e "..."` / `curl ...`） → 直接 bash 执行原文；执行前先做 B22 URL 替换
 - 这是跟 proposer SKILL v7.4+ 协议约定的格式，evaluator 不能因看到 `manual:` 前缀就跳过命令
 
 2. 记录 stdout / stderr / exit code

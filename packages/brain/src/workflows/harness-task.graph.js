@@ -459,6 +459,11 @@ export async function fixDispatchNode(state) {
     ci_status: 'pending',
     ci_fail_type: null,
     failed_checks: [],
+    // B21: 必须 reset evaluate_verdict/evaluate_error — evaluateContractNode 幂等门
+    // 判 state.evaluate_verdict 非空则短路返回旧 FAIL，新轮次永远不 spawn 真实评估器。
+    // 不清零 → 跨 fix_round 持久 FAIL → 无限循环（W45 实证）。
+    evaluate_verdict: null,
+    evaluate_error: null,
   };
 }
 
@@ -580,6 +585,8 @@ export async function evaluateContractNode(state, opts = {}) {
         SPRINT_DIR: payload.sprint_dir || 'sprints',
         BRAIN_URL: 'http://host.docker.internal:5221',
         HARNESS_CALLBACK_URL: `http://host.docker.internal:5221/api/brain/harness/callback/${containerId}`,
+        // B22: 评估容器内 psql postgresql://localhost/cecelia 无法解析，改用 host.docker.internal
+        DB: 'postgresql://host.docker.internal/cecelia',
         WORKSTREAM_INDEX: extractWorkstreamIndex(payload),
       },
     });
