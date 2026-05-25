@@ -34,6 +34,86 @@ const HARNESS_MERMAID = `graph TD
   Report --> End([END])`;
 
 /**
+ * GET /initiative/:id/detail
+ * 返回 initiative 详情：6 字段（initiative_id/prd_content/contract_content/gan_rounds/step_timing/screenshot_urls）
+ * 来源：tasks + initiative_contracts + task_events + checkpoint_blobs
+ */
+router.get('/initiative/:id/detail', async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const { rows: initRows } = await pool.query(
+      `SELECT id FROM tasks WHERE id::text = $1 AND task_type = 'harness_initiative' LIMIT 1`,
+      [id]
+    );
+    if (initRows.length === 0) {
+      return res.status(404).json({ error: 'initiative not found' });
+    }
+
+    let prd_content = null;
+    let contract_content = null;
+    let gan_rounds = null;
+    try {
+      const { rows } = await pool.query(
+        `SELECT prd_content, contract_content, review_rounds
+         FROM initiative_contracts
+         WHERE initiative_id = $1::uuid
+         ORDER BY version DESC LIMIT 1`,
+        [id]
+      );
+      if (rows.length > 0) {
+        prd_content = rows[0].prd_content != null ? rows[0].prd_content : null;
+        contract_content = rows[0].contract_content != null ? rows[0].contract_content : null;
+        gan_rounds = rows[0].review_rounds != null ? rows[0].review_rounds : null;
+      }
+    } catch { /* initiative_contracts table may not exist */ }
+
+    let step_timing = [];
+    try {
+      const { rows } = await pool.query(
+        `SELECT payload, created_at
+         FROM task_events
+         WHERE task_id = $1::uuid AND event_type = 'graph_node_update'
+         ORDER BY created_at ASC`,
+        [id]
+      );
+      step_timing = rows.map(row => ({
+        node: row.payload?.nodeName || null,
+        ts: row.created_at,
+        attempt: row.payload?.attemptN ?? null,
+      }));
+    } catch { /* ignore */ }
+
+    let screenshot_urls = [];
+    try {
+      const { rows } = await pool.query(
+        `SELECT DISTINCT ON (channel) blob
+         FROM checkpoint_blobs
+         WHERE thread_id LIKE $1 AND channel = 'screenshot_urls' AND type = 'json'
+         ORDER BY channel, version DESC`,
+        [`harness-task:${id}:%`]
+      );
+      if (rows.length > 0 && rows[0].blob) {
+        const parsed = JSON.parse(Buffer.from(rows[0].blob).toString('utf8'));
+        if (Array.isArray(parsed)) screenshot_urls = parsed;
+      }
+    } catch { /* ignore */ }
+
+    res.json({
+      contract_content,
+      gan_rounds,
+      initiative_id: id,
+      prd_content,
+      screenshot_urls,
+      step_timing,
+    });
+  } catch (err) {
+    console.error('[GET /harness/initiative/:id/detail]', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
  * GET /initiative/:id/ws-progress
  * 返回该 initiative 下所有 WS 的进度状态
  * 从 checkpoint_blobs 表查询 thread_id LIKE 'harness-task:{id}:ws%' 的记录
