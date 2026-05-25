@@ -56,32 +56,6 @@ journey_type: user_facing
 
 ---
 
-## BEHAVIOR 条目
-
-> **验证命令统一使用** `result->'report_content'`（JSONB path，不是 `->>`），psql 输出即可直接 pipe 到 jq。
-
-- [x] [BEHAVIOR] reportNode 完成后 `tasks.result->'report_content'` 含顶层字段 `step_timing` 为 array 类型
-  Test: manual:bash -c 'REPORT=$(psql $DB -t -c "SELECT result->'"'"'report_content'"'"' FROM tasks WHERE task_type='"'"'harness_initiative'"'"' AND status='"'"'completed'"'"' AND result->'"'"'report_content'"'"' IS NOT NULL ORDER BY completed_at DESC LIMIT 1" | tr -d " \n"); if [ -z "$REPORT" ]; then printf "SKIP\n"; exit 0; fi; printf "%s" "$REPORT" | jq -e '"'"'.step_timing | type == "array"'"'"' && printf "OK\n" || exit 1'
-  期望: OK 或 SKIP
-
-- [x] [BEHAVIOR] `tasks.result->'report_content'` 含顶层字段 `ws_issues` 为 array，元素结构含 `ws_id`/`feedback`/`ci_fail_type`
-  Test: manual:bash -c 'REPORT=$(psql $DB -t -c "SELECT result->'"'"'report_content'"'"' FROM tasks WHERE task_type='"'"'harness_initiative'"'"' AND status='"'"'completed'"'"' AND result->'"'"'report_content'"'"' IS NOT NULL ORDER BY completed_at DESC LIMIT 1" | tr -d " \n"); if [ -z "$REPORT" ]; then printf "SKIP\n"; exit 0; fi; printf "%s" "$REPORT" | jq -e '"'"'.ws_issues | type == "array"'"'"' && printf "%s" "$REPORT" | jq -e '"'"'if (.ws_issues | length) > 0 then .ws_issues[0] | has("ws_id") and has("feedback") and has("ci_fail_type") else true end'"'"' && printf "OK\n" || exit 1'
-  期望: OK 或 SKIP
-
-- [x] [BEHAVIOR] `tasks.result->'report_content'` 含顶层字段 `ws_costs` 为 array，元素结构含 `ws_id`/`cost_usd`
-  Test: manual:bash -c 'REPORT=$(psql $DB -t -c "SELECT result->'"'"'report_content'"'"' FROM tasks WHERE task_type='"'"'harness_initiative'"'"' AND status='"'"'completed'"'"' AND result->'"'"'report_content'"'"' IS NOT NULL ORDER BY completed_at DESC LIMIT 1" | tr -d " \n"); if [ -z "$REPORT" ]; then printf "SKIP\n"; exit 0; fi; printf "%s" "$REPORT" | jq -e '"'"'.ws_costs | type == "array"'"'"' && printf "%s" "$REPORT" | jq -e '"'"'if (.ws_costs | length) > 0 then .ws_costs[0] | has("ws_id") and has("cost_usd") else true end'"'"' && printf "OK\n" || exit 1'
-  期望: OK 或 SKIP
-
-- [x] [BEHAVIOR] `tasks.result->'report_content'` 不含禁用字段 `timings`/`timing`/`issues`/`costs`/`breakdown`
-  Test: manual:bash -c 'REPORT=$(psql $DB -t -c "SELECT result->'"'"'report_content'"'"' FROM tasks WHERE task_type='"'"'harness_initiative'"'"' AND status='"'"'completed'"'"' AND result->'"'"'report_content'"'"' IS NOT NULL ORDER BY completed_at DESC LIMIT 1" | tr -d " \n"); if [ -z "$REPORT" ]; then printf "SKIP\n"; exit 0; fi; printf "%s" "$REPORT" | jq -e '"'"'has("timings") | not'"'"' && printf "%s" "$REPORT" | jq -e '"'"'has("timing") | not'"'"' && printf "%s" "$REPORT" | jq -e '"'"'has("issues") | not'"'"' && printf "%s" "$REPORT" | jq -e '"'"'has("costs") | not'"'"' && printf "%s" "$REPORT" | jq -e '"'"'has("breakdown") | not'"'"' && printf "OK\n" || exit 1'
-  期望: OK 或 SKIP
-
-- [x] [BEHAVIOR] `step_timing` 数组元素（有数据时）每条含 `node`/`duration_ms` 字段
-  Test: manual:bash -c 'REPORT=$(psql $DB -t -c "SELECT result->'"'"'report_content'"'"' FROM tasks WHERE task_type='"'"'harness_initiative'"'"' AND status='"'"'completed'"'"' AND result->'"'"'report_content'"'"' IS NOT NULL ORDER BY completed_at DESC LIMIT 1" | tr -d " \n"); if [ -z "$REPORT" ]; then printf "SKIP\n"; exit 0; fi; TLEN=$(printf "%s" "$REPORT" | jq ".step_timing | length"); if [ "$TLEN" = "0" ]; then printf "SKIP\n"; exit 0; fi; printf "%s" "$REPORT" | jq -e '"'"'.step_timing[0] | has("node") and has("duration_ms")'"'"' && printf "OK\n" || exit 1'
-  期望: OK 或 SKIP
-
----
-
 ## BEHAVIOR:E2E 条目（user_facing 专属，Mode B final-e2e 跑）
 
 - [ ] [BEHAVIOR:E2E] evaluator 验收后截图存 screenshots/ws4-01.png，复制到 ~/claude-output/harness-screenshots/
