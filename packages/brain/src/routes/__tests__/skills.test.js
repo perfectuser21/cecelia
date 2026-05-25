@@ -40,7 +40,8 @@ describe('GET /api/brain/skills', () => {
     const res = await request(app).get('/api/brain/skills?status=deprecated');
     expect(res.status).toBe(200);
     const call = pool.query.mock.calls[0];
-    expect(call[0]).toContain('status');
+    expect(call[0]).toContain('WHERE');
+    expect(call[1]).toEqual(expect.arrayContaining(['deprecated']));
   });
 });
 
@@ -63,5 +64,39 @@ describe('POST /api/brain/skills', () => {
     const { default: request } = await import('supertest');
     const res = await request(app).post('/api/brain/skills').send({});
     expect(res.status).toBe(400);
+  });
+});
+
+describe('PATCH /api/brain/skills/:id', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it('updates a skill and returns 200', async () => {
+    pool.query.mockResolvedValue({ rows: [{ id: 'abc', name: '/dev', status: 'deprecated' }] });
+    const app = makeApp();
+    const { default: request } = await import('supertest');
+    const res = await request(app)
+      .patch('/api/brain/skills/abc')
+      .send({ status: 'deprecated' });
+    expect(res.status).toBe(200);
+    expect(res.body.status).toBe('deprecated');
+  });
+
+  it('returns 400 when no fields provided', async () => {
+    const app = makeApp();
+    const { default: request } = await import('supertest');
+    const res = await request(app)
+      .patch('/api/brain/skills/abc')
+      .send({});
+    expect(res.status).toBe(400);
+  });
+
+  it('returns 404 when skill not found', async () => {
+    pool.query.mockResolvedValue({ rows: [] });
+    const app = makeApp();
+    const { default: request } = await import('supertest');
+    const res = await request(app)
+      .patch('/api/brain/skills/nonexistent')
+      .send({ description: 'updated' });
+    expect(res.status).toBe(404);
   });
 });

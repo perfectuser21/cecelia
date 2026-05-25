@@ -13,6 +13,9 @@ router.get('/', async (req, res) => {
     const clauses = [];
 
     if (req.query.status) {
+      if (!VALID_STATUSES.includes(req.query.status)) {
+        return res.status(400).json({ error: `status must be one of: ${VALID_STATUSES.join(', ')}` });
+      }
       params.push(req.query.status);
       clauses.push(`status = $${params.length}`);
     }
@@ -43,22 +46,24 @@ router.get('/', async (req, res) => {
 // POST /api/brain/skills
 router.post('/', async (req, res) => {
   try {
-    const { name, description, location, status = 'active', metadata = {} } = req.body;
+    const { name, description, location, status = 'active', metadata = {}, area_id, notion_id } = req.body;
     if (!name) return res.status(400).json({ error: 'name is required' });
     if (!VALID_STATUSES.includes(status)) {
       return res.status(400).json({ error: `status must be one of: ${VALID_STATUSES.join(', ')}` });
     }
     const { rows } = await pool.query(
-      `INSERT INTO skill_registry (name, description, location, status, metadata)
-       VALUES ($1, $2, $3, $4, $5)
+      `INSERT INTO skill_registry (name, description, location, status, metadata, area_id, notion_id)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)
        ON CONFLICT (name) DO UPDATE SET
          description = EXCLUDED.description,
          location = EXCLUDED.location,
          status = EXCLUDED.status,
          metadata = EXCLUDED.metadata,
+         area_id = EXCLUDED.area_id,
+         notion_id = EXCLUDED.notion_id,
          updated_at = NOW()
        RETURNING *`,
-      [name, description || null, location || null, status, JSON.stringify(metadata)]
+      [name, description || null, location || null, status, JSON.stringify(metadata), area_id || null, notion_id || null]
     );
     return res.status(201).json(rows[0]);
   } catch (err) {
@@ -70,17 +75,19 @@ router.post('/', async (req, res) => {
 // PATCH /api/brain/skills/:id
 router.patch('/:id', async (req, res) => {
   try {
-    const { description, location, status, metadata, notion_id } = req.body;
+    const { description, location, status, metadata, notion_id, area_id, notion_synced_at } = req.body;
     if (status && !VALID_STATUSES.includes(status)) {
       return res.status(400).json({ error: `status must be one of: ${VALID_STATUSES.join(', ')}` });
     }
     const sets = [];
     const vals = [];
-    if (description !== undefined) { vals.push(description); sets.push(`description = $${vals.length}`); }
-    if (location    !== undefined) { vals.push(location);    sets.push(`location = $${vals.length}`); }
-    if (status      !== undefined) { vals.push(status);      sets.push(`status = $${vals.length}`); }
-    if (metadata    !== undefined) { vals.push(JSON.stringify(metadata)); sets.push(`metadata = $${vals.length}`); }
-    if (notion_id   !== undefined) { vals.push(notion_id);   sets.push(`notion_id = $${vals.length}`); }
+    if (description       !== undefined) { vals.push(description);              sets.push(`description = $${vals.length}`); }
+    if (location          !== undefined) { vals.push(location);                 sets.push(`location = $${vals.length}`); }
+    if (status            !== undefined) { vals.push(status);                   sets.push(`status = $${vals.length}`); }
+    if (metadata          !== undefined) { vals.push(JSON.stringify(metadata)); sets.push(`metadata = $${vals.length}`); }
+    if (notion_id         !== undefined) { vals.push(notion_id);                sets.push(`notion_id = $${vals.length}`); }
+    if (area_id           !== undefined) { vals.push(area_id);                  sets.push(`area_id = $${vals.length}`); }
+    if (notion_synced_at  !== undefined) { vals.push(notion_synced_at);         sets.push(`notion_synced_at = $${vals.length}`); }
     if (!sets.length) return res.status(400).json({ error: 'no fields to update' });
     sets.push(`updated_at = NOW()`);
     vals.push(req.params.id);
