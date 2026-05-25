@@ -418,6 +418,37 @@ export function summarizeLangGraphEvents(events) {
   };
 }
 
+function buildPipelineStages(lg, events, legacyStageMap, nodeToStage, verdict) {
+  if (lg) {
+    const seenNodes = new Set(
+      (events || []).map(e => (e && e.payload) ? e.payload.node : null).filter(Boolean)
+    );
+    return HARNESS_STAGE_ORDER.map(type => {
+      const nodeName = Object.keys(nodeToStage).find(k => nodeToStage[k] === type);
+      const label = HARNESS_STAGE_LABELS[type];
+      let status = 'not_started';
+      if (nodeName && seenNodes.has(nodeName)) {
+        if (verdict === 'passed') {
+          status = 'completed';
+        } else if (verdict === 'failed') {
+          status = lg.current_node === nodeName ? 'failed' : 'completed';
+        } else if (lg.current_node === nodeName) {
+          status = 'in_progress';
+        } else {
+          status = 'completed';
+        }
+      }
+      return { task_type: type, label, status };
+    });
+  }
+  const stageMap = legacyStageMap || {};
+  return HARNESS_STAGE_ORDER.map(type => stageMap[type] || {
+    task_type: type,
+    label: HARNESS_STAGE_LABELS[type],
+    status: 'not_started',
+  });
+}
+
 /**
  * 根据 planner task + langgraph 聚合 构造单条 pipeline 记录。
  * 公开给单元测试使用。
@@ -449,36 +480,7 @@ export function buildPipelineRecord(task, events, legacyStageMap) {
     report: 'harness_report',
   };
 
-  let stages;
-  if (lg) {
-    const seenNodes = new Set(
-      (events || []).map(e => (e && e.payload) ? e.payload.node : null).filter(Boolean)
-    );
-    stages = HARNESS_STAGE_ORDER.map(type => {
-      const nodeName = Object.keys(nodeToStage).find(k => nodeToStage[k] === type);
-      const label = HARNESS_STAGE_LABELS[type];
-      let status = 'not_started';
-      if (nodeName && seenNodes.has(nodeName)) {
-        if (verdict === 'passed') {
-          status = 'completed';
-        } else if (verdict === 'failed') {
-          status = lg.current_node === nodeName ? 'failed' : 'completed';
-        } else if (lg.current_node === nodeName) {
-          status = 'in_progress';
-        } else {
-          status = 'completed';
-        }
-      }
-      return { task_type: type, label, status };
-    });
-  } else {
-    const stageMap = legacyStageMap || {};
-    stages = HARNESS_STAGE_ORDER.map(type => stageMap[type] || {
-      task_type: type,
-      label: HARNESS_STAGE_LABELS[type],
-      status: 'not_started',
-    });
-  }
+  const stages = buildPipelineStages(lg, events, legacyStageMap, nodeToStage, verdict);
 
   const currentStep = lg?.current_node_label
     || stages.find(s => s.status === 'in_progress' || s.status === 'queued')?.label
