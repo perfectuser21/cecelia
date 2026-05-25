@@ -61,11 +61,20 @@ function checkFile(filePath) {
 
   // Rule 1: 禁 [BEHAVIOR] 条目
   // 允许的：`## BEHAVIOR 索引`（标题）
-  // 禁止的：`- [ ] [BEHAVIOR] ...` 或 `- [x] [BEHAVIOR] ...`
+  // 允许的（v7.4）：`[BEHAVIOR]` 条目若其 Test 字段使用 manual:bash，可留在 DoD 文件
+  // 禁止的：`- [ ] [BEHAVIOR] ...` 或 `- [x] [BEHAVIOR] ...` 且 Test 非 manual:bash
   for (let i = 0; i < lines.length; i++) {
-    if (/^\s*-\s*\[[\sxX]\]\s*\[BEHAVIOR\]/.test(lines[i])) {
+    if (!/^\s*-\s*\[[\sxX]\]\s*\[BEHAVIOR\]/.test(lines[i])) continue;
+    // 向后查找 Test 字段，检查是否是 manual:bash（v7.4 允许留在 DoD）
+    let hasManualBash = false;
+    for (let j = i + 1; j < lines.length; j++) {
+      const next = lines[j];
+      if (/^\s*-\s*\[[\sxX]\]\s*\[(BEHAVIOR|ARTIFACT)\]/.test(next)) break;
+      if (/^\s+Test:\s*manual:bash/.test(next)) { hasManualBash = true; break; }
+    }
+    if (!hasManualBash) {
       violations.push(
-        `L${i + 1}: 禁止 [BEHAVIOR] 条目 — BEHAVIOR 必须搬到 tests/ws{N}/*.test.ts：\n    ${lines[i].trim()}`
+        `L${i + 1}: 禁止 [BEHAVIOR] 条目 — BEHAVIOR 必须搬到 tests/ws{N}/*.test.ts（或使用 manual:bash Test 字段）：\n    ${lines[i].trim()}`
       );
     }
   }

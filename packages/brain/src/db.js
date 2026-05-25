@@ -30,4 +30,5 @@ export function getPoolHealth() {
   };
 }
 
+export { pool };
 export default pool;

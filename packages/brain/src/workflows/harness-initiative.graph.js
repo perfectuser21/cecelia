@@ -1312,12 +1312,42 @@ export async function reportNode(state, opts = {}) {
   // 重入会重复 UPDATE，虽语义等幂但增加 DB 负载且 completed_at 会刷新）。
   if (state.report_path) return { report_path: state.report_path };
   const dbPool = opts.pool || pool;
+
+  let step_timing = [];
+  try {
+    const eventsResult = await dbPool.query(
+      `SELECT payload, created_at
+       FROM task_events
+       WHERE task_id::text = $1 AND event_type = 'graph_node_update'
+       ORDER BY created_at ASC`,
+      [state.initiativeId]
+    );
+    step_timing = eventsResult.rows.map((row, i) => {
+      const next = eventsResult.rows[i + 1];
+      const started_at = row.created_at;
+      const ended_at = next ? next.created_at : null;
+      const duration_ms = ended_at ? new Date(ended_at) - new Date(started_at) : null;
+      return { node: row.payload?.nodeName || 'unknown', started_at, ended_at, duration_ms };
+    });
+  } catch (err) {
+    console.warn(`[reportNode] step_timing query failed: ${err.message}`);
+  }
+
+  const subTasks = state.sub_tasks || [];
+  const ws_issues = subTasks
+    .filter(s => s.evaluator_feedback || s.ci_fail_type)
+    .map(s => ({ ws_id: s.ws_id || s.id, feedback: s.evaluator_feedback || null, ci_fail_type: s.ci_fail_type || null }));
+  const ws_costs = subTasks.map(s => ({ ws_id: s.ws_id || s.id, cost_usd: s.cost_usd || 0 }));
+
   const reportContent = JSON.stringify({
     initiativeId: state.initiativeId,
-    sub_tasks: state.sub_tasks || [],
+    sub_tasks: subTasks,
     final_e2e_verdict: state.final_e2e_verdict,
     failed_scenarios: state.final_e2e_failed_scenarios || [],
-    cost_usd: (state.sub_tasks || []).reduce((a, s) => a + (s.cost_usd || 0), 0),
+    cost_usd: subTasks.reduce((a, s) => a + (s.cost_usd || 0), 0),
+    step_timing,
+    ws_issues,
+    ws_costs,
     completed_at: new Date().toISOString(),
   }, null, 2);
   // 写 initiative_runs phase=done/failed

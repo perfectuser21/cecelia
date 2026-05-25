@@ -255,6 +255,9 @@ const { chromium, expect } = require('@playwright/test');
 })();
 ```
 
+> [BEHAVIOR:E2E:screenshot] evaluator 验收后，截图文件存 `screenshots/<ws_id>-<step>.png` 格式，并复制到 `~/claude-output/harness-screenshots/` 目录归档。
+> 每次关键操作前后必须调用 `page.screenshot()`，文件名遵循 `screenshots/<ws_id>-<step>.png` 占位符规范。
+
 ---
 
 ### target_environment = windows_cloud（公网 Windows 产品 — GitHub Actions windows-latest，完全干净 VM）

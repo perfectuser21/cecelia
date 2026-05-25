@@ -13,7 +13,7 @@ import { readFile } from 'fs/promises';
 import { execSync } from 'child_process';
 import { join } from 'path';
 import { homedir } from 'os';
-import pool from '../db.js';
+import { pool } from '../db.js';
 
 const router = Router();
 

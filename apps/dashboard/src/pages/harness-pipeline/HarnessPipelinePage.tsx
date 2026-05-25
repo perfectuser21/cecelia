@@ -423,10 +423,81 @@ function StageBadge({ stage }: { stage: PipelineStage }) {
   );
 }
 
+// ─── 组件：Initiative 详情面板 ────────────────────────────────────────────────
+
+interface InitiativeDetail {
+  initiative_id: string;
+  prd_content: string | null;
+  contract_content: string | null;
+  gan_rounds: number | null;
+  step_timing: Array<{ node: string; started_at: string; ended_at: string | null; duration_ms: number | null }>;
+  screenshot_urls: string[];
+}
+
+function InitiativeDetailPanel({ initiativeId, onClose }: { initiativeId: string; onClose: () => void }) {
+  const [detail, setDetail] = useState<InitiativeDetail | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    setLoading(true);
+    fetch(`/api/brain/harness/initiative/${initiativeId}/detail`)
+      .then(r => r.ok ? r.json() : null)
+      .then(data => { setDetail(data); setLoading(false); })
+      .catch(() => setLoading(false));
+  }, [initiativeId]);
+
+  return (
+    <div data-testid="initiative-detail-panel" className="border-t border-slate-200 dark:border-slate-700 px-4 py-3 bg-slate-50 dark:bg-slate-900/50">
+      <div className="flex items-center justify-between mb-3">
+        <span className="text-xs font-semibold text-slate-600 dark:text-slate-300 uppercase tracking-wide">Initiative 详情</span>
+        <button onClick={onClose} className="text-slate-400 hover:text-slate-600 text-xs">✕</button>
+      </div>
+      {loading ? (
+        <div className="text-xs text-slate-400">加载中…</div>
+      ) : detail ? (
+        <>
+          {detail.prd_content && (
+            <div data-testid="initiative-prd-content" className="mb-3">
+              <div className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide mb-1">PRD</div>
+              <pre className="text-xs text-slate-700 dark:text-slate-300 whitespace-pre-wrap max-h-40 overflow-y-auto bg-white dark:bg-slate-800 p-2 rounded border border-slate-200 dark:border-slate-700">{detail.prd_content}</pre>
+            </div>
+          )}
+          {detail.step_timing && detail.step_timing.length > 0 && (
+            <div data-testid="initiative-step-timeline" className="mb-3">
+              <div className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide mb-1">步骤时序</div>
+              <div className="space-y-1">
+                {detail.step_timing.map((step, i) => (
+                  <div key={i} data-testid="step-timeline-item" className="flex items-center gap-2 text-xs text-slate-600 dark:text-slate-300">
+                    <span className="font-medium w-20 shrink-0">{step.node}</span>
+                    <span className="text-slate-400">{step.duration_ms != null ? `${step.duration_ms}ms` : '—'}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+          {detail.screenshot_urls && detail.screenshot_urls.length > 0 && (
+            <div className="mb-2">
+              <div className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide mb-1">截图</div>
+              <div className="flex flex-wrap gap-1">
+                {detail.screenshot_urls.map((url, i) => (
+                  <a key={i} href={url} target="_blank" rel="noopener noreferrer" className="text-xs text-blue-500 hover:underline">{url.split('/').pop()}</a>
+                ))}
+              </div>
+            </div>
+          )}
+        </>
+      ) : (
+        <div className="text-xs text-slate-400">无法加载详情</div>
+      )}
+    </div>
+  );
+}
+
 // ─── 组件：Pipeline 卡片 ──────────────────────────────────────────────────────
 
 function PipelineCard({ pipeline, onInitiativeClick }: { pipeline: Pipeline; onInitiativeClick?: (id: string) => void }) {
   const [expanded, setExpanded] = useState(false);
+  const [showDetail, setShowDetail] = useState(false);
   const navigate = useNavigate();
   const { stages, verdict, elapsed_ms, created_at, sprint_goal, description,
           current_step, title, langgraph, status, priority, pr_url } = pipeline;
@@ -454,6 +525,8 @@ function PipelineCard({ pipeline, onInitiativeClick }: { pipeline: Pipeline; onI
   const wsPrUrls = (langgraph?.pr_urls || []).filter((u): u is string => !!u);
   const multiPrCount = wsPrUrls.length;
   const showMultiPrs = multiPrCount > 1;
+
+  const isInitiative = pipeline.task_type === 'harness_initiative';
 
   return (
     <div
@@ -565,6 +638,11 @@ function PipelineCard({ pipeline, onInitiativeClick }: { pipeline: Pipeline; onI
           <WsProgressSection initiativeId={pipeline.pipeline_id} />
         )}
       </div>
+
+      {/* Initiative 详情面板 */}
+      {isInitiative && showDetail && (
+        <InitiativeDetailPanel initiativeId={pipeline.pipeline_id} onClose={() => setShowDetail(false)} />
+      )}
 
       {/* 展开详情 */}
       {expanded && (

@@ -7,7 +7,7 @@ import express from 'express';
 import request from 'supertest';
 
 const mockPool = vi.hoisted(() => ({ query: vi.fn() }));
-vi.mock('../db.js', () => ({ default: mockPool }));
+vi.mock('../db.js', () => ({ default: mockPool, pool: mockPool }));
 
 const { default: harnessRouter } = await import('../routes/harness.js');
 
