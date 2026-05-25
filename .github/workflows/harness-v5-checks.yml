@@ -40,7 +40,7 @@ jobs:
           node-version: 20
       - name: Run check-dod-purity
         env:
-          BASE_REF: origin/${{ github.base_ref }}
+          BASE_REF: origin/${{ github.base_ref || 'main' }}
         run: node packages/engine/scripts/devgate/check-dod-purity.cjs
 
   # ─── Check 2: Test Contract 覆盖（测试文件必须存在） ─────────────────
@@ -56,7 +56,7 @@ jobs:
           node-version: 20
       - name: Run check-test-coverage
         env:
-          BASE_REF: origin/${{ github.base_ref }}
+          BASE_REF: origin/${{ github.base_ref || 'main' }}
         run: node packages/engine/scripts/devgate/check-test-coverage.cjs
 
   # ─── Check 3: TDD Red-Green commit 顺序 ───────────────────────────
@@ -69,7 +69,7 @@ jobs:
           fetch-depth: 0
       - name: Run check-tdd-commit-order
         env:
-          BASE_REF: origin/${{ github.base_ref }}
+          BASE_REF: origin/${{ github.base_ref || 'main' }}
           HEAD_REF: HEAD
         run: bash packages/engine/scripts/devgate/check-tdd-commit-order.sh
 
@@ -87,7 +87,7 @@ jobs:
       - name: Check if sprint tests changed
         id: check-tests
         env:
-          BASE_REF: origin/${{ github.base_ref }}
+          BASE_REF: origin/${{ github.base_ref || 'main' }}
         run: |
           set -euo pipefail
           # 排除 e2e-*.test.ts：E2E 验证文件依赖 Brain 运行环境（mac_web evaluator），
@@ -134,5 +134,5 @@ jobs:
           node-version: 20
       - name: Run skeleton-shape-check
         env:
-          BASE_REF: origin/${{ github.base_ref }}
+          BASE_REF: origin/${{ github.base_ref || 'main' }}
         run: node packages/engine/scripts/devgate/skeleton-shape-check.cjs
