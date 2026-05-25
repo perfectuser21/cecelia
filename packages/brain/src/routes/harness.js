@@ -128,6 +128,80 @@ router.get('/initiative/:id/ws-progress', async (req, res) => {
 });
 
 /**
+ * GET /initiative/:id/detail
+ * initiative 详情：PRD/合同内容 + step_timing 时间轴 + gan_rounds 轮次
+ * 宽容降级：无数据返回 nulls+[]，不返 404
+ */
+const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+router.get('/initiative/:id/detail', async (req, res) => {
+  const { id } = req.params;
+
+  if (!UUID_REGEX.test(id)) {
+    return res.status(400).json({ error: 'invalid id' });
+  }
+
+  try {
+    const { rows: contractRows } = await pool.query(
+      `SELECT prd_content, contract_content, review_rounds
+       FROM initiative_contracts
+       WHERE initiative_id = $1::uuid
+       ORDER BY version DESC
+       LIMIT 1`,
+      [id]
+    );
+    const contract = contractRows[0] || null;
+
+    let step_timing = [];
+    try {
+      const { rows: eventRows } = await pool.query(
+        `SELECT node, status, attempt, ts
+         FROM initiative_run_events
+         WHERE initiative_id = $1::uuid
+         ORDER BY ts ASC`,
+        [id]
+      );
+
+      const nodeMap = {};
+      for (const row of eventRows) {
+        const key = `${row.node}:${row.attempt}`;
+        if (!nodeMap[key]) nodeMap[key] = { node: row.node };
+        if (row.status === 'running') {
+          nodeMap[key].started_at = new Date(Number(row.ts) * 1000).toISOString();
+        } else if (row.status === 'done' || row.status === 'failed') {
+          nodeMap[key].ended_at = new Date(Number(row.ts) * 1000).toISOString();
+        }
+      }
+
+      step_timing = Object.values(nodeMap)
+        .filter(e => e.started_at)
+        .map(e => ({
+          node: e.node,
+          started_at: e.started_at,
+          ended_at: e.ended_at || null,
+          duration_ms: (e.ended_at && e.started_at)
+            ? new Date(e.ended_at).getTime() - new Date(e.started_at).getTime()
+            : null,
+        }));
+    } catch {
+      // graceful degradation — initiative_run_events may not exist
+    }
+
+    return res.json({
+      initiative_id: id,
+      prd_content: contract?.prd_content ?? null,
+      contract_content: contract?.contract_content ?? null,
+      gan_rounds: contract?.review_rounds != null ? Number(contract.review_rounds) : null,
+      step_timing,
+      screenshot_urls: [],
+    });
+  } catch (err) {
+    console.error('[GET /harness/initiative/detail]', err.message);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+/**
  * GET /pipeline/:planner_task_id
  * 返回该 planner 下所有 harness/sprint 任务（含 planner 自身）
  */
