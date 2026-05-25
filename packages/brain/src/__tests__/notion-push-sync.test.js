@@ -43,6 +43,7 @@ describe('runNotionPushSync', () => {
     mockQuery.mockResolvedValueOnce({ rows: [journey] }); // journeys NULL
     mockQuery.mockResolvedValueOnce({ rows: [] });         // features NULL
     mockQuery.mockResolvedValueOnce({ rows: [] });         // issues NULL
+    mockQuery.mockResolvedValue({ rows: [] });             // skill_registry / journey_steps / journey_step_links (new)
 
     mockNotionReq.mockResolvedValueOnce({ id: 'notion-page-id-1' });
     mockQuery.mockResolvedValueOnce({ rows: [] }); // UPDATE journeys
@@ -63,11 +64,9 @@ describe('runNotionPushSync', () => {
   it('Notion API 失败时跳过该行（notion_synced_at 保持 NULL）', async () => {
     const journey = { id: 'j-uuid', name: 'X', journey_type: 'dev_pipeline', description: null, maturity: 'not_started', status: 'active', e2e_test_path: null, area_notion_id: null };
     mockQuery.mockResolvedValueOnce({ rows: [journey] });
-    mockQuery.mockResolvedValueOnce({ rows: [] });
-    mockQuery.mockResolvedValueOnce({ rows: [] });
+    mockQuery.mockResolvedValue({ rows: [] }); // features / issues / skill_registry / journey_steps / journey_step_links + log INSERT
 
     mockNotionReq.mockRejectedValueOnce(new Error('Notion timeout'));
-    mockQuery.mockResolvedValueOnce({ rows: [] }); // notion_sync_log INSERT
 
     const { runNotionPushSync } = await import('../notion-push-sync.js');
     await expect(runNotionPushSync({ query: mockQuery })).resolves.not.toThrow();
@@ -118,8 +117,11 @@ describe('runNotionPushSync — new push functions', () => {
     };
     mockNotionReq.mockResolvedValue({ id: 'notion-page-1' });
     mockQuery
-      .mockResolvedValueOnce({ rows: [mockSkill] })  // skill_registry select
-      .mockResolvedValue({ rows: [] });               // other selects + update
+      .mockResolvedValueOnce({ rows: [] })            // journeys select
+      .mockResolvedValueOnce({ rows: [] })            // features select
+      .mockResolvedValueOnce({ rows: [] })            // issues select
+      .mockResolvedValueOnce({ rows: [mockSkill] })   // skill_registry select
+      .mockResolvedValue({ rows: [] });               // journey_steps / journey_step_links + UPDATE
 
     const { runNotionPushSync } = await import('../notion-push-sync.js');
     await runNotionPushSync({ query: mockQuery });
