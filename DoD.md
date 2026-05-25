@@ -1,30 +1,25 @@
-contract_branch: cp-harness-propose-r2-4e73a2b3
-workstream_index: 3
+contract_branch: cp-harness-propose-r3-92950980
+workstream_index: 4
 sprint_dir: sprints/cecelia-pipeline-viz-v2
 
-# DoD — WS3: Dashboard initiative 详情面板
+# DoD — WS4: reportNode 增强（step_timing / ws_issues / ws_costs）
 
 ## ARTIFACT 条目
 
-- [x] [ARTIFACT] `apps/dashboard/src/pages/harness-pipeline/HarnessPipelinePage.tsx` 含 `initiative-detail-panel` data-testid
-  Test: node -e "const c=require('fs').readFileSync('apps/dashboard/src/pages/harness-pipeline/HarnessPipelinePage.tsx','utf8');if(!c.includes('initiative-detail-panel'))process.exit(1);console.log('OK')"
+- [x] [ARTIFACT] `packages/brain/src/workflows/harness-initiative.graph.js` reportNode 含 `step_timing` 字段赋值
+  Test: node -e "const c=require('fs').readFileSync('packages/brain/src/workflows/harness-initiative.graph.js','utf8');if(!c.includes('step_timing'))process.exit(1);console.log('OK')"
 
-- [x] [ARTIFACT] Dashboard 页面含 `initiative-prd-content` 和 `initiative-step-timeline` 两个 data-testid
-  Test: node -e "const c=require('fs').readFileSync('apps/dashboard/src/pages/harness-pipeline/HarnessPipelinePage.tsx','utf8');if(!c.includes('initiative-prd-content')||!c.includes('initiative-step-timeline'))process.exit(1);console.log('OK')"
+- [x] [ARTIFACT] reportNode 含 `ws_issues` 字段赋值
+  Test: node -e "const c=require('fs').readFileSync('packages/brain/src/workflows/harness-initiative.graph.js','utf8');if(!c.includes('ws_issues'))process.exit(1);console.log('OK')"
 
-- [x] [ARTIFACT] `initiative-card` data-testid 绑定到 initiative 类型的 pipeline card 上
-  Test: node -e "const c=require('fs').readFileSync('apps/dashboard/src/pages/harness-pipeline/HarnessPipelinePage.tsx','utf8');if(!c.includes('initiative-card'))process.exit(1);console.log('OK')"
+- [x] [ARTIFACT] reportNode 含 `ws_costs` 字段赋值
+  Test: node -e "const c=require('fs').readFileSync('packages/brain/src/workflows/harness-initiative.graph.js','utf8');if(!c.includes('ws_costs'))process.exit(1);console.log('OK')"
 
-## BEHAVIOR 条目
+- [x] [ARTIFACT] reportNode 写入 `tasks.result` 含 `report_content` 键
+  Test: node -e "const c=require('fs').readFileSync('packages/brain/src/workflows/harness-initiative.graph.js','utf8');if(!c.includes('report_content'))process.exit(1);console.log('OK')"
 
-- [x] [BEHAVIOR] Dashboard TypeScript 编译无错误（组件代码有效，非空壳，TS 类型正确）
-  Test: bash -c 'cd /workspace && npx tsc --project apps/dashboard/tsconfig.json --noEmit > /tmp/tsc-ws3-dod.txt 2>&1; node -e "const d=require(\"fs\").readFileSync(\"/tmp/tsc-ws3-dod.txt\",\"utf8\");d.toLowerCase().includes(\"error\")&&process.exit(1)||console.log(\"PASS\")"'
+- [x] [ARTIFACT] 禁用字段 timings/timing/issues/costs/breakdown 不作为 reportContent 顶层键出现
+  Test: manual:bash -c 'node -e "const c=require(\"fs\").readFileSync(\"packages/brain/src/workflows/harness-initiative.graph.js\",\"utf8\");const start=c.indexOf(\"export async function reportNode\");const slice=c.slice(start,start+3000);const banned=[\"timings\",\"timing\",\"issues\",\"costs\",\"breakdown\"];banned.forEach(f=>{const rx=new RegExp(\"[\\\"\\x27]\"+f+\"[\\\"\\x27]\\\\s*:\");if(rx.test(slice)){console.error(\"FAIL:\",f);process.exit(1);}});console.log(\"OK\");"'
 
-- [x] [BEHAVIOR] 组件调用 `/api/brain/harness/initiative` 端点（API 接入验证 — 测组件有无接入，而非测 WS2 API 本身）
-  Test: node -e "const c=require('fs').readFileSync('apps/dashboard/src/pages/harness-pipeline/HarnessPipelinePage.tsx','utf8');if(!c.includes('harness/initiative'))process.exit(1);console.log('PASS')"
-
-- [x] [BEHAVIOR] 组件含截图条件渲染逻辑（screenshot_urls 为空时不渲染 section）及 PRD 内容渲染逻辑
-  Test: node -e "const c=require('fs').readFileSync('apps/dashboard/src/pages/harness-pipeline/HarnessPipelinePage.tsx','utf8');if(!c.includes('screenshot_urls')||!c.includes('initiative-prd-content'))process.exit(1);console.log('PASS')"
-
-- [x] [BEHAVIOR] 组件含点击交互逻辑（onClick handler）和 React 状态管理（useState/useReducer），驱动 step_timing 时间线渲染
-  Test: node -e "const c=require('fs').readFileSync('apps/dashboard/src/pages/harness-pipeline/HarnessPipelinePage.tsx','utf8');if(!c.includes('onClick')||!c.includes('useState')||!c.includes('step_timing')||!c.includes('initiative-step-timeline'))process.exit(1);console.log('PASS')"
+- [x] [ARTIFACT] ws_issues 元素含 feedback / ci_fail_type 字段逻辑
+  Test: manual:bash -c 'node -e "const c=require(\"fs\").readFileSync(\"packages/brain/src/workflows/harness-initiative.graph.js\",\"utf8\");const start=c.indexOf(\"export async function reportNode\");const slice=c.slice(start,start+4000);if(!slice.includes(\"feedback\")){console.error(\"FAIL: ws_issues 缺 feedback\");process.exit(1);}if(!slice.includes(\"ci_fail_type\")){console.error(\"FAIL: ws_issues 缺 ci_fail_type\");process.exit(1);}console.log(\"OK\");"'
