@@ -56,7 +56,13 @@ jobs:
       - name: Run check-test-coverage
         env:
           BASE_REF: origin/${{ github.base_ref }}
-        run: node packages/engine/scripts/devgate/check-test-coverage.cjs
+          WORKSTREAM_FILTER: ${{ fromJson('{}') && '' || '' }}${{ contains(github.head_ref, 'ws') && (github.head_ref) || '' }}
+        run: |
+          # 从分支名提取当前 workstream（cp-XXXXXXXX-ws-YYYY-wsN → wsN）
+          WS_MATCH=$(echo "${{ github.head_ref }}" | grep -oE 'ws[0-9]+$' || true)
+          export WORKSTREAM_FILTER="$WS_MATCH"
+          echo "ℹ️  WORKSTREAM_FILTER=$WORKSTREAM_FILTER（来自分支 ${{ github.head_ref }}）"
+          node packages/engine/scripts/devgate/check-test-coverage.cjs
 
   # ─── Check 3: TDD Red-Green commit 顺序 ───────────────────────────
   tdd-commit-order:

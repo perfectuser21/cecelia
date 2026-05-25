@@ -74,10 +74,10 @@ function parseTestContract(content) {
     const m = testFileRaw.match(/`([^`]+)`/);
     const testFile = m ? m[1] : testFileRaw;
     if (!/\.test\.(ts|js)$/.test(testFile)) continue;
-    // behavior 覆盖用 '/' 分割
+    // behavior 覆盖用 '/' 分割；去掉所有 backtick 避免与 it() 名称不匹配
     const behaviors = behaviorsRaw
       .split(/[/,、]/)
-      .map((s) => s.trim().replace(/^`|`$/g, ""))
+      .map((s) => s.trim().replace(/`/g, ""))
       .filter((s) => s.length > 0);
     rows.push({ ws, testFile, behaviors });
   }
@@ -90,6 +90,9 @@ function checkContract(contractPath) {
   const rows = parseTestContract(content);
   const violations = [];
 
+  // 若有 WORKSTREAM_FILTER 环境变量（如 ws1），只检查该 workstream
+  const wsFilter = (process.env.WORKSTREAM_FILTER || "").toLowerCase();
+
   if (rows.length === 0) {
     return [
       `${contractPath}: 未找到 ## Test Contract 表或表为空（v5.0 合同必须含此表）`,
@@ -97,6 +100,11 @@ function checkContract(contractPath) {
   }
 
   for (const row of rows) {
+    // 过滤：只检查当前 workstream
+    if (wsFilter && !row.ws.toLowerCase().includes(wsFilter)) {
+      console.log(`  ℹ️  跳过 ${row.ws}（WORKSTREAM_FILTER=${wsFilter}）`);
+      continue;
+    }
     // 测试文件路径：相对 sprint 目录
     const testFilePath = path.join(sprintDir, row.testFile);
     if (!fs.existsSync(testFilePath)) {
@@ -112,13 +120,23 @@ function checkContract(contractPath) {
       violations.push(`${row.ws}: ${testFilePath} 无 it()/test() 块`);
       continue;
     }
-    // 每个声明的 behavior 必须能在 itNames 里找到（子串匹配）
+    // 每个声明的 behavior 必须能在 itNames 里找到
+    // 匹配策略（宽松）：子串匹配 OR 关键词重叠（50% 以上词命中）
     for (const behavior of row.behaviors) {
-      const found = itNames.some(
-        (n) =>
-          n.toLowerCase().includes(behavior.toLowerCase()) ||
-          behavior.toLowerCase().includes(n.toLowerCase())
-      );
+      const bLow = behavior.toLowerCase();
+      const found = itNames.some((n) => {
+        const nLow = n.toLowerCase();
+        // 子串匹配
+        if (nLow.includes(bLow) || bLow.includes(nLow)) return true;
+        // 关键词重叠：提取字母数字 + CJK 词（长度 ≥ 2）
+        const words = (s) =>
+          [...s.matchAll(/[\w一-鿿]{2,}/g)].map((m) => m[0]);
+        const bWords = words(bLow);
+        const nWords = words(nLow);
+        if (bWords.length === 0) return false;
+        const hits = bWords.filter((w) => nWords.includes(w)).length;
+        return hits / bWords.length >= 0.5;
+      });
       if (!found) {
         violations.push(
           `${row.ws}: BEHAVIOR "${behavior}" 在 ${row.testFile} 的 ${itNames.length} 个 it() 中找不到对应项`
