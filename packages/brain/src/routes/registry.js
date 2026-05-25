@@ -172,6 +172,11 @@ router.post('/', async (req, res) => {
     if (!VALID_TYPES.includes(type)) {
       return res.status(400).json({ error: `Invalid type. Must be one of: ${VALID_TYPES.join(', ')}` });
     }
+    if (type === 'skill') {
+      return res.status(400).json({
+        error: 'Use POST /api/brain/skills to register skills (skill_registry table)',
+      });
+    }
     if (!VALID_STATUSES.includes(status)) {
       return res.status(400).json({ error: `Invalid status. Must be one of: ${VALID_STATUSES.join(', ')}` });
     }

@@ -149,7 +149,7 @@ describe('GET /api/brain/journey_steps', () => {
 describe('POST /api/brain/journey_steps', () => {
   beforeEach(() => { mockQuery.mockReset(); });
 
-  it('creates a step and returns 201', async () => {
+  it('creates a step and returns 200 (upsert endpoint)', async () => {
     mockQuery.mockResolvedValueOnce({ rows: [{ id: 'xyz', name: 'Step 1', journey_id: 'j1', step_number: 1 }] });
 
     const { default: router } = await import('../journeys.js');
@@ -162,7 +162,7 @@ describe('POST /api/brain/journey_steps', () => {
     const res = await request.default(app)
       .post('/api/brain/journey_steps')
       .send({ journey_id: 'j1', name: 'Step 1', step_number: 1 });
-    expect(res.status).toBe(201);
+    expect(res.status).toBe(200);
   });
 
   it('returns 400 when required fields missing', async () => {

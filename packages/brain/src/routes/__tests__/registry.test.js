@@ -81,3 +81,34 @@ describe('GET /api/brain/registry?type=skill routing', () => {
     expect(sql).not.toContain('skill_registry');
   });
 });
+
+describe('POST /api/brain/registry type=skill guard', () => {
+  let app;
+
+  beforeEach(async () => {
+    vi.clearAllMocks();
+    const { default: router } = await import('../registry.js');
+    const express = await import('express');
+    app = express.default();
+    app.use(express.default.json());
+    app.use('/api/brain/registry', router);
+  });
+
+  it('POST type=skill returns 400 with guidance to use /api/brain/skills', async () => {
+    const request = await import('supertest');
+    const res = await request.default(app)
+      .post('/api/brain/registry')
+      .send({ name: '/dev', type: 'skill' });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toContain('/api/brain/skills');
+  });
+
+  it('POST other types accepted (mock insert succeeds)', async () => {
+    mockQuery.mockResolvedValueOnce({ rows: [{ id: 'reg-1', name: 'my-api', type: 'api', status: 'active' }] });
+    const request = await import('supertest');
+    const res = await request.default(app)
+      .post('/api/brain/registry')
+      .send({ name: 'my-api', type: 'api' });
+    expect(res.status).toBe(201);
+  });
+});

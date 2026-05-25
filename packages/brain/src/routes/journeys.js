@@ -259,7 +259,7 @@ router.post('/journey_steps', async (req, res) => {
        RETURNING *`,
       [journey_id, name, step_number, description || null, status || 'planned']
     );
-    res.status(201).json(rows[0]);
+    res.status(200).json(rows[0]);
   } catch (err) {
     console.error('[journeys] POST /journey_steps error:', err.message);
     res.status(500).json({ error: err.message });
