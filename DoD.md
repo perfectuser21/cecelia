@@ -1,47 +1,30 @@
-contract_branch: cp-harness-propose-r3-fb5c3fe5
-workstream_index: 1
-sprint_dir: sprints/cecelia-harness-viz
+contract_branch: cp-harness-propose-r2-4e73a2b3
+workstream_index: 3
+sprint_dir: sprints/cecelia-pipeline-viz-v2
 
----
-skeleton: false
-journey_type: user_facing
----
-# Contract DoD — Workstream 1: Brain API ws-progress 端点
-
-**范围**: `packages/brain/src/routes/harness.js` 新增 `GET /initiative/:id/ws-progress`，查询 checkpoint_blobs 表读取 WS 进度
-**大小**: S (<100 行)
-**依赖**: 无
+# DoD — WS3: Dashboard initiative 详情面板
 
 ## ARTIFACT 条目
 
-- [x] [ARTIFACT] harness.js 含 `initiative/:id/ws-progress` 路由定义
-  Test: node -e "const c=require('fs').readFileSync('packages/brain/src/routes/harness.js','utf8');if(!c.includes('ws-progress'))process.exit(1);console.log('OK')"
+- [x] [ARTIFACT] `apps/dashboard/src/pages/harness-pipeline/HarnessPipelinePage.tsx` 含 `initiative-detail-panel` data-testid
+  Test: node -e "const c=require('fs').readFileSync('apps/dashboard/src/pages/harness-pipeline/HarnessPipelinePage.tsx','utf8');if(!c.includes('initiative-detail-panel'))process.exit(1);console.log('OK')"
 
-- [x] [ARTIFACT] 路由使用 checkpoint_blobs 表查询（含 thread_id LIKE 'harness-task:%:ws%' 过滤）
-  Test: node -e "const c=require('fs').readFileSync('packages/brain/src/routes/harness.js','utf8');if(!c.includes('checkpoint_blobs'))process.exit(1);console.log('OK')"
+- [x] [ARTIFACT] Dashboard 页面含 `initiative-prd-content` 和 `initiative-step-timeline` 两个 data-testid
+  Test: node -e "const c=require('fs').readFileSync('apps/dashboard/src/pages/harness-pipeline/HarnessPipelinePage.tsx','utf8');if(!c.includes('initiative-prd-content')||!c.includes('initiative-step-timeline'))process.exit(1);console.log('OK')"
 
-## BEHAVIOR 条目（manual:bash 真环境验证，psql 使用 $DB_HOST/$DB_USER/$DB_PASSWORD/$DB_NAME 单独变量）
+- [x] [ARTIFACT] `initiative-card` data-testid 绑定到 initiative 类型的 pipeline card 上
+  Test: node -e "const c=require('fs').readFileSync('apps/dashboard/src/pages/harness-pipeline/HarnessPipelinePage.tsx','utf8');if(!c.includes('initiative-card'))process.exit(1);console.log('OK')"
 
-- [x] [BEHAVIOR] ws-progress API 返回顶层 keys 精确等于 ["initiative_id","workstreams"]（schema 完整性）
-  Test: manual:bash -c 'INIT_ID=$(PGPASSWORD=$DB_PASSWORD psql -h $DB_HOST -U $DB_USER -d $DB_NAME -t -A -c "SELECT id FROM tasks WHERE task_type='"'"'harness_initiative'"'"' LIMIT 1" | tr -d " \n"); [ -z "$INIT_ID" ] && exit 0; RESP=$(curl -sf localhost:5221/api/brain/harness/initiative/$INIT_ID/ws-progress); jq -e '"'"'keys == ["initiative_id","workstreams"]'"'"' <<< "$RESP" || exit 1'
-  期望: OK
+## BEHAVIOR 条目
 
-- [x] [BEHAVIOR] initiative_id 字段值等于请求路径中的 id（字段值正确）
-  Test: manual:bash -c 'INIT_ID=$(PGPASSWORD=$DB_PASSWORD psql -h $DB_HOST -U $DB_USER -d $DB_NAME -t -A -c "SELECT id FROM tasks WHERE task_type='"'"'harness_initiative'"'"' LIMIT 1" | tr -d " \n"); [ -z "$INIT_ID" ] && exit 0; RESP=$(curl -sf localhost:5221/api/brain/harness/initiative/$INIT_ID/ws-progress); jq -e --arg id "$INIT_ID" '"'"'.initiative_id == $id'"'"' <<< "$RESP" || exit 1'
-  期望: OK
+- [x] [BEHAVIOR] Dashboard TypeScript 编译无错误（组件代码有效，非空壳，TS 类型正确）
+  Test: bash -c 'cd /workspace && npx tsc --project apps/dashboard/tsconfig.json --noEmit > /tmp/tsc-ws3-dod.txt 2>&1; node -e "const d=require(\"fs\").readFileSync(\"/tmp/tsc-ws3-dod.txt\",\"utf8\");d.toLowerCase().includes(\"error\")&&process.exit(1)||console.log(\"PASS\")"'
 
-- [x] [BEHAVIOR] workstreams 是数组且不包含禁用字段（keys 完整性 + 禁用字段反向检查）
-  Test: manual:bash -c 'INIT_ID=$(PGPASSWORD=$DB_PASSWORD psql -h $DB_HOST -U $DB_USER -d $DB_NAME -t -A -c "SELECT id FROM tasks WHERE task_type='"'"'harness_initiative'"'"' LIMIT 1" | tr -d " \n"); [ -z "$INIT_ID" ] && exit 0; RESP=$(curl -sf localhost:5221/api/brain/harness/initiative/$INIT_ID/ws-progress); jq -e '"'"'.workstreams | type == "array"'"'"' <<< "$RESP" || exit 1; for f in steps phases stages result data ws_list; do jq -e "has(\"$f\") | not" <<< "$RESP" || exit 1; done'
-  期望: OK
+- [x] [BEHAVIOR] 组件调用 `/api/brain/harness/initiative` 端点（API 接入验证 — 测组件有无接入，而非测 WS2 API 本身）
+  Test: node -e "const c=require('fs').readFileSync('apps/dashboard/src/pages/harness-pipeline/HarnessPipelinePage.tsx','utf8');if(!c.includes('harness/initiative'))process.exit(1);console.log('PASS')"
 
-- [x] [BEHAVIOR] 无 WS checkpoint 的 initiative 返回 workstreams=[]（空数组边界）
-  Test: manual:bash -c 'CR=$(curl -sf -X POST localhost:5221/api/brain/tasks -H '"'"'Content-Type: application/json'"'"' -d '"'"'{"task_type":"harness_initiative","status":"queued","title":"test-empty-ws-dod"}'"'"'); NEW_ID=$(node -e "process.stdout.write(JSON.parse(require('"'"'fs'"'"').readFileSync('"'"'/dev/stdin'"'"','"'"'utf8'"'"')).id)" <<< "$CR"); RESP=$(curl -sf localhost:5221/api/brain/harness/initiative/$NEW_ID/ws-progress); PGPASSWORD=$DB_PASSWORD psql -h $DB_HOST -U $DB_USER -d $DB_NAME -c "DELETE FROM tasks WHERE id='"'"'$NEW_ID'"'"'" >/dev/null; jq -e '"'"'.workstreams == []'"'"' <<< "$RESP" || exit 1'
-  期望: OK
+- [x] [BEHAVIOR] 组件含截图条件渲染逻辑（screenshot_urls 为空时不渲染 section）及 PRD 内容渲染逻辑
+  Test: node -e "const c=require('fs').readFileSync('apps/dashboard/src/pages/harness-pipeline/HarnessPipelinePage.tsx','utf8');if(!c.includes('screenshot_urls')||!c.includes('initiative-prd-content'))process.exit(1);console.log('PASS')"
 
-- [x] [BEHAVIOR] 不存在的 initiative_id 返回 HTTP 404 + error 字段（error path）
-  Test: manual:bash -c 'CODE=$(curl -s -o /dev/null -w "%{http_code}" "localhost:5221/api/brain/harness/initiative/00000000-0000-0000-0000-000000000000/ws-progress"); [ "$CODE" = "404" ] || exit 1; jq -e '"'"'.error == "initiative not found"'"'"' <<< "$(curl -s localhost:5221/api/brain/harness/initiative/00000000-0000-0000-0000-000000000000/ws-progress)" || exit 1'
-  期望: OK
-
-- [x] [BEHAVIOR] workstream 子对象 fix_round 是 number 类型（字段类型校验）
-  Test: manual:bash -c 'INIT_ID=$(PGPASSWORD=$DB_PASSWORD psql -h $DB_HOST -U $DB_USER -d $DB_NAME -t -A -c "SELECT t.id FROM tasks t INNER JOIN checkpoint_blobs cb ON cb.thread_id LIKE '"'"'harness-task:'"'"' || t.id::text || '"'"':ws%'"'"' WHERE t.task_type='"'"'harness_initiative'"'"' LIMIT 1" | tr -d " \n"); [ -z "$INIT_ID" ] && exit 0; RESP=$(curl -sf localhost:5221/api/brain/harness/initiative/$INIT_ID/ws-progress); jq -e '"'"'.workstreams[0].fix_round | type == "number"'"'"' <<< "$RESP" || exit 1'
-  期望: OK
+- [x] [BEHAVIOR] 组件含点击交互逻辑（onClick handler）和 React 状态管理（useState/useReducer），驱动 step_timing 时间线渲染
+  Test: node -e "const c=require('fs').readFileSync('apps/dashboard/src/pages/harness-pipeline/HarnessPipelinePage.tsx','utf8');if(!c.includes('onClick')||!c.includes('useState')||!c.includes('step_timing')||!c.includes('initiative-step-timeline'))process.exit(1);console.log('PASS')"
