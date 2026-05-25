@@ -1,9 +1,10 @@
 #!/usr/bin/env node
 /**
- * check-dod-purity.cjs — Harness v5 CI check
+ * check-dod-purity.cjs — Harness v7.4 CI check
  *
- * 规则：
- *   contract-dod-ws{N}.md 只能装 [ARTIFACT] 条目，严禁 [BEHAVIOR] 条目
+ * 规则（v7.4 修订）：
+ *   contract-dod-ws{N}.md 可装 [ARTIFACT] 和 [BEHAVIOR] 条目
+ *   [BEHAVIOR] 必须有 Test: manual:bash 内嵌命令（v7.4 协议，v5.0 禁令已废止）
  *   Test 字段只允许白名单：node / npm / curl / bash / psql / tests/ / manual: / contract:
  *
  * 扫描范围：
@@ -59,16 +60,9 @@ function checkFile(filePath) {
   const lines = content.split("\n");
   const violations = [];
 
-  // Rule 1: 禁 [BEHAVIOR] 条目
-  // 允许的：`## BEHAVIOR 索引`（标题）
-  // 禁止的：`- [ ] [BEHAVIOR] ...` 或 `- [x] [BEHAVIOR] ...`
-  for (let i = 0; i < lines.length; i++) {
-    if (/^\s*-\s*\[[\sxX]\]\s*\[BEHAVIOR\]/.test(lines[i])) {
-      violations.push(
-        `L${i + 1}: 禁止 [BEHAVIOR] 条目 — BEHAVIOR 必须搬到 tests/ws{N}/*.test.ts：\n    ${lines[i].trim()}`
-      );
-    }
-  }
+  // Rule 1 (v7.4): [BEHAVIOR] 条目允许存在，但必须有 Test: manual:bash 命令
+  // v5.0 的禁令已废止（SKILL.md changelog v7.4 反转）
+  // 不再对 [BEHAVIOR] 条目本身报错，仅 Rule 2 检查其 Test 格式
 
   // Rule 2: Test 字段白名单
   // 允许：manual:<cmd>(含 node/npm/curl/bash/psql) / tests/... / contract:...
@@ -127,8 +121,8 @@ function main() {
   } else {
     console.log(`${RED}❌ DoD 纯度检查失败${RESET} (${totalViolations} 处违规)`);
     console.log("\n  contract-dod-ws{N}.md 规则：");
-    console.log("    - 只能装 [ARTIFACT] 条目");
-    console.log("    - [BEHAVIOR] 必须搬到 sprints/{sprint}/tests/ws{N}/*.test.ts");
+    console.log("    - 可装 [ARTIFACT] 和 [BEHAVIOR] 条目（v7.4）");
+    console.log("    - [BEHAVIOR] 须含 Test: manual:bash 命令");
     console.log("    - Test 字段：manual:<cmd> / tests/... / contract:...");
     console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
     process.exit(1);

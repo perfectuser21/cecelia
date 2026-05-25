@@ -106,13 +106,30 @@ jobs:
         run: npm ci
       - name: Run sprint tests
         if: steps.check-tests.outputs.has_tests == 'true'
+        env:
+          BRANCH_NAME: ${{ github.head_ref }}
         run: |
           set -euo pipefail
+          ALL_TEST_FILES="${{ steps.check-tests.outputs.test_files }}"
+
+          # 从分支名提取当前 workstream（cp-XXXXXXXX-ws-YYYY-wsN → wsN）
+          WS_MATCH=$(echo "${BRANCH_NAME}" | grep -oE 'ws[0-9]+$' || true)
+
+          # 过滤：只跑当前 workstream 的测试（避免因 import commit 把所有 ws 的测试都拉进来）
+          if [ -n "$WS_MATCH" ]; then
+            TEST_FILES=$(echo "$ALL_TEST_FILES" | grep "/${WS_MATCH}/" || echo "$ALL_TEST_FILES")
+            echo "ℹ️  当前 workstream: $WS_MATCH，只跑对应测试"
+          else
+            TEST_FILES="$ALL_TEST_FILES"
+          fi
+
           echo "📋 跑这些测试文件："
-          echo "${{ steps.check-tests.outputs.test_files }}" | sed 's/^/  /'
+          echo "$TEST_FILES" | sed 's/^/  /'
           echo ""
-          # vitest 从 CLI 接受相对路径即可
-          npx vitest run ${{ steps.check-tests.outputs.test_files }} --reporter=verbose || {
+
+          # 把换行转成空格，避免多文件路径被 shell 当独立命令执行
+          TEST_FILES_ARGS=$(echo "$TEST_FILES" | tr '\n' ' ')
+          npx vitest run $TEST_FILES_ARGS --reporter=verbose || {
             echo "❌ 测试未通过（Green 阶段失败）"
             exit 1
           }

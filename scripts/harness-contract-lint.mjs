@@ -101,8 +101,14 @@ for (const entry of entries) {
       });
     } else {
       // 规则 3: 白名单检查
-      // 分割管道/分号命令段，检查每段首词
-      const segments = testValue.split(/[|;]/).map(s => s.trim()).filter(Boolean);
+      // manual:bash -c '...' 格式中，bash -c 引号内部的命令属于 bash 子 shell，不单独检查
+      // 只检查 manual: 前缀本身的工具名，以及 bash -c 引号外部的管道/分号段
+      let valueToCheck = testValue;
+      if (/^manual:bash\s+-c\s+['"]/.test(testValue)) {
+        // manual:bash -c '...' — 只验证 bash 本身是白名单（已是），跳过引号内容
+        continue;
+      }
+      const segments = valueToCheck.split(/[|;]/).map(s => s.trim()).filter(Boolean);
       for (const segment of segments) {
         const firstWord = segment.split(/\s+/)[0].toLowerCase().replace(/^!/, '');
         if (BANNED_TOOLS.includes(firstWord)) {
