@@ -1096,6 +1096,11 @@ router.get('/initiative/:id/detail', async (req, res) => {
   try {
     const { id } = req.params;
 
+    // UUID 格式校验 — 非法格式直接 400，不查 DB
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)) {
+      return res.status(400).json({ error: 'invalid initiative id' });
+    }
+
     // 1. 验证 initiative 存在（task_type=harness_initiative）
     const { rows: initRows } = await pool.query(
       `SELECT id, payload FROM tasks WHERE id::text = $1 AND task_type = 'harness_initiative' LIMIT 1`,
