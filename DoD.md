@@ -28,16 +28,16 @@ journey_type: user_facing
 
 ## ARTIFACT 条目
 
-- [ ] [ARTIFACT] PRD DoD #8：`sprints/cecelia-pipeline-viz-v2/sprint-prd.md` 存在
+- [x] [ARTIFACT] PRD DoD #8：`sprints/cecelia-pipeline-viz-v2/sprint-prd.md` 存在
   Test: node -e "require('fs').accessSync('sprints/cecelia-pipeline-viz-v2/sprint-prd.md');console.log('OK')"
 
-- [ ] [ARTIFACT] PRD DoD #8：`sprints/cecelia-pipeline-viz-v2/contract-dod-ws1.md` 至 `contract-dod-ws5.md` 全部存在（每 WS 一份）
+- [x] [ARTIFACT] PRD DoD #8：`sprints/cecelia-pipeline-viz-v2/contract-dod-ws1.md` 至 `contract-dod-ws5.md` 全部存在（每 WS 一份）
   Test: node -e "const fs=require('fs');['ws1','ws2','ws3','ws4','ws5'].forEach(w=>{fs.accessSync('sprints/cecelia-pipeline-viz-v2/contract-dod-'+w+'.md')});console.log('OK')"
 
-- [ ] [ARTIFACT] `sprints/cecelia-pipeline-viz-v2/tests/ws5/e2e-screenshot-chain.test.ts` 存在且含截图目录验证逻辑
+- [x] [ARTIFACT] `sprints/cecelia-pipeline-viz-v2/tests/ws5/e2e-screenshot-chain.test.ts` 存在且含截图目录验证逻辑
   Test: node -e "const c=require('fs').readFileSync('sprints/cecelia-pipeline-viz-v2/tests/ws5/e2e-screenshot-chain.test.ts','utf8');if(!c.includes('harness-screenshots'))process.exit(1);console.log('OK')"
 
-- [ ] [ARTIFACT] `~/claude-output/harness-screenshots/` 目录可被创建（前置环境验证）
+- [x] [ARTIFACT] `~/claude-output/harness-screenshots/` 目录可被创建（前置环境验证）
   Test: node -e "const p=require('path').join(process.env.HOME,'claude-output/harness-screenshots');require('fs').mkdirSync(p,{recursive:true});console.log('OK')"
 
 ---
