@@ -34,6 +34,69 @@ const HARNESS_MERMAID = `graph TD
   Report --> End([END])`;
 
 /**
+ * GET /initiative/:id/detail
+ * Initiative 全链路详情：PRD 内容、合同内容、GAN 轮次、步骤时序、截图 URL
+ * 响应字段（固定集合）：initiative_id, prd_content, contract_content, gan_rounds, step_timing, screenshot_urls
+ */
+router.get('/initiative/:id/detail', async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const { rows: initRows } = await pool.query(
+      `SELECT id FROM tasks WHERE id::text = $1 AND task_type = 'harness_initiative' LIMIT 1`,
+      [id]
+    );
+    if (initRows.length === 0) {
+      return res.status(404).json({ error: 'initiative not found' });
+    }
+
+    const { rows: contractRows } = await pool.query(
+      `SELECT prd_content, contract_content, review_rounds
+       FROM initiative_contracts
+       WHERE initiative_id::text = $1
+       ORDER BY version DESC LIMIT 1`,
+      [id]
+    );
+    const contract = contractRows[0] || null;
+
+    const { rows: eventRows } = await pool.query(
+      `SELECT payload, created_at
+       FROM task_events
+       WHERE task_id::text = $1 AND event_type = 'graph_node_update'
+       ORDER BY created_at ASC`,
+      [id]
+    );
+    const step_timing = eventRows.map(row => ({
+      node: row.payload?.nodeName || 'unknown',
+      ts: row.created_at,
+    }));
+
+    const { rows: blobRows } = await pool.query(
+      `SELECT blob FROM checkpoint_blobs
+       WHERE thread_id LIKE $1 AND channel = 'screenshot_url' AND type = 'json'`,
+      [`harness-task:${id}:%`]
+    );
+    const screenshot_urls = blobRows
+      .map(row => {
+        try { return JSON.parse(Buffer.from(row.blob).toString('utf8')); } catch { return null; }
+      })
+      .filter(url => typeof url === 'string');
+
+    res.json({
+      initiative_id: String(id),
+      prd_content: contract?.prd_content ?? null,
+      contract_content: contract?.contract_content ?? null,
+      gan_rounds: contract?.review_rounds != null ? Number(contract.review_rounds) : null,
+      step_timing,
+      screenshot_urls,
+    });
+  } catch (err) {
+    console.error('[GET /harness/initiative/detail]', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
  * GET /initiative/:id/ws-progress
  * 返回该 initiative 下所有 WS 的进度状态
  * 从 checkpoint_blobs 表查询 thread_id LIKE 'harness-task:{id}:ws%' 的记录
