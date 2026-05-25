@@ -1075,4 +1075,93 @@ router.get('/stats', async (req, res) => {
   }
 });
 
+// task_type → LangGraph node name（用于 step_timing.node）
+const TASK_TYPE_TO_NODE = {
+  sprint_planner: 'planner',
+  harness_contract_propose: 'proposer', sprint_contract_propose: 'proposer',
+  harness_contract_review: 'reviewer', sprint_contract_review: 'reviewer',
+  harness_generate: 'generator', sprint_generate: 'generator',
+  harness_fix: 'fix', sprint_fix: 'fix',
+  harness_ci_watch: 'ci-watch',
+  harness_evaluate: 'evaluator', sprint_evaluate: 'evaluator',
+  harness_report: 'reporter', sprint_report: 'reporter',
+};
+
+/**
+ * GET /initiative/:id/detail
+ * 返回 initiative 详情：PRD/合约内容、GAN 轮次、步骤时序、截图链接
+ * 精确六字段 schema: initiative_id, prd_content, contract_content, gan_rounds, step_timing, screenshot_urls
+ */
+router.get('/initiative/:id/detail', async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    // 1. 验证 initiative 存在（task_type=harness_initiative）
+    const { rows: initRows } = await pool.query(
+      `SELECT id, payload FROM tasks WHERE id::text = $1 AND task_type = 'harness_initiative' LIMIT 1`,
+      [id]
+    );
+    if (initRows.length === 0) {
+      return res.status(404).json({ error: 'initiative not found' });
+    }
+
+    const sprintDir = initRows[0].payload?.sprint_dir || 'sprints';
+
+    // 2. 读取 sprint 文件（不存在时为 null）
+    let prd_content = null;
+    let contract_content = null;
+    try {
+      prd_content = await readFile(join(REPO_ROOT, sprintDir, 'sprint-prd.md'), 'utf8');
+    } catch { /* file not found */ }
+    try {
+      contract_content = await readFile(join(REPO_ROOT, sprintDir, 'sprint-contract.md'), 'utf8');
+    } catch { /* file not found */ }
+
+    // 3. 聚合子任务 step_timing（只含已完成任务，需 started_at + completed_at）
+    const { rows: childTasks } = await pool.query(
+      `SELECT task_type, started_at, completed_at
+       FROM tasks
+       WHERE payload->>'initiative_id' = $1
+         AND started_at IS NOT NULL
+         AND completed_at IS NOT NULL
+       ORDER BY started_at ASC`,
+      [id]
+    );
+
+    const step_timing = childTasks.map(t => ({
+      node: TASK_TYPE_TO_NODE[t.task_type] || t.task_type,
+      started_at: t.started_at,
+      ended_at: t.completed_at,
+      duration_ms: Math.round(new Date(t.completed_at) - new Date(t.started_at)),
+    }));
+
+    // 4. GAN 对抗轮次（review 任务数量，0 则为 null）
+    const { rows: ganRows } = await pool.query(
+      `SELECT COUNT(*)::int AS cnt FROM tasks
+       WHERE payload->>'initiative_id' = $1
+         AND (task_type = 'harness_contract_review' OR task_type = 'sprint_contract_review')`,
+      [id]
+    );
+    const ganCount = ganRows[0]?.cnt || 0;
+    const gan_rounds = ganCount > 0 ? ganCount : null;
+
+    // 5. screenshot_urls（payload 中的数组，不存在时为 []）
+    const screenshot_urls = Array.isArray(initRows[0].payload?.screenshot_urls)
+      ? initRows[0].payload.screenshot_urls
+      : [];
+
+    res.json({
+      initiative_id: id,
+      prd_content,
+      contract_content,
+      gan_rounds,
+      step_timing,
+      screenshot_urls,
+    });
+  } catch (err) {
+    console.error('[GET /harness/initiative/:id/detail]', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 export default router;
