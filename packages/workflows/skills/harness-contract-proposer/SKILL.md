@@ -256,6 +256,22 @@ const { chromium, expect } = require('@playwright/test');
 })();
 ```
 
+**[BEHAVIOR:E2E:screenshot]** evaluator 验收后截图必须存入 `~/claude-output/harness-screenshots/<ws_id>-<step>.png`
+
+```
+截图路径规范：~/claude-output/harness-screenshots/<ws_id>-<step>.png
+示例：
+  ~/claude-output/harness-screenshots/ws1-01-initial.png
+  ~/claude-output/harness-screenshots/ws1-02-action.png
+  ~/claude-output/harness-screenshots/ws1-03-result.png
+
+合约要求：
+  - evaluator 在模式B final-e2e 验收完成后，将所有截图重命名并移动到上述目标路径
+  - 文件名格式：<ws_id>-<step>.png（step 为两位数字前缀 + 描述，如 01-initial、02-action）
+  - 截图目录 ~/claude-output/harness-screenshots/ 由 evaluator 负责创建（mkdir -p）
+  - Test: manual:bash -c 'ls ~/claude-output/harness-screenshots/ | grep -E "^ws[0-9]+-[0-9]+-.*\.png$"'
+```
+
 ---
 
 ### target_environment = windows_cloud（公网 Windows 产品 — GitHub Actions windows-latest，完全干净 VM）
