@@ -1313,11 +1313,53 @@ export async function reportNode(state, opts = {}) {
   // 重入会重复 UPDATE，虽语义等幂但增加 DB 负载且 completed_at 会刷新）。
   if (state.report_path) return { report_path: state.report_path };
   const dbPool = opts.pool || pool;
+
+  // Compute step_timing from task_events graph_node_update events (same logic as /detail endpoint)
+  let step_timing = [];
+  try {
+    const { rows: evtRows } = await dbPool.query(
+      `SELECT payload, created_at
+       FROM task_events
+       WHERE task_id = $1::uuid AND event_type = 'graph_node_update'
+       ORDER BY created_at ASC`,
+      [state.initiativeId]
+    );
+    for (let i = 0; i < evtRows.length; i++) {
+      const p = evtRows[i].payload || {};
+      const started_at = new Date(evtRows[i].created_at).toISOString();
+      const nextTs = evtRows[i + 1]?.created_at;
+      const duration_ms = nextTs
+        ? new Date(nextTs).getTime() - new Date(evtRows[i].created_at).getTime()
+        : null;
+      step_timing.push({ node: p.nodeName || 'unknown', started_at, duration_ms });
+    }
+  } catch (err) {
+    console.warn(`[harness-initiative.graph] reportNode step_timing query failed: ${err.message}`);
+  }
+
+  // Compute ws_issues from sub_tasks (evaluator_feedback + ci_fail_type)
+  const ws_issues = (state.sub_tasks || [])
+    .filter(s => s.ci_fail_type || s.evaluator_feedback)
+    .map(s => ({
+      ws_id: s.id,
+      feedback: s.evaluator_feedback || null,
+      ci_fail_type: s.ci_fail_type || null,
+    }));
+
+  // Compute ws_costs from sub_tasks (ws_id + cost_usd)
+  const ws_costs = (state.sub_tasks || []).map(s => ({
+    ws_id: s.id,
+    cost_usd: s.cost_usd || 0,
+  }));
+
   const reportContent = JSON.stringify({
     initiativeId: state.initiativeId,
     sub_tasks: state.sub_tasks || [],
     final_e2e_verdict: state.final_e2e_verdict,
     failed_scenarios: state.final_e2e_failed_scenarios || [],
+    step_timing,
+    ws_issues,
+    ws_costs,
     cost_usd: (state.sub_tasks || []).reduce((a, s) => a + (s.cost_usd || 0), 0),
     completed_at: new Date().toISOString(),
   }, null, 2);
@@ -1343,9 +1385,10 @@ export async function reportNode(state, opts = {}) {
     const taskStatus = state.final_e2e_verdict === 'PASS' ? 'completed' : 'failed';
     await dbPool.query(
       `UPDATE tasks SET status=$2::text, completed_at=NOW(), updated_at=NOW(),
+        result = COALESCE(result, '{}'::jsonb) || jsonb_build_object('report_content', $4::jsonb),
         error_message=CASE WHEN $2::text='failed' THEN $3::text ELSE error_message END
        WHERE id=$1::uuid`,
-      [state.initiativeId, taskStatus, reason]
+      [state.initiativeId, taskStatus, reason, reportContent]
     );
   } catch (err) {
     console.warn(`[harness-initiative.graph] reportNode db update failed: ${err.message}`);
