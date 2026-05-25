@@ -1,47 +1,72 @@
-contract_branch: cp-harness-propose-r3-fb5c3fe5
-workstream_index: 1
-sprint_dir: sprints/cecelia-harness-viz
+contract_branch: cp-05251409-ws-4e73a2b3-ws5
+workstream_index: 5
+sprint_dir: sprints/cecelia-pipeline-viz-v2
 
 ---
 skeleton: false
 journey_type: user_facing
 ---
-# Contract DoD — Workstream 1: Brain API ws-progress 端点
+# Contract DoD — Workstream 5: E2E 截图链路验证
 
-**范围**: `packages/brain/src/routes/harness.js` 新增 `GET /initiative/:id/ws-progress`，查询 checkpoint_blobs 表读取 WS 进度
-**大小**: S (<100 行)
-**依赖**: 无
+**范围**: `sprints/cecelia-pipeline-viz-v2/tests/ws5/e2e-screenshot-chain.test.ts` — 轻量 E2E 脚本，验证 WS1-WS4 完整截图写入链路
+**大小**: S（40-60 行）
+**依赖**: Workstream 4 完成后
+
+---
+
+## Risks
+
+### R5a: /tmp/e2e-start-marker 未在截图前创建导致 COUNT 统计历史截图
+**影响**: 若 E2E 脚本前置步骤未执行 `touch /tmp/e2e-start-marker`，`find -newer` 会统计所有历史 PNG，造假通过。
+**缓解**: BEHAVIOR 2 的 `find -newer /tmp/e2e-start-marker` 依赖 final-e2e 脚本开头的 `execSync('touch /tmp/e2e-start-marker')`（已在 E2E 脚本中声明）；WS5 evaluator 在触发 E2E 前自动 touch 标记。
+
+### R5b: 流水线目录结构检查因文件路径不同而 FAIL
+**影响**: PRD DoD #8 检查 `sprints/cecelia-pipeline-viz-v2/contract-dod-ws*.md`，若 sprint 目录名拼写不同（如 `cecelia-pipeline-vis-v2`），所有文件检查 FAIL。
+**缓解**: 目录名 `sprints/cecelia-pipeline-viz-v2/` 在 PRD DoD #8 中字面定义，generator 须使用完全相同的路径；此目录在 Round 1 已创建，路径已固定。
+
+---
 
 ## ARTIFACT 条目
 
-- [x] [ARTIFACT] harness.js 含 `initiative/:id/ws-progress` 路由定义
-  Test: node -e "const c=require('fs').readFileSync('packages/brain/src/routes/harness.js','utf8');if(!c.includes('ws-progress'))process.exit(1);console.log('OK')"
+- [ ] [ARTIFACT] PRD DoD #8：`sprints/cecelia-pipeline-viz-v2/sprint-prd.md` 存在
+  Test: node -e "require('fs').accessSync('sprints/cecelia-pipeline-viz-v2/sprint-prd.md');console.log('OK')"
 
-- [x] [ARTIFACT] 路由使用 checkpoint_blobs 表查询（含 thread_id LIKE 'harness-task:%:ws%' 过滤）
-  Test: node -e "const c=require('fs').readFileSync('packages/brain/src/routes/harness.js','utf8');if(!c.includes('checkpoint_blobs'))process.exit(1);console.log('OK')"
+- [ ] [ARTIFACT] PRD DoD #8：`sprints/cecelia-pipeline-viz-v2/contract-dod-ws1.md` 至 `contract-dod-ws5.md` 全部存在（每 WS 一份）
+  Test: node -e "const fs=require('fs');['ws1','ws2','ws3','ws4','ws5'].forEach(w=>{fs.accessSync('sprints/cecelia-pipeline-viz-v2/contract-dod-'+w+'.md')});console.log('OK')"
 
-## BEHAVIOR 条目（manual:bash 真环境验证，psql 使用 $DB_HOST/$DB_USER/$DB_PASSWORD/$DB_NAME 单独变量）
+- [ ] [ARTIFACT] `sprints/cecelia-pipeline-viz-v2/tests/ws5/e2e-screenshot-chain.test.ts` 存在且含截图目录验证逻辑
+  Test: node -e "const c=require('fs').readFileSync('sprints/cecelia-pipeline-viz-v2/tests/ws5/e2e-screenshot-chain.test.ts','utf8');if(!c.includes('harness-screenshots'))process.exit(1);console.log('OK')"
 
-- [x] [BEHAVIOR] ws-progress API 返回顶层 keys 精确等于 ["initiative_id","workstreams"]（schema 完整性）
-  Test: manual:bash -c 'INIT_ID=$(PGPASSWORD=$DB_PASSWORD psql -h $DB_HOST -U $DB_USER -d $DB_NAME -t -A -c "SELECT id FROM tasks WHERE task_type='"'"'harness_initiative'"'"' LIMIT 1" | tr -d " \n"); [ -z "$INIT_ID" ] && exit 0; RESP=$(curl -sf localhost:5221/api/brain/harness/initiative/$INIT_ID/ws-progress); jq -e '"'"'keys == ["initiative_id","workstreams"]'"'"' <<< "$RESP" || exit 1'
+- [ ] [ARTIFACT] `~/claude-output/harness-screenshots/` 目录可被创建（前置环境验证）
+  Test: node -e "const p=require('path').join(process.env.HOME,'claude-output/harness-screenshots');require('fs').mkdirSync(p,{recursive:true});console.log('OK')"
+
+---
+
+## BEHAVIOR 条目
+
+- [ ] [BEHAVIOR] WS5 E2E 脚本跑完后，`~/claude-output/harness-screenshots/` 目录存在（不缺失前置目录）
+  Test: manual:bash -c 'mkdir -p "$HOME/claude-output/harness-screenshots" && ls "$HOME/claude-output/harness-screenshots" && echo OK || exit 1'
   期望: OK
 
-- [x] [BEHAVIOR] initiative_id 字段值等于请求路径中的 id（字段值正确）
-  Test: manual:bash -c 'INIT_ID=$(PGPASSWORD=$DB_PASSWORD psql -h $DB_HOST -U $DB_USER -d $DB_NAME -t -A -c "SELECT id FROM tasks WHERE task_type='"'"'harness_initiative'"'"' LIMIT 1" | tr -d " \n"); [ -z "$INIT_ID" ] && exit 0; RESP=$(curl -sf localhost:5221/api/brain/harness/initiative/$INIT_ID/ws-progress); jq -e --arg id "$INIT_ID" '"'"'.initiative_id == $id'"'"' <<< "$RESP" || exit 1'
+- [ ] [BEHAVIOR] `~/claude-output/harness-screenshots/` 目录有 ≥1 个 PNG 文件（E2E 跑后，带时间窗口）
+  Test: manual:bash -c 'COUNT=$(find "$HOME/claude-output/harness-screenshots" -name "*.png" -newer /tmp/e2e-start-marker -type f 2>/dev/null | wc -l | tr -d " "); [ "$COUNT" -ge 1 ] && echo OK || { echo "FAIL: 无新 PNG，COUNT=$COUNT"; exit 1; }'
+  期望: OK（需先 touch /tmp/e2e-start-marker 再跑 E2E）
+
+- [ ] [BEHAVIOR] `/api/brain/harness/initiative/:id/detail` 端到端可访问（WS1-WS4 全部就位后链路完整）
+  Test: manual:bash -c 'TEST_ID=$(psql $DB -t -c "SELECT id FROM tasks WHERE task_type='"'"'harness_initiative'"'"' LIMIT 1" | tr -d " "); CODE=$(curl -s -o /dev/null -w "%{http_code}" "localhost:5221/api/brain/harness/initiative/${TEST_ID}/detail"); [ "$CODE" = "200" ] && echo OK || { echo "FAIL: HTTP $CODE"; exit 1; }'
   期望: OK
 
-- [x] [BEHAVIOR] workstreams 是数组且不包含禁用字段（keys 完整性 + 禁用字段反向检查）
-  Test: manual:bash -c 'INIT_ID=$(PGPASSWORD=$DB_PASSWORD psql -h $DB_HOST -U $DB_USER -d $DB_NAME -t -A -c "SELECT id FROM tasks WHERE task_type='"'"'harness_initiative'"'"' LIMIT 1" | tr -d " \n"); [ -z "$INIT_ID" ] && exit 0; RESP=$(curl -sf localhost:5221/api/brain/harness/initiative/$INIT_ID/ws-progress); jq -e '"'"'.workstreams | type == "array"'"'"' <<< "$RESP" || exit 1; for f in steps phases stages result data ws_list; do jq -e "has(\"$f\") | not" <<< "$RESP" || exit 1; done'
+- [ ] [BEHAVIOR] Dashboard /pipeline 页的 initiative card 点击后，详情面板 API 请求成功（Playwright API 断言，非 UI）
+  Test: manual:bash -c 'TEST_ID=$(psql $DB -t -c "SELECT id FROM tasks WHERE task_type='"'"'harness_initiative'"'"' LIMIT 1" | tr -d " "); RESP=$(curl -sf "localhost:5221/api/brain/harness/initiative/${TEST_ID}/detail"); echo "$RESP" | jq -e '"'"'.initiative_id | type == "string"'"'"' && echo "$RESP" | jq -e '"'"'.step_timing | type == "array"'"'"' && echo OK || exit 1'
   期望: OK
 
-- [x] [BEHAVIOR] 无 WS checkpoint 的 initiative 返回 workstreams=[]（空数组边界）
-  Test: manual:bash -c 'CR=$(curl -sf -X POST localhost:5221/api/brain/tasks -H '"'"'Content-Type: application/json'"'"' -d '"'"'{"task_type":"harness_initiative","status":"queued","title":"test-empty-ws-dod"}'"'"'); NEW_ID=$(node -e "process.stdout.write(JSON.parse(require('"'"'fs'"'"').readFileSync('"'"'/dev/stdin'"'"','"'"'utf8'"'"')).id)" <<< "$CR"); RESP=$(curl -sf localhost:5221/api/brain/harness/initiative/$NEW_ID/ws-progress); PGPASSWORD=$DB_PASSWORD psql -h $DB_HOST -U $DB_USER -d $DB_NAME -c "DELETE FROM tasks WHERE id='"'"'$NEW_ID'"'"'" >/dev/null; jq -e '"'"'.workstreams == []'"'"' <<< "$RESP" || exit 1'
-  期望: OK
+---
 
-- [x] [BEHAVIOR] 不存在的 initiative_id 返回 HTTP 404 + error 字段（error path）
-  Test: manual:bash -c 'CODE=$(curl -s -o /dev/null -w "%{http_code}" "localhost:5221/api/brain/harness/initiative/00000000-0000-0000-0000-000000000000/ws-progress"); [ "$CODE" = "404" ] || exit 1; jq -e '"'"'.error == "initiative not found"'"'"' <<< "$(curl -s localhost:5221/api/brain/harness/initiative/00000000-0000-0000-0000-000000000000/ws-progress)" || exit 1'
-  期望: OK
+## BEHAVIOR:E2E 条目（user_facing 専属，Mode B final-e2e 跑）
 
-- [x] [BEHAVIOR] workstream 子对象 fix_round 是 number 类型（字段类型校验）
-  Test: manual:bash -c 'INIT_ID=$(PGPASSWORD=$DB_PASSWORD psql -h $DB_HOST -U $DB_USER -d $DB_NAME -t -A -c "SELECT t.id FROM tasks t INNER JOIN checkpoint_blobs cb ON cb.thread_id LIKE '"'"'harness-task:'"'"' || t.id::text || '"'"':ws%'"'"' WHERE t.task_type='"'"'harness_initiative'"'"' LIMIT 1" | tr -d " \n"); [ -z "$INIT_ID" ] && exit 0; RESP=$(curl -sf localhost:5221/api/brain/harness/initiative/$INIT_ID/ws-progress); jq -e '"'"'.workstreams[0].fix_round | type == "number"'"'"' <<< "$RESP" || exit 1'
-  期望: OK
+- [ ] [BEHAVIOR:E2E] 跑完 WS5 E2E 后，screenshots/ 目录有 ≥1 个 PNG 文件，~/claude-output/harness-screenshots/ 同步有文件
+  Screenshots:
+    - 01-pipeline-list.png  期望：/pipeline 列表页正常渲染，有 initiative card 可见
+    - 03-detail-panel.png   期望：initiative 详情面板已展开，initiative-detail-panel 元素可见
+    - 05-timeline.png       期望：步骤时间线区块可见（initiative-step-timeline 元素存在）
+  期望：所有截图可读；Claude Read 图确认 DOM 与期望描述一致；~/claude-output/harness-screenshots/ 同步存在对应文件
