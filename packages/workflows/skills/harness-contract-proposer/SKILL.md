@@ -255,6 +255,23 @@ const { chromium, expect } = require('@playwright/test');
 })();
 ```
 
+#### mac_web 合约必须包含截图 DoD 条目
+
+每个 mac_web workstream 的 `contract-dod-ws{N}.md` 末尾必须追加以下条目：
+
+```
+[BEHAVIOR:E2E:screenshot]
+- evaluator 验收后截图存 screenshots/<ws_id>-<step>.png（如 screenshots/ws1-01-initial.png）
+- 截图同步复制到 ~/claude-output/harness-screenshots/ 供人工审阅
+  Test: manual:bash -c 'mkdir -p ~/claude-output/harness-screenshots && ls screenshots/*.png 2>/dev/null | xargs -I{} cp {} ~/claude-output/harness-screenshots/ && ls ~/claude-output/harness-screenshots/*.png | head -3'
+```
+
+**规则**：
+- `screenshots/` 目录在 sprint 工作区内，相对于 `SPRINT_DIR`
+- `~/claude-output/harness-screenshots/` 是固定目标路径，evaluator 从此路径核验截图存在
+- 截图文件名格式：`<ws_id>-<step_number>-<description>.png`（如 `ws1-01-initial.png`、`ws1-02-result.png`）
+- mac_web Playwright 脚本中的 `page.screenshot()` 调用必须与本条目中的文件名一一对应
+
 ---
 
 ### target_environment = windows_cloud（公网 Windows 产品 — GitHub Actions windows-latest，完全干净 VM）
