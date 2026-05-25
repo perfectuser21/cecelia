@@ -427,11 +427,11 @@ workstream_count: 5
 
 | Workstream | Test File | BEHAVIOR 覆盖 | 预期红证据 |
 |---|---|---|---|
-| WS1 | `tests/ws1/skill-screenshot-dod.test.ts` | SKILL.md 含 `[BEHAVIOR:E2E:screenshot]` 文字 | 1 failure（文字尚未存在）|
-| WS2 | `tests/ws2/harness-detail-route.test.ts` | /detail 路由 HTTP 200 + schema + error 404 + 可空字段类型 | 4-5 failures（路由不存在）|
-| WS3 | `tests/ws3/initiative-detail-panel.test.ts` | 组件 TS 编译 + API 接入 + 条件渲染 + 交互逻辑 | 3-4 failures（组件未写）|
-| WS4 | `tests/ws4/report-node-fields.test.ts` | reportNode 含 step_timing/ws_issues/ws_costs + 元素结构 | 3 failures（字段未加）|
-| WS5 | `tests/ws5/e2e-screenshot-chain.test.ts` | 截图目录有新 PNG + sprint 目录结构完整 | 2 failures（链路未建立）|
+| WS1 | `tests/ws1/skill-screenshot-dod.test.ts` | 截图条目文字、mac_web 合约模板区块 | 1 failure（文字尚未存在）|
+| WS2 | `tests/ws2/harness-detail-route.test.ts` | HTTP 200 + 六字段 schema、禁用字段不出现、error path、step_timing 元素含 node | 4-5 failures（路由不存在）|
+| WS3 | `tests/ws3/initiative-detail-panel.test.ts` | initiative-detail-panel data-testid、initiative-prd-content data-testid、条件渲染逻辑存在 | 3-4 failures（组件未写）|
+| WS4 | `tests/ws4/report-node-fields.test.ts` | step_timing（array）、ws_issues（array）、ws_costs 元素含 ws_id | 3 failures（字段未加）|
+| WS5 | `tests/ws5/e2e-screenshot-chain.test.ts` | harness-screenshots 目录有 PNG、Brain API 健康检查、detail 端点可访问 | 2 failures（链路未建立）|
 
 ---
 
