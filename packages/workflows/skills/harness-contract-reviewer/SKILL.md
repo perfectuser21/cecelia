@@ -6,10 +6,11 @@ description: |
   而非"防作弊测试框架"。
   核心职责：(1) spec 对齐用户真需求 (2) criteria 可量化无歧义 (3) happy + error + 边界场景全覆盖
   GAN 对抗**多轮**直到双方达成共识。无硬轮数上限，但 Reviewer 真找不出实质 spec/产品漏洞时必须 APPROVED。
-version: 6.5.0
+version: 6.6.0
 created: 2026-04-08
-updated: 2026-05-20
+updated: 2026-05-25
 changelog:
+  - 6.6.0: 强制 Bash 工具写结果文件（Bug 11 — missing_result_file 根因）— SKILL.md 只说"写到文件"但 LLM 可能仅在文本中描述命令而不执行，导致 ContractViolation。v6.6 明确要求通过 Bash 工具执行写文件命令 + 执行验证命令确认文件存在
   - 6.5.0: 加第 8 维 rubric `depends_on_serial_chain` — W52 step6 实证：proposer 生成 task-plan.json 时将所有 ws 的 depends_on 设为 []，Brain 并发 dispatch，ws2 evaluator 验 publish_status 列但 ws1 migration 未合并导致 FAIL→无限 fix loop。第 8 维强卡 ws1 以外的 ws 必须显式声明前置依赖，migration ws 必须出现在后续 ws 的 depends_on 里
   - 6.4.0: 修自相矛盾死轮 cap — 删 line 86-88 "Round 1-2 阈值 7 / Round 3-4 阈值 6 / Round 5 force APPROVED" 死阶梯（违反 brain 代码 detectConvergenceTrend + 用户原话「无上限收敛」）；改成单轮阈值固定 7 + 趋势兜底，跟 harness-gan.graph.js 实际行为对齐。verdict 模板里同步删 round 阈值字样
   - 6.3.0: 修协议盲 — 加 Golden Path 覆盖审查段（4 问题：端到端完整？验证命令真？User Story 1:1？step 间数据流自洽？）。reviewer 之前 0 处提 Golden Path
@@ -254,15 +255,22 @@ Round N, 阈值固定 7/10（不随 round 衰减）。
 
 ### Step 4: 写结果文件（Brain 读文件而非 stdout）
 
-**输出协议（v6.5.0+ — 文件协议）**：
+**输出协议（v6.6.0 — 强制 Bash 工具写文件）**：
 
-最终输出必须写入 `/workspace/.brain-result.json`，Brain 读文件不读 stdout：
+最终输出必须通过 **Bash 工具**写入 `/workspace/.brain-result.json`（Brain 读文件不读 stdout，文本输出的命令不生效）：
+
+⚠️ **关键：必须在 Claude Code 的 Bash 工具中执行以下命令，不能只在文本里描述它**
 
 ```bash
-# 写结果文件（Brain 读文件而非 stdout）
-cat > /workspace/.brain-result.json << BREOF
+# [必须通过 Bash 工具执行，不是文字描述] 写结果文件
+cat > /workspace/.brain-result.json << 'BREOF'
 {"verdict":"<APPROVED|REVISION>","rubric_scores":{"dod_machineability":X,"scope_match_prd":X,"test_is_red":X,"internal_consistency":X,"risk_registered":X,"verification_oracle_completeness":X,"behavior_count_position":X,"depends_on_serial_chain":X},"feedback":"<feedback text or empty>"}
 BREOF
+```
+
+写完后用 Bash 工具验证文件存在：
+```bash
+test -f /workspace/.brain-result.json && echo "OK: result file written" || echo "FAIL: file missing!"
 ```
 
 REVISION 时 feedback 必须含具体修改方向。
