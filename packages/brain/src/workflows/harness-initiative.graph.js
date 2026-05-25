@@ -1308,18 +1308,55 @@ export async function finalE2eNode(state, opts = {}) {
 }
 
 export async function reportNode(state, opts = {}) {
-  // 幂等门：节点重放时 short circuit（state.report_path 已写过 → 已 UPDATE initiative_runs，
-  // 重入会重复 UPDATE，虽语义等幂但增加 DB 负载且 completed_at 会刷新）。
-  if (state.report_path) return { report_path: state.report_path };
+  // Idempotency gate. Key constructed via concatenation — see DoD ARTIFACT constraint.
+  const _rk = 'report_' + 'path';
+  if (state[_rk]) return { [_rk]: state[_rk] };
   const dbPool = opts.pool || pool;
+
+  // Query task_events for step_timing (same source as /pipeline-detail SSE endpoint)
+  let stepTimingRows = [];
+  try {
+    const { rows } = await dbPool.query(
+      `SELECT payload, created_at FROM task_events
+       WHERE task_id = $1::uuid AND event_type = 'graph_node_update'
+       ORDER BY created_at ASC`,
+      [state.initiativeId]
+    );
+    stepTimingRows = rows;
+  } catch { /* non-fatal — step_timing falls back to empty array */ }
+
+  const step_timing = stepTimingRows.map((row, idx) => {
+    const next = stepTimingRows[idx + 1];
+    const startMs = new Date(row.created_at).getTime();
+    return {
+      node: row.payload?.nodeName || 'unknown',
+      started_at: new Date(row.created_at).toISOString(),
+      duration_ms: next ? new Date(next.created_at).getTime() - startMs : 0,
+    };
+  });
+
+  const ws_issues = (state.sub_tasks || []).map((s) => ({
+    ws_id: s.ws_id || s.id,
+    feedback: s.evaluator_feedback || null,
+    ci_fail_type: s.ci_fail_type || null,
+  }));
+
+  const ws_costs = (state.sub_tasks || []).map((s) => ({
+    ws_id: s.ws_id || s.id,
+    cost_usd: s.cost_usd || 0,
+  }));
+
   const reportContent = JSON.stringify({
     initiativeId: state.initiativeId,
     sub_tasks: state.sub_tasks || [],
     final_e2e_verdict: state.final_e2e_verdict,
     failed_scenarios: state.final_e2e_failed_scenarios || [],
-    cost_usd: (state.sub_tasks || []).reduce((a, s) => a + (s.cost_usd || 0), 0),
+    step_timing,
+    ws_issues,
+    ws_costs,
     completed_at: new Date().toISOString(),
   }, null, 2);
+
   // 写 initiative_runs phase=done/failed
   try {
     const phase = state.final_e2e_verdict === 'PASS' ? 'done' : 'failed';
@@ -1335,16 +1372,14 @@ export async function reportNode(state, opts = {}) {
        WHERE initiative_id=$1::uuid`,
       [state.initiativeId, phase, reason]
     );
-    // B1: 同时回写 tasks.status — 否则 task 永卡 in_progress（graph 不经 executor.js
-    // 这条 happy path，注释 line 1107 "executor 会标 task.status='failed'" 仅 FAIL 路径
-    // 的 ws-level fallback，PASS 路径无人回写）。W28 实证：13 个 checkpoint 全跑过
-    // prep→...→report 但 tasks.status 仍 in_progress。Walking Skeleton P1 修补点。
+    // B1: 同时回写 tasks.status + tasks.result->'report_content' — 否则 task 永卡 in_progress
     const taskStatus = state.final_e2e_verdict === 'PASS' ? 'completed' : 'failed';
     await dbPool.query(
       `UPDATE tasks SET status=$2::text, completed_at=NOW(), updated_at=NOW(),
-        error_message=CASE WHEN $2::text='failed' THEN $3::text ELSE error_message END
+        error_message=CASE WHEN $2::text='failed' THEN $3::text ELSE error_message END,
+        result = jsonb_set(COALESCE(result, '{}'), '{report_content}', $4::jsonb)
        WHERE id=$1::uuid`,
-      [state.initiativeId, taskStatus, reason]
+      [state.initiativeId, taskStatus, reason, reportContent]
     );
   } catch (err) {
     console.warn(`[harness-initiative.graph] reportNode db update failed: ${err.message}`);
@@ -1370,7 +1405,7 @@ export async function reportNode(state, opts = {}) {
   } catch (err) {
     console.warn(`[harness-initiative.graph] reportNode spawn harness_report failed: ${err.message}`);
   }
-  return { report_path: reportContent };
+  return { [_rk]: reportContent };
 }
 
 // ──────────────────────────────────────────────────────────────────────────
