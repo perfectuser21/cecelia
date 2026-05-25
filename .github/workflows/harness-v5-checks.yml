@@ -89,7 +89,9 @@ jobs:
           BASE_REF: origin/${{ github.base_ref }}
         run: |
           set -euo pipefail
-          TEST_FILES=$(git diff --name-only "${BASE_REF}...HEAD" | grep -E '^sprints/[^/]+/tests/.*\.test\.ts$' || true)
+          # 排除 e2e-*.test.ts：E2E 验证文件依赖 Brain 运行环境（mac_web evaluator），
+          # 不应在 CI ubuntu runner（无 Brain）里跑；evaluator 在全环境验证
+          TEST_FILES=$(git diff --name-only "${BASE_REF}...HEAD" | grep -E '^sprints/[^/]+/tests/.*\.test\.ts$' | grep -v '/e2e-[^/]*\.test\.ts$' || true)
           if [ -z "$TEST_FILES" ]; then
             echo "has_tests=false" >> $GITHUB_OUTPUT
             echo "ℹ️  无 sprint 测试变更，后续步骤会跳过"
