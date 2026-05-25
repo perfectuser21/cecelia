@@ -585,6 +585,8 @@ export async function evaluateContractNode(state, opts = {}) {
         SPRINT_DIR: payload.sprint_dir || 'sprints',
         BRAIN_URL: 'http://host.docker.internal:5221',
         HARNESS_CALLBACK_URL: `http://host.docker.internal:5221/api/brain/harness/callback/${containerId}`,
+        // B22: 评估容器内 psql postgresql://localhost/cecelia 无法解析，改用 host.docker.internal
+        DB: 'postgresql://host.docker.internal/cecelia',
         WORKSTREAM_INDEX: extractWorkstreamIndex(payload),
       },
     });
