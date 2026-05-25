@@ -6,7 +6,11 @@
  */
 
 import { useState, useMemo, lazy, Suspense, useEffect } from 'react';
-import { Link, useLocation, Route } from 'react-router-dom';
+import type { FC } from 'react';
+import { Link, useLocation, Route as _RouteBase } from 'react-router-dom';
+import type { RouteProps } from 'react-router-dom';
+// @types/react 18.3.x broke Route JSX compatibility; cast to FC to restore it
+const Route: FC<RouteProps> = _RouteBase as unknown as FC<RouteProps>;
 
 // A1 (Day 2 Epic A): Task PRD viewer at /tasks/:id/prd
 // 用户从 PR body 的 "📋 PRD: <link>" 点进来，看任务的 PRD 全文
