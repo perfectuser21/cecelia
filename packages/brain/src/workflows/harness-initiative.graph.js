@@ -1071,20 +1071,21 @@ const LIVENESS_CHECK_EVERY_N = parseInt(process.env.CECELIA_LIVENESS_CHECK_N || 
  * @returns {Promise<string|null>}  死亡原因描述 or null（还活着）
  */
 async function _checkContainerLiveness(containerId) {
-  try {
-    const { execa } = await import('execa');
-    const { stdout } = await execa('docker', [
-      'inspect', '--format', '{{.State.Status}}', containerId,
-    ]);
-    const status = stdout.trim();
-    if (status === 'exited' || status === 'dead') {
-      return `container_${status}_without_callback`;
-    }
-    return null; // running / paused / restarting → 还活着
-  } catch (dockerErr) {
-    // docker inspect 失败：容器不存在（已被删）
-    return `container_inspect_failed: ${dockerErr.message}`;
-  }
+  return new Promise((resolve) => {
+    execFileCb('docker', ['inspect', '--format', '{{.State.Status}}', containerId], (err, stdout) => {
+      if (err) {
+        // 只有明确"容器不存在"才视为死亡，其他错误保守返回 null 避免误判
+        if (err.message && (err.message.includes('No such') || err.message.includes('not found'))) {
+          resolve(`container_inspect_failed: ${err.message}`);
+        } else {
+          resolve(null);
+        }
+        return;
+      }
+      const status = (stdout || '').trim();
+      resolve((status === 'exited' || status === 'dead') ? `container_${status}_without_callback` : null);
+    });
+  });
 }
 
 /**

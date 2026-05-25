@@ -26,7 +26,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 // ─── mock child_process（必须 hoisted，在所有 import 之前注册）──────────────────
 const mockExecFile = vi.hoisted(() => vi.fn());
-vi.mock("child_process", () => ({ execFile: mockExecFile }));
+vi.mock("node:child_process", () => ({ execFile: mockExecFile }));
 
 // ─── mock 所有 harness-initiative.graph.js 的重量级依赖 ─────────────────────────
 vi.mock("../db.js", () => ({ default: { connect: vi.fn(), query: vi.fn() } }));
@@ -129,8 +129,7 @@ describe("_waitForSubGraphCompletion — container liveness detection (B2/B3)", 
     compiled = { getState: mockGetState, invoke: mockInvoke };
 
     // docker inspect 返回 "exited"（通过 execFile callback）
-    mockExecFile.mockImplementation((cmd, args, cb) => cb(null, "exited
-"));
+    mockExecFile.mockImplementation((cmd, args, cb) => cb(null, 'exited'));
 
     const result = await _waitForSubGraphCompletion(compiled, config, 30_000, {
       pollIntervalMs: 50,
@@ -209,8 +208,7 @@ describe("_waitForSubGraphCompletion — container liveness detection (B2/B3)", 
     compiled = { getState: mockGetState, invoke: mockInvoke };
 
     // docker inspect → running（容器还活着）
-    mockExecFile.mockImplementation((cmd, args, cb) => cb(null, "running
-"));
+    mockExecFile.mockImplementation((cmd, args, cb) => cb(null, 'running'));
 
     const result = await _waitForSubGraphCompletion(compiled, config, 30_000, {
       pollIntervalMs: 50,
@@ -259,8 +257,7 @@ describe("_waitForSubGraphCompletion — container liveness detection (B2/B3)", 
     const mockInvoke = vi.fn().mockResolvedValue(undefined);
     compiled = { getState: mockGetState, invoke: mockInvoke };
 
-    mockExecFile.mockImplementation((cmd, args, cb) => cb(null, "dead
-"));
+    mockExecFile.mockImplementation((cmd, args, cb) => cb(null, 'dead'));
 
     await _waitForSubGraphCompletion(compiled, config, 30_000, {
       pollIntervalMs: 50,
