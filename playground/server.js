@@ -80,14 +80,15 @@ app.get('/modulo', (req, res) => {
 });
 
 app.get('/subtract', (req, res) => {
-  const { a, b } = req.query;
+  const a = req.query.a;
+  const b = req.query.b;
+  if (typeof a === 'string' && typeof b === 'string' && STRICT_NUMBER.test(a) && STRICT_NUMBER.test(b)) {
+    return res.json({ result: Number(a) - Number(b), operation: 'subtract' });
+  }
   if (a === undefined || b === undefined) {
     return res.status(400).json({ error: 'a 和 b 都是必填 query 参数' });
   }
-  if (typeof a !== 'string' || typeof b !== 'string' || !STRICT_NUMBER.test(a) || !STRICT_NUMBER.test(b)) {
-    return res.status(400).json({ error: 'a 和 b 必须匹配 ^-?\\d+(\\.\\d+)?$（禁止科学计数法、Infinity、前导 +、十六进制等）' });
-  }
-  return res.json({ result: Number(a) - Number(b), operation: 'subtract' });
+  return res.status(400).json({ error: 'a 和 b 必须匹配 ^-?\\d+(\\.\\d+)?$（禁止科学计数法、Infinity、前导 +、十六进制等）' });
 });
 
 app.get('/increment', (req, res) => {
