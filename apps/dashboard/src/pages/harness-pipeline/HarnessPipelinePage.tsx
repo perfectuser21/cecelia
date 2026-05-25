@@ -269,6 +269,77 @@ function WsProgressSection({ initiativeId }: { initiativeId: string }) {
   );
 }
 
+// ─── 组件：Initiative 详情面板 ───────────────────────────────────────────────
+
+interface InitiativeDetail {
+  initiative_id: string;
+  prd_content: string | null;
+  contract_content: string | null;
+  gan_rounds: number | null;
+  step_timing: Array<{ node: string; started_at: string; ended_at: string; duration_ms: number }>;
+  screenshot_urls: string[];
+}
+
+function InitiativeDetailPanel({ initiativeId, onClose }: { initiativeId: string; onClose: () => void }) {
+  const [detail, setDetail] = useState<InitiativeDetail | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    fetch(`/api/brain/harness/initiative/${initiativeId}/detail`)
+      .then(r => r.ok ? r.json() : null)
+      .then(data => { if (!cancelled) { setDetail(data); setLoading(false); } })
+      .catch(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, [initiativeId]);
+
+  return (
+    <div data-testid="initiative-detail-panel" className="fixed inset-0 z-50 flex items-start justify-end bg-black/20" onClick={onClose}>
+      <div className="w-full max-w-lg h-full bg-white dark:bg-slate-800 shadow-xl overflow-y-auto" onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between p-4 border-b border-slate-200 dark:border-slate-700">
+          <h2 className="text-sm font-semibold text-slate-900 dark:text-white">Initiative 详情</h2>
+          <button onClick={onClose} className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 text-lg leading-none">×</button>
+        </div>
+        {loading && <div className="p-4 text-sm text-slate-400">加载中…</div>}
+        {detail && (
+          <div className="p-4 space-y-4">
+            {detail.prd_content && (
+              <section data-testid="initiative-prd-content">
+                <div className="text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wide mb-1">PRD 内容</div>
+                <pre className="text-xs text-slate-700 dark:text-slate-300 whitespace-pre-wrap bg-slate-50 dark:bg-slate-900/50 rounded p-2 max-h-48 overflow-y-auto">{detail.prd_content}</pre>
+              </section>
+            )}
+            {detail.step_timing.length > 0 && (
+              <section data-testid="initiative-step-timeline">
+                <div className="text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wide mb-1">执行时间线</div>
+                <div className="space-y-1">
+                  {detail.step_timing.map((step, i) => (
+                    <div key={i} data-testid="step-timeline-item" className="flex items-center gap-2 text-xs">
+                      <span className="font-mono text-slate-600 dark:text-slate-300 min-w-[80px]">{step.node}</span>
+                      <span className="text-slate-400">{step.duration_ms}ms</span>
+                    </div>
+                  ))}
+                </div>
+              </section>
+            )}
+            {detail.screenshot_urls.length > 0 && (
+              <section>
+                <div className="text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wide mb-1">截图</div>
+                <div className="space-y-1">
+                  {detail.screenshot_urls.map((url, i) => (
+                    <a key={i} href={url} target="_blank" rel="noopener noreferrer" className="block text-xs text-blue-500 hover:underline truncate">{url}</a>
+                  ))}
+                </div>
+              </section>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ─── 组件：单阶段徽章 ─────────────────────────────────────────────────────────
 
 function StageBadge({ stage }: { stage: PipelineStage }) {
@@ -326,7 +397,10 @@ function PipelineCard({ pipeline }: { pipeline: Pipeline }) {
   const showMultiPrs = multiPrCount > 1;
 
   return (
-    <div className={`rounded-xl border bg-white dark:bg-slate-800 shadow-sm overflow-hidden transition-all duration-200 ${borderColor}`}>
+    <div
+      className={`rounded-xl border bg-white dark:bg-slate-800 shadow-sm overflow-hidden transition-all duration-200 ${borderColor}`}
+      {...(pipeline.task_type === 'harness_initiative' ? { 'data-testid': 'initiative-card' } : {})}
+    >
       <div
         className="flex items-start justify-between p-4 cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-700/50 transition-colors"
         onClick={() => setExpanded(!expanded)}

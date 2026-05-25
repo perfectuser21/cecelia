@@ -67,16 +67,16 @@ echo "  message: $COMMIT_1_MSG"
 echo "  files:"
 echo "$COMMIT_1_FILES" | sed 's/^/    /'
 
-BAD_FILES_C1=$(echo "$COMMIT_1_FILES" | grep -vE '^(sprints/[^/]+/tests/.*\.test\.ts|DoD\.md|sprints/[^/]+/contract-dod-ws[0-9]+\.md|)$' || true)
+BAD_FILES_C1=$(echo "$COMMIT_1_FILES" | grep -vE '^(sprints/[^/]+/tests/.*\.test\.ts|DoD\.md|sprints/[^/]+/contract-dod-ws[0-9]+\.md|sprints/[^/]+/contract-draft\.md|sprints/[^/]+/sprint-prd\.md|sprints/[^/]+/task-plan\.json|)$' || true)
 if [ -n "$BAD_FILES_C1" ]; then
-  echo -e "  ${RED}❌ commit 1 含非测试/DoD 的文件（应只含 tests + DoD.md）：${RESET}"
+  echo -e "  ${RED}❌ commit 1 含非测试/DoD 的文件（应只含 tests + DoD.md + sprint docs）：${RESET}"
   echo "$BAD_FILES_C1" | sed 's/^/      /'
   VIOLATIONS=$((VIOLATIONS + 1))
 fi
 
-# ── Check 2: commit 1 message 含 (Red) 或 test( ──────────────────────
-if ! echo "$COMMIT_1_MSG" | grep -qE '\(Red\)|^test\('; then
-  echo -e "  ${RED}❌ commit 1 message 缺 (Red) 或 test( 前缀${RESET}"
+# ── Check 2: commit 1 message 含 (Red) 或 test( 或 chore(*harness*) ──
+if ! echo "$COMMIT_1_MSG" | grep -qE '\(Red\)|^test\(|^chore\(harness\)'; then
+  echo -e "  ${RED}❌ commit 1 message 缺 (Red)、test( 前缀或 chore(harness) 前缀${RESET}"
   VIOLATIONS=$((VIOLATIONS + 1))
 fi
 

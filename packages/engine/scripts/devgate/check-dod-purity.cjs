@@ -59,13 +59,23 @@ function checkFile(filePath) {
   const lines = content.split("\n");
   const violations = [];
 
-  // Rule 1: 禁 [BEHAVIOR] 条目
-  // 允许的：`## BEHAVIOR 索引`（标题）
-  // 禁止的：`- [ ] [BEHAVIOR] ...` 或 `- [x] [BEHAVIOR] ...`
+  // Rule 1: v7.4+ — [BEHAVIOR] 条目必须带 Test: manual:bash 命令（evaluator v1.1 协议）
+  // 允许的：`## BEHAVIOR 索引`（标题）、带 manual:bash 测试的 [BEHAVIOR] 条目
+  // 允许的：[BEHAVIOR:E2E] 条目（Mode B final-e2e，用 Screenshots: 而非 Test: manual:）
+  // 禁止的：没有 Test: manual:bash 的裸 [BEHAVIOR] 条目（[BEHAVIOR:E2E] 除外）
   for (let i = 0; i < lines.length; i++) {
-    if (/^\s*-\s*\[[\sxX]\]\s*\[BEHAVIOR\]/.test(lines[i])) {
+    if (!/^\s*-\s*\[[\sxX]\]\s*\[BEHAVIOR/.test(lines[i])) continue;
+    // [BEHAVIOR:E2E] items use Screenshots: section instead of Test: manual:bash — skip
+    if (/^\s*-\s*\[[\sxX]\]\s*\[BEHAVIOR:E2E/.test(lines[i])) continue;
+    // Look ahead for Test: manual: within 5 lines
+    let hasManualTest = false;
+    for (let j = i + 1; j < Math.min(i + 6, lines.length); j++) {
+      if (/^\s*-\s*\[[\sxX]\]/.test(lines[j])) break; // next item
+      if (/^\s*Test:\s*manual:/.test(lines[j])) { hasManualTest = true; break; }
+    }
+    if (!hasManualTest) {
       violations.push(
-        `L${i + 1}: 禁止 [BEHAVIOR] 条目 — BEHAVIOR 必须搬到 tests/ws{N}/*.test.ts：\n    ${lines[i].trim()}`
+        `L${i + 1}: [BEHAVIOR] 条目缺少 Test: manual:bash 命令（v7.4 协议要求）：\n    ${lines[i].trim()}`
       );
     }
   }

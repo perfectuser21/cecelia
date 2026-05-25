@@ -13,7 +13,7 @@ import { readFile } from 'fs/promises';
 import { execSync } from 'child_process';
 import { join } from 'path';
 import { homedir } from 'os';
-import pool from '../db.js';
+import { pool } from '../db.js';
 
 const router = Router();
 
@@ -123,6 +123,83 @@ router.get('/initiative/:id/ws-progress', async (req, res) => {
     res.json({ initiative_id: id, workstreams });
   } catch (err) {
     console.error('[GET /harness/initiative/ws-progress]', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * GET /initiative/:id/detail
+ * Initiative 详情：PRD/合同内容 + step timing + screenshot URLs
+ * 返回 {initiative_id, prd_content, contract_content, gan_rounds, step_timing, screenshot_urls}
+ */
+router.get('/initiative/:id/detail', async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const { rows: initRows } = await pool.query(
+      `SELECT id FROM tasks WHERE id::text = $1 AND task_type = 'harness_initiative' LIMIT 1`,
+      [id]
+    );
+    if (initRows.length === 0) {
+      return res.status(404).json({ error: 'initiative not found' });
+    }
+
+    const { rows: contractRows } = await pool.query(
+      `SELECT prd_content, contract_content, review_rounds
+       FROM initiative_contracts
+       WHERE initiative_id = $1::uuid
+       ORDER BY created_at DESC LIMIT 1`,
+      [id]
+    );
+    const contract = contractRows[0] || null;
+
+    const { rows: eventRows } = await pool.query(
+      `SELECT payload, created_at
+       FROM task_events
+       WHERE task_id = $1::uuid
+       ORDER BY created_at ASC`,
+      [id]
+    );
+    const nodeMap = new Map();
+    for (const row of eventRows) {
+      const nodeName = row.payload?.nodeName;
+      if (!nodeName) continue;
+      if (!nodeMap.has(nodeName)) {
+        nodeMap.set(nodeName, { node: nodeName, started_at: row.created_at, ended_at: row.created_at });
+      } else {
+        nodeMap.get(nodeName).ended_at = row.created_at;
+      }
+    }
+    const step_timing = Array.from(nodeMap.values()).map(s => ({
+      node: s.node,
+      started_at: s.started_at,
+      ended_at: s.ended_at,
+      duration_ms: new Date(s.ended_at) - new Date(s.started_at),
+    }));
+
+    const { rows: blobRows } = await pool.query(
+      `SELECT blob
+       FROM checkpoint_blobs
+       WHERE thread_id LIKE $1 AND channel = 'screenshot_url' AND type = 'json'
+       ORDER BY version ASC`,
+      [`harness-task:${id}:%`]
+    );
+    const screenshot_urls = blobRows
+      .map(r => {
+        try { return JSON.parse(Buffer.from(r.blob).toString('utf8')); } catch { return null; }
+      })
+      .filter(Boolean);
+
+    res.json({
+      initiative_id: id,
+      prd_content: contract?.prd_content ?? null,
+      contract_content: contract?.contract_content ?? null,
+      gan_rounds: contract?.review_rounds ?? null,
+      step_timing,
+      screenshot_urls,
+    });
+  } catch (err) {
+    console.error('[GET /harness/initiative/detail]', err.message);
     res.status(500).json({ error: err.message });
   }
 });

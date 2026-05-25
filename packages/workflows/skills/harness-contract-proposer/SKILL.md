@@ -249,10 +249,28 @@ const { chromium, expect } = require('@playwright/test');
     process.exit(1);
   }
 
+  // 5. 截图复制到持久化目录（mac_web 专属 DoD）
+  const { execSync } = require('child_process');
+  execSync('mkdir -p ~/claude-output/harness-screenshots/');
+  execSync('cp screenshots/ws{ws_id}-*.png ~/claude-output/harness-screenshots/ 2>/dev/null || true');
+
   await context.close();
   await browser.close();
   console.log('✅ Golden Path UI 验证通过');
 })();
+```
+
+**mac_web E2E 截图 DoD（user_facing 专属）**:
+
+```markdown
+## BEHAVIOR:E2E 截图验收
+
+- [ ] [BEHAVIOR:E2E:screenshot] Playwright 截图链路验证 — 截图写入 ~/claude-output/harness-screenshots/
+  Screenshots:
+    - ws{ws_id}-01-{step}.png  期望：{操作前页面，关键 UI 元素可见}
+    - ws{ws_id}-03-{step}.png  期望：{操作后结果，成功标志元素可见}
+  截图目标路径: ~/claude-output/harness-screenshots/
+  期望：所有截图存入 ~/claude-output/harness-screenshots/，Claude Read 图自验通过
 ```
 
 ---

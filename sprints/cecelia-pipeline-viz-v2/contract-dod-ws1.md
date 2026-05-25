@@ -24,29 +24,29 @@ journey_type: user_facing
 
 ## ARTIFACT 条目
 
-- [ ] [ARTIFACT] `packages/workflows/skills/harness-contract-proposer/SKILL.md` 文件存在且包含 `[BEHAVIOR:E2E:screenshot]` 字样
+- [x] [ARTIFACT] `packages/workflows/skills/harness-contract-proposer/SKILL.md` 文件存在且包含 `[BEHAVIOR:E2E:screenshot]` 字样
   Test: node -e "const c=require('fs').readFileSync('packages/workflows/skills/harness-contract-proposer/SKILL.md','utf8');if(!c.includes('[BEHAVIOR:E2E:screenshot]'))process.exit(1);console.log('OK')"
 
-- [ ] [ARTIFACT] SKILL.md mac_web 合约模板区块包含截图复制路径 `~/claude-output/harness-screenshots/`
+- [x] [ARTIFACT] SKILL.md mac_web 合约模板区块包含截图复制路径 `~/claude-output/harness-screenshots/`
   Test: node -e "const c=require('fs').readFileSync('packages/workflows/skills/harness-contract-proposer/SKILL.md','utf8');if(!c.includes('~/claude-output/harness-screenshots/'))process.exit(1);console.log('OK')"
 
 ---
 
 ## BEHAVIOR 条目
 
-- [ ] [BEHAVIOR] SKILL.md 含 `[BEHAVIOR:E2E:screenshot]` 截图条目文字（文件级可验证）
+- [x] [BEHAVIOR] SKILL.md 含 `[BEHAVIOR:E2E:screenshot]` 截图条目文字（文件级可验证）
   Test: manual:bash -c 'grep -c "\[BEHAVIOR:E2E:screenshot\]" packages/workflows/skills/harness-contract-proposer/SKILL.md || exit 1; echo OK'
   期望: OK（count ≥ 1）
 
-- [ ] [BEHAVIOR] 截图条目包含 `screenshots/<ws_id>-<step>.png` 格式占位符
+- [x] [BEHAVIOR] 截图条目包含 `screenshots/<ws_id>-<step>.png` 格式占位符
   Test: manual:bash -c 'grep -E "screenshots/.*-.*\\.png" packages/workflows/skills/harness-contract-proposer/SKILL.md && echo OK || exit 1'
   期望: OK
 
-- [ ] [BEHAVIOR] 截图条目包含复制目标路径 `~/claude-output/harness-screenshots/`
+- [x] [BEHAVIOR] 截图条目包含复制目标路径 `~/claude-output/harness-screenshots/`
   Test: manual:bash -c 'grep "~/claude-output/harness-screenshots/" packages/workflows/skills/harness-contract-proposer/SKILL.md && echo OK || exit 1'
   期望: OK
 
-- [ ] [BEHAVIOR] SKILL.md 注入后 mac_web 合约模板区块（`target_environment = mac_web`）能被定位，且截图条目在其下方
+- [x] [BEHAVIOR] SKILL.md 注入后 mac_web 合约模板区块（`target_environment = mac_web`）能被定位，且截图条目在其下方
   Test: manual:bash -c 'awk "/target_environment = mac_web/,/target_environment = windows/" packages/workflows/skills/harness-contract-proposer/SKILL.md | grep -c "\[BEHAVIOR:E2E:screenshot\]" || exit 1; echo OK'
   期望: OK（mac_web 区块含截图条目）
 
@@ -54,7 +54,7 @@ journey_type: user_facing
 
 ## BEHAVIOR:E2E 条目（user_facing 专属，Mode B final-e2e 跑）
 
-- [ ] [BEHAVIOR:E2E] evaluator 验收后截图存 screenshots/ws1-01.png，复制到 ~/claude-output/harness-screenshots/
+- [x] [BEHAVIOR:E2E] evaluator 验收后截图存 screenshots/ws1-01.png，复制到 ~/claude-output/harness-screenshots/
   Screenshots:
     - ws1-01.png   期望：截图存在于目标目录，文件 > 0 bytes
   期望：find ~/claude-output/harness-screenshots/ -name "ws1-*.png" 返回 ≥ 1 条

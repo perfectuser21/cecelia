@@ -42,16 +42,16 @@ journey_type: user_facing
 
 ## ARTIFACT 条目
 
-- [ ] [ARTIFACT] `packages/brain/src/workflows/harness-initiative.graph.js` 的 reportNode 函数 reportContent 包含 `step_timing` 字段名
+- [x] [ARTIFACT] `packages/brain/src/workflows/harness-initiative.graph.js` 的 reportNode 函数 reportContent 包含 `step_timing` 字段名
   Test: node -e "const c=require('fs').readFileSync('packages/brain/src/workflows/harness-initiative.graph.js','utf8');const fn=c.slice(c.indexOf('reportNode'));if(!fn.includes('step_timing'))process.exit(1);console.log('OK')"
 
-- [ ] [ARTIFACT] `packages/brain/src/workflows/harness-initiative.graph.js` 的 reportNode 包含 `ws_issues` 和 `ws_costs` 字段
+- [x] [ARTIFACT] `packages/brain/src/workflows/harness-initiative.graph.js` 的 reportNode 包含 `ws_issues` 和 `ws_costs` 字段
   Test: node -e "const c=require('fs').readFileSync('packages/brain/src/workflows/harness-initiative.graph.js','utf8');const fn=c.slice(c.indexOf('reportNode'));if(!fn.includes('ws_issues')||!fn.includes('ws_costs'))process.exit(1);console.log('OK')"
 
-- [ ] [ARTIFACT] reportNode 禁用字段 `timings`/`timing`/`issues`/`costs`/`breakdown` 不出现在 reportContent 对象键名中
+- [x] [ARTIFACT] reportNode 禁用字段 `timings`/`timing`/`issues`/`costs`/`breakdown` 不出现在 reportContent 对象键名中
   Test: node -e "const c=require('fs').readFileSync('packages/brain/src/workflows/harness-initiative.graph.js','utf8');const fn=c.slice(c.indexOf('reportNode'),c.indexOf('reportNode')+3000);['timings:','timing:','issues:','costs:','breakdown:'].forEach(k=>{if(fn.includes(k)){console.error('FAIL: 禁用字段',k);process.exit(1);}});console.log('OK')"
 
-- [ ] [ARTIFACT] reportNode 使用 `report_content` 键（而非 `report_path`）写入 tasks.result
+- [x] [ARTIFACT] reportNode 使用 `report_content` 键（而非 `report_path`）写入 tasks.result
   Test: node -e "const c=require('fs').readFileSync('packages/brain/src/workflows/harness-initiative.graph.js','utf8');const fn=c.slice(c.indexOf('reportNode'),c.indexOf('reportNode')+3000);if(!fn.includes('report_content')){console.error('FAIL: 未使用 report_content 键');process.exit(1)}if(fn.includes('report_path')){console.error('FAIL: 残留 report_path 歧义字段名');process.exit(1)}console.log('OK')"
 
 ---
@@ -60,23 +60,23 @@ journey_type: user_facing
 
 > **验证命令统一使用** `result->'report_content'`（JSONB path，不是 `->>`），psql 输出即可直接 pipe 到 jq。
 
-- [ ] [BEHAVIOR] reportNode 完成后 `tasks.result->'report_content'` 含顶层字段 `step_timing` 为 array 类型
+- [x] [BEHAVIOR] reportNode 完成后 `tasks.result->'report_content'` 含顶层字段 `step_timing` 为 array 类型
   Test: manual:bash -c 'REPORT=$(psql $DB -t -c "SELECT result->'"'"'report_content'"'"' FROM tasks WHERE task_type='"'"'harness_initiative'"'"' AND status='"'"'completed'"'"' AND result->'"'"'report_content'"'"' IS NOT NULL ORDER BY completed_at DESC LIMIT 1" | tr -d " \n"); if [ -z "$REPORT" ]; then echo "SKIP: 无已完成 initiative 含 report_content"; exit 0; fi; echo "$REPORT" | jq -e '"'"'.step_timing | type == "array"'"'"' && echo OK || exit 1'
   期望: OK 或 SKIP
 
-- [ ] [BEHAVIOR] `tasks.result->'report_content'` 含顶层字段 `ws_issues` 为 array，元素结构含 `ws_id`/`feedback`/`ci_fail_type`
+- [x] [BEHAVIOR] `tasks.result->'report_content'` 含顶层字段 `ws_issues` 为 array，元素结构含 `ws_id`/`feedback`/`ci_fail_type`
   Test: manual:bash -c 'REPORT=$(psql $DB -t -c "SELECT result->'"'"'report_content'"'"' FROM tasks WHERE task_type='"'"'harness_initiative'"'"' AND status='"'"'completed'"'"' AND result->'"'"'report_content'"'"' IS NOT NULL ORDER BY completed_at DESC LIMIT 1" | tr -d " \n"); if [ -z "$REPORT" ]; then echo "SKIP"; exit 0; fi; echo "$REPORT" | jq -e '"'"'.ws_issues | type == "array"'"'"' && echo "$REPORT" | jq -e '"'"'if (.ws_issues | length) > 0 then .ws_issues[0] | has("ws_id") and has("feedback") and has("ci_fail_type") else true end'"'"' && echo OK || exit 1'
   期望: OK 或 SKIP
 
-- [ ] [BEHAVIOR] `tasks.result->'report_content'` 含顶层字段 `ws_costs` 为 array，元素结构含 `ws_id`/`cost_usd`
+- [x] [BEHAVIOR] `tasks.result->'report_content'` 含顶层字段 `ws_costs` 为 array，元素结构含 `ws_id`/`cost_usd`
   Test: manual:bash -c 'REPORT=$(psql $DB -t -c "SELECT result->'"'"'report_content'"'"' FROM tasks WHERE task_type='"'"'harness_initiative'"'"' AND status='"'"'completed'"'"' AND result->'"'"'report_content'"'"' IS NOT NULL ORDER BY completed_at DESC LIMIT 1" | tr -d " \n"); if [ -z "$REPORT" ]; then echo "SKIP"; exit 0; fi; echo "$REPORT" | jq -e '"'"'.ws_costs | type == "array"'"'"' && echo "$REPORT" | jq -e '"'"'if (.ws_costs | length) > 0 then .ws_costs[0] | has("ws_id") and has("cost_usd") else true end'"'"' && echo OK || exit 1'
   期望: OK 或 SKIP
 
-- [ ] [BEHAVIOR] `tasks.result->'report_content'` 不含禁用字段 `timings`/`timing`/`issues`/`costs`/`breakdown`
+- [x] [BEHAVIOR] `tasks.result->'report_content'` 不含禁用字段 `timings`/`timing`/`issues`/`costs`/`breakdown`
   Test: manual:bash -c 'REPORT=$(psql $DB -t -c "SELECT result->'"'"'report_content'"'"' FROM tasks WHERE task_type='"'"'harness_initiative'"'"' AND status='"'"'completed'"'"' AND result->'"'"'report_content'"'"' IS NOT NULL ORDER BY completed_at DESC LIMIT 1" | tr -d " \n"); if [ -z "$REPORT" ]; then echo "SKIP"; exit 0; fi; echo "$REPORT" | jq -e '"'"'has("timings") | not'"'"' && echo "$REPORT" | jq -e '"'"'has("timing") | not'"'"' && echo "$REPORT" | jq -e '"'"'has("issues") | not'"'"' && echo "$REPORT" | jq -e '"'"'has("costs") | not'"'"' && echo "$REPORT" | jq -e '"'"'has("breakdown") | not'"'"' && echo OK || exit 1'
   期望: OK 或 SKIP
 
-- [ ] [BEHAVIOR] `step_timing` 数组元素（有数据时）每条含 `node`/`duration_ms` 字段
+- [x] [BEHAVIOR] `step_timing` 数组元素（有数据时）每条含 `node`/`duration_ms` 字段
   Test: manual:bash -c 'REPORT=$(psql $DB -t -c "SELECT result->'"'"'report_content'"'"' FROM tasks WHERE task_type='"'"'harness_initiative'"'"' AND status='"'"'completed'"'"' AND result->'"'"'report_content'"'"' IS NOT NULL ORDER BY completed_at DESC LIMIT 1" | tr -d " \n"); if [ -z "$REPORT" ]; then echo "SKIP"; exit 0; fi; TLEN=$(echo "$REPORT" | jq ".step_timing | length"); if [ "$TLEN" = "0" ]; then echo "SKIP: step_timing empty"; exit 0; fi; echo "$REPORT" | jq -e '"'"'.step_timing[0] | has("node") and has("duration_ms")'"'"' && echo OK || exit 1'
   期望: OK 或 SKIP
 
@@ -84,7 +84,7 @@ journey_type: user_facing
 
 ## BEHAVIOR:E2E 条目（user_facing 专属，Mode B final-e2e 跑）
 
-- [ ] [BEHAVIOR:E2E] evaluator 验收后截图存 screenshots/ws4-01.png，复制到 ~/claude-output/harness-screenshots/
+- [x] [BEHAVIOR:E2E] evaluator 验收后截图存 screenshots/ws4-01.png，复制到 ~/claude-output/harness-screenshots/
   Screenshots:
     - ws4-01.png   期望：reportNode 增强后，完成的 initiative 详情面板可见 step_timing 区块（通过 /detail API 数据驱动），面板展示至少 1 条时间线条目
   期望：find ~/claude-output/harness-screenshots/ -name "ws4-*.png" 返回 ≥ 1 条

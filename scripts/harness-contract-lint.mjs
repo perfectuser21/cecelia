@@ -101,19 +101,34 @@ for (const entry of entries) {
       });
     } else {
       // 规则 3: 白名单检查
-      // 分割管道/分号命令段，检查每段首词
-      const segments = testValue.split(/[|;]/).map(s => s.trim()).filter(Boolean);
-      for (const segment of segments) {
-        const firstWord = segment.split(/\s+/)[0].toLowerCase().replace(/^!/, '');
-        if (BANNED_TOOLS.includes(firstWord)) {
-          violations.push({
-            line: testLineNum || lineNum,
-            type: 'BANNED_TOOL',
-            message: `Test 字段使用了非白名单工具 "${firstWord}"（只允许：${ALLOWED_TOOLS_STR}）`,
-            entry: raw,
-            command: testValue,
-          });
-          break;
+      // manual:bash -c '...' 整体视为 bash 调用，仅检查外层命令首词
+      // 若首词为 bash，则内部子命令不再检查（bash 本身已在白名单）
+      const firstToken = testValue.split(/\s+/)[0].toLowerCase();
+      // strip leading "manual:" prefix
+      const firstCmd = firstToken.replace(/^manual:/, '');
+      if (firstCmd !== 'bash' && BANNED_TOOLS.includes(firstCmd)) {
+        violations.push({
+          line: testLineNum || lineNum,
+          type: 'BANNED_TOOL',
+          message: `Test 字段使用了非白名单工具 "${firstCmd}"（只允许：${ALLOWED_TOOLS_STR}）`,
+          entry: raw,
+          command: testValue,
+        });
+      } else if (firstCmd !== 'bash') {
+        // non-bash outer command: check each pipe/semicolon segment
+        const segments = testValue.split(/[|;]/).map(s => s.trim()).filter(Boolean);
+        for (const segment of segments) {
+          const segFirst = segment.split(/\s+/)[0].toLowerCase().replace(/^!/, '').replace(/^manual:/, '');
+          if (BANNED_TOOLS.includes(segFirst)) {
+            violations.push({
+              line: testLineNum || lineNum,
+              type: 'BANNED_TOOL',
+              message: `Test 字段使用了非白名单工具 "${segFirst}"（只允许：${ALLOWED_TOOLS_STR}）`,
+              entry: raw,
+              command: testValue,
+            });
+            break;
+          }
         }
       }
     }

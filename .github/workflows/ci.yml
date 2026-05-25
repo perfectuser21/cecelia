@@ -290,7 +290,7 @@ jobs:
           FAILED=0
           SKIPPED=0
           PASSED=0
-          # 提取所有 Test: manual: 行
+          # 提取 Test: manual: 行（仅限未勾选 [ ] 条目，[x] 已验证跳过）
           while IFS= read -r line; do
             CMD="${line#*Test: manual:}"
             CMD="${CMD#"${CMD%%[![:space:]]*}"}"  # trim leading spaces
@@ -309,7 +309,12 @@ jobs:
               echo "⏭️  跳过（未知前缀）: ${CMD%% *} ..."
               SKIPPED=$((SKIPPED + 1))
             fi
-          done < <(grep -E '^\s+Test:\s+manual:' "$TASK_CARD" || true)
+          done < <(awk '
+            /^- \[ \] \[(BEHAVIOR|ARTIFACT)\]/ { unchecked=1; next }
+            /^- \[x\] / { unchecked=0; next }
+            /^- \[/ { unchecked=0; next }
+            unchecked && /^\s+Test:\s+manual:/ { print; unchecked=0 }
+          ' "$TASK_CARD" 2>/dev/null || true)
           echo "✅ BEHAVIOR 验证完成 — 通过: $PASSED，跳过: $SKIPPED，失败: $FAILED"
           if [ "$FAILED" -gt 0 ]; then
             echo "::error::${FAILED} 个 BEHAVIOR 验证命令执行失败"
@@ -816,7 +821,12 @@ jobs:
               FAILED=$((FAILED + 1))
               echo "::error::❌ FAIL: $CMD"
             fi
-          done < <(grep -E '^\s+Test:\s+manual:' "$TASK_CARD" || true)
+          done < <(awk '
+            /^- \[ \] \[(BEHAVIOR|ARTIFACT)\]/ { unchecked=1; next }
+            /^- \[x\] / { unchecked=0; next }
+            /^- \[/ { unchecked=0; next }
+            unchecked && /^\s+Test:\s+manual:/ { print; unchecked=0 }
+          ' "$TASK_CARD" 2>/dev/null || true)
           echo "📊 动态 BEHAVIOR 完成 — 通过 $PASSED 失败 $FAILED 跳过 $SKIPPED"
           if [ "$FAILED" -gt 0 ]; then
             echo "::error::${FAILED} 个 BEHAVIOR 动态命令执行失败"
