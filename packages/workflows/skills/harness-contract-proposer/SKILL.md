@@ -256,6 +256,26 @@ const { chromium, expect } = require('@playwright/test');
 })();
 ```
 
+**BEHAVIOR:E2E 截图 DoD（mac_web user_facing sprint 合约模板末尾必须包含）**
+
+在合约 DoD 的 `## BEHAVIOR:E2E 条目` 段末尾添加以下截图 DoD 条目，evaluator 验收后截图存入 `~/claude-output/harness-screenshots/<ws_id>-<step>.png`：
+
+```markdown
+- [ ] [BEHAVIOR:E2E:screenshot] evaluator 验收后截图已存入 ~/claude-output/harness-screenshots/
+  Screenshots:
+    - <ws_id>-01-initial.png      期望：操作前页面初始状态，关键元素可见
+    - <ws_id>-02-action.png       期望：用户操作后页面截图，过渡状态可见
+    - <ws_id>-03-result.png       期望：操作完成后结果页面截图，期望变化已发生
+  路径格式：~/claude-output/harness-screenshots/<ws_id>-<step>.png
+  期望：evaluator 完成后截图已复制到 ~/claude-output/harness-screenshots/ 目录
+```
+
+evaluator 完成验收后必须执行：
+```bash
+mkdir -p ~/claude-output/harness-screenshots/
+cp screenshots/*.png ~/claude-output/harness-screenshots/ 2>/dev/null || true
+```
+
 ---
 
 ### target_environment = windows_cloud（公网 Windows 产品 — GitHub Actions windows-latest，完全干净 VM）
