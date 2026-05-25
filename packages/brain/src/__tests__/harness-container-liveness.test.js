@@ -8,43 +8,43 @@
  *         _waitForSubGraphCompletion 再次傻等 90 分钟。
  *
  * 修复目标：在轮询循环里检查 containerId 对应容器的 docker 状态。
- *   如果容器 exited / dead，主动通过 compiled.invoke({resume:{status:'failed',...}}, config)
+ *   如果容器 exited / dead，主动通过 compiled.invoke({resume:{status:"failed",...}}, config)
  *   唤醒 sub-graph 走 failure 路径，而不是等到 90min 超时。
  *
  * 测试策略：
- *   - mock compiled.getState() → 始终返回 next=['await_callback']（sub-graph stuck）
- *   - mock execa docker inspect → 返回 'exited'
+ *   - mock compiled.getState() → 始终返回 next=["await_callback"]（sub-graph stuck）
+ *   - mock child_process.execFile → 模拟 docker inspect 返回结果
  *   - mock compiled.invoke（resume）→ 让 getState 之后返回 next=[]
- *   - 断言：在合理时间内（小于 10s 而非 90min），invoke 被调用且带 resume.status='failed'
+ *   - 断言：在合理时间内（小于 10s 而非 90min），invoke 被调用且带 resume.status="failed"
  *
  * DoD 映射：
  * - [BEHAVIOR] B2: container exited → liveness check 主动 resume sub-graph → 返回 failed 状态
  * - [BEHAVIOR] B3: container 不存在（docker inspect 报错）→ 同样主动 resume
  */
 
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
-// ─── mock execa（必须 hoisted，在所有 import 之前注册）──────────────────────────
-const mockExeca = vi.hoisted(() => vi.fn());
-vi.mock('execa', () => ({ execa: mockExeca }));
+// ─── mock child_process（必须 hoisted，在所有 import 之前注册）──────────────────
+const mockExecFile = vi.hoisted(() => vi.fn());
+vi.mock("node:child_process", () => ({ execFile: mockExecFile }));
 
 // ─── mock 所有 harness-initiative.graph.js 的重量级依赖 ─────────────────────────
-vi.mock('../db.js', () => ({ default: { connect: vi.fn(), query: vi.fn() } }));
-vi.mock('../spawn/index.js', () => ({ spawn: vi.fn() }));
-vi.mock('../harness-session-bridge.js', () => ({
+vi.mock("../db.js", () => ({ default: { connect: vi.fn(), query: vi.fn() } }));
+vi.mock("../spawn/index.js", () => ({ spawn: vi.fn() }));
+vi.mock("../harness-session-bridge.js", () => ({
   reconnectOrSpawn: vi.fn(),
   makeSessionRecord: vi.fn(),
 }));
-vi.mock('../harness-shared.js', () => ({
+vi.mock("../harness-shared.js", () => ({
   parseDockerOutput: vi.fn((x) => x),
-  loadSkillContent: vi.fn(() => 'SKILL'),
+  loadSkillContent: vi.fn(() => "SKILL"),
   readBrainResult: vi.fn(),
 }));
-vi.mock('../harness-dag.js', () => ({
+vi.mock("../harness-dag.js", () => ({
   parseTaskPlan: vi.fn(),
   upsertTaskPlan: vi.fn().mockResolvedValue({ idMap: {}, insertedTaskIds: [] }),
 }));
-vi.mock('../harness-final-e2e.js', () => ({
+vi.mock("../harness-final-e2e.js", () => ({
   runFinalE2E: vi.fn(),
   attributeFailures: vi.fn(),
   runScenarioCommand: vi.fn(),
@@ -52,27 +52,27 @@ vi.mock('../harness-final-e2e.js', () => ({
   teardownE2E: vi.fn(),
   normalizeAcceptance: vi.fn(),
 }));
-vi.mock('../harness-worktree.js', () => ({
-  ensureHarnessWorktree: vi.fn().mockResolvedValue('/mock-wt'),
+vi.mock("../harness-worktree.js", () => ({
+  ensureHarnessWorktree: vi.fn().mockResolvedValue("/mock-wt"),
   harnessSubTaskWorktreePath: vi.fn(),
-  DEFAULT_BASE_REPO: '/mock-cecelia',
+  DEFAULT_BASE_REPO: "/mock-cecelia",
 }));
-vi.mock('../harness-credentials.js', () => ({
-  resolveGitHubToken: vi.fn().mockResolvedValue('mock-token'),
+vi.mock("../harness-credentials.js", () => ({
+  resolveGitHubToken: vi.fn().mockResolvedValue("mock-token"),
 }));
-vi.mock('../lib/git-fence.js', () => ({
+vi.mock("../lib/git-fence.js", () => ({
   fetchAndShowOriginFile: vi.fn(),
 }));
-vi.mock('../harness-gan-graph.js', () => ({
+vi.mock("../harness-gan-graph.js", () => ({
   runGanContractGraph: vi.fn(),
   buildHarnessGanGraph: vi.fn(),
 }));
-vi.mock('../orchestrator/pg-checkpointer.js', () => ({
+vi.mock("../orchestrator/pg-checkpointer.js", () => ({
   getPgCheckpointer: vi.fn().mockResolvedValue({}),
 }));
-vi.mock('./retry-policies.js', () => ({ LLM_RETRY: {}, DB_RETRY: {}, NO_RETRY: {} }));
-vi.mock('../workflows/retry-policies.js', () => ({ LLM_RETRY: {}, DB_RETRY: {}, NO_RETRY: {} }));
-vi.mock('@langchain/langgraph', () => {
+vi.mock("./retry-policies.js", () => ({ LLM_RETRY: {}, DB_RETRY: {}, NO_RETRY: {} }));
+vi.mock("../workflows/retry-policies.js", () => ({ LLM_RETRY: {}, DB_RETRY: {}, NO_RETRY: {} }));
+vi.mock("@langchain/langgraph", () => {
   function Annotation(x) { return x; }
   Annotation.Root = (fields) => fields;
   return {
@@ -83,159 +83,151 @@ vi.mock('@langchain/langgraph', () => {
       compile() { return { invoke: vi.fn(), getState: vi.fn() }; }
     },
     Annotation,
-    START: '__start__',
-    END: '__end__',
+    START: "__start__",
+    END: "__end__",
     Send: class { constructor(n, s) { this.node = n; this.state = s; } },
     interrupt: vi.fn(),
     MemorySaver: class {},
   };
 });
-vi.mock('./harness-task.graph.js', () => ({
+vi.mock("./harness-task.graph.js", () => ({
   buildHarnessTaskGraph: vi.fn(() => ({
     compile: vi.fn(() => ({ invoke: vi.fn(), getState: vi.fn() })),
   })),
   compileHarnessTaskGraph: vi.fn(),
 }));
-vi.mock('../harness-pg-checkpointer.js', () => ({ getPgCheckpointer: vi.fn() }));
+vi.mock("../harness-pg-checkpointer.js", () => ({ getPgCheckpointer: vi.fn() }));
 
 // ─── 导入被测函数（在所有 mock 之后）────────────────────────────────────────────
-// 修复后 _waitForSubGraphCompletion 从 harness-initiative.graph.js 导出
-import { _waitForSubGraphCompletion } from '../workflows/harness-initiative.graph.js';
+import { _waitForSubGraphCompletion } from "../workflows/harness-initiative.graph.js";
 
-describe('_waitForSubGraphCompletion — container liveness detection (B2/B3)', () => {
+describe("_waitForSubGraphCompletion — container liveness detection (B2/B3)", () => {
   let compiled;
   let config;
 
   beforeEach(() => {
     vi.clearAllMocks();
-    config = { configurable: { thread_id: 'harness-task:test-initiative:ws1' } };
+    config = { configurable: { thread_id: "harness-task:test-initiative:ws1" } };
   });
 
   afterEach(() => {
     vi.restoreAllMocks();
   });
 
-  it('B2: container exited → 主动 resume sub-graph 走 failure 路径，不等超时', async () => {
-    // 第 1 次 getState: sub-graph stuck at await_callback
-    // 第 2 次 getState（resume 后）: next=[] 表示已完成
+  it("B2: container exited → 主动 resume sub-graph 走 failure 路径，不等超时", async () => {
     const mockGetState = vi.fn()
       .mockResolvedValueOnce({
-        next: ['await_callback'],
-        values: { containerId: 'harness-ws1-abc123', status: 'queued' },
+        next: ["await_callback"],
+        values: { containerId: "harness-ws1-abc123", status: "queued" },
       })
       .mockResolvedValue({
         next: [],
-        values: { status: 'failed', containerId: 'harness-ws1-abc123' },
+        values: { status: "failed", containerId: "harness-ws1-abc123" },
       });
 
     const mockInvoke = vi.fn().mockResolvedValue(undefined);
     compiled = { getState: mockGetState, invoke: mockInvoke };
 
-    // docker inspect 返回 'exited'
-    mockExeca.mockResolvedValue({ stdout: 'exited\n', stderr: '' });
-
-    // 修复后：遇到 exited 容器应立即 resume，不需要等到 timeoutMs
-    const result = await _waitForSubGraphCompletion(compiled, config, 30_000, {
-      pollIntervalMs: 50,
-      livenessCheckEveryN: 1, // 每次 poll 都做 liveness check（测试加速）
-    });
-
-    // 断言：docker inspect 被调用，参数含 containerId
-    expect(mockExeca).toHaveBeenCalledWith(
-      'docker',
-      expect.arrayContaining(['inspect', '--format', '{{.State.Status}}', 'harness-ws1-abc123'])
-    );
-
-    // 断言：invoke 被调用（liveness resume），payload 含 resume.status='failed'
-    expect(mockInvoke).toHaveBeenCalledWith(
-      expect.objectContaining({
-        resume: expect.objectContaining({
-          status: 'failed',
-          error: expect.stringContaining('exited'),
-        }),
-      }),
-      config
-    );
-
-    // 断言：函数返回 failed 状态（不是超时后的 fallback）
-    expect(result).toMatchObject({ status: 'failed' });
-  });
-
-  it('B3: docker inspect 失败（容器不存在）→ 主动 resume sub-graph', async () => {
-    const mockGetState = vi.fn()
-      .mockResolvedValueOnce({
-        next: ['await_callback'],
-        values: { containerId: 'harness-ws1-dead456', status: 'queued' },
-      })
-      .mockResolvedValue({
-        next: [],
-        values: { status: 'failed', containerId: 'harness-ws1-dead456' },
-      });
-
-    const mockInvoke = vi.fn().mockResolvedValue(undefined);
-    compiled = { getState: mockGetState, invoke: mockInvoke };
-
-    // docker inspect 失败（容器不存在）
-    mockExeca.mockRejectedValue(new Error('Error: No such container: harness-ws1-dead456'));
+    // docker inspect 返回 "exited"（通过 execFile callback）
+    mockExecFile.mockImplementation((cmd, args, cb) => cb(null, 'exited'));
 
     const result = await _waitForSubGraphCompletion(compiled, config, 30_000, {
       pollIntervalMs: 50,
       livenessCheckEveryN: 1,
     });
 
-    // 断言：invoke 被调用（即使 docker inspect 失败也应视为容器死亡）
+    // 断言：execFile 被调用，参数含 containerId
+    expect(mockExecFile).toHaveBeenCalledWith(
+      "docker",
+      expect.arrayContaining(["inspect", "--format", "{{.State.Status}}", "harness-ws1-abc123"]),
+      expect.any(Function)
+    );
+
+    // 断言：invoke 被调用（liveness resume），payload 含 resume.status="failed"
     expect(mockInvoke).toHaveBeenCalledWith(
       expect.objectContaining({
-        resume: expect.objectContaining({ status: 'failed' }),
+        resume: expect.objectContaining({
+          status: "failed",
+          error: expect.stringContaining("exited"),
+        }),
       }),
       config
     );
 
-    expect(result).toMatchObject({ status: 'failed' });
+    expect(result).toMatchObject({ status: "failed" });
   });
 
-  it('正常路径: container running → 不触发 resume，继续等待', async () => {
-    // 第 1 次: stuck at await_callback，container running
-    // 第 2 次: next=[] → 完成（模拟正常 callback 到来）
+  it("B3: docker inspect 失败（容器不存在）→ 主动 resume sub-graph", async () => {
+    const mockGetState = vi.fn()
+      .mockResolvedValueOnce({
+        next: ["await_callback"],
+        values: { containerId: "harness-ws1-dead456", status: "queued" },
+      })
+      .mockResolvedValue({
+        next: [],
+        values: { status: "failed", containerId: "harness-ws1-dead456" },
+      });
+
+    const mockInvoke = vi.fn().mockResolvedValue(undefined);
+    compiled = { getState: mockGetState, invoke: mockInvoke };
+
+    // docker inspect 失败（容器不存在）— execFile 以 err 调用 callback
+    mockExecFile.mockImplementation((cmd, args, cb) =>
+      cb(new Error("Error: No such object: harness-ws1-dead456"), "")
+    );
+
+    const result = await _waitForSubGraphCompletion(compiled, config, 30_000, {
+      pollIntervalMs: 50,
+      livenessCheckEveryN: 1,
+    });
+
+    expect(mockInvoke).toHaveBeenCalledWith(
+      expect.objectContaining({
+        resume: expect.objectContaining({ status: "failed" }),
+      }),
+      config
+    );
+
+    expect(result).toMatchObject({ status: "failed" });
+  });
+
+  it("正常路径: container running → 不触发 resume，继续等待", async () => {
     let callCount = 0;
     const mockGetState = vi.fn().mockImplementation(async () => {
       callCount++;
       if (callCount === 1) {
         return {
-          next: ['await_callback'],
-          values: { containerId: 'harness-ws1-ok789', status: 'queued' },
+          next: ["await_callback"],
+          values: { containerId: "harness-ws1-ok789", status: "queued" },
         };
       }
-      return { next: [], values: { status: 'completed', pr_url: 'https://github.com/x/y/pull/99' } };
+      return { next: [], values: { status: "completed", pr_url: "https://github.com/x/y/pull/99" } };
     });
 
     const mockInvoke = vi.fn();
     compiled = { getState: mockGetState, invoke: mockInvoke };
 
     // docker inspect → running（容器还活着）
-    mockExeca.mockResolvedValue({ stdout: 'running\n', stderr: '' });
+    mockExecFile.mockImplementation((cmd, args, cb) => cb(null, 'running'));
 
     const result = await _waitForSubGraphCompletion(compiled, config, 30_000, {
       pollIntervalMs: 50,
       livenessCheckEveryN: 1,
     });
 
-    // 断言：invoke 没有被调用（不应提前 resume）
     expect(mockInvoke).not.toHaveBeenCalled();
-
-    // 断言：正常返回 completed
-    expect(result).toMatchObject({ status: 'completed' });
+    expect(result).toMatchObject({ status: "completed" });
   });
 
-  it('无 containerId → 跳过 liveness check，不报错', async () => {
+  it("无 containerId → 跳过 liveness check，不报错", async () => {
     const mockGetState = vi.fn()
       .mockResolvedValueOnce({
-        next: ['await_callback'],
-        values: { containerId: null, status: 'queued' },
+        next: ["await_callback"],
+        values: { containerId: null, status: "queued" },
       })
       .mockResolvedValue({
         next: [],
-        values: { status: 'completed' },
+        values: { status: "completed" },
       });
 
     const mockInvoke = vi.fn();
@@ -246,29 +238,26 @@ describe('_waitForSubGraphCompletion — container liveness detection (B2/B3)', 
       livenessCheckEveryN: 1,
     });
 
-    // 无 containerId → docker inspect 不应被调用
-    expect(mockExeca).not.toHaveBeenCalled();
-    // invoke 不应被调用
+    expect(mockExecFile).not.toHaveBeenCalled();
     expect(mockInvoke).not.toHaveBeenCalled();
-    expect(result).toMatchObject({ status: 'completed' });
+    expect(result).toMatchObject({ status: "completed" });
   });
 
-  it('container dead → 视为 exited，触发 resume', async () => {
+  it("container dead → 视为 exited，触发 resume", async () => {
     const mockGetState = vi.fn()
       .mockResolvedValueOnce({
-        next: ['await_callback'],
-        values: { containerId: 'harness-ws1-dead', status: 'queued' },
+        next: ["await_callback"],
+        values: { containerId: "harness-ws1-dead", status: "queued" },
       })
       .mockResolvedValue({
         next: [],
-        values: { status: 'failed' },
+        values: { status: "failed" },
       });
 
     const mockInvoke = vi.fn().mockResolvedValue(undefined);
     compiled = { getState: mockGetState, invoke: mockInvoke };
 
-    // docker inspect → 'dead'
-    mockExeca.mockResolvedValue({ stdout: 'dead\n', stderr: '' });
+    mockExecFile.mockImplementation((cmd, args, cb) => cb(null, 'dead'));
 
     await _waitForSubGraphCompletion(compiled, config, 30_000, {
       pollIntervalMs: 50,
@@ -277,7 +266,7 @@ describe('_waitForSubGraphCompletion — container liveness detection (B2/B3)', 
 
     expect(mockInvoke).toHaveBeenCalledWith(
       expect.objectContaining({
-        resume: expect.objectContaining({ status: 'failed' }),
+        resume: expect.objectContaining({ status: "failed" }),
       }),
       config
     );
