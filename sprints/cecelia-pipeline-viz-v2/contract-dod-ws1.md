@@ -24,21 +24,31 @@ journey_type: user_facing
 
 ## ARTIFACT 条目
 
-- [x] [ARTIFACT] `packages/workflows/skills/harness-contract-proposer/SKILL.md` 文件存在且包含 `[BEHAVIOR:E2E:screenshot]` 字样
+- [ ] [ARTIFACT] `packages/workflows/skills/harness-contract-proposer/SKILL.md` 文件存在且包含 `[BEHAVIOR:E2E:screenshot]` 字样
   Test: node -e "const c=require('fs').readFileSync('packages/workflows/skills/harness-contract-proposer/SKILL.md','utf8');if(!c.includes('[BEHAVIOR:E2E:screenshot]'))process.exit(1);console.log('OK')"
 
-- [x] [ARTIFACT] SKILL.md mac_web 合约模板区块包含截图复制路径 `~/claude-output/harness-screenshots/`
+- [ ] [ARTIFACT] SKILL.md mac_web 合约模板区块包含截图复制路径 `~/claude-output/harness-screenshots/`
   Test: node -e "const c=require('fs').readFileSync('packages/workflows/skills/harness-contract-proposer/SKILL.md','utf8');if(!c.includes('~/claude-output/harness-screenshots/'))process.exit(1);console.log('OK')"
 
 ---
 
-## BEHAVIOR 索引（已迁移至 tests/ws1/skill-screenshot-dod.test.ts）
+## BEHAVIOR 条目
 
-BEHAVIOR 条目已覆盖于 `sprints/cecelia-pipeline-viz-v2/tests/ws1/skill-screenshot-dod.test.ts`：
-- it('SKILL.md 含 [BEHAVIOR:E2E:screenshot] 截图条目文字') → 通过
-- it('截图条目包含 screenshots/<ws_id>-<step>.png 格式') → 通过
-- it('截图条目包含 ~/claude-output/harness-screenshots/ 目标路径') → 通过
-- it('截图条目在 mac_web 合约模板区块内') → 通过
+- [ ] [BEHAVIOR] SKILL.md 含 `[BEHAVIOR:E2E:screenshot]` 截图条目文字（文件级可验证）
+  Test: manual:bash -c 'grep -c "\[BEHAVIOR:E2E:screenshot\]" packages/workflows/skills/harness-contract-proposer/SKILL.md || exit 1; echo OK'
+  期望: OK（count ≥ 1）
+
+- [ ] [BEHAVIOR] 截图条目包含 `screenshots/<ws_id>-<step>.png` 格式占位符
+  Test: manual:bash -c 'grep -E "screenshots/.*-.*\\.png" packages/workflows/skills/harness-contract-proposer/SKILL.md && echo OK || exit 1'
+  期望: OK
+
+- [ ] [BEHAVIOR] 截图条目包含复制目标路径 `~/claude-output/harness-screenshots/`
+  Test: manual:bash -c 'grep "~/claude-output/harness-screenshots/" packages/workflows/skills/harness-contract-proposer/SKILL.md && echo OK || exit 1'
+  期望: OK
+
+- [ ] [BEHAVIOR] SKILL.md 注入后 mac_web 合约模板区块（`target_environment = mac_web`）能被定位，且截图条目在其下方
+  Test: manual:bash -c 'awk "/target_environment = mac_web/,/target_environment = windows/" packages/workflows/skills/harness-contract-proposer/SKILL.md | grep -c "\[BEHAVIOR:E2E:screenshot\]" || exit 1; echo OK'
+  期望: OK（mac_web 区块含截图条目）
 
 ---
 
