@@ -1121,6 +1121,16 @@ jobs:
           CHANGED=$(git diff --name-only "$BASE"..."$HEAD" 2>/dev/null || echo "")
           # 排除 sprints/archive/：归档的老格式 sprint（v5 前），不应该走新 lint 规则
           DOD_FILES=$(echo "$CHANGED" | grep -E '(^|/)DoD\.md$|(^|/)contract-dod-ws[0-9]+\.md$' | grep -v '^sprints/archive/' || true)
+          # WORKSTREAM_FILTER：从分支名提取当前 workstream（cp-XXXXXXXX-ws-YYYY-wsN → wsN）
+          # 只检查当前 workstream 的 DoD 文件，避免因 import commit 把所有 ws 都拉进来被 lint
+          WS_MATCH=$(echo "${{ github.head_ref }}" | grep -oE 'ws[0-9]+$' || true)
+          if [ -n "$WS_MATCH" ] && [ -n "$DOD_FILES" ]; then
+            FILTERED=$(echo "$DOD_FILES" | grep -E "[-/]${WS_MATCH}(\.md)?" || true)
+            if [ -n "$FILTERED" ]; then
+              DOD_FILES="$FILTERED"
+              echo "ℹ️  WORKSTREAM_FILTER=$WS_MATCH，只检查当前 ws 的 DoD 文件"
+            fi
+          fi
           if [ -z "$DOD_FILES" ]; then
             echo "has_dod=false" >> $GITHUB_OUTPUT
             echo "⏭️  无 DoD/contract 文件变更，跳过 harness-contract-lint"
