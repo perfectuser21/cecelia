@@ -1,74 +1,37 @@
 contract_branch: cp-harness-propose-r3-92950980
-workstream_index: 2
+workstream_index: 4
 sprint_dir: sprints/cecelia-pipeline-viz-v2
+journey_type: autonomous
 
----
-skeleton: false
-journey_type: user_facing
----
-# Contract DoD — Workstream 2: Brain GET /api/brain/harness/initiative/:id/detail 端点
-
-**范围**: `packages/brain/src/routes/harness.js`（新增 GET /initiative/:id/detail 路由，从 tasks + initiative_contracts + task_events + checkpoint_blobs 组装响应）+ `packages/brain/src/__tests__/harness-detail.test.js`（新建单测，含 mock pool）
-**大小**: M（约 120-150 行净增，2 文件）
-**依赖**: Workstream 1 完成后
-
----
-
-## Risks
-
-### R2a: 端点未注册 → Brain 通用 404 handler 假绿
-**影响**: Brain 通用 404 handler 返回 `{"error":"Not Found"}`，对任何路径均 404，导致"404-acceptable"旁路假绿
-**缓解**: BEHAVIOR 1 使用真实 initiative（先 INSERT 到 DB），对真实 initiative 调用 /detail 必须返回 200；404 只对不存在 initiative 允许。端点未注册时真实 initiative 也返 404 → 真红 ✓
-
-### R2b: schema keys 顺序不一致导致 jq 比较失败
-**影响**: jq keys 输出字母升序，PRD schema 集合字面顺序不同，proposer 拼错 jq 断言
-**缓解**: BEHAVIOR 3 使用字母升序排列 `["contract_content","gan_rounds","initiative_id","prd_content","screenshot_urls","step_timing"]`
-
----
+# DoD — WS4: reportNode 增强（step_timing / ws_issues / ws_costs）
 
 ## ARTIFACT 条目
 
-- [x] [ARTIFACT] `packages/brain/src/routes/harness.js` 含 `/initiative/:id/detail` 路由注册
-  Test: node -e "const c=require('fs').readFileSync('packages/brain/src/routes/harness.js','utf8');if(!c.includes('/initiative/:id/detail') && !c.includes(\"initiative/:id/detail\"))process.exit(1);console.log('OK')"
+- [x] [ARTIFACT] `packages/brain/src/workflows/harness-initiative.graph.js` reportNode 含 `step_timing` 字段赋值
+  Test: node -e "const c=require('fs').readFileSync('packages/brain/src/workflows/harness-initiative.graph.js','utf8');if(!c.includes('step_timing'))process.exit(1);console.log('OK')"
 
-- [x] [ARTIFACT] `packages/brain/src/__tests__/harness-detail.test.js` 存在且含 mock pool + describe 块
-  Test: node -e "const c=require('fs').readFileSync('packages/brain/src/__tests__/harness-detail.test.js','utf8');if(!c.includes('describe') || !c.includes('initiative'))process.exit(1);console.log('OK')"
+- [x] [ARTIFACT] reportNode 含 `ws_issues` 字段赋值
+  Test: node -e "const c=require('fs').readFileSync('packages/brain/src/workflows/harness-initiative.graph.js','utf8');if(!c.includes('ws_issues'))process.exit(1);console.log('OK')"
 
----
+- [x] [ARTIFACT] reportNode 含 `ws_costs` 字段赋值
+  Test: node -e "const c=require('fs').readFileSync('packages/brain/src/workflows/harness-initiative.graph.js','utf8');if(!c.includes('ws_costs'))process.exit(1);console.log('OK')"
+
+- [x] [ARTIFACT] reportNode 写入 `tasks.result` 含 `report_content` 键
+  Test: node -e "const c=require('fs').readFileSync('packages/brain/src/workflows/harness-initiative.graph.js','utf8');if(!c.includes('report_content'))process.exit(1);console.log('OK')"
+
+- [x] [ARTIFACT] 禁用字段 timings/timing/issues/costs/breakdown 不作为 reportContent 顶层键出现
+  Test: manual:bash -c 'node -e "const c=require(\"fs\").readFileSync(\"packages/brain/src/workflows/harness-initiative.graph.js\",\"utf8\");const start=c.indexOf(\"export async function reportNode\");const slice=c.slice(start,start+3000);const banned=[\"timings\",\"timing\",\"issues\",\"costs\",\"breakdown\"];banned.forEach(f=>{const rx=new RegExp(\"[\\\"\\x27]\"+f+\"[\\\"\\x27]\\\\s*:\");if(rx.test(slice)){console.error(\"FAIL:\",f);process.exit(1);}});console.log(\"OK\");"'
 
 ## BEHAVIOR 条目（内嵌 manual:bash 命令）
 
-- [x] [BEHAVIOR] 已存在的 initiative 调用 /detail 返回 HTTP 200（端点未注册时 Brain 404 → 真红）
-  Test: manual:bash -c 'TEST_ID=$(curl -sf -X POST localhost:5221/api/brain/tasks -H "Content-Type: application/json" -d "{\"task_type\":\"harness_initiative\",\"title\":\"test-detail-dod-ws2\"}" | jq -r .id); [ -n "$TEST_ID" ] || { echo "FAIL: task creation failed"; exit 1; }; RESP=$(curl -sf "localhost:5221/api/brain/harness/initiative/$TEST_ID/detail") || { echo "FAIL: 端点未返回 200"; exit 1; }; jq -e '"'"'.initiative_id | type == "string"'"'"' >/dev/null <<< "$RESP" || { echo "FAIL: initiative_id not string"; exit 1; }'
-  期望: OK
+- [x] [BEHAVIOR] reportNode 源码含三字段（step_timing/ws_issues/ws_costs），WS4 未实现时 grep 返回 exit 1 → 真红
+  Test: manual:bash -c 'node -e "const c=require(\"fs\").readFileSync(\"packages/brain/src/workflows/harness-initiative.graph.js\",\"utf8\");const fields=[\"step_timing\",\"ws_issues\",\"ws_costs\"];fields.forEach(f=>{if(!c.includes(f)){console.error(\"FAIL: reportNode 缺字段\",f);process.exit(1);}});console.log(\"OK\")"'
 
-- [x] [BEHAVIOR] /detail 响应含 step_timing(array) 和 screenshot_urls(array)
-  Test: manual:bash -c 'TEST_ID=$(curl -sf -X POST localhost:5221/api/brain/tasks -H "Content-Type: application/json" -d "{\"task_type\":\"harness_initiative\",\"title\":\"test-detail-arrays-ws2\"}" | jq -r .id); [ -n "$TEST_ID" ] || exit 1; RESP=$(curl -sf "localhost:5221/api/brain/harness/initiative/$TEST_ID/detail") || exit 1; jq -e '"'"'.step_timing | type == "array"'"'"' >/dev/null <<< "$RESP" || { echo "FAIL: step_timing not array"; exit 1; }; jq -e '"'"'.screenshot_urls | type == "array"'"'"' >/dev/null <<< "$RESP" || { echo "FAIL: screenshot_urls not array"; exit 1; }'
-  期望: OK
+- [x] [BEHAVIOR] reportNode 含 `report_content` 键写入 tasks.result（WS4 未实现时字符串不存在 → exit 1 → 真红）
+  Test: manual:bash -c 'node -e "const c=require(\"fs\").readFileSync(\"packages/brain/src/workflows/harness-initiative.graph.js\",\"utf8\");if(!c.includes(\"report_content\")){console.error(\"FAIL: 缺 report_content 写入逻辑\");process.exit(1);}console.log(\"OK\")"'
 
-- [x] [BEHAVIOR] /detail 响应 schema 完整性 — 顶层 keys 完全等于 PRD 定义的 6 字段集合（jq 字母序）
-  Test: manual:bash -c 'TEST_ID=$(curl -sf -X POST localhost:5221/api/brain/tasks -H "Content-Type: application/json" -d "{\"task_type\":\"harness_initiative\",\"title\":\"test-detail-keys-ws2\"}" | jq -r .id); [ -n "$TEST_ID" ] || exit 1; RESP=$(curl -sf "localhost:5221/api/brain/harness/initiative/$TEST_ID/detail") || exit 1; jq -e '"'"'keys == ["contract_content","gan_rounds","initiative_id","prd_content","screenshot_urls","step_timing"]'"'"' >/dev/null <<< "$RESP" || { echo "FAIL: schema 顶层 keys 不符 PRD 定义"; exit 1; }'
-  期望: OK
+- [x] [BEHAVIOR] 禁用字段（timings/timing/issues/costs/breakdown）不作为 reportContent JSONB 键出现（精确键名匹配，不误杀 ws_issues/ws_costs/step_timing）
+  Test: manual:bash -c 'node -e "const c=require(\"fs\").readFileSync(\"packages/brain/src/workflows/harness-initiative.graph.js\",\"utf8\");const start=c.indexOf(\"export async function reportNode\");const slice=c.slice(start,start+3000);const banned=[\"timings\",\"timing\",\"issues\",\"costs\",\"breakdown\"];banned.forEach(f=>{const rx=new RegExp(\"[\\\"\\x27]\"+f+\"[\\\"\\x27]\\\\s*:\");if(rx.test(slice)){console.error(\"FAIL: 禁用字段作为独立键名出现在 reportNode 上下文:\",f);process.exit(1);}});console.log(\"OK\")"'
 
-- [x] [BEHAVIOR] /detail 响应禁用字段不存在（steps/timeline/result/data/details/info/content/report）
-  Test: manual:bash -c 'TEST_ID=$(curl -sf -X POST localhost:5221/api/brain/tasks -H "Content-Type: application/json" -d "{\"task_type\":\"harness_initiative\",\"title\":\"test-detail-banned-ws2\"}" | jq -r .id); [ -n "$TEST_ID" ] || exit 1; RESP=$(curl -sf "localhost:5221/api/brain/harness/initiative/$TEST_ID/detail") || exit 1; for FIELD in steps timeline result data details info content report; do jq -e "has(\"$FIELD\") | not" >/dev/null <<< "$RESP" || { echo "FAIL: 禁用字段 $FIELD 出现在响应中"; exit 1; }; done'
-  期望: OK
-
-- [x] [BEHAVIOR] 不存在的 initiative 返回 HTTP 404 + error 字段（string）
-  Test: manual:bash -c 'CODE=$(curl -s -o /tmp/detail-404-ws2.json -w "%{http_code}" "localhost:5221/api/brain/harness/initiative/00000000-0000-0000-0000-000000000099/detail"); [ "$CODE" = "404" ] || exit 1; jq -e '"'"'.error | type == "string"'"'"' >/dev/null /tmp/detail-404-ws2.json'
-  期望: OK
-
-- [x] [BEHAVIOR] prd_content/contract_content/gan_rounds 字段类型符合 PRD 定义（string|null / number|null）
-  Test: manual:bash -c 'TEST_ID=$(curl -sf -X POST localhost:5221/api/brain/tasks -H "Content-Type: application/json" -d "{\"task_type\":\"harness_initiative\",\"title\":\"test-detail-nullable-ws2\"}" | jq -r .id); [ -n "$TEST_ID" ] || exit 1; RESP=$(curl -sf "localhost:5221/api/brain/harness/initiative/$TEST_ID/detail") || exit 1; jq -e '"'"'.prd_content | (type == "string" or . == null)'"'"' >/dev/null <<< "$RESP" || { echo "FAIL: prd_content 类型不符（非 string|null）"; exit 1; }; jq -e '"'"'.contract_content | (type == "string" or . == null)'"'"' >/dev/null <<< "$RESP" || { echo "FAIL: contract_content 类型不符"; exit 1; }; jq -e '"'"'.gan_rounds | (type == "number" or . == null)'"'"' >/dev/null <<< "$RESP" || { echo "FAIL: gan_rounds 类型不符（非 number|null）"; exit 1; }'
-  期望: OK
-
-## BEHAVIOR:E2E 条目（user_facing 专属，Mode B final-e2e 跑）
-
-- [x] [BEHAVIOR:E2E] 用户点击 initiative card，详情面板展示 /detail API 数据（Playwright）
-  Screenshots:
-    - 01-pipeline-list.png   期望：/pipeline 页正常加载，initiative-card 列表可见，无 JS 错误
-    - 02-card-click.png      期望：点击 card 后侧栏/抽屉开始出现（过渡中）
-    - 03-detail-panel.png    期望：`[data-testid="initiative-detail-panel"]` 可见，面板完全展开
-    - 04-prd-content.png     期望：`[data-testid="initiative-prd-content"]` 可见，含 PRD 相关文字
-    - 05-timeline.png        期望：`[data-testid="initiative-step-timeline"]` 可见，step 条目 ≥ 0 条
-  期望：Playwright exit 0，所有 toBeVisible 断言通过，/detail API schema 验证通过
+- [x] [BEHAVIOR] ws_issues 元素含 ws_id / feedback / ci_fail_type 字段描述（源码逻辑验证）
+  Test: manual:bash -c 'node -e "const c=require(\"fs\").readFileSync(\"packages/brain/src/workflows/harness-initiative.graph.js\",\"utf8\");const start=c.indexOf(\"export async function reportNode\");const slice=c.slice(start,start+4000);if(!slice.includes(\"feedback\")){console.error(\"FAIL: ws_issues 缺 feedback 字段\");process.exit(1);}if(!slice.includes(\"ci_fail_type\")){console.error(\"FAIL: ws_issues 缺 ci_fail_type 字段\");process.exit(1);}console.log(\"OK\")"'
