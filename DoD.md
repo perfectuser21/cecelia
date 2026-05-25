@@ -39,19 +39,19 @@ journey_type: user_facing
 ## BEHAVIOR 条目（内嵌 manual:bash 命令）
 
 - [x] [BEHAVIOR] 已存在的 initiative 调用 /detail 返回 HTTP 200（端点未注册时 Brain 404 → 真红）
-  Test: manual:bash -c 'TEST_ID=$(curl -sf -X POST localhost:5221/api/brain/tasks -H "Content-Type: application/json" -d "{\"task_type\":\"harness_initiative\",\"title\":\"test-detail-dod-ws2\"}" | jq -r .id); [ -n "$TEST_ID" ] || { echo "FAIL: task creation failed"; exit 1; }; RESP=$(curl -sf "localhost:5221/api/brain/harness/initiative/$TEST_ID/detail") || { echo "FAIL: 端点未返回 200"; exit 1; }; echo "$RESP" | jq -e '"'"'.initiative_id | type == "string"'"'"' || { echo "FAIL: initiative_id not string"; exit 1; }; echo OK'
+  Test: manual:bash -c 'TEST_ID=$(curl -sf -X POST localhost:5221/api/brain/tasks -H "Content-Type: application/json" -d "{\"task_type\":\"harness_initiative\",\"title\":\"test-detail-dod-ws2\"}" | jq -r .id); [ -n "$TEST_ID" ] || { echo "FAIL: task creation failed"; exit 1; }; RESP=$(curl -sf "localhost:5221/api/brain/harness/initiative/$TEST_ID/detail") || { echo "FAIL: 端点未返回 200"; exit 1; }; jq -e '"'"'.initiative_id | type == "string"'"'"' >/dev/null <<< "$RESP" || { echo "FAIL: initiative_id not string"; exit 1; }'
   期望: OK
 
 - [x] [BEHAVIOR] /detail 响应含 step_timing(array) 和 screenshot_urls(array)
-  Test: manual:bash -c 'TEST_ID=$(curl -sf -X POST localhost:5221/api/brain/tasks -H "Content-Type: application/json" -d "{\"task_type\":\"harness_initiative\",\"title\":\"test-detail-arrays-ws2\"}" | jq -r .id); [ -n "$TEST_ID" ] || exit 1; RESP=$(curl -sf "localhost:5221/api/brain/harness/initiative/$TEST_ID/detail") || exit 1; echo "$RESP" | jq -e '"'"'.step_timing | type == "array"'"'"' || { echo "FAIL: step_timing not array"; exit 1; }; echo "$RESP" | jq -e '"'"'.screenshot_urls | type == "array"'"'"' || { echo "FAIL: screenshot_urls not array"; exit 1; }; echo OK'
+  Test: manual:bash -c 'TEST_ID=$(curl -sf -X POST localhost:5221/api/brain/tasks -H "Content-Type: application/json" -d "{\"task_type\":\"harness_initiative\",\"title\":\"test-detail-arrays-ws2\"}" | jq -r .id); [ -n "$TEST_ID" ] || exit 1; RESP=$(curl -sf "localhost:5221/api/brain/harness/initiative/$TEST_ID/detail") || exit 1; jq -e '"'"'.step_timing | type == "array"'"'"' >/dev/null <<< "$RESP" || { echo "FAIL: step_timing not array"; exit 1; }; jq -e '"'"'.screenshot_urls | type == "array"'"'"' >/dev/null <<< "$RESP" || { echo "FAIL: screenshot_urls not array"; exit 1; }'
   期望: OK
 
 - [x] [BEHAVIOR] /detail 响应 schema 完整性 — 顶层 keys 完全等于 PRD 定义的 6 字段集合（jq 字母序）
-  Test: manual:bash -c 'TEST_ID=$(curl -sf -X POST localhost:5221/api/brain/tasks -H "Content-Type: application/json" -d "{\"task_type\":\"harness_initiative\",\"title\":\"test-detail-keys-ws2\"}" | jq -r .id); [ -n "$TEST_ID" ] || exit 1; RESP=$(curl -sf "localhost:5221/api/brain/harness/initiative/$TEST_ID/detail") || exit 1; echo "$RESP" | jq -e '"'"'keys == ["contract_content","gan_rounds","initiative_id","prd_content","screenshot_urls","step_timing"]'"'"' || { echo "FAIL: schema 顶层 keys 不符 PRD 定义"; exit 1; }; echo OK'
+  Test: manual:bash -c 'TEST_ID=$(curl -sf -X POST localhost:5221/api/brain/tasks -H "Content-Type: application/json" -d "{\"task_type\":\"harness_initiative\",\"title\":\"test-detail-keys-ws2\"}" | jq -r .id); [ -n "$TEST_ID" ] || exit 1; RESP=$(curl -sf "localhost:5221/api/brain/harness/initiative/$TEST_ID/detail") || exit 1; jq -e '"'"'keys == ["contract_content","gan_rounds","initiative_id","prd_content","screenshot_urls","step_timing"]'"'"' >/dev/null <<< "$RESP" || { echo "FAIL: schema 顶层 keys 不符 PRD 定义"; exit 1; }'
   期望: OK
 
 - [x] [BEHAVIOR] /detail 响应禁用字段不存在（steps/timeline/result/data/details/info/content/report）
-  Test: manual:bash -c 'TEST_ID=$(curl -sf -X POST localhost:5221/api/brain/tasks -H "Content-Type: application/json" -d "{\"task_type\":\"harness_initiative\",\"title\":\"test-detail-banned-ws2\"}" | jq -r .id); [ -n "$TEST_ID" ] || exit 1; RESP=$(curl -sf "localhost:5221/api/brain/harness/initiative/$TEST_ID/detail") || exit 1; for FIELD in steps timeline result data details info content report; do echo "$RESP" | jq -e "has(\"$FIELD\") | not" || { echo "FAIL: 禁用字段 $FIELD 出现在响应中"; exit 1; }; done; echo OK'
+  Test: manual:bash -c 'TEST_ID=$(curl -sf -X POST localhost:5221/api/brain/tasks -H "Content-Type: application/json" -d "{\"task_type\":\"harness_initiative\",\"title\":\"test-detail-banned-ws2\"}" | jq -r .id); [ -n "$TEST_ID" ] || exit 1; RESP=$(curl -sf "localhost:5221/api/brain/harness/initiative/$TEST_ID/detail") || exit 1; for FIELD in steps timeline result data details info content report; do jq -e "has(\"$FIELD\") | not" >/dev/null <<< "$RESP" || { echo "FAIL: 禁用字段 $FIELD 出现在响应中"; exit 1; }; done'
   期望: OK
 
 - [x] [BEHAVIOR] 不存在的 initiative 返回 HTTP 404 + error 字段（string）
@@ -59,7 +59,7 @@ journey_type: user_facing
   期望: OK
 
 - [x] [BEHAVIOR] prd_content/contract_content/gan_rounds 字段类型符合 PRD 定义（string|null / number|null）
-  Test: manual:bash -c 'TEST_ID=$(curl -sf -X POST localhost:5221/api/brain/tasks -H "Content-Type: application/json" -d "{\"task_type\":\"harness_initiative\",\"title\":\"test-detail-nullable-ws2\"}" | jq -r .id); [ -n "$TEST_ID" ] || exit 1; RESP=$(curl -sf "localhost:5221/api/brain/harness/initiative/$TEST_ID/detail") || exit 1; echo "$RESP" | jq -e '"'"'.prd_content | (type == "string" or . == null)'"'"' || { echo "FAIL: prd_content 类型不符（非 string|null）"; exit 1; }; echo "$RESP" | jq -e '"'"'.contract_content | (type == "string" or . == null)'"'"' || { echo "FAIL: contract_content 类型不符"; exit 1; }; echo "$RESP" | jq -e '"'"'.gan_rounds | (type == "number" or . == null)'"'"' || { echo "FAIL: gan_rounds 类型不符（非 number|null）"; exit 1; }; echo OK'
+  Test: manual:bash -c 'TEST_ID=$(curl -sf -X POST localhost:5221/api/brain/tasks -H "Content-Type: application/json" -d "{\"task_type\":\"harness_initiative\",\"title\":\"test-detail-nullable-ws2\"}" | jq -r .id); [ -n "$TEST_ID" ] || exit 1; RESP=$(curl -sf "localhost:5221/api/brain/harness/initiative/$TEST_ID/detail") || exit 1; jq -e '"'"'.prd_content | (type == "string" or . == null)'"'"' >/dev/null <<< "$RESP" || { echo "FAIL: prd_content 类型不符（非 string|null）"; exit 1; }; jq -e '"'"'.contract_content | (type == "string" or . == null)'"'"' >/dev/null <<< "$RESP" || { echo "FAIL: contract_content 类型不符"; exit 1; }; jq -e '"'"'.gan_rounds | (type == "number" or . == null)'"'"' >/dev/null <<< "$RESP" || { echo "FAIL: gan_rounds 类型不符（非 number|null）"; exit 1; }'
   期望: OK
 
 ## BEHAVIOR:E2E 条目（user_facing 专属，Mode B final-e2e 跑）
