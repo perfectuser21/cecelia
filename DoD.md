@@ -1,6 +1,7 @@
 contract_branch: cp-harness-propose-r3-92950980
 workstream_index: 4
 sprint_dir: sprints/cecelia-pipeline-viz-v2
+journey_type: autonomous
 
 # DoD — WS4: reportNode 增强（step_timing / ws_issues / ws_costs）
 
