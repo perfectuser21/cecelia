@@ -1,64 +1,100 @@
-# Sprint PRD — Brain Version Endpoint
+# Sprint PRD — Brain API: GET /api/brain/harness/initiative/:id/detail
 
 ## OKR 对齐
 
-- **对应 KR**：KR（系统可观测性 / 运维健康）
+- **对应 KR**：KR（Harness Pipeline 可观测性 / Initiative 详情面板）
 - **当前进度**：N/A（Brain API 上下文不可达，本地推断）
-- **本次推进预期**：新增 1 个可机检版本查询端点，提升系统可观测性
+- **本次推进预期**：补全 ws3 Dashboard 详情面板所依赖的缺失后端 API 端点
 
 ## 背景
 
-外部工具（evaluator、dashboard、CI 脚本）需要查询当前运行 Brain 的版本号与 schema 版本，
-目前只能解析 package.json 或调用 /api/brain/status（返回字段噪音多）。
-新增 GET /api/brain/version 端点，提供轻量、字段固定、可机检的版本信息接口。
+ws3 (PR #3106) 在 `HarnessPipelinePage` 中新增了 `InitiativeDetailPanel` 组件，
+该组件调用 `GET /api/brain/harness/initiative/:id/detail`，但 Brain 后端从未实现该端点。
+结果：详情面板打开时始终显示"详情加载失败"。
+本次 sprint 补实现该端点。
 
 ## Golden Path（核心场景）
 
-外部调用方从 [GET /api/brain/version] → 经过 [Brain 读取 package.json version + EXPECTED_SCHEMA_VERSION] → 到达 [返回 JSON 含 version 和 schema_version]
+Dashboard 从 [点击 Initiative Card → 打开 InitiativeDetailPanel] → 经过 [前端调用 GET /api/brain/harness/initiative/:id/detail] → 到达 [面板展示 PRD 全文 + 步骤时间线 + 合约摘要]
 
 具体：
-1. 调用方发送 `GET /api/brain/version`，无需任何参数
-2. Brain 从 package.json 读取 `version` 字段，从 selfcheck.js 读取 `EXPECTED_SCHEMA_VERSION`
-3. 返回 HTTP 200，body 为 `{"version":"<semver>","schema_version":"<str>"}`
+1. 前端带 initiative_id（即 harness_initiative 任务 ID）调用该端点
+2. Brain 从 `initiative_contracts` 表读取 `prd_content`、`contract_content`；从 `cecelia_events`（event_type='langgraph_step'）重建 `step_timing` 和 `gan_rounds`
+3. 返回 HTTP 200，body 含 `initiative_id`、`prd_content`、`contract_content`、`gan_rounds`、`step_timing`、`screenshot_urls`
 
 ## Response Schema
 
-### Endpoint: GET /api/brain/version
+### Endpoint: GET /api/brain/harness/initiative/:id/detail
+
+**Path Parameters**:
+- `id` (string, 必填): harness_initiative 任务 ID（UUID 格式）
 
 **Query Parameters**: 无
 
 **Success (HTTP 200)**:
 ```json
-{"version": "1.230.10", "schema_version": "279"}
+{
+  "initiative_id": "e04a51cb-b13e-4389-bb3e-1d21267dd2e3",
+  "prd_content": "# Sprint PRD...",
+  "contract_content": "# Contract DoD...",
+  "gan_rounds": 2,
+  "step_timing": [
+    {"node": "planner", "started_at": "2026-05-25T10:00:00Z", "ended_at": "2026-05-25T10:01:00Z", "duration_ms": 60000},
+    {"node": "proposer", "started_at": "2026-05-25T10:01:00Z", "ended_at": null, "duration_ms": null}
+  ],
+  "screenshot_urls": []
+}
 ```
-- `version` (string, 必填): semver 格式，来自 packages/brain/package.json `.version`
-- `schema_version` (string, 必填): 来自 `EXPECTED_SCHEMA_VERSION` 常量，字符串形式
-- **禁用响应字段名**: `ver`/`v`/`pkg_version`/`db_version`/`build`/`tag`/`release`
-- **Schema 完整性**: 顶层 keys 必须完全等于 `["version", "schema_version"]`，不允许多余字段
+- `initiative_id` (string, 必填): 原样返回请求的 id
+- `prd_content` (string|null, 必填): 来自 `initiative_contracts.prd_content`，无则 null
+- `contract_content` (string|null, 必填): 来自 `initiative_contracts.contract_content`，无则 null
+- `gan_rounds` (number|null, 必填): 从 cecelia_events 统计（proposer+reviewer langgraph_step 配对数），无则 null
+- `step_timing` (array, 必填): 从 cecelia_events langgraph_step 事件列表，每元素含 `node/started_at/ended_at/duration_ms`；无则 `[]`
+- `screenshot_urls` (array, 必填): 当前固定返回 `[]`（截图存储未实现）
+- **禁用字段**: 不得出现 `steps`/`stages`/`tasks`/`contract`/`runs`/`data`/`payload` 等
 
-**Error**: 此端点为纯只读常量读取，不预期 4xx/5xx；若出现则返回标准 `{"error":"<string>"}`
+**Error (HTTP 404)**:
+```json
+{"error": "initiative not found"}
+```
+
+**Error (HTTP 400)**:
+```json
+{"error": "invalid id"}
+```
+
+**Schema 完整性**: 顶层 keys 必须完全等于 `["initiative_id","prd_content","contract_content","gan_rounds","step_timing","screenshot_urls"]`
 
 ## 边界情况
 
-- package.json 不可读：返回 HTTP 500，`{"error":"version read failed"}`
-- 不接受任何 query 参数（多余参数忽略，不报错）
+- id 不是合法 UUID → 400 `{"error":"invalid id"}`
+- id 合法但无对应 contract/events（initiative 不存在）→ 返回 200 + null 字段 + 空数组（宽容降级，不返回 404，便于 frontend 渲染"无数据"空态）
+- cecelia_events 表查询失败 → step_timing 降级为 `[]`，不抛 500
 
 ## 范围限定
 
-**在范围内**：GET /api/brain/version 端点实现（只读，无 DB 查询）
-**不在范围内**：POST/PUT/DELETE、版本比较逻辑、自动更新触发、/status 端点改造
+**在范围内**：
+- `packages/brain/src/routes/harness.js` 新增 `GET /initiative/:id/detail` 路由
+- 从 `initiative_contracts` 读 prd_content / contract_content
+- 从 `cecelia_events` 重建 step_timing + gan_rounds
+- screenshot_urls 固定返回 `[]`
+
+**不在范围内**：
+- 截图上传/存储功能
+- Dashboard 前端改动（已有 InitiativeDetailPanel，等待端点即可）
+- `initiative_contracts` 或 `cecelia_events` 表 schema 变更
 
 ## 假设
 
-- [ASSUMPTION: EXPECTED_SCHEMA_VERSION 常量从 selfcheck.js 导入]
-- [ASSUMPTION: 端点注册在现有 status router 或 brain-meta router 下]
+- [ASSUMPTION: initiative_contracts 表含 prd_content / contract_content 列（与 /dag 端点相同查法）]
+- [ASSUMPTION: cecelia_events 表含 task_id::uuid + event_type='langgraph_step' + payload（含 node/started_at/ended_at）]
+- [ASSUMPTION: harness.js router 已挂载在 /api/brain/harness/ 前缀下，新路由加在同文件即可]
 
 ## 预期受影响文件
 
-- `packages/brain/src/routes/status.js`: 新增 GET /version 路由
-- `packages/brain/src/selfcheck.js`: 导出 EXPECTED_SCHEMA_VERSION（若当前未 export）
+- `packages/brain/src/routes/harness.js`: 新增 GET /initiative/:id/detail 路由（约 60-80 行）
 
 ## journey_type: autonomous
-## journey_type_reason: 仅涉及 packages/brain/ 内部路由，无 UI / 无外部 agent 协议
+## journey_type_reason: 仅涉及 packages/brain/ 内部 API 路由，无 UI 改动
 ## target_environment: local_api
-## target_environment_reason: 纯 Brain 内部端点，evaluator 在本地 curl localhost:5221/api/brain/version 验证
+## target_environment_reason: 纯 Brain 后端端点，evaluator 在本地 curl localhost:5221/api/brain/harness/initiative/:id/detail 验证
