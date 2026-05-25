@@ -55,13 +55,13 @@ describe('System Registry API — Integration', () => {
       expect(res.body[0].name).toBe('/dev');
     });
 
-    it('支持 type=skill 过滤', async () => {
+    it('支持 type=skill 过滤 — 路由到 skill_registry', async () => {
       pool.query.mockResolvedValueOnce({ rows: [SAMPLE_ENTRY] });
       const res = await request(makeApp()).get('/api/brain/registry?type=skill');
       expect(res.status).toBe(200);
       const call = pool.query.mock.calls[0];
-      expect(call[0]).toContain('AND type =');
-      expect(call[1]).toContain('skill');
+      expect(call[0]).toContain('skill_registry');
+      expect(call[0]).not.toContain('AND type =');
     });
 
     it('支持 status 过滤', async () => {

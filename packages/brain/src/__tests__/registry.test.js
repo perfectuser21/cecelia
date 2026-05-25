@@ -44,13 +44,14 @@ describe('GET /api/brain/registry', () => {
     expect(res.body[0].name).toBe('dev');
   });
 
-  it('支持 ?type= 过滤', async () => {
+  it('支持 ?type= 过滤 — type=skill 路由到 skill_registry', async () => {
     mockQuery.mockResolvedValueOnce({ rows: [] });
 
     const res = await request(app).get('/api/brain/registry?type=skill');
     expect(res.status).toBe(200);
     const callArgs = mockQuery.mock.calls[0];
-    expect(callArgs[1]).toContain('skill');
+    expect(callArgs[0]).toContain('skill_registry');
+    expect(callArgs[0]).not.toContain('system_registry');
   });
 
   it('支持 ?status= 过滤', async () => {
