@@ -1,33 +1,27 @@
 {
   "initiative_id": "pending",
   "journey_type": "autonomous",
-  "journey_type_reason": "仅涉及 packages/brain/ 内部路由，无 UI / 无外部 agent 协议，evaluator 用 curl localhost:5221 验证",
+  "journey_type_reason": "仅涉及 packages/brain/ 内部路由新增，无 UI 改动、无外部 agent 协议，evaluator 用 curl localhost:5221 验证",
   "tasks": [
     {
       "task_id": "ws1",
-      "title": "新增 GET /api/brain/version 路由",
-      "scope": "在 packages/brain/src/routes/status.js 注册 GET /version 路由。handler 内部使用独立 try-catch + readFileSync（new URL('../../package.json', import.meta.url)）读取 package.json version，从 selfcheck.js import EXPECTED_SCHEMA_VERSION，返回 {version, schema_version}。package.json 不可读时返回 HTTP 500 + {error:'version read failed'}。多余 query 参数忽略。",
+      "title": "实现 GET /initiative/:id/detail 路由",
+      "scope": "在 packages/brain/src/routes/harness.js 新增 GET /initiative/:id/detail 路由处理函数：查询 tasks 表验证 initiative 存在（task_type=harness_initiative），读取 sprint_dir/sprint-prd.md 和 sprint-contract.md（不存在时为 null），聚合子任务 step_timing 数组（含 node/started_at/ended_at/duration_ms），返回六字段 JSON schema",
       "dod": [
-        "[ARTIFACT] packages/brain/src/routes/status.js 含 /version 路由注册",
-        "[ARTIFACT] 路由内使用 EXPECTED_SCHEMA_VERSION 从 selfcheck.js 导入",
-        "[ARTIFACT] selfcheck.js 含 export const EXPECTED_SCHEMA_VERSION",
-        "[ARTIFACT] /version handler 含 try-catch + HTTP 500",
-        "[BEHAVIOR] GET /api/brain/version 返回 HTTP 200，version 字段类型为 string",
-        "[BEHAVIOR] GET /api/brain/version 返回 schema_version 字段类型为 string",
-        "[BEHAVIOR] 响应 keys 完全等于 [schema_version,version]，不多不少",
-        "[BEHAVIOR] 禁用字段 ver/v/pkg_version/db_version/build/tag/release 均不出现",
-        "[BEHAVIOR] package.json chmod 000 时返回 HTTP 500 + error 字段",
-        "[BEHAVIOR] 多余 query 参数被忽略，仍返回 HTTP 200",
-        "[BEHAVIOR] version 值与 package.json 实际值一致（值来源 oracle）",
-        "[BEHAVIOR] version 符合 semver 格式 x.y.z",
-        "[BEHAVIOR] schema_version 值与 selfcheck.js EXPECTED_SCHEMA_VERSION 一致"
+        "[BEHAVIOR] 存在的 initiative ID 返回 200 + initiative_id 等于请求路径 :id",
+        "[BEHAVIOR] schema keys 精确等于 ['contract_content','gan_rounds','initiative_id','prd_content','screenshot_urls','step_timing']",
+        "[BEHAVIOR] 全部 7 个禁用字段（prd/contract/timeline/screenshots/stages/details/data）均不存在于 response",
+        "[BEHAVIOR] 不存在 ID → 404 + error 字段精确等于 'initiative not found'",
+        "[BEHAVIOR] 文件不存在时 prd_content == null 且 contract_content == null，HTTP 仍为 200",
+        "[BEHAVIOR] screenshot_urls 类型为 array（空时为 []，不为 null）",
+        "[BEHAVIOR] gan_rounds 类型为 null 或 number，禁止字符串类型",
+        "[BEHAVIOR] 有关联子任务时 step_timing 各元素含 node/started_at/ended_at/duration_ms 四个字段",
+        "[ARTIFACT] packages/brain/src/routes/harness.js 含 router.get('/initiative/:id/detail' 路由注册"
       ],
-      "files": [
-        "packages/brain/src/routes/status.js"
-      ],
+      "files": ["packages/brain/src/routes/harness.js"],
       "depends_on": [],
       "complexity": "S",
-      "estimated_minutes": 25
+      "estimated_minutes": 30
     }
   ]
 }

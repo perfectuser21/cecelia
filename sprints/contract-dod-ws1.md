@@ -2,60 +2,47 @@
 skeleton: false
 journey_type: autonomous
 ---
-# Contract DoD — Workstream 1: GET /api/brain/version 路由
+# Contract DoD — Workstream 1: 实现 GET /initiative/:id/detail 路由
 
-**范围**: 在 `packages/brain/src/routes/status.js` 新增 GET /version 路由，handler 内部独立 readFileSync + try-catch，返回 `{version, schema_version}`
-**大小**: S（净增 ~25 行）
+**范围**: 在 `packages/brain/src/routes/harness.js` 中新增 `GET /initiative/:id/detail` 路由处理函数
+**大小**: S（净增 < 100 行）
 **依赖**: 无
 
 ## ARTIFACT 条目
 
-- [x] [ARTIFACT] `packages/brain/src/routes/status.js` 包含 `/version` 路由注册
-  Test: node -e "const c=require('fs').readFileSync('packages/brain/src/routes/status.js','utf8');if(!c.includes('/version'))process.exit(1);console.log('OK')"
+- [ ] [ARTIFACT] `packages/brain/src/routes/harness.js` 含 `router.get('/initiative/:id/detail'` 路由注册
+  Test: node -e "const c=require('fs').readFileSync('packages/brain/src/routes/harness.js','utf8');if(!c.includes(\"router.get('/initiative/:id/detail'\"))process.exit(1)"
 
-- [x] [ARTIFACT] `/version` 路由使用 `EXPECTED_SCHEMA_VERSION` 来自 selfcheck.js 导入
-  Test: node -e "const c=require('fs').readFileSync('packages/brain/src/routes/status.js','utf8');if(!c.includes('EXPECTED_SCHEMA_VERSION'))process.exit(1);console.log('OK')"
+## BEHAVIOR 条目（内嵌可执行 manual: 命令）
 
-- [x] [ARTIFACT] `selfcheck.js` 含 `export const EXPECTED_SCHEMA_VERSION`（风险 R1 验证）
-  Test: node -e "const c=require('fs').readFileSync('packages/brain/src/selfcheck.js','utf8');if(!c.includes('export const EXPECTED_SCHEMA_VERSION'))process.exit(1);console.log('OK')"
-
-- [x] [ARTIFACT] `/version` 路由 handler 包含 try-catch + HTTP 500（支持 error path）
-  Test: node -e "const c=require('fs').readFileSync('packages/brain/src/routes/status.js','utf8');if(!c.match(/try\s*\{/)||!c.match(/500/))process.exit(1);console.log('OK')"
-
-## BEHAVIOR 条目
-
-- [x] [BEHAVIOR] GET /api/brain/version 返回 HTTP 200，`version` 字段类型为 string
-  Test: manual:bash -c 'curl -sf localhost:5221/api/brain/version | jq -e '"'"'.version | type == "string"'"'"' || { printf "%s\n" "FAIL: version 不是 string"; exit 1; }; printf "%s\n" "OK"'
+- [ ] [BEHAVIOR] 存在的 initiative ID 返回 200 + initiative_id 字段等于请求路径 :id
+  Test: manual:bash -c 'DB="${DB:-postgresql://localhost/cecelia}"; TEST_ID=$(psql "$DB" -t -c "INSERT INTO tasks (task_type, status, title, payload) VALUES ('"'"'harness_initiative'"'"', '"'"'queued'"'"', '"'"'dod-behavior1'"'"', '"'"'{"sprint_dir":"sprints/nonexistent-xyz"}'"'"') RETURNING id" | tr -d '"'"' \n'"'"'); RESP=$(curl -sf "localhost:5221/api/brain/harness/initiative/${TEST_ID}/detail") || { echo "FAIL: 端点未返回 200"; exit 1; }; echo "$RESP" | jq -e --arg id "$TEST_ID" '"'"'.initiative_id == $id'"'"' || { echo "FAIL: initiative_id 不匹配"; exit 1; }; echo OK'
   期望: OK
 
-- [x] [BEHAVIOR] GET /api/brain/version 返回 `schema_version` 字段类型为 string
-  Test: manual:bash -c 'curl -sf localhost:5221/api/brain/version | jq -e '"'"'.schema_version | type == "string"'"'"' || { printf "%s\n" "FAIL: schema_version 不是 string"; exit 1; }; printf "%s\n" "OK"'
+- [ ] [BEHAVIOR] schema keys 完整性 — 顶层 keys 精确等于 PRD 定义的六个字段
+  Test: manual:bash -c 'DB="${DB:-postgresql://localhost/cecelia}"; SCHEMA_ID=$(psql "$DB" -t -c "INSERT INTO tasks (task_type, status, title, payload) VALUES ('"'"'harness_initiative'"'"', '"'"'queued'"'"', '"'"'dod-behavior2'"'"', '"'"'{"sprint_dir":"sprints/nonexistent-xyz"}'"'"') RETURNING id" | tr -d '"'"' \n'"'"'); RESP=$(curl -sf "localhost:5221/api/brain/harness/initiative/${SCHEMA_ID}/detail") || { echo "FAIL"; exit 1; }; echo "$RESP" | jq -e '"'"'keys == ["contract_content","gan_rounds","initiative_id","prd_content","screenshot_urls","step_timing"]'"'"' || { echo "FAIL: keys 不完整"; exit 1; }; echo OK'
   期望: OK
 
-- [x] [BEHAVIOR] 响应 keys 完全等于 `["schema_version","version"]`，不多不少
-  Test: manual:bash -c 'curl -sf localhost:5221/api/brain/version | jq -e '"'"'keys == ["schema_version","version"]'"'"' || { printf "%s\n" "FAIL: keys schema drift"; exit 1; }; printf "%s\n" "OK"'
+- [ ] [BEHAVIOR] 禁用字段反向检查 — response 中不含全部 7 个禁用字段（prd/contract/timeline/screenshots/stages/details/data）
+  Test: manual:bash -c 'DB="${DB:-postgresql://localhost/cecelia}"; FBD_ID=$(psql "$DB" -t -c "INSERT INTO tasks (task_type, status, title, payload) VALUES ('"'"'harness_initiative'"'"', '"'"'queued'"'"', '"'"'dod-behavior3'"'"', '"'"'{"sprint_dir":"sprints/nonexistent-xyz"}'"'"') RETURNING id" | tr -d '"'"' \n'"'"'); RESP=$(curl -sf "localhost:5221/api/brain/harness/initiative/${FBD_ID}/detail") || { echo "FAIL"; exit 1; }; echo "$RESP" | jq -e '"'"'has("prd") | not'"'"' || { echo "FAIL: 含禁用字段 prd"; exit 1; }; echo "$RESP" | jq -e '"'"'has("contract") | not'"'"' || { echo "FAIL: 含禁用字段 contract"; exit 1; }; echo "$RESP" | jq -e '"'"'has("timeline") | not'"'"' || { echo "FAIL: 含禁用字段 timeline"; exit 1; }; echo "$RESP" | jq -e '"'"'has("screenshots") | not'"'"' || { echo "FAIL: 含禁用字段 screenshots"; exit 1; }; echo "$RESP" | jq -e '"'"'has("stages") | not'"'"' || { echo "FAIL: 含禁用字段 stages"; exit 1; }; echo "$RESP" | jq -e '"'"'has("details") | not'"'"' || { echo "FAIL: 含禁用字段 details"; exit 1; }; echo "$RESP" | jq -e '"'"'has("data") | not'"'"' || { echo "FAIL: 含禁用字段 data"; exit 1; }; echo OK'
   期望: OK
 
-- [x] [BEHAVIOR] 禁用字段 `ver`/`v`/`pkg_version`/`db_version`/`build`/`tag`/`release` 均不出现在响应中
-  Test: manual:bash -c 'RESP=$(curl -sf localhost:5221/api/brain/version); for BANNED in ver v pkg_version db_version build tag release; do printf "%s" "$RESP" | jq -e "has(\"$BANNED\") | not" || { printf "%s\n" "FAIL: 禁用字段 $BANNED 出现"; exit 1; }; done; printf "%s\n" "OK"'
+- [ ] [BEHAVIOR] error path — 不存在 ID → 404 + error 字段精确等于 "initiative not found"（不是 Brain 全局 404 的 "Not Found"）
+  Test: manual:bash -c 'CODE=$(curl -s -o /dev/null -w "%{http_code}" "localhost:5221/api/brain/harness/initiative/00000000-0000-0000-0000-000000000000/detail"); [ "$CODE" = "404" ] || { echo "FAIL: 应为 404，实际 '"'"'$CODE'"'"'"; exit 1; }; RESP=$(curl -s "localhost:5221/api/brain/harness/initiative/00000000-0000-0000-0000-000000000000/detail"); echo "$RESP" | jq -e '"'"'.error == "initiative not found"'"'"' || { echo "FAIL: error 字段应为 initiative not found（Brain 全局 404 返回 Not Found 不通过）"; exit 1; }; echo OK'
   期望: OK
 
-- [x] [BEHAVIOR] package.json 不可读时 GET /api/brain/version 返回 HTTP 500，body 含 `error` 字段（string 类型）
-  Test: manual:bash -c 'ORIG=$(stat -c "%a" packages/brain/package.json 2>/dev/null); ORIG=${ORIG:-644}; chmod 000 packages/brain/package.json; CODE=$(curl -s -o /tmp/ver-err.json -w "%{http_code}" localhost:5221/api/brain/version); chmod "$ORIG" packages/brain/package.json; [ "$CODE" = "500" ] || { printf "%s\n" "FAIL: error path 期望 HTTP 500，得 $CODE（路由须在 handler 内 readFileSync，不可用模块级缓存 pkg）"; exit 1; }; jq -e '"'"'.error | type == "string"'"'"' /tmp/ver-err.json || { printf "%s\n" "FAIL: error body 缺 error 字段"; exit 1; }; printf "%s\n" "OK"'
+- [ ] [BEHAVIOR] prd_content 和 contract_content 类型 — 文件不存在时两者均为 null（不报 5xx）
+  Test: manual:bash -c 'DB="${DB:-postgresql://localhost/cecelia}"; NF_ID=$(psql "$DB" -t -c "INSERT INTO tasks (task_type, status, title, payload) VALUES ('"'"'harness_initiative'"'"', '"'"'queued'"'"', '"'"'dod-behavior5'"'"', '"'"'{"sprint_dir":"sprints/nonexistent-test-xyz"}'"'"') RETURNING id" | tr -d '"'"' \n'"'"'); RESP=$(curl -sf "localhost:5221/api/brain/harness/initiative/${NF_ID}/detail") || { echo "FAIL: 文件不存在时应返回 200"; exit 1; }; echo "$RESP" | jq -e '"'"'.prd_content == null'"'"' || { echo "FAIL: prd_content 应为 null"; exit 1; }; echo "$RESP" | jq -e '"'"'.contract_content == null'"'"' || { echo "FAIL: contract_content 应为 null"; exit 1; }; echo OK'
   期望: OK
 
-- [x] [BEHAVIOR] 多余 query 参数被忽略，GET /api/brain/version?foo=bar 仍返回 HTTP 200
-  Test: manual:bash -c 'CODE=$(curl -s -o /dev/null -w "%{http_code}" "localhost:5221/api/brain/version?foo=bar&baz=qux"); [ "$CODE" = "200" ] || { printf "%s\n" "FAIL: 多余 query 参数未被忽略，期望 200 得 $CODE"; exit 1; }; printf "%s\n" "OK"'
+- [ ] [BEHAVIOR] screenshot_urls 始终为 array 类型（空时为 []，不为 null）
+  Test: manual:bash -c 'DB="${DB:-postgresql://localhost/cecelia}"; SS_ID=$(psql "$DB" -t -c "INSERT INTO tasks (task_type, status, title, payload) VALUES ('"'"'harness_initiative'"'"', '"'"'queued'"'"', '"'"'dod-behavior6'"'"', '"'"'{"sprint_dir":"sprints/nonexistent-xyz"}'"'"') RETURNING id" | tr -d '"'"' \n'"'"'); RESP=$(curl -sf "localhost:5221/api/brain/harness/initiative/${SS_ID}/detail") || { echo "FAIL"; exit 1; }; echo "$RESP" | jq -e '"'"'.screenshot_urls | type == "array"'"'"' || { echo "FAIL: screenshot_urls 不是数组"; exit 1; }; echo OK'
   期望: OK
 
-- [x] [BEHAVIOR] `version` 值与 packages/brain/package.json 实际值一致（值来源 oracle，防止 generator 硬编码）
-  Test: manual:bash -c 'EXPECTED=$(node -e "process.stdout.write(JSON.parse(require('"'"'fs'"'"').readFileSync('"'"'packages/brain/package.json'"'"','"'"'utf8'"'"')).version)"); RESP=$(curl -sf localhost:5221/api/brain/version); printf "%s" "$RESP" | jq -e ".version == \"$EXPECTED\"" || { printf "%s\n" "FAIL: version 与 package.json 不一致（expected=$EXPECTED）"; exit 1; }; printf "%s\n" "OK"'
+- [ ] [BEHAVIOR] gan_rounds 类型 — 必须为 null 或 number，禁止字符串
+  Test: manual:bash -c 'DB="${DB:-postgresql://localhost/cecelia}"; GR_ID=$(psql "$DB" -t -c "INSERT INTO tasks (task_type, status, title, payload) VALUES ('"'"'harness_initiative'"'"', '"'"'queued'"'"', '"'"'dod-behavior7'"'"', '"'"'{"sprint_dir":"sprints/nonexistent-xyz"}'"'"') RETURNING id" | tr -d '"'"' \n'"'"'); RESP=$(curl -sf "localhost:5221/api/brain/harness/initiative/${GR_ID}/detail") || { echo "FAIL"; exit 1; }; echo "$RESP" | jq -e '"'"'.gan_rounds == null or (.gan_rounds | type == "number")'"'"' || { echo "FAIL: gan_rounds 必须为 null 或 number"; exit 1; }; echo OK'
   期望: OK
 
-- [x] [BEHAVIOR] `version` 字段符合 semver 格式 x.y.z（数字点数字点数字）
-  Test: manual:bash -c 'curl -sf localhost:5221/api/brain/version | jq -e '"'"'.version | test("^[0-9]+\\.[0-9]+\\.[0-9]+$")'"'"' || { printf "%s\n" "FAIL: version 不是 semver x.y.z 格式"; exit 1; }; printf "%s\n" "OK"'
-  期望: OK
-
-- [x] [BEHAVIOR] `schema_version` 值与 selfcheck.js `EXPECTED_SCHEMA_VERSION` 一致（值来源 oracle）
-  Test: manual:bash -c 'EXPECTED=$(node -e "const c=require('"'"'fs'"'"').readFileSync('"'"'packages/brain/src/selfcheck.js'"'"','"'"'utf8'"'"');const m=c.match(/EXPECTED_SCHEMA_VERSION = '"'"'([^'"'"']+)'"'"'/);process.stdout.write(m[1])"); RESP=$(curl -sf localhost:5221/api/brain/version); printf "%s" "$RESP" | jq -e ".schema_version == \"$EXPECTED\"" || { printf "%s\n" "FAIL: schema_version 与 selfcheck.js 不一致（expected=$EXPECTED）"; exit 1; }; printf "%s\n" "OK"'
+- [ ] [BEHAVIOR] step_timing 元素结构 — 有关联子任务时各元素含 node/started_at/ended_at/duration_ms 四个字段
+  Test: manual:bash -c 'DB="${DB:-postgresql://localhost/cecelia}"; INIT_ID=$(psql "$DB" -t -c "INSERT INTO tasks (task_type, status, title, payload) VALUES ('"'"'harness_initiative'"'"', '"'"'queued'"'"', '"'"'dod-behavior8'"'"', '"'"'{"sprint_dir":"sprints/nonexistent-xyz"}'"'"') RETURNING id" | tr -d '"'"' \n'"'"'); psql "$DB" -c "INSERT INTO tasks (task_type, status, title, payload, started_at, completed_at) VALUES ('"'"'harness_contract_propose'"'"', '"'"'completed'"'"', '"'"'dod-b8-sub'"'"', json_build_object('"'"'initiative_id'"'"', '"'"''"'"'${INIT_ID}'"'"''"'"', '"'"'sprint_dir'"'"', '"'"'sprints/nonexistent-xyz'"'"'), NOW() - interval '"'"'5 minutes'"'"', NOW() - interval '"'"'2 minutes'"'"')" > /dev/null; RESP=$(curl -sf "localhost:5221/api/brain/harness/initiative/${INIT_ID}/detail") || { echo "FAIL"; exit 1; }; COUNT=$(echo "$RESP" | jq '"'"'.step_timing | length'"'"'); [ "$COUNT" -ge 1 ] || { echo "FAIL: step_timing 应有 >=1 元素（已插入子任务）"; exit 1; }; echo "$RESP" | jq -e '"'"'.step_timing[0].node | type == "string"'"'"' || { echo "FAIL: node 非字符串"; exit 1; }; echo "$RESP" | jq -e '"'"'.step_timing[0] | has("started_at")'"'"' || { echo "FAIL: 缺 started_at"; exit 1; }; echo "$RESP" | jq -e '"'"'.step_timing[0] | has("ended_at")'"'"' || { echo "FAIL: 缺 ended_at"; exit 1; }; echo "$RESP" | jq -e '"'"'.step_timing[0] | has("duration_ms")'"'"' || { echo "FAIL: 缺 duration_ms"; exit 1; }; echo OK'
   期望: OK
