@@ -8,9 +8,9 @@ import express from 'express';
 import request from 'supertest';
 
 // Mock db.js — 路径从 src/__tests__/ 出发，../db.js → src/db.js
-// routes/harness.js 中 import pool from '../db.js' 解析同一模块
+// routes/harness.js 中 import { pool } from '../db.js' 解析同一模块
 const mockPool = vi.hoisted(() => ({ query: vi.fn() }));
-vi.mock('../db.js', () => ({ default: mockPool }));
+vi.mock('../db.js', () => ({ default: mockPool, pool: mockPool }));
 
 // 延迟导入，确保 mock 先注册
 const { default: harnessRouter } = await import('../routes/harness.js');
