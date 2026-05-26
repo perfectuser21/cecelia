@@ -1,0 +1,65 @@
+{
+  "initiative_id": "pending",
+  "journey_type": "dev_pipeline",
+  "journey_type_reason": "验证 harness 引擎 generator 节点的 PRD 注入行为，属于开发工作流管道端到端验证",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "创建 smoke-verify.sh：端到端验证 buildGeneratorPrompt PRD 注入行为",
+      "scope": "新建 sprints/dev-visibility-smoke/smoke-verify.sh，包含：sprint-prd.md 存在性检查、harness-utils.js ## Sprint PRD 注入代码检查（prdContent + harness-utils 两项关键词独立验证）、harness-initiative.graph.js sprint-prd.md 读取 + prdContent 传递检查；Brain tasks 验证使用 GET /api/brain/tasks/$TASK_ID 具体查询 + status == completed or in_progress",
+      "dod": [
+        "[BEHAVIOR] bash smoke-verify.sh 退出码为 0（所有检查通过）",
+        "[BEHAVIOR] smoke-verify.sh 内容含 '## Sprint PRD' 关键词检查逻辑",
+        "[BEHAVIOR] smoke-verify.sh 内容含 sprint-prd.md 存在性验证",
+        "[BEHAVIOR] smoke-verify.sh 含 prdContent 和 harness-utils 两项关键词（独立检查）",
+        "[BEHAVIOR] Brain tasks 表有本次 task_id 记录且 status = completed 或 in_progress（GET /api/brain/tasks/$TASK_ID + jq-e 精确匹配）",
+        "[ARTIFACT] sprints/dev-visibility-smoke/smoke-verify.sh 文件存在"
+      ],
+      "files": [
+        "sprints/dev-visibility-smoke/smoke-verify.sh"
+      ],
+      "depends_on": [],
+      "complexity": "S",
+      "estimated_minutes": 20
+    },
+    {
+      "task_id": "ws2",
+      "title": "创建 prd-injection-smoke.test.ts：buildGeneratorPrompt PRD 注入路径集成测试（含 prdContent=null 边界情况）",
+      "scope": "新建 sprints/dev-visibility-smoke/tests/ws2/prd-injection-smoke.test.ts，vitest 集成测试：读取真实 sprint-prd.md → 调用 buildGeneratorPrompt → 断言 ## Sprint PRD 存在、内容不截断、顺序正确；含 prdContent=null 边界情况测试（prompt 含错误标注不静默跳过）；含 Brain tasks 查询（GET /api/brain/tasks/$TASK_ID + status == completed or in_progress）；含 smoke-verify.sh 存在性断言（依赖 WS1）",
+      "dod": [
+        "[BEHAVIOR] prd-injection-smoke.test.ts 含 buildGeneratorPrompt 调用",
+        "[BEHAVIOR] prd-injection-smoke.test.ts 含 toContain('## Sprint PRD') 断言",
+        "[BEHAVIOR] prd-injection-smoke.test.ts 含 smoke-verify.sh 存在性断言",
+        "[BEHAVIOR] prd-injection-smoke.test.ts 含 prdContent=null 边界情况（prompt 含 error 标注）",
+        "[BEHAVIOR] prd-injection-smoke.test.ts 含 Brain tasks 查询（TASK_ID + completed or in_progress）",
+        "[BEHAVIOR] buildGeneratorPrompt(prdContent=null) 实际返回含错误标注的 prompt（不抛异常不返空）",
+        "[ARTIFACT] sprints/dev-visibility-smoke/tests/ws2/prd-injection-smoke.test.ts 文件存在"
+      ],
+      "files": [
+        "sprints/dev-visibility-smoke/tests/ws2/prd-injection-smoke.test.ts"
+      ],
+      "depends_on": ["ws1"],
+      "complexity": "S",
+      "estimated_minutes": 25
+    },
+    {
+      "task_id": "ws3",
+      "title": "修改 harness-utils.js：prdContent=null 时插入错误标注段（非静默跳过）",
+      "scope": "修改 packages/brain/src/harness-utils.js line 165 的 prdSection ternary：false 分支从 `[]`（静默跳过）改为 `['## Sprint PRD', '⚠️ ERROR: sprint-prd.md 无法读取或不存在，PRD 内容为空', '']`（错误标注段）。保持 true 分支行为不变。同步创建 sprints/dev-visibility-smoke/tests/ws3/null-annotation.test.ts 验证代码结构 + 运行时行为",
+      "dod": [
+        "[BEHAVIOR] harness-utils.js prdSection false 分支非空数组 [] — 代码结构检查",
+        "[BEHAVIOR] buildGeneratorPrompt(prdContent=null) 返回含 ERROR 标注的 prompt",
+        "[BEHAVIOR] buildGeneratorPrompt(prdContent=null) 返回 prompt 含 ## Sprint PRD 段",
+        "[BEHAVIOR] buildGeneratorPrompt(prdContent='real') 正常路径不受影响",
+        "[ARTIFACT] packages/brain/src/harness-utils.js false 分支已修改（非空数组 []）"
+      ],
+      "files": [
+        "packages/brain/src/harness-utils.js",
+        "sprints/dev-visibility-smoke/tests/ws3/null-annotation.test.ts"
+      ],
+      "depends_on": ["ws2"],
+      "complexity": "S",
+      "estimated_minutes": 20
+    }
+  ]
+}
