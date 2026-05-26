@@ -819,6 +819,19 @@ async function executeTick() {
     }
   }
 
+  // 0.4.6. Harness worktree cleanup: 每 20 分钟清理 harness-v2/ 下 7 天以上的遗留 worktree
+  if (zombieElapsed >= ZOMBIE_CLEANUP_INTERVAL_MS) {
+    try {
+      const { cleanupStaleHarnessWorktrees } = await import('./harness-worktree.js');
+      const staleResult = await cleanupStaleHarnessWorktrees();
+      if (staleResult.cleaned > 0) {
+        tickLog(`[tick] Harness stale worktree cleanup: removed=${staleResult.cleaned}`);
+      }
+    } catch (staleErr) {
+      console.error('[tick] Harness stale worktree cleanup failed (non-fatal):', staleErr.message);
+    }
+  }
+
   // 0.5. Periodic cleanup: run once per CLEANUP_INTERVAL_MS (default 1 hour)
   const cleanupElapsed = Date.now() - tickState.lastCleanupTime;
   if (cleanupElapsed >= CLEANUP_INTERVAL_MS) {
