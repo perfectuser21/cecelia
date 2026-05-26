@@ -33,6 +33,7 @@ describe('advanceTaskIndexNode — serial merge gate', () => {
     const result = await advanceTaskIndexNode(state);
     expect(result.error).toBeDefined();
     expect(result.error.node).toBe('advance');
+    expect(result.error.message).toContain('ws1');
   });
 
   it('上一个 sub-task status=merged → 正常递增 index，无 error', async () => {
