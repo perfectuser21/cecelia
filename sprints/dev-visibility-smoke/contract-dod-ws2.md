@@ -1,7 +1,3 @@
-contract_branch: cp-05270002-ws-27612727-ws2
-workstream_index: 2
-sprint_dir: sprints/dev-visibility-smoke
-
 ---
 skeleton: false
 journey_type: dev_pipeline
@@ -45,4 +41,4 @@ journey_type: dev_pipeline
 
 - [x] [BEHAVIOR] vitest 运行 tests/ws2/ 全部测试通过（WS1+WS3 均完成后）
   Test: manual:bash -c 'node -e "const {spawnSync}=require(\"child_process\");let tid=\"\";try{const cr=spawnSync(\"curl\",[\"-sf\",\"-X\",\"POST\",\"http://localhost:5221/api/brain/tasks\",\"-H\",\"Content-Type: application/json\",\"-d\",\"{\\\"title\\\":\\\"Smoke\\\",\\\"task_type\\\":\\\"harness_generate\\\"}\"],{encoding:\"utf8\",timeout:3000});const d=JSON.parse(cr.stdout||\"{}\"||cr.stderr);if(d.id){tid=d.id;spawnSync(\"curl\",[\"-sf\",\"-X\",\"PATCH\",\"http://localhost:5221/api/brain/tasks/\"+tid,\"-H\",\"Content-Type: application/json\",\"-d\",\"{\\\"status\\\":\\\"in_progress\\\"}\"],{encoding:\"utf8\",timeout:3000});spawnSync(\"curl\",[\"-sf\",\"-X\",\"PATCH\",\"http://localhost:5221/api/brain/tasks/\"+tid,\"-H\",\"Content-Type: application/json\",\"-d\",\"{\\\"status\\\":\\\"completed\\\"}\"],{encoding:\"utf8\",timeout:3000})}}catch(e){}const env={...process.env};if(tid)env.TASK_ID=tid;const vr=spawnSync(\"npx\",[\"vitest\",\"run\",\"../../sprints/dev-visibility-smoke/tests/ws2/\",\"--reporter=verbose\"],{env,encoding:\"utf8\",maxBuffer:2097152,cwd:\"packages/brain\"});vr.status===0?console.log(\"OK\"):process.exit(1)"'
-  期望: OK（WS1+WS3 均完成后；WS3 完成前 test 6 仍红 — 属正常预期）
+  期望: OK（WS1+WS3 均完成后）

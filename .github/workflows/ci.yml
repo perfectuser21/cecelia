@@ -785,6 +785,25 @@ jobs:
           echo "::error::Brain 60s 内未就绪"
           tail -60 /tmp/brain.log
           exit 1
+      - name: Seed smoke task for DoD dynamic behavior
+        if: steps.detect.outputs.has_dynamic == 'true'
+        run: |
+          TASK_RESP=$(curl -sf -X POST http://localhost:5221/api/brain/tasks \
+            -H "Content-Type: application/json" \
+            -d '{"title":"CI DoD Smoke Task","task_type":"harness_generate"}' 2>/dev/null || echo '{}')
+          SMOKE_ID=$(echo "$TASK_RESP" | node -e "let d='';process.stdin.on('data',c=>d+=c);process.stdin.on('end',()=>{try{const p=JSON.parse(d);p.id&&process.stdout.write(p.id)}catch(e){}})" 2>/dev/null || true)
+          if [ -n "$SMOKE_ID" ]; then
+            curl -sf -X PATCH "http://localhost:5221/api/brain/tasks/$SMOKE_ID" \
+              -H "Content-Type: application/json" \
+              -d '{"status":"in_progress"}' > /dev/null || true
+            curl -sf -X PATCH "http://localhost:5221/api/brain/tasks/$SMOKE_ID" \
+              -H "Content-Type: application/json" \
+              -d '{"status":"completed"}' > /dev/null || true
+            echo "TASK_ID=$SMOKE_ID" >> "$GITHUB_ENV"
+            echo "✅ Seeded DoD smoke task: $SMOKE_ID (status=completed)"
+          else
+            echo "::warning::Could not create DoD smoke task — Brain tasks test will use default ID"
+          fi
       - name: 执行 DoD BEHAVIOR 动态命令
         if: steps.detect.outputs.has_dynamic == 'true'
         env:

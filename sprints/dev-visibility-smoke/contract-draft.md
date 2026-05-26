@@ -279,6 +279,7 @@ workstream_count: 3
 
 | Workstream | Test File | BEHAVIOR 覆盖 | 预期红色证据 |
 |---|---|---|---|
-| WS1 | `tests/ws1/smoke-verify-script.test.ts` | smoke-verify.sh 文件存在、执行退出码为 0 | WS1 未完成 → 2 failures（smoke-verify.sh 不存在） |
+| WS1 | `tests/ws1/smoke-verify-script.test.ts` | smoke-verify.sh 文件存在、退出码 | WS1 未完成 → 1 failure（smoke-verify.sh 不存在） |
+| WS2 | `tests/ws2/prd-injection-smoke.test.ts` | sprint-prd.md 存在且非空、buildGeneratorPrompt 注入、PRD 内容完整、Sprint PRD 出现在、smoke-verify.sh 存在、prdContent=null、Brain tasks 表 | tests 1-4 GREEN（#3142 已合并）；test 7 需 TASK_ID 种子 |
 
-**说明**：WS2/WS3 Test Contract 行在各自 PR 中添加。WS1 仅覆盖 smoke-verify.sh 脚本存在性与可执行性。
+**说明（Block 3 修正）**：WS2 tests 1-4 在创建测试文件后即为 GREEN，因 #3142 已合并，`buildGeneratorPrompt` prdContent 注入逻辑已存在。这 4 条验证存量 #3142 行为，不是 WS2 新增交付物的红色证据。真正的 Red 证据：test 5（WS1 前置）和 test 6（WS3 null 修复前永久红）。
