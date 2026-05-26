@@ -579,6 +579,9 @@ ${skillContent}
 ## 任务描述
 ${state.task.description || state.task.title || ''}
 
+## PrepPRD（产品语言，用户确认过的需求文档）
+${state.task?.payload?.prep_prd_body || '（未提供，Planner 从 sprint-prd.md 推断）'}
+
 ## 输出要求（v2）
 1. 生成 ${sprintDir}/sprint-prd.md（What，不写 How）
 2. 在 stdout 末尾输出 task-plan.json
@@ -593,6 +596,7 @@ ${state.task.description || state.task.title || ''}
         HARNESS_NODE: 'planner',
         HARNESS_SPRINT_DIR: sprintDir,
         HARNESS_INITIATIVE_ID: state.initiativeId,
+        CECELIA_JOURNEY_ID: state.task?.payload?.journey_id || '',
         GITHUB_TOKEN: state.githubToken,
       },
     };
@@ -1055,15 +1059,93 @@ export function _resetTaskGraphCacheForTests() {
 const SUBGRAPH_WAIT_MS = parseInt(process.env.CECELIA_SUBGRAPH_WAIT_MS || `${90 * 60 * 1000}`, 10);
 const SUBGRAPH_POLL_INTERVAL_MS = parseInt(process.env.CECELIA_SUBGRAPH_POLL_MS || '5000', 10);
 
-async function _waitForSubGraphCompletion(compiled, config, timeoutMs) {
+// 默认每 12 次 poll（12 × 5s = 60s）做一次容器 liveness check
+const LIVENESS_CHECK_EVERY_N = parseInt(process.env.CECELIA_LIVENESS_CHECK_N || '12', 10);
+
+/**
+ * 检查 Docker 容器是否仍在 running。
+ * 如果容器 exited / dead，或 docker inspect 失败（容器不存在），视为死亡返回非空错误字符串。
+ * 容器仍在 running 返回 null。
+ *
+ * @param {string} containerId
+ * @returns {Promise<string|null>}  死亡原因描述 or null（还活着）
+ */
+async function _checkContainerLiveness(containerId) {
+  return new Promise((resolve) => {
+    execFileCb('docker', ['inspect', '--format', '{{.State.Status}}', containerId], (err, stdout) => {
+      if (err) {
+        // 只有明确"容器不存在"才视为死亡，其他错误保守返回 null 避免误判
+        if (err.message && (err.message.includes('No such') || err.message.includes('not found'))) {
+          resolve(`container_inspect_failed: ${err.message}`);
+        } else {
+          resolve(null);
+        }
+        return;
+      }
+      const status = (stdout || '').trim();
+      resolve((status === 'exited' || status === 'dead') ? `container_${status}_without_callback` : null);
+    });
+  });
+}
+
+/**
+ * 等待 sub-graph 完成（轮询 getState 直到 next=[]）。
+ *
+ * 增加容器活性检测（B2/B3 修复）：每 livenessCheckEveryN 次 poll 检查一次
+ * sub-graph state 里的 containerId 是否仍在 running。如果容器已死亡（exited/dead/不存在），
+ * 主动通过 compiled.invoke({resume:{status:'failed',...}}, config) 唤醒 sub-graph，
+ * 避免傻等 90min 超时。
+ *
+ * @param {object} compiled          LangGraph compiled graph
+ * @param {object} config            LangGraph config（含 thread_id）
+ * @param {number} timeoutMs         最长等待时间（默认 90min）
+ * @param {object} [opts]            测试注入选项
+ * @param {number} [opts.pollIntervalMs]     轮询间隔（默认 SUBGRAPH_POLL_INTERVAL_MS）
+ * @param {number} [opts.livenessCheckEveryN] 每 N 次 poll 做一次 liveness check（默认 12）
+ */
+export async function _waitForSubGraphCompletion(compiled, config, timeoutMs, opts = {}) {
+  const pollIntervalMs = opts.pollIntervalMs ?? SUBGRAPH_POLL_INTERVAL_MS;
+  const livenessCheckEveryN = opts.livenessCheckEveryN ?? LIVENESS_CHECK_EVERY_N;
+
   const deadline = Date.now() + timeoutMs;
+  let pollCount = 0;
+
   while (Date.now() < deadline) {
     const state = await compiled.getState(config);
     if (!state.next || state.next.length === 0) {
       return state.values;
     }
+
+    // ── 容器活性检测（B2/B3）──────────────────────────────────────────────
+    // 每 livenessCheckEveryN 次 poll 检查一次容器是否还活着
+    if (pollCount % livenessCheckEveryN === 0) {
+      const containerId = state.values?.containerId;
+      if (containerId) {
+        const deathReason = await _checkContainerLiveness(containerId);
+        if (deathReason) {
+          // 容器已死，主动 resume sub-graph 走 failure 路径
+          console.warn(
+            `[harness-liveness] Container ${containerId} died (${deathReason}), resuming sub-graph with failure`
+          );
+          try {
+            await compiled.invoke(
+              { resume: { status: 'failed', error: deathReason } },
+              config
+            );
+          } catch (resumeErr) {
+            // resume 失败时记录警告（sub-graph 可能已经在 END 了）
+            console.warn(`[harness-liveness] resume invoke failed: ${resumeErr.message}`);
+          }
+          // resume 后 getState 拿最新状态
+          const finalState = await compiled.getState(config);
+          return { ...(finalState.values || {}), status: finalState.values?.status || 'failed' };
+        }
+      }
+    }
+
+    pollCount++;
     // 还在中间节点（通常 await_callback interrupt） — 等下一轮 poll
-    await new Promise((r) => setTimeout(r, SUBGRAPH_POLL_INTERVAL_MS));
+    await new Promise((r) => setTimeout(r, pollIntervalMs));
   }
   // 超时 — 拿当前 state 当 final（status 可能 undefined → join 视作 failed）
   const state = await compiled.getState(config);
@@ -1117,7 +1199,8 @@ export async function runSubTaskNode(state, opts = {}) {
       final = firstResult;
     } else {
       // sub-graph 大概率停在 await_callback interrupt — poll getState 等到 END
-      final = await _waitForSubGraphCompletion(compiled, config, waitMs);
+      // opts.waitOpts 供测试注入 pollIntervalMs / livenessCheckEveryN
+      final = await _waitForSubGraphCompletion(compiled, config, waitMs, opts.waitOpts || {});
     }
   } catch (err) {
     final = { status: 'failed', error: { node: 'sub_graph', message: err.message } };
@@ -1230,11 +1313,53 @@ export async function reportNode(state, opts = {}) {
   // 重入会重复 UPDATE，虽语义等幂但增加 DB 负载且 completed_at 会刷新）。
   if (state.report_path) return { report_path: state.report_path };
   const dbPool = opts.pool || pool;
+
+  // Compute step_timing from task_events graph_node_update events (same logic as /detail endpoint)
+  let step_timing = [];
+  try {
+    const { rows: evtRows } = await dbPool.query(
+      `SELECT payload, created_at
+       FROM task_events
+       WHERE task_id = $1::uuid AND event_type = 'graph_node_update'
+       ORDER BY created_at ASC`,
+      [state.initiativeId]
+    );
+    for (let i = 0; i < evtRows.length; i++) {
+      const p = evtRows[i].payload || {};
+      const started_at = new Date(evtRows[i].created_at).toISOString();
+      const nextTs = evtRows[i + 1]?.created_at;
+      const duration_ms = nextTs
+        ? new Date(nextTs).getTime() - new Date(evtRows[i].created_at).getTime()
+        : null;
+      step_timing.push({ node: p.nodeName || 'unknown', started_at, duration_ms });
+    }
+  } catch (err) {
+    console.warn(`[harness-initiative.graph] reportNode step_timing query failed: ${err.message}`);
+  }
+
+  // Compute ws_issues from sub_tasks (evaluator_feedback + ci_fail_type)
+  const ws_issues = (state.sub_tasks || [])
+    .filter(s => s.ci_fail_type || s.evaluator_feedback)
+    .map(s => ({
+      ws_id: s.id,
+      feedback: s.evaluator_feedback || null,
+      ci_fail_type: s.ci_fail_type || null,
+    }));
+
+  // Compute ws_costs from sub_tasks (ws_id + cost_usd)
+  const ws_costs = (state.sub_tasks || []).map(s => ({
+    ws_id: s.id,
+    cost_usd: s.cost_usd || 0,
+  }));
+
   const reportContent = JSON.stringify({
     initiativeId: state.initiativeId,
     sub_tasks: state.sub_tasks || [],
     final_e2e_verdict: state.final_e2e_verdict,
     failed_scenarios: state.final_e2e_failed_scenarios || [],
+    step_timing,
+    ws_issues,
+    ws_costs,
     cost_usd: (state.sub_tasks || []).reduce((a, s) => a + (s.cost_usd || 0), 0),
     completed_at: new Date().toISOString(),
   }, null, 2);
@@ -1260,12 +1385,34 @@ export async function reportNode(state, opts = {}) {
     const taskStatus = state.final_e2e_verdict === 'PASS' ? 'completed' : 'failed';
     await dbPool.query(
       `UPDATE tasks SET status=$2::text, completed_at=NOW(), updated_at=NOW(),
+        result = COALESCE(result, '{}'::jsonb) || jsonb_build_object('report_content', $4::jsonb),
         error_message=CASE WHEN $2::text='failed' THEN $3::text ELSE error_message END
        WHERE id=$1::uuid`,
-      [state.initiativeId, taskStatus, reason]
+      [state.initiativeId, taskStatus, reason, reportContent]
     );
   } catch (err) {
     console.warn(`[harness-initiative.graph] reportNode db update failed: ${err.message}`);
+  }
+  // 派 harness_report 子任务（6 步交付：Notion / 飞书 / harness-report.md）
+  try {
+    await dbPool.query(
+      `INSERT INTO tasks (title, description, task_type, status, priority, payload)
+       VALUES ($1, $2, 'harness_report', 'queued', 'P2', $3::jsonb)`,
+      [
+        `[Harness Report] ${state.task?.title || state.initiativeId}`,
+        `Auto-spawned by reportNode for initiative ${state.initiativeId}`,
+        JSON.stringify({
+          initiative_id: state.initiativeId,
+          final_e2e_verdict: state.final_e2e_verdict,
+          sprint_dir: state.sprintDir,
+          journey_id: state.task?.payload?.journey_id,
+          feature_id: state.task?.payload?.feature_id,
+          sub_tasks: state.sub_tasks || [],
+        }),
+      ]
+    );
+  } catch (err) {
+    console.warn(`[harness-initiative.graph] reportNode spawn harness_report failed: ${err.message}`);
   }
   return { report_path: reportContent };
 }
@@ -1374,7 +1521,9 @@ export async function finalEvaluateDispatchNode(state, opts = {}) {
   const execFn = opts.execFile || execFile;
   const sprintDir = state.task?.payload?.sprint_dir || 'sprints';
   const journeyType = state.taskPlan?.journey_type || 'autonomous';
-  const targetEnv = (state.prdContent || '').match(/^##\s*target_environment:\s*(\S+)/m)?.[1] || 'local_api';
+  const targetEnv = (state.prdContent || '').match(/^##\s*target_environment:\s*(\S+)/m)?.[1]
+    || state.task?.payload?.target_environment
+    || 'local_api';
   const _baseRepo = (state.task?.payload?.base_repo || '').toLowerCase();
   const githubRepo = _baseRepo.includes('zenithjoy') ? 'perfectuser21/zenithjoy-workspace' : 'perfectuser21/cecelia';
 

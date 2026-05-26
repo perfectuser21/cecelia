@@ -1440,6 +1440,65 @@ describe('GET /increment — 7 已有路由回归 [BEHAVIOR]', () => {
   });
 });
 
+describe('GET /subtract', () => {
+  test('GET /subtract?a=10&b=3 → 200 + {result:7, operation:"subtract"}', async () => {
+    const res = await request(app).get('/subtract').query({ a: '10', b: '3' });
+    expect(res.status).toBe(200);
+    expect(res.body.result).toBe(7);
+    expect(res.body.operation).toBe('subtract');
+  });
+
+  test('GET /subtract?a=10&b=3 → keys | sort == ["operation","result"]（schema 完整性）', async () => {
+    const res = await request(app).get('/subtract').query({ a: '10', b: '3' });
+    expect(res.status).toBe(200);
+    expect(Object.keys(res.body).sort()).toEqual(['operation', 'result']);
+  });
+
+  test('GET /subtract?a=10&b=3 → 禁用字段 difference/diff/value/answer/data 均不存在', async () => {
+    const res = await request(app).get('/subtract').query({ a: '10', b: '3' });
+    expect(res.status).toBe(200);
+    for (const k of ['difference', 'diff', 'value', 'answer', 'data']) {
+      expect(Object.prototype.hasOwnProperty.call(res.body, k)).toBe(false);
+    }
+  });
+
+  test('缺参 a → HTTP 400 + error 字段类型 string', async () => {
+    const res = await request(app).get('/subtract').query({ b: '3' });
+    expect(res.status).toBe(400);
+    expect(typeof res.body.error).toBe('string');
+    expect(res.body.error.length).toBeGreaterThan(0);
+  });
+
+  test('缺参 b → HTTP 400 + error 字段类型 string', async () => {
+    const res = await request(app).get('/subtract').query({ a: '10' });
+    expect(res.status).toBe(400);
+    expect(typeof res.body.error).toBe('string');
+    expect(res.body.error.length).toBeGreaterThan(0);
+  });
+
+  test('GET /subtract?a=1e5&b=3 → HTTP 400（非法格式，科学计数法拒）', async () => {
+    const res = await request(app).get('/subtract').query({ a: '1e5', b: '3' });
+    expect(res.status).toBe(400);
+  });
+
+  test('GET /subtract?a=3&b=10 → HTTP 200 + result=-7（负数结果）', async () => {
+    const res = await request(app).get('/subtract').query({ a: '3', b: '10' });
+    expect(res.status).toBe(200);
+    expect(res.body.result).toBe(-7);
+    expect(res.body.operation).toBe('subtract');
+  });
+
+  test('operation 字段字面值严格 === "subtract"（不许变体 difference/diff/sub/minus）', async () => {
+    const res = await request(app).get('/subtract').query({ a: '10', b: '3' });
+    expect(res.status).toBe(200);
+    expect(res.body.operation).toBe('subtract');
+    expect(res.body.operation).not.toBe('difference');
+    expect(res.body.operation).not.toBe('diff');
+    expect(res.body.operation).not.toBe('sub');
+    expect(res.body.operation).not.toBe('minus');
+  });
+});
+
 describe('GET /decrement', () => {
   test('GET /decrement?value=5 → 200 + {result:4, operation:"decrement"}（字面严等）', async () => {
     const res = await request(app).get('/decrement').query({ value: '5' });

@@ -45,4 +45,15 @@ describe('task-router initiative types', () => {
     expect(mod.isValidTaskType('exploratory')).toBe(false);
     expect(mod.isValidTaskType('codex_qa')).toBe(true);
   });
+
+  it('harness_evaluate 在 VALID_TASK_TYPES 中', async () => {
+    const mod = await import('../task-router.js');
+    expect(mod.isValidTaskType('harness_evaluate')).toBe(true);
+  });
+
+  it('harness_evaluate 在 LOCATION_MAP 中且路由到 us', async () => {
+    const mod = await import('../task-router.js');
+    expect(mod.LOCATION_MAP['harness_evaluate']).toBe('us');
+    expect(mod.getTaskLocation('harness_evaluate')).toBe('us');
+  });
 });

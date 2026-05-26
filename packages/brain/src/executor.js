@@ -2848,7 +2848,19 @@ export async function runHarnessInitiativeRouter(task, opts = {}) {
   const resumeRequested = task.payload?.resume_from_checkpoint === true;
   let input;
   if (existing && resumeRequested) {
-    input = null;  // 显式 resume from checkpoint
+    // 检查 checkpoint 是否处于 error 状态（如 ganLoop 节点执行失败）
+    // 若 error 有值，resume 会立即路由到 END → final=null → task failed → 每 2min 死循环
+    const ckError = existing.channel_values?.error;
+    if (ckError) {
+      // 坏 checkpoint：升 N，fresh start，避免无限 resume→END→loop
+      attemptN = baseAttemptN + 1;
+      threadId = `harness-initiative:${initiativeId}:${attemptN}`;
+      input = { task };
+      await dbPool.query('UPDATE tasks SET execution_attempts=$1 WHERE id=$2', [attemptN, task.id]);
+      console.log(`[startup-sync] Bad checkpoint (error state) for task=${task.id}, fresh start attempt=${attemptN}`);
+    } else {
+      input = null;  // 显式 resume from checkpoint
+    }
   } else if (existing && !resumeRequested) {
     // 同 attemptN 已有 checkpoint 但未 resume → 升 N，留旧 checkpoint 诊断
     attemptN = baseAttemptN + 1;

@@ -4,10 +4,11 @@ description: |
   Harness Contract Proposer — Harness v5 GAN Layer 2a：
   读 PRD，GAN 对抗写 Golden Path 合同（每步含真实验证命令）；
   Reviewer APPROVED 后倒推拆 task-plan.json。
-version: 7.11.0
+version: 7.12.0
 created: 2026-04-08
-updated: 2026-05-23
+updated: 2026-05-25
 changelog:
+  - 7.12.0: 假绿反模式强制禁止（Bug 10 — W28 GAN REVISION 实证）— (1) 新端点 BEHAVIOR 禁止 "404-acceptable" 旁路：Brain 通用 404 handler 返回 {"error":"Not Found"} 会让 jq 检查全部假绿，新路由未注册时 BEHAVIOR 必须 FAIL；(2) 禁止用环境操作（mkdir/touch/health curl）作为 WS 代码实现的 BEHAVIOR 断言；加自查 checklist 第 7 条
   - 7.11.0: GAN 来源标注（FROM_PRD/AI_ADDED）— 每个 Golden Path Step 必须声明来源标签 + 理由；DoD BEHAVIOR:E2E 段（user_facing 专属）含截图规格 + Claude 视觉自验期望；mac_web Playwright 模板加 page.screenshot() 在关键操作前后
   - 7.10.0: depends_on 串行死规则 — 修 W52 step6 并行根因：migration ws 必须是后续所有 ws 的前置依赖，`depends_on: []` 只允许 ws1；自查 checklist 第 7 条 python3 断言
   - 7.9.0: 删除 windows_local 模板 — 所有 Windows 测试统一走 windows_cloud（GitHub Actions），Cecelia 走 mac_web/local_api；target_environment 枚举值同步缩减
@@ -255,6 +256,26 @@ const { chromium, expect } = require('@playwright/test');
 })();
 ```
 
+**BEHAVIOR:E2E 截图 DoD（mac_web user_facing sprint 合约模板末尾必须包含）**
+
+在合约 DoD 的 `## BEHAVIOR:E2E 条目` 段末尾添加以下截图 DoD 条目，evaluator 验收后截图存入 `~/claude-output/harness-screenshots/<ws_id>-<step>.png`：
+
+```markdown
+- [ ] [BEHAVIOR:E2E:screenshot] evaluator 验收后截图已存入 ~/claude-output/harness-screenshots/
+  Screenshots:
+    - <ws_id>-01-initial.png      期望：操作前页面初始状态，关键元素可见
+    - <ws_id>-02-action.png       期望：用户操作后页面截图，过渡状态可见
+    - <ws_id>-03-result.png       期望：操作完成后结果页面截图，期望变化已发生
+  路径格式：~/claude-output/harness-screenshots/<ws_id>-<step>.png
+  期望：evaluator 完成后截图已复制到 ~/claude-output/harness-screenshots/ 目录
+```
+
+evaluator 完成验收后必须执行：
+```bash
+mkdir -p ~/claude-output/harness-screenshots/
+cp screenshots/*.png ~/claude-output/harness-screenshots/ 2>/dev/null || true
+```
+
 ---
 
 ### target_environment = windows_cloud（公网 Windows 产品 — GitHub Actions windows-latest，完全干净 VM）
@@ -302,6 +323,63 @@ if ($resp.status -ne "ok") { throw "FAIL: App 未能连接云端 status=$($resp.
 Stop-Process -Id $Proc.Id -Force
 Write-Host "✅ windows_cloud E2E 验证通过 version=$InstalledVersion"
 ```
+
+---
+
+#### windows_cloud 变体 B：Playwright dryrun（ZenithJoy publisher 验证）
+
+> 适用：sprint 目标是验证 `publish-{platform}-{type}-dryrun.cjs` 在 GitHub Actions windows-latest 上执行，非安装包交付。
+> 典型场景：`zj-douyin-article-agent-port`、任何 publisher dryrun sprint。
+
+**E2E 验收步骤（写入 `sprints/.../e2e-verify.ps1`）**：
+
+```powershell
+# final-e2e 验证脚本 — ZenithJoy publisher dryrun（windows-latest）
+param(
+  [string]$Platform = "{platform}",
+  [string]$PublishType = "{type}",
+  [string]$QueueJson = "$PSScriptRoot\test-queue.json"
+)
+
+Set-StrictMode -Version Latest
+$ErrorActionPreference = "Stop"
+
+# 1. 安装依赖
+Set-Location "$PSScriptRoot\..\.."
+npm ci --prefer-offline 2>&1 | Select-Object -Last 5
+npx playwright install chromium 2>&1 | Select-Object -Last 5
+
+# 2. 创建测试队列文件
+$queue = @([PSCustomObject]@{
+  title   = "测试文章标题"
+  content = "测试正文内容，用于 dryrun 验证。"
+  cover   = ""
+})
+$queue | ConvertTo-Json -Depth 5 | Out-File -FilePath $QueueJson -Encoding utf8
+
+# 3. 执行 dryrun 脚本
+$scriptPath = "services\agent\publishers\$Platform-publisher\publish-$Platform-$PublishType-dryrun.cjs"
+$output = node $scriptPath $QueueJson 2>&1
+$lastLine = ($output | Where-Object { $_ -match '^\{' } | Select-Object -Last 1)
+
+if (-not $lastLine) {
+  Write-Error "FAIL: 脚本无 JSON 输出"
+  exit 1
+}
+
+$result = $lastLine | ConvertFrom-Json
+if (-not $result.ok -or -not $result.dryRun) {
+  Write-Error "FAIL: ok=$($result.ok) dryRun=$($result.dryRun)"
+  exit 1
+}
+
+Write-Host "✅ dryrun 验证通过: ok=$($result.ok) dryRun=$($result.dryRun)"
+exit 0
+```
+
+**PASS 标准**：脚本 exit 0 + stdout JSON `ok:true, dryRun:true`
+**FAIL 标准**：exit 1 OR `ok:false` OR timeout 15min
+**GHA workflow**：`.github/workflows/e2e-windows.yml`（`workflow_dispatch` + `windows-latest`）
 
 ---
 
@@ -384,6 +462,56 @@ workstream_count: {N}
 - curl 必须加 `-f` flag（HTTP 5xx 才返回非0 exit code）
 - Playwright 脚本必须含显式 `toBeVisible` / `toHaveText` 断言，不能只 navigate
 
+### ⚠️ 假绿反模式（v7.12.0 — Bug 10 禁止，必须自查）
+
+**反模式 1：新端点 "404-acceptable" 旁路**（test_is_red 降到 6 的根因）
+
+Brain 的通用 404 handler 返回 `{"error": "Not Found"}` (JSON)。当你写：
+```bash
+CODE=$(curl -s -o /dev/null -w "%{http_code}" localhost:5221/api/brain/new-endpoint/test-id)
+if [ "$CODE" = "200" ]; then
+  # validate 200 response
+elif [ "$CODE" = "404" ]; then
+  echo "OK status=404 (test UUID not in DB — 端点存在)"  # ← 这行是假绿！
+fi
+```
+当 `new-endpoint` **路由根本没注册**时，Brain 返回 404 + `{"error":"Not Found"}`，`jq -e '.error | type == "string"'` 通过，打印 "OK"。
+**所有 BEHAVIOR 全部假绿，Generator 不实现端点也能 PASS。**
+
+**禁止** ❌：`[ "$CODE" = "404" ]` 分支接受并打印 OK（对新端点而言 404 = 路由未注册）
+**必须** ✅：对新实现的端点，使用 supertest 单测（测试文件存在且运行失败），或 curl 必须要求 200（404 = FAIL）
+
+正确写法（evaluator 模式A，测 Brain 新端点）：
+```bash
+# 方式1：直接要求 200（404 = 端点未实现 = FAIL）
+RESP=$(curl -sf localhost:5221/api/brain/harness/initiative/$TEST_ID/detail) || { echo "FAIL: 端点未返回 200"; exit 1; }
+echo "$RESP" | jq -e '.initiative_id | type == "string"' || { echo "FAIL: schema 不符"; exit 1; }
+echo OK
+
+# 方式2：supertest 单测存在且覆盖路由（TDD 红绿证明端点注册了）
+node -e "require('fs').accessSync('packages/brain/src/__tests__/harness-detail.test.js')" || { echo "FAIL: 测试文件不存在"; exit 1; }
+echo OK
+```
+
+**反模式 2：环境操作当 BEHAVIOR**（WS 实现的是代码，不是操作环境）
+
+```bash
+# ❌ 这三条在 WS5 "写 e2e-screenshot-chain.test.ts" 之前就能通过，不是真红
+mkdir -p ~/claude-output/harness-screenshots/ && echo OK      # mkdir 环境无关
+curl -sf localhost:5221/api/brain/health | jq -e '.ok' && echo OK  # health 检查无关 WS5
+touch ~/claude-output/dummy-test.png && echo OK               # 写别的文件不验实现
+```
+
+**禁止** ❌：`mkdir`/`touch`/`health curl`/`echo` 等与 WS 实现无关的环境操作当作 BEHAVIOR
+**必须** ✅：BEHAVIOR 验证的是 WS 写的**那个文件的内容**或**那个功能的行为**
+
+正确写法（WS5 生成 e2e-screenshot-chain.test.ts 的 BEHAVIOR）：
+```bash
+# 验证文件内容：WS5 没实现时这行 FAIL（文件不存在）
+node -e "const c=require('fs').readFileSync('sprints/viz-v2/tests/ws5/e2e-screenshot-chain.test.ts','utf8');if(!c.includes('harness-screenshots'))process.exit(1)" || { echo "FAIL: 测试文件缺 harness-screenshots 断言"; exit 1; }
+echo OK
+```
+
 ### ⚠️ GAN 来源标注规则（v7.11.0 — 来源透明性）
 
 每个 Golden Path Step **必须**在步骤标题行之后立即声明 `**来源**:` 标签：
@@ -423,6 +551,8 @@ PRD `## Response Schema` 段定义的字段名（key 字面值）是**不可改�
 3. **断言**：contract keys 集合 == PRD keys 集合（字面相等）
 4. **断言**：PRD 禁用列表里的字段名 **绝对不在** contract 任何 jq -e 命令的正向断言里出现（只能在反向 `! has(...)` 检查里）
 5. **断言（v7.6 新加 — Bug 9）**：`grep -c '^- \[ \] \[BEHAVIOR\]' contract-dod-ws*.md` ≥ 4。少于 4 → contract 作废，按 Step 2b 模板补齐到 ≥ 4 条不同场景（schema 字段 + keys 完整性 + 禁用字段反向 + error path 至少各 1）
+6. **depends_on 串行链（v7.10 新加）**：`python3 -c "import json,sys; d=json.load(open('${SPRINT_DIR}/task-plan.json')); ws=[t['task_id'] for t in d['tasks']]; err=[t['task_id'] for t in d['tasks'] if t['task_id']!='ws1' and not t.get('depends_on')]; sys.exit(1) if err else print('OK')"`  ws2+ 必须有 `depends_on`
+7. **假绿自查（v7.12 新加 — Bug 10）**：对每条 `[BEHAVIOR]` 命令，心想"如果 WS 对应的代码**一行都没写**，这条命令会 FAIL 吗？"。答案是 YES → 真红，合格；答案是 NO（mkdir/touch/health check/404-acceptable 都能通过）→ **假绿，必须改写**
 
 任一断言 fail → contract 草案作废，**用 PRD 字面字段名 + ≥ 4 条 [BEHAVIOR] 重写**。
 

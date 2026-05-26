@@ -487,6 +487,7 @@ export function buildPipelineRecord(task, events, legacyStageMap) {
   return {
     pipeline_id: task.id,
     planner_task_id: task.id, // 向后兼容：前端详情页用这个跳转
+    task_type: task.task_type,
     sprint_dir: sprintDir,
     title: task.title,
     description: task.description || '',
