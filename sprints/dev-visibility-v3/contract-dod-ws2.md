@@ -10,15 +10,15 @@ journey_type: autonomous
 
 ## ARTIFACT 条目
 
-- [ ] [ARTIFACT] `dev/SKILL.md` 含 Route B 段落（出现 "Route B" 文字）
+- [x] [ARTIFACT] `dev/SKILL.md` 含 Route B 段落（出现 "Route B" 文字）
   Test: node -e "const c=require('fs').readFileSync('packages/workflows/skills/dev/SKILL.md','utf8');if(!c.includes('Route B'))process.exit(1);console.log('OK')"
 
-- [ ] [ARTIFACT] `dev/SKILL.md` 含 Brain POST 端点引用
+- [x] [ARTIFACT] `dev/SKILL.md` 含 Brain POST 端点引用
   Test: node -e "const c=require('fs').readFileSync('packages/workflows/skills/dev/SKILL.md','utf8');if(!c.includes('localhost:5221/api/brain/tasks'))process.exit(1);console.log('OK')"
 
 ## BEHAVIOR 条目
 
-- [ ] [BEHAVIOR] Route B 段落含 `task_type=dev`（Brain 注册任务类型字段）
+- [x] [BEHAVIOR] Route B 段落含 `task_type=dev`（Brain 注册任务类型字段）
   Test: manual:bash -c '
   node -e "
   const c=require(\"fs\").readFileSync(\"packages/workflows/skills/dev/SKILL.md\",\"utf8\");
@@ -30,7 +30,7 @@ journey_type: autonomous
   '
   期望: OK
 
-- [ ] [BEHAVIOR] Route A（有 `--task-id`）路径保持不变，`--task-id` 引用仍在文件中
+- [x] [BEHAVIOR] Route A（有 `--task-id`）路径保持不变，`--task-id` 引用仍在文件中
   Test: manual:bash -c '
   node -e "
   const c=require(\"fs\").readFileSync(\"packages/workflows/skills/dev/SKILL.md\",\"utf8\");
@@ -40,7 +40,7 @@ journey_type: autonomous
   '
   期望: OK
 
-- [ ] [BEHAVIOR] Route B 含 Brain 离线时不阻断 `/dev` 流程的描述（warn 日志或"不阻断"文字）
+- [x] [BEHAVIOR] Route B 含 Brain 离线时不阻断 `/dev` 流程的描述（warn 日志或"不阻断"文字）
   Test: manual:bash -c '
   node -e "
   const c=require(\"fs\").readFileSync(\"packages/workflows/skills/dev/SKILL.md\",\"utf8\");
@@ -51,7 +51,7 @@ journey_type: autonomous
   '
   期望: OK
 
-- [ ] [BEHAVIOR] error path — Route B POST Brain 步骤描述明确是在 PrepPRD 确认后执行（不是 Stage 2/3）
+- [x] [BEHAVIOR] error path — Route B POST Brain 步骤描述明确是在 PrepPRD 确认后执行（不是 Stage 2/3）
   Test: manual:bash -c '
   node -e "
   const c=require(\"fs\").readFileSync(\"packages/workflows/skills/dev/SKILL.md\",\"utf8\");

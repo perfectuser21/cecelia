@@ -10,18 +10,18 @@ journey_type: autonomous
 
 ## ARTIFACT 条目
 
-- [ ] [ARTIFACT] `harness-utils.js buildGeneratorPrompt` 签名含 `prdContent`
+- [x] [ARTIFACT] `harness-utils.js buildGeneratorPrompt` 签名含 `prdContent`
   Test: node -e "const c=require('fs').readFileSync('packages/brain/src/harness-utils.js','utf8');if(!c.includes('prdContent'))process.exit(1);console.log('OK')"
 
-- [ ] [ARTIFACT] `harness-task.graph.js TaskState` 含 `prdContent` Annotation
+- [x] [ARTIFACT] `harness-task.graph.js TaskState` 含 `prdContent` Annotation
   Test: node -e "const c=require('fs').readFileSync('packages/brain/src/workflows/harness-task.graph.js','utf8');if(!c.includes('prdContent'))process.exit(1);console.log('OK')"
 
-- [ ] [ARTIFACT] `harness-initiative.graph.js runSubTaskNode` 函数体含 `prdContent`
+- [x] [ARTIFACT] `harness-initiative.graph.js runSubTaskNode` 函数体含 `prdContent`
   Test: node -e "const c=require('fs').readFileSync('packages/brain/src/workflows/harness-initiative.graph.js','utf8');const idx=c.indexOf('export async function runSubTaskNode');if(idx===-1)process.exit(1);if(!c.slice(idx,idx+3000).includes('prdContent'))process.exit(1);console.log('OK')"
 
 ## BEHAVIOR 条目
 
-- [ ] [BEHAVIOR] `buildGeneratorPrompt` 接受 `prdContent` 参数，非空时 prompt 包含 `## Sprint PRD` 标识
+- [x] [BEHAVIOR] `buildGeneratorPrompt` 接受 `prdContent` 参数，非空时 prompt 包含 `## Sprint PRD` 标识
   Test: manual:bash -c '
   node -e "
   const c=require(\"fs\").readFileSync(\"packages/brain/src/harness-utils.js\",\"utf8\");
@@ -32,7 +32,7 @@ journey_type: autonomous
   '
   期望: OK
 
-- [ ] [BEHAVIOR] `prdContent` 为 null/空时，`buildGeneratorPrompt` 跳过该段（代码含条件判断 `if(prdContent)` 或等价写法）
+- [x] [BEHAVIOR] `prdContent` 为 null/空时，`buildGeneratorPrompt` 跳过该段（代码含条件判断 `if(prdContent)` 或等价写法）
   Test: manual:bash -c '
   node -e "
   const c=require(\"fs\").readFileSync(\"packages/brain/src/harness-utils.js\",\"utf8\");
@@ -44,7 +44,7 @@ journey_type: autonomous
   '
   期望: OK
 
-- [ ] [BEHAVIOR] `harness-task.graph.js spawnNode` 把 `prdContent` 传给 `buildGeneratorPrompt`（调用点含两个参数）
+- [x] [BEHAVIOR] `harness-task.graph.js spawnNode` 把 `prdContent` 传给 `buildGeneratorPrompt`（调用点含两个参数）
   Test: manual:bash -c '
   node -e "
   const c=require(\"fs\").readFileSync(\"packages/brain/src/workflows/harness-task.graph.js\",\"utf8\");
@@ -59,7 +59,7 @@ journey_type: autonomous
   '
   期望: OK
 
-- [ ] [BEHAVIOR] `runSubTaskNode` 在 `compiled.invoke` 调用处传 `prdContent: state.prdContent`
+- [x] [BEHAVIOR] `runSubTaskNode` 在 `compiled.invoke` 调用处传 `prdContent: state.prdContent`
   Test: manual:bash -c '
   node -e "
   const c=require(\"fs\").readFileSync(\"packages/brain/src/workflows/harness-initiative.graph.js\",\"utf8\");
@@ -72,7 +72,7 @@ journey_type: autonomous
   '
   期望: OK
 
-- [ ] [BEHAVIOR] error path — `prdContent` 为 null 时 `buildGeneratorPrompt` 不抛错，仍返回有效 prompt 字符串（代码兜底存在）
+- [x] [BEHAVIOR] error path — `prdContent` 为 null 时 `buildGeneratorPrompt` 不抛错，仍返回有效 prompt 字符串（代码兜底存在）
   Test: manual:bash -c '
   node -e "
   const c=require(\"fs\").readFileSync(\"packages/brain/src/harness-utils.js\",\"utf8\");

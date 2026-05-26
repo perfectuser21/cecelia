@@ -10,15 +10,15 @@ journey_type: autonomous
 
 ## ARTIFACT 条目
 
-- [ ] [ARTIFACT] `harness-generator/SKILL.md` 不含"并行派发"旧文字
+- [x] [ARTIFACT] `harness-generator/SKILL.md` 不含"并行派发"旧文字
   Test: node -e "const c=require('fs').readFileSync('packages/workflows/skills/harness-generator/SKILL.md','utf8');if(c.includes('并行派发'))process.exit(1);console.log('OK')"
 
-- [ ] [ARTIFACT] `harness-generator/SKILL.md` 含"串行派发"新文字
+- [x] [ARTIFACT] `harness-generator/SKILL.md` 含"串行派发"新文字
   Test: node -e "const c=require('fs').readFileSync('packages/workflows/skills/harness-generator/SKILL.md','utf8');if(!c.includes('串行派发'))process.exit(1);console.log('OK')"
 
 ## BEHAVIOR 条目
 
-- [ ] [BEHAVIOR] Step 0.5 注释改为串行派发（文件不再含"并行派发"，含"串行派发"）
+- [x] [BEHAVIOR] Step 0.5 注释改为串行派发（文件不再含"并行派发"，含"串行派发"）
   Test: manual:bash -c '
   node -e "
   const c=require(\"fs\").readFileSync(\"packages/workflows/skills/harness-generator/SKILL.md\",\"utf8\");
@@ -29,7 +29,7 @@ journey_type: autonomous
   '
   期望: OK
 
-- [ ] [BEHAVIOR] `contract-draft.md` 旧引用已移除，不出现在文件任何位置
+- [x] [BEHAVIOR] `contract-draft.md` 旧引用已移除，不出现在文件任何位置
   Test: manual:bash -c '
   node -e "
   const c=require(\"fs\").readFileSync(\"packages/workflows/skills/harness-generator/SKILL.md\",\"utf8\");
@@ -39,7 +39,7 @@ journey_type: autonomous
   '
   期望: OK
 
-- [ ] [BEHAVIOR] `sprint-contract.md` 文件名引用仍然存在（统一后的正确文件名）
+- [x] [BEHAVIOR] `sprint-contract.md` 文件名引用仍然存在（统一后的正确文件名）
   Test: manual:bash -c '
   node -e "
   const c=require(\"fs\").readFileSync(\"packages/workflows/skills/harness-generator/SKILL.md\",\"utf8\");
@@ -49,7 +49,7 @@ journey_type: autonomous
   '
   期望: OK
 
-- [ ] [BEHAVIOR] Step 0.5 标题行后的注释包含 merge gate 串行说明（确认说明完整而非只换关键词）
+- [x] [BEHAVIOR] Step 0.5 标题行后的注释包含 merge gate 串行说明（确认说明完整而非只换关键词）
   Test: manual:bash -c '
   node -e "
   const c=require(\"fs\").readFileSync(\"packages/workflows/skills/harness-generator/SKILL.md\",\"utf8\");
@@ -64,7 +64,7 @@ journey_type: autonomous
   '
   期望: OK
 
-- [ ] [BEHAVIOR] error path — `harness-generator/SKILL.md` 文件可读（非空，存在于磁盘）
+- [x] [BEHAVIOR] error path — `harness-generator/SKILL.md` 文件可读（非空，存在于磁盘）
   Test: manual:bash -c '
   node -e "
   const fs=require(\"fs\");
