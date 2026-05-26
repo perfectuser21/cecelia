@@ -795,6 +795,9 @@ jobs:
           if [ -n "$SMOKE_ID" ]; then
             curl -sf -X PATCH "http://localhost:5221/api/brain/tasks/$SMOKE_ID" \
               -H "Content-Type: application/json" \
+              -d '{"status":"in_progress"}' > /dev/null || true
+            curl -sf -X PATCH "http://localhost:5221/api/brain/tasks/$SMOKE_ID" \
+              -H "Content-Type: application/json" \
               -d '{"status":"completed"}' > /dev/null || true
             echo "TASK_ID=$SMOKE_ID" >> "$GITHUB_ENV"
             echo "✅ Seeded DoD smoke task: $SMOKE_ID (status=completed)"
