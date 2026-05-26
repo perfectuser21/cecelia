@@ -18,6 +18,7 @@ const mockMerge = vi.fn();
 const mockClassify = vi.fn();
 const mockPoolQuery = vi.fn();
 const mockSpawnDetached = vi.fn();
+const mockCleanupWorktree = vi.fn();
 // B21: mergePrNode 现在直接调 `gh pr merge` 通过 promisify(child_process.execFile)。
 // 在 E2E happy/fix-loop 路径里 mock child_process.execFile，避免真去跑 gh CLI。
 const mockExecFileImpl = vi.fn();
@@ -47,6 +48,7 @@ vi.mock('../../harness-worktree.js', () => ({
   ensureHarnessWorktree: (...a) => mockEnsureWorktree(...a),
   harnessSubTaskBranchName: (initiativeId, logical) => `cp-mock-${String(initiativeId).slice(0, 8)}-${logical}`,
   harnessSubTaskWorktreePath: (initiativeId, logical) => `/mock-wt/task-${String(initiativeId).slice(0, 8)}-${logical}`,
+  cleanupHarnessWorktree: (...a) => mockCleanupWorktree(...a),
 }));
 vi.mock('../../harness-credentials.js', () => ({ resolveGitHubToken: (...a) => mockResolveToken(...a) }));
 vi.mock('../../docker-executor.js', () => ({
@@ -440,6 +442,29 @@ describe('mergePrNode', () => {
     expect(delta.error).toBeDefined();
     expect(delta.error.node).toBe('merge_pr');
     expect(delta.error.message).toMatch(/no pr_url/);
+  });
+
+  it('happy with worktreePath → calls cleanupHarnessWorktree with the path', async () => {
+    const execFile = vi.fn().mockResolvedValue({ stdout: '✓ merged', stderr: '' });
+    mockCleanupWorktree.mockResolvedValue(undefined);
+    const delta = await mergePrNode(
+      { pr_url: 'https://x/pull/1', worktreePath: '/wt/task-abc123' },
+      { execFile }
+    );
+    expect(delta.status).toBe('merged');
+    expect(mockCleanupWorktree).toHaveBeenCalledOnce();
+    expect(mockCleanupWorktree).toHaveBeenCalledWith('/wt/task-abc123');
+  });
+
+  it('happy without worktreePath → does NOT call cleanupHarnessWorktree', async () => {
+    const execFile = vi.fn().mockResolvedValue({ stdout: '✓ merged', stderr: '' });
+    mockCleanupWorktree.mockClear();
+    const delta = await mergePrNode(
+      { pr_url: 'https://x/pull/1' },
+      { execFile }
+    );
+    expect(delta.status).toBe('merged');
+    expect(mockCleanupWorktree).not.toHaveBeenCalled();
   });
 });
 
