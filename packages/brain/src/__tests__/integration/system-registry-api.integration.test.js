@@ -126,23 +126,31 @@ describe('System Registry API — Integration', () => {
 
   describe('POST /api/brain/registry', () => {
     it('成功创建新条目', async () => {
-      const newEntry = { ...SAMPLE_ENTRY, id: 'new-id-001', name: '/new-skill' };
+      const newEntry = { id: 'new-id-001', name: 'new-api-endpoint', type: 'api', location: null, status: 'active', description: '新 API', metadata: {}, created_at: new Date().toISOString(), updated_at: new Date().toISOString() };
       pool.query.mockResolvedValueOnce({ rows: [newEntry] });
       const res = await request(makeApp())
         .post('/api/brain/registry')
         .send({
-          type: 'skill',
-          name: '/new-skill',
-          description: '新技能',
+          type: 'api',
+          name: 'new-api-endpoint',
+          description: '新 API',
         });
       expect(res.status).toBe(201);
       expect(res.body).toBeDefined();
     });
 
+    it('type=skill 时返回 400（应使用 POST /api/brain/skills）', async () => {
+      const res = await request(makeApp())
+        .post('/api/brain/registry')
+        .send({ type: 'skill', name: '/new-skill' });
+      expect(res.status).toBe(400);
+      expect(res.body.error).toContain('skills');
+    });
+
     it('缺少必填字段时返回 400', async () => {
       const res = await request(makeApp())
         .post('/api/brain/registry')
-        .send({ type: 'skill' }); // 缺 name
+        .send({ type: 'api' }); // 缺 name
       expect(res.status).toBe(400);
     });
   });

@@ -134,15 +134,24 @@ describe('POST /api/brain/registry', () => {
   });
 
   it('upsert 重复条目时返回 200（已存在则更新）', async () => {
-    const existing = { id: 'uuid-1', name: 'dev', type: 'skill', status: 'active', description: '更新描述', metadata: {}, location: null, registered_at: new Date().toISOString(), updated_at: new Date().toISOString() };
+    const existing = { id: 'uuid-1', name: 'cron-daily', type: 'cron', status: 'active', description: '更新描述', metadata: {}, location: null, registered_at: new Date().toISOString(), updated_at: new Date().toISOString() };
     mockQuery.mockResolvedValueOnce({ rows: [existing] });
 
     const res = await request(app)
       .post('/api/brain/registry')
-      .send({ name: 'dev', type: 'skill', description: '更新描述' });
+      .send({ name: 'cron-daily', type: 'cron', description: '更新描述' });
 
     expect([200, 201]).toContain(res.status);
-    expect(res.body.name).toBe('dev');
+    expect(res.body.name).toBe('cron-daily');
+  });
+
+  it('type=skill 时返回 400（应使用 POST /api/brain/skills）', async () => {
+    const res = await request(app)
+      .post('/api/brain/registry')
+      .send({ name: 'dev', type: 'skill' });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toContain('skills');
   });
 
   it('缺少 name 时返回 400', async () => {
