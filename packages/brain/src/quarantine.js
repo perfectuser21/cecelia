@@ -257,6 +257,7 @@ async function quarantineTask(taskId, reason, details = {}) {
             content: analysisResult.text.trim(),
             category: 'quarantine_pattern',
             triggerEvent: 'quarantine',
+            task_id: taskId || null,
           });
 
           console.log(`[quarantine] LLM analysis completed for task ${taskId}`);
