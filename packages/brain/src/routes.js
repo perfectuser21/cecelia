@@ -13,6 +13,7 @@ import publishJobsRouter from './routes/publish-jobs.js';
 import capacityBudgetRouter from './routes/capacity-budget.js';
 import devReviewsRouter from './routes/dev-reviews.js';
 import registryRouter from './routes/registry.js';
+import skillsRouter from './routes/skills.js';
 import contentPipelineRouter from './routes/content-pipeline.js';
 import contentLibraryRouter from './routes/content-library.js';
 import socialTrendingRouter from './routes/social-trending.js';
@@ -29,6 +30,9 @@ const router = Router();
 for (const subRouter of [statusRouter, tasksRouter, tickRouter, actionsRouter, executionRouter, goalsRouter, analyticsRouter, brainMetaRouter, opsRouter, publishResultsRouter, publishJobsRouter, capacityBudgetRouter, devReviewsRouter]) {
   router.stack.push(...subRouter.stack);
 }
+
+// Skills 目录 — GET/POST/PATCH/DELETE /skills
+router.use('/skills', skillsRouter);
 
 // 系统注册表 — 全局目录，解决孤岛和重复问题
 router.use('/registry', registryRouter);

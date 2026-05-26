@@ -6,10 +6,11 @@ description: |
   而非"防作弊测试框架"。
   核心职责：(1) spec 对齐用户真需求 (2) criteria 可量化无歧义 (3) happy + error + 边界场景全覆盖
   GAN 对抗**多轮**直到双方达成共识。无硬轮数上限，但 Reviewer 真找不出实质 spec/产品漏洞时必须 APPROVED。
-version: 6.6.0
+version: 6.7.0
 created: 2026-04-08
-updated: 2026-05-25
+updated: 2026-05-26
 changelog:
+  - 6.7.0: 新增 Step 5 — Contract APPROVED 后写 Brain DB planned 条目（api_registry + db_schema_registry），补齐 GAN 阶段到 Report 阶段之间的数据空白；planned → done 由 harness-sprint-state Report 阶段完成
   - 6.6.0: 强制 Bash 工具写结果文件（Bug 11 — missing_result_file 根因）— SKILL.md 只说"写到文件"但 LLM 可能仅在文本中描述命令而不执行，导致 ContractViolation。v6.6 明确要求通过 Bash 工具执行写文件命令 + 执行验证命令确认文件存在
   - 6.5.0: 加第 8 维 rubric `depends_on_serial_chain` — W52 step6 实证：proposer 生成 task-plan.json 时将所有 ws 的 depends_on 设为 []，Brain 并发 dispatch，ws2 evaluator 验 publish_status 列但 ws1 migration 未合并导致 FAIL→无限 fix loop。第 8 维强卡 ws1 以外的 ws 必须显式声明前置依赖，migration ws 必须出现在后续 ws 的 depends_on 里
   - 6.4.0: 修自相矛盾死轮 cap — 删 line 86-88 "Round 1-2 阈值 7 / Round 3-4 阈值 6 / Round 5 force APPROVED" 死阶梯（违反 brain 代码 detectConvergenceTrend + 用户原话「无上限收敛」）；改成单轮阈值固定 7 + 趋势兜底，跟 harness-gan.graph.js 实际行为对齐。verdict 模板里同步删 round 阈值字样
@@ -274,6 +275,76 @@ test -f /workspace/.brain-result.json && echo "OK: result file written" || echo 
 ```
 
 REVISION 时 feedback 必须含具体修改方向。
+
+---
+
+### Step 5: APPROVED → 写 Brain DB（planned 条目）
+
+**仅在 verdict = APPROVED 时执行**。把合同里定义的 API endpoints + DB tables 写入本地 Brain DB，status=planned，供 Report 阶段对比实际完成情况。
+
+```javascript
+// 读 SPRINT_DIR 从 env 注入（与 Step 1 一致）
+const fs = require('fs');
+const SPRINT_DIR = process.env.SPRINT_DIR;
+const BRAIN = process.env.BRAIN_API || 'http://localhost:5221';
+const SPRINT_ID = process.env.SPRINT_ID || 'unknown';
+
+const contract = fs.existsSync(`${SPRINT_DIR}/contract-draft.md`)
+  ? fs.readFileSync(`${SPRINT_DIR}/contract-draft.md`, 'utf8') : '';
+const prd = fs.existsSync(`${SPRINT_DIR}/sprint-prd.md`)
+  ? fs.readFileSync(`${SPRINT_DIR}/sprint-prd.md`, 'utf8') : '';
+
+// 提取 API endpoints（[BEHAVIOR] Method: / Endpoint: 格式）
+const apis = [...contract.matchAll(/Method:\s*(GET|POST|PUT|DELETE|PATCH)\s*\nEndpoint:\s*(\S+)/gi)]
+  .map(m => ({ method: m[1].toUpperCase(), endpoint: m[2] }));
+
+// 提取 DB tables（Table: 行）
+const tables = [...(contract + '\n' + prd).matchAll(/Table:\s*(\w+)/gi)]
+  .map(m => m[1].trim())
+  .filter((v, i, a) => a.indexOf(v) === i);  // 去重
+
+async function writePlanned() {
+  // api_registry
+  for (const api of apis) {
+    try {
+      await fetch(`${BRAIN}/api/brain/registry`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: `${api.method} ${api.endpoint}`,
+          type: 'api',
+          status: 'planned',
+          metadata: { sprint_id: SPRINT_ID, method: api.method, endpoint: api.endpoint }
+        })
+      });
+      console.log('✅ api_registry planned:', api.method, api.endpoint);
+    } catch(e) { console.warn('WARN api_registry:', e.message); }
+  }
+
+  // db_schema_registry
+  for (const table of tables) {
+    try {
+      await fetch(`${BRAIN}/api/brain/registry`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: table,
+          type: 'db_schema',
+          status: 'planned',
+          metadata: { sprint_id: SPRINT_ID }
+        })
+      });
+      console.log('✅ db_schema_registry planned:', table);
+    } catch(e) { console.warn('WARN db_schema_registry:', e.message); }
+  }
+}
+
+writePlanned().then(() => console.log('Step 5 完成：', apis.length, 'API +', tables.length, 'tables 写入 planned'));
+```
+
+**注意**：
+- 写入失败只 WARN，不阻塞结果文件（Brain 的 APPROVED 判定以 `/workspace/.brain-result.json` 为准）
+- Report 阶段（harness-sprint-state）会把 planned → done 状态更新 + 推 Notion
 
 ---
 

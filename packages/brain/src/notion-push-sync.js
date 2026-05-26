@@ -4,6 +4,10 @@ const JOURNEY_DB = '358c40c2-ba63-8148-bde7-e313d789931a';
 const FEATURE_DB = '358c40c2-ba63-81e3-96c5-d762b3d34dff';
 const ISSUES_DB  = 'a17c40c2-ba63-82fb-9888-8152cefe29ec';
 
+const SKILL_REGISTRY_DB  = '353c40c2-ba63-81bf-ae3e-f0e6fa3753d7';
+const STEPS_DB           = '369c40c2-ba63-812c-9f35-e7e43db25014';
+const STEP_LINKS_DB      = '369c40c2-ba63-81e2-b95a-e5e3d0592676';
+
 const SUB_AREA_NOTION_IDS = {
   brain:         '5c0c40c2-ba63-8184-bc3d-f1c5e48caee4',
   engine:        '64bc40c2-ba63-81b0-a7e2-c2f7bb3b2e31',
@@ -148,6 +152,111 @@ async function pushIssues(pool, token) {
   }
 }
 
+async function pushSkillRegistry(pool, token) {
+  const { rows } = await pool.query(
+    `SELECT * FROM skill_registry WHERE notion_synced_at IS NULL LIMIT 10`
+  );
+  for (const s of rows) {
+    try {
+      const properties = {
+        Name:        { title: [{ text: { content: s.name } }] },
+        Description: { rich_text: buildRichText(s.description) },
+        Status:      { select: { name: s.status || 'active' } },
+      };
+      if (s.location) {
+        properties['Source'] = { rich_text: buildRichText(s.location) };
+      }
+      const page = await notionReq(token, '/pages', 'POST', {
+        parent: { database_id: SKILL_REGISTRY_DB },
+        properties,
+      });
+      await pool.query(
+        'UPDATE skill_registry SET notion_id=$1, notion_synced_at=NOW() WHERE id=$2',
+        [page.id, s.id]
+      );
+    } catch (err) {
+      console.warn(`[notion-push-sync] skill ${s.id} 推送失败: ${err.message}`);
+      await logSyncError(pool, err.message);
+    }
+  }
+}
+
+async function pushJourneySteps(pool, token) {
+  const { rows } = await pool.query(`
+    SELECT s.*, j.notion_id AS journey_notion_id
+    FROM journey_steps s
+    LEFT JOIN journeys j ON j.id = s.journey_id
+    WHERE s.notion_synced_at IS NULL
+      AND j.notion_id IS NOT NULL
+    LIMIT 10
+  `);
+  for (const s of rows) {
+    try {
+      const properties = {
+        Name:   { title: [{ text: { content: s.name } }] },
+        Status: { select: { name: s.status || 'planned' } },
+      };
+      if (s.description) {
+        properties['Description'] = { rich_text: buildRichText(s.description) };
+      }
+      if (s.journey_notion_id) {
+        properties['Journey'] = { relation: [{ id: s.journey_notion_id }] };
+      }
+      const page = await notionReq(token, '/pages', 'POST', {
+        parent: { database_id: STEPS_DB },
+        properties,
+      });
+      await pool.query(
+        'UPDATE journey_steps SET notion_id=$1, notion_synced_at=NOW() WHERE id=$2',
+        [page.id, s.id]
+      );
+    } catch (err) {
+      console.warn(`[notion-push-sync] step ${s.id} 推送失败: ${err.message}`);
+      await logSyncError(pool, err.message);
+    }
+  }
+}
+
+async function pushJourneyStepLinks(pool, token) {
+  const { rows } = await pool.query(`
+    SELECT l.*, j.notion_id AS journey_notion_id, s.notion_id AS step_notion_id,
+           j.name AS journey_name, s.name AS step_name
+    FROM journey_step_links l
+    LEFT JOIN journeys j ON j.id = l.journey_id
+    LEFT JOIN journey_steps s ON s.id = l.step_id
+    WHERE l.notion_synced_at IS NULL
+      AND j.notion_id IS NOT NULL
+      AND s.notion_id IS NOT NULL
+    LIMIT 10
+  `);
+  for (const l of rows) {
+    try {
+      const properties = {
+        Name:   { title: [{ text: { content: `${l.journey_name} — ${l.step_name}` } }] },
+        Status: { select: { name: l.status || 'planned' } },
+        Order:  { number: l.step_order },
+      };
+      if (l.journey_notion_id) {
+        properties['Journey'] = { relation: [{ id: l.journey_notion_id }] };
+      }
+      if (l.step_notion_id) {
+        properties['Step'] = { relation: [{ id: l.step_notion_id }] };
+      }
+      const page = await notionReq(token, '/pages', 'POST', {
+        parent: { database_id: STEP_LINKS_DB },
+        properties,
+      });
+      await pool.query(
+        'UPDATE journey_step_links SET notion_id=$1, notion_synced_at=NOW() WHERE id=$2',
+        [page.id, l.id]
+      );
+    } catch (err) {
+      console.warn(`[notion-push-sync] step_link ${l.id} 推送失败: ${err.message}`);
+      await logSyncError(pool, err.message);
+    }
+  }
+}
+
 export async function runNotionPushSync(pool) {
   let token;
   try {
@@ -159,4 +268,7 @@ export async function runNotionPushSync(pool) {
   await pushJourneys(pool, token);
   await pushJourneyFeatures(pool, token);
   await pushIssues(pool, token);
+  await pushSkillRegistry(pool, token);
+  await pushJourneySteps(pool, token);
+  await pushJourneyStepLinks(pool, token);
 }

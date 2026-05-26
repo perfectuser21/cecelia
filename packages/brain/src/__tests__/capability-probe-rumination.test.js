@@ -160,6 +160,19 @@ describe('probeRumination — loop_dead 自愈机制（PROBE_FAIL_RUMINATION cp-
   });
 });
 
+describe('probeRumination — 自愈 runRumination 必须异步（防探针超时）', () => {
+  it('self-heal direct_run 不阻塞探针 — runRumination(pool) 不使用 await（fire-and-forget）', () => {
+    // BUG: await runRumination(pool) 触发 LLM/NotebookLM 调用，耗时 >30s → probe timeout
+    // 修复: runRumination(pool).then().catch() 异步执行，探针立即返回
+    expect(ruminationFn).not.toContain('await runRumination(pool)');
+  });
+
+  it('self-heal 启动后 loopDeadContext 包含 direct_run 标记（可观测性保持）', () => {
+    // 即使 fire-and-forget，仍须在 detail 中记录自愈已触发
+    expect(ruminationFn).toContain('self_heal=direct_run');
+  });
+});
+
 describe('probeRumination — Case A 自愈立即 direct_run（cp-05200001）', () => {
   it('Case A 和 Case B 都包含 import rumination.js（两处 direct_run 确保两种 loop_dead 场景都立即反刍）', () => {
     // 修复前：只有 Case B 有 import('./rumination.js')，count=1
