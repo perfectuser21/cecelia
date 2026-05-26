@@ -14,35 +14,35 @@ journey_type: dev_pipeline
 
 ## ARTIFACT 条目
 
-- [ ] [ARTIFACT] `sprints/dev-visibility-smoke/tests/ws2/prd-injection-smoke.test.ts` 文件存在
+- [x] [ARTIFACT] `sprints/dev-visibility-smoke/tests/ws2/prd-injection-smoke.test.ts` 文件存在
   Test: node -e "require('fs').accessSync('sprints/dev-visibility-smoke/tests/ws2/prd-injection-smoke.test.ts')" && echo OK
 
 ## BEHAVIOR 条目（内嵌可执行 manual: 命令）
 
-- [ ] [BEHAVIOR] prd-injection-smoke.test.ts 含 buildGeneratorPrompt 函数调用（非空导入 + 调用）
+- [x] [BEHAVIOR] prd-injection-smoke.test.ts 含 buildGeneratorPrompt 函数调用（非空导入 + 调用）
   Test: manual:bash -c 'node -e "const c=require(\"fs\").readFileSync(\"sprints/dev-visibility-smoke/tests/ws2/prd-injection-smoke.test.ts\",\"utf8\");if(!c.includes(\"buildGeneratorPrompt\"))process.exit(1);console.log(\"OK\")"'
   期望: OK
 
-- [ ] [BEHAVIOR] prd-injection-smoke.test.ts 含 toContain("## Sprint PRD") 断言（验证注入关键词）
+- [x] [BEHAVIOR] prd-injection-smoke.test.ts 含 toContain("## Sprint PRD") 断言（验证注入关键词）
   Test: manual:bash -c 'node -e "const c=require(\"fs\").readFileSync(\"sprints/dev-visibility-smoke/tests/ws2/prd-injection-smoke.test.ts\",\"utf8\");if(!c.includes(\"Sprint PRD\"))process.exit(1);if(!c.includes(\"toContain\")||!c.includes(\"expect\"))process.exit(1);console.log(\"OK\")"'
   期望: OK
 
-- [ ] [BEHAVIOR] prd-injection-smoke.test.ts 含 smoke-verify.sh 存在性断言（边界情况 WS1 前置验证）
+- [x] [BEHAVIOR] prd-injection-smoke.test.ts 含 smoke-verify.sh 存在性断言（边界情况 WS1 前置验证）
   Test: manual:bash -c 'node -e "const c=require(\"fs\").readFileSync(\"sprints/dev-visibility-smoke/tests/ws2/prd-injection-smoke.test.ts\",\"utf8\");if(!c.includes(\"smoke-verify.sh\"))process.exit(1);console.log(\"OK\")"'
   期望: OK
 
-- [ ] [BEHAVIOR] prd-injection-smoke.test.ts 含 prdContent=null 边界情况测试（prompt 含错误标注，不静默跳过）
+- [x] [BEHAVIOR] prd-injection-smoke.test.ts 含 prdContent=null 边界情况测试（prompt 含错误标注，不静默跳过）
   Test: manual:bash -c 'node -e "const c=require(\"fs\").readFileSync(\"sprints/dev-visibility-smoke/tests/ws2/prd-injection-smoke.test.ts\",\"utf8\");if(!c.includes(\"null\"))process.exit(1);if(!c.includes(\"error\")&&!c.includes(\"ERROR\"))process.exit(1);console.log(\"OK\")"'
   期望: OK
 
-- [ ] [BEHAVIOR] buildGeneratorPrompt(prdContent=null) 实际返回含错误标注的 prompt（不抛异常、不返空字符串）
+- [x] [BEHAVIOR] buildGeneratorPrompt(prdContent=null) 实际返回含错误标注的 prompt（不抛异常、不返空字符串）
   Test: manual:bash -c 'node -e "import(\"./packages/brain/src/harness-utils.js\").then(function(m){var p=m.buildGeneratorPrompt({id:\"x\",title:\"t\",description:\"t\",payload:{dod:[],files:[],parent_task_id:\"p\",logical_task_id:\"w\"}},{prdContent:null});if(typeof p!==\"string\"||p.length===0){console.error(\"FAIL:返回非字符串或空\");process.exit(1)}var l=p.toLowerCase();if(!l.includes(\"error\")&&!p.includes(\"PRD不存在\")&&!p.includes(\"无法读取\")){console.error(\"FAIL:prdContent=null时无错误标注,prompt前80:\"+p.slice(0,80));process.exit(1)}console.log(\"OK\")}).catch(function(e){console.error(\"FAIL:\",e.message);process.exit(1)})"'
   期望: OK
 
-- [ ] [BEHAVIOR] prd-injection-smoke.test.ts 含 Brain tasks 查询断言（用 TASK_ID 具体查询 + status == completed or in_progress）
+- [x] [BEHAVIOR] prd-injection-smoke.test.ts 含 Brain tasks 查询断言（用 TASK_ID 具体查询 + status == completed or in_progress）
   Test: manual:bash -c 'node -e "const c=require(\"fs\").readFileSync(\"sprints/dev-visibility-smoke/tests/ws2/prd-injection-smoke.test.ts\",\"utf8\");if(!c.includes(\"TASK_ID\"))process.exit(1);if(!c.includes(\"completed\"))process.exit(1);if(!c.includes(\"in_progress\"))process.exit(1);console.log(\"OK\")"'
   期望: OK
 
-- [ ] [BEHAVIOR] vitest 运行 tests/ws2/ 全部测试通过（WS1+WS3 均完成后）
-  Test: manual:bash -c 'cd packages/brain && npx vitest run ../../sprints/dev-visibility-smoke/tests/ws2/ --reporter=verbose 2>&1 | grep -E "passed|✓" | grep -v "failed\|FAIL" | head -1 | grep -q "." && echo OK || { echo FAIL; exit 1; }'
+- [x] [BEHAVIOR] vitest 运行 tests/ws2/ 全部测试通过（WS1+WS3 均完成后）
+  Test: manual:bash -c 'node -e "const {spawnSync}=require(\"child_process\");const r=spawnSync(\"npx\",[\"vitest\",\"run\",\"sprints/dev-visibility-smoke/tests/ws2/\",\"--reporter=verbose\"],{encoding:\"utf8\",maxBuffer:2097152});r.status===0?console.log(\"OK\"):process.exit(1)"'
   期望: OK（WS1+WS3 均完成后；WS3 完成前 test 6 仍红 — 属正常预期）
