@@ -29,6 +29,7 @@ import { execFile as execFileCb } from 'node:child_process';
 import { promisify } from 'node:util';
 import pool from '../db.js';
 import { spawn } from '../spawn/index.js';
+import { executeOnHost } from '../spawn/host-executor.js';
 import { reconnectOrSpawn, makeSessionRecord } from '../harness-session-bridge.js';
 import { parseDockerOutput, loadSkillContent, readBrainResult } from '../harness-shared.js';
 import { parseTaskPlan, upsertTaskPlan } from '../harness-dag.js';
@@ -45,6 +46,28 @@ const execFile = execFileDefault;
 // 保持测试 vi.mock('../../harness-gan-graph.js') 路径兼容。
 // Phase C7 清 shim 前不改。
 import { runGanContractGraph } from '../harness-gan-graph.js';
+
+/** 生成 goal-based Stop hook settings JSON（与 executor.js buildGoalSettings 相同格式） */
+function buildHarnessGoalSettings(goalCondition) {
+  if (!goalCondition) return null;
+  return JSON.stringify({
+    hooks: {
+      Stop: [{
+        hooks: [{
+          type: 'prompt',
+          prompt: `Has the following goal been achieved based on the conversation? Goal: ${goalCondition}\n\nAnswer YES only if you can confirm from the conversation that the goal is met. Answer NO otherwise.`,
+          model: 'claude-haiku-4-5-20251001',
+        }],
+      }],
+    },
+  });
+}
+
+const HARNESS_PHASE_GOALS = {
+  planner:  'The task-plan.json file has been written to the sprint directory and all workstreams are defined',
+  evaluate: 'The evaluation is complete and .brain-result.json has been written with verdict=PASS or FAIL',
+  generator: 'The workstream implementation PR has been created and pushed to GitHub',
+};
 
 const DEFAULT_TIMEOUT_SEC = 21600; // 6h，对齐 initiative_contracts.timeout_sec 默认
 const DEFAULT_BUDGET_USD = 10;
@@ -611,6 +634,9 @@ ${state.task?.payload?.prep_prd_body || '（未提供，Planner 从 sprint-prd.m
         HARNESS_INITIATIVE_ID: state.initiativeId,
         CECELIA_JOURNEY_ID: state.task?.payload?.journey_id || '',
         GITHUB_TOKEN: state.githubToken,
+        ...(buildHarnessGoalSettings(HARNESS_PHASE_GOALS.planner)
+          ? { CECELIA_GOAL_SETTINGS: buildHarnessGoalSettings(HARNESS_PHASE_GOALS.planner) }
+          : {}),
       },
     };
 
@@ -1559,6 +1585,7 @@ export async function finalEvaluateDispatchNode(state, opts = {}) {
   const _evalDbPool = opts.pool || pool;
   await emitLangGraphStep(_evalDbPool, state.initiativeId, { node: 'evaluator', status: 'started' });
   const executor = opts.executor || spawn;
+  const hostExecutor = opts.hostExecutor || executeOnHost;
   const execFn = opts.execFile || execFile;
   const sprintDir = state.task?.payload?.sprint_dir || 'sprints';
   const journeyType = state.taskPlan?.journey_type || 'autonomous';
@@ -1567,6 +1594,10 @@ export async function finalEvaluateDispatchNode(state, opts = {}) {
     || 'local_api';
   const _baseRepo = (state.task?.payload?.base_repo || '').toLowerCase();
   const githubRepo = _baseRepo.includes('zenithjoy') ? 'perfectuser21/zenithjoy-workspace' : 'perfectuser21/cecelia';
+  // ZenithJoy windows_cloud 真实 workflow 文件名（非 evaluator SKILL 默认的 e2e-windows.yml）
+  const windowsCloudWorkflow = _baseRepo.includes('zenithjoy') ? 'agent-e2e-video.yml' : 'e2e-windows.yml';
+  // mac_web 用 host executor；其他环境用 Docker spawn
+  const actualExecutor = targetEnv === 'mac_web' ? hostExecutor : executor;
 
   // Cross-repo sprints: evaluator 需要在 sub-task worktree（外部仓库克隆）里运行，
   // 才能通过 ARTIFACT 检查（implementation 文件在外部 repo，不在 Cecelia）。
@@ -1644,7 +1675,7 @@ GITHUB_REPO=${githubRepo}`;
 
   let result;
   try {
-    result = await executor({
+    result = await actualExecutor({
       task: { ...state.task, task_type: 'harness_evaluate' },
       prompt,
       worktreePath: evalWorktreePath,
@@ -1659,6 +1690,14 @@ GITHUB_REPO=${githubRepo}`;
         GITHUB_TOKEN: state.githubToken,
         PR_URL: firstSubTaskPr,
         PR_BRANCH: prBranchEnv,
+        // mac_web host executor: 告知 SKILL 把 .brain-result.json 写到 worktree（而非 /workspace）
+        ...(targetEnv === 'mac_web' ? { WORKSPACE_PATH: evalWorktreePath } : {}),
+        // windows_cloud: 注入实际 workflow 文件名（ZenithJoy 用 agent-e2e-video.yml）
+        WINDOWS_CLOUD_WORKFLOW: windowsCloudWorkflow,
+        // goal-based stop hook：evaluator 完成写 .brain-result.json 后才能停
+        ...(buildHarnessGoalSettings(HARNESS_PHASE_GOALS.evaluate)
+          ? { CECELIA_GOAL_SETTINGS: buildHarnessGoalSettings(HARNESS_PHASE_GOALS.evaluate) }
+          : {}),
       },
     });
   } catch (err) {

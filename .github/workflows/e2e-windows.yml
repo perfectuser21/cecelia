@@ -1,0 +1,57 @@
+name: Harness E2E (Windows)
+
+# Generic harness E2E entry point for windows_cloud target_environment.
+# Triggered by evaluator SKILL when target_environment=windows_cloud on Cecelia sprints.
+# Runs e2e-verify.ps1 from the sprint directory on a fresh Windows runner.
+
+on:
+  workflow_dispatch:
+    inputs:
+      task_id:
+        description: 'Brain harness task ID (evaluate task UUID)'
+        required: true
+        type: string
+      sprint_dir:
+        description: 'Sprint directory path (e.g. sprints/run-20260526-1400)'
+        required: true
+        type: string
+      pr_branch:
+        description: 'PR branch to checkout before running E2E (empty = main)'
+        required: false
+        default: ''
+        type: string
+
+jobs:
+  e2e:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.pr_branch || 'main' }}
+          fetch-depth: 1
+
+      - name: Run E2E verification script
+        shell: pwsh
+        env:
+          TASK_ID: ${{ inputs.task_id }}
+          SPRINT_DIR: ${{ inputs.sprint_dir }}
+        run: |
+          $scriptPath = "${{ inputs.sprint_dir }}/e2e-verify.ps1"
+          if (-not (Test-Path $scriptPath)) {
+            Write-Error "E2E script not found: $scriptPath"
+            exit 1
+          }
+          Write-Host "Running $scriptPath for task=${{ inputs.task_id }}"
+          & $scriptPath
+          exit $LASTEXITCODE
+
+      - name: Upload screenshots artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: screenshots
+          path: screenshots/
+          if-no-files-found: ignore
+          retention-days: 7
