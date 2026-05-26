@@ -111,7 +111,7 @@ fi
 
 ### Step 0.5: ★ MANDATORY PRE-FLIGHT — rebase 到最新 main
 
-**为什么必须**：Brain 在 Phase B 并行派发 4 个 ws。ws1 先合并到 main 后，ws2/ws3/ws4 的 worktree 仍基于**老 main 快照**（clone 时的 main），如果不 rebase，兄弟 ws 动过的共享文件（常见 `packages/brain/src/routes/*.js`）会在 PR 阶段跟 main 产生 **add/add 冲突**，CI 直接挂，需要人肉救场。
+**为什么必须**：Brain 在 Phase B 串行派发（每个 ws merge gate 通过后 Brain 才启动下一个）。ws1 先合并到 main 后，ws2/ws3/ws4 的 worktree 仍基于**老 main 快照**（clone 时的 main），如果不 rebase，兄弟 ws 动过的共享文件（常见 `packages/brain/src/routes/*.js`）会在 PR 阶段跟 main 产生 **add/add 冲突**，CI 直接挂，需要人肉救场。
 
 ```bash
 # 必须在任何 checkout -b / 写代码之前跑
@@ -163,7 +163,7 @@ git show "origin/${CONTRACT_BRANCH}:${SPRINT_DIR}/contract-dod-ws${WS_IDX}.md"
 git ls-tree -r "origin/${CONTRACT_BRANCH}" -- "${SPRINT_DIR}/tests/ws${WS_IDX}/"
 ```
 
-**只读 sprint-contract.md，不读 contract-draft.md。**
+**只读 sprint-contract.md。**
 
 
 
@@ -183,8 +183,6 @@ WS=${WORKSTREAM:-ws1}
 SCOPE=$(jq -r ".tasks[] | select(.task_id==\"$WS\") | .files[]" "${SPRINT_DIR}/task-plan.json")
 echo "本 task 可改文件: $SCOPE"
 ```
-
-若 task-plan.json 不存在（老 contract）→ 退化到 contract-draft.md 的 ws 段推断。
 
 **v6.3 字段名对齐**：proposer SKILL v7.6+ 实际产出 schema 是 `tasks[]`（含 `task_id`/`files`/`depends_on`/`scope`/`dod`），不是 `workstreams[]`。本表已对齐。
 

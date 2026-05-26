@@ -77,6 +77,24 @@ cat ~/.claude-account3/skills/dev/steps/00-worktree-auto.md 2>/dev/null || cat ~
 
 ---
 
+## Brain 任务登记（Route A / Route B）
+
+**Route B（不带 `--task-id`）**：Stage 1 Spec 开始前向 Brain 登记本次任务：
+
+```bash
+curl -s -X POST localhost:5221/api/brain/tasks \
+  -H "Content-Type: application/json" \
+  -d "{\"task_type\":\"dev\",\"title\":\"<本次改动标题>\",\"description\":\"<PRD摘要>\"}" \
+  | node -e "process.stdin.resume();let d='';process.stdin.on('data',c=>d+=c);process.stdin.on('end',()=>{try{const r=JSON.parse(d);console.log('Brain task:',r.id);}catch{console.warn('⚠️ Brain 离线，不阻断');}})" \
+  2>/dev/null || echo "⚠️ Brain 离线，不阻断 /dev 流程"
+```
+
+Brain 离线时输出 warn 日志继续，不阻断流程。登记成功后记录 `task_id` 供后续回写任务状态用。
+
+**Route A（有 `--task-id`）**：跳过登记，直接从 Brain 读取已有 Task PRD（见上方 `--task-id 参数` 章节），`--task-id` 路径保持不变。
+
+---
+
 ## ⚡ 核心目标（CRITICAL）
 
 **从 /dev 启动的那一刻起，唯一的目标就是：成功合并 PR 到目标分支（main）。**
