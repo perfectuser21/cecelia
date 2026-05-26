@@ -1,7 +1,3 @@
-contract_branch: cp-05270002-ws-27612727-ws2
-workstream_index: 2
-sprint_dir: sprints/dev-visibility-smoke
-
 ---
 skeleton: false
 journey_type: dev_pipeline
