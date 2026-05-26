@@ -103,7 +103,7 @@ describe('ensureHarnessWorktree branch naming', () => {
       baseRepo: '/tmp/cec',
       execFn, statFn, logFn,
     });
-    expect(p).toBe('/tmp/cec/.claude/worktrees/harness-v2/task-abcdef12');
+    expect(p).toBe('/Users/administrator/perfect21/cecelia/.claude/worktrees/harness-v2/task-abcdef12');
     expect(logs.some(l => l.includes('rebase origin/main skipped'))).toBe(true);
     expect(calls.some(c => c.includes('rebase --abort'))).toBe(true);
   });

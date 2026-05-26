@@ -22,6 +22,7 @@ export async function resolveAccount(opts, ctx = {}) {
     const authFailed = explicit ? isAuthFailed(explicit) : false;
     const needsFallback = !explicit || capped || authFailed;
     if (!needsFallback) return;
+    // OAuth token 自动刷新，无需 session ≥ 4h 的限制
     const selection = await selectBestAccount({ cascade: opts.cascade });
     if (!selection || !selection.accountId) return;
     const taskId = ctx.taskId || opts.task?.id || 'unknown';

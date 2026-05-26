@@ -16,6 +16,7 @@ import langfuseRoutes from './src/routes/langfuse.js';
 import memoryRoutes from './src/routes/memory.js';
 import settingsRoutes from './src/routes/settings.js';
 import janitorRoutes from './src/routes/janitor.js';
+import { runJob } from './src/janitor.js';
 import profileFactsRoutes from './src/routes/profile-facts.js';
 import clusterRoutes from './src/routes/cluster.js';
 import vpsMonitorRoutes from './src/routes/vps-monitor.js';
@@ -71,6 +72,8 @@ import initiativesRoutes from './src/routes/initiatives.js';
 import backupRoutes from './src/routes/backup.js';
 import llmServiceRoutes from './src/routes/llm-service.js';
 import featuresRoutes from './src/routes/features.js';
+import clipsRoutes from './src/routes/clips.js';
+import journeysRouter from './src/routes/journeys.js';
 import { internalAuth } from './src/middleware/internal-auth.js';
 import createAutonomousRouter from './src/routes/autonomous.js';
 import { initTickLoop } from './src/tick.js';
@@ -297,6 +300,7 @@ app.use('/api/brain/registry', registryRoutes);
 // 但保险起见仍按照先 specific 后 generic 的顺序排列。
 app.use('/api/brain', harnessCallbackRouter);
 app.use('/api/brain', walkingSkeletonRouter);
+app.use('/api/brain', journeysRouter);
 app.use('/api/brain/harness', harnessRoutes);
 app.use('/api/brain/harness-interrupts', harnessInterruptsRouter);
 app.use('/api/brain/initiatives', initiativesRoutes);
@@ -306,6 +310,7 @@ app.use('/api/brain/backup', backupRoutes);
 // 鉴权仅在此路径生效：env CECELIA_INTERNAL_TOKEN 未设置时 dev 放行
 // 独立 body parser limit 4MB：vision 端点要传 image_base64，单张图 500KB-2MB 是常态，
 // 全局 256kb 限制会让 vision 请求直接 413 request entity too large。
+app.use('/api/brain/clips', clipsRoutes);
 app.use('/api/brain/llm-service', internalAuth, express.json({ limit: '4mb' }), llmServiceRoutes);
 
 app.get('/api/brain/autonomous/sessions', createAutonomousRouter(join(dirname(fileURLToPath(import.meta.url)), '.')));
@@ -716,6 +721,17 @@ async function onBrainListening() {
     console.warn('[Server] Conversation Consolidator init failed (non-fatal):', e.message);
   }
 
+  // Initialize Notion Push Sync (每 5 分钟扫描 notion_synced_at=NULL，推送到 Notion)
+  try {
+    const { runNotionPushSync } = await import('./src/notion-push-sync.js');
+    setInterval(async () => {
+      try { await runNotionPushSync(pool); } catch (e) { console.warn('[Server] Notion push sync failed:', e.message); }
+    }, 5 * 60 * 1000);
+    console.log('[Server] Notion Push Sync scheduled (5min interval)');
+  } catch (e) {
+    console.warn('[Server] Notion Push Sync init failed (non-fatal):', e.message);
+  }
+
   // Initialize Daily Memory Consolidation (每 30 分钟轮询，内部 elapsed-time 闸门按 CONSOLIDATION_INTERVAL_HOURS 节流)
   // Wave 2 重构后 tick-runner.js 已废弃，原 step 10.x 调用断点；此处恢复独立调度，修 PROBE_FAIL_CONSOLIDATION 真因
   // 初次 setTimeout 用 5s（小于 capability-probe 的 30s 首发延迟），避免 cold-start 上 probe 先于 consolidation 跑
@@ -758,6 +774,20 @@ async function onBrainListening() {
 
   // Auto-start cecelia-bridge if not already running
   await startCeceliaBridge();
+
+  // Janitor 自动调度：每 6h 清理 docker 容器/镜像，启动时立即跑一次清遗留容器
+  try {
+    const JANITOR_DOCKER_PRUNE_INTERVAL_MS = 6 * 60 * 60 * 1000;
+    const runDockerPrune = () =>
+      runJob(pool, 'docker-prune').catch(e =>
+        console.warn('[janitor-auto] docker-prune failed:', e.message)
+      );
+    runDockerPrune();
+    setInterval(runDockerPrune, JANITOR_DOCKER_PRUNE_INTERVAL_MS);
+    console.log('[Server] Janitor docker-prune scheduled (startup + 6h interval)');
+  } catch (e) {
+    console.warn('[Server] Janitor auto-schedule init failed (non-fatal):', e.message);
+  }
 
   // Sync Learning rules into learnings table (non-blocking, best-effort)
   // Ensures learning-retriever.js has data to inject into /dev task prompts

@@ -1,44 +1,31 @@
 {
   "initiative_id": "pending",
-  "journey_type": "user_facing",
-  "journey_type_reason": "入口是 dashboard 详情页（apps/dashboard/），用户直接感知实时节点推进；frontend + SSE 均面向真实用户操作",
+  "journey_type": "autonomous",
+  "journey_type_reason": "仅涉及 playground/server.js 路由 + 测试，无 UI / 无外部 agent 协议；target_environment: playground，evaluator 用 localhost:3XXX 验证",
   "tasks": [
     {
       "task_id": "ws1",
-      "title": "packages/brain/src/routes/harness.js 新增 GET /stream SSE 端点",
-      "scope": "在 harness.js 新增 router.get('/stream') 端点：(1) 验证 planner_task_id query 参数，缺少返 400 {error:string}，不存在返 404 {error:'pipeline not found'}；(2) 设置 text/event-stream 响应头；(3) 每 2s 轮询 task_events WHERE task_id=$planner_task_id AND event_type='graph_node_update' AND created_at > $lastSeen，推送 event: node_update data: {node:payload.nodeName, label:<mapped>, attempt:payload.attemptN, ts:created_at.toISOString()}；(4) 检测 task.status=completed/failed 时推 event: done data:{status,verdict}，关闭连接；(5) 每 30s 发 ': keepalive' comment 维持连接",
+      "title": "playground/server.js 新增 GET /subtract 路由 + playground/tests/server.test.js 新增 describe 块",
+      "scope": "在 playground/server.js 注册 GET /subtract（复用 STRICT_NUMBER regex ^-?\\d+(\\.\\d+)?$，校验 a/b 存在且合法，计算 Number(a)-Number(b)，返回 {result: <number>, operation: \"subtract\"}；禁用响应字段 difference/diff/value/answer/data；禁用 operation 变体 difference/diff/sub/minus）；在 playground/tests/server.test.js 新增 describe('GET /subtract', ...) 块（happy 正数/负数/零结果、schema 完整性 oracle、禁用字段反向断言、error path 缺参+非法格式）",
       "dod": [
-        "[BEHAVIOR] GET /stream?planner_task_id=<valid> 返回 HTTP 200 Content-Type: text/event-stream",
-        "[BEHAVIOR] node_update event data JSON keys == [attempt,label,node,ts]，无禁用字段 name/nodeName/timestamp/type",
-        "[BEHAVIOR] 缺少 planner_task_id → 400 {error:string}，无 message/msg",
-        "[BEHAVIOR] 未知 UUID → 404 {error:'pipeline not found'}",
-        "[ARTIFACT] harness.js 含 router.get('/stream') 路由"
+        "[ARTIFACT] playground/server.js 内含 app.get('/subtract' 路由注册",
+        "[ARTIFACT] playground/server.js /subtract 路由响应含字面 operation: \"subtract\"（禁用 difference/diff/sub/minus）",
+        "[ARTIFACT] playground/server.js /subtract 路由响应含字面 result 字段（禁用 difference/diff/value/answer/data）",
+        "[ARTIFACT] playground/tests/server.test.js 内含 describe('GET /subtract' 块",
+        "[BEHAVIOR] GET /subtract?a=10&b=3 → HTTP 200 + {result:7, operation:\"subtract\"}（schema 字段值）",
+        "[BEHAVIOR] GET /subtract?a=10&b=3 → keys | sort == [\"operation\",\"result\"]（schema 完整性）",
+        "[BEHAVIOR] GET /subtract?a=10&b=3 → 禁用字段 difference/diff/value/answer/data 均不存在（反向验证）",
+        "[BEHAVIOR] 缺参 a → HTTP 400 + error 字段类型 string（error path）",
+        "[BEHAVIOR] GET /subtract?a=1e5&b=3 → HTTP 400（非法格式 error path）",
+        "[BEHAVIOR] GET /subtract?a=3&b=10 → HTTP 200 + result=-7（负数结果）"
       ],
       "files": [
-        "packages/brain/src/routes/harness.js"
+        "playground/server.js",
+        "playground/tests/server.test.js"
       ],
       "depends_on": [],
       "complexity": "M",
-      "estimated_minutes": 45
-    },
-    {
-      "task_id": "ws2",
-      "title": "HarnessPipelineDetailPage.tsx 新增 EventSource hook + SSE 实时日志区",
-      "scope": "在 HarnessPipelineDetailPage.tsx 新增：(1) useEffect 中实例化 EventSource 连接到 /api/brain/harness/stream?planner_task_id={id}，query 参数名必须是字面量 planner_task_id；(2) 监听 node_update 事件，追加日志行（节点 label + ts）到状态数组；(3) 监听 done 事件，显示'Pipeline 已完成 ✅'或'Pipeline 失败 ❌'；(4) cleanup: useEffect return () => es.close()；(5) 日志容器加 data-testid='sse-log'",
-      "dod": [
-        "[BEHAVIOR] EventSource URL 含 planner_task_id= query 参数（Playwright route 拦截验证）",
-        "[BEHAVIOR] [data-testid='sse-log'] 在详情页 toBeVisible",
-        "[BEHAVIOR] node_update 事件后日志区 toContainText('Proposer')",
-        "[BEHAVIOR] done 事件后页面含 'Pipeline 已完成' toBeVisible",
-        "[BEHAVIOR] done.verdict='PASS' 时页面含 'PASS' 文本 toBeVisible（Playwright expect 断言）",
-        "[ARTIFACT] HarnessPipelineDetailPage.tsx 含 data-testid='sse-log'"
-      ],
-      "files": [
-        "apps/dashboard/src/pages/harness-pipeline/HarnessPipelineDetailPage.tsx"
-      ],
-      "depends_on": ["ws1"],
-      "complexity": "M",
-      "estimated_minutes": 40
+      "estimated_minutes": 30
     }
   ]
 }

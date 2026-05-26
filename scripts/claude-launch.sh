@@ -8,7 +8,7 @@
 #   dry-run:    bash scripts/claude-launch.sh --dry-run  → echo 最终命令行后 exit 0
 set -euo pipefail
 
-SID="${CLAUDE_SESSION_ID:-$(uuidgen | tr '[:upper:]' '[:lower:]')}"
+SID="${CLAUDE_SESSION_ID:-$(uuidgen 2>/dev/null | tr '[:upper:]' '[:lower:]' || cat /proc/sys/kernel/random/uuid 2>/dev/null || python3 -c 'import uuid; print(uuid.uuid4())' 2>/dev/null)}"
 export CLAUDE_SESSION_ID="$SID"
 
 # --dry-run 选项：解析参数，提取 --dry-run 标志

@@ -117,3 +117,51 @@ describe('readVerdictFile (Protocol v2)', () => {
     expect(await readVerdictFile(null)).toBeNull();
   });
 });
+
+describe('EvaluatorOutputSchema — null 字段接受', () => {
+  it('PASS verdict with null optional fields should parse successfully', async () => {
+    const { EvaluatorOutputSchema } = await import('../harness-shared.js');
+    const result = EvaluatorOutputSchema.safeParse({
+      verdict: 'PASS',
+      task_id: 'test-task-id',
+      failed_step: null,
+      log_excerpt: null,
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('PASS verdict with all-null optional fields should parse successfully', async () => {
+    const { EvaluatorOutputSchema } = await import('../harness-shared.js');
+    const result = EvaluatorOutputSchema.safeParse({
+      verdict: 'PASS',
+      task_id: null,
+      feedback: null,
+      failed_step: null,
+      log_excerpt: null,
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('FAIL verdict without feedback fields should fail validation', async () => {
+    const { EvaluatorOutputSchema } = await import('../harness-shared.js');
+    const result = EvaluatorOutputSchema.safeParse({
+      verdict: 'FAIL',
+      task_id: 'test-task-id',
+      failed_step: null,
+      log_excerpt: null,
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it('FAIL verdict with feedback should parse successfully', async () => {
+    const { EvaluatorOutputSchema } = await import('../harness-shared.js');
+    const result = EvaluatorOutputSchema.safeParse({
+      verdict: 'FAIL',
+      task_id: 'test-task-id',
+      feedback: 'some error message',
+      failed_step: null,
+      log_excerpt: null,
+    });
+    expect(result.success).toBe(true);
+  });
+});

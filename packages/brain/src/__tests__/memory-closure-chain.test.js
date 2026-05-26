@@ -18,6 +18,7 @@ const mockPool = { query: mockQuery };
 vi.mock('../db.js', () => ({ default: mockPool }));
 vi.mock('../memory-utils.js', () => ({ generateL0Summary: (s) => s.slice(0, 50) }));
 vi.mock('../embedding-service.js', () => ({ generateLearningEmbeddingAsync: vi.fn() }));
+vi.mock('../actions.js', () => ({ createTask: vi.fn().mockResolvedValue({ success: true, task: { id: 'mock-insight-task' }, deduplicated: false }) }));
 
 // ─── Test: resolveRelatedFailureMemories ────────────────────────────────────
 
@@ -100,6 +101,8 @@ describe('recordLearning closure chain (MC-3)', () => {
     mockQuery
       .mockResolvedValueOnce({ rows: [] })           // 去重检查：无重复
       .mockResolvedValueOnce({ rows: [{ id: learningId, version: 1 }] }) // INSERT learnings
+      .mockResolvedValueOnce({ rows: [] })           // 强制绑定：task dedup（无已存在 task）
+      .mockResolvedValueOnce({ rowCount: 1 })        // 强制绑定：UPDATE learnings SET applied=true
       .mockResolvedValueOnce({ rows: [{ id: memId }] }) // INSERT memory_stream
       .mockResolvedValueOnce({ rowCount: 1 });        // UPDATE learnings SET source_memory_id
 
@@ -140,6 +143,8 @@ describe('recordLearning closure chain (MC-3)', () => {
     mockQuery
       .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({ rows: [{ id: learningId, version: 1 }] }) // INSERT learnings OK
+      .mockResolvedValueOnce({ rows: [] })                               // 强制绑定：task dedup
+      .mockResolvedValueOnce({ rowCount: 1 })                           // 强制绑定：UPDATE applied
       .mockRejectedValueOnce(new Error('DB connection lost')); // INSERT memory_stream FAILS
 
     const { recordLearning } = await import('../learning.js');

@@ -527,7 +527,7 @@ _resolve_claude_session_id() {
             echo "$args" | grep -oE '\-\-session-id[ =][a-f0-9-]+' | head -1 | awk '{print $NF}'
             return 0
         fi
-        pid=$(ps -o ppid= "$pid" 2>/dev/null | tr -d ' ')
+        pid=$(ps -o ppid= "$pid" 2>/dev/null | tr -d ' ' || echo "")
         depth=$((depth + 1))
     done
     echo ""

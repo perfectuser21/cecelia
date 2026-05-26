@@ -83,4 +83,44 @@ describe('callback-utils', () => {
       expect(blockedDetail).toBeTruthy();
     });
   });
+
+  /**
+   * isSuccessfulExecution 模式验证
+   *
+   * task_run_metrics.exit_status 和 watchdog.cleanupMetrics 的 exitStatus
+   * 必须基于规范化后的 newStatus（而非原始 status 字符串），确保
+   * docker-executor 以 'success' 回调时也能正确写入 exit_status='success'。
+   *
+   * 修复前：两处使用 status === 'AI Done'，docker 'success' 会错误写入 'failed'
+   * 修复后：(newStatus === 'completed' || newStatus === 'completed_no_pr') ? 'success' : 'failed'
+   */
+  describe('isSuccessfulExecution — exitStatus 计算依据', () => {
+    function isSuccessfulExecution(newStatus) {
+      return newStatus === 'completed' || newStatus === 'completed_no_pr';
+    }
+
+    it("docker 'success' → normalizeCallbackStatus → 'completed' → isSuccessful=true", () => {
+      const newStatus = normalizeCallbackStatus('success');
+      expect(isSuccessfulExecution(newStatus)).toBe(true);
+    });
+
+    it("bridge 'AI Done' → normalizeCallbackStatus → 'completed' → isSuccessful=true", () => {
+      const newStatus = normalizeCallbackStatus('AI Done');
+      expect(isSuccessfulExecution(newStatus)).toBe(true);
+    });
+
+    it("'completed_no_pr' → isSuccessful=true（dev 任务无 PR 也算成功）", () => {
+      expect(isSuccessfulExecution('completed_no_pr')).toBe(true);
+    });
+
+    it("'failed' → isSuccessful=false", () => {
+      const newStatus = normalizeCallbackStatus('failed');
+      expect(isSuccessfulExecution(newStatus)).toBe(false);
+    });
+
+    it("'timeout' → normalizeCallbackStatus → 'failed' → isSuccessful=false", () => {
+      const newStatus = normalizeCallbackStatus('timeout');
+      expect(isSuccessfulExecution(newStatus)).toBe(false);
+    });
+  });
 });

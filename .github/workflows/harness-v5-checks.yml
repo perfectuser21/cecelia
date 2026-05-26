@@ -76,6 +76,20 @@ jobs:
   tests-actually-pass:
     name: Sprint Tests 实跑 (v5.0)
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg15
+        env:
+          POSTGRES_USER: cecelia
+          POSTGRES_PASSWORD: cecelia
+          POSTGRES_DB: cecelia
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
     steps:
       - uses: actions/checkout@v4
         with:
@@ -104,8 +118,41 @@ jobs:
       - name: Install dependencies (root workspaces)
         if: steps.check-tests.outputs.has_tests == 'true'
         run: npm ci
+      - name: Run Brain migrations
+        if: steps.check-tests.outputs.has_tests == 'true'
+        env:
+          DB_HOST: localhost
+          DB_PORT: '5432'
+          DB_NAME: cecelia
+          DB_USER: cecelia
+          DB_PASSWORD: cecelia
+        run: cd packages/brain && node src/migrate.js
+      - name: Start Brain server
+        if: steps.check-tests.outputs.has_tests == 'true'
+        env:
+          DB_HOST: localhost
+          DB_PORT: '5432'
+          DB_NAME: cecelia
+          DB_USER: cecelia
+          DB_PASSWORD: cecelia
+          BRAIN_PORT: 5221
+          NODE_ENV: development
+          CECELIA_TICK_ENABLED: 'false'
+        run: |
+          cd packages/brain && node server.js &
+          for i in $(seq 1 60); do
+            if curl -sf http://localhost:5221/api/brain/tick/status >/dev/null 2>&1; then
+              echo "✅ Brain healthy in ${i}s"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "::error::Brain not healthy after 60s"
+          exit 1
       - name: Run sprint tests
         if: steps.check-tests.outputs.has_tests == 'true'
+        env:
+          DB: postgresql://cecelia:cecelia@localhost:5432/cecelia
         run: |
           set -euo pipefail
           echo "📋 跑这些测试文件："

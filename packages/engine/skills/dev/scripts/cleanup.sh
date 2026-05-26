@@ -637,6 +637,24 @@ if [[ -f "$DEV_MODE_FILE" ]] && [[ "${VALIDATION_PASSED:-true}" == "true" ]]; th
                 echo "cleanup_done: true" >> "$target_file"
             fi
         fi
+        # v24 Bug 2 fix：done 时 SIGTERM guardian + rm 灯文件
+        # 最佳努力（|| true），stop-dev.sh classify=done 是第二道保险
+        local _branch_kill="${BRANCH:-$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo '')}"
+        if [[ -n "$_branch_kill" ]]; then
+            local _main_repo_kill
+            _main_repo_kill=$(git rev-parse --show-toplevel 2>/dev/null || echo "")
+            if [[ -n "$_main_repo_kill" ]]; then
+                local _lights_kill="$_main_repo_kill/.cecelia/lights"
+                for _lf_kill in "$_lights_kill/"*"-${_branch_kill}.live"; do
+                    [[ -f "$_lf_kill" ]] || continue
+                    local _gpid_kill
+                    _gpid_kill=$(jq -r '.guardian_pid // ""' "$_lf_kill" 2>/dev/null || echo "")
+                    [[ -n "$_gpid_kill" ]] && kill "$_gpid_kill" 2>/dev/null || true
+                    rm -f "$_lf_kill"
+                    echo "[cleanup] v24: 已 kill guardian PID=${_gpid_kill}，灯已灭：$(basename "$_lf_kill")" >&2
+                done
+            fi
+        fi
     }
 
     if [[ -n "$LOCK_UTILS" ]] && type atomic_append_dev_mode &>/dev/null; then

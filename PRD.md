@@ -1,6 +1,17 @@
-## 成功标准
+# /clips 静态路由修复
 
-- [x] [BEHAVIOR] SKILL.md 含"位置词死规则"关键字
-  Test: manual:node -e "const c=require('fs').readFileSync('packages/workflows/skills/harness-planner/SKILL.md','utf8');if(!c.includes('位置词死规则'))process.exit(1)"
-- [x] [ARTIFACT] SKILL.md 版本升至 8.4.0
-  Test: manual:node -e "const c=require('fs').readFileSync('packages/workflows/skills/harness-planner/SKILL.md','utf8');if(!c.includes('8.4.0'))process.exit(1)"
+## 背景
+Dashboard `/clips` 路由被 catch-all 重定向到 `/`，原因是 DynamicRouter 依赖 coreConfig 加载成功。
+
+## 目标
+将 ContentClipsPage/ContentClipDetailPage 注册为静态路由，与 TaskPrdPage/HarnessDetailPage 模式一致。
+
+## DoD
+- [x] `[ARTIFACT]` `apps/dashboard/src/App.tsx` 包含 ContentClipsPage lazy import
+  - Test: `manual:node -e "const c=require('fs').readFileSync('apps/dashboard/src/App.tsx','utf8');if(!c.includes('ContentClipsPage'))process.exit(1)"`
+- [x] `[BEHAVIOR]` `/clips` 路由注册为静态路由（path="/clips" 在 App.tsx 存在）
+  - Test: `manual:node -e "const c=require('fs').readFileSync('apps/dashboard/src/App.tsx','utf8');if(!c.includes('\"/clips\"'))process.exit(1)"`
+
+## 成功标准
+- `http://perfect21:5211/clips` 打开显示 Content Clips 列表页（不重定向到 /）
+- `http://perfect21:5211/clips/:id` 打开显示 Clip 详情页

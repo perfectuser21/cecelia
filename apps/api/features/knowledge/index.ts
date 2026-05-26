@@ -8,7 +8,7 @@ const manifest: FeatureManifest = {
   instances: ['core'],
 
   navGroups: [
-    { id: 'knowledge-docs', label: '知识库', icon: 'BookOpen', order: 6 },
+    { id: 'knowledge-docs', label: 'Knowledge', icon: 'BookOpen', order: 6 },
   ],
 
   routes: [

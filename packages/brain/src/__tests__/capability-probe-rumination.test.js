@@ -159,3 +159,25 @@ describe('probeRumination — loop_dead 自愈机制（PROBE_FAIL_RUMINATION cp-
     expect(ruminationFn).toContain('!minimalMode');
   });
 });
+
+describe('probeRumination — Case A 自愈立即 direct_run（cp-05200001）', () => {
+  it('Case A 和 Case B 都包含 import rumination.js（两处 direct_run 确保两种 loop_dead 场景都立即反刍）', () => {
+    // 修复前：只有 Case B 有 import('./rumination.js')，count=1
+    // 修复后：Case A（consciousness 重新启用后）也立即运行，count≥2
+    const importCount = (ruminationFn.match(/import\('\.\/rumination\.js'\)/g) || []).length;
+    expect(importCount).toBeGreaterThanOrEqual(2);
+  });
+
+  it('consciousness_reenabled 标记与 direct_run 标记都出现在函数体中（Case A 完整自愈链）', () => {
+    expect(ruminationFn).toContain('consciousness_reenabled');
+    expect(ruminationFn).toContain('direct_run');
+    // consciousness_reenabled 在 if(!consEnabled) 分支，direct_run 也应在其后同一分支出现
+    const reenabledIdx = ruminationFn.indexOf('consciousness_reenabled');
+    const loopRestartedIdx = ruminationFn.indexOf('consciousness_loop_restarted');
+    const firstDirectRunIdx = ruminationFn.indexOf('direct_run');
+    // loop_restarted 在 Wave 2，direct_run 在 Wave 3，Wave 2 先于 Wave 3
+    expect(loopRestartedIdx).toBeLessThan(firstDirectRunIdx);
+    // consciousness_reenabled（Case A Wave 1）先于第一个 direct_run（Case A Wave 3）
+    expect(reenabledIdx).toBeLessThan(firstDirectRunIdx);
+  });
+});

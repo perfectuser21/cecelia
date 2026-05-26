@@ -9,6 +9,10 @@ export default defineConfig({
       'tests/**/*.{test,spec}.?(c|m)[jt]s?(x)',
       '../../tests/packages/brain/**/*.{test,spec}.?(c|m)[jt]s?(x)',
       '../../tests/integration/**/*.{test,spec}.?(c|m)[jt]s?(x)',
+      // 根目录遗留测试（多 repo 合并产物，已清归脑测试）
+      '../../tests/*.{test,spec}.?(c|m)[jt]s?(x)',
+      '../../tests/brain/**/*.{test,spec}.?(c|m)[jt]s?(x)',
+      '../../tests/alertness/**/*.{test,spec}.?(c|m)[jt]s?(x)',
     ],
     // 以下测试需要真实 PostgreSQL 连接或有其他 CI 环境 pre-existing 失败
     // brain-unit 跑纯单元测试（有 vi.mock('db.js') 的），集成测试走 brain-integration
@@ -103,7 +107,6 @@ export default defineConfig({
       // Mock 不完整或代码逻辑变更导致失败（pre-existing issue）
       // content-pipeline-{executors,llm,error-message,etc}.test.js 全部已删除
       // （in-Brain content-pipeline 编排搬到 ZJ pipeline-worker，PR zenithjoy#216）
-      'src/__tests__/executor-startup-sync.test.js',
       'src/__tests__/startup-sync.test.js',
       // content_type 注册表加载缺少 content_type 字段 — 预先存在（main 上已失败）
       'src/__tests__/content-type-registry.test.js',
@@ -116,6 +119,8 @@ export default defineConfig({
       'src/__tests__/harness-module-constants.test.js',
       // 需要真实 PostgreSQL 连接的集成测试
       'src/__tests__/integration/pipeline-rescue.integration.test.js',
+      // dev-registry: 直连 pool.query 验 7 张新表，需真实 DB — 走 brain-integration
+      'src/workflows/__tests__/dev-registry.test.js',
     ],
     coverage: {
       provider: 'v8',

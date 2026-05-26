@@ -212,6 +212,12 @@ describe('callback-processor — docker contract status mapping', () => {
     );
   }
 
+  function findDecisionLogCall() {
+    return mockClient.query.mock.calls.find(
+      c => typeof c[0] === 'string' && c[0].includes('INSERT INTO decision_log')
+    );
+  }
+
   it("status='success'（docker exit 0）→ newStatus=completed", async () => {
     const { processExecutionCallback } = await import('../callback-processor.js');
     await processExecutionCallback(
@@ -223,6 +229,28 @@ describe('callback-processor — docker contract status mapping', () => {
     expect(update[1][1], "newStatus must map success → completed").toBe('completed');
   });
 
+  it("status='success'（docker exit 0）→ decision_log.status='success'（不得为 failed）", async () => {
+    const { processExecutionCallback } = await import('../callback-processor.js');
+    await processExecutionCallback(
+      { task_id: 'docker-ok-2', run_id: 'r1b', status: 'success', result: { ok: true } },
+      mockPool
+    );
+    const decisionCall = findDecisionLogCall();
+    expect(decisionCall, 'decision_log INSERT 应被执行').toBeDefined();
+    expect(decisionCall[1][4], "docker 'success' 回调 decision_log.status 必须是 'success' 而非 'failed'").toBe('success');
+  });
+
+  it("status='AI Done'（bridge 协议）→ decision_log.status='success'", async () => {
+    const { processExecutionCallback } = await import('../callback-processor.js');
+    await processExecutionCallback(
+      { task_id: 'bridge-ok-2', run_id: 'r4b', status: 'AI Done', result: { verdict: 'DONE' } },
+      mockPool
+    );
+    const decisionCall = findDecisionLogCall();
+    expect(decisionCall, 'decision_log INSERT 应被执行').toBeDefined();
+    expect(decisionCall[1][4], "'AI Done' 回调 decision_log.status 必须是 'success'").toBe('success');
+  });
+
   it("status='failed'（docker exit !=0）→ newStatus=failed", async () => {
     const { processExecutionCallback } = await import('../callback-processor.js');
     await processExecutionCallback(
@@ -231,6 +259,17 @@ describe('callback-processor — docker contract status mapping', () => {
     );
     const update = findUpdateCall();
     expect(update[1][1]).toBe('failed');
+  });
+
+  it("status='failed'（docker exit !=0）→ decision_log.status='failed'", async () => {
+    const { processExecutionCallback } = await import('../callback-processor.js');
+    await processExecutionCallback(
+      { task_id: 'docker-fail-2', run_id: 'r2b', status: 'failed', result: { error: 'boom' }, exit_code: 137 },
+      mockPool
+    );
+    const decisionCall = findDecisionLogCall();
+    expect(decisionCall, 'decision_log INSERT 应被执行').toBeDefined();
+    expect(decisionCall[1][4]).toBe('failed');
   });
 
   it("status='timeout'（docker SIGKILL）→ newStatus=failed", async () => {

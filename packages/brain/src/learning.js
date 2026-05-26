@@ -15,6 +15,7 @@ import { generateEmbedding } from './openai-client.js';
 import { generateLearningEmbeddingAsync } from './embedding-service.js';
 import { generateL0Summary } from './memory-utils.js';
 import { callLLM } from './llm-caller.js';
+import { createTask } from './actions.js';
 
 // Strategy adjustment whitelist (safety measure)
 const ADJUSTABLE_PARAMS = {
@@ -101,6 +102,34 @@ export async function recordLearning(analysis) {
 
     const learning = result.rows[0];
     console.log(`[learning] Recorded learning: ${learning.id}`);
+
+    // 强制绑定：RCA learning 必须触发 dev task（Insight-to-Action 闭环）
+    try {
+      const taskDedup = await pool.query(
+        `SELECT id FROM tasks WHERE payload->>'insight_learning_id' = $1 AND status != 'cancelled' LIMIT 1`,
+        [learning.id]
+      );
+      if (taskDedup.rows.length === 0) {
+        await createTask({
+          title: `[Insight修复] ${title.slice(0, 120)}`,
+          description: `由 RCA Learning 自动生成的修复任务。\n\nlearning_id: ${learning.id}\n\n${content}`,
+          priority: 'P2',
+          task_type: 'dev',
+          trigger_source: 'cortex',
+          payload: {
+            insight_learning_id: learning.id,
+            event_type: triggerEvent,
+          },
+        });
+        await pool.query(
+          `UPDATE learnings SET applied = true, applied_at = NOW() WHERE id = $1`,
+          [learning.id]
+        );
+        console.log(`[learning] Auto-created dev task for RCA learning ${learning.id}`);
+      }
+    } catch (taskErr) {
+      console.warn(`[learning] Failed to create task for learning ${learning.id} (non-fatal):`, taskErr.message);
+    }
 
     // 写 memory_stream 记录，建立闭环链条（failure_pattern → memory_stream active）
     try {
