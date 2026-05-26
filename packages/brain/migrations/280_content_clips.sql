@@ -1,7 +1,7 @@
 -- Migration 280: Content Clips 采集表
 -- 抖音/小红书内容采集记录
 
-CREATE TABLE clips (
+CREATE TABLE IF NOT EXISTS clips (
   id            UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
   url           TEXT        NOT NULL,
   platform      TEXT        NOT NULL CHECK (platform IN ('douyin', 'xiaohongshu')),
@@ -27,6 +27,6 @@ CREATE TABLE clips (
   processed_at  TIMESTAMPTZ
 );
 
-CREATE UNIQUE INDEX idx_clips_url             ON clips (url);
-CREATE INDEX idx_clips_platform_status        ON clips (platform, status, created_at DESC);
-CREATE INDEX idx_clips_created_at             ON clips (created_at DESC);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_clips_url             ON clips (url);
+CREATE INDEX IF NOT EXISTS idx_clips_platform_status        ON clips (platform, status, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_clips_created_at             ON clips (created_at DESC);

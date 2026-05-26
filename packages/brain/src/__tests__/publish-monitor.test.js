@@ -6,6 +6,10 @@ import {
   monitorPublishQueue,
 } from '../publish-monitor.js';
 
+vi.mock('../alerting.js', () => ({
+  raise: vi.fn().mockResolvedValue(undefined),
+}));
+
 // ─── classifyPublishFailure ────────────────────────────────────────────────────
 
 describe('classifyPublishFailure', () => {
@@ -178,5 +182,113 @@ describe('monitorPublishQueue - failure_type 路由', () => {
     const nextRunAt = new Date(payloadArg.next_run_at).getTime();
     expect(nextRunAt - Date.now()).toBeGreaterThan(28 * 1000);
     expect(nextRunAt - Date.now()).toBeLessThan(32 * 1000);
+  });
+});
+
+// ─── 微信 token 失效检测 ──────────────────────────────────────────────────────
+
+describe('monitorPublishQueue - 微信 token 失效检测', () => {
+  let mockPool;
+  let queryMock;
+  let raiseMock;
+
+  beforeEach(async () => {
+    queryMock = vi.fn();
+    mockPool = { query: queryMock };
+    queryMock.mockResolvedValue({ rows: [], rowCount: 0 });
+
+    const alerting = await import('../alerting.js');
+    raiseMock = alerting.raise;
+    raiseMock.mockClear();
+  });
+
+  it('wechat 任务 payload.error_code=40001 → persistFailureType=auth_fail，不重试', async () => {
+    // fetchRetryableTasks
+    queryMock.mockResolvedValueOnce({
+      rows: [{
+        id: 'wt-1', title: '微信发布', retry_count: 0,
+        payload: { platform: 'wechat', error_code: 40001 },
+        error_message: null,
+      }],
+    });
+
+    await monitorPublishQueue(mockPool);
+
+    // persistFailureType：SET payload，不含 status='queued'
+    const updateCalls = queryMock.mock.calls.filter(
+      ([sql]) => typeof sql === 'string' && sql.includes('SET payload') && !sql.includes("status = 'queued'") && !sql.includes("status = 'completed'")
+    );
+    expect(updateCalls.length).toBeGreaterThanOrEqual(1);
+    const payload = JSON.parse(updateCalls[0][1][1]);
+    expect(payload.failure_type).toBe('auth_fail');
+
+    const retryCalls = queryMock.mock.calls.filter(
+      ([sql]) => typeof sql === 'string' && sql.includes("status = 'queued'")
+    );
+    expect(retryCalls).toHaveLength(0);
+  });
+
+  it('wechat 连续 auth_fail ≥2 → raise P0 飞书告警', async () => {
+    // fetchRetryableTasks → 空（已处理过的失败任务不再重试）
+    queryMock.mockResolvedValueOnce({ rows: [] });
+    // fetchTodayStats
+    queryMock.mockResolvedValueOnce({ rows: [] });
+    // writeStats: working_memory upsert
+    queryMock.mockResolvedValueOnce({ rowCount: 1 });
+    // writeStats: publish_success_daily upsert（wechat 保障行）
+    queryMock.mockResolvedValueOnce({ rowCount: 1 });
+    // fetchWechatAuthFailsToday → 2 条失败
+    queryMock.mockResolvedValueOnce({
+      rows: [
+        { id: 'wt-1', title: '微信发布1', payload: { platform: 'wechat', account_name: '公众号A', failure_type: 'auth_fail' } },
+        { id: 'wt-2', title: '微信发布2', payload: { platform: 'wechat', account_name: '公众号A', error_code: 40001 } },
+      ],
+    });
+
+    await monitorPublishQueue(mockPool);
+
+    expect(raiseMock).toHaveBeenCalledWith(
+      'P0',
+      'wechat_access_token_expired',
+      expect.stringContaining('公众号A')
+    );
+    expect(raiseMock.mock.calls[0][2]).toMatch(/2 次/);
+  });
+
+  it('wechat auth_fail 仅 1 次 → 不触发飞书告警', async () => {
+    queryMock.mockResolvedValueOnce({ rows: [] }); // fetchRetryableTasks
+    queryMock.mockResolvedValueOnce({ rows: [] }); // fetchTodayStats
+    queryMock.mockResolvedValueOnce({ rowCount: 1 }); // working_memory upsert
+    queryMock.mockResolvedValueOnce({ rowCount: 1 }); // publish_success_daily wechat
+    // fetchWechatAuthFailsToday → 只有 1 条
+    queryMock.mockResolvedValueOnce({
+      rows: [
+        { id: 'wt-1', title: '微信发布1', payload: { platform: 'wechat', failure_type: 'auth_fail' } },
+      ],
+    });
+
+    await monitorPublishQueue(mockPool);
+
+    expect(raiseMock).not.toHaveBeenCalled();
+  });
+
+  it('wechat 保障行：无任务时也写入 publish_success_daily', async () => {
+    queryMock.mockResolvedValueOnce({ rows: [] }); // fetchRetryableTasks
+    queryMock.mockResolvedValueOnce({ rows: [] }); // fetchTodayStats（无任何任务）
+    queryMock.mockResolvedValueOnce({ rowCount: 1 }); // working_memory upsert
+    // publish_success_daily 应有 wechat 写入
+    queryMock.mockResolvedValueOnce({ rowCount: 1 });
+    queryMock.mockResolvedValueOnce({ rows: [] }); // fetchWechatAuthFailsToday
+
+    await monitorPublishQueue(mockPool);
+
+    const wechatStatCalls = queryMock.mock.calls.filter(
+      ([sql, params]) =>
+        typeof sql === 'string' &&
+        sql.includes('publish_success_daily') &&
+        Array.isArray(params) &&
+        params[0] === 'wechat'
+    );
+    expect(wechatStatCalls.length).toBeGreaterThanOrEqual(1);
   });
 });

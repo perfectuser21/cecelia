@@ -62,6 +62,11 @@ router.post('/:id/retry', async (req, res) => {
 /** POST /:id/callback — internal: content-service posts result here */
 router.post('/:id/callback', async (req, res) => {
   try {
+    const secret = process.env.CLIPS_WEBHOOK_SECRET;
+    if (secret && req.headers['x-webhook-secret'] !== secret) {
+      return res.status(401).json({ error: 'unauthorized' });
+    }
+
     const { success, title, transcript, images, author, author_id,
             like_count, comment_count, share_count, cover_url, video_url,
             raw_response, error } = req.body;

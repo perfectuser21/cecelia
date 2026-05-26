@@ -43,6 +43,7 @@ describe('runNotionPushSync', () => {
     mockQuery.mockResolvedValueOnce({ rows: [journey] }); // journeys NULL
     mockQuery.mockResolvedValueOnce({ rows: [] });         // features NULL
     mockQuery.mockResolvedValueOnce({ rows: [] });         // issues NULL
+    mockQuery.mockResolvedValue({ rows: [] });             // skill_registry / journey_steps / journey_step_links (new)
 
     mockNotionReq.mockResolvedValueOnce({ id: 'notion-page-id-1' });
     mockQuery.mockResolvedValueOnce({ rows: [] }); // UPDATE journeys
@@ -63,11 +64,9 @@ describe('runNotionPushSync', () => {
   it('Notion API 失败时跳过该行（notion_synced_at 保持 NULL）', async () => {
     const journey = { id: 'j-uuid', name: 'X', journey_type: 'dev_pipeline', description: null, maturity: 'not_started', status: 'active', e2e_test_path: null, area_notion_id: null };
     mockQuery.mockResolvedValueOnce({ rows: [journey] });
-    mockQuery.mockResolvedValueOnce({ rows: [] });
-    mockQuery.mockResolvedValueOnce({ rows: [] });
+    mockQuery.mockResolvedValue({ rows: [] }); // features / issues / skill_registry / journey_steps / journey_step_links + log INSERT
 
     mockNotionReq.mockRejectedValueOnce(new Error('Notion timeout'));
-    mockQuery.mockResolvedValueOnce({ rows: [] }); // notion_sync_log INSERT
 
     const { runNotionPushSync } = await import('../notion-push-sync.js');
     await expect(runNotionPushSync({ query: mockQuery })).resolves.not.toThrow();
@@ -76,5 +75,65 @@ describe('runNotionPushSync', () => {
       c => typeof c[0] === 'string' && c[0].includes('UPDATE journeys') && c[0].includes('notion_synced_at')
     );
     expect(updateCall).toBeUndefined();
+  });
+});
+
+describe('runNotionPushSync — new push functions', () => {
+  beforeEach(() => {
+    mockQuery.mockReset();
+    mockNotionReq.mockReset();
+    // default: no unsync'd rows
+    mockQuery.mockResolvedValue({ rows: [] });
+  });
+
+  it('calls pushSkillRegistry — queries skill_registry WHERE notion_synced_at IS NULL', async () => {
+    const { runNotionPushSync } = await import('../notion-push-sync.js');
+    await runNotionPushSync({ query: mockQuery });
+    const calls = mockQuery.mock.calls.map(c => c[0]);
+    const skillQuery = calls.find(q => q && q.includes('skill_registry') && q.includes('notion_synced_at IS NULL'));
+    expect(skillQuery).toBeTruthy();
+  });
+
+  it('calls pushJourneySteps — queries journey_steps WHERE notion_synced_at IS NULL', async () => {
+    const { runNotionPushSync } = await import('../notion-push-sync.js');
+    await runNotionPushSync({ query: mockQuery });
+    const calls = mockQuery.mock.calls.map(c => c[0]);
+    const stepsQuery = calls.find(q => q && q.includes('journey_steps') && q.includes('notion_synced_at IS NULL'));
+    expect(stepsQuery).toBeTruthy();
+  });
+
+  it('calls pushJourneyStepLinks — queries journey_step_links WHERE notion_synced_at IS NULL', async () => {
+    const { runNotionPushSync } = await import('../notion-push-sync.js');
+    await runNotionPushSync({ query: mockQuery });
+    const calls = mockQuery.mock.calls.map(c => c[0]);
+    const linksQuery = calls.find(q => q && q.includes('journey_step_links') && q.includes('notion_synced_at IS NULL'));
+    expect(linksQuery).toBeTruthy();
+  });
+
+  it('pushes skill to Notion skill_registry DB when notion_synced_at is null', async () => {
+    const mockSkill = {
+      id: 'skill-1', name: '/dev', description: 'dev skill',
+      status: 'active', location: null, notion_id: null,
+    };
+    mockNotionReq.mockResolvedValue({ id: 'notion-page-1' });
+    mockQuery
+      .mockResolvedValueOnce({ rows: [] })            // journeys select
+      .mockResolvedValueOnce({ rows: [] })            // features select
+      .mockResolvedValueOnce({ rows: [] })            // issues select
+      .mockResolvedValueOnce({ rows: [mockSkill] })   // skill_registry select
+      .mockResolvedValue({ rows: [] });               // journey_steps / journey_step_links + UPDATE
+
+    const { runNotionPushSync } = await import('../notion-push-sync.js');
+    await runNotionPushSync({ query: mockQuery });
+
+    expect(mockNotionReq).toHaveBeenCalledWith(
+      'fake-token', '/pages', 'POST',
+      expect.objectContaining({
+        parent: { database_id: '353c40c2-ba63-81bf-ae3e-f0e6fa3753d7' },
+        properties: expect.objectContaining({
+          Name: expect.any(Object),
+        }),
+      })
+    );
   });
 });

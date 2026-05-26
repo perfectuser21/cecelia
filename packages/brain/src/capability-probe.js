@@ -409,30 +409,21 @@ async function probeRumination() {
           loopDeadContext += ` self_heal_loop_fail=${loopErr.message.slice(0, 40)}`;
           console.warn('[Probe] rumination consciousness loop restart failed:', loopErr.message);
         }
-        // Wave 3 (Case A): consciousness 已重新启用 → 立即运行一次 runRumination 解除积压
-        // loop 每 20min 才触发，probe 监控周期远短于此；不立即消化则下次 probe 仍失败
-        try {
-          const { runRumination } = await import('./rumination.js');
-          const healResult = await runRumination(pool);
-          const healDigested = healResult?.digested ?? 0;
-          loopDeadContext += ` self_heal=direct_run digested=${healDigested}`;
-          console.log(`[Probe] rumination Case A self-heal: direct_run digested=${healDigested}`);
-        } catch (healErr) {
-          loopDeadContext += ` self_heal_fail=${healErr.message.slice(0, 60)}`;
-          console.warn('[Probe] rumination Case A self-heal direct_run failed:', healErr.message);
-        }
+        // Wave 3 (Case A): fire-and-forget runRumination — 不 await 防止 LLM 调用阻塞 30s probe 超时
+        loopDeadContext += ' self_heal=direct_run(bg)';
+        import('./rumination.js').then(({ runRumination }) => runRumination(pool)).then(r => {
+          console.log(`[Probe] rumination Case A self-heal: direct_run completed digested=${r?.digested ?? 0}`);
+        }).catch(e => {
+          console.warn('[Probe] rumination Case A self-heal direct_run failed:', e.message);
+        });
       } else {
-        // Case B: consciousness 已启用但 runRumination 未被调用 → 直接运行解堵 + 重启 loop
-        try {
-          const { runRumination } = await import('./rumination.js');
-          const healResult = await runRumination(pool);
-          const healDigested = healResult?.digested ?? 0;
-          loopDeadContext += ` self_heal=direct_run digested=${healDigested}`;
-          console.log(`[Probe] rumination loop_dead self-heal: direct_run digested=${healDigested}`);
-        } catch (healErr) {
-          loopDeadContext += ` self_heal_fail=${healErr.message.slice(0, 60)}`;
-          console.warn('[Probe] rumination self-heal direct_run failed:', healErr.message);
-        }
+        // Case B: fire-and-forget runRumination — 不 await 防止 LLM 调用阻塞 30s probe 超时
+        loopDeadContext += ' self_heal=direct_run(bg)';
+        import('./rumination.js').then(({ runRumination }) => runRumination(pool)).then(r => {
+          console.log(`[Probe] rumination loop_dead self-heal: direct_run completed digested=${r?.digested ?? 0}`);
+        }).catch(e => {
+          console.warn('[Probe] rumination self-heal direct_run failed:', e.message);
+        });
         // Wave 2: consciousness loop 可能也未启动 → 尝试重启
         try {
           const { startConsciousnessLoop } = await import('./consciousness-loop.js');
