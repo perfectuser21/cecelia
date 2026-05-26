@@ -1,33 +1,31 @@
 {
   "initiative_id": "pending",
   "journey_type": "autonomous",
-  "journey_type_reason": "仅涉及 packages/brain/ 内部路由，无 UI / 无外部 agent 协议，evaluator 用 curl localhost:5221 验证",
+  "journey_type_reason": "仅涉及 playground/server.js 路由 + 测试，无 UI / 无外部 agent 协议；target_environment: playground，evaluator 用 localhost:3XXX 验证",
   "tasks": [
     {
       "task_id": "ws1",
-      "title": "新增 GET /api/brain/version 路由",
-      "scope": "在 packages/brain/src/routes/status.js 注册 GET /version 路由。handler 内部使用独立 try-catch + readFileSync（new URL('../../package.json', import.meta.url)）读取 package.json version，从 selfcheck.js import EXPECTED_SCHEMA_VERSION，返回 {version, schema_version}。package.json 不可读时返回 HTTP 500 + {error:'version read failed'}。多余 query 参数忽略。",
+      "title": "playground/server.js 新增 GET /subtract 路由 + playground/tests/server.test.js 新增 describe 块",
+      "scope": "在 playground/server.js 注册 GET /subtract（复用 STRICT_NUMBER regex ^-?\\d+(\\.\\d+)?$，校验 a/b 存在且合法，计算 Number(a)-Number(b)，返回 {result: <number>, operation: \"subtract\"}；禁用响应字段 difference/diff/value/answer/data；禁用 operation 变体 difference/diff/sub/minus）；在 playground/tests/server.test.js 新增 describe('GET /subtract', ...) 块（happy 正数/负数/零结果、schema 完整性 oracle、禁用字段反向断言、error path 缺参+非法格式）",
       "dod": [
-        "[ARTIFACT] packages/brain/src/routes/status.js 含 /version 路由注册",
-        "[ARTIFACT] 路由内使用 EXPECTED_SCHEMA_VERSION 从 selfcheck.js 导入",
-        "[ARTIFACT] selfcheck.js 含 export const EXPECTED_SCHEMA_VERSION",
-        "[ARTIFACT] /version handler 含 try-catch + HTTP 500",
-        "[BEHAVIOR] GET /api/brain/version 返回 HTTP 200，version 字段类型为 string",
-        "[BEHAVIOR] GET /api/brain/version 返回 schema_version 字段类型为 string",
-        "[BEHAVIOR] 响应 keys 完全等于 [schema_version,version]，不多不少",
-        "[BEHAVIOR] 禁用字段 ver/v/pkg_version/db_version/build/tag/release 均不出现",
-        "[BEHAVIOR] package.json chmod 000 时返回 HTTP 500 + error 字段",
-        "[BEHAVIOR] 多余 query 参数被忽略，仍返回 HTTP 200",
-        "[BEHAVIOR] version 值与 package.json 实际值一致（值来源 oracle）",
-        "[BEHAVIOR] version 符合 semver 格式 x.y.z",
-        "[BEHAVIOR] schema_version 值与 selfcheck.js EXPECTED_SCHEMA_VERSION 一致"
+        "[ARTIFACT] playground/server.js 内含 app.get('/subtract' 路由注册",
+        "[ARTIFACT] playground/server.js /subtract 路由响应含字面 operation: \"subtract\"（禁用 difference/diff/sub/minus）",
+        "[ARTIFACT] playground/server.js /subtract 路由响应含字面 result 字段（禁用 difference/diff/value/answer/data）",
+        "[ARTIFACT] playground/tests/server.test.js 内含 describe('GET /subtract' 块",
+        "[BEHAVIOR] GET /subtract?a=10&b=3 → HTTP 200 + {result:7, operation:\"subtract\"}（schema 字段值）",
+        "[BEHAVIOR] GET /subtract?a=10&b=3 → keys | sort == [\"operation\",\"result\"]（schema 完整性）",
+        "[BEHAVIOR] GET /subtract?a=10&b=3 → 禁用字段 difference/diff/value/answer/data 均不存在（反向验证）",
+        "[BEHAVIOR] 缺参 a → HTTP 400 + error 字段类型 string（error path）",
+        "[BEHAVIOR] GET /subtract?a=1e5&b=3 → HTTP 400（非法格式 error path）",
+        "[BEHAVIOR] GET /subtract?a=3&b=10 → HTTP 200 + result=-7（负数结果）"
       ],
       "files": [
-        "packages/brain/src/routes/status.js"
+        "playground/server.js",
+        "playground/tests/server.test.js"
       ],
       "depends_on": [],
-      "complexity": "S",
-      "estimated_minutes": 25
+      "complexity": "M",
+      "estimated_minutes": 30
     }
   ]
 }

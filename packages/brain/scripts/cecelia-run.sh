@@ -448,6 +448,8 @@ main() {
         fi
       fi
     fi
+    # 清理 goal-based stop hook 临时设置文件
+    [[ -n "${_goal_settings_tmp:-}" ]] && rm -f "$_goal_settings_tmp" 2>/dev/null || true
   }
   trap cleanup EXIT
 
@@ -507,6 +509,16 @@ main() {
       echo "[cecelia-run] Injecting env: ${skillenv_key}=${skillenv_val}" >&2
     fi
   done
+
+  # goal-based stop hook: write CECELIA_GOAL_SETTINGS to temp file, pass as --settings flag
+  local SETTINGS_FLAG=""
+  if [[ -n "${CECELIA_GOAL_SETTINGS:-}" ]]; then
+    local _goal_settings_tmp
+    _goal_settings_tmp=$(mktemp /tmp/cecelia-goal-settings-XXXXXX.json)
+    printf '%s' "$CECELIA_GOAL_SETTINGS" > "$_goal_settings_tmp"
+    SETTINGS_FLAG="--settings $_goal_settings_tmp"
+    echo "[cecelia-run] goal-based stop hook enabled (settings: $_goal_settings_tmp)" >&2
+  fi
 
   # Max turns: 0 = 不限制（不传 --max-turns 参数），其他值 = 上限
   local MAX_TURNS="${CECELIA_MAX_TURNS:-${CECELIA_SKILLENV_CECELIA_MAX_TURNS:-0}}"
@@ -620,14 +632,14 @@ main() {
     fi
     if [[ "$PERMISSION_MODE" == "plan" ]]; then
       # FIX (P0): </dev/null 重定向 stdin，避免 bridge 退出后子进程因 stdin EOF 立即死掉（0 字节根因）
-      setsid bash -c "cd '$ACTUAL_WORK_DIR' && unset CLAUDECODE && CECELIA_HEADLESS=true $PROVIDER_ENV $CLAUDE_INVOKE --permission-mode plan $MODEL_FLAG $MAX_TURNS_FLAG --output-format json >\"$out_json\" 2>\"$err_log\"" _ "$original_prompt" </dev/null &
+      setsid bash -c "cd '$ACTUAL_WORK_DIR' && unset CLAUDECODE && CECELIA_HEADLESS=true $PROVIDER_ENV $CLAUDE_INVOKE --permission-mode plan $MODEL_FLAG $MAX_TURNS_FLAG $SETTINGS_FLAG --output-format json >\"$out_json\" 2>\"$err_log\"" _ "$original_prompt" </dev/null &
     else
         echo "[cecelia-run] DEBUG: 启动 claude 进程..." >&2
       echo "[cecelia-run] DEBUG: WORK_DIR=$ACTUAL_WORK_DIR" >&2
       echo "[cecelia-run] DEBUG: MODEL_FLAG=$MODEL_FLAG" >&2
       echo "[cecelia-run] DEBUG: PROMPT=${original_prompt:0:200}..." >&2
       # FIX (P0): </dev/null 重定向 stdin，避免 bridge 退出后子进程因 stdin EOF 立即死掉（0 字节根因）
-      setsid bash -c "cd '$ACTUAL_WORK_DIR' && unset CLAUDECODE && CECELIA_HEADLESS=true $PROVIDER_ENV $CLAUDE_INVOKE --dangerously-skip-permissions $MODEL_FLAG $MAX_TURNS_FLAG --output-format json >\"$out_json\" 2>\"$err_log\"" _ "$original_prompt" </dev/null &
+      setsid bash -c "cd '$ACTUAL_WORK_DIR' && unset CLAUDECODE && CECELIA_HEADLESS=true $PROVIDER_ENV $CLAUDE_INVOKE --dangerously-skip-permissions $MODEL_FLAG $MAX_TURNS_FLAG $SETTINGS_FLAG --output-format json >\"$out_json\" 2>\"$err_log\"" _ "$original_prompt" </dev/null &
     fi
     CHILD_PID=$!
 

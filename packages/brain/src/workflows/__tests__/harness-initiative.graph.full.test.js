@@ -95,6 +95,7 @@ import {
   reportNode,
   buildHarnessFullGraph,
   inferTaskPlanNode,
+  runPlannerNode,   // ← 新增
 } from '../harness-initiative.graph.js';
 
 // ─── 5 节点单测 ────────────────────────────────────────────────────────────
@@ -245,30 +246,95 @@ describe('finalE2eNode', () => {
   });
 });
 
+describe('runPlannerNode — prep_prd_body 注入', () => {
+  it('prompt 含 prep_prd_body 内容', async () => {
+    const capturedArgs = [];
+    mockSpawn.mockImplementation(async (taskArg) => {
+      capturedArgs.push(taskArg);
+      return { exit_code: 0, stdout: 'plannerOutput', stderr: '' };
+    });
+    mockResolveTok.mockResolvedValue('gh-token');
+    mockEnsureWt.mockResolvedValue('/wt');
+    mockReadFile.mockRejectedValue(new Error('no file'));
+
+    await runPlannerNode({
+      task: {
+        id: 'task-1',
+        title: 'test feature',
+        description: 'test desc',
+        payload: {
+          sprint_dir: 'sprints/test',
+          prep_prd_body: '# PrepPRD\n## Journey 当前状态\n- ✅ Step A',
+          journey_id: 'journey-uuid-123',
+        },
+      },
+      initiativeId: 'init-1',
+      worktreePath: '/wt',
+      githubToken: 'gh-token',
+    });
+
+    expect(capturedArgs.length).toBeGreaterThan(0);
+    const prompt = capturedArgs[0].prompt;
+    expect(prompt).toContain('PrepPRD');
+    expect(prompt).toContain('Journey 当前状态');
+  });
+
+  it('env 含 CECELIA_JOURNEY_ID', async () => {
+    const capturedArgs = [];
+    mockSpawn.mockImplementation(async (taskArg) => {
+      capturedArgs.push(taskArg);
+      return { exit_code: 0, stdout: 'plannerOutput', stderr: '' };
+    });
+    mockResolveTok.mockResolvedValue('gh-token');
+    mockEnsureWt.mockResolvedValue('/wt');
+    mockReadFile.mockRejectedValue(new Error('no file'));
+
+    await runPlannerNode({
+      task: {
+        id: 'task-1',
+        title: 'test',
+        description: 'test',
+        payload: {
+          sprint_dir: 'sprints/test',
+          journey_id: 'journey-uuid-456',
+        },
+      },
+      initiativeId: 'init-1',
+      worktreePath: '/wt',
+      githubToken: 'gh-token',
+    });
+
+    const env = capturedArgs[0].env;
+    expect(env.CECELIA_JOURNEY_ID).toBe('journey-uuid-456');
+  });
+});
+
 describe('reportNode', () => {
   beforeEach(() => { mockPool.query.mockReset(); });
 
   it('PASS → UPDATE initiative_runs phase=done', async () => {
-    mockPool.query.mockResolvedValueOnce({ rows: [] });
+    mockPool.query.mockResolvedValueOnce({ rows: [] }); // step_timing SELECT task_events
+    mockPool.query.mockResolvedValueOnce({ rows: [] }); // UPDATE initiative_runs
     const delta = await reportNode({
       initiativeId: 'i', sub_tasks: [{ id: 's1', cost_usd: 0.5 }], final_e2e_verdict: 'PASS',
     });
     expect(delta.report_path).toBeTruthy();
     expect(mockPool.query).toHaveBeenCalled();
-    const sqlArgs = mockPool.query.mock.calls[0];
+    const sqlArgs = mockPool.query.mock.calls[1]; // calls[1] = UPDATE initiative_runs (calls[0] = step_timing)
     expect(sqlArgs[0]).toContain('UPDATE initiative_runs');
     // sqlArgs[1] 是参数数组 [initiativeId, phase, reason]
     expect(sqlArgs[1]).toContain('done');
   });
   it('FAIL → UPDATE phase=failed + failure_reason', async () => {
-    mockPool.query.mockResolvedValueOnce({ rows: [] });
-    mockPool.query.mockResolvedValueOnce({ rows: [] });
+    mockPool.query.mockResolvedValueOnce({ rows: [] }); // step_timing SELECT task_events
+    mockPool.query.mockResolvedValueOnce({ rows: [] }); // UPDATE initiative_runs
+    mockPool.query.mockResolvedValueOnce({ rows: [] }); // UPDATE tasks
     const delta = await reportNode({
       initiativeId: 'i', sub_tasks: [], final_e2e_verdict: 'FAIL',
       final_e2e_failed_scenarios: [{ name: 'sc1' }],
     });
     expect(delta.report_path).toBeTruthy();
-    const sqlArgs = mockPool.query.mock.calls[0];
+    const sqlArgs = mockPool.query.mock.calls[1]; // calls[1] = UPDATE initiative_runs (calls[0] = step_timing)
     // sqlArgs[1] 是参数数组 [initiativeId, phase, reason]
     const params = sqlArgs[1];
     expect(params).toContain('failed');
@@ -280,13 +346,15 @@ describe('reportNode', () => {
   // 但 task 永卡 in_progress。W28 实证：13 个 checkpoint 全跑过 prep→...→report，
   // task.status 仍 in_progress。
   it('PASS → 同时 UPDATE tasks SET status=completed (B1)', async () => {
-    mockPool.query.mockResolvedValueOnce({ rows: [] });
-    mockPool.query.mockResolvedValueOnce({ rows: [] });
+    mockPool.query.mockResolvedValueOnce({ rows: [] }); // step_timing SELECT task_events
+    mockPool.query.mockResolvedValueOnce({ rows: [] }); // UPDATE initiative_runs
+    mockPool.query.mockResolvedValueOnce({ rows: [] }); // UPDATE tasks
+    mockPool.query.mockResolvedValueOnce({ rows: [] }); // INSERT harness_report
     await reportNode({
       initiativeId: 'i', sub_tasks: [{ id: 's1' }], final_e2e_verdict: 'PASS',
     });
-    expect(mockPool.query).toHaveBeenCalledTimes(2);
-    const taskUpdate = mockPool.query.mock.calls[1];
+    expect(mockPool.query).toHaveBeenCalledTimes(4);
+    const taskUpdate = mockPool.query.mock.calls[2]; // calls[2] = UPDATE tasks (calls[0]=step_timing, calls[1]=initiative_runs)
     expect(taskUpdate[0]).toMatch(/UPDATE tasks/i);
     expect(taskUpdate[0]).toMatch(/status\s*=\s*\$/);
     const params = taskUpdate[1];
@@ -295,14 +363,16 @@ describe('reportNode', () => {
   });
 
   it('FAIL → 同时 UPDATE tasks SET status=failed (B1)', async () => {
-    mockPool.query.mockResolvedValueOnce({ rows: [] });
-    mockPool.query.mockResolvedValueOnce({ rows: [] });
+    mockPool.query.mockResolvedValueOnce({ rows: [] }); // step_timing SELECT task_events
+    mockPool.query.mockResolvedValueOnce({ rows: [] }); // UPDATE initiative_runs
+    mockPool.query.mockResolvedValueOnce({ rows: [] }); // UPDATE tasks
+    mockPool.query.mockResolvedValueOnce({ rows: [] }); // INSERT harness_report
     await reportNode({
       initiativeId: 'i', sub_tasks: [], final_e2e_verdict: 'FAIL',
       final_e2e_failed_scenarios: [{ name: 'sc1' }],
     });
-    expect(mockPool.query).toHaveBeenCalledTimes(2);
-    const taskUpdate = mockPool.query.mock.calls[1];
+    expect(mockPool.query).toHaveBeenCalledTimes(4);
+    const taskUpdate = mockPool.query.mock.calls[2]; // calls[2] = UPDATE tasks (calls[0]=step_timing, calls[1]=initiative_runs)
     expect(taskUpdate[0]).toMatch(/UPDATE tasks/i);
     const params = taskUpdate[1];
     expect(params).toContain('i');
@@ -315,6 +385,25 @@ describe('reportNode', () => {
     });
     expect(mockPool.query).not.toHaveBeenCalled();
     expect(delta.report_path).toBe('already-set');
+  });
+
+  it('PASS → 第 4 次 query 是 INSERT INTO tasks (harness_report spawn)', async () => {
+    mockPool.query.mockResolvedValue({ rows: [] });
+    await reportNode({
+      initiativeId: 'i-spawn',
+      sub_tasks: [{ id: 's1', cost_usd: 0.1 }],
+      final_e2e_verdict: 'PASS',
+      sprintDir: 'sprints/test',
+      task: {
+        title: 'test feature',
+        payload: { journey_id: 'j1', feature_id: 'f1' },
+      },
+    });
+    // calls[0]=step_timing SELECT, calls[1]=UPDATE initiative_runs, calls[2]=UPDATE tasks, calls[3]=INSERT harness_report
+    expect(mockPool.query).toHaveBeenCalledTimes(4);
+    const insertCall = mockPool.query.mock.calls[3];
+    expect(insertCall[0]).toMatch(/INSERT INTO tasks/i);
+    expect(insertCall[0]).toContain('harness_report');
   });
 });
 

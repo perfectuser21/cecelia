@@ -32,8 +32,11 @@ describe('capture-digestion job', () => {
   });
 
   it('DIGESTION_PROMPT 包含 6 种 target_type', async () => {
+    const { fileURLToPath } = await import('url');
+    const { resolve, dirname } = await import('path');
     const fs = await import('fs');
-    const content = fs.readFileSync('packages/brain/src/capture-digestion.js', 'utf8');
+    const __d = dirname(fileURLToPath(import.meta.url));
+    const content = fs.readFileSync(resolve(__d, '../packages/brain/src/capture-digestion.js'), 'utf8');
     expect(content).toContain('note');
     expect(content).toContain('knowledge');
     expect(content).toContain('content');

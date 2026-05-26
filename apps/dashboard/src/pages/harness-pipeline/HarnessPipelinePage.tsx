@@ -41,9 +41,36 @@ interface LangGraphSummary {
   ws_verdicts?: Array<string | null>;
 }
 
+interface WsWorkstream {
+  ws_id: string;
+  title: string;
+  status: string;
+  evaluate_verdict: string | null;
+  pr_url: string | null;
+  fix_round: number;
+  container_id: string | null;
+}
+
+interface StepTiming {
+  node: string;
+  started_at: string | null;
+  ended_at: string | null;
+  duration_ms: number | null;
+}
+
+interface InitiativeDetail {
+  initiative_id: string;
+  prd_content: string | null;
+  contract_content: string | null;
+  gan_rounds: number | null;
+  step_timing: StepTiming[];
+  screenshot_urls: string[];
+}
+
 interface Pipeline {
   pipeline_id: string;
   planner_task_id: string | null;
+  task_type?: string;
   sprint_dir: string | null;
   title: string;
   description?: string;
@@ -190,6 +217,187 @@ export function formatLangGraphSummary(lg: LangGraphSummary, status: string): st
   return parts.join(' · ');
 }
 
+// ─── 组件：Initiative 详情面板 ────────────────────────────────────────────────
+
+function InitiativeDetailPanel({ initiativeId, onClose }: { initiativeId: string; onClose: () => void }) {
+  const [detail, setDetail] = useState<InitiativeDetail | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    fetch(`/api/brain/harness/initiative/${initiativeId}/detail`)
+      .then(r => r.ok ? r.json() : null)
+      .then(data => { if (!cancelled) { setDetail(data); setLoading(false); } })
+      .catch(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, [initiativeId]);
+
+  return (
+    <div
+      data-testid="initiative-detail-panel"
+      className="w-96 shrink-0 border-l border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 overflow-y-auto flex flex-col fixed right-0 top-0 bottom-0 z-40 shadow-xl"
+    >
+      <div className="flex items-center justify-between px-4 py-3 border-b border-slate-200 dark:border-slate-700">
+        <h3 className="font-semibold text-slate-900 dark:text-white text-sm">Initiative 详情</h3>
+        <button
+          onClick={onClose}
+          className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 text-xl leading-none"
+        >
+          ×
+        </button>
+      </div>
+
+      {loading && (
+        <div className="flex-1 flex items-center justify-center text-sm text-slate-400">加载中...</div>
+      )}
+
+      {!loading && !detail && (
+        <div className="flex-1 flex items-center justify-center text-sm text-red-400">详情加载失败</div>
+      )}
+
+      {!loading && detail && (
+        <div className="flex-1 overflow-y-auto p-4 space-y-4">
+          {/* PRD Content */}
+          <section>
+            <h4 className="text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wide mb-2">PRD 全文</h4>
+            <div
+              data-testid="initiative-prd-content"
+              className="text-xs text-slate-700 dark:text-slate-300 whitespace-pre-wrap font-mono bg-slate-50 dark:bg-slate-900/50 rounded-lg p-3 max-h-64 overflow-y-auto"
+            >
+              {detail.prd_content ?? '无 PRD 内容'}
+            </div>
+          </section>
+
+          {/* Step Timeline — driven by step_timing */}
+          <section>
+            <h4 className="text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wide mb-2">
+              步骤时间线{detail.gan_rounds != null ? ` · GAN ${detail.gan_rounds} 轮` : ''}
+            </h4>
+            <div data-testid="initiative-step-timeline" className="space-y-1.5">
+              {detail.step_timing.length === 0 ? (
+                <p className="text-xs text-slate-400">暂无时间线数据</p>
+              ) : (
+                detail.step_timing.map(step => (
+                  <div
+                    key={step.node}
+                    data-testid="step-timeline-item"
+                    className="flex items-center gap-2 text-xs py-1.5 px-2 rounded bg-slate-50 dark:bg-slate-900/50"
+                  >
+                    <span className="w-2 h-2 rounded-full bg-blue-400 shrink-0" />
+                    <span className="font-medium text-slate-700 dark:text-slate-200 flex-1">{step.node}</span>
+                    {step.duration_ms != null && (
+                      <span className="text-slate-400 shrink-0">{formatDuration(step.duration_ms)}</span>
+                    )}
+                  </div>
+                ))
+              )}
+            </div>
+          </section>
+
+          {/* Screenshots — 仅 screenshot_urls 非空时渲染 */}
+          {detail.screenshot_urls && detail.screenshot_urls.length > 0 && (
+            <section>
+              <h4 className="text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wide mb-2">截图</h4>
+              <div className="space-y-1.5">
+                {detail.screenshot_urls.map((url, i) => (
+                  <a
+                    key={i}
+                    href={url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="block text-xs text-blue-500 hover:underline truncate"
+                  >
+                    {url.split('/').pop() ?? url}
+                  </a>
+                ))}
+              </div>
+            </section>
+          )}
+
+          {/* Contract Summary */}
+          {detail.contract_content && (
+            <section>
+              <h4 className="text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wide mb-2">合约摘要</h4>
+              <div className="text-xs text-slate-600 dark:text-slate-400 whitespace-pre-wrap bg-slate-50 dark:bg-slate-900/50 rounded-lg p-3 max-h-48 overflow-y-auto">
+                {detail.contract_content}
+              </div>
+            </section>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── 组件：WS 进度区块 ────────────────────────────────────────────────────────
+
+const VERDICT_BADGE: Record<string, string> = {
+  PASS: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300',
+  FAIL: 'bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300',
+  FIXED: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300',
+};
+
+function WsProgressSection({ initiativeId }: { initiativeId: string }) {
+  const [workstreams, setWorkstreams] = useState<WsWorkstream[] | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetch(`/api/brain/harness/initiative/${initiativeId}/ws-progress`)
+      .then(r => r.ok ? r.json() : null)
+      .then(data => { if (!cancelled && data) setWorkstreams(data.workstreams); })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [initiativeId]);
+
+  if (!workstreams || workstreams.length === 0) return null;
+
+  return (
+    <div className="mt-2 border-t border-slate-100 dark:border-slate-700 pt-2" data-testid="ws-progress-section">
+      <div className="text-[10px] font-semibold text-slate-400 dark:text-slate-500 uppercase tracking-wide mb-1.5">
+        Workstreams
+      </div>
+      <div className="space-y-1">
+        {workstreams.map(ws => {
+          const s = normalizeStatus(ws.status);
+          const prMatch = ws.pr_url?.match(/\/pull\/(\d+)/);
+          const prNo = prMatch?.[1];
+          return (
+            <div key={ws.ws_id} className="flex items-center gap-2 text-xs">
+              <span className="shrink-0">{STATUS_ICON[s] ?? '—'}</span>
+              <span className={`font-mono text-[10px] shrink-0 ${STATUS_COLOR[s] ?? STATUS_COLOR.not_started}`}>
+                {ws.ws_id}
+              </span>
+              <span className="text-slate-600 dark:text-slate-300 truncate flex-1 min-w-0">
+                {ws.title || ws.ws_id}
+              </span>
+              {ws.evaluate_verdict && (
+                <span className={`text-[10px] font-bold px-1 py-0.5 rounded shrink-0 ${VERDICT_BADGE[ws.evaluate_verdict] ?? 'bg-slate-100 text-slate-600 dark:bg-slate-700 dark:text-slate-300'}`}>
+                  {ws.evaluate_verdict}
+                </span>
+              )}
+              {ws.fix_round > 0 && (
+                <span className="text-[10px] text-slate-400 shrink-0">Fix×{ws.fix_round}</span>
+              )}
+              {prNo && ws.pr_url && (
+                <a
+                  href={ws.pr_url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-[10px] text-blue-500 hover:underline shrink-0"
+                  onClick={e => e.stopPropagation()}
+                >
+                  PR #{prNo}
+                </a>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 // ─── 组件：单阶段徽章 ─────────────────────────────────────────────────────────
 
 function StageBadge({ stage }: { stage: PipelineStage }) {
@@ -217,11 +425,12 @@ function StageBadge({ stage }: { stage: PipelineStage }) {
 
 // ─── 组件：Pipeline 卡片 ──────────────────────────────────────────────────────
 
-function PipelineCard({ pipeline }: { pipeline: Pipeline }) {
+function PipelineCard({ pipeline, onInitiativeClick }: { pipeline: Pipeline; onInitiativeClick?: (id: string) => void }) {
   const [expanded, setExpanded] = useState(false);
   const navigate = useNavigate();
   const { stages, verdict, elapsed_ms, created_at, sprint_goal, description,
           current_step, title, langgraph, status, priority, pr_url } = pipeline;
+  const isInitiative = pipeline.task_type === 'harness_initiative';
 
   const hasFailed = ['failed', 'cancelled', 'canceled', 'quarantined'].includes(status)
                      || stages.some(s => ['failed', 'quarantined'].includes(s.status));
@@ -247,10 +456,19 @@ function PipelineCard({ pipeline }: { pipeline: Pipeline }) {
   const showMultiPrs = multiPrCount > 1;
 
   return (
-    <div className={`rounded-xl border bg-white dark:bg-slate-800 shadow-sm overflow-hidden transition-all duration-200 ${borderColor}`}>
+    <div
+      className={`rounded-xl border bg-white dark:bg-slate-800 shadow-sm overflow-hidden transition-all duration-200 ${borderColor}`}
+      data-testid={isInitiative ? 'initiative-card' : undefined}
+    >
       <div
         className="flex items-start justify-between p-4 cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-700/50 transition-colors"
-        onClick={() => setExpanded(!expanded)}
+        onClick={() => {
+          if (isInitiative && onInitiativeClick) {
+            onInitiativeClick(pipeline.pipeline_id);
+          } else {
+            setExpanded(!expanded);
+          }
+        }}
       >
         <div className="flex items-start gap-3 flex-1 min-w-0">
           <span className="text-lg mt-0.5 shrink-0">{overallIcon}</span>
@@ -336,13 +554,16 @@ function PipelineCard({ pipeline }: { pipeline: Pipeline }) {
         </div>
       </div>
 
-      {/* 阶段徽章栏 */}
+      {/* 阶段徽章栏 + WS 进度 */}
       <div className="px-4 pb-3">
         <div className="flex flex-wrap gap-1.5">
           {stages.map(stage => (
             <StageBadge key={stage.task_type} stage={stage} />
           ))}
         </div>
+        {pipeline.task_type === 'harness_initiative' && (
+          <WsProgressSection initiativeId={pipeline.pipeline_id} />
+        )}
       </div>
 
       {/* 展开详情 */}
@@ -568,6 +789,7 @@ export default function HarnessPipelinePage() {
   const [autoRefresh, setAutoRefresh] = useState(true);
   const [modalMode, setModalMode] = useState<NewMode | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
+  const [selectedInitiativeId, setSelectedInitiativeId] = useState<string | null>(null);
   const navigate = useNavigate();
 
   const fetchPipelines = useCallback(async () => {
@@ -754,9 +976,18 @@ export default function HarnessPipelinePage() {
           <PipelineCard
             key={pipeline.pipeline_id}
             pipeline={pipeline}
+            onInitiativeClick={setSelectedInitiativeId}
           />
         ))}
       </div>
+
+      {/* Initiative 详情面板 */}
+      {selectedInitiativeId && (
+        <InitiativeDetailPanel
+          initiativeId={selectedInitiativeId}
+          onClose={() => setSelectedInitiativeId(null)}
+        />
+      )}
 
       {/* 新建 Modal */}
       {modalMode && (

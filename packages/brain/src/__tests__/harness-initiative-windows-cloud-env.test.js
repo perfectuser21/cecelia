@@ -73,6 +73,7 @@ vi.mock('./harness-task.graph.js', () => ({
 vi.mock('../harness-worktree.js', () => ({
   ensureHarnessWorktree: vi.fn(),
   harnessTaskWorktreePath: vi.fn((taskId) => `/mock-wt/task-${taskId}`),
+  harnessSubTaskWorktreePath: vi.fn((initiativeId, logicalId) => `/mock-wt/task-${initiativeId.slice(0, 8)}-${logicalId}`),
   DEFAULT_BASE_REPO: '/mock-base',
 }));
 
@@ -319,5 +320,77 @@ describe('finalEvaluateDispatchNode — GITHUB_REPO 注入（断链 #1）', () =
     expect(capturedEnv.SPRINT_DIR).toBe('sprints/run-008');
     expect(capturedEnv.IS_FINAL_E2E).toBe('true');
     expect(capturedEnv.GITHUB_TOKEN).toBe('ghtoken');
+  });
+});
+
+// ─── payload.target_environment fallback（Bug 1 修复验证）─────────────────────
+
+describe('finalEvaluateDispatchNode — payload.target_environment fallback', () => {
+  beforeEach(() => {
+    vi.resetAllMocks();
+    vi.mocked(readBrainResult).mockResolvedValue({ verdict: 'PASS' });
+  });
+
+  it('prdContent 无 target_environment 但 payload 有时，使用 payload 值', async () => {
+    const capturedEnv = {};
+    const mockExecutor = vi.fn().mockImplementation(async (opts) => {
+      Object.assign(capturedEnv, opts.env || {});
+      return { exit_code: 0, timed_out: false, stderr: '' };
+    });
+
+    const state = {
+      final_e2e_verdict: null,
+      final_e2e_fix_count: 0,
+      task_loop_index: 0,
+      task: {
+        id: 'task-payload-fallback',
+        payload: {
+          sprint_dir: 'sprints/run-004',
+          target_environment: 'windows_cloud',
+        },
+      },
+      taskPlan: { journey_type: 'user_facing' },
+      prdContent: '# Sprint PRD\n\n（无 target_environment 行）',
+      worktreePath: '/tmp/wt-zenithjoy',
+      sub_tasks: [],
+      githubToken: 'tok',
+    };
+
+    await finalEvaluateDispatchNode(state, {
+      executor: mockExecutor,
+      execFile: vi.fn().mockResolvedValue({ stdout: '' }),
+    });
+
+    expect(capturedEnv.TARGET_ENV).toBe('windows_cloud');
+  });
+
+  it('prdContent 和 payload 都无 target_environment 时，默认 local_api', async () => {
+    const capturedEnv = {};
+    const mockExecutor = vi.fn().mockImplementation(async (opts) => {
+      Object.assign(capturedEnv, opts.env || {});
+      return { exit_code: 0, timed_out: false, stderr: '' };
+    });
+
+    const state = {
+      final_e2e_verdict: null,
+      final_e2e_fix_count: 0,
+      task_loop_index: 0,
+      task: {
+        id: 'task-no-env',
+        payload: { sprint_dir: 'sprints/run-005' },
+      },
+      taskPlan: { journey_type: 'autonomous' },
+      prdContent: '# Sprint PRD',
+      worktreePath: '/tmp/wt-cecelia',
+      sub_tasks: [],
+      githubToken: 'tok',
+    };
+
+    await finalEvaluateDispatchNode(state, {
+      executor: mockExecutor,
+      execFile: vi.fn().mockResolvedValue({ stdout: '' }),
+    });
+
+    expect(capturedEnv.TARGET_ENV).toBe('local_api');
   });
 });

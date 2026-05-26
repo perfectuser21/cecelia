@@ -1,9 +1,11 @@
 ---
 id: harness-planner-skill
 description: |
-  Harness Planner — Harness v5 阶段 A Layer 1：把用户需求展开为 Initiative PRD（Golden Path 格式）。
-  输出 sprint-prd.md（What，不写 How），供 Proposer GAN 起草 Golden Path 合同。
-  v8 起不再拆任务——任务 DAG 由 Proposer 在合同 GAN 确认后从 Golden Path 倒推。
+  【Brain 内部节点，禁止人类直接调用】
+  Harness Planner — Brain executor 在 harness_initiative 任务中自动调用的 Layer 1 节点。
+  人类启动 harness/sprint 的唯一正确入口是 /walking-skeleton（动作5 harness-bridge），
+  它会 POST Brain harness_initiative 任务，Brain 再自动调本 skill。
+  直接调本 skill = 绕过 Brain 调度层，违反 zero-human-gate 原则。
 version: 8.6.0
 created: 2026-04-08
 updated: 2026-05-18

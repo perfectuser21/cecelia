@@ -119,6 +119,8 @@ export default defineConfig({
       'src/__tests__/harness-module-constants.test.js',
       // 需要真实 PostgreSQL 连接的集成测试
       'src/__tests__/integration/pipeline-rescue.integration.test.js',
+      // dev-registry: 直连 pool.query 验 7 张新表，需真实 DB — 走 brain-integration
+      'src/workflows/__tests__/dev-registry.test.js',
     ],
     coverage: {
       provider: 'v8',

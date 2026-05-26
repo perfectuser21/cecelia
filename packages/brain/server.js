@@ -73,6 +73,7 @@ import backupRoutes from './src/routes/backup.js';
 import llmServiceRoutes from './src/routes/llm-service.js';
 import featuresRoutes from './src/routes/features.js';
 import clipsRoutes from './src/routes/clips.js';
+import journeysRouter from './src/routes/journeys.js';
 import { internalAuth } from './src/middleware/internal-auth.js';
 import createAutonomousRouter from './src/routes/autonomous.js';
 import { initTickLoop } from './src/tick.js';
@@ -299,6 +300,7 @@ app.use('/api/brain/registry', registryRoutes);
 // 但保险起见仍按照先 specific 后 generic 的顺序排列。
 app.use('/api/brain', harnessCallbackRouter);
 app.use('/api/brain', walkingSkeletonRouter);
+app.use('/api/brain', journeysRouter);
 app.use('/api/brain/harness', harnessRoutes);
 app.use('/api/brain/harness-interrupts', harnessInterruptsRouter);
 app.use('/api/brain/initiatives', initiativesRoutes);
@@ -717,6 +719,17 @@ async function onBrainListening() {
     console.log('[Server] Conversation Consolidator scheduled (5min interval)');
   } catch (e) {
     console.warn('[Server] Conversation Consolidator init failed (non-fatal):', e.message);
+  }
+
+  // Initialize Notion Push Sync (每 5 分钟扫描 notion_synced_at=NULL，推送到 Notion)
+  try {
+    const { runNotionPushSync } = await import('./src/notion-push-sync.js');
+    setInterval(async () => {
+      try { await runNotionPushSync(pool); } catch (e) { console.warn('[Server] Notion push sync failed:', e.message); }
+    }, 5 * 60 * 1000);
+    console.log('[Server] Notion Push Sync scheduled (5min interval)');
+  } catch (e) {
+    console.warn('[Server] Notion Push Sync init failed (non-fatal):', e.message);
   }
 
   // Initialize Daily Memory Consolidation (每 30 分钟轮询，内部 elapsed-time 闸门按 CONSOLIDATION_INTERVAL_HOURS 节流)

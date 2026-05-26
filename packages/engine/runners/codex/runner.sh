@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 # ============================================================================
-# Codex Runner — Codex CLI Provider 适配器 v2.5.0
+# Codex Runner — Codex CLI Provider 适配器 v2.6.0
 # ============================================================================
 # 这是 Codex（OpenAI）Provider 的协议适配器。
-# 完成判断逻辑来自 lib/devloop-check.sh（Provider-Agnostic SSOT）。
+# v2.6.0: 完成判断逻辑迁移到 goal-based stop hook（--settings JSON），
+#         不再依赖 devloop-check.sh。Codex runner 简化为：执行 → 依赖 goal hook 完成。
 #
 # 此文件职责：
 #   1. 初始化 .dev-mode.<branch> 状态文件（Codex 无 session，用 task_id 代替）
@@ -11,7 +12,7 @@
 #   3. 构建完整的单次执行 prompt（含完整 /dev 工作流指令 + PRD 内容）
 #   4. 调用 codex-bin exec 执行完整工作流
 #   5. 若 Codex 中途退出：以带上下文的恢复 prompt 重启（最多 MAX_RETRIES 次）
-#   6. 循环调用 devloop_check() 直到完成
+#   6. [v2.6.0] 完成条件由 goal-based hook（--settings JSON）在 Codex 侧评估，不再轮询
 #   7. Quota 超限时自动切换账号（v2.3.0 新增）
 #
 # 设计原则（v2.3.0 新增账号轮换）：
@@ -149,25 +150,9 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ENGINE_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 PROJECT_ROOT="$(git -C "$ENGINE_ROOT" rev-parse --show-toplevel 2>/dev/null || echo "$ENGINE_ROOT")"
 
-# ===== 加载 devloop-check.sh（SSOT）=====
-DEVLOOP_CHECK_LIB=""
-for candidate in \
-    "$ENGINE_ROOT/lib/devloop-check.sh" \
-    "$PROJECT_ROOT/packages/engine/lib/devloop-check.sh" \
-    "$HOME/.claude/lib/devloop-check.sh"; do
-    if [[ -f "$candidate" ]]; then
-        DEVLOOP_CHECK_LIB="$candidate"
-        break
-    fi
-done
-
-if [[ -z "$DEVLOOP_CHECK_LIB" ]]; then
-    echo "❌ 找不到 devloop-check.sh，无法运行 Codex runner" >&2
-    exit 1
-fi
-
-# shellcheck disable=SC1090
-source "$DEVLOOP_CHECK_LIB"
+# ===== devloop-check.sh 已废弃（v2.6.0）=====
+# goal-based stop hook 架构下，完成条件由 Claude Code --settings 注入的 Haiku 评估。
+# devloop-check.sh 已从 engine/lib/ 删除，此处不再 source。
 
 # ===== 检查 codex-bin =====
 if [[ ! -x "$CODEX_BIN" && "$DRY_RUN" == "false" ]]; then
@@ -358,23 +343,12 @@ while true; do
     echo "  [Codex Runner: 第 $RETRY_COUNT/$CODEX_MAX_RETRIES 轮 | 账号 $((CURRENT_ACCOUNT_IDX+1))/${#CODEX_ACCOUNT_LIST[@]}]"
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
-    # ===== 调用 devloop_check（SSOT）=====
-    DEVLOOP_RESULT=$(devloop_check "$BRANCH" "$DEV_MODE_FILE") || true
-    DEVLOOP_STATUS=$(echo "$DEVLOOP_RESULT" | jq -r '.status // "blocked"' 2>/dev/null || echo "blocked")
-
-    if [[ "$DEVLOOP_STATUS" == "done" ]]; then
-        echo "🎉 工作流完成！清理状态文件..."
-        rm -f "$DEV_MODE_FILE" "$DEV_LOCK_FILE"
-        echo "✅ Codex Runner 成功完成"
-        exit 0
-    fi
-
-    DEVLOOP_REASON=$(echo "$DEVLOOP_RESULT" | jq -r '.reason // ""' 2>/dev/null || echo "")
-    DEVLOOP_ACTION=$(echo "$DEVLOOP_RESULT" | jq -r '.action // ""' 2>/dev/null || echo "")
-
-    echo "  状态: blocked"
-    echo "  原因: $DEVLOOP_REASON"
-    [[ -n "$DEVLOOP_ACTION" ]] && echo "  行动: $DEVLOOP_ACTION"
+    # ===== v2.6.0: goal-based 完成判断 =====
+    # 完成条件由 Codex 内嵌的 goal-based stop hook（--settings JSON）在 Codex 侧评估。
+    # Codex 一旦满足目标条件会自行退出（exit 0），无需外部轮询 devloop_check()。
+    # 此处仅继续执行循环（用于重试 / Quota 切换场景）。
+    DEVLOOP_REASON=""
+    DEVLOOP_ACTION=""
     echo ""
 
     # ===== 构建 prompt =====

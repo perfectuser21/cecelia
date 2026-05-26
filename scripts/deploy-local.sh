@@ -130,14 +130,35 @@ if [[ "$NEED_DASHBOARD" == true ]]; then
     if [[ "$DRY_RUN" == true ]]; then
         echo "  [dry-run] cd $MAIN_ROOT/apps/dashboard && npm run build"
     else
-        cd "$MAIN_ROOT/apps/dashboard"
-        npm run build
+        # 确保当前平台的 native 模块已安装（容器 Linux 和宿主 macOS 可能不同）
+        cd "$MAIN_ROOT"
+        npm install --prefer-offline --cache /tmp/.npm-cache --silent 2>/dev/null \
+            || npm install --cache /tmp/.npm-cache --silent 2>/dev/null \
+            || true
+
+        # 检测是否在 Docker 容器内运行（容器内存通常受限，vite build 需要 >1GB heap）
+        # 若在容器内，启动独立构建容器（4GB 内存），避免 OOM
+        if [[ -f "/.dockerenv" ]] && command -v docker &>/dev/null; then
+            echo "  (容器内构建 → 使用独立 node 容器，4GB 内存限制)"
+            docker run --rm \
+                -v "$MAIN_ROOT:$MAIN_ROOT:rw" \
+                -w "$MAIN_ROOT/apps/dashboard" \
+                -e NODE_OPTIONS="--max-old-space-size=3072" \
+                --memory=4g \
+                --memory-swap=4g \
+                node:20-alpine \
+                npm run build
+        else
+            cd "$MAIN_ROOT/apps/dashboard"
+            NODE_OPTIONS="--max-old-space-size=3072" npm run build
+        fi
         cd "$MAIN_ROOT"
     fi
     echo ""
 
     # rsync 构建产物到 HK VPS
-    HK_HOST="hk"
+    # hk-vps 是 xian-m4 SSH config 中已定义的别名（原 "hk" 在 SSH config 中无对应）
+    HK_HOST="${CECELIA_HK_HOST:-hk-vps}"
     HK_REMOTE_DIR="/opt/cecelia/frontend"
     DIST_DIR="$MAIN_ROOT/apps/dashboard/dist"
 
@@ -147,9 +168,17 @@ if [[ "$NEED_DASHBOARD" == true ]]; then
             echo "  [dry-run] rsync -avz --delete $DIST_DIR/ $HK_HOST:$HK_REMOTE_DIR/dist/"
         else
             ssh "$HK_HOST" "mkdir -p $HK_REMOTE_DIR/dist" 2>/dev/null || true
-            rsync -avz --delete "$DIST_DIR/" "$HK_HOST:$HK_REMOTE_DIR/dist/" || {
-                echo "⚠️  rsync 到 HK 失败，Dashboard 仅本地部署"
-            }
+            # 优先用 rsync；容器内 rsync 可能不存在，回退到 tar+ssh
+            if command -v rsync &>/dev/null; then
+                rsync -avz --delete "$DIST_DIR/" "$HK_HOST:$HK_REMOTE_DIR/dist/" || {
+                    echo "⚠️  rsync 到 HK 失败，Dashboard 仅本地部署"
+                }
+            else
+                tar -czf - -C "$DIST_DIR" . \
+                    | ssh "$HK_HOST" "tar -xzf - -C $HK_REMOTE_DIR/dist/" || {
+                    echo "⚠️  tar+ssh 同步到 HK 失败，Dashboard 仅本地部署"
+                }
+            fi
             # 重启 HK 前端容器（如果在运行）
             ssh "$HK_HOST" "cd $HK_REMOTE_DIR && docker compose restart 2>/dev/null" || true
             echo "✅ HK VPS 同步完成"
