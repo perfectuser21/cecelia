@@ -1441,6 +1441,19 @@ export async function pickSubTaskNode(state) {
 }
 
 export async function advanceTaskIndexNode(state) {
+  // Serial merge gate: 上一个 sub-task 必须 merged 才能推进到下一个 WS
+  const subTasks = state.sub_tasks || [];
+  if (subTasks.length > 0) {
+    const lastTask = subTasks[subTasks.length - 1];
+    if (lastTask && lastTask.status !== 'merged') {
+      return {
+        error: {
+          node: 'advance',
+          message: `Serial gate: sub-task ${lastTask.id} did not merge (status=${lastTask.status ?? 'undefined'}). Next workstream blocked.`,
+        },
+      };
+    }
+  }
   return {
     task_loop_index: (state.task_loop_index ?? 0) + 1,
     task_loop_fix_count: 0,
