@@ -16,10 +16,10 @@ journey_type: dev_pipeline
 
 ## ARTIFACT 条目
 
-- [ ] [ARTIFACT] (B1) `sprints/ws2-route-b-verify/verify-route-b.sh` 文件存在
+- [x] [ARTIFACT] (B1) `sprints/ws2-route-b-verify/verify-route-b.sh` 文件存在
   Test: `node -e "require('fs').accessSync('sprints/ws2-route-b-verify/verify-route-b.sh')"`
 
-- [ ] [ARTIFACT] 脚本含 `#!/bin/bash` shebang 和 `set -e` 安全标志
+- [x] [ARTIFACT] 脚本含 `#!/bin/bash` shebang 和 `set -e` 安全标志
   Test: `node -e "const c=require('fs').readFileSync('sprints/ws2-route-b-verify/verify-route-b.sh','utf8');if(!c.includes('#!/bin/bash'))process.exit(1)"`
 
 ---
@@ -30,23 +30,23 @@ journey_type: dev_pipeline
 > Mode A：evaluator 逐 ws 跑 — 验证脚本文件内容（真红：文件不存在时 readFileSync → ENOENT → exit 1）
 > Mode B：final-e2e — 运行 `bash verify-route-b.sh`（Brain 在线时 exit 0）
 
-- [ ] [BEHAVIOR] (B2) 脚本含 Brain 健康检查命令（/api/brain/health）
+- [x] [BEHAVIOR] (B2) 脚本含 Brain 健康检查命令（/api/brain/health）
   Test: manual:bash -c 'node -e "const c=require(\"fs\").readFileSync(\"sprints/ws2-route-b-verify/verify-route-b.sh\",\"utf8\");if(!c.includes(\"health\"))process.exit(1);console.log(\"OK\")"'
   期望: OK
 
-- [ ] [BEHAVIOR] (B3) 脚本含 Route B 触发命令（POST /api/brain/tasks curl）
+- [x] [BEHAVIOR] (B3) 脚本含 Route B 触发命令（POST /api/brain/tasks curl）
   Test: manual:bash -c 'node -e "const c=require(\"fs\").readFileSync(\"sprints/ws2-route-b-verify/verify-route-b.sh\",\"utf8\");if(!c.includes(\"/api/brain/tasks\"))process.exit(1);console.log(\"OK\")"'
   期望: OK
 
-- [ ] [BEHAVIOR] (B4) 脚本对 status 作双值断言（in_progress OR completed — Round 2 新增，修复 Round 1 问题 3）
+- [x] [BEHAVIOR] (B4) 脚本对 status 作双值断言（in_progress OR completed — Round 2 新增，修复 Round 1 问题 3）
   Test: manual:bash -c 'node -e "const c=require(\"fs\").readFileSync(\"sprints/ws2-route-b-verify/verify-route-b.sh\",\"utf8\");if(!c.includes(\"in_progress\")||!c.includes(\"completed\"))process.exit(1);console.log(\"OK\")"'
   期望: OK
 
-- [ ] [BEHAVIOR] (B5) 脚本含 task_type=dev 和 title 非空断言
+- [x] [BEHAVIOR] (B5) 脚本含 task_type=dev 和 title 非空断言
   Test: manual:bash -c 'node -e "const c=require(\"fs\").readFileSync(\"sprints/ws2-route-b-verify/verify-route-b.sh\",\"utf8\");if(!c.includes(\"task_type\")||!c.includes(\"title\"))process.exit(1);console.log(\"OK\")"'
   期望: OK
 
-- [ ] [BEHAVIOR] (B6) 脚本含基线计数或时间窗口防造假逻辑（date +%s 或 300）
+- [x] [BEHAVIOR] (B6) 脚本含基线计数或时间窗口防造假逻辑（date +%s 或 300）
   Test: manual:bash -c 'node -e "const c=require(\"fs\").readFileSync(\"sprints/ws2-route-b-verify/verify-route-b.sh\",\"utf8\");const ok=c.includes(\"date +%s\")||c.includes(\"300\");if(!ok)process.exit(1);console.log(\"OK\")"'
   期望: OK
 
@@ -54,7 +54,7 @@ journey_type: dev_pipeline
 
 ## BEHAVIOR:E2E 条目（dev_pipeline 专属 — Mode B final-e2e）
 
-- [ ] [BEHAVIOR:E2E] 完整 Golden Path 执行通过，stdout 含成功标志
+- [x] [BEHAVIOR:E2E] 完整 Golden Path 执行通过，stdout 含成功标志
   Test: manual:bash -c 'OUTPUT=$(bash sprints/ws2-route-b-verify/verify-route-b.sh 2>&1); echo "$OUTPUT" | grep -q "Route B.*验证通过\|✅" && echo OK || { echo "FAIL"; echo "$OUTPUT"; exit 1; }'
   期望: OK（Brain 在 localhost:5221 在线时）
 
