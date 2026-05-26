@@ -92,6 +92,18 @@ if [[ -n "${CLAUDE_MODEL_OVERRIDE:-}" ]]; then
   MODEL_FLAGS=(--model "$CLAUDE_MODEL_OVERRIDE")
 fi
 
+# goal-based stop hook：与 cecelia-run.sh 相同机制
+# CECELIA_GOAL_SETTINGS 由 harness-initiative.graph.js 注入（JSON --settings 内容）
+# 写入临时文件后以 --settings <file> 传给 claude，让 Stop hook 问 Haiku"目标完成了吗"
+GOAL_FLAGS=()
+_GOAL_TMP=""
+if [[ -n "${CECELIA_GOAL_SETTINGS:-}" ]]; then
+  _GOAL_TMP=$(mktemp /tmp/cecelia-goal-settings-XXXXXX.json)
+  printf '%s' "$CECELIA_GOAL_SETTINGS" > "$_GOAL_TMP"
+  GOAL_FLAGS=(--settings "$_GOAL_TMP")
+  echo "[entrypoint] goal-based stop hook enabled (settings: $_GOAL_TMP)" >&2
+fi
+
 # 7. 启动 claude headless
 # 优先从 /tmp/cecelia-prompts/${CECELIA_TASK_ID}.prompt 读 prompt 并走 stdin
 # —— 长 prompt（GAN Round N Reviewer 含完整合同历史）不会撞 OS argv 限制
@@ -107,10 +119,10 @@ STDOUT_FILE="/tmp/cecelia-prompts/${CECELIA_TASK_ID:-UNSET}.stdout"
 
 run_claude() {
   if [[ -f "$PROMPT_FILE" ]]; then
-    claude -p --dangerously-skip-permissions --output-format json "${MODEL_FLAGS[@]}" < "$PROMPT_FILE" 2>&1 | tee "$STDOUT_FILE"
+    claude -p --dangerously-skip-permissions --output-format json "${MODEL_FLAGS[@]}" "${GOAL_FLAGS[@]}" < "$PROMPT_FILE" 2>&1 | tee "$STDOUT_FILE"
     return ${PIPESTATUS[0]}
   else
-    claude -p --dangerously-skip-permissions --output-format json "${MODEL_FLAGS[@]}" "$@" 2>&1 | tee "$STDOUT_FILE"
+    claude -p --dangerously-skip-permissions --output-format json "${MODEL_FLAGS[@]}" "${GOAL_FLAGS[@]}" "$@" 2>&1 | tee "$STDOUT_FILE"
     return ${PIPESTATUS[0]}
   fi
 }
@@ -118,9 +130,9 @@ run_claude() {
 # 非 harness 任务（如手动 docker run、self-drive 普通容器）走老 exec 路径
 if [[ -z "${CECELIA_TASK_ID:-}" || -z "${HARNESS_NODE:-}" ]]; then
   if [[ -f "$PROMPT_FILE" ]]; then
-    exec claude -p --dangerously-skip-permissions --output-format json "${MODEL_FLAGS[@]}" < "$PROMPT_FILE"
+    exec claude -p --dangerously-skip-permissions --output-format json "${MODEL_FLAGS[@]}" "${GOAL_FLAGS[@]}" < "$PROMPT_FILE"
   else
-    exec claude -p --dangerously-skip-permissions --output-format json "${MODEL_FLAGS[@]}" "$@"
+    exec claude -p --dangerously-skip-permissions --output-format json "${MODEL_FLAGS[@]}" "${GOAL_FLAGS[@]}" "$@"
   fi
 fi
 
