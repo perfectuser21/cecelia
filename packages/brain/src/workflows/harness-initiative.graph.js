@@ -1179,6 +1179,12 @@ export async function _waitForSubGraphCompletion(compiled, config, timeoutMs, op
 export async function runSubTaskNode(state, opts = {}) {
   const subTask = state.sub_task;
   if (!subTask) return {};
+  const _runDbPool = opts.pool || pool;
+  await emitLangGraphStep(_runDbPool, state.initiativeId, {
+    node: 'generator',
+    sub_task_id: subTask.id,
+    task_index: state.task_loop_index ?? 0,
+  });
   const fixCount = state.task_loop_fix_count ?? 0;
   const feedback = state.evaluate_feedback;
   const taskForGraph = {
