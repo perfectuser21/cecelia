@@ -1,51 +1,29 @@
-contract_branch: cp-harness-propose-r3-92950980
-workstream_index: 5
-sprint_dir: sprints/cecelia-pipeline-viz-v2
+contract_branch: cp-harness-propose-r3-a11b8abb
+workstream_index: 2
+sprint_dir: sprints/harness-self-heal
 
 ---
 skeleton: false
-journey_type: user_facing
+journey_type: autonomous
 ---
-# Contract DoD — Workstream 5: E2E 截图链路验证
+# Contract DoD — Workstream 2: harness-container-monitor.js + tick-runner.js 注册
 
-**范围**: `sprints/cecelia-pipeline-viz-v2/tests/ws5/e2e-screenshot-chain.test.ts`（新建，约 80 行）— 验证 harness-screenshots 目录创建 + /detail API 端到端可访问 + 截图目录结构
-**大小**: S（约 80 行，1 文件）
-**依赖**: Workstream 4 完成后
-
----
-
-## Risks
-
-### R5a: 假绿 — 环境操作（mkdir/touch）当作 BEHAVIOR 断言
-**影响**: WS5 的验证若只用 mkdir/touch/health check，在 WS5 代码实现前就能通过，产生假绿
-**缓解**: BEHAVIOR 1 验证测试文件存在且含关键断言（文件不存在时 accessSync 报 ENOENT → 真红 ✓）；BEHAVIOR 3 验证文件引用 /api/brain/harness/initiative 路径（WS5 未实现时文件不存在 → 真红 ✓）
-
-### R5b: /detail 端点访问被认为 500 为 PASS
-**影响**: 验证 /detail 可访问性时若将 500 误认为 PASS，实则端点异常
-**缓解**: BEHAVIOR 4 显式检查 code != 500（500 = 端点报错，200/404 = 端点正常响应）
-
----
+**范围**: 新建 `packages/brain/src/harness-container-monitor.js`（容器健康检查 + dispatch + 幂等 + Bark + cecelia_events）；`tick-runner.js` 注册 30s 节拍（MINIMAL_MODE 守护）
+**大小**: M（~170 行净增，2 文件）
+**依赖**: Workstream 1
 
 ## ARTIFACT 条目
 
-- [x] [ARTIFACT] `sprints/cecelia-pipeline-viz-v2/tests/ws5/e2e-screenshot-chain.test.ts` 文件存在
-  Test: node -e "require('fs').accessSync('sprints/cecelia-pipeline-viz-v2/tests/ws5/e2e-screenshot-chain.test.ts');console.log('OK')"
+- [ ] [ARTIFACT] `packages/brain/src/harness-container-monitor.js` 存在，导出 `checkHarnessContainers` 和 `createInterventionTask`
+- [ ] [ARTIFACT] `checkHarnessContainers` 函数签名接受 `opts: { pool, dockerUnavailable?: boolean }` 参数对象
+- [ ] [ARTIFACT] `packages/brain/src/tick-runner.js` 包含 `harness-container-monitor` import 调用
 
-- [x] [ARTIFACT] 测试文件含 `harness-screenshots` 关键词（测试逻辑验证截图目录）
-  Test: node -e "const c=require('fs').readFileSync('sprints/cecelia-pipeline-viz-v2/tests/ws5/e2e-screenshot-chain.test.ts','utf8');if(!c.includes('harness-screenshots'))process.exit(1);console.log('OK')"
+## BEHAVIOR 条目
 
----
-
-## BEHAVIOR 条目（内嵌 manual:bash 命令）
-
-- [x] [BEHAVIOR] 测试文件存在且含 harness-screenshots 断言（WS5 未实现时文件不存在 → accessSync ENOENT → exit 1 → 真红）
-  Test: manual:bash -c 'node -e "const c=require(\"fs\").readFileSync(\"sprints/cecelia-pipeline-viz-v2/tests/ws5/e2e-screenshot-chain.test.ts\",\"utf8\");if(!c.includes(\"harness-screenshots\")){process.exit(1);}console.log(\"OK\");"'
-
-- [x] [BEHAVIOR] 测试文件含 `describe` 块和 `it(` 测试用例（验证文件是有效 vitest test）
-  Test: manual:bash -c 'node -e "const c=require(\"fs\").readFileSync(\"sprints/cecelia-pipeline-viz-v2/tests/ws5/e2e-screenshot-chain.test.ts\",\"utf8\");if(!c.includes(\"describe(\")&&!c.includes(\"it(\")){process.exit(1);}console.log(\"OK\");"'
-
-- [x] [BEHAVIOR] 测试文件引用 /api/brain/harness/initiative 路径（验证覆盖 /detail 端点，WS5 未实现时文件不存在 → 真红）
-  Test: manual:bash -c 'node -e "const c=require(\"fs\").readFileSync(\"sprints/cecelia-pipeline-viz-v2/tests/ws5/e2e-screenshot-chain.test.ts\",\"utf8\");if(!c.includes(\"/api/brain/harness/initiative\")){process.exit(1);}console.log(\"OK\");"'
-
-- [x] [BEHAVIOR] /detail 端点返回非 500（Brain 运行时验证端点健康 — 200 or 404 均为正常）
-  Test: node -e "require('http').request({host:'localhost',port:5221,path:'/api/brain/harness/initiative/00000000-0000-0000-0000-000000000099/detail'},r=>{if(r.statusCode===500){process.exit(1);}process.exit(0);}).on('error',()=>process.exit(1)).end()"
+- [ ] [BEHAVIOR] checkHarnessContainers 函数可调用且不抛异常（docker 不可用时 warn 不 throw）
+- [ ] [BEHAVIOR] createInterventionTask 向 DB tasks 表写入 harness_intervention 记录（带时间窗口防造假）
+- [ ] [BEHAVIOR] 幂等保护：同 initiative 重复调用 createInterventionTask 返回 skipped:true
+- [ ] [BEHAVIOR] monitor 在 harness-container-monitor.js 中集成 cecelia_events 写入（intervention_result）
+- [ ] [BEHAVIOR] tick-runner.js MINIMAL_MODE 守护 + 30s 间隔配置
+- [ ] [BEHAVIOR] Bark→飞书→cecelia_events 三级降级告警链
+- [ ] [BEHAVIOR] error path — Bark + 飞书均失败/未配置时降级写 cecelia_events
