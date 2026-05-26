@@ -554,7 +554,7 @@ jobs:
         image: pgvector/pgvector:pg15
         env:
           POSTGRES_USER: cecelia
-          POSTGRES_PASSWORD: cecelia_test
+          POSTGRES_PASSWORD: ${{ secrets.CI_DB_PASSWORD }}
           POSTGRES_DB: cecelia_test
         ports:
           - 5432:5432
@@ -576,16 +576,16 @@ jobs:
           DB_PORT: '5432'
           DB_NAME: cecelia_test
           DB_USER: cecelia
-          DB_PASSWORD: cecelia_test
+          DB_PASSWORD: ${{ secrets.CI_DB_PASSWORD }}
         run: cd packages/brain && node src/migrate.js
       - name: Integration Tests
         env:
-          DATABASE_URL: postgresql://cecelia:cecelia_test@localhost:5432/cecelia_test
+          DATABASE_URL: postgresql://cecelia:${{ secrets.CI_DB_PASSWORD }}@localhost:5432/cecelia_test
           DB_HOST: localhost
           DB_PORT: '5432'
           DB_NAME: cecelia_test
           DB_USER: cecelia
-          DB_PASSWORD: cecelia_test
+          DB_PASSWORD: ${{ secrets.CI_DB_PASSWORD }}
           NODE_ENV: test
         run: cd packages/brain && npx vitest run src/__tests__/integration/ --reporter=verbose
 
@@ -615,7 +615,7 @@ jobs:
         image: pgvector/pgvector:pg15
         env:
           POSTGRES_USER: cecelia
-          POSTGRES_PASSWORD: cecelia_test
+          POSTGRES_PASSWORD: ${{ secrets.CI_DB_PASSWORD }}
           POSTGRES_DB: cecelia_test
         ports:
           - 5432:5432
@@ -648,7 +648,7 @@ jobs:
         image: pgvector/pgvector:pg15
         env:
           POSTGRES_USER: cecelia
-          POSTGRES_PASSWORD: cecelia_test
+          POSTGRES_PASSWORD: ${{ secrets.CI_DB_PASSWORD }}
           POSTGRES_DB: cecelia_test
         ports:
           - 5432:5432
@@ -670,16 +670,16 @@ jobs:
           DB_PORT: '5432'
           DB_NAME: cecelia_test
           DB_USER: cecelia
-          DB_PASSWORD: cecelia_test
+          DB_PASSWORD: ${{ secrets.CI_DB_PASSWORD }}
         run: cd packages/brain && node src/migrate.js
       - name: E2E Smoke Tests（golden-path + agent-lifecycle + dev-lifecycle）
         env:
-          DATABASE_URL: postgresql://cecelia:cecelia_test@localhost:5432/cecelia_test
+          DATABASE_URL: postgresql://cecelia:${{ secrets.CI_DB_PASSWORD }}@localhost:5432/cecelia_test
           DB_HOST: localhost
           DB_PORT: '5432'
           DB_NAME: cecelia_test
           DB_USER: cecelia
-          DB_PASSWORD: cecelia_test
+          DB_PASSWORD: ${{ secrets.CI_DB_PASSWORD }}
           NODE_ENV: test
         run: |
           cd packages/brain && npx vitest run \
@@ -703,7 +703,7 @@ jobs:
         image: pgvector/pgvector:pg15
         env:
           POSTGRES_USER: cecelia
-          POSTGRES_PASSWORD: cecelia_test
+          POSTGRES_PASSWORD: ${{ secrets.CI_DB_PASSWORD }}
           POSTGRES_DB: cecelia_test
         ports:
           - 5432:5432
@@ -748,6 +748,10 @@ jobs:
         run: |
           sudo ln -sf "$GITHUB_WORKSPACE" /workspace
           cd playground && npm install
+      - name: Bootstrap .env from .env.example
+        if: steps.detect.outputs.has_dynamic == 'true'
+        run: |
+          [ ! -f packages/brain/.env ] && cp packages/brain/.env.example packages/brain/.env || true
       - name: Run Migrations
         if: steps.detect.outputs.has_dynamic == 'true'
         env:
@@ -755,7 +759,7 @@ jobs:
           DB_PORT: '5432'
           DB_NAME: cecelia_test
           DB_USER: cecelia
-          DB_PASSWORD: cecelia_test
+          DB_PASSWORD: ${{ secrets.CI_DB_PASSWORD }}
         run: cd packages/brain && node src/migrate.js
       - name: Start Brain server
         if: steps.detect.outputs.has_dynamic == 'true'
@@ -764,7 +768,7 @@ jobs:
           DB_PORT: '5432'
           DB_NAME: cecelia_test
           DB_USER: cecelia
-          DB_PASSWORD: cecelia_test
+          DB_PASSWORD: ${{ secrets.CI_DB_PASSWORD }}
           NODE_ENV: test
         run: |
           cd packages/brain
@@ -788,8 +792,8 @@ jobs:
           DB_PORT: '5432'
           DB_NAME: cecelia_test
           DB_USER: cecelia
-          DB_PASSWORD: cecelia_test
-          DB: postgresql://cecelia:cecelia_test@localhost:5432/cecelia_test
+          DB_PASSWORD: ${{ secrets.CI_DB_PASSWORD }}
+          DB: postgresql://cecelia:${{ secrets.CI_DB_PASSWORD }}@localhost:5432/cecelia_test
         run: |
           TASK_CARD="${{ steps.detect.outputs.task_card }}"
           FAILED=0
@@ -840,7 +844,7 @@ jobs:
         image: pgvector/pgvector:pg15
         env:
           POSTGRES_USER: cecelia
-          POSTGRES_PASSWORD: cecelia_test
+          POSTGRES_PASSWORD: ${{ secrets.CI_DB_PASSWORD }}
           POSTGRES_DB: cecelia_test
         ports:
           - 5432:5432
@@ -877,7 +881,7 @@ jobs:
           DB_PORT: '5432'
           DB_NAME: cecelia_test
           DB_USER: cecelia
-          DB_PASSWORD: cecelia_test
+          DB_PASSWORD: ${{ secrets.CI_DB_PASSWORD }}
           NODE_ENV: test
         run: |
           node apps/api/dist/dashboard/server.js > /tmp/api.log 2>&1 &
@@ -942,7 +946,7 @@ jobs:
         image: pgvector/pgvector:pg15
         env:
           POSTGRES_USER: cecelia
-          POSTGRES_PASSWORD: cecelia_test
+          POSTGRES_PASSWORD: ${{ secrets.CI_DB_PASSWORD }}
           POSTGRES_DB: cecelia_test
         ports:
           - 5432:5432
@@ -963,7 +967,7 @@ jobs:
           DB_PORT: '5432'
           DB_NAME: cecelia_test
           DB_USER: cecelia
-          DB_PASSWORD: cecelia_test
+          DB_PASSWORD: ${{ secrets.CI_DB_PASSWORD }}
         run: |
           cd packages/brain
           npm ci
@@ -980,7 +984,7 @@ jobs:
             -e DB_PORT=5432 \
             -e DB_NAME=cecelia_test \
             -e DB_USER=cecelia \
-            -e DB_PASSWORD=cecelia_test \
+            -e DB_PASSWORD=${{ secrets.CI_DB_PASSWORD }} \
             -e BRAIN_PORT=5221 \
             -e NODE_ENV=test \
             -e CECELIA_TICK_ENABLED=false \
@@ -1000,6 +1004,12 @@ jobs:
       - name: Run all packages/brain/scripts/smoke/*.sh
         env:
           BRAIN_URL: http://localhost:5221
+          DATABASE_URL: postgresql://cecelia:cecelia_test@localhost:5432/cecelia_test
+          DB_HOST: localhost
+          DB_PORT: '5432'
+          DB_NAME: cecelia_test
+          DB_USER: cecelia
+          DB_PASSWORD: cecelia_test
         run: |
           SMOKE_DIR=packages/brain/scripts/smoke
           if [ ! -d "$SMOKE_DIR" ]; then

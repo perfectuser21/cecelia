@@ -29,6 +29,7 @@ import { execFile as execFileCb } from 'node:child_process';
 import { promisify } from 'node:util';
 import pool from '../db.js';
 import { spawn } from '../spawn/index.js';
+import { executeOnHost } from '../spawn/host-executor.js';
 import { reconnectOrSpawn, makeSessionRecord } from '../harness-session-bridge.js';
 import { parseDockerOutput, loadSkillContent, readBrainResult } from '../harness-shared.js';
 import { parseTaskPlan, upsertTaskPlan } from '../harness-dag.js';
@@ -45,6 +46,28 @@ const execFile = execFileDefault;
 // 保持测试 vi.mock('../../harness-gan-graph.js') 路径兼容。
 // Phase C7 清 shim 前不改。
 import { runGanContractGraph } from '../harness-gan-graph.js';
+
+/** 生成 goal-based Stop hook settings JSON（与 executor.js buildGoalSettings 相同格式） */
+function buildHarnessGoalSettings(goalCondition) {
+  if (!goalCondition) return null;
+  return JSON.stringify({
+    hooks: {
+      Stop: [{
+        hooks: [{
+          type: 'prompt',
+          prompt: `Has the following goal been achieved based on the conversation? Goal: ${goalCondition}\n\nAnswer YES only if you can confirm from the conversation that the goal is met. Answer NO otherwise.`,
+          model: 'claude-haiku-4-5-20251001',
+        }],
+      }],
+    },
+  });
+}
+
+const HARNESS_PHASE_GOALS = {
+  planner:  'The task-plan.json file has been written to the sprint directory and all workstreams are defined',
+  evaluate: 'The evaluation is complete and .brain-result.json has been written with verdict=PASS or FAIL',
+  generator: 'The workstream implementation PR has been created and pushed to GitHub',
+};
 
 const DEFAULT_TIMEOUT_SEC = 21600; // 6h，对齐 initiative_contracts.timeout_sec 默认
 const DEFAULT_BUDGET_USD = 10;
@@ -530,6 +553,19 @@ import { LLM_RETRY, DB_RETRY, NO_RETRY } from './retry-policies.js';
 // 注：上方 imports 已含 spawn / parseDockerOutput / loadSkillContent / parseTaskPlan /
 // upsertTaskPlan / ensureHarnessWorktree / resolveGitHubToken / runGanContractGraph
 
+async function emitLangGraphStep(dbPool, taskId, payload) {
+  if (!taskId) return;
+  try {
+    await dbPool.query(
+      `INSERT INTO cecelia_events (event_type, source, task_id, payload)
+       VALUES ('langgraph_step', 'harness-initiative', $1::uuid, $2::jsonb)`,
+      [taskId, JSON.stringify(payload)]
+    );
+  } catch (err) {
+    console.warn('[harness-initiative] emitLangGraphStep failed:', err.message);
+  }
+}
+
 export const InitiativeState = Annotation.Root({
   task:           Annotation({ reducer: (_o, n) => n, default: () => null }),
   initiativeId:   Annotation({ reducer: (_o, n) => n, default: () => null }),
@@ -598,6 +634,9 @@ ${state.task?.payload?.prep_prd_body || '（未提供，Planner 从 sprint-prd.m
         HARNESS_INITIATIVE_ID: state.initiativeId,
         CECELIA_JOURNEY_ID: state.task?.payload?.journey_id || '',
         GITHUB_TOKEN: state.githubToken,
+        ...(buildHarnessGoalSettings(HARNESS_PHASE_GOALS.planner)
+          ? { CECELIA_GOAL_SETTINGS: buildHarnessGoalSettings(HARNESS_PHASE_GOALS.planner) }
+          : {}),
       },
     };
 
@@ -713,6 +752,8 @@ export async function parsePrdNode(state) {
 }
 export async function runGanLoopNode(state, opts = {}) {
   if (state.ganResult) return { ganResult: state.ganResult };
+  const dbPool = opts.pool || pool;
+  await emitLangGraphStep(dbPool, state.initiativeId, { node: 'proposer', status: 'started' });
   try {
     const executor = opts.executor || spawn;
     const sprintDir = state.sprintDir || state.task?.payload?.sprint_dir || 'sprints';
@@ -733,6 +774,11 @@ export async function runGanLoopNode(state, opts = {}) {
       budgetCapUsd: budgetUsd,
       checkpointer,
       baseRepo: state.task?.payload?.base_repo || undefined,
+    });
+    await emitLangGraphStep(dbPool, state.initiativeId, {
+      node: 'reviewer',
+      review_round: ganResult.rounds || 1,
+      review_verdict: ganResult.verdict || null,
     });
     return { ganResult };
   } catch (err) {
@@ -1018,7 +1064,11 @@ export function fanoutSubTasksNode(state) {
 /**
  * fanoutPassthroughNode: 真正的 graph node — 占位，让 conditional edge 有源头。
  */
-export async function fanoutPassthroughNode(_state) { return {}; }
+export async function fanoutPassthroughNode(state, opts = {}) {
+  const dbPool = opts.pool || pool;
+  await emitLangGraphStep(dbPool, state.initiativeId, { node: 'generator', status: 'started' });
+  return {};
+}
 
 // Layer 3: sub-graph 现在用 interrupt()，必须传 checkpointer。否则 invoke() 抛
 // "No checkpointer set"。这里用 PG checkpointer（生产）；测试可以注 opts.compiledTaskGraph。
@@ -1155,6 +1205,12 @@ export async function _waitForSubGraphCompletion(compiled, config, timeoutMs, op
 export async function runSubTaskNode(state, opts = {}) {
   const subTask = state.sub_task;
   if (!subTask) return {};
+  const _runDbPool = opts.pool || pool;
+  await emitLangGraphStep(_runDbPool, state.initiativeId, {
+    node: 'generator',
+    sub_task_id: subTask.id,
+    task_index: state.task_loop_index ?? 0,
+  });
   const fixCount = state.task_loop_fix_count ?? 0;
   const feedback = state.evaluate_feedback;
   const taskForGraph = {
@@ -1248,6 +1304,8 @@ function _collectCoveredTasks(scenarios) {
 }
 
 export async function finalE2eNode(state, opts = {}) {
+  const _dbPool = opts.pool || pool;
+  await emitLangGraphStep(_dbPool, state.initiativeId, { node: 'evaluator', status: 'started' });
   // join 已 FAIL 短路：不跑 E2E
   if (state.final_e2e_verdict === 'FAIL') {
     return { final_e2e_verdict: 'FAIL' };
@@ -1313,6 +1371,13 @@ export async function reportNode(state, opts = {}) {
   // 重入会重复 UPDATE，虽语义等幂但增加 DB 负载且 completed_at 会刷新）。
   if (state.report_path) return { report_path: state.report_path };
   const dbPool = opts.pool || pool;
+  await emitLangGraphStep(dbPool, state.initiativeId, {
+    node: 'report',
+    evaluator_verdict: state.final_e2e_verdict || null,
+    workstreams: (state.sub_tasks || []).map(s => s.id),
+    pr_urls: (state.sub_tasks || []).filter(s => s.pr_url).map(s => s.pr_url),
+    ws_verdicts: (state.sub_tasks || []).map(s => s.status),
+  });
 
   // Compute step_timing from task_events graph_node_update events (same logic as /detail endpoint)
   let step_timing = [];
@@ -1534,7 +1599,10 @@ export async function finalEvaluateDispatchNode(state, opts = {}) {
   if (state.final_e2e_verdict === 'PASS' || state.final_e2e_verdict === 'PASS_WITH_OVERRIDE') {
     return { final_e2e_verdict: state.final_e2e_verdict };
   }
+  const _evalDbPool = opts.pool || pool;
+  await emitLangGraphStep(_evalDbPool, state.initiativeId, { node: 'evaluator', status: 'started' });
   const executor = opts.executor || spawn;
+  const hostExecutor = opts.hostExecutor || executeOnHost;
   const execFn = opts.execFile || execFile;
   const sprintDir = state.task?.payload?.sprint_dir || 'sprints';
   const journeyType = state.taskPlan?.journey_type || 'autonomous';
@@ -1543,6 +1611,10 @@ export async function finalEvaluateDispatchNode(state, opts = {}) {
     || 'local_api';
   const _baseRepo = (state.task?.payload?.base_repo || '').toLowerCase();
   const githubRepo = _baseRepo.includes('zenithjoy') ? 'perfectuser21/zenithjoy-workspace' : 'perfectuser21/cecelia';
+  // ZenithJoy windows_cloud 真实 workflow 文件名（非 evaluator SKILL 默认的 e2e-windows.yml）
+  const windowsCloudWorkflow = _baseRepo.includes('zenithjoy') ? 'agent-e2e-video.yml' : 'e2e-windows.yml';
+  // mac_web 用 host executor；其他环境用 Docker spawn
+  const actualExecutor = targetEnv === 'mac_web' ? hostExecutor : executor;
 
   // Cross-repo sprints: evaluator 需要在 sub-task worktree（外部仓库克隆）里运行，
   // 才能通过 ARTIFACT 检查（implementation 文件在外部 repo，不在 Cecelia）。
@@ -1620,7 +1692,7 @@ GITHUB_REPO=${githubRepo}`;
 
   let result;
   try {
-    result = await executor({
+    result = await actualExecutor({
       task: { ...state.task, task_type: 'harness_evaluate' },
       prompt,
       worktreePath: evalWorktreePath,
@@ -1635,6 +1707,14 @@ GITHUB_REPO=${githubRepo}`;
         GITHUB_TOKEN: state.githubToken,
         PR_URL: firstSubTaskPr,
         PR_BRANCH: prBranchEnv,
+        // mac_web host executor: 告知 SKILL 把 .brain-result.json 写到 worktree（而非 /workspace）
+        ...(targetEnv === 'mac_web' ? { WORKSPACE_PATH: evalWorktreePath } : {}),
+        // windows_cloud: 注入实际 workflow 文件名（ZenithJoy 用 agent-e2e-video.yml）
+        WINDOWS_CLOUD_WORKFLOW: windowsCloudWorkflow,
+        // goal-based stop hook：evaluator 完成写 .brain-result.json 后才能停
+        ...(buildHarnessGoalSettings(HARNESS_PHASE_GOALS.evaluate)
+          ? { CECELIA_GOAL_SETTINGS: buildHarnessGoalSettings(HARNESS_PHASE_GOALS.evaluate) }
+          : {}),
       },
     });
   } catch (err) {
