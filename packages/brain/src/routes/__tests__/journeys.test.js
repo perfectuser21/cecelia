@@ -107,3 +107,124 @@ describe('POST /api/brain/journey_features', () => {
     expect(res.body.notion_synced_at).toBeNull();
   });
 });
+
+describe('GET /api/brain/journeys (list)', () => {
+  beforeEach(() => { mockQuery.mockReset(); });
+
+  it('returns 200 with array of journeys', async () => {
+    mockQuery.mockResolvedValueOnce({ rows: [{ id: 'abc', name: 'Test Journey' }] });
+
+    const { default: router } = await import('../journeys.js');
+    const express = await import('express');
+    const app = express.default();
+    app.use(express.default.json());
+    app.use('/api/brain', router);
+
+    const request = await import('supertest');
+    const res = await request.default(app).get('/api/brain/journeys');
+    expect(res.status).toBe(200);
+    expect(Array.isArray(res.body)).toBe(true);
+  });
+});
+
+describe('GET /api/brain/journey_steps', () => {
+  beforeEach(() => { mockQuery.mockReset(); });
+
+  it('returns 200 with array', async () => {
+    mockQuery.mockResolvedValueOnce({ rows: [] });
+
+    const { default: router } = await import('../journeys.js');
+    const express = await import('express');
+    const app = express.default();
+    app.use(express.default.json());
+    app.use('/api/brain', router);
+
+    const request = await import('supertest');
+    const res = await request.default(app).get('/api/brain/journey_steps');
+    expect(res.status).toBe(200);
+    expect(Array.isArray(res.body)).toBe(true);
+  });
+});
+
+describe('POST /api/brain/journey_steps', () => {
+  beforeEach(() => { mockQuery.mockReset(); });
+
+  it('creates a step and returns 200 (upsert endpoint)', async () => {
+    mockQuery.mockResolvedValueOnce({ rows: [{ id: 'xyz', name: 'Step 1', journey_id: 'j1', step_number: 1 }] });
+
+    const { default: router } = await import('../journeys.js');
+    const express = await import('express');
+    const app = express.default();
+    app.use(express.default.json());
+    app.use('/api/brain', router);
+
+    const request = await import('supertest');
+    const res = await request.default(app)
+      .post('/api/brain/journey_steps')
+      .send({ journey_id: 'j1', name: 'Step 1', step_number: 1 });
+    expect(res.status).toBe(200);
+  });
+
+  it('returns 400 when required fields missing', async () => {
+    const { default: router } = await import('../journeys.js');
+    const express = await import('express');
+    const app = express.default();
+    app.use(express.default.json());
+    app.use('/api/brain', router);
+
+    const request = await import('supertest');
+    const res = await request.default(app).post('/api/brain/journey_steps').send({ name: 'Step 1' });
+    expect(res.status).toBe(400);
+  });
+});
+
+describe('GET /api/brain/journey_step_links', () => {
+  beforeEach(() => { mockQuery.mockReset(); });
+
+  it('returns 200 with array', async () => {
+    mockQuery.mockResolvedValueOnce({ rows: [] });
+
+    const { default: router } = await import('../journeys.js');
+    const express = await import('express');
+    const app = express.default();
+    app.use(express.default.json());
+    app.use('/api/brain', router);
+
+    const request = await import('supertest');
+    const res = await request.default(app).get('/api/brain/journey_step_links');
+    expect(res.status).toBe(200);
+    expect(Array.isArray(res.body)).toBe(true);
+  });
+});
+
+describe('POST /api/brain/journey_step_links', () => {
+  beforeEach(() => { mockQuery.mockReset(); });
+
+  it('creates a link and returns 201', async () => {
+    mockQuery.mockResolvedValueOnce({ rows: [{ id: 'lnk1', journey_id: 'j1', step_id: 's1', step_order: 1 }] });
+
+    const { default: router } = await import('../journeys.js');
+    const express = await import('express');
+    const app = express.default();
+    app.use(express.default.json());
+    app.use('/api/brain', router);
+
+    const request = await import('supertest');
+    const res = await request.default(app)
+      .post('/api/brain/journey_step_links')
+      .send({ journey_id: 'j1', step_id: 's1', step_order: 1 });
+    expect(res.status).toBe(201);
+  });
+
+  it('returns 400 when required fields missing', async () => {
+    const { default: router } = await import('../journeys.js');
+    const express = await import('express');
+    const app = express.default();
+    app.use(express.default.json());
+    app.use('/api/brain', router);
+
+    const request = await import('supertest');
+    const res = await request.default(app).post('/api/brain/journey_step_links').send({ journey_id: 'j1' });
+    expect(res.status).toBe(400);
+  });
+});
