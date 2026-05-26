@@ -107,7 +107,8 @@ for ((i = 1; i < COMMIT_COUNT; i++)); do
   fi
 
   # 检测本 commit 有无实现代码
-  IMPL_TOUCHED=$(echo "$FILES" | grep -E '^(packages|apps)/.+\.(ts|tsx|js|jsx|cjs|mjs|py|sh)$' || true)
+  # 注意：sprints/*.sh 也算实现（harness 任务可交付 sprint 脚本而非 packages/ 代码）
+  IMPL_TOUCHED=$(echo "$FILES" | grep -E '^(packages|apps|sprints)/.+\.(ts|tsx|js|jsx|cjs|mjs|py|sh)$' || true)
   if [ -n "$IMPL_TOUCHED" ]; then
     IMPL_FOUND=1
   fi
@@ -117,7 +118,7 @@ done
 
 # ── Check 4: commit 2+ 必须有一个 commit 含实现 ────────────────────────
 if [ $IMPL_FOUND -eq 0 ] && [ $COMMIT_COUNT -gt 1 ]; then
-  echo -e "${RED}❌ commit 2+ 未找到任何实现代码改动（packages/ 或 apps/）${RESET}"
+  echo -e "${RED}❌ commit 2+ 未找到任何实现代码改动（packages/ 或 apps/ 或 sprints/*.sh）${RESET}"
   VIOLATIONS=$((VIOLATIONS + 1))
 fi
 

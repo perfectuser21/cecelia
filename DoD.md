@@ -1,21 +1,41 @@
-# DoD: fix(harness) — worktree cleanup after merge + periodic stale cleanup
+contract_branch: cp-05270002-ws-27612727-ws1
+workstream_index: 1
+sprint_dir: sprints/dev-visibility-smoke
 
-## Branch
-cp-0526172922-harness-worktree-cleanup
+---
+skeleton: false
+journey_type: dev_pipeline
+---
+# Contract DoD — Workstream 1: smoke-verify.sh 冒烟脚本
 
-## Changes
+**范围**: 创建 `sprints/dev-visibility-smoke/smoke-verify.sh`，端到端验证 buildGeneratorPrompt PRD 注入行为 + sprint-prd.md 存在性
+**大小**: S（< 70 行）
+**依赖**: 无
 
-- [x] [BEHAVIOR] mergePrNode calls cleanupHarnessWorktree after successful PR merge
-  Test: tests:packages/brain/src/workflows/__tests__/harness-task.graph.test.js
+## ARTIFACT 条目
 
-- [x] [BEHAVIOR] mergePrNode skips cleanup when worktreePath is null
-  Test: tests:packages/brain/src/workflows/__tests__/harness-task.graph.test.js
+- [x] [ARTIFACT] `sprints/dev-visibility-smoke/smoke-verify.sh` 文件存在
+  Test: node -e "require('fs').accessSync('sprints/dev-visibility-smoke/smoke-verify.sh')" && echo OK
 
-- [x] [ARTIFACT] cleanupStaleHarnessWorktrees exported from harness-worktree.js
-  Test: manual:node -e "const c=require('fs').readFileSync('packages/brain/src/harness-worktree.js','utf8');if(!c.includes('export async function cleanupStaleHarnessWorktrees'))process.exit(1);console.log('ok')"
+## BEHAVIOR 条目（内嵌可执行 manual: 命令）
 
-- [x] [BEHAVIOR] tick-runner calls cleanupStaleHarnessWorktrees every 20 minutes
-  Test: manual:node -e "const c=require('fs').readFileSync('packages/brain/src/tick-runner.js','utf8');if(!c.includes('cleanupStaleHarnessWorktrees'))process.exit(1);console.log('ok')"
+- [x] [BEHAVIOR] smoke-verify.sh 内容含 `## Sprint PRD` 关键词检查逻辑（非空实现）
+  Test: manual:bash -c 'node -e "const c=require(\"fs\").readFileSync(\"sprints/dev-visibility-smoke/smoke-verify.sh\",\"utf8\");if(!c.includes(\"Sprint PRD\"))process.exit(1);console.log(\"OK\")"'
+  期望: OK
 
-- [x] [ARTIFACT] SUBGRAPH_POLL_INTERVAL_MS default is 30000 (30s)
-  Test: manual:node -e "const c=require('fs').readFileSync('packages/brain/src/workflows/harness-initiative.graph.js','utf8');if(!c.includes(\"'30000'\"))process.exit(1);console.log('ok')"
+- [x] [BEHAVIOR] smoke-verify.sh 内容含 sprint-prd.md 存在性验证（-s 或 existsSync 检查）
+  Test: manual:bash -c 'node -e "const c=require(\"fs\").readFileSync(\"sprints/dev-visibility-smoke/smoke-verify.sh\",\"utf8\");if(!c.includes(\"sprint-prd.md\"))process.exit(1);console.log(\"OK\")"'
+  期望: OK
+
+- [x] [BEHAVIOR] bash smoke-verify.sh 执行退出码为 0（所有冒烟检查通过）
+  Test: manual:bash -c 'bash sprints/dev-visibility-smoke/smoke-verify.sh && echo OK || { echo FAIL; exit 1; }'
+  期望: OK
+
+- [x] [BEHAVIOR] smoke-verify.sh 内含 harness-utils.js prdContent 注入验证（两项关键词均须存在）
+  Test: manual:bash -c 'node -e "const c=require(\"fs\").readFileSync(\"sprints/dev-visibility-smoke/smoke-verify.sh\",\"utf8\");if(!c.includes(\"prdContent\"))process.exit(1);if(!c.includes(\"harness-utils\"))process.exit(1);console.log(\"OK\")"'
+  期望: OK
+
+- [x] [BEHAVIOR] Brain tasks 表有本次 task_id 记录且 status = completed 或 in_progress（GET /api/brain/tasks/$TASK_ID + jq-e 精确匹配）
+  Test: manual:bash -c 'node -e "const{execSync}=require(\"child_process\");try{execSync(\"curl -sf localhost:5221/api/brain/health\",{stdio:\"ignore\"})}catch(e){process.exit(0)};var id=process.env.TASK_ID;if(!id)process.exit(0);try{var r=execSync(\"curl -sf localhost:5221/api/brain/tasks/\"+id).toString();var s=JSON.parse(r).status;if(s!==\"completed\"&&s!==\"in_progress\")process.exit(1)}catch(e){process.exit(1)}"'
+  期望: OK（Brain 在线且本次 task_id status=completed 或 in_progress）或 SKIP（Brain 不在线时冒烟不强制）
+  注意：Brain 在线但 status=pending/failed/error → exit 1（不可用 SKIP 掩盖）
