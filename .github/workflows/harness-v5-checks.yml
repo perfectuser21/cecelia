@@ -118,6 +118,10 @@ jobs:
       - name: Install dependencies (root workspaces)
         if: steps.check-tests.outputs.has_tests == 'true'
         run: npm ci
+      - name: Bootstrap .env from .env.example
+        if: steps.check-tests.outputs.has_tests == 'true'
+        run: |
+          [ ! -f packages/brain/.env ] && cp packages/brain/.env.example packages/brain/.env || true
       - name: Run Brain migrations
         if: steps.check-tests.outputs.has_tests == 'true'
         env:

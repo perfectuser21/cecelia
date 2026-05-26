@@ -1,7 +1,3 @@
-contract_branch: cp-harness-propose-r3-a11b8abb
-workstream_index: 1
-sprint_dir: sprints/harness-self-heal
-
 ---
 skeleton: false
 journey_type: autonomous
@@ -41,7 +37,7 @@ journey_type: autonomous
   期望: OK（exit 0）
 
 - [x] [BEHAVIOR] error path — VALID_TASK_TYPES 变更不破坏现有路由（regression：dev → us 仍工作）
-  Test: manual:bash -c 'node -e "const s=require(\"fs\").readFileSync(\"packages/brain/src/task-router.js\",\"utf8\");if(!s.match(/'\''dev'\''\s*:\s*'\''us'\''/)){console.error(\"FAIL: dev→us 路由被破坏\");process.exit(1);}console.log(\"OK\")"'
+  Test: manual:bash -c 'node -e "const s=require(\"fs\").readFileSync(\"packages/brain/src/task-router.js\",\"utf8\");if(!s.match(/'\'dev'\''\s*:\s*'\''us'\''/)){console.error(\"FAIL: dev→us 路由被破坏\");process.exit(1);}console.log(\"OK\")"'
   期望: OK（exit 0）
 
 - [x] [BEHAVIOR] .env 包含 FEISHU_WEBHOOK= 行（飞书中间层降级链可配置）
