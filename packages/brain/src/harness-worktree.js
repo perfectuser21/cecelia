@@ -230,3 +230,45 @@ export async function cleanupHarnessWorktree(wtPath, opts = {}) {
     await rmFn(wtPath);
   } catch { /* idempotent */ }
 }
+
+/**
+ * Scan .claude/worktrees/harness-v2/ and remove directories older than staleDays.
+ * These are full git clones (not git worktrees), so deletion is direct rm -rf.
+ *
+ * @param {object} [opts]
+ * @param {number} [opts.staleDays=7]   Age threshold in days
+ * @param {string} [opts.baseRepo]      Override DEFAULT_BASE_REPO (for testing)
+ * @returns {Promise<{cleaned: number, errors: number}>}
+ */
+export async function cleanupStaleHarnessWorktrees(opts = {}) {
+  const staleDays = opts.staleDays ?? 7;
+  const staleMs = staleDays * 24 * 60 * 60 * 1000;
+  const baseRepo = opts.baseRepo || DEFAULT_BASE_REPO;
+  const wtBase = path.join(baseRepo, '.claude', 'worktrees', 'harness-v2');
+
+  let cleaned = 0;
+  let errors = 0;
+
+  try {
+    const { readdir } = await import('node:fs/promises');
+    const entries = await readdir(wtBase, { withFileTypes: true });
+    const now = Date.now();
+    for (const entry of entries) {
+      if (!entry.isDirectory()) continue;
+      const fullPath = path.join(wtBase, entry.name);
+      try {
+        const s = await stat(fullPath);
+        if (now - s.mtimeMs > staleMs) {
+          await rm(fullPath, { recursive: true, force: true });
+          cleaned++;
+        }
+      } catch {
+        errors++;
+      }
+    }
+  } catch {
+    // wtBase does not exist or not readable — nothing to clean
+  }
+
+  return { cleaned, errors };
+}

@@ -1107,7 +1107,7 @@ export function _resetTaskGraphCacheForTests() {
  * 重新 poll）。
  */
 const SUBGRAPH_WAIT_MS = parseInt(process.env.CECELIA_SUBGRAPH_WAIT_MS || `${90 * 60 * 1000}`, 10);
-const SUBGRAPH_POLL_INTERVAL_MS = parseInt(process.env.CECELIA_SUBGRAPH_POLL_MS || '5000', 10);
+const SUBGRAPH_POLL_INTERVAL_MS = parseInt(process.env.CECELIA_SUBGRAPH_POLL_MS || '30000', 10);
 
 // 默认每 12 次 poll（12 × 5s = 60s）做一次容器 liveness check
 const LIVENESS_CHECK_EVERY_N = parseInt(process.env.CECELIA_LIVENESS_CHECK_N || '12', 10);

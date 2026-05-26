@@ -38,7 +38,7 @@ import crypto from 'node:crypto';
 import { execFile as execFileCb } from 'node:child_process';
 import { promisify } from 'node:util';
 // Note: legacy `spawn` import removed (Layer 3 uses spawnDockerDetached for fire-and-forget docker run -d)
-import { ensureHarnessWorktree, harnessSubTaskBranchName } from '../harness-worktree.js';
+import { ensureHarnessWorktree, harnessSubTaskBranchName, cleanupHarnessWorktree } from '../harness-worktree.js';
 import { resolveGitHubToken } from '../harness-credentials.js';
 // Note: legacy `writeDockerCallback` import removed (Layer 3 uses callback router POST → Command(resume))
 import { spawnDockerDetached } from '../spawn/detached.js';
@@ -425,6 +425,9 @@ export async function mergePrNode(state, opts = {}) {
     );
     const tail = (stdout || '').trim().slice(0, 200);
     console.log(`[merge_pr] gh pr merge ok pr=${prUrl}: ${tail}`);
+    if (state.worktreePath) {
+      await cleanupHarnessWorktree(state.worktreePath);
+    }
     return {
       status: 'merged',
       ci_status: 'merged',

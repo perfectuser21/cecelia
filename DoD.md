@@ -1,15 +1,21 @@
-# DoD: fix(ci) — auto-merge 扩展到所有 cp-* PR
+# DoD: fix(harness) — worktree cleanup after merge + periodic stale cleanup
 
 ## Branch
-cp-0526203448-ci-auto-merge-all-cp-prs
+cp-0526172922-harness-worktree-cleanup
 
 ## Changes
 
-- [x] [BEHAVIOR] auto-merge job 对 cp-* 分支 PR CI 绿即触发（不再限 harness label）
-  Test: manual:node -e "const c=require('fs').readFileSync('.github/workflows/ci.yml','utf8');if(!c.includes(\"grep -qE '^cp-'\"))process.exit(1);console.log('ok')"
+- [x] [BEHAVIOR] mergePrNode calls cleanupHarnessWorktree after successful PR merge
+  Test: tests:packages/brain/src/workflows/__tests__/harness-task.graph.test.js
 
-- [x] [BEHAVIOR] 非 cp-* 分支 PR 不触发 auto-merge
-  Test: manual:node -e "const c=require('fs').readFileSync('.github/workflows/ci.yml','utf8');if(!c.includes('Not a cp-* branch, skipping auto-merge'))process.exit(1);console.log('ok')"
+- [x] [BEHAVIOR] mergePrNode skips cleanup when worktreePath is null
+  Test: tests:packages/brain/src/workflows/__tests__/harness-task.graph.test.js
 
-- [x] [ARTIFACT] auto-merge job 注释和 step name 已更新为"所有 cp-* 分支"
-  Test: manual:node -e "const c=require('fs').readFileSync('.github/workflows/ci.yml','utf8');if(!c.includes('所有 cp-* 分支 PR，CI 通过后自动合并'))process.exit(1);console.log('ok')"
+- [x] [ARTIFACT] cleanupStaleHarnessWorktrees exported from harness-worktree.js
+  Test: manual:node -e "const c=require('fs').readFileSync('packages/brain/src/harness-worktree.js','utf8');if(!c.includes('export async function cleanupStaleHarnessWorktrees'))process.exit(1);console.log('ok')"
+
+- [x] [BEHAVIOR] tick-runner calls cleanupStaleHarnessWorktrees every 20 minutes
+  Test: manual:node -e "const c=require('fs').readFileSync('packages/brain/src/tick-runner.js','utf8');if(!c.includes('cleanupStaleHarnessWorktrees'))process.exit(1);console.log('ok')"
+
+- [x] [ARTIFACT] SUBGRAPH_POLL_INTERVAL_MS default is 30000 (30s)
+  Test: manual:node -e "const c=require('fs').readFileSync('packages/brain/src/workflows/harness-initiative.graph.js','utf8');if(!c.includes(\"'30000'\"))process.exit(1);console.log('ok')"
