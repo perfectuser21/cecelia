@@ -57,6 +57,28 @@ router.post('/journeys', async (req, res) => {
   }
 });
 
+// GET /api/brain/journeys
+router.get('/journeys', async (req, res) => {
+  try {
+    const limit = Math.min(parseInt(req.query.limit) || 50, 200);
+    const offset = parseInt(req.query.offset) || 0;
+    const params = [];
+    const clauses = [];
+    if (req.query.area_id) { params.push(req.query.area_id); clauses.push(`area_id=$${params.length}`); }
+    if (req.query.maturity) { params.push(req.query.maturity); clauses.push(`maturity=$${params.length}`); }
+    const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
+    params.push(limit, offset);
+    const { rows } = await pool.query(
+      `SELECT * FROM journeys ${where} ORDER BY created_at DESC LIMIT $${params.length - 1} OFFSET $${params.length}`,
+      params
+    );
+    res.json(rows);
+  } catch (err) {
+    console.error('[journeys] GET /journeys error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // GET /api/brain/journeys/:id
 router.get('/journeys/:id', async (req, res) => {
   try {
@@ -198,6 +220,90 @@ router.post('/issues', async (req, res) => {
     res.status(201).json(rows[0]);
   } catch (err) {
     console.error('[journeys] POST /issues error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/brain/journey_steps
+router.get('/journey_steps', async (req, res) => {
+  try {
+    const limit = Math.min(parseInt(req.query.limit) || 100, 500);
+    const params = [];
+    const clauses = [];
+    if (req.query.journey_id) { params.push(req.query.journey_id); clauses.push(`journey_id=$${params.length}`); }
+    const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
+    params.push(limit);
+    const { rows } = await pool.query(
+      `SELECT * FROM journey_steps ${where} ORDER BY journey_id, step_number LIMIT $${params.length}`,
+      params
+    );
+    res.json(rows);
+  } catch (err) {
+    console.error('[journeys] GET /journey_steps error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/brain/journey_steps
+router.post('/journey_steps', async (req, res) => {
+  try {
+    const { journey_id, name, step_number, description, status } = req.body;
+    if (!journey_id || !name || step_number === undefined) {
+      return res.status(400).json({ error: 'journey_id, name, step_number are required' });
+    }
+    const { rows } = await pool.query(
+      `INSERT INTO journey_steps (journey_id, name, step_number, description, status, notion_synced_at)
+       VALUES ($1,$2,$3,$4,$5,NULL)
+       ON CONFLICT (journey_id, step_number) DO UPDATE SET
+         name=EXCLUDED.name, description=EXCLUDED.description, updated_at=NOW()
+       RETURNING *`,
+      [journey_id, name, step_number, description || null, status || 'planned']
+    );
+    res.status(200).json(rows[0]);
+  } catch (err) {
+    console.error('[journeys] POST /journey_steps error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/brain/journey_step_links
+router.get('/journey_step_links', async (req, res) => {
+  try {
+    const limit = Math.min(parseInt(req.query.limit) || 100, 500);
+    const params = [];
+    const clauses = [];
+    if (req.query.journey_id) { params.push(req.query.journey_id); clauses.push(`journey_id=$${params.length}`); }
+    const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
+    params.push(limit);
+    const { rows } = await pool.query(
+      `SELECT * FROM journey_step_links ${where} ORDER BY journey_id, step_order LIMIT $${params.length}`,
+      params
+    );
+    res.json(rows);
+  } catch (err) {
+    console.error('[journeys] GET /journey_step_links error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/brain/journey_step_links
+router.post('/journey_step_links', async (req, res) => {
+  try {
+    const { journey_id, step_id, step_order, status } = req.body;
+    if (!journey_id || !step_id || step_order === undefined) {
+      return res.status(400).json({ error: 'journey_id, step_id, step_order are required' });
+    }
+    const { rows } = await pool.query(
+      `INSERT INTO journey_step_links (journey_id, step_id, step_order, status, notion_synced_at)
+       VALUES ($1,$2,$3,$4,NULL)
+       ON CONFLICT (journey_id, step_id) DO UPDATE SET
+         step_order=EXCLUDED.step_order, status=EXCLUDED.status
+       RETURNING *`,
+      [journey_id, step_id, step_order, status || 'planned']
+    );
+    res.status(201).json(rows[0]);
+  } catch (err) {
+    console.error('[journeys] POST /journey_step_links error:', err.message);
     res.status(500).json({ error: err.message });
   }
 });
