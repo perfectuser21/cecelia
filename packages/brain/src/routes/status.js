@@ -418,6 +418,47 @@ export function summarizeLangGraphEvents(events) {
   };
 }
 
+// 注：harness_planner stage 已退役（PR retire-harness-planner），LangGraph planner 节点
+// 不再映射到独立 stage（PRD 在 contract_propose 阶段内联生成）。
+const NODE_TO_STAGE = {
+  proposer: 'harness_contract_propose',
+  reviewer: 'harness_contract_review',
+  generator: 'harness_generate',
+  evaluator: 'harness_ci_watch',
+  report: 'harness_report',
+};
+
+function computePipelineStages(lg, events, verdict, legacyStageMap) {
+  if (lg) {
+    const seenNodes = new Set(
+      (events || []).map(e => (e && e.payload) ? e.payload.node : null).filter(Boolean)
+    );
+    return HARNESS_STAGE_ORDER.map(type => {
+      const nodeName = Object.keys(NODE_TO_STAGE).find(k => NODE_TO_STAGE[k] === type);
+      const label = HARNESS_STAGE_LABELS[type];
+      let status = 'not_started';
+      if (nodeName && seenNodes.has(nodeName)) {
+        if (verdict === 'passed') {
+          status = 'completed';
+        } else if (verdict === 'failed') {
+          status = lg.current_node === nodeName ? 'failed' : 'completed';
+        } else if (lg.current_node === nodeName) {
+          status = 'in_progress';
+        } else {
+          status = 'completed';
+        }
+      }
+      return { task_type: type, label, status };
+    });
+  }
+  const stageMap = legacyStageMap || {};
+  return HARNESS_STAGE_ORDER.map(type => stageMap[type] || {
+    task_type: type,
+    label: HARNESS_STAGE_LABELS[type],
+    status: 'not_started',
+  });
+}
+
 /**
  * 根据 planner task + langgraph 聚合 构造单条 pipeline 记录。
  * 公开给单元测试使用。
@@ -439,47 +480,7 @@ export function buildPipelineRecord(task, events, legacyStageMap) {
   else if (['in_progress', 'running'].includes(task.status)) verdict = 'in_progress';
   else if (task.status === 'queued') verdict = 'pending';
 
-  // 注：harness_planner stage 已退役（PR retire-harness-planner），LangGraph planner 节点
-  // 不再映射到独立 stage（PRD 在 contract_propose 阶段内联生成）。
-  const nodeToStage = {
-    proposer: 'harness_contract_propose',
-    reviewer: 'harness_contract_review',
-    generator: 'harness_generate',
-    evaluator: 'harness_ci_watch',
-    report: 'harness_report',
-  };
-
-  let stages;
-  if (lg) {
-    const seenNodes = new Set(
-      (events || []).map(e => (e && e.payload) ? e.payload.node : null).filter(Boolean)
-    );
-    stages = HARNESS_STAGE_ORDER.map(type => {
-      const nodeName = Object.keys(nodeToStage).find(k => nodeToStage[k] === type);
-      const label = HARNESS_STAGE_LABELS[type];
-      let status = 'not_started';
-      if (nodeName && seenNodes.has(nodeName)) {
-        if (verdict === 'passed') {
-          status = 'completed';
-        } else if (verdict === 'failed') {
-          status = lg.current_node === nodeName ? 'failed' : 'completed';
-        } else if (lg.current_node === nodeName) {
-          status = 'in_progress';
-        } else {
-          status = 'completed';
-        }
-      }
-      return { task_type: type, label, status };
-    });
-  } else {
-    const stageMap = legacyStageMap || {};
-    stages = HARNESS_STAGE_ORDER.map(type => stageMap[type] || {
-      task_type: type,
-      label: HARNESS_STAGE_LABELS[type],
-      status: 'not_started',
-    });
-  }
-
+  const stages = computePipelineStages(lg, events, verdict, legacyStageMap);
   const currentStep = lg?.current_node_label
     || stages.find(s => s.status === 'in_progress' || s.status === 'queued')?.label
     || null;
