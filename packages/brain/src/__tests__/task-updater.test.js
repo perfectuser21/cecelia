@@ -90,6 +90,9 @@ describe('task-updater', () => {
       expect(result.success).toBe(true);
       const sql = mockPool.query.mock.calls[0][0];
       expect(sql).toContain('completed_at = NOW()');
+      // 终态必须清除 claimed_by / claimed_at，防止僵尸锁
+      expect(sql).toContain('claimed_by = NULL');
+      expect(sql).toContain('claimed_at = NULL');
       expect(mockPublishTaskCompleted).toHaveBeenCalledOnce();
     });
 
@@ -100,6 +103,10 @@ describe('task-updater', () => {
       const result = await updateTaskStatus('task-001', 'failed');
 
       expect(result.success).toBe(true);
+      // 终态必须清除 claimed_by / claimed_at，防止僵尸锁
+      const sql = mockPool.query.mock.calls[0][0];
+      expect(sql).toContain('claimed_by = NULL');
+      expect(sql).toContain('claimed_at = NULL');
       expect(mockPublishTaskFailed).toHaveBeenCalledOnce();
     });
 
