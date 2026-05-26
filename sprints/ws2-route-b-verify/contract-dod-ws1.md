@@ -1,7 +1,3 @@
-contract_branch: cp-05270009-ws-9e2bb3da-ws1
-workstream_index: 1
-sprint_dir: sprints/ws2-route-b-verify
-
 ---
 skeleton: false
 journey_type: dev_pipeline
@@ -17,10 +13,10 @@ journey_type: dev_pipeline
 ## ARTIFACT 条目
 
 - [ ] [ARTIFACT] (B1) `sprints/ws2-route-b-verify/verify-route-b.sh` 文件存在
-  Test: `node -e "require('fs').accessSync('sprints/ws2-route-b-verify/verify-route-b.sh')"`
+  Test: node -e "require('fs').accessSync('sprints/ws2-route-b-verify/verify-route-b.sh')"
 
 - [ ] [ARTIFACT] 脚本含 `#!/bin/bash` shebang 和 `set -e` 安全标志
-  Test: `node -e "const c=require('fs').readFileSync('sprints/ws2-route-b-verify/verify-route-b.sh','utf8');if(!c.includes('#!/bin/bash'))process.exit(1)"`
+  Test: node -e "const c=require('fs').readFileSync('sprints/ws2-route-b-verify/verify-route-b.sh','utf8');if(!c.includes('#!/bin/bash'))process.exit(1)"
 
 ---
 
