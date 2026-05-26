@@ -6,10 +6,11 @@ description: |
   evaluator 在 CI 绿之后、PR merge 之前真启服务 + 跑 contract 的 manual:bash 命令验真行为。
   PASS → 允许 merge；FAIL → 不 merge，带反馈打回 Generator 在 PR 分支 fix loop（main 不变动）。
   模式 A 跑 contract-dod-ws*.md BEHAVIOR；模式 B（所有 ws merge 后）跑 final E2E Golden Path。
-version: 1.9.0
+version: 1.10.0
 created: 2026-05-06
-updated: 2026-05-23
+updated: 2026-05-26
 changelog:
+  - 1.10.0: mac_web host executor 兼容 — 新增 WORKSPACE="${WORKSPACE_PATH:-/workspace}" 变量；所有 .brain-result.json 写入路径改为 "$WORKSPACE/.brain-result.json"（Docker /workspace，宿主 worktreePath）；mac_web Step B-2 修复：由 node /tmp/e2e-verify.js（文件不存在）改为优先 bash /tmp/e2e-verify.sh 并 fallback node .js；更新注入变量表格添加 WORKSPACE_PATH 和 WINDOWS_CLOUD_WORKFLOW
   - 1.9.0: Step B-2.5 截图处理（mac_web 专属）— 复制 screenshots/*.png 到 ~/claude-output/harness-screenshots/$SPRINT/；Claude Read 每张 PNG 视觉自验（对照 BEHAVIOR:E2E 期望描述）；生成公网 URL（38.23.47.81:9998）；PASS brain-result.json 增加 screenshots 字段
   - 1.8.0: 删除 windows_local case — 所有 Windows 测试统一走 windows_cloud（GitHub Actions），无需维护 xian-pc/xian-rog 本地 Windows 机器；TARGET_ENV 枚举同步缩减
   - 1.7.0: windows_native 拆分为 windows_cloud + windows_local（已被 1.8.0 合并）
@@ -73,6 +74,8 @@ generator 写代码 + push PR
 | `WORKSTREAM_N` | 当前 workstream 编号（如 `1`），仅模式 A 用 |
 | `JOURNEY_TYPE` | `user_facing` / `autonomous` / `dev_pipeline` / `agent_remote` |
 | `TARGET_ENV` | `mac_web` / `windows_cloud` / `linux_server` / `local_api` / `playground`（来自 PRD `target_environment` 字段）|
+| `WORKSPACE_PATH` | 结果文件写入目录（mac_web host 执行时为 worktreePath，Docker 默认不注入，脚本 fallback `/workspace`）|
+| `WINDOWS_CLOUD_WORKFLOW` | GHA workflow 文件名（harness-initiative.graph.js 根据 base_repo 注入：zenithjoy → `agent-e2e-video.yml`，否则 `e2e-windows.yml`）|
 | `DB` | PostgreSQL 连接串，如 `postgresql://localhost/cecelia` |
 
 **注**：DoD 文件中的 `Test:` 命令若引用 `$TARGET_TASK_ID`，该 ID 来自 DoD 文件内部（合同写入时硬编码或由 Generator 写入），Evaluator 直接执行 DoD 中的命令原文，不需单独注入。
@@ -173,6 +176,10 @@ W41 fix loop 5 round 评测：如果用 chromium default profile，第 5 round e
 ### Step 0: 确认模式
 
 ```bash
+# WORKSPACE_PATH 由 host-executor 注入（mac_web 直接在宿主运行时为 worktreePath）
+# Docker 路径默认 /workspace，宿主路径由注入变量覆盖
+WORKSPACE="${WORKSPACE_PATH:-/workspace}"
+
 if [[ "$IS_FINAL_E2E" == "true" ]]; then
   echo "模式 B — 最终 E2E"
 else
@@ -189,7 +196,7 @@ fi
 ```bash
 DOD_FILE="${SPRINT_DIR}/contract-dod-ws${WORKSTREAM_N}.md"
 if [[ ! -f "$DOD_FILE" ]]; then
-  cat > /workspace/.brain-result.json << BREOF
+  cat > "$WORKSPACE/.brain-result.json" << BREOF
 {"verdict":"FAIL","task_id":"$TASK_ID","failed_step":"dod_missing","log_excerpt":null}
 BREOF
   exit 0
@@ -199,7 +206,7 @@ cat "$DOD_FILE"
 
 若提取结果中 `[BEHAVIOR]` 条目数量为 0，输出 FAIL：
 ```bash
-cat > /workspace/.brain-result.json << BREOF
+cat > "$WORKSPACE/.brain-result.json" << BREOF
 {"verdict":"FAIL","task_id":"$TASK_ID","failed_step":"no_behavior","log_excerpt":null}
 BREOF
 ```
@@ -256,7 +263,7 @@ fi
 **全部通过时**（所有 `[BEHAVIOR]` exit 0 且结果匹配期望）：
 
 ```bash
-cat > /workspace/.brain-result.json << BREOF
+cat > "$WORKSPACE/.brain-result.json" << BREOF
 {"verdict":"PASS","task_id":"$TASK_ID","failed_step":null,"log_excerpt":null}
 BREOF
 ```
@@ -264,7 +271,7 @@ BREOF
 **有任何失败时**：
 
 ```bash
-cat > /workspace/.brain-result.json << BREOF
+cat > "$WORKSPACE/.brain-result.json" << BREOF
 {"verdict":"FAIL","task_id":"$TASK_ID","failed_step":"<失败的 DoD 条目描述>","log_excerpt":"<实际输出 vs 期望值，具体修复方向>"}
 BREOF
 ```
@@ -284,7 +291,7 @@ BREOF
 ```bash
 CONTRACT="${SPRINT_DIR}/contract-draft.md"
 if [[ ! -f "$CONTRACT" ]]; then
-  cat > /workspace/.brain-result.json << BREOF
+  cat > "$WORKSPACE/.brain-result.json" << BREOF
 {"verdict":"FAIL","task_id":"$TASK_ID","failed_step":"setup","log_excerpt":"合同文件不存在：$CONTRACT"}
 BREOF
   exit 0
@@ -303,7 +310,7 @@ if [[ "$TARGET_ENV" == "windows_cloud" ]]; then
       "$CONTRACT" > /tmp/e2e-verify.ps1
   fi
   if [[ ! -s /tmp/e2e-verify.ps1 ]]; then
-    cat > /workspace/.brain-result.json << BREOF
+    cat > "$WORKSPACE/.brain-result.json" << BREOF
 {"verdict":"FAIL","task_id":"$TASK_ID","failed_step":"setup","log_excerpt":"windows_cloud 合同中未找到 ## E2E 验收 区块或区块内无 ps1/powershell 脚本"}
 BREOF
     exit 0
@@ -318,7 +325,7 @@ else
   awk '/^## E2E 验收/{found=1} found && /^```bash/{in_block=1; next} in_block && /^```/{in_block=0; exit} in_block{print}' \
     "$CONTRACT" > /tmp/e2e-verify.sh
   if [[ ! -s /tmp/e2e-verify.sh ]]; then
-    cat > /workspace/.brain-result.json << BREOF
+    cat > "$WORKSPACE/.brain-result.json" << BREOF
 {"verdict":"FAIL","task_id":"$TASK_ID","failed_step":"setup","log_excerpt":"合同中未找到 ## E2E 验收 区块或区块内无 bash 脚本"}
 BREOF
     exit 0
@@ -345,7 +352,7 @@ if [[ "$IS_PLAYGROUND_SPRINT" == "true" ]]; then
   # playground sprint：Brain API URL = planner_drift（原 B33 逻辑，保留）
   if grep -qE "localhost:5221/api/brain/|/api/brain/(ping|health|tasks|tick|status)" /tmp/e2e-verify.sh; then
     DRIFT_LINE=$(grep -E "localhost:5221/api/brain/|/api/brain/(ping|health|tasks|tick|status)" /tmp/e2e-verify.sh | head -1)
-    cat > /workspace/.brain-result.json << BREOF
+    cat > "$WORKSPACE/.brain-result.json" << BREOF
 {"verdict":"FAIL","task_id":"$TASK_ID","failed_step":"url_validation","log_excerpt":"playground sprint 禁止调用 Brain API：$DRIFT_LINE"}
 BREOF
     exit 0
@@ -354,7 +361,7 @@ else
   # 真实功能 sprint：autonomous journey_type 必须包含真实 Brain API URL
   if [[ "$JOURNEY_TYPE" == "autonomous" ]]; then
     if ! grep -qE "localhost:5221/api/brain/|psql.*cecelia" /tmp/e2e-verify.sh; then
-      cat > /workspace/.brain-result.json << BREOF
+      cat > "$WORKSPACE/.brain-result.json" << BREOF
 {"verdict":"FAIL","task_id":"$TASK_ID","failed_step":"url_validation","log_excerpt":"autonomous sprint 的 E2E 脚本未测真实 Brain API (localhost:5221) 或 DB，检测到可能测了 playground 或未知目标，请改为 curl localhost:5221/api/brain/... 验证真实行为"}
 BREOF
       exit 0
@@ -378,7 +385,7 @@ timeout 120 bash /tmp/e2e-verify.sh 2>&1 | tee /tmp/e2e-result.log
 EXIT_CODE=${PIPESTATUS[0]}
 # timeout 退出码 124 表示超时
 if [[ $EXIT_CODE -eq 124 ]]; then
-  cat > /workspace/.brain-result.json << BREOF
+  cat > "$WORKSPACE/.brain-result.json" << BREOF
 {"verdict":"FAIL","task_id":"$TASK_ID","failed_step":"timeout","log_excerpt":"E2E 脚本执行超时（120 秒），请检查被测服务是否正常启动或脚本是否有无限等待"}
 BREOF
   exit 0
@@ -401,8 +408,12 @@ case "$TARGET_ENV" in
 
   mac_web)
     # Playwright 本机浏览器（Cecelia Dashboard，localhost:5174）
-    # e2e 脚本必须是 Node.js + @playwright/test
-    timeout 180 node /tmp/e2e-verify.js 2>&1 | tee /tmp/e2e-result.log
+    # Step B-1 提取的脚本是 /tmp/e2e-verify.sh（bash 块）；若合同为 .js 则 fallback node
+    if [[ -f /tmp/e2e-verify.js ]]; then
+      timeout 180 node /tmp/e2e-verify.js 2>&1 | tee /tmp/e2e-result.log
+    else
+      timeout 180 bash /tmp/e2e-verify.sh 2>&1 | tee /tmp/e2e-result.log
+    fi
     EXIT_CODE=${PIPESTATUS[0]}
     ;;
 
@@ -422,7 +433,7 @@ case "$TARGET_ENV" in
       2>&1 | tee /tmp/e2e-trigger.log
     TRIGGER_EXIT=$?
     if [[ $TRIGGER_EXIT -ne 0 ]]; then
-      cat > /workspace/.brain-result.json << BREOF
+      cat > "$WORKSPACE/.brain-result.json" << BREOF
 {"verdict":"FAIL","task_id":"$TASK_ID","failed_step":"gh_trigger","log_excerpt":"GitHub Actions 触发失败，检查 gh auth 状态和 repo 权限"}
 BREOF
       exit 0
@@ -557,7 +568,7 @@ fi
 **脚本 exit 0（通过）**：
 
 ```bash
-cat > /workspace/.brain-result.json << BREOF
+cat > "$WORKSPACE/.brain-result.json" << BREOF
 {"verdict":"PASS","task_id":"$TASK_ID","failed_step":null,"log_excerpt":null,"screenshots":${SCREENSHOTS_JSON:-[]}}
 BREOF
 ```
@@ -567,7 +578,7 @@ BREOF
 分析 `/tmp/e2e-result.log`，定位哪个步骤失败（对照合同的 Step 1 / Step 2 / Step 3）：
 
 ```bash
-cat > /workspace/.brain-result.json << BREOF
+cat > "$WORKSPACE/.brain-result.json" << BREOF
 {"verdict":"FAIL","task_id":"$TASK_ID","failed_step":"<Step N>","log_excerpt":"<失败行前后 5 行 + 具体失败原因 + 修复方向>"}
 BREOF
 ```
@@ -576,12 +587,12 @@ BREOF
 
 ## 输出规范
 
-**输出协议（v1.5.0+ — 文件协议）**：最终结果写入 `/workspace/.brain-result.json`，Brain 读文件不读 stdout。
+**输出协议（v1.5.0+ — 文件协议）**：最终结果写入 `"$WORKSPACE/.brain-result.json"`（Docker 默认 `/workspace/.brain-result.json`，mac_web host 执行时为 `$WORKSPACE_PATH/.brain-result.json`），Brain 读文件不读 stdout。
 
 示例（PASS）：
 
 ```bash
-cat > /workspace/.brain-result.json << BREOF
+cat > "$WORKSPACE/.brain-result.json" << BREOF
 {"verdict":"PASS","task_id":"$TASK_ID","failed_step":null,"log_excerpt":null}
 BREOF
 ```
@@ -589,14 +600,14 @@ BREOF
 示例（FAIL）：
 
 ```bash
-cat > /workspace/.brain-result.json << BREOF
+cat > "$WORKSPACE/.brain-result.json" << BREOF
 {"verdict":"FAIL","task_id":"$TASK_ID","failed_step":"task-executor.js 未调用 updateTaskStatus，任务完成后状态未从 in_progress 变为 completed","log_excerpt":"got: in_progress, expected: completed"}
 BREOF
 ```
 
 **禁止**：
 - 用 echo 输出 verdict JSON 到 stdout（Brain 不读 stdout）
-- 输出摘要/说明文字代替写文件（必须真正写入 /workspace/.brain-result.json）
+- 输出摘要/说明文字代替写文件（必须真正写入 "$WORKSPACE/.brain-result.json"）
 
 ---
 
