@@ -6,10 +6,10 @@ cp-0526172922-harness-worktree-cleanup
 ## Changes
 
 - [x] [BEHAVIOR] mergePrNode calls cleanupHarnessWorktree after successful PR merge
-  Test: packages/brain/src/workflows/__tests__/harness-task.graph.test.js
+  Test: tests:packages/brain/src/workflows/__tests__/harness-task.graph.test.js
 
 - [x] [BEHAVIOR] mergePrNode skips cleanup when worktreePath is null
-  Test: packages/brain/src/workflows/__tests__/harness-task.graph.test.js
+  Test: tests:packages/brain/src/workflows/__tests__/harness-task.graph.test.js
 
 - [x] [ARTIFACT] cleanupStaleHarnessWorktrees exported from harness-worktree.js
   Test: manual:node -e "const c=require('fs').readFileSync('packages/brain/src/harness-worktree.js','utf8');if(!c.includes('export async function cleanupStaleHarnessWorktrees'))process.exit(1);console.log('ok')"
