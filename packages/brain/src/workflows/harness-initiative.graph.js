@@ -1550,6 +1550,8 @@ export async function finalEvaluateDispatchNode(state, opts = {}) {
   if (state.final_e2e_verdict === 'PASS' || state.final_e2e_verdict === 'PASS_WITH_OVERRIDE') {
     return { final_e2e_verdict: state.final_e2e_verdict };
   }
+  const _evalDbPool = opts.pool || pool;
+  await emitLangGraphStep(_evalDbPool, state.initiativeId, { node: 'evaluator', status: 'started' });
   const executor = opts.executor || spawn;
   const execFn = opts.execFile || execFile;
   const sprintDir = state.task?.payload?.sprint_dir || 'sprints';

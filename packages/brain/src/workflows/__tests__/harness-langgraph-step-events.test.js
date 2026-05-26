@@ -81,6 +81,15 @@ describe('finalE2eNode — langgraph_step events', () => {
   });
 });
 
+describe('finalEvaluateDispatchNode — langgraph_step events (Mode B, production path)', () => {
+  const body = extractFnBody('finalEvaluateDispatchNode', '\nexport function routeAfterFinalEval');
+
+  it('emits evaluator event (Mode B is the production graph node)', () => {
+    expect(body).toMatch(/emitLangGraphStep/);
+    expect(body).toMatch(/evaluator/);
+  });
+});
+
 describe('reportNode — langgraph_step events', () => {
   const body = extractFnBody('reportNode', '\n// ────');
 
