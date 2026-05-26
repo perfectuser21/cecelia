@@ -190,6 +190,8 @@ const ZOMBIE_SWEEP_INTERVAL_MS = parseInt(process.env.CECELIA_ZOMBIE_SWEEP_INTER
 const ORPHAN_PR_WORKER_INTERVAL_MS = parseInt(process.env.CECELIA_ORPHAN_PR_WORKER_INTERVAL_MS || String(30 * 60 * 1000), 10);
 // W3: harness initiative deadline_at watchdog（5min/次默认，env 可覆盖）
 const HARNESS_WATCHDOG_INTERVAL_MS = parseInt(process.env.CECELIA_HARNESS_WATCHDOG_INTERVAL_MS || String(5 * 60 * 1000), 10);
+// harness container health monitor（30s/次默认，MINIMAL_MODE 下仍运行）
+const CONTAINER_MONITOR_INTERVAL_MS = parseInt(process.env.CECELIA_CONTAINER_MONITOR_INTERVAL_MS || String(30 * 1000), 10);
 // GOAL_EVAL_INTERVAL_MS 已收口到 goal-eval-plugin.js（D1.7c-plugin1）— tick-runner.js 不再读
 
 /** Check if a task is stale (in_progress for too long) — 与 tick.js 同名同义 */
@@ -388,6 +390,21 @@ async function executeTick() {
       }
     }).catch(err => {
       console.warn('[tick] harness-watchdog plugin failed (non-fatal):', err.message);
+    });
+  }
+
+  // [感知] Harness Container Monitor：每 30s 检查 harness 容器健康，MINIMAL_MODE 下仍守护
+  const lastContainerMonitor = tickState.lastContainerMonitorTime || 0;
+  if (Date.now() - lastContainerMonitor >= CONTAINER_MONITOR_INTERVAL_MS) {
+    tickState.lastContainerMonitorTime = Date.now();
+    import('./harness-container-monitor.js').then(({ checkHarnessContainers }) =>
+      checkHarnessContainers({ pool })
+    ).then(r => {
+      if (r.anomalies?.length > 0) {
+        tickLog(`[tick] harness-container-monitor: checked=${r.checked} anomalies=${r.anomalies.length}`);
+      }
+    }).catch(err => {
+      console.warn('[tick] harness-container-monitor failed (non-fatal):', err.message);
     });
   }
 

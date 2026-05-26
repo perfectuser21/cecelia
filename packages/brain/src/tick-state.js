@@ -32,6 +32,7 @@ export const tickState = {
   lastOrphanPrWorkerTime: 0,    // Phase 1 orphan PR scan
   lastPausedRequeuTime: 0,      // paused task requeue/archive scan
   lastHarnessWatchdogTime: 0,   // W3 — harness initiative deadline_at watchdog
+  lastContainerMonitorTime: 0,  // harness container health check
 
   // === 5 个 loop / consciousness 控制态 ===
   loopTimer: null,              // setInterval 主循环句柄
@@ -62,6 +63,7 @@ export function resetTickStateForTests() {
   tickState.lastOrphanPrWorkerTime = 0;
   tickState.lastPausedRequeuTime = 0;
   tickState.lastHarnessWatchdogTime = 0;
+  tickState.lastContainerMonitorTime = 0;
   tickState.loopTimer = null;
   tickState.recoveryTimer = null;
   tickState.tickRunning = false;
