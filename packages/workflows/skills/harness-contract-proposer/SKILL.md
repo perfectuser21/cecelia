@@ -383,6 +383,98 @@ exit 0
 
 ---
 
+#### windows_cloud 变体 C：Dashboard / Web App（Vite + Playwright，适用于 ZenithJoy Dashboard 功能 sprint）
+
+> 适用：sprint 目标是验证 Dashboard（React + Vite）新页面/交互，在 GitHub Actions windows-latest 上用 Playwright 真实浏览器验收。
+> 典型场景：super admin 管理页、客户管理、任何 `apps/dashboard/` 下的新 UI 功能。
+
+**⚠️ Windows PS1 强制规则（4 条，违反会导致 CI 失败）**：
+1. `npm run dev` / `npm run preview` 必须用 `Start-Process` + `-WorkingDirectory "$scriptDir\..\.."` 显式指定工作目录
+2. `npx` / `npm` 在 Windows 需要 `.cmd` shim：用 `cmd.exe /c npx.cmd ...` 或 `cmd.exe /c npm.cmd ...`
+3. localhost 端口检测必须用 `Test-NetConnection -ComputerName localhost -Port $VitePort`（避免 IPv6 解析失败）
+4. Vite 端口固定 `$VitePort = 5174`，与 playwright `baseURL` 保持一致；`npm run preview` 用 `--port $VitePort`
+
+**E2E 验收步骤（写入 `sprints/.../e2e-verify.ps1`）**：
+
+```powershell
+# final-e2e 验证脚本 — ZenithJoy Dashboard Playwright（windows-latest）
+param(
+  [string]$BaseUrl = "http://localhost:5174",
+  [string]$SuperAdminEmail = $env:E2E_SUPER_ADMIN_EMAIL,
+  [string]$SuperAdminPassword = $env:E2E_SUPER_ADMIN_PASSWORD
+)
+
+Set-StrictMode -Version Latest
+$ErrorActionPreference = "Stop"
+
+$VitePort = 5174
+$scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+$repoRoot = Resolve-Path "$scriptDir\..\.."
+
+# 1. 安装依赖（必须指定 WorkingDirectory）
+Write-Host "▶ Installing dependencies..."
+$installProc = Start-Process -FilePath "cmd.exe" `
+  -ArgumentList "/c npm.cmd ci --prefer-offline" `
+  -WorkingDirectory $repoRoot `
+  -Wait -PassThru -NoNewWindow
+if ($installProc.ExitCode -ne 0) { throw "FAIL: npm ci failed" }
+
+# 2. 安装 Playwright 浏览器
+$playwrightProc = Start-Process -FilePath "cmd.exe" `
+  -ArgumentList "/c npx.cmd playwright install chromium --with-deps" `
+  -WorkingDirectory $repoRoot `
+  -Wait -PassThru -NoNewWindow
+if ($playwrightProc.ExitCode -ne 0) { throw "FAIL: playwright install failed" }
+
+# 3. Build + 启动 Vite preview（preview 比 dev 更快就绪）
+Write-Host "▶ Building dashboard..."
+$buildProc = Start-Process -FilePath "cmd.exe" `
+  -ArgumentList "/c npm.cmd run build" `
+  -WorkingDirectory "$repoRoot\apps\dashboard" `
+  -Wait -PassThru -NoNewWindow
+if ($buildProc.ExitCode -ne 0) { throw "FAIL: build failed" }
+
+Write-Host "▶ Starting Vite preview on port $VitePort..."
+$serverProc = Start-Process -FilePath "cmd.exe" `
+  -ArgumentList "/c npx.cmd vite preview --port $VitePort --host" `
+  -WorkingDirectory "$repoRoot\apps\dashboard" `
+  -PassThru -NoNewWindow
+
+# 4. 等待服务就绪（Test-NetConnection 兼容 IPv6/IPv4）
+$maxWait = 30
+$waited = 0
+do {
+  Start-Sleep -Seconds 1
+  $waited++
+  $conn = Test-NetConnection -ComputerName localhost -Port $VitePort -WarningAction SilentlyContinue
+} while (-not $conn.TcpTestSucceeded -and $waited -lt $maxWait)
+if (-not $conn.TcpTestSucceeded) { throw "FAIL: Vite 未在 ${maxWait}s 内就绪 port=$VitePort" }
+Write-Host "✅ Vite 就绪 port=$VitePort"
+
+# 5. 跑 Playwright E2E（写在 apps/dashboard/e2e/<feature>.spec.ts）
+$e2eProc = Start-Process -FilePath "cmd.exe" `
+  -ArgumentList "/c npx.cmd playwright test e2e\{feature}.spec.ts --reporter=list" `
+  -WorkingDirectory "$repoRoot\apps\dashboard" `
+  -Wait -PassThru -NoNewWindow `
+  -Environment @{
+    BASE_URL = $BaseUrl
+    E2E_EMAIL = $SuperAdminEmail
+    E2E_PASSWORD = $SuperAdminPassword
+  }
+
+Stop-Process -Id $serverProc.Id -Force -ErrorAction SilentlyContinue
+if ($e2eProc.ExitCode -ne 0) { throw "FAIL: Playwright E2E 失败 exit=$($e2eProc.ExitCode)" }
+Write-Host "✅ windows_cloud Dashboard E2E 验证通过"
+exit 0
+```
+
+**PASS 标准**：`e2eProc.ExitCode -eq 0` + Playwright 所有 spec 通过
+**FAIL 标准**：任何 step exit≠0 OR Playwright 失败 OR Vite 30s 内未就绪
+**GHA workflow**：`.github/workflows/e2e-windows.yml`（`workflow_dispatch` + `windows-latest`）
+**secrets 必须**：`E2E_SUPER_ADMIN_EMAIL`、`E2E_SUPER_ADMIN_PASSWORD`（在 sprint PRD 的认证前提条件段中声明）
+
+---
+
 ### target_environment = linux_server（生产 API — SSH 到 hk-vps 执行）
 
 ```bash
