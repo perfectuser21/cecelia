@@ -1,49 +1,46 @@
-contract_branch: cp-harness-propose-r3-a11b8abb
+contract_branch: cp-05262117-ws-8a6b1b4a-ws1
 workstream_index: 1
-sprint_dir: sprints/harness-self-heal
+sprint_dir: sprints/dev-visibility-v3
 
 ---
 skeleton: false
 journey_type: autonomous
 ---
-# Contract DoD — Workstream 1: 路由配置前置注册
+# Contract DoD — Workstream 1: DB migration + notion-push-sync 两函数实现
 
-**范围**: `task-router.js` 新增 harness_intervention 到 VALID_TASK_TYPES + LOCATION_MAP(us)；`packages/brain/.env` 写入 BARK_TOKEN + FEISHU_WEBHOOK=（飞书中间层预留）
-**大小**: S（<18 行净增，2 文件）
+**范围**: `packages/brain/migrations/284_notion_synced_decisions_contracts.sql`（新建）；`packages/brain/src/notion-push-sync.js`（新增 `pushDecisions`、`pushInitiativeContracts`，在 `runNotionPushSync` 中调用）
+**大小**: M（~105 行净增）
 **依赖**: 无
 
 ## ARTIFACT 条目
 
-- [x] [ARTIFACT] `packages/brain/src/task-router.js` 的 VALID_TASK_TYPES 数组包含 `'harness_intervention'`
-  Test: node -e "const s=require('fs').readFileSync('packages/brain/src/task-router.js','utf8');if(!s.includes(\"'harness_intervention'\"))process.exit(1);console.log('OK')"
+- [x] [ARTIFACT] migration 文件存在，含两表 `notion_synced_at` 列
+  Test: node -e "const fs=require('fs'),p=require('path');const dir='packages/brain/migrations';const files=fs.readdirSync(dir).filter(f=>f.endsWith('.sql'));const found=files.some(f=>{const c=fs.readFileSync(p.join(dir,f),'utf8');return c.includes('decisions') && c.includes('notion_synced_at') && c.includes('initiative_contracts');});if(!found)process.exit(1);console.log('OK')"
 
-- [x] [ARTIFACT] `packages/brain/src/task-router.js` 的 LOCATION_MAP 包含 `'harness_intervention': 'us'`
-  Test: node -e "const s=require('fs').readFileSync('packages/brain/src/task-router.js','utf8');if(!s.match(/'harness_intervention':\s*'us'/))process.exit(1);console.log('OK')"
+- [x] [ARTIFACT] `notion-push-sync.js` 含 `pushDecisions` 函数定义
+  Test: node -e "const c=require('fs').readFileSync('packages/brain/src/notion-push-sync.js','utf8');if(!c.includes('async function pushDecisions'))process.exit(1);console.log('OK')"
 
-- [x] [ARTIFACT] `packages/brain/.env` 存在并包含 `BARK_TOKEN=` 行
-  Test: node -e "const s=require('fs').readFileSync('packages/brain/.env','utf8');if(!s.includes('BARK_TOKEN='))process.exit(1);console.log('OK')"
-
-- [x] [ARTIFACT] `packages/brain/.env` 包含 `FEISHU_WEBHOOK=` 行（飞书中间层降级预留）
-  Test: node -e "const s=require('fs').readFileSync('packages/brain/.env','utf8');if(!s.includes('FEISHU_WEBHOOK='))process.exit(1);console.log('OK')"
+- [x] [ARTIFACT] `notion-push-sync.js` 含 `pushInitiativeContracts` 函数定义
+  Test: node -e "const c=require('fs').readFileSync('packages/brain/src/notion-push-sync.js','utf8');if(!c.includes('async function pushInitiativeContracts'))process.exit(1);console.log('OK')"
 
 ## BEHAVIOR 条目
 
-- [x] [BEHAVIOR] VALID_TASK_TYPES 包含 harness_intervention（写入前此项 FAIL）
-  Test: manual:bash -c 'node -e "const s=require(\"fs\").readFileSync(\"packages/brain/src/task-router.js\",\"utf8\");const match=s.match(/VALID_TASK_TYPES\s*=\s*\[[\s\S]*?\]/);if(!match||!match[0].includes(\"harness_intervention\")){console.error(\"FAIL: harness_intervention not in VALID_TASK_TYPES\");process.exit(1);}console.log(\"OK\")"'
-  期望: OK（exit 0）
+- [x] [BEHAVIOR] `pushDecisions` 查询 `notion_synced_at IS NULL` 并在成功后更新 `notion_synced_at`
+  Test: manual:node -e "const c=require('fs').readFileSync('packages/brain/src/notion-push-sync.js','utf8');if(!c.includes('async function pushDecisions')){process.exit(1);}if(!c.includes('notion_synced_at IS NULL')){process.exit(1);}if(!c.includes('notion_synced_at=NOW()')&&!c.includes('notion_synced_at = NOW()')){process.exit(1);}console.log('OK');"
+  期望: OK
 
-- [x] [BEHAVIOR] LOCATION_MAP 明确映射 harness_intervention → 'us'（不靠 DEFAULT_LOCATION 兜底）
-  Test: manual:bash -c 'node -e "const s=require(\"fs\").readFileSync(\"packages/brain/src/task-router.js\",\"utf8\");if(!s.match(/{[^}]*'\''harness_intervention'\''\s*:\s*'\''us'\''/)){console.error(\"FAIL: 缺显式映射\");process.exit(1);}console.log(\"OK\")"'
-  期望: OK（exit 0）
+- [x] [BEHAVIOR] `pushInitiativeContracts` 函数体含 `notion_synced_at IS NULL` 过滤 + `notion_synced_at = NOW()` 更新（对齐 `pushDecisions` 实现强度）
+  Test: manual:node -e "const c=require('fs').readFileSync('packages/brain/src/notion-push-sync.js','utf8');const fnIdx=c.indexOf('async function pushInitiativeContracts');if(fnIdx===-1){process.exit(1);}const afterFn=c.slice(fnIdx);const nextFnIdx=afterFn.indexOf('async function ',10);const fnBody=nextFnIdx>0?afterFn.slice(0,nextFnIdx):afterFn.slice(0,2000);if(!fnBody.includes('notion_synced_at IS NULL')){process.exit(1);}if(!fnBody.includes('notion_synced_at=NOW()')&&!fnBody.includes('notion_synced_at = NOW()')){process.exit(1);}console.log('OK');"
+  期望: OK
 
-- [x] [BEHAVIOR] .env 包含 BARK_TOKEN=...行（非空值）
-  Test: manual:bash -c 'node -e "const s=require(\"fs\").readFileSync(\"packages/brain/.env\",\"utf8\");const m=s.match(/BARK_TOKEN=(\S+)/);if(!m||m[1].length<5){console.error(\"FAIL: BARK_TOKEN 缺失或空\");process.exit(1);}console.log(\"OK\")"'
-  期望: OK（exit 0）
+- [x] [BEHAVIOR] `runNotionPushSync` 函数体调用 `pushDecisions(pool, token)` 和 `pushInitiativeContracts(pool, token)`
+  Test: manual:node -e "const c=require('fs').readFileSync('packages/brain/src/notion-push-sync.js','utf8');const fnStart=c.indexOf('export async function runNotionPushSync');if(fnStart===-1){process.exit(1);}const body=c.slice(fnStart);if(!body.includes('pushDecisions(')){process.exit(1);}if(!body.includes('pushInitiativeContracts(')){process.exit(1);}console.log('OK');"
+  期望: OK
 
-- [x] [BEHAVIOR] error path — VALID_TASK_TYPES 变更不破坏现有路由（regression：dev → us 仍工作）
-  Test: manual:bash -c 'node -e "const s=require(\"fs\").readFileSync(\"packages/brain/src/task-router.js\",\"utf8\");if(!s.match(/'\''dev'\''\s*:\s*'\''us'\''/)){console.error(\"FAIL: dev→us 路由被破坏\");process.exit(1);}console.log(\"OK\")"'
-  期望: OK（exit 0）
+- [x] [BEHAVIOR] migration 文件同时覆盖 `decisions` 和 `initiative_contracts` 两张表（不只覆盖其中一张）
+  Test: manual:node -e "const fs=require('fs'),p=require('path');const dir='packages/brain/migrations';const files=fs.readdirSync(dir).filter(f=>f.endsWith('.sql'));const found=files.some(f=>{const c=fs.readFileSync(p.join(dir,f),'utf8');return c.includes('decisions')&&c.includes('notion_synced_at')&&c.includes('initiative_contracts');});if(!found){process.exit(1);}console.log('OK');"
+  期望: OK
 
-- [x] [BEHAVIOR] .env 包含 FEISHU_WEBHOOK= 行（飞书中间层降级链可配置）
-  Test: manual:bash -c 'node -e "const s=require(\"fs\").readFileSync(\"packages/brain/.env\",\"utf8\");if(!s.includes(\"FEISHU_WEBHOOK=\")){console.error(\"FAIL: FEISHU_WEBHOOK 缺失，飞书中间层无法配置\");process.exit(1);}console.log(\"OK\")"'
-  期望: OK（exit 0）
+- [x] [BEHAVIOR] error path — Brain Notion token 不可用时，`pushDecisions` / `pushInitiativeContracts` 静默跳过（`catch` + `warn` 日志，不 throw），与现有 `pushIssues` 行为一致
+  Test: manual:node -e "const c=require('fs').readFileSync('packages/brain/src/notion-push-sync.js','utf8');const hasWarn=c.includes('console.warn');const hasCatch=c.includes('.catch(')||c.includes('} catch');if(!hasWarn||!hasCatch){process.exit(1);}console.log('OK');"
+  期望: OK

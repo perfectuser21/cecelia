@@ -1,0 +1,80 @@
+{
+  "initiative_id": "pending",
+  "journey_type": "autonomous",
+  "journey_type_reason": "全链路均为 Brain 内部函数（notion-push-sync、harness-utils、harness-initiative.graph.js）+ SKILL 文档改动，无 UI 层，通过 curl localhost:5221 + psql + 文件内容检查验证",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "DB migration + notion-push-sync 新增 pushDecisions / pushInitiativeContracts + runNotionPushSync 调用",
+      "scope": "packages/brain/migrations/ 新建 SQL 为 decisions 和 initiative_contracts 两张表添加 notion_synced_at timestamptz 列；packages/brain/src/notion-push-sync.js 新增 pushDecisions、pushInitiativeContracts 函数，在 runNotionPushSync 内调用",
+      "dod": [
+        "[ARTIFACT] packages/brain/migrations/ 含同时覆盖两表 notion_synced_at 的 SQL 文件",
+        "[BEHAVIOR] notion-push-sync.js 含 async function pushDecisions，含 notion_synced_at IS NULL 过滤 + NOW() 更新",
+        "[BEHAVIOR] notion-push-sync.js 含 async function pushInitiativeContracts，结构一致",
+        "[BEHAVIOR] runNotionPushSync 函数体调用 pushDecisions(pool, token) 和 pushInitiativeContracts(pool, token)",
+        "[BEHAVIOR] error path — token 不可用时静默跳过（catch + warn 日志）"
+      ],
+      "files": [
+        "packages/brain/migrations/284_notion_synced_decisions_contracts.sql",
+        "packages/brain/src/notion-push-sync.js"
+      ],
+      "depends_on": [],
+      "complexity": "M",
+      "estimated_minutes": 40
+    },
+    {
+      "task_id": "ws2",
+      "title": "dev/SKILL.md Route B 加 POST Brain 任务注册步骤",
+      "scope": "packages/workflows/skills/dev/SKILL.md — 在 PrepPRD 确认后新增 Route A/B 说明：Route B（无 --task-id）POST localhost:5221/api/brain/tasks task_type=dev，Brain 离线时 warn 日志不阻断流程；Route A（有 --task-id）保持不变",
+      "dod": [
+        "[ARTIFACT] dev/SKILL.md 含 Route B 段落（出现 Route B 文字）",
+        "[BEHAVIOR] Route B 含 localhost:5221/api/brain/tasks + task_type 字段",
+        "[BEHAVIOR] Route A --task-id 路径引用保持不变",
+        "[BEHAVIOR] Route B 含 Brain 离线降级说明（warn 或不阻断文字）"
+      ],
+      "files": [
+        "packages/workflows/skills/dev/SKILL.md"
+      ],
+      "depends_on": ["ws1"],
+      "complexity": "S",
+      "estimated_minutes": 20
+    },
+    {
+      "task_id": "ws3",
+      "title": "buildGeneratorPrompt 加 prdContent + runSubTaskNode 传递链 + harness-task.graph.js 注解",
+      "scope": "packages/brain/src/harness-utils.js buildGeneratorPrompt 接受 opts.prdContent，非空时拼入 ## Sprint PRD 段，null/空时跳过；packages/brain/src/workflows/harness-initiative.graph.js runSubTaskNode 在 compiled.invoke 时传 prdContent: state.prdContent；packages/brain/src/workflows/harness-task.graph.js TaskState 加 prdContent Annotation，spawnNode 传 prdContent 到 buildGeneratorPrompt",
+      "dod": [
+        "[ARTIFACT] harness-utils.js buildGeneratorPrompt 含 prdContent 参数",
+        "[ARTIFACT] harness-task.graph.js TaskState 含 prdContent Annotation",
+        "[ARTIFACT] harness-initiative.graph.js runSubTaskNode 函数体含 prdContent",
+        "[BEHAVIOR] buildGeneratorPrompt 非空 prdContent 时 prompt 含 Sprint PRD 标识",
+        "[BEHAVIOR] prdContent 为 null 时有条件保护（if/三元/默认值），不注入空段"
+      ],
+      "files": [
+        "packages/brain/src/harness-utils.js",
+        "packages/brain/src/workflows/harness-initiative.graph.js",
+        "packages/brain/src/workflows/harness-task.graph.js"
+      ],
+      "depends_on": ["ws2"],
+      "complexity": "S",
+      "estimated_minutes": 30
+    },
+    {
+      "task_id": "ws4",
+      "title": "harness-generator SKILL.md Step 0.5 注释串行化 + 文件名统一",
+      "scope": "packages/workflows/skills/harness-generator/SKILL.md — Step 0.5 注释由'并行派发'改为'串行派发（每个 ws merge gate 通过后 Brain 才启动下一个）'；移除 contract-draft.md 旧引用，保留 sprint-contract.md",
+      "dod": [
+        "[ARTIFACT] SKILL.md 不含'并行派发'，含'串行派发'",
+        "[ARTIFACT] SKILL.md 不含 contract-draft.md 旧引用",
+        "[BEHAVIOR] Step 0.5 区块含 merge gate 串行说明",
+        "[BEHAVIOR] sprint-contract.md 统一文件名引用存在"
+      ],
+      "files": [
+        "packages/workflows/skills/harness-generator/SKILL.md"
+      ],
+      "depends_on": ["ws3"],
+      "complexity": "S",
+      "estimated_minutes": 20
+    }
+  ]
+}
