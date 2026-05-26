@@ -6,12 +6,12 @@
 
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 let pool;
-let recordLearning, applyStrategyAdjustments, getRecentLearnings, shouldTriggerLearning, createLearningTask, ADJUSTABLE_PARAMS;
+let recordLearning, applyStrategyAdjustments, getRecentLearnings, shouldTriggerLearning, createLearningTask, ADJUSTABLE_PARAMS, upsertLearning;
 
 beforeAll(async () => {
   vi.resetModules();
   pool = (await import('../db.js')).default;
-  ({ recordLearning, applyStrategyAdjustments, getRecentLearnings, shouldTriggerLearning, createLearningTask, ADJUSTABLE_PARAMS } = await import('../learning.js'));
+  ({ recordLearning, applyStrategyAdjustments, getRecentLearnings, shouldTriggerLearning, createLearningTask, ADJUSTABLE_PARAMS, upsertLearning } = await import('../learning.js'));
 });
 
 describe('Learning Loop', () => {
@@ -234,5 +234,20 @@ describe('Learning Loop', () => {
         expect(config.min).toBeLessThan(config.max);
       });
     });
+  });
+});
+
+describe('upsertLearning — task_id 原子绑定', () => {
+  it('upsertLearning 写入 learnings 时必须包含 task_id 列', async () => {
+    const testTaskId = 'test-task-id-atomic-' + Date.now();
+    const title = 'lu-test: upsert-task-id-' + Date.now();
+    const result = await upsertLearning(
+      { title, content: 'test content', task_id: testTaskId },
+      pool
+    );
+    expect(result.upserted).toBe(true);
+
+    const row = await pool.query('SELECT task_id FROM learnings WHERE id = $1', [result.id]);
+    expect(row.rows[0].task_id).toBe(testTaskId);
   });
 });
