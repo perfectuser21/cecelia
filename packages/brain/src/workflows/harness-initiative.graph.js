@@ -530,6 +530,19 @@ import { LLM_RETRY, DB_RETRY, NO_RETRY } from './retry-policies.js';
 // 注：上方 imports 已含 spawn / parseDockerOutput / loadSkillContent / parseTaskPlan /
 // upsertTaskPlan / ensureHarnessWorktree / resolveGitHubToken / runGanContractGraph
 
+async function emitLangGraphStep(dbPool, taskId, payload) {
+  if (!taskId) return;
+  try {
+    await dbPool.query(
+      `INSERT INTO cecelia_events (event_type, source, task_id, payload)
+       VALUES ('langgraph_step', 'harness-initiative', $1::uuid, $2::jsonb)`,
+      [taskId, JSON.stringify(payload)]
+    );
+  } catch (err) {
+    console.warn('[harness-initiative] emitLangGraphStep failed:', err.message);
+  }
+}
+
 export const InitiativeState = Annotation.Root({
   task:           Annotation({ reducer: (_o, n) => n, default: () => null }),
   initiativeId:   Annotation({ reducer: (_o, n) => n, default: () => null }),
@@ -713,6 +726,8 @@ export async function parsePrdNode(state) {
 }
 export async function runGanLoopNode(state, opts = {}) {
   if (state.ganResult) return { ganResult: state.ganResult };
+  const dbPool = opts.pool || pool;
+  await emitLangGraphStep(dbPool, state.initiativeId, { node: 'proposer', status: 'started' });
   try {
     const executor = opts.executor || spawn;
     const sprintDir = state.sprintDir || state.task?.payload?.sprint_dir || 'sprints';
@@ -733,6 +748,11 @@ export async function runGanLoopNode(state, opts = {}) {
       budgetCapUsd: budgetUsd,
       checkpointer,
       baseRepo: state.task?.payload?.base_repo || undefined,
+    });
+    await emitLangGraphStep(dbPool, state.initiativeId, {
+      node: 'reviewer',
+      review_round: ganResult.rounds || 1,
+      review_verdict: ganResult.verdict || null,
     });
     return { ganResult };
   } catch (err) {
@@ -1018,7 +1038,11 @@ export function fanoutSubTasksNode(state) {
 /**
  * fanoutPassthroughNode: 真正的 graph node — 占位，让 conditional edge 有源头。
  */
-export async function fanoutPassthroughNode(_state) { return {}; }
+export async function fanoutPassthroughNode(state, opts = {}) {
+  const dbPool = opts.pool || pool;
+  await emitLangGraphStep(dbPool, state.initiativeId, { node: 'generator', status: 'started' });
+  return {};
+}
 
 // Layer 3: sub-graph 现在用 interrupt()，必须传 checkpointer。否则 invoke() 抛
 // "No checkpointer set"。这里用 PG checkpointer（生产）；测试可以注 opts.compiledTaskGraph。
@@ -1248,6 +1272,8 @@ function _collectCoveredTasks(scenarios) {
 }
 
 export async function finalE2eNode(state, opts = {}) {
+  const _dbPool = opts.pool || pool;
+  await emitLangGraphStep(_dbPool, state.initiativeId, { node: 'evaluator', status: 'started' });
   // join 已 FAIL 短路：不跑 E2E
   if (state.final_e2e_verdict === 'FAIL') {
     return { final_e2e_verdict: 'FAIL' };
@@ -1313,6 +1339,13 @@ export async function reportNode(state, opts = {}) {
   // 重入会重复 UPDATE，虽语义等幂但增加 DB 负载且 completed_at 会刷新）。
   if (state.report_path) return { report_path: state.report_path };
   const dbPool = opts.pool || pool;
+  await emitLangGraphStep(dbPool, state.initiativeId, {
+    node: 'report',
+    evaluator_verdict: state.final_e2e_verdict || null,
+    workstreams: (state.sub_tasks || []).map(s => s.id),
+    pr_urls: (state.sub_tasks || []).filter(s => s.pr_url).map(s => s.pr_url),
+    ws_verdicts: (state.sub_tasks || []).map(s => s.status),
+  });
 
   // Compute step_timing from task_events graph_node_update events (same logic as /detail endpoint)
   let step_timing = [];
