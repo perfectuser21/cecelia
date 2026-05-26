@@ -4,7 +4,7 @@ BRAIN="${BRAIN_API:-http://localhost:5221}"
 
 TASK=$(curl -sf -X POST "$BRAIN/api/brain/tasks" \
   -H "Content-Type: application/json" \
-  -d '{"task_type":"generic","title":"smoke-claimed-by-test","priority":"P3"}')
+  -d '{"task_type":"research","title":"smoke-claimed-by-test","priority":"P2"}')
 ID=$(echo "$TASK" | python3 -c "import json,sys; print(json.load(sys.stdin)['id'])")
 echo "Created task $ID"
 
