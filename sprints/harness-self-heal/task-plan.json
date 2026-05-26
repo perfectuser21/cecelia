@@ -1,0 +1,67 @@
+{
+  "initiative_id": "pending",
+  "journey_type": "autonomous",
+  "journey_type_reason": "主流程由 Brain tick 30s 轮询触发，无用户界面交互，所有验证通过 curl localhost:5221 + psql 完成",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "task-router.js 注册 harness_intervention + .env 写入 BARK_TOKEN + FEISHU_WEBHOOK",
+      "scope": "packages/brain/src/task-router.js VALID_TASK_TYPES + LOCATION_MAP 新增 harness_intervention(us)；packages/brain/.env 新增 BARK_TOKEN 行 + FEISHU_WEBHOOK= 行（飞书中间层预留）",
+      "dod": [
+        "[BEHAVIOR] VALID_TASK_TYPES 包含 'harness_intervention' — node 读文件验",
+        "[BEHAVIOR] LOCATION_MAP 显式包含 'harness_intervention': 'us' — regex 验",
+        "[BEHAVIOR] .env 包含 BARK_TOKEN=<value> — readFileSync 验",
+        "[BEHAVIOR] .env 包含 FEISHU_WEBHOOK= 行（飞书中间层降级可配置）",
+        "[BEHAVIOR] regression: dev→us 未被破坏 — regex 验",
+        "[ARTIFACT] task-router.js 变更已 commit"
+      ],
+      "files": [
+        "packages/brain/src/task-router.js",
+        "packages/brain/.env"
+      ],
+      "depends_on": [],
+      "complexity": "S",
+      "estimated_minutes": 20
+    },
+    {
+      "task_id": "ws2",
+      "title": "新建 harness-container-monitor.js + tick-runner.js 注册",
+      "scope": "packages/brain/src/harness-container-monitor.js（checkHarnessContainers + createInterventionTask + 幂等 + Bark + cecelia_events）；packages/brain/src/tick-runner.js 注册 CONTAINER_MONITOR_INTERVAL_MS 节拍（MINIMAL_MODE 守护）",
+      "dod": [
+        "[BEHAVIOR] checkHarnessContainers 函数导出且可调用 — import 验",
+        "[BEHAVIOR] createInterventionTask 向 DB 写入 harness_intervention task，带时间窗口验证",
+        "[BEHAVIOR] 幂等：已有 in_progress intervention 时返回 skipped:true",
+        "[BEHAVIOR] cecelia_events 写入 event_type=intervention_result — 文件内容验",
+        "[BEHAVIOR] Bark→飞书→cecelia_events 三级降级告警链：monitor 文件含 BARK_TOKEN + FEISHU_WEBHOOK/feishu/lark + cecelia_events 三处实现证据",
+        "[ARTIFACT] harness-container-monitor.js 创建，checkHarnessContainers 签名接受 {pool, dockerUnavailable?: boolean}",
+        "[ARTIFACT] tick-runner.js 包含 harness-container-monitor import"
+      ],
+      "files": [
+        "packages/brain/src/harness-container-monitor.js",
+        "packages/brain/src/tick-runner.js"
+      ],
+      "depends_on": ["ws1"],
+      "complexity": "M",
+      "estimated_minutes": 45
+    },
+    {
+      "task_id": "ws3",
+      "title": "新建 packages/engine/skills/harness-intervention/SKILL.md",
+      "scope": "SKILL.md 描述 Intervention Skill 完整执行步骤：docker logs 读取 → checkpoint → 合同文件 → 三类卡死识别 → 修复操作 → 30s 等待 → Bark→飞书→cecelia_events 三级降级告警",
+      "dod": [
+        "[BEHAVIOR] SKILL.md 存在且包含 'docker logs' — readFileSync 验",
+        "[BEHAVIOR] 包含三类卡死类型（CI 未触发/PR 未推/Brain 状态）",
+        "[BEHAVIOR] 包含 BARK_TOKEN 告警集成描述",
+        "[BEHAVIOR] 包含 30s 等待验证描述",
+        "[BEHAVIOR] 包含 Brain API 5221 不可达降级策略",
+        "[ARTIFACT] SKILL.md 创建"
+      ],
+      "files": [
+        "packages/engine/skills/harness-intervention/SKILL.md"
+      ],
+      "depends_on": ["ws2"],
+      "complexity": "M",
+      "estimated_minutes": 30
+    }
+  ]
+}
