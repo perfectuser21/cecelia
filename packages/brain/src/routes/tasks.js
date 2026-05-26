@@ -423,6 +423,12 @@ router.patch('/tasks/:task_id', async (req, res) => {
       params.push(status);
       setClauses.push(`status_history = status_history || $${paramIdx++}::jsonb`);
       params.push(JSON.stringify([historyEntry]));
+      // Clear claim on terminal states — prevents zombie locks where claimed_by residue
+      // blocks selectNextDispatchableTask (which filters claimed_by IS NULL)
+      if (status === 'failed' || status === 'completed') {
+        setClauses.push('claimed_by = NULL');
+        setClauses.push('claimed_at = NULL');
+      }
     }
 
 

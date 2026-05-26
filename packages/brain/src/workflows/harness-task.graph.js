@@ -65,6 +65,21 @@ export const MAX_FIX_ROUNDS = parseInt(process.env.HARNESS_MAX_FIX_ROUNDS || '20
 export const MAX_POLL_COUNT = 20;          // 90s × 20 = 30 min
 export const POLL_INTERVAL_MS = 90 * 1000;
 
+function buildHarnessGoalSettings(goalCondition) {
+  if (!goalCondition) return null;
+  return JSON.stringify({
+    hooks: {
+      Stop: [{
+        hooks: [{
+          type: 'prompt',
+          prompt: `Has the following goal been achieved? Answer YES if complete, NO if not.\nGoal: ${goalCondition}\n\nCheck the current state of the workspace (files, git status) to determine if the goal is met.`,
+          model: 'claude-haiku-4-5-20251001',
+        }],
+      }],
+    },
+  });
+}
+
 export function normalizeVerdict(raw) {
   const upper = raw ? String(raw).toUpperCase().trim() : '';
   return new Set(['PASS', 'FIXED', 'APPROVED']).has(upper) ? 'PASS' : 'FAIL';
@@ -226,6 +241,9 @@ export async function spawnNode(state, opts = {}) {
             ? String(payload.workstream_count)
             : '',
         PLANNER_BRANCH: payload.planner_branch || '',
+        ...(buildHarnessGoalSettings('The workstream implementation PR has been created and pushed to GitHub')
+          ? { CECELIA_GOAL_SETTINGS: buildHarnessGoalSettings('The workstream implementation PR has been created and pushed to GitHub') }
+          : {}),
       },
     });
   } catch (err) {
@@ -588,6 +606,9 @@ export async function evaluateContractNode(state, opts = {}) {
         // B22: 评估容器内 psql postgresql://localhost/cecelia 无法解析，改用 host.docker.internal
         DB: 'postgresql://host.docker.internal/cecelia',
         WORKSTREAM_INDEX: extractWorkstreamIndex(payload),
+        ...(buildHarnessGoalSettings('The evaluation is complete and .brain-result.json has been written with verdict=PASS or FAIL')
+          ? { CECELIA_GOAL_SETTINGS: buildHarnessGoalSettings('The evaluation is complete and .brain-result.json has been written with verdict=PASS or FAIL') }
+          : {}),
       },
     });
   } catch (err) {

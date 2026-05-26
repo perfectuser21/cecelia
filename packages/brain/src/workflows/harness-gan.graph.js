@@ -40,6 +40,21 @@ const execFile = promisify(execFileCb);
 // 100 = 50 轮 propose+review 预留一倍。
 export const DEFAULT_RECURSION_LIMIT = 100;
 
+function buildHarnessGoalSettings(goalCondition) {
+  if (!goalCondition) return null;
+  return JSON.stringify({
+    hooks: {
+      Stop: [{
+        hooks: [{
+          type: 'prompt',
+          prompt: `Has the following goal been achieved? Answer YES if complete, NO if not.\nGoal: ${goalCondition}\n\nCheck the current state of the workspace (files, git status) to determine if the goal is met.`,
+          model: 'claude-haiku-4-5-20251001',
+        }],
+      }],
+    },
+  });
+}
+
 // 5 个 rubric 维度（reviewer 每轮独立打分；收敛检测 + 阈值判决均依赖此列表）。
 const RUBRIC_DIMENSIONS = [
   'dod_machineability',
@@ -346,6 +361,9 @@ export function createGanContractNodes(executor, ctx) {
         PROPOSE_ROUND: String(nextRound),
         PROPOSE_BRANCH: computedBranch,
         GITHUB_TOKEN: githubToken,
+        ...(buildHarnessGoalSettings('The contract-draft.md has been written and pushed to the propose branch')
+          ? { CECELIA_GOAL_SETTINGS: buildHarnessGoalSettings('The contract-draft.md has been written and pushed to the propose branch') }
+          : {}),
       },
     };
 
@@ -423,6 +441,9 @@ export function createGanContractNodes(executor, ctx) {
         PLANNER_BRANCH: 'main',
         REVIEW_ROUND: String(currentRound),
         GITHUB_TOKEN: githubToken,
+        ...(buildHarnessGoalSettings('The review verdict has been written to .brain-result.json as APPROVED or REVISION')
+          ? { CECELIA_GOAL_SETTINGS: buildHarnessGoalSettings('The review verdict has been written to .brain-result.json as APPROVED or REVISION') }
+          : {}),
       },
     };
 
