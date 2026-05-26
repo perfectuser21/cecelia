@@ -104,11 +104,10 @@ jobs:
           git commit -m "chore(learnings): 月度归档（${TOTAL} 文件 / ${BUCKETS} 月桶）[bot]"
           git push origin "$BRANCH"
 
+          BODY=$(printf "自动触发：archive-learnings workflow。归档 ${TOTAL} 个 30 天前的 learning 到 ${BUCKETS} 个 YYYY-MM.tar.gz。\n\nharness 标签用于跳过 pr-size-check 硬门禁（1500 行），并触发 auto-merge job。")
           PR_URL=$(gh pr create \
             --title "chore(learnings): 月度归档 ${TOTAL} 文件" \
-            --body "自动触发：archive-learnings workflow。归档 ${TOTAL} 个 30 天前的 learning 到 ${BUCKETS} 个 YYYY-MM.tar.gz。
-
-harness 标签用于跳过 pr-size-check 硬门禁（1500 行），并触发 auto-merge job。" \
+            --body "$BODY" \
             --label harness \
             --head "$BRANCH" \
             --base main)

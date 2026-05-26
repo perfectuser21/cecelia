@@ -66,6 +66,7 @@ vi.mock('../orchestrator/pg-checkpointer.js', () => ({
 vi.mock('../harness-shared.js', () => ({
   parseDockerOutput: vi.fn((x) => x),
   loadSkillContent: vi.fn(() => 'SKILL_CONTENT'),
+  readBrainResult: vi.fn().mockResolvedValue({ verdict: 'PASS' }),
 }));
 
 vi.mock('../spawn/index.js', () => ({
@@ -81,6 +82,7 @@ vi.mock('./harness-task.graph.js', () => ({
 vi.mock('../harness-worktree.js', () => ({
   ensureHarnessWorktree: vi.fn(),
   harnessTaskWorktreePath: vi.fn((taskId) => `/mock-wt/task-${taskId}`),
+  harnessSubTaskWorktreePath: vi.fn((initiativeId, logicalId) => `/mock-wt/task-${initiativeId.slice(0, 8)}-${logicalId}`),
   DEFAULT_BASE_REPO: '/mock-base',
 }));
 
@@ -89,7 +91,7 @@ vi.mock('../harness-credentials.js', () => ({
 }));
 
 import { parseTaskPlan } from '../harness-dag.js';
-import { parseDockerOutput } from '../harness-shared.js';
+import { parseDockerOutput, readBrainResult } from '../harness-shared.js';
 
 import {
   parsePrdNode,
@@ -98,6 +100,8 @@ import {
   pickSubTaskNode,
   advanceTaskIndexNode,
   retryTaskNode,
+  finalEvaluateDispatchNode,
+  _routeAfterFinalE2E,
 } from '../workflows/harness-initiative.graph.js';
 
 // ─── 1. parsePrdNode v8 leniency ─────────────────────────────────────────────
@@ -258,14 +262,14 @@ describe('routeAfterEvaluate', () => {
     expect(routeAfterEvaluate(state)).toBe('retry');
   });
 
-  it('FAIL + count >= 3 → terminal_fail', () => {
+  it('FAIL + count >= 3 → retry (no cap)', () => {
     const state = {
       evaluate_verdict: 'FAIL',
       task_loop_index: 0,
       task_loop_fix_count: 3,
       taskPlan: { tasks: [{ id: 't1' }] },
     };
-    expect(routeAfterEvaluate(state)).toBe('terminal_fail');
+    expect(routeAfterEvaluate(state)).toBe('retry');
   });
 
   it('null verdict → retry (treated as FAIL)', () => {
@@ -399,5 +403,163 @@ describe('retryTaskNode', () => {
     const state = { task_loop_fix_count: 1, evaluate_verdict: 'FAIL', evaluate_feedback: 'err' };
     const result = await retryTaskNode(state);
     expect(result.evaluate_verdict).toBeNull();
+  });
+});
+
+// ─── _routeAfterFinalE2E — 4 cases ───────────────────────────────────────────
+
+describe('_routeAfterFinalE2E', () => {
+  it('error → report', () => {
+    expect(_routeAfterFinalE2E({ error: { node: 'final_evaluate' }, final_e2e_verdict: 'FAIL' })).toBe('report');
+  });
+
+  it('PASS → report', () => {
+    expect(_routeAfterFinalE2E({ final_e2e_verdict: 'PASS' })).toBe('report');
+  });
+
+  it('PASS_WITH_OVERRIDE → report', () => {
+    expect(_routeAfterFinalE2E({ final_e2e_verdict: 'PASS_WITH_OVERRIDE' })).toBe('report');
+  });
+
+  it('FAIL (no error) → pick_sub_task', () => {
+    expect(_routeAfterFinalE2E({ final_e2e_verdict: 'FAIL' })).toBe('pick_sub_task');
+  });
+});
+
+// ─── finalEvaluateDispatchNode fix loop delta ─────────────────────────────────
+
+describe('finalEvaluateDispatchNode — fix loop', () => {
+  beforeEach(() => {
+    vi.resetAllMocks();
+    // readBrainResult default: PASS（exit_code=0 路径调用；exit_code=1 路径不调用）
+    vi.mocked(readBrainResult).mockResolvedValue({ verdict: 'PASS' });
+  });
+
+  it('FAIL + final_e2e_fix_count=0 → returns fix_count:1 + task_loop_index:0', async () => {
+    const mockSpawnFn = vi.fn().mockResolvedValue({
+      exit_code: 1,
+      timed_out: false,
+      stderr: 'e2e fail',
+    });
+
+    const state = {
+      final_e2e_fix_count: 0,
+      task_loop_index: 3,
+      task: { id: 'task-1', payload: { sprint_dir: 'sprints' } },
+      taskPlan: { journey_type: 'autonomous' },
+      worktreePath: '/tmp/wt',
+      sub_tasks: [],
+      githubToken: 'tok',
+    };
+
+    const result = await finalEvaluateDispatchNode(state, { executor: mockSpawnFn, execFile: vi.fn().mockResolvedValue({ stdout: '' }) });
+
+    expect(result.final_e2e_verdict).toBe('FAIL');
+    expect(result.final_e2e_fix_count).toBe(1);
+    expect(result.task_loop_index).toBe(0);
+  });
+
+  it('FAIL + final_e2e_fix_count=2 → returns fix_count:3 + task_loop_index:0', async () => {
+    const mockSpawnFn = vi.fn().mockResolvedValue({
+      exit_code: 1,
+      timed_out: false,
+      stderr: 'e2e fail again',
+    });
+
+    const state = {
+      final_e2e_fix_count: 2,
+      task_loop_index: 2,
+      task: { id: 'task-1', payload: { sprint_dir: 'sprints' } },
+      taskPlan: { journey_type: 'autonomous' },
+      worktreePath: '/tmp/wt',
+      sub_tasks: [],
+      githubToken: 'tok',
+    };
+
+    const result = await finalEvaluateDispatchNode(state, { executor: mockSpawnFn, execFile: vi.fn().mockResolvedValue({ stdout: '' }) });
+
+    expect(result.final_e2e_verdict).toBe('FAIL');
+    expect(result.final_e2e_fix_count).toBe(3);
+    expect(result.task_loop_index).toBe(0);
+  });
+
+  it('PASS → returns PASS verdict, no fix_count or index changes', async () => {
+    const mockSpawnFn = vi.fn().mockResolvedValue({ exit_code: 0, timed_out: false, stderr: '' });
+
+    const state = {
+      final_e2e_fix_count: 0,
+      task_loop_index: 2,
+      task: { id: 'task-1', payload: { sprint_dir: 'sprints' } },
+      taskPlan: { journey_type: 'autonomous' },
+      worktreePath: '/tmp/wt',
+      sub_tasks: [],
+      githubToken: 'tok',
+    };
+
+    const result = await finalEvaluateDispatchNode(state, {
+      executor: mockSpawnFn,
+      execFile: vi.fn().mockResolvedValue({ stdout: '' }),
+    });
+
+    expect(result.final_e2e_verdict).toBe('PASS');
+    expect(result.task_loop_index).toBeUndefined();
+    expect(result.final_e2e_fix_count).toBeUndefined();
+  });
+
+  it('FAIL + final_e2e_fix_count=3 (>= old MAX) → continues retrying (no cap)', async () => {
+    const mockSpawnFn = vi.fn().mockResolvedValue({
+      exit_code: 1,
+      timed_out: false,
+      stderr: 'e2e fail max',
+    });
+
+    const state = {
+      final_e2e_fix_count: 3,
+      task_loop_index: 2,
+      task: { id: 'task-1', payload: { sprint_dir: 'sprints' } },
+      taskPlan: { journey_type: 'autonomous' },
+      worktreePath: '/tmp/wt',
+      sub_tasks: [],
+      initiativeId: 'init-1',
+      githubToken: 'tok',
+    };
+
+    const result = await finalEvaluateDispatchNode(state, {
+      executor: mockSpawnFn,
+      execFile: vi.fn().mockResolvedValue({ stdout: '' }),
+    });
+
+    expect(result.error).toBeUndefined();
+    expect(result.final_e2e_verdict).toBe('FAIL');
+    expect(result.final_e2e_fix_count).toBe(4);
+    expect(result.task_loop_index).toBe(0);
+  });
+
+  it('FAIL + final_e2e_fix_count=10 → continues retrying (count becomes 11)', async () => {
+    const mockSpawnFn = vi.fn().mockResolvedValue({
+      exit_code: 1,
+      timed_out: false,
+      stderr: 'still failing',
+    });
+
+    const state = {
+      final_e2e_fix_count: 10,
+      task_loop_index: 0,
+      task: { id: 'task-1', payload: { sprint_dir: 'sprints' } },
+      taskPlan: { journey_type: 'autonomous' },
+      worktreePath: '/tmp/wt',
+      sub_tasks: [],
+      initiativeId: 'init-1',
+      githubToken: 'tok',
+    };
+
+    const result = await finalEvaluateDispatchNode(state, {
+      executor: mockSpawnFn,
+      execFile: vi.fn().mockResolvedValue({ stdout: '' }),
+    });
+
+    expect(result.error).toBeUndefined();
+    expect(result.final_e2e_fix_count).toBe(11);
+    expect(result.task_loop_index).toBe(0);
   });
 });

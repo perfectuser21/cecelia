@@ -96,7 +96,7 @@ router.get('/', async (req, res) => {
     params.push(limit, offset);
 
     const { rows } = await pool.query(
-      `SELECT id, name, type, location, status, description, metadata, registered_at, updated_at
+      `SELECT id, name, type, location, status, description, metadata, created_at, updated_at
        FROM system_registry
        ${whereClause}
        ORDER BY type, name

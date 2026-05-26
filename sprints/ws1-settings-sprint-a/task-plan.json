@@ -1,0 +1,57 @@
+{
+  "initiative_id": "pending",
+  "journey_type": "user_facing",
+  "journey_type_reason": "任务核心是侧边栏导航 UI 变化（Settings 入口可见性 + 分组重构），用户可直接感知，需 Playwright E2E 验证",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "Settings 独立 navItem 注册（system-hub 单文件）",
+      "scope": "修改 apps/api/features/system-hub/index.ts：从 System tab children 数组移除 /settings（label:'设置'）；给 /settings 路由添加独立 navItem（label:'Settings', icon:'Settings', group:'system', order:20）",
+      "dod": [
+        "[BEHAVIOR] /settings 路由有独立 navItem 且 label='Settings'（grep 验证）",
+        "[BEHAVIOR] 中文 '设置' 已从 system-hub 全文消失",
+        "[BEHAVIOR] Settings navItem.group 指向 'system'",
+        "[ARTIFACT] SettingsLayout 组件注册于 manifest components"
+      ],
+      "files": ["apps/api/features/system-hub/index.ts"],
+      "depends_on": [],
+      "complexity": "S",
+      "estimated_minutes": 20
+    },
+    {
+      "task_id": "ws2",
+      "title": "navGroup 标签英文化 + cecelia/execution/knowledge 归并入 system",
+      "scope": "修改 3 个 feature manifest：(1) knowledge/index.ts: navGroup label '知识库'→'Knowledge'；(2) cecelia/index.ts: 移除 navGroups 声明，navItem.group 'cecelia'→'system'；(3) execution/index.ts: 移除 navGroups 声明（label:'执行'），navItem.group 'execution'→'system'",
+      "dod": [
+        "[BEHAVIOR] knowledge navGroup label='Knowledge'，不含中文 '知识库'",
+        "[BEHAVIOR] cecelia navGroups 声明已移除（navGroups 数组为空），navItem.group='system'",
+        "[BEHAVIOR] execution navGroups 声明已移除，navItem.group='system'",
+        "[BEHAVIOR] requireSuperAdmin 过滤逻辑仍在 filterNavGroups 函数中",
+        "[ARTIFACT] 全局无中文 navGroup label"
+      ],
+      "files": [
+        "apps/api/features/knowledge/index.ts",
+        "apps/api/features/cecelia/index.ts",
+        "apps/api/features/execution/index.ts"
+      ],
+      "depends_on": ["ws1"],
+      "complexity": "S",
+      "estimated_minutes": 25
+    },
+    {
+      "task_id": "ws3",
+      "title": "inbox 合并入 dashboard（分组总数降至 ≤ 5）",
+      "scope": "修改 apps/api/features/inbox/index.ts：移除 navGroups 声明（id:'inbox'），将 inbox 路由 navItem.group 'inbox'→'dashboard'。最终 5 个分组：dashboard/today/gtd/knowledge-docs/system",
+      "dod": [
+        "[BEHAVIOR] inbox navGroups 声明已移除（数组为空）",
+        "[BEHAVIOR] inbox navItem.group='dashboard'（归入 Dashboard 分组）",
+        "[BEHAVIOR] 全局 navGroup 唯一 id 总数 ≤ 5",
+        "[ARTIFACT] id='inbox' 不在任何 manifest navGroups 声明中"
+      ],
+      "files": ["apps/api/features/inbox/index.ts"],
+      "depends_on": [],
+      "complexity": "S",
+      "estimated_minutes": 20
+    }
+  ]
+}

@@ -1,5 +1,5 @@
 /**
- * harness-shared.js — 跨模块共享的 docker output parsing 工具。
+ * harness-shared.js — 跨模块共享的 docker output parsing 工具与 Zod 输出 Schema。
  *
  * 这 3 个函数原定义在 harness-graph.js（6 节点 GAN pipeline 主文件）。
  * 该 pipeline 已退役（PR retire-harness-planner），但 docker-executor /
@@ -7,6 +7,11 @@
  * Claude `--output-format json` 容器输出，故抽到本模块独立保留。
  *
  * 函数语义与 harness-graph.js 原版完全一致，仅 module 路径切换。
+ *
+ * 额外导出：
+ * - ReviewerOutputSchema — Zod schema，校验 harness-contract-reviewer 输出结构
+ * - EvaluatorOutputSchema — Zod schema，校验 harness-evaluator 输出结构（verdict: PASS|FIXED|FAIL）
+ * - readAndValidateBrainResult — 读取 .brain-result.json 并用给定 schema 校验，校验失败抛 schema_mismatch
  */
 
 import { readFileSync, existsSync } from 'fs';
@@ -14,6 +19,7 @@ import { readFile } from 'node:fs/promises';
 import path from 'path';
 import os from 'os';
 import { fileURLToPath } from 'url';
+import { z } from 'zod';
 
 // ─── Skill 内联加载 ──────────────────────────────────────────────────────────
 // Docker 容器里 Claude Code headless (-p) 模式不识别 `/skill-name` 语法，
@@ -254,4 +260,48 @@ export async function readBrainResult(worktreePath, requiredFields = []) {
     }
   }
   return data;
+}
+
+// ─── Zod Output Schemas（自研 Structured Output 验证层）───────────────────────
+
+export const ReviewerOutputSchema = z.object({
+  verdict: z.enum(['APPROVED', 'REVISION']),
+  rubric_scores: z.object({
+    dod_machineability:   z.number().min(1).max(10),
+    scope_match_prd:      z.number().min(1).max(10),
+    test_is_red:          z.number().min(1).max(10),
+    internal_consistency: z.number().min(1).max(10),
+    risk_registered:      z.number().min(1).max(10),
+  }),
+  feedback: z.string(),
+});
+
+export const EvaluatorOutputSchema = z.object({
+  verdict:     z.enum(['PASS', 'FAIL', 'FIXED']),
+  task_id:     z.string().nullable().optional(),
+  feedback:    z.string().nullable().optional(),    // evaluator v2 format
+  failed_step: z.string().nullable().optional(),    // evaluator v1 format（FAIL 详情）
+  log_excerpt: z.string().nullable().optional(),    // evaluator v1 format（FAIL 日志）
+  fixes:       z.array(z.string()).nullable().optional(),  // generator FIXED format（B21）
+}).refine(
+  d => d.verdict === 'PASS' || d.feedback || d.failed_step || d.log_excerpt || (d.fixes && d.fixes.length > 0),
+  { message: 'FAIL/FIXED verdict requires at least one of: feedback, failed_step, log_excerpt, fixes' }
+);
+
+/**
+ * readBrainResult + Zod schema 深度验证。
+ * 失败时 throw Error with code='schema_mismatch'。
+ */
+export async function readAndValidateBrainResult(worktreePath, schema) {
+  const data = await readBrainResult(worktreePath);
+  const result = schema.safeParse(data);
+  if (!result.success) {
+    const issues = result.error.issues
+      .map(i => `${i.path.join('.')}: ${i.message}`)
+      .join('; ');
+    const err = new Error(`ContractViolation: schema_mismatch — ${issues}`);
+    err.code = 'schema_mismatch';
+    throw err;
+  }
+  return result.data;
 }

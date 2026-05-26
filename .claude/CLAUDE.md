@@ -158,7 +158,30 @@ curl "localhost:5221/api/brain/memory/search" -X POST -H "Content-Type: applicat
 
 ---
 
-## 8. 任务完成后必须回写（CRITICAL）
+## 8. 系统性问题记录到 Notion Issues
+
+**触发条件**（满足其一即建 issue，不是每次 fix 都建）：
+- 对话中发现某个地方被反复修（stop hook、evaluator、health check 等）
+- 和用户商量后识别出设计缺陷或架构问题
+- 同一根因导致多次 CI/pipeline 失败
+
+**创建命令**：
+```bash
+node scripts/notion-create-issue.js \
+  --title "<问题简述>" \
+  --priority <P0|P1|P2|P3> \
+  --sub-area <brain|engine|dashboard|zenithjoy|multi-agent> \
+  --body "<根因描述>"
+```
+
+Sub Area 对应关系：`packages/brain/` → brain，`packages/engine/` → engine，
+`apps/dashboard/`(Cecelia) → dashboard，`apps/api/`(ZenithJoy) → zenithjoy
+
+**修复完成后**更新 issue 状态为 Closed，附 PR 链接。
+
+---
+
+## 9. 任务完成后必须回写（CRITICAL）
 
 PR 合并后，必须执行以下两件事：
 

@@ -20,18 +20,20 @@ describe('ensureHarnessWorktree', () => {
       execFn, statFn,
       logFn: () => {},
     });
-    expect(p).toBe('/tmp/cec/.claude/worktrees/harness-v2/task-abcdef12');
+    expect(p).toBe('/Users/administrator/perfect21/cecelia/.claude/worktrees/harness-v2/task-abcdef12');
     expect(calls.some(c => c.includes('clone'))).toBe(false);
     expect(calls.some(c => c.includes('worktree add'))).toBe(false);
   });
 
-  it('clones independent repo when dir does not exist', async () => {
+  it('clones with --local when cloneSource is a local path', async () => {
     const calls = [];
     const execFn = async (cmd, args) => {
       calls.push([cmd, ...args].join(' '));
       return { stdout: '' };
     };
-    const statFn = async () => false;
+    // wtPath doesn't exist (false), cloneSource is local (true)
+    const wtPath = '/Users/administrator/perfect21/cecelia/.claude/worktrees/harness-v2/task-beefcafe';
+    const statFn = async (p) => p === '/tmp/cec';
 
     const p = await ensureHarnessWorktree({
       taskId: 'beefcafe11111111',
@@ -39,7 +41,7 @@ describe('ensureHarnessWorktree', () => {
       execFn, statFn,
       logFn: () => {},
     });
-    expect(p).toBe('/tmp/cec/.claude/worktrees/harness-v2/task-beefcafe');
+    expect(p).toBe(wtPath);
     const cloneCall = calls.find(c => c.startsWith('git clone'));
     expect(cloneCall).toBeTruthy();
     expect(cloneCall).toContain('--local');
@@ -47,13 +49,38 @@ describe('ensureHarnessWorktree', () => {
     expect(cloneCall).toContain('--branch main');
     expect(cloneCall).toContain('--single-branch');
     expect(cloneCall).toContain('/tmp/cec');
-    expect(cloneCall).toContain('/tmp/cec/.claude/worktrees/harness-v2/task-beefcafe');
+    expect(cloneCall).toContain(wtPath);
     const checkoutCall = calls.find(c => c.includes('checkout -b'));
     expect(checkoutCall).toBeTruthy();
     // 分支名改为 cp-* 规约（符合 branch-protect.sh 正则 + CI branch-naming）
     const branchArg = checkoutCall.split('checkout -b ')[1]?.trim();
     expect(branchArg).toMatch(/^cp-\d{8}-ws-beefcafe$/);
     expect(branchArg?.startsWith('harness-v2/')).toBe(false);
+  });
+
+  it('clones without --local when cloneSource is a remote URL', async () => {
+    const calls = [];
+    const execFn = async (cmd, args) => {
+      calls.push([cmd, ...args].join(' '));
+      return { stdout: '' };
+    };
+    // cloneSource is a remote URL (statFn always false)
+    const statFn = async () => false;
+    const remoteUrl = 'https://github.com/perfectuser21/zenithjoy-workspace';
+
+    const p = await ensureHarnessWorktree({
+      taskId: 'beefcafe11111111',
+      baseRepo: remoteUrl,
+      execFn, statFn,
+      logFn: () => {},
+    });
+    const cloneCall = calls.find(c => c.startsWith('git clone'));
+    expect(cloneCall).toBeTruthy();
+    expect(cloneCall).not.toContain('--local');
+    expect(cloneCall).not.toContain('--no-hardlinks');
+    expect(cloneCall).toContain('--branch main');
+    expect(cloneCall).toContain('--single-branch');
+    expect(cloneCall).toContain(remoteUrl);
   });
 
   it('does not call git worktree add anywhere', async () => {

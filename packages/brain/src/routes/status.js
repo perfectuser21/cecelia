@@ -6,6 +6,7 @@ import { getTickStatus } from '../tick.js';
 import { getActivePolicy, getWorkingMemory, getTopTasks, getRecentDecisions, IDEMPOTENCY_TTL, ALLOWED_ACTIONS } from './shared.js';
 import { getNightlyOrchestratorStatus } from '../nightly-orchestrator.js';
 import websocketService, { WS_EVENTS } from '../websocket.js';
+import { EXPECTED_SCHEMA_VERSION } from '../selfcheck.js';
 
 const pkg = JSON.parse(readFileSync(new URL('../../package.json', import.meta.url)));
 const router = Router();
@@ -486,6 +487,7 @@ export function buildPipelineRecord(task, events, legacyStageMap) {
   return {
     pipeline_id: task.id,
     planner_task_id: task.id, // 向后兼容：前端详情页用这个跳转
+    task_type: task.task_type,
     sprint_dir: sprintDir,
     title: task.title,
     description: task.description || '',
@@ -912,6 +914,21 @@ router.get('/hello', async (req, res) => {
     });
   } catch (err) {
     res.status(500).json({ error: 'Failed to say hello', details: err.message });
+  }
+});
+
+// ==================== Version API ====================
+
+/**
+ * GET /api/brain/version
+ * 返回 {version, schema_version}；package.json 不可读时返回 HTTP 500
+ */
+router.get('/version', (req, res) => {
+  try {
+    const pkgData = JSON.parse(readFileSync(new URL('../../package.json', import.meta.url), 'utf8'));
+    res.json({ schema_version: EXPECTED_SCHEMA_VERSION, version: pkgData.version });
+  } catch {
+    res.status(500).json({ error: 'version read failed' });
   }
 });
 

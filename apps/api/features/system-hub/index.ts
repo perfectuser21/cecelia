@@ -8,6 +8,7 @@ const manifest: FeatureManifest = {
   instances: ['core'],
 
   navGroups: [
+    { id: 'content', label: 'Content', icon: 'Scissors', order: 4 },
     { id: 'system', label: 'System', icon: 'Monitor', order: 5 },
   ],
 
@@ -59,6 +60,8 @@ const manifest: FeatureManifest = {
     { path: '/harness/:id', component: 'HarnessDetailPage' },
     { path: '/collection-dashboard', component: 'CollectionDashboardPage' },
     { path: '/viral-analysis', component: 'ViralAnalysisPage' },
+    { path: '/clips', component: 'ContentClipsPage', navItem: { label: 'Content Clips', icon: 'Scissors', group: 'content', order: 1 } },
+    { path: '/clips/:id', component: 'ContentClipDetailPage' },
     { path: '/okr-roadmap', component: 'OKRRoadmap' },
     { path: '/account-usage', component: 'AccountUsagePage' },
     { path: '/brain-models', component: 'BrainModelsPage' },
@@ -172,6 +175,8 @@ const manifest: FeatureManifest = {
     HarnessDetailPage: () => import('../../../dashboard/src/pages/harness/HarnessDetailPage'),
     CollectionDashboardPage: () => import('../../../dashboard/src/pages/collection-dashboard/CollectionDashboardPage'),
     ViralAnalysisPage: () => import('../../../dashboard/src/pages/viral-analysis/ViralAnalysisPage'),
+    ContentClipsPage: () => import('../../../dashboard/src/pages/clips/ContentClipsPage'),
+    ContentClipDetailPage: () => import('../../../dashboard/src/pages/clips/ContentClipDetailPage'),
     OKRRoadmap: () => import('../../../dashboard/src/pages/roadmap/RoadmapPage'),
     AccountUsagePage: () => import('../../../dashboard/src/pages/account-usage/AccountUsagePage'),
     BrainModelsPage: () => import('../../../dashboard/src/pages/brain-models/BrainModelsPage'),

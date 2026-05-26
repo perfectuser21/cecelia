@@ -60,7 +60,10 @@ export default defineConfig({
         ]
       },
       workbox: {
-        globPatterns: ['**/*.{js,css,html,ico,png,svg,woff2}'],
+        // Exclude html — index.html must come from network so browsers always
+        // get updated bundle filenames on every deploy. NavigationRoute disabled.
+        navigateFallback: null,
+        globPatterns: ['**/*.{js,css,ico,png,svg,woff2}'],
         runtimeCaching: [
           {
             urlPattern: /^https:\/\/.*\.zenjoymedia\.media\/api\/.*/i,

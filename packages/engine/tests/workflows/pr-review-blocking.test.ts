@@ -9,7 +9,6 @@ import { spawnSync } from 'child_process';
  * 验证 detect-review-issues.js 和 pr-review.yml 的正确行为：
  * 1. detect-review-issues.js：stdin 包含🔴时 exit 1，不含时 exit 0
  * 2. pr-review.yml 不再使用 hustcer/deepseek-review，改为直接调 OpenRouter API
- * 3. devloop-check.sh 包含 check_divergence_count 函数
  */
 
 const ROOT_DIR = join(__dirname, '../../../..');

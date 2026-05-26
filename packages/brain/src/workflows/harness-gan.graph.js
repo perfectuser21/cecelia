@@ -31,7 +31,8 @@ import {
 import { fetchAndShowOriginFile } from '../lib/git-fence.js';
 import { verifyProposerOutput } from '../lib/contract-verify.js';
 import { LLM_RETRY } from './retry-policies.js';
-import { loadSkillContent, readBrainResult } from '../harness-shared.js';
+import { loadSkillContent, readBrainResult, ReviewerOutputSchema } from '../harness-shared.js';
+import { reconnectOrSpawn, makeSessionRecord } from '../harness-session-bridge.js';
 
 const execFile = promisify(execFileCb);
 
@@ -128,6 +129,31 @@ export function computeVerdictFromRubric(scores, round) {
   if (nums.some((n) => n === null)) return null; // 维度不完整
   const allPass = nums.every((n) => n >= threshold);
   return allPass ? 'APPROVED' : 'REVISION';
+}
+
+/**
+ * Reviewer spawn + schema 验证循环。
+ * 不合格 → warn + 继续循环；budget 超 → throw gan_budget_exceeded。
+ * 导出供测试使用。
+ */
+export async function runReviewerSchemaLoop(spawnFn, schema, budgetCap, accumulatedCost = 0) {
+  while (true) {
+    const raw = await spawnFn();
+    accumulatedCost += Number(raw?.cost_usd || 0);
+
+    if (accumulatedCost > budgetCap) {
+      throw new Error(`gan_budget_exceeded: spent=${accumulatedCost.toFixed(3)} cap=${budgetCap}`);
+    }
+
+    const parsed = schema.safeParse(raw);
+    if (!parsed.success) {
+      const issues = parsed.error.issues.map(i => `${i.path.join('.')}: ${i.message}`).join('; ');
+      console.warn(`[harness-gan] schema_mismatch, retrying: ${issues}`);
+      continue;
+    }
+
+    return { ...parsed.data, cost_usd: accumulatedCost, _raw: raw };
+  }
 }
 
 /**
@@ -260,6 +286,10 @@ export const GanContractState = Annotation.Root({
     },
     default: () => [],
   }),
+  session_map: Annotation({
+    reducer: (old, neu) => ({ ...(old ?? {}), ...(neu ?? {}) }),
+    default: () => ({}),
+  }),
 });
 
 // ── 节点工厂 ─────────────────────────────────────────────────────────────
@@ -280,7 +310,7 @@ export const GanContractState = Annotation.Root({
  */
 export function createGanContractNodes(executor, ctx) {
   const {
-    taskId, initiativeId, sprintDir, worktreePath, githubToken,
+    taskId, initiativeId, sprintDir, worktreePath, githubToken, baseRepo,
     budgetCapUsd = 10,
     readContractFile = defaultReadContractFile,
     fetchOriginFile: _fetchOriginFile = fetchAndShowOriginFile,
@@ -297,7 +327,9 @@ export function createGanContractNodes(executor, ctx) {
     const { unlink } = await import('node:fs/promises');
     try { await unlink(path.join(worktreePath, '.brain-result.json')); } catch { /* 首轮不存在，忽略 */ }
 
-    const result = await executor({
+    const roundSession = state.session_map?.[nextRound] ?? null;
+
+    const taskArg = {
       task: { id: taskId, task_type: 'harness_contract_propose' },
       prompt: buildProposerPrompt(state.prdContent, state.feedback, nextRound, computedBranch),
       worktreePath,
@@ -315,15 +347,29 @@ export function createGanContractNodes(executor, ctx) {
         PROPOSE_BRANCH: computedBranch,
         GITHUB_TOKEN: githubToken,
       },
+    };
+
+    const result = await reconnectOrSpawn({
+      nodeKey: '_session',
+      state: { _session: roundSession },
+      executor,
+      taskArg,
+      worktreePath,
+      async readOutput(wt) {
+        try {
+          const contractContent = await readContractFile(wt, sprintDir);
+          const resultData = await readBrainResult(wt, ['propose_branch']);
+          return { _reconnected: true, contractContent, propose_branch: resultData.propose_branch };
+        } catch { return null; }
+      },
     });
-    if (!result || result.exit_code !== 0) {
+
+    if (!result || (result.exit_code !== undefined && result.exit_code !== 0)) {
       throw new Error(`proposer_failed: exit=${result?.exit_code} stderr=${(result?.stderr || '').slice(0, 300)}`);
     }
-    const contractContent = await readContractFile(worktreePath, sprintDir);
-
-    // 读容器写入的结果文件；LLM 有时会自行计算分支名（不用 env var），改为 warn + 接受实际值
-    const resultData = await readBrainResult(worktreePath, ['propose_branch']);
-    if (resultData.propose_branch !== computedBranch) {
+    const contractContent = result.contractContent ?? await readContractFile(worktreePath, sprintDir);
+    const resultData = result._reconnected ? result : await readBrainResult(worktreePath, ['propose_branch']);
+    if (resultData.propose_branch !== computedBranch && resultData.propose_branch) {
       console.warn(`[harness-gan] propose_branch mismatch — expected=${computedBranch} got=${resultData.propose_branch}, accepting got value`);
     }
     const proposeBranch = resultData.propose_branch || computedBranch;
@@ -340,13 +386,16 @@ export function createGanContractNodes(executor, ctx) {
     // docker exit_code=0 ≠ 节点 success（contract enforcement 第一层）。
     // H15 重构：从 ad-hoc fetchOriginFile 改用 SSOT verifyProposerOutput（throws ContractViolation）。
     // 失败时 throw → LangGraph retryPolicy: LLM_RETRY 自动重试 3 次。
-    await verifyProposer({ worktreePath, branch: proposeBranch, sprintDir });
+    if (!result._reconnected) {
+      await verifyProposer({ worktreePath, branch: proposeBranch, sprintDir, baseRepo });
+    }
 
     return {
       round: nextRound,
       costUsd: (state.costUsd || 0) + Number(result.cost_usd || 0),
       contractContent,
       proposeBranch,
+      session_map: { [nextRound]: makeSessionRecord(result) },
     };
   }
 
@@ -355,9 +404,12 @@ export function createGanContractNodes(executor, ctx) {
     const { unlink } = await import('node:fs/promises');
     try { await unlink(path.join(worktreePath, '.brain-result.json')); } catch { /* 忽略 */ }
 
-    const result = await executor({
+    const currentRound = state.round || 0;
+    const roundSession = state.session_map?.[currentRound] ?? null;
+
+    const taskArg = {
       task: { id: taskId, task_type: 'harness_contract_review' },
-      prompt: buildReviewerPrompt(state.prdContent, state.contractContent, state.round),
+      prompt: buildReviewerPrompt(state.prdContent, state.contractContent, currentRound),
       worktreePath,
       timeoutMs: 1800000,
       env: {
@@ -365,25 +417,109 @@ export function createGanContractNodes(executor, ctx) {
         HARNESS_NODE: 'reviewer',
         HARNESS_SPRINT_DIR: sprintDir,
         HARNESS_INITIATIVE_ID: initiativeId,
-        HARNESS_REVIEW_ROUND: String(state.round),
+        HARNESS_REVIEW_ROUND: String(currentRound),
         TASK_ID: taskId,
         SPRINT_DIR: sprintDir,
         PLANNER_BRANCH: 'main',
-        REVIEW_ROUND: String(state.round),
+        REVIEW_ROUND: String(currentRound),
         GITHUB_TOKEN: githubToken,
       },
+    };
+
+    // 初始 spawn（获取 result，处理 reconnect 路径）
+    const result = await reconnectOrSpawn({
+      nodeKey: '_session',
+      state: { _session: roundSession },
+      executor,
+      taskArg,
+      worktreePath,
+      async readOutput(wt) {
+        try {
+          const data = await readBrainResult(wt, ['verdict', 'rubric_scores', 'feedback']);
+          return { _reconnected: true, ...data };
+        } catch { return null; }
+      },
     });
-    if (!result || result.exit_code !== 0) {
+
+    if (!result || (result.exit_code !== undefined && result.exit_code !== 0)) {
       throw new Error(`reviewer_failed: exit=${result?.exit_code}`);
     }
-    const nextCost = (state.costUsd || 0) + Number(result.cost_usd || 0);
-    if (nextCost > budgetCapUsd) {
-      throw new Error(`gan_budget_exceeded: spent=${nextCost.toFixed(3)} cap=${budgetCapUsd}`);
+
+    // ── Budget 前置检查（在读文件之前）──────────────────────────────────────
+    // 必须在 readBrainResult 之前检查，这样无结果文件的测试场景也能正确 throw
+    const spawnCostThisRound = Number(result.cost_usd || 0);
+    const costAfterSpawn = (state.costUsd || 0) + spawnCostThisRound;
+    if (costAfterSpawn > budgetCapUsd) {
+      throw new Error(`gan_budget_exceeded: spent=${costAfterSpawn.toFixed(3)} cap=${budgetCapUsd}`);
     }
 
     // 读容器写入的结果文件（rubric_scores + verdict + feedback）
-    const currentRound = state.round || 0;
-    const resultData = await readBrainResult(worktreePath, ['verdict', 'rubric_scores']);
+    // _reconnected 路径：直接使用已恢复的数据，跳过 schema 循环
+    // 正常路径：读文件后做 schema 验证循环（仅当 rubric_scores 有实际数据时）
+    let resultData;
+    let spawnCostUsd = spawnCostThisRound;
+    if (result._reconnected) {
+      resultData = result;
+    } else {
+      // 读首次 spawn 产出的文件
+      const rawData = await readBrainResult(worktreePath, ['verdict', 'rubric_scores', 'feedback']);
+
+      // ── 向后兼容：空 rubric_scores ({} 或 null/undefined) → 跳过 schema 重试，直接用文件 verdict
+      // schema 严格重试只在 rubric_scores 有部分数据（LLM 给了一些维度但不完整）时启用。
+      // 空 rubric_scores 意味着旧版 reviewer 不打分，走 legacy fallback 路径
+      // （computeVerdictFromRubric 会返回 null，上层 fallback 到 file verdict）。
+      const hasRubricData = rawData.rubric_scores &&
+        typeof rawData.rubric_scores === 'object' &&
+        Object.keys(rawData.rubric_scores).length > 0;
+
+      if (!hasRubricData) {
+        // 空 rubric_scores — 向后兼容，直接使用文件数据，不做 schema 重试
+        resultData = rawData;
+      } else {
+        // rubric_scores 有数据 — 做 schema 验证循环（不合格时重新 spawn）
+        // 首次调用使用已读取的 rawData（避免重复读文件），后续调用重新 spawn
+        // accumulatedCost 传 0，budget 检查由前置检查负责，避免与 state.costUsd 双重计算
+        let firstSchemaCall = true;
+        const loopResult = await runReviewerSchemaLoop(
+          async () => {
+            if (firstSchemaCall) {
+              firstSchemaCall = false;
+              return { ...rawData, cost_usd: 0 };
+            }
+            // 后续：schema 不合格，清除旧结果文件并重新 spawn reviewer
+            const { unlink } = await import('node:fs/promises');
+            try { await unlink(path.join(worktreePath, '.brain-result.json')); } catch { /* 忽略 */ }
+            const retryResult = await reconnectOrSpawn({
+              nodeKey: '_session',
+              state: { _session: null },
+              executor,
+              taskArg,
+              worktreePath,
+              async readOutput(wt) {
+                try {
+                  const data = await readBrainResult(wt, ['verdict', 'rubric_scores', 'feedback']);
+                  return { _reconnected: true, ...data };
+                } catch { return null; }
+              },
+            });
+            if (!retryResult || (retryResult.exit_code !== undefined && retryResult.exit_code !== 0)) {
+              throw new Error(`reviewer_failed: exit=${retryResult?.exit_code}`);
+            }
+            const retryCost = Number(retryResult.cost_usd || 0);
+            spawnCostUsd += retryCost;
+            const raw = retryResult._reconnected
+              ? retryResult
+              : await readBrainResult(worktreePath, ['verdict', 'rubric_scores', 'feedback']);
+            return { ...raw, cost_usd: 0 };
+          },
+          ReviewerOutputSchema,
+          budgetCapUsd,
+          0,
+        );
+        resultData = loopResult;
+      }
+    }
+    const nextCost = (state.costUsd || 0) + spawnCostUsd;
     const rubricScores = resultData.rubric_scores;
     const rubricVerdict = computeVerdictFromRubric(rubricScores, currentRound);
     // rubric 代码判决优先；文件 verdict 作为 fallback（LLM 打分但代码判阈值）
@@ -406,7 +542,7 @@ export function createGanContractNodes(executor, ctx) {
       forcedApproval = true;
     }
 
-    const patch = { costUsd: nextCost, verdict, forcedApproval };
+    const patch = { costUsd: nextCost, verdict, forcedApproval, session_map: { [currentRound]: makeSessionRecord(result) } };
     if (newHistoryEntry) {
       // reducer 会 append，所以 patch 给单条新 entry
       patch.rubricHistory = [newHistoryEntry];
@@ -456,6 +592,7 @@ export function buildGanContractGraph(nodes) {
  * @param {Function} opts.executor          docker-executor.executeInDocker
  * @param {string} opts.worktreePath
  * @param {string} opts.githubToken
+ * @param {string} [opts.baseRepo]            外部 repo 路径（默认 cecelia）
  * @param {number} [opts.budgetCapUsd=10]
  * @param {object} opts.checkpointer        PostgresSaver 实例（必填）。v1.229.0 起删除 MemorySaver fallback：
  *                                          PG 缺失必须 fail-fast，避免 brain 重启 state 丢光导致 ghost task。
@@ -466,7 +603,7 @@ export function buildGanContractGraph(nodes) {
 export async function runGanContractGraph(opts) {
   const {
     taskId, initiativeId, sprintDir, prdContent,
-    executor, worktreePath, githubToken,
+    executor, worktreePath, githubToken, baseRepo,
     budgetCapUsd = 10,
     checkpointer,
     readContractFile,
@@ -485,7 +622,7 @@ export async function runGanContractGraph(opts) {
   }
 
   const nodes = createGanContractNodes(executor, {
-    taskId, initiativeId, sprintDir, worktreePath, githubToken,
+    taskId, initiativeId, sprintDir, worktreePath, githubToken, baseRepo,
     budgetCapUsd, readContractFile, fetchOriginFile,
   });
   const graph = buildGanContractGraph(nodes);

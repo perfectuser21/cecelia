@@ -1,94 +1,58 @@
-# Sprint PRD — Harness Pipeline 实时 Streaming 前台可见性
+# Sprint PRD — playground 加 GET /subtract endpoint（B1）
 
 ## OKR 对齐
 
-- **对应 KR**：KR-3（Harness 可靠性 — pipeline 可观测性）
-- **当前进度**：N/A（Brain API 不可达）
-- **本次推进预期**：dashboard 用户无需手动刷新即可看到 harness pipeline 节点实时执行状态
+- **对应 KR**：Cecelia harness pipeline 端到端验证（接续 W26 /increment）
+- **本次推进预期**：Bug 10（proposer 假绿）+ Bug 11（reviewer 结果文件）修复后管道验证
 
 ## 背景
 
-Harness pipeline 执行时，`executor.js` 已通过 `emitGraphNodeUpdate` 将每个图节点完成事件写入 `task_events` 表（`event_type='graph_node_update'`）。但 dashboard 的 `HarnessPipelineDetailPage` 仅在页面加载时获取一次数据，`HarnessPipelinePage` 每 15 秒轮询一次。用户无法实时看到节点推进，debug 体验差。
+B1 是 Bug 10 (#3110) + Bug 11 (#3111) 修复后第一个验证 sprint，用最简双参减法端点跑通完整管道，确认两个 bug 均真生效。
 
 ## Golden Path（核心场景）
 
-用户打开运行中 pipeline 的详情页 → 页面自动建立 SSE 连接 → 每当一个 harness 图节点执行完成，日志区实时追加一行（节点名 + 时间戳 + 简要 payload）→ pipeline 结束时 SSE 自动关闭，日志区显示"Pipeline 已完成"。
+HTTP 客户端从 [发起 `GET /subtract?a=10&b=3`] → 经过 [playground server strict-schema 校验 + 计算] → 到达 [200 响应 `{"result":7,"operation":"subtract"}`]
 
-具体步骤：
-1. 用户打开 `/pipeline/:id`，`HarnessPipelineDetailPage` 发起 `EventSource` 连接到 `GET /api/brain/harness/stream?planner_task_id={id}`
-2. Brain SSE 端点从 `task_events` 表按 `created_at` 轮询新 `graph_node_update` 行（每 2s 一次），以 `data:` 格式推送
-3. 前端收到事件 → 追加到页面"实时日志"区，显示节点名（中文标签）和时间
-4. pipeline 对应 task 状态变为 `completed`/`failed` 时，SSE 发送 `event: done` 然后服务端关闭连接
-5. 用户看到"Pipeline 已完成 ✅"或"Pipeline 失败 ❌"，日志区停止滚动
+具体：
+1. 发送 `GET /subtract?a=10&b=3`
+2. server 校验 a、b 存在且匹配 `^-?\d+(\.\d+)?$`
+3. 返回 HTTP 200：`{"result":7,"operation":"subtract"}`
 
 ## Response Schema
 
-### Endpoint: GET /api/brain/harness/stream
+### Endpoint: GET /subtract
 
-**Query Parameters**:
-- `planner_task_id` (string, 必填): pipeline 的 planner task ID（UUID）
-- **禁用 query 名**: `id`/`taskId`/`task_id`/`pipeline_id`/`tid`
+**Query Parameters**: `a`（被减数，必填）、`b`（减数，必填），匹配 `^-?\d+(\.\d+)?$`；禁用 `x/y/p/q/n/m/v1/v2`
 
-**SSE Event Stream（Content-Type: text/event-stream）**:
-
-普通节点更新事件（`event: node_update`）:
-```
-event: node_update
-data: {"node":"proposer","label":"Proposer","attempt":1,"ts":"2026-05-16T10:00:00Z"}
-```
-- `node` (string, 必填): 节点英文名（如 `planner`/`proposer`/`reviewer`/`generator`/`evaluator`/`report`）
-- `label` (string, 必填): 节点中文标签
-- `attempt` (number, 必填): 第几次尝试（≥1）
-- `ts` (string, 必填): ISO 8601 时间戳
-- **禁用字段名**: `name`/`nodeName`/`step`/`phase`/`stage`/`time`/`timestamp`
-
-完成事件（`event: done`）:
-```
-event: done
-data: {"status":"completed","verdict":"PASS"}
-```
-- `status`: `completed` | `failed`
-- `verdict`: `PASS` | `FAIL` | `null`
-
-错误事件（HTTP 400/404）:
+**Success (HTTP 200)**:
 ```json
-{"error": "<string>"}
+{"result": 7, "operation": "subtract"}
 ```
-- 必有 `error` key，禁用 `message`/`msg`
+- `result` (number): `Number(a) - Number(b)`
+- `operation` (string): 字面量 `subtract`；禁用 `difference`/`diff`/`sub`/`minus`
+- **禁用响应字段**: `difference`/`diff`/`value`/`answer`/`data`
+- **Schema 完整性**: 顶层 keys 完全等于 `["operation","result"]`
 
-**禁用响应字段名**: `data`/`payload`/`result`/`event_type`/`type`（SSE `event:` 行已表达类型）
-
-**Keepalive**: 每 30s 发一行 `: keepalive` comment（空事件，维持连接）
+**Error (HTTP 400)**: `{"error":"<string>"}` — 缺参或非法格式
 
 ## 边界情况
 
-- `planner_task_id` 不存在 → HTTP 404 `{"error":"pipeline not found"}`
-- pipeline 已完成 → 推送所有历史 `graph_node_update` 事件后立即发 `event: done` 关闭
-- SSE 断连 → 前端 EventSource 自动重连（浏览器原生行为；后端无需额外处理）
-- 同一 pipeline 无新事件 → 保持连接 + 30s keepalive comment
+- 缺参 → 400；非法格式（`1e5`/`Inf`/`+1`/`0xFF`）→ 400；结果负数（a=3,b=10 → -7）正常返回
 
 ## 范围限定
 
-**在范围内**：
-- `packages/brain/src/routes/harness.js` 新增 `GET /stream` 端点
-- `apps/dashboard/src/pages/harness-pipeline/HarnessPipelineDetailPage.tsx` 新增实时日志区（EventSource）
-
-**不在范围内**：
-- 修改 `emitGraphNodeUpdate` 写入逻辑
-- WebSocket 推送（已有 ws 系统不纳入，SSE 已足够）
-- pipeline 列表页（`HarnessPipelinePage.tsx`）的 15s 轮询改造
-- 历史 pipeline 回放 UI（复杂交互，不在本 sprint）
+**在范围内**：`playground/server.js` 新增 GET /subtract（strict-schema 双参减法）
+**不在范围内**：其他端点修改、overflow/浮点精度
 
 ## 假设
 
-- [ASSUMPTION: `task_events` 表有索引 `(task_id, event_type, created_at)`，2s 轮询不会造成性能问题]
-- [ASSUMPTION: Brain API 在 `localhost:5221` 上运行，dashboard 通过 Vite proxy 访问]
-- [ASSUMPTION: dashboard 已有 EventSource polyfill 或目标浏览器原生支持]
+- [ASSUMPTION: playground/server.js 已有 `STRICT_NUMBER` regex 可复用]
 
 ## 预期受影响文件
 
-- `packages/brain/src/routes/harness.js`: 新增 SSE stream 端点 `/stream`
-- `apps/dashboard/src/pages/harness-pipeline/HarnessPipelineDetailPage.tsx`: 新增实时日志区 + EventSource hook
+- `playground/server.js`: 新增 GET /subtract 路由
 
-## journey_type: user_facing
-## journey_type_reason: 入口是 dashboard 详情页（`apps/dashboard/`），用户直接感知实时节点推进
+## journey_type: autonomous
+## journey_type_reason: 仅涉及 playground/server.js，无 UI / 无外部 agent 协议
+## target_environment: playground
+## target_environment_reason: evaluator 在本地 localhost:3000（或 $PLAYGROUND_PORT）验证

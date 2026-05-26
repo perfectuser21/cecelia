@@ -6,10 +6,15 @@ description: |
   evaluator 在 CI 绿之后、PR merge 之前真启服务 + 跑 contract 的 manual:bash 命令验真行为。
   PASS → 允许 merge；FAIL → 不 merge，带反馈打回 Generator 在 PR 分支 fix loop（main 不变动）。
   模式 A 跑 contract-dod-ws*.md BEHAVIOR；模式 B（所有 ws merge 后）跑 final E2E Golden Path。
-version: 1.4.0
+version: 1.9.0
 created: 2026-05-06
-updated: 2026-05-14
+updated: 2026-05-23
 changelog:
+  - 1.9.0: Step B-2.5 截图处理（mac_web 专属）— 复制 screenshots/*.png 到 ~/claude-output/harness-screenshots/$SPRINT/；Claude Read 每张 PNG 视觉自验（对照 BEHAVIOR:E2E 期望描述）；生成公网 URL（38.23.47.81:9998）；PASS brain-result.json 增加 screenshots 字段
+  - 1.8.0: 删除 windows_local case — 所有 Windows 测试统一走 windows_cloud（GitHub Actions），无需维护 xian-pc/xian-rog 本地 Windows 机器；TARGET_ENV 枚举同步缩减
+  - 1.7.0: windows_native 拆分为 windows_cloud + windows_local（已被 1.8.0 合并）
+  - 1.6.0: 修复 B33 误伤真实功能 sprint — B33 URL 检测改为 playground 感知：playground sprint（playground/server.js 存在）禁止出现 Brain API URL；真实功能 sprint（autonomous journey_type）反向要求 E2E 脚本必须含 Brain API URL，缺失直接 FAIL（防止 playground 命令混入真实 sprint）
+  - 1.5.0: Rule 4 弱 oracle 改 FAIL — 命令缺 jq -e 值校验不再"容忍但报告"，直接输出 FAIL feedback 拒绝通过；中间态在 GAN 已收敛后无意义（proposer v7.8 配套）
   - 1.4.0: B33 e2e URL 位置词检测 — W35/W43 实证 planner 在 playground sprint 的 e2e 生成了 /api/brain/ping 而非 playground /ping (localhost:3000)。Step B-1.5 加 pre-exec 扫描，含 /api/brain/ 的命令立即 FAIL 并标 planner_drift
   - 1.3.0: 明确 pre-merge gate 位置（反 2026-04-09 决策）— description 重写 + 加 "## 调用时机" 段，说明 evaluator 跑在 CI 绿后、PR merge 前。配套 brain 编排改动（harness-initiative.graph.js 把 evaluate 从 merge 后挪到 merge 前）由独立 PR 跟进
   - 1.2.0: 修协议盲 — 加 Test: 字段 manual:bash/manual: 前缀处理段（proposer SKILL v7.4+ 写此格式，evaluator 必须 strip 后执行）
@@ -67,6 +72,7 @@ generator 写代码 + push PR
 | `TASK_ID` | Brain 中当前 evaluate task 的 UUID |
 | `WORKSTREAM_N` | 当前 workstream 编号（如 `1`），仅模式 A 用 |
 | `JOURNEY_TYPE` | `user_facing` / `autonomous` / `dev_pipeline` / `agent_remote` |
+| `TARGET_ENV` | `mac_web` / `windows_cloud` / `linux_server` / `local_api` / `playground`（来自 PRD `target_environment` 字段）|
 | `DB` | PostgreSQL 连接串，如 `postgresql://localhost/cecelia` |
 
 **注**：DoD 文件中的 `Test:` 命令若引用 `$TARGET_TASK_ID`，该 ID 来自 DoD 文件内部（合同写入时硬编码或由 Generator 写入），Evaluator 直接执行 DoD 中的命令原文，不需单独注入。
@@ -87,7 +93,7 @@ generator 写代码 + push PR
 1. **禁止把 vitest 输出 grep "passed" 当 PASS 证据**。vitest 是 generator 自写的测试，不是 contract oracle。即便看到 "Tests 8 passed" 也不能给 PASS——必须真跑合同里 [BEHAVIOR] 的 `Test:` 命令逐条校验
 2. **禁止以"代码看起来对"给 PASS**。不能读 server.js 源码看到 `app.get('/sum')` 就 PASS——必须真起 server + 真 curl + jq 校验响应
 3. **缺 [BEHAVIOR] Test: 命令直接 FAIL**。如果合同 contract-dod-ws{N}.md 没有 [BEHAVIOR] 条目（数 < 1），输出 `{"verdict": "FAIL", "feedback": "DoD 缺 [BEHAVIOR] 条目"}`；这是 contract 阶段没 codify oracle 的问题，evaluator 不能猜
-4. **缺 jq -e 严匹配视为弱测试**。如果 [BEHAVIOR] Test: 命令只 `curl -f /xxx` 不带 jq 校验 body shape，记入 `feedback` 但本轮仍按命令 exit code 判（容忍但报告，让 reviewer 下轮严化）
+4. **缺 jq -e 严匹配直接 FAIL**。如果 [BEHAVIOR] Test: 命令只 `curl -f /xxx` 不带 jq 校验 body shape，输出 `{"verdict":"FAIL","feedback":"命令缺 jq -e 严匹配，属弱 oracle，schema drift 无法被抓，拒绝通过；请在 contract-dod 里补充 jq -e 值校验命令后重新提交"}` — 禁止"容忍但报告"的中间态，GAN 已收敛后不存在"下轮 reviewer 再严化"的机会
 
 **特别针对 schema drift（W19/W20 根因）**：如果 PRD 写 response 必须 `{result, operation}` 但 generator 实际返 `{product}`：
 - 合同里若有 `jq -e '.result == 35'` → evaluator 真跑 → exit 1 → FAIL ✓ 抓住
@@ -208,13 +214,28 @@ Test: curl -s localhost:5221/api/brain/tasks/$TARGET_TASK_ID | jq -r '.status'
 
 #### Step A-2: 逐条执行验证命令
 
+**B22 — Docker 环境 URL 替换（执行任何 Test 命令前必须完成）**：
+
+当 evaluator 在 Docker 容器内运行时，`localhost:5221` 无法连接到宿主的 Brain API，必须替换为 `host.docker.internal:5221`。执行每条 Test 命令前，检查并替换：
+
+```bash
+# 若 BRAIN_URL 已设为非 localhost 地址（说明在 Docker 容器内）
+if [ -n "$BRAIN_URL" ] && [ "$BRAIN_URL" != "http://localhost:5221" ]; then
+  BRAIN_HOST_PORT=$(echo "$BRAIN_URL" | sed 's|http://||')
+  # 在 Test 命令字符串中替换 localhost:5221 → host.docker.internal:5221
+  TEST_CMD=$(echo "$TEST_CMD" | sed "s|localhost:5221|$BRAIN_HOST_PORT|g")
+fi
+```
+
+将替换后的 `$TEST_CMD` 传给 `bash -c "$TEST_CMD"` 执行。
+
 对每条 `[BEHAVIOR]` 条目：
 
 1. 执行 `Test:` 字段中的命令（在真实环境，非 mock）
 **Test: 字段前缀处理（v1.2 — 修协议盲，proposer SKILL 写 manual:bash 前缀）**：
-- Test 命令若以 `manual:bash -c '<cmd>'` 开头 → strip `manual:bash -c '` 前缀和末尾 `'`，把里面的 `<cmd>` 整体用 `bash -c "<cmd>"` 执行
-- Test 命令若以 `manual:` 开头（无 bash -c）→ strip `manual:` 前缀，剩下原样 bash 执行
-- 不以 `manual:` 开头的（如 `node -e "..."` / `curl ...`） → 直接 bash 执行原文
+- Test 命令若以 `manual:bash -c '<cmd>'` 开头 → strip `manual:bash -c '` 前缀和末尾 `'`，把里面的 `<cmd>` 整体用 `bash -c "<cmd>"` 执行；执行前先做 B22 URL 替换
+- Test 命令若以 `manual:` 开头（无 bash -c）→ strip `manual:` 前缀，剩下原样 bash 执行；执行前先做 B22 URL 替换
+- 不以 `manual:` 开头的（如 `node -e "..."` / `curl ...`） → 直接 bash 执行原文；执行前先做 B22 URL 替换
 - 这是跟 proposer SKILL v7.4+ 协议约定的格式，evaluator 不能因看到 `manual:` 前缀就跳过命令
 
 2. 记录 stdout / stderr / exit code
@@ -269,57 +290,86 @@ BREOF
   exit 0
 fi
 
-# 提取 "## E2E 验收" 区块内第一个 bash 代码块
-awk '/^## E2E 验收/{found=1} found && /^```bash/{in_block=1; next} in_block && /^```/{in_block=0; exit} in_block{print}' \
-  "$CONTRACT" > /tmp/e2e-verify.sh
+# 读取 target_environment（注入变量优先，fallback PRD 文件）
+TARGET_ENV="${TARGET_ENV:-local_api}"
 
-if [[ ! -s /tmp/e2e-verify.sh ]]; then
-  cat > /workspace/.brain-result.json << BREOF
+if [[ "$TARGET_ENV" == "windows_cloud" ]]; then
+  # windows_cloud：提取 ps1/powershell 代码块写到 sprint_dir/e2e-verify.ps1，供 GHA runner 使用
+  awk '/^## E2E 验收/{found=1} found && /^```(powershell|ps1)/{in_block=1; next} in_block && /^```/{in_block=0; exit} in_block{print}' \
+    "$CONTRACT" > /tmp/e2e-verify.ps1
+  if [[ ! -s /tmp/e2e-verify.ps1 ]]; then
+    # fallback：尝试 bash 块（兼容旧合同格式）
+    awk '/^## E2E 验收/{found=1} found && /^```bash/{in_block=1; next} in_block && /^```/{in_block=0; exit} in_block{print}' \
+      "$CONTRACT" > /tmp/e2e-verify.ps1
+  fi
+  if [[ ! -s /tmp/e2e-verify.ps1 ]]; then
+    cat > /workspace/.brain-result.json << BREOF
+{"verdict":"FAIL","task_id":"$TASK_ID","failed_step":"setup","log_excerpt":"windows_cloud 合同中未找到 ## E2E 验收 区块或区块内无 ps1/powershell 脚本"}
+BREOF
+    exit 0
+  fi
+  # 写入 sprint_dir 并 push 到 PR 分支，GHA workflow checkout 后直接运行
+  cp /tmp/e2e-verify.ps1 "${SPRINT_DIR}/e2e-verify.ps1"
+  git add "${SPRINT_DIR}/e2e-verify.ps1" 2>/dev/null || true
+  git commit -m "chore(harness): add e2e-verify.ps1 for windows_cloud runner" --no-verify 2>/dev/null || true
+  git push origin HEAD 2>/dev/null || true
+else
+  # 提取 "## E2E 验收" 区块内第一个 bash 代码块
+  awk '/^## E2E 验收/{found=1} found && /^```bash/{in_block=1; next} in_block && /^```/{in_block=0; exit} in_block{print}' \
+    "$CONTRACT" > /tmp/e2e-verify.sh
+  if [[ ! -s /tmp/e2e-verify.sh ]]; then
+    cat > /workspace/.brain-result.json << BREOF
 {"verdict":"FAIL","task_id":"$TASK_ID","failed_step":"setup","log_excerpt":"合同中未找到 ## E2E 验收 区块或区块内无 bash 脚本"}
 BREOF
-  exit 0
+    exit 0
+  fi
+  chmod +x /tmp/e2e-verify.sh
 fi
-chmod +x /tmp/e2e-verify.sh
 ```
 
-#### Step B-1.5: E2E 命令位置词验证（B33 — W35/W43 实证）
+#### Step B-1.5: E2E 命令位置词验证（B33 v1.6 — playground-aware）
 
-**在执行 E2E 脚本前，必须先检查脚本是否包含 Brain API URL 漂移。**
+**在执行 E2E 脚本前，先判断是 playground sprint 还是真实功能 sprint，然后做方向相反的检测。**
 
-根因：W35→W43 共 9 次失败，错误均为 `final_e2e_verdict=FAIL: GET /api/brain/ping`。planner/proposer 在 playground sprint 的合同 e2e 脚本中错误写入了 Brain 健康检查 URL（`localhost:5221/api/brain/ping`）而非 playground 的真实端点（`localhost:3000/ping`）。
-
-**位置词死规则**：
-- `localhost:5221/api/brain/` → Brain API（调度/决策，不是被测服务）
-- `localhost:3000/` 或 `localhost:$PLAYGROUND_PORT/` → playground（被测服务）
-- 两者**不可混用**；playground sprint 的 e2e 里出现 Brain URL = planner_drift
+根因（原始 B33）：W35→W43 共 9 次失败，playground sprint 的 e2e 脚本错误混入 Brain API URL。
+根因（v1.6 修复）：原 B33 无差别拦截所有 Brain API URL，导致真实功能 sprint（autonomous）的 E2E 脚本被误判为 planner_drift——而真实功能 sprint 的 E2E **必须** 调用 Brain API。
 
 ```bash
-# B33 检测：扫描 e2e 脚本是否含 Brain API URL
-if grep -qE "localhost:5221/api/brain/|/api/brain/(ping|health|tasks|tick|status)" /tmp/e2e-verify.sh; then
-  DRIFT_LINE=$(grep -E "localhost:5221/api/brain/|/api/brain/(ping|health|tasks|tick|status)" /tmp/e2e-verify.sh | head -1)
-  cat > /workspace/.brain-result.json << BREOF
-{"verdict":"FAIL","task_id":"$TASK_ID","failed_step":"url_validation","log_excerpt":"$DRIFT_LINE"}
+# B33 v1.6：先判断 sprint 类型，再做方向相反的 URL 检测
+IS_PLAYGROUND_SPRINT=false
+if [ -d "playground" ] && [ -f "playground/server.js" ]; then
+  IS_PLAYGROUND_SPRINT=true
+fi
+
+if [[ "$IS_PLAYGROUND_SPRINT" == "true" ]]; then
+  # playground sprint：Brain API URL = planner_drift（原 B33 逻辑，保留）
+  if grep -qE "localhost:5221/api/brain/|/api/brain/(ping|health|tasks|tick|status)" /tmp/e2e-verify.sh; then
+    DRIFT_LINE=$(grep -E "localhost:5221/api/brain/|/api/brain/(ping|health|tasks|tick|status)" /tmp/e2e-verify.sh | head -1)
+    cat > /workspace/.brain-result.json << BREOF
+{"verdict":"FAIL","task_id":"$TASK_ID","failed_step":"url_validation","log_excerpt":"playground sprint 禁止调用 Brain API：$DRIFT_LINE"}
 BREOF
-  exit 0
+    exit 0
+  fi
+else
+  # 真实功能 sprint：autonomous journey_type 必须包含真实 Brain API URL
+  if [[ "$JOURNEY_TYPE" == "autonomous" ]]; then
+    if ! grep -qE "localhost:5221/api/brain/|psql.*cecelia" /tmp/e2e-verify.sh; then
+      cat > /workspace/.brain-result.json << BREOF
+{"verdict":"FAIL","task_id":"$TASK_ID","failed_step":"url_validation","log_excerpt":"autonomous sprint 的 E2E 脚本未测真实 Brain API (localhost:5221) 或 DB，检测到可能测了 playground 或未知目标，请改为 curl localhost:5221/api/brain/... 验证真实行为"}
+BREOF
+      exit 0
+    fi
+  fi
 fi
 ```
 
-**反例**（直接导致 W35-W43 失败，禁止出现）：
+**位置词死规则（v1.6）**：
 
-```bash
-# ❌ playground sprint 的 e2e 里调用 Brain ping
-curl -f localhost:5221/api/brain/ping  # 这是 Brain 健康检查，不是 playground 验证
-```
-
-**正例**（playground sprint 的 e2e 应如此）：
-
-```bash
-# ✅ 调用 playground 自己的端点
-cd playground && PLAYGROUND_PORT=3001 node server.js & SPID=$!
-sleep 2
-curl -f localhost:3001/ping | jq -e '.pong == true'
-kill $SPID
-```
+| sprint 类型 | Brain API URL (5221) | playground URL (3xxx) |
+|---|---|---|
+| playground sprint（`playground/server.js` 存在）| ❌ FAIL（planner_drift）| ✅ 必须有 |
+| 真实功能 sprint autonomous | ✅ 必须有 | ❌ FAIL（错误目标）|
+| 真实功能 sprint user_facing | ✅ 需要（API 验后端）| ❌ 无意义 |
 
 #### Step B-2: 执行 E2E 脚本
 
@@ -335,14 +385,172 @@ BREOF
 fi
 ```
 
-按 `journey_type` 补充验证逻辑：
+按 `target_environment` 选择执行方式（v1.6 — 机器感知派发）：
 
-| journey_type | E2E 验证方式 |
-|---|---|
-| `autonomous` | 直接跑合同 bash 脚本（curl/psql 链路） |
-| `user_facing` | 合同 bash 脚本 + chrome MCP Playwright 界面点击验证 |
-| `dev_pipeline` | 合同 bash 脚本 + `gh pr view` 验证 callback 到达 |
-| `agent_remote` | 合同 bash 脚本 + 检查 bridge 回调 + DB 状态 |
+```bash
+# 读取 target_environment（从 PRD 或注入变量）
+TARGET_ENV="${TARGET_ENV:-local_api}"
+
+case "$TARGET_ENV" in
+
+  local_api)
+    # Brain 本地部署，curl + psql
+    timeout 120 bash /tmp/e2e-verify.sh 2>&1 | tee /tmp/e2e-result.log
+    EXIT_CODE=${PIPESTATUS[0]}
+    ;;
+
+  mac_web)
+    # Playwright 本机浏览器（Cecelia Dashboard，localhost:5174）
+    # e2e 脚本必须是 Node.js + @playwright/test
+    timeout 180 node /tmp/e2e-verify.js 2>&1 | tee /tmp/e2e-result.log
+    EXIT_CODE=${PIPESTATUS[0]}
+    ;;
+
+  windows_cloud)
+    # GitHub Actions windows-latest runner（ZenithJoy Agent 等连公网产品）
+    # 每次触发都是全新干净 VM，免费（public repo），适合下载安装包/连云端 endpoint
+    # 合同 e2e 脚本必须是 .ps1 格式（见 proposer windows_cloud 模板）
+    # 等待结果：轮询 run 状态，最长 10 分钟
+    # GITHUB_REPO 由 harness-initiative.graph.js 注入，base_repo 含 zenithjoy → perfectuser21/zenithjoy-workspace
+    REPO="${GITHUB_REPO:-perfectuser21/cecelia}"
+    WORKFLOW="${WINDOWS_CLOUD_WORKFLOW:-e2e-windows.yml}"
+    gh workflow run "$WORKFLOW" \
+      --repo "$REPO" \
+      -f task_id="$TASK_ID" \
+      -f sprint_dir="$SPRINT_DIR" \
+      -f pr_branch="${PR_BRANCH:-}" \
+      2>&1 | tee /tmp/e2e-trigger.log
+    TRIGGER_EXIT=$?
+    if [[ $TRIGGER_EXIT -ne 0 ]]; then
+      cat > /workspace/.brain-result.json << BREOF
+{"verdict":"FAIL","task_id":"$TASK_ID","failed_step":"gh_trigger","log_excerpt":"GitHub Actions 触发失败，检查 gh auth 状态和 repo 权限"}
+BREOF
+      exit 0
+    fi
+    # 等 Actions 完成（最长 10 分钟，每 30 秒轮询一次）
+    sleep 10
+    for i in $(seq 1 20); do
+      RUN_STATUS=$(gh run list --repo "$REPO" --workflow "$WORKFLOW" --limit 1 \
+        --json status,conclusion --jq '.[0].status' 2>/dev/null)
+      RUN_CONCLUSION=$(gh run list --repo "$REPO" --workflow "$WORKFLOW" --limit 1 \
+        --json status,conclusion --jq '.[0].conclusion' 2>/dev/null)
+      if [[ "$RUN_STATUS" == "completed" ]]; then
+        break
+      fi
+      sleep 30
+    done
+    if [[ "$RUN_CONCLUSION" == "success" ]]; then
+      EXIT_CODE=0
+    else
+      EXIT_CODE=1
+      gh run list --repo "$REPO" --workflow "$WORKFLOW" --limit 1 \
+        --json url --jq '.[0].url' > /tmp/e2e-result.log 2>&1
+      echo "conclusion: $RUN_CONCLUSION" >> /tmp/e2e-result.log
+    fi
+    ;;
+
+
+  linux_server)
+    # SSH 到 hk-vps 或 us-vps 执行 bash 脚本
+    LINUX_HOST="${LINUX_E2E_HOST:-hk-vps}"
+    scp /tmp/e2e-verify.sh "$LINUX_HOST:/tmp/cecelia-e2e.sh" 2>&1
+    timeout 180 ssh "$LINUX_HOST" "bash /tmp/cecelia-e2e.sh" \
+      2>&1 | tee /tmp/e2e-result.log
+    EXIT_CODE=${PIPESTATUS[0]}
+    ;;
+
+  playground)
+    # playground 训练 sprint，本地执行
+    timeout 60 bash /tmp/e2e-verify.sh 2>&1 | tee /tmp/e2e-result.log
+    EXIT_CODE=${PIPESTATUS[0]}
+    ;;
+
+  *)
+    echo "WARN: 未知 TARGET_ENV=$TARGET_ENV，回退到 local_api"
+    timeout 120 bash /tmp/e2e-verify.sh 2>&1 | tee /tmp/e2e-result.log
+    EXIT_CODE=${PIPESTATUS[0]}
+    ;;
+esac
+```
+
+**前置条件**：
+
+`windows_cloud`：
+- `gh` CLI 已登录（`gh auth status` 验证），PAT 有 `workflow` write scope
+- 目标 repo 有 `e2e-windows.yml` workflow（含 `workflow_dispatch` 触发器）
+- GitHub Actions 使用 `windows-latest` runner，免费（public repo）
+
+`linux_server`：
+- `~/.ssh/config` 已配置 `hk-vps` / `us-vps` 别名，SSH 免密登录已配置
+- 目标机器上 `node` / `bash` 已安装
+
+#### Step B-2.5: 截图处理（仅 mac_web）
+
+```bash
+if [[ "$TARGET_ENV" == "mac_web" ]]; then
+  SPRINT_BASENAME=$(basename "$SPRINT_DIR")
+  SCREENSHOT_DEST="$HOME/claude-output/harness-screenshots/$SPRINT_BASENAME"
+  mkdir -p "$SCREENSHOT_DEST"
+
+  # 1. 复制截图到公网目录
+  if ls screenshots/*.png 2>/dev/null | head -1 > /dev/null; then
+    cp screenshots/*.png "$SCREENSHOT_DEST/"
+  fi
+
+  # 2. Claude Read 每张截图自验（视觉确认）
+  # evaluator 必须用 Read tool 读取 $SCREENSHOT_DEST 下每张 PNG，
+  # 对照 DoD [BEHAVIOR:E2E] 期望描述逐一确认画面内容：
+  # - 01-initial.png：页面是否正常加载，关键 UI 元素是否可见？
+  # - 02-action.png：用户操作后状态是否符合期望描述？
+  # - 03-result.png：最终结果是否显示成功标志元素？
+  # 如果任意截图与期望描述不符 → 输出 FAIL，feedback 说明哪张图与期望不符
+
+  # 3. 生成公网链接列表
+  SCREENSHOT_URLS=()
+  for f in "$SCREENSHOT_DEST"/*.png; do
+    [ -f "$f" ] || continue
+    BASENAME=$(basename "$f")
+    SCREENSHOT_URLS+=("http://38.23.47.81:9998/harness-screenshots/$SPRINT_BASENAME/$BASENAME")
+  done
+  SCREENSHOTS_JSON=$(printf '%s\n' "${SCREENSHOT_URLS[@]}" | jq -R . | jq -s .)
+else
+  SCREENSHOTS_JSON="[]"
+fi
+```
+
+---
+
+#### Step B-2.6: windows_cloud artifact 下载 + 视觉验证
+
+```bash
+if [[ "$TARGET_ENV" == "windows_cloud" ]]; then
+  REPO="${GITHUB_REPO:-perfectuser21/zenithjoy-workspace}"
+  WORKFLOW="${WINDOWS_CLOUD_WORKFLOW:-e2e-windows.yml}"
+
+  # 获取最新 run ID（触发后等 10s 再查，避免拿到上一次 run）
+  RUN_ID=$(gh run list --repo "$REPO" --workflow "$WORKFLOW" \
+    --limit 1 --json databaseId --jq '.[0].databaseId' 2>/dev/null)
+
+  if [[ -n "$RUN_ID" ]]; then
+    # 下载 screenshots artifact（GHA workflow 需上传 artifact name="screenshots"）
+    mkdir -p /tmp/windows-cloud-screenshots
+    gh run download "$RUN_ID" \
+      --repo "$REPO" \
+      --name "screenshots" \
+      --dir /tmp/windows-cloud-screenshots 2>/dev/null || true
+
+    # evaluator 必须用 Read tool 读取每张 PNG，对照 DoD [BEHAVIOR:E2E] 逐一视觉确认：
+    # - 截图是否展示了期望的界面元素？
+    # - 操作结果是否与 DoD 描述一致？
+    # 如有截图与期望不符 → 输出 FAIL，feedback 说明哪张图有问题
+    ls /tmp/windows-cloud-screenshots/*.png 2>/dev/null | head -20
+  fi
+
+  SCREENSHOTS_JSON="[]"
+fi
+```
+
+---
 
 #### Step B-3: 判断结果
 
@@ -350,7 +558,7 @@ fi
 
 ```bash
 cat > /workspace/.brain-result.json << BREOF
-{"verdict":"PASS","task_id":"$TASK_ID","failed_step":null,"log_excerpt":null}
+{"verdict":"PASS","task_id":"$TASK_ID","failed_step":null,"log_excerpt":null,"screenshots":${SCREENSHOTS_JSON:-[]}}
 BREOF
 ```
 

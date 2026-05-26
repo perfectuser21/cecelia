@@ -36,15 +36,16 @@ features:
   - id: stop-hook
     name: Stop Hook（/dev 流程守门）
     status: stable
-    since: "2026-04-21"  # PR #2503 cwd-as-key 切线（v22）；2026-05-07 v23 心跳模型 #2826 全面重写
+    since: "2026-04-21"  # PR #2503 cwd-as-key 切线（v22）；2026-05-07 v23 心跳模型 #2826；2026-05-20 v24 修复
     owner: engine
     description: |
       Cecelia /dev 流程的核心守门 — 每次 assistant 想 stop turn 时触发。
       v23（2026-05-07）心跳模型：扫 .cecelia/lights/<sid_short>-*.live mtime，
       新鲜（< TTL=300s）→ block 让 ralph loop 续命；全黑 → release 下班。
-      OS mtime 替代 v22 软件状态机；与 Brain 完全解耦；多 session × 多 worktree
-      天然不串。/dev 完成由 engine-ship → ship-finalize.sh 写 done-marker +
-      SIGTERM guardian → 灯熄。
+      v24（2026-05-20）三项 bug 修复：1) stop-dev.sh 改用 CLAUDE_HOOK_SESSION_ID
+      env var（stop.sh 从 stdin 解析后 export，不再二次读空 stdin）；
+      2) 灯亮时调 classify_session(cwd) 获取具体 action 透传给 Claude；
+      3) cleanup.sh 完成时 SIGTERM guardian + rm .live 文件（熄灯职责下移到 cleanup.sh）。
     entry_points:
       - packages/engine/hooks/stop-dev.sh        # v23 心跳决策（单一出口）
       - packages/engine/hooks/dev-mode-tool-guard.sh  # PreToolUse 拦 ScheduleWakeup + Bash bg
@@ -63,9 +64,10 @@ features:
       - main_repo/.cecelia/aborted/{sid_short}-{branch}.aborted    # 中止审计标记
       - worktree/.dev-mode.{branch}                    # worktree 元数据缓存
       - worktree/.dev-lock.{branch}                    # session_id + owner_session
-    contract_url: https://www.notion.so/Stop-Hook-Contract-v18-22-2-357c40c2ba6381b893c7e251707d1252
+    contract_url: https://www.notion.so/Stop-Hook-v24-2026-05-20-366c40c2ba6381038adcd7e763e9bd63
+    contract_url_v23: https://www.notion.so/Stop-Hook-Contract-v18-22-2-357c40c2ba6381b893c7e251707d1252
     contract_url_legacy: https://www.notion.so/35753f413ec581d9b607f61e4e90ce0b  # 月升 frozen，留作历史快照
-    invariants_count: 18  # L1-L18 详见 contract，integrity 元测试 grep 验证
+    invariants_count: 21  # L1-L21 + L22-L24（v24 新增），integrity 元测试 grep 验证
     state_machine:
       stages:
         - P1 PR 未创建 → block: 立即 push + gh pr create
@@ -114,6 +116,49 @@ features:
 # Changelog（细粒度改动历史）
 # ============================================================================
 changelog:
+  - version: "18.27.3"
+    date: "2026-05-22"
+    change: "feat+refactor"
+    description: "Goal-Based Stop Hook（cp-0522111134）— 删除 stop-dev.sh / dev-heartbeat-guardian.sh / devloop-check.sh / ship-finalize.sh，Brain executor.js 启动 session 时通过 CECELIA_GOAL_SETTINGS 注入 --settings prompt-based stop hook，Haiku 评估 goal_condition 驱动 session 自然退出。新增 migration 281（tasks.goal_condition 列）、buildGoalSettings()、goal-settings-serializer 单元测试、stop-sh-routing 测试、goal-injection-chain 集成测试、goal-condition-smoke.sh。"
+    files:
+      - "packages/engine/hooks/stop-dev.sh (deleted)"
+      - "packages/engine/lib/devloop-check.sh (deleted)"
+      - "packages/engine/lib/dev-heartbeat-guardian.sh (deleted)"
+      - "packages/engine/scripts/ship-finalize.sh (deleted)"
+      - "packages/brain/src/executor.js (buildGoalSettings + CECELIA_GOAL_SETTINGS 注入)"
+      - "packages/brain/scripts/cecelia-run.sh (--settings 透传)"
+      - "packages/brain/scripts/cecelia-bridge.js (CECELIA_GOAL_SETTINGS env 透传)"
+      - "packages/brain/migrations/281_add_goal_condition.sql (新增 goal_condition 列)"
+      - "packages/brain/src/__tests__/goal-settings-serializer.test.js (新建)"
+      - "packages/engine/tests/hooks/stop-sh-routing.test.ts (新建)"
+      - "packages/engine/tests/integration/goal-injection-chain.test.ts (新建)"
+      - "packages/brain/scripts/smoke/goal-condition-smoke.sh (新建)"
+      - "docs/registry/features/engine.yml (新增 engine_goal_stop_hook feature)"
+      - "scripts/check-single-exit.sh (v25.0.0 — 反转为检测已删除文件 + 新链路)"
+
+  - version: "18.27.2"
+    date: "2026-05-21"
+    change: "fix"
+    description: "stop-dev.sh block 路径改为 exit 2，修复 v24 回归导致 PR 提交后立即 X0"
+    files:
+      - "packages/engine/hooks/stop-dev.sh (block case 改 exit 2)"
+      - "packages/engine/tests/hooks/stop-hook-v24.test.ts (验证 block → exit 2)"
+
+  - version: "18.27.1"
+    date: "2026-05-20"
+    change: "fix+test"
+    description: "Stop Hook v24 完整实现（cp-05201600）— 补全 PR #3061 未覆盖的 classify_session 完整路由：blocked→reason+action 组合透传、done→kill guardian+rm灯文件+exit 0、not-dev→stdout reason 输出（T15 验证调用）。classify_session 不可用时保底 not-dev（原 #3061 保底为 block）。新增 T13-T16 测试覆盖完整决策路径。更新 T1-T12 配套 classify mock 防止 hook 默认 not-dev 影响旧期望。"
+    files:
+      - "packages/engine/hooks/stop-dev.sh (classify_session 完整路由 blocked/done/not-dev)"
+      - "packages/engine/skills/dev/scripts/cleanup.sh (done 路径 SIGTERM guardian + rm .live 灯文件)"
+      - "packages/engine/tests/hooks/stop-hook-v24.test.ts (新建 T13-T16)"
+      - "packages/engine/tests/hooks/stop-hook-v23-decision.test.ts (加 setupMockClassifyBlocked beforeEach)"
+      - "packages/engine/tests/hooks/stop-hook-bypass-3layer.test.ts (加 classify mock)"
+      - "packages/engine/tests/hooks/stop-hook-v23-routing.test.ts (加 classify mock + 更新语义)"
+      - "packages/engine/tests/integration/ralph-loop-mode.test.sh (加 inject_classify_blocked)"
+      - "packages/engine/tests/integration/stop-dev-deploy-escape.test.sh (加 inject_classify_mock)"
+      - "Engine 6 处版本文件 18.27.0 → 18.27.1"
+
   - version: "18.26.0"
     date: "2026-05-07"
     change: "feat+security"
