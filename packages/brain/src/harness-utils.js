@@ -156,12 +156,13 @@ export function extractWorkstreamIndex(payload) {
  * @param {{fixMode?: boolean}} opts
  * @returns {string}
  */
-export function buildGeneratorPrompt(task, { fixMode = false } = {}) {
+export function buildGeneratorPrompt(task, { fixMode = false, prdContent = null } = {}) {
   const payload = task.payload || {};
   const dod = Array.isArray(payload.dod) ? payload.dod.join('\n- ') : '';
   const files = Array.isArray(payload.files) ? payload.files.join('\n- ') : '';
   const skillContent = loadSkillContent('harness-generator');
   const fixModeNotice = fixMode ? '**FIX mode**：本轮是 Brain 派 fix loop。按 SKILL 的 systematic-debugging 流程修上一轮 evaluator FAIL 反馈。\n\n' : '';
+  const prdSection = prdContent ? [`## Sprint PRD`, prdContent, ''] : [];
   return [
     '你是 harness-generator agent。按下面 SKILL 指令工作。',
     '',
@@ -181,6 +182,7 @@ export function buildGeneratorPrompt(task, { fixMode = false } = {}) {
     `## 任务描述`,
     task.description || '',
     '',
+    ...prdSection,
     `## DoD`,
     dod ? `- ${dod}` : '(none)',
     '',

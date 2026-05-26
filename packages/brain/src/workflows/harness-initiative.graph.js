@@ -1246,6 +1246,7 @@ export async function runSubTaskNode(state, opts = {}) {
         githubToken: state.githubToken,
         contractBranch: state.contractBranch || state.ganResult?.propose_branch || null,
         baseRepo: state.task?.payload?.base_repo || undefined,
+        prdContent: state.prdContent || null,
       },
       config
     );

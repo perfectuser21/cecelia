@@ -115,6 +115,7 @@ export const TaskState = Annotation.Root({
   error:            Annotation({ reducer: (_o, n) => n, default: () => null }),
   evaluate_verdict: Annotation({ reducer: (_o, n) => n, default: () => null }),
   evaluate_error:   Annotation({ reducer: (_o, n) => n, default: () => null }),
+  prdContent:       Annotation({ reducer: (_o, n) => n, default: () => null }),
 });
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -192,7 +193,7 @@ export async function spawnNode(state, opts = {}) {
   // harnessSubTaskBranchName 是纯函数，幂等调用安全（ensureWt 也用了同参数调用）
   const precomputedBranch = harnessSubTaskBranchName(initiativeId, task.id);
 
-  const prompt = buildGeneratorPrompt(task, { fixMode });
+  const prompt = buildGeneratorPrompt(task, { fixMode, prdContent: state.prdContent || null });
 
   // containerId 必须唯一（fix_round loop 重 spawn 不撞 docker --name）
   // 格式：harness-task-<safeId>-r<round>-<rand8>
