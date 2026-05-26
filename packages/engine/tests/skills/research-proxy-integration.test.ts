@@ -64,20 +64,22 @@ describe('autonomous-research-proxy 行为规则', () => {
   });
 });
 
-describe('SKILL.md 加载 autonomous-research-proxy 规则 + inline Tier 1 快速参考', () => {
+describe('SKILL.md v19+ 结构验证（PrepPRD 驱动架构）', () => {
   const content = readFileSync(SKILL_FILE, 'utf8');
 
-  it('提及 autonomous-research-proxy 文件', () => {
-    expect(content).toContain('autonomous-research-proxy');
+  it('包含 PrepPRD 三种格式（Bug/小改动/大功能）', () => {
+    expect(content).toContain('Bug PrepPRD');
+    expect(content).toContain('小改动 PrepPRD');
+    expect(content).toContain('大功能 PrepPRD');
   });
 
-  it('inline Tier 1 核心条款', () => {
-    expect(content).toContain('Research Subagent');
-    expect(content).toContain('不停下');
+  it('包含 Brain DB 10 张表查询', () => {
+    expect(content).toContain('journeys');
+    expect(content).toContain('journey_steps');
   });
 
-  it('TERMINAL IMPERATIVE 指向 engine-worktree', () => {
+  it('大功能 PrepPRD 含 E2E 测试账号必填段', () => {
+    expect(content).toContain('E2E 测试账号');
     expect(content).toContain('engine-worktree');
-    expect(content).toContain('TERMINAL IMPERATIVE');
   });
 });
