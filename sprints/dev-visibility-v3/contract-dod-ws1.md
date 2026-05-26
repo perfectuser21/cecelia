@@ -10,18 +10,18 @@ journey_type: autonomous
 
 ## ARTIFACT 条目
 
-- [ ] [ARTIFACT] migration 文件存在，含两表 `notion_synced_at` 列
+- [x] [ARTIFACT] migration 文件存在，含两表 `notion_synced_at` 列
   Test: node -e "const fs=require('fs'),p=require('path');const dir='packages/brain/migrations';const files=fs.readdirSync(dir).filter(f=>f.endsWith('.sql'));const found=files.some(f=>{const c=fs.readFileSync(p.join(dir,f),'utf8');return c.includes('decisions') && c.includes('notion_synced_at') && c.includes('initiative_contracts');});if(!found)process.exit(1);console.log('OK')"
 
-- [ ] [ARTIFACT] `notion-push-sync.js` 含 `pushDecisions` 函数定义
+- [x] [ARTIFACT] `notion-push-sync.js` 含 `pushDecisions` 函数定义
   Test: node -e "const c=require('fs').readFileSync('packages/brain/src/notion-push-sync.js','utf8');if(!c.includes('async function pushDecisions'))process.exit(1);console.log('OK')"
 
-- [ ] [ARTIFACT] `notion-push-sync.js` 含 `pushInitiativeContracts` 函数定义
+- [x] [ARTIFACT] `notion-push-sync.js` 含 `pushInitiativeContracts` 函数定义
   Test: node -e "const c=require('fs').readFileSync('packages/brain/src/notion-push-sync.js','utf8');if(!c.includes('async function pushInitiativeContracts'))process.exit(1);console.log('OK')"
 
 ## BEHAVIOR 条目
 
-- [ ] [BEHAVIOR] `pushDecisions` 查询 `notion_synced_at IS NULL` 并在成功后更新 `notion_synced_at`
+- [x] [BEHAVIOR] `pushDecisions` 查询 `notion_synced_at IS NULL` 并在成功后更新 `notion_synced_at`
   Test: manual:bash -c '
   node -e "
   const c=require(\"fs\").readFileSync(\"packages/brain/src/notion-push-sync.js\",\"utf8\");
@@ -33,7 +33,7 @@ journey_type: autonomous
   '
   期望: OK
 
-- [ ] [BEHAVIOR] `pushInitiativeContracts` 函数体含 `notion_synced_at IS NULL` 过滤 + `notion_synced_at = NOW()` 更新（对齐 `pushDecisions` 实现强度）
+- [x] [BEHAVIOR] `pushInitiativeContracts` 函数体含 `notion_synced_at IS NULL` 过滤 + `notion_synced_at = NOW()` 更新（对齐 `pushDecisions` 实现强度）
   Test: manual:bash -c '
   node -e "
   const c=require(\"fs\").readFileSync(\"packages/brain/src/notion-push-sync.js\",\"utf8\");
@@ -49,7 +49,7 @@ journey_type: autonomous
   '
   期望: OK
 
-- [ ] [BEHAVIOR] `runNotionPushSync` 函数体调用 `pushDecisions(pool, token)` 和 `pushInitiativeContracts(pool, token)`
+- [x] [BEHAVIOR] `runNotionPushSync` 函数体调用 `pushDecisions(pool, token)` 和 `pushInitiativeContracts(pool, token)`
   Test: manual:bash -c '
   node -e "
   const c=require(\"fs\").readFileSync(\"packages/brain/src/notion-push-sync.js\",\"utf8\");
@@ -63,7 +63,7 @@ journey_type: autonomous
   '
   期望: OK
 
-- [ ] [BEHAVIOR] migration 文件同时覆盖 `decisions` 和 `initiative_contracts` 两张表（不只覆盖其中一张）
+- [x] [BEHAVIOR] migration 文件同时覆盖 `decisions` 和 `initiative_contracts` 两张表（不只覆盖其中一张）
   Test: manual:bash -c '
   node -e "
   const fs=require(\"fs\"),p=require(\"path\");
@@ -79,7 +79,7 @@ journey_type: autonomous
   '
   期望: OK
 
-- [ ] [BEHAVIOR] error path — Brain Notion token 不可用时，`pushDecisions` / `pushInitiativeContracts` 静默跳过（`catch` + `warn` 日志，不 throw），与现有 `pushIssues` 行为一致
+- [x] [BEHAVIOR] error path — Brain Notion token 不可用时，`pushDecisions` / `pushInitiativeContracts` 静默跳过（`catch` + `warn` 日志，不 throw），与现有 `pushIssues` 行为一致
   Test: manual:bash -c '
   node -e "
   const c=require(\"fs\").readFileSync(\"packages/brain/src/notion-push-sync.js\",\"utf8\");

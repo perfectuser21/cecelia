@@ -329,7 +329,7 @@ echo "✅ Golden Path 全程验证通过"
 
 | Workstream | Test File | BEHAVIOR 覆盖 | 预期红证据 |
 |---|---|---|---|
-| WS1 | `tests/ws1/notion-push-sync.test.js` | pushDecisions/pushInitiativeContracts 存在 + runNotionPushSync 调用 + migration 两表 | WS1 未实现时 4 failures |
-| WS2 | `tests/ws2/dev-skill-route-b.test.js` | SKILL.md Route B 含必要字段 | WS2 未实现时 4 failures |
-| WS3 | `tests/ws3/build-generator-prompt.test.js` | prdContent 注入/跳过 + harness-task.graph.js 注解 | WS3 未实现时 4 failures |
-| WS4 | `tests/ws4/harness-generator-skill.test.js` | 串行派发 + 无旧文字 + 文件名统一 | WS4 未实现时 4 failures |
+| WS1 | `tests/ws1/notion-push-sync.test.js` | pushDecisions/pushInitiativeContracts/runNotionPushSync/migration | WS1 未实现时 5 failures |
+| WS2 | `tests/ws2/dev-skill-route-b.test.js` | Route B 段落/task_type/Route A/Brain 离线 | WS2 未实现时 4 failures |
+| WS3 | `tests/ws3/build-generator-prompt.test.js` | prdContent/harness-task.graph.js | WS3 未实现时 4 failures |
+| WS4 | `tests/ws4/harness-generator-skill.test.js` | SKILL.md 含新文字/sprint-contract.md/文件非空 | WS4 未实现时 4 failures |
