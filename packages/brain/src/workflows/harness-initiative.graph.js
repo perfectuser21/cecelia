@@ -1506,8 +1506,25 @@ export async function pickSubTaskNode(state) {
 }
 
 export async function advanceTaskIndexNode(state) {
+  // Serial merge gate: 刚完成的 sub-task (tasks[idx]) 必须 merged 才能推进
+  const subTasks = state.sub_tasks || [];
+  const tasks = state.taskPlan?.tasks || [];
+  const idx = state.task_loop_index ?? 0;
+  if (subTasks.length > 0 && idx < tasks.length) {
+    const currentTask = tasks[idx];
+    const currentId = currentTask?.id || currentTask?.task_id;
+    const record = subTasks.find((s) => s.id === currentId);
+    if (record && record.status !== 'merged') {
+      return {
+        error: {
+          node: 'advance',
+          message: `Serial gate: sub-task ${currentId} did not merge (status=${record.status ?? 'undefined'}). Next workstream blocked.`,
+        },
+      };
+    }
+  }
   return {
-    task_loop_index: (state.task_loop_index ?? 0) + 1,
+    task_loop_index: idx + 1,
     task_loop_fix_count: 0,
     evaluate_verdict: null,
     evaluate_feedback: null,
