@@ -44,7 +44,7 @@ import { resolveGitHubToken } from '../harness-credentials.js';
 import { spawnDockerDetached } from '../spawn/detached.js';
 import { resolveAccount } from '../spawn/middleware/account-rotation.js';
 import { checkPrStatus, classifyFailedChecks } from '../shepherd.js';
-import { parseDockerOutput, extractField, readPrFromGitState, readVerdictFile, readBrainResult } from '../harness-shared.js';
+import { parseDockerOutput, extractField, readPrFromGitState, readVerdictFile, readBrainResult, EvaluatorOutputSchema } from '../harness-shared.js';
 import { buildGeneratorPrompt, extractWorkstreamIndex } from '../harness-utils.js';
 import { getPgCheckpointer } from '../orchestrator/pg-checkpointer.js';
 import pool from '../db.js';
@@ -79,6 +79,7 @@ export const TaskState = Annotation.Root({
   worktreePath:     Annotation({ reducer: (_o, n) => n, default: () => null }),
   githubToken:      Annotation({ reducer: (_o, n) => n, default: () => null }),
   contractBranch:   Annotation({ reducer: (_o, n) => n, default: () => null }),
+  baseRepo:         Annotation({ reducer: (_o, n) => n, default: () => null }),
   // H13: 防 resume 时 spawn 节点重 import contract sprints/（git fetch 已花过 quota）
   contractImported: Annotation({ reducer: (_o, n) => n, default: () => false }),
   // Layer 3: containerId 是 spawn 节点 spawn detached 容器的 docker --name，同时也是
@@ -93,6 +94,7 @@ export const TaskState = Annotation.Root({
   ci_fail_type:     Annotation({ reducer: (_o, n) => n, default: () => null }),
   failed_checks:    Annotation({ reducer: (_o, n) => n, default: () => [] }),
   status:           Annotation({ reducer: (_o, n) => n, default: () => 'queued' }),
+  rebase_attempted: Annotation({ reducer: (_o, n) => n, default: () => 0 }),
   cost_usd:         Annotation({ reducer: (c, n) => (c || 0) + (n || 0), default: () => 0 }),
   generator_output: Annotation({ reducer: (_o, n) => n, default: () => null }),
   error:            Annotation({ reducer: (_o, n) => n, default: () => null }),
@@ -146,7 +148,7 @@ export async function spawnNode(state, opts = {}) {
       // 修 PR #2851 P0：之前调 ensureHarnessWorktree(taskId='ws1') 被 shortTaskId 拒 → spawn 从未真跑。
       const wtKey = `${String(initiativeId).slice(0, 8)}-${task.id}`;
       const branch = harnessSubTaskBranchName(initiativeId, task.id);
-      worktreePath = await ensureWt({ taskId: task.id, initiativeId, wtKey, branch });
+      worktreePath = await ensureWt({ taskId: task.id, initiativeId, wtKey, branch, baseRepo: state.baseRepo || undefined });
     }
     if (!token) token = await resolveTok();
   } catch (err) {
@@ -386,21 +388,17 @@ export async function pollCiNode(state, opts = {}) {
   return { ci_status: 'pending', poll_count: pollCount + 1 };
 }
 
+const BEHIND_RE = /behind|out of date|outdated|head ref is out of date|must be up to date|not mergeable/i;
+
 export async function mergePrNode(state, opts = {}) {
   if (state.status === 'merged') return { status: 'merged' };
   const execFn = opts.execFile || execFileDefault;
   const prUrl = state?.pr_url;
 
   if (!prUrl) {
-    return { merge_error: 'no pr_url available' };
+    return { error: { node: 'merge_pr', message: 'no pr_url available' } };
   }
 
-  // B21: evaluator PASS 后 brain 真调 gh pr merge --squash 自动合并 PR。
-  // 不再依赖人工 merge button，也不依赖外层 shepherd。
-  // CI 在 poll_ci 节点已验绿，进入此节点时合并安全，无需 --auto 再等。
-  // --delete-branch 合完自动删 head branch。
-  // merge 失败不 throw（避免 graph 走 error 通道触发重试导致重复 merge 风险），
-  // 而是写 merge_error 让 graph 退 END，由人工或 shepherd 补救。
   try {
     const { stdout } = await execFn(
       'gh',
@@ -416,12 +414,35 @@ export async function mergePrNode(state, opts = {}) {
       merge_command: 'gh pr merge --squash',
     };
   } catch (err) {
-    console.warn(`[merge_pr] gh pr merge failed pr=${prUrl}: ${err.message}`);
-    return {
-      merge_error: err.message,
-      // 不 set state.error（避免 graph END 走异常路径），让任务标 completed 不 failed
-    };
+    const msg = err.message || '';
+
+    if (state.rebase_attempted) {
+      console.error(`[merge_pr] merge failed after rebase pr=${prUrl}: ${msg}`);
+      return { error: { node: 'merge_pr', message: `merge failed after rebase: ${msg}` } };
+    }
+
+    if (!BEHIND_RE.test(msg)) {
+      console.error(`[merge_pr] non-recoverable merge error pr=${prUrl}: ${msg}`);
+      return { error: { node: 'merge_pr', message: msg } };
+    }
+
+    console.warn(`[merge_pr] branch behind, calling update-branch pr=${prUrl}`);
+    try {
+      await execFn('gh', ['pr', 'update-branch', prUrl, '--rebase'], { timeout: 30_000 });
+      console.log(`[merge_pr] update-branch ok, re-queuing CI poll pr=${prUrl}`);
+      return { ci_status: 'pending', rebase_attempted: 1 };
+    } catch (updateErr) {
+      console.error(`[merge_pr] update-branch failed pr=${prUrl}: ${updateErr.message}`);
+      return { error: { node: 'merge_pr', message: `update-branch failed: ${updateErr.message}` } };
+    }
   }
+}
+
+export function routeAfterMergePr(state) {
+  if (state.status === 'merged') return 'end';
+  if (state.error) return 'end';
+  if (state.ci_status === 'pending') return 'poll';
+  return 'end';
 }
 
 export async function fixDispatchNode(state) {
@@ -438,6 +459,11 @@ export async function fixDispatchNode(state) {
     ci_status: 'pending',
     ci_fail_type: null,
     failed_checks: [],
+    // B21: 必须 reset evaluate_verdict/evaluate_error — evaluateContractNode 幂等门
+    // 判 state.evaluate_verdict 非空则短路返回旧 FAIL，新轮次永远不 spawn 真实评估器。
+    // 不清零 → 跨 fix_round 持久 FAIL → 无限循环（W45 实证）。
+    evaluate_verdict: null,
+    evaluate_error: null,
   };
 }
 
@@ -477,6 +503,12 @@ export function routeAfterEvaluate(state) {
 // evaluator container reads contract DoD + manual:bash commands, exits 0/1.
 // Verdict PASS → merge_pr; FAIL → fix_dispatch (do NOT merge into main).
 export async function evaluateContractNode(state, opts = {}) {
+  // 幂等门：Brain 重启或 outer graph 重进时，evaluate_verdict 已存在则直接返回，不重复 spawn。
+  if (state.evaluate_verdict) {
+    console.log(`[evaluator] idempotent passthrough verdict=${state.evaluate_verdict}`);
+    return { evaluate_verdict: state.evaluate_verdict };
+  }
+
   const spawnFn = opts.spawnDetached || spawnDockerDetached;
   const resolveTok = opts.resolveToken || resolveGitHubToken;
   const dbPool = opts.poolOverride || pool;
@@ -553,6 +585,8 @@ export async function evaluateContractNode(state, opts = {}) {
         SPRINT_DIR: payload.sprint_dir || 'sprints',
         BRAIN_URL: 'http://host.docker.internal:5221',
         HARNESS_CALLBACK_URL: `http://host.docker.internal:5221/api/brain/harness/callback/${containerId}`,
+        // B22: 评估容器内 psql postgresql://localhost/cecelia 无法解析，改用 host.docker.internal
+        DB: 'postgresql://host.docker.internal/cecelia',
         WORKSTREAM_INDEX: extractWorkstreamIndex(payload),
       },
     });
@@ -610,14 +644,23 @@ export async function evaluateContractNode(state, opts = {}) {
   if (state.worktreePath) {
     try {
       const brainResult = await readBrainResult(state.worktreePath, ['verdict']);
-      const normV = normalizeVerdict(brainResult.verdict);
-      const feedback = brainResult.log_excerpt || brainResult.failed_step || null;
+      const parsed = EvaluatorOutputSchema.safeParse(brainResult);
+      if (!parsed.success) {
+        const issues = parsed.error.issues.map(i => `${i.path.join('.')}: ${i.message}`).join('; ');
+        console.warn(`[evaluator] schema_mismatch, propagating: ${issues}`);
+        const err = new Error(`ContractViolation: schema_mismatch — ${issues}`);
+        err.code = 'schema_mismatch';
+        throw err;
+      }
+      const normV = normalizeVerdict(parsed.data.verdict);
+      const feedback = parsed.data.feedback || parsed.data.log_excerpt || parsed.data.failed_step || null;
       return {
         evaluate_verdict: normV,
         evaluate_error: normV === 'FAIL' ? (feedback || 'evaluator returned FAIL') : null,
       };
-    } catch {
-      // .brain-result.json 不存在或字段缺失，继续 Protocol v1 fallback
+    } catch (e) {
+      if (e.code === 'schema_mismatch') throw e;  // 重新抛出，不被 fallback 吞掉
+      // .brain-result.json 不存在或其他错误，继续 Protocol v1 fallback
     }
   }
 
@@ -662,7 +705,7 @@ export function buildHarnessTaskGraph() {
       end: END, merge: 'merge_pr', evaluate: 'evaluate_contract', fix: 'fix_dispatch', timeout: END, poll: 'poll_ci',
     })
     .addConditionalEdges('evaluate_contract', routeAfterEvaluate, { merge: 'merge_pr', fix: 'fix_dispatch' })
-    .addEdge('merge_pr', END)
+    .addConditionalEdges('merge_pr', routeAfterMergePr, { end: END, poll: 'poll_ci' })
     .addConditionalEdges('fix_dispatch', routeAfterFix, {
       end: END, failed: END, spawn: 'spawn',
     });

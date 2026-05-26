@@ -31,7 +31,8 @@ describe('B40: evaluateContractNode Protocol v2.5 — .brain-result.json fallbac
     expect(graphSource).toMatch(/try\s*\{[\s\S]*?readBrainResult[\s\S]*?\}\s*catch/);
   });
 
-  it('graph.js .brain-result.json 结果使用 log_excerpt 或 failed_step 作为 feedback', () => {
-    expect(graphSource).toMatch(/brainResult\.log_excerpt\s*\|\|\s*brainResult\.failed_step/);
+  it('graph.js .brain-result.json 结果使用 log_excerpt 或 failed_step 作为 feedback（走 parsed.data）', () => {
+    // schema 验证后字段在 parsed.data 上，不再从 brainResult 原始对象读
+    expect(graphSource).toMatch(/parsed\.data\.log_excerpt\s*\|\|\s*parsed\.data\.failed_step/);
   });
 });

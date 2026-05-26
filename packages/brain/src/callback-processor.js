@@ -126,31 +126,32 @@ export async function processExecutionCallback(data, pool) {
       `Task ${task_id} execution completed with status: ${status}`,
       JSON.stringify({ task_id, run_id, status, iterations }),
       JSON.stringify(lastRunResult),
-      status === 'AI Done' ? 'success' : 'failed',
+      (newStatus === 'completed' || newStatus === 'completed_no_pr') ? 'success' : 'failed',
       String(run_id || ''),
       String(status || ''),
     ]);
 
     // Progress step（非阻塞）
+    const isSuccessfulExecution = newStatus === 'completed' || newStatus === 'completed_no_pr';
     try {
       const { recordProgressStep } = await import('./progress-ledger.js');
       await recordProgressStep(task_id, run_id, {
         sequence: 1,
         name: 'task_execution',
         type: 'execution',
-        status: status === 'AI Done' ? 'completed' : 'failed',
+        status: isSuccessfulExecution ? 'completed' : 'failed',
         startedAt: null,
         completedAt: new Date(),
         durationMs: duration_ms || null,
         inputSummary: null,
         outputSummary: findingsValue ? findingsValue.substring(0, 500) : null,
         findings: result && typeof result === 'object' ? result : {},
-        errorCode: status !== 'AI Done' ? 'execution_failed' : null,
-        errorMessage: status !== 'AI Done' ? `Task execution failed with status: ${status}` : null,
+        errorCode: isSuccessfulExecution ? null : 'execution_failed',
+        errorMessage: isSuccessfulExecution ? null : `Task execution failed with status: ${status}`,
         retryCount: iterations || 0,
         artifacts: { pr_url: pr_url || null },
         metadata: { checkpoint_id: checkpoint_id || null, original_status: status },
-        confidenceScore: status === 'AI Done' ? 1.0 : 0.2,
+        confidenceScore: isSuccessfulExecution ? 1.0 : 0.2,
       });
       console.log(`[callback-processor] Progress step recorded for task ${task_id}`);
     } catch (progressErr) {

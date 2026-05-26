@@ -1,15 +1,13 @@
 import { FeatureManifest } from '../types';
 
 const manifest: FeatureManifest = {
-  id: 'execution',
   name: 'Execution',
+  id: 'execution',
   version: '1.0.0',
   source: 'core',
   instances: ['core'],
 
-  navGroups: [
-    { id: 'execution', label: '执行', order: 3 },
-  ],
+  navGroups: [],
 
   routes: [
     // Brain Status Dashboard
@@ -34,7 +32,7 @@ const manifest: FeatureManifest = {
     {
       path: '/harness-pipeline',
       component: 'HarnessPipelinePage',
-      navItem: { label: 'Harness Pipeline', icon: 'GitBranch', group: 'execution', order: 30 },
+      navItem: { label: 'Harness Pipeline', icon: 'GitBranch', group: 'system', order: 30 },
     },
     { path: '/harness-pipeline/:id', component: 'HarnessPipelineDetailPage' },
     { path: '/harness-pipeline/:id/step/:step', component: 'HarnessPipelineStepPage' },

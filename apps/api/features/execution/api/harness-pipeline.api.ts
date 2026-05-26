@@ -23,6 +23,8 @@ export interface HarnessStage {
 
 export interface HarnessPipeline {
   planner_task_id: string;
+  pipeline_id?: string;
+  task_type?: string;
   sprint_dir: string;
   title: string;
   sprint_goal: string;
@@ -31,6 +33,25 @@ export interface HarnessPipeline {
   elapsed_ms: number;
   created_at: string;
   stages: HarnessStage[];
+}
+
+export interface InitiativeStepTiming {
+  node: string;
+  duration_ms: number | null;
+}
+
+export interface InitiativeDetail {
+  initiative_id: string;
+  prd_content: string | null;
+  contract_content: string | null;
+  gan_rounds: number | null;
+  step_timing: InitiativeStepTiming[];
+  screenshot_urls: string[];
+}
+
+export async function getInitiativeDetail(initiativeId: string): Promise<InitiativeDetail> {
+  const res = await apiClient.get(`/brain/harness/initiative/${encodeURIComponent(initiativeId)}/detail`);
+  return res.data;
 }
 
 export interface HarnessPipelinesResponse {

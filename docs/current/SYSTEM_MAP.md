@@ -1,12 +1,13 @@
 ---
 id: current-system-map
-version: 1.1.0
+version: 1.2.0
 created: 2026-03-10
-updated: 2026-05-04
+updated: 2026-05-26
 authority: CURRENT_STATE
 changelog:
   - 1.0.0: 初始版本，基于 main 分支代码实际审计
   - 1.1.0: Wave1 双层架构 — LLM fire-and-forget、circuit_breaker_states 持久化、brain_guidance 表
+  - 1.2.0: Harness Pipeline 可视化 v2 — GET /initiative/:id/detail 端点 + Dashboard initiative 详情面板（data-testid: initiative-card/detail-panel/prd-content/step-timeline）+ reportNode step_timing/ws_issues/ws_costs 增强
 ---
 
 # Cecelia 系统架构图（当前事实版）

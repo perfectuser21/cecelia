@@ -1470,6 +1470,39 @@ function getPermissionModeForTaskType(taskType) {
   return modeMap[taskType] || 'bypassPermissions';
 }
 
+// 各 harness 阶段的预定义 goal conditions（task.goal_condition 为空时作为 fallback）
+const HARNESS_GOAL_CONDITIONS = {
+  'harness_spec':  'The spec document has been written and committed to docs/superpowers/specs/',
+  'harness_code':  'All implementation is complete, all tests pass, and changes are committed to git',
+  'harness_prci':  'A pull request has been created and pushed to GitHub, PR URL is shown in the conversation',
+  'harness_ship':  'The pull request has been merged and all CI checks have passed',
+  'spec':          'The spec document has been written and committed to docs/superpowers/specs/',
+  'code':          'All implementation is complete, all tests pass, and changes are committed to git',
+  'prci':          'A pull request has been created and pushed to GitHub, PR URL is shown in the conversation',
+  'ship':          'The pull request has been merged and all CI checks have passed',
+  'generic':       'The task described in the prompt has been completed successfully',
+};
+
+/**
+ * 生成 Claude Code --settings prompt-based stop hook JSON。
+ * @param {string|null} goalCondition
+ * @returns {string|null} JSON 字符串；goalCondition 为空时返回 null
+ */
+function buildGoalSettings(goalCondition) {
+  if (!goalCondition) return null;
+  return JSON.stringify({
+    hooks: {
+      Stop: [{
+        hooks: [{
+          type: 'prompt',
+          prompt: `Has the following goal been achieved based on the conversation? Goal: ${goalCondition}\n\nAnswer YES only if you can confirm from the conversation that the goal is met. Answer NO otherwise.`,
+          model: 'claude-haiku-4-5-20251001'
+        }]
+      }]
+    }
+  });
+}
+
 /**
  * 获取特定 task_type 需要注入的额外环境变量。
  * 这些变量会通过 cecelia-bridge → cecelia-run → claude 进程传递，
@@ -2815,7 +2848,19 @@ export async function runHarnessInitiativeRouter(task, opts = {}) {
   const resumeRequested = task.payload?.resume_from_checkpoint === true;
   let input;
   if (existing && resumeRequested) {
-    input = null;  // 显式 resume from checkpoint
+    // 检查 checkpoint 是否处于 error 状态（如 ganLoop 节点执行失败）
+    // 若 error 有值，resume 会立即路由到 END → final=null → task failed → 每 2min 死循环
+    const ckError = existing.channel_values?.error;
+    if (ckError) {
+      // 坏 checkpoint：升 N，fresh start，避免无限 resume→END→loop
+      attemptN = baseAttemptN + 1;
+      threadId = `harness-initiative:${initiativeId}:${attemptN}`;
+      input = { task };
+      await dbPool.query('UPDATE tasks SET execution_attempts=$1 WHERE id=$2', [attemptN, task.id]);
+      console.log(`[startup-sync] Bad checkpoint (error state) for task=${task.id}, fresh start attempt=${attemptN}`);
+    } else {
+      input = null;  // 显式 resume from checkpoint
+    }
   } else if (existing && !resumeRequested) {
     // 同 attemptN 已有 checkpoint 但未 resume → 升 N，留旧 checkpoint 诊断
     attemptN = baseAttemptN + 1;
@@ -3027,6 +3072,9 @@ async function triggerCeceliaRun(task) {
   // 实现下沉到 runHarnessInitiativeRouter，便于测试 + 复用。
   if (task.task_type === 'harness_initiative') {
     console.log(`[executor] 路由决策: task_type=${task.task_type} → Harness Full Graph (A+B+C)`);
+
+    // OAuth token 自动刷新，无需 session ≥ 4h 的 pre-check
+
     try {
       const result = await runHarnessInitiativeRouter(task);
       // harness_initiative 是同步阻塞执行（无回调），executor 必须自行回写状态
@@ -3169,9 +3217,6 @@ async function triggerCeceliaRun(task) {
     }
     const permissionMode = getPermissionModeForTaskType(taskType);
     const extraEnv = getExtraEnvForTaskType(taskType);
-    // 无头模式下 tty 不可用，注入 CLAUDE_SESSION_ID 供 Stop Hook _session_matches() 会话隔离
-    // worktree-manage.sh 写 .dev-lock 时读取此变量作为 session_id 字段
-    extraEnv.CLAUDE_SESSION_ID = task.id;
     const model = getModelForTask(task);
 
     // Update task with run info before execution
@@ -3219,6 +3264,13 @@ async function triggerCeceliaRun(task) {
     const credentials = getCredentialsForTask(task);
     if (credentials) {
       extraEnv.CECELIA_CREDENTIALS = credentials;
+    }
+
+    // goal-based stop hook: inject --settings JSON for tasks with goal_condition
+    const _goalCond = task.goal_condition || HARNESS_GOAL_CONDITIONS[taskType] || null;
+    const _goalSettings = buildGoalSettings(_goalCond);
+    if (_goalSettings) {
+      extraEnv.CECELIA_GOAL_SETTINGS = _goalSettings;
     }
 
     // ── Docker Sandbox 分支（HARNESS_DOCKER_ENABLED=true）───────────────────
@@ -3867,6 +3919,9 @@ export {
   SAFETY_MARGIN,
   // v13: code-review env isolation
   getExtraEnvForTaskType,
+  // v18: goal-based stop hook
+  buildGoalSettings,
+  HARNESS_GOAL_CONDITIONS,
   // v14: Input validation for shell commands
   assertSafeId,
   assertSafePid,

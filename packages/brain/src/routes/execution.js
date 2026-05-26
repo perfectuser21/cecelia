@@ -203,34 +203,35 @@ router.post('/execution-callback', async (req, res) => {
         `Task ${task_id} execution completed with status: ${status}`,
         JSON.stringify({ task_id, run_id, status, iterations }),
         JSON.stringify(lastRunResult),
-        status === 'AI Done' ? 'success' : 'failed',
+        (newStatus === 'completed' || newStatus === 'completed_no_pr') ? 'success' : 'failed',
         String(run_id || ''),
         String(status || '')
       ]);
 
       // Record progress step for completed execution
+      const isSuccessfulExecution = newStatus === 'completed' || newStatus === 'completed_no_pr';
       try {
         const { recordProgressStep } = await import('../progress-ledger.js');
         await recordProgressStep(task_id, run_id, {
-          sequence: 1, // 简化版：每个任务记录为单步骤
+          sequence: 1,
           name: 'task_execution',
           type: 'execution',
-          status: status === 'AI Done' ? 'completed' : 'failed',
-          startedAt: null, // execution-callback 时不知道开始时间
+          status: isSuccessfulExecution ? 'completed' : 'failed',
+          startedAt: null,
           completedAt: new Date(),
           durationMs: duration_ms || null,
           inputSummary: null,
           outputSummary: findingsValue ? findingsValue.substring(0, 500) : null,
           findings: result && typeof result === 'object' ? result : {},
-          errorCode: status !== 'AI Done' ? 'execution_failed' : null,
-          errorMessage: status !== 'AI Done' ? `Task execution failed with status: ${status}` : null,
+          errorCode: isSuccessfulExecution ? null : 'execution_failed',
+          errorMessage: isSuccessfulExecution ? null : `Task execution failed with status: ${status}`,
           retryCount: iterations || 0,
           artifacts: { pr_url: pr_url || null },
           metadata: {
             checkpoint_id: checkpoint_id || null,
             original_status: status
           },
-          confidenceScore: status === 'AI Done' ? 1.0 : 0.2
+          confidenceScore: isSuccessfulExecution ? 1.0 : 0.2
         });
         console.log(`[execution-callback] Progress step recorded for task ${task_id}`);
       } catch (progressErr) {
@@ -298,7 +299,7 @@ router.post('/execution-callback', async (req, res) => {
         }
       } catch { /* non-fatal */ }
 
-      const exitStatus = status === 'AI Done' ? 'success' : 'failed';
+      const exitStatus = (newStatus === 'completed' || newStatus === 'completed_no_pr') ? 'success' : 'failed';
 
       await pool.query(`
         INSERT INTO task_run_metrics (
@@ -367,7 +368,7 @@ router.post('/execution-callback', async (req, res) => {
       const { cleanupMetrics } = await import('../watchdog.js');
       await cleanupMetrics(task_id, pool, {
         runId: run_id || null,
-        exitStatus: status === 'AI Done' ? 'success' : 'failed',
+        exitStatus: (newStatus === 'completed' || newStatus === 'completed_no_pr') ? 'success' : 'failed',
       });
     } catch { /* ignore */ }
 
@@ -1763,6 +1764,7 @@ ${resultStr.substring(0, 2000)}
                 planner_task_id: task_id,
                 planner_branch: plannerBranch,
                 propose_round: 1,
+                feature_id: harnessPayload.feature_id || null,
                 harness_mode: true
               }
             });
@@ -1834,6 +1836,7 @@ ${resultStr.substring(0, 2000)}
                 propose_task_id: task_id,
                 propose_branch: proposeBranch,   // Reviewer 读 contract-draft 所需
                 propose_round: proposeRound,
+                feature_id: harnessPayload.feature_id || null,
                 harness_mode: true
               }
             });
@@ -1956,6 +1959,7 @@ ${resultStr.substring(0, 2000)}
                 propose_round: nextRound,
                 review_feedback_task_id: task_id,
                 review_branch: reviewBranch,    // Proposer 读反馈所需
+                feature_id: harnessPayload.feature_id || null,
                 harness_mode: true
               }
             });
@@ -2156,6 +2160,7 @@ ${resultStr.substring(0, 2000)}
                   planner_branch: harnessPayload.planner_branch || null,
                   contract_branch: harnessPayload.contract_branch,
                   project_id: harnessTask.project_id,
+                  feature_id: harnessPayload.feature_id || null,
                   eval_round: 1,
                   harness_mode: true
                 }
@@ -2240,6 +2245,7 @@ ${resultStr.substring(0, 2000)}
                 planner_task_id: harnessPayload.planner_task_id,
                 planner_branch: harnessPayload.planner_branch || null,
                 contract_branch: harnessPayload.contract_branch,
+                feature_id: harnessPayload.feature_id || null,
                 eval_round: evalRound + 1,
                 harness_mode: true
               }
@@ -2395,6 +2401,25 @@ ${resultStr.substring(0, 2000)}
               }
             } catch (smokeErr) {
               console.warn(`[execution-callback] harness: smoke test failed (non-fatal): ${smokeErr.message}`);
+            }
+
+            // Step 3.5: 回写 Feature thickness（thin → medium）
+            const featureId = harnessPayload.feature_id;
+            if (featureId) {
+              try {
+                const patchResp = await fetch(`http://localhost:5221/api/brain/journey_features/${featureId}`, {
+                  method: 'PATCH',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ thickness: 'medium' }),
+                });
+                if (patchResp.ok) {
+                  console.log(`[execution-callback] harness: Feature ${featureId} thickness → medium (evaluator PASS)`);
+                } else {
+                  console.warn(`[execution-callback] harness: thickness PATCH failed ${patchResp.status} (non-fatal)`);
+                }
+              } catch (thickErr) {
+                console.warn(`[execution-callback] harness: thickness PATCH error (non-fatal): ${thickErr.message}`);
+              }
             }
 
             // Step 4: 创建 Report

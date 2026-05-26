@@ -22,17 +22,18 @@
  *   3. 调 runFinalE2E → verdict PASS | FAIL
  *   4. PASS → initiative_runs.phase='done' + completed_at=NOW()
  *   5. FAIL → attributeFailures → 为每个可疑 Task 建 harness_task(fix mode) + fix_round++
- *           fix_round > MAX_FIX_ROUNDS → phase='failed'，写 failure_reason
+ *           fix_round 超出上限 → phase='failed'，写 failure_reason
  */
 
 import { execFile as execFileCb } from 'node:child_process';
 import { promisify } from 'node:util';
 import pool from '../db.js';
 import { spawn } from '../spawn/index.js';
+import { reconnectOrSpawn, makeSessionRecord } from '../harness-session-bridge.js';
 import { parseDockerOutput, loadSkillContent, readBrainResult } from '../harness-shared.js';
 import { parseTaskPlan, upsertTaskPlan } from '../harness-dag.js';
 import { runFinalE2E, attributeFailures } from '../harness-final-e2e.js';
-import { ensureHarnessWorktree } from '../harness-worktree.js';
+import { ensureHarnessWorktree, harnessSubTaskWorktreePath } from '../harness-worktree.js';
 import { resolveGitHubToken } from '../harness-credentials.js';
 import { fetchAndShowOriginFile } from '../lib/git-fence.js';
 import { readFile, readdir } from 'node:fs/promises';
@@ -47,7 +48,6 @@ import { runGanContractGraph } from '../harness-gan-graph.js';
 
 const DEFAULT_TIMEOUT_SEC = 21600; // 6h，对齐 initiative_contracts.timeout_sec 默认
 const DEFAULT_BUDGET_USD = 10;
-const MAX_FIX_ROUNDS = 3; // fix_round > 3 → phase='failed'（PRD §6.3）
 
 /**
  * 运行一个 Initiative 的阶段 A：规划 + 合同起草 + 运行态登记。
@@ -110,8 +110,10 @@ ${task.description || task.title || ''}
   // ── Prep：挂载 worktree + 注入 GitHub token（Harness v2 container mount）──
   let worktreePath;
   let githubToken;
+  let baseRepo;
   try {
-    worktreePath = await ensureHarnessWorktree({ taskId: task.id, initiativeId });
+    baseRepo = task.payload?.base_repo || undefined;
+    worktreePath = await ensureHarnessWorktree({ taskId: task.id, initiativeId, baseRepo });
     githubToken = await resolveGitHubToken();
   } catch (err) {
     console.error(`[harness-initiative-runner] prep failed task=${task.id}: ${err.message}`);
@@ -202,6 +204,7 @@ ${task.description || task.title || ''}
       githubToken,
       budgetCapUsd: budgetUsd,
       checkpointer: opts.checkpointer,
+      baseRepo,
     });
   } catch (err) {
     console.error(`[harness-initiative-runner] GAN failed task=${task.id}: ${err.message}`);
@@ -360,13 +363,12 @@ export async function createFixTask({
  * 语义：
  *   - not_ready: 子任务未全完成，tick 稍后重试
  *   - e2e_pass : Final E2E 全绿，initiative_runs.phase='done'
- *   - e2e_fail : 部分 scenario 失败，建 fix 子任务；若 fix_round > MAX_FIX_ROUNDS 则 phase='failed'
+ *   - e2e_fail : 部分 scenario 失败，建 fix 子任务；若 fix_round 超出上限则 phase='failed'
  *
  * @param {string} initiativeTaskId   parent harness_initiative task UUID
  * @param {object} [opts]
  * @param {object} [opts.pool]         pg pool 注入（测试用）
  * @param {Function} [opts.runE2E]     runFinalE2E 替换（测试用）
- * @param {number} [opts.maxFixRounds=3]
  * @param {object} [opts.now]          Date 替换（测试用，不常用）
  * @returns {Promise<{
  *   status: 'not_ready'|'e2e_pass'|'e2e_fail'|'e2e_failed_terminal'|'no_contract'|'error',
@@ -383,7 +385,7 @@ export async function runPhaseCIfReady(initiativeTaskId, opts = {}) {
 
   const dbPool = opts.pool || pool;
   const runE2E = opts.runE2E || runFinalE2E;
-  const maxFixRounds = Number.isFinite(opts.maxFixRounds) ? opts.maxFixRounds : MAX_FIX_ROUNDS;
+  // maxFixRounds 已移除上限，始终重试
 
   const client = await dbPool.connect();
   try {
@@ -458,8 +460,6 @@ export async function runPhaseCIfReady(initiativeTaskId, opts = {}) {
     const fixTaskIds = [];
     const failureAttribution = [];
 
-    let anyExceededRounds = false;
-
     for (const [failedTaskId, info] of attribution.entries()) {
       // 取当前 fix_round：从 original task 查现存 fix 子任务计数
       const roundQ = await client.query(
@@ -478,10 +478,7 @@ export async function runPhaseCIfReady(initiativeTaskId, opts = {}) {
         nextRound,
       });
 
-      if (nextRound > maxFixRounds) {
-        anyExceededRounds = true;
-        continue; // 不再建 fix task（terminal fail 已触发）
-      }
+      // 无上限：始终创建 fix task，不检查轮次上限
 
       const newId = await createFixTask({
         initiativeId,
@@ -494,28 +491,7 @@ export async function runPhaseCIfReady(initiativeTaskId, opts = {}) {
       fixTaskIds.push(newId);
     }
 
-    if (anyExceededRounds) {
-      const reason = `Final E2E FAIL: ${failureAttribution
-        .map((a) => `task=${a.task_id}(r=${a.nextRound})`)
-        .join(', ')}`;
-      await client.query(
-        `UPDATE initiative_runs
-         SET phase='failed', failure_reason=$1, completed_at=NOW(), updated_at=NOW()
-         WHERE id=$2::uuid`,
-        [reason, runId]
-      );
-      return {
-        status: 'e2e_failed_terminal',
-        initiativeId,
-        runId,
-        verdict: 'FAIL',
-        fixTaskIds,
-        failureAttribution,
-        error: reason,
-      };
-    }
-
-    // 未超 fix round：退回到 B_task_loop 等 fix task 走完
+    // 始终重试：退回到 B_task_loop 等 fix task 走完
     await client.query(
       `UPDATE initiative_runs
        SET phase='B_task_loop', updated_at=NOW()
@@ -548,7 +524,7 @@ export async function runPhaseCIfReady(initiativeTaskId, opts = {}) {
 // 每节点首句幂等门防 LangGraph resume 重 spawn（C6 smoke 教训）。
 // PRD: docs/superpowers/specs/2026-04-25-c8a-harness-initiative-graph-design.md
 
-import { StateGraph, Annotation, START, END, interrupt } from '@langchain/langgraph';
+import { StateGraph, Annotation, START, END } from '@langchain/langgraph';
 import { getPgCheckpointer } from '../orchestrator/pg-checkpointer.js';
 import { LLM_RETRY, DB_RETRY, NO_RETRY } from './retry-policies.js';
 // 注：上方 imports 已含 spawn / parseDockerOutput / loadSkillContent / parseTaskPlan /
@@ -566,6 +542,8 @@ export const InitiativeState = Annotation.Root({
   ganResult:      Annotation({ reducer: (_o, n) => n, default: () => null }),
   result:         Annotation({ reducer: (_o, n) => n, default: () => null }),
   error:          Annotation({ reducer: (_o, n) => n, default: () => null }),
+  planner_session:   Annotation({ reducer: (_o, n) => n, default: () => null }),
+  evaluator_session: Annotation({ reducer: (_o, n) => n, default: () => null }),
 });
 
 // 节点 stub — Task 2-6 逐个填充。
@@ -573,7 +551,8 @@ export async function prepInitiativeNode(state) {
   if (state.worktreePath) return { worktreePath: state.worktreePath };
   try {
     const initiativeId = state.task?.payload?.initiative_id || state.task?.initiative_id || state.task?.id;
-    const worktreePath = await ensureHarnessWorktree({ taskId: state.task.id, initiativeId });
+    const baseRepo = state.task?.payload?.base_repo || undefined;
+    const worktreePath = await ensureHarnessWorktree({ taskId: state.task.id, initiativeId, baseRepo });
     const githubToken = await resolveGitHubToken();
     return { worktreePath, githubToken, initiativeId };
   } catch (err) {
@@ -581,7 +560,7 @@ export async function prepInitiativeNode(state) {
   }
 }
 export async function runPlannerNode(state, opts = {}) {
-  if (state.plannerOutput) return { plannerOutput: state.plannerOutput };
+  if (state.plannerOutput && !state.planner_session) return { plannerOutput: state.plannerOutput };
   try {
     const executor = opts.executor || spawn;
     const sprintDir = state.task?.payload?.sprint_dir || 'sprints';
@@ -600,12 +579,15 @@ ${skillContent}
 ## 任务描述
 ${state.task.description || state.task.title || ''}
 
+## PrepPRD（产品语言，用户确认过的需求文档）
+${state.task?.payload?.prep_prd_body || '（未提供，Planner 从 sprint-prd.md 推断）'}
+
 ## 输出要求（v2）
 1. 生成 ${sprintDir}/sprint-prd.md（What，不写 How）
 2. 在 stdout 末尾输出 task-plan.json
 3. task-plan.json 必须被 \`\`\`json ... \`\`\` 代码块包裹便于提取`;
 
-    const result = await executor({
+    const taskArg = {
       task: { ...state.task, task_type: 'harness_planner' },
       prompt,
       worktreePath: state.worktreePath,
@@ -614,17 +596,38 @@ ${state.task.description || state.task.title || ''}
         HARNESS_NODE: 'planner',
         HARNESS_SPRINT_DIR: sprintDir,
         HARNESS_INITIATIVE_ID: state.initiativeId,
+        CECELIA_JOURNEY_ID: state.task?.payload?.journey_id || '',
         GITHUB_TOKEN: state.githubToken,
       },
+    };
+
+    const result = await reconnectOrSpawn({
+      nodeKey: 'planner_session',
+      state,
+      executor,
+      taskArg,
+      worktreePath: state.worktreePath,
+      async readOutput(wt) {
+        try {
+          const { readFile: rf } = await import('node:fs/promises');
+          const content = await rf(`${wt}/${sprintDir}/sprint-prd.md`, 'utf8');
+          return { plannerOutput: content };
+        } catch { return null; }
+      },
     });
+
+    if (result.plannerOutput) {
+      // reconnected path: readOutput 已经返回了 plannerOutput
+      return { plannerOutput: result.plannerOutput, planner_session: makeSessionRecord(result) };
+    }
     if (result.exit_code !== 0 || result.timed_out) {
       const msg = result.timed_out
         ? 'Docker timeout'
         : `Docker exit=${result.exit_code}: ${(result.stderr || '').slice(-500)}`;
       return { error: { node: 'planner', message: msg } };
     }
-    const plannerOutput = parseDockerOutput(result.stdout);
-    return { plannerOutput };
+    const plannerOutput = parseDockerOutput(result.stdout ?? '');
+    return { plannerOutput, planner_session: makeSessionRecord(result) };
   } catch (err) {
     return { error: { node: 'planner', message: err.message } };
   }
@@ -729,6 +732,7 @@ export async function runGanLoopNode(state, opts = {}) {
       githubToken: state.githubToken,
       budgetCapUsd: budgetUsd,
       checkpointer,
+      baseRepo: state.task?.payload?.base_repo || undefined,
     });
     return { ganResult };
   } catch (err) {
@@ -900,6 +904,7 @@ export const FullInitiativeState = Annotation.Root({
   task_loop_fix_count: Annotation({ reducer: (_o, n) => n, default: () => 0 }),
   evaluate_verdict:   Annotation({ reducer: (_o, n) => n, default: () => null }),
   evaluate_feedback:  Annotation({ reducer: (_o, n) => n, default: () => null }),
+  final_e2e_fix_count: Annotation({ reducer: (_o, n) => n, default: () => 0 }),
 });
 
 /**
@@ -1054,15 +1059,93 @@ export function _resetTaskGraphCacheForTests() {
 const SUBGRAPH_WAIT_MS = parseInt(process.env.CECELIA_SUBGRAPH_WAIT_MS || `${90 * 60 * 1000}`, 10);
 const SUBGRAPH_POLL_INTERVAL_MS = parseInt(process.env.CECELIA_SUBGRAPH_POLL_MS || '5000', 10);
 
-async function _waitForSubGraphCompletion(compiled, config, timeoutMs) {
+// 默认每 12 次 poll（12 × 5s = 60s）做一次容器 liveness check
+const LIVENESS_CHECK_EVERY_N = parseInt(process.env.CECELIA_LIVENESS_CHECK_N || '12', 10);
+
+/**
+ * 检查 Docker 容器是否仍在 running。
+ * 如果容器 exited / dead，或 docker inspect 失败（容器不存在），视为死亡返回非空错误字符串。
+ * 容器仍在 running 返回 null。
+ *
+ * @param {string} containerId
+ * @returns {Promise<string|null>}  死亡原因描述 or null（还活着）
+ */
+async function _checkContainerLiveness(containerId) {
+  return new Promise((resolve) => {
+    execFileCb('docker', ['inspect', '--format', '{{.State.Status}}', containerId], (err, stdout) => {
+      if (err) {
+        // 只有明确"容器不存在"才视为死亡，其他错误保守返回 null 避免误判
+        if (err.message && (err.message.includes('No such') || err.message.includes('not found'))) {
+          resolve(`container_inspect_failed: ${err.message}`);
+        } else {
+          resolve(null);
+        }
+        return;
+      }
+      const status = (stdout || '').trim();
+      resolve((status === 'exited' || status === 'dead') ? `container_${status}_without_callback` : null);
+    });
+  });
+}
+
+/**
+ * 等待 sub-graph 完成（轮询 getState 直到 next=[]）。
+ *
+ * 增加容器活性检测（B2/B3 修复）：每 livenessCheckEveryN 次 poll 检查一次
+ * sub-graph state 里的 containerId 是否仍在 running。如果容器已死亡（exited/dead/不存在），
+ * 主动通过 compiled.invoke({resume:{status:'failed',...}}, config) 唤醒 sub-graph，
+ * 避免傻等 90min 超时。
+ *
+ * @param {object} compiled          LangGraph compiled graph
+ * @param {object} config            LangGraph config（含 thread_id）
+ * @param {number} timeoutMs         最长等待时间（默认 90min）
+ * @param {object} [opts]            测试注入选项
+ * @param {number} [opts.pollIntervalMs]     轮询间隔（默认 SUBGRAPH_POLL_INTERVAL_MS）
+ * @param {number} [opts.livenessCheckEveryN] 每 N 次 poll 做一次 liveness check（默认 12）
+ */
+export async function _waitForSubGraphCompletion(compiled, config, timeoutMs, opts = {}) {
+  const pollIntervalMs = opts.pollIntervalMs ?? SUBGRAPH_POLL_INTERVAL_MS;
+  const livenessCheckEveryN = opts.livenessCheckEveryN ?? LIVENESS_CHECK_EVERY_N;
+
   const deadline = Date.now() + timeoutMs;
+  let pollCount = 0;
+
   while (Date.now() < deadline) {
     const state = await compiled.getState(config);
     if (!state.next || state.next.length === 0) {
       return state.values;
     }
+
+    // ── 容器活性检测（B2/B3）──────────────────────────────────────────────
+    // 每 livenessCheckEveryN 次 poll 检查一次容器是否还活着
+    if (pollCount % livenessCheckEveryN === 0) {
+      const containerId = state.values?.containerId;
+      if (containerId) {
+        const deathReason = await _checkContainerLiveness(containerId);
+        if (deathReason) {
+          // 容器已死，主动 resume sub-graph 走 failure 路径
+          console.warn(
+            `[harness-liveness] Container ${containerId} died (${deathReason}), resuming sub-graph with failure`
+          );
+          try {
+            await compiled.invoke(
+              { resume: { status: 'failed', error: deathReason } },
+              config
+            );
+          } catch (resumeErr) {
+            // resume 失败时记录警告（sub-graph 可能已经在 END 了）
+            console.warn(`[harness-liveness] resume invoke failed: ${resumeErr.message}`);
+          }
+          // resume 后 getState 拿最新状态
+          const finalState = await compiled.getState(config);
+          return { ...(finalState.values || {}), status: finalState.values?.status || 'failed' };
+        }
+      }
+    }
+
+    pollCount++;
     // 还在中间节点（通常 await_callback interrupt） — 等下一轮 poll
-    await new Promise((r) => setTimeout(r, SUBGRAPH_POLL_INTERVAL_MS));
+    await new Promise((r) => setTimeout(r, pollIntervalMs));
   }
   // 超时 — 拿当前 state 当 final（status 可能 undefined → join 视作 failed）
   const state = await compiled.getState(config);
@@ -1106,6 +1189,7 @@ export async function runSubTaskNode(state, opts = {}) {
         // worktreePath: state.worktreePath,
         githubToken: state.githubToken,
         contractBranch: state.contractBranch || state.ganResult?.propose_branch || null,
+        baseRepo: state.task?.payload?.base_repo || undefined,
       },
       config
     );
@@ -1115,7 +1199,8 @@ export async function runSubTaskNode(state, opts = {}) {
       final = firstResult;
     } else {
       // sub-graph 大概率停在 await_callback interrupt — poll getState 等到 END
-      final = await _waitForSubGraphCompletion(compiled, config, waitMs);
+      // opts.waitOpts 供测试注入 pollIntervalMs / livenessCheckEveryN
+      final = await _waitForSubGraphCompletion(compiled, config, waitMs, opts.waitOpts || {});
     }
   } catch (err) {
     final = { status: 'failed', error: { node: 'sub_graph', message: err.message } };
@@ -1228,11 +1313,53 @@ export async function reportNode(state, opts = {}) {
   // 重入会重复 UPDATE，虽语义等幂但增加 DB 负载且 completed_at 会刷新）。
   if (state.report_path) return { report_path: state.report_path };
   const dbPool = opts.pool || pool;
+
+  // Compute step_timing from task_events graph_node_update events (same logic as /detail endpoint)
+  let step_timing = [];
+  try {
+    const { rows: evtRows } = await dbPool.query(
+      `SELECT payload, created_at
+       FROM task_events
+       WHERE task_id = $1::uuid AND event_type = 'graph_node_update'
+       ORDER BY created_at ASC`,
+      [state.initiativeId]
+    );
+    for (let i = 0; i < evtRows.length; i++) {
+      const p = evtRows[i].payload || {};
+      const started_at = new Date(evtRows[i].created_at).toISOString();
+      const nextTs = evtRows[i + 1]?.created_at;
+      const duration_ms = nextTs
+        ? new Date(nextTs).getTime() - new Date(evtRows[i].created_at).getTime()
+        : null;
+      step_timing.push({ node: p.nodeName || 'unknown', started_at, duration_ms });
+    }
+  } catch (err) {
+    console.warn(`[harness-initiative.graph] reportNode step_timing query failed: ${err.message}`);
+  }
+
+  // Compute ws_issues from sub_tasks (evaluator_feedback + ci_fail_type)
+  const ws_issues = (state.sub_tasks || [])
+    .filter(s => s.ci_fail_type || s.evaluator_feedback)
+    .map(s => ({
+      ws_id: s.id,
+      feedback: s.evaluator_feedback || null,
+      ci_fail_type: s.ci_fail_type || null,
+    }));
+
+  // Compute ws_costs from sub_tasks (ws_id + cost_usd)
+  const ws_costs = (state.sub_tasks || []).map(s => ({
+    ws_id: s.id,
+    cost_usd: s.cost_usd || 0,
+  }));
+
   const reportContent = JSON.stringify({
     initiativeId: state.initiativeId,
     sub_tasks: state.sub_tasks || [],
     final_e2e_verdict: state.final_e2e_verdict,
     failed_scenarios: state.final_e2e_failed_scenarios || [],
+    step_timing,
+    ws_issues,
+    ws_costs,
     cost_usd: (state.sub_tasks || []).reduce((a, s) => a + (s.cost_usd || 0), 0),
     completed_at: new Date().toISOString(),
   }, null, 2);
@@ -1258,12 +1385,34 @@ export async function reportNode(state, opts = {}) {
     const taskStatus = state.final_e2e_verdict === 'PASS' ? 'completed' : 'failed';
     await dbPool.query(
       `UPDATE tasks SET status=$2::text, completed_at=NOW(), updated_at=NOW(),
+        result = COALESCE(result, '{}'::jsonb) || jsonb_build_object('report_content', $4::jsonb),
         error_message=CASE WHEN $2::text='failed' THEN $3::text ELSE error_message END
        WHERE id=$1::uuid`,
-      [state.initiativeId, taskStatus, reason]
+      [state.initiativeId, taskStatus, reason, reportContent]
     );
   } catch (err) {
     console.warn(`[harness-initiative.graph] reportNode db update failed: ${err.message}`);
+  }
+  // 派 harness_report 子任务（6 步交付：Notion / 飞书 / harness-report.md）
+  try {
+    await dbPool.query(
+      `INSERT INTO tasks (title, description, task_type, status, priority, payload)
+       VALUES ($1, $2, 'harness_report', 'queued', 'P2', $3::jsonb)`,
+      [
+        `[Harness Report] ${state.task?.title || state.initiativeId}`,
+        `Auto-spawned by reportNode for initiative ${state.initiativeId}`,
+        JSON.stringify({
+          initiative_id: state.initiativeId,
+          final_e2e_verdict: state.final_e2e_verdict,
+          sprint_dir: state.sprintDir,
+          journey_id: state.task?.payload?.journey_id,
+          feature_id: state.task?.payload?.feature_id,
+          sub_tasks: state.sub_tasks || [],
+        }),
+      ]
+    );
+  } catch (err) {
+    console.warn(`[harness-initiative.graph] reportNode spawn harness_report failed: ${err.message}`);
   }
   return { report_path: reportContent };
 }
@@ -1313,7 +1462,7 @@ export async function terminalFailNode(state, opts = {}) {
   // 重入会再次刷 completed_at，不必要的 DB 负载）。
   if (state.error?.node === 'terminal_fail') return { error: state.error };
   const dbPool = opts.pool || pool;
-  const reason = `Evaluator FAIL after ${MAX_FIX_ROUNDS} retries on task index ${state.task_loop_index ?? 0}: ${(state.evaluate_feedback || '').slice(0, 300)}`;
+  const reason = `Evaluator FAIL on task index ${state.task_loop_index ?? 0}: ${(state.evaluate_feedback || '').slice(0, 300)}`;
   try {
     await dbPool.query(
       `UPDATE initiative_runs SET phase='failed', failure_reason=$1, completed_at=NOW(), updated_at=NOW() WHERE initiative_id=$2::uuid`,
@@ -1339,14 +1488,12 @@ export function routeAfterEvaluate(state) {
   if (state.error) return 'end';
   const tasks = state.taskPlan?.tasks || [];
   const idx = state.task_loop_index ?? 0;
-  const fixCount = state.task_loop_fix_count ?? 0;
 
   if (state.evaluate_verdict === 'PASS') {
     if (idx + 1 >= tasks.length) return 'final_evaluate';
     return 'advance';
   }
   // FAIL (or null/unexpected verdict — treated as FAIL to prevent silent skip)
-  if (fixCount >= MAX_FIX_ROUNDS) return 'terminal_fail';
   return 'retry';
 }
 
@@ -1354,7 +1501,7 @@ export function routeAfterEvaluate(state) {
 
 /**
  * W5 — 关键决策点 interrupt()。
- * 当 final E2E verdict='FAIL' 且 fix_round 已达 MAX_FIX_ROUNDS 时，调 interrupt()
+ * 当 final E2E verdict='FAIL' 且 fix_round 超出上限时，调 interrupt()
  * 暂停 graph，由主理人通过 routes/harness-interrupts.js POST resume 决策：
  *   - abort:              终止 graph，写 error
  *   - extend_fix_rounds:  允许再 fix 3 轮（fix_rounds_extended=3）
@@ -1374,6 +1521,34 @@ export async function finalEvaluateDispatchNode(state, opts = {}) {
   const execFn = opts.execFile || execFile;
   const sprintDir = state.task?.payload?.sprint_dir || 'sprints';
   const journeyType = state.taskPlan?.journey_type || 'autonomous';
+  const targetEnv = (state.prdContent || '').match(/^##\s*target_environment:\s*(\S+)/m)?.[1]
+    || state.task?.payload?.target_environment
+    || 'local_api';
+  const _baseRepo = (state.task?.payload?.base_repo || '').toLowerCase();
+  const githubRepo = _baseRepo.includes('zenithjoy') ? 'perfectuser21/zenithjoy-workspace' : 'perfectuser21/cecelia';
+
+  // Cross-repo sprints: evaluator 需要在 sub-task worktree（外部仓库克隆）里运行，
+  // 才能通过 ARTIFACT 检查（implementation 文件在外部 repo，不在 Cecelia）。
+  // 修正：把 sprint 文件从 initiative worktree 复制到 sub-task worktree，然后挂载后者。
+  let evalWorktreePath = state.worktreePath;
+  if (state.task?.payload?.base_repo && state.task?.id) {
+    const existsFn = opts.existsSync || (await import('node:fs')).existsSync;
+    const cpFn = opts.fsCp || (await import('node:fs/promises')).cp;
+    const subWtPath = opts.subTaskWorktreePath !== undefined
+      ? opts.subTaskWorktreePath
+      : harnessSubTaskWorktreePath(state.task.id, 'ws1');
+    if (existsFn(subWtPath)) {
+      try {
+        const sprintSrc = path.join(state.worktreePath, sprintDir);
+        const sprintDst = path.join(subWtPath, sprintDir);
+        await cpFn(sprintSrc, sprintDst, { recursive: true, force: true });
+        evalWorktreePath = subWtPath;
+        console.log(`[final_evaluate] cross-repo: using sub-task worktree ${subWtPath}`);
+      } catch (err) {
+        console.warn(`[final_evaluate] cross-repo worktree sync failed, falling back to initiative worktree: ${err.message}`);
+      }
+    }
+  }
 
   // B17: final_evaluate 也跑 PR 分支（generator 写的代码还在 PR 分支没 merge main）
   const firstSubTaskPr = (state.sub_tasks || [])[0]?.pr_url || '';
@@ -1402,16 +1577,19 @@ ${skillContent}
 IS_FINAL_E2E=true
 SPRINT_DIR=${sprintDir}
 TASK_ID=${state.task?.id}
-JOURNEY_TYPE=${journeyType}`;
+JOURNEY_TYPE=${journeyType}
+TARGET_ENV=${targetEnv}
+GITHUB_REPO=${githubRepo}`;
 
   // 清理上轮残留结果文件，防止 executor 失败时读到旧数据
   const { unlink: unlinkResultFile } = await import('node:fs/promises');
-  try { await unlinkResultFile(path.join(state.worktreePath, '.brain-result.json')); } catch { /* 忽略 */ }
+  try { await unlinkResultFile(path.join(evalWorktreePath, '.brain-result.json')); } catch { /* 忽略 */ }
 
-  // B41: Phase C 前把 playground/ 从 origin/main 同步到 initiative worktree。
+  // B41: Phase C 前把 playground/ 从 origin/main 同步到 initiative worktree（仅同仓库 sprint）。
   // 根因：initiative worktree HEAD 停在 GAN 合同分支，playground 代码是旧的；
   // Phase B PR 合并进 main 后，这里必须拉最新代码，否则 evaluator 测旧实现永远 FAIL。
-  if (state.worktreePath) {
+  // cross-repo sprint（evalWorktreePath !== state.worktreePath）跳过此步，外部 repo 无 playground/。
+  if (evalWorktreePath === state.worktreePath && state.worktreePath) {
     try {
       await execFn('git', ['fetch', 'origin', 'main'],
         { cwd: state.worktreePath, timeout: 30_000 });
@@ -1428,13 +1606,15 @@ JOURNEY_TYPE=${journeyType}`;
     result = await executor({
       task: { ...state.task, task_type: 'harness_evaluate' },
       prompt,
-      worktreePath: state.worktreePath,
+      worktreePath: evalWorktreePath,
       env: {
         CECELIA_TASK_TYPE: 'harness_evaluate',
         HARNESS_NODE: 'final_evaluate',
         IS_FINAL_E2E: 'true',
         SPRINT_DIR: sprintDir,
         JOURNEY_TYPE: journeyType,
+        TARGET_ENV: targetEnv,
+        GITHUB_REPO: githubRepo,
         GITHUB_TOKEN: state.githubToken,
         PR_URL: firstSubTaskPr,
         PR_BRANCH: prBranchEnv,
@@ -1454,7 +1634,7 @@ JOURNEY_TYPE=${journeyType}`;
     // 读容器写入的结果文件（替代 stdout 末行 JSON 解析）
     let resultData;
     try {
-      resultData = await readBrainResult(state.worktreePath, ['verdict']);
+      resultData = await readBrainResult(evalWorktreePath, ['verdict']);
     } catch (readErr) {
       resultData = { verdict: 'FAIL', failed_step: 'result_file_missing', log_excerpt: readErr.message };
     }
@@ -1475,54 +1655,11 @@ JOURNEY_TYPE=${journeyType}`;
     }
   }
 
-  // W5 — fix_round 用尽 + FAIL → interrupt() 问主理人
-  const fixRound = state.task_loop_fix_count ?? 0;
-  if (verdictDelta.final_e2e_verdict === 'FAIL' && fixRound >= MAX_FIX_ROUNDS) {
-    let decision;
-    try {
-      decision = interrupt({
-        type: 'final_e2e_failed_max_fix',
-        initiative_id: state.initiativeId,
-        task_id: state.task?.id,
-        failed_scenarios: verdictDelta.final_e2e_failed_scenarios || [],
-        fix_rounds_used: fixRound,
-        message:
-          'Final E2E 已重试 ' + fixRound + ' 次仍失败。请决定：' +
-          '(a) action=abort 终止 (b) action=extend_fix_rounds 增加 fix_round 限额再试 ' +
-          '(c) action=accept_failed 标 sprint failed 但接受',
-      });
-    } catch (err) {
-      // GraphInterrupt 是 LangGraph 暂停信号 — 不在此 catch（retryOn 已排除），但兜底返 verdictDelta
-      if (err?.name === 'GraphInterrupt' || /interrupt/i.test(String(err?.message || ''))) {
-        throw err;
-      }
-      console.warn(`[finalEvaluateDispatchNode] interrupt() unexpected error: ${err.message}`);
-      return verdictDelta;
-    }
+  const fixRound = state.final_e2e_fix_count ?? 0;
 
-    if (decision?.action === 'abort') {
-      return {
-        ...verdictDelta,
-        error: { node: 'final_evaluate', message: 'aborted by operator', operator_decision: decision },
-      };
-    }
-    if (decision?.action === 'extend_fix_rounds') {
-      // 把 fix count 重置为 0 让 graph 路由回 retry 再跑（caller 需从 evaluate 路径再来）
-      return {
-        ...verdictDelta,
-        task_loop_fix_count: 0,
-        fix_rounds_extended: (state.fix_rounds_extended || 0) + 3,
-        operator_decision: decision,
-      };
-    }
-    if (decision?.action === 'accept_failed') {
-      return {
-        ...verdictDelta,
-        final_e2e_verdict: 'PASS_WITH_OVERRIDE',
-        operator_decision: decision,
-      };
-    }
-    // 未知 action — 保留原 verdict
+  // FAIL → 始终重试，无上限
+  if (verdictDelta.final_e2e_verdict === 'FAIL') {
+    return { ...verdictDelta, final_e2e_fix_count: fixRound + 1, task_loop_index: 0 };
   }
 
   return verdictDelta;
@@ -1536,9 +1673,10 @@ function _routeAfterJoin(state) {
   return 'final_e2e'; // 即便 FAIL 也进 final_e2e（短路 verdict=FAIL，不再跑 scenarios）
 }
 
-function _routeAfterFinalE2E(state) {
-  if (state.error) return 'end';
-  return 'report';
+export function _routeAfterFinalE2E(state) {
+  if (state.error) return 'report';
+  if (state.final_e2e_verdict === 'PASS' || state.final_e2e_verdict === 'PASS_WITH_OVERRIDE') return 'report';
+  return 'pick_sub_task'; // FAIL → 重跑所有 sub-tasks
 }
 
 export function buildHarnessFullGraph(nodeOverrides = {}) {
@@ -1579,7 +1717,7 @@ export function buildHarnessFullGraph(nodeOverrides = {}) {
     .addConditionalEdges('pick_sub_task', routeFromPickSubTask, { run_sub_task: 'run_sub_task', final_evaluate: 'final_evaluate', end: END })
     .addEdge('run_sub_task', 'advance')
     .addEdge('advance', 'pick_sub_task')
-    .addEdge('final_evaluate', 'report')
+    .addConditionalEdges('final_evaluate', _routeAfterFinalE2E, { report: 'report', pick_sub_task: 'pick_sub_task' })
     .addEdge('report', END);
 }
 

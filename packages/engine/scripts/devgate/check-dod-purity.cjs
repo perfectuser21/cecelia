@@ -3,7 +3,8 @@
  * check-dod-purity.cjs — Harness v5 CI check
  *
  * 规则：
- *   contract-dod-ws{N}.md 只能装 [ARTIFACT] 条目，严禁 [BEHAVIOR] 条目
+ *   contract-dod-ws{N}.md 允许 [ARTIFACT] 和 [BEHAVIOR] 条目
+ *   （evaluator anti-cheat rule 3 要求 DoD 至少含 1 个 [BEHAVIOR] 条目，优先级高于旧的纯度规则）
  *   Test 字段只允许白名单：node / npm / curl / bash / psql / tests/ / manual: / contract:
  *
  * 扫描范围：
@@ -59,16 +60,8 @@ function checkFile(filePath) {
   const lines = content.split("\n");
   const violations = [];
 
-  // Rule 1: 禁 [BEHAVIOR] 条目
-  // 允许的：`## BEHAVIOR 索引`（标题）
-  // 禁止的：`- [ ] [BEHAVIOR] ...` 或 `- [x] [BEHAVIOR] ...`
-  for (let i = 0; i < lines.length; i++) {
-    if (/^\s*-\s*\[[\sxX]\]\s*\[BEHAVIOR\]/.test(lines[i])) {
-      violations.push(
-        `L${i + 1}: 禁止 [BEHAVIOR] 条目 — BEHAVIOR 必须搬到 tests/ws{N}/*.test.ts：\n    ${lines[i].trim()}`
-      );
-    }
-  }
+  // Rule 1: [BEHAVIOR] 条目已允许（evaluator anti-cheat rule 3 要求 DoD 至少含 1 个 [BEHAVIOR]）
+  // 旧规则"禁 [BEHAVIOR]"在 v5.1 中移除，[BEHAVIOR] 和 [ARTIFACT] 均可出现在 DoD 文件中。
 
   // Rule 2: Test 字段白名单
   // 允许：manual:<cmd>(含 node/npm/curl/bash/psql) / tests/... / contract:...
@@ -94,7 +87,7 @@ function checkFile(filePath) {
 
 function main() {
   console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
-  console.log("  DoD Purity Check (v5.0)");
+  console.log("  DoD Purity Check (v5.1)");
   console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n");
 
   const files = listFiles();
@@ -127,8 +120,7 @@ function main() {
   } else {
     console.log(`${RED}❌ DoD 纯度检查失败${RESET} (${totalViolations} 处违规)`);
     console.log("\n  contract-dod-ws{N}.md 规则：");
-    console.log("    - 只能装 [ARTIFACT] 条目");
-    console.log("    - [BEHAVIOR] 必须搬到 sprints/{sprint}/tests/ws{N}/*.test.ts");
+    console.log("    - 允许 [ARTIFACT] 和 [BEHAVIOR] 条目");
     console.log("    - Test 字段：manual:<cmd> / tests/... / contract:...");
     console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
     process.exit(1);

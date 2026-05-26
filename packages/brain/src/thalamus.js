@@ -1294,10 +1294,10 @@ function quickRoute(event) {
 
   // RUMINATION_RESULT：反刍结果，丘脑决定写入哪些内容
   if (event.type === EVENT_TYPES.RUMINATION_RESULT) {
-    // 有 self_updates → 需要 L1 判断写入哪些 self_model
-    if (Array.isArray(event.self_updates) && event.self_updates.length > 0) {
-      return null; // 交 L1 LLM 处理
-    }
+    // self_updates：self_model 已由 rumination.js 直接调用 updateSelfModel() 更新；
+    // write_self_model 已从白名单移除，L1 LLM 无法处理，且洞察→task 绑定已在
+    // rumination.js 的 maybeCreateRuminationTask 中完成。继续往下做 L0 处理。
+
     // 有可执行行动 → L0 直接创建 research 任务
     if (Array.isArray(event.actions) && event.actions.length > 0) {
       return {

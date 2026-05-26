@@ -1,45 +1,82 @@
 ---
 skeleton: false
-journey_type: user_facing
+journey_type: autonomous
 ---
-# Contract DoD — Workstream 1: DB Migration — initiative_run_events 表
+# Contract DoD — Workstream 1: playground GET /subtract 路由 + 测试块
 
-**范围**: 创建 `packages/brain/src/db/migrations/010-initiative-run-events.sql`，建表 DDL + 复合索引
-**大小**: S（<30 行，1 文件）
-**依赖**: 无
+**范围**: 在 `playground/server.js` 新增 `GET /subtract` 路由（复用 `STRICT_NUMBER` regex `^-?\d+(\.\d+)?$`，校验 a/b 存在且合法，计算 `Number(a) - Number(b)`，返回 `{result: <number>, operation: "subtract"}`）；在 `playground/tests/server.test.js` 新增 `describe('GET /subtract', ...)` 测试块  
+**大小**: M（server.js ~35 行 + tests ~80 行 = ~115 行）  
+**依赖**: 无（唯一 workstream）
+
+---
 
 ## ARTIFACT 条目
 
-- [x] [ARTIFACT] `packages/brain/src/db/migrations/010-initiative-run-events.sql` 文件存在
-  Test: node -e "require('fs').accessSync('packages/brain/src/db/migrations/010-initiative-run-events.sql')"
+- [x] [ARTIFACT] `playground/server.js` 内含 `/subtract` 路由注册
+  Test: node -e "const c=require('fs').readFileSync('playground/server.js','utf8');if(!/app\.get\(['\"]\/subtract['\"]/.test(c))process.exit(1)"
 
-- [x] [ARTIFACT] migration 文件包含 `CREATE TABLE initiative_run_events` DDL
-  Test: node -e "const c=require('fs').readFileSync('packages/brain/src/db/migrations/010-initiative-run-events.sql','utf8');if(!c.includes('CREATE TABLE initiative_run_events'))process.exit(1)"
+- [x] [ARTIFACT] `playground/server.js` 的 `/subtract` 路由使用 query 名 `a` 和 `b`（不使用禁用名 x/y/p/q/n/m/v1/v2）
+  Test: node -e "const c=require('fs').readFileSync('playground/server.js','utf8');const m=c.match(/app\.get\(['\"]\/subtract[\s\S]*?\}\);/);if(!m)process.exit(1);if(!/\b(req\.query\.a|\{\s*a\s*[,}])/.test(m[0]))process.exit(1)"
 
-- [x] [ARTIFACT] migration 文件包含 `event_id UUID PRIMARY KEY` 定义
-  Test: node -e "const c=require('fs').readFileSync('packages/brain/src/db/migrations/010-initiative-run-events.sql','utf8');if(!c.includes('event_id') || !c.includes('UUID PRIMARY KEY'))process.exit(1)"
+- [x] [ARTIFACT] `playground/server.js` 的 `/subtract` 路由响应含字面 `operation: "subtract"`
+  Test: node -e "const c=require('fs').readFileSync('playground/server.js','utf8');const m=c.match(/app\.get\(['\"]\/subtract[\s\S]*?\}\);/);if(!m||!/operation\s*:\s*['\"]subtract['\"]/.test(m[0]))process.exit(1)"
 
-- [x] [ARTIFACT] migration 文件包含复合索引 `(initiative_id, created_at)`
-  Test: node -e "const c=require('fs').readFileSync('packages/brain/src/db/migrations/010-initiative-run-events.sql','utf8');if(!c.includes('initiative_id') || !c.includes('created_at'))process.exit(1)"
+- [x] [ARTIFACT] `playground/server.js` 的 `/subtract` 路由响应含字面 `result` 字段（不漂移到 difference/diff/value/answer/data）
+  Test: node -e "const c=require('fs').readFileSync('playground/server.js','utf8');const m=c.match(/app\.get\(['\"]\/subtract[\s\S]*?\}\);/);if(!m)process.exit(1);if(!/\bresult\s*:/.test(m[0]))process.exit(1);for(const k of ['difference','diff','value','answer','data']){if(new RegExp('\\b'+k+'\\s*:').test(m[0])){console.error('forbidden key '+k);process.exit(1)}}"
 
-## BEHAVIOR 条目（内嵌可执行 manual: 命令）
+- [x] [ARTIFACT] `playground/tests/server.test.js` 内含 `describe('GET /subtract'` 块
+  Test: node -e "const c=require('fs').readFileSync('playground/tests/server.test.js','utf8');if(!/describe\(['\"]GET \/subtract/.test(c))process.exit(1)"
 
-- [x] [BEHAVIOR] 执行 migration 后 `initiative_run_events` 表存在于 DB
-  Test: manual:bash -c 'DB="${DATABASE_URL:-postgresql://cecelia@localhost/cecelia}"; psql "$DB" -c "\d initiative_run_events" > /tmp/ws1_tbl.txt 2>&1; node -e "const c=require(\"fs\").readFileSync(\"/tmp/ws1_tbl.txt\",\"utf8\");if(c.toLowerCase().includes(\"does not exist\")||c.toLowerCase().includes(\"error\")){process.stderr.write(\"FAIL: 表不存在\n\");process.exit(1);}process.stdout.write(\"PASS: 表存在\n\")"'
-  期望: PASS: 表存在
+---
 
-- [x] [BEHAVIOR] 表包含全部必填列（event_id/initiative_id/node/status/payload/created_at）
-  Test: manual:bash -c 'DB="${DATABASE_URL:-postgresql://cecelia@localhost/cecelia}"; psql "$DB" -t -c "SELECT column_name FROM information_schema.columns WHERE table_name='"'"'initiative_run_events'"'"' ORDER BY column_name" > /tmp/ws1_cols.txt 2>/dev/null; node -e "const c=require(\"fs\").readFileSync(\"/tmp/ws1_cols.txt\",\"utf8\");const miss=[\"event_id\",\"initiative_id\",\"node\",\"status\",\"payload\",\"created_at\"].filter(col=>!c.includes(col));if(miss.length){process.stderr.write(\"FAIL: 缺列 \"+miss.join(\",\")+\"\n\");process.exit(1);}process.stdout.write(\"PASS: 列完整\n\")"'
-  期望: PASS: 列完整
+## BEHAVIOR 条目（内嵌 manual:bash 命令，playground target_environment）
 
-- [x] [BEHAVIOR] node CHECK 约束拒绝无效枚举值（如 'step'）
-  Test: manual:bash -c 'DB="${DATABASE_URL:-postgresql://cecelia@localhost/cecelia}"; psql "$DB" -c "INSERT INTO initiative_run_events (initiative_id, node, status) VALUES ('"'"'00000000-0000-0000-0000-000000000000'"'"', '"'"'step'"'"', '"'"'running'"'"')" > /tmp/ws1_chk1.txt 2>&1; node -e "const c=require(\"fs\").readFileSync(\"/tmp/ws1_chk1.txt\",\"utf8\").toLowerCase();if(!c.includes(\"violates check constraint\")){process.stderr.write(\"FAIL: CHECK 约束未生效\n\");process.exit(1);}process.stdout.write(\"PASS: CHECK 约束拒绝非法 node\n\")"'
-  期望: PASS: CHECK 约束拒绝非法 node
+> target_environment: playground — BEHAVIOR 命令使用 `node playground/server.js`（playground sprint 例外规则）
 
-- [x] [BEHAVIOR] status CHECK 约束拒绝禁用别名（如 'in_progress'）
-  Test: manual:bash -c 'DB="${DATABASE_URL:-postgresql://cecelia@localhost/cecelia}"; psql "$DB" -c "INSERT INTO initiative_run_events (initiative_id, node, status) VALUES ('"'"'00000000-0000-0000-0000-000000000000'"'"', '"'"'planner'"'"', '"'"'in_progress'"'"')" > /tmp/ws1_chk2.txt 2>&1; node -e "const c=require(\"fs\").readFileSync(\"/tmp/ws1_chk2.txt\",\"utf8\").toLowerCase();if(!c.includes(\"violates check constraint\")){process.stderr.write(\"FAIL: CHECK 约束未拒绝 in_progress\n\");process.exit(1);}process.stdout.write(\"PASS: status CHECK 约束正常\n\")"'
-  期望: PASS: status CHECK 约束正常
+- [x] [BEHAVIOR] GET /subtract?a=10&b=3 → HTTP 200 + `{result:7, operation:"subtract"}`（schema 字段值验证）
+  Test: manual:bash -c 'PLAYGROUND_PORT=3401 NODE_ENV=production node playground/server.js > /tmp/dod-b1.log 2>&1 & SPID=$!; sleep 2; RESP=$(curl -sf "http://localhost:3401/subtract?a=10&b=3") || { kill $SPID; printf "FAIL: 端点未返回 200\n"; exit 1; }; printf "%s\n" "$RESP" | jq -e '"'"'.result == 7'"'"' || { kill $SPID; printf "FAIL: result != 7\n"; exit 1; }; printf "%s\n" "$RESP" | jq -e '"'"'.operation == "subtract"'"'"' || { kill $SPID; printf "FAIL: operation != subtract\n"; exit 1; }; kill $SPID; printf "OK\n"'
+  期望: OK
 
-- [x] [BEHAVIOR] 复合索引 `(initiative_id, created_at)` 存在于 DB
-  Test: manual:bash -c 'DB="${DATABASE_URL:-postgresql://cecelia@localhost/cecelia}"; psql "$DB" -t -c "SELECT indexname FROM pg_indexes WHERE tablename='"'"'initiative_run_events'"'"'" > /tmp/ws1_idx.txt 2>/dev/null; node -e "const c=require(\"fs\").readFileSync(\"/tmp/ws1_idx.txt\",\"utf8\");if(!c.includes(\"initiative_run_events\")){process.stderr.write(\"FAIL: 索引不存在\n\");process.exit(1);}process.stdout.write(\"PASS: 索引存在\n\")"'
-  期望: PASS: 索引存在
+- [x] [BEHAVIOR] GET /subtract?a=10&b=3 → 顶层 keys = `["operation","result"]`（keys 完整性，不多不少）
+  Test: manual:bash -c 'PLAYGROUND_PORT=3402 NODE_ENV=production node playground/server.js > /tmp/dod-b2.log 2>&1 & SPID=$!; sleep 2; RESP=$(curl -sf "http://localhost:3402/subtract?a=10&b=3") || { kill $SPID; exit 1; }; printf "%s\n" "$RESP" | jq -e '"'"'keys | sort == ["operation","result"]'"'"' || { kill $SPID; printf "FAIL: keys 不合规\n"; exit 1; }; kill $SPID; printf "OK\n"'
+  期望: OK
+
+- [x] [BEHAVIOR] GET /subtract?a=10&b=3 → 响应不含任一禁用字段 difference/diff/value/answer/data（禁用字段反向验证）
+  Test: manual:bash -c 'PLAYGROUND_PORT=3403 NODE_ENV=production node playground/server.js > /tmp/dod-b3.log 2>&1 & SPID=$!; sleep 2; RESP=$(curl -sf "http://localhost:3403/subtract?a=10&b=3") || { kill $SPID; exit 1; }; for k in difference diff value answer data; do printf "%s\n" "$RESP" | jq -e "has(\"$k\") | not" > /dev/null || { kill $SPID; printf "FAIL: 禁用字段 $k 出现\n"; exit 1; }; done; kill $SPID; printf "OK\n"'
+  期望: OK
+
+- [x] [BEHAVIOR] 缺参 a → HTTP 400 + error 字段类型为 string（error path — 缺参）
+  Test: manual:bash -c 'PLAYGROUND_PORT=3404 NODE_ENV=production node playground/server.js > /tmp/dod-b4.log 2>&1 & SPID=$!; sleep 2; CODE=$(curl -s -o /tmp/dod-err.json -w "%{http_code}" "http://localhost:3404/subtract?b=3"); [ "$CODE" = "400" ] || { kill $SPID; printf "FAIL: 缺 a 应返 400，实际 $CODE\n"; exit 1; }; jq -e '"'"'.error | type == "string"'"'"' /tmp/dod-err.json || { kill $SPID; printf "FAIL: error 字段不存在\n"; exit 1; }; kill $SPID; printf "OK\n"'
+  期望: OK
+
+- [x] [BEHAVIOR] GET /subtract 4 种非法格式（1e5/Inf/%2B1/0xFF）→ 全部 HTTP 400（error path — 非法格式拒绝）
+  Test: manual:bash -c 'PLAYGROUND_PORT=3405 NODE_ENV=production node playground/server.js > /tmp/dod-b5.log 2>&1 & SPID=$!; sleep 2; for bad in "a=1e5&b=3" "a=Inf&b=3" "a=%2B1&b=3" "a=0xFF&b=3"; do CODE=$(curl -s -o /dev/null -w "%{http_code}" "http://localhost:3405/subtract?$bad"); [ "$CODE" = "400" ] || { kill $SPID; printf "FAIL: $bad 应返 400，实际 $CODE\n"; exit 1; }; done; kill $SPID; printf "OK\n"'
+  期望: OK
+
+- [x] [BEHAVIOR] GET /subtract?a=3&b=10 → HTTP 200 + result=-7（负数结果正常返回）
+  Test: manual:bash -c 'PLAYGROUND_PORT=3406 NODE_ENV=production node playground/server.js > /tmp/dod-b6.log 2>&1 & SPID=$!; sleep 2; RESP=$(curl -sf "http://localhost:3406/subtract?a=3&b=10") || { kill $SPID; exit 1; }; printf "%s\n" "$RESP" | jq -e '"'"'.result == -7'"'"' || { kill $SPID; printf "FAIL: result 应为 -7\n"; exit 1; }; kill $SPID; printf "OK\n"'
+  期望: OK
+
+---
+
+## Risks
+
+### RISK-1: Bug 10 假绿回归风险（端口冲突导致 BEHAVIOR 命令 exit 0）
+
+**描述**: 若 Generator 没有正确实现 `/subtract` 路由，但测试机器上已有进程占用 3401-3406 端口中某一端口（或上一次测试残留进程未 kill），`node playground/server.js` 在该端口静默启动失败，`curl -sf` 转而连到已存在进程的旧 handler，老路由返回 404 → `curl -sf` exit 1 → BEHAVIOR FAIL。但若旧进程碰巧返回 200（如同端口 Express 兼容响应），则 BEHAVIOR 假绿通过，Generator 不实现也能 PASS。
+
+**缓解措施**:
+1. 每条 BEHAVIOR 命令使用不同端口（3401-3406 分开），降低碰撞概率
+2. 每条命令在 `kill $SPID` 后加 `sleep 1` 以确保端口释放
+3. Evaluator 在跑 BEHAVIOR 前应先 `lsof -ti tcp:3401-3406 | xargs kill -9 2>/dev/null || true` 清空端口
+4. Contract 验证命令用 `PLAYGROUND_PORT` 动态赋值，evaluator 可注入空闲端口
+
+**残余风险**: 低。各 Step 端口已不同；假绿要求旧进程碰巧返回同格式 JSON，概率极低。
+
+---
+
+### RISK-2: STRICT_NUMBER regex 不存在风险
+
+**描述**: PRD 写 `[ASSUMPTION: playground/server.js 已有 STRICT_NUMBER regex 可复用]`。若 Generator 查到 `playground/server.js` 里不存在此 regex，需自行定义。若 Generator 误判（如把 `/^\d+$/` 当 STRICT_NUMBER 使用），非法格式 `+1`/`-1`/`.5` 等可能漏网，B5 BEHAVIOR（四种格式 400）会 FAIL。
+
+**缓解措施**: Generator 应先 grep `playground/server.js` 确认 STRICT_NUMBER 是否存在；若不存在则**自行定义** `const STRICT_NUMBER = /^-?\d+(\.\d+)?$/` 并注释 `// defined per PRD assumption`；B5 已扩展为循环验 4 种格式，任何一种漏判均能抓出。

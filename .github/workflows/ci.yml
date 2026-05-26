@@ -25,6 +25,7 @@ jobs:
       workspace: ${{ steps.detect.outputs.workspace }}
       compose: ${{ steps.detect.outputs.compose }}
       dod: ${{ steps.detect.outputs.dod }}
+      quality: ${{ steps.detect.outputs.quality }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -90,6 +91,38 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+  # ─── DoD 格式检查（独立，所有 PR 必跑）────────────────────────────────
+  # 从 engine-tests 移出，确保 Brain/Workspace PR 的 DoD 也被检查
+  dod-format-check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v4
+      - name: DoD 格式检查
+        run: |
+          TASK_CARD=""
+          # DoD.md 是当前标准（v6 命名），.task-*.md / task-card.md 为旧兼容
+          for f in DoD.md .task-*.md task-card.md; do
+            [ -f "$f" ] && TASK_CARD="$f" && break
+          done
+          if [ -z "$TASK_CARD" ]; then
+            echo "⏭️  未找到 DoD 文件，跳过格式检查"
+            exit 0
+          fi
+          echo "📋 检查 DoD 文件: $TASK_CARD"
+          if ! grep -q '\[BEHAVIOR\]' "$TASK_CARD"; then
+            echo "::error::DoD 缺少 [BEHAVIOR] 条目，至少需要一个"
+            exit 1
+          fi
+          echo "✅ 已发现 [BEHAVIOR] 条目"
+          UNCHECKED=$(grep -c '^\- \[ \]' "$TASK_CARD" || true)
+          if [ "$UNCHECKED" -gt 0 ]; then
+            echo "::error::DoD 有 ${UNCHECKED} 个未验证条目（[ ]），push 前必须全部勾选为 [x]"
+            grep '^\- \[ \]' "$TASK_CARD" | head -5
+            exit 1
+          fi
+          echo "✅ DoD 格式检查通过"
+
   # ─── 依赖漏洞扫描（根目录，含 dev deps，high+ 级别硬拦）────────
   # 拦截 high 及以上（high / critical）漏洞，moderate 及以下仍允许。
   # 覆盖 high 级别漏洞，避免高危漏洞进入生产。
@@ -102,17 +135,19 @@ jobs:
         with:
           node-version: '22'
           cache: 'npm'
-      - name: npm audit — runtime high+ (warn-only during Walking Skeleton P1)
+      - name: npm audit — runtime high+
         run: |
           npm ci --ignore-scripts
           # runtime 依赖（packages/brain, apps/api）不允许 high+，--omit=dev 排除 vite/rollup/workbox 等 build 工具
-          # vite/vite-plugin-pwa 需要 major 升级（5→8），单独 P2 track，暂不在此阻断
-          # 2026-05-11：Walking Skeleton P1 进行中，bullmq → uuid GHSA-w5hq-g745-h8pq 阻塞 4 个 PR
-          # 临时改 warn-only（continue-on-error），TODO 在 P1 完成后开独立 PR 修真漏洞
-          npm audit --audit-level=high --omit=dev || echo "::warning::runtime high+ audit findings — track in Walking Skeleton P1 follow-up"
+          # 已知待修漏洞（Walking Skeleton P1 结束后，warn-only 豁免撤销，恢复硬失败）：
+          #   GHSA-q7rr-3cgh-j5r3: @opentelemetry/sdk-node ≤0.216.0 — fix 需 major 升级 0.218.0，独立 P2 track
+          #   protobufjs ≤7.5.7 — npm audit fix 可修（non-breaking），TODO: 开独立 PR
+          # 若此步骤失败：运行 npm audit --audit-level=high --omit=dev 查看具体 advisory，升级对应包
+          npm audit --audit-level=high --omit=dev
       - name: npm audit — all deps critical
         run: |
-          # 全量（含 dev）仍检查 critical，防供应链攻击
+          # 全量（含 dev）检查 critical，防供应链攻击
+          # GHSA-gx6x-v325-85g4 (size-sensor/echarts-for-react) 属 dev dep，已被 --audit-level=critical 过滤
           npm audit --audit-level=critical
 
   # ─── Registry Lint（始终运行）────────────────────────────────
@@ -199,10 +234,14 @@ jobs:
             echo "✅ 基础分支，跳过命名检查: $BRANCH"
             exit 0
           fi
-          if echo "$BRANCH" | grep -qE '^(cp-|feature/|fix/|chore/|docs/)'; then
+          # 兼容 8 位 (MMDDHHNN) 与 10 位 (MMDDHHMMSS) 时间戳
+          if echo "$BRANCH" | grep -qE '^cp-[0-9]{8,10}-[a-z0-9-]+$'; then
             echo "✅ 分支命名规范: $BRANCH"
           else
-            echo "::error::分支名 '$BRANCH' 不符合规范，应以 cp-/feature//fix//chore//docs/ 开头"
+            echo "::error::分支名 '$BRANCH' 不符合 /dev 工作流规范"
+            echo "  当前分支: $BRANCH"
+            echo "  要求格式: cp-XXXXXXXX-task-name（8 或 10 位时间戳）"
+            echo "  所有代码改动必须通过 /dev 工作流创建分支"
             exit 1
           fi
 
@@ -235,33 +274,6 @@ jobs:
         run: cd packages/engine && bash ci/scripts/check-dynamic-tests.sh
       - name: Chinese Punctuation Bomb Scan
         run: bash packages/engine/ci/scripts/check-chinese-punctuation-bombs.sh
-      - name: DoD 格式检查
-        run: |
-          # 检测 PR 中的 task-card.md 文件（跳过未含 task-card 的 PR）
-          TASK_CARD=""
-          # DoD.md 是当前标准（v6 命名），.task-*.md / task-card.md 为旧兼容
-          for f in DoD.md .task-*.md task-card.md; do
-            [ -f "$f" ] && TASK_CARD="$f" && break
-          done
-          if [ -z "$TASK_CARD" ]; then
-            echo "⏭️  未找到 task-card.md，跳过 DoD 格式检查"
-            exit 0
-          fi
-          echo "📋 检查 DoD 文件: $TASK_CARD"
-          # 检查至少有一个 [BEHAVIOR] 条目
-          if ! grep -q '\[BEHAVIOR\]' "$TASK_CARD"; then
-            echo "::error::Task Card 缺少 [BEHAVIOR] 条目，至少需要一个"
-            exit 1
-          fi
-          echo "✅ 已发现 [BEHAVIOR] 条目"
-          # 检查所有条目是否已勾选（不允许 [ ] 未验证条目）
-          UNCHECKED=$(grep -c '^\- \[ \]' "$TASK_CARD" || true)
-          if [ "$UNCHECKED" -gt 0 ]; then
-            echo "::error::DoD 有 ${UNCHECKED} 个未验证条目（[ ]），push 前必须全部勾选为 [x]"
-            grep '^\- \[ \]' "$TASK_CARD" | head -5
-            exit 1
-          fi
-          echo "✅ 所有 DoD 条目已验证"
       - name: DoD BEHAVIOR 命令执行
         run: |
           # 检测 PR 中的 task-card.md 文件
@@ -446,7 +458,7 @@ jobs:
             EXTRA="--changed origin/${{ github.base_ref }}"
           fi
           set +e
-          npx vitest run --shard=${{ matrix.shard }}/4 $EXTRA --exclude='src/__tests__/integration/**' --reporter=verbose 2>&1 | tee /tmp/vitest-out.txt
+          npx vitest run --shard=${{ matrix.shard }}/4 $EXTRA --exclude='src/__tests__/integration/**' --reporter=verbose --coverage --coverage.reporter=lcov --coverage.reportsDirectory=coverage/shard-${{ matrix.shard }} 2>&1 | tee /tmp/vitest-out.txt
           EXIT=${PIPESTATUS[0]}
           if [ $EXIT -ne 0 ]; then
             if grep -qE "Tests.*[0-9]+ passed" /tmp/vitest-out.txt && ! grep -qE "Tests.*[0-9]+ failed" /tmp/vitest-out.txt; then
@@ -459,6 +471,15 @@ jobs:
             fi
             exit $EXIT
           fi
+
+      - name: Upload coverage artifact (shard 1 only)
+        if: matrix.shard == 1 && steps.scope.outputs.mode != 'skip'
+        uses: actions/upload-artifact@v4
+        with:
+          name: brain-coverage-lcov
+          path: packages/brain/coverage/shard-1/lcov.info
+          retention-days: 1
+          if-no-files-found: ignore
 
   # ─── Brain: Unit Tests Aggregation ─────────────────────────
   # 所有 brain-unit matrix shards 都成功才通过。
@@ -483,37 +504,33 @@ jobs:
 
   # ─── Brain: Diff Coverage Gate ────────────────────────────
   # PR 新增行覆盖率 < 80% 则 CI fail，迫使为新代码路径补测试
+  # 使用 shard 1 的 lcov artifact（不重跑 vitest，节省 ~35min）
+  # 注：shard 1 只覆盖约 25% test 文件，diff-cover 80% 门禁为近似值（非全量）
+  # 权衡：CI 速度提升 vs 覆盖精度；若 gate 误报，可临时将 --fail-under=80 降低或切回全量
   brain-diff-coverage:
-    needs: [changes, brain-unit]
-    if: needs.changes.outputs.brain == 'true' && needs.brain-unit.result == 'success'
+    needs: [changes, brain-unit-all]
+    if: needs.changes.outputs.brain == 'true' && needs.brain-unit-all.result == 'success' && github.event_name == 'pull_request'
     runs-on: ubuntu-latest
-    timeout-minutes: 35
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 0   # diff-cover 需要 origin/main 历史做比较
-      - uses: actions/setup-node@v4
+          fetch-depth: 0
+      - name: Download coverage artifact
+        id: download_cov
+        continue-on-error: true
+        uses: actions/download-artifact@v4
         with:
-          node-version: '22'
-          cache: 'npm'
-      - run: cd packages/brain && npm ci
-      - name: Run Tests with Coverage
-        env:
-          NODE_OPTIONS: '--max-old-space-size=4096'
-        run: |
-          cd packages/brain
-          set +e
-          npx vitest run --coverage --exclude='src/__tests__/integration/**' 2>&1 | tee /tmp/vitest-coverage-out.txt
-          EXIT=${PIPESTATUS[0]}
-          if [ $EXIT -ne 0 ]; then
-            if grep -qE "Tests.*[0-9]+ passed" /tmp/vitest-coverage-out.txt && ! grep -qE "Tests.*[0-9]+ failed" /tmp/vitest-coverage-out.txt; then
-              echo "[brain-coverage] OOM worker exit but all tests passed — continuing"
-            else
-              exit $EXIT
-            fi
-          fi
+          name: brain-coverage-lcov
+          path: packages/brain/coverage/
       - name: Diff Coverage Gate
         run: |
+          # brain-unit shard 1 在 PR 无 .js/.ts 变更时跳过（scope=skip），不上传 artifact。
+          # 此时 download 失败（continue-on-error），lcov.info 不存在 — 无源码变更，覆盖率不适用，跳过。
+          if [ ! -f packages/brain/coverage/lcov.info ]; then
+            echo "⏭️  无 lcov artifact（brain 变更不含 .js/.ts 源码，scope=skip）— 跳过 diff-cover"
+            exit 0
+          fi
           pip install diff-cover --quiet
           git fetch origin main
           cd packages/brain
@@ -620,13 +637,10 @@ jobs:
       - name: Test apps/dashboard
         run: cd apps/dashboard && npm ci && npx vitest run
 
-  # ─── E2E Smoke（brain / workspace 改动时才跑）─────────────────
-  # 覆盖跨包盲区：无论改哪个包，都验证系统级关键路径没有断。
+  # ─── E2E Smoke（永久 gate，所有 PR 必跑）──────────────────────
+  # 保护已建立的 Walking Skeleton 路径，任何 PR 都不能绕过 E2E 检查。
   # 包含：golden-path（3条核心链路） + agent-lifecycle（状态机完整性）
-  # 注：仅在 brain 或 workspace 改动时跑（纯文档/engine 改动时跳过，节省 15min）
   e2e-smoke:
-    needs: changes
-    if: needs.changes.outputs.brain == 'true' || needs.changes.outputs.workspace == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     services:
@@ -775,6 +789,7 @@ jobs:
           DB_NAME: cecelia_test
           DB_USER: cecelia
           DB_PASSWORD: cecelia_test
+          DB: postgresql://cecelia:cecelia_test@localhost:5432/cecelia_test
         run: |
           TASK_CARD="${{ steps.detect.outputs.task_card }}"
           FAILED=0
@@ -813,6 +828,105 @@ jobs:
         run: |
           [ -f /tmp/brain.pid ] && kill $(cat /tmp/brain.pid) 2>/dev/null || true
           tail -40 /tmp/brain.log 2>/dev/null || true
+
+  # ─── Workspace API Smoke（跨包边界验证：apps/api ↔ packages/brain）─────────
+  # 验证 apps/api (5211) 代理到 brain (5221) 的跨包链路完整。
+  # 不依赖 Docker image，直接起两个 Node.js 进程，验 HTTP 边界。
+  workspace-api-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: pgvector/pgvector:pg15
+        env:
+          POSTGRES_USER: cecelia
+          POSTGRES_PASSWORD: cecelia_test
+          POSTGRES_DB: cecelia_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: Start stub brain (port 5221)
+        # 真实 brain 初始化 >120s（consciousness guard + tick loop），不适合 smoke。
+        # stub 只验代理路由；brain 真实行为由 real-env-smoke + brain-unit 覆盖。
+        # 单行避免 YAML block scalar 缩进断裂。
+        run: |
+          python3 -c "import http.server,json;http.server.HTTPServer(('',5221),type('H',(http.server.BaseHTTPRequestHandler,),{'do_GET':lambda s:(s.send_response(200),s.send_header('Content-Type','application/json'),s.end_headers(),s.wfile.write(json.dumps({'service':'cecelia-brain','status':'running','port':5221}).encode())),'log_message':lambda*a:None})).serve_forever()" > /tmp/stub-brain.log 2>&1 &
+          sleep 1
+          curl -sf http://localhost:5221/health && echo "stub brain ready" || (cat /tmp/stub-brain.log && exit 1)
+
+      - name: Install apps/api deps + build
+        run: cd apps/api && npm ci && npm run build
+
+      - name: Start apps/api (port 5211)
+        env:
+          PORT: '5211'
+          BRAIN_API: http://localhost:5221
+          BRAIN_NODE_API: http://localhost:5221
+          DB_HOST: localhost
+          DB_PORT: '5432'
+          DB_NAME: cecelia_test
+          DB_USER: cecelia
+          DB_PASSWORD: cecelia_test
+          NODE_ENV: test
+        run: |
+          node apps/api/dist/dashboard/server.js > /tmp/api.log 2>&1 &
+          for i in $(seq 1 30); do
+            curl -sf http://localhost:5211/api/cecelia/health >/dev/null 2>&1 && echo "apps/api ready after ${i}s" && break
+            sleep 1
+          done
+          curl -sf http://localhost:5211/api/cecelia/health || (cat /tmp/api.log && exit 1)
+
+      - name: Cross-package proxy smoke
+        run: |
+          echo "=== 1/3 apps/api 自身健康 ==="
+          curl -sf http://localhost:5211/api/cecelia/health | python3 -c "import sys,json; d=json.load(sys.stdin); print(d)"
+
+          echo "=== 2/3 brain 直接健康 ==="
+          curl -sf http://localhost:5221/health | python3 -c "import sys,json; d=json.load(sys.stdin); print(d)"
+
+          echo "=== 3/3 跨包代理：apps/api → brain ==="
+          PROXY_RESP=$(curl -sf http://localhost:5211/api/brain/health)
+          echo "$PROXY_RESP"
+          echo "$PROXY_RESP" | python3 -c "
+          import sys, json
+          d = json.load(sys.stdin)
+          assert d.get('status') == 'running', f'brain proxy health check failed: {d}'
+          print('✅ 跨包代理通过')
+          "
+
+      - name: Dump logs on failure
+        if: failure()
+        run: |
+          echo "=== brain.log ===" && cat /tmp/brain.log || true
+          echo "=== api.log ===" && cat /tmp/api.log || true
+
+
+  # ─── Quality Package Tests ───────────────────────────────────────────
+  # packages/quality 自身的 QA 测试（gateway/worker/heartbeat/queue/devgate hooks）
+  quality-tests:
+    needs: changes
+    if: needs.changes.outputs.quality == 'true' || needs.changes.outputs.engine == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+      - name: Quality Package Tests
+        run: cd packages/quality && npm ci && npm test
 
   # ─── Real-Env Smoke (起真 brain docker container + 真 postgres，跑 smoke.sh) ─
   # 与单测 / integration 互补：单测 mock 一切；integration 起 node server 直跑；
@@ -1156,7 +1270,7 @@ jobs:
   # ─── Gate: 所有检查通过才能合并 ─────────────────────────────
   ci-passed:
     if: always()
-    needs: [secrets-scan, dep-audit, registry-lint, eslint, pr-size-check, branch-naming, engine-tests, engine-tests-shell, lint-migration-unique-version, brain-unit, brain-unit-all, brain-diff-coverage, brain-integration, workspace-build, workspace-test, e2e-smoke, dod-behavior-dynamic, harness-dod-integrity, harness-contract-lint, docker-infra-smoke, lint-test-pairing, lint-feature-has-smoke, lint-base-fresh, lint-tdd-commit-order, lint-learning-constraint-coverage, lint-test-quality, lint-no-mock-only-test, lint-no-fake-test, lint-single-exit, lint-bypass-not-committed, real-env-smoke]
+    needs: [secrets-scan, dod-format-check, dep-audit, registry-lint, eslint, pr-size-check, branch-naming, engine-tests, engine-tests-shell, lint-migration-unique-version, brain-unit, brain-unit-all, brain-diff-coverage, brain-integration, workspace-build, workspace-test, e2e-smoke, dod-behavior-dynamic, harness-dod-integrity, harness-contract-lint, docker-infra-smoke, lint-test-pairing, lint-feature-has-smoke, lint-base-fresh, lint-tdd-commit-order, lint-learning-constraint-coverage, lint-test-quality, lint-no-mock-only-test, lint-no-fake-test, lint-single-exit, lint-bypass-not-committed, real-env-smoke, workspace-api-smoke, quality-tests]
     runs-on: ubuntu-latest
     timeout-minutes: 2
     steps:
@@ -1167,6 +1281,7 @@ jobs:
           check() { local n=$1 r=$2; if [ "$r" = "failure" ]; then echo "❌ $n"; FAILED=true; elif [ "$r" = "skipped" ]; then echo "⏭️  $n (skipped)"; else echo "✅ $n"; fi; }
 
           check "secrets-scan"      "${{ needs.secrets-scan.result }}"
+          check "dod-format-check"  "${{ needs.dod-format-check.result }}"
           check "dep-audit"         "${{ needs.dep-audit.result }}"
           check "registry-lint"     "${{ needs.registry-lint.result }}"
           check "eslint"            "${{ needs.eslint.result }}"
@@ -1195,6 +1310,8 @@ jobs:
           check "lint-no-mock-only-test" "${{ needs.lint-no-mock-only-test.result }}"
           check "lint-no-fake-test"      "${{ needs.lint-no-fake-test.result }}"
           check "real-env-smoke"         "${{ needs.real-env-smoke.result }}"
+          check "workspace-api-smoke"    "${{ needs.workspace-api-smoke.result }}"
+          check "quality-tests"         "${{ needs.quality-tests.result }}"
 
           if [ "$FAILED" = "true" ]; then
             echo ""; echo "❌ CI FAILED"; exit 1
