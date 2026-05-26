@@ -13,6 +13,7 @@ export default defineConfig({
       '../../tests/*.{test,spec}.?(c|m)[jt]s?(x)',
       '../../tests/brain/**/*.{test,spec}.?(c|m)[jt]s?(x)',
       '../../tests/alertness/**/*.{test,spec}.?(c|m)[jt]s?(x)',
+      '../../sprints/**/*.{test,spec}.?(c|m)[jt]s?(x)',
     ],
     // 以下测试需要真实 PostgreSQL 连接或有其他 CI 环境 pre-existing 失败
     // brain-unit 跑纯单元测试（有 vi.mock('db.js') 的），集成测试走 brain-integration
