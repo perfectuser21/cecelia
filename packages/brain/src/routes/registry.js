@@ -69,6 +69,31 @@ router.get('/', async (req, res) => {
   try {
     const limit = Math.min(parseInt(req.query.limit) || 50, 200);
     const offset = parseInt(req.query.offset) || 0;
+
+    // type=skill → skill_registry 独立表
+    if (req.query.type === 'skill') {
+      const params = [];
+      const clauses = [];
+      if (req.query.status) { params.push(req.query.status); clauses.push(`status = $${params.length}`); }
+      const searchTerm = req.query.search || req.query.q;
+      if (searchTerm) {
+        const qv = `%${searchTerm}%`;
+        params.push(qv, qv);
+        clauses.push(`(name ILIKE $${params.length - 1} OR description ILIKE $${params.length})`);
+      }
+      const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
+      params.push(limit, offset);
+      const { rows } = await pool.query(
+        `SELECT id, notion_id, name, description, location, status, area_id, metadata, notion_synced_at, created_at, updated_at
+         FROM skill_registry ${where}
+         ORDER BY name
+         LIMIT $${params.length - 1} OFFSET $${params.length}`,
+        params
+      );
+      return res.json(rows);
+    }
+
+    // 其余 type → system_registry（保持原有行为）
     const parts = [];
     const params = [];
 
@@ -96,7 +121,7 @@ router.get('/', async (req, res) => {
     params.push(limit, offset);
 
     const { rows } = await pool.query(
-      `SELECT id, name, type, location, status, description, metadata, registered_at, updated_at
+      `SELECT id, name, type, location, status, description, metadata, created_at, updated_at
        FROM system_registry
        ${whereClause}
        ORDER BY type, name
@@ -146,6 +171,11 @@ router.post('/', async (req, res) => {
     }
     if (!VALID_TYPES.includes(type)) {
       return res.status(400).json({ error: `Invalid type. Must be one of: ${VALID_TYPES.join(', ')}` });
+    }
+    if (type === 'skill') {
+      return res.status(400).json({
+        error: 'Use POST /api/brain/skills to register skills (skill_registry table)',
+      });
     }
     if (!VALID_STATUSES.includes(status)) {
       return res.status(400).json({ error: `Invalid status. Must be one of: ${VALID_STATUSES.join(', ')}` });

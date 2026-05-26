@@ -8,11 +8,15 @@ import { writeFileSync, mkdtempSync, mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { createGanContractNodes } from '../../packages/brain/src/workflows/harness-gan.graph.js';
 
+const PROPOSE_BRANCH = 'cp-harness-propose-r1-task-h10';
+
 function makeCtx(overrides = {}) {
   const dir = mkdtempSync(path.join(tmpdir(), 'h10-test-'));
   const sprintDir = 'sprints/test';
   mkdirSync(path.join(dir, sprintDir), { recursive: true });
   writeFileSync(path.join(dir, sprintDir, 'contract-draft.md'), '# fake contract');
+  // .brain-result.json 由 executor（docker 容器）写入；harness-gan line 328 在 executor 运行前删旧文件。
+  // 测试里 executor mock 负责写入（见各 test）。
   return {
     taskId: 'task-h10',
     initiativeId: 'init-h10',
@@ -25,15 +29,17 @@ function makeCtx(overrides = {}) {
   };
 }
 
-const PROPOSER_STDOUT_OK = 'log\n{"verdict":"PROPOSED","propose_branch":"cp-harness-propose-r1-task-h10"}\n';
+const PROPOSER_STDOUT_OK = `log\n{"verdict":"PROPOSED","propose_branch":"${PROPOSE_BRANCH}"}\n`;
 
 describe('H10 — proposer 节点 verify origin push', () => {
   test('origin verify 通过 → 正常 return propose_branch', async () => {
-    const executor = vi.fn().mockResolvedValue({
-      exit_code: 0,
-      stdout: PROPOSER_STDOUT_OK,
-      stderr: '',
-      cost_usd: 0,
+    // executor mock 模拟 docker 容器的 side effect：写入 .brain-result.json
+    const executor = vi.fn().mockImplementation(async (taskArg) => {
+      writeFileSync(
+        path.join(taskArg.worktreePath, '.brain-result.json'),
+        JSON.stringify({ propose_branch: PROPOSE_BRANCH }),
+      );
+      return { exit_code: 0, stdout: PROPOSER_STDOUT_OK, stderr: '', cost_usd: 0 };
     });
     // H15: 改用 verifyProposer 注入（替换 H10 fetchOriginFile）
     const verifyProposer = vi.fn().mockResolvedValue(undefined);
@@ -46,11 +52,13 @@ describe('H10 — proposer 节点 verify origin push', () => {
   });
 
   test('origin verify 失败 → throw 含 branch 名 + 原 err（H15: ContractViolation 直接 propagate）', async () => {
-    const executor = vi.fn().mockResolvedValue({
-      exit_code: 0,
-      stdout: PROPOSER_STDOUT_OK,
-      stderr: '',
-      cost_usd: 0,
+    // executor mock 模拟 docker 容器的 side effect：写入 .brain-result.json
+    const executor = vi.fn().mockImplementation(async (taskArg) => {
+      writeFileSync(
+        path.join(taskArg.worktreePath, '.brain-result.json'),
+        JSON.stringify({ propose_branch: PROPOSE_BRANCH }),
+      );
+      return { exit_code: 0, stdout: PROPOSER_STDOUT_OK, stderr: '', cost_usd: 0 };
     });
     // H15: verifyProposer throw ContractViolation，直接 propagate（不再包一层 Error）
     const verifyProposer = vi.fn().mockRejectedValue(

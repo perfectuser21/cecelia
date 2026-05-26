@@ -55,13 +55,13 @@ describe('System Registry API — Integration', () => {
       expect(res.body[0].name).toBe('/dev');
     });
 
-    it('支持 type=skill 过滤', async () => {
+    it('支持 type=skill 过滤 — 路由到 skill_registry', async () => {
       pool.query.mockResolvedValueOnce({ rows: [SAMPLE_ENTRY] });
       const res = await request(makeApp()).get('/api/brain/registry?type=skill');
       expect(res.status).toBe(200);
       const call = pool.query.mock.calls[0];
-      expect(call[0]).toContain('AND type =');
-      expect(call[1]).toContain('skill');
+      expect(call[0]).toContain('skill_registry');
+      expect(call[0]).not.toContain('AND type =');
     });
 
     it('支持 status 过滤', async () => {
@@ -126,23 +126,31 @@ describe('System Registry API — Integration', () => {
 
   describe('POST /api/brain/registry', () => {
     it('成功创建新条目', async () => {
-      const newEntry = { ...SAMPLE_ENTRY, id: 'new-id-001', name: '/new-skill' };
+      const newEntry = { id: 'new-id-001', name: 'new-api-endpoint', type: 'api', location: null, status: 'active', description: '新 API', metadata: {}, created_at: new Date().toISOString(), updated_at: new Date().toISOString() };
       pool.query.mockResolvedValueOnce({ rows: [newEntry] });
       const res = await request(makeApp())
         .post('/api/brain/registry')
         .send({
-          type: 'skill',
-          name: '/new-skill',
-          description: '新技能',
+          type: 'api',
+          name: 'new-api-endpoint',
+          description: '新 API',
         });
       expect(res.status).toBe(201);
       expect(res.body).toBeDefined();
     });
 
+    it('type=skill 时返回 400（应使用 POST /api/brain/skills）', async () => {
+      const res = await request(makeApp())
+        .post('/api/brain/registry')
+        .send({ type: 'skill', name: '/new-skill' });
+      expect(res.status).toBe(400);
+      expect(res.body.error).toContain('skills');
+    });
+
     it('缺少必填字段时返回 400', async () => {
       const res = await request(makeApp())
         .post('/api/brain/registry')
-        .send({ type: 'skill' }); // 缺 name
+        .send({ type: 'api' }); // 缺 name
       expect(res.status).toBe(400);
     });
   });

@@ -725,7 +725,7 @@ export async function extractConversationLearning(userMessage, reply, dbPool) {
  * @param {import('pg').Pool} [dbPool] - 可选，默认用全局 pool
  * @returns {Promise<{ id: string, upserted: boolean }>}
  */
-export async function upsertLearning({ title, content = '', category = 'general', triggerEvent = null }, dbPool) {
+export async function upsertLearning({ title, content = '', category = 'general', triggerEvent = null, task_id = null }, dbPool) {
   const p = dbPool || pool;
 
   const existing = await p.query(
@@ -747,10 +747,10 @@ export async function upsertLearning({ title, content = '', category = 'general'
   }
 
   const result = await p.query(
-    `INSERT INTO learnings (title, category, trigger_event, content, frequency_count, last_reinforced_at)
-     VALUES ($1, $2, $3, $4, 1, NOW())
+    `INSERT INTO learnings (title, category, trigger_event, content, frequency_count, last_reinforced_at, task_id)
+     VALUES ($1, $2, $3, $4, 1, NOW(), $5)
      RETURNING id`,
-    [title, category, triggerEvent, content]
+    [title, category, triggerEvent, content, task_id || null]
   );
   return { id: result.rows[0].id, upserted: true };
 }

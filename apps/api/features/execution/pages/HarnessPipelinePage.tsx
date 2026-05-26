@@ -17,8 +17,16 @@ import {
   GitBranch,
   ExternalLink,
   ArrowRight,
+  X,
 } from 'lucide-react';
-import { getHarnessPipelines, type HarnessPipeline, type HarnessStage, type HarnessStageStatus } from '../api/harness-pipeline.api';
+import {
+  getHarnessPipelines,
+  getInitiativeDetail,
+  type HarnessPipeline,
+  type HarnessStage,
+  type HarnessStageStatus,
+  type InitiativeDetail,
+} from '../api/harness-pipeline.api';
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
@@ -118,17 +126,140 @@ function StageFlowBar({ stages }: { stages: HarnessStage[] }) {
   );
 }
 
-// ─── Pipeline Card ───────────────────────────────────────────────────────────
+// ─── Initiative Detail Panel ─────────────────────────────────────────────────
 
-function PipelineCard({ pipeline }: { pipeline: HarnessPipeline }) {
-  const [expanded, setExpanded] = useState(false);
-  const navigate = useNavigate();
+function formatDuration(ms: number | null | undefined): string {
+  if (!ms || ms <= 0) return '';
+  const s = Math.floor(ms / 1000);
+  if (s < 60) return `${s}s`;
+  const m = Math.floor(s / 60);
+  const rem = s % 60;
+  return rem > 0 ? `${m}m${rem}s` : `${m}m`;
+}
+
+function InitiativeDetailPanel({ initiativeId, onClose }: { initiativeId: string; onClose: () => void }) {
+  const [detail, setDetail] = useState<InitiativeDetail | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    getInitiativeDetail(initiativeId)
+      .then(data => { if (!cancelled) { setDetail(data); setLoading(false); } })
+      .catch(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, [initiativeId]);
 
   return (
-    <div className="bg-white dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700/50 rounded-xl overflow-hidden">
+    <div
+      data-testid="initiative-detail-panel"
+      className="w-96 shrink-0 border-l border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 overflow-y-auto flex flex-col fixed right-0 top-0 bottom-0 z-40 shadow-xl"
+    >
+      <div className="flex items-center justify-between px-4 py-3 border-b border-slate-200 dark:border-slate-700">
+        <h3 className="font-semibold text-slate-900 dark:text-white text-sm">Initiative 详情</h3>
+        <button
+          onClick={onClose}
+          className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
+        >
+          <X className="w-4 h-4" />
+        </button>
+      </div>
+
+      {loading && (
+        <div className="flex-1 flex items-center justify-center text-sm text-slate-400">
+          <Loader2 className="w-5 h-5 animate-spin mr-2" />加载中...
+        </div>
+      )}
+
+      {!loading && !detail && (
+        <div className="flex-1 flex items-center justify-center text-sm text-red-400">详情加载失败</div>
+      )}
+
+      {!loading && detail && (
+        <div className="flex-1 overflow-y-auto p-4 space-y-4">
+          <section>
+            <h4 className="text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wide mb-2">PRD 全文</h4>
+            <div
+              data-testid="initiative-prd-content"
+              className="text-xs text-slate-700 dark:text-slate-300 whitespace-pre-wrap font-mono bg-slate-50 dark:bg-slate-900/50 rounded-lg p-3 max-h-64 overflow-y-auto"
+            >
+              {detail.prd_content ?? '无 PRD 内容'}
+            </div>
+          </section>
+
+          <section>
+            <h4 className="text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wide mb-2">
+              步骤时间线{detail.gan_rounds != null ? ` · GAN ${detail.gan_rounds} 轮` : ''}
+            </h4>
+            <div data-testid="initiative-step-timeline" className="space-y-1.5">
+              {detail.step_timing.length === 0 ? (
+                <p className="text-xs text-slate-400">暂无时间线数据</p>
+              ) : (
+                detail.step_timing.map((step, i) => (
+                  <div
+                    key={`${step.node}-${i}`}
+                    className="flex items-center gap-2 text-xs py-1.5 px-2 rounded bg-slate-50 dark:bg-slate-900/50"
+                  >
+                    <span className="w-2 h-2 rounded-full bg-blue-400 shrink-0" />
+                    <span className="font-medium text-slate-700 dark:text-slate-200 flex-1">{step.node}</span>
+                    {step.duration_ms != null && (
+                      <span className="text-slate-400 shrink-0">{formatDuration(step.duration_ms)}</span>
+                    )}
+                  </div>
+                ))
+              )}
+            </div>
+          </section>
+
+          {detail.contract_content && (
+            <section>
+              <h4 className="text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wide mb-2">合约摘要</h4>
+              <div className="text-xs text-slate-600 dark:text-slate-400 whitespace-pre-wrap bg-slate-50 dark:bg-slate-900/50 rounded-lg p-3 max-h-48 overflow-y-auto">
+                {detail.contract_content}
+              </div>
+            </section>
+          )}
+
+          {detail.screenshot_urls && detail.screenshot_urls.length > 0 && (
+            <section>
+              <h4 className="text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wide mb-2">截图</h4>
+              <div className="space-y-1.5">
+                {detail.screenshot_urls.map((url, i) => (
+                  <a key={i} href={url} target="_blank" rel="noopener noreferrer"
+                    className="block text-xs text-blue-500 hover:underline truncate">
+                    {url.split('/').pop() ?? url}
+                  </a>
+                ))}
+              </div>
+            </section>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Pipeline Card ───────────────────────────────────────────────────────────
+
+function PipelineCard({ pipeline, onInitiativeClick }: { pipeline: HarnessPipeline; onInitiativeClick?: (id: string) => void }) {
+  const [expanded, setExpanded] = useState(false);
+  const navigate = useNavigate();
+  const isInitiative = pipeline.task_type === 'harness_initiative';
+
+  return (
+    <div
+      className="bg-white dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700/50 rounded-xl overflow-hidden"
+      data-testid={isInitiative ? 'initiative-card' : undefined}
+    >
       {/* Header */}
       <button
-        onClick={() => setExpanded(!expanded)}
+        onClick={() => {
+          if (isInitiative && onInitiativeClick && pipeline.pipeline_id) {
+            onInitiativeClick(pipeline.pipeline_id);
+          } else {
+            setExpanded(!expanded);
+          }
+        }}
         className="w-full text-left px-5 py-4 flex items-start gap-3 hover:bg-slate-50 dark:hover:bg-slate-700/30 transition-colors"
       >
         <span className="mt-1 text-slate-400">
@@ -258,6 +389,7 @@ export default function HarnessPipelinePage() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [selectedInitiativeId, setSelectedInitiativeId] = useState<string | null>(null);
 
   const fetchPipelines = useCallback(async (silent = false) => {
     if (!silent) setLoading(true);
@@ -349,9 +481,21 @@ export default function HarnessPipelinePage() {
       {!loading && !error && pipelines.length > 0 && (
         <div className="space-y-3">
           {pipelines.map(pipeline => (
-            <PipelineCard key={pipeline.sprint_dir} pipeline={pipeline} />
+            <PipelineCard
+              key={pipeline.sprint_dir}
+              pipeline={pipeline}
+              onInitiativeClick={setSelectedInitiativeId}
+            />
           ))}
         </div>
+      )}
+
+      {/* Initiative Detail Panel */}
+      {selectedInitiativeId && (
+        <InitiativeDetailPanel
+          initiativeId={selectedInitiativeId}
+          onClose={() => setSelectedInitiativeId(null)}
+        />
       )}
     </div>
   );

@@ -6,10 +6,11 @@ description: |
   evaluator 在 CI 绿之后、PR merge 之前真启服务 + 跑 contract 的 manual:bash 命令验真行为。
   PASS → 允许 merge；FAIL → 不 merge，带反馈打回 Generator 在 PR 分支 fix loop（main 不变动）。
   模式 A 跑 contract-dod-ws*.md BEHAVIOR；模式 B（所有 ws merge 后）跑 final E2E Golden Path。
-version: 1.8.0
+version: 1.9.0
 created: 2026-05-06
-updated: 2026-05-18
+updated: 2026-05-23
 changelog:
+  - 1.9.0: Step B-2.5 截图处理（mac_web 专属）— 复制 screenshots/*.png 到 ~/claude-output/harness-screenshots/$SPRINT/；Claude Read 每张 PNG 视觉自验（对照 BEHAVIOR:E2E 期望描述）；生成公网 URL（38.23.47.81:9998）；PASS brain-result.json 增加 screenshots 字段
   - 1.8.0: 删除 windows_local case — 所有 Windows 测试统一走 windows_cloud（GitHub Actions），无需维护 xian-pc/xian-rog 本地 Windows 机器；TARGET_ENV 枚举同步缩减
   - 1.7.0: windows_native 拆分为 windows_cloud + windows_local（已被 1.8.0 合并）
   - 1.6.0: 修复 B33 误伤真实功能 sprint — B33 URL 检测改为 playground 感知：playground sprint（playground/server.js 存在）禁止出现 Brain API URL；真实功能 sprint（autonomous journey_type）反向要求 E2E 脚本必须含 Brain API URL，缺失直接 FAIL（防止 playground 命令混入真实 sprint）
@@ -213,13 +214,28 @@ Test: curl -s localhost:5221/api/brain/tasks/$TARGET_TASK_ID | jq -r '.status'
 
 #### Step A-2: 逐条执行验证命令
 
+**B22 — Docker 环境 URL 替换（执行任何 Test 命令前必须完成）**：
+
+当 evaluator 在 Docker 容器内运行时，`localhost:5221` 无法连接到宿主的 Brain API，必须替换为 `host.docker.internal:5221`。执行每条 Test 命令前，检查并替换：
+
+```bash
+# 若 BRAIN_URL 已设为非 localhost 地址（说明在 Docker 容器内）
+if [ -n "$BRAIN_URL" ] && [ "$BRAIN_URL" != "http://localhost:5221" ]; then
+  BRAIN_HOST_PORT=$(echo "$BRAIN_URL" | sed 's|http://||')
+  # 在 Test 命令字符串中替换 localhost:5221 → host.docker.internal:5221
+  TEST_CMD=$(echo "$TEST_CMD" | sed "s|localhost:5221|$BRAIN_HOST_PORT|g")
+fi
+```
+
+将替换后的 `$TEST_CMD` 传给 `bash -c "$TEST_CMD"` 执行。
+
 对每条 `[BEHAVIOR]` 条目：
 
 1. 执行 `Test:` 字段中的命令（在真实环境，非 mock）
 **Test: 字段前缀处理（v1.2 — 修协议盲，proposer SKILL 写 manual:bash 前缀）**：
-- Test 命令若以 `manual:bash -c '<cmd>'` 开头 → strip `manual:bash -c '` 前缀和末尾 `'`，把里面的 `<cmd>` 整体用 `bash -c "<cmd>"` 执行
-- Test 命令若以 `manual:` 开头（无 bash -c）→ strip `manual:` 前缀，剩下原样 bash 执行
-- 不以 `manual:` 开头的（如 `node -e "..."` / `curl ...`） → 直接 bash 执行原文
+- Test 命令若以 `manual:bash -c '<cmd>'` 开头 → strip `manual:bash -c '` 前缀和末尾 `'`，把里面的 `<cmd>` 整体用 `bash -c "<cmd>"` 执行；执行前先做 B22 URL 替换
+- Test 命令若以 `manual:` 开头（无 bash -c）→ strip `manual:` 前缀，剩下原样 bash 执行；执行前先做 B22 URL 替换
+- 不以 `manual:` 开头的（如 `node -e "..."` / `curl ...`） → 直接 bash 执行原文；执行前先做 B22 URL 替换
 - 这是跟 proposer SKILL v7.4+ 协议约定的格式，evaluator 不能因看到 `manual:` 前缀就跳过命令
 
 2. 记录 stdout / stderr / exit code
@@ -274,17 +290,41 @@ BREOF
   exit 0
 fi
 
-# 提取 "## E2E 验收" 区块内第一个 bash 代码块
-awk '/^## E2E 验收/{found=1} found && /^```bash/{in_block=1; next} in_block && /^```/{in_block=0; exit} in_block{print}' \
-  "$CONTRACT" > /tmp/e2e-verify.sh
+# 读取 target_environment（注入变量优先，fallback PRD 文件）
+TARGET_ENV="${TARGET_ENV:-local_api}"
 
-if [[ ! -s /tmp/e2e-verify.sh ]]; then
-  cat > /workspace/.brain-result.json << BREOF
+if [[ "$TARGET_ENV" == "windows_cloud" ]]; then
+  # windows_cloud：提取 ps1/powershell 代码块写到 sprint_dir/e2e-verify.ps1，供 GHA runner 使用
+  awk '/^## E2E 验收/{found=1} found && /^```(powershell|ps1)/{in_block=1; next} in_block && /^```/{in_block=0; exit} in_block{print}' \
+    "$CONTRACT" > /tmp/e2e-verify.ps1
+  if [[ ! -s /tmp/e2e-verify.ps1 ]]; then
+    # fallback：尝试 bash 块（兼容旧合同格式）
+    awk '/^## E2E 验收/{found=1} found && /^```bash/{in_block=1; next} in_block && /^```/{in_block=0; exit} in_block{print}' \
+      "$CONTRACT" > /tmp/e2e-verify.ps1
+  fi
+  if [[ ! -s /tmp/e2e-verify.ps1 ]]; then
+    cat > /workspace/.brain-result.json << BREOF
+{"verdict":"FAIL","task_id":"$TASK_ID","failed_step":"setup","log_excerpt":"windows_cloud 合同中未找到 ## E2E 验收 区块或区块内无 ps1/powershell 脚本"}
+BREOF
+    exit 0
+  fi
+  # 写入 sprint_dir 并 push 到 PR 分支，GHA workflow checkout 后直接运行
+  cp /tmp/e2e-verify.ps1 "${SPRINT_DIR}/e2e-verify.ps1"
+  git add "${SPRINT_DIR}/e2e-verify.ps1" 2>/dev/null || true
+  git commit -m "chore(harness): add e2e-verify.ps1 for windows_cloud runner" --no-verify 2>/dev/null || true
+  git push origin HEAD 2>/dev/null || true
+else
+  # 提取 "## E2E 验收" 区块内第一个 bash 代码块
+  awk '/^## E2E 验收/{found=1} found && /^```bash/{in_block=1; next} in_block && /^```/{in_block=0; exit} in_block{print}' \
+    "$CONTRACT" > /tmp/e2e-verify.sh
+  if [[ ! -s /tmp/e2e-verify.sh ]]; then
+    cat > /workspace/.brain-result.json << BREOF
 {"verdict":"FAIL","task_id":"$TASK_ID","failed_step":"setup","log_excerpt":"合同中未找到 ## E2E 验收 区块或区块内无 bash 脚本"}
 BREOF
-  exit 0
+    exit 0
+  fi
+  chmod +x /tmp/e2e-verify.sh
 fi
-chmod +x /tmp/e2e-verify.sh
 ```
 
 #### Step B-1.5: E2E 命令位置词验证（B33 v1.6 — playground-aware）
@@ -371,12 +411,14 @@ case "$TARGET_ENV" in
     # 每次触发都是全新干净 VM，免费（public repo），适合下载安装包/连云端 endpoint
     # 合同 e2e 脚本必须是 .ps1 格式（见 proposer windows_cloud 模板）
     # 等待结果：轮询 run 状态，最长 10 分钟
+    # GITHUB_REPO 由 harness-initiative.graph.js 注入，base_repo 含 zenithjoy → perfectuser21/zenithjoy-workspace
     REPO="${GITHUB_REPO:-perfectuser21/cecelia}"
     WORKFLOW="${WINDOWS_CLOUD_WORKFLOW:-e2e-windows.yml}"
     gh workflow run "$WORKFLOW" \
       --repo "$REPO" \
       -f task_id="$TASK_ID" \
       -f sprint_dir="$SPRINT_DIR" \
+      -f pr_branch="${PR_BRANCH:-}" \
       2>&1 | tee /tmp/e2e-trigger.log
     TRIGGER_EXIT=$?
     if [[ $TRIGGER_EXIT -ne 0 ]]; then
@@ -442,13 +484,81 @@ esac
 - `~/.ssh/config` 已配置 `hk-vps` / `us-vps` 别名，SSH 免密登录已配置
 - 目标机器上 `node` / `bash` 已安装
 
+#### Step B-2.5: 截图处理（仅 mac_web）
+
+```bash
+if [[ "$TARGET_ENV" == "mac_web" ]]; then
+  SPRINT_BASENAME=$(basename "$SPRINT_DIR")
+  SCREENSHOT_DEST="$HOME/claude-output/harness-screenshots/$SPRINT_BASENAME"
+  mkdir -p "$SCREENSHOT_DEST"
+
+  # 1. 复制截图到公网目录
+  if ls screenshots/*.png 2>/dev/null | head -1 > /dev/null; then
+    cp screenshots/*.png "$SCREENSHOT_DEST/"
+  fi
+
+  # 2. Claude Read 每张截图自验（视觉确认）
+  # evaluator 必须用 Read tool 读取 $SCREENSHOT_DEST 下每张 PNG，
+  # 对照 DoD [BEHAVIOR:E2E] 期望描述逐一确认画面内容：
+  # - 01-initial.png：页面是否正常加载，关键 UI 元素是否可见？
+  # - 02-action.png：用户操作后状态是否符合期望描述？
+  # - 03-result.png：最终结果是否显示成功标志元素？
+  # 如果任意截图与期望描述不符 → 输出 FAIL，feedback 说明哪张图与期望不符
+
+  # 3. 生成公网链接列表
+  SCREENSHOT_URLS=()
+  for f in "$SCREENSHOT_DEST"/*.png; do
+    [ -f "$f" ] || continue
+    BASENAME=$(basename "$f")
+    SCREENSHOT_URLS+=("http://38.23.47.81:9998/harness-screenshots/$SPRINT_BASENAME/$BASENAME")
+  done
+  SCREENSHOTS_JSON=$(printf '%s\n' "${SCREENSHOT_URLS[@]}" | jq -R . | jq -s .)
+else
+  SCREENSHOTS_JSON="[]"
+fi
+```
+
+---
+
+#### Step B-2.6: windows_cloud artifact 下载 + 视觉验证
+
+```bash
+if [[ "$TARGET_ENV" == "windows_cloud" ]]; then
+  REPO="${GITHUB_REPO:-perfectuser21/zenithjoy-workspace}"
+  WORKFLOW="${WINDOWS_CLOUD_WORKFLOW:-e2e-windows.yml}"
+
+  # 获取最新 run ID（触发后等 10s 再查，避免拿到上一次 run）
+  RUN_ID=$(gh run list --repo "$REPO" --workflow "$WORKFLOW" \
+    --limit 1 --json databaseId --jq '.[0].databaseId' 2>/dev/null)
+
+  if [[ -n "$RUN_ID" ]]; then
+    # 下载 screenshots artifact（GHA workflow 需上传 artifact name="screenshots"）
+    mkdir -p /tmp/windows-cloud-screenshots
+    gh run download "$RUN_ID" \
+      --repo "$REPO" \
+      --name "screenshots" \
+      --dir /tmp/windows-cloud-screenshots 2>/dev/null || true
+
+    # evaluator 必须用 Read tool 读取每张 PNG，对照 DoD [BEHAVIOR:E2E] 逐一视觉确认：
+    # - 截图是否展示了期望的界面元素？
+    # - 操作结果是否与 DoD 描述一致？
+    # 如有截图与期望不符 → 输出 FAIL，feedback 说明哪张图有问题
+    ls /tmp/windows-cloud-screenshots/*.png 2>/dev/null | head -20
+  fi
+
+  SCREENSHOTS_JSON="[]"
+fi
+```
+
+---
+
 #### Step B-3: 判断结果
 
 **脚本 exit 0（通过）**：
 
 ```bash
 cat > /workspace/.brain-result.json << BREOF
-{"verdict":"PASS","task_id":"$TASK_ID","failed_step":null,"log_excerpt":null}
+{"verdict":"PASS","task_id":"$TASK_ID","failed_step":null,"log_excerpt":null,"screenshots":${SCREENSHOTS_JSON:-[]}}
 BREOF
 ```
 

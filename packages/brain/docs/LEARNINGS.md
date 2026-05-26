@@ -1,5 +1,36 @@
 # Development Learnings
 
+## [2026-05-20] PROBE_FAIL_RUMINATION — Case A 自愈缺少即时 direct_run (cp-05200001)
+
+### 根本原因
+
+`probeRumination` 的 `loop_dead` 自愈分支分两种场景：
+- **Case A**：consciousness 被 DB 禁用 → `setConsciousnessEnabled(pool, true)` + 重启 loop
+- **Case B**：consciousness 已启用但 loop 未跑 → `runRumination(pool)` + 重启 loop
+
+Case A 只重启了 loop（每 20min 触发一次），**没有立即调用 `runRumination`**。  
+结果：probe 监控每几分钟检查一次，loop 20min 才跑，probe 会在这段时间内持续失败 → Brain 监控系统持续派发 auto-fix 任务。
+
+### 修复方案
+
+在 Case A 的 Wave 2（loop 重启）后增加 **Wave 3**：
+```javascript
+const { runRumination } = await import('./rumination.js');
+const healResult = await runRumination(pool);
+loopDeadContext += ` self_heal=direct_run digested=${healResult?.digested ?? 0}`;
+```
+现在 Case A 和 Case B 自愈链等价：均先运行一次 rumination（立即产出 synthesis_archive 条目），再确保 loop 持续运行。
+
+### 关键信号
+
+探针返回值中 `self_heal=consciousness_reenabled` 但没有 `self_heal=direct_run` → Case A 路径触发，但缺少即时 runRumination。修复后两个标记会同时出现。
+
+### 防范
+
+增加静态测试（`import('./rumination.js')` 出现次数 ≥ 2）确保 Case A 和 Case B 各自都有 direct_run，以后重构此函数时会立即捕获回归。
+
+---
+
 ## [2026-05-07] PROBE_FAIL_CONSOLIDATION — 空合并日只写 daily_logs 不写 memory_stream (cp-05071456)
 
 ### 根本原因

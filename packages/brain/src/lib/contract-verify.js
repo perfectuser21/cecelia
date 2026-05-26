@@ -40,16 +40,22 @@ export async function verifyProposerOutput(opts) {
   const { worktreePath, branch, sprintDir, execFn = execFile } = opts;
   const baseRepo = opts.baseRepo || '/Users/administrator/perfect21/cecelia';
 
-  // 显式从 baseRepo 读 GitHub URL（worktree 的 origin remote 可能是本地路径）
+  // H17: baseRepo が remote URL（GitHub/SSH）の場合はそのまま githubUrl として使用。
+  // git -C <url> はディレクトリ変更を試みるため URL では fatal になる。
   let githubUrl;
-  try {
-    const { stdout } = await execFn('git', ['-C', baseRepo, 'remote', 'get-url', 'origin']);
-    githubUrl = stdout.trim();
-  } catch (err) {
-    throw new ContractViolation(
-      `verifyProposerOutput: cannot read GitHub URL from baseRepo origin: ${err.message}`,
-      { stage: 'github_url' },
-    );
+  if (/^(https?|ssh|git):\/\//.test(baseRepo)) {
+    githubUrl = baseRepo;
+  } else {
+    // local path — baseRepo の origin remote から GitHub URL を読む
+    try {
+      const { stdout } = await execFn('git', ['-C', baseRepo, 'remote', 'get-url', 'origin']);
+      githubUrl = stdout.trim();
+    } catch (err) {
+      throw new ContractViolation(
+        `verifyProposerOutput: cannot read GitHub URL from baseRepo origin: ${err.message}`,
+        { stage: 'github_url' },
+      );
+    }
   }
 
   // 1. ls-remote 验 branch 真在 origin

@@ -1,0 +1,70 @@
+{
+  "initiative_id": "pending",
+  "journey_type": "user_facing",
+  "journey_type_reason": "PRD journey_type 字段明确声明 user_facing；涉及 apps/dashboard/ React UI 页面可视化改动",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "Brain API — 新增 GET /initiative/:id/ws-progress 端点",
+      "scope": "在 packages/brain/src/routes/harness.js 新增路由，查询 checkpoint_blobs 表（thread_id LIKE 'harness-task:{initiative_id}:ws%'），提取 ws_id/title/status/evaluate_verdict/pr_url/fix_round/container_id，返回 {initiative_id, workstreams[]} 结构",
+      "dod": [
+        "[BEHAVIOR] GET /initiative/:id/ws-progress 返回 keys == ['initiative_id','workstreams']（schema 完整性）",
+        "[BEHAVIOR] initiative_id 字段值等于请求路径 id",
+        "[BEHAVIOR] 无 WS checkpoint 时 workstreams 返回 []",
+        "[BEHAVIOR] 不存在 initiative_id 返回 HTTP 404 + {error:'initiative not found'}",
+        "[ARTIFACT] harness.js 含 ws-progress 路由定义 + checkpoint_blobs 查询"
+      ],
+      "files": [
+        "packages/brain/src/routes/harness.js"
+      ],
+      "depends_on": [],
+      "complexity": "S",
+      "estimated_minutes": 30
+    },
+    {
+      "task_id": "ws2",
+      "title": "Brain 单元测试 — harness-ws-progress.test.js（mock pool）",
+      "scope": "新建 packages/brain/src/__tests__/harness-ws-progress.test.js，用 vi.mock('../db.js') mock pool，覆盖：正常返回/空 workstreams/404 路径/fix_round 类型/禁用字段不存在",
+      "dod": [
+        "[ARTIFACT] packages/brain/src/__tests__/harness-ws-progress.test.js 文件存在且含 describe + it 块",
+        "[BEHAVIOR] vitest 单测全部通过（mock pool 返回正确 schema）",
+        "[BEHAVIOR] 含空 workstreams 边界场景测试",
+        "[BEHAVIOR] 含 404 not found 错误路径测试",
+        "[BEHAVIOR] 测试文件不含禁用字段名在 mock 响应正向断言中"
+      ],
+      "files": [
+        "packages/brain/src/__tests__/harness-ws-progress.test.js"
+      ],
+      "depends_on": ["ws1"],
+      "complexity": "M",
+      "estimated_minutes": 35
+    },
+    {
+      "task_id": "ws3",
+      "title": "Dashboard UI — WsProgressSection（4 条 status 图标映射）+ 渲染测试",
+      "scope": "修改 HarnessPipelinePage.tsx PipelineCard 组件：在 status badge 下方新增 WsProgressSection，调用 /api/brain/harness/initiative/:id/ws-progress，展示 ws_id | 标题(≤30字) | 状态图标 | verdict badge | PR 链接；4 条 status→图标映射：null+container_id非空→🔄，null+null→⬜，merged→✅，running/spawning→🔄；新建 WsProgress.test.tsx + WsStatusIcon.test.tsx 渲染测试（mock API）",
+      "dod": [
+        "[ARTIFACT] HarnessPipelinePage.tsx 含 data-testid='ws-progress-section' 和 data-testid='ws-progress-row'",
+        "[ARTIFACT] apps/dashboard/src/pages/harness-pipeline/__tests__/WsProgress.test.tsx 存在",
+        "[ARTIFACT] apps/dashboard/src/pages/harness-pipeline/__tests__/WsStatusIcon.test.tsx 存在",
+        "[BEHAVIOR] UI 引用所有 PRD 字段（ws_id/title/status/evaluate_verdict/pr_url/fix_round/container_id）",
+        "[BEHAVIOR] 禁用字段名不在 UI 代码数据解构中",
+        "[BEHAVIOR] status=null && container_id 非空 → 🔄 运行中（边界场景 1）",
+        "[BEHAVIOR] status=null && container_id=null → ⬜ 待开始（边界场景 2）",
+        "[BEHAVIOR] status=merged → ✅ MERGED（状态映射正确）",
+        "[BEHAVIOR] status=running/spawning → 🔄 运行中（状态映射正确）",
+        "[BEHAVIOR] UI 源码含标题 ≤30 字截断逻辑（.slice(0,30) 或等效）",
+        "[BEHAVIOR] UI 源码含 data-testid=ws-verdict-badge（PRD verdict badge 约束）",
+        "[BEHAVIOR:E2E] Playwright mac_web：/pipeline 页面 ws-progress-section 可见，截图验证"
+      ],
+      "files": [
+        "apps/dashboard/src/pages/harness-pipeline/HarnessPipelinePage.tsx",
+        "apps/dashboard/src/pages/harness-pipeline/__tests__/WsProgress.test.tsx",
+        "apps/dashboard/src/pages/harness-pipeline/__tests__/WsStatusIcon.test.tsx"
+      ],
+      "depends_on": ["ws2"],
+      "complexity": "M",
+      "estimated_minutes": 45
+    }
+  ]
+}

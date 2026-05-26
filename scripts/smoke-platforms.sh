@@ -121,7 +121,7 @@ main() {
   local platforms=()
   if [[ -n "$FILTER_PLATFORM" ]]; then
     [[ -v "PLATFORM_CONTENT_TYPE[$FILTER_PLATFORM]" ]] \
-      || fail "不支持的平台: $FILTER_PLATFORM（可选: ${!PLATFORM_CONTENT_TYPE[*]}）"
+      || fail "不支持的平台: ${FILTER_PLATFORM}（可选: ${!PLATFORM_CONTENT_TYPE[*]}）"
     platforms=("$FILTER_PLATFORM")
   else
     platforms=(douyin kuaishou weibo toutiao)

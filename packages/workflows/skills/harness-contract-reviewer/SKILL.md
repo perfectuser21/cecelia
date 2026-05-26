@@ -6,10 +6,13 @@ description: |
   而非"防作弊测试框架"。
   核心职责：(1) spec 对齐用户真需求 (2) criteria 可量化无歧义 (3) happy + error + 边界场景全覆盖
   GAN 对抗**多轮**直到双方达成共识。无硬轮数上限，但 Reviewer 真找不出实质 spec/产品漏洞时必须 APPROVED。
-version: 6.4.0
+version: 6.7.0
 created: 2026-04-08
-updated: 2026-05-11
+updated: 2026-05-26
 changelog:
+  - 6.7.0: 新增 Step 5 — Contract APPROVED 后写 Brain DB planned 条目（api_registry + db_schema_registry），补齐 GAN 阶段到 Report 阶段之间的数据空白；planned → done 由 harness-sprint-state Report 阶段完成
+  - 6.6.0: 强制 Bash 工具写结果文件（Bug 11 — missing_result_file 根因）— SKILL.md 只说"写到文件"但 LLM 可能仅在文本中描述命令而不执行，导致 ContractViolation。v6.6 明确要求通过 Bash 工具执行写文件命令 + 执行验证命令确认文件存在
+  - 6.5.0: 加第 8 维 rubric `depends_on_serial_chain` — W52 step6 实证：proposer 生成 task-plan.json 时将所有 ws 的 depends_on 设为 []，Brain 并发 dispatch，ws2 evaluator 验 publish_status 列但 ws1 migration 未合并导致 FAIL→无限 fix loop。第 8 维强卡 ws1 以外的 ws 必须显式声明前置依赖，migration ws 必须出现在后续 ws 的 depends_on 里
   - 6.4.0: 修自相矛盾死轮 cap — 删 line 86-88 "Round 1-2 阈值 7 / Round 3-4 阈值 6 / Round 5 force APPROVED" 死阶梯（违反 brain 代码 detectConvergenceTrend + 用户原话「无上限收敛」）；改成单轮阈值固定 7 + 趋势兜底，跟 harness-gan.graph.js 实际行为对齐。verdict 模板里同步删 round 阈值字样
   - 6.3.0: 修协议盲 — 加 Golden Path 覆盖审查段（4 问题：端到端完整？验证命令真？User Story 1:1？step 间数据流自洽？）。reviewer 之前 0 处提 Golden Path
   - 6.2.0: 加第 7 维 rubric `behavior_count_position` — W22 实证 R1 1 轮直接 APPROVED 弱合同（25 [ARTIFACT] + 0 [BEHAVIOR]），第 6 维只评"PRD response 字段被 codify"无法卡这种"BEHAVIOR 全跑 vitest 索引"的极端情况。第 7 维硬卡 contract-dod-ws*.md 必须含 ≥ 4 条 [BEHAVIOR] 标签 + 内嵌 manual:bash 命令。跟 proposer v7.4 + evaluator v1.1 协议对齐
@@ -123,6 +126,20 @@ Proposer 产出的 `contract-draft.md` 格式是 **Golden Path Steps**：每步 
 - ❌ E2E 脚本只 `curl -f /xxx` 看 HTTP 200，没 jq 校验 body shape
 - ✅ 每个 PRD response 字段 → 对应 1 条 `jq -e '.<key> == <value>'` 命令；schema 完整性卡 + 禁用字段反向检查全齐
 
+### depends_on 串行链审查清单（第 8 维硬阈值，0 分判定示例）
+
+- ❌ ws2 以上的任何 ws `depends_on: []`（**W52 step6 实证根因：并发 dispatch → evaluator 验 migration 未进 DB**）
+- ❌ migration ws 存在，但 service ws 不声明依赖它（并行后果：DB schema 缺失）
+- ❌ task-plan.json 包含 4 个 ws 但全部 `depends_on: []`
+- ✅ ws1.depends_on=[]，ws2.depends_on=["ws1"]，ws3.depends_on=["ws2"]，ws4.depends_on=["ws3"] — 线性链完整
+- ✅ 若某 ws 确实无依赖（纯独立 feature），需要在 scope 里注明"本 ws 与其他 ws 无 schema/data/interface 依赖"
+
+**为什么单独立第 8 维**：proposer 模板里有串行示例，但没有机器强制检查。Brain 读 `depends_on` 决定调度顺序，全部 `[]` = 并发 = evaluator 在前置 ws 合并前就跑 → FAIL → 无限 fix loop，且 fix loop 本身无法修复这个根因（改代码没用，问题在 DB schema 未就绪）。第 8 维在 GAN 阶段卡住，不等 evaluator 发现。
+
+**硬阈值**：task-plan.json 里 ws2+ 任意 ws `depends_on: []` 且无"本 ws 无 schema/data/interface 依赖"说明 → 第 8 维 = 0 → 强制 REVISION。
+
+---
+
 ### Pivot vs Refine 信号
 
 - **Refine**（默认）：Round N 总分**比 N-1 高** → 继续相同方向改
@@ -179,7 +196,7 @@ internal_consistency / risk_registered）独立打 0-10 分。不要再按 v6 �
 
 ### Step 3: 产出 Verdict
 
-**必须输出 7 维度评分（JSON 结构化，v6.2 新增 behavior_count_position）**：
+**必须输出 8 维度评分（JSON 结构化，v6.5 新增 depends_on_serial_chain）**：
 
 ```markdown
 ## RUBRIC SCORES
@@ -192,7 +209,8 @@ internal_consistency / risk_registered）独立打 0-10 分。不要再按 v6 �
   "internal_consistency": 6,
   "risk_registered": 5,
   "verification_oracle_completeness": 4,
-  "behavior_count_position": 0
+  "behavior_count_position": 0,
+  "depends_on_serial_chain": 10
 }
 ```
 
@@ -205,6 +223,7 @@ internal_consistency / risk_registered）独立打 0-10 分。不要再按 v6 �
 - **风险登记 = 5**：只列了 1 条 risk（"HTTP 超时处理"），没写 mitigation。cascade 失败未覆盖。
 - **Verification Oracle 完整性 = 4**：PRD `## Response Schema` 段写了 `{result, operation}` 二字段，但合同只 `curl ... | jq '.result'`，缺 `jq -e '.operation == "multiply"'` 与 `jq -e 'keys == ["operation", "result"]'` 完整性卡，schema drift 漏网风险高。
 - **BEHAVIOR 数量与位置 = 0**：`contract-dod-ws1.md` 含 25 条 [ARTIFACT] + 0 条 [BEHAVIOR] 标签。BEHAVIOR 段是 `## BEHAVIOR 索引` 指向 `tests/ws1/power.test.js` 的 vitest 用例，evaluator v1.1 反作弊红线第 3 条不接受 vitest 索引代替 manual:bash 命令。第 7 维硬阈值 ≥ 4，本合同 = 0，强制 REVISION。
+- **depends_on 串行链 = 10**：ws1.depends_on=[]，ws2.depends_on=["ws1"]，ws3.depends_on=["ws2"]，ws4.depends_on=["ws3"]，线性链完整，migration→service→routes→smoke 顺序正确。
 
 ## VERDICT: {APPROVED or REVISION based on rubric threshold}
 
@@ -237,18 +256,95 @@ Round N, 阈值固定 7/10（不随 round 衰减）。
 
 ### Step 4: 写结果文件（Brain 读文件而非 stdout）
 
-**输出协议（v6.5.0+ — 文件协议）**：
+**输出协议（v6.6.0 — 强制 Bash 工具写文件）**：
 
-最终输出必须写入 `/workspace/.brain-result.json`，Brain 读文件不读 stdout：
+最终输出必须通过 **Bash 工具**写入 `/workspace/.brain-result.json`（Brain 读文件不读 stdout，文本输出的命令不生效）：
+
+⚠️ **关键：必须在 Claude Code 的 Bash 工具中执行以下命令，不能只在文本里描述它**
 
 ```bash
-# 写结果文件（Brain 读文件而非 stdout）
-cat > /workspace/.brain-result.json << BREOF
-{"verdict":"<APPROVED|REVISION>","rubric_scores":{"dod_machineability":X,"scope_match_prd":X,"test_is_red":X,"internal_consistency":X,"risk_registered":X,"verification_oracle_completeness":X,"behavior_count_position":X},"feedback":"<feedback text or empty>"}
+# [必须通过 Bash 工具执行，不是文字描述] 写结果文件
+cat > /workspace/.brain-result.json << 'BREOF'
+{"verdict":"<APPROVED|REVISION>","rubric_scores":{"dod_machineability":X,"scope_match_prd":X,"test_is_red":X,"internal_consistency":X,"risk_registered":X,"verification_oracle_completeness":X,"behavior_count_position":X,"depends_on_serial_chain":X},"feedback":"<feedback text or empty>"}
 BREOF
 ```
 
+写完后用 Bash 工具验证文件存在：
+```bash
+test -f /workspace/.brain-result.json && echo "OK: result file written" || echo "FAIL: file missing!"
+```
+
 REVISION 时 feedback 必须含具体修改方向。
+
+---
+
+### Step 5: APPROVED → 写 Brain DB（planned 条目）
+
+**仅在 verdict = APPROVED 时执行**。把合同里定义的 API endpoints + DB tables 写入本地 Brain DB，status=planned，供 Report 阶段对比实际完成情况。
+
+```javascript
+// 读 SPRINT_DIR 从 env 注入（与 Step 1 一致）
+const fs = require('fs');
+const SPRINT_DIR = process.env.SPRINT_DIR;
+const BRAIN = process.env.BRAIN_API || 'http://localhost:5221';
+const SPRINT_ID = process.env.SPRINT_ID || 'unknown';
+
+const contract = fs.existsSync(`${SPRINT_DIR}/contract-draft.md`)
+  ? fs.readFileSync(`${SPRINT_DIR}/contract-draft.md`, 'utf8') : '';
+const prd = fs.existsSync(`${SPRINT_DIR}/sprint-prd.md`)
+  ? fs.readFileSync(`${SPRINT_DIR}/sprint-prd.md`, 'utf8') : '';
+
+// 提取 API endpoints（[BEHAVIOR] Method: / Endpoint: 格式）
+const apis = [...contract.matchAll(/Method:\s*(GET|POST|PUT|DELETE|PATCH)\s*\nEndpoint:\s*(\S+)/gi)]
+  .map(m => ({ method: m[1].toUpperCase(), endpoint: m[2] }));
+
+// 提取 DB tables（Table: 行）
+const tables = [...(contract + '\n' + prd).matchAll(/Table:\s*(\w+)/gi)]
+  .map(m => m[1].trim())
+  .filter((v, i, a) => a.indexOf(v) === i);  // 去重
+
+async function writePlanned() {
+  // api_registry
+  for (const api of apis) {
+    try {
+      await fetch(`${BRAIN}/api/brain/registry`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: `${api.method} ${api.endpoint}`,
+          type: 'api',
+          status: 'planned',
+          metadata: { sprint_id: SPRINT_ID, method: api.method, endpoint: api.endpoint }
+        })
+      });
+      console.log('✅ api_registry planned:', api.method, api.endpoint);
+    } catch(e) { console.warn('WARN api_registry:', e.message); }
+  }
+
+  // db_schema_registry
+  for (const table of tables) {
+    try {
+      await fetch(`${BRAIN}/api/brain/registry`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: table,
+          type: 'db_schema',
+          status: 'planned',
+          metadata: { sprint_id: SPRINT_ID }
+        })
+      });
+      console.log('✅ db_schema_registry planned:', table);
+    } catch(e) { console.warn('WARN db_schema_registry:', e.message); }
+  }
+}
+
+writePlanned().then(() => console.log('Step 5 完成：', apis.length, 'API +', tables.length, 'tables 写入 planned'));
+```
+
+**注意**：
+- 写入失败只 WARN，不阻塞结果文件（Brain 的 APPROVED 判定以 `/workspace/.brain-result.json` 为准）
+- Report 阶段（harness-sprint-state）会把 planned → done 状态更新 + 推 Notion
 
 ---
 

@@ -98,6 +98,33 @@ describe('H15 — verifyProposerOutput', () => {
     await expect(verifyProposerOutput({ ...baseOpts, execFn })).rejects.toThrow(ContractViolation);
     await expect(verifyProposerOutput({ ...baseOpts, execFn })).rejects.toThrow(/empty_task_plan/);
   });
+
+  test('H17: baseRepo 是 GitHub URL 时直接用作 githubUrl，不调 git -C <url> remote get-url', async () => {
+    const gitCalls = [];
+    const execFn = vi.fn().mockImplementation(async (cmd, args) => {
+      gitCalls.push([cmd, ...args].join(' '));
+      if (cmd === 'git' && args[0] === 'ls-remote') {
+        return { stdout: 'abc123\trefs/heads/cp-harness-propose-r1-task\n', stderr: '' };
+      }
+      if (cmd === 'git' && args[0] === 'fetch') return { stdout: '', stderr: '' };
+      if (cmd === 'git' && args[0] === 'show') {
+        return { stdout: JSON.stringify({ tasks: [{ id: 'ws1' }] }), stderr: '' };
+      }
+      throw new Error(`unexpected cmd: ${cmd} ${args.join(' ')}`);
+    });
+    const remoteBaseRepo = 'https://github.com/perfectuser21/zenithjoy-workspace';
+    await expect(verifyProposerOutput({
+      ...baseOpts,
+      baseRepo: remoteBaseRepo,
+      execFn,
+    })).resolves.toBeUndefined();
+    // 不应调用 git -C <url> remote get-url
+    const remoteGetUrl = gitCalls.find(c => c.includes('remote') && c.includes('get-url') && c.includes(remoteBaseRepo));
+    expect(remoteGetUrl).toBeUndefined();
+    // ls-remote 应使用 remoteBaseRepo URL 本身
+    const lsRemoteCall = gitCalls.find(c => c.startsWith('git ls-remote'));
+    expect(lsRemoteCall).toContain(remoteBaseRepo);
+  });
 });
 
 // -------- C. verifyGeneratorOutput (6 cases) --------

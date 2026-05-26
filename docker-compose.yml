@@ -87,6 +87,8 @@ services:
       - CODEX_HOME=/Users/administrator/.codex-team1
       # Brain 容器里 /tmp/cecelia-prompts 对应的宿主路径（docker-executor 用它构造子容器 mount 源）
       - HOST_PROMPT_DIR=/Users/administrator/claude-output/cecelia-prompts
+      # ZenithJoy API — harness-sprint-state skill 写 sprint_states/journey_steps 用
+      - BRAIN_API=http://host.docker.internal:5200
       # OPENAI_API_KEY is provided via env_file (.env.docker) — do NOT override here
       # Overriding with ${OPENAI_API_KEY} causes empty string when host shell has no export
       # FEISHU_OWNER_OPEN_IDS is provided via env_file (.env.docker) — same reason, do NOT override here

@@ -1131,13 +1131,14 @@ async function requeueTask(taskId, reason, evidence = {}) {
 
     if (existing.rows.length === 0) {
       await pool.query(`
-        INSERT INTO learnings (title, category, trigger_event, content, metadata, content_hash, version, is_latest, digested)
-        VALUES ($1, 'failure_pattern', 'watchdog_kill', $2, $3, $4, 1, true, false)
+        INSERT INTO learnings (title, category, trigger_event, content, metadata, content_hash, version, is_latest, digested, task_id)
+        VALUES ($1, 'failure_pattern', 'watchdog_kill', $2, $3, $4, 1, true, false, $5)
       `, [
         failureTitle,
         failureContent,
         JSON.stringify({ task_id: taskId, task_type: task_type || null, project_id: project_id || null }),
         contentHash,
+        taskId || null,
       ]);
     } else {
       console.log(`[executor] Skipping duplicate failure_pattern (hash=${contentHash})`);
@@ -1468,6 +1469,39 @@ function getPermissionModeForTaskType(taskType) {
     'audit': 'bypassPermissions',
   };
   return modeMap[taskType] || 'bypassPermissions';
+}
+
+// 各 harness 阶段的预定义 goal conditions（task.goal_condition 为空时作为 fallback）
+const HARNESS_GOAL_CONDITIONS = {
+  'harness_spec':  'The spec document has been written and committed to docs/superpowers/specs/',
+  'harness_code':  'All implementation is complete, all tests pass, and changes are committed to git',
+  'harness_prci':  'A pull request has been created and pushed to GitHub, PR URL is shown in the conversation',
+  'harness_ship':  'The pull request has been merged and all CI checks have passed',
+  'spec':          'The spec document has been written and committed to docs/superpowers/specs/',
+  'code':          'All implementation is complete, all tests pass, and changes are committed to git',
+  'prci':          'A pull request has been created and pushed to GitHub, PR URL is shown in the conversation',
+  'ship':          'The pull request has been merged and all CI checks have passed',
+  'generic':       'The task described in the prompt has been completed successfully',
+};
+
+/**
+ * 生成 Claude Code --settings prompt-based stop hook JSON。
+ * @param {string|null} goalCondition
+ * @returns {string|null} JSON 字符串；goalCondition 为空时返回 null
+ */
+function buildGoalSettings(goalCondition) {
+  if (!goalCondition) return null;
+  return JSON.stringify({
+    hooks: {
+      Stop: [{
+        hooks: [{
+          type: 'prompt',
+          prompt: `Has the following goal been achieved based on the conversation? Goal: ${goalCondition}\n\nAnswer YES only if you can confirm from the conversation that the goal is met. Answer NO otherwise.`,
+          model: 'claude-haiku-4-5-20251001'
+        }]
+      }]
+    }
+  });
 }
 
 /**
@@ -2815,7 +2849,19 @@ export async function runHarnessInitiativeRouter(task, opts = {}) {
   const resumeRequested = task.payload?.resume_from_checkpoint === true;
   let input;
   if (existing && resumeRequested) {
-    input = null;  // 显式 resume from checkpoint
+    // 检查 checkpoint 是否处于 error 状态（如 ganLoop 节点执行失败）
+    // 若 error 有值，resume 会立即路由到 END → final=null → task failed → 每 2min 死循环
+    const ckError = existing.channel_values?.error;
+    if (ckError) {
+      // 坏 checkpoint：升 N，fresh start，避免无限 resume→END→loop
+      attemptN = baseAttemptN + 1;
+      threadId = `harness-initiative:${initiativeId}:${attemptN}`;
+      input = { task };
+      await dbPool.query('UPDATE tasks SET execution_attempts=$1 WHERE id=$2', [attemptN, task.id]);
+      console.log(`[startup-sync] Bad checkpoint (error state) for task=${task.id}, fresh start attempt=${attemptN}`);
+    } else {
+      input = null;  // 显式 resume from checkpoint
+    }
   } else if (existing && !resumeRequested) {
     // 同 attemptN 已有 checkpoint 但未 resume → 升 N，留旧 checkpoint 诊断
     attemptN = baseAttemptN + 1;
@@ -3028,26 +3074,7 @@ async function triggerCeceliaRun(task) {
   if (task.task_type === 'harness_initiative') {
     console.log(`[executor] 路由决策: task_type=${task.task_type} → Harness Full Graph (A+B+C)`);
 
-    // Pre-check：至少一个账号 session ≥ 4h，否则置 paused 等账号恢复
-    try {
-      const { selectBestAccount } = await import('./account-usage.js');
-      const accountCheck = await selectBestAccount({ minSessionHours: 4 });
-      if (!accountCheck) {
-        console.warn(`[executor] harness_initiative ${task.id}: 无满足 session≥4h 的账号，置 paused`);
-        await pool.query(
-          `UPDATE tasks SET status='paused', updated_at=NOW() WHERE id=$1`,
-          [task.id]
-        );
-        import('./alerting.js').then(({ raise }) =>
-          raise('P1', `no_account_harness_${task.id}`,
-            `⚠️ 所有账号均不满足 harness 任务 ${task.id} session ≥ 4h 要求，任务已暂停，待账号恢复后自动重试`
-          ).catch(() => {})
-        ).catch(() => {});
-        return { success: true, taskId: task.id, initiative: true, paused: true, reason: 'no_account_available' };
-      }
-    } catch (checkErr) {
-      console.warn(`[executor] harness pre-check 失败（非阻塞继续）: ${checkErr.message}`);
-    }
+    // OAuth token 自动刷新，无需 session ≥ 4h 的 pre-check
 
     try {
       const result = await runHarnessInitiativeRouter(task);
@@ -3191,9 +3218,6 @@ async function triggerCeceliaRun(task) {
     }
     const permissionMode = getPermissionModeForTaskType(taskType);
     const extraEnv = getExtraEnvForTaskType(taskType);
-    // 无头模式下 tty 不可用，注入 CLAUDE_SESSION_ID 供 Stop Hook _session_matches() 会话隔离
-    // worktree-manage.sh 写 .dev-lock 时读取此变量作为 session_id 字段
-    extraEnv.CLAUDE_SESSION_ID = task.id;
     const model = getModelForTask(task);
 
     // Update task with run info before execution
@@ -3241,6 +3265,13 @@ async function triggerCeceliaRun(task) {
     const credentials = getCredentialsForTask(task);
     if (credentials) {
       extraEnv.CECELIA_CREDENTIALS = credentials;
+    }
+
+    // goal-based stop hook: inject --settings JSON for tasks with goal_condition
+    const _goalCond = task.goal_condition || HARNESS_GOAL_CONDITIONS[taskType] || null;
+    const _goalSettings = buildGoalSettings(_goalCond);
+    if (_goalSettings) {
+      extraEnv.CECELIA_GOAL_SETTINGS = _goalSettings;
     }
 
     // ── Docker Sandbox 分支（HARNESS_DOCKER_ENABLED=true）───────────────────
@@ -3889,6 +3920,9 @@ export {
   SAFETY_MARGIN,
   // v13: code-review env isolation
   getExtraEnvForTaskType,
+  // v18: goal-based stop hook
+  buildGoalSettings,
+  HARNESS_GOAL_CONDITIONS,
   // v14: Input validation for shell commands
   assertSafeId,
   assertSafePid,
