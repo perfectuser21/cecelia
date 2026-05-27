@@ -1176,6 +1176,9 @@ async function _checkPrMerged(prUrl) {
 export async function _waitForSubGraphCompletion(compiled, config, timeoutMs, opts = {}) {
   const pollIntervalMs = opts.pollIntervalMs ?? SUBGRAPH_POLL_INTERVAL_MS;
   const livenessCheckEveryN = opts.livenessCheckEveryN ?? LIVENESS_CHECK_EVERY_N;
+  // B42: 允许测试注入，避免在生产代码里 mock 全局函数
+  const checkLiveness = opts._checkLiveness ?? _checkContainerLiveness;
+  const checkPrMerged = opts._checkPrMerged ?? _checkPrMerged;
 
   const deadline = Date.now() + timeoutMs;
   let pollCount = 0;
@@ -1188,15 +1191,18 @@ export async function _waitForSubGraphCompletion(compiled, config, timeoutMs, op
 
     // ── 容器活性检测（B2/B3）──────────────────────────────────────────────
     // 每 livenessCheckEveryN 次 poll 检查一次容器是否还活着
-    if (pollCount % livenessCheckEveryN === 0) {
+    // B42 guard: 仅在 sub-graph 停在 await_callback 时才触发
+    // 容器 exit(0) 后 sub-graph 已离开 await_callback 继续运行时，不误判为死亡
+    const isAwaitingCallback = Array.isArray(state.next) && state.next.includes('await_callback');
+    if (isAwaitingCallback && pollCount % livenessCheckEveryN === 0) {
       const containerId = state.values?.containerId;
       if (containerId) {
-        const deathReason = await _checkContainerLiveness(containerId);
+        const deathReason = await checkLiveness(containerId);
         if (deathReason) {
           // B1 fix: 先验 PR 是否已 merged，已 merged → success，不走 failure
           const prUrl = state.values?.pr_url;
           if (prUrl) {
-            const alreadyMerged = await _checkPrMerged(prUrl);
+            const alreadyMerged = await checkPrMerged(prUrl);
             if (alreadyMerged) {
               console.log(
                 `[harness-liveness] Container ${containerId} exited after PR merged (${prUrl}), treating as success`
