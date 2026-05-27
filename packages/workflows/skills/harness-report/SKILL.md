@@ -74,6 +74,65 @@ echo "✅ Step 2: 中台 Dashboard 已更新"
 
 ---
 
+### Step 2.5: 创建 Notion Project（Run 级）+ 遍历 Notion Task（WS 级）
+
+```bash
+# JOURNEY_ID 由 cecelia-run 注入（可选，缺失时传 null）
+# SPRINT_WS_LIST 格式："WS1:PR_TITLE_1 WS2:PR_TITLE_2"（可选，缺失时从 sprint_dir 推断）
+JOURNEY_ID="${JOURNEY_ID:-}"
+SPRINT_WS_LIST="${SPRINT_WS_LIST:-}"
+
+# 2.5a — 创建 Notion Project（Run 级，status=Done，关联 journey）
+# 标题格式：$FEATURE_NAME；journey_id 关联本次 Run 所属 Journey
+JOURNEY_ID_JSON=$([ -n "${JOURNEY_ID:-}" ] && echo "\"$JOURNEY_ID\"" || echo "null")
+
+# 2.5a — 创建 Notion Project（Run 级）
+# payload: {"title":"...","status":"Done","journey_id":"...","sprint_dir":"...","pr_url":"..."}
+PROJECT_PAYLOAD=$(jq -n \
+  --arg title "$FEATURE_NAME" \
+  --arg status "Done" \
+  --argjson journey_id "$JOURNEY_ID_JSON" \
+  --arg sprint_dir "$SPRINT_DIR" \
+  --arg pr_url "$PR_URL" \
+  '{title:$title, status:$status, journey_id:$journey_id, sprint_dir:$sprint_dir, pr_url:$pr_url}')
+
+curl -s -X POST "localhost:5221/api/brain/notion/project" \
+  -H "Content-Type: application/json" \
+  -d "$PROJECT_PAYLOAD" 2>/dev/null || echo "WARN: Notion Project 创建失败（非阻断）"
+echo "✅ Step 2.5a: Notion Project 已创建（Run 级，status=Done，journey_id=${JOURNEY_ID:-null}）"
+
+# 2.5b — 遍历 WS 列表，逐个创建 Notion Task
+# 标题格式：WS{n} — {PR_TITLE}（n 为 workstream 编号，PR_TITLE 为该 WS 的 PR 标题）
+if [ -z "$SPRINT_WS_LIST" ]; then
+  # 从 sprint_dir 扫描 tests/ws* 目录推断 WS 编号
+  SPRINT_WS_LIST=""
+  for ws_dir in "${SPRINT_DIR}"/tests/ws*/; do
+    [ -d "$ws_dir" ] || continue
+    ws_num=$(basename "$ws_dir" | sed 's/ws//')
+    SPRINT_WS_LIST="${SPRINT_WS_LIST}WS${ws_num}:${FEATURE_NAME} "
+  done
+fi
+
+for WS_ENTRY in $SPRINT_WS_LIST; do
+  WS_LABEL="${WS_ENTRY%%:*}"
+  WS_PR_TITLE="${WS_ENTRY##*:}"
+  [ "$WS_PR_TITLE" = "$WS_LABEL" ] && WS_PR_TITLE="$FEATURE_NAME"
+  TASK_TITLE="${WS_LABEL} — ${WS_PR_TITLE}"
+  TASK_PAYLOAD=$(jq -n \
+    --arg title "$TASK_TITLE" \
+    --arg status "Done" \
+    --arg sprint_dir "$SPRINT_DIR" \
+    '{title:$title, status:$status, sprint_dir:$sprint_dir}')
+  curl -s -X POST "localhost:5221/api/brain/notion/task" \
+    -H "Content-Type: application/json" \
+    -d "$TASK_PAYLOAD" 2>/dev/null || echo "WARN: Notion Task 创建失败（${TASK_TITLE}，非阻断）"
+  echo "  ✅ Notion Task: $TASK_TITLE"
+done
+echo "✅ Step 2.5b: Notion Task 遍历完成（格式：WS{n} — {PR_TITLE}，status=Done）"
+```
+
+---
+
 ### Step 3: 写 Notion AI Notes（GAN 标注表 + 截图链接 + DoD 结果）
 
 ```bash
