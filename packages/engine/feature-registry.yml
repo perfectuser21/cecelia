@@ -116,6 +116,13 @@ features:
 # Changelog（细粒度改动历史）
 # ============================================================================
 changelog:
+  - version: "19.2.0"
+    date: "2026-05-27"
+    change: "feat"
+    description: "dev skill v19.2 — 大功能 PrepPRD 前强制提炼 Golden Path（cp-20260527-dev-skill-golden-path）。PrepPRD 生成前新增「Golden Path 先行」强制步骤：从用户描述提炼用户操作流程（非技术组件），补全首次使用/日常使用/出错恢复三场景，用户确认后才能继续。PrepPRD 大功能模板新增 Golden Path 区块作为合同/WS 拆分/E2E 的唯一锚点。修复根因：之前生成技术组件描述而非用户交互流程，导致骨架跑空。"
+    files:
+      - "packages/engine/skills/dev/SKILL.md (v19.1.0 → v19.2.0 — Golden Path 先行)"
+
   - version: "19.1.0"
     date: "2026-05-26"
     change: "feat+refactor"
