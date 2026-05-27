@@ -160,13 +160,23 @@ if [[ -z "$TARGET_URL" ]]; then
   TARGET_URL="http://host.docker.internal:5221/api/brain/harness/callback/${CONTAINER_ID}"
 fi
 
-if curl -sf -m 10 -X POST \
-    "$TARGET_URL" \
-    -H "Content-Type: application/json" \
-    -d "$CALLBACK_BODY" >/dev/null 2>&1; then
-  echo "[entrypoint] harness callback POST ok (url=${TARGET_URL} exit=${EXIT_CODE})"
-else
-  echo "[entrypoint] harness callback POST 失败（不阻塞容器退出）— url=${TARGET_URL} exit=${EXIT_CODE}"
+CALLBACK_OK=0
+for _retry in 1 2 3 4 5; do
+  if curl -sf -m 10 -X POST "$TARGET_URL" \
+      -H "Content-Type: application/json" \
+      -d "$CALLBACK_BODY" >/dev/null 2>&1; then
+    echo "[entrypoint] harness callback POST ok (url=${TARGET_URL} exit=${EXIT_CODE} attempt=${_retry})"
+    CALLBACK_OK=1
+    break
+  fi
+  if [[ $_retry -lt 5 ]]; then
+    _sleep=$(( (_retry - 1) * 3 + 3 ))
+    echo "[entrypoint] harness callback attempt ${_retry}/5 失败，${_sleep}s 后重试..."
+    sleep "$_sleep"
+  fi
+done
+if [[ $CALLBACK_OK -eq 0 ]]; then
+  echo "[entrypoint] harness callback POST 全部失败（不阻塞容器退出）— url=${TARGET_URL} exit=${EXIT_CODE}"
 fi
 
 exit "$EXIT_CODE"
