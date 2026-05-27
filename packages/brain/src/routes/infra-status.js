@@ -396,7 +396,7 @@ router.get('/health', async (req, res) => {
             const expiresAt = new Date(expiresAtMs).toISOString();
             let token_status;
             if (remainingMs < 0) token_status = 'expired';
-            else if (remainingMs < 8 * 3600000) token_status = 'expiring_soon';
+            else if (remainingMs < 4 * 3600000) token_status = 'expiring_soon';
             else token_status = 'ok';
             tokenExpiry = { token_expires_at: expiresAt, token_remaining_hours: remainingHours, token_status };
           }

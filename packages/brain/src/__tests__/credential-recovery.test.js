@@ -223,48 +223,31 @@ describe('checkAndAlertExpiringCredentials', () => {
     _resetAlertDedup(); // 清除内存去重缓存，确保每个测试独立
   });
 
-  it('< 3h 剩余：通过 raise() 发送 P0 紧急告警', async () => {
-    mockExpiringCredential(2 * 60 * 60 * 1000); // 2h remaining
+  it('token 刚过期（< 1h）：cron 还能修，不告警', async () => {
+    mockExpiringCredential(-30 * 60 * 1000); // 过期 30 分钟，cron 还能自动刷新
 
-    const result = await checkAndAlertExpiringCredentials(pool);
-
-    expect(result.alerted).toBe(2); // H14: ACCOUNTS={account1, account2}（account3 退订）
-    expect(raise).toHaveBeenCalledWith(
-      'P0',
-      expect.stringContaining('credential_expiry_account'),
-      expect.stringContaining('需立即刷新')
-    );
-    expect(createTask).not.toHaveBeenCalled(); // 不再创建 research 任务
-  });
-
-  it('< 3h 剩余：1h 内已告警时跳过（内存去重）', async () => {
-    mockExpiringCredential(2 * 60 * 60 * 1000); // 2h remaining
-    // 第一次调用 — 填充去重缓存
-    await checkAndAlertExpiringCredentials(pool);
-    vi.clearAllMocks();
-    // 第二次调用 — 1h 内同账号同级别应被跳过
     const result = await checkAndAlertExpiringCredentials(pool);
 
     expect(result.alerted).toBe(0);
     expect(raise).not.toHaveBeenCalled();
   });
 
-  it('3h~8h 剩余：通过 raise() 发送 P1 常规告警', async () => {
-    mockExpiringCredential(5 * 60 * 60 * 1000); // 5h remaining
+  it('token 过期超 1h：cron 连续失败，P0 告警', async () => {
+    mockExpiringCredential(-2 * 60 * 60 * 1000); // 过期 2h，超过 STUCK_EXPIRED_MS(1h)
 
     const result = await checkAndAlertExpiringCredentials(pool);
 
-    expect(result.alerted).toBe(2); // H14: ACCOUNTS={account1, account2}
+    expect(result.alerted).toBe(2); // 两个账号都告警
     expect(raise).toHaveBeenCalledWith(
-      'P1',
-      expect.stringContaining('credential_expiry_account'),
-      expect.stringContaining('需尽快刷新')
+      'P0',
+      expect.stringContaining('credential_stuck_account'),
+      expect.stringContaining('cron 自动刷新失败')
     );
     expect(createTask).not.toHaveBeenCalled();
   });
 
-  it('3h~8h 剩余：1h 内已告警时跳过（内存去重）', async () => {
-    mockExpiringCredential(5 * 60 * 60 * 1000); // 5h remaining
+  it('token 过期超 1h：1h 内已告警时跳过（内存去重）', async () => {
+    mockExpiringCredential(-2 * 60 * 60 * 1000); // 过期 2h
     await checkAndAlertExpiringCredentials(pool);
     vi.clearAllMocks();
     const result = await checkAndAlertExpiringCredentials(pool);
@@ -273,8 +256,26 @@ describe('checkAndAlertExpiringCredentials', () => {
     expect(raise).not.toHaveBeenCalled();
   });
 
-  it('凭据健康（> 8h）：不告警', async () => {
-    mockExpiringCredential(10 * 60 * 60 * 1000); // 10h — above 8h threshold
+  it('token expiring_soon（剩余 3h）：不告警，cron 会处理', async () => {
+    mockExpiringCredential(3 * 60 * 60 * 1000); // 剩余 3h，cron 即将刷新
+
+    const result = await checkAndAlertExpiringCredentials(pool);
+
+    expect(result.alerted).toBe(0);
+    expect(raise).not.toHaveBeenCalled();
+  });
+
+  it('凭据文件缺失：P0 告警', async () => {
+    existsSync.mockReturnValue(false); // 模拟文件不存在
+
+    const result = await checkAndAlertExpiringCredentials(pool);
+
+    expect(result.alerted).toBe(2);
+    expect(raise).toHaveBeenCalledWith('P0', expect.any(String), expect.stringContaining('缺失'));
+  });
+
+  it('凭据健康（剩余 7h）：不告警', async () => {
+    mockExpiringCredential(7 * 60 * 60 * 1000); // 7h — 正常，cron 会在 <3h 时刷新
 
     const result = await checkAndAlertExpiringCredentials(pool);
 
