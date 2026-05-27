@@ -302,6 +302,11 @@ app.use('/api/brain', harnessCallbackRouter);
 app.use('/api/brain', walkingSkeletonRouter);
 app.use('/api/brain', journeysRouter);
 app.use('/api/brain/harness', harnessRoutes);
+// Alias: /api/brain/initiative-runs/:id 可直接访问（不带 /harness 前缀）
+// 合同 DoD 要求 GET /api/brain/initiative-runs/:id，harness.js 路由挂载于 /harness，
+// 此处二次挂载让路由在 /api/brain 前缀下也生效。
+// /stats/pipeline 等路径已在此挂载点之前被 statsRoutes/contentPipelineRoutes 处理，无冲突。
+app.use('/api/brain', harnessRoutes);
 app.use('/api/brain/harness-interrupts', harnessInterruptsRouter);
 app.use('/api/brain/initiatives', initiativesRoutes);
 app.use('/api/brain/backup', backupRoutes);

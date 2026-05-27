@@ -273,17 +273,18 @@ ${task.description || task.title || ''}
 
     // 建 initiative_runs（phase='B_task_loop'，阶段 A 已结束）
     const journeyType = taskPlan?.journey_type || 'autonomous';
+    const journeyId = task.payload?.journey_id || null;
     const runInsert = await client.query(
       `INSERT INTO initiative_runs (
          initiative_id, contract_id, phase,
-         deadline_at, journey_type
+         deadline_at, journey_type, journey_id
        )
        VALUES ($1::uuid, $2::uuid, 'B_task_loop',
          NOW() + ($3 || ' seconds')::interval,
-         $4
+         $4, $5
        )
        RETURNING id`,
-      [initiativeId, contractId, String(timeoutSec), journeyType]
+      [initiativeId, contractId, String(timeoutSec), journeyType, journeyId]
     );
     const runId = runInsert.rows[0].id;
 
@@ -832,17 +833,18 @@ export async function dbUpsertNode(state, opts = {}) {
     );
     const contractId = contractInsert.rows[0].id;
     const journeyType = state.taskPlan?.journey_type || 'autonomous';
+    const journeyId = state.task?.payload?.journey_id || null;
     const runInsert = await client.query(
       `INSERT INTO initiative_runs (
          initiative_id, contract_id, phase,
-         deadline_at, journey_type
+         deadline_at, journey_type, journey_id
        )
        VALUES ($1::uuid, $2::uuid, 'B_task_loop',
          NOW() + ($3 || ' seconds')::interval,
-         $4
+         $4, $5
        )
        RETURNING id`,
-      [state.initiativeId, contractId, String(timeoutSec), journeyType]
+      [state.initiativeId, contractId, String(timeoutSec), journeyType, journeyId]
     );
     const runId = runInsert.rows[0].id;
     await client.query('COMMIT');
