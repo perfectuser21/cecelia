@@ -17,8 +17,9 @@ const SRC = readFileSync('packages/brain/src/notion-push-sync.js', 'utf8');
 const AI_NOTES_DB = '185c40c2-ba63-828c-973f-81a9c4582cd6';
 
 // AI Notes DB 只有三个 property：Title(title), Type(select), Date(date)
-// 不存在的字段：Status, Category, Decision, Reason, Version, PRD, Name
-const FORBIDDEN_FIELDS = ['Status', 'Category', 'Decision', 'Reason', 'Version', 'PRD'];
+// 不存在的 property key：Status, Category, Reason, Version, PRD, Name
+// 注意：'Decision' 是 Type 的值，不是 property key，不在此列表
+const FORBIDDEN_FIELDS = ['Status', 'Category', 'Reason', 'Version', 'PRD'];
 
 describe('notion-push-sync DB ID 修正', () => {
   it('DECISIONS_DB 等于真实 AI Notes DB ID', () => {
