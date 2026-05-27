@@ -129,7 +129,8 @@ ${task.description || task.title || ''}
 ## 输出要求（v2）
 1. 生成 ${sprintDir}/sprint-prd.md（What，不写 How）
 2. 在 stdout 末尾输出 task-plan.json（符合 harness-planner SKILL.md 定义的 schema）
-3. task-plan.json 必须被 \`\`\`json ... \`\`\` 代码块包裹便于提取`;
+3. task-plan.json 必须被 \`\`\`json ... \`\`\` 代码块包裹便于提取
+4. task-plan.json 的 initiative_id 字段：必须使用 $HARNESS_INITIATIVE_ID 环境变量的值（已注入容器），**禁止**写 "pending" 或任何占位符`;
 
   // ── Prep：挂载 worktree + 注入 GitHub token（Harness v2 container mount）──
   let worktreePath;
