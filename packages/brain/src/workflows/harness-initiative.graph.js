@@ -1141,6 +1141,22 @@ async function _checkContainerLiveness(containerId) {
 }
 
 /**
+ * 检查 GitHub PR 是否已 merged。
+ * B1 fix: container 死亡时先验 PR 状态，防止已完成 WS 被误标 failed。
+ *
+ * @param {string} prUrl
+ * @returns {Promise<boolean>}
+ */
+async function _checkPrMerged(prUrl) {
+  return new Promise((resolve) => {
+    execFileCb('gh', ['pr', 'view', prUrl, '--json', 'state', '-q', '.state'], (err, stdout) => {
+      if (err) { resolve(false); return; }
+      resolve((stdout || '').trim().toUpperCase() === 'MERGED');
+    });
+  });
+}
+
+/**
  * 等待 sub-graph 完成（轮询 getState 直到 next=[]）。
  *
  * 增加容器活性检测（B2/B3 修复）：每 livenessCheckEveryN 次 poll 检查一次
@@ -1175,6 +1191,17 @@ export async function _waitForSubGraphCompletion(compiled, config, timeoutMs, op
       if (containerId) {
         const deathReason = await _checkContainerLiveness(containerId);
         if (deathReason) {
+          // B1 fix: 先验 PR 是否已 merged，已 merged → success，不走 failure
+          const prUrl = state.values?.pr_url;
+          if (prUrl) {
+            const alreadyMerged = await _checkPrMerged(prUrl);
+            if (alreadyMerged) {
+              console.log(
+                `[harness-liveness] Container ${containerId} exited after PR merged (${prUrl}), treating as success`
+              );
+              return { ...(state.values), status: 'merged' };
+            }
+          }
           // 容器已死，主动 resume sub-graph 走 failure 路径
           console.warn(
             `[harness-liveness] Container ${containerId} died (${deathReason}), resuming sub-graph with failure`

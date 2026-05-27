@@ -271,4 +271,70 @@ describe("_waitForSubGraphCompletion — container liveness detection (B2/B3)", 
       config
     );
   });
+
+  it("B1: container exited 但 PR 已 merged → success 路径，不触发 failure resume", async () => {
+    const mockGetState = vi.fn().mockResolvedValue({
+      next: ["await_callback"],
+      values: {
+        containerId: "harness-ws1-abc123",
+        pr_url: "https://github.com/perfectuser21/cecelia/pull/99",
+        status: "queued",
+      },
+    });
+    const mockInvoke = vi.fn();
+    compiled = { getState: mockGetState, invoke: mockInvoke };
+
+    // docker → exited，gh pr view → MERGED
+    mockExecFile.mockImplementation((cmd, args, cb) => {
+      if (cmd === "docker") cb(null, "exited");
+      else if (cmd === "gh") cb(null, "MERGED\n");
+      else cb(new Error("unexpected"), "");
+    });
+
+    const result = await _waitForSubGraphCompletion(compiled, config, 30_000, {
+      pollIntervalMs: 50,
+      livenessCheckEveryN: 1,
+    });
+
+    // 绝不以 failure 调 invoke
+    expect(mockInvoke).not.toHaveBeenCalledWith(
+      expect.objectContaining({ resume: expect.objectContaining({ status: "failed" }) }),
+      expect.anything()
+    );
+    expect(result.status).toBe("merged");
+  });
+
+  it("B1: container exited，gh pr view 失败 → 保持原 failure 路径", async () => {
+    const mockGetState = vi.fn()
+      .mockResolvedValueOnce({
+        next: ["await_callback"],
+        values: {
+          containerId: "harness-ws1-dead",
+          pr_url: "https://github.com/perfectuser21/cecelia/pull/77",
+          status: "queued",
+        },
+      })
+      .mockResolvedValue({ next: [], values: { status: "failed" } });
+
+    const mockInvoke = vi.fn().mockResolvedValue(undefined);
+    compiled = { getState: mockGetState, invoke: mockInvoke };
+
+    // docker → exited，gh → 报错
+    mockExecFile.mockImplementation((cmd, args, cb) => {
+      if (cmd === "docker") cb(null, "exited");
+      else if (cmd === "gh") cb(new Error("gh: command failed"), "");
+      else cb(null, "");
+    });
+
+    const result = await _waitForSubGraphCompletion(compiled, config, 30_000, {
+      pollIntervalMs: 50,
+      livenessCheckEveryN: 1,
+    });
+
+    expect(mockInvoke).toHaveBeenCalledWith(
+      expect.objectContaining({ resume: expect.objectContaining({ status: "failed" }) }),
+      config
+    );
+    expect(result.status).toBe("failed");
+  });
 });
