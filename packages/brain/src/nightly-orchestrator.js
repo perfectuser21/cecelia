@@ -242,7 +242,7 @@ export async function runOrchestrationCycle() {
  * 生成夜间编排总结报告，写入 daily_logs。
  * 幂等：今日已写则更新。
  */
-async function generateOvernightReport() {
+export async function generateOvernightReport() {
   const today = new Date().toISOString().split('T')[0];
 
   if (_lastReportDate === today) {
