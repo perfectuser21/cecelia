@@ -77,21 +77,45 @@ cat ~/.claude-account3/skills/dev/steps/00-worktree-auto.md 2>/dev/null || cat ~
 
 ---
 
-## Brain 任务登记（Route A / Route B）
+## Brain 任务登记（路径 A/B）
 
-**Route B（不带 `--task-id`）**：Stage 1 Spec 开始前向 Brain 登记本次任务：
+**有 `--task-id`**：跳过登记，直接从 Brain 读取已有 Task PRD（见上方 `--task-id 参数` 章节）。
+
+**无 `--task-id`**（PrepPRD 确认后，Stage 1 Spec 开始前）按改动类型选择路径：
+
+### 路径 A — Bug 修复
+
+PrepPRD 确认 → POST /api/brain/issues 登记 bug（得 issue_id）→ POST /api/brain/tasks 带 journey_id + issue_id：
 
 ```bash
-curl -s -X POST localhost:5221/api/brain/tasks \
+# Step 1: 登记 Issue（Bug）
+ISSUE_ID=$(curl -sf -X POST localhost:5221/api/brain/issues \
   -H "Content-Type: application/json" \
-  -d "{\"task_type\":\"dev\",\"title\":\"<本次改动标题>\",\"description\":\"<PRD摘要>\"}" \
+  -d "{\"title\":\"<bug 简述>\",\"description\":\"<bug 详情>\",\"journey_id\":\"${JOURNEY_ID:-null}\"}" \
+  | node -e "process.stdin.resume();let d='';process.stdin.on('data',c=>d+=c);process.stdin.on('end',()=>{try{const r=JSON.parse(d);console.log(r.id);}catch{}})" \
+  2>/dev/null)
+
+# Step 2: 登记 Task，关联 issue_id + journey_id
+curl -sf -X POST localhost:5221/api/brain/tasks \
+  -H "Content-Type: application/json" \
+  -d "{\"task_type\":\"dev\",\"title\":\"<本次改动标题>\",\"description\":\"<PRD摘要>\",\"journey_id\":\"${JOURNEY_ID:-null}\",\"issue_id\":\"${ISSUE_ID:-null}\"}" \
   | node -e "process.stdin.resume();let d='';process.stdin.on('data',c=>d+=c);process.stdin.on('end',()=>{try{const r=JSON.parse(d);console.log('Brain task:',r.id);}catch{console.warn('⚠️ Brain 离线，不阻断');}})" \
   2>/dev/null || echo "⚠️ Brain 离线，不阻断 /dev 流程"
 ```
 
-Brain 离线时输出 warn 日志继续，不阻断流程。登记成功后记录 `task_id` 供后续回写任务状态用。
+### 路径 B — 小改动
 
-**Route A（有 `--task-id`）**：跳过登记，直接从 Brain 读取已有 Task PRD（见上方 `--task-id 参数` 章节），`--task-id` 路径保持不变。
+PrepPRD 确认 → POST /api/brain/tasks 带 journey_id：
+
+```bash
+curl -sf -X POST localhost:5221/api/brain/tasks \
+  -H "Content-Type: application/json" \
+  -d "{\"task_type\":\"dev\",\"title\":\"<本次改动标题>\",\"description\":\"<PRD摘要>\",\"journey_id\":\"${JOURNEY_ID:-null}\"}" \
+  | node -e "process.stdin.resume();let d='';process.stdin.on('data',c=>d+=c);process.stdin.on('end',()=>{try{const r=JSON.parse(d);console.log('Brain task:',r.id);}catch{console.warn('⚠️ Brain 离线，不阻断');}})" \
+  2>/dev/null || echo "⚠️ Brain 离线，不阻断 /dev 流程"
+```
+
+**journey_id 处理**：`JOURNEY_ID` 环境变量缺失时写 `null`（`${JOURNEY_ID:-null}`），不阻断流程。Brain 离线时输出 warn 日志继续，不阻断流程。登记成功后记录 `task_id` 供后续回写任务状态用。
 
 ---
 
