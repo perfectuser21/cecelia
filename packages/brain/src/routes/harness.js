@@ -1189,4 +1189,62 @@ router.get('/stats', async (req, res) => {
   }
 });
 
+/**
+ * POST /api/brain/harness/complete
+ * harness-report SKILL.md Step 2 调用：pipeline 全部 WS 交付后更新 initiative 状态
+ * body: { initiative_id, sprint_dir?, pr_url?, screenshots? }
+ */
+router.post('/complete', async (req, res) => {
+  const { initiative_id, sprint_dir, pr_url, screenshots } = req.body ?? {};
+  if (!initiative_id) return res.status(400).json({ error: 'initiative_id required' });
+  try {
+    const result = { completed_at: new Date().toISOString() };
+    if (pr_url) result.pr_url = pr_url;
+    if (screenshots) result.screenshots = screenshots;
+    if (sprint_dir) result.sprint_dir = sprint_dir;
+    await pool.query(
+      `UPDATE tasks SET status='completed', completed_at=NOW(),
+       result = COALESCE(result, '{}'::jsonb) || $1::jsonb
+       WHERE id::text = $2 AND status != 'completed'`,
+      [JSON.stringify(result), initiative_id]
+    );
+    console.log(`[POST /harness/complete] initiative ${initiative_id} marked completed`);
+    res.json({ ok: true, initiative_id });
+  } catch (err) {
+    console.error('[POST /harness/complete]', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * POST /api/brain/harness/notify
+ * harness-report SKILL.md Step 5 调用：发送飞书通知
+ * body: { type, title, message?, initiative_id?, pr_url?, task_id?, verdict? }
+ * type: harness_complete | harness_task_merged | harness_final_e2e | general
+ */
+router.post('/notify', async (req, res) => {
+  const { type, title, message, initiative_id, pr_url, task_id, verdict } = req.body ?? {};
+  if (!type || !title) return res.status(400).json({ error: 'type and title required' });
+  try {
+    const { notifyHarnessFinalE2E, notifyHarnessTaskMerged, sendFeishu } = await import('../notifier.js');
+    let sent = false;
+    if (type === 'harness_complete' || type === 'harness_final_e2e') {
+      sent = await notifyHarnessFinalE2E({
+        initiative_id: initiative_id || title,
+        initiative_title: title,
+        verdict: verdict || 'PASS',
+      });
+    } else if (type === 'harness_task_merged') {
+      sent = await notifyHarnessTaskMerged({ title, pr_url, task_id });
+    } else {
+      const text = message ? `${title}\n${message}` : title;
+      sent = await sendFeishu(text);
+    }
+    res.json({ ok: true, sent: !!sent });
+  } catch (err) {
+    console.error('[POST /harness/notify]', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 export default router;

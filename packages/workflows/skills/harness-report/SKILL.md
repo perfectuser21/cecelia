@@ -237,7 +237,7 @@ if [ -n "$FIRST_SCREENSHOT_URL" ]; then
   FEISHU_MSG="$FEISHU_MSG\n截图: $FIRST_SCREENSHOT_URL"
 fi
 
-curl -X POST "localhost:5221/api/brain/notify" \
+curl -X POST "localhost:5221/api/brain/harness/notify" \
   -H "Content-Type: application/json" \
   -d "{
     \"type\": \"harness_complete\",
