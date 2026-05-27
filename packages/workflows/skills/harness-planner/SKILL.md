@@ -345,7 +345,7 @@ git push origin HEAD 2>/dev/null || echo "[harness-planner] push skipped (no cre
 
 ## 常见错误
 
-1. **输出 task-plan.json** → v8 不再拆任务，此文件由 Proposer 在合同 GAN 确认后产出
+1. **task-plan.json initiative_id 写 "pending"** → 必须使用 `$HARNESS_INITIATIVE_ID` 环境变量（已注入），写 "pending" 会导致 parsePrd 警告 + 下游 DB 写入错误
 2. **PRD 仍用功能需求列表格式** → 必须改为 Golden Path 格式（入口→步骤→出口）
 3. **写实现细节**（"引入 X 库"、"用 async 模式"）→ 违反 What-only 原则
 4. **忘记 journey_type** → 必须在 PRD 末尾标注，Proposer 和 Evaluator 依赖此字段
