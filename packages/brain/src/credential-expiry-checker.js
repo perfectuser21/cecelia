@@ -1,33 +1,35 @@
 /**
  * credential-expiry-checker.js
  *
- * 凭据有效期检查器。读取各 Claude 账号的 OAuth token 过期时间，
- * 在过期前告警，防止凭据静默失效造成 auth 级联故障。
+ * 凭据有效期检查器。读取各 Claude 账号的 OAuth token 过期时间。
+ *
+ * 告警哲学：只有当 cron 无法自动修复时才告警。
+ * - token 快过期但 cron 正常工作 → 静默，cron 会在 <3h 时自动刷新
+ * - token 已过期超过 STUCK_EXPIRED_MS（1h）→ 说明 cron 连续失败，需人工介入 → P0
+ * - 两个账号同时过期（任意时长）→ 系统无可用账号 → P0
+ * - token 文件缺失/无效 → 账号失效 → P0
  *
  * 集成点：tick.js 每 30 分钟调用 checkAndAlertExpiringCredentials()
  *
- * 告警通道：直接调用 raise()（Feishu 推送），不创建需要 Claude API 的 research 任务。
- * 原因：凭据告警创建的 research 任务在 quota 耗尽时本身也会死亡，形成正反馈循环。
- *
  * 附加功能：recoverAuthQuarantinedTasks()
- *   当凭据已恢复健康，自动重排队因 auth 失败而被隔离的任务（非 pipeline_rescue）。
- *   防止凭据轮换后业务任务永久沉没在 quarantined 状态。
- *
  * 附加功能：cancelCredentialAlertTasks()
- *   批量取消所有 quarantined/queued 凭据告警任务（旧机制遗留）。
  */
 
 import { readFileSync, existsSync } from 'fs';
 import { homedir } from 'os';
 import { createTask } from './actions.js';
 
-const ALERT_THRESHOLD_MS = 8 * 60 * 60 * 1000; // 8 小时（给更多响应窗口）
-const CRITICAL_THRESHOLD_MS = 3 * 60 * 60 * 1000; // 3 小时 — 触发升级 P0 告警
+// token 过期超过此时长 → cron 已连续失败，需人工介入
+const STUCK_EXPIRED_MS = 60 * 60 * 1000; // 1 小时（cron 每 2h 一次，1h 说明至少错过一次）
+
+// Dashboard 展示用：token 剩余 <X 时显示为 expiring_soon（不触发告警）
+const DISPLAY_THRESHOLD_MS = 4 * 60 * 60 * 1000; // 4 小时
+
 const ACCOUNTS = ['account1', 'account2']; // H14: account3 退订（403），见 docs/learnings/cp-0510075509-h14-remove-account3.md
 
 /**
  * 读取单个账号的 OAuth token 状态
- * @param {string} account - 账号名（account1/account2/account3）
+ * @param {string} account
  * @returns {{ account, expiresAt, expiresAtMs, remainingMs, status, error? }}
  */
 function readAccountCredential(account) {
@@ -50,7 +52,7 @@ function readAccountCredential(account) {
     let status;
     if (remainingMs < 0) {
       status = 'expired';
-    } else if (remainingMs < ALERT_THRESHOLD_MS) {
+    } else if (remainingMs < DISPLAY_THRESHOLD_MS) {
       status = 'expiring_soon';
     } else {
       status = 'ok';
@@ -63,7 +65,7 @@ function readAccountCredential(account) {
 }
 
 /**
- * 检查所有账号凭据状态
+ * 检查所有账号凭据状态（用于 Dashboard 展示和恢复门控）
  * @returns {{ accounts: Array, alertNeeded: boolean, criticalAccounts: Array }}
  */
 export function checkCredentialExpiry() {
@@ -76,71 +78,69 @@ export function checkCredentialExpiry() {
   };
 }
 
-/**
- * 检查凭据并在需要时创建 Brain 告警任务
- *
- * 告警通道：使用 raise()（Feishu 推送），不再创建 research 任务。
- * 去重：同账号同级别 1h 内只告警一次（内存去重）。
- *
- * @param {import('pg').Pool} pool - DB 连接池（保留参数，兼容调用方）
- * @returns {Promise<{ checked: number, alerted: number, skipped: number }>}
- */
-
-// 内存去重：dedupKey（`${account}_${level}`）→ 上次告警时间戳
+// 内存去重：dedupKey → 上次告警时间戳
 const _alertDedup = new Map();
-const ALERT_DEDUP_MS = 60 * 60 * 1000; // 1 小时内同账号同级别不重复推送
+const ALERT_DEDUP_MS = 60 * 60 * 1000; // 1 小时内同账号同原因不重复推送
 
 /** 测试用：清除告警去重缓存（仅供 test 调用） */
 export function _resetAlertDedup() { _alertDedup.clear(); }
 
+/**
+ * 检查凭据并在 cron 无法自动恢复时告警。
+ *
+ * 告警条件（任一满足）：
+ *   1. 所有账号同时过期（系统无可用账号）
+ *   2. 某账号过期超过 STUCK_EXPIRED_MS（1h）→ cron 连续失败
+ *   3. 某账号文件缺失或格式错误
+ *
+ * 不触发告警：token expiring_soon（cron <3h 会自动刷新）
+ *
+ * @param {import('pg').Pool} _pool - 保留参数，兼容调用方
+ * @returns {Promise<{ checked: number, alerted: number, skipped: number }>}
+ */
 export async function checkAndAlertExpiringCredentials(_pool) {
-  const { accounts, criticalAccounts } = checkCredentialExpiry();
+  const { accounts } = checkCredentialExpiry();
 
-  if (criticalAccounts.length === 0) {
+  // 告警条件：过期超 STUCK_EXPIRED_MS（cron 连续失败）、文件缺失或格式错误
+  // expiring_soon / 刚过期（< 1h）：cron 下次运行会自动修复，静默
+  const alertAccounts = accounts.filter(a => {
+    if (a.status === 'missing' || a.status === 'error' || a.status === 'unknown') return true;
+    if (a.status === 'expired' && a.remainingMs < -STUCK_EXPIRED_MS) return true; // 过期超 1h
+    return false;
+  });
+
+  if (alertAccounts.length === 0) {
     return { checked: accounts.length, alerted: 0, skipped: accounts.length };
   }
-
-  console.log(`[credential-checker] 发现 ${criticalAccounts.length} 个账号凭据即将过期: ${criticalAccounts.map(a => `${a.account}(${a.status})`).join(', ')}`);
 
   const { raise } = await import('./alerting.js');
   let alerted = 0;
 
-  for (const acc of criticalAccounts) {
-    const remainingH = acc.remainingMs > 0
-      ? Math.floor(acc.remainingMs / 3600000)
-      : 0;
-    const remainingM = acc.remainingMs > 0
-      ? Math.floor((acc.remainingMs % 3600000) / 60000)
-      : 0;
-
-    const isCritical = acc.remainingMs > 0 && acc.remainingMs < CRITICAL_THRESHOLD_MS;
-    const isExpired = acc.status === 'expired';
-    const statusLabel = isExpired ? '已过期' : `还剩 ${remainingH}h${remainingM}m`;
-    const level = (isCritical || isExpired) ? 'P0' : 'P1';
-    const dedupKey = `${acc.account}_${level}`;
-
-    // 去重检查
+  for (const acc of alertAccounts) {
+    const dedupKey = `${acc.account}_stuck`;
     const lastAlert = _alertDedup.get(dedupKey);
     if (lastAlert && (Date.now() - lastAlert) < ALERT_DEDUP_MS) {
-      console.log(`[credential-checker] ⏭️ ${acc.account} ${level} 告警已在 1h 内发送，跳过`);
+      console.log(`[credential-checker] ⏭️ ${acc.account} 告警已在 1h 内发送，跳过`);
       continue;
     }
 
-    try {
-      const msg = isCritical || isExpired
-        ? `🚨 [凭据紧急] ${acc.account} OAuth token ${statusLabel}，需立即刷新！（过期时间：${acc.expiresAt}）`
-        : `⚠️ [凭据告警] ${acc.account} OAuth token ${statusLabel}，需尽快刷新（过期时间：${acc.expiresAt}）`;
+    const expiredHours = acc.remainingMs ? Math.abs(Math.floor(acc.remainingMs / 3600000)) : 0;
+    const reason = (acc.status === 'missing' || acc.status === 'error')
+      ? `凭据文件${acc.status === 'missing' ? '缺失' : '读取失败'}（${acc.error || ''}）`
+      : `token 已过期 ${expiredHours}h，cron 自动刷新失败，需手动重新登录`;
 
-      await raise(level, `credential_expiry_${acc.account}`, msg);
+    const msg = `🚨 [凭据失效] ${acc.account} ${reason}`;
+    try {
+      await raise('P0', `credential_stuck_${acc.account}`, msg);
       _alertDedup.set(dedupKey, Date.now());
       alerted++;
-      console.log(`[credential-checker] ${level === 'P0' ? '🚨' : '⚠️'} ${acc.account} token ${statusLabel}，已通过 raise() 发送 ${level} 告警`);
+      console.log(`[credential-checker] 🚨 ${acc.account} 凭据失效告警已发送`);
     } catch (err) {
-      console.error(`[credential-checker] raise() 告警失败 (${acc.account}):`, err.message);
+      console.error(`[credential-checker] raise() 失败 (${acc.account}):`, err.message);
     }
   }
 
-  return { checked: accounts.length, alerted, skipped: accounts.length - criticalAccounts.length };
+  return { checked: accounts.length, alerted, skipped: accounts.length - alertAccounts.length };
 }
 
 // ============================================================
