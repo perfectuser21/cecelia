@@ -3,8 +3,9 @@ import { notionReq, getToken } from './recurring-notion-sync.js';
 const JOURNEY_DB = '358c40c2-ba63-8148-bde7-e313d789931a';
 const FEATURE_DB = '358c40c2-ba63-81e3-96c5-d762b3d34dff';
 const ISSUES_DB  = 'a17c40c2-ba63-82fb-9888-8152cefe29ec';
-const DECISIONS_DB           = '1b2c40c2-ba63-8101-ae1e-d1e2f3a4b5c6';
-const INITIATIVE_CONTRACTS_DB = '2c3d40c2-ba63-8102-bf2f-e2f3a4b5c6d7';
+// AI Notes DB — decisions 用 Type=Decision，initiative_contracts 用 Type=Contract
+const DECISIONS_DB           = '185c40c2-ba63-828c-973f-81a9c4582cd6';
+const INITIATIVE_CONTRACTS_DB = '185c40c2-ba63-828c-973f-81a9c4582cd6';
 
 const SKILL_REGISTRY_DB  = '353c40c2-ba63-81bf-ae3e-f0e6fa3753d7';
 const STEPS_DB           = '369c40c2-ba63-812c-9f35-e7e43db25014';
@@ -266,23 +267,22 @@ async function pushDecisions(pool, token) {
 
   for (const d of rows) {
     try {
+      const title = d.topic || d.decision?.slice(0, 100) || String(d.id);
       const properties = {
-        Name: { title: [{ text: { content: d.topic || d.decision || String(d.id) } }] },
-        Status: { select: { name: d.status || 'active' } },
+        Title: { title: [{ text: { content: title } }] },
+        Type: { select: { name: 'Decision' } },
+        ...(d.created_at ? { Date: { date: { start: d.created_at.toISOString?.() || d.created_at } } } : {}),
       };
-      if (d.category) {
-        properties['Category'] = { rich_text: buildRichText(d.category) };
-      }
-      if (d.decision) {
-        properties['Decision'] = { rich_text: buildRichText(d.decision) };
-      }
-      if (d.reason) {
-        properties['Reason'] = { rich_text: buildRichText(d.reason) };
-      }
+      const bodyLines = [
+        d.decision && `**决策**: ${d.decision}`,
+        d.reason && `**原因**: ${d.reason}`,
+        d.category && `**分类**: ${d.category}`,
+      ].filter(Boolean).join('\n\n');
 
       const page = await notionReq(token, '/pages', 'POST', {
         parent: { database_id: DECISIONS_DB },
         properties,
+        children: bodyLines ? [{ object: 'block', type: 'paragraph', paragraph: { rich_text: buildRichText(bodyLines) } }] : [],
       });
 
       await pool.query(
@@ -303,18 +303,22 @@ async function pushInitiativeContracts(pool, token) {
 
   for (const ic of rows) {
     try {
+      const title = `Contract ${String(ic.initiative_id).slice(0, 8)} v${ic.version}`;
       const properties = {
-        Name: { title: [{ text: { content: `Contract ${ic.initiative_id} v${ic.version}` } }] },
-        Status: { select: { name: ic.status || 'draft' } },
-        Version: { number: ic.version },
+        Title: { title: [{ text: { content: title } }] },
+        Type: { select: { name: 'Contract' } },
+        ...(ic.approved_at ? { Date: { date: { start: ic.approved_at.toISOString?.() || ic.approved_at } } } : {}),
       };
-      if (ic.prd_content) {
-        properties['PRD'] = { rich_text: buildRichText(ic.prd_content) };
-      }
+      const bodyLines = [
+        ic.status && `**状态**: ${ic.status}`,
+        ic.review_rounds != null && `**GAN 轮次**: ${ic.review_rounds}`,
+        ic.prd_content && `**Sprint PRD**:\n${ic.prd_content.slice(0, 1800)}`,
+      ].filter(Boolean).join('\n\n');
 
       const page = await notionReq(token, '/pages', 'POST', {
         parent: { database_id: INITIATIVE_CONTRACTS_DB },
         properties,
+        children: bodyLines ? [{ object: 'block', type: 'paragraph', paragraph: { rich_text: buildRichText(bodyLines) } }] : [],
       });
 
       await pool.query(
