@@ -95,6 +95,72 @@ Brain 离线时输出 warn 日志继续，不阻断流程。登记成功后记�
 
 ---
 
+## 改动类型分流（Bug 修复 vs 小改动）
+
+Stage 1 Spec 确认改动类型后，按以下路径向 Brain 登记本次任务：
+
+### 路径 A — Bug 修复
+
+先登记 Issue（获取 `issue_id`），再创建 Task 并关联：
+
+```bash
+# Step 1: 登记 Bug Issue，获取 issue_id
+ISSUE_RESP=$(curl -s -X POST localhost:5221/api/brain/issues \
+  -H "Content-Type: application/json" \
+  -d "{
+    \"title\": \"<bug 简述>\",
+    \"description\": \"<根因描述 + 复现步骤>\",
+    \"priority\": \"P1\",
+    \"journey_id\": \"<当前 journey_id>\"
+  }")
+ISSUE_ID=$(echo "$ISSUE_RESP" | node -e "process.stdin.resume();let d='';process.stdin.on('data',c=>d+=c);process.stdin.on('end',()=>{try{console.log(JSON.parse(d).id);}catch{console.warn('⚠️ Brain 离线，issue_id 未获取')}})")
+
+# Step 2: 创建 Task，关联 journey_id + issue_id
+curl -s -X POST localhost:5221/api/brain/tasks \
+  -H "Content-Type: application/json" \
+  -d "{
+    \"task_type\": \"dev\",
+    \"title\": \"fix: <bug 简述>\",
+    \"description\": \"<PRD 摘要>\",
+    \"journey_id\": \"<当前 journey_id>\",
+    \"issue_id\": \"$ISSUE_ID\"
+  }" \
+  | node -e "process.stdin.resume();let d='';process.stdin.on('data',c=>d+=c);process.stdin.on('end',()=>{try{const r=JSON.parse(d);console.log('Brain task:',r.id);}catch{console.warn('⚠️ Brain 离线，不阻断')}})" \
+  2>/dev/null || echo "⚠️ Brain 离线，不阻断 /dev 流程"
+```
+
+### 路径 B — 小改动
+
+直接创建 Task，带 `journey_id`，无需先开 Issue：
+
+```bash
+curl -s -X POST localhost:5221/api/brain/tasks \
+  -H "Content-Type: application/json" \
+  -d "{
+    \"task_type\": \"dev\",
+    \"title\": \"<改动标题>\",
+    \"description\": \"<PRD 摘要>\",
+    \"journey_id\": \"<当前 journey_id>\"
+  }" \
+  | node -e "process.stdin.resume();let d='';process.stdin.on('data',c=>d+=c);process.stdin.on('end',()=>{try{const r=JSON.parse(d);console.log('Brain task:',r.id);}catch{console.warn('⚠️ Brain 离线，不阻断')}})" \
+  2>/dev/null || echo "⚠️ Brain 离线，不阻断 /dev 流程"
+```
+
+### journey_id=NULL 边界说明
+
+`journey_id` 缺失时（未知归属 Journey、紧急修复等），**不阻断 /dev 流程**：
+
+```bash
+# journey_id 未知时传 null，Task 正常创建
+-d "{\"task_type\":\"dev\",\"title\":\"...\",\"journey_id\":null}"
+```
+
+- Task 写入 Brain，`journey_id` 字段为 `null`
+- 事后可手动关联：`PATCH /api/brain/tasks/{task_id}` 补填 `journey_id`
+- Brain 离线或请求失败时同样输出 `⚠️ warn` 日志后继续，不 `exit 1`
+
+---
+
 ## ⚡ 核心目标（CRITICAL）
 
 **从 /dev 启动的那一刻起，唯一的目标就是：成功合并 PR 到目标分支（main）。**
