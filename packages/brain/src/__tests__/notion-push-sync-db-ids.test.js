@@ -10,9 +10,12 @@
  * 3. pushInitiativeContracts 同上
  */
 import { readFileSync } from 'fs';
+import { resolve, dirname } from 'path';
+import { fileURLToPath } from 'url';
 import { describe, it, expect } from 'vitest';
 
-const SRC = readFileSync('packages/brain/src/notion-push-sync.js', 'utf8');
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const SRC = readFileSync(resolve(__dirname, '../notion-push-sync.js'), 'utf8');
 
 const AI_NOTES_DB = '185c40c2-ba63-828c-973f-81a9c4582cd6';
 
