@@ -1,7 +1,7 @@
 ---
 name: dev
-version: 19.1.0
-updated: 2026-05-26
+version: 19.2.0
+updated: 2026-05-27
 description: 统一开发点火入口。查 10 张 Brain DB 表拿上下文 → 判断类型（bug / 小改动 / 大功能）→ 生成 PrepPRD → 用户确认 → 路由执行。
 trigger: /dev, --task-id <id>, 我想做, 有个 bug, 改一下, 出问题了, walking skeleton, harness, journey, feature
 ---
@@ -56,6 +56,35 @@ curl -s "localhost:5221/api/brain/registry?type=test&limit=20"
 ## PrepPRD（三种格式，用户说"对"/"走"后才执行）
 
 **PrepPRD 是唯一的人工确认点。**
+
+### ⚠️ 大功能必做：写 PrepPRD 之前先提炼 Golden Path
+
+在生成大功能 PrepPRD 之前，必须先做这一步：
+
+**从用户描述里提炼 Golden Path，补全隐含步骤，展示给用户确认后再继续。**
+
+格式（逐步写，不跳过）：
+```
+[首次使用]
+Step 1: [谁] [做了什么操作] → 系统 [响应] → [下一状态]
+Step 2: ...
+
+[日常使用]
+Step 1: ...
+
+[出错/掉线后]
+Step 1: [用户如何知道出错了] → Step 2: [用户如何恢复]
+```
+
+提炼规则：
+- 写"用户操作"，不写"系统组件"
+  - ❌ "建 check-health.js，配置 GitHub Secrets"
+  - ✅ "管理员打开 Dashboard → 点'抖音登录' → 本地弹出 Chrome 到 creator 页"
+- 补全用户没说出口但一定存在的步骤（如"登录后自动抓 cookie 并同步"）
+- 必须覆盖**异常场景**：掉线了 → 用户怎么知道 → 用户怎么恢复
+- 用户描述里的每个隐含动作都要显式写出来
+
+**Golden Path 用户确认后，才能继续写 PrepPRD。**
 
 ### Bug PrepPRD
 
@@ -125,6 +154,20 @@ curl -s "localhost:5221/api/brain/registry?type=test&limit=20"
 
 ## 本次要做的
 [用用户语言描述]
+
+## Golden Path（用户操作流程，逐步，不跳过）
+
+> 这是唯一决定"做什么"的锚点。合同、WS 拆分、E2E 全部从这里派生。
+
+### 首次使用
+1. [谁] [做了什么] → 系统 [响应] → [状态]
+2. ...
+
+### 日常使用
+1. ...
+
+### 出错/掉线后
+1. [用户如何发现问题] → [用户做什么] → 系统 [恢复动作]
 
 ## 客户视角（用户打开产品能感知到什么）
 [不写技术细节，只写客户会看到/感受到的变化]
