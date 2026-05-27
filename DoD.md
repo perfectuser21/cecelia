@@ -14,23 +14,23 @@ journey_type: dev_pipeline
 
 ## ARTIFACT 条目
 
-- [ ] [ARTIFACT] `packages/workflows/skills/dev/SKILL.md` 包含路径 A/B 描述段
+- [x] [ARTIFACT] `packages/workflows/skills/dev/SKILL.md` 包含路径 A/B 描述段
   Test: grep -q "路径 A" packages/workflows/skills/dev/SKILL.md
 
 ## BEHAVIOR 条目（内嵌可执行 manual: 命令）
 
-- [ ] [BEHAVIOR] dev/SKILL.md 包含 api/brain/issues 端点调用
+- [x] [BEHAVIOR] dev/SKILL.md 包含 api/brain/issues 端点调用
   Test: manual:bash -c 'grep -q "api/brain/issues" packages/workflows/skills/dev/SKILL.md && echo OK || exit 1'
   期望: OK
 
-- [ ] [BEHAVIOR] dev/SKILL.md POST /api/brain/tasks 含 issue_id 参数
+- [x] [BEHAVIOR] dev/SKILL.md POST /api/brain/tasks 含 issue_id 参数
   Test: manual:bash -c 'grep -q "issue_id" packages/workflows/skills/dev/SKILL.md && echo OK || exit 1'
   期望: OK
 
-- [ ] [BEHAVIOR] dev/SKILL.md POST /api/brain/tasks 含 journey_id 参数
+- [x] [BEHAVIOR] dev/SKILL.md POST /api/brain/tasks 含 journey_id 参数
   Test: manual:bash -c 'grep -q "journey_id" packages/workflows/skills/dev/SKILL.md && echo OK || exit 1'
   期望: OK
 
-- [ ] [BEHAVIOR] dev/SKILL.md 包含 journey_id 缺失 NULL 保护说明
+- [x] [BEHAVIOR] dev/SKILL.md 包含 journey_id 缺失 NULL 保护说明
   Test: manual:bash -c 'grep -q ":-null\|journey_id.*null\|缺失.*null\|NULL" packages/workflows/skills/dev/SKILL.md && echo OK || exit 1'
   期望: OK
