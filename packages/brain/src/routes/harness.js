@@ -34,6 +34,40 @@ const HARNESS_MERMAID = `graph TD
   Report --> End([END])`;
 
 /**
+ * GET /initiative-runs/:id
+ * 按 initiative_id 查最新 run，返回含 journey_id 字段
+ * :id 必须是合法 UUID，否则返回 400
+ */
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+router.get('/initiative-runs/:id', async (req, res) => {
+  const { id } = req.params;
+  if (!UUID_RE.test(id)) {
+    return res.status(400).json({ error: 'invalid initiative_id: must be a UUID' });
+  }
+  try {
+    const { rows } = await pool.query(
+      `SELECT id, initiative_id, contract_id, phase,
+              journey_type, journey_id,
+              deadline_at, completed_at, failure_reason,
+              created_at, updated_at
+       FROM initiative_runs
+       WHERE initiative_id = $1::uuid
+       ORDER BY created_at DESC
+       LIMIT 1`,
+      [id]
+    );
+    if (rows.length === 0) {
+      return res.status(404).json({ error: 'initiative run not found' });
+    }
+    res.json(rows[0]);
+  } catch (err) {
+    console.error('[GET /harness/initiative-runs/:id]', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
  * GET /initiative/:id/detail
  * 返回 initiative 详情：6 字段（initiative_id/prd_content/contract_content/gan_rounds/step_timing/screenshot_urls）
  * 来源：tasks + initiative_contracts + task_events + checkpoint_blobs
