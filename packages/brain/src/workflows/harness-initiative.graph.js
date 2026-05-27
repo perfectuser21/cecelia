@@ -46,6 +46,7 @@ const execFile = execFileDefault;
 // 保持测试 vi.mock('../../harness-gan-graph.js') 路径兼容。
 // Phase C7 清 shim 前不改。
 import { runGanContractGraph } from '../harness-gan-graph.js';
+import { killInitiativeContainers } from '../harness-container-cleanup.js';
 
 /** 生成 goal-based Stop hook settings JSON（与 executor.js buildGoalSettings 相同格式） */
 function buildHarnessGoalSettings(goalCondition) {
@@ -1485,6 +1486,10 @@ export async function reportNode(state, opts = {}) {
        WHERE id=$1::uuid`,
       [state.initiativeId, taskStatus, reason, reportContent]
     );
+    // B2 fix: initiative 终态 → 主动 kill 关联容器（zombie 防治）
+    killInitiativeContainers(state.initiativeId).catch(err2 =>
+      console.warn(`[reportNode] container cleanup failed: ${err2.message}`)
+    );
   } catch (err) {
     console.warn(`[harness-initiative.graph] reportNode db update failed: ${err.message}`);
   }
@@ -1579,6 +1584,10 @@ export async function terminalFailNode(state, opts = {}) {
     await dbPool.query(
       `UPDATE initiative_runs SET phase='failed', failure_reason=$1, completed_at=NOW(), updated_at=NOW() WHERE initiative_id=$2::uuid`,
       [reason.slice(0, 500), state.initiativeId]
+    );
+    // B2 fix: terminal fail → 主动 kill 关联容器
+    killInitiativeContainers(state.initiativeId).catch(err2 =>
+      console.warn(`[terminalFailNode] container cleanup failed: ${err2.message}`)
     );
   } catch (err) {
     console.warn(`[harness-initiative.graph] terminalFailNode db update failed: ${err.message}`);
