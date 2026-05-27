@@ -134,18 +134,18 @@ describe('parseTaskPlan', () => {
       .toThrow(/> 8/);
   });
 
-  it('拒 >5 tasks 但无 justification', () => {
+  it('接受 6 tasks 无需 justification（阈值改为 >8）', () => {
     const tasks = Array.from({ length: 6 }, (_, i) => makeValidTask(`ws${i + 1}`));
     const plan = { initiative_id: 'x', tasks };
-    expect(() => parseTaskPlan(JSON.stringify(plan)))
-      .toThrow(/justification/);
-  });
-
-  it('接受 6 tasks 且有 justification', () => {
-    const tasks = Array.from({ length: 6 }, (_, i) => makeValidTask(`ws${i + 1}`));
-    const plan = { initiative_id: 'x', tasks, justification: '这个 initiative 范围宽，合理拆 6' };
     const out = parseTaskPlan(JSON.stringify(plan));
     expect(out.tasks).toHaveLength(6);
+  });
+
+  it('接受 8 tasks 无需 justification（边界 ≤8 全通过）', () => {
+    const tasks = Array.from({ length: 8 }, (_, i) => makeValidTask(`ws${i + 1}`));
+    const plan = { initiative_id: 'x', tasks };
+    const out = parseTaskPlan(JSON.stringify(plan));
+    expect(out.tasks).toHaveLength(8);
   });
 
   it('拒非字符串 jsonString', () => {

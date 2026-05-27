@@ -66,8 +66,8 @@ export function parseTaskPlan(jsonString) {
   if (obj.tasks.length > 8) {
     throw new Error(`parseTaskPlan: tasks length ${obj.tasks.length} > 8 (hard cap)`);
   }
-  if (obj.tasks.length > 5 && (!obj.justification || typeof obj.justification !== 'string' || !obj.justification.trim())) {
-    throw new Error('parseTaskPlan: tasks.length > 5 requires non-empty justification');
+  if (obj.tasks.length > 8 && (!obj.justification || typeof obj.justification !== 'string' || !obj.justification.trim())) {
+    throw new Error('parseTaskPlan: tasks.length > 8 requires non-empty justification');
   }
 
   const seen = new Set();
