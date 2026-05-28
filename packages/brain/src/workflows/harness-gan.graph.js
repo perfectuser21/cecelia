@@ -32,7 +32,7 @@ import { fetchAndShowOriginFile } from '../lib/git-fence.js';
 import { verifyProposerOutput } from '../lib/contract-verify.js';
 import { LLM_RETRY } from './retry-policies.js';
 import { loadSkillContent, readBrainResult, ReviewerOutputSchema } from '../harness-shared.js';
-import { reconnectOrSpawn, makeSessionRecord } from '../harness-session-bridge.js';
+import { makeSessionRecord } from '../harness-session-bridge.js';
 import { spawnDockerDetached } from '../spawn/detached.js';
 import { resolveAccount } from '../spawn/middleware/account-rotation.js';
 import { interrupt } from '@langchain/langgraph';
