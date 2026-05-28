@@ -81,13 +81,23 @@ router.post('/circuit-breaker/:key/reset', async (req, res) => {
 
 // ==================== Health Check API ====================
 
+async function probeCodexBridge() {
+  const bridgeBase = process.env.XIAN_CODEX_BRIDGE_URL || 'http://100.86.57.69:3458';
+  try {
+    const res = await fetch(`${bridgeBase}/accounts`, { signal: AbortSignal.timeout(2000) });
+    return res.ok ? 'online' : 'offline';
+  } catch {
+    return 'offline';
+  }
+}
+
 /**
  * GET /api/brain/health
  * One-stop health check for all Cecelia organs
  */
 router.get('/health', async (req, res) => {
   try {
-    const [tickStatus, cbStates, activePipelinesResult, evaluatorStatsResult, docker_runtime] = await Promise.all([
+    const [tickStatus, cbStates, activePipelinesResult, evaluatorStatsResult, docker_runtime, codex_bridge_status] = await Promise.all([
       getTickStatus(),
       Promise.resolve(getAllCBStates()),
       // active_pipelines: harness_planner 已退役（PR retire-harness-planner），改统计 harness_initiative
@@ -107,7 +117,8 @@ router.get('/health', async (req, res) => {
         reachable: false,
         version: null,
         error: err && err.message ? err.message : 'docker probe failed',
-      }))
+      })),
+      probeCodexBridge()
     ]);
 
     const esRow = evaluatorStatsResult?.rows?.[0] ?? null;
@@ -174,6 +185,7 @@ router.get('/health', async (req, res) => {
         },
         planner: { status: 'v2' }
       },
+      codex_bridge_status,
       docker_runtime,
       timestamp: new Date().toISOString()
     });
