@@ -1,192 +1,90 @@
 ---
 name: kuaishou-publisher
-description: 快手自动发布工具 - 图文/视频发布（CDP Cookie + HTTP API 方案）
-trigger: 发布快手、kuaishou、快手发布
-version: 1.4.0
-created: 2026-03-07
-updated: 2026-03-19
+description: 快手自动发布工具 - 图文发布（新 API 方案：CDP Cookie + HTTP 直接调用，生产就绪）
+trigger: 发布快手、kuaishou、快手发布、kuaishou-publisher
+version: 1.3.0
+created: 2026-03-10
+updated: 2026-03-10
 changelog:
   - 1.0.0: 初始版本 - 图文发布，CDP 直连方式
   - 1.1.0: OAuth 会话检查脚本 + 批量发布前置防护
   - 1.2.0: 新增 API 方案（publish-kuaishou-api.cjs）— CDP 提取 Cookie + HTTP 直接调用
-  - 1.3.0: 批量发布脚本（batch-publish-kuaishou.sh）切换为新 API 方案，旧方案保留作备用
-  - 1.4.0: 新增视频发布脚本（publish-kuaishou-video.cjs）— 支持视频上传/分块/封面/标签
+  - 1.3.0: 批量发布脚本切换为新 API 方案，旧方案保留作备用
 ---
 
 # Kuaishou Publisher
 
-快手自动发布工具 - 图文/视频内容，支持两种发布方案
+快手自动发布工具 - 支持两种发布方案
 
-## 方案对比
+## 实现状态（2026-03-10）
 
-| 方案 | 脚本 | 原理 | 优势 | 劣势 |
-|------|------|------|------|------|
-| CDP 自动化（旧） | `publish-kuaishou-image.cjs` | CDP 控制浏览器 UI | 不需了解 API | 受页面改版影响、需要 Windows 路径 |
-| 新 API 方案 | `publish-kuaishou-api.cjs` | CDP 提取 Cookie → HTTP 直接调用 | 稳定、快速 | 依赖内部 API 格式不变 |
-
-**推荐使用新 API 方案**（publish-kuaishou-api.cjs）。
+| 类型 | 方案 | 状态 | 说明 |
+|------|------|------|------|
+| 图文（新 API） | publish-kuaishou-api.cjs | 推荐 | CDP Cookie + HTTP API，稳定快速 |
+| 图文（CDP 旧方案） | publish-kuaishou-image.cjs | 备用 | 浏览器 UI 自动化 |
+| 会话检查 | check-kuaishou-session.cjs | 已实现 | 发布前 OAuth 验证 |
+| 批量发布 | batch-publish-kuaishou.sh | 已实现 | 默认用新 API 方案 |
 
 ## 架构
 
-```
 Mac mini (100.86.57.69 / localhost)
-    ↓ CDP WebSocket (Tailscale 内网直连)
+  CDP WebSocket (Tailscale 内网直连)
 Windows PC (100.97.242.124:19223)
-    ↓ 提取 Cookie（新方案）/ 浏览器 UI 自动化（旧方案）
-快手发布成功
-```
+  提取 Cookie（新方案）/ 浏览器 UI 自动化（旧方案）
+快手 CP API (cp.kuaishou.com) -> 快手发布成功
 
-**关键区别（与头条/抖音不同）**：
-- 不需要 SSH 到 Windows PC
-- 直接从 Mac mini 通过 CDP 控制浏览器
-- CDP 端口：19223（快手专用）
+CDP 端口：19223（快手专用）
 
-## 支持类型
+## 核心脚本
 
-| 类型 | 脚本 | 状态 | 说明 |
-|------|------|------|------|
-| 图文（新 API） | `scripts/publish-kuaishou-api.cjs` | ✅ 推荐 | Cookie + HTTP API，不依赖页面结构 |
-| 图文（CDP 旧方案） | `scripts/publish-kuaishou-image.cjs` | ✅ 备用 | 浏览器 UI 自动化 |
-| 视频 | `scripts/publish-kuaishou-video.cjs` | ✅ | Cookie + HTTP API，支持分块上传、封面、标签 |
-| 会话检查 | `scripts/check-kuaishou-session.cjs` | ✅ | 发布前检查 |
+packages/workflows/skills/kuaishou-publisher/scripts/
+- publish-kuaishou-api.cjs     # 新 API 方案（推荐）
+- publish-kuaishou-image.cjs   # 旧 CDP 方案（备用）
+- check-kuaishou-session.cjs   # OAuth 会话检查
+- batch-publish-kuaishou.sh    # 批量发布
+- __tests__/publish-kuaishou-api.test.cjs  # 单元测试
 
 ## 使用方式
 
-### 会话状态检查（推荐发布前先运行）
+### 会话检查（发布前先运行）
 
-```bash
-NODE_PATH=/Users/administrator/perfect21/zenithjoy/services/creator/scripts/publishers/node_modules \
-  node /Users/administrator/perfect21/zenithjoy/services/creator/scripts/publishers/kuaishou-publisher/check-kuaishou-session.cjs
-```
+NODE_PATH=/Users/administrator/perfect21/cecelia/node_modules \
+  node packages/workflows/skills/kuaishou-publisher/scripts/check-kuaishou-session.cjs
 
-**输出示例**：
-- `[SESSION_OK]` — 会话有效，可以发布（exit 0）
-- `[SESSION_EXPIRED]` — 需要重新登录（exit 2）
-- `[CDP_ERROR]` — Windows PC 未连接（exit 1）
+输出：
+- [SESSION_OK] — 可以发布（exit 0）
+- [SESSION_EXPIRED] — 需要在 Windows Chrome 重新登录快手 CP（exit 2）
+- [CDP_ERROR] — Windows PC 未连接（exit 1）
 
-### 新 API 方案（推荐）
+### 单条发布（新 API 方案）
 
-```bash
-NODE_PATH=/Users/administrator/perfect21/zenithjoy/services/creator/scripts/publishers/node_modules \
-  node /Users/administrator/perfect21/zenithjoy/services/creator/scripts/publishers/kuaishou-publisher/publish-kuaishou-api.cjs \
-  --content ~/.kuaishou-queue/2026-03-07/image-1/
-```
-
-### 视频发布
-
-```bash
-NODE_PATH=/Users/administrator/perfect21/zenithjoy/services/creator/scripts/publishers/node_modules \
-  node /Users/administrator/perfect21/zenithjoy/services/creator/scripts/publishers/kuaishou-publisher/publish-kuaishou-video.cjs \
-  --video /path/to/video.mp4 \
-  --title "视频标题" \
-  --tags "标签1,标签2" \
-  --cover /path/to/cover.jpg
-```
-
-**参数说明**：
-- `--video`（必填）：视频文件路径（.mp4/.mov/.avi/.mkv/.flv/.webm）
-- `--title`（必填）：视频标题
-- `--tags`（可选）：逗号分隔的标签列表
-- `--cover`（可选）：封面图路径（.jpg/.png/.webp）
-
-**退出码**：
-- `0` — 发布成功，输出作品 ID
-- `1` — 发布失败（CDP 错误、API 错误等）
-- `2` — 会话失效（需重新登录）
-
-### 旧 CDP 方案（备用）
-
-```bash
-NODE_PATH=/Users/administrator/perfect21/zenithjoy/services/creator/scripts/publishers/node_modules \
-  node /Users/administrator/perfect21/zenithjoy/services/creator/scripts/publishers/kuaishou-publisher/publish-kuaishou-image.cjs \
-  --content ~/.kuaishou-queue/2026-03-07/image-1/
-```
+NODE_PATH=/Users/administrator/perfect21/cecelia/node_modules \
+  node packages/workflows/skills/kuaishou-publisher/scripts/publish-kuaishou-api.cjs \
+  --content ~/.kuaishou-queue/2026-03-10/image-1/
 
 ### 批量发布
 
-```bash
-bash /Users/administrator/perfect21/zenithjoy/services/creator/scripts/publishers/kuaishou-publisher/batch-publish-kuaishou.sh 2026-03-07
-```
+bash packages/workflows/skills/kuaishou-publisher/scripts/batch-publish-kuaishou.sh 2026-03-10
 
-### 内容目录结构
+## 内容目录格式
 
-```
 ~/.kuaishou-queue/{date}/
-├── image-{id}/
-│   ├── type.txt        → "image"
-│   ├── content.txt     → 文案内容
-│   └── image.jpg       → 图片（可多张：image1.jpg, image2.jpg...）
-```
+- image-1/
+  - content.txt     （可选，文案）
+  - image.jpg       （图片，支持 image1.jpg, image2.jpg...）
+  - done.txt        （发布完成后自动创建）
 
 ## 配置
 
 | 参数 | 值 |
 |------|-----|
-| Windows PC IP | `100.97.242.124` |
-| CDP 端口 | `19223` |
-| 发布页面 | `https://cp.kuaishou.com/article/publish/photo-video` |
-| 上传 Token API | `https://cp.kuaishou.com/rest/cp/works/upload/photo/token` |
-| 发布 API | `https://cp.kuaishou.com/rest/cp/works/photo/new` |
-| 会话 Cookie | `kuaishou.web.cp.api_st` / `kuaishou.web.cp.api_ph` |
-| NODE_PATH | `/Users/administrator/perfect21/zenithjoy/services/creator/scripts/publishers/node_modules` |
+| Windows PC IP | 100.97.242.124 |
+| CDP 端口 | 19223 |
+| 会话 Cookie | kuaishou.web.cp.api_st / kuaishou.web.cp.api_ph |
+| NODE_PATH | /Users/administrator/perfect21/cecelia/node_modules |
 
 ## 故障排查
 
-### CDP 连接失败
-
-```bash
-curl http://100.97.242.124:19223/json
-```
-
-### 找不到 ws 模块
-
-```bash
-export NODE_PATH=/Users/administrator/perfect21/zenithjoy/services/creator/scripts/publishers/node_modules
-```
-
-### API 端点返回 404
-
-新 API 方案的端点可能随快手 CP 版本更新而变更。排查方法：
-1. 在 Windows Chrome 打开快手 CP（cp.kuaishou.com）
-2. 打开 DevTools → Network 面板，过滤 XHR/Fetch
-3. 手动发布一次图文，记录上传和发布相关的请求 URL
-4. 更新 `publish-kuaishou-api.cjs` 中的 `KUAISHOU_UPLOAD_TOKEN_URL` 和 `KUAISHOU_PUBLISH_URL`
-
----
-
-## Brain 任务回调（platform_post_id）
-
-当本 skill 作为 Brain `content_publish` 任务（`platform=kuaishou`）执行时，发布成功后**必须**将 platform_post_id 写回 Brain。
-
-### 脚本 JSON 输出格式
-
-`publish-kuaishou-api.cjs` 发布成功后末尾会输出一行机器可读 JSON：
-
-```
-{"ok":true,"platform":"kuaishou","platform_post_id":"<作品ID>","postUrl":"<管理链接>"}
-```
-
-失败时输出：`{"ok":false,"error":"<原因>"}`（通过 exit code 1 或 2 体现）
-
-### 任务完成时必须回写 result（CRITICAL）
-
-agent 在调用 `PATCH /api/brain/tasks/{task_id}` 标记 `completed` 时，**必须**将 `platform_post_id` 包含在 `result` 字段中：
-
-```json
-{
-  "status": "completed",
-  "result": {
-    "platform_post_id": "<作品ID，从脚本 JSON 输出中提取>"
-  }
-}
-```
-
-这是数据回流的关键：Brain 的 `execution.js` 会从 `result` 提取 `platform_post_id` 并写入 `zenithjoy.publish_logs`，供 KR2 验收。
-
-`platform_post_id` 可为 null（如脚本未能提取），Brain 允许空值。
-
----
-
-**版本**: 1.4.0
-**状态**: ✅ 图文发布 + 视频发布 + OAuth 会话检查 + 批量发布
-**架构**: Mac mini → CDP → Windows PC 浏览器 Cookie → 快手 API
+CDP 连接失败: curl http://100.97.242.124:19223/json
+API 端点 404: 在 Windows Chrome DevTools Network 面板抓包重新发布，更新 publish-kuaishou-api.cjs 端点
+找不到 ws 模块: export NODE_PATH=/Users/administrator/perfect21/cecelia/node_modules

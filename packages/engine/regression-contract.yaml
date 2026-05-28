@@ -28,7 +28,7 @@
 
 # NOTE: version 需要与 package.json 保持同步
 # 更新 package.json 时同步更新此处
-version: 19.2.0
+version: 19.2.1
 updated: 2026-05-21
 
 # ============================================================================
@@ -2963,22 +2963,7 @@ skills:
   #   feature: cto-review
   #   name: "CTO 代码审查 Skill — 五维 PASS/FAIL 判断（已废弃，替代：code_review_gate）"
 
-  - id: S4-002
-    feature: S4
-    name: "intent-expand skill — 意图扩展，沿层级链补全PRD"
-    scope: skill
-    priority: P2
-    trigger: [PR]
-    method: manual
-    tags: [intent-expand, brain-api, enriched-prd, okr, vision]
-    owner: brain
-    steps:
-      given: "Brain 派发 intent_expand 任务，PARENT_TASK_ID 已设置"
-      when: "执行 intent-expand skill（Step 1-4）"
-      then: "沿 Task→Project→KR→OKR→Vision 链查询 Brain API，输出 .enriched-prd-<branch>.md，打印 ENRICHED_PRD_RESULT: SUCCESS"
-    evidence:
-      type: command
-      run: "bash -c 'test -f packages/engine/skills/intent-expand/SKILL.md'"
+  # DEPRECATED: intent-expand Skill 目录已迁出至外部 skill repo，本地路径已删除
 
   # DEPRECATED: code-quality 已被 code_review_gate 替代（Pipeline v2），Skill 目录已删除
   # - id: S4-003

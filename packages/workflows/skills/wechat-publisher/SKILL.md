@@ -38,7 +38,7 @@ Mac mini (localhost)
 **关键路径**：
 - 凭据：`~/.credentials/wechat.env`（WECHAT_APPID + WECHAT_APPSECRET）
 - Token 缓存：`/tmp/wechat_token.json`（有效期 7200s，提前 5min 刷新）
-- 脚本位置：`/Users/administrator/perfect21/zenithjoy/services/creator/scripts/publishers/wechat-publisher/`
+- 脚本位置：`packages/workflows/skills/wechat-publisher/scripts/`
 
 ---
 
@@ -56,8 +56,8 @@ Mac mini (localhost)
 ### 直接参数模式
 
 ```bash
-NODE_PATH=/Users/administrator/perfect21/zenithjoy/services/creator/scripts/publishers/node_modules \
-  node /Users/administrator/perfect21/zenithjoy/services/creator/scripts/publishers/wechat-publisher/publish-wechat-article.cjs \
+NODE_PATH=/Users/administrator/perfect21/cecelia/node_modules \
+  node packages/workflows/skills/wechat-publisher/scripts/publish-wechat-article.cjs \
   --title "今日分享" \
   --content "<p>文章正文内容</p>" \
   --author "作者名" \
@@ -68,8 +68,8 @@ NODE_PATH=/Users/administrator/perfect21/zenithjoy/services/creator/scripts/publ
 ### 内容目录模式
 
 ```bash
-NODE_PATH=/Users/administrator/perfect21/zenithjoy/services/creator/scripts/publishers/node_modules \
-  node /Users/administrator/perfect21/zenithjoy/services/creator/scripts/publishers/wechat-publisher/publish-wechat-article.cjs \
+NODE_PATH=/Users/administrator/perfect21/cecelia/node_modules \
+  node packages/workflows/skills/wechat-publisher/scripts/publish-wechat-article.cjs \
   --content-dir ~/.wechat-queue/2026-03-10/article-1/
 ```
 
@@ -88,8 +88,8 @@ article-1/
 ### Token 检查
 
 ```bash
-NODE_PATH=/Users/administrator/perfect21/zenithjoy/services/creator/scripts/publishers/node_modules \
-  node /Users/administrator/perfect21/zenithjoy/services/creator/scripts/publishers/wechat-publisher/check-wechat-token.cjs
+NODE_PATH=/Users/administrator/perfect21/cecelia/node_modules \
+  node packages/workflows/skills/wechat-publisher/scripts/check-wechat-token.cjs
 ```
 
 **输出**：
@@ -106,27 +106,8 @@ NODE_PATH=/Users/administrator/perfect21/zenithjoy/services/creator/scripts/publ
 1. **加载凭据** — 读取 `~/.credentials/wechat.env`（APPID + APPSECRET）
 2. **获取 Access Token** — 缓存到 `/tmp/wechat_token.json`，过期自动刷新
 3. **上传封面图片**（可选）— `POST /cgi-bin/media/uploadimg`
-4. **上传图文素材** — `POST /cgi-bin/media/uploadnews`，返回 `media_id`
-5. **群发给所有粉丝** — `POST /cgi-bin/message/mass/sendall`，返回 `msg_id`
-
-### 任务完成时必须回写 result（CRITICAL）
-
-脚本末尾会输出一行 JSON：`{"ok":true,"platform":"wechat","media_id":"...","msg_id":"..."}`
-
-agent 在调用 `PATCH /api/brain/tasks/{task_id}` 标记 `completed` 时，**必须**将 `msg_id` 和 `media_id` 包含在 `result` 字段中：
-
-```json
-{
-  "status": "completed",
-  "result": {
-    "platform_post_id": "<msg_id>",
-    "media_id": "<media_id>",
-    "msg_id": "<msg_id>"
-  }
-}
-```
-
-这是数据回流的关键：Brain 的 `execution.js` 会从 `result` 提取 `platform_post_id` 并写入 `zenithjoy.publish_logs`，供 KR2 验收。
+4. **创建草稿** — `POST /cgi-bin/draft/add`，返回 `media_id`
+5. **提交发布** — `POST /cgi-bin/freepublish/submit`，传入 `media_id`
 
 ### 为什么用官方 API
 

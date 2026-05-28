@@ -5,8 +5,6 @@ name: Harness v5 Checks
 #
 # 触发范围：只在 harness 相关改动时跑
 #   - sprints/*/contract-*.md / contract-dod-ws*.md / tests/ws*/*.test.ts
-#   - packages/workflows/skills/harness-contract-*/SKILL.md
-#   - packages/workflows/skills/harness-generator/SKILL.md
 
 on:
   pull_request:
@@ -15,8 +13,6 @@ on:
       - 'sprints/**/sprint-contract.md'
       - 'sprints/**/contract-dod-ws*.md'
       - 'sprints/**/tests/**/*.test.ts'
-      - 'packages/workflows/skills/harness-contract-*/SKILL.md'
-      - 'packages/workflows/skills/harness-generator/SKILL.md'
       - 'sprints/**/contract-dod-ws0.md'
       # 排除归档：老 sprint 纯历史痕迹，格式可能不符 v5 规则，不应触发检查
       - '!sprints/archive/**'

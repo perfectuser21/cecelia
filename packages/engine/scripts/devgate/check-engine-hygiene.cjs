@@ -12,11 +12,10 @@
  *      Use /superpowers:<skill-name> skill invocation instead.
  *   3. regression-contract.yaml must not have empty core[] / golden_paths[]
  *      (unless explicitly marked "allow_empty: true" on the same line).
- *   4. Engine version must be in sync across 5 files:
+ *   4. Engine version must be in sync across 4 files:
  *        packages/engine/VERSION
  *        packages/engine/package.json  (.version)
  *        packages/engine/.hook-core-version
- *        packages/engine/skills/dev/SKILL.md  (frontmatter version:)
  *        packages/engine/regression-contract.yaml  (top-level version:)
  *
  * Usage:
@@ -210,22 +209,6 @@ function getVersionPackageJson(absPath) {
   }
 }
 
-function getVersionSkillFrontmatter(absPath) {
-  if (!fs.existsSync(absPath)) return { version: null, reason: 'file missing' };
-  const lines = readLines(absPath);
-  // Frontmatter is between first "---" and second "---", within first ~20 lines.
-  let start = -1;
-  for (let i = 0; i < Math.min(lines.length, 20); i++) {
-    if (lines[i].trim() === '---') { start = i; break; }
-  }
-  if (start === -1) return { version: null, reason: 'no frontmatter block' };
-  for (let i = start + 1; i < Math.min(lines.length, start + 25); i++) {
-    if (lines[i].trim() === '---') break;
-    const m = lines[i].match(/^version:\s*(.+)\s*$/);
-    if (m) return { version: m[1].trim().replace(/^["']|["']$/g, ''), reason: null };
-  }
-  return { version: null, reason: 'no version: in frontmatter' };
-}
 
 function getVersionRegressionYaml(absPath) {
   if (!fs.existsSync(absPath)) return { version: null, reason: 'file missing' };
@@ -259,11 +242,7 @@ function checkVersionSync(failures) {
       rel: 'packages/engine/hooks/VERSION',
       read: getVersionFile,
     },
-    {
-      name: 'skills/dev/SKILL.md',
-      rel: 'packages/engine/skills/dev/SKILL.md',
-      read: getVersionSkillFrontmatter,
-    },
+
     {
       name: 'regression-contract.yaml',
       rel: 'packages/engine/regression-contract.yaml',

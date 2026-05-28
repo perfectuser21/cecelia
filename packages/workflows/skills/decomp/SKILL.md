@@ -1,5 +1,9 @@
 ---
-id: decomp-skill
+name: decomp
+description: |
+  全链路 Project Management 拆解引擎（秋米驱动）。将 OKR/KR/Project/Scope/Initiative/Task 层级目标拆解成可执行任务。
+  当用户需要拆解目标、规划项目、把大想法变成具体 PR 列表时触发。
+  触发词：/decomp、帮我拆解、拆一下、把这个拆成任务、规划 Initiative、OKR 怎么拆、项目怎么做。
 version: 2.1.0
 created: 2026-01-01
 updated: 2026-03-21
@@ -35,6 +39,128 @@ changelog:
 - **Phase 1**（OKR/KR/Project 拆解）：把大目标拆成下一层
 - **Phase 2**（initiative_plan）：Initiative 内规划下一个 PR
 - **Phase 3**（project_plan）：Project 内规划下一个 Initiative（飞轮机制）
+
+---
+
+## 🔄 与 Notion 的分工
+
+**decomp** 和 **notion** 是两个独立的 skill，分开调用，不互相嵌套：
+
+```
+Step 1: /decomp
+  职责：拆解结构 + 写 Brain DB（projects/tasks 表）
+  输出：拆解结果摘要（层级、名称、ID）
+
+Step 2: /notion（用户说"写到Notion"时触发）
+  职责：按模板写 Notion 页面 content + 设置 relations
+  输入：Step 1 的拆解结果
+  模板：notion skill 中的 KR/Project/Initiative 填写公式
+```
+
+**每次 /decomp 完成后，必须在输出末尾提示**：
+> ✅ Brain DB 写入完成。如需同步到 Notion，告诉我"写到 Notion"，我用 notion skill 按模板填写页面内容。
+
+---
+
+## 📄 Page Content Templates（各层级页面内容规范）
+
+**原则**：Notion 的结构（DB views、timeline、table）由用户维护；我负责填 text content + 维护 relations。每层写什么、不写什么有明确规范。
+
+### O（Objective）— 方向性目标
+
+**定义**：定性的方向，回答"我们要去哪里"，不能有数字。
+
+**必须包含**：
+- **为什么现在**：这个方向为什么是当前季度最重要的
+- **成功画面**：季度末世界长什么样（感性描述）
+- **不包含什么**：明确边界，防止范围蔓延
+
+**硬规则**：
+- ❌ O 里绝对不能出现数字目标（数字在 KR 里）
+- ❌ 不能写"提升 XX"这种没有基线的描述
+
+---
+
+### KR（Key Result）— 可衡量的结果
+
+**定义**：证明 O 被实现了的量化指标。
+
+**必须包含**：
+1. **衡量什么**：指标定义（口径/公式），明确什么算成功、什么算失败
+2. **基线**：现在是多少（未知则写"待测量"）
+3. **目标值 + 截止日**：具体数字 + 日期
+4. **当前状态**：实时进度（手动或自动更新）
+5. **拆解逻辑**：为什么拆成这几个 Project，每个 Project 一句话说明贡献
+6. **KR DoD**：验收条件（checkbox 列表，可自动化验收）
+
+**硬规则**：
+- ❌ 不能写"提升"、"改善"、"优化"等无法衡量的词
+- ✅ 必须是数字/百分比/布尔值（达到/未达到）
+- ✅ 每个 O 下 3-5 个 KR，互不重叠
+
+---
+
+### Project — 1周业务目标
+
+**定义**：1周内可完成的业务交付物，推进 KR 进展。
+
+**必须包含**：
+1. **北极星目标**：完成后 KR 推进了多少%（要量化）
+2. **背景/为什么做**：解决什么问题，当前痛点是什么
+3. **范围边界**：IN scope（3条）/ OUT of scope（3条）
+4. **为什么这样拆 Initiative**：拆解逻辑，每个 Initiative 的贡献
+5. **DoD**：可验证的完成条件（checkbox，3-5条）
+
+**硬规则**：
+- ❌ 不要在 Project 里写 Initiative 的技术细节
+- ✅ IN/OUT of scope 必须写，防止范围蔓延
+- ✅ DoD 必须是可执行验收的，不能是"感觉完成了"
+
+---
+
+### Initiative — 单一交付物
+
+**定义**：一个明确输出，AI 可独立执行，人工在 DoD 层面验收。
+
+**必须包含**：
+1. **Project 引用**：页面顶部用 mention 链接到所属 Project（格式：`Project ↗ [Project名]  ·  I序号 / 总数  ·  依赖说明`）
+2. **目标**（2-3句）：先说现在的痛点，再说完成后得到什么能力，用口语表达
+3. **技术要点**：方向指针，3-5条，说"要想清楚的事"，不写实现细节，用口语
+4. **DoD**：验收标准（checkbox，3-5条，写可观察的结果）
+5. **不包含**：明确哪些不在本次范围内（防止范围蔓延）
+6. **依赖**：前置条件 + 后置影响
+
+**Properties 必须设置**：
+- `Due`：按依赖关系自动推算日期（I1 从今天起，后续按序叠加）
+- `Priority`：P1/P2/P3
+- `Status`：To do / Doing / Done
+
+**名字规范**：结果导向，口语化，描述完成后得到什么，不用技术术语。
+- ✅ "各平台内容格式自动适配"
+- ✅ "发布结果可查 + 账号存活监控"
+- ❌ "内容格式适配层"（听不懂）
+- ❌ "生产→发布→采集 自动触发链路"（技术黑话）
+
+**技术要点写法**：
+- ✅ "需要一个翻译层，把内部格式变成各平台能接受的样子"
+- ✅ "要控制并发数量，不能太多导致账号被限流"
+- ❌ "设计 unified content package schema with platform-specific transformer"
+
+**硬规则**：
+- ❌ 不能只有标题没有 DoD
+- ✅ DoD 写可观察结果（"日报里出现告警"/"查 DB 可验证"），不写技术步骤
+- ✅ "不包含"必须写，是范围控制的关键
+- ✅ Due date 必须设，不能空着
+
+---
+
+### 写入时机
+
+| 层级 | 何时写 page content |
+|------|-------------------|
+| O / KR | 季度规划时一次性写好 |
+| Project | 开始这个 Project 的第一个 Initiative 之前 |
+| Initiative | 认领并开始执行之前 |
 
 ---
 

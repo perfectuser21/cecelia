@@ -17,7 +17,6 @@
 #   packages/engine/package-lock.json              ("version" fields — root + root package)
 #   packages/engine/.hook-core-version             (whole file)
 #   packages/engine/hooks/VERSION                  (whole file)
-#   packages/engine/skills/dev/SKILL.md            (frontmatter "version:" line)
 #   packages/engine/regression-contract.yaml       (top-level "version:" line)
 #
 # Strategy:
@@ -51,7 +50,6 @@ PACKAGE_JSON="$ENGINE_DIR/package.json"
 PACKAGE_LOCK="$ENGINE_DIR/package-lock.json"
 HOOK_CORE_VERSION="$ENGINE_DIR/.hook-core-version"
 HOOKS_VERSION="$ENGINE_DIR/hooks/VERSION"
-SKILL_MD="$ENGINE_DIR/skills/dev/SKILL.md"
 REGRESSION_YAML="$ENGINE_DIR/regression-contract.yaml"
 
 # ---------- arg parsing ----------
@@ -116,7 +114,7 @@ fi
 # ---------- collect target list (skip missing optional files with warn) ----------
 # Phase 7.3: bash 3.2 set -u compat — 所有下游 "${TARGETS[@]}" 展开均加 +${TARGETS[@]} guard
 declare -a TARGETS=()
-for f in "$VERSION_FILE" "$PACKAGE_JSON" "$HOOK_CORE_VERSION" "$HOOKS_VERSION" "$SKILL_MD" "$REGRESSION_YAML"; do
+for f in "$VERSION_FILE" "$PACKAGE_JSON" "$HOOK_CORE_VERSION" "$HOOKS_VERSION" "$REGRESSION_YAML"; do
   if [[ -f "$f" ]]; then
     TARGETS+=("$f")
   else
@@ -210,37 +208,6 @@ update_package_lock() {
   ' "$target" "$NEW"
 }
 
-update_skill_md() {
-  local target="$1"
-  node -e '
-    const fs = require("fs");
-    const target = process.argv[1];
-    const newV = process.argv[2];
-    const raw = fs.readFileSync(target, "utf8");
-    const lines = raw.split(/\r?\n/);
-    // Find frontmatter block (first "---" ... second "---") within first 30 lines.
-    let start = -1, end = -1;
-    for (let i = 0; i < Math.min(lines.length, 30); i++) {
-      if (lines[i].trim() === "---") { start = i; break; }
-    }
-    if (start === -1) { console.error("ERROR: no frontmatter in " + target); process.exit(1); }
-    for (let i = start + 1; i < Math.min(lines.length, start + 40); i++) {
-      if (lines[i].trim() === "---") { end = i; break; }
-    }
-    if (end === -1) { console.error("ERROR: unterminated frontmatter in " + target); process.exit(1); }
-    let replaced = false;
-    for (let i = start + 1; i < end; i++) {
-      if (/^version:\s*/.test(lines[i])) {
-        lines[i] = "version: " + newV;
-        replaced = true;
-        break;
-      }
-    }
-    if (!replaced) { console.error("ERROR: no version: line in frontmatter of " + target); process.exit(1); }
-    fs.writeFileSync(target, lines.join("\n"));
-  ' "$target" "$NEW"
-}
-
 update_regression_yaml() {
   local target="$1"
   node -e '
@@ -275,9 +242,6 @@ if ! (
         ;;
       "$PACKAGE_LOCK")
         update_package_lock "$f"
-        ;;
-      "$SKILL_MD")
-        update_skill_md "$f"
         ;;
       "$REGRESSION_YAML")
         update_regression_yaml "$f"
