@@ -10,29 +10,29 @@ journey_type: autonomous
 
 ## ARTIFACT 条目
 
-- [ ] [ARTIFACT] 测试文件存在 `packages/brain/src/__tests__/integration/health-codex-bridge-status.integration.test.js`
+- [x] [ARTIFACT] 测试文件存在 `packages/brain/src/__tests__/integration/health-codex-bridge-status.integration.test.js`
   Test: node -e "require('fs').accessSync('/workspace/packages/brain/src/__tests__/integration/health-codex-bridge-status.integration.test.js'); console.log('OK')"
 
-- [ ] [ARTIFACT] 测试文件包含 mock global.fetch（模拟 bridge 探活）
+- [x] [ARTIFACT] 测试文件包含 mock global.fetch（模拟 bridge 探活）
   Test: node -e "const c=require('fs').readFileSync('/workspace/packages/brain/src/__tests__/integration/health-codex-bridge-status.integration.test.js','utf8');if(!c.includes('fetch'))process.exit(1);console.log('OK')"
 
-- [ ] [ARTIFACT] 测试文件包含 describe 块针对 codex_bridge_status
+- [x] [ARTIFACT] 测试文件包含 describe 块针对 codex_bridge_status
   Test: node -e "const c=require('fs').readFileSync('/workspace/packages/brain/src/__tests__/integration/health-codex-bridge-status.integration.test.js','utf8');if(!c.includes('codex_bridge_status'))process.exit(1);console.log('OK')"
 
 ## BEHAVIOR 条目（内嵌可执行 manual:bash 命令）
 
-- [ ] [BEHAVIOR] 测试文件包含 online 分支测试（bridge 返回 2xx → codex_bridge_status = "online"）
+- [x] [BEHAVIOR] 测试文件包含 online 分支测试（bridge 返回 2xx → codex_bridge_status = "online"）
   Test: manual:bash -c 'node -e "const c=require(\"fs\").readFileSync(\"/workspace/packages/brain/src/__tests__/integration/health-codex-bridge-status.integration.test.js\",\"utf8\");if(!c.includes(\"online\"))process.exit(1);console.log(\"OK\")"'
   期望: OK
 
-- [ ] [BEHAVIOR] 测试文件包含 offline 分支测试（bridge 返回非 2xx → codex_bridge_status = "offline"）
+- [x] [BEHAVIOR] 测试文件包含 offline 分支测试（bridge 返回非 2xx → codex_bridge_status = "offline"）
   Test: manual:bash -c 'node -e "const c=require(\"fs\").readFileSync(\"/workspace/packages/brain/src/__tests__/integration/health-codex-bridge-status.integration.test.js\",\"utf8\");if(!c.includes(\"offline\"))process.exit(1);console.log(\"OK\")"'
   期望: OK
 
-- [ ] [BEHAVIOR] error path — 测试文件包含 timeout 或 throw/reject 分支（bridge 探活超时/异常 → "offline"）
+- [x] [BEHAVIOR] error path — 测试文件包含 timeout 或 throw/reject 分支（bridge 探活超时/异常 → "offline"）
   Test: manual:bash -c 'node -e "const c=require(\"fs\").readFileSync(\"/workspace/packages/brain/src/__tests__/integration/health-codex-bridge-status.integration.test.js\",\"utf8\");if(!c.includes(\"timeout\")&&!c.includes(\"throw\")&&!c.includes(\"reject\"))process.exit(1);console.log(\"OK\")"'
   期望: OK
 
-- [ ] [BEHAVIOR] 测试文件包含 schema 完整性断言（验证 status + uptime_seconds 与 codex_bridge_status 共存）
+- [x] [BEHAVIOR] 测试文件包含 schema 完整性断言（验证 status + uptime_seconds 与 codex_bridge_status 共存）
   Test: manual:bash -c 'node -e "const c=require(\"fs\").readFileSync(\"/workspace/packages/brain/src/__tests__/integration/health-codex-bridge-status.integration.test.js\",\"utf8\");if(!c.includes(\"uptime_seconds\")&&!c.includes(\"status\"))process.exit(1);console.log(\"OK\")"'
   期望: OK

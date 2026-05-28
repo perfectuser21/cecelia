@@ -129,6 +129,9 @@ export default defineConfig({
       // Sprint Tests (codex-xian-verify ws1): 使用 resolve('./packages/brain/...') 相对路径，
       // brain-unit 从 packages/brain 运行时路径双重 → 走 Sprint Tests CI
       '../../sprints/codex-xian-verify/tests/ws1/health-codex-bridge-ws1.test.ts',
+      // Sprint Tests (codex-xian-verify ws2): 检查文件是否存在用 resolve('./packages/brain/...') 路径，
+      // brain-unit 从 packages/brain 运行时 TEST_FILE 指向的路径正确但测试本身属于 Sprint 层，走 Sprint Tests CI
+      '../../sprints/codex-xian-verify/tests/ws2/health-codex-bridge-ws2.test.ts',
     ],
     coverage: {
       provider: 'v8',

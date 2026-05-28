@@ -190,7 +190,7 @@ workstream_count: 2
 | Workstream | 产物路径 | BEHAVIOR 覆盖 | 红证据（实测） |
 |---|---|---|---|
 | WS1 | `packages/brain/src/routes/goals.js` | codex_bridge_status 字段 + 探活 URL + offline fallback | 3 failures（见下方）|
-| WS2 | `packages/brain/src/__tests__/integration/health-codex-bridge-status.integration.test.js` | online/offline/timeout/throw 四分支覆盖 + schema 完整性 | 3 failures（见下方）|
+| WS2 | `../../packages/brain/src/__tests__/integration/health-codex-bridge-status.integration.test.js` | online/offline/timeout/throw/schema 完整性 | 3 failures（见下方）|
 
 ### WS1 红证据（实测 vitest 输出）
 
