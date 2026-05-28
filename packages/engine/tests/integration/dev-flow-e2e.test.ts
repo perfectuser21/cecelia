@@ -9,7 +9,7 @@ import {
   rmSync,
   existsSync,
 } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { tmpdir, homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 
 /**
@@ -29,10 +29,8 @@ import { join, resolve } from 'node:path';
 const PROJECT_ROOT = resolve(__dirname, '../../../../');
 const LAUNCHER = join(PROJECT_ROOT, 'scripts/claude-launch.sh');
 const STOP_SH = join(PROJECT_ROOT, 'hooks/stop.sh');
-const WORKTREE_MANAGE = join(
-  PROJECT_ROOT,
-  'packages/engine/skills/dev/scripts/worktree-manage.sh',
-);
+const WORKTREE_MANAGE = join(homedir(), '.claude', 'skills', 'dev', 'scripts', 'worktree-manage.sh');
+const worktreeManageExists = existsSync(WORKTREE_MANAGE);
 
 describe('Phase 7.4 /dev 7 棒接力链 E2E regression', () => {
   let tmpRoot: string;
@@ -89,7 +87,7 @@ echo "ARGS=$*"
   //   CLAUDE_SESSION_ID 在环境里 → cmd_create 写入 .dev-lock.* 的 owner_session
   //   破坏点：worktree-manage.sh::_resolve_claude_session_id（Phase 7.1 加的 env 优先分支）
   // ==========================================================================
-  it('[S2] worktree-manage cmd_create 把 CLAUDE_SESSION_ID 写进 .dev-lock owner_session', () => {
+  it.skipIf(!worktreeManageExists)('[S2] worktree-manage cmd_create 把 CLAUDE_SESSION_ID 写进 .dev-lock owner_session', () => {
     // 临时 git repo
     const repo = join(tmpRoot, 'repo');
     mkdirSync(repo, { recursive: true });

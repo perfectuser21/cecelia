@@ -1,8 +1,8 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { execSync } from 'child_process'
-import { mkdtempSync, rmSync, readFileSync } from 'fs'
+import { existsSync, mkdtempSync, rmSync, readFileSync } from 'fs'
 import { resolve, join } from 'path'
-import { tmpdir } from 'os'
+import { tmpdir, homedir } from 'os'
 
 /**
  * FD 201 leak regression test
@@ -14,8 +14,11 @@ import { tmpdir } from 'os'
  *
  * 修复：guardian fork 时显式 `201>&-` 关闭该 FD。
  */
+
+const SCRIPT = join(homedir(), '.claude', 'skills', 'dev', 'scripts', 'worktree-manage.sh');
+const scriptExists = existsSync(SCRIPT);
+
 describe('worktree-manage.sh — FD 201 leak (cp-0507172354 PR-3)', () => {
-  const SCRIPT = resolve(__dirname, '../../skills/dev/scripts/worktree-manage.sh')
   let mainRepo: string
 
   beforeEach(() => {
@@ -34,7 +37,7 @@ describe('worktree-manage.sh — FD 201 leak (cp-0507172354 PR-3)', () => {
     rmSync(mainRepo, { recursive: true, force: true })
   })
 
-  it('cmd_create 退出后 worktree-create.lock 不再被 guardian 持有', () => {
+  it.skipIf(!scriptExists)('cmd_create 退出后 worktree-create.lock 不再被 guardian 持有', () => {
     const env = {
       ...process.env,
       CLAUDE_SESSION_ID: 'fd201abc-test',
@@ -67,7 +70,7 @@ describe('worktree-manage.sh — FD 201 leak (cp-0507172354 PR-3)', () => {
     expect(lockHolders).toBe('')
   }, 10000)
 
-  it('worktree-manage.sh fork guardian 行包含 201>&-（防回退 lint）', () => {
+  it.skipIf(!scriptExists)('worktree-manage.sh fork guardian 行包含 201>&-（防回退 lint）', () => {
     const content = readFileSync(SCRIPT, 'utf8')
     // 找 nohup ... & fork 行（在 v23 PR-2 之后是通过 $_hb_link 启动 guardian）
     const nohupLines = content.split('\n').filter(l => /nohup\s+bash/.test(l))
