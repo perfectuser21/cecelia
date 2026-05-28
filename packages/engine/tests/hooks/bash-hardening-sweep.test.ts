@@ -10,17 +10,14 @@ import { existsSync } from 'node:fs';
 
 const REPO_ROOT = resolve(__dirname, '../../../..');
 
+// packages/engine/skills/ と packages/workflows/skills/ 已迁移到 ~/.claude/skills/ (zenithjoy-skills repo)
+// CI runner 没有 ~/.claude/skills/，只保留仍在 cecelia repo 中的脚本
 const MODIFIED_SCRIPTS = [
-  'packages/engine/skills/dev/scripts/cleanup.sh',
-  'packages/workflows/skills/dev/scripts/cleanup.sh',
   'packages/engine/ci/scripts/check-chinese-punctuation-bombs.sh',
-  'packages/workflows/skills/dev/scripts/scan-change-level.sh',
-  'packages/engine/skills/dev/scripts/fetch-task-prd.sh',
   'packages/brain/scripts/cleanup-merged-worktrees.sh',
   'packages/engine/runners/codex/runner.sh',
   'packages/engine/runners/codex/playwright-runner.sh',
   'packages/brain/scripts/cecelia-run.sh',
-  'packages/workflows/skills/skill-creator/scripts/classify-skill.sh',
   'packages/engine/scripts/bump-version.sh',
 ];
 

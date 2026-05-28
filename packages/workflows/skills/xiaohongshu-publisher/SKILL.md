@@ -1,21 +1,18 @@
 ---
 name: xiaohongshu-publisher
-description: 小红书自动发布工具 - 图文/视频发布（CDP 直连方式）
-trigger: 发布小红书、xiaohongshu、xhs、小红书发布、小红书视频
-version: 1.3.0
+description: 小红书自动发布工具 - 通过 Mac mini Playwright 自动化发布图文内容
+trigger: 发布小红书、xiaohongshu、xhs、小红书发布
+version: 1.2.0
 created: 2026-03-08
-updated: 2026-03-19
+updated: 2026-03-10
 changelog:
-  - 1.4.0: 补充 Brain content_publish 任务回调规范（platform_post_id）
-  - 1.3.0: 新增视频发布脚本 publish-xiaohongshu-video.cjs（CDP 端口 19225）
-  - 1.2.0: 清理废弃旧脚本（publish-xhs-image.cjs + batch-publish-xhs.sh）
-  - 1.1.0: N8N flow 完整接通 Node.js 脚本，生产就绪
-  - 1.0.0: 初始版本 - 图文发布，CDP 直连方式
+  - 1.2.0: 更新为 Node.js/CDP 实现（替换旧 Python/Playwright 方案）
+  - 1.0.0: 初始版本 - 支持图文发布，通过 N8N flow 调度
 ---
 
 # Xiaohongshu Publisher
 
-小红书自动发布工具 - 图文内容，N8N → SSH → Mac mini → CDP → Windows PC Chrome
+小红书自动发布工具 - 图文内容，N8N → SSH → Mac mini → CDP → Windows PC Chrome。
 
 ## 架构
 
@@ -31,14 +28,13 @@ Windows PC (100.97.242.124:19225)
 小红书发布成功 → 飞书通知
 ```
 
-## 支持类型
+**关键路径**：
+- N8N (美国 VPS) → SSH → Mac mini (100.108.7.63) → CDP → Windows PC (100.97.242.124:19225)
+- Mac mini 脚本位置：`~/perfect21/cecelia/packages/workflows/skills/xiaohongshu-publisher/scripts/publish-xiaohongshu-image.cjs`
 
-| 类型 | 脚本 | 状态 |
-|------|------|------|
-| 图文 | `scripts/publish-xiaohongshu-image.cjs` | ✅ 生产就绪 |
-| 视频 | `scripts/publish-xiaohongshu-video.cjs` | ✅ 生产就绪 |
+---
 
-## 使用方式
+## 调用方式
 
 ### 通过 N8N Webhook（推荐）
 
@@ -58,30 +54,30 @@ curl -X POST https://n8n.zenjoymedia.media/webhook/content-publish \
 - 已存在且包含至少一张图片（`.jpg/.jpeg/.png/.gif/.webp`）
 - 可选包含 `title.txt`（标题）和 `content.txt`（正文）
 
-### 单条发布（直接运行）
+### 直接运行脚本（开发/测试）
 
 ```bash
-# 图文发布（在 Mac mini 上执行）
-NODE_PATH=/Users/administrator/perfect21/zenithjoy/services/creator/scripts/publishers/node_modules \
-  node /Users/administrator/perfect21/zenithjoy/services/creator/scripts/publishers/xiaohongshu-publisher/publish-xiaohongshu-image.cjs \
+# 在 Mac mini 上执行
+NODE_PATH=/Users/administrator/perfect21/cecelia/node_modules \
+  node ~/perfect21/cecelia/packages/workflows/skills/xiaohongshu-publisher/scripts/publish-xiaohongshu-image.cjs \
   --content ~/.xiaohongshu-queue/2026-03-10/image-1/
 
-# 视频发布（在 Mac mini 上执行）
-NODE_PATH=/Users/administrator/perfect21/zenithjoy/services/creator/scripts/publishers/node_modules \
-  node /Users/administrator/perfect21/zenithjoy/services/creator/scripts/publishers/xiaohongshu-publisher/publish-xiaohongshu-video.cjs \
-  --video /path/to/video.mp4 \
-  --title "视频标题" \
-  --tags "美食,旅行"
+# dry-run（不实际连接 CDP）
+NODE_PATH=/Users/administrator/perfect21/cecelia/node_modules \
+  node ~/perfect21/cecelia/packages/workflows/skills/xiaohongshu-publisher/scripts/publish-xiaohongshu-image.cjs \
+  --content ~/.xiaohongshu-queue/2026-03-10/image-1/ --dry-run
 ```
 
 ### 批量发布
 
 ```bash
 # 在 Mac mini 上执行
-bash /Users/administrator/perfect21/zenithjoy/services/creator/scripts/publishers/xiaohongshu-publisher/batch-publish-xiaohongshu.sh 2026-03-10
+bash ~/perfect21/cecelia/packages/workflows/skills/xiaohongshu-publisher/scripts/batch-publish-xiaohongshu.sh 2026-03-10
 ```
 
-### 内容目录结构
+---
+
+## 内容目录结构
 
 ```
 ~/.xiaohongshu-queue/{date}/
@@ -91,6 +87,8 @@ bash /Users/administrator/perfect21/zenithjoy/services/creator/scripts/publisher
 │   └── image.jpg       → 图片（必需，最多 9 张：image1.jpg, image2.jpg...）
 └── image-{id}/done.txt → 发布成功后自动创建，批量发布时跳过
 ```
+
+---
 
 ## 配置
 
@@ -102,8 +100,10 @@ bash /Users/administrator/perfect21/zenithjoy/services/creator/scripts/publisher
 | 发布页面 | `https://creator.xiaohongshu.com/publish/publish` |
 | Windows 图片目录 | `C:\Users\xuxia\xiaohongshu-media\{date}\{dir}\` |
 | 截图目录（调试） | `/tmp/xiaohongshu-publish-screenshots/` |
-| NODE_PATH | `/Users/administrator/perfect21/zenithjoy/services/creator/scripts/publishers/node_modules` |
+| NODE_PATH | `/Users/administrator/perfect21/cecelia/node_modules` |
 | N8N SSH Credential | VPS SSH Key (ID: vvJsQOZ95sqzemla) |
+
+---
 
 ## N8N Flow 节点说明
 
@@ -115,6 +115,8 @@ bash /Users/administrator/perfect21/zenithjoy/services/creator/scripts/publisher
 | n9 | SSH-小红书 | SSH 到 Mac mini (100.108.7.63)，执行 publish-xiaohongshu-image.cjs |
 | n11 | 解析-小红书 | 优先 JSON 解析，降级关键词匹配，构建飞书通知 |
 | n12 | 飞书-小红书 | 发送发布结果通知 |
+
+---
 
 ## 故障排查
 
@@ -139,35 +141,8 @@ curl http://100.97.242.124:19225/json
 ls -la /tmp/xiaohongshu-publish-screenshots/
 ```
 
-### 图片未上传到 Windows PC
-
-图片必须预置在 Windows PC 对应目录：
-```
-C:\Users\xuxia\xiaohongshu-media\{date}\{content-dir-name}\*.jpg
-```
-与 Mac mini 的 `contentDir` 结构对应，通过 Tailscale 文件共享或手动同步。
-
 ---
 
-## Brain 任务回调（platform_post_id）
-
-当本 skill 作为 Brain `content_publish` 任务（`platform=xiaohongshu`）执行时，发布成功后**必须**将 platform_post_id 写回 Brain。
-
-### 提取规则
-
-| 脚本 | 输出样本 | 提取正则 |
-|------|---------|---------|
-| `publish-xiaohongshu-image.cjs` | `笔记 ID: 6605abc123def456` | `/笔记 ID:\s*(\S+)/` |
-| `publish-xiaohongshu-video.cjs` | `笔记 ID: 6605abc123def456` | `/笔记 ID:\s*(\S+)/` |
-
-### 任务 result 格式
-
-发布完成后，在 execution-callback `result` 中包含：
-
-```json
-{
-  "platform_post_id": "6605abc123def456"
-}
-```
-
-Brain 的 `execution.js` 会读取此字段并写入 `zenithjoy.publish_logs.platform_post_id`，供 KR1（非微信7日成功率）统计。
+**版本**: 1.2.0
+**状态**: 生产就绪
+**架构**: N8N → SSH → Mac mini Node.js/CDP → Windows PC Chrome → 小红书

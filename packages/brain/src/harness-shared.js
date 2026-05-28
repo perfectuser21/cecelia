@@ -18,7 +18,6 @@ import { readFileSync, existsSync } from 'fs';
 import { readFile } from 'node:fs/promises';
 import path from 'path';
 import os from 'os';
-import { fileURLToPath } from 'url';
 import { z } from 'zod';
 
 // ─── Skill 内联加载 ──────────────────────────────────────────────────────────
@@ -26,16 +25,14 @@ import { z } from 'zod';
 // 必须把 SKILL.md 原文内联到 prompt 里，Claude 才能按 skill 指令工作。
 //
 // 搜索顺序:
-// 1-3. host 上 ~/.claude*/skills 的 symlink（开发本机 + brain runtime）
-// 4. monorepo 内 packages/workflows/skills（CI / 任何 git checkout 都有，无 home 依赖）
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+// 1-3. host 上 ~/.claude*/skills 的 symlink（软链接指向 zenithjoy-skills repo）
+// 4.   monorepo 内 packages/workflows/skills/（CI fallback，用于单元测试与 smoke）
 const SKILL_SEARCH_DIRS = [
   path.join(os.homedir(), '.claude-account1', 'skills'),
   path.join(os.homedir(), '.claude-account2', 'skills'),
   path.join(os.homedir(), '.claude', 'skills'),
-  // packages/brain/src/ → packages/workflows/skills/
-  path.resolve(__dirname, '..', '..', 'workflows', 'skills'),
+  // CI / dev fallback: monorepo 内已同步的 SKILL 快照（从 zenithjoy-skills 同步）
+  path.resolve(path.dirname(new URL(import.meta.url).pathname), '..', '..', 'workflows', 'skills'),
 ];
 
 const _skillCache = new Map();

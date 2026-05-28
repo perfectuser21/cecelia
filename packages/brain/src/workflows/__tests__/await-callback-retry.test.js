@@ -24,14 +24,6 @@ describe('B18: awaitCallback exit≠0 不设 error 走 ci_fail', () => {
     expect(src).not.toMatch(/fix_round\s*>\s*MAX_FIX_ROUNDS/);
   });
 
-  it('harness-generator/SKILL.md 含 GREEN 前真验 manual:bash 规则', () => {
-    const skillSrc = readFileSync(
-      resolve(__dirname, '../../../../../packages/workflows/skills/harness-generator/SKILL.md'),
-      'utf8'
-    );
-    expect(skillSrc).toMatch(/all_behaviors_passed|GREEN.*真验.*manual:bash|GREEN.*前.*合同.*manual/i);
-  });
-
   it('await_callback edge 是条件 edge（routeAfterCallback）— B18 wiring 修补', () => {
     expect(src).toMatch(/addConditionalEdges\([\s\S]*['"]await_callback['"]\s*,\s*routeAfterCallback/);
     expect(src).not.toMatch(/addEdge\(\s*['"]await_callback['"]\s*,\s*['"]parse_callback['"]\s*\)/);

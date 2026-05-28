@@ -2,11 +2,11 @@
 /**
  * generate-skills-index.mjs
  *
- * 扫描 packages/workflows/skills/ 目录，自动更新 .agent-knowledge/skills-index.md
+ * 扫描 ~/perfect21/zenithjoy-skills 目录，自动更新 .agent-knowledge/skills-index.md
  *
  * 策略：
  *   1. 读取现有 skills-index.md，提取已分类的 Skills（保持分类不变）
- *   2. 扫描 packages/workflows/skills/ 发现所有 Skills（读取 SKILL.md frontmatter）
+ *   2. 扫描 ~/perfect21/zenithjoy-skills 发现所有 Skills（读取 SKILL.md frontmatter）
  *   3. 新增 Skills（不在现有索引中的）追加到 "新增 Skills" 区块
  *   4. 更新 Skills 总数
  *   5. 写回文件（或 --dry-run 时只打印）
@@ -19,10 +19,11 @@
 import { readFileSync, writeFileSync, readdirSync, existsSync } from 'fs';
 import { join, resolve, dirname } from 'path';
 import { fileURLToPath } from 'url';
+import os from 'os';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = resolve(__dirname, '..');
-const SKILLS_DIR = join(PROJECT_ROOT, 'packages/workflows/skills');
+const SKILLS_DIR = join(os.homedir(), 'perfect21/zenithjoy-skills');
 const INDEX_FILE = join(PROJECT_ROOT, '.agent-knowledge/skills-index.md');
 
 const DRY_RUN = process.argv.includes('--dry-run');

@@ -7,9 +7,7 @@ created: 2026-02-12
 updated: 2026-03-19
 changelog:
   - 1.0.0: ✅ 2026-02-12 完成 - 三种类型全部验证通过（zenithjoy）
-  - 1.1.0: 迁移脚本到 cecelia（已废弃）
-  - 1.2.0: ✅ 2026-04-11 统一到 zenithjoy - 脚本迁移至 services/creator/scripts/publishers/douyin-publisher/
-  - 1.2.0: 补充 Brain content_publish 任务回调规范（platform_post_id）
+  - 1.1.0: ✅ 2026-03-19 迁移到 cecelia - 图文/视频脚本迁移，CDP 直连架构，.cjs 格式，内容目录接口
 ---
 
 # Douyin Publisher
@@ -46,8 +44,8 @@ Windows PC（西安，100.97.242.124）
 ### 视频发布
 
 ```bash
-NODE_PATH=/Users/administrator/perfect21/zenithjoy/services/creator/scripts/publishers/node_modules \
-  node /Users/administrator/perfect21/zenithjoy/services/creator/scripts/publishers/douyin-publisher/publish-douyin-video.cjs \
+NODE_PATH=/Users/administrator/perfect21/cecelia/node_modules \
+  node packages/workflows/skills/douyin-publisher/scripts/publish-douyin-video.cjs \
   --content ~/.douyin-queue/2026-03-19/video-1/
 ```
 
@@ -63,8 +61,8 @@ NODE_PATH=/Users/administrator/perfect21/zenithjoy/services/creator/scripts/publ
 ### 图文发布
 
 ```bash
-NODE_PATH=/Users/administrator/perfect21/zenithjoy/services/creator/scripts/publishers/node_modules \
-  node /Users/administrator/perfect21/zenithjoy/services/creator/scripts/publishers/douyin-publisher/publish-douyin-image.cjs \
+NODE_PATH=/Users/administrator/perfect21/cecelia/node_modules \
+  node packages/workflows/skills/douyin-publisher/scripts/publish-douyin-image.cjs \
   --content ~/.douyin-queue/2026-03-19/image-1/
 ```
 
@@ -80,7 +78,7 @@ NODE_PATH=/Users/administrator/perfect21/zenithjoy/services/creator/scripts/publ
 ### 批量发布
 
 ```bash
-bash /Users/administrator/perfect21/zenithjoy/services/creator/scripts/publishers/douyin-publisher/batch-publish-douyin.sh 2026-03-19
+bash packages/workflows/skills/douyin-publisher/scripts/batch-publish-douyin.sh 2026-03-19
 ```
 
 **退出码**：
@@ -108,36 +106,11 @@ ssh xian-mac "ssh -i ~/.ssh/windows_ed xuxia@100.97.242.124 'schtasks /run /tn S
 ### 找不到 ws 模块
 
 ```bash
-export NODE_PATH=/Users/administrator/perfect21/zenithjoy/services/creator/scripts/publishers/node_modules
+export NODE_PATH=/Users/administrator/perfect21/cecelia/node_modules
 ```
 
 ---
 
-## Brain 任务回调（platform_post_id）
-
-当本 skill 作为 Brain `content_publish` 任务（`platform=douyin`）执行时，发布成功后**必须**将 platform_post_id 写回 Brain。
-
-### 提取规则
-
-| 脚本 | 输出样本 | 提取正则 |
-|------|---------|---------|
-| `publish-douyin-image.cjs` | `作品 ID: 7605807641759875624` | `/作品 ID:\s*(\S+)/` |
-| `publish-douyin-video.cjs` | `作品 ID: 7605807641759875624` | `/作品 ID:\s*(\S+)/` |
-
-### 任务 result 格式
-
-发布完成后，在 execution-callback `result` 中包含：
-
-```json
-{
-  "platform_post_id": "7605807641759875624"
-}
-```
-
-Brain 的 `execution.js` 会读取此字段并写入 `zenithjoy.publish_logs.platform_post_id`，供 KR1（非微信7日成功率）统计。
-
----
-
-**版本**: 1.2.0
-**状态**: ✅ **zenithjoy 统一管理** - 脚本位于 zenithjoy/services/creator/scripts/publishers/douyin-publisher/
+**版本**: 1.1.0
+**状态**: ✅ **cecelia 架构就绪** - 图文/视频脚本迁移完成，CDP 直连 Windows
 **架构**: Mac mini → xian-mac SCP → Windows CDP → 抖音

@@ -525,7 +525,7 @@ queued → in_progress → completed
 | harness_initiative | US | Harness v2 阶段 A — Initiative 规划 + DAG 调度入口 (/harness-planner) | Sonnet / - | 默认 anthropic |
 | harness_task | US | Harness v2 阶段 B — Task 级执行（内部 Generator/CI/Evaluator 状态机） | Sonnet / - | 默认 anthropic |
 | harness_final_e2e | US | Harness v2 阶段 C — Initiative 级真实 E2E 验收 | Sonnet / - | 默认 anthropic |
-| harness_intervention | US | Harness 人工干预任务类型（Brain 内部处理） | Sonnet / - | 默认 anthropic |
+| harness_intervention | US | Harness 巡逻干预任务（卡住检测 + 自动重置） | - | /_internal |
 | content-pipeline | 西安 | 内容工厂 Pipeline 编排入口 (/content-creator) | - | general |
 | content-research | 西安 | 内容调研阶段 (/notebooklm) | - | general |
 | content-copywriting | 西安 | 文案生成阶段 (/content-creator) | - | general |

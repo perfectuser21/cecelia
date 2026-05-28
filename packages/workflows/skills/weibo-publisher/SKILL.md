@@ -1,170 +1,108 @@
 ---
 name: weibo-publisher
-description: 微博自动发布工具 - 图文发布（生产就绪）
-trigger: 发布微博、weibo、微博发布
-version: 1.3.0
-created: 2026-03-07
-updated: 2026-03-10
+description: 微博自动发布工具 - 图文发布（Playwright CDP 方案）
+trigger: 发布微博、weibo、微博发布、weibo-publisher
+version: 1.0.0
+created: 2026-02-25
+updated: 2026-03-07
 changelog:
-  - 1.3.0: 新增 API 方案（publish-weibo-api.cjs）— CDP 提取 Cookie + HTTP 直接调用，不触发验证码
-  - 1.2.0: 修复 Windows 路径 Bug（移除多余的 images/ 子目录），使用 utils.cjs 工具函数
-  - 1.1.0: 提取 CDPClient 为独立可测试模块，增加单元测试覆盖率
-  - 1.0.0: 初始版本 - 图文发布，CDP 直连方式，含滑块验证码自动处理
+  - 0.1.0: 开发中（框架初始化）
+  - 1.0.0: ✅ 2026-03-07 完成 - 图文发布 CDP 方案实现
 ---
 
 # Weibo Publisher
 
-微博自动发布工具 - 图文内容，支持两种发布方案
+微博自动发布工具 - 基于 Chrome DevTools Protocol (CDP) 浏览器自动化
 
-## 方案对比
+## ✅ 实现状态（2026-03-07）
 
-| 方案 | 脚本 | 原理 | 优势 | 劣势 |
-|------|------|------|------|------|
-| CDP 自动化（旧） | `publish-weibo-image.cjs` | CDP 控制浏览器 UI | 不需了解 API | 触发验证码、受页面改版影响 |
-| 新 API 方案 | `publish-weibo-api.cjs` | CDP 提取 Cookie → HTTP 直接调用 | 稳定、快速、不触发验证码 | 依赖内部 API 格式不变 |
-
-**推荐使用新 API 方案**（publish-weibo-api.cjs）。
-
-## 架构
-
-```
-Mac mini (100.86.57.69 / localhost)
-    ↓ CDP WebSocket (Tailscale 内网直连)
-Windows PC (100.97.242.124:19227)
-    ↓ 浏览器自动化
-微博发布成功
-```
-
-**关键区别（与头条/抖音不同）**：
-- 不需要 SSH 到 Windows PC
-- 直接从 Mac mini 通过 CDP 控制浏览器
-- CDP 端口：19227（微博专用）
-- **含验证码处理**：自动识别并处理微博滑块验证码
-
-## 支持类型
-
-| 类型 | 脚本 | 状态 | 说明 |
-|------|------|------|------|
-| 图文（新 API） | `scripts/publish-weibo-api.cjs` | ✅ 推荐 | Cookie + HTTP API，不触发验证码 |
-| 图文（CDP 旧方案） | `scripts/publish-weibo-image.cjs` | ✅ 备用 | 浏览器 UI 自动化 |
-
-## 使用方式
-
-### 新 API 方案（推荐）
-
-```bash
-# 单条发布
-NODE_PATH=/Users/administrator/perfect21/zenithjoy/services/creator/scripts/publishers/node_modules \
-  node /Users/administrator/perfect21/zenithjoy/services/creator/scripts/publishers/weibo-publisher/publish-weibo-api.cjs \
-  --content ~/.weibo-queue/2026-03-07/image-1/
-```
-
-### 旧 CDP 方案（备用）
-
-```bash
-NODE_PATH=/Users/administrator/perfect21/zenithjoy/services/creator/scripts/publishers/node_modules \
-  node /Users/administrator/perfect21/zenithjoy/services/creator/scripts/publishers/weibo-publisher/publish-weibo-image.cjs \
-  --content ~/.weibo-queue/2026-03-07/image-1/
-```
-
-### 批量发布
-
-```bash
-bash /Users/administrator/perfect21/zenithjoy/services/creator/scripts/publishers/weibo-publisher/batch-publish-weibo.sh 2026-03-07
-```
-
-### 内容目录结构
-
-```
-~/.weibo-queue/{date}/
-├── image-{id}/
-│   ├── content.txt     → 文案内容（可选，支持话题 #xxx#）
-│   └── image.jpg       → 图片（可多张：image1.jpg, image2.jpg...）
-```
-
-## 配置
-
-| 参数 | 值 |
-|------|-----|
-| Windows PC IP | `100.97.242.124` |
-| CDP 端口 | `19227` |
-| 发布页面 | `https://weibo.com/p/publish/` |
-| Windows 图片目录 | `C:\Users\xuxia\weibo-media\{date}\{contentDirName}\{file}` |
-| 截图目录（调试） | `/tmp/weibo-publish-screenshots/` |
-| NODE_PATH | `/Users/administrator/perfect21/zenithjoy/services/creator/scripts/publishers/node_modules` |
-
-## 验证码处理模块
-
-微博在自动化操作时会显示滑块验证码（天鉴验证）。本工具内置验证码自动处理：
-
-1. **检测**：识别页面中的验证码遮罩层（`[class*="geetest"]`、`[class*="tc-9bad"]` 等）
-2. **截图**：保存验证码截图用于调试
-3. **滑动**：使用 CDP `Input.dispatchMouseEvent` 模拟自然人手拖动轨迹（含加速度曲线）
-4. **验证**：等待验证码消失确认成功，超时后报错
-
-### 验证码故障排查
-
-```bash
-# 查看验证码截图
-ls -la /tmp/weibo-publish-screenshots/
-
-# 检查 CDP 连接
-curl http://100.97.242.124:19227/json
-
-# 手动重置：在 Windows PC 上手动过一次验证码后重试
-```
-
-## 故障排查
-
-### CDP 连接失败
-
-```bash
-curl http://100.97.242.124:19227/json
-```
-
-**常见原因**：
-- Windows PC Chrome 未以调试模式启动（需 `--remote-debugging-port=19227`）
-- Tailscale 网络断开（`tailscale status` 检查）
-- Chrome 已更新且端口配置丢失
-
-### 验证码持续失败
-
-- 微博检测到自动化行为，可能需要在 Windows PC 上手动过一次验证码恢复信任
-- 查看截图 `/tmp/weibo-publish-screenshots/captcha-*.png` 了解验证码类型
-
-### 微博登录失效
-
-在 Windows PC 的 Chrome（19227）上重新登录微博账号。
+| 类型 | 状态 | 说明 |
+|------|------|------|
+| **图文** | ✅ 已实现 | 支持文本 + 最多 9 张图片 |
+| **视频** | 🔄 待实现 | 后续 feature |
 
 ---
 
-## Brain 任务回调（platform_post_id）
-
-当本 skill 作为 Brain `content_publish` 任务（`platform=weibo`）执行时，发布成功后**必须**将 platform_post_id 写回 Brain。
-
-### 脚本 JSON 输出格式
-
-`publish-weibo-api.cjs` 发布成功后末尾会输出一行机器可读 JSON：
+## 🏗️ 架构
 
 ```
-{"ok":true,"platform":"weibo","platform_post_id":"<微博ID>","postUrl":"<链接>"}
+N8N 内容发布 Flow (Cecelia)
+    ↓ POST /content-publish
+Mac mini (perfect21)
+    ↓ python3 publish-weibo-image.py
+Windows PC CDP (100.97.242.124:19227)
+    ↓ Chrome DevTools Protocol
+微博 ✅ (weibo.com)
 ```
 
-微博 ID 为 URL 片段（如 `4Fz8kKqXY0`，即 `weibo.com/detail/{id}`），非纯数字。
+**关键路径**：
+- N8N → SSH Mac mini → Python CDP 脚本
+- Windows CDP 端口：19227（微博专用）
+- 脚本位置：`~/perfect21/zenithjoy/services/creator/scripts/publish-weibo-image.py`
 
-### 任务完成时必须回写 result（CRITICAL）
+---
 
-agent 在调用 `PATCH /api/brain/tasks/{task_id}` 标记 `completed` 时，**必须**将 `platform_post_id` 包含在 `result` 字段中：
+## 📝 脚本位置
 
+| 脚本 | 位置 | 状态 |
+|------|------|------|
+| publish-weibo-image.py | Mac mini: `~/perfect21/zenithjoy/services/creator/scripts/` | ✅ 已实现 |
+| N8N 内容发布 Flow | Cecelia: `packages/workflows/n8n/workflows/media/flow-内容发布.json` | ✅ 已更新 |
+
+---
+
+## 📦 接口规范
+
+### 图文发布
+```bash
+# 仅文字
+python3 publish-weibo-image.py '你好微博'
+
+# 图文
+python3 publish-weibo-image.py '今日分享' /path/to/img1.jpg /path/to/img2.jpg
+```
+
+### N8N 调用
 ```json
+POST /webhook/content-publish
 {
-  "status": "completed",
-  "result": {
-    "platform_post_id": "<微博ID，从脚本 JSON 输出中提取>"
-  }
+  "taskId": "task-001",
+  "title": "今日分享",
+  "content": "微博正文内容",
+  "images": [],
+  "targetPlatforms": ["weibo"]
 }
 ```
 
-这是数据回流的关键：Brain 的 `execution.js` 会从 `result` 提取 `platform_post_id` 并写入 `zenithjoy.publish_logs`，供 KR2 验收。
+---
 
-`platform_post_id` 可为 null（如脚本未能提取），Brain 允许空值。
+## 🔧 技术方案
+
+1. **CDP 连接** - Python websockets 连接 Windows PC 的 Chrome (port 19227)
+2. **文案填写** - 使用原生 setter 绕过框架响应式系统
+3. **图片上传** - Base64 编码 → DataTransfer API → file input
+4. **发布检测** - 轮询检查成功提示或超时假定成功
+
+---
+
+## ⚠️ 注意事项
+
+- 微博 Web 端需要已登录状态（Chrome Profile 保留登录）
+- CDP 端口 19227 是微博专用端口，和其他平台不冲突
+- 图片最多 9 张（微博平台限制）
+- 字符限制：微博正文 ≤ 2000 字
+
+---
+
+## 🔐 依赖配置
+
+- Windows PC SSH 密钥：`~/.ssh/windows_ed`
+- Mac mini SSH 凭据：N8N 中配置 "Mac Mini SSH Key"
+- Chrome 已登录微博账号
+
+---
+
+**版本**: 1.0.0
+**状态**: ✅ **图文发布已实现**
+**架构**: N8N → Mac mini → CDP → Windows Chrome → 微博
+**使用**: `python3 publish-weibo-image.py <文案> [图片...]`

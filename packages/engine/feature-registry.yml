@@ -1129,3 +1129,7 @@ changelog:
       - "harness-contract-proposer"
       - "harness-contract-reviewer"
       - "harness-evaluator"
+  - version: "19.2.1"
+    date: "2026-05-28"
+    type: "chore"
+    description: "Skill 目录从 cecelia 完全剥离。packages/workflows/skills/ 和 packages/engine/skills/ 删除，skill 迁移到 github.com/perfectuser21/zenithjoy-skills。harness-shared.js SKILL_SEARCH_DIRS 移除 monorepo fallback，bump-version.sh 由 6 文件降为 5 文件联动。"
