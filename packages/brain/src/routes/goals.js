@@ -14,6 +14,20 @@ import { probe as dockerRuntimeProbe } from '../docker-runtime-probe.js';
 
 // Constants previously in old alertness.js
 const EVENT_BACKLOG_THRESHOLD = 50;
+
+const XIAN_CODEX_BRIDGE_URL = process.env.XIAN_CODEX_BRIDGE_URL || 'http://100.86.57.69:3458';
+
+async function checkXianBridgeHealth() {
+  try {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 3000);
+    const resp = await fetch(`${XIAN_CODEX_BRIDGE_URL}/health`, { signal: ctrl.signal });
+    clearTimeout(timer);
+    return resp.ok ? 'online' : 'offline';
+  } catch {
+    return 'offline';
+  }
+}
 const pkg = JSON.parse(readFileSync(new URL('../../package.json', import.meta.url)));
 
 const router = Router();
@@ -87,7 +101,7 @@ router.post('/circuit-breaker/:key/reset', async (req, res) => {
  */
 router.get('/health', async (req, res) => {
   try {
-    const [tickStatus, cbStates, activePipelinesResult, evaluatorStatsResult, docker_runtime] = await Promise.all([
+    const [tickStatus, cbStates, activePipelinesResult, evaluatorStatsResult, docker_runtime, xian_bridge_status] = await Promise.all([
       getTickStatus(),
       Promise.resolve(getAllCBStates()),
       // active_pipelines: harness_planner 已退役（PR retire-harness-planner），改统计 harness_initiative
@@ -107,7 +121,8 @@ router.get('/health', async (req, res) => {
         reachable: false,
         version: null,
         error: err && err.message ? err.message : 'docker probe failed',
-      }))
+      })),
+      checkXianBridgeHealth()
     ]);
 
     const esRow = evaluatorStatsResult?.rows?.[0] ?? null;
@@ -143,6 +158,7 @@ router.get('/health', async (req, res) => {
     const uptimeSeconds = Math.floor(process.uptime());
     res.json({
       status: healthy ? 'healthy' : 'degraded',
+      xian_bridge_status,
       uptime: uptimeSeconds,
       uptime_seconds: uptimeSeconds,
       active_pipelines: activePipelinesResult.rows[0].cnt,
