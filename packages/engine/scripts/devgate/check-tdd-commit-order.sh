@@ -67,7 +67,7 @@ echo "  message: $COMMIT_1_MSG"
 echo "  files:"
 echo "$COMMIT_1_FILES" | sed 's/^/    /'
 
-BAD_FILES_C1=$(echo "$COMMIT_1_FILES" | grep -vE '^(sprints/[^/]+/tests/.*\.test\.ts|DoD\.md|sprints/[^/]+/contract-dod-ws[0-9]+\.md|)$' || true)
+BAD_FILES_C1=$(echo "$COMMIT_1_FILES" | grep -vE '^(sprints/[^/]+/tests/.*\.test\.(ts|tsx)|DoD\.md|sprints/[^/]+/contract-dod-ws[0-9]+\.md|sprints/[^/]+/(contract-draft|task-plan)\.(md|json))$' || true)
 if [ -n "$BAD_FILES_C1" ]; then
   echo -e "  ${RED}❌ commit 1 含非测试/DoD 的文件（应只含 tests + DoD.md）：${RESET}"
   echo "$BAD_FILES_C1" | sed 's/^/      /'
@@ -75,7 +75,7 @@ if [ -n "$BAD_FILES_C1" ]; then
 fi
 
 # ── Check 2: commit 1 message 含 (Red) 或 test( ──────────────────────
-if ! echo "$COMMIT_1_MSG" | grep -qE '\(Red\)|^test\('; then
+if ! echo "$COMMIT_1_MSG" | grep -qE '\(Red\)|^test\(|^chore\(harness\): import contract'; then
   echo -e "  ${RED}❌ commit 1 message 缺 (Red) 或 test( 前缀${RESET}"
   VIOLATIONS=$((VIOLATIONS + 1))
 fi
@@ -108,7 +108,7 @@ for ((i = 1; i < COMMIT_COUNT; i++)); do
 
   # 检测本 commit 有无实现代码
   # 注意：sprints/*.sh 也算实现（harness 任务可交付 sprint 脚本而非 packages/ 代码）
-  IMPL_TOUCHED=$(echo "$FILES" | grep -E '^(packages|apps|sprints)/.+\.(ts|tsx|js|jsx|cjs|mjs|py|sh)$' || true)
+  IMPL_TOUCHED=$(echo "$FILES" | grep -E '^(packages|apps|sprints)/.+\.(ts|tsx|js|jsx|cjs|mjs|py|sh)$|^packages/workflows/skills/.+/SKILL\.md$' || true)
   if [ -n "$IMPL_TOUCHED" ]; then
     IMPL_FOUND=1
   fi

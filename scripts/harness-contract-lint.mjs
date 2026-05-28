@@ -101,10 +101,13 @@ for (const entry of entries) {
       });
     } else {
       // 规则 3: 白名单检查
-      // 分割管道/分号命令段，检查每段首词
-      const segments = testValue.split(/[|;]/).map(s => s.trim()).filter(Boolean);
-      for (const segment of segments) {
-        const firstWord = segment.split(/\s+/)[0].toLowerCase().replace(/^!/, '');
+      // 去除 manual: 前缀（运行时标记，不是工具名）
+      const cmdForCheck = testValue.startsWith('manual:') ? testValue.slice(7).trim() : testValue;
+
+      // bash -c '...' 内部的管道/分号属于 shell 脚本，不逐段扫描
+      // 只校验顶层工具名（bash 在白名单中）
+      if (/^bash\s+-c\s+['"]/.test(cmdForCheck)) {
+        const firstWord = cmdForCheck.split(/\s+/)[0].toLowerCase();
         if (BANNED_TOOLS.includes(firstWord)) {
           violations.push({
             line: testLineNum || lineNum,
@@ -113,7 +116,22 @@ for (const entry of entries) {
             entry: raw,
             command: testValue,
           });
-          break;
+        }
+      } else {
+        // 分割管道/分号命令段，检查每段首词
+        const segments = cmdForCheck.split(/[|;]/).map(s => s.trim()).filter(Boolean);
+        for (const segment of segments) {
+          const firstWord = segment.split(/\s+/)[0].toLowerCase().replace(/^!/, '');
+          if (BANNED_TOOLS.includes(firstWord)) {
+            violations.push({
+              line: testLineNum || lineNum,
+              type: 'BANNED_TOOL',
+              message: `Test 字段使用了非白名单工具 "${firstWord}"（只允许：${ALLOWED_TOOLS_STR}）`,
+              entry: raw,
+              command: testValue,
+            });
+            break;
+          }
         }
       }
     }

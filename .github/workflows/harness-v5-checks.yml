@@ -178,11 +178,14 @@ jobs:
           DB: postgresql://cecelia:cecelia@localhost:5432/cecelia
         run: |
           set -euo pipefail
+          # Capture test file list (GHA template expansion produces multiline string)
+          TEST_FILES_RAW="${{ steps.check-tests.outputs.test_files }}"
           echo "📋 跑这些测试文件："
-          echo "${{ steps.check-tests.outputs.test_files }}" | sed 's/^/  /'
+          echo "$TEST_FILES_RAW" | sed 's/^/  /'
           echo ""
-          # vitest 从 CLI 接受相对路径即可
-          npx vitest run ${{ steps.check-tests.outputs.test_files }} --reporter=verbose || {
+          # Use readarray to handle multiline test file paths as array
+          readarray -t TEST_FILE_ARR <<< "$TEST_FILES_RAW"
+          npx vitest run "${TEST_FILE_ARR[@]}" --reporter=verbose || {
             echo "❌ 测试未通过（Green 阶段失败）"
             exit 1
           }
