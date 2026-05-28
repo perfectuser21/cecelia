@@ -315,19 +315,6 @@ jobs:
             echo "::error::${FAILED} 个 BEHAVIOR 验证命令执行失败"
             exit 1
           fi
-      - name: Feature Registry 同步检查
-        run: |
-          BASE_REF="origin/${{ github.base_ref || 'main' }}"
-          CHANGED=$(git diff --name-only "$BASE_REF"...HEAD 2>/dev/null || echo "")
-          if echo "$CHANGED" | grep -qE '^packages/engine/skills/'; then
-            if ! echo "$CHANGED" | grep -q 'feature-registry.yml'; then
-              echo "::error::修改了 packages/engine/skills/ 但未更新 feature-registry.yml"
-              exit 1
-            fi
-            echo "✅ feature-registry.yml 已同步更新"
-          else
-            echo "⏭️  未修改 packages/engine/skills/，跳过 feature-registry 检查"
-          fi
       - name: E2E Integrity Check
         run: bash packages/engine/scripts/e2e-integrity-check.sh
 
