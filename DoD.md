@@ -1,37 +1,46 @@
-contract_branch: direct
-workstream_index: 2
-sprint_dir: sprints/harness-xian-codex-spawn
+contract_branch: cp-harness-propose-r2-801eba1e
+workstream_index: 1
+sprint_dir: sprints/codex-xian-verify
 
-# DoD — ws2: harness-task.graph.js spawnNode HARNESS_XIAN_ENABLED 分支
+---
+skeleton: false
+journey_type: autonomous
+---
+# Contract DoD — Workstream 1: goals.js /health 新增 codex_bridge_status 探活字段
 
-**范围**: `packages/brain/src/workflows/harness-task.graph.js` 中 `spawnNode` 加 HARNESS_XIAN_ENABLED 特性分支
+**范围**: `packages/brain/src/routes/goals.js` `/health` handler 新增对 `${XIAN_CODEX_BRIDGE_URL}/accounts` 的 2s 超时探活，根据结果写入 `codex_bridge_status: "online"|"offline"`；catch-all 确保任何失败/超时/throw 均写 `"offline"`；字段无论 HARNESS_XIAN_ENABLED 取值始终出现
+**大小**: S (<100 行净增，1 文件)
+**依赖**: 无
 
-## [BEHAVIOR] HARNESS_XIAN_ENABLED 严格 === 'true' 检查
+## ARTIFACT 条目
 
-- Criteria: HARNESS_XIAN_ENABLED 检查使用严格 === 'true'（不是 truthy，非 == true）
-- Test: vitest (unit mock — HARNESS_XIAN_ENABLED='false'/'1' 均走 Docker 路径)
+- [ ] [ARTIFACT] `packages/brain/src/routes/goals.js` /health handler 含 `codex_bridge_status` 字段写入
+  Test: node -e "const c=require('fs').readFileSync('/workspace/packages/brain/src/routes/goals.js','utf8');if(!c.includes('codex_bridge_status'))process.exit(1);console.log('OK')"
 
-## [BEHAVIOR] spawnNode Bridge 调用含 try/catch + fallback Docker
+- [ ] [ARTIFACT] `packages/brain/src/routes/goals.js` 含 bridge 探活 URL（XIAN_CODEX_BRIDGE_URL 或默认值）
+  Test: node -e "const c=require('fs').readFileSync('/workspace/packages/brain/src/routes/goals.js','utf8');if(!c.includes('XIAN_CODEX_BRIDGE_URL')&&!c.includes('100.86.57.69'))process.exit(1);console.log('OK')"
 
-- Criteria: HARNESS_XIAN_ENABLED='true' 时先调 Bridge；Bridge 抛错则 catch + fallback spawnDockerDetached
-- Test: vitest (unit mock — spawnBridgeMock throw → spawnDetached 被调用，run 不中断)
+- [ ] [ARTIFACT] `packages/brain/src/routes/goals.js` 含 offline fallback（catch + 'offline' 字符串）
+  Test: node -e "const c=require('fs').readFileSync('/workspace/packages/brain/src/routes/goals.js','utf8');if(!c.includes('offline'))process.exit(1);console.log('OK')"
 
-## [BEHAVIOR] HARNESS_XIAN_BRIDGE_URL 环境变量用于 Bridge URL
+## BEHAVIOR 条目（evaluator 逐 WS 跑 — autonomous 模式 A，curl 测真实 Brain localhost:5221）
 
-- Criteria: Bridge 第一参数来自 process.env.HARNESS_XIAN_BRIDGE_URL（不 hardcode）
-- Test: vitest (unit mock)
+- [ ] [BEHAVIOR] GET /api/brain/health 响应包含 codex_bridge_status 字段，类型为 string
+  Test: manual:bash -c 'curl -sf localhost:5221/api/brain/health | jq -e '"'"'.codex_bridge_status | type == "string"'"'"' || { echo "FAIL: 字段缺失或类型错误"; exit 1; }; echo OK'
+  期望: OK
 
-## [BEHAVIOR] callback_url 使用 finalContainerId
+- [ ] [BEHAVIOR] codex_bridge_status 值为合法枚举 "online" 或 "offline"（不接受其他任何值）
+  Test: manual:bash -c 'curl -sf localhost:5221/api/brain/health | jq -e '"'"'(.codex_bridge_status == "online") or (.codex_bridge_status == "offline")'"'"' || { echo "FAIL: 非法枚举值"; exit 1; }; echo OK'
+  期望: OK
 
-- Criteria: Bridge payload 的 callback_url 包含 finalContainerId（与 thread_lookup 对齐）
-- Test: vitest (unit mock)
+- [ ] [BEHAVIOR] schema 完整性 — 响应同时包含 codex_bridge_status、status、uptime_seconds（新字段与现有字段共存）
+  Test: manual:bash -c 'curl -sf localhost:5221/api/brain/health | jq -e '"'"'has("codex_bridge_status") and has("status") and has("uptime_seconds")'"'"' || { echo "FAIL: schema 不完整"; exit 1; }; echo OK'
+  期望: OK
 
-## [BEHAVIOR] opts.spawnBridge DI 接口
+- [ ] [BEHAVIOR] 禁用变体不存在 — codex_bridge_status 不等于 up/down/ok/reachable/active/unavailable（null 防护）
+  Test: manual:bash -c 'curl -sf localhost:5221/api/brain/health | jq -e '"'"'.codex_bridge_status != null and (.codex_bridge_status | IN("up","down","ok","reachable","active","unavailable") | not)'"'"' || { echo "FAIL: 使用了禁用变体"; exit 1; }; echo OK'
+  期望: OK
 
-- Criteria: spawnNode 第二参数 opts 接受 spawnBridge 覆盖（测试 DI 接口）
-- Test: vitest (unit mock — opts.spawnBridge 传入时被调用)
-
-## [ARTIFACT] harness-task.graph.js 含 HARNESS_XIAN_ENABLED 字面量
-
-- Criteria: packages/brain/src/workflows/harness-task.graph.js 文件内含字符串 HARNESS_XIAN_ENABLED
-- Test: manual:bash -c 'node -e "const fs=require(\"fs\"); const c=fs.readFileSync(\"./packages/brain/src/workflows/harness-task.graph.js\",\"utf8\"); if (!c.includes(\"HARNESS_XIAN_ENABLED\")) { console.error(\"FAIL: literal not found\"); process.exit(1); } console.log(\"OK: HARNESS_XIAN_ENABLED found\");"'
+- [ ] [BEHAVIOR] error path — bridge 探活 offline 时 health 仍返 HTTP 200（goals.js 含 catch-all + offline fallback 逻辑，由 WS2 单元测试验证探活失败路径）
+  Test: manual:bash -c 'CODE=$(curl -s -o /dev/null -w "%{http_code}" localhost:5221/api/brain/health); [ "$CODE" = "200" ] || { echo "FAIL: health 返回 $CODE 而非 200"; exit 1; }; curl -sf localhost:5221/api/brain/health | jq -e '"'"'has("codex_bridge_status")'"'"' || { echo "FAIL: offline 路径下字段缺失"; exit 1; }; echo OK'
+  期望: OK
