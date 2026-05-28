@@ -187,33 +187,35 @@ echo "✅ Step 3: Notion AI Notes 已写入（GAN标注表 + 截图链接）"
 
 ---
 
-### Step 3.5: 文档归档（PrepPRD/PRD/Contract）
+### Step 3.5: 文档归档（PrepPRD/SprintPRD/Contract）
 
 ```bash
-# 分别读取 PrepPRD / PRD / Contract 文档，逐一写入 Notion AI Notes
+# 分别读取 PrepPRD / SprintPRD / Contract 文档，逐一写入 Notion AI Notes
 # 文件不存在时跳过（非阻断）
-for DOC_PAIR in "prep-prd.md:PrepPRD" "sprint-prd.md:PRD" "contract-draft.md:Contract"; do
+for DOC_PAIR in "prep-prd.md:PrepPRD" "sprint-prd.md:SprintPRD" "contract-draft.md:Contract"; do
   DOC_FILE="${DOC_PAIR%%:*}"
   DOC_TYPE="${DOC_PAIR##*:}"
   DOC_PATH="${SPRINT_DIR}/${DOC_FILE}"
 
   if [ ! -f "$DOC_PATH" ]; then
-    echo "SKIP: $DOC_FILE 不存在，跳过（非阻断）"
+    echo "WARN: $DOC_FILE 不存在，跳过（非阻断）"
     continue
   fi
 
   DOC_CONTENT=$(cat "$DOC_PATH")
+  NOTES_PAYLOAD=$(jq -n \
+    --arg title "${DOC_TYPE} 文档：${FEATURE_NAME}" \
+    --arg type "$DOC_TYPE" \
+    --arg content "$DOC_CONTENT" \
+    --arg initiative_id "${TASK_ID:-}" \
+    --arg sprint_dir "$SPRINT_DIR" \
+    '{"title": $title, "type": $type, "content": $content, "initiative_id": $initiative_id, "sprint_dir": $sprint_dir}')
   curl -X POST "localhost:5221/api/brain/notes" \
     -H "Content-Type: application/json" \
-    -d "{
-      \"title\": \"${DOC_TYPE} 文档：${FEATURE_NAME}\",
-      \"type\": \"Log\",
-      \"sub_area\": \"$SUB_AREA\",
-      \"body\": $(echo "$DOC_CONTENT" | jq -Rs .)
-    }" 2>/dev/null || echo "WARN: Notion Notes 写入失败（$DOC_TYPE，非阻断）"
+    -d "$NOTES_PAYLOAD" 2>/dev/null || echo "WARN: Notion Notes 写入失败（$DOC_TYPE，非阻断）"
   echo "✅ 已归档 $DOC_TYPE（$DOC_FILE）到 Notion AI Notes"
 done
-echo "✅ Step 3.5: 文档归档完成（PrepPRD/PRD/Contract）"
+echo "✅ Step 3.5: 文档归档完成（PrepPRD/SprintPRD/Contract）"
 ```
 
 ---
