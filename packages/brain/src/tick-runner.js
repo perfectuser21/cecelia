@@ -1290,6 +1290,23 @@ async function executeTick() {
     }
   }
 
+  // 6.6. Dead task reset — execution_attempts=0 stuck tasks (in_progress/queued > 10min) → queued
+  try {
+    const deadResult = await pool.query(`
+      UPDATE tasks
+      SET status = 'queued', claimed_by = NULL, claimed_at = NULL, started_at = NULL
+      WHERE execution_attempts = 0
+        AND status IN ('in_progress', 'queued')
+        AND updated_at < NOW() - INTERVAL '10 minutes'
+      RETURNING id, title
+    `);
+    if (deadResult.rowCount > 0) {
+      tickLog(`[tick] Reset ${deadResult.rowCount} dead task(s) (execution_attempts=0, stuck >10min)`);
+    }
+  } catch (deadErr) {
+    console.error('[tick] dead task reset error (non-fatal):', deadErr.message);
+  }
+
   // 7. Dispatch tasks — fill all available slots (scoped to focused objective first, then global)
   tickLog(`[tick] Phase 7 reached: queued=${queued.length} inProgress=${inProgress.length} allGoalIds=${allGoalIds.length}`);
   publishCognitiveState({ phase: 'dispatching', detail: '派发任务…' });
