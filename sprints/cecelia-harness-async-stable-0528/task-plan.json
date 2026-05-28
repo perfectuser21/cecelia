@@ -1,0 +1,120 @@
+{
+  "initiative_id": "2c9c9b66-9b94-47a4-a2cf-a5a2719a4baa",
+  "journey_type": "autonomous",
+  "journey_type_reason": "全部改动在 packages/brain/src/，无 UI/dashboard/engine 改动",
+  "target_environment": "local_api",
+  "target_environment_reason": "纯后端 Brain 内部改动，curl localhost:5221 + 代码结构验证本地执行",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "DB Migration — 新建 harness_messages 表",
+      "scope": "新建 packages/brain/migrations/287_harness_messages.sql，创建 harness_messages 表（id UUID PK, initiative_id UUID, sub_task_id TEXT, message TEXT, consumed_at TIMESTAMPTZ DEFAULT NULL, created_at TIMESTAMPTZ DEFAULT NOW()），使用 IF NOT EXISTS 保证幂等",
+      "dod": [
+        "[BEHAVIOR] packages/brain/migrations/287_harness_messages.sql 文件存在且含 CREATE TABLE IF NOT EXISTS harness_messages",
+        "[BEHAVIOR] migration 含六个必填字段：id(UUID)/initiative_id/sub_task_id/message/consumed_at/created_at",
+        "[ARTIFACT] 287_harness_messages.sql 使用 IF NOT EXISTS（幂等迁移）"
+      ],
+      "files": [
+        "packages/brain/migrations/287_harness_messages.sql"
+      ],
+      "depends_on": [],
+      "complexity": "S",
+      "estimated_minutes": 20
+    },
+    {
+      "task_id": "ws2",
+      "title": "Planner 节点异步化 — spawnDockerDetached + interrupt",
+      "scope": "改造 packages/brain/src/workflows/harness-initiative.graph.js 的 runPlannerNode 函数：将同步 reconnectOrSpawn 改为 spawnDockerDetached 启动 Planner 容器（detached mode），spawn 后向 walking_skeleton_thread_lookup 写入映射记录（graph_name='harness-initiative'），然后调 interrupt() 挂起 graph。Brain tick 在 Planner 运行期间继续处理其他任务。",
+      "dod": [
+        "[BEHAVIOR] harness-initiative.graph.js 含 spawnDockerDetached 调用（代码内容检查）",
+        "[BEHAVIOR] runPlannerNode 函数体不含阻塞 reconnectOrSpawn",
+        "[BEHAVIOR] runPlannerNode 函数体含 interrupt() 调用",
+        "[BEHAVIOR] harness-initiative.graph.js 含 walking_skeleton_thread_lookup 写入逻辑",
+        "[ARTIFACT] runPlannerNode 改为 detached + interrupt 模式（移除同步阻塞）"
+      ],
+      "files": [
+        "packages/brain/src/workflows/harness-initiative.graph.js"
+      ],
+      "depends_on": ["ws1"],
+      "complexity": "M",
+      "estimated_minutes": 45
+    },
+    {
+      "task_id": "ws3",
+      "title": "GAN 每轮异步化 — proposer/reviewer detached + interrupt",
+      "scope": "改造 packages/brain/src/workflows/harness-gan.graph.js 的 proposer 和 reviewer 函数：将 reconnectOrSpawn 改为 spawnDockerDetached + interrupt()。每轮向 walking_skeleton_thread_lookup 写入映射（graph_name='harness-gan'）。GAN 收敛逻辑（detectConvergenceTrend/budgetCap）不变。",
+      "dod": [
+        "[BEHAVIOR] harness-gan.graph.js 含 spawnDockerDetached 调用",
+        "[BEHAVIOR] proposer 函数体不含阻塞 reconnectOrSpawn",
+        "[BEHAVIOR] reviewer 函数体不含阻塞 reconnectOrSpawn",
+        "[BEHAVIOR] detectConvergenceTrend 收敛逻辑仍存在（不被破坏）",
+        "[BEHAVIOR] harness-gan.graph.js 含 interrupt() 调用",
+        "[ARTIFACT] proposer + reviewer 改为 detached + interrupt 模式"
+      ],
+      "files": [
+        "packages/brain/src/workflows/harness-gan.graph.js"
+      ],
+      "depends_on": ["ws2"],
+      "complexity": "M",
+      "estimated_minutes": 45
+    },
+    {
+      "task_id": "ws4",
+      "title": "Harness Initiative Patrol — initiative_runs 卡住检测 + harness_intervention 创建",
+      "scope": "新建 packages/brain/src/harness-initiative-patrol.js：扫描 initiative_runs WHERE completed_at IS NULL，检测 Planner 阶段卡住（>15min）/ GAN 阶段卡住（>20min），创建 harness_intervention 任务（防重：同 initiative 已有 pending 则跳过）。修改 packages/brain/src/pipeline-patrol-plugin.js 调用新 patrol。",
+      "dod": [
+        "[BEHAVIOR] harness-initiative-patrol.js 文件存在",
+        "[BEHAVIOR] patrol 含 initiative_runs 查询和 completed_at IS NULL 扫描",
+        "[BEHAVIOR] patrol 含 harness_intervention 任务创建和防重逻辑",
+        "[BEHAVIOR] pipeline-patrol-plugin.js 集成 harness patrol 调用",
+        "[ARTIFACT] harness-initiative-patrol.js 新文件，含错误处理不崩溃 Brain tick"
+      ],
+      "files": [
+        "packages/brain/src/harness-initiative-patrol.js",
+        "packages/brain/src/pipeline-patrol-plugin.js"
+      ],
+      "depends_on": ["ws3"],
+      "complexity": "M",
+      "estimated_minutes": 45
+    },
+    {
+      "task_id": "ws5",
+      "title": "Intervention Handler — Docker logs 读取 + LLM 分析 + task-router 注册",
+      "scope": "新建 packages/brain/src/harness-intervention-handler.js：读 Docker logs（通过 walking_skeleton_thread_lookup.container_id），调 Brain LLM 客户端分析，返回 action=retry/skip/alert 写入 task result（task.result.action）。修改 packages/brain/src/task-router.js 注册 harness_intervention → harness-intervention-handler。",
+      "dod": [
+        "[BEHAVIOR] harness-intervention-handler.js 文件存在",
+        "[BEHAVIOR] handler 含 action 字段输出（retry/skip/alert 之一）",
+        "[BEHAVIOR] task-router.js 路由 harness_intervention → harness-intervention-handler",
+        "[BEHAVIOR] handler 含 LLM 客户端调用（现有 Brain LLM）",
+        "[ARTIFACT] harness-intervention-handler.js 新文件，含 try-catch 错误处理"
+      ],
+      "files": [
+        "packages/brain/src/harness-intervention-handler.js",
+        "packages/brain/src/task-router.js"
+      ],
+      "depends_on": ["ws4"],
+      "complexity": "M",
+      "estimated_minutes": 45
+    },
+    {
+      "task_id": "ws6",
+      "title": "消息 API + thread_lookup status 生命周期",
+      "scope": "在 packages/brain/src/routes/harness.js 新增 GET /api/brain/harness/messages/:initiativeId/:subTaskId（返回 {messages:[]}，不存在的 initiativeId 也返 {messages:[]}）和 POST（body={message},返回 201+{id,message,created_at}）。在 packages/brain/src/lib/harness-thread-lookup.js 新增 updateHarnessThreadStatus(containerId, 'completed'|'failed') 并在 graph 结束/失败节点调用。",
+      "dod": [
+        "[BEHAVIOR] GET /api/brain/harness/messages/:initiativeId/:subTaskId 返回 200 + {messages:[]} (keys==['messages'])",
+        "[BEHAVIOR] POST 返回 201 + {id,message,created_at}（禁用字段 data/result/payload/body 不存在）",
+        "[BEHAVIOR] GET 不存在的 initiativeId 返回 {messages:[]} 而非 404",
+        "[BEHAVIOR] POST body 无 message 字段时返回 4xx（输入校验）",
+        "[BEHAVIOR] harness-thread-lookup.js 含 UPDATE status=completed/failed 逻辑",
+        "[ARTIFACT] routes/harness.js 含 GET+POST messages 路由；harness-thread-lookup.js 含 status 更新函数"
+      ],
+      "files": [
+        "packages/brain/src/routes/harness.js",
+        "packages/brain/src/lib/harness-thread-lookup.js"
+      ],
+      "depends_on": ["ws5"],
+      "complexity": "M",
+      "estimated_minutes": 45
+    }
+  ]
+}
