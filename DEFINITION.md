@@ -441,7 +441,7 @@ Global OKR → Area OKR → KR → Project → Initiative → Task
 | **topic_decision_feedback** | 选题热度反馈（migration 214，week_key + topic_keyword 唯一索引，高热话题注入选题 Prompt） |
 | **topic_suggestions** | 选题推荐审核队列（migration 217，pending/approved/rejected/auto_promoted，2h 自动晋级） |
 | **llm_usage_snapshots** | LLM 算力消耗快照（migration 218，每日定时采集账号用量，供周报趋势分析） |
-| **schema_version** | 迁移版本追踪 | Schema 版本: 283 |
+| **schema_version** | 迁移版本追踪 | Schema 版本: 286 |
 | **initiative_run_events** | Harness pipeline 节点状态流（migration 279，initiative_id/node/status/attempt/ts BIGINT） |
 | **publish_success_daily** | 每日每平台发布成功率快照（migration 276，platform/date UNIQUE，Brain tick 写入） |
 | **janitor_runs** | Janitor 任务执行记录（migration 272，job_name/status/output/duration） |
@@ -525,6 +525,7 @@ queued → in_progress → completed
 | harness_initiative | US | Harness v2 阶段 A — Initiative 规划 + DAG 调度入口 (/harness-planner) | Sonnet / - | 默认 anthropic |
 | harness_task | US | Harness v2 阶段 B — Task 级执行（内部 Generator/CI/Evaluator 状态机） | Sonnet / - | 默认 anthropic |
 | harness_final_e2e | US | Harness v2 阶段 C — Initiative 级真实 E2E 验收 | Sonnet / - | 默认 anthropic |
+| harness_intervention | US | Harness 人工干预任务类型（Brain 内部处理） | Sonnet / - | 默认 anthropic |
 | content-pipeline | 西安 | 内容工厂 Pipeline 编排入口 (/content-creator) | - | general |
 | content-research | 西安 | 内容调研阶段 (/notebooklm) | - | general |
 | content-copywriting | 西安 | 文案生成阶段 (/content-creator) | - | general |
