@@ -3294,6 +3294,8 @@ async function triggerCeceliaRun(task) {
       };
       if (model) dockerEnv.CECELIA_MODEL = model;
       if (provider) dockerEnv.CECELIA_PROVIDER = provider;
+      if (process.env.HARNESS_XIAN_ENABLED) dockerEnv.HARNESS_XIAN_ENABLED = process.env.HARNESS_XIAN_ENABLED;
+      if (process.env.HARNESS_XIAN_BRIDGE_URL) dockerEnv.HARNESS_XIAN_BRIDGE_URL = process.env.HARNESS_XIAN_BRIDGE_URL;
 
       const dockerResult = await spawnDocker({
         task,
