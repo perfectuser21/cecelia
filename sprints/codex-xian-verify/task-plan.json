@@ -1,0 +1,41 @@
+{
+  "initiative_id": "pending",
+  "journey_type": "autonomous",
+  "journey_type_reason": "仅涉及 packages/brain/ 后端路由逻辑，无 UI 交互",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "goals.js /health 路由新增 codex_bridge_status 探活字段",
+      "scope": "修改 packages/brain/src/routes/goals.js 的 /health handler：对 ${XIAN_CODEX_BRIDGE_URL}/accounts（默认 http://100.86.57.69:3458/accounts）发起 AbortSignal.timeout(2000) 探活，2xx → codex_bridge_status: 'online'，任何失败/超时/throw catch 后写 'offline'；字段加入 Promise.all 并行，不改变现有字段结构",
+      "dod": [
+        "[BEHAVIOR] curl -sf localhost:5221/api/brain/health | jq -e '.codex_bridge_status | type == \"string\"'",
+        "[BEHAVIOR] curl -sf localhost:5221/api/brain/health | jq -e '(.codex_bridge_status == \"online\") or (.codex_bridge_status == \"offline\")'",
+        "[BEHAVIOR] curl -sf localhost:5221/api/brain/health | jq -e '.codex_bridge_status != null and (.codex_bridge_status | IN(\"up\",\"down\",\"ok\",\"reachable\",\"active\",\"unavailable\") | not)'",
+        "[ARTIFACT] packages/brain/src/routes/goals.js 含 codex_bridge_status 字段写入逻辑 + offline fallback"
+      ],
+      "files": [
+        "packages/brain/src/routes/goals.js"
+      ],
+      "depends_on": [],
+      "complexity": "S",
+      "estimated_minutes": 20
+    },
+    {
+      "task_id": "ws2",
+      "title": "新建 health-codex-bridge-status 集成测试（online/offline/timeout/throw 四分支）",
+      "scope": "在 packages/brain/src/__tests__/integration/ 新建 health-codex-bridge-status.integration.test.js，mock global.fetch（桩 bridge 探活），验证：(1) fetch 返回 2xx → codex_bridge_status='online'；(2) fetch 返回 4xx/5xx → 'offline'；(3) fetch timeout → 'offline'；(4) fetch throw → 'offline'；(5) schema 完整性（codex_bridge_status + status + uptime_seconds 同时存在）；(6) 现有字段未被破坏",
+      "dod": [
+        "[ARTIFACT] packages/brain/src/__tests__/integration/health-codex-bridge-status.integration.test.js 文件存在",
+        "[BEHAVIOR] 测试文件包含 online 分支：node -e \"const c=require('fs').readFileSync('/workspace/packages/brain/src/__tests__/integration/health-codex-bridge-status.integration.test.js','utf8');if(!c.includes('online'))process.exit(1);console.log('OK')\"",
+        "[BEHAVIOR] 测试文件包含 timeout/throw/reject 分支：node -e \"const c=require('fs').readFileSync('/workspace/packages/brain/src/__tests__/integration/health-codex-bridge-status.integration.test.js','utf8');if(!c.includes('timeout')&&!c.includes('throw')&&!c.includes('reject'))process.exit(1);console.log('OK')\"",
+        "[BEHAVIOR] 测试文件包含 schema 断言（uptime_seconds 或 status）：node -e \"const c=require('fs').readFileSync('/workspace/packages/brain/src/__tests__/integration/health-codex-bridge-status.integration.test.js','utf8');if(!c.includes('uptime_seconds')&&!c.includes('status'))process.exit(1);console.log('OK')\""
+      ],
+      "files": [
+        "packages/brain/src/__tests__/integration/health-codex-bridge-status.integration.test.js"
+      ],
+      "depends_on": ["ws1"],
+      "complexity": "M",
+      "estimated_minutes": 35
+    }
+  ]
+}
