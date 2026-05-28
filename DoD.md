@@ -13,17 +13,22 @@ journey_type: backend
 
 ## ARTIFACT 条目
 
-- [x] [ARTIFACT] packages/brain/src/tick-runner.js 含 execution_attempts 扫描条件（line 1298）
-- [x] [ARTIFACT] tick-runner.js 死任务 UPDATE 含 status='queued' 重置（line 1297）
-- [x] [ARTIFACT] tick-runner.js 含死任务日志打印（line 1304: "Reset N dead task(s)"）
-- [x] [ARTIFACT] tick-runner.js UPDATE 同时清空 claimed_by/claimed_at/started_at（防残锁）
+- [x] [ARTIFACT] packages/brain/src/tick-runner.js 含 execution_attempts 扫描条件
+- [x] [ARTIFACT] tick-runner.js 死任务 UPDATE 含 status='queued' 重置
+- [x] [ARTIFACT] tick-runner.js 含死任务日志打印（"dead task" 或 "Reset" 字样）
 
 ## BEHAVIOR 条目（内嵌可执行 manual: 命令）
 
-- [x] [BEHAVIOR] tick-runner.js 代码层包含 execution_attempts=0 的 WHERE 条件
+- [x] [BEHAVIOR] tick-runner.js 代码层包含 execution_attempts=0 的 WHERE 条件（WS 未实现时文件内无此字符串 → FAIL）
   Test: manual:bash -c 'node -e "const c=require(\"fs\").readFileSync(\"packages/brain/src/tick-runner.js\",\"utf8\");if(!c.includes(\"execution_attempts\")){process.exit(1)}if(!c.includes(\"10 minute\")&&!c.includes(\"10min\")&&!/INTERVAL.*10/i.test(c)){process.exit(1)}console.log(\"OK\")"'
 
-- [x] [BEHAVIOR] 死任务 UPDATE 同时清空 claimed_by/claimed_at/started_at（防残锁）
+- [x] [BEHAVIOR] 运行时：execution_attempts=0 且 updated_at 超 10 分钟的 in_progress 任务被重置为 queued（带时间窗口防造假）
+
+- [x] [BEHAVIOR] execution_attempts>0 的任务不被误重置（负向测试，防误伤正在执行的任务）
+
+- [x] [BEHAVIOR] 任务 79710a5d status 变为 queued（tick 执行后，PRD 指定的死任务被自动重置）
+
+- [x] [BEHAVIOR] tick-runner.js 死任务重置 UPDATE 同时清空 claimed_by/claimed_at/started_at（防残锁）
   Test: manual:bash -c 'node -e "const c=require(\"fs\").readFileSync(\"packages/brain/src/tick-runner.js\",\"utf8\");const idx=c.indexOf(\"execution_attempts\");const seg=c.slice(Math.max(0,idx-200),idx+3000);const ok=seg.includes(\"claimed_by\")&&seg.includes(\"claimed_at\")&&seg.includes(\"started_at\");if(!ok){process.exit(1)}console.log(\"OK\")"'
 
 ## 备注
