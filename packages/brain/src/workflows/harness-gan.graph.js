@@ -498,7 +498,7 @@ export function createGanContractNodes(executor, ctx) {
       throw new Error(`gan_budget_exceeded: spent=${costAfterSpawn.toFixed(3)} cap=${budgetCapUsd}`);
     }
 
-    // WS3 async: single spawn per round, no reconnectOrSpawn retry loop
+    // WS3 async: single spawn per round, no blocking retry loop
     let resultData = await readBrainResult(worktreePath, ['verdict', 'rubric_scores', 'feedback']).catch(() => ({}));
     const rawData = resultData;
     const hasRubricData = rawData.rubric_scores &&
@@ -656,4 +656,100 @@ export async function runGanContractGraph(opts) {
 
   // kickoff 成功，GAN 已在第一次 interrupt 挂起，等 callback resume
   return { kickoff: true, thread_id: String(taskId) };
+}
+
+/**
+ * proposerSpawnNode — 独立导出：只做 detached spawn + thread_lookup 写入。
+ * WS3 async 架构：spawn 和 interrupt 分离，方便单元测试各阶段。
+ */
+export async function proposerSpawnNode(ctx, opts = {}) {
+  const {
+    taskId, initiativeId, sprintDir = 'sprints', worktreePath,
+    githubToken, round = 0, proposerContainerId,
+  } = ctx;
+  const spawnFn = opts.spawnDetached || spawnDockerDetached;
+  const dbPool = opts.pool || opts.poolOverride || pool;
+
+  if (proposerContainerId) return { proposerContainerId };
+
+  const nextRound = round + 1;
+  const computedBranch = `cp-harness-propose-r${nextRound}-${taskId.slice(0, 8)}`;
+  const rand = crypto.randomUUID().slice(0, 8);
+  const containerId = `harness-gan-propose-${taskId.slice(0, 8)}-r${nextRound}-${rand}`;
+  const threadId = taskId;
+
+  const acctOpts = { task: { id: taskId, task_type: 'harness_contract_propose' }, env: {} };
+  try { await resolveAccount(acctOpts, { taskId }); } catch { /* non-blocking */ }
+
+  await spawnFn({
+    task: { id: taskId, task_type: 'harness_contract_propose' },
+    prompt: '',
+    worktreePath,
+    containerId,
+    env: {
+      ...acctOpts.env,
+      CECELIA_TASK_TYPE: 'harness_contract_propose',
+      HARNESS_NODE: 'proposer',
+      HARNESS_SPRINT_DIR: sprintDir,
+      HARNESS_INITIATIVE_ID: initiativeId || taskId,
+      PROPOSE_ROUND: String(nextRound),
+      PROPOSE_BRANCH: computedBranch,
+      GITHUB_TOKEN: githubToken || '',
+      HARNESS_CALLBACK_URL: `http://host.docker.internal:5221/api/brain/harness/callback/${containerId}`,
+    },
+  });
+
+  await dbPool.query(
+    `INSERT INTO walking_skeleton_thread_lookup (container_id, thread_id, graph_name, status)
+     VALUES ($1, $2, 'harness-gan', 'spawning') ON CONFLICT (container_id) DO NOTHING`,
+    [containerId, threadId]
+  );
+
+  return { proposerContainerId: containerId, round: nextRound, proposeBranch: computedBranch };
+}
+
+/**
+ * reviewerSpawnNode — 独立导出：只做 detached spawn + thread_lookup 写入。
+ */
+export async function reviewerSpawnNode(ctx, opts = {}) {
+  const {
+    taskId, initiativeId, sprintDir = 'sprints', worktreePath,
+    githubToken, round = 0, reviewerContainerId,
+  } = ctx;
+  const spawnFn = opts.spawnDetached || spawnDockerDetached;
+  const dbPool = opts.pool || opts.poolOverride || pool;
+
+  if (reviewerContainerId) return { reviewerContainerId };
+
+  const rand = crypto.randomUUID().slice(0, 8);
+  const containerId = `harness-gan-review-${taskId.slice(0, 8)}-r${round}-${rand}`;
+  const threadId = taskId;
+
+  const acctOpts = { task: { id: taskId, task_type: 'harness_contract_review' }, env: {} };
+  try { await resolveAccount(acctOpts, { taskId }); } catch { /* non-blocking */ }
+
+  await spawnFn({
+    task: { id: taskId, task_type: 'harness_contract_review' },
+    prompt: '',
+    worktreePath,
+    containerId,
+    env: {
+      ...acctOpts.env,
+      CECELIA_TASK_TYPE: 'harness_contract_review',
+      HARNESS_NODE: 'reviewer',
+      HARNESS_SPRINT_DIR: sprintDir,
+      HARNESS_INITIATIVE_ID: initiativeId || taskId,
+      REVIEW_ROUND: String(round),
+      GITHUB_TOKEN: githubToken || '',
+      HARNESS_CALLBACK_URL: `http://host.docker.internal:5221/api/brain/harness/callback/${containerId}`,
+    },
+  });
+
+  await dbPool.query(
+    `INSERT INTO walking_skeleton_thread_lookup (container_id, thread_id, graph_name, status)
+     VALUES ($1, $2, 'harness-gan', 'spawning') ON CONFLICT (container_id) DO NOTHING`,
+    [containerId, threadId]
+  );
+
+  return { reviewerContainerId: containerId };
 }

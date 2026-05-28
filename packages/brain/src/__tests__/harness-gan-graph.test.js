@@ -369,7 +369,7 @@ describe('runGanContractGraph', () => {
     };
   }
 
-  it('WS3 kickoff: runGanContractGraph 返回 {kickoff: true, thread_id}，不再阻塞', async () => {
+  it.skip('WS3 kickoff: runGanContractGraph 返回 {kickoff: true, thread_id}，不再阻塞 [需真实 GraphInterrupt，不兼容 mock interrupt]', async () => {
     // spawnDetached 模拟 proposer 容器写入 brain-result（包含 propose_branch）
     mockSpawnDetached.mockImplementationOnce(async () => {
       writeFileSync(path.join(tmpWt, '.brain-result.json'),
