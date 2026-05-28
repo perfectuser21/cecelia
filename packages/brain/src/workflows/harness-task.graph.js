@@ -41,7 +41,7 @@ import { promisify } from 'node:util';
 import { ensureHarnessWorktree, harnessSubTaskBranchName, cleanupHarnessWorktree } from '../harness-worktree.js';
 import { resolveGitHubToken } from '../harness-credentials.js';
 // Note: legacy `writeDockerCallback` import removed (Layer 3 uses callback router POST → Command(resume))
-import { spawnDockerDetached } from '../spawn/detached.js';
+import { spawnDockerDetached, spawnCodexBridgeDetached } from '../spawn/detached.js';
 import { resolveAccount } from '../spawn/middleware/account-rotation.js';
 import { checkPrStatus, classifyFailedChecks } from '../shepherd.js';
 import { parseDockerOutput, extractField, readPrFromGitState, readVerdictFile, readBrainResult, EvaluatorOutputSchema } from '../harness-shared.js';
@@ -135,6 +135,7 @@ export const TaskState = Annotation.Root({
  * @param {Object} state           TaskState
  * @param {Object} [opts]
  * @param {Function} [opts.spawnDetached]    覆盖 spawnDockerDetached（测试用）
+ * @param {Function} [opts.spawnBridge]      覆盖 spawnCodexBridgeDetached（测试用 DI）
  * @param {Function} [opts.ensureWorktree]
  * @param {Function} [opts.resolveToken]
  * @param {Object}   [opts.poolOverride]     覆盖 pg pool（测试用）
@@ -213,40 +214,62 @@ export async function spawnNode(state, opts = {}) {
   await resolveAccount(acctOpts, { taskId: task.id });
   const accountEnv = acctOpts.env;
 
-  // spawn detached（不 await 容器跑完）
+  const callbackUrl = `http://host.docker.internal:5221/api/brain/harness/callback/${finalContainerId}`;
+
+  const dockerArgs = {
+    task: { ...task, task_type: 'harness_task' },
+    prompt,
+    worktreePath,
+    containerId: finalContainerId,
+    env: {
+      // 上面 resolveAccount 注入的 CECELIA_CREDENTIALS + CECELIA_MODEL
+      ...accountEnv,
+      CECELIA_TASK_TYPE: 'harness_task',
+      HARNESS_NODE: 'generator',
+      HARNESS_INITIATIVE_ID: initiativeId,
+      HARNESS_TASK_ID: task.id,
+      HARNESS_FIX_MODE: fixMode ? 'true' : 'false',
+      // Protocol v2: Brain 预计算分支名注入，容器直接 checkout 到此分支，无需自报
+      HARNESS_BRANCH_NAME: precomputedBranch,
+      GITHUB_TOKEN: token,
+      CONTRACT_BRANCH: payload.contract_branch || state.contractBranch || '',
+      SPRINT_DIR: payload.sprint_dir || 'sprints',
+      BRAIN_URL: 'http://host.docker.internal:5221',
+      // CALLBACK_URL 容器跑完 wget 这个 URL POST stdout
+      HARNESS_CALLBACK_URL: callbackUrl,
+      WORKSTREAM_INDEX: extractWorkstreamIndex(payload),
+      WORKSTREAM_COUNT:
+        payload.workstream_count !== undefined && payload.workstream_count !== null
+          ? String(payload.workstream_count)
+          : '',
+      PLANNER_BRANCH: payload.planner_branch || '',
+      ...(buildHarnessGoalSettings('The workstream implementation PR has been created and pushed to GitHub')
+        ? { CECELIA_GOAL_SETTINGS: buildHarnessGoalSettings('The workstream implementation PR has been created and pushed to GitHub') }
+        : {}),
+    },
+  };
+
+  // HARNESS_XIAN_ENABLED='true' 时走 Codex Bridge 路径（xian-m4），否则走默认 Docker 路径
   try {
-    await spawnFn({
-      task: { ...task, task_type: 'harness_task' },
-      prompt,
-      worktreePath,
-      containerId: finalContainerId,
-      env: {
-        // 上面 resolveAccount 注入的 CECELIA_CREDENTIALS + CECELIA_MODEL
-        ...accountEnv,
-        CECELIA_TASK_TYPE: 'harness_task',
-        HARNESS_NODE: 'generator',
-        HARNESS_INITIATIVE_ID: initiativeId,
-        HARNESS_TASK_ID: task.id,
-        HARNESS_FIX_MODE: fixMode ? 'true' : 'false',
-        // Protocol v2: Brain 预计算分支名注入，容器直接 checkout 到此分支，无需自报
-        HARNESS_BRANCH_NAME: precomputedBranch,
-        GITHUB_TOKEN: token,
-        CONTRACT_BRANCH: payload.contract_branch || state.contractBranch || '',
-        SPRINT_DIR: payload.sprint_dir || 'sprints',
-        BRAIN_URL: 'http://host.docker.internal:5221',
-        // CALLBACK_URL 容器跑完 wget 这个 URL POST stdout
-        HARNESS_CALLBACK_URL: `http://host.docker.internal:5221/api/brain/harness/callback/${finalContainerId}`,
-        WORKSTREAM_INDEX: extractWorkstreamIndex(payload),
-        WORKSTREAM_COUNT:
-          payload.workstream_count !== undefined && payload.workstream_count !== null
-            ? String(payload.workstream_count)
-            : '',
-        PLANNER_BRANCH: payload.planner_branch || '',
-        ...(buildHarnessGoalSettings('The workstream implementation PR has been created and pushed to GitHub')
-          ? { CECELIA_GOAL_SETTINGS: buildHarnessGoalSettings('The workstream implementation PR has been created and pushed to GitHub') }
-          : {}),
-      },
-    });
+    if (process.env.HARNESS_XIAN_ENABLED === 'true') {
+      const bridgeUrl = process.env.HARNESS_XIAN_BRIDGE_URL;
+      const spawnBridgeFn = opts.spawnBridge || spawnCodexBridgeDetached;
+      try {
+        await spawnBridgeFn(bridgeUrl, {
+          task_id: finalContainerId,
+          task_type: task.task_type || 'harness_task',
+          prompt,
+          skill: 'harness-generator',
+          branch: precomputedBranch,
+          callback_url: callbackUrl,
+        });
+      } catch (bridgeErr) {
+        console.warn(`[harness-task.graph] Bridge spawn failed, falling back to Docker: ${bridgeErr.message}`);
+        await spawnFn(dockerArgs);
+      }
+    } else {
+      await spawnFn(dockerArgs);
+    }
   } catch (err) {
     return { error: { node: 'spawn', message: `spawn: ${err.message}` } };
   }
