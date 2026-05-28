@@ -26,10 +26,13 @@ import { z } from 'zod';
 //
 // 搜索顺序:
 // 1-3. host 上 ~/.claude*/skills 的 symlink（软链接指向 zenithjoy-skills repo）
+// 4.   monorepo 内 packages/workflows/skills/（CI fallback，用于单元测试与 smoke）
 const SKILL_SEARCH_DIRS = [
   path.join(os.homedir(), '.claude-account1', 'skills'),
   path.join(os.homedir(), '.claude-account2', 'skills'),
   path.join(os.homedir(), '.claude', 'skills'),
+  // CI / dev fallback: monorepo 内已同步的 SKILL 快照（从 zenithjoy-skills 同步）
+  path.resolve(path.dirname(new URL(import.meta.url).pathname), '..', '..', 'workflows', 'skills'),
 ];
 
 const _skillCache = new Map();
