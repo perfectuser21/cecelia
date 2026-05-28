@@ -104,5 +104,55 @@ export async function spawnDockerDetached(opts) {
   });
 }
 
+/**
+ * spawnCodexBridgeDetached — POST 到 xian-m4 Codex Bridge，非阻塞派发 harness 任务。
+ *
+ * Bridge 契约（POST bridgeUrl）：
+ *   Request:  { task_id, task_type, callback_url, ...payload }
+ *   Response: { status: "accepted", job_id: string }  (HTTP 200)
+ *   Error:    { error: string }                        (HTTP 4xx/5xx)
+ *
+ * 校验：
+ *   - HTTP status != 200 → throw（上层 spawnNode catch fallback 到 Docker）
+ *   - response.status !== "accepted" → throw
+ *   - typeof response.job_id !== "string" → throw
+ *
+ * @param {string} bridgeUrl     — Bridge /run endpoint（如 http://100.86.57.69:3458/run）
+ * @param {Object} payload       — 必须含 task_id / task_type / callback_url
+ * @param {Object} [opts]        — 可选：{ timeoutMs }
+ * @returns {Promise<{status: "accepted", job_id: string}>}
+ */
+export async function spawnCodexBridgeDetached(bridgeUrl, payload, opts = {}) {
+  const { timeoutMs = 10000 } = opts;
+
+  const resp = await fetch(bridgeUrl, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+    signal: AbortSignal.timeout(timeoutMs),
+  });
+
+  if (!resp.ok) {
+    let detail = '';
+    try { detail = JSON.stringify(await resp.json()); } catch { /* ignore */ }
+    throw new Error(`spawnCodexBridgeDetached: Bridge returned HTTP ${resp.status} — ${detail}`);
+  }
+
+  const data = await resp.json();
+
+  if (data.status !== 'accepted') {
+    throw new Error(
+      `spawnCodexBridgeDetached: Bridge response missing status=accepted (got ${JSON.stringify(data.status)})`
+    );
+  }
+  if (typeof data.job_id !== 'string') {
+    throw new Error(
+      `spawnCodexBridgeDetached: Bridge response job_id must be string (got ${typeof data.job_id})`
+    );
+  }
+
+  return data;
+}
+
 // 测试 hook
 export const __test__ = { writePromptFile };
