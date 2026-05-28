@@ -19,7 +19,7 @@
  */
 
 import path from 'node:path';
-import { readFile, readdir, access } from 'node:fs/promises';
+import { readFile, readdir, access as _access } from 'node:fs/promises';
 import { execFile as execFileCb } from 'node:child_process';
 import { promisify } from 'node:util';
 import {

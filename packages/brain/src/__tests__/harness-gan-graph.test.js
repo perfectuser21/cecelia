@@ -216,9 +216,12 @@ describe('createGanContractNodes', () => {
   });
 
   it('reviewer node: APPROVED verdict → state.verdict=APPROVED', async () => {
+    // spawnDetached 模拟容器写入结果文件（reviewer 开始时会 unlink，所以必须在 spawn 里写）
+    mockSpawnDetached.mockImplementationOnce(async () => {
+      writeFileSync(path.join(tmpWt, '.brain-result.json'),
+        JSON.stringify({ verdict: 'APPROVED', rubric_scores: RUBRIC_ALL_PASS, feedback: '' }));
+    });
     mockInterrupt.mockReturnValueOnce({ exit_code: 0, stdout: '' });
-    writeFileSync(path.join(tmpWt, '.brain-result.json'),
-      JSON.stringify({ verdict: 'APPROVED', rubric_scores: RUBRIC_ALL_PASS, feedback: '' }));
     const { createGanContractNodes } = await import('../harness-gan-graph.js');
     const nodes = createGanContractNodes(null, makeCtx());
     const newState = await nodes.reviewer({ prdContent: '# PRD', contractContent: '# C', round: 1, costUsd: 0 });
@@ -230,9 +233,11 @@ describe('createGanContractNodes', () => {
   });
 
   it('reviewer node: REVISION verdict — feedback 来自结果文件', async () => {
+    mockSpawnDetached.mockImplementationOnce(async () => {
+      writeFileSync(path.join(tmpWt, '.brain-result.json'),
+        JSON.stringify({ verdict: 'REVISION', rubric_scores: RUBRIC_RISK_FAIL, feedback: 'detailed feedback text' }));
+    });
     mockInterrupt.mockReturnValueOnce({ exit_code: 0, stdout: '' });
-    writeFileSync(path.join(tmpWt, '.brain-result.json'),
-      JSON.stringify({ verdict: 'REVISION', rubric_scores: RUBRIC_RISK_FAIL, feedback: 'detailed feedback text' }));
     const { createGanContractNodes } = await import('../harness-gan-graph.js');
     const nodes = createGanContractNodes(null, makeCtx());
     const newState = await nodes.reviewer({ prdContent: '# PRD', contractContent: '# C', round: 1, costUsd: 0 });
@@ -257,9 +262,11 @@ describe('createGanContractNodes', () => {
   });
 
   it('reviewer node: 高轮数（round=10）单独不再 force APPROVED — 由收敛检测裁定', async () => {
+    mockSpawnDetached.mockImplementationOnce(async () => {
+      writeFileSync(path.join(tmpWt, '.brain-result.json'),
+        JSON.stringify({ verdict: 'REVISION', rubric_scores: {}, feedback: '' }));
+    });
     mockInterrupt.mockReturnValueOnce({ exit_code: 0, stdout: '' });
-    writeFileSync(path.join(tmpWt, '.brain-result.json'),
-      JSON.stringify({ verdict: 'REVISION', rubric_scores: {}, feedback: '' }));
     const { createGanContractNodes } = await import('../harness-gan-graph.js');
     const nodes = createGanContractNodes(null, makeCtx());
     const newState = await nodes.reviewer({ prdContent: '# PRD', contractContent: '# C', round: 10, costUsd: 0 });
@@ -268,9 +275,11 @@ describe('createGanContractNodes', () => {
   });
 
   it('reviewer node: rubric 全 ≥7 → APPROVED（即使文件 verdict 说 REVISION）', async () => {
+    mockSpawnDetached.mockImplementationOnce(async () => {
+      writeFileSync(path.join(tmpWt, '.brain-result.json'),
+        JSON.stringify({ verdict: 'REVISION', rubric_scores: RUBRIC_ALL_PASS, feedback: '' }));
+    });
     mockInterrupt.mockReturnValueOnce({ exit_code: 0, stdout: '' });
-    writeFileSync(path.join(tmpWt, '.brain-result.json'),
-      JSON.stringify({ verdict: 'REVISION', rubric_scores: RUBRIC_ALL_PASS, feedback: '' }));
     const { createGanContractNodes } = await import('../harness-gan-graph.js');
     const nodes = createGanContractNodes(null, makeCtx());
     const newState = await nodes.reviewer({ prdContent: '# PRD', contractContent: '# C', round: 1, costUsd: 0 });
@@ -278,9 +287,12 @@ describe('createGanContractNodes', () => {
   });
 
   it('reviewer node: rubric 一维 < 阈值 → REVISION（即使文件 verdict 说 APPROVED）', async () => {
+    mockSpawnDetached.mockImplementationOnce(async () => {
+      writeFileSync(path.join(tmpWt, '.brain-result.json'),
+        JSON.stringify({ verdict: 'APPROVED', rubric_scores: RUBRIC_RISK_FAIL, feedback: 'fb' }));
+    });
     mockInterrupt.mockReturnValueOnce({ exit_code: 0, stdout: '' });
-    writeFileSync(path.join(tmpWt, '.brain-result.json'),
-      JSON.stringify({ verdict: 'APPROVED', rubric_scores: RUBRIC_RISK_FAIL, feedback: 'fb' }));
+    // 下面的旧 writeFileSync 保留以防 spawnDetached 未能覆盖
     const { createGanContractNodes } = await import('../harness-gan-graph.js');
     const nodes = createGanContractNodes(null, makeCtx());
     const newState = await nodes.reviewer({ prdContent: '# PRD', contractContent: '# C', round: 1, costUsd: 0 });
@@ -288,9 +300,11 @@ describe('createGanContractNodes', () => {
   });
 
   it('reviewer node: 空 rubric_scores → fallback 到 file verdict（向后兼容）', async () => {
+    mockSpawnDetached.mockImplementationOnce(async () => {
+      writeFileSync(path.join(tmpWt, '.brain-result.json'),
+        JSON.stringify({ verdict: 'APPROVED', rubric_scores: {}, feedback: '' }));
+    });
     mockInterrupt.mockReturnValueOnce({ exit_code: 0, stdout: '' });
-    writeFileSync(path.join(tmpWt, '.brain-result.json'),
-      JSON.stringify({ verdict: 'APPROVED', rubric_scores: {}, feedback: '' }));
     const { createGanContractNodes } = await import('../harness-gan-graph.js');
     const nodes = createGanContractNodes(null, makeCtx());
     const newState = await nodes.reviewer({ prdContent: '# PRD', contractContent: '# C', round: 1, costUsd: 0 });
@@ -298,9 +312,11 @@ describe('createGanContractNodes', () => {
   });
 
   it('reviewer node: round 3 阈值降 6，rubric 全 ≥6 → APPROVED', async () => {
+    mockSpawnDetached.mockImplementationOnce(async () => {
+      writeFileSync(path.join(tmpWt, '.brain-result.json'),
+        JSON.stringify({ verdict: 'REVISION', rubric_scores: RUBRIC_ALL_SIX, feedback: '' }));
+    });
     mockInterrupt.mockReturnValueOnce({ exit_code: 0, stdout: '' });
-    writeFileSync(path.join(tmpWt, '.brain-result.json'),
-      JSON.stringify({ verdict: 'REVISION', rubric_scores: RUBRIC_ALL_SIX, feedback: '' }));
     const { createGanContractNodes } = await import('../harness-gan-graph.js');
     const nodes = createGanContractNodes(null, makeCtx());
     const newState = await nodes.reviewer({ prdContent: '# PRD', contractContent: '# C', round: 3, costUsd: 0 });
@@ -345,19 +361,24 @@ describe('runGanContractGraph', () => {
       worktreePath: tmpWt,
       githubToken: 'ghs_test',
       budgetCapUsd: 10,
+      readContractFile: vi.fn(async () => '# Contract'),
+      fetchOriginFile: vi.fn(async () => '{"tasks":[]}'),
+      verifyProposer: vi.fn(async () => undefined),
       checkpointer: new MemorySaver(),
       ...overrides,
     };
   }
 
   it('WS3 kickoff: runGanContractGraph 返回 {kickoff: true, thread_id}，不再阻塞', async () => {
-    writeFileSync(path.join(tmpWt, '.brain-result.json'),
-      JSON.stringify({ propose_branch: 'cp-harness-propose-r1-task-e2e' }));
+    // spawnDetached 模拟 proposer 容器写入 brain-result（包含 propose_branch）
+    mockSpawnDetached.mockImplementationOnce(async () => {
+      writeFileSync(path.join(tmpWt, '.brain-result.json'),
+        JSON.stringify({ propose_branch: 'cp-harness-propose-r1-task-e2e' }));
+    });
     const { runGanContractGraph } = await import('../harness-gan-graph.js');
     const res = await runGanContractGraph(makeOpts());
     expect(res.kickoff).toBe(true);
     expect(res.thread_id).toBe('task-e2e-1');
-    // 派发了第一个 proposer 容器
     expect(mockSpawnDetached).toHaveBeenCalledTimes(1);
     const opts = mockSpawnDetached.mock.calls[0][0];
     expect(opts.env.HARNESS_CALLBACK_URL).toContain('/api/brain/harness/callback/');
