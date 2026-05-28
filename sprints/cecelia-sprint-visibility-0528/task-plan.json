@@ -1,0 +1,107 @@
+{
+  "initiative_id": "99e1f58e-fd20-4b48-ba25-090a7f4a110c",
+  "journey_type": "user_facing",
+  "journey_type_reason": "WS4 涉及 apps/dashboard/ HarnessDetailPage 文档 tab，UI 优先级最高；final-e2e 走 mac_web Playwright",
+  "target_environment": "mac_web",
+  "target_environment_reason": "Cecelia Dashboard E2E 走本机 Playwright，localhost:5174，内网",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "Brain API 新增 3 个 Notion 端点：POST /notes、POST /notion/project、POST /notion/task",
+      "scope": "新建 packages/brain/src/routes/notes.js：(1) notesRouter POST / → POST /api/brain/notes，接受 {title,content,type,initiative_id?,sprint_dir?}，调用 Notion AI Notes DB（185c40c2-ba63-828c-973f-81a9c4582cd6）新建页面，返回 {id,url,title} HTTP 201，Notion 失败返回 502 + {error:'notion api error:<detail>'}；(2) notionRouter POST /project → POST /api/brain/notion/project，自动加 [Sprint] 前缀；(3) notionRouter POST /task → POST /api/brain/notion/task，自动推断 [WSn] 前缀；所有端点复用 notionReq/getToken（与 recurring-notion-sync.js 同源）；在 packages/brain/src/routes.js 注册 notesRouter(/notes) 和 notionRouter(/notion)",
+      "dod": [
+        "[BEHAVIOR] POST /api/brain/notes 返回 201 或 502（非 404），201 时 schema {id,url,title}，禁用字段不出现",
+        "[BEHAVIOR] POST /api/brain/notion/project 返回 201 时 title 精确等于 \"[Sprint] MyRun\"（原始 title 完整保留，不能只返回 \"[Sprint]\"）",
+        "[BEHAVIOR] POST /api/brain/notion/task 返回 201 时 title 精确等于 \"[WS2] 实现功能X\"（ws_number=2 精确匹配，禁止 [WSnone]/[WS]），keys==[\"id\",\"title\",\"url\"]",
+        "[BEHAVIOR] POST /api/brain/notes 缺 title → HTTP 400 + {error: string}",
+        "[BEHAVIOR] POST /api/brain/notes 缺 content → HTTP 400 + {error: string}",
+        "[ARTIFACT] packages/brain/src/routes/notes.js 文件存在且含 3 个路由注册",
+        "[ARTIFACT] routes.js 已注册 notesRouter 和 notionRouter"
+      ],
+      "files": [
+        "packages/brain/src/routes/notes.js",
+        "packages/brain/src/routes.js"
+      ],
+      "depends_on": [],
+      "complexity": "M",
+      "estimated_minutes": 45
+    },
+    {
+      "task_id": "ws2",
+      "title": "harness-report SKILL.md Step 3.5 修正（type/content/initiative_id 字段）",
+      "scope": "修正 packages/workflows/skills/harness-report/SKILL.md 中 Step 3.5：(1) sprint-prd.md 映射从 'PRD' 改为 'SprintPRD'；(2) POST 请求体字段从 'body' 改为 'content'；(3) type 字段改用 $DOC_TYPE 变量（不再硬编码 'Log'）；(4) POST payload 增加 initiative_id=$HARNESS_INITIATIVE_ID 和 sprint_dir=$SPRINT_DIR 字段",
+      "dod": [
+        "[BEHAVIOR] SKILL.md Step 3.5 区间内含 SprintPRD（不含 sprint-prd.md:PRD）",
+        "[BEHAVIOR] SKILL.md Step 3.5 区间内 POST payload 用 content 字段（不含 body 字段）",
+        "[BEHAVIOR] SKILL.md Step 3.5 区间内 type 使用 $DOC_TYPE 变量（不含硬编码 Log）",
+        "[BEHAVIOR] SKILL.md Step 3.5 区间内含 initiative_id 字段",
+        "[BEHAVIOR] SKILL.md Step 3.5 三种类型覆盖：PrepPRD/SprintPRD/Contract",
+        "[ARTIFACT] harness-report SKILL.md 含 Step 3.5 字面量"
+      ],
+      "files": [
+        "packages/workflows/skills/harness-report/SKILL.md"
+      ],
+      "depends_on": ["ws1"],
+      "complexity": "S",
+      "estimated_minutes": 20
+    },
+    {
+      "task_id": "ws3",
+      "title": "Brain API GET /harness/sprint-docs 端点",
+      "scope": "在 packages/brain/src/routes/harness.js 新增 GET /sprint-docs?sprint_dir=... 端点：从 REPO_ROOT/{sprint_dir}/ 读取 prep-prd.md、sprint-prd.md、contract-draft.md、harness-report.md；返回 {sprint_dir: string, docs: {prep_prd, sprint_prd, contract, harness_report}}（文件不存在时字段值为 null，不报 404）；缺 sprint_dir 参数返回 HTTP 400 + {error: 'sprint_dir is required'}；query 参数名必须字面用 sprint_dir",
+      "dod": [
+        "[BEHAVIOR] GET /api/brain/harness/sprint-docs?sprint_dir=... 返回 HTTP 200 + {sprint_dir, docs}",
+        "[BEHAVIOR] docs keys == [\"contract\",\"harness_report\",\"prep_prd\",\"sprint_prd\"]（sorted，完全等于）",
+        "[BEHAVIOR] 现有文件（sprint-prd.md）对应字段为 string；不存在文件字段为 null",
+        "[BEHAVIOR] 缺 sprint_dir 参数 → HTTP 400 + {error: string}",
+        "[BEHAVIOR] 禁用响应字段（prepPrd/sprintPrd/contractDraft/report）不出现",
+        "[ARTIFACT] harness.js 含 /sprint-docs 路由注册及 4 个文档字段名"
+      ],
+      "files": [
+        "packages/brain/src/routes/harness.js"
+      ],
+      "depends_on": ["ws2"],
+      "complexity": "S",
+      "estimated_minutes": 25
+    },
+    {
+      "task_id": "ws4",
+      "title": "HarnessDetailPage 新增文档 tab（markdown 渲染）",
+      "scope": "在 apps/dashboard/src/pages/harness/HarnessDetailPage.tsx 新增 [文档] tab：(1) 添加 tab 切换 state（activeTab）；(2) 文档 tab 触发器 data-testid='docs-tab'；(3) 点击后 fetch GET /api/brain/harness/sprint-docs?sprint_dir={sprint_dir_from_initiative}；(4) 使用 react-markdown 渲染 docs.sprint_prd（含 docs.prep_prd）；(5) 渲染容器 data-testid='docs-tab-content'；若 react-markdown 未安装则 npm install react-markdown",
+      "dod": [
+        "[BEHAVIOR] HarnessDetailPage.tsx 含 docs-tab、docs-tab-content、sprint-docs 三个关键字符串",
+        "[BEHAVIOR] GET /api/brain/harness/sprint-docs?sprint_dir=... 对现有 sprint_dir 返回 sprint_prd string",
+        "[BEHAVIOR] HarnessDetailPage.tsx 含 tab 切换 state 管理代码",
+        "[BEHAVIOR:E2E] Playwright 点击 docs-tab → docs-tab-content 可见 → markdown 内容非空",
+        "[ARTIFACT] HarnessDetailPage.tsx 含 data-testid='docs-tab' 和 data-testid='docs-tab-content'",
+        "[ARTIFACT] react-markdown 依赖已安装或在 package.json 中声明"
+      ],
+      "files": [
+        "apps/dashboard/src/pages/harness/HarnessDetailPage.tsx",
+        "apps/dashboard/package.json"
+      ],
+      "depends_on": ["ws3"],
+      "complexity": "M",
+      "estimated_minutes": 45
+    },
+    {
+      "task_id": "ws5",
+      "title": "tick-runner.js 死任务自动重置（execution_attempts=0 且超 10 分钟）",
+      "scope": "在 packages/brain/src/tick-runner.js 适当位置（Phase 1 扫描段）新增死任务重置逻辑：查询 execution_attempts=0 AND status IN ('in_progress','queued') AND updated_at < NOW()-INTERVAL '10 minutes'，批量 UPDATE status='queued', execution_attempts=0, claimed_by=NULL, claimed_at=NULL, started_at=NULL；打印日志 '[tick] Reset N dead task(s) (execution_attempts=0)'；79710a5d 因此逻辑自动被重置（无需手动 PATCH）",
+      "dod": [
+        "[BEHAVIOR] tick-runner.js 含 execution_attempts 扫描条件和 10 分钟时间窗口",
+        "[BEHAVIOR] 运行时：execution_attempts=0 且超 10 分钟的任务在 30s 内变 queued（带插入测试任务验证）",
+        "[BEHAVIOR] execution_attempts=1 的任务不被误重置（负向测试）",
+        "[BEHAVIOR] 任务 79710a5d status 变为 queued（tick 执行后自动重置）",
+        "[BEHAVIOR] 死任务 UPDATE 包含 claimed_by/claimed_at/started_at 清空字段",
+        "[ARTIFACT] tick-runner.js 含 execution_attempts、queued 重置、日志字符串"
+      ],
+      "files": [
+        "packages/brain/src/tick-runner.js"
+      ],
+      "depends_on": ["ws4"],
+      "complexity": "S",
+      "estimated_minutes": 25
+    }
+  ]
+}
