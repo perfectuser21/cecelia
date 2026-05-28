@@ -198,6 +198,32 @@ Step 1: [用户如何知道出错了] → Step 2: [用户如何恢复]
 ### 基础设施
 - [ ] 需要：[服务/端口/环境变量/GHA secrets 名称]
 
+### ⚠️ Final E2E 前置核查（写 PrepPRD 时必须执行，有 ❌ = 不能点火）
+
+> **Final E2E = 模拟真实用户逐步走完 Golden Path，这是所有 sprint 的默认行为，不可降级。**
+> 以下核查结果必须呈现给用户。用户确认"所有 ❌ 已处理"后才能继续。
+
+**核查步骤（PrepPRD 阶段自动执行）：**
+
+```bash
+# windows_cloud / mac_web：核查 GHA secrets 是否已配置
+REPO=$(cat sprints/*/sprint-prd.md 2>/dev/null | grep "base_repo" | head -1 | awk '{print $2}' || echo "")
+if [ -n "$REPO" ]; then
+  gh secret list --repo "$REPO" 2>/dev/null | grep -E "E2E_|SUPER_ADMIN_" \
+    && echo "✅ E2E secrets 已配置" || echo "❌ E2E secrets 未配置"
+fi
+```
+
+把核查结果填入表格，呈现给用户：
+
+| 前置条件 | 需要什么 | 状态 | 若 ❌ 如何修复 |
+|---|---|---|---|
+| GHA secret | [secret 名称] | ✅/❌ | `gh secret set <NAME> --repo <REPO>` |
+| 测试账号 | [邮箱] 在 DB 存在 | ✅/❌ | 手动创建或提供账号 |
+| 目标服务 | [服务名] 已部署 | ✅/❌ | 部署步骤 |
+
+**所有 ❌ 项必须处理完毕，用户确认后才能点火 Harness。**
+
 ## 用户确认的成功标准
 - [可验证的条件]
 ```

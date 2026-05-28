@@ -116,6 +116,13 @@ features:
 # Changelog（细粒度改动历史）
 # ============================================================================
 changelog:
+  - version: "19.3.0"
+    date: "2026-05-28"
+    change: "feat"
+    description: "dev skill v19.3 — PrepPRD 加 Final E2E 前置核查段（cp-0528151614-dev-skill-e2e-prereq-check）。「前置工作」段新增「Final E2E 前置核查」小节：写 PrepPRD 时必须自动执行 gh secret list 核查 GHA secrets、测试账号、目标服务就绪状态，列出 ✅/❌ 表格呈现给用户，有 ❌ 必须用户确认处理完毕后才能点火 Harness。根因：Line 00 sprint Final E2E 因 secrets 未配置必然失败，但 PrepPRD 阶段没有主动核查。"
+    files:
+      - "packages/engine/skills/dev/SKILL.md (v19.2.0 → v19.3.0 — Final E2E 前置核查)"
+
   - version: "19.2.0"
     date: "2026-05-27"
     change: "feat"
