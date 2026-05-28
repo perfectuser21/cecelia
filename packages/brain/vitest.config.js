@@ -126,6 +126,9 @@ export default defineConfig({
       '../../sprints/cecelia-sprint-visibility-0528/tests/ws3/sprint-docs.test.ts',
       // Sprint Tests (ws5): 使用 process.cwd() 相对路径，brain-unit 从 packages/brain 运行时路径错误 → 走 Sprint Tests CI
       '../../sprints/cecelia-sprint-visibility-0528/tests/ws5/dead-task-reset.test.ts',
+      // Sprint Tests (codex-xian-verify ws1): 使用 resolve('./packages/brain/...') 相对路径，
+      // brain-unit 从 packages/brain 运行时路径双重 → 走 Sprint Tests CI
+      '../../sprints/codex-xian-verify/tests/ws1/health-codex-bridge-ws1.test.ts',
     ],
     coverage: {
       provider: 'v8',
