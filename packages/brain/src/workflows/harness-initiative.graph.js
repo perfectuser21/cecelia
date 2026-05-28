@@ -611,7 +611,7 @@ export async function runPlannerNode(state, opts = {}) {
     });
     const { exit_code, stdout } = callbackPayload || {};
     if (exit_code !== 0) {
-      return { error: { node: 'planner', message: `Planner exit=${exit_code}` } };
+      return { error: { node: 'planner', message: `Planner exit=${exit_code}: ${(stdout || '').slice(-300)}` } };
     }
     const plannerOutput = parseDockerOutput(stdout ?? '');
     return { plannerOutput };
@@ -646,8 +646,8 @@ ${state.task?.payload?.prep_prd_body || '（未提供，Planner 从 sprint-prd.m
 3. task-plan.json 必须被 \`\`\`json ... \`\`\` 代码块包裹便于提取`;
 
   const rand = crypto.randomUUID().slice(0, 8);
-  const safeId = String(initiativeId).replace(/[^a-zA-Z0-9-]/g, '').slice(0, 8);
-  const containerId = `harness-planner-${safeId}-${rand}`;
+  const safeTaskId = String(state.task?.id || initiativeId).replace(/[^a-zA-Z0-9-]/g, '').slice(0, 8);
+  const containerId = `harness-planner-${safeTaskId}-${rand}`;
   const threadId = `harness-initiative:${initiativeId}:planner`;
 
   const acctOpts = { task: { ...state.task, task_type: 'harness_planner' }, env: {} };

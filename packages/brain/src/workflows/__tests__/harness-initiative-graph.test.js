@@ -182,7 +182,8 @@ describe('runPlannerNode', () => {
     await runPlannerNode(state);
     const insertCall = mockDbQuery.mock.calls.find(c => String(c[0]).includes('walking_skeleton_thread_lookup'));
     expect(insertCall).toBeDefined();
-    expect(insertCall[1]).toContain('harness-initiative');
+    // graph_name='harness-initiative' 在 SQL 字符串里（不是参数），检查 SQL 字符串
+    expect(String(insertCall[0])).toContain('harness-initiative');
   });
 });
 
