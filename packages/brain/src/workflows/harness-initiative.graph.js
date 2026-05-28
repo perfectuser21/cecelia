@@ -31,6 +31,8 @@ import pool from '../db.js';
 import { spawn } from '../spawn/index.js';
 import { executeOnHost } from '../spawn/host-executor.js';
 import { reconnectOrSpawn, makeSessionRecord } from '../harness-session-bridge.js';
+import { spawnDockerDetached } from '../spawn/detached.js';
+import { resolveAccount } from '../spawn/middleware/account-rotation.js';
 import { parseDockerOutput, loadSkillContent, readBrainResult } from '../harness-shared.js';
 import { parseTaskPlan, upsertTaskPlan } from '../harness-dag.js';
 import { runFinalE2E, attributeFailures } from '../harness-final-e2e.js';
@@ -550,7 +552,7 @@ export async function runPhaseCIfReady(initiativeTaskId, opts = {}) {
 // 每节点首句幂等门防 LangGraph resume 重 spawn（C6 smoke 教训）。
 // PRD: docs/superpowers/specs/2026-04-25-c8a-harness-initiative-graph-design.md
 
-import { StateGraph, Annotation, START, END } from '@langchain/langgraph';
+import { StateGraph, Annotation, START, END, interrupt } from '@langchain/langgraph';
 import { getPgCheckpointer } from '../orchestrator/pg-checkpointer.js';
 import { LLM_RETRY, DB_RETRY, NO_RETRY } from './retry-policies.js';
 // 注：上方 imports 已含 spawn / parseDockerOutput / loadSkillContent / parseTaskPlan /
@@ -599,12 +601,29 @@ export async function prepInitiativeNode(state) {
   }
 }
 export async function runPlannerNode(state, opts = {}) {
-  if (state.plannerOutput && !state.planner_session) return { plannerOutput: state.plannerOutput };
-  try {
-    const executor = opts.executor || spawn;
-    const sprintDir = state.task?.payload?.sprint_dir || 'sprints';
-    const skillContent = loadSkillContent('harness-planner');
-    const prompt = `你是 harness-planner agent。按下面 SKILL 指令工作。
+  // 幂等门：已有 plannerOutput 直接 passthrough（resume 后重跑此节点时）
+  if (state.plannerOutput) return { plannerOutput: state.plannerOutput };
+  // 幂等门：已 spawn 过（有 containerId）说明在等 callback，重新 interrupt
+  if (state.planner_container_id) {
+    const callbackPayload = interrupt({
+      type: 'wait_planner_callback',
+      containerId: state.planner_container_id,
+    });
+    const { exit_code, stdout } = callbackPayload || {};
+    if (exit_code !== 0) {
+      return { error: { node: 'planner', message: `Planner exit=${exit_code}` } };
+    }
+    const plannerOutput = parseDockerOutput(stdout ?? '');
+    return { plannerOutput };
+  }
+
+  const spawnFn = opts.spawnDetached || spawnDockerDetached;
+  const dbPool = opts.poolOverride || pool;
+  const sprintDir = state.task?.payload?.sprint_dir || 'sprints';
+  const initiativeId = state.initiativeId || state.task?.id;
+  const skillContent = loadSkillContent('harness-planner');
+
+  const prompt = `你是 harness-planner agent。按下面 SKILL 指令工作。
 
 ${skillContent}
 
@@ -612,7 +631,7 @@ ${skillContent}
 
 ## 本次任务参数
 **task_id**: ${state.task.id}
-**initiative_id**: ${state.initiativeId}
+**initiative_id**: ${initiativeId}
 **sprint_dir**: ${sprintDir}
 
 ## 任务描述
@@ -626,53 +645,64 @@ ${state.task?.payload?.prep_prd_body || '（未提供，Planner 从 sprint-prd.m
 2. 在 stdout 末尾输出 task-plan.json
 3. task-plan.json 必须被 \`\`\`json ... \`\`\` 代码块包裹便于提取`;
 
-    const taskArg = {
+  const rand = crypto.randomUUID().slice(0, 8);
+  const safeId = String(initiativeId).replace(/[^a-zA-Z0-9-]/g, '').slice(0, 8);
+  const containerId = `harness-planner-${safeId}-${rand}`;
+  const threadId = `harness-initiative:${initiativeId}:planner`;
+
+  const acctOpts = { task: { ...state.task, task_type: 'harness_planner' }, env: {} };
+  try {
+    await resolveAccount(acctOpts, { taskId: state.task.id });
+  } catch (err) {
+    console.warn(`[harness-initiative] resolveAccount failed: ${err.message}`);
+  }
+
+  try {
+    await spawnFn({
       task: { ...state.task, task_type: 'harness_planner' },
       prompt,
       worktreePath: state.worktreePath,
+      containerId,
       env: {
+        ...acctOpts.env,
         CECELIA_TASK_TYPE: 'harness_planner',
         HARNESS_NODE: 'planner',
         HARNESS_SPRINT_DIR: sprintDir,
-        HARNESS_INITIATIVE_ID: state.initiativeId,
+        HARNESS_INITIATIVE_ID: initiativeId,
         CECELIA_JOURNEY_ID: state.task?.payload?.journey_id || '',
         GITHUB_TOKEN: state.githubToken,
+        HARNESS_CALLBACK_URL: `http://host.docker.internal:5221/api/brain/harness/callback/${containerId}`,
         ...(buildHarnessGoalSettings(HARNESS_PHASE_GOALS.planner)
           ? { CECELIA_GOAL_SETTINGS: buildHarnessGoalSettings(HARNESS_PHASE_GOALS.planner) }
           : {}),
       },
-    };
-
-    const result = await reconnectOrSpawn({
-      nodeKey: 'planner_session',
-      state,
-      executor,
-      taskArg,
-      worktreePath: state.worktreePath,
-      async readOutput(wt) {
-        try {
-          const { readFile: rf } = await import('node:fs/promises');
-          const content = await rf(`${wt}/${sprintDir}/sprint-prd.md`, 'utf8');
-          return { plannerOutput: content };
-        } catch { return null; }
-      },
     });
-
-    if (result.plannerOutput) {
-      // reconnected path: readOutput 已经返回了 plannerOutput
-      return { plannerOutput: result.plannerOutput, planner_session: makeSessionRecord(result) };
-    }
-    if (result.exit_code !== 0 || result.timed_out) {
-      const msg = result.timed_out
-        ? 'Docker timeout'
-        : `Docker exit=${result.exit_code}: ${(result.stderr || '').slice(-500)}`;
-      return { error: { node: 'planner', message: msg } };
-    }
-    const plannerOutput = parseDockerOutput(result.stdout ?? '');
-    return { plannerOutput, planner_session: makeSessionRecord(result) };
   } catch (err) {
-    return { error: { node: 'planner', message: err.message } };
+    return { error: { node: 'planner', message: `spawn: ${err.message}` } };
   }
+
+  try {
+    await dbPool.query(
+      `INSERT INTO walking_skeleton_thread_lookup (container_id, thread_id, graph_name, status)
+       VALUES ($1, $2, 'harness-initiative', 'spawning')
+       ON CONFLICT (container_id) DO NOTHING`,
+      [containerId, threadId]
+    );
+  } catch (err) {
+    console.warn(`[harness-initiative] thread_lookup INSERT failed cid=${containerId}: ${err.message}`);
+  }
+
+  const callbackPayload = interrupt({
+    type: 'wait_planner_callback',
+    containerId,
+  });
+
+  const { exit_code, stdout } = callbackPayload || {};
+  if (exit_code !== 0) {
+    return { error: { node: 'planner', message: `Planner exit=${exit_code}` } };
+  }
+  const plannerOutput = parseDockerOutput(stdout ?? '');
+  return { plannerOutput, planner_container_id: containerId };
 }
 export async function parsePrdNode(state) {
   if (state.taskPlan && state.prdContent) {
