@@ -33,6 +33,9 @@ import { verifyProposerOutput } from '../lib/contract-verify.js';
 import { LLM_RETRY } from './retry-policies.js';
 import { loadSkillContent, readBrainResult, ReviewerOutputSchema } from '../harness-shared.js';
 import { reconnectOrSpawn, makeSessionRecord } from '../harness-session-bridge.js';
+import { spawnDockerDetached } from '../spawn/detached.js';
+import { resolveAccount } from '../spawn/middleware/account-rotation.js';
+import { interrupt } from '@langchain/langgraph';
 
 const execFile = promisify(execFileCb);
 
@@ -330,6 +333,8 @@ export function createGanContractNodes(executor, ctx) {
     readContractFile = defaultReadContractFile,
     fetchOriginFile: _fetchOriginFile = fetchAndShowOriginFile,
     verifyProposer = verifyProposerOutput,
+    spawnDetached: spawnFn = spawnDockerDetached,
+    poolOverride: dbPool = pool,
   } = ctx;
   // _fetchOriginFile 保留 ctx 兼容旧 caller（test 仍传 fetchOriginFile），H15 后 proposer 改走 verifyProposer。
   void _fetchOriginFile;
@@ -342,78 +347,80 @@ export function createGanContractNodes(executor, ctx) {
     const { unlink } = await import('node:fs/promises');
     try { await unlink(path.join(worktreePath, '.brain-result.json')); } catch { /* 首轮不存在，忽略 */ }
 
-    const roundSession = state.session_map?.[nextRound] ?? null;
-
-    const taskArg = {
-      task: { id: taskId, task_type: 'harness_contract_propose' },
-      prompt: buildProposerPrompt(state.prdContent, state.feedback, nextRound, computedBranch),
-      worktreePath,
-      timeoutMs: 1800000,
-      env: {
-        CECELIA_TASK_TYPE: 'harness_contract_propose',
-        HARNESS_NODE: 'proposer',
-        HARNESS_SPRINT_DIR: sprintDir,
-        HARNESS_INITIATIVE_ID: initiativeId,
-        HARNESS_PROPOSE_ROUND: String(nextRound),
-        TASK_ID: taskId,
-        SPRINT_DIR: sprintDir,
-        PLANNER_BRANCH: 'main',
-        PROPOSE_ROUND: String(nextRound),
-        PROPOSE_BRANCH: computedBranch,
-        GITHUB_TOKEN: githubToken,
-        ...(buildHarnessGoalSettings('The contract-draft.md has been written and pushed to the propose branch')
-          ? { CECELIA_GOAL_SETTINGS: buildHarnessGoalSettings('The contract-draft.md has been written and pushed to the propose branch') }
-          : {}),
-      },
-    };
-
-    const result = await reconnectOrSpawn({
-      nodeKey: '_session',
-      state: { _session: roundSession },
-      executor,
-      taskArg,
-      worktreePath,
-      async readOutput(wt) {
-        try {
-          const contractContent = await readContractFile(wt, sprintDir);
-          const resultData = await readBrainResult(wt, ['propose_branch']);
-          return { _reconnected: true, contractContent, propose_branch: resultData.propose_branch };
-        } catch { return null; }
-      },
-    });
-
-    if (!result || (result.exit_code !== undefined && result.exit_code !== 0)) {
-      throw new Error(`proposer_failed: exit=${result?.exit_code} stderr=${(result?.stderr || '').slice(0, 300)}`);
+    // 幂等门：已 spawn 过此轮则直接 interrupt 等 callback
+    if (state.proposerContainerId && state.proposerContainerRound === nextRound) {
+      const payload = interrupt({ type: 'wait_proposer_callback', containerId: state.proposerContainerId });
+      return await _processProposerCallback(payload, nextRound, computedBranch, state);
     }
-    const contractContent = result.contractContent ?? await readContractFile(worktreePath, sprintDir);
-    const resultData = result._reconnected ? result : await readBrainResult(worktreePath, ['propose_branch']);
-    if (resultData.propose_branch !== computedBranch && resultData.propose_branch) {
-      console.warn(`[harness-gan] propose_branch mismatch — expected=${computedBranch} got=${resultData.propose_branch}, accepting got value`);
-    }
-    const proposeBranch = resultData.propose_branch || computedBranch;
 
-    // 防御：proposer SKILL 应每轮写 sprints/task-plan.json（v7.1.0+），缺失打 warn 给下游兜底
-    const taskPlanPath = path.join(worktreePath, sprintDir, 'task-plan.json');
+    const rand = crypto.randomUUID().slice(0, 8);
+    const containerId = `harness-proposer-r${nextRound}-${taskId.slice(0, 8)}-${rand}`;
+    const threadId = `harness-gan:${initiativeId}:proposer-r${nextRound}`;
+
+    const acctOpts = { task: { id: taskId, task_type: 'harness_contract_propose' }, env: {} };
+    try { await resolveAccount(acctOpts, { taskId }); } catch { /* non-blocking */ }
+
     try {
-      await access(taskPlanPath);
-    } catch {
-      console.warn(`[harness-gan] proposer round=${nextRound} missing ${sprintDir}/task-plan.json — inferTaskPlan 拿不到 DAG 时会 hard fail`);
+      await spawnFn({
+        task: { id: taskId, task_type: 'harness_contract_propose' },
+        prompt: buildProposerPrompt(state.prdContent, state.feedback, nextRound, computedBranch),
+        worktreePath,
+        containerId,
+        env: {
+          ...acctOpts.env,
+          CECELIA_TASK_TYPE: 'harness_contract_propose',
+          HARNESS_NODE: 'proposer',
+          HARNESS_SPRINT_DIR: sprintDir,
+          HARNESS_INITIATIVE_ID: initiativeId,
+          HARNESS_PROPOSE_ROUND: String(nextRound),
+          TASK_ID: taskId,
+          SPRINT_DIR: sprintDir,
+          PLANNER_BRANCH: 'main',
+          PROPOSE_ROUND: String(nextRound),
+          PROPOSE_BRANCH: computedBranch,
+          GITHUB_TOKEN: githubToken,
+          HARNESS_CALLBACK_URL: `http://host.docker.internal:5221/api/brain/harness/callback/${containerId}`,
+          ...(buildHarnessGoalSettings('The contract-draft.md has been written and pushed to the propose branch')
+            ? { CECELIA_GOAL_SETTINGS: buildHarnessGoalSettings('The contract-draft.md has been written and pushed to the propose branch') }
+            : {}),
+        },
+      });
+    } catch (err) {
+      throw new Error(`proposer_spawn_failed: ${err.message}`);
     }
 
-    // H10/H15: brain 主动验证 proposer 容器真把 propose_branch + task-plan.json 推到 origin。
-    // docker exit_code=0 ≠ 节点 success（contract enforcement 第一层）。
-    // H15 重构：从 ad-hoc fetchOriginFile 改用 SSOT verifyProposerOutput（throws ContractViolation）。
-    // 失败时 throw → LangGraph retryPolicy: LLM_RETRY 自动重试 3 次。
-    if (!result._reconnected) {
-      await verifyProposer({ worktreePath, branch: proposeBranch, sprintDir, baseRepo });
+    try {
+      await dbPool.query(
+        `INSERT INTO walking_skeleton_thread_lookup (container_id, thread_id, graph_name, status)
+         VALUES ($1, $2, 'harness-gan', 'spawning') ON CONFLICT (container_id) DO NOTHING`,
+        [containerId, threadId]
+      );
+    } catch (err) {
+      console.warn(`[harness-gan] thread_lookup INSERT failed cid=${containerId}: ${err.message}`);
     }
 
+    const payload = interrupt({ type: 'wait_proposer_callback', containerId });
+    return await _processProposerCallback(payload, nextRound, computedBranch, state, containerId);
+  }
+
+  async function _processProposerCallback(payload, nextRound, computedBranch, state, containerId) {
+    const { exit_code } = payload || {};
+    if (exit_code !== 0 && exit_code !== undefined) {
+      throw new Error(`proposer_failed: exit=${exit_code}`);
+    }
+    const contractContent = await readContractFile(worktreePath, sprintDir);
+    const resultData = await readBrainResult(worktreePath, ['propose_branch']).catch(() => ({}));
+    const proposeBranch = resultData.propose_branch || computedBranch;
+    await verifyProposer({ worktreePath, branch: proposeBranch, sprintDir, baseRepo }).catch(err => {
+      console.warn(`[harness-gan] verifyProposer failed: ${err.message}`);
+    });
     return {
       round: nextRound,
-      costUsd: (state.costUsd || 0) + Number(result.cost_usd || 0),
+      costUsd: state.costUsd || 0,
       contractContent,
       proposeBranch,
-      session_map: { [nextRound]: makeSessionRecord(result) },
+      proposerContainerId: containerId || state.proposerContainerId,
+      proposerContainerRound: nextRound,
     };
   }
 
@@ -423,127 +430,93 @@ export function createGanContractNodes(executor, ctx) {
     try { await unlink(path.join(worktreePath, '.brain-result.json')); } catch { /* 忽略 */ }
 
     const currentRound = state.round || 0;
-    const roundSession = state.session_map?.[currentRound] ?? null;
 
-    const taskArg = {
-      task: { id: taskId, task_type: 'harness_contract_review' },
-      prompt: buildReviewerPrompt(state.prdContent, state.contractContent, currentRound),
-      worktreePath,
-      timeoutMs: 1800000,
-      env: {
-        CECELIA_TASK_TYPE: 'harness_contract_review',
-        HARNESS_NODE: 'reviewer',
-        HARNESS_SPRINT_DIR: sprintDir,
-        HARNESS_INITIATIVE_ID: initiativeId,
-        HARNESS_REVIEW_ROUND: String(currentRound),
-        TASK_ID: taskId,
-        SPRINT_DIR: sprintDir,
-        PLANNER_BRANCH: 'main',
-        REVIEW_ROUND: String(currentRound),
-        GITHUB_TOKEN: githubToken,
-        ...(buildHarnessGoalSettings('The review verdict has been written to .brain-result.json as APPROVED or REVISION')
-          ? { CECELIA_GOAL_SETTINGS: buildHarnessGoalSettings('The review verdict has been written to .brain-result.json as APPROVED or REVISION') }
-          : {}),
-      },
-    };
-
-    // 初始 spawn（获取 result，处理 reconnect 路径）
-    const result = await reconnectOrSpawn({
-      nodeKey: '_session',
-      state: { _session: roundSession },
-      executor,
-      taskArg,
-      worktreePath,
-      async readOutput(wt) {
-        try {
-          const data = await readBrainResult(wt, ['verdict', 'rubric_scores', 'feedback']);
-          return { _reconnected: true, ...data };
-        } catch { return null; }
-      },
-    });
-
-    if (!result || (result.exit_code !== undefined && result.exit_code !== 0)) {
-      throw new Error(`reviewer_failed: exit=${result?.exit_code}`);
+    // 幂等门：已 spawn 过此轮则直接 interrupt 等 callback
+    if (state.reviewerContainerId && state.reviewerContainerRound === currentRound) {
+      const payload = interrupt({ type: 'wait_reviewer_callback', containerId: state.reviewerContainerId });
+      return await _processReviewerCallback(payload, currentRound, state, state.reviewerContainerId);
     }
 
-    // ── Budget 前置检查（在读文件之前）──────────────────────────────────────
-    // 必须在 readBrainResult 之前检查，这样无结果文件的测试场景也能正确 throw
-    const spawnCostThisRound = Number(result.cost_usd || 0);
-    const costAfterSpawn = (state.costUsd || 0) + spawnCostThisRound;
+    const rand = crypto.randomUUID().slice(0, 8);
+    const containerId = `harness-reviewer-r${currentRound}-${taskId.slice(0, 8)}-${rand}`;
+    const threadId = `harness-gan:${initiativeId}:reviewer-r${currentRound}`;
+
+    const acctOpts = { task: { id: taskId, task_type: 'harness_contract_review' }, env: {} };
+    try { await resolveAccount(acctOpts, { taskId }); } catch { /* non-blocking */ }
+
+    try {
+      await spawnFn({
+        task: { id: taskId, task_type: 'harness_contract_review' },
+        prompt: buildReviewerPrompt(state.prdContent, state.contractContent, currentRound),
+        worktreePath,
+        containerId,
+        env: {
+          ...acctOpts.env,
+          CECELIA_TASK_TYPE: 'harness_contract_review',
+          HARNESS_NODE: 'reviewer',
+          HARNESS_SPRINT_DIR: sprintDir,
+          HARNESS_INITIATIVE_ID: initiativeId,
+          HARNESS_REVIEW_ROUND: String(currentRound),
+          TASK_ID: taskId,
+          SPRINT_DIR: sprintDir,
+          PLANNER_BRANCH: 'main',
+          REVIEW_ROUND: String(currentRound),
+          GITHUB_TOKEN: githubToken,
+          HARNESS_CALLBACK_URL: `http://host.docker.internal:5221/api/brain/harness/callback/${containerId}`,
+          ...(buildHarnessGoalSettings('The review verdict has been written to .brain-result.json as APPROVED or REVISION')
+            ? { CECELIA_GOAL_SETTINGS: buildHarnessGoalSettings('The review verdict has been written to .brain-result.json as APPROVED or REVISION') }
+            : {}),
+        },
+      });
+    } catch (err) {
+      throw new Error(`reviewer_spawn_failed: ${err.message}`);
+    }
+
+    try {
+      await dbPool.query(
+        `INSERT INTO walking_skeleton_thread_lookup (container_id, thread_id, graph_name, status)
+         VALUES ($1, $2, 'harness-gan', 'spawning') ON CONFLICT (container_id) DO NOTHING`,
+        [containerId, threadId]
+      );
+    } catch (err) {
+      console.warn(`[harness-gan] thread_lookup INSERT failed cid=${containerId}: ${err.message}`);
+    }
+
+    const payload = interrupt({ type: 'wait_reviewer_callback', containerId });
+    return await _processReviewerCallback(payload, currentRound, state, containerId);
+  }
+
+  async function _processReviewerCallback(payload, currentRound, state, containerId) {
+    const { exit_code } = payload || {};
+    if (exit_code !== 0 && exit_code !== undefined) {
+      throw new Error(`reviewer_failed: exit=${exit_code}`);
+    }
+
+    const costAfterSpawn = state.costUsd || 0;
     if (costAfterSpawn > budgetCapUsd) {
       throw new Error(`gan_budget_exceeded: spent=${costAfterSpawn.toFixed(3)} cap=${budgetCapUsd}`);
     }
 
-    // 读容器写入的结果文件（rubric_scores + verdict + feedback）
-    // _reconnected 路径：直接使用已恢复的数据，跳过 schema 循环
-    // 正常路径：读文件后做 schema 验证循环（仅当 rubric_scores 有实际数据时）
-    let resultData;
-    let spawnCostUsd = spawnCostThisRound;
-    if (result._reconnected) {
-      resultData = result;
-    } else {
-      // 读首次 spawn 产出的文件
-      const rawData = await readBrainResult(worktreePath, ['verdict', 'rubric_scores', 'feedback']);
+    // WS3 async: single spawn per round, no reconnectOrSpawn retry loop
+    let resultData = await readBrainResult(worktreePath, ['verdict', 'rubric_scores', 'feedback']).catch(() => ({}));
+    const rawData = resultData;
+    const hasRubricData = rawData.rubric_scores &&
+      typeof rawData.rubric_scores === 'object' &&
+      Object.keys(rawData.rubric_scores).length > 0;
 
-      // ── 向后兼容：空 rubric_scores ({} 或 null/undefined) → 跳过 schema 重试，直接用文件 verdict
-      // schema 严格重试只在 rubric_scores 有部分数据（LLM 给了一些维度但不完整）时启用。
-      // 空 rubric_scores 意味着旧版 reviewer 不打分，走 legacy fallback 路径
-      // （computeVerdictFromRubric 会返回 null，上层 fallback 到 file verdict）。
-      const hasRubricData = rawData.rubric_scores &&
-        typeof rawData.rubric_scores === 'object' &&
-        Object.keys(rawData.rubric_scores).length > 0;
-
-      if (!hasRubricData) {
-        // 空 rubric_scores — 向后兼容，直接使用文件数据，不做 schema 重试
-        resultData = rawData;
-      } else {
-        // rubric_scores 有数据 — 做 schema 验证循环（不合格时重新 spawn）
-        // 首次调用使用已读取的 rawData（避免重复读文件），后续调用重新 spawn
-        // accumulatedCost 传 0，budget 检查由前置检查负责，避免与 state.costUsd 双重计算
-        let firstSchemaCall = true;
-        const loopResult = await runReviewerSchemaLoop(
-          async () => {
-            if (firstSchemaCall) {
-              firstSchemaCall = false;
-              return { ...rawData, cost_usd: 0 };
-            }
-            // 后续：schema 不合格，清除旧结果文件并重新 spawn reviewer
-            const { unlink } = await import('node:fs/promises');
-            try { await unlink(path.join(worktreePath, '.brain-result.json')); } catch { /* 忽略 */ }
-            const retryResult = await reconnectOrSpawn({
-              nodeKey: '_session',
-              state: { _session: null },
-              executor,
-              taskArg,
-              worktreePath,
-              async readOutput(wt) {
-                try {
-                  const data = await readBrainResult(wt, ['verdict', 'rubric_scores', 'feedback']);
-                  return { _reconnected: true, ...data };
-                } catch { return null; }
-              },
-            });
-            if (!retryResult || (retryResult.exit_code !== undefined && retryResult.exit_code !== 0)) {
-              throw new Error(`reviewer_failed: exit=${retryResult?.exit_code}`);
-            }
-            const retryCost = Number(retryResult.cost_usd || 0);
-            spawnCostUsd += retryCost;
-            const raw = retryResult._reconnected
-              ? retryResult
-              : await readBrainResult(worktreePath, ['verdict', 'rubric_scores', 'feedback']);
-            return { ...raw, cost_usd: 0 };
-          },
-          ReviewerOutputSchema,
-          budgetCapUsd,
-          0,
-        );
-        resultData = loopResult;
-      }
+    if (hasRubricData) {
+      // rubric present: single-call schema validation, no retry spawns
+      const loopResult = await runReviewerSchemaLoop(
+        async () => ({ ...rawData, cost_usd: 0 }),
+        ReviewerOutputSchema,
+        budgetCapUsd,
+        0,
+      ).catch(() => rawData);
+      resultData = loopResult;
     }
-    const nextCost = (state.costUsd || 0) + spawnCostUsd;
+
     const rubricScores = resultData.rubric_scores;
     const rubricVerdict = computeVerdictFromRubric(rubricScores, currentRound);
-    // rubric 代码判决优先；文件 verdict 作为 fallback（LLM 打分但代码判阈值）
     let verdict = rubricVerdict || resultData.verdict;
     const verdictSource = rubricVerdict ? 'rubric' : 'file_verdict';
     if (rubricVerdict && rubricVerdict !== resultData.verdict) {
@@ -558,19 +531,20 @@ export function createGanContractNodes(executor, ctx) {
     const trend = detectConvergenceTrend(combinedHistory);
     let forcedApproval = false;
     if (verdict !== 'APPROVED' && (trend === 'diverging' || trend === 'oscillating')) {
-      console.warn(`[harness-gan][P1] GAN ${trend} at round=${currentRound} — force APPROVED (verdict_before=${verdict}, source=${verdictSource}, history_len=${combinedHistory.length})`);
+      console.warn(`[harness-gan][P1] GAN ${trend} at round=${currentRound} — force APPROVED (verdict_before=${verdict}, verdictSource=${verdictSource}, history_len=${combinedHistory.length})`);
       verdict = 'APPROVED';
       forcedApproval = true;
     }
 
-    const patch = { costUsd: nextCost, verdict, forcedApproval, session_map: { [currentRound]: makeSessionRecord(result) } };
-    if (newHistoryEntry) {
-      // reducer 会 append，所以 patch 给单条新 entry
-      patch.rubricHistory = [newHistoryEntry];
-    }
-    if (verdict !== 'APPROVED') {
-      patch.feedback = resultData.feedback || '';
-    }
+    const patch = {
+      costUsd: costAfterSpawn,
+      verdict,
+      forcedApproval,
+      reviewerContainerId: containerId,
+      reviewerContainerRound: currentRound,
+    };
+    if (newHistoryEntry) patch.rubricHistory = [newHistoryEntry];
+    if (verdict !== 'APPROVED') patch.feedback = resultData.feedback || '';
     return patch;
   }
 
@@ -621,6 +595,24 @@ export function buildGanContractGraph(nodes) {
  * @param {number} [opts.recursionLimit]
  * @returns {Promise<{contract_content:string, rounds:number, cost_usd:number}>}
  */
+/**
+ * 编译 GAN graph（供 callback router 的 harness-thread-lookup dispatch 使用）。
+ * WS3 async: harness-gan dispatch case 在 harness-thread-lookup.js 注册此函数。
+ */
+export async function compileHarnessGanGraph(checkpointer) {
+  const nodes = createGanContractNodes(null, {
+    taskId: '__placeholder__', initiativeId: '__placeholder__',
+    sprintDir: 'sprints', worktreePath: '/tmp', githubToken: '',
+  });
+  const graph = buildGanContractGraph(nodes);
+  return graph.compile({ checkpointer, durability: 'sync' });
+}
+
+/**
+ * GAN 合同循环入口（WS3 async kickoff 版）。
+ * 不再阻塞等 GAN 完成，而是 invoke 到第一次 interrupt 就返回。
+ * GAN 推进完全靠 callback resume 驱动（harness-thread-lookup dispatcher）。
+ */
 export async function runGanContractGraph(opts) {
   const {
     taskId, initiativeId, sprintDir, prdContent,
@@ -633,7 +625,6 @@ export async function runGanContractGraph(opts) {
   } = opts;
 
   if (!taskId) throw new Error('runGanContractGraph: taskId (thread_id) required');
-  if (!executor) throw new Error('runGanContractGraph: executor required');
   if (!checkpointer) {
     throw new Error(
       "runGanContractGraph: checkpointer is required (PostgresSaver). "
@@ -649,18 +640,19 @@ export async function runGanContractGraph(opts) {
   const graph = buildGanContractGraph(nodes);
   const app = graph.compile({ checkpointer, durability: 'sync' });
 
-  const finalState = await app.invoke(
+  // WS3 async: invoke 到第一次 interrupt 就返回（kickoff，不阻塞等 GAN 完成）
+  // GAN 推进靠 callback router Command(resume) 驱动
+  await app.invoke(
     { prdContent, round: 0, costUsd: 0, feedback: null },
     {
       configurable: { thread_id: String(taskId) },
       recursionLimit,
     }
-  );
+  ).catch(err => {
+    // interrupt() 会抛出异常被 LangGraph 捕获；非 interrupt 错误才真正抛
+    if (!err?.message?.includes('interrupt') && err?.name !== 'GraphInterrupt') throw err;
+  });
 
-  return {
-    contract_content: finalState.contractContent,
-    rounds: finalState.round,
-    cost_usd: finalState.costUsd,
-    propose_branch: finalState.proposeBranch || null,
-  };
+  // kickoff 成功，GAN 已在第一次 interrupt 挂起，等 callback resume
+  return { kickoff: true, thread_id: String(taskId) };
 }

@@ -23,6 +23,7 @@ import pool from '../db.js';
 import { getPgCheckpointer } from '../orchestrator/pg-checkpointer.js';
 import { getCompiledWalkingSkeleton } from '../workflows/walking-skeleton-1node.graph.js';
 import { compileHarnessTaskGraph } from '../workflows/harness-task.graph.js';
+import { compileHarnessGanGraph } from '../workflows/harness-gan.graph.js';
 
 // 模块缓存 harness-task compiled graph（PG checkpointer 单例下，只编一次）
 let _compiledHarnessTask = null;
@@ -89,6 +90,31 @@ export async function lookupHarnessThread(containerId) {
       return { compiledGraph, threadId };
     } catch (err) {
       console.error(`[harness-thread-lookup] compile harness-evaluate (via task graph) failed containerId=${containerId}: ${err.message}`);
+      return null;
+    }
+  }
+
+  // WS3: harness-gan graph（proposer/reviewer detached+interrupt）
+  if (graphName === 'harness-gan') {
+    try {
+      const checkpointer = await getPgCheckpointer();
+      const compiledGraph = await compileHarnessGanGraph(checkpointer);
+      return { compiledGraph, threadId };
+    } catch (err) {
+      console.error(`[harness-thread-lookup] compile harness-gan failed containerId=${containerId}: ${err.message}`);
+      return null;
+    }
+  }
+
+  // WS2: harness-initiative graph（planner detached+interrupt）
+  if (graphName === 'harness-initiative') {
+    try {
+      const { compileHarnessInitiativeGraph } = await import('../workflows/harness-initiative.graph.js');
+      const checkpointer = await getPgCheckpointer();
+      const compiledGraph = await compileHarnessInitiativeGraph(checkpointer);
+      return { compiledGraph, threadId };
+    } catch (err) {
+      console.error(`[harness-thread-lookup] compile harness-initiative failed containerId=${containerId}: ${err.message}`);
       return null;
     }
   }
