@@ -123,6 +123,7 @@ export default function HarnessDetailPage() {
           实时日志
         </button>
         <button
+          data-testid="docs-tab"
           onClick={() => handleTabChange('docs')}
           className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
             activeTab === 'docs'
@@ -181,9 +182,10 @@ export default function HarnessDetailPage() {
               </div>
               <div className="p-4">
                 {sprintDocs.docs[key] ? (
-                  <pre className="text-xs text-gray-800 whitespace-pre-wrap font-mono overflow-auto max-h-96">
-                    {sprintDocs.docs[key]}
-                  </pre>
+                  <div
+                    className="text-xs text-gray-800 whitespace-pre-wrap font-mono overflow-auto max-h-96"
+                    dangerouslySetInnerHTML={{ __html: sprintDocs.docs[key] as string }}
+                  />
                 ) : (
                   <div className="text-gray-400 text-sm italic">文件不存在</div>
                 )}

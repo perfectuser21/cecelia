@@ -122,6 +122,10 @@ export default defineConfig({
       'src/__tests__/integration/pipeline-rescue.integration.test.js',
       // dev-registry: 直连 pool.query 验 7 张新表，需真实 DB — 走 brain-integration
       'src/workflows/__tests__/dev-registry.test.js',
+      // Sprint Tests (ws3): 使用 fetch() 直调 localhost:5221，brain-unit 无真实服务器 → 走 Sprint Tests CI
+      '../../sprints/cecelia-sprint-visibility-0528/tests/ws3/sprint-docs.test.ts',
+      // Sprint Tests (ws5): 使用 process.cwd() 相对路径，brain-unit 从 packages/brain 运行时路径错误 → 走 Sprint Tests CI
+      '../../sprints/cecelia-sprint-visibility-0528/tests/ws5/dead-task-reset.test.ts',
     ],
     coverage: {
       provider: 'v8',

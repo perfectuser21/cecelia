@@ -1,11 +1,13 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'fs';
-import { resolve } from 'path';
+import { resolve, dirname } from 'path';
+import { fileURLToPath } from 'url';
 
-const PAGE_PATH = resolve(
-  process.cwd(),
-  'apps/dashboard/src/pages/harness/HarnessDetailPage.tsx'
-);
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+// tests/ws4/ → tests → cecelia-sprint-visibility-0528 → sprints → repo root (4 levels up)
+const REPO_ROOT = resolve(__dirname, '../../../../');
+const PAGE_PATH = resolve(REPO_ROOT, 'apps/dashboard/src/pages/harness/HarnessDetailPage.tsx');
 
 describe('Workstream 4 — HarnessDetailPage 文档 tab [BEHAVIOR]', () => {
   it('HarnessDetailPage.tsx 含 docs-tab data-testid（tab 触发器）', () => {
