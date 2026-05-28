@@ -64,6 +64,7 @@ import krProjectMapRoutes from './src/routes/kr-project-map.js';
 import contextRoutes from './src/routes/context.js';
 import publishJobsRoutes from './src/routes/publish-jobs.js';
 import registryRoutes from './src/routes/registry.js';
+import notesRoutes from './src/routes/notes.js';
 import harnessRoutes from './src/routes/harness.js';
 import harnessInterruptsRouter from './src/routes/harness-interrupts.js';
 import harnessCallbackRouter from './src/routes/harness-callback.js';
@@ -280,6 +281,9 @@ app.use('/api/brain/strategic-decisions', strategicDecisionsRoutes);
 app.post('/api/brain/decisions/match', express.json(), createDecisionsMatchRouter());
 app.use('/api/brain/conversation-captures', conversationCapturesRoutes);
 app.use('/api/brain/capture-atoms', captureAtomsRoutes);
+// Notion 写入端点：POST /notes, POST /notion/project, POST /notion/task
+app.use('/api/brain', notesRoutes);
+
 // Mount brain routes BEFORE contentPipelineRoutes to prevent /:id/stats wildcard
 // from intercepting /publish-results/stats and other specific routes in brainRoutes
 app.use('/api/brain', brainRoutes);
