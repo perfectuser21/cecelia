@@ -342,5 +342,8 @@ workstream_count: 5
 
 | Workstream | Test File | BEHAVIOR 覆盖 | 预期红证据 |
 |---|---|---|---|
-| WS1 | `tests/ws1/notion-endpoints.test.ts` | 端点已注册/schema/title 精确等于/缺 title 返回 400 | routes/notes.js 不存在 → N failures |
-| WS2 | `tests/ws2/skill-step35.test.ts` | SprintPRD/content 字段/DOC_TYPE 变量/initiative_id 字段 | SKILL.md 未修改 → N failures |
+| WS1 | `tests/ws1/notion-endpoints.test.ts` | 3 端点注册/schema/精确 title 值/error path | routes/notes.js 不存在 → N failures |
+| WS2 | `tests/ws2/skill-step35.test.ts` | Step 3.5 字段名正确性 | SKILL.md 未修改 → N failures |
+| WS3 | `tests/ws3/sprint-docs.test.ts` | sprint-docs schema/null/400 | 端点未实现 → N failures |
+| WS4 | `tests/ws4/harness-detail-docs.test.ts` | docs-tab 组件 + API 联动 | HarnessDetailPage 无 docs-tab → N failures |
+| WS5 | `tests/ws5/dead-task-reset.test.ts` | execution_attempts 逻辑 | tick-runner.js 无此逻辑 → N failures |
