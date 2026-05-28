@@ -24,15 +24,5 @@ golden_paths: []
 # ============================================================================
 # Publisher 技能测试契约
 # ============================================================================
-publisher_tests:
-  - id: weibo-publisher-utils
-    name: weibo-publisher 工具函数单元测试
-    trigger: [PR, Release]
-    command: node --test packages/workflows/skills/weibo-publisher/scripts/__tests__/utils.test.cjs
-    description: |
-      测试 weibo-publisher 纯工具函数：
-      - findImages: 图片文件扫描与排序（无图/单图/多图三种场景）
-      - readContent: 文案读取与修剪
-      - convertToWindowsPaths: 本地路径转 Windows 路径
-      - escapeForJS: CDP 字符串注入安全转义
-      - extractDirNames: 目录名提取
+publisher_tests: []
+# DEPRECATED: weibo-publisher-utils 测试条目已移除，packages/workflows/skills 路径已迁出至外部 skill repo

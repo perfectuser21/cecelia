@@ -79,7 +79,7 @@ contracts:
       task.id, task.title, task.description 是必须字段。
       改 executor.js 参数传递方式时 skill 可能收不到必要信息。
     consumer: packages/brain/src/executor.js
-    provider: packages/workflows/skills/
+    provider: github.com/perfectuser21/zenithjoy-skills
     signature_file: packages/brain/src/executor.js
     test_file: packages/brain/src/__tests__/executor-skill-format-contract.test.js
     priority: P1
