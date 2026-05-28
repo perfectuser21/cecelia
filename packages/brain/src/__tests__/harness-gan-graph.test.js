@@ -1,9 +1,12 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
-// WS3 async: mock spawnDockerDetached + interrupt + db pool
-const mockSpawnDetached = vi.fn().mockResolvedValue(undefined);
-const mockInterrupt = vi.fn();
-const mockDbQuery = vi.fn().mockResolvedValue({ rows: [] });
+// WS3 async: hoisted mocks so variables are available when vi.mock factories execute
+const { mockSpawnDetached, mockInterrupt, mockDbQuery } = vi.hoisted(() => ({
+  mockSpawnDetached: vi.fn().mockResolvedValue(undefined),
+  mockInterrupt: vi.fn(),
+  mockDbQuery: vi.fn().mockResolvedValue({ rows: [] }),
+}));
+
 vi.mock('../spawn/detached.js', () => ({ spawnDockerDetached: (...a) => mockSpawnDetached(...a) }));
 vi.mock('../db.js', () => ({ default: { query: (...a) => mockDbQuery(...a) } }));
 vi.mock('../spawn/middleware/account-rotation.js', () => ({ resolveAccount: vi.fn().mockResolvedValue(undefined) }));
