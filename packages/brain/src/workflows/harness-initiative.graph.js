@@ -30,7 +30,7 @@ import { promisify } from 'node:util';
 import pool from '../db.js';
 import { spawn } from '../spawn/index.js';
 import { executeOnHost } from '../spawn/host-executor.js';
-import { reconnectOrSpawn, makeSessionRecord } from '../harness-session-bridge.js';
+import { reconnectOrSpawn as _reconnectOrSpawn, makeSessionRecord as _makeSessionRecord } from '../harness-session-bridge.js';
 import { spawnDockerDetached } from '../spawn/detached.js';
 import { resolveAccount } from '../spawn/middleware/account-rotation.js';
 import { parseDockerOutput, loadSkillContent, readBrainResult } from '../harness-shared.js';
@@ -609,16 +609,17 @@ export async function runPlannerNode(state, opts = {}) {
       type: 'wait_planner_callback',
       containerId: state.planner_container_id,
     });
-    const { exit_code, stdout } = callbackPayload || {};
+    const { exit_code, stdout, error: cbErr } = callbackPayload || {};
     if (exit_code !== 0) {
-      return { error: { node: 'planner', message: `Planner exit=${exit_code}: ${(stdout || '').slice(-300)}` } };
+      const detail = cbErr || (stdout || '').slice(-300);
+      return { error: { node: 'planner', message: `Planner exit=${exit_code}: ${detail}` } };
     }
     const plannerOutput = parseDockerOutput(stdout ?? '');
     return { plannerOutput };
   }
 
   const spawnFn = opts.spawnDetached || spawnDockerDetached;
-  const dbPool = opts.poolOverride || pool;
+  const dbPool = opts.pool || opts.poolOverride || pool;
   const sprintDir = state.task?.payload?.sprint_dir || 'sprints';
   const initiativeId = state.initiativeId || state.task?.id;
   const skillContent = loadSkillContent('harness-planner');
@@ -648,7 +649,8 @@ ${state.task?.payload?.prep_prd_body || '（未提供，Planner 从 sprint-prd.m
   const rand = crypto.randomUUID().slice(0, 8);
   const safeTaskId = String(state.task?.id || initiativeId).replace(/[^a-zA-Z0-9-]/g, '').slice(0, 8);
   const containerId = `harness-planner-${safeTaskId}-${rand}`;
-  const threadId = `harness-initiative:${initiativeId}:planner`;
+  // thread_id 优先用 opts.configurable.thread_id（LangGraph 运行时注入），兜底用计算值
+  const threadId = opts.configurable?.thread_id || `harness-initiative:${initiativeId}:planner`;
 
   const acctOpts = { task: { ...state.task, task_type: 'harness_planner' }, env: {} };
   try {
@@ -697,9 +699,10 @@ ${state.task?.payload?.prep_prd_body || '（未提供，Planner 从 sprint-prd.m
     containerId,
   });
 
-  const { exit_code, stdout } = callbackPayload || {};
+  const { exit_code, stdout, error: callbackError } = callbackPayload || {};
   if (exit_code !== 0) {
-    return { error: { node: 'planner', message: `Planner exit=${exit_code}` } };
+    const detail = callbackError || (stdout || '').slice(-300);
+    return { error: { node: 'planner', message: `Planner exit=${exit_code}: ${detail}` } };
   }
   const plannerOutput = parseDockerOutput(stdout ?? '');
   return { plannerOutput, planner_container_id: containerId };
