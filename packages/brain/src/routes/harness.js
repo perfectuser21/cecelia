@@ -1190,36 +1190,6 @@ router.get('/stats', async (req, res) => {
 });
 
 /**
- * GET /sprint-docs?sprint_dir=...
- * 返回 sprint 目录下 4 个文档的 markdown 内容
- * 文件不存在时对应字段为 null；缺 sprint_dir 返回 400
- */
-router.get('/sprint-docs', async (req, res) => {
-  const { sprint_dir } = req.query;
-  if (!sprint_dir) {
-    return res.status(400).json({ error: 'sprint_dir is required' });
-  }
-
-  const fileMap = [
-    ['prep_prd', 'prep-prd.md'],
-    ['sprint_prd', 'sprint-prd.md'],
-    ['contract', 'contract-draft.md'],
-    ['harness_report', 'harness-report.md'],
-  ];
-
-  const docs = {};
-  for (const [key, filename] of fileMap) {
-    try {
-      docs[key] = await readFile(join(REPO_ROOT, sprint_dir, filename), 'utf8');
-    } catch {
-      docs[key] = null;
-    }
-  }
-
-  res.json({ sprint_dir, docs });
-});
-
-/**
  * POST /api/brain/harness/complete
  * harness-report SKILL.md Step 2 调用：pipeline 全部 WS 交付后更新 initiative 状态
  * body: { initiative_id, sprint_dir?, pr_url?, screenshots? }
