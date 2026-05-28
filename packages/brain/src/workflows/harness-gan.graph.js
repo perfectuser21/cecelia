@@ -309,6 +309,17 @@ export const GanContractState = Annotation.Root({
     reducer: (old, neu) => ({ ...(old ?? {}), ...(neu ?? {}) }),
     default: () => ({}),
   }),
+  // WS3 async: context 字段（原来从 ctx 传入，现在也放进 state 让节点可读）
+  taskId: Annotation({ reducer: (_old, neu) => neu, default: () => null }),
+  initiativeId: Annotation({ reducer: (_old, neu) => neu, default: () => null }),
+  sprintDir: Annotation({ reducer: (_old, neu) => neu, default: () => 'sprints' }),
+  worktreePath: Annotation({ reducer: (_old, neu) => neu, default: () => null }),
+  githubToken: Annotation({ reducer: (_old, neu) => neu, default: () => null }),
+  budgetCapUsd: Annotation({ reducer: (_old, neu) => neu, default: () => 10 }),
+  proposerContainerId: Annotation({ reducer: (_old, neu) => neu, default: () => null }),
+  reviewerContainerId: Annotation({ reducer: (_old, neu) => neu, default: () => null }),
+  proposerContainerRound: Annotation({ reducer: (_old, neu) => neu, default: () => null }),
+  reviewerContainerRound: Annotation({ reducer: (_old, neu) => neu, default: () => null }),
 });
 
 // ── 节点工厂 ─────────────────────────────────────────────────────────────
@@ -751,5 +762,5 @@ export async function reviewerSpawnNode(ctx, opts = {}) {
     [containerId, threadId]
   );
 
-  return { reviewerContainerId: containerId };
+  return { reviewerContainerId: containerId, round };
 }
