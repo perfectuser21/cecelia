@@ -750,7 +750,7 @@ export async function reviewerSpawnNode(ctx, opts = {}) {
       HARNESS_NODE: 'reviewer',
       HARNESS_SPRINT_DIR: sprintDir,
       HARNESS_INITIATIVE_ID: initiativeId || taskId,
-      REVIEW_ROUND: String(round),
+      HARNESS_REVIEW_ROUND: String(round),
       GITHUB_TOKEN: githubToken || '',
       HARNESS_CALLBACK_URL: `http://host.docker.internal:5221/api/brain/harness/callback/${containerId}`,
     },
@@ -762,5 +762,5 @@ export async function reviewerSpawnNode(ctx, opts = {}) {
     [containerId, threadId]
   );
 
-  return { reviewerContainerId: containerId, round };
+  return { reviewerContainerId: containerId, round: String(round) };
 }
