@@ -40,20 +40,19 @@ const quarantineSrc = fs.readFileSync(
 );
 
 describe('harness pipeline — evaluator触发时机', () => {
-  it('harness_evaluate 只在最后一个 WS 完成时创建（currentWsIdx === totalWsCount）', () => {
-    // v5.0: Generator 完成后创建 harness_evaluate（不是 harness_report）
-    const marker = 'currentWsIdx === totalWsCount';
-    const idx = execSrc.indexOf(marker);
-    expect(idx).toBeGreaterThan(0);
-    // harness_report task creation should appear after this marker
-    // 窗口设为 4000（当前 if 块长度约 2515 chars），为后续代码扩展预留 1500 chars 余量
-    const region = execSrc.slice(idx, idx + 4000);
-    expect(region).toContain('harness_report');
+  it('generator 完成后无条件触发 harness_evaluate（单 Sprint 单 PR，无 WS index 检查）', () => {
+    // v7.0+ 单 Sprint 模式：删除多 WS 链式触发，generator 完成后无条件创建 harness_evaluate
+    expect(execSrc).not.toContain('currentWsIdx === totalWsCount');
+    expect(execSrc).not.toContain('currentWsIdx < totalWsCount');
+    // harness_evaluate 在 harness_generate 完成回调中存在（无条件触发）
+    const genIdx = execSrc.indexOf("harnessType === 'harness_generate'");
+    expect(genIdx).toBeGreaterThan(0);
+    const region = execSrc.slice(genIdx, genIdx + 9000);
+    expect(region).toContain("task_type: 'harness_evaluate'");
     expect(region).toContain('project_id');
   });
 
   it('harness_report 创建前不应有不带 totalWsCount 检查的早期触发', () => {
-    // Should NOT have report creation before the WS count check
     expect(execSrc).not.toContain('execution_callback_harness_serial');
   });
 });
@@ -89,11 +88,18 @@ describe('harness pipeline — contract_branch guard', () => {
 });
 
 describe('harness pipeline — 幂等保护', () => {
-  it('创建 WS{N+1} 前查 DB 检查是否已存在', () => {
-    expect(execSrc).toContain('already queued');
-    expect(execSrc).toContain("workstream_index");
-    // Check the idempotency query exists
-    expect(execSrc).toContain("status IN ('queued','in_progress')");
+  it('generator payload 不含 workstream_index/count（单 Sprint 模式）', () => {
+    // v7.0+ 单 Sprint 模式：APPROVED → generator 无 workstream 字段
+    const approvedIdx = execSrc.indexOf("harnessType} APPROVED → ${generateType} created");
+    expect(approvedIdx).toBeGreaterThan(0);
+    // 确认不再有 workstream_index 字段注入到 generator payload
+    const region = execSrc.slice(approvedIdx - 500, approvedIdx + 200);
+    expect(region).not.toContain('workstream_index: 1');
+    expect(region).not.toContain('workstream_count: safeWsCount');
+  });
+
+  it('Proposer 去重查询仍有 status IN queued/in_progress 保护', () => {
+    expect(execSrc).toContain("status IN ('queued', 'in_progress')");
   });
 });
 
