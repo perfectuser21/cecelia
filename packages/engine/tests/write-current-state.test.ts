@@ -28,14 +28,7 @@ describe('write-current-state.sh', () => {
   });
 });
 
-describe('engine-ship SKILL.md 包含 CURRENT_STATE 步骤', () => {
-  it('engine-ship/SKILL.md 包含 write-current-state 调用', () => {
-    const content = readFileSync(SHIP_MD, 'utf8');
-    expect(content).toContain('write-current-state');
-  });
-
-  // v3.0.0: 章节号已精简，不再检查顺序（write-current-state 存在即可）
-});
+// engine-ship/SKILL.md 已迁移到 zenithjoy-skills，不再由 engine CI 校验
 
 describe('write-current-state.sh 包含 CI 状态章节', () => {
   it('脚本包含 gh run list 调用', () => {

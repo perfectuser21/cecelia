@@ -1133,3 +1133,7 @@ changelog:
     date: "2026-05-28"
     type: "chore"
     description: "Skill 目录从 cecelia 完全剥离。packages/workflows/skills/ 和 packages/engine/skills/ 删除，skill 迁移到 github.com/perfectuser21/zenithjoy-skills。harness-shared.js SKILL_SEARCH_DIRS 移除 monorepo fallback，bump-version.sh 由 6 文件降为 5 文件联动。"
+  - version: "19.2.2"
+    date: "2026-05-29"
+    type: "feat"
+    description: "engine-ship 从 packages/engine/skills/ 移除（已在 zenithjoy-skills）。engine-ship TERMINAL IMPERATIVE 改为调用 engine-pr-watchdog（PR 合并守卫）。dev/SKILL.md 接力链补全 engine-pr-watchdog。write-current-state 测试移除对 engine-ship 路径的硬引用。"
