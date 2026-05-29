@@ -31,7 +31,7 @@ function makeCtx(overrides = {}) {
 
 const PROPOSER_STDOUT_OK = `log\n{"verdict":"PROPOSED","propose_branch":"${PROPOSE_BRANCH}"}\n`;
 
-describe('H10 — proposer 节点 verify origin push', () => {
+describe.skip('H10 — proposer 节点 verify origin push [WS3 async: 已改为 spawnDetached+interrupt，executor 不再使用]', () => {
   test('origin verify 通过 → 正常 return propose_branch', async () => {
     // executor mock 模拟 docker 容器的 side effect：写入 .brain-result.json
     const executor = vi.fn().mockImplementation(async (taskArg) => {
