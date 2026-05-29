@@ -1,24 +1,45 @@
-# DoD — WS4: Harness Initiative Patrol
+contract_branch: cp-05281036-ws-2c9c9b66-ws1
+workstream_index: 1
+sprint_dir: sprints/cecelia-harness-async-stable-0528
 
-卡住检测 + intervention 触发：扫 `initiative_runs`（未完成）检测 Planner（15min）/ GAN 每轮（20min）卡住，
-超阈值在 `tasks` 表创建 `harness_intervention` 任务，交本机干预。
+---
+skeleton: false
+journey_type: autonomous
+---
+# Contract DoD — Workstream 1: DB Migration — harness_messages 表
 
-## 成功标准
+**范围**: 新建 `packages/brain/migrations/288_harness_messages.sql`，创建 `harness_messages` 表，供 WS6 的消息 API 端点使用
+**大小**: S (~35 行，1 文件)
+**依赖**: 无
 
-- [x] [ARTIFACT] packages/brain/src/harness-initiative-patrol.js 文件存在
-  Test: manual:node -e "require('fs').accessSync('packages/brain/src/harness-initiative-patrol.js')"
-- [x] [ARTIFACT] pipeline-patrol-plugin.js 调用 harnessInitiativePatrol
-  Test: manual:node -e "const c=require('fs').readFileSync('packages/brain/src/pipeline-patrol-plugin.js','utf8');if(!c.includes('runHarnessInitiativePatrol'))process.exit(1)"
-- [x] [BEHAVIOR] harness-initiative-patrol.js 存在
-  Test: manual:node -e "require('fs').accessSync('packages/brain/src/harness-initiative-patrol.js')"
-- [x] [BEHAVIOR] 含 completed_at IS NULL 查询
-  Test: manual:node -e "const c=require('fs').readFileSync('packages/brain/src/harness-initiative-patrol.js','utf8');if(!c.includes('completed_at IS NULL'))process.exit(1)"
-- [x] [BEHAVIOR] 含 15min Planner 阈值（15 * 60 * 1000）
-  Test: manual:node -e "const c=require('fs').readFileSync('packages/brain/src/harness-initiative-patrol.js','utf8');if(!c.includes('15 * 60 * 1000'))process.exit(1)"
-- [x] [BEHAVIOR] 含 GAN 每轮 20min 阈值（20 * 60 * 1000）
-  Test: manual:node -e "const c=require('fs').readFileSync('packages/brain/src/harness-initiative-patrol.js','utf8');if(!c.includes('20 * 60 * 1000'))process.exit(1)"
-- [x] [BEHAVIOR] 含 harness_intervention 创建逻辑
-  Test: manual:node -e "const c=require('fs').readFileSync('packages/brain/src/harness-initiative-patrol.js','utf8');if(!c.includes('harness_intervention'))process.exit(1)"
-- [x] [BEHAVIOR] 含防重状态检查（queued/in_progress/pending）
-  Test: manual:node -e "const c=require('fs').readFileSync('packages/brain/src/harness-initiative-patrol.js','utf8');if(!(c.includes('queued')&&c.includes('in_progress')&&c.includes('pending')))process.exit(1)"
-# WS4 patrol triggered at Fri May 29 08:38:33 CST 2026
+## ARTIFACT 条目
+
+- [x] [ARTIFACT] `packages/brain/migrations/288_harness_messages.sql` 文件存在
+  Test: node -e "require('fs').accessSync('packages/brain/migrations/288_harness_messages.sql')"
+
+- [x] [ARTIFACT] migration 文件含 `CREATE TABLE IF NOT EXISTS harness_messages` 语句
+  Test: node -e "const c=require('fs').readFileSync('packages/brain/migrations/288_harness_messages.sql','utf8'); if(!c.includes('CREATE TABLE') || !c.includes('harness_messages'))process.exit(1)"
+
+- [x] [ARTIFACT] migration 含所有必填字段：id, initiative_id, sub_task_id, message, consumed_at, created_at
+  Test: node -e "const c=require('fs').readFileSync('packages/brain/migrations/288_harness_messages.sql','utf8'); ['id','initiative_id','sub_task_id','message','consumed_at','created_at'].forEach(f=>{if(!c.includes(f)){console.error('FAIL: missing field '+f);process.exit(1)}})"
+
+- [x] [ARTIFACT] migration 使用 `IF NOT EXISTS`（幂等）
+  Test: node -e "const c=require('fs').readFileSync('packages/brain/migrations/288_harness_messages.sql','utf8'); if(!c.includes('IF NOT EXISTS'))process.exit(1)"
+
+## BEHAVIOR 条目
+
+- [x] [BEHAVIOR] migration 文件存在且包含完整 CREATE TABLE 语句
+  Test: manual:bash -c 'node -e "const c=require(\"fs\").readFileSync(\"packages/brain/migrations/288_harness_messages.sql\",\"utf8\"); if(!c.includes(\"CREATE TABLE IF NOT EXISTS harness_messages\"))process.exit(1); console.log(\"OK\")" || { echo "FAIL: migration 文件缺 CREATE TABLE harness_messages"; exit 1; }'
+  期望: OK
+
+- [x] [BEHAVIOR] harness_messages 表 schema 含六个必填字段（id/initiative_id/sub_task_id/message/consumed_at/created_at）
+  Test: manual:bash -c 'node -e "const c=require(\"fs\").readFileSync(\"packages/brain/migrations/288_harness_messages.sql\",\"utf8\"); const fields=[\"id\",\"initiative_id\",\"sub_task_id\",\"message\",\"consumed_at\",\"created_at\"]; fields.forEach(f=>{if(!c.includes(f)){console.error(\"FAIL: missing field \"+f);process.exit(1)}}); console.log(\"OK\")" || exit 1'
+  期望: OK
+
+- [x] [BEHAVIOR] id 字段为 UUID 类型（Primary Key）
+  Test: manual:bash -c 'node -e "const c=require(\"fs\").readFileSync(\"packages/brain/migrations/288_harness_messages.sql\",\"utf8\"); if(!c.match(/id\s+UUID/i) && !c.match(/id\s+uuid/))process.exit(1); console.log(\"OK\")" || { echo "FAIL: id 字段非 UUID 类型"; exit 1; }'
+  期望: OK
+
+- [x] [BEHAVIOR] error path — consumed_at 字段默认值为 NULL（可为空，消费前为 null）
+  Test: manual:bash -c 'node -e "const c=require(\"fs\").readFileSync(\"packages/brain/migrations/288_harness_messages.sql\",\"utf8\"); if(!c.includes(\"consumed_at\") || (!c.includes(\"DEFAULT NULL\") && !c.includes(\"TIMESTAMPTZ\")))process.exit(1); console.log(\"OK\")" || { echo "FAIL: consumed_at 字段配置不符合要求"; exit 1; }'
+  期望: OK

@@ -2,11 +2,11 @@ import { describe, it, expect } from 'vitest';
 import { readFileSync, existsSync } from 'fs';
 import { join } from 'path';
 
-// vitest 运行目录: packages/brain/
-const MIGRATION_PATH = join(process.cwd(), 'migrations/287_harness_messages.sql');
+// Sprint Tests CI 从 repo root 运行；migration 在 packages/brain/migrations/
+const MIGRATION_PATH = join(process.cwd(), 'packages/brain/migrations/288_harness_messages.sql');
 
 describe('WS1 — DB Migration harness_messages [BEHAVIOR]', () => {
-  it('287_harness_messages.sql 文件存在', () => {
+  it('288_harness_messages.sql 文件存在', () => {
     expect(existsSync(MIGRATION_PATH)).toBe(true);
   });
 
