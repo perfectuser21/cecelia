@@ -13,6 +13,7 @@ import { readFile } from 'fs/promises';
 import { execSync } from 'child_process';
 import { join } from 'path';
 import { homedir } from 'os';
+import { randomUUID } from 'crypto';
 import pool from '../db.js';
 
 const router = Router();
@@ -1274,6 +1275,62 @@ router.post('/notify', async (req, res) => {
   } catch (err) {
     console.error('[POST /harness/notify]', err.message);
     res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * GET /messages/:initiativeId/:subTaskId
+ * 查询某 sub-task 的未消费消息（默认 consumed_at IS NULL）。
+ * - initiativeId 不存在（或 harness_messages 表暂缺）→ 返回 { messages: [] }，绝不 404/500
+ * - 响应仅含 messages 键，禁用 data/items/results/payload/list
+ */
+router.get('/messages/:initiativeId/:subTaskId', async (req, res) => {
+  const { initiativeId, subTaskId } = req.params;
+  try {
+    const { rows } = await pool.query(
+      `SELECT id, message, created_at, consumed_at
+         FROM harness_messages
+        WHERE initiative_id = $1 AND sub_task_id = $2 AND consumed_at IS NULL
+        ORDER BY created_at ASC`,
+      [initiativeId, subTaskId]
+    );
+    res.json({ messages: rows });
+  } catch (err) {
+    // 表暂缺（WS1 migration 未合）或 id 非法：优雅降级为空列表
+    console.warn(`[GET /harness/messages] ${err.message}`);
+    res.json({ messages: [] });
+  }
+});
+
+/**
+ * POST /messages/:initiativeId/:subTaskId
+ * 写入一条消息到 harness_messages（consumed_at=NULL）。
+ * - 无 message 字段 → 400
+ * - 成功 → 201 + { id, message, created_at }，禁用 data/result/payload/body
+ * - harness_messages 表未就绪（WS1 migration 未合）→ 503（依赖未就绪）
+ */
+router.post('/messages/:initiativeId/:subTaskId', async (req, res) => {
+  const { initiativeId, subTaskId } = req.params;
+  const { message } = req.body ?? {};
+  if (typeof message !== 'string' || message.trim() === '') {
+    return res.status(400).json({ error: 'message is required' });
+  }
+  const id = randomUUID();
+  try {
+    const { rows } = await pool.query(
+      `INSERT INTO harness_messages (id, initiative_id, sub_task_id, message, consumed_at)
+       VALUES ($1, $2, $3, $4, NULL)
+       RETURNING id, message, created_at`,
+      [id, initiativeId, subTaskId, message]
+    );
+    res.status(201).json({
+      id: rows[0].id,
+      message: rows[0].message,
+      created_at: rows[0].created_at,
+    });
+  } catch (err) {
+    console.warn(`[POST /harness/messages] ${err.message}`);
+    res.status(503).json({ error: 'harness_messages unavailable' });
   }
 });
 

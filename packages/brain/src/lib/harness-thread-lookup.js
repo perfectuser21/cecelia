@@ -38,6 +38,20 @@ export function _resetHarnessTaskCacheForTests() {
   _compiledHarnessTask = null;
 }
 
+/**
+ * 更新某 harness thread 的生命周期状态。
+ * @param {string} containerId  walking_skeleton_thread_lookup.container_id
+ * @param {'spawning'|'running'|'completed'|'failed'} status
+ */
+export async function updateHarnessThreadStatus(containerId, status) {
+  await pool.query(
+    `UPDATE walking_skeleton_thread_lookup
+        SET status = $2, updated_at = NOW()
+      WHERE container_id = $1`,
+    [containerId, status]
+  );
+}
+
 export async function lookupHarnessThread(containerId) {
   if (!containerId) return null;
 
