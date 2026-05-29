@@ -54,6 +54,7 @@ export default defineConfig({
       'src/__tests__/initiative-closer.test.js',
       'src/__tests__/initiative-completion.test.js',
       'src/__tests__/initiative-orchestration-migration.test.js',
+      'src/__tests__/migration-289.test.js',
       'src/__tests__/initiative-queue.test.js',
       'src/__tests__/intent-match.test.js',
       'src/__tests__/intent.test.js',
