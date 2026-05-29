@@ -225,7 +225,7 @@ curl -s -X POST localhost:5221/api/brain/decisions \
 Skill({"skill":"superpowers:systematic-debugging"})
 ```
 
-systematic-debugging → engine-worktree → Superpowers autonomous 接力链 → fix PR → engine-ship
+systematic-debugging → engine-worktree → Superpowers autonomous 接力链 → fix PR → engine-ship → engine-pr-watchdog
 
 ---
 
@@ -249,7 +249,7 @@ Skill({"skill":"engine-worktree"})
 ```
 
 Superpowers autonomous 接力链：
-brainstorming → writing-plans → subagent-driven-development → finishing（Option 2 push+PR）→ engine-ship
+brainstorming → writing-plans → subagent-driven-development → finishing（Option 2 push+PR）→ engine-ship → engine-pr-watchdog
 
 **Autonomous 规则（必遵守）：**
 
@@ -267,7 +267,7 @@ Tier 1 固定默认：
   - "每 plan task commit 顺序：commit-1 fail test / commit-2 impl"
   - "controller 会 verify commit 顺序，不符合让你重做"
 - finishing → Option 2 (push+PR)
-- finishing 完成 → 下一 tool call 必须 `Skill({"skill":"engine-ship"})`
+- finishing 完成 → 下一 tool call 必须 `Skill({"skill":"engine-ship"})` → engine-ship 完成后自动调 `engine-pr-watchdog`
 - BLOCKED 第 3 次 → `superpowers:dispatching-parallel-agents`
 
 **smoke.sh 强制（feat: + 改 brain/src/ 的 PR）：**

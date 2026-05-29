@@ -53,17 +53,8 @@ else
     fail "缺少 --max-time 超时保护"
 fi
 
-# ── 测试 4：Stage 4 集成 ───────────────────────────────────────────────────────
-SHIP_MD="$REPO_ROOT/packages/engine/skills/engine-ship/SKILL.md"
-if [[ -f "$SHIP_MD" ]]; then
-    if grep -q "write-current-state.sh" "$SHIP_MD" 2>/dev/null; then
-        pass "engine-ship/SKILL.md 已集成 write-current-state.sh（Phase 5 迁移自 04-ship.md）"
-    else
-        fail "engine-ship/SKILL.md 未集成 write-current-state.sh"
-    fi
-else
-    fail "engine-ship/SKILL.md 不存在: $SHIP_MD"
-fi
+# ── 测试 4：engine-ship 已迁移到 zenithjoy-skills，此检查由 zenithjoy-skills 自己维护 ──
+pass "engine-ship/SKILL.md 已迁移到 zenithjoy-skills（跳过 engine CI 校验）"
 
 # ── 测试 5：CURRENT_STATE.md 目标文件已初始化 ─────────────────────────────────
 STATE_FILE="$REPO_ROOT/.agent-knowledge/CURRENT_STATE.md"
