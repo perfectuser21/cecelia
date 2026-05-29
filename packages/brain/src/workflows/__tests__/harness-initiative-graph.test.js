@@ -7,6 +7,10 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 // Mocks 注入
 const mockSpawn = vi.fn();
+const mockSpawnDetached = vi.fn().mockResolvedValue(undefined);
+const mockInterrupt = vi.fn();
+const mockDbQuery = vi.fn().mockResolvedValue({ rows: [] });
+const mockResolveAccount = vi.fn().mockResolvedValue(undefined);
 const mockEnsureWorktree = vi.fn();
 const mockResolveToken = vi.fn();
 const mockParseTaskPlan = vi.fn();
@@ -15,11 +19,19 @@ const mockRunGan = vi.fn();
 const mockReadFile = vi.fn();
 
 vi.mock('../../spawn/index.js', () => ({ spawn: (...a) => mockSpawn(...a) }));
+vi.mock('../../spawn/detached.js', () => ({ spawnDockerDetached: (...a) => mockSpawnDetached(...a) }));
+vi.mock('../../db.js', () => ({ default: { query: (...a) => mockDbQuery(...a) } }));
+vi.mock('../../spawn/middleware/account-rotation.js', () => ({ resolveAccount: (...a) => mockResolveAccount(...a) }));
+vi.mock('@langchain/langgraph', async (importOriginal) => {
+  const actual = await importOriginal();
+  return { ...actual, interrupt: (...a) => mockInterrupt(...a) };
+});
 vi.mock('../../harness-worktree.js', () => ({ ensureHarnessWorktree: (...a) => mockEnsureWorktree(...a) }));
 vi.mock('../../harness-credentials.js', () => ({ resolveGitHubToken: (...a) => mockResolveToken(...a) }));
-vi.mock('../../harness-graph.js', () => ({
+vi.mock('../../harness-shared.js', () => ({
   parseDockerOutput: (s) => s,
   loadSkillContent: () => 'SKILL CONTENT',
+  readBrainResult: vi.fn().mockResolvedValue({}),
 }));
 vi.mock('../../harness-dag.js', () => ({
   parseTaskPlan: (...a) => mockParseTaskPlan(...a),
@@ -115,48 +127,63 @@ describe('prepInitiativeNode', () => {
 });
 
 describe('runPlannerNode', () => {
-  beforeEach(() => { mockSpawn.mockReset(); });
+  beforeEach(() => {
+    mockSpawnDetached.mockReset().mockResolvedValue(undefined);
+    mockInterrupt.mockReset();
+    mockDbQuery.mockReset().mockResolvedValue({ rows: [] });
+    mockResolveAccount.mockReset().mockResolvedValue(undefined);
+  });
 
-  it('happy: 调 spawn 传 harness_planner task_type + HARNESS_NODE=planner env', async () => {
-    mockSpawn.mockResolvedValueOnce({ exit_code: 0, stdout: 'PLANNER OUT' });
+  it('happy: 调 spawnDockerDetached 传 harness_planner + interrupt 返回 stdout', async () => {
+    mockInterrupt.mockReturnValueOnce({ exit_code: 0, stdout: 'PLANNER OUT' });
     const state = {
       task: { id: 't1', description: 'do', payload: { sprint_dir: 'sprints' } },
       initiativeId: 'init-1', worktreePath: '/wt', githubToken: 'ghp_x',
     };
     const delta = await runPlannerNode(state);
-    expect(mockSpawn).toHaveBeenCalledTimes(1);
-    const opts = mockSpawn.mock.calls[0][0];
+    expect(mockSpawnDetached).toHaveBeenCalledTimes(1);
+    const opts = mockSpawnDetached.mock.calls[0][0];
     expect(opts.task.task_type).toBe('harness_planner');
     expect(opts.worktreePath).toBe('/wt');
     expect(opts.env.HARNESS_NODE).toBe('planner');
     expect(opts.env.HARNESS_INITIATIVE_ID).toBe('init-1');
     expect(opts.env.GITHUB_TOKEN).toBe('ghp_x');
+    expect(opts.env.HARNESS_CALLBACK_URL).toContain('/api/brain/harness/callback/');
     expect(delta.plannerOutput).toBe('PLANNER OUT');
     expect(delta.error).toBeUndefined();
   });
 
-  it('idempotent: state.plannerOutput 已存在 → 不调 spawn', async () => {
+  it('idempotent: state.plannerOutput 已存在 → 不调 spawnDetached', async () => {
     const state = { plannerOutput: 'cached', task: { id: 't2' } };
     const delta = await runPlannerNode(state);
-    expect(mockSpawn).not.toHaveBeenCalled();
+    expect(mockSpawnDetached).not.toHaveBeenCalled();
     expect(delta.plannerOutput).toBe('cached');
   });
 
-  it('error: spawn 抛 → state.error.node="planner"', async () => {
-    mockSpawn.mockRejectedValueOnce(new Error('docker died'));
+  it('error: spawnDetached 抛 → state.error.node="planner"', async () => {
+    mockSpawnDetached.mockRejectedValueOnce(new Error('docker died'));
     const state = { task: { id: 't3', payload: {} }, initiativeId: 'init-3', worktreePath: '/wt' };
     const delta = await runPlannerNode(state);
     expect(delta.error.node).toBe('planner');
-    expect(delta.error.message).toBe('docker died');
+    expect(delta.error.message).toContain('docker died');
   });
 
-  it('exit_code != 0: state.error 含 stderr tail', async () => {
-    mockSpawn.mockResolvedValueOnce({ exit_code: 1, stderr: 'oops' });
+  it('exit_code != 0: interrupt 返回非零 exit_code → state.error', async () => {
+    mockInterrupt.mockReturnValueOnce({ exit_code: 1, stdout: '' });
     const state = { task: { id: 't4', payload: {} }, initiativeId: 'init-4', worktreePath: '/wt' };
     const delta = await runPlannerNode(state);
     expect(delta.error.node).toBe('planner');
     expect(delta.error.message).toContain('exit=1');
-    expect(delta.error.message).toContain('oops');
+  });
+
+  it('thread_lookup INSERT 调用含 harness-initiative graph_name', async () => {
+    mockInterrupt.mockReturnValueOnce({ exit_code: 0, stdout: 'OK' });
+    const state = { task: { id: 't5', payload: {} }, initiativeId: 'init-5', worktreePath: '/wt' };
+    await runPlannerNode(state);
+    const insertCall = mockDbQuery.mock.calls.find(c => String(c[0]).includes('walking_skeleton_thread_lookup'));
+    expect(insertCall).toBeDefined();
+    // graph_name='harness-initiative' 在 SQL 字符串里（不是参数），检查 SQL 字符串
+    expect(String(insertCall[0])).toContain('harness-initiative');
   });
 });
 
