@@ -32,3 +32,4 @@ Brain harness pipeline 卡住时的人工干预处理器：读 Docker logs → L
 - readDockerLogs：成功合并 stdout+stderr / 报错 reject
 - handleIntervention：无容器 / 读日志成功 / 读日志失败 / 空日志 / LLM 异常 / 写库异常 全分支降级
 - task-router：getInternalTaskHandler 注册查询
+# WS5 intervention triggered at Fri May 29 08:38:37 CST 2026
