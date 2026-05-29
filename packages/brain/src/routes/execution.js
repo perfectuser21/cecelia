@@ -1900,31 +1900,10 @@ ${resultStr.substring(0, 2000)}
                 return;
               }
             }
-            // 从 Reviewer result 提取 workstream_count（默认 1）
-            const workstreamCount = (() => {
-              const extractWs = (obj) => {
-                if (!obj) return null;
-                if (obj.workstream_count) return parseInt(obj.workstream_count, 10);
-                if (typeof obj.result === 'string') {
-                  try { const p = JSON.parse(obj.result); if (p.workstream_count) return parseInt(p.workstream_count, 10); } catch {}
-                  const m = obj.result.match(/"workstream_count"\s*:\s*(\d+)/);
-                  if (m) return parseInt(m[1], 10);
-                }
-                return null;
-              };
-              if (result != null && typeof result === 'object') { const v = extractWs(result); if (v) return v; }
-              if (typeof result === 'string') {
-                try { const p = JSON.parse(result); if (p.workstream_count) return parseInt(p.workstream_count, 10); } catch {}
-                const m = result.match(/"workstream_count"\s*:\s*(\d+)/);
-                if (m) return parseInt(m[1], 10);
-              }
-              return 1;
-            })();
-            const safeWsCount = Math.max(1, Math.min(workstreamCount, 6)); // 上限 6 防爆炸
-            // 串行：APPROVED 只创建 WS1，后续由 harness_generate 完成回调链式触发
+            // 单 Sprint = 单 Generator = 单 PR（harness-contract-proposer v8.0+）
             await createHarnessTask({
-              title: `[Generator] G1/${safeWsCount} — ${plannerShort}`,
-              description: `合同已批准，Generator 按 Workstream 1/${safeWsCount} 写代码 + 创建 PR（串行首个）。\ncontract_review task_id: ${task_id}`,
+              title: `[Generator] — ${plannerShort}`,
+              description: `合同已批准，Generator 实现完整 Sprint 并创建 PR。\ncontract_review task_id: ${task_id}`,
               priority: 'P1',
               project_id: harnessTask.project_id,
               goal_id: harnessTask.goal_id,
@@ -1935,12 +1914,10 @@ ${resultStr.substring(0, 2000)}
                 planner_task_id: harnessPayload.planner_task_id,
                 planner_branch: harnessPayload.planner_branch,
                 contract_branch: resolvedContractBranch,
-                workstream_index: 1,
-                workstream_count: safeWsCount,
                 harness_mode: true
               }
             });
-            console.log(`[execution-callback] harness: ${harnessType} APPROVED → ${generateType} W1/${safeWsCount} created（串行，后续由完成回调链式触发）`);
+            console.log(`[execution-callback] harness: ${harnessType} APPROVED → ${generateType} created`);
           } else {
             // REVISION：继续 GAN 对抗，必须传递 planner_branch 和 review_branch
             const nextRound = (harnessPayload.propose_round || 1) + 1;
@@ -2076,100 +2053,60 @@ ${resultStr.substring(0, 2000)}
             console.log(`[execution-callback] harness: harness_generate ${task_id} pr_url 缺失 → harness_fix 已创建`);
             return; // 不继续创建 ci_watch
           }
-          // 串行 Workstream 链式触发：当前 WS 完成 → 触发下一个 WS（若还有剩余）
-          const currentWsIdx = harnessPayload.workstream_index || 1;
-          const totalWsCount = harnessPayload.workstream_count || 1;
-          if (currentWsIdx < totalWsCount) {
-            const nextWsIdx = currentWsIdx + 1;
-            // Bug Fix: 幂等检查 — 已有同 WS 任务则跳过，防止 callback 重复触发
-            const existingWs = await pool.query(
-              `SELECT id FROM tasks WHERE project_id = $1 AND task_type = 'harness_generate'
-               AND payload->>'workstream_index' = $2 AND status IN ('queued','in_progress') LIMIT 1`,
-              [harnessTask.project_id, String(nextWsIdx)]
-            );
-            if (existingWs.rows.length > 0) {
-              console.log(`[execution-callback] harness: WS${nextWsIdx} already queued, skip creation`);
-            } else {
+          // Generator 完成 → 无条件触发 evaluator（单 Sprint 单 PR 模式，harness-generator v7.0+）
+          // CI 状态检查：PR 存在时验证 CI 是否通过，失败则走 harness_fix
+          let ciCheckFailed = false;
+          if (prUrl) {
+            const ciPassed = await checkPrCiStatus(prUrl);
+            if (ciPassed === false) {
+              ciCheckFailed = true;
+              console.log(`[execution-callback] harness: harness_generate ${task_id} CI failed → harness_fix`);
               await createHarnessTask({
-                title: `[Generator] G${nextWsIdx}/${totalWsCount} — ${plannerShort}`,
-                description: `合同已批准，Generator 按 Workstream ${nextWsIdx}/${totalWsCount} 写代码 + 创建 PR（串行，WS${currentWsIdx} 已完成）。\ncontract_branch: ${harnessPayload.contract_branch}`,
-                priority: 'P1',
-                project_id: harnessTask.project_id,
-                // Bug Fix: harness 任务不挂 goal，使用 execution_callback_harness trigger 绕过 goal_id 校验
-                task_type: 'harness_generate',
-                trigger_source: 'execution_callback_harness',
-                payload: {
-                  sprint_dir: harnessPayload.sprint_dir,
-                  planner_task_id: harnessPayload.planner_task_id,
-                  planner_branch: harnessPayload.planner_branch,
-                  contract_branch: harnessPayload.contract_branch,
-                  workstream_index: nextWsIdx,
-                  workstream_count: totalWsCount,
-                  harness_mode: true
-                }
-              });
-              console.log(`[execution-callback] harness: WS${currentWsIdx}/${totalWsCount} 完成 → 串行触发 WS${nextWsIdx}/${totalWsCount}`);
-            }
-          }
-
-          // Bug Fix: harness_report 只在最后一个 WS 完成时创建（避免多 WS 时 W2/W3 PR 缺失）
-          if (currentWsIdx === totalWsCount) {
-            // CI 状态检查：PR 存在时验证 CI 是否通过，失败则走 harness_fix
-            let ciCheckFailed = false;
-            if (prUrl) {
-              const ciPassed = await checkPrCiStatus(prUrl);
-              if (ciPassed === false) {
-                ciCheckFailed = true;
-                console.log(`[execution-callback] harness: harness_generate ${task_id} CI failed → harness_fix`);
-                await createHarnessTask({
-                  title: `[Fix] CI 失败 — ${plannerShort}`,
-                  description: `Generator PR CI 失败，自动修复。\npr_url: ${prUrl}`,
-                  priority: 'P1',
-                  project_id: harnessTask.project_id,
-                  goal_id: harnessTask.goal_id,
-                  task_type: 'harness_fix',
-                  trigger_source: 'execution_callback_harness',
-                  payload: {
-                    sprint_dir: harnessPayload.sprint_dir,
-                    dev_task_id: task_id,
-                    planner_task_id: harnessPayload.planner_task_id,
-                    planner_branch: harnessPayload.planner_branch || null,
-                    contract_branch: harnessPayload.contract_branch || null,
-                    pr_url: prUrl,
-                    eval_round: 1,
-                    ci_fail_type: 'ci_failed_after_generate',
-                    harness_mode: true,
-                  },
-                });
-              }
-            }
-            if (!ciCheckFailed) {
-              // v5.0: CI 通过后创建 harness_evaluate（对抗性 E2E 验收），不直接创建 report
-              await createHarnessTask({
-                title: `[Evaluator] E1 — ${plannerShort}`,
-                description: `E2E 功能验收：部署服务 + API 验证 + 前端验证。\npr_url: ${prUrl}`,
+                title: `[Fix] CI 失败 — ${plannerShort}`,
+                description: `Generator PR CI 失败，自动修复。\npr_url: ${prUrl}`,
                 priority: 'P1',
                 project_id: harnessTask.project_id,
                 goal_id: harnessTask.goal_id,
-                task_type: 'harness_evaluate',
+                task_type: 'harness_fix',
                 trigger_source: 'execution_callback_harness',
                 payload: {
                   sprint_dir: harnessPayload.sprint_dir,
-                  pr_url: prUrl,
                   dev_task_id: task_id,
                   planner_task_id: harnessPayload.planner_task_id,
                   planner_branch: harnessPayload.planner_branch || null,
-                  contract_branch: harnessPayload.contract_branch,
-                  project_id: harnessTask.project_id,
-                  feature_id: harnessPayload.feature_id || null,
+                  contract_branch: harnessPayload.contract_branch || null,
+                  pr_url: prUrl,
                   eval_round: 1,
-                  harness_mode: true
-                }
+                  ci_fail_type: 'ci_failed_after_generate',
+                  harness_mode: true,
+                },
               });
-              console.log(`[execution-callback] harness: harness_generate WS${currentWsIdx}/${totalWsCount}（最后） → harness_evaluate created (pr_url=${prUrl})`);
             }
-          } else {
-            console.log(`[execution-callback] harness: harness_generate WS${currentWsIdx}/${totalWsCount} 完成，等待后续 WS，暂不创建 report`);
+          }
+          if (!ciCheckFailed) {
+            // CI 通过后创建 harness_evaluate（E2E 验收）
+            await createHarnessTask({
+              title: `[Evaluator] E1 — ${plannerShort}`,
+              description: `E2E 功能验收：部署服务 + API 验证 + 前端验证。\npr_url: ${prUrl}`,
+              priority: 'P1',
+              project_id: harnessTask.project_id,
+              goal_id: harnessTask.goal_id,
+              task_type: 'harness_evaluate',
+              trigger_source: 'execution_callback_harness',
+              payload: {
+                sprint_dir: harnessPayload.sprint_dir,
+                pr_url: prUrl,
+                dev_task_id: task_id,
+                planner_task_id: harnessPayload.planner_task_id,
+                planner_branch: harnessPayload.planner_branch || null,
+                contract_branch: harnessPayload.contract_branch,
+                project_id: harnessTask.project_id,
+                feature_id: harnessPayload.feature_id || null,
+                eval_round: 1,
+                harness_mode: true
+              }
+            });
+            console.log(`[execution-callback] harness: harness_generate ${task_id} → harness_evaluate created (pr_url=${prUrl})`);
           }
         }
 

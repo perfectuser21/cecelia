@@ -452,16 +452,7 @@ async function readSprintFiles(sprintDir) {
     }
   }
 
-  // 也尝试读取 workstream 合同
-  for (let i = 1; i <= 5; i++) {
-    const wsFile = `contract-dod-ws${i}.md`;
-    try {
-      const filePath = join(REPO_ROOT, sprintDir, wsFile);
-      files[wsFile] = await readFile(filePath, 'utf8');
-    } catch {
-      break; // 一旦某个 ws 不存在，后续大概也没有
-    }
-  }
+  // contract-dod-ws*.md 已废弃 — harness-contract-proposer v8.0+ 使用单文件 contract-dod.md
 
   return files;
 }
