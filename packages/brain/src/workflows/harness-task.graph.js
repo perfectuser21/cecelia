@@ -237,11 +237,9 @@ export async function spawnNode(state, opts = {}) {
       BRAIN_URL: 'http://host.docker.internal:5221',
       // CALLBACK_URL 容器跑完 wget 这个 URL POST stdout
       HARNESS_CALLBACK_URL: callbackUrl,
-      WORKSTREAM_INDEX: extractWorkstreamIndex(payload),
-      WORKSTREAM_COUNT:
-        payload.workstream_count !== undefined && payload.workstream_count !== null
-          ? String(payload.workstream_count)
-          : '',
+      // WORKSTREAM_INDEX/COUNT 已移除 — harness-generator v7.0+ 单 Sprint 模式不使用
+      // WORKSTREAM_INDEX: extractWorkstreamIndex(payload),
+      // WORKSTREAM_COUNT: payload.workstream_count != null ? String(payload.workstream_count) : '',
       PLANNER_BRANCH: payload.planner_branch || '',
       ...(buildHarnessGoalSettings('The workstream implementation PR has been created and pushed to GitHub')
         ? { CECELIA_GOAL_SETTINGS: buildHarnessGoalSettings('The workstream implementation PR has been created and pushed to GitHub') }
