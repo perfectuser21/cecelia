@@ -45,6 +45,18 @@ import {
   IS_DARWIN,
 } from './platform-utils.js';
 
+/**
+ * 计算 watchdog deadline 毫秒数。
+ * 若 deadline 为 null/undefined 或已过期 → 返回 6h fallback。
+ * 若 deadline 未来 → 返回剩余毫秒。
+ * 导出供单元测试使用。
+ */
+export function computeDeadlineMs(deadlineAt) {
+  if (!deadlineAt) return 6 * 3600 * 1000;
+  const remaining = new Date(deadlineAt).getTime() - Date.now();
+  return remaining > 0 ? remaining : 6 * 3600 * 1000;
+}
+
 // ─── Resource Cache ─────────────────────────────────────────────────────────
 // Prevents execSync from blocking the Node.js event loop in the hot path.
 // Seeded with safe defaults on module load, then refreshed every 15s via
@@ -2878,9 +2890,7 @@ export async function runHarnessInitiativeRouter(task, opts = {}) {
     [initiativeId]
   );
   const deadlineAt = deadlineRow.rows[0]?.deadline_at;
-  const deadlineMs = deadlineAt
-    ? Math.max(60_000, new Date(deadlineAt).getTime() - Date.now())  // 至少 1min
-    : 6 * 3600 * 1000;  // fallback 6h
+  const deadlineMs = computeDeadlineMs(deadlineAt);
   const ctrl = new AbortController();
   const timer = setTimeout(
     () => ctrl.abort(new Error(`harness_watchdog: deadline exceeded for ${initiativeId} thread=${threadId}`)),

@@ -71,13 +71,15 @@ beforeEach(async () => {
 });
 
 describe('harness watchdog AbortSignal（W3）', () => {
-  it('deadline_at 已过 → AbortController 触发 → 返回 watchdog_deadline 不抛错', async () => {
-    // 用 fake timer 跳过 60s floor — runner 内 setTimeout 跑满后 abort
+  it('deadline_at 已过 → 6h fallback → AbortController 在 6h 后触发 → 返回 watchdog_deadline 不抛错', async () => {
+    // Fix: 过期 deadline 使用 6h fallback（不再用 Math.max(60_000, negative) = 60_000）
+    // 测试：设置 2 秒后到期的 deadline（未来），推进 2001ms，watchdog 触发
     vi.useFakeTimers();
     try {
       mockPoolQuery.mockImplementation(async (sql) => {
         if (typeof sql === 'string' && /SELECT\s+deadline_at/i.test(sql)) {
-          return { rows: [{ deadline_at: new Date(Date.now() - 60_000).toISOString() }] };
+          // 使用 2 秒后到期的 deadline，验证未来 deadline 按实际剩余时间触发
+          return { rows: [{ deadline_at: new Date(Date.now() + 2_000).toISOString() }] };
         }
         return { rows: [] };
       });
@@ -92,9 +94,9 @@ describe('harness watchdog AbortSignal（W3）', () => {
       };
 
       const promise = runHarnessInitiativeRouter(task);
-      // 让 microtasks 跑（getCheckpointer / SELECT / setTimeout 注册），再推进 60s
+      // 让 microtasks 跑（getCheckpointer / SELECT / setTimeout 注册），再推进 2s
       await vi.advanceTimersByTimeAsync(0);
-      await vi.advanceTimersByTimeAsync(60_001);
+      await vi.advanceTimersByTimeAsync(2_001);
 
       const r = await promise;
       expect(r.ok).toBe(false);
