@@ -401,7 +401,7 @@ echo "✅ Golden Path 全程验证通过"
 workstream_count: 6
 
 ### Workstream 1: DB migration — harness_messages 表
-**范围**: 新建 `packages/brain/migrations/287_harness_messages.sql`，创建 `harness_messages` 表（id UUID PK, initiative_id UUID, sub_task_id TEXT, message TEXT, consumed_at TIMESTAMPTZ DEFAULT NULL, created_at TIMESTAMPTZ DEFAULT NOW()）
+**范围**: 新建 `packages/brain/migrations/288_harness_messages.sql`，创建 `harness_messages` 表（id UUID PK, initiative_id UUID, sub_task_id TEXT, message TEXT, consumed_at TIMESTAMPTZ DEFAULT NULL, created_at TIMESTAMPTZ DEFAULT NOW()）
 **大小**: S (<50 行)
 **依赖**: 无
 
@@ -452,7 +452,7 @@ workstream_count: 6
 **Mitigation**: WS3 Patrol 检测 Planner>15min 未 callback → 创建 `harness_intervention` → handler 发 alert；Brain 重启后 Graph Resume 机制已有兜底
 
 ### Risk 2: migration 失败导致 WS6 端点 500
-**风险**: `287_harness_messages.sql` migration 未执行（Brain 启动时 migration runner 未覆盖此文件），导致 `harness_messages` 表不存在，POST/GET 端点返回 DB 错误
+**风险**: `288_harness_messages.sql` migration 未执行（Brain 启动时 migration runner 未覆盖此文件），导致 `harness_messages` 表不存在，POST/GET 端点返回 DB 错误
 **Mitigation**: migration 使用 `CREATE TABLE IF NOT EXISTS`（幂等）；Brain migration runner 按文件名数字序执行，287 命名确保在现有 migration 之后执行；WS6 评估命令会 FAIL 给出明确错误信息
 
 ### Risk 3: Patrol 防重失效导致 intervention 任务风暴
@@ -465,9 +465,9 @@ workstream_count: 6
 
 | Workstream | Test File | BEHAVIOR 覆盖 | 预期红证据 |
 |---|---|---|---|
-| WS1 | `tests/ws1/migration.test.ts` | 文件存在/SQL 内容/字段完整性 | 文件不存在 → N failures |
-| WS2 | `tests/ws2/planner-async.test.ts` | spawnDockerDetached 调用/interrupt/thread_lookup写入/错误路径 | 函数仍用 reconnectOrSpawn → N failures |
-| WS3 | `tests/ws3/gan-async.test.ts` | proposer detached/reviewer detached/收敛逻辑不变/error path | 函数仍用 reconnectOrSpawn → N failures |
-| WS4 | `tests/ws4/patrol.test.ts` | 文件存在/initiative_runs 查询/任务创建/防重/error path | 文件不存在 → N failures |
-| WS5 | `tests/ws5/intervention.test.ts` | 文件存在/action 字段/docker logs读取/路由注册/error path | 文件不存在 → N failures |
-| WS6 | `tests/ws6/messages-api.test.ts` | GET 200+messages/POST 201+schema/keys 完整性/禁用字段/消息对象四字段/consumed参数/error path | 端点未注册 → N failures |
+| WS1 | `tests/ws1/migration.test.ts` | 文件存在/CREATE TABLE/initiative_id | 文件不存在 → N failures |
+| WS2 | `tests/ws2/planner-async.test.ts` | spawnDockerDetached/interrupt/thread_lookup 写入/try-catch | 函数仍用 reconnectOrSpawn → N failures |
+| WS3 | `tests/ws3/gan-async.test.ts` | proposer/reviewer/收敛逻辑/thread_lookup 写入 | 函数仍用 reconnectOrSpawn → N failures |
+| WS4 | `tests/ws4/patrol.test.ts` | 文件存在/initiative_runs 查询/任务创建/防重/try-catch | 文件不存在 → N failures |
+| WS5 | `tests/ws5/intervention.test.ts` | 文件存在/action 字段/docker logs 读取/harness_intervention/try-catch | 文件不存在 → N failures |
+| WS6 | `tests/ws6/messages-api.test.ts` | GET /messages/201/禁用字段/消息对象/consumed/404 | 端点未注册 → N failures |
