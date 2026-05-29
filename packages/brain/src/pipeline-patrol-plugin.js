@@ -9,9 +9,13 @@
  *   - 否则更新 tickState.lastPipelinePatrolTime 并执行 runPipelinePatrol
  *
  * 失败处理：内部 catch，错误打 console.error 并返回 { error }，不冒泡到 tick-runner。
+ *
+ * WS4：同节流门内追加 runHarnessInitiativePatrol（扫卡住的 harness initiative：
+ *   Planner 15min / GAN 每轮 20min），结果挂在返回值的 harness 字段。
  */
 
 import { runPipelinePatrol } from './pipeline-patrol.js';
+import { runHarnessInitiativePatrol } from './harness-initiative-patrol.js';
 
 const PIPELINE_PATROL_INTERVAL_MS = parseInt(
   process.env.CECELIA_PIPELINE_PATROL_INTERVAL_MS || String(5 * 60 * 1000),
@@ -40,7 +44,21 @@ export async function tick({ pool, tickState, tickLog, intervalMs } = {}) {
     if ((r?.stuck || 0) > 0 || (r?.rescued || 0) > 0) {
       tickLog?.(`[tick] Pipeline patrol: scanned=${r.scanned} stuck=${r.stuck} rescued=${r.rescued}`);
     }
-    return r;
+
+    // WS4: 追加 harness initiative 巡航（卡住检测 + intervention 触发）。
+    // 独立 try：harness patrol 失败不影响 pipeline patrol 结果。
+    let harness = null;
+    try {
+      harness = await runHarnessInitiativePatrol(pool);
+      if ((harness?.stuck || 0) > 0 || (harness?.intervened || 0) > 0) {
+        tickLog?.(`[tick] Harness initiative patrol: scanned=${harness.scanned} stuck=${harness.stuck} intervened=${harness.intervened}`);
+      }
+    } catch (hErr) {
+      console.error('[tick] Harness initiative patrol failed (non-fatal):', hErr.message);
+      harness = { error: hErr.message };
+    }
+
+    return { ...r, harness };
   } catch (err) {
     console.error('[tick] Pipeline patrol failed (non-fatal):', err.message);
     return { error: err.message };
