@@ -114,11 +114,17 @@ router.post('/notion/task', async (req, res) => {
     const properties = {
       Title: { title: [{ text: { content: fullTitle } }] },
     };
-    if (status) properties.Status = { select: { name: status } };
 
     const page = await notionReq(token, '/pages', 'POST', {
       parent: { database_id: TASKS_DB },
       properties,
+      ...(status && {
+        children: [{
+          object: 'block',
+          type: 'paragraph',
+          paragraph: { rich_text: buildRichText(`Status: ${status}`) },
+        }],
+      }),
     });
 
     return res.status(201).json({ id: page.id, url: page.url, title: fullTitle });
