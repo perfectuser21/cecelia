@@ -97,13 +97,28 @@ jobs:
         id: check-tests
         env:
           BASE_REF: origin/${{ github.base_ref }}
+          BRANCH_NAME: ${{ github.head_ref }}
         run: |
           set -euo pipefail
-          TEST_FILES=$(git diff --name-only "${BASE_REF}...HEAD" | grep -E '^sprints/[^/]+/tests/.*\.test\.ts$' || true)
-          if [ -z "$TEST_FILES" ]; then
+          ALL_TEST_FILES=$(git diff --name-only "${BASE_REF}...HEAD" | grep -E '^sprints/[^/]+/tests/.*\.test\.ts$' || true)
+          if [ -z "$ALL_TEST_FILES" ]; then
             echo "has_tests=false" >> $GITHUB_OUTPUT
             echo "ℹ️  无 sprint 测试变更，后续步骤会跳过"
           else
+            # 从分支名提取 workstream 序号（如 cp-05281036-ws-xxx-ws1 → 1）
+            # 格式：cp-{date}-ws-{id}-ws{N} 或 cp-{date}-ws{N}
+            WS_IDX=$(echo "${BRANCH_NAME:-}" | grep -oE '\-ws([0-9]+)$' | grep -oE '[0-9]+' || true)
+            if [ -n "$WS_IDX" ]; then
+              echo "🔍 分支 ${BRANCH_NAME} 检测到 workstream ws${WS_IDX}，只跑 ws${WS_IDX} 测试"
+              TEST_FILES=$(echo "$ALL_TEST_FILES" | grep "/tests/ws${WS_IDX}/" || true)
+              if [ -z "$TEST_FILES" ]; then
+                echo "ℹ️  ws${WS_IDX} 无测试文件变更，回退到全量运行"
+                TEST_FILES="$ALL_TEST_FILES"
+              fi
+            else
+              echo "ℹ️  分支名未含 workstream 后缀，运行全量 sprint 测试"
+              TEST_FILES="$ALL_TEST_FILES"
+            fi
             echo "has_tests=true" >> $GITHUB_OUTPUT
             {
               echo "test_files<<TESTFILES"

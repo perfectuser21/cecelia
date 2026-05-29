@@ -1,7 +1,3 @@
-contract_branch: cp-05281036-ws-2c9c9b66-ws1
-workstream_index: 1
-sprint_dir: sprints/cecelia-harness-async-stable-0528
-
 ---
 skeleton: false
 journey_type: autonomous

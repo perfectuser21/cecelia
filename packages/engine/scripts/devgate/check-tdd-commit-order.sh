@@ -2,12 +2,14 @@
 # check-tdd-commit-order.sh — Harness v5 CI check
 #
 # 规则（仅对 harness PR）：
-#   1. commit 1 只能 touch：sprints/*/tests/**/*.test.ts + DoD.md
+#   1. Red commit（message 含 (Red) 或 test( 开头）只能 touch：
+#      sprints/*/tests/**/*.test.ts + DoD.md + sprints/*/contract-dod-ws*.md
 #      禁含 packages/ apps/ 等实现目录
-#   2. commit 2+ 必须包含实现代码（packages/ 或 apps/ 下的 *.{ts,js,cjs,mjs,sh}）
-#   3. commit 1 之后，任何 commit 都不许修改 sprints/*/tests/**/*.test.ts
-#   4. commit 1 message 必须含 "(Red)" 或 "test(" 开头
-#   5. 至少一个 commit message 含 "(Green)" 或 "feat("
+#      注意：Red commit 之前的 "import contract" 预提交（chore(harness)）
+#      允许含任何 sprints/ 文件（sprint-prd.md/task-plan.json/contract-draft.md）
+#   2. Red commit 之后的 commit 必须包含实现代码（packages/ 或 apps/ 下的 *.{ts,js,cjs,mjs,sh,sql}）
+#   3. Red commit 之后，任何 commit 都不许修改 sprints/*/tests/**/*.test.ts
+#   4. 至少一个 commit message 含 "(Green)" 或 "feat("
 #
 # 跳过条件：
 #   - PR diff 里没有 sprints/*/tests/**/*.test.ts 改动（非 harness 产出的普通 PR）
@@ -30,7 +32,7 @@ BASE="${BASE_REF:-origin/main}"
 HEAD="${HEAD_REF:-HEAD}"
 
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-echo "  TDD Commit Order Check (v5.0)"
+echo "  TDD Commit Order Check (v5.1)"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo "  base: ${BASE}"
 echo "  head: ${HEAD}"
@@ -57,41 +59,61 @@ COMMIT_ARR=($COMMITS)
 COMMIT_COUNT=${#COMMIT_ARR[@]}
 VIOLATIONS=0
 
-# ── Check 1: commit 1 只能 touch tests/ + DoD.md ─────────────────────
-COMMIT_1=${COMMIT_ARR[0]}
-COMMIT_1_MSG=$(git log -1 --format=%s "$COMMIT_1")
-COMMIT_1_FILES=$(git show --name-only --format= "$COMMIT_1")
+# ── 查找第一个 Red commit（含 (Red) 或 test( 前缀）────────────────────────
+# 允许在 Red commit 之前存在 "import contract" 预提交（chore(harness): import contract）
+# 这些预提交被允许含任何 sprints/ 文件
+RED_IDX=-1
+for ((i = 0; i < COMMIT_COUNT; i++)); do
+  MSG=$(git log -1 --format=%s "${COMMIT_ARR[$i]}")
+  if echo "$MSG" | grep -qE '\(Red\)|^test\('; then
+    RED_IDX=$i
+    break
+  fi
+done
 
-echo "Commit 1: $COMMIT_1"
-echo "  message: $COMMIT_1_MSG"
-echo "  files:"
-echo "$COMMIT_1_FILES" | sed 's/^/    /'
+# 打印所有 commits 供调试
+for ((i = 0; i < COMMIT_COUNT; i++)); do
+  C=${COMMIT_ARR[$i]}
+  MSG=$(git log -1 --format=%s "$C")
+  FILES=$(git show --name-only --format= "$C")
+  echo "Commit $((i + 1)): $C"
+  echo "  message: $MSG"
+  echo "  files:"
+  echo "$FILES" | sed 's/^/    /'
+  echo ""
+done
 
-BAD_FILES_C1=$(echo "$COMMIT_1_FILES" | grep -vE '^(sprints/[^/]+/tests/.*\.test\.(ts|tsx)|DoD\.md|sprints/[^/]+/contract-dod-ws[0-9]+\.md|sprints/[^/]+/(contract-draft|task-plan)\.(md|json))$' || true)
-if [ -n "$BAD_FILES_C1" ]; then
-  echo -e "  ${RED}❌ commit 1 含非测试/DoD 的文件（应只含 tests + DoD.md）：${RESET}"
-  echo "$BAD_FILES_C1" | sed 's/^/      /'
+if [ $RED_IDX -eq -1 ]; then
+  echo -e "${RED}❌ 没有找到 Red commit（含 (Red) 或 test( 前缀的 commit）${RESET}"
   VIOLATIONS=$((VIOLATIONS + 1))
+  # Fallback: use first commit as Red commit
+  RED_IDX=0
 fi
 
-# ── Check 2: commit 1 message 含 (Red) 或 test( ──────────────────────
-if ! echo "$COMMIT_1_MSG" | grep -qE '\(Red\)|^test\(|^chore\(harness\): import contract'; then
-  echo -e "  ${RED}❌ commit 1 message 缺 (Red) 或 test( 前缀${RESET}"
+# ── Check 1: Red commit 只能 touch tests/ + DoD.md + contract-dod-ws ────
+RED_COMMIT=${COMMIT_ARR[$RED_IDX]}
+RED_COMMIT_MSG=$(git log -1 --format=%s "$RED_COMMIT")
+RED_COMMIT_FILES=$(git show --name-only --format= "$RED_COMMIT")
+
+echo "🔴 Red commit detected at position $((RED_IDX + 1)): $RED_COMMIT"
+echo "  message: $RED_COMMIT_MSG"
+
+BAD_FILES_RED=$(echo "$RED_COMMIT_FILES" | grep -vE '^(sprints/[^/]+/tests/.*\.test\.ts|DoD\.md|sprints/[^/]+/contract-dod-ws[0-9]+\.md|)$' || true)
+if [ -n "$BAD_FILES_RED" ]; then
+  echo -e "  ${RED}❌ Red commit 含非测试/DoD 的文件（应只含 tests + DoD.md）：${RESET}"
+  echo "$BAD_FILES_RED" | sed 's/^/      /'
   VIOLATIONS=$((VIOLATIONS + 1))
 fi
 
 echo ""
 
-# ── Check 3: commit 2+ 必须含实现 + 测试文件不许改 ─────────────────────
+# ── Check 2: Red commit 之后不许修改测试文件，必须含实现 ─────────────────
 HAS_GREEN=0
 IMPL_FOUND=0
-for ((i = 1; i < COMMIT_COUNT; i++)); do
+for ((i = RED_IDX + 1; i < COMMIT_COUNT; i++)); do
   C=${COMMIT_ARR[$i]}
   MSG=$(git log -1 --format=%s "$C")
   FILES=$(git show --name-only --format= "$C")
-
-  echo "Commit $((i + 1)): $C"
-  echo "  message: $MSG"
 
   # 检测是否含 (Green) 或 feat(
   if echo "$MSG" | grep -qE '\(Green\)|^feat\('; then
@@ -101,28 +123,26 @@ for ((i = 1; i < COMMIT_COUNT; i++)); do
   # 检测本 commit 有无 touch sprints/*/tests/*.test.ts（不许）
   TEST_TOUCHED=$(echo "$FILES" | grep -E '^sprints/[^/]+/tests/.*\.test\.ts$' || true)
   if [ -n "$TEST_TOUCHED" ]; then
-    echo -e "  ${RED}❌ commit 2+ 修改了测试文件（违反 CONTRACT IS LAW — 测试 Red 后不可改）：${RESET}"
+    echo -e "  ${RED}❌ commit $((i + 1)) 修改了测试文件（违反 CONTRACT IS LAW — 测试 Red 后不可改）：${RESET}"
     echo "$TEST_TOUCHED" | sed 's/^/      /'
     VIOLATIONS=$((VIOLATIONS + 1))
   fi
 
-  # 检测本 commit 有无实现代码
-  # 注意：sprints/*.sh 也算实现（harness 任务可交付 sprint 脚本而非 packages/ 代码）
-  IMPL_TOUCHED=$(echo "$FILES" | grep -E '^(packages|apps|sprints)/.+\.(ts|tsx|js|jsx|cjs|mjs|py|sh)$|^packages/workflows/skills/.+/SKILL\.md$' || true)
+  # 检测本 commit 有无实现代码（包含 .sql 迁移文件）
+  # sprints/*.sh 也算实现（harness 任务可交付 sprint 脚本而非 packages/ 代码）
+  IMPL_TOUCHED=$(echo "$FILES" | grep -E '^(packages|apps|sprints)/.+\.(ts|tsx|js|jsx|cjs|mjs|py|sh|sql)$' || true)
   if [ -n "$IMPL_TOUCHED" ]; then
     IMPL_FOUND=1
   fi
-
-  echo ""
 done
 
-# ── Check 4: commit 2+ 必须有一个 commit 含实现 ────────────────────────
-if [ $IMPL_FOUND -eq 0 ] && [ $COMMIT_COUNT -gt 1 ]; then
-  echo -e "${RED}❌ commit 2+ 未找到任何实现代码改动（packages/ 或 apps/ 或 sprints/*.sh）${RESET}"
+# ── Check 3: Red commit 之后必须有一个 commit 含实现 ───────────────────────
+if [ $IMPL_FOUND -eq 0 ] && [ "$RED_IDX" -lt "$((COMMIT_COUNT - 1))" ]; then
+  echo -e "${RED}❌ Red commit 之后未找到实现代码（packages/ 或 apps/ 或 sprints/*.{sh,sql}）${RESET}"
   VIOLATIONS=$((VIOLATIONS + 1))
 fi
 
-# ── Check 5: 至少一个 commit 含 (Green) 或 feat( ──────────────────────
+# ── Check 4: 至少一个 commit 含 (Green) 或 feat( ──────────────────────────
 if [ $HAS_GREEN -eq 0 ] && [ $COMMIT_COUNT -gt 1 ]; then
   echo -e "${RED}❌ 没有 commit message 含 (Green) 或 feat( 前缀${RESET}"
   VIOLATIONS=$((VIOLATIONS + 1))
@@ -137,8 +157,9 @@ else
   echo -e "${RED}❌ TDD Commit Order 检查失败${RESET} ($VIOLATIONS 处违规)"
   echo ""
   echo "  TDD 规则："
-  echo "    commit 1: 只含 tests/ + DoD.md + contract-dod-ws，message 含 (Red)"
-  echo "    commit 2+: 含实现代码，测试文件不许改，至少一个 message 含 (Green)"
+  echo "    Red commit: 只含 tests/ + DoD.md + contract-dod-ws，message 含 (Red)"
+  echo "    Red 之后: 含实现代码，测试文件不许改，至少一个 message 含 (Green)"
+  echo "    允许 Red 前有 chore(harness): import contract 预提交（可含 sprint-prd 等）"
   echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
   exit 1
 fi
