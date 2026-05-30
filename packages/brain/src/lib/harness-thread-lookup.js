@@ -23,7 +23,6 @@ import pool from '../db.js';
 import { getPgCheckpointer } from '../orchestrator/pg-checkpointer.js';
 import { getCompiledWalkingSkeleton } from '../workflows/walking-skeleton-1node.graph.js';
 import { compileHarnessTaskGraph } from '../workflows/harness-task.graph.js';
-import { compileHarnessGanGraph } from '../workflows/harness-gan.graph.js';
 
 // 模块缓存 harness-task compiled graph（PG checkpointer 单例下，只编一次）
 let _compiledHarnessTask = null;
@@ -108,24 +107,18 @@ export async function lookupHarnessThread(containerId) {
     }
   }
 
-  // WS3: harness-gan graph（proposer/reviewer detached+interrupt）
+  // B44: harness-gan 已改回同步，不再写 thread_lookup，此分支保留作兼容（返回 null 即可）
   if (graphName === 'harness-gan') {
-    try {
-      const checkpointer = await getPgCheckpointer();
-      const compiledGraph = await compileHarnessGanGraph(checkpointer);
-      return { compiledGraph, threadId };
-    } catch (err) {
-      console.error(`[harness-thread-lookup] compile harness-gan failed containerId=${containerId}: ${err.message}`);
-      return null;
-    }
+    console.warn(`[harness-thread-lookup] harness-gan is now synchronous (B44), graph_name=${graphName} should not appear in thread_lookup`);
+    return null;
   }
 
-  // WS2: harness-initiative graph（planner detached+interrupt）
+  // B44 fix: harness-initiative 用全图（compileHarnessFullGraph，executor 用的图）
+  // 原来的 compileHarnessInitiativeGraph 只含 Phase A 节点，无法处理 callback resume
   if (graphName === 'harness-initiative') {
     try {
-      const { compileHarnessInitiativeGraph } = await import('../workflows/harness-initiative.graph.js');
-      const checkpointer = await getPgCheckpointer();
-      const compiledGraph = await compileHarnessInitiativeGraph(checkpointer);
+      const { compileHarnessFullGraph } = await import('../workflows/harness-initiative.graph.js');
+      const compiledGraph = await compileHarnessFullGraph();
       return { compiledGraph, threadId };
     } catch (err) {
       console.error(`[harness-thread-lookup] compile harness-initiative failed containerId=${containerId}: ${err.message}`);
