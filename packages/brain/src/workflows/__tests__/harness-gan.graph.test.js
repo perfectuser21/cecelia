@@ -20,7 +20,7 @@ function makeExecutorWithResultFile(worktreePath, overrides = {}) {
   });
 }
 
-describe.skip('GAN proposer node task-plan.json access 校验 [BEHAVIOR] [WS3 async: 需迁移]', () => {
+describe('GAN proposer node task-plan.json access 校验 [BEHAVIOR]', () => {
   it('proposer 跑完缺 sprints/task-plan.json 时应打 console.warn 不抛错', async () => {
     const tmp = await mkdtemp(path.join(os.tmpdir(), 'gan-proposer-test-'));
     try {
