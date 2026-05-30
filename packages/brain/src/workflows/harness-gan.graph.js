@@ -344,6 +344,7 @@ export const GanContractState = Annotation.Root({
 export function createGanContractNodes(executor, ctx) {
   const {
     taskId, initiativeId, sprintDir, worktreePath, githubToken, baseRepo,
+    plannerOutput = '',
     budgetCapUsd = 10,
     readContractFile = defaultReadContractFile,
     fetchOriginFile: _fetchOriginFile = fetchAndShowOriginFile,
@@ -353,6 +354,8 @@ export function createGanContractNodes(executor, ctx) {
   } = ctx;
   // _fetchOriginFile 保留 ctx 兼容旧 caller（test 仍传 fetchOriginFile），H15 后 proposer 改走 verifyProposer。
   void _fetchOriginFile;
+  // planner SKILL 推到 cp-MMDDHHM-harness-prd，从 plannerOutput 提取；fallback 'main'（本地 cat 兜底）
+  const plannerBranch = plannerOutput.match(/cp-[0-9]+-harness-prd/)?.[0] ?? 'main';
 
   async function proposer(state) {
     const nextRound = (state.round || 0) + 1;
@@ -390,7 +393,7 @@ export function createGanContractNodes(executor, ctx) {
           HARNESS_PROPOSE_ROUND: String(nextRound),
           TASK_ID: taskId,
           SPRINT_DIR: sprintDir,
-          PLANNER_BRANCH: 'main',
+          PLANNER_BRANCH: plannerBranch,
           PROPOSE_ROUND: String(nextRound),
           PROPOSE_BRANCH: computedBranch,
           GITHUB_TOKEN: githubToken,
@@ -474,7 +477,7 @@ export function createGanContractNodes(executor, ctx) {
           HARNESS_REVIEW_ROUND: String(currentRound),
           TASK_ID: taskId,
           SPRINT_DIR: sprintDir,
-          PLANNER_BRANCH: 'main',
+          PLANNER_BRANCH: plannerBranch,
           REVIEW_ROUND: String(currentRound),
           GITHUB_TOKEN: githubToken,
           HARNESS_CALLBACK_URL: `http://host.docker.internal:5221/api/brain/harness/callback/${containerId}`,
@@ -632,6 +635,7 @@ export async function runGanContractGraph(opts) {
   const {
     taskId, initiativeId, sprintDir, prdContent,
     executor, worktreePath, githubToken, baseRepo,
+    plannerOutput = '',
     budgetCapUsd = 10,
     checkpointer,
     readContractFile,
@@ -650,7 +654,7 @@ export async function runGanContractGraph(opts) {
 
   const nodes = createGanContractNodes(executor, {
     taskId, initiativeId, sprintDir, worktreePath, githubToken, baseRepo,
-    budgetCapUsd, readContractFile, fetchOriginFile,
+    plannerOutput, budgetCapUsd, readContractFile, fetchOriginFile,
   });
   const graph = buildGanContractGraph(nodes);
   const app = graph.compile({ checkpointer, durability: 'sync' });

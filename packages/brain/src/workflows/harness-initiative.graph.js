@@ -229,6 +229,7 @@ ${task.description || task.title || ''}
       executor,
       worktreePath,
       githubToken,
+      plannerOutput,
       budgetCapUsd: budgetUsd,
       checkpointer: opts.checkpointer,
       baseRepo,
@@ -807,6 +808,7 @@ export async function runGanLoopNode(state, opts = {}) {
       executor,
       worktreePath: state.worktreePath,
       githubToken: state.githubToken,
+      plannerOutput: state.plannerOutput || '',
       budgetCapUsd: budgetUsd,
       checkpointer,
       baseRepo: state.task?.payload?.base_repo || undefined,
@@ -1301,7 +1303,8 @@ export async function runSubTaskNode(state, opts = {}) {
     },
   };
   const compiled = opts.compiledTaskGraph || await _getTaskGraphCompiled();
-  const config = { configurable: { thread_id: `harness-task:${state.initiativeId}:${subTask.id}` }, recursionLimit: 200 };
+  // final_e2e_fix_count 追加到 thread_id：final_evaluate FAIL 重跑时用 fresh checkpoint，避免旧状态污染
+  const config = { configurable: { thread_id: `harness-task:${state.initiativeId}:${subTask.id}:fix${state.final_e2e_fix_count ?? 0}` }, recursionLimit: 200 };
   const waitMs = opts.waitMs !== undefined ? opts.waitMs : SUBGRAPH_WAIT_MS;
   let final;
   try {
@@ -1648,6 +1651,8 @@ export function routeFromPickSubTask(state) {
   return 'run_sub_task';
 }
 
+// routeAfterEvaluate: 不连接 graph（initiative 层的 evaluate 节点已删除，路由目标 'advance'/'retry' 已不存在）。
+// 保留 export 仅供 harness-initiative-evaluate.test.js 单元测试引用，不影响生产 graph。
 export function routeAfterEvaluate(state) {
   if (state.error) return 'end';
   const tasks = state.taskPlan?.tasks || [];
