@@ -2,8 +2,12 @@ import { describe, it, expect } from 'vitest';
 import { readFileSync, existsSync } from 'fs';
 import { join } from 'path';
 
-// Sprint Tests CI 从 repo root 运行；migration 在 packages/brain/migrations/
-const MIGRATION_PATH = join(process.cwd(), 'packages/brain/migrations/288_harness_messages.sql');
+// 使用 import.meta.url 计算绝对路径（不受 vitest shard CWD 影响）
+import { fileURLToPath } from 'url';
+const __filename = fileURLToPath(import.meta.url);
+// sprints/cecelia-harness-async-stable-0528/tests/ws1/migration.test.ts → 向上 5 层到 repo root
+const REPO_ROOT = join(__filename, '..', '..', '..', '..', '..');
+const MIGRATION_PATH = join(REPO_ROOT, 'packages/brain/migrations/288_harness_messages.sql');
 
 describe('WS1 — DB Migration harness_messages [BEHAVIOR]', () => {
   it('288_harness_messages.sql 文件存在', () => {
