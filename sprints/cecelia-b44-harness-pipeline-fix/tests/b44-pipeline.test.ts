@@ -1,3 +1,4 @@
+// B44 — Red commit marker
 import { describe, it, expect } from 'vitest';
 import { fileURLToPath } from 'url';
 import { readFileSync } from 'fs';
