@@ -45,7 +45,7 @@ import { spawnDockerDetached, spawnCodexBridgeDetached } from '../spawn/detached
 import { resolveAccount } from '../spawn/middleware/account-rotation.js';
 import { checkPrStatus, classifyFailedChecks } from '../shepherd.js';
 import { parseDockerOutput, extractField, readPrFromGitState, readVerdictFile, readBrainResult, EvaluatorOutputSchema, loadSkillContent } from '../harness-shared.js';
-import { buildGeneratorPrompt, extractWorkstreamIndex } from '../harness-utils.js';
+import { buildGeneratorPrompt } from '../harness-utils.js';
 import { getPgCheckpointer } from '../orchestrator/pg-checkpointer.js';
 import pool from '../db.js';
 import { verifyGeneratorOutput } from '../lib/contract-verify.js';
