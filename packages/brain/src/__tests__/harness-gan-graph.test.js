@@ -91,10 +91,10 @@ describe('thresholdForRound', () => {
     expect(thresholdForRound(1)).toBe(7);
     expect(thresholdForRound(2)).toBe(7);
   });
-  it('round 3+ 阈值 6', () => {
-    expect(thresholdForRound(3)).toBe(6);
-    expect(thresholdForRound(5)).toBe(6);
-    expect(thresholdForRound(10)).toBe(6);
+  it('round 3+ 阈值固定 7（reviewer SKILL v6.4.0+ 单轮阈值不降）', () => {
+    expect(thresholdForRound(3)).toBe(7);
+    expect(thresholdForRound(5)).toBe(7);
+    expect(thresholdForRound(10)).toBe(7);
   });
 });
 
@@ -105,6 +105,8 @@ describe('computeVerdictFromRubric', () => {
     test_is_red: 7,
     internal_consistency: 7,
     risk_registered: 7,
+    verification_oracle_completeness: 7,
+    ci_workflow_alignment: 7,
   };
 
   it('round 1 全 ≥7 → APPROVED', () => {
@@ -116,12 +118,12 @@ describe('computeVerdictFromRubric', () => {
     expect(computeVerdictFromRubric(scores, 1)).toBe('REVISION');
   });
 
-  it('round 3 同样一维 6 → APPROVED（阈值降到 6）', () => {
+  it('round 3 一维 6 → REVISION（阈值固定 7，不再降为 6）', () => {
     const scores = { ...allSeven, risk_registered: 6 };
-    expect(computeVerdictFromRubric(scores, 3)).toBe('APPROVED');
+    expect(computeVerdictFromRubric(scores, 3)).toBe('REVISION');
   });
 
-  it('round 3 一维 5 → REVISION（仍低于阈值 6）', () => {
+  it('round 3 一维 5 → REVISION（低于阈值 7）', () => {
     const scores = { ...allSeven, risk_registered: 5 };
     expect(computeVerdictFromRubric(scores, 3)).toBe('REVISION');
   });
@@ -137,12 +139,15 @@ describe('computeVerdictFromRubric', () => {
 
 const RUBRIC_ALL_PASS = {
   dod_machineability: 8, scope_match_prd: 8, test_is_red: 8, internal_consistency: 8, risk_registered: 8,
+  verification_oracle_completeness: 8, ci_workflow_alignment: 8,
 };
 const RUBRIC_RISK_FAIL = {
   dod_machineability: 8, scope_match_prd: 7, test_is_red: 9, internal_consistency: 7, risk_registered: 5,
+  verification_oracle_completeness: 8, ci_workflow_alignment: 8,
 };
 const RUBRIC_ALL_SIX = {
   dod_machineability: 6, scope_match_prd: 7, test_is_red: 6, internal_consistency: 6, risk_registered: 6,
+  verification_oracle_completeness: 6, ci_workflow_alignment: 6,
 };
 
 describe('createGanContractNodes', () => {
@@ -311,7 +316,7 @@ describe('createGanContractNodes', () => {
     expect(newState.verdict).toBe('APPROVED');
   });
 
-  it('reviewer node: round 3 阈值降 6，rubric 全 ≥6 → APPROVED', async () => {
+  it('reviewer node: round 3 阈值固定 7，rubric 全 =6 → REVISION（不再降阈值）', async () => {
     mockSpawnDetached.mockImplementationOnce(async () => {
       writeFileSync(path.join(tmpWt, '.brain-result.json'),
         JSON.stringify({ verdict: 'REVISION', rubric_scores: RUBRIC_ALL_SIX, feedback: '' }));
@@ -320,7 +325,7 @@ describe('createGanContractNodes', () => {
     const { createGanContractNodes } = await import('../harness-gan-graph.js');
     const nodes = createGanContractNodes(null, makeCtx());
     const newState = await nodes.reviewer({ prdContent: '# PRD', contractContent: '# C', round: 3, costUsd: 0 });
-    expect(newState.verdict).toBe('APPROVED');
+    expect(newState.verdict).toBe('REVISION');
   });
 });
 
