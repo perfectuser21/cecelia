@@ -1285,13 +1285,6 @@ export async function runSubTaskNode(state, opts = {}) {
   });
   const fixCount = state.task_loop_fix_count ?? 0;
   const feedback = state.evaluate_feedback;
-  // Final E2E 失败上下文：当 final_evaluate FAIL 重跑时，把失败原因注入 generator。
-  // 不注入则 generator 对 Final E2E 失败原因一无所知，无限重跑同样代码无法收敛（B43 根因）。
-  const finalE2EFixCount = state.final_e2e_fix_count ?? 0;
-  const finalE2EScenarios = state.final_e2e_failed_scenarios || [];
-  const finalE2EFeedback = finalE2EFixCount > 0 && finalE2EScenarios.length > 0
-    ? `Final E2E FAIL（第 ${finalE2EFixCount} 轮重试）：\n${finalE2EScenarios.map(s => `- ${s.name}${s.output ? '：' + String(s.output).slice(0, 300) : ''}${s.error ? '（err: ' + String(s.error).slice(0, 200) + '）' : ''}`).join('\n')}`
-    : null;
   const taskForGraph = {
     id: subTask.id,
     title: subTask.title,
@@ -1307,12 +1300,12 @@ export async function runSubTaskNode(state, opts = {}) {
       // 不覆盖导致 generator 写到顶级 sprints/ 而非正确子目录（W49 实证 B38 根因）。
       ...(state.sprintDir ? { sprint_dir: state.sprintDir } : {}),
       ...(fixCount > 0 && feedback ? { fix_round: fixCount, evaluator_feedback: feedback } : {}),
-      ...(finalE2EFeedback ? { final_e2e_fix_round: finalE2EFixCount, final_e2e_evaluator_feedback: finalE2EFeedback } : {}),
     },
   };
   const compiled = opts.compiledTaskGraph || await _getTaskGraphCompiled();
   // final_e2e_fix_count 追加到 thread_id：final_evaluate FAIL 重跑时用 fresh checkpoint，避免旧状态污染
-  const config = { configurable: { thread_id: `harness-task:${state.initiativeId}:${subTask.id}:fix${state.final_e2e_fix_count ?? 0}` }, recursionLimit: 200 };
+  // thread_id 含 fix_count 保证 evaluate_contract FAIL 重试时用 fresh checkpoint
+  const config = { configurable: { thread_id: `harness-task:${state.initiativeId}:${subTask.id}:fix${state.task_loop_fix_count ?? 0}` }, recursionLimit: 200 };
   const waitMs = opts.waitMs !== undefined ? opts.waitMs : SUBGRAPH_WAIT_MS;
   let final;
   try {
@@ -1655,7 +1648,7 @@ export function routeFromPickSubTask(state) {
   if (state.error) return 'end';
   const tasks = state.taskPlan?.tasks || [];
   const idx = state.task_loop_index ?? 0;
-  if (idx >= tasks.length) return 'final_evaluate';
+  if (idx >= tasks.length) return 'report';
   return 'run_sub_task';
 }
 
@@ -1874,14 +1867,14 @@ export function _routeAfterFinalE2E(state) {
 export function buildHarnessFullGraph(nodeOverrides = {}) {
   const {
     runSubTaskFn = runSubTaskNode,
-    finalEvaluateFn = finalEvaluateDispatchNode,
   } = nodeOverrides;
   // 节点级 RetryPolicy（W2）—— 见 packages/brain/src/workflows/retry-policies.js
-  // LLM_RETRY: planner / ganLoop / run_sub_task / final_evaluate
+  // LLM_RETRY: planner / ganLoop / run_sub_task
   // DB_RETRY:  dbUpsert / report
-  // NO_RETRY:  prep / parsePrd / inferTaskPlan / pick_sub_task / advance / retry / terminal_fail
-  // NOTE: per-task `evaluate` 节点已下沉到 harness-task.graph.js 子图内（evaluate_contract 节点），
-  //       initiative graph 不再有 evaluate 节点。
+  // NO_RETRY:  prep / parsePrd / inferTaskPlan / pick_sub_task / advance
+  // 单一 evaluator 设计：per-task evaluate_contract 节点（IS_FINAL_E2E=true）在 harness-task.graph.js
+  // 子图内完成 pre-merge 全量 E2E 验收，initiative graph 不再有独立 final_evaluate 节点。
+  // 对齐 Anthropic 官方 Harness 设计（单 evaluator pre-merge 迭代循环）。
   return new StateGraph(FullInitiativeState)
     .addNode('prep', prepInitiativeNode, { retryPolicy: NO_RETRY })
     .addNode('planner', runPlannerNode, { retryPolicy: LLM_RETRY })
@@ -1892,12 +1885,6 @@ export function buildHarnessFullGraph(nodeOverrides = {}) {
     .addNode('pick_sub_task', pickSubTaskNode, { retryPolicy: NO_RETRY })
     .addNode('run_sub_task', runSubTaskFn, { retryPolicy: LLM_RETRY })
     .addNode('advance', advanceTaskIndexNode, { retryPolicy: NO_RETRY })
-    // NOTE: 'retry' / 'terminal_fail' 节点删除 — 它们 originally 由 routeAfterEvaluate 路由进入，
-    // 但 per-task evaluator 下沉到 harness-task.graph.js 的 evaluate_contract 子图后，
-    // initiative 层的 evaluate 节点+routeAfterEvaluate 路由都被删除，这两个节点变成 orphan。
-    // retryTaskNode / terminalFailNode 函数定义保留（其他地方可能调用）。
-    // Golden Path 终验 — 跨 ws E2E 聚合验证，区别于 task 子图内的 evaluate_contract（per-task pre-merge gate）。
-    .addNode('final_evaluate', finalEvaluateFn, { retryPolicy: LLM_RETRY })
     .addNode('report', reportNode, { retryPolicy: DB_RETRY })
     .addEdge(START, 'prep')
     .addConditionalEdges('prep', stateHasError, { error: END, ok: 'planner' })
@@ -1906,10 +1893,9 @@ export function buildHarnessFullGraph(nodeOverrides = {}) {
     .addConditionalEdges('ganLoop', stateHasError, { error: END, ok: 'inferTaskPlan' })
     .addConditionalEdges('inferTaskPlan', stateHasError, { error: END, ok: 'dbUpsert' })
     .addConditionalEdges('dbUpsert', stateHasError, { error: END, ok: 'pick_sub_task' })
-    .addConditionalEdges('pick_sub_task', routeFromPickSubTask, { run_sub_task: 'run_sub_task', final_evaluate: 'final_evaluate', end: END })
+    .addConditionalEdges('pick_sub_task', routeFromPickSubTask, { run_sub_task: 'run_sub_task', report: 'report', end: END })
     .addEdge('run_sub_task', 'advance')
     .addEdge('advance', 'pick_sub_task')
-    .addConditionalEdges('final_evaluate', _routeAfterFinalE2E, { report: 'report', pick_sub_task: 'pick_sub_task' })
     .addEdge('report', END);
 }
 

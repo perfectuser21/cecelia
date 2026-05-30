@@ -74,6 +74,9 @@ vi.mock('../../harness-final-e2e.js', () => ({
 
 import { buildHarnessFullGraph } from '../harness-initiative.graph.js';
 
+// 单一 evaluator 重构后：final_evaluate 节点已从 initiative graph 删除，
+// evaluate_contract（IS_FINAL_E2E=true）在 harness-task.graph.js 子图内负责 E2E 验收。
+// B43 原始场景（失败上下文传递）现在在 task 子图 evaluate_contract → generator 链路上。
 // WS2 async: B43 full graph 测试依赖旧阻塞 Planner executor，
 // 新实现用 interrupt()，需迁移到 MemorySaver+Command(resume) 模式。
 describe.skip('B43 — harness pipeline A→B→C regression guard [WS2 async: 需迁移]', () => {
@@ -88,7 +91,7 @@ describe.skip('B43 — harness pipeline A→B→C regression guard [WS2 async: �
     mockPool.connect.mockResolvedValue(mockClient);
   });
 
-  it('full graph A→B→C: nodeOverrides inject mock run_sub_task + final_evaluate → PASS', async () => {
+  it('full graph A→B→C: nodeOverrides inject mock run_sub_task（无 final_evaluate，已删）→ PASS', async () => {
     // Phase A mocks
     mockEnsureWt.mockResolvedValue('/wt-b43');
     mockResolveTok.mockResolvedValue('tok-b43');
@@ -111,19 +114,13 @@ describe.skip('B43 — harness pipeline A→B→C regression guard [WS2 async: �
       .mockResolvedValueOnce({ rows: [] });                   // COMMIT
     mockUpsertTaskPlan.mockResolvedValue({ idMap: {}, insertedTaskIds: ['ws1'] });
 
-    // Phase B+C injectable mocks — THIS IS WHAT b43 IS TESTING
+    // Phase B injectable mock — final_evaluate 已从 initiative graph 删除
     const mockRunSubTaskFn = vi.fn(async (state) => ({
       sub_tasks: [{ id: state.sub_task?.id, status: 'merged', pr_url: 'https://github.com/fake/pr/1' }],
     }));
-    const mockFinalEvaluateFn = vi.fn(async () => ({
-      final_e2e_verdict: 'PASS',
-      final_e2e_failed_scenarios: [],
-    }));
 
-    // buildHarnessFullGraph must accept nodeOverrides — RED if it doesn't
     const compiled = buildHarnessFullGraph({
       runSubTaskFn: mockRunSubTaskFn,
-      finalEvaluateFn: mockFinalEvaluateFn,
     }).compile({ checkpointer: new MemorySaver() });
 
     const final = await compiled.invoke(
@@ -131,12 +128,9 @@ describe.skip('B43 — harness pipeline A→B→C regression guard [WS2 async: �
       { configurable: { thread_id: 'b43:1' }, recursionLimit: 500 }
     );
 
-    // B→C transition assertions
+    // A→B transition assertions（final_evaluate 移除后，run_sub_task → advance → pick → report）
     expect(mockRunSubTaskFn).toHaveBeenCalledTimes(1);
     expect(mockRunSubTaskFn.mock.calls[0][0].sub_task?.id).toBe('ws1');
-    expect(mockFinalEvaluateFn).toHaveBeenCalledTimes(1);
-    expect(final.final_e2e_verdict).toBe('PASS');
-    expect(final.final_e2e_failed_scenarios).toEqual([]);
     expect(final.report_path).toBeTruthy();
   }, 8000);
 });
