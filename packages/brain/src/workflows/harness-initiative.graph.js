@@ -1302,7 +1302,7 @@ export async function runSubTaskNode(state, opts = {}) {
   const compiled = opts.compiledTaskGraph || await _getTaskGraphCompiled();
   // final_e2e_fix_count 追加到 thread_id：final_evaluate FAIL 重跑时用 fresh checkpoint，避免旧状态污染
   // thread_id 含 fix_count 保证 evaluate_contract FAIL 重试时用 fresh checkpoint
-  const config = { configurable: { thread_id: `harness-task:${state.initiativeId}:${subTask.id}:fix${state.task_loop_fix_count ?? 0}` }, recursionLimit: 200 };
+  const config = { configurable: { thread_id: `harness-task:${state.initiativeId}:${subTask.id}:fix${state.final_e2e_fix_count ?? 0}` }, recursionLimit: 200 };
   const waitMs = opts.waitMs !== undefined ? opts.waitMs : SUBGRAPH_WAIT_MS;
   let final;
   try {
