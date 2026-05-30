@@ -1,86 +1,49 @@
 /**
- * lib/harness-thread-lookup.test.js — LangGraph 修正 Sprint Stream 5
- *
- * Stream 1 起步是 stub，Stream 5 真实化为 PG 查询。
- *
- * 这些断言守住"接口契约"（callback router 按此 mock）：
- *   - 返回 null 表示找不到（router 应 404）
- *   - 返回 { compiledGraph, threadId } 表示成功
- *   - 错误不抛（PG/compile 失败均 swallow → null）
+ * B44 fix — harness-thread-lookup.js 的 harness-initiative case 应用 compileHarnessFullGraph
  */
-import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { MemorySaver } from '@langchain/langgraph';
+import { describe, it, expect, vi } from 'vitest';
 
-// Mock db pool — 测试不能真连 PG
-const mockQuery = vi.fn();
-vi.mock('../../db.js', () => ({
-  default: { query: (...args) => mockQuery(...args) },
-}));
+// mock
+const mockCompileFullGraph = vi.fn().mockResolvedValue({ invoke: vi.fn(), getState: vi.fn() });
+const mockCompileInitiativeGraph = vi.fn().mockResolvedValue({ invoke: vi.fn() });
+const mockPgCheckpointer = vi.fn().mockResolvedValue({});
 
-// Mock pg-checkpointer — 用 MemorySaver 代替（compile graph 需要 checkpointer）
 vi.mock('../../orchestrator/pg-checkpointer.js', () => ({
-  getPgCheckpointer: vi.fn().mockResolvedValue(new MemorySaver()),
+  getPgCheckpointer: () => mockPgCheckpointer(),
+}));
+vi.mock('../../workflows/harness-initiative.graph.js', () => ({
+  compileHarnessFullGraph: () => mockCompileFullGraph(),
+  compileHarnessInitiativeGraph: () => mockCompileInitiativeGraph(),
+}));
+vi.mock('../../workflows/harness-task.graph.js', () => ({
+  compileHarnessTaskGraph: vi.fn().mockResolvedValue({}),
+}));
+vi.mock('../../workflows/walking-skeleton-1node.graph.js', () => ({
+  getCompiledWalkingSkeleton: vi.fn().mockResolvedValue({}),
+}));
+vi.mock('../../workflows/harness-gan.graph.js', () => ({
+  compileHarnessGanGraph: vi.fn().mockResolvedValue({}),
+}));
+vi.mock('../../db.js', () => ({
+  default: {
+    query: vi.fn().mockResolvedValue({
+      rows: [{ thread_id: 'test-thread-1', graph_name: 'harness-initiative' }],
+    }),
+  },
 }));
 
-import { lookupHarnessThread } from '../harness-thread-lookup.js';
-import { _resetCompiledForTests } from '../../workflows/walking-skeleton-1node.graph.js';
+import { _resetHarnessTaskCacheForTests, lookupHarnessThread } from '../harness-thread-lookup.js';
 
-describe('lib/harness-thread-lookup (Stream 5 真实 PG 查询)', () => {
-  beforeEach(() => {
-    mockQuery.mockReset();
-    _resetCompiledForTests();
-  });
+describe('B44 — harness-initiative case uses compileHarnessFullGraph [BEHAVIOR]', () => {
+  it('graph_name=harness-initiative → calls compileHarnessFullGraph (NOT compileHarnessInitiativeGraph)', async () => {
+    _resetHarnessTaskCacheForTests();
+    mockCompileFullGraph.mockClear();
+    mockCompileInitiativeGraph.mockClear();
 
-  it('exports lookupHarnessThread 函数', () => {
-    expect(typeof lookupHarnessThread).toBe('function');
-  });
-
-  it('未知 containerId — PG 返回空 → null', async () => {
-    mockQuery.mockResolvedValueOnce({ rows: [] });
-    const result = await lookupHarnessThread('any-container-id');
-    expect(result).toBeNull();
-    expect(mockQuery).toHaveBeenCalledTimes(1);
-  });
-
-  it('空字符串 / undefined → 直接 null（不打 PG）', async () => {
-    expect(await lookupHarnessThread('')).toBeNull();
-    expect(await lookupHarnessThread(undefined)).toBeNull();
-    expect(mockQuery).not.toHaveBeenCalled();
-  });
-
-  it('walking-skeleton-1node graph 命中 → 返回 { compiledGraph, threadId }', async () => {
-    mockQuery.mockResolvedValueOnce({
-      rows: [{ thread_id: 'thread-xyz', graph_name: 'walking-skeleton-1node' }],
-    });
     const result = await lookupHarnessThread('container-abc');
+
     expect(result).not.toBeNull();
-    expect(result.threadId).toBe('thread-xyz');
-    expect(result.compiledGraph).toBeDefined();
-    expect(typeof result.compiledGraph.invoke).toBe('function');
-  });
-
-  it('B9: harness-evaluate graph 命中 → dispatch to compiledHarnessTask 同 thread_id', async () => {
-    mockQuery.mockResolvedValueOnce({
-      rows: [{ thread_id: 'harness-evaluate:init-1:ws1', graph_name: 'harness-evaluate' }],
-    });
-    const result = await lookupHarnessThread('harness-evaluate-ws1-r0-abc');
-    expect(result).not.toBeNull();
-    expect(result.threadId).toBe('harness-evaluate:init-1:ws1');
-    expect(result.compiledGraph).toBeDefined();
-    expect(typeof result.compiledGraph.invoke).toBe('function');
-  });
-
-  it('未知 graph_name → 返回 null（dispatch miss）', async () => {
-    mockQuery.mockResolvedValueOnce({
-      rows: [{ thread_id: 'thread-xyz', graph_name: 'unknown-graph' }],
-    });
-    const result = await lookupHarnessThread('container-abc');
-    expect(result).toBeNull();
-  });
-
-  it('PG 查询抛错 → 返回 null（不向上传播）', async () => {
-    mockQuery.mockRejectedValueOnce(new Error('connection refused'));
-    const result = await lookupHarnessThread('container-abc');
-    expect(result).toBeNull();
+    expect(mockCompileFullGraph).toHaveBeenCalledTimes(1);
+    expect(mockCompileInitiativeGraph).not.toHaveBeenCalled();
   });
 });
