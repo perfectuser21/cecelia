@@ -1547,6 +1547,9 @@ export async function reportNode(state, opts = {}) {
           sprint_dir: state.sprintDir,
           journey_id: state.task?.payload?.journey_id,
           feature_id: state.task?.payload?.feature_id,
+          feature_name: state.task?.payload?.feature_name || state.task?.title || '',
+          pr_url: (state.sub_tasks || [])[0]?.pr_url || '',
+          pr_urls: (state.sub_tasks || []).map((t) => t.pr_url).filter(Boolean),
           sub_tasks: state.sub_tasks || [],
         }),
       ]
@@ -1683,7 +1686,7 @@ export async function finalEvaluateDispatchNode(state, opts = {}) {
   const executor = opts.executor || spawn;
   const hostExecutor = opts.hostExecutor || executeOnHost;
   const execFn = opts.execFile || execFile;
-  const sprintDir = state.task?.payload?.sprint_dir || 'sprints';
+  const sprintDir = state.sprintDir || state.task?.payload?.sprint_dir || 'sprints';
   const journeyType = state.taskPlan?.journey_type || 'autonomous';
   const targetEnv = (state.prdContent || '').match(/^##\s*target_environment:\s*(\S+)/m)?.[1]
     || state.task?.payload?.target_environment
