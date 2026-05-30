@@ -41,21 +41,6 @@ const execFile = promisify(execFileCb);
 // 100 = 50 轮 propose+review 预留一倍。
 export const DEFAULT_RECURSION_LIMIT = 100;
 
-function buildHarnessGoalSettings(goalCondition) {
-  if (!goalCondition) return null;
-  return JSON.stringify({
-    hooks: {
-      Stop: [{
-        hooks: [{
-          type: 'prompt',
-          prompt: `Has the following goal been achieved? Answer YES if complete, NO if not.\nGoal: ${goalCondition}\n\nCheck the current state of the workspace (files, git status) to determine if the goal is met.`,
-          model: 'claude-haiku-4-5-20251001',
-        }],
-      }],
-    },
-  });
-}
-
 // 7 个 rubric 维度（对齐 harness-contract-reviewer SKILL v6.4.0+）。
 // ⚠️ harness::rubric-dimensions 接口约定：此数组必须与 reviewer SKILL 输出维度完全一致。
 // 改 reviewer SKILL 维度 = 必须同步改这里（查 Brain registry type=harness_interface）。
