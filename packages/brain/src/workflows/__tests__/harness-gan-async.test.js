@@ -1,3 +1,6 @@
+// WS3 async: 已回退（B44 fix），proposer/reviewer 改回阻塞 executor。
+// 以下测试验证 WS3 架构（spawnDockerDetached + interrupt），已不适用。
+// 保留文件供历史参考，全部 skip。
 /**
  * WS3 — GAN 每轮异步化（spawnDockerDetached + interrupt）
  *
@@ -46,7 +49,7 @@ const RUBRIC_ALL_PASS = {
 const GAN_SRC = path.resolve(__dirname, '..', 'harness-gan.graph.js');
 
 // ── [BEHAVIOR] DoD 源码级断言 ────────────────────────────────────────────────
-describe('WS3 DoD — harness-gan.graph.js 源码契约 [BEHAVIOR]', () => {
+describe.skip('WS3 DoD — harness-gan.graph.js 源码契约 [BEHAVIOR]', () => {
   const src = readFileSync(GAN_SRC, 'utf8');
 
   it('[ARTIFACT/BEHAVIOR] 引入并使用 spawnDockerDetached', () => {
@@ -74,7 +77,7 @@ describe('WS3 DoD — harness-gan.graph.js 源码契约 [BEHAVIOR]', () => {
 });
 
 // ── State schema：context 进 state（可被 callback router resume）──────────────
-describe('GanContractState — context 字段进 state', () => {
+describe.skip('GanContractState — context 字段进 state', () => {
   it('含 taskId/worktreePath/sprintDir/budgetCapUsd + 异步容器字段', () => {
     const spec = GanContractState.spec;
     for (const f of ['taskId', 'initiativeId', 'sprintDir', 'worktreePath', 'githubToken', 'budgetCapUsd',
@@ -85,7 +88,7 @@ describe('GanContractState — context 字段进 state', () => {
 });
 
 // ── proposer_spawn：detached + thread_lookup ─────────────────────────────────
-describe('proposerSpawnNode (detached spawn + thread_lookup)', () => {
+describe.skip('proposerSpawnNode (detached spawn + thread_lookup)', () => {
   beforeEach(() => {
     mockSpawnDetached.mockReset().mockResolvedValue({ containerId: 'x' });
     mockPoolQuery.mockReset().mockResolvedValue({ rows: [] });
@@ -125,7 +128,7 @@ describe('proposerSpawnNode (detached spawn + thread_lookup)', () => {
 });
 
 // ── reviewer_spawn ───────────────────────────────────────────────────────────
-describe('reviewerSpawnNode (detached spawn + thread_lookup)', () => {
+describe.skip('reviewerSpawnNode (detached spawn + thread_lookup)', () => {
   beforeEach(() => {
     mockSpawnDetached.mockReset().mockResolvedValue({ containerId: 'x' });
     mockPoolQuery.mockReset().mockResolvedValue({ rows: [] });
@@ -154,7 +157,7 @@ describe('reviewerSpawnNode (detached spawn + thread_lookup)', () => {
 });
 
 // ── compileHarnessGanGraph + topology ────────────────────────────────────────
-describe('compileHarnessGanGraph / buildGanContractGraph', () => {
+describe.skip('compileHarnessGanGraph / buildGanContractGraph', () => {
   it.skip('buildGanContractGraph() compile 不抛，含 6 节点 [WS3: 当前为 2 节点，6节点是目标架构]', () => {
     const compiled = buildGanContractGraph().compile();
     const nodes = Object.keys(compiled.nodes || {});
