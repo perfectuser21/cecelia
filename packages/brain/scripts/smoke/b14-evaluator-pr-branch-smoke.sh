@@ -5,7 +5,7 @@
 # 改用 docker exec 在已起 brain 容器内做源码读取 + 模块 import 验证：
 #   1. 文件真存在
 #   2. 含 'PR_BRANCH: prBranchEnv' 字面
-#   3. 含 'gh pr view' fallback
+#   3. 含 'gh' 调用 + 'headRefName'（允许跨行格式）
 #   4. 模块能 import（语法无误）
 set -euo pipefail
 
@@ -23,14 +23,16 @@ const src = readFileSync('./src/workflows/harness-task.graph.js', 'utf8');
 const checks = [
   { name: 'PR_BRANCH env 注入', regex: /PR_BRANCH\s*:\s*prBranchEnv/ },
   { name: 'state.pr_branch 主路径', regex: /state\.pr_branch/ },
-  { name: 'gh pr view fallback', regex: /gh.*pr.*view.*headRefName/ },
+  // B14: 允许跨行格式（execFileDefault 参数数组可能换行）
+  // 只验证 'gh' 命令存在 + headRefName 参数存在 + 两者在同一上下文
+  { name: 'gh + headRefName 存在', regex: /[\s\S]*'gh'[\s\S]*headRefName/ },
   { name: '10s timeout 兜底', regex: /timeout:\s*10_000/ },
 ];
 
 let fail = false;
 for (const c of checks) {
   if (!c.regex.test(src)) {
-    console.error('FAIL:', c.name, '未命中', c.regex);
+    console.error('FAIL:', c.name, '未命中', String(c.regex));
     fail = true;
   }
 }

@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # b43-harness-pipeline-e2e-smoke.sh
 # B43 regression guard：harness pipeline A→B→C 静态 + routing 函数验证
-# Case 1: buildHarnessFullGraph 支持 nodeOverrides（B43 新增参数）
-# Case 2: routeFromPickSubTask 路由逻辑正确（纯函数，不需要服务）
+# Case 1: buildHarnessFullGraph 支持 nodeOverrides（runSubTaskFn）
+# Case 2: routeFromPickSubTask 路由逻辑正确（单一 evaluator 设计，tasks done → report）
 # Case 3: compileHarnessFullGraph export 存在（静态 grep）
 set -euo pipefail
 
@@ -22,30 +22,34 @@ if (!g0 || typeof g0.compile !== 'function') {
   throw new Error('Case 1 FAIL: buildHarnessFullGraph() must return a StateGraph');
 }
 
-// 验证传入 nodeOverrides 也返回 StateGraph
-const g1 = buildHarnessFullGraph({ runSubTaskFn: async () => ({}), finalEvaluateFn: async () => ({}) });
+// 验证传入 nodeOverrides 也返回 StateGraph（单一 evaluator：不再接受 finalEvaluateFn，额外属性被忽略）
+const g1 = buildHarnessFullGraph({ runSubTaskFn: async () => ({}) });
 if (!g1 || typeof g1.compile !== 'function') {
-  throw new Error('Case 1 FAIL: buildHarnessFullGraph({ nodeOverrides }) must return a StateGraph');
+  throw new Error('Case 1 FAIL: buildHarnessFullGraph({ runSubTaskFn }) must return a StateGraph');
 }
 
 console.log('[smoke:b43] Case 1 PASS: buildHarnessFullGraph 支持 nodeOverrides');
 JS
 
 # ── Case 2: routeFromPickSubTask routing logic ────────────────────────────────
-echo "[smoke:b43] Case 2: routeFromPickSubTask routing 正确"
+# 单一 evaluator 设计：tasks done → 直接 report（不再经 final_evaluate 节点）
+echo "[smoke:b43] Case 2: routeFromPickSubTask routing 正确（单一 evaluator：done→report）"
 node --input-type=module << 'JS'
 import { routeFromPickSubTask } from './src/workflows/harness-initiative.graph.js';
 
+// tasks done (idx >= len) → report（单一 evaluator 在 run_sub_task 子图内完成）
 const r1 = routeFromPickSubTask({ taskPlan: { tasks: ['t1'] }, task_loop_index: 1 });
-if (r1 !== 'final_evaluate') throw new Error(`Case 2a FAIL: expected final_evaluate, got ${r1}`);
+if (r1 !== 'report') throw new Error(`Case 2a FAIL: expected report (single evaluator), got ${r1}`);
 
+// idx < len → run_sub_task
 const r2 = routeFromPickSubTask({ taskPlan: { tasks: ['t1'] }, task_loop_index: 0 });
 if (r2 !== 'run_sub_task') throw new Error(`Case 2b FAIL: expected run_sub_task, got ${r2}`);
 
+// error → end
 const r3 = routeFromPickSubTask({ error: 'boom', taskPlan: { tasks: ['t1'] }, task_loop_index: 0 });
 if (r3 !== 'end') throw new Error(`Case 2c FAIL: expected end on error, got ${r3}`);
 
-console.log('[smoke:b43] Case 2 PASS: routeFromPickSubTask routing 正确');
+console.log('[smoke:b43] Case 2 PASS: routeFromPickSubTask routing 正确（done→report）');
 JS
 
 # ── Case 3: compileHarnessFullGraph export exists ─────────────────────────────
