@@ -33,10 +33,7 @@ import { verifyProposerOutput } from '../lib/contract-verify.js';
 import { LLM_RETRY } from './retry-policies.js';
 import { loadSkillContent, readBrainResult, ReviewerOutputSchema } from '../harness-shared.js';
 import { makeSessionRecord as _makeSessionRecord } from '../harness-session-bridge.js';
-import pool from '../db.js';
-import { spawnDockerDetached } from '../spawn/detached.js';
 import { resolveAccount } from '../spawn/middleware/account-rotation.js';
-import { interrupt } from '@langchain/langgraph';
 
 const execFile = promisify(execFileCb);
 
@@ -312,17 +309,7 @@ export const GanContractState = Annotation.Root({
     reducer: (old, neu) => ({ ...(old ?? {}), ...(neu ?? {}) }),
     default: () => ({}),
   }),
-  // WS3 async: context 字段（原来从 ctx 传入，现在也放进 state 让节点可读）
-  taskId: Annotation({ reducer: (_old, neu) => neu, default: () => null }),
-  initiativeId: Annotation({ reducer: (_old, neu) => neu, default: () => null }),
-  sprintDir: Annotation({ reducer: (_old, neu) => neu, default: () => 'sprints' }),
-  worktreePath: Annotation({ reducer: (_old, neu) => neu, default: () => null }),
-  githubToken: Annotation({ reducer: (_old, neu) => neu, default: () => null }),
-  budgetCapUsd: Annotation({ reducer: (_old, neu) => neu, default: () => 10 }),
-  proposerContainerId: Annotation({ reducer: (_old, neu) => neu, default: () => null }),
-  reviewerContainerId: Annotation({ reducer: (_old, neu) => neu, default: () => null }),
-  proposerContainerRound: Annotation({ reducer: (_old, neu) => neu, default: () => null }),
-  reviewerContainerRound: Annotation({ reducer: (_old, neu) => neu, default: () => null }),
+
 });
 
 // ── 节点工厂 ─────────────────────────────────────────────────────────────
@@ -349,8 +336,6 @@ export function createGanContractNodes(executor, ctx) {
     readContractFile = defaultReadContractFile,
     fetchOriginFile: _fetchOriginFile = fetchAndShowOriginFile,
     verifyProposer = verifyProposerOutput,
-    spawnDetached: spawnFn = spawnDockerDetached,
-    poolOverride: dbPool = pool,
   } = ctx;
   // _fetchOriginFile 保留 ctx 兼容旧 caller（test 仍传 fetchOriginFile），H15 后 proposer 改走 verifyProposer。
   void _fetchOriginFile;
@@ -365,67 +350,34 @@ export function createGanContractNodes(executor, ctx) {
     const { unlink } = await import('node:fs/promises');
     try { await unlink(path.join(worktreePath, '.brain-result.json')); } catch { /* 首轮不存在，忽略 */ }
 
-    // 幂等门：已 spawn 过此轮则直接 interrupt 等 callback
-    if (state.proposerContainerId && state.proposerContainerRound === nextRound) {
-      const payload = interrupt({ type: 'wait_proposer_callback', containerId: state.proposerContainerId });
-      return await _processProposerCallback(payload, nextRound, computedBranch, state);
-    }
-
-    const rand = crypto.randomUUID().slice(0, 8);
-    const containerId = `harness-proposer-r${nextRound}-${taskId.slice(0, 8)}-${rand}`;
-    const threadId = `harness-gan:${initiativeId}:proposer-r${nextRound}`;
-
     const acctOpts = { task: { id: taskId, task_type: 'harness_contract_propose' }, env: {} };
     try { await resolveAccount(acctOpts, { taskId }); } catch { /* non-blocking */ }
 
-    try {
-      await spawnFn({
-        task: { id: taskId, task_type: 'harness_contract_propose' },
-        prompt: buildProposerPrompt(state.prdContent, state.feedback, nextRound, computedBranch),
-        worktreePath,
-        containerId,
-        env: {
-          ...acctOpts.env,
-          CECELIA_TASK_TYPE: 'harness_contract_propose',
-          HARNESS_NODE: 'proposer',
-          HARNESS_SPRINT_DIR: sprintDir,
-          HARNESS_INITIATIVE_ID: initiativeId,
-          HARNESS_PROPOSE_ROUND: String(nextRound),
-          TASK_ID: taskId,
-          SPRINT_DIR: sprintDir,
-          PLANNER_BRANCH: plannerBranch,
-          PROPOSE_ROUND: String(nextRound),
-          PROPOSE_BRANCH: computedBranch,
-          GITHUB_TOKEN: githubToken,
-          HARNESS_CALLBACK_URL: `http://host.docker.internal:5221/api/brain/harness/callback/${containerId}`,
-          ...(buildHarnessGoalSettings('The contract-draft.md has been written and pushed to the propose branch')
-            ? { CECELIA_GOAL_SETTINGS: buildHarnessGoalSettings('The contract-draft.md has been written and pushed to the propose branch') }
-            : {}),
-        },
-      });
-    } catch (err) {
-      throw new Error(`proposer_spawn_failed: ${err.message}`);
+    // B44 fix: 改回阻塞 executor（WS3 async 已回退，根因 propose_branch 丢失）
+    const result = await executor({
+      task: { id: taskId, task_type: 'harness_contract_propose' },
+      prompt: buildProposerPrompt(state.prdContent, state.feedback, nextRound, computedBranch),
+      worktreePath,
+      env: {
+        ...acctOpts.env,
+        CECELIA_TASK_TYPE: 'harness_contract_propose',
+        HARNESS_NODE: 'proposer',
+        HARNESS_SPRINT_DIR: sprintDir,
+        HARNESS_INITIATIVE_ID: initiativeId,
+        HARNESS_PROPOSE_ROUND: String(nextRound),
+        TASK_ID: taskId,
+        SPRINT_DIR: sprintDir,
+        PLANNER_BRANCH: plannerBranch,
+        PROPOSE_ROUND: String(nextRound),
+        PROPOSE_BRANCH: computedBranch,
+        GITHUB_TOKEN: githubToken,
+      },
+    });
+
+    if (result.exit_code !== 0 || result.timed_out) {
+      throw new Error(`proposer_failed: exit=${result.exit_code}`);
     }
 
-    try {
-      await dbPool.query(
-        `INSERT INTO walking_skeleton_thread_lookup (container_id, thread_id, graph_name, status)
-         VALUES ($1, $2, 'harness-gan', 'spawning') ON CONFLICT (container_id) DO NOTHING`,
-        [containerId, threadId]
-      );
-    } catch (err) {
-      console.warn(`[harness-gan] thread_lookup INSERT failed cid=${containerId}: ${err.message}`);
-    }
-
-    const payload = interrupt({ type: 'wait_proposer_callback', containerId });
-    return await _processProposerCallback(payload, nextRound, computedBranch, state, containerId);
-  }
-
-  async function _processProposerCallback(payload, nextRound, computedBranch, state, containerId) {
-    const { exit_code } = payload || {};
-    if (exit_code !== 0 && exit_code !== undefined) {
-      throw new Error(`proposer_failed: exit=${exit_code}`);
-    }
     const contractContent = await readContractFile(worktreePath, sprintDir);
     const resultData = await readBrainResult(worktreePath, ['propose_branch']).catch(() => ({}));
     const proposeBranch = resultData.propose_branch || computedBranch;
@@ -437,8 +389,6 @@ export function createGanContractNodes(executor, ctx) {
       costUsd: state.costUsd || 0,
       contractContent,
       proposeBranch,
-      proposerContainerId: containerId || state.proposerContainerId,
-      proposerContainerRound: nextRound,
     };
   }
 
@@ -449,65 +399,31 @@ export function createGanContractNodes(executor, ctx) {
 
     const currentRound = state.round || 0;
 
-    // 幂等门：已 spawn 过此轮则直接 interrupt 等 callback
-    if (state.reviewerContainerId && state.reviewerContainerRound === currentRound) {
-      const payload = interrupt({ type: 'wait_reviewer_callback', containerId: state.reviewerContainerId });
-      return await _processReviewerCallback(payload, currentRound, state, state.reviewerContainerId);
-    }
-
-    const rand = crypto.randomUUID().slice(0, 8);
-    const containerId = `harness-reviewer-r${currentRound}-${taskId.slice(0, 8)}-${rand}`;
-    const threadId = `harness-gan:${initiativeId}:reviewer-r${currentRound}`;
-
     const acctOpts = { task: { id: taskId, task_type: 'harness_contract_review' }, env: {} };
     try { await resolveAccount(acctOpts, { taskId }); } catch { /* non-blocking */ }
 
-    try {
-      await spawnFn({
-        task: { id: taskId, task_type: 'harness_contract_review' },
-        prompt: buildReviewerPrompt(state.prdContent, state.contractContent, currentRound),
-        worktreePath,
-        containerId,
-        env: {
-          ...acctOpts.env,
-          CECELIA_TASK_TYPE: 'harness_contract_review',
-          HARNESS_NODE: 'reviewer',
-          HARNESS_SPRINT_DIR: sprintDir,
-          HARNESS_INITIATIVE_ID: initiativeId,
-          HARNESS_REVIEW_ROUND: String(currentRound),
-          TASK_ID: taskId,
-          SPRINT_DIR: sprintDir,
-          PLANNER_BRANCH: plannerBranch,
-          REVIEW_ROUND: String(currentRound),
-          GITHUB_TOKEN: githubToken,
-          HARNESS_CALLBACK_URL: `http://host.docker.internal:5221/api/brain/harness/callback/${containerId}`,
-          ...(buildHarnessGoalSettings('The review verdict has been written to .brain-result.json as APPROVED or REVISION')
-            ? { CECELIA_GOAL_SETTINGS: buildHarnessGoalSettings('The review verdict has been written to .brain-result.json as APPROVED or REVISION') }
-            : {}),
-        },
-      });
-    } catch (err) {
-      throw new Error(`reviewer_spawn_failed: ${err.message}`);
-    }
+    // B44 fix: 改回阻塞 executor（WS3 async 已回退）
+    const result = await executor({
+      task: { id: taskId, task_type: 'harness_contract_review' },
+      prompt: buildReviewerPrompt(state.prdContent, state.contractContent, currentRound),
+      worktreePath,
+      env: {
+        ...acctOpts.env,
+        CECELIA_TASK_TYPE: 'harness_contract_review',
+        HARNESS_NODE: 'reviewer',
+        HARNESS_SPRINT_DIR: sprintDir,
+        HARNESS_INITIATIVE_ID: initiativeId,
+        HARNESS_REVIEW_ROUND: String(currentRound),
+        TASK_ID: taskId,
+        SPRINT_DIR: sprintDir,
+        PLANNER_BRANCH: plannerBranch,
+        REVIEW_ROUND: String(currentRound),
+        GITHUB_TOKEN: githubToken,
+      },
+    });
 
-    try {
-      await dbPool.query(
-        `INSERT INTO walking_skeleton_thread_lookup (container_id, thread_id, graph_name, status)
-         VALUES ($1, $2, 'harness-gan', 'spawning') ON CONFLICT (container_id) DO NOTHING`,
-        [containerId, threadId]
-      );
-    } catch (err) {
-      console.warn(`[harness-gan] thread_lookup INSERT failed cid=${containerId}: ${err.message}`);
-    }
-
-    const payload = interrupt({ type: 'wait_reviewer_callback', containerId });
-    return await _processReviewerCallback(payload, currentRound, state, containerId);
-  }
-
-  async function _processReviewerCallback(payload, currentRound, state, containerId) {
-    const { exit_code } = payload || {};
-    if (exit_code !== 0 && exit_code !== undefined) {
-      throw new Error(`reviewer_failed: exit=${exit_code}`);
+    if (result.exit_code !== 0 || result.timed_out) {
+      throw new Error(`reviewer_failed: exit=${result.exit_code}`);
     }
 
     const costAfterSpawn = state.costUsd || 0;
@@ -515,7 +431,6 @@ export function createGanContractNodes(executor, ctx) {
       throw new Error(`gan_budget_exceeded: spent=${costAfterSpawn.toFixed(3)} cap=${budgetCapUsd}`);
     }
 
-    // WS3 async: single spawn per round, no blocking retry loop
     let resultData = await readBrainResult(worktreePath, ['verdict', 'rubric_scores', 'feedback']).catch(() => ({}));
     const rawData = resultData;
     const hasRubricData = rawData.rubric_scores &&
@@ -523,7 +438,6 @@ export function createGanContractNodes(executor, ctx) {
       Object.keys(rawData.rubric_scores).length > 0;
 
     if (hasRubricData) {
-      // rubric present: single-call schema validation, no retry spawns
       const loopResult = await runReviewerSchemaLoop(
         async () => ({ ...rawData, cost_usd: 0 }),
         ReviewerOutputSchema,
@@ -541,7 +455,6 @@ export function createGanContractNodes(executor, ctx) {
       console.warn(`[harness-gan] round=${currentRound} rubric_verdict=${rubricVerdict} ≠ file_verdict=${resultData.verdict} — 按 rubric 判（代码权威）`);
     }
 
-    // 收敛检测：把当前轮 scores 拼到历史里，判最近 3 轮趋势
     const newHistoryEntry = rubricScores ? { round: currentRound, scores: rubricScores } : null;
     const combinedHistory = newHistoryEntry
       ? [...(state.rubricHistory || []), newHistoryEntry]
@@ -558,8 +471,6 @@ export function createGanContractNodes(executor, ctx) {
       costUsd: costAfterSpawn,
       verdict,
       forcedApproval,
-      reviewerContainerId: containerId,
-      reviewerContainerRound: currentRound,
     };
     if (newHistoryEntry) patch.rubricHistory = [newHistoryEntry];
     if (verdict !== 'APPROVED') patch.feedback = resultData.feedback || '';
@@ -614,20 +525,7 @@ export function buildGanContractGraph(nodes) {
  * @returns {Promise<{contract_content:string, rounds:number, cost_usd:number}>}
  */
 /**
- * 编译 GAN graph（供 callback router 的 harness-thread-lookup dispatch 使用）。
- * WS3 async: harness-gan dispatch case 在 harness-thread-lookup.js 注册此函数。
- */
-export async function compileHarnessGanGraph(checkpointer) {
-  const nodes = createGanContractNodes(null, {
-    taskId: '__placeholder__', initiativeId: '__placeholder__',
-    sprintDir: 'sprints', worktreePath: '/tmp', githubToken: '',
-  });
-  const graph = buildGanContractGraph(nodes);
-  return graph.compile({ checkpointer, durability: 'sync' });
-}
-
-/**
- * GAN 合同循环入口（WS3 async kickoff 版）。
+ * GAN 合同循环入口（同步版，B44 fix 回退 WS3 async）。
  * 不再阻塞等 GAN 完成，而是 invoke 到第一次 interrupt 就返回。
  * GAN 推进完全靠 callback resume 驱动（harness-thread-lookup dispatcher）。
  */
@@ -659,115 +557,21 @@ export async function runGanContractGraph(opts) {
   const graph = buildGanContractGraph(nodes);
   const app = graph.compile({ checkpointer, durability: 'sync' });
 
-  // WS3 async: invoke 到第一次 interrupt 就返回（kickoff，不阻塞等 GAN 完成）
-  // GAN 推进靠 callback router Command(resume) 驱动
-  await app.invoke(
+  // B44 fix: 同步等 GAN 完整跑完再返回（WS3 async 已回退，根因 propose_branch 丢失）
+  const finalState = await app.invoke(
     { prdContent, round: 0, costUsd: 0, feedback: null },
     {
       configurable: { thread_id: String(taskId) },
       recursionLimit,
     }
-  ).catch(err => {
-    // interrupt() 会抛出异常被 LangGraph 捕获；非 interrupt 错误才真正抛
-    if (!err?.message?.includes('interrupt') && err?.name !== 'GraphInterrupt') throw err;
-  });
-
-  // kickoff 成功，GAN 已在第一次 interrupt 挂起，等 callback resume
-  return { kickoff: true, thread_id: String(taskId) };
-}
-
-/**
- * proposerSpawnNode — 独立导出：只做 detached spawn + thread_lookup 写入。
- * WS3 async 架构：spawn 和 interrupt 分离，方便单元测试各阶段。
- */
-export async function proposerSpawnNode(ctx, opts = {}) {
-  const {
-    taskId, initiativeId, sprintDir = 'sprints', worktreePath,
-    githubToken, round = 0, proposerContainerId,
-  } = ctx;
-  const spawnFn = opts.spawnDetached || spawnDockerDetached;
-  const dbPool = opts.pool || opts.poolOverride || pool;
-
-  if (proposerContainerId) return { proposerContainerId };
-
-  const nextRound = round + 1;
-  const computedBranch = `cp-harness-propose-r${nextRound}-${taskId.slice(0, 8)}`;
-  const rand = crypto.randomUUID().slice(0, 8);
-  const containerId = `harness-gan-propose-${taskId.slice(0, 8)}-r${nextRound}-${rand}`;
-  const threadId = taskId;
-
-  const acctOpts = { task: { id: taskId, task_type: 'harness_contract_propose' }, env: {} };
-  try { await resolveAccount(acctOpts, { taskId }); } catch { /* non-blocking */ }
-
-  await spawnFn({
-    task: { id: taskId, task_type: 'harness_contract_propose' },
-    prompt: '',
-    worktreePath,
-    containerId,
-    env: {
-      ...acctOpts.env,
-      CECELIA_TASK_TYPE: 'harness_contract_propose',
-      HARNESS_NODE: 'proposer',
-      HARNESS_SPRINT_DIR: sprintDir,
-      HARNESS_INITIATIVE_ID: initiativeId || taskId,
-      PROPOSE_ROUND: String(nextRound),
-      PROPOSE_BRANCH: computedBranch,
-      GITHUB_TOKEN: githubToken || '',
-      HARNESS_CALLBACK_URL: `http://host.docker.internal:5221/api/brain/harness/callback/${containerId}`,
-    },
-  });
-
-  await dbPool.query(
-    `INSERT INTO walking_skeleton_thread_lookup (container_id, thread_id, graph_name, status)
-     VALUES ($1, $2, 'harness-gan', 'spawning') ON CONFLICT (container_id) DO NOTHING`,
-    [containerId, threadId]
   );
-
-  return { proposerContainerId: containerId, round: nextRound, proposeBranch: computedBranch };
+  return {
+    contract_content: finalState.contractContent || '',
+    propose_branch: finalState.proposeBranch || null,
+    rounds: finalState.round || 0,
+    cost_usd: finalState.costUsd || 0,
+    verdict: finalState.verdict || 'APPROVED',
+    forced_approval: finalState.forcedApproval || false,
+  };
 }
 
-/**
- * reviewerSpawnNode — 独立导出：只做 detached spawn + thread_lookup 写入。
- */
-export async function reviewerSpawnNode(ctx, opts = {}) {
-  const {
-    taskId, initiativeId, sprintDir = 'sprints', worktreePath,
-    githubToken, round = 0, reviewerContainerId,
-  } = ctx;
-  const spawnFn = opts.spawnDetached || spawnDockerDetached;
-  const dbPool = opts.pool || opts.poolOverride || pool;
-
-  if (reviewerContainerId) return { reviewerContainerId };
-
-  const rand = crypto.randomUUID().slice(0, 8);
-  const containerId = `harness-gan-review-${taskId.slice(0, 8)}-r${round}-${rand}`;
-  const threadId = taskId;
-
-  const acctOpts = { task: { id: taskId, task_type: 'harness_contract_review' }, env: {} };
-  try { await resolveAccount(acctOpts, { taskId }); } catch { /* non-blocking */ }
-
-  await spawnFn({
-    task: { id: taskId, task_type: 'harness_contract_review' },
-    prompt: '',
-    worktreePath,
-    containerId,
-    env: {
-      ...acctOpts.env,
-      CECELIA_TASK_TYPE: 'harness_contract_review',
-      HARNESS_NODE: 'reviewer',
-      HARNESS_SPRINT_DIR: sprintDir,
-      HARNESS_INITIATIVE_ID: initiativeId || taskId,
-      HARNESS_REVIEW_ROUND: String(round),
-      GITHUB_TOKEN: githubToken || '',
-      HARNESS_CALLBACK_URL: `http://host.docker.internal:5221/api/brain/harness/callback/${containerId}`,
-    },
-  });
-
-  await dbPool.query(
-    `INSERT INTO walking_skeleton_thread_lookup (container_id, thread_id, graph_name, status)
-     VALUES ($1, $2, 'harness-gan', 'spawning') ON CONFLICT (container_id) DO NOTHING`,
-    [containerId, threadId]
-  );
-
-  return { reviewerContainerId: containerId, round: String(round) };
-}
