@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# ZenithJoy Engine - 分支保护 Hook v29
+# ZenithJoy Engine - 分支保护 Hook v30
+# v30: 移除 Engine skills 保护 — skills 已迁至 zenithjoy-skills repo
 # v29: 删除状态机门禁 — Hook 只做安全兜底，验证放 CI
 # v28: 精简版 — 只留 worktree/分支保护核心逻辑
 # v24: 统一分支命名规范 — cp-* 为唯一合法格式
@@ -63,13 +64,8 @@ if [[ "$REAL_FILE_PATH" == "$HOME_DIR/.claude/hooks/"* ]] || \
     exit 2
 fi
 
-# skills 目录：只保护 Engine 相关 (dev, qa, audit, semver)
-if echo "$REAL_FILE_PATH" | grep -Eq "/.claude/skills/(dev|qa|audit|semver)(/|$)" || \
-   echo "$FILE_PATH" | grep -Eq "/.claude/skills/(dev|qa|audit|semver)(/|$)"; then
-    echo "[ERROR] 禁止直接修改 Engine 核心 skills" >&2
-    exit 2
-fi
-# 非 Engine 全局 skills 放行
+# 全局 skills 目录：直接放行（skills 已迁至 zenithjoy-skills repo，不再需要保护）
+# 全局 skills 放行
 if [[ "$REAL_FILE_PATH" == "$HOME_DIR/.claude/skills/"* ]] || \
    [[ "$FILE_PATH" == "$HOME_DIR/.claude/skills/"* ]]; then
     exit 0
