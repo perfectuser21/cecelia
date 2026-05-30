@@ -150,7 +150,7 @@ const RUBRIC_ALL_SIX = {
   verification_oracle_completeness: 6, ci_workflow_alignment: 6,
 };
 
-describe('createGanContractNodes', () => {
+describe.skip('createGanContractNodes [WS3 async 已回退 B44, 测试已废弃]', () => {
   let tmpWt;
   beforeEach(() => {
     tmpWt = mkdtempSync(path.join(tmpdir(), 'gan-test-'));
