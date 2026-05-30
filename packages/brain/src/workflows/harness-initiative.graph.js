@@ -130,9 +130,7 @@ ${task.description || task.title || ''}
 
 ## 输出要求（v2）
 1. 生成 ${sprintDir}/sprint-prd.md（What，不写 How）
-2. 在 stdout 末尾输出 task-plan.json（符合 harness-planner SKILL.md 定义的 schema）
-3. task-plan.json 必须被 \`\`\`json ... \`\`\` 代码块包裹便于提取
-4. task-plan.json 的 initiative_id 字段：必须使用 $HARNESS_INITIATIVE_ID 环境变量的值（已注入容器），**禁止**写 "pending" 或任何占位符`;
+2. sprint-prd.md 写完后，在最后一行输出：{"verdict":"DONE","sprint_dir":"<sprint_dir的实际值>"}`;
 
   // ── Prep：挂载 worktree + 注入 GitHub token（Harness v2 container mount）──
   let worktreePath;
@@ -644,8 +642,7 @@ ${state.task?.payload?.prep_prd_body || '（未提供，Planner 从 sprint-prd.m
 
 ## 输出要求（v2）
 1. 生成 ${sprintDir}/sprint-prd.md（What，不写 How）
-2. 在 stdout 末尾输出 task-plan.json
-3. task-plan.json 必须被 \`\`\`json ... \`\`\` 代码块包裹便于提取`;
+2. sprint-prd.md 写完后，在最后一行输出：{"verdict":"DONE","sprint_dir":"${sprintDir}"}` ;
 
   const rand = crypto.randomUUID().slice(0, 8);
   const safeTaskId = String(state.task?.id || initiativeId).replace(/[^a-zA-Z0-9-]/g, '').slice(0, 8);
@@ -1305,7 +1302,7 @@ export async function runSubTaskNode(state, opts = {}) {
   const compiled = opts.compiledTaskGraph || await _getTaskGraphCompiled();
   // final_e2e_fix_count 追加到 thread_id：final_evaluate FAIL 重跑时用 fresh checkpoint，避免旧状态污染
   // thread_id 含 fix_count 保证 evaluate_contract FAIL 重试时用 fresh checkpoint
-  const config = { configurable: { thread_id: `harness-task:${state.initiativeId}:${subTask.id}:fix${state.task_loop_fix_count ?? 0}` }, recursionLimit: 200 };
+  const config = { configurable: { thread_id: `harness-task:${state.initiativeId}:${subTask.id}:fix${state.final_e2e_fix_count ?? 0}` }, recursionLimit: 200 };
   const waitMs = opts.waitMs !== undefined ? opts.waitMs : SUBGRAPH_WAIT_MS;
   let final;
   try {
