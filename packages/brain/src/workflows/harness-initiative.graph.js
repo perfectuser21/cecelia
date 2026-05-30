@@ -1285,6 +1285,13 @@ export async function runSubTaskNode(state, opts = {}) {
   });
   const fixCount = state.task_loop_fix_count ?? 0;
   const feedback = state.evaluate_feedback;
+  // Final E2E 失败上下文：当 final_evaluate FAIL 重跑时，把失败原因注入 generator。
+  // 不注入则 generator 对 Final E2E 失败原因一无所知，无限重跑同样代码无法收敛（B43 根因）。
+  const finalE2EFixCount = state.final_e2e_fix_count ?? 0;
+  const finalE2EScenarios = state.final_e2e_failed_scenarios || [];
+  const finalE2EFeedback = finalE2EFixCount > 0 && finalE2EScenarios.length > 0
+    ? `Final E2E FAIL（第 ${finalE2EFixCount} 轮重试）：\n${finalE2EScenarios.map(s => `- ${s.name}${s.output ? '：' + String(s.output).slice(0, 300) : ''}${s.error ? '（err: ' + String(s.error).slice(0, 200) + '）' : ''}`).join('\n')}`
+    : null;
   const taskForGraph = {
     id: subTask.id,
     title: subTask.title,
@@ -1300,6 +1307,7 @@ export async function runSubTaskNode(state, opts = {}) {
       // 不覆盖导致 generator 写到顶级 sprints/ 而非正确子目录（W49 实证 B38 根因）。
       ...(state.sprintDir ? { sprint_dir: state.sprintDir } : {}),
       ...(fixCount > 0 && feedback ? { fix_round: fixCount, evaluator_feedback: feedback } : {}),
+      ...(finalE2EFeedback ? { final_e2e_fix_round: finalE2EFixCount, final_e2e_evaluator_feedback: finalE2EFeedback } : {}),
     },
   };
   const compiled = opts.compiledTaskGraph || await _getTaskGraphCompiled();

@@ -65,6 +65,21 @@ describe('buildGeneratorPrompt', () => {
     // SKILL v6.1 Step 6.5 关键词必有
     expect(p).toContain('Contract Self-Verification');
   });
+  it('B43: final_e2e_evaluator_feedback 注入 FINAL E2E FIX mode 提示', () => {
+    const p = buildGeneratorPrompt({
+      id: 't1',
+      payload: {
+        final_e2e_fix_round: 2,
+        final_e2e_evaluator_feedback: 'Final E2E FAIL（第 2 轮重试）：\n- step-login：超时',
+      },
+    }, { fixMode: false });
+    expect(p).toContain('FINAL E2E FIX mode');
+    expect(p).toContain('第 2 轮重试');
+    expect(p).toContain('step-login：超时');
+    // 无 final_e2e_feedback 时不含该提示
+    const p2 = buildGeneratorPrompt({ id: 't2', payload: {} }, { fixMode: false });
+    expect(p2).not.toContain('FINAL E2E FIX mode');
+  });
 });
 
 describe('extractWorkstreamIndex', () => {
