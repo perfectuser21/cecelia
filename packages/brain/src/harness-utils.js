@@ -162,6 +162,10 @@ export function buildGeneratorPrompt(task, { fixMode = false, prdContent = null 
   const files = Array.isArray(payload.files) ? payload.files.join('\n- ') : '';
   const skillContent = loadSkillContent('harness-generator');
   const fixModeNotice = fixMode ? '**FIX mode**：本轮是 Brain 派 fix loop。按 SKILL 的 systematic-debugging 流程修上一轮 evaluator FAIL 反馈。\n\n' : '';
+  // B43: Final E2E 失败后重跑时注入失败上下文，让 generator 知道具体哪个场景失败需要修复。
+  const finalE2ENotice = payload.final_e2e_evaluator_feedback
+    ? `**FINAL E2E FIX mode**：本轮是 Final E2E 失败后的第 ${payload.final_e2e_fix_round || '?'} 轮重试。\n\n失败详情：\n${payload.final_e2e_evaluator_feedback}\n\n请针对以上 Final E2E 失败进行修复，不要只重写未修改的代码。\n\n`
+    : '';
   const prdSection = prdContent ? [`## Sprint PRD`, prdContent, ''] : [];
   return [
     '你是 harness-generator agent。按下面 SKILL 指令工作。',
@@ -170,6 +174,7 @@ export function buildGeneratorPrompt(task, { fixMode = false, prdContent = null 
     '',
     '---',
     '',
+    finalE2ENotice,
     fixModeNotice,
     `task_id: ${task.id}`,
     `initiative_id: ${payload.parent_task_id || ''}`,
