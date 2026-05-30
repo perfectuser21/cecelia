@@ -44,7 +44,7 @@ import { resolveGitHubToken } from '../harness-credentials.js';
 import { spawnDockerDetached, spawnCodexBridgeDetached } from '../spawn/detached.js';
 import { resolveAccount } from '../spawn/middleware/account-rotation.js';
 import { checkPrStatus, classifyFailedChecks } from '../shepherd.js';
-import { parseDockerOutput, extractField, readPrFromGitState, readVerdictFile, readBrainResult, EvaluatorOutputSchema } from '../harness-shared.js';
+import { parseDockerOutput, extractField, readPrFromGitState, readVerdictFile, readBrainResult, EvaluatorOutputSchema, loadSkillContent } from '../harness-shared.js';
 import { buildGeneratorPrompt, extractWorkstreamIndex } from '../harness-utils.js';
 import { getPgCheckpointer } from '../orchestrator/pg-checkpointer.js';
 import pool from '../db.js';
@@ -541,10 +541,10 @@ export function routeAfterEvaluate(state) {
   return 'fix';
 }
 
-// evaluateContractNode — Approach A pre-merge gate (PRD 2026-05-11).
-// Spawn a `harness_evaluate` sub-task (task-router:129 → /harness-evaluator skill);
-// evaluator container reads contract DoD + manual:bash commands, exits 0/1.
-// Verdict PASS → merge_pr; FAIL → fix_dispatch (do NOT merge into main).
+// evaluateContractNode — 单一 evaluator pre-merge gate（对齐 Anthropic 官方 Harness 设计）。
+// Anthropic 原文：一个 Sprint = 一个 Generator + 一个 Evaluator，evaluate 在 merge 之前跑，
+// PASS → merge；FAIL → 带具体反馈打回 Generator 重写（无限对抗）。
+// IS_FINAL_E2E=true：跑 contract-draft.md ## E2E 验收 完整脚本（不再分 Mode A / Mode B）。
 export async function evaluateContractNode(state, opts = {}) {
   // 幂等门：Brain 重启或 outer graph 重进时，evaluate_verdict 已存在则直接返回，不重复 spawn。
   if (state.evaluate_verdict) {
@@ -560,6 +560,14 @@ export async function evaluateContractNode(state, opts = {}) {
   const payload = task?.payload || {};
   const initiativeId = state.initiativeId || payload.parent_task_id || payload.initiative_id || task?.id;
 
+  // target_environment: 从 prdContent 提取（同 initiative graph 逻辑）
+  const targetEnv = (state.prdContent || '').match(/^##?\s*target_environment:\s*(\S+)/m)?.[1]
+    || payload.target_environment
+    || 'local_api';
+  const _baseRepo = (state.baseRepo || payload.base_repo || '').toLowerCase();
+  const githubRepo = _baseRepo.includes('zenithjoy') ? 'perfectuser21/zenithjoy-workspace' : 'perfectuser21/cecelia';
+  const windowsCloudWorkflow = _baseRepo.includes('zenithjoy') ? 'agent-e2e-video.yml' : 'e2e-windows.yml';
+
   let token = state.githubToken;
   try {
     if (!token) token = await resolveTok();
@@ -570,31 +578,10 @@ export async function evaluateContractNode(state, opts = {}) {
   const rand = crypto.randomUUID().slice(0, 8);
   const safeId = String(task.id).replace(/[^a-zA-Z0-9-]/g, '');
   const containerId = `harness-evaluate-${safeId}-r${state.fix_round || 0}-${rand}`;
-  // B10 (Walking Skeleton P1 cascade fix): evaluate_contract 节点本身在 harness-task
-  // graph 内运行，interrupt() 暂停的是 harness-task thread。spawn 写 thread_lookup
-  // 必须用 task graph 的 thread_id，否则 callback resume 打到 empty thread，真正
-  // interrupt 等待的 harness-task thread 永久卡（W31 实证：callback ok 但 graph 不推进）。
+  // B10: evaluate_contract 在 harness-task graph 内，thread_lookup 必须用 task graph thread_id
   const threadId = `harness-task:${initiativeId}:${task.id}`;
 
-  const evaluatePrompt = [
-    `[harness-evaluator] Evaluate the contract DoD for task: ${task.title || task.id}`,
-    `PR URL: ${state.pr_url || '(none)'}`,
-    `Contract branch: ${state.contractBranch || payload.contract_branch || '(none)'}`,
-    `Worktree: ${state.worktreePath || '(none)'}`,
-    `ws_index: ${payload.ws_index ?? ''}`,
-  ].join('\n');
-
-  const acctOpts = { task: { ...task, task_type: 'harness_evaluate' }, env: {} };
-  try {
-    await resolveAccount(acctOpts, { taskId: task.id });
-  } catch (err) {
-    return { evaluate_verdict: 'FAIL', evaluate_error: `resolveAccount: ${err.message}` };
-  }
-  const accountEnv = acctOpts.env;
-
-  // B14: 把 PR 分支名传给 evaluator container（Step 0a git checkout 用）。
-  // 优先 state.pr_branch；fallback `gh pr view --json headRefName` 兜底（罕见路径）。
-  // 不传 PR_BRANCH → evaluator 永远跑 main → 看不见 generator 改 → 永远 FAIL（W19-W36 实证）。
+  // B14: PR 分支名传给 evaluator（Step 0a git checkout 用，不传则永远跑 main 看不到改动）
   let prBranchEnv = state.pr_branch || '';
   if (!prBranchEnv && state.pr_url) {
     try {
@@ -609,6 +596,31 @@ export async function evaluateContractNode(state, opts = {}) {
     }
   }
 
+  const skillContent = loadSkillContent('harness-evaluator');
+  const sprintDir = payload.sprint_dir || 'sprints';
+  const evaluatePrompt = [
+    '你是 harness-evaluator agent。按下面 SKILL 指令工作。',
+    '',
+    skillContent,
+    '',
+    '---',
+    '',
+    '## 注入变量',
+    `IS_FINAL_E2E=true`,
+    `SPRINT_DIR=${sprintDir}`,
+    `TASK_ID=${task.id}`,
+    `TARGET_ENV=${targetEnv}`,
+    `GITHUB_REPO=${githubRepo}`,
+  ].join('\n');
+
+  const acctOpts = { task: { ...task, task_type: 'harness_evaluate' }, env: {} };
+  try {
+    await resolveAccount(acctOpts, { taskId: task.id });
+  } catch (err) {
+    return { evaluate_verdict: 'FAIL', evaluate_error: `resolveAccount: ${err.message}` };
+  }
+  const accountEnv = acctOpts.env;
+
   try {
     await spawnFn({
       task: { ...task, task_type: 'harness_evaluate' },
@@ -621,16 +633,18 @@ export async function evaluateContractNode(state, opts = {}) {
         HARNESS_NODE: 'evaluate_contract',
         HARNESS_INITIATIVE_ID: initiativeId,
         HARNESS_TASK_ID: task.id,
+        IS_FINAL_E2E: 'true',
         GITHUB_TOKEN: token,
         CONTRACT_BRANCH: state.contractBranch || payload.contract_branch || '',
         PR_URL: state.pr_url || '',
         PR_BRANCH: prBranchEnv,
-        SPRINT_DIR: payload.sprint_dir || 'sprints',
+        SPRINT_DIR: sprintDir,
+        TARGET_ENV: targetEnv,
+        GITHUB_REPO: githubRepo,
+        WINDOWS_CLOUD_WORKFLOW: windowsCloudWorkflow,
         BRAIN_URL: 'http://host.docker.internal:5221',
         HARNESS_CALLBACK_URL: `http://host.docker.internal:5221/api/brain/harness/callback/${containerId}`,
-        // B22: 评估容器内 psql postgresql://localhost/cecelia 无法解析，改用 host.docker.internal
         DB: 'postgresql://host.docker.internal/cecelia',
-        WORKSTREAM_INDEX: extractWorkstreamIndex(payload),
         ...(buildHarnessGoalSettings('The evaluation is complete and .brain-result.json has been written with verdict=PASS or FAIL')
           ? { CECELIA_GOAL_SETTINGS: buildHarnessGoalSettings('The evaluation is complete and .brain-result.json has been written with verdict=PASS or FAIL') }
           : {}),
