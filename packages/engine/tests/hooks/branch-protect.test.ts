@@ -163,9 +163,9 @@ describe("branch-protect.sh", () => {
     }
   });
 
-  // v18: Skills protection relaxation tests
+  // v30: Skills protection removed — skills migrated to zenithjoy-skills repo
   describe("skills protection (v18)", () => {
-    it("should protect Engine skills (dev, qa, audit, semver)", () => {
+    it("should allow all skills including formerly-Engine skills (v30)", () => {
       const engineSkillPaths = [
         `${process.env.HOME}/.claude/skills/dev/SKILL.md`,
         `${process.env.HOME}/.claude/skills/qa/SKILL.md`,
@@ -179,19 +179,20 @@ describe("branch-protect.sh", () => {
           tool_input: { file_path: testPath },
         });
 
-        // Engine skills should be blocked (exit 2)
-        let exitCode = 0;
+        // v30: Engine skills are now allowed (exit 0), skills migrated to zenithjoy-skills
+        let exitCode = -1;
         try {
           execSync(`bash "${PATCHED_HOOK_PATH}"`, {
             encoding: "utf-8",
             stdio: ["pipe", "pipe", "pipe"],
             env: { ...process.env, HOOK_INPUT: input },
           });
+          exitCode = 0;
         } catch (e: unknown) {
           const err = e as { status?: number };
           exitCode = err.status || 1;
         }
-        expect(exitCode).toBe(2);
+        expect(exitCode).toBe(0);
       }
     });
 
