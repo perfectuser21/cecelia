@@ -6,7 +6,7 @@ import { join } from 'path';
 import { fileURLToPath } from 'url';
 const __filename = fileURLToPath(import.meta.url);
 // sprints/cecelia-harness-async-stable-0528/tests/ws1/migration.test.ts → 向上 6 层到 repo root
-const REPO_ROOT = join(__filename, '..', '..', '..', '..', '..', '..');
+const REPO_ROOT = join(__filename, '..', '..', '..', '..', '..');
 const MIGRATION_PATH = join(REPO_ROOT, 'packages/brain/migrations/288_harness_messages.sql');
 
 describe('WS1 — DB Migration harness_messages [BEHAVIOR]', () => {
