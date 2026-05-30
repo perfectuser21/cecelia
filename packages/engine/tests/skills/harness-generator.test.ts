@@ -9,10 +9,10 @@ const skillExists = existsSync(SKILL_PATH);
 describe('harness-generator v6.0 结构', () => {
   const content = skillExists ? readFileSync(SKILL_PATH, 'utf8') : '';
 
-  it.skipIf(!skillExists)('frontmatter version 为 6.3.0', () => {
+  it.skipIf(!skillExists)('frontmatter version 为 7.0.0', () => {
     const versionLine = content.split('\n').slice(0, 20).find(l => l.trim().startsWith('version:'));
     expect(versionLine).toBeDefined();
-    expect(versionLine).toContain('6.3.0');
+    expect(versionLine).toContain('7.0.0');
   });
 
   it.skipIf(!skillExists)('明确融入 4 个 superpowers', () => {
