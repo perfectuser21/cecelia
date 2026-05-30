@@ -16,6 +16,8 @@ describe('ReviewerOutputSchema', () => {
         test_is_red: 9,
         internal_consistency: 8,
         risk_registered: 7,
+        verification_oracle_completeness: 8,
+        ci_workflow_alignment: 8,
       },
       feedback: '合同质量良好',
     };
@@ -116,6 +118,7 @@ describe('readAndValidateBrainResult', () => {
       rubric_scores: {
         dod_machineability: 8, scope_match_prd: 7, test_is_red: 9,
         internal_consistency: 8, risk_registered: 7,
+        verification_oracle_completeness: 8, ci_workflow_alignment: 8,
       },
       feedback: 'good',
     });
@@ -160,6 +163,7 @@ describe('reviewer schema retry 逻辑', () => {
       rubric_scores: {
         dod_machineability: 8, scope_match_prd: 7, test_is_red: 9,
         internal_consistency: 8, risk_registered: 7,
+        verification_oracle_completeness: 8, ci_workflow_alignment: 8,
       },
       feedback: 'good',
       cost_usd: 0.05,

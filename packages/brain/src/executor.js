@@ -2019,8 +2019,9 @@ async function _prepareHarnessEvaluatePrompt(task) {
   // 注入合同内容供 Evaluator 理解验收标准（Given-When-Then）
   let contractContent = '';
   if (contractBranch) {
-    const content = await _fetchSprintFile(contractBranch, `${sprintDir}/sprint-contract.md`);
-    if (content) contractContent = `\n\n## ${sprintDir}/sprint-contract.md（来自 ${contractBranch}）\n${content}`;
+    // ⚠️ harness::contract-filename 接口约定：proposer 写 contract-draft.md（v8.x 起不再有 sprint-contract.md）
+    const content = await _fetchSprintFile(contractBranch, `${sprintDir}/contract-draft.md`);
+    if (content) contractContent = `\n\n## ${sprintDir}/contract-draft.md（来自 ${contractBranch}）\n${content}`;
   }
 
   return `/harness-evaluator
@@ -2159,9 +2160,10 @@ async function _prepareHarnessGeneratePrompt(task) {
   const contractBranch = task.payload?.contract_branch || null;
   let basePrompt = _prepareSprintPrompt(task, taskType);
   if (contractBranch) {
-    const contractContent = await _fetchSprintFile(contractBranch, `${sprintDir}/sprint-contract.md`);
+    // ⚠️ harness::contract-filename 接口约定：proposer 写 contract-draft.md（v8.x 起不再有 sprint-contract.md）
+    const contractContent = await _fetchSprintFile(contractBranch, `${sprintDir}/contract-draft.md`);
     if (contractContent) {
-      basePrompt += `\n\n## ${sprintDir}/sprint-contract.md（来自 ${contractBranch}）\n${contractContent}`;
+      basePrompt += `\n\n## ${sprintDir}/contract-draft.md（来自 ${contractBranch}）\n${contractContent}`;
     }
   }
   return basePrompt;

@@ -264,11 +264,14 @@ export async function readBrainResult(worktreePath, requiredFields = []) {
 export const ReviewerOutputSchema = z.object({
   verdict: z.enum(['APPROVED', 'REVISION']),
   rubric_scores: z.object({
-    dod_machineability:   z.number().min(1).max(10),
-    scope_match_prd:      z.number().min(1).max(10),
-    test_is_red:          z.number().min(1).max(10),
-    internal_consistency: z.number().min(1).max(10),
-    risk_registered:      z.number().min(1).max(10),
+    dod_machineability:               z.number().min(1).max(10),
+    scope_match_prd:                  z.number().min(1).max(10),
+    test_is_red:                      z.number().min(1).max(10),
+    internal_consistency:             z.number().min(1).max(10),
+    risk_registered:                  z.number().min(1).max(10),
+    // ⚠️ harness::rubric-dimensions 接口约定：reviewer SKILL v6.4.0+ 新增 2 维度
+    verification_oracle_completeness: z.number().min(1).max(10),
+    ci_workflow_alignment:            z.number().min(1).max(10),
   }),
   feedback: z.string(),
 });

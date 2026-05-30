@@ -59,13 +59,17 @@ function buildHarnessGoalSettings(goalCondition) {
   });
 }
 
-// 5 个 rubric 维度（reviewer 每轮独立打分；收敛检测 + 阈值判决均依赖此列表）。
+// 7 个 rubric 维度（对齐 harness-contract-reviewer SKILL v6.4.0+）。
+// ⚠️ harness::rubric-dimensions 接口约定：此数组必须与 reviewer SKILL 输出维度完全一致。
+// 改 reviewer SKILL 维度 = 必须同步改这里（查 Brain registry type=harness_interface）。
 const RUBRIC_DIMENSIONS = [
   'dod_machineability',
   'scope_match_prd',
   'test_is_red',
   'internal_consistency',
   'risk_registered',
+  'verification_oracle_completeness',
+  'ci_workflow_alignment',
 ];
 
 // ── 收敛检测（替代旧的轮数硬 cap） ─────────────────────────────────────────
@@ -76,12 +80,13 @@ const RUBRIC_DIMENSIONS = [
 // 设计：
 //   - 不再用轮数硬 cap（环境变量门槛已删除）
 //   - 累积每轮 rubric_scores → rubricHistory
-//   - converging（5 维度全部持平或上升）→ 继续 GAN
+//   - converging（7 维度全部持平或上升）→ 继续 GAN
 //   - diverging（任一维度连续走低）/ oscillating（最近 3 轮高低高）→ force APPROVED + P1 alert
 //   - insufficient_data（< 3 轮）→ 继续 GAN（数据不够判趋势）
 //
 // 输入：rubricHistory = [{round, scores: {dod_machineability, scope_match_prd, test_is_red,
-//                                         internal_consistency, risk_registered}}, ...]
+//                                         internal_consistency, risk_registered,
+//                                         verification_oracle_completeness, ci_workflow_alignment}}, ...]
 // 输出：'converging' | 'diverging' | 'oscillating' | 'insufficient_data'
 export function detectConvergenceTrend(rubricHistory) {
   if (!Array.isArray(rubricHistory) || rubricHistory.length < 3) {
@@ -113,7 +118,7 @@ export function detectConvergenceTrend(rubricHistory) {
     if (va > vb && vb > vc) return 'diverging';
   }
 
-  // 3. converging：最近 2 轮（b→c）5 维度全部 ≥ 上一轮（持平算 OK）
+  // 3. converging：最近 2 轮（b→c）7 维度全部 ≥ 上一轮（持平算 OK）
   const lastPairOk = RUBRIC_DIMENSIONS.every((dim) => {
     const vb = Number(b.scores[dim]);
     const vc = Number(c.scores[dim]);
@@ -122,19 +127,17 @@ export function detectConvergenceTrend(rubricHistory) {
   });
   if (lastPairOk) return 'converging';
 
-  // 兜底（5 维度有升有降但没有任一维度持续走低/震荡）
+  // 兜底（7 维度有升有降但没有任一维度持续走低/震荡）
   return 'converging';
 }
 
-// Round-based 阈值（对齐 Anthropic harness-design 2026-03 "each criterion has a hard threshold"）
-// Round 1-2 严格（7 分），Round 3-4 放宽（6 分），给 Reviewer 识别收敛但仍严肃的空间。
-export function thresholdForRound(round) {
-  if (round <= 2) return 7;
-  return 6; // Round 3+
+// 阈值固定 7（对齐 reviewer SKILL v6.4.0+ changelog: 单轮阈值固定 7，不随轮次放宽）。
+export function thresholdForRound(_round) {
+  return 7;
 }
 
 // 根据 rubric scores 和 round 计算权威 verdict（代码判 PASS，不信 LLM 文字）
-// 所有 5 维度 ≥ 阈值 → APPROVED；任一低于 → REVISION。
+// 所有 7 维度 ≥ 阈值 → APPROVED；任一低于 → REVISION。
 // scores 缺失或维度不完整 → null（调用方 fallback 到 LLM 文本 verdict）。
 // 对齐 Anthropic：each criterion has hard threshold, PASS is code-decided.
 // RUBRIC_DIMENSIONS 在文件顶部定义（与 detectConvergenceTrend 共用）。
