@@ -4,10 +4,11 @@ description: |
   Harness Contract Proposer — Harness v5 GAN Layer 2a：
   读 PRD，GAN 对抗写 Golden Path 合同（每步含真实验证命令）；
   Reviewer APPROVED 后倒推拆 task-plan.json。
-version: 8.2.0
+version: 8.3.0
 created: 2026-04-08
 updated: 2026-05-30
 changelog:
+  - 8.3.0: B50 收敛模型 — 软化 ≥4 BEHAVIOR 硬底（覆盖4类标准场景是下限，上限由PRD定，禁padding）；新增 Step 1.5 精简纪律（修订轮先删后加、净变化趋近0、只补PRD真漏覆盖、scope不蔓延）。配合 reviewer v8.2 + brain B50 合同膨胀检测
   - 8.2.0: 修复自查 checklist 旧格式引用 — contract-dod-ws*.md → contract-dod.md（与 v8.0 单 Sprint 单文件格式对齐）
   - 8.1.0: windows_cloud workflow 内容审查强制规则 — 写任何 windows_cloud BEHAVIOR 引用 GHA workflow 之前，Proposer 必须用 Bash 工具 cat 读取 workflow 实际内容，做用户路径 1:1 映射检查，缺失步骤标注 [CI_GAP]，禁止将文件存在/大小/版本号检查算作业务行为验证；违反直接扣 DoD 第 1 维至 0 分
   - 8.0.0: 移除 Workstream 拆分概念 — 对齐 Anthropic 官方 v2 Harness 设计（一个 Sprint = 一个 Generator = 一个 PR）。删除"单 WS ≤ 200 行"切分死规则、depends_on 串行链校验；task-plan.json 始终只输出 1 个 task（ws1）；测试目录改为 tests/；DoD 文件改为 contract-dod.md
@@ -119,6 +120,24 @@ git show "origin/${PLANNER_BRANCH}:${SPRINT_DIR}/sprint-prd.md" 2>/dev/null || \
 ```bash
 JOURNEY_TYPE=$(grep -m1 "^## journey_type:" "${SPRINT_DIR}/sprint-prd.md" | sed 's/## journey_type: //' | tr -d ' ') || JOURNEY_TYPE="autonomous"
 ```
+
+---
+
+### Step 1.5: 精简纪律（B50 — 防膨胀，修订轮必做）
+
+**核心：合同收敛目标是"覆盖完 PRD"，不是"无限加严谨度"。处理 Reviewer 反馈时先减后加，净变化趋近 0。**
+
+> "全" = PRD 每个 Golden Path 步骤 + 每个响应字段 + happy/error/edge 路径各**一条**验证（有限）。
+> "复杂" = 在 PRD 之外堆"还能更健壮"的内容（无限）。
+
+**修订轮（propose_round > 1）处理 Reviewer 反馈时：**
+
+1. **先删后加**：先删掉上一版里 PRD 没要求的冗余（重复验证、锦上添花的额外场景、PRD 未提的字段），再加 Reviewer 指出的"PRD 真实漏覆盖"项。
+2. **净变化趋近 0**：合同行数应逐轮持平或下降，不应持续增长。若你发现合同越改越大，说明在加 PRD 之外的东西——停下，回到 PRD 覆盖清单。
+3. **只补"真漏覆盖"**：Reviewer 反馈里"PRD 某项没覆盖"才补；"可以更严谨/更完整/更健壮"一律忽略（这些会被 Reviewer 维度 2 超覆盖扣分，也会触发 Brain 的合同膨胀发散检测 force-approve）。
+4. **scope 不蔓延**：PRD 没描述的端点/字段/场景，绝不加进合同。合同的边界 = PRD 的边界。
+
+**自查（写完修订版必做）**：本轮合同行数 vs 上轮？若增长，逐条问"新增的每一行 PRD 要求了吗"——没要求的删掉。
 
 ---
 
@@ -706,7 +725,7 @@ W26 r3 proposer 在 contract-dod 末尾写：
 - ❌ "DoD 纯度规则" — 不存在此规则。v7.4 起 DoD 必须含 [BEHAVIOR]
 - ❌ "v5.0 严禁 contract-dod-ws 出现 [BEHAVIOR]" — v5.0 已废止，见 changelog
 - ❌ "BEHAVIOR 已搬到 vitest" — vitest 不被 evaluator 读，evaluator 只跑 DoD 文件 manual:bash
-- ❌ "本任务行为简单，1 条够了" — 阈值是死的 ≥ 4 条不同场景
+- ❌ "本任务行为简单，1 条够了" — API 任务至少覆盖 4 类标准场景（schema 字段 / keys 完整性 / 禁用字段反向 / error path），这是**覆盖 PRD 的下限**，不是 padding。但**上限也由 PRD 决定**：覆盖完这 4 类 + PRD 列出的字段/路径就够了，禁止为"更严谨"堆更多（见下方精简纪律 B50）
 
 只要看到 `[BEHAVIOR] 条目已搬迁` / `DoD 纯度规则` / `v5.0` 等字眼出现在 contract-dod 文件里 → 草案作废重写。
 
