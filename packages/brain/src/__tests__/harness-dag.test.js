@@ -291,7 +291,7 @@ describe('parseTaskPlan — journey_type 透传', () => {
           files: ['packages/brain/src/server.js'],
           depends_on: [],
           complexity: 'S',
-          estimated_minutes: 20,
+          estimated_minutes: 30,
         },
       ],
     });

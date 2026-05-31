@@ -218,7 +218,8 @@ describe('inferTaskPlanNode — reads from propose branch via git show', () => {
     };
 
     const result = await inferTaskPlanNode(state);
-    expect(result).toEqual({});
+    expect(result.error).toBeDefined();
+    expect(result.error.node).toBe('infer_task_plan');
   });
 });
 describe('pickSubTaskNode', () => {
