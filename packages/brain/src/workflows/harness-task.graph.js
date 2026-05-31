@@ -203,8 +203,10 @@ export async function spawnNode(state, opts = {}) {
   const finalContainerId = `harness-task-${safeId}-r${fixRound}-${rand}`;
 
   // thread_id 必须跟 harness-initiative.graph runSubTaskNode 用的一致：
-  // `harness-task:${initiativeId}:${subTaskId}` —— callback router 用此 lookup
-  const threadId = `harness-task:${initiativeId}:${task.id}`;
+  // `harness-task:${initiativeId}:${subTaskId}:fix${N}` —— callback router 用此 lookup
+  // B47: final_e2e_fix_count 从 payload 读，与 config thread_id 保持一致
+  const threadFixRound = state.task?.payload?.final_e2e_fix_count ?? 0;
+  const threadId = `harness-task:${initiativeId}:${task.id}:fix${threadFixRound}`;
 
   // 关键：调 resolveAccount 选 claude account → 注入 CECELIA_CREDENTIALS + CECELIA_MODEL。
   // buildDockerArgs 据此加 -v ~/.claude-accountN:/host-claude-config:ro mount。
@@ -585,7 +587,9 @@ export async function evaluateContractNode(state, opts = {}) {
   const safeId = String(task.id).replace(/[^a-zA-Z0-9-]/g, '');
   const containerId = `harness-evaluate-${safeId}-r${state.fix_round || 0}-${rand}`;
   // B10: evaluate_contract 在 harness-task graph 内，thread_lookup 必须用 task graph thread_id
-  const threadId = `harness-task:${initiativeId}:${task.id}`;
+  // B47: final_e2e_fix_count 从 payload 读，与 config thread_id 保持一致
+  const threadFixRound = state.task?.payload?.final_e2e_fix_count ?? 0;
+  const threadId = `harness-task:${initiativeId}:${task.id}:fix${threadFixRound}`;
 
   // B14: PR 分支名传给 evaluator（Step 0a git checkout 用，不传则永远跑 main 看不到改动）
   let prBranchEnv = state.pr_branch || '';
@@ -640,6 +644,7 @@ export async function evaluateContractNode(state, opts = {}) {
         HARNESS_INITIATIVE_ID: initiativeId,
         HARNESS_TASK_ID: task.id,
         IS_FINAL_E2E: 'true',
+        JOURNEY_TYPE: state.task?.payload?.journey_type || 'autonomous',
         GITHUB_TOKEN: token,
         CONTRACT_BRANCH: state.contractBranch || payload.contract_branch || '',
         PR_URL: state.pr_url || '',

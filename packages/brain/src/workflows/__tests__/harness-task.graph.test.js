@@ -172,7 +172,8 @@ describe('spawnNode (Layer 3 spawn-and-interrupt)', () => {
     expect(insertCall).toBeDefined();
     // params: [container_id, thread_id]
     expect(insertCall[1][0]).toBe(spawnArg.containerId);
-    expect(insertCall[1][1]).toBe('harness-task:init-1:sub-1');
+    // B47: thread_id now includes :fix${N} suffix (final_e2e_fix_count from payload, default 0)
+    expect(insertCall[1][1]).toBe('harness-task:init-1:sub-1:fix0');
     // delta
     expect(delta.containerId).toBe(spawnArg.containerId);
     expect(delta.worktreePath).toBe('/wt/abc');

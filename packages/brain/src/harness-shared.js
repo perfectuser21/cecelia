@@ -271,7 +271,7 @@ export const ReviewerOutputSchema = z.object({
     risk_registered:                  z.number().min(1).max(10),
     // ⚠️ harness::rubric-dimensions 接口约定：reviewer SKILL v6.4.0+ 新增 2 维度
     verification_oracle_completeness: z.number().min(1).max(10),
-    ci_workflow_alignment:            z.number().min(1).max(10),
+    ci_workflow_alignment:            z.number().min(1).max(10).optional().default(10),
   }),
   feedback: z.string(),
 });
