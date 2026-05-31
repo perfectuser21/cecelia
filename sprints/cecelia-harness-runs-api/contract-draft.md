@@ -286,7 +286,7 @@ workstream_count: 1
 
 | Workstream | Test File | BEHAVIOR 覆盖 | 预期红证据（机检命令） |
 |---|---|---|---|
-| WS1 | `sprints/cecelia-harness-runs-api/tests/ws1/harness-runs-list.test.js` | 全部 12 条 BEHAVIOR（含排序） | `npx vitest run sprints/cecelia-harness-runs-api/tests/ws1/harness-runs-list.test.js 2>&1` |
+| WS1 | `tests/ws1/harness-runs-list.test.js` | 无参数返回 HTTP 200/total 等于 runs/全部 10 个必须字段/禁用字段/cost_usd 序列化/空结果返回 HTTP 200/limit 非整数返回 HTTP 400/limit=0/limit=101/limit=100/journey_id 非 UUID/phase 为空字符串/按 created_at DESC 排序 | `npx vitest run sprints/cecelia-harness-runs-api/tests/ws1/harness-runs-list.test.js 2>&1` |
 
 ---
 
