@@ -66,9 +66,8 @@ const RUBRIC_DIMENSIONS = [
 //   - diverging（任一维度连续走低）/ oscillating（最近 3 轮高低高）→ force APPROVED + P1 alert
 //   - insufficient_data（< 3 轮）→ 继续 GAN（数据不够判趋势）
 //
-// 输入：rubricHistory = [{round, scores: {dod_machineability, scope_match_prd, test_is_red,
-//                                         internal_consistency, risk_registered,
-//                                         verification_oracle_completeness, ci_workflow_alignment}}, ...]
+// 输入：rubricHistory = [{round, scores: {7 维度...}, contractLines?: number}, ...]
+//   contractLines（B50 新增，可选）：该轮合同行数，连续 2 轮净增长判 diverging（防膨胀）
 // 输出：'converging' | 'diverging' | 'oscillating' | 'insufficient_data'
 export function detectConvergenceTrend(rubricHistory) {
   if (!Array.isArray(rubricHistory) || rubricHistory.length < 3) {
@@ -98,6 +97,17 @@ export function detectConvergenceTrend(rubricHistory) {
     const vc = Number(c.scores[dim]);
     if ([va, vb, vc].some((n) => Number.isNaN(n))) continue;
     if (va > vb && vb > vc) return 'diverging';
+  }
+
+  // 2.5 diverging（B50 — 合同膨胀检测）：合同行数连续 2 轮净增长（a < b < c）= "越来越大"。
+  // 用户原意：不限轮数，但必须收敛（越来越小或持平），不能发散。
+  // 合同逐轮膨胀且评分未全过 = 典型发散（实证 257→339→413→571 行，15 轮不收敛）。
+  // 仅在三轮都有 contractLines 数据时判定（旧 history 无此字段则跳过，向后兼容）。
+  const la = Number(a.contractLines);
+  const lb = Number(b.contractLines);
+  const lc = Number(c.contractLines);
+  if (![la, lb, lc].some((n) => Number.isNaN(n)) && la < lb && lb < lc) {
+    return 'diverging';
   }
 
   // 3. converging：最近 2 轮（b→c）7 维度全部 ≥ 上一轮（持平算 OK）
@@ -447,7 +457,9 @@ export function createGanContractNodes(executor, ctx) {
       console.warn(`[harness-gan] round=${currentRound} rubric_verdict=${rubricVerdict} ≠ file_verdict=${resultData.verdict} — 按 rubric 判（代码权威）`);
     }
 
-    const newHistoryEntry = rubricScores ? { round: currentRound, scores: rubricScores } : null;
+    // B50: 记录本轮合同行数，供 detectConvergenceTrend 检测膨胀发散
+    const contractLines = (state.contractContent || '').split('\n').length;
+    const newHistoryEntry = rubricScores ? { round: currentRound, scores: rubricScores, contractLines } : null;
     const combinedHistory = newHistoryEntry
       ? [...(state.rubricHistory || []), newHistoryEntry]
       : (state.rubricHistory || []);
