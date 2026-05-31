@@ -139,3 +139,21 @@ describe('computeHarnessInitiativeError', () => {
     expect(err.length).toBeLessThanOrEqual(500);
   });
 });
+
+describe('computeHarnessInitiativeOk — B48 interrupt detection', () => {
+  it('B48: returns null when no report_path (graph interrupted/waiting for callback)', () => {
+    // planner spawned detached, graph hit interrupt — final has prep state but no report_path
+    const interrupted = { worktreePath: '/wt', githubToken: 'tok', initiativeId: 'init-1' };
+    expect(computeHarnessInitiativeOk(interrupted)).toBeNull();
+  });
+
+  it('B48: returns true only when report_path is set (reportNode actually ran)', () => {
+    const completed = { report_path: 'sprints/test/report.json', worktreePath: '/wt' };
+    expect(computeHarnessInitiativeOk(completed)).toBe(true);
+  });
+
+  it('B48: returns false when error set (even with report_path)', () => {
+    const errored = { report_path: 'sprints/test/report.json', error: { node: 'planner', message: 'fail' } };
+    expect(computeHarnessInitiativeOk(errored)).toBe(false);
+  });
+});
