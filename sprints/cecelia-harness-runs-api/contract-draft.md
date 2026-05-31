@@ -1,6 +1,6 @@
-# Sprint Contract Draft (Round 6)
+# Sprint Contract Draft (Round 7)
 
-> **Round 6 变更**: 合约已完整，无新增条目。
+> **Round 7 变更**: 合约已完整，无新增条目。
 > - [STATUS] Reviewer 已批准（verdict: APPROVED）；13/13 红测稳定，路由 `GET /initiative-runs` 尚未实现
 > - [CARRY] 全部内容保持不变（4 ARTIFACT + 12 BEHAVIOR，E2E 6 条，13 个红色单元测试）
 > - 本 Round 为 Generator 就绪确认 pass，无 contract 内容修改
