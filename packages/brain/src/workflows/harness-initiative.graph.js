@@ -413,7 +413,7 @@ export async function dbUpsertNode(state, opts = {}) {
   }
 }
 
-function stateHasError(state) { return state.error ? 'error' : 'ok'; }
+export function stateHasError(state) { return state.error ? 'error' : 'ok'; }
 
 export function buildHarnessInitiativeGraph() {
   return new StateGraph(InitiativeState)
@@ -1084,7 +1084,7 @@ export function buildHarnessFullGraph(nodeOverrides = {}) {
     .addConditionalEdges('dbUpsert', stateHasError, { error: END, ok: 'pick_sub_task' })
     .addConditionalEdges('pick_sub_task', routeFromPickSubTask, { run_sub_task: 'run_sub_task', report: 'report', end: END })
     .addEdge('run_sub_task', 'advance')
-    .addEdge('advance', 'pick_sub_task')
+    .addConditionalEdges('advance', stateHasError, { error: 'report', ok: 'pick_sub_task' })
     .addEdge('report', END);
 }
 
