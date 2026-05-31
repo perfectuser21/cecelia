@@ -34,13 +34,67 @@ const HARNESS_MERMAID = `graph TD
   Evaluator -->|FAIL| Generator
   Report --> End([END])`;
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * GET /initiative-runs
+ * 列表查询 initiative_runs，支持 phase/journey_id/limit 过滤
+ */
+router.get('/initiative-runs', async (req, res) => {
+  const { phase, journey_id, limit: limitRaw } = req.query;
+
+  const limitNum = limitRaw === undefined ? 50 : Number(limitRaw);
+  if (limitRaw !== undefined && (!Number.isInteger(limitNum) || limitNum < 1 || limitNum > 100)) {
+    return res.status(400).json({ error: 'invalid limit: must be integer 1-100' });
+  }
+
+  if (journey_id !== undefined && !UUID_RE.test(journey_id)) {
+    return res.status(400).json({ error: 'invalid journey_id: must be a UUID' });
+  }
+
+  try {
+    const conditions = [];
+    const params = [];
+
+    if (phase && phase !== '') {
+      params.push(phase);
+      conditions.push(`phase = $${params.length}`);
+    }
+
+    if (journey_id) {
+      params.push(journey_id);
+      conditions.push(`journey_id = $${params.length}::uuid`);
+    }
+
+    params.push(limitNum);
+    const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+
+    const { rows } = await pool.query(
+      `SELECT id, initiative_id, phase, journey_type, journey_id,
+              created_at, completed_at, deadline_at,
+              failure_reason, cost_usd::float8 AS cost_usd
+       FROM initiative_runs
+       ${where}
+       ORDER BY created_at DESC
+       LIMIT $${params.length}`,
+      params
+    );
+
+    const ALLOWED = ['id', 'initiative_id', 'phase', 'journey_type', 'journey_id',
+      'created_at', 'completed_at', 'deadline_at', 'failure_reason', 'cost_usd'];
+    const runs = rows.map(r => Object.fromEntries(ALLOWED.map(k => [k, r[k] ?? null])));
+    res.json({ runs, total: runs.length });
+  } catch (err) {
+    console.error('[GET /harness/initiative-runs]', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 /**
  * GET /initiative-runs/:id
  * 按 initiative_id 查最新 run，返回含 journey_id 字段
  * :id 必须是合法 UUID，否则返回 400
  */
-const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
 router.get('/initiative-runs/:id', async (req, res) => {
   const { id } = req.params;
   if (!UUID_RE.test(id)) {
