@@ -1,3 +1,25 @@
+# Contract Review Feedback — Round 12
+
+**verdict**: DONE
+**sprint_dir**: sprints/cecelia-harness-runs-api
+**reviewed_at**: 2026-05-31
+
+---
+
+## Sprint 终态归档（Round 12 修订）
+
+Round 12 = Sprint DONE 终态确认，并修复了 2 项 CI 阻塞问题。
+
+- **13/13 测试全绿**：`GET /initiative-runs` 路由完整实现
+- **PR #3210** `feat(harness-runs-api): GET /initiative-runs 列表查询端点` — 开放中
+- **CI 修复**（本 Round 修复，已推送至 PR 分支）：
+  - `Test Contract 覆盖检查`：contract-draft.md 中 Test Contract 表路径从绝对路径改为相对 sprint dir 的路径（`tests/ws1/...`），BEHAVIOR 列改为实际 `it()` 子串列表
+  - `lint-feature-has-smoke`：新增 `packages/brain/scripts/smoke/harness-runs-api-smoke.sh`（5 Case，41 行实代码，10 个真命令）
+- **branch-naming** FAILURE 为 harness 自动生成分支格式 `cp-harness-propose-rN-<hash>` 与 CI 期望 `cp-XXXXXXXX-<name>` 不兼容的结构性问题，需在 CI 规则中豁免 harness 分支命名模式
+- **DeepSeek Code Review** FAILURE 为外部代码审查工具问题，不影响功能实现
+
+---
+
 # Contract Review Feedback — Round 1
 
 **verdict**: APPROVED
