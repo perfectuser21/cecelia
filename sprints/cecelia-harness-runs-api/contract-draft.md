@@ -1,4 +1,9 @@
-# Sprint Contract Draft (Round 1)
+# Sprint Contract Draft (Round 2)
+
+> **Round 2 变更**: 基于 Round 1 评审反馈（verdict: APPROVED）合并以下补充：
+> - [MINOR-1] 新增 BEHAVIOR「runs 按 created_at DESC 排序」的单元测试（第 13 条）
+> - [MINOR-2] 在 Risks/Generator 执行摘要中强化 `cost_usd::float8` cast 说明
+> - [NOTICE] 路由顺序（GET /initiative-runs 位于 GET /initiative-runs/:id 之前）保持原有约定
 
 ## Golden Path
 
@@ -255,17 +260,18 @@ workstream_count: 1
 **BEHAVIOR**:
 - [ ] [BEHAVIOR] GET /initiative-runs 无参数返回 HTTP 200，顶层 keys 精确等于 `["runs","total"]`
 - [ ] [BEHAVIOR] total 等于 runs 数组实际长度
-- [ ] [BEHAVIOR] runs 按 created_at DESC 排序
+- [ ] [BEHAVIOR] runs 按 created_at DESC 排序（路由不破坏 DB 返回顺序；SQL ORDER BY 正确性由 E2E 验证）
 - [ ] [BEHAVIOR] runs 每条含 id/initiative_id/phase/journey_type/journey_id/created_at/completed_at/deadline_at/failure_reason/cost_usd 共 10 个字段
 - [ ] [BEHAVIOR] runs 每条不含 contract_id/current_task_id/merged_task_ids
-- [ ] [BEHAVIOR] cost_usd 序列化为 number 或 null（不是字符串）
+- [ ] [BEHAVIOR] cost_usd 序列化为 number 或 null（不是字符串；Generator 须用 `cost_usd::float8`）
 - [ ] [BEHAVIOR] limit 默认 50，最大 100；limit=100 成功返回 200
 - [ ] [BEHAVIOR] limit 非整数、<1 或 >100 → HTTP 400，error 含 "invalid limit: must be integer 1-100"
 - [ ] [BEHAVIOR] journey_id 不是合法 UUID → HTTP 400，error == "invalid journey_id: must be a UUID"
 - [ ] [BEHAVIOR] phase 为空字符串 → 忽略过滤，正常返回 200
 - [ ] [BEHAVIOR] 空结果 → HTTP 200，`{"runs":[],"total":0}`
+- [ ] [BEHAVIOR] 路由不破坏 DB 返回的 created_at 顺序（newer 在前）
 
-**对应合同 Step**: Step 1~8
+**对应合同 Step**: Step 1~8（排序测试对应 Workstream BEHAVIOR 第 12 条，单元层验证路由不打乱顺序）
 
 ---
 
@@ -280,4 +286,13 @@ workstream_count: 1
 
 | Workstream | Test File | BEHAVIOR 覆盖 | 预期红证据（机检命令） |
 |---|---|---|---|
-| WS1 | `sprints/cecelia-harness-runs-api/tests/ws1/harness-runs-list.test.js` | 全部 11 条 BEHAVIOR | `npx vitest run sprints/cecelia-harness-runs-api/tests/ws1/harness-runs-list.test.js 2>&1` |
+| WS1 | `sprints/cecelia-harness-runs-api/tests/ws1/harness-runs-list.test.js` | 全部 12 条 BEHAVIOR（含排序） | `npx vitest run sprints/cecelia-harness-runs-api/tests/ws1/harness-runs-list.test.js 2>&1` |
+
+---
+
+## Generator 执行摘要（必读）
+
+1. 在 `packages/brain/src/routes/harness.js` 中，在 `router.get('/initiative-runs/:id', ...)` **之前**新增 `router.get('/initiative-runs', ...)`
+2. SQL SELECT 必须：`cost_usd::float8 AS cost_usd`，并 `ORDER BY created_at DESC`，默认 `LIMIT 50`
+3. SQL SELECT 不含 `contract_id`、`current_task_id`、`merged_task_ids`
+4. 运行 `npx vitest run sprints/cecelia-harness-runs-api/tests/ws1/harness-runs-list.test.js` 确认 **13/13 全绿**（第 13 条为新增排序测试）后提 PR

@@ -162,4 +162,20 @@ describe('Brain API — GET /initiative-runs (列表) [BEHAVIOR]', () => {
     expect(res.status).toBe(200);
     expect(Array.isArray(res.body.runs)).toBe(true);
   });
+
+  it('[BEHAVIOR] runs 按 created_at DESC 排序（路由不打乱 DB 返回顺序）', async () => {
+    const newer = { ...SAMPLE_RUN, id: 'cccccccc-cccc-cccc-cccc-cccccccccccc', created_at: new Date('2026-05-31T12:00:00Z') };
+    const older = { ...SAMPLE_RUN, id: 'dddddddd-dddd-dddd-dddd-dddddddddddd', created_at: new Date('2026-05-30T08:00:00Z') };
+    // DB mock 模拟已由 ORDER BY DESC 排序的返回：newer 在前
+    mockPool.query.mockResolvedValueOnce({ rows: [newer, older] });
+
+    const app = createApp();
+    const res = await request(app).get('/initiative-runs');
+
+    expect(res.status).toBe(200);
+    expect(res.body.runs).toHaveLength(2);
+    // 路由不应打乱顺序：第一条应比第二条的 created_at 更新
+    expect(new Date(res.body.runs[0].created_at).getTime())
+      .toBeGreaterThan(new Date(res.body.runs[1].created_at).getTime());
+  });
 });
