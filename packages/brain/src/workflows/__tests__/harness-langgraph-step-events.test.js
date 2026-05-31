@@ -63,41 +63,14 @@ describe('runGanLoopNode — langgraph_step events', () => {
   });
 });
 
-describe('fanoutPassthroughNode — langgraph_step events (legacy parallel path)', () => {
-  const body = extractFnBody('fanoutPassthroughNode', '\n// Layer 3');
-
-  it('emits generator event', () => {
-    expect(body).toMatch(/emitLangGraphStep/);
-    expect(body).toMatch(/generator/);
-  });
-});
-
 describe('runSubTaskNode — langgraph_step events (production serial path)', () => {
-  const body = extractFnBody('runSubTaskNode', '\nexport async function joinSubTasksNode');
+  const body = extractFnBody('runSubTaskNode', '\nexport async function reportNode');
 
   it('emits generator event with sub_task_id and task_index', () => {
     expect(body).toMatch(/emitLangGraphStep/);
     expect(body).toMatch(/generator/);
     expect(body).toMatch(/sub_task_id/);
     expect(body).toMatch(/task_index/);
-  });
-});
-
-describe('finalE2eNode — langgraph_step events', () => {
-  const body = extractFnBody('finalE2eNode', '\nexport async function reportNode');
-
-  it('emits evaluator event', () => {
-    expect(body).toMatch(/emitLangGraphStep/);
-    expect(body).toMatch(/evaluator/);
-  });
-});
-
-describe('finalEvaluateDispatchNode — langgraph_step events (Mode B, production path)', () => {
-  const body = extractFnBody('finalEvaluateDispatchNode', '\nexport function routeAfterFinalEval');
-
-  it('emits evaluator event (Mode B is the production graph node)', () => {
-    expect(body).toMatch(/emitLangGraphStep/);
-    expect(body).toMatch(/evaluator/);
   });
 });
 

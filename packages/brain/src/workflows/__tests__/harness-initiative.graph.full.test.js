@@ -1,10 +1,10 @@
 /**
- * Sprint 1 Phase B/C 全图重构 — 顶层 full graph 端到端 + 5 节点单测。
+ * Sprint 1 Phase B/C 全图重构 — 顶层 full graph 端到端 + 节点单测。
  * 覆盖：
- *   - 5 新节点（fanoutSubTasksNode / runSubTaskNode / joinSubTasksNode / finalE2eNode / reportNode）
- *   - happy 端到端：planner → gan → 2 sub_tasks fanout → all merged → final_e2e PASS → report
- *   - fix-loop：1 sub_task ci_fail 后 ci_pass merged → final_e2e PASS
- *   - resume：MemorySaver 同 thread_id 续上 mid-loop
+ *   - buildHarnessFullGraph wiring
+ *   - inferTaskPlanNode
+ *   - reportNode
+ *   - full graph e2e (happy / fix-loop / resume)
  */
 import { describe, it, expect, vi, beforeEach, afterEach, beforeAll } from 'vitest';
 import { MemorySaver } from '@langchain/langgraph';
@@ -80,47 +80,12 @@ vi.mock('node:fs/promises', () => ({
 vi.mock('../../orchestrator/pg-checkpointer.js', () => ({
   getPgCheckpointer: vi.fn().mockResolvedValue(new MemorySaver()),
 }));
-vi.mock('../../harness-final-e2e.js', () => ({
-  runScenarioCommand: vi.fn(() => ({ exitCode: 0, output: 'ok' })),
-  bootstrapE2E: vi.fn(() => ({ exitCode: 0, output: 'ok' })),
-  teardownE2E: vi.fn(() => ({ exitCode: 0, output: '' })),
-  normalizeAcceptance: (a) => a,
-  attributeFailures: () => new Map(),
-}));
-
 import {
-  fanoutSubTasksNode,
-  joinSubTasksNode,
-  finalE2eNode,
   reportNode,
   buildHarnessFullGraph,
   inferTaskPlanNode,
-  runPlannerNode,   // ← 新增
+  runPlannerNode,
 } from '../harness-initiative.graph.js';
-
-// ─── 5 节点单测 ────────────────────────────────────────────────────────────
-
-describe('fanoutSubTasksNode (router function)', () => {
-  it('从 taskPlan.tasks 派发 Send[] 路由', () => {
-    const state = {
-      initiativeId: 'i',
-      taskPlan: { tasks: [{ id: 's1', title: 'T1' }, { id: 's2', title: 'T2' }] },
-    };
-    const sends = fanoutSubTasksNode(state);
-    expect(Array.isArray(sends)).toBe(true);
-    expect(sends.length).toBe(2);
-    expect(sends[0].node).toBe('run_sub_task');
-    expect(sends[0].args.sub_task.id).toBe('s1');
-  });
-  it('空 tasks → 返回 ["join"] 直接跳 join', () => {
-    const sends = fanoutSubTasksNode({ taskPlan: { tasks: [] } });
-    expect(sends).toEqual(['join']);
-  });
-  it('null taskPlan → 返回 ["join"]', () => {
-    const sends = fanoutSubTasksNode({ taskPlan: null });
-    expect(sends).toEqual(['join']);
-  });
-});
 
 describe('inferTaskPlanNode', () => {
   beforeEach(() => { mockParseTaskPlan.mockReset(); });
@@ -181,71 +146,24 @@ describe('buildHarnessFullGraph wiring', () => {
   });
 });
 
-describe('joinSubTasksNode', () => {
-  it('sub_tasks 全 merged → all_sub_tasks_done=true', async () => {
-    const delta = await joinSubTasksNode({
-      sub_tasks: [
-        { id: 's1', status: 'merged' },
-        { id: 's2', status: 'merged' },
-      ],
-    });
-    expect(delta.all_sub_tasks_done).toBe(true);
-    expect(delta.final_e2e_verdict).toBeUndefined();
+describe('dead code regression guard — #3188 后遗留函数已删除', () => {
+  it('fanoutSubTasksNode / fanoutPassthroughNode / joinSubTasksNode / finalE2eNode 不再从 graph 文件导出', async () => {
+    const mod = await import('../harness-initiative.graph.js');
+    expect(mod.fanoutSubTasksNode).toBeUndefined();
+    expect(mod.fanoutPassthroughNode).toBeUndefined();
+    expect(mod.joinSubTasksNode).toBeUndefined();
+    expect(mod.finalE2eNode).toBeUndefined();
   });
-  it('有 sub_task 非 merged → all_sub_tasks_done=false + final_e2e_verdict=FAIL', async () => {
-    const delta = await joinSubTasksNode({
-      sub_tasks: [
-        { id: 's1', status: 'merged' },
-        { id: 's2', status: 'failed' },
-      ],
-    });
-    expect(delta.all_sub_tasks_done).toBe(false);
-    expect(delta.final_e2e_verdict).toBe('FAIL');
-    expect(delta.final_e2e_failed_scenarios.length).toBe(1);
-    expect(delta.final_e2e_failed_scenarios[0].covered_tasks).toEqual(['s2']);
-  });
-  it('空 sub_tasks → all_sub_tasks_done=false', async () => {
-    const delta = await joinSubTasksNode({ sub_tasks: [] });
-    expect(delta.all_sub_tasks_done).toBe(false);
+
+  it('routeAfterEvaluate / finalEvaluateDispatchNode / runInitiative 不再从 graph 文件导出', async () => {
+    const mod = await import('../harness-initiative.graph.js');
+    expect(mod.routeAfterEvaluate).toBeUndefined();
+    expect(mod.finalEvaluateDispatchNode).toBeUndefined();
+    expect(mod.runInitiative).toBeUndefined();
   });
 });
 
-describe('finalE2eNode', () => {
-  beforeEach(() => { mockPool.query.mockReset(); });
 
-  it('happy: 跑 scenarios 全 pass → verdict=PASS', async () => {
-    const delta = await finalE2eNode({
-      initiativeId: 'i',
-      contract: { e2e_acceptance: { scenarios: [{ name: 's1', covered_tasks: ['t1'], commands: [{ cmd: 'echo' }] }] } },
-    }, { skipBootstrap: true });
-    expect(delta.final_e2e_verdict).toBe('PASS');
-  });
-  it('已 FAIL → 短路', async () => {
-    const delta = await finalE2eNode({ final_e2e_verdict: 'FAIL' });
-    expect(delta.final_e2e_verdict).toBe('FAIL');
-  });
-  it('无 e2e_acceptance → 视为 PASS', async () => {
-    const delta = await finalE2eNode({});
-    expect(delta.final_e2e_verdict).toBe('PASS');
-  });
-  it('scenarios 中一条 fail → verdict=FAIL', async () => {
-    const failingRunScenario = vi.fn()
-      .mockResolvedValueOnce({ exitCode: 0, output: 'ok' })
-      .mockResolvedValueOnce({ exitCode: 1, output: 'boom' });
-    const delta = await finalE2eNode({
-      initiativeId: 'i',
-      contract: { e2e_acceptance: {
-        scenarios: [
-          { name: 's1', covered_tasks: ['t1'], commands: [{ cmd: 'a' }] },
-          { name: 's2', covered_tasks: ['t2'], commands: [{ cmd: 'b' }] },
-        ],
-      } },
-    }, { skipBootstrap: true, runScenario: failingRunScenario });
-    expect(delta.final_e2e_verdict).toBe('FAIL');
-    expect(delta.final_e2e_failed_scenarios.length).toBe(1);
-    expect(delta.final_e2e_failed_scenarios[0].name).toBe('s2');
-  });
-});
 
 // WS2 async: runPlannerNode 现在调 spawnDockerDetached+interrupt，
 // 直接调用（非 graph 上下文）会抛 "Called interrupt() outside graph"。
