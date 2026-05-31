@@ -391,13 +391,37 @@ describe('account-usage', () => {
       expect(usage.account1.five_hour_pct).toBe(0);
     });
 
-    it('API 返回非 ok 状态时应回退', async () => {
+    it('API 返回 500（非 429）时应回退到默认零值', async () => {
       setupValidCredentials();
-      mockFetch.mockResolvedValue({ ok: false, status: 429 });
+      mockFetch.mockResolvedValue({ ok: false, status: 500 });
       mockPool.query.mockResolvedValue({ rows: [] });
 
       const usage = await getAccountUsage(true);
+      // 非 429 失败（瞬时错误）→ 保持旧行为，回退默认零值
       expect(usage.account1.five_hour_pct).toBe(0);
+    });
+
+    it('B49: API 返回 429 时应标记账号不可用（five_hour_pct=100），不降级旧缓存', async () => {
+      const staleRow = {
+        account_id: 'account1',
+        five_hour_pct: 4,
+        seven_day_pct: 2,
+        seven_day_sonnet_pct: 3,
+        resets_at: null,
+        seven_day_resets_at: null,
+        extra_used: false,
+      };
+      setupValidCredentials();
+      mockFetch.mockResolvedValue({ ok: false, status: 429 });
+      mockPool.query.mockImplementation(async (sql) => {
+        if (sql.includes('INTERVAL')) return { rows: [] };
+        if (sql.includes('account_usage_cache') && sql.includes('SELECT')) return { rows: [staleRow] };
+        return { rows: [] };
+      });
+
+      const usage = await getAccountUsage(true);
+      // 429 = 账号确实超配额，必须判不可用（≥ USAGE_THRESHOLD 80），不能用乐观旧缓存的 4%
+      expect(usage.account1.five_hour_pct).toBe(100);
     });
 
     it('API 数据成功时应 upsert 缓存', async () => {

@@ -388,6 +388,9 @@ async function fetchUsageFromAPI(accountId) {
 
     if (!res.ok) {
       console.warn(`[account-usage] ${accountId}: API 返回 ${res.status}`);
+      // B49: 429 = 账号确实超配额，不能降级到乐观旧缓存继续选它（否则反复选死账号死循环）。
+      // 返回 sentinel 让 getAccountUsage 标记账号不可用。非 429（500/超时等瞬时错误）保持旧行为返回 null。
+      if (res.status === 429) return { __rateLimited: true };
       return null;
     }
 
@@ -507,7 +510,21 @@ export async function getAccountUsage(forceRefresh = false) {
     }
 
     const data = await fetchUsageFromAPI(accountId);
-    if (data) {
+    if (data && data.__rateLimited) {
+      // B49: 429 限流 → 标记 five_hour_pct=100（≥ USAGE_THRESHOLD 80）让 selectBestAccount 淘汰，
+      // 不落乐观旧缓存。resets_at 设 1h 后，避免被 effectivePct 的"即将重置"逻辑误判为可用。
+      console.warn(`[account-usage] ${accountId}: 429 限流 → 标记不可用（five_hour_pct=100），跳过此账号`);
+      results[accountId] = {
+        account_id: accountId,
+        five_hour_pct: 100,
+        seven_day_pct: 100,
+        seven_day_sonnet_pct: 100,
+        resets_at: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
+        seven_day_resets_at: null,
+        seven_day_sonnet_resets_at: null,
+        extra_used: false,
+      };
+    } else if (data) {
       results[accountId] = await upsertCache(accountId, data);
     } else {
       const stale = await getStaleCached(accountId);
