@@ -56,6 +56,47 @@ describe('detectConvergenceTrend [BEHAVIOR]', () => {
     expect(detectConvergenceTrend(hist)).toBe('diverging');
   });
 
+  it('B50: 合同行数连续 2 轮净增长（a<b<c）→ diverging（防膨胀）', () => {
+    const sc = { dod_machineability: 6, scope_match_prd: 7, test_is_red: 7, internal_consistency: 7, risk_registered: 7, verification_oracle_completeness: 7, ci_workflow_alignment: 10 };
+    const hist = [
+      { round: 1, scores: { ...sc }, contractLines: 257 },
+      { round: 2, scores: { ...sc }, contractLines: 413 },
+      { round: 3, scores: { ...sc }, contractLines: 571 },
+    ];
+    // 评分持平（本会判 converging），但合同逐轮膨胀 → 必须判 diverging
+    expect(detectConvergenceTrend(hist)).toBe('diverging');
+  });
+
+  it('B50: 合同行数持平 → 不触发膨胀检测，仍 converging', () => {
+    const sc = { dod_machineability: 7, scope_match_prd: 7, test_is_red: 7, internal_consistency: 7, risk_registered: 7, verification_oracle_completeness: 7, ci_workflow_alignment: 10 };
+    const hist = [
+      { round: 1, scores: { ...sc }, contractLines: 120 },
+      { round: 2, scores: { ...sc }, contractLines: 120 },
+      { round: 3, scores: { ...sc }, contractLines: 120 },
+    ];
+    expect(detectConvergenceTrend(hist)).toBe('converging');
+  });
+
+  it('B50: 合同行数下降（收敛精简）→ converging', () => {
+    const sc = { dod_machineability: 7, scope_match_prd: 7, test_is_red: 7, internal_consistency: 7, risk_registered: 7, verification_oracle_completeness: 7, ci_workflow_alignment: 10 };
+    const hist = [
+      { round: 1, scores: { ...sc }, contractLines: 200 },
+      { round: 2, scores: { ...sc }, contractLines: 150 },
+      { round: 3, scores: { ...sc }, contractLines: 130 },
+    ];
+    expect(detectConvergenceTrend(hist)).toBe('converging');
+  });
+
+  it('B50: 无 contractLines 字段（旧 history）→ 不崩，按评分判 converging（向后兼容）', () => {
+    const sc = { dod_machineability: 7, scope_match_prd: 7, test_is_red: 7, internal_consistency: 7, risk_registered: 7, verification_oracle_completeness: 7, ci_workflow_alignment: 10 };
+    const hist = [
+      { round: 1, scores: { ...sc } },
+      { round: 2, scores: { ...sc } },
+      { round: 3, scores: { ...sc } },
+    ];
+    expect(detectConvergenceTrend(hist)).toBe('converging');
+  });
+
   it('最近 3 轮某维度高低高震荡 → oscillating', () => {
     const hist = [
       { round: 1, scores: { dod_machineability: 8, scope_match_prd: 7, test_is_red: 7, internal_consistency: 7, risk_registered: 7 } },
