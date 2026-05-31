@@ -6,10 +6,11 @@ description: |
   而非"防作弊测试框架"。
   核心职责：(1) spec 对齐用户真需求 (2) criteria 可量化无歧义 (3) happy + error + 边界场景全覆盖
   GAN 对抗**多轮**直到双方达成共识。无硬轮数上限，但 Reviewer 真找不出实质 spec/产品漏洞时必须 APPROVED。
-version: 8.1.0
+version: 8.2.0
 created: 2026-04-08
 updated: 2026-05-30
 changelog:
+  - 8.2.0: B50 收敛模型 — 维度2 scope_match_prd 改双向惩罚（超覆盖也扣分）；维度5 风险登记相对任务不强制≥2；新增 Step 2.5 收敛追踪段（阻塞问题逐轮减少+合同行数趋势+只补PRD真漏覆盖）。根治简单任务合同膨胀发散
   - 8.1.0: 修复 ci_workflow_alignment 7 维对齐 — 非 windows_cloud/linux_server 环境不再跳过第 7 维，改为默认填 10（N/A）；阈值统一为全 7 维 ≥ 7 → APPROVED；防止 Brain computeVerdictFromRubric 因缺字段返回 null 降级到 LLM 文字判断
   - 8.0.0: 新增第 7 维 ci_workflow_alignment，要求 Reviewer 读取 workflow 文件内容验证业务对齐性；windows_cloud/linux_server 目标环境要求 7 维全部 ≥ 7 → APPROVED，其他环境维持原 6 维 ≥ 7 → APPROVED
   - 7.0.0: 移除第 7/8 维（WS 专属）— 对齐单 Sprint 单 PR 模式（harness-contract-proposer v8.0+）。第 7 维 behavior_count_position 检查"每个 workstream ≥ 4 条 BEHAVIOR"，第 8 维 depends_on_serial_chain 检查"ws2+ 必须有 depends_on"，两者前提是多 WS 存在，单 Sprint 模式下无意义。Rubric 恢复 6 维，阈值不变（全部 ≥ 7 → APPROVED）
@@ -80,10 +81,10 @@ Proposer 产出的 `contract-draft.md` 格式是 **Golden Path Steps**：每步 
 | # | 维度 | 定义 | 10 分标准 | 0 分标准 |
 |---|---|---|---|---|
 | 1 | **DoD 机检性** | 每条 DoD 能否转成 `exit code` 命令（非 echo / grep "..." ≥ 0） | 所有 DoD 都有 `node -e / curl / psql / npx vitest run` 类命令，exit 非 0 即真红 | 全是 echo / ls / 自然语言描述 |
-| 2 | **Scope 匹配 PRD** | DoD 既不超出 PRD 的 User Story，也不漏掉 | 1:1 覆盖 PRD User Story，无额外范围膨胀 | 合同讲的事 PRD 里根本没，或 PRD 关键 story 没对应 DoD |
+| 2 | **Scope 匹配 PRD（双向惩罚）** | DoD 必须与 PRD **1:1**：既不漏覆盖，**也不超覆盖**。合同含 PRD 未要求的额外 risk/behavior/场景/字段 = 范围蔓延，扣分 | 严格 1:1 覆盖 PRD（每个 Golden Path 步骤/响应字段/路径各一条验证），无任何 PRD 之外的内容 | 漏 PRD 关键 story（欠覆盖）**或** 含 PRD 没要求的东西（超覆盖/膨胀）——两者都判低分 |
 | 3 | **Test 真红** | 测试文件存在性 + 必须 FAIL 的假设成立 | 显式列 "测试文件在 `tests/...`，不动代码跑 → exit=1 with `at time.test.ts:N`" | 没列 test 文件路径，或无法判断"尚未实现时是否会 FAIL" |
 | 4 | **内部一致** | 合同本身术语 / 字段 / 命令无矛盾 | 每个字段 / 命令只定义一次，引用用稳定 ID | 合同前后定义不一致，或命令在多处粘贴可能漂移 |
-| 5 | **风险登记** | Risks 栏列了 + 每条有 mitigation | ≥ 2 条具名 risk + mitigation（含 cascade 失败时怎办） | 无 Risks 栏，或只写"无已知风险" |
+| 5 | **风险登记（相对任务）** | Risks 栏覆盖**该任务真实存在的**风险点 + 每条 mitigation。简单任务风险点少则少列，不强凑数 | 覆盖任务所有真实风险点，每条有 mitigation；简单任务 1 条真风险也算满分 | 无 Risks 栏，或漏掉明显风险点，或为凑数编造 PRD 无关的风险 |
 | 6 | **Verification Oracle 完整性**（v6.1）| PRD 的 Response Schema 段是否被合同 codify 成 jq -e 可执行 oracle | PRD 每个 response 字段都对应至少 1 条 `jq -e '.key == val'` 命令；schema 完整性用 `jq -e 'keys == [...]'` 强卡；禁用字段名清单都有反向 `! jq -e '.禁用key'` 检查 | PRD 写了 schema 但合同只有自然语言描述（"返回 {result, operation}"）没有 jq -e 命令；或 jq -e 命令漏掉某个字段（schema drift 漏网） |
 | 7 | **CI Workflow 内容对齐**（windows_cloud/linux_server 专属）| 凡合同引用 GHA workflow 作为 BEHAVIOR 断言，Reviewer 必须用 Bash 工具读取该 workflow 文件内容，确认 workflow steps 与合同 BEHAVIOR 的用户操作语义一致 | Reviewer 读了 workflow 文件，每条 BEHAVIOR 都能指向 workflow 里的一个真实业务 step | Reviewer 未读 workflow 文件直接批准，或 workflow 里全是文件大小/存在性检查但合同声称验证了业务行为。**非 windows_cloud/linux_server 环境：填 10（N/A，无 GHA workflow 可审查）** |
 
@@ -177,6 +178,32 @@ cat .github/workflows/<workflow文件名>.yml 2>/dev/null || echo "WORKFLOW_NOT_
 ```
 读取结果后逐步对比合同 BEHAVIOR 断言与 workflow steps 的语义对齐性。
 **未执行此 Bash 命令 → 第 7 维强制 0 分，不允许 APPROVED**。
+
+### Step 2.5: 收敛追踪（B50 — 防发散，每轮必做）
+
+**核心原则：合同收敛目标是"覆盖完 PRD"，不是"无限逼近完美"。**
+
+> "全" = PRD 每个 Golden Path 步骤 + 每个响应字段 + happy/error/edge 路径各有**一条**验证（有限清单，覆盖完即 100%）。
+> "复杂/膨胀" = 在 PRD 之外不断加"还能更严谨"的内容（无限）。
+> Reviewer 的职责是确认**覆盖完 PRD**，不是把简单任务的合同往大里推。
+
+**每轮 Verdict 前必须输出 `## 收敛状态` 段：**
+
+```markdown
+## 收敛状态（Round N）
+- 上轮我提的阻塞问题：[N 个]
+- 本轮已解决：[M 个]
+- 仍阻塞：[N-M 个]
+- 本轮新增阻塞问题：[K 个] —— **只能是"PRD 某项未覆盖"，禁止"可以更严谨/更完整/更健壮"**
+- 合同行数：上轮 X → 本轮 Y（趋势：增/平/减）
+```
+
+**死规则：**
+1. **阻塞问题必须逐轮减少**。若本轮新增问题 > 已解决问题，且新增的不是"PRD 真实漏覆盖"而是"锦上添花"，→ 这些新问题作废，不计入，直接按已覆盖判 APPROVED。
+2. **合同行数逐轮增长是发散信号**。简单任务（PRD ≤ 100 行）合同超过 ~150 行还在涨 → 说明在膨胀，Reviewer 应停止挑"更严谨"，按 PRD 覆盖度判分。
+3. **"可以更完整"不是阻塞问题**。只有"PRD 明确要求的某项，合同没覆盖"才是真阻塞。PRD 没要求的，合同有没有都不扣分（有了反而按维度 2 超覆盖扣分）。
+
+---
 
 ### Step 3: 产出 Verdict
 
