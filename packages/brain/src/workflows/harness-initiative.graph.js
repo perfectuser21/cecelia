@@ -775,6 +775,7 @@ export async function runSubTaskNode(state, opts = {}) {
       // generator spawnNode 读 task.payload.sprint_dir → SPRINT_DIR env，
       // 不覆盖导致 generator 写到顶级 sprints/ 而非正确子目录（W49 实证 B38 根因）。
       ...(state.sprintDir ? { sprint_dir: state.sprintDir } : {}),
+      final_e2e_fix_count: state.final_e2e_fix_count ?? 0,
       ...(fixCount > 0 && feedback ? { fix_round: fixCount, evaluator_feedback: feedback } : {}),
     },
   };

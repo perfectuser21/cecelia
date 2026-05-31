@@ -128,9 +128,12 @@ export function computeVerdictFromRubric(scores, round) {
   const threshold = thresholdForRound(round);
   const nums = RUBRIC_DIMENSIONS.map((k) => {
     const v = scores[k];
-    return typeof v === 'number' && !Number.isNaN(v) ? v : null;
+    if (typeof v === 'number' && !Number.isNaN(v)) return v;
+    // ci_workflow_alignment 是 optional 字段，缺失时默认 10（N/A=pass）
+    if (k === 'ci_workflow_alignment') return 10;
+    return null;
   });
-  if (nums.some((n) => n === null)) return null; // 维度不完整
+  if (nums.some((n) => n === null)) return null; // 其他必填维度缺失
   const allPass = nums.every((n) => n >= threshold);
   return allPass ? 'APPROVED' : 'REVISION';
 }
@@ -325,7 +328,11 @@ export function createGanContractNodes(executor, ctx) {
   // _fetchOriginFile 保留 ctx 兼容旧 caller（test 仍传 fetchOriginFile），H15 后 proposer 改走 verifyProposer。
   void _fetchOriginFile;
   // planner SKILL 推到 cp-MMDDHHM-harness-prd，从 plannerOutput 提取；fallback 'main'（本地 cat 兜底）
-  const plannerBranch = plannerOutput.match(/cp-[0-9]+-harness-prd/)?.[0] ?? 'main';
+  // B47: 优先从 planner verdict JSON 的 planner_branch 字段读（B46 SKILL 新增），regex 作 fallback
+  const plannerBranchFromJson = plannerOutput.match(/"planner_branch"\s*:\s*"([^"]+)"/)?.[1];
+  const plannerBranch = plannerBranchFromJson
+    || plannerOutput.match(/cp-[0-9]+-harness-prd/)?.[0]
+    || 'main';
 
   async function proposer(state) {
     const nextRound = (state.round || 0) + 1;
