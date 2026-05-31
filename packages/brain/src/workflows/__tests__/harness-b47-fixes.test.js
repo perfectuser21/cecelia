@@ -7,7 +7,7 @@
  * 5. evaluateContractNode injects JOURNEY_TYPE env
  */
 import { describe, it, expect } from 'vitest';
-import { computeVerdictFromRubric, detectConvergenceTrend } from '../harness-gan.graph.js';
+import { computeVerdictFromRubric } from '../harness-gan.graph.js';
 import { ReviewerOutputSchema } from '../../harness-shared.js';
 
 // ── Fix 3: computeVerdictFromRubric ci_workflow_alignment fallback ────────────
