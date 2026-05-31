@@ -1,0 +1,34 @@
+{
+  "initiative_id": "pending",
+  "journey_type": "autonomous",
+  "journey_type_reason": "纯 Brain API 端点，无 UI、无外部 agent 协议、无平台写入",
+  "target_environment": "brain",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "Brain API — 新增 GET /initiative-runs 列表查询端点",
+      "scope": "在 packages/brain/src/routes/harness.js 现有 GET /initiative-runs/:id 路由之前新增 GET /initiative-runs 路由（无路径参数），查询 initiative_runs 表，SELECT id/initiative_id/phase/journey_type/journey_id/created_at/completed_at/deadline_at/failure_reason/cost_usd::float，支持 phase/journey_id/limit 查询参数（limit 默认 50 最大 100，journey_id 须通过 UUID_RE 校验，phase 为空字符串时忽略），ORDER BY created_at DESC，返回 {runs[], total} 结构",
+      "dod": [
+        "[BEHAVIOR] GET /initiative-runs 无参数返回 HTTP 200，顶层 keys 精确等于 ['runs','total']",
+        "[BEHAVIOR] total 等于 runs 数组实际长度",
+        "[BEHAVIOR] runs 每条含 id/initiative_id/phase/journey_type/journey_id/created_at/completed_at/deadline_at/failure_reason/cost_usd 共 10 字段",
+        "[BEHAVIOR] runs 每条不含 contract_id/current_task_id/merged_task_ids",
+        "[BEHAVIOR] cost_usd 序列化为 number 或 null（使用 cost_usd::float）",
+        "[BEHAVIOR] limit 非整数/<1/>100 → HTTP 400，error 含 'invalid limit: must be integer 1-100'",
+        "[BEHAVIOR] limit=100 成功返回 200",
+        "[BEHAVIOR] journey_id 非 UUID → HTTP 400，error == 'invalid journey_id: must be a UUID'",
+        "[BEHAVIOR] phase 为空字符串 → 忽略过滤，正常返回 200",
+        "[BEHAVIOR] 空结果 → HTTP 200，{\"runs\":[],\"total\":0}",
+        "[ARTIFACT] SQL 含 ORDER BY created_at DESC",
+        "[ARTIFACT] SQL SELECT 不含 contract_id/current_task_id/merged_task_ids"
+      ],
+      "files": [
+        "packages/brain/src/routes/harness.js"
+      ],
+      "depends_on": [],
+      "complexity": "S",
+      "estimated_minutes": 30,
+      "test_command": "npx vitest run sprints/cecelia-harness-runs-api/tests/ws1/harness-runs-list.test.js"
+    }
+  ]
+}
