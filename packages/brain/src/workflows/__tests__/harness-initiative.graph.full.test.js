@@ -232,77 +232,75 @@ describe.skip('runPlannerNode — prep_prd_body 注入 [WS2 async: 需迁移到 
 });
 
 describe('reportNode', () => {
-  beforeEach(() => { mockPool.query.mockReset(); });
+  beforeEach(() => {
+    mockPool.query.mockReset();
+    mockClient.query.mockReset();
+    mockClient.release.mockReset();
+    mockPool.connect.mockResolvedValue(mockClient);
+  });
 
-  it('PASS → UPDATE initiative_runs phase=done', async () => {
-    mockPool.query.mockResolvedValueOnce({ rows: [] }); // emitLangGraphStep INSERT cecelia_events
-    mockPool.query.mockResolvedValueOnce({ rows: [] }); // step_timing SELECT task_events
-    mockPool.query.mockResolvedValueOnce({ rows: [] }); // UPDATE initiative_runs
+  it('PASS -> UPDATE initiative_runs phase=done', async () => {
+    mockPool.query.mockResolvedValue({ rows: [] }); // emitLangGraphStep + step_timing
+    mockClient.query.mockResolvedValue({ rows: [] }); // UPDATE initiative_runs + UPDATE tasks (via connect)
     const delta = await reportNode({
       initiativeId: 'i', sub_tasks: [{ id: 's1', cost_usd: 0.5 }], final_e2e_verdict: 'PASS',
     });
     expect(delta.report_path).toBeTruthy();
-    expect(mockPool.query).toHaveBeenCalled();
-    const sqlArgs = mockPool.query.mock.calls[2]; // calls[2] = UPDATE initiative_runs (calls[0]=emit, calls[1]=step_timing)
-    expect(sqlArgs[0]).toContain('UPDATE initiative_runs');
-    // sqlArgs[1] 是参数数组 [initiativeId, phase, reason]
-    expect(sqlArgs[1]).toContain('done');
+    // B45: initiative_runs UPDATE now goes through pool.connect() -> client.query
+    const runsCall = mockClient.query.mock.calls.find(c => c[0].includes('UPDATE initiative_runs'));
+    expect(runsCall).toBeDefined();
+    expect(runsCall[0]).toContain('UPDATE initiative_runs');
+    expect(runsCall[1]).toContain('done');
   });
-  it('FAIL → UPDATE phase=failed + failure_reason', async () => {
-    mockPool.query.mockResolvedValueOnce({ rows: [] }); // emitLangGraphStep INSERT cecelia_events
-    mockPool.query.mockResolvedValueOnce({ rows: [] }); // step_timing SELECT task_events
-    mockPool.query.mockResolvedValueOnce({ rows: [] }); // UPDATE initiative_runs
-    mockPool.query.mockResolvedValueOnce({ rows: [] }); // UPDATE tasks
+
+  it('FAIL -> UPDATE phase=failed + failure_reason', async () => {
+    mockPool.query.mockResolvedValue({ rows: [] }); // emitLangGraphStep + step_timing
+    mockClient.query.mockResolvedValue({ rows: [] }); // UPDATE initiative_runs + UPDATE tasks (via connect)
     const delta = await reportNode({
       initiativeId: 'i', sub_tasks: [], final_e2e_verdict: 'FAIL',
       final_e2e_failed_scenarios: [{ name: 'sc1' }],
     });
     expect(delta.report_path).toBeTruthy();
-    const sqlArgs = mockPool.query.mock.calls[2]; // calls[2] = UPDATE initiative_runs (calls[0]=emit, calls[1]=step_timing)
-    // sqlArgs[1] 是参数数组 [initiativeId, phase, reason]
-    const params = sqlArgs[1];
+    // B45: initiative_runs UPDATE now goes through pool.connect() -> client.query
+    const runsCall = mockClient.query.mock.calls.find(c => c[0].includes('UPDATE initiative_runs'));
+    expect(runsCall).toBeDefined();
+    const params = runsCall[1];
     expect(params).toContain('failed');
     expect(params.find(p => typeof p === 'string' && p.includes('sc1'))).toBeTruthy();
   });
 
-  // ── B1 hole: tasks.status 回写（Walking Skeleton P1）─────────────────────
+  // -- B1 hole: tasks.status 回写（Walking Skeleton P1）-----------------------------------------
   // 修补 reportNode 只更 initiative_runs，不回写 tasks.status；graph 走完到 END
   // 但 task 永卡 in_progress。W28 实证：13 个 checkpoint 全跑过 prep→...→report，
   // task.status 仍 in_progress。
-  it('PASS → 同时 UPDATE tasks SET status=completed (B1)', async () => {
-    mockPool.query.mockResolvedValueOnce({ rows: [] }); // emitLangGraphStep INSERT cecelia_events
-    mockPool.query.mockResolvedValueOnce({ rows: [] }); // step_timing SELECT task_events
-    mockPool.query.mockResolvedValueOnce({ rows: [] }); // UPDATE initiative_runs
-    mockPool.query.mockResolvedValueOnce({ rows: [] }); // UPDATE tasks
-    mockPool.query.mockResolvedValueOnce({ rows: [] }); // INSERT harness_report
+  it('PASS -> 同时 UPDATE tasks SET status=completed (B1)', async () => {
+    mockPool.query.mockResolvedValue({ rows: [] }); // emitLangGraphStep + step_timing + INSERT harness_report
+    mockClient.query.mockResolvedValue({ rows: [] }); // UPDATE initiative_runs + UPDATE tasks (via connect)
     await reportNode({
       initiativeId: 'i', sub_tasks: [{ id: 's1' }], final_e2e_verdict: 'PASS',
     });
-    expect(mockPool.query).toHaveBeenCalledTimes(5);
-    const taskUpdate = mockPool.query.mock.calls[3]; // calls[3] = UPDATE tasks (calls[0]=emit, calls[1]=step_timing, calls[2]=initiative_runs)
+    // B45: initiative_runs + tasks UPDATE via pool.connect() -> client.query
+    const taskUpdate = mockClient.query.mock.calls.find(c => c[0].match(/UPDATE tasks/i));
+    expect(taskUpdate).toBeDefined();
     expect(taskUpdate[0]).toMatch(/UPDATE tasks/i);
     expect(taskUpdate[0]).toMatch(/status\s*=\s*\$/);
-    const params = taskUpdate[1];
-    expect(params).toContain('i');
-    expect(params).toContain('completed');
+    expect(taskUpdate[1]).toContain('i');
+    expect(taskUpdate[1]).toContain('completed');
   });
 
-  it('FAIL → 同时 UPDATE tasks SET status=failed (B1)', async () => {
-    mockPool.query.mockResolvedValueOnce({ rows: [] }); // emitLangGraphStep INSERT cecelia_events
-    mockPool.query.mockResolvedValueOnce({ rows: [] }); // step_timing SELECT task_events
-    mockPool.query.mockResolvedValueOnce({ rows: [] }); // UPDATE initiative_runs
-    mockPool.query.mockResolvedValueOnce({ rows: [] }); // UPDATE tasks
-    mockPool.query.mockResolvedValueOnce({ rows: [] }); // INSERT harness_report
+  it('FAIL -> 同时 UPDATE tasks SET status=failed (B1)', async () => {
+    mockPool.query.mockResolvedValue({ rows: [] }); // emitLangGraphStep + step_timing + INSERT harness_report
+    mockClient.query.mockResolvedValue({ rows: [] }); // UPDATE initiative_runs + UPDATE tasks (via connect)
     await reportNode({
       initiativeId: 'i', sub_tasks: [], final_e2e_verdict: 'FAIL',
       final_e2e_failed_scenarios: [{ name: 'sc1' }],
     });
-    expect(mockPool.query).toHaveBeenCalledTimes(5);
-    const taskUpdate = mockPool.query.mock.calls[3]; // calls[3] = UPDATE tasks (calls[0]=emit, calls[1]=step_timing, calls[2]=initiative_runs)
+    // B45: initiative_runs + tasks UPDATE via pool.connect() -> client.query
+    const taskUpdate = mockClient.query.mock.calls.find(c => c[0].match(/UPDATE tasks/i));
+    expect(taskUpdate).toBeDefined();
     expect(taskUpdate[0]).toMatch(/UPDATE tasks/i);
-    const params = taskUpdate[1];
-    expect(params).toContain('i');
-    expect(params).toContain('failed');
+    expect(taskUpdate[1]).toContain('i');
+    expect(taskUpdate[1]).toContain('failed');
   });
 
   it('已 idempotent (state.report_path 已存) → 不再调 query (B1)', async () => {
@@ -310,11 +308,13 @@ describe('reportNode', () => {
       initiativeId: 'i', sub_tasks: [], final_e2e_verdict: 'PASS', report_path: 'already-set',
     });
     expect(mockPool.query).not.toHaveBeenCalled();
+    expect(mockClient.query).not.toHaveBeenCalled();
     expect(delta.report_path).toBe('already-set');
   });
 
-  it('PASS → 第 5 次 query 是 INSERT INTO tasks (harness_report spawn)', async () => {
-    mockPool.query.mockResolvedValue({ rows: [] });
+  it('PASS -> 最后一次 mockPool.query 是 INSERT INTO tasks (harness_report spawn)', async () => {
+    mockPool.query.mockResolvedValue({ rows: [] }); // emitLangGraphStep + step_timing + INSERT harness_report
+    mockClient.query.mockResolvedValue({ rows: [] }); // UPDATE initiative_runs + UPDATE tasks (via connect)
     await reportNode({
       initiativeId: 'i-spawn',
       sub_tasks: [{ id: 's1', cost_usd: 0.1 }],
@@ -325,9 +325,10 @@ describe('reportNode', () => {
         payload: { journey_id: 'j1', feature_id: 'f1' },
       },
     });
-    // calls[0]=emit cecelia_events, calls[1]=step_timing SELECT, calls[2]=UPDATE initiative_runs, calls[3]=UPDATE tasks, calls[4]=INSERT harness_report
-    expect(mockPool.query).toHaveBeenCalledTimes(5);
-    const insertCall = mockPool.query.mock.calls[4];
+    // B45: calls[0]=emit cecelia_events, calls[1]=step_timing SELECT, calls[2]=INSERT harness_report
+    // UPDATE initiative_runs + tasks now via client.query (not mockPool.query)
+    expect(mockPool.query).toHaveBeenCalledTimes(3);
+    const insertCall = mockPool.query.mock.calls[2];
     expect(insertCall[0]).toMatch(/INSERT INTO tasks/i);
     expect(insertCall[0]).toContain('harness_report');
   });

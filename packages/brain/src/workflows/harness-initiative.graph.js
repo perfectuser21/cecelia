@@ -873,10 +873,17 @@ export async function reportNode(state, opts = {}) {
     cost_usd: s.cost_usd || 0,
   }));
 
+  // B45 Fix1: final_e2e_verdict 没有节点主动写时，从 sub_tasks 状态推导
+  // 单一 evaluator pre-merge gate 设计：每个 ws evaluate_contract PASS 才能 merge
+  // 所以全部 merged = 等价于 Final E2E PASS
+  const computedVerdict = state.final_e2e_verdict ||
+    ((state.sub_tasks?.length > 0 && state.sub_tasks.every(s => s.status === 'merged'))
+      ? 'PASS' : 'FAIL');
+
   const reportContent = JSON.stringify({
     initiativeId: state.initiativeId,
     sub_tasks: state.sub_tasks || [],
-    final_e2e_verdict: state.final_e2e_verdict,
+    final_e2e_verdict: computedVerdict,
     failed_scenarios: state.final_e2e_failed_scenarios || [],
     step_timing,
     ws_issues,
@@ -886,31 +893,36 @@ export async function reportNode(state, opts = {}) {
   }, null, 2);
   // 写 initiative_runs phase=done/failed
   try {
-    const phase = state.final_e2e_verdict === 'PASS' ? 'done' : 'failed';
-    if (state.final_e2e_verdict === 'FAIL') {
-      // Bug 3 防御性日志 — 配合 executor.js computeHarnessInitiativeOk
-      // 让 task_events 留痕，方便日后排查"task=completed 但 final_evaluate=FAIL" 的回归
-      console.error(`[reportNode] final_e2e_verdict=FAIL initiative=${state.initiativeId} → 标 phase='failed'，executor 会标 task.status='failed'`);
+    const phase = computedVerdict === 'PASS' ? 'done' : 'failed';
+    if (computedVerdict === 'FAIL') {
+      // B45: 使用 computedVerdict（可从 sub_tasks 推导）
+      console.error(`[reportNode] computedVerdict=FAIL initiative=${state.initiativeId} → 标 phase='failed'，executor 会标 task.status='failed'`);
     }
-    const reason = `Final E2E ${state.final_e2e_verdict}: ${(state.final_e2e_failed_scenarios || []).map(s => s.name).join('; ').slice(0, 500)}`;
-    await dbPool.query(
-      `UPDATE initiative_runs SET phase=$2, completed_at=NOW(), updated_at=NOW(),
-        failure_reason=CASE WHEN $2='failed' THEN $3 ELSE failure_reason END
-       WHERE initiative_id=$1::uuid`,
-      [state.initiativeId, phase, reason]
-    );
-    // B1: 同时回写 tasks.status — 否则 task 永卡 in_progress（graph 不经 executor.js
-    // 这条 happy path，注释 line 1107 "executor 会标 task.status='failed'" 仅 FAIL 路径
-    // 的 ws-level fallback，PASS 路径无人回写）。W28 实证：13 个 checkpoint 全跑过
-    // prep→...→report 但 tasks.status 仍 in_progress。Walking Skeleton P1 修补点。
-    const taskStatus = state.final_e2e_verdict === 'PASS' ? 'completed' : 'failed';
-    await dbPool.query(
-      `UPDATE tasks SET status=$2::text, completed_at=NOW(), updated_at=NOW(),
-        result = COALESCE(result, '{}'::jsonb) || jsonb_build_object('report_content', $4::jsonb),
-        error_message=CASE WHEN $2::text='failed' THEN $3::text ELSE error_message END
-       WHERE id=$1::uuid`,
-      [state.initiativeId, taskStatus, reason, reportContent]
-    );
+    const reason = `Final E2E ${computedVerdict}: ${(state.final_e2e_failed_scenarios || []).map(s => s.name).join('; ').slice(0, 500)}`;
+    // B45: 使用 pool.connect() → client.query 确保测试 mock 可验证、支持连接复用
+    const client = await dbPool.connect();
+    try {
+      await client.query(
+        `UPDATE initiative_runs SET phase=$2, completed_at=NOW(), updated_at=NOW(),
+          failure_reason=CASE WHEN $2='failed' THEN $3 ELSE failure_reason END
+         WHERE initiative_id=$1::uuid`,
+        [state.initiativeId, phase, reason]
+      );
+      // B1: 同时回写 tasks.status — 否则 task 永卡 in_progress（graph 不经 executor.js
+      // 这条 happy path，注释 line 1107 "executor 会标 task.status='failed'" 仅 FAIL 路径
+      // 的 ws-level fallback，PASS 路径无人回写）。W28 实证：13 个 checkpoint 全跑过
+      // prep→...→report 但 tasks.status 仓 in_progress。Walking Skeleton P1 修补点。
+      const taskStatus = computedVerdict === 'PASS' ? 'completed' : 'failed';
+      await client.query(
+        `UPDATE tasks SET status=$2::text, completed_at=NOW(), updated_at=NOW(),
+          result = COALESCE(result, '{}'::jsonb) || jsonb_build_object('report_content', $4::jsonb),
+          error_message=CASE WHEN $2::text='failed' THEN $3::text ELSE error_message END
+         WHERE id=$1::uuid`,
+        [state.initiativeId, taskStatus, reason, reportContent]
+      );
+    } finally {
+      client.release();
+    }
     // B2 fix: initiative 终态 → 主动 kill 关联容器（zombie 防治）
     killInitiativeContainers(state.initiativeId).catch(err2 =>
       console.warn(`[reportNode] container cleanup failed: ${err2.message}`)
