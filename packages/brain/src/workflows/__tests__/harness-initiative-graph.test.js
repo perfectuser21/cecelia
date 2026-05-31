@@ -60,6 +60,8 @@ import {
   dbUpsertNode,
   reportNode,
   InitiativeState,
+  advanceTaskIndexNode,
+  stateHasError,
 } from '../harness-initiative.graph.js';
 
 describe('harness-initiative graph — structure', () => {
@@ -367,5 +369,25 @@ describe('reportNode — B45 Fix1: verdict 从 sub_tasks 推导', () => {
     const runsCall = calls.find(c => typeof c[0] === 'string' && c[0].includes('initiative_runs'));
     expect(runsCall, 'initiative_runs should be updated').toBeDefined();
     expect(runsCall[1][1]).toBe('failed');
+  });
+});
+
+describe('advanceTaskIndexNode — B45 Fix2: serial gate error → stateHasError', () => {
+  it('B45 Fix2: advanceTaskIndexNode error 时 stateHasError 返回 error（条件边前置验证）', async () => {
+    // 构造 advance 会报 serial gate error 的场景：sub_tasks 有 ws1 但 status 不是 merged
+    const state = {
+      task: { id: 'init-id', title: 't', payload: {} },
+      initiativeId: 'init-id',
+      taskPlan: { tasks: [{ id: 'ws1', task_id: 'ws1' }] },
+      sub_tasks: [{ id: 'ws1', status: 'failed' }],
+      task_loop_index: 0,
+      task_loop_fix_count: 0,
+    };
+    const result = await advanceTaskIndexNode(state);
+    // advance 应该返回 error（serial gate：ws1 status !== merged）
+    expect(result.error).toBeDefined();
+    expect(result.error.node).toBe('advance');
+    // stateHasError 应该识别 error → 触发条件边走 report
+    expect(stateHasError(result)).toBe('error');
   });
 });
