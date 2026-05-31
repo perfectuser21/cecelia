@@ -100,14 +100,15 @@ describe('inferTaskPlanNode', () => {
     expect(exec).not.toHaveBeenCalled();
   });
 
-  it('空 tasks + 无 propose_branch → passthrough 返回 {}', async () => {
+  it('空 tasks + 无 propose_branch → 返回 error（propose_branch 丢失）', async () => {
     const delta = await inferTaskPlanNode({
       task: { id: 'init-1' },
       initiativeId: 'i',
       ganResult: { contract_content: 'C' },  // 无 propose_branch
       taskPlan: { tasks: [] },
     });
-    expect(delta).toEqual({});
+    expect(delta.error).toBeDefined();
+    expect(delta.error.node).toBe('infer_task_plan');
   });
 
   it('空 tasks + propose_branch git show 失败 → 返回 { error } 让图走 error → END (#2819)', async () => {
@@ -123,11 +124,12 @@ describe('inferTaskPlanNode', () => {
     expect(delta.error).toMatch(/git show.*failed/);
   });
 
-  it('无 ganResult → passthrough 返回 {}', async () => {
+  it('无 ganResult → 返回 error（propose_branch 丢失）', async () => {
     const delta = await inferTaskPlanNode(
       { task: { id: 't' }, initiativeId: 'i', taskPlan: { tasks: [] } }
     );
-    expect(delta).toEqual({});
+    expect(delta.error).toBeDefined();
+    expect(delta.error.node).toBe('infer_task_plan');
   });
 });
 

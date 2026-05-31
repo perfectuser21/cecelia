@@ -194,7 +194,7 @@ describe('inferTaskPlanNode — reads from propose branch via git show', () => {
     expect(result).toHaveProperty('error');
   });
 
-  it('returns {} when no propose_branch in ganResult', async () => {
+  it('returns error when no propose_branch in ganResult', async () => {
     const state = {
       taskPlan: null,
       ganResult: {},
@@ -204,10 +204,11 @@ describe('inferTaskPlanNode — reads from propose branch via git show', () => {
     };
 
     const result = await inferTaskPlanNode(state);
-    expect(result).toEqual({});
+    expect(result.error).toBeDefined();
+    expect(result.error.node).toBe('infer_task_plan');
   });
 
-  it('returns {} when ganResult is null', async () => {
+  it('returns error when ganResult is null', async () => {
     const state = {
       taskPlan: null,
       ganResult: null,

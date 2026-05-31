@@ -92,7 +92,7 @@ describe('parseTaskPlan', () => {
       .toThrow(/estimated_minutes/);
 
     const t2 = makeValidTask('ws1');
-    t2.estimated_minutes = 120;
+    t2.estimated_minutes = 121;  // 新范围 30-120，121 超出
     expect(() => parseTaskPlan(JSON.stringify(makeValidPlan([t2]))))
       .toThrow(/estimated_minutes/);
   });
