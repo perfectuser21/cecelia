@@ -35,6 +35,14 @@ journey_type: autonomous
   Test: manual:bash -c 'RESP=$(curl -sf localhost:5221/api/brain/harness/initiative-runs 2>/dev/null) || { echo "FAIL: 端点未返回 200"; exit 1; }; echo "$RESP" | jq -e '"'"'.total == (.runs | length)'"'"' || { echo "FAIL: total != runs 长度"; exit 1; }; echo OK'
   期望: OK
 
+- [ ] [BEHAVIOR] runs 每条含全部 10 个必须字段（字段完整性正向检查）
+  Test: manual:bash -c 'RESP=$(curl -sf "localhost:5221/api/brain/harness/initiative-runs?limit=1" 2>/dev/null) || { echo "FAIL: 端点未返回 200"; exit 1; }; CNT=$(echo "$RESP" | jq '"'"'.runs | length'"'"'); if [ "$CNT" -gt 0 ]; then for FIELD in id initiative_id phase journey_type journey_id created_at completed_at deadline_at failure_reason cost_usd; do echo "$RESP" | jq -e --arg f "$FIELD" '"'"'.runs[0] | has($f)'"'"' || { echo "FAIL: 缺少字段 $FIELD"; exit 1; }; done; fi; echo OK'
+  期望: OK
+
+- [ ] [BEHAVIOR] cost_usd 序列化为 number 或 null（非字符串，NUMERIC → float 类型安全）
+  Test: manual:bash -c 'RESP=$(curl -sf "localhost:5221/api/brain/harness/initiative-runs?limit=1" 2>/dev/null) || { echo "FAIL: 端点未返回 200"; exit 1; }; CNT=$(echo "$RESP" | jq '"'"'.runs | length'"'"'); if [ "$CNT" -gt 0 ]; then TYPE=$(echo "$RESP" | jq '"'"'.runs[0].cost_usd | type'"'"'); [ "$TYPE" = '"'"'"number"'"'"' ] || [ "$TYPE" = '"'"'"null"'"'"' ] || { echo "FAIL: cost_usd type=$TYPE 期望 number 或 null"; exit 1; }; fi; echo OK'
+  期望: OK
+
 - [ ] [BEHAVIOR] runs 每条不含禁用字段 contract_id/current_task_id/merged_task_ids（禁用字段反向检查）
   Test: manual:bash -c 'RESP=$(curl -sf "localhost:5221/api/brain/harness/initiative-runs?limit=1" 2>/dev/null) || { echo "FAIL: 端点未返回 200"; exit 1; }; CNT=$(echo "$RESP" | jq '"'"'.runs | length'"'"'); if [ "$CNT" -gt 0 ]; then echo "$RESP" | jq -e '"'"'.runs[0] | has("contract_id") | not'"'"' || { echo "FAIL: 禁用字段 contract_id 存在"; exit 1; }; echo "$RESP" | jq -e '"'"'.runs[0] | has("current_task_id") | not'"'"' || { echo "FAIL: 禁用字段 current_task_id 存在"; exit 1; }; echo "$RESP" | jq -e '"'"'.runs[0] | has("merged_task_ids") | not'"'"' || { echo "FAIL: 禁用字段 merged_task_ids 存在"; exit 1; }; fi; echo OK'
   期望: OK
@@ -111,7 +119,19 @@ RESP=$(curl -sf "$BASE?phase=nonexistent_phase_xyz") || { echo "FAIL E2E 5: 端�
 echo "$RESP" | jq -e '.runs == [] and .total == 0' || { echo "FAIL E2E 5: 空结果不符"; exit 1; }
 echo "✅ E2E 5 通过"
 
+echo "=== E2E 6: runs 字段 schema + cost_usd 类型验证 ==="
+RESP=$(curl -sf "$BASE?limit=1") || { echo "FAIL E2E 6: 端点未返回 200"; exit 1; }
+CNT=$(echo "$RESP" | jq '.runs | length')
+if [ "$CNT" -gt 0 ]; then
+  for FIELD in id initiative_id phase journey_type journey_id created_at completed_at deadline_at failure_reason cost_usd; do
+    echo "$RESP" | jq -e --arg f "$FIELD" '.runs[0] | has($f)' || { echo "FAIL E2E 6: 缺少字段 $FIELD"; exit 1; }
+  done
+  TYPE=$(echo "$RESP" | jq '.runs[0].cost_usd | type')
+  [ "$TYPE" = '"number"' ] || [ "$TYPE" = '"null"' ] || { echo "FAIL E2E 6: cost_usd type=$TYPE 非 number/null"; exit 1; }
+fi
+echo "✅ E2E 6 通过"
+
 echo "✅ 所有 E2E 验收通过"
 ```
 
-**通过标准**: 脚本 exit 0；所有 5 条 E2E 断言均输出 "通过"
+**通过标准**: 脚本 exit 0；所有 6 条 E2E 断言均输出 "通过"

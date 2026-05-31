@@ -1,8 +1,10 @@
-# Sprint Contract Draft (Round 3)
+# Sprint Contract Draft (Round 4)
 
-> **Round 3 变更**: 基于 Round 2 评审补充 Evaluator oracle 文件：
-> - [CRITICAL] 新增 `contract-dod.md`（SKILL v8.0+ 必须文件）：含 4 条 ARTIFACT + 10 条 BEHAVIOR，内嵌 `manual:bash` 命令供 Evaluator 直接执行
-> - [CARRY] Round 2 全部内容保持不变（13 个单元测试、cost_usd::float8 注记、路由顺序约定）
+> **Round 4 变更**: 补全 contract-dod.md BEHAVIOR 覆盖盲区：
+> - [BEHAVIOR+] 新增「runs 每条含全部 10 个必须字段」正向字段完整性检查（manual:bash 内嵌命令）
+> - [BEHAVIOR+] 新增「cost_usd 序列化为 number 或 null」运行时类型检查（补充 ARTIFACT cost_usd::float 的静态代码检查）
+> - [E2E+] final-e2e 新增 E2E 6：字段 schema + cost_usd 类型联合验收（共 6 条 E2E）
+> - [CARRY] Round 3 全部内容保持不变（4 ARTIFACT + 10 BEHAVIOR → 现在 12 BEHAVIOR，13 个红色单元测试）
 
 ## Golden Path
 
