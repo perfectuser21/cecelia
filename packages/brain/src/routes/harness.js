@@ -69,6 +69,33 @@ router.get('/initiative-runs/:id', async (req, res) => {
 });
 
 /**
+ * GET /runs
+ * 返回最近 harness pipeline 运行列表
+ * ?limit=N 默认 20，范围 1-100，按 started_at DESC
+ */
+router.get('/runs', async (req, res) => {
+  const rawLimit = req.query.limit ?? '20';
+  const limit = parseInt(rawLimit, 10);
+  if (!Number.isInteger(limit) || limit < 1 || limit > 100) {
+    return res.status(400).json({ error: 'limit must be an integer between 1 and 100' });
+  }
+  try {
+    const { rows } = await pool.query(
+      `SELECT id, initiative_id, phase, journey_type,
+              started_at, completed_at, failure_reason
+       FROM initiative_runs
+       ORDER BY started_at DESC
+       LIMIT $1`,
+      [limit]
+    );
+    res.json(rows);
+  } catch (err) {
+    console.error('[GET /harness/runs]', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
  * GET /initiative/:id/detail
  * 返回 initiative 详情：6 字段（initiative_id/prd_content/contract_content/gan_rounds/step_timing/screenshot_urls）
  * 来源：tasks + initiative_contracts + task_events + checkpoint_blobs
