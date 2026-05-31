@@ -48,7 +48,7 @@ function buildHarnessGoalSettings(goalCondition) {
 }
 
 const HARNESS_PHASE_GOALS = {
-  planner:  'The task-plan.json file has been written to the sprint directory and all workstreams are defined',
+  planner:  'The sprint-prd.md has been written to the sprint directory with Golden Path, and a verdict JSON with sprint_dir has been output',
   evaluate: 'The evaluation is complete and .brain-result.json has been written with verdict=PASS or FAIL',
   generator: 'The workstream implementation PR has been created and pushed to GitHub',
 };
@@ -96,6 +96,7 @@ export const InitiativeState = Annotation.Root({
   error:          Annotation({ reducer: (_o, n) => n, default: () => null }),
   planner_session:   Annotation({ reducer: (_o, n) => n, default: () => null }),
   evaluator_session: Annotation({ reducer: (_o, n) => n, default: () => null }),
+  planner_container_id: Annotation({ reducer: (_o, n) => n, default: () => null }),
 });
 
 // 节点 stub — Task 2-6 逐个填充。
@@ -492,6 +493,7 @@ export const FullInitiativeState = Annotation.Root({
   evaluate_verdict:   Annotation({ reducer: (_o, n) => n, default: () => null }),
   evaluate_feedback:  Annotation({ reducer: (_o, n) => n, default: () => null }),
   final_e2e_fix_count: Annotation({ reducer: (_o, n) => n, default: () => 0 }),
+  planner_container_id: Annotation({ reducer: (_o, n) => n, default: () => null }),
 });
 
 /**
@@ -520,7 +522,7 @@ export async function inferTaskPlanNode(state, _opts = {}) {
 
   if (!proposeBranch) {
     console.warn('[infer_task_plan] no propose_branch in ganResult, cannot read task-plan.json');
-    return {};
+    return { error: { node: 'infer_task_plan', message: 'propose_branch missing from ganResult — GAN did not produce a proposal' } };
   }
 
   // B32: verify propose_branch 真在 origin。LLM 工艺不稳定（W42 proposer container
@@ -940,7 +942,7 @@ export async function reportNode(state, opts = {}) {
         `Auto-spawned by reportNode for initiative ${state.initiativeId}`,
         JSON.stringify({
           initiative_id: state.initiativeId,
-          final_e2e_verdict: state.final_e2e_verdict,
+          final_e2e_verdict: computedVerdict,
           sprint_dir: state.sprintDir,
           journey_id: state.task?.payload?.journey_id,
           feature_id: state.task?.payload?.feature_id,
