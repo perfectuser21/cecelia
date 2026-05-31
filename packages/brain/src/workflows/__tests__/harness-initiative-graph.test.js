@@ -58,6 +58,7 @@ import {
   parsePrdNode,
   runGanLoopNode,
   dbUpsertNode,
+  reportNode,
   InitiativeState,
 } from '../harness-initiative.graph.js';
 
@@ -315,5 +316,56 @@ describe('dbUpsertNode', () => {
     expect(delta.error.node).toBe('dbUpsert');
     expect(delta.error.message).toContain('insert failed');
     expect(client.release).toHaveBeenCalled();
+  });
+});
+
+describe('reportNode — B45 Fix1: verdict 从 sub_tasks 推导', () => {
+  it('B45 Fix1: reportNode 从 sub_tasks 推导 PASS（all merged，final_e2e_verdict=null）', async () => {
+    const dbQueryMock = vi.fn().mockResolvedValue({ rows: [] });
+    const mockPool = {
+      connect: vi.fn().mockResolvedValue({ query: dbQueryMock, release: vi.fn() }),
+      query: vi.fn().mockResolvedValue({ rows: [] }),
+    };
+    const state = {
+      initiativeId: 'test-init-b45',
+      task: { id: 'test-task-b45', title: 'test', payload: {} },
+      sub_tasks: [{ id: 'ws1', status: 'merged', pr_url: 'https://github.com/x/y/pull/1', cost_usd: 0 }],
+      final_e2e_verdict: null,
+      final_e2e_failed_scenarios: [],
+      sprintDir: 'sprints/test-b45',
+      taskPlan: null,
+      prdContent: null,
+    };
+    await reportNode(state, { pool: mockPool });
+    const calls = dbQueryMock.mock.calls;
+    const runsCall = calls.find(c => typeof c[0] === 'string' && c[0].includes('initiative_runs'));
+    expect(runsCall, 'initiative_runs should be updated').toBeDefined();
+    expect(runsCall[1][1]).toBe('done');
+    const tasksCall = calls.find(c => typeof c[0] === 'string' && c[0].includes('UPDATE tasks'));
+    expect(tasksCall, 'tasks should be updated').toBeDefined();
+    expect(tasksCall[1][1]).toBe('completed');
+  });
+
+  it('B45 Fix1: reportNode 从 sub_tasks 推导 FAIL（有未 merged，final_e2e_verdict=null）', async () => {
+    const dbQueryMock = vi.fn().mockResolvedValue({ rows: [] });
+    const mockPool = {
+      connect: vi.fn().mockResolvedValue({ query: dbQueryMock, release: vi.fn() }),
+      query: vi.fn().mockResolvedValue({ rows: [] }),
+    };
+    const state = {
+      initiativeId: 'test-init-b45-fail',
+      task: { id: 'test-task-b45-fail', title: 'test', payload: {} },
+      sub_tasks: [{ id: 'ws1', status: 'failed', pr_url: null, cost_usd: 0 }],
+      final_e2e_verdict: null,
+      final_e2e_failed_scenarios: [],
+      sprintDir: 'sprints/test-b45-fail',
+      taskPlan: null,
+      prdContent: null,
+    };
+    await reportNode(state, { pool: mockPool });
+    const calls = dbQueryMock.mock.calls;
+    const runsCall = calls.find(c => typeof c[0] === 'string' && c[0].includes('initiative_runs'));
+    expect(runsCall, 'initiative_runs should be updated').toBeDefined();
+    expect(runsCall[1][1]).toBe('failed');
   });
 });
