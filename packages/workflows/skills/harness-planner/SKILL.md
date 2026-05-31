@@ -6,10 +6,11 @@ description: |
   人类启动 harness/sprint 的唯一正确入口是 /walking-skeleton（动作5 harness-bridge），
   它会 POST Brain harness_initiative 任务，Brain 再自动调本 skill。
   直接调本 skill = 绕过 Brain 调度层，违反 zero-human-gate 原则。
-version: 8.6.0
+version: 8.7.0
 created: 2026-04-08
-updated: 2026-05-18
+updated: 2026-05-30
 changelog:
+  - 8.7.0: thin-slice 行数上限从 ≤50 调整为 ≤100 — 实测含 smoke script 的真实 PRD 常见 80-110 行，50 行限制在 eval 中持续误报；保留"禁止 254 行 medium/thick PRD"的精神，只放宽数字
   - 8.6.0: 删除 windows_local — 所有 Windows 测试统一走 windows_cloud（GitHub Actions windows-latest）；Cecelia 是内网产品走 mac_web/local_api，无需 windows_local；target_environment 从 6 种缩减为 5 种
   - 8.5.0: 加 target_environment 字段 — Step 0.5 新增推断规则，PRD 模板末尾新增 target_environment 行；evaluator 模式B 按此字段派发到正确机器执行 E2E
   - 8.4.0: Step 0 位置词死规则（B33 — W43 实证）— planner 把 playground 漂移到 brain route，强制 thin_prd 位置词原样映射到实现模块
@@ -44,13 +45,13 @@ changelog:
 
 为防 planner 把 thin slice 写成 medium thick spec（W36 实证 254 行 PRD）：
 
-- **thin slice PRD ≤ 50 行**（不含 OKR 对齐段和"为什么选这个 feature"叙事）
+- **thin slice PRD ≤ 100 行**（含 smoke script 区块；禁止写历史背景、实现路径、OKR 叙事）
 - **thin slice DoD ≤ 8 条**（不分 BEHAVIOR/ARTIFACT 总数 ≤ 8）
 - 超 → planner 自审 reject + 强制砍范围 / 拆 multi-sprint
 
 **反例**：W36 planner 254 行 PRD + 32 DoD 条目，引用 W19-W26 全部历史 + B1-B13 全部 fix 上下文 → 不是 thin slice 是 medium thick。
 
-**正例**：W37 thin slice 应是 "playground 加 GET /ping 返 `{pong:true,ts:<unix>}`"，PRD < 30 行 + DoD ≤ 5 条。
+**正例**：含 Golden Path + Response Schema + smoke script 的完整 thin PRD，80-90 行以内。
 
 ---
 
@@ -338,8 +339,10 @@ git push origin HEAD 2>/dev/null || echo "[harness-planner] push skipped (no cre
 **最后一条消息**：
 
 ```
-{"verdict": "DONE", "branch": "cp-...", "sprint_dir": "sprints/run-..."}
+{"verdict": "DONE", "branch": "cp-...", "sprint_dir": "sprints/run-...", "planner_branch": "cp-..."}
 ```
+
+说明：`planner_branch` 字段供 Brain `runGanLoopNode` 读取，作为 GAN proposer 的 `PLANNER_BRANCH` env，避免回退到 main 读 PRD。
 
 ---
 

@@ -6,13 +6,15 @@ description: |
   而非"防作弊测试框架"。
   核心职责：(1) spec 对齐用户真需求 (2) criteria 可量化无歧义 (3) happy + error + 边界场景全覆盖
   GAN 对抗**多轮**直到双方达成共识。无硬轮数上限，但 Reviewer 真找不出实质 spec/产品漏洞时必须 APPROVED。
-version: 6.7.0
+version: 8.1.0
 created: 2026-04-08
-updated: 2026-05-26
+updated: 2026-05-30
 changelog:
+  - 8.1.0: 修复 ci_workflow_alignment 7 维对齐 — 非 windows_cloud/linux_server 环境不再跳过第 7 维，改为默认填 10（N/A）；阈值统一为全 7 维 ≥ 7 → APPROVED；防止 Brain computeVerdictFromRubric 因缺字段返回 null 降级到 LLM 文字判断
+  - 8.0.0: 新增第 7 维 ci_workflow_alignment，要求 Reviewer 读取 workflow 文件内容验证业务对齐性；windows_cloud/linux_server 目标环境要求 7 维全部 ≥ 7 → APPROVED，其他环境维持原 6 维 ≥ 7 → APPROVED
+  - 7.0.0: 移除第 7/8 维（WS 专属）— 对齐单 Sprint 单 PR 模式（harness-contract-proposer v8.0+）。第 7 维 behavior_count_position 检查"每个 workstream ≥ 4 条 BEHAVIOR"，第 8 维 depends_on_serial_chain 检查"ws2+ 必须有 depends_on"，两者前提是多 WS 存在，单 Sprint 模式下无意义。Rubric 恢复 6 维，阈值不变（全部 ≥ 7 → APPROVED）
   - 6.7.0: 新增 Step 5 — Contract APPROVED 后写 Brain DB planned 条目（api_registry + db_schema_registry），补齐 GAN 阶段到 Report 阶段之间的数据空白；planned → done 由 harness-sprint-state Report 阶段完成
   - 6.6.0: 强制 Bash 工具写结果文件（Bug 11 — missing_result_file 根因）— SKILL.md 只说"写到文件"但 LLM 可能仅在文本中描述命令而不执行，导致 ContractViolation。v6.6 明确要求通过 Bash 工具执行写文件命令 + 执行验证命令确认文件存在
-  - 6.5.0: 加第 8 维 rubric `depends_on_serial_chain` — W52 step6 实证：proposer 生成 task-plan.json 时将所有 ws 的 depends_on 设为 []，Brain 并发 dispatch，ws2 evaluator 验 publish_status 列但 ws1 migration 未合并导致 FAIL→无限 fix loop。第 8 维强卡 ws1 以外的 ws 必须显式声明前置依赖，migration ws 必须出现在后续 ws 的 depends_on 里
   - 6.4.0: 修自相矛盾死轮 cap — 删 line 86-88 "Round 1-2 阈值 7 / Round 3-4 阈值 6 / Round 5 force APPROVED" 死阶梯（违反 brain 代码 detectConvergenceTrend + 用户原话「无上限收敛」）；改成单轮阈值固定 7 + 趋势兜底，跟 harness-gan.graph.js 实际行为对齐。verdict 模板里同步删 round 阈值字样
   - 6.3.0: 修协议盲 — 加 Golden Path 覆盖审查段（4 问题：端到端完整？验证命令真？User Story 1:1？step 间数据流自洽？）。reviewer 之前 0 处提 Golden Path
   - 6.2.0: 加第 7 维 rubric `behavior_count_position` — W22 实证 R1 1 轮直接 APPROVED 弱合同（25 [ARTIFACT] + 0 [BEHAVIOR]），第 6 维只评"PRD response 字段被 codify"无法卡这种"BEHAVIOR 全跑 vitest 索引"的极端情况。第 7 维硬卡 contract-dod-ws*.md 必须含 ≥ 4 条 [BEHAVIOR] 标签 + 内嵌 manual:bash 命令。跟 proposer v7.4 + evaluator v1.1 协议对齐
@@ -71,7 +73,7 @@ Proposer 产出的 `contract-draft.md` 格式是 **Golden Path Steps**：每步 
 
 少一项 → 第 2 维 scope_match_prd 或第 4 维 internal_consistency 扣分。Golden Path 断链 → 直接 REVISION 不打分。
 
-## 评分 Rubric（v6.2 — 7 维度，对齐 Anthropic "each criterion has hard threshold"）
+## 评分 Rubric（v8.0 — 7 维度，对齐 Anthropic "each criterion has hard threshold"）
 
 **7 个评分维度，每维 0-10 打分。硬阈值由调用方 extractVerdict 代码判定，不让 LLM 主观汇总**。
 
@@ -83,13 +85,13 @@ Proposer 产出的 `contract-draft.md` 格式是 **Golden Path Steps**：每步 
 | 4 | **内部一致** | 合同本身术语 / 字段 / 命令无矛盾 | 每个字段 / 命令只定义一次，引用用稳定 ID | 合同前后定义不一致，或命令在多处粘贴可能漂移 |
 | 5 | **风险登记** | Risks 栏列了 + 每条有 mitigation | ≥ 2 条具名 risk + mitigation（含 cascade 失败时怎办） | 无 Risks 栏，或只写"无已知风险" |
 | 6 | **Verification Oracle 完整性**（v6.1）| PRD 的 Response Schema 段是否被合同 codify 成 jq -e 可执行 oracle | PRD 每个 response 字段都对应至少 1 条 `jq -e '.key == val'` 命令；schema 完整性用 `jq -e 'keys == [...]'` 强卡；禁用字段名清单都有反向 `! jq -e '.禁用key'` 检查 | PRD 写了 schema 但合同只有自然语言描述（"返回 {result, operation}"）没有 jq -e 命令；或 jq -e 命令漏掉某个字段（schema drift 漏网） |
-| 7 | **BEHAVIOR 数量与位置**（v6.2 新增 — 修 W22 R1 漏判根因）| contract-dod-ws*.md **每个 workstream** 必须 ≥ 4 条 `[BEHAVIOR]` 标签 + 内嵌 `Test: manual:bash` 命令；不允许只有"## BEHAVIOR 索引指向 vitest" | 每个 workstream DoD 文件含 ≥ 4 条 [BEHAVIOR]（schema 字段 + schema 完整性 + 禁用字段反向 + error path），全用 `manual:bash` 内嵌命令；evaluator 直接执行 | DoD 文件 0 条 [BEHAVIOR] 标签 / 只写 `## BEHAVIOR 索引` 段指向 vitest（v7.3 错误格式） / [ARTIFACT] 数 >> [BEHAVIOR] 数（如 25:0）|
+| 7 | **CI Workflow 内容对齐**（windows_cloud/linux_server 专属）| 凡合同引用 GHA workflow 作为 BEHAVIOR 断言，Reviewer 必须用 Bash 工具读取该 workflow 文件内容，确认 workflow steps 与合同 BEHAVIOR 的用户操作语义一致 | Reviewer 读了 workflow 文件，每条 BEHAVIOR 都能指向 workflow 里的一个真实业务 step | Reviewer 未读 workflow 文件直接批准，或 workflow 里全是文件大小/存在性检查但合同声称验证了业务行为。**非 windows_cloud/linux_server 环境：填 10（N/A，无 GHA workflow 可审查）** |
 
 ### 阈值规则（代码判，Reviewer 不主观综合）
 
 **单轮阈值（不随 round 衰减）**：
-- 全部 7 维 ≥ 7 分 → APPROVED
-- 任何一维 < 7 分 → REVISION
+- `target_environment` 为 `windows_cloud` 或 `linux_server` 时：**7 维全部 ≥ 7 → APPROVED**，任何一维 < 7 → REVISION
+- 其他 `target_environment`：全部 7 维 ≥ 7 → APPROVED，任何一维 < 7 → REVISION（ci_workflow_alignment 对非 windows 环境默认填 10，表示 N/A 直接通过）
 
 **收敛兜底（无轮数硬 cap）**：
 不设 MAX_ROUNDS。`harness-gan.graph.js` 调 `detectConvergenceTrend(rubricHistory)` 看最近 3 轮 7 维度走势：
@@ -108,16 +110,6 @@ Proposer 产出的 `contract-draft.md` 格式是 **Golden Path Steps**：每步 
 
 无上限 ≠ 5 轮死 cap。死 cap 违反用户原意。
 
-### BEHAVIOR 数量与位置审查清单（第 7 维硬阈值，0 分判定示例）
-
-- ❌ contract-dod-ws1.md 只有 `## BEHAVIOR 索引` 段，0 条 `[BEHAVIOR]` 标签条目（**W22 实证根因**）
-- ❌ DoD 文件 25 条 [ARTIFACT] + 0 条 [BEHAVIOR]（极端不平衡）
-- ❌ [BEHAVIOR] Test 字段引用 vitest 文件而不是 `manual:bash` 内嵌命令
-- ❌ DoD 文件含 [BEHAVIOR] 标签但 Test: 命令是 echo "TODO" 等假命令
-- ✅ 每个 workstream ≥ 4 条 [BEHAVIOR]（schema 字段 + 完整性 + 禁用字段 + error path）+ 全 `manual:bash` 命令
-
-**为什么单独立第 7 维**：第 1 维"DoD 机检性"评的是"已存在的 DoD 命令是否机检"，但 LLM 可以把 BEHAVIOR 都拆到 vitest 文件里，DoD 文件只放 ARTIFACT，第 1 维就被绕过了。第 7 维强约束 BEHAVIOR 必须**在 DoD 文件内嵌** + **数量** + **类型分布**，跟第 1 维互补。
-
 ### Verification Oracle 完整性审查清单（第 6 维 0 分判定示例）
 
 - ❌ PRD 写 `{"result": 35, "operation": "multiply"}` 但合同只有 `curl /multiply | jq '.result'`（缺 operation 字段 jq -e）
@@ -125,18 +117,6 @@ Proposer 产出的 `contract-draft.md` 格式是 **Golden Path Steps**：每步 
 - ❌ PRD 要求 schema 完整 2 字段，合同没 `jq -e 'keys == ["operation","result"]'` 完整性卡
 - ❌ E2E 脚本只 `curl -f /xxx` 看 HTTP 200，没 jq 校验 body shape
 - ✅ 每个 PRD response 字段 → 对应 1 条 `jq -e '.<key> == <value>'` 命令；schema 完整性卡 + 禁用字段反向检查全齐
-
-### depends_on 串行链审查清单（第 8 维硬阈值，0 分判定示例）
-
-- ❌ ws2 以上的任何 ws `depends_on: []`（**W52 step6 实证根因：并发 dispatch → evaluator 验 migration 未进 DB**）
-- ❌ migration ws 存在，但 service ws 不声明依赖它（并行后果：DB schema 缺失）
-- ❌ task-plan.json 包含 4 个 ws 但全部 `depends_on: []`
-- ✅ ws1.depends_on=[]，ws2.depends_on=["ws1"]，ws3.depends_on=["ws2"]，ws4.depends_on=["ws3"] — 线性链完整
-- ✅ 若某 ws 确实无依赖（纯独立 feature），需要在 scope 里注明"本 ws 与其他 ws 无 schema/data/interface 依赖"
-
-**为什么单独立第 8 维**：proposer 模板里有串行示例，但没有机器强制检查。Brain 读 `depends_on` 决定调度顺序，全部 `[]` = 并发 = evaluator 在前置 ws 合并前就跑 → FAIL → 无限 fix loop，且 fix loop 本身无法修复这个根因（改代码没用，问题在 DB schema 未就绪）。第 8 维在 GAN 阶段卡住，不等 evaluator 发现。
-
-**硬阈值**：task-plan.json 里 ws2+ 任意 ws `depends_on: []` 且无"本 ws 无 schema/data/interface 依赖"说明 → 第 8 维 = 0 → 强制 REVISION。
 
 ---
 
@@ -183,20 +163,24 @@ cat "${SPRINT_DIR}/sprint-prd.md"
 # 读合同草案
 cat "${SPRINT_DIR}/contract-draft.md"
 
-# 读各 workstream DoD
-ls "${SPRINT_DIR}/contract-dod-ws"*.md 2>/dev/null | xargs cat
+# 读 Sprint DoD（单文件，harness-contract-proposer v8.0+）
+cat "${SPRINT_DIR}/contract-dod.md" 2>/dev/null || true
 ```
 
 ### Step 2: 按 Rubric 打分
 
-严格按上文"评分 Rubric"的 5 个维度（dod_machineability / scope_match_prd / test_is_red /
-internal_consistency / risk_registered）独立打 0-10 分。不要再按 v6 的 Spec 对齐/Criteria
-量化/覆盖度/无歧义/Workstream 旧结构组织思考 — 那 5 维和当前 rubric 不是一一对应的，会让
-你陷入"合同写得越多越好"的误区。只按上文 rubric 表 5 维逐个打分。
+严格按上文"评分 Rubric"的 7 个维度独立打 0-10 分，逐维给出证据。不要按旧版结构组织思考，只按 rubric 表逐个打分。
+
+**第 7 维强制执行**：凡合同包含 `[BEHAVIOR]` 引用 GHA workflow 名称（.yml 文件），Reviewer 必须在当前 turn 内用 Bash 工具执行：
+```bash
+cat .github/workflows/<workflow文件名>.yml 2>/dev/null || echo "WORKFLOW_NOT_FOUND"
+```
+读取结果后逐步对比合同 BEHAVIOR 断言与 workflow steps 的语义对齐性。
+**未执行此 Bash 命令 → 第 7 维强制 0 分，不允许 APPROVED**。
 
 ### Step 3: 产出 Verdict
 
-**必须输出 8 维度评分（JSON 结构化，v6.5 新增 depends_on_serial_chain）**：
+**必须输出 7 维度评分（JSON 结构化）**：
 
 ```markdown
 ## RUBRIC SCORES
@@ -209,21 +193,18 @@ internal_consistency / risk_registered）独立打 0-10 分。不要再按 v6 �
   "internal_consistency": 6,
   "risk_registered": 5,
   "verification_oracle_completeness": 4,
-  "behavior_count_position": 0,
-  "depends_on_serial_chain": 10
+  "ci_workflow_alignment": 7
 }
 ```
 
 每分伴一句证据（为何这分，不为何更高也不为何更低）：
 
-- **DoD 机检性 = 8**：大部分 DoD 用 `node -e ... process.exit()` 或 `npx vitest run ... --reporter=json`。但 workstream 2 还有一条 `grep -q "hello"` 级别的弱检查。
+- **DoD 机检性 = 8**：大部分 DoD 用 `node -e ... process.exit()` 或 `npx vitest run ... --reporter=json`。但有一条 `grep -q "hello"` 级别的弱检查。
 - **Scope 匹配 PRD = 7**：User Story 1-3 覆盖 DoD 1-5。User Story 4 的"并发请求处理"没显式 DoD。
 - **Test 真红 = 9**：测试文件路径明确，不动代码跑必 FAIL。
-- **内部一致 = 6**：`contract-dod-ws1.md` 和 `contract-draft.md` 两处都粘贴了同一条 `node -e` 命令，可能漂移。
+- **内部一致 = 6**：`contract-dod.md` 和 `contract-draft.md` 两处都粘贴了同一条 `node -e` 命令，可能漂移。
 - **风险登记 = 5**：只列了 1 条 risk（"HTTP 超时处理"），没写 mitigation。cascade 失败未覆盖。
 - **Verification Oracle 完整性 = 4**：PRD `## Response Schema` 段写了 `{result, operation}` 二字段，但合同只 `curl ... | jq '.result'`，缺 `jq -e '.operation == "multiply"'` 与 `jq -e 'keys == ["operation", "result"]'` 完整性卡，schema drift 漏网风险高。
-- **BEHAVIOR 数量与位置 = 0**：`contract-dod-ws1.md` 含 25 条 [ARTIFACT] + 0 条 [BEHAVIOR] 标签。BEHAVIOR 段是 `## BEHAVIOR 索引` 指向 `tests/ws1/power.test.js` 的 vitest 用例，evaluator v1.1 反作弊红线第 3 条不接受 vitest 索引代替 manual:bash 命令。第 7 维硬阈值 ≥ 4，本合同 = 0，强制 REVISION。
-- **depends_on 串行链 = 10**：ws1.depends_on=[]，ws2.depends_on=["ws1"]，ws3.depends_on=["ws2"]，ws4.depends_on=["ws3"]，线性链完整，migration→service→routes→smoke 顺序正确。
 
 ## VERDICT: {APPROVED or REVISION based on rubric threshold}
 
@@ -265,7 +246,7 @@ Round N, 阈值固定 7/10（不随 round 衰减）。
 ```bash
 # [必须通过 Bash 工具执行，不是文字描述] 写结果文件
 cat > /workspace/.brain-result.json << 'BREOF'
-{"verdict":"<APPROVED|REVISION>","rubric_scores":{"dod_machineability":X,"scope_match_prd":X,"test_is_red":X,"internal_consistency":X,"risk_registered":X,"verification_oracle_completeness":X,"behavior_count_position":X,"depends_on_serial_chain":X},"feedback":"<feedback text or empty>"}
+{"verdict":"<APPROVED|REVISION>","rubric_scores":{"dod_machineability":X,"scope_match_prd":X,"test_is_red":X,"internal_consistency":X,"risk_registered":X,"verification_oracle_completeness":X,"ci_workflow_alignment":X},"feedback":"<feedback text or empty>"}
 BREOF
 ```
 
@@ -275,6 +256,11 @@ test -f /workspace/.brain-result.json && echo "OK: result file written" || echo 
 ```
 
 REVISION 时 feedback 必须含具体修改方向。
+
+**ci_workflow_alignment 填值规则**：
+- `target_environment` 为 `windows_cloud` 或 `linux_server`：正常审查 workflow 文件后打分（0-10）
+- 其他环境（mac_web / local_api / playground 等）：直接填 `10`（N/A，无 GHA workflow 可审查）
+- **禁止省略此字段**：Brain `computeVerdictFromRubric` 要求全 7 维都有值，缺字段返回 null 降级到 LLM 文字判断
 
 ---
 

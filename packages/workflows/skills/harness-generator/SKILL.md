@@ -1,17 +1,20 @@
 ---
 id: harness-generator-skill
 description: |
-  Harness Generator — Harness v5.0 严格合同执行者 × Superpowers 融合。
-  读取 GAN 对抗已批准的 sprint-contract.md + tests/ws{N}/*.test.ts + contract-dod-ws{N}.md，按 TDD 纪律两次 commit（commit 1 = 测试 Red / commit 2 = 实现 Green）。
+  Harness Generator — Harness v7.0 严格合同执行者 × Superpowers 融合。
+  读取 GAN 对抗已批准的 contract-draft.md + tests/*.test.ts + contract-dod.md，按 TDD 纪律两次 commit（commit 1 = 测试 Red / commit 2 = 实现 Green）。
   融入 4 个 superpowers：test-driven-development / verification-before-completion / systematic-debugging / requesting-code-review。
-  CONTRACT IS LAW：合同里有的全实现，合同外一字不加；**测试文件从合同原样复制，commit 1 后不可修改**（CI 强校验）。
-version: 6.3.0
+  CONTRACT IS LAW：合同里有的全实现，合同外一字不加；测试文件从合同原样复制，commit 1 后不可修改（CI 强校验）。一个 Sprint = 一个 Generator = 一个 PR。
+version: 7.2.0
 created: 2026-04-08
-updated: 2026-05-06
+updated: 2026-05-30
 changelog:
+  - 7.2.0: 修 Bug 5 — 读合同文件名从 sprint-contract.md 改为 contract-draft.md（v8.x reviewer 不再做 cp 步骤）
+  - 7.1.0: Step 6.5 补 windows_cloud 例外说明 — [BEHAVIOR] 必须 bash-executable；PowerShell 只在 contract-draft.md ## E2E 验收 区块
+  - 7.0.0: 移除 Workstream 拆分 — 对齐 Anthropic 官方 v2 Harness 设计（一个 Sprint = 一个 Generator = 一个 PR）。删除 WORKSTREAM_INDEX/WORKSTREAM_COUNT 必要参数约束；测试目录从 tests/ws1/ 改为 tests/；DoD 文件从 contract-dod-ws1.md 改为 contract-dod.md；分支命名去掉 ws 后缀；移除多 ws 并行 rebase 说明
   - 6.3.0: 修字段名协议矛盾 — workstreams[].scope_files → tasks[].files（proposer SKILL v7.6+ 实际输出 schema 是 tasks[]，v6.2 段写错）
   - 6.2.0: 修协议盲 — Step 1 后加 task-plan.json 必读字段段（proposer GAN 收敛后输出，含 workstreams scope_files 白名单）
-  - 6.1.0: 加 Step 6.5 Contract Self-Verification — push 前自跑 contract-dod-ws*.md 所有 [BEHAVIOR] manual:bash 命令，任一 FAIL 不准 push 必须自修。配合 proposer v7.4 + reviewer v6.2 + evaluator v1.1 协议对齐。修 W19/W20/W21/W22 实证 generator 频繁推漂移实现给 evaluator 兜底的根因
+  - 6.1.0: 加 Step 6.5 Contract Self-Verification — push 前自跑 contract-dod.md 所有 [BEHAVIOR] manual:bash 命令，任一 FAIL 不准 push 必须自修
   - 6.0.0: Working Skeleton — skeleton task 检测（is_skeleton）；允许 SKELETON STUB 注释；commit message 加 (Skeleton Red)/(Skeleton Green)；PR body 必须含 Stub 清单
   - 5.0.0: TDD × Superpowers 融合 — 两次 commit 纪律（commit 1 测试 Red / commit 2 实现 Green）+ 4 个 superpowers（test-driven-development / verification-before-completion / systematic-debugging / requesting-code-review）；测试文件从合同原样 checkout，commit 1 后不可修改；Mode 2 harness_fix 走 systematic-debugging
   - 4.3.0: contract-dod-ws 读取路径改为 ${SPRINT_DIR}/contract-dod-ws${WS_IDX}.md（与 Proposer 写入路径对齐）
@@ -24,7 +27,7 @@ changelog:
 > **语言规则: 所有输出必须使用简体中文。严禁日语、韩语或其他语言。**
 > **执行规则: 严格按照下面列出的步骤执行。不要搜索/查找其他 skill 文件，不要 find/glob 查找任何 SKILL.md，直接按本文档流程操作。**
 
-# /harness-generator — Harness v5.0 TDD 执行者（Superpowers 融合）
+# /harness-generator — Harness v7.0 TDD 执行者（Superpowers 融合，单 Sprint）
 
 **角色**: Generator（代码实现者，遵循 TDD Red-Green 纪律）
 **对应 task_type**: `harness_generate` / `harness_fix`
@@ -72,15 +75,13 @@ TASK_ID={task_id}
 SPRINT_DIR={sprint_dir}
 CONTRACT_BRANCH={contract_branch}
 PLANNER_BRANCH={planner_branch}
-WORKSTREAM_INDEX={workstream_index}  # 1-based，可能为空（单 workstream 时）
-WORKSTREAM_COUNT={workstream_count}
 ```
 
-**CONTRACT_BRANCH / SPRINT_DIR / BRAIN_URL / WORKSTREAM_INDEX 任一未定义时绝对禁止继续。**
+**CONTRACT_BRANCH / SPRINT_DIR / BRAIN_URL 任一未定义时绝对禁止继续。**
 
 ```bash
-# v6 P1-D 自检 — Brain dispatch 必须把这 4 个 env 都注入进来
-for var in CONTRACT_BRANCH SPRINT_DIR BRAIN_URL WORKSTREAM_INDEX; do
+# 自检 — Brain dispatch 必须把这 3 个 env 都注入进来
+for var in CONTRACT_BRANCH SPRINT_DIR BRAIN_URL; do
   if [ -z "${!var:-}" ]; then
     echo "ERROR: env $var 未定义 — Brain dispatch 协议失败 (harness-task-dispatch.js 应注入)"
     echo "{\"verdict\": \"ABORTED\", \"reason\": \"missing env $var\"}"
@@ -111,31 +112,12 @@ fi
 
 ### Step 0.5: ★ MANDATORY PRE-FLIGHT — rebase 到最新 main
 
-**为什么必须**：Brain 在 Phase B 串行派发（每个 ws merge gate 通过后 Brain 才启动下一个）。ws1 先合并到 main 后，ws2/ws3/ws4 的 worktree 仍基于**老 main 快照**（clone 时的 main），如果不 rebase，兄弟 ws 动过的共享文件（常见 `packages/brain/src/routes/*.js`）会在 PR 阶段跟 main 产生 **add/add 冲突**，CI 直接挂，需要人肉救场。
-
 ```bash
-# 必须在任何 checkout -b / 写代码之前跑
 git fetch origin main
 git rebase origin/main || {
   echo "ERROR: rebase 冲突 — 必须解决后才能继续"
-  # 诊断步骤：
-  #   git status               → 查看冲突文件
-  #   多半是兄弟 ws 共享文件：
-  #     - packages/brain/src/routes/*.js（多个 ws 往同一个 router 加端点）
-  #     - packages/brain/src/server.js（route 注册）
-  #     - packages/brain/src/brain-manifest.generated.json（自动生成）
-  # 解决策略：
-  #   - routes/*.js add/add：打开文件，保留双方新增端点（ws 互不冲突，只是都加了东西）
-  #   - manifest.generated.json：丢弃本地，接受 origin/main，后面重新生成
-  # 解决后：
-  #   git add <file> && git rebase --continue
-  # 实在搞不定：
-  #   git rebase --abort
-  #   echo "{\"verdict\": \"ABORTED\", \"reason\": \"rebase main 冲突无法自动解决\"}"
   exit 1
 }
-
-# verify: 当前 HEAD 必须 >= origin/main
 git merge-base --is-ancestor origin/main HEAD || {
   echo "ERROR: rebase 后 HEAD 仍落后 origin/main，拒绝继续"
   exit 1
@@ -143,48 +125,25 @@ git merge-base --is-ancestor origin/main HEAD || {
 ```
 
 **禁止事项**：
-- 禁止跳过 rebase 直接开工（即使 worktree 看起来"干净"）
+- 禁止跳过 rebase 直接开工
 - 禁止用 `git merge origin/main` 代替 rebase（会产生 merge commit 污染历史）
 
 ### Step 1: 读合同 + 测试文件清单
 
 ```bash
-WS_IDX="${WORKSTREAM_INDEX:-1}"
-
 git fetch origin "${CONTRACT_BRANCH}" 2>/dev/null || true
 
-# 读合同
-git show "origin/${CONTRACT_BRANCH}:${SPRINT_DIR}/sprint-contract.md"
+# 读合同（⚠️ harness::contract-filename 接口约定：文件名是 contract-draft.md，不是 sprint-contract.md）
+git show "origin/${CONTRACT_BRANCH}:${SPRINT_DIR}/contract-draft.md"
 
-# 读 DoD（只含 [ARTIFACT]）
-git show "origin/${CONTRACT_BRANCH}:${SPRINT_DIR}/contract-dod-ws${WS_IDX}.md"
+# 读 DoD（[ARTIFACT] + [BEHAVIOR]）
+git show "origin/${CONTRACT_BRANCH}:${SPRINT_DIR}/contract-dod.md"
 
 # 列出测试文件
-git ls-tree -r "origin/${CONTRACT_BRANCH}" -- "${SPRINT_DIR}/tests/ws${WS_IDX}/"
+git ls-tree -r "origin/${CONTRACT_BRANCH}" -- "${SPRINT_DIR}/tests/"
 ```
 
-**只读 sprint-contract.md。**
-
-
-
-**v6.2 协议盲修复 — task-plan.json**：
-
-`${SPRINT_DIR}/task-plan.json` 由 proposer GAN 收敛后输出，含任务 DAG + workstream 边界。Generator 必读字段：
-
-| 字段 | 用途 |
-|---|---|
-| `tasks[].task_id` | 当前 `WORKSTREAM` 环境变量匹配的子任务（如 ws1 / ws2） |
-| `tasks[].files` | 允许改的文件白名单（**禁止跨 task 改文件**） |
-| `tasks[].depends_on` | 依赖的 task_id，必须先完成 |
-
-读取：
-```bash
-WS=${WORKSTREAM:-ws1}
-SCOPE=$(jq -r ".tasks[] | select(.task_id==\"$WS\") | .files[]" "${SPRINT_DIR}/task-plan.json")
-echo "本 task 可改文件: $SCOPE"
-```
-
-**v6.3 字段名对齐**：proposer SKILL v7.6+ 实际产出 schema 是 `tasks[]`（含 `task_id`/`files`/`depends_on`/`scope`/`dod`），不是 `workstreams[]`。本表已对齐。
+**只读 contract-draft.md，CONTRACT IS LAW。**
 
 
 ### Step 2: 创建 cp-* 分支（强制仓库命名规约）
@@ -200,9 +159,7 @@ fi
 TASK_ID_SHORT="${HARNESS_TASK_ID:0:8}"
 
 # 分支名必须按仓库规约 cp-MMDDHHNN-* （详见 hooks/branch-protect.sh）
-# 时区用上海时间保证 MMDDHHNN 稳定；task_id 前 8 位作唯一后缀（避免兄弟 ws 撞名）
-WS_SUFFIX=${WORKSTREAM_INDEX:+"-ws${WORKSTREAM_INDEX}"}
-BRANCH="cp-$(TZ=Asia/Shanghai date +%m%d%H%M)-ws-${TASK_ID_SHORT}${WS_SUFFIX}"
+BRANCH="cp-$(TZ=Asia/Shanghai date +%m%d%H%M)-${TASK_ID_SHORT}"
 
 # 合法性自检（跟 hooks/branch-protect.sh 同规则）
 if ! [[ "$BRANCH" =~ ^cp-[0-9]{8,10}-[a-z0-9][a-z0-9_-]*$ ]]; then
@@ -224,13 +181,12 @@ git checkout -b "$BRANCH"
 
 ```bash
 # 从合同 branch 原样 checkout 测试文件（禁止修改）
-git checkout "origin/${CONTRACT_BRANCH}" -- "${SPRINT_DIR}/tests/ws${WS_IDX}/"
+git checkout "origin/${CONTRACT_BRANCH}" -- "${SPRINT_DIR}/tests/"
 
-# 原样复制 DoD（contract-dod-ws{N}.md → DoD.md，加 contract 来源 header）
-CONTRACT_DOD=$(git show "origin/${CONTRACT_BRANCH}:${SPRINT_DIR}/contract-dod-ws${WS_IDX}.md")
+# 原样复制 DoD（contract-dod.md → DoD.md，加 contract 来源 header）
+CONTRACT_DOD=$(git show "origin/${CONTRACT_BRANCH}:${SPRINT_DIR}/contract-dod.md")
 cat > DoD.md << DODEOF
 contract_branch: ${CONTRACT_BRANCH}
-workstream_index: ${WS_IDX}
 sprint_dir: ${SPRINT_DIR}
 
 ${CONTRACT_DOD}
@@ -238,13 +194,13 @@ DODEOF
 
 # commit 1 只能 touch：sprints/*/tests/**/*.test.ts + DoD.md
 # 禁含 packages/ apps/ 等实现目录
-git add "${SPRINT_DIR}/tests/ws${WS_IDX}/" DoD.md
-git commit -m "test(harness): ws${WS_IDX} failing tests (Red)"
+git add "${SPRINT_DIR}/tests/" DoD.md
+git commit -m "test(harness): sprint failing tests (Red)"
 
 # verify Red：跑测试看红（预期 FAIL，因实现还不存在）
-npx vitest run "${SPRINT_DIR}/tests/ws${WS_IDX}/" --reporter=verbose 2>&1 | tee /tmp/red-evidence.txt || true
+npx vitest run "${SPRINT_DIR}/tests/" --reporter=verbose 2>&1 | tee /tmp/red-evidence.txt || true
 
-EXPECTED_RED=$(grep -c "^\s*it(" "${SPRINT_DIR}/tests/ws${WS_IDX}/"*.test.ts 2>/dev/null | awk -F: '{s+=$2} END {print s}')
+EXPECTED_RED=$(grep -rc "^\s*it(" "${SPRINT_DIR}/tests/" 2>/dev/null | awk -F: '{s+=$2} END {print s}')
 ACTUAL_RED=$(grep -cE "FAIL|✗|×" /tmp/red-evidence.txt || echo 0)
 if [ "$ACTUAL_RED" -lt "$EXPECTED_RED" ]; then
   echo "ERROR: 预期 $EXPECTED_RED 个红，实际 $ACTUAL_RED — 测试本地就能过，说明 import 错或测试太弱"
@@ -273,7 +229,7 @@ test(harness): skeleton e2e test (Skeleton Red)
 
 # commit 2 必须含实现（禁止只含测试）；可含 Learning / docs / 配置等 ARTIFACT
 git add <实现文件> docs/learnings/cp-*.md <配置文件>
-git commit -m "feat(harness): ws${WS_IDX} implementation (Green)"
+git commit -m "feat(harness): sprint implementation (Green)"
 ```
 
 **硬约束**（CI 强校验）：
@@ -293,7 +249,7 @@ git commit -m "feat(harness): ws${WS_IDX} implementation (Green)"
 
 ```bash
 # 跑完整测试套件
-npx vitest run "${SPRINT_DIR}/tests/ws${WS_IDX}/" --reporter=verbose 2>&1 | tee /tmp/green-evidence.txt
+npx vitest run "${SPRINT_DIR}/tests/" --reporter=verbose 2>&1 | tee /tmp/green-evidence.txt
 
 # 验证：
 # - 原本红的测试现在必须绿
@@ -321,7 +277,7 @@ Review Summary 贴进 PR body。
 
 ```bash
 # 1. 提取 contract DoD 文件所有 [BEHAVIOR] Test: 命令
-DOD_FILE="${SPRINT_DIR}/contract-dod-ws${WS_IDX}.md"
+DOD_FILE="${SPRINT_DIR}/contract-dod.md"
 grep -E "^\s+Test: manual:" "$DOD_FILE" | sed 's/.*Test: manual://' > /tmp/contract-behavior-cmds.sh
 
 CMD_COUNT=$(wc -l < /tmp/contract-behavior-cmds.sh | tr -d ' ')
@@ -362,14 +318,19 @@ echo "✅ Contract 自验全过，可以 push"
 - 自修后重新跑 Step 6.5 直到全过
 - **禁止跳过 Step 6.5 直接 push**（W19/W20/W21/W22 教训）
 
+**windows_cloud target 例外说明**：
+- contract-dod.md 里的 `[BEHAVIOR]` 条目必须是 **bash-executable**（curl/psql/jq 等 API-level 检查），generator 在 Linux Docker 里跑这些没问题
+- PowerShell / Windows 专属命令只写在 contract-draft.md 的 `## E2E 验收` 区块里，供 evaluator 触发 GHA workflow 时使用
+- 如果自验时发现 [BEHAVIOR] 里有 PowerShell 命令 → 这是 proposer 写错了（应在 E2E 区块），告知 generator 无法在本地验证、标 `[CI_GAP]` 并 push，让 evaluator 的 windows_cloud Mode B 去跑
+
 ### Step 7: Push + PR
 
 ```bash
 git push origin HEAD
 
-PR_URL=$(gh pr create --title "feat(harness): ws${WS_IDX} — <目标>" --body "$(cat <<'PRBODY'
+PR_URL=$(gh pr create --title "feat(harness): <Sprint 目标>" --body "$(cat <<'PRBODY'
 ## Summary
-<本 workstream 实现的功能>
+<本 Sprint 实现的完整功能>
 
 ## Test Evidence
 
@@ -396,16 +357,63 @@ PRBODY
 echo "PR created: $PR_URL"
 ```
 
-### Step 8: 输出 verdict JSON（⚠️ Brain 通过此提取 pr_url）
+### Step 7.5: 轮询 CI + 等待合并（PR 创建后立刻执行，不退出）
+
+PR 创建完不退出，原地轮询直到合并。合并后才进 Step 8。
+
+```bash
+# 从 PR_URL 提取 PR 号
+PR_NUMBER=$(echo "$PR_URL" | grep -oE '[0-9]+$')
+REPO=$(echo "$PR_URL" | grep -oE 'github\.com/[^/]+/[^/]+' | sed 's|github.com/||')
+FIX_COUNT=0
+MAX_FIXES=3
+
+# 先启用 auto-merge
+gh pr merge "$PR_NUMBER" --repo "$REPO" --auto --squash 2>/dev/null && echo "auto-merge enabled"
+
+while true; do
+  STATE=$(gh pr view "$PR_NUMBER" --repo "$REPO" --json state --jq '.state' 2>/dev/null)
+  [ "$STATE" = "MERGED" ] && { echo "PR #$PR_NUMBER merged"; break; }
+  [ "$STATE" = "CLOSED" ] && { echo "PR #$PR_NUMBER closed"; break; }
+
+  CHECKS=$(gh pr checks "$PR_NUMBER" --repo "$REPO" 2>/dev/null)
+  FAILED=$(echo "$CHECKS" | grep -c "fail" 2>/dev/null || echo 0)
+  PENDING=$(echo "$CHECKS" | grep -cE "pending|in_progress|queued" 2>/dev/null || echo 0)
+  MERGE_STATE=$(gh pr view "$PR_NUMBER" --repo "$REPO" --json mergeStateStatus --jq '.mergeStateStatus' 2>/dev/null)
+
+  if [ "$FAILED" -gt 0 ]; then
+    if [ "$FIX_COUNT" -ge "$MAX_FIXES" ]; then
+      echo "CI failed $MAX_FIXES times, giving up"
+      break
+    fi
+    FIX_COUNT=$((FIX_COUNT+1))
+    # CI 失败 → 读日志修复
+    RUN_ID=$(gh pr checks "$PR_NUMBER" --repo "$REPO" --json name,conclusion,databaseId 2>/dev/null \
+      | jq -r '[.[] | select(.conclusion=="failure")] | sort_by(.databaseId) | last | .databaseId // empty')
+    echo "CI failed (attempt $FIX_COUNT), reading logs..."
+    gh run view "$RUN_ID" --repo "$REPO" --log-failed 2>/dev/null | tail -100
+    # 分析日志 → 在 worktree 里修复 → git commit + push
+    # （根据日志内容直接修复，此处为 Claude 的内联操作，不另起 session）
+    continue
+  fi
+
+  [ "$MERGE_STATE" = "BEHIND" ] && {
+    echo "branch behind main, rebasing..."
+    git fetch origin main && git rebase origin/main && git push origin HEAD --force-with-lease
+    continue
+  }
+
+  echo "$(TZ=Asia/Shanghai date '+%H:%M:%S') OPEN | pending=$PENDING fail=$FAILED | $MERGE_STATE"
+  sleep 30
+done
+```
+
+> **说明**：Bash 工具单次 timeout 上限 600000ms（10 分钟）。超时后立刻重新发 Bash 调用继续轮询，不输出任何文字，不结束 turn。直到合并为止。
+
+### Step 8: 输出 verdict JSON（⚠️ Brain 通过此提取 pr_url，合并后才执行）
 
 > **CRITICAL**: 最后一条消息必须是**纯 JSON**，禁止任何其他文字（不加 markdown、不加说明）。
-> Brain 的 execution.js 依赖此 JSON 提取 pr_url 并创建 harness_ci_watch。
-
-```
-{"verdict": "DONE", "pr_url": "https://github.com/perfectuser21/cecelia/pull/xxxx"}
-```
-
-实际执行：
+> Brain 的 execution.js 依赖此 JSON 提取 pr_url。
 
 ```bash
 echo "{\"verdict\": \"DONE\", \"pr_url\": \"$PR_URL\"}"
@@ -479,7 +487,7 @@ commit 2: feat(harness): skeleton implementation (Skeleton Green)
 
 ## 禁止事项（严格）
 
-1. **禁止自写 sprint-contract.md** —— 合同是上游 GAN 阶段产出，Generator 只读
+1. **禁止自写 contract-draft.md** —— 合同是上游 GAN 阶段产出，Generator 只读
 2. **禁止加合同外内容** —— 安全阀/额外测试/顺手修复全不加；测试文件也是合同一部分
 3. **禁止修改从合同 checkout 的测试文件** —— 测试一旦 commit 1 Red，就**不可改**（CI 强校验 git log：测试文件 diff 在 commit 2+ 里必须为空）
 4. **禁止自判 PASS** —— Evaluator / CI 才是判官
@@ -504,7 +512,7 @@ commit 2: feat(harness): skeleton implementation (Skeleton Green)
 
 GREEN commit + push 前**必须**真验合同行为：
 
-1. 读取 `${SPRINT_DIR}/contract-dod-ws${WORKSTREAM_INDEX}.md` 中所有 `[BEHAVIOR]` 行的 `Test: manual:bash -c '...'` 命令
+1. 读取 `${SPRINT_DIR}/contract-dod.md` 中所有 `[BEHAVIOR]` 行的 `Test: manual:bash -c '...'` 命令
 2. **真启服务 + 真跑这些命令**（不要用 vitest mock 代替）：
    - 启动 server: `node playground/server.js &` 或 contract 指定方式
    - 逐条执行 manual:bash 命令
