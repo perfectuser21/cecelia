@@ -218,9 +218,10 @@ const HARNESS_TASK = {
 describe('triggerCeceliaRun — harness_initiative 状态回写（PR #2816 fix）', () => {
 
   it('graph ok=true → updateTaskStatus("completed") 被调用', async () => {
-    // graph stream 返回无 error 的 state
+    // graph stream 返回无 error 的 state，并包含 report_path（B48：标志 reportNode 完成）
     mockCompiled.stream.mockImplementation(async function* () {
       yield { dbUpsert: { sub_tasks: [{ task_id: 'ws1' }] } };
+      yield { report: { report_path: 'sprints/test/report.json' } };
     });
 
     const result = await triggerCeceliaRun(HARNESS_TASK);

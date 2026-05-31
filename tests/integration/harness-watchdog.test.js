@@ -122,6 +122,7 @@ describe('harness watchdog AbortSignal（W3）', () => {
     // 一个发出一个 update 然后结束的 stream
     mockGraphStream.mockImplementation(async () => (async function* () {
       yield { prepInitiative: { initiativeId: 'x' } };
+      yield { report: { report_path: 'sprints/test/report.json' } };  // B48: report_path → ok=true
     })());
 
     const task = {

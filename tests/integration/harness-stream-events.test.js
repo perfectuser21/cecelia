@@ -62,7 +62,8 @@ describe('harness streamMode events（W4）', () => {
       yield { runPlanner: { planner_done: true } };
       yield { parsePrd: { prd_parsed: true } };
       yield { dbUpsert: { upserted: true } };
-      yield { fanoutSubTasks: { count: 3 } };
+      // B48: report_path 标志 reportNode 真正运行完毕，ok() 才返 true
+      yield { fanoutSubTasks: { count: 3, report_path: 'sprints/test/report.json' } };
     })());
 
     const task = {

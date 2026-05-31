@@ -72,10 +72,10 @@ describe('computeHarnessInitiativeOk', () => {
     expect(computeHarnessInitiativeOk(undefined)).toBe(false);
   });
 
-  it('final 为空对象（无 verdict 无 error）→ ok=true (向后兼容)', () => {
-    // 这是历史行为：graph 跑完没设 error 也没设 verdict 时仍标 completed
-    // 不在本 PR 范围内改这个语义（避免引入新 regression）
-    expect(computeHarnessInitiativeOk({})).toBe(true);
+  it('final 为空对象（无 verdict 无 error 无 report_path）→ ok=null (B48: graph interrupted/waiting)', () => {
+    // B48 改变了语义：空 final 代表 graph 还在 interrupt 等待（planner callback 未回），
+    // 不应标 completed，留 in_progress 等 reportNode 回写。
+    expect(computeHarnessInitiativeOk({})).toBeNull();
   });
 });
 
@@ -137,5 +137,23 @@ describe('computeHarnessInitiativeError', () => {
       final_e2e_failed_scenarios: longScenarios,
     });
     expect(err.length).toBeLessThanOrEqual(500);
+  });
+});
+
+describe('computeHarnessInitiativeOk — B48 interrupt detection', () => {
+  it('B48: returns null when no report_path (graph interrupted/waiting for callback)', () => {
+    // planner spawned detached, graph hit interrupt — final has prep state but no report_path
+    const interrupted = { worktreePath: '/wt', githubToken: 'tok', initiativeId: 'init-1' };
+    expect(computeHarnessInitiativeOk(interrupted)).toBeNull();
+  });
+
+  it('B48: returns true only when report_path is set (reportNode actually ran)', () => {
+    const completed = { report_path: 'sprints/test/report.json', worktreePath: '/wt' };
+    expect(computeHarnessInitiativeOk(completed)).toBe(true);
+  });
+
+  it('B48: returns false when error set (even with report_path)', () => {
+    const errored = { report_path: 'sprints/test/report.json', error: { node: 'planner', message: 'fail' } };
+    expect(computeHarnessInitiativeOk(errored)).toBe(false);
   });
 });
