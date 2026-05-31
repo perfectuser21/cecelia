@@ -512,17 +512,27 @@ async function probeGeoWebsite() {
     { url: `${BASE}/zh/posts/`, expect: null, label: 'posts_page' },
   ];
 
+  // Run all checks in parallel — sequential fetches would stack up to 3×timeout and
+  // risk hitting the outer 30s probe timeout if any single request is slow.
+  const PER_CHECK_TIMEOUT_MS = 20_000;
+  const results = await Promise.allSettled(
+    checks.map(async (check) => {
+      const res = await fetch(check.url, { redirect: 'follow', signal: AbortSignal.timeout(PER_CHECK_TIMEOUT_MS) });
+      const ok = res.status === 200 && (!check.expect || (await res.text()).includes(check.expect));
+      return { label: check.label, ok, status: res.status };
+    })
+  );
+
   const details = [];
   let allOk = true;
 
-  for (const check of checks) {
-    try {
-      const res = await fetch(check.url, { redirect: 'follow', signal: AbortSignal.timeout(10000) });
-      const ok = res.status === 200 && (!check.expect || (await res.text()).includes(check.expect));
-      details.push(`${check.label}=${ok ? 'ok' : `fail(${res.status})`}`);
-      if (!ok) allOk = false;
-    } catch (err) {
-      details.push(`${check.label}=error(${err.message.slice(0, 40)})`);
+  for (let i = 0; i < checks.length; i++) {
+    const r = results[i];
+    if (r.status === 'fulfilled') {
+      details.push(`${r.value.label}=${r.value.ok ? 'ok' : `fail(${r.value.status})`}`);
+      if (!r.value.ok) allOk = false;
+    } else {
+      details.push(`${checks[i].label}=error(${r.reason.message.slice(0, 40)})`);
       allOk = false;
     }
   }
