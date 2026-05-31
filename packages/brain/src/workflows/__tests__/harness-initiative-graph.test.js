@@ -58,7 +58,10 @@ import {
   parsePrdNode,
   runGanLoopNode,
   dbUpsertNode,
+  reportNode,
   InitiativeState,
+  advanceTaskIndexNode,
+  stateHasError,
 } from '../harness-initiative.graph.js';
 
 describe('harness-initiative graph — structure', () => {
@@ -315,5 +318,76 @@ describe('dbUpsertNode', () => {
     expect(delta.error.node).toBe('dbUpsert');
     expect(delta.error.message).toContain('insert failed');
     expect(client.release).toHaveBeenCalled();
+  });
+});
+
+describe('reportNode — B45 Fix1: verdict 从 sub_tasks 推导', () => {
+  it('B45 Fix1: reportNode 从 sub_tasks 推导 PASS（all merged，final_e2e_verdict=null）', async () => {
+    const dbQueryMock = vi.fn().mockResolvedValue({ rows: [] });
+    const mockPool = {
+      connect: vi.fn().mockResolvedValue({ query: dbQueryMock, release: vi.fn() }),
+      query: vi.fn().mockResolvedValue({ rows: [] }),
+    };
+    const state = {
+      initiativeId: 'test-init-b45',
+      task: { id: 'test-task-b45', title: 'test', payload: {} },
+      sub_tasks: [{ id: 'ws1', status: 'merged', pr_url: 'https://github.com/x/y/pull/1', cost_usd: 0 }],
+      final_e2e_verdict: null,
+      final_e2e_failed_scenarios: [],
+      sprintDir: 'sprints/test-b45',
+      taskPlan: null,
+      prdContent: null,
+    };
+    await reportNode(state, { pool: mockPool });
+    const calls = dbQueryMock.mock.calls;
+    const runsCall = calls.find(c => typeof c[0] === 'string' && c[0].includes('initiative_runs'));
+    expect(runsCall, 'initiative_runs should be updated').toBeDefined();
+    expect(runsCall[1][1]).toBe('done');
+    const tasksCall = calls.find(c => typeof c[0] === 'string' && c[0].includes('UPDATE tasks'));
+    expect(tasksCall, 'tasks should be updated').toBeDefined();
+    expect(tasksCall[1][1]).toBe('completed');
+  });
+
+  it('B45 Fix1: reportNode 从 sub_tasks 推导 FAIL（有未 merged，final_e2e_verdict=null）', async () => {
+    const dbQueryMock = vi.fn().mockResolvedValue({ rows: [] });
+    const mockPool = {
+      connect: vi.fn().mockResolvedValue({ query: dbQueryMock, release: vi.fn() }),
+      query: vi.fn().mockResolvedValue({ rows: [] }),
+    };
+    const state = {
+      initiativeId: 'test-init-b45-fail',
+      task: { id: 'test-task-b45-fail', title: 'test', payload: {} },
+      sub_tasks: [{ id: 'ws1', status: 'failed', pr_url: null, cost_usd: 0 }],
+      final_e2e_verdict: null,
+      final_e2e_failed_scenarios: [],
+      sprintDir: 'sprints/test-b45-fail',
+      taskPlan: null,
+      prdContent: null,
+    };
+    await reportNode(state, { pool: mockPool });
+    const calls = dbQueryMock.mock.calls;
+    const runsCall = calls.find(c => typeof c[0] === 'string' && c[0].includes('initiative_runs'));
+    expect(runsCall, 'initiative_runs should be updated').toBeDefined();
+    expect(runsCall[1][1]).toBe('failed');
+  });
+});
+
+describe('advanceTaskIndexNode — B45 Fix2: serial gate error → stateHasError', () => {
+  it('B45 Fix2: advanceTaskIndexNode error 时 stateHasError 返回 error（条件边前置验证）', async () => {
+    // 构造 advance 会报 serial gate error 的场景：sub_tasks 有 ws1 但 status 不是 merged
+    const state = {
+      task: { id: 'init-id', title: 't', payload: {} },
+      initiativeId: 'init-id',
+      taskPlan: { tasks: [{ id: 'ws1', task_id: 'ws1' }] },
+      sub_tasks: [{ id: 'ws1', status: 'failed' }],
+      task_loop_index: 0,
+      task_loop_fix_count: 0,
+    };
+    const result = await advanceTaskIndexNode(state);
+    // advance 应该返回 error（serial gate：ws1 status !== merged）
+    expect(result.error).toBeDefined();
+    expect(result.error.node).toBe('advance');
+    // stateHasError 应该识别 error → 触发条件边走 report
+    expect(stateHasError(result)).toBe('error');
   });
 });
