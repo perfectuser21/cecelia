@@ -210,4 +210,26 @@ describe('probeGeoWebsite', () => {
     expect(geoResult.ok).toBe(false);
     expect(geoResult.detail).toContain('homepage=fail(503)');
   });
+
+  it('uses HEAD for posts_page and GET for homepage/blog_list', async () => {
+    const calls = [];
+    global.fetch = vi.fn((url, opts) => {
+      calls.push({ url, method: opts?.method || 'GET' });
+      const body = url.includes('/zh/blog/')
+        ? 'Visit our /zh/blog/ for articles'
+        : 'Welcome to ZenithJoyAI homepage';
+      return Promise.resolve({ status: 200, text: async () => body });
+    });
+
+    const { runProbes } = await import('../capability-probe.js');
+    await runProbes();
+
+    const homepageCall = calls.find(c => c.url.includes('/zh/') && !c.url.includes('blog') && !c.url.includes('posts'));
+    const blogCall = calls.find(c => c.url.includes('/zh/blog/'));
+    const postsCall = calls.find(c => c.url.includes('/zh/posts/'));
+
+    expect(homepageCall?.method).toBe('GET');
+    expect(blogCall?.method).toBe('GET');
+    expect(postsCall?.method).toBe('HEAD');
+  });
 });

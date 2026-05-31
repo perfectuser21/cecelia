@@ -509,7 +509,8 @@ async function probeGeoWebsite() {
   const checks = [
     { url: `${BASE}/zh/`, expect: 'ZenithJoyAI', label: 'homepage' },
     { url: `${BASE}/zh/blog/`, expect: '/zh/blog/', label: 'blog_list' },
-    { url: `${BASE}/zh/posts/`, expect: null, label: 'posts_page' },
+    // HEAD avoids full-page SSR body transfer; we only need status 200 (expect: null).
+    { url: `${BASE}/zh/posts/`, expect: null, label: 'posts_page', method: 'HEAD' },
   ];
 
   // Run all checks in parallel — sequential fetches would stack up to 3×timeout and
@@ -517,7 +518,11 @@ async function probeGeoWebsite() {
   const PER_CHECK_TIMEOUT_MS = 20_000;
   const results = await Promise.allSettled(
     checks.map(async (check) => {
-      const res = await fetch(check.url, { redirect: 'follow', signal: AbortSignal.timeout(PER_CHECK_TIMEOUT_MS) });
+      const res = await fetch(check.url, {
+        method: check.method || 'GET',
+        redirect: 'follow',
+        signal: AbortSignal.timeout(PER_CHECK_TIMEOUT_MS),
+      });
       const ok = res.status === 200 && (!check.expect || (await res.text()).includes(check.expect));
       return { label: check.label, ok, status: res.status };
     })
