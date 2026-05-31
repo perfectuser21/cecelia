@@ -1,9 +1,8 @@
-# Sprint Contract Draft (Round 2)
+# Sprint Contract Draft (Round 3)
 
-> **Round 2 变更**: 基于 Round 1 评审反馈（verdict: APPROVED）合并以下补充：
-> - [MINOR-1] 新增 BEHAVIOR「runs 按 created_at DESC 排序」的单元测试（第 13 条）
-> - [MINOR-2] 在 Risks/Generator 执行摘要中强化 `cost_usd::float8` cast 说明
-> - [NOTICE] 路由顺序（GET /initiative-runs 位于 GET /initiative-runs/:id 之前）保持原有约定
+> **Round 3 变更**: 基于 Round 2 评审补充 Evaluator oracle 文件：
+> - [CRITICAL] 新增 `contract-dod.md`（SKILL v8.0+ 必须文件）：含 4 条 ARTIFACT + 10 条 BEHAVIOR，内嵌 `manual:bash` 命令供 Evaluator 直接执行
+> - [CARRY] Round 2 全部内容保持不变（13 个单元测试、cost_usd::float8 注记、路由顺序约定）
 
 ## Golden Path
 
