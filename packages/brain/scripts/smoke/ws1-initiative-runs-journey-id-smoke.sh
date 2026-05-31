@@ -38,16 +38,17 @@ if (!sql.includes('journey_id')) throw new Error('Case 2 FAIL: 缺少 journey_id
 console.log('[smoke:ws1] Case 2 PASS: migration 285 存在');
 "
 
-echo "[smoke:ws1] Case 3: harness-initiative.graph.js 两处 INSERT 均含 journey_id"
+echo "[smoke:ws1] Case 3: harness-initiative.graph.js INSERT INTO initiative_runs 含 journey_id"
 node -e "
 const fs = require('fs');
 const content = fs.readFileSync('$GRAPH_FILE', 'utf8');
 const blocks = content.match(/INSERT INTO initiative_runs[\s\S]*?RETURNING id/g) || [];
-if (blocks.length < 2) throw new Error('Case 3 FAIL: 少于 2 个 INSERT 块，实际: ' + blocks.length);
+// runInitiative 过程式函数已在 #3200 删除，现在只有 dbUpsertNode 一处 INSERT
+if (blocks.length < 1) throw new Error('Case 3 FAIL: 无 INSERT INTO initiative_runs 块');
 blocks.forEach((b, i) => {
   if (!b.includes('journey_id')) throw new Error('Case 3 FAIL: INSERT 块 ' + (i+1) + ' 缺少 journey_id');
 });
-console.log('[smoke:ws1] Case 3 PASS: 两处 INSERT 均含 journey_id (' + blocks.length + ' 块)');
+console.log('[smoke:ws1] Case 3 PASS: INSERT 含 journey_id (' + blocks.length + ' 块)');
 "
 
 echo "[smoke:ws1] Case 4: harness.js 含 initiative-runs/:id 路由 + UUID 校验 + journey_id 返回"

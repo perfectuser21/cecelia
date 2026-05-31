@@ -17,7 +17,7 @@ const src = readFileSync('./src/workflows/harness-initiative.graph.js', 'utf8');
 
 const checks = [
   { name: 'prepInitiativeNode 读 base_repo',   regex: /state\\.task\??\\.payload\??\\.base_repo/ },
-  { name: 'runInitiative 读 base_repo',         regex: /task\\.payload\??\\.base_repo/ },
+  { name: 'runGanLoopNode/runSubTaskNode 读 base_repo', regex: /state\\.task\??\\.payload\??\\.base_repo/ },
   { name: 'baseRepo 传入 ensureHarnessWorktree', regex: /ensureHarnessWorktree\(\s*\{[^}]*baseRepo/ },
 ];
 
