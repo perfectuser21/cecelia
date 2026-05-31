@@ -92,7 +92,7 @@ describe('parseTaskPlan', () => {
       .toThrow(/estimated_minutes/);
 
     const t2 = makeValidTask('ws1');
-    t2.estimated_minutes = 120;
+    t2.estimated_minutes = 121;  // 新范围 30-120，121 超出
     expect(() => parseTaskPlan(JSON.stringify(makeValidPlan([t2]))))
       .toThrow(/estimated_minutes/);
   });
@@ -291,7 +291,7 @@ describe('parseTaskPlan — journey_type 透传', () => {
           files: ['packages/brain/src/server.js'],
           depends_on: [],
           complexity: 'S',
-          estimated_minutes: 20,
+          estimated_minutes: 30,
         },
       ],
     });

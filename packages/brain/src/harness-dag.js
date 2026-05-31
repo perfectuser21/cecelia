@@ -97,8 +97,8 @@ export function parseTaskPlan(jsonString) {
     if (!VALID_COMPLEXITY.has(t.complexity)) {
       throw new Error(`parseTaskPlan: tasks[${i}].complexity must be S|M|L`);
     }
-    if (typeof t.estimated_minutes !== 'number' || t.estimated_minutes < 20 || t.estimated_minutes > 60) {
-      throw new Error(`parseTaskPlan: tasks[${i}].estimated_minutes must be 20 <= n <= 60`);
+    if (typeof t.estimated_minutes !== 'number' || t.estimated_minutes < 30 || t.estimated_minutes > 120) {
+      throw new Error(`parseTaskPlan: tasks[${i}].estimated_minutes must be 30 <= n <= 120`);
     }
   }
 

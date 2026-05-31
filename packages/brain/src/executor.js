@@ -2172,7 +2172,8 @@ async function _prepareHarnessGeneratePrompt(task) {
 function _prepareHarnessReportPrompt(task, taskType) {
   const sprintDir = task.payload?.sprint_dir || 'sprints';
   const skillName = taskType === 'harness_report' ? '/harness-report' : '/sprint-report';
-  return `${skillName}\n\n## Harness v4.0 — Report\n\ntask_id: ${task.id}\nsprint_dir: ${sprintDir}\npr_url: ${task.payload?.pr_url || ''}\n\n${task.description || task.title}`;
+  const totalCost = (task.payload?.sub_tasks || []).reduce((a, s) => a + (s.cost_usd || 0), 0);
+  return `${skillName}\n\n## Harness v4.0 — Report\n\ntask_id: ${task.id}\nsprint_dir: ${sprintDir}\npr_url: ${task.payload?.pr_url || ''}\ninitiative_id: ${task.payload?.initiative_id || task.id}\nfeature_id: ${task.payload?.feature_id || ''}\nfeature_name: ${task.payload?.feature_name || task.title || ''}\njourney_id: ${task.payload?.journey_id || ''}\ntotal_cost: ${totalCost}\nscreenshots: ${JSON.stringify(task.payload?.screenshots || [])}\npr_urls: ${JSON.stringify(task.payload?.pr_urls || [])}\n\n${task.description || task.title}`;
 }
 
 function _prepareHarnessPlannerPrompt(task, _taskType) {

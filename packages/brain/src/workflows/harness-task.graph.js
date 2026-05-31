@@ -464,6 +464,12 @@ export async function mergePrNode(state, opts = {}) {
       return { error: { node: 'merge_pr', message: `merge failed after rebase: ${msg}` } };
     }
 
+    const ALREADY_MERGED_RE = /already merged|not open|pull request.*closed/i;
+    if (ALREADY_MERGED_RE.test(msg)) {
+      console.log(`[merge_pr] PR already merged, treating as success pr=${prUrl}`);
+      try { if (state.worktreePath) await cleanupHarnessWorktree(state.worktreePath); } catch {}
+      return { status: 'merged', ci_status: 'merged', merged_at: new Date().toISOString() };
+    }
     if (!BEHIND_RE.test(msg)) {
       console.error(`[merge_pr] non-recoverable merge error pr=${prUrl}: ${msg}`);
       return { error: { node: 'merge_pr', message: msg } };
