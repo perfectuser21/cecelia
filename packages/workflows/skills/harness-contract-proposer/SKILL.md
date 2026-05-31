@@ -4,10 +4,13 @@ description: |
   Harness Contract Proposer — Harness v5 GAN Layer 2a：
   读 PRD，GAN 对抗写 Golden Path 合同（每步含真实验证命令）；
   Reviewer APPROVED 后倒推拆 task-plan.json。
-version: 7.12.0
+version: 8.2.0
 created: 2026-04-08
-updated: 2026-05-25
+updated: 2026-05-30
 changelog:
+  - 8.2.0: 修复自查 checklist 旧格式引用 — contract-dod-ws*.md → contract-dod.md（与 v8.0 单 Sprint 单文件格式对齐）
+  - 8.1.0: windows_cloud workflow 内容审查强制规则 — 写任何 windows_cloud BEHAVIOR 引用 GHA workflow 之前，Proposer 必须用 Bash 工具 cat 读取 workflow 实际内容，做用户路径 1:1 映射检查，缺失步骤标注 [CI_GAP]，禁止将文件存在/大小/版本号检查算作业务行为验证；违反直接扣 DoD 第 1 维至 0 分
+  - 8.0.0: 移除 Workstream 拆分概念 — 对齐 Anthropic 官方 v2 Harness 设计（一个 Sprint = 一个 Generator = 一个 PR）。删除"单 WS ≤ 200 行"切分死规则、depends_on 串行链校验；task-plan.json 始终只输出 1 个 task（ws1）；测试目录改为 tests/；DoD 文件改为 contract-dod.md
   - 7.12.0: 假绿反模式强制禁止（Bug 10 — W28 GAN REVISION 实证）— (1) 新端点 BEHAVIOR 禁止 "404-acceptable" 旁路：Brain 通用 404 handler 返回 {"error":"Not Found"} 会让 jq 检查全部假绿，新路由未注册时 BEHAVIOR 必须 FAIL；(2) 禁止用环境操作（mkdir/touch/health curl）作为 WS 代码实现的 BEHAVIOR 断言；加自查 checklist 第 7 条
   - 7.11.0: GAN 来源标注（FROM_PRD/AI_ADDED）— 每个 Golden Path Step 必须声明来源标签 + 理由；DoD BEHAVIOR:E2E 段（user_facing 专属）含截图规格 + Claude 视觉自验期望；mac_web Playwright 模板加 page.screenshot() 在关键操作前后
   - 7.10.0: depends_on 串行死规则 — 修 W52 step6 并行根因：migration ws 必须是后续所有 ws 的前置依赖，`depends_on: []` 只允许 ws1；自查 checklist 第 7 条 python3 断言
@@ -41,8 +44,8 @@ changelog:
 产出：
 
 1. **`${SPRINT_DIR}/contract-draft.md`** — Golden Path Steps 合同，每步含验证命令 + 硬阈值，末尾含 E2E 验收脚本
-2. **`${SPRINT_DIR}/contract-dod-ws{N}.md`** — 每个 workstream 的 DoD（只装 [ARTIFACT] 条目）
-3. **`${SPRINT_DIR}/tests/ws{N}/*.test.ts`** — 真实失败测试（TDD Red 阶段）
+2. **`${SPRINT_DIR}/contract-dod.md`** — 整个 Sprint 的 DoD（[ARTIFACT] + [BEHAVIOR] 条目）
+3. **`${SPRINT_DIR}/tests/*.test.ts`** — 真实失败测试（TDD Red 阶段）
 
 GAN 收敛（Reviewer APPROVED）后输出第 4 件：
 
@@ -87,9 +90,9 @@ Generator 写代码 + vitest 单元测试
 
 | 类型 | 住哪 | 说明 |
 |---|---|---|
-| **[ARTIFACT]** | `contract-dod-ws{N}.md` 内 ARTIFACT 段 | 静态产出物：文件/内容/配置 |
-| **[BEHAVIOR]** | `contract-dod-ws{N}.md` 内 BEHAVIOR 段（**带 `manual:bash` 内嵌可执行命令**） | 运行时行为：API 响应/函数返回 |
-| 辅助单测 | `tests/ws{N}/*.test.ts` 的 `it()` 块 | generator 写代码用的 vitest，**不当 evaluator oracle**——evaluator 不读 vitest 输出，只跑 DoD 文件 BEHAVIOR 的 manual:bash 命令 |
+| **[ARTIFACT]** | `contract-dod.md` 内 ARTIFACT 段 | 静态产出物：文件/内容/配置 |
+| **[BEHAVIOR]** | `contract-dod.md` 内 BEHAVIOR 段（**带 `manual:bash` 内嵌可执行命令**） | 运行时行为：API 响应/函数返回 |
+| 辅助单测 | `tests/*.test.ts` 的 `it()` 块 | generator 写代码用的 vitest，**不当 evaluator oracle**——evaluator 不读 vitest 输出，只跑 DoD 文件 BEHAVIOR 的 manual:bash 命令 |
 
 **关键变化（v7.4 vs v7.3）**：
 
@@ -104,9 +107,9 @@ vitest 测试文件还要写（generator TDD red-green 用），但**不再被 e
 ### Step 1: 读取 PRD
 
 ```bash
-# TASK_ID、SPRINT_DIR、PLANNER_BRANCH、PROPOSE_ROUND、INITIATIVE_ID、REVIEW_BRANCH、DB 由 cecelia-run 通过 prompt 注入，直接使用
+# TASK_ID、SPRINT_DIR、PLANNER_BRANCH、PROPOSE_ROUND、INITIATIVE_ID、DB 由 cecelia-run 通过 prompt 注入，直接使用
 # 每次调用 = 一轮 GAN；Brain 的 harness-gan-graph.js 管理轮次循环和 APPROVED/REVISION 路由
-# REVIEW_BRANCH: 上一轮 Reviewer 的分支（第一轮为空）；DB: postgresql://localhost/cecelia（或 $DB_URL）
+# DB: postgresql://localhost/cecelia（或 $DB_URL）
 git fetch origin "${PLANNER_BRANCH}" 2>/dev/null || true
 git show "origin/${PLANNER_BRANCH}:${SPRINT_DIR}/sprint-prd.md" 2>/dev/null || \
   cat "${SPRINT_DIR}/sprint-prd.md"
@@ -115,14 +118,6 @@ git show "origin/${PLANNER_BRANCH}:${SPRINT_DIR}/sprint-prd.md" 2>/dev/null || \
 读取 journey_type（从 PRD 末尾）：
 ```bash
 JOURNEY_TYPE=$(grep -m1 "^## journey_type:" "${SPRINT_DIR}/sprint-prd.md" | sed 's/## journey_type: //' | tr -d ' ') || JOURNEY_TYPE="autonomous"
-```
-
-如果是修订轮（propose_round > 1），读取 Reviewer 反馈：
-```bash
-if [ -n "$REVIEW_BRANCH" ]; then
-  git fetch origin "${REVIEW_BRANCH}" 2>/dev/null || true
-  git show "origin/${REVIEW_BRANCH}:${SPRINT_DIR}/contract-review-feedback.md" 2>/dev/null || true
-fi
 ```
 
 ---
@@ -475,6 +470,25 @@ exit 0
 
 ---
 
+### windows_cloud BEHAVIOR 必须满足"用户路径 1:1 映射"规则（强制）
+
+在写任何 `[BEHAVIOR]` 引用 GHA workflow 之前，Proposer 必须：
+
+1. 用 Bash 工具执行 `cat .github/workflows/<workflow文件名>.yml`，读取该 workflow 的实际内容
+2. 列出用户真实操作路径（每一步用户会做什么），例如：
+   - 用户安装 Agent
+   - 用户扫码绑定（session 写入本地文件）
+   - 用户触发发布
+   - Agent 读取 session 文件，注入 DOUYIN_COOKIES
+   - 发布返回 ok:true，无浏览器弹出
+3. 对比 workflow 里的 steps，确认每一步用户操作都有对应的 step 验证
+4. 如果 workflow 缺少某个用户步骤的验证 → 必须在合同里标注 `[CI_GAP: <缺失的步骤>]` 并要求 Generator 补写 workflow step
+5. **禁止将只检查文件存在/大小/版本号的 step 算作业务行为验证**
+
+违反此规则（直接写 `[BEHAVIOR] <workflow名> PASS` 而不读 workflow 内容）→ Reviewer 第 1 维 DoD 机检性直接扣至 0 分
+
+---
+
 ### target_environment = linux_server（生产 API — SSH 到 hk-vps 执行）
 
 ```bash
@@ -507,43 +521,11 @@ echo "✅ 生产环境 Golden Path 验证通过"
 
 ---
 
-## Workstreams
-
-workstream_count: {N}
-
-### Workstream 1: {标题}
-
-**范围**: {清晰的实现边界}
-**大小**: S(<100行) / M(100-300行) / L(>300行)
-**依赖**: 无 / Workstream X 完成后
-
-**BEHAVIOR 覆盖测试文件**: `tests/ws1/xxx.test.ts`
-
----
-
-## Workstreams 切分硬规则（v7.7 — B14 加，2026-05-12）
-
-**死规则**：
-
-1. 单 workstream **≤ 200 行**净增 + **≤ 3 文件** — 超就强制再切
-2. 整 contract 净增 < 200 行时才允许 `workstream_count=1`
-3. proposer 自查 checklist 加第 6 条：算每 ws 预期 LoC，超 200 强制切
-
-**反例（W36 实证）**：planner 写"加 /decrement endpoint" PRD 254 行，proposer 没切，ws1 塞 `server.js + tests + README` 三文件 335 行 → fix loop 跑 3 round → FAIL。
-
-**正例**：W36 应切 3 ws：
-- ws1 `server.js` 路由 ~50 行 S
-- ws2 tests 套件 ~150 行 M
-- ws3 README ~70 行 S
-- ws2 依赖 ws1
-
----
-
 ## Test Contract
 
-| Workstream | Test File | BEHAVIOR 覆盖 | 预期红证据 |
+| 功能 | Test File | BEHAVIOR 覆盖 | 预期红证据 |
 |---|---|---|---|
-| WS1 | `tests/ws1/xxx.test.ts` | {行为列表} | WS1 → N failures |
+| 整个 Sprint | `tests/xxx.test.ts` | {行为列表} | → N failures |
 ````
 
 **验证命令写作规范**（Reviewer 重点检查，GAN 对抗焦点）：
@@ -636,15 +618,14 @@ PRD `## Response Schema` 段定义的字段名（key 字面值）是**不可改�
 
 ### 自查 checklist（contract 写完前必跑）
 
-写完 contract-dod-ws*.md 前 proposer **必须自查**：
+写完 contract-dod.md 前 proposer **必须自查**：
 
 1. **提取 PRD response 字段名** → grep 出 `## Response Schema` 段的字面 key 名（如 `result`, `operation`, `error`）
-2. **提取 contract jq -e 字段名** → grep 出 contract-dod-ws*.md 里 `jq -e '.<key>'` 的字面 key 名
+2. **提取 contract jq -e 字段名** → grep 出 contract-dod.md 里 `jq -e '.<key>'` 的字面 key 名
 3. **断言**：contract keys 集合 == PRD keys 集合（字面相等）
 4. **断言**：PRD 禁用列表里的字段名 **绝对不在** contract 任何 jq -e 命令的正向断言里出现（只能在反向 `! has(...)` 检查里）
-5. **断言（v7.6 新加 — Bug 9）**：`grep -c '^- \[ \] \[BEHAVIOR\]' contract-dod-ws*.md` ≥ 4。少于 4 → contract 作废，按 Step 2b 模板补齐到 ≥ 4 条不同场景（schema 字段 + keys 完整性 + 禁用字段反向 + error path 至少各 1）
-6. **depends_on 串行链（v7.10 新加）**：`python3 -c "import json,sys; d=json.load(open('${SPRINT_DIR}/task-plan.json')); ws=[t['task_id'] for t in d['tasks']]; err=[t['task_id'] for t in d['tasks'] if t['task_id']!='ws1' and not t.get('depends_on')]; sys.exit(1) if err else print('OK')"`  ws2+ 必须有 `depends_on`
-7. **假绿自查（v7.12 新加 — Bug 10）**：对每条 `[BEHAVIOR]` 命令，心想"如果 WS 对应的代码**一行都没写**，这条命令会 FAIL 吗？"。答案是 YES → 真红，合格；答案是 NO（mkdir/touch/health check/404-acceptable 都能通过）→ **假绿，必须改写**
+5. **断言（v7.6 新加 — Bug 9）**：`grep -c '^- \[ \] \[BEHAVIOR\]' contract-dod.md` ≥ 4。少于 4 → contract 作废，按 Step 2b 模板补齐到 ≥ 4 条不同场景（schema 字段 + keys 完整性 + 禁用字段反向 + error path 至少各 1）
+6. **假绿自查（v7.12 新加 — Bug 10）**：对每条 `[BEHAVIOR]` 命令，心想"如果对应代码**一行都没写**，这条命令会 FAIL 吗？"。答案是 YES → 真红，合格；答案是 NO（mkdir/touch/health check/404-acceptable 都能通过）→ **假绿，必须改写**
 
 任一断言 fail → contract 草案作废，**用 PRD 字面字段名 + ≥ 4 条 [BEHAVIOR] 重写**。
 
@@ -700,13 +681,13 @@ RESP=$(curl -f localhost:3001/multiply?a=7&b=5)
 
 ---
 
-### Step 2b: 写 contract-dod-ws{N}.md（v7.4 新结构）
+### Step 2b: 写 contract-dod.md（v8.0 — 单文件，覆盖整个 Sprint）
 
-**关键变化**：BEHAVIOR 段不再是"索引指向 vitest"，而是**内嵌可独立执行的 manual:bash 命令**。Evaluator v1.1 直接跑这些命令判 PASS/FAIL，不读 vitest 输出。
+**关键变化**：一个 Sprint 只有一个 DoD 文件（`contract-dod.md`），不再按 WS 分拆。BEHAVIOR 段内嵌可独立执行的 manual:bash 命令，Evaluator 直接跑。
 
 ### ⚠️ BEHAVIOR 数量硬阈值（v7.6 — 修 Bug 9）
 
-`contract-dod-ws{N}.md` **必须 ≥ 4 条** `- [ ] [BEHAVIOR]` 条目，至少覆盖 4 类场景各一条：
+`contract-dod.md` **必须 ≥ 4 条** `- [ ] [BEHAVIOR]` 条目，至少覆盖 4 类场景各一条：
 
 1. **schema 字段值**（PRD Response Schema 每个字段一条 jq -e）
 2. **keys 完整性**（`jq -e 'keys == [...]'` 整体匹配）
@@ -732,16 +713,15 @@ W26 r3 proposer 在 contract-dod 末尾写：
 ```bash
 mkdir -p "${SPRINT_DIR}"
 
-cat > "${SPRINT_DIR}/contract-dod-ws1.md" << 'DODEOF'
+cat > "${SPRINT_DIR}/contract-dod.md" << 'DODEOF'
 ---
 skeleton: false
 journey_type: {journey_type}
 ---
-# Contract DoD — Workstream 1: {标题}
+# Contract DoD — Sprint: {标题}
 
 **范围**: {实现边界}
 **大小**: S/M/L
-**依赖**: 无 / Workstream X
 
 ## ARTIFACT 条目
 
@@ -807,12 +787,12 @@ DODEOF
 ### Step 2c: 写真实失败测试
 
 ```bash
-mkdir -p "${SPRINT_DIR}/tests/ws1"
-cat > "${SPRINT_DIR}/tests/ws1/xxx.test.ts" << 'TESTEOF'
+mkdir -p "${SPRINT_DIR}/tests"
+cat > "${SPRINT_DIR}/tests/xxx.test.ts" << 'TESTEOF'
 import { describe, it, expect } from 'vitest';
-import { targetFunction } from '../../../../packages/brain/src/target-module.js';
+import { targetFunction } from '../../../packages/brain/src/target-module.js';
 
-describe('Workstream 1 — {功能名} [BEHAVIOR]', () => {
+describe('{功能名} [BEHAVIOR]', () => {
   it('{行为1}', async () => {
     const result = await targetFunction({ input: 'x' });
     expect(result).toBe('expected_value');
@@ -825,8 +805,8 @@ describe('Workstream 1 — {功能名} [BEHAVIOR]', () => {
 TESTEOF
 
 # 确认 Red evidence
-npx vitest run "${SPRINT_DIR}/tests/ws1/" --reporter=verbose 2>&1 | tee /tmp/ws1-red.log || true
-grep -E "FAIL|failed|✗" /tmp/ws1-red.log || { echo "ERROR: 测试未产生 Red"; exit 1; }
+npx vitest run "${SPRINT_DIR}/tests/" --reporter=verbose 2>&1 | tee /tmp/sprint-red.log || true
+grep -E "FAIL|failed|✗" /tmp/sprint-red.log || { echo "ERROR: 测试未产生 Red"; exit 1; }
 ```
 
 ---
@@ -835,10 +815,7 @@ grep -E "FAIL|failed|✗" /tmp/ws1-red.log || { echo "ERROR: 测试未产生 Red
 
 **每轮都生成**（REVISION 轮的 task-plan 在被打回的分支上无害；APPROVED 即最后一轮 proposer 的分支，inferTaskPlan 从此读取）：
 
-从 Golden Path Steps 倒推拆任务：
-- 每个 Golden Path Step → 对应 1-N 个 Task（按 LOC 估算）
-- 每个 Task 预估 < 200 行（soft limit）；> 400 行强制拆分
-- 线性依赖链：ws2 depends_on ws1
+一个 Sprint = 一个 Generator = 一个 PR。task-plan.json 始终只有一个 task（ws1），Generator 读合同后一口气实现全部功能。
 
 ```bash
 cat > "${SPRINT_DIR}/task-plan.json" << 'JSONEOF'
@@ -849,26 +826,16 @@ cat > "${SPRINT_DIR}/task-plan.json" << 'JSONEOF'
   "tasks": [
     {
       "task_id": "ws1",
-      "title": "{对应 Golden Path Step 1 的实现}",
+      "title": "{整个 Sprint 的实现目标}",
       "scope": "{What，不写 How}",
       "dod": [
-        "[BEHAVIOR] {可运行验证，对应合同 Step 1 验证命令}",
+        "[BEHAVIOR] {可运行验证，对应合同验证命令}",
         "[ARTIFACT] {文件存在}"
       ],
       "files": ["{预期受影响文件}"],
       "depends_on": [],
       "complexity": "S|M|L",
-      "estimated_minutes": 30
-    },
-    {
-      "task_id": "ws2",
-      "title": "{对应 Golden Path Step 2 的实现}",
-      "scope": "...",
-      "dod": ["[BEHAVIOR] ..."],
-      "files": ["..."],
-      "depends_on": ["ws1"],
-      "complexity": "M",
-      "estimated_minutes": 45
+      "estimated_minutes": 60
     }
   ]
 }
@@ -876,64 +843,9 @@ JSONEOF
 ```
 
 **字段约束**：
-- `task_id`: ws1/ws2/... 逻辑 ID（Brain 入库时映射 UUID）
-- `estimated_minutes`: 20 ≤ n ≤ 60
+- `task_id`: 固定 `ws1`（一个 Sprint 只有一个 task）
+- `estimated_minutes`: 30 ≤ n ≤ 120
 - `dod`: 至少 1 个 `[BEHAVIOR]`
-- `depends_on`: 线性链（ws2 depends_on ws1 即可）
-
----
-
-### ⚠️ depends_on 串行死规则（v7.10 — 修并行根因）
-
-**只要满足以下任一条件，必须在 `depends_on` 显式声明前置 ws：**
-
-| 依赖类型 | 说明 | 并行后果 |
-|---|---|---|
-| schema 依赖 | ws 的 BEHAVIOR 验证需要某 migration 已在 DB 里 | evaluator 验 column 不存在 → FAIL |
-| 数据依赖 | ws 功能依赖前置 ws 写入的行 | 数据不存在 → FAIL |
-| 接口依赖 | ws 路由层依赖前置 ws 的 service 函数 | import 报错 → FAIL |
-
-**强制串行链（Reviewer 第 8 维检查）**：
-
-```
-ws1（migration）: depends_on: []          ← 唯一可以为空
-ws2（service）:   depends_on: ["ws1"]     ← migration 必须先进 DB
-ws3（routes）:    depends_on: ["ws2"]     ← service 必须先存在
-ws4（smoke）:     depends_on: ["ws3"]     ← 全链路最后跑
-```
-
-**禁止**：`depends_on: []` 出现在 ws1 以外的任何 ws。
-
-**反例（W52 step6 实证）**：
-
-```json
-// ❌ 全部 depends_on: [] → Brain 并发 dispatch → ws2 evaluator 验
-//    publish_status 列但 ws1 migration 未合并 → FAIL → 无限 fix loop
-{ "task_id": "ws1", "depends_on": [] },
-{ "task_id": "ws2", "depends_on": [] },
-{ "task_id": "ws3", "depends_on": [] },
-{ "task_id": "ws4", "depends_on": [] }
-```
-
-**自查 checklist 第 7 条（v7.10 新增）**：写完 task-plan.json 后必跑：
-
-```bash
-python3 - << 'PYEOF'
-import json
-plan = json.load(open("${SPRINT_DIR}/task-plan.json"))
-tasks = plan["tasks"]
-for i, t in enumerate(tasks):
-    if i == 0:
-        assert t["depends_on"] == [], f"FAIL: ws1.depends_on 应为 []，实际 {t['depends_on']}"
-    else:
-        prev = tasks[i-1]["task_id"]
-        assert prev in t["depends_on"], \
-            f"FAIL: {t['task_id']}.depends_on 缺少前置 {prev}（并行根因！）"
-print("✅ depends_on 串行链验证通过")
-PYEOF
-```
-
-断言 fail → task-plan.json 作废，补全后重写。
 
 ---
 
@@ -945,8 +857,8 @@ PYEOF
 git checkout -b "${PROPOSE_BRANCH}" 2>/dev/null || git checkout "${PROPOSE_BRANCH}"
 
 git add "${SPRINT_DIR}/contract-draft.md" \
-        "${SPRINT_DIR}/contract-dod-ws"*.md \
-        "${SPRINT_DIR}/tests/ws"*/ \
+        "${SPRINT_DIR}/contract-dod.md" \
+        "${SPRINT_DIR}/tests/" \
         "${SPRINT_DIR}/task-plan.json" 2>/dev/null  # 每轮生成；2>/dev/null 防御 LLM 偶发漏写（下游 inferTaskPlan 兜底报错）
 
 git commit -m "feat(contract): round-${PROPOSE_ROUND} Golden Path draft + DoD + tests + task-plan"
@@ -957,9 +869,8 @@ git push origin "${PROPOSE_BRANCH}"
 
 ```bash
 # 写结果文件（Brain 读文件，不读 stdout）
-WORKSTREAM_COUNT=$(find "${SPRINT_DIR}" -name "contract-dod-ws*.md" 2>/dev/null | wc -l | tr -d ' ')
 cat > /workspace/.brain-result.json << BREOF
-{"propose_branch":"${PROPOSE_BRANCH}","workstream_count":${WORKSTREAM_COUNT},"task_plan_path":"${SPRINT_DIR}/task-plan.json"}
+{"propose_branch":"${PROPOSE_BRANCH}","workstream_count":1,"task_plan_path":"${SPRINT_DIR}/task-plan.json"}
 BREOF
 echo "[proposer] .brain-result.json 写入完成 propose_branch=${PROPOSE_BRANCH}"
 ```
@@ -968,7 +879,7 @@ echo "[proposer] .brain-result.json 写入完成 propose_branch=${PROPOSE_BRANCH
 
 proposer 调用结束时必须向 `/workspace/.brain-result.json` 写入 JSON：
 - `propose_branch`：Brain 注入的 `$PROPOSE_BRANCH` 值
-- `workstream_count`：contract-dod-ws*.md 文件数量
+- `workstream_count`：固定为 1（一个 Sprint = 一个 Generator）
 - `task_plan_path`：`${SPRINT_DIR}/task-plan.json`
 
 Brain 读此文件获取结果，不解析 stdout。`$PROPOSE_BRANCH` 由 Brain 注入，proposer 直接使用。
