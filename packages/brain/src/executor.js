@@ -2976,6 +2976,9 @@ export function computeHarnessInitiativeOk(final) {
   if (!final) return false;
   if (final.error) return false;
   if (final.final_e2e_verdict === 'FAIL') return false;
+  // B48: 只有 reportNode 真正跑完（report_path 已写入）才视为 ok。
+  // graph 处于 interrupt 等待（planner callback 未回）时 final 无 report_path → 返回 null。
+  if (!final.report_path) return null;
   return true;
 }
 
@@ -3086,8 +3089,11 @@ async function triggerCeceliaRun(task) {
 
     try {
       const result = await runHarnessInitiativeRouter(task);
-      // harness_initiative 是同步阻塞执行（无回调），executor 必须自行回写状态
-      if (result.ok) {
+      // B48: ok=null → graph 在 interrupt 等待（planner/callback 还没回来），
+      // 留 in_progress，reportNode B1 fix 会在完成时回写 completed/failed。
+      if (result.ok === null) {
+        console.log(`[executor] harness graph interrupted/waiting task=${task.id} thread=${result.threadId}, leaving in_progress`);
+      } else if (result.ok) {
         await updateTaskStatus(task.id, 'completed');
       } else {
         await updateTaskStatus(task.id, 'failed', { error_message: String(result.error || 'harness graph failed').slice(0, 500) });
