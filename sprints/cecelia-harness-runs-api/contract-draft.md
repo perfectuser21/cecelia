@@ -1,10 +1,9 @@
-# Sprint Contract Draft (Round 4)
+# Sprint Contract Draft (Round 5)
 
-> **Round 4 变更**: 补全 contract-dod.md BEHAVIOR 覆盖盲区：
-> - [BEHAVIOR+] 新增「runs 每条含全部 10 个必须字段」正向字段完整性检查（manual:bash 内嵌命令）
-> - [BEHAVIOR+] 新增「cost_usd 序列化为 number 或 null」运行时类型检查（补充 ARTIFACT cost_usd::float 的静态代码检查）
-> - [E2E+] final-e2e 新增 E2E 6：字段 schema + cost_usd 类型联合验收（共 6 条 E2E）
-> - [CARRY] Round 3 全部内容保持不变（4 ARTIFACT + 10 BEHAVIOR → 现在 12 BEHAVIOR，13 个红色单元测试）
+> **Round 5 变更**: 合约已完整，无新增条目。
+> - [STATUS] Round 4 reviewer 已批准（verdict: APPROVED）；13/13 红测稳定，路由 `GET /initiative-runs` 尚未实现
+> - [CARRY] Round 4 全部内容保持不变（4 ARTIFACT + 12 BEHAVIOR，E2E 6 条，13 个红色单元测试）
+> - 本 Round 为 Generator 就绪确认 pass，无 contract 内容修改
 
 ## Golden Path
 
