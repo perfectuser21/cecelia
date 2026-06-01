@@ -163,6 +163,36 @@ ${state.task?.payload?.prep_prd_body || '（未提供，Planner 从 sprint-prd.m
   // thread_id 优先用 opts.configurable.thread_id（LangGraph 运行时注入），兜底用计算值
   const threadId = opts.configurable?.thread_id || `harness-initiative:${initiativeId}:planner`;
 
+  // 注入 initiative_runs 历史上下文（失败不阻塞）
+  let runHistoryText = '';
+  try {
+    const journeyId = state.task?.payload?.journey_id;
+    if (journeyId) {
+      const fetchFn = globalThis.fetch;
+      const runsRes = await fetchFn('http://localhost:5221/api/brain/harness/runs?limit=10');
+      if (runsRes.ok) {
+        const runsData = await runsRes.json();
+        const allRuns = runsData.runs || runsData || [];
+        const runs = allRuns
+          .filter(r => r.journey_id === journeyId || r.journeyId === journeyId)
+          .slice(0, 5);
+        if (runs.length > 0) {
+          const lines = runs.map((r, i) => {
+            const status = r.status || 'unknown';
+            const date = r.completed_at || r.created_at || '';
+            const dateStr = date ? date.slice(0, 10) : 'N/A';
+            const title = r.title || r.sprint_dir || `Run${i + 1}`;
+            return `Run${i + 1}=${status}(${dateStr}) [${title}]`;
+          });
+          runHistoryText = `\n\n## Run历史(最近${runs.length}次)\n${lines.join('\n')}`;
+        }
+      }
+    }
+  } catch (err) {
+    console.warn(`[harness-initiative] fetchRunHistory failed (non-blocking): ${err.message}`);
+  }
+  const plannerPromptFinal = runHistoryText ? `${prompt}${runHistoryText}` : prompt;
+
   const acctOpts = { task: { ...state.task, task_type: 'harness_planner' }, env: {} };
   try {
     await resolveAccount(acctOpts, { taskId: state.task.id });
@@ -173,7 +203,7 @@ ${state.task?.payload?.prep_prd_body || '（未提供，Planner 从 sprint-prd.m
   try {
     await spawnFn({
       task: { ...state.task, task_type: 'harness_planner' },
-      prompt,
+      prompt: plannerPromptFinal,
       worktreePath: state.worktreePath,
       containerId,
       env: {
