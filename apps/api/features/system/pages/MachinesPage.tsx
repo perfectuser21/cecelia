@@ -7,12 +7,12 @@ import {
 import { machinesApi, Machine } from '../api/machines.api';
 
 const COUNTRY_FLAG: Record<string, string> = { US: '🇺🇸', CN: '🇨🇳', HK: '🇭🇰' };
-const LOCATION_LABEL: Record<string, string> = { US: '美国', CN: '西安', HK: '香港' };
+const LOCATION_LABEL: Record<string, string> = { US: '美国', Xian: '西安', HK: '香港', CN: '西安' };
 
 function groupByLocation(machines: Machine[]): Record<string, Machine[]> {
   const groups: Record<string, Machine[]> = {};
   for (const m of machines) {
-    const loc = m.metadata.effective_country || 'Unknown';
+    const loc = m.metadata.physical_location || m.metadata.effective_country || 'Unknown';
     if (!groups[loc]) groups[loc] = [];
     groups[loc].push(m);
   }
@@ -113,7 +113,7 @@ export default function MachinesPage() {
   const conflictCount = machines.filter(m => m.conflicts.some(c => c.severity === 'error')).length;
   const warnCount = machines.filter(m => m.conflicts.some(c => c.severity === 'warning')).length;
   const groups = groupByLocation(machines);
-  const locationOrder = ['US', 'HK', 'CN'];
+  const locationOrder = ['US', 'HK', 'Xian'];
 
   if (loading) {
     return (
