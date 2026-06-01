@@ -96,6 +96,34 @@ router.get('/runs', async (req, res) => {
 });
 
 /**
+ * GET /runs/:id
+ * 按 run UUID 精确查询单条 initiative_runs 记录（7 列）
+ * :id 必须是合法 UUID，否则返回 400
+ */
+router.get('/runs/:id', async (req, res) => {
+  const { id } = req.params;
+  if (!UUID_RE.test(id)) {
+    return res.status(400).json({ error: 'invalid id: must be a UUID' });
+  }
+  try {
+    const { rows } = await pool.query(
+      `SELECT id, initiative_id, phase, journey_type,
+              started_at, completed_at, failure_reason
+       FROM initiative_runs
+       WHERE id = $1::uuid`,
+      [id]
+    );
+    if (rows.length === 0) {
+      return res.status(404).json({ error: 'run not found' });
+    }
+    res.json(rows[0]);
+  } catch (err) {
+    console.error('[GET /harness/runs/:id]', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
  * GET /initiative/:id/detail
  * 返回 initiative 详情：6 字段（initiative_id/prd_content/contract_content/gan_rounds/step_timing/screenshot_urls）
  * 来源：tasks + initiative_contracts + task_events + checkpoint_blobs
