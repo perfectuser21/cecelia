@@ -238,17 +238,17 @@ describe('account-usage', () => {
     });
 
     it('部分账号被标记时应返回 false', () => {
-      // H14: ACCOUNTS=[account1, account2]，只 mark account1 → 部分 capped
+      // B51: ACCOUNTS=[account2, account3]，只 mark account2 → 部分 capped
       const futureTime = new Date(Date.now() + 7200000).toISOString();
-      markSpendingCap('account1', futureTime);
+      markSpendingCap('account2', futureTime);
       expect(isAllAccountsSpendingCapped()).toBe(false);
     });
 
     it('所有账号都被标记时应返回 true', () => {
-      // H14: ACCOUNTS=[account1, account2]，全部 mark → 全 capped
+      // B51: ACCOUNTS=[account2, account3]，全部 mark → 全 capped
       const futureTime = new Date(Date.now() + 7200000).toISOString();
-      markSpendingCap('account1', futureTime);
       markSpendingCap('account2', futureTime);
+      markSpendingCap('account3', futureTime);
       expect(isAllAccountsSpendingCapped()).toBe(true);
     });
 
@@ -268,10 +268,10 @@ describe('account-usage', () => {
 
   describe('getSpendingCapStatus', () => {
     it('应返回所有 2 个账号的状态', () => {
-      // H14: ACCOUNTS=[account1, account2]
+      // B51: ACCOUNTS=[account2, account3]
       const status = getSpendingCapStatus();
       expect(status).toHaveLength(2);
-      expect(status.map(s => s.accountId)).toEqual(['account1', 'account2']);
+      expect(status.map(s => s.accountId)).toEqual(['account2', 'account3']);
     });
 
     it('未被标记的账号应返回 capped=false, resetTime=null', () => {
@@ -291,7 +291,7 @@ describe('account-usage', () => {
       expect(a2.capped).toBe(true);
       expect(a2.resetTime).toBe(futureTime);
 
-      const a1 = status.find(s => s.accountId === 'account1');
+      const a1 = status.find(s => s.accountId === 'account3');
       expect(a1.capped).toBe(false);
     });
   });
@@ -321,7 +321,7 @@ describe('account-usage', () => {
       });
 
       const usage = await getAccountUsage();
-      expect(usage.account1).toEqual(cachedRow);
+      expect(usage.account2).toEqual(cachedRow);
       // fetch 不应被调用（因为缓存命中）
       expect(mockFetch).not.toHaveBeenCalled();
     });
@@ -334,11 +334,11 @@ describe('account-usage', () => {
       mockPool.query.mockResolvedValue({ rows: [] });
 
       const usage = await getAccountUsage(true);
-      // H14: ACCOUNTS=[account1, account2]，应调用 fetch 2 次
+      // B51: ACCOUNTS=[account2, account3]，应调用 fetch 2 次
       expect(mockFetch).toHaveBeenCalledTimes(2);
       // 所有账号都应有数据
-      expect(usage.account1).toBeDefined();
       expect(usage.account2).toBeDefined();
+      expect(usage.account3).toBeDefined();
     });
 
     it('API 失败时应回退到过期缓存', async () => {
@@ -368,7 +368,7 @@ describe('account-usage', () => {
       });
 
       const usage = await getAccountUsage();
-      expect(usage.account1).toEqual(staleRow);
+      expect(usage.account2).toEqual(staleRow);
     });
 
     it('API 失败且无过期缓存时应返回默认零值', async () => {
@@ -377,8 +377,8 @@ describe('account-usage', () => {
       mockPool.query.mockResolvedValue({ rows: [] }); // 无缓存
 
       const usage = await getAccountUsage();
-      expect(usage.account1).toEqual({
-        account_id: 'account1',
+      expect(usage.account2).toEqual({
+        account_id: 'account2',
         five_hour_pct: 0,
         seven_day_pct: 0,
         seven_day_sonnet_pct: 0,
@@ -397,7 +397,7 @@ describe('account-usage', () => {
 
       const usage = await getAccountUsage(true);
       // 应回退到默认值（no token → null → stale/default）
-      expect(usage.account1.five_hour_pct).toBe(0);
+      expect(usage.account2.five_hour_pct).toBe(0);
     });
 
     it('API 返回 500（非 429）时应回退到默认零值', async () => {
@@ -407,14 +407,14 @@ describe('account-usage', () => {
 
       const usage = await getAccountUsage(true);
       // 非 429 失败（瞬时错误）→ 保持旧行为，回退默认零值
-      expect(usage.account1.five_hour_pct).toBe(0);
+      expect(usage.account2.five_hour_pct).toBe(0);
     });
 
     it('usage 接口 429 + 健康缓存 → 回退缓存用量（不再武断判死健康账号）', async () => {
       // 回归：usage 查询接口的 429（高频轮询触发）≠ 账号配额耗尽。
       // 健康账号（缓存 4%）偶发 usage-429 不应被标 five_hour_pct=100 踢出轮换。
       const staleRow = {
-        account_id: 'account1',
+        account_id: 'account2',
         five_hour_pct: 4,
         seven_day_pct: 2,
         seven_day_sonnet_pct: 3,
@@ -432,14 +432,14 @@ describe('account-usage', () => {
 
       const usage = await getAccountUsage(true);
       // 回退到缓存的 4%，账号保持可用 — 不再 hardcode 100
-      expect(usage.account1.five_hour_pct).toBe(4);
-      expect(usage.account1).toEqual(staleRow);
+      expect(usage.account2.five_hour_pct).toBe(4);
+      expect(usage.account2).toEqual(staleRow);
     });
 
     it('usage 接口 429 + 真配额耗尽缓存 → 缓存高 pct 自然淘汰（不死循环）', async () => {
       // 真配额耗尽时，上次成功 fetch 已把高 pct 落缓存；回退到该缓存账号依然被淘汰。
       const exhaustedRow = {
-        account_id: 'account1',
+        account_id: 'account2',
         five_hour_pct: 98,
         seven_day_pct: 50,
         seven_day_sonnet_pct: 40,
@@ -457,7 +457,7 @@ describe('account-usage', () => {
 
       const usage = await getAccountUsage(true);
       // 回退缓存 98% ≥ 阈值，仍被淘汰 — 死循环由真实缓存高 pct 天然防住
-      expect(usage.account1.five_hour_pct).toBe(98);
+      expect(usage.account2.five_hour_pct).toBe(98);
     });
 
     it('usage 接口 429 + 无缓存 → 保守跳过但短重置（5min，不长期毒化）', async () => {
@@ -466,9 +466,9 @@ describe('account-usage', () => {
       mockPool.query.mockResolvedValue({ rows: [] }); // 无任何缓存
 
       const usage = await getAccountUsage(true);
-      expect(usage.account1.five_hour_pct).toBe(100);
+      expect(usage.account2.five_hour_pct).toBe(100);
       // resets_at 应在 ~5min 后（不是旧逻辑的 1h）
-      const resetMs = new Date(usage.account1.resets_at).getTime() - Date.now();
+      const resetMs = new Date(usage.account2.resets_at).getTime() - Date.now();
       expect(resetMs).toBeGreaterThan(0);
       expect(resetMs).toBeLessThanOrEqual(5 * 60 * 1000 + 1000);
     });
@@ -480,7 +480,7 @@ describe('account-usage', () => {
 
       await getAccountUsage(true);
 
-      // H14: ACCOUNTS=[account1, account2]，2 个 INSERT
+      // B51: ACCOUNTS=[account2, account3]，2 个 INSERT
       const insertCalls = mockPool.query.mock.calls.filter(
         c => c[0].includes('INSERT INTO account_usage_cache')
       );
@@ -492,7 +492,7 @@ describe('account-usage', () => {
       mockPool.query.mockResolvedValue({ rows: [] });
 
       const usage = await getAccountUsage(true);
-      expect(usage.account1.five_hour_pct).toBe(0);
+      expect(usage.account2.five_hour_pct).toBe(0);
     });
   });
 
@@ -528,14 +528,14 @@ describe('account-usage', () => {
       });
 
       it('5h 用量超过 80% 的账号应被排除', async () => {
-        // H14: ACCOUNTS=[account1, account2]，account1 90% 被排除，account2 50% 通过
+        // B51: ACCOUNTS=[account2, account3]，account2 90% 被排除，account3 50% 通过
         setupUsageData({
-          account1: { five_hour_pct: 90, seven_day_pct: 30, seven_day_sonnet_pct: 40, resets_at: null, extra_used: false },
-          account2: { five_hour_pct: 50, seven_day_pct: 10, seven_day_sonnet_pct: 10, resets_at: null, extra_used: false },
+          account2: { five_hour_pct: 90, seven_day_pct: 30, seven_day_sonnet_pct: 40, resets_at: null, extra_used: false },
+          account3: { five_hour_pct: 50, seven_day_pct: 10, seven_day_sonnet_pct: 10, resets_at: null, extra_used: false },
         });
 
         const result = await selectBestAccount();
-        expect(result).toEqual({ accountId: 'account2', model: 'sonnet', modelId: 'claude-sonnet-4-6' });
+        expect(result).toEqual({ accountId: 'account3', model: 'sonnet', modelId: 'claude-sonnet-4-6' });
       });
 
       it('sonnet 7d 在 95-99% 时仍选 Sonnet（新阈值 100%）', async () => {
@@ -693,46 +693,44 @@ describe('account-usage', () => {
         const soonReset = new Date(Date.now() + 10 * 60000).toISOString(); // 10 分钟后重置
 
         setupUsageData({
-          account1: { five_hour_pct: 70, seven_day_pct: 30, seven_day_sonnet_pct: 40, resets_at: soonReset, extra_used: false },
-          account2: { five_hour_pct: 40, seven_day_pct: 10, seven_day_sonnet_pct: 10, resets_at: null, extra_used: false },
-          account3: { five_hour_pct: 60, seven_day_pct: 50, seven_day_sonnet_pct: 60, resets_at: null, extra_used: false },
+          account2: { five_hour_pct: 70, seven_day_pct: 30, seven_day_sonnet_pct: 40, resets_at: soonReset, extra_used: false },
+          account3: { five_hour_pct: 40, seven_day_pct: 10, seven_day_sonnet_pct: 10, resets_at: null, extra_used: false },
         });
 
         const result = await selectBestAccount();
-        // 新算法：seven_day_resets_at=null → deficit=0，按 ePct ASC 排序
-        // account1 ePct=0（5h 即将重置），account2 ePct=40
-        // account1 ePct 最低，被优先选择（即将重置的账号确实被优先）
-        expect(result.accountId).toBe('account1');
+        // B51: ACCOUNTS=[account2, account3]
+        // account2 ePct=0（5h 即将重置），account3 ePct=40
+        // account2 ePct 最低，被优先选择（即将重置的账号确实被优先）
+        expect(result.accountId).toBe('account2');
       });
 
       it('即将重置的账号在同 sonnet7d 时应排前面', async () => {
         const soonReset = new Date(Date.now() + 10 * 60000).toISOString();
 
         setupUsageData({
-          account1: { five_hour_pct: 70, seven_day_pct: 30, seven_day_sonnet_pct: 40, resets_at: soonReset, extra_used: false },
-          account2: { five_hour_pct: 50, seven_day_pct: 30, seven_day_sonnet_pct: 40, resets_at: null, extra_used: false },
-          account3: { five_hour_pct: 79, seven_day_pct: 90, seven_day_sonnet_pct: 90, resets_at: null, extra_used: false },
+          account2: { five_hour_pct: 70, seven_day_pct: 30, seven_day_sonnet_pct: 40, resets_at: soonReset, extra_used: false },
+          account3: { five_hour_pct: 50, seven_day_pct: 30, seven_day_sonnet_pct: 40, resets_at: null, extra_used: false },
         });
 
         const result = await selectBestAccount();
-        // account1: sonnet7d=40, ePct=0（即将重置）
-        // account2: sonnet7d=40, ePct=50
-        // 同 sonnet7d 时按 ePct 排序，account1 ePct=0 排前面
-        expect(result.accountId).toBe('account1');
+        // B51: ACCOUNTS=[account2, account3]
+        // account2: sonnet7d=40, ePct=0（即将重置）
+        // account3: sonnet7d=40, ePct=50
+        // 同 sonnet7d 时按 ePct 排序，account2 ePct=0 排前面
+        expect(result.accountId).toBe('account2');
       });
     });
 
     describe('Haiku 独立模式', () => {
       it('model=haiku 应走独立模式（只看 5h 和 7d_total）', async () => {
         setupUsageData({
-          account1: { five_hour_pct: 30, seven_day_pct: 96, seven_day_sonnet_pct: 96, resets_at: null, extra_used: false },
-          account2: { five_hour_pct: 50, seven_day_pct: 97, seven_day_sonnet_pct: 97, resets_at: null, extra_used: false },
-          account3: { five_hour_pct: 70, seven_day_pct: 98, seven_day_sonnet_pct: 98, resets_at: null, extra_used: false },
+          account2: { five_hour_pct: 30, seven_day_pct: 96, seven_day_sonnet_pct: 96, resets_at: null, extra_used: false },
+          account3: { five_hour_pct: 50, seven_day_pct: 97, seven_day_sonnet_pct: 97, resets_at: null, extra_used: false },
         });
 
         const result = await selectBestAccount({ model: 'haiku' });
-        // Haiku 独立模式：seven_day_pct < 100 → 全部可用，按 7d 和 ePct 排序选 account1
-        expect(result).toEqual({ accountId: 'account1', model: 'haiku', modelId: 'claude-haiku-4-5-20251001' });
+        // B51: ACCOUNTS=[account2, account3]，Haiku 独立模式：seven_day_pct < 100 → 全部可用，按 7d 和 ePct 排序选 account2
+        expect(result).toEqual({ accountId: 'account2', model: 'haiku', modelId: 'claude-haiku-4-5-20251001' });
       });
 
       it('Haiku 独立模式应排除 extra_used 的账号', async () => {
@@ -791,14 +789,13 @@ describe('account-usage', () => {
   describe('selectBestAccountForHaiku', () => {
     it('应返回 accountId 字符串（而非对象）', async () => {
       setupUsageData({
-        account1: { five_hour_pct: 30, seven_day_pct: 10, seven_day_sonnet_pct: 10, resets_at: null, extra_used: false },
-        account2: { five_hour_pct: 50, seven_day_pct: 20, seven_day_sonnet_pct: 20, resets_at: null, extra_used: false },
-        account3: { five_hour_pct: 70, seven_day_pct: 30, seven_day_sonnet_pct: 30, resets_at: null, extra_used: false },
+        account2: { five_hour_pct: 30, seven_day_pct: 10, seven_day_sonnet_pct: 10, resets_at: null, extra_used: false },
+        account3: { five_hour_pct: 50, seven_day_pct: 20, seven_day_sonnet_pct: 20, resets_at: null, extra_used: false },
       });
 
       const result = await selectBestAccountForHaiku();
       expect(typeof result).toBe('string');
-      expect(result).toBe('account1');
+      expect(result).toBe('account2');
     });
 
     it('所有账号不可用时应返回 null', async () => {
@@ -870,14 +867,13 @@ describe('account-usage', () => {
 
     it('5h 用量 79% 时应通过阈值检查', async () => {
       setupUsageData({
-        account1: { five_hour_pct: 79, seven_day_pct: 30, seven_day_sonnet_pct: 30, resets_at: null, extra_used: false },
-        account2: { five_hour_pct: 90, seven_day_pct: 20, seven_day_sonnet_pct: 20, resets_at: null, extra_used: false },
+        account2: { five_hour_pct: 79, seven_day_pct: 30, seven_day_sonnet_pct: 30, resets_at: null, extra_used: false },
         account3: { five_hour_pct: 90, seven_day_pct: 20, seven_day_sonnet_pct: 20, resets_at: null, extra_used: false },
       });
 
       const result = await selectBestAccount();
       expect(result).not.toBeNull();
-      expect(result.accountId).toBe('account1');
+      expect(result.accountId).toBe('account2');
     });
 
     it('sonnet 7d 刚好等于 95% 时应通过 Sonnet 阶段（新阈值 100%）', async () => {
