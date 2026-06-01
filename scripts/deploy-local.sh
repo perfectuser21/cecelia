@@ -156,32 +156,29 @@ if [[ "$NEED_DASHBOARD" == true ]]; then
     fi
     echo ""
 
-    # rsync 构建产物到 HK VPS
-    # hk-vps 是 xian-m4 SSH config 中已定义的别名（原 "hk" 在 SSH config 中无对应）
-    HK_HOST="${CECELIA_HK_HOST:-hk-vps}"
+    # 同步构建产物到 HK VPS
+    # 用 Tailscale IP 而非主机名别名——Brain 跑在 Docker 容器里，容器的 ~ 是 /root，
+    # 不是宿主机 /Users/administrator，SSH config 里的 hk-vps 别名找不到。
+    HK_IP="${CECELIA_HK_IP:-100.86.118.99}"
+    HK_USER="${CECELIA_HK_USER:-root}"
+    HK_SSH_KEY="${CECELIA_HK_SSH_KEY:-/Users/administrator/.ssh/id_rsa}"
+    HK_SSH_OPTS="-i $HK_SSH_KEY -o StrictHostKeyChecking=no -o ConnectTimeout=15"
     HK_REMOTE_DIR="/opt/cecelia/frontend"
     DIST_DIR="$MAIN_ROOT/apps/dashboard/dist"
 
     if [[ -d "$DIST_DIR" ]]; then
-        echo "🚀 同步 Dashboard 到 HK VPS ($HK_HOST:$HK_REMOTE_DIR)..."
+        echo "🚀 同步 Dashboard 到 HK VPS ($HK_USER@$HK_IP:$HK_REMOTE_DIR)..."
         if [[ "$DRY_RUN" == true ]]; then
-            echo "  [dry-run] rsync -avz --delete $DIST_DIR/ $HK_HOST:$HK_REMOTE_DIR/dist/"
+            echo "  [dry-run] tar+ssh $DIST_DIR/ -> $HK_USER@$HK_IP:$HK_REMOTE_DIR/dist/"
         else
-            ssh "$HK_HOST" "mkdir -p $HK_REMOTE_DIR/dist" 2>/dev/null || true
-            # 优先用 rsync；容器内 rsync 可能不存在，回退到 tar+ssh
-            if command -v rsync &>/dev/null; then
-                rsync -avz --delete "$DIST_DIR/" "$HK_HOST:$HK_REMOTE_DIR/dist/" || {
-                    echo "⚠️  rsync 到 HK 失败，Dashboard 仅本地部署"
-                }
-            else
-                tar -czf - -C "$DIST_DIR" . \
-                    | ssh "$HK_HOST" "tar -xzf - -C $HK_REMOTE_DIR/dist/" || {
-                    echo "⚠️  tar+ssh 同步到 HK 失败，Dashboard 仅本地部署"
-                }
-            fi
-            # 重启 HK 前端容器（如果在运行）
-            ssh "$HK_HOST" "cd $HK_REMOTE_DIR && docker compose restart 2>/dev/null" || true
-            echo "✅ HK VPS 同步完成"
+            ssh $HK_SSH_OPTS "$HK_USER@$HK_IP" "mkdir -p $HK_REMOTE_DIR/dist" 2>/dev/null || true
+            tar -czf - -C "$DIST_DIR" . \
+                | ssh $HK_SSH_OPTS "$HK_USER@$HK_IP" "tar -xzf - -C $HK_REMOTE_DIR/dist/" && {
+                ssh $HK_SSH_OPTS "$HK_USER@$HK_IP" "docker exec cecelia-core-hk nginx -s reload 2>/dev/null" || true
+                echo "✅ HK VPS 同步完成"
+            } || {
+                echo "⚠️  tar+ssh 同步到 HK 失败，Dashboard 仅本地部署"
+            }
         fi
     else
         echo "⚠️  Dashboard dist/ 不存在，跳过 HK 同步"
