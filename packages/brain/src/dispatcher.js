@@ -454,7 +454,12 @@ export async function dispatchNextTask(goalIds) {
   });
 
   // 5. Check executor availability and trigger
-  const ceceliaAvailable = await checkCeceliaRunAvailable();
+  // harness_initiative 走 Docker spawn 路径，完全不依赖 cecelia-bridge。
+  // 跳过 bridge check，否则 bridge 不在时 harness 会被错误 revert 到 queued。
+  const needsBridgeCheck = nextTask.task_type !== 'harness_initiative';
+  const ceceliaAvailable = needsBridgeCheck
+    ? await checkCeceliaRunAvailable()
+    : { available: true };
   if (!ceceliaAvailable.available) {
     // Revert task to queued so it can be retried next tick
     await updateTask({ task_id: nextTask.id, status: 'queued' });
