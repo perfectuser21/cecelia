@@ -31,6 +31,7 @@ export interface MachineMetadata {
   ssh_user?: string;
   exit_node?: string | null;
   exit_node_ip?: string | null;
+  physical_location?: string;
   effective_country?: string;
   offers_exit_node?: boolean;
   socks_proxy?: string;
