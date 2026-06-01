@@ -91,7 +91,7 @@ async function clearAllSpendingCaps() {
   const mod = await import('../account-usage.js');
   // 直接设置过期时间清除
   const pastTime = new Date(Date.now() - 1000).toISOString();
-  ['account1', 'account2'].forEach(id => {
+  ['account2', 'account3'].forEach(id => {
     // 如果有 spending cap，通过标记过期来清除
     if (mod.isSpendingCapped(id)) {
       mod.markSpendingCap(id, pastTime);
@@ -116,10 +116,10 @@ describe('S: selectBestAccount reset-aware 调度', () => {
     const { default: pool } = await import('../db.js');
     pool.query.mockReset();
     pool.query.mockImplementation((sql, params) => {
+      // B51: ACCOUNTS=[account2, account3]，原 account1 角色→account2，原 account2 角色→account3
       const rows = [
-        makeRow('account1', 70, 20),   // effectivePct=0（即将重置）
-        makeRow('account2', 5, 180),   // effectivePct=5
-        makeRow('account3', 40, 120),  // effectivePct=40
+        makeRow('account2', 70, 20),   // effectivePct=0（即将重置）
+        makeRow('account3', 5, 180),   // effectivePct=5
       ];
       if (typeof sql === 'string' && sql.includes('account_usage_cache') && params?.[0]) {
         return Promise.resolve({ rows: rows.filter(r => r.account_id === params[0]) });
@@ -129,9 +129,9 @@ describe('S: selectBestAccount reset-aware 调度', () => {
 
     const { selectBestAccount } = await import('../account-usage.js');
     const result = await selectBestAccount();
-    // Sonnet 阶段，seven_day_sonnet_pct=0 < 100%，selecte account1（即将重置 ePct=0）
+    // Sonnet 阶段，seven_day_sonnet_pct=0 < 100%，select account2（即将重置 ePct=0）
     expect(result).not.toBeNull();
-    expect(result?.accountId).toBe('account1');
+    expect(result?.accountId).toBe('account2');
     expect(result?.model).toBe('sonnet');
   });
 
@@ -249,9 +249,9 @@ describe('SC: Spending Cap 账号级过滤（v1.197.0）', () => {
     const { default: pool } = await import('../db.js');
     pool.query.mockReset();
     pool.query.mockImplementation((sql, params) => {
+      // B51: ACCOUNTS=[account2, account3]，account2=用量最优，account3=用量最低但被 cap
       const rows = [
-        makeRow('account1', 20, 120, 0, 0),
-        makeRow('account2', 30, 120, 0, 0),
+        makeRow('account2', 20, 120, 0, 0),
         makeRow('account3', 10, 120, 0, 0),  // 用量最低但被 cap
       ];
       if (typeof sql === 'string' && sql.includes('account_usage_cache') && params?.[0]) {
@@ -264,8 +264,8 @@ describe('SC: Spending Cap 账号级过滤（v1.197.0）', () => {
     markSpendingCap('account3', new Date(Date.now() + 2 * 60 * 60 * 1000).toISOString());
 
     const result = await selectBestAccount();
-    // account3 被 cap，跳过 → 选 account1（ePct=20 次低）
-    expect(result?.accountId).toBe('account1');
+    // account3 被 cap，跳过 → 选 account2（ePct=20 次低）
+    expect(result?.accountId).toBe('account2');
     expect(result?.model).toBe('sonnet');
   });
 
@@ -314,9 +314,10 @@ describe('M: 三阶段模型降级链', () => {
     const { default: pool } = await import('../db.js');
     pool.query.mockReset();
     pool.query.mockImplementation((sql, params) => {
+      // B51: ACCOUNTS=[account2, account3]，account1 退订
       const rows = [
-        makeRow('account1', 20, 120, 70, 100),  // sonnet=100% → 全满
-        makeRow('account2', 30, 120, 50, 100),  // sonnet=100% → 全满，7d=50% 最低 ← Haiku 候选
+        makeRow('account2', 20, 120, 70, 100),  // sonnet=100% → 全满
+        makeRow('account3', 30, 120, 50, 100),  // sonnet=100% → 全满，7d=50% 最低 ← Haiku 候选
       ];
       if (typeof sql === 'string' && sql.includes('account_usage_cache') && params?.[0]) {
         return Promise.resolve({ rows: rows.filter(r => r.account_id === params[0]) });
@@ -328,10 +329,10 @@ describe('M: 三阶段模型降级链', () => {
     const result = await selectBestAccount();
     expect(result).not.toBeNull();
     // 新逻辑：DEFAULT_CASCADE=['sonnet','haiku']，无 Opus
-    // Sonnet 全满(100%) → 降级 Haiku；account2 seven_day_pct=50% 最低 → 选中
-    // H14: account3 退订，仅 account1/2
+    // Sonnet 全满(100%) → 降级 Haiku；account3 seven_day_pct=50% 最低 → 选中
+    // B51: account1 退订，仅 account2/3
     expect(result?.model).toBe('haiku');
-    expect(result?.accountId).toBe('account2');
+    expect(result?.accountId).toBe('account3');
   });
 
   // ============================================================
@@ -342,9 +343,10 @@ describe('M: 三阶段模型降级链', () => {
     const { default: pool } = await import('../db.js');
     pool.query.mockReset();
     pool.query.mockImplementation((sql, params) => {
+      // B51: ACCOUNTS=[account2, account3]，account1 退订
       const rows = [
-        makeRow('account1', 30, 120, 97, 100),  // sonnet满 + opus满
-        makeRow('account2', 10, 120, 95, 100),  // sonnet满 + opus满（7d=95 ≥ 95），5h=10% 最低 ← 选
+        makeRow('account2', 30, 120, 97, 100),  // sonnet满 + opus满
+        makeRow('account3', 10, 120, 95, 100),  // sonnet满 + opus满（7d=95 ≥ 95），5h=10% 最低 ← 选
       ];
       if (typeof sql === 'string' && sql.includes('account_usage_cache') && params?.[0]) {
         return Promise.resolve({ rows: rows.filter(r => r.account_id === params[0]) });
@@ -356,8 +358,8 @@ describe('M: 三阶段模型降级链', () => {
     const result = await selectBestAccount();
     expect(result).not.toBeNull();
     expect(result?.model).toBe('haiku');
-    // H14: account3 退订，account2 持原 account3 角色（5h 最低）
-    expect(result?.accountId).toBe('account2');
+    // B51: account1 退订，account3 持原 account2 角色（5h 最低）
+    expect(result?.accountId).toBe('account3');
   });
 
   // ============================================================
@@ -393,9 +395,10 @@ describe('M: 三阶段模型降级链', () => {
     const { default: pool } = await import('../db.js');
     pool.query.mockReset();
     pool.query.mockImplementation((sql, params) => {
+      // B51: ACCOUNTS=[account2, account3]，account1 退订
       const rows = [
-        makeRow('account1', 0, 120, 75, 100),  // sonnet=100% >= 95%
-        makeRow('account2', 18, 120, 93, 98),  // sonnet=98% < 100 → 唯一 Sonnet 候选
+        makeRow('account2', 0, 120, 75, 100),  // sonnet=100% >= 95%
+        makeRow('account3', 18, 120, 93, 98),  // sonnet=98% < 100 → 唯一 Sonnet 候选
       ];
       if (typeof sql === 'string' && sql.includes('account_usage_cache') && params?.[0]) {
         return Promise.resolve({ rows: rows.filter(r => r.account_id === params[0]) });
@@ -407,11 +410,11 @@ describe('M: 三阶段模型降级链', () => {
     const result = await selectBestAccount();
     expect(result).not.toBeNull();
     // 新逻辑：Sonnet 阈值 100%
-    // account1 sevenDaySonnetPct=100 → 不可用 Sonnet
-    // account2 sevenDaySonnetPct=98 < 100 → 可用 Sonnet → 唯一候选
-    // H14: account3 退订
+    // account2 sevenDaySonnetPct=100 → 不可用 Sonnet
+    // account3 sevenDaySonnetPct=98 < 100 → 可用 Sonnet → 唯一候选
+    // B51: account1 退订
     expect(result?.model).toBe('sonnet');
-    expect(result?.accountId).toBe('account2');
+    expect(result?.accountId).toBe('account3');
   });
 
   // ============================================================
@@ -422,9 +425,10 @@ describe('M: 三阶段模型降级链', () => {
     const { default: pool } = await import('../db.js');
     pool.query.mockReset();
     pool.query.mockImplementation((sql, params) => {
+      // B51: ACCOUNTS=[account2, account3]，account1 退订
       const rows = [
-        makeRow('account1', 0, 120, 75, 100),   // sonnet=100% >= 95%
-        makeRow('account2', 18, 120, 50, 94),   // sonnet=94% < 95% → Sonnet 候选！
+        makeRow('account2', 0, 120, 75, 100),   // sonnet=100% >= 95%
+        makeRow('account3', 18, 120, 50, 94),   // sonnet=94% < 95% → Sonnet 候选！
       ];
       if (typeof sql === 'string' && sql.includes('account_usage_cache') && params?.[0]) {
         return Promise.resolve({ rows: rows.filter(r => r.account_id === params[0]) });
@@ -436,8 +440,8 @@ describe('M: 三阶段模型降级链', () => {
     const result = await selectBestAccount();
     expect(result).not.toBeNull();
     expect(result?.model).toBe('sonnet');
-    // H14: account3 退订，account2 持原 account3 角色
-    expect(result?.accountId).toBe('account2');
+    // B51: account1 退订，account3 持原 account2 角色
+    expect(result?.accountId).toBe('account3');
   });
 });
 
@@ -459,12 +463,13 @@ describe('AF: Auth Failure source 区分', () => {
     _resetAuthFailures();
 
     // 模拟 API 401 设置的熔断（source=api_error，默认值）
-    markAuthFailure('account1', new Date(Date.now() + 2 * 60 * 60 * 1000).toISOString(), 'api_error');
-    expect(isAuthFailed('account1')).toBe(true);
+    // B51: 用 ACCOUNTS 内的 account2（account1 退订，不在 proactiveTokenCheck 遍历范围）
+    markAuthFailure('account2', new Date(Date.now() + 2 * 60 * 60 * 1000).toISOString(), 'api_error');
+    expect(isAuthFailed('account2')).toBe(true);
 
     // token 文件已有效（fs mock 返回 1 年后过期）→ proactiveTokenCheck 不应清除 api_error 熔断
     await proactiveTokenCheck();
-    expect(isAuthFailed('account1')).toBe(true);
+    expect(isAuthFailed('account2')).toBe(true);
   });
 
   // AF2: token_expired 设置的熔断在 token 有效时被 proactiveTokenCheck 清除
@@ -476,12 +481,13 @@ describe('AF: Auth Failure source 区分', () => {
     _resetAuthFailures();
 
     // 模拟 token 过期设置的熔断（source=token_expired）
-    markAuthFailure('account1', new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(), 'token_expired');
-    expect(isAuthFailed('account1')).toBe(true);
+    // B51: 用 ACCOUNTS 内的 account2（account1 退订，proactiveTokenCheck 只遍历 ACCOUNTS）
+    markAuthFailure('account2', new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(), 'token_expired');
+    expect(isAuthFailed('account2')).toBe(true);
 
     // token 文件现在有效（fs mock 返回 1 年后过期）→ proactiveTokenCheck 应清除 token_expired 熔断
     await proactiveTokenCheck();
-    expect(isAuthFailed('account1')).toBe(false);
+    expect(isAuthFailed('account2')).toBe(false);
   });
 
   // AF3: markAuthFailure 默认 source 为 api_error
