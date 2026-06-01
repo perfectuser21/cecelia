@@ -18,8 +18,10 @@ import pool from '../db.js';
 const router = Router();
 
 // 宿主机每分钟写入的 Tailscale 状态缓存文件路径（Brain 容器挂载了宿主机目录）
+// 宿主机 tailscale 状态缓存文件：cron 每分钟写入，容器通过挂载共享路径读取
+// 优先使用 REPO_ROOT 环境变量，兜底用相对于本文件向上 4 级的路径
 const __filename = fileURLToPath(import.meta.url);
-const REPO_ROOT = join(dirname(__filename), '../../../../');
+const REPO_ROOT = process.env.REPO_ROOT || join(dirname(__filename), '../../../../');
 const TAILSCALE_CACHE = join(REPO_ROOT, 'tailscale-cache.json');
 
 function getTailscaleStatus() {
@@ -29,7 +31,9 @@ function getTailscaleStatus() {
     if (existsSync(TAILSCALE_CACHE)) {
       raw = readFileSync(TAILSCALE_CACHE, 'utf8');
     }
-  } catch { /* fallthrough */ }
+  } catch (err) {
+    console.warn('[machines] 读取 tailscale 缓存文件失败:', err.message);
+  }
 
   // 兜底：尝试直接调 tailscale（在宿主机直接跑时有效）
   if (!raw) {
