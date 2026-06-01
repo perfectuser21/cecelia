@@ -9,7 +9,7 @@
  */
 
 import { Router } from 'express';
-import { execSync, execFileSync } from 'child_process';
+import { execSync } from 'child_process';
 import { readFileSync, existsSync } from 'fs';
 import { fileURLToPath } from 'url';
 import { join, dirname } from 'path';
