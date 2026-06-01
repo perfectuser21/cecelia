@@ -285,3 +285,82 @@ describe('Bug #5: processCortexTask 失败时调用 handleTaskFailure', () => {
     expect(failedCalls).toHaveLength(0);
   });
 });
+
+describe('Bug 回归: harness_initiative bridge guard bypass', () => {
+  // 验证行为：cecelia-bridge 不可用时，harness_initiative 仍被派发（不被拦截）
+  // 根因：dispatcher 对所有任务检查 bridge，但 harness_initiative 走 Docker spawn，不依赖 bridge。
+  // 修法：needsBridgeCheck = nextTask.task_type !== 'harness_initiative'
+  //
+  // 注意：此 describe 与上面 Bug #1/5 共享同一模块级 vi.mock 配置（checkCeceliaRunAvailable 默认 available=true）。
+  // 这里用 mockResolvedValueOnce({ available: false }) 覆盖，模拟 bridge 不可用场景。
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('bridge 不可用时 harness_initiative 仍被派发（不走 bridge guard）', async () => {
+    // 覆盖 checkCeceliaRunAvailable 返回不可用（bridge 不在）
+    const executorMod = await import('../executor.js');
+    executorMod.checkCeceliaRunAvailable.mockResolvedValueOnce({ available: false, error: 'Bridge not running' });
+
+    mockTriggerCeceliaRun.mockResolvedValueOnce({ success: true, taskId: 'harness-task-1' });
+
+    const harnessTask = {
+      id: 'harness-task-1',
+      title: 'GET /api/brain/harness/runs/:id — 回归测试任务',
+      description: 'harness_initiative 测试，bridge 不可用时仍应派发',
+      task_type: 'harness_initiative',
+      status: 'queued',
+      priority: 'P1',
+      payload: { sprint_dir: 'sprints/test', base_repo: '/repo' },
+    };
+
+    mockQuery.mockResolvedValueOnce({ rows: [] });                    // retired drain
+    mockQuery.mockResolvedValueOnce({ rows: [harnessTask] });        // candidate tasks
+    mockQuery.mockResolvedValueOnce({ rows: [{ id: harnessTask.id }] }); // C1 claim
+    mockQuery.mockResolvedValueOnce({ rows: [harnessTask] });        // full task fetch
+    mockQuery.mockResolvedValue({ rows: [], rowCount: 1 });          // 其余 DB 调用
+
+    const { dispatchNextTask } = await import('../tick.js');
+    const result = await dispatchNextTask(['goal-1']);
+
+    // harness_initiative 应绕过 bridge guard，成功派发
+    expect(mockTriggerCeceliaRun).toHaveBeenCalledWith(
+      expect.objectContaining({ task_type: 'harness_initiative' })
+    );
+    expect(result.dispatched).toBe(true);
+    expect(result.task_id).toBe('harness-task-1');
+
+    // 任务不应被 revert 回 queued
+    const revertCalls = mockUpdateTask.mock.calls.filter(c => c[0]?.status === 'queued');
+    expect(revertCalls).toHaveLength(0);
+  });
+
+  it('bridge 不可用时普通 dev 任务仍被拦截（bridge guard 对非 harness 任务有效）', async () => {
+    const executorMod = await import('../executor.js');
+    executorMod.checkCeceliaRunAvailable.mockResolvedValueOnce({ available: false, error: 'Bridge not running' });
+
+    const devTask = {
+      id: 'dev-task-1',
+      title: 'Regular dev task that needs bridge',
+      description: '普通 dev 任务，bridge 不在时应被拦截',
+      task_type: 'dev',
+      status: 'queued',
+      priority: 'P1',
+      payload: {},
+    };
+
+    mockQuery.mockResolvedValueOnce({ rows: [] });
+    mockQuery.mockResolvedValueOnce({ rows: [devTask] });
+    mockQuery.mockResolvedValueOnce({ rows: [{ id: devTask.id }] });
+    mockQuery.mockResolvedValueOnce({ rows: [devTask] });
+    mockQuery.mockResolvedValue({ rows: [], rowCount: 1 });
+
+    const { dispatchNextTask } = await import('../tick.js');
+    const result = await dispatchNextTask(['goal-1']);
+
+    expect(result.dispatched).toBe(false);
+    expect(result.reason).toBe('no_executor');
+    expect(mockTriggerCeceliaRun).not.toHaveBeenCalled();
+  });
+});
