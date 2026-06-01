@@ -511,19 +511,34 @@ export async function getAccountUsage(forceRefresh = false) {
 
     const data = await fetchUsageFromAPI(accountId);
     if (data && data.__rateLimited) {
-      // B49: 429 限流 → 标记 five_hour_pct=100（≥ USAGE_THRESHOLD 80）让 selectBestAccount 淘汰，
-      // 不落乐观旧缓存。resets_at 设 1h 后，避免被 effectivePct 的"即将重置"逻辑误判为可用。
-      console.warn(`[account-usage] ${accountId}: 429 限流 → 标记不可用（five_hour_pct=100），跳过此账号`);
-      results[accountId] = {
-        account_id: accountId,
-        five_hour_pct: 100,
-        seven_day_pct: 100,
-        seven_day_sonnet_pct: 100,
-        resets_at: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
-        seven_day_resets_at: null,
-        seven_day_sonnet_resets_at: null,
-        extra_used: false,
-      };
+      // usage 查询接口（/api/oauth/usage）有独立的高频限流，比 messages API 严得多。
+      // Brain 每个 tick 给每个账号轮询它，极易触发 429——但这 ≠ 账号 messages 配额耗尽，
+      // 账号本身仍可正常跑任务。B49 旧逻辑武断标 five_hour_pct=100 把健康账号判死，
+      // 导致 harness 单账号被踢出轮换、pipeline 卡死。
+      //
+      // 修正：回退到上次成功的缓存用量（最后一次真实读数）。
+      //   - 真配额耗尽 → 上次成功 fetch 已记录高 pct 落缓存 → 缓存本身就被 selectBestAccount 淘汰，
+      //     不会死循环（B49 担心的死循环由"缓存里的真实高 pct"天然防住，不需要靠 usage-429 判死）。
+      //   - 健康账号偶发 usage-429 → 缓存显示低 pct → 账号保持可用。
+      //   - 无任何缓存（首次冷启动 + 立刻 429）→ 保守标不可用，但 resets_at 设 5min 短重置，
+      //     不长期毒化该账号。
+      const stale = await getStaleCached(accountId);
+      if (stale) {
+        console.warn(`[account-usage] ${accountId}: usage 接口 429（非配额耗尽）→ 回退缓存用量 5h=${stale.five_hour_pct}%`);
+        results[accountId] = stale;
+      } else {
+        console.warn(`[account-usage] ${accountId}: usage 接口 429 且无缓存 → 保守跳过（5min 后重试）`);
+        results[accountId] = {
+          account_id: accountId,
+          five_hour_pct: 100,
+          seven_day_pct: 100,
+          seven_day_sonnet_pct: 100,
+          resets_at: new Date(Date.now() + 5 * 60 * 1000).toISOString(),
+          seven_day_resets_at: null,
+          seven_day_sonnet_resets_at: null,
+          extra_used: false,
+        };
+      }
     } else if (data) {
       results[accountId] = await upsertCache(accountId, data);
     } else {

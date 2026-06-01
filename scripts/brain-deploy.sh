@@ -200,6 +200,14 @@ if [[ "$DEPLOY_MODE" == "docker" ]]; then
     fi
     echo ""
 
+    # 6.9 凭据自愈：容器启动前，把丢失的 Claude 账号 .credentials.json 从 1Password 恢复。
+    # Brain 在 Docker（只读挂载账号目录、读不到 macOS 钥匙串），文件丢了就判账号 MISSING、
+    # harness 单账号卡死。此处自动补回，non-fatal 不阻塞部署。
+    if [[ "$DRY_RUN" == false && -f "$SCRIPT_DIR/restore-claude-creds.sh" ]]; then
+        echo "[6.9/8] 凭据自愈（缺失文件从 1Password 恢复）..."
+        bash "$SCRIPT_DIR/restore-claude-creds.sh" 2>&1 | sed 's/^/  /' || echo "  [warn] restore 失败（non-fatal）"
+    fi
+
     # 7. Stop old container + start new one
     echo "[7/8] Starting container..."
 
