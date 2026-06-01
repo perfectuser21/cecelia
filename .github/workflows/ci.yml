@@ -146,9 +146,11 @@ jobs:
           npm audit --audit-level=high --omit=dev
       - name: npm audit — all deps critical
         run: |
-          # 全量（含 dev）检查 critical，防供应链攻击
-          # GHSA-gx6x-v325-85g4 (size-sensor/echarts-for-react) 属 dev dep，已被 --audit-level=critical 过滤
-          npm audit --audit-level=critical
+          # 全量（含 dev）检查 critical，防供应链攻击。
+          # 用带白名单的脚本：对"无 non-breaking 修复 + 本项目用法下不可利用"的 advisory
+          # 做文档化豁免（当前：GHSA-5xrq-8626-4rwp vitest UI，dev-only，CI/生产不跑 UI server），
+          # 仍拦截所有其它 critical。新 CVE 公布导致 fail 时见脚本内白名单纪律。
+          bash scripts/ci/dep-audit-critical.sh
 
   # ─── Registry Lint（始终运行）────────────────────────────────
   registry-lint:
