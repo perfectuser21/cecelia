@@ -10,13 +10,39 @@
 
 import { Router } from 'express';
 import { execSync } from 'child_process';
+import { readFileSync, existsSync } from 'fs';
+import { fileURLToPath } from 'url';
+import { join, dirname } from 'path';
 import pool from '../db.js';
 
 const router = Router();
 
+// 宿主机每分钟写入的 Tailscale 状态缓存文件路径（Brain 容器挂载了宿主机目录）
+// 宿主机 tailscale 状态缓存文件：cron 每分钟写入，容器通过挂载共享路径读取
+// 优先使用 REPO_ROOT 环境变量，兜底用相对于本文件向上 4 级的路径
+const __filename = fileURLToPath(import.meta.url);
+const REPO_ROOT = process.env.REPO_ROOT || join(dirname(__filename), '../../../../');
+const TAILSCALE_CACHE = join(REPO_ROOT, 'tailscale-cache.json');
+
 function getTailscaleStatus() {
+  let raw = null;
+  // 优先读宿主机缓存文件（Brain 在容器中无法直接调 tailscale CLI）
   try {
-    const raw = execSync('tailscale status --json', { timeout: 5000 }).toString();
+    if (existsSync(TAILSCALE_CACHE)) {
+      raw = readFileSync(TAILSCALE_CACHE, 'utf8');
+    }
+  } catch (err) {
+    console.warn('[machines] 读取 tailscale 缓存文件失败:', err.message);
+  }
+
+  // 兜底：尝试直接调 tailscale（在宿主机直接跑时有效）
+  if (!raw) {
+    try {
+      raw = execSync('tailscale status --json', { timeout: 5000 }).toString();
+    } catch { return {}; }
+  }
+
+  try {
     const data = JSON.parse(raw);
     const online = {};
     const peers = data.Peer || {};
@@ -26,7 +52,6 @@ function getTailscaleStatus() {
         online[ip] = { online: peer.Online ?? true, lastSeen: peer.LastSeen };
       }
     }
-    // Self
     const selfIPs = data.Self?.TailscaleIPs || [];
     if (selfIPs.length) {
       const ip = selfIPs[0].split('/')[0];
