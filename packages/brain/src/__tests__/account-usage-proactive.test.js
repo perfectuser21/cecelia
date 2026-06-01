@@ -45,20 +45,18 @@ describe('proactiveTokenCheck', () => {
   it('token 已过期 → markAuthFailure + 触发 P1 告警', async () => {
     const expiredAt = Date.now() - 10 * 60 * 1000; // 10min ago
     mockReadFileSync.mockImplementation((path) => {
-      if (path.includes('account1')) return makeCredentials(expiredAt);
-      if (path.includes('account2')) return makeCredentials(Date.now() + 3 * 60 * 60 * 1000);
+      if (path.includes('account2')) return makeCredentials(expiredAt);
       if (path.includes('account3')) return makeCredentials(Date.now() + 3 * 60 * 60 * 1000);
     });
 
     await proactiveTokenCheck();
 
-    expect(isAuthFailed('account1')).toBe(true);
-    expect(isAuthFailed('account2')).toBe(false);
+    expect(isAuthFailed('account2')).toBe(true);
     expect(isAuthFailed('account3')).toBe(false);
     expect(mockRaise).toHaveBeenCalledWith(
       'P1',
-      'token_expired_account1',
-      expect.stringContaining('account1')
+      'token_expired_account2',
+      expect.stringContaining('account2')
     );
   });
 
@@ -68,33 +66,33 @@ describe('proactiveTokenCheck', () => {
 
     await proactiveTokenCheck();
 
-    expect(isAuthFailed('account1')).toBe(false);
+    expect(isAuthFailed('account2')).toBe(false);
     expect(mockRaise).toHaveBeenCalledWith(
       'P1',
-      'token_expiring_soon_account1',
+      'token_expiring_soon_account2',
       expect.stringContaining('分钟')
     );
   });
 
   it('token 有效 + 之前 token_expired 熔断 → 清除熔断（token 刷新场景）', async () => {
-    markAuthFailure('account1', new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(), 'token_expired');
-    expect(isAuthFailed('account1')).toBe(true);
+    markAuthFailure('account2', new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(), 'token_expired');
+    expect(isAuthFailed('account2')).toBe(true);
 
     const futureExpiry = Date.now() + 2 * 60 * 60 * 1000; // 2h valid
     mockReadFileSync.mockImplementation(() => makeCredentials(futureExpiry));
 
     await proactiveTokenCheck();
 
-    expect(isAuthFailed('account1')).toBe(false);
+    expect(isAuthFailed('account2')).toBe(false);
     expect(mockPool.query).toHaveBeenCalledWith(
       expect.stringContaining('is_auth_failed = false'),
-      ['account1']
+      ['account2']
     );
   });
 
   it('token 有效 + 之前 api_error 熔断 → 不清除熔断（等 resetTime 自然过期）', async () => {
-    markAuthFailure('account1', new Date(Date.now() + 2 * 60 * 60 * 1000).toISOString(), 'api_error');
-    expect(isAuthFailed('account1')).toBe(true);
+    markAuthFailure('account2', new Date(Date.now() + 2 * 60 * 60 * 1000).toISOString(), 'api_error');
+    expect(isAuthFailed('account2')).toBe(true);
 
     const futureExpiry = Date.now() + 2 * 60 * 60 * 1000; // 2h valid
     mockReadFileSync.mockImplementation(() => makeCredentials(futureExpiry));
@@ -103,7 +101,7 @@ describe('proactiveTokenCheck', () => {
     await proactiveTokenCheck();
 
     // api_error 熔断不因 token 有效而清除
-    expect(isAuthFailed('account1')).toBe(true);
+    expect(isAuthFailed('account2')).toBe(true);
     // 不触发 DB 清除
     const clearCalls = mockPool.query.mock.calls.filter(([sql]) =>
       typeof sql === 'string' && sql.includes('is_auth_failed = false')
@@ -118,7 +116,7 @@ describe('proactiveTokenCheck', () => {
 
     await proactiveTokenCheck();
 
-    expect(isAuthFailed('account1')).toBe(false);
+    expect(isAuthFailed('account2')).toBe(false);
     expect(mockRaise).not.toHaveBeenCalled();
   });
 
