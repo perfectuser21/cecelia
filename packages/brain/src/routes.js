@@ -13,6 +13,7 @@ import publishJobsRouter from './routes/publish-jobs.js';
 import capacityBudgetRouter from './routes/capacity-budget.js';
 import devReviewsRouter from './routes/dev-reviews.js';
 import registryRouter from './routes/registry.js';
+import machinesRouter from './routes/machines.js';
 import skillsRouter from './routes/skills.js';
 import contentPipelineRouter from './routes/content-pipeline.js';
 import contentLibraryRouter from './routes/content-library.js';
@@ -36,6 +37,9 @@ router.use('/skills', skillsRouter);
 
 // 系统注册表 — 全局目录，解决孤岛和重复问题
 router.use('/registry', registryRouter);
+
+// 机器拓扑 — 叠加 Tailscale 状态 + 冲突检测
+router.use('/machines', machinesRouter);
 
 // 内容 pipeline — GET /pipelines/:id/stats 等路由
 router.use('/pipelines', contentPipelineRouter);
