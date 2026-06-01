@@ -89,3 +89,68 @@ describe('GET /runs', () => {
     expect(res.body[0]).toMatchObject(mockRow);
   });
 });
+
+describe('GET /runs/:id', () => {
+  let app;
+  let pool;
+
+  beforeEach(async () => {
+    vi.clearAllMocks();
+    const poolMod = await import('../../db.js');
+    pool = poolMod.default;
+    const routerMod = await import('../harness.js');
+    app = express();
+    app.use(express.json());
+    app.use('/', routerMod.default);
+  });
+
+  const VALID_UUID = 'aaaaaaaa-0000-0000-0000-000000000000';
+
+  it('存在的 UUID 返回 200 + 单条记录', async () => {
+    const mockRow = {
+      id: VALID_UUID,
+      initiative_id: 'bbbbbbbb-0000-0000-0000-000000000000',
+      phase: 'done',
+      journey_type: 'dev_pipeline',
+      started_at: '2026-06-01T00:00:00Z',
+      completed_at: '2026-06-01T01:00:00Z',
+      failure_reason: null,
+    };
+    pool.query.mockResolvedValueOnce({ rows: [mockRow] });
+    const res = await request(app).get(`/runs/${VALID_UUID}`);
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject(mockRow);
+    expect(pool.query.mock.calls[0][1][0]).toBe(VALID_UUID);
+  });
+
+  it('不存在的 UUID 返回 404', async () => {
+    pool.query.mockResolvedValueOnce({ rows: [] });
+    const res = await request(app).get(`/runs/${VALID_UUID}`);
+    expect(res.status).toBe(404);
+    expect(res.body.error).toBe('harness run not found');
+  });
+
+  it('非 UUID 返回 400', async () => {
+    const res = await request(app).get('/runs/not-a-uuid');
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/uuid/i);
+  });
+
+  it('响应 keys 精确等于 7 字段', async () => {
+    const mockRow = {
+      id: VALID_UUID,
+      initiative_id: 'bbbbbbbb-0000-0000-0000-000000000000',
+      phase: 'done',
+      journey_type: 'dev_pipeline',
+      started_at: '2026-06-01T00:00:00Z',
+      completed_at: null,
+      failure_reason: null,
+    };
+    pool.query.mockResolvedValueOnce({ rows: [mockRow] });
+    const res = await request(app).get(`/runs/${VALID_UUID}`);
+    expect(res.status).toBe(200);
+    expect(Object.keys(res.body).sort()).toEqual(
+      ['completed_at','failure_reason','id','initiative_id','journey_type','phase','started_at']
+    );
+  });
+});
