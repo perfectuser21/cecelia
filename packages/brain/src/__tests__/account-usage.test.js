@@ -401,7 +401,9 @@ describe('account-usage', () => {
       expect(usage.account1.five_hour_pct).toBe(0);
     });
 
-    it('B49: API 返回 429 时应标记账号不可用（five_hour_pct=100），不降级旧缓存', async () => {
+    it('usage 接口 429 + 健康缓存 → 回退缓存用量（不再武断判死健康账号）', async () => {
+      // 回归：usage 查询接口的 429（高频轮询触发）≠ 账号配额耗尽。
+      // 健康账号（缓存 4%）偶发 usage-429 不应被标 five_hour_pct=100 踢出轮换。
       const staleRow = {
         account_id: 'account1',
         five_hour_pct: 4,
@@ -420,8 +422,46 @@ describe('account-usage', () => {
       });
 
       const usage = await getAccountUsage(true);
-      // 429 = 账号确实超配额，必须判不可用（≥ USAGE_THRESHOLD 80），不能用乐观旧缓存的 4%
+      // 回退到缓存的 4%，账号保持可用 — 不再 hardcode 100
+      expect(usage.account1.five_hour_pct).toBe(4);
+      expect(usage.account1).toEqual(staleRow);
+    });
+
+    it('usage 接口 429 + 真配额耗尽缓存 → 缓存高 pct 自然淘汰（不死循环）', async () => {
+      // 真配额耗尽时，上次成功 fetch 已把高 pct 落缓存；回退到该缓存账号依然被淘汰。
+      const exhaustedRow = {
+        account_id: 'account1',
+        five_hour_pct: 98,
+        seven_day_pct: 50,
+        seven_day_sonnet_pct: 40,
+        resets_at: null,
+        seven_day_resets_at: null,
+        extra_used: false,
+      };
+      setupValidCredentials();
+      mockFetch.mockResolvedValue({ ok: false, status: 429 });
+      mockPool.query.mockImplementation(async (sql) => {
+        if (sql.includes('INTERVAL')) return { rows: [] };
+        if (sql.includes('account_usage_cache') && sql.includes('SELECT')) return { rows: [exhaustedRow] };
+        return { rows: [] };
+      });
+
+      const usage = await getAccountUsage(true);
+      // 回退缓存 98% ≥ 阈值，仍被淘汰 — 死循环由真实缓存高 pct 天然防住
+      expect(usage.account1.five_hour_pct).toBe(98);
+    });
+
+    it('usage 接口 429 + 无缓存 → 保守跳过但短重置（5min，不长期毒化）', async () => {
+      setupValidCredentials();
+      mockFetch.mockResolvedValue({ ok: false, status: 429 });
+      mockPool.query.mockResolvedValue({ rows: [] }); // 无任何缓存
+
+      const usage = await getAccountUsage(true);
       expect(usage.account1.five_hour_pct).toBe(100);
+      // resets_at 应在 ~5min 后（不是旧逻辑的 1h）
+      const resetMs = new Date(usage.account1.resets_at).getTime() - Date.now();
+      expect(resetMs).toBeGreaterThan(0);
+      expect(resetMs).toBeLessThanOrEqual(5 * 60 * 1000 + 1000);
     });
 
     it('API 数据成功时应 upsert 缓存', async () => {
