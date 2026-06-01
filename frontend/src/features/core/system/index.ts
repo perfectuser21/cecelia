@@ -56,6 +56,13 @@ const manifest: FeatureManifest = {
     { path: '/ops/devgate', redirect: '/devgate' },
     // Performance
     { path: '/performance', component: 'PerformanceMonitoring' },
+    // Machines
+    {
+      path: '/machines',
+      component: 'MachinesPage',
+      navItem: { label: '设备', icon: 'Server', group: 'system', order: 99 },
+    },
+    { path: '/machines/:name', component: 'MachineDetailPage' },
   ],
 
   components: {
@@ -68,6 +75,8 @@ const manifest: FeatureManifest = {
     QualityMonitorPage: () => import('./pages/QualityMonitorPage'),
     DevGateMetrics: () => import('./pages/DevGateMetrics'),
     PerformanceMonitoring: () => import('./pages/PerformanceMonitoring'),
+    MachinesPage: () => import('./pages/MachinesPage'),
+    MachineDetailPage: () => import('./pages/MachineDetailPage'),
   },
 };
 
