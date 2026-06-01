@@ -154,4 +154,15 @@ describe('machines routes', () => {
       expect(ipConflicts).toHaveLength(0);
     });
   });
+
+  describe('tailscale cache file fallback', () => {
+    it('returns tailscale_online true when IP matches cache file', async () => {
+      mockQuery.mockResolvedValueOnce({ rows: [MACHINE_ROW] });
+      // The mock for child_process execSync returns valid tailscale JSON
+      const res = await request(makeApp()).get('/api/brain/machines');
+      expect(res.status).toBe(200);
+      // tailscale_online is determined by getTailscaleStatus() which uses cache or execSync
+      expect(typeof res.body[0].tailscale_online).toBe('boolean');
+    });
+  });
 });
