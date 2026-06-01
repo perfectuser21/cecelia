@@ -251,6 +251,15 @@ describe('account-usage', () => {
       markSpendingCap('account2', futureTime);
       expect(isAllAccountsSpendingCapped()).toBe(true);
     });
+
+    it('account3 被标记时应影响 isAllAccountsSpendingCapped（B51: account3 应在 ACCOUNTS 列表）', () => {
+      // B51 failing test: ACCOUNTS 应包含 account3，不含 account1
+      // 当前 ACCOUNTS=[account1,account2] → mark account2+account3 不会全 capped → 预期 false（Red）
+      const futureTime = new Date(Date.now() + 7200000).toISOString();
+      markSpendingCap('account2', futureTime);
+      markSpendingCap('account3', futureTime);
+      expect(isAllAccountsSpendingCapped()).toBe(true);
+    });
   });
 
   // ════════════════════════════════════════════════════════════════════════════
