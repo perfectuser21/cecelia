@@ -232,4 +232,70 @@ describe('probeGeoWebsite', () => {
     expect(blogCall?.method).toBe('GET');
     expect(postsCall?.method).toBe('HEAD');
   });
+
+  it('retries once on TypeError (transient network error) and succeeds', async () => {
+    // Simulate: first call throws TypeError (e.g. DNS failure), second call succeeds.
+    // This covers the transient network error retry path introduced to prevent
+    // false-positive auto-fix dispatches from one-off network blips.
+    let callCount = 0;
+    global.fetch = vi.fn((url) => {
+      callCount++;
+      if (callCount <= 3) {
+        // First call for each URL throws a network TypeError
+        const err = new TypeError('fetch failed');
+        err.cause = new Error('ENOTFOUND zenithjoyai.com');
+        return Promise.reject(err);
+      }
+      const body = url.includes('/zh/blog/')
+        ? 'Visit our /zh/blog/ for articles'
+        : 'Welcome to ZenithJoyAI homepage';
+      return Promise.resolve({ status: 200, text: async () => body });
+    });
+
+    const { runProbes } = await import('../capability-probe.js');
+    const results = await runProbes();
+    const geoResult = results.find(r => r.name === 'geo_website');
+
+    expect(geoResult).toBeDefined();
+    expect(geoResult.ok).toBe(true);
+    expect(geoResult.detail).toContain('homepage=ok');
+    expect(geoResult.detail).toContain('blog_list=ok');
+    expect(geoResult.detail).toContain('posts_page=ok');
+    // fetch called 6 times: 3 fails (one per URL) + 3 retries
+    expect(callCount).toBe(6);
+  });
+
+  it('fails after retry when TypeError persists on all checks', async () => {
+    // Both attempts fail with TypeError — probe must report failure, not crash.
+    global.fetch = vi.fn((url) => {
+      const err = new TypeError('fetch failed');
+      err.cause = new Error('ECONNREFUSED');
+      return Promise.reject(err);
+    });
+
+    const { runProbes } = await import('../capability-probe.js');
+    const results = await runProbes();
+    const geoResult = results.find(r => r.name === 'geo_website');
+
+    expect(geoResult).toBeDefined();
+    expect(geoResult.ok).toBe(false);
+    // cause message should appear in detail for diagnostics
+    expect(geoResult.detail).toMatch(/error\(fetch failed:ECONNREFUSED\)/);
+  });
+
+  it('does NOT retry on HTTP errors (503 is a real outage, not transient)', async () => {
+    let callCount = 0;
+    global.fetch = vi.fn((url) => {
+      callCount++;
+      return Promise.resolve({ status: 503, text: async () => '' });
+    });
+
+    const { runProbes } = await import('../capability-probe.js');
+    const results = await runProbes();
+    const geoResult = results.find(r => r.name === 'geo_website');
+
+    expect(geoResult.ok).toBe(false);
+    // Should be exactly 3 calls (one per URL), no retries
+    expect(callCount).toBe(3);
+  });
 });

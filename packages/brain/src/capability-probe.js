@@ -513,16 +513,29 @@ async function probeGeoWebsite() {
     { url: `${BASE}/zh/posts/`, expect: null, label: 'posts_page', method: 'HEAD' },
   ];
 
-  // Run all checks in parallel — sequential fetches would stack up to 3×timeout and
-  // risk hitting the outer 30s probe timeout if any single request is slow.
-  const PER_CHECK_TIMEOUT_MS = 20_000;
+  // 12s per check × 2 attempts + 1s retry delay = 25s max, fits under 30s outer probe timeout.
+  const PER_CHECK_TIMEOUT_MS = 12_000;
+  const RETRY_DELAY_MS = 1_000;
+
   const results = await Promise.allSettled(
     checks.map(async (check) => {
-      const res = await fetch(check.url, {
+      const doFetch = () => fetch(check.url, {
         method: check.method || 'GET',
         redirect: 'follow',
         signal: AbortSignal.timeout(PER_CHECK_TIMEOUT_MS),
       });
+
+      let res;
+      try {
+        res = await doFetch();
+      } catch (err) {
+        // Retry once on network-level errors (TypeError = DNS/TCP failures).
+        // HTTP errors (4xx/5xx) are not retried — those indicate real outages.
+        if (!(err instanceof TypeError)) throw err;
+        await new Promise(r => setTimeout(r, RETRY_DELAY_MS));
+        res = await doFetch();
+      }
+
       const ok = res.status === 200 && (!check.expect || (await res.text()).includes(check.expect));
       return { label: check.label, ok, status: res.status };
     })
@@ -537,7 +550,11 @@ async function probeGeoWebsite() {
       details.push(`${r.value.label}=${r.value.ok ? 'ok' : `fail(${r.value.status})`}`);
       if (!r.value.ok) allOk = false;
     } else {
-      details.push(`${checks[i].label}=error(${r.reason.message.slice(0, 40)})`);
+      const cause = r.reason.cause?.message;
+      const errMsg = cause
+        ? `${r.reason.message.slice(0, 30)}:${cause.slice(0, 30)}`
+        : r.reason.message.slice(0, 40);
+      details.push(`${checks[i].label}=error(${errMsg})`);
       allOk = false;
     }
   }
