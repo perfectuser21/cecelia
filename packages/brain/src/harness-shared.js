@@ -38,24 +38,30 @@ const SKILL_SEARCH_DIRS = [
 const _skillCache = new Map();
 
 /**
- * 读取 skill 的 SKILL.md 内容（缓存）。
- * 优先查 ~/.claude-account1/skills/<name>/SKILL.md。
- * 找不到返回空串（不抛错，让 prompt 能回退）。
+ * 读取 skill 的 SKILL.md 内容（成功结果缓存）。
+ * 按 SKILL_SEARCH_DIRS 顺序查找。
+ * B56: 找不到/读失败 → throw（不返回空串、不缓存失败）。
+ * 调用方拿空 SKILL 静默降级会跑出错误成果（generator 无 PR），故 fail-fast。
  */
 export function loadSkillContent(skillName) {
   if (_skillCache.has(skillName)) return _skillCache.get(skillName);
+  const tried = [];
   for (const base of SKILL_SEARCH_DIRS) {
     const p = path.join(base, skillName, 'SKILL.md');
+    tried.push(p);
     if (existsSync(p)) {
       try {
         const content = readFileSync(p, 'utf8');
-        _skillCache.set(skillName, content);
+        _skillCache.set(skillName, content); // 只缓存成功结果
         return content;
-      } catch { /* continue */ }
+      } catch { /* 读失败继续下一路径，不缓存 */ }
     }
   }
-  _skillCache.set(skillName, '');
-  return '';
+  // B56: 找不到 SKILL.md = 系统配置错误，fail-fast（不返回空串、不缓存失败）。
+  // 历史 bug：返回空串 + 缓存空串 → generator 拿空 SKILL prompt 静默跑出无 PR 的假成功。
+  throw new Error(
+    `loadSkillContent: SKILL.md not found for "${skillName}". Searched: ${tried.join(', ')}`
+  );
 }
 
 // ─── Docker 输出解析 ─────────────────────────────────────────────────────────
