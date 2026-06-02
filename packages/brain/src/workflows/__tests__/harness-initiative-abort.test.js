@@ -46,12 +46,11 @@ import { runGanContractGraph } from '../../harness-gan-graph.js';
 // ────────────────────────────────────────────────────────────
 describe('InitiativeState schema', () => {
   it('有 initiative_run_id 字段，默认 null', () => {
-    const defaults = {};
-    for (const [k, ann] of Object.entries(InitiativeState.spec)) {
-      defaults[k] = ann.default?.();
-    }
-    expect('initiative_run_id' in defaults).toBe(true);
-    expect(defaults.initiative_run_id).toBeNull();
+    expect('initiative_run_id' in InitiativeState.spec).toBe(true);
+    // Annotation.Root spec 里用 initialValueFactory 或 value 存默认值
+    const ann = InitiativeState.spec.initiative_run_id;
+    const defaultVal = ann.initialValueFactory?.() ?? ann.value;
+    expect(defaultVal).toBeNull();
   });
 });
 
