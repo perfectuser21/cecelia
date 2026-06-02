@@ -154,7 +154,7 @@ export async function verifyContractProposerOutput(opts) {
     githubUrl = baseRepo;
   } else {
     try {
-      const { stdout } = await execFn('git', ['-C', baseRepo, 'remote', 'get-url', 'origin']);
+      const { stdout } = await execFn('git', ['-C', baseRepo, 'remote', 'get-url', 'origin'], {});
       githubUrl = stdout.trim();
     } catch (err) {
       throw new ContractViolation(
@@ -167,7 +167,7 @@ export async function verifyContractProposerOutput(opts) {
   // 1. ls-remote 验 branch 真在 origin（proposer 被 429 静默吞掉时分支根本不存在）
   try {
     const authedUrl = injectToken(githubUrl, githubToken);
-    const { stdout } = await execFn('git', ['ls-remote', authedUrl, branch]);
+    const { stdout } = await execFn('git', ['ls-remote', authedUrl, branch], {});
     if (!stdout.trim()) {
       throw new ContractViolation(
         `proposer_didnt_push: branch '${branch}' not found on origin (${githubUrl})`,
