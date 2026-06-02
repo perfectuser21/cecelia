@@ -96,6 +96,25 @@ router.get('/runs', async (req, res) => {
 });
 
 /**
+ * GET /runs/recent
+ * 返回最近 3 条 initiative_runs 记录，仅含 id/phase/started_at，按 started_at DESC
+ */
+router.get('/runs/recent', async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      `SELECT id, phase, started_at
+       FROM initiative_runs
+       ORDER BY started_at DESC
+       LIMIT 3`
+    );
+    res.json(rows);
+  } catch (err) {
+    console.error('[GET /harness/runs/recent]', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
  * GET /runs/:id
  * 按 run 自身 UUID 查单条 initiative_run 记录
  * id 非合法 UUID → 400，不存在 → 404
