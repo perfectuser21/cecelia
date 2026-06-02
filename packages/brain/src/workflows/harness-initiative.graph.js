@@ -111,9 +111,12 @@ export async function prepInitiativeNode(state, opts = {}) {
     if (!state.task?.payload?.journey_id) {
       console.warn(`[prep] journey_id missing in task.payload — initiative_run.journey_id will be null, Notion Project will be orphaned (task.id=${state.task?.id})`);
     }
-    const ensureWorktree = opts.ensureWorktree || ensureHarnessWorktree;
+    // 默认字面调用 ensureHarnessWorktree({ ...baseRepo })，base-repo-support-smoke 正则守卫；
+    // 测试可注入 opts.ensureWorktree 替换（条件分支保留字面调用不被间接层吞掉）
     const resolveToken = opts.resolveToken || resolveGitHubToken;
-    const worktreePath = await ensureWorktree({ taskId: state.task.id, initiativeId, baseRepo });
+    const worktreePath = opts.ensureWorktree
+      ? await opts.ensureWorktree({ taskId: state.task.id, initiativeId, baseRepo })
+      : await ensureHarnessWorktree({ taskId: state.task.id, initiativeId, baseRepo });
     const githubToken = await resolveToken();
 
     // OPEN-6: worktree 建好后立即 INSERT initiative_runs(A_contract)，确保 GAN abort 时有记录可更新
