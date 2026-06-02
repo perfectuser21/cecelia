@@ -44,7 +44,7 @@ describe('defaultReadContractFile — contract.md fallback', () => {
       throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
     });
     readdir.mockResolvedValue([]);
-    execFile.mockRejectedValue(new Error('no commits'));
+    execFile.mockImplementation((_cmd, _args, _opts, cb) => cb(new Error('no commits')));
     const result = await defaultReadContractFile('/repo', 'sprints');
     expect(result).toBe('plain content');
   });
@@ -52,7 +52,7 @@ describe('defaultReadContractFile — contract.md fallback', () => {
   it('三个都没有时抛 contract file not found', async () => {
     readFile.mockRejectedValue(Object.assign(new Error('ENOENT'), { code: 'ENOENT' }));
     readdir.mockResolvedValue([]);
-    execFile.mockRejectedValue(new Error('no commits'));
+    execFile.mockImplementation((_cmd, _args, _opts, cb) => cb(new Error('no commits')));
     await expect(defaultReadContractFile('/repo', 'sprints')).rejects.toThrow('contract file not found');
   });
 });
