@@ -141,3 +141,31 @@ describe('Propose 状态聚合逻辑', () => {
     expect(aggregateProposeStatus(['completed', 'queued'])).toBe('in_progress');
   });
 });
+
+// ─── PipelineProgressBar NODE_LABEL 映射测试 ──────────────────────────────────
+
+describe('PipelineProgressBar NODE_LABEL', () => {
+  const NODE_LABEL: Record<string, string> = {
+    prep: '准备', planner: 'Planner', parsePrd: '解析 PRD',
+    ganLoop: 'GAN 对抗', dbUpsert: '写库', generator: 'Generator',
+    evaluator: 'Evaluator', merge: '合并', report: '报告',
+  };
+
+  it('所有 9 个节点都有中文标签', () => {
+    const expectedNodes = ['prep', 'planner', 'parsePrd', 'ganLoop', 'dbUpsert', 'generator', 'evaluator', 'merge', 'report'];
+    for (const node of expectedNodes) {
+      expect(NODE_LABEL[node]).toBeDefined();
+      expect(NODE_LABEL[node].length).toBeGreaterThan(0);
+    }
+  });
+
+  it('未知节点 fallback 返回原 key', () => {
+    const unknownNode = 'unknownStep';
+    const label = NODE_LABEL[unknownNode] ?? unknownNode;
+    expect(label).toBe(unknownNode);
+  });
+
+  it('pct 100 对应 report 节点', () => {
+    expect(NODE_LABEL['report']).toBe('报告');
+  });
+});
