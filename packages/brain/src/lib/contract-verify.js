@@ -108,6 +108,100 @@ export async function verifyProposerOutput(opts) {
 }
 
 /**
+ * 验 GAN 合同轮 proposer 真把【合同】（contract-draft.md / sprint-contract.md）push 到 origin 的 propose 分支。
+ *
+ * 与 verifyProposerOutput（验 task-plan.json）的关键区别 —— 这是修 GAN 永不收敛的根因：
+ * GAN 每轮 proposer 的真实交付物是【合同】（reviewer 每轮审的就是它，GAN 收敛的也是它）。
+ * task-plan.json 是 GAN 收敛【后】下游 inferTaskPlanNode 才读的产物，proposer SKILL 的 git add
+ * 对它用 `2>/dev/null` 容忍 LLM 偶发漏写、inferTaskPlanNode 有 B32 兜底（代 push / fallback）。
+ * 用 task-plan.json 当"proposer 这轮到底有没有产出（vs 被 429 静默吞掉）"的信号，会在
+ * 合同有效但漏 task-plan.json 时误判 proposer_didnt_push → #3229 起连续 2 轮即 ABORT GAN，
+ * pipeline 永远进不了 generator（H15 #2867 起潜伏，#3229 去掉 .catch 后致命暴露）。
+ * 故 GAN 的 verifyProposer 必须验合同产物，不验 task-plan.json。
+ *
+ * @param {Object} opts
+ * @param {string} opts.worktreePath - 跑 git 命令的 worktree
+ * @param {string} opts.branch - propose_branch 名
+ * @param {string} opts.sprintDir
+ * @param {string} [opts.baseRepo] - 读 origin URL
+ * @param {Function} [opts.execFn] - 测试注入
+ * @throws {ContractViolation}
+ */
+export async function verifyContractProposerOutput(opts) {
+  const { worktreePath, branch, sprintDir, execFn = execFile } = opts;
+  const baseRepo = opts.baseRepo || '/Users/administrator/perfect21/cecelia';
+
+  // H17: baseRepo 是 remote URL（GitHub/SSH）直接用；否则从本地 origin remote 读 URL
+  let githubUrl;
+  if (/^(https?|ssh|git):\/\//.test(baseRepo)) {
+    githubUrl = baseRepo;
+  } else {
+    try {
+      const { stdout } = await execFn('git', ['-C', baseRepo, 'remote', 'get-url', 'origin']);
+      githubUrl = stdout.trim();
+    } catch (err) {
+      throw new ContractViolation(
+        `verifyContractProposerOutput: cannot read GitHub URL from baseRepo origin: ${err.message}`,
+        { stage: 'github_url' },
+      );
+    }
+  }
+
+  // 1. ls-remote 验 branch 真在 origin（proposer 被 429 静默吞掉时分支根本不存在）
+  try {
+    const { stdout } = await execFn('git', ['ls-remote', githubUrl, branch]);
+    if (!stdout.trim()) {
+      throw new ContractViolation(
+        `proposer_didnt_push: branch '${branch}' not found on origin (${githubUrl})`,
+        { branch, githubUrl, stage: 'ls_remote' },
+      );
+    }
+  } catch (err) {
+    if (err instanceof ContractViolation) throw err;
+    throw new ContractViolation(
+      `verifyContractProposerOutput: ls-remote failed for ${branch}: ${err.message}`,
+      { branch, stage: 'ls_remote_exec' },
+    );
+  }
+
+  // 2. fetch 分支后 git show 合同文件（reviewer APPROVED 会把 contract-draft.md rename → sprint-contract.md）
+  const candidates = [`${sprintDir}/contract-draft.md`, `${sprintDir}/sprint-contract.md`];
+  try {
+    await execFn('git', ['fetch', githubUrl, `${branch}:refs/remotes/origin/${branch}`], { cwd: worktreePath });
+  } catch (err) {
+    throw new ContractViolation(
+      `proposer_didnt_push: branch '${branch}' fetch failed: ${err.message}`,
+      { branch, stage: 'fetch' },
+    );
+  }
+  let content = null;
+  const showErrors = [];
+  for (const p of candidates) {
+    try {
+      const { stdout } = await execFn('git', ['show', `origin/${branch}:${p}`], { cwd: worktreePath });
+      content = stdout;
+      break;
+    } catch (err) {
+      showErrors.push(`${p}: ${err.message}`);
+    }
+  }
+  if (content === null) {
+    throw new ContractViolation(
+      `proposer_didnt_push: branch '${branch}' missing contract file (${candidates.join(' | ')}): ${showErrors.join('; ')}`,
+      { branch, candidates, stage: 'git_show' },
+    );
+  }
+
+  // 3. 合同非空（防 proposer 推了空壳）
+  if (!content.trim()) {
+    throw new ContractViolation(
+      `proposer_empty_contract: branch '${branch}' 合同文件为空`,
+      { branch, stage: 'empty' },
+    );
+  }
+}
+
+/**
  * 验 generator 节点真创了 PR + diff 含 requiredArtifacts。
  *
  * @param {Object} opts
