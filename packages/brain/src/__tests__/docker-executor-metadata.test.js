@@ -70,12 +70,21 @@ describe('executeInDocker — WF-3 观察性元数据', () => {
     return await import('../docker-executor.js');
   }
 
-  // ensureDockerImage 会先 spawn docker image inspect，需拦截并返回成功 proc
+  // ensureDockerImage 会先 spawn docker image inspect，需拦截并返回成功 proc。
+  // 跑前 removeStaleContainer 会 spawn `docker rm -f {name}` 清同名残留容器，
+  // 同样短路成快速 exit（否则 run mock 的 --cidfile 断言会误命中 rm 调用）。
   function withInspectSuccess(runImpl) {
     let inspected = false;
     return function (cmd, args, opts) {
       if (!inspected && Array.isArray(args) && args[0] === 'image') {
         inspected = true;
+        const p = new EventEmitter();
+        p.stdout = new EventEmitter();
+        p.stderr = new EventEmitter();
+        queueMicrotask(() => p.emit('exit', 0, null));
+        return p;
+      }
+      if (Array.isArray(args) && args[0] === 'rm') {
         const p = new EventEmitter();
         p.stdout = new EventEmitter();
         p.stderr = new EventEmitter();

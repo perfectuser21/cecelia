@@ -203,12 +203,19 @@ function containerName(taskId) {
  */
 export function removeStaleContainer(name, spawnFn = spawn) {
   return new Promise((resolve) => {
+    let done = false;
+    const finish = () => { if (!done) { done = true; resolve(); } };
     try {
       const proc = spawnFn('docker', ['rm', '-f', name], { stdio: 'ignore' });
-      proc.on('close', () => resolve());
-      proc.on('error', () => resolve());
+      // 真实 spawn 同时 emit 'exit' 与 'close'；runDocker 用 'exit'，这里对齐并兜 'close'/'error'。
+      proc.on('exit', finish);
+      proc.on('close', finish);
+      proc.on('error', finish);
+      // 防御：docker rm 卡死不阻塞 pipeline（最坏退回原冲突，由 #3229 中止兜底）。
+      const t = setTimeout(finish, 8000);
+      if (typeof t.unref === 'function') t.unref();
     } catch {
-      resolve();
+      finish();
     }
   });
 }
