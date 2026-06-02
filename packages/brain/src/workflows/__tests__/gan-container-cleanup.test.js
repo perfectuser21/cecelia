@@ -6,7 +6,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import path from 'node:path';
 import { mkdtemp, rm } from 'node:fs/promises';
-import { writeFileSync } from 'node:fs';
+import { writeFileSync, readFileSync } from 'node:fs';
 import os from 'node:os';
 import { createGanContractNodes } from '../harness-gan.graph.js';
 
@@ -90,5 +90,16 @@ describe('GAN 容器名清理（防 exit 125 撞名）', () => {
     } finally {
       await rm(tmp, { recursive: true, force: true });
     }
+  });
+
+  it('cleanup 绝不用 docker rm -f（防回归：-f 会杀正在跑的容器 → exit 137）', () => {
+    // 源码级守卫：#3230 曾用 rm -f 把正在跑的 proposer/reviewer 杀了（137）。
+    // 必须用 docker rm（不带 -f）——只删停止的残留，活容器安全报错跳过。
+    const src = readFileSync(
+      new URL('../harness-gan.graph.js', import.meta.url),
+      'utf8',
+    );
+    expect(src).not.toMatch(/\['rm',\s*'-f'/);
+    expect(src).toMatch(/\['rm',\s*name\]/);
   });
 });
