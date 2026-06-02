@@ -97,3 +97,4 @@ packages/quality/.test-phase1/
 
 # Ralph Loop 模式 dev session 状态（项目根，永远不进 git）
 .cecelia/dev-active-*.json
+node_modules

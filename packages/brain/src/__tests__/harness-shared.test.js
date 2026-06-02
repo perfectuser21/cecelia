@@ -26,12 +26,11 @@ describe('harness-shared module', () => {
     expect(extractField('pr_url: FAILED', 'pr_url')).toBeNull();
   });
 
-  it('loadSkillContent 返回字符串（缺文件时返回空字符串而非抛错）', async () => {
+  it('loadSkillContent 缺文件时 throw（B56 fail-fast，不再返回空串）', async () => {
+    // B56: CI 环境无 ~/.claude-account*/skills/，loadSkillContent 应 throw 而非静默返回空串。
+    // 旧行为返回空串会导致 generator 拿空 SKILL prompt 跑出无 PR 的假成功，故 fail-fast。
     const { loadSkillContent } = await import('../harness-shared.js');
-    // 不依赖宿主机 skill 文件存在；只验证 signature + 不抛错（CI 环境无 ~/.claude-account*/skills/）
-    const content = loadSkillContent('nonexistent-skill-name-xyz');
-    expect(typeof content).toBe('string');
-    // 缺文件时 loadSkillContent 应返回 '' 而非抛错，证明 signature 正确
+    expect(() => loadSkillContent('nonexistent-skill-name-xyz-b56')).toThrow(/SKILL\.md not found/);
   });
 
   it('exports Protocol v2 工具：readPrFromGitState / readVerdictFile', async () => {
