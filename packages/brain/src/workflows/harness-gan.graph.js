@@ -47,6 +47,14 @@ export const DEFAULT_RECURSION_LIMIT = 100;
 // 真在对抗的 GAN 仍可无限轮，符合"GAN 无硬轮数上限"设计）。
 export const MAX_NO_PUSH_STREAK = 2;
 
+// B54: reviewer 连续"未产出可解析 verdict"的容忍上限。
+// 实证 bug：reviewer 把 APPROVED 写进散文 contract-review-feedback.md，但没把 verdict/rubric_scores
+// 写进 brain 读的 .brain-result.json（checkpoint 实证 verdict 通道全程空）→ verdict=undefined →
+// 永不 APPROVED；B52 删了强制收敛兜底阀 → 无限空转（v4 实证空转到 round6+ 才手动杀）。
+// 先从散文反馈降级解析 verdict；若任何来源都拿不到，连续 ≥ 此值即带原因中止（对称 MAX_NO_PUSH_STREAK）。
+// 不是轮数上限——拿到 verdict 就清零，真在对抗的 GAN 仍可无限轮。
+export const MAX_NO_VERDICT_STREAK = 3;
+
 // 7 个 rubric 维度（对齐 harness-contract-reviewer SKILL v6.4.0+）。
 // ⚠️ harness::rubric-dimensions 接口约定：此数组必须与 reviewer SKILL 输出维度完全一致。
 // 改 reviewer SKILL 维度 = 必须同步改这里（查 Brain registry type=harness_interface）。
@@ -280,6 +288,30 @@ export async function defaultReadContractFile(worktreePath, sprintDir) {
   throw new Error(`contract file not found in any of: ${errors.join('; ')}`);
 }
 
+// B54: 从 reviewer 散文反馈 contract-review-feedback.md 降级解析 verdict。
+// reviewer 偶发没把 verdict/rubric_scores 写进 brain 读的 .brain-result.json（结构化通道空），
+// 但可靠把决定写进散文反馈文件（如 `**verdict**: APPROVED` / `## VERDICT: REVISION`）。
+// 结构化 verdict 缺失时用此兜底，避免 reviewer 真实决定丢失导致 GAN 永不收敛。
+// 找不到文件/无 verdict 标记 → 返回 null（不抛）。
+export async function defaultReadReviewerFeedbackVerdict(worktreePath, sprintDir) {
+  const candidates = [
+    path.join(worktreePath, sprintDir, 'contract-review-feedback.md'),
+    path.join(worktreePath, sprintDir, 'review-feedback.md'),
+  ];
+  for (const p of candidates) {
+    let content;
+    try {
+      content = await readFile(p, 'utf8');
+    } catch {
+      continue;
+    }
+    // 匹配 `**verdict**: APPROVED` / `## VERDICT: REVISION` / `verdict：APPROVED` 等
+    const m = content.match(/(?:#{1,4}\s*)?\**\s*verdict\s*\**\s*[:：]\s*\**\s*\(?\s*(APPROVED|REVISION)/i);
+    if (m) return m[1].toUpperCase();
+  }
+  return null;
+}
+
 // ── LangGraph State 注解 ─────────────────────────────────────────────────
 
 export const GanContractState = Annotation.Root({
@@ -303,6 +335,8 @@ export const GanContractState = Annotation.Root({
   // 累计 ≥ MAX_NO_PUSH_STREAK 即判 proposer 坏（多半账号限流/报错）→ 带原因中止 GAN。
   // 正常 push 成功则清零。
   proposerNoPushStreak: Annotation({ reducer: (_old, neu) => neu, default: () => 0 }),
+  // B54: reviewer 连续"未产出可解析 verdict"的次数。拿到 verdict 清零，达 MAX_NO_VERDICT_STREAK 中止。
+  reviewerNoVerdictStreak: Annotation({ reducer: (_old, neu) => neu, default: () => 0 }),
   // error: 节点设置后，graph 路由到 END（中止），上层据此判 GAN 失败。
   error: Annotation({ reducer: (_old, neu) => neu, default: () => null }),
   // rubricHistory: 累积每轮 reviewer 的 rubric_scores，供 detectConvergenceTrend 判趋势。
@@ -353,6 +387,7 @@ export function createGanContractNodes(executor, ctx) {
     readContractFile = defaultReadContractFile,
     fetchOriginFile: _fetchOriginFile = fetchAndShowOriginFile,
     verifyProposer = verifyContractProposerOutput,
+    readReviewerFeedback = defaultReadReviewerFeedbackVerdict,
   } = ctx;
   // _fetchOriginFile 保留 ctx 兼容旧 caller（test 仍传 fetchOriginFile），H15 后 proposer 改走 verifyProposer。
   void _fetchOriginFile;
@@ -500,6 +535,17 @@ export function createGanContractNodes(executor, ctx) {
       console.warn(`[harness-gan] round=${currentRound} rubric_verdict=${rubricVerdict} ≠ file_verdict=${resultData.verdict} — 按 rubric 判（代码权威）`);
     }
 
+    // B54: 结构化 verdict 缺失（reviewer 没把 verdict/rubric_scores 写进 brain 读的 .brain-result.json，
+    // checkpoint 实证 verdict 通道全程空）→ 从散文反馈 contract-review-feedback.md 降级解析，
+    // 恢复 reviewer 真实决定，避免 GAN 永不收敛。rubric 仍是首选权威，散文仅在结构化彻底缺失时兜底。
+    if (verdict !== 'APPROVED' && verdict !== 'REVISION') {
+      const proseVerdict = await readReviewerFeedback(worktreePath, sprintDir).catch(() => null);
+      if (proseVerdict) {
+        console.warn(`[harness-gan] round=${currentRound} 结构化 verdict 缺失，从 contract-review-feedback.md 降级解析 verdict=${proseVerdict}`);
+        verdict = proseVerdict;
+      }
+    }
+
     // B52: 记录本轮合同行数 + 趋势（仅用于诊断日志，不再强制 APPROVED）
     // 原 B50 forced-approval 逻辑已移除：GAN 无限跑直到 Reviewer 真实 APPROVED。
     // 强制收敛是 Proposer 漂移的应急阀，根因修复见 harness-contract-proposer B52 精简纪律。
@@ -514,10 +560,26 @@ export function createGanContractNodes(executor, ctx) {
       console.warn(`[harness-gan][DIAG] GAN ${trend} at round=${currentRound} (verdict=${verdict}, history_len=${combinedHistory.length}) — Proposer 应收敛，不强制 APPROVED`);
     }
 
+    // B54 防御纵深：任何来源（rubric / file_verdict / 散文反馈）都拿不到可解析 verdict =
+    // reviewer 输出彻底坏。累计连续失败，达上限即带原因中止 GAN，而不是默默当 REVISION 无限空转
+    // （对称 proposerNoPushStreak / #3229）。拿到干净 verdict 就清零，真在对抗的 GAN 仍可无限轮。
+    const cleanVerdict = (verdict === 'APPROVED' || verdict === 'REVISION') ? verdict : null;
+    const noVerdictStreak = cleanVerdict ? 0 : (state.reviewerNoVerdictStreak || 0) + 1;
+    if (!cleanVerdict && noVerdictStreak >= MAX_NO_VERDICT_STREAK) {
+      const msg = `reviewer_no_parseable_verdict: 连续 ${noVerdictStreak} 轮 reviewer 未产出可解析 verdict（.brain-result.json 缺 verdict/rubric_scores 且 contract-review-feedback.md 无 verdict 标记）`;
+      console.error(`[harness-gan][ABORT] ${msg}`);
+      return {
+        costUsd: costAfterSpawn,
+        reviewerNoVerdictStreak: noVerdictStreak,
+        error: { node: 'reviewer', message: msg },
+      };
+    }
+
     const patch = {
       costUsd: costAfterSpawn,
       verdict,
       forcedApproval: false,
+      reviewerNoVerdictStreak: noVerdictStreak,
     };
     if (newHistoryEntry) patch.rubricHistory = [newHistoryEntry];
     if (verdict !== 'APPROVED') patch.feedback = resultData.feedback || '';
@@ -529,7 +591,9 @@ export function createGanContractNodes(executor, ctx) {
 
 // ── Graph 组装 ─────────────────────────────────────────────────────────
 
-function reviewerRouter(state) {
+export function reviewerRouter(state) {
+  // B54: reviewer 设了 error（连续无可解析 verdict 中止）→ END，不再路由回 proposer 空转。
+  if (state.error) return END;
   return state.verdict === 'APPROVED' ? END : 'proposer';
 }
 
