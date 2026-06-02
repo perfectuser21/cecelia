@@ -4,6 +4,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   slug, classifyArea, classifyGroup, classifyKind, detailRoute, normStatus,
+  shanghaiDay, toFeedItem, buildFeed, computeStats,
 } from '../warroom-classify.js';
 
 describe('slug', () => {
@@ -105,5 +106,98 @@ describe('normStatus', () => {
   it('canceled/cancelled → canceled', () => {
     expect(normStatus('canceled')).toBe('canceled');
     expect(normStatus('cancelled')).toBe('canceled');
+  });
+});
+
+describe('shanghaiDay', () => {
+  it('UTC 时间转上海日期（+8 跨天）', () => {
+    expect(shanghaiDay('2026-06-01T17:00:00Z')).toBe('2026-06-02');
+  });
+  it('空值 → 空串', () => {
+    expect(shanghaiDay(null)).toBe('');
+    expect(shanghaiDay('')).toBe('');
+  });
+});
+
+describe('toFeedItem', () => {
+  const now = new Date('2026-06-02T04:00:00Z').getTime();
+
+  it('active sprint：elapsed 用 now-started，带进度', () => {
+    const t = {
+      id: 't1', task_type: 'harness_initiative', status: 'in_progress',
+      title: 'GET /api/brain/x 接口', priority: 'P1',
+      started_at: '2026-06-02T03:00:00Z', completed_at: null,
+      payload: { base_repo: 'https://github.com/x/cecelia.git' },
+    };
+    const item = toFeedItem(t, null, { pct: 40, node: 'ganLoop' }, now);
+    expect(item).toMatchObject({
+      id: 't1', kind: 'sprint', status: 'active', progress_pct: 40,
+      current_node: 'ganLoop', detail_route: '/pipeline/t1',
+    });
+    expect(item.elapsed_ms).toBe(3600_000);
+  });
+
+  it('failed task：带 fail_reason，无进度', () => {
+    const t = {
+      id: 't2', task_type: 'dev', status: 'failed',
+      title: 'fix bug', error_message: 'exit 28 timeout',
+      started_at: '2026-06-02T03:00:00Z', completed_at: '2026-06-02T03:30:00Z',
+      payload: {},
+    };
+    const item = toFeedItem(t, null, null, now);
+    expect(item).toMatchObject({
+      kind: 'task', status: 'failed', fail_reason: 'exit 28 timeout',
+      detail_route: '/tasks/t2/prd', progress_pct: null,
+    });
+    expect(item.elapsed_ms).toBe(1800_000);
+  });
+
+  it('pr_url 从 result 兜底', () => {
+    const t = { id: 't3', task_type: 'dev', status: 'completed', title: 'x', payload: {}, result: { pr_url: 'http://pr/9' } };
+    expect(toFeedItem(t, null, null, now).pr_url).toBe('http://pr/9');
+  });
+});
+
+describe('buildFeed', () => {
+  const now = Date.now();
+  const tasks = [
+    { id: 'a', task_type: 'harness_initiative', status: 'in_progress', title: 'brain x', created_at: '2026-06-02T01:00:00Z', payload: { base_repo: 'cecelia.git' } },
+    { id: 'b', task_type: 'harness_initiative', status: 'failed', title: 'brain y', created_at: '2026-06-02T00:00:00Z', payload: { base_repo: 'cecelia.git' } },
+    { id: 'c', task_type: 'harness_initiative', status: 'completed', title: 'iLink 通道', created_at: '2026-06-01T00:00:00Z', payload: { base_repo: 'zenithjoy-workspace.git', journey_id: 'j1' } },
+  ];
+
+  it('按 area 分组 + 数量正确 + cecelia 排前', () => {
+    const areas = buildFeed(tasks, { j1: '客户私域 AI 接管' }, {}, now);
+    expect(areas.find(a => a.areaKey === 'cecelia').count).toBe(2);
+    expect(areas.find(a => a.areaKey === 'zenithjoy').count).toBe(1);
+    expect(areas[0].areaKey).toBe('cecelia');
+  });
+
+  it('ZenithJoy 任务用 journey 名做 group', () => {
+    const areas = buildFeed(tasks, { j1: '客户私域 AI 接管' }, {}, now);
+    expect(areas.find(a => a.areaKey === 'zenithjoy').groups[0].groupName).toBe('客户私域 AI 接管');
+  });
+
+  it('group 内 active 排在 failed 前', () => {
+    const areas = buildFeed(tasks, {}, {}, now);
+    const brain = areas.find(a => a.areaKey === 'cecelia').groups.find(g => g.groupKey === 'brain');
+    expect(brain.tasks[0].status).toBe('active');
+    expect(brain.tasks[1].status).toBe('failed');
+  });
+});
+
+describe('computeStats', () => {
+  const tasks = [
+    { id: '1', status: 'in_progress', created_at: '2026-06-02T01:00:00Z' },
+    { id: '2', status: 'completed', completed_at: '2026-06-02T02:00:00Z', pr_url: 'http://pr/1' },
+    { id: '3', status: 'failed', completed_at: '2026-06-02T03:00:00Z' },
+    { id: '4', status: 'completed', completed_at: '2026-05-20T00:00:00Z', pr_url: 'http://pr/2' },
+  ];
+  it('今日 done/failed + active + 本月 PR', () => {
+    const s = computeStats(tasks, '2026-06-02');
+    expect(s.active).toBe(1);
+    expect(s.done_today).toBe(1);
+    expect(s.failed_today).toBe(1);
+    expect(s.pr_this_month).toBe(1); // 仅 task2 在 6 月（task4 PR 是 5 月）
   });
 });
