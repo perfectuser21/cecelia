@@ -398,6 +398,59 @@ function WsProgressSection({ initiativeId }: { initiativeId: string }) {
   );
 }
 
+// ─── 组件：Pipeline 进度条 ────────────────────────────────────────────────────
+
+const NODE_LABEL: Record<string, string> = {
+  prep: '准备', planner: 'Planner', parsePrd: '解析 PRD',
+  ganLoop: 'GAN 对抗', dbUpsert: '写库', generator: 'Generator',
+  evaluator: 'Evaluator', merge: '合并', report: '报告',
+};
+
+function PipelineProgressBar({ initiativeId, status }: { initiativeId: string; status: string }) {
+  const [pct, setPct] = useState<number>(0);
+  const [node, setNode] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (status !== 'in_progress') return;
+    let cancelled = false;
+
+    const poll = () => {
+      fetch(`/api/brain/harness/runs/${initiativeId}/progress`)
+        .then(r => r.ok ? r.json() : null)
+        .then(data => {
+          if (!cancelled && data) {
+            setPct(data.pct ?? 0);
+            setNode(data.current_node ?? null);
+          }
+        })
+        .catch(() => {});
+    };
+
+    poll();
+    const timer = setInterval(poll, 10_000);
+    return () => { cancelled = true; clearInterval(timer); };
+  }, [initiativeId, status]);
+
+  if (status !== 'in_progress') return null;
+
+  const label = node ? (NODE_LABEL[node] ?? node) : '启动中';
+
+  return (
+    <div className="mt-2 mb-1" data-testid="pipeline-progress-bar">
+      <div className="flex items-center justify-between text-[10px] text-slate-500 dark:text-slate-400 mb-1">
+        <span className="font-medium">{label}</span>
+        <span>{pct}%</span>
+      </div>
+      <div className="h-1 w-full rounded-full bg-slate-200 dark:bg-slate-700 overflow-hidden">
+        <div
+          className="h-full rounded-full bg-blue-500 transition-all duration-500"
+          style={{ width: `${pct}%` }}
+        />
+      </div>
+    </div>
+  );
+}
+
 // ─── 组件：单阶段徽章 ─────────────────────────────────────────────────────────
 
 function StageBadge({ stage }: { stage: PipelineStage }) {
@@ -562,7 +615,10 @@ function PipelineCard({ pipeline, onInitiativeClick }: { pipeline: Pipeline; onI
           ))}
         </div>
         {pipeline.task_type === 'harness_initiative' && (
-          <WsProgressSection initiativeId={pipeline.pipeline_id} />
+          <>
+            <PipelineProgressBar initiativeId={pipeline.pipeline_id} status={status} />
+            <WsProgressSection initiativeId={pipeline.pipeline_id} />
+          </>
         )}
       </div>
 
