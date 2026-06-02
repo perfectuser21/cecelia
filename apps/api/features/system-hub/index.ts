@@ -29,7 +29,7 @@ const manifest: FeatureManifest = {
           { path: '/system/feature-map', label: 'Feature Map', icon: 'Map', order: 7 },
           { path: '/live-monitor', label: 'Live Monitor', icon: 'Activity', order: 9 },
           { path: '/autonomous', label: 'Autonomous', icon: 'Bot', order: 11 },
-          { path: '/pipeline', label: 'Harness Pipeline', icon: 'GitBranch', order: 15 },
+          { path: '/pipeline', label: '战情室', icon: 'Radar', order: 15 },
           { path: '/brain-models', label: 'Brain Models', icon: 'Cpu', order: 16 },
           { path: '/collection-dashboard', label: 'Collection', icon: 'Database', order: 12 },
           { path: '/viral-analysis', label: '爆款分析', icon: 'TrendingUp', order: 13 },
@@ -53,7 +53,8 @@ const manifest: FeatureManifest = {
     // Drill-down routes (remain separate)
     { path: '/live-monitor', component: 'LiveMonitor' },
     { path: '/autonomous', component: 'AutonomousSessionsPage' },
-    { path: '/pipeline', component: 'HarnessPipelinePage' },
+    // 战情室：统一 feed（替换旧 harness-only 列表为入口；详情仍走 HarnessPipelineDetailPage）
+    { path: '/pipeline', component: 'WarRoomPage' },
     { path: '/pipeline/:id', component: 'HarnessPipelineDetailPage' },
     { path: '/pipeline/:id/step/:step', component: 'HarnessPipelineStepPage' },
     { path: '/initiatives/:id', component: 'InitiativeDetail' },
@@ -167,6 +168,7 @@ const manifest: FeatureManifest = {
     // Drill-down pages
     LiveMonitor: () => import('../../../dashboard/src/pages/live-monitor/LiveMonitorPage'),
     AutonomousSessionsPage: () => import('../../../dashboard/src/pages/autonomous/AutonomousSessionsPage'),
+    WarRoomPage: () => import('../../../dashboard/src/pages/warroom/WarRoomPage'),
     HarnessPipelinePage: () => import('../../../dashboard/src/pages/harness-pipeline/HarnessPipelinePage'),
     HarnessPipelineDetailPage: () => import('../../../dashboard/src/pages/harness-pipeline/HarnessPipelineDetailPage'),
     HarnessPipelineStepPage: () => import('../../../dashboard/src/pages/harness-pipeline/HarnessPipelineStepPage'),

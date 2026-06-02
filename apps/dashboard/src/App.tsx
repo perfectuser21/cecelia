@@ -70,7 +70,8 @@ function AppContent() {
   const isFullHeightRoute = (path: string) =>
     path.startsWith('/system') || path.startsWith('/work') || path.startsWith('/immune') ||
     path.startsWith('/cecelia') || path.startsWith('/okr/review') || path.startsWith('/inbox') ||
-    path.startsWith('/gtd') || path.startsWith('/knowledge/doc-chat');
+    path.startsWith('/gtd') || path.startsWith('/knowledge/doc-chat') ||
+    path === '/pipeline';  // 战情室全屏三栏（/pipeline/:id 详情仍走带内边距布局）
 
   // Tab 路由不加 p-8 内边距（TabbedPage 自带布局）
   const isTabbedRoute = isFullHeightRoute;
