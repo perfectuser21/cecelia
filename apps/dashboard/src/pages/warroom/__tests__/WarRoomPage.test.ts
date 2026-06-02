@@ -12,7 +12,9 @@ import {
   relativeTime,
   statusMeta,
   kindLabel,
+  formatPriority,
   filterArea,
+  filterByKind,
   pickDefaultTask,
   type FeedArea,
   type FeedTask,
@@ -187,5 +189,81 @@ describe('pickDefaultTask（默认选中）', () => {
 
   it('空数据返回 null', () => {
     expect(pickDefaultTask([])).toBeNull();
+  });
+});
+
+describe('formatPriority（优先级显示，去重 P）', () => {
+  it('已含 P 前缀不重复加 P', () => {
+    expect(formatPriority('P1')).toBe('P1');
+    expect(formatPriority('P0')).toBe('P0');
+    expect(formatPriority('p2')).toBe('P2'); // 归一大写
+  });
+
+  it('裸数字补 P 前缀', () => {
+    expect(formatPriority(2)).toBe('P2');
+    expect(formatPriority('3')).toBe('P3');
+  });
+
+  it('空值返回空串', () => {
+    expect(formatPriority(null)).toBe('');
+    expect(formatPriority('')).toBe('');
+  });
+});
+
+describe('filterByKind（任务种类过滤）', () => {
+  const MIXED: FeedArea[] = [
+    {
+      areaKey: 'cecelia',
+      areaName: 'Cecelia',
+      order: 0,
+      count: 2,
+      groups: [
+        {
+          groupKey: 'brain',
+          groupName: 'Brain API',
+          count: 2,
+          tasks: [
+            mkTask({ id: 's1', kind: 'sprint' }),
+            mkTask({ id: 't1k', kind: 'task' }),
+          ],
+        },
+      ],
+    },
+    {
+      areaKey: 'zenithjoy',
+      areaName: 'ZenithJoy',
+      order: 1,
+      count: 1,
+      groups: [
+        { groupKey: 'l5', groupName: 'Line 05', count: 1, tasks: [mkTask({ id: 'p1', kind: 'pipeline' })] },
+      ],
+    },
+  ];
+
+  it("'all' 原样返回", () => {
+    expect(filterByKind(MIXED, 'all')).toHaveLength(2);
+  });
+
+  it('只留匹配 kind 的任务，空组/空 area 被剔除', () => {
+    const out = filterByKind(MIXED, 'task');
+    expect(out).toHaveLength(1);
+    expect(out[0].areaKey).toBe('cecelia');
+    expect(out[0].groups[0].tasks.map((t) => t.id)).toEqual(['t1k']);
+  });
+
+  it('pipeline 只命中 ZenithJoy', () => {
+    const out = filterByKind(MIXED, 'pipeline');
+    expect(out).toHaveLength(1);
+    expect(out[0].areaKey).toBe('zenithjoy');
+  });
+
+  it('过滤后 count 反映剩余任务数', () => {
+    const out = filterByKind(MIXED, 'sprint');
+    expect(out[0].count).toBe(1);
+    expect(out[0].groups[0].count).toBe(1);
+  });
+
+  it('无命中返回空数组', () => {
+    expect(filterByKind(MIXED, 'scraper')).toHaveLength(0);
   });
 });
