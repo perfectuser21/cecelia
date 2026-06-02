@@ -32,11 +32,11 @@ describe('injectToken', () => {
   });
 });
 
-// ─── verifyProposerOutput ls-remote uses token ───────────────────────────────
+// ─── verifyProposerOutput / verifyContractProposerOutput ls-remote uses token ─
 vi.mock('node:child_process', () => ({ execFile: vi.fn() }));
 
 const { execFile } = await import('node:child_process');
-const { verifyProposerOutput } = await import('../contract-verify.js');
+const { verifyProposerOutput, verifyContractProposerOutput } = await import('../contract-verify.js');
 
 describe('verifyProposerOutput — githubToken ls-remote', () => {
   beforeEach(() => vi.resetAllMocks());
@@ -76,5 +76,69 @@ describe('verifyProposerOutput — githubToken ls-remote', () => {
     const lsRemoteCall = capturedArgs.find(a => a[0] === 'ls-remote');
     expect(lsRemoteCall).toBeDefined();
     expect(lsRemoteCall[1]).toContain('x-access-token:ghp_secret999@github.com');
+  });
+});
+
+describe('verifyContractProposerOutput — githubToken ls-remote', () => {
+  beforeEach(() => vi.resetAllMocks());
+
+  it('ls-remote 使用带 token 的 URL（private repo 认证）', async () => {
+    const capturedArgs = [];
+    execFile.mockImplementation((cmd, args, _opts, cb) => {
+      capturedArgs.push([...args]);
+      if (args[0] === '-C') {
+        cb(null, { stdout: 'https://github.com/org/repo.git\n' });
+      } else if (args[0] === 'ls-remote') {
+        cb(null, { stdout: 'abc\trefs/heads/cp-propose\n' });
+      } else if (args[0] === 'fetch') {
+        cb(null, { stdout: '' });
+      } else if (args[0] === 'show') {
+        cb(null, { stdout: '# contract-draft' });
+      } else {
+        cb(null, { stdout: '' });
+      }
+    });
+
+    await verifyContractProposerOutput({
+      worktreePath: '/fake/wt',
+      branch: 'cp-propose',
+      sprintDir: 'sprints/test',
+      baseRepo: '/fake/repo',
+      githubToken: 'ghp_contracttoken',
+    }).catch(() => {});
+
+    const lsRemoteCall = capturedArgs.find(a => a[0] === 'ls-remote');
+    expect(lsRemoteCall).toBeDefined();
+    expect(lsRemoteCall[1]).toContain('x-access-token:ghp_contracttoken@github.com');
+  });
+
+  it('fetch 使用带 token 的 URL', async () => {
+    const capturedArgs = [];
+    execFile.mockImplementation((cmd, args, _opts, cb) => {
+      capturedArgs.push([...args]);
+      if (args[0] === '-C') {
+        cb(null, { stdout: 'https://github.com/org/repo.git\n' });
+      } else if (args[0] === 'ls-remote') {
+        cb(null, { stdout: 'abc\trefs/heads/cp-propose\n' });
+      } else if (args[0] === 'fetch') {
+        cb(null, { stdout: '' });
+      } else if (args[0] === 'show') {
+        cb(null, { stdout: '# contract-draft' });
+      } else {
+        cb(null, { stdout: '' });
+      }
+    });
+
+    await verifyContractProposerOutput({
+      worktreePath: '/fake/wt',
+      branch: 'cp-propose',
+      sprintDir: 'sprints/test',
+      baseRepo: '/fake/repo',
+      githubToken: 'ghp_fetchtoken',
+    }).catch(() => {});
+
+    const fetchCall = capturedArgs.find(a => a[0] === 'fetch');
+    expect(fetchCall).toBeDefined();
+    expect(fetchCall[1]).toContain('x-access-token:ghp_fetchtoken@github.com');
   });
 });

@@ -145,7 +145,7 @@ export async function verifyProposerOutput(opts) {
  * @throws {ContractViolation}
  */
 export async function verifyContractProposerOutput(opts) {
-  const { worktreePath, branch, sprintDir, execFn = execFile } = opts;
+  const { worktreePath, branch, sprintDir, execFn = execFile, githubToken } = opts;
   const baseRepo = opts.baseRepo || '/Users/administrator/perfect21/cecelia';
 
   // H17: baseRepo 是 remote URL（GitHub/SSH）直接用；否则从本地 origin remote 读 URL
@@ -154,7 +154,7 @@ export async function verifyContractProposerOutput(opts) {
     githubUrl = baseRepo;
   } else {
     try {
-      const { stdout } = await execFn('git', ['-C', baseRepo, 'remote', 'get-url', 'origin']);
+      const { stdout } = await execFn('git', ['-C', baseRepo, 'remote', 'get-url', 'origin'], {});
       githubUrl = stdout.trim();
     } catch (err) {
       throw new ContractViolation(
@@ -166,7 +166,8 @@ export async function verifyContractProposerOutput(opts) {
 
   // 1. ls-remote 验 branch 真在 origin（proposer 被 429 静默吞掉时分支根本不存在）
   try {
-    const { stdout } = await execFn('git', ['ls-remote', githubUrl, branch]);
+    const authedUrl = injectToken(githubUrl, githubToken);
+    const { stdout } = await execFn('git', ['ls-remote', authedUrl, branch], {});
     if (!stdout.trim()) {
       throw new ContractViolation(
         `proposer_didnt_push: branch '${branch}' not found on origin (${githubUrl})`,
@@ -184,7 +185,8 @@ export async function verifyContractProposerOutput(opts) {
   // 2. fetch 分支后 git show 合同文件（reviewer APPROVED 会把 contract-draft.md rename → sprint-contract.md）
   const candidates = [`${sprintDir}/contract-draft.md`, `${sprintDir}/sprint-contract.md`];
   try {
-    await execFn('git', ['fetch', githubUrl, `${branch}:refs/remotes/origin/${branch}`], { cwd: worktreePath });
+    const authedFetchUrl = injectToken(githubUrl, githubToken);
+    await execFn('git', ['fetch', authedFetchUrl, `${branch}:refs/remotes/origin/${branch}`], { cwd: worktreePath });
   } catch (err) {
     throw new ContractViolation(
       `proposer_didnt_push: branch '${branch}' fetch failed: ${err.message}`,
