@@ -293,4 +293,37 @@ describe('task-tasks routes', () => {
       expect(params).toContain(null);
     });
   });
+
+  describe('POST /tasks — B51 harness_initiative journey_id warning', () => {
+    it('harness_initiative without journey_id → 201 with warnings field', async () => {
+      mockPool.query.mockResolvedValueOnce({
+        rows: [{ id: 'hi-uuid', title: 'Test Initiative', status: 'queued', task_type: 'harness_initiative' }],
+      });
+
+      const res = await request(app).post('/tasks').send({
+        title: 'Test Initiative',
+        task_type: 'harness_initiative',
+        payload: { sprint_dir: 'sprints/test' }, // 无 journey_id
+      });
+
+      expect(res.status).toBe(201);
+      expect(res.body.warnings).toBeDefined();
+      expect(res.body.warnings[0]).toMatch(/journey_id/);
+    });
+
+    it('harness_initiative with journey_id → 201 without warnings', async () => {
+      mockPool.query.mockResolvedValueOnce({
+        rows: [{ id: 'hi-uuid2', title: 'Test Initiative', status: 'queued', task_type: 'harness_initiative' }],
+      });
+
+      const res = await request(app).post('/tasks').send({
+        title: 'Test Initiative',
+        task_type: 'harness_initiative',
+        payload: { sprint_dir: 'sprints/test', journey_id: 'j-uuid-123' },
+      });
+
+      expect(res.status).toBe(201);
+      expect(res.body.warnings).toBeUndefined();
+    });
+  });
 });
