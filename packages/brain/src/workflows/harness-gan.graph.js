@@ -29,7 +29,7 @@ import {
   END,
 } from '@langchain/langgraph';
 import { fetchAndShowOriginFile } from '../lib/git-fence.js';
-import { verifyProposerOutput } from '../lib/contract-verify.js';
+import { verifyContractProposerOutput } from '../lib/contract-verify.js';
 import { LLM_RETRY } from './retry-policies.js';
 import { loadSkillContent, readBrainResult, ReviewerOutputSchema } from '../harness-shared.js';
 import { makeSessionRecord as _makeSessionRecord } from '../harness-session-bridge.js';
@@ -352,7 +352,7 @@ export function createGanContractNodes(executor, ctx) {
     budgetCapUsd = 10,
     readContractFile = defaultReadContractFile,
     fetchOriginFile: _fetchOriginFile = fetchAndShowOriginFile,
-    verifyProposer = verifyProposerOutput,
+    verifyProposer = verifyContractProposerOutput,
   } = ctx;
   // _fetchOriginFile 保留 ctx 兼容旧 caller（test 仍传 fetchOriginFile），H15 后 proposer 改走 verifyProposer。
   void _fetchOriginFile;
@@ -403,7 +403,9 @@ export function createGanContractNodes(executor, ctx) {
     const resultData = await readBrainResult(worktreePath, ['propose_branch']).catch(() => ({}));
     const proposeBranch = resultData.propose_branch || computedBranch;
 
-    // verifyProposer 失败 = proposer 这轮没把分支 push 到 origin（多半账号 429/报错没产出）。
+    // verifyProposer 失败 = proposer 这轮没把【合同】push 到 origin 分支（多半账号 429/报错没产出）。
+    // 验的是合同产物（contract-draft.md/sprint-contract.md），不是 task-plan.json —— task-plan.json
+    // 是 GAN 收敛后 inferTaskPlanNode 才读的下游产物（有 B32 兜底），合同才是每轮真实交付物。
     // 旧代码 .catch 吞掉错误照常返回旧合同，导致 reviewer 审旧合同 → REVISION → 再空转，
     // 实证空转 23 轮把 account2 烧穿。改为：累计连续未 push，达上限即带原因中止（route END）。
     let pushOk = true;
