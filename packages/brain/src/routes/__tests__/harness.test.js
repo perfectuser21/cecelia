@@ -154,3 +154,64 @@ describe('GET /runs/:id', () => {
     );
   });
 });
+
+describe('GET /runs/:id/progress — B52 pipeline progress', () => {
+  let app;
+  let pool;
+  const VALID_UUID = '550e8400-e29b-41d4-a716-446655440000';
+
+  beforeEach(async () => {
+    vi.clearAllMocks();
+    const poolMod = await import('../../db.js');
+    pool = poolMod.default;
+    const routerMod = await import('../harness.js');
+    app = express();
+    app.use(express.json());
+    app.use('/', routerMod.default);
+  });
+
+  it('invalid UUID → 400', async () => {
+    const res = await request(app).get('/runs/not-a-uuid/progress');
+    expect(res.status).toBe(400);
+  });
+
+  it('run not found → 404', async () => {
+    pool.query
+      .mockResolvedValueOnce({ rows: [] })   // initiative_runs
+      .mockResolvedValueOnce({ rows: [] });   // initiative_run_events
+    const res = await request(app).get(`/runs/${VALID_UUID}/progress`);
+    expect(res.status).toBe(404);
+  });
+
+  it('planner done → pct=15, current_node=planner', async () => {
+    pool.query
+      .mockResolvedValueOnce({ rows: [{ initiative_id: VALID_UUID, phase: 'B_task_loop', started_at: new Date(), completed_at: null, failure_reason: null }] })
+      .mockResolvedValueOnce({ rows: [{ node: 'prep' }, { node: 'planner' }] });
+    const res = await request(app).get(`/runs/${VALID_UUID}/progress`);
+    expect(res.status).toBe(200);
+    expect(res.body.pct).toBe(15);
+    expect(res.body.current_node).toBe('planner');
+    expect(res.body.failed).toBeUndefined();
+  });
+
+  it('phase=done → pct=100 regardless of events', async () => {
+    pool.query
+      .mockResolvedValueOnce({ rows: [{ initiative_id: VALID_UUID, phase: 'done', started_at: new Date(), completed_at: new Date(), failure_reason: null }] })
+      .mockResolvedValueOnce({ rows: [] });
+    const res = await request(app).get(`/runs/${VALID_UUID}/progress`);
+    expect(res.status).toBe(200);
+    expect(res.body.pct).toBe(100);
+    expect(res.body.current_node).toBe('report');
+  });
+
+  it('phase=failed → pct from events + failed:true + failure_reason', async () => {
+    pool.query
+      .mockResolvedValueOnce({ rows: [{ initiative_id: VALID_UUID, phase: 'failed', started_at: new Date(), completed_at: null, failure_reason: 'evaluator FAIL' }] })
+      .mockResolvedValueOnce({ rows: [{ node: 'prep' }, { node: 'planner' }, { node: 'ganLoop' }] });
+    const res = await request(app).get(`/runs/${VALID_UUID}/progress`);
+    expect(res.status).toBe(200);
+    expect(res.body.pct).toBe(40);
+    expect(res.body.failed).toBe(true);
+    expect(res.body.failure_reason).toBe('evaluator FAIL');
+  });
+});
