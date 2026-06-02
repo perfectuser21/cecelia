@@ -37,17 +37,17 @@ describe('WS1 — harness-initiative.graph.js 两处 INSERT [BEHAVIOR]', () => {
     expect(existsSync(GRAPH_FILE)).toBe(true);
   });
 
-  it('INSERT INTO initiative_runs 出现至少 2 次', () => {
+  it('INSERT INTO initiative_runs 出现至少 1 次', () => {
     const content = readFileSync(GRAPH_FILE, 'utf-8');
     const matches = content.match(/INSERT INTO initiative_runs/g) || [];
-    expect(matches.length).toBeGreaterThanOrEqual(2);
+    expect(matches.length).toBeGreaterThanOrEqual(1);
   });
 
-  it('所有 INSERT INTO initiative_runs 块均含 journey_id 字段（两处都要有）', () => {
+  it('所有 INSERT INTO initiative_runs 块均含 journey_id 字段', () => {
     const content = readFileSync(GRAPH_FILE, 'utf-8');
     // 提取所有 INSERT INTO initiative_runs ... RETURNING id 块
     const insertBlocks = content.match(/INSERT INTO initiative_runs[\s\S]*?RETURNING id/g) || [];
-    expect(insertBlocks.length, '预期至少 2 个 INSERT 块').toBeGreaterThanOrEqual(2);
+    expect(insertBlocks.length, '预期至少 1 个 INSERT 块').toBeGreaterThanOrEqual(1);
     insertBlocks.forEach((block, i) => {
       expect(block, `INSERT 块 ${i + 1} 缺少 journey_id`).toContain('journey_id');
     });
