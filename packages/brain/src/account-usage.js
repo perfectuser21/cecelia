@@ -13,7 +13,7 @@ import { readFileSync } from 'fs';
 import { homedir } from 'os';
 import pool from './db.js';
 
-const ACCOUNTS = ['account2', 'account3']; // B51: account1 退订，account2+account3 生效
+const ACCOUNTS = ['account2']; // B53: account3 org 订阅禁用(403 organization disabled，凭据有效但 org 关了 Claude Code)，移出池；account1 无凭据。仅 account2 可用
 const CACHE_TTL_MINUTES = 3;
 const USAGE_THRESHOLD = 80;       // 5h 超过此百分比则跳过
 const SONNET_7D_THRESHOLD = 100;  // sonnet 7d 满载阈值（≥ 此值时不可用 Sonnet，尝试 Opus）
@@ -135,16 +135,18 @@ export async function loadSpendingCapsFromDB() {
 
 /**
  * 检查是否所有账号都处于 spending cap 状态
+ * @param {string[]} [accounts] 账号列表，默认生产池 ACCOUNTS（测试可注入多账号验轮换逻辑）
  */
-export function isAllAccountsSpendingCapped() {
-  return ACCOUNTS.every(id => isSpendingCapped(id));
+export function isAllAccountsSpendingCapped(accounts = ACCOUNTS) {
+  return accounts.every(id => isSpendingCapped(id));
 }
 
 /**
  * 获取所有账号的 spending cap 状态（用于日志/API）
+ * @param {string[]} [accounts] 账号列表，默认生产池 ACCOUNTS（测试可注入多账号验轮换逻辑）
  */
-export function getSpendingCapStatus() {
-  return ACCOUNTS.map(id => {
+export function getSpendingCapStatus(accounts = ACCOUNTS) {
+  return accounts.map(id => {
     const cap = _spendingCapMap.get(id);
     const capped = isSpendingCapped(id);
     return { accountId: id, capped, resetTime: capped ? cap?.resetTime : null };
@@ -488,7 +490,7 @@ export function __setAccountUsageForTest(rows) { __testCacheOverride = rows; }
  * @param {boolean} forceRefresh - 强制忽略缓存，重新从 API 获取
  * @returns {Object} { account1: {...}, account2: {...}, account3: {...} }
  */
-export async function getAccountUsage(forceRefresh = false) {
+export async function getAccountUsage(forceRefresh = false, accounts = ACCOUNTS) {
   // Test seam: return injected rows if set (converts array → {account_id: row} map)
   if (__testCacheOverride) {
     const overrideMap = {};
@@ -500,7 +502,7 @@ export async function getAccountUsage(forceRefresh = false) {
 
   const results = {};
 
-  for (const accountId of ACCOUNTS) {
+  for (const accountId of accounts) {
     if (!forceRefresh) {
       const cached = await getCached(accountId);
       if (cached) {
@@ -599,12 +601,14 @@ function effectivePct(pct, resetsAt) {
 export async function selectBestAccount(options = {}) {
   await proactiveTokenCheck();
   const { model: requestedModel, cascade: requestedCascade } = options;
+  // accounts 默认生产池 ACCOUNTS；测试可注入多账号验"跳过 capped/超配额 → 选下一个"轮换逻辑
+  const accounts = options.accounts || ACCOUNTS;
   try {
-    const usage = await getAccountUsage();
+    const usage = await getAccountUsage(false, accounts);
 
     const SEVEN_DAY_MS = 7 * 24 * 3600 * 1000;
     const now = Date.now();
-    const mapped = ACCOUNTS.map(id => {
+    const mapped = accounts.map(id => {
       const u = usage[id];
       const pct = u?.five_hour_pct ?? 0;
       const ePct = effectivePct(pct, u?.resets_at);

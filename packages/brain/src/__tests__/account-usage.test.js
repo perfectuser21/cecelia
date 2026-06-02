@@ -237,27 +237,23 @@ describe('account-usage', () => {
       expect(isAllAccountsSpendingCapped()).toBe(false);
     });
 
-    it('部分账号被标记时应返回 false', () => {
-      // B51: ACCOUNTS=[account2, account3]，只 mark account2 → 部分 capped
+    it('部分账号被标记时应返回 false（注入 2 账号验轮换逻辑）', () => {
+      // B53: 生产池仅 account2，但轮换逻辑仍需多账号覆盖 → 注入 [account2, account3]
       const futureTime = new Date(Date.now() + 7200000).toISOString();
       markSpendingCap('account2', futureTime);
-      expect(isAllAccountsSpendingCapped()).toBe(false);
+      expect(isAllAccountsSpendingCapped(['account2', 'account3'])).toBe(false);
     });
 
-    it('所有账号都被标记时应返回 true', () => {
-      // B51: ACCOUNTS=[account2, account3]，全部 mark → 全 capped
+    it('所有账号都被标记时应返回 true（注入 2 账号）', () => {
       const futureTime = new Date(Date.now() + 7200000).toISOString();
       markSpendingCap('account2', futureTime);
       markSpendingCap('account3', futureTime);
-      expect(isAllAccountsSpendingCapped()).toBe(true);
+      expect(isAllAccountsSpendingCapped(['account2', 'account3'])).toBe(true);
     });
 
-    it('account3 被标记时应影响 isAllAccountsSpendingCapped（B51: account3 应在 ACCOUNTS 列表）', () => {
-      // B51 failing test: ACCOUNTS 应包含 account3，不含 account1
-      // 当前 ACCOUNTS=[account1,account2] → mark account2+account3 不会全 capped → 预期 false（Red）
+    it('B53: 默认生产池仅 account2（account3 org 禁用已移出）→ 标记 account2 即全 capped', () => {
       const futureTime = new Date(Date.now() + 7200000).toISOString();
       markSpendingCap('account2', futureTime);
-      markSpendingCap('account3', futureTime);
       expect(isAllAccountsSpendingCapped()).toBe(true);
     });
   });
@@ -267,15 +263,20 @@ describe('account-usage', () => {
   // ════════════════════════════════════════════════════════════════════════════
 
   describe('getSpendingCapStatus', () => {
-    it('应返回所有 2 个账号的状态', () => {
-      // B51: ACCOUNTS=[account2, account3]
+    it('B53: 默认生产池仅返回 account2（account3 org 禁用已移出）', () => {
       const status = getSpendingCapStatus();
+      expect(status).toHaveLength(1);
+      expect(status.map(s => s.accountId)).toEqual(['account2']);
+    });
+
+    it('注入多账号时返回对应数量的状态', () => {
+      const status = getSpendingCapStatus(['account2', 'account3']);
       expect(status).toHaveLength(2);
       expect(status.map(s => s.accountId)).toEqual(['account2', 'account3']);
     });
 
     it('未被标记的账号应返回 capped=false, resetTime=null', () => {
-      const status = getSpendingCapStatus();
+      const status = getSpendingCapStatus(['account2', 'account3']);
       for (const s of status) {
         expect(s.capped).toBe(false);
         expect(s.resetTime).toBeNull();
@@ -286,7 +287,7 @@ describe('account-usage', () => {
       const futureTime = new Date(Date.now() + 7200000).toISOString();
       markSpendingCap('account2', futureTime);
 
-      const status = getSpendingCapStatus();
+      const status = getSpendingCapStatus(['account2', 'account3']);
       const a2 = status.find(s => s.accountId === 'account2');
       expect(a2.capped).toBe(true);
       expect(a2.resetTime).toBe(futureTime);
@@ -333,8 +334,8 @@ describe('account-usage', () => {
       // upsertCache 的 INSERT/UPDATE
       mockPool.query.mockResolvedValue({ rows: [] });
 
-      const usage = await getAccountUsage(true);
-      // B51: ACCOUNTS=[account2, account3]，应调用 fetch 2 次
+      // B53: 生产池仅 account2，但 fetch 行为需多账号覆盖 → 注入 [account2, account3]
+      const usage = await getAccountUsage(true, ['account2', 'account3']);
       expect(mockFetch).toHaveBeenCalledTimes(2);
       // 所有账号都应有数据
       expect(usage.account2).toBeDefined();
@@ -478,9 +479,9 @@ describe('account-usage', () => {
       setupFetchUsage();
       mockPool.query.mockResolvedValue({ rows: [] });
 
-      await getAccountUsage(true);
+      // B53: 生产池仅 account2，upsert 行为需多账号覆盖 → 注入 [account2, account3]
+      await getAccountUsage(true, ['account2', 'account3']);
 
-      // B51: ACCOUNTS=[account2, account3]，2 个 INSERT
       const insertCalls = mockPool.query.mock.calls.filter(
         c => c[0].includes('INSERT INTO account_usage_cache')
       );
@@ -527,14 +528,14 @@ describe('account-usage', () => {
         expect(result).toEqual({ accountId: 'account2', model: 'sonnet', modelId: 'claude-sonnet-4-6' });
       });
 
-      it('5h 用量超过 80% 的账号应被排除', async () => {
-        // B51: ACCOUNTS=[account2, account3]，account2 90% 被排除，account3 50% 通过
+      it('5h 用量超过 80% 的账号应被排除（注入 2 账号验轮换）', async () => {
+        // B53: 生产池仅 account2，轮换排除逻辑需多账号 → 注入 [account2, account3]
         setupUsageData({
           account2: { five_hour_pct: 90, seven_day_pct: 30, seven_day_sonnet_pct: 40, resets_at: null, extra_used: false },
           account3: { five_hour_pct: 50, seven_day_pct: 10, seven_day_sonnet_pct: 10, resets_at: null, extra_used: false },
         });
 
-        const result = await selectBestAccount();
+        const result = await selectBestAccount({ accounts: ['account2', 'account3'] });
         expect(result).toEqual({ accountId: 'account3', model: 'sonnet', modelId: 'claude-sonnet-4-6' });
       });
 
@@ -657,7 +658,8 @@ describe('account-usage', () => {
           account3: { five_hour_pct: 60, seven_day_pct: 40, seven_day_sonnet_pct: 50, resets_at: null, extra_used: false },
         });
 
-        const result = await selectBestAccount();
+        // B53: 生产池仅 account2，"跳过 capped 选下一个"需多账号 → 注入 [account2, account3]
+        const result = await selectBestAccount({ accounts: ['account2', 'account3'] });
         expect(result.accountId).not.toBe('account2');
       });
     });

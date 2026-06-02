@@ -326,7 +326,7 @@ describe('M: 三阶段模型降级链', () => {
     });
 
     const { selectBestAccount } = await import('../account-usage.js');
-    const result = await selectBestAccount();
+    const result = await selectBestAccount({ accounts: ['account2', 'account3'] }); // B53: 注入多账号验降级链
     expect(result).not.toBeNull();
     // 新逻辑：DEFAULT_CASCADE=['sonnet','haiku']，无 Opus
     // Sonnet 全满(100%) → 降级 Haiku；account3 seven_day_pct=50% 最低 → 选中
@@ -355,7 +355,7 @@ describe('M: 三阶段模型降级链', () => {
     });
 
     const { selectBestAccount } = await import('../account-usage.js');
-    const result = await selectBestAccount();
+    const result = await selectBestAccount({ accounts: ['account2', 'account3'] }); // B53: 注入多账号验降级链
     expect(result).not.toBeNull();
     expect(result?.model).toBe('haiku');
     // B51: account1 退订，account3 持原 account2 角色（5h 最低）
@@ -407,7 +407,7 @@ describe('M: 三阶段模型降级链', () => {
     });
 
     const { selectBestAccount } = await import('../account-usage.js');
-    const result = await selectBestAccount();
+    const result = await selectBestAccount({ accounts: ['account2', 'account3'] }); // B53: 注入多账号验降级链
     expect(result).not.toBeNull();
     // 新逻辑：Sonnet 阈值 100%
     // account2 sevenDaySonnetPct=100 → 不可用 Sonnet
@@ -437,7 +437,7 @@ describe('M: 三阶段模型降级链', () => {
     });
 
     const { selectBestAccount } = await import('../account-usage.js');
-    const result = await selectBestAccount();
+    const result = await selectBestAccount({ accounts: ['account2', 'account3'] }); // B53: 注入多账号验降级链
     expect(result).not.toBeNull();
     expect(result?.model).toBe('sonnet');
     // B51: account1 退订，account3 持原 account2 角色

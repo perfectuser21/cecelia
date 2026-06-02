@@ -25,7 +25,7 @@ const STUCK_EXPIRED_MS = 60 * 60 * 1000; // 1 小时（cron 每 2h 一次，1h �
 // Dashboard 展示用：token 剩余 <X 时显示为 expiring_soon（不触发告警）
 const DISPLAY_THRESHOLD_MS = 4 * 60 * 60 * 1000; // 4 小时
 
-const ACCOUNTS = ['account2', 'account3']; // B51: account1 退订（缺 .credentials.json 永久 AUTH_FAILED），account3 凭据有效恢复使用
+const ACCOUNTS = ['account2']; // B53: account3 org 订阅禁用(403)，移出池；account1 无凭据。仅 account2 可用
 
 /**
  * 读取单个账号的 OAuth token 状态
@@ -68,8 +68,8 @@ function readAccountCredential(account) {
  * 检查所有账号凭据状态（用于 Dashboard 展示和恢复门控）
  * @returns {{ accounts: Array, alertNeeded: boolean, criticalAccounts: Array }}
  */
-export function checkCredentialExpiry() {
-  const accounts = ACCOUNTS.map(readAccountCredential);
+export function checkCredentialExpiry(accountList = ACCOUNTS) {
+  const accounts = accountList.map(readAccountCredential);
   const criticalAccounts = accounts.filter(a => a.status === 'expiring_soon' || a.status === 'expired');
   return {
     accounts,
@@ -96,10 +96,11 @@ export function _resetAlertDedup() { _alertDedup.clear(); }
  * 不触发告警：token expiring_soon（cron <3h 会自动刷新）
  *
  * @param {import('pg').Pool} _pool - 保留参数，兼容调用方
+ * @param {string[]} [accountList] 账号列表，默认生产池 ACCOUNTS（测试可注入多账号验告警逻辑）
  * @returns {Promise<{ checked: number, alerted: number, skipped: number }>}
  */
-export async function checkAndAlertExpiringCredentials(_pool) {
-  const { accounts } = checkCredentialExpiry();
+export async function checkAndAlertExpiringCredentials(_pool, accountList = ACCOUNTS) {
+  const { accounts } = checkCredentialExpiry(accountList);
 
   // 告警条件：过期超 STUCK_EXPIRED_MS（cron 连续失败）、文件缺失或格式错误
   // expiring_soon / 刚过期（< 1h）：cron 下次运行会自动修复，静默

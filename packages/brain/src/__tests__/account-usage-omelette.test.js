@@ -52,7 +52,8 @@ describe('selectBestAccount — Opus omelette quota skip', () => {
   });
 
   it('skips account with seven_day_omelette_pct >= 95 when model=opus', async () => {
-    const pick = await selectBestAccount({ model: 'opus' });
+    // B53: 生产池仅 account2，"跳过 omelette 满账号选下一个"需多账号 → 注入 [account2, account3]
+    const pick = await selectBestAccount({ model: 'opus', accounts: ['account2', 'account3'] });
     expect(pick).not.toBeNull();
     expect(pick.accountId).toBe('account3');
   });
