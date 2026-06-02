@@ -190,6 +190,30 @@ function containerName(taskId) {
 }
 
 /**
+ * 跑前强制清理同名残留容器。
+ *
+ * 根因：容器名按 taskId 固定（containerName），harness GAN 同一 task 的每轮
+ * proposer/reviewer 复用同名容器。配合 `--rm`（退出后 docker 异步删除），
+ * `docker run` 一返回上层立刻 spawn 下一轮同名容器——上一个还没删完 →
+ * "Conflict. container name already in use" → exit 125 → 该轮 proposer 根本没启动 →
+ * 没 push 分支 → verifyProposer 报 proposer_didnt_push（实证 GAN 因此空转）。
+ *
+ * `docker rm -f` 幂等：容器不存在直接成功；正在删除/残留的强制清掉。GAN 串行执行，
+ * 不会误杀正在跑的同 task 容器。失败不阻塞（最坏退回原冲突，由 #3229 兜底中止）。
+ */
+export function removeStaleContainer(name, spawnFn = spawn) {
+  return new Promise((resolve) => {
+    try {
+      const proc = spawnFn('docker', ['rm', '-f', name], { stdio: 'ignore' });
+      proc.on('close', () => resolve());
+      proc.on('error', () => resolve());
+    } catch {
+      resolve();
+    }
+  });
+}
+
+/**
  * 生成 cidfile 路径（docker 启动后把 container ID 写入此文件）
  * 我们用它拿容器 ID 前 12 位，便于观察性/forensic。
  */
@@ -451,6 +475,11 @@ export async function executeInDocker(opts) {
   if (cidfile && existsSync(cidfile)) {
     try { unlinkSync(cidfile); } catch { /* ignore */ }
   }
+
+  // 同名残留容器清理：容器名按 taskId 固定，GAN 同 task 多轮复用同名，--rm 异步删除
+  // 留下时间窗 → 下一轮 spawn 撞 "container name already in use"（exit 125）→ proposer
+  // 没启动没 push → GAN 空转。跑前强制 rm -f 清掉残留，幂等不误杀（GAN 串行）。
+  await removeStaleContainer(name);
 
   // 记录 docker 命令（方便 forensic / 前端元数据展示）
   const command = `docker ${args.join(' ')}`;
