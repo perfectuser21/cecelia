@@ -25,7 +25,7 @@ const STUCK_EXPIRED_MS = 60 * 60 * 1000; // 1 小时（cron 每 2h 一次，1h �
 // Dashboard 展示用：token 剩余 <X 时显示为 expiring_soon（不触发告警）
 const DISPLAY_THRESHOLD_MS = 4 * 60 * 60 * 1000; // 4 小时
 
-const ACCOUNTS = ['account2', 'account3']; // B51: account1 退订（缺 .credentials.json 永久 AUTH_FAILED），account3 凭据有效恢复使用
+const ACCOUNTS = ['account2']; // B53: account3 org 订阅禁用(403)，移出池；account1 无凭据。仅 account2 可用
 
 /**
  * 读取单个账号的 OAuth token 状态

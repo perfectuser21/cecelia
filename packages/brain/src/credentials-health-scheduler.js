@@ -40,7 +40,7 @@ const CODEX_BRIDGE_URL = process.env.XIAN_CODEX_BRIDGE_URL || 'http://100.86.57.
 
 // ── 账号列表 ──────────────────────────────────────────────────────────────────
 
-const CLAUDE_ACCOUNTS = ['account2', 'account3']; // B51: account1 退订（缺 .credentials.json 永久 AUTH_FAILED），account3 凭据有效恢复使用
+const CLAUDE_ACCOUNTS = ['account2']; // B53: account3 org 订阅禁用(403)，移出池；account1 无凭据。仅 account2 可用
 const CODEX_ACCOUNTS  = ['team1', 'team2', 'team3', 'team4', 'team5'];
 const PUBLISHER_PLATFORMS = ['douyin', 'xiaohongshu', 'zhihu', 'weibo', 'toutiao', 'kuaishou', 'wechat'];
 
