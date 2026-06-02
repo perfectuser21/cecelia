@@ -30,7 +30,7 @@ export interface FeedTask {
   title: string;
   status: WarStatus;
   raw_status: string;
-  priority: number | null;
+  priority: string | number | null;
   created_at: string;
   elapsed_ms: number | null;
   progress_pct: number | null;
@@ -143,6 +143,30 @@ export function filterArea(areas: FeedArea[], key: string): FeedArea[] {
   return areas.filter((a) => a.areaKey === key);
 }
 
+/** 优先级显示：归一为单个 P 前缀（"P1"→"P1"，2→"P2"），空值返回空 */
+export function formatPriority(p: string | number | null): string {
+  if (p == null || p === '') return '';
+  const s = String(p);
+  return /^p/i.test(s) ? s.toUpperCase() : `P${s}`;
+}
+
+/** 按任务 kind 过滤：只留匹配任务，剔除空 group/空 area，count 重算；'all' 原样返回 */
+export function filterByKind(areas: FeedArea[], kind: string): FeedArea[] {
+  if (kind === 'all') return areas;
+  const out: FeedArea[] = [];
+  for (const a of areas) {
+    const groups: FeedGroup[] = [];
+    for (const g of a.groups) {
+      const tasks = g.tasks.filter((t) => t.kind === kind);
+      if (tasks.length) groups.push({ ...g, tasks, count: tasks.length });
+    }
+    if (groups.length) {
+      out.push({ ...a, groups, count: groups.reduce((n, g) => n + g.count, 0) });
+    }
+  }
+  return out;
+}
+
 /** 默认选中：首个 active 任务，无则首个任务，空则 null */
 export function pickDefaultTask(areas: FeedArea[]): FeedTask | null {
   let first: FeedTask | null = null;
@@ -175,6 +199,22 @@ const AREA_BAR: Record<string, string> = {
   zenithjoy: 'bg-amber-500',
   infra: 'bg-slate-400',
 };
+
+// kind 徽章配色（静态类名，Tailwind JIT 可收录）
+const KIND_BADGE: Record<WarKind, string> = {
+  sprint: 'bg-violet-500/10 text-violet-300 border border-violet-500/20',
+  pipeline: 'bg-teal-500/10 text-teal-300 border border-teal-500/20',
+  scraper: 'bg-amber-500/10 text-amber-300 border border-amber-500/20',
+  task: 'bg-slate-500/10 text-slate-300 border border-slate-500/20',
+};
+
+function KindBadge({ kind }: { kind: WarKind }) {
+  return (
+    <span className={`text-[9px] tracking-wide px-1.5 py-px rounded font-semibold ${KIND_BADGE[kind]}`}>
+      {kindLabel(kind)}
+    </span>
+  );
+}
 
 function StatChip({ dot, value, label, valueClass }: { dot: string; value: number; label: string; valueClass?: string }) {
   return (
@@ -236,8 +276,9 @@ function FeedRow({ task, active, onSelect }: { task: FeedTask; active: boolean; 
             <GitPullRequest className="w-2.5 h-2.5" />
           </a>
         )}
+        <KindBadge kind={task.kind} />
         <span className={`text-[9px] tracking-wide px-1.5 py-px rounded font-semibold uppercase ${meta.pill}`}>{meta.label}</span>
-        {task.priority != null && <span className="text-slate-700 font-mono text-[10px]">P{task.priority}</span>}
+        {task.priority != null && <span className="text-slate-700 font-mono text-[10px]">{formatPriority(task.priority)}</span>}
       </div>
     </div>
   );
@@ -346,7 +387,7 @@ function DetailPanel({ task, onOpen }: { task: FeedTask | null; onOpen: (t: Feed
         </div>
         <div className="text-[11px] text-slate-300 leading-snug">{task.title}</div>
         <div className="text-[10px] text-slate-600 mt-0.5">
-          {task.priority != null && <span>P{task.priority} · </span>}
+          {task.priority != null && <span>{formatPriority(task.priority)} · </span>}
           {elapsed ? `${elapsed} 历时` : relativeTime(task.created_at)}
         </div>
       </div>
@@ -419,12 +460,22 @@ const FILTERS: Array<{ key: string; label: string }> = [
   { key: 'zenithjoy', label: 'ZENITHJOY' },
 ];
 
+// kind 过滤项（区分 harness sprint 与 dev/pipeline/采集）
+const KIND_FILTERS: Array<{ key: string; label: string }> = [
+  { key: 'all', label: '全部' },
+  { key: 'sprint', label: 'Sprint' },
+  { key: 'task', label: 'Task' },
+  { key: 'pipeline', label: 'Pipeline' },
+  { key: 'scraper', label: '采集' },
+];
+
 export default function WarRoomPage() {
   const navigate = useNavigate();
   const [data, setData] = useState<FeedResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [areaFilter, setAreaFilter] = useState('all');
+  const [kindFilter, setKindFilter] = useState('all');
   const [selected, setSelected] = useState<FeedTask | null>(null);
   const [expandedKeys, setExpandedKeys] = useState<Set<string>>(new Set());
   const [clock, setClock] = useState('');
@@ -472,7 +523,10 @@ export default function WarRoomPage() {
 
   const areas = data?.areas ?? [];
   const stats = data?.stats ?? { active: 0, done_today: 0, failed_today: 0, pr_this_month: 0 };
-  const visibleAreas = useMemo(() => filterArea(areas, areaFilter), [areas, areaFilter]);
+  const visibleAreas = useMemo(
+    () => filterByKind(filterArea(areas, areaFilter), kindFilter),
+    [areas, areaFilter, kindFilter],
+  );
 
   const toggleGroup = useCallback((key: string) => {
     setExpandedKeys((prev) => {
@@ -516,6 +570,19 @@ export default function WarRoomPage() {
                 onClick={() => setAreaFilter(f.key)}
                 className={`px-2 py-0.5 rounded transition-colors ${
                   areaFilter === f.key ? 'bg-slate-700 text-slate-200' : 'text-slate-500 hover:text-slate-300'
+                }`}
+              >
+                {f.label}
+              </button>
+            ))}
+          </div>
+          <div className="flex items-center gap-1 bg-slate-800/80 border border-slate-700/50 rounded px-1 py-0.5">
+            {KIND_FILTERS.map((f) => (
+              <button
+                key={f.key}
+                onClick={() => setKindFilter(f.key)}
+                className={`px-2 py-0.5 rounded transition-colors ${
+                  kindFilter === f.key ? 'bg-violet-600/40 text-violet-100' : 'text-slate-500 hover:text-slate-300'
                 }`}
               >
                 {f.label}
