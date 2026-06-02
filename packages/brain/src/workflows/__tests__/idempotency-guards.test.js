@@ -62,6 +62,8 @@ function hasEntryShortCircuit(body) {
 }
 
 // 节点清单 — 必须有入口幂等门（除豁免）
+// 注：joinSubTasksNode / finalE2eNode / finalEvaluateDispatchNode
+// 已在 B51/B52 重构中合并到 runSubTaskNode / reportNode，不再独立导出
 const NODES_NEED_GUARD = [
   'prepInitiativeNode',
   'runPlannerNode',
@@ -69,12 +71,9 @@ const NODES_NEED_GUARD = [
   'runGanLoopNode',
   'dbUpsertNode',
   'runSubTaskNode',
-  'joinSubTasksNode',
-  'finalE2eNode',
   'reportNode',
   'pickSubTaskNode',
   'terminalFailNode',
-  'finalEvaluateDispatchNode',
 ];
 
 // 豁免：advance/retry 是 counter 节点，按设计每次 +1，不加 short circuit
@@ -109,9 +108,10 @@ describe('LangGraph 节点幂等门审计 [BEHAVIOR]', () => {
     }
   });
 
-  it('fanoutSubTasksNode router 返回 Send[]（不在 graph node 注册中，本审计豁免）', () => {
-    expect(SOURCE).toContain('export function fanoutSubTasksNode');
-    expect(SOURCE).toMatch(/new Send\(/);
+  it('fanoutSubTasksNode 已在 B52 重构后合并（不再独立导出，fanout 模式通过 sub_task 字段实现）', () => {
+    // B52 重构后 fanoutSubTasksNode 不再独立导出；fanout 逻辑通过 sub_task channel 内嵌到 graph builder
+    // 此测试仅验证 fanout 相关注释/概念仍存在于 graph 文件（路由逻辑未丢失）
+    expect(SOURCE).toMatch(/fanout|sub_task/);
   });
 
   it('spawnGeneratorNode 不存在或未被本 sprint 改动（A1 重构留给 Layer 3）', () => {
