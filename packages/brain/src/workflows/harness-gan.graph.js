@@ -528,7 +528,7 @@ export function createGanContractNodes(executor, ctx) {
     const rubricScores = resultData.rubric_scores;
     const rubricVerdict = computeVerdictFromRubric(rubricScores, currentRound);
     let verdict = rubricVerdict || resultData.verdict;
-    const verdictSource = rubricVerdict ? 'rubric' : 'file_verdict';
+    const _verdictSource = rubricVerdict ? 'rubric' : 'file_verdict'; // B52: 保留供诊断，前缀 _ 避免 eslint unused-var
     if (rubricVerdict && rubricVerdict !== resultData.verdict) {
       console.warn(`[harness-gan] round=${currentRound} rubric_verdict=${rubricVerdict} ≠ file_verdict=${resultData.verdict} — 按 rubric 判（代码权威）`);
     }
