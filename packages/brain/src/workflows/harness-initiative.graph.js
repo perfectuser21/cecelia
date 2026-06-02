@@ -94,13 +94,14 @@ export const InitiativeState = Annotation.Root({
   ganResult:      Annotation({ reducer: (_o, n) => n, default: () => null }),
   result:         Annotation({ reducer: (_o, n) => n, default: () => null }),
   error:          Annotation({ reducer: (_o, n) => n, default: () => null }),
+  initiative_run_id: Annotation({ reducer: (_o, n) => n, default: () => null }),
   planner_session:   Annotation({ reducer: (_o, n) => n, default: () => null }),
   evaluator_session: Annotation({ reducer: (_o, n) => n, default: () => null }),
   planner_container_id: Annotation({ reducer: (_o, n) => n, default: () => null }),
 });
 
 // 节点 stub — Task 2-6 逐个填充。
-export async function prepInitiativeNode(state) {
+export async function prepInitiativeNode(state, opts = {}) {
   if (state.worktreePath) return { worktreePath: state.worktreePath };
   try {
     // B51: initiativeId = task.id（同一实体，无独立 initiative 表）
@@ -110,9 +111,33 @@ export async function prepInitiativeNode(state) {
     if (!state.task?.payload?.journey_id) {
       console.warn(`[prep] journey_id missing in task.payload — initiative_run.journey_id will be null, Notion Project will be orphaned (task.id=${state.task?.id})`);
     }
-    const worktreePath = await ensureHarnessWorktree({ taskId: state.task.id, initiativeId, baseRepo });
-    const githubToken = await resolveGitHubToken();
-    return { worktreePath, githubToken, initiativeId };
+    // 默认字面调用 ensureHarnessWorktree({ ...baseRepo })，base-repo-support-smoke 正则守卫；
+    // 测试可注入 opts.ensureWorktree 替换（条件分支保留字面调用不被间接层吞掉）
+    const resolveToken = opts.resolveToken || resolveGitHubToken;
+    const worktreePath = opts.ensureWorktree
+      ? await opts.ensureWorktree({ taskId: state.task.id, initiativeId, baseRepo })
+      : await ensureHarnessWorktree({ taskId: state.task.id, initiativeId, baseRepo });
+    const githubToken = await resolveToken();
+
+    // OPEN-6: worktree 建好后立即 INSERT initiative_runs(A_contract)，确保 GAN abort 时有记录可更新
+    const dbPool = opts.pool || pool;
+    const journeyType = state.task?.payload?.journey_type || 'autonomous';
+    const journeyId = state.task?.payload?.journey_id || null;
+    let initiative_run_id = null;
+    try {
+      const runInsert = await dbPool.query(
+        `INSERT INTO initiative_runs (initiative_id, phase, journey_type, journey_id)
+         VALUES ($1::uuid, 'A_contract', $2, $3)
+         RETURNING id`,
+        [initiativeId, journeyType, journeyId]
+      );
+      initiative_run_id = runInsert.rows[0]?.id || null;
+    } catch (dbErr) {
+      // non-blocking：DB 失败不阻止 worktree 建立，GAN 阶段降级为无 run 记录
+      console.warn(`[prep] initiative_runs INSERT failed (non-fatal): ${dbErr.message}`);
+    }
+
+    return { worktreePath, githubToken, initiativeId, initiative_run_id };
   } catch (err) {
     return { error: { node: 'prep', message: err.message } };
   }
@@ -365,6 +390,21 @@ export async function runGanLoopNode(state, opts = {}) {
     });
     return { ganResult };
   } catch (err) {
+    // OPEN-5: GAN abort 传播到 tasks + initiative_runs
+    const taskId = state.task?.id || state.initiativeId;
+    const errorPayload = JSON.stringify({ node: 'gan', message: err.message });
+    if (taskId) {
+      dbPool.query(
+        `UPDATE tasks SET status='failed', result=$1::jsonb, updated_at=NOW() WHERE id=$2::uuid`,
+        [errorPayload, taskId]
+      ).catch((e) => console.warn(`[ganLoop] tasks UPDATE failed (non-fatal): ${e.message}`));
+    }
+    if (state.initiative_run_id) {
+      dbPool.query(
+        `UPDATE initiative_runs SET phase='failed', failure_reason=$1, updated_at=NOW() WHERE id=$2::uuid`,
+        [err.message, state.initiative_run_id]
+      ).catch((e) => console.warn(`[ganLoop] initiative_runs UPDATE failed (non-fatal): ${e.message}`));
+    }
     return { error: { node: 'gan', message: err.message } };
   }
 }
@@ -422,19 +462,33 @@ export async function dbUpsertNode(state, opts = {}) {
     const contractId = contractInsert.rows[0].id;
     const journeyType = state.taskPlan?.journey_type || 'autonomous';
     const journeyId = state.task?.payload?.journey_id || null;
-    const runInsert = await client.query(
-      `INSERT INTO initiative_runs (
-         initiative_id, contract_id, phase,
-         deadline_at, journey_type, journey_id
-       )
-       VALUES ($1::uuid, $2::uuid, 'B_task_loop',
-         NOW() + ($3 || ' seconds')::interval,
-         $4, $5
-       )
-       RETURNING id`,
-      [state.initiativeId, contractId, String(timeoutSec), journeyType, journeyId]
-    );
-    const runId = runInsert.rows[0].id;
+    // OPEN-6: 有 initiative_run_id（prep 阶段创建）→ UPDATE phase + contract_id；否则 fallback INSERT
+    let runId;
+    if (state.initiative_run_id) {
+      await client.query(
+        `UPDATE initiative_runs
+         SET phase='B_task_loop', contract_id=$1::uuid,
+             deadline_at=NOW() + ($2 || ' seconds')::interval,
+             updated_at=NOW()
+         WHERE id=$3::uuid`,
+        [contractId, String(timeoutSec), state.initiative_run_id]
+      );
+      runId = state.initiative_run_id;
+    } else {
+      const runInsert = await client.query(
+        `INSERT INTO initiative_runs (
+           initiative_id, contract_id, phase,
+           deadline_at, journey_type, journey_id
+         )
+         VALUES ($1::uuid, $2::uuid, 'B_task_loop',
+           NOW() + ($3 || ' seconds')::interval,
+           $4, $5
+         )
+         RETURNING id`,
+        [state.initiativeId, contractId, String(timeoutSec), journeyType, journeyId]
+      );
+      runId = runInsert.rows[0].id;
+    }
     await client.query('COMMIT');
     return {
       result: {
@@ -508,6 +562,7 @@ export const FullInitiativeState = Annotation.Root({
   ganResult:      Annotation({ reducer: (_o, n) => n, default: () => null }),
   result:         Annotation({ reducer: (_o, n) => n, default: () => null }),
   error:          Annotation({ reducer: (_o, n) => n, default: () => null }),
+  initiative_run_id: Annotation({ reducer: (_o, n) => n, default: () => null }),
   contract:       Annotation({ reducer: (_o, n) => n, default: () => null }),
   contractBranch: Annotation({ reducer: (_o, n) => n, default: () => null }),
 
