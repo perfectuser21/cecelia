@@ -446,7 +446,7 @@ export function createGanContractNodes(executor, ctx) {
     // 实证空转 23 轮把 account2 烧穿。改为：累计连续未 push，达上限即带原因中止（route END）。
     let pushOk = true;
     let pushErr = '';
-    await verifyProposer({ worktreePath, branch: proposeBranch, sprintDir, baseRepo }).catch(err => {
+    await verifyProposer({ worktreePath, branch: proposeBranch, sprintDir, baseRepo, githubToken }).catch(err => {
       pushOk = false;
       pushErr = err.message;
       console.warn(`[harness-gan] verifyProposer failed: ${err.message}`);
