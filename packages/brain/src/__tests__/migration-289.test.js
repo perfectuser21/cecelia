@@ -7,7 +7,7 @@
  * 本测试验证：
  * 1. decisions 表有 notion_id 列（VARCHAR UNIQUE）
  * 2. initiative_contracts 表有 notion_id 列（VARCHAR UNIQUE）
- * 3. EXPECTED_SCHEMA_VERSION 已更新到 289
+ * 3. EXPECTED_SCHEMA_VERSION 已更新到 291（migration 早到 291，本测试断言对齐当前期望值）
  */
 
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
@@ -48,8 +48,8 @@ describe('Migration 289 - decisions/initiative_contracts notion_id', () => {
     expect(result.rows.length).toBe(1);
   });
 
-  it('EXPECTED_SCHEMA_VERSION 应为 289', async () => {
+  it('EXPECTED_SCHEMA_VERSION 应为 291', async () => {
     const { EXPECTED_SCHEMA_VERSION } = await import('../selfcheck.js');
-    expect(EXPECTED_SCHEMA_VERSION).toBe('289');
+    expect(EXPECTED_SCHEMA_VERSION).toBe('291');
   });
 });

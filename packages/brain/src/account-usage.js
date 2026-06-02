@@ -13,7 +13,7 @@ import { readFileSync } from 'fs';
 import { homedir } from 'os';
 import pool from './db.js';
 
-const ACCOUNTS = ['account1', 'account2']; // H14: account3 退订（403），见 docs/learnings/cp-0510075509-h14-remove-account3.md
+const ACCOUNTS = ['account2', 'account3']; // B51: account1 退订，account2+account3 生效
 const CACHE_TTL_MINUTES = 3;
 const USAGE_THRESHOLD = 80;       // 5h 超过此百分比则跳过
 const SONNET_7D_THRESHOLD = 100;  // sonnet 7d 满载阈值（≥ 此值时不可用 Sonnet，尝试 Opus）

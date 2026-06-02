@@ -27,9 +27,11 @@ describe('selectBestAccount — Opus omelette quota skip', () => {
   beforeEach(() => {
     // __setAccountUsageForTest seam: C3 impl 时注入 mock cache rows
     // 格式对应 account_usage_cache 表行（含 seven_day_omelette_pct 新列）
+    // B51: ACCOUNTS=[account2, account3]，account1 退订
+    // 原 account1 角色（列表第1个）→ account2，原 account2 角色（列表第2个）→ account3
     __setAccountUsageForTest([
       {
-        account_id: 'account1',
+        account_id: 'account2',
         five_hour_pct: 10,
         seven_day_pct: 20,
         seven_day_sonnet_pct: 15,
@@ -38,7 +40,7 @@ describe('selectBestAccount — Opus omelette quota skip', () => {
         seven_day_resets_at: null,
       },
       {
-        account_id: 'account2',
+        account_id: 'account3',
         five_hour_pct: 30,
         seven_day_pct: 25,
         seven_day_sonnet_pct: 18,
@@ -52,20 +54,20 @@ describe('selectBestAccount — Opus omelette quota skip', () => {
   it('skips account with seven_day_omelette_pct >= 95 when model=opus', async () => {
     const pick = await selectBestAccount({ model: 'opus' });
     expect(pick).not.toBeNull();
-    expect(pick.accountId).toBe('account2');
+    expect(pick.accountId).toBe('account3');
   });
 
   it('does NOT skip on omelette when model=sonnet', async () => {
     const pick = await selectBestAccount({ model: 'sonnet' });
-    // account1 has lower five_hour_pct → lower load, would be preferred for sonnet
+    // account2 has lower five_hour_pct → lower load, would be preferred for sonnet
     expect(pick).not.toBeNull();
-    expect(pick.accountId).toBe('account1');
+    expect(pick.accountId).toBe('account2');
   });
 
   it('returns null when all accounts capped for opus (omelette >= 95)', async () => {
     __setAccountUsageForTest([
       {
-        account_id: 'account1',
+        account_id: 'account2',
         five_hour_pct: 10,
         seven_day_pct: 20,
         seven_day_sonnet_pct: 15,
@@ -74,7 +76,7 @@ describe('selectBestAccount — Opus omelette quota skip', () => {
         seven_day_resets_at: null,
       },
       {
-        account_id: 'account2',
+        account_id: 'account3',
         five_hour_pct: 10,
         seven_day_pct: 15,
         seven_day_sonnet_pct: 12,
