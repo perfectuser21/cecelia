@@ -23,6 +23,7 @@
 // Edit resource-tier.js, not here — this comment is the SC-3 regex anchor for PRD BEHAVIOR tests.
 
 import { spawn } from 'child_process';
+import { randomBytes } from 'crypto';
 import { writeFileSync, mkdirSync, existsSync, readFileSync, unlinkSync, readdirSync, statSync } from 'fs';
 import path from 'path';
 import os from 'os';
@@ -182,11 +183,20 @@ function envToArgs(env) {
 }
 
 /**
- * 生成 container 名（短 ID，便于 docker kill）
+ * 生成 container 名。
+ *
+ * 前缀 `cecelia-task-{taskId12}` 保持稳定（quarantine/recovery 按此前缀找任务的容器），
+ * 末尾加每次调用唯一的随机后缀 → 同一 task 的多轮 GAN 容器（proposer/reviewer 各轮）
+ * 名字互不相同，**根除"同名撞车"（exit 125）**，也就不需要 spawn 前 docker rm 清理
+ * （那个 rm -f 还误杀过活容器 exit 137）。
+ *
+ * 注意：buildDockerArgs 每次调用只算一次 name，--name 与超时 kill 用同一个值，一致。
+ * 任何"按 taskId 查容器"的地方必须用前缀匹配（见 quarantine.hasActiveContainer）。
  */
 function containerName(taskId) {
   const short = String(taskId).replace(/-/g, '').slice(0, 12);
-  return `cecelia-task-${short}`;
+  const uniq = randomBytes(4).toString('hex'); // 8 hex，避免同 task 多轮重名
+  return `cecelia-task-${short}-${uniq}`;
 }
 
 /**
