@@ -235,7 +235,8 @@ describe('checkAndAlertExpiringCredentials', () => {
   it('token 过期超 1h：cron 连续失败，P0 告警', async () => {
     mockExpiringCredential(-2 * 60 * 60 * 1000); // 过期 2h，超过 STUCK_EXPIRED_MS(1h)
 
-    const result = await checkAndAlertExpiringCredentials(pool);
+    // B53: 生产池仅 account2，多账号告警逻辑需注入 → [account2, account3]
+    const result = await checkAndAlertExpiringCredentials(pool, ['account2', 'account3']);
 
     expect(result.alerted).toBe(2); // 两个账号都告警
     expect(raise).toHaveBeenCalledWith(
@@ -268,7 +269,8 @@ describe('checkAndAlertExpiringCredentials', () => {
   it('凭据文件缺失：P0 告警', async () => {
     existsSync.mockReturnValue(false); // 模拟文件不存在
 
-    const result = await checkAndAlertExpiringCredentials(pool);
+    // B53: 生产池仅 account2，多账号告警逻辑需注入 → [account2, account3]
+    const result = await checkAndAlertExpiringCredentials(pool, ['account2', 'account3']);
 
     expect(result.alerted).toBe(2);
     expect(raise).toHaveBeenCalledWith('P0', expect.any(String), expect.stringContaining('缺失'));
