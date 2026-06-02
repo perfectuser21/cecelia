@@ -41,6 +41,12 @@ const execFile = promisify(execFileCb);
 // 100 = 50 轮 propose+review 预留一倍。
 export const DEFAULT_RECURSION_LIMIT = 100;
 
+// proposer 连续未 push 分支的容忍上限。proposer 因账号 429/报错没产出时不 push，
+// 旧代码吞掉 verifyProposer 错误继续空转（实证空转 23 轮把账号烧穿）。
+// 连续 ≥ 此值即判 proposer 坏 → 带原因中止 GAN（不是轮数上限——push 成功就清零，
+// 真在对抗的 GAN 仍可无限轮，符合"GAN 无硬轮数上限"设计）。
+export const MAX_NO_PUSH_STREAK = 2;
+
 // 7 个 rubric 维度（对齐 harness-contract-reviewer SKILL v6.4.0+）。
 // ⚠️ harness::rubric-dimensions 接口约定：此数组必须与 reviewer SKILL 输出维度完全一致。
 // 改 reviewer SKILL 维度 = 必须同步改这里（查 Brain registry type=harness_interface）。
@@ -291,6 +297,13 @@ export const GanContractState = Annotation.Root({
   // 时透传到 payload.contract_branch，供 harness-task-dispatch.js 注入 CONTRACT_BRANCH env。
   // 漏写会导致 Generator ABORT（v6 P0-final 修复点）。
   proposeBranch: Annotation({ reducer: (_old, neu) => neu, default: () => null }),
+  // proposerNoPushStreak: proposer 连续"没 push 分支"的次数。proposer 因 429/报错没产出时
+  // verifyProposer 抛错，旧代码 .catch 吞掉继续空转（实证空转 23 轮把账号烧穿）。
+  // 累计 ≥ MAX_NO_PUSH_STREAK 即判 proposer 坏（多半账号限流/报错）→ 带原因中止 GAN。
+  // 正常 push 成功则清零。
+  proposerNoPushStreak: Annotation({ reducer: (_old, neu) => neu, default: () => 0 }),
+  // error: 节点设置后，graph 路由到 END（中止），上层据此判 GAN 失败。
+  error: Annotation({ reducer: (_old, neu) => neu, default: () => null }),
   // rubricHistory: 累积每轮 reviewer 的 rubric_scores，供 detectConvergenceTrend 判趋势。
   // reducer 把 patch 里的新条目 append 进 list（替代旧的轮数硬 cap）。
   // entry 形如 {round, scores: {dod_machineability, scope_match_prd, test_is_red,
@@ -383,14 +396,36 @@ export function createGanContractNodes(executor, ctx) {
     const contractContent = await readContractFile(worktreePath, sprintDir);
     const resultData = await readBrainResult(worktreePath, ['propose_branch']).catch(() => ({}));
     const proposeBranch = resultData.propose_branch || computedBranch;
+
+    // verifyProposer 失败 = proposer 这轮没把分支 push 到 origin（多半账号 429/报错没产出）。
+    // 旧代码 .catch 吞掉错误照常返回旧合同，导致 reviewer 审旧合同 → REVISION → 再空转，
+    // 实证空转 23 轮把 account2 烧穿。改为：累计连续未 push，达上限即带原因中止（route END）。
+    let pushOk = true;
+    let pushErr = '';
     await verifyProposer({ worktreePath, branch: proposeBranch, sprintDir, baseRepo }).catch(err => {
+      pushOk = false;
+      pushErr = err.message;
       console.warn(`[harness-gan] verifyProposer failed: ${err.message}`);
     });
+
+    const noPushStreak = pushOk ? 0 : (state.proposerNoPushStreak || 0) + 1;
+    if (!pushOk && noPushStreak >= MAX_NO_PUSH_STREAK) {
+      const msg = `proposer_repeatedly_didnt_push: 连续 ${noPushStreak} 轮未 push 分支（疑似账号 429/报错，proposer 无产出）— ${pushErr}`;
+      console.error(`[harness-gan][ABORT] ${msg}`);
+      return {
+        round: nextRound,
+        costUsd: state.costUsd || 0,
+        proposerNoPushStreak: noPushStreak,
+        error: { node: 'proposer', message: msg },
+      };
+    }
+
     return {
       round: nextRound,
       costUsd: state.costUsd || 0,
       contractContent,
       proposeBranch,
+      proposerNoPushStreak: noPushStreak,
     };
   }
 
@@ -490,6 +525,11 @@ function reviewerRouter(state) {
   return state.verdict === 'APPROVED' ? END : 'proposer';
 }
 
+// proposer 后路由：error 已设（proposer 连续没 push）则中止到 END，否则正常进 reviewer。
+function proposerRouter(state) {
+  return state.error ? END : 'reviewer';
+}
+
 /**
  * 组装 GAN 子图（编译前）。
  * @param {{ proposer: Function, reviewer: Function }} nodes
@@ -500,7 +540,10 @@ export function buildGanContractGraph(nodes) {
     .addNode('proposer', nodes.proposer, { retryPolicy: LLM_RETRY })
     .addNode('reviewer', nodes.reviewer)
     .addEdge(START, 'proposer')
-    .addEdge('proposer', 'reviewer')
+    .addConditionalEdges('proposer', proposerRouter, {
+      [END]: END,
+      reviewer: 'reviewer',
+    })
     .addConditionalEdges('reviewer', reviewerRouter, {
       [END]: END,
       proposer: 'proposer',
@@ -569,6 +612,15 @@ export async function runGanContractGraph(opts) {
       recursionLimit,
     }
   );
+  // proposer 连续没 push 被中止：带原因抛错，让上层 runGanLoopNode 标 GAN 失败，
+  // 而不是返回一个"verdict=APPROVED 的空合同"误导后续 Generator。
+  if (finalState.error) {
+    const e = new Error(finalState.error.message || 'gan_aborted');
+    e.ganAborted = true;
+    e.node = finalState.error.node || 'proposer';
+    throw e;
+  }
+
   return {
     contract_content: finalState.contractContent || '',
     propose_branch: finalState.proposeBranch || null,
