@@ -103,8 +103,13 @@ export const InitiativeState = Annotation.Root({
 export async function prepInitiativeNode(state) {
   if (state.worktreePath) return { worktreePath: state.worktreePath };
   try {
-    const initiativeId = state.task?.payload?.initiative_id || state.task?.initiative_id || state.task?.id;
+    // B51: initiativeId = task.id（同一实体，无独立 initiative 表）
+    // payload.initiative_id / task.initiative_id 是旧格式兼容字段，权威值始终是 task.id
+    const initiativeId = state.task?.id;
     const baseRepo = state.task?.payload?.base_repo || undefined;
+    if (!state.task?.payload?.journey_id) {
+      console.warn(`[prep] journey_id missing in task.payload — initiative_run.journey_id will be null, Notion Project will be orphaned (task.id=${state.task?.id})`);
+    }
     const worktreePath = await ensureHarnessWorktree({ taskId: state.task.id, initiativeId, baseRepo });
     const githubToken = await resolveGitHubToken();
     return { worktreePath, githubToken, initiativeId };
@@ -371,10 +376,16 @@ export async function dbUpsertNode(state, opts = {}) {
   const client = await dbPool.connect();
   try {
     await client.query('BEGIN');
+    // B51: initiative_id = task.id 约定显式化 — LLM 写 "pending" 或其他错误值时强制覆盖
+    let taskPlanForUpsert = state.taskPlan;
+    if (taskPlanForUpsert?.initiative_id && taskPlanForUpsert.initiative_id !== state.initiativeId) {
+      console.warn(`[dbUpsertNode] taskPlan.initiative_id "${taskPlanForUpsert.initiative_id}" ≠ state.initiativeId "${state.initiativeId}" — 覆盖为权威值`);
+      taskPlanForUpsert = { ...taskPlanForUpsert, initiative_id: state.initiativeId };
+    }
     const { idMap, insertedTaskIds } = await upsertTaskPlan({
       initiativeId: state.initiativeId,
       initiativeTaskId: state.task.id,
-      taskPlan: state.taskPlan,
+      taskPlan: taskPlanForUpsert,
       client,
       contractBranch: state.ganResult.propose_branch || null,
     });

@@ -101,13 +101,14 @@ describe('prepInitiativeNode', () => {
   it('happy: 调 ensureHarnessWorktree + resolveGitHubToken 写入 worktreePath/githubToken/initiativeId', async () => {
     mockEnsureWorktree.mockResolvedValueOnce('/wt/foo');
     mockResolveToken.mockResolvedValueOnce('ghp_xxx');
+    // B51: initiativeId = task.id（不再读 payload.initiative_id）
     const state = { task: { id: 't1', payload: { initiative_id: 'init-1' } } };
     const delta = await prepInitiativeNode(state);
-    expect(mockEnsureWorktree).toHaveBeenCalledWith({ taskId: 't1', initiativeId: 'init-1' });
+    expect(mockEnsureWorktree).toHaveBeenCalledWith({ taskId: 't1', initiativeId: 't1' });
     expect(mockResolveToken).toHaveBeenCalledTimes(1);
     expect(delta.worktreePath).toBe('/wt/foo');
     expect(delta.githubToken).toBe('ghp_xxx');
-    expect(delta.initiativeId).toBe('init-1');
+    expect(delta.initiativeId).toBe('t1');
     expect(delta.error).toBeUndefined();
   });
 

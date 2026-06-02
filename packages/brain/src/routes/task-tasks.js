@@ -85,6 +85,12 @@ router.post('/', async (req, res) => {
     // 未提供 domain 时自动检测
     const domain = domainInput ?? detectDomain(`${title} ${description ?? ''}`).domain;
 
+    // B51: harness_initiative 任务缺 journey_id 会导致 initiative_runs + Notion 游离，提前 warn
+    const warnings = [];
+    if (task_type === 'harness_initiative' && !(payload?.journey_id)) {
+      warnings.push('journey_id missing in payload — initiative_run.journey_id will be null, Notion Project will be orphaned');
+    }
+
     const result = await pool.query(
       `INSERT INTO tasks (
          title, description, priority, task_type, status,
@@ -109,7 +115,9 @@ router.post('/', async (req, res) => {
       ]
     );
 
-    res.status(201).json(result.rows[0]);
+    const responseBody = result.rows[0];
+    if (warnings.length > 0) responseBody.warnings = warnings;
+    res.status(201).json(responseBody);
   } catch (err) {
     if (err.code === '23514') {
       return res.status(400).json({ error: 'Invalid field value', details: err.message });
