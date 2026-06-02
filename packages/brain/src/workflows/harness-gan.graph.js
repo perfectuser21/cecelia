@@ -360,7 +360,12 @@ function defaultCleanupContainer(taskId) {
     let done = false;
     const finish = () => { if (!done) { done = true; resolve(); } };
     try {
-      const proc = spawnProc('docker', ['rm', '-f', name], { stdio: 'ignore' });
+      // 关键：用 `docker rm` 不带 `-f`。
+      // 只清"已停止/退出但 --rm 还没删完"的残留（这才是 125 撞名的源头），
+      // 对"正在运行"的容器 docker rm 会安全报错 → 我们 catch 后跳过，绝不强杀。
+      // 之前 #3230 用 `rm -f` 会把正在跑的 proposer/reviewer 也杀了（exit 137），
+      // 用一个偶发的 125（LangGraph 重试可自愈）换来了"杀活容器"的更糟回归。
+      const proc = spawnProc('docker', ['rm', name], { stdio: 'ignore' });
       proc.on('exit', finish);
       proc.on('close', finish);
       proc.on('error', finish);
