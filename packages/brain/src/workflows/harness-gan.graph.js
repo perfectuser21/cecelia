@@ -240,6 +240,7 @@ export async function defaultReadContractFile(worktreePath, sprintDir) {
   const candidates = [
     path.join(worktreePath, sprintDir, 'contract-draft.md'),
     path.join(worktreePath, sprintDir, 'sprint-contract.md'),
+    path.join(worktreePath, sprintDir, 'contract.md'),
   ];
   const errors = [];
   for (const p of candidates) {
