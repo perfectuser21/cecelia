@@ -63,14 +63,23 @@ describe('resolveResourceTier', () => {
 });
 
 describe('containerName', () => {
-  it('生成 cecelia-task-{12 字符短 ID}', () => {
+  it('生成 cecelia-task-{12 字符短 ID}-{唯一后缀}', () => {
     const name = __test__.containerName('39c1c97e-4fbf-46bf-a686-cdac9c40c3c8');
-    expect(name).toBe('cecelia-task-39c1c97e4fbf');
+    // 前缀稳定（quarantine 按此前缀找容器），末尾唯一后缀防同 task 多轮撞名
+    expect(name).toMatch(/^cecelia-task-39c1c97e4fbf-[0-9a-f]+$/);
     expect(name.length).toBeLessThanOrEqual(63); // docker name 限制
   });
 
   it('短 task_id 也安全（不会越界）', () => {
-    expect(__test__.containerName('abc')).toBe('cecelia-task-abc');
+    expect(__test__.containerName('abc')).toMatch(/^cecelia-task-abc-[0-9a-f]+$/);
+  });
+
+  it('同一 taskId 两次调用名字不同（根除同 task 多轮撞名 exit 125）', () => {
+    const n1 = __test__.containerName('same-task-id');
+    const n2 = __test__.containerName('same-task-id');
+    expect(n1).not.toBe(n2);
+    expect(n1.startsWith('cecelia-task-sametaskid-')).toBe(true);
+    expect(n2.startsWith('cecelia-task-sametaskid-')).toBe(true);
   });
 });
 

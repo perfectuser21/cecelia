@@ -1069,9 +1069,14 @@ async function hasActiveContainer(taskId) {
   const shortId = String(taskId).replace(/-/g, '').slice(0, 12);
   const expectedName = `cecelia-task-${shortId}`;
   try {
-    // docker ps --format '{{.Names}}' 列出所有运行中容器名，精确匹配
+    // docker ps --format '{{.Names}}' 列出所有运行中容器名。
+    // 容器名现为 cecelia-task-{taskId12}-{随机}（同 task 多轮唯一），用前缀匹配：
+    // `cecelia-task-{taskId12}` 或 `cecelia-task-{taskId12}-*` 都算该 task 有活跃容器。
     const { stdout } = await execFile('docker', ['ps', '--format', '{{.Names}}'], { timeout: 3000 });
-    return stdout.split(/\r?\n/).some(line => line.trim() === expectedName);
+    return stdout.split(/\r?\n/).some(line => {
+      const n = line.trim();
+      return n === expectedName || n.startsWith(`${expectedName}-`);
+    });
   } catch {
     // docker 不可达 / 超时 / 命令不存在 → 保守返回 false（按原 failure 逻辑走）
     return false;
