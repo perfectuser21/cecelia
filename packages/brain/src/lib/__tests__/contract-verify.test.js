@@ -7,6 +7,7 @@ import { describe, test, expect, vi } from 'vitest';
 import {
   ContractViolation,
   verifyProposerOutput,
+  verifyContractProposerOutput,
   verifyGeneratorOutput,
   verifyEvaluatorWorktree,
 } from '../contract-verify.js';
@@ -122,6 +123,129 @@ describe('H15 — verifyProposerOutput', () => {
     const remoteGetUrl = gitCalls.find(c => c.includes('remote') && c.includes('get-url') && c.includes(remoteBaseRepo));
     expect(remoteGetUrl).toBeUndefined();
     // ls-remote 应使用 remoteBaseRepo URL 本身
+    const lsRemoteCall = gitCalls.find(c => c.startsWith('git ls-remote'));
+    expect(lsRemoteCall).toContain(remoteBaseRepo);
+  });
+});
+
+// -------- B2. verifyContractProposerOutput (GAN 合同轮验合同产物，不是 task-plan.json) --------
+// 根因回归：GAN 每轮 proposer 真实交付物是 contract-draft.md（reviewer 审的就是它），
+// task-plan.json 是 GAN 收敛后下游 inferTaskPlan 才读的产物（SKILL git add 用 2>/dev/null 容忍漏写）。
+// 旧代码把 verifyProposer 默认接成 verifyProposerOutput(查 task-plan.json)，proposer 产了有效
+// 合同但偶发漏 task-plan.json 就被误判 proposer_didnt_push，#3229 后 2 轮 ABORT，GAN 永不收敛。
+describe('verifyContractProposerOutput — 验合同产物而非 task-plan.json', () => {
+  const baseOpts = {
+    worktreePath: '/tmp/wt',
+    branch: 'cp-harness-propose-r1-task',
+    sprintDir: 'sprints/test',
+    baseRepo: '/tmp/baserepo',
+  };
+
+  // scenario.showByPath: { 'contract-draft.md': {stdout|throw}, 'sprint-contract.md': {...} }
+  function makeExecFn(scenario) {
+    return vi.fn().mockImplementation(async (cmd, args) => {
+      if (cmd === 'git' && args.includes('remote') && args.includes('get-url')) {
+        if (scenario.getUrl?.throw) throw new Error(scenario.getUrl.throw);
+        return { stdout: scenario.getUrl?.stdout ?? 'https://github.com/perfectuser21/cecelia\n', stderr: '' };
+      }
+      if (cmd === 'git' && args[0] === 'ls-remote') {
+        if (scenario.lsRemote?.throw) throw new Error(scenario.lsRemote.throw);
+        return { stdout: scenario.lsRemote?.stdout ?? '', stderr: '' };
+      }
+      if (cmd === 'git' && args[0] === 'fetch') {
+        if (scenario.fetch?.throw) throw new Error(scenario.fetch.throw);
+        return { stdout: '', stderr: '' };
+      }
+      if (cmd === 'git' && args[0] === 'show') {
+        const ref = args[1] || '';
+        const hit = Object.keys(scenario.showByPath || {}).find(k => ref.endsWith(k));
+        const spec = hit ? scenario.showByPath[hit] : { throw: 'fatal: pathspec did not match' };
+        if (spec.throw) throw new Error(spec.throw);
+        return { stdout: spec.stdout ?? '', stderr: '' };
+      }
+      throw new Error(`unexpected cmd: ${cmd} ${args.join(' ')}`);
+    });
+  }
+
+  test('happy: 分支存在 + contract-draft.md 有内容 → 不 throw', async () => {
+    const execFn = makeExecFn({
+      lsRemote: { stdout: 'abc123\trefs/heads/cp-harness-propose-r1-task\n' },
+      showByPath: { 'contract-draft.md': { stdout: '# Sprint Contract Draft\n\n## Golden Path Step 1\n...' } },
+    });
+    await expect(verifyContractProposerOutput({ ...baseOpts, execFn })).resolves.toBeUndefined();
+  });
+
+  test('happy fallback: contract-draft.md 缺但 sprint-contract.md 有内容（reviewer rename 后）→ 不 throw', async () => {
+    const execFn = makeExecFn({
+      lsRemote: { stdout: 'abc123\n' },
+      showByPath: {
+        'contract-draft.md': { throw: 'fatal: pathspec did not match' },
+        'sprint-contract.md': { stdout: '# Sprint Contract\n\nGolden Path...' },
+      },
+    });
+    await expect(verifyContractProposerOutput({ ...baseOpts, execFn })).resolves.toBeUndefined();
+  });
+
+  test('关键回归: 只有 contract-draft.md、没有 task-plan.json → 不 throw（task-plan 是下游产物）', async () => {
+    // 这正是真实失败场景：proposer 推了有效合同但没 task-plan.json。
+    // 旧的 verifyProposerOutput 会在这里 throw → ABORT；新函数只看合同，放行。
+    const execFn = makeExecFn({
+      lsRemote: { stdout: 'abc123\n' },
+      showByPath: {
+        'contract-draft.md': { stdout: '# Sprint Contract Draft\n内容...' },
+        'task-plan.json': { throw: 'fatal: path task-plan.json does not exist' },
+      },
+    });
+    await expect(verifyContractProposerOutput({ ...baseOpts, execFn })).resolves.toBeUndefined();
+    // 断言新函数根本不去查 task-plan.json
+    const showedTaskPlan = execFn.mock.calls.some(
+      ([cmd, args]) => cmd === 'git' && args[0] === 'show' && String(args[1]).includes('task-plan.json'),
+    );
+    expect(showedTaskPlan).toBe(false);
+  });
+
+  test('branch missing: ls-remote 返 "" → throw ContractViolation(proposer_didnt_push + branch 名)', async () => {
+    const execFn = makeExecFn({ lsRemote: { stdout: '' } });
+    await expect(verifyContractProposerOutput({ ...baseOpts, execFn })).rejects.toThrow(ContractViolation);
+    await expect(verifyContractProposerOutput({ ...baseOpts, execFn })).rejects.toThrow(/proposer_didnt_push/);
+    await expect(verifyContractProposerOutput({ ...baseOpts, execFn })).rejects.toThrow(/cp-harness-propose-r1-task/);
+  });
+
+  test('合同文件全缺: contract-draft.md + sprint-contract.md 都 throw → ContractViolation(proposer_didnt_push 含 contract)', async () => {
+    const execFn = makeExecFn({
+      lsRemote: { stdout: 'abc123\n' },
+      showByPath: {
+        'contract-draft.md': { throw: 'fatal: pathspec did not match' },
+        'sprint-contract.md': { throw: 'fatal: pathspec did not match' },
+      },
+    });
+    await expect(verifyContractProposerOutput({ ...baseOpts, execFn })).rejects.toThrow(ContractViolation);
+    await expect(verifyContractProposerOutput({ ...baseOpts, execFn })).rejects.toThrow(/proposer_didnt_push/);
+    await expect(verifyContractProposerOutput({ ...baseOpts, execFn })).rejects.toThrow(/contract/);
+  });
+
+  test('合同为空: contract-draft.md 内容全空白 → ContractViolation(proposer_empty_contract)', async () => {
+    const execFn = makeExecFn({
+      lsRemote: { stdout: 'abc123\n' },
+      showByPath: { 'contract-draft.md': { stdout: '   \n  \n' } },
+    });
+    await expect(verifyContractProposerOutput({ ...baseOpts, execFn })).rejects.toThrow(ContractViolation);
+    await expect(verifyContractProposerOutput({ ...baseOpts, execFn })).rejects.toThrow(/proposer_empty_contract/);
+  });
+
+  test('H17: baseRepo 是 GitHub URL 时直接用作 githubUrl，不调 git -C <url> remote get-url', async () => {
+    const gitCalls = [];
+    const execFn = vi.fn().mockImplementation(async (cmd, args) => {
+      gitCalls.push([cmd, ...args].join(' '));
+      if (cmd === 'git' && args[0] === 'ls-remote') return { stdout: 'abc123\n', stderr: '' };
+      if (cmd === 'git' && args[0] === 'fetch') return { stdout: '', stderr: '' };
+      if (cmd === 'git' && args[0] === 'show') return { stdout: '# contract\n非空', stderr: '' };
+      throw new Error(`unexpected cmd: ${cmd} ${args.join(' ')}`);
+    });
+    const remoteBaseRepo = 'https://github.com/perfectuser21/zenithjoy-workspace';
+    await expect(verifyContractProposerOutput({ ...baseOpts, baseRepo: remoteBaseRepo, execFn })).resolves.toBeUndefined();
+    const remoteGetUrl = gitCalls.find(c => c.includes('remote') && c.includes('get-url'));
+    expect(remoteGetUrl).toBeUndefined();
     const lsRemoteCall = gitCalls.find(c => c.startsWith('git ls-remote'));
     expect(lsRemoteCall).toContain(remoteBaseRepo);
   });
