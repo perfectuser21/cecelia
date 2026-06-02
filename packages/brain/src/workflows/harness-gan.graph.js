@@ -20,7 +20,7 @@
 
 import path from 'node:path';
 import { readFile, readdir, access as _access } from 'node:fs/promises';
-import { execFile as execFileCb } from 'node:child_process';
+import { execFile as execFileCb, spawn as spawnProc } from 'node:child_process';
 import { promisify } from 'node:util';
 import {
   StateGraph,
@@ -339,6 +339,39 @@ export const GanContractState = Annotation.Root({
  * @param {Function} [ctx.readContractFile] 测试注入
  * @returns {{ proposer: Function, reviewer: Function }}
  */
+
+/**
+ * 默认容器清理：spawn 前强制 docker rm -f 同名残留容器。
+ *
+ * 根因：docker-executor 的容器名按 taskId 固定（cecelia-task-{id12}，是 quarantine /
+ * startup-recovery / session-bridge 跨系统按 taskId 算出的查找契约，不能改成随机名）。
+ * GAN 同一 task 每轮 proposer/reviewer 复用同名容器，配合 --rm 异步删除留时间窗 →
+ * 下一轮 spawn 撞 "container name already in use"（exit 125）→ proposer 没启动没 push。
+ *
+ * 在 GAN 节点 spawn 前清残留（只在 GAN 这种"同 task 快速复用"路径需要，generic
+ * executeInDocker 不碰，避免打乱大量 spawn-mock 测试的调用序列）。幂等、失败不阻塞。
+ *
+ * @param {string} taskId
+ */
+function defaultCleanupContainer(taskId) {
+  const short = String(taskId).replace(/-/g, '').slice(0, 12);
+  const name = `cecelia-task-${short}`;
+  return new Promise((resolve) => {
+    let done = false;
+    const finish = () => { if (!done) { done = true; resolve(); } };
+    try {
+      const proc = spawnProc('docker', ['rm', '-f', name], { stdio: 'ignore' });
+      proc.on('exit', finish);
+      proc.on('close', finish);
+      proc.on('error', finish);
+      const t = setTimeout(finish, 8000);
+      if (typeof t.unref === 'function') t.unref();
+    } catch {
+      finish();
+    }
+  });
+}
+
 export function createGanContractNodes(executor, ctx) {
   const {
     taskId, initiativeId, sprintDir, worktreePath, githubToken, baseRepo,
@@ -347,6 +380,7 @@ export function createGanContractNodes(executor, ctx) {
     readContractFile = defaultReadContractFile,
     fetchOriginFile: _fetchOriginFile = fetchAndShowOriginFile,
     verifyProposer = verifyProposerOutput,
+    cleanupContainer = defaultCleanupContainer,
   } = ctx;
   // _fetchOriginFile 保留 ctx 兼容旧 caller（test 仍传 fetchOriginFile），H15 后 proposer 改走 verifyProposer。
   void _fetchOriginFile;
@@ -367,6 +401,10 @@ export function createGanContractNodes(executor, ctx) {
 
     const acctOpts = { task: { id: taskId, task_type: 'harness_contract_propose' }, env: {} };
     try { await resolveAccount(acctOpts, { taskId }); } catch { /* non-blocking */ }
+
+    // spawn 前清同名残留容器：容器名按 taskId 固定，上一轮 --rm 异步删除可能还没完，
+    // 不清就撞 "container name already in use"（exit 125）→ 本轮 proposer 没启动没 push。
+    await cleanupContainer(taskId);
 
     // B44 fix: 改回阻塞 executor（WS3 async 已回退，根因 propose_branch 丢失）
     const result = await executor({
@@ -438,6 +476,9 @@ export function createGanContractNodes(executor, ctx) {
 
     const acctOpts = { task: { id: taskId, task_type: 'harness_contract_review' }, env: {} };
     try { await resolveAccount(acctOpts, { taskId }); } catch { /* non-blocking */ }
+
+    // spawn 前清同名残留容器（同 proposer，防 exit 125 撞名）
+    await cleanupContainer(taskId);
 
     // B44 fix: 改回阻塞 executor（WS3 async 已回退）
     const result = await executor({
