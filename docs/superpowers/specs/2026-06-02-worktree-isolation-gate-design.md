@@ -34,11 +34,12 @@
   6. 在 worktree 内 → exit 0（放行）。
 - 单一职责：只管"主仓库禁 checkout 任务分支"，不碰凭据/代码扫描（那是 bash-guard）。
 
-### 组件 2（契约修正）
+### 组件 2（契约修正 — 仅 cecelia repo 内部分）
 
-- `packages/engine/skills/engine-worktree`（即 ~/.claude/skills/engine-worktree/SKILL.md 的源）/ `worktree-manage.sh`：
-  - 修正 SKILL.md line19 "worktree add + cd + 写 .dev-lock" 的不实表述——脚本是子进程，`cd` 改不了父进程 cwd，实际只 `echo` 路径；明确 **cd 是调用方责任**。
-  - `worktree-manage.sh cmd_init_or_check`：在主仓库成功创建 worktree 后，输出清晰的"✅ worktree 已创建，请 cd <path> 继续"，不再用会被误读为失败的 `exit 1` 自检（区分"刚创建待调用方 cd" vs 真正的"以为在 worktree 但不在"）。
+> **跨 repo 边界**：`engine-worktree` SKILL.md 的真实源在 `zenithjoy-skills` repo（user skill，symlink 挂到 ~/.claude/skills），**不在 cecelia**。按 skill 两类分布规则，user skill 改动必须走 skill-creator + zenithjoy-skills 的独立 PR，不能进本 cecelia `[CONFIG]` PR。故 SKILL.md line19 "cd" 文字修正**剥离为 follow-up**（见下方"后续 follow-up"），本 PR 不动它。
+
+- `packages/engine/skills/dev/scripts/worktree-manage.sh`（在 cecelia repo，本 PR 改）：
+  - `cmd_init_or_check`：在主仓库成功创建 worktree 后，输出清晰的"✅ worktree 已创建，请 cd <path> 继续"，不再用会被误读为失败的 `exit 1` 自检（区分"刚创建待调用方 cd" vs 真正的"以为在 worktree 但不在"）。脚本是子进程、`cd` 改不了父进程 cwd 这一事实，通过显式输出告知调用方，而非假装已 cd。
 
 ### 组件 3：回归测试
 
@@ -66,3 +67,7 @@
 
 - git post-checkout hook + `.githooks/` + core.hooksPath 改造：主防线已覆盖 Claude agent 主场景（Cecelia 自动化），手动终端 checkout 是边缘场景，留后续迭代。
 - 不改 bash-guard.sh / branch-protect.sh 的现有逻辑（只新增独立 hook，最小爆炸半径）。
+
+## 后续 follow-up（不在本 PR）
+
+- zenithjoy-skills repo：经 skill-creator 修正 `engine-worktree/SKILL.md` line19 关于 init-or-check "会 cd" 的不实表述，与本 PR 改后的 worktree-manage.sh 输出对齐。走 zenithjoy-skills 独立 PR。
