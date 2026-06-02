@@ -20,7 +20,7 @@
 
 import path from 'node:path';
 import { readFile, readdir, access as _access } from 'node:fs/promises';
-import { execFile as execFileCb, spawn as spawnProc } from 'node:child_process';
+import { execFile as execFileCb } from 'node:child_process';
 import { promisify } from 'node:util';
 import {
   StateGraph,
@@ -29,7 +29,7 @@ import {
   END,
 } from '@langchain/langgraph';
 import { fetchAndShowOriginFile } from '../lib/git-fence.js';
-import { verifyProposerOutput } from '../lib/contract-verify.js';
+import { verifyContractProposerOutput } from '../lib/contract-verify.js';
 import { LLM_RETRY } from './retry-policies.js';
 import { loadSkillContent, readBrainResult, ReviewerOutputSchema } from '../harness-shared.js';
 import { makeSessionRecord as _makeSessionRecord } from '../harness-session-bridge.js';
@@ -341,42 +341,9 @@ export const GanContractState = Annotation.Root({
  * @returns {{ proposer: Function, reviewer: Function }}
  */
 
-/**
- * 默认容器清理：spawn 前强制 docker rm -f 同名残留容器。
- *
- * 根因：docker-executor 的容器名按 taskId 固定（cecelia-task-{id12}，是 quarantine /
- * startup-recovery / session-bridge 跨系统按 taskId 算出的查找契约，不能改成随机名）。
- * GAN 同一 task 每轮 proposer/reviewer 复用同名容器，配合 --rm 异步删除留时间窗 →
- * 下一轮 spawn 撞 "container name already in use"（exit 125）→ proposer 没启动没 push。
- *
- * 在 GAN 节点 spawn 前清残留（只在 GAN 这种"同 task 快速复用"路径需要，generic
- * executeInDocker 不碰，避免打乱大量 spawn-mock 测试的调用序列）。幂等、失败不阻塞。
- *
- * @param {string} taskId
- */
-function defaultCleanupContainer(taskId) {
-  const short = String(taskId).replace(/-/g, '').slice(0, 12);
-  const name = `cecelia-task-${short}`;
-  return new Promise((resolve) => {
-    let done = false;
-    const finish = () => { if (!done) { done = true; resolve(); } };
-    try {
-      // 关键：用 `docker rm` 不带 `-f`。
-      // 只清"已停止/退出但 --rm 还没删完"的残留（这才是 125 撞名的源头），
-      // 对"正在运行"的容器 docker rm 会安全报错 → 我们 catch 后跳过，绝不强杀。
-      // 之前 #3230 用 `rm -f` 会把正在跑的 proposer/reviewer 也杀了（exit 137），
-      // 用一个偶发的 125（LangGraph 重试可自愈）换来了"杀活容器"的更糟回归。
-      const proc = spawnProc('docker', ['rm', name], { stdio: 'ignore' });
-      proc.on('exit', finish);
-      proc.on('close', finish);
-      proc.on('error', finish);
-      const t = setTimeout(finish, 8000);
-      if (typeof t.unref === 'function') t.unref();
-    } catch {
-      finish();
-    }
-  });
-}
+// 注：原 defaultCleanupContainer（#3230/#3234 的 spawn 前 docker rm）已删除。
+// 根治改为容器名唯一化（docker-executor.containerName 加随机后缀），同 task 多轮
+// 容器名互不相同，不再撞名（exit 125），自然也无需 spawn 前清理。
 
 export function createGanContractNodes(executor, ctx) {
   const {
@@ -385,8 +352,7 @@ export function createGanContractNodes(executor, ctx) {
     budgetCapUsd = 10,
     readContractFile = defaultReadContractFile,
     fetchOriginFile: _fetchOriginFile = fetchAndShowOriginFile,
-    verifyProposer = verifyProposerOutput,
-    cleanupContainer = defaultCleanupContainer,
+    verifyProposer = verifyContractProposerOutput,
   } = ctx;
   // _fetchOriginFile 保留 ctx 兼容旧 caller（test 仍传 fetchOriginFile），H15 后 proposer 改走 verifyProposer。
   void _fetchOriginFile;
@@ -407,10 +373,6 @@ export function createGanContractNodes(executor, ctx) {
 
     const acctOpts = { task: { id: taskId, task_type: 'harness_contract_propose' }, env: {} };
     try { await resolveAccount(acctOpts, { taskId }); } catch { /* non-blocking */ }
-
-    // spawn 前清同名残留容器：容器名按 taskId 固定，上一轮 --rm 异步删除可能还没完，
-    // 不清就撞 "container name already in use"（exit 125）→ 本轮 proposer 没启动没 push。
-    await cleanupContainer(taskId);
 
     // B44 fix: 改回阻塞 executor（WS3 async 已回退，根因 propose_branch 丢失）
     const result = await executor({
@@ -441,7 +403,9 @@ export function createGanContractNodes(executor, ctx) {
     const resultData = await readBrainResult(worktreePath, ['propose_branch']).catch(() => ({}));
     const proposeBranch = resultData.propose_branch || computedBranch;
 
-    // verifyProposer 失败 = proposer 这轮没把分支 push 到 origin（多半账号 429/报错没产出）。
+    // verifyProposer 失败 = proposer 这轮没把【合同】push 到 origin 分支（多半账号 429/报错没产出）。
+    // 验的是合同产物（contract-draft.md/sprint-contract.md），不是 task-plan.json —— task-plan.json
+    // 是 GAN 收敛后 inferTaskPlanNode 才读的下游产物（有 B32 兜底），合同才是每轮真实交付物。
     // 旧代码 .catch 吞掉错误照常返回旧合同，导致 reviewer 审旧合同 → REVISION → 再空转，
     // 实证空转 23 轮把 account2 烧穿。改为：累计连续未 push，达上限即带原因中止（route END）。
     let pushOk = true;
@@ -482,9 +446,6 @@ export function createGanContractNodes(executor, ctx) {
 
     const acctOpts = { task: { id: taskId, task_type: 'harness_contract_review' }, env: {} };
     try { await resolveAccount(acctOpts, { taskId }); } catch { /* non-blocking */ }
-
-    // spawn 前清同名残留容器（同 proposer，防 exit 125 撞名）
-    await cleanupContainer(taskId);
 
     // B44 fix: 改回阻塞 executor（WS3 async 已回退）
     const result = await executor({
