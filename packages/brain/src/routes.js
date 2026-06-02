@@ -21,6 +21,7 @@ import socialTrendingRouter from './routes/social-trending.js';
 import topicsRouter from './routes/topics.js';
 // llm-service 在 server.js 里以 /api/brain/llm-service 独立挂载（带 internalAuth 中间件）
 import harnessRouter from './routes/harness.js';
+import warroomRouter from './routes/warroom.js';
 import kr3Router from './routes/kr3.js';
 import dispatchRouter from './routes/dispatch.js';
 
@@ -55,6 +56,9 @@ router.use('/topics', topicsRouter);
 
 // Harness 可视化 — GET /harness/pipeline-detail, GET /harness/pipeline/:id
 router.use('/harness', harnessRouter);
+
+// 战情室统一 feed — GET /warroom/feed（聚合所有任务，按 Area/Group 分组）
+router.use('/warroom', warroomRouter);
 
 // KR3 小程序配置状态 — GET /kr3/check-config, POST /kr3/mark-wx-pay, POST /kr3/mark-admin-oid
 router.use('/kr3', kr3Router);
