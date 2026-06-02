@@ -26,6 +26,20 @@ export class ContractViolation extends Error {
 }
 
 /**
+ * 将 GitHub token 注入 HTTPS GitHub URL，用于 private repo 认证。
+ * 对非 HTTPS URL 或已含认证信息的 URL 原样返回（幂等）。
+ *
+ * @param {string} url
+ * @param {string|null|undefined} token
+ * @returns {string}
+ */
+export function injectToken(url, token) {
+  if (!token) return url;
+  if (!url.startsWith('https://github.com/')) return url;
+  return url.replace('https://', `https://x-access-token:${token}@`);
+}
+
+/**
  * 验 proposer 节点真把 propose_branch + sprintDir/task-plan.json push 到 origin。
  *
  * @param {Object} opts
@@ -34,10 +48,11 @@ export class ContractViolation extends Error {
  * @param {string} opts.sprintDir - 'sprints/w8-langgraph-vN'
  * @param {string} [opts.baseRepo] - 主仓库（读 origin URL）
  * @param {Function} [opts.execFn] - 测试注入
+ * @param {string} [opts.githubToken] - GitHub token，用于 private repo 认证
  * @throws {ContractViolation}
  */
 export async function verifyProposerOutput(opts) {
-  const { worktreePath, branch, sprintDir, execFn = execFile } = opts;
+  const { worktreePath, branch, sprintDir, execFn = execFile, githubToken } = opts;
   const baseRepo = opts.baseRepo || '/Users/administrator/perfect21/cecelia';
 
   // H17: baseRepo が remote URL（GitHub/SSH）の場合はそのまま githubUrl として使用。
@@ -48,7 +63,7 @@ export async function verifyProposerOutput(opts) {
   } else {
     // local path — baseRepo の origin remote から GitHub URL を読む
     try {
-      const { stdout } = await execFn('git', ['-C', baseRepo, 'remote', 'get-url', 'origin']);
+      const { stdout } = await execFn('git', ['-C', baseRepo, 'remote', 'get-url', 'origin'], {});
       githubUrl = stdout.trim();
     } catch (err) {
       throw new ContractViolation(
@@ -60,7 +75,8 @@ export async function verifyProposerOutput(opts) {
 
   // 1. ls-remote 验 branch 真在 origin
   try {
-    const { stdout } = await execFn('git', ['ls-remote', githubUrl, branch]);
+    const authedUrl = injectToken(githubUrl, githubToken);
+    const { stdout } = await execFn('git', ['ls-remote', authedUrl, branch], {});
     if (!stdout.trim()) {
       throw new ContractViolation(
         `proposer_didnt_push: branch '${branch}' not found on origin (${githubUrl})`,
@@ -79,7 +95,8 @@ export async function verifyProposerOutput(opts) {
   const taskPlanPath = `${sprintDir}/task-plan.json`;
   let content;
   try {
-    await execFn('git', ['fetch', githubUrl, `${branch}:refs/remotes/origin/${branch}`], { cwd: worktreePath });
+    const authedFetchUrl = injectToken(githubUrl, githubToken);
+    await execFn('git', ['fetch', authedFetchUrl, `${branch}:refs/remotes/origin/${branch}`], { cwd: worktreePath });
     const { stdout } = await execFn('git', ['show', `origin/${branch}:${taskPlanPath}`], { cwd: worktreePath });
     content = stdout;
   } catch (err) {
