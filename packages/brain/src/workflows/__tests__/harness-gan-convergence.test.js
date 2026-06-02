@@ -176,7 +176,7 @@ describe.skip('reviewer node 收敛检测集成 [BEHAVIOR] [B44: executor 模式
     }
   });
 
-  it('diverging（dod_machineability 连续走低）→ force APPROVED + forcedApproval=true + P1 alert', async () => {
+  it('B52: diverging（dod_machineability 连续走低）→ 不再 force APPROVED，仅打 DIAG 日志', async () => {
     const tmpDir = mkdtempSync(join(tmpdir(), 'gan-conv-'));
     try {
       const scores = { dod_machineability: 4, scope_match_prd: 7, test_is_red: 7, internal_consistency: 7, risk_registered: 7 };
@@ -190,10 +190,12 @@ describe.skip('reviewer node 收敛检测集成 [BEHAVIOR] [B44: executor 模式
       const newState = await nodes.reviewer({
         prdContent: '# PRD', contractContent: '# C', round: 3, costUsd: 0, rubricHistory,
       });
-      expect(newState.verdict).toBe('APPROVED');
-      expect(newState.forcedApproval).toBe(true);
+      // B52: diverging 不再强制 APPROVED，verdict 保持 REVISION
+      expect(newState.verdict).toBe('REVISION');
+      expect(newState.forcedApproval).toBe(false);
+      // 诊断日志仍然打出（[DIAG] 而非 [P1]）
       const warnMsg = warnSpy.mock.calls.flat().join(' ');
-      expect(warnMsg).toMatch(/\[harness-gan\]\[P1\]/);
+      expect(warnMsg).toMatch(/\[harness-gan\]\[DIAG\]/);
       expect(warnMsg).toMatch(/diverging/i);
       warnSpy.mockRestore();
     } finally {
@@ -201,9 +203,7 @@ describe.skip('reviewer node 收敛检测集成 [BEHAVIOR] [B44: executor 模式
     }
   });
 
-  it('oscillating（dod_machineability 在 8/6/8 震荡）→ force APPROVED + P1 alert', async () => {
-    // 当前轮 round=3 scores: dod_machineability=8（震荡回升），scope_match_prd=4 让 rubric 判 REVISION
-    // 然后 history [r1=8, r2=6, r3=8] → high-low-high → oscillating
+  it('B52: oscillating（dod_machineability 在 8/6/8 震荡）→ 不再 force APPROVED，仅打 DIAG 日志', async () => {
     const tmpDir = mkdtempSync(join(tmpdir(), 'gan-conv-'));
     try {
       const scores = { dod_machineability: 8, scope_match_prd: 4, test_is_red: 7, internal_consistency: 7, risk_registered: 7 };
@@ -217,10 +217,11 @@ describe.skip('reviewer node 收敛检测集成 [BEHAVIOR] [B44: executor 模式
       const newState = await nodes.reviewer({
         prdContent: '# PRD', contractContent: '# C', round: 3, costUsd: 0, rubricHistory,
       });
-      expect(newState.verdict).toBe('APPROVED');
-      expect(newState.forcedApproval).toBe(true);
+      // B52: oscillating 不再强制 APPROVED，verdict 保持 REVISION
+      expect(newState.verdict).toBe('REVISION');
+      expect(newState.forcedApproval).toBe(false);
       const warnMsg = warnSpy.mock.calls.flat().join(' ');
-      expect(warnMsg).toMatch(/\[harness-gan\]\[P1\]/);
+      expect(warnMsg).toMatch(/\[harness-gan\]\[DIAG\]/);
       expect(warnMsg).toMatch(/oscillating/i);
       warnSpy.mockRestore();
     } finally {

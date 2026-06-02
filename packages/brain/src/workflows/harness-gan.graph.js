@@ -533,24 +533,24 @@ export function createGanContractNodes(executor, ctx) {
       console.warn(`[harness-gan] round=${currentRound} rubric_verdict=${rubricVerdict} ≠ file_verdict=${resultData.verdict} — 按 rubric 判（代码权威）`);
     }
 
-    // B50: 记录本轮合同行数，供 detectConvergenceTrend 检测膨胀发散
+    // B52: 记录本轮合同行数 + 趋势（仅用于诊断日志，不再强制 APPROVED）
+    // 原 B50 forced-approval 逻辑已移除：GAN 无限跑直到 Reviewer 真实 APPROVED。
+    // 强制收敛是 Proposer 漂移的应急阀，根因修复见 harness-contract-proposer B52 精简纪律。
     const contractLines = (state.contractContent || '').split('\n').length;
     const newHistoryEntry = rubricScores ? { round: currentRound, scores: rubricScores, contractLines } : null;
     const combinedHistory = newHistoryEntry
       ? [...(state.rubricHistory || []), newHistoryEntry]
       : (state.rubricHistory || []);
     const trend = detectConvergenceTrend(combinedHistory);
-    let forcedApproval = false;
     if (verdict !== 'APPROVED' && (trend === 'diverging' || trend === 'oscillating')) {
-      console.warn(`[harness-gan][P1] GAN ${trend} at round=${currentRound} — force APPROVED (verdict_before=${verdict}, verdictSource=${verdictSource}, history_len=${combinedHistory.length})`);
-      verdict = 'APPROVED';
-      forcedApproval = true;
+      // 诊断日志保留，但不再强制通过 — Proposer B52 精简纪律应防止到达此状态
+      console.warn(`[harness-gan][DIAG] GAN ${trend} at round=${currentRound} (verdict=${verdict}, history_len=${combinedHistory.length}) — Proposer 应收敛，不强制 APPROVED`);
     }
 
     const patch = {
       costUsd: costAfterSpawn,
       verdict,
-      forcedApproval,
+      forcedApproval: false,
     };
     if (newHistoryEntry) patch.rubricHistory = [newHistoryEntry];
     if (verdict !== 'APPROVED') patch.feedback = resultData.feedback || '';

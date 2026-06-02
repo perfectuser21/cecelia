@@ -124,6 +124,78 @@ router.get('/runs/:id', async (req, res) => {
 });
 
 /**
+ * GET /runs/:id/progress — B52 Pipeline 进度百分比
+ *
+ * 从 initiative_run_events 读已完成节点，映射到固定百分比，返回当前进度。
+ * phase=done → pct=100；phase=failed → pct+failed:true。
+ */
+const NODE_PCT_MAP = {
+  prep: 5, planner: 15, parsePrd: 25, ganLoop: 40, dbUpsert: 50,
+  generator: 65, evaluator: 80, merge: 90, report: 100,
+};
+
+router.get('/runs/:id/progress', async (req, res) => {
+  const { id } = req.params;
+  if (!UUID_RE.test(id)) {
+    return res.status(400).json({ error: 'invalid id: must be a UUID' });
+  }
+  try {
+    const [runResult, eventsResult] = await Promise.all([
+      pool.query(
+        `SELECT initiative_id, phase, started_at, completed_at, failure_reason
+         FROM initiative_runs WHERE initiative_id = $1::uuid LIMIT 1`,
+        [id]
+      ),
+      pool.query(
+        `SELECT DISTINCT node FROM initiative_run_events
+         WHERE initiative_id = $1::uuid AND status = 'completed'`,
+        [id]
+      ),
+    ]);
+
+    if (runResult.rows.length === 0) {
+      return res.status(404).json({ error: 'initiative run not found' });
+    }
+
+    const run = runResult.rows[0];
+    const doneNodes = eventsResult.rows.map(r => r.node);
+
+    let pct = 0;
+    let current_node = null;
+    for (const node of doneNodes) {
+      const nodePct = NODE_PCT_MAP[node];
+      if (nodePct !== undefined && nodePct > pct) {
+        pct = nodePct;
+        current_node = node;
+      }
+    }
+
+    if (run.phase === 'done') { pct = 100; current_node = 'report'; }
+
+    const elapsed_ms = run.started_at
+      ? Date.now() - new Date(run.started_at).getTime()
+      : null;
+
+    const resp = {
+      initiative_id: id,
+      pct,
+      current_node,
+      phase: run.phase,
+      elapsed_ms,
+      started_at: run.started_at,
+    };
+    if (run.phase === 'failed') {
+      resp.failed = true;
+      resp.failure_reason = run.failure_reason;
+    }
+    res.json(resp);
+  } catch (err) {
+    console.error('[GET /harness/runs/:id/progress]', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
  * GET /initiative/:id/detail
  * 返回 initiative 详情：6 字段（initiative_id/prd_content/contract_content/gan_rounds/step_timing/screenshot_urls）
  * 来源：tasks + initiative_contracts + task_events + checkpoint_blobs
