@@ -10,7 +10,10 @@
       },
       {
         "matcher": "Bash",
-        "hooks": [{"type": "command", "command": "./hooks/bash-guard.sh"}]
+        "hooks": [
+          {"type": "command", "command": "./hooks/bash-guard.sh"},
+          {"type": "command", "command": "./hooks/worktree-checkout-guard.sh"}
+        ]
       }
     ]
   }

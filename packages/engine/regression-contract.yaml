@@ -28,8 +28,8 @@
 
 # NOTE: version 需要与 package.json 保持同步
 # 更新 package.json 时同步更新此处
-version: 19.2.2
-updated: 2026-05-21
+version: 19.2.3
+updated: 2026-06-02
 
 # ============================================================================
 # Hooks 回归契约
@@ -91,6 +91,24 @@ hooks:
       type: exit_code
       equals: 0
     test: "tests/hooks/branch-protect.test.ts"
+
+  - id: H1-004
+    feature: H1
+    name: "主仓库禁止 checkout/switch 到任务分支"
+    scope: hook
+    priority: P1
+    trigger: [PR, Release]
+    method: auto
+    tags: [branch, worktree, isolation]
+    owner: infra
+    steps:
+      given: "在主仓库目录（git-dir 不含 worktrees）"
+      when: "执行 git checkout/switch 切到 cp-*/feature 分支"
+      then: "worktree-checkout-guard 阻止（exit 2）并提示在独立 worktree 开发"
+    evidence:
+      type: exit_code
+      equals: 2
+    test: "tests/integration/worktree-checkout-guard.test.sh"
 
   # --------------------------------------------------------------------------
   # H1-010~H1-012: v8.24.0 安全修复 (branch-protect.sh)
