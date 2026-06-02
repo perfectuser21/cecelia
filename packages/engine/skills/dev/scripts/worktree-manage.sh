@@ -570,13 +570,18 @@ LOCKEOF
         cmd_create "$task_name"
     fi
 
-    # 自检
+    # 自检：脚本是子进程，无法 cd 调用方进程。区分两种情况：
+    #   - 已在 worktree（调用方在 worktree 内调用）→ 验证分支格式
+    #   - 在主仓库刚创建 worktree（cmd_create 已 echo 路径）→ 提示调用方 cd，不误判失败
     git_dir=$(git rev-parse --git-dir 2>/dev/null)
     local current_branch
     current_branch=$(git rev-parse --abbrev-ref HEAD)
-    [[ "$git_dir" != *"worktrees"* ]] && { echo "❌ 未在 worktree 中"; exit 1; }
-    [[ ! "$current_branch" =~ ^cp- ]] && { echo "❌ 分支名不符合 cp-* 格式"; exit 1; }
-    echo "✅ engine-worktree 自检通过"
+    if [[ "$git_dir" == *"worktrees"* ]]; then
+        [[ ! "$current_branch" =~ ^cp- ]] && { echo "❌ 分支名不符合 cp-* 格式"; exit 1; }
+        echo "✅ engine-worktree 自检通过（已在 worktree）"
+    else
+        echo "✅ worktree 已创建（见上方路径）。脚本无法 cd 调用方进程——请调用方 cd 进该 worktree 后再继续。" >&2
+    fi
 }
 
 # 仅作为可执行脚本时跑 main；被 source 时跳过（让测试能拉函数）
