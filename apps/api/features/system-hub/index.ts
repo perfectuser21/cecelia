@@ -28,7 +28,6 @@ const manifest: FeatureManifest = {
           { path: '/system/engine', label: 'Engine', icon: 'Cpu', order: 6 },
           { path: '/system/feature-map', label: 'Feature Map', icon: 'Map', order: 7 },
           { path: '/live-monitor', label: 'Live Monitor', icon: 'Activity', order: 9 },
-          { path: '/autonomous', label: 'Autonomous', icon: 'Bot', order: 11 },
           { path: '/pipeline', label: '战情室', icon: 'Radar', order: 15 },
           { path: '/brain-models', label: 'Brain Models', icon: 'Cpu', order: 16 },
           { path: '/collection-dashboard', label: 'Collection', icon: 'Database', order: 12 },
@@ -52,13 +51,17 @@ const manifest: FeatureManifest = {
     { path: '/system/skills-registry', redirect: '/system/team' },
     // Drill-down routes (remain separate)
     { path: '/live-monitor', component: 'LiveMonitor' },
-    { path: '/autonomous', component: 'AutonomousSessionsPage' },
-    // 战情室：统一 feed（替换旧 harness-only 列表为入口；详情仍走 HarnessPipelineDetailPage）
+    // 战情室：统一 feed（替换旧 harness-only 列表为入口；详情走 HarnessPipelineDetailPage）
     { path: '/pipeline', component: 'WarRoomPage' },
     { path: '/pipeline/:id', component: 'HarnessPipelineDetailPage' },
     { path: '/pipeline/:id/step/:step', component: 'HarnessPipelineStepPage' },
-    { path: '/initiatives/:id', component: 'InitiativeDetail' },
-    { path: '/harness/:id', component: 'HarnessDetailPage' },
+    // War Room PR-C：退役死页/重复详情页 → 统一收口到 /pipeline（战情室）
+    // - /autonomous: /api/brain/autonomous/sessions 0 条死页
+    // - /harness/:id: 老 SSE stream 详情页，SSE 日志 + sprint-docs tab 已吸收进 HarnessPipelineDetailPage(/pipeline/:id)
+    // 注：/initiatives/:id 的 system-hub 死页（指向已删的 harness/InitiativeDetail）已移除；
+    //     该路径由 planning feature 的工作页继续持有，不在此重复注册。
+    { path: '/autonomous', redirect: '/pipeline' },
+    { path: '/harness/:id', redirect: '/pipeline' },
     { path: '/collection-dashboard', component: 'CollectionDashboardPage' },
     { path: '/viral-analysis', component: 'ViralAnalysisPage' },
     { path: '/clips', component: 'ContentClipsPage', navItem: { label: 'Content Clips', icon: 'Scissors', group: 'content', order: 1 } },
@@ -167,14 +170,9 @@ const manifest: FeatureManifest = {
     SystemTabbed: () => import('./pages/SystemTabbed'),
     // Drill-down pages
     LiveMonitor: () => import('../../../dashboard/src/pages/live-monitor/LiveMonitorPage'),
-    AutonomousSessionsPage: () => import('../../../dashboard/src/pages/autonomous/AutonomousSessionsPage'),
     WarRoomPage: () => import('../../../dashboard/src/pages/warroom/WarRoomPage'),
-    HarnessPipelinePage: () => import('../../../dashboard/src/pages/harness-pipeline/HarnessPipelinePage'),
     HarnessPipelineDetailPage: () => import('../../../dashboard/src/pages/harness-pipeline/HarnessPipelineDetailPage'),
     HarnessPipelineStepPage: () => import('../../../dashboard/src/pages/harness-pipeline/HarnessPipelineStepPage'),
-    InitiativeDetail: () => import('../../../dashboard/src/pages/harness/InitiativeDetail'),
-    HarnessStreamPage: () => import('../../../dashboard/src/pages/harness/HarnessStreamPage'),
-    HarnessDetailPage: () => import('../../../dashboard/src/pages/harness/HarnessDetailPage'),
     CollectionDashboardPage: () => import('../../../dashboard/src/pages/collection-dashboard/CollectionDashboardPage'),
     ViralAnalysisPage: () => import('../../../dashboard/src/pages/viral-analysis/ViralAnalysisPage'),
     ContentClipsPage: () => import('../../../dashboard/src/pages/clips/ContentClipsPage'),

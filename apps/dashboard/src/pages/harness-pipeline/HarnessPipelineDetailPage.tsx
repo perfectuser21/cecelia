@@ -731,7 +731,68 @@ function SseLogSection({
   );
 }
 
+// ─── Types: Sprint Docs ─────────────────────────────────────────────────────
+
+interface SprintDocs {
+  sprint_dir: string;
+  docs: {
+    prep_prd: string | null;
+    sprint_prd: string | null;
+    contract: string | null;
+    harness_report: string | null;
+  };
+}
+
+// ─── Section: Sprint Docs Tab ────────────────────────────────────────────────
+// 吸收自旧 HarnessDetailPage（/harness/:id 退役）：sprint-docs tab，
+// 展示 Prep PRD / Sprint PRD / Contract / Harness Report 四类文档。
+
+const DOC_SECTIONS: { key: keyof SprintDocs['docs']; label: string }[] = [
+  { key: 'prep_prd', label: 'Prep PRD' },
+  { key: 'sprint_prd', label: 'Sprint PRD' },
+  { key: 'contract', label: 'Contract' },
+  { key: 'harness_report', label: 'Harness Report' },
+];
+
+function SprintDocsSection({
+  loading,
+  docs,
+}: {
+  loading: boolean;
+  docs: SprintDocs | null;
+}) {
+  return (
+    <div data-testid="docs-tab-content" className="space-y-4">
+      {loading && (
+        <div className="text-slate-500 dark:text-slate-400 text-sm">加载文档中...</div>
+      )}
+      {!loading && !docs && (
+        <div className="text-slate-500 dark:text-slate-400 text-sm">暂无文档（sprint_dir 未知）</div>
+      )}
+      {docs && DOC_SECTIONS.map(({ key, label }) => (
+        <div key={key} className="border border-slate-200 dark:border-slate-700 rounded-lg overflow-hidden">
+          <div className="bg-slate-100 dark:bg-slate-800 px-4 py-2 border-b border-slate-200 dark:border-slate-700">
+            <h3 className="text-sm font-semibold text-slate-700 dark:text-slate-200">{label}</h3>
+          </div>
+          <div className="p-4 bg-white dark:bg-slate-900/50">
+            {docs.docs[key] ? (
+              <div
+                className="text-xs text-slate-800 dark:text-slate-300 whitespace-pre-wrap font-mono overflow-auto max-h-96"
+                dangerouslySetInnerHTML={{ __html: docs.docs[key] as string }}
+              />
+            ) : (
+              <div className="text-slate-400 dark:text-slate-500 text-sm italic">文件不存在</div>
+            )}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 // ─── Main Component ─────────────────────────────────────────────────────────
+
+type DetailTab = 'pipeline' | 'docs';
 
 export default function HarnessPipelineDetailPage() {
   const { id } = useParams<{ id: string }>();
@@ -741,6 +802,9 @@ export default function HarnessPipelineDetailPage() {
   const [error, setError] = useState<string | null>(null);
   const [sseLogs, setSseLogs] = useState<SseLogEntry[]>([]);
   const [sseDone, setSseDone] = useState<SseDoneData | null>(null);
+  const [activeTab, setActiveTab] = useState<DetailTab>('pipeline');
+  const [sprintDocs, setSprintDocs] = useState<SprintDocs | null>(null);
+  const [docsLoading, setDocsLoading] = useState(false);
 
   const fetchDetail = useCallback(async () => {
     if (!id) return;
@@ -761,6 +825,28 @@ export default function HarnessPipelineDetailPage() {
   useEffect(() => {
     fetchDetail();
   }, [fetchDetail]);
+
+  // sprint-docs 懒加载：切到 docs tab 时按需拉取（吸收自旧 HarnessDetailPage）
+  const loadDocs = useCallback(async () => {
+    const sprintDir = data?.sprint_dir;
+    if (!sprintDir || sprintDocs || docsLoading) return;
+    setDocsLoading(true);
+    try {
+      const res = await fetch(
+        `/api/brain/harness/sprint-docs?sprint_dir=${encodeURIComponent(sprintDir)}`
+      );
+      if (res.ok) setSprintDocs(await res.json());
+    } catch {
+      // ignore — UI 显示「暂无文档」
+    } finally {
+      setDocsLoading(false);
+    }
+  }, [data?.sprint_dir, sprintDocs, docsLoading]);
+
+  const handleTabChange = useCallback((tab: DetailTab) => {
+    setActiveTab(tab);
+    if (tab === 'docs') loadDocs();
+  }, [loadDocs]);
 
   useEffect(() => {
     if (!id || typeof EventSource === 'undefined') return;
@@ -855,17 +941,50 @@ export default function HarnessPipelineDetailPage() {
         </div>
       </div>
 
-      {/* SSE 实时日志区 */}
-      <SseLogSection logs={sseLogs} done={sseDone} />
+      {/* Tab 切换：Pipeline 视图 | 文档（吸收自旧 /harness/:id 详情页） */}
+      <div className="flex gap-2 mb-4 border-b border-slate-200 dark:border-slate-700">
+        <button
+          onClick={() => handleTabChange('pipeline')}
+          className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
+            activeTab === 'pipeline'
+              ? 'border-blue-500 text-blue-600 dark:text-blue-400'
+              : 'border-transparent text-slate-500 hover:text-slate-700 dark:hover:text-slate-300'
+          }`}
+        >
+          Pipeline
+        </button>
+        <button
+          data-testid="docs-tab"
+          onClick={() => handleTabChange('docs')}
+          className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
+            activeTab === 'docs'
+              ? 'border-blue-500 text-blue-600 dark:text-blue-400'
+              : 'border-transparent text-slate-500 hover:text-slate-700 dark:hover:text-slate-300'
+          }`}
+        >
+          文档
+        </button>
+      </div>
 
-      {/* LangGraph 时间轴（仅在走了 LangGraph 路径时渲染） */}
-      {data.langgraph?.enabled && <LangGraphSection info={data.langgraph} />}
+      {activeTab === 'pipeline' && (
+        <>
+          {/* SSE 实时日志区 */}
+          <SseLogSection logs={sseLogs} done={sseDone} />
 
-      {/* 阶段时间线概览 */}
-      <StageTimeline stages={data.stages} />
+          {/* LangGraph 时间轴（仅在走了 LangGraph 路径时渲染） */}
+          {data.langgraph?.enabled && <LangGraphSection info={data.langgraph} />}
 
-      {/* 串行步骤列表 + 三栏钻取 */}
-      <StepCards steps={data.steps || []} pipelineId={id!} />
+          {/* 阶段时间线概览 */}
+          <StageTimeline stages={data.stages} />
+
+          {/* 串行步骤列表 + 三栏钻取 */}
+          <StepCards steps={data.steps || []} pipelineId={id!} />
+        </>
+      )}
+
+      {activeTab === 'docs' && (
+        <SprintDocsSection loading={docsLoading} docs={sprintDocs} />
+      )}
     </div>
   );
 }
