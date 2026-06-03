@@ -317,6 +317,7 @@ describe('Bug 回归: harness_initiative bridge guard bypass', () => {
 
     mockQuery.mockResolvedValueOnce({ rows: [] });                    // retired drain
     mockQuery.mockResolvedValueOnce({ rows: [harnessTask] });        // candidate tasks
+    mockQuery.mockResolvedValueOnce({ rows: [{ n: 0 }] });           // 全局 harness 并发计数（本 PR 加）→ 0 < cap
     mockQuery.mockResolvedValueOnce({ rows: [{ id: harnessTask.id }] }); // C1 claim
     mockQuery.mockResolvedValueOnce({ rows: [harnessTask] });        // full task fetch
     mockQuery.mockResolvedValue({ rows: [], rowCount: 1 });          // 其余 DB 调用
