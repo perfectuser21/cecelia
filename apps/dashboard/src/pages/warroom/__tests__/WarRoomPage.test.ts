@@ -13,6 +13,7 @@ import {
   statusMeta,
   kindLabel,
   formatPriority,
+  verdictMeta,
   filterArea,
   filterByKind,
   pickDefaultTask,
@@ -265,5 +266,30 @@ describe('filterByKind（任务种类过滤）', () => {
 
   it('无命中返回空数组', () => {
     expect(filterByKind(MIXED, 'scraper')).toHaveLength(0);
+  });
+});
+
+describe('verdictMeta（最终验收结论样式）', () => {
+  it('PASS → 绿色 + label PASS', () => {
+    const m = verdictMeta('PASS');
+    expect(m).not.toBeNull();
+    expect(m!.label).toBe('PASS');
+    expect(m!.pill).toMatch(/emerald|green/);
+  });
+
+  it('FAIL → 红色 + label FAIL', () => {
+    const m = verdictMeta('FAIL');
+    expect(m).not.toBeNull();
+    expect(m!.label).toBe('FAIL');
+    expect(m!.pill).toMatch(/red/);
+  });
+
+  it('大小写归一', () => {
+    expect(verdictMeta('pass')!.label).toBe('PASS');
+  });
+
+  it('空/未知 → null（不渲染徽章）', () => {
+    expect(verdictMeta(null)).toBeNull();
+    expect(verdictMeta('')).toBeNull();
   });
 });
