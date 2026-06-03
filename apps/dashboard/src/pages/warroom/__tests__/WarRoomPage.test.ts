@@ -24,9 +24,16 @@ import {
   shanghaiClock,
   stageRows,
   elapsedForStatus,
+  lineProgress,
+  stepStatusMeta,
+  roadmapRows,
+  normalizeLineAreas,
   type FeedArea,
   type FeedTask,
   type FeedStage,
+  type LineSummary,
+  type LineArea,
+  type LineStep,
 } from '../WarRoomPage';
 
 describe('formatElapsed（耗时格式化）', () => {
@@ -485,5 +492,141 @@ describe('applyViewFilters（聚焦/状态/归档 组合过滤）', () => {
   it('过滤到空 → 返回空数组', () => {
     const out = applyViewFilters(make(), { ...base, statusFilter: 'active', hidden: new Set(['active1']) });
     expect(out).toHaveLength(0);
+  });
+});
+
+// ====================== Line 中心化（PR-B 新增）======================
+
+function mkLine(over: Partial<LineSummary>): LineSummary {
+  return {
+    id: 'l1',
+    name: '视频剪辑',
+    status: 'active',
+    maturity: null,
+    step_total: 0,
+    step_done: 0,
+    running: 0,
+    task_total: 0,
+    last_activity: null,
+    ...over,
+  };
+}
+
+describe('lineProgress（roadmap 进度）', () => {
+  it('正常 done/total → pct 取整', () => {
+    expect(lineProgress(mkLine({ step_total: 4, step_done: 1 }))).toEqual({ done: 1, total: 4, pct: 25 });
+    expect(lineProgress(mkLine({ step_total: 3, step_done: 2 }))).toEqual({ done: 2, total: 3, pct: 67 });
+  });
+
+  it('total=0 → pct 0（不除零）', () => {
+    expect(lineProgress(mkLine({ step_total: 0, step_done: 0 }))).toEqual({ done: 0, total: 0, pct: 0 });
+  });
+
+  it('done 超过 total → pct 封顶 100', () => {
+    expect(lineProgress(mkLine({ step_total: 2, step_done: 5 })).pct).toBe(100);
+  });
+
+  it('缺省字段（PR-A 未合）→ 安全 0', () => {
+    // @ts-expect-error 故意传缺字段对象，验证可选读取不崩
+    expect(lineProgress({ id: 'x', name: 'y' })).toEqual({ done: 0, total: 0, pct: 0 });
+  });
+
+  it('负数 step_done 兜底为 0', () => {
+    expect(lineProgress(mkLine({ step_total: 4, step_done: -1 })).done).toBe(0);
+  });
+});
+
+describe('stepStatusMeta（roadmap 圆点色）', () => {
+  it('done → 绿点', () => {
+    expect(stepStatusMeta('done').dot).toMatch(/emerald|green/);
+  });
+  it('in_progress → 蓝点', () => {
+    expect(stepStatusMeta('in_progress').dot).toMatch(/blue/);
+  });
+  it('planned → 灰点', () => {
+    expect(stepStatusMeta('planned').dot).toMatch(/slate|gray/);
+  });
+  it('未知状态 → 灰点兜底', () => {
+    expect(stepStatusMeta('weird').dot).toMatch(/slate|gray/);
+    expect(stepStatusMeta('').dot).toBeTruthy();
+  });
+});
+
+describe('roadmapRows（roadmap 时间线渲染行）', () => {
+  const STEPS: LineStep[] = [
+    { step_number: 2, name: 'Step B', status: 'in_progress', description: 'b' },
+    { step_number: 1, name: 'Step A', status: 'done', description: 'a' },
+    { step_number: 3, name: 'Step C', status: 'planned', description: 'c' },
+  ];
+
+  it('null/undefined/空 → 空数组', () => {
+    expect(roadmapRows(null)).toEqual([]);
+    expect(roadmapRows(undefined)).toEqual([]);
+    expect(roadmapRows([])).toEqual([]);
+  });
+
+  it('按 step_number 升序排列', () => {
+    const rows = roadmapRows(STEPS);
+    expect(rows.map((r) => r.step_number)).toEqual([1, 2, 3]);
+    expect(rows.map((r) => r.name)).toEqual(['Step A', 'Step B', 'Step C']);
+  });
+
+  it('每行带 status + dot 样式', () => {
+    const rows = roadmapRows(STEPS);
+    expect(rows[0].status).toBe('done');
+    expect(rows[0].dot).toMatch(/emerald|green/);
+    expect(rows[1].dot).toMatch(/blue/);
+    expect(rows[2].dot).toMatch(/slate|gray/);
+  });
+
+  it('缺 step_number 的 step 排到末尾且不崩', () => {
+    // @ts-expect-error 故意缺 step_number
+    const rows = roadmapRows([{ name: 'X', status: 'planned' }, { step_number: 1, name: 'Y', status: 'done' }]);
+    expect(rows).toHaveLength(2);
+    expect(rows[0].name).toBe('Y');
+  });
+});
+
+describe('normalizeLineAreas（Area 分组规整）', () => {
+  const AREAS: LineArea[] = [
+    {
+      areaKey: 'zenithjoy', areaName: 'ZenithJoy',
+      lines: [
+        mkLine({ id: 'z1', name: '视频剪辑', running: 2 }),
+        mkLine({ id: 'z2', name: '智能发布', running: 0 }),
+      ],
+    },
+    {
+      areaKey: 'cecelia', areaName: 'Cecelia',
+      lines: [mkLine({ id: 'c1', name: 'Harness Pipeline', running: 1 })],
+    },
+  ];
+
+  it('null/缺省 → 空数组（fallback 不崩）', () => {
+    expect(normalizeLineAreas(null)).toEqual([]);
+    expect(normalizeLineAreas(undefined)).toEqual([]);
+    expect(normalizeLineAreas([])).toEqual([]);
+  });
+
+  it('保留所有 area 与 line', () => {
+    const out = normalizeLineAreas(AREAS);
+    expect(out).toHaveLength(2);
+    expect(out.flatMap((a) => a.lines).map((l) => l.id).sort()).toEqual(['c1', 'z1', 'z2']);
+  });
+
+  it('每个 area 带 running 总数（聚合该 area 内 line running）', () => {
+    const out = normalizeLineAreas(AREAS);
+    const zj = out.find((a) => a.areaKey === 'zenithjoy')!;
+    expect(zj.running).toBe(2);
+    const cc = out.find((a) => a.areaKey === 'cecelia')!;
+    expect(cc.running).toBe(1);
+  });
+
+  it('剔除空 area（无 line）', () => {
+    const out = normalizeLineAreas([
+      ...AREAS,
+      { areaKey: 'empty', areaName: 'Empty', lines: [] },
+    ]);
+    expect(out.find((a) => a.areaKey === 'empty')).toBeUndefined();
   });
 });
