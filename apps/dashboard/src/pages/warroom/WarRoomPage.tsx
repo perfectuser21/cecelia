@@ -310,6 +310,18 @@ export function pickDefaultTask(areas: FeedArea[]): FeedTask | null {
   return first;
 }
 
+/**
+ * 战情室根容器 className。
+ * 全屏时 fixed inset-0 z-[9999] 覆盖整个视口（含 Dashboard 左侧栏/顶栏），
+ * 解决"点全屏没区别（外壳还在）"。否则 h-full 填满父容器。
+ */
+export function rootClass(isFullscreen: boolean): string {
+  const base = 'wr-root flex flex-col bg-[#0a0e1a] text-slate-400 font-mono select-none';
+  return isFullscreen
+    ? `${base} fixed inset-0 z-[9999] h-screen w-screen`
+    : `${base} h-full`;
+}
+
 /** iso 是否落在 nowMs 所在的上海日（YYYY-MM-DD 相等） */
 export function isToday(iso: string | null | undefined, nowMs: number): boolean {
   if (!iso) return false;
@@ -904,7 +916,7 @@ export default function WarRoomPage() {
   const openDetail = useCallback((t: FeedTask) => navigate(t.detail_route), [navigate]);
 
   return (
-    <div className="wr-root h-full flex flex-col bg-[#0a0e1a] text-slate-400 font-mono select-none">
+    <div className={rootClass(isFullscreen)}>
       <style>{WR_STYLE}</style>
 
       {/* ── 顶栏 ── */}
@@ -1079,7 +1091,10 @@ export default function WarRoomPage() {
           <div className="sticky top-0 z-10 bg-[#0a0e1a]/95 backdrop-blur-sm border-b border-slate-800/50">
             <div className="flex items-center gap-2 px-4 py-1.5">
               <span className="text-[9px] tracking-[0.12em] uppercase text-slate-600 font-bold">任务 Feed</span>
-              <span className="text-[9px] text-slate-700 font-mono">{data?.total ?? 0} 条</span>
+              <span className="text-[9px] text-slate-700 font-mono">
+                {visibleAreas.reduce((n, a) => n + a.count, 0)}
+                {data && visibleAreas.reduce((n, a) => n + a.count, 0) !== data.total ? ` / ${data.total}` : ''} 条
+              </span>
               {data && (
                 <div className="ml-auto flex items-center gap-1 text-[10px] text-slate-700">
                   <Clock className="w-2.5 h-2.5" />

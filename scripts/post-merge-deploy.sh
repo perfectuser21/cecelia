@@ -71,10 +71,29 @@ fi
 _patch_brain "deployed" "Brain deployed and healthy"
 echo "[deploy] ✅ Brain 部署成功，已回写 deployed 状态"
 
-if echo "${CHANGED_FILES}" | grep -q "apps/dashboard"; then
-  echo "[deploy] 检测到 apps/dashboard 变更，开始构建..."
-  cd "$(dirname "$0")/../apps/dashboard" && npm run build
-  echo "[deploy] Dashboard 构建完成"
+if echo "${CHANGED_FILES}" | grep -qE "apps/dashboard|apps/api"; then
+  echo "[deploy] 检测到前端变更，开始构建 dashboard..."
+  REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+  DASH_DIR="${REPO_ROOT}/apps/dashboard"
+  # 健壮调用：node_modules/.bin/vite 软链常缺失（monorepo hoist），直接走 vite 包入口，
+  # 避免 `npm run build` 因 "vite: command not found" 静默失败 → 服务端 dist 永不更新。
+  VITE_BIN=""
+  for cand in "${DASH_DIR}/node_modules/.bin/vite" "${REPO_ROOT}/node_modules/.bin/vite"; do
+    [ -x "$cand" ] && VITE_BIN="$cand" && break
+  done
+  BUILD_OK=1
+  if [ -n "$VITE_BIN" ]; then
+    ( cd "$DASH_DIR" && "$VITE_BIN" build ) && BUILD_OK=0
+  else
+    ( cd "$DASH_DIR" && node "${REPO_ROOT}/node_modules/vite/bin/vite.js" build ) && BUILD_OK=0
+  fi
+  if [ "$BUILD_OK" -eq 0 ]; then
+    echo "[deploy] ✅ Dashboard 构建完成"
+    docker compose -f "${REPO_ROOT}/docker-compose.yml" restart frontend >/dev/null 2>&1 || true
+  else
+    echo "[deploy] ❌ Dashboard 构建失败（vite 未找到或报错）" >&2
+    exit 1
+  fi
 fi
 
 echo "=== 部署完成 ==="
