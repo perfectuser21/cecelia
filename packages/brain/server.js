@@ -70,6 +70,7 @@ import harnessInterruptsRouter from './src/routes/harness-interrupts.js';
 import harnessCallbackRouter from './src/routes/harness-callback.js';
 import walkingSkeletonRouter from './src/routes/walking-skeleton.js';
 import initiativesRoutes from './src/routes/initiatives.js';
+import initiativeRunsRoutes from './src/routes/initiative-runs.js';
 import backupRoutes from './src/routes/backup.js';
 import llmServiceRoutes from './src/routes/llm-service.js';
 import featuresRoutes from './src/routes/features.js';
@@ -306,6 +307,9 @@ app.use('/api/brain', harnessCallbackRouter);
 app.use('/api/brain', walkingSkeletonRouter);
 app.use('/api/brain', journeysRouter);
 app.use('/api/brain/harness', harnessRoutes);
+// phase-summary 路由必须在 harnessRoutes alias 之前挂载，
+// 否则 harnessRoutes 的 /initiative-runs/:id 会先将 "phase-summary" 匹配为 :id。
+app.use('/api/brain/initiative-runs', initiativeRunsRoutes);
 // Alias: /api/brain/initiative-runs/:id 可直接访问（不带 /harness 前缀）
 // 合同 DoD 要求 GET /api/brain/initiative-runs/:id，harness.js 路由挂载于 /harness，
 // 此处二次挂载让路由在 /api/brain 前缀下也生效。
