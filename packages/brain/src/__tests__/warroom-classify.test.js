@@ -156,6 +156,30 @@ describe('toFeedItem', () => {
     const t = { id: 't3', task_type: 'dev', status: 'completed', title: 'x', payload: {}, result: { pr_url: 'http://pr/9' } };
     expect(toFeedItem(t, null, null, now).pr_url).toBe('http://pr/9');
   });
+
+  it('无 report：verdict / findings_count 为 null', () => {
+    const t = { id: 't4', task_type: 'harness_initiative', status: 'completed', title: 'x', payload: {} };
+    const item = toFeedItem(t, null, null, now);
+    expect(item.verdict).toBeNull();
+    expect(item.findings_count).toBeNull();
+  });
+
+  it('带 report：合并 verdict + findings_count，pr_url 兜底用 report', () => {
+    const t = { id: 't5', task_type: 'harness_initiative', status: 'completed', title: 'x', payload: {} };
+    const report = { verdict: 'PASS', pr_url: 'http://pr/report', findings_count: 3 };
+    const item = toFeedItem(t, null, null, now, report);
+    expect(item.verdict).toBe('PASS');
+    expect(item.findings_count).toBe(3);
+    expect(item.pr_url).toBe('http://pr/report'); // task 无 pr_url → 用 report 的
+  });
+
+  it('task 自身有 pr_url 时优先，不被 report 覆盖', () => {
+    const t = { id: 't6', task_type: 'harness_initiative', status: 'completed', title: 'x', pr_url: 'http://pr/own', payload: {} };
+    const report = { verdict: 'FAIL', pr_url: 'http://pr/report', findings_count: 0 };
+    const item = toFeedItem(t, null, null, now, report);
+    expect(item.pr_url).toBe('http://pr/own');
+    expect(item.verdict).toBe('FAIL');
+  });
 });
 
 describe('buildFeed', () => {
@@ -183,6 +207,16 @@ describe('buildFeed', () => {
     const brain = areas.find(a => a.areaKey === 'cecelia').groups.find(g => g.groupKey === 'brain');
     expect(brain.tasks[0].status).toBe('active');
     expect(brain.tasks[1].status).toBe('failed');
+  });
+
+  it('reportByInitiativeId 按 task.id 把 verdict 合并进对应 sprint', () => {
+    const reportMap = { b: { verdict: 'FAIL', pr_url: null, findings_count: 2 } };
+    const areas = buildFeed(tasks, {}, {}, now, reportMap);
+    const brain = areas.find(a => a.areaKey === 'cecelia').groups.find(g => g.groupKey === 'brain');
+    const byId = Object.fromEntries(brain.tasks.map(t => [t.id, t]));
+    expect(byId.b.verdict).toBe('FAIL');
+    expect(byId.b.findings_count).toBe(2);
+    expect(byId.a.verdict).toBeNull(); // 无 report 的 sprint 不受影响
   });
 });
 

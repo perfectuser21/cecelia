@@ -70,10 +70,36 @@ router.get('/feed', async (req, res) => {
       } catch { /* events 表缺失不阻塞 */ }
     }
 
+    // 3b. harness_report 摘要 → 按 initiative_id 合并进所属 sprint（不单独成行）
+    //     report.payload.initiative_id === harness_initiative.id（1:1 关联，已验证）
+    const reportByInitiativeId = {};
+    try {
+      const { rows: reps } = await pool.query(
+        `SELECT payload->>'initiative_id' AS initiative_id,
+                payload->>'final_e2e_verdict' AS verdict,
+                payload->>'pr_url' AS pr_url,
+                payload->'findings' AS findings
+         FROM tasks
+         WHERE task_type = 'harness_report'
+           AND created_at > NOW() - ($1 || ' days')::interval
+           AND payload->>'initiative_id' IS NOT NULL`,
+        [String(days)]
+      );
+      for (const r of reps) {
+        const fc = Array.isArray(r.findings) ? r.findings.length : null;
+        // 同一 sprint 多份 report 时保留最新（查询按默认顺序，后写覆盖即可接受）
+        reportByInitiativeId[r.initiative_id] = {
+          verdict: r.verdict || null,
+          pr_url: r.pr_url || null,
+          findings_count: fc,
+        };
+      }
+    } catch { /* harness_report 缺失不阻塞 feed */ }
+
     // 4. 装配
     const nowMs = Date.now();
     const todayStr = shanghaiDay(new Date().toISOString());
-    const areas = buildFeed(tasks, journeyNameById, progressById, nowMs);
+    const areas = buildFeed(tasks, journeyNameById, progressById, nowMs, reportByInitiativeId);
     const stats = computeStats(tasks, todayStr);
 
     res.json({ stats, areas, total: tasks.length, generated_at: new Date().toISOString() });

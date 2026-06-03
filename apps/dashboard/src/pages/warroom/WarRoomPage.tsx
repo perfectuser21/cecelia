@@ -37,6 +37,10 @@ export interface FeedTask {
   current_node: string | null;
   fail_reason: string | null;
   pr_url: string | null;
+  /** 由所属 sprint 的 harness_report 合并而来（最终验收结论 PASS/FAIL） */
+  verdict?: string | null;
+  /** harness_report findings 数量 */
+  findings_count?: number | null;
   detail_route: string;
 }
 
@@ -148,6 +152,15 @@ export function formatPriority(p: string | number | null): string {
   if (p == null || p === '') return '';
   const s = String(p);
   return /^p/i.test(s) ? s.toUpperCase() : `P${s}`;
+}
+
+/** 最终验收结论(harness_report.final_e2e_verdict) → 徽章样式；空/未知返回 null（不渲染） */
+export function verdictMeta(v: string | null | undefined): { label: string; pill: string } | null {
+  if (!v) return null;
+  const up = String(v).toUpperCase();
+  if (up === 'PASS') return { label: 'PASS', pill: 'bg-emerald-500/15 text-emerald-300 border border-emerald-500/30' };
+  if (up === 'FAIL') return { label: 'FAIL', pill: 'bg-red-500/15 text-red-300 border border-red-500/30' };
+  return { label: up, pill: 'bg-slate-500/15 text-slate-300 border border-slate-500/30' };
 }
 
 /** 按任务 kind 过滤：只留匹配任务，剔除空 group/空 area，count 重算；'all' 原样返回 */
@@ -277,6 +290,10 @@ function FeedRow({ task, active, onSelect }: { task: FeedTask; active: boolean; 
           </a>
         )}
         <KindBadge kind={task.kind} />
+        {(() => {
+          const v = verdictMeta(task.verdict);
+          return v ? <span className={`text-[9px] tracking-wide px-1.5 py-px rounded font-bold ${v.pill}`}>{v.label}</span> : null;
+        })()}
         <span className={`text-[9px] tracking-wide px-1.5 py-px rounded font-semibold uppercase ${meta.pill}`}>{meta.label}</span>
         {task.priority != null && <span className="text-slate-700 font-mono text-[10px]">{formatPriority(task.priority)}</span>}
       </div>
@@ -379,11 +396,17 @@ function DetailPanel({ task, onOpen }: { task: FeedTask | null; onOpen: (t: Feed
               {kindLabel(task.kind)} · {meta.label}
             </span>
           </div>
-          {isActive && (
-            <span className="flex items-center gap-0.5 text-[10px] text-red-500/70">
-              <Radio className="w-2.5 h-2.5 text-red-500" /> LIVE
-            </span>
-          )}
+          <div className="flex items-center gap-1.5">
+            {(() => {
+              const v = verdictMeta(task.verdict);
+              return v ? <span className={`text-[9px] tracking-wide px-1.5 py-px rounded font-bold ${v.pill}`}>{v.label}</span> : null;
+            })()}
+            {isActive && (
+              <span className="flex items-center gap-0.5 text-[10px] text-red-500/70">
+                <Radio className="w-2.5 h-2.5 text-red-500" /> LIVE
+              </span>
+            )}
+          </div>
         </div>
         <div className="text-[11px] text-slate-300 leading-snug">{task.title}</div>
         <div className="text-[10px] text-slate-600 mt-0.5">
@@ -417,6 +440,8 @@ function DetailPanel({ task, onOpen }: { task: FeedTask | null; onOpen: (t: Feed
       <div className="flex-1 overflow-y-auto px-3 py-2 text-[10px] text-slate-500 space-y-1.5">
         <div className="flex justify-between"><span className="text-slate-700">种类</span><span>{kindLabel(task.kind)}</span></div>
         <div className="flex justify-between"><span className="text-slate-700">原始状态</span><span className="font-mono">{task.raw_status}</span></div>
+        {task.verdict && <div className="flex justify-between"><span className="text-slate-700">最终验收</span><span className={`font-mono font-semibold ${verdictMeta(task.verdict)?.label === 'FAIL' ? 'text-red-400' : 'text-emerald-400'}`}>{verdictMeta(task.verdict)?.label}</span></div>}
+        {task.findings_count != null && <div className="flex justify-between"><span className="text-slate-700">findings</span><span className="font-mono">{task.findings_count}</span></div>}
         <div className="flex justify-between"><span className="text-slate-700">创建</span><span>{relativeTime(task.created_at)}</span></div>
         {elapsed && <div className="flex justify-between"><span className="text-slate-700">历时</span><span className="font-mono">{elapsed}</span></div>}
         <div className="flex justify-between gap-2"><span className="text-slate-700 flex-shrink-0">ID</span><span className="font-mono truncate">{task.id}</span></div>
