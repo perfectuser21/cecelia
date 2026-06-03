@@ -1061,6 +1061,8 @@ export async function reportNode(state, opts = {}) {
           pr_url: (state.sub_tasks || [])[0]?.pr_url || '',
           pr_urls: (state.sub_tasks || []).map((t) => t.pr_url).filter(Boolean),
           sub_tasks: state.sub_tasks || [],
+          gan_rounds: state.ganResult?.rounds || 0,
+          gan_cost_usd: state.ganResult?.cost_usd || 0,
         }),
       ]
     );
