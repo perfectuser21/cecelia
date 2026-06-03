@@ -19,7 +19,16 @@ Brain 现在有**两套**任务路由：
 
 ## 范围
 
-- 所有任务类型统一路由（不只 harness）。
+**分两期（主理人 2026-06-03 决策）：**
+
+- **本期（phase 1，本 spec 交付）**：建路由地基 + **harness 收编**。
+  - 新建 DB 驱动的 `resolveExecutor` 路由器 + `loadActiveMachines`（复用 `system_registry` 设备表）+ machines `POST` 注册接口 + seed 脚本。
+  - `harness-task.graph.js` 改调 `resolveExecutor`，删 `HARNESS_XIAN_ENABLED` 全局开关。
+  - 默认 us-m4/claude；显式 `{machine,executor}` 覆盖；非法组合 / 显式+DB失败 → loud-fail。
+- **phase 2（下一个 sprint，本期不做）**：把 `executor.js` 的 `selectBestMachine` 静态 `MACHINE_REGISTRY` 派发入口也改成走 `resolveExecutor`，让**所有非 harness 任务**也能读 `payload.{machine,executor}` override，真正全量统一。地基已在本期就绪。
+
+通用约束：
+
 - 复用现有 DB 设备表 `system_registry`（type=machine）+ `routes/machines.js`，不新建表。
 - 不改 worker-daemon（已支持 mode + repo + callback 重写，infrastructure repo 已部署西安）。
 
@@ -51,7 +60,7 @@ Brain 现在有**两套**任务路由：
 
 ### 单元 2：`resolveExecutor(task, deps)` 路由器（逻辑）
 
-新模块 `packages/brain/src/routing/resolve-executor.js`，取代 `executor.js` 静态 `MACHINE_REGISTRY` + `selectBestMachine` 的职责。纯逻辑可注入 DB 读取，便于单测。
+新模块 `packages/brain/src/routing/resolve-executor.js`，**phase 2 将取代** `executor.js` 静态 `MACHINE_REGISTRY` + `selectBestMachine` 的职责（本期先建好、只被 harness graph 消费；executor.js 派发入口暂不动）。纯逻辑可注入 DB 读取，便于单测。
 
 输入：`task`（含 `task_type`、`payload`）。输出：`{ machineId, executor, url }` 或抛错。
 
@@ -75,13 +84,13 @@ DB 读取走一个薄封装 `loadMachines()`（查 system_registry type=machine 
 ### 单元 4：任务字段 + 默认（接口）
 
 - 任务 `payload` 可选 `{ machine, executor }`。`/dev` 路径 C 点火 harness_initiative 时，用户说"用西安 codex"→ payload 带 `{machine:'xian-m4', executor:'codex'}`；不带 = 默认。
-- 非 harness 任务也可带该字段做 override（统一）。
+- 本期 `{machine,executor}` 仅 harness 路径生效；**非 harness 任务的 override 是 phase 2**（待 executor.js 派发入口接 resolveExecutor）。
 - 缺省行为完全等价现有（标签路由 + us-m4 默认），保证不回归。
 
 ## 错误处理
 
 - 显式请求非法组合（机器无此 executor / 机器非 active）→ 抛 `ExecutorRouteError`，任务标 failed + 清晰 reason（不偷偷改派，避免"我以为跑西安结果跑美国"）。
-- DB 读取失败 → 降级到硬编码 us-m4/claude 兜底 + 告警（路由不能因 DB 抖动全挂）。
+- DB 读取失败：**有显式 `{machine}` 或 `{executor}` 偏好 → 抛 `ExecutorRouteError`**（不静默改派）；仅**无显式偏好**的默认任务才降级到 us-m4/claude 兜底 + 告警（路由不因 DB 抖动全挂）。
 
 ## 测试策略
 
