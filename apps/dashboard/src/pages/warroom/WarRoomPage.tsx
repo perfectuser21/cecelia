@@ -17,7 +17,24 @@ import { useNavigate } from 'react-router-dom';
 import {
   Zap, Server, Layers, GitPullRequest, RefreshCw, Radio, Clock,
   FileText, ExternalLink, Activity, CircleDot, Maximize, Minimize,
+  Crosshair, Archive, EyeOff,
 } from 'lucide-react';
+
+const ARCHIVE_LS_KEY = 'warroom:archived:v1';
+// 时间范围选项 → 后端 ?days=
+const TIME_FILTERS: Array<{ key: number; label: string }> = [
+  { key: 1, label: '今天' },
+  { key: 3, label: '3天' },
+  { key: 90, label: '全部' },
+];
+// 状态筛选项（含计数 key 对齐 WarStatus）
+const STATUS_FILTERS: Array<{ key: string; label: string }> = [
+  { key: 'all', label: '全部' },
+  { key: 'active', label: '进行中' },
+  { key: 'failed', label: '失败' },
+  { key: 'done', label: '已完成' },
+  { key: 'canceled', label: '取消' },
+];
 
 // ====================== 数据契约（对齐 /api/brain/warroom/feed）======================
 
@@ -293,6 +310,54 @@ export function pickDefaultTask(areas: FeedArea[]): FeedTask | null {
   return first;
 }
 
+/** iso 是否落在 nowMs 所在的上海日（YYYY-MM-DD 相等） */
+export function isToday(iso: string | null | undefined, nowMs: number): boolean {
+  if (!iso) return false;
+  const opt = { timeZone: 'Asia/Shanghai' } as const;
+  const day = (ms: number) => {
+    try { return new Date(ms).toLocaleDateString('en-CA', opt); } catch { return ''; }
+  };
+  const t = new Date(iso).getTime();
+  if (Number.isNaN(t)) return false;
+  return day(t) === day(nowMs);
+}
+
+/**
+ * 视图过滤（聚焦 / 状态 / 归档 组合）——剔除空 group/空 area 并重算 count。
+ * 顺序：先按归档 + 状态 + 聚焦逐任务过滤，再清理空容器。
+ * - focusMode：只留 active 或 今日创建的任务（去掉老黄历）
+ * - statusFilter：'all' 不限，否则只留该 status
+ * - hidden + showArchived：showArchived=false 时剔除 hidden 集合内的任务
+ */
+export function applyViewFilters(
+  areas: FeedArea[],
+  opts: {
+    focusMode: boolean;
+    statusFilter: string;
+    hidden: Set<string>;
+    showArchived: boolean;
+    nowMs: number;
+  },
+): FeedArea[] {
+  const { focusMode, statusFilter, hidden, showArchived, nowMs } = opts;
+  const keep = (t: FeedTask): boolean => {
+    if (!showArchived && hidden.has(t.id)) return false;
+    if (statusFilter !== 'all' && t.status !== statusFilter) return false;
+    if (focusMode && t.status !== 'active' && !isToday(t.created_at, nowMs)) return false;
+    return true;
+  };
+  const out: FeedArea[] = [];
+  for (const a of areas) {
+    const groups: FeedGroup[] = [];
+    for (const g of a.groups) {
+      const tasks = g.tasks.filter(keep);
+      if (tasks.length) groups.push({ ...g, tasks, count: tasks.length });
+    }
+    if (groups.length) out.push({ ...a, groups, count: groups.reduce((n, g) => n + g.count, 0) });
+  }
+  return out;
+}
+
 // ====================== 子组件 ======================
 
 const AREA_ICON: Record<string, typeof Server> = {
@@ -338,7 +403,10 @@ function StatChip({ dot, value, label, valueClass }: { dot: string; value: numbe
   );
 }
 
-function FeedRow({ task, active, onSelect }: { task: FeedTask; active: boolean; onSelect: (t: FeedTask) => void }) {
+function FeedRow({ task, active, onSelect, onArchive, archived }: {
+  task: FeedTask; active: boolean; onSelect: (t: FeedTask) => void;
+  onArchive: (id: string) => void; archived: boolean;
+}) {
   const meta = statusMeta(task.status);
   const rel = relativeTime(task.created_at);
   const isActive = task.status === 'active';
@@ -395,6 +463,13 @@ function FeedRow({ task, active, onSelect }: { task: FeedTask; active: boolean; 
         })()}
         <span className={`text-[9px] tracking-wide px-1.5 py-px rounded font-semibold uppercase ${meta.pill}`}>{meta.label}</span>
         {task.priority != null && <span className="text-slate-700 font-mono text-[10px]">{formatPriority(task.priority)}</span>}
+        <button
+          onClick={(e) => { e.stopPropagation(); onArchive(task.id); }}
+          title={archived ? '取消归档' : '归档（不再显示）'}
+          className={`transition-opacity ${archived ? 'text-amber-500/70 hover:text-amber-400' : 'opacity-0 group-hover:opacity-100 text-slate-600 hover:text-slate-300'}`}
+        >
+          {archived ? <Archive className="w-3 h-3" /> : <EyeOff className="w-3 h-3" />}
+        </button>
       </div>
     </div>
   );
@@ -403,7 +478,7 @@ function FeedRow({ task, active, onSelect }: { task: FeedTask; active: boolean; 
 const COLLAPSE_LIMIT = 6;
 
 function GroupBlock({
-  area, group, selectedId, onSelect, expanded, onToggle,
+  area, group, selectedId, onSelect, expanded, onToggle, onArchive, archivedSet,
 }: {
   area: FeedArea;
   group: FeedGroup;
@@ -411,9 +486,11 @@ function GroupBlock({
   onSelect: (t: FeedTask) => void;
   expanded: boolean;
   onToggle: () => void;
+  onArchive: (id: string) => void;
+  archivedSet: Set<string>;
 }) {
   const visible = expanded ? group.tasks : group.tasks.slice(0, COLLAPSE_LIMIT);
-  const hidden = group.tasks.length - visible.length;
+  const moreCount = group.tasks.length - visible.length;
   return (
     <div className="mb-3">
       <div className="flex items-center gap-1.5 px-2 py-0.5 mb-0.5">
@@ -422,12 +499,13 @@ function GroupBlock({
         <span className="text-[9px] text-slate-700">{group.count}</span>
       </div>
       {visible.map((t) => (
-        <FeedRow key={t.id} task={t} active={t.id === selectedId} onSelect={onSelect} />
+        <FeedRow key={t.id} task={t} active={t.id === selectedId} onSelect={onSelect}
+          onArchive={onArchive} archived={archivedSet.has(t.id)} />
       ))}
-      {(hidden > 0 || expanded) && group.tasks.length > COLLAPSE_LIMIT && (
+      {(moreCount > 0 || expanded) && group.tasks.length > COLLAPSE_LIMIT && (
         <div className="px-3 py-1.5">
           <button onClick={onToggle} className="text-[10px] text-slate-700 hover:text-slate-500 transition-colors">
-            {expanded ? `收起 ${group.groupName}` : `展开其余 ${hidden} 条（${group.groupName}）`}
+            {expanded ? `收起 ${group.groupName}` : `展开其余 ${moreCount} 条（${group.groupName}）`}
           </button>
         </div>
       )}
@@ -438,13 +516,15 @@ function GroupBlock({
 }
 
 function AreaBlock({
-  area, selectedId, onSelect, expandedKeys, onToggle,
+  area, selectedId, onSelect, expandedKeys, onToggle, onArchive, archivedSet,
 }: {
   area: FeedArea;
   selectedId: string | null;
   onSelect: (t: FeedTask) => void;
   expandedKeys: Set<string>;
   onToggle: (key: string) => void;
+  onArchive: (id: string) => void;
+  archivedSet: Set<string>;
 }) {
   const Icon = AREA_ICON[area.areaKey] || CircleDot;
   const accent = AREA_ACCENT[area.areaKey] || 'text-slate-400';
@@ -468,6 +548,8 @@ function AreaBlock({
           onSelect={onSelect}
           expanded={expandedKeys.has(`${area.areaKey}/${g.groupKey}`)}
           onToggle={() => onToggle(`${area.areaKey}/${g.groupKey}`)}
+          onArchive={onArchive}
+          archivedSet={archivedSet}
         />
       ))}
     </div>
@@ -702,15 +784,34 @@ export default function WarRoomPage() {
   const [error, setError] = useState<string | null>(null);
   const [areaFilter, setAreaFilter] = useState('all');
   const [kindFilter, setKindFilter] = useState('all');
+  const [focusMode, setFocusMode] = useState(true);          // 默认聚焦：只看 active + 今日
+  const [statusFilter, setStatusFilter] = useState('all');
+  const [timeFilter, setTimeFilter] = useState(3);           // 后端 ?days=
+  const [showArchived, setShowArchived] = useState(false);
+  const [hidden, setHidden] = useState<Set<string>>(() => {
+    try {
+      const raw = localStorage.getItem(ARCHIVE_LS_KEY);
+      return new Set<string>(raw ? JSON.parse(raw) : []);
+    } catch { return new Set<string>(); }
+  });
   const [selected, setSelected] = useState<FeedTask | null>(null);
   const [expandedKeys, setExpandedKeys] = useState<Set<string>>(new Set());
   const [clock, setClock] = useState('');
   const [isFullscreen, setIsFullscreen] = useState(false);
 
+  const toggleArchive = useCallback((id: string) => {
+    setHidden((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      try { localStorage.setItem(ARCHIVE_LS_KEY, JSON.stringify([...next])); } catch { /* 忽略配额错误 */ }
+      return next;
+    });
+  }, []);
+
   const fetchFeed = useCallback(async (silent = false) => {
     try {
       if (!silent) setLoading(true);
-      const res = await fetch('/api/brain/warroom/feed');
+      const res = await fetch(`/api/brain/warroom/feed?days=${timeFilter}`);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const json: FeedResponse = await res.json();
       setData(json);
@@ -729,7 +830,7 @@ export default function WarRoomPage() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [timeFilter]);
 
   useEffect(() => {
     fetchFeed();
@@ -763,9 +864,34 @@ export default function WarRoomPage() {
   const areas = data?.areas ?? [];
   const stats = data?.stats ?? { active: 0, done_today: 0, failed_today: 0, pr_this_month: 0 };
   const visibleAreas = useMemo(
-    () => filterByKind(filterArea(areas, areaFilter), kindFilter),
-    [areas, areaFilter, kindFilter],
+    () => applyViewFilters(
+      filterByKind(filterArea(areas, areaFilter), kindFilter),
+      { focusMode, statusFilter, hidden, showArchived, nowMs: Date.now() },
+    ),
+    [areas, areaFilter, kindFilter, focusMode, statusFilter, hidden, showArchived],
   );
+
+  // 全局状态计数（取自原始 areas，供左栏状态筛选显示数量）
+  const statusCounts = useMemo(() => {
+    const c: Record<string, number> = { all: 0, active: 0, failed: 0, done: 0, canceled: 0 };
+    for (const a of areas) for (const g of a.groups) for (const t of g.tasks) {
+      if (!showArchived && hidden.has(t.id)) continue;
+      c.all++; c[t.status] = (c[t.status] ?? 0) + 1;
+    }
+    return c;
+  }, [areas, hidden, showArchived]);
+
+  // 选中项若被过滤掉/为空，回退到可见集合的默认项
+  useEffect(() => {
+    setSelected((prev) => {
+      if (prev) {
+        for (const a of visibleAreas) for (const g of a.groups) for (const t of g.tasks) {
+          if (t.id === prev.id) return prev;
+        }
+      }
+      return pickDefaultTask(visibleAreas);
+    });
+  }, [visibleAreas]);
 
   const toggleGroup = useCallback((key: string) => {
     setExpandedKeys((prev) => {
@@ -844,8 +970,69 @@ export default function WarRoomPage() {
 
       {/* ── 三栏 ── */}
       <div className="flex flex-1 overflow-hidden">
-        {/* 左：Area 导航 */}
+        {/* 左：筛选 + Area 导航 */}
         <div className="w-44 flex-shrink-0 border-r border-slate-800/60 bg-slate-900/30 overflow-y-auto px-3 pt-3 pb-4">
+          {/* ── 视图：聚焦/全部 ── */}
+          <button
+            onClick={() => setFocusMode((v) => !v)}
+            className={`w-full flex items-center gap-1.5 px-1.5 py-1 rounded text-xs mb-2 transition-colors ${
+              focusMode ? 'bg-violet-600/30 text-violet-100' : 'bg-slate-800/60 text-slate-400 hover:text-slate-200'
+            }`}
+            title="聚焦：只看 进行中 + 今日"
+          >
+            <Crosshair className="w-3 h-3 flex-shrink-0" />
+            <span className="font-semibold">{focusMode ? '聚焦模式' : '全部任务'}</span>
+            <span className="ml-auto text-[9px] opacity-70">{focusMode ? '点击看全部' : '点击聚焦'}</span>
+          </button>
+
+          {/* ── 时间范围 ── */}
+          <div className="text-[9px] tracking-[0.12em] uppercase text-slate-600 font-bold mb-1">时间</div>
+          <div className="flex items-center gap-1 bg-slate-800/60 border border-slate-700/40 rounded px-1 py-0.5 mb-3 text-[10px]">
+            {TIME_FILTERS.map((f) => (
+              <button
+                key={f.key}
+                onClick={() => setTimeFilter(f.key)}
+                className={`flex-1 px-1 py-0.5 rounded transition-colors ${
+                  timeFilter === f.key ? 'bg-slate-700 text-slate-200' : 'text-slate-500 hover:text-slate-300'
+                }`}
+              >
+                {f.label}
+              </button>
+            ))}
+          </div>
+
+          {/* ── 状态筛选 ── */}
+          <div className="text-[9px] tracking-[0.12em] uppercase text-slate-600 font-bold mb-1">状态</div>
+          <div className="space-y-0.5 mb-3">
+            {STATUS_FILTERS.map((f) => (
+              <button
+                key={f.key}
+                onClick={() => setStatusFilter(f.key)}
+                className={`w-full flex items-center gap-1.5 px-1.5 py-0.5 rounded text-[11px] transition-colors ${
+                  statusFilter === f.key ? 'bg-blue-500/10 text-blue-300' : 'text-slate-500 hover:bg-slate-400/5'
+                }`}
+              >
+                <span className="truncate">{f.label}</span>
+                <span className="ml-auto text-[9px] text-slate-600">{statusCounts[f.key] ?? 0}</span>
+              </button>
+            ))}
+          </div>
+
+          {/* ── 归档 ── */}
+          {hidden.size > 0 && (
+            <button
+              onClick={() => setShowArchived((v) => !v)}
+              className={`w-full flex items-center gap-1.5 px-1.5 py-0.5 rounded text-[11px] mb-3 transition-colors ${
+                showArchived ? 'bg-amber-500/10 text-amber-300' : 'text-slate-500 hover:bg-slate-400/5'
+              }`}
+            >
+              <Archive className="w-3 h-3 flex-shrink-0" />
+              <span>{showArchived ? '隐藏已归档' : '显示已归档'}</span>
+              <span className="ml-auto text-[9px] text-slate-600">{hidden.size}</span>
+            </button>
+          )}
+
+          <div className="border-t border-slate-800/60 -mx-3 mb-3" />
           <div className="text-[9px] tracking-[0.12em] uppercase text-slate-600 font-bold mb-2">Areas</div>
           <button
             onClick={() => setAreaFilter('all')}
@@ -924,6 +1111,8 @@ export default function WarRoomPage() {
               onSelect={setSelected}
               expandedKeys={expandedKeys}
               onToggle={toggleGroup}
+              onArchive={toggleArchive}
+              archivedSet={hidden}
             />
           ))}
         </div>

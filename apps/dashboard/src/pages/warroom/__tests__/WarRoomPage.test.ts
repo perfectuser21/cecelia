@@ -16,6 +16,8 @@ import {
   verdictMeta,
   filterArea,
   filterByKind,
+  isToday,
+  applyViewFilters,
   pickDefaultTask,
   absoluteShanghai,
   shanghaiClock,
@@ -390,5 +392,82 @@ describe('stageRows（stage 时间线渲染行）', () => {
     // @ts-expect-error 故意传非法 status 验证兜底
     const rows = stageRows([{ key: 'x', label: 'X', status: 'weird', elapsed_ms: null }]);
     expect(rows[0].status).toBe('pending');
+  });
+});
+
+describe('isToday（上海日判断）', () => {
+  const now = new Date('2026-06-03T02:00:00Z').getTime(); // 上海 2026-06-03 10:00
+  it('同上海日 → true', () => {
+    expect(isToday('2026-06-03T00:30:00Z', now)).toBe(true);   // 上海 08:30 同日
+    expect(isToday('2026-06-02T17:00:00Z', now)).toBe(true);   // 上海 06-03 01:00 同日
+  });
+  it('昨天 → false', () => {
+    expect(isToday('2026-06-02T01:00:00Z', now)).toBe(false);  // 上海 06-02 09:00
+  });
+  it('空值 → false', () => {
+    expect(isToday(null, now)).toBe(false);
+    expect(isToday('', now)).toBe(false);
+  });
+});
+
+describe('applyViewFilters（聚焦/状态/归档 组合过滤）', () => {
+  const now = new Date('2026-06-03T02:00:00Z').getTime();
+  const mk = (o: Partial<FeedTask>): FeedTask => ({
+    id: 'x', kind: 'sprint', title: 't', status: 'done', raw_status: 'completed',
+    priority: null, created_at: '2026-06-03T01:00:00Z', elapsed_ms: null, progress_pct: null,
+    current_node: null, fail_reason: null, pr_url: null, detail_route: '/x', ...o,
+  });
+  const make = (): FeedArea[] => [{
+    areaKey: 'cecelia', areaName: 'Cecelia', order: 0, count: 5,
+    groups: [{ groupKey: 'brain', groupName: 'Brain', count: 5, tasks: [
+      mk({ id: 'active1', status: 'active', created_at: '2026-05-30T00:00:00Z' }), // active 但旧
+      mk({ id: 'today-fail', status: 'failed', created_at: '2026-06-03T00:00:00Z' }), // 今日失败
+      mk({ id: 'old-fail', status: 'failed', created_at: '2026-05-30T00:00:00Z' }), // 老失败
+      mk({ id: 'today-done', status: 'done', created_at: '2026-06-03T00:30:00Z' }), // 今日完成
+      mk({ id: 'canceled1', status: 'canceled', created_at: '2026-06-03T00:00:00Z' }),
+    ] }],
+  }];
+  const ids = (areas: FeedArea[]) => areas.flatMap(a => a.groups.flatMap(g => g.tasks.map(t => t.id)));
+  const base = { focusMode: false, statusFilter: 'all', hidden: new Set<string>(), showArchived: false, nowMs: now };
+
+  it('全开放（focus off, status all）→ 全留', () => {
+    expect(ids(applyViewFilters(make(), base))).toHaveLength(5);
+  });
+
+  it('聚焦模式 → 只留 active + 今日（剔老失败）', () => {
+    const out = ids(applyViewFilters(make(), { ...base, focusMode: true }));
+    expect(out).toContain('active1');      // active 即使旧也留
+    expect(out).toContain('today-fail');   // 今日
+    expect(out).toContain('today-done');
+    expect(out).not.toContain('old-fail'); // 老的非 active → 剔
+  });
+
+  it('状态筛选 failed → 只留失败', () => {
+    const out = ids(applyViewFilters(make(), { ...base, statusFilter: 'failed' }));
+    expect(out.sort()).toEqual(['old-fail', 'today-fail']);
+  });
+
+  it('归档 + 不显示已归档 → 剔除归档项', () => {
+    const out = ids(applyViewFilters(make(), { ...base, hidden: new Set(['old-fail', 'canceled1']) }));
+    expect(out).not.toContain('old-fail');
+    expect(out).not.toContain('canceled1');
+    expect(out).toHaveLength(3);
+  });
+
+  it('显示已归档 → 归档项回来', () => {
+    const out = ids(applyViewFilters(make(), { ...base, hidden: new Set(['old-fail']), showArchived: true }));
+    expect(out).toContain('old-fail');
+  });
+
+  it('全过滤后空组/空 area 被剔除 + count 重算', () => {
+    const out = applyViewFilters(make(), { ...base, statusFilter: 'active' });
+    expect(out).toHaveLength(1);
+    expect(out[0].count).toBe(1);
+    expect(out[0].groups[0].count).toBe(1);
+  });
+
+  it('过滤到空 → 返回空数组', () => {
+    const out = applyViewFilters(make(), { ...base, statusFilter: 'active', hidden: new Set(['active1']) });
+    expect(out).toHaveLength(0);
   });
 });
