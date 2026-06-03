@@ -18,6 +18,7 @@ import {
   filterByKind,
   isToday,
   applyViewFilters,
+  rootClass,
   pickDefaultTask,
   absoluteShanghai,
   shanghaiClock,
@@ -392,6 +393,21 @@ describe('stageRows（stage 时间线渲染行）', () => {
     // @ts-expect-error 故意传非法 status 验证兜底
     const rows = stageRows([{ key: 'x', label: 'X', status: 'weird', elapsed_ms: null }]);
     expect(rows[0].status).toBe('pending');
+  });
+});
+
+describe('rootClass（全屏覆盖外壳）', () => {
+  it('非全屏 → h-full，不覆盖', () => {
+    const c = rootClass(false);
+    expect(c).toContain('h-full');
+    expect(c).not.toContain('fixed');
+  });
+  it('全屏 → fixed inset-0 高 z 覆盖整屏', () => {
+    const c = rootClass(true);
+    expect(c).toContain('fixed');
+    expect(c).toContain('inset-0');
+    expect(c).toMatch(/z-\[\d+\]/);
+    expect(c).toContain('h-screen');
   });
 });
 
