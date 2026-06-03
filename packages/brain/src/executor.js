@@ -26,6 +26,7 @@ import { getDecisionsSummary } from './decisions-context.js';
 import { recordExpectedReward } from './dopamine.js';
 import { getActiveProfile, FALLBACK_PROFILE } from './model-profile.js';
 import { getTaskLocation } from './task-router.js';
+import { resolveExecutor } from './routing/resolve-executor.js';
 import { loadCache as _loadCache, getCachedLocation, getCachedConfig, refreshCache as _refreshCache } from './task-type-config-cache.js';
 import { updateTaskStatus, updateTaskProgress as _updateTaskProgress } from './task-updater.js';
 import { traceStep, LAYER, STATUS, EXECUTOR_HOSTS } from './trace.js';
@@ -194,59 +195,8 @@ async function selectBestBridge() {
   return selected.url;
 }
 
-// 机器注册表（Machine Registry）
-// tags 决定机器能执行哪类任务：
-//   has_git     = 需要代码/git 访问（US M4 独有）
-//   general     = 通用任务，任意机器均可
-//   has_browser = 需要 Browser/CDP 访问（将来扩展）
-const MACHINE_REGISTRY = [
-  {
-    id: 'us-m4',
-    url: process.env.EXECUTOR_BRIDGE_URL || 'http://localhost:3457',
-    type: 'claude_code',
-    tags: ['has_git', 'general'],
-  },
-  {
-    id: 'xian-m4',
-    url: XIAN_CODEX_BRIDGE_URL,
-    type: 'codex',
-    tags: ['general'],
-  },
-  {
-    id: 'xian-m1',
-    url: XIAN_M1_BRIDGE_URL,
-    type: 'codex',
-    tags: ['general'],
-  },
-];
-
-/**
- * 从机器注册表中选择最适合的机器
- * @param {string[]} requiredTags - 任务所需的 capability tags
- * @returns {Promise<Object>} - 最佳机器配置（fallback 到 us-m4）
- */
-async function selectBestMachine(requiredTags) {
-  const candidates = MACHINE_REGISTRY.filter(m =>
-    requiredTags.every(tag => m.tags.includes(tag))
-  );
-
-  if (candidates.length === 0) {
-    console.warn(`[executor] selectBestMachine: 无机器匹配 tags=${JSON.stringify(requiredTags)}，降级到 us-m4`);
-    return MACHINE_REGISTRY.find(m => m.id === 'us-m4') || MACHINE_REGISTRY[0];
-  }
-
-  if (candidates.length === 1) return candidates[0];
-
-  // 多台候选时，优先在 Codex 机器之间负载均衡
-  const codexCandidates = candidates.filter(m => m.type === 'codex');
-  if (codexCandidates.length > 0) {
-    const bestUrl = await selectBestBridge();
-    const matched = codexCandidates.find(m => m.url === bestUrl);
-    return matched || codexCandidates[0];
-  }
-
-  return candidates[0];
-}
+// 静态机器注册表 + 选机函数已删除（phase 2 单元2，死代码：派发链从未调用，仅自引用）。
+// 机器+执行器路由统一走 routing/resolve-executor.js（DB 驱动）。
 
 // ==================== Input Validation ====================
 
@@ -3126,6 +3076,15 @@ export function summarizeNodeState(state) {
 // 注意：Coding 通道（dev/codex_dev/initiative_plan 等）在 task-router.js 中标注为 'us'，
 //       不需要在此维护第二份白名单，改 task-router.js 即可影响路由。
 
+// Retired harness task_types — 全部归入 harness_initiative full-graph sub-graph。
+// - Sprint 1 (PR #2640)：harness_task / harness_ci_watch / harness_fix / harness_final_e2e
+// - retire-harness-planner：harness_planner（subsumed by harness_initiative full graph）
+// 模块级常量：override 分支（排除 harness/retired）与下方 retired 短路块共用，引用顺序无忧。
+const _RETIRED_HARNESS_TYPES = new Set([
+  'harness_task', 'harness_ci_watch', 'harness_fix', 'harness_final_e2e',
+  'harness_planner',  // retired in PR retire-harness-planner; subsumed by harness_initiative full graph
+]);
+
 async function triggerCeceliaRun(task) {
   // 动态路由：优先从 task_type_configs 缓存读取（其余 Codex B类，前台可调）
   // A类和 Coding pathway B类不在缓存中，getCachedLocation 返回 null，走 hardcoded 逻辑
@@ -3139,29 +3098,62 @@ async function triggerCeceliaRun(task) {
     return triggerCodexReview(task);
   }
 
+  // 1. 显式 override（phase 2 单元1）：payload.{machine,executor} → DB 驱动路由。
+  //    REVIEW 短路之后、location-map 路由之前。无显式偏好则整段跳过（零回归）。
+  //    [MINOR 3] 排除 harness_initiative / retired harness types：这些任务即使误传
+  //    payload.executor 也必须走下方 harness graph / retired 短路，不进 override。
+  //    resolveExecutor 抛错 → loud-fail（标 failed + return），绝不静默改派。
+  let forceUsClaude = false; // [BLOCKER 1] claude override 命中后短路掉下方 location 路由
+  if (
+    (task.payload?.machine || task.payload?.executor) &&
+    task.task_type !== 'harness_initiative' &&
+    !_RETIRED_HARNESS_TYPES.has(task.task_type)
+  ) {
+    let route;
+    try {
+      route = await resolveExecutor(task);
+    } catch (err) {
+      console.error(`[executor] 显式路由失败 task=${task.id}: ${err.message}`);
+      await updateTaskStatus(task.id, 'failed', {
+        error_message: `executor route: ${err.message}`.slice(0, 500),
+      });
+      // [BLOCKER 2] terminal loud-fail：对齐 harness 块模式，返回 success:true 告诉
+      // dispatcher「executor 已处理完毕（已标 failed），无需回退 queued、不污染 cecelia-run 熔断器」。
+      return { success: true, taskId: task.id, failed: true, executor: 'route-rejected', error: err.message };
+    }
+    console.log(`[executor] 显式路由: task=${task.id} → ${route.machineId}/${route.executor} (${route.url})`);
+    if (route.executor === 'codex') {
+      return triggerCodexBridge(task, route.url);
+    }
+    // [BLOCKER 1] route.executor === 'claude' → 必须落到下方 US Claude 默认派发。
+    // 置 forceUsClaude 短路掉后续所有 location 分支（xian / xian_m1 / review / us+codex），
+    // 否则天然 location='xian' 的 task_type（codex_dev 等）会被二次劫持送到西安 codex。
+    forceUsClaude = true;
+  }
+
   // 2. 西安 Codex Bridge（location='xian'，负载均衡 M4+M1）
   // 动态类型优先走缓存 location，静态类型走 LOCATION_MAP
-  if (location === 'xian') {
+  if (!forceUsClaude && location === 'xian') {
     const src = dynamicLocation ? 'dynamic-cache' : 'location-map';
     console.log(`[executor] 路由决策: task_type=${task.task_type} → Codex Bridge (location=xian, src=${src})`);
     return triggerCodexBridge(task);
   }
 
   // 2.1 西安M1 Codex Bridge（location='xian_m1'，钉到 M1 专用节点）
-  if (location === 'xian_m1') {
+  if (!forceUsClaude && location === 'xian_m1') {
     const src = dynamicLocation ? 'dynamic-cache' : 'location-map';
     console.log(`[executor] 路由决策: task_type=${task.task_type} → Codex Bridge M1 (location=xian_m1, src=${src})`);
     return triggerCodexBridge(task, XIAN_M1_BRIDGE_URL);
   }
 
   // 2.5 US 本机 Codex CLI（spec_review / code_review_gate 独立 2-slot 池）
-  if (task.task_type === 'spec_review' || task.task_type === 'code_review_gate') {
+  if (!forceUsClaude && (task.task_type === 'spec_review' || task.task_type === 'code_review_gate')) {
     console.log(`[executor] 路由决策: task_type=${task.task_type} → Local Codex CLI (review pool)`);
     return triggerLocalCodexExec(task);
   }
 
   // 2.8 US 本机 Codex CLI（B类动态任务 executor=codex，前台可配）
-  if (location === 'us' && dynamicExecutor === 'codex') {
+  if (!forceUsClaude && location === 'us' && dynamicExecutor === 'codex') {
     console.log(`[executor] 路由决策: task_type=${task.task_type} → Local Codex CLI (dynamic executor=codex)`);
     return triggerLocalCodexExec(task);
   }
@@ -3206,14 +3198,8 @@ async function triggerCeceliaRun(task) {
     }
   }
 
-  // Retired harness task_types — 全部归入 harness_initiative full-graph sub-graph。
-  // - Sprint 1 (PR #2640)：harness_task / harness_ci_watch / harness_fix / harness_final_e2e
-  // - retire-harness-planner (PR 本次)：harness_planner（subsumed by harness_initiative full graph）
+  // Retired harness task_types（_RETIRED_HARNESS_TYPES 在模块顶部定义，override 分支共用）。
   // 老数据派到 executor → 标 terminal failure 防止"复活"。
-  const _RETIRED_HARNESS_TYPES = new Set([
-    'harness_task', 'harness_ci_watch', 'harness_fix', 'harness_final_e2e',
-    'harness_planner',  // retired in PR retire-harness-planner; subsumed by harness_initiative full graph
-  ]);
   if (_RETIRED_HARNESS_TYPES.has(task.task_type)) {
     console.warn(`[executor] retired task_type=${task.task_type} task=${task.id} → marking pipeline_terminal_failure`);
     try {
@@ -4038,9 +4024,6 @@ export {
   // v15: Token-aware slot allocation
   getTokenPressure,
   TOKEN_PRESSURE_THRESHOLD,
-  // v16: Machine Registry + capability tags routing
-  MACHINE_REGISTRY,
-  selectBestMachine,
   // v17: Docker Sandbox executor (HARNESS_DOCKER_ENABLED=true) — spawn() 已成唯一入口，
   // 仅保留 callback / 资源 tier / 探活辅助函数对外。
   writeDockerCallback,
