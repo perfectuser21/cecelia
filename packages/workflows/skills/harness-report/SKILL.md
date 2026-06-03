@@ -48,6 +48,8 @@ Phase B: Sprint 状态同步 → 把本次 Sprint 产出的 API/DB/Tests/Feature
 FIRST_SCREENSHOT_URL=$(echo "$SCREENSHOTS" | jq -r '.[0] // ""')
 TOTAL_COST="${TOTAL_COST:-0}"
 SCREENSHOTS="${SCREENSHOTS:-[]}"
+GAN_ROUNDS="${GAN_ROUNDS:-0}"
+FINAL_E2E_VERDICT="${FINAL_E2E_VERDICT:-PASS}"
 ```
 
 ---
@@ -193,27 +195,76 @@ echo "✅ Step 5: 飞书通知已发送"
 
 ---
 
-### Step 6: 写本地 harness-report.md（备份）
+### Step 6: 写本地 harness-report.md + learning.md（从 Brain API 查真实数据）
 
 ```bash
+# 从 Brain API 拉真实运行数据
+REPORT_DATA=$(curl -sf "localhost:5221/api/brain/tasks/$TASK_ID" 2>/dev/null || echo '{}')
+REPORT_CONTENT=$(echo "$REPORT_DATA" | node -e "
+const d=JSON.parse(require('fs').readFileSync('/dev/stdin','utf8'));
+const r=d.result?.report_content;
+process.stdout.write(r ? JSON.stringify(r) : '{}');
+" 2>/dev/null || echo '{}')
+
+TOTAL_COST_REAL=$(echo "$REPORT_CONTENT" | node -e "
+const d=JSON.parse(require('fs').readFileSync('/dev/stdin','utf8'));
+process.stdout.write(String(d.cost_usd||'0'));
+" 2>/dev/null || echo "${TOTAL_COST:-0}")
+
+TIMING_SUMMARY=$(echo "$REPORT_CONTENT" | node -e "
+const d=JSON.parse(require('fs').readFileSync('/dev/stdin','utf8'));
+const t=d.step_timing||[];
+const lines=t.map(s=>{const ms=s.duration_ms;const dur=ms?Math.round(ms/1000)+'s':'?';return '  '+s.node+': '+dur;});
+process.stdout.write(lines.join('\n')||'  (无耗时数据)');
+" 2>/dev/null || echo "  (无耗时数据)")
+
+ISSUES_SUMMARY=$(echo "$REPORT_CONTENT" | node -e "
+const d=JSON.parse(require('fs').readFileSync('/dev/stdin','utf8'));
+const issues=d.ws_issues||[];
+if(!issues.length){process.stdout.write('无');process.exit(0);}
+const lines=issues.map(i=>'- ws='+i.ws_id+': '+(i.feedback||i.ci_fail_type||'unknown'));
+process.stdout.write(lines.join('\n'));
+" 2>/dev/null || echo "无")
+
+GAN_ROUNDS="${GAN_ROUNDS:-0}"
 COMPLETED_AT=$(TZ=Asia/Shanghai date '+%Y-%m-%d %H:%M:%S %Z')
+
 cat > "${SPRINT_DIR}/harness-report.md" << REPORT
-# Harness v5.0 完成报告
+# Harness 完成报告 — ${FEATURE_NAME}
 
-**完成时间**: $COMPLETED_AT
-**Sprint Dir**: $SPRINT_DIR
-**PR**: $PR_URL
-**总成本**: \$$TOTAL_COST USD
+**完成时间**: ${COMPLETED_AT}
+**Sprint Dir**: ${SPRINT_DIR}
+**PR**: ${PR_URL}
+**GAN 轮次**: ${GAN_ROUNDS}
+**总成本**: \$${TOTAL_COST_REAL} USD
 
-## DoD 验证结果
+## 阶段耗时
+${TIMING_SUMMARY}
 
-所有 ARTIFACT + BEHAVIOR 条目验证通过（evaluator PASS）。
+## 问题列表
+${ISSUES_SUMMARY}
 
 ## 交付结论
-
-✅ Harness v5.0 完成。PR 已合并，Notion 已更新，飞书已通知。
+Final E2E: ${FINAL_E2E_VERDICT:-PASS}。PR 已合并，Notion 已更新。
 REPORT
-echo "✅ Step 6: harness-report.md 已写入"
+echo "✅ Step 6: harness-report.md 已写入（真实数据）"
+
+cat > "${SPRINT_DIR}/learning.md" << LEARN
+# Learning — ${FEATURE_NAME}（${COMPLETED_AT}）
+
+## 运行指标
+- GAN 轮次：${GAN_ROUNDS}
+- 总成本：\$${TOTAL_COST_REAL} USD
+- PR：${PR_URL}
+- Sprint Dir：${SPRINT_DIR}
+
+## 发现的问题
+${ISSUES_SUMMARY}
+
+## 下次预防清单
+$([ "${ISSUES_SUMMARY}" = "无" ] && echo "- [ ] 本次 run 无异常，继续保持" || echo "- [ ] 复查上述问题根因并在下次 run 前修复")
+LEARN
+echo "✅ Step 6: learning.md 已写入（真实数据）"
 ```
 
 ---

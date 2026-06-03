@@ -6,6 +6,8 @@ import { resolve } from 'path';
 const BRAIN_ROOT = resolve(__dirname, '../../../../packages/brain');
 
 // Mock all heavy brain dependencies using relative paths (vi.mock is hoisted — paths must be static literals)
+// harness-shared imports zod which is not installed in engine CI context
+vi.mock('../../../../packages/brain/src/harness-shared.js', () => ({ loadSkillContent: vi.fn(async () => '') }));
 vi.mock('../../../../packages/brain/src/db.js', () => ({ default: { query: vi.fn(), connect: vi.fn() } }));
 vi.mock('../../../../packages/brain/src/learning-retriever.js', () => ({ buildLearningContext: vi.fn(async () => '') }));
 vi.mock('../../../../packages/brain/src/decisions-context.js', () => ({ getDecisionsSummary: vi.fn(async () => '') }));

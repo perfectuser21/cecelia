@@ -126,6 +126,11 @@ features:
 # Changelog（细粒度改动历史）
 # ============================================================================
 changelog:
+  - version: "19.2.4"
+    date: 2026-06-03
+    change: '[CONFIG] harness-report SKILL Step 6 查 Brain API 写真实 harness-report.md/learning.md'
+    files:
+      - packages/workflows/skills/harness-report/SKILL.md
   - version: "19.2.3"
     date: "2026-06-02"
     change: "fix"
