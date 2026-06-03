@@ -389,6 +389,18 @@ async function executeTick() {
     }).catch(err => {
       console.warn('[tick] harness-watchdog plugin failed (non-fatal):', err.message);
     });
+
+    // OPEN-2：重排「驱动器已死」的 parked harness 任务（心跳陈旧 + phase=B_task_loop）。
+    // 把 startup-sync 的 resume 逻辑做成 tick 级周期版，不再死等 brain 重启才自愈。
+    import('./harness-watchdog.js').then(({ resumeStalledHarnessDrivers }) =>
+      resumeStalledHarnessDrivers({ pool })
+    ).then(r => {
+      if (r?.resumed?.length > 0) {
+        tickLog(`[tick] harness-watchdog: resumed ${r.resumed.length} stalled driver(s) (scanned=${r.scanned})`);
+      }
+    }).catch(err => {
+      console.warn('[tick] harness-watchdog resume failed (non-fatal):', err.message);
+    });
   }
 
   // [R4] Orphan worktree 清理：每 10 分钟调一次 shell 脚本（D1.7c plugin）
