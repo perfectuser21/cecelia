@@ -21,9 +21,12 @@ export async function loadActiveMachines() {
     return _cache;
   }
   const { rows } = await pool.query(
+    // ORDER BY name：确定性选机（配合 select-load-balanced 取 candidates[0]，
+    // 默认任务稳定落到字典序第一台满足标签的机器，不随 DB 物理顺序漂移）。
     `SELECT name, status, metadata
      FROM system_registry
-     WHERE type = 'machine' AND status = 'active'`,
+     WHERE type = 'machine' AND status = 'active'
+     ORDER BY name`,
   );
   _cache = rows;
   _cacheAt = now;

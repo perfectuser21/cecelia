@@ -20,6 +20,11 @@ vi.mock('../db.js', () => ({
   default: { query: (...args) => mockQuery(...args) },
 }));
 
+const clearCacheSpy = vi.fn();
+vi.mock('../routing/load-machines.js', () => ({
+  clearMachineCache: (...args) => clearCacheSpy(...args),
+}));
+
 import machinesRouter from './machines.js';
 
 function makeApp() {
@@ -117,6 +122,24 @@ describe('machines routes', () => {
       expect(res.status).toBe(200);
       expect(res.body.metadata.notes).toBe('updated');
     });
+
+    it('PATCH 成功后调用 clearMachineCache（改机器后立即可路由）[MINOR #7]', async () => {
+      const updated = { ...MACHINE_ROW, metadata: { ...MACHINE_ROW.metadata, status_note: 'x' } };
+      mockQuery.mockResolvedValueOnce({ rows: [MACHINE_ROW] });
+      mockQuery.mockResolvedValueOnce({ rows: [updated] });
+      await request(makeApp())
+        .patch('/api/brain/machines/mac-mini-m4-xian')
+        .send({ metadata: { status_note: 'x' } });
+      expect(clearCacheSpy).toHaveBeenCalled();
+    });
+
+    it('PATCH 失败（404）不调用 clearMachineCache', async () => {
+      mockQuery.mockResolvedValueOnce({ rows: [] });
+      await request(makeApp())
+        .patch('/api/brain/machines/nonexistent')
+        .send({ metadata: { notes: 'test' } });
+      expect(clearCacheSpy).not.toHaveBeenCalled();
+    });
   });
 
   describe('POST /api/brain/machines', () => {
@@ -168,6 +191,16 @@ describe('machines routes', () => {
       const insertCall = mockQuery.mock.calls.find(c => /INSERT INTO system_registry/.test(c[0]));
       expect(insertCall).toBeDefined();
       expect(insertCall[0]).toMatch(/'machine'/);
+      // 注册新机器后立即清缓存，使其马上可路由 [MINOR #7]
+      expect(clearCacheSpy).toHaveBeenCalled();
+    });
+
+    it('POST 失败（409 重名）不调用 clearMachineCache [MINOR #7]', async () => {
+      mockQuery.mockResolvedValueOnce({ rows: [{ id: 'existing-uuid' }] }); // dup
+      await request(makeApp())
+        .post('/api/brain/machines')
+        .send({ name: 'mac-mini-m4-xian', metadata: {} });
+      expect(clearCacheSpy).not.toHaveBeenCalled();
     });
 
     it('defaults status to active when not provided', async () => {

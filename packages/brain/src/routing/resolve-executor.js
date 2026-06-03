@@ -25,9 +25,9 @@ import { loadActiveMachines } from './load-machines.js';
 import { selectLoadBalancedMachine } from './select-load-balanced.js';
 
 // 兜底路由：默认美国 M4 + Claude Code（用户规则 feedback memory）。
-// id 用 'us-m4'（沿用旧 MACHINE_REGISTRY id），url 用本地 cecelia-bridge。
+// machineId 用 DB 真名 'mac-mini-m4-us'（与 seed/system_registry 一致），url 用本地 cecelia-bridge。
 export const FALLBACK_ROUTE = Object.freeze({
-  machineId: 'us-m4',
+  machineId: 'mac-mini-m4-us',
   executor: 'claude',
   url: process.env.EXECUTOR_BRIDGE_URL || 'http://localhost:3457',
 });
@@ -94,13 +94,22 @@ export async function resolveExecutor(task, deps = {}) {
   const reqMachine = payload.machine || null;
   const reqExecutor = payload.executor || null;
 
-  // DB 读取失败 → 降级兜底（路由不能因 DB 抖动全挂）。
+  // DB 读取失败处理（spec §错误处理）：
+  //   - 无显式偏好（纯标签默认）→ 降级兜底（路由不能因 DB 抖动全挂）。
+  //   - 有显式偏好（payload.machine 或 payload.executor）→ 抛 ExecutorRouteError，
+  //     不静默改派到美国（避免"我以为跑西安结果跑美国"，spec line 83）。
+  const hasExplicitPreference = Boolean(reqMachine || reqExecutor);
   let machines;
   try {
     machines = await loadMachines();
   } catch (err) {
+    if (hasExplicitPreference) {
+      throw new ExecutorRouteError(
+        `显式路由失败：读取机器表失败，无法校验 {machine:'${reqMachine || ''}', executor:'${reqExecutor || ''}'}（不静默改派）: ${err.message}`,
+      );
+    }
     console.warn(
-      `[resolveExecutor] loadMachines 失败，降级 us-m4/claude 兜底: ${err.message}`,
+      `[resolveExecutor] loadMachines 失败，降级 ${FALLBACK_ROUTE.machineId}/claude 兜底: ${err.message}`,
     );
     return { ...FALLBACK_ROUTE };
   }
@@ -156,8 +165,12 @@ export async function resolveExecutor(task, deps = {}) {
   }
 
   // ── 3. 能力标签默认：都没给 → TASK_REQUIREMENTS 标签 → 选满足机器 ──
+  // 对齐 legacy task-router getTaskRequirements：小写查表，未知 task_type 兜底最严格
+  // ['has_git']（=只 us-m4 满足）。绝不能用空数组 → [].every() 恒 true → 所有机器都"满足"
+  // → 默认任务漂移到 DB 第一台 codex 机器（BLOCKER #1：可能跑去西安）。
   const requirements = taskRequirements || (await loadTaskRequirements());
-  const requiredTags = requirements[task?.task_type] || [];
+  const taskTypeKey = String(task?.task_type || '').toLowerCase();
+  const requiredTags = requirements[taskTypeKey] || ['has_git'];
   const tagged = activeMachines.filter((m) => machineHasTags(m, requiredTags));
 
   if (tagged.length > 0) {

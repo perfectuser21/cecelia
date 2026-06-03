@@ -189,9 +189,44 @@ describe('resolveExecutor — 能力标签默认', () => {
   });
 });
 
-describe('resolveExecutor — 兜底 us-m4 / claude', () => {
-  it('未知 task_type 标签无匹配 → 兜底 us-m4 / claude', async () => {
-    // task_type 不在 taskRequirements 里 → 无标签 → 无满足机器 → 兜底
+describe('resolveExecutor — 未知 task_type 不漂移到 codex 机器 [BLOCKER #1]', () => {
+  // 回归：未知 task_type → requirements[task_type]||[] 空数组 → [].every() 恒 true →
+  // 所有 active 机器都"满足" → 默认任务可能路由到 DB 第一台（xian codex 排前就跑去西安）。
+  // 修复后：未知 task_type 对齐 legacy ['has_git']（小写查表）→ 只 us-m4 满足 → 必走 us-m4/claude。
+  it('两台 active（us-m4=claude + xian-m4=codex），未知 task_type 无 payload → 必 resolve 到 us-m4/claude（不去西安）', async () => {
+    // 故意把 xian-m4 排在 DB 第一位：若 bug 存在会被负载策略选中
+    const deps = makeDeps({
+      loadMachines: vi.fn().mockResolvedValue([
+        { name: 'xian-m4', status: 'active', metadata: { tags: ['general'], executors: [{ executor: 'codex', url: 'http://host.docker.internal:13458', default: true }] } },
+        { name: 'mac-mini-m4-us', status: 'active', metadata: { tags: ['has_git', 'general'], executors: [{ executor: 'claude', url: 'http://localhost:3457', default: true }] } },
+      ]),
+      taskRequirements: { dev: ['has_git'] }, // harness_task 不在表里 → 未知
+      // 选第一个：若 requiredTags=[] 让两台都进 candidates，会错选 xian-m4
+      selectLoadBalanced: vi.fn(async (candidates) => candidates[0]),
+    });
+    const route = await resolveExecutor({ task_type: 'harness_task', payload: {} }, deps);
+    expect(route.machineId).toBe('mac-mini-m4-us');
+    expect(route.executor).toBe('claude');
+  });
+
+  it('未知 task_type 大小写混合（HARNESS_TASK）也对齐小写 has_git → us-m4', async () => {
+    const deps = makeDeps({
+      loadMachines: vi.fn().mockResolvedValue([
+        { name: 'xian-m4', status: 'active', metadata: { tags: ['general'], executors: [{ executor: 'codex', url: 'u', default: true }] } },
+        { name: 'mac-mini-m4-us', status: 'active', metadata: { tags: ['has_git', 'general'], executors: [{ executor: 'claude', url: 'http://localhost:3457', default: true }] } },
+      ]),
+      taskRequirements: { dev: ['has_git'] },
+      selectLoadBalanced: vi.fn(async (candidates) => candidates[0]),
+    });
+    const route = await resolveExecutor({ task_type: 'HARNESS_TASK', payload: {} }, deps);
+    expect(route.machineId).toBe('mac-mini-m4-us');
+    expect(route.executor).toBe('claude');
+  });
+});
+
+describe('resolveExecutor — 兜底 mac-mini-m4-us / claude', () => {
+  it('未知 task_type 标签无匹配 → 兜底 mac-mini-m4-us / claude', async () => {
+    // task_type 不在 taskRequirements 里 → 默认 ['has_git'] → 无满足机器 → 兜底
     const deps = makeDeps({
       loadMachines: vi.fn().mockResolvedValue([
         // 没有任何 has_git 机器，且没有 mac-mini-m4-us
@@ -201,7 +236,7 @@ describe('resolveExecutor — 兜底 us-m4 / claude', () => {
     });
     const route = await resolveExecutor({ task_type: 'weird_type', payload: {} }, deps);
     expect(route).toEqual(FALLBACK_ROUTE);
-    expect(route.machineId).toBe('us-m4');
+    expect(route.machineId).toBe('mac-mini-m4-us');
     expect(route.executor).toBe('claude');
   });
 });
@@ -215,15 +250,30 @@ describe('resolveExecutor — DB 失败降级', () => {
     expect(route).toEqual(FALLBACK_ROUTE);
   });
 
-  it('显式请求时 loadMachines 抛错 → 同样降级兜底（DB 抖动不能全挂）', async () => {
+  it('显式请求时 loadMachines 抛错 → 抛 ExecutorRouteError（不静默改派，spec line 83）[MAJOR #3]', async () => {
+    // 有 payload.machine/executor = 显式偏好 → DB 挂时不能偷偷降级到美国，
+    // 否则"我以为跑西安结果跑美国"。必须抛错让任务标 failed。
     const deps = makeDeps({
       loadMachines: vi.fn().mockRejectedValue(new Error('db down')),
     });
-    const route = await resolveExecutor(
-      { task_type: 'dev', payload: { machine: 'xian-m4', executor: 'codex' } },
-      deps,
-    );
-    expect(route).toEqual(FALLBACK_ROUTE);
+    await expect(
+      resolveExecutor(
+        { task_type: 'dev', payload: { machine: 'xian-m4', executor: 'codex' } },
+        deps,
+      ),
+    ).rejects.toThrow(ExecutorRouteError);
+  });
+
+  it('只给 executor 的半显式请求 + loadMachines 抛错 → 同样抛 ExecutorRouteError [MAJOR #3]', async () => {
+    const deps = makeDeps({
+      loadMachines: vi.fn().mockRejectedValue(new Error('db down')),
+    });
+    await expect(
+      resolveExecutor(
+        { task_type: 'dev', payload: { executor: 'codex' } },
+        deps,
+      ),
+    ).rejects.toThrow(ExecutorRouteError);
   });
 });
 

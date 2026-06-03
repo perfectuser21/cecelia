@@ -3395,8 +3395,8 @@ async function triggerCeceliaRun(task) {
       };
       if (model) dockerEnv.CECELIA_MODEL = model;
       if (provider) dockerEnv.CECELIA_PROVIDER = provider;
-      if (process.env.HARNESS_XIAN_ENABLED) dockerEnv.HARNESS_XIAN_ENABLED = process.env.HARNESS_XIAN_ENABLED;
-      if (process.env.HARNESS_XIAN_BRIDGE_URL) dockerEnv.HARNESS_XIAN_BRIDGE_URL = process.env.HARNESS_XIAN_BRIDGE_URL;
+      // 旧的西安 harness 全局开关 env 透传已删除（死代码）：harness 路由收编进
+      // resolveExecutor（DB 驱动 machine+executor），graph 不再读任何全局开关。
 
       const dockerResult = await spawnDocker({
         task,
