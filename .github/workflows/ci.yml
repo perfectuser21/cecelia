@@ -210,16 +210,18 @@ jobs:
           echo "  总计: ${TOTAL} 行"
           echo ""
 
-          # 分档：>800 警告，>3000 硬失败（harness label PR 已在 job-level 跳过）
-          # 注：Brain 功能 PR 含完整测试文件通常达 1500-2500 行，3000 是合理硬上限
-          if [ "$TOTAL" -gt 3000 ]; then
-            echo "::error::PR 变更量 ${TOTAL} 行，超过 3000 行硬门槛，必须拆分"
+          # 分档：>800（总计）警告，>3000（新增）硬失败（harness label PR 已在 job-level 跳过）
+          # 注：硬门槛只数「新增」行——评审负担来自新增代码；纯删除（退役死页/清理）行数
+          #     再多也是降低系统复杂度，强制拆分纯删除 PR 是反模式。删除行仍计入 800 软警告。
+          # 注：Brain 功能 PR 含完整测试文件通常新增 1500-2500 行，3000 新增是合理硬上限。
+          if [ "$ADDITIONS" -gt 3000 ]; then
+            echo "::error::PR 新增 ${ADDITIONS} 行，超过 3000 行硬门槛，必须拆分"
             exit 1
           elif [ "$TOTAL" -gt 800 ]; then
-            echo "⚠️  警告: PR 超过 800 行（${TOTAL} 行），建议拆分为更小的 PR"
-            echo "::warning::PR 变更量 ${TOTAL} 行，超过 800 行阈值，建议拆分"
+            echo "⚠️  警告: PR 超过 800 行（总计 ${TOTAL} 行，新增 ${ADDITIONS}），建议拆分为更小的 PR"
+            echo "::warning::PR 变更量总计 ${TOTAL} 行（新增 ${ADDITIONS}），超过 800 行阈值，建议拆分"
           else
-            echo "✅ PR 大小合理（${TOTAL} 行）"
+            echo "✅ PR 大小合理（总计 ${TOTAL} 行，新增 ${ADDITIONS}）"
           fi
 
   # ─── 分支命名检查（仅 PR 触发）────────────────────────────────
