@@ -630,6 +630,20 @@ async function handleFailureSpike(stats) {
 
   // Analyze each unique failure signature
   for (const failure of failures) {
+    // Fast-path: MONITOR_RESTART + TRANSIENT + no stderr/log_tail
+    // = 系统级强制中断（心跳超时），handleStuckRun 已将任务重新入队。
+    // 无需 RCA 升级，直接跳过（Cortex Insight 3b9711b7）。
+    if (failure.reason_code === 'MONITOR_RESTART' && failure.reason_kind === 'TRANSIENT') {
+      const runPayload = await fetchRunPayload(failure.run_id);
+      if (!runPayload.stderr && !runPayload.log_tail) {
+        console.log(
+          `[Monitor] Skip immune/RCA for run=${failure.run_id}: ` +
+          `MONITOR_RESTART+TRANSIENT+no_stderr is a system-level forced interrupt, task already requeued`
+        );
+        continue;
+      }
+    }
+
     const signature = generateErrorSignature(failure);
 
     // === Immune System Priority: Check active policy first ===

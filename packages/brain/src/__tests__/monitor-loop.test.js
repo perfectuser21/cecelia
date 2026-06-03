@@ -870,6 +870,75 @@ describe('monitor-loop', () => {
       vi.clearAllTimers();
     });
 
+    it('MONITOR_RESTART + TRANSIENT + no_stderr 时跳过 immune/RCA（系统级强制中断，任务已重新入队）', async () => {
+      // 回归防线（Cortex Insight 3b9711b7）：
+      // MONITOR_RESTART + TRANSIENT + 无 stderr/log_tail = 心跳超时被系统强杀，
+      // handleStuckRun 已将任务重新入队，此处不需要 RCA 升级，直接 continue。
+      let queryIndex = 0;
+      mockPool.query.mockImplementation((sql) => {
+        queryIndex++;
+        if (queryIndex === 1) return Promise.resolve({ rows: [] }); // no stuck
+        if (queryIndex === 2) {
+          return Promise.resolve({
+            rows: [{ failed_count: '1', total_count: '5', failure_rate: '0.20' }],
+          });
+        }
+        if (queryIndex === 3) {
+          return Promise.resolve({
+            rows: [makeFailure({ reason_code: 'MONITOR_RESTART', reason_kind: 'TRANSIENT' })],
+          });
+        }
+        if (queryIndex === 4) {
+          // fetchRunPayload: 无 payload → no stderr/log_tail
+          return Promise.resolve({ rows: [] });
+        }
+        return Promise.resolve({ rows: [] });
+      });
+
+      startMonitorLoop();
+      await flushCycle();
+
+      // immune/RCA 均不应触发
+      expect(mockFindActivePolicy).not.toHaveBeenCalled();
+      expect(mockUpdateFailureSignature).not.toHaveBeenCalled();
+      expect(mockPerformRCA).not.toHaveBeenCalled();
+      vi.clearAllTimers();
+    });
+
+    it('MONITOR_RESTART + TRANSIENT 但有 stderr 时，不跳过，正常走 immune/RCA', async () => {
+      // 有 stderr 说明进程异常退出而非纯心跳超时，需要 RCA 分析
+      let queryIndex = 0;
+      mockPool.query.mockImplementation((sql) => {
+        queryIndex++;
+        if (queryIndex === 1) return Promise.resolve({ rows: [] }); // no stuck
+        if (queryIndex === 2) {
+          return Promise.resolve({
+            rows: [{ failed_count: '1', total_count: '5', failure_rate: '0.20' }],
+          });
+        }
+        if (queryIndex === 3) {
+          return Promise.resolve({
+            rows: [makeFailure({ reason_code: 'MONITOR_RESTART', reason_kind: 'TRANSIENT' })],
+          });
+        }
+        if (queryIndex === 4) {
+          // fetchRunPayload: 有 stderr → 不跳过
+          return Promise.resolve({
+            rows: [{ payload: { stderr: 'SIGKILL: out of memory', log_tail: '' } }],
+          });
+        }
+        return Promise.resolve({ rows: [] });
+      });
+      mockShouldAnalyzeFailure.mockResolvedValue({ should_analyze: false });
+
+      startMonitorLoop();
+      await flushCycle();
+
+      // 有 stderr → 必须走 immune 系统
+      expect(mockFindActivePolicy).toHaveBeenCalled();
+      vi.clearAllTimers();
+    });
+
     it('失败列表为空时跳过所有策略和 RCA 处理', async () => {
       let queryIndex = 0;
       mockPool.query.mockImplementation(() => {
