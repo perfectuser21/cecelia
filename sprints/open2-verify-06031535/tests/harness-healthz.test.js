@@ -26,29 +26,29 @@ describe('GET /healthz [BEHAVIOR]', () => {
     expect(res.status).toBe(200);
   });
 
-  it('响应体 ok 字段为布尔 true', async () => {
+  it('ok=true 响应体 ok 字段为布尔 true', async () => {
     const res = await request(app).get('/healthz');
     expect(res.body.ok).toBe(true);
   });
 
-  it('响应体 service 字段为字面量 "harness"', async () => {
+  it('service=harness 响应体 service 字段固定为 harness', async () => {
     const res = await request(app).get('/healthz');
     expect(res.body.service).toBe('harness');
   });
 
-  it('响应体 ts 字段为有效 ISO8601 string', async () => {
+  it('ts ISO8601 响应体 ts 字段为有效 string', async () => {
     const res = await request(app).get('/healthz');
     expect(typeof res.body.ts).toBe('string');
     const d = new Date(res.body.ts);
     expect(isNaN(d.getTime())).toBe(false);
   });
 
-  it('响应体 keys 严格等于 ["ok","service","ts"]', async () => {
+  it('keys 完整性 — 严格等于 ok service ts', async () => {
     const res = await request(app).get('/healthz');
     expect(Object.keys(res.body).sort()).toEqual(['ok', 'service', 'ts'].sort());
   });
 
-  it('禁用字段 status/healthy/name/timestamp 均不存在', async () => {
+  it('禁用字段 ×4 — status healthy name timestamp 均不存在', async () => {
     const res = await request(app).get('/healthz');
     expect(res.body).not.toHaveProperty('status');
     expect(res.body).not.toHaveProperty('healthy');
