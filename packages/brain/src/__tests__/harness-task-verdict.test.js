@@ -127,19 +127,62 @@ describe('mergePrNode — branch-behind retry', () => {
     };
     const result = await mergePrNode({ pr_url: PR_URL, rebase_attempted: 0 }, { execFile: execFn });
     expect(calls[0]).toContain('merge');
-    expect(calls[1]).toContain('update-branch');
-    expect(calls[1]).toContain('--rebase');
+    const ub = calls.find((c) => c.includes('update-branch'));
+    expect(ub).toBeDefined();
+    expect(ub).toContain('--rebase');
     expect(result.ci_status).toBe('pending');
     expect(result.rebase_attempted).toBe(1);
     expect(result.error).toBeUndefined();
   });
 
-  it('behind 错误但 rebase_attempted=1 → 返回 error（已重试过）', async () => {
-    const execFn = async () => { throw new Error('must be up to date with the base branch'); };
+  it('behind + rebase_attempted=1（churn 反复落后）→ 计数器递增继续重试 update-branch', async () => {
+    // rebase_attempted 是计数器（非布尔）：未达上限时持续 update-branch，
+    // 覆盖 feedback_pr_stuck_behind_churn 的「PR 反复 BEHIND main」高合并频率场景。
+    const calls = [];
+    const execFn = async (_cmd, args) => {
+      calls.push([...args]);
+      if (args.includes('merge')) throw new Error('branch is behind the base branch by 1 commit');
+      if (args.includes('view')) return { stdout: JSON.stringify({ mergeable: 'UNKNOWN', mergeStateStatus: 'BEHIND' }) };
+      return { stdout: '' };
+    };
     const result = await mergePrNode({ pr_url: PR_URL, rebase_attempted: 1 }, { execFile: execFn });
+    expect(calls.some((c) => c.includes('update-branch'))).toBe(true);
+    expect(result.ci_status).toBe('pending');
+    expect(result.rebase_attempted).toBe(2);
+    expect(result.error).toBeUndefined();
+  });
+
+  it('behind + rebase_attempted=3（达上限）→ 带 reason 终止，不再调 update-branch', async () => {
+    const calls = [];
+    const execFn = async (_cmd, args) => {
+      calls.push([...args]);
+      if (args.includes('merge')) throw new Error('must be up to date with the base branch');
+      if (args.includes('view')) return { stdout: JSON.stringify({ mergeable: 'UNKNOWN', mergeStateStatus: 'BEHIND' }) };
+      return { stdout: '' };
+    };
+    const result = await mergePrNode({ pr_url: PR_URL, rebase_attempted: 3 }, { execFile: execFn });
+    expect(calls.some((c) => c.includes('update-branch'))).toBe(false);
     expect(result.error).toBeDefined();
     expect(result.error.node).toBe('merge_pr');
-    expect(result.error.message).toMatch(/after rebase/i);
+    expect(result.error.reason).toBe('rebase_exhausted');
+    expect(result.error.message).toMatch(/max|上限|exhaust/i);
+  });
+
+  it('CONFLICTING（真冲突）→ 不假装 update-branch 能解，带可诊断 reason 终止', async () => {
+    const calls = [];
+    const execFn = async (_cmd, args) => {
+      calls.push([...args]);
+      if (args.includes('merge')) throw new Error('Pull request is not mergeable');
+      if (args.includes('view')) return { stdout: JSON.stringify({ mergeable: 'CONFLICTING', mergeStateStatus: 'DIRTY' }) };
+      return { stdout: '' };
+    };
+    const result = await mergePrNode({ pr_url: PR_URL, rebase_attempted: 0 }, { execFile: execFn });
+    // 真冲突 update-branch 解不了 → 绝不调用，避免浪费 CI 轮次/无限刷
+    expect(calls.some((c) => c.includes('update-branch'))).toBe(false);
+    expect(result.error).toBeDefined();
+    expect(result.error.node).toBe('merge_pr');
+    expect(result.error.reason).toBe('conflicting');
+    expect(result.error.message).toMatch(/conflict|冲突/i);
   });
 
   it('behind 错误 update-branch 也失败 → 返回 error', async () => {
