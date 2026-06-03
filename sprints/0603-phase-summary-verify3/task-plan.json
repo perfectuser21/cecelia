@@ -1,0 +1,27 @@
+{
+  "initiative_id": "pending",
+  "journey_type": "autonomous",
+  "journey_type_reason": "仅涉及 packages/brain/，无 UI、无远端 agent、无 hook/skill 改动",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "实现 GET /api/brain/initiative-runs/phase-summary 只读聚合路由",
+      "scope": "新建 packages/brain/src/routes/initiative-runs.js，挂载 GET /phase-summary handler：查 initiative_runs 表，过滤 phase IS NOT NULL，GROUP BY phase 计 count，按 count DESC 排序，返回 [{phase, count}] JSON 数组；在 packages/brain/server.js 中 import 并 app.use('/api/brain/initiative-runs', router) 挂载",
+      "dod": [
+        "[BEHAVIOR] curl localhost:5221/api/brain/initiative-runs/phase-summary 返回 HTTP 200 + JSON array",
+        "[BEHAVIOR] 注入 (3*A_contract, 1*B_task_loop, 1*NULL) 后响应每条 keys == [count,phase]、phase==string、count==number、A_contract count>=3、无 phase==null",
+        "[BEHAVIOR] count 列单调降序：高频 phase 在前",
+        "[BEHAVIOR] 响应每条不含 name/total/stage/runs/n/num/cnt/value/type/phase_name/phaseName 任一禁用字段",
+        "[ARTIFACT] packages/brain/src/routes/initiative-runs.js 含 Router、export default、GROUP BY phase、phase IS NOT NULL、ORDER BY count DESC",
+        "[ARTIFACT] packages/brain/server.js import 该 router 并 app.use 到 /api/brain/initiative-runs"
+      ],
+      "files": [
+        "packages/brain/src/routes/initiative-runs.js",
+        "packages/brain/server.js"
+      ],
+      "depends_on": [],
+      "complexity": "S",
+      "estimated_minutes": 45
+    }
+  ]
+}
