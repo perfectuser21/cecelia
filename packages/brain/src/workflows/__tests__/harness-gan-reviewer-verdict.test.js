@@ -118,6 +118,7 @@ describe('B54 — reviewer 任何来源都无 verdict → 连续 N 轮中止（�
       expect(r.error).toBeTruthy();
       expect(r.error.node).toBe('reviewer');
       expect(r.error.message).toMatch(/no_parseable_verdict|未产出.*verdict/);
+      expect(r.error.terminal).toBe(true);
       expect(r.reviewerNoVerdictStreak).toBe(MAX_NO_VERDICT_STREAK);
     } finally { await rm(tmp, { recursive: true, force: true }); }
   });

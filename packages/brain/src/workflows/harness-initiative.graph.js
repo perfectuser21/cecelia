@@ -405,7 +405,7 @@ export async function runGanLoopNode(state, opts = {}) {
         [err.message, state.initiative_run_id]
       ).catch((e) => console.warn(`[ganLoop] initiative_runs UPDATE failed (non-fatal): ${e.message}`));
     }
-    return { error: { node: 'gan', message: err.message } };
+    return { error: { node: 'gan', message: err.message, terminal: err.terminal === true } };
   }
 }
 export async function dbUpsertNode(state, opts = {}) {
@@ -1093,6 +1093,7 @@ export async function advanceTaskIndexNode(state) {
         error: {
           node: 'advance',
           message: `Serial gate: sub-task ${currentId} did not merge (status=${record.status ?? 'undefined'}). Next workstream blocked.`,
+          terminal: true,
         },
       };
     }
@@ -1131,7 +1132,7 @@ export async function terminalFailNode(state, opts = {}) {
   } catch (err) {
     console.warn(`[harness-initiative.graph] terminalFailNode db update failed: ${err.message}`);
   }
-  return { error: { node: 'terminal_fail', message: reason } };
+  return { error: { node: 'terminal_fail', message: reason, terminal: true } };
 }
 
 // Change 5: New routing functions

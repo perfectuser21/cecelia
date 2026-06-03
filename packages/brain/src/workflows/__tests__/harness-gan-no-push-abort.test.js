@@ -49,6 +49,7 @@ describe('GAN proposer 连续未 push → 中止（不空转）', () => {
       expect(r2.error).toBeTruthy();
       expect(r2.error.node).toBe('proposer');
       expect(r2.error.message).toMatch(/didnt_push|未 push|429/);
+      expect(r2.error.terminal).toBe(true);
       expect(r2.proposerNoPushStreak).toBe(2);
     } finally {
       await rm(tmp, { recursive: true, force: true });

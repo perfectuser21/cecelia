@@ -173,7 +173,9 @@ export async function runReviewerSchemaLoop(spawnFn, schema, budgetCap, accumula
     accumulatedCost += Number(raw?.cost_usd || 0);
 
     if (accumulatedCost > budgetCap) {
-      throw new Error(`gan_budget_exceeded: spent=${accumulatedCost.toFixed(3)} cap=${budgetCap}`);
+      const budgetErr = new Error(`gan_budget_exceeded: spent=${accumulatedCost.toFixed(3)} cap=${budgetCap}`);
+      budgetErr.terminal = true;
+      throw budgetErr;
     }
 
     const parsed = schema.safeParse(raw);
@@ -459,7 +461,7 @@ export function createGanContractNodes(executor, ctx) {
         round: nextRound,
         costUsd: state.costUsd || 0,
         proposerNoPushStreak: noPushStreak,
-        error: { node: 'proposer', message: msg },
+        error: { node: 'proposer', message: msg, terminal: true },
       };
     }
 
@@ -508,7 +510,9 @@ export function createGanContractNodes(executor, ctx) {
 
     const costAfterSpawn = state.costUsd || 0;
     if (costAfterSpawn > budgetCapUsd) {
-      throw new Error(`gan_budget_exceeded: spent=${costAfterSpawn.toFixed(3)} cap=${budgetCapUsd}`);
+      const msg = `gan_budget_exceeded: spent=${costAfterSpawn.toFixed(3)} cap=${budgetCapUsd}`;
+      console.error(`[harness-gan][ABORT] ${msg}`);
+      return { costUsd: costAfterSpawn, error: { node: 'reviewer', message: msg, terminal: true } };
     }
 
     let resultData = await readBrainResult(worktreePath, ['verdict', 'rubric_scores', 'feedback']).catch(() => ({}));
@@ -571,7 +575,7 @@ export function createGanContractNodes(executor, ctx) {
       return {
         costUsd: costAfterSpawn,
         reviewerNoVerdictStreak: noVerdictStreak,
-        error: { node: 'reviewer', message: msg },
+        error: { node: 'reviewer', message: msg, terminal: true },
       };
     }
 
@@ -690,6 +694,7 @@ export async function runGanContractGraph(opts) {
     const e = new Error(finalState.error.message || 'gan_aborted');
     e.ganAborted = true;
     e.node = finalState.error.node || 'proposer';
+    e.terminal = finalState.error.terminal === true;
     throw e;
   }
 
