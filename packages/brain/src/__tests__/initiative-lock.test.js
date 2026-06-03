@@ -144,7 +144,9 @@ describe('dispatchNextTask: Initiative 二次锁检查', () => {
     mockQuery.mockResolvedValueOnce({ rows: [] });
     // 1. selectNextDispatchableTask 主查询 → 返回候选
     mockQuery.mockResolvedValueOnce({ rows: [candidateTask] });
-    // 2. Initiative 二次锁检查 → 发现已有 in_progress 任务
+    // 2. 全局 harness 并发计数（本 PR 加）→ 0 < cap，放行
+    mockQuery.mockResolvedValueOnce({ rows: [{ n: 0 }] });
+    // 3. Initiative 二次锁检查 → 发现已有 in_progress 任务
     mockQuery.mockResolvedValueOnce({
       rows: [{ id: 'task-blocking', title: '另一个进行中任务' }]
     });
@@ -212,11 +214,13 @@ describe('dispatchNextTask: Initiative 二次锁检查', () => {
     mockQuery.mockResolvedValueOnce({ rows: [] });
     // 1. 主查询 → 候选
     mockQuery.mockResolvedValueOnce({ rows: [candidateTask] });
-    // 2. Initiative 锁检查 → 无 in_progress 任务（锁通过）
+    // 2. 全局 harness 并发计数（本 PR 加）→ 0 < cap，放行
+    mockQuery.mockResolvedValueOnce({ rows: [{ n: 0 }] });
+    // 3. Initiative 锁检查 → 无 in_progress 任务（锁通过）
     mockQuery.mockResolvedValueOnce({ rows: [] });
-    // 3. C1 claim: UPDATE tasks SET claimed_by ... RETURNING id
+    // 4. C1 claim: UPDATE tasks SET claimed_by ... RETURNING id
     mockQuery.mockResolvedValueOnce({ rows: [{ id: candidateTask.id }] });
-    // 4. SELECT * FROM tasks（fullTaskResult，dispatch 继续执行时）
+    // 5. SELECT * FROM tasks（fullTaskResult，dispatch 继续执行时）
     mockQuery.mockResolvedValueOnce({ rows: [candidateTask] });
 
     const { dispatchNextTask } = await import('../tick.js');
