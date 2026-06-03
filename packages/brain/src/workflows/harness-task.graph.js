@@ -439,6 +439,7 @@ export async function pollCiNode(state, opts = {}) {
 }
 
 const BEHIND_RE = /behind|out of date|outdated|head ref is out of date|must be up to date|not mergeable/i;
+const CONFLICTING_RE = /conflicting|merge conflict|has conflicts/i;
 
 export async function mergePrNode(state, opts = {}) {
   if (state.status === 'merged') return { status: 'merged' };
@@ -469,27 +470,34 @@ export async function mergePrNode(state, opts = {}) {
   } catch (err) {
     const msg = err.message || '';
 
-    if (state.rebase_attempted) {
-      console.error(`[merge_pr] merge failed after rebase pr=${prUrl}: ${msg}`);
-      return { error: { node: 'merge_pr', message: `merge failed after rebase: ${msg}` } };
-    }
-
     const ALREADY_MERGED_RE = /already merged|not open|pull request.*closed/i;
     if (ALREADY_MERGED_RE.test(msg)) {
       console.log(`[merge_pr] PR already merged, treating as success pr=${prUrl}`);
       try { if (state.worktreePath) await cleanupHarnessWorktree(state.worktreePath); } catch {}
       return { status: 'merged', ci_status: 'merged', merged_at: new Date().toISOString() };
     }
+
+    if (CONFLICTING_RE.test(msg)) {
+      console.error(`[merge_pr] PR has merge conflicts, update-branch cannot fix pr=${prUrl}: ${msg}`);
+      return { error: { node: 'merge_pr', message: `conflicting: ${msg}`, reason: 'merge_conflict' } };
+    }
+
     if (!BEHIND_RE.test(msg)) {
       console.error(`[merge_pr] non-recoverable merge error pr=${prUrl}: ${msg}`);
       return { error: { node: 'merge_pr', message: msg } };
     }
 
-    console.warn(`[merge_pr] branch behind, calling update-branch pr=${prUrl}`);
+    const rebaseCount = state.rebase_attempted || 0;
+    if (rebaseCount >= 3) {
+      console.error(`[merge_pr] merge failed after ${rebaseCount} rebase attempts pr=${prUrl}: ${msg}`);
+      return { error: { node: 'merge_pr', message: `merge failed after ${rebaseCount} rebase attempts: ${msg}` } };
+    }
+
+    console.warn(`[merge_pr] branch behind (attempt ${rebaseCount + 1}/3), calling update-branch pr=${prUrl}`);
     try {
       await execFn('gh', ['pr', 'update-branch', prUrl, '--rebase'], { timeout: 30_000 });
       console.log(`[merge_pr] update-branch ok, re-queuing CI poll pr=${prUrl}`);
-      return { ci_status: 'pending', rebase_attempted: 1 };
+      return { ci_status: 'pending', rebase_attempted: rebaseCount + 1 };
     } catch (updateErr) {
       console.error(`[merge_pr] update-branch failed pr=${prUrl}: ${updateErr.message}`);
       return { error: { node: 'merge_pr', message: `update-branch failed: ${updateErr.message}` } };
