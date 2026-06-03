@@ -31,6 +31,7 @@ import { updateTaskStatus, updateTaskProgress as _updateTaskProgress } from './t
 import { traceStep, LAYER, STATUS, EXECUTOR_HOSTS } from './trace.js';
 import { getAccountUsage } from './account-usage.js';
 import { writeDockerCallback, resolveResourceTier, isDockerAvailable } from './docker-executor.js';
+import { loadSkillContent } from './harness-shared.js';
 import { writeInitiativeRunEvent } from './events/initiativeRunEvents.js';
 import { spawn as spawnDocker } from './spawn/index.js';
 import {
@@ -2171,9 +2172,30 @@ async function _prepareHarnessGeneratePrompt(task) {
 
 function _prepareHarnessReportPrompt(task, taskType) {
   const sprintDir = task.payload?.sprint_dir || 'sprints';
-  const skillName = taskType === 'harness_report' ? '/harness-report' : '/sprint-report';
   const totalCost = (task.payload?.sub_tasks || []).reduce((a, s) => a + (s.cost_usd || 0), 0);
-  return `${skillName}\n\n## Harness v4.0 — Report\n\ntask_id: ${task.id}\nsprint_dir: ${sprintDir}\npr_url: ${task.payload?.pr_url || ''}\ninitiative_id: ${task.payload?.initiative_id || task.id}\nfeature_id: ${task.payload?.feature_id || ''}\nfeature_name: ${task.payload?.feature_name || task.title || ''}\njourney_id: ${task.payload?.journey_id || ''}\ntotal_cost: ${totalCost}\nscreenshots: ${JSON.stringify(task.payload?.screenshots || [])}\npr_urls: ${JSON.stringify(task.payload?.pr_urls || [])}\n\n${task.description || task.title}`;
+  // 参数块（task_id/sprint_dir/pr_url/...），与原实现一致。
+  const paramsBlock = `## Harness v4.0 — Report\n\ntask_id: ${task.id}\nsprint_dir: ${sprintDir}\npr_url: ${task.payload?.pr_url || ''}\ninitiative_id: ${task.payload?.initiative_id || task.id}\nfeature_id: ${task.payload?.feature_id || ''}\nfeature_name: ${task.payload?.feature_name || task.title || ''}\njourney_id: ${task.payload?.journey_id || ''}\ntotal_cost: ${totalCost}\nscreenshots: ${JSON.stringify(task.payload?.screenshots || [])}\npr_urls: ${JSON.stringify(task.payload?.pr_urls || [])}\n\n${task.description || task.title}`;
+
+  // Bug B fix（Bug 7 复刻）：容器内 headless `claude -p` 不展开 slash command，
+  // 裸 `/harness-report` 会让 report agent 收到字面量 + 零 SKILL 指令 → 空壳报告 exit 0 静默降级。
+  // 和其余 5 个阶段对齐：用 loadSkillContent 把 SKILL.md 完整内联进 prompt（SKILL.md 是 SSOT）。
+  if (taskType === 'harness_report') {
+    const skillContent = loadSkillContent('harness-report');
+    return [
+      '你是 harness-report agent。按下面 SKILL 指令工作。',
+      '',
+      skillContent,
+      '',
+      '---',
+      '',
+      paramsBlock,
+    ].join('\n');
+  }
+
+  // sprint_report 路径：sprint-report SKILL 未同步进 CI fallback 目录
+  // (packages/workflows/skills/)，inline 化会在缺 host skill 的容器/CI 触发 B56 fail-fast。
+  // 本次只修 harness_report（确认在 headless 容器跑），sprint_report 保持原 slash 形式。
+  return `/sprint-report\n\n${paramsBlock}`;
 }
 
 function _prepareHarnessPlannerPrompt(task, _taskType) {
@@ -3717,9 +3739,15 @@ async function syncOrphanTasksOnStartup() {
 
   for (const task of result.rows) {
     if (LANGGRAPH_TYPES.has(task.task_type)) {
+      // Bug A fix: requeue 时必须清 claim 三件套，否则死 runner 残留的 claimed_by
+      // 让 dispatch-helpers.js 的 `AND t.claimed_by IS NULL` 永远选不出该任务，
+      // Brain 重启后任务死锁在 queued。样板见 tick-runner.js:1270/:1297。
       await pool.query(
         `UPDATE tasks SET
           status = 'queued',
+          claimed_by = NULL,
+          claimed_at = NULL,
+          started_at = NULL,
           payload = COALESCE(payload, '{}'::jsonb) || $2::jsonb,
           updated_at = NOW()
         WHERE id = $1`,

@@ -277,4 +277,39 @@ describe('syncOrphanTasksOnStartup requeue 行为', () => {
     );
     expect(failedCall).toBeUndefined();
   });
+
+  // Bug A: claim 锁泄漏 — harness_initiative requeue 时必须清 claim 字段，
+  // 否则死 runner 残留的 claimed_by 让 dispatch-helpers.js 的
+  // `AND t.claimed_by IS NULL` 永远选不出该任务 → Brain 重启后死锁在 queued。
+  it('Bug A: harness_initiative requeue 必须清 claimed_by/claimed_at/started_at（防 claim 锁泄漏）', async () => {
+    mockQuery.mockResolvedValueOnce({
+      rows: [{
+        id: 'harness-claimed-orphan-1',
+        title: 'harness initiative with stale claim lock',
+        payload: { watchdog_retry_count: 0 },
+        started_at: new Date().toISOString(),
+        error_message: null,
+        task_type: 'harness_initiative',
+        claimed_by: 'dead-runner-pid-999',
+      }]
+    });
+    mockQuery.mockResolvedValue({ rows: [], rowCount: 1 });
+
+    const { syncOrphanTasksOnStartup } = await import('../executor.js');
+    const result = await syncOrphanTasksOnStartup();
+
+    expect(result.requeued).toBe(1);
+
+    // 找到 requeue 的 UPDATE（status='queued'）
+    const requeueCall = mockQuery.mock.calls.find(
+      call => typeof call[0] === 'string' && call[0].includes("status = 'queued'")
+    );
+    expect(requeueCall).toBeTruthy();
+
+    // UPDATE 必须把 claim 三件套清空（样板见 tick-runner.js:1270/:1297）
+    const sql = requeueCall[0];
+    expect(sql).toMatch(/claimed_by\s*=\s*NULL/i);
+    expect(sql).toMatch(/claimed_at\s*=\s*NULL/i);
+    expect(sql).toMatch(/started_at\s*=\s*NULL/i);
+  });
 });

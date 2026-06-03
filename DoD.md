@@ -1,45 +1,26 @@
-contract_branch: cp-05281036-ws-2c9c9b66-ws1
-workstream_index: 1
-sprint_dir: sprints/cecelia-harness-async-stable-0528
+# DoD：executor.js 两个机械 bug 修复
 
----
-skeleton: false
-journey_type: autonomous
----
-# Contract DoD — Workstream 1: DB Migration — harness_messages 表
+Brain task: ff3a8ec2-4f1e-40f4-a746-db97d22742e7
+分支: cp-0603091820-executor-claim-report-fix
 
-**范围**: 新建 `packages/brain/migrations/288_harness_messages.sql`，创建 `harness_messages` 表，供 WS6 的消息 API 端点使用
-**大小**: S (~35 行，1 文件)
-**依赖**: 无
+## Bug A — claim 锁泄漏（重启后任务死锁 queued）
 
-## ARTIFACT 条目
+- [x] [ARTIFACT] `syncOrphanTasksOnStartup` 的 harness_initiative requeue UPDATE 清空 claim 三件套
+  Test: node -e "const c=require('fs').readFileSync('packages/brain/src/executor.js','utf8');if(!c.includes('claimed_by = NULL'))process.exit(1)"
+- [x] [BEHAVIOR] requeue 分支 UPDATE 同时设 claimed_by/claimed_at/started_at = NULL（防 dispatch-helpers `AND claimed_by IS NULL` 永选不出该任务）
+  Test: manual:node -e "const c=require('fs').readFileSync('packages/brain/src/executor.js','utf8');const m=c.match(/LANGGRAPH_TYPES\.has\(task\.task_type\)[\s\S]{0,600}?resume_from_checkpoint: true/);if(!m||!/claimed_by = NULL/.test(m[0])||!/claimed_at = NULL/.test(m[0])||!/started_at = NULL/.test(m[0]))process.exit(1)"
 
-- [x] [ARTIFACT] `packages/brain/migrations/288_harness_messages.sql` 文件存在
-  Test: node -e "require('fs').accessSync('packages/brain/migrations/288_harness_messages.sql')"
+## Bug B — report 用 slash command（容器内空 SKILL 静默降级）
 
-- [x] [ARTIFACT] migration 文件含 `CREATE TABLE IF NOT EXISTS harness_messages` 语句
-  Test: node -e "const c=require('fs').readFileSync('packages/brain/migrations/288_harness_messages.sql','utf8'); if(!c.includes('CREATE TABLE') || !c.includes('harness_messages'))process.exit(1)"
+- [x] [ARTIFACT] `_prepareHarnessReportPrompt` 的 harness_report 路径改用 `loadSkillContent('harness-report')` inline SKILL
+  Test: node -e "const c=require('fs').readFileSync('packages/brain/src/executor.js','utf8');if(!c.includes(\"loadSkillContent('harness-report')\"))process.exit(1)"
+- [x] [BEHAVIOR] executor.js import harness-shared 且 harness_report 路径调用 loadSkillContent('harness-report')，prompt 不再以裸 slash 开头
+  Test: manual:node -e "const c=require('fs').readFileSync('packages/brain/src/executor.js','utf8');if(!/loadSkillContent\(['\"]harness-report['\"]\)/.test(c)||!/from '\.\/harness-shared\.js'/.test(c))process.exit(1)"
 
-- [x] [ARTIFACT] migration 含所有必填字段：id, initiative_id, sub_task_id, message, consumed_at, created_at
-  Test: node -e "const c=require('fs').readFileSync('packages/brain/migrations/288_harness_messages.sql','utf8'); ['id','initiative_id','sub_task_id','message','consumed_at','created_at'].forEach(f=>{if(!c.includes(f)){console.error('FAIL: missing field '+f);process.exit(1)}})"
+## 验收
 
-- [x] [ARTIFACT] migration 使用 `IF NOT EXISTS`（幂等）
-  Test: node -e "const c=require('fs').readFileSync('packages/brain/migrations/288_harness_messages.sql','utf8'); if(!c.includes('IF NOT EXISTS'))process.exit(1)"
-
-## BEHAVIOR 条目
-
-- [x] [BEHAVIOR] migration 文件存在且包含完整 CREATE TABLE 语句
-  Test: manual:bash -c 'node -e "const c=require(\"fs\").readFileSync(\"packages/brain/migrations/288_harness_messages.sql\",\"utf8\"); if(!c.includes(\"CREATE TABLE IF NOT EXISTS harness_messages\"))process.exit(1); console.log(\"OK\")" || { echo "FAIL: migration 文件缺 CREATE TABLE harness_messages"; exit 1; }'
-  期望: OK
-
-- [x] [BEHAVIOR] harness_messages 表 schema 含六个必填字段（id/initiative_id/sub_task_id/message/consumed_at/created_at）
-  Test: manual:bash -c 'node -e "const c=require(\"fs\").readFileSync(\"packages/brain/migrations/288_harness_messages.sql\",\"utf8\"); const fields=[\"id\",\"initiative_id\",\"sub_task_id\",\"message\",\"consumed_at\",\"created_at\"]; fields.forEach(f=>{if(!c.includes(f)){console.error(\"FAIL: missing field \"+f);process.exit(1)}}); console.log(\"OK\")" || exit 1'
-  期望: OK
-
-- [x] [BEHAVIOR] id 字段为 UUID 类型（Primary Key）
-  Test: manual:bash -c 'node -e "const c=require(\"fs\").readFileSync(\"packages/brain/migrations/288_harness_messages.sql\",\"utf8\"); if(!c.match(/id\s+UUID/i) && !c.match(/id\s+uuid/))process.exit(1); console.log(\"OK\")" || { echo "FAIL: id 字段非 UUID 类型"; exit 1; }'
-  期望: OK
-
-- [x] [BEHAVIOR] error path — consumed_at 字段默认值为 NULL（可为空，消费前为 null）
-  Test: manual:bash -c 'node -e "const c=require(\"fs\").readFileSync(\"packages/brain/migrations/288_harness_messages.sql\",\"utf8\"); if(!c.includes(\"consumed_at\") || (!c.includes(\"DEFAULT NULL\") && !c.includes(\"TIMESTAMPTZ\")))process.exit(1); console.log(\"OK\")" || { echo "FAIL: consumed_at 字段配置不符合要求"; exit 1; }'
-  期望: OK
+- [x] failing test 先 commit（commit-1 RED），修复让 test 变绿（commit-2 GREEN）
+- [x] 两个 regression test 永久留 CI：executor-startup-sync.test.js（Bug A）+ executor-report-prompt.test.js（Bug B）
+- [x] Brain 版本四处同步 bump（1.230.15 → 1.230.16）
+- [x] DevGate 通过（facts-check / version-sync）
+- [x] 本地 brain-unit 相关测试全绿（CI 全绿由 engine-pr-watchdog 轮询确认）
