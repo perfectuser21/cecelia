@@ -66,6 +66,7 @@ import publishJobsRoutes from './src/routes/publish-jobs.js';
 import registryRoutes from './src/routes/registry.js';
 import notesRoutes from './src/routes/notes.js';
 import harnessRoutes from './src/routes/harness.js';
+import harnessRoutesRouter from './src/routes/harness.routes.js';
 import harnessInterruptsRouter from './src/routes/harness-interrupts.js';
 import harnessCallbackRouter from './src/routes/harness-callback.js';
 import walkingSkeletonRouter from './src/routes/walking-skeleton.js';
@@ -305,6 +306,7 @@ app.use('/api/brain/registry', registryRoutes);
 app.use('/api/brain', harnessCallbackRouter);
 app.use('/api/brain', walkingSkeletonRouter);
 app.use('/api/brain', journeysRouter);
+app.use('/api/brain/harness', harnessRoutesRouter);
 app.use('/api/brain/harness', harnessRoutes);
 // Alias: /api/brain/initiative-runs/:id 可直接访问（不带 /harness 前缀）
 // 合同 DoD 要求 GET /api/brain/initiative-runs/:id，harness.js 路由挂载于 /harness，
