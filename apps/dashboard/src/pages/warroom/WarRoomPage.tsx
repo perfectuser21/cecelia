@@ -921,7 +921,7 @@ function LineNavItem({ line, active, onSelect }: {
   );
 }
 
-/** 中栏 Line 视图：头部 + 📋 ROADMAP + ⚡ 正在跑（复用 FeedRow） */
+/** 中栏 Line 视图：头部 + Roadmap + 正在跑（左右两栏，复用 FeedRow） */
 function LineView({
   detail, loading, selectedId, onSelectTask, onArchive, archivedSet,
 }: {
@@ -948,7 +948,7 @@ function LineView({
   const running = safeTasks.filter((t) => t.status === 'active');
   const others = safeTasks.filter((t) => t.status !== 'active');
   return (
-    <div className="px-5 py-4 max-w-4xl mx-auto">
+    <div className="px-6 py-5">
       {/* Line 头部 */}
       <div className="mb-5">
         <div className="flex items-center gap-2.5 flex-wrap mb-2">
@@ -970,11 +970,14 @@ function LineView({
         )}
       </div>
 
-      {/* 📋 ROADMAP */}
-      <div className="mb-6">
+      {/* Roadmap 与 正在跑 左右两栏，填满宽度 */}
+      <div className="grid grid-cols-1 xl:grid-cols-2 gap-6 items-start">
+
+      {/* Roadmap（规划） */}
+      <div className="rounded-lg border border-slate-800/60 bg-slate-900/20 p-4">
         <div className="flex items-center gap-2 mb-3">
           <MapIcon className="w-4 h-4 text-cyan-400" />
-          <span className="text-[13px] tracking-[0.1em] uppercase text-slate-400 font-bold">📋 Roadmap</span>
+          <span className="text-[13px] tracking-[0.1em] uppercase text-slate-300 font-bold">Roadmap · 规划</span>
           <span className="text-[12px] text-slate-600 font-mono">{rows.length} 步</span>
         </div>
         {rows.length === 0 ? (
@@ -1003,11 +1006,11 @@ function LineView({
         )}
       </div>
 
-      {/* ⚡ 正在跑 */}
-      <div>
+      {/* 正在跑 */}
+      <div className="rounded-lg border border-slate-800/60 bg-slate-900/20 p-4">
         <div className="flex items-center gap-2 mb-2">
           <Zap className="w-4 h-4 text-amber-400" />
-          <span className="text-[13px] tracking-[0.1em] uppercase text-slate-400 font-bold">⚡ 正在跑</span>
+          <span className="text-[13px] tracking-[0.1em] uppercase text-slate-300 font-bold">正在跑</span>
           <span className="text-[12px] text-slate-600 font-mono">{safeTasks.length} 条</span>
           {running.length > 0 && (
             <span className="text-[12px] font-mono px-1.5 rounded bg-blue-500/15 text-blue-300 border border-blue-500/25">{running.length} 进行中</span>
@@ -1029,6 +1032,7 @@ function LineView({
             ))}
           </div>
         )}
+      </div>
       </div>
     </div>
   );
@@ -1325,7 +1329,7 @@ export default function WarRoomPage() {
       {/* ── 三栏 ── */}
       <div className="flex flex-1 overflow-hidden">
         {/* 左：筛选 + Area 导航 */}
-        <div className="w-52 flex-shrink-0 border-r border-slate-800/60 bg-slate-900/30 overflow-y-auto px-3 pt-3 pb-4">
+        <div className="w-60 flex-shrink-0 border-r border-slate-800/60 bg-slate-900/30 overflow-y-auto px-3 pt-3 pb-4">
           {/* ── 视图：聚焦/全部 ── */}
           <button
             onClick={() => setFocusMode((v) => !v)}
