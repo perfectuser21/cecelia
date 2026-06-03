@@ -154,3 +154,19 @@ describe('preparePrompt 重构：主函数为 dispatcher 结构', () => {
     expect(executorSrc).toContain('_prepareDefaultPrompt(task, skill)');
   });
 });
+
+describe('Bug B regression: _prepareHarnessReportPrompt 使用 loadSkillContent inline', () => {
+  it('_prepareHarnessReportPrompt 是 async 函数', () => {
+    expect(executorSrc).toContain('async function _prepareHarnessReportPrompt(');
+  });
+
+  it('_prepareHarnessReportPrompt 用 loadSkillContent 而非裸 slash command', () => {
+    expect(executorSrc).toContain("loadSkillContent(skillKey)");
+    expect(executorSrc).not.toMatch(/skillName\s*=.*['"]\/harness-report['"]/);
+    expect(executorSrc).not.toMatch(/skillName\s*=.*['"]\/sprint-report['"]/);
+  });
+
+  it('executor.js 从 harness-shared.js 导入 loadSkillContent', () => {
+    expect(executorSrc).toContain("import { loadSkillContent } from './harness-shared.js'");
+  });
+});

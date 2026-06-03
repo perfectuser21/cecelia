@@ -31,6 +31,7 @@ import { updateTaskStatus, updateTaskProgress as _updateTaskProgress } from './t
 import { traceStep, LAYER, STATUS, EXECUTOR_HOSTS } from './trace.js';
 import { getAccountUsage } from './account-usage.js';
 import { writeDockerCallback, resolveResourceTier, isDockerAvailable } from './docker-executor.js';
+import { loadSkillContent } from './harness-shared.js';
 import { writeInitiativeRunEvent } from './events/initiativeRunEvents.js';
 import { spawn as spawnDocker } from './spawn/index.js';
 import {
@@ -2169,11 +2170,31 @@ async function _prepareHarnessGeneratePrompt(task) {
   return basePrompt;
 }
 
-function _prepareHarnessReportPrompt(task, taskType) {
+async function _prepareHarnessReportPrompt(task, taskType) {
   const sprintDir = task.payload?.sprint_dir || 'sprints';
-  const skillName = taskType === 'harness_report' ? '/harness-report' : '/sprint-report';
+  const skillKey = taskType === 'harness_report' ? 'harness-report' : 'sprint-report';
   const totalCost = (task.payload?.sub_tasks || []).reduce((a, s) => a + (s.cost_usd || 0), 0);
-  return `${skillName}\n\n## Harness v4.0 — Report\n\ntask_id: ${task.id}\nsprint_dir: ${sprintDir}\npr_url: ${task.payload?.pr_url || ''}\ninitiative_id: ${task.payload?.initiative_id || task.id}\nfeature_id: ${task.payload?.feature_id || ''}\nfeature_name: ${task.payload?.feature_name || task.title || ''}\njourney_id: ${task.payload?.journey_id || ''}\ntotal_cost: ${totalCost}\nscreenshots: ${JSON.stringify(task.payload?.screenshots || [])}\npr_urls: ${JSON.stringify(task.payload?.pr_urls || [])}\n\n${task.description || task.title}`;
+  const skillContent = loadSkillContent(skillKey);
+  return [
+    skillContent,
+    '',
+    '---',
+    '',
+    '## Harness v4.0 — Report',
+    '',
+    `task_id: ${task.id}`,
+    `sprint_dir: ${sprintDir}`,
+    `pr_url: ${task.payload?.pr_url || ''}`,
+    `initiative_id: ${task.payload?.initiative_id || task.id}`,
+    `feature_id: ${task.payload?.feature_id || ''}`,
+    `feature_name: ${task.payload?.feature_name || task.title || ''}`,
+    `journey_id: ${task.payload?.journey_id || ''}`,
+    `total_cost: ${totalCost}`,
+    `screenshots: ${JSON.stringify(task.payload?.screenshots || [])}`,
+    `pr_urls: ${JSON.stringify(task.payload?.pr_urls || [])}`,
+    '',
+    task.description || task.title,
+  ].join('\n');
 }
 
 function _prepareHarnessPlannerPrompt(task, _taskType) {
@@ -3720,6 +3741,9 @@ async function syncOrphanTasksOnStartup() {
       await pool.query(
         `UPDATE tasks SET
           status = 'queued',
+          claimed_by = NULL,
+          claimed_at = NULL,
+          started_at = NULL,
           payload = COALESCE(payload, '{}'::jsonb) || $2::jsonb,
           updated_at = NOW()
         WHERE id = $1`,

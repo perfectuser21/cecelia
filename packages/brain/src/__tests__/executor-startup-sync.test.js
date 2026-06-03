@@ -276,5 +276,11 @@ describe('syncOrphanTasksOnStartup requeue 行为', () => {
       call => typeof call[0] === 'string' && call[0].includes("status = 'failed'")
     );
     expect(failedCall).toBeUndefined();
+
+    // Bug A regression: requeue SQL 必须清除 claim 锁字段，防止重启后任务死锁 queued
+    const sql = requeueCall[0];
+    expect(sql).toContain('claimed_by = NULL');
+    expect(sql).toContain('claimed_at = NULL');
+    expect(sql).toContain('started_at = NULL');
   });
 });
