@@ -124,8 +124,11 @@ export function shanghaiDay(ts) {
  * @param {string|null} journeyName
  * @param {{pct:number, node:string}|null} progress
  * @param {number} nowMs
+ * @param {{verdict?:string, pr_url?:string, findings_count?:number}|null} report
+ *        对应 sprint 的 harness_report 摘要（按 initiative_id 关联）。
+ *        harness_report 不单独成行，其 verdict/pr/findings 合并进所属 sprint。
  */
-export function toFeedItem(t, journeyName, progress, nowMs) {
+export function toFeedItem(t, journeyName, progress, nowMs, report = null) {
   const area = classifyArea(t);
   const group = classifyGroup(t, area, journeyName);
   const kind = classifyKind(t.task_type);
@@ -138,7 +141,8 @@ export function toFeedItem(t, journeyName, progress, nowMs) {
     else if (status === 'active') elapsed_ms = nowMs - start;
   }
 
-  const pr_url = t.pr_url || (t.result && t.result.pr_url) || null;
+  // pr_url 优先级：task 自身 > task.result > report 兜底
+  const pr_url = t.pr_url || (t.result && t.result.pr_url) || (report && report.pr_url) || null;
 
   return {
     id: t.id,
@@ -153,6 +157,8 @@ export function toFeedItem(t, journeyName, progress, nowMs) {
     current_node: progress ? progress.node : null,
     fail_reason: status === 'failed' ? (t.error_message || null) : null,
     pr_url,
+    verdict: report ? (report.verdict || null) : null,
+    findings_count: report ? (report.findings_count ?? null) : null,
     detail_route: detailRoute(t, kind),
     _area: area,
     _group: group,
@@ -165,15 +171,17 @@ export function toFeedItem(t, journeyName, progress, nowMs) {
  * @param {Record<string,string>} journeyNameById  journey_id → name（notion_id 或 uuid）
  * @param {Record<string,{pct:number,node:string}>} progressById  task.id → progress
  * @param {number} nowMs
+ * @param {Record<string,{verdict?:string,pr_url?:string,findings_count?:number}>} reportByInitiativeId
+ *        sprint task.id → 该 sprint 的 harness_report 摘要
  * @returns {Array} areas[]
  */
-export function buildFeed(tasks, journeyNameById = {}, progressById = {}, nowMs = 0) {
+export function buildFeed(tasks, journeyNameById = {}, progressById = {}, nowMs = 0, reportByInitiativeId = {}) {
   const areaMap = new Map();
 
   for (const t of tasks) {
     const jId = t?.payload?.journey_id;
     const jName = jId ? (journeyNameById[jId] || null) : null;
-    const item = toFeedItem(t, jName, progressById[t.id] || null, nowMs);
+    const item = toFeedItem(t, jName, progressById[t.id] || null, nowMs, reportByInitiativeId[t.id] || null);
     const { _area: area, _group: group } = item;
     delete item._area; delete item._group;
 
