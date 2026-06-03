@@ -391,8 +391,11 @@ export async function runGanLoopNode(state, opts = {}) {
     return { ganResult };
   } catch (err) {
     // OPEN-5: GAN abort 传播到 tasks + initiative_runs
+    // B59: 熔断（ganAborted）或显式 terminal → error.terminal=true，进 checkpoint 后
+    // B58 resume 钩子第一次中止即 failed；transient（如 proposer_failed exit≠0 裸 throw）→ falsy，靠 cap 兜底重试。
+    const isTerminal = err.terminal === true || err.ganAborted === true;
     const taskId = state.task?.id || state.initiativeId;
-    const errorPayload = JSON.stringify({ node: 'gan', message: err.message });
+    const errorPayload = JSON.stringify({ node: 'gan', message: err.message, terminal: isTerminal });
     if (taskId) {
       dbPool.query(
         `UPDATE tasks SET status='failed', result=$1::jsonb, updated_at=NOW() WHERE id=$2::uuid`,
@@ -405,7 +408,7 @@ export async function runGanLoopNode(state, opts = {}) {
         [err.message, state.initiative_run_id]
       ).catch((e) => console.warn(`[ganLoop] initiative_runs UPDATE failed (non-fatal): ${e.message}`));
     }
-    return { error: { node: 'gan', message: err.message } };
+    return { error: { node: 'gan', message: err.message, terminal: isTerminal } };
   }
 }
 export async function dbUpsertNode(state, opts = {}) {
@@ -1093,6 +1096,7 @@ export async function advanceTaskIndexNode(state) {
         error: {
           node: 'advance',
           message: `Serial gate: sub-task ${currentId} did not merge (status=${record.status ?? 'undefined'}). Next workstream blocked.`,
+          terminal: true,  // serial gate 本就是 terminal，标上保持一致
         },
       };
     }
@@ -1131,7 +1135,7 @@ export async function terminalFailNode(state, opts = {}) {
   } catch (err) {
     console.warn(`[harness-initiative.graph] terminalFailNode db update failed: ${err.message}`);
   }
-  return { error: { node: 'terminal_fail', message: reason } };
+  return { error: { node: 'terminal_fail', message: reason, terminal: true } };
 }
 
 // Change 5: New routing functions

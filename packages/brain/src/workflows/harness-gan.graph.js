@@ -459,7 +459,8 @@ export function createGanContractNodes(executor, ctx) {
         round: nextRound,
         costUsd: state.costUsd || 0,
         proposerNoPushStreak: noPushStreak,
-        error: { node: 'proposer', message: msg },
+        // terminal:true — 熔断（硬停），配合 B58 resume 钩子第一次中止即 failed，不再消耗满 cap
+        error: { node: 'proposer', message: msg, terminal: true },
       };
     }
 
@@ -508,7 +509,14 @@ export function createGanContractNodes(executor, ctx) {
 
     const costAfterSpawn = state.costUsd || 0;
     if (costAfterSpawn > budgetCapUsd) {
-      throw new Error(`gan_budget_exceeded: spent=${costAfterSpawn.toFixed(3)} cap=${budgetCapUsd}`);
+      // 预算熔断（硬停）：return error 走 finalState.error→ganAborted 统一路径并带 terminal:true，
+      // 而不是裸 throw（裸 throw 不带 terminal，会被当 transient 让 cap 兜底无谓重启）。
+      const msg = `gan_budget_exceeded: spent=${costAfterSpawn.toFixed(3)} cap=${budgetCapUsd}`;
+      console.error(`[harness-gan][ABORT] ${msg}`);
+      return {
+        costUsd: costAfterSpawn,
+        error: { node: 'reviewer', message: msg, terminal: true },
+      };
     }
 
     let resultData = await readBrainResult(worktreePath, ['verdict', 'rubric_scores', 'feedback']).catch(() => ({}));
@@ -571,7 +579,8 @@ export function createGanContractNodes(executor, ctx) {
       return {
         costUsd: costAfterSpawn,
         reviewerNoVerdictStreak: noVerdictStreak,
-        error: { node: 'reviewer', message: msg },
+        // terminal:true — 熔断（硬停），配合 B58 resume 钩子第一次中止即 failed，不再消耗满 cap
+        error: { node: 'reviewer', message: msg, terminal: true },
       };
     }
 
@@ -690,6 +699,8 @@ export async function runGanContractGraph(opts) {
     const e = new Error(finalState.error.message || 'gan_aborted');
     e.ganAborted = true;
     e.node = finalState.error.node || 'proposer';
+    // 把熔断点标的 terminal 带到抛出的 error 上，供 runGanLoopNode 写进 checkpoint error.terminal
+    e.terminal = finalState.error.terminal === true;
     throw e;
   }
 
