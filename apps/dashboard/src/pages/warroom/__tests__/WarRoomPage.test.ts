@@ -17,8 +17,13 @@ import {
   filterArea,
   filterByKind,
   pickDefaultTask,
+  absoluteShanghai,
+  shanghaiClock,
+  stageRows,
+  elapsedForStatus,
   type FeedArea,
   type FeedTask,
+  type FeedStage,
 } from '../WarRoomPage';
 
 describe('formatElapsed（耗时格式化）', () => {
@@ -291,5 +296,99 @@ describe('verdictMeta（最终验收结论样式）', () => {
   it('空/未知 → null（不渲染徽章）', () => {
     expect(verdictMeta(null)).toBeNull();
     expect(verdictMeta('')).toBeNull();
+  });
+});
+
+describe('absoluteShanghai（绝对上海时间，用于 title 悬停）', () => {
+  it('固定 UTC 时刻 → 上海时间（UTC+8）', () => {
+    // 2026-06-03T00:00:00Z = 上海 2026-06-03 08:00:00
+    const s = absoluteShanghai('2026-06-03T00:00:00Z');
+    expect(s).toContain('2026');
+    expect(s).toContain('08:00');
+  });
+
+  it('不随浏览器时区漂移：跨日 UTC 仍按 +8 渲染', () => {
+    // 2026-06-02T20:00:00Z = 上海 2026-06-03 04:00:00
+    const s = absoluteShanghai('2026-06-02T20:00:00Z');
+    expect(s).toContain('2026-06-03');
+    expect(s).toContain('04:00');
+  });
+
+  it('空/非法值返回空串', () => {
+    expect(absoluteShanghai(null)).toBe('');
+    expect(absoluteShanghai('')).toBe('');
+    expect(absoluteShanghai('not-a-date')).toBe('');
+  });
+});
+
+describe('shanghaiClock（顶栏时钟，强制上海时区）', () => {
+  it('返回 HH:MM:SS 24 小时格式', () => {
+    const c = shanghaiClock(new Date('2026-06-03T00:00:00Z'));
+    expect(c).toBe('08:00:00');
+  });
+
+  it('凌晨补零 + 24 小时制（非 12 小时 AM/PM）', () => {
+    const c = shanghaiClock(new Date('2026-06-03T15:05:09Z')); // 上海 23:05:09
+    expect(c).toBe('23:05:09');
+    expect(c).not.toMatch(/AM|PM|上午|下午/);
+  });
+
+  it('无参数时不抛错并返回 HH:MM:SS 串', () => {
+    expect(shanghaiClock()).toMatch(/^\d{2}:\d{2}:\d{2}$/);
+  });
+});
+
+describe('elapsedForStatus（历时仅对 in_progress 显示）', () => {
+  it('in_progress → 正常格式化', () => {
+    expect(elapsedForStatus(90_000, 'in_progress')).toBe('1m30s');
+  });
+
+  it('queued → 空串（不显示误导累加值）', () => {
+    expect(elapsedForStatus(90_000, 'queued')).toBe('');
+  });
+
+  it('completed / failed / 其它原始状态 → 空串', () => {
+    expect(elapsedForStatus(90_000, 'completed')).toBe('');
+    expect(elapsedForStatus(90_000, 'failed')).toBe('');
+    expect(elapsedForStatus(90_000, 'blocked')).toBe('');
+  });
+
+  it('in_progress 但 ms 非正 → 空串', () => {
+    expect(elapsedForStatus(0, 'in_progress')).toBe('');
+    expect(elapsedForStatus(null, 'in_progress')).toBe('');
+  });
+});
+
+describe('stageRows（stage 时间线渲染行）', () => {
+  const STAGES: FeedStage[] = [
+    { key: 'plan', label: 'Planner', status: 'done', elapsed_ms: 5_000 },
+    { key: 'gen', label: 'Generator', status: 'running', elapsed_ms: null },
+    { key: 'eval', label: 'Evaluator', status: 'pending', elapsed_ms: null },
+    { key: 'final', label: 'Final E2E', status: 'failed', elapsed_ms: 12_000 },
+  ];
+
+  it('空/缺省安全：null 与 [] 都返回空数组', () => {
+    expect(stageRows(null)).toEqual([]);
+    expect(stageRows(undefined)).toEqual([]);
+    expect(stageRows([])).toEqual([]);
+  });
+
+  it('逐步映射 label/status，并把 elapsed_ms 格式化成 elapsed 串', () => {
+    const rows = stageRows(STAGES);
+    expect(rows).toHaveLength(4);
+    expect(rows[0]).toMatchObject({ key: 'plan', label: 'Planner', status: 'done', elapsed: '5s' });
+    expect(rows[3]).toMatchObject({ key: 'final', label: 'Final E2E', status: 'failed', elapsed: '12s' });
+  });
+
+  it('running/pending 无耗时 → elapsed 为空串', () => {
+    const rows = stageRows(STAGES);
+    expect(rows[1].elapsed).toBe('');
+    expect(rows[2].elapsed).toBe('');
+  });
+
+  it('非法 status 兜底为 pending', () => {
+    // @ts-expect-error 故意传非法 status 验证兜底
+    const rows = stageRows([{ key: 'x', label: 'X', status: 'weird', elapsed_ms: null }]);
+    expect(rows[0].status).toBe('pending');
   });
 });

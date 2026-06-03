@@ -16,13 +16,28 @@ import { useEffect, useMemo, useState, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Zap, Server, Layers, GitPullRequest, RefreshCw, Radio, Clock,
-  FileText, ExternalLink, Activity, CircleDot,
+  FileText, ExternalLink, Activity, CircleDot, Maximize, Minimize,
 } from 'lucide-react';
 
 // ====================== 数据契约（对齐 /api/brain/warroom/feed）======================
 
 export type WarStatus = 'active' | 'done' | 'failed' | 'canceled';
 export type WarKind = 'sprint' | 'pipeline' | 'scraper' | 'task';
+export type StageStatus = 'done' | 'running' | 'pending' | 'failed';
+
+/** sprint LangGraph 单步（来自 PR-A：harness-pipelines join，仅 sprint 携带） */
+export interface FeedStage {
+  key: string;
+  label: string;
+  status: StageStatus;
+  elapsed_ms: number | null;
+}
+
+/** 单个 workstream 的验收结论（多 workstream sprint 才有） */
+export interface WsVerdict {
+  name: string;
+  verdict: string;
+}
 
 export interface FeedTask {
   id: string;
@@ -42,6 +57,26 @@ export interface FeedTask {
   /** harness_report findings 数量 */
   findings_count?: number | null;
   detail_route: string;
+
+  // ── 以下为 PR-A LangGraph 富数据（仅 sprint，PR-A 未合时全部缺省，可选读取）──
+  /** langgraph.current_node_label，如 "Proposer" / "Evaluator" */
+  node_label?: string | null;
+  /** GAN 对抗轮次 */
+  gan_rounds?: number | null;
+  /** Fix 修复轮次 */
+  fix_rounds?: number | null;
+  /** Reviewer 审查轮次 */
+  review_round?: number | null;
+  /** Evaluator 评估轮次 */
+  eval_round?: number | null;
+  /** 真实 stage 时间线（每步 label/status/耗时） */
+  stages?: FeedStage[] | null;
+  /** 多 workstream 各自验收结论 */
+  ws_verdicts?: WsVerdict[] | null;
+  /** 失败时的最后报错（pipeline 级，比 fail_reason 更细） */
+  last_error?: string | null;
+  /** 多个 PR 链接（一个 sprint 可能拆多 PR） */
+  pr_urls?: string[] | null;
 }
 
 export interface FeedGroup {
@@ -93,6 +128,70 @@ export function formatElapsed(ms: number | null): string {
   const d = Math.floor(h / 24);
   const rh = h % 24;
   return rh ? `${d}d${rh}h` : `${d}d`;
+}
+
+/**
+ * 历时显示守门：**仅** raw_status==='in_progress' 才显示历时。
+ * queued / completed / failed / blocked 等返回空串——避免展示误导性累加值
+ * （非进行中的任务 elapsed_ms 常是历史快照或排队等待时间，不代表真实运行时长）。
+ */
+export function elapsedForStatus(ms: number | null, rawStatus: string): string {
+  if (rawStatus !== 'in_progress') return '';
+  return formatElapsed(ms);
+}
+
+/**
+ * ISO → 绝对上海时间串（强制 Asia/Shanghai，不跟随浏览器时区）。
+ * 用于 relativeTime 旁的 title 悬停，让用户能看到精确时间。空/非法返回空串。
+ */
+export function absoluteShanghai(iso: string | null | undefined): string {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '';
+  // zh-CN + Asia/Shanghai → "2026/06/03 08:00:00"，统一成 "YYYY-MM-DD HH:MM:SS"
+  const parts = new Intl.DateTimeFormat('zh-CN', {
+    timeZone: 'Asia/Shanghai',
+    year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', second: '2-digit',
+    hour12: false,
+  }).formatToParts(d);
+  const get = (t: string) => parts.find((p) => p.type === t)?.value ?? '';
+  let hh = get('hour');
+  if (hh === '24') hh = '00'; // Intl 偶发 24:xx，归一
+  return `${get('year')}-${get('month')}-${get('day')} ${hh}:${get('minute')}:${get('second')}`;
+}
+
+/**
+ * 顶栏时钟：强制 Asia/Shanghai 的 HH:MM:SS（24 小时制），不跟随浏览器时区。
+ * 入参可选（默认 now），便于单测注入固定时刻。
+ */
+export function shanghaiClock(now: Date = new Date()): string {
+  const parts = new Intl.DateTimeFormat('zh-CN', {
+    timeZone: 'Asia/Shanghai',
+    hour: '2-digit', minute: '2-digit', second: '2-digit',
+    hour12: false,
+  }).formatToParts(now);
+  const get = (t: string) => parts.find((p) => p.type === t)?.value ?? '00';
+  let hh = get('hour');
+  if (hh === '24') hh = '00';
+  return `${hh}:${get('minute')}:${get('second')}`;
+}
+
+/**
+ * stages[] → 可渲染行（每步 key/label/status/elapsed 串）。
+ * null/undefined/空 安全返回 []；status 非法兜底为 'pending'。纯函数，便于单测。
+ */
+export function stageRows(
+  stages: FeedStage[] | null | undefined,
+): Array<{ key: string; label: string; status: StageStatus; elapsed: string }> {
+  if (!Array.isArray(stages)) return [];
+  const valid: StageStatus[] = ['done', 'running', 'pending', 'failed'];
+  return stages.map((s) => ({
+    key: s.key,
+    label: s.label,
+    status: valid.includes(s.status) ? s.status : 'pending',
+    elapsed: formatElapsed(s.elapsed_ms),
+  }));
 }
 
 /** ISO 时间 → 相对中文（刚刚 / N分钟前 / N小时前 / N天前）；空值返回空 */
@@ -256,7 +355,7 @@ function FeedRow({ task, active, onSelect }: { task: FeedTask; active: boolean; 
       <div className="flex-1 min-w-0">
         <div className={`truncate ${isActive ? 'font-medium text-slate-200' : meta.text}`}>{task.title}</div>
         <div className="flex items-center gap-2 mt-0.5">
-          <span className="text-slate-600">{rel}</span>
+          <span className="text-slate-600" title={absoluteShanghai(task.created_at)}>{rel}</span>
           {isActive && task.current_node && (
             <>
               <span className="text-slate-700">·</span>
@@ -375,6 +474,43 @@ function AreaBlock({
   );
 }
 
+// stage 状态 → 圆点色 + 文字色（静态类名，Tailwind JIT 可收录）
+const STAGE_DOT: Record<StageStatus, string> = {
+  done: 'bg-emerald-500',
+  running: 'bg-blue-400',
+  pending: 'bg-slate-700',
+  failed: 'bg-red-500',
+};
+const STAGE_TEXT: Record<StageStatus, string> = {
+  done: 'text-slate-400',
+  running: 'text-blue-300',
+  pending: 'text-slate-600',
+  failed: 'text-red-400',
+};
+
+/** sprint 真实 stage 时间线（用 stages[]，每步 label/status/耗时） */
+function StageTimeline({ stages }: { stages: FeedStage[] | null | undefined }) {
+  const rows = stageRows(stages);
+  if (rows.length === 0) return null;
+  return (
+    <div className="px-3 py-2 border-b border-slate-800/40 flex-shrink-0">
+      <div className="text-[9px] text-slate-600 mb-1.5 tracking-wider uppercase">Stage 时间线</div>
+      <div className="space-y-1">
+        {rows.map((r) => {
+          const running = r.status === 'running';
+          return (
+            <div key={r.key} className="flex items-center gap-2 text-[10px]">
+              <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${STAGE_DOT[r.status]} ${running ? 'wr-pulse' : ''}`} />
+              <span className={`flex-1 truncate ${STAGE_TEXT[r.status]} ${running ? 'font-medium' : ''}`}>{r.label}</span>
+              {r.elapsed && <span className="font-mono text-slate-600 flex-shrink-0">{r.elapsed}</span>}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 function DetailPanel({ task, onOpen }: { task: FeedTask | null; onOpen: (t: FeedTask) => void }) {
   if (!task) {
     return (
@@ -385,7 +521,12 @@ function DetailPanel({ task, onOpen }: { task: FeedTask | null; onOpen: (t: Feed
   }
   const meta = statusMeta(task.status);
   const isActive = task.status === 'active';
-  const elapsed = formatElapsed(task.elapsed_ms);
+  const isSprint = task.kind === 'sprint';
+  // 历时仅对真正运行中的任务显示，避免 queued/历史任务展示误导累加值
+  const elapsed = elapsedForStatus(task.elapsed_ms, task.raw_status);
+  const stages = task.stages ?? [];
+  const wsVerdicts = task.ws_verdicts ?? [];
+  const prUrls = (task.pr_urls && task.pr_urls.length ? task.pr_urls : (task.pr_url ? [task.pr_url] : []));
   return (
     <>
       <div className="px-3 py-2 border-b border-slate-800/60 flex-shrink-0">
@@ -411,22 +552,80 @@ function DetailPanel({ task, onOpen }: { task: FeedTask | null; onOpen: (t: Feed
         <div className="text-[11px] text-slate-300 leading-snug">{task.title}</div>
         <div className="text-[10px] text-slate-600 mt-0.5">
           {task.priority != null && <span>{formatPriority(task.priority)} · </span>}
-          {elapsed ? `${elapsed} 历时` : relativeTime(task.created_at)}
+          <span title={absoluteShanghai(task.created_at)}>
+            {elapsed ? `${elapsed} 历时` : relativeTime(task.created_at)}
+          </span>
         </div>
       </div>
 
-      {isActive && (task.progress_pct != null || task.current_node) && (
+      {isActive && (task.progress_pct != null || task.current_node || task.node_label) && (() => {
+        // 当前节点优先用 sprint 的 node_label（langgraph，更准），回落 current_node
+        const node = task.node_label || task.current_node;
+        return (
+          <div className="px-3 py-2 border-b border-slate-800/40 flex-shrink-0">
+            <div className="flex justify-between text-[9px] text-slate-600 mb-1">
+              <span>{node ? `当前节点 · ${node}` : '进行中'}</span>
+              {task.progress_pct != null && <span className="text-blue-400">{task.progress_pct}%</span>}
+            </div>
+            <div className="h-[2px] rounded-full bg-slate-800 overflow-hidden">
+              <div
+                className="h-full rounded-full bg-gradient-to-r from-blue-600 to-violet-600"
+                style={{ width: `${task.progress_pct ?? 8}%` }}
+              />
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* GAN/Fix 对抗轮次计数（仅 sprint，有数据时） */}
+      {isSprint && (task.gan_rounds != null || task.fix_rounds != null || task.review_round != null || task.eval_round != null) && (
         <div className="px-3 py-2 border-b border-slate-800/40 flex-shrink-0">
-          <div className="flex justify-between text-[9px] text-slate-600 mb-1">
-            <span>{task.current_node ? `当前节点 · ${task.current_node}` : '进行中'}</span>
-            {task.progress_pct != null && <span className="text-blue-400">{task.progress_pct}%</span>}
+          <div className="text-[9px] text-slate-600 mb-1.5 tracking-wider uppercase">对抗轮次</div>
+          <div className="flex flex-wrap gap-1.5">
+            {task.gan_rounds != null && (
+              <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-violet-500/10 text-violet-300 border border-violet-500/20">GAN ×{task.gan_rounds}</span>
+            )}
+            {task.fix_rounds != null && (
+              <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-300 border border-amber-500/20">Fix ×{task.fix_rounds}</span>
+            )}
+            {task.review_round != null && (
+              <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-cyan-500/10 text-cyan-300 border border-cyan-500/20">Review ×{task.review_round}</span>
+            )}
+            {task.eval_round != null && (
+              <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-blue-500/10 text-blue-300 border border-blue-500/20">Eval ×{task.eval_round}</span>
+            )}
           </div>
-          <div className="h-[2px] rounded-full bg-slate-800 overflow-hidden">
-            <div
-              className="h-full rounded-full bg-gradient-to-r from-blue-600 to-violet-600"
-              style={{ width: `${task.progress_pct ?? 8}%` }}
-            />
+        </div>
+      )}
+
+      {/* 真实 stage 时间线（仅 sprint，有 stages 数据时） */}
+      {isSprint && <StageTimeline stages={stages} />}
+
+      {/* 多 workstream 验收结论 */}
+      {isSprint && wsVerdicts.length > 0 && (
+        <div className="px-3 py-2 border-b border-slate-800/40 flex-shrink-0">
+          <div className="text-[9px] text-slate-600 mb-1.5 tracking-wider uppercase">Workstream 验收</div>
+          <div className="space-y-1">
+            {wsVerdicts.map((w, i) => {
+              const v = verdictMeta(w.verdict);
+              return (
+                <div key={`${w.name}-${i}`} className="flex items-center justify-between text-[10px] gap-2">
+                  <span className="text-slate-500 truncate">{w.name}</span>
+                  {v
+                    ? <span className={`text-[9px] tracking-wide px-1.5 py-px rounded font-bold flex-shrink-0 ${v.pill}`}>{v.label}</span>
+                    : <span className="text-slate-600 font-mono flex-shrink-0">{w.verdict}</span>}
+                </div>
+              );
+            })}
           </div>
+        </div>
+      )}
+
+      {/* 失败时显示 pipeline 级 last_error（比 fail_reason 更细，sprint 优先展示） */}
+      {task.status === 'failed' && task.last_error && (
+        <div className="px-3 py-2 border-b border-slate-800/40 flex-shrink-0">
+          <div className="text-[9px] text-slate-600 mb-1 tracking-wider uppercase">Pipeline 报错</div>
+          <div className="text-[10px] text-red-400/80 leading-relaxed break-words whitespace-pre-wrap">{task.last_error}</div>
         </div>
       )}
 
@@ -454,16 +653,18 @@ function DetailPanel({ task, onOpen }: { task: FeedTask | null; onOpen: (t: Feed
         >
           <FileText className="w-3 h-3" /> 打开详情
         </button>
-        {task.pr_url && (
+        {prUrls.map((url, i) => (
           <a
-            href={task.pr_url}
+            key={url}
+            href={url}
             target="_blank"
             rel="noreferrer"
+            title={url}
             className="flex items-center justify-center gap-1 px-2 text-[10px] text-blue-400 hover:text-blue-300 bg-blue-500/5 hover:bg-blue-500/10 border border-blue-500/20 rounded py-1.5 transition-colors"
           >
-            <ExternalLink className="w-3 h-3" /> PR
+            <ExternalLink className="w-3 h-3" /> PR{prUrls.length > 1 ? ` ${i + 1}` : ''}
           </a>
-        )}
+        ))}
       </div>
     </>
   );
@@ -504,6 +705,7 @@ export default function WarRoomPage() {
   const [selected, setSelected] = useState<FeedTask | null>(null);
   const [expandedKeys, setExpandedKeys] = useState<Set<string>>(new Set());
   const [clock, setClock] = useState('');
+  const [isFullscreen, setIsFullscreen] = useState(false);
 
   const fetchFeed = useCallback(async (silent = false) => {
     try {
@@ -536,14 +738,26 @@ export default function WarRoomPage() {
   }, [fetchFeed]);
 
   useEffect(() => {
-    const tick = () => {
-      const d = new Date();
-      const p = (n: number) => String(n).padStart(2, '0');
-      setClock(`${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`);
-    };
+    // 顶栏时钟强制上海时区（Asia/Shanghai），不跟随浏览器本地时区
+    const tick = () => setClock(shanghaiClock());
     tick();
     const t = setInterval(tick, 1000);
     return () => clearInterval(t);
+  }, []);
+
+  // 跟踪真实全屏状态（用户也可能按 ESC 退出，需同步图标）
+  useEffect(() => {
+    const onChange = () => setIsFullscreen(!!document.fullscreenElement);
+    document.addEventListener('fullscreenchange', onChange);
+    return () => document.removeEventListener('fullscreenchange', onChange);
+  }, []);
+
+  const toggleFullscreen = useCallback(() => {
+    if (document.fullscreenElement) {
+      document.exitFullscreen?.();
+    } else {
+      document.documentElement.requestFullscreen?.();
+    }
   }, []);
 
   const areas = data?.areas ?? [];
@@ -617,6 +831,13 @@ export default function WarRoomPage() {
           <span className="text-slate-600 font-mono">{clock}</span>
           <button onClick={() => fetchFeed()} className="text-slate-600 hover:text-slate-300 transition-colors" title="刷新">
             <RefreshCw className={`w-3 h-3 ${loading ? 'animate-spin' : ''}`} />
+          </button>
+          <button
+            onClick={toggleFullscreen}
+            className="text-slate-600 hover:text-slate-300 transition-colors"
+            title={isFullscreen ? '退出全屏' : '全屏'}
+          >
+            {isFullscreen ? <Minimize className="w-3 h-3" /> : <Maximize className="w-3 h-3" />}
           </button>
         </div>
       </div>
