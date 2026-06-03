@@ -10,7 +10,8 @@
 
 import { Router } from 'express';
 import pool from '../db.js';
-import { buildFeed, computeStats, shanghaiDay } from '../warroom-classify.js';
+import { buildFeed, computeStats, shanghaiDay, normalizeLg } from '../warroom-classify.js';
+import { buildPipelineRecord } from './status.js';
 
 const router = Router();
 
@@ -96,10 +97,48 @@ router.get('/feed', async (req, res) => {
       }
     } catch { /* harness_report 缺失不阻塞 feed */ }
 
+    // 3c. LangGraph 富数据：join harness-pipelines（同源逻辑，复用 status.js 的 buildPipelineRecord）。
+    //     join key：harness_initiative.id === harness-pipelines.planner_task_id。
+    //     仅对 feed 中的 sprint（harness_initiative）任务建映射；异常不阻塞 feed。
+    const lgByPlannerTaskId = {};
+    try {
+      const sprintIds = tasks
+        .filter((t) => t.task_type === 'harness_initiative')
+        .map((t) => t.id);
+      if (sprintIds.length > 0) {
+        // 一次性批量拉 langgraph_step 事件（与 /harness-pipelines 同源查询）
+        const eventsByTask = new Map();
+        const { rows: evRows } = await pool.query(
+          `SELECT task_id, payload, created_at
+           FROM cecelia_events
+           WHERE task_id = ANY($1::uuid[])
+             AND event_type = 'langgraph_step'
+           ORDER BY created_at ASC`,
+          [sprintIds]
+        );
+        for (const row of evRows) {
+          const tid = String(row.task_id);
+          if (!eventsByTask.has(tid)) eventsByTask.set(tid, []);
+          eventsByTask.get(tid).push(row);
+        }
+        // 用 planner task（即 feed 里的 harness_initiative task 行）+ 事件构造 pipeline 记录，再归一。
+        for (const t of tasks) {
+          if (t.task_type !== 'harness_initiative') continue;
+          const evs = eventsByTask.get(String(t.id)) || [];
+          // 老 pipeline（无 langgraph 事件）：legacyStageMap 省略，buildPipelineRecord 给 not_started 占位 stages。
+          const rec = buildPipelineRecord(t, evs, null);
+          lgByPlannerTaskId[t.id] = normalizeLg(rec);
+        }
+      }
+    } catch (e) {
+      // harness-pipelines join 失败不可阻塞 feed
+      console.error('[warroom/feed] langgraph join failed:', e.message);
+    }
+
     // 4. 装配
     const nowMs = Date.now();
     const todayStr = shanghaiDay(new Date().toISOString());
-    const areas = buildFeed(tasks, journeyNameById, progressById, nowMs, reportByInitiativeId);
+    const areas = buildFeed(tasks, journeyNameById, progressById, nowMs, reportByInitiativeId, lgByPlannerTaskId);
     const stats = computeStats(tasks, todayStr);
 
     res.json({ stats, areas, total: tasks.length, generated_at: new Date().toISOString() });

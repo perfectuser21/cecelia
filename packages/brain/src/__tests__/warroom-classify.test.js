@@ -4,7 +4,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   slug, classifyArea, classifyGroup, classifyKind, detailRoute, normStatus,
-  shanghaiDay, toFeedItem, buildFeed, computeStats,
+  shanghaiDay, toFeedItem, buildFeed, computeStats, normalizeLg,
 } from '../warroom-classify.js';
 
 describe('slug', () => {
@@ -179,6 +179,164 @@ describe('toFeedItem', () => {
     const item = toFeedItem(t, null, null, now, report);
     expect(item.pr_url).toBe('http://pr/own');
     expect(item.verdict).toBe('FAIL');
+  });
+});
+
+describe('normalizeLg（harness-pipelines 记录 → feed lg 契约）', () => {
+  const raw = {
+    planner_task_id: 't1',
+    elapsed_ms: 33,
+    langgraph: {
+      current_node: 'generator',
+      current_node_label: 'Generator',
+      gan_rounds: 2,
+      fix_rounds: 1,
+      review_round: 2,
+      eval_round: 0,
+      last_error: null,
+      pr_urls: [],
+      workstreams: ['ws1', 'ws2'],
+      ws_verdicts: ['queued', 'PASS'],
+    },
+    stages: [
+      { task_type: 'harness_contract_propose', label: 'Propose', status: 'completed' },
+      { task_type: 'harness_generate', label: 'Generate', status: 'in_progress' },
+      { task_type: 'harness_ci_watch', label: 'CI Watch', status: 'not_started' },
+      { task_type: 'harness_report', label: 'Report', status: 'failed' },
+    ],
+  };
+
+  it('归一 stages：key/label/status/elapsed_ms 四字段，status 收敛', () => {
+    const lg = normalizeLg(raw);
+    expect(lg.stages).toEqual([
+      { key: 'harness_contract_propose', label: 'Propose', status: 'done', elapsed_ms: null },
+      { key: 'harness_generate', label: 'Generate', status: 'running', elapsed_ms: null },
+      { key: 'harness_ci_watch', label: 'CI Watch', status: 'pending', elapsed_ms: null },
+      { key: 'harness_report', label: 'Report', status: 'failed', elapsed_ms: null },
+    ]);
+  });
+
+  it('归一 ws_verdicts：workstreams + ws_verdicts 拉链成 {name,verdict}', () => {
+    const lg = normalizeLg(raw);
+    expect(lg.ws_verdicts).toEqual([
+      { name: 'ws1', verdict: 'queued' },
+      { name: 'ws2', verdict: 'PASS' },
+    ]);
+  });
+
+  it('透传 node_label / 轮次 / elapsed_ms', () => {
+    const lg = normalizeLg(raw);
+    expect(lg.node_label).toBe('Generator');
+    expect(lg.gan_rounds).toBe(2);
+    expect(lg.fix_rounds).toBe(1);
+    expect(lg.review_round).toBe(2);
+    expect(lg.eval_round).toBe(0);
+    expect(lg.current_node).toBe('generator');
+    expect(lg.elapsed_ms).toBe(33);
+  });
+
+  it('空 ws → ws_verdicts 为 null；空 stages → stages 为 null', () => {
+    const lg = normalizeLg({ planner_task_id: 't', langgraph: { workstreams: [], ws_verdicts: [] }, stages: [] });
+    expect(lg.ws_verdicts).toBeNull();
+    expect(lg.stages).toBeNull();
+  });
+});
+
+describe('toFeedItem + lg 合并（仅 sprint）', () => {
+  const now = new Date('2026-06-02T04:00:00Z').getTime();
+  const lg = {
+    node_label: 'Generator',
+    current_node: 'generator',
+    gan_rounds: 2,
+    fix_rounds: 1,
+    review_round: 2,
+    eval_round: 0,
+    last_error: 'boom',
+    pr_urls: ['http://pr/1'],
+    ws_verdicts: [{ name: 'ws1', verdict: 'PASS' }],
+    stages: [{ key: 'harness_generate', label: 'Generate', status: 'running', elapsed_ms: null }],
+    elapsed_ms: 33,
+  };
+
+  it('sprint：lg 字段全部合并，current_node/elapsed 被 lg 覆盖', () => {
+    const t = {
+      id: 't1', task_type: 'harness_initiative', status: 'in_progress',
+      title: 'x', started_at: '2026-06-02T03:00:00Z', payload: {},
+    };
+    // progress 给一个不同的 node + elapsed 来自 started_at，确认 lg 覆盖
+    const item = toFeedItem(t, null, { pct: 40, node: 'ganLoop' }, now, null, lg);
+    expect(item.node_label).toBe('Generator');
+    expect(item.gan_rounds).toBe(2);
+    expect(item.fix_rounds).toBe(1);
+    expect(item.review_round).toBe(2);
+    expect(item.eval_round).toBe(0);
+    expect(item.last_error).toBe('boom');
+    expect(item.pr_urls).toEqual(['http://pr/1']);
+    expect(item.ws_verdicts).toEqual([{ name: 'ws1', verdict: 'PASS' }]);
+    expect(item.stages).toEqual([{ key: 'harness_generate', label: 'Generate', status: 'running', elapsed_ms: null }]);
+    // lg 覆盖 current_node 与 elapsed_ms
+    expect(item.current_node).toBe('generator');
+    expect(item.elapsed_ms).toBe(33);
+  });
+
+  it('sprint 无 lg：契约字段为 null，current_node/elapsed 回退原值', () => {
+    const t = {
+      id: 't2', task_type: 'harness_initiative', status: 'in_progress',
+      title: 'x', started_at: '2026-06-02T03:00:00Z', payload: {},
+    };
+    const item = toFeedItem(t, null, { pct: 40, node: 'ganLoop' }, now, null, null);
+    expect(item.node_label).toBeNull();
+    expect(item.gan_rounds).toBeNull();
+    expect(item.fix_rounds).toBeNull();
+    expect(item.review_round).toBeNull();
+    expect(item.eval_round).toBeNull();
+    expect(item.stages).toBeNull();
+    expect(item.ws_verdicts).toBeNull();
+    expect(item.last_error).toBeNull();
+    expect(item.pr_urls).toBeNull();
+    // 无 lg：current_node 回退 progress.node，elapsed 回退 now-started
+    expect(item.current_node).toBe('ganLoop');
+    expect(item.elapsed_ms).toBe(3600_000);
+  });
+
+  it('非 sprint 任务：即使传了 lg 也不挂这些字段（全 null）', () => {
+    const t = { id: 't3', task_type: 'dev', status: 'in_progress', title: 'x', started_at: '2026-06-02T03:00:00Z', payload: {} };
+    const item = toFeedItem(t, null, null, now, null, lg);
+    expect(item.node_label).toBeNull();
+    expect(item.stages).toBeNull();
+    expect(item.ws_verdicts).toBeNull();
+    expect(item.gan_rounds).toBeNull();
+    expect(item.last_error).toBeNull();
+    expect(item.pr_urls).toBeNull();
+  });
+});
+
+describe('buildFeed + lgByPlannerTaskId', () => {
+  const now = Date.now();
+  const lgTasks = [
+    { id: 'a', task_type: 'harness_initiative', status: 'in_progress', title: 'brain x', created_at: '2026-06-02T01:00:00Z', started_at: '2026-06-02T00:00:00Z', payload: { base_repo: 'cecelia.git' } },
+    { id: 'd', task_type: 'dev', status: 'in_progress', title: 'fix', created_at: '2026-06-02T00:30:00Z', payload: { base_repo: 'cecelia.git' } },
+  ];
+  const lgMap = {
+    a: {
+      node_label: 'Evaluator', current_node: 'evaluator', gan_rounds: 3, fix_rounds: 0,
+      review_round: 3, eval_round: 1, last_error: null, pr_urls: [], ws_verdicts: null,
+      stages: [{ key: 'harness_generate', label: 'Generate', status: 'done', elapsed_ms: null }],
+      elapsed_ms: 999,
+    },
+  };
+
+  it('sprint 命中 lg → 挂 node_label/stages；dev 任务即使无 lg 也不带', () => {
+    const areas = buildFeed(lgTasks, {}, {}, now, {}, lgMap);
+    const cec = areas.find(a => a.areaKey === 'cecelia');
+    const all = cec.groups.flatMap(g => g.tasks);
+    const a = all.find(t => t.id === 'a');
+    const d = all.find(t => t.id === 'd');
+    expect(a.node_label).toBe('Evaluator');
+    expect(a.stages[0].key).toBe('harness_generate');
+    expect(a.elapsed_ms).toBe(999);
+    expect(d.node_label).toBeNull();
+    expect(d.stages).toBeNull();
   });
 });
 
