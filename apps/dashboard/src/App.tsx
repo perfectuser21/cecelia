@@ -15,8 +15,6 @@ const Route: FC<RouteProps> = _RouteBase as unknown as FC<RouteProps>;
 // A1 (Day 2 Epic A): Task PRD viewer at /tasks/:id/prd
 // 用户从 PR body 的 "📋 PRD: <link>" 点进来，看任务的 PRD 全文
 const TaskPrdPage = lazy(() => import('./pages/tasks/TaskPrdPage'));
-// ws4: HarnessDetailPage — /harness/:id initiative 实时 Streaming 详情页
-const HarnessDetailPage = lazy(() => import('./pages/harness/HarnessDetailPage'));
 // clips: 静态路由，不依赖动态配置加载
 const ContentClipsPage = lazy(() => import('./pages/clips/ContentClipsPage'));
 const ContentClipDetailPage = lazy(() => import('./pages/clips/ContentClipDetailPage'));
@@ -286,15 +284,6 @@ function AppContent() {
               element={
                 <Suspense fallback={<div className="p-8 text-center text-gray-500">Loading…</div>}>
                   <TaskPrdPage />
-                </Suspense>
-              }
-            />
-            {/* ws4: HarnessDetailPage — /harness/:id initiative 实时 Streaming 详情页 */}
-            <Route
-              path="/harness/:id"
-              element={
-                <Suspense fallback={<div className="p-8 text-center text-gray-500">Loading…</div>}>
-                  <HarnessDetailPage />
                 </Suspense>
               }
             />

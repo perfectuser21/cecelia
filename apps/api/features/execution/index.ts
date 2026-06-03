@@ -28,14 +28,10 @@ const manifest: FeatureManifest = {
     { path: '/n8n/workflows/:instance/:id', component: 'N8nWorkflowDetail' },
     { path: '/n8n/live-status', component: 'N8nLiveStatus' },
     { path: '/n8n/live-status/:instance/:executionId', component: 'N8nLiveStatusDetail' },
-    // Harness Pipeline
-    {
-      path: '/harness-pipeline',
-      component: 'HarnessPipelinePage',
-      navItem: { label: 'Harness Pipeline', icon: 'GitBranch', group: 'system', order: 30 },
-    },
-    { path: '/harness-pipeline/:id', component: 'HarnessPipelineDetailPage' },
-    { path: '/harness-pipeline/:id/step/:step', component: 'HarnessPipelineStepPage' },
+    // Harness Pipeline 旧列表已退役（被战情室 /pipeline 取代）→ redirect 收口，避免老链接 404
+    { path: '/harness-pipeline', redirect: '/pipeline' },
+    { path: '/harness-pipeline/:id', redirect: '/pipeline' },
+    { path: '/harness-pipeline/:id/step/:step', redirect: '/pipeline' },
     // Workers
     {
       path: '/workers',
@@ -68,9 +64,6 @@ const manifest: FeatureManifest = {
     N8nLiveStatus: () => import('./pages/N8nLiveStatus'),
     N8nLiveStatusDetail: () => import('./pages/N8nLiveStatusDetail'),
     WorkersOverview: () => import('./pages/WorkersOverview'),
-    HarnessPipelinePage: () => import('./pages/HarnessPipelinePage'),
-    HarnessPipelineDetailPage: () => import('./pages/HarnessPipelineDetailPage'),
-    HarnessPipelineStepPage: () => import('./pages/HarnessPipelineStepPage'),
   },
 };
 
