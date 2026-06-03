@@ -61,6 +61,64 @@ export function classifyGroup(task, area, journeyName) {
   return { groupKey: 'uncategorized', groupName: '未分类' };
 }
 
+// ───────────────────────── Line 中心化（PR-A 纯函数）─────────────────────────
+
+// journey 名字 → ZenithJoy 的关键词（对齐 CLAUDE.md Line 映射 + spec §归类）
+const ZENITHJOY_NAME_RE = /智能发布|视频剪辑|运营中枢|客户|获客|私域|发布|剪辑|Line\s*0/i;
+
+/**
+ * 按 journey 名字把它归到一个 Area（纯函数，对齐 spec §journey→area 归类）。
+ * @param {string} name  journey.name
+ * @returns {'zenithjoy'|'cecelia'}
+ */
+export function classifyJourneyArea(name) {
+  const n = String(name || '');
+  if (ZENITHJOY_NAME_RE.test(n)) return 'zenithjoy';
+  // MJ / Harness / Agent / Cecelia / 开发闭环 … 以及无名兜底 → cecelia
+  return 'cecelia';
+}
+
+// step.status 视为"已完成"的取值集合
+const STEP_DONE_STATUSES = new Set(['done', 'completed']);
+
+/**
+ * 统计一条线的 roadmap 进度（纯函数）。
+ * @param {Array<{status:string}>} steps  journey_steps 行
+ * @returns {{step_total:number, step_done:number}}
+ */
+export function computeStepProgress(steps) {
+  const arr = Array.isArray(steps) ? steps : [];
+  let step_done = 0;
+  for (const s of arr) {
+    if (STEP_DONE_STATUSES.has(String(s?.status || '').toLowerCase())) step_done++;
+  }
+  return { step_total: arr.length, step_done };
+}
+
+/**
+ * 一条 journey 用于匹配 task.payload.journey_id 的所有键（id + notion_id 双格式）。
+ * @param {{id?:string, notion_id?:string}} journey
+ * @returns {string[]}
+ */
+export function journeyIdKeys(journey) {
+  const keys = [];
+  if (journey?.id) keys.push(String(journey.id));
+  if (journey?.notion_id) keys.push(String(journey.notion_id));
+  return keys;
+}
+
+/**
+ * 判断 task 是否关联到给定 journey（payload.journey_id 命中 id 或 notion_id）。
+ * @param {{payload?:{journey_id?:string}}} task
+ * @param {{id?:string, notion_id?:string}} journey
+ * @returns {boolean}
+ */
+export function taskMatchesJourney(task, journey) {
+  const jid = task?.payload?.journey_id;
+  if (jid == null) return false;
+  return journeyIdKeys(journey).includes(String(jid));
+}
+
 /**
  * 任务种类 → 用于前端标签 + 决定下钻详情页
  * @param {string} taskType
