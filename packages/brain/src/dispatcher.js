@@ -370,6 +370,26 @@ export async function dispatchNextTask(goalIds) {
       }
     }
 
+    // 3c''. Global harness_initiative concurrent limit — OOM 防护（OPEN-1）
+    //       dispatcher 仅有 per-project initiative lock，无全局上限 → 4-5 条并发
+    //       pipeline-heavy GAN/planner 撑爆 OrbStack VM (exit137)。
+    //       HARNESS_GLOBAL_CONCURRENCY env 可调（默认 2）。
+    if (INITIATIVE_LOCK_TASK_TYPES.includes(candidate.task_type)) {
+      const GLOBAL_HARNESS_LIMIT = parseInt(process.env.HARNESS_GLOBAL_CONCURRENCY || '2', 10);
+      const globalCountResult = await pool.query(
+        `SELECT COUNT(*) FROM tasks
+         WHERE status = 'in_progress'
+           AND task_type = ANY($1::text[])`,
+        [INITIATIVE_LOCK_TASK_TYPES]
+      );
+      const globalRunning = parseInt(globalCountResult.rows[0]?.count || '0', 10);
+      if (globalRunning >= GLOBAL_HARNESS_LIMIT) {
+        tickLog(`[dispatch] 全局 harness 并发上限 ${GLOBAL_HARNESS_LIMIT}，当前 ${globalRunning}，跳过派发: ${candidate.title}`);
+        await recordDispatchResult(pool, false, 'harness_global_limit');
+        return { dispatched: false, reason: 'harness_global_limit', running: globalRunning, limit: GLOBAL_HARNESS_LIMIT, task_id: candidate.id, actions };
+      }
+    }
+
     // 3c'. C1 Atomic claim: 确保没被其他 runner（如外部 autonomous agent）抢先 claim
     //      放在 pre-flight / initiative lock 之后、mark in_progress 之前，
     //      让 UPDATE...WHERE claimed_by IS NULL 的原子性承担"同一 task 只能派给一个 runner"的保证。

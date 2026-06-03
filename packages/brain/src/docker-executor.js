@@ -547,13 +547,18 @@ export async function writeDockerCallback(task, runId, checkpointId, result) {
 
   const stderrTail = result.stderr ? result.stderr.slice(-2000) : null;
   const isOomKilled = result.exit_code === EXIT_SIGKILL && !result.timed_out;
+  const _outputText = (result.stdout || '') + '\n' + (result.stderr || '');
+  const isAuthFailure = result.exit_code !== 0 && !isOomKilled && !result.timed_out && !isEnvBroken &&
+    /not\s+logged\s+in|403/i.test(_outputText);
   const failureClass = result.timed_out
     ? 'docker_timeout'
     : (isEnvBroken
         ? 'env_skill_missing'
         : (isOomKilled
             ? 'docker_oom_killed'
-            : (result.exit_code !== 0 ? 'docker_nonzero_exit' : null)));
+            : (isAuthFailure
+                ? 'docker_auth_failure'
+                : (result.exit_code !== 0 ? 'docker_nonzero_exit' : null))));
 
   // exit=137 Alert：cgroup OOM 杀容器（不是手动 timeout）→ 资源不够或任务超标。
   // P1 级别：单次失败不阻塞，但累积应该被关注。fire-and-forget 不阻塞 callback 写入。
