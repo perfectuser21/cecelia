@@ -544,8 +544,27 @@ export function createGanContractNodes(executor, ctx) {
     }
 
     // B54: 结构化 verdict 缺失（reviewer 没把 verdict/rubric_scores 写进 brain 读的 .brain-result.json，
-    // checkpoint 实证 verdict 通道全程空）→ 从散文反馈 contract-review-feedback.md 降级解析，
-    // 恢复 reviewer 真实决定，避免 GAN 永不收敛。rubric 仍是首选权威，散文仅在结构化彻底缺失时兜底。
+    // checkpoint 实证 verdict 通道全程空）→ 两级降级兜底：
+    // 1. stdout JSON 提取（B55：reviewer stdout 有完整 JSON 但未写文件时直接用，避免重跑容器）
+    // 2. 散文反馈 contract-review-feedback.md（B54 原逻辑）
+    if (verdict !== 'APPROVED' && verdict !== 'REVISION') {
+      // B55: reviewer stdout 里分别提取 verdict 字段 + rubric_scores 对象，避免解析完整外层 JSON
+      const stdoutVerdictMatch = (result.stdout || '').match(/"verdict"\s*:\s*"(APPROVED|REVISION)"/);
+      const stdoutRubricMatch  = (result.stdout || '').match(/"rubric_scores"\s*:\s*(\{[^}]+\})/);
+      if (stdoutVerdictMatch && stdoutRubricMatch) {
+        try {
+          const extractedRubric = JSON.parse(stdoutRubricMatch[1]);
+          if (extractedRubric && Object.keys(extractedRubric).length > 0) {
+            const extractedVerdict = computeVerdictFromRubric(extractedRubric, currentRound) || stdoutVerdictMatch[1];
+            if (extractedVerdict === 'APPROVED' || extractedVerdict === 'REVISION') {
+              verdict = extractedVerdict;
+              resultData = { ...resultData, rubric_scores: extractedRubric };
+              console.warn(`[harness-gan] round=${currentRound} B55: 从 stdout 提取 verdict=${verdict}，跳过 retry`);
+            }
+          }
+        } catch { /* rubric JSON 格式异常，继续走下一级 fallback */ }
+      }
+    }
     if (verdict !== 'APPROVED' && verdict !== 'REVISION') {
       const proseVerdict = await readReviewerFeedback(worktreePath, sprintDir).catch(() => null);
       if (proseVerdict) {
