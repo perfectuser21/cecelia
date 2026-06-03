@@ -393,3 +393,86 @@ describe('computeStats', () => {
     expect(s.pr_this_month).toBe(1); // 仅 task2 在 6 月（task4 PR 是 5 月）
   });
 });
+
+// ───────────────────────── Line 中心化（PR-A）─────────────────────────
+import {
+  classifyJourneyArea, computeStepProgress, journeyIdKeys, taskMatchesJourney,
+} from '../warroom-classify.js';
+
+describe('classifyJourneyArea', () => {
+  it('智能发布 → zenithjoy', () => {
+    expect(classifyJourneyArea('智能发布')).toBe('zenithjoy');
+  });
+  it('视频剪辑 → zenithjoy', () => {
+    expect(classifyJourneyArea('视频剪辑')).toBe('zenithjoy');
+  });
+  it('ZenithJoy 运营中枢 → zenithjoy', () => {
+    expect(classifyJourneyArea('ZenithJoy 运营中枢')).toBe('zenithjoy');
+  });
+  it('客户智能获客路径 → zenithjoy', () => {
+    expect(classifyJourneyArea('客户智能获客路径')).toBe('zenithjoy');
+  });
+  it('客户私域 AI 接管 → zenithjoy', () => {
+    expect(classifyJourneyArea('客户私域 AI 接管')).toBe('zenithjoy');
+  });
+  it('客户首次成功路径 → zenithjoy（含"客户"）', () => {
+    expect(classifyJourneyArea('客户首次成功路径')).toBe('zenithjoy');
+  });
+  it('Line 02 客户智能获客 → zenithjoy（含 Line 0）', () => {
+    expect(classifyJourneyArea('Line 02 客户智能获客路径')).toBe('zenithjoy');
+  });
+  it('MJ1 · 主理人开发闭环 → cecelia', () => {
+    expect(classifyJourneyArea('MJ1 · 主理人开发闭环')).toBe('cecelia');
+  });
+  it('Cecelia Harness Pipeline → cecelia', () => {
+    expect(classifyJourneyArea('Cecelia Harness Pipeline')).toBe('cecelia');
+  });
+  it('Agent 系统 hardening → cecelia', () => {
+    expect(classifyJourneyArea('Agent 系统 hardening')).toBe('cecelia');
+  });
+  it('空/无名 → cecelia 兜底', () => {
+    expect(classifyJourneyArea('')).toBe('cecelia');
+    expect(classifyJourneyArea(null)).toBe('cecelia');
+    expect(classifyJourneyArea(undefined)).toBe('cecelia');
+  });
+});
+
+describe('computeStepProgress', () => {
+  it('done 状态计入 step_done', () => {
+    const steps = [
+      { status: 'done' }, { status: 'planned' }, { status: 'in_progress' }, { status: 'done' },
+    ];
+    expect(computeStepProgress(steps)).toEqual({ step_total: 4, step_done: 2 });
+  });
+  it('空数组 → 0/0', () => {
+    expect(computeStepProgress([])).toEqual({ step_total: 0, step_done: 0 });
+    expect(computeStepProgress(null)).toEqual({ step_total: 0, step_done: 0 });
+  });
+  it('completed 也算 done', () => {
+    expect(computeStepProgress([{ status: 'completed' }, { status: 'done' }]))
+      .toEqual({ step_total: 2, step_done: 2 });
+  });
+});
+
+describe('journeyIdKeys / taskMatchesJourney', () => {
+  const journey = { id: 'uuid-1', notion_id: 'notion-1' };
+  it('journeyIdKeys 同时含 id 和 notion_id', () => {
+    expect(journeyIdKeys(journey).sort()).toEqual(['notion-1', 'uuid-1']);
+  });
+  it('journeyIdKeys 缺 notion_id 只含 id', () => {
+    expect(journeyIdKeys({ id: 'uuid-1', notion_id: null })).toEqual(['uuid-1']);
+  });
+  it('task.payload.journey_id === journey.id 匹配', () => {
+    expect(taskMatchesJourney({ payload: { journey_id: 'uuid-1' } }, journey)).toBe(true);
+  });
+  it('task.payload.journey_id === journey.notion_id 匹配', () => {
+    expect(taskMatchesJourney({ payload: { journey_id: 'notion-1' } }, journey)).toBe(true);
+  });
+  it('无关 journey_id 不匹配', () => {
+    expect(taskMatchesJourney({ payload: { journey_id: 'other' } }, journey)).toBe(false);
+  });
+  it('task 无 journey_id 不匹配', () => {
+    expect(taskMatchesJourney({ payload: {} }, journey)).toBe(false);
+    expect(taskMatchesJourney({}, journey)).toBe(false);
+  });
+});
