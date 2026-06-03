@@ -1,0 +1,26 @@
+{
+  "initiative_id": "pending",
+  "journey_type": "autonomous",
+  "journey_type_reason": "仅涉及 packages/brain/ 路由层实现，无 UI 交互，curl localhost:5221 本地验证即可",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "新建 harness.routes.js 实现 GET /echo 端点并挂载到 server.js",
+      "scope": "新建 packages/brain/src/routes/harness.routes.js，注册 GET /echo 路由，读取 req.query.msg 返回 {ok:true, echo:<msg>}；在 server.js 中导入并挂载到 /api/brain/harness",
+      "dod": [
+        "[BEHAVIOR] GET /api/brain/harness/echo?msg=hello 返回 HTTP 200 + {ok:true, echo:'hello'}",
+        "[BEHAVIOR] response schema keys 精确等于 ['echo','ok']，无多余字段",
+        "[BEHAVIOR] msg 未传时返回 HTTP 200，ok=true，echo=''或null",
+        "[BEHAVIOR] msg 含中文时 URL decode 后原样返回（PRD 边界情况）",
+        "[ARTIFACT] packages/brain/src/routes/harness.routes.js 文件存在且注册了 GET /echo 路由"
+      ],
+      "files": [
+        "packages/brain/src/routes/harness.routes.js",
+        "packages/brain/server.js"
+      ],
+      "depends_on": [],
+      "complexity": "S",
+      "estimated_minutes": 30
+    }
+  ]
+}
