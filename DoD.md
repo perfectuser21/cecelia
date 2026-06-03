@@ -1,26 +1,30 @@
-# DoD：executor.js 两个机械 bug 修复
+# DoD：harness_initiative 全局 fresh-start 上限
 
-Brain task: ff3a8ec2-4f1e-40f4-a746-db97d22742e7
-分支: cp-0603091820-executor-claim-report-fix
+Brain task: 65b4e93a-731a-4a45-a595-42761a893757
+分支: cp-06030939-max-fresh-starts
 
-## Bug A — claim 锁泄漏（重启后任务死锁 queued）
+## 背景
 
-- [x] [ARTIFACT] `syncOrphanTasksOnStartup` 的 harness_initiative requeue UPDATE 清空 claim 三件套
-  Test: node -e "const c=require('fs').readFileSync('packages/brain/src/executor.js','utf8');if(!c.includes('claimed_by = NULL'))process.exit(1)"
-- [x] [BEHAVIOR] requeue 分支 UPDATE 同时设 claimed_by/claimed_at/started_at = NULL（防 dispatch-helpers `AND claimed_by IS NULL` 永选不出该任务）
-  Test: manual:node -e "const c=require('fs').readFileSync('packages/brain/src/executor.js','utf8');const m=c.match(/LANGGRAPH_TYPES\.has\(task\.task_type\)[\s\S]{0,600}?resume_from_checkpoint: true/);if(!m||!/claimed_by = NULL/.test(m[0])||!/claimed_at = NULL/.test(m[0])||!/started_at = NULL/.test(m[0]))process.exit(1)"
+`runHarnessInitiativeRouter` 遇坏 checkpoint（`channel_values.error` 有值）时升 `attemptN` 做
+fresh-start 从头重跑 planner。`execution_attempts` 一直涨却**从无上限判定** → 本机 Docker 抽风时
+无限重跑、20+ planner 容器、永不收敛。本 PR 加全局上限，把"无限 fresh-start"变成"有界 → terminal failed"。
 
-## Bug B — report 用 slash command（容器内空 SKILL 静默降级）
+## 改动
 
-- [x] [ARTIFACT] `_prepareHarnessReportPrompt` 的 harness_report 路径改用 `loadSkillContent('harness-report')` inline SKILL
-  Test: node -e "const c=require('fs').readFileSync('packages/brain/src/executor.js','utf8');if(!c.includes(\"loadSkillContent('harness-report')\"))process.exit(1)"
-- [x] [BEHAVIOR] executor.js import harness-shared 且 harness_report 路径调用 loadSkillContent('harness-report')，prompt 不再以裸 slash 开头
-  Test: manual:node -e "const c=require('fs').readFileSync('packages/brain/src/executor.js','utf8');if(!/loadSkillContent\(['\"]harness-report['\"]\)/.test(c)||!/from '\.\/harness-shared\.js'/.test(c))process.exit(1)"
+- [x] [ARTIFACT] 导出命名常量 `MAX_INITIATIVE_FRESH_STARTS`（默认 3），便于测试引用
+  Test: node -e "const c=require('fs').readFileSync('packages/brain/src/executor.js','utf8');if(!/export const MAX_INITIATIVE_FRESH_STARTS = 3/.test(c))process.exit(1)"
+
+- [x] [BEHAVIOR] `execution_attempts >= MAX_INITIATIVE_FRESH_STARTS` → 不 invoke graph，标 status='failed' + failure_class='max_fresh_starts_exceeded'，返回 `terminal:true`
+  Test: manual:node -e "const c=require('fs').readFileSync('packages/brain/src/executor.js','utf8');if(!/\(task\.execution_attempts \|\| 0\) >= MAX_INITIATIVE_FRESH_STARTS/.test(c))process.exit(1);if(!/max_fresh_starts_exceeded[\s\S]{0,200}terminal: true/.test(c))process.exit(1);if(!/status='failed'/.test(c))process.exit(1)"
+
+- [x] [BEHAVIOR] resume 分支：`existing.channel_values?.error?.terminal === true` → 同样视为 terminal（Wave 2b 钩子，不 fresh-start）
+  Test: manual:node -e "const c=require('fs').readFileSync('packages/brain/src/executor.js','utf8');if(!/error\?\.terminal === true/.test(c))process.exit(1);if(!/checkpoint_terminal/.test(c))process.exit(1)"
 
 ## 验收
 
-- [x] failing test 先 commit（commit-1 RED），修复让 test 变绿（commit-2 GREEN）
-- [x] 两个 regression test 永久留 CI：executor-startup-sync.test.js（Bug A）+ executor-report-prompt.test.js（Bug B）
-- [x] Brain 版本四处同步 bump（1.230.15 → 1.230.16）
+- [x] failing test 先写（4 用例 RED），实现后全绿（GREEN）
+- [x] regression test 永久留 CI：`packages/brain/src/__tests__/harness-max-fresh-starts.test.js`
+- [x] 既有 `harness-resume-checkpoint-error-state.test.js` 6/6 仍绿（无回归，execution_attempts<上限不受影响）
+- [x] 未碰节点 catch→error→END 逻辑 / GAN / interrupt()（Wave 2b 范畴）
+- [x] Brain 版本四处同步 bump（1.230.16 → 1.230.17）
 - [x] DevGate 通过（facts-check / version-sync）
-- [x] 本地 brain-unit 相关测试全绿（CI 全绿由 engine-pr-watchdog 轮询确认）
