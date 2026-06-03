@@ -195,59 +195,8 @@ async function selectBestBridge() {
   return selected.url;
 }
 
-// 机器注册表（Machine Registry）
-// tags 决定机器能执行哪类任务：
-//   has_git     = 需要代码/git 访问（US M4 独有）
-//   general     = 通用任务，任意机器均可
-//   has_browser = 需要 Browser/CDP 访问（将来扩展）
-const MACHINE_REGISTRY = [
-  {
-    id: 'us-m4',
-    url: process.env.EXECUTOR_BRIDGE_URL || 'http://localhost:3457',
-    type: 'claude_code',
-    tags: ['has_git', 'general'],
-  },
-  {
-    id: 'xian-m4',
-    url: XIAN_CODEX_BRIDGE_URL,
-    type: 'codex',
-    tags: ['general'],
-  },
-  {
-    id: 'xian-m1',
-    url: XIAN_M1_BRIDGE_URL,
-    type: 'codex',
-    tags: ['general'],
-  },
-];
-
-/**
- * 从机器注册表中选择最适合的机器
- * @param {string[]} requiredTags - 任务所需的 capability tags
- * @returns {Promise<Object>} - 最佳机器配置（fallback 到 us-m4）
- */
-async function selectBestMachine(requiredTags) {
-  const candidates = MACHINE_REGISTRY.filter(m =>
-    requiredTags.every(tag => m.tags.includes(tag))
-  );
-
-  if (candidates.length === 0) {
-    console.warn(`[executor] selectBestMachine: 无机器匹配 tags=${JSON.stringify(requiredTags)}，降级到 us-m4`);
-    return MACHINE_REGISTRY.find(m => m.id === 'us-m4') || MACHINE_REGISTRY[0];
-  }
-
-  if (candidates.length === 1) return candidates[0];
-
-  // 多台候选时，优先在 Codex 机器之间负载均衡
-  const codexCandidates = candidates.filter(m => m.type === 'codex');
-  if (codexCandidates.length > 0) {
-    const bestUrl = await selectBestBridge();
-    const matched = codexCandidates.find(m => m.url === bestUrl);
-    return matched || codexCandidates[0];
-  }
-
-  return candidates[0];
-}
+// 静态机器注册表 + 选机函数已删除（phase 2 单元2，死代码：派发链从未调用，仅自引用）。
+// 机器+执行器路由统一走 routing/resolve-executor.js（DB 驱动）。
 
 // ==================== Input Validation ====================
 
@@ -4061,9 +4010,6 @@ export {
   // v15: Token-aware slot allocation
   getTokenPressure,
   TOKEN_PRESSURE_THRESHOLD,
-  // v16: Machine Registry + capability tags routing
-  MACHINE_REGISTRY,
-  selectBestMachine,
   // v17: Docker Sandbox executor (HARNESS_DOCKER_ENABLED=true) — spawn() 已成唯一入口，
   // 仅保留 callback / 资源 tier / 探活辅助函数对外。
   writeDockerCallback,
