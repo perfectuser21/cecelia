@@ -1,0 +1,30 @@
+{
+  "initiative_id": "pending",
+  "journey_type": "autonomous",
+  "journey_type_reason": "纯 Brain 后端路由新增，无前端交互，无外部 agent 协议变更，curl localhost:5221 本地验证即可",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "harness.js 新增 GET /healthz 路由，返回 {ok:true, service:'harness', ts:ISO8601}",
+      "scope": "packages/brain/src/routes/harness.js 新增 router.get('/healthz') handler；packages/brain/src/routes/__tests__/harness.healthz.test.js 新增 supertest 单测（验证 200/ok/service/ts/keys/禁用字段）",
+      "dod": [
+        "[BEHAVIOR] GET /api/brain/harness/healthz 返回 HTTP 200",
+        "[BEHAVIOR] 响应体 ok 字段为布尔 true",
+        "[BEHAVIOR] 响应体 service 字段为字面量 \"harness\"",
+        "[BEHAVIOR] 响应体 ts 字段为有效 ISO8601 string",
+        "[BEHAVIOR] 响应体 keys 严格等于 [\"ok\",\"service\",\"ts\"]",
+        "[BEHAVIOR] 禁用字段 status/healthy/name/timestamp 均不存在",
+        "[BEHAVIOR] error path — 路由未注册时 curl -sf 返回非零退出码",
+        "[ARTIFACT] packages/brain/src/routes/harness.js 包含 /healthz 路由",
+        "[ARTIFACT] packages/brain/src/routes/__tests__/harness.healthz.test.js 存在"
+      ],
+      "files": [
+        "packages/brain/src/routes/harness.js",
+        "packages/brain/src/routes/__tests__/harness.healthz.test.js"
+      ],
+      "depends_on": [],
+      "complexity": "S",
+      "estimated_minutes": 30
+    }
+  ]
+}
