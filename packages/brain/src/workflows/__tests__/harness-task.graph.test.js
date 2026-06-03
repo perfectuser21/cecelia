@@ -556,6 +556,73 @@ describe('mergePrNode', () => {
     expect(delta.status).toBe('merged');
     expect(mockCleanupWorktree).not.toHaveBeenCalled();
   });
+
+  // BEHIND 限次重试
+  it('BEHIND + rebase_attempted 未设 → update-branch，rebase_attempted 变 1', async () => {
+    const execFile = vi.fn()
+      .mockRejectedValueOnce(new Error('out of date with the base branch'))
+      .mockResolvedValueOnce({ stdout: '', stderr: '' });
+    const delta = await mergePrNode({ pr_url: 'https://x/pull/1' }, { execFile });
+    expect(delta.ci_status).toBe('pending');
+    expect(delta.rebase_attempted).toBe(1);
+    expect(execFile).toHaveBeenCalledTimes(2);
+  });
+
+  it('BEHIND + rebase_attempted=1 → update-branch，rebase_attempted 变 2', async () => {
+    const execFile = vi.fn()
+      .mockRejectedValueOnce(new Error('head ref is out of date'))
+      .mockResolvedValueOnce({ stdout: '', stderr: '' });
+    const delta = await mergePrNode({ pr_url: 'https://x/pull/1', rebase_attempted: 1 }, { execFile });
+    expect(delta.ci_status).toBe('pending');
+    expect(delta.rebase_attempted).toBe(2);
+  });
+
+  it('BEHIND + rebase_attempted=2 → update-branch，rebase_attempted 变 3', async () => {
+    const execFile = vi.fn()
+      .mockRejectedValueOnce(new Error('must be up to date'))
+      .mockResolvedValueOnce({ stdout: '', stderr: '' });
+    const delta = await mergePrNode({ pr_url: 'https://x/pull/1', rebase_attempted: 2 }, { execFile });
+    expect(delta.ci_status).toBe('pending');
+    expect(delta.rebase_attempted).toBe(3);
+  });
+
+  it('BEHIND + rebase_attempted=3 → 超限返回 error，不再调 update-branch', async () => {
+    const execFile = vi.fn()
+      .mockRejectedValueOnce(new Error('out of date with the base branch'));
+    const delta = await mergePrNode({ pr_url: 'https://x/pull/1', rebase_attempted: 3 }, { execFile });
+    expect(delta.error).toBeDefined();
+    expect(delta.error.node).toBe('merge_pr');
+    expect(delta.error.message).toMatch(/rebase/i);
+    expect(execFile).toHaveBeenCalledTimes(1);
+  });
+
+  // CONFLICTING 诊断终止
+  it('CONFLICTING → 立即返回 error，不调 update-branch', async () => {
+    const execFile = vi.fn()
+      .mockRejectedValueOnce(new Error('pull request is in conflicting state'));
+    const delta = await mergePrNode({ pr_url: 'https://x/pull/1' }, { execFile });
+    expect(delta.error).toBeDefined();
+    expect(delta.error.node).toBe('merge_pr');
+    expect(delta.error.message).toMatch(/conflict/i);
+    expect(execFile).toHaveBeenCalledTimes(1);
+  });
+
+  it('CONFLICTING → error.reason = merge_conflict（可诊断字段）', async () => {
+    const execFile = vi.fn()
+      .mockRejectedValueOnce(new Error('merge conflict detected'));
+    const delta = await mergePrNode({ pr_url: 'https://x/pull/1' }, { execFile });
+    expect(delta.error).toBeDefined();
+    expect(delta.error.reason).toBe('merge_conflict');
+  });
+
+  it('CONFLICTING 即使 rebase_attempted=0 也不重试', async () => {
+    const execFile = vi.fn()
+      .mockRejectedValueOnce(new Error('has conflicts that must be resolved'));
+    const delta = await mergePrNode({ pr_url: 'https://x/pull/1', rebase_attempted: 0 }, { execFile });
+    expect(delta.error).toBeDefined();
+    expect(delta.error.reason).toBe('merge_conflict');
+    expect(execFile).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe('fixDispatchNode', () => {
