@@ -55,8 +55,10 @@ vi.mock('../../docker-executor.js', () => ({
   writeDockerCallback: (...a) => mockWriteCallback(...a),
   executeInDocker: (...a) => mockSpawn(...a),
 }));
+const mockSpawnBridge = vi.fn();
 vi.mock('../../spawn/detached.js', () => ({
   spawnDockerDetached: (...a) => mockSpawnDetached(...a),
+  spawnCodexBridgeDetached: (...a) => mockSpawnBridge(...a),
 }));
 vi.mock('../../shepherd.js', () => ({
   checkPrStatus: (...a) => mockCheckPr(...a),
@@ -228,6 +230,93 @@ describe('spawnNode (Layer 3 spawn-and-interrupt)', () => {
     });
     expect(delta.containerId).toBeDefined();
     expect(delta.error).toBeUndefined();
+  });
+});
+
+// Unit 3 + 4: harness 收编进 resolveExecutor（删 HARNESS_XIAN_ENABLED 全局开关）。
+// claude route → docker（spawnDockerDetached）；codex route → POST route.url/run（spawnCodexBridgeDetached）。
+describe('spawnNode — resolveExecutor 路由（Unit 3 收编 harness）', () => {
+  beforeEach(() => {
+    mockSpawnDetached.mockReset();
+    mockSpawnBridge.mockReset();
+    mockEnsureWorktree.mockReset();
+    mockResolveToken.mockReset();
+    mockPoolQuery.mockReset();
+    mockPoolQuery.mockResolvedValue({ rows: [] });
+    mockEnsureWorktree.mockResolvedValue('/wt');
+    mockResolveToken.mockResolvedValue('ghp');
+    mockSpawnDetached.mockResolvedValue({});
+    mockSpawnBridge.mockResolvedValue({ status: 'accepted', job_id: 'j1' });
+  });
+
+  it('源码不再引用 HARNESS_XIAN_ENABLED 全局开关', () => {
+    const fs = require('node:fs');
+    const path = require('node:path');
+    const src = fs.readFileSync(path.resolve(__dirname, '..', 'harness-task.graph.js'), 'utf8');
+    expect(src).not.toMatch(/HARNESS_XIAN_ENABLED/);
+    expect(src).not.toMatch(/HARNESS_XIAN_BRIDGE_URL/);
+  });
+
+  it('claude route → 走 spawnDockerDetached（docker），不调 bridge', async () => {
+    const resolveExecutor = vi.fn().mockResolvedValue({
+      machineId: 'us-m4', executor: 'claude', url: 'http://localhost:3457',
+    });
+    const delta = await spawnNode(
+      { task: { id: 's', payload: {} }, initiativeId: 'i' },
+      { resolveExecutor },
+    );
+    expect(resolveExecutor).toHaveBeenCalledOnce();
+    expect(mockSpawnDetached).toHaveBeenCalledTimes(1);
+    expect(mockSpawnBridge).not.toHaveBeenCalled();
+    expect(delta.containerId).toBeDefined();
+  });
+
+  it('codex route → POST route.url/run 走 spawnCodexBridgeDetached，payload 带 repo + mode=codex', async () => {
+    const resolveExecutor = vi.fn().mockResolvedValue({
+      machineId: 'xian-m4', executor: 'codex', url: 'http://host.docker.internal:13458',
+    });
+    const delta = await spawnNode(
+      {
+        task: { id: 's', task_type: 'harness_task', payload: { base_repo: 'cecelia' } },
+        initiativeId: 'i',
+        baseRepo: 'perfectuser21/cecelia',
+      },
+      { resolveExecutor },
+    );
+    expect(resolveExecutor).toHaveBeenCalledOnce();
+    expect(mockSpawnBridge).toHaveBeenCalledTimes(1);
+    expect(mockSpawnDetached).not.toHaveBeenCalled();
+    const [bridgeUrl, bridgePayload] = mockSpawnBridge.mock.calls[0];
+    // POST 到 route.url + /run
+    expect(bridgeUrl).toBe('http://host.docker.internal:13458/run');
+    expect(bridgePayload.mode).toBe('codex');
+    // repo: state.baseRepo 优先
+    expect(bridgePayload.repo).toBe('perfectuser21/cecelia');
+    expect(bridgePayload.callback_url).toContain('host.docker.internal:5221');
+    expect(bridgePayload.task_id).toBe(delta.containerId);
+    expect(bridgePayload.skill).toBe('harness-generator');
+    // 仍写 thread_lookup
+    expect(delta.containerId).toBeDefined();
+  });
+
+  it('codex route repo 回退 payload.base_repo（state.baseRepo 缺省）', async () => {
+    const resolveExecutor = vi.fn().mockResolvedValue({
+      machineId: 'xian-m4', executor: 'codex', url: 'http://host.docker.internal:13458',
+    });
+    await spawnNode(
+      { task: { id: 's', payload: { base_repo: 'perfectuser21/zenithjoy-workspace' } }, initiativeId: 'i' },
+      { resolveExecutor },
+    );
+    const [, bridgePayload] = mockSpawnBridge.mock.calls[0];
+    expect(bridgePayload.repo).toBe('perfectuser21/zenithjoy-workspace');
+  });
+
+  it('缺省（无注入 resolveExecutor）+ 空 DB → 默认 claude/docker（不回归）', async () => {
+    // 不注入 resolveExecutor → 走真实路由；db.js mock 返回空 rows → FALLBACK us-m4/claude → docker
+    const delta = await spawnNode({ task: { id: 's', payload: {} }, initiativeId: 'i' });
+    expect(mockSpawnDetached).toHaveBeenCalledTimes(1);
+    expect(mockSpawnBridge).not.toHaveBeenCalled();
+    expect(delta.containerId).toBeDefined();
   });
 });
 
