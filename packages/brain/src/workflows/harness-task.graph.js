@@ -600,6 +600,136 @@ export function routeAfterEvaluate(state) {
   return 'fix';
 }
 
+// ─── 确定性 ARTIFACT 门（fidelity-gate 修复，run 926779b5/#3276 实证）─────────────
+//
+// 根因：pre-merge evaluator 是 LLM agent，local_api 模式打活 brain（跑 main、且重部署中
+// 不可达），结构上验不了 PR 分支的新实现，还会 hand-wave PASS；brain 侧没有任何确定性
+// "实现真存在" 检查 → "功能没建也 merge"。
+//
+// 修法：evaluator 之外，brain 自己 checkout PR 分支 + 跑 contract-dod.md 的 [ARTIFACT]
+// Test 命令（那些 `node -e ...includes()/accessSync()` 确定性文件检查）。任一失败 → 强制
+// verdict=FAIL，无视 LLM。不依赖活 brain、不依赖 LLM 诚实。
+// fail-open 原则：门本身跑不起来（无合同/无 worktree/无 ARTIFACT 条目）→ ran=false，放过
+// 给 LLM evaluator，不误杀。只有命令"确定性地失败"才强制 FAIL。
+
+/**
+ * 从 contract-dod.md 提取 [ARTIFACT] 条目的 Test: 命令（排除 [BEHAVIOR]）。
+ * @param {string} md
+ * @returns {string[]}
+ */
+export function extractArtifactTests(md) {
+  const lines = (md || '').split('\n');
+  const cmds = [];
+  let inArtifact = false;
+  for (const line of lines) {
+    const bullet = line.match(/^\s*-\s*(?:\[[ xX]\]\s*)?\[(ARTIFACT|BEHAVIOR)\]/);
+    if (bullet) { inArtifact = bullet[1] === 'ARTIFACT'; continue; }
+    if (/^\s*#{1,6}\s/.test(line)) { inArtifact = false; continue; }
+    const t = line.match(/^\s*Test:\s*(.+)$/);
+    if (t && inArtifact) {
+      const cmd = t[1].trim().replace(/^manual:/, '').trim();
+      if (cmd) cmds.push(cmd);
+    }
+  }
+  return cmds;
+}
+
+/**
+ * 逐条跑 ARTIFACT 命令，任一非零退出 → ok=false。
+ * @param {object} args
+ * @param {string[]} args.commands
+ * @param {string} args.cwd
+ * @param {Function} [args.execShell]  (cmd, {cwd, timeout}) => Promise，非零退出须 reject
+ * @param {number} [args.timeoutMs]
+ * @returns {Promise<{ok:boolean, failures:{cmd:string,error:string}[]}>}
+ */
+export async function runArtifactGate({ commands, cwd, execShell, timeoutMs = 30000 }) {
+  const run = execShell || ((cmd, o) => execFileDefault('bash', ['-c', cmd], { cwd: o.cwd, timeout: o.timeout }));
+  const failures = [];
+  for (const cmd of commands || []) {
+    try {
+      await run(cmd, { cwd, timeout: timeoutMs });
+    } catch (e) {
+      const detail = (e?.stderr || e?.message || 'non-zero exit').toString().slice(0, 300);
+      failures.push({ cmd, error: detail });
+    }
+  }
+  return { ok: failures.length === 0, failures };
+}
+
+/**
+ * 编排：checkout PR 分支到隔离 worktree → 读 PR 分支的 contract-dod.md → 跑 [ARTIFACT] 命令。
+ * fail-open：缺 prBranch/worktreePath/合同/ARTIFACT 条目 → ran=false。
+ *
+ * @param {object} args  {prBranch, sprintDir, worktreePath, githubToken}
+ * @param {object} [deps]  注入 git/IO 依赖（测试用）
+ * @returns {Promise<{ran:boolean, ok?:boolean, failures?:object[]}>}
+ */
+export async function verifyContractArtifactsForPr(
+  { prBranch, sprintDir, worktreePath },
+  deps = {}
+) {
+  if (!prBranch || !worktreePath) return { ran: false };
+  const execFile = deps.execFile || execFileDefault;
+  const runGate = deps.runGate || ((commands, cwd) => runArtifactGate({ commands, cwd }));
+  const sd = sprintDir || 'sprints';
+
+  // fetch PR 分支（确保 origin/<prBranch> 在本地）
+  try {
+    await execFile('git', ['-C', worktreePath, 'fetch', 'origin', prBranch], { timeout: 60_000 });
+  } catch (e) {
+    console.warn(`[artifact-gate] fetch ${prBranch} 失败（fail-open）：${e.message}`);
+    return { ran: false };
+  }
+
+  // 读 PR 分支上的 contract-dod.md
+  const readContract = deps.readContract || (async () => {
+    const { stdout } = await execFile(
+      'git', ['-C', worktreePath, 'show', `origin/${prBranch}:${sd}/contract-dod.md`],
+      { timeout: 20_000, maxBuffer: 10 * 1024 * 1024 }
+    );
+    return stdout;
+  });
+  let contractMd;
+  try {
+    contractMd = await readContract();
+  } catch (e) {
+    console.warn(`[artifact-gate] 读 ${sd}/contract-dod.md 失败（fail-open）：${e.message}`);
+    return { ran: false };
+  }
+
+  const commands = extractArtifactTests(contractMd);
+  if (commands.length === 0) {
+    console.warn('[artifact-gate] 合同无 [ARTIFACT] 条目（fail-open）');
+    return { ran: false };
+  }
+
+  // checkout PR 分支到隔离临时 worktree
+  const tmp = deps.tmpDir || `/tmp/harness-artifact-gate-${crypto.randomUUID().slice(0, 8)}`;
+  const mkWorktree = deps.mkWorktree || (async () => {
+    await execFile('git', ['-C', worktreePath, 'worktree', 'add', '--detach', '--force', tmp, `origin/${prBranch}`], { timeout: 120_000 });
+    return tmp;
+  });
+  const rmWorktree = deps.rmWorktree || (async (p) => {
+    await execFile('git', ['-C', worktreePath, 'worktree', 'remove', '--force', p], { timeout: 60_000 }).catch(() => {});
+  });
+
+  let checkoutDir;
+  try {
+    checkoutDir = await mkWorktree();
+  } catch (e) {
+    console.warn(`[artifact-gate] worktree add ${prBranch} 失败（fail-open）：${e.message}`);
+    return { ran: false };
+  }
+
+  try {
+    const { ok, failures } = await runGate(commands, checkoutDir);
+    return { ran: true, ok, failures };
+  } finally {
+    await rmWorktree(checkoutDir);
+  }
+}
+
 // evaluateContractNode — 单一 evaluator pre-merge gate（对齐 Anthropic 官方 Harness 设计）。
 // Anthropic 原文：一个 Sprint = 一个 Generator + 一个 Evaluator，evaluate 在 merge 之前跑，
 // PASS → merge；FAIL → 带具体反馈打回 Generator 重写（无限对抗）。
@@ -657,8 +787,35 @@ export async function evaluateContractNode(state, opts = {}) {
     }
   }
 
-  const skillContent = loadSkillContent('harness-evaluator');
   const sprintDir = payload.sprint_dir || 'sprints';
+
+  // ── 确定性 ARTIFACT 门（fidelity-gate 修复）──────────────────────────────────
+  // LLM evaluator 之前先跑 brain 侧确定性检查：checkout PR 分支 + 跑 contract-dod.md 的
+  // [ARTIFACT] Test 命令。任一确定性失败 → 直接 FAIL（挡 merge、打回 generator），不浪费
+  // LLM spawn。门跑不起来（fail-open）→ 继续走 LLM evaluator。
+  const verifyArtifacts = opts.verifyArtifacts || verifyContractArtifactsForPr;
+  try {
+    const gate = await verifyArtifacts(
+      { prBranch: prBranchEnv, sprintDir, worktreePath: state.worktreePath },
+      {}
+    );
+    if (gate && gate.ran && gate.ok === false) {
+      const detail = (gate.failures || [])
+        .map((f) => `• ${f.cmd} → ${f.error}`)
+        .join('\n')
+        .slice(0, 800);
+      console.error(`[evaluator] ARTIFACT 门 FAIL（实现未满足合同 ARTIFACT，挡 merge）pr=${prBranchEnv}:\n${detail}`);
+      return {
+        evaluate_verdict: 'FAIL',
+        evaluate_error: `ARTIFACT 门失败（PR 分支未满足合同 [ARTIFACT] 要求，功能可能未真实现）：\n${detail}`,
+      };
+    }
+  } catch (gateErr) {
+    // 门本身异常 → fail-open，不误杀，继续走 LLM evaluator
+    console.warn(`[evaluator] ARTIFACT 门执行异常（fail-open）：${gateErr.message}`);
+  }
+
+  const skillContent = loadSkillContent('harness-evaluator');
   const evaluatePrompt = [
     '你是 harness-evaluator agent。按下面 SKILL 指令工作。',
     '',
