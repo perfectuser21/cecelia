@@ -440,6 +440,30 @@ export async function pollCiNode(state, opts = {}) {
 
 const BEHIND_RE = /behind|out of date|outdated|head ref is out of date|must be up to date|not mergeable/i;
 
+// 分支保护要求 up-to-date：高合并频率下 PR 会反复 BEHIND main（churn）。
+// 限次重试 update-branch，避免无限刷；达上限带 reason 终止。
+// 参见 feedback_pr_stuck_behind_churn：禁止本地 rebase 抢 worker，只用服务端 update-branch。
+const MAX_REBASE_ATTEMPTS = 3;
+
+// 读取 PR 权威 mergeable 状态，区分 BEHIND（可 update-branch 解）vs CONFLICTING（真冲突，解不了）。
+// 失败时返回 UNKNOWN，调用方回落到 merge 错误文本判定。
+async function queryMergeState(execFn, prUrl) {
+  try {
+    const { stdout } = await execFn(
+      'gh',
+      ['pr', 'view', prUrl, '--json', 'mergeable,mergeStateStatus'],
+      { timeout: 30_000 }
+    );
+    const data = JSON.parse(stdout || '{}');
+    return {
+      mergeable: data.mergeable || 'UNKNOWN',
+      mergeStateStatus: data.mergeStateStatus || 'UNKNOWN',
+    };
+  } catch {
+    return { mergeable: 'UNKNOWN', mergeStateStatus: 'UNKNOWN' };
+  }
+}
+
 export async function mergePrNode(state, opts = {}) {
   if (state.status === 'merged') return { status: 'merged' };
   const execFn = opts.execFile || execFileDefault;
@@ -469,27 +493,46 @@ export async function mergePrNode(state, opts = {}) {
   } catch (err) {
     const msg = err.message || '';
 
-    if (state.rebase_attempted) {
-      console.error(`[merge_pr] merge failed after rebase pr=${prUrl}: ${msg}`);
-      return { error: { node: 'merge_pr', message: `merge failed after rebase: ${msg}` } };
-    }
-
+    // 已被外部路径合并 → 视为成功（幂等）
     const ALREADY_MERGED_RE = /already merged|not open|pull request.*closed/i;
     if (ALREADY_MERGED_RE.test(msg)) {
       console.log(`[merge_pr] PR already merged, treating as success pr=${prUrl}`);
       try { if (state.worktreePath) await cleanupHarnessWorktree(state.worktreePath); } catch {}
       return { status: 'merged', ci_status: 'merged', merged_at: new Date().toISOString() };
     }
-    if (!BEHIND_RE.test(msg)) {
+
+    // 查权威 mergeable 状态，区分 BEHIND vs CONFLICTING（真冲突）
+    const { mergeable, mergeStateStatus } = await queryMergeState(execFn, prUrl);
+
+    // CONFLICTING（真冲突）：update-branch 解不了 → 带可诊断 reason 终止，绝不静默干等到超时。
+    const isConflicting = mergeable === 'CONFLICTING' || mergeStateStatus === 'DIRTY';
+    if (isConflicting) {
+      const reason = `PR conflicts with base branch (mergeable=${mergeable}, state=${mergeStateStatus}); `
+        + `update-branch cannot auto-resolve merge conflicts — needs fix round / manual resolution`;
+      console.error(`[merge_pr] CONFLICTING pr=${prUrl}: ${reason}`);
+      return { error: { node: 'merge_pr', reason: 'conflicting', message: reason } };
+    }
+
+    // BEHIND：落后 main（分支保护要求 up-to-date）→ 服务端 update-branch，限次重试。
+    const isBehind = mergeStateStatus === 'BEHIND' || BEHIND_RE.test(msg);
+    if (!isBehind) {
       console.error(`[merge_pr] non-recoverable merge error pr=${prUrl}: ${msg}`);
       return { error: { node: 'merge_pr', message: msg } };
     }
 
-    console.warn(`[merge_pr] branch behind, calling update-branch pr=${prUrl}`);
+    const attempts = state.rebase_attempted || 0;
+    if (attempts >= MAX_REBASE_ATTEMPTS) {
+      const reason = `branch still BEHIND after ${attempts} update-branch attempts `
+        + `(max ${MAX_REBASE_ATTEMPTS}); aborting to avoid infinite rebase churn`;
+      console.error(`[merge_pr] ${reason} pr=${prUrl}`);
+      return { error: { node: 'merge_pr', reason: 'rebase_exhausted', message: reason } };
+    }
+
+    console.warn(`[merge_pr] branch behind (attempt ${attempts + 1}/${MAX_REBASE_ATTEMPTS}), calling update-branch pr=${prUrl}`);
     try {
       await execFn('gh', ['pr', 'update-branch', prUrl, '--rebase'], { timeout: 30_000 });
       console.log(`[merge_pr] update-branch ok, re-queuing CI poll pr=${prUrl}`);
-      return { ci_status: 'pending', rebase_attempted: 1 };
+      return { ci_status: 'pending', rebase_attempted: attempts + 1 };
     } catch (updateErr) {
       console.error(`[merge_pr] update-branch failed pr=${prUrl}: ${updateErr.message}`);
       return { error: { node: 'merge_pr', message: `update-branch failed: ${updateErr.message}` } };
