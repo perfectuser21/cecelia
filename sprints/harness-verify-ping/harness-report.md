@@ -1,4 +1,4 @@
-━━━ Sprint: 验收run: GET /api/brain/harness/ping 健康端点  PR #3270  2026-06-03 ━━━
+━━━ Sprint: OPEN2验收run-06031535: harness/healthz 端点  PR #3276  2026-06-03 ━━━
 
 PIPELINE  A+B+C phases · 0 eval rounds · - · $0
 
