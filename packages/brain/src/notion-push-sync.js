@@ -25,6 +25,11 @@ function buildRichText(text) {
   return [{ type: 'text', text: { content: String(text).slice(0, 2000) } }];
 }
 
+// 404 "Could not find page" = stale relation ID，永久标记为已同步阻止无限重试
+function isStaleRelationError(err) {
+  return err.message && err.message.includes('Could not find page');
+}
+
 async function logSyncError(pool, errMsg) {
   await pool.query(
     `INSERT INTO notion_sync_log (direction, records_synced, records_failed, error_message)
@@ -51,9 +56,7 @@ async function pushJourneys(pool, token) {
         Maturity: { select: { name: j.maturity } },
         Status: { select: { name: j.status || 'active' } },
       };
-      if (j.e2e_test_path) {
-        properties['E2E Test Path'] = { rich_text: buildRichText(j.e2e_test_path) };
-      }
+      // E2E Test Path 字段在 Notion Journey DB 不存在，已移除推送
       if (j.area_notion_id) {
         properties['Area'] = { relation: [{ id: j.area_notion_id }] };
       }
@@ -114,6 +117,9 @@ async function pushJourneyFeatures(pool, token) {
     } catch (err) {
       console.warn(`[notion-push-sync] feature ${f.id} 推送失败: ${err.message}`);
       await logSyncError(pool, err.message);
+      if (isStaleRelationError(err)) {
+        await pool.query('UPDATE journey_features SET notion_synced_at=NOW() WHERE id=$1', [f.id]).catch(() => {});
+      }
     }
   }
 }
@@ -151,6 +157,9 @@ async function pushIssues(pool, token) {
     } catch (err) {
       console.warn(`[notion-push-sync] issue ${issue.id} 推送失败: ${err.message}`);
       await logSyncError(pool, err.message);
+      if (isStaleRelationError(err)) {
+        await pool.query('UPDATE issues SET notion_synced_at=NOW() WHERE id=$1', [issue.id]).catch(() => {});
+      }
     }
   }
 }
@@ -167,7 +176,7 @@ async function pushSkillRegistry(pool, token) {
         Status:      { select: { name: s.status || 'active' } },
       };
       if (s.location) {
-        properties['Source'] = { rich_text: buildRichText(s.location) };
+        properties['Source'] = { select: { name: s.location } };
       }
       const page = await notionReq(token, '/pages', 'POST', {
         parent: { database_id: SKILL_REGISTRY_DB },
@@ -196,8 +205,8 @@ async function pushJourneySteps(pool, token) {
   for (const s of rows) {
     try {
       const properties = {
-        Name:   { title: [{ text: { content: s.name } }] },
-        Status: { select: { name: s.status || 'planned' } },
+        Name: { title: [{ text: { content: s.name } }] },
+        // Status 字段在 Notion Steps DB 不存在，已移除推送
       };
       if (s.description) {
         properties['Description'] = { rich_text: buildRichText(s.description) };
