@@ -147,7 +147,7 @@ describe('triggerCeceliaRun: 显式 executor override 分支（phase 2 单元 1�
     );
   });
 
-  it('resolveExecutor 抛错 → 任务标 failed + 不派发（loud-fail）', async () => {
+  it('resolveExecutor 抛错 → 任务标 failed + 不派发（loud-fail, terminal）', async () => {
     resolveExecutorMock.mockRejectedValue(
       new ExecutorRouteErrorMock("显式路由失败：机器 'xian-m4' 未部署 executor 'claude'"),
     );
@@ -167,7 +167,58 @@ describe('triggerCeceliaRun: 显式 executor override 分支（phase 2 单元 1�
     // 既没派 codex 也没进 US claude
     expect(codexFetchCalls().length).toBe(0);
     expect(traceStepMock).not.toHaveBeenCalled();
-    expect(res.success).toBe(false);
+    // [BLOCKER 2] terminal：返回 success:true（dispatcher 见 success → 不回退 queued、不污染熔断器），
+    // 但带 failed 标记，executor 已把任务标 failed。
+    expect(res.success).toBe(true);
+    expect(res.failed).toBe(true);
+    expect(res.executor).toBe('route-rejected');
+    expect(res.taskId).toBe(task.id);
+  });
+
+  it('[BLOCKER 1] claude override + getTaskLocation=xian → 短路 location 路由，落 US claude（不被西安劫持）', async () => {
+    // 天然 location='xian' 的 task_type（如 codex_dev/explore），显式 payload.executor='claude'
+    // 必须落 US claude，绝不能被下方 if(location==='xian') 二次劫持送到西安 codex。
+    resolveExecutorMock.mockResolvedValue({
+      machineId: 'mac-mini-m4-us',
+      executor: 'claude',
+      url: 'http://localhost:3457',
+    });
+    getTaskLocationMock.mockReturnValue('xian'); // 天然西安，但显式要 claude
+    const task = {
+      id: 'ffffffff-0000-1111-2222-333333333333',
+      task_type: 'codex_dev',
+      title: 't',
+      payload: { machine: 'mac-mini-m4-us', executor: 'claude' },
+    };
+
+    await triggerCeceliaRun(task);
+
+    expect(resolveExecutorMock).toHaveBeenCalledWith(task);
+    // 关键断言：codex bridge 完全没被调（没被西安劫持）
+    expect(codexFetchCalls().length).toBe(0);
+    // 落到 US claude 默认派发
+    expect(traceStepMock).toHaveBeenCalled();
+    expect(updateTaskStatusMock).not.toHaveBeenCalledWith(
+      task.id, 'failed', expect.anything(),
+    );
+  });
+
+  it('[MINOR 3] harness_initiative 带 payload.executor → 仍走 harness graph，不进 override 分支', async () => {
+    // harness 任务误传 payload.executor 不能绕过 harness graph。
+    const task = {
+      id: '11111111-2222-3333-4444-555555555555',
+      task_type: 'harness_initiative',
+      title: 't',
+      payload: { executor: 'codex', machine: 'xian-m4' },
+    };
+
+    const res = await triggerCeceliaRun(task);
+
+    // override 分支被排除：resolveExecutor 不被调
+    expect(resolveExecutorMock).not.toHaveBeenCalled();
+    // 走 harness graph（runHarnessInitiativeRouter 在本测试环境会抛错被 catch，
+    // 但返回 success:true + initiative:true 是 harness 块的标志）
+    expect(res.initiative).toBe(true);
   });
 
   it('无 payload.machine/executor → location=xian 仍 triggerCodexBridge（默认 xian bridge），不调 resolveExecutor（回归保护）', async () => {

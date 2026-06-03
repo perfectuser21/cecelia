@@ -74,6 +74,20 @@ console.log('死代码已删除');
 " >/dev/null 2>&1 && ok "executor.js 不再导出 MACHINE_REGISTRY/selectBestMachine" \
   || fail "executor.js 仍导出死代码（或加载失败）"
 
+# ── 5. override 分支硬化回归（BLOCKER 1/2 + MINOR 3 源码守卫）──────────
+#   - forceUsClaude 短路：claude override 不被 location 分支二次劫持
+#   - terminal loud-fail：catch 返回 success:true（dispatcher 不回退 queued）
+#   - harness 排除：override 条件含 task_type !== 'harness_initiative'
+echo "── grep: override 分支硬化守卫（源码级回归）──"
+EXEC="$BRAIN_ROOT/src/executor.js"
+guard_ok=1
+grep -q "forceUsClaude" "$EXEC" || { echo "缺 forceUsClaude 短路 flag"; guard_ok=0; }
+grep -q "!forceUsClaude && location === 'xian'" "$EXEC" || { echo "location=xian 未被 forceUsClaude 守卫"; guard_ok=0; }
+grep -q "success: true, taskId: task.id, failed: true, executor: 'route-rejected'" "$EXEC" || { echo "loud-fail 非 terminal（success!=true）"; guard_ok=0; }
+grep -q "task.task_type !== 'harness_initiative'" "$EXEC" || { echo "override 条件未排除 harness_initiative"; guard_ok=0; }
+[[ "$guard_ok" -eq 1 ]] && ok "override 分支硬化守卫齐全（forceUsClaude + terminal + harness 排除）" \
+  || fail "override 分支硬化守卫缺失"
+
 echo ""
 echo "── 结果：PASS=$PASS FAIL=$FAIL ──"
 [[ "$FAIL" -eq 0 ]] && exit 0 || exit 1
