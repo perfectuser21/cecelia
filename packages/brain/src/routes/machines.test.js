@@ -119,6 +119,80 @@ describe('machines routes', () => {
     });
   });
 
+  describe('POST /api/brain/machines', () => {
+    it('returns 400 when name not provided', async () => {
+      const res = await request(makeApp())
+        .post('/api/brain/machines')
+        .send({ metadata: { tags: ['general'] } });
+      expect(res.status).toBe(400);
+      expect(res.body).toHaveProperty('error');
+    });
+
+    it('returns 409 when machine name already exists', async () => {
+      mockQuery.mockResolvedValueOnce({ rows: [{ id: 'existing-uuid' }] }); // dup check
+      const res = await request(makeApp())
+        .post('/api/brain/machines')
+        .send({ name: 'mac-mini-m4-xian', metadata: { tags: ['general'] } });
+      expect(res.status).toBe(409);
+      expect(res.body).toHaveProperty('error');
+    });
+
+    it('inserts system_registry row type=machine and returns created machine', async () => {
+      const createdRow = {
+        id: 'new-uuid',
+        name: 'mac-mini-m5-haikou',
+        description: '海口 Mac mini M5',
+        status: 'active',
+        metadata: {
+          tailscale_ip: '100.99.0.1',
+          tags: ['general'],
+          executors: [{ executor: 'codex', url: 'http://host.docker.internal:13460', default: true }],
+        },
+        updated_at: '2026-06-03T00:00:00Z',
+      };
+      mockQuery.mockResolvedValueOnce({ rows: [] });          // dup check → none
+      mockQuery.mockResolvedValueOnce({ rows: [createdRow] }); // INSERT ... RETURNING
+
+      const res = await request(makeApp())
+        .post('/api/brain/machines')
+        .send({
+          name: 'mac-mini-m5-haikou',
+          description: '海口 Mac mini M5',
+          metadata: createdRow.metadata,
+        });
+
+      expect(res.status).toBe(201);
+      expect(res.body.name).toBe('mac-mini-m5-haikou');
+      expect(res.body.metadata.executors[0].executor).toBe('codex');
+      // INSERT 应写 type='machine'
+      const insertCall = mockQuery.mock.calls.find(c => /INSERT INTO system_registry/.test(c[0]));
+      expect(insertCall).toBeDefined();
+      expect(insertCall[0]).toMatch(/'machine'/);
+    });
+
+    it('defaults status to active when not provided', async () => {
+      const createdRow = {
+        id: 'u', name: 'm', description: null, status: 'active',
+        metadata: {}, updated_at: 't',
+      };
+      mockQuery.mockResolvedValueOnce({ rows: [] });
+      mockQuery.mockResolvedValueOnce({ rows: [createdRow] });
+      const res = await request(makeApp())
+        .post('/api/brain/machines')
+        .send({ name: 'm' });
+      expect(res.status).toBe(201);
+      expect(res.body.status).toBe('active');
+    });
+
+    it('returns 500 on db error', async () => {
+      mockQuery.mockRejectedValueOnce(new Error('db error'));
+      const res = await request(makeApp())
+        .post('/api/brain/machines')
+        .send({ name: 'm', metadata: {} });
+      expect(res.status).toBe(500);
+    });
+  });
+
   describe('conflict detection', () => {
     it('flags ip_mismatch when service needs_cn_ip but machine is US', async () => {
       const cnServiceRow = {
