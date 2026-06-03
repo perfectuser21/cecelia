@@ -66,6 +66,7 @@ const HARNESS_PHASE_GOALS = {
 import { StateGraph, Annotation, START, END, interrupt } from '@langchain/langgraph';
 import { getPgCheckpointer } from '../orchestrator/pg-checkpointer.js';
 import { LLM_RETRY, DB_RETRY, NO_RETRY } from './retry-policies.js';
+import { writeDriverHeartbeat } from '../harness-heartbeat.js';
 // 注：上方 imports 已含 spawn / parseDockerOutput / loadSkillContent / parseTaskPlan /
 // upsertTaskPlan / ensureHarnessWorktree / resolveGitHubToken / runGanContractGraph
 
@@ -792,8 +793,13 @@ export async function _waitForSubGraphCompletion(compiled, config, timeoutMs, op
 
   const deadline = Date.now() + timeoutMs;
   let pollCount = 0;
+  // OPEN-2：run_sub_task 是父 graph 的阻塞节点，整个 poll 期间父 checkpoint 不变。
+  // 每轮 poll 刷父任务心跳，证明「驱动器还活着」，否则看门狗会把这条活跑误判为 parked 重排。
+  const hbPool = opts.heartbeatPool || pool;
+  const hbInitiativeId = opts.initiativeId || null;
 
   while (Date.now() < deadline) {
+    await writeDriverHeartbeat(hbPool, hbInitiativeId);
     const state = await compiled.getState(config);
     if (!state.next || state.next.length === 0) {
       return state.values;
@@ -907,7 +913,12 @@ export async function runSubTaskNode(state, opts = {}) {
     } else {
       // sub-graph 大概率停在 await_callback interrupt — poll getState 等到 END
       // opts.waitOpts 供测试注入 pollIntervalMs / livenessCheckEveryN
-      final = await _waitForSubGraphCompletion(compiled, config, waitMs, opts.waitOpts || {});
+      // OPEN-2：注入 initiativeId + pool，让 poll 期间持续刷父任务驱动器心跳。
+      final = await _waitForSubGraphCompletion(compiled, config, waitMs, {
+        initiativeId: state.initiativeId,
+        heartbeatPool: _runDbPool,
+        ...(opts.waitOpts || {}),
+      });
     }
   } catch (err) {
     final = { status: 'failed', error: { node: 'sub_graph', message: err.message } };

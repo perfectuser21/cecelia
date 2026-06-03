@@ -68,6 +68,23 @@ export function harnessConcurrencyExceeded(runningCount, max = MAX_CONCURRENT_HA
   return Number(runningCount) >= Number(max);
 }
 
+/**
+ * 纯判定：候选任务是否应受 harness 并发 cap 限制。
+ *
+ * OPEN-2：看门狗把 parked in_progress 任务重排（resume_from_checkpoint=true）后，
+ * 这条 resume 不是「新工作」——它恢复的是一个已经存在、已经占过 cap 槽的 initiative。
+ * 若仍受 cap 限制，其它活跑占满 cap 时 resume 会被永久挡住 → 自愈被 cap 锁死。
+ * 因此 resume 任务豁免 cap。
+ *
+ * @param {{ task_type?: string, payload?: object }} candidate
+ * @returns {boolean} true=应套用并发 cap 检查
+ */
+export function shouldApplyHarnessCap(candidate) {
+  if (!candidate || candidate.task_type !== 'harness_initiative') return false;
+  if (candidate.payload?.resume_from_checkpoint === true) return false;
+  return true;
+}
+
 // Initiative-level lock 仅对 harness pipeline 类型生效。
 // dev / talk / audit / qa 等通用任务不持有 initiative lock，避免单 project 内死锁
 // （bb245cb4 教训：harness Initiative Phase A 跑期间整个 project 通用任务全被拒派）。
@@ -387,7 +404,7 @@ export async function dispatchNextTask(goalIds) {
     //       只对 harness_initiative 生效；dev / content 等任务不受影响。
     //       注意：达到上限时直接 return（不继续 try 下一候选），让本 tick 让位给非 harness
     //       任务的下一次 tick 重新走完整 selectNext，避免在循环里反复计数。
-    if (candidate.task_type === 'harness_initiative') {
+    if (shouldApplyHarnessCap(candidate)) {
       const capRes = await pool.query(
         `SELECT count(*)::int AS n FROM tasks
            WHERE task_type = 'harness_initiative'

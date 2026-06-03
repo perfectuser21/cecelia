@@ -1,0 +1,409 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head><meta charset="UTF-8"><title>验收run: GET /api/brain/harness/ping 健康端点 — Sprint Report</title>
+<style>
+body{font-family:sans-serif;margin:0;display:flex;flex-direction:column;height:100vh;}
+header{background:#1a1a2e;color:#fff;padding:12px 24px;display:flex;align-items:center;gap:16px;}
+header a{color:#adf;text-decoration:none;}
+main{display:flex;flex:1;overflow:hidden;}
+nav{width:160px;background:#f4f4f4;border-right:1px solid #ddd;padding:16px 0;overflow-y:auto;}
+nav ul{list-style:none;margin:0;padding:0;}
+nav li a{display:block;padding:8px 16px;color:#333;text-decoration:none;}
+nav li a:hover{background:#e0e0e0;}
+.content{flex:1;overflow-y:auto;padding:24px;}
+.section pre{background:#f8f8f8;border:1px solid #ddd;padding:16px;border-radius:4px;}
+.screenshot{margin-bottom:16px;}
+</style>
+</head>
+<body>
+<header>
+  <span><strong>验收run: GET /api/brain/harness/ping 健康端点</strong> Sprint Report</span>
+  <a href="https://github.com/perfectuser21/cecelia/pull/3270" target="_blank">PR #3270</a>
+</header>
+<main>
+<nav><ul>
+<li><a href="#" onclick="show('sprint-prd');return false;">PRD</a></li><li><a href="#" onclick="show('contract');return false;">D-Contract</a></li><li><a href="#" onclick="show('dod');return false;">DOD</a></li><li><a href="#" onclick="show('report');return false;">Report</a></li><li><a href="#" onclick="show('learning');return false;">Learning</a></li>
+<li><a href="#" onclick="show('screenshots');return false;">截图</a></li>
+</ul></nav>
+<div class="content">
+<div id="sprint-prd" class="section" style="display:none;"><pre style="white-space:pre-wrap;word-break:break-word;"># Sprint PRD — GET /api/brain/harness/ping 端点
+
+## OKR 对齐
+
+- **对应 KR**：Harness Pipeline 可验证性 KR
+- **当前进度**：N/A（基础设施验证端点）
+- **本次推进预期**：提供标准 ping 探针，供 harness evaluator 验证 Brain API 可达性
+
+## 背景
+
+Harness evaluator 在每次 sprint 验收时需要一个轻量端点来确认 Brain API 存活。现有 `/api/brain/harness/` 路由已注册，缺少标准 ping 探针。
+
+## Golden Path（核心场景）
+
+系统从 `GET /api/brain/harness/ping` 入口 → Brain harness 路由处理 → 返回 JSON 响应
+
+具体：
+1. 调用方发送 `GET /api/brain/harness/ping`（无鉴权要求）
+2. Brain 路由在 `packages/brain/src/routes/harness.js` 中处理请求
+3. 返回 HTTP 200，body 为 `{"ok": true, "ts": "&lt;ISO 8601 时间戳&gt;"}`
+
+## Response Schema
+
+```
+GET /api/brain/harness/ping
+→ 200 OK
+{
+  "ok": true,          // boolean，固定为 true
+  "ts": string         // ISO 8601 格式，如 "2026-06-03T10:00:00.000Z"
+}
+```
+
+## 边界情况
+
+- 无请求参数，无 body，无副作用
+- ts 字段为服务器处理时刻的 ISO 时间戳（`new Date().toISOString()`）
+
+## 范围限定
+
+**在范围内**：
+- `packages/brain/src/routes/harness.js` 新增 `GET /ping` 路由
+- 单元测试：断言响应状态 200、`ok === true`、`ts` 为有效 ISO 字符串
+
+**不在范围内**：
+- 数据库读写
+- 鉴权中间件改动
+- 其他路由文件修改
+- Dashboard UI 变更
+
+## 假设
+
+- [ASSUMPTION: Brain server 保持现有 `/api/brain/harness` 路由挂载，不需要改 server.js]
+- [ASSUMPTION: 单元测试使用现有 `packages/brain/src/routes/__tests__/` 或同级测试目录]
+
+## E2E 验收
+
+```bash
+# 启动 Brain（已运行则跳过），验证端点可达
+curl -sf http://localhost:5221/api/brain/harness/ping \
+  | jq -e '.ok == true and (.ts | type == "string")' \
+  &amp;&amp; echo "✅ /api/brain/harness/ping 验证通过" \
+  || { echo "❌ /api/brain/harness/ping 失败"; exit 1; }
+```
+
+## 预期受影响文件
+
+- `packages/brain/src/routes/harness.js`：新增 `GET /ping` handler
+- `packages/brain/src/routes/__tests__/harness.ping.test.js`（或同目录）：新增单元测试
+
+## journey_type: autonomous
+## journey_type_reason: 仅涉及 packages/brain/src/ 后端路由，无 UI 交互
+## target_environment: local_api
+## target_environment_reason: 纯 Brain 后端端点，curl localhost:5221 本地验证即可
+## journey_id: cecelia-harness-pipeline
+## step_id: harness-verify-ping
+</pre></div><div id="contract" class="section" style="display:none;"><pre style="white-space:pre-wrap;word-break:break-word;"># Sprint Contract Draft (Round 2)
+
+## Response Schema（推导来源: PRD 字面）
+
+### Endpoint: GET /api/brain/harness/ping
+
+**Success (HTTP 200)**:
+```json
+{"ok": true, "ts": "&lt;ISO 8601 string&gt;"}
+```
+- `ok` (boolean, 必填): 来源——PRD `## Response Schema` 明确定义，固定值 `true`
+- `ts` (string, 必填): 来源——PRD `## Response Schema` 明确定义，`new Date().toISOString()` 格式，如 `"2026-06-03T10:00:00.000Z"`
+
+**禁用字段名**: `status`, `alive`, `pong`, `timestamp`（语义等价词，PRD 未授权，禁止出现在响应体）
+
+**Error (HTTP 4xx)**:
+```json
+{"error": "&lt;string&gt;"}
+```
+
+---
+
+## Golden Path
+
+[客户端 GET] → [Brain harness 路由] → [返回 200 JSON]
+
+---
+
+### Step 1: 客户端发送 GET /api/brain/harness/ping（无鉴权）
+
+**来源**: `[FROM_PRD]` — PRD § "Golden Path（核心场景）" 第 1 条直接定义
+
+**可观测行为**: HTTP 响应状态码为 200，Body 为 JSON 对象
+
+**验证命令**:
+```bash
+CODE=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:5221/api/brain/harness/ping)
+[ "$CODE" = "200" ] || { echo "FAIL: 期望 200，实际 $CODE"; exit 1; }
+echo "OK: HTTP 200"
+```
+
+**硬阈值**: HTTP 200
+
+---
+
+### Step 2: 响应体 ok 字段固定为 boolean true
+
+**来源**: `[FROM_PRD]` — PRD `## Response Schema` 明确定义 `"ok": true // boolean，固定为 true`
+
+**可观测行为**: 响应 JSON 中 `ok` 字段值为布尔 `true`
+
+**验证命令**:
+```bash
+RESP=$(curl -sf http://localhost:5221/api/brain/harness/ping) || { echo "FAIL: curl 失败"; exit 1; }
+echo "$RESP" | jq -e '.ok == true' || { echo "FAIL: ok 字段不为 true"; exit 1; }
+echo "OK: ok == true"
+```
+
+**硬阈值**: `.ok == true`（布尔相等，非字符串 "true"）
+
+---
+
+### Step 3: 响应体 ts 字段为有效 ISO 8601 字符串
+
+**来源**: `[FROM_PRD]` — PRD `## Response Schema` 明确定义 `"ts": string // ISO 8601 格式`，§"边界情况"补充 `new Date().toISOString()`
+
+**可观测行为**: `ts` 字段为 string 类型，符合 ISO 8601 格式（含 `T` 和 `Z`）
+
+**验证命令**:
+```bash
+RESP=$(curl -sf http://localhost:5221/api/brain/harness/ping) || { echo "FAIL: curl 失败"; exit 1; }
+echo "$RESP" | jq -e '.ts | type == "string"' || { echo "FAIL: ts 不是 string"; exit 1; }
+TS=$(echo "$RESP" | jq -r '.ts')
+[[ "$TS" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\.[0-9]{3}Z$ ]] || \
+  { echo "FAIL: ts 不符合 ISO 8601，实际=$TS"; exit 1; }
+echo "OK: ts 为有效 ISO 8601"
+```
+
+**硬阈值**: `.ts | type == "string"` + 正则匹配 `YYYY-MM-DDTHH:mm:ss.mmmZ`
+
+---
+
+### Step 4: 响应体 keys 完整性 — 只含 ok + ts，无额外字段
+
+**来源**: `[AI_ADDED]` — GAN Round 1 Proposer 加入，理由：防止 generator 实现时混入 `status`/`alive`/`pong`/`timestamp` 等禁用字段，schema 完整性验证是 PRD 禁用字段清单的可执行形式
+
+**可观测行为**: 响应 JSON 顶层 keys 集合严格等于 `["ok","ts"]`，不多不少
+
+**验证命令**:
+```bash
+RESP=$(curl -sf http://localhost:5221/api/brain/harness/ping) || { echo "FAIL: curl 失败"; exit 1; }
+echo "$RESP" | jq -e 'keys == ["ok","ts"]' || { echo "FAIL: keys 不等于 [\"ok\",\"ts\"]，实际=$(echo "$RESP" | jq 'keys')"; exit 1; }
+echo "OK: keys == [\"ok\",\"ts\"]"
+```
+
+**硬阈值**: `keys == ["ok","ts"]`（JSON 键按字母序排）
+
+---
+
+### Step 5: 禁用字段反向检查
+
+**来源**: `[AI_ADDED]` — GAN Round 1 Proposer 加入，理由：PRD 禁用字段清单（`status`/`alive`/`pong`/`timestamp`）需要 oracle 验证，`! has()` 反向断言确保 generator 不漂移到语义等价词
+
+**可观测行为**: 响应体不含任何禁用字段
+
+**验证命令**:
+```bash
+RESP=$(curl -sf http://localhost:5221/api/brain/harness/ping) || { echo "FAIL: curl 失败"; exit 1; }
+echo "$RESP" | jq -e 'has("status") | not' || { echo "FAIL: 禁用字段 status 出现"; exit 1; }
+echo "$RESP" | jq -e 'has("alive") | not'  || { echo "FAIL: 禁用字段 alive 出现"; exit 1; }
+echo "$RESP" | jq -e 'has("pong") | not'   || { echo "FAIL: 禁用字段 pong 出现"; exit 1; }
+echo "$RESP" | jq -e 'has("timestamp") | not' || { echo "FAIL: 禁用字段 timestamp 出现"; exit 1; }
+echo "OK: 无禁用字段"
+```
+
+**硬阈值**: `has("status") | not` 等 4 项反向断言均通过
+
+---
+
+### Step 6: Error path — 未注册路径返回 404（端点本身必须存在才能验证）
+
+**来源**: `[AI_ADDED]` — GAN Round 1 Proposer 加入，理由：防止 Brain 通用 404 handler 假绿（v7.12 Bug 10 防模式 1）— 必须验证 `/ping` 真实注册，而非 Brain 的通用 "Not Found" 响应。具体：先用 curl -sf 要求 200，404 = FAIL 即路由未注册
+
+**可观测行为**: `/api/brain/harness/ping` 请求成功（200），不触发通用 404
+
+**验证命令**:
+```bash
+# 此验证命令本身即端点存在性的防假绿断言：curl -sf 在 4xx/5xx 时 exit 1
+RESP=$(curl -sf http://localhost:5221/api/brain/harness/ping) \
+  || { echo "FAIL: /ping 端点未注册（返回 404/5xx）— 路由未实现"; exit 1; }
+echo "OK: /ping 端点已注册（非通用 404）"
+```
+
+**硬阈值**: `curl -sf` exit 0（404 = exit 1 = FAIL）
+
+---
+
+## E2E 验收（最终 final-e2e 跑）
+
+**journey_type**: autonomous
+**target_environment**: local_api
+
+```bash
+#!/bin/bash
+set -e
+
+# final-e2e: GET /api/brain/harness/ping Golden Path 全程验证
+echo "=== final-e2e: /api/brain/harness/ping ==="
+
+# Step 0: Brain 存活探针 — 先确认 Brain API 可达，否则后续 connection refused 无法区分"路由未注册"
+curl -sf http://localhost:5221/api/brain/context &gt; /dev/null \
+  || { echo "FAIL: Brain API 未启动（localhost:5221 connection refused）— 请先启动 Brain 再跑 E2E"; exit 1; }
+echo "OK: Brain API 可达"
+
+# Step 1: 端点可达，返回 200
+CODE=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:5221/api/brain/harness/ping)
+[ "$CODE" = "200" ] || { echo "FAIL: HTTP $CODE (期望 200)"; exit 1; }
+
+# Step 2: ok == true
+RESP=$(curl -sf http://localhost:5221/api/brain/harness/ping)
+echo "$RESP" | jq -e '.ok == true' || { echo "FAIL: ok 不为 true"; exit 1; }
+
+# Step 3: ts 为 ISO 8601 string
+echo "$RESP" | jq -e '.ts | type == "string"' || { echo "FAIL: ts 不是 string"; exit 1; }
+TS=$(echo "$RESP" | jq -r '.ts')
+[[ "$TS" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\.[0-9]{3}Z$ ]] \
+  || { echo "FAIL: ts 不符合 ISO 8601，实际=$TS"; exit 1; }
+
+# Step 4: keys 完整性
+echo "$RESP" | jq -e 'keys == ["ok","ts"]' || { echo "FAIL: keys 不等于 [\"ok\",\"ts\"]"; exit 1; }
+
+# Step 5: 禁用字段反向
+echo "$RESP" | jq -e 'has("status") | not'    || { echo "FAIL: 禁用字段 status"; exit 1; }
+echo "$RESP" | jq -e 'has("alive") | not'     || { echo "FAIL: 禁用字段 alive"; exit 1; }
+echo "$RESP" | jq -e 'has("pong") | not'      || { echo "FAIL: 禁用字段 pong"; exit 1; }
+echo "$RESP" | jq -e 'has("timestamp") | not' || { echo "FAIL: 禁用字段 timestamp"; exit 1; }
+
+echo "✅ /api/brain/harness/ping Golden Path 验证全部通过"
+```
+
+---
+
+## Test Contract
+
+| 功能 | Test File | BEHAVIOR 覆盖 | 预期 Red 证据 |
+|---|---|---|---|
+| GET /ping 状态码 | `packages/brain/src/routes/__tests__/harness.ping.test.js` | HTTP 200 | → FAIL (路由未注册) |
+| ok 字段布尔值 | `packages/brain/src/routes/__tests__/harness.ping.test.js` | `.ok == true` | → FAIL |
+| ts 字段类型 | `packages/brain/src/routes/__tests__/harness.ping.test.js` | `.ts | type == "string"` | → FAIL |
+| keys 完整性 | `packages/brain/src/routes/__tests__/harness.ping.test.js` | `keys == ["ok","ts"]` | → FAIL |
+| 禁用字段反向 | `packages/brain/src/routes/__tests__/harness.ping.test.js` | `! has("status")` 等 | → FAIL |
+
+---
+
+## Risks
+
+| 风险 | 概率 | 影响 | Mitigation |
+|---|---|---|---|
+| E2E 时 Brain 未启动，`curl` 返回 `connection refused`，与路由未注册的 `404` 失败表现不同但同样 FAIL，难以区分根因 | 中 | 中（诊断成本高，误判为路由问题） | E2E 脚本 Step 0 先探 `/api/brain/context`，`connection refused` 时立即打印"Brain API 未启动"明确错误，区分两类失败 |
+| `ts` 字段格式依赖 `new Date().toISOString()` 的运行时行为，Node 版本差异可能导致微小格式差异 | 低 | 低（正则已覆盖标准格式） | 正则 `YYYY-MM-DDTHH:mm:ss.mmmZ` 已约束，Node 14+ 行为一致 |
+</pre></div><div id="dod" class="section" style="display:none;"><pre style="white-space:pre-wrap;word-break:break-word;">---
+skeleton: false
+journey_type: autonomous
+---
+# Contract DoD — Sprint: GET /api/brain/harness/ping 端点
+
+**范围**: `packages/brain/src/routes/harness.js` 新增 `GET /ping` 路由，返回 `{"ok":true,"ts":"&lt;ISO&gt;"}` 
+**大小**: S
+
+## ARTIFACT 条目
+
+- [ ] [ARTIFACT] `packages/brain/src/routes/harness.js` 包含 `/ping` 路由 handler
+  Test: node -e "const c=require('fs').readFileSync('packages/brain/src/routes/harness.js','utf8');if(!c.includes('/ping'))process.exit(1);console.log('OK')"
+
+- [ ] [ARTIFACT] 测试文件存在于 `packages/brain/src/routes/__tests__/harness.ping.test.js`
+  Test: node -e "require('fs').accessSync('packages/brain/src/routes/__tests__/harness.ping.test.js');console.log('OK')"
+
+## BEHAVIOR 条目
+
+- [ ] [BEHAVIOR] GET /api/brain/harness/ping 返回 HTTP 200
+  Test: manual:bash -c 'CODE=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:5221/api/brain/harness/ping); [ "$CODE" = "200" ] || { echo "FAIL: HTTP $CODE"; exit 1; }; echo OK'
+  期望: OK
+
+- [ ] [BEHAVIOR] 响应体 ok 字段为布尔 true
+  Test: manual:bash -c 'RESP=$(curl -sf http://localhost:5221/api/brain/harness/ping) || { echo "FAIL: curl 失败"; exit 1; }; echo "$RESP" | jq -e ".ok == true" || { echo "FAIL: ok 不为 true"; exit 1; }; echo OK'
+  期望: OK
+
+- [ ] [BEHAVIOR] 响应体 ts 字段为 string 类型（ISO 8601）
+  Test: manual:bash -c 'RESP=$(curl -sf http://localhost:5221/api/brain/harness/ping) || exit 1; echo "$RESP" | jq -e ".ts | type == \"string\"" || { echo "FAIL: ts 不是 string"; exit 1; }; TS=$(echo "$RESP" | jq -r ".ts"); [[ "$TS" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\.[0-9]{3}Z$ ]] || { echo "FAIL: ts 不符合 ISO 8601 $TS"; exit 1; }; echo OK'
+  期望: OK
+
+- [ ] [BEHAVIOR] 响应体 keys 完整性 — 严格等于 ["ok","ts"]
+  Test: manual:bash -c 'RESP=$(curl -sf http://localhost:5221/api/brain/harness/ping) || exit 1; echo "$RESP" | jq -e "keys == [\"ok\",\"ts\"]" || { echo "FAIL: keys 不等于 [ok,ts]"; exit 1; }; echo OK'
+  期望: OK
+
+- [ ] [BEHAVIOR] 禁用字段 status/alive/pong/timestamp 均不存在
+  Test: manual:bash -c 'RESP=$(curl -sf http://localhost:5221/api/brain/harness/ping) || exit 1; echo "$RESP" | jq -e "has(\"status\") | not" || { echo "FAIL: 禁用字段 status"; exit 1; }; echo "$RESP" | jq -e "has(\"alive\") | not" || { echo "FAIL: 禁用字段 alive"; exit 1; }; echo "$RESP" | jq -e "has(\"pong\") | not" || { echo "FAIL: 禁用字段 pong"; exit 1; }; echo "$RESP" | jq -e "has(\"timestamp\") | not" || { echo "FAIL: 禁用字段 timestamp"; exit 1; }; echo OK'
+  期望: OK
+
+- [ ] [BEHAVIOR] error path — 未实现时 curl -sf 返回非零退出码（防 Brain 通用 404 假绿）
+  Test: manual:bash -c 'RESP=$(curl -sf http://localhost:5221/api/brain/harness/ping) || { echo "FAIL: 端点不存在（路由未注册）"; exit 1; }; echo OK'
+  期望: OK（此条在 generator 实现后才 PASS，实现前 FAIL 即 Red 证据）
+
+## Risks
+
+| 风险 | Mitigation |
+|---|---|
+| E2E 时 Brain 未启动，`connection refused` 与路由未注册的 404 失败表现不同但难以区分 | final-e2e 首先探 `/api/brain/context` 存活；BEHAVIOR 命令若返回 connection refused，说明 Brain 未启动而非路由未实现 |
+</pre></div><div id="report" class="section" style="display:none;"><pre style="white-space:pre-wrap;word-break:break-word;">━━━ Sprint: 验收run: GET /api/brain/harness/ping 健康端点  PR #3270  2026-06-03 ━━━
+
+PIPELINE  A+B+C phases · 0 eval rounds · - · $0
+
+Phase          Time    Cost    Result
+Proposer       -       -       ✅
+Planner        -       -       ✅
+Generator      -       -       ✅
+Evaluator×0    -       -       ✅
+Reporter       -       -       ✅
+
+DOD -/- ✅  FAIL: 无
+
+E2E 截图: （无截图）
+Learning: （从本次 Sprint 提炼的洞察见 learning.md）
+DB sync: journey_steps · journey_features · api_registry ✅ · Notion pushed ✅
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+</pre></div><div id="learning" class="section" style="display:none;"><pre style="white-space:pre-wrap;word-break:break-word;"># Learning — 验收run: GET /api/brain/harness/ping 健康端点
+
+## 运行指标
+
+- GAN 轮次：0
+- Evaluator Fix 次数：0
+- PR：https://github.com/perfectuser21/cecelia/pull/3270
+- Sprint Dir：/workspace/sprints/harness-verify-ping
+
+## 发现的问题
+
+### [PROMPT] Prompt 类问题
+
+- （无）
+
+### [BUG] 代码缺陷
+
+- （无）
+
+### [INFRA] 基础设施问题
+
+- （无）
+
+### [DESIGN] 设计缺陷
+
+- （无）
+
+## 下次预防清单
+
+- [ ] 检查 contract-draft.md 格式是否符合 evaluator 预期
+- [ ] 确认 DoD 所有 [BEHAVIOR] 条目有对应测试
+- [ ] GAN 轮次 &gt; 2 时复盘 evaluator prompt 是否过严
+</pre></div>
+<div id="screenshots" class="section" style="display:none;"><p>无截图</p></div>
+</div>
+</main>
+<script>
+function show(id){document.querySelectorAll('.section').forEach(s=>s.style.display='none');var el=document.getElementById(id);if(el)el.style.display='block';}
+var first=document.querySelector('.section');if(first)first.style.display='block';
+</script>
+</body></html>

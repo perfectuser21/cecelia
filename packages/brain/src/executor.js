@@ -2931,6 +2931,10 @@ export async function runHarnessInitiativeRouter(task, opts = {}) {
     deadlineMs
   );
 
+  // OPEN-2：驱动开始即写一次心跳，标记「本 brain 进程正在驱动该 graph」。
+  const { writeDriverHeartbeat } = await import('./harness-heartbeat.js');
+  await writeDriverHeartbeat(dbPool, initiativeId);
+
   let final = null;
   try {
     // W4 — streamMode='updates' 逐节点推 task_events
@@ -2943,6 +2947,8 @@ export async function runHarnessInitiativeRouter(task, opts = {}) {
     let nodeCount = 0;
     const MAX_EVENTS = 100;  // 防写爆
     for await (const update of stream) {
+      // OPEN-2：每个 node 推进都刷心跳，覆盖节点间的 gap（pick_sub_task→run_sub_task 等）。
+      await writeDriverHeartbeat(dbPool, initiativeId);
       for (const [nodeName, partialState] of Object.entries(update || {})) {
         if (nodeCount < MAX_EVENTS) {
           try {

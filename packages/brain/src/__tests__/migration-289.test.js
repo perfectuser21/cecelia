@@ -48,8 +48,8 @@ describe('Migration 289 - decisions/initiative_contracts notion_id', () => {
     expect(result.rows.length).toBe(1);
   });
 
-  it('EXPECTED_SCHEMA_VERSION 应为 291', async () => {
+  it('EXPECTED_SCHEMA_VERSION 应为 292', async () => {
     const { EXPECTED_SCHEMA_VERSION } = await import('../selfcheck.js');
-    expect(EXPECTED_SCHEMA_VERSION).toBe('291');
+    expect(EXPECTED_SCHEMA_VERSION).toBe('292');
   });
 });
