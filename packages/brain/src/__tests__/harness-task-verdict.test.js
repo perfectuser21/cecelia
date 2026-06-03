@@ -134,12 +134,12 @@ describe('mergePrNode — branch-behind retry', () => {
     expect(result.error).toBeUndefined();
   });
 
-  it('behind 错误但 rebase_attempted=1 → 返回 error（已重试过）', async () => {
+  it('behind 错误但 rebase_attempted=3（超限）→ 返回 error（不再调 update-branch）', async () => {
     const execFn = async () => { throw new Error('must be up to date with the base branch'); };
-    const result = await mergePrNode({ pr_url: PR_URL, rebase_attempted: 1 }, { execFile: execFn });
+    const result = await mergePrNode({ pr_url: PR_URL, rebase_attempted: 3 }, { execFile: execFn });
     expect(result.error).toBeDefined();
     expect(result.error.node).toBe('merge_pr');
-    expect(result.error.message).toMatch(/after rebase/i);
+    expect(result.error.message).toMatch(/after.*rebase/i);
   });
 
   it('behind 错误 update-branch 也失败 → 返回 error', async () => {
