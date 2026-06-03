@@ -22,8 +22,15 @@ phase 1 spec 说 phase 2 "把 executor.js 的 `selectBestMachine` 派发入口�
 
 ## 目标
 
-让**所有非 harness 任务**也能按 `payload.{machine,executor}` 显式 override 路由（默认行为不变），
-并清掉死代码 `selectBestMachine` / `MACHINE_REGISTRY`。
+让**经 `triggerCeceliaRun` 派发的非 harness 任务**（codex_qa / general / B 类等）也能按
+`payload.{machine,executor}` 显式 override 路由（默认行为不变），并清掉死代码
+`selectBestMachine` / `MACHINE_REGISTRY`。
+
+**范围修正（探查发现，主理人决策）**：`dev` 任务走 dispatcher 的 `_dispatchViaWorkflowRuntime`
+→ `runWorkflow('dev-task')` 的 **v2 workflow runtime，不经过 `triggerCeceliaRun`**，故本期
+override 对 `dev` 不生效。这是有意的：**dev 跑 codex 已有独立 task_type `codex_dev`**
+（location-map 天然路由西安），无需用 dev+override 重复表达。v2 runtime 接 override 留作后续，
+本期不做（高风险动 graph-runtime、低价值）。
 
 **用户规则**：默认美国 M4 + Claude；codex/西安仅按需（显式指定）。见 [[feedback-default-us-claude]]。
 
