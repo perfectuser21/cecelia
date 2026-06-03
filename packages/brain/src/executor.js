@@ -2846,6 +2846,41 @@ async function triggerLocalCodexExec(task) {
 }
 
 /**
+ * MAX_INITIATIVE_FRESH_STARTS — harness_initiative 全局 fresh-start 上限。
+ *
+ * 坏 checkpoint（channel_values.error 有值）会升 attemptN 做 fresh start 从头重跑 planner，
+ * 但 execution_attempts 一直涨却从无上限判定 → 本机 Docker 抽风时无限重跑、永不收敛。
+ * 达到此上限后不再 fresh-start，直接把 task 标 terminal failed
+ * （failure_class='max_fresh_starts_exceeded'）。
+ */
+export const MAX_INITIATIVE_FRESH_STARTS = 3;
+
+/**
+ * markInitiativeTerminalFailed — 把 harness_initiative task 标为 terminal failed。
+ *
+ * 写法对齐 runHarnessInitiativeRouter 内已有的 watchdog_deadline 写法：
+ * status='failed' + custom_props.failure_class=<failureClass>。terminal 失败后
+ * consciousness-loop 不再 retry（status=failed 终态），杜绝无限重跑。
+ *
+ * @param {{query: Function}} dbPool
+ * @param {string} taskId
+ * @param {string} failureClass - failure_class 值（如 'max_fresh_starts_exceeded'）
+ * @param {string} errorMessage
+ */
+async function markInitiativeTerminalFailed(dbPool, taskId, failureClass, errorMessage) {
+  try {
+    await dbPool.query(
+      `UPDATE tasks SET status='failed', error_message=$1,
+         custom_props = jsonb_set(COALESCE(custom_props,'{}'::jsonb), '{failure_class}', $2::jsonb)
+       WHERE id=$3`,
+      [String(errorMessage).slice(0, 500), JSON.stringify(failureClass), taskId]
+    );
+  } catch (markErr) {
+    console.warn(`[executor] markInitiativeTerminalFailed failed (non-fatal): ${markErr.message}`);
+  }
+}
+
+/**
  * runHarnessInitiativeRouter — harness_initiative 路由分支的可测函数化。
  *
  * Spec: docs/superpowers/specs/2026-05-06-harness-langgraph-reliability-design.md
@@ -2876,11 +2911,40 @@ export async function runHarnessInitiativeRouter(task, opts = {}) {
   let attemptN = baseAttemptN;
   let threadId = `harness-initiative:${initiativeId}:${attemptN}`;
 
+  // 全局 fresh-start 上限 — execution_attempts 已达上限 → 不再 fresh-start / 不 invoke graph，
+  // 直接 terminal failed，杜绝坏 checkpoint 导致的无限重跑（20+ planner 容器、永不收敛）。
+  if ((task.execution_attempts || 0) >= MAX_INITIATIVE_FRESH_STARTS) {
+    await markInitiativeTerminalFailed(
+      dbPool,
+      task.id,
+      'max_fresh_starts_exceeded',
+      `max_fresh_starts_exceeded: execution_attempts=${task.execution_attempts} >= ${MAX_INITIATIVE_FRESH_STARTS}`
+    );
+    console.error(
+      `[startup-sync] task=${task.id} 达 fresh-start 上限 ${MAX_INITIATIVE_FRESH_STARTS}，标 terminal failed（停止重跑）`
+    );
+    return { ok: false, error: 'max_fresh_starts_exceeded', terminal: true, threadId, attemptN };
+  }
+
   const checkpointer = await getPgCheckpointer();
   const existing = await checkpointer.get({ configurable: { thread_id: threadId } });
   const resumeRequested = task.payload?.resume_from_checkpoint === true;
   let input;
   if (existing && resumeRequested) {
+    // Wave 2b 钩子：checkpoint 显式标 error.terminal===true → 永久失败，不再 fresh-start。
+    // 即便现在没人 set 也无害（普通 error 仍走下方 fresh-start 分支）。
+    if (existing.channel_values?.error?.terminal === true) {
+      await markInitiativeTerminalFailed(
+        dbPool,
+        task.id,
+        'checkpoint_terminal',
+        'checkpoint marked terminal (error.terminal=true)'
+      );
+      console.error(
+        `[startup-sync] task=${task.id} checkpoint 标 terminal，标 terminal failed（停止重跑）`
+      );
+      return { ok: false, error: 'checkpoint_terminal', terminal: true, threadId, attemptN };
+    }
     // 检查 checkpoint 是否处于 error 状态（如 ganLoop 节点执行失败）
     // 若 error 有值，resume 会立即路由到 END → final=null → task failed → 每 2min 死循环
     const ckError = existing.channel_values?.error;
