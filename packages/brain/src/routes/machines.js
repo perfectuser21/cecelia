@@ -110,6 +110,41 @@ function enrichMachine(row, tailscaleStatus) {
 }
 
 /**
+ * POST /api/brain/machines
+ * Body: { name, description?, status?, metadata? } — 注册新机器，插 system_registry type=machine。
+ * 将来 Dashboard 下拉/海口 M5 走这里。重名 409，缺 name 400。
+ */
+router.post('/', async (req, res) => {
+  try {
+    const { name, description = null, status = 'active', metadata = {} } = req.body || {};
+    if (!name || typeof name !== 'string') {
+      return res.status(400).json({ error: 'Body must include a non-empty name string' });
+    }
+
+    // 重名检查（type=machine 唯一）
+    const { rows: dup } = await pool.query(
+      `SELECT id FROM system_registry WHERE type = 'machine' AND name = $1`,
+      [name]
+    );
+    if (dup.length > 0) {
+      return res.status(409).json({ error: `Machine '${name}' already exists` });
+    }
+
+    const { rows } = await pool.query(
+      `INSERT INTO system_registry (type, name, description, status, metadata)
+       VALUES ('machine', $1, $2, $3, $4)
+       RETURNING id, name, description, status, metadata, updated_at`,
+      [name, description, status, JSON.stringify(metadata)]
+    );
+    const tsStatus = getTailscaleStatus();
+    return res.status(201).json(enrichMachine(rows[0], tsStatus));
+  } catch (err) {
+    console.error('[machines] create error:', err);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+/**
  * GET /api/brain/machines
  */
 router.get('/', async (req, res) => {
