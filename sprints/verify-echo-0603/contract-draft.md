@@ -121,4 +121,4 @@ echo "✅ /api/brain/harness/echo Golden Path 验证通过"
 
 | 功能 | Test File | BEHAVIOR 覆盖 | 预期红证据 |
 |---|---|---|---|
-| echo 路由注册与响应 | `tests/harness-echo.test.ts` | ok:true/schema keys/msg 未传/URL decode/echo:"hello" | → 4 failures（harness.routes.js 不存在）|
+| echo 路由注册与响应 | `tests/harness-echo.test.ts` | ok:true/schema keys/msg 未传/URL decode | → 4 failures（harness.routes.js 不存在）|
