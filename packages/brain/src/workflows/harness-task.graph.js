@@ -42,6 +42,7 @@ import { ensureHarnessWorktree, harnessSubTaskBranchName, cleanupHarnessWorktree
 import { resolveGitHubToken } from '../harness-credentials.js';
 // Note: legacy `writeDockerCallback` import removed (Layer 3 uses callback router POST → Command(resume))
 import { spawnDockerDetached, spawnCodexBridgeDetached } from '../spawn/detached.js';
+import { resolveExecutor as resolveExecutorDefault } from '../routing/resolve-executor.js';
 import { resolveAccount } from '../spawn/middleware/account-rotation.js';
 import { checkPrStatus, classifyFailedChecks } from '../shepherd.js';
 import { parseDockerOutput, extractField, readPrFromGitState, readVerdictFile, readBrainResult, EvaluatorOutputSchema, loadSkillContent } from '../harness-shared.js';
@@ -136,6 +137,7 @@ export const TaskState = Annotation.Root({
  * @param {Object} [opts]
  * @param {Function} [opts.spawnDetached]    覆盖 spawnDockerDetached（测试用）
  * @param {Function} [opts.spawnBridge]      覆盖 spawnCodexBridgeDetached（测试用 DI）
+ * @param {Function} [opts.resolveExecutor]  覆盖 resolveExecutor（机器+执行器路由，测试用 DI）
  * @param {Function} [opts.ensureWorktree]
  * @param {Function} [opts.resolveToken]
  * @param {Object}   [opts.poolOverride]     覆盖 pg pool（测试用）
@@ -249,25 +251,31 @@ export async function spawnNode(state, opts = {}) {
     },
   };
 
-  // HARNESS_XIAN_ENABLED='true' 时走 Codex Bridge 路径（xian-m4），否则走默认 Docker 路径
+  // 机器+执行器统一路由（取代旧的西安全局开关 env）：
+  //   resolveExecutor 据 payload.{machine,executor} > 半显式 > 标签默认 > us-m4/claude 兜底。
+  //   executor=claude → 现有 docker 派发（美国本地 cecelia/runner）。
+  //   executor=codex  → POST route.url/run（worker-daemon：mode 路由 + repo→codex-task.sh 出 PR）。
+  const resolveExec = opts.resolveExecutor || resolveExecutorDefault;
+  const spawnBridgeFn = opts.spawnBridge || spawnCodexBridgeDetached;
   try {
-    if (process.env.HARNESS_XIAN_ENABLED === 'true') {
-      const bridgeUrl = process.env.HARNESS_XIAN_BRIDGE_URL;
-      const spawnBridgeFn = opts.spawnBridge || spawnCodexBridgeDetached;
-      try {
-        await spawnBridgeFn(bridgeUrl, {
-          task_id: finalContainerId,
-          task_type: task.task_type || 'harness_task',
-          prompt,
-          skill: 'harness-generator',
-          branch: precomputedBranch,
-          callback_url: callbackUrl,
-        });
-      } catch (bridgeErr) {
-        console.warn(`[harness-task.graph] Bridge spawn failed, falling back to Docker: ${bridgeErr.message}`);
-        await spawnFn(dockerArgs);
-      }
+    const route = await resolveExec(task);
+    if (route.executor === 'codex') {
+      // codex：POST route.url/run，worker-daemon 侧已就绪（mode 路由 + repo + callback 重写）。
+      // repo 优先用 state.baseRepo，回退 payload.base_repo。callback_url 用 host.docker.internal，
+      // worker-daemon 会重写成真实 Brain 地址。
+      const repo = state.baseRepo || payload.base_repo || '';
+      await spawnBridgeFn(`${route.url}/run`, {
+        task_id: finalContainerId,
+        task_type: task.task_type || 'harness_task',
+        prompt,
+        skill: 'harness-generator',
+        branch: precomputedBranch,
+        callback_url: callbackUrl,
+        repo,
+        mode: 'codex',
+      });
     } else {
+      // claude（默认）：本地 docker run -d detached。
       await spawnFn(dockerArgs);
     }
   } catch (err) {
