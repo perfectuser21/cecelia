@@ -1452,4 +1452,8 @@ router.post('/messages/:initiativeId/:subTaskId', async (req, res) => {
   }
 });
 
+router.get('/ping', (_req, res) => {
+  res.json({ ok: true, ts: new Date().toISOString() });
+});
+
 export default router;
