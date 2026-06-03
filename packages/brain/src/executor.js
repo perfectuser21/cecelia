@@ -26,6 +26,7 @@ import { getDecisionsSummary } from './decisions-context.js';
 import { recordExpectedReward } from './dopamine.js';
 import { getActiveProfile, FALLBACK_PROFILE } from './model-profile.js';
 import { getTaskLocation } from './task-router.js';
+import { resolveExecutor } from './routing/resolve-executor.js';
 import { loadCache as _loadCache, getCachedLocation, getCachedConfig, refreshCache as _refreshCache } from './task-type-config-cache.js';
 import { updateTaskStatus, updateTaskProgress as _updateTaskProgress } from './task-updater.js';
 import { traceStep, LAYER, STATUS, EXECUTOR_HOSTS } from './trace.js';
@@ -3137,6 +3138,28 @@ async function triggerCeceliaRun(task) {
   if (REVIEW_TASK_TYPES.includes(task.task_type)) {
     console.log(`[executor] 路由决策: task_type=${task.task_type} → triggerCodexReview`);
     return triggerCodexReview(task);
+  }
+
+  // 1. 显式 override（phase 2 单元1）：payload.{machine,executor} → DB 驱动路由。
+  //    REVIEW 短路之后、location-map 路由之前。无显式偏好则整段跳过（零回归）。
+  //    resolveExecutor 抛错 → loud-fail（标 failed + return），绝不静默改派。
+  if (task.payload?.machine || task.payload?.executor) {
+    let route;
+    try {
+      route = await resolveExecutor(task);
+    } catch (err) {
+      console.error(`[executor] 显式路由失败 task=${task.id}: ${err.message}`);
+      await updateTaskStatus(task.id, 'failed', {
+        error_message: `executor route: ${err.message}`.slice(0, 500),
+      });
+      return { success: false, taskId: task.id, error: err.message, executor: 'route-rejected' };
+    }
+    console.log(`[executor] 显式路由: task=${task.id} → ${route.machineId}/${route.executor} (${route.url})`);
+    if (route.executor === 'codex') {
+      return triggerCodexBridge(task, route.url);
+    }
+    // route.executor === 'claude' → 落到下方 US Claude 默认派发
+    // （本期 claude 仅 us-m4 部署，route.url 即 EXECUTOR_BRIDGE_URL；不另起分支避免重复派发逻辑）
   }
 
   // 2. 西安 Codex Bridge（location='xian'，负载均衡 M4+M1）
