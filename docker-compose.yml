@@ -18,6 +18,9 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
       # Skills + cecelia-run (read-only)
       - /Users/administrator/.claude:/Users/administrator/.claude:ro
+      # B57: zenithjoy-skills SSOT — .claude/skills/* 是指向这里的 symlink，
+      # 不 mount 则容器内 symlink 悬空 → harness SKILL 加载失败（loadSkillContent 全 miss → 空 SKILL 凑合跑 / B56 后 fail-fast）
+      - /Users/administrator/perfect21/zenithjoy-skills:/Users/administrator/perfect21/zenithjoy-skills:ro
       # Credentials + Claude accounts — 保持宿主路径不 remap
       # HOST_HOME=/Users/administrator + Dockerfile ENV HOME 也对齐宿主路径，
       # 这样 Brain os.homedir() 和 docker-executor 构造的子容器 mount 源都能解析。
