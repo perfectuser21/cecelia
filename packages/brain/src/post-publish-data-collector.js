@@ -163,7 +163,7 @@ async function completeScraperTask(pool, scraperTaskId, result) {
 /**
  * Brain 内部处理排队的 platform_scraper 任务。
  *
- * 设计原因：platform_scraper 路由到 'cn' 机器（原设计）在机器路由表
+ * 设计原因：platform_scraper 路由到 'cn' 机器（原设计）在 MACHINE_REGISTRY
  * 中不存在，executor 无法派发。改为 Brain tick 内直接处理：
  *   1. 优先读 pipeline_publish_stats（N8N 若已采集到真实数据则回填）
  *   2. 无真实数据时写 placeholder（views/likes/comments=0）保持链路畅通
