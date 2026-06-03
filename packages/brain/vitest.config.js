@@ -167,6 +167,8 @@ export default defineConfig({
       // Pre-existing failures: harness-journey-tracking sprint in progress
       '../../sprints/harness-journey-tracking/tests/ws2/harness-report-prd-archive.test.ts',
       '../../sprints/harness-journey-tracking/tests/ws4/harness-report-notion-project-task.test.ts',
+      // Sprint Tests (0603-phase-summary-verify3): 直连 pool.query 真实 DB，brain-unit 无 postgres → 走 Sprint Tests CI
+      '../../sprints/0603-phase-summary-verify3/tests/phase-summary.test.ts',
     ],
     coverage: {
       provider: 'v8',

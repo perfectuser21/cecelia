@@ -14,12 +14,16 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 // Only loads if env vars are not already set (Docker/CI won't be affected)
 dotenv.config({ path: path.join(__dirname, '../../.env') });
 
+// Full URL support: DATABASE_URL or DB env var (Sprint Tests CI passes DB=postgresql://...)
+const connectionUrl = process.env.DATABASE_URL || process.env.DB || '';
+const useConnectionString = /^postgres(?:ql)?:\/\//.test(connectionUrl);
+
 // isTest 优先判断，用于 DB_NAME fallback 和 guard
 const isTest = process.env.NODE_ENV === 'test' || process.env.VITEST === 'true';
 const dbName = process.env.DB_NAME || (isTest ? 'cecelia_test' : 'cecelia');
 
-// Guard: 禁止测试环境连生产 DB
-if (isTest && dbName === 'cecelia') {
+// Guard: 禁止测试环境连生产 DB（使用 connectionString URL 时显式绕过）
+if (!useConnectionString && isTest && dbName === 'cecelia') {
   throw new Error(
     '禁止在测试环境连接 cecelia 生产 DB。\n' +
     '解决方式：\n' +
@@ -28,14 +32,20 @@ if (isTest && dbName === 'cecelia') {
   );
 }
 
-export const DB_DEFAULTS = {
-  host: process.env.DB_HOST || 'localhost',
-  port: parseInt(process.env.DB_PORT || '5432', 10),
-  database: dbName,
-  user: process.env.DB_USER || 'cecelia',
-  password: process.env.DB_PASSWORD || '',
+const poolBase = {
   // 连接池健康配置（R3）
   max: parseInt(process.env.DB_POOL_MAX || '30', 10),
   idleTimeoutMillis: parseInt(process.env.DB_IDLE_TIMEOUT_MS || '30000', 10),
   connectionTimeoutMillis: parseInt(process.env.DB_CONN_TIMEOUT_MS || '5000', 10),
 };
+
+export const DB_DEFAULTS = useConnectionString
+  ? { ...poolBase, connectionString: connectionUrl }
+  : {
+      ...poolBase,
+      host: process.env.DB_HOST || 'localhost',
+      port: parseInt(process.env.DB_PORT || '5432', 10),
+      database: dbName,
+      user: process.env.DB_USER || 'cecelia',
+      password: process.env.DB_PASSWORD || '',
+    };

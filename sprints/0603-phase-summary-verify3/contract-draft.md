@@ -263,7 +263,7 @@ echo "✅ Golden Path E2E 验证通过 alpha=3 beta=2 gamma=1 sort=DESC null_exc
 
 | 功能 | Test File | BEHAVIOR 覆盖 | 预期红证据 |
 |---|---|---|---|
-| 整个 Sprint：phase-summary 路由实现 | `tests/phase-summary.test.ts` | 路由注册、JSON 数组形态、{phase,count} 字段完整性、count DESC 排序、NULL phase 排除、禁用字段名反向 | 全部 FAIL：`packages/brain/src/routes/initiative-runs.js` 不存在，import 阶段抛错 → 6 个 it 块全部红 |
+| 整个 Sprint：phase-summary 路由实现 | `tests/phase-summary.test.ts` | HTTP 200、keys 完整匹配、phase 是 string、NULL phase 行不出现、count 整体单调降序、禁用字段名反向 | 全部 FAIL：`packages/brain/src/routes/initiative-runs.js` 不存在，import 阶段抛错 → 6 个 it 块全部红 |
 
 ---
 
