@@ -65,6 +65,9 @@ const execFileDefault = promisify(execFileCb);
 export const MAX_FIX_ROUNDS = parseInt(process.env.HARNESS_MAX_FIX_ROUNDS || '20', 10);
 export const MAX_POLL_COUNT = 20;          // 90s × 20 = 30 min
 export const POLL_INTERVAL_MS = 90 * 1000;
+// 无 CI check 的 PR：给几轮 grace 等 CI 注册（避免抢在 check 出现前误判），
+// 仍 0 check 且 MERGEABLE → 判 pass（无 check 可等，再等也不会出现）。
+export const NO_CHECKS_GRACE_POLLS = 2;
 
 function buildHarnessGoalSettings(goalCondition) {
   if (!goalCondition) return null;
@@ -436,6 +439,14 @@ export async function pollCiNode(state, opts = {}) {
   }
   if (info.ciStatus === 'ci_passed' || info.ciStatus === 'merged') {
     return { ci_status: 'pass', poll_count: pollCount + 1 };
+  }
+  // 无 CI check：给 NO_CHECKS_GRACE_POLLS 轮等 CI 注册；仍无 check 且 MERGEABLE → 判 pass。
+  // （否则 0-check 的 PR 会被当 pending 一直轮询到 MAX_POLL_COUNT 超时，merge 永不执行）
+  if (info.ciStatus === 'ci_no_checks') {
+    if (info.mergeable === 'MERGEABLE' && (pollCount + 1) >= NO_CHECKS_GRACE_POLLS) {
+      return { ci_status: 'pass', poll_count: pollCount + 1 };
+    }
+    return { ci_status: 'pending', poll_count: pollCount + 1 };
   }
   if (info.ciStatus === 'ci_failed') {
     const failType = classifyFn(info.failedChecks || []);

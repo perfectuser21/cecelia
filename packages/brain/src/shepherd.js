@@ -58,8 +58,13 @@ export function checkPrStatus(prUrl) {
       ciStatus = 'closed';
     } else if (failedChecks.length > 0) {
       ciStatus = 'ci_failed';
-    } else if (pendingChecks.length > 0 || checks.length === 0) {
+    } else if (pendingChecks.length > 0) {
       ciStatus = 'ci_pending';
+    } else if (checks.length === 0) {
+      // 无 CI check 配置（statusCheckRollup 空）：区别于"check 还在跑"的 ci_pending。
+      // 旧逻辑把这里也判 ci_pending → harness poll_ci 永远等不到 check → 30min 超时 →
+      // merge 永不执行。调用方据 mergeable 决定是否直接合并（无 check 可等）。
+      ciStatus = 'ci_no_checks';
     } else {
       // 全部通过（checks 存在且无失败无 pending）
       ciStatus = 'ci_passed';
