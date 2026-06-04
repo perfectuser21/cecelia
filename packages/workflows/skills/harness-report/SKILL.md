@@ -54,6 +54,17 @@ FINAL_E2E_VERDICT="${FINAL_E2E_VERDICT:-PASS}"
 
 ---
 
+### Step 0: 埋点 phase-event start（non-fatal）
+
+```bash
+PHASE_EVENT_ID=$(curl -fsS -X POST "${BRAIN_URL:-localhost:5221}/api/brain/harness/phase-event" \
+  -H 'Content-Type: application/json' \
+  -d "{\"initiative_id\":\"${INITIATIVE_ID:-${TASK_ID:-unknown}}\",\"node\":\"report\",\"status\":\"running\",\"model\":\"${MODEL_ID:-claude-sonnet-4-6}\"}" \
+  2>/dev/null | jq -r '.id // empty') || true
+```
+
+---
+
 ### Step 1: 回写 Brain 任务状态
 
 ```bash
@@ -195,39 +206,53 @@ echo "✅ Step 5: 飞书通知已发送"
 
 ---
 
-### Step 6: 写本地 harness-report.md + learning.md（从 Brain API 查真实数据）
+### Step 6: 写本地 harness-report.md + learning.md（从 Brain API + initiative_run_events 查真实数据）
 
 ```bash
-# 从 Brain API 拉真实运行数据
-REPORT_DATA=$(curl -sf "localhost:5221/api/brain/tasks/$TASK_ID" 2>/dev/null || echo '{}')
-REPORT_CONTENT=$(echo "$REPORT_DATA" | node -e "
-const d=JSON.parse(require('fs').readFileSync('/dev/stdin','utf8'));
-const r=d.result?.report_content;
-process.stdout.write(r ? JSON.stringify(r) : '{}');
-" 2>/dev/null || echo '{}')
+# 从 initiative_run_events 查 Phase 维度数据（ts_end/1000 转秒，ts 单位秒）
+PHASE_DATA=$(psql "${DB_URL:-postgresql://localhost/cecelia}" -tAF'|' -c \
+  "SELECT node, ts, ts_end, cost_usd, model, status
+   FROM initiative_run_events
+   WHERE initiative_id = '${INITIATIVE_ID:-${TASK_ID:-}}'::uuid
+   ORDER BY ts ASC" 2>/dev/null || echo "")
 
-TOTAL_COST_REAL=$(echo "$REPORT_CONTENT" | node -e "
+PHASE_TABLE=$(echo "$PHASE_DATA" | node -e "
+const lines = require('fs').readFileSync('/dev/stdin','utf8').trim().split('\n').filter(Boolean);
+const rows = lines.map(l => {
+  const [node, ts, ts_end, cost_usd, model, status] = l.split('|');
+  const dur = (ts_end && ts) ? Math.round((Number(ts_end)/1000 - Number(ts))) + 's' : '-';
+  const cost = cost_usd && cost_usd !== '' ? '\$' + Number(cost_usd).toFixed(4) : '-';
+  const mdl = model && model !== '' ? model : '-';
+  const st = status && status !== '' ? status : '-';
+  return '| ' + [node||'-', dur, cost, mdl, st].join(' | ') + ' |';
+});
+const header = '| 阶段 | 耗时 | 成本 | 模型 | 状态 |\n|------|------|------|------|------|';
+process.stdout.write(rows.length ? header + '\n' + rows.join('\n') : '(无 Phase 数据)');
+" 2>/dev/null || echo "(无 Phase 数据)")
+
+# 从 Brain API 拉总成本和问题数据
+REPORT_DATA=$(curl -sf "localhost:5221/api/brain/tasks/$TASK_ID" 2>/dev/null || echo '{}')
+TOTAL_COST_REAL=$(echo "$REPORT_DATA" | node -e "
 const d=JSON.parse(require('fs').readFileSync('/dev/stdin','utf8'));
-process.stdout.write(String(d.cost_usd||'0'));
+process.stdout.write(String(d.result?.total_cost_usd||'${TOTAL_COST:-0}'));
 " 2>/dev/null || echo "${TOTAL_COST:-0}")
 
-TIMING_SUMMARY=$(echo "$REPORT_CONTENT" | node -e "
+ISSUES_SUMMARY=$(echo "$REPORT_DATA" | node -e "
 const d=JSON.parse(require('fs').readFileSync('/dev/stdin','utf8'));
-const t=d.step_timing||[];
-const lines=t.map(s=>{const ms=s.duration_ms;const dur=ms?Math.round(ms/1000)+'s':'?';return '  '+s.node+': '+dur;});
-process.stdout.write(lines.join('\n')||'  (无耗时数据)');
-" 2>/dev/null || echo "  (无耗时数据)")
-
-ISSUES_SUMMARY=$(echo "$REPORT_CONTENT" | node -e "
-const d=JSON.parse(require('fs').readFileSync('/dev/stdin','utf8'));
-const issues=d.ws_issues||[];
+const issues=(d.result?.report_content?.ws_issues)||[];
 if(!issues.length){process.stdout.write('无');process.exit(0);}
-const lines=issues.map(i=>'- ws='+i.ws_id+': '+(i.feedback||i.ci_fail_type||'unknown'));
+const lines=issues.map(i=>'- '+i.ws_id+': '+(i.feedback||i.ci_fail_type||'unknown'));
 process.stdout.write(lines.join('\n'));
 " 2>/dev/null || echo "无")
 
 GAN_ROUNDS="${GAN_ROUNDS:-0}"
 COMPLETED_AT=$(TZ=Asia/Shanghai date '+%Y-%m-%d %H:%M:%S %Z')
+
+# 埋点 phase-event end（non-fatal）
+curl -fsS -X PATCH "${BRAIN_URL:-localhost:5221}/api/brain/harness/phase-event/${PHASE_EVENT_ID:-0}" \
+  -H 'Content-Type: application/json' \
+  -d "{\"status\":\"completed\",\"ts_end\":$(date +%s%3N),\"cost_usd\":${TOTAL_COST_REAL:-0}}" \
+  2>/dev/null || true
 
 cat > "${SPRINT_DIR}/harness-report.md" << REPORT
 # Harness 完成报告 — ${FEATURE_NAME}
@@ -238,8 +263,9 @@ cat > "${SPRINT_DIR}/harness-report.md" << REPORT
 **GAN 轮次**: ${GAN_ROUNDS}
 **总成本**: \$${TOTAL_COST_REAL} USD
 
-## 阶段耗时
-${TIMING_SUMMARY}
+## Phase 指标（initiative_run_events）
+
+${PHASE_TABLE}
 
 ## 问题列表
 ${ISSUES_SUMMARY}
@@ -247,7 +273,7 @@ ${ISSUES_SUMMARY}
 ## 交付结论
 Final E2E: ${FINAL_E2E_VERDICT:-PASS}。PR 已合并，Notion 已更新。
 REPORT
-echo "✅ Step 6: harness-report.md 已写入（真实数据）"
+echo "✅ Step 6: harness-report.md 已写入（initiative_run_events 真实数据）"
 
 cat > "${SPRINT_DIR}/learning.md" << LEARN
 # Learning — ${FEATURE_NAME}（${COMPLETED_AT}）
@@ -257,6 +283,10 @@ cat > "${SPRINT_DIR}/learning.md" << LEARN
 - 总成本：\$${TOTAL_COST_REAL} USD
 - PR：${PR_URL}
 - Sprint Dir：${SPRINT_DIR}
+
+## Phase 明细（ts_end/1000 转秒）
+
+${PHASE_TABLE}
 
 ## 发现的问题
 ${ISSUES_SUMMARY}

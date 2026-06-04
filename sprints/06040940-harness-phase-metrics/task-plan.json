@@ -1,0 +1,47 @@
+{
+  "initiative_id": "177b2b46-8752-4e52-8051-5f1d3c9c5618",
+  "journey_type": "dev_pipeline",
+  "journey_type_reason": "改造 harness pipeline 自身埋点（Brain DB + API + 5 skill prompt + Reporter 模板），起点是 pipeline 生命周期非 UI/agent_remote。",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "Harness Pipeline 各阶段真实指标埋点 — migration + API + skill 首尾调用 + Reporter 模板",
+      "scope": "给 initiative_run_events（migration 279，PK=id BIGSERIAL，时间列=ts BIGINT）加 ts_end/cost_usd/model 三列并扩 status CHECK 接受 'completed'（migration 293 + selfcheck bump 至 '293'）；让 writeInitiativeRunEvent 接 model 并新增 updateInitiativeRunEvent；在 packages/brain/src/routes/harness.js 注册 POST /api/brain/harness/phase-event（接 model 返 {id, initiative_id, node, status, model, ts}）与 PATCH /api/brain/harness/phase-event/:id（接 status+ts_end+cost_usd 返同字段；不存在 :id → 404+error 字符串字段）；给 5 个 harness skill（PRD 字面：planner / contract-proposer / generator / evaluator / report，**不含 reviewer**）SKILL.md 首尾各加 POST/PATCH phase-event 的可执行片段并用 || true 或注释 non-fatal 吞错；改 harness-report SKILL Step 6 从 initiative_run_events 表读 phase 维度数据（含 ts_end / cost_usd / model 字段），harness-report.md 与 index.html 模板 Phase 表格行四列：阶段名 / 耗时 / 成本 / 模型 / 状态，缺字段写 `-`。",
+      "dod": [
+        "[ARTIFACT] packages/brain/migrations/293_initiative_run_events_phase_metrics.sql 含 ADD COLUMN ts_end BIGINT / cost_usd NUMERIC(10,4) / model TEXT + 扩 status CHECK 接受 'completed'",
+        "[ARTIFACT] packages/brain/src/selfcheck.js EXPECTED_SCHEMA_VERSION 升至 '293'",
+        "[ARTIFACT] packages/brain/src/events/initiativeRunEvents.js 含 writeInitiativeRunEvent(model 参数) + updateInitiativeRunEvent(id, ts_end, cost_usd)",
+        "[ARTIFACT] packages/brain/src/routes/harness.js 注册 POST /phase-event 与 PATCH /phase-event/:id",
+        "[ARTIFACT] 5 个 harness skill SKILL.md（planner/contract-proposer/generator/evaluator/report）含 phase-event 字面 + 吞错（|| true / 2>/dev/null / non-fatal 注释）",
+        "[ARTIFACT] harness-report SKILL Step 6 引用 initiative_run_events 且含耗时/成本/模型三关键字",
+        "[ARTIFACT] harness-report index.html 模板含 cost_usd/model/duration/ts_end 之一占位符",
+        "[BEHAVIOR] POST /api/brain/harness/phase-event 接 model 返 {id, ..., model:回显, status:'running'}，schema 完整 + 禁用字段（event_id/phase/model_id/cost/created_at）不暴露",
+        "[BEHAVIOR] POST 后 DB 行 model 列字面命中；ts_end/cost_usd 此时为 NULL（PK=id BIGSERIAL，时间列 ts BIGINT）",
+        "[BEHAVIOR] PATCH /api/brain/harness/phase-event/:id 返 ts_end+cost_usd 是 number + status='completed'；DB 三列非 NULL；ts 在 5min 窗口内（防造假）",
+        "[BEHAVIOR] PATCH response 含 model 字段 + schema 完整性 has(id/status/ts_end/cost_usd/model) + event_id/created_at 不存在（Reviewer R4 oracle completeness）",
+        "[BEHAVIOR] PATCH 不存在 :id（99999999999999）返 HTTP 404 + JSON .error 字符串字段（不是 Express 默认 HTML 404）",
+        "[BEHAVIOR] Migration 293 已 apply — information_schema 三列齐 + status CHECK 接受 'completed'（试插立刻回滚）",
+        "[BEHAVIOR] executor.js 保留 'writeInitiativeRunEvent failed (non-fatal)' warn 字符串（吞错回归保护）",
+        "[BEHAVIOR] Reporter 注入 5 phase 后 DB 5 行三列齐 + harness-report SKILL 引用 initiative_run_events",
+        "[BEHAVIOR] 同一 phase 重复 POST (initiative_id+node 相同) → DB 最终 model = 第二次传入值（PRD 边界情况3）",
+        "[BEHAVIOR] 仅 POST 未 PATCH 的行 cost_usd 为 NULL（PRD 边界情况2: Report 该行成本列显示'-'）",
+        "[BEHAVIOR] harness-report SKILL Step 6 含 ts_end/1000 duration 单位转换（ts=秒, ts_end=毫秒 — Reviewer R1 内部一致性）"
+      ],
+      "files": [
+        "packages/brain/migrations/293_initiative_run_events_phase_metrics.sql",
+        "packages/brain/src/selfcheck.js",
+        "packages/brain/src/events/initiativeRunEvents.js",
+        "packages/brain/src/routes/harness.js",
+        "packages/brain/src/routes/__tests__/harness.test.js",
+        "packages/workflows/skills/harness-planner/SKILL.md",
+        "packages/workflows/skills/harness-contract-proposer/SKILL.md",
+        "packages/workflows/skills/harness-generator/SKILL.md",
+        "packages/workflows/skills/harness-evaluator/SKILL.md",
+        "packages/workflows/skills/harness-report/SKILL.md"
+      ],
+      "depends_on": [],
+      "complexity": "M",
+      "estimated_minutes": 90
+    }
+  ]
+}

@@ -105,6 +105,17 @@ vitest 测试文件还要写（generator TDD red-green 用），但**不再被 e
 
 ## 执行流程
 
+### Step 0: 埋点 phase-event start（non-fatal）
+
+```bash
+PHASE_EVENT_ID=$(curl -fsS -X POST "${BRAIN_URL:-localhost:5221}/api/brain/harness/phase-event" \
+  -H 'Content-Type: application/json' \
+  -d "{\"initiative_id\":\"${INITIATIVE_ID:-unknown}\",\"node\":\"contract-proposer\",\"status\":\"running\",\"model\":\"${MODEL_ID:-claude-sonnet-4-6}\"}" \
+  2>/dev/null | jq -r '.id // empty') || true
+```
+
+---
+
 ### Step 1: 读取 PRD
 
 ```bash
@@ -882,6 +893,15 @@ git add "${SPRINT_DIR}/contract-draft.md" \
 
 git commit -m "feat(contract): round-${PROPOSE_ROUND} Golden Path draft + DoD + tests + task-plan"
 git push origin "${PROPOSE_BRANCH}"
+```
+
+**埋点 phase-event end（non-fatal，每轮 push 后）**：
+
+```bash
+curl -fsS -X PATCH "${BRAIN_URL:-localhost:5221}/api/brain/harness/phase-event/${PHASE_EVENT_ID:-0}" \
+  -H 'Content-Type: application/json' \
+  -d "{\"status\":\"completed\",\"ts_end\":$(date +%s%3N),\"cost_usd\":${PHASE_COST_USD:-0}}" \
+  2>/dev/null || true
 ```
 
 **结果文件写入**（每轮 — 含被 REVISION 打回轮）：

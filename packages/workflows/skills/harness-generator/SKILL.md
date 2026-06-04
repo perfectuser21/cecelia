@@ -128,6 +128,17 @@ git merge-base --is-ancestor origin/main HEAD || {
 - 禁止跳过 rebase 直接开工
 - 禁止用 `git merge origin/main` 代替 rebase（会产生 merge commit 污染历史）
 
+### Step 0.6: 埋点 phase-event start（non-fatal）
+
+```bash
+PHASE_EVENT_ID=$(curl -fsS -X POST "${BRAIN_URL:-localhost:5221}/api/brain/harness/phase-event" \
+  -H 'Content-Type: application/json' \
+  -d "{\"initiative_id\":\"${INITIATIVE_ID:-unknown}\",\"node\":\"generator\",\"status\":\"running\",\"model\":\"${MODEL_ID:-claude-sonnet-4-6}\"}" \
+  2>/dev/null | jq -r '.id // empty') || true
+```
+
+---
+
 ### Step 1: 读合同 + 测试文件清单
 
 ```bash
@@ -416,6 +427,12 @@ done
 > Brain 的 execution.js 依赖此 JSON 提取 pr_url。
 
 ```bash
+# 埋点 phase-event end（non-fatal）
+curl -fsS -X PATCH "${BRAIN_URL:-localhost:5221}/api/brain/harness/phase-event/${PHASE_EVENT_ID:-0}" \
+  -H 'Content-Type: application/json' \
+  -d "{\"status\":\"completed\",\"ts_end\":$(date +%s%3N),\"cost_usd\":${PHASE_COST_USD:-0}}" \
+  2>/dev/null || true
+
 echo "{\"verdict\": \"DONE\", \"pr_url\": \"$PR_URL\"}"
 ```
 

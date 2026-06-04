@@ -110,6 +110,17 @@ generator 写代码 + push PR
 
 ## 执行流程
 
+### Step -1: 埋点 phase-event start（non-fatal）
+
+```bash
+PHASE_EVENT_ID=$(curl -fsS -X POST "${BRAIN_URL:-localhost:5221}/api/brain/harness/phase-event" \
+  -H 'Content-Type: application/json' \
+  -d "{\"initiative_id\":\"${INITIATIVE_ID:-unknown}\",\"node\":\"evaluator\",\"status\":\"running\",\"model\":\"${MODEL_ID:-claude-sonnet-4-6}\"}" \
+  2>/dev/null | jq -r '.id // empty') || true
+```
+
+---
+
 ### Step 0a：切到 PR 分支（pre-merge gate 前置）
 
 evaluator 必须先切到 PR 分支才能跑 server 验真行为。模式 A 跑 generator 在 PR 分支写的代码，PR 分支名由 `$PR_BRANCH` env 提供（brain `evaluateContractNode` 透传 — B14 修复）。
@@ -617,6 +628,12 @@ fi
 **脚本 exit 0（通过）**：
 
 ```bash
+# 埋点 phase-event end（non-fatal）
+curl -fsS -X PATCH "${BRAIN_URL:-localhost:5221}/api/brain/harness/phase-event/${PHASE_EVENT_ID:-0}" \
+  -H 'Content-Type: application/json' \
+  -d "{\"status\":\"completed\",\"ts_end\":$(date +%s%3N),\"cost_usd\":${PHASE_COST_USD:-0}}" \
+  2>/dev/null || true
+
 cat > "$WORKSPACE/.brain-result.json" << BREOF
 {"verdict":"PASS","task_id":"$TASK_ID","failed_step":null,"log_excerpt":null,"screenshots":${SCREENSHOTS_JSON:-[]}}
 BREOF

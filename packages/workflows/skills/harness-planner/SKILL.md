@@ -57,6 +57,17 @@ changelog:
 
 ## 执行流程
 
+### Step -1: 埋点 phase-event start（non-fatal）
+
+```bash
+PHASE_EVENT_ID=$(curl -fsS -X POST "${BRAIN_URL:-localhost:5221}/api/brain/harness/phase-event" \
+  -H 'Content-Type: application/json' \
+  -d "{\"initiative_id\":\"${HARNESS_INITIATIVE_ID:-unknown}\",\"node\":\"planner\",\"status\":\"running\",\"model\":\"${MODEL_ID:-claude-sonnet-4-6}\"}" \
+  2>/dev/null | jq -r '.id // empty') || true
+```
+
+---
+
 ### Step 0: thin_prd 主题死规则（B20 — W41 实证）
 
 **第一件事**：读 `task.payload.thin_prd`，把它当**产品法律**。sprint-prd.md 必须含 thin_prd 关键词字面。
@@ -334,6 +345,15 @@ git checkout -b "cp-$(TZ=Asia/Shanghai date +%m%d%H%M)-harness-prd"
 git add "$SPRINT_DIR/sprint-prd.md"
 git commit -m "feat(harness): Initiative PRD — {目标}"
 git push origin HEAD 2>/dev/null || echo "[harness-planner] push skipped (no creds), commit retained on local branch"
+```
+
+**最后一条消息之前，埋点 phase-event end（non-fatal）**：
+
+```bash
+curl -fsS -X PATCH "${BRAIN_URL:-localhost:5221}/api/brain/harness/phase-event/${PHASE_EVENT_ID:-0}" \
+  -H 'Content-Type: application/json' \
+  -d "{\"status\":\"completed\",\"ts_end\":$(date +%s%3N),\"cost_usd\":${PHASE_COST_USD:-0}}" \
+  2>/dev/null || true
 ```
 
 **最后一条消息**：

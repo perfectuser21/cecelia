@@ -1456,4 +1456,70 @@ router.get('/ping', (_req, res) => {
   res.json({ ok: true, ts: new Date().toISOString() });
 });
 
+/**
+ * POST /phase-event
+ * 记录 harness phase 开始事件（含 model）。
+ * Body: { initiative_id, node, status='running', model }
+ * Response 201: { id, initiative_id, node, status, model, ts }
+ */
+router.post('/phase-event', async (req, res) => {
+  const { initiative_id, node, status = 'running', model } = req.body ?? {};
+  if (!initiative_id || !node) {
+    return res.status(400).json({ error: 'initiative_id and node are required' });
+  }
+  const ts = Math.floor(Date.now() / 1000);
+  try {
+    const { rows } = await pool.query(
+      `INSERT INTO initiative_run_events (initiative_id, node, status, ts, model)
+       VALUES ($1, $2, $3, $4, $5)
+       RETURNING id, initiative_id, node, status, model, ts`,
+      [initiative_id, node, status, ts, model ?? null]
+    );
+    return res.status(201).json(rows[0]);
+  } catch (err) {
+    console.error('[POST /harness/phase-event]', err.message);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * PATCH /phase-event/:id
+ * 记录 harness phase 结束事件（ts_end + cost_usd + status）。
+ * Body: { status, ts_end, cost_usd }
+ * Response 200: { id, initiative_id, node, status, model, ts, ts_end, cost_usd }
+ * 404 + { error: string } 当 :id 不存在
+ */
+router.patch('/phase-event/:id', async (req, res) => {
+  const { id } = req.params;
+  const { status, ts_end, cost_usd } = req.body ?? {};
+  try {
+    const { rows } = await pool.query(
+      `UPDATE initiative_run_events
+          SET ts_end   = COALESCE($2, ts_end),
+              cost_usd = COALESCE($3, cost_usd),
+              status   = COALESCE($4, status)
+        WHERE id = $1
+        RETURNING id, initiative_id, node, status, model, ts, ts_end, cost_usd`,
+      [id, ts_end ?? null, cost_usd ?? null, status ?? null]
+    );
+    if (rows.length === 0) {
+      return res.status(404).json({ error: `phase-event id ${id} not found` });
+    }
+    const row = rows[0];
+    return res.json({
+      id: row.id,
+      initiative_id: row.initiative_id,
+      node: row.node,
+      status: row.status,
+      model: row.model,
+      ts: row.ts,
+      ts_end: row.ts_end !== null ? Number(row.ts_end) : null,
+      cost_usd: row.cost_usd !== null ? Number(row.cost_usd) : null,
+    });
+  } catch (err) {
+    console.error('[PATCH /harness/phase-event/:id]', err.message);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
 export default router;
