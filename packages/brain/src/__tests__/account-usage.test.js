@@ -1080,3 +1080,25 @@ describe('account-usage', () => {
     });
   });
 });
+
+// ─── ACCOUNTS pool integrity — regression for B53 account removal bug ────────
+
+describe('ACCOUNTS pool integrity — regression for B53 account removal bug', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('getAccountUsage() 默认应查 account1 和 account2 — 防止再次误移除账号', async () => {
+    setupValidCredentials();
+    setupFetchUsage();
+    mockPool.query.mockResolvedValue({ rows: [] }); // 无缓存，强制走 fetch
+
+    const result = await getAccountUsage(true); // forceRefresh=true 跳过缓存
+
+    // 两个账号都应该有结果
+    expect(Object.keys(result)).toContain('account1');
+    expect(Object.keys(result)).toContain('account2');
+    // fetch 应被调用两次（每个账号一次）
+    expect(mockFetch).toHaveBeenCalledTimes(2);
+  });
+});
