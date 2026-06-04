@@ -72,6 +72,7 @@ describe('ensureHarnessWorktree', () => {
       taskId: 'beefcafe11111111',
       baseRepo: remoteUrl,
       execFn, statFn,
+      tokenFn: async () => '', // 显式无 token → clone 用裸 URL（隔离环境 GITHUB_TOKEN）
       logFn: () => {},
     });
     const cloneCall = calls.find(c => c.startsWith('git clone'));
