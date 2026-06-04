@@ -13,7 +13,7 @@ import { readFileSync } from 'fs';
 import { homedir } from 'os';
 import pool from './db.js';
 
-const ACCOUNTS = ['account2']; // B53: account3 org 订阅禁用(403 organization disabled，凭据有效但 org 关了 Claude Code)，移出池；account1 无凭据。仅 account2 可用
+const ACCOUNTS = ['account1', 'account2']; // account3 org 订阅禁用(403)，移出池。account1 凭据已恢复(Jun 2026)，与 account2 轮换。
 const CACHE_TTL_MINUTES = 3;
 const USAGE_THRESHOLD = 80;       // 5h 超过此百分比则跳过
 const SONNET_7D_THRESHOLD = 100;  // sonnet 7d 满载阈值（≥ 此值时不可用 Sonnet，尝试 Opus）
