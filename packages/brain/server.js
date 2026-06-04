@@ -97,6 +97,17 @@ import { handleRealtimeWebSocket } from './src/orchestrator-realtime.js';
 import { handleChat } from './src/orchestrator-chat.js';
 import { getScanStatus } from './src/task-generator-scheduler.js';
 import { waitForPortFree, listenWithRetry } from './src/startup-port-guard.js';
+import { setupGitCredentials } from './src/lib/git-credentials-setup.js';
+
+// 容器 git 凭据初始化（必须在任何 git clone/fetch/push 之前）：
+// 宿主 ~/.gitconfig 只读挂载进容器、配了容器内不存在的 credential.helper，
+// 导致 GitHub-URL base_repo 的 harness clone/fetch/push 全失败。写可写 GIT_CONFIG_GLOBAL
+// 用 url.insteadOf 注入 x-access-token，一处修复 clone/fetch/push 全部。
+setupGitCredentials({
+  token: process.env.GITHUB_TOKEN,
+  configPath: '/tmp/brain-gitconfig',
+  env: process.env,
+});
 
 const app = express();
 app.locals.pool = pool;

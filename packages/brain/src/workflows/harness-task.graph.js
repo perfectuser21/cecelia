@@ -263,6 +263,15 @@ export async function spawnNode(state, opts = {}) {
       // codex：POST route.url/run，worker-daemon 侧已就绪（mode 路由 + repo + callback 重写）。
       // repo 优先用 state.baseRepo，回退 payload.base_repo。callback_url 用 host.docker.internal，
       // worker-daemon 会重写成真实 Brain 地址。
+      //
+      // 关键差异（vs claude 本地 docker mount）：codex 在西安 `git clone from GitHub`，
+      // 看不到本地 worktree 的 contract import commit。spawnBridge 前必须先 push 合同分支到
+      // GitHub，否则西安 codex-task.sh checkout 后看不到 sprints/contract-dod.md → generator
+      // 不知道 DoD 存在 → evaluator 永远 FAIL。
+      if (state.contractImported && worktreePath) {
+        await execFile('git', ['-C', worktreePath, 'push', 'origin',
+          `HEAD:${precomputedBranch}`], { timeout: 60_000 });
+      }
       const repo = state.baseRepo || payload.base_repo || '';
       await spawnBridgeFn(`${route.url}/run`, {
         task_id: finalContainerId,
@@ -273,6 +282,8 @@ export async function spawnNode(state, opts = {}) {
         callback_url: callbackUrl,
         repo,
         mode: 'codex',
+        // codex-task.sh 容器内需要 token 来 git push + gh pr create。
+        env: { GITHUB_TOKEN: token },
       });
     } else {
       // claude（默认）：本地 docker run -d detached。
