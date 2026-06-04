@@ -1,0 +1,149 @@
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+
+vi.mock('node:fs/promises', () => {
+  const m = { readFile: vi.fn(), readdir: vi.fn(), access: vi.fn(), mkdir: vi.fn(), unlink: vi.fn() };
+  return { default: m, ...m };
+});
+vi.mock('../../db.js', () => ({ default: { connect: vi.fn(), query: vi.fn() } }));
+vi.mock('../../lib/contract-verify.js', () => ({
+  ContractViolation: class extends Error {},
+  verifyProposerOutput: vi.fn(),
+  verifyGeneratorOutput: vi.fn(),
+  verifyEvaluatorWorktree: vi.fn(),
+}));
+vi.mock('../../harness-dag.js', () => ({ parseTaskPlan: vi.fn(() => null), upsertTaskPlan: vi.fn() }));
+vi.mock('../../harness-final-e2e.js', () => ({ runFinalE2E: vi.fn(), attributeFailures: vi.fn() }));
+vi.mock('../../harness-credentials.js', () => ({ resolveGitHubToken: vi.fn(async () => 'tok') }));
+vi.mock('../../lib/git-fence.js', () => ({ fetchAndShowOriginFile: vi.fn() }));
+vi.mock('../../spawn/index.js', () => ({ spawn: vi.fn() }));
+vi.mock('../../harness-shared.js', () => ({
+  parseDockerOutput: vi.fn(),
+  loadSkillContent: vi.fn(() => ''),
+  readBrainResult: vi.fn(async () => ({})),
+}));
+vi.mock('../../harness-pg-checkpointer.js', () => ({ getPgCheckpointer: vi.fn() }));
+vi.mock('../../harness-session-bridge.js', () => ({
+  reconnectOrSpawn: vi.fn(),
+  makeSessionRecord: vi.fn(() => ({})),
+}));
+
+const mockEnsureHarnessWorktree = vi.fn(async () => '/mock-wt/task-abc');
+vi.mock('../../harness-worktree.js', () => ({
+  ensureHarnessWorktree: (...args) => mockEnsureHarnessWorktree(...args),
+  harnessSubTaskBranchName: vi.fn(() => 'cp-0604-ws-abc-ws1'),
+  harnessTaskWorktreePath: vi.fn((id) => `/mock-wt/task-${id}`),
+  DEFAULT_BASE_REPO: '/mock-cecelia',
+}));
+
+vi.mock('@langchain/langgraph', () => {
+  const Annotation = vi.fn((opts) => opts);
+  Annotation.Root = vi.fn((fields) => fields);
+  return {
+    StateGraph: vi.fn(() => ({
+      addNode: vi.fn(),
+      addEdge: vi.fn(),
+      addConditionalEdges: vi.fn(),
+      compile: vi.fn(() => ({ invoke: vi.fn() })),
+    })),
+    Annotation,
+    START: '__start__',
+    END: '__end__',
+    interrupt: vi.fn(),
+  };
+});
+
+import { spawnNode } from '../harness-task.graph.js';
+
+// codex 路由：resolveExecutor 返回西安
+const codexRoute = vi.fn(async () => ({
+  executor: 'codex',
+  url: 'http://100.86.57.69:3458',
+  machineId: 'mac-mini-m4-xian',
+}));
+
+function baseState(overrides = {}) {
+  return {
+    task: {
+      id: 'ws1',
+      title: 'Test',
+      description: 'Desc',
+      payload: {
+        machine: 'mac-mini-m4-xian',
+        executor: 'codex',
+        base_repo: 'https://github.com/perfectuser21/infrastructure.git',
+      },
+    },
+    initiativeId: 'abcdef12-0000-0000-0000-000000000000',
+    worktreePath: '/mock-wt/task-ws1',
+    githubToken: 'ghp_test_token',
+    baseRepo: 'https://github.com/perfectuser21/infrastructure.git',
+    contractBranch: 'cp-harness-propose-r3-abc',
+    contractImported: true,
+    containerId: null,
+    ...overrides,
+  };
+}
+
+beforeEach(() => {
+  vi.clearAllMocks();
+});
+
+describe('harness-task.graph — spawnNode codex 路径 push contract + GITHUB_TOKEN', () => {
+  it('codex 路径：spawnBridgeFn 之前 push contract 到 GitHub', async () => {
+    const order = [];
+    const mockExecFile = vi.fn(async (cmd, args) => {
+      if (cmd === 'git' && Array.isArray(args) && args.includes('push')) {
+        order.push('push');
+      }
+      return { stdout: '', stderr: '' };
+    });
+    const mockSpawnBridge = vi.fn(async () => { order.push('bridge'); });
+
+    await spawnNode(baseState(), {
+      spawnBridge: mockSpawnBridge,
+      execFile: mockExecFile,
+      resolveExecutor: codexRoute,
+      resolveToken: vi.fn(async () => 'ghp_test_token'),
+      poolOverride: { query: vi.fn(async () => ({ rows: [] })) },
+    });
+
+    expect(mockSpawnBridge).toHaveBeenCalledOnce();
+    expect(order).toEqual(['push', 'bridge']); // push 必须在 bridge 之前
+  });
+
+  it('codex payload 包含 env.GITHUB_TOKEN', async () => {
+    const bridgeCalls = [];
+    const mockSpawnBridge = vi.fn(async (url, payload) => { bridgeCalls.push(payload); });
+
+    await spawnNode(baseState(), {
+      spawnBridge: mockSpawnBridge,
+      execFile: vi.fn(async () => ({ stdout: '', stderr: '' })),
+      resolveExecutor: codexRoute,
+      resolveToken: vi.fn(async () => 'ghp_test_token'),
+      poolOverride: { query: vi.fn(async () => ({ rows: [] })) },
+    });
+
+    expect(bridgeCalls).toHaveLength(1);
+    expect(bridgeCalls[0].env?.GITHUB_TOKEN).toBe('ghp_test_token');
+    expect(bridgeCalls[0].mode).toBe('codex');
+    expect(bridgeCalls[0].repo).toBe('https://github.com/perfectuser21/infrastructure.git');
+  });
+
+  it('contractImported=false 时不 push（无合同导入无需 push）', async () => {
+    const pushCalls = [];
+    const mockExecFile = vi.fn(async (cmd, args) => {
+      if (cmd === 'git' && Array.isArray(args) && args.includes('push')) pushCalls.push(args);
+      return { stdout: '', stderr: '' };
+    });
+
+    await spawnNode(baseState({ contractBranch: null, contractImported: false }), {
+      spawnBridge: vi.fn(async () => {}),
+      execFile: mockExecFile,
+      resolveExecutor: codexRoute,
+      resolveToken: vi.fn(async () => 'ghp_test_token'),
+      poolOverride: { query: vi.fn(async () => ({ rows: [] })) },
+    });
+
+    expect(pushCalls).toHaveLength(0);
+  });
+});

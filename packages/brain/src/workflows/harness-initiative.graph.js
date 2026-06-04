@@ -882,6 +882,10 @@ export async function runSubTaskNode(state, opts = {}) {
       ...(state.sprintDir ? { sprint_dir: state.sprintDir } : {}),
       final_e2e_fix_count: state.final_e2e_fix_count ?? 0,
       ...(fixCount > 0 && feedback ? { fix_round: fixCount, evaluator_feedback: feedback } : {}),
+      // 透传 initiative 级别执行器路由（西安 Codex 对比用）。spawnNode → resolveExecutor
+      // 读 task.payload.{machine,executor} 决定 Generator 跑美国 Claude 还是西安 Codex。
+      ...(state.task?.payload?.machine ? { machine: state.task.payload.machine } : {}),
+      ...(state.task?.payload?.executor ? { executor: state.task.payload.executor } : {}),
     },
   };
   const compiled = opts.compiledTaskGraph || await _getTaskGraphCompiled();
