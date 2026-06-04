@@ -13,7 +13,7 @@ import { readFileSync } from 'fs';
 import { homedir } from 'os';
 import pool from './db.js';
 
-const ACCOUNTS = ['account2']; // B53: account3 org 订阅禁用(403 organization disabled，凭据有效但 org 关了 Claude Code)，移出池；account1 无凭据。仅 account2 可用
+const ACCOUNTS = ['account1', 'account2']; // account3 org 订阅禁用(403)，移出池。account1 凭据已恢复(Jun 2026)，与 account2 轮换。
 const CACHE_TTL_MINUTES = 3;
 const USAGE_THRESHOLD = 80;       // 5h 超过此百分比则跳过
 const SONNET_7D_THRESHOLD = 100;  // sonnet 7d 满载阈值（≥ 此值时不可用 Sonnet，尝试 Opus）
@@ -511,7 +511,13 @@ export async function getAccountUsage(forceRefresh = false, accounts = ACCOUNTS)
       }
     }
 
-    const data = await fetchUsageFromAPI(accountId);
+    let data;
+    try {
+      data = await fetchUsageFromAPI(accountId);
+    } catch (err) {
+      console.warn(`[account-usage] ${accountId}: fetchUsageFromAPI 抛出异常（凭据缺失或无效）: ${err.message}`);
+      data = null;
+    }
     if (data && data.__rateLimited) {
       // usage 查询接口（/api/oauth/usage）有独立的高频限流，比 messages API 严得多。
       // Brain 每个 tick 给每个账号轮询它，极易触发 429——但这 ≠ 账号 messages 配额耗尽，

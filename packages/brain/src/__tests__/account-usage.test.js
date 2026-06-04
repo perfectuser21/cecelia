@@ -251,8 +251,9 @@ describe('account-usage', () => {
       expect(isAllAccountsSpendingCapped(['account2', 'account3'])).toBe(true);
     });
 
-    it('B53: 默认生产池仅 account2（account3 org 禁用已移出）→ 标记 account2 即全 capped', () => {
+    it('生产池 account1+account2（account3 org 禁用已移出）→ 标记两个账号才全 capped', () => {
       const futureTime = new Date(Date.now() + 7200000).toISOString();
+      markSpendingCap('account1', futureTime);
       markSpendingCap('account2', futureTime);
       expect(isAllAccountsSpendingCapped()).toBe(true);
     });
@@ -263,10 +264,10 @@ describe('account-usage', () => {
   // ════════════════════════════════════════════════════════════════════════════
 
   describe('getSpendingCapStatus', () => {
-    it('B53: 默认生产池仅返回 account2（account3 org 禁用已移出）', () => {
+    it('默认生产池返回 account1 和 account2（account3 org 禁用已移出）', () => {
       const status = getSpendingCapStatus();
-      expect(status).toHaveLength(1);
-      expect(status.map(s => s.accountId)).toEqual(['account2']);
+      expect(status).toHaveLength(2);
+      expect(status.map(s => s.accountId)).toEqual(['account1', 'account2']);
     });
 
     it('注入多账号时返回对应数量的状态', () => {
@@ -695,6 +696,7 @@ describe('account-usage', () => {
         const soonReset = new Date(Date.now() + 10 * 60000).toISOString(); // 10 分钟后重置
 
         setupUsageData({
+          account1: { five_hour_pct: 40, seven_day_pct: 10, seven_day_sonnet_pct: 10, resets_at: null, extra_used: false },
           account2: { five_hour_pct: 70, seven_day_pct: 30, seven_day_sonnet_pct: 40, resets_at: soonReset, extra_used: false },
           account3: { five_hour_pct: 40, seven_day_pct: 10, seven_day_sonnet_pct: 10, resets_at: null, extra_used: false },
         });
@@ -710,6 +712,7 @@ describe('account-usage', () => {
         const soonReset = new Date(Date.now() + 10 * 60000).toISOString();
 
         setupUsageData({
+          account1: { five_hour_pct: 50, seven_day_pct: 30, seven_day_sonnet_pct: 40, resets_at: null, extra_used: false },
           account2: { five_hour_pct: 70, seven_day_pct: 30, seven_day_sonnet_pct: 40, resets_at: soonReset, extra_used: false },
           account3: { five_hour_pct: 50, seven_day_pct: 30, seven_day_sonnet_pct: 40, resets_at: null, extra_used: false },
         });
@@ -726,6 +729,7 @@ describe('account-usage', () => {
     describe('Haiku 独立模式', () => {
       it('model=haiku 应走独立模式（只看 5h 和 7d_total）', async () => {
         setupUsageData({
+          account1: { five_hour_pct: 50, seven_day_pct: 97, seven_day_sonnet_pct: 97, resets_at: null, extra_used: false },
           account2: { five_hour_pct: 30, seven_day_pct: 96, seven_day_sonnet_pct: 96, resets_at: null, extra_used: false },
           account3: { five_hour_pct: 50, seven_day_pct: 97, seven_day_sonnet_pct: 97, resets_at: null, extra_used: false },
         });
@@ -791,6 +795,7 @@ describe('account-usage', () => {
   describe('selectBestAccountForHaiku', () => {
     it('应返回 accountId 字符串（而非对象）', async () => {
       setupUsageData({
+        account1: { five_hour_pct: 50, seven_day_pct: 20, seven_day_sonnet_pct: 20, resets_at: null, extra_used: false },
         account2: { five_hour_pct: 30, seven_day_pct: 10, seven_day_sonnet_pct: 10, resets_at: null, extra_used: false },
         account3: { five_hour_pct: 50, seven_day_pct: 20, seven_day_sonnet_pct: 20, resets_at: null, extra_used: false },
       });
@@ -869,6 +874,7 @@ describe('account-usage', () => {
 
     it('5h 用量 79% 时应通过阈值检查', async () => {
       setupUsageData({
+        account1: { five_hour_pct: 90, seven_day_pct: 30, seven_day_sonnet_pct: 30, resets_at: null, extra_used: false },
         account2: { five_hour_pct: 79, seven_day_pct: 30, seven_day_sonnet_pct: 30, resets_at: null, extra_used: false },
         account3: { five_hour_pct: 90, seven_day_pct: 20, seven_day_sonnet_pct: 20, resets_at: null, extra_used: false },
       });
@@ -1078,5 +1084,27 @@ describe('account-usage', () => {
       // count=0 不恢复到内存，下次 markAuthFailure 从 1 开始
       expect(dbCall[1][2]).toBe(1);
     });
+  });
+});
+
+// ─── ACCOUNTS pool integrity — regression for B53 account removal bug ────────
+
+describe('ACCOUNTS pool integrity — regression for B53 account removal bug', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('getAccountUsage() 默认应查 account1 和 account2 — 防止再次误移除账号', async () => {
+    setupValidCredentials();
+    setupFetchUsage();
+    mockPool.query.mockResolvedValue({ rows: [] }); // 无缓存，强制走 fetch
+
+    const result = await getAccountUsage(true); // forceRefresh=true 跳过缓存
+
+    // 两个账号都应该有结果
+    expect(Object.keys(result)).toContain('account1');
+    expect(Object.keys(result)).toContain('account2');
+    // fetch 应被调用两次（每个账号一次）
+    expect(mockFetch).toHaveBeenCalledTimes(2);
   });
 });
