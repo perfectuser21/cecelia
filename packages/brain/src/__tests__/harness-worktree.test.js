@@ -83,6 +83,55 @@ describe('ensureHarnessWorktree', () => {
     expect(cloneCall).toContain(remoteUrl);
   });
 
+  it('远端 URL clone 注入 GITHUB_TOKEN（x-access-token），clone 后改回干净 origin', async () => {
+    const calls = [];
+    const execFn = async (cmd, args) => {
+      calls.push([cmd, ...args].join(' '));
+      return { stdout: '' };
+    };
+    const statFn = async () => false;
+    const remoteUrl = 'https://github.com/perfectuser21/infrastructure.git';
+
+    await ensureHarnessWorktree({
+      taskId: 'beefcafe22222222',
+      baseRepo: remoteUrl,
+      execFn, statFn,
+      tokenFn: async () => 'ghp_secret_token',
+      logFn: () => {},
+    });
+
+    // clone 用注入 token 的 URL（不是裸 URL）
+    const cloneCall = calls.find(c => c.startsWith('git clone'));
+    expect(cloneCall).toContain('https://x-access-token:ghp_secret_token@github.com/perfectuser21/infrastructure.git');
+    // clone 后把 origin 改回干净 URL（不落盘 token）
+    const setUrlCall = calls.find(c => c.includes('remote set-url origin'));
+    expect(setUrlCall).toBeTruthy();
+    expect(setUrlCall).toContain(remoteUrl);
+    expect(setUrlCall).not.toContain('x-access-token');
+  });
+
+  it('远端 URL 但 tokenFn 返回空时，clone 退回裸 URL（best-effort，不阻塞）', async () => {
+    const calls = [];
+    const execFn = async (cmd, args) => {
+      calls.push([cmd, ...args].join(' '));
+      return { stdout: '' };
+    };
+    const statFn = async () => false;
+    const remoteUrl = 'https://github.com/perfectuser21/infrastructure.git';
+
+    await ensureHarnessWorktree({
+      taskId: 'beefcafe33333333',
+      baseRepo: remoteUrl,
+      execFn, statFn,
+      tokenFn: async () => '',
+      logFn: () => {},
+    });
+
+    const cloneCall = calls.find(c => c.startsWith('git clone'));
+    expect(cloneCall).toContain(remoteUrl);
+    expect(cloneCall).not.toContain('x-access-token');
+  });
+
   it('does not call git worktree add anywhere', async () => {
     const calls = [];
     const execFn = async (cmd, args) => {
