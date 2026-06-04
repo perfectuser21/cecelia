@@ -25,11 +25,18 @@ import { selectBestAccount, __setAccountUsageForTest } from '../account-usage.js
 
 describe('selectBestAccount — Opus omelette quota skip', () => {
   beforeEach(() => {
-    // __setAccountUsageForTest seam: C3 impl 时注入 mock cache rows
-    // 格式对应 account_usage_cache 表行（含 seven_day_omelette_pct 新列）
-    // B51: ACCOUNTS=[account2, account3]，account1 退订
-    // 原 account1 角色（列表第1个）→ account2，原 account2 角色（列表第2个）→ account3
+    // account1 恢复后加入池，需同步更新 mock 数据
+    // account1: omelette=96（opus 不可用），five_hour_pct=30（高于 account2 → sonnet 时 account2 胜）
     __setAccountUsageForTest([
+      {
+        account_id: 'account1',
+        five_hour_pct: 30,
+        seven_day_pct: 20,
+        seven_day_sonnet_pct: 15,
+        seven_day_omelette_pct: 96,
+        resets_at: null,
+        seven_day_resets_at: null,
+      },
       {
         account_id: 'account2',
         five_hour_pct: 10,
@@ -67,6 +74,15 @@ describe('selectBestAccount — Opus omelette quota skip', () => {
 
   it('returns null when all accounts capped for opus (omelette >= 95)', async () => {
     __setAccountUsageForTest([
+      {
+        account_id: 'account1',
+        five_hour_pct: 10,
+        seven_day_pct: 20,
+        seven_day_sonnet_pct: 15,
+        seven_day_omelette_pct: 97,
+        resets_at: null,
+        seven_day_resets_at: null,
+      },
       {
         account_id: 'account2',
         five_hour_pct: 10,
