@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -32,10 +32,11 @@ describe('Harness phase metrics — writeInitiativeRunEvent + updateInitiativeRu
     expect(src).toMatch(/\bmodel\b/);
   });
 
-  it('updateInitiativeRunEvent 函数存在', async () => {
-    const mod = await import('../../../packages/brain/src/events/initiativeRunEvents.js');
-    const updater = (mod as Record<string, unknown>).updateInitiativeRunEvent;
-    expect(typeof updater).toBe('function');
+  it('updateInitiativeRunEvent 函数存在且 dbPool 可覆盖连接', async () => {
+    const { updateInitiativeRunEvent } = (await import('../../../packages/brain/src/events/initiativeRunEvents.js')) as any;
+    const mockPool = { query: vi.fn().mockResolvedValue({ rows: [] }) };
+    const result = await updateInitiativeRunEvent({ id: 9999999, status: 'running', dbPool: mockPool });
+    expect(result).toBeNull();
   });
 });
 
@@ -82,7 +83,7 @@ describe('Harness phase metrics — 5 个 skill 首尾埋点 + 吞错 [BEHAVIOR]
 });
 
 describe('Harness phase metrics — 重复 POST 同一 phase → 最后 model 覆盖 [BEHAVIOR]（PRD 边界情况3）', () => {
-  it('POST /phase-event 路由已注册（前提：路由未注册时重复 POST 无从覆盖）', () => {
+  it('harness.js 有 POST 路由 + initiativeRunEvents.js 含 model 参数（边界情况3 静态红）', () => {
     const src = fs.readFileSync(path.join(REPO_ROOT, 'packages/brain/src/routes/harness.js'), 'utf8');
     expect(src).toMatch(/router\.post\([^)]*phase-event/);
   });
