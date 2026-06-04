@@ -279,6 +279,35 @@ ${state.task?.payload?.prep_prd_body || '（未提供，Planner 从 sprint-prd.m
   const plannerOutput = parseDockerOutput(stdout ?? '');
   return { plannerOutput, planner_container_id: containerId };
 }
+// 从 git log 新增文件列表识别真正的 sprint 目录。
+// 锚定合同标记文件（sprint-prd.md / contract-*.md）所在目录，而非猜任意子目录名 —
+// 防止 Planner 把测试放 sprints/tests/ 时，检测把 tests 误当成 sprint 目录
+// （验证线实证 bug：sprintDir=sprints/tests → Proposer 找不到合同 → ENOENT 失败）。
+// 返回 null 表示无法判定，让调用方走文件系统 fallback。
+export function detectSprintDirFromGitLog(logOut) {
+  if (!logOut || !logOut.trim()) return null;
+  const lines = logOut.split('\n').map((l) => l.trim()).filter(Boolean);
+  // 优先：合同标记文件所在目录就是 sprint 目录（最可靠）
+  const MARKERS = new Set([
+    'sprint-prd.md', 'contract-draft.md', 'contract-dod.md', 'contract.md', 'sprint-contract.md',
+  ]);
+  for (const line of lines) {
+    if (!line.startsWith('sprints/')) continue;
+    const base = line.slice(line.lastIndexOf('/') + 1);
+    if (MARKERS.has(base)) {
+      const dir = line.slice(0, line.length - base.length - 1);
+      return dir || 'sprints';
+    }
+  }
+  // 次选：sprints/<子目录>/ （旧 B37 行为），但排除已知非-sprint 子目录
+  const EXCLUDE = new Set(['tests', 'test', '__tests__', 'node_modules', 'fixtures']);
+  const subdirs = [...logOut.matchAll(/sprints\/([^/\n]+)\//g)]
+    .map((m) => m[1])
+    .filter((name) => !EXCLUDE.has(name));
+  if (subdirs.length > 0) return `sprints/${subdirs.at(-1)}`;
+  return null;
+}
+
 export async function parsePrdNode(state) {
   if (state.taskPlan && state.prdContent) {
     return { taskPlan: state.taskPlan, prdContent: state.prdContent, sprintDir: state.sprintDir };
@@ -306,10 +335,9 @@ export async function parsePrdNode(state) {
         ['log', '--diff-filter=A', '--name-only', '--format=', 'origin/main..HEAD', '--', 'sprints/'],
         { cwd: state.worktreePath }
       );
-      const allMatches = [...logOut.matchAll(/sprints\/([^/\n]+)\//g)];
-      const newSprintMatch = allMatches.at(-1);
-      if (newSprintMatch) {
-        sprintDir = `sprints/${newSprintMatch[1]}`;
+      const detected = detectSprintDirFromGitLog(logOut);
+      if (detected) {
+        sprintDir = detected;
       } else if (!logOut.trim()) {
         // B40: git log 无新增文件（未 commit），fallback 到文件系统检测
         try {
