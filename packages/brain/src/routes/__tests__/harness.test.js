@@ -155,6 +155,168 @@ describe('GET /runs/:id', () => {
   });
 });
 
+describe('POST /phase-event — phase-event start', () => {
+  let app;
+  let pool;
+
+  beforeEach(async () => {
+    vi.clearAllMocks();
+    const poolMod = await import('../../db.js');
+    pool = poolMod.default;
+    const routerMod = await import('../harness.js');
+    app = express();
+    app.use(express.json());
+    app.use('/', routerMod.default);
+  });
+
+  it('POST 返回 {id, initiative_id, node, status, model}', async () => {
+    const mockRow = { id: 42, initiative_id: 'init-1', node: 'planner', status: 'running', model: 'claude-opus-4-7', ts: 1717000000 };
+    pool.query.mockResolvedValueOnce({ rows: [mockRow] });
+    const res = await request(app)
+      .post('/phase-event')
+      .send({ initiative_id: 'init-1', node: 'planner', status: 'running', model: 'claude-opus-4-7' });
+    expect(res.status).toBe(201);
+    expect(res.body.id).toBeDefined();
+    expect(res.body.model).toBe('claude-opus-4-7');
+    expect(res.body.status).toBe('running');
+  });
+
+  it('response 不含禁用字段 event_id/phase/model_id/cost/created_at', async () => {
+    const mockRow = { id: 42, initiative_id: 'init-1', node: 'planner', status: 'running', model: 'claude-sonnet-4-6', ts: 1717000000 };
+    pool.query.mockResolvedValueOnce({ rows: [mockRow] });
+    const res = await request(app)
+      .post('/phase-event')
+      .send({ initiative_id: 'init-1', node: 'planner', status: 'running', model: 'claude-sonnet-4-6' });
+    expect(res.status).toBe(201);
+    expect(res.body).not.toHaveProperty('event_id');
+    expect(res.body).not.toHaveProperty('phase');
+    expect(res.body).not.toHaveProperty('model_id');
+    expect(res.body).not.toHaveProperty('cost');
+    expect(res.body).not.toHaveProperty('created_at');
+  });
+
+  it('response 含 id/initiative_id/node/status/model/ts 六字段', async () => {
+    const mockRow = { id: 99, initiative_id: 'init-x', node: 'generator', status: 'running', model: 'claude-opus-4-7', ts: 1717000001 };
+    pool.query.mockResolvedValueOnce({ rows: [mockRow] });
+    const res = await request(app)
+      .post('/phase-event')
+      .send({ initiative_id: 'init-x', node: 'generator', status: 'running', model: 'claude-opus-4-7' });
+    expect(res.status).toBe(201);
+    expect(Object.keys(res.body).sort()).toEqual(['id', 'initiative_id', 'model', 'node', 'status', 'ts'].sort());
+  });
+});
+
+describe('PATCH /phase-event/:id — phase-event end', () => {
+  let app;
+  let pool;
+
+  beforeEach(async () => {
+    vi.clearAllMocks();
+    const poolMod = await import('../../db.js');
+    pool = poolMod.default;
+    const routerMod = await import('../harness.js');
+    app = express();
+    app.use(express.json());
+    app.use('/', routerMod.default);
+  });
+
+  it('PATCH 返回 ts_end(number) + cost_usd(number) + status=completed', async () => {
+    const mockRow = { id: 42, initiative_id: 'init-1', node: 'planner', status: 'completed', model: 'claude-opus-4-7', ts: 1717000000, ts_end: 1717000060000, cost_usd: 0.42 };
+    pool.query.mockResolvedValueOnce({ rows: [mockRow] });
+    const res = await request(app)
+      .patch('/phase-event/42')
+      .send({ status: 'completed', ts_end: 1717000060000, cost_usd: 0.42 });
+    expect(res.status).toBe(200);
+    expect(typeof res.body.ts_end).toBe('number');
+    expect(typeof res.body.cost_usd).toBe('number');
+    expect(res.body.status).toBe('completed');
+  });
+
+  it('PATCH response 含 model 字段 + has(id/status/ts_end/cost_usd/model)', async () => {
+    const mockRow = { id: 42, initiative_id: 'init-1', node: 'planner', status: 'completed', model: 'claude-opus-4-7', ts: 1717000000, ts_end: 1717000060000, cost_usd: 0.42 };
+    pool.query.mockResolvedValueOnce({ rows: [mockRow] });
+    const res = await request(app)
+      .patch('/phase-event/42')
+      .send({ status: 'completed', ts_end: 1717000060000, cost_usd: 0.42 });
+    expect(res.status).toBe(200);
+    expect(res.body).toHaveProperty('id');
+    expect(res.body).toHaveProperty('status');
+    expect(res.body).toHaveProperty('ts_end');
+    expect(res.body).toHaveProperty('cost_usd');
+    expect(res.body).toHaveProperty('model');
+  });
+
+  it('PATCH response 不含 event_id/created_at', async () => {
+    const mockRow = { id: 42, initiative_id: 'init-1', node: 'planner', status: 'completed', model: 'claude-opus-4-7', ts: 1717000000, ts_end: 1717000060000, cost_usd: 0.42 };
+    pool.query.mockResolvedValueOnce({ rows: [mockRow] });
+    const res = await request(app)
+      .patch('/phase-event/42')
+      .send({ status: 'completed', ts_end: 1717000060000, cost_usd: 0.42 });
+    expect(res.status).toBe(200);
+    expect(res.body).not.toHaveProperty('event_id');
+    expect(res.body).not.toHaveProperty('created_at');
+  });
+
+  it('PATCH 不存在 :id=99999999999999 → 404 + JSON .error 字符串字段', async () => {
+    pool.query.mockResolvedValueOnce({ rows: [] });
+    const res = await request(app)
+      .patch('/phase-event/99999999999999')
+      .send({ status: 'completed', ts_end: 1717000060000, cost_usd: 0.01 });
+    expect(res.status).toBe(404);
+    expect(typeof res.body.error).toBe('string');
+    expect(res.body.error.length).toBeGreaterThan(0);
+  });
+});
+
+describe('[BEHAVIOR] migration + executor 文件检查', () => {
+  it('migration 293 文件存在且含三列 + completed CHECK', () => {
+    const src = fs.readFileSync(
+      new URL('../../../migrations/293_initiative_run_events_phase_metrics.sql', import.meta.url),
+      'utf8'
+    );
+    expect(src).toMatch(/ts_end/i);
+    expect(src).toMatch(/cost_usd/i);
+    expect(src).toMatch(/model/i);
+    expect(src).toMatch(/completed/i);
+  });
+
+  it('executor.js 保留 writeInitiativeRunEvent failed (non-fatal) warn 字符串', () => {
+    const src = fs.readFileSync(
+      new URL('../../executor.js', import.meta.url),
+      'utf8'
+    );
+    expect(src).toMatch(/writeInitiativeRunEvent failed \(non-fatal\)/);
+  });
+
+  it('harness-report SKILL.md Step 6 引用 initiative_run_events', () => {
+    const src = fs.readFileSync(
+      new URL('../../../../workflows/skills/harness-report/SKILL.md', import.meta.url),
+      'utf8'
+    );
+    expect(src).toMatch(/initiative_run_events/);
+  });
+
+  it('harness-report SKILL.md Step 6 含 ts_end.*1000 duration 单位转换', () => {
+    const src = fs.readFileSync(
+      new URL('../../../../workflows/skills/harness-report/SKILL.md', import.meta.url),
+      'utf8'
+    );
+    expect(src).toMatch(/ts_end/);
+    expect(src).toMatch(/1000/);
+  });
+
+  it('5 个 harness skill 含 phase-event 字面', () => {
+    const skills = ['harness-planner', 'harness-contract-proposer', 'harness-generator', 'harness-evaluator', 'harness-report'];
+    for (const skill of skills) {
+      const src = fs.readFileSync(
+        new URL(`../../../../workflows/skills/${skill}/SKILL.md`, import.meta.url),
+        'utf8'
+      );
+      expect(src, `${skill} 缺 phase-event`).toMatch(/phase-event/);
+    }
+  });
+});
+
 describe('GET /runs/:id/progress — B52 pipeline progress', () => {
   let app;
   let pool;
