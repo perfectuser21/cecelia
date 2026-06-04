@@ -3,6 +3,16 @@ import { promisify } from 'node:util';
 import { stat, rm } from 'node:fs/promises';
 import path from 'node:path';
 import { makeCpBranchName, shortTaskId } from './harness-utils.js';
+import { resolveGitHubToken } from './harness-credentials.js';
+
+/**
+ * 把 GitHub https URL 注入 x-access-token 凭据，用于无 credential helper 的容器内 clone。
+ * 非 https URL 或无 token 时原样返回。
+ */
+function injectTokenIntoUrl(url, token) {
+  if (!token || !/^https:\/\//.test(url)) return url;
+  return url.replace(/^https:\/\//, `https://x-access-token:${token}@`);
+}
 
 const execFile = promisify(execFileCb);
 
@@ -102,6 +112,7 @@ export async function ensureHarnessWorktree(opts) {
   const statFn = opts.statFn || defaultStat;
   const rmFn = opts.rmFn || defaultRm;
   const logFn = opts.logFn || ((msg) => console.warn(msg));
+  const tokenFn = opts.tokenFn || resolveGitHubToken;
 
   // H11: opts.wtKey + opts.branch 让 sub-task callers 用复合 key（绕过 shortTaskId ≥8 校验）。
   // initiative-level callers（不传 wtKey/branch）走老路用 shortTaskId(taskId) + makeCpBranchName。
@@ -179,11 +190,28 @@ export async function ensureHarnessWorktree(opts) {
       cloneSource, wtPath,
     ]);
   } else {
+    // 远端 URL：容器内无 credential helper（git-credential-gh-token not found），
+    // 注入 x-access-token 凭据才能 clone 私有/受限 repo。clone 后改回干净 origin 不落盘 token。
+    let cloneToken = '';
+    try {
+      cloneToken = (await tokenFn()) || '';
+    } catch (err) {
+      logFn(`[harness-worktree] resolveGitHubToken 失败（裸 URL clone）: ${err.message}`);
+    }
+    const cloneUrl = injectTokenIntoUrl(cloneSource, cloneToken);
     await execFn('git', [
       'clone',
       '--branch', 'main', '--single-branch',
-      cloneSource, wtPath,
+      cloneUrl, wtPath,
     ]);
+    // 若注入了 token，把 origin 改回干净 URL（避免 token 落盘 .git/config）
+    if (cloneToken) {
+      try {
+        await execFn('git', ['-C', wtPath, 'remote', 'set-url', 'origin', cloneSource]);
+      } catch (err) {
+        logFn(`[harness-worktree] could not reset origin to clean URL for ${wtPath}: ${err.message}`);
+      }
+    }
   }
 
   // H16: clone 后改 origin URL 到主仓库的 GitHub origin。
