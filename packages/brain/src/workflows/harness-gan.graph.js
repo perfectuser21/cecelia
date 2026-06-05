@@ -271,6 +271,26 @@ export async function defaultReadContractFile(worktreePath, sprintDir) {
       }
     }
   } catch { /* sprintDir doesn't exist or readdir failed */ }
+  // B56: sprints/ 根目录 fallback — sprintDir 可能被误算（如 sprints/tests，合同实际在 sprints/）。
+  // 不信任传入的 sprintDir，从 worktree 的 sprints/ 根起扫根+所有子目录找合同，以文件实际位置为准。
+  // 防御 sprintDir 多源不一致：不管哪个源算错，合同在哪就读哪。
+  try {
+    const sprintsRoot = path.join(worktreePath, 'sprints');
+    for (const name of ['contract-draft.md', 'sprint-contract.md', 'contract.md']) {
+      try {
+        return await readFile(path.join(sprintsRoot, name), 'utf8');
+      } catch { /* keep scanning */ }
+    }
+    const rootEntries = await readdir(sprintsRoot, { withFileTypes: true });
+    for (const entry of rootEntries) {
+      if (!entry.isDirectory()) continue;
+      for (const name of ['contract-draft.md', 'sprint-contract.md']) {
+        try {
+          return await readFile(path.join(sprintsRoot, entry.name, name), 'utf8');
+        } catch { /* keep scanning */ }
+      }
+    }
+  } catch { /* sprints/ root not found */ }
   try {
     const { stdout } = await execFile('git', [
       '-C', worktreePath, 'log', '--all', '--pretty=format:%H', '-S', 'Sprint Contract Draft', '--', `${sprintDir}/contract-draft.md`,
