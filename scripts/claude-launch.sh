@@ -43,5 +43,16 @@ if [[ -z "$_CLAUDE_BIN" || ! -x "$_CLAUDE_BIN" ]]; then
     exit 127
 fi
 
+# 账号切换：claude-switch cs/cn 写入 ~/.claude/.active-account-dir
+if [[ -z "${CLAUDE_CONFIG_DIR:-}" ]]; then
+    _ACCT_DIR_FILE="$HOME/.claude/.active-account-dir"
+    if [[ -f "$_ACCT_DIR_FILE" ]]; then
+        _ACCT_DIR=$(cat "$_ACCT_DIR_FILE")
+        if [[ -d "$_ACCT_DIR" ]]; then
+            export CLAUDE_CONFIG_DIR="$_ACCT_DIR"
+        fi
+    fi
+fi
+
 FINAL_CMD=("$_CLAUDE_BIN" --session-id "$SID" "${ARGS[@]+"${ARGS[@]}"}")
 exec "${FINAL_CMD[@]}"
