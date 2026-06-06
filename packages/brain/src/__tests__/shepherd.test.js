@@ -45,59 +45,65 @@ describe('classifyFailedChecks', () => {
 });
 
 // ===== checkPrStatus =====
+// 新实现拆为两次 execSync：1st = state+mergeable，2nd = statusCheckRollup
+// MERGED/CLOSED 早返回只需 1 次调用
 describe('checkPrStatus', () => {
   beforeEach(() => {
     vi.mocked(execSync).mockReset();
   });
 
-  it('解析 CI 通过且 mergeable 的 PR', () => {
-    vi.mocked(execSync).mockReturnValueOnce(JSON.stringify({
-      state: 'OPEN',
-      mergeable: 'MERGEABLE',
-      statusCheckRollup: [{ name: 'brain-ci', conclusion: 'SUCCESS', status: 'COMPLETED' }],
-    }));
+  it('解析 CI 通过且 mergeable 的 PR（两次调用）', () => {
+    vi.mocked(execSync)
+      .mockReturnValueOnce(JSON.stringify({ state: 'OPEN', mergeable: 'MERGEABLE' }))
+      .mockReturnValueOnce(JSON.stringify({ statusCheckRollup: [{ name: 'brain-ci', conclusion: 'SUCCESS', status: 'COMPLETED' }] }));
     const result = checkPrStatus('https://github.com/owner/repo/pull/1');
     expect(result.ciStatus).toBe('ci_passed');
     expect(result.allPassed).toBe(true);
   });
 
-  it('解析 CI 失败的 PR', () => {
-    vi.mocked(execSync).mockReturnValueOnce(JSON.stringify({
-      state: 'OPEN',
-      mergeable: 'MERGEABLE',
-      statusCheckRollup: [{ name: 'eslint-check', conclusion: 'FAILURE', status: 'COMPLETED' }],
-    }));
+  it('解析 CI 失败的 PR（两次调用）', () => {
+    vi.mocked(execSync)
+      .mockReturnValueOnce(JSON.stringify({ state: 'OPEN', mergeable: 'MERGEABLE' }))
+      .mockReturnValueOnce(JSON.stringify({ statusCheckRollup: [{ name: 'eslint-check', conclusion: 'FAILURE', status: 'COMPLETED' }] }));
     const result = checkPrStatus('https://github.com/owner/repo/pull/2');
     expect(result.ciStatus).toBe('ci_failed');
     expect(result.failedChecks).toContain('eslint-check');
   });
 
-  it('解析 CI pending 的 PR', () => {
-    vi.mocked(execSync).mockReturnValueOnce(JSON.stringify({
-      state: 'OPEN',
-      mergeable: 'MERGEABLE',
-      statusCheckRollup: [{ name: 'brain-ci', conclusion: null, status: 'IN_PROGRESS' }],
-    }));
+  it('解析 CI pending 的 PR（两次调用）', () => {
+    vi.mocked(execSync)
+      .mockReturnValueOnce(JSON.stringify({ state: 'OPEN', mergeable: 'MERGEABLE' }))
+      .mockReturnValueOnce(JSON.stringify({ statusCheckRollup: [{ name: 'brain-ci', conclusion: null, status: 'IN_PROGRESS' }] }));
     expect(checkPrStatus('https://github.com/owner/repo/pull/3').ciStatus).toBe('ci_pending');
   });
 
-  it('解析已合并的 PR', () => {
-    vi.mocked(execSync).mockReturnValueOnce(JSON.stringify({
-      state: 'MERGED', mergeable: 'UNKNOWN', statusCheckRollup: [],
-    }));
-    expect(checkPrStatus('https://github.com/owner/repo/pull/4').ciStatus).toBe('merged');
+  it('解析已合并的 PR（一次调用即早返回）', () => {
+    vi.mocked(execSync).mockReturnValueOnce(JSON.stringify({ state: 'MERGED', mergeable: 'UNKNOWN' }));
+    const result = checkPrStatus('https://github.com/owner/repo/pull/4');
+    expect(result.ciStatus).toBe('merged');
+    expect(result.allPassed).toBe(true);
+    expect(vi.mocked(execSync)).toHaveBeenCalledTimes(1);
   });
 
-  it('解析已关闭的 PR', () => {
-    vi.mocked(execSync).mockReturnValueOnce(JSON.stringify({
-      state: 'CLOSED', mergeable: 'UNKNOWN', statusCheckRollup: [],
-    }));
-    expect(checkPrStatus('https://github.com/owner/repo/pull/5').ciStatus).toBe('closed');
+  it('解析已关闭的 PR（一次调用即早返回）', () => {
+    vi.mocked(execSync).mockReturnValueOnce(JSON.stringify({ state: 'CLOSED', mergeable: 'UNKNOWN' }));
+    const result = checkPrStatus('https://github.com/owner/repo/pull/5');
+    expect(result.ciStatus).toBe('closed');
+    expect(vi.mocked(execSync)).toHaveBeenCalledTimes(1);
+  });
+
+  it('statusCheckRollup 查询失败时降级为 ci_no_checks（PAT 权限不足容错）', () => {
+    vi.mocked(execSync)
+      .mockReturnValueOnce(JSON.stringify({ state: 'OPEN', mergeable: 'MERGEABLE' }))
+      .mockImplementationOnce(() => { throw new Error('GraphQL: no checks:read scope'); });
+    const result = checkPrStatus('https://github.com/owner/repo/pull/6');
+    expect(result.ciStatus).toBe('ci_no_checks');
+    expect(result.state).toBe('OPEN');
   });
 
   it('gh CLI 失败时抛出错误', () => {
     vi.mocked(execSync).mockImplementationOnce(() => { throw new Error('gh: not found'); });
-    expect(() => checkPrStatus('https://github.com/owner/repo/pull/6')).toThrow(/gh pr view failed/);
+    expect(() => checkPrStatus('https://github.com/owner/repo/pull/7')).toThrow(/gh pr view failed/);
   });
 });
 
@@ -118,18 +124,20 @@ describe('shepherdOpenPRs', () => {
     expect(mockPool.query).toHaveBeenCalledTimes(1);
   });
 
-  it('S2: CI 通过且 mergeable → auto-merge，pr_status=ci_passed', async () => {
+  it('S2: CI 通过且 mergeable → auto-merge，pr_status=merged', async () => {
     const task = { id: 'task-1', title: 'T1', pr_url: 'https://github.com/o/r/pull/1', pr_status: 'open', retry_count: 0, payload: {} };
     mockPool.query
       .mockResolvedValueOnce({ rows: [task] })
       .mockResolvedValueOnce({ rowCount: 1 });
     vi.mocked(execSync)
-      .mockReturnValueOnce(JSON.stringify({ state: 'OPEN', mergeable: 'MERGEABLE', statusCheckRollup: [{ name: 'brain-ci', conclusion: 'SUCCESS', status: 'COMPLETED' }] }))
-      .mockReturnValueOnce('');
+      .mockReturnValueOnce(JSON.stringify({ state: 'OPEN', mergeable: 'MERGEABLE' }))
+      .mockReturnValueOnce(JSON.stringify({ statusCheckRollup: [{ name: 'brain-ci', conclusion: 'SUCCESS', status: 'COMPLETED' }] }))
+      .mockReturnValueOnce('')
+      .mockReturnValueOnce(JSON.stringify({ state: 'MERGED', mergeable: 'UNKNOWN' }));
 
     const result = await shepherdOpenPRs(mockPool);
     expect(result.merged).toBe(1);
-    expect(mockPool.query.mock.calls[1][0]).toContain("pr_status = 'ci_passed'");
+    expect(mockPool.query.mock.calls[1][0]).toContain("pr_status = 'merged'");
   });
 
   it('S3: CI 失败 + retry=0 + lint → 重排 queued', async () => {
@@ -138,7 +146,9 @@ describe('shepherdOpenPRs', () => {
       .mockResolvedValueOnce({ rows: [task] })
       .mockResolvedValueOnce({ rowCount: 1 })
       .mockResolvedValueOnce({ rowCount: 1 });
-    vi.mocked(execSync).mockReturnValueOnce(JSON.stringify({ state: 'OPEN', mergeable: 'MERGEABLE', statusCheckRollup: [{ name: 'eslint-check', conclusion: 'FAILURE', status: 'COMPLETED' }] }));
+    vi.mocked(execSync)
+      .mockReturnValueOnce(JSON.stringify({ state: 'OPEN', mergeable: 'MERGEABLE' }))
+      .mockReturnValueOnce(JSON.stringify({ statusCheckRollup: [{ name: 'eslint-check', conclusion: 'FAILURE', status: 'COMPLETED' }] }));
 
     const result = await shepherdOpenPRs(mockPool);
     expect(result.failed).toBe(1);
@@ -152,17 +162,21 @@ describe('shepherdOpenPRs', () => {
     mockPool.query
       .mockResolvedValueOnce({ rows: [task] })
       .mockResolvedValueOnce({ rowCount: 1 });
-    vi.mocked(execSync).mockReturnValueOnce(JSON.stringify({ state: 'OPEN', mergeable: 'MERGEABLE', statusCheckRollup: [{ name: 'eslint-check', conclusion: 'FAILURE', status: 'COMPLETED' }] }));
+    vi.mocked(execSync)
+      .mockReturnValueOnce(JSON.stringify({ state: 'OPEN', mergeable: 'MERGEABLE' }))
+      .mockReturnValueOnce(JSON.stringify({ statusCheckRollup: [{ name: 'eslint-check', conclusion: 'FAILURE', status: 'COMPLETED' }] }));
 
     await shepherdOpenPRs(mockPool);
     expect(quarantineTask).toHaveBeenCalledWith('task-3', 'ci_failure', expect.objectContaining({ failure_class: 'lint', retry_count: 2 }));
-    expect(mockPool.query).toHaveBeenCalledTimes(2); // 不重排
+    expect(mockPool.query).toHaveBeenCalledTimes(2);
   });
 
   it('S5: CI 失败 + type=other + retry=0 → quarantine', async () => {
     const task = { id: 'task-4', title: 'T4', pr_url: 'https://github.com/o/r/pull/4', pr_status: 'open', retry_count: 0, payload: {} };
     mockPool.query.mockResolvedValueOnce({ rows: [task] }).mockResolvedValueOnce({ rowCount: 1 });
-    vi.mocked(execSync).mockReturnValueOnce(JSON.stringify({ state: 'OPEN', mergeable: 'MERGEABLE', statusCheckRollup: [{ name: 'security-scan', conclusion: 'FAILURE', status: 'COMPLETED' }] }));
+    vi.mocked(execSync)
+      .mockReturnValueOnce(JSON.stringify({ state: 'OPEN', mergeable: 'MERGEABLE' }))
+      .mockReturnValueOnce(JSON.stringify({ statusCheckRollup: [{ name: 'security-scan', conclusion: 'FAILURE', status: 'COMPLETED' }] }));
 
     await shepherdOpenPRs(mockPool);
     expect(quarantineTask).toHaveBeenCalledWith('task-4', 'ci_failure', expect.objectContaining({ failure_class: 'other' }));
@@ -171,7 +185,7 @@ describe('shepherdOpenPRs', () => {
   it('S6: PR state=MERGED → pr_status=merged，更新 pr_merged_at', async () => {
     const task = { id: 'task-5', title: 'T5', pr_url: 'https://github.com/o/r/pull/5', pr_status: 'ci_pending', retry_count: 0, payload: {} };
     mockPool.query.mockResolvedValueOnce({ rows: [task] }).mockResolvedValueOnce({ rowCount: 1 });
-    vi.mocked(execSync).mockReturnValueOnce(JSON.stringify({ state: 'MERGED', mergeable: 'UNKNOWN', statusCheckRollup: [] }));
+    vi.mocked(execSync).mockReturnValueOnce(JSON.stringify({ state: 'MERGED', mergeable: 'UNKNOWN' }));
 
     const result = await shepherdOpenPRs(mockPool);
     expect(result.merged).toBe(1);
@@ -182,7 +196,7 @@ describe('shepherdOpenPRs', () => {
   it('S7: PR state=CLOSED → pr_status=closed', async () => {
     const task = { id: 'task-6', title: 'T6', pr_url: 'https://github.com/o/r/pull/6', pr_status: 'open', retry_count: 0, payload: {} };
     mockPool.query.mockResolvedValueOnce({ rows: [task] }).mockResolvedValueOnce({ rowCount: 1 });
-    vi.mocked(execSync).mockReturnValueOnce(JSON.stringify({ state: 'CLOSED', mergeable: 'UNKNOWN', statusCheckRollup: [] }));
+    vi.mocked(execSync).mockReturnValueOnce(JSON.stringify({ state: 'CLOSED', mergeable: 'UNKNOWN' }));
 
     await shepherdOpenPRs(mockPool);
     expect(mockPool.query.mock.calls[1][0]).toContain("pr_status = 'closed'");
@@ -196,7 +210,7 @@ describe('shepherdOpenPRs', () => {
     mockPool.query.mockResolvedValueOnce({ rows: tasks }).mockResolvedValueOnce({ rowCount: 1 });
     vi.mocked(execSync)
       .mockImplementationOnce(() => { throw new Error('gh: not found'); })
-      .mockReturnValueOnce(JSON.stringify({ state: 'MERGED', mergeable: 'UNKNOWN', statusCheckRollup: [] }));
+      .mockReturnValueOnce(JSON.stringify({ state: 'MERGED', mergeable: 'UNKNOWN' }));
 
     const result = await shepherdOpenPRs(mockPool);
     expect(result.processed).toBe(2);
@@ -213,7 +227,9 @@ describe('shepherdOpenPRs', () => {
   it('S10: CI pending → pr_status 更新为 ci_pending（原为 open）', async () => {
     const task = { id: 'task-9', title: 'T9', pr_url: 'https://github.com/o/r/pull/9', pr_status: 'open', retry_count: 0, payload: {} };
     mockPool.query.mockResolvedValueOnce({ rows: [task] }).mockResolvedValueOnce({ rowCount: 1 });
-    vi.mocked(execSync).mockReturnValueOnce(JSON.stringify({ state: 'OPEN', mergeable: 'MERGEABLE', statusCheckRollup: [{ name: 'brain-ci', conclusion: null, status: 'IN_PROGRESS' }] }));
+    vi.mocked(execSync)
+      .mockReturnValueOnce(JSON.stringify({ state: 'OPEN', mergeable: 'MERGEABLE' }))
+      .mockReturnValueOnce(JSON.stringify({ statusCheckRollup: [{ name: 'brain-ci', conclusion: null, status: 'IN_PROGRESS' }] }));
 
     const result = await shepherdOpenPRs(mockPool);
     expect(result.pending).toBe(1);
