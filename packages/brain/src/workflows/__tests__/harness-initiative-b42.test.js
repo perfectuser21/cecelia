@@ -70,7 +70,8 @@ describe('_waitForSubGraphCompletion — B42 liveness race guard', () => {
       _checkPrMerged: prMergedCheck,
     });
 
-    expect(livenessCheck).toHaveBeenCalledWith('harness-task-ws1-r0-dead');
+    // Fix #4: checkLiveness 现在带第二参 {executor, daemonUrl}（远程 worker-daemon 路由）
+    expect(livenessCheck).toHaveBeenCalledWith('harness-task-ws1-r0-dead', expect.any(Object));
     expect(result.status).toBe('failed');
   });
 
