@@ -76,7 +76,7 @@ generator 写代码 + push PR
 | `TASK_ID` | Brain 中当前 evaluate task 的 UUID |
 | `WORKSTREAM_INDEX` | 当前 workstream 编号（如 `1`），仅模式 A 用；旧变量名 `WORKSTREAM_N` 同时兼容 |
 | `JOURNEY_TYPE` | `user_facing` / `autonomous` / `dev_pipeline` / `agent_remote` |
-| `TARGET_ENV` | `mac_web` / `windows_cloud` / `linux_server` / `local_api` / `playground`（来自 PRD `target_environment` 字段）|
+| `TARGET_ENV` | `mac_web` / `windows_cloud` / `windows_wechat` / `linux_server` / `local_api` / `playground`（来自 PRD `target_environment` 字段）|
 | `WORKSPACE_PATH` | 结果文件写入目录（mac_web host 执行时为 worktreePath，Docker 默认不注入，脚本 fallback `/workspace`）|
 | `WINDOWS_CLOUD_WORKFLOW` | GHA workflow 文件名（harness-initiative.graph.js 根据 base_repo 注入：zenithjoy → `agent-e2e-video.yml`，否则 `e2e-windows.yml`）|
 | `DB` | PostgreSQL 连接串，如 `postgresql://localhost/cecelia` |
@@ -521,6 +521,55 @@ BREOF
     ;;
 
 
+  windows_wechat)
+    # self-hosted runner xian-rog（含微信 4.1.8 + uiautomation + pyautogui）
+    # 适用场景：任何含 wechat-rpa / pyautogui / RPA / 个微 / 微信监听 关键词的 sprint
+    # 触发 e2e-wechat-rpa.yml（在 perfectuser21/zenithjoy-workspace repo）
+    # 注意：xian-rog 是 self-hosted runner，不是 GitHub 托管的干净 VM；
+    #       微信 4.1.8 已锁版本（≤4.1.8 才有 UIA 控件树），不可升级
+    REPO="perfectuser21/zenithjoy-workspace"
+    WORKFLOW="e2e-wechat-rpa.yml"
+    WORKFLOW_FILE=".github/workflows/${WORKFLOW}"
+    if [[ ! -f "$WORKFLOW_FILE" ]]; then
+      cat > "$WORKSPACE/.brain-result.json" << BREOF
+{"verdict":"FAIL","task_id":"$TASK_ID","failed_step":"workflow_content_check","log_excerpt":"workflow 文件不存在: $WORKFLOW_FILE — 请先在 perfectuser21/zenithjoy-workspace 创建 e2e-wechat-rpa.yml"}
+BREOF
+      exit 0
+    fi
+    gh workflow run "$WORKFLOW" \
+      --repo "$REPO" \
+      -f task_id="$TASK_ID" \
+      -f sprint_dir="$SPRINT_DIR" \
+      -f pr_branch="${PR_BRANCH:-}" \
+      2>&1 | tee /tmp/e2e-trigger.log
+    TRIGGER_EXIT=$?
+    if [[ $TRIGGER_EXIT -ne 0 ]]; then
+      cat > "$WORKSPACE/.brain-result.json" << BREOF
+{"verdict":"FAIL","task_id":"$TASK_ID","failed_step":"gh_trigger","log_excerpt":"e2e-wechat-rpa.yml 触发失败，检查 gh auth 状态和 xian-rog runner 是否在线"}
+BREOF
+      exit 0
+    fi
+    sleep 10
+    for i in $(seq 1 20); do
+      RUN_STATUS=$(gh run list --repo "$REPO" --workflow "$WORKFLOW" --limit 1 \
+        --json status,conclusion --jq '.[0].status' 2>/dev/null)
+      RUN_CONCLUSION=$(gh run list --repo "$REPO" --workflow "$WORKFLOW" --limit 1 \
+        --json status,conclusion --jq '.[0].conclusion' 2>/dev/null)
+      if [[ "$RUN_STATUS" == "completed" ]]; then
+        break
+      fi
+      sleep 30
+    done
+    if [[ "$RUN_CONCLUSION" == "success" ]]; then
+      EXIT_CODE=0
+    else
+      EXIT_CODE=1
+      gh run list --repo "$REPO" --workflow "$WORKFLOW" --limit 1 \
+        --json url --jq '.[0].url' > /tmp/e2e-result.log 2>&1
+      echo "conclusion: $RUN_CONCLUSION" >> /tmp/e2e-result.log
+    fi
+    ;;
+
   linux_server)
     # SSH 到 hk-vps 或 us-vps 执行 bash 脚本
     LINUX_HOST="${LINUX_E2E_HOST:-hk-vps}"
@@ -550,6 +599,12 @@ esac
 - `gh` CLI 已登录（`gh auth status` 验证），PAT 有 `workflow` write scope
 - 目标 repo 有 `e2e-windows.yml` workflow（含 `workflow_dispatch` 触发器）
 - GitHub Actions 使用 `windows-latest` runner，免费（public repo）
+
+`windows_wechat`：
+- `gh` CLI 已登录，PAT 有 `workflow` write scope
+- 目标 repo `perfectuser21/zenithjoy-workspace` 有 `e2e-wechat-rpa.yml` workflow（含 `workflow_dispatch` 触发器）
+- self-hosted runner `xian-rog` 在线（微信 4.1.8.107 已锁版本 + uiautomation + pyautogui 已装）
+- 选择此 target 而非 `windows_cloud` 的原因：wechat-rpa 依赖真实微信客户端 + 本地 UIA 控件树，GitHub 托管的干净 VM 无法安装/运行微信
 
 `linux_server`：
 - `~/.ssh/config` 已配置 `hk-vps` / `us-vps` 别名，SSH 免密登录已配置
