@@ -55,7 +55,9 @@ describe('parsePrdNode — B37: git diff 找新 sprint 目录', () => {
     ].join('\n');
 
     // git diff 返回正确的新 sprint 文件
-    mockExecFile.mockImplementation((_cmd, _args, _opts, cb) => {
+    mockExecFile.mockImplementation((cmd, args, _opts, cb) => {
+      // B57: resolveSprintDirFromFs 的 find sprint-prd.md 探测返回空，走 git-log fallback（本测试意图）
+      if (cmd === 'find' && Array.isArray(args) && args.includes('sprint-prd.md')) { cb(null, '', ''); return; }
       cb(null, 'sprints/w47-b37-test/sprint-prd.md\n', '');
     });
     fsPromises.readFile.mockResolvedValue('# PRD from correct sprint');
@@ -79,7 +81,8 @@ describe('parsePrdNode — B37: git diff 找新 sprint 目录', () => {
     const plannerOutput = '{"verdict":"DONE","sprint_dir":"sprints/w48-from-regex","branch":"cp-x"}';
 
     // git diff 返回空（非 sprints/ 下的文件）
-    mockExecFile.mockImplementation((_cmd, _args, _opts, cb) => {
+    mockExecFile.mockImplementation((cmd, args, _opts, cb) => {
+      if (cmd === 'find' && Array.isArray(args) && args.includes('sprint-prd.md')) { cb(null, '', ''); return; }
       cb(null, 'some-other-file.md\n', '');
     });
     fsPromises.readFile.mockResolvedValue('# PRD');

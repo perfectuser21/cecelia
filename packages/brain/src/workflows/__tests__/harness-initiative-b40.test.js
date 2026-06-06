@@ -49,7 +49,9 @@ describe('B40: parsePrdNode git log fallback + dbUpsertNode sprint_dir 写回', 
 
   it('B40-1: git log 使用 log 而非 diff（验证命令第一个 arg）', async () => {
     let capturedArgs = null;
-    mockExecFile.mockImplementation((_cmd, args, _opts, cb) => {
+    mockExecFile.mockImplementation((cmd, args, _opts, cb) => {
+      // B57: resolveSprintDirFromFs 的 find sprint-prd.md 探测返回空（不捕获），走 git-log（本测试意图）
+      if (cmd === 'find' && Array.isArray(args) && args.includes('sprint-prd.md')) { cb(null, '', ''); return; }
       if (!capturedArgs) capturedArgs = args;
       cb(null, 'sprints/ws2-test/sprint-prd.md\n', '');
     });
@@ -67,13 +69,13 @@ describe('B40: parsePrdNode git log fallback + dbUpsertNode sprint_dir 写回', 
   });
 
   it('B40-2: git log 返回空 + find 找到单个子目录 → 使用 find 结果', async () => {
-    // Call 1: git log 返回空
-    mockExecFile.mockImplementationOnce((_cmd, _args, _opts, cb) => {
+    // B57: cmd/args 感知 — find sprint-prd.md 探测返回空（走旧 fallback 本测试意图）；
+    //   git log 返回空；find -type d 子目录探测返回 ws3。
+    mockExecFile.mockImplementation((cmd, args, _opts, cb) => {
+      if (cmd === 'find' && Array.isArray(args) && args.includes('sprint-prd.md')) { cb(null, '', ''); return; }
+      if (cmd === 'git') { cb(null, '', ''); return; }
+      if (cmd === 'find') { cb(null, '/fake/worktree/sprints/ws3\n', ''); return; }
       cb(null, '', '');
-    });
-    // Call 2: find 返回一个子目录
-    mockExecFile.mockImplementationOnce((_cmd, _args, _opts, cb) => {
-      cb(null, '/fake/worktree/sprints/ws3\n', '');
     });
     fsPromises.readFile.mockResolvedValue('# PRD content');
 
