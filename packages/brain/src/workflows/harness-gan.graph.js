@@ -430,6 +430,7 @@ export function createGanContractNodes(executor, ctx) {
     verifyProposer = verifyContractProposerOutput,
     readReviewerFeedback = defaultReadReviewerFeedbackVerdict,
     readContractFromBranch = defaultReadContractFromBranch,
+    heartbeatFn = null,
   } = ctx;
   // _fetchOriginFile 保留 ctx 兼容旧 caller（test 仍传 fetchOriginFile），H15 后 proposer 改走 verifyProposer。
   void _fetchOriginFile;
@@ -470,25 +471,33 @@ export function createGanContractNodes(executor, ctx) {
     try { await resolveAccount(acctOpts, { taskId }); } catch { /* non-blocking */ }
 
     // B44 fix: 改回阻塞 executor（WS3 async 已回退，根因 propose_branch 丢失）
-    const result = await executor({
-      task: { id: taskId, task_type: 'harness_contract_propose' },
-      prompt: buildProposerPrompt(state.prdContent, state.feedback, nextRound, computedBranch),
-      worktreePath,
-      env: {
-        ...acctOpts.env,
-        CECELIA_TASK_TYPE: 'harness_contract_propose',
-        HARNESS_NODE: 'proposer',
-        HARNESS_SPRINT_DIR: sprintDir,
-        HARNESS_INITIATIVE_ID: initiativeId,
-        HARNESS_PROPOSE_ROUND: String(nextRound),
-        TASK_ID: taskId,
-        SPRINT_DIR: sprintDir,
-        PLANNER_BRANCH: plannerBranch,
-        PROPOSE_ROUND: String(nextRound),
-        PROPOSE_BRANCH: computedBranch,
-        GITHUB_TOKEN: githubToken,
-      },
-    });
+    const hbTimer = heartbeatFn
+      ? setInterval(() => { heartbeatFn().catch(() => {}); }, 60_000)
+      : null;
+    let result;
+    try {
+      result = await executor({
+        task: { id: taskId, task_type: 'harness_contract_propose' },
+        prompt: buildProposerPrompt(state.prdContent, state.feedback, nextRound, computedBranch),
+        worktreePath,
+        env: {
+          ...acctOpts.env,
+          CECELIA_TASK_TYPE: 'harness_contract_propose',
+          HARNESS_NODE: 'proposer',
+          HARNESS_SPRINT_DIR: sprintDir,
+          HARNESS_INITIATIVE_ID: initiativeId,
+          HARNESS_PROPOSE_ROUND: String(nextRound),
+          TASK_ID: taskId,
+          SPRINT_DIR: sprintDir,
+          PLANNER_BRANCH: plannerBranch,
+          PROPOSE_ROUND: String(nextRound),
+          PROPOSE_BRANCH: computedBranch,
+          GITHUB_TOKEN: githubToken,
+        },
+      });
+    } finally {
+      if (hbTimer) clearInterval(hbTimer);
+    }
 
     if (result.exit_code !== 0 || result.timed_out) {
       throw new Error(`proposer_failed: exit=${result.exit_code}`);
@@ -544,24 +553,32 @@ export function createGanContractNodes(executor, ctx) {
     try { await resolveAccount(acctOpts, { taskId }); } catch { /* non-blocking */ }
 
     // B44 fix: 改回阻塞 executor（WS3 async 已回退）
-    const result = await executor({
-      task: { id: taskId, task_type: 'harness_contract_review' },
-      prompt: buildReviewerPrompt(state.prdContent, state.contractContent, currentRound),
-      worktreePath,
-      env: {
-        ...acctOpts.env,
-        CECELIA_TASK_TYPE: 'harness_contract_review',
-        HARNESS_NODE: 'reviewer',
-        HARNESS_SPRINT_DIR: sprintDir,
-        HARNESS_INITIATIVE_ID: initiativeId,
-        HARNESS_REVIEW_ROUND: String(currentRound),
-        TASK_ID: taskId,
-        SPRINT_DIR: sprintDir,
-        PLANNER_BRANCH: plannerBranch,
-        REVIEW_ROUND: String(currentRound),
-        GITHUB_TOKEN: githubToken,
-      },
-    });
+    const hbTimer = heartbeatFn
+      ? setInterval(() => { heartbeatFn().catch(() => {}); }, 60_000)
+      : null;
+    let result;
+    try {
+      result = await executor({
+        task: { id: taskId, task_type: 'harness_contract_review' },
+        prompt: buildReviewerPrompt(state.prdContent, state.contractContent, currentRound),
+        worktreePath,
+        env: {
+          ...acctOpts.env,
+          CECELIA_TASK_TYPE: 'harness_contract_review',
+          HARNESS_NODE: 'reviewer',
+          HARNESS_SPRINT_DIR: sprintDir,
+          HARNESS_INITIATIVE_ID: initiativeId,
+          HARNESS_REVIEW_ROUND: String(currentRound),
+          TASK_ID: taskId,
+          SPRINT_DIR: sprintDir,
+          PLANNER_BRANCH: plannerBranch,
+          REVIEW_ROUND: String(currentRound),
+          GITHUB_TOKEN: githubToken,
+        },
+      });
+    } finally {
+      if (hbTimer) clearInterval(hbTimer);
+    }
 
     if (result.exit_code !== 0 || result.timed_out) {
       throw new Error(`reviewer_failed: exit=${result.exit_code}`);
@@ -746,6 +763,7 @@ export async function runGanContractGraph(opts) {
     readContractFile,
     fetchOriginFile,
     recursionLimit = DEFAULT_RECURSION_LIMIT,
+    heartbeatFn = null,
   } = opts;
 
   if (!taskId) throw new Error('runGanContractGraph: taskId (thread_id) required');
@@ -760,6 +778,7 @@ export async function runGanContractGraph(opts) {
   const nodes = createGanContractNodes(executor, {
     taskId, initiativeId, sprintDir, worktreePath, githubToken, baseRepo,
     plannerOutput, budgetCapUsd, readContractFile, fetchOriginFile,
+    heartbeatFn,
   });
   const graph = buildGanContractGraph(nodes);
   const app = graph.compile({ checkpointer, durability: 'sync' });

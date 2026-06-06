@@ -26,15 +26,15 @@ describe('B44 — harness-gan.graph.js GAN 改回同步 [BEHAVIOR]', () => {
 
   it('proposer 节点使用 await executor({ 而非 spawnDockerDetached', () => {
     const src = readFileSync(SRC, 'utf8');
-    // B44 fix: 阻塞 executor 模式（不需要转义 { }）
-    expect(src).toMatch(/const result = await executor\(/);
+    // B44 fix: 阻塞 executor 模式（心跳 fix 后改为 let result + try/finally，仍是同步 await executor）
+    expect(src).toMatch(/result = await executor\(/);
     // 不含 WS3 async 的 spawnDockerDetached 调用
     expect(src).not.toMatch(/spawnDockerDetached/);
   });
 
   it('reviewer 节点也使用 await executor(，executor 共被调用 2 次', () => {
     const src = readFileSync(SRC, 'utf8');
-    const execCalls = (src.match(/const result = await executor\(/g) || []).length;
+    const execCalls = (src.match(/result = await executor\(/g) || []).length;
     expect(execCalls).toBeGreaterThanOrEqual(2);
   });
 });
