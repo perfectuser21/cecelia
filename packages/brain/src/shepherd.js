@@ -32,54 +32,67 @@ const CI_FAIL_PATTERNS = {
  * @returns {{ state: string, mergeable: string, ciStatus: string, failedChecks: string[], allPassed: boolean }}
  */
 export function checkPrStatus(prUrl) {
+  // Fetch state + mergeable first (always works with basic repo scope).
+  let baseData;
   try {
-    const output = execSync(
-      `gh pr view "${prUrl}" --json state,statusCheckRollup,mergeable`,
+    const baseOut = execSync(
+      `gh pr view "${prUrl}" --json state,mergeable`,
       { encoding: 'utf-8', timeout: 30000, stdio: ['pipe', 'pipe', 'pipe'] }
     );
-    const data = JSON.parse(output);
-
-    const state = data.state || 'UNKNOWN'; // OPEN, MERGED, CLOSED
-    const mergeable = data.mergeable || 'UNKNOWN'; // MERGEABLE, CONFLICTING, UNKNOWN
-    const checks = data.statusCheckRollup || [];
-
-    // 分析 CI 状态
-    const failedChecks = checks.filter(c =>
-      c.conclusion === 'FAILURE' || c.conclusion === 'TIMED_OUT' || c.conclusion === 'ACTION_REQUIRED'
-    );
-    const pendingChecks = checks.filter(c =>
-      c.conclusion === null || c.status === 'IN_PROGRESS' || c.status === 'QUEUED' || c.status === 'PENDING'
-    );
-
-    let ciStatus;
-    if (state === 'MERGED') {
-      ciStatus = 'merged';
-    } else if (state === 'CLOSED') {
-      ciStatus = 'closed';
-    } else if (failedChecks.length > 0) {
-      ciStatus = 'ci_failed';
-    } else if (pendingChecks.length > 0) {
-      ciStatus = 'ci_pending';
-    } else if (checks.length === 0) {
-      // 无 CI check 配置（statusCheckRollup 空）：区别于"check 还在跑"的 ci_pending。
-      // 旧逻辑把这里也判 ci_pending → harness poll_ci 永远等不到 check → 30min 超时 →
-      // merge 永不执行。调用方据 mergeable 决定是否直接合并（无 check 可等）。
-      ciStatus = 'ci_no_checks';
-    } else {
-      // 全部通过（checks 存在且无失败无 pending）
-      ciStatus = 'ci_passed';
-    }
-
-    return {
-      state,
-      mergeable,
-      ciStatus,
-      failedChecks: failedChecks.map(c => c.name || c.context || 'unknown'),
-      allPassed: failedChecks.length === 0 && pendingChecks.length === 0 && checks.length > 0,
-    };
+    baseData = JSON.parse(baseOut);
   } catch (err) {
     throw new Error(`gh pr view failed for ${prUrl}: ${err.message}`);
   }
+
+  const state = baseData.state || 'UNKNOWN';
+  const mergeable = baseData.mergeable || 'UNKNOWN';
+
+  // Short-circuit for terminal states — no CI check query needed.
+  if (state === 'MERGED') {
+    return { state, mergeable, ciStatus: 'merged', failedChecks: [], allPassed: true };
+  }
+  if (state === 'CLOSED') {
+    return { state, mergeable, ciStatus: 'closed', failedChecks: [], allPassed: false };
+  }
+
+  // Fetch CI checks separately; PAT may lack checks:read scope — fall back to no-checks.
+  let checks = [];
+  try {
+    const checksOut = execSync(
+      `gh pr view "${prUrl}" --json statusCheckRollup`,
+      { encoding: 'utf-8', timeout: 30000, stdio: ['pipe', 'pipe', 'pipe'] }
+    );
+    checks = JSON.parse(checksOut).statusCheckRollup || [];
+  } catch {
+    checks = [];
+  }
+
+  const failedChecks = checks.filter(c =>
+    c.conclusion === 'FAILURE' || c.conclusion === 'TIMED_OUT' || c.conclusion === 'ACTION_REQUIRED'
+  );
+  const pendingChecks = checks.filter(c =>
+    c.conclusion === null || c.status === 'IN_PROGRESS' || c.status === 'QUEUED' || c.status === 'PENDING'
+  );
+
+  let ciStatus;
+  if (failedChecks.length > 0) {
+    ciStatus = 'ci_failed';
+  } else if (pendingChecks.length > 0) {
+    ciStatus = 'ci_pending';
+  } else if (checks.length === 0) {
+    // No CI check config (or failed to fetch) — caller decides based on mergeable.
+    ciStatus = 'ci_no_checks';
+  } else {
+    ciStatus = 'ci_passed';
+  }
+
+  return {
+    state,
+    mergeable,
+    ciStatus,
+    failedChecks: failedChecks.map(c => c.name || c.context || 'unknown'),
+    allPassed: failedChecks.length === 0 && pendingChecks.length === 0 && checks.length > 0,
+  };
 }
 
 /**
