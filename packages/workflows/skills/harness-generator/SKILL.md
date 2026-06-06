@@ -540,9 +540,11 @@ GREEN commit + push 前**必须**真验合同行为：
 
 **反例（W19-W39 实证根因）**：generator 用 vitest mock + supertest 自验"11/11 PASS"，但 evaluator 真起 server + curl + jq 跑同样的 manual:bash 命令仍判 FAIL。LLM 解读差异导致 generator 觉得过了 evaluator 不过，fix loop 永不收敛。
 
-**verdict JSON 范例**：
+**verdict JSON 范例**（⚠️ `pr_url` 必须是你刚 `gh pr create` 实际返回的真实 URL）：
 ```
-{"verdict": "DONE", "pr_url": "https://github.com/x/y/pull/123", "all_behaviors_passed": true, "behaviors_run": 11, "behaviors_passed": 11}
+{"verdict": "DONE", "pr_url": "<把这里替换成 gh pr create 返回的真实 PR URL>", "all_behaviors_passed": true, "behaviors_run": 11, "behaviors_passed": 11}
 ```
+
+> 🚫 **严禁照抄示例占位 URL**：任何含 `x/y`、`OWNER/REPO`、`org/repo`、`pull/123` 的 URL 都是占位符，原样输出会让 Brain 报 `generator_pr_not_found`、整条 harness 线作废。正确做法：`git push` 后用 `PR_URL=$(gh pr create ... )`（或 `gh pr view --json url -q .url`）拿到真实 URL 再填进 verdict JSON。
 
 `all_behaviors_passed=false` 时禁止 push — generator 必须先把代码改对让全部 manual:bash 过。
