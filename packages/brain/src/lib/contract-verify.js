@@ -204,6 +204,18 @@ export async function verifyContractProposerOutput(opts) {
       showErrors.push(`${p}: ${err.message}`);
     }
   }
+  // B56 fallback: sprintDir 可能被误算（如 sprints/tests），也检查 sprints/ 根目录
+  if (content === null && sprintDir !== 'sprints') {
+    for (const name of ['contract-draft.md', 'sprint-contract.md']) {
+      const p = `sprints/${name}`;
+      try {
+        const { stdout } = await execFn('git', ['show', `origin/${branch}:${p}`], { cwd: worktreePath });
+        if (stdout) { content = stdout; break; }
+      } catch (err) {
+        showErrors.push(`${p} (B56 fallback): ${err.message}`);
+      }
+    }
+  }
   if (content === null) {
     throw new ContractViolation(
       `proposer_didnt_push: branch '${branch}' missing contract file (${candidates.join(' | ')}): ${showErrors.join('; ')}`,

@@ -346,10 +346,14 @@ export async function parsePrdNode(state) {
             { cwd: state.worktreePath }
           );
           const dirs = findOut.trim().split('\n').filter(Boolean);
-          if (dirs.length === 1) {
-            sprintDir = path.relative(state.worktreePath, dirs[0]);
-          } else if (dirs.length > 1) {
-            console.warn(`[parsePrdNode] B40: found ${dirs.length} sprint subdirs, cannot auto-detect. Keeping ${sprintDir}`);
+          // B40-fix: 排除已知非 sprint 目录（同 detectSprintDirFromGitLog 的 EXCLUDE），
+          // 防止 infrastructure 等 repo 的 sprints/tests/ 被误判为 sprint 目录。
+          const B40_EXCLUDE = new Set(['tests', 'test', '__tests__', 'node_modules', 'fixtures']);
+          const validDirs = dirs.filter(d => !B40_EXCLUDE.has(path.basename(d)));
+          if (validDirs.length === 1) {
+            sprintDir = path.relative(state.worktreePath, validDirs[0]);
+          } else if (validDirs.length > 1) {
+            console.warn(`[parsePrdNode] B40: found ${validDirs.length} valid sprint subdirs, cannot auto-detect. Keeping ${sprintDir}`);
           }
         } catch { /* sprints/ 子目录未找到，保持已有 sprintDir */ }
       }
