@@ -219,7 +219,10 @@ describe("_waitForSubGraphCompletion — container liveness detection (B2/B3)", 
     expect(result).toMatchObject({ status: "completed" });
   });
 
-  it("无 containerId → 跳过 liveness check，不报错", async () => {
+  it("无 containerId（spawn 出错未捕获）→ fail-fast resume failed，不永挂", async () => {
+    // Fix #2：旧行为是"无 containerId 跳过 liveness 继续 poll"→ 实证导致永挂 66min
+    // （spawn 失败返回 {error} 无 containerId，子图停 await_callback，liveness 被 if(containerId) 短路）。
+    // 新行为：停在 await_callback 但 containerId 为空 = spawn 阶段出错 → 立即 resume failed。
     const mockGetState = vi.fn()
       .mockResolvedValueOnce({
         next: ["await_callback"],
@@ -227,10 +230,10 @@ describe("_waitForSubGraphCompletion — container liveness detection (B2/B3)", 
       })
       .mockResolvedValue({
         next: [],
-        values: { status: "completed" },
+        values: { status: "failed", error: "spawn_missing_containerid" },
       });
 
-    const mockInvoke = vi.fn();
+    const mockInvoke = vi.fn(async () => {}); // 必须 async：代码对返回值 .catch()
     compiled = { getState: mockGetState, invoke: mockInvoke };
 
     const result = await _waitForSubGraphCompletion(compiled, config, 30_000, {
@@ -238,9 +241,10 @@ describe("_waitForSubGraphCompletion — container liveness detection (B2/B3)", 
       livenessCheckEveryN: 1,
     });
 
-    expect(mockExecFile).not.toHaveBeenCalled();
-    expect(mockInvoke).not.toHaveBeenCalled();
-    expect(result).toMatchObject({ status: "completed" });
+    expect(mockExecFile).not.toHaveBeenCalled(); // 不查 docker（无 containerId）
+    expect(mockInvoke).toHaveBeenCalled();        // 但主动 resume failed
+    expect(mockInvoke.mock.calls[0][0].resume.status).toBe("failed");
+    expect(result.status).toBe("failed");
   });
 
   it("container dead → 视为 exited，触发 resume", async () => {

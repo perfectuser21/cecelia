@@ -57,8 +57,8 @@ describe('_waitForSubGraphCompletion — Fix #3 callback 总超时兜底', () =>
             next: ['await_callback'],
             values: {
               containerId: 'harness-task-ws1-r0-alive',
-              // spawnedAt 远超 CALLBACK_TIMEOUT_MS（11 min ago）
-              spawnedAt: Date.now() - 11 * 60 * 1000,
+              // spawnedAt 远超 CALLBACK_TIMEOUT_MS（101 min ago > 默认 100min）
+              spawnedAt: Date.now() - 101 * 60 * 1000,
               status: 'queued',
             },
           };
@@ -81,6 +81,42 @@ describe('_waitForSubGraphCompletion — Fix #3 callback 总超时兜底', () =>
     expect(resumeArg.resume.status).toBe('failed');
     expect(resumeArg.resume.error).toBe('callback_timeout');
     expect(result.status).toBe('failed');
+  });
+
+  it('callback_timeout 但 PR 已 merged → 判 success（不误判 failed）', async () => {
+    const livenessCheck = vi.fn(async () => null);
+    const invoke = vi.fn(async () => {});
+    let call = 0;
+    const compiled = {
+      getState: vi.fn(async () => {
+        call++;
+        if (call === 1) {
+          return {
+            next: ['await_callback'],
+            values: {
+              containerId: 'harness-task-ws1-r0-timeout-merged',
+              spawnedAt: Date.now() - 101 * 60 * 1000, // 超时
+              pr_url: 'https://github.com/perfectuser21/infrastructure/pull/99',
+              status: 'queued',
+            },
+          };
+        }
+        return { next: [], values: { status: 'merged' } };
+      }),
+      invoke,
+    };
+
+    const result = await _waitForSubGraphCompletion(compiled, {}, 90 * 60 * 1000, {
+      pollIntervalMs: 1,
+      livenessCheckEveryN: 1,
+      _checkLiveness: livenessCheck,
+      _checkPrMerged: async () => true, // PR 实际已 merged
+      heartbeatPool: { query: async () => ({}) },
+    });
+
+    // 超时但 PR 已 merged → 不 resume failed，直接判 merged
+    expect(invoke).not.toHaveBeenCalled();
+    expect(result.status).toBe('merged');
   });
 
   it('spawnedAt 未超时 + 容器活着 → 不触发 callback_timeout，继续 poll', async () => {
@@ -119,9 +155,11 @@ describe('_waitForSubGraphCompletion — Fix #3 callback 总超时兜底', () =>
 });
 
 describe('CALLBACK_TIMEOUT_MS 常量', () => {
-  it('默认 10 分钟，且远小于 90min 全局超时', () => {
+  it('默认 > worker-daemon 90min job 预算（不误杀健康 generator）', () => {
     expect(CALLBACK_TIMEOUT_MS).toBeGreaterThan(0);
-    expect(CALLBACK_TIMEOUT_MS).toBeLessThan(90 * 60 * 1000);
+    // callback 只在 job 跑完才 POST，正常 agentic generator 合法跑 11–89min；
+    // 默认必须 > 90min（worker-daemon WORKER_TIMEOUT_MS）否则误杀健康 generator。
+    expect(CALLBACK_TIMEOUT_MS).toBeGreaterThan(90 * 60 * 1000);
   });
 });
 
