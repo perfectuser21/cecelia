@@ -10,7 +10,7 @@
  * 修复：spawn → 条件边 routeAfterSpawn：state.error → END，否则 await_callback。
  *      spawnNode catch 块补 containerId（forensic / 远程容器定位）。
  */
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect } from 'vitest';
 import {
   routeAfterSpawn,
   spawnNode,
