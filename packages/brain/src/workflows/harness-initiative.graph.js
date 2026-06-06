@@ -308,6 +308,27 @@ export function detectSprintDirFromGitLog(logOut) {
   return null;
 }
 
+// sprint_dir 单一真相源：sprint-prd.md 实际所在目录就是 sprint 目录。
+// planner 唯一创建一次 sprint-prd.md，文件系统位置确定——不受 git commit 时机 / GAN round /
+// sprints/tests 子目录污染（旧 verdict 正则 + git-log + readdir 启发式都会被污染算成 sprints/tests）。
+// 多个匹配时取最短路径（最接近 sprints/ 根，排除 tests/fixtures 等嵌套误选）。
+// 找不到 / 出错 → null，让调用方走旧启发式 fallback。
+export async function resolveSprintDirFromFs(worktreePath, deps = {}) {
+  const execFn = deps.execFile || execFile;
+  try {
+    const { stdout } = await execFn('find',
+      [path.join(worktreePath, 'sprints'), '-name', 'sprint-prd.md', '-maxdepth', '3'],
+      { cwd: worktreePath, timeout: 10_000 }
+    );
+    const paths = String(stdout || '').split('\n').map((s) => s.trim()).filter(Boolean);
+    if (paths.length === 0) return null;
+    paths.sort((a, b) => a.length - b.length);
+    return path.relative(worktreePath, path.dirname(paths[0]));
+  } catch {
+    return null;
+  }
+}
+
 export async function parsePrdNode(state) {
   if (state.taskPlan && state.prdContent) {
     return { taskPlan: state.taskPlan, prdContent: state.prdContent, sprintDir: state.sprintDir };
@@ -324,6 +345,12 @@ export async function parsePrdNode(state) {
     taskPlan.initiative_id = state.initiativeId;
   }
   let sprintDir = state.task?.payload?.sprint_dir || 'sprints';
+  // B57: sprint_dir 单一真相源 — sprint-prd.md 文件系统位置（权威，跳过下面所有易污染的启发式）。
+  // 找到就用它；找不到才退回 verdict JSON + git-log + readdir 旧启发式（向后兼容）。
+  const fsResolved = state.worktreePath ? await resolveSprintDirFromFs(state.worktreePath, { execFile }) : null;
+  if (fsResolved) {
+    sprintDir = fsResolved;
+  } else {
   // B35+B36: 从 planner verdict JSON 提取 sprint_dir，取最后一个（verdict 在输出末尾）
   const sprintDirMatches = [...(state.plannerOutput || '').matchAll(/"sprint_dir"\s*:\s*"([^"]+)"/g)];
   if (sprintDirMatches.length > 0) sprintDir = sprintDirMatches.at(-1)[1];
@@ -359,6 +386,7 @@ export async function parsePrdNode(state) {
       }
     } catch { /* git log 失败，保持已有 sprintDir */ }
   }
+  } // end else（fsResolved 未命中时的旧启发式 fallback）
   let prdContent = state.plannerOutput || '';
   try {
     prdContent = await readFile(
