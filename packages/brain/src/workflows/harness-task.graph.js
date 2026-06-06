@@ -105,6 +105,11 @@ export const TaskState = Annotation.Root({
   // walking_skeleton_thread_lookup 表 PRIMARY KEY，callback router 反查 thread_id 用。
   // fix_round loop 后 fixDispatchNode 必须 reset 让 spawn 节点重新 spawn fresh container。
   containerId:      Annotation({ reducer: (_o, n) => n, default: () => null }),
+  // Fix #3: spawn 时间戳，await_callback 总超时兜底用（独立于 docker inspect）。
+  spawnedAt:        Annotation({ reducer: (_o, n) => n, default: () => null }),
+  // Fix #4: executor + 远程 daemonUrl，远程 worker-daemon /health liveness 用。
+  executor:         Annotation({ reducer: (_o, n) => n, default: () => null }),
+  daemonUrl:        Annotation({ reducer: (_o, n) => n, default: () => null }),
   pr_url:           Annotation({ reducer: (_o, n) => n, default: () => null }),
   pr_branch:        Annotation({ reducer: (_o, n) => n, default: () => null }),
   fix_round:        Annotation({ reducer: (_o, n) => n, default: () => 0 }),
@@ -161,6 +166,14 @@ export async function spawnNode(state, opts = {}) {
   const fixRound = state.fix_round || 0;
   const fixMode = fixRound > 0;
 
+  // Fix #6: 提前生成 finalContainerId，让任何 catch 块都能带上 containerId 返回。
+  // 永挂 debug 实证：catch 返回 {error} 不带 containerId → brain 日志 grep 不到任何
+  // containerId，无法反查/清理西安远程容器（可能已起）。containerId 必须唯一
+  // （fix_round loop 重 spawn 不撞 docker --name）：harness-task-<safeId>-r<round>-<rand8>。
+  const rand = crypto.randomUUID().slice(0, 8);
+  const safeId = String(task.id).replace(/[^a-zA-Z0-9-]/g, '');
+  const finalContainerId = `harness-task-${safeId}-r${fixRound}-${rand}`;
+
   let worktreePath = state.worktreePath;
   let token = state.githubToken;
 
@@ -174,7 +187,7 @@ export async function spawnNode(state, opts = {}) {
     }
     if (!token) token = await resolveTok();
   } catch (err) {
-    return { error: { node: 'spawn', message: `prep: ${err.message}` } };
+    return { containerId: finalContainerId, status: 'failed', error: { node: 'spawn', message: `prep: ${err.message}` } };
   }
 
   // H13: 把 proposer 分支的合同物件（sprints/）checkout 到 generator worktree。
@@ -191,7 +204,7 @@ export async function spawnNode(state, opts = {}) {
       await execFile('git', ['commit', '-m', `chore(harness): import contract from ${contractBranch}`], { cwd: worktreePath })
         .catch(() => null);
     } catch (err) {
-      return { error: { node: 'spawn', message: `prep: import contract from ${contractBranch}: ${err.message}` } };
+      return { containerId: finalContainerId, status: 'failed', error: { node: 'spawn', message: `prep: import contract from ${contractBranch}: ${err.message}` } };
     }
   }
 
@@ -200,12 +213,6 @@ export async function spawnNode(state, opts = {}) {
   const precomputedBranch = harnessSubTaskBranchName(initiativeId, task.id);
 
   const prompt = buildGeneratorPrompt(task, { fixMode, prdContent: state.prdContent || null });
-
-  // containerId 必须唯一（fix_round loop 重 spawn 不撞 docker --name）
-  // 格式：harness-task-<safeId>-r<round>-<rand8>
-  const rand = crypto.randomUUID().slice(0, 8);
-  const safeId = String(task.id).replace(/[^a-zA-Z0-9-]/g, '');
-  const finalContainerId = `harness-task-${safeId}-r${fixRound}-${rand}`;
 
   // thread_id 必须跟 harness-initiative.graph runSubTaskNode 用的一致：
   // `harness-task:${initiativeId}:${subTaskId}:fix${N}` —— callback router 用此 lookup
@@ -260,8 +267,10 @@ export async function spawnNode(state, opts = {}) {
   //   executor=codex  → POST route.url/run（worker-daemon：mode 路由 + repo→codex-task.sh 出 PR）。
   const resolveExec = opts.resolveExecutor || resolveExecutorDefault;
   const spawnBridgeFn = opts.spawnBridge || spawnCodexBridgeDetached;
+  // route 在 try 外声明，让成功 return 能带上 executor/daemonUrl（远程 liveness 用）。
+  let route = null;
   try {
-    const route = await resolveExec(task);
+    route = await resolveExec(task);
     if (route.executor === 'codex') {
       // codex：POST route.url/run，worker-daemon 侧已就绪（mode 路由 + repo + callback 重写）。
       // repo 优先用 state.baseRepo，回退 payload.base_repo。callback_url 用 host.docker.internal，
@@ -288,12 +297,16 @@ export async function spawnNode(state, opts = {}) {
         // codex-task.sh 容器内需要 token 来 git push + gh pr create。
         env: { GITHUB_TOKEN: token },
       });
+      // Fix #5: codex 派发可观测性 — 永挂 debug 实证 grep detached/containerId 全空，
+      // 无法判断 spawn 到底有没有跑到西安。
+      console.log(`[spawn-codex] dispatched task_id=${finalContainerId} → ${route.url}`);
     } else {
       // claude（默认）：本地 docker run -d detached。
       await spawnFn(dockerArgs);
     }
   } catch (err) {
-    return { error: { node: 'spawn', message: `spawn: ${err.message}` } };
+    // Fix #6: catch 带上 finalContainerId（西安可能已远程起容器，需 containerId 定位/清理）。
+    return { containerId: finalContainerId, status: 'failed', error: { node: 'spawn', message: `spawn: ${err.message}` } };
   }
 
   // 写 thread_lookup（callback router 反查用）。失败不阻塞 spawn，因为容器已经在跑；
@@ -313,6 +326,13 @@ export async function spawnNode(state, opts = {}) {
     containerId: finalContainerId,
     worktreePath,
     githubToken: token,
+    // Fix #3: 记录 spawn 时间戳，让 _waitForSubGraphCompletion 能独立于 docker inspect
+    //         判断 callback 是否迟到/丢失（await_callback 总超时兜底）。
+    spawnedAt: Date.now(),
+    // Fix #4: 记录 executor + 远程 daemonUrl，让 _checkContainerLiveness 对西安 Codex
+    //         容器走 worker-daemon /health 而非本地 docker inspect（本地查不到远程容器）。
+    executor: route?.executor || 'claude',
+    daemonUrl: route?.executor === 'codex' ? route.url : null,
     ...(contractBranch ? { contractImported: true } : {}),
   };
 }
@@ -576,6 +596,8 @@ export async function fixDispatchNode(state) {
     generator_output: null,
     // Layer 3：必须 reset containerId 否则 spawn 节点幂等门 short-circuit，永远不会重 spawn
     containerId: null,
+    // Fix #3: reset spawnedAt — 重 spawn 时由 spawnNode 写新时间戳，旧值会让 callback_timeout 误触发。
+    spawnedAt: null,
     // B19: 不 reset pr_url/pr_branch — generator fix mode 同 PR push 新 commit，URL 不变。
     // W40 实证：reset 后 sub-task graph END 时 pr_url=null → finalEvaluate 拿不到
     // PR_BRANCH → evaluator 跑 main 没新代码 → §1 happy FAIL（最后一公里 bug）。
@@ -593,6 +615,15 @@ export async function fixDispatchNode(state) {
 
 // ──────────────────────────────────────────────────────────────────────────
 // 路由函数
+
+// Fix #1（第 4 个 generator 永挂 bug 的结构性根因）：
+// spawnNode 在 prep/spawn 抛错时返回 {error}（不带可用容器），原代码用无条件边
+// `.addEdge('spawn','await_callback')` 无脑进 await_callback → interrupt() 把执行挂在
+// 节点内部 → routeAfterCallback conditional edge 永远轮不到 → graph 卡 await_callback
+// 66 分钟。改用本路由函数：spawn 返回 error 直接 END(status=failed)，绝不进 interrupt。
+export function routeAfterSpawn(state) {
+  return state.error ? 'end' : 'await_callback';
+}
 
 // B18: awaitCallback exit≠0 后 ci_status='fail' + ci_fail_type='container_exit'
 // 此时直接进 fix_dispatch（跟 ci_fail 同等），不走 parse_callback（否则 pr_url=null → END）
@@ -994,7 +1025,11 @@ export function buildHarnessTaskGraph() {
     .addNode('merge_pr', mergePrNode)
     .addNode('fix_dispatch', fixDispatchNode)
     .addEdge(START, 'spawn')
-    .addEdge('spawn', 'await_callback')
+    // Fix #1: spawn → 条件边。spawn 返回 {error}（prep/spawn 失败）→ END status=failed，
+    // 绝不无条件进 await_callback（否则 interrupt 卡死，conditional edge 永远轮不到）。
+    .addConditionalEdges('spawn', routeAfterSpawn, {
+      await_callback: 'await_callback', end: END,
+    })
     .addConditionalEdges('await_callback', routeAfterCallback, {
       fix: 'fix_dispatch', parse: 'parse_callback', end: END,
     })

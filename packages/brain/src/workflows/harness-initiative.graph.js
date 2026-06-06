@@ -790,17 +790,66 @@ const SUBGRAPH_POLL_INTERVAL_MS = parseInt(process.env.CECELIA_SUBGRAPH_POLL_MS 
 // 默认每 12 次 poll（12 × 5s = 60s）做一次容器 liveness check
 const LIVENESS_CHECK_EVERY_N = parseInt(process.env.CECELIA_LIVENESS_CHECK_N || '12', 10);
 
+// Fix #3: await_callback 独立总超时兜底（不依赖任何 docker inspect / 容器活性）。
+// 覆盖"containerId 存在、本地/远程容器看似活着、但 callback 永不来"的场景：
+// 西安网络阻塞 POST、容器内 wget callback 失败 3 次放弃。
+//
+// ⚠️ 默认值必须 > worker-daemon 的 job 预算（WORKER_TIMEOUT_MS=90min），否则会误杀健康 generator：
+// callback 只在 generator job「跑完」才 POST（无中间心跳），一个正常 agentic TDD generator
+// （写测试→实现→跑CI→push→建PR）合法地跑 11–89min，10min 默认会把它当「callback 永不来」误杀，
+// 把「永挂 bug」换成「误杀健康 generator bug」。故默认 = 90min + 10min grace（时钟漂移/网络/回调往返）。
+export const CALLBACK_TIMEOUT_MS = parseInt(
+  process.env.CECELIA_CALLBACK_TIMEOUT_MS || `${100 * 60 * 1000}`, 10,
+);
+
 /**
- * 检查 Docker 容器是否仍在 running。
- * 如果容器 exited / dead，或 docker inspect 失败（容器不存在），视为死亡返回非空错误字符串。
+ * Fix #4: 检查远程 worker-daemon（西安 Codex）是否可达 → 粗判容器活性。
+ *
+ * worker-daemon /health 返回 { status:'ok', running_jobs:<数字> }。running_jobs 是
+ * inFlight.size（数字，不是 id 列表），无法按 containerId 精确判断单个 job，所以远程
+ * liveness 只做粗判：daemon 不可达（fetch 抛错/非 200）→ 判死；可达 → 保守 null（活着），
+ * 真正的失败靠 Fix #3 的 callback_timeout 兜底。
+ *
+ * @param {string} daemonUrl
+ * @param {Function} [fetchImpl]
+ * @returns {Promise<string|null>}
+ */
+async function _checkRemoteDaemonLiveness(daemonUrl, fetchImpl) {
+  const doFetch = fetchImpl || globalThis.fetch;
+  try {
+    const resp = await doFetch(`${daemonUrl}/health`, { signal: AbortSignal.timeout(5000) });
+    if (!resp || !resp.ok) {
+      return `daemon_unreachable: ${daemonUrl}/health HTTP ${resp ? resp.status : 'no-response'}`;
+    }
+    return null; // 可达 → 保守当活着
+  } catch (err) {
+    return `daemon_unreachable: ${daemonUrl} (${err.message})`;
+  }
+}
+
+/**
+ * 检查容器是否仍在 running。
+ * - 本地 claude 容器：docker inspect。exited/dead/不存在 → 视为死亡返回非空错误字符串。
+ * - 远程 codex 容器（executor==='codex' && daemonUrl）：查 worker-daemon /health（本地
+ *   docker inspect 查不到西安远程容器，会误判 No such → 死亡）。
  * 容器仍在 running 返回 null。
  *
  * @param {string} containerId
+ * @param {object} [opts]
+ * @param {string} [opts.executor]      'codex' 走远程，否则本地 docker inspect
+ * @param {string} [opts.daemonUrl]     远程 worker-daemon base url（codex 用）
+ * @param {Function} [opts.fetchImpl]   注入 fetch（测试用）
+ * @param {Function} [opts.execFileImpl] 注入 execFile（测试用）
  * @returns {Promise<string|null>}  死亡原因描述 or null（还活着）
  */
-async function _checkContainerLiveness(containerId) {
+export async function _checkContainerLiveness(containerId, opts = {}) {
+  // Fix #4: 西安 Codex 远程容器 → 查 worker-daemon /health（本地 docker inspect 查不到）。
+  if (opts.executor === 'codex' && opts.daemonUrl) {
+    return _checkRemoteDaemonLiveness(opts.daemonUrl, opts.fetchImpl);
+  }
+  const execFile = opts.execFileImpl || execFileCb;
   return new Promise((resolve) => {
-    execFileCb('docker', ['inspect', '--format', '{{.State.Status}}', containerId], (err, stdout) => {
+    execFile('docker', ['inspect', '--format', '{{.State.Status}}', containerId], (err, stdout) => {
       if (err) {
         // 只有明确"容器不存在"才视为死亡，其他错误保守返回 null 避免误判
         if (err.message && (err.message.includes('No such') || err.message.includes('not found'))) {
@@ -875,8 +924,55 @@ export async function _waitForSubGraphCompletion(compiled, config, timeoutMs, op
     const isAwaitingCallback = Array.isArray(state.next) && state.next.includes('await_callback');
     if (isAwaitingCallback && pollCount % livenessCheckEveryN === 0) {
       const containerId = state.values?.containerId;
-      if (containerId) {
-        const deathReason = await checkLiveness(containerId);
+
+      // Fix #2: await_callback 但 state 无 containerId（spawn 阶段出错未捕获，
+      // 或未来新增的任何"await_callback 时无 containerId"路径）→ 不可恢复态，
+      // 第一次检测即判失败 fail-fast，不无脑 poll 到 90min。
+      // 注：Fix #1 落地后正常路径不会再走到这（spawn error 已在子图内 END），此为双保险。
+      if (!containerId) {
+        console.warn('[harness-liveness] await_callback 但 state 无 containerId（spawn 阶段出错未捕获）→ resume failed');
+        await compiled.invoke(
+          { resume: { status: 'failed', error: 'spawn_missing_containerid' } },
+          config,
+        ).catch((e) => console.warn(`[harness-liveness] resume invoke failed: ${e.message}`));
+        const fs = await compiled.getState(config);
+        return { ...(fs.values || {}), status: 'failed' };
+      }
+
+      // Fix #3: await_callback 独立总超时 — containerId 存在、容器看似活着、但 callback
+      // 永不来（西安网络阻塞 POST / 容器内 wget 放弃）→ 提前 fail，不等 90min 全局超时。
+      const spawnedAt = state.values?.spawnedAt;
+      if (spawnedAt && (Date.now() - spawnedAt) > CALLBACK_TIMEOUT_MS) {
+        // 与死亡路径一致：fail 前先验 PR 是否已 merged。覆盖「generator 成功 push+merge 但
+        // callback POST 丢了」——否则会把一个真成功的 generator 误判 failed、白跑一个 fix round。
+        const prUrl = state.values?.pr_url;
+        if (prUrl) {
+          const alreadyMerged = await checkPrMerged(prUrl).catch(() => false);
+          if (alreadyMerged) {
+            console.log(
+              `[harness-liveness] callback_timeout 但 PR 已 merged（${prUrl}），判 success`,
+            );
+            return { ...(state.values), status: 'merged' };
+          }
+        }
+        console.warn(
+          `[harness-liveness] await_callback 超过 CALLBACK_TIMEOUT_MS（${CALLBACK_TIMEOUT_MS}ms）`
+          + ` containerId=${containerId} → callback_timeout fail-fast`,
+        );
+        await compiled.invoke(
+          { resume: { status: 'failed', error: 'callback_timeout' } },
+          config,
+        ).catch((e) => console.warn(`[harness-liveness] resume invoke failed: ${e.message}`));
+        const fs = await compiled.getState(config);
+        return { ...(fs.values || {}), status: 'failed' };
+      }
+
+      {
+        // Fix #4: 远程 codex 容器走 worker-daemon /health，本地 claude 容器走 docker inspect。
+        const deathReason = await checkLiveness(containerId, {
+          executor: state.values?.executor,
+          daemonUrl: state.values?.daemonUrl,
+        });
         if (deathReason) {
           // B1 fix: 先验 PR 是否已 merged，已 merged → success，不走 failure
           const prUrl = state.values?.pr_url;

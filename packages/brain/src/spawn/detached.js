@@ -85,6 +85,10 @@ export async function spawnDockerDetached(opts) {
     i++;
   }
 
+  // Fix #5: spawn 可观测性 — 永挂 debug 实证 grep detached/containerId 全空，无法判断
+  // docker run -d 到底有没有跑。打 containerId（before）+ dockerId（success）+ stderr（fail）。
+  console.log(`[spawn-detached] docker run -d --name ${opts.containerId}`);
+
   return new Promise((resolve, reject) => {
     const proc = nodeSpawn('docker', args, { stdio: ['ignore', 'pipe', 'pipe'] });
     let stdout = '';
@@ -92,12 +96,15 @@ export async function spawnDockerDetached(opts) {
     proc.stdout.on('data', (c) => { stdout += c.toString(); });
     proc.stderr.on('data', (c) => { stderr += c.toString(); });
     proc.on('error', (err) => {
+      console.error(`[spawn-detached] docker run -d FAILED (spawn error) name=${opts.containerId}: ${err.message}`);
       reject(new Error(`docker spawn (detached) error: ${err.message}`));
     });
     proc.on('exit', (code) => {
       if (code === 0) {
+        console.log(`[spawn-detached] spawned containerId=${opts.containerId} dockerId=${stdout.trim().slice(0, 12)}`);
         resolve({ containerId: opts.containerId, dockerStdout: stdout.trim() });
       } else {
+        console.error(`[spawn-detached] docker run -d FAILED exit=${code} name=${opts.containerId} ${stderr.slice(0, 200)}`);
         reject(new Error(`docker run -d exit_code=${code}: ${stderr.slice(0, 500)}`));
       }
     });
