@@ -1053,16 +1053,32 @@ export async function reportNode(state, opts = {}) {
     cost_usd: s.cost_usd || 0,
   }));
 
+  // merge-race 修复：reportNode 可能在 sub_task PR 的 auto-merge 完成前抢跑（实测 PR 创建到
+  // merge 约 10 分钟：CI + squash）。对有 pr_url 但 status≠merged 的 sub_task 回查 GitHub 真实
+  // merge 状态，已 merge 则纠正为 merged——否则会把"PR 已合并但 graph state 未刷新"误判成
+  // Final E2E FAIL（failed_scenarios 为空的空 reason FAIL，实证 PR#50 已 merged 仍判 FAIL）。
+  const checkPrMerged = opts._checkPrMerged ?? _checkPrMerged;
+  const reconciledSubTasks = await Promise.all((state.sub_tasks || []).map(async (s) => {
+    if (s && s.status !== 'merged' && s.pr_url) {
+      const merged = await checkPrMerged(s.pr_url).catch(() => false);
+      if (merged) {
+        console.log(`[reportNode] merge-race 纠正：${s.id} PR ${s.pr_url} 实际已 merged，status→merged`);
+        return { ...s, status: 'merged' };
+      }
+    }
+    return s;
+  }));
+
   // B45 Fix1: final_e2e_verdict 没有节点主动写时，从 sub_tasks 状态推导
   // 单一 evaluator pre-merge gate 设计：每个 ws evaluate_contract PASS 才能 merge
   // 所以全部 merged = 等价于 Final E2E PASS
   const computedVerdict = state.final_e2e_verdict ||
-    ((state.sub_tasks?.length > 0 && state.sub_tasks.every(s => s.status === 'merged'))
+    ((reconciledSubTasks.length > 0 && reconciledSubTasks.every(s => s.status === 'merged'))
       ? 'PASS' : 'FAIL');
 
   const reportContent = JSON.stringify({
     initiativeId: state.initiativeId,
-    sub_tasks: state.sub_tasks || [],
+    sub_tasks: reconciledSubTasks,
     final_e2e_verdict: computedVerdict,
     failed_scenarios: state.final_e2e_failed_scenarios || [],
     step_timing,
