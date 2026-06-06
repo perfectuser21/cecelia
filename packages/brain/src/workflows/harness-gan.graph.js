@@ -308,6 +308,27 @@ export async function defaultReadContractFile(worktreePath, sprintDir) {
   throw new Error(`contract file not found in any of: ${errors.join('; ')}`);
 }
 
+// B59-idem: 查某一轮 propose 分支上是否已 push 合同（proposer 幂等门用）。
+// fetch 分支后 git show contract-draft.md / sprint-contract.md；存在返回内容，否则 null（不抛）。
+// 让 proposer 节点在 LLM_RETRY 重试时识别"本轮已成功"，跳过重复 spawn。
+export async function defaultReadContractFromBranch(worktreePath, branch, sprintDir) {
+  try {
+    await execFile('git', ['-C', worktreePath, 'fetch', 'origin', `${branch}:refs/remotes/origin/${branch}`],
+      { timeout: 30_000 });
+  } catch {
+    return null; // 分支还不存在 = 本轮还没产出
+  }
+  for (const name of ['contract-draft.md', 'sprint-contract.md']) {
+    try {
+      const { stdout } = await execFile('git',
+        ['-C', worktreePath, 'show', `origin/${branch}:${sprintDir}/${name}`],
+        { timeout: 15_000, maxBuffer: 10 * 1024 * 1024 });
+      if (stdout && stdout.trim()) return stdout;
+    } catch { /* 该文件不在此分支，试下一个 */ }
+  }
+  return null;
+}
+
 // B54: 从 reviewer 散文反馈 contract-review-feedback.md 降级解析 verdict。
 // reviewer 偶发没把 verdict/rubric_scores 写进 brain 读的 .brain-result.json（结构化通道空），
 // 但可靠把决定写进散文反馈文件（如 `**verdict**: APPROVED` / `## VERDICT: REVISION`）。
@@ -408,6 +429,7 @@ export function createGanContractNodes(executor, ctx) {
     fetchOriginFile: _fetchOriginFile = fetchAndShowOriginFile,
     verifyProposer = verifyContractProposerOutput,
     readReviewerFeedback = defaultReadReviewerFeedbackVerdict,
+    readContractFromBranch = defaultReadContractFromBranch,
   } = ctx;
   // _fetchOriginFile 保留 ctx 兼容旧 caller（test 仍传 fetchOriginFile），H15 后 proposer 改走 verifyProposer。
   void _fetchOriginFile;
@@ -421,6 +443,24 @@ export function createGanContractNodes(executor, ctx) {
   async function proposer(state) {
     const nextRound = (state.round || 0) + 1;
     const computedBranch = `cp-harness-propose-r${nextRound}-${taskId.slice(0, 8)}`;
+
+    // B59-idem 幂等门：proposer 节点配 retryPolicy=LLM_RETRY(maxAttempts=3)，节点内偶发 throw
+    // 会让 LangGraph 重试整节点 → 重复 spawn LLM 容器（实证每轮 2-3 个，纯浪费）。
+    // 若本轮 computedBranch 已有合同（上次 attempt 已成功 push），直接复用、跳过 executor，
+    // 让重试变廉价。无合同 / 出错 → 正常 spawn。
+    const existingContract = await readContractFromBranch(
+      worktreePath, computedBranch, sprintDir, { githubToken }
+    ).catch(() => null);
+    if (existingContract) {
+      console.log(`[harness-gan] proposer round ${nextRound} 合同已存在于 ${computedBranch}，跳过重 spawn（B59-idem 幂等）`);
+      return {
+        round: nextRound,
+        costUsd: state.costUsd || 0,
+        contractContent: existingContract,
+        proposeBranch: computedBranch,
+        proposerNoPushStreak: 0,
+      };
+    }
 
     // 清理上轮残留结果文件，防止 executor 失败时读到旧数据
     const { unlink } = await import('node:fs/promises');
