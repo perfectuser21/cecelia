@@ -431,6 +431,7 @@ export async function runGanLoopNode(state, opts = {}) {
     // Stream 2 v1.229.0 起 runGanContractGraph fail-fast if !checkpointer，
     // 必须显式传，否则 ganLoop 直接 throw "checkpointer is required"。
     const checkpointer = opts.checkpointer || await getPgCheckpointer();
+    // B51: state.task.id === initiativeId（同一实体，非旧格式 task.initiative_id 字段）
     const heartbeatFn = () => writeDriverHeartbeat(dbPool, state.task.id).catch(() => {});
     const ganResult = await runGanContractGraph({
       taskId: state.task.id,
