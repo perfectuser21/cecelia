@@ -58,7 +58,8 @@ beforeEach(() => {
 
 describe('parsePrdNode B40: sprints/tests/ 不误判为 sprint 目录', () => {
   it('sprints/tests/ 是唯一子目录时 → sprintDir 保持 sprints', async () => {
-    mockExecFile((cmd, _args, done) => {
+    mockExecFile((cmd, args, done) => {
+      if (cmd === 'find' && Array.isArray(args) && args.includes('sprint-prd.md')) { done(null, { stdout: '' }); return; }
       if (cmd === 'git') {
         done(null, { stdout: '' }); // git log 返回空 → 触发 B40
       } else if (cmd === 'find') {
@@ -79,7 +80,8 @@ describe('parsePrdNode B40: sprints/tests/ 不误判为 sprint 目录', () => {
   });
 
   it('sprints/tests/ + sprints/clamp/ → 排除 tests，只剩 clamp 则取 clamp', async () => {
-    mockExecFile((cmd, _args, done) => {
+    mockExecFile((cmd, args, done) => {
+      if (cmd === 'find' && Array.isArray(args) && args.includes('sprint-prd.md')) { done(null, { stdout: '' }); return; }
       if (cmd === 'git') {
         done(null, { stdout: '' });
       } else if (cmd === 'find') {
@@ -100,7 +102,8 @@ describe('parsePrdNode B40: sprints/tests/ 不误判为 sprint 目录', () => {
   });
 
   it('sprints/tests/ + sprints/__tests__/ → 两个都被排除 → sprintDir 保持 sprints', async () => {
-    mockExecFile((cmd, _args, done) => {
+    mockExecFile((cmd, args, done) => {
+      if (cmd === 'find' && Array.isArray(args) && args.includes('sprint-prd.md')) { done(null, { stdout: '' }); return; }
       if (cmd === 'git') {
         done(null, { stdout: '' });
       } else if (cmd === 'find') {
