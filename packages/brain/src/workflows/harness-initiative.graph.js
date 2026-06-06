@@ -792,9 +792,14 @@ const LIVENESS_CHECK_EVERY_N = parseInt(process.env.CECELIA_LIVENESS_CHECK_N || 
 
 // Fix #3: await_callback 独立总超时兜底（不依赖任何 docker inspect / 容器活性）。
 // 覆盖"containerId 存在、本地/远程容器看似活着、但 callback 永不来"的场景：
-// 西安网络阻塞 POST、容器内 wget callback 失败 3 次放弃。比 90min 全局超时快 9 倍。
+// 西安网络阻塞 POST、容器内 wget callback 失败 3 次放弃。
+//
+// ⚠️ 默认值必须 > worker-daemon 的 job 预算（WORKER_TIMEOUT_MS=90min），否则会误杀健康 generator：
+// callback 只在 generator job「跑完」才 POST（无中间心跳），一个正常 agentic TDD generator
+// （写测试→实现→跑CI→push→建PR）合法地跑 11–89min，10min 默认会把它当「callback 永不来」误杀，
+// 把「永挂 bug」换成「误杀健康 generator bug」。故默认 = 90min + 10min grace（时钟漂移/网络/回调往返）。
 export const CALLBACK_TIMEOUT_MS = parseInt(
-  process.env.CECELIA_CALLBACK_TIMEOUT_MS || `${10 * 60 * 1000}`, 10,
+  process.env.CECELIA_CALLBACK_TIMEOUT_MS || `${100 * 60 * 1000}`, 10,
 );
 
 /**
@@ -938,6 +943,18 @@ export async function _waitForSubGraphCompletion(compiled, config, timeoutMs, op
       // 永不来（西安网络阻塞 POST / 容器内 wget 放弃）→ 提前 fail，不等 90min 全局超时。
       const spawnedAt = state.values?.spawnedAt;
       if (spawnedAt && (Date.now() - spawnedAt) > CALLBACK_TIMEOUT_MS) {
+        // 与死亡路径一致：fail 前先验 PR 是否已 merged。覆盖「generator 成功 push+merge 但
+        // callback POST 丢了」——否则会把一个真成功的 generator 误判 failed、白跑一个 fix round。
+        const prUrl = state.values?.pr_url;
+        if (prUrl) {
+          const alreadyMerged = await checkPrMerged(prUrl).catch(() => false);
+          if (alreadyMerged) {
+            console.log(
+              `[harness-liveness] callback_timeout 但 PR 已 merged（${prUrl}），判 success`,
+            );
+            return { ...(state.values), status: 'merged' };
+          }
+        }
         console.warn(
           `[harness-liveness] await_callback 超过 CALLBACK_TIMEOUT_MS（${CALLBACK_TIMEOUT_MS}ms）`
           + ` containerId=${containerId} → callback_timeout fail-fast`,
