@@ -39,9 +39,22 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 
+/**
+ * 等待 executor 被调用（说明 setInterval 已经注册），使用真实时间 polling。
+ * proposer 有多个前置 await（readContractFromBranch / import / resolveAccount），
+ * 必须等这些 microtask 完成后 setInterval 才注册，再推进 fake timer 才能触发心跳。
+ */
+async function waitForExecutorCall(executorMock, timeoutMs = 5000) {
+  const start = Date.now();
+  while (executorMock.mock.calls.length === 0) {
+    if (Date.now() - start > timeoutMs) throw new Error('executor was not called within timeout');
+    await new Promise(r => setTimeout(r, 10));
+  }
+}
+
 describe('GAN executor 阻塞期间心跳保活（watchdog 防重排）', () => {
   it('proposer executor 阻塞 130s 时 heartbeatFn 被调用 2 次', async () => {
-    vi.useFakeTimers();
+    vi.useFakeTimers({ shouldAdvanceTime: true });
     const heartbeatFn = vi.fn().mockResolvedValue(undefined);
 
     let resolveExecutor;
@@ -52,6 +65,8 @@ describe('GAN executor 阻塞期间心跳保活（watchdog 防重排）', () => 
     const nodes = createGanContractNodes(executor, makeCtx({ heartbeatFn }));
     const proposerPromise = nodes.proposer({ prdContent: '# PRD', round: 0, costUsd: 0 });
 
+    // 等 executor 被调用（表示 setInterval 已注册），再推进 fake timer
+    await waitForExecutorCall(executor);
     await vi.advanceTimersByTimeAsync(130_000);
     expect(heartbeatFn).toHaveBeenCalledTimes(2);
 
@@ -63,7 +78,7 @@ describe('GAN executor 阻塞期间心跳保活（watchdog 防重排）', () => 
   });
 
   it('reviewer executor 阻塞 130s 时 heartbeatFn 被调用 2 次', async () => {
-    vi.useFakeTimers();
+    vi.useFakeTimers({ shouldAdvanceTime: true });
     const heartbeatFn = vi.fn().mockResolvedValue(undefined);
 
     let resolveExecutor;
@@ -81,6 +96,8 @@ describe('GAN executor 阻塞期间心跳保活（watchdog 防重排）', () => 
     };
     const reviewerPromise = nodes.reviewer(reviewerState);
 
+    // 等 executor 被调用（表示 setInterval 已注册），再推进 fake timer
+    await waitForExecutorCall(executor);
     await vi.advanceTimersByTimeAsync(130_000);
     expect(heartbeatFn).toHaveBeenCalledTimes(2);
 
@@ -99,19 +116,21 @@ describe('GAN executor 阻塞期间心跳保活（watchdog 防重排）', () => 
   });
 
   it('heartbeatFn throw 不阻断 proposer 正常执行', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
     const heartbeatFn = vi.fn().mockRejectedValue(new Error('db gone'));
-    vi.useFakeTimers();
 
-    let resolveExecutor;
-    const executor = vi.fn(
-      () => new Promise(resolve => { resolveExecutor = () => resolve({ exit_code: 0 }); })
-    );
+    const executor = vi.fn(async () => {
+      await new Promise(r => setTimeout(r, 61_000));
+      return { exit_code: 0 };
+    });
 
     const nodes = createGanContractNodes(executor, makeCtx({ heartbeatFn }));
     const p = nodes.proposer({ prdContent: '# PRD', round: 0, costUsd: 0 });
 
+    // 等 executor 被调用（表示 setInterval 已注册），再推进 fake timer
+    await waitForExecutorCall(executor);
     await vi.advanceTimersByTimeAsync(65_000);
-    resolveExecutor();
     await expect(p).resolves.toBeDefined();
+    expect(heartbeatFn).toHaveBeenCalled();
   });
 });
