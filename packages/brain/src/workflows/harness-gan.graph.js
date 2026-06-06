@@ -55,6 +55,13 @@ export const MAX_NO_PUSH_STREAK = 2;
 // 不是轮数上限——拿到 verdict 就清零，真在对抗的 GAN 仍可无限轮。
 export const MAX_NO_VERDICT_STREAK = 3;
 
+// 轮次安全熔断（治"几个小时"慢根因）：原 B52 移除强制收敛阀后，预算熔断（budgetCapUsd）是唯一
+// 兜底，但实测 executor 返回 cost=n/a → state.costUsd 全程 0 → `cost > cap` 永不触发 → GAN 可
+// 无限空转（实证 15-23 轮 = 几个小时）。加一个独立于 cost 追踪的轮次硬上限作 backstop：达上限
+// 仍是 REVISION（Proposer 未在合理轮数内收敛）→ 带 terminal:true fail-fast 中止，对称
+// MAX_NO_PUSH_STREAK / MAX_NO_VERDICT_STREAK / budget。真在收敛的 GAN（≤上限轮 APPROVED）不受影响。
+export const MAX_GAN_ROUNDS = Number(process.env.MAX_GAN_ROUNDS) || 8;
+
 // 7 个 rubric 维度（对齐 harness-contract-reviewer SKILL v6.4.0+）。
 // ⚠️ harness::rubric-dimensions 接口约定：此数组必须与 reviewer SKILL 输出维度完全一致。
 // 改 reviewer SKILL 维度 = 必须同步改这里（查 Brain registry type=harness_interface）。
@@ -676,6 +683,18 @@ export function createGanContractNodes(executor, ctx) {
         costUsd: costAfterSpawn,
         reviewerNoVerdictStreak: noVerdictStreak,
         // terminal:true — 熔断（硬停），配合 B58 resume 钩子第一次中止即 failed，不再消耗满 cap
+        error: { node: 'reviewer', message: msg, terminal: true },
+      };
+    }
+
+    // 轮次安全熔断：拿到干净 REVISION（Proposer 真在对抗但 round 已达上限仍未收敛）→ terminal 中止。
+    // 仅在 verdict==='REVISION' 时触发（verdict 缺失走上面的 no-verdict streak；APPROVED 正常 END）。
+    if (verdict === 'REVISION' && currentRound >= MAX_GAN_ROUNDS) {
+      const msg = `gan_max_rounds_exceeded: round=${currentRound} 达上限 MAX_GAN_ROUNDS=${MAX_GAN_ROUNDS} 仍未 APPROVED（Proposer 未收敛）`;
+      console.error(`[harness-gan][ABORT] ${msg}`);
+      return {
+        costUsd: costAfterSpawn,
+        reviewerNoVerdictStreak: noVerdictStreak,
         error: { node: 'reviewer', message: msg, terminal: true },
       };
     }
