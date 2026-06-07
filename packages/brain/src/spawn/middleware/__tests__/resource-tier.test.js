@@ -8,8 +8,8 @@ describe('resolveResourceTier()', () => {
   it('planner → light', () => {
     expect(resolveResourceTier('planner')).toEqual({ memoryMB: 512, cpuCores: 1, timeoutMs: 1800000, tier: 'light' });
   });
-  it('content_research → pipeline-heavy', () => {
-    expect(resolveResourceTier('content_research')).toEqual({ memoryMB: 2048, cpuCores: 1, timeoutMs: 10800000, tier: 'pipeline-heavy' });
+  it('content_research → pipeline-heavy（4GB — harness LLM 容器在 2048m 实测 OOM exit137）', () => {
+    expect(resolveResourceTier('content_research')).toEqual({ memoryMB: 4096, cpuCores: 1, timeoutMs: 10800000, tier: 'pipeline-heavy' });
   });
   it('unknown task_type → normal', () => {
     expect(resolveResourceTier('something_new')).toEqual({ memoryMB: 1024, cpuCores: 1, timeoutMs: 5400000, tier: 'normal' });
