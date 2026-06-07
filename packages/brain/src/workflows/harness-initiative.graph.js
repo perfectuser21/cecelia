@@ -1082,6 +1082,13 @@ export async function runSubTaskNode(state, opts = {}) {
   // thread_id 含 fix_count 保证 evaluate_contract FAIL 重试时用 fresh checkpoint
   const config = { configurable: { thread_id: `harness-task:${state.initiativeId}:${subTask.id}:fix${state.final_e2e_fix_count ?? 0}` }, recursionLimit: 200 };
   const waitMs = opts.waitMs !== undefined ? opts.waitMs : SUBGRAPH_WAIT_MS;
+  // 诊断：进 generator 子图前记录关键上下文，便于 generator 那层失败时定位。
+  console.log(
+    `[runSubTaskNode] invoke generator sub-graph thread=${config.configurable.thread_id}`
+    + ` sub_task=${subTask.id} baseRepo=${state.task?.payload?.base_repo || '(none)'}`
+    + ` contractBranch=${state.contractBranch || state.ganResult?.propose_branch || '(none)'}`
+    + ` machine=${state.task?.payload?.machine || '-'} executor=${state.task?.payload?.executor || '-'}`
+  );
   let final;
   try {
     const firstResult = await compiled.invoke(
@@ -1114,7 +1121,21 @@ export async function runSubTaskNode(state, opts = {}) {
       });
     }
   } catch (err) {
+    // 诊断（B：旧代码吞掉 sub-graph invoke 报错 → generator 失败零日志，实证 de4b2668 查不到原因）。
+    // 必须 console.error 出 message+stack，并把 error 透到 sub_task.evaluator_feedback 让 reportNode
+    // ws_issues 可见。
+    console.error(
+      `[runSubTaskNode] sub-graph invoke 抛错 sub_task=${subTask.id}`
+      + ` thread=${config.configurable.thread_id}: ${err.message}\n${err.stack || ''}`
+    );
     final = { status: 'failed', error: { node: 'sub_graph', message: err.message } };
+  }
+  // 诊断：记录子图最终结果（status + error），便于复盘 generator 那层。
+  if (final.status !== 'merged' && final.status !== 'completed') {
+    console.warn(
+      `[runSubTaskNode] sub_task=${subTask.id} 非成功终态 status=${final.status}`
+      + ` error=${final.error ? JSON.stringify(final.error) : '(none)'} pr_url=${final.pr_url || '(none)'}`
+    );
   }
   return {
     sub_tasks: [{
@@ -1125,6 +1146,9 @@ export async function runSubTaskNode(state, opts = {}) {
       fix_round: final.fix_round,
       cost_usd: final.cost_usd,
       ci_fail_type: final.ci_fail_type,
+      // 透传失败信息（error 或子图自带 evaluator_feedback）→ reportNode ws_issues 可见。
+      evaluator_feedback: final.evaluator_feedback
+        || (final.error ? (typeof final.error === 'string' ? final.error : JSON.stringify(final.error)) : undefined),
     }],
   };
 }
