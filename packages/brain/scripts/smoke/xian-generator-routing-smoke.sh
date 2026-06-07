@@ -24,9 +24,11 @@ const checks = [
     src: initSrc, regex: /state\.task\?\.payload\?\.machine\s*\?\s*\{\s*machine:\s*state\.task\.payload\.machine/ },
   { name: 'runSubTaskNode 透传 executor',
     src: initSrc, regex: /state\.task\?\.payload\?\.executor\s*\?\s*\{\s*executor:\s*state\.task\.payload\.executor/ },
-  // 2. spawnNode codex 路径 push contract（contractImported 守卫 + git push HEAD:branch）
-  { name: 'spawnNode codex push contract（contractImported 守卫）',
-    src: taskSrc, regex: /state\.contractImported\s*&&\s*worktreePath/ },
+  // 2. spawnNode codex 路径 push contract（contractInWorktree 守卫 + git push HEAD:branch）
+  //    门控用本次执行的本地变量 contractInWorktree（导入后即 true），不用 state.contractImported
+  //    （后者首次运行同执行内仍 false → push 被跳过 → 西安 codex 无合同→无 PR，见 #3306）。
+  { name: 'spawnNode codex push contract（contractInWorktree 守卫）',
+    src: taskSrc, regex: /contractInWorktree\s*&&\s*worktreePath/ },
   { name: 'spawnNode codex push HEAD:precomputedBranch',
     src: taskSrc, regex: /'push'[\s\S]{0,40}HEAD:\\\$\{precomputedBranch\}/ },
   // 3. spawnNode codex payload 注入 GITHUB_TOKEN
