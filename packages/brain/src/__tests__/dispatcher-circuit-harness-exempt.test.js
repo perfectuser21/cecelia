@@ -132,6 +132,17 @@ describe('dispatcher circuit-breaker — harness_initiative 豁免', () => {
   it('case 2: dev task + 熔断 OPEN → circuit_breaker_open', async () => {
     mockIsAllowed.mockReturnValue(false); // 熔断 OPEN
 
+    // 让 atomic claim (UPDATE...RETURNING id) 成功，才能走到 circuit breaker 检查
+    mockQuery.mockImplementation((sql) => {
+      if (/UPDATE tasks SET claimed_by/.test(sql)) {
+        return Promise.resolve({ rows: [{ id: 'task-dev-1' }] });
+      }
+      if (/SELECT \* FROM tasks WHERE id/.test(sql)) {
+        return Promise.resolve({ rows: [{ id: 'task-dev-1', task_type: 'dev', title: 'dev task' }] });
+      }
+      return Promise.resolve({ rows: [] });
+    });
+
     mockSelectNextDispatchableTask.mockResolvedValue({
       id: 'task-dev-1',
       task_type: 'dev',
