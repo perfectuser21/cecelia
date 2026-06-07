@@ -286,6 +286,16 @@ export async function spawnNode(state, opts = {}) {
       // GitHub，否则西安 codex-task.sh checkout 后看不到 sprints/contract-dod.md → generator
       // 不知道 DoD 存在 → evaluator 永远 FAIL。
       if (contractInWorktree && worktreePath) {
+        // 兜底：import 的 commit 偶发未落地（实证 60fa150f：合同 checkout+add 了但 commit 没成功，
+        // 文件 staged 未提交）。push 只传 committed，必须先把 worktree 里任何 staged 改动提交进 HEAD，
+        // 否则西安 codex clone 的分支没合同 → 无产出无 PR。git add -A + commit（无变更则 no-op）。
+        await execFile('git', ['-C', worktreePath, 'add', '-A'], { cwd: worktreePath }).catch(() => null);
+        await execFile('git', ['-C', worktreePath,
+          '-c', 'user.name=Cecelia Bot', '-c', 'user.email=cecelia-bot@noreply.github.com',
+          'commit', '--no-verify', '-m', `chore(harness): ensure contract committed for codex ${precomputedBranch}`],
+        { cwd: worktreePath })
+          .then(() => console.log(`[spawn-codex] 兜底提交合同到 ${precomputedBranch}`))
+          .catch(() => { /* 无 staged 变更 → commit 空转，正常 */ });
         await execFile('git', ['-C', worktreePath, 'push', 'origin',
           `HEAD:${precomputedBranch}`], { timeout: 60_000 });
       }
