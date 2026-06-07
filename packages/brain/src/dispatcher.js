@@ -293,12 +293,6 @@ export async function dispatchNextTask(goalIds) {
     }
   }
 
-  // 2. Circuit breaker check
-  if (!isAllowed('cecelia-run')) {
-    await recordDispatchResult(pool, false, 'circuit_breaker_open');
-    return { dispatched: false, reason: 'circuit_breaker_open', actions };
-  }
-
   // 2.5 Drain retired harness tasks — 一次 SQL 把所有 queued retired 类型批量
   //     标 pipeline_terminal_failure。必须在 selectNextDispatchableTask 之前，
   //     防止 retired task 跟正常 P0/P1 队列竞争 — 在 bridge 不可用的环境（CI
@@ -534,6 +528,17 @@ export async function dispatchNextTask(goalIds) {
   // harness_initiative 走 Docker spawn 路径，完全不依赖 cecelia-bridge。
   // 跳过 bridge check，否则 bridge 不在时 harness 会被错误 revert 到 queued。
   const needsBridgeCheck = nextTask.task_type !== 'harness_initiative';
+
+  // Circuit breaker — 只对依赖 cecelia-bridge 的任务生效（harness_initiative 豁免）
+  // 注意：此检查在 atomic claim 和 mark in_progress 之后，
+  //       所以拦截时必须回滚 task 状态和 claim。
+  if (needsBridgeCheck && !isAllowed('cecelia-run')) {
+    await updateTask({ task_id: nextTask.id, status: 'queued' });
+    await pool.query('UPDATE tasks SET claimed_by = NULL, claimed_at = NULL WHERE id = $1', [nextTask.id]);
+    await recordDispatchResult(pool, false, 'circuit_breaker_open');
+    return { dispatched: false, reason: 'circuit_breaker_open', actions };
+  }
+
   const ceceliaAvailable = needsBridgeCheck
     ? await checkCeceliaRunAvailable()
     : { available: true };
