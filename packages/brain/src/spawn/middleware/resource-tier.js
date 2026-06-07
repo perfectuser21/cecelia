@@ -23,7 +23,9 @@ export const RESOURCE_TIERS = {
   light:            { memoryMB: 512,  cpuCores: 1, timeoutMs: 30  * 60 * 1000 },
   normal:           { memoryMB: 1024, cpuCores: 1, timeoutMs: 90  * 60 * 1000 },
   heavy:            { memoryMB: 1536, cpuCores: 2, timeoutMs: 120 * 60 * 1000 },
-  'pipeline-heavy': { memoryMB: 2048, cpuCores: 1, timeoutMs: 180 * 60 * 1000 },
+  // 4096：harness LLM 容器（planner/propose/review，claude-sonnet/opus + >1M prompt cache）
+  // 在 2048m 实测 OOM exit137（GAN proposer 158s 被 kill）。content pipeline 峰值 ~1100MB，4GB 富余无害。
+  'pipeline-heavy': { memoryMB: 4096, cpuCores: 1, timeoutMs: 180 * 60 * 1000 },
 };
 
 export const TASK_TYPE_TIER = {
