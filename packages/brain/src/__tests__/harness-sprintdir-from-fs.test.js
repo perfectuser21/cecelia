@@ -37,6 +37,22 @@ describe('resolveSprintDirFromFs', () => {
     expect(r).toBe('sprints');
   });
 
+  it('显式 preferredSprintDir 命中结果 → 优先它（不被陈旧顶层最短路径覆盖）', async () => {
+    // 实证 v6：base_repo 被前几次 run 污染，顶层 sprints/sprint-prd.md 残留 + 本次 sprints/v6-truncate/。
+    // 最短路径会选陈旧顶层 → 读错 task-plan → 假绿。显式 sprint_dir 命中时必须优先它。
+    const r = await resolveSprintDirFromFs('/wt', {
+      execFile: fakeExec('/wt/sprints/sprint-prd.md\n/wt/sprints/v6-truncate/sprint-prd.md\n'),
+    }, 'sprints/v6-truncate');
+    expect(r).toBe('sprints/v6-truncate');
+  });
+
+  it('preferredSprintDir 不在结果里 → 退回最短路径（向后兼容）', async () => {
+    const r = await resolveSprintDirFromFs('/wt', {
+      execFile: fakeExec('/wt/sprints/sprint-prd.md\n/wt/sprints/other/sprint-prd.md\n'),
+    }, 'sprints/nonexistent');
+    expect(r).toBe('sprints');
+  });
+
   it('find 无结果 → null（让调用方走 fallback）', async () => {
     const r = await resolveSprintDirFromFs('/wt', { execFile: fakeExec('') });
     expect(r).toBeNull();
