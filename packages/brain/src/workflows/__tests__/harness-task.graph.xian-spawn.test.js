@@ -89,6 +89,33 @@ beforeEach(() => {
 });
 
 describe('harness-task.graph — spawnNode codex 路径 push contract + GITHUB_TOKEN', () => {
+  it('codex push 前先 commit（兜底 import commit 偶发未落地 → 合同 staged 未提交 → push 漏合同）', async () => {
+    // 实证 60fa150f：import 的 commit 偶发没落地（合同 staged 但未 committed），push 只传 committed
+    // → 西安 codex clone 的分支没合同 → 无产出无 PR。修：push 前 add -A + commit 兜底。
+    const seq = [];
+    const mockExecFile = vi.fn(async (cmd, args) => {
+      if (cmd === 'git' && Array.isArray(args)) {
+        // 兜底提交的签名：git add -A（import 用的是 add sprints/，以此区分）
+        if (args.includes('add') && args.includes('-A')) seq.push('add-A');
+        if (args.includes('push')) seq.push('push');
+      }
+      return { stdout: '', stderr: '' };
+    });
+
+    await spawnNode(baseState({ contractBranch: 'cp-harness-propose-r3-abc', contractImported: false }), {
+      spawnBridge: vi.fn(async () => {}),
+      execFile: mockExecFile,
+      resolveExecutor: codexRoute,
+      resolveToken: vi.fn(async () => 'ghp_test_token'),
+      poolOverride: { query: vi.fn(async () => ({ rows: [] })) },
+    });
+
+    // push 之前必须有 add -A 兜底提交（确保 import 偶发未落地的 staged 合同被提交进 HEAD）
+    const pushIdx = seq.lastIndexOf('push');
+    expect(pushIdx).toBeGreaterThanOrEqual(0);
+    expect(seq.slice(0, pushIdx)).toContain('add-A');
+  });
+
   it('codex 路径：spawnBridgeFn 之前 push contract 到 GitHub', async () => {
     const order = [];
     const mockExecFile = vi.fn(async (cmd, args) => {
