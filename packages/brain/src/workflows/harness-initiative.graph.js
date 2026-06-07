@@ -343,7 +343,7 @@ export function detectSprintDirFromGitLog(logOut) {
 // sprints/tests 子目录污染（旧 verdict 正则 + git-log + readdir 启发式都会被污染算成 sprints/tests）。
 // 多个匹配时取最短路径（最接近 sprints/ 根，排除 tests/fixtures 等嵌套误选）。
 // 找不到 / 出错 → null，让调用方走旧启发式 fallback。
-export async function resolveSprintDirFromFs(worktreePath, deps = {}) {
+export async function resolveSprintDirFromFs(worktreePath, deps = {}, preferredSprintDir = null) {
   const execFn = deps.execFile || execFile;
   try {
     const { stdout } = await execFn('find',
@@ -352,8 +352,15 @@ export async function resolveSprintDirFromFs(worktreePath, deps = {}) {
     );
     const paths = String(stdout || '').split('\n').map((s) => s.trim()).filter(Boolean);
     if (paths.length === 0) return null;
-    paths.sort((a, b) => a.length - b.length);
-    return path.relative(worktreePath, path.dirname(paths[0]));
+    const dirs = paths.map((p) => path.relative(worktreePath, path.dirname(p)));
+    // 优先信任显式 payload.sprint_dir：若它确有 sprint-prd.md（命中 find 结果）就用它。
+    // 否则才取最短路径——避免 base_repo 被前几次 run 污染（顶层 sprints/sprint-prd.md 残留）时，
+    // 最短路径误选陈旧顶层目录、读到旧 task-plan 产出假绿（v6 实证：误报 add5 PR#51 为 completed）。
+    if (preferredSprintDir && dirs.includes(preferredSprintDir)) {
+      return preferredSprintDir;
+    }
+    dirs.sort((a, b) => a.length - b.length);
+    return dirs[0];
   } catch {
     return null;
   }
@@ -377,7 +384,7 @@ export async function parsePrdNode(state) {
   let sprintDir = state.task?.payload?.sprint_dir || 'sprints';
   // B57: sprint_dir 单一真相源 — sprint-prd.md 文件系统位置（权威，跳过下面所有易污染的启发式）。
   // 找到就用它；找不到才退回 verdict JSON + git-log + readdir 旧启发式（向后兼容）。
-  const fsResolved = state.worktreePath ? await resolveSprintDirFromFs(state.worktreePath, { execFile }) : null;
+  const fsResolved = state.worktreePath ? await resolveSprintDirFromFs(state.worktreePath, { execFile }, state.task?.payload?.sprint_dir) : null;
   if (fsResolved) {
     sprintDir = fsResolved;
   } else {
