@@ -146,11 +146,41 @@ export async function prepInitiativeNode(state, opts = {}) {
 export async function runPlannerNode(state, opts = {}) {
   // 幂等门：已有 plannerOutput 直接 passthrough（resume 后重跑此节点时）
   if (state.plannerOutput) return { plannerOutput: state.plannerOutput };
+
+  // resume 容错（防孤儿 planner 并发 → SIGKILL 误标 OOM）：
+  // 本节点 spawn 后直接 interrupt()，而 planner_container_id 只在节点末尾 return —— interrupt
+  // 让节点从头重放（LangGraph），resume 时 state.planner_container_id 丢失（未 commit）。
+  // 但 spawn 时已把 (container_id, thread_id) 写进 walking_skeleton_thread_lookup（interrupt 丢不掉），
+  // 故 state 缺失时按 thread_id 回查：已 spawn 过则复用、走下面等回调分支，绝不重 spawn。
+  let plannerContainerId = state.planner_container_id;
+  if (!plannerContainerId) {
+    const tid = opts.configurable?.thread_id;
+    // 格式校验：thread_id 必须是 `harness-initiative:<id>:<attemptN>` 形态，非法值不查（防脏数据/误查）。
+    // （查询本身已参数化 $1，无注入风险；此处是额外的输入收窄。）
+    if (typeof tid === 'string' && /^harness-initiative:[^:]+:\d+$/.test(tid)) {
+      try {
+        const lookupPool = opts.pool || opts.poolOverride || pool;
+        const { rows } = await lookupPool.query(
+          `SELECT container_id FROM walking_skeleton_thread_lookup
+           WHERE thread_id = $1 AND graph_name = 'harness-initiative'
+           ORDER BY created_at DESC LIMIT 1`,
+          [tid]
+        );
+        if (rows?.[0]?.container_id) plannerContainerId = rows[0].container_id;
+      } catch (err) {
+        // 回查失败 = 无法确认是否已 spawn。刻意选「当首次处理、继续 spawn」而非中止整条 initiative：
+        // 一次 DB 抖动不该让 sprint 整体失败；代价是该 race 窗口内可能多 spawn 一个 planner（极罕见、
+        // 且被 90min 全局 deadline + 容器自然退出兜底），远小于「transient 错误直接 fail 整条线」。
+        console.warn(`[harness-initiative] planner thread_lookup 回查失败 thread_id=${tid}（当首次处理，继续 spawn）: ${err.message}`);
+      }
+    }
+  }
+
   // 幂等门：已 spawn 过（有 containerId）说明在等 callback，重新 interrupt
-  if (state.planner_container_id) {
+  if (plannerContainerId) {
     const callbackPayload = interrupt({
       type: 'wait_planner_callback',
-      containerId: state.planner_container_id,
+      containerId: plannerContainerId,
     });
     const { exit_code, stdout, error: cbErr } = callbackPayload || {};
     if (exit_code !== 0) {
