@@ -155,7 +155,9 @@ export async function runPlannerNode(state, opts = {}) {
   let plannerContainerId = state.planner_container_id;
   if (!plannerContainerId) {
     const tid = opts.configurable?.thread_id;
-    if (tid) {
+    // 格式校验：thread_id 必须是 `harness-initiative:<id>:<attemptN>` 形态，非法值不查（防脏数据/误查）。
+    // （查询本身已参数化 $1，无注入风险；此处是额外的输入收窄。）
+    if (typeof tid === 'string' && /^harness-initiative:[^:]+:\d+$/.test(tid)) {
       try {
         const lookupPool = opts.pool || opts.poolOverride || pool;
         const { rows } = await lookupPool.query(
@@ -166,7 +168,10 @@ export async function runPlannerNode(state, opts = {}) {
         );
         if (rows?.[0]?.container_id) plannerContainerId = rows[0].container_id;
       } catch (err) {
-        console.warn(`[harness-initiative] planner thread_lookup 回查失败（当首次处理）: ${err.message}`);
+        // 回查失败 = 无法确认是否已 spawn。刻意选「当首次处理、继续 spawn」而非中止整条 initiative：
+        // 一次 DB 抖动不该让 sprint 整体失败；代价是该 race 窗口内可能多 spawn 一个 planner（极罕见、
+        // 且被 90min 全局 deadline + 容器自然退出兜底），远小于「transient 错误直接 fail 整条线」。
+        console.warn(`[harness-initiative] planner thread_lookup 回查失败 thread_id=${tid}（当首次处理，继续 spawn）: ${err.message}`);
       }
     }
   }
