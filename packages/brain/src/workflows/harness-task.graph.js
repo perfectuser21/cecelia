@@ -195,6 +195,10 @@ export async function spawnNode(state, opts = {}) {
   // 但 generator worktree fresh off main 看不到。先 fetch + checkout，让 generator 容器内 SKILL
   // 能 read 合同基于它干活；不做 'import contract' → generator 不知道 DoD 存在 → evaluator 永远 FAIL。
   const contractBranch = state.contractBranch;
+  // 本地标志：合同是否已在本次 worktree 里（已有 state.contractImported 或本次刚导入）。
+  // 不能用 state.contractImported 作 codex push 门控——它只在本函数 return 时才置 true，
+  // 同一次执行里读仍是 false → 首次运行 push 被跳过 → 西安 codex clone 后没合同 → 无产出无 PR（358c80f3 实证）。
+  let contractInWorktree = !!state.contractImported;
   if (contractBranch && !state.contractImported) {
     try {
       await execFile('git', ['fetch', 'origin', `${contractBranch}:refs/remotes/origin/${contractBranch}`], { cwd: worktreePath });
@@ -203,6 +207,7 @@ export async function spawnNode(state, opts = {}) {
       // commit 失败（无变更）非阻塞 — generator 仍能在 worktree 里看到 sprints/
       await execFile('git', ['commit', '-m', `chore(harness): import contract from ${contractBranch}`], { cwd: worktreePath })
         .catch(() => null);
+      contractInWorktree = true;
     } catch (err) {
       return { containerId: finalContainerId, status: 'failed', error: { node: 'spawn', message: `prep: import contract from ${contractBranch}: ${err.message}` } };
     }
@@ -280,7 +285,7 @@ export async function spawnNode(state, opts = {}) {
       // 看不到本地 worktree 的 contract import commit。spawnBridge 前必须先 push 合同分支到
       // GitHub，否则西安 codex-task.sh checkout 后看不到 sprints/contract-dod.md → generator
       // 不知道 DoD 存在 → evaluator 永远 FAIL。
-      if (state.contractImported && worktreePath) {
+      if (contractInWorktree && worktreePath) {
         await execFile('git', ['-C', worktreePath, 'push', 'origin',
           `HEAD:${precomputedBranch}`], { timeout: 60_000 });
       }
