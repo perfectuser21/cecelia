@@ -106,6 +106,35 @@ describe('WS2 runPlannerNode — spawn-and-interrupt', () => {
     expect(mockSpawnDetached).not.toHaveBeenCalled();
   });
 
+  it('resume 丢失 planner_container_id：从 thread_lookup 回查 → 不重 spawn 孤儿容器', async () => {
+    // 根因复现：interrupt() 发生在 spawn 之后、return planner_container_id 之前，
+    // LangGraph 节点重放（resume）不含未 return 的值 → state.planner_container_id 丢失。
+    // 旧逻辑此时幂等门不触发 → 重新 spawn 第二个 planner（孤儿容器并发 → 内存挤爆 SIGKILL=误标OOM）。
+    // 修复：spawn 时已把 (container_id, thread_id) 写进 walking_skeleton_thread_lookup（interrupt 丢不掉），
+    // resume 时按 thread_id 回查 → 复用、走等回调分支，绝不重 spawn。
+    mockPoolQuery.mockReset().mockImplementation((sql) => {
+      if (/SELECT\s+container_id\s+FROM\s+walking_skeleton_thread_lookup/i.test(sql)) {
+        return Promise.resolve({ rows: [{ container_id: 'harness-planner-t1-existing' }] });
+      }
+      return Promise.resolve({ rows: [] });
+    });
+    let thrown = null;
+    try {
+      await runPlannerNode(
+        baseState, // 无 planner_container_id（模拟 resume 丢失）
+        {
+          spawnDetached: mockSpawnDetached,
+          pool: { query: mockPoolQuery },
+          configurable: { thread_id: 'harness-initiative:init-1:2' },
+        }
+      );
+    } catch (e) {
+      thrown = e; // 走等回调分支 interrupt() yield
+    }
+    expect(mockSpawnDetached).not.toHaveBeenCalled(); // 关键：不再 spawn 孤儿 planner
+    expect(thrown).toBeTruthy();
+  });
+
   it('resume: interrupt 后 Command(resume={stdout,exit_code:0}) → 续跑产 plannerOutput', async () => {
     const compiled = new StateGraph(InitiativeState)
       .addNode('planner', runPlannerNode)
