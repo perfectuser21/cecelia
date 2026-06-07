@@ -129,7 +129,31 @@ describe('harness-task.graph — spawnNode codex 路径 push contract + GITHUB_T
     expect(bridgeCalls[0].repo).toBe('https://github.com/perfectuser21/infrastructure.git');
   });
 
-  it('contractImported=false 时不 push（无合同导入无需 push）', async () => {
+  it('首次运行：contractBranch 有 + state.contractImported=false → 本次导入合同后仍须 push（修西安codex无合同bug）', async () => {
+    // 根因：合同在 line 198 本次刚导入进 worktree，但 push 门控读 state.contractImported——
+    // 它只在函数 return 时才置 true，同一次执行里仍是 false → push 被跳过 → generator 分支没合同上
+    // GitHub → 西安 codex clone 后没合同可读 → 啥也不产出 → AHEAD=0 → 无 PR（实证 358c80f3）。
+    const pushCalls = [];
+    const mockExecFile2 = vi.fn(async (cmd, args) => {
+      if (cmd === 'git' && Array.isArray(args) && args.includes('push')) pushCalls.push(args);
+      return { stdout: '', stderr: '' };
+    });
+
+    await spawnNode(
+      baseState({ contractBranch: 'cp-harness-propose-r3-abc', contractImported: false }),
+      {
+        spawnBridge: vi.fn(async () => {}),
+        execFile: mockExecFile2,
+        resolveExecutor: codexRoute,
+        resolveToken: vi.fn(async () => 'ghp_test_token'),
+        poolOverride: { query: vi.fn(async () => ({ rows: [] })) },
+      }
+    );
+
+    expect(pushCalls.length).toBeGreaterThanOrEqual(1);
+  });
+
+  it('contractImported=false 且无 contractBranch 时不 push（无合同导入无需 push）', async () => {
     const pushCalls = [];
     const mockExecFile = vi.fn(async (cmd, args) => {
       if (cmd === 'git' && Array.isArray(args) && args.includes('push')) pushCalls.push(args);
