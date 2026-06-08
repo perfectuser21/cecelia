@@ -76,6 +76,7 @@ import llmServiceRoutes from './src/routes/llm-service.js';
 import featuresRoutes from './src/routes/features.js';
 import clipsRoutes from './src/routes/clips.js';
 import journeysRouter from './src/routes/journeys.js';
+import abilitiesRouter from './src/routes/abilities.js';
 import { internalAuth } from './src/middleware/internal-auth.js';
 import createAutonomousRouter from './src/routes/autonomous.js';
 import { initTickLoop } from './src/tick.js';
@@ -317,6 +318,7 @@ app.use('/api/brain/registry', registryRoutes);
 app.use('/api/brain', harnessCallbackRouter);
 app.use('/api/brain', walkingSkeletonRouter);
 app.use('/api/brain', journeysRouter);
+app.use('/api/brain', abilitiesRouter);
 app.use('/api/brain/harness', harnessRoutesRouter);
 app.use('/api/brain/harness', harnessRoutes);
 // Alias: /api/brain/initiative-runs/:id 可直接访问（不带 /harness 前缀）
