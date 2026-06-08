@@ -19,7 +19,7 @@ router.get('/abilities', async (req, res) => {
     if (journey_id) { params.push(journey_id); clauses.push(`journey_id=$${params.length}`); }
     if (kind)       { params.push(kind);       clauses.push(`kind=$${params.length}`); }
     if (status)     { params.push(status);     clauses.push(`status=$${params.length}`); }
-    params.push(parseInt(limit, 10) || 200);
+    params.push(Math.min(parseInt(limit, 10) || 200, 500));
     const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
     const { rows } = await pool.query(
       `SELECT * FROM abilities ${where} ORDER BY created_at DESC LIMIT $${params.length}`, params
@@ -69,6 +69,7 @@ router.patch('/abilities/:id', async (req, res) => {
     if (status)       { sets.push(`status=$${idx++}`);       vals.push(status); }
     if (!sets.length) return res.status(400).json({ error: 'no fields to update' });
     sets.push(`updated_at=NOW()`);
+    sets.push(`notion_synced_at=NULL`); // 标脏，待 Notion 重新同步
     vals.push(req.params.id);
     const { rows } = await pool.query(
       `UPDATE abilities SET ${sets.join(',')} WHERE id=$${idx} RETURNING *`, vals
@@ -91,7 +92,7 @@ router.get('/golden_path', async (req, res) => {
     const clauses = [];
     if (scope_type) { params.push(scope_type); clauses.push(`scope_type=$${params.length}`); }
     if (scope_id)   { params.push(scope_id);   clauses.push(`scope_id=$${params.length}`); }
-    params.push(parseInt(limit, 10) || 200);
+    params.push(Math.min(parseInt(limit, 10) || 200, 500));
     const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
     const { rows } = await pool.query(
       `SELECT * FROM golden_path ${where} ORDER BY order_no ASC LIMIT $${params.length}`, params
