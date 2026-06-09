@@ -57,8 +57,8 @@ describe('abilities routes', () => {
 
 
   it('POST /abilities 查 journey_features 而非 abilities（kind 字段必须存在）', async () => {
-    mockQuery.mockResolvedValueOnce({ rows: [{ id: 'area-uuid' }] }); // areas 查 area_id
-    mockQuery.mockResolvedValueOnce({ rows: [{ id: 'ab1', name: 'Y', kind: 'feature', area_id: 'area-uuid' }] }); // INSERT
+    // 不传 area，只做一次 INSERT query
+    mockQuery.mockResolvedValueOnce({ rows: [{ id: 'ab1', name: 'Y', kind: 'feature' }] }); // INSERT journey_features
     const res = await (await req())(await makeApp()).post('/api/brain/abilities').send({ name: 'Y', kind: 'feature' });
     expect(res.status).toBe(201);
     expect(res.body.kind).toBe('feature');
