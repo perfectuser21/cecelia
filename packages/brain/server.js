@@ -292,7 +292,26 @@ app.use('/api/brain/design-docs', designDocsRoutes);
 app.use('/api/brain/user-annotations', userAnnotationsRoutes);
 app.use('/api/brain/strategic-decisions', strategicDecisionsRoutes);
 app.post('/api/brain/decisions/match', express.json(), createDecisionsMatchRouter());
-app.use('/api/brain/decisions', strategicDecisionsRoutes);
+// GET /api/brain/decisions — alias 返回数组格式（兼容 smoke-business.sh）
+app.get('/api/brain/decisions', async (req, res) => {
+  const { status, category, made_by, author, limit = 100 } = req.query;
+  try {
+    const params = [];
+    const conditions = ['category IS NOT NULL'];
+    if (status) { params.push(status); conditions.push(`status = $${params.length}`); }
+    if (category) { params.push(category); conditions.push(`category = $${params.length}`); }
+    if (made_by) { params.push(made_by); conditions.push(`made_by = $${params.length}`); }
+    if (author) { params.push(author); conditions.push(`author = $${params.length}`); }
+    params.push(parseInt(limit, 10) || 100);
+    const result = await pool.query(
+      `SELECT * FROM decisions WHERE ${conditions.join(' AND ')} ORDER BY created_at DESC LIMIT $${params.length}`,
+      params
+    );
+    res.json(result.rows);
+  } catch (err) {
+    res.json([]);
+  }
+});
 app.use('/api/brain/conversation-captures', conversationCapturesRoutes);
 app.use('/api/brain/capture-atoms', captureAtomsRoutes);
 // Notion 写入端点：POST /notes, POST /notion/project, POST /notion/task
