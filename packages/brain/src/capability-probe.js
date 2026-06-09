@@ -508,12 +508,14 @@ async function probeGeoWebsite() {
   const BASE = 'https://zenithjoyai.com';
   const checks = [
     { url: `${BASE}/zh/`, expect: 'ZenithJoyAI', label: 'homepage' },
-    { url: `${BASE}/zh/blog/`, expect: '/zh/blog/', label: 'blog_list' },
+    // HEAD avoids full-page SSR body transfer; blog list page renders all posts and can take >12s.
+    { url: `${BASE}/zh/blog/`, expect: null, label: 'blog_list', method: 'HEAD' },
     // HEAD avoids full-page SSR body transfer; we only need status 200 (expect: null).
     { url: `${BASE}/zh/posts/`, expect: null, label: 'posts_page', method: 'HEAD' },
   ];
 
   // 12s per check × 2 attempts + 1s retry delay = 25s max, fits under 30s outer probe timeout.
+  // homepage: GET+expect (content check); blog_list+posts_page: HEAD (SSR pages — avoid body transfer).
   const PER_CHECK_TIMEOUT_MS = 12_000;
   const RETRY_DELAY_MS = 1_000;
 

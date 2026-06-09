@@ -211,13 +211,13 @@ describe('probeGeoWebsite', () => {
     expect(geoResult.detail).toContain('homepage=fail(503)');
   });
 
-  it('uses HEAD for posts_page and GET for homepage/blog_list', async () => {
+  it('uses HEAD for blog_list and posts_page, GET for homepage', async () => {
     const calls = [];
     global.fetch = vi.fn((url, opts) => {
       calls.push({ url, method: opts?.method || 'GET' });
-      const body = url.includes('/zh/blog/')
-        ? 'Visit our /zh/blog/ for articles'
-        : 'Welcome to ZenithJoyAI homepage';
+      const body = url.includes('/zh/') && !url.includes('blog') && !url.includes('posts')
+        ? 'Welcome to ZenithJoyAI homepage'
+        : '';
       return Promise.resolve({ status: 200, text: async () => body });
     });
 
@@ -229,8 +229,55 @@ describe('probeGeoWebsite', () => {
     const postsCall = calls.find(c => c.url.includes('/zh/posts/'));
 
     expect(homepageCall?.method).toBe('GET');
-    expect(blogCall?.method).toBe('GET');
+    expect(blogCall?.method).toBe('HEAD');
     expect(postsCall?.method).toBe('HEAD');
+  });
+
+  it('reports blog_list=error(timeout) when blog SSR page exceeds per-check timeout', async () => {
+    // Regression: blog list SSR renders all posts and can take >12s (same root cause as posts_page).
+    // Fix: use HEAD to skip body transfer. This test verifies graceful error reporting if HEAD also times out.
+    const realTimeout = AbortSignal.timeout;
+    AbortSignal.timeout = vi.fn((ms) => {
+      const ac = new AbortController();
+      setTimeout(() => ac.abort(new DOMException('The operation was aborted due to timeout', 'TimeoutError')), 50);
+      return ac.signal;
+    });
+
+    global.fetch = vi.fn((url, opts) => {
+      if (url.includes('/zh/blog/')) {
+        return new Promise((resolve, reject) => {
+          const sig = opts?.signal;
+          if (sig) {
+            if (sig.aborted) {
+              reject(sig.reason ?? new DOMException('aborted', 'AbortError'));
+              return;
+            }
+            sig.addEventListener('abort', () => {
+              reject(sig.reason ?? new DOMException('The operation was aborted due to timeout', 'AbortError'));
+            });
+          }
+          // Never resolves — simulates slow SSR page
+        });
+      }
+      const body = url.includes('/zh/') && !url.includes('blog') && !url.includes('posts')
+        ? 'Welcome to ZenithJoyAI homepage'
+        : '';
+      return Promise.resolve({ status: 200, text: async () => body });
+    });
+
+    try {
+      const { runProbes } = await import('../capability-probe.js');
+      const results = await runProbes();
+      const geoResult = results.find(r => r.name === 'geo_website');
+
+      expect(geoResult).toBeDefined();
+      expect(geoResult.ok).toBe(false);
+      expect(geoResult.detail).toMatch(/blog_list=error/);
+      expect(geoResult.detail).toContain('homepage=ok');
+      expect(geoResult.detail).toContain('posts_page=ok');
+    } finally {
+      AbortSignal.timeout = realTimeout;
+    }
   });
 
   it('retries once on TypeError (transient network error) and succeeds', async () => {
