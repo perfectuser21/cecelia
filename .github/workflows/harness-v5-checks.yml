@@ -205,7 +205,6 @@ jobs:
   skeleton-shape-check:
     name: Skeleton 测试形状校验 (v1.0)
     runs-on: ubuntu-latest
-    continue-on-error: true  # 观察期软门禁 — 确认无误报后去掉此行切硬门禁
     steps:
       - uses: actions/checkout@v4
         with:
