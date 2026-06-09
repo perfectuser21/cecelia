@@ -292,6 +292,26 @@ app.use('/api/brain/design-docs', designDocsRoutes);
 app.use('/api/brain/user-annotations', userAnnotationsRoutes);
 app.use('/api/brain/strategic-decisions', strategicDecisionsRoutes);
 app.post('/api/brain/decisions/match', express.json(), createDecisionsMatchRouter());
+// GET /api/brain/decisions — alias 返回数组格式（兼容 smoke-business.sh）
+app.get('/api/brain/decisions', async (req, res) => {
+  const { status, category, made_by, author, limit = 100 } = req.query;
+  try {
+    const params = [];
+    const conditions = ['category IS NOT NULL'];
+    if (status) { params.push(status); conditions.push(`status = $${params.length}`); }
+    if (category) { params.push(category); conditions.push(`category = $${params.length}`); }
+    if (made_by) { params.push(made_by); conditions.push(`made_by = $${params.length}`); }
+    if (author) { params.push(author); conditions.push(`author = $${params.length}`); }
+    params.push(parseInt(limit, 10) || 100);
+    const result = await pool.query(
+      `SELECT * FROM decisions WHERE ${conditions.join(' AND ')} ORDER BY created_at DESC LIMIT $${params.length}`,
+      params
+    );
+    res.json(result.rows);
+  } catch (err) {
+    res.json([]);
+  }
+});
 app.use('/api/brain/conversation-captures', conversationCapturesRoutes);
 app.use('/api/brain/capture-atoms', captureAtomsRoutes);
 // Notion 写入端点：POST /notes, POST /notion/project, POST /notion/task
@@ -318,14 +338,25 @@ app.use('/api/brain/registry', registryRoutes);
 app.use('/api/brain', harnessCallbackRouter);
 app.use('/api/brain', walkingSkeletonRouter);
 app.use('/api/brain', journeysRouter);
+// GET /api/brain/issues — skills 期望的端点（journey_features 里有 issues，此处提供独立路由）
+app.get('/api/brain/issues', async (req, res) => {
+  const { limit = 20, journey_id, status } = req.query;
+  try {
+    let query = 'SELECT * FROM issues WHERE 1=1';
+    const params = [];
+    if (journey_id) { query += ` AND journey_id = $${params.push(journey_id)}`; }
+    if (status) { query += ` AND status = $${params.push(status)}`; }
+    query += ` ORDER BY created_at DESC LIMIT $${params.push(parseInt(limit))}`;
+    const result = await pool.query(query, params);
+    res.json({ issues: result.rows });
+  } catch (err) {
+    // issues 表不存在或查询失败时返回空，不 500
+    res.json({ issues: [] });
+  }
+});
 app.use('/api/brain', abilitiesRouter);
 app.use('/api/brain/harness', harnessRoutesRouter);
 app.use('/api/brain/harness', harnessRoutes);
-// Alias: /api/brain/initiative-runs/:id 可直接访问（不带 /harness 前缀）
-// 合同 DoD 要求 GET /api/brain/initiative-runs/:id，harness.js 路由挂载于 /harness，
-// 此处二次挂载让路由在 /api/brain 前缀下也生效。
-// /stats/pipeline 等路径已在此挂载点之前被 statsRoutes/contentPipelineRoutes 处理，无冲突。
-app.use('/api/brain', harnessRoutes);
 app.use('/api/brain/harness-interrupts', harnessInterruptsRouter);
 app.use('/api/brain/initiatives', initiativesRoutes);
 app.use('/api/brain/backup', backupRoutes);

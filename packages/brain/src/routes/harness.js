@@ -1351,14 +1351,17 @@ router.post('/complete', async (req, res) => {
     if (pr_url) result.pr_url = pr_url;
     if (screenshots) result.screenshots = screenshots;
     if (sprint_dir) result.sprint_dir = sprint_dir;
-    await pool.query(
+    const updateResult = await pool.query(
       `UPDATE tasks SET status='completed', completed_at=NOW(),
        result = COALESCE(result, '{}'::jsonb) || $1::jsonb
        WHERE id::text = $2 AND status != 'completed'`,
       [JSON.stringify(result), initiative_id]
     );
+    if (updateResult.rowCount === 0) {
+      console.warn(`[POST /harness/complete] initiative ${initiative_id} UPDATE affected 0 rows — not found or already completed`);
+    }
     console.log(`[POST /harness/complete] initiative ${initiative_id} marked completed`);
-    res.json({ ok: true, initiative_id });
+    res.json({ ok: true, initiative_id, rowsAffected: updateResult.rowCount });
   } catch (err) {
     console.error('[POST /harness/complete]', err.message);
     res.status(500).json({ error: err.message });

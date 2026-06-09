@@ -94,10 +94,11 @@ router.get('/journeys/:id', async (req, res) => {
 // GET /api/brain/journey_features
 router.get('/journey_features', async (req, res) => {
   try {
-    const { journey_id, area, status, limit = 100 } = req.query;
+    const { journey_id, kind, area, status, limit = 100 } = req.query;
     const params = [];
     const clauses = [];
     if (journey_id) { params.push(journey_id); clauses.push(`journey_id=$${params.length}`); }
+    if (kind)       { params.push(kind);       clauses.push(`kind=$${params.length}`); }
     if (area)       { params.push(area);       clauses.push(`area_id=(SELECT id FROM areas WHERE name=$${params.length} LIMIT 1)`); }
     if (status)     { params.push(status);     clauses.push(`status=$${params.length}`); }
     params.push(parseInt(limit, 10) || 100);
@@ -116,7 +117,7 @@ router.get('/journey_features', async (req, res) => {
 // POST /api/brain/journey_features
 router.post('/journey_features', async (req, res) => {
   try {
-    const { name, journey_id, thickness, status, area, unit_test_path, version } = req.body;
+    const { name, journey_id, thickness, status, area, unit_test_path, version, kind, workflow_ref } = req.body;
     if (!name) return res.status(400).json({ error: 'name is required' });
     if (thickness && !VALID_THICKNESS.includes(thickness)) {
       return res.status(400).json({ error: `thickness must be one of: ${VALID_THICKNESS.join(',')}` });
@@ -140,8 +141,8 @@ router.post('/journey_features', async (req, res) => {
 
     const { rows } = await pool.query(
       `INSERT INTO journey_features
-         (name, journey_id, thickness, status, area_id, unit_test_path, version, notion_synced_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,NULL)
+         (name, journey_id, thickness, status, area_id, unit_test_path, version, kind, workflow_ref, notion_synced_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,NULL)
        RETURNING *`,
       [
         name,
@@ -151,6 +152,8 @@ router.post('/journey_features', async (req, res) => {
         areaId,
         unit_test_path || null,
         version || null,
+        kind || 'feature',
+        workflow_ref || null,
       ]
     );
     res.status(201).json(rows[0]);

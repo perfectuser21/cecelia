@@ -167,8 +167,9 @@ async function fetchAllDecisions(db) {
 export default function createDecisionsMatchRouter() {
   return async function handleDecisionsMatch(req, res) {
     try {
-      const { prd, topics } = req.body || {};
-      if (!prd) return res.status(400).json({ error: 'prd field required' });
+      const prd = (req.body || {}).prd || (req.body || {}).query;
+      const { topics } = req.body || {};
+      if (!prd) return res.status(400).json({ error: 'prd or query field required' });
       const result = await matchDecisions(prd, topics || []);
       res.json(result);
     } catch (err) {

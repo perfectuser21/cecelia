@@ -112,3 +112,34 @@ describe('POST /api/brain/registry type=skill guard', () => {
     expect(res.status).toBe(201);
   });
 });
+
+describe('POST /api/brain/registry VALID_TYPES — test and db_schema', () => {
+  let app;
+
+  beforeEach(async () => {
+    vi.clearAllMocks();
+    const { default: router } = await import('../registry.js');
+    const express = await import('express');
+    app = express.default();
+    app.use(express.default.json());
+    app.use('/api/brain/registry', router);
+  });
+
+  it('POST type=test accepted (VALID_TYPES now includes test)', async () => {
+    mockQuery.mockResolvedValueOnce({ rows: [{ id: 'reg-2', name: 'my-test', type: 'test', status: 'active' }] });
+    const request = await import('supertest');
+    const res = await request.default(app)
+      .post('/api/brain/registry')
+      .send({ name: 'my-test', type: 'test' });
+    expect(res.status).toBe(201);
+  });
+
+  it('POST type=db_schema accepted (VALID_TYPES now includes db_schema)', async () => {
+    mockQuery.mockResolvedValueOnce({ rows: [{ id: 'reg-3', name: 'my-schema', type: 'db_schema', status: 'active' }] });
+    const request = await import('supertest');
+    const res = await request.default(app)
+      .post('/api/brain/registry')
+      .send({ name: 'my-schema', type: 'db_schema' });
+    expect(res.status).toBe(201);
+  });
+});

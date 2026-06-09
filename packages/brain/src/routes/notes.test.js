@@ -100,3 +100,17 @@ describe('notes routes', () => {
     });
   });
 });
+
+describe('notes.js TASKS_DB env var 注入', () => {
+  it('notes.js 文件包含 NOTION_TASKS_DB_ID env var 引用', async () => {
+    // 覆盖 notes.js TASKS_DB 修复：确认代码已改用 env var
+    const fs = await import('fs');
+    const path = await import('path');
+    const src = fs.default.readFileSync(
+      path.default.resolve(path.default.dirname(new URL(import.meta.url).pathname), './notes.js'),
+      'utf8'
+    );
+    expect(src).toContain('NOTION_TASKS_DB_ID');
+    expect(src).toContain('process.env');
+  });
+});

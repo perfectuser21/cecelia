@@ -14,7 +14,7 @@ import { notionReq, getToken } from '../recurring-notion-sync.js';
 // Notion DB IDs
 const AI_NOTES_DB = '185c40c2-ba63-828c-973f-81a9c4582cd6';
 const PROJECTS_DB = '358c40c2-ba63-81e3-96c5-d762b3d34dff';
-const TASKS_DB    = '185c40c2-ba63-828c-973f-81a9c4582cd6';
+const TASKS_DB    = process.env.NOTION_TASKS_DB_ID || 'TODO_SET_CORRECT_DB_ID'; // was incorrectly same as AI_NOTES_DB
 
 function buildRichText(text) {
   if (!text) return [];
