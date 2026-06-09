@@ -228,3 +228,48 @@ describe('POST /api/brain/journey_step_links', () => {
     expect(res.status).toBe(400);
   });
 });
+
+describe('GET /journey_features kind 过滤', () => {
+  beforeEach(() => { mockQuery.mockReset(); });
+
+  it('kind 参数传入 SQL WHERE 子句', async () => {
+    mockQuery.mockResolvedValueOnce({ rows: [] });
+    const { default: router } = await import('../journeys.js');
+    const express = await import('express');
+    const app = express.default();
+    app.use(express.default.json());
+    app.use('/api/brain', router);
+
+    const request = await import('supertest');
+    const res = await request.default(app).get('/api/brain/journey_features?kind=ability');
+    expect(res.status).toBe(200);
+    const sql = mockQuery.mock.calls[0][0];
+    expect(sql).toContain('kind=');
+    const params = mockQuery.mock.calls[0][1];
+    expect(params).toContain('ability');
+  });
+});
+
+describe('POST /journey_features kind 和 workflow_ref 写入', () => {
+  beforeEach(() => { mockQuery.mockReset(); });
+
+  it('kind 字段写入 INSERT 语句', async () => {
+    mockQuery.mockResolvedValueOnce({ rows: [] }); // journey_id lookup
+    mockQuery.mockResolvedValueOnce({ rows: [{ id: 'feat-1', name: 'test-feature', kind: 'ability', workflow_ref: null }] });
+
+    const { default: router } = await import('../journeys.js');
+    const express = await import('express');
+    const app = express.default();
+    app.use(express.default.json());
+    app.use('/api/brain', router);
+
+    const request = await import('supertest');
+    const res = await request.default(app)
+      .post('/api/brain/journey_features')
+      .send({ name: 'test-feature', kind: 'ability' });
+    expect(res.status).toBe(201);
+    const insertSql = mockQuery.mock.calls.find(c => c[0].includes('INSERT'));
+    expect(insertSql[0]).toContain('kind');
+    expect(insertSql[0]).toContain('workflow_ref');
+  });
+});

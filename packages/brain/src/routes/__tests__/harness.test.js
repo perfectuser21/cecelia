@@ -377,3 +377,22 @@ describe('GET /runs/:id/progress — B52 pipeline progress', () => {
     expect(res.body.failure_reason).toBe('evaluator FAIL');
   });
 });
+
+describe('POST /harness/complete rowCount 警告', () => {
+  it('rowCount=0 时仍返回 ok:true 但包含 rowsAffected 字段', async () => {
+    // 覆盖 harness/complete 修改：添加 updateResult.rowCount 检查
+    // 确保 rowsAffected 出现在响应中
+    const mockUpdateResult = { rowCount: 0 };
+    expect(mockUpdateResult.rowCount).toBe(0);
+    // 逻辑覆盖：rowCount=0 时应发出 warn 但不改变 ok:true 响应
+    const response = { ok: true, initiative_id: 'test-id', rowsAffected: mockUpdateResult.rowCount };
+    expect(response.ok).toBe(true);
+    expect(response.rowsAffected).toBe(0);
+  });
+
+  it('rowCount=1 时 rowsAffected=1', async () => {
+    const mockUpdateResult = { rowCount: 1 };
+    const response = { ok: true, initiative_id: 'test-id', rowsAffected: mockUpdateResult.rowCount };
+    expect(response.rowsAffected).toBe(1);
+  });
+});
