@@ -92,9 +92,12 @@ async function pushJourneyFeatures(pool, token) {
     try {
       const properties = {
         Name: { title: [{ text: { content: f.name } }] },
-        Thickness: { select: { name: f.thickness } },
+        Kind: { select: { name: f.kind || 'feature' } },
         Status: { select: { name: f.status || 'planned' } },
       };
+      if (f.thickness) {
+        properties['Thickness'] = { select: { name: f.thickness } };
+      }
       if (f.journey_notion_id) {
         properties['Journey'] = { relation: [{ id: f.journey_notion_id }] };
       }

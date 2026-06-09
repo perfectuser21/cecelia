@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head><meta charset="UTF-8"><title>AI 爆款视频翻拍 — Line 07 thin 骨架 — Sprint Report</title>
+<style>
+body{font-family:sans-serif;margin:0;display:flex;flex-direction:column;height:100vh;}
+header{background:#1a1a2e;color:#fff;padding:12px 24px;display:flex;align-items:center;gap:16px;}
+header a{color:#adf;text-decoration:none;}
+main{display:flex;flex:1;overflow:hidden;}
+nav{width:160px;background:#f4f4f4;border-right:1px solid #ddd;padding:16px 0;overflow-y:auto;}
+nav ul{list-style:none;margin:0;padding:0;}
+nav li a{display:block;padding:8px 16px;color:#333;text-decoration:none;}
+nav li a:hover{background:#e0e0e0;}
+.content{flex:1;overflow-y:auto;padding:24px;}
+.section pre{background:#f8f8f8;border:1px solid #ddd;padding:16px;border-radius:4px;}
+.screenshot{margin-bottom:16px;}
+</style>
+</head>
+<body>
+<header>
+  <span><strong>AI 爆款视频翻拍 — Line 07 thin 骨架</strong> Sprint Report</span>
+  <a href="https://github.com/perfectuser21/zenithjoy-workspace/pull/705" target="_blank">PR</a>
+</header>
+<main>
+<nav><ul>
+<li><a href="#" onclick="show('prep-prd');return false;">PrepPRD</a></li><li><a href="#" onclick="show('sprint-prd');return false;">PRD</a></li><li><a href="#" onclick="show('contract');return false;">D-Contract</a></li><li><a href="#" onclick="show('dod');return false;">DOD</a></li><li><a href="#" onclick="show('report');return false;">Report</a></li><li><a href="#" onclick="show('learning');return false;">Learning</a></li>
+<li><a href="#" onclick="show('screenshots');return false;">截图</a></li>
+</ul></nav>
+<div class="content">
+<div id="prep-prd" class="section" style="display:none;"><p>（文件不存在）</p></div><div id="sprint-prd" class="section" style="display:none;"><p>（文件不存在）</p></div><div id="contract" class="section" style="display:none;"><p>（文件不存在）</p></div><div id="dod" class="section" style="display:none;"><p>（文件不存在）</p></div><div id="report" class="section" style="display:none;"><pre style="white-space:pre-wrap;word-break:break-word;">━━━ Sprint: AI 爆款视频翻拍 — Line 07 thin 骨架  PR #705  2026-06-09 ━━━
+
+PIPELINE  A+B+C phases · 0 eval rounds · - · $0
+
+Phase          Time    Cost    Result
+Proposer       -       -       ✅
+Planner        -       -       ✅
+Generator      -       -       ✅
+Evaluator×0    -       -       ✅
+Reporter       -       -       ✅
+
+DOD -/- ✅  FAIL: 无
+
+E2E 截图: （无截图）
+Learning: （从本次 Sprint 提炼的洞察见 learning.md）
+DB sync: journey_steps · journey_features · api_registry ✅ · Notion pushed ✅
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+</pre></div><div id="learning" class="section" style="display:none;"><pre style="white-space:pre-wrap;word-break:break-word;"># Learning — AI 爆款视频翻拍 — Line 07 thin 骨架
+
+## 运行指标
+
+- GAN 轮次：0
+- Evaluator Fix 次数：0
+- PR：https://github.com/perfectuser21/zenithjoy-workspace/pull/705
+- Sprint Dir：/workspace/sprints/06090814-video-remake
+
+## 发现的问题
+
+### [PROMPT] Prompt 类问题
+
+- （无）
+
+### [BUG] 代码缺陷
+
+- （无）
+
+### [INFRA] 基础设施问题
+
+- （无）
+
+### [DESIGN] 设计缺陷
+
+- （无）
+
+## 下次预防清单
+
+- [ ] 检查 contract-draft.md 格式是否符合 evaluator 预期
+- [ ] 确认 DoD 所有 [BEHAVIOR] 条目有对应测试
+- [ ] GAN 轮次 &gt; 2 时复盘 evaluator prompt 是否过严
+</pre></div>
+<div id="screenshots" class="section" style="display:none;"><p>无截图</p></div>
+</div>
+</main>
+<script>
+function show(id){document.querySelectorAll('.section').forEach(s=>s.style.display='none');var el=document.getElementById(id);if(el)el.style.display='block';}
+var first = document.querySelector('.section');if(first)first.style.display='block';
+</script>
+</body></html>
