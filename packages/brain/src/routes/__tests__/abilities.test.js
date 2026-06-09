@@ -29,10 +29,12 @@ describe('abilities routes', () => {
   });
 
   it('POST /abilities 建一条返回 201', async () => {
-    mockQuery.mockResolvedValueOnce({ rows: [{ id: 'a2', name: 'X', area: 'zenithjoy', kind: 'ability' }] });
+    mockQuery.mockResolvedValueOnce({ rows: [{ id: 'area-uuid' }] }); // areas 表查 area_id
+    mockQuery.mockResolvedValueOnce({ rows: [{ id: 'a2', name: 'X', area_id: 'area-uuid', kind: 'ability' }] }); // INSERT journey_features
     const res = await (await req())(await makeApp()).post('/api/brain/abilities').send({ name: 'X', area: 'zenithjoy' });
     expect(res.status).toBe(201);
     expect(res.body.name).toBe('X');
+    expect(res.body.kind).toBe('ability');
   });
 
   it('PATCH /abilities/:id 不存在返回 404', async () => {
@@ -51,6 +53,15 @@ describe('abilities routes', () => {
   it('POST /golden_path 缺字段返回 400', async () => {
     const res = await (await req())(await makeApp()).post('/api/brain/golden_path').send({ scope_type: 'journey' });
     expect(res.status).toBe(400);
+  });
+
+
+  it('POST /abilities 查 journey_features 而非 abilities（kind 字段必须存在）', async () => {
+    mockQuery.mockResolvedValueOnce({ rows: [{ id: 'area-uuid' }] }); // areas 查 area_id
+    mockQuery.mockResolvedValueOnce({ rows: [{ id: 'ab1', name: 'Y', kind: 'feature', area_id: 'area-uuid' }] }); // INSERT
+    const res = await (await req())(await makeApp()).post('/api/brain/abilities').send({ name: 'Y', kind: 'feature' });
+    expect(res.status).toBe(201);
+    expect(res.body.kind).toBe('feature');
   });
 
   it('DB 报错返回 500', async () => {
