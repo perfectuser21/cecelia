@@ -107,7 +107,7 @@ describe('notes.js TASKS_DB env var 注入', () => {
     const fs = await import('fs');
     const path = await import('path');
     const src = fs.default.readFileSync(
-      path.default.resolve(path.default.dirname(new URL(import.meta.url).pathname), '../notes.js'),
+      path.default.resolve(path.default.dirname(new URL(import.meta.url).pathname), './notes.js'),
       'utf8'
     );
     expect(src).toContain('NOTION_TASKS_DB_ID');
