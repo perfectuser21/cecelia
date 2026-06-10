@@ -431,6 +431,7 @@ describe('selfcheck schema version', () => {
     }));
 
     const { EXPECTED_SCHEMA_VERSION } = await import('../selfcheck.js');
+    // 293 是地板，加 migration 不要 bump（issue 14d66027）。
     expect(EXPECTED_SCHEMA_VERSION).toBe('293');
   });
 });
