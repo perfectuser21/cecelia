@@ -97,4 +97,12 @@ describe('resumeStalledHarnessDrivers — OPEN-2 看门狗', () => {
     expect(r.resumed).toEqual([]);
     expect(r.scanned).toBe(1);
   });
+
+  it('staleMinutes 默认 10 — 3min 过敏感导致活驱动被误重排（Issue 5a4faede）', async () => {
+    mockPoolQuery.mockResolvedValue({ rows: [] });
+    await resumeStalledHarnessDrivers({});
+    // SQL 第一个参数即 staleMinutes 字符串
+    const params = mockPoolQuery.mock.calls[0]?.[1];
+    expect(params).toEqual(['10']);
+  });
 });
