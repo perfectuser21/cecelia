@@ -42,6 +42,7 @@ router.post('/', async (req, res) => {
       trigger_source = 'auto',
       domain: domainInput = null,
       okr_initiative_id = null,
+      ability_id = null,
     } = req.body;
 
     if (!title || title.trim() === '') {
@@ -95,10 +96,10 @@ router.post('/', async (req, res) => {
       `INSERT INTO tasks (
          title, description, priority, task_type, status,
          project_id, area_id, goal_id, location,
-         payload, trigger_source, domain, okr_initiative_id
+         payload, trigger_source, domain, okr_initiative_id, ability_id
        )
-       VALUES ($1, $2, $3, $4, 'queued', $5, $6, $7, $8, $9, $10, $11, $12)
-       RETURNING id, title, status, task_type, priority, project_id, area_id, goal_id, okr_initiative_id, created_at`,
+       VALUES ($1, $2, $3, $4, 'queued', $5, $6, $7, $8, $9, $10, $11, $12, $13)
+       RETURNING id, title, status, task_type, priority, project_id, area_id, goal_id, okr_initiative_id, ability_id, created_at`,
       [
         title.trim(),
         description,
@@ -112,6 +113,7 @@ router.post('/', async (req, res) => {
         trigger_source,
         domain,
         okr_initiative_id,
+        ability_id,
       ]
     );
 
