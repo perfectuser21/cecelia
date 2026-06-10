@@ -143,3 +143,34 @@ describe('POST /api/brain/registry VALID_TYPES — test and db_schema', () => {
     expect(res.status).toBe(201);
   });
 });
+
+describe('POST /api/brain/registry VALID_STATUSES — planned status', () => {
+  let app;
+
+  beforeEach(async () => {
+    vi.clearAllMocks();
+    const { default: router } = await import('../registry.js');
+    const express = await import('express');
+    app = express.default();
+    app.use(express.default.json());
+    app.use('/api/brain/registry', router);
+  });
+
+  it('POST with status=planned should be accepted (400 before fix, 201 after)', async () => {
+    mockQuery.mockResolvedValueOnce({ rows: [{ id: 'reg-4', name: 'my-planned-api', type: 'api', status: 'planned' }] });
+    const request = await import('supertest');
+    const res = await request.default(app)
+      .post('/api/brain/registry')
+      .send({ name: 'my-planned-api', type: 'api', status: 'planned' });
+    expect(res.status).toBe(201);
+  });
+
+  it('POST with status=planned should not return 400 invalid status error', async () => {
+    mockQuery.mockResolvedValueOnce({ rows: [{ id: 'reg-5', name: 'planned-endpoint', type: 'api', status: 'planned' }] });
+    const request = await import('supertest');
+    const res = await request.default(app)
+      .post('/api/brain/registry')
+      .send({ name: 'planned-endpoint', type: 'api', status: 'planned' });
+    expect(res.body.error).toBeUndefined();
+  });
+});
