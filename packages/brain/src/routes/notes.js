@@ -15,7 +15,7 @@ import pool from '../db.js';
 // Notion DB IDs
 const AI_NOTES_DB = '185c40c2-ba63-828c-973f-81a9c4582cd6';
 const PROJECTS_DB = '358c40c2-ba63-81e3-96c5-d762b3d34dff';
-const TASKS_DB    = process.env.NOTION_TASKS_DB_ID || 'TODO_SET_CORRECT_DB_ID'; // was incorrectly same as AI_NOTES_DB
+const TASKS_DB    = process.env.NOTION_TASKS_DB_ID || 'd5bc40c2-ba63-82ef-965a-8153b7ad81a0'; // Notion Tasks DB（env var 优先，fallback 为已确认 ID）
 
 function buildRichText(text) {
   if (!text) return [];
