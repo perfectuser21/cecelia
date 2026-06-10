@@ -7,7 +7,12 @@ vi.mock('../recurring-notion-sync.js', () => ({
   notionReq: vi.fn(),
 }));
 
+vi.mock('../db.js', () => ({
+  default: { query: vi.fn().mockResolvedValue({ rows: [] }) },
+}));
+
 import { notionReq } from '../recurring-notion-sync.js';
+import pool from '../db.js';
 import notesRouter from './notes.js';
 
 function makeApp() {
@@ -45,6 +50,48 @@ describe('notes routes', () => {
       expect(res.status).toBe(201);
       expect(Object.keys(res.body).sort()).toEqual(['id', 'title', 'url']);
       expect(res.body.title).toBe('My Note');
+    });
+
+    it('passes initiative_id to Notion properties and DB', async () => {
+      notionReq.mockResolvedValueOnce({ id: 'page-id', url: 'https://notion.so/page-id' });
+      const iid = 'aaaabbbb-cccc-dddd-eeee-ffffaaaabbbb';
+      const res = await request(makeApp())
+        .post('/api/brain/notes')
+        .send({ title: 'Sprint Note', content: 'body', type: 'Report', initiative_id: iid });
+      expect(res.status).toBe(201);
+      // Notion 调用携带 Initiative ID 属性
+      const notionCall = notionReq.mock.calls[0];
+      const notionBody = notionCall[3];
+      expect(notionBody.properties['Initiative ID']).toBeDefined();
+      expect(notionBody.properties['Initiative ID'].rich_text[0].text.content).toBe(iid);
+      // DB 调用带 initiative_id 参数
+      expect(pool.query).toHaveBeenCalledWith(
+        expect.stringContaining('initiative_id'),
+        [res.body.title, 'body', 'Report', iid],
+      );
+    });
+
+    it('omits Initiative ID property when initiative_id not provided', async () => {
+      notionReq.mockResolvedValueOnce({ id: 'page-id', url: 'https://notion.so/page-id' });
+      await request(makeApp())
+        .post('/api/brain/notes')
+        .send({ title: 'Plain Note', content: 'body', type: 'Note' });
+      const notionBody = notionReq.mock.calls[0][3];
+      expect(notionBody.properties['Initiative ID']).toBeUndefined();
+      // DB 调用时 initiative_id 为 null
+      expect(pool.query).toHaveBeenCalledWith(
+        expect.stringContaining('initiative_id'),
+        ['Plain Note', 'body', 'Note', null],
+      );
+    });
+
+    it('returns 201 even when DB insert fails', async () => {
+      notionReq.mockResolvedValueOnce({ id: 'page-id', url: 'https://notion.so/page-id' });
+      pool.query.mockRejectedValueOnce(new Error('db down'));
+      const res = await request(makeApp())
+        .post('/api/brain/notes')
+        .send({ title: 't', content: 'c', type: 'Note' });
+      expect(res.status).toBe(201);
     });
 
     it('returns 502 if notion API throws', async () => {
