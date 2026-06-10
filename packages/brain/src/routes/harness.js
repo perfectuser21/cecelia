@@ -780,6 +780,59 @@ const TASK_TYPE_TO_SKILL = {
   sprint_report: 'harness-report',
 };
 
+// LangGraph node name → skill 目录名
+const NODE_TO_SKILL = {
+  planner: 'harness-planner',
+  proposer: 'harness-contract-proposer',
+  reviewer: 'harness-contract-reviewer',
+  generator: 'harness-generator',
+  run_sub_task: 'harness-generator',
+  report: 'harness-report',
+};
+
+// LangGraph node name → system prompt 前缀
+const NODE_SYSTEM_PROMPTS = {
+  planner: '你是 harness-planner agent。按下面 SKILL 指令工作。',
+  proposer: '你是 harness-contract-proposer agent。按下面 SKILL 指令工作。',
+  reviewer: '你是 harness-contract-reviewer agent。按下面 SKILL 指令工作。',
+  generator: '你是 harness-generator agent。按下面 SKILL 指令工作。',
+  run_sub_task: '你是 harness-generator agent。按下面 SKILL 指令工作。',
+  report: '你是 harness-report agent。按下面 SKILL 指令工作。',
+};
+
+// 节点读入的 sprint dir 文件（user input）
+const NODE_INPUT_FILE = {
+  proposer: 'sprint-prd.md',
+  reviewer: 'contract-draft.md',
+  generator: 'task-plan.json',
+  run_sub_task: 'task-plan.json',
+};
+
+// 节点写出的 sprint dir 文件（output）
+const NODE_OUTPUT_FILE = {
+  planner: 'sprint-prd.md',
+  proposer: 'contract-draft.md',
+  report: 'harness-report.md',
+};
+
+async function readSkillFile(skillName) {
+  if (!skillName) return null;
+  try {
+    return await readFile(join(homedir(), '.claude-account1', 'skills', skillName, 'SKILL.md'), 'utf8');
+  } catch {
+    return null;
+  }
+}
+
+async function readSprintFile(sprintDir, filename) {
+  if (!sprintDir || !filename) return null;
+  try {
+    return await readFile(join(REPO_ROOT, sprintDir, filename), 'utf8');
+  } catch {
+    return null;
+  }
+}
+
 /**
  * 读取对应 skill 的 SKILL.md 内容；无则返回 null
  */
@@ -937,18 +990,41 @@ async function buildLangGraphInfo(taskId) {
     state_available: checkpointRows.length > 0,
   };
 
+  // Fetch task data for DB context and sprint_dir
+  let taskData = null;
+  let sprintDir = null;
+  try {
+    const { rows: taskRows } = await pool.query(
+      `SELECT title, description, payload, journey_id FROM tasks WHERE id = $1::uuid`,
+      [taskId]
+    );
+    if (taskRows[0]) {
+      taskData = taskRows[0];
+      sprintDir = taskRows[0].payload?.sprint_dir || null;
+    }
+  } catch (err) {
+    console.warn(`[buildLangGraphInfo] task query failed: ${err.message}`);
+  }
+
   if (events.length === 0) {
     return { ...empty, checkpoints };
   }
 
-  // 把每条事件 normalize 成 step
-  const steps = events.map((row, idx) => {
+  // 把每条事件 normalize 成 step（async 以便并发读 skill/sprint 文件）
+  const steps = await Promise.all(events.map(async (row, idx) => {
     const p = row.payload || {};
+    const nodeName = p.node || 'unknown';
     // 从 review_verdict / evaluator_verdict 里取一个作为 verdict
     const verdict = p.review_verdict || p.evaluator_verdict || null;
+    const skillName = NODE_TO_SKILL[nodeName] || null;
+    const [skillContent, inputContent, outputContent] = await Promise.all([
+      readSkillFile(skillName),
+      readSprintFile(sprintDir, NODE_INPUT_FILE[nodeName]),
+      readSprintFile(sprintDir, NODE_OUTPUT_FILE[nodeName]),
+    ]);
     return {
       step_index: typeof p.step_index === 'number' ? p.step_index : idx + 1,
-      node: p.node || 'unknown',
+      node: nodeName,
       verdict,
       review_round: p.review_round ?? null,
       eval_round: p.eval_round ?? null,
@@ -962,8 +1038,21 @@ async function buildLangGraphInfo(taskId) {
       error: p.error || null,
       timestamp: row.created_at,
       state_snapshot: p,
+      // Enriched context fields
+      skill_name: skillName,
+      system_prompt: NODE_SYSTEM_PROMPTS[nodeName] || null,
+      skill_content: skillContent,
+      input_content: inputContent,
+      output_content: outputContent,
+      db_context: taskData ? {
+        task_id: taskId,
+        title: taskData.title,
+        description: (taskData.description || '').slice(0, 500),
+        journey_id: taskData.journey_id,
+        sprint_dir: sprintDir,
+      } : null,
     };
-  });
+  }));
 
   // 按 step_index 稳定排序（防止时间戳相同时顺序错乱）
   steps.sort((a, b) => (a.step_index || 0) - (b.step_index || 0));
