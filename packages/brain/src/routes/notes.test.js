@@ -160,4 +160,16 @@ describe('notes.js TASKS_DB env var 注入', () => {
     expect(src).toContain('NOTION_TASKS_DB_ID');
     expect(src).toContain('process.env');
   });
+
+  it('notes.js TASKS_DB fallback 为正确的 Notion Tasks DB ID（非 TODO 占位）', async () => {
+    const fs = await import('fs');
+    const path = await import('path');
+    const src = fs.default.readFileSync(
+      path.default.resolve(path.default.dirname(new URL(import.meta.url).pathname), './notes.js'),
+      'utf8'
+    );
+    // 确认 fallback 已从 TODO_SET_CORRECT_DB_ID 改为正确 DB ID
+    expect(src).not.toContain('TODO_SET_CORRECT_DB_ID');
+    expect(src).toContain('d5bc40c2-ba63-82ef-965a-8153b7ad81a0');
+  });
 });
