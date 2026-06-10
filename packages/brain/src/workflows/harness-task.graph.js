@@ -666,7 +666,12 @@ export function routeAfterSpawn(state) {
 // 此时直接进 fix_dispatch（跟 ci_fail 同等），不走 parse_callback（否则 pr_url=null → END）
 export function routeAfterCallback(state) {
   if (state.error) return 'end';
-  if (state.ci_status === 'fail' && state.ci_fail_type === 'container_exit') return 'fix';
+  // 根因 2: auth_failed 同 container_exit 走 fix 路径 — fix_dispatch 重 spawn 时
+  // resolveAccount 已因 markAuthFailure 熔断换号，否则 401 会掉进 parse → no_pr 直接终止。
+  if (state.ci_status === 'fail'
+      && (state.ci_fail_type === 'container_exit' || state.ci_fail_type === 'auth_failed')) {
+    return 'fix';
+  }
   return 'parse';
 }
 

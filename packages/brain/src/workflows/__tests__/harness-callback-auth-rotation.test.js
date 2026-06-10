@@ -49,7 +49,7 @@ vi.mock('../../orchestrator/pg-checkpointer.js', () => ({
   getPgCheckpointer: vi.fn().mockResolvedValue({}),
 }));
 
-import { spawnNode, awaitCallbackNode, TaskState } from '../harness-task.graph.js';
+import { spawnNode, awaitCallbackNode, routeAfterCallback, TaskState } from '../harness-task.graph.js';
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -118,6 +118,12 @@ describe('awaitCallbackNode — 401 auth 分类', () => {
     const delta = await awaitCallbackNode({ containerId: 'c2', accountId: 'account5' });
     expect(mockMarkAuthFailure).toHaveBeenCalledWith('account5', null, 'api_error');
     expect(delta.ci_fail_type).toBe('auth_failed');
+  });
+
+  it('routeAfterCallback: auth_failed 必须走 fix（重 spawn 换号），不能掉进 parse→no_pr 终止', () => {
+    expect(routeAfterCallback({ ci_status: 'fail', ci_fail_type: 'auth_failed' })).toBe('fix');
+    expect(routeAfterCallback({ ci_status: 'fail', ci_fail_type: 'container_exit' })).toBe('fix');
+    expect(routeAfterCallback({})).toBe('parse');
   });
 
   it('exit=0 正常路径不跑 auth 检测', async () => {
