@@ -375,13 +375,16 @@ function LangGraphRoundCard({
   secondNode,
   first,
   second,
+  pipelineId,
 }: {
   roundLabel: string;
   firstNode: string;
   secondNode: string;
   first: LangGraphStep | null | undefined;
   second: LangGraphStep | null | undefined;
+  pipelineId: string;
 }) {
+  const navigate = useNavigate();
   const [expanded, setExpanded] = useState(false);
   const duration = first?.timestamp && second?.timestamp
     ? formatDuration(first.timestamp, second.timestamp)
@@ -432,15 +435,31 @@ function LangGraphRoundCard({
       </button>
       {expanded && (
         <div className="px-3 py-2 border-t border-slate-200 dark:border-slate-700 text-xs text-slate-600 dark:text-slate-300 space-y-2">
-          <div>
+          <div className="flex items-center gap-2 flex-wrap">
             <span className="font-semibold">{firstNode} step #{first?.step_index ?? '?'}</span>
-            <span className="ml-2 text-slate-400">{formatTime(first?.timestamp || null)}</span>
-            {first?.error && <pre className="mt-1 text-red-500 whitespace-pre-wrap">{first.error}</pre>}
+            <span className="text-slate-400">{formatTime(first?.timestamp || null)}</span>
+            {first?.step_index != null && (
+              <button
+                onClick={() => navigate(`/pipeline/${pipelineId}/step/${first.step_index}`)}
+                className="ml-auto text-blue-600 dark:text-blue-400 hover:underline"
+              >
+                查看详情 →
+              </button>
+            )}
+            {first?.error && <pre className="mt-1 text-red-500 whitespace-pre-wrap w-full">{first.error}</pre>}
           </div>
-          <div>
+          <div className="flex items-center gap-2 flex-wrap">
             <span className="font-semibold">{secondNode} step #{second?.step_index ?? '?'}</span>
-            <span className="ml-2 text-slate-400">{formatTime(second?.timestamp || null)}</span>
-            {second?.error && <pre className="mt-1 text-red-500 whitespace-pre-wrap">{second.error}</pre>}
+            <span className="text-slate-400">{formatTime(second?.timestamp || null)}</span>
+            {second?.step_index != null && (
+              <button
+                onClick={() => navigate(`/pipeline/${pipelineId}/step/${second.step_index}`)}
+                className="ml-auto text-blue-600 dark:text-blue-400 hover:underline"
+              >
+                查看详情 →
+              </button>
+            )}
+            {second?.error && <pre className="mt-1 text-red-500 whitespace-pre-wrap w-full">{second.error}</pre>}
           </div>
         </div>
       )}
@@ -452,10 +471,12 @@ function LangGraphRoundList({
   title,
   rounds,
   nodePair,
+  pipelineId,
 }: {
   title: string;
   rounds: LangGraphRound[];
   nodePair: [string, string];
+  pipelineId: string;
 }) {
   if (rounds.length === 0) return null;
 
@@ -477,6 +498,7 @@ function LangGraphRoundList({
               secondNode={nodePair[1]}
               first={first}
               second={second}
+              pipelineId={pipelineId}
             />
           );
         })}
@@ -638,7 +660,7 @@ function WorkstreamRow({
   );
 }
 
-function LangGraphSection({ info }: { info: LangGraphInfo }) {
+function LangGraphSection({ info, pipelineId }: { info: LangGraphInfo; pipelineId: string }) {
   return (
     <div className="mb-6 border border-violet-200 dark:border-violet-900/50 rounded-lg p-4 bg-violet-50/40 dark:bg-violet-950/20">
       <div className="flex items-center gap-2 mb-3 flex-wrap">
@@ -658,11 +680,13 @@ function LangGraphSection({ info }: { info: LangGraphInfo }) {
         title="GAN 对抗"
         rounds={info.gan_rounds}
         nodePair={['proposer', 'reviewer']}
+        pipelineId={pipelineId}
       />
       <LangGraphRoundList
         title="Fix 循环"
         rounds={info.fix_rounds}
         nodePair={['generator', 'evaluator']}
+        pipelineId={pipelineId}
       />
 
       {info.gan_rounds.length === 0 && info.fix_rounds.length === 0 && (
@@ -972,7 +996,7 @@ export default function HarnessPipelineDetailPage() {
           <SseLogSection logs={sseLogs} done={sseDone} />
 
           {/* LangGraph 时间轴（仅在走了 LangGraph 路径时渲染） */}
-          {data.langgraph?.enabled && <LangGraphSection info={data.langgraph} />}
+          {data.langgraph?.enabled && <LangGraphSection info={data.langgraph} pipelineId={id!} />}
 
           {/* 阶段时间线概览 */}
           <StageTimeline stages={data.stages} />
