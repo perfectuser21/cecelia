@@ -51,6 +51,14 @@ describe('resumeStalledHarnessDrivers — OPEN-2 看门狗', () => {
     expect(sql).toMatch(/IS\s+NULL/i);
   });
 
+  it('默认 staleMinutes=10（根因3：3min 太敏感，driver 长同步操作期间心跳断流被误判重排）', async () => {
+    mockPoolQuery.mockImplementation(async () => ({ rows: [] }));
+    await resumeStalledHarnessDrivers({});
+    const params = mockPoolQuery.mock.calls[0]?.[1] || [];
+    // SELECT 的第一个参数是 staleMinutes 字符串
+    expect(params[0]).toBe('10');
+  });
+
   it('无陈旧任务 → resumed 空', async () => {
     mockPoolQuery.mockImplementation(async () => ({ rows: [] }));
     const r = await resumeStalledHarnessDrivers({});
