@@ -22,3 +22,13 @@ describe('pipeline-detail planner detection', () => {
     expect(plannerLine).toBeDefined();
   });
 });
+
+describe('buildLangGraphInfo db_context query', () => {
+  it('task SELECT 不含 journey_id（列已移除，含该列会导致 db_context 全 null）', () => {
+    expect(src).not.toMatch(/SELECT title.*journey_id.*FROM tasks/s);
+    expect(src).toMatch(/SELECT title, description, payload FROM tasks/);
+  });
+  it('db_context 不含 journey_id 字段', () => {
+    expect(src).not.toMatch(/journey_id: taskData\.journey_id/);
+  });
+});

@@ -997,7 +997,7 @@ async function buildLangGraphInfo(taskId) {
   let sprintDir = null;
   try {
     const { rows: taskRows } = await pool.query(
-      `SELECT title, description, payload, journey_id FROM tasks WHERE id = $1::uuid`,
+      `SELECT title, description, payload FROM tasks WHERE id = $1::uuid`,
       [taskId]
     );
     if (taskRows[0]) {
@@ -1050,7 +1050,6 @@ async function buildLangGraphInfo(taskId) {
         task_id: taskId,
         title: taskData.title,
         description: (taskData.description || '').slice(0, 500),
-        journey_id: taskData.journey_id,
         sprint_dir: sprintDir,
       } : null,
     };
