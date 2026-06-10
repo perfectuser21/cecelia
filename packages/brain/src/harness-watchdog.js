@@ -91,8 +91,10 @@ export async function scanStuckHarness({ pool: dbPool = pool, notifier } = {}) {
  * 安全设计（杜绝双驱动 / 误杀合法等待）：
  *   - 只扫 phase='B_task_loop'（run_sub_task 阻塞区）。**排除 A_planning**——那是 planner
  *     在 interrupt 等容器 callback 的合法状态，无 in-brain 驱动器是预期的，重排会 thrash。
- *   - 只重排 driver_heartbeat_at 陈旧(>staleMinutes)或 NULL 的任务。活驱动（run_sub_task
- *     的 _waitForSubGraphCompletion）每 ~30s 刷心跳 → 心跳新鲜必然=活驱动在 pump（不动）。
+ *   - 只重排 driver_heartbeat_at 陈旧(>staleMinutes，默认 10min)或 NULL 的任务。活驱动
+ *     （run_sub_task 的 _waitForSubGraphCompletion）每 ~30s 刷心跳 → 心跳新鲜必然=活驱动
+ *     在 pump（不动）。默认曾为 3min，但 Brain 事件循环短暂阻塞（execSync 调 gh/git）会让
+ *     心跳看起来陈旧，导致活驱动被误重排（Issue 5a4faede）→ 放宽到 10min。
  *   - 重排 = status→queued + resume_from_checkpoint=true（executor 走 resume 续 checkpoint）
  *     + 清 claim 三件套（否则 dispatcher 的 claimed_by IS NULL 永远选不出 → 死锁）。
  *   - UPDATE 带 `AND status='in_progress'` 原子守卫，防两个并发 tick 双翻。
@@ -101,10 +103,10 @@ export async function scanStuckHarness({ pool: dbPool = pool, notifier } = {}) {
  *
  * @param {object} [opts]
  * @param {import('pg').Pool} [opts.pool]
- * @param {number} [opts.staleMinutes=3]  心跳陈旧阈值（分钟）
+ * @param {number} [opts.staleMinutes=10]  心跳陈旧阈值（分钟）
  * @returns {Promise<{ resumed: string[], scanned: number }>}
  */
-export async function resumeStalledHarnessDrivers({ pool: dbPool = pool, staleMinutes = 3 } = {}) {
+export async function resumeStalledHarnessDrivers({ pool: dbPool = pool, staleMinutes = 10 } = {}) {
   const stalled = await dbPool.query(
     `SELECT t.id
        FROM tasks t

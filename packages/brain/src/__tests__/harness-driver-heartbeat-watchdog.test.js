@@ -6,7 +6,7 @@
  * 任务 park 在非-END checkpoint。dispatcher 只 claim queued、唯一 re-driver
  * startup-sync 仅 boot 跑 → 任务死等下次重启。
  *
- * resumeStalledHarnessDrivers = tick 级看门狗：只重排「心跳陈旧(>3min) 且停在
+ * resumeStalledHarnessDrivers = tick 级看门狗：只重排「心跳陈旧(>10min) 且停在
  * B_task_loop（run_sub_task 阻塞区）」的 in_progress harness_initiative 任务。
  *
  * 关键安全不变量（本测试守护）：
