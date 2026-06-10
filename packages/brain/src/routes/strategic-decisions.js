@@ -14,6 +14,8 @@ import pool from '../db.js';
 
 const router = Router();
 
+const VALID_STATUSES = ['active', 'executed', 'expired'];
+
 /**
  * GET /
  * 查询战略决策列表
@@ -78,6 +80,10 @@ router.post('/', async (req, res) => {
 
     if (!topic || !decision) {
       return res.status(400).json({ success: false, error: 'topic 和 decision 为必填项' });
+    }
+
+    if (!VALID_STATUSES.includes(status)) {
+      return res.status(400).json({ success: false, error: `status 非法，合法值：${VALID_STATUSES.join('|')}` });
     }
 
     const result = await pool.query(
