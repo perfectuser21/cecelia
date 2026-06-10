@@ -1,0 +1,46 @@
+#!/usr/bin/env bash
+# Git pre-commit hook: 强制 cp-* 分支 + .dev-mode 会话
+# 通过 git config --global core.hooksPath 全局生效
+# 覆盖所有文件写入方式（Python/Bash/任何工具）
+
+set -uo pipefail
+
+PROJECT_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || echo "")
+[[ -z "$PROJECT_ROOT" ]] && exit 0
+
+CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
+# Fallback for repos without initial commit (HEAD is unborn)
+if [[ -z "$CURRENT_BRANCH" || "$CURRENT_BRANCH" == "HEAD" ]]; then
+    CURRENT_BRANCH=$(git symbolic-ref --short HEAD 2>/dev/null || echo "")
+fi
+[[ -z "$CURRENT_BRANCH" ]] && exit 0
+
+if [[ "$CURRENT_BRANCH" =~ ^cp-[0-9]{8,10}-[a-z0-9][a-z0-9_-]*$ ]]; then
+    DEV_MODE_FILE="$PROJECT_ROOT/.dev-mode.${CURRENT_BRANCH}"
+    if [[ -f "$DEV_MODE_FILE" ]]; then
+        exit 0
+    fi
+    echo "" >&2
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
+    echo "  [PRE-COMMIT] .dev-mode 文件缺失" >&2
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
+    echo "" >&2
+    echo "  分支 $CURRENT_BRANCH 没有活跃的 /dev 会话" >&2
+    echo "  缺少: $DEV_MODE_FILE" >&2
+    echo "  请运行 /dev 初始化开发环境" >&2
+    echo "" >&2
+    echo "[SKILL_REQUIRED: dev]" >&2
+    exit 1
+fi
+
+echo "" >&2
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
+echo "  [PRE-COMMIT] 禁止在此分支提交代码" >&2
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
+echo "" >&2
+echo "  当前分支: $CURRENT_BRANCH" >&2
+echo "  只能在 cp-MMDDHHNN-task-name 分支提交代码" >&2
+echo "  请运行 /dev 创建功能分支" >&2
+echo "" >&2
+echo "[SKILL_REQUIRED: dev]" >&2
+exit 1
