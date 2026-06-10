@@ -157,10 +157,10 @@ router.get('/audit', async (_req, res) => {
           ELSE 0
         END AS stated_progress,
         COUNT(oi.id) AS total_initiatives,
-        COUNT(oi.id) FILTER (WHERE oi.status = 'completed') AS completed_initiatives,
+        COUNT(oi.id) FILTER (WHERE oi.status = 'done') AS completed_initiatives,
         CASE
           WHEN COUNT(oi.id) = 0 THEN NULL
-          ELSE ROUND(COUNT(oi.id) FILTER (WHERE oi.status = 'completed') * 100.0 / COUNT(oi.id))
+          ELSE ROUND(COUNT(oi.id) FILTER (WHERE oi.status = 'done') * 100.0 / COUNT(oi.id))
         END AS actual_progress
       FROM key_results kr
       LEFT JOIN okr_projects op ON op.kr_id = kr.id

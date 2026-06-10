@@ -4,10 +4,10 @@
  * 每次 tick 触发，纯 SQL 逻辑，无 LLM。
  *
  * 逻辑：
- *   1. 查所有 status='in_progress' 的 okr_initiatives/okr_scopes/okr_projects
+ *   1. 查所有 status='running' 的 okr_initiatives
  *   2. 对每个 initiative，查 tasks 状态分布
  *   3. 如果 total > 0 AND queued = 0 AND in_progress = 0 → 标记完成
- *   4. 更新对应新表 status='completed', completed_at=NOW()
+ *   4. 更新 okr_initiatives status='done', completed_at=NOW()
  *   5. INSERT INTO cecelia_events (event_type='initiative_completed', ...)
  *   6. 返回关闭数量
  *
@@ -25,11 +25,11 @@ import { reviewProjectCompletion as _reviewProjectCompletion, shouldAdjustPlan, 
  * @returns {Promise<{ closedCount: number, closed: Array<{id: string, name: string}>, activatedCount: number }>}
  */
 async function checkInitiativeCompletion(pool) {
-  // 查所有 in_progress 或 active 的 initiatives（迁移：projects WHERE type='initiative' → okr_initiatives）
+  // 查所有 running 的 initiatives（生命周期：planned→queued→running→done/failed）
   const initiativesResult = await pool.query(`
     SELECT id, title AS name
     FROM okr_initiatives
-    WHERE status IN ('in_progress', 'active')
+    WHERE status IN ('running')
   `);
 
   const initiatives = initiativesResult.rows;
@@ -67,7 +67,7 @@ async function checkInitiativeCompletion(pool) {
     // 标记为完成
     await pool.query(`
       UPDATE okr_initiatives
-      SET status = 'completed',
+      SET status = 'done',
           completed_at = NOW(),
           updated_at = NOW()
       WHERE id = $1
@@ -93,7 +93,7 @@ async function checkInitiativeCompletion(pool) {
     if (parent && parent.type === 'scope') {
       // 检查该 Scope 下是否还有未完成的 Initiative（迁移：projects WHERE parent_id → okr_initiatives WHERE scope_id）
       const remainingResult = await pool.query(
-        `SELECT COUNT(*) as cnt FROM okr_initiatives WHERE scope_id = $1 AND status != 'completed'`,
+        `SELECT COUNT(*) as cnt FROM okr_initiatives WHERE scope_id = $1 AND status != 'done'`,
         [parent.id]
       );
       const remaining = parseInt(remainingResult.rows[0].cnt, 10);
@@ -191,7 +191,7 @@ async function checkProjectCompletion(pool) {
       AND NOT EXISTS (
         SELECT 1 FROM okr_initiatives oi
         JOIN okr_scopes os ON oi.scope_id = os.id
-        WHERE os.project_id = op.id AND oi.status != 'completed'
+        WHERE os.project_id = op.id AND oi.status != 'done'
       )
       AND (
         EXISTS (SELECT 1 FROM okr_scopes os WHERE os.project_id = op.id)
@@ -253,12 +253,12 @@ async function checkProjectCompletion(pool) {
 /**
  * Initiative 队列管理器
  *
- * 从 pending initiative 中按优先级激活，确保 active 总数不超过 MAX。
+ * 从 planned initiative 中激活为 running，确保 running 总数不超过 MAX。
  *
  * 激活逻辑：
- *   1. 查当前 active initiative 数量
+ *   1. 查当前 running initiative 数量
  *   2. 如果 < MAX_ACTIVE_INITIATIVES，计算空位数
- *   3. 从 pending 中按 KR 优先级（P0 > P1 > P2）和创建时间激活
+ *   3. 从 planned 中按创建时间激活为 running
  *   4. 返回激活数量
  *
  * 触发位置：
@@ -291,11 +291,11 @@ async function activateNextInitiatives(pool, slotsOverride) {
     ? computeCapacity(slotsOverride).initiative.max
     : MAX_ACTIVE_INITIATIVES; // 运行时 fallback 到常量（避免 async import 复杂度）
 
-  // 1. 查当前 active initiative 数量（迁移：projects WHERE type='initiative' → okr_initiatives）
+  // 1. 查当前 running initiative 数量（生命周期：running = 进行中）
   const activeCountResult = await pool.query(`
     SELECT COUNT(*) AS cnt
     FROM okr_initiatives
-    WHERE status IN ('active', 'in_progress')
+    WHERE status IN ('running')
   `);
   const currentActive = parseInt(activeCountResult.rows[0].cnt, 10);
 
@@ -305,17 +305,17 @@ async function activateNextInitiatives(pool, slotsOverride) {
     return 0;
   }
 
-  // 3. 从 pending 中按创建时间激活（okr_initiatives → okr_scopes → okr_projects.kr_id）
+  // 3. 从 planned 中按创建时间激活（okr_initiatives → okr_scopes → okr_projects.kr_id）
   const activateResult = await pool.query(`
     UPDATE okr_initiatives
-    SET status = 'active',
+    SET status = 'running',
         updated_at = NOW()
     WHERE id IN (
       SELECT oi.id
       FROM okr_initiatives oi
       LEFT JOIN okr_scopes os ON oi.scope_id = os.id
       LEFT JOIN okr_projects op ON op.id = os.project_id
-      WHERE oi.status = 'pending'
+      WHERE oi.status = 'planned'
       ORDER BY oi.created_at ASC
       LIMIT $1
     )
@@ -361,7 +361,7 @@ async function checkScopeCompletion(pool) {
     WHERE os.status IN ('active', 'in_progress')
       AND NOT EXISTS (
         SELECT 1 FROM okr_initiatives oi
-        WHERE oi.scope_id = os.id AND oi.status != 'completed'
+        WHERE oi.scope_id = os.id AND oi.status != 'done'
       )
       AND EXISTS (
         SELECT 1 FROM okr_initiatives oi WHERE oi.scope_id = os.id

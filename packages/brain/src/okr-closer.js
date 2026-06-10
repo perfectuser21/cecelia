@@ -11,9 +11,9 @@
  * Initiative 完成检测
  *
  * 逻辑：
- *   1. 查所有 status 不在 completed/cancelled 的 okr_initiatives
+ *   1. 查所有 status 不在 done/cancelled 的 okr_initiatives
  *   2. 对每个 initiative，查关联 tasks（via okr_initiative_id）的状态分布
- *   3. total > 0 且无 queued/in_progress → 标记 completed
+ *   3. total > 0 且无 queued/in_progress → 标记 done
  *   4. 若所属 scope 还有其他未完成 initiative → 创建 okr_scope_plan 任务
  *
  * @param {import('pg').Pool} pool
@@ -23,7 +23,7 @@ async function checkOkrInitiativeCompletion(pool) {
   const initiativesResult = await pool.query(`
     SELECT id, title, scope_id
     FROM okr_initiatives
-    WHERE status NOT IN ('completed', 'cancelled')
+    WHERE status NOT IN ('done', 'cancelled')
   `);
 
   const initiatives = initiativesResult.rows;
@@ -57,7 +57,7 @@ async function checkOkrInitiativeCompletion(pool) {
 
     await pool.query(`
       UPDATE okr_initiatives
-      SET status = 'completed', updated_at = NOW()
+      SET status = 'done', updated_at = NOW()
       WHERE id = $1
     `, [initiative.id]);
 
@@ -77,7 +77,7 @@ async function checkOkrInitiativeCompletion(pool) {
       const remainingResult = await pool.query(`
         SELECT COUNT(*) AS cnt
         FROM okr_initiatives
-        WHERE scope_id = $1 AND status != 'completed'
+        WHERE scope_id = $1 AND status != 'done'
       `, [initiative.scope_id]);
 
       const remaining = parseInt(remainingResult.rows[0].cnt, 10);
@@ -143,7 +143,7 @@ async function checkOkrScopeCompletion(pool) {
         SELECT 1 FROM okr_initiatives WHERE scope_id = s.id
       )
       AND NOT EXISTS (
-        SELECT 1 FROM okr_initiatives WHERE scope_id = s.id AND status != 'completed'
+        SELECT 1 FROM okr_initiatives WHERE scope_id = s.id AND status != 'done'
       )
   `);
 
