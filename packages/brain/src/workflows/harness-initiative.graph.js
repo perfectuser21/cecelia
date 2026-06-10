@@ -127,8 +127,9 @@ export async function prepInitiativeNode(state, opts = {}) {
     let initiative_run_id = null;
     try {
       const runInsert = await dbPool.query(
-        `INSERT INTO initiative_runs (initiative_id, phase, journey_type, journey_id)
-         VALUES ($1::uuid, 'A_contract', $2, $3)
+        `INSERT INTO initiative_runs (initiative_id, phase, journey_type, journey_id, okr_initiative_id)
+         VALUES ($1::uuid, 'A_contract', $2, $3,
+           (SELECT okr_initiative_id FROM harness_initiative_migration_map WHERE harness_task_id = $1::uuid))
          RETURNING id`,
         [initiativeId, journeyType, journeyId]
       );
@@ -582,11 +583,12 @@ export async function dbUpsertNode(state, opts = {}) {
       const runInsert = await client.query(
         `INSERT INTO initiative_runs (
            initiative_id, contract_id, phase,
-           deadline_at, journey_type, journey_id
+           deadline_at, journey_type, journey_id, okr_initiative_id
          )
          VALUES ($1::uuid, $2::uuid, 'B_task_loop',
            NOW() + ($3 || ' seconds')::interval,
-           $4, $5
+           $4, $5,
+           (SELECT okr_initiative_id FROM harness_initiative_migration_map WHERE harness_task_id = $1::uuid)
          )
          RETURNING id`,
         [state.initiativeId, contractId, String(timeoutSec), journeyType, journeyId]
@@ -1273,6 +1275,13 @@ export async function reportNode(state, opts = {}) {
          WHERE id=$1::uuid`,
         [state.initiativeId, taskStatus, reason, reportContent]
       );
+      // 2b-2b: 镜像同步对应 okr_initiative → done/failed（non-fatal，best-effort）
+      try {
+        const { syncOkrInitiativeStatus } = await import('../okr-initiative-sync.js');
+        await syncOkrInitiativeStatus(client, state.initiativeId, phase === 'done' ? 'done' : 'failed');
+      } catch (syncErr) {
+        console.warn(`[reportNode] okr-initiative sync non-fatal: ${syncErr.message}`);
+      }
     } finally {
       client.release();
     }
