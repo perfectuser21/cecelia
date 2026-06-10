@@ -841,6 +841,38 @@ export const CALLBACK_TIMEOUT_MS = parseInt(
   process.env.CECELIA_CALLBACK_TIMEOUT_MS || `${100 * 60 * 1000}`, 10,
 );
 
+// 根因 1（2026-06-10）：CALLBACK_TIMEOUT_MS 是 soft timeout——超过它且容器**确认还在
+// running** 时不再 fail-fast（之前会误杀跑超 100min 的健康 generator，尤其 brain 重启
+// resume 后 spawnedAt 已老）。容器 running 就继续等，直到 hard ceiling 才放弃；
+// 放弃时 docker kill 容器，防僵尸容器迟到 callback 污染后续 fix round 状态。
+export const CALLBACK_HARD_CEILING_MS = parseInt(
+  process.env.CECELIA_CALLBACK_HARD_CEILING_MS || `${3 * 60 * 60 * 1000}`, 10,
+);
+
+/**
+ * 放弃等待时强杀容器（hard ceiling 路径）。
+ * 远程 codex 容器本地 docker 杀不到 → no-op（worker-daemon 自己有 WORKER_TIMEOUT 预算）。
+ *
+ * @param {string} containerId
+ * @param {object} [opts]
+ * @param {string} [opts.executor]
+ * @param {Function} [opts.execFileImpl] 注入 execFile（测试用）
+ */
+export async function _killContainer(containerId, opts = {}) {
+  if (opts.executor === 'codex') return;
+  const execFile = opts.execFileImpl || execFileCb;
+  return new Promise((resolve) => {
+    execFile('docker', ['kill', containerId], (err) => {
+      if (err) {
+        console.warn(`[harness-liveness] docker kill ${containerId} failed (non-fatal): ${err.message}`);
+      } else {
+        console.warn(`[harness-liveness] docker kill ${containerId} — hard ceiling 放弃僵尸容器`);
+      }
+      resolve();
+    });
+  });
+}
+
 /**
  * Fix #4: 检查远程 worker-daemon（西安 Codex）是否可达 → 粗判容器活性。
  *
@@ -941,6 +973,7 @@ export async function _waitForSubGraphCompletion(compiled, config, timeoutMs, op
   // B42: 允许测试注入，避免在生产代码里 mock 全局函数
   const checkLiveness = opts._checkLiveness ?? _checkContainerLiveness;
   const checkPrMerged = opts._checkPrMerged ?? _checkPrMerged;
+  const killContainer = opts._killContainer ?? _killContainer;
 
   const deadline = Date.now() + timeoutMs;
   let pollCount = 0;
@@ -978,10 +1011,13 @@ export async function _waitForSubGraphCompletion(compiled, config, timeoutMs, op
         return { ...(fs.values || {}), status: 'failed' };
       }
 
-      // Fix #3: await_callback 独立总超时 — containerId 存在、容器看似活着、但 callback
-      // 永不来（西安网络阻塞 POST / 容器内 wget 放弃）→ 提前 fail，不等 90min 全局超时。
+      // Fix #3 + 根因 1（liveness 感知）: await_callback 独立总超时 —— containerId 存在但
+      // callback 迟迟不来。soft timeout（CALLBACK_TIMEOUT_MS）只对「容器已死」fail-fast；
+      // 容器确认还在 running → 继续等到 hard ceiling（CALLBACK_HARD_CEILING_MS），
+      // 超 hard ceiling 才放弃，且放弃前 docker kill 防僵尸容器迟到 callback。
       const spawnedAt = state.values?.spawnedAt;
-      if (spawnedAt && (Date.now() - spawnedAt) > CALLBACK_TIMEOUT_MS) {
+      const elapsedSinceSpawn = spawnedAt ? (Date.now() - spawnedAt) : 0;
+      if (spawnedAt && elapsedSinceSpawn > CALLBACK_TIMEOUT_MS) {
         // 与死亡路径一致：fail 前先验 PR 是否已 merged。覆盖「generator 成功 push+merge 但
         // callback POST 丢了」——否则会把一个真成功的 generator 误判 failed、白跑一个 fix round。
         const prUrl = state.values?.pr_url;
@@ -994,12 +1030,35 @@ export async function _waitForSubGraphCompletion(compiled, config, timeoutMs, op
             return { ...(state.values), status: 'merged' };
           }
         }
+        const timeoutDeathReason = await checkLiveness(containerId, {
+          executor: state.values?.executor,
+          daemonUrl: state.values?.daemonUrl,
+        });
+        if (!timeoutDeathReason && elapsedSinceSpawn <= CALLBACK_HARD_CEILING_MS) {
+          // 容器确认还在 running → 不误杀，继续等（liveness 本轮已查过，直接进下一轮 poll）
+          console.warn(
+            `[harness-liveness] await_callback 超 soft timeout（${CALLBACK_TIMEOUT_MS}ms）`
+            + ` 但容器 ${containerId} 仍 running → 继续等到 hard ceiling（${CALLBACK_HARD_CEILING_MS}ms）`,
+          );
+          pollCount++;
+          await new Promise((r) => setTimeout(r, pollIntervalMs));
+          continue;
+        }
+        let giveUpReason;
+        if (timeoutDeathReason) {
+          giveUpReason = `callback_timeout: ${timeoutDeathReason}`;
+        } else {
+          // 超 hard ceiling 容器还在跑 → 僵尸，放弃前 kill 防迟到 callback 污染后续状态
+          giveUpReason = 'callback_hard_ceiling';
+          await killContainer(containerId, { executor: state.values?.executor })
+            .catch((e) => console.warn(`[harness-liveness] kill failed (non-fatal): ${e.message}`));
+        }
         console.warn(
-          `[harness-liveness] await_callback 超过 CALLBACK_TIMEOUT_MS（${CALLBACK_TIMEOUT_MS}ms）`
-          + ` containerId=${containerId} → callback_timeout fail-fast`,
+          `[harness-liveness] await_callback 放弃等待（elapsed=${elapsedSinceSpawn}ms）`
+          + ` containerId=${containerId} → ${giveUpReason}`,
         );
         await compiled.invoke(
-          { resume: { status: 'failed', error: 'callback_timeout' } },
+          { resume: { status: 'failed', error: giveUpReason } },
           config,
         ).catch((e) => console.warn(`[harness-liveness] resume invoke failed: ${e.message}`));
         const fs = await compiled.getState(config);
