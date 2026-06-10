@@ -2825,6 +2825,13 @@ async function markInitiativeTerminalFailed(dbPool, taskId, failureClass, errorM
        WHERE id=$3`,
       [String(errorMessage).slice(0, 500), JSON.stringify(failureClass), taskId]
     );
+    // 2b-2b: 镜像同步对应 okr_initiative → failed（non-fatal，best-effort）
+    try {
+      const { syncOkrInitiativeStatus } = await import('./okr-initiative-sync.js');
+      await syncOkrInitiativeStatus(dbPool, taskId, 'failed');
+    } catch (syncErr) {
+      console.warn(`[executor] okr-initiative sync(failed) non-fatal: ${syncErr.message}`);
+    }
   } catch (markErr) {
     console.warn(`[executor] markInitiativeTerminalFailed failed (non-fatal): ${markErr.message}`);
   }
@@ -2874,6 +2881,15 @@ export async function runHarnessInitiativeRouter(task, opts = {}) {
       `[startup-sync] task=${task.id} 达 fresh-start 上限 ${MAX_INITIATIVE_FRESH_STARTS}，标 terminal failed（停止重跑）`
     );
     return { ok: false, error: 'max_fresh_starts_exceeded', terminal: true, threadId, attemptN };
+  }
+
+  // 2b-2b: harness 开跑 → 镜像同步对应 okr_initiative → running（non-fatal，best-effort，
+  // 解析/新建对应 okr_initiatives 行使规划侧 Initiative 成为实时真相；绝不阻断 harness）
+  try {
+    const { syncOkrInitiativeStatus } = await import('./okr-initiative-sync.js');
+    await syncOkrInitiativeStatus(dbPool, task.id, 'running');
+  } catch (syncErr) {
+    console.warn(`[executor] okr-initiative sync(running) non-fatal: ${syncErr.message}`);
   }
 
   const checkpointer = await getPgCheckpointer();
