@@ -78,7 +78,7 @@ describe('SKILL.md v19+ 结构验证（PrepPRD 驱动架构）', () => {
 
   it.skipIf(!filesExist)('包含 Brain DB 10 张表查询', () => {
     expect(content).toContain('journeys');
-    expect(content).toContain('journey_steps');
+    expect(content).toContain('journey_features');
   });
 
   it.skipIf(!filesExist)('大功能 PrepPRD 含 E2E 测试账号必填段', () => {
