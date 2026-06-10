@@ -1,42 +1,32 @@
-contract_branch: cp-harness-propose-r2-5d5f3cfc
-sprint_dir: sprints/verify-echo-0603
+# DoD — Harness Evaluator 执行环境三处修复
 
----
-skeleton: false
-journey_type: autonomous
----
-# Contract DoD — Sprint: GET /api/brain/harness/echo 路由实现
-
-**范围**: 新建 `packages/brain/src/routes/harness.routes.js`，注册 `GET /echo` 子路由；在 `server.js` 中挂载；响应 `{ok:true, echo:<msg>}`
-**大小**: S
+**范围**: `evaluateContractNode` 按 target_environment 路由（mac_web→host / 其余→docker）+ 补 WECHAT_RPA_WORKFLOW；Dockerfile 加 postgresql-client；新增 sync-skills-snapshot.sh。
+**大小**: M
 
 ## ARTIFACT 条目
 
-- [x] [ARTIFACT] `packages/brain/src/routes/harness.routes.js` 文件存在且注册了 GET /echo 路由
-  Test: node -e "const c=require('fs').readFileSync('packages/brain/src/routes/harness.routes.js','utf8');if(!c.includes('/echo')&&!c.includes('echo'))process.exit(1);console.log('OK')"
+- [x] [ARTIFACT] harness-task.graph.js 导入 executeOnHost（host 执行器接通）
+  Test: manual:node -e "const c=require('fs').readFileSync('packages/brain/src/workflows/harness-task.graph.js','utf8');if(!c.includes(\"from '../spawn/host-executor.js'\"))process.exit(1);console.log('OK')"
 
-- [x] [ARTIFACT] `packages/brain/server.js` 中导入并挂载 harness.routes.js
-  Test: node -e "const c=require('fs').readFileSync('packages/brain/server.js','utf8');if(!c.includes('harness.routes'))process.exit(1);console.log('OK')"
+- [x] [ARTIFACT] harness-task.graph.js 导入 readAndValidateBrainResult（host 路径读 verdict）
+  Test: manual:node -e "const c=require('fs').readFileSync('packages/brain/src/workflows/harness-task.graph.js','utf8');if(!c.includes('readAndValidateBrainResult'))process.exit(1);console.log('OK')"
+
+- [x] [ARTIFACT] Dockerfile 安装 postgresql-client（psql 合同验证命令可用）
+  Test: manual:node -e "const c=require('fs').readFileSync('docker/cecelia-runner/Dockerfile','utf8');if(!c.includes('postgresql-client'))process.exit(1);console.log('OK')"
+
+- [x] [ARTIFACT] scripts/sync-skills-snapshot.sh 存在且列出 6 个 harness skill
+  Test: manual:node -e "const c=require('fs').readFileSync('scripts/sync-skills-snapshot.sh','utf8');['harness-planner','harness-contract-proposer','harness-contract-reviewer','harness-generator','harness-evaluator','harness-report'].forEach(s=>{if(!c.includes(s))process.exit(1)});console.log('OK')"
 
 ## BEHAVIOR 条目（内嵌可执行 manual: 命令）
 
-- [x] [BEHAVIOR] `GET /api/brain/harness/echo?msg=hello` 返回 `ok=true`
-  Test: manual:bash -c 'RESP=$(curl -sf "localhost:5221/api/brain/harness/echo?msg=hello") || { echo "FAIL: 端点未返回 200"; exit 1; }; echo "$RESP" | jq -e ".ok == true" || { echo "FAIL: ok不为true"; exit 1; }; echo OK'
-  期望: OK
+- [x] [BEHAVIOR] evaluateContractNode 按 targetEnv 路由：mac_web 走 executeOnHost，源码含 `if (targetEnv === 'mac_web')` 分支
+  Test: manual:node -e "const c=require('fs').readFileSync('packages/brain/src/workflows/harness-task.graph.js','utf8');if(!c.includes(\"targetEnv === 'mac_web'\")||!c.includes('opts.executeOnHost'))process.exit(1);console.log('OK')"
 
-- [x] [BEHAVIOR] `GET /api/brain/harness/echo?msg=hello` 返回 `echo="hello"`（等于msg参数原值）
-  Test: manual:bash -c 'RESP=$(curl -sf "localhost:5221/api/brain/harness/echo?msg=hello") || { echo "FAIL: 端点未返回 200"; exit 1; }; echo "$RESP" | jq -e ".echo == \"hello\"" || { echo "FAIL: echo字段不等于hello"; exit 1; }; echo OK'
-  期望: OK
+- [x] [BEHAVIOR] host 路径用 localhost（host.docker.internal 不可解析），含 `BRAIN_URL: 'http://localhost:5221'` 与 `postgresql://localhost/cecelia`
+  Test: manual:node -e "const c=require('fs').readFileSync('packages/brain/src/workflows/harness-task.graph.js','utf8');if(!c.includes(\"'http://localhost:5221'\")||!c.includes('postgresql://localhost/cecelia'))process.exit(1);console.log('OK')"
 
-- [x] [BEHAVIOR] Response schema keys 完整性 — 顶层 keys 精确等于 `["echo", "ok"]`，无多余字段
-  Test: manual:bash -c 'RESP=$(curl -sf "localhost:5221/api/brain/harness/echo?msg=hello") || { echo "FAIL: 端点未返回 200"; exit 1; }; echo "$RESP" | jq -e "keys == [\"echo\", \"ok\"]" || { echo "FAIL: schema keys不匹配，generator可能添加了多余字段或用了替代字段名"; exit 1; }; echo OK'
-  期望: OK
+- [x] [BEHAVIOR] 两条路径都注入 WECHAT_RPA_WORKFLOW（共享 baseEvalEnv）
+  Test: manual:node -e "const c=require('fs').readFileSync('packages/brain/src/workflows/harness-task.graph.js','utf8');if(!c.includes('WECHAT_RPA_WORKFLOW'))process.exit(1);console.log('OK')"
 
-- [x] [BEHAVIOR] 边界情况 — `msg` 未传时返回 HTTP 200，`ok=true`（不报错）
-  Test: manual:bash -c 'RESP=$(curl -sf "localhost:5221/api/brain/harness/echo") || { echo "FAIL: 空msg时端点未返回200"; exit 1; }; echo "$RESP" | jq -e ".ok == true" || { echo "FAIL: 空msg时ok不为true"; exit 1; }; ECHO_VAL=$(echo "$RESP" | jq -r ".echo"); [ "$ECHO_VAL" = "" ] || [ "$ECHO_VAL" = "null" ] || { echo "FAIL: 空msg时echo值异常: $ECHO_VAL"; exit 1; }; echo OK'
-  期望: OK
-
-- [x] [BEHAVIOR] 边界情况 — `msg` 含中文时 URL decode 后原样返回
-  Test: manual:bash -c 'RESP=$(curl -sf "localhost:5221/api/brain/harness/echo?msg=%E6%B5%8B%E8%AF%95") || { echo "FAIL: 中文msg时端点未返回200"; exit 1; }; echo "$RESP" | jq -e '"'"'.echo == "测试"'"'"' || { echo "FAIL: 中文msg未正确decode返回"; exit 1; }; echo OK'
-  期望: OK
-  来源: [FROM_PRD] — PRD 边界情况段明确定义（"`msg` 含特殊字符（空格/中文）：URL decode 后原样返回"）
+- [x] [BEHAVIOR] 路由 vitest 测试文件存在且覆盖 mac_web→host / local_api→docker 回归 / WECHAT_RPA_WORKFLOW 三场景（brain-unit CI job 实跑）
+  Test: manual:node -e "const c=require('fs').readFileSync('packages/brain/src/workflows/__tests__/harness-task-evaluator-host-routing.test.js','utf8');['executeOnHost','spawnDetached','local_api','WECHAT_RPA_WORKFLOW'].forEach(s=>{if(!c.includes(s))process.exit(1)});console.log('OK')"
