@@ -981,6 +981,18 @@ export async function _waitForSubGraphCompletion(compiled, config, timeoutMs, op
         // 透传给 Serial gate（06-08 b249b808 "did not merge (status=queued)" 实证）。
         console.log('[harness-liveness] 外层 deadline 到期但容器仍 running 且未到 hard ceiling → 延长等待');
         deadline = Date.now() + Math.max(pollIntervalMs * livenessCheckEveryN, pollIntervalMs);
+      } else if (aliveReason === null && !underHard) {
+        // 活着但超 hard ceiling：kill 止血（codex 远程杀不到，跳过）+ resume failed，
+        // 与内层 hard-ceiling 分支同语义（deadline 先到时不能漏 kill — review issue ①）
+        if (st.values?.executor !== 'codex') {
+          await killContainer(cid);
+        }
+        await compiled.invoke(
+          { resume: { status: 'failed', error: 'callback_hard_timeout' } },
+          config,
+        ).catch((e) => console.warn(`[harness-liveness] resume invoke failed: ${e.message}`));
+        const fs2 = await compiled.getState(config);
+        return { ...(fs2.values || {}), status: 'failed' };
       } else {
         const finalStatus = (st.values?.status && st.values.status !== 'queued') ? st.values.status : 'failed';
         return { ...(st.values || {}), status: finalStatus };

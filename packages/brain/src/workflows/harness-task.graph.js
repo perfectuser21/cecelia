@@ -362,15 +362,21 @@ export async function spawnNode(state, opts = {}) {
  * 误杀修复（Issue 5a4faede）：callback 失败分类。
  * exit≠0 时检测 stdout 的 auth 特征（OAuth token 容器内过期 → claude 中途 401）：
  * 'auth_failure' → awaitCallbackNode 熔断账号让 fix loop 轮换；其余 'container_exit'。
+ *
+ * 文本 pattern 锚定在 claude result JSON 的 result 字段值内（真实 401 时 result 字段
+ * 就是 "Failed to authenticate. API Error: 401 ..."），避免 generator 跑登录类任务时
+ * transcript 里引用的业务输出（如 "user login failed to authenticate"）误熔断健康账号。
  */
 export function _classifyCallbackFailure(payload = {}) {
   const stdout = String(payload.stdout || '');
-  const authPatterns = [
-    /"api_error_status"\s*:\s*401/,
-    /failed\s+to\s+authenticate/i,
-    /invalid\s+authentication\s+credentials/i,
-  ];
-  return authPatterns.some((re) => re.test(stdout)) ? 'auth_failure' : 'container_exit';
+  // 精确信号：claude result JSON 的 api_error_status 401
+  if (/"api_error_status"\s*:\s*401/.test(stdout)) return 'auth_failure';
+  // 文本信号必须锚定在 result 字段值内，避免误伤 transcript 里引用的业务输出
+  // （如登录类 e2e 测试失败信息含 "failed to authenticate" — review issue ②）
+  if (/"result"\s*:\s*"[^"]*(failed to authenticate|invalid authentication credentials)/i.test(stdout)) {
+    return 'auth_failure';
+  }
+  return 'container_exit';
 }
 
 /**

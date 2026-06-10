@@ -357,4 +357,38 @@ describe('_waitForSubGraphCompletion — 外层 deadline 与 queued 透传', () 
 
     expect(result.status).toBe('failed');
   });
+
+  it('deadline 到期 + 容器活着但超 hard ceiling → kill + resume failed（不漏止血）', async () => {
+    const killContainer = vi.fn(async () => {});
+    // 模拟真实行为：resume invoke 之前 sub-graph 一直停在 await_callback（超 hard ceiling），
+    // invoke 后才进入 failed 终态 — 避免 poll 路径先消费 getState 导致测不到止血分支
+    let invoked = false;
+    const invoke = vi.fn(async () => { invoked = true; });
+    const compiled = {
+      getState: vi.fn(async () => {
+        if (!invoked) {
+          return {
+            next: ['await_callback'],
+            values: {
+              containerId: 'harness-task-ws1-r0-deadline-overhard',
+              spawnedAt: Date.now() - 241 * 60 * 1000,
+              status: 'queued',
+            },
+          };
+        }
+        return { next: [], values: { status: 'failed', error: 'callback_hard_timeout' } };
+      }),
+      invoke,
+    };
+    const result = await _waitForSubGraphCompletion(compiled, {}, 1, {
+      pollIntervalMs: 1,
+      livenessCheckEveryN: 1000,
+      _checkLiveness: vi.fn(async () => null),
+      _checkPrMerged: async () => false,
+      _killContainer: killContainer,
+      heartbeatPool: { query: async () => ({}) },
+    });
+    expect(killContainer).toHaveBeenCalledWith('harness-task-ws1-r0-deadline-overhard');
+    expect(result.status).toBe('failed');
+  });
 });
