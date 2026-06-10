@@ -10,11 +10,12 @@
 
 import { Router } from 'express';
 import { notionReq, getToken } from '../recurring-notion-sync.js';
+import pool from '../db.js';
 
 // Notion DB IDs
 const AI_NOTES_DB = '185c40c2-ba63-828c-973f-81a9c4582cd6';
 const PROJECTS_DB = '358c40c2-ba63-81e3-96c5-d762b3d34dff';
-const TASKS_DB    = process.env.NOTION_TASKS_DB_ID || 'TODO_SET_CORRECT_DB_ID'; // was incorrectly same as AI_NOTES_DB
+const TASKS_DB    = process.env.NOTION_TASKS_DB_ID || 'd5bc40c2-ba63-82ef-965a-8153b7ad81a0'; // Notion Tasks DB（env var 优先，fallback 为已确认 ID）
 
 function buildRichText(text) {
   if (!text) return [];
@@ -31,7 +32,7 @@ const router = Router();
  * Error 502: { error } — Notion API failure
  */
 router.post('/notes', async (req, res) => {
-  const { title, content, type } = req.body || {};
+  const { title, content, type, initiative_id } = req.body || {};
 
   if (!title) return res.status(400).json({ error: 'title is required' });
   if (!content) return res.status(400).json({ error: 'content is required' });
@@ -43,6 +44,9 @@ router.post('/notes', async (req, res) => {
       properties: {
         Title: { title: [{ text: { content: title } }] },
         ...(type && { Type: { select: { name: type } } }),
+        ...(initiative_id && {
+          'Initiative ID': { rich_text: [{ type: 'text', text: { content: initiative_id } }] },
+        }),
       },
       children: [{
         object: 'block',
@@ -50,6 +54,18 @@ router.post('/notes', async (req, res) => {
         paragraph: { rich_text: buildRichText(content) },
       }],
     });
+
+    // 同步写入 Brain DB notes 表，保存 initiative_id 供查询
+    try {
+      await pool.query(
+        `INSERT INTO notes (title, content, type, initiative_id, owner)
+         VALUES ($1, $2, $3, $4, 'cecelia')`,
+        [title, content, type || null, initiative_id || null],
+      );
+    } catch (dbErr) {
+      // DB 写入失败不阻断 Notion 成功响应，记录日志即可
+      console.error('[POST /api/brain/notes] DB insert failed:', dbErr.message);
+    }
 
     return res.status(201).json({ id: page.id, url: page.url, title });
   } catch (err) {

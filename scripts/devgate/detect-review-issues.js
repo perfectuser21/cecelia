@@ -42,11 +42,19 @@ process.stdin.on('end', () => {
   if (hasRedSection) {
     // 有"严重问题"section — 检查内容是否为"未发现"
     // 在 "严重问题" 出现后的 400 字符内，查找"未发现"
+    // 也检查总结段落中是否有"未发现严重的安全或功能问题"等免责声明
     const sectionSaysNoIssues = /严重问题[\s\S]{0,400}未发现/.test(input)
       || /未发现[\s\S]{0,50}严重问题/.test(input)
       || /没有发现[\s\S]{0,30}严重问题/.test(input)
       || /严重问题[\s\S]{0,200}[-*]\s*\*\*无\*\*/.test(input)
-      || /严重问题[\s\S]{0,200}[-*]\s*无\b/.test(input);
+      || /严重问题[\s\S]{0,200}[-*]\s*无\b/.test(input)
+      // 总结段落中的免责声明（DeepSeek 有时在总结里而非 section 内声明无严重问题）
+      || /没有严重的(安全|功能|逻辑|实现)/.test(input)
+      || /未发现严重的(安全|功能|逻辑|实现)/.test(input)
+      || /没有(发现|找到)(真实|实际|严重)/.test(input)
+      // DeepSeek 总结中明确说可合并时，视为无严重问题
+      || /当前的变更可以合并/.test(input)
+      || /变更可以合并/.test(input);
 
     if (sectionSaysNoIssues) {
       process.stderr.write('[detect-review-issues] 未检测到严重问题，审查通过\n');

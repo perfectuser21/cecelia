@@ -68,3 +68,38 @@ describe('task-tasks routes — B51 journey_id warning', () => {
     expect(res.body.warnings).toBeUndefined();
   });
 });
+
+describe('task-tasks routes — ability_id 十字边', () => {
+  let app;
+  beforeEach(() => {
+    vi.clearAllMocks();
+    app = createApp();
+  });
+
+  it('创建任务时 ability_id 透传到 INSERT 参数并回显', async () => {
+    mockPool.query.mockResolvedValueOnce({
+      rows: [{ id: 'dev-9', title: 'Build douyin publish', status: 'queued', task_type: 'dev', ability_id: 'ab-1' }],
+    });
+    const res = await request(app).post('/tasks').send({
+      title: 'Build douyin publish',
+      ability_id: 'ab-1',
+    });
+    expect(res.status).toBe(201);
+    // INSERT 参数数组含 ability_id
+    const params = mockPool.query.mock.calls[0][1];
+    expect(params).toContain('ab-1');
+    // SQL 文本含 ability_id 列
+    expect(mockPool.query.mock.calls[0][0]).toMatch(/ability_id/);
+    expect(res.body.ability_id).toBe('ab-1');
+  });
+
+  it('不传 ability_id 时为 null，不报错', async () => {
+    mockPool.query.mockResolvedValueOnce({
+      rows: [{ id: 'dev-10', title: 'Plain task', status: 'queued', task_type: 'dev', ability_id: null }],
+    });
+    const res = await request(app).post('/tasks').send({ title: 'Plain task' });
+    expect(res.status).toBe(201);
+    const params = mockPool.query.mock.calls[0][1];
+    expect(params[params.length - 1]).toBeNull();
+  });
+});
