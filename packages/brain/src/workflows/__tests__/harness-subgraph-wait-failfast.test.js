@@ -13,6 +13,7 @@ import {
   _waitForSubGraphCompletion,
   _checkContainerLiveness,
   CALLBACK_TIMEOUT_MS,
+  CALLBACK_HARD_TIMEOUT_MS,
 } from '../harness-initiative.graph.js';
 
 describe('_waitForSubGraphCompletion — Fix #2 containerId 缺失 fail-fast', () => {
@@ -45,8 +46,8 @@ describe('_waitForSubGraphCompletion — Fix #2 containerId 缺失 fail-fast', (
 });
 
 describe('_waitForSubGraphCompletion — Fix #3 callback 总超时兜底', () => {
-  it('containerId 存在 + 容器活着但 callback 永不来 → callback_timeout 提前 fail', async () => {
-    const livenessCheck = vi.fn(async () => null); // 容器一直活着
+  it('spawnedAt 超 CALLBACK_TIMEOUT 但容器仍 running → 不误杀，继续等到正常完成', async () => {
+    const livenessCheck = vi.fn(async () => null); // docker inspect: running
     const invoke = vi.fn(async () => {});
     let call = 0;
     const compiled = {
@@ -56,14 +57,14 @@ describe('_waitForSubGraphCompletion — Fix #3 callback 总超时兜底', () =>
           return {
             next: ['await_callback'],
             values: {
-              containerId: 'harness-task-ws1-r0-alive',
-              // spawnedAt 远超 CALLBACK_TIMEOUT_MS（101 min ago > 默认 100min）
+              containerId: 'harness-task-ws1-r1-alive-working',
+              // 超 CALLBACK_TIMEOUT(100min) 但远未到 hard ceiling(240min)
               spawnedAt: Date.now() - 101 * 60 * 1000,
               status: 'queued',
             },
           };
         }
-        return { next: [], values: { status: 'failed', error: 'callback_timeout' } };
+        return { next: [], values: { status: 'merged' } };
       }),
       invoke,
     };
@@ -73,13 +74,89 @@ describe('_waitForSubGraphCompletion — Fix #3 callback 总超时兜底', () =>
       livenessCheckEveryN: 1,
       _checkLiveness: livenessCheck,
       _checkPrMerged: async () => false,
+      _killContainer: vi.fn(async () => {}),
       heartbeatPool: { query: async () => ({}) },
     });
 
-    expect(invoke).toHaveBeenCalled();
+    // Line 07 r1 实证：容器活着有 5 个 commit 在干活，旧逻辑 100min 判死。
+    // 新逻辑：liveness 确认 running → 不 resume failed，继续 poll 到正常完成。
+    expect(invoke).not.toHaveBeenCalled();
+    expect(result.status).toBe('merged');
+  });
+
+  it('spawnedAt 超 hard ceiling（240min）→ kill 容器 + resume failed(callback_hard_timeout)', async () => {
+    const livenessCheck = vi.fn(async () => null); // 容器活着（可能 hang 死循环）
+    const killContainer = vi.fn(async () => {});
+    const invoke = vi.fn(async () => {});
+    let call = 0;
+    const compiled = {
+      getState: vi.fn(async () => {
+        call++;
+        if (call === 1) {
+          return {
+            next: ['await_callback'],
+            values: {
+              containerId: 'harness-task-ws1-r1-hung',
+              spawnedAt: Date.now() - 241 * 60 * 1000, // 超 hard ceiling
+              status: 'queued',
+            },
+          };
+        }
+        return { next: [], values: { status: 'failed', error: 'callback_hard_timeout' } };
+      }),
+      invoke,
+    };
+
+    const result = await _waitForSubGraphCompletion(compiled, {}, 90 * 60 * 1000, {
+      pollIntervalMs: 1,
+      livenessCheckEveryN: 1,
+      _checkLiveness: livenessCheck,
+      _checkPrMerged: async () => false,
+      _killContainer: killContainer,
+      heartbeatPool: { query: async () => ({}) },
+    });
+
+    expect(killContainer).toHaveBeenCalledWith('harness-task-ws1-r1-hung');
     const resumeArg = invoke.mock.calls[0][0];
     expect(resumeArg.resume.status).toBe('failed');
-    expect(resumeArg.resume.error).toBe('callback_timeout');
+    expect(resumeArg.resume.error).toBe('callback_hard_timeout');
+    expect(result.status).toBe('failed');
+  });
+
+  it('executor=codex 超 hard ceiling → fail 但不 kill（远程容器本地杀不到）', async () => {
+    const killContainer = vi.fn(async () => {});
+    const invoke = vi.fn(async () => {});
+    let call = 0;
+    const compiled = {
+      getState: vi.fn(async () => {
+        call++;
+        if (call === 1) {
+          return {
+            next: ['await_callback'],
+            values: {
+              containerId: 'harness-task-ws1-r0-remote',
+              spawnedAt: Date.now() - 241 * 60 * 1000,
+              executor: 'codex',
+              daemonUrl: 'http://100.86.57.69:3458',
+              status: 'queued',
+            },
+          };
+        }
+        return { next: [], values: { status: 'failed', error: 'callback_hard_timeout' } };
+      }),
+      invoke,
+    };
+
+    const result = await _waitForSubGraphCompletion(compiled, {}, 90 * 60 * 1000, {
+      pollIntervalMs: 1,
+      livenessCheckEveryN: 1,
+      _checkLiveness: vi.fn(async () => null),
+      _checkPrMerged: async () => false,
+      _killContainer: killContainer,
+      heartbeatPool: { query: async () => ({}) },
+    });
+
+    expect(killContainer).not.toHaveBeenCalled();
     expect(result.status).toBe('failed');
   });
 
@@ -161,6 +238,11 @@ describe('CALLBACK_TIMEOUT_MS 常量', () => {
     // 默认必须 > 90min（worker-daemon WORKER_TIMEOUT_MS）否则误杀健康 generator。
     expect(CALLBACK_TIMEOUT_MS).toBeGreaterThan(90 * 60 * 1000);
   });
+
+  it('hard ceiling 默认 240min 且 > CALLBACK_TIMEOUT_MS', () => {
+    expect(CALLBACK_HARD_TIMEOUT_MS).toBe(240 * 60 * 1000);
+    expect(CALLBACK_HARD_TIMEOUT_MS).toBeGreaterThan(CALLBACK_TIMEOUT_MS);
+  });
 });
 
 describe('_checkContainerLiveness — Fix #4 远程 worker-daemon /health', () => {
@@ -212,5 +294,67 @@ describe('_checkContainerLiveness — Fix #4 远程 worker-daemon /health', () =
       execFileImpl: execFileMock,
     });
     expect(reason).toBeNull();
+  });
+});
+
+describe('_waitForSubGraphCompletion — 外层 deadline 与 queued 透传', () => {
+  it('deadline 到期 + 容器活着且未到 hard ceiling → 延长等待，不返回 queued', async () => {
+    const invoke = vi.fn(async () => {});
+    let call = 0;
+    const compiled = {
+      getState: vi.fn(async () => {
+        call++;
+        if (call <= 2) {
+          return {
+            next: ['await_callback'],
+            values: {
+              containerId: 'harness-task-ws1-r0-deadline-alive',
+              spawnedAt: Date.now() - 1000, // 刚 spawn，远未到 hard ceiling
+              status: 'queued',
+            },
+          };
+        }
+        return { next: [], values: { status: 'merged' } };
+      }),
+      invoke,
+    };
+
+    // timeoutMs=1 → 外层 deadline 立即到期；旧逻辑直接返回 status='queued'（Serial gate
+    // 报 "did not merge (status=queued)" — 06-08 b249b808 实证）。新逻辑：容器活着 → 延长等待。
+    const result = await _waitForSubGraphCompletion(compiled, {}, 1, {
+      pollIntervalMs: 1,
+      livenessCheckEveryN: 1000, // 关掉周期 liveness 干扰，只测 deadline 路径
+      _checkLiveness: vi.fn(async () => null),
+      _checkPrMerged: async () => false,
+      _killContainer: vi.fn(async () => {}),
+      heartbeatPool: { query: async () => ({}) },
+    });
+
+    expect(result.status).toBe('merged');
+  });
+
+  it('deadline 到期 + 容器已死 → 返回 failed（不再透传 status channel 默认值 queued）', async () => {
+    const compiled = {
+      getState: vi.fn(async () => ({
+        next: ['await_callback'],
+        values: {
+          containerId: 'harness-task-ws1-r0-deadline-dead',
+          spawnedAt: Date.now() - 1000,
+          status: 'queued',
+        },
+      })),
+      invoke: vi.fn(async () => {}),
+    };
+
+    const result = await _waitForSubGraphCompletion(compiled, {}, 1, {
+      pollIntervalMs: 1,
+      livenessCheckEveryN: 1000,
+      _checkLiveness: vi.fn(async () => 'container_exited_without_callback'),
+      _checkPrMerged: async () => false,
+      _killContainer: vi.fn(async () => {}),
+      heartbeatPool: { query: async () => ({}) },
+    });
+
+    expect(result.status).toBe('failed');
   });
 });
