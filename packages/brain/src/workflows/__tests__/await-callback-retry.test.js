@@ -16,8 +16,9 @@ describe('B18: awaitCallback exit≠0 不设 error 走 ci_fail', () => {
     expect(src).not.toMatch(/error:\s*\{\s*node:\s*['"]await_callback['"]/);
   });
 
-  it('awaitCallback exit≠0 改设 ci_status=fail + ci_fail_type=container_exit', () => {
-    expect(src).toMatch(/ci_fail_type:\s*['"]container_exit['"]/);
+  it('awaitCallback exit≠0 改设 ci_status=fail + ci_fail_type 由分类器决定', () => {
+    expect(src).toMatch(/ci_fail_type:\s*failType/);
+    expect(src).toMatch(/_classifyCallbackFailure/);
   });
 
   it('routeAfterFix 不再 cap fix_round (W用户决定不设硬上限)', () => {

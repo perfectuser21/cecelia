@@ -44,6 +44,7 @@ import { resolveGitHubToken } from '../harness-credentials.js';
 import { spawnDockerDetached, spawnCodexBridgeDetached } from '../spawn/detached.js';
 import { resolveExecutor as resolveExecutorDefault } from '../routing/resolve-executor.js';
 import { resolveAccount } from '../spawn/middleware/account-rotation.js';
+import { markAuthFailure } from '../account-usage.js';
 import { checkPrStatus, classifyFailedChecks } from '../shepherd.js';
 import { parseDockerOutput, extractField, readPrFromGitState, readVerdictFile, readBrainResult, EvaluatorOutputSchema, loadSkillContent } from '../harness-shared.js';
 import { buildGeneratorPrompt } from '../harness-utils.js';
@@ -110,6 +111,9 @@ export const TaskState = Annotation.Root({
   // Fix #4: executor + 远程 daemonUrl，远程 worker-daemon /health liveness 用。
   executor:         Annotation({ reducer: (_o, n) => n, default: () => null }),
   daemonUrl:        Annotation({ reducer: (_o, n) => n, default: () => null }),
+  // 误杀修复（Issue 5a4faede）：spawn 时 resolveAccount 选中的 claude 账号 id。
+  // awaitCallbackNode 收到 401 callback 时据此 markAuthFailure 熔断，下一轮 spawn 自动轮换。
+  accountId:        Annotation({ reducer: (_o, n) => n, default: () => null }),
   pr_url:           Annotation({ reducer: (_o, n) => n, default: () => null }),
   pr_branch:        Annotation({ reducer: (_o, n) => n, default: () => null }),
   fix_round:        Annotation({ reducer: (_o, n) => n, default: () => 0 }),
@@ -348,8 +352,25 @@ export async function spawnNode(state, opts = {}) {
     //         容器走 worker-daemon /health 而非本地 docker inspect（本地查不到远程容器）。
     executor: route?.executor || 'claude',
     daemonUrl: route?.executor === 'codex' ? route.url : null,
+    // 误杀修复（Issue 5a4faede）：记录 resolveAccount 选中账号，401 callback 时熔断用。
+    accountId: accountEnv.CECELIA_CREDENTIALS || null,
     ...(contractBranch ? { contractImported: true } : {}),
   };
+}
+
+/**
+ * 误杀修复（Issue 5a4faede）：callback 失败分类。
+ * exit≠0 时检测 stdout 的 auth 特征（OAuth token 容器内过期 → claude 中途 401）：
+ * 'auth_failure' → awaitCallbackNode 熔断账号让 fix loop 轮换；其余 'container_exit'。
+ */
+export function _classifyCallbackFailure(payload = {}) {
+  const stdout = String(payload.stdout || '');
+  const authPatterns = [
+    /"api_error_status"\s*:\s*401/,
+    /failed\s+to\s+authenticate/i,
+    /invalid\s+authentication\s+credentials/i,
+  ];
+  return authPatterns.some((re) => re.test(stdout)) ? 'auth_failure' : 'container_exit';
 }
 
 /**
@@ -361,7 +382,7 @@ export async function spawnNode(state, opts = {}) {
  *
  * 幂等门：state.generator_output 已有（resume 后 graph 重跑此节点）→ passthrough。
  */
-export async function awaitCallbackNode(state) {
+export async function awaitCallbackNode(state, opts = {}) {
   if (state.generator_output) return { generator_output: state.generator_output };
 
   const callbackPayload = interrupt({
@@ -377,11 +398,22 @@ export async function awaitCallbackNode(state) {
 
   if (exitCode !== 0) {
     const errMsg = payload.error || payload.stderr || `container exit_code=${exitCode}`;
-    // B18: 不再设 state.error（fatal）→ 转 ci_fail 路径让 fix loop 继续重试
+    const failType = _classifyCallbackFailure(payload);
+    if (failType === 'auth_failure' && state.executor !== 'codex' && state.accountId) {
+      // 熔断该账号：isAuthFailed 置位后，fix loop 重 spawn 时 resolveAccount 自动轮换
+      const markFn = opts.markAuthFailureImpl || markAuthFailure;
+      try {
+        markFn(state.accountId);
+        console.warn(`[harness-task.graph] auth_failure 检出 account=${state.accountId} → 已熔断，fix loop 将轮换账号`);
+      } catch (e) {
+        console.warn(`[harness-task.graph] markAuthFailure(${state.accountId}) failed: ${e.message}`);
+      }
+    }
+    // B18: 不设 state.error（fatal）→ 转 ci_fail 路径让 fix loop 重试
     // 区分 docker daemon 死（true fatal，由 spawnNode throw 抓）vs 容器内业务 fail（应 retry）
     return {
       ci_status: 'fail',
-      ci_fail_type: 'container_exit',
+      ci_fail_type: failType,
       failed_checks: [errMsg],
     };
   }
@@ -640,11 +672,12 @@ export function routeAfterSpawn(state) {
   return state.error ? 'end' : 'await_callback';
 }
 
-// B18: awaitCallback exit≠0 后 ci_status='fail' + ci_fail_type='container_exit'
+// B18: awaitCallback exit≠0 后 ci_status='fail' + ci_fail_type（分类器决定）
 // 此时直接进 fix_dispatch（跟 ci_fail 同等），不走 parse_callback（否则 pr_url=null → END）
+// 误杀修复（Issue 5a4faede）：auth_failure 同样走 fix —— 账号已熔断，respawn 时自动轮换。
 export function routeAfterCallback(state) {
   if (state.error) return 'end';
-  if (state.ci_status === 'fail' && state.ci_fail_type === 'container_exit') return 'fix';
+  if (state.ci_status === 'fail' && state.ci_fail_type && ['container_exit', 'auth_failure'].includes(state.ci_fail_type)) return 'fix';
   return 'parse';
 }
 
