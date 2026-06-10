@@ -8,6 +8,11 @@ set -uo pipefail
 PROJECT_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || echo "")
 [[ -z "$PROJECT_ROOT" ]] && exit 0
 
+# 测试框架环境直接放行（Vitest/Jest 跑测试时 execSync 继承这些 env）
+if [[ -n "${VITEST:-}" ]] || [[ -n "${JEST_WORKER_ID:-}" ]]; then
+    exit 0
+fi
+
 CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
 # Fallback for repos without initial commit (HEAD is unborn)
 if [[ -z "$CURRENT_BRANCH" || "$CURRENT_BRANCH" == "HEAD" ]]; then
