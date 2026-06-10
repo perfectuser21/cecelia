@@ -17,7 +17,7 @@ import pool from '../db.js';
 const router = Router();
 
 const VALID_TYPES = ['skill', 'cron', 'api', 'machine', 'integration', 'test', 'db_schema', 'other'];
-const VALID_STATUSES = ['active', 'inactive', 'deprecated'];
+const VALID_STATUSES = ['active', 'inactive', 'deprecated', 'planned'];
 
 /**
  * GET /api/brain/registry/exists
