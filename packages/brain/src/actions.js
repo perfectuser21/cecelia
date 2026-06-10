@@ -179,7 +179,7 @@ async function createInitiative({ name, parent_id, kr_id, decomposition_mode, de
 
   const result = await pool.query(`
     INSERT INTO okr_initiatives (title, scope_id, description, status, owner_role, metadata)
-    VALUES ($1, $2, $3, 'active', $4, $5)
+    VALUES ($1, $2, $3, 'running', $4, $5)
     RETURNING *, title AS name
   `, [
     name,

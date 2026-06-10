@@ -59,7 +59,7 @@ beforeAll(async () => {
   scopeId = scopeRes.rows[0].id;
 
   const initRes = await pool.query(
-    `INSERT INTO okr_initiatives (scope_id, title, status) VALUES ($1, $2, 'active') RETURNING id`,
+    `INSERT INTO okr_initiatives (scope_id, title, status) VALUES ($1, $2, 'running') RETURNING id`,
     [scopeId, `[l3-test] Initiative-${Date.now()}`]
   );
   initiativeId = initRes.rows[0].id;

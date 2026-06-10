@@ -234,7 +234,7 @@ async function checkReadyKRInitiatives() {
       JOIN okr_scopes os ON i.scope_id = os.id
       JOIN okr_projects op ON os.project_id = op.id
       WHERE op.kr_id = $1
-        AND i.status IN ('active', 'in_progress')
+        AND i.status IN ('running')
     `, [kr.id]);
 
     // KR 状态流转：ready → in_progress（有任务在跑时）
@@ -247,10 +247,10 @@ async function checkReadyKRInitiatives() {
       }
     }
 
-    // KR 完成检查：所有 Initiative 都 completed → KR completed
-    if (initiatives.rows.length > 0 && initiatives.rows.every(i => i.status === 'completed' || i.status === 'archived')) {
-      // 确认确实没有 active initiative
-      const activeCount = initiatives.rows.filter(i => i.status === 'active' || i.status === 'in_progress').length;
+    // KR 完成检查：所有 Initiative 都 done → KR completed
+    if (initiatives.rows.length > 0 && initiatives.rows.every(i => i.status === 'done' || i.status === 'archived')) {
+      // 确认确实没有 running initiative
+      const activeCount = initiatives.rows.filter(i => i.status === 'running').length;
       if (activeCount === 0) {
         await pool.query(`UPDATE key_results SET status = 'completed', updated_at = NOW() WHERE id = $1`, [kr.id]);
         console.log(`[decomp-checker] KR ${kr.id} → completed (all initiatives done)`);

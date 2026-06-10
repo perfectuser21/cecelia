@@ -980,7 +980,7 @@ async function parseAndCreate(input, options = {}) {
       // Create new project
       const newProject = await pool.query(`
         INSERT INTO okr_initiatives (title, description, status)
-        VALUES ($1, $2, 'active')
+        VALUES ($1, $2, 'running')
         RETURNING *, title AS name
       `, [parsedIntent.projectName, `Auto-created from intent: ${input}`]);
 

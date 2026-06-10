@@ -131,7 +131,7 @@ describe('decomposition-checker v2.0', () => {
 
       pool.query.mockResolvedValueOnce({
         rows: [{
-          id: 'init-1', name: 'Active Initiative', status: 'in_progress',
+          id: 'init-1', name: 'Active Initiative', status: 'running',
           active_tasks: '2', running_tasks: '1'
         }]
       });
@@ -156,7 +156,7 @@ describe('decomposition-checker v2.0', () => {
 
       pool.query.mockResolvedValueOnce({
         rows: [{
-          id: 'init-1', name: 'Done Initiative', status: 'completed',
+          id: 'init-1', name: 'Done Initiative', status: 'done',
           active_tasks: '0', running_tasks: '0'
         }]
       });
@@ -189,7 +189,7 @@ describe('decomposition-checker v2.0', () => {
 
       pool.query.mockResolvedValueOnce({
         rows: [{
-          id: 'init-1', name: 'Idle Initiative', status: 'active',
+          id: 'init-1', name: 'Idle Initiative', status: 'running',
           active_tasks: '0', running_tasks: '0', domain: null
         }]
       });

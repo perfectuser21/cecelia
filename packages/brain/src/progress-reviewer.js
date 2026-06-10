@@ -38,7 +38,7 @@ async function reviewProjectCompletion(pool, projectId) {
   // 2. 收集 Initiative 统计（迁移：projects WHERE type='initiative' → okr_initiatives via scopes）
   const initResult = await pool.query(
     `SELECT COUNT(*) AS total,
-            COUNT(*) FILTER (WHERE oi.status = 'completed') AS completed
+            COUNT(*) FILTER (WHERE oi.status = 'done') AS completed
      FROM okr_initiatives oi
      JOIN okr_scopes os ON oi.scope_id = os.id
      WHERE os.project_id = $1`,

@@ -78,7 +78,7 @@ describe('diagnoseKR', () => {
         {
           id: 'init-001',
           name: 'Test Initiative',
-          status: 'active',
+          status: 'running',
           created_at: new Date(),
           task_count: '2',
           active_task_count: '1',
@@ -116,7 +116,7 @@ describe('diagnoseKR', () => {
         {
           id: 'init-002',
           name: 'Blocked Initiative',
-          status: 'active',
+          status: 'running',
           created_at: new Date(),
           task_count: '0',
           active_task_count: '0',
@@ -144,7 +144,7 @@ describe('diagnoseKR', () => {
         {
           id: 'init-003',
           name: 'All Done Initiative',
-          status: 'active',
+          status: 'running',
           created_at: new Date(),
           task_count: '3',
           active_task_count: '0',
@@ -169,7 +169,7 @@ describe('diagnoseKR', () => {
         {
           id: 'init-004',
           name: 'Failed Initiative',
-          status: 'active',
+          status: 'running',
           created_at: new Date(),
           task_count: '2',
           active_task_count: '0',
@@ -208,8 +208,8 @@ describe('diagnoseKR', () => {
         { id: 'proj-006', name: 'Project F', status: 'active', type: 'project', created_at: new Date() }
       ]},
       { rows: [
-        { id: 'init-006a', name: 'Init A', status: 'active', created_at: new Date(), task_count: '1', active_task_count: '1', completed_task_count: '0', failed_task_count: '0' },
-        { id: 'init-006b', name: 'Init B', status: 'active', created_at: new Date(), task_count: '0', active_task_count: '0', completed_task_count: '0', failed_task_count: '0' }
+        { id: 'init-006a', name: 'Init A', status: 'running', created_at: new Date(), task_count: '1', active_task_count: '1', completed_task_count: '0', failed_task_count: '0' },
+        { id: 'init-006b', name: 'Init B', status: 'running', created_at: new Date(), task_count: '0', active_task_count: '0', completed_task_count: '0', failed_task_count: '0' }
       ]},
       { rows: [] }, // tasks for init-006a
       { rows: [] }  // tasks for init-006b
@@ -229,7 +229,7 @@ describe('diagnoseKR', () => {
       { rows: [{ id: 'kr-007', title: 'KR routing', status: 'in_progress', priority: 'P0', progress: 20 }] },
       { rows: [{ id: 'proj-007', name: 'Project G', status: 'active', type: 'project', created_at: new Date() }] },
       { rows: [
-        { id: 'init-007', name: 'Init G', status: 'active', created_at: new Date(), task_count: '1', active_task_count: '1', completed_task_count: '0', failed_task_count: '0' }
+        { id: 'init-007', name: 'Init G', status: 'running', created_at: new Date(), task_count: '1', active_task_count: '1', completed_task_count: '0', failed_task_count: '0' }
       ]},
       { rows: [
         { id: 'task-007', title: 'Write tests', task_type: 'qa', status: 'queued', priority: 'P1', created_at: new Date(), updated_at: new Date() }

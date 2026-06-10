@@ -133,7 +133,7 @@ class SimilarityService {
       INNER JOIN okr_scopes os ON os.id = oi.scope_id
       INNER JOIN okr_projects op ON op.id = os.project_id
       LEFT JOIN key_results kr ON kr.id = op.kr_id
-      WHERE oi.status IN ('active', 'in_progress', 'pending')
+      WHERE oi.status IN ('running', 'planned')
       ORDER BY oi.updated_at DESC
       LIMIT 50
     `);

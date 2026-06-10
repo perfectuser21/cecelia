@@ -274,7 +274,7 @@ router.get('/diagnose/:kr_id', async (req, res) => {
       });
     }
 
-    const inactiveInitiativeCount = initiativeDetails.filter(i => i.status !== 'active' && i.task_counts.queued > 0).length;
+    const inactiveInitiativeCount = initiativeDetails.filter(i => i.status !== 'running' && i.task_counts.queued > 0).length;
     if (inactiveInitiativeCount > 0) {
       blockers.push({
         type: 'initiative_not_active',

@@ -209,7 +209,7 @@ async function processReviewResult(pool, taskId, verdict, findings) {
           `SELECT oi.id, oi.title AS name
            FROM okr_initiatives oi
            JOIN okr_scopes os ON oi.scope_id = os.id
-           WHERE os.project_id = $1 AND oi.status != 'completed'`,
+           WHERE os.project_id = $1 AND oi.status != 'done'`,
           [entityId]
         );
         const { createTask: createAdM2Task } = await import('./actions.js');

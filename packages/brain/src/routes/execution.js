@@ -2542,7 +2542,7 @@ ${resultStr.substring(0, 2000)}
 
           if (verdict === 'APPROVED') {
             await pool.query(
-              `UPDATE okr_initiatives SET status = 'completed', completed_at = NOW(), updated_at = NOW() WHERE id = $1`,
+              `UPDATE okr_initiatives SET status = 'done', completed_at = NOW(), updated_at = NOW() WHERE id = $1`,
               [projectId]
             );
             console.log(`[execution-callback] 断链#6 APPROVED: initiative ${projectId} → completed`);
@@ -3876,7 +3876,7 @@ router.get('/planner/initiatives-without-tasks', async (_req, res) => {
       INNER JOIN okr_scopes os ON os.project_id = op.id
       INNER JOIN okr_initiatives oi
         ON oi.scope_id = os.id
-        AND oi.status = 'active'
+        AND oi.status = 'running'
         AND NOT EXISTS (
           SELECT 1 FROM tasks t
           WHERE t.okr_initiative_id = oi.id

@@ -234,7 +234,7 @@ export async function refreshWorldState(dbPool) {
       p.query(`
         SELECT title, status
         FROM okr_initiatives
-        WHERE status IN ('active', 'in_progress', 'pending')
+        WHERE status IN ('running', 'planned')
         ORDER BY updated_at DESC
         LIMIT 8
       `).catch(() => ({ rows: [] })),
