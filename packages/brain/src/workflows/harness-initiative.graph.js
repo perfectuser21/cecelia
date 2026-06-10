@@ -26,7 +26,7 @@ const execFile = execFileDefault;
 // 保持测试 vi.mock('../../harness-gan-graph.js') 路径兼容。
 // Phase C7 清 shim 前不改。
 import { runGanContractGraph } from '../harness-gan-graph.js';
-import { killInitiativeContainers } from '../harness-container-cleanup.js';
+import { killInitiativeContainers, killContainerById } from '../harness-container-cleanup.js';
 
 const DEFAULT_TIMEOUT_SEC = 21600; // 6h，对齐 initiative_contracts.timeout_sec 默认
 const DEFAULT_BUDGET_USD = 10;
@@ -841,6 +841,14 @@ export const CALLBACK_TIMEOUT_MS = parseInt(
   process.env.CECELIA_CALLBACK_TIMEOUT_MS || `${100 * 60 * 1000}`, 10,
 );
 
+// 误杀修复（2026-06-10，Issue 5a4faede）：CALLBACK_TIMEOUT 到点时若 docker inspect 确认
+// 容器仍 running，说明 generator 还在干活（claude -p --output-format json 只在结束时输出，
+// 无中间输出 ≠ 挂死；Line 07 r1 实证：被判死时 worktree 已有 5 个真实 commit）→ 不杀，继续等。
+// 真正的放弃线是 hard ceiling：超过即使容器活着也 kill + fail，防 generator 真挂死永占驱动器。
+export const CALLBACK_HARD_TIMEOUT_MS = parseInt(
+  process.env.CECELIA_CALLBACK_HARD_TIMEOUT_MS || `${240 * 60 * 1000}`, 10,
+);
+
 /**
  * Fix #4: 检查远程 worker-daemon（西安 Codex）是否可达 → 粗判容器活性。
  *
@@ -928,12 +936,19 @@ async function _checkPrMerged(prUrl) {
  * 主动通过 compiled.invoke({resume:{status:'failed',...}}, config) 唤醒 sub-graph，
  * 避免傻等 90min 超时。
  *
+ * 误杀修复（2026-06-10）：
+ * - CALLBACK_TIMEOUT 到点先验 liveness：容器仍 running 且未到 CALLBACK_HARD_TIMEOUT_MS
+ *   → 继续等；超 hard ceiling → kill 容器（codex 远程跳过）+ resume failed(callback_hard_timeout)。
+ * - 外层 deadline（timeoutMs）到期时同理：容器活着且未到 hard ceiling → 延长 deadline 继续等；
+ *   否则返回 failed，不再把 status channel 默认值 'queued' 透传给 Serial gate。
+ *
  * @param {object} compiled          LangGraph compiled graph
  * @param {object} config            LangGraph config（含 thread_id）
- * @param {number} timeoutMs         最长等待时间（默认 90min）
+ * @param {number} timeoutMs         最长等待时间（默认 90min；容器活着时可被延长）
  * @param {object} [opts]            测试注入选项
  * @param {number} [opts.pollIntervalMs]     轮询间隔（默认 SUBGRAPH_POLL_INTERVAL_MS）
  * @param {number} [opts.livenessCheckEveryN] 每 N 次 poll 做一次 liveness check（默认 12）
+ * @param {Function} [opts._killContainer]   注入容器 kill（默认 killContainerById，测试用）
  */
 export async function _waitForSubGraphCompletion(compiled, config, timeoutMs, opts = {}) {
   const pollIntervalMs = opts.pollIntervalMs ?? SUBGRAPH_POLL_INTERVAL_MS;
@@ -941,15 +956,36 @@ export async function _waitForSubGraphCompletion(compiled, config, timeoutMs, op
   // B42: 允许测试注入，避免在生产代码里 mock 全局函数
   const checkLiveness = opts._checkLiveness ?? _checkContainerLiveness;
   const checkPrMerged = opts._checkPrMerged ?? _checkPrMerged;
+  const killContainer = opts._killContainer ?? killContainerById;
 
-  const deadline = Date.now() + timeoutMs;
+  let deadline = Date.now() + timeoutMs;
   let pollCount = 0;
   // OPEN-2：run_sub_task 是父 graph 的阻塞节点，整个 poll 期间父 checkpoint 不变。
   // 每轮 poll 刷父任务心跳，证明「驱动器还活着」，否则看门狗会把这条活跑误判为 parked 重排。
   const hbPool = opts.heartbeatPool || pool;
   const hbInitiativeId = opts.initiativeId || null;
 
-  while (Date.now() < deadline) {
+  while (true) {
+    if (Date.now() >= deadline) {
+      const st = await compiled.getState(config);
+      if (!st.next || st.next.length === 0) return st.values;
+      const awaitingCb = Array.isArray(st.next) && st.next.includes('await_callback');
+      const cid = st.values?.containerId;
+      const sp = st.values?.spawnedAt;
+      const underHard = sp ? (Date.now() - sp) < CALLBACK_HARD_TIMEOUT_MS : false;
+      const aliveReason = (awaitingCb && cid)
+        ? await checkLiveness(cid, { executor: st.values?.executor, daemonUrl: st.values?.daemonUrl })
+        : 'not_awaiting_callback';
+      if (aliveReason === null && underHard) {
+        // 误杀修复：generator 还活着 → 延长等待，不再把 status channel 默认值 'queued'
+        // 透传给 Serial gate（06-08 b249b808 "did not merge (status=queued)" 实证）。
+        console.log('[harness-liveness] 外层 deadline 到期但容器仍 running 且未到 hard ceiling → 延长等待');
+        deadline = Date.now() + Math.max(pollIntervalMs * livenessCheckEveryN, pollIntervalMs);
+      } else {
+        const finalStatus = (st.values?.status && st.values.status !== 'queued') ? st.values.status : 'failed';
+        return { ...(st.values || {}), status: finalStatus };
+      }
+    }
     await writeDriverHeartbeat(hbPool, hbInitiativeId);
     const state = await compiled.getState(config);
     if (!state.next || state.next.length === 0) {
@@ -961,7 +997,9 @@ export async function _waitForSubGraphCompletion(compiled, config, timeoutMs, op
     // B42 guard: 仅在 sub-graph 停在 await_callback 时才触发
     // 容器 exit(0) 后 sub-graph 已离开 await_callback 继续运行时，不误判为死亡
     const isAwaitingCallback = Array.isArray(state.next) && state.next.includes('await_callback');
-    if (isAwaitingCallback && pollCount % livenessCheckEveryN === 0) {
+    // 「每 N 次 poll 查一次」：第 N 次 poll（pollCount=N-1）首查，而非 pollCount=0 立即查。
+    // N=1 时行为不变（0 % 1 === 0）；spawn 后第一拍就 docker inspect 本来也只会得到 running。
+    if (isAwaitingCallback && pollCount % livenessCheckEveryN === livenessCheckEveryN - 1) {
       const containerId = state.values?.containerId;
 
       // Fix #2: await_callback 但 state 无 containerId（spawn 阶段出错未捕获，
@@ -978,12 +1016,13 @@ export async function _waitForSubGraphCompletion(compiled, config, timeoutMs, op
         return { ...(fs.values || {}), status: 'failed' };
       }
 
-      // Fix #3: await_callback 独立总超时 — containerId 存在、容器看似活着、但 callback
-      // 永不来（西安网络阻塞 POST / 容器内 wget 放弃）→ 提前 fail，不等 90min 全局超时。
+      // Fix #3 改（误杀修复）：await_callback 超时 ≠ 失败。callback 只在 generator 跑完才
+      // POST，容器 running = 还在干活。超 CALLBACK_TIMEOUT 后先验 liveness：
+      //   running 且未到 hard ceiling → 继续等（旧逻辑在这里误杀了健康 generator）；
+      //   running 但超 hard ceiling   → kill（codex 跳过）+ resume failed；
+      //   已死                        → 落到下方既有死亡分支统一处理（含 PR merged 救场）。
       const spawnedAt = state.values?.spawnedAt;
       if (spawnedAt && (Date.now() - spawnedAt) > CALLBACK_TIMEOUT_MS) {
-        // 与死亡路径一致：fail 前先验 PR 是否已 merged。覆盖「generator 成功 push+merge 但
-        // callback POST 丢了」——否则会把一个真成功的 generator 误判 failed、白跑一个 fix round。
         const prUrl = state.values?.pr_url;
         if (prUrl) {
           const alreadyMerged = await checkPrMerged(prUrl).catch(() => false);
@@ -994,16 +1033,32 @@ export async function _waitForSubGraphCompletion(compiled, config, timeoutMs, op
             return { ...(state.values), status: 'merged' };
           }
         }
-        console.warn(
-          `[harness-liveness] await_callback 超过 CALLBACK_TIMEOUT_MS（${CALLBACK_TIMEOUT_MS}ms）`
-          + ` containerId=${containerId} → callback_timeout fail-fast`,
-        );
-        await compiled.invoke(
-          { resume: { status: 'failed', error: 'callback_timeout' } },
-          config,
-        ).catch((e) => console.warn(`[harness-liveness] resume invoke failed: ${e.message}`));
-        const fs = await compiled.getState(config);
-        return { ...(fs.values || {}), status: 'failed' };
+        const aliveReason = await checkLiveness(containerId, {
+          executor: state.values?.executor,
+          daemonUrl: state.values?.daemonUrl,
+        });
+        const overHardCeiling = (Date.now() - spawnedAt) > CALLBACK_HARD_TIMEOUT_MS;
+        if (aliveReason === null && !overHardCeiling) {
+          console.log(
+            `[harness-liveness] callback 超 CALLBACK_TIMEOUT 但容器 ${containerId} 仍 running`
+            + `（hard ceiling 未到）→ 继续等待`,
+          );
+        } else if (aliveReason === null && overHardCeiling) {
+          if (state.values?.executor !== 'codex') {
+            await killContainer(containerId);
+          }
+          console.warn(
+            `[harness-liveness] await_callback 超 hard ceiling（${CALLBACK_HARD_TIMEOUT_MS}ms）`
+            + ` containerId=${containerId} → kill + fail`,
+          );
+          await compiled.invoke(
+            { resume: { status: 'failed', error: 'callback_hard_timeout' } },
+            config,
+          ).catch((e) => console.warn(`[harness-liveness] resume invoke failed: ${e.message}`));
+          const fs = await compiled.getState(config);
+          return { ...(fs.values || {}), status: 'failed' };
+        }
+        // aliveReason 非 null（已死）→ 不在此处理，由下方死亡分支统一走
       }
 
       {
@@ -1048,9 +1103,7 @@ export async function _waitForSubGraphCompletion(compiled, config, timeoutMs, op
     // 还在中间节点（通常 await_callback interrupt） — 等下一轮 poll
     await new Promise((r) => setTimeout(r, pollIntervalMs));
   }
-  // 超时 — 拿当前 state 当 final（status 可能 undefined → join 视作 failed）
-  const state = await compiled.getState(config);
-  return { ...(state.values || {}), status: state.values?.status || 'failed' };
+  // while(true) 无自然出口：完成 / 失败 / deadline 处置均在循环内 return
 }
 
 export async function runSubTaskNode(state, opts = {}) {

@@ -57,3 +57,19 @@ export async function killInitiativeContainers(initiativeId) {
 
   console.log(`[harness-container-cleanup] initiative=${initiativeId} killed=${killed}/${containerIds.length} scanned`);
 }
+
+/**
+ * 按 docker --name 直杀单个容器（spawn/detached.js 以 containerId 作 --name 启动）。
+ * 误杀修复（Issue 5a4faede）：hard ceiling 放弃等待时止血，防容器继续烧配额。
+ *
+ * @param {string} containerId
+ */
+export async function killContainerById(containerId) {
+  if (!containerId) return;
+  try {
+    await dockerCmd(['rm', '-f', containerId]);
+    console.log(`[harness-container-cleanup] killed container ${containerId} (hard ceiling)`);
+  } catch (err) {
+    console.warn(`[harness-container-cleanup] rm -f ${containerId} failed: ${err.message}`);
+  }
+}
