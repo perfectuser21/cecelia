@@ -975,14 +975,53 @@ export async function _waitForSubGraphCompletion(compiled, config, timeoutMs, op
   const checkPrMerged = opts._checkPrMerged ?? _checkPrMerged;
   const killContainer = opts._killContainer ?? _killContainer;
 
-  const deadline = Date.now() + timeoutMs;
+  let deadline = Date.now() + timeoutMs;
   let pollCount = 0;
   // OPEN-2：run_sub_task 是父 graph 的阻塞节点，整个 poll 期间父 checkpoint 不变。
   // 每轮 poll 刷父任务心跳，证明「驱动器还活着」，否则看门狗会把这条活跑误判为 parked 重排。
   const hbPool = opts.heartbeatPool || pool;
   const hbInitiativeId = opts.initiativeId || null;
 
-  while (Date.now() < deadline) {
+  while (true) {
+    // ── 外层 deadline liveness 感知（06-08 b249b808 实证）────────────────────
+    // 旧逻辑 deadline 到期直接返回 status channel 默认值 'queued' → Serial gate 报
+    // "did not merge (status=queued)"。且 deadline(90min) < soft timeout(100min from
+    // spawnedAt)，内层 liveness 感知在首轮驱动中轮不到——活 generator 仍被外层砍头。
+    // 新逻辑：到期先验活性，running 且未到 hard ceiling → 延长等待；running 但超
+    // hard ceiling → kill + resume failed（与内层 hard ceiling 同语义）；已死/非
+    // await_callback → 返回 failed（不再透传 'queued'）。
+    if (Date.now() >= deadline) {
+      const st = await compiled.getState(config);
+      if (!st.next || st.next.length === 0) return st.values;
+      const awaitingCb = Array.isArray(st.next) && st.next.includes('await_callback');
+      const cid = st.values?.containerId;
+      const sp = st.values?.spawnedAt;
+      const underHard = sp ? (Date.now() - sp) < CALLBACK_HARD_CEILING_MS : false;
+      const aliveReason = (awaitingCb && cid)
+        ? await checkLiveness(cid, { executor: st.values?.executor, daemonUrl: st.values?.daemonUrl })
+        : 'not_awaiting_callback';
+      if (aliveReason === null && underHard) {
+        console.log('[harness-liveness] 外层 deadline 到期但容器仍 running 且未到 hard ceiling → 延长等待');
+        deadline = Date.now() + Math.max(pollIntervalMs * livenessCheckEveryN, pollIntervalMs);
+      } else if (aliveReason === null && !underHard) {
+        // 活着但超 hard ceiling：kill 止血（codex guard 在 _killContainer 内）+ resume failed
+        await killContainer(cid, { executor: st.values?.executor })
+          .catch((e) => console.warn(`[harness-liveness] kill failed (non-fatal): ${e.message}`));
+        console.warn(
+          `[harness-liveness] 外层 deadline 到期且超 hard ceiling（${CALLBACK_HARD_CEILING_MS}ms）`
+          + ` containerId=${cid} → kill + fail`,
+        );
+        await compiled.invoke(
+          { resume: { status: 'failed', error: 'callback_hard_ceiling' } },
+          config,
+        ).catch((e) => console.warn(`[harness-liveness] resume invoke failed: ${e.message}`));
+        const fs = await compiled.getState(config);
+        return { ...(fs.values || {}), status: 'failed' };
+      } else {
+        const finalStatus = (st.values?.status && st.values.status !== 'queued') ? st.values.status : 'failed';
+        return { ...(st.values || {}), status: finalStatus };
+      }
+    }
     await writeDriverHeartbeat(hbPool, hbInitiativeId);
     const state = await compiled.getState(config);
     if (!state.next || state.next.length === 0) {
@@ -1098,7 +1137,11 @@ export async function _waitForSubGraphCompletion(compiled, config, timeoutMs, op
           }
           // resume 后 getState 拿最新状态
           const finalState = await compiled.getState(config);
-          return { ...(finalState.values || {}), status: finalState.values?.status || 'failed' };
+          // 'queued' 是 status channel 默认值，resume 失败时透传它会让 Serial gate 误读
+          // 为 "did not merge (status=queued)" —— 与外层 deadline 同根因，一并钉死为 failed
+          const deathStatus = finalState.values?.status && finalState.values.status !== 'queued'
+            ? finalState.values.status : 'failed';
+          return { ...(finalState.values || {}), status: deathStatus };
         }
       }
     }
@@ -1107,9 +1150,7 @@ export async function _waitForSubGraphCompletion(compiled, config, timeoutMs, op
     // 还在中间节点（通常 await_callback interrupt） — 等下一轮 poll
     await new Promise((r) => setTimeout(r, pollIntervalMs));
   }
-  // 超时 — 拿当前 state 当 final（status 可能 undefined → join 视作 failed）
-  const state = await compiled.getState(config);
-  return { ...(state.values || {}), status: state.values?.status || 'failed' };
+  // 不可达：deadline 处置在循环头完成（延长 / kill+fail / 返回 failed），无自然出口
 }
 
 export async function runSubTaskNode(state, opts = {}) {
