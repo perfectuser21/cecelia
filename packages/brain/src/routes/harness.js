@@ -23,7 +23,7 @@ const REPO_ROOT = new URL('../../../..', import.meta.url).pathname;
 
 // LangGraph Harness pipeline 架构图（静态，节点拓扑从 harness-graph.js 对应过来）
 // 前端用 mermaid.render() 画成 SVG
-const HARNESS_MERMAID = `graph TD
+const HARNESS_MERMAID = `graph LR
   Start([START]) --> Planner
   Planner --> Proposer
   Proposer --> Reviewer
@@ -437,7 +437,9 @@ router.get('/pipeline-detail', async (req, res) => {
     );
 
     // 2. 提取 planner 信息（harness_planner 已退役 PR retire-harness-planner，仅保留 sprint_planner）
-    const planner = tasks.find(t => t.task_type === 'sprint_planner');
+    // 新 LangGraph pipeline 入口类型为 harness_initiative，作为回退
+    const planner = tasks.find(t => t.task_type === 'sprint_planner')
+      || tasks.find(t => t.task_type === 'harness_initiative');
     const sprintDir = planner?.payload?.sprint_dir || tasks[0]?.payload?.sprint_dir || 'sprints';
 
     // 3. 构建 GAN 对抗轮次

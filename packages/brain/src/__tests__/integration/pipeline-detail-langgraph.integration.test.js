@@ -163,7 +163,7 @@ describe('pipeline-detail LangGraph 字段 — 集成测试', () => {
     expect(lg.fix_rounds).toEqual([]);
     expect(lg.checkpoints.count).toBe(0);
     expect(lg.checkpoints.state_available).toBe(false);
-    expect(lg.mermaid).toContain('graph TD');
+    expect(lg.mermaid).toContain('graph LR');
   });
 
   it('LangGraph task enabled=true，steps 按时间升序', async () => {
