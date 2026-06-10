@@ -99,12 +99,17 @@ export async function scanStuckHarness({ pool: dbPool = pool, notifier } = {}) {
  *   - 重排任务在 dispatcher 侧豁免并发 cap（见 dispatcher.js::shouldApplyHarnessCap），
  *     否则其它活跑占满 cap 时自愈被 cap 锁死。
  *
+ * 根因 3（2026-06-10）：staleMinutes 默认 3→10。心跳每 ~30s 刷一轮，但 driver 在
+ * poll 间隙会做长同步操作（gh pr view 验 merged、docker inspect liveness、contract
+ * import git fetch/push、spawn prep），多个慢调用叠加可断流数分钟；3min 阈值会把活
+ * driver 误判 parked → 重排 → 并发双驱动（06-06 GAN heartbeat 事故同根因系）。
+ *
  * @param {object} [opts]
  * @param {import('pg').Pool} [opts.pool]
- * @param {number} [opts.staleMinutes=3]  心跳陈旧阈值（分钟）
+ * @param {number} [opts.staleMinutes=10]  心跳陈旧阈值（分钟）
  * @returns {Promise<{ resumed: string[], scanned: number }>}
  */
-export async function resumeStalledHarnessDrivers({ pool: dbPool = pool, staleMinutes = 3 } = {}) {
+export async function resumeStalledHarnessDrivers({ pool: dbPool = pool, staleMinutes = 10 } = {}) {
   const stalled = await dbPool.query(
     `SELECT t.id
        FROM tasks t

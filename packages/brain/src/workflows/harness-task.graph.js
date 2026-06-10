@@ -44,6 +44,7 @@ import { resolveGitHubToken } from '../harness-credentials.js';
 import { spawnDockerDetached, spawnCodexBridgeDetached } from '../spawn/detached.js';
 import { resolveExecutor as resolveExecutorDefault } from '../routing/resolve-executor.js';
 import { resolveAccount } from '../spawn/middleware/account-rotation.js';
+import { checkAuthFailure } from '../spawn/middleware/cap-marking.js';
 import { checkPrStatus, classifyFailedChecks } from '../shepherd.js';
 import { parseDockerOutput, extractField, readPrFromGitState, readVerdictFile, readBrainResult, EvaluatorOutputSchema, loadSkillContent } from '../harness-shared.js';
 import { buildGeneratorPrompt } from '../harness-utils.js';
@@ -110,6 +111,8 @@ export const TaskState = Annotation.Root({
   // Fix #4: executor + 远程 daemonUrl，远程 worker-daemon /health liveness 用。
   executor:         Annotation({ reducer: (_o, n) => n, default: () => null }),
   daemonUrl:        Annotation({ reducer: (_o, n) => n, default: () => null }),
+  // 根因 2（2026-06-10）: resolveAccount 选出的账号，401 callback 时 markAuthFailure 轮换用。
+  accountId:        Annotation({ reducer: (_o, n) => n, default: () => null }),
   pr_url:           Annotation({ reducer: (_o, n) => n, default: () => null }),
   pr_branch:        Annotation({ reducer: (_o, n) => n, default: () => null }),
   fix_round:        Annotation({ reducer: (_o, n) => n, default: () => 0 }),
@@ -348,6 +351,8 @@ export async function spawnNode(state, opts = {}) {
     //         容器走 worker-daemon /health 而非本地 docker inspect（本地查不到远程容器）。
     executor: route?.executor || 'claude',
     daemonUrl: route?.executor === 'codex' ? route.url : null,
+    // 根因 2: 记录本次容器用的账号，callback 401 时 awaitCallbackNode 据此 markAuthFailure。
+    accountId: accountEnv.CECELIA_CREDENTIALS || null,
     ...(contractBranch ? { contractImported: true } : {}),
   };
 }
@@ -361,7 +366,7 @@ export async function spawnNode(state, opts = {}) {
  *
  * 幂等门：state.generator_output 已有（resume 后 graph 重跑此节点）→ passthrough。
  */
-export async function awaitCallbackNode(state) {
+export async function awaitCallbackNode(state, opts = {}) {
   if (state.generator_output) return { generator_output: state.generator_output };
 
   const callbackPayload = interrupt({
@@ -377,11 +382,28 @@ export async function awaitCallbackNode(state) {
 
   if (exitCode !== 0) {
     const errMsg = payload.error || payload.stderr || `container exit_code=${exitCode}`;
+    // 根因 2（2026-06-10）: 识别 401 auth 失败 → markAuthFailure 熔断该账号。
+    // 之前只标 container_exit 重 spawn，resolveAccount 不知道账号坏了 →
+    // 同一个坏账号被反复选中，fix loop 空转烧光轮次。标记后下次 spawn 自动换号。
+    const checkAuth = opts.checkAuthFailure || checkAuthFailure;
+    let authFailed = false;
+    try {
+      const authRes = await checkAuth(
+        {
+          stdout: payload.stdout || (typeof payload.result === 'string' ? payload.result : ''),
+          stderr: `${payload.stderr || ''}\n${payload.error || ''}`,
+        },
+        { env: { CECELIA_CREDENTIALS: state.accountId || null } },
+      );
+      authFailed = !!authRes?.authFailed;
+    } catch (err) {
+      console.warn(`[harness-task.graph] checkAuthFailure 失败（non-fatal）: ${err.message}`);
+    }
     // B18: 不再设 state.error（fatal）→ 转 ci_fail 路径让 fix loop 继续重试
     // 区分 docker daemon 死（true fatal，由 spawnNode throw 抓）vs 容器内业务 fail（应 retry）
     return {
       ci_status: 'fail',
-      ci_fail_type: 'container_exit',
+      ci_fail_type: authFailed ? 'auth_failed' : 'container_exit',
       failed_checks: [errMsg],
     };
   }
