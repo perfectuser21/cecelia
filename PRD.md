@@ -1,15 +1,23 @@
-# PRD — 同步 harness-generator 快照至 SSOT 7.5.0
+# PRD — Hotfix: 修 detached spawn prompt 文件旧命名（P0 pipeline 全瘫）
 
 ## 背景
 
-所有 skill 的唯一 SSOT 是 zenithjoy-skills repo。`packages/workflows/skills/` 是给 monorepo CI / Brain harness graph（loadSkillContent）读的「快照拷贝」。SSOT 的 harness-generator 已升到 7.5.0（PR #51：删除 generator 的 `gh pr merge --auto` 自合并红线），monorepo 快照还停在 7.4.0，skill-drift 巡检已对此产生告警，Brain 跑的还是旧 SKILL.md。
+PR #3345 给 `packages/brain/src/docker-executor.js` 的 `buildDockerArgs` 引入「取证文件按运行实例唯一命名」协议：每次 spawn 生成 `runInstance`，prompt 文件写 `${taskId}.${runInstance}.prompt`，并注入容器 env `CECELIA_PROMPT_FILE` 指向同名路径。
+
+但 `packages/brain/src/spawn/detached.js` 有一份**重复的本地 `writePromptFile`**，仍写旧命名 `${taskId}.prompt`（无 runInstance）。`spawnDockerDetached` 先用本地函数写旧名文件，再经 `buildDockerArgs` 注入新名 env → 容器 entrypoint 按 env 找新名文件 → 不存在 → claude 报 `Input must be provided either through stdin or as a prompt argument` → exit 1。
+
+影响所有 detached spawn（planner / generator / evaluator）= harness pipeline 全瘫。生产实证：task 4795f72e 的 planner 连续两个 attempt 秒退，磁盘上 `4795f72e-….prompt`（旧名）与 `.4b797a59.stdout`（新名）并存。
 
 ## 范围
 
-用 `scripts/sync-skills-snapshot.sh` 把 6 个 harness skill 的 SKILL.md 从 SSOT 同步到快照。本次实际只有 harness-generator 有 diff（7.4.0 → 7.5.0），其余 5 个已与 SSOT 一致。纯快照刷新，无代码逻辑改动。
+- 删除 `detached.js` 的本地 `writePromptFile` + `DEFAULT_PROMPT_DIR` 常量（消灭重复实现）。
+- `spawnDockerDetached` 先调 `buildDockerArgs(opts)`，再把 `opts.prompt` 写到 `built.forensics.promptFile`（与容器 `CECELIA_PROMPT_FILE` env 共享同一 runInstance，HOST_PROMPT_DIR 解析同源）。
+- 新增复现单测（mock docker spawn，断言落盘 basename == 注入 env basename）。
+- 新增真实容器集成 smoke（`spawnDockerDetached` + `CECELIA_ENTRYPOINT_TEST=1` 最小容器，断言容器 stdout PROMPT_FILE 与磁盘真实文件一致）。
 
 ## 成功标准
 
-- harness-generator 快照 SKILL.md 与 SSOT 一致，版本号刷新到 7.5.0。
-- 其余 5 个 harness skill 快照版本号保持 SSOT 最新版（planner 8.10.0 / contract-proposer 9.1.0 / contract-reviewer 9.1.0 / evaluator 1.15.0 / report 6.2.0）。
-- merge 后 skill-drift 巡检 `any_drift` 为 false。
+- `detached.js` 不再含本地 `writePromptFile` / `DEFAULT_PROMPT_DIR`；prompt 落盘路径 == `buildDockerArgs.forensics.promptFile`。
+- 复现单测先红（旧命名 → env-named 文件不存在）、改后转绿。
+- `packages/brain/src/spawn/` 下全部 vitest 通过。
+- 宿主集成 smoke 真实 spawn 容器：容器报告的 `PROMPT_FILE`（含 runInstance 后缀）与 `spawnDockerDetached` 在宿主磁盘写入的文件 basename 逐字一致、内容正确。

@@ -411,9 +411,11 @@ export function buildDockerArgs(opts, ctx = {}) {
     ...extraVolumes,
     ...envToArgs(envFinal),
     image,
-    // Prompt 不再作为 argv 传入 — entrypoint.sh 从 /tmp/cecelia-prompts/${CECELIA_TASK_ID}.prompt
-    // 读并通过 stdin 喂给 claude。这样长 prompt（GAN Round N Reviewer 含完整合同历史）
-    // 不会撞 OS argv 长度限制触发 spawn E2BIG。writePromptFile 已在上面写好文件。
+    // Prompt 不再作为 argv 传入 — entrypoint.sh 按注入的 CECELIA_PROMPT_FILE env
+    // （/tmp/cecelia-prompts/${taskId}.${runInstance}.prompt，含运行实例后缀）读并通过 stdin
+    // 喂给 claude。这样长 prompt（GAN Round N Reviewer 含完整合同历史）不会撞 OS argv 长度
+    // 限制触发 spawn E2BIG。落盘由 caller（executeInDocker / spawnDockerDetached）写到
+    // forensics.promptFile，与此 env basename 逐字一致。
   ];
 
   // forensics：宿主侧写入路径（executeInDocker 用 promptFile 写 prompt 到磁盘）。
