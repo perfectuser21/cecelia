@@ -31,7 +31,7 @@ journey_type: autonomous
 - [x] [BEHAVIOR] `writePromptFile` 返回路径 basename 匹配 `{taskId}.{ts10+}-{hex8}.prompt`，不再是旧格式 `{taskId}.prompt`
   Test: manual:bash -c '
     T=$(mktemp -d)
-    cat > /tmp/bv1.mjs << '"'"'EOF'"'"'
+    cat > /workspace/bv1.mjs << '"'"'EOF'"'"'
 import path from "path";
 const m = await import("./packages/brain/src/docker-executor.js");
 const p = m.__test__.writePromptFile("bv1-check", "x");
@@ -40,8 +40,8 @@ if (b === "bv1-check.prompt") { console.error("FAIL old format:", b); process.ex
 if (!/^bv1-check\.\d{10,}-[0-9a-f]{8}\.prompt$/.test(b)) { console.error("FAIL bad format:", b); process.exit(1); }
 console.log("OK:", b);
 EOF
-    CECELIA_PROMPT_DIR="$T" node /tmp/bv1.mjs 2>/dev/null; EC=$?
-    rm -rf "$T" /tmp/bv1.mjs; exit $EC
+    CECELIA_PROMPT_DIR="$T" node /workspace/bv1.mjs 2>/dev/null; EC=$?
+    rm -rf "$T" /workspace/bv1.mjs; exit $EC
   '
   期望: OK: bv1-check.{ts}-{hex8}.prompt
 
@@ -54,7 +54,7 @@ EOF
 - [x] [BEHAVIOR] 连续调用 `writePromptFile('task-x', 'run1')` 和 `writePromptFile('task-x', 'run2')` 后，两个返回路径不同，且第一次文件内容仍为 'run1'
   Test: manual:bash -c '
     T=$(mktemp -d)
-    cat > /tmp/bv2.mjs << '"'"'EOF'"'"'
+    cat > /workspace/bv2.mjs << '"'"'EOF'"'"'
 import { readFileSync } from "fs";
 const m = await import("./packages/brain/src/docker-executor.js");
 const p1 = m.__test__.writePromptFile("bv2task", "run1");
@@ -65,8 +65,8 @@ const c1 = readFileSync(p1, "utf8");
 if (c1 !== "run1") { console.error("FAIL: p1 content overwritten:", c1); process.exit(1); }
 console.log("OK: p1 != p2 and p1 content preserved");
 EOF
-    CECELIA_PROMPT_DIR="$T" node /tmp/bv2.mjs 2>/dev/null; EC=$?
-    rm -rf "$T" /tmp/bv2.mjs; exit $EC
+    CECELIA_PROMPT_DIR="$T" node /workspace/bv2.mjs 2>/dev/null; EC=$?
+    rm -rf "$T" /workspace/bv2.mjs; exit $EC
   '
   期望: OK: p1 != p2 and p1 content preserved
 
