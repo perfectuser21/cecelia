@@ -11,7 +11,7 @@ fail() { echo "❌ $1"; ((FAIL++)) || true; }
 # 1. executeContractCommands 导出存在
 echo "── executeContractCommands export ──"
 result=$(node --input-type=module -e "
-import { executeContractCommands } from '/workspace/packages/brain/src/harness-final-e2e.js';
+import { executeContractCommands } from './packages/brain/src/harness-final-e2e.js';
 console.log(typeof executeContractCommands === 'function' ? 'ok' : 'missing');
 " 2>/dev/null || echo "error")
 [[ "$result" == "ok" ]] \
