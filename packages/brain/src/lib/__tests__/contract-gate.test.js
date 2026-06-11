@@ -13,6 +13,8 @@ import {
   isTautology,
   isNegativeFailAssertion,
   isStatusCodeOracle,
+  hasCaptureThenAssert,
+  isAggregateDbProbeWithoutWindow,
   formatGateReport,
   RULES,
   ENV_CAPABILITY,
@@ -335,6 +337,124 @@ describe('逻辑行归一 — #3351 负向测试 + 既有规则在多行场景�
     const text = ['```bash', 'assert_output \\', '  || true', '```'].join('\n');
     const r = evaluateContractText(text);
     expect(r.hits.map((h) => h.ruleId)).toContain('cheat/or-true');
+  });
+});
+
+describe('钝点 A：capture-then-assert 跨语句 oracle（curl-no-jq 放行）', () => {
+  it('生产 fixture（run fa2b3e21）：RESP=$(curl) 捕获 + 下一句 jq -e 断言 → 无 curl-no-jq，ok=true', async () => {
+    const r = await runContractGate(path.join(FX, 'capture-then-assert'));
+    expect(r.hits.map((h) => h.ruleId)).not.toContain('weak-oracle/curl-no-jq');
+    expect(r.ok).toBe(true);
+  });
+
+  it('反例 fixture：裸 RESP=$(curl) 后 K 行无断言 → 仍命中 curl-no-jq，ok=false（不放水）', async () => {
+    const r = await runContractGate(path.join(FX, 'capture-no-assert'));
+    expect(r.hits.map((h) => h.ruleId)).toContain('weak-oracle/curl-no-jq');
+    expect(r.ok).toBe(false);
+  });
+
+  it('纯文本：捕获后下一句 [ "$CODE" 比较 ] 也算断言（放行）', () => {
+    const text = [
+      '```bash',
+      'OUT=$(curl -sf localhost:5221/api/x)',
+      '[ "$OUT" = "ok" ] || { echo FAIL; exit 1; }',
+      '```',
+    ].join('\n');
+    const r = evaluateContractText(text);
+    expect(r.hits.map((h) => h.ruleId)).not.toContain('weak-oracle/curl-no-jq');
+  });
+
+  it('纯文本：捕获后 grep -q 断言（放行）', () => {
+    const text = [
+      '```bash',
+      'BODY=$(curl -sf localhost/api/posts)',
+      'echo "$BODY" | grep -q "published"',
+      '```',
+    ].join('\n');
+    const r = evaluateContractText(text);
+    expect(r.hits.map((h) => h.ruleId)).not.toContain('weak-oracle/curl-no-jq');
+  });
+
+  it('变量名精确匹配：捕获 RESP 却断言无关 $OTHER → 不放行（防假放行）', () => {
+    const text = [
+      '```bash',
+      'RESP=$(curl -sf localhost/api/x)',
+      'echo "$OTHER" | jq -e ".ok"',
+      '```',
+    ].join('\n');
+    const r = evaluateContractText(text);
+    expect(r.hits.map((h) => h.ruleId)).toContain('weak-oracle/curl-no-jq');
+  });
+
+  it('K 窗外的断言不放行（断言落在第 7 条逻辑语句，超出 K=5）', () => {
+    const logicalLines = [
+      { content: 'RESP=$(curl -sf url)' }, // index 0
+      { content: 'echo a' },
+      { content: 'echo b' },
+      { content: 'echo c' },
+      { content: 'echo d' },
+      { content: 'echo e' }, // index 5 (第 5 条之后)
+      { content: 'echo "$RESP" | jq -e ".ok"' }, // index 6 — 超窗
+    ];
+    expect(hasCaptureThenAssert('RESP=$(curl -sf url)', { logicalLines, index: 0 })).toBe(false);
+  });
+
+  it('hasCaptureThenAssert 精确性：非捕获形态 / 无 ctx → false', () => {
+    expect(hasCaptureThenAssert('curl -sf url', { logicalLines: [], index: 0 })).toBe(false);
+    expect(hasCaptureThenAssert('RESP=$(curl url)', undefined)).toBe(false);
+  });
+});
+
+describe('钝点 B：db-no-time-window 只打聚合/存在性探测，不误伤定点读/写语句', () => {
+  it('生产 fixture（run fa2b3e21）：INSERT...RETURNING + WHERE id 定点读 → 无 db-no-time-window，ok=true', async () => {
+    const r = await runContractGate(path.join(FX, 'db-point-read'));
+    expect(r.hits.map((h) => h.ruleId)).not.toContain('domain/db-no-time-window');
+    expect(r.ok).toBe(true);
+  });
+
+  it('既有 fixture（真 count 无时间窗）→ 仍命中（不放水）', async () => {
+    const r = await runContractGate(path.join(FX, 'db-no-window'));
+    expect(r.hits.map((h) => h.ruleId)).toContain('domain/db-no-time-window');
+  });
+
+  it('isAggregateDbProbeWithoutWindow 分型精确性', () => {
+    // 聚合无时间窗 → 命中
+    expect(
+      isAggregateDbProbeWithoutWindow("psql \"$DB\" -c \"SELECT count(*) FROM posts WHERE status='sent'\"")
+    ).toBe(true);
+    expect(isAggregateDbProbeWithoutWindow('psql "$DB" -c "SELECT sum(amount) FROM orders"')).toBe(
+      true
+    );
+    // 主键等值定点读 → 放行
+    expect(
+      isAggregateDbProbeWithoutWindow('psql "$DB" -tAc "SELECT status FROM journey_features WHERE id=\'$ID\'"')
+    ).toBe(false);
+    expect(
+      isAggregateDbProbeWithoutWindow('psql "$DB" -tAc "SELECT x FROM t WHERE task_id = 5"')
+    ).toBe(false);
+    // 写语句（INSERT...RETURNING / UPDATE / DELETE）→ 放行
+    expect(
+      isAggregateDbProbeWithoutWindow('psql "$DB" -tAc "INSERT INTO t (a) VALUES (1) RETURNING id"')
+    ).toBe(false);
+    expect(isAggregateDbProbeWithoutWindow('psql "$DB" -c "UPDATE t SET a=1 WHERE id=2"')).toBe(
+      false
+    );
+    // 已带时间窗 → 放行
+    expect(
+      isAggregateDbProbeWithoutWindow(
+        "psql \"$DB\" -c \"SELECT count(*) FROM posts WHERE created_at > NOW() - interval '5 minutes'\""
+      )
+    ).toBe(false);
+    // 无主键等值的存在性探测（status 非主键）→ 保守命中（fail-closed）
+    expect(
+      isAggregateDbProbeWithoutWindow("psql \"$DB\" -c \"SELECT 1 FROM posts WHERE status='sent'\"")
+    ).toBe(true);
+    // 聚合即便同句含写，聚合读仍跨历史 → 命中
+    expect(
+      isAggregateDbProbeWithoutWindow('psql "$DB" -c "INSERT INTO t VALUES(1); SELECT count(*) FROM t"')
+    ).toBe(true);
+    // 非 psql → 不适用
+    expect(isAggregateDbProbeWithoutWindow('echo "SELECT count(*) FROM t"')).toBe(false);
   });
 });
 
