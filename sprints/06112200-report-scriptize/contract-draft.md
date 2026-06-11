@@ -399,6 +399,6 @@ echo "✅ harness-report.mjs Golden Path E2E 全部通过"
 
 | 功能 | Test File | BEHAVIOR 覆盖 | 预期红证据 |
 |---|---|---|---|
-| 整个 Sprint | `tests/harness-report-script.test.js` | 模块导出、报告生成函数、patchFeatureDone 无 thickness（stale fix）| → 3 failures（模块不存在） |
+| 整个 Sprint | `tests/harness-report-script.test.js` | exports generateReportFiles、does not include thickness、generates harness-report.md | → 3 failures（模块不存在） |
 
 > **路径说明**：TDD Red 阶段源文件位于 `sprints/06112200-report-scriptize/tests/harness-report-script.test.js`（本 sprint 目录），generator 实现脚本后将其复制/移动到 `packages/brain/src/__tests__/harness-report-script.test.js` 并通过 Green 验证。import 路径 `'../../../scripts/harness-report.mjs'` 在 `packages/brain/src/__tests__/` 下正确解析到 `packages/brain/scripts/harness-report.mjs`。
