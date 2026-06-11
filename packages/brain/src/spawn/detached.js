@@ -24,20 +24,12 @@ import { writeFileSync, mkdirSync, existsSync } from 'fs';
 import path from 'path';
 import { buildDockerArgs } from '../docker-executor.js';
 
-const DEFAULT_PROMPT_DIR = process.env.CECELIA_PROMPT_DIR || '/tmp/cecelia-prompts';
-
-/**
- * 写 prompt 到文件（detached spawn 不能走 stdin —— 容器后台跑无 stdio attach）。
- * 文件挂到容器 /tmp/cecelia-prompts/${TASK_ID}.prompt，entrypoint.sh 读它。
- */
-function writePromptFile(taskId, prompt) {
-  if (!existsSync(DEFAULT_PROMPT_DIR)) {
-    mkdirSync(DEFAULT_PROMPT_DIR, { recursive: true });
-  }
-  const file = path.join(DEFAULT_PROMPT_DIR, `${taskId}.prompt`);
-  writeFileSync(file, prompt, 'utf8');
-  return file;
-}
+// 注意：本文件**不再**自带本地 prompt 落盘函数 / 本地 prompt 目录常量。
+// prompt 文件落盘路径必须由 buildDockerArgs 返回的 forensics.promptFile 决定——它与注入容器的
+// CECELIA_PROMPT_FILE env 共享同一 runInstance（HOST_PROMPT_DIR 解析也同源）。若在此另写一份
+// `${taskId}.prompt`（无 instance），容器按 env 找新名文件、磁盘上却只有旧名 → entrypoint
+// `[[ -f $PROMPT_FILE ]]` 为假 → claude 报 "Input must be provided either through stdin or as a
+// prompt argument" → exit 1，detached spawn（planner/generator/evaluator）全瘫（PR #3345 协议断裂根因）。
 
 export async function spawnDockerDetached(opts) {
   if (!opts || !opts.task || !opts.task.id) {
@@ -50,11 +42,16 @@ export async function spawnDockerDetached(opts) {
     throw new Error('spawnDockerDetached: opts.containerId is required');
   }
 
-  // 持久化 prompt（容器读它）
-  writePromptFile(opts.task.id, opts.prompt);
-
-  // 复用 buildDockerArgs 拿挂载 + env，拿到后改 --name 和移除 --rm 走后台
+  // 先 buildDockerArgs 拿挂载 + env + forensics.promptFile（runInstance SSOT），
+  // 再把 prompt 写到与容器 CECELIA_PROMPT_FILE env basename 完全一致的宿主路径。
   const built = buildDockerArgs(opts);
+
+  // 持久化 prompt（容器按 env 读它）——路径 == forensics.promptFile，绝不自拼旧名。
+  const promptFile = built.forensics.promptFile;
+  const promptDir = path.dirname(promptFile);
+  if (!existsSync(promptDir)) mkdirSync(promptDir, { recursive: true });
+  writeFileSync(promptFile, opts.prompt, 'utf8');
+
   // built.args 含 ['run', '--rm', '--name', oldName, '--cidfile', cidfile, ...]
   // 我们替换为 ['run', '-d', '--name', containerId, ...]（detach 后不写 cidfile，避免名字冲突）
   const args = [];
@@ -161,5 +158,5 @@ export async function spawnCodexBridgeDetached(bridgeUrl, payload, opts = {}) {
   return data;
 }
 
-// 测试 hook
-export const __test__ = { writePromptFile };
+// 测试 hook（writePromptFile 已删除 —— prompt 落盘统一走 buildDockerArgs.forensics.promptFile）
+export const __test__ = { buildDockerArgs };
