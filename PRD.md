@@ -1,20 +1,15 @@
-# PRD — evaluate 节点在 PR 已 merge 时短路 PASS（修 fix-loop-on-merged-PR）
+# PRD — 同步 harness-generator 快照至 SSOT 7.5.0
 
 ## 背景
 
-本系统每次 merge 触发 auto-version 重启 brain → checkpoint 大概率断在 merge 节点后、写盘前 → 成功的 harness run 恢复时会重跑 evaluate 节点。此时 PR 已 merge、分支已删 → evaluator checkout 已删分支失败 / E2E FAIL → `routeAfterEvaluate` 把 FAIL 路由到 fix → 在【已 merge 的 PR】上 spawn generator（fix loop）。这是本系统的**常态而非边缘**（每个成功 run 恢复时都会撞）。
+所有 skill 的唯一 SSOT 是 zenithjoy-skills repo。`packages/workflows/skills/` 是给 monorepo CI / Brain harness graph（loadSkillContent）读的「快照拷贝」。SSOT 的 harness-generator 已升到 7.5.0（PR #51：删除 generator 的 `gh pr merge --auto` 自合并红线），monorepo 快照还停在 7.4.0，skill-drift 巡检已对此产生告警，Brain 跑的还是旧 SKILL.md。
 
-## 根因
+## 范围
 
-`evaluateContractNode` 动作前不查 PR 是否已 merge，无条件 checkout PR 分支跑 E2E。PR 合并后分支删除 → evaluate 必 FAIL → fix loop。
-
-## 修复
-
-`evaluateContractNode` 在幂等门之后、spawn 之前，先 `gh pr view --json state` 查 PR 状态。已 `MERGED` → 短路返回 `evaluate_verdict='PASS'`（log `merged-short-circuit`），不再 checkout 已删分支跑 E2E、不触发 fix loop。合同已过 CI 合并即视为达标。查询失败 fail-open（当未 merge，继续正常 evaluate，绝不因查询失败误判 PASS）。下游 `mergePrNode` 对已 merge PR 幂等（already-merged→success→end），短路 PASS 端到端安全。可测试性：`opts.checkPrMerged` 注入（默认真 gh 调用）。
+用 `scripts/sync-skills-snapshot.sh` 把 6 个 harness skill 的 SKILL.md 从 SSOT 同步到快照。本次实际只有 harness-generator 有 diff（7.4.0 → 7.5.0），其余 5 个已与 SSOT 一致。纯快照刷新，无代码逻辑改动。
 
 ## 成功标准
 
-- PR 已 merge → evaluate 短路 verdict=PASS，不 spawn evaluator（不 checkout 已删分支）。
-- PR 未 merge → 不短路，照常进 evaluate。
-- 幂等门优先：evaluate_verdict 已存在则直接返回，不查 PR 状态。
-- 查询失败 fail-open（不误判 PASS）。
+- harness-generator 快照 SKILL.md 与 SSOT 一致，版本号刷新到 7.5.0。
+- 其余 5 个 harness skill 快照版本号保持 SSOT 最新版（planner 8.10.0 / contract-proposer 9.1.0 / contract-reviewer 9.1.0 / evaluator 1.15.0 / report 6.2.0）。
+- merge 后 skill-drift 巡检 `any_drift` 为 false。
