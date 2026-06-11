@@ -130,6 +130,10 @@ export const TaskState = Annotation.Root({
   error:            Annotation({ reducer: (_o, n) => n, default: () => null }),
   evaluate_verdict: Annotation({ reducer: (_o, n) => n, default: () => null }),
   evaluate_error:   Annotation({ reducer: (_o, n) => n, default: () => null }),
+  // P1: 失败分类。'contract_invalid' = Contract Gate 命中合同产物（合同本身不合格）→
+  // 责任在 GAN proposer（有权改合同），generator 无权改合同 → 路由终止 initiative，不进 fix loop。
+  // null = 普通实现缺陷 → 维持 generator fix loop。
+  failure_class:    Annotation({ reducer: (_o, n) => n, default: () => null }),
   prdContent:       Annotation({ reducer: (_o, n) => n, default: () => null }),
 });
 
@@ -692,9 +696,22 @@ export function routeAfterPoll(state) {
   return 'poll'; // pending → loop
 }
 
-// Pre-merge gate router: post-evaluator verdict → merge or fix.
+// 合同产物文件判定：Contract Gate 命中这些文件 = 合同本身不合格（弱断言/作弊/缺工具），
+// 责任在 GAN proposer（有权改合同），不是 generator（CONTRACT IS LAW，generator 无权改合同）。
+// contract-dod.md / contract-draft.md / sprint-contract.md 是合同三态产物。
+export function isContractArtifactFile(filePath) {
+  if (!filePath || typeof filePath !== 'string') return false;
+  const base = filePath.split('/').pop();
+  return /^(contract-dod|contract-draft|sprint-contract|contract)\.md$/.test(base);
+}
+
+// Pre-merge gate router: post-evaluator verdict → merge / end / fix.
 export function routeAfterEvaluate(state) {
   if (state.evaluate_verdict === 'PASS') return 'merge';
+  // P1: 合同产物不合格（Contract Gate 命中合同文件本身）→ 终止 initiative，不进 generator fix loop。
+  // generator 无权改合同 → 进 fix loop 只会同一行反复命中空转烧轮次（实证 run ea622a94 r0/r1/r2 三连）。
+  // 修复责任在 GAN proposer：feedback 已带结构化命中清单，供重发时 proposer 参考。
+  if (state.failure_class === 'contract_invalid') return 'end';
   return 'fix';
 }
 
@@ -963,7 +980,21 @@ export async function evaluateContractNode(state, opts = {}) {
     }
     if (cg && cg.ok === false) {
       const feedback = formatGateReport(cg, `${sprintDir}/contract-dod.md`).slice(0, 1200);
-      console.error(`[evaluator] Contract Gate FAIL（合同含作弊/弱断言/缺工具，spawn 前拦截）：\n${feedback}`);
+      // P1 修复：Contract Gate 扫的是合同产物（contract-dod.md / contract-draft.md）本身。命中 =
+      // 合同质量缺陷（弱断言/作弊/缺工具），责任在 GAN proposer（有权改合同），不是 generator。
+      // CONTRACT IS LAW：generator 无权改合同 → 进通用 fix loop 只会同一行反复命中空转烧轮次
+      // （实证 run ea622a94 r0/r1/r2 三连）。故 fail-fast：标记 failure_class=contract_invalid，
+      // routeAfterEvaluate 路由直接终止 initiative（END），feedback 带结构化命中清单供重发时 proposer 参考。
+      if (isContractArtifactFile(cg.contractFile)) {
+        console.error(`[evaluator] Contract Gate FAIL（合同产物 ${cg.contractFile} 不合格，责任在 GAN proposer，终止 initiative 不进 generator fix loop）：\n${feedback}`);
+        return {
+          evaluate_verdict: 'FAIL',
+          failure_class: 'contract_invalid',
+          evaluate_error: `Contract Gate 命中合同产物（${cg.contractFile}）——合同质量缺陷责任在 GAN proposer（generator 无权改合同），终止 initiative，请重发让 proposer 修复后再跑：\n${feedback}`,
+        };
+      }
+      // 命中含实现侧文件（理论分支：当前 gate 只扫合同产物）→ 维持现有 fix loop 行为（generator 可修）。
+      console.error(`[evaluator] Contract Gate FAIL（含实现侧命中，spawn 前拦截，进 fix loop）：\n${feedback}`);
       return {
         evaluate_verdict: 'FAIL',
         evaluate_error: `Contract Gate 命中（spawn 前确定性拦截，不浪费 evaluator 容器）：\n${feedback}`,
@@ -1203,7 +1234,9 @@ export function buildHarnessTaskGraph() {
     .addConditionalEdges('poll_ci', routeAfterPoll, {
       end: END, merge: 'merge_pr', evaluate: 'evaluate_contract', fix: 'fix_dispatch', timeout: END, poll: 'poll_ci',
     })
-    .addConditionalEdges('evaluate_contract', routeAfterEvaluate, { merge: 'merge_pr', fix: 'fix_dispatch' })
+    // P1: end = Contract Gate 命中合同产物（failure_class=contract_invalid）→ 终止 initiative，
+    // 不进 generator fix loop（generator 无权改合同，进 fix loop 必空转）。
+    .addConditionalEdges('evaluate_contract', routeAfterEvaluate, { merge: 'merge_pr', fix: 'fix_dispatch', end: END })
     .addConditionalEdges('merge_pr', routeAfterMergePr, { end: END, poll: 'poll_ci' })
     .addConditionalEdges('fix_dispatch', routeAfterFix, {
       end: END, failed: END, spawn: 'spawn',
