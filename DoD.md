@@ -35,11 +35,11 @@ journey_type: autonomous
   期望: OK
 
 - [ ] [BEHAVIOR] Step 2 — skill 契约 vitest 测试对当前 packages/workflows/skills/ 快照全绿（evaluator 含 env_missing 红线 + B-1.6/1.7/1.8 + 无 ws_id 残留、reviewer 7 维名对齐 ReviewerOutputSchema、generator 无 gh pr merge、proposer 含领域验证规则段）
-  Test: manual:bash -c 'npx vitest run packages/brain/tests/skill-contracts/ --reporter=verbose 2>&1 | tee /tmp/sc-green.log; EXIT=${PIPESTATUS[0]}; [ "$EXIT" -eq 0 ] || { echo "FAIL: 契约测试未全绿 exit=$EXIT"; tail -30 /tmp/sc-green.log; exit 1; }; echo OK'
+  Test: manual:bash -c 'cd packages/brain && npx vitest run tests/skill-contracts/ --reporter=verbose 2>&1 | tee /tmp/sc-green.log; EXIT=${PIPESTATUS[0]}; [ "$EXIT" -eq 0 ] || { echo "FAIL: 契约测试未全绿 exit=$EXIT"; tail -30 /tmp/sc-green.log; exit 1; }; echo OK'
   期望: OK
 
 - [ ] [BEHAVIOR] Step 3 — 篡改 fixture（删去 env_missing）必使契约测试非零退出，且错误信息中含字面量 `env_missing`（不接受仅 "snapshot mismatch"）
-  Test: manual:bash -c 'FIXTURE=$(mktemp /tmp/eval-tampered-XXXXXX.md); grep -v "env_missing" packages/workflows/skills/harness-evaluator/SKILL.md > "$FIXTURE"; EVALUATOR_SKILL_FIXTURE="$FIXTURE" npx vitest run packages/brain/tests/skill-contracts/ --reporter=verbose > /tmp/tamper-test.log 2>&1; TAMPER_EXIT=$?; rm -f "$FIXTURE"; [ "$TAMPER_EXIT" -ne 0 ] || { echo "FAIL: 篡改 fixture 应非零退出但返回 0"; exit 1; }; grep -qE "env_missing" /tmp/tamper-test.log || { echo "FAIL: 篡改 fixture 未指明 env_missing"; exit 1; }; echo OK'
+  Test: manual:bash -c 'FIXTURE=$(mktemp /tmp/eval-tampered-XXXXXX.md); grep -v "env_missing" packages/workflows/skills/harness-evaluator/SKILL.md > "$FIXTURE"; (cd packages/brain && EVALUATOR_SKILL_FIXTURE="$FIXTURE" npx vitest run tests/skill-contracts/ --reporter=verbose) > /tmp/tamper-test.log 2>&1; TAMPER_EXIT=$?; rm -f "$FIXTURE"; [ "$TAMPER_EXIT" -ne 0 ] || { echo "FAIL: 篡改 fixture 应非零退出但返回 0"; exit 1; }; grep -qE "env_missing" /tmp/tamper-test.log || { echo "FAIL: 篡改 fixture 未指明 env_missing"; exit 1; }; echo OK'
   期望: OK
 
 - [ ] [BEHAVIOR] Step 4a — check-contract-exists.mjs 对缺合同的 sprints/ diff（stdin 无 contract-draft.md）非零退出且 stdout/stderr 含 `contract-draft.md` 字样
