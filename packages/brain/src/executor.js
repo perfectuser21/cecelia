@@ -2855,7 +2855,36 @@ async function markInitiativeTerminalFailed(dbPool, taskId, failureClass, errorM
  * @param {object} [opts] - { pool, compiled } 测试可注入
  * @returns {Promise<{ ok: boolean, threadId: string, attemptN: number, finalState?: object, error?: string }>}
  */
+// 图级并发 invoke 互斥：同一 initiative 同时只能被一个 brain 驱动器跑。
+const _activeInitiativeRuns = new Map(); // initiativeId -> startedAtMs
+
+// 测试 hook：清空执行锁表
+export function _resetActiveInitiativeRunsForTests() {
+  _activeInitiativeRuns.clear();
+}
+
 export async function runHarnessInitiativeRouter(task, opts = {}) {
+  const initiativeId = task.payload?.initiative_id || task.id;
+
+  // P1: 图级并发 invoke 互斥 —— 必须在任何 await 之前（Node 单线程，has()->set() 之间无 await，
+  // check-and-set 原子）。根因：checkpoint 在 merge 节点后写盘前被截断、Brain 重启后，
+  // startup-sync re-queue + dispatcher dispatch 可对【同一 thread】并发 invoke 本函数，各驱动一份图
+  // → 双图执行（A 重跑 evaluate 在已删 PR 分支上 FAIL→fix loop spawn generator；B 又 spawn evaluator，
+  // 同 thread 两容器并行）。#3335 的 containerId claim 只挡容器回调重入，挡不住这里的图级并发。
+  // 后到者直接跳过 + log（不抢同一 thread 的驱动权）。
+  if (_activeInitiativeRuns.has(initiativeId)) {
+    console.warn(`[executor] runHarnessInitiativeRouter: initiative=${initiativeId} 已在驱动中，跳过本次并发 invoke（防双图执行）`);
+    return { ok: null, skipped: true, reason: 'already_running', initiativeId, threadId: null };
+  }
+  _activeInitiativeRuns.set(initiativeId, Date.now());
+  try {
+    return await _driveHarnessInitiative(task, opts);
+  } finally {
+    _activeInitiativeRuns.delete(initiativeId);
+  }
+}
+
+async function _driveHarnessInitiative(task, opts = {}) {
   const dbPool = opts.pool || pool;
   const { compileHarnessFullGraph } = await import('./workflows/harness-initiative.graph.js');
   const { getPgCheckpointer } = await import('./orchestrator/pg-checkpointer.js');

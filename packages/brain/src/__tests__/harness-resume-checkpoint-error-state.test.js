@@ -329,3 +329,49 @@ describe('runHarnessInitiativeRouter — 坏 checkpoint 检测（resume-checkpoi
     expect(capturedStreamInput).toBeNull();
   });
 });
+
+// ── P1: 图级并发 invoke 互斥 ─────────────────────────────────────
+// 现场（10:48 #3338 merge → 10:50 Brain 重启）：checkpoint 在 merge 节点后写盘前被截断 →
+// startup-sync re-queue + dispatcher dispatch 对【同一 initiative】并发 invoke runHarnessInitiativeRouter
+// → 两个并发图执行（A 重跑 evaluate 在已删 PR 分支上 FAIL→fix loop spawn generator；B 又 spawn evaluator）
+// → 10:57 同 thread 两容器并行。#3335 的 claim 只挡容器回调重入，不挡图级并发 invoke。
+// 修复：runHarnessInitiativeRouter 对同一 initiativeId 加进程内执行锁，后到的并发 invoke 直接跳过 + log。
+describe('runHarnessInitiativeRouter — 图级并发 invoke 互斥（防双图执行）', () => {
+  const CONCURRENT_TASK = {
+    id: 'task-concurrent-1',
+    task_type: 'harness_initiative',
+    title: 'concurrent invoke test',
+    payload: { initiative_id: 'init-concurrent-001' },
+    status: 'in_progress',
+    retry_count: 0,
+    execution_attempts: 0,
+  };
+
+  it('同一 initiative 并发两次 invoke → 第二个被跳过（skipped），stream 只被调一次', async () => {
+    // fresh start（无 checkpoint），让第一个 invoke 顺利进到 stream 并持锁
+    mockCheckpointerGet.mockResolvedValue(null);
+
+    // 第一个 invoke：同步进入并在第一个 await 前抢到锁，随后挂在 stream（持锁）
+    const p1 = runHarnessInitiativeRouter(CONCURRENT_TASK, { pool: { query: mockQuery } });
+    // 第二个 invoke：此时 init-concurrent-001 已被 p1 锁住 → 必须直接 skipped，不进 stream
+    const r2 = await runHarnessInitiativeRouter(CONCURRENT_TASK, { pool: { query: mockQuery } });
+
+    expect(r2.skipped).toBe(true);
+    expect(r2.reason).toBe('already_running');
+
+    const r1 = await p1;
+    // 第一个正常驱动（非 skipped），它的 stream 跑过一次
+    expect(r1.skipped).toBeFalsy();
+    expect(mockCompiled.stream).toHaveBeenCalledTimes(1);
+  });
+
+  it('锁在驱动结束后释放：同一 initiative 顺序两次 invoke 都能正常跑（不误判 skipped）', async () => {
+    mockCheckpointerGet.mockResolvedValue(null);
+
+    const r1 = await runHarnessInitiativeRouter(CONCURRENT_TASK, { pool: { query: mockQuery } });
+    const r2 = await runHarnessInitiativeRouter(CONCURRENT_TASK, { pool: { query: mockQuery } });
+
+    expect(r1.skipped).toBeFalsy();
+    expect(r2.skipped).toBeFalsy();
+  });
+});
