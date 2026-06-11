@@ -14,6 +14,8 @@ import {
   isNegativeFailAssertion,
   isStatusCodeOracle,
   hasCaptureThenAssert,
+  isCaptureNegativeThenAssert,
+  isCommentLine,
   isAggregateDbProbeWithoutWindow,
   formatGateReport,
   RULES,
@@ -195,6 +197,135 @@ describe('cheat/or-true — 负向测试（预期失败）惯用法不误伤', (
     expect(isNegativeFailAssertion('cmd && { echo x; exit 0; } || true')).toBe(false);
     // 无 && {...} 块的真吞错 → 不豁免
     expect(isNegativeFailAssertion('assert_output || true')).toBe(false);
+  });
+});
+
+describe('缺陷 A：注释行不参与作弊/弱 oracle 扫描', () => {
+  it('生产 fixture（run da418741）：注释行含 || true 字样不命中，验收脚本干净 → ok=true', async () => {
+    const r = await runContractGate(path.join(FX, 'comment-or-true'));
+    expect(r.hits.map((h) => h.ruleId)).not.toContain('cheat/or-true');
+    expect(r.ok).toBe(true);
+  });
+
+  it('纯文本：行首 # 注释含 || true 不命中 or-true（被剥离）', () => {
+    const text = ['```bash', '# 这里 || true 只是说明，不是脚本', 'grep -q ok file', '```'].join(
+      '\n'
+    );
+    const r = evaluateContractText(text);
+    expect(r.hits.map((h) => h.ruleId)).not.toContain('cheat/or-true');
+  });
+
+  it('纯文本：行首 # 注释含 MOCK_X 不命中 mock-env（被剥离）', () => {
+    const text = ['```bash', '# 不要用 MOCK_X 注入假环境', 'node real.js && grep -q ok out'].concat(
+      '```'
+    ).join('\n');
+    const r = evaluateContractText(text);
+    expect(r.hits.map((h) => h.ruleId)).not.toContain('cheat/mock-env');
+  });
+
+  it('缩进注释（前导空白 + #）同样被剥离', () => {
+    const text = ['```bash', '    # test -f /tmp/x 只是注释里的例子', 'grep -q ok file', '```'].join(
+      '\n'
+    );
+    const r = evaluateContractText(text);
+    expect(r.hits.map((h) => h.ruleId)).not.toContain('weak-oracle/file-existence-only');
+  });
+
+  it('保守边界：真命令行尾部的 # 段不剥离（非行首 # 仍按原行判定，不放水）', () => {
+    // 行首是真命令（assert_output || true），# 注释在尾部 —— 仅做行首跳过，整行仍命中 or-true
+    const text = ['```bash', 'assert_output || true  # 说明文字', '```'].join('\n');
+    const r = evaluateContractText(text);
+    expect(r.hits.map((h) => h.ruleId)).toContain('cheat/or-true');
+  });
+
+  it('isCommentLine 精确性', () => {
+    expect(isCommentLine('# 注释')).toBe(true);
+    expect(isCommentLine('   # 缩进注释')).toBe(true);
+    expect(isCommentLine('grep -q ok file')).toBe(false);
+    expect(isCommentLine('echo "#hash" # tail')).toBe(false);
+  });
+});
+
+describe('缺陷 B：capture-negative-assert 捕获形态负向测试不误伤 or-true', () => {
+  it('生产 fixture（run da418741）：VAR=$(... || true) 捕获 + 下句对 $VAR 断言 → 无 or-true，ok=true', async () => {
+    const r = await runContractGate(path.join(FX, 'capture-negative-assert'));
+    expect(r.hits.map((h) => h.ruleId)).not.toContain('cheat/or-true');
+    expect(r.ok).toBe(true);
+  });
+
+  it('纯文本：捕获后 grep -q 断言（放行）', () => {
+    const text = [
+      '```bash',
+      'LOG=$(run_check 2>&1 || true)',
+      'echo "$LOG" | grep -q "expected error" || { echo FAIL; exit 1; }',
+      '```',
+    ].join('\n');
+    const r = evaluateContractText(text);
+    expect(r.hits.map((h) => h.ruleId)).not.toContain('cheat/or-true');
+  });
+
+  it('纯文本：捕获后 [ 比较 ] 断言（放行）', () => {
+    const text = [
+      '```bash',
+      'OUT=$(maybe_fail || true)',
+      '[ -n "$OUT" ] || { echo FAIL; exit 1; }',
+      '```',
+    ].join('\n');
+    const r = evaluateContractText(text);
+    expect(r.hits.map((h) => h.ruleId)).not.toContain('cheat/or-true');
+  });
+
+  it('反例：裸 VAR=$(cmd || true) 后 K 行无断言 → 仍命中 or-true（不放水）', () => {
+    const text = ['```bash', 'LOG=$(run_check 2>&1 || true)', 'echo "done"', '```'].join('\n');
+    const r = evaluateContractText(text);
+    expect(r.hits.map((h) => h.ruleId)).toContain('cheat/or-true');
+  });
+
+  it('反例：裸 cmd || true（非捕获形态）→ 仍命中 or-true', () => {
+    const text = ['```bash', 'assert_output || true', 'echo "$X" | grep -q ok', '```'].join('\n');
+    const r = evaluateContractText(text);
+    expect(r.hits.map((h) => h.ruleId)).toContain('cheat/or-true');
+  });
+
+  it('反例：|| true 在捕获外（赋值后另一条 swallow）→ 仍命中 or-true', () => {
+    // BAR=$(baz) 捕获后另起 foo || true，|| true 不在 $() 内 → 不放行
+    const text = ['```bash', 'BAR=$(baz); foo || true', 'echo "$BAR" | grep -q ok', '```'].join(
+      '\n'
+    );
+    const r = evaluateContractText(text);
+    expect(r.hits.map((h) => h.ruleId)).toContain('cheat/or-true');
+  });
+
+  it('变量名精确匹配：捕获 LOG 却断言无关 $OTHER → 仍命中（防假放行）', () => {
+    const text = [
+      '```bash',
+      'LOG=$(run_check 2>&1 || true)',
+      'echo "$OTHER" | grep -q ok',
+      '```',
+    ].join('\n');
+    const r = evaluateContractText(text);
+    expect(r.hits.map((h) => h.ruleId)).toContain('cheat/or-true');
+  });
+
+  it('isCaptureNegativeThenAssert 精确性', () => {
+    const ll = [
+      { content: 'LOG=$(run 2>&1 || true)' },
+      { content: 'echo "$LOG" | grep -q err' },
+    ];
+    expect(isCaptureNegativeThenAssert('LOG=$(run 2>&1 || true)', { logicalLines: ll, index: 0 })).toBe(
+      true
+    );
+    // 非捕获形态
+    expect(isCaptureNegativeThenAssert('cmd || true', { logicalLines: [], index: 0 })).toBe(false);
+    // 无 ctx
+    expect(isCaptureNegativeThenAssert('LOG=$(run || true)', undefined)).toBe(false);
+    // || true 在捕获外
+    expect(
+      isCaptureNegativeThenAssert('BAR=$(baz); foo || true', {
+        logicalLines: [{ content: 'BAR=$(baz); foo || true' }, { content: 'echo "$BAR" | grep -q ok' }],
+        index: 0,
+      })
+    ).toBe(false);
   });
 });
 
