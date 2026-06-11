@@ -1,18 +1,19 @@
-# PRD — h14 账号池回归测试对齐 account1 已回池
+# PRD — skill-drift 端点尊重 process.env.REPO_ROOT（修生产 snapshot_version 全 null）
 
 ## 背景
 
-`tests/brain/h14-remove-account3.test.js` 断言 account-usage.js 的 ACCOUNTS 数组「仅 account2（不含 account1/account3）」。但 account1 凭据已恢复（account-usage.js 行内注释「account1 凭据已恢复(Jun 2026)，与 account2 轮换」；当日运行日志 account-usage 在 account1/account2 间轮换；用户 memory ai-accounts 亦记 account1/2 为有效账号、account3 未充值不派）。实际数组已是 `['account1','account2']`，导致该断言 stale 失败。
+刚 merge 的 #3338 `GET /api/brain/harness/skill-drift` 在生产容器里 6 个 skill 的 `snapshot_version` 全 null、`any_drift` 恒 true。根因：snapshotDir 默认 `join(REPO_ROOT, 'packages','workflows','skills')`，而模块级 `REPO_ROOT = new URL('../../../..', import.meta.url)` 由模块路径算 → Brain 镜像里是 `/app`，`/app` 下无 packages/workflows（docker exec 实证）。但 deploy（docker-compose.yml）已把宿主 repo 以绝对路径挂进容器（line 34/54）并设 env `REPO_ROOT=/Users/administrator/perfect21/cecelia`（line 85）；SSOT 侧之所以正常，是因为它走 `homedir()`（Dockerfile ENV HOME 对齐宿主）→ 命中挂载。
 
-## 决策依据（team-lead，2026-06-11）
+## 方案选择
 
-account1 应在池里；该测试本意是「禁 account3（org 禁用）」，断言「仅 account2」是 stale。对齐为 `['account1','account2']`，保留禁 account3 的本意。
+team-lead 给①部署注入 SKILLS_SNAPSHOT_DIR / ②代码 fallback 二选一。采用**代码侧、复用现成 env 惯例**：`process.env.REPO_ROOT || 模块计算值`——这是仓库既有惯例（zombie-cleaner.js / emergency-cleanup.js / startup-recovery.js 都这么写），且 deploy 已设好该 env + 挂载，无需改部署配置、无硬编码路径，比硬编码挂载绝对路径更干净。
 
 ## 范围
 
-只改 `tests/brain/h14-remove-account3.test.js` 的 account-usage.js 那条断言（account1 应在、account3 不在、account2 在）+ 同步更新 header/describe 叙述。另两条（credentials-health-scheduler.js / credential-expiry-checker.js = [account2]）不动（各自范围未含 account1，且测试通过）。不改任何 src。
+`packages/brain/src/routes/harness.js` 的 `/skill-drift`：snapshotDir 默认从 `process.env.REPO_ROOT || REPO_ROOT` 派生。其余不动。
 
 ## 成功标准
 
-- h14 测试 3 条全绿，守护的不变量变为「account3 永不在任何池里」。
-- account-usage.js 断言：含 account1、含 account2、不含 account3。
+- 容器内（REPO_ROOT env 指向已挂载宿主 repo）snapshot_version 读到非 null。
+- SKILLS_SNAPSHOT_DIR 显式覆盖仍优先；本地无 env 时回退模块计算值（本地/CI 正常）。
+- 部署后 curl 端点：snapshot_version 全非 null 且 any_drift=false（当前 SSOT 与快照版本一致）。
