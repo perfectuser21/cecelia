@@ -30,6 +30,8 @@ import {
 } from '@langchain/langgraph';
 import { fetchAndShowOriginFile } from '../lib/git-fence.js';
 import { verifyContractProposerOutput } from '../lib/contract-verify.js';
+// P1 治本：GAN 收敛（reviewer APPROVED）前置跑同一确定性 Contract Gate（#3348 共享库，禁复制）。
+import { evaluateContractText, formatGateReport } from '../lib/contract-gate.js';
 import { LLM_RETRY } from './retry-policies.js';
 import { loadSkillContent, readBrainResult, ReviewerOutputSchema } from '../harness-shared.js';
 import { makeSessionRecord as _makeSessionRecord } from '../harness-session-bridge.js';
@@ -684,6 +686,38 @@ export function createGanContractNodes(executor, ctx) {
       };
     }
 
+    // P1 治本：reviewer 判 APPROVED 后、GAN 退出之前，对合同产物跑同一确定性 Contract Gate
+    // （#3348 共享库）。命中 = 合同含弱断言/作弊/缺工具的硬红线 → 不退出 GAN，verdict 改 REVISION，
+    // 把命中清单作为 feedback 拼进下一轮 proposer 输入（走现有 REVISION 回环），proposer 修合同。
+    // 这样弱合同根本到不了 generator（治本）。gate 命中是确定性反馈（行号+规则名），proposer
+    // 一两轮内应修掉——GAN 无轮数上限是刻意设计，但 gate 命中不是轮数问题。
+    // gate 执行异常 → fail-open，不阻塞 GAN 收敛（语义判断仍归 reviewer）。
+    // 只对确定性红线（作弊/弱断言/缺工具/域规则）拦截，排除 structural/no-assertion 元规则：
+    // GAN 阶段合同的验收脚本可能在外部 tests/ 文件里（contract-draft.md 不内联 bash），
+    // 此时 structural/no-assertion 是格式误报；"无可验收断言"由 evaluator 阶段读 contract-dod.md 兜底。
+    let gateFeedback = '';
+    if (verdict === 'APPROVED' && state.contractContent) {
+      try {
+        const cg = evaluateContractText(state.contractContent);
+        const blockHits = (cg.hits || []).filter(
+          (h) => !h.exempted && h.ruleId !== 'structural/no-assertion'
+        );
+        const blockEnv = (cg.envMissing || []).filter((e) => !e.exempted);
+        if (blockHits.length || blockEnv.length) {
+          const report = formatGateReport(
+            { hits: blockHits, exemptions: [], envMissing: blockEnv },
+            `${sprintDir}/contract-draft.md`
+          ).slice(0, 1200);
+          gateFeedback =
+            '## 确定性 Contract Gate 命中（合同硬红线，必须修复，非主观意见）\n' + report;
+          console.warn(`[harness-gan] round=${currentRound} Contract Gate 命中 → 不退出 GAN，verdict 改 REVISION 打回 proposer 修合同：\n${gateFeedback}`);
+          verdict = 'REVISION';
+        }
+      } catch (gateErr) {
+        console.warn(`[harness-gan] Contract Gate 执行异常（fail-open，不阻塞收敛）：${gateErr.message}`);
+      }
+    }
+
     const patch = {
       costUsd: costAfterSpawn,
       verdict,
@@ -691,7 +725,10 @@ export function createGanContractNodes(executor, ctx) {
       reviewerNoVerdictStreak: noVerdictStreak,
     };
     if (newHistoryEntry) patch.rubricHistory = [newHistoryEntry];
-    if (verdict !== 'APPROVED') patch.feedback = resultData.feedback || '';
+    // verdict 非 APPROVED 时回传 feedback：gate 命中清单优先（确定性红线），再拼 reviewer 散文反馈。
+    if (verdict !== 'APPROVED') {
+      patch.feedback = [gateFeedback, resultData.feedback].filter(Boolean).join('\n\n') || '';
+    }
     return patch;
   }
 
