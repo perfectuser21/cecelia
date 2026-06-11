@@ -37,11 +37,16 @@ export const RULES = [
   {
     id: 'weak-oracle/curl-no-jq',
     description: 'curl 取响应却无 jq -e 值校验',
-    // 放行两类合法 oracle：
+    // 放行三类合法 oracle：
     //  - 同一逻辑语句含 jq -e（含反斜杠续行多行 pipeline，预处理已归一为单逻辑行）
     //  - 状态码 oracle：curl -w %{http_code} 捕获状态码 + 后续码断言（body 刻意丢弃，jq 不适用）
-    detect: (line) =>
-      /\bcurl\b/.test(line) && !/\bjq\s+-e\b/.test(line) && !isStatusCodeOracle(line),
+    //  - capture-then-assert：VAR=$(curl ...) 捕获响应，后续 K 条逻辑语句内对 $VAR 施加
+    //    jq -e / grep -q / [ 比较 / case 值断言（跨语句 oracle，见 hasCaptureThenAssert）
+    detect: (line, ctx) =>
+      /\bcurl\b/.test(line) &&
+      !/\bjq\s+-e\b/.test(line) &&
+      !isStatusCodeOracle(line) &&
+      !hasCaptureThenAssert(line, ctx),
     feedback: ({ line }) =>
       `第 ${line} 行 curl 取响应但未 jq -e 校验字段值——加 | jq -e '.field == ...'`,
   },
@@ -86,14 +91,13 @@ export const RULES = [
   },
   {
     id: 'domain/db-no-time-window',
-    description: '声明 DB 写入但 SELECT 无 created_at > NOW()-interval 时间窗',
-    detect: (line) =>
-      /\bpsql\b/.test(line) &&
-      /\b(SELECT|count)\b/i.test(line) &&
-      !/\binterval\b/i.test(line) &&
-      !/NOW\s*\(\s*\)/i.test(line),
+    description: '聚合/存在性探测 SELECT 无 created_at > NOW()-interval 时间窗（拿历史冒充本轮产出）',
+    // 只作用于【聚合/计数】或【无主键等值的存在性探测】SELECT（见 isAggregateDbProbeWithoutWindow）。
+    // 定点读（WHERE id/uuid 等值）+ INSERT/UPDATE/DELETE 写语句不命中——它们读/写确定行，无历史冒充面。
+    detect: (line) => isAggregateDbProbeWithoutWindow(line),
     feedback: ({ line }) =>
-      `第 ${line} 行 DB 计数缺时间窗——加 AND created_at > NOW() - interval '5 minutes'`,
+      `第 ${line} 行 DB 聚合/存在性探测缺时间窗——加 AND created_at > NOW() - interval '5 minutes'` +
+      `（定点读 WHERE id=... 不需要；若确为定点读被误判可 gate-allow 豁免）`,
   },
 ];
 
@@ -155,6 +159,88 @@ export function isNegativeFailAssertion(line) {
 export function isStatusCodeOracle(line) {
   if (typeof line !== 'string') return false;
   return /(?:-w|--write-out)\b/.test(line) && /%\{http_code\}/.test(line);
+}
+
+// 在命令替换/反引号捕获中提取被赋值的变量名（仅认 `VAR=$(...)` / `VAR="$(...)"` / `VAR=`...``）。
+// 赋值无空格（`VAR=$(`），与 `[ "$X" = v ]` 的带空格比较 `=` 天然区分，不误取。
+function captureAssignVar(line) {
+  if (typeof line !== 'string') return null;
+  const m = line.match(/(?:^|[\s;&|(])([A-Za-z_]\w*)=(?:"?\$\(|`)/);
+  return m ? m[1] : null;
+}
+
+// 某逻辑语句是否对 $VAR 施加了【值断言】：引用 $VAR/"$VAR"/${VAR} 且含
+// jq -e / grep -q / [ 或 [[ 比较 / case / test 之一（变量名精确匹配，防"捕获 A 断言 B"假放行）。
+function isValueAssertionOnVar(stmt, varName) {
+  if (typeof stmt !== 'string') return false;
+  const ref = new RegExp(`\\$\\{?${varName}\\b`);
+  if (!ref.test(stmt)) return false;
+  return (
+    /\bjq\s+-e\b/.test(stmt) ||
+    /\bgrep\s+-\w*q/.test(stmt) ||
+    /\[\[?\s/.test(stmt) ||
+    /\bcase\b/.test(stmt) ||
+    /\btest\s+-?\w/.test(stmt)
+  );
+}
+
+/**
+ * capture-then-assert 跨语句 oracle 识别（curl-no-jq 放行第三类）。
+ *
+ * 形态：`RESP=$(curl ...)` 捕获响应（本语句可能只做失败传播 `|| { echo FAIL; exit 1; }`，
+ * 无值断言），其后【K 条逻辑语句】内对【同名】 $RESP 施加 jq -e / grep -q / [ 比较 / case 值断言。
+ * 这是合法的 oracle，只是值校验落在捕获语句的下一条逻辑语句 → curl-no-jq 不应误报。
+ *
+ * 变量名精确匹配：只认对【同一变量】的断言，杜绝"捕获 RESP 却断言无关 X"的假放行。
+ * 找不到（裸 `RESP=$(curl)` 后 K 行无断言）→ 返回 false，curl-no-jq 照常命中（不放水）。
+ *
+ * @param {string} line  当前逻辑语句内容
+ * @param {{logicalLines?:{content:string}[], index?:number, K?:number}} [ctx]  归一后的逻辑语句序列 + 当前下标
+ * @returns {boolean}  true=跨语句断言成立（放行）
+ */
+export function hasCaptureThenAssert(line, ctx) {
+  if (!ctx || !Array.isArray(ctx.logicalLines)) return false;
+  const varName = captureAssignVar(line);
+  if (!varName) return false; // 非 VAR=$(curl) 捕获形态 → 不适用本放行
+  const K = typeof ctx.K === 'number' ? ctx.K : 5;
+  const start = (typeof ctx.index === 'number' ? ctx.index : -1) + 1;
+  const end = Math.min(ctx.logicalLines.length, start + K);
+  for (let i = start; i < end; i++) {
+    const stmt = ctx.logicalLines[i] && ctx.logicalLines[i].content;
+    if (typeof stmt !== 'string') continue;
+    if (/gate-allow:/.test(stmt)) continue; // 元数据行不算断言
+    if (isValueAssertionOnVar(stmt, varName)) return true;
+  }
+  return false;
+}
+
+/**
+ * DB 时间窗规则的判定（按断言意图分型，不用句法特征当意图）。
+ *
+ * 时间窗的本意：防"拿历史数据冒充本轮产出"。只有【会扫到历史行】的断言才需要时间窗：
+ *  - 聚合/计数：count(*) / sum / avg / min / max → 必命中（即便带 WHERE，仍跨历史聚合）
+ *  - 无主键等值约束的存在性探测 SELECT（如 `SELECT 1 FROM t WHERE status='sent'`）→ 命中
+ * 不需要时间窗（放行）：
+ *  - 定点读：`SELECT col FROM t WHERE id=... / uuid=... / *_id=...`（读确定的一行，无冒充面）
+ *  - INSERT / UPDATE / DELETE 写语句（含 RETURNING）：写确定行，不查历史
+ *  - 已带 interval / NOW() 时间窗
+ * 边界拿不准（非聚合、无主键等值）→ 保守命中（fail-closed），作者用 gate-allow 兜底。
+ *
+ * @param {string} line  单条逻辑语句
+ * @returns {boolean}  true=命中 domain/db-no-time-window
+ */
+export function isAggregateDbProbeWithoutWindow(line) {
+  if (typeof line !== 'string') return false;
+  if (!/\bpsql\b/.test(line)) return false;
+  if (/\binterval\b/i.test(line) || /NOW\s*\(\s*\)/i.test(line)) return false; // 已有时间窗
+  if (!/\bSELECT\b/i.test(line)) return false; // 仅读语句；纯写（INSERT...RETURNING）无 SELECT，放行
+  // 聚合/计数：即便同句含写或带 WHERE，聚合读仍跨历史 → 必命中（优先于写语句放行）
+  if (/\b(?:count|sum|avg|min|max)\s*\(/i.test(line)) return true;
+  // 纯写语句（无聚合读）：写确定行，不查历史 → 放行
+  if (/\b(?:INSERT|UPDATE|DELETE)\b/i.test(line)) return false;
+  // 非聚合 SELECT：主键等值定点读放行；否则（无主键等值的存在性探测）保守命中
+  const hasPkEquality = /\bWHERE\b[\s\S]*?\b(?:id|uuid|\w+_id)\s*=\s*\S/i.test(line);
+  return !hasPkEquality;
 }
 
 /** 解析 gate-allow 行 → { ruleId, reason }（合同显式豁免单条规则的逃生口）。 */
@@ -267,13 +353,17 @@ export function evaluateContractText(text, opts = {}) {
   const hits = [];
   const envMissing = [];
 
-  for (const { content: line, lineNo } of logicalLines) {
+  for (let idx = 0; idx < logicalLines.length; idx++) {
+    const { content: line, lineNo } = logicalLines[idx];
     // gate-allow 行本身不参与规则检测（它是元数据，不是验收脚本）
     if (/gate-allow:/.test(line)) continue;
     const excerpt = line.trim().slice(0, 160);
 
+    // 跨语句规则（如 curl-no-jq 的 capture-then-assert）需要后续逻辑语句上下文
+    const ctx = { logicalLines, index: idx };
+
     for (const rule of RULES) {
-      if (rule.detect(line)) {
+      if (rule.detect(line, ctx)) {
         hits.push({
           ruleId: rule.id,
           line: lineNo,
