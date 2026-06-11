@@ -127,6 +127,8 @@ export default defineConfig({
       '../../sprints/cecelia-sprint-visibility-0528/tests/ws3/sprint-docs.test.ts',
       // Sprint Tests (ws5): 使用 process.cwd() 相对路径，brain-unit 从 packages/brain 运行时路径错误 → 走 Sprint Tests CI
       '../../sprints/cecelia-sprint-visibility-0528/tests/ws5/dead-task-reset.test.ts',
+      // Sprint Tests (skill-drift-patrol): 使用 readFileSync('packages/brain/...') 相对路径，brain-unit CWD=packages/brain 路径错误 → 走 Sprint Tests CI
+      '../../sprints/06111220-skill-drift-patrol/tests/skill-drift-patrol.test.ts',
       // Pre-existing failures: wrong import paths (../../brain/src/ instead of ../../packages/brain/src/)
       // Added to exclude list in skill-repo-decouple PR (not caused by this PR)
       '../../tests/alertness/diagnosis.test.js',
