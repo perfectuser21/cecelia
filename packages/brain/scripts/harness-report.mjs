@@ -186,6 +186,14 @@ export async function upsertRegistries(taskId, opts = {}) {
 
 // ─── CLI 入口（仅在直接执行时运行）────────────────────────────────────────────
 
+// psql -t 在部分 PG 版本下仍输出 "INSERT 0 1" 行，导致 UUID 参数含噪声后缀
+// 例如 "uuid\n\nINSERT01\n"。本函数提取第一个合法 UUID，否则 trim() 兜底。
+const sanitizeUUID = (val) => {
+  if (!val) return val;
+  const match = val.match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i);
+  return match ? match[0] : val.trim();
+};
+
 async function main() {
   // ── 参数解析 ──────────────────────────────────────────────────────────────
   const args = process.argv.slice(2);
@@ -195,9 +203,9 @@ async function main() {
   };
 
   const sprintDir = get('--sprint-dir');
-  const taskId = get('--task-id');
+  const taskId = sanitizeUUID(get('--task-id'));
   const prUrl = get('--pr-url');
-  const featureId = get('--feature-id');
+  const featureId = sanitizeUUID(get('--feature-id'));
 
   if (!sprintDir || !taskId || !prUrl || !featureId) {
     process.stderr.write(
