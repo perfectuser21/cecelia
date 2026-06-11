@@ -1392,7 +1392,27 @@ export async function reportNode(state, opts = {}) {
   } catch (err) {
     console.warn(`[harness-initiative.graph] reportNode db update failed: ${err.message}`);
   }
-  // 派 harness_report 子任务（6 步交付：Notion / 飞书 / harness-report.md）
+  // 优先调 harness-report.mjs 脚本执行机械回写（Brain API + 报告文件生成）
+  // 需 sprint_dir + feature_id + pr_url；任一缺失时跳过（非阻断）
+  const sprintDir = state.sprintDir || state.task?.payload?.sprint_dir;
+  const featureId = state.task?.payload?.feature_id;
+  const prUrl = (state.sub_tasks || [])[0]?.pr_url || state.task?.payload?.pr_url || '';
+  if (sprintDir && featureId && state.initiativeId) {
+    try {
+      const { generateReportFiles, patchFeatureDone, upsertRegistries } = await import('../../scripts/harness-report.mjs');
+      await generateReportFiles(sprintDir, { taskId: state.initiativeId, prUrl });
+      await patchFeatureDone(featureId).catch(err =>
+        console.warn(`[reportNode] harness-report.mjs patchFeatureDone non-fatal: ${err.message}`)
+      );
+      await upsertRegistries(state.initiativeId).catch(err =>
+        console.warn(`[reportNode] harness-report.mjs upsertRegistries non-fatal: ${err.message}`)
+      );
+      console.log(`[reportNode] harness-report.mjs 机械回写完成 initiative=${state.initiativeId}`);
+    } catch (err) {
+      console.warn(`[reportNode] harness-report.mjs 调用失败（非阻断）: ${err.message}`);
+    }
+  }
+  // 派 harness_report 子任务（Phase B：Notion / 飞书 通知）
   try {
     await dbPool.query(
       `INSERT INTO tasks (title, description, task_type, status, priority, payload)
