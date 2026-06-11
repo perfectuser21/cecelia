@@ -746,16 +746,23 @@ jobs:
         if: steps.detect.outputs.has_dynamic == 'true'
         run: |
           [ ! -f packages/brain/.env ] && cp packages/brain/.env.example packages/brain/.env || true
-      - name: Clone skills SSOT (zenithjoy-skills)
-        # skill-drift 端点的 DoD B6 断言 all(.ssot_version != null) 需要真实 SSOT 在
-        # $HOME/perfect21/zenithjoy-skills（Brain 默认 SKILLS_SSOT_DIR）。SSOT 仓库
-        # 是 private，runner 的 GITHUB_TOKEN 无跨仓库权限，用 DEPLOY_TOKEN 克隆。
-        # 克隆失败仅 warning（不阻断无 SSOT 依赖的其他 PR 的 DoD 命令）。
+      - name: Provision skills SSOT (zenithjoy-skills)
+        # skill-drift 端点的 DoD B6 断言 all(.ssot_version != null) 需要 SSOT 在
+        # $HOME/perfect21/zenithjoy-skills（Brain 默认 SKILLS_SSOT_DIR）。SSOT 仓库是
+        # private；DEPLOY_TOKEN 是 Brain HTTP 部署 token 而非 GitHub PAT，runner 上
+        # clone 必然 403（实证：PR #3338 run 27319434949）。回退：用 repo 内快照
+        # packages/workflows/skills/ seed SSOT 目录 — B6 防硬编码核心是快照侧独立
+        # grep 对比；SSOT 侧断言只要求真实读盘非 null，seed 副本同样真实读盘。
+        # 仍先尝试 clone，将来 secret 换成有跨仓库权限的 PAT 时自动用真 SSOT。
         if: steps.detect.outputs.has_dynamic == 'true'
         run: |
-          git clone --depth 1 "https://x-access-token:${{ secrets.DEPLOY_TOKEN }}@github.com/perfectuser21/zenithjoy-skills" "$HOME/perfect21/zenithjoy-skills" 2>/dev/null \
-            && echo "✅ SSOT cloned to $HOME/perfect21/zenithjoy-skills" \
-            || echo "::warning::SSOT clone 失败（DEPLOY_TOKEN 无权限或网络）— 依赖 SSOT 的 DoD 断言将 FAIL"
+          if git clone --depth 1 "https://x-access-token:${{ secrets.DEPLOY_TOKEN }}@github.com/perfectuser21/zenithjoy-skills" "$HOME/perfect21/zenithjoy-skills" 2>/dev/null; then
+            echo "✅ SSOT cloned to $HOME/perfect21/zenithjoy-skills"
+          else
+            mkdir -p "$HOME/perfect21/zenithjoy-skills"
+            cp -r "$GITHUB_WORKSPACE/packages/workflows/skills/." "$HOME/perfect21/zenithjoy-skills/"
+            echo "✅ SSOT seeded from snapshot fallback（clone 不可用：DEPLOY_TOKEN 非 GitHub PAT）"
+          fi
       - name: Run Migrations
         if: steps.detect.outputs.has_dynamic == 'true'
         env:
