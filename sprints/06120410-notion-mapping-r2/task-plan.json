@@ -1,0 +1,34 @@
+{
+  "initiative_id": "cf4f596c-fa2b-48f2-ba7b-9969557c85a4",
+  "journey_type": "autonomous",
+  "journey_type_reason": "全程 packages/brain/ 后端路由 + 定时同步修复，无 UI、无远端 agent 协议",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "Notion 属性映射修复：新建 notion-property-map.js + 三处路由切换新属性名 + 添加 warnings 响应",
+      "scope": "1. 新建 packages/brain/src/notion-property-map.js，导出 NOTION_PROPERTY_MAP（各 DB 当前属性清单，标注 2026-06-11 查询日期；notionTask.allowedKeys 不含 Status）和 stripUnknownProperties(properties, allowedKeys) 函数，返回 { props, warnings }；2. 修复 routes/notes.js POST /api/brain/notes：移除 'Initiative ID' 属性，调用 stripUnknownProperties，response 添加 warnings 字段（initiative_id 仍写 Brain DB）；3. 修复 routes/notes.js POST /api/brain/notion/task：将 Title 属性改为 Name（Tasks DB 真实属性名），response 添加 warnings 字段；4. 修复 notion-push-sync.js pushJourneyStepLinks：移除 Order 属性（Step Links DB 已删除该属性）；5. 更新 packages/brain/src/routes/notes.test.js 三处断言：:51 改四字段含 warnings，:65 将 Initiative ID toBeDefined 反转为 not.toHaveProperty，:137 改四字段含 warnings（这三处在修代码前 RED，修后 GREEN，必须 commit）",
+      "dod": [
+        "[ARTIFACT] packages/brain/src/notion-property-map.js 文件存在，导出 NOTION_PROPERTY_MAP 和 stripUnknownProperties",
+        "[ARTIFACT] notion-push-sync.js pushJourneyStepLinks 函数体不含旧属性 Order: { ... }（精确正则匹配）",
+        "[ARTIFACT] routes/notes.js POST /api/brain/notes handler 不含硬编码 'Initiative ID'（精确路由体提取）",
+        "[ARTIFACT] routes/notes.js POST /api/brain/notion/task handler 用 Name: { ... } 不用 Title: { ... }",
+        "[BEHAVIOR] POST /api/brain/notes 返回 201 + id(string) + url(string) + title(string) + warnings(array)",
+        "[BEHAVIOR] POST /api/brain/notes 响应顶层 keys 完全等于 ['id','title','url','warnings']",
+        "[BEHAVIOR] POST /api/brain/notion/task 返回 201 + id(string) + url(string) + title([WS1]前缀) + warnings(array) + keys完整性(['id','title','url','warnings'])",
+        "[BEHAVIOR] POST /api/brain/notes 带未知属性 → 2xx + warnings 非空，含跳过说明",
+        "[BEHAVIOR] POST /api/brain/notes 缺 title → 400 + error(string)",
+        "[BEHAVIOR] POST /api/brain/notes 带 initiative_id → DB notes.initiative_id 非 null（5分钟时间窗口）",
+        "[BEHAVIOR] pushJourneyStepLinks 函数体精确静态断言：不含 Order: 属性定义（/\\bOrder\\s*:\\s*\\{/ = false）"
+      ],
+      "files": [
+        "packages/brain/src/notion-property-map.js",
+        "packages/brain/src/routes/notes.js",
+        "packages/brain/src/notion-push-sync.js",
+        "packages/brain/src/routes/notes.test.js"
+      ],
+      "depends_on": [],
+      "complexity": "M",
+      "estimated_minutes": 60
+    }
+  ]
+}
