@@ -249,7 +249,6 @@ async function pushJourneyStepLinks(pool, token) {
       const properties = {
         Name:   { title: [{ text: { content: `${l.journey_name} — ${l.step_name}` } }] },
         Status: { select: { name: l.status || 'planned' } },
-        Order:  { number: l.step_order },
       };
       if (l.journey_notion_id) {
         properties['Journey'] = { relation: [{ id: l.journey_notion_id }] };

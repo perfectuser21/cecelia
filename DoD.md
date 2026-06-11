@@ -1,32 +1,80 @@
-# Contract DoD — Contract Gate 规则进化 R4（注释行不参与作弊扫描 + capture-negative-assert 放行）
+contract_branch: cp-06120706-ws-cf4f596c-ws1
+sprint_dir: sprints/06120410-notion-mapping-r2
 
-**范围**: 细化 `cheat/or-true`（新增第二类放行：捕获形态负向测试 `VAR=$(... || true)` + 跨语句对同名 $VAR 断言，新增 `isCaptureNegativeThenAssert` 识别器，复用 #3357 的 `hasCaptureThenAssert`）+ 扫描器前置剥离纯注释行（新增 `isCommentLine`，行首 `#` 跳过，evaluate 循环对纯注释逻辑语句不跑任何规则/env 扫描）+ 新增 `comment-or-true`/`capture-negative-assert` 两个生产实证 fixture + 单测。不含改其它规则、改 GAN 轮数策略、改路由、UI。复用 #3348/#3350/#3351/#3353/#3357 gate 库。
-**大小**: S
+---
+skeleton: false
+journey_type: autonomous
+---
+# Contract DoD — Sprint: Brain↔Notion 属性映射修复（R2 重发）
 
-## 背景
+**范围**: routes/notes.js + notion-push-sync.js 三处属性名修复 + 新增 notion-property-map.js 统一剔除+warn 模块
+**大小**: M
 
-`#3357` 把 capture-then-assert 跨语句 oracle 接入 curl-no-jq 后，生产 run da418741（ci-defense-r2 合同）又实证两个钝点，致正确合同被 cheat/or-true 误报、GAN 烧轮次：
+---
 
-- **缺陷 A — 注释行参与作弊扫描**：`# 必须非零退出（上面 || true 是因为要捕获 log；用 echo 验返回）` 纯注释行（首个非空白字符为 `#`）里出现 `|| true` 字样，被 cheat/or-true 命中。注释是写给人看的说明，不是验收脚本，绝不该参与任何规则扫描。
-- **缺陷 B — 负向测试的捕获形态**：`TAMPER_LOG=$(... npx vitest run ... 2>&1 || true)` 把【预期失败】命令的输出捕获进变量，末尾 `|| true` 仅落在命令替换 `$( )` 内部（只为让命令替换不因预期失败而中断），随后 `echo "$TAMPER_LOG" | grep -q "FAIL.*env_missing"` 对同名 $VAR 施加断言——与 #3351 的单语句负向断言同语义，却被 cheat/or-true 误报。
+## ARTIFACT 条目
 
-## 成功标准
+- [x] [ARTIFACT] 新文件 `packages/brain/src/notion-property-map.js` 存在且导出 `stripUnknownProperties` 函数和 `NOTION_PROPERTY_MAP` 对象
+  Test: node -e "const c=require('fs').readFileSync('packages/brain/src/notion-property-map.js','utf8'); if(!c.includes('stripUnknownProperties') || !c.includes('NOTION_PROPERTY_MAP')) process.exit(1); console.log('OK')"
 
-- 纯注释行（行首 `#`，含缩进）一律不参与任何 cheat/weak-oracle/env 规则扫描；保守只做【行首 `#`】跳过，真命令行尾部的 `#` 段不剥离（避免误把真命令当注释放水）。
-- `VAR=$( <预期失败命令> || true)` 捕获形态 + 后续【K=5 条逻辑语句内】对【同名】 $VAR 施加 grep -q / jq -e / [ 比较 / case 值断言 → 不再命中 `cheat/or-true`（缺陷 B 消除）。
-- 三重收口防放水：必须是 `VAR=$(...)` 捕获形态、`|| true` 必须落在命令替换内部（赋值之外的另一条 swallow 不放行）、后续 K 条逻辑语句内对同名 $VAR 有断言（裸捕获后无断言仍命中、裸 `cmd || true` 仍命中、断言无关变量仍命中）。
-- contract-gate 既有全部 13 fixtures/单测一个不松动；wiring/converge 测试绿。
+- [x] [ARTIFACT] `packages/brain/src/routes/notes.js` /notes 路由不含旧属性 `Initiative ID`（精确路由体提取）
+  Test: node -e "const src=require('fs').readFileSync('packages/brain/src/routes/notes.js','utf8'); const s=src.indexOf(\"router.post('/notes'\"); if(s<0){console.error('FAIL: /notes 路由未找到');process.exit(1);} const e=src.indexOf('\nrouter.',s+1); const body=src.slice(s,e>0?e:undefined); if(body.includes(\"'Initiative ID'\")){console.error('FAIL: Initiative ID 仍在 /notes 路由');process.exit(1);} console.log('OK')"
 
-## BEHAVIOR 条目（被测 = 真实 packages/brain/src/lib/contract-gate.js；CI eval node 加载真实模块断言 + vitest 套件）
+- [x] [ARTIFACT] `packages/brain/src/routes/notes.js` /notion/task 路由使用 `Name` 属性（Tasks DB 真实 title 属性名），不含旧 `Title:`
+  Test: node -e "const src=require('fs').readFileSync('packages/brain/src/routes/notes.js','utf8'); const s=src.indexOf(\"router.post('/notion/task'\"); if(s<0){console.error('FAIL');process.exit(1);} const e1=src.indexOf('\nrouter.',s+1); const e2=src.indexOf('\nexport ',s+1); const end=e1>0?e1:(e2>0?e2:undefined); const body=src.slice(s,end); if(/\\bTitle\\s*:\\s*\\{/.test(body)){console.error('FAIL: 仍含 Title:');process.exit(1);} if(!/\\bName\\s*:\\s*\\{/.test(body)){console.error('FAIL: 缺 Name:');process.exit(1);} console.log('OK')"
 
-- [x] [BEHAVIOR] 缺陷 A：comment-or-true fixture 放行（注释里 || true 不命中），真命令行尾 # 段不放水
-  Test: manual:node -e "import('./packages/brain/src/lib/contract-gate.js').then(async m=>{const ok=await m.runContractGate('./packages/brain/src/lib/__tests__/fixtures/contract-gate/comment-or-true');if(ok.hits.map(h=>h.ruleId).includes('cheat/or-true'))process.exit(2);if(!ok.ok)process.exit(3);const t=['```bash','assert_output || true  # tail comment','```'].join(String.fromCharCode(10));const r=m.evaluateContractText(t);if(!r.hits.map(h=>h.ruleId).includes('cheat/or-true'))process.exit(4);console.log('OK')}).catch(e=>{console.error(e);process.exit(1)})"
+- [x] [ARTIFACT] `packages/brain/src/notion-push-sync.js` `pushJourneyStepLinks` 函数体不含旧 `Order:` 属性
+  Test: node -e "const src=require('fs').readFileSync('packages/brain/src/notion-push-sync.js','utf8'); const s=src.indexOf('async function pushJourneyStepLinks'); if(s<0){console.error('FAIL: 函数未找到');process.exit(1);} const e=src.indexOf('\nasync function ',s+1); const body=src.slice(s,e>0?e:undefined); if(/\\bOrder\\s*:\\s*\\{/.test(body)){console.error('FAIL: 仍含 Order:');process.exit(1);} console.log('OK')"
 
-- [x] [BEHAVIOR] 缺陷 A 精确性：isCommentLine 导出；行首 #（含缩进）为真、尾部 # 的真命令为假
-  Test: manual:node -e "import('./packages/brain/src/lib/contract-gate.js').then(m=>{const f=m.isCommentLine;if(typeof f!=='function')process.exit(2);if(f('# x')!==true)process.exit(3);if(f('   # y')!==true)process.exit(4);if(f('grep -q ok file')!==false)process.exit(5);if(f('echo hi # tail')!==false)process.exit(6);console.log('OK')}).catch(e=>{console.error(e);process.exit(1)})"
+---
 
-- [x] [BEHAVIOR] 缺陷 B：capture-negative-assert fixture 放行、裸捕获无断言反例仍命中
-  Test: manual:node -e "import('./packages/brain/src/lib/contract-gate.js').then(async m=>{const ok=await m.runContractGate('./packages/brain/src/lib/__tests__/fixtures/contract-gate/capture-negative-assert');if(ok.hits.map(h=>h.ruleId).includes('cheat/or-true'))process.exit(2);if(!ok.ok)process.exit(3);const L=String.fromCharCode(10);const D=String.fromCharCode(36);const bad=['```bash','LOG='+D+'(run 2>&1 || true)','echo done','```'].join(L);const r=m.evaluateContractText(bad);if(!r.hits.map(h=>h.ruleId).includes('cheat/or-true'))process.exit(4);console.log('OK')}).catch(e=>{console.error(e);process.exit(1)})"
+## BEHAVIOR 条目（内嵌 manual:bash，≥4 类场景）
 
-- [x] [BEHAVIOR] 缺陷 B 精确性：isCaptureNegativeThenAssert 导出；捕获内 || true + 同名断言放行、捕获外 swallow 不放行
-  Test: manual:node -e "import('./packages/brain/src/lib/contract-gate.js').then(m=>{const f=m.isCaptureNegativeThenAssert;if(typeof f!=='function')process.exit(2);const D=String.fromCharCode(36);const Q=String.fromCharCode(34);const cap='LOG='+D+'(run 2>&1 || true)';const ll=[{content:cap},{content:'[ -n '+Q+D+'LOG'+Q+' ]'}];if(f(cap,{logicalLines:ll,index:0})!==true)process.exit(3);const out='BAR='+D+'(baz) || true';const ol=[{content:out},{content:'[ -n '+Q+D+'BAR'+Q+' ]'}];if(f(out,{logicalLines:ol,index:0})!==false)process.exit(4);console.log('OK')}).catch(e=>{console.error(e);process.exit(1)})"
+- [x] [BEHAVIOR] POST /api/brain/notes（带 initiative_id）→ 201 + warnings array 非空（Initiative ID 剔除后留痕，warnings 必须 ≥1 条）
+  Test: manual:bash -c 'RESP=$(curl -sf -X POST localhost:5221/api/brain/notes -H "Content-Type: application/json" -d "{\"title\":\"dod-notes-warnings\",\"content\":\"body\",\"type\":\"Note\",\"initiative_id\":\"cf4f596c-fa2b-48f2-ba7b-9969557c85a4\"}") || { echo "FAIL: POST /api/brain/notes 非 2xx"; exit 1; }; echo "$RESP" | jq -e ".id | type == \"string\"" || { echo "FAIL: id 缺失"; exit 1; }; echo "$RESP" | jq -e ".warnings | type == \"array\"" || { echo "FAIL: warnings 缺失"; exit 1; }; echo "$RESP" | jq -e ".warnings | length >= 1" || { echo "FAIL: warnings 应非空（Initiative ID 剔除后应有留痕）"; exit 1; }; echo OK'
+  期望: OK
+
+- [x] [BEHAVIOR] POST /api/brain/notes 响应 schema 完整性：顶层 keys 必须完全等于 ["id","title","url","warnings"]，不多不少
+  Test: manual:bash -c 'RESP=$(curl -sf -X POST localhost:5221/api/brain/notes -H "Content-Type: application/json" -d "{\"title\":\"dod-schema\",\"content\":\"body\",\"type\":\"Note\"}") || exit 1; echo "$RESP" | jq -e "keys | sort == [\"id\",\"title\",\"url\",\"warnings\"]" || { echo "FAIL: schema keys 不符"; exit 1; }; echo OK'
+  期望: OK
+
+- [x] [BEHAVIOR] POST /api/brain/notion/task → 201 + id/url/title/warnings（Name 属性修复后无 502，含完整 schema 验证）
+  Test: manual:bash -c 'RESP=$(curl -sf -X POST localhost:5221/api/brain/notion/task -H "Content-Type: application/json" -d "{\"title\":\"dod-task-name\",\"ws_number\":1}") || { echo "FAIL: POST /api/brain/notion/task 非 2xx"; exit 1; }; echo "$RESP" | jq -e ".id | type == \"string\"" || { echo "FAIL: task.id 缺失"; exit 1; }; echo "$RESP" | jq -e ".warnings | type == \"array\"" || { echo "FAIL: task.warnings 缺失"; exit 1; }; echo OK'
+  期望: OK
+
+- [x] [BEHAVIOR] 源码精确断言：三处旧属性全移除（node 函数体提取，避免注释误匹配）
+  Test: manual:bash -c 'node -e "const src1=require(\"fs\").readFileSync(\"packages/brain/src/notion-push-sync.js\",\"utf8\"); const s1=src1.indexOf(\"async function pushJourneyStepLinks\"); const e1=src1.indexOf(\"\nasync function \",s1+1); const body1=src1.slice(s1,e1>0?e1:undefined); if(/\\bOrder\\s*:\\s*\\{/.test(body1)){console.error(\"FAIL: Order 仍存在\");process.exit(1);} const src2=require(\"fs\").readFileSync(\"packages/brain/src/routes/notes.js\",\"utf8\"); const s2=src2.indexOf(\"router.post(\\x27/notes\\x27\"); const e2=src2.indexOf(\"\nrouter.\",s2+1); const body2=src2.slice(s2,e2>0?e2:undefined); if(body2.includes(\"Initiative ID\")){console.error(\"FAIL: Initiative ID 仍存在\");process.exit(1);} const s3=src2.indexOf(\"router.post(\\x27/notion/task\\x27\"); const e3a=src2.indexOf(\"\nrouter.\",s3+1); const e3b=src2.indexOf(\"\nexport \",s3+1); const body3=src2.slice(s3,e3a>0?e3a:(e3b>0?e3b:undefined)); if(/\\bTitle\\s*:\\s*\\{/.test(body3)){console.error(\"FAIL: Title 仍存在\");process.exit(1);} if(!/\\bName\\s*:\\s*\\{/.test(body3)){console.error(\"FAIL: Name 缺失\");process.exit(1);} console.log(\"ALL_OK\");\"'
+  期望: ALL_OK
+
+- [x] [BEHAVIOR] notion-property-map.js 导出 stripUnknownProperties 函数语义正确（已知属性保留，未知属性剔除并写入 warnings）
+  Test: manual:bash -c 'node --input-type=module << JSEOF
+import { stripUnknownProperties } from "./packages/brain/src/notion-property-map.js";
+if (typeof stripUnknownProperties !== "function") { console.error("FAIL"); process.exit(1); }
+const { props, warnings } = stripUnknownProperties({ Title: { title: [] }, FakeField: { rich_text: [] } }, ["Title"]);
+if (!props.Title || props.FakeField) { console.error("FAIL: strip 逻辑错误"); process.exit(1); }
+if (!warnings.some(w => w.includes("FakeField"))) { console.error("FAIL: warnings 未记录"); process.exit(1); }
+console.log("OK");
+JSEOF'
+  期望: OK
+
+- [x] [BEHAVIOR] error path — POST /api/brain/notes 缺 title 返 400 + error 字段
+  Test: manual:bash -c 'CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST localhost:5221/api/brain/notes -H "Content-Type: application/json" -d "{\"content\":\"body\"}"); [ "$CODE" = "400" ] || { echo "FAIL: expected 400 got $CODE"; exit 1; }; echo OK'
+  期望: OK
+
+- [x] [BEHAVIOR] error path — POST /api/brain/notion/task 缺 title 返 400
+  Test: manual:bash -c 'CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST localhost:5221/api/brain/notion/task -H "Content-Type: application/json" -d "{}"); [ "$CODE" = "400" ] || { echo "FAIL: expected 400 got $CODE"; exit 1; }; echo OK'
+  期望: OK
+
+- [x] [BEHAVIOR] Brain DB notes 表在 5 分钟内有 initiative_id 对应记录（initiative_id 仍存 Brain DB，不因剔除 Notion 属性而丢失）
+  Test: manual:bash -c 'curl -sf -X POST localhost:5221/api/brain/notes -H "Content-Type: application/json" -d "{\"title\":\"dod-db\",\"content\":\"body\",\"type\":\"Note\",\"initiative_id\":\"cf4f596c-test\"}" >/dev/null; COUNT=$(psql "${DB:-postgresql://localhost/cecelia}" -t -c "SELECT count(*) FROM notes WHERE initiative_id='"'"'cf4f596c-test'"'"' AND created_at > NOW() - interval '"'"'5 minutes'"'"'" | tr -d '"'"' '"'"'); [ "${COUNT:-0}" -ge 1 ] || { echo "FAIL"; exit 1; }; echo OK'
+  期望: OK
+
+---
+
+## Risks
+
+| # | 风险描述 | Mitigation（已写入合同验证） |
+|---|---|---|
+| R1 | Notion API 网络超时 → Brain 500 | try-catch → HTTP 502 |
+| R2 | Notion schema 再次变更 | 属性名集中到 notion-property-map.js |
+| R3 | grep 误匹配注释 | node 函数体提取 + 精确正则 |

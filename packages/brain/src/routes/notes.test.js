@@ -48,7 +48,7 @@ describe('notes routes', () => {
         .post('/api/brain/notes')
         .send({ title: 'My Note', content: 'body', type: 'Note' });
       expect(res.status).toBe(201);
-      expect(Object.keys(res.body).sort()).toEqual(['id', 'title', 'url']);
+      expect(Object.keys(res.body).sort()).toEqual(['id', 'title', 'url', 'warnings']);
       expect(res.body.title).toBe('My Note');
     });
 
@@ -59,11 +59,10 @@ describe('notes routes', () => {
         .post('/api/brain/notes')
         .send({ title: 'Sprint Note', content: 'body', type: 'Report', initiative_id: iid });
       expect(res.status).toBe(201);
-      // Notion 调用携带 Initiative ID 属性
+      // Initiative ID 已从 AI Notes DB 移除，不应进入 Notion properties
       const notionCall = notionReq.mock.calls[0];
       const notionBody = notionCall[3];
-      expect(notionBody.properties['Initiative ID']).toBeDefined();
-      expect(notionBody.properties['Initiative ID'].rich_text[0].text.content).toBe(iid);
+      expect(notionBody.properties).not.toHaveProperty('Initiative ID');
       // DB 调用带 initiative_id 参数
       expect(pool.query).toHaveBeenCalledWith(
         expect.stringContaining('initiative_id'),
@@ -134,7 +133,7 @@ describe('notes routes', () => {
         .send({ title: '实现功能X', ws_number: 2 });
       expect(res.status).toBe(201);
       expect(res.body.title).toBe('[WS2] 实现功能X');
-      expect(Object.keys(res.body).sort()).toEqual(['id', 'title', 'url']);
+      expect(Object.keys(res.body).sort()).toEqual(['id', 'title', 'url', 'warnings']);
     });
 
     it('skips prefix if title already contains [WSn]', async () => {

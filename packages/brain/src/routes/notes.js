@@ -11,6 +11,7 @@
 import { Router } from 'express';
 import { notionReq, getToken } from '../recurring-notion-sync.js';
 import pool from '../db.js';
+import { NOTION_PROPERTY_MAP, stripUnknownProperties } from '../notion-property-map.js';
 
 // Notion DB IDs
 const AI_NOTES_DB = '185c40c2-ba63-828c-973f-81a9c4582cd6';
@@ -39,15 +40,17 @@ router.post('/notes', async (req, res) => {
 
   try {
     const token = getToken();
+    const rawProperties = {
+      Title: { title: [{ text: { content: title } }] },
+      ...(type && { Type: { select: { name: type } } }),
+    };
+    const { props: properties, warnings } = stripUnknownProperties(
+      rawProperties,
+      NOTION_PROPERTY_MAP.aiNotes.allowedKeys,
+    );
     const page = await notionReq(token, '/pages', 'POST', {
       parent: { database_id: AI_NOTES_DB },
-      properties: {
-        Title: { title: [{ text: { content: title } }] },
-        ...(type && { Type: { select: { name: type } } }),
-        ...(initiative_id && {
-          'Initiative ID': { rich_text: [{ type: 'text', text: { content: initiative_id } }] },
-        }),
-      },
+      properties,
       children: [{
         object: 'block',
         type: 'paragraph',
@@ -55,7 +58,7 @@ router.post('/notes', async (req, res) => {
       }],
     });
 
-    // 同步写入 Brain DB notes 表，保存 initiative_id 供查询
+    // 同步写入 Brain DB notes 表，initiative_id 仍存 Brain DB（不走 Notion）
     try {
       await pool.query(
         `INSERT INTO notes (title, content, type, initiative_id, owner)
@@ -63,11 +66,15 @@ router.post('/notes', async (req, res) => {
         [title, content, type || null, initiative_id || null],
       );
     } catch (dbErr) {
-      // DB 写入失败不阻断 Notion 成功响应，记录日志即可
       console.error('[POST /api/brain/notes] DB insert failed:', dbErr.message);
     }
 
-    return res.status(201).json({ id: page.id, url: page.url, title });
+    // initiative_id 被 Notion schema 剔除，留 warning 留痕
+    if (initiative_id) {
+      warnings.push(`skip: 'initiative_id' not in AI Notes DB schema (Brain DB only)`);
+    }
+
+    return res.status(201).json({ id: page.id, url: page.url, title, warnings });
   } catch (err) {
     console.error('[POST /api/brain/notes]', err.message);
     return res.status(502).json({ error: `notion api error: ${err.message}` });
@@ -127,9 +134,13 @@ router.post('/notion/task', async (req, res) => {
 
   try {
     const token = getToken();
-    const properties = {
-      Title: { title: [{ text: { content: fullTitle } }] },
+    const rawProperties = {
+      Name: { title: [{ text: { content: fullTitle } }] },
     };
+    const { props: properties, warnings } = stripUnknownProperties(
+      rawProperties,
+      NOTION_PROPERTY_MAP.notionTask.allowedKeys,
+    );
 
     const page = await notionReq(token, '/pages', 'POST', {
       parent: { database_id: TASKS_DB },
@@ -143,7 +154,7 @@ router.post('/notion/task', async (req, res) => {
       }),
     });
 
-    return res.status(201).json({ id: page.id, url: page.url, title: fullTitle });
+    return res.status(201).json({ id: page.id, url: page.url, title: fullTitle, warnings });
   } catch (err) {
     console.error('[POST /api/brain/notion/task]', err.message);
     return res.status(502).json({ error: `notion api error: ${err.message}` });
