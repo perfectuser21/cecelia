@@ -837,6 +837,31 @@ export async function evaluateContractNode(state, opts = {}) {
     return { evaluate_verdict: state.evaluate_verdict };
   }
 
+  // merged-short-circuit（P1 收尾）：PR 已 merge 时直接 PASS，不 checkout 已删分支跑 E2E、不触发 fix loop。
+  // 本系统每次 merge 触发 auto-version 重启 brain → checkpoint 大概率断在 merge 节点后 → 成功的
+  // harness run 恢复时会重跑 evaluate；此时 PR 已 merge、分支已删 → checkout 失败 / E2E FAIL →
+  // routeAfterEvaluate 路由 fix → 在【已 merge 的 PR】上 spawn generator（fix loop）。这是常态而非边缘。
+  // 合同已过 CI 合并即视为达标 → PASS。mergePrNode 对已 merge PR 幂等（already-merged→success→end）。
+  const checkPrMerged = opts.checkPrMerged || (async (prUrl) => {
+    try {
+      const { stdout } = await execFileDefault(
+        'gh', ['pr', 'view', prUrl, '--json', 'state', '-q', '.state'], { timeout: 10_000 }
+      );
+      return stdout.trim() === 'MERGED';
+    } catch (err) {
+      // fail-open：查不到状态就当未 merge，继续正常 evaluate（绝不因查询失败误判 PASS）
+      console.warn(`[evaluator] merged-check gh pr view 失败（fail-open，继续正常 evaluate）：${err.message}`);
+      return false;
+    }
+  });
+  if (state.pr_url) {
+    const merged = await checkPrMerged(state.pr_url);
+    if (merged) {
+      console.log(`[evaluator] PR 已 merge（${state.pr_url}）→ merged-short-circuit verdict=PASS（不 checkout 已删分支/不触发 fix loop）`);
+      return { evaluate_verdict: 'PASS', evaluate_error: null };
+    }
+  }
+
   const spawnFn = opts.spawnDetached || spawnDockerDetached;
   const resolveTok = opts.resolveToken || resolveGitHubToken;
   const dbPool = opts.poolOverride || pool;

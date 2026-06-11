@@ -1,20 +1,20 @@
-# DoD — runHarnessInitiativeRouter 图级并发 invoke 互斥（P1）
+# DoD — evaluate 节点 PR 已 merge 时短路 PASS
 
-**范围**: executor.js runHarnessInitiativeRouter 加 per-initiative 进程内执行锁，并发后到者跳过。
+**范围**: evaluateContractNode 幂等门后加 merged-short-circuit（gh pr view state=MERGED → PASS）。
 **大小**: S
 
 ## ARTIFACT 条目
 
-- [x] [ARTIFACT] executor.js 有 _activeInitiativeRuns 执行锁表 + 测试 reset hook
-  Test: manual:node -e "const c=require('fs').readFileSync('packages/brain/src/executor.js','utf8');if(!c.includes('_activeInitiativeRuns')||!c.includes('_resetActiveInitiativeRunsForTests'))process.exit(1);console.log('OK')"
+- [x] [ARTIFACT] evaluateContractNode 有 checkPrMerged + merged-short-circuit 返回 PASS
+  Test: manual:node -e "const c=require('fs').readFileSync('packages/brain/src/workflows/harness-task.graph.js','utf8');if(!c.includes('checkPrMerged')||!c.includes('merged-short-circuit'))process.exit(1);console.log('OK')"
 
-- [x] [ARTIFACT] 并发后到者短路返回 skipped:already_running
-  Test: manual:node -e "const c=require('fs').readFileSync('packages/brain/src/executor.js','utf8');if(!c.includes(\"reason: 'already_running'\")||!c.includes('skipped: true'))process.exit(1);console.log('OK')"
+- [x] [ARTIFACT] checkPrMerged 用 gh pr view --json state 且 fail-open
+  Test: manual:node -e "const c=require('fs').readFileSync('packages/brain/src/workflows/harness-task.graph.js','utf8');if(!c.includes(\"'pr', 'view'\")||!c.includes(\"=== 'MERGED'\")||!c.includes('fail-open'))process.exit(1);console.log('OK')"
 
-- [x] [ARTIFACT] 锁在 finally 释放（含所有出口）
-  Test: manual:node -e "const c=require('fs').readFileSync('packages/brain/src/executor.js','utf8');if(!c.includes('_activeInitiativeRuns.delete(initiativeId)'))process.exit(1);if(!/finally\s*\{[\s\S]*_activeInitiativeRuns.delete/.test(c))process.exit(1);console.log('OK')"
+- [x] [ARTIFACT] 短路回归测试文件存在
+  Test: manual:node -e "const c=require('fs').readFileSync('packages/brain/src/workflows/__tests__/harness-task-evaluator-merged-shortcircuit.test.js','utf8');if(!c.includes('checkPrMerged'))process.exit(1);console.log('OK')"
 
 ## BEHAVIOR 条目（内嵌可执行 manual: 命令）
 
-- [x] [BEHAVIOR] 并发互斥回归测试覆盖：并发两次→第二个 skipped+stream 只调一次 / 顺序两次都正常跑（brain-unit CI --changed 实跑此测试）
-  Test: manual:node -e "const c=require('fs').readFileSync('packages/brain/src/__tests__/harness-resume-checkpoint-error-state.test.js','utf8');['图级并发 invoke 互斥','skipped).toBe(true','already_running','toHaveBeenCalledTimes(1)','顺序两次'].forEach(s=>{if(!c.includes(s))process.exit(1)});console.log('OK')"
+- [x] [BEHAVIOR] 短路回归测试覆盖：已 merge→PASS+不 spawn / 未 merge→照常 spawn / 幂等门优先不查状态（brain-unit CI --changed 实跑）
+  Test: manual:node -e "const c=require('fs').readFileSync('packages/brain/src/workflows/__tests__/harness-task-evaluator-merged-shortcircuit.test.js','utf8');['verdict).toBe(\x27PASS\x27','not.toHaveBeenCalled','幂等门优先','toHaveBeenCalledOnce'].forEach(s=>{if(!c.includes(s))process.exit(1)});console.log('OK')"
