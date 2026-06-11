@@ -1,0 +1,29 @@
+{
+  "initiative_id": "pending",
+  "journey_type": "autonomous",
+  "journey_type_reason": "纯 Brain 后端改动，evaluateContractNode 在 packages/brain/src/workflows/，无 UI 无外部 agent 协议",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "evaluateContractNode 职责分离：代码执行段 + LLM 裁读段 + coverage 校验 + legacy 开关 + 单测",
+      "scope": "packages/brain/src/harness-shared.js 新增 ExecutionRecordSchema（Zod schema，逐命令 cmd/exitCode/stdout/stderr/elapsedMs）；EvaluatorOutputSchema 扩展 coverage 字段（optional array）；harness-task.graph.js evaluateContractNode 拆分为代码执行段（复用 runScenarioCommand/execFile 逐段执行 E2E 脚本、采集结果、写 execution-record.json）+ LLM 裁读段（只读记录产出 verdict+coverage）；Brain 代码校验 coverage 覆盖 Golden Path 每一步（缺步整体 FAIL，不由 LLM 自判）；EVALUATE_PATH=legacy 回退开关保留旧 spawn 路径；新增/扩展 harness-task.graph.test.js 单测覆盖分离路径 + coverage 校验 + legacy 开关 + 失败型 fixture",
+      "dod": [
+        "[BEHAVIOR] ExecutionRecordSchema 已从 harness-shared.js 导出且 parse 正常执行记录成功（exit 0）",
+        "[BEHAVIOR] EvaluatorOutputSchema.shape 含 coverage 字段，PASS+coverage parse 成功",
+        "[BEHAVIOR] evaluate-split.test.ts 单测全通过（coverage 完整性 + 落盘 + 失败型 + legacy）",
+        "[BEHAVIOR] EvaluatorOutputSchema 接受 FAIL verdict + failed_step + coverage 含失败步",
+        "[BEHAVIOR] Step 7 — harness-task.graph.js 含 EVALUATE_PATH=legacy 回退开关分支代码",
+        "[ARTIFACT] execution-record.json 写入逻辑存在于实现代码"
+      ],
+      "files": [
+        "packages/brain/src/harness-shared.js",
+        "packages/brain/src/workflows/harness-task.graph.js",
+        "packages/brain/src/harness-final-e2e.js",
+        "packages/brain/src/workflows/__tests__/harness-task.graph.test.js"
+      ],
+      "depends_on": [],
+      "complexity": "M",
+      "estimated_minutes": 90
+    }
+  ]
+}

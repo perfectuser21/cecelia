@@ -1,6 +1,3 @@
-contract_branch: cp-06120724-ws-56b5cc39-ws1
-sprint_dir: sprints/06120545-e2e-exec-judge-r3
-
 ---
 skeleton: false
 journey_type: autonomous
