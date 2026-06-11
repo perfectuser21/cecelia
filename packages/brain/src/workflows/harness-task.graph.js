@@ -42,11 +42,12 @@ import { ensureHarnessWorktree, harnessSubTaskBranchName, cleanupHarnessWorktree
 import { resolveGitHubToken } from '../harness-credentials.js';
 // Note: legacy `writeDockerCallback` import removed (Layer 3 uses callback router POST → Command(resume))
 import { spawnDockerDetached, spawnCodexBridgeDetached } from '../spawn/detached.js';
+import { executeOnHost } from '../spawn/host-executor.js';
 import { resolveExecutor as resolveExecutorDefault } from '../routing/resolve-executor.js';
 import { resolveAccount } from '../spawn/middleware/account-rotation.js';
 import { checkAuthFailure } from '../spawn/middleware/cap-marking.js';
 import { checkPrStatus, classifyFailedChecks } from '../shepherd.js';
-import { parseDockerOutput, extractField, readPrFromGitState, readVerdictFile, readBrainResult, EvaluatorOutputSchema, loadSkillContent } from '../harness-shared.js';
+import { parseDockerOutput, extractField, readPrFromGitState, readVerdictFile, readBrainResult, readAndValidateBrainResult, EvaluatorOutputSchema, loadSkillContent } from '../harness-shared.js';
 import { buildGeneratorPrompt } from '../harness-utils.js';
 import { getPgCheckpointer } from '../orchestrator/pg-checkpointer.js';
 import pool from '../db.js';
@@ -934,6 +935,83 @@ export async function evaluateContractNode(state, opts = {}) {
   }
   const accountEnv = acctOpts.env;
 
+  // evaluator SKILL 变量表声称会注入 WECHAT_RPA_WORKFLOW，实际之前没注入（靠 skill 内
+  // fallback 默认值兜着）。两条路径（host / docker）都补上，payload 可覆盖。
+  const wechatRpaWorkflow = payload.wechat_rpa_workflow || 'e2e-wechat-rpa.yml';
+  const goalSettings = buildHarnessGoalSettings(
+    'The evaluation is complete and .brain-result.json has been written with verdict=PASS or FAIL'
+  );
+
+  // 两路径共享的基础 env（BRAIN_URL / HARNESS_CALLBACK_URL / DB 三个按环境分别覆盖）。
+  const baseEvalEnv = {
+    ...accountEnv,
+    CECELIA_TASK_TYPE: 'harness_evaluate',
+    HARNESS_NODE: 'evaluate_contract',
+    HARNESS_INITIATIVE_ID: initiativeId,
+    HARNESS_TASK_ID: task.id,
+    IS_FINAL_E2E: 'true',
+    JOURNEY_TYPE: state.task?.payload?.journey_type || 'autonomous',
+    GITHUB_TOKEN: token,
+    CONTRACT_BRANCH: state.contractBranch || payload.contract_branch || '',
+    PR_URL: state.pr_url || '',
+    PR_BRANCH: prBranchEnv,
+    SPRINT_DIR: sprintDir,
+    TARGET_ENV: targetEnv,
+    GITHUB_REPO: githubRepo,
+    WINDOWS_CLOUD_WORKFLOW: windowsCloudWorkflow,
+    WECHAT_RPA_WORKFLOW: wechatRpaWorkflow,
+    ...(goalSettings ? { CECELIA_GOAL_SETTINGS: goalSettings } : {}),
+  };
+
+  // ── target_environment 路由 ─────────────────────────────────────────────
+  // mac_web（Cecelia Dashboard，localhost:5174/5221 直接可达 + Playwright 需要真实浏览器）
+  // 必须在宿主 Mac 上跑，不能进无浏览器的 docker 容器（物理不可能做 UI 验证）。
+  // executeOnHost 同步等结果（不走 thread_lookup + interrupt 回调），执行完直接读
+  // .brain-result.json 产生与 docker 回调路径完全相同语义的 state 更新。
+  if (targetEnv === 'mac_web') {
+    const execHost = opts.executeOnHost || executeOnHost;
+    let hostResult;
+    try {
+      hostResult = await execHost({
+        task: { ...task, task_type: 'harness_evaluate' },
+        prompt: evaluatePrompt,
+        worktreePath: state.worktreePath,
+        // host 上 host.docker.internal 不可解析 → 一律 localhost。
+        // WORKSPACE_PATH 由 executeOnHost 自动注入为 worktreePath。
+        env: {
+          ...baseEvalEnv,
+          BRAIN_URL: 'http://localhost:5221',
+          HARNESS_CALLBACK_URL: `http://localhost:5221/api/brain/harness/callback/${containerId}`,
+          DB: 'postgresql://localhost/cecelia',
+        },
+      });
+    } catch (err) {
+      return { evaluate_verdict: 'FAIL', evaluate_error: `host-exec: ${err.message}` };
+    }
+
+    if (!hostResult || hostResult.exit_code !== 0) {
+      const detail = hostResult?.timed_out
+        ? 'host evaluator timed out'
+        : `host evaluator exit_code=${hostResult?.exit_code ?? 'unknown'}`;
+      return { evaluate_verdict: 'FAIL', evaluate_error: detail };
+    }
+
+    // 镜像 docker 回调路径语义：读 .brain-result.json + schema 校验 → verdict/feedback。
+    // 读文件失败 / schema_mismatch → FAIL + evaluate_error（host 路径不 throw，直接收敛）。
+    try {
+      const data = await readAndValidateBrainResult(state.worktreePath, EvaluatorOutputSchema);
+      const normV = normalizeVerdict(data.verdict);
+      const feedback = data.feedback || data.log_excerpt || data.failed_step || null;
+      return {
+        evaluate_verdict: normV,
+        evaluate_error: normV === 'FAIL' ? (feedback || 'evaluator returned FAIL') : null,
+      };
+    } catch (e) {
+      return { evaluate_verdict: 'FAIL', evaluate_error: `host result read: ${e.message}` };
+    }
+  }
+
+  // ── docker 路径（local_api / windows_cloud 等，默认）──────────────────────
   try {
     await spawnFn({
       task: { ...task, task_type: 'harness_evaluate' },
@@ -941,27 +1019,10 @@ export async function evaluateContractNode(state, opts = {}) {
       worktreePath: state.worktreePath,
       containerId,
       env: {
-        ...accountEnv,
-        CECELIA_TASK_TYPE: 'harness_evaluate',
-        HARNESS_NODE: 'evaluate_contract',
-        HARNESS_INITIATIVE_ID: initiativeId,
-        HARNESS_TASK_ID: task.id,
-        IS_FINAL_E2E: 'true',
-        JOURNEY_TYPE: state.task?.payload?.journey_type || 'autonomous',
-        GITHUB_TOKEN: token,
-        CONTRACT_BRANCH: state.contractBranch || payload.contract_branch || '',
-        PR_URL: state.pr_url || '',
-        PR_BRANCH: prBranchEnv,
-        SPRINT_DIR: sprintDir,
-        TARGET_ENV: targetEnv,
-        GITHUB_REPO: githubRepo,
-        WINDOWS_CLOUD_WORKFLOW: windowsCloudWorkflow,
+        ...baseEvalEnv,
         BRAIN_URL: 'http://host.docker.internal:5221',
         HARNESS_CALLBACK_URL: `http://host.docker.internal:5221/api/brain/harness/callback/${containerId}`,
         DB: 'postgresql://host.docker.internal/cecelia',
-        ...(buildHarnessGoalSettings('The evaluation is complete and .brain-result.json has been written with verdict=PASS or FAIL')
-          ? { CECELIA_GOAL_SETTINGS: buildHarnessGoalSettings('The evaluation is complete and .brain-result.json has been written with verdict=PASS or FAIL') }
-          : {}),
       },
     });
   } catch (err) {
