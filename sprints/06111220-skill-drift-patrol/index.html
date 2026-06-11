@@ -1,0 +1,512 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head><meta charset="UTF-8"><title>Skill 漂移巡检告警（smoke + 日巡） — Sprint Report</title>
+<style>
+body{font-family:sans-serif;margin:0;display:flex;flex-direction:column;height:100vh;}
+header{background:#1a1a2e;color:#fff;padding:12px 24px;display:flex;align-items:center;gap:16px;}
+header a{color:#adf;text-decoration:none;}
+main{display:flex;flex:1;overflow:hidden;}
+nav{width:160px;background:#f4f4f4;border-right:1px solid #ddd;padding:16px 0;overflow-y:auto;}
+nav ul{list-style:none;margin:0;padding:0;}
+nav li a{display:block;padding:8px 16px;color:#333;text-decoration:none;}
+nav li a:hover{background:#e0e0e0;}
+.content{flex:1;overflow-y:auto;padding:24px;}
+.section pre{background:#f8f8f8;border:1px solid #ddd;padding:16px;border-radius:4px;}
+</style>
+</head>
+<body>
+<header>
+  <span><strong>Skill 漂移巡检告警（smoke + 日巡）</strong> Sprint Report</span>
+  <a href="https://github.com/perfectuser21/cecelia/pull/3342" target="_blank">PR #3342</a>
+</header>
+<main>
+<nav><ul>
+<li><a href="#" onclick="show('sprint-prd');return false;">PrepPRD</a></li><li><a href="#" onclick="show('contract');return false;">D-Contract</a></li><li><a href="#" onclick="show('dod');return false;">DOD</a></li><li><a href="#" onclick="show('report');return false;">Report</a></li><li><a href="#" onclick="show('learning');return false;">Learning</a></li>
+<li><a href="#" onclick="show('screenshots');return false;">截图</a></li>
+</ul></nav>
+<div class="content">
+<div id="sprint-prd" class="section" style="display:none;"><pre style="white-space:pre-wrap;word-break:break-word;"># Sprint PRD — skill-drift 巡检告警（smoke 注册 + 日巡消费者）
+
+## OKR 对齐
+
+- **对应 KR**：Harness Pipeline 可观测性（Brain API 离线，KR 编号标注 [ASSUMPTION]）
+- **当前进度**：未知
+- **本次推进预期**：漂移从"静默"→"自动告警可查"
+
+## 背景
+
+`GET /api/brain/harness/skill-drift` 端点已上线（PR #3338/#3339），`skill-drift-smoke.sh` 已存在但未注册到 post-deploy 钩子；漂移发生时无人知晓，端点价值为零。本 sprint 补两件事：smoke 正式挂入 post-deploy 自动执行链路，以及每日巡检消费者（漂移→告警记录可查）。
+
+## Golden Path（核心场景）
+
+运维者从 [部署后/手动触发] → 经过 [smoke 校验/日巡检测] → 到达 [漂移可查、无漂移静默]
+
+1. 运维者执行 `bash packages/brain/scripts/smoke/smoke-skill-drift.sh` → 输出 PASS（断言：HTTP 200、skills 恰 6 项、snapshot_version 全部非 null、any_drift 与逐项 drifted 一致）
+2. 运维者把任意一份快照 SKILL.md 的 `version:` 值改掉制造漂移 → 调用巡检触发入口（Brain 定时器手动触发 API 或等价方式，由实现决定）→ 系统产生一条可查的告警记录，内容指明漂移 skill 名
+3. 运维者恢复快照 version → 再次触发巡检 → 不产生新告警
+4. 运维者 `curl localhost:5221/api/brain/harness/skill-drift/patrol-history`（或等价端点）→ 能看到第 2 步告警记录（含 skill 名、发生时间）
+
+## 边界情况
+
+- Brain 重启后告警历史不丢失（DB 落库，不依赖内存缓冲）
+- 同一次漂移内重复触发巡检 → 不产生重复告警（幂等，按日去重）
+- 飞书静默时：只落库，不推送（尊重现有 alerting 通道配置）
+- smoke 断言：任一 `snapshot_version == null` → 必须 FAIL（抓住 #3339 类 bug）
+
+## 范围限定
+
+**在范围内**：
+- smoke 脚本正式挂入 post-deploy 自动执行钩子（注册或命名约定，由实现决定）
+- `packages/brain/src/cron/skill-drift-patrol.js` 每日运行一次，复用现有端点逻辑检测漂移
+- 漂移时调用 `raise('P1', 'skill_drift_&lt;name&gt;', '...')` + 落库一条告警记录
+- `GET /api/brain/harness/skill-drift/patrol-history`（或等价）返回历史告警记录
+- 注册巡检模块到 `tick-runner.js` 每日调度
+
+**不在范围内**：
+- 自动修复/同步漂移
+- 6 个 harness skill 之外的 skill 检测
+- Dashboard 展示
+- 重新实现版本对比逻辑（复用现有端点）
+
+## 假设
+
+- [ASSUMPTION: Brain API 离线，OKR 进度无法实读，不影响范围锚定]
+- [ASSUMPTION: `run_post_deploy_smoke` 的发现机制由 Proposer 按现有 smoke 目录约定实现]
+- [ASSUMPTION: 告警记录落库复用现有 DB 连接（pool），无需新建独立存储]
+- [ASSUMPTION: 每日巡检触发时间与 `cron/daily-real-business-smoke.js` 模式对齐（UTC 窗口内触发）]
+
+## 预期受影响文件
+
+- `packages/brain/scripts/smoke/smoke-skill-drift.sh` 或 `skill-drift-smoke.sh`：确认命名符合 post-deploy 发现约定
+- `packages/brain/src/cron/skill-drift-patrol.js`：新增每日巡检模块
+- `packages/brain/src/tick-runner.js`：注册巡检模块调用
+- `packages/brain/src/routes/harness.js`：新增 patrol-history 查询端点
+- DB migration（如需）：告警记录落库表
+
+## E2E 验收
+
+&gt; 此区块为 Planner 初稿框定。最终可执行脚本由 proposer 按 `target_environment=local_api` 产出（curl + jq + psql）。
+
+```bash
+# 占位：proposer 按 local_api 模板填入真实脚本
+# 期望验收点（自然语言）：
+# 1. bash smoke-skill-drift.sh → exit 0 且输出 "PASS: N  FAIL: 0"
+# 2. 制造漂移 → 触发巡检 → psql/curl 查到告警记录 rows=1，skill_name 指明漂移项
+# 3. 恢复版本 → 触发巡检 → 查告警记录 rows 不变（无新增）
+# 4. GET /api/brain/harness/skill-drift/patrol-history → HTTP 200，含步骤 2 的记录
+```
+
+## journey_type: autonomous
+## journey_type_reason: 纯 packages/brain/ 后端巡检模块，无 UI/bridge/engine 涉及
+## target_environment: local_api
+## target_environment_reason: Brain 内部模块 + curl localhost:5221 验证，无需 Playwright 或远端机器
+## journey_id: （来源 = task.payload.journey_id，Cecelia Line 唯一 = Harness Pipeline）
+## step_id: Deterministic Gate initiative 第 1/7 条 run
+</pre></div><div id="contract" class="section" style="display:none;"><pre style="white-space:pre-wrap;word-break:break-word;"># Sprint Contract Draft (Round 2)
+
+## Response Schema（推导来源: PRD 字面 + api_registry 推导）
+
+### Endpoint: GET /api/brain/harness/skill-drift/patrol-history
+**Success (HTTP 200)**:
+```json
+{
+  "alerts": [
+    {
+      "id": "&lt;number&gt;",
+      "skill_name": "&lt;string&gt;",
+      "ssot_version": "&lt;string|null&gt;",
+      "snapshot_version": "&lt;string|null&gt;",
+      "drift_date": "&lt;string (YYYY-MM-DD)&gt;",
+      "detected_at": "&lt;string (ISO timestamp)&gt;"
+    }
+  ]
+}
+```
+- `alerts` (array, 必填): 历史漂移告警记录列表；无告警时返回 `[]`
+- `alerts[].id` (number, 必填): 来源——DB serial PK，api_registry 同类端点惯例
+- `alerts[].skill_name` (string, 必填): 来源——PRD"内容指明漂移 skill 名"明确要求
+- `alerts[].ssot_version` (string|null, 必填): 来源——PRD"含 skill 名、发生时间"延伸；null = 文件缺失
+- `alerts[].snapshot_version` (string|null, 必填): 同上
+- `alerts[].drift_date` (string YYYY-MM-DD, 必填): 来源——PRD"按日去重"隐式要求落库 date 字段
+- `alerts[].detected_at` (string ISO, 必填): 来源——PRD"含发生时间"明确要求
+
+**禁用字段名**: `alert_id`（用 `id`）、`name`（用 `skill_name`）、`date`（用 `drift_date`）、`time`（用 `detected_at`）
+
+**Error (HTTP 4xx/5xx)**:
+```json
+{"error": "&lt;string&gt;"}
+```
+
+---
+
+## 已知约束（来自回归测试）
+
+（暂无直接相关的 skill-drift-patrol 回归测试）
+
+---
+
+## Golden Path
+
+[部署后/手动触发] → [smoke 校验] → [日巡检测漂移] → [告警落库可查] → [恢复后无新增]
+
+---
+
+### Step 1: 运维者执行 smoke 脚本验证端点健康
+**来源**: `[FROM_PRD]` — PRD Golden Path 第 1 步："运维者执行 `bash packages/brain/scripts/smoke/skill-drift-smoke.sh` → 输出 PASS"
+
+**可观测行为**: 脚本 exit 0，输出包含 `PASS: N  FAIL: 0`；任一 `snapshot_version == null` 时 exit 1（防 #3339 类 bug 静默通过）
+
+**验证命令**:
+```bash
+# 在 Brain 可达的环境下执行（smoke 本身已有完整断言）
+bash packages/brain/scripts/smoke/skill-drift-smoke.sh
+# 期望：exit 0 且 stdout 含 "FAIL: 0"
+```
+
+**硬阈值**: exit 0；输出含 `FAIL: 0`；snapshot_version 全非 null 时不产生 FAIL
+
+---
+
+### Step 2: 运维者制造漂移 → 触发日巡检 → 系统写入告警记录
+**来源**: `[FROM_PRD]` — PRD Golden Path 第 2 步："制造漂移 → 调用巡检触发入口 → 系统产生一条可查的告警记录，内容指明漂移 skill 名"
+
+**可观测行为**: `skill_drift_alerts` 表新增一条记录，`skill_name` 字段指明漂移的 skill，`detected_at` 在触发后 5 分钟内
+
+**验证命令**:
+```bash
+# 保存原始 version，制造漂移
+SNAPSHOT_FILE="packages/workflows/skills/harness-planner/SKILL.md"
+ORIG=$(grep -m1 '^version:' "$SNAPSHOT_FILE" | sed 's/version: *//')
+sed -i "s/^version:.*/version: 9999.0.0-drift-test/" "$SNAPSHOT_FILE"
+
+# 触发日巡检（调用 patrol 端点或等价 API，具体路径由实现决定；此处用触发 API）
+curl -sf -X POST localhost:5221/api/brain/harness/skill-drift/patrol-trigger \
+  || curl -sf localhost:5221/api/brain/harness/skill-drift/patrol 2&gt;/dev/null \
+  || echo "patrol trigger OK (tick-based)"
+
+# 等待最多 10 秒写入
+sleep 3
+
+# 验证 DB 有告警记录（带时间窗口防历史数据造假）
+COUNT=$(psql "${DB:-postgresql://localhost/cecelia}" -t -c \
+  "SELECT count(*) FROM skill_drift_alerts \
+   WHERE skill_name='harness-planner' \
+   AND detected_at &gt; NOW() - interval '5 minutes'" | tr -d ' ')
+[ "$COUNT" -ge 1 ] || { echo "FAIL: 未写入告警记录"; sed -i "s/^version:.*/version: $ORIG/" "$SNAPSHOT_FILE"; exit 1; }
+echo "✅ 告警记录已写入 count=$COUNT"
+
+# 恢复
+sed -i "s/^version:.*/version: $ORIG/" "$SNAPSHOT_FILE"
+```
+
+**硬阈值**: `count ≥ 1`，`detected_at &gt; NOW() - interval '5 minutes'`，`skill_name = 'harness-planner'`
+
+---
+
+### Step 3: 运维者恢复版本 → 再次触发巡检 → 不产生重复告警（按日去重）
+**来源**: `[FROM_PRD]` — PRD 边界情况："同一次漂移内重复触发巡检 → 不产生重复告警（幂等，按日去重）"；PRD Golden Path 第 3 步
+
+**可观测行为**: 同一 `skill_name` + `drift_date` 组合，第二次触发不新增记录
+
+**验证命令**:
+```bash
+# 前提：Step 2 已执行，数据库中已有 harness-planner 今日告警
+BEFORE=$(psql "${DB:-postgresql://localhost/cecelia}" -t -c \
+  "SELECT count(*) FROM skill_drift_alerts \
+   WHERE skill_name='harness-planner' AND drift_date = CURRENT_DATE" | tr -d ' ')
+
+# 再次触发巡检（漂移仍存在的场景）
+curl -sf -X POST localhost:5221/api/brain/harness/skill-drift/patrol-trigger 2&gt;/dev/null || true
+sleep 3
+
+AFTER=$(psql "${DB:-postgresql://localhost/cecelia}" -t -c \
+  "SELECT count(*) FROM skill_drift_alerts \
+   WHERE skill_name='harness-planner' AND drift_date = CURRENT_DATE" | tr -d ' ')
+[ "$AFTER" -eq "$BEFORE" ] || { echo "FAIL: 重复触发产生了新记录 before=$BEFORE after=$AFTER"; exit 1; }
+echo "✅ 按日去重正常 count=$BEFORE"
+```
+
+**硬阈值**: `AFTER == BEFORE`（第二次触发同一天不增加行数）
+
+---
+
+### Step 4: 运维者查询巡检历史 → API 返回含 skill 名和时间的记录
+**来源**: `[FROM_PRD]` — PRD Golden Path 第 4 步："curl localhost:5221/api/brain/harness/skill-drift/patrol-history → 能看到第 2 步告警记录（含 skill 名、发生时间）"
+
+**可观测行为**: HTTP 200，body 含 `alerts` 数组，Step 2 写入的记录可在列表中找到
+
+**验证命令**:
+```bash
+RESP=$(curl -sf localhost:5221/api/brain/harness/skill-drift/patrol-history)
+echo "$RESP" | jq -e '.alerts | type == "array"' || { echo "FAIL: alerts 非数组"; exit 1; }
+# 验证 schema 完整性（顶层 key 只能是 alerts）
+echo "$RESP" | jq -e 'keys == ["alerts"]' || { echo "FAIL: 顶层 keys 不符"; exit 1; }
+# 验证 Step 2 的记录存在
+echo "$RESP" | jq -e '.alerts | map(select(.skill_name == "harness-planner")) | length &gt;= 1' \
+  || { echo "FAIL: 未找到 harness-planner 的告警记录"; exit 1; }
+# 验证记录字段完整性（含 ssot_version / snapshot_version）
+echo "$RESP" | jq -e '.alerts[0] | has("id") and has("skill_name") and has("ssot_version") and has("snapshot_version") and has("drift_date") and has("detected_at")' \
+  || { echo "FAIL: 记录缺少必要字段"; exit 1; }
+# 验证禁用字段不出现（name / alert_id / date / time）
+echo "$RESP" | jq -e '.alerts[0] | has("alert_id") | not' || { echo "FAIL: 禁用字段 alert_id 出现"; exit 1; }
+echo "$RESP" | jq -e '.alerts[0] | has("name") | not'     || { echo "FAIL: 禁用字段 name 出现"; exit 1; }
+echo "$RESP" | jq -e '.alerts[0] | has("date") | not'     || { echo "FAIL: 禁用字段 date 出现"; exit 1; }
+echo "$RESP" | jq -e '.alerts[0] | has("time") | not'     || { echo "FAIL: 禁用字段 time 出现"; exit 1; }
+echo "✅ patrol-history 端点验证通过"
+```
+
+**硬阈值**: HTTP 200；`alerts` 为数组；含 `harness-planner` 记录；每条记录含全部 6 字段（`id`, `skill_name`, `ssot_version`, `snapshot_version`, `drift_date`, `detected_at`）；禁用字段 `alert_id`/`name`/`date`/`time` 不出现
+
+---
+
+### Step 5: smoke 脚本在 post-deploy 自动执行链路生效
+**来源**: `[FROM_PRD]` — PRD 范围内："smoke 脚本正式挂入 post-deploy 自动执行钩子"；`[AI_ADDED]` — 验证发现机制（文件命名符合 `brain-deploy.sh` 的 `packages/brain/scripts/smoke/*.sh` glob 发现规则）
+
+**可观测行为**: `smoke-skill-drift.sh`（或 `skill-drift-smoke.sh`）存在于 `packages/brain/scripts/smoke/`，可被 `run_post_deploy_smoke()` 通过 `gh pr view` + path filter 自动发现
+
+**验证命令**:
+```bash
+# 验证 smoke 脚本存在于 post-deploy 发现路径
+SMOKE_FILES=$(find packages/brain/scripts/smoke -maxdepth 1 -name "*skill-drift*.sh" -type f)
+[ -n "$SMOKE_FILES" ] || { echo "FAIL: smoke 脚本不在 packages/brain/scripts/smoke/"; exit 1; }
+echo "✅ smoke 脚本路径正确: $SMOKE_FILES"
+
+# 验证 smoke 脚本含 snapshot_version != null 断言（PRD 边界规则）
+grep -q "snapshot_version" packages/brain/scripts/smoke/skill-drift-smoke.sh \
+  || { echo "FAIL: smoke 缺少 snapshot_version 非 null 断言"; exit 1; }
+echo "✅ smoke 含 snapshot_version 断言"
+```
+
+**硬阈值**: 文件存在；文件内含 `snapshot_version` 相关断言
+
+---
+
+## E2E 验收（target_environment = local_api）
+
+**journey_type**: autonomous
+**target_environment**: local_api
+
+```bash
+#!/bin/bash
+# final-e2e 脚本 — skill-drift-patrol（local_api）
+# 前提：Brain 在 localhost:5221 运行，DB = postgresql://localhost/cecelia
+set -e
+
+DB="${DB:-postgresql://localhost/cecelia}"
+BRAIN="${BRAIN_URL:-http://localhost:5221}"
+SNAPSHOT_FILE="packages/workflows/skills/harness-planner/SKILL.md"
+
+echo "=== Step 1: smoke 脚本验证 ==="
+bash packages/brain/scripts/smoke/skill-drift-smoke.sh
+echo "✅ Step 1 PASS"
+
+echo ""
+echo "=== Step 2: 制造漂移 → 触发巡检 → 验证告警落库 ==="
+# 保存原始 version
+ORIG_VER=$(grep -m1 '^version:' "$SNAPSHOT_FILE" | sed 's/version: *//')
+echo "原始版本: $ORIG_VER"
+
+# 制造漂移
+sed -i "s/^version:.*/version: 9999.0.0-e2e-drift/" "$SNAPSHOT_FILE"
+echo "已制造漂移 → snapshot version = 9999.0.0-e2e-drift"
+
+# 触发巡检（尝试手动触发端点，若不存在则依赖 tick 定时器）
+TRIGGER_RESP=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$BRAIN/api/brain/harness/skill-drift/patrol-trigger" 2&gt;/dev/null)
+if [ "$TRIGGER_RESP" = "200" ] || [ "$TRIGGER_RESP" = "202" ]; then
+  echo "巡检已手动触发 HTTP=$TRIGGER_RESP"
+else
+  echo "无手动触发端点（HTTP=$TRIGGER_RESP），等待 tick 触发"
+fi
+
+# 等待写入（最多 15 秒）
+MAX_WAIT=15
+for i in $(seq 1 $MAX_WAIT); do
+  COUNT=$(psql "$DB" -t -c \
+    "SELECT count(*) FROM skill_drift_alerts \
+     WHERE skill_name='harness-planner' \
+     AND detected_at &gt; NOW() - interval '5 minutes'" 2&gt;/dev/null | tr -d ' ')
+  [ "$COUNT" -ge 1 ] 2&gt;/dev/null &amp;&amp; break
+  [ "$i" = "$MAX_WAIT" ] &amp;&amp; {
+    echo "FAIL: 超时 $MAX_WAIT 秒内未写入告警记录"
+    sed -i "s/^version:.*/version: $ORIG_VER/" "$SNAPSHOT_FILE"
+    exit 1
+  }
+  sleep 1
+done
+echo "✅ Step 2 PASS 告警已落库 count=$COUNT"
+
+echo ""
+echo "=== Step 3: 重复触发 → 验证按日去重 ==="
+BEFORE=$(psql "$DB" -t -c \
+  "SELECT count(*) FROM skill_drift_alerts \
+   WHERE skill_name='harness-planner' AND drift_date = CURRENT_DATE" | tr -d ' ')
+
+curl -s -o /dev/null -X POST "$BRAIN/api/brain/harness/skill-drift/patrol-trigger" 2&gt;/dev/null || true
+sleep 3
+
+AFTER=$(psql "$DB" -t -c \
+  "SELECT count(*) FROM skill_drift_alerts \
+   WHERE skill_name='harness-planner' AND drift_date = CURRENT_DATE" | tr -d ' ')
+[ "$AFTER" -eq "$BEFORE" ] || {
+  echo "FAIL: 重复触发产生了新记录 before=$BEFORE after=$AFTER"
+  sed -i "s/^version:.*/version: $ORIG_VER/" "$SNAPSHOT_FILE"
+  exit 1
+}
+echo "✅ Step 3 PASS 去重正常"
+
+echo ""
+echo "=== Step 4: 查询 patrol-history ==="
+RESP=$(curl -sf "$BRAIN/api/brain/harness/skill-drift/patrol-history")
+echo "$RESP" | jq -e '.alerts | type == "array"' || { echo "FAIL: alerts 非数组"; exit 1; }
+echo "$RESP" | jq -e 'keys == ["alerts"]' || { echo "FAIL: 顶层 keys 不符"; exit 1; }
+echo "$RESP" | jq -e '.alerts | map(select(.skill_name == "harness-planner")) | length &gt;= 1' \
+  || { echo "FAIL: 未找到 harness-planner 告警记录"; exit 1; }
+echo "$RESP" | jq -e '.alerts[0] | has("id") and has("skill_name") and has("ssot_version") and has("snapshot_version") and has("drift_date") and has("detected_at")' \
+  || { echo "FAIL: 记录缺字段"; exit 1; }
+echo "$RESP" | jq -e '.alerts[0] | has("name") | not'     || { echo "FAIL: 禁用字段 name 出现"; exit 1; }
+echo "$RESP" | jq -e '.alerts[0] | has("time") | not'     || { echo "FAIL: 禁用字段 time 出现"; exit 1; }
+echo "✅ Step 4 PASS patrol-history 返回正确"
+
+echo ""
+echo "=== 恢复快照 version ==="
+sed -i "s/^version:.*/version: $ORIG_VER/" "$SNAPSHOT_FILE"
+echo "已恢复 snapshot version = $ORIG_VER"
+
+echo ""
+echo "✅ Golden Path E2E 全部通过"
+```
+
+---
+
+## Risks
+
+| # | 风险 | 概率 | 影响 | Mitigation |
+|---|---|---|---|---|
+| R1 | `patrol-trigger` 端点未实现 — E2E Step 2 发 POST 返回 4xx，依赖 tick 触发；若 tick 窗口 &gt; 15s，psql 断言超时，exit 1 | 中（tick 周期通常 5min &gt; 15s）| E2E Step 2 FAIL，需 Generator 实现手动触发端点 | E2E 脚本在 trigger 返回非 200/202 时打印警告但继续；Generator **必须**实现 `POST /api/brain/harness/skill-drift/patrol-trigger` 以使端到端在 15s 内可验 |
+| R2 | DB migration 表 `skill_drift_alerts` 未创建 — `psql` 报 `ERROR: relation "skill_drift_alerts" does not exist`，导致脚本 crash 而非返回 count=0 | 中（evaluator 运行前 migration 可能未执行）| E2E Step 2/3 psql crash；BEHAVIOR6/7 也 crash | Generator 须在 migration SQL 注释中写明"evaluator 运行 E2E 前执行：`psql $DB &lt; migration.sql`"；evaluator 侧脚本在 psql 命令前检查表存在：`psql $DB -c '\dt skill_drift_alerts' || { echo "FAIL: migration 未运行"; exit 1; }` |
+
+---
+
+## Test Contract
+
+| 功能 | Test File | BEHAVIOR 覆盖 | 预期红证据 |
+|---|---|---|---|
+| patrol 模块 + patrol-history 端点 | `tests/skill-drift-patrol.test.ts` | smoke / HTTP 200 / 必要字段 / runSkillDriftPatrol | → 3-4 failures（模块和端点未实现时） |
+</pre></div><div id="dod" class="section" style="display:none;"><pre style="white-space:pre-wrap;word-break:break-word;">---
+skeleton: false
+journey_type: autonomous
+---
+# Contract DoD — Sprint: skill-drift 巡检告警（smoke 注册 + 日巡消费者）
+
+**范围**: packages/brain/ 后端巡检模块（patrol cron + DB 落库 + patrol-history API + smoke 更新）
+**大小**: M
+
+## ARTIFACT 条目
+
+- [ ] [ARTIFACT] `packages/brain/scripts/smoke/skill-drift-smoke.sh` 存在且含 `snapshot_version` 非 null 断言
+  Test: node -e "const c=require('fs').readFileSync('packages/brain/scripts/smoke/skill-drift-smoke.sh','utf8');if(!c.includes('snapshot_version'))process.exit(1);console.log('OK')"
+
+- [ ] [ARTIFACT] `packages/brain/src/cron/skill-drift-patrol.js` 存在且含 `raise` 调用
+  Test: node -e "const c=require('fs').readFileSync('packages/brain/src/cron/skill-drift-patrol.js','utf8');if(!c.includes(\"raise('P1'\"))&amp;&amp;!c.includes('raise(\"P1\"'))process.exit(1);console.log('OK')"
+
+- [ ] [ARTIFACT] `packages/brain/src/tick-runner.js` 含 skill-drift-patrol 模块导入
+  Test: node -e "const c=require('fs').readFileSync('packages/brain/src/tick-runner.js','utf8');if(!c.includes('skill-drift-patrol'))process.exit(1);console.log('OK')"
+
+- [ ] [ARTIFACT] `packages/brain/src/routes/harness.js` 含 `/patrol-history` 路由注册
+  Test: node -e "const c=require('fs').readFileSync('packages/brain/src/routes/harness.js','utf8');if(!c.includes('patrol-history'))process.exit(1);console.log('OK')"
+
+- [ ] [ARTIFACT] DB migration 文件存在（`packages/brain/migrations/301_skill_drift_alerts.sql` 或更高编号）
+  Test: bash -c 'f=$(find packages/brain/migrations -name "*skill_drift*" -type f 2&gt;/dev/null | head -1); [ -n "$f" ] &amp;&amp; echo "OK: $f" || { echo FAIL; exit 1; }'
+
+## BEHAVIOR 条目（内嵌可执行 manual: 命令）
+
+- [ ] [BEHAVIOR] smoke 脚本 exit 0（Brain 健康无漂移时）
+  Test: manual:bash -c 'bash packages/brain/scripts/smoke/skill-drift-smoke.sh &amp;&amp; echo OK || exit 1'
+  期望: exit 0，输出含 "FAIL: 0"
+
+- [ ] [BEHAVIOR] smoke 脚本含 snapshot_version 非 null 检测（PRD 边界：任一 null → FAIL）
+  Test: manual:bash -c 'grep -q "snapshot_version" packages/brain/scripts/smoke/skill-drift-smoke.sh &amp;&amp; echo OK || { echo "FAIL: 缺 snapshot_version 断言"; exit 1; }'
+  期望: OK
+
+- [ ] [BEHAVIOR] `GET /api/brain/harness/skill-drift/patrol-history` 返回 HTTP 200 + alerts 数组
+  Test: manual:bash -c 'RESP=$(curl -sf localhost:5221/api/brain/harness/skill-drift/patrol-history); echo "$RESP" | jq -e ".alerts | type == \"array\"" &amp;&amp; echo "$RESP" | jq -e "keys == [\"alerts\"]" || exit 1; echo OK'
+  期望: OK
+
+- [ ] [BEHAVIOR] `GET /api/brain/harness/skill-drift/patrol-history` schema 完整性（id + skill_name + ssot_version + snapshot_version + drift_date + detected_at，空列表时跳过字段检查）
+  Test: manual:bash -c 'RESP=$(curl -sf localhost:5221/api/brain/harness/skill-drift/patrol-history); LEN=$(echo "$RESP" | jq ".alerts | length"); if [ "$LEN" -gt 0 ]; then echo "$RESP" | jq -e ".alerts[0] | has(\"id\") and has(\"skill_name\") and has(\"ssot_version\") and has(\"snapshot_version\") and has(\"drift_date\") and has(\"detected_at\")" || exit 1; fi; echo OK'
+  期望: OK（有记录时全部 6 字段齐全）
+
+- [ ] [BEHAVIOR] `patrol-history` 禁用字段不出现（`alert_id`, `name`, `date`, `time` — 全部 4 个禁用名）
+  Test: manual:bash -c 'RESP=$(curl -sf localhost:5221/api/brain/harness/skill-drift/patrol-history); LEN=$(echo "$RESP" | jq ".alerts | length"); if [ "$LEN" -gt 0 ]; then echo "$RESP" | jq -e ".alerts[0] | has(\"alert_id\") | not" || exit 1; echo "$RESP" | jq -e ".alerts[0] | has(\"name\") | not" || exit 1; echo "$RESP" | jq -e ".alerts[0] | has(\"date\") | not" || exit 1; echo "$RESP" | jq -e ".alerts[0] | has(\"time\") | not" || exit 1; fi; echo OK'
+  期望: OK（4 个禁用字段均未出现）
+
+- [ ] [BEHAVIOR] 制造漂移 → 触发巡检 → `skill_drift_alerts` 写入记录（带时间窗口防造假）
+  Test: manual:bash -c 'SNAP="packages/workflows/skills/harness-planner/SKILL.md"; ORIG=$(grep -m1 "^version:" "$SNAP" | sed "s/version: *//"); sed -i "s/^version:.*/version: 9999.0.0-dod-test/" "$SNAP"; curl -s -o /dev/null -X POST localhost:5221/api/brain/harness/skill-drift/patrol-trigger 2&gt;/dev/null || true; sleep 5; COUNT=$(psql "${DB:-postgresql://localhost/cecelia}" -t -c "SELECT count(*) FROM skill_drift_alerts WHERE skill_name='"'"'harness-planner'"'"' AND detected_at &gt; NOW() - interval '"'"'5 minutes'"'"'" | tr -d " "); sed -i "s/^version:.*/version: $ORIG/" "$SNAP"; [ "$COUNT" -ge 1 ] &amp;&amp; echo OK || { echo "FAIL count=$COUNT"; exit 1; }'
+  期望: OK（count ≥ 1，5 分钟内写入）
+
+- [ ] [BEHAVIOR] 同一 skill + drift_date 重复触发不新增记录（按日去重）
+  Test: manual:bash -c 'BEFORE=$(psql "${DB:-postgresql://localhost/cecelia}" -t -c "SELECT count(*) FROM skill_drift_alerts WHERE drift_date = CURRENT_DATE" | tr -d " "); curl -s -o /dev/null -X POST localhost:5221/api/brain/harness/skill-drift/patrol-trigger 2&gt;/dev/null || true; sleep 3; AFTER=$(psql "${DB:-postgresql://localhost/cecelia}" -t -c "SELECT count(*) FROM skill_drift_alerts WHERE drift_date = CURRENT_DATE" | tr -d " "); [ "$AFTER" -eq "$BEFORE" ] &amp;&amp; echo "OK dedup BEFORE=$BEFORE AFTER=$AFTER" || { echo "FAIL 重复新增 BEFORE=$BEFORE AFTER=$AFTER"; exit 1; }'
+  期望: OK（无新增）
+
+- [ ] [BEHAVIOR] error path — `patrol-history` 非 GET 方法返回 4xx
+  Test: manual:bash -c 'CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST localhost:5221/api/brain/harness/skill-drift/patrol-history); [ "$CODE" = "404" ] || [ "$CODE" = "405" ] || [ "$CODE" = "400" ] || { echo "FAIL: POST 返回 $CODE"; exit 1; }; echo OK'
+  期望: OK（POST → 非 200）
+</pre></div><div id="report" class="section" style="display:none;"><pre style="white-space:pre-wrap;word-break:break-word;">━━━ Sprint: Skill 漂移巡检告警（smoke + 日巡）  PR #3342  2026-06-11 ━━━
+
+PIPELINE  A+B+C phases · 1 eval rounds · - · $0
+
+Phase          Time    Cost    Result
+Proposer       -       -       ✅
+Planner        -       -       ✅
+Generator      -       -       ✅
+Evaluator×1    -       -       ✅
+Reporter       -       -       ✅
+
+DOD -/- ✅  FAIL: 无
+
+E2E 截图: （无截图）
+Learning: （从本次 Sprint 提炼的洞察见 learning.md）
+DB sync: journey_features · api_registry ✅ · Notion pushed ✅
+# journey_steps 保留只读兼容（notion-push-sync 仍同步存量数据），新增数据禁止写入；Ability/Feature 一律写 journey_features
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+</pre></div><div id="learning" class="section" style="display:none;"><pre style="white-space:pre-wrap;word-break:break-word;"># Learning — Skill 漂移巡检告警（smoke + 日巡）
+
+## 运行指标
+
+- GAN 轮次：1
+- Evaluator Fix 次数：1
+- PR：https://github.com/perfectuser21/cecelia/pull/3342
+- Sprint Dir：sprints/06111220-skill-drift-patrol
+
+## 发现的问题
+
+### [PROMPT] Prompt 类问题
+
+- 无
+
+### [BUG] 代码缺陷
+
+- 无
+
+### [INFRA] 基础设施问题
+
+- 无
+
+### [DESIGN] 设计缺陷
+
+- 无
+
+## 下次预防清单
+
+- [ ] 检查 contract-draft.md 格式是否符合 evaluator 预期
+- [ ] 确认 DoD 所有 [BEHAVIOR] 条目有对应测试
+- [ ] GAN 轮次 &gt; 2 时复盘 evaluator prompt 是否过严
+</pre></div>
+<div id="screenshots" class="section" style="display:none;"><p>无截图</p></div>
+</div>
+</main>
+<script>
+function show(id){document.querySelectorAll('.section').forEach(s=>s.style.display='none');var el=document.getElementById(id);if(el)el.style.display='block';}
+var first=document.querySelector('.section');if(first)first.style.display='block';
+</script>
+</body></html>
