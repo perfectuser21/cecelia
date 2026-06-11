@@ -1,20 +1,19 @@
-# PRD — Harness callback 幂等去重（修 GAN proposer 并发重 spawn）
+# PRD — 对齐 phase-event/initiative_run_events stale 测试至新 SSOT 契约
 
 ## 背景
 
-真实跑 harness pipeline（task ed860936）现场抓到编排层 P0 bug：GAN proposer 节点被并发 spawn 5 个容器（08:12-08:14，间隔 20-30s，第 5 次后停止），全部 env 相同（同 PROPOSE_ROUND=1 / 同 PROPOSE_BRANCH / 同 workspace mount / 同 .cid），同时处于 Up 状态 = 5 个并发图执行实例。
+我之前的 PR #3334（同步 harness skill 快照至 SSOT cc8e65f）把 SSOT #50「链路审计修复」后的 skill 内容带进 monorepo 快照，删掉了 skill 里的 `phase-event`/`initiative_run_events`/`ts_end`/`cost_usd` 等字面，导致一批断言「skill 含这些字面」的旧测试在全量 brain 套里变红（15 个，分布在 4 个测试文件）。CI 没拦住是因为 brain-unit 用 `vitest --changed`，而这些测试运行时 `fs.readFileSync` 读 SKILL.md（不在 import 图里）→ 改快照不触发它们。
 
-## 根因（systematic-debugging 确认）
+## 决策依据（team-lead，2026-06-11）
 
-planner 容器跑完后 `docker/cecelia-runner/entrypoint.sh` 用 `curl -m 10` POST 回调到 `/api/brain/harness/callback/:containerId`，**失败重试 5 次**（backoff 3/6/9/12s）。`harness-callback.js` 在 HTTP 请求内**同步 `await compiledGraph.invoke(resume)`**，而 GAN proposer 是阻塞节点（B44，spawn 容器后 await 数分钟）→ 10s 内无响应 → curl 超时 → runner 重试 → 回调路由**无幂等** → 每次重试都对**同一 thread_id** 发起一次新的并发 resume → 每次跑 proposer 节点 spawn 一个相同 env 的容器。5 次重试 = 5 个并发容器，间隔 ~13-22s，第 5 次后停止——与现场完全吻合。callback_queue/callback-worker 路径不 resume 图，排除。
+phase metrics 的 owner 是 **Brain 侧**，不是 skill：`initiative_run_events` 表 2200+ 行、近 7 天事件全部由 Brain 侧 `events/initiativeRunEvents.js`（图节点生命周期 emitGraphNodeUpdate → write/update）写入；skill 自 06-04 起就没有 phase-event 埋点指令但事件流完整 → skill 侧 curl 埋点自始未在生产生效，#50 清理合理，**不是回归**。故这些「skill 含字面」断言已过时，应改写成断言 Brain 侧 owner。
 
 ## 范围
 
-`packages/brain/src/routes/harness-callback.js`：每个 containerId 的回调最多 resume 一次（进程内 claim，check-and-set 原子），重复回调（curl 重试 / 并发）直接 200 ack，不再 invoke。
+把 4 个测试文件里的 stale skill-content 断言改写为断言 Brain 侧 owner（events/initiativeRunEvents.js 写 initiative_run_events + 三列 / harness.js phase-event 端点 / migration 293），保留各文件里原本有效的 Brain 侧断言。`routes/harness.js` 的 POST/PATCH /phase-event 端点保留不动（向后兼容）。
 
 ## 成功标准
 
-- 同一 containerId 的回调无论重试/并发多少次，`compiledGraph.invoke` 只被调用一次（= 只 spawn 一个 proposer 容器）。
-- 不同 containerId 互不影响，各自正常 resume。
-- lookup 失败/404 时释放 claim，后续回调可重试（不被误去重）。
-- 既有 harness-callback 行为（200 成功 / 404 无 thread / 500 resume 抛错 / 400 缺 body）全部保持。
+- 4 个受影响测试文件全绿；全量 brain 单测里这 15 个 stale 失败清零。
+- 改写后的断言校验真实生产机制（Brain 侧 owner），保留回归价值，不再依赖已移除的 skill 字面。
+- 不改任何 src 逻辑、不改 skill 快照、不动 phase-event 端点。

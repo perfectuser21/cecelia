@@ -1,20 +1,20 @@
-# DoD — Harness callback 幂等去重（修 GAN proposer 并发重 spawn）
+# DoD — 对齐 phase-event/initiative_run_events stale 测试至新 SSOT 契约
 
-**范围**: harness-callback.js 加 per-containerId 幂等 claim，重复回调直接 ack 不重入 resume。
+**范围**: 4 个测试文件的 stale skill-content 断言改写为断言 Brain 侧 owner（events/initiativeRunEvents.js）。纯测试对齐，不改 src/skill。
 **大小**: S
 
 ## ARTIFACT 条目
 
-- [x] [ARTIFACT] harness-callback.js 有进程内 claim 表（_claimedCallbacks）+ 测试 reset hook
-  Test: manual:node -e "const c=require('fs').readFileSync('packages/brain/src/routes/harness-callback.js','utf8');if(!c.includes('_claimedCallbacks')||!c.includes('_resetCallbackDedupeForTests'))process.exit(1);console.log('OK')"
+- [x] [ARTIFACT] harness.test.js 不再读 skill SKILL.md 做断言，改断言 Brain 侧 owner
+  Test: manual:node -e "const c=require('fs').readFileSync('packages/brain/src/routes/__tests__/harness.test.js','utf8');if(c.includes('skills/harness-report/SKILL.md'))process.exit(1);if(!c.includes('events/initiativeRunEvents.js'))process.exit(1);console.log('OK')"
 
-- [x] [ARTIFACT] 重复回调短路返回 deduped，不再 invoke
-  Test: manual:node -e "const c=require('fs').readFileSync('packages/brain/src/routes/harness-callback.js','utf8');if(!c.includes('deduped: true'))process.exit(1);console.log('OK')"
+- [x] [ARTIFACT] skill-phase-event-calls.test.ts 改断言 Brain 侧 owner（不再 grep SKILL.md）
+  Test: manual:node -e "const c=require('fs').readFileSync('sprints/06040940-harness-phase-metrics/tests/skill-phase-event-calls.test.ts','utf8');if(!c.includes('initiativeRunEvents.js'))process.exit(1);console.log('OK')"
 
-- [x] [ARTIFACT] 去重回归测试文件存在
-  Test: manual:node -e "const c=require('fs').readFileSync('packages/brain/src/routes/__tests__/harness-callback-dedupe.test.js','utf8');if(!c.includes('只 resume 一次'))process.exit(1);console.log('OK')"
+- [x] [ARTIFACT] report-step6-refs-events.test.ts 改断言 events/initiativeRunEvents.js（不再读 harness-report SKILL.md）
+  Test: manual:node -e "const c=require('fs').readFileSync('sprints/06040940-harness-phase-metrics/tests/report-step6-refs-events.test.ts','utf8');if(c.includes('harness-report/SKILL.md'))process.exit(1);if(!c.includes('initiativeRunEvents.js'))process.exit(1);console.log('OK')"
 
 ## BEHAVIOR 条目（内嵌可执行 manual: 命令）
 
-- [x] [BEHAVIOR] 去重回归测试覆盖 4 场景：重试只 resume 一次 / 并发只 resume 一次 / 不同 containerId 各自 resume / 404 释放 claim（brain-unit CI --changed 实跑，因测试 import harness-callback.js）
-  Test: manual:node -e "const c=require('fs').readFileSync('packages/brain/src/routes/__tests__/harness-callback-dedupe.test.js','utf8');['重试两次','5 次重试','并发到达','不同 containerId','404','toHaveBeenCalledTimes(1)','toHaveBeenCalledTimes(2)'].forEach(s=>{if(!c.includes(s))process.exit(1)});console.log('OK')"
+- [x] [BEHAVIOR] harness-phase-event.test.ts 的 stale 「skill 含 phase-event 字面」断言已清除并替换为 Brain 侧 owner 断言（brain-unit CI --changed 实跑这 4 个测试文件验证全绿）
+  Test: manual:node -e "const c=require('fs').readFileSync('sprints/06040940-harness-phase-metrics/tests/harness-phase-event.test.ts','utf8');if(c.includes('skills/${skill}/SKILL.md'))process.exit(1);if(!c.includes('INSERT INTO initiative_run_events'))process.exit(1);console.log('OK')"
