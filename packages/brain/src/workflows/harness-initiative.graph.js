@@ -692,6 +692,8 @@ export const FullInitiativeState = Annotation.Root({
   // Serial evaluate loop state
   task_loop_index:    Annotation({ reducer: (_o, n) => n, default: () => 0 }),
   task_loop_fix_count: Annotation({ reducer: (_o, n) => n, default: () => 0 }),
+  // resume 防护：serial gate 对 status=queued 无终败证据的当前 sub-task 重跑计数（防死循环上限）
+  serial_gate_requeue_count: Annotation({ reducer: (_o, n) => n, default: () => 0 }),
   evaluate_verdict:   Annotation({ reducer: (_o, n) => n, default: () => null }),
   evaluate_feedback:  Annotation({ reducer: (_o, n) => n, default: () => null }),
   final_e2e_fix_count: Annotation({ reducer: (_o, n) => n, default: () => 0 }),
@@ -1444,7 +1446,11 @@ export async function pickSubTaskNode(state) {
   };
 }
 
-export async function advanceTaskIndexNode(state) {
+// Serial gate resume 防护：status=queued 无终败证据时最多重跑当前 sub-task 的次数。
+// 超过则视为真未收敛 → terminal FAIL（杜绝本修复自身在病态 status 下死循环）。
+const SERIAL_GATE_REQUEUE_CAP = 2;
+
+export async function advanceTaskIndexNode(state, opts = {}) {
   // Serial merge gate: 刚完成的 sub-task (tasks[idx]) 必须 merged 才能推进
   const subTasks = state.sub_tasks || [];
   const tasks = state.taskPlan?.tasks || [];
@@ -1454,6 +1460,52 @@ export async function advanceTaskIndexNode(state) {
     const currentId = currentTask?.id || currentTask?.task_id;
     const record = subTasks.find((s) => s.id === currentId);
     if (record && record.status !== 'merged') {
+      // ── Resume 终局误判防护（根因：serial gate 在 resume 路径用陈旧 checkpoint 状态做终局
+      //    判断）。在飞 run 期间另一 PR merge 触发部署重启 → startup-sync re-queue + dispatcher
+      //    resume → 恢复图走到本 gate，sub_task 状态仍是 checkpoint 旧值（queued/未 merged），
+      //    在飞工作其实可恢复，却被直接判终败误杀兄弟 run（实证 d8acba51 / c0e2546b）。
+      //    教训：终局判断必须基于持久事实源，不能信 resume 时的陈旧 checkpoint。
+      const checkPrMerged = opts._checkPrMerged ?? _checkPrMerged;
+
+      // 1) 持久事实源 = GitHub PR 状态。已 merged → 与 reportNode/liveness 既有 merge-race
+      //    纠正（#3341 短路）同语义：纠正 sub_tasks 状态并放行推进，绝不误判 FAIL。
+      if (record.pr_url) {
+        const merged = await checkPrMerged(record.pr_url).catch(() => false);
+        if (merged) {
+          console.log(
+            `[advance] resume merge-race 纠正：${currentId} PR ${record.pr_url} 实际已 merged，serial gate 放行推进`
+          );
+          return {
+            sub_tasks: [{ ...record, status: 'merged' }],  // reducer merge-by-id
+            task_loop_index: idx + 1,
+            task_loop_fix_count: 0,
+            serial_gate_requeue_count: 0,
+            evaluate_verdict: null,
+            evaluate_feedback: null,
+          };
+        }
+      }
+
+      // 2) 无终败证据：status=queued（status channel 默认值，resume 时透传）或缺失，且 PR 未
+      //    merged —— 说明是「在飞工作被重启截断」而非真失败。不判 FAIL，重新进入 run_sub_task
+      //    复用既有幂等链路继续推进当前 sub-task（不递增 task_loop_index → pick_sub_task 重选同一个）。
+      const noTerminalEvidence = !record.status || record.status === 'queued';
+      const requeueCount = state.serial_gate_requeue_count ?? 0;
+      if (noTerminalEvidence && requeueCount < SERIAL_GATE_REQUEUE_CAP) {
+        console.warn(
+          `[advance] resume 防护：${currentId} status=${record.status ?? 'undefined'} 无终败证据`
+          + `（PR 未 merged 或合同/分支仍在飞）→ 重跑当前 sub-task（第 ${requeueCount + 1}/${SERIAL_GATE_REQUEUE_CAP} 次），不判 FAIL`
+        );
+        return {
+          // 不递增 task_loop_index → 重选同一 sub-task → run_sub_task 幂等重跑
+          serial_gate_requeue_count: requeueCount + 1,
+          task_loop_fix_count: 0,
+          evaluate_verdict: null,
+          evaluate_feedback: null,
+        };
+      }
+
+      // 3) genuine 终败（status=failed 等）或 requeue 超上限仍未收敛 → terminal FAIL（保持原语义）。
       return {
         error: {
           node: 'advance',
@@ -1466,6 +1518,7 @@ export async function advanceTaskIndexNode(state) {
   return {
     task_loop_index: idx + 1,
     task_loop_fix_count: 0,
+    serial_gate_requeue_count: 0,
     evaluate_verdict: null,
     evaluate_feedback: null,
   };
