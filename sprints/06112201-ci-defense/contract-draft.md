@@ -274,5 +274,5 @@ echo "✅ Golden Path 全部验证通过"
 
 | 功能 | Test File | BEHAVIOR 覆盖 | 预期红证据 |
 |---|---|---|---|
-| 整个 Sprint（文件存在性） | `sprints/06112201-ci-defense/tests/ci-defense.test.js` | 4 new files exist（含 skill-ci.yml）| → 4 failures (files not created yet) |
-| skill 契约内容（正向+反向） | `packages/brain/src/__tests__/skill-contract.test.js` | evaluator/reviewer/generator/proposer 不变量 | Generator 创建后全绿 |
+| 整个 Sprint（文件存在性） | `tests/ci-defense.test.js` | changed-test-router.mjs 存在 / contract-existence-check.mjs 存在 / skill-contract.test.js 存在 / skill-ci.yml 存在 | → 4 failures (files not created yet) |
+| skill 契约内容（正向+反向） | `../../packages/brain/src/__tests__/skill-contract.test.js` | env_missing / B-1.6 / ReviewerOutputSchema / 领域验证规则 / gh pr merge | Generator 创建后全绿 |

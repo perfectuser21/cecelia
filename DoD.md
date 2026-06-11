@@ -21,9 +21,16 @@ journey_type: autonomous
 ## BEHAVIOR 条目
 
 - [x] [BEHAVIOR] `changed-test-router.mjs --files <skill_file>` → stdout 含 skill-contract 测试路径（非空）
+  Test: manual:bash -c 'OUT=$(node packages/brain/scripts/ci/changed-test-router.mjs --files packages/workflows/skills/harness-evaluator/SKILL.md 2>/dev/null); echo "$OUT" | grep -q "skill-contract" || { echo "FAIL: stdout 无 skill-contract 路径 — OUT=[${OUT}]"; exit 1; }; echo OK'
 - [x] [BEHAVIOR] `changed-test-router.mjs` 无 --files 参数 → fail-closed（exit 非 0）
+  Test: manual:bash -c 'node packages/brain/scripts/ci/changed-test-router.mjs 2>/dev/null; EXIT=$?; [ "$EXIT" -ne 0 ] || { echo "FAIL: 缺 --files 应 exit 非0，得到 exit=0"; exit 1; }; echo OK'
 - [x] [BEHAVIOR] `skill-contract.test.js` vitest 正向全绿 + 7 项不变量内容覆盖
+  Test: manual:bash -c 'cd packages/brain && npx vitest run src/__tests__/skill-contract.test.js 2>&1; EXIT=$?; [ "$EXIT" -eq 0 ] || { echo "FAIL: skill-contract 未全绿 exit=$EXIT"; exit 1; }; echo OK'
 - [x] [BEHAVIOR] `skill-contract.test.js` 反向 fixture 含显式 `toBe(false)` 断言（非隐式 truthy）
+  Test: manual:bash -c 'node -e "const c=require(\"fs\").readFileSync(\"packages/brain/src/__tests__/skill-contract.test.js\",\"utf8\");if(!c.includes(\"toBe(false)\"))process.exit(1);console.log(\"OK: toBe(false) 存在\")" || { echo "FAIL: 反向 fixture 缺 toBe(false) 显式断言"; exit 1; }'
 - [x] [BEHAVIOR] `skill-contract.test.js` env_missing 反向 fixture it() 执行通过（检测逻辑对篡改输入返回 ok=false）
+  Test: manual:bash -c 'cd packages/brain && VOUT=$(npx vitest run src/__tests__/skill-contract.test.js --reporter=verbose 2>&1); echo "$VOUT" | grep -E "✓|✔" | grep -i "env_missing" || { echo "FAIL: env_missing 反向 fixture it() 未通过"; echo "$VOUT"; exit 1; }; echo OK'
 - [x] [BEHAVIOR] `contract-existence-check.mjs` sprint 目录缺合同 → exit 非 0
+  Test: manual:bash -c 'TMPDIR=$(mktemp -d); mkdir -p "$TMPDIR/sprints/test-ci-gate"; touch "$TMPDIR/sprints/test-ci-gate/sprint-prd.md"; node packages/brain/scripts/ci/contract-existence-check.mjs --root "$TMPDIR" --files "sprints/test-ci-gate/sprint-prd.md" 2>/dev/null; EXIT=$?; rm -rf "$TMPDIR"; [ "$EXIT" -ne 0 ] || { echo "FAIL: 缺合同应 exit 非0，得到 exit=0"; exit 1; }; echo OK'
 - [x] [BEHAVIOR] `contract-existence-check.mjs` sprint 目录含合同 → exit 0
+  Test: manual:bash -c 'TMPDIR=$(mktemp -d); mkdir -p "$TMPDIR/sprints/test-ci-gate"; touch "$TMPDIR/sprints/test-ci-gate/sprint-prd.md" "$TMPDIR/sprints/test-ci-gate/contract-draft.md"; node packages/brain/scripts/ci/contract-existence-check.mjs --root "$TMPDIR" --files "sprints/test-ci-gate/sprint-prd.md"; EXIT=$?; rm -rf "$TMPDIR"; [ "$EXIT" -eq 0 ] || { echo "FAIL: 有合同应 exit 0，得到 exit=$EXIT"; exit 1; }; echo OK'
