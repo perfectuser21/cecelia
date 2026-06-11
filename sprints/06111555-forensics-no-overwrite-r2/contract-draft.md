@@ -166,7 +166,7 @@ echo "✅ Golden Path（取证防覆盖）全程验证通过（evaluator 容器�
 
 | 功能 | Test File | BEHAVIOR 覆盖 | 预期红证据 |
 |---|---|---|---|
-| 整个 Sprint | `tests/forensics-no-overwrite.test.ts` | writePromptFile 唯一化 + buildDockerArgs 注入 env/实例后缀（含 STDOUT_FILE）| → 2 failures（当前 writePromptFile 返回同路径、无 CECELIA_PROMPT_FILE/CECELIA_STDOUT_FILE）|
+| 整个 Sprint | `tests/forensics-no-overwrite.test.ts` | 两次写 prompt 取证返回不同路径/注入 CECELIA_PROMPT_FILE 且三类路径共享实例后缀 | → 2 failures（当前 writePromptFile 返回同路径、无 CECELIA_PROMPT_FILE/CECELIA_STDOUT_FILE）|
 
 ---
 
