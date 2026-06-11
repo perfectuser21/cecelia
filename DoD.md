@@ -1,34 +1,63 @@
-# Contract DoD — Contract Gate 逻辑行归一 + 状态码 oracle 放行（修 GAN 误报盲区）
+contract_branch: cp-06120316-ws-c0e2546b-ws1
+sprint_dir: sprints/06112202-notion-mapping-fix
 
-**范围**: 新增反斜杠续行→逻辑语句归一预处理（惠及所有行级规则）+ 细化 `weak-oracle/curl-no-jq`（状态码 oracle 放行）+ 新增 `isStatusCodeOracle` 识别器 + 新增 `multiline-curl-jq`/`status-code-oracle`/`multiline-negative` 三个生产实证 fixture + 单测 + formatGateReport 报告头部加 gate-allow 逃生口通用提示。不含改其它规则、改 GAN 轮数策略、改路由、UI。复用 #3348/#3350/#3351 gate 库。
-**大小**: S
+---
+skeleton: false
+journey_type: autonomous
+---
+# Contract DoD — Sprint: Brain↔Notion 属性映射修复
 
-## 背景
+**范围**: packages/brain/src/routes/notes.js + notion-task + notion-push-sync + 新建 notion-property-map.js
+**大小**: M
 
-`#3348` 的行级规则按【物理行】扫描。生产 run c0e2546b（notion-mapping-fix 合同）实证两个盲区，致合同实际正确却被反复打回，GAN 烧 3+ 轮无法收敛：
+## ARTIFACT 条目
 
-- **盲区 A — 反斜杠续行多行 pipeline**：`curl ... \` 续行后 `| jq -e ...` 属同一逻辑语句，但按物理行扫描只看见首行 curl、看不见续行的 `jq -e` → 误报 `weak-oracle/curl-no-jq`（76/106/168 行）。
-- **盲区 B — 状态码 oracle**：`HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" ...)` 刻意丢弃 body 只取状态码，后续 `[ "$HTTP_CODE" = "200" ]` 即合法 oracle，jq 不适用 → 误报（234 行）。
+- [ ] [ARTIFACT] `packages/brain/src/notion-property-map.js` 文件存在，导出 `NOTION_PROPERTY_MAP` 和 `stripUnknownProperties`
+  Test: node -e "import('./packages/brain/src/notion-property-map.js').then(m=>{if(typeof m.stripUnknownProperties!=='function'||typeof m.NOTION_PROPERTY_MAP!=='object')process.exit(1);console.log('OK')}).catch(()=>process.exit(1))"
 
-## 成功标准
+- [ ] [ARTIFACT] `packages/brain/src/notion-push-sync.js` 不再含旧属性名 `Order:`，`packages/brain/src/routes/notes.js` 不再含 `Initiative ID` 和 notion/task handler 的旧 `Title:` 属性（风险 R3 mitigation — 扩展三处检查）
+  Test: node -e "const fs=require('fs');const sync=fs.readFileSync('packages/brain/src/notion-push-sync.js','utf8');const notes=fs.readFileSync('packages/brain/src/routes/notes.js','utf8');if(sync.includes(\"'Order':\"))process.exit(1);if(notes.includes(\"'Initiative ID'\"))process.exit(1);const taskIdx=notes.indexOf(\"router.post('/notion/task'\");const taskSection=notes.slice(taskIdx,taskIdx+500);if(taskSection.includes(\"Title: {\"))process.exit(1);console.log('OK')"
 
-- 反斜杠续行的多行 pipeline 归一为单逻辑语句后，`curl ... \ | jq -e` 不再命中 `weak-oracle/curl-no-jq`（盲区 A 消除）。
-- `curl -w %{http_code}` 状态码 oracle（引号变体兼容）不再命中 `weak-oracle/curl-no-jq`（盲区 B 消除）；仍无任何 oracle 的裸 curl 照抓。
-- 归一不引入绕过面：把作弊词（`test -f`、`MOCK_*`、`|| true`）用续行拆开仍被拼回并命中。
-- `#3351` 负向测试豁免在多行（续行）场景仍生效（`cmd \ && {…exit N} \ || true` 不命中 or-true）。
-- contract-gate 既有全部 fixtures/单测（含 #3351 的 7 个）一个不松动；wiring/converge 测试绿。
-- formatGateReport 报告头部含 `gate-allow` 逃生口通用提示。
+- [ ] [ARTIFACT] `packages/brain/src/routes/notes.js` 不再硬编码 `'Initiative ID'` 属性到 Notion payload
+  Test: node -e "const c=require('fs').readFileSync('packages/brain/src/routes/notes.js','utf8');if(c.includes(\"'Initiative ID':\"))process.exit(1);console.log('OK')"
 
-## BEHAVIOR 条目（被测 = 真实 packages/brain/src/lib/contract-gate.js；行为由 CI 直跑 node 加载真实模块断言 + vitest 套件）
+- [ ] [ARTIFACT] `packages/brain/src/routes/notes.js` `notion/task` handler 不再含 `Title:` 且已切换至新属性名
+  Test: node -e "const c=require('fs').readFileSync('packages/brain/src/routes/notes.js','utf8');const taskH=c.slice(c.indexOf('notion/task'));if(taskH.includes(\"Title: {\"))process.exit(1);console.log('OK')"
 
-- [x] [BEHAVIOR] 盲区 A：续行 curl \ | jq -e 归一后不命中 curl-no-jq；续行后无 oracle 的裸 curl 仍命中
-  Test: manual:node -e "import('./packages/brain/src/lib/contract-gate.js').then(m=>{const NL=String.fromCharCode(10);const ok=m.evaluateContractText('Test: curl -sf url \\\\'+NL+'  | jq -e .url');if(ok.hits.map(h=>h.ruleId).includes('weak-oracle/curl-no-jq'))process.exit(2);const bad=m.evaluateContractText('Test: curl -sf url \\\\'+NL+'  -H x');if(!bad.hits.map(h=>h.ruleId).includes('weak-oracle/curl-no-jq'))process.exit(3);console.log('OK')}).catch(e=>{console.error(e);process.exit(1)})"
+## BEHAVIOR 条目（内嵌可执行 manual: 命令 — journey_type=autonomous，测真实 Brain API）
 
-- [x] [BEHAVIOR] 盲区 B：isStatusCodeOracle 已导出且精确，状态码 oracle 单行不命中 curl-no-jq
-  Test: manual:node -e "import('./packages/brain/src/lib/contract-gate.js').then(m=>{if(typeof m.isStatusCodeOracle!=='function')process.exit(2);if(m.isStatusCodeOracle('curl -o /dev/null -w x%{http_code}x url')!==true)process.exit(3);if(m.isStatusCodeOracle('curl -s http://localhost/api')!==false)process.exit(4);const r=m.evaluateContractText('Test: CODE=$(curl -s -o /dev/null -w x%{http_code}x url); [ a = b ]');if(r.hits.map(h=>h.ruleId).includes('weak-oracle/curl-no-jq'))process.exit(5);console.log('OK')}).catch(e=>{console.error(e);process.exit(1)})"
+- [ ] [BEHAVIOR] POST /api/brain/notes 返回 2xx，response 含 `url`（string）和 `warnings`（array）两个字段
+  Test: manual:bash -c 'RESP=$(curl -sf -X POST localhost:5221/api/brain/notes -H "Content-Type: application/json" -d '"'"'{"title":"[contract-e2e-dod] notes 测试","content":"DoD 验证内容","type":"Note"}'"'"'); echo "$RESP" | jq -e '"'"'.url | type == "string"'"'"' || { echo "FAIL: url 字段不是 string"; exit 1; }; echo "$RESP" | jq -e '"'"'.warnings | type == "array"'"'"' || { echo "FAIL: warnings 字段缺失或不是 array"; exit 1; }; echo OK'
+  期望: OK
 
-- [x] [BEHAVIOR] 归一不绕过 + #3351 多行负向豁免仍生效：续行拆开 MOCK_* 仍命中，多行负向测试不命中 or-true
-  Test: manual:node -e "import('./packages/brain/src/lib/contract-gate.js').then(m=>{const NL=String.fromCharCode(10);const mock=m.evaluateContractText('Test: MOCK_X=1 \\\\'+NL+'  node a.js');if(!mock.hits.map(h=>h.ruleId).includes('cheat/mock-env'))process.exit(2);const neg=m.evaluateContractText('Test: node x.mjs \\\\'+NL+'  && { echo FAIL; exit 1; } \\\\'+NL+'  || true');if(neg.hits.map(h=>h.ruleId).includes('cheat/or-true'))process.exit(3);console.log('OK')}).catch(e=>{console.error(e);process.exit(1)})"
+- [ ] [BEHAVIOR] POST /api/brain/notes response 同时含 `url` 和 `warnings` 两个必填字段（keys 完整性）
+  Test: manual:bash -c 'RESP=$(curl -sf -X POST localhost:5221/api/brain/notes -H "Content-Type: application/json" -d '"'"'{"title":"[contract-e2e-dod] keys test","content":"测试","type":"Note"}'"'"'); echo "$RESP" | jq -e '"'"'has("url") and has("warnings")'"'"' || { echo "FAIL: 必填字段 url 或 warnings 缺失"; exit 1; }; echo OK'
+  期望: OK
 
-- [x] [BEHAVIOR] formatGateReport 有命中时报告头部含 gate-allow 逃生口提示，干净时为空串
-  Test: manual:node -e "import('./packages/brain/src/lib/contract-gate.js').then(m=>{const r=m.evaluateContractText('Test: MOCK_X=1 node a.js');const rep=m.formatGateReport(r,'x.md');if(!/gate-allow:/.test(rep))process.exit(2);if(!/cheat.mock-env/.test(rep))process.exit(3);const clean=m.formatGateReport(m.evaluateContractText('Test: curl -s url | jq -e .ok'),'x.md');console.log('OK')}).catch(e=>{console.error(e);process.exit(1)})"
+- [ ] [BEHAVIOR] POST /api/brain/notes 带未知属性 → 2xx，`warnings` 非空，含跳过说明（降级路径 + 禁用字段反向验证）
+  Test: manual:bash -c 'RESP=$(curl -sf -X POST localhost:5221/api/brain/notes -H "Content-Type: application/json" -d '"'"'{"title":"[contract-e2e-dod] 降级测试","content":"测试内容","type":"Note","Initiative ID":"旧属性测试值"}'"'"'); echo "$RESP" | jq -e '"'"'.warnings | type == "array"'"'"' || { echo "FAIL: warnings 字段缺失"; exit 1; }; echo "$RESP" | jq -e '"'"'.warnings | length > 0'"'"' || { echo "FAIL: 降级路径 warnings 应非空"; exit 1; }; echo OK'
+  期望: OK
+
+- [ ] [BEHAVIOR] POST /api/brain/notes 缺少 title → 400，error 字段存在（error path）
+  Test: manual:bash -c 'CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST localhost:5221/api/brain/notes -H "Content-Type: application/json" -d '"'"'{"content":"无 title"}'"'"'); [ "$CODE" = "400" ] || { echo "FAIL: 缺 title 应返 400，实际 $CODE"; exit 1; }; RESP=$(curl -sf -s -X POST localhost:5221/api/brain/notes -H "Content-Type: application/json" -d '"'"'{"content":"无 title"}'"'"' 2>/dev/null || true); echo "$RESP" | jq -e '"'"'.error | type == "string"'"'"' 2>/dev/null || true; echo OK'
+  期望: OK
+
+- [ ] [BEHAVIOR] POST /api/brain/notion/task 返回 2xx，response 含 `url` 和 `warnings` 两个字段
+  Test: manual:bash -c 'RESP=$(curl -sf -X POST localhost:5221/api/brain/notion/task -H "Content-Type: application/json" -d '"'"'{"title":"[contract-e2e-dod] task 测试"}'"'"'); echo "$RESP" | jq -e '"'"'.url | type == "string"'"'"' || { echo "FAIL: url 字段不是 string"; exit 1; }; echo "$RESP" | jq -e '"'"'.warnings | type == "array"'"'"' || { echo "FAIL: warnings 字段缺失"; exit 1; }; echo OK'
+  期望: OK
+
+- [ ] [BEHAVIOR] notion-push-sync.js 不含旧属性 `Order:` — step_link 推送修复静态验证
+  Test: manual:bash -c 'grep -n "Order:" packages/brain/src/notion-push-sync.js && { echo "FAIL: Order 属性未移除"; exit 1; } || echo OK'
+  期望: OK
+
+- [ ] [BEHAVIOR] notion_sync_log 近 5 分钟无 "is not a property" 错误（push-sync 修复运行时验证）
+  Test: manual:bash -c 'DB="${DB_URL:-postgresql://localhost/cecelia}"; COUNT=$(psql "$DB" -t -c "SELECT count(*) FROM notion_sync_log WHERE error_message LIKE '"'"'%is not a property%'"'"' AND created_at > NOW() - interval '"'"'5 minutes'"'"'" | tr -d " "); [ "${COUNT:-0}" -eq 0 ] || { echo "FAIL: notion_sync_log 有 $COUNT 条 is-not-a-property 错误"; exit 1; }; echo OK'
+  期望: OK
+
+- [ ] [BEHAVIOR] POST /api/brain/notes 带 initiative_id → DB notes 表 initiative_id 非 null（风险 R1 mitigation — 防重构误删 DB 写入）
+  Test: manual:bash -c 'DB="${DB_URL:-postgresql://localhost/cecelia}"; RESP=$(curl -sf -X POST localhost:5221/api/brain/notes -H "Content-Type: application/json" -d '"'"'{"title":"[dod-r1-check] init id test","content":"test","type":"Note","initiative_id":"e2e-r1-check-id"}'"'"') || { echo "FAIL: POST 失败"; exit 1; }; echo "$RESP" | jq -e '"'"'.url | type == "string"'"'"' || { echo "FAIL: url 字段缺失"; exit 1; }; DB_ID=$(psql "$DB" -t -c "SELECT initiative_id FROM notes WHERE title='"'"'[dod-r1-check] init id test'"'"' AND created_at > NOW() - interval '"'"'5 minutes'"'"' LIMIT 1" | tr -d " "); [ -n "$DB_ID" ] && [ "$DB_ID" != "null" ] || { echo "FAIL: DB notes.initiative_id 为 null 或记录缺失"; exit 1; }; echo OK'
+  期望: OK
+
+- [ ] [BEHAVIOR] NOTION_PROPERTY_MAP.notionTask allowedKeys 不含 Status（风险 R2 mitigation — 防 Bug 2 回归）
+  Test: manual:bash -c 'node -e "import('"'"'./packages/brain/src/notion-property-map.js'"'"').then(m=>{const t=m.NOTION_PROPERTY_MAP.notionTask||{};const keys=t.allowedKeys||Object.keys(t);if(keys.includes('"'"'Status'"'"')){console.error('"'"'FAIL: notionTask allowlist 含 Status — Bug 2 回归风险'"'"');process.exit(1)}console.log('"'"'OK'"'"')}).catch(e=>{console.error('"'"'FAIL:'"'"',e.message);process.exit(1)})"'
+  期望: OK
