@@ -1,0 +1,30 @@
+{
+  "initiative_id": "${INITIATIVE_ID}",
+  "journey_type": "autonomous",
+  "journey_type_reason": "纯 packages/brain/ 后端巡检模块，无 UI/bridge/engine 涉及",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "skill-drift 巡检告警：smoke 注册 + 日巡消费者 + patrol-history 端点 + DB migration",
+      "scope": "1) 更新 smoke-skill-drift.sh 添加 snapshot_version 非 null 断言；2) 新建 packages/brain/src/cron/skill-drift-patrol.js（每日检测漂移，调 raise('P1',...) + 写 skill_drift_alerts 表，按日去重）；3) 注册到 tick-runner.js；4) harness.js 新增 GET /skill-drift/patrol-history；5) DB migration 建 skill_drift_alerts 表（skill_name+drift_date UNIQUE）",
+      "dod": [
+        "[BEHAVIOR] bash packages/brain/scripts/smoke/skill-drift-smoke.sh → exit 0，含 snapshot_version 非 null 断言",
+        "[BEHAVIOR] 制造漂移 → 触发巡检 → psql 查 skill_drift_alerts created_at > NOW()-interval '5 min' count >= 1",
+        "[BEHAVIOR] 同 skill_name+drift_date 重复触发 → DB 行数不变（ON CONFLICT DO NOTHING）",
+        "[BEHAVIOR] GET /api/brain/harness/skill-drift/patrol-history → HTTP 200，keys==[\"alerts\"]，含 id/skill_name/drift_date/detected_at",
+        "[ARTIFACT] packages/brain/src/cron/skill-drift-patrol.js 含 raise('P1') 调用",
+        "[ARTIFACT] packages/brain/migrations/301_skill_drift_alerts.sql 存在"
+      ],
+      "files": [
+        "packages/brain/scripts/smoke/skill-drift-smoke.sh",
+        "packages/brain/src/cron/skill-drift-patrol.js",
+        "packages/brain/src/tick-runner.js",
+        "packages/brain/src/routes/harness.js",
+        "packages/brain/migrations/301_skill_drift_alerts.sql"
+      ],
+      "depends_on": [],
+      "complexity": "M",
+      "estimated_minutes": 75
+    }
+  ]
+}

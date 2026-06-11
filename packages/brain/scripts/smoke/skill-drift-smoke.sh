@@ -20,6 +20,13 @@ echo "$r" | jq -e '.any_drift == (.skills | map(.drifted) | any)' >/dev/null 2>&
 # packages/workflows/ 且无 SSOT mount），null != null 为 false 会与 PRD 语义矛盾误报。
 echo "$r" | jq -e '.skills | all(.drifted == (if (.ssot_version == null) or (.snapshot_version == null) then true else (.ssot_version != .snapshot_version) end))' >/dev/null 2>&1 \
   && ok "drifted 符合 PRD 语义（null→true，否则比值）" || fail "drifted 不符合 PRD 语义"
+# PRD 边界规则（#3339 教训）：任一 snapshot_version == null → 必须 FAIL，防静默通过
+null_count=$(echo "$r" | jq '[.skills[] | select(.snapshot_version == null)] | length' 2>/dev/null || echo 1)
+if [[ "$null_count" -eq 0 ]]; then
+  ok "所有 skill snapshot_version 非 null"
+else
+  fail "有 $null_count 个 skill snapshot_version 为 null（#3339 类 bug）"
+fi
 code=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$BRAIN/api/brain/harness/skill-drift")
 [[ "$code" != "200" ]] && ok "POST 同路径非 200（方法语义）" || fail "POST 返回了 200"
 
