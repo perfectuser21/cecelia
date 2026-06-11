@@ -17,7 +17,8 @@
  *   }
  */
 
-import { execSync } from 'child_process';
+import { execSync, execFileSync } from 'child_process';
+import { writeFileSync, mkdirSync } from 'fs';
 import path from 'path';
 
 const DEFAULT_UP_SCRIPT = 'scripts/harness-e2e-up.sh';
@@ -279,6 +280,98 @@ export function attributeFailures(failedScenarios) {
     }
   }
   return map;
+}
+
+// ─── Sprint 06120010: executeContractCommands / validateCoverageTable / isLegacyMode ───
+
+/**
+ * 代码层执行 BEHAVIOR manual:bash 命令，逐条捕获 exit_code / stdout / stderr / duration_ms。
+ * stdout/stderr 超 OUTPUT_CAP_BYTES 时保留头部 3000 + 尾部 1000 字节（TRNK_HEAD/TRNK_TAIL 标记）。
+ *
+ * @param {Array<{cmd:string, type?:string}>} commands
+ * @param {{sprintDir:string, runId:string}} opts
+ * @returns {Promise<{recordPath:string, commands:Array}>}
+ */
+export async function executeContractCommands(commands, opts = {}) {
+  const { sprintDir, runId } = opts;
+  if (!sprintDir) throw new Error('executeContractCommands: opts.sprintDir required');
+  if (!runId) throw new Error('executeContractCommands: opts.runId required');
+
+  mkdirSync(sprintDir, { recursive: true });
+
+  const TOTAL_CAP = OUTPUT_CAP_BYTES; // 4000
+  const TRUNC_SEP = '\n...[T]...\n'; // 11 bytes
+  const TRUNC_AVAIL = TOTAL_CAP - TRUNC_SEP.length; // 3989
+  const HEAD_BYTES = Math.ceil(TRUNC_AVAIL * 0.75); // ~2992
+  const TAIL_BYTES = TRUNC_AVAIL - HEAD_BYTES; // ~997
+
+  const records = [];
+  for (const command of commands) {
+    const cmd = command?.cmd || '';
+    const start = Date.now();
+    let exitCode = 0;
+    let stdout = '';
+    let stderr = '';
+    try {
+      const raw = execSync(cmd, {
+        encoding: 'buffer',
+        shell: true,
+        stdio: ['ignore', 'pipe', 'pipe'],
+        timeout: DEFAULT_SCENARIO_TIMEOUT_MS,
+        maxBuffer: 20 * 1024 * 1024,
+      });
+      stdout = raw ? raw.toString('utf8') : '';
+    } catch (err) {
+      exitCode = Number.isInteger(err.status) ? err.status : 1;
+      stdout = err.stdout ? err.stdout.toString('utf8') : '';
+      stderr = err.stderr ? err.stderr.toString('utf8') : '';
+    }
+    const duration_ms = Date.now() - start;
+
+    // 截断：超 TOTAL_CAP 字节时保留头尾（TRNK_HEAD+TRNK_TAIL 标记），总长 ≤ TOTAL_CAP
+    if (stdout.length > TOTAL_CAP) {
+      stdout = stdout.slice(0, HEAD_BYTES) + TRUNC_SEP + stdout.slice(-TAIL_BYTES);
+    }
+    if (stderr.length > TOTAL_CAP) {
+      stderr = stderr.slice(0, HEAD_BYTES) + TRUNC_SEP + stderr.slice(-TAIL_BYTES);
+    }
+
+    records.push({ cmd, exit_code: exitCode, stdout, stderr, duration_ms });
+  }
+
+  // 唯一命名：runId 加随机 8-hex 后缀（对齐 #3345 运行实例命名）
+  const rand = Math.floor(Math.random() * 0xffffffff).toString(16).padStart(8, '0');
+  const recordFileName = `exec-record-${runId}-${rand}.json`;
+  const recordPath = path.join(sprintDir, recordFileName);
+
+  writeFileSync(recordPath, JSON.stringify({ commands: records }, null, 2), 'utf8');
+
+  return { recordPath, commands: records };
+}
+
+/**
+ * Brain 代码覆盖校验：校验 coverage.steps 是否覆盖所有 gpSteps。
+ * 无论 LLM 自述什么，缺步时强制返回 {ok: false, missing: [...]}。
+ *
+ * @param {{steps?: Array<{step:string}>}} coverage
+ * @param {string[]} gpSteps
+ * @returns {{ok:boolean, missing?:string[]}}
+ */
+export function validateCoverageTable(coverage, gpSteps) {
+  const steps = Array.isArray(coverage?.steps) ? coverage.steps : [];
+  const coveredSet = new Set(steps.map(s => s?.step).filter(Boolean));
+  const missing = (gpSteps || []).filter(s => !coveredSet.has(s));
+  if (missing.length > 0) return { ok: false, missing };
+  return { ok: true };
+}
+
+/**
+ * 检测 EVALUATOR_LEGACY 回退开关。
+ * @returns {boolean}
+ */
+export function isLegacyMode() {
+  const v = process.env.EVALUATOR_LEGACY;
+  return v === '1' || v === 'true';
 }
 
 // ─── 内部辅助 ─────────────────────────────────────────────────────────────

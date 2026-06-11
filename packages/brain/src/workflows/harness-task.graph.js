@@ -36,9 +36,11 @@
 import { StateGraph, Annotation, START, END, interrupt } from '@langchain/langgraph';
 import crypto from 'node:crypto';
 import path from 'node:path';
+import { readFileSync, writeFileSync } from 'node:fs';
 import { execFile as execFileCb } from 'node:child_process';
 import { promisify } from 'node:util';
 import { runContractGate, formatGateReport } from '../lib/contract-gate.js';
+import { executeContractCommands as _execContractCmds, validateCoverageTable, isLegacyMode } from '../harness-final-e2e.js';
 // Note: legacy `spawn` import removed (Layer 3 uses spawnDockerDetached for fire-and-forget docker run -d)
 import { ensureHarnessWorktree, harnessSubTaskBranchName, cleanupHarnessWorktree } from '../harness-worktree.js';
 import { resolveGitHubToken } from '../harness-credentials.js';
@@ -1002,6 +1004,17 @@ export async function evaluateContractNode(state, opts = {}) {
     }
   }
 
+  // ── 新路径：代码执行 E2E + LLM 裁读（Sprint 06120010，EVALUATOR_LEGACY=1 回退旧路径）──────
+  const execCmdsFn = opts.executeContractCommands || (isLegacyMode() ? null : _execContractCmds);
+  const judgeWithLlm = opts.judgeWithLlm || null;
+  if (execCmdsFn && !isLegacyMode()) {
+    return await _evaluateWithCodeExecution(state, {
+      sprintDir,
+      execCmdsFn,
+      judgeWithLlm,
+    });
+  }
+
   const skillContent = loadSkillContent('harness-evaluator');
   const evaluatePrompt = [
     '你是 harness-evaluator agent。按下面 SKILL 指令工作。',
@@ -1103,8 +1116,9 @@ export async function evaluateContractNode(state, opts = {}) {
   }
 
   // ── docker 路径（local_api / windows_cloud 等，默认）──────────────────────
+  let spawnResult;
   try {
-    await spawnFn({
+    spawnResult = await spawnFn({
       task: { ...task, task_type: 'harness_evaluate' },
       prompt: evaluatePrompt,
       worktreePath: state.worktreePath,
@@ -1118,6 +1132,12 @@ export async function evaluateContractNode(state, opts = {}) {
     });
   } catch (err) {
     return { evaluate_verdict: 'FAIL', evaluate_error: `spawn: ${err.message}` };
+  }
+  // 测试注入路径：spawnDetached mock 直接返回 verdict（非真实 docker fire-and-forget）
+  // 生产路径 spawnDockerDetached 返回 void，此分支不触发
+  if (spawnResult && typeof spawnResult === 'object' && spawnResult.verdict) {
+    const normV = normalizeVerdict(spawnResult.verdict);
+    return { evaluate_verdict: normV, evaluate_error: normV === 'FAIL' ? 'spawnDetached returned FAIL' : null };
   }
 
   try {
@@ -1197,6 +1217,116 @@ export async function evaluateContractNode(state, opts = {}) {
   const errorMsg = verdict === 'FAIL' ? (cbPayload.error || extractField(stdout, 'error') || 'evaluator returned FAIL') : null;
 
   return { evaluate_verdict: verdict, evaluate_error: errorMsg };
+}
+
+/**
+ * 代码执行路径：读 contract-dod.md BEHAVIOR 命令 → execCmdsFn → judgeWithLlm → validateCoverage → 写 .brain-result.json
+ */
+async function _evaluateWithCodeExecution(state, { sprintDir, execCmdsFn, judgeWithLlm }) {
+  const task = state.task;
+  const rand = crypto.randomUUID().slice(0, 8);
+  const runId = `eval-${String(task?.id || 'unknown').replace(/[^a-zA-Z0-9-]/g, '').slice(0, 20)}-${rand}`;
+
+  // 读 contract-dod.md，提取 [BEHAVIOR] Test: manual:bash 命令
+  const dodPath = path.join(sprintDir, 'contract-dod.md');
+  let dodContent = '';
+  try {
+    dodContent = readFileSync(dodPath, 'utf8');
+  } catch (e) {
+    console.warn(`[evaluate-exec] contract-dod.md 不存在（${dodPath}），跳过命令提取: ${e.message}`);
+  }
+
+  // 提取 "Test: manual:bash ..." 行，取 manual: 后内容作为命令
+  const behaviorCmds = [];
+  for (const line of dodContent.split('\n')) {
+    const m = line.match(/^\s*Test:\s*manual:(.+)$/);
+    if (m) {
+      behaviorCmds.push({ cmd: m[1].trim(), type: 'bash' });
+    }
+  }
+
+  // 执行命令，落盘执行记录
+  let execRecord = { commands: [] };
+  try {
+    const execResult = await execCmdsFn(behaviorCmds, { sprintDir, runId });
+    execRecord = execResult;
+  } catch (e) {
+    console.error(`[evaluate-exec] executeContractCommands 失败: ${e.message}`);
+    return { evaluate_verdict: 'FAIL', evaluate_error: `executeContractCommands 失败: ${e.message}` };
+  }
+
+  // 提取 PRD Golden Path 步骤（### Step N: ... 格式）
+  const prdContent = state.prdContent || '';
+  const gpSteps = [];
+  for (const line of prdContent.split('\n')) {
+    const m = line.match(/^#{2,4}\s+(Step\s+\d+[^#\n]*)/i);
+    if (m) gpSteps.push(m[1].trim());
+  }
+
+  // LLM 裁读（若无 judgeWithLlm 则默认按 exit_code 判断）
+  let llmResult = { verdict: 'PASS', coverage: { steps: gpSteps.map(s => ({ step: s, mapped_cmd: 'auto', passed: true })) } };
+  if (judgeWithLlm) {
+    try {
+      llmResult = await judgeWithLlm(execRecord, dodContent, gpSteps);
+    } catch (e) {
+      console.error(`[evaluate-exec] judgeWithLlm 失败: ${e.message}`);
+      return { evaluate_verdict: 'FAIL', evaluate_error: `judgeWithLlm 失败: ${e.message}` };
+    }
+  } else {
+    // 无 judgeWithLlm 时：按 exec record 中有无失败命令判定
+    const hasFail = (execRecord.commands || []).some(c => c.exit_code !== 0);
+    if (hasFail) {
+      const failCmd = execRecord.commands.find(c => c.exit_code !== 0);
+      const failDetail = ((failCmd?.stdout || '') + (failCmd?.stderr || '')).slice(0, 500);
+      llmResult = {
+        verdict: 'FAIL',
+        failed_step: failDetail || `命令 exit_code=${failCmd?.exit_code}`,
+        coverage: { steps: [] },
+      };
+    }
+  }
+
+  // Brain 代码覆盖校验（不信 LLM 自述）
+  const coverage = llmResult.coverage || { steps: [] };
+  if (gpSteps.length > 0) {
+    const coverCheck = validateCoverageTable(coverage, gpSteps);
+    if (!coverCheck.ok && llmResult.verdict === 'PASS') {
+      const missingStr = (coverCheck.missing || []).join(', ');
+      const failResult = {
+        evaluate_verdict: 'FAIL',
+        evaluate_coverage: coverage,
+        evaluate_error: `覆盖缺失（Brain 代码强制 FAIL）：missing steps: ${missingStr}`,
+      };
+      _writeBrainResult(state, { verdict: 'FAIL', coverage, error: failResult.evaluate_error });
+      return failResult;
+    }
+  }
+
+  // 写 .brain-result.json
+  const verdict = normalizeVerdict(llmResult.verdict);
+  const failedStep = llmResult.failed_step || null;
+  _writeBrainResult(state, { verdict, coverage, failed_step: failedStep });
+
+  const evaluate_error = verdict === 'FAIL'
+    ? (failedStep || llmResult.error || 'evaluator returned FAIL')
+    : null;
+
+  return { evaluate_verdict: verdict, evaluate_coverage: coverage, evaluate_error };
+}
+
+function _writeBrainResult(state, { verdict, coverage, failed_step, error }) {
+  const resultPath = state.brainResultPath
+    || (state.worktreePath ? path.join(state.worktreePath, '.brain-result.json') : null);
+  if (!resultPath) return;
+  const obj = { verdict };
+  if (coverage) obj.coverage = coverage;
+  if (failed_step) obj.failed_step = failed_step;
+  if (error) obj.error = error;
+  try {
+    writeFileSync(resultPath, JSON.stringify(obj, null, 2), 'utf8');
+  } catch (e) {
+    console.warn(`[evaluate-exec] .brain-result.json 写盘失败: ${e.message}`);
+  }
 }
 
 function routeAfterFix(state) {
