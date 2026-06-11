@@ -17,7 +17,7 @@
  *   }
  */
 
-import { execSync, execFileSync } from 'child_process';
+import { execSync } from 'child_process';
 import { writeFileSync, mkdirSync } from 'fs';
 import path from 'path';
 

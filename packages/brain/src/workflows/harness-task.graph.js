@@ -1004,10 +1004,14 @@ export async function evaluateContractNode(state, opts = {}) {
     }
   }
 
-  // ── 新路径：代码执行 E2E + LLM 裁读（Sprint 06120010，EVALUATOR_LEGACY=1 回退旧路径）──────
-  const execCmdsFn = opts.executeContractCommands || (isLegacyMode() ? null : _execContractCmds);
+  // ── 新路径：代码执行 E2E + LLM 裁读（Sprint 06120010，仅 journey_type=autonomous；EVALUATOR_LEGACY=1 回退旧路径）──────
+  const isAutonomousJourney = state.task?.payload?.journey_type === 'autonomous';
+  const legacyMode = isLegacyMode();
+  const execCmdsFn = legacyMode
+    ? null
+    : (opts.executeContractCommands || (isAutonomousJourney ? _execContractCmds : null));
   const judgeWithLlm = opts.judgeWithLlm || null;
-  if (execCmdsFn && !isLegacyMode()) {
+  if (execCmdsFn) {
     return await _evaluateWithCodeExecution(state, {
       sprintDir,
       execCmdsFn,
