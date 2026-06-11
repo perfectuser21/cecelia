@@ -1,14 +1,16 @@
 ---
 id: harness-generator-skill
 description: |
-  Harness Generator — Harness v7.0 严格合同执行者 × Superpowers 融合。
+  Harness Generator — 严格合同执行者 × Superpowers 融合。
   读取 GAN 对抗已批准的 contract-draft.md + tests/*.test.ts + contract-dod.md，按 TDD 纪律两次 commit（commit 1 = 测试 Red / commit 2 = 实现 Green）。
   融入 4 个 superpowers：test-driven-development / verification-before-completion / systematic-debugging / requesting-code-review。
   CONTRACT IS LAW：合同里有的全实现，合同外一字不加；测试文件从合同原样复制，commit 1 后不可修改（CI 强校验）。一个 Sprint = 一个 Generator = 一个 PR。
-version: 7.2.0
+version: 7.4.0
 created: 2026-04-08
-updated: 2026-05-30
+updated: 2026-06-11
 changelog:
+  - 7.4.0: 链路审计修复 5 项 — (a) 回流「防照抄示例占位 PR URL」保护到 Step 8（含 verdict JSON schema 表 DONE/FIXED/FAILED 三态）；(b) Step 6.5 镜像注释改指向 evaluator 新增 Step B-1.6（名称引用，不写行号）；(c) Step 3 Red 验证从 grep 日志符号改为 `npx vitest run --reporter=json` 统计 failed/passed（确定性）；(d) Step 6.5 失败补「重试工作流」（修实现→commit→重跑，连续 3 轮仍 FAIL 标 [BEHAVIOR_FAIL] 并 push 交 evaluator）
+  - 7.3.0: Step 6.5 加 localhost→host.docker.internal 替换逻辑（与 Evaluator 镜像，修复容器内 Brain API BEHAVIOR 命令必然超时 FAIL 的问题）
   - 7.2.0: 修 Bug 5 — 读合同文件名从 sprint-contract.md 改为 contract-draft.md（v8.x reviewer 不再做 cp 步骤）
   - 7.1.0: Step 6.5 补 windows_cloud 例外说明 — [BEHAVIOR] 必须 bash-executable；PowerShell 只在 contract-draft.md ## E2E 验收 区块
   - 7.0.0: 移除 Workstream 拆分 — 对齐 Anthropic 官方 v2 Harness 设计（一个 Sprint = 一个 Generator = 一个 PR）。删除 WORKSTREAM_INDEX/WORKSTREAM_COUNT 必要参数约束；测试目录从 tests/ws1/ 改为 tests/；DoD 文件从 contract-dod-ws1.md 改为 contract-dod.md；分支命名去掉 ws 后缀；移除多 ws 并行 rebase 说明
@@ -27,7 +29,7 @@ changelog:
 > **语言规则: 所有输出必须使用简体中文。严禁日语、韩语或其他语言。**
 > **执行规则: 严格按照下面列出的步骤执行。不要搜索/查找其他 skill 文件，不要 find/glob 查找任何 SKILL.md，直接按本文档流程操作。**
 
-# /harness-generator — Harness v7.0 TDD 执行者（Superpowers 融合，单 Sprint）
+# /harness-generator — Harness Generator TDD 执行者（Superpowers 融合，单 Sprint）
 
 **角色**: Generator（代码实现者，遵循 TDD Red-Green 纪律）
 **对应 task_type**: `harness_generate` / `harness_fix`
@@ -128,17 +130,6 @@ git merge-base --is-ancestor origin/main HEAD || {
 - 禁止跳过 rebase 直接开工
 - 禁止用 `git merge origin/main` 代替 rebase（会产生 merge commit 污染历史）
 
-### Step 0.6: 埋点 phase-event start（non-fatal）
-
-```bash
-PHASE_EVENT_ID=$(curl -fsS -X POST "${BRAIN_URL:-localhost:5221}/api/brain/harness/phase-event" \
-  -H 'Content-Type: application/json' \
-  -d "{\"initiative_id\":\"${INITIATIVE_ID:-unknown}\",\"node\":\"generator\",\"status\":\"running\",\"model\":\"${MODEL_ID:-claude-sonnet-4-6}\"}" \
-  2>/dev/null | jq -r '.id // empty') || true
-```
-
----
-
 ### Step 1: 读合同 + 测试文件清单
 
 ```bash
@@ -209,14 +200,24 @@ git add "${SPRINT_DIR}/tests/" DoD.md
 git commit -m "test(harness): sprint failing tests (Red)"
 
 # verify Red：跑测试看红（预期 FAIL，因实现还不存在）
-npx vitest run "${SPRINT_DIR}/tests/" --reporter=verbose 2>&1 | tee /tmp/red-evidence.txt || true
+# 用 --reporter=json 拿确定性统计，不再 grep 日志里的 FAIL/✗/× 符号（受颜色码/语言/格式干扰，会误判）
+npx vitest run "${SPRINT_DIR}/tests/" --reporter=json --outputFile=/tmp/red-report.json 2>&1 | tee /tmp/red-evidence.txt || true
 
-EXPECTED_RED=$(grep -rc "^\s*it(" "${SPRINT_DIR}/tests/" 2>/dev/null | awk -F: '{s+=$2} END {print s}')
-ACTUAL_RED=$(grep -cE "FAIL|✗|×" /tmp/red-evidence.txt || echo 0)
-if [ "$ACTUAL_RED" -lt "$EXPECTED_RED" ]; then
-  echo "ERROR: 预期 $EXPECTED_RED 个红，实际 $ACTUAL_RED — 测试本地就能过，说明 import 错或测试太弱"
+# 从 JSON 读 failed/passed/total（确定性）
+FAILED_RED=$(node -e "const r=require('/tmp/red-report.json');process.stdout.write(String(r.numFailedTests ?? 0))" 2>/dev/null || echo 0)
+PASSED_RED=$(node -e "const r=require('/tmp/red-report.json');process.stdout.write(String(r.numPassedTests ?? 0))" 2>/dev/null || echo 0)
+TOTAL_RED=$(node -e "const r=require('/tmp/red-report.json');process.stdout.write(String(r.numTotalTests ?? 0))" 2>/dev/null || echo 0)
+
+# Red 阶段：实现还不存在，所有测试都应 FAIL
+if [ "$TOTAL_RED" -eq 0 ]; then
+  echo "ERROR: vitest numTotalTests=0 — 测试文件路径错或未被收集"
   exit 1
 fi
+if [ "$PASSED_RED" -gt 0 ]; then
+  echo "ERROR: Red 阶段有 $PASSED_RED 个测试已通过（应全红）— 实现还没写就能过 = import 错或断言太弱"
+  exit 1
+fi
+echo "Red 证据：$FAILED_RED/$TOTAL_RED failed（全红，符合预期）"
 ```
 
 **Red 证据贴进 commit 1 的 git notes 或临时保存在 /tmp/red-evidence.txt，后面进 PR body。**
@@ -289,7 +290,7 @@ Review Summary 贴进 PR body。
 ```bash
 # 1. 提取 contract DoD 文件所有 [BEHAVIOR] Test: 命令
 DOD_FILE="${SPRINT_DIR}/contract-dod.md"
-grep -E "^\s+Test: manual:" "$DOD_FILE" | sed 's/.*Test: manual://' > /tmp/contract-behavior-cmds.sh
+grep -E "^\s*Test: manual:" "$DOD_FILE" | sed 's/.*Test: manual://' > /tmp/contract-behavior-cmds.sh
 
 CMD_COUNT=$(wc -l < /tmp/contract-behavior-cmds.sh | tr -d ' ')
 echo "[contract-self-verify] 提取 $CMD_COUNT 条 [BEHAVIOR] manual:bash 命令"
@@ -299,6 +300,11 @@ echo "[contract-self-verify] 提取 $CMD_COUNT 条 [BEHAVIOR] manual:bash 命令
 PASS_COUNT=0
 FAIL_LOG=""
 while IFS= read -r cmd; do
+  # 容器内 localhost→host.docker.internal 替换（与 evaluator Step B-1.6「环境预检 + localhost 重写」镜像）
+  if [ -n "$BRAIN_URL" ] && [ "$BRAIN_URL" != "http://localhost:5221" ]; then
+    BRAIN_HOST_PORT=$(echo "$BRAIN_URL" | sed "s|http://||")
+    cmd=$(echo "$cmd" | sed "s|localhost:5221|$BRAIN_HOST_PORT|g")
+  fi
   echo "[contract-self-verify] 跑: $cmd"
   if bash -c "$cmd" 2>&1; then
     PASS_COUNT=$((PASS_COUNT + 1))
@@ -324,6 +330,7 @@ echo "✅ Contract 自验全过，可以 push"
 ```
 
 **核心规则**：
+- 注意：替换逻辑与 evaluator Step B-1.6「环境预检 + localhost 重写」镜像，保证 Generator 自验环境与 Evaluator 执行环境行为一致。
 - generator 自验跟 evaluator 跑同一套 manual:bash 命令——所以"自验过 = evaluator 也会过"（除了环境差异）
 - 自验失败 → 自修代码（不改 contract）
 - 自修后重新跑 Step 6.5 直到全过
@@ -333,6 +340,37 @@ echo "✅ Contract 自验全过，可以 push"
 - contract-dod.md 里的 `[BEHAVIOR]` 条目必须是 **bash-executable**（curl/psql/jq 等 API-level 检查），generator 在 Linux Docker 里跑这些没问题
 - PowerShell / Windows 专属命令只写在 contract-draft.md 的 `## E2E 验收` 区块里，供 evaluator 触发 GHA workflow 时使用
 - 如果自验时发现 [BEHAVIOR] 里有 PowerShell 命令 → 这是 proposer 写错了（应在 E2E 区块），告知 generator 无法在本地验证、标 `[CI_GAP]` 并 push，让 evaluator 的 windows_cloud Mode B 去跑
+
+**Step 6.5 失败重试工作流（FAIL 时必走，禁止直接放弃或改测试）**：
+
+```
+自验 FAIL
+   ↓
+修「实现代码」让 manual:bash 过（禁改 contract、禁改 sprints/*/tests/ 测试文件）
+   ↓
+git commit -m "fix(harness): 修实现让 contract 自验过 (Green after fix)"
+   ↓
+重跑 Step 6.5
+   ↓
+过 → 进 Step 7 push；仍 FAIL → 计数 +1，回到「修实现代码」
+   ↓
+连续 3 轮仍 FAIL（ROUND≥3）→ 不再死磕：
+   - PR description 顶部标 [BEHAVIOR_FAIL]，列出仍失败的 manual:bash 命令 + 实际输出
+   - 正常 push（不阻塞），交 evaluator 处理（evaluator 是判官，generator 不自判 PASS）
+```
+
+```bash
+SELFVERIFY_ROUND_FILE="/tmp/generator-selfverify-round-${TASK_ID:-x}"
+ROUND=$(cat "$SELFVERIFY_ROUND_FILE" 2>/dev/null || echo 0)
+# ...（每次 Step 6.5 FAIL 后）
+ROUND=$((ROUND+1)); echo "$ROUND" > "$SELFVERIFY_ROUND_FILE"
+if [ "$ROUND" -ge 3 ]; then
+  echo "⚠️ Step 6.5 连续 $ROUND 轮 FAIL，标 [BEHAVIOR_FAIL] 并 push 交 evaluator"
+  # 在 PR body 顶部加 [BEHAVIOR_FAIL] 段（列出失败命令 + 输出），然后正常走 Step 7
+fi
+```
+
+**死规则**：重试期间**只能改实现代码**，绝不允许改 contract / 改测试文件来迁就（违反 CONTRACT IS LAW，CI 强校验测试 diff）。
 
 ### Step 7: Push + PR
 
@@ -376,15 +414,17 @@ PR 创建完不退出，原地轮询直到合并。合并后才进 Step 8。
 # 从 PR_URL 提取 PR 号
 PR_NUMBER=$(echo "$PR_URL" | grep -oE '[0-9]+$')
 REPO=$(echo "$PR_URL" | grep -oE 'github\.com/[^/]+/[^/]+' | sed 's|github.com/||')
-FIX_COUNT=0
 MAX_FIXES=3
+# FIX_COUNT 持久化到文件，防止 Bash timeout 重调用后计数归零
+FIX_COUNT_FILE="/tmp/generator-fix-count-${PR_NUMBER}"
+FIX_COUNT=$(cat "$FIX_COUNT_FILE" 2>/dev/null || echo 0)
 
 # 先启用 auto-merge
 gh pr merge "$PR_NUMBER" --repo "$REPO" --auto --squash 2>/dev/null && echo "auto-merge enabled"
 
 while true; do
   STATE=$(gh pr view "$PR_NUMBER" --repo "$REPO" --json state --jq '.state' 2>/dev/null)
-  [ "$STATE" = "MERGED" ] && { echo "PR #$PR_NUMBER merged"; break; }
+  [ "$STATE" = "MERGED" ] && { echo "PR #$PR_NUMBER merged"; rm -f "$FIX_COUNT_FILE"; break; }
   [ "$STATE" = "CLOSED" ] && { echo "PR #$PR_NUMBER closed"; break; }
 
   CHECKS=$(gh pr checks "$PR_NUMBER" --repo "$REPO" 2>/dev/null)
@@ -395,9 +435,11 @@ while true; do
   if [ "$FAILED" -gt 0 ]; then
     if [ "$FIX_COUNT" -ge "$MAX_FIXES" ]; then
       echo "CI failed $MAX_FIXES times, giving up"
+      rm -f "$FIX_COUNT_FILE"
       break
     fi
     FIX_COUNT=$((FIX_COUNT+1))
+    echo "$FIX_COUNT" > "$FIX_COUNT_FILE"
     # CI 失败 → 读日志修复
     RUN_ID=$(gh pr checks "$PR_NUMBER" --repo "$REPO" --json name,conclusion,databaseId 2>/dev/null \
       | jq -r '[.[] | select(.conclusion=="failure")] | sort_by(.databaseId) | last | .databaseId // empty')
@@ -426,17 +468,21 @@ done
 > **CRITICAL**: 最后一条消息必须是**纯 JSON**，禁止任何其他文字（不加 markdown、不加说明）。
 > Brain 的 execution.js 依赖此 JSON 提取 pr_url。
 
-```bash
-# 埋点 phase-event end（non-fatal）
-curl -fsS -X PATCH "${BRAIN_URL:-localhost:5221}/api/brain/harness/phase-event/${PHASE_EVENT_ID:-0}" \
-  -H 'Content-Type: application/json' \
-  -d "{\"status\":\"completed\",\"ts_end\":$(date +%s%3N),\"cost_usd\":${PHASE_COST_USD:-0}}" \
-  2>/dev/null || true
+**verdict JSON schema（三态，各自必带字段）**：
 
+| verdict | 用于 | 必带字段 | 说明 |
+|---|---|---|---|
+| `DONE` | Mode 1 首次实现成功 push + 合并 | `verdict`, `pr_url` | `pr_url` 必须是真实 URL（见下方占位符红线）|
+| `FIXED` | Mode 2 harness_fix 修复后 push | `verdict`, `pr_url`, `fixes`（修复说明数组）| 在原 PR 分支修复，不新建 PR |
+| `FAILED` | 连续 3 轮自验/CI 仍 FAIL，放弃 | `verdict`, `pr_url`, `reason`（失败根因）| PR body 已标 [BEHAVIOR_FAIL]，交 evaluator/人处理 |
+
+```bash
 echo "{\"verdict\": \"DONE\", \"pr_url\": \"$PR_URL\"}"
 ```
 
 输出这一行作为最后消息（纯 JSON，不加其他内容）。
+
+> 🚫 **严禁照抄示例占位 URL**：任何含 `x/y`、`OWNER/REPO`、`org/repo`、`pull/123` 的 URL 都是占位符，原样输出会让 Brain 报 `generator_pr_not_found`、整条 harness 线作废。`pr_url` 必须取自你刚 `gh pr create` 实际返回的 `$PR_URL`（或 `gh pr view --json url -q .url`），不是从本文档示例里复制的字面值。
 
 ---
 
@@ -523,28 +569,4 @@ commit 2: feat(harness): skeleton implementation (Skeleton Green)
 | "合同写漏了一个功能，顺手加上" | 违反合同外不加，只能写进 PR description 上报 |
 | "跑测试挺慢，跳过这一步吧" | 违反 verification-before-completion，禁止"看起来应该过了"的假设 |
 
----
-
-## GREEN commit 前真验合同 manual:bash（v6 — B18 新增 2026-05-13）
-
-GREEN commit + push 前**必须**真验合同行为：
-
-1. 读取 `${SPRINT_DIR}/contract-dod.md` 中所有 `[BEHAVIOR]` 行的 `Test: manual:bash -c '...'` 命令
-2. **真启服务 + 真跑这些命令**（不要用 vitest mock 代替）：
-   - 启动 server: `node playground/server.js &` 或 contract 指定方式
-   - 逐条执行 manual:bash 命令
-   - 检查每条 exit code == 0
-   - 跑完 kill 测试 server
-3. 全部 exit 0 才能 git push + 输出 verdict='DONE'
-4. verdict JSON 必须含 `all_behaviors_passed: true` 字段
-
-**反例（W19-W39 实证根因）**：generator 用 vitest mock + supertest 自验"11/11 PASS"，但 evaluator 真起 server + curl + jq 跑同样的 manual:bash 命令仍判 FAIL。LLM 解读差异导致 generator 觉得过了 evaluator 不过，fix loop 永不收敛。
-
-**verdict JSON 范例**（⚠️ `pr_url` 必须是你刚 `gh pr create` 实际返回的真实 URL）：
-```
-{"verdict": "DONE", "pr_url": "<把这里替换成 gh pr create 返回的真实 PR URL>", "all_behaviors_passed": true, "behaviors_run": 11, "behaviors_passed": 11}
-```
-
-> 🚫 **严禁照抄示例占位 URL**：任何含 `x/y`、`OWNER/REPO`、`org/repo`、`pull/123` 的 URL 都是占位符，原样输出会让 Brain 报 `generator_pr_not_found`、整条 harness 线作废。正确做法：`git push` 后用 `PR_URL=$(gh pr create ... )`（或 `gh pr view --json url -q .url`）拿到真实 URL 再填进 verdict JSON。
-
-`all_behaviors_passed=false` 时禁止 push — generator 必须先把代码改对让全部 manual:bash 过。
+# GREEN commit 前真验：见 Step 6.5 Contract Self-Verification（v6.1+）
