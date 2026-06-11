@@ -282,6 +282,24 @@ export const ReviewerOutputSchema = z.object({
   feedback: z.string(),
 });
 
+// ExecutionRecordSchema — 代码执行段产出结构（逐命令执行记录，落盘 execution-record.json）
+// Sprint: evaluateContractNode 职责分离（代码执行 + LLM 裁读）
+export const ExecutionRecordSchema = z.object({
+  commands: z.array(z.object({
+    cmd:       z.string(),
+    exitCode:  z.number().int(),
+    stdout:    z.string(),
+    stderr:    z.string(),
+    elapsedMs: z.number(),
+  })),
+});
+
+// CoverageItemSchema — LLM 裁读段输出的 coverage 对照表条目
+const CoverageItemSchema = z.object({
+  step:   z.string(),
+  passed: z.boolean(),
+});
+
 export const EvaluatorOutputSchema = z.object({
   verdict:     z.enum(['PASS', 'FAIL', 'FIXED']),
   task_id:     z.string().nullable().optional(),
@@ -289,6 +307,7 @@ export const EvaluatorOutputSchema = z.object({
   failed_step: z.string().nullable().optional(),    // evaluator v1 format（FAIL 详情）
   log_excerpt: z.string().nullable().optional(),    // evaluator v1 format（FAIL 日志）
   fixes:       z.array(z.string()).nullable().optional(),  // generator FIXED format（B21）
+  coverage:    z.array(CoverageItemSchema).optional(),     // LLM 裁读段 coverage 对照表（每步 → 通过与否）
 }).refine(
   d => d.verdict === 'PASS' || d.feedback || d.failed_step || d.log_excerpt || (d.fixes && d.fixes.length > 0),
   { message: 'FAIL/FIXED verdict requires at least one of: feedback, failed_step, log_excerpt, fixes' }

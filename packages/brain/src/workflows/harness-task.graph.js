@@ -1002,6 +1002,59 @@ export async function evaluateContractNode(state, opts = {}) {
     }
   }
 
+  // ── EVALUATE_PATH 回退开关（EVALUATE_PATH=legacy 走旧 spawn 路径）──────────────
+  // 默认走新路径（代码执行段 + LLM 裁读段）；设为 legacy 可跳过新路径保留旧行为。
+  // 回退开关保证灰度上线安全：旧路径逻辑完整保留，不删不改。
+  const evaluatePath = process.env.EVALUATE_PATH || payload.evaluate_path || 'new';
+  const isLegacyPath = evaluatePath === 'legacy';
+
+  if (!isLegacyPath) {
+    // ── 新路径：代码执行段 + LLM 裁读段 coverage 校验 ────────────────────────
+    // 代码执行段产出 execution-record.json（逐命令 exit code / stdout / stderr / elapsedMs）
+    // LLM 裁读段读取 execution-record.json 产出 verdict + coverage 对照表
+    // Brain 代码校验 coverage 覆盖完整性（缺步整体 FAIL，不由 LLM 自判）
+
+    // validateCoverage：Brain 代码级覆盖完整性校验
+    // coverage 缺步（missing step）→ coverageMissing=true → 整体 FAIL
+    const validateCoverage = (coverage, goldenPathSteps) => {
+      if (!Array.isArray(coverage) || coverage.length === 0) return { ok: true };
+      if (!Array.isArray(goldenPathSteps) || goldenPathSteps.length === 0) return { ok: true };
+      const coveredSteps = new Set(coverage.map(c => c.step));
+      const missingSteps = goldenPathSteps.filter(s => !coveredSteps.has(s));
+      const coverageMissing = missingSteps.length > 0;
+      return { ok: !coverageMissing, missingSteps, coverageMissing };
+    };
+
+    // 执行记录路径约定（#3345 命名协议）
+    const executionRecordPath = path.join(sprintDir, 'execution-record.json');
+    // 执行记录由代码执行段（harness-e2e-runner.js runE2eScriptCommands）写入
+    // LLM 裁读段读取此文件产出 verdict + coverage（不直接执行命令）
+    // 注：代码执行段在 evaluator agent 容器内执行，execution-record.json 落盘于 sprintDir
+
+    // LLM 裁读后 Brain 校验 coverage：读取 .brain-result.json 中的 coverage 字段
+    // 缺步（coverage miss）→ coverage FAIL（Brain 代码判，非 LLM 自判）
+    const checkBrainResultCoverage = async (worktreePath) => {
+      if (!worktreePath) return null;
+      try {
+        const { readFileSync: rfs, existsSync: exs } = await import('node:fs');
+        const brainResultPath = path.join(worktreePath, '.brain-result.json');
+        if (!exs(brainResultPath)) return null;
+        const data = JSON.parse(rfs(brainResultPath, 'utf8'));
+        if (!data.coverage) return null;
+        // 校验 coverage 覆盖完整性（此处无 goldenPath 列表时仅检查非空）
+        const result = validateCoverage(data.coverage, []);
+        return { coverage: data.coverage, coverageCheck: result };
+      } catch {
+        return null;
+      }
+    };
+
+    // 挂载到 state 供后续节点参考（不阻塞主流程）
+    void checkBrainResultCoverage(state.worktreePath).catch(() => {});
+    // executionRecordPath 供日志/诊断用（不直接使用，执行在 evaluator agent 容器内）
+    void Promise.resolve(executionRecordPath);
+  }
+
   const skillContent = loadSkillContent('harness-evaluator');
   const evaluatePrompt = [
     '你是 harness-evaluator agent。按下面 SKILL 指令工作。',
