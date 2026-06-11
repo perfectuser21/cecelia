@@ -170,6 +170,9 @@ export default defineConfig({
       // Pre-existing failures: open2-verify-06031535 sprint healthz tests — route was never implemented
       // (empty shell rejected by ARTIFACT gate after this sprint merged; Red tests permanently fail)
       '../../sprints/open2-verify-06031535/tests/harness-healthz.test.js',
+      // skill-contracts tests run via skill-tests CI job (--config vitest.skill-contracts.config.js)
+      // Excluded from brain-unit shards to keep shard distribution stable
+      'tests/skill-contracts/**',
     ],
     coverage: {
       provider: 'v8',

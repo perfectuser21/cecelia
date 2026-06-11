@@ -992,7 +992,7 @@ jobs:
             exit 1
           }
       - name: Run skill contract tests (packages/workflows/skills snapshot)
-        run: cd packages/brain && npx vitest run tests/skill-contracts/ --reporter=verbose
+        run: cd packages/brain && npx vitest run tests/skill-contracts/ --config vitest.skill-contracts.config.js --reporter=verbose
 
   # ─── Real-Env Smoke (起真 brain docker container + 真 postgres，跑 smoke.sh) ─
   # 与单测 / integration 互补：单测 mock 一切；integration 起 node server 直跑；
