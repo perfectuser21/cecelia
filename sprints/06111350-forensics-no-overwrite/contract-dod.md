@@ -1,6 +1,3 @@
-contract_branch: cp-harness-propose-r3-d601d256
-sprint_dir: sprints/06111350-forensics-no-overwrite
-
 ---
 skeleton: false
 journey_type: autonomous

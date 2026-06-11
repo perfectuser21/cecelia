@@ -1,0 +1,27 @@
+{
+  "initiative_id": "d601d256-2094-4d88-8a3c-029f55e91c38",
+  "journey_type": "autonomous",
+  "journey_type_reason": "纯后端执行器 + entrypoint 改动，无 UI / agent 协议 / engine hooks；curl localhost:5221 + docker run + ls 即可完成全部验证",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "取证文件防覆盖：docker-executor + host-executor + entrypoint 按运行实例命名 .prompt/.stdout",
+      "scope": "1. packages/brain/src/docker-executor.js: writePromptFile 加实例标识后缀（Date.now()-hex8）；executeInDocker 在调用 buildDockerArgs 前向 opts.env 赋值 CECELIA_PROMPT_FILE / CECELIA_STDOUT_FILE；2. packages/brain/src/spawn/host-executor.js: prompt 文件命名加实例标识；3. docker/cecelia-runner/entrypoint.sh: PROMPT_FILE/STDOUT_FILE 改从 CECELIA_PROMPT_FILE/CECELIA_STDOUT_FILE env 读（含 fallback）；4. docker/build.sh 重建镜像",
+      "dod": [
+        "[BEHAVIOR] writePromptFile 返回路径 basename 匹配 ^{taskId}.\\d{10,}-[0-9a-f]{8}.prompt$（非旧格式）",
+        "[BEHAVIOR] 两次调用 writePromptFile 同 taskId 返回不同路径且第一次内容不被覆盖",
+        "[BEHAVIOR] executeInDocker 函数体在 buildDockerArgs(opts 调用前的非注释代码含 opts.env.CECELIA_PROMPT_FILE / opts.env.CECELIA_STDOUT_FILE 赋值语句",
+        "[BEHAVIOR] entrypoint.sh 含 CECELIA_PROMPT_FILE / CECELIA_STDOUT_FILE 变量引用（含 fallback 语法）",
+        "[ARTIFACT] docker/cecelia-runner/entrypoint.sh 包含 CECELIA_PROMPT_FILE fallback 语法"
+      ],
+      "files": [
+        "packages/brain/src/docker-executor.js",
+        "packages/brain/src/spawn/host-executor.js",
+        "docker/cecelia-runner/entrypoint.sh"
+      ],
+      "depends_on": [],
+      "complexity": "S",
+      "estimated_minutes": 45
+    }
+  ]
+}
