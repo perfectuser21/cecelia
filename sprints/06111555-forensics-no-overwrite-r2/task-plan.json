@@ -1,0 +1,30 @@
+{
+  "initiative_id": "cf9ce514-9bbe-42f6-a06f-7e473abfeede",
+  "journey_type": "autonomous",
+  "journey_type_reason": "仅改 packages/brain/ 与 docker/ 运行时容器协议，无 dashboard/bridge/engine，属纯后端自治能力。",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "Agent 取证文件（prompt/stdout/cid）按运行实例唯一命名，防同 task 重跑覆盖",
+      "scope": "spawn 侧三类取证路径插入共享的 runInstance 后缀（保留 taskId 前缀）；docker-executor 经 env(CECELIA_PROMPT_FILE/CECELIA_STDOUT_FILE) 把完整文件名传入容器；entrypoint.sh 优先按 env 读（prompt+stdout 均需 env-优先）、缺失回退旧拼接，并支持 CECELIA_ENTRYPOINT_TEST 短路；host-executor prompt 路径同步唯一化；新增 host-docker post-deploy smoke。What 层面交付，不规定内部线程实现。",
+      "dod": [
+        "[BEHAVIOR] 同一 taskId 两次写 prompt 取证返回不同路径、第一组不被覆盖（check-step1-no-overwrite.mjs exit 0）",
+        "[BEHAVIOR] ls|grep <taskId 前缀> 两组取证均可检索（check-step2-prefix-retrieval.sh exit 0）",
+        "[BEHAVIOR] entrypoint 注入 CECELIA_PROMPT_FILE + CECELIA_STDOUT_FILE 时两者均采用注入唯一文件；env 缺失两者均回退旧拼接（check-step3-entrypoint-resolve.sh priority+fallback exit 0）",
+        "[BEHAVIOR] buildDockerArgs 三类路径共享唯一实例后缀且跨 spawn 唯一（check-step4-docker-args-suffix.mjs exit 0）",
+        "[ARTIFACT] packages/brain/scripts/smoke/forensics-no-overwrite-smoke.sh 真实 host-docker spawn 冒烟",
+        "[ARTIFACT] host-executor.js 去裸 ${taskId}-host.prompt 覆盖写法、改运行实例唯一",
+        "[ARTIFACT] entrypoint.sh 含 CECELIA_PROMPT_FILE + CECELIA_STDOUT_FILE env-优先解析 + 旧拼接回退"
+      ],
+      "files": [
+        "packages/brain/src/docker-executor.js",
+        "packages/brain/src/spawn/host-executor.js",
+        "docker/cecelia-runner/entrypoint.sh",
+        "packages/brain/scripts/smoke/forensics-no-overwrite-smoke.sh"
+      ],
+      "depends_on": [],
+      "complexity": "M",
+      "estimated_minutes": 75
+    }
+  ]
+}
