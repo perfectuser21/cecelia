@@ -68,9 +68,14 @@ export const RULES = [
   {
     id: 'cheat/or-true',
     description: '断言尾部 || true 吞错',
-    // 负向测试惯用法 `cmd && { ...; exit N; } || true`（N≠0）不算吞错：|| true 在此是对
-    // 【预期失败】的合法承接（见 isNegativeFailAssertion），放行；其余裸 || true 仍命中。
-    detect: (line) => /\|\|\s*true\b/.test(line) && !isNegativeFailAssertion(line),
+    // 两类负向测试（预期失败）惯用法不算吞错，放行；其余裸 || true 仍命中：
+    //  - 单语句块：`cmd && { ...; exit N; } || true`（N≠0，见 isNegativeFailAssertion）
+    //  - 捕获形态：`VAR=$( <预期失败命令> || true)` 把预期失败命令输出捕获，后续 K 条逻辑语句
+    //    内对同名 $VAR 施加值断言（见 isCaptureNegativeThenAssert，复用 hasCaptureThenAssert）
+    detect: (line, ctx) =>
+      /\|\|\s*true\b/.test(line) &&
+      !isNegativeFailAssertion(line) &&
+      !isCaptureNegativeThenAssert(line, ctx),
     feedback: ({ line }) =>
       `第 ${line} 行 || true 吞掉失败 exit code——删除；若为负向测试（预期失败），` +
       `改写为 if cmd; then echo FAIL; exit 1; fi 或用 gate-allow 豁免留痕`,
@@ -144,6 +149,84 @@ export function isNegativeFailAssertion(line) {
   const block = m[1];
   // 块内含 exit/return 非零码：纯数字 1-9.. / 变量 $N、${N}、"$N"（运行期非零意图）
   return /\b(?:exit|return)\s+(?:["']?\$\{?\w+\}?["']?|[1-9]\d*)/.test(block);
+}
+
+/**
+ * 注释行识别（扫描器第一课：先剥离注释，再谈规则）。
+ *
+ * 纯注释行（首个非空白字符为 `#`）是写给人看的说明，不是验收脚本——不应参与任何
+ * cheat/weak-oracle 规则扫描（生产 run da418741：注释里写 `... || true ...` 被误判
+ * cheat/or-true）。保守只做【行首 `#`】跳过：行尾注释段的剥离涉及 heredoc / 字符串内
+ * `#` 的边界（如 `grep '#tag'`、URL fragment `http://x#y`），拿捏不准宁可不剥，
+ * 避免把真命令的尾部误判成注释而放水。
+ *
+ * @param {string} line  单条逻辑语句
+ * @returns {boolean}  true=纯注释行（跳过所有规则）
+ */
+export function isCommentLine(line) {
+  return typeof line === 'string' && /^\s*#/.test(line);
+}
+
+/**
+ * 提取捕获赋值 `VAR=$( ... )` / `` VAR=`...` `` 命令替换的内部内容（不含外层定界符）。
+ * `$( )` 用括号深度扫描，正确处理内部嵌套 `$(...)`；反引号扫到下一个反引号。
+ * 非捕获形态 → null。
+ *
+ * @param {string} line  单条逻辑语句
+ * @returns {string|null}  命令替换内部内容
+ */
+function captureSubstitutionSpan(line) {
+  if (typeof line !== 'string') return null;
+  // VAR=$( 或 VAR="$(
+  const sub = line.match(/(?:^|[\s;&|(])[A-Za-z_]\w*=(?:"?)\$\(/);
+  if (sub) {
+    let depth = 1;
+    let i = sub.index + sub[0].length;
+    const start = i;
+    for (; i < line.length; i++) {
+      const c = line[i];
+      if (c === '(') depth++;
+      else if (c === ')') {
+        depth--;
+        if (depth === 0) break;
+      }
+    }
+    return line.slice(start, i);
+  }
+  // VAR=`...`
+  const bt = line.match(/(?:^|[\s;&|(])[A-Za-z_]\w*=`/);
+  if (bt) {
+    const start = bt.index + bt[0].length;
+    const end = line.indexOf('`', start);
+    return end === -1 ? line.slice(start) : line.slice(start, end);
+  }
+  return null;
+}
+
+/**
+ * 捕获形态负向测试识别（cheat/or-true 放行第二类）。
+ *
+ * 形态：`VAR=$( <预期失败命令> 2>&1 || true)` 把【预期失败】命令的输出捕获进变量，
+ * 末尾 `|| true` 仅落在【命令替换 $( ) 内部】，只为让命令替换不因预期失败而中断
+ * （set -e 下避免预期失败杀脚本，与 #3351 单语句负向断言同语义）；随后【K 条逻辑语句内】
+ * 对同名 $VAR 施加值断言（grep -q / jq -e / [ 比较 / case，复用 hasCaptureThenAssert）。
+ *
+ * 三重收口防放水：
+ *  1. 必须是 `VAR=$(...)` 捕获形态（captureSubstitutionSpan）；
+ *  2. `|| true` 必须落在该捕获的命令替换【内部】——赋值之外的另一条 `foo || true` swallow
+ *     不放行（防"捕获 + 无关 swallow"假放行）；
+ *  3. 后续 K 条逻辑语句内对【同名】 $VAR 有值断言——裸捕获后无断言仍命中（防真吞错）。
+ *
+ * @param {string} line  当前逻辑语句内容
+ * @param {object} [ctx]  归一后逻辑语句序列 + 当前下标（见 hasCaptureThenAssert）
+ * @returns {boolean}  true=捕获形态负向测试（放行）
+ */
+export function isCaptureNegativeThenAssert(line, ctx) {
+  if (typeof line !== 'string' || line.length > 2000) return false;
+  const inner = captureSubstitutionSpan(line);
+  if (inner == null) return false; // 非捕获形态
+  if (!/\|\|\s*true\b/.test(inner)) return false; // || true 不在命令替换内部
+  return hasCaptureThenAssert(line, ctx); // 后续 K 条逻辑语句内对同名 $VAR 有值断言
 }
 
 /**
@@ -357,6 +440,8 @@ export function evaluateContractText(text, opts = {}) {
     const { content: line, lineNo } = logicalLines[idx];
     // gate-allow 行本身不参与规则检测（它是元数据，不是验收脚本）
     if (/gate-allow:/.test(line)) continue;
+    // 纯注释行（行首 #）不参与任何规则/env 扫描——先剥离注释，再谈规则
+    if (isCommentLine(line)) continue;
     const excerpt = line.trim().slice(0, 160);
 
     // 跨语句规则（如 curl-no-jq 的 capture-then-assert）需要后续逻辑语句上下文
