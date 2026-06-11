@@ -9,7 +9,7 @@
  */
 
 import { Router } from 'express';
-import { readFile } from 'fs/promises';
+import { readFile, access } from 'fs/promises';
 import { execSync } from 'child_process';
 import { join } from 'path';
 import { homedir } from 'os';
@@ -1547,6 +1547,70 @@ router.post('/messages/:initiativeId/:subTaskId', async (req, res) => {
 
 router.get('/ping', (_req, res) => {
   res.json({ ok: true, ts: new Date().toISOString() });
+});
+
+/**
+ * GET /skill-drift
+ * 只读检测 6 个 harness skill 的 SSOT 与快照 SKILL.md frontmatter version 漂移。
+ * SSOT: SKILLS_SSOT_DIR（默认 ~/perfect21/zenithjoy-skills，支持 <name>/SKILL.md 与
+ *       skills/<name>/SKILL.md 两种布局探测）
+ * 快照: SKILLS_SNAPSHOT_DIR（默认 repo 内 packages/workflows/skills/）
+ * 每次请求实读磁盘，不缓存；仅检测，不写文件、无 DB 访问。
+ */
+const HARNESS_DRIFT_SKILLS = [
+  'harness-planner',
+  'harness-contract-proposer',
+  'harness-contract-reviewer',
+  'harness-generator',
+  'harness-evaluator',
+  'harness-report',
+];
+
+// 与合同交叉验证命令 grep -m1 '^version:' 同语义：取文件首个 version: 行的值
+async function readSkillVersion(filePath) {
+  let content;
+  try {
+    content = await readFile(filePath, 'utf8');
+  } catch {
+    return null;
+  }
+  const line = content.split('\n').find((l) => l.startsWith('version:'));
+  if (!line) return null;
+  const value = line.slice('version:'.length).replace(/[\s"]/g, '');
+  return value || null;
+}
+
+async function readSsotSkillVersion(ssotDir, name) {
+  for (const candidate of [join(ssotDir, name, 'SKILL.md'), join(ssotDir, 'skills', name, 'SKILL.md')]) {
+    try {
+      await access(candidate);
+    } catch {
+      continue;
+    }
+    return readSkillVersion(candidate);
+  }
+  return null;
+}
+
+router.get('/skill-drift', async (_req, res) => {
+  try {
+    const ssotDir = process.env.SKILLS_SSOT_DIR || join(homedir(), 'perfect21', 'zenithjoy-skills');
+    const snapshotDir = process.env.SKILLS_SNAPSHOT_DIR || join(REPO_ROOT, 'packages', 'workflows', 'skills');
+    const skills = [];
+    for (const name of HARNESS_DRIFT_SKILLS) {
+      const ssotVersion = await readSsotSkillVersion(ssotDir, name);
+      const snapshotVersion = await readSkillVersion(join(snapshotDir, name, 'SKILL.md'));
+      // 任一侧 null（文件缺失/无 version 行）按 PRD 边界规则记为漂移
+      const drifted = ssotVersion === null || snapshotVersion === null
+        ? true
+        : ssotVersion !== snapshotVersion;
+      skills.push({ name, ssot_version: ssotVersion, snapshot_version: snapshotVersion, drifted });
+    }
+    return res.json({ skills, any_drift: skills.some((s) => s.drifted) });
+  } catch (err) {
+    console.error('[GET /harness/skill-drift]', err.message);
+    return res.status(500).json({ error: err.message });
+  }
 });
 
 /**
