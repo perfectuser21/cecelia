@@ -87,15 +87,17 @@ describe('executeInDocker — WF-3 观察性元数据', () => {
   }
 
   it('成功路径：container_id 从 --cidfile 读取（前 12 位），command 字段完整', async () => {
-    const { executeInDocker, __test__ } = await loadExecutor();
+    const { executeInDocker } = await loadExecutor();
     const taskId = 'task-meta-1';
-    const cidfilePath = __test__.cidFilePath(taskId);
     const fakeFullId = 'abcdef0123456789fedcba9876543210fedcba9876543210fedcba9876543210';
 
     mockSpawn.mockImplementation(withInspectSuccess((cmd, args) => {
       // 校验：args 里应该有 --cidfile 参数
       expect(cmd).toBe('docker');
       expect(args).toContain('--cidfile');
+      // 从实际 args 提取 cidfile 路径（含唯一 runInstance 后缀，不可预测）
+      const cidfileIdx = args.indexOf('--cidfile');
+      const cidfilePath = cidfileIdx >= 0 ? args[cidfileIdx + 1] : null;
       // docker run 时模拟写 cidfile
       return makeFakeDockerProc({
         stdout: 'hello\n{"result":"ok"}\n',
@@ -125,22 +127,23 @@ describe('executeInDocker — WF-3 观察性元数据', () => {
   });
 
   it('失败路径（非 OOM）：非零 exit_code 时 container_id 仍能读到（cidfile 未清理前读）', async () => {
-    const { executeInDocker, __test__ } = await loadExecutor();
+    const { executeInDocker } = await loadExecutor();
     const taskId = 'task-meta-fail';
-    const cidfilePath = __test__.cidFilePath(taskId);
     const fakeId = '0011223344556677';
 
     // exit=1 是一般容器内业务失败，不是 OOM/SIGKILL，仍走 resolve 路径。
     // 137/SIGKILL 在 Harness W6 后改走 reject — 由下面单独 case 覆盖。
-    mockSpawn.mockImplementation(withInspectSuccess(() =>
-      makeFakeDockerProc({
+    mockSpawn.mockImplementation(withInspectSuccess((cmd, args) => {
+      const cidfileIdx = args.indexOf('--cidfile');
+      const cidfilePath = cidfileIdx >= 0 ? args[cidfileIdx + 1] : null;
+      return makeFakeDockerProc({
         stdout: '',
         stderr: 'task failed',
         code: 1,
         cidToWrite: fakeId,
         cidfilePath,
-      })
-    ));
+      });
+    }));
 
     const result = await executeInDocker({
       task: { id: taskId, task_type: 'dev' },
@@ -154,20 +157,21 @@ describe('executeInDocker — WF-3 观察性元数据', () => {
   });
 
   it('Harness W6: OOM (exit=137) reject 时 error 上仍带 container_id 用于 forensic', async () => {
-    const { executeInDocker, __test__ } = await loadExecutor();
+    const { executeInDocker } = await loadExecutor();
     const taskId = 'task-meta-oom';
-    const cidfilePath = __test__.cidFilePath(taskId);
     const fakeId = 'aabbccddeeff0011';
 
-    mockSpawn.mockImplementation(withInspectSuccess(() =>
-      makeFakeDockerProc({
+    mockSpawn.mockImplementation(withInspectSuccess((cmd, args) => {
+      const cidfileIdx = args.indexOf('--cidfile');
+      const cidfilePath = cidfileIdx >= 0 ? args[cidfileIdx + 1] : null;
+      return makeFakeDockerProc({
         stdout: '',
         stderr: 'OOM killed',
         code: 137,
         cidToWrite: fakeId,
         cidfilePath,
-      })
-    ));
+      });
+    }));
 
     const err = await executeInDocker({
       task: { id: taskId, task_type: 'dev' },
@@ -204,17 +208,17 @@ describe('executeInDocker — WF-3 观察性元数据', () => {
 
   it('残留 cidfile 会被清理再 run（否则 docker 会立即失败）', async () => {
     const { existsSync } = await import('fs');
-    const { executeInDocker, __test__ } = await loadExecutor();
+    const { executeInDocker } = await loadExecutor();
     const taskId = 'task-meta-stale';
-    const cidfilePath = __test__.cidFilePath(taskId);
-    // 预先写一个残留文件
-    writeFileSync(cidfilePath, 'old-container-id', 'utf8');
-    expect(existsSync(cidfilePath)).toBe(true);
 
+    // 新实现：cidfile 路径含唯一 runInstance，每次 spawn 使用新路径，不会遇到残留冲突。
+    // 验证：spawn 被调用时，从 args 拿到的 cidfile 路径是全新的（不存在）。
     let spawnCalled = false;
-    mockSpawn.mockImplementation(withInspectSuccess(() => {
-      // executor 已经在 spawn 前删除 cidfile
-      expect(existsSync(cidfilePath)).toBe(false);
+    mockSpawn.mockImplementation(withInspectSuccess((cmd, args) => {
+      const cidfileIdx = args.indexOf('--cidfile');
+      const cidfilePath = cidfileIdx >= 0 ? args[cidfileIdx + 1] : null;
+      expect(cidfilePath).not.toBeNull();
+      expect(existsSync(cidfilePath)).toBe(false); // 唯一新路径，从不残留
       spawnCalled = true;
       return makeFakeDockerProc({ stdout: '', stderr: '', code: 0 });
     }));

@@ -157,13 +157,15 @@ export async function ensureDockerImage(image) {
 
 /**
  * 把 prompt 写入临时文件（避免 argv 过长 / 引号转义陷阱）
- * 文件挂载到 container 的 /workspace/.cecelia-prompts/{file}.txt
+ * 文件名含运行实例唯一后缀，同一 taskId 多次 spawn 互不覆盖。
+ * 文件挂载到 container 的 /tmp/cecelia-prompts/{file}
  */
 function writePromptFile(taskId, prompt) {
   if (!existsSync(DEFAULT_PROMPT_DIR)) {
     mkdirSync(DEFAULT_PROMPT_DIR, { recursive: true });
   }
-  const file = path.join(DEFAULT_PROMPT_DIR, `${taskId}.prompt`);
+  const runInstance = randomBytes(4).toString('hex'); // ≥6 hex via 4 bytes = 8 hex
+  const file = path.join(DEFAULT_PROMPT_DIR, `${taskId}.${runInstance}.prompt`);
   writeFileSync(file, prompt, 'utf8');
   return file;
 }
@@ -201,10 +203,12 @@ function containerName(taskId) {
 
 /**
  * 生成 cidfile 路径（docker 启动后把 container ID 写入此文件）
+ * 含运行实例后缀，同一 taskId 多次 spawn 互不覆盖。
  * 我们用它拿容器 ID 前 12 位，便于观察性/forensic。
  */
-function cidFilePath(taskId) {
-  return path.join(DEFAULT_PROMPT_DIR, `${taskId}.cid`);
+function cidFilePath(taskId, runInstance) {
+  const inst = runInstance || randomBytes(4).toString('hex');
+  return path.join(DEFAULT_PROMPT_DIR, `${taskId}.${inst}.cid`);
 }
 
 /**
@@ -257,6 +261,9 @@ export function buildDockerArgs(opts, ctx = {}) {
   const image = opts.image || DEFAULT_IMAGE;
   const worktreePath = opts.worktreePath || DEFAULT_WORKTREE_BASE;
   const name = containerName(taskId);
+  // 每次 spawn 生成一个唯一的 runInstance（≥8 hex via randomBytes(4)），
+  // prompt/stdout/cid 三者在同一次 spawn 内共享，保证命名一致性。
+  const runInstance = randomBytes(4).toString('hex');
   // Brain docker 化后 os.homedir() 返回容器内 $HOME（/home/cecelia 或 /root），
   // 不是宿主 /Users/administrator。docker-executor 给 pipeline container 挂载
   // 凭据路径（.claude-accountN）用 homedir 拼出，错了会让 Claude CLI 秒退
@@ -375,7 +382,19 @@ export function buildDockerArgs(opts, ctx = {}) {
     extraVolumes.push('-v', `${hostSshDir}:/home/cecelia/.ssh:ro`);
   }
 
-  const cidfile = cidFilePath(taskId);
+  // 宿主侧取证路径（prompt/cid）含 runInstance 后缀；容器内 stdout 路径也同名。
+  // HOST_PROMPT_DIR 是宿主视角路径（docker -v mount 源），DEFAULT_PROMPT_DIR 是容器内挂载目标（/tmp/cecelia-prompts）。
+  // basename 保持一致，容器通过 CECELIA_PROMPT_FILE / CECELIA_STDOUT_FILE env 读到正确文件。
+  const promptBasename = `${taskId}.${runInstance}.prompt`;
+  const stdoutBasename = `${taskId}.${runInstance}.stdout`;
+  const cidfile = cidFilePath(taskId, runInstance);
+
+  // 把容器内完整路径注入 env，entrypoint.sh 按 env 优先读（不再自拼）。
+  // 容器内 /tmp/cecelia-prompts 是 HOST_PROMPT_DIR 的 bind-mount 目标，basename 与宿主一致。
+  const CONTAINER_PROMPT_DIR = '/tmp/cecelia-prompts';
+  envFinal.CECELIA_PROMPT_FILE = `${CONTAINER_PROMPT_DIR}/${promptBasename}`;
+  envFinal.CECELIA_STDOUT_FILE = `${CONTAINER_PROMPT_DIR}/${stdoutBasename}`;
+
   const args = [
     'run',
     '--rm',
@@ -397,7 +416,15 @@ export function buildDockerArgs(opts, ctx = {}) {
     // 不会撞 OS argv 长度限制触发 spawn E2BIG。writePromptFile 已在上面写好文件。
   ];
 
-  return { args, envFinal, name, memoryMB, cpuCores, image, worktreePath, hostClaudeConfigDir, cidfile };
+  // forensics：宿主侧写入路径（executeInDocker 用 promptFile 写 prompt 到磁盘）。
+  // basename 与容器 CECELIA_PROMPT_FILE basename 一致，挂载后容器可读。
+  const forensics = {
+    promptFile: path.join(HOST_PROMPT_DIR, promptBasename),
+    stdoutFile: path.join(HOST_PROMPT_DIR, stdoutBasename),
+    runInstance,
+  };
+
+  return { args, envFinal, name, memoryMB, cpuCores, image, worktreePath, hostClaudeConfigDir, cidfile, forensics };
 }
 
 // account-rotation 已迁到 spawn/middleware/account-rotation.js（v2 P2 PR3）
@@ -425,15 +452,17 @@ export async function executeInDocker(opts) {
   logger.logStart();
   await checkCostCap(opts);
 
-  // 写 prompt 文件（宿主侧持久化，用于 debug / audit）
-  writePromptFile(taskId, opts.prompt);
-
   // 账号轮换 middleware — 所有 spawn 自动享有"cap/auth fail fallback"。
   opts.env = opts.env || {};
   await resolveCascade(opts);
   await resolveAccount(opts, { taskId });
 
-  const { args, _envFinal, name, memoryMB, cpuCores, image, cidfile } = buildDockerArgs(opts);
+  const { args, name, memoryMB, cpuCores, image, cidfile, forensics } = buildDockerArgs(opts);
+
+  // 写 prompt 文件到 forensics.promptFile（与容器 CECELIA_PROMPT_FILE env 同名，runInstance 保证一致）
+  const promptDir = path.dirname(forensics.promptFile);
+  if (!existsSync(promptDir)) mkdirSync(promptDir, { recursive: true });
+  writeFileSync(forensics.promptFile, opts.prompt, 'utf8');
 
   // 镜像预检：机器重启后本地镜像丢失（exit=125）时自动触发 docker/build.sh 重建
   const imgCheck = await ensureDockerImage(image);
