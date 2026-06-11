@@ -14,6 +14,18 @@
 set -euo pipefail
 
 IMAGE="${CECELIA_RUNNER_IMAGE:-cecelia/runner:latest}"
+
+# === 跳过条件（CI / 无 docker 环境）：本脚本是 post-deploy host-docker smoke，
+# 需要真实 docker daemon + 已构建镜像。缺任一 → 打印 SKIP 并 exit 0（不假绿、不误红）===
+if ! command -v docker >/dev/null 2>&1 || ! docker info >/dev/null 2>&1; then
+  echo "[smoke] forensics-no-overwrite: SKIP — docker 不可用（CI/无 docker 环境）"
+  exit 0
+fi
+if ! docker image inspect "$IMAGE" >/dev/null 2>&1; then
+  echo "[smoke] forensics-no-overwrite: SKIP — 镜像 $IMAGE 未构建（需先 bash docker/build.sh）"
+  exit 0
+fi
+
 TASK="smoke-forensics-$$"
 DIR="$(mktemp -d)"
 trap 'rm -rf "$DIR"' EXIT
