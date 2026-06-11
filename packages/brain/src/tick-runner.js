@@ -106,6 +106,7 @@ import { scheduleKR3ProgressReport } from './kr3-progress-scheduler.js';
 import { calculateAndWrite as calculateKR3Progress } from './kr3-progress-calculator.js';
 import { updatePublishSuccessKRs } from './kr1-kr2-updater.js';
 import { runDailySmoke } from './cron/daily-real-business-smoke.js';
+import { runSkillDriftPatrol, isInPatrolWindow } from './cron/skill-drift-patrol.js';
 import { runCredentialsHealthCheck } from './credentials-health-scheduler.js';
 import { scheduleDailyBackup } from './daily-backup-scheduler.js';
 // Sprint 1: harness-watcher.js retired (Phase B/C 进 LangGraph，sub-graph poll_ci 自管)
@@ -1715,6 +1716,12 @@ async function executeTick() {
   // 10.22 每日 DB 备份调度（北京时间 02:00 = UTC 18:00，创建 trigger_backup 任务，幂等，fire-and-forget）
   Promise.resolve().then(() => scheduleDailyBackup(pool))
     .catch(e => console.warn('[tick] 每日备份调度失败:', e.message));
+
+  // 10.23 skill-drift 巡检（每天 UTC 02:00 = 北京时间 10:00，漂移 → P1 告警 + 写库，fire-and-forget）
+  if (isInPatrolWindow(now)) {
+    Promise.resolve().then(() => runSkillDriftPatrol(pool))
+      .catch(e => console.warn('[tick] skill-drift 巡检失败:', e.message));
+  }
 
   } // end !MINIMAL_MODE (10.x 所有自动调度)
 

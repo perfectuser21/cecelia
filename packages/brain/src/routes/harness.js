@@ -1618,6 +1618,44 @@ router.get('/skill-drift', async (_req, res) => {
 });
 
 /**
+ * GET /skill-drift/patrol-history
+ * 查询 skill-drift 巡检告警历史记录。
+ * Response 200: { alerts: Array<{id, skill_name, ssot_version, snapshot_version, drift_date, detected_at}> }
+ */
+router.get('/skill-drift/patrol-history', async (_req, res) => {
+  try {
+    const { rows } = await pool.query(
+      `SELECT id, skill_name, ssot_version, snapshot_version,
+              to_char(drift_date, 'YYYY-MM-DD') AS drift_date,
+              detected_at
+       FROM skill_drift_alerts
+       ORDER BY detected_at DESC
+       LIMIT 500`
+    );
+    return res.json({ alerts: rows });
+  } catch (err) {
+    console.error('[GET /harness/skill-drift/patrol-history]', err.message);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * POST /skill-drift/patrol-trigger
+ * 手动触发一次 skill-drift 巡检（供 E2E 测试使用，无需等待每日窗口）。
+ * Response 200: { triggered: true, message: string }
+ */
+router.post('/skill-drift/patrol-trigger', async (_req, res) => {
+  try {
+    const { runSkillDriftPatrol } = await import('../cron/skill-drift-patrol.js');
+    await runSkillDriftPatrol();
+    return res.json({ triggered: true, message: 'patrol 已完成' });
+  } catch (err) {
+    console.error('[POST /harness/skill-drift/patrol-trigger]', err.message);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+/**
  * POST /phase-event
  * 记录 harness phase 开始事件（含 model）。
  * Body: { initiative_id, node, status='running', model }
