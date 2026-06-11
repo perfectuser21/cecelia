@@ -12,6 +12,8 @@ import {
   evaluateContractText,
   isTautology,
   isNegativeFailAssertion,
+  isStatusCodeOracle,
+  formatGateReport,
   RULES,
   ENV_CAPABILITY,
 } from '../contract-gate.js';
@@ -246,5 +248,106 @@ describe('硬化回归（code review findings — 防误杀/防绕过）', () =>
   it('M-4：散文句中的 "Test:" 不被当命令扫描（防误命中）', () => {
     const r = evaluateContractText('Run the Test: section manually || true to skip.');
     expect(r.hits.map((h) => h.ruleId)).not.toContain('cheat/or-true');
+  });
+});
+
+describe('盲区 A：反斜杠续行多行 pipeline（逻辑行归一后 curl-no-jq 不误报）', () => {
+  it('生产 fixture（run c0e2546b Step 1）：curl 续行后 | jq -e → 无 curl-no-jq，ok=true', async () => {
+    const r = await runContractGate(path.join(FX, 'multiline-curl-jq'));
+    expect(r.hits.map((h) => h.ruleId)).not.toContain('weak-oracle/curl-no-jq');
+    expect(r.ok).toBe(true);
+  });
+
+  it('归一前（物理行）等价输入会误报，归一后（同逻辑语句）不报', () => {
+    // 纯文本入口：续行 \ 把 curl 与 jq -e 拆到两物理行，逻辑上是一条 pipeline
+    const text = [
+      '```bash',
+      'curl -sf -X POST localhost:5221/api/x \\',
+      "  | jq -e '.url | type == \"string\"' > /dev/null \\",
+      '  || { echo "FAIL"; exit 1; }',
+      '```',
+    ].join('\n');
+    const r = evaluateContractText(text);
+    expect(r.hits.map((h) => h.ruleId)).not.toContain('weak-oracle/curl-no-jq');
+    expect(r.ok).toBe(true);
+  });
+
+  it('续行后仍无任何 oracle 的裸 curl → 照抓 curl-no-jq（不放水）', () => {
+    const text = [
+      '```bash',
+      'curl -sf http://localhost:5221/api/posts \\',
+      '  -H "Accept: application/json"',
+      '```',
+    ].join('\n');
+    const r = evaluateContractText(text);
+    expect(r.hits.map((h) => h.ruleId)).toContain('weak-oracle/curl-no-jq');
+    // 报告行号锚定到逻辑语句的起始物理行（curl 行），而非续行
+    const hit = r.hits.find((h) => h.ruleId === 'weak-oracle/curl-no-jq');
+    expect(hit.line).toBe(2);
+  });
+});
+
+describe('盲区 B：curl -w %{http_code} 状态码 oracle（curl-no-jq 放行）', () => {
+  it('生产 fixture（run c0e2546b cleanup）：-w %{http_code} + 码断言 → 无 curl-no-jq，ok=true', async () => {
+    const r = await runContractGate(path.join(FX, 'status-code-oracle'));
+    expect(r.hits.map((h) => h.ruleId)).not.toContain('weak-oracle/curl-no-jq');
+    expect(r.ok).toBe(true);
+  });
+
+  it('isStatusCodeOracle 精确性（引号变体兼容）', () => {
+    expect(isStatusCodeOracle('curl -s -o /dev/null -w "%{http_code}" url')).toBe(true);
+    expect(isStatusCodeOracle("curl -s -o /dev/null -w '%{http_code}' url")).toBe(true);
+    expect(isStatusCodeOracle('curl -s -o /dev/null -w %{http_code} url')).toBe(true);
+    expect(isStatusCodeOracle('curl -s -o /dev/null --write-out "%{http_code}" url')).toBe(true);
+    // 无 -w / 无 %{http_code} → 不是状态码 oracle
+    expect(isStatusCodeOracle('curl -s http://localhost/api')).toBe(false);
+    expect(isStatusCodeOracle('curl -w "%{time_total}" url')).toBe(false);
+  });
+
+  it('单行状态码 oracle 直接放行', () => {
+    const r = evaluateContractText(
+      '  Test: manual:bash -c \'CODE=$(curl -s -o /dev/null -w "%{http_code}" url); [ "$CODE" = "200" ]\''
+    );
+    expect(r.hits.map((h) => h.ruleId)).not.toContain('weak-oracle/curl-no-jq');
+  });
+});
+
+describe('逻辑行归一 — #3351 负向测试 + 既有规则在多行场景仍正确', () => {
+  it('多行负向测试 fixture（cmd \\ && {...} \\ || true）→ 无 cheat/or-true，ok=true', async () => {
+    const r = await runContractGate(path.join(FX, 'multiline-negative'));
+    expect(r.hits.map((h) => h.ruleId)).not.toContain('cheat/or-true');
+    expect(r.ok).toBe(true);
+  });
+
+  it('归一不给作弊者拆词绕过：test \\ -f 拆两行仍命中 file-existence-only', () => {
+    const text = ['```bash', 'test \\', '  -f /tmp/out.mp4', '```'].join('\n');
+    const r = evaluateContractText(text);
+    expect(r.hits.map((h) => h.ruleId)).toContain('weak-oracle/file-existence-only');
+  });
+
+  it('归一不给作弊者拆词绕过：MOCK_X=1 \\ node 拆两行仍命中 mock-env', () => {
+    const text = ['```bash', 'MOCK_X=1 \\', '  node a.js', '```'].join('\n');
+    const r = evaluateContractText(text);
+    expect(r.hits.map((h) => h.ruleId)).toContain('cheat/mock-env');
+  });
+
+  it('归一不给作弊者拆词绕过：assert \\ || true 拆两行仍命中 or-true（非负向结构）', () => {
+    const text = ['```bash', 'assert_output \\', '  || true', '```'].join('\n');
+    const r = evaluateContractText(text);
+    expect(r.hits.map((h) => h.ruleId)).toContain('cheat/or-true');
+  });
+});
+
+describe('formatGateReport — 逃生口提示头部', () => {
+  it('有命中时报告头部含 gate-allow 通用提示', () => {
+    const r = evaluateContractText("  Test: manual:bash -c 'MOCK_X=1 node a.js'");
+    const report = formatGateReport(r, 'contract-dod.md');
+    expect(report).toMatch(/gate-allow:/);
+    expect(report).toMatch(/cheat\/mock-env/); // 命中清单仍在
+  });
+
+  it('干净合同（无命中）报告为空串，不输出提示头部', async () => {
+    const r = await runContractGate(path.join(FX, 'clean'));
+    expect(formatGateReport(r, 'contract-dod.md')).toBe('');
   });
 });
