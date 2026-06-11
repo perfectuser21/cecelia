@@ -287,4 +287,4 @@ echo "✅ Golden Path E2E 全部通过"
 
 | 功能 | Test File | BEHAVIOR 覆盖 | 预期红证据 |
 |---|---|---|---|
-| patrol 模块 + patrol-history 端点 | `tests/skill-drift-patrol.test.ts` | smoke exit / DB 写入 / 去重 / API schema | → 3-4 failures（模块和端点未实现时） |
+| patrol 模块 + patrol-history 端点 | `tests/skill-drift-patrol.test.ts` | smoke / HTTP 200 / 必要字段 / runSkillDriftPatrol | → 3-4 failures（模块和端点未实现时） |
