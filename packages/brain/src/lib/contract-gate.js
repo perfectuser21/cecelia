@@ -59,15 +59,20 @@ export const RULES = [
   {
     id: 'cheat/or-true',
     description: '断言尾部 || true 吞错',
-    detect: (line) => /\|\|\s*true\b/.test(line),
-    feedback: ({ line }) => `第 ${line} 行 || true 吞掉失败 exit code——删除`,
+    // 负向测试惯用法 `cmd && { ...; exit N; } || true`（N≠0）不算吞错：|| true 在此是对
+    // 【预期失败】的合法承接（见 isNegativeFailAssertion），放行；其余裸 || true 仍命中。
+    detect: (line) => /\|\|\s*true\b/.test(line) && !isNegativeFailAssertion(line),
+    feedback: ({ line }) =>
+      `第 ${line} 行 || true 吞掉失败 exit code——删除；若为负向测试（预期失败），` +
+      `改写为 if cmd; then echo FAIL; exit 1; fi 或用 gate-allow 豁免留痕`,
   },
   {
     id: 'weak-oracle/file-existence-only',
     description: '只查文件存在/大小，无内容断言',
     detect: (line) =>
       /\btest\s+-[fes]\b/.test(line) || /\bls\s+-l\b/.test(line) || /\.size\b/.test(line),
-    feedback: ({ line }) => `第 ${line} 行只查文件存在/大小——加内容/业务属性断言`,
+    feedback: ({ line }) =>
+      `第 ${line} 行只查文件存在/大小——加内容/业务属性断言（如 grep -q '<关键内容>' file）`,
   },
   {
     id: 'weak-oracle/tautology',
@@ -107,6 +112,30 @@ export function isTautology(line) {
   );
   if (b && b[1] === b[3] && b[2] === b[4]) return true;
   return false;
+}
+
+/**
+ * 负向测试（预期失败）惯用法识别：`cmd && { ...; exit N; } || true`（N≠0）。
+ *
+ * 语义：cmd【预期失败】；若反而成功（&& 成立）则进入块内主动 `exit N` 报 FAIL。
+ * 末尾 `|| true` 承接的是 cmd 的【预期失败】退出码（set -e 下避免预期失败直接杀脚本），
+ * 不是吞掉真实断言的失败 → 不应判 cheat/or-true。这是验证 fail-closed 行为的合同绕不开的写法。
+ *
+ * 仅识别【单行】结构（`&& { ... } || true` 同行）：覆盖生产实证的两种负向测试，
+ * 以及 `exit "$N"` / `return N` / 多语句块等常见变体。多行 `{}`（块跨行）等复杂变体
+ * 行级匹配识别不到时，保守命中 cheat/or-true（fail-closed），由作者用 gate-allow 显式豁免留痕。
+ *
+ * @param {string} line  单行验收脚本
+ * @returns {boolean}  true=负向测试惯用法（放行），false=非负向结构（按原规则判定）
+ */
+export function isNegativeFailAssertion(line) {
+  if (typeof line !== 'string' || line.length > 2000) return false;
+  // && { ...块... } || true：块与 || true 同行
+  const m = line.match(/&&\s*\{([\s\S]*?)\}\s*\|\|\s*true\b/);
+  if (!m) return false;
+  const block = m[1];
+  // 块内含 exit/return 非零码：纯数字 1-9.. / 变量 $N、${N}、"$N"（运行期非零意图）
+  return /\b(?:exit|return)\s+(?:["']?\$\{?\w+\}?["']?|[1-9]\d*)/.test(block);
 }
 
 /** 解析 gate-allow 行 → { ruleId, reason }（合同显式豁免单条规则的逃生口）。 */

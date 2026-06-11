@@ -1,26 +1,25 @@
-# Contract DoD — P1 修复：Contract Gate FAIL 路由缺陷（合同产物命中不进 generator fix loop）
+# Contract DoD — Contract Gate `cheat/or-true` 不误伤负向测试（预期失败）惯用法
 
-**范围**: `evaluateContractNode` 合同产物命中 fail-fast（failure_class=contract_invalid → routeAfterEvaluate END）+ GAN reviewer 收敛前置同一 gate 库（命中→REVISION 打回 proposer）+ 两场景 failing test。复用 #3348 gate 库（import，禁复制）。不含改 gate 规则表、改 GAN 轮数策略、UI。
+**范围**: 细化 `cheat/or-true` 规则 + 新增 `isNegativeFailAssertion` 识别器 + 新增 `or-true-negative` fixture + 单测；顺手改两条修复建议文案（or-true / file-existence-only）。不含改其它规则、改 GAN 轮数策略、改路由、UI。复用 #3348/#3348 gate 库。
 **大小**: S
 
-## ARTIFACT 条目
+## 背景
 
-- [x] [ARTIFACT] `isContractArtifactFile` 导出 + `routeAfterEvaluate` 对 contract_invalid 返回 'end'
-  Test: manual:node -e "const c=require('fs').readFileSync('packages/brain/src/workflows/harness-task.graph.js','utf8');if(!/export function isContractArtifactFile/.test(c)||!/failure_class === 'contract_invalid'/.test(c)||!/return 'end'/.test(c))process.exit(1)"
+`#3348` 的 `cheat/or-true` 把所有 `|| true` 一律判作"吞错"。生产 run d8acba51（ci-defense 合同）实证：标准负向测试 `cmd && { echo "FAIL"; exit 1; } || true`（语义="cmd 应失败；若成功则主动 FAIL"）被误伤，按建议"删 || true"会破坏负向测试（set -e 下预期失败直接杀脚本）→ GAN 振荡到 round 5。
 
-- [x] [ARTIFACT] evaluate_contract 条件边新增 end→END（终止 initiative 通道）
-  Test: manual:node -e "const c=require('fs').readFileSync('packages/brain/src/workflows/harness-task.graph.js','utf8');const seg=(c.split(\"addConditionalEdges('evaluate_contract'\")[1]||'').slice(0,200);if(!/end:\s*END/.test(seg))process.exit(1)"
+## 成功标准
 
-- [x] [ARTIFACT] GAN reviewer 复用 #3348 gate 库（import contract-gate.js，禁复制规则逻辑）
-  Test: manual:node -e "const c=require('fs').readFileSync('packages/brain/src/workflows/harness-gan.graph.js','utf8');if(!/import \{ evaluateContractText, formatGateReport \} from '..\/lib\/contract-gate.js'/.test(c))process.exit(1)"
+- 负向测试惯用法 `cmd && { ...; exit N; } || true`（N≠0）不再命中 `cheat/or-true`。
+- 既有"真吞错"样例（`assert || true`、`grep xxx || true` 等无前置 `&& {…exit N}` 结构）仍命中（不弱化既有 fixtures 回归）。
+- contract-gate 既有全部 fixtures/单测一个不松动。
 
-## BEHAVIOR 条目（被测 = 真实 packages/brain graph 节点 + 路由函数；行为由 vitest 在 brain-ci.yml 执行）
+## BEHAVIOR 条目（被测 = 真实 packages/brain/src/lib/contract-gate.js；行为由 vitest 在 CI 执行）
 
-- [x] [BEHAVIOR] Contract Gate 命中合同产物 → evaluateContractNode 标记 failure_class=contract_invalid 且不 spawn evaluator；routeAfterEvaluate 路由 END，不进 generator fix loop（vitest: __tests__/contract-gate-wiring.test.js，brain-ci.yml 执行）
-  Test: manual:node -e "const c=require('fs').readFileSync('packages/brain/src/workflows/__tests__/contract-gate-wiring.test.js','utf8');if(!/failure_class.*contract_invalid/.test(c)||!/routeAfterEvaluate.*contract_invalid.*end|end.*终止 initiative/.test(c)||!/not\.toHaveBeenCalled/.test(c))process.exit(1)"
+- [x] [BEHAVIOR] 负向测试 `cmd && { echo FAIL; exit 1; } || true` 不命中 cheat/or-true，而真吞错 `assert || true` 仍命中（CI 直跑 node 加载真实模块断言）
+  Test: manual:node -e "import('./packages/brain/src/lib/contract-gate.js').then(m=>{const a=m.evaluateContractText('  Test: x && { echo FAIL; exit 1; } || true').hits.map(h=>h.ruleId);if(a.includes('cheat/or-true'))process.exit(1);const b=m.evaluateContractText('  Test: assert || true').hits.map(h=>h.ruleId);if(!b.includes('cheat/or-true'))process.exit(1);console.log('OK')}).catch(e=>{console.error(e);process.exit(1)})"
 
-- [x] [BEHAVIOR] GAN reviewer 判 APPROVED 但合同命中确定性红线 → verdict 改 REVISION 且 feedback 含 ruleId 命中清单（打回 proposer，不退出 GAN）；合同干净则维持 APPROVED（vitest: __tests__/harness-gan-contract-gate-converge.test.js，brain-ci.yml 执行）
-  Test: manual:node -e "const c=require('fs').readFileSync('packages/brain/src/workflows/__tests__/harness-gan-contract-gate-converge.test.js','utf8');if(!/REVISION/.test(c)||!/cheat\/mock-env|weak-oracle/.test(c)||!/APPROVED/.test(c))process.exit(1)"
+- [x] [BEHAVIOR] isNegativeFailAssertion 已导出且精确：`exit 1`→true、裸 `assert || true`→false、`exit 0`→false（非负向断言不放行）
+  Test: manual:node -e "import('./packages/brain/src/lib/contract-gate.js').then(m=>{if(typeof m.isNegativeFailAssertion!=='function')process.exit(1);if(m.isNegativeFailAssertion('cmd && { echo FAIL; exit 1; } || true')!==true)process.exit(1);if(m.isNegativeFailAssertion('assert || true')!==false)process.exit(1);if(m.isNegativeFailAssertion('cmd && { echo x; exit 0; } || true')!==false)process.exit(1);console.log('OK')}).catch(e=>{console.error(e);process.exit(1)})"
 
-- [x] [BEHAVIOR] GAN 收敛 gate 排除 structural/no-assertion 元规则（合同断言可能在外部 tests/，避免格式误报；由 evaluator 阶段读 contract-dod.md 兜底）
-  Test: manual:node -e "const c=require('fs').readFileSync('packages/brain/src/workflows/harness-gan.graph.js','utf8');if(!/ruleId !== 'structural\/no-assertion'/.test(c)||!/evaluateContractText/.test(c))process.exit(1)"
+- [x] [BEHAVIOR] or-true 修复建议含"负向测试改写/gate-allow 豁免"提示，file-existence-only 建议含 `grep -q` 升级示例
+  Test: manual:node -e "const c=require('fs').readFileSync('packages/brain/src/lib/contract-gate.js','utf8');if(!/负向测试（预期失败）/.test(c)||!/gate-allow 豁免留痕/.test(c)||!/grep -q '<关键内容>' file/.test(c))process.exit(1)"
