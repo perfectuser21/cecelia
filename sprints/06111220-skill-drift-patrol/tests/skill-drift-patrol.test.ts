@@ -117,8 +117,12 @@ describe('skill-drift-patrol 模块', () => {
 describe('smoke 脚本 snapshot_version 断言', () => {
   it('skill-drift-smoke.sh 文件含 snapshot_version 检测', async () => {
     const { readFileSync } = await import('fs');
+    const { resolve, dirname } = await import('path');
+    const { fileURLToPath } = await import('url');
+    // 用 import.meta.url 构造绝对路径，不依赖 CWD（brain-unit 从 packages/brain/ 跑）
+    const dir = dirname(fileURLToPath(import.meta.url));
     const content = readFileSync(
-      'packages/brain/scripts/smoke/skill-drift-smoke.sh',
+      resolve(dir, '../../../packages/brain/scripts/smoke/skill-drift-smoke.sh'),
       'utf8'
     );
     expect(content).toContain('snapshot_version');

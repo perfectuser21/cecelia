@@ -1019,6 +1019,8 @@ jobs:
             -e NODE_ENV=test \
             -e CECELIA_TICK_ENABLED=false \
             -e ENV_REGION=us \
+            -e REPO_ROOT=/repo_root \
+            -v $GITHUB_WORKSPACE/packages/workflows:/repo_root/packages/workflows:ro \
             cecelia-brain:ci
           # 等 /api/brain/tick/status 200（最多 90s）
           for i in $(seq 1 90); do
