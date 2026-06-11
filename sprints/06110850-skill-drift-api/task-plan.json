@@ -1,0 +1,29 @@
+{
+  "initiative_id": "${INITIATIVE_ID}",
+  "journey_type": "autonomous",
+  "journey_type_reason": "实现仅涉及 packages/brain/（纯后端只读 API），无 dashboard / engine / 远端 agent 协议参与",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "Brain 新增只读端点 GET /api/brain/harness/skill-drift：实读 SSOT 与快照 6 个 harness SKILL.md version 并逐项对比",
+      "scope": "在 harness 路由下新增无参数只读 GET 端点：对 6 个 harness skill（harness-planner / harness-contract-proposer / harness-contract-reviewer / harness-generator / harness-evaluator / harness-report）逐项实读 SSOT（SKILLS_SSOT_DIR 可覆盖，默认 ~/perfect21/zenithjoy-skills，支持 <name>/SKILL.md 与 skills/<name>/SKILL.md 两种布局探测）与快照（SKILLS_SNAPSHOT_DIR 可覆盖，默认 packages/workflows/skills/）的 SKILL.md frontmatter version: 行，返回 {skills:[{name,ssot_version,snapshot_version,drifted}×6], any_drift}。文件缺失或无 version 行 → 对应 version 为 null 且 drifted=true；drifted == (ssot_version !== snapshot_version)；any_drift == 任一 drifted。每次请求实读磁盘，禁止缓存/硬编码。仅检测：不写文件、无 DB 写入、不含其他 skill、不含 Dashboard/告警。",
+      "dod": [
+        "[BEHAVIOR] curl -sf localhost:5221/api/brain/harness/skill-drift 返 200，skills 恰好 6 项且 name 集合精确等于 6 个 harness skill（contract-dod.md B1）",
+        "[BEHAVIOR] 顶层 keys 严格 == [\"any_drift\",\"skills\"]，项级 keys 严格 == [\"drifted\",\"name\",\"snapshot_version\",\"ssot_version\"]，类型正确，禁用字段（anyDrift/ssotVersion 等）不出现（contract-dod.md B2/B3/B4）",
+        "[BEHAVIOR] any_drift == (skills | map(.drifted) | any) 且每项 drifted == (ssot_version != snapshot_version)（contract-dod.md B5）",
+        "[BEHAVIOR] 响应 snapshot_version 逐项等于 evaluator 独立 grep packages/workflows/skills/<name>/SKILL.md frontmatter 实读值，防硬编码（contract-dod.md B6）",
+        "[BEHAVIOR] GET 2xx 前提下 POST 同路径非 200（contract-dod.md B7）",
+        "[BEHAVIOR] sprints/06110850-skill-drift-api/tests/skill-drift.test.ts 全部 11 条由红转绿（含边界：文件缺失→null、无 version 行→null、改盘翻转真实读盘）",
+        "[ARTIFACT] packages/brain/src/routes/harness.js 含 skill-drift 路由注册",
+        "[ARTIFACT] packages/brain/src/routes/__tests__/ 下含 skill-drift 回归测试（永久 CI，覆盖 drifted/null/any_drift 断言）"
+      ],
+      "files": [
+        "packages/brain/src/routes/harness.js",
+        "packages/brain/src/routes/__tests__/harness.skill-drift.test.js"
+      ],
+      "depends_on": [],
+      "complexity": "S",
+      "estimated_minutes": 45
+    }
+  ]
+}
