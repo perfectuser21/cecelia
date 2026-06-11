@@ -11,6 +11,7 @@ import {
   runContractGate,
   evaluateContractText,
   isTautology,
+  isNegativeFailAssertion,
   RULES,
   ENV_CAPABILITY,
 } from '../contract-gate.js';
@@ -145,6 +146,51 @@ describe('isTautology — 精确性（防误伤真实断言）', () => {
   });
   it('echo PASS | grep FAIL → false（字面量不同）', () => {
     expect(isTautology('echo PASS | grep FAIL')).toBe(false);
+  });
+});
+
+describe('cheat/or-true — 负向测试（预期失败）惯用法不误伤', () => {
+  it('生产 fixture：cmd && { echo FAIL; exit N; } || true 整段 → 无 cheat/or-true，ok=true', async () => {
+    const r = await runContractGate(path.join(FX, 'or-true-negative'));
+    expect(r.hits.map((h) => h.ruleId)).not.toContain('cheat/or-true');
+    expect(r.ok).toBe(true);
+  });
+
+  it('exit 1 负向断言行不命中 or-true', () => {
+    const r = evaluateContractText(
+      '  Test: manual:bash -c \'node check.mjs && { echo "FAIL: 应失败"; exit 1; } || true\''
+    );
+    expect(r.hits.map((h) => h.ruleId)).not.toContain('cheat/or-true');
+  });
+
+  it('多语句块 + exit "$N" 变体不命中 or-true', () => {
+    const r = evaluateContractText(
+      '  Test: manual:bash -c \'gate "$D" && { echo FAIL; rm -rf "$T"; exit "$N"; } || true\''
+    );
+    expect(r.hits.map((h) => h.ruleId)).not.toContain('cheat/or-true');
+  });
+
+  it('真吞错（无前置负向断言结构）仍命中 or-true', () => {
+    const r1 = evaluateContractText("  Test: manual:bash -c 'assert_output || true'");
+    expect(r1.hits.map((h) => h.ruleId)).toContain('cheat/or-true');
+    const r2 = evaluateContractText("  Test: manual:bash -c 'grep -q foo file || true'");
+    expect(r2.hits.map((h) => h.ruleId)).toContain('cheat/or-true');
+  });
+
+  it('多行 {} 复杂变体（块跨行）保守命中 or-true（作者用 gate-allow 豁免）', () => {
+    // 块与 || true 不同行 → 行级匹配识别不到负向结构 → fail-closed 命中
+    const r = evaluateContractText("  Test: manual:bash -c 'cmd; } || true'");
+    expect(r.hits.map((h) => h.ruleId)).toContain('cheat/or-true');
+  });
+
+  it('isNegativeFailAssertion 精确性', () => {
+    expect(isNegativeFailAssertion('cmd && { echo FAIL; exit 1; } || true')).toBe(true);
+    expect(isNegativeFailAssertion('cmd && { echo FAIL; exit "$N"; } || true')).toBe(true);
+    expect(isNegativeFailAssertion('cmd && { echo FAIL; return 2; } || true')).toBe(true);
+    // exit 0 不是负向断言（那是兜底） → 不豁免
+    expect(isNegativeFailAssertion('cmd && { echo x; exit 0; } || true')).toBe(false);
+    // 无 && {...} 块的真吞错 → 不豁免
+    expect(isNegativeFailAssertion('assert_output || true')).toBe(false);
   });
 });
 
