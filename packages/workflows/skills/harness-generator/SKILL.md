@@ -5,10 +5,11 @@ description: |
   读取 GAN 对抗已批准的 contract-draft.md + tests/*.test.ts + contract-dod.md，按 TDD 纪律两次 commit（commit 1 = 测试 Red / commit 2 = 实现 Green）。
   融入 4 个 superpowers：test-driven-development / verification-before-completion / systematic-debugging / requesting-code-review。
   CONTRACT IS LAW：合同里有的全实现，合同外一字不加；测试文件从合同原样复制，commit 1 后不可修改（CI 强校验）。一个 Sprint = 一个 Generator = 一个 PR。
-version: 7.4.0
+version: 7.5.0
 created: 2026-04-08
 updated: 2026-06-11
 changelog:
+  - 7.5.0: 🚫 删除 Step 7.5 的 gh pr merge --auto 自合并 — generator 职责到 CI 全绿为止，merge 由 Brain mergePrNode 在 evaluator PASS 后执行；否则 evaluator pre-merge gate 被绕过（2026-06-11 PR #3342 实证：CI 绿即自动合并，evaluator 从未运行）。循环退出条件从 MERGED 改为 CI 全绿（保留 MERGED/CLOSED 容错出口）
   - 7.4.0: 链路审计修复 5 项 — (a) 回流「防照抄示例占位 PR URL」保护到 Step 8（含 verdict JSON schema 表 DONE/FIXED/FAILED 三态）；(b) Step 6.5 镜像注释改指向 evaluator 新增 Step B-1.6（名称引用，不写行号）；(c) Step 3 Red 验证从 grep 日志符号改为 `npx vitest run --reporter=json` 统计 failed/passed（确定性）；(d) Step 6.5 失败补「重试工作流」（修实现→commit→重跑，连续 3 轮仍 FAIL 标 [BEHAVIOR_FAIL] 并 push 交 evaluator）
   - 7.3.0: Step 6.5 加 localhost→host.docker.internal 替换逻辑（与 Evaluator 镜像，修复容器内 Brain API BEHAVIOR 命令必然超时 FAIL 的问题）
   - 7.2.0: 修 Bug 5 — 读合同文件名从 sprint-contract.md 改为 contract-draft.md（v8.x reviewer 不再做 cp 步骤）
@@ -406,9 +407,14 @@ PRBODY
 echo "PR created: $PR_URL"
 ```
 
-### Step 7.5: 轮询 CI + 等待合并（PR 创建后立刻执行，不退出）
+### Step 7.5: 轮询 CI 到全绿（PR 创建后立刻执行，不退出；禁止 merge）
 
-PR 创建完不退出，原地轮询直到合并。合并后才进 Step 8。
+PR 创建完不退出，原地轮询直到 **CI 全绿**，然后进 Step 8 输出 verdict。
+
+> **🚫 红线（v7.5.0）：generator 禁止执行任何 `gh pr merge`（含 `--auto`）。**
+> merge 是 Brain `mergePrNode` 在 **evaluator PASS 之后**的职责。generator 自行 merge =
+> 绕过 evaluator pre-merge gate（"evaluator 不 PASS，main 不变动"被破坏）。
+> 实证：2026-06-11 PR #3342 被 generator 的 `--auto` 在 CI 绿后自动合并，evaluator 从未运行。
 
 ```bash
 # 从 PR_URL 提取 PR 号
@@ -419,12 +425,10 @@ MAX_FIXES=3
 FIX_COUNT_FILE="/tmp/generator-fix-count-${PR_NUMBER}"
 FIX_COUNT=$(cat "$FIX_COUNT_FILE" 2>/dev/null || echo 0)
 
-# 先启用 auto-merge
-gh pr merge "$PR_NUMBER" --repo "$REPO" --auto --squash 2>/dev/null && echo "auto-merge enabled"
-
 while true; do
   STATE=$(gh pr view "$PR_NUMBER" --repo "$REPO" --json state --jq '.state' 2>/dev/null)
-  [ "$STATE" = "MERGED" ] && { echo "PR #$PR_NUMBER merged"; rm -f "$FIX_COUNT_FILE"; break; }
+  # 容错出口：恢复场景下 PR 可能已被 mergePrNode 合并/人工关闭
+  [ "$STATE" = "MERGED" ] && { echo "PR #$PR_NUMBER already merged (by mergePrNode)"; rm -f "$FIX_COUNT_FILE"; break; }
   [ "$STATE" = "CLOSED" ] && { echo "PR #$PR_NUMBER closed"; break; }
 
   CHECKS=$(gh pr checks "$PR_NUMBER" --repo "$REPO" 2>/dev/null)
@@ -456,14 +460,20 @@ while true; do
     continue
   }
 
+  if [ "$FAILED" -eq 0 ] && [ "$PENDING" -eq 0 ]; then
+    echo "CI 全绿，generator 任务完成（merge 交给 evaluator PASS 后的 mergePrNode）"
+    rm -f "$FIX_COUNT_FILE"
+    break
+  fi
+
   echo "$(TZ=Asia/Shanghai date '+%H:%M:%S') OPEN | pending=$PENDING fail=$FAILED | $MERGE_STATE"
   sleep 30
 done
 ```
 
-> **说明**：Bash 工具单次 timeout 上限 600000ms（10 分钟）。超时后立刻重新发 Bash 调用继续轮询，不输出任何文字，不结束 turn。直到合并为止。
+> **说明**：Bash 工具单次 timeout 上限 600000ms（10 分钟）。超时后立刻重新发 Bash 调用继续轮询，不输出任何文字，不结束 turn。直到 CI 全绿为止。
 
-### Step 8: 输出 verdict JSON（⚠️ Brain 通过此提取 pr_url，合并后才执行）
+### Step 8: 输出 verdict JSON（⚠️ Brain 通过此提取 pr_url，CI 全绿后执行）
 
 > **CRITICAL**: 最后一条消息必须是**纯 JSON**，禁止任何其他文字（不加 markdown、不加说明）。
 > Brain 的 execution.js 依赖此 JSON 提取 pr_url。
@@ -472,7 +482,7 @@ done
 
 | verdict | 用于 | 必带字段 | 说明 |
 |---|---|---|---|
-| `DONE` | Mode 1 首次实现成功 push + 合并 | `verdict`, `pr_url` | `pr_url` 必须是真实 URL（见下方占位符红线）|
+| `DONE` | Mode 1 首次实现成功 push + CI 全绿（未 merge，merge 由 mergePrNode 做）| `verdict`, `pr_url` | `pr_url` 必须是真实 URL（见下方占位符红线）|
 | `FIXED` | Mode 2 harness_fix 修复后 push | `verdict`, `pr_url`, `fixes`（修复说明数组）| 在原 PR 分支修复，不新建 PR |
 | `FAILED` | 连续 3 轮自验/CI 仍 FAIL，放弃 | `verdict`, `pr_url`, `reason`（失败根因）| PR body 已标 [BEHAVIOR_FAIL]，交 evaluator/人处理 |
 
