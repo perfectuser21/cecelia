@@ -50,7 +50,7 @@ import { resolveAccount } from '../spawn/middleware/account-rotation.js';
 import { checkAuthFailure } from '../spawn/middleware/cap-marking.js';
 import { checkPrStatus, classifyFailedChecks } from '../shepherd.js';
 import { parseDockerOutput, extractField, readPrFromGitState, readVerdictFile, readBrainResult, readAndValidateBrainResult, EvaluatorOutputSchema, loadSkillContent } from '../harness-shared.js';
-import { buildGeneratorPrompt } from '../harness-utils.js';
+import { buildGeneratorPrompt, harnessContractThreadSuffix } from '../harness-utils.js';
 import { getPgCheckpointer } from '../orchestrator/pg-checkpointer.js';
 import pool from '../db.js';
 import { verifyGeneratorOutput } from '../lib/contract-verify.js';
@@ -230,10 +230,13 @@ export async function spawnNode(state, opts = {}) {
   const prompt = buildGeneratorPrompt(task, { fixMode, prdContent: state.prdContent || null });
 
   // thread_id 必须跟 harness-initiative.graph runSubTaskNode 用的一致：
-  // `harness-task:${initiativeId}:${subTaskId}:fix${N}` —— callback router 用此 lookup
+  // `harness-task:${initiativeId}:${subTaskId}:fix${N}<合同后缀>` —— callback router 用此 lookup
   // B47: final_e2e_fix_count 从 payload 读，与 config thread_id 保持一致
+  // 合同绑定：thread_id 追加 contractBranch 折出的稳定短 token，合同重新收敛 → 新线程，
+  // 不复用旧终局 checkpoint（run da418741 死线程秒回 root cause）。state.contractBranch
+  // 即父 runSubTaskNode invoke 时传入值，子图内不再变，spawn/evaluate 两处一致。
   const threadFixRound = state.task?.payload?.final_e2e_fix_count ?? 0;
-  const threadId = `harness-task:${initiativeId}:${task.id}:fix${threadFixRound}`;
+  const threadId = `harness-task:${initiativeId}:${task.id}:fix${threadFixRound}${harnessContractThreadSuffix(state.contractBranch)}`;
 
   // 关键：调 resolveAccount 选 claude account → 注入 CECELIA_CREDENTIALS + CECELIA_MODEL。
   // buildDockerArgs 据此加 -v ~/.claude-accountN:/host-claude-config:ro mount。
@@ -916,8 +919,9 @@ export async function evaluateContractNode(state, opts = {}) {
   const containerId = `harness-evaluate-${safeId}-r${state.fix_round || 0}-${rand}`;
   // B10: evaluate_contract 在 harness-task graph 内，thread_lookup 必须用 task graph thread_id
   // B47: final_e2e_fix_count 从 payload 读，与 config thread_id 保持一致
+  // 合同绑定：与 spawnNode 同口径追加合同后缀，保证 callback router 反查命中同一线程。
   const threadFixRound = state.task?.payload?.final_e2e_fix_count ?? 0;
-  const threadId = `harness-task:${initiativeId}:${task.id}:fix${threadFixRound}`;
+  const threadId = `harness-task:${initiativeId}:${task.id}:fix${threadFixRound}${harnessContractThreadSuffix(state.contractBranch)}`;
 
   // B14: PR 分支名传给 evaluator（Step 0a git checkout 用，不传则永远跑 main 看不到改动）
   let prBranchEnv = state.pr_branch || '';

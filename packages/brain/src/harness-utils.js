@@ -6,7 +6,36 @@
  *   - buildGeneratorPrompt — Bug 7 fix：inline SKILL pattern
  */
 
+import crypto from 'node:crypto';
 import { loadSkillContent } from './harness-shared.js';
+
+/**
+ * 计算 sub-task generator/evaluate 子图 thread_id 的「合同版本后缀」（SSOT）。
+ *
+ * 线程身份必须包含其语义版本——合同（contractBranch）。合同经 GAN 重新收敛后会换
+ * propose 分支；旧合同跑出的子图 checkpoint 可能已处终局（如 Contract Gate 命中合同产物
+ * → failure_class=contract_invalid 直接 END）。若 thread_id 不含合同维度，新合同会复用
+ * 旧终局 checkpoint → invoke 立即返回死状态、无任何节点执行（实证 run da418741：
+ * fix0 线程三连秒回 status=queued）。把 contractBranch 折成稳定短 token 进 thread_id：
+ * 合同变 → 新线程 → 执行历史归零。
+ *
+ * 三处必须用本 helper 保持一致（否则 callback router 反查 thread_id 失配）：
+ *   - harness-initiative.graph.js runSubTaskNode（父 invoke 子图，决定 checkpoint thread）
+ *   - harness-task.graph.js spawnNode（写 walking_skeleton_thread_lookup）
+ *   - harness-task.graph.js evaluateContractNode（写 walking_skeleton_thread_lookup）
+ *
+ * 兼容性：contractBranch 为 null/''（无 GAN 合同维度，如测试/直跑路径）→ 返回空串，
+ * thread_id 退回旧格式 `harness-task:<id>:<ws>:fix<N>`，不破坏既有线程语义。
+ *
+ * @param {string|null|undefined} contractBranch  当前合同 propose 分支名
+ * @returns {string}  '' 或 ':c<8位hex>'
+ */
+export function harnessContractThreadSuffix(contractBranch) {
+  if (!contractBranch) return '';
+  // sha256 折 8 位 hex：thread_id 短且字符集安全；同 contractBranch → 同 token（确定性）。
+  const token = crypto.createHash('sha256').update(String(contractBranch)).digest('hex').slice(0, 8);
+  return `:c${token}`;
+}
 
 /**
  * 返回上海时区（UTC+8）的 MMDDHHMM 8 位字符串。

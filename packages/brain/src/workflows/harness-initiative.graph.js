@@ -13,6 +13,7 @@ import { spawn } from '../spawn/index.js';
 import { spawnDockerDetached } from '../spawn/detached.js';
 import { resolveAccount } from '../spawn/middleware/account-rotation.js';
 import { parseDockerOutput, loadSkillContent } from '../harness-shared.js';
+import { harnessContractThreadSuffix } from '../harness-utils.js';
 import { parseTaskPlan, upsertTaskPlan } from '../harness-dag.js';
 import { ensureHarnessWorktree } from '../harness-worktree.js';
 import { resolveGitHubToken } from '../harness-credentials.js';
@@ -1189,17 +1190,45 @@ export async function runSubTaskNode(state, opts = {}) {
     },
   };
   const compiled = opts.compiledTaskGraph || await _getTaskGraphCompiled();
+  // contractBranch 是子图线程身份的语义版本维度。此处解析一次，既喂 thread_id 也喂 invoke
+  // 输入，保证父子两侧 thread_id 完全一致（子图 spawn/evaluate 用 state.contractBranch 折同一后缀）。
+  const contractBranchForThread = state.contractBranch || state.ganResult?.propose_branch || null;
   // final_e2e_fix_count 追加到 thread_id：final_evaluate FAIL 重跑时用 fresh checkpoint，避免旧状态污染
   // thread_id 含 fix_count 保证 evaluate_contract FAIL 重试时用 fresh checkpoint
-  const config = { configurable: { thread_id: `harness-task:${state.initiativeId}:${subTask.id}:fix${state.final_e2e_fix_count ?? 0}` }, recursionLimit: 200 };
+  // 合同绑定（run da418741 死线程修复）：thread_id 追加 contractBranch 折出的稳定短 token。
+  // 合同经 GAN 重新收敛 → propose 分支变 → token 变 → 新线程，绝不复用旧合同留下的终局
+  // checkpoint（旧 fix0 线程 contract_invalid 已 END，再 invoke 会秒回死状态、无节点执行）。
+  const threadId = `harness-task:${state.initiativeId}:${subTask.id}:fix${state.final_e2e_fix_count ?? 0}${harnessContractThreadSuffix(contractBranchForThread)}`;
+  const config = { configurable: { thread_id: threadId }, recursionLimit: 200 };
   const waitMs = opts.waitMs !== undefined ? opts.waitMs : SUBGRAPH_WAIT_MS;
   // 诊断：进 generator 子图前记录关键上下文，便于 generator 那层失败时定位。
   console.log(
     `[runSubTaskNode] invoke generator sub-graph thread=${config.configurable.thread_id}`
     + ` sub_task=${subTask.id} baseRepo=${state.task?.payload?.base_repo || '(none)'}`
-    + ` contractBranch=${state.contractBranch || state.ganResult?.propose_branch || '(none)'}`
+    + ` contractBranch=${contractBranchForThread || '(none)'}`
     + ` machine=${state.task?.payload?.machine || '-'} executor=${state.task?.payload?.executor || '-'}`
   );
+  // 防御诊断（Fix 3）：合同绑定后目标线程正常应是 fresh（无 checkpoint）。若探到该线程已存在
+  // 终局 checkpoint（next=[] 且 values 非空），说明 thread_id 仍复用了旧终局态——invoke 必然
+  // 秒回死状态、无任何节点执行。留明确告警钩子，便于本类 bug 复发时一眼定位（不阻断流程）。
+  try {
+    const _getState = opts._getStateForDiag || (() => compiled.getState(config));
+    const pre = await _getState();
+    const preVals = pre && pre.values ? pre.values : {};
+    const hasCheckpoint = preVals && Object.keys(preVals).length > 0;
+    const isTerminal = pre && (!pre.next || pre.next.length === 0);
+    if (hasCheckpoint && isTerminal) {
+      console.warn(
+        `[runSubTaskNode] ⚠️ 死线程探测：thread=${config.configurable.thread_id} 已存在终局 checkpoint`
+        + ` (next=[], status=${preVals.status}, failure_class=${preVals.failure_class || '-'})`
+        + ` — invoke 将秒回死状态、无节点执行。若本轮是合同重新收敛，说明 thread_id 合同绑定未生效，`
+        + ` 请检查 contractBranch 传递（当前 contractBranch=${contractBranchForThread || '(none)'}）。`
+      );
+    }
+  } catch (diagErr) {
+    // fresh thread getState 在部分 checkpointer 实现下可能抛错/返回空 — 诊断钩子吞掉不影响主流程。
+    if (process.env.HARNESS_DEBUG) console.warn(`[runSubTaskNode] 死线程探测 getState 失败（忽略）：${diagErr.message}`);
+  }
   let final;
   try {
     const firstResult = await compiled.invoke(
@@ -1211,7 +1240,7 @@ export async function runSubTaskNode(state, opts = {}) {
         // ensureHarnessWorktree 建独立 worktree（用 sub_task.id 作 key）。
         // worktreePath: state.worktreePath,
         githubToken: state.githubToken,
-        contractBranch: state.contractBranch || state.ganResult?.propose_branch || null,
+        contractBranch: contractBranchForThread,
         baseRepo: state.task?.payload?.base_repo || undefined,
         prdContent: state.prdContent || null,
       },
@@ -1241,11 +1270,18 @@ export async function runSubTaskNode(state, opts = {}) {
     );
     final = { status: 'failed', error: { node: 'sub_graph', message: err.message } };
   }
-  // 诊断：记录子图最终结果（status + error），便于复盘 generator 那层。
+  // Fix 2：contract_invalid 终局必须作为「带原因的明确状态」上浮，而非被 "Serial gate: did not
+  // merge (status=queued)" 通用文案掩盖（run da418741 排障要靠日志拼时间线的根因之一）。
+  // 子图 contract_invalid 路径 evaluate→END 时不写 status（停在默认 'queued'），但 final 带
+  // failure_class='contract_invalid' + evaluate_error。这里把它升成显式 ci_fail_type + feedback。
+  const isContractInvalid = final.failure_class === 'contract_invalid';
+  // 诊断：记录子图最终结果（status + error + failure_class），便于复盘 generator 那层。
   if (final.status !== 'merged' && final.status !== 'completed') {
     console.warn(
       `[runSubTaskNode] sub_task=${subTask.id} 非成功终态 status=${final.status}`
+      + ` failure_class=${final.failure_class || '-'}`
       + ` error=${final.error ? JSON.stringify(final.error) : '(none)'} pr_url=${final.pr_url || '(none)'}`
+      + (isContractInvalid ? ' [合同质量缺陷·责任在 GAN proposer，需重发让 proposer 修合同]' : '')
     );
   }
   return {
@@ -1256,9 +1292,12 @@ export async function runSubTaskNode(state, opts = {}) {
       pr_url: final.pr_url,
       fix_round: final.fix_round,
       cost_usd: final.cost_usd,
-      ci_fail_type: final.ci_fail_type,
-      // 透传失败信息（error 或子图自带 evaluator_feedback）→ reportNode ws_issues 可见。
+      // Fix 2：contract_invalid 单独打型，让 reportNode ws_issues 显示明确原因而非通用失败。
+      ci_fail_type: final.ci_fail_type || (isContractInvalid ? 'contract_invalid' : undefined),
+      // 透传失败信息（error / 子图 evaluator_feedback / contract_invalid 的 evaluate_error）→
+      // reportNode ws_issues 可见。evaluate_error 兜底覆盖 contract_invalid 终局原因。
       evaluator_feedback: final.evaluator_feedback
+        || final.evaluate_error
         || (final.error ? (typeof final.error === 'string' ? final.error : JSON.stringify(final.error)) : undefined),
     }],
   };

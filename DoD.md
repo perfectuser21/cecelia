@@ -1,32 +1,41 @@
-# Contract DoD — Contract Gate 规则进化 R4（注释行不参与作弊扫描 + capture-negative-assert 放行）
+# Contract DoD — Harness sub-graph 死线程复用修复（thread_id 绑定合同版本）
 
-**范围**: 细化 `cheat/or-true`（新增第二类放行：捕获形态负向测试 `VAR=$(... || true)` + 跨语句对同名 $VAR 断言，新增 `isCaptureNegativeThenAssert` 识别器，复用 #3357 的 `hasCaptureThenAssert`）+ 扫描器前置剥离纯注释行（新增 `isCommentLine`，行首 `#` 跳过，evaluate 循环对纯注释逻辑语句不跑任何规则/env 扫描）+ 新增 `comment-or-true`/`capture-negative-assert` 两个生产实证 fixture + 单测。不含改其它规则、改 GAN 轮数策略、改路由、UI。复用 #3348/#3350/#3351/#3353/#3357 gate 库。
+**范围**: 修 `runSubTaskNode`（harness-initiative.graph.js）+ `spawnNode`/`evaluateContractNode`（harness-task.graph.js）三处子图 thread_id 构造，追加 `contractBranch` 折出的稳定短 token（新增纯函数 `harnessContractThreadSuffix`，放 harness-utils.js）。连带：runSubTaskNode 把 `failure_class=contract_invalid` 终局上浮为 `sub_task.ci_fail_type` + 明确 feedback；新增死线程探测 console.warn 钩子。不含改 GAN 轮数策略、改路由、改 Contract Gate 规则、UI。
 **大小**: S
 
 ## 背景
 
-`#3357` 把 capture-then-assert 跨语句 oracle 接入 curl-no-jq 后，生产 run da418741（ci-defense-r2 合同）又实证两个钝点，致正确合同被 cheat/or-true 误报、GAN 烧轮次：
+实证 run da418741（2026-06-12 06:48）：
+- 早期合同在 evaluate 期被 Contract Gate 判 `contract_invalid` → 子图线程 `harness-task:<initiative>:ws1:fix0` 留下**终局 checkpoint**（evaluate→END，status 停默认 `'queued'`，failure_class=contract_invalid）。
+- 其后 gate 规则进化（#3358）+ GAN 重新收敛出新合同（cp-harness-propose-r3-da418741）。
+- `runSubTaskNode` 再 invoke **同一 fix0 线程** → LangGraph 终局线程 invoke 立即返回最终态、无节点执行、无报错 → 三次全部秒回 `非成功终态 status=queued error=(none) pr_url=(none)` → #3356 的 requeue 上限耗尽 → "Serial gate: did not merge" 终败。#3356 的 requeue 修复在此场景退化成对死线程的无效重试。
 
-- **缺陷 A — 注释行参与作弊扫描**：`# 必须非零退出（上面 || true 是因为要捕获 log；用 echo 验返回）` 纯注释行（首个非空白字符为 `#`）里出现 `|| true` 字样，被 cheat/or-true 命中。注释是写给人看的说明，不是验收脚本，绝不该参与任何规则扫描。
-- **缺陷 B — 负向测试的捕获形态**：`TAMPER_LOG=$(... npx vitest run ... 2>&1 || true)` 把【预期失败】命令的输出捕获进变量，末尾 `|| true` 仅落在命令替换 `$( )` 内部（只为让命令替换不因预期失败而中断），随后 `echo "$TAMPER_LOG" | grep -q "FAIL.*env_missing"` 对同名 $VAR 施加断言——与 #3351 的单语句负向断言同语义，却被 cheat/or-true 误报。
+根因：**线程身份不含其语义版本——合同变了，执行历史却没归零**。thread_id 只含 `initiativeId+taskId+final_e2e_fix_count`，不含合同维度，故合同重新收敛后复用旧终局 checkpoint。
 
 ## 成功标准
 
-- 纯注释行（行首 `#`，含缩进）一律不参与任何 cheat/weak-oracle/env 规则扫描；保守只做【行首 `#`】跳过，真命令行尾部的 `#` 段不剥离（避免误把真命令当注释放水）。
-- `VAR=$( <预期失败命令> || true)` 捕获形态 + 后续【K=5 条逻辑语句内】对【同名】 $VAR 施加 grep -q / jq -e / [ 比较 / case 值断言 → 不再命中 `cheat/or-true`（缺陷 B 消除）。
-- 三重收口防放水：必须是 `VAR=$(...)` 捕获形态、`|| true` 必须落在命令替换内部（赋值之外的另一条 swallow 不放行）、后续 K 条逻辑语句内对同名 $VAR 有断言（裸捕获后无断言仍命中、裸 `cmd || true` 仍命中、断言无关变量仍命中）。
-- contract-gate 既有全部 13 fixtures/单测一个不松动；wiring/converge 测试绿。
+- sub-graph thread_id 绑定合同版本：合同 propose 分支变 → token 变 → 新线程；同合同同 fix_count → 同 thread_id（callback router 反查 walking_skeleton_thread_lookup 稳定）。
+- 三处构造口径一致（runSubTaskNode 父 invoke / spawnNode 写 lookup / evaluateContractNode 写 lookup），父子 thread_id 完全一致，否则 callback resume 失配。
+- 无 contractBranch（测试/直跑路径）→ thread_id 退回旧格式 `harness-task:<id>:<ws>:fix<N>`，不破坏既有线程语义与既有单测。
+- contract_invalid 终局上浮为带原因的明确状态：`sub_task.ci_fail_type='contract_invalid'` + `evaluator_feedback` 含 evaluate_error（不再被 "did not merge (status=queued)" 通用文案掩盖）。
+- 死线程探测：目标线程已存在终局 checkpoint（next=[] 且 values 非空）时 console.warn 明确告警（诊断钩子，不阻断流程）。
+- 既有 harness 单测全绿（runSubTaskNode-payload / harness-subtask-error-diag / harness-task.graph / harness-pipeline-p2p3-fixes / harness-container-liveness）；#3356 requeue、#3341 短路、callback thread_lookup 路由不破坏。
 
-## BEHAVIOR 条目（被测 = 真实 packages/brain/src/lib/contract-gate.js；CI eval node 加载真实模块断言 + vitest 套件）
+## BEHAVIOR 条目（被测 = 真实 packages/brain/src；CI manual:node 读真实源码断言 + vitest 套件深测行为）
 
-- [x] [BEHAVIOR] 缺陷 A：comment-or-true fixture 放行（注释里 || true 不命中），真命令行尾 # 段不放水
-  Test: manual:node -e "import('./packages/brain/src/lib/contract-gate.js').then(async m=>{const ok=await m.runContractGate('./packages/brain/src/lib/__tests__/fixtures/contract-gate/comment-or-true');if(ok.hits.map(h=>h.ruleId).includes('cheat/or-true'))process.exit(2);if(!ok.ok)process.exit(3);const t=['```bash','assert_output || true  # tail comment','```'].join(String.fromCharCode(10));const r=m.evaluateContractText(t);if(!r.hits.map(h=>h.ruleId).includes('cheat/or-true'))process.exit(4);console.log('OK')}).catch(e=>{console.error(e);process.exit(1)})"
+- [x] [BEHAVIOR] harnessContractThreadSuffix 存在且追加进三处 thread_id（harness-utils 定义 + initiative/task graph 引用）
+  Test: manual:node -e "const fs=require('fs');const u=fs.readFileSync('packages/brain/src/harness-utils.js','utf8');if(!/export function harnessContractThreadSuffix/.test(u))process.exit(2);if(!/createHash\('sha256'\)/.test(u))process.exit(3);const i=fs.readFileSync('packages/brain/src/workflows/harness-initiative.graph.js','utf8');if(!/harnessContractThreadSuffix\(contractBranchForThread\)/.test(i))process.exit(4);const t=fs.readFileSync('packages/brain/src/workflows/harness-task.graph.js','utf8');if((t.match(/harnessContractThreadSuffix\(state\.contractBranch\)/g)||[]).length!==2)process.exit(5);console.log('OK')"
 
-- [x] [BEHAVIOR] 缺陷 A 精确性：isCommentLine 导出；行首 #（含缩进）为真、尾部 # 的真命令为假
-  Test: manual:node -e "import('./packages/brain/src/lib/contract-gate.js').then(m=>{const f=m.isCommentLine;if(typeof f!=='function')process.exit(2);if(f('# x')!==true)process.exit(3);if(f('   # y')!==true)process.exit(4);if(f('grep -q ok file')!==false)process.exit(5);if(f('echo hi # tail')!==false)process.exit(6);console.log('OK')}).catch(e=>{console.error(e);process.exit(1)})"
+- [x] [BEHAVIOR] runSubTaskNode thread_id 单一解析 contractBranchForThread，喂 thread_id 也喂 invoke 输入（父子一致）
+  Test: manual:node -e "const fs=require('fs');const c=fs.readFileSync('packages/brain/src/workflows/harness-initiative.graph.js','utf8');const m=c.match(/export async function runSubTaskNode[\\s\\S]*?\\n\\}/);if(!m)process.exit(2);const b=m[0];if(!/const contractBranchForThread =/.test(b))process.exit(3);if(!/thread_id: threadId/.test(b))process.exit(4);if(!/contractBranch: contractBranchForThread/.test(b))process.exit(5);if(!/final_e2e_fix_count/.test(b))process.exit(6);console.log('OK')"
 
-- [x] [BEHAVIOR] 缺陷 B：capture-negative-assert fixture 放行、裸捕获无断言反例仍命中
-  Test: manual:node -e "import('./packages/brain/src/lib/contract-gate.js').then(async m=>{const ok=await m.runContractGate('./packages/brain/src/lib/__tests__/fixtures/contract-gate/capture-negative-assert');if(ok.hits.map(h=>h.ruleId).includes('cheat/or-true'))process.exit(2);if(!ok.ok)process.exit(3);const L=String.fromCharCode(10);const D=String.fromCharCode(36);const bad=['```bash','LOG='+D+'(run 2>&1 || true)','echo done','```'].join(L);const r=m.evaluateContractText(bad);if(!r.hits.map(h=>h.ruleId).includes('cheat/or-true'))process.exit(4);console.log('OK')}).catch(e=>{console.error(e);process.exit(1)})"
+- [x] [BEHAVIOR] Fix 2：contract_invalid 终局上浮为 ci_fail_type=contract_invalid（runSubTaskNode 返回映射含该分型）
+  Test: manual:node -e "const fs=require('fs');const c=fs.readFileSync('packages/brain/src/workflows/harness-initiative.graph.js','utf8');const m=c.match(/export async function runSubTaskNode[\\s\\S]*?\\n\\}/)[0];if(!/failure_class === 'contract_invalid'/.test(m))process.exit(2);if(!/isContractInvalid \\? 'contract_invalid'/.test(m))process.exit(3);if(m.indexOf('failure_class=')<0)process.exit(4);console.log('OK')"
 
-- [x] [BEHAVIOR] 缺陷 B 精确性：isCaptureNegativeThenAssert 导出；捕获内 || true + 同名断言放行、捕获外 swallow 不放行
-  Test: manual:node -e "import('./packages/brain/src/lib/contract-gate.js').then(m=>{const f=m.isCaptureNegativeThenAssert;if(typeof f!=='function')process.exit(2);const D=String.fromCharCode(36);const Q=String.fromCharCode(34);const cap='LOG='+D+'(run 2>&1 || true)';const ll=[{content:cap},{content:'[ -n '+Q+D+'LOG'+Q+' ]'}];if(f(cap,{logicalLines:ll,index:0})!==true)process.exit(3);const out='BAR='+D+'(baz) || true';const ol=[{content:out},{content:'[ -n '+Q+D+'BAR'+Q+' ]'}];if(f(out,{logicalLines:ol,index:0})!==false)process.exit(4);console.log('OK')}).catch(e=>{console.error(e);process.exit(1)})"
+- [x] [BEHAVIOR] Fix 3：死线程探测告警钩子存在（终局 checkpoint → console.warn 死线程探测）
+  Test: manual:node -e "const fs=require('fs');const c=fs.readFileSync('packages/brain/src/workflows/harness-initiative.graph.js','utf8');const m=c.match(/export async function runSubTaskNode[\\s\\S]*?\\n\\}/)[0];if(!/死线程探测/.test(m))process.exit(2);if(!/_getStateForDiag/.test(m))process.exit(3);console.log('OK')"
+
+> 行为深测（合同重新收敛→新线程、同合同→同线程、contract_invalid 上浮、死线程告警）由
+> vitest 套件 `packages/brain/src/workflows/__tests__/harness-subthread-contract-binding.test.js`
+> 在 brain-ci 测试 job 中执行（14 用例）。check-dod-mapping 只接受 repo-root `tests/` 路径，
+> 故此处不以 DoD 条目引用，上面 4 条 manual:node 已覆盖源级+逻辑不变量。
