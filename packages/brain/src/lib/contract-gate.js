@@ -37,7 +37,11 @@ export const RULES = [
   {
     id: 'weak-oracle/curl-no-jq',
     description: 'curl 取响应却无 jq -e 值校验',
-    detect: (line) => /\bcurl\b/.test(line) && !/\bjq\s+-e\b/.test(line),
+    // 放行两类合法 oracle：
+    //  - 同一逻辑语句含 jq -e（含反斜杠续行多行 pipeline，预处理已归一为单逻辑行）
+    //  - 状态码 oracle：curl -w %{http_code} 捕获状态码 + 后续码断言（body 刻意丢弃，jq 不适用）
+    detect: (line) =>
+      /\bcurl\b/.test(line) && !/\bjq\s+-e\b/.test(line) && !isStatusCodeOracle(line),
     feedback: ({ line }) =>
       `第 ${line} 行 curl 取响应但未 jq -e 校验字段值——加 | jq -e '.field == ...'`,
   },
@@ -138,6 +142,21 @@ export function isNegativeFailAssertion(line) {
   return /\b(?:exit|return)\s+(?:["']?\$\{?\w+\}?["']?|[1-9]\d*)/.test(block);
 }
 
+/**
+ * 状态码 oracle 识别：`curl ... -w %{http_code}` 捕获 HTTP 状态码 + 后续码断言。
+ *
+ * 语义：body 被 `-o /dev/null` 刻意丢弃，只取状态码做 oracle（如 `[ "$HTTP_CODE" = "200" ]`），
+ * jq 取字段值在此不适用 → 这是合法 oracle，curl-no-jq 不应误报。
+ * 引号变体兼容：`-w "%{http_code}"` / `-w '%{http_code}'` / `-w %{http_code}` 及长选项 `--write-out` 均认。
+ *
+ * @param {string} line  单行（逻辑行）验收脚本
+ * @returns {boolean}  true=状态码 oracle（curl-no-jq 放行）
+ */
+export function isStatusCodeOracle(line) {
+  if (typeof line !== 'string') return false;
+  return /(?:-w|--write-out)\b/.test(line) && /%\{http_code\}/.test(line);
+}
+
 /** 解析 gate-allow 行 → { ruleId, reason }（合同显式豁免单条规则的逃生口）。 */
 function parseExemptions(lines) {
   const out = [];
@@ -186,6 +205,47 @@ function markCommandLines(lines) {
 }
 
 /**
+ * 反斜杠续行归一：把以 `\`（行尾，允许尾随空白）结尾的命令行与其后续物理行合并为
+ * 单个【逻辑语句】，保留起始物理行号用于报告定位。
+ *
+ * 为什么必须先归一（行级规则的前置）：proposer 常把一条 shell pipeline 写成多物理行
+ * （`curl ... \` 续 `| jq -e ...`）。若规则按物理行扫描，只看见首行 curl、看不见续行的
+ * jq -e → 误报 weak-oracle/curl-no-jq（生产 run c0e2546b 被冤枉 3+ 轮的根因）。
+ * 归一后所有行级规则（curl-no-jq / or-true / file-existence 等）都在完整逻辑语句上判定，
+ * 既消盲区，也不给作弊者用续行拆词绕过的机会（拆开的词会被重新拼回）。
+ *
+ * 安全：只对【命令行】（Test: 行 / bash 围栏块内）启动归一；散文行即便以 `\` 结尾也不吞并
+ * 其后的命令行（命令行仍会作为独立逻辑行被处理），不引入"散文吞命令"的绕过面。
+ *
+ * @param {string[]} lines      物理行数组
+ * @param {boolean[]} isCommand markCommandLines 的逐物理行命令标记
+ * @returns {{content:string, lineNo:number}[]}  逻辑行（仅命令行；lineNo=起始物理行号，1-based）
+ */
+function buildLogicalLines(lines, isCommand) {
+  const out = [];
+  let i = 0;
+  while (i < lines.length) {
+    if (!isCommand[i]) {
+      i += 1;
+      continue;
+    }
+    const startNo = i + 1;
+    const parts = [];
+    let k = i;
+    while (k < lines.length) {
+      const raw = lines[k];
+      const continues = /\\\s*$/.test(raw);
+      parts.push(continues ? raw.replace(/\\\s*$/, '') : raw);
+      if (!continues) break;
+      k += 1;
+    }
+    out.push({ content: parts.join(' '), lineNo: startNo });
+    i = k + 1;
+  }
+  return out;
+}
+
+/**
  * 对一段合同文本做确定性 gate 判定（不读盘，便于单测）。
  * @param {string} text  合同（contract-dod.md）内容
  * @param {object} [opts]  { envCapability }
@@ -201,16 +261,15 @@ export function evaluateContractText(text, opts = {}) {
   // 只对验收命令行跑规则（Test: 行 / bash 围栏块），不误伤散文描述
   const isCommand = markCommandLines(lines);
   const hasAssertion = isCommand.some(Boolean);
+  // 反斜杠续行归一为逻辑语句（保留起始物理行号），所有行级规则在完整逻辑语句上判定
+  const logicalLines = buildLogicalLines(lines, isCommand);
 
   const hits = [];
   const envMissing = [];
 
-  lines.forEach((rawLine, idx) => {
-    const lineNo = idx + 1;
-    const line = rawLine;
-    if (!isCommand[idx]) return; // 非命令行（标题/散文/bullet 描述）跳过，防误命中
+  for (const { content: line, lineNo } of logicalLines) {
     // gate-allow 行本身不参与规则检测（它是元数据，不是验收脚本）
-    if (/gate-allow:/.test(line)) return;
+    if (/gate-allow:/.test(line)) continue;
     const excerpt = line.trim().slice(0, 160);
 
     for (const rule of RULES) {
@@ -238,7 +297,7 @@ export function evaluateContractText(text, opts = {}) {
         });
       }
     }
-  });
+  }
 
   // 结构性：无任何可验收断言 → 不合格（空脚本/无命令）
   if (!hasAssertion) {
@@ -320,5 +379,9 @@ export function formatGateReport(result, fileLabel = 'contract-dod.md') {
     if (em.exempted) continue;
     out.push(`env_missing: ${em.tool} ${fileLabel}:${em.line} — ${em.excerpt}`);
   }
-  return out.join('\n');
+  if (out.length === 0) return '';
+  // 通用逃生口提示（报告头部）：proposer 不一定知道 gate-allow 这个单条豁免逃生口。
+  const header =
+    '提示：确属误报可在合同中用 `gate-allow: <rule-id> <理由>` 单条豁免留痕（逐条精确豁免，不影响其余红线）。';
+  return [header, ...out].join('\n');
 }
