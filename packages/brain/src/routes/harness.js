@@ -1595,7 +1595,11 @@ async function readSsotSkillVersion(ssotDir, name) {
 router.get('/skill-drift', async (_req, res) => {
   try {
     const ssotDir = process.env.SKILLS_SSOT_DIR || join(homedir(), 'perfect21', 'zenithjoy-skills');
-    const snapshotDir = process.env.SKILLS_SNAPSHOT_DIR || join(REPO_ROOT, 'packages', 'workflows', 'skills');
+    // 生产容器修复：模块级 REPO_ROOT 由 import.meta.url 算 → 镜像里是 /app（无 packages/workflows）。
+    // deploy 已把宿主 repo 以绝对路径挂进容器并设 env REPO_ROOT（同 zombie-cleaner/startup-recovery 惯例），
+    // 故快照路径优先用 process.env.REPO_ROOT，复用现成挂载，避免 snapshot_version 全 null。
+    const snapshotRepoRoot = process.env.REPO_ROOT || REPO_ROOT;
+    const snapshotDir = process.env.SKILLS_SNAPSHOT_DIR || join(snapshotRepoRoot, 'packages', 'workflows', 'skills');
     const skills = [];
     for (const name of HARNESS_DRIFT_SKILLS) {
       const ssotVersion = await readSsotSkillVersion(ssotDir, name);
