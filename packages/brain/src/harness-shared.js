@@ -267,6 +267,20 @@ export async function readBrainResult(worktreePath, requiredFields = []) {
 
 // ─── Zod Output Schemas（自研 Structured Output 验证层）───────────────────────
 
+/**
+ * ExecutionRecordSchema — 代码执行段逐命令结果（evaluateContractNode Step 2 产物）。
+ * 每条命令含 cmd / exitCode / stdout / stderr / elapsedMs；不做语义裁读，交 LLM 裁读段判断。
+ */
+export const ExecutionRecordSchema = z.object({
+  commands: z.array(z.object({
+    cmd:       z.string(),
+    exitCode:  z.number().int(),
+    stdout:    z.string(),
+    stderr:    z.string(),
+    elapsedMs: z.number(),
+  })),
+});
+
 export const ReviewerOutputSchema = z.object({
   verdict: z.enum(['APPROVED', 'REVISION']),
   rubric_scores: z.object({
@@ -289,6 +303,8 @@ export const EvaluatorOutputSchema = z.object({
   failed_step: z.string().nullable().optional(),    // evaluator v1 format（FAIL 详情）
   log_excerpt: z.string().nullable().optional(),    // evaluator v1 format（FAIL 日志）
   fixes:       z.array(z.string()).nullable().optional(),  // generator FIXED format（B21）
+  // LLM 裁读段产出：每步 → 对应命令 → 通过与否（Brain 代码校验覆盖完整性，非 LLM 自判）
+  coverage:    z.array(z.object({ step: z.string(), passed: z.boolean() })).optional(),
 }).refine(
   d => d.verdict === 'PASS' || d.feedback || d.failed_step || d.log_excerpt || (d.fixes && d.fixes.length > 0),
   { message: 'FAIL/FIXED verdict requires at least one of: feedback, failed_step, log_excerpt, fixes' }

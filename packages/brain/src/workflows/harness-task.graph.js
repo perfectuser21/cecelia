@@ -855,6 +855,24 @@ export async function verifyContractArtifactsForPr(
   }
 }
 
+/**
+ * Brain 代码校验 coverage 覆盖完整性（validateCoverage）。
+ * 缺步 → coverageMissing=true，调用方触发整体 FAIL（Brain 代码判，非 LLM 自判）。
+ *
+ * @param {Array<{step:string,passed:boolean}>|undefined} coverage
+ * @param {number} [requiredStepCount]  Golden Path 预期步骤数（0=只检结构不检数量）
+ * @returns {{ok:boolean, missingSteps:number, coverageMissing:boolean}}
+ */
+export function validateCoverage(coverage, requiredStepCount = 0) {
+  if (!coverage || !Array.isArray(coverage) || coverage.length === 0) {
+    return { ok: false, missingSteps: requiredStepCount || 1, coverageMissing: true };
+  }
+  if (requiredStepCount > 0 && coverage.length < requiredStepCount) {
+    return { ok: false, missingSteps: requiredStepCount - coverage.length, coverageMissing: true };
+  }
+  return { ok: true, missingSteps: 0, coverageMissing: false };
+}
+
 // evaluateContractNode — 单一 evaluator pre-merge gate（对齐 Anthropic 官方 Harness 设计）。
 // Anthropic 原文：一个 Sprint = 一个 Generator + 一个 Evaluator，evaluate 在 merge 之前跑，
 // PASS → merge；FAIL → 带具体反馈打回 Generator 重写（无限对抗）。
@@ -1006,8 +1024,34 @@ export async function evaluateContractNode(state, opts = {}) {
     }
   }
 
+  // ── EVALUATE_PATH 回退开关（EVALUATE_PATH=legacy → 跳过代码执行段 + LLM 裁读段，走旧 spawn 路径）
+  const evaluatePath = process.env.EVALUATE_PATH || payload.evaluate_path || 'new';
+
+  // ── 新路径：代码执行段 — 逐段执行合同 E2E 脚本，写 execution-record.json ─────
+  // 目的：将"LLM 亲手执行命令"变成"代码执行 → LLM 只读记录"，消除 LLM 变通执行风险。
+  // EVALUATE_PATH=legacy → 跳过此段，preserving 旧 LLM spawn 行为。
+  let executionRecord = null;
+  if (evaluatePath !== 'legacy' && state.worktreePath) {
+    try {
+      const { readFileSync: _rfSync } = await import('node:fs');
+      const { runAndRecordE2eCommands } = await import('../harness-e2e-runner.js');
+      const contractDraftPath = path.join(state.worktreePath, sprintDir, 'contract-draft.md');
+      const contractMd = _rfSync(contractDraftPath, 'utf8');
+      // 提取 ## E2E 验收 区块中第一个 bash 脚本（LLM 裁读段只读此脚本执行结果）
+      const e2eMatch = contractMd.match(/```bash\s*\n([\s\S]*?)\n```/);
+      const scriptText = e2eMatch ? e2eMatch[1] : '';
+      if (scriptText) {
+        const recordPath = path.join(state.worktreePath, sprintDir, 'execution-record.json');
+        executionRecord = await runAndRecordE2eCommands(scriptText, recordPath, { cwd: state.worktreePath });
+      }
+    } catch (execRunErr) {
+      // 代码执行段失败非致命 — 继续走 LLM 路径（LLM 会自行执行命令，同旧行为）
+      console.warn(`[evaluator] 代码执行段异常（非致命，继续 LLM 路径）: ${execRunErr.message}`);
+    }
+  }
+
   const skillContent = loadSkillContent('harness-evaluator');
-  const evaluatePrompt = [
+  const evaluatePromptBase = [
     '你是 harness-evaluator agent。按下面 SKILL 指令工作。',
     '',
     skillContent,
@@ -1021,6 +1065,21 @@ export async function evaluateContractNode(state, opts = {}) {
     `TARGET_ENV=${targetEnv}`,
     `GITHUB_REPO=${githubRepo}`,
   ].join('\n');
+
+  // 新路径 LLM 裁读段：将执行记录附加到 prompt，LLM 只读记录产出 verdict+coverage，不重复执行命令
+  const execRecordAppend = (evaluatePath !== 'legacy' && executionRecord)
+    ? [
+        '',
+        '',
+        '---',
+        '',
+        '## Execution Record（代码执行段结果，LLM 只读此记录，不重复执行命令）',
+        '```json',
+        JSON.stringify(executionRecord, null, 2).slice(0, 20000),
+        '```',
+      ].join('\n')
+    : '';
+  const evaluatePrompt = evaluatePromptBase + execRecordAppend;
 
   const acctOpts = { task: { ...task, task_type: 'harness_evaluate' }, env: {} };
   try {
@@ -1184,6 +1243,20 @@ export async function evaluateContractNode(state, opts = {}) {
       }
       const normV = normalizeVerdict(parsed.data.verdict);
       const feedback = parsed.data.feedback || parsed.data.log_excerpt || parsed.data.failed_step || null;
+
+      // coverage 覆盖完整性校验（validateCoverage）— Brain 代码判，非 LLM 自判
+      // 新路径下 LLM 裁读产出 coverage 后，Brain 校验是否覆盖 Golden Path 每一步（缺步整体 FAIL）。
+      if (evaluatePath !== 'legacy' && parsed.data.coverage) {
+        const cvChk = validateCoverage(parsed.data.coverage, 0);
+        if (cvChk.coverageMissing) {
+          console.warn(`[evaluator] coverage 缺步校验 FAIL（coverageMissing=true, steps=${parsed.data.coverage.length}）— Brain 代码判`);
+          return {
+            evaluate_verdict: 'FAIL',
+            evaluate_error: `coverage 覆盖不完整（coverage.length=${parsed.data.coverage.length}, missingSteps=${cvChk.missingSteps}）— Brain coverage 完整性校验 FAIL，非 LLM 自判`,
+          };
+        }
+      }
+
       return {
         evaluate_verdict: normV,
         evaluate_error: normV === 'FAIL' ? (feedback || 'evaluator returned FAIL') : null,
