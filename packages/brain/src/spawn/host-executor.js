@@ -11,6 +11,7 @@
 
 import { spawn as nodeSpawn } from 'node:child_process';
 import { writeFileSync, mkdirSync, existsSync } from 'node:fs';
+import { randomBytes } from 'node:crypto';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -40,7 +41,8 @@ export async function executeOnHost(opts) {
 
   // Write prompt to file for debug/audit (same pattern as docker-executor)
   if (!existsSync(HOST_PROMPT_DIR)) mkdirSync(HOST_PROMPT_DIR, { recursive: true });
-  writeFileSync(path.join(HOST_PROMPT_DIR, `${taskId}-host.prompt`), opts.prompt, 'utf8');
+  const instanceId = `${Date.now()}-${randomBytes(4).toString('hex')}`;
+  writeFileSync(path.join(HOST_PROMPT_DIR, `${taskId}.${instanceId}-host.prompt`), opts.prompt, 'utf8');
 
   // Resolve claude-launch.sh relative to this package
   const thisDir = path.dirname(fileURLToPath(import.meta.url));

@@ -163,7 +163,8 @@ function writePromptFile(taskId, prompt) {
   if (!existsSync(DEFAULT_PROMPT_DIR)) {
     mkdirSync(DEFAULT_PROMPT_DIR, { recursive: true });
   }
-  const file = path.join(DEFAULT_PROMPT_DIR, `${taskId}.prompt`);
+  const instanceId = `${Date.now()}-${randomBytes(4).toString('hex')}`;
+  const file = path.join(DEFAULT_PROMPT_DIR, `${taskId}.${instanceId}.prompt`);
   writeFileSync(file, prompt, 'utf8');
   return file;
 }
@@ -426,12 +427,19 @@ export async function executeInDocker(opts) {
   await checkCostCap(opts);
 
   // 写 prompt 文件（宿主侧持久化，用于 debug / audit）
-  writePromptFile(taskId, opts.prompt);
+  const promptFilePath = writePromptFile(taskId, opts.prompt);
+  const promptFileBasename = path.basename(promptFilePath);
+  const instanceId = promptFileBasename.replace(`${taskId}.`, '').replace('.prompt', '');
+  const stdoutFileBasename = `${taskId}.${instanceId}.stdout`;
 
   // 账号轮换 middleware — 所有 spawn 自动享有"cap/auth fail fallback"。
   opts.env = opts.env || {};
   await resolveCascade(opts);
   await resolveAccount(opts, { taskId });
+
+  // 注入取证文件路径到容器 env（BEHAVIOR:3 — 必须在 buildDockerArgs 调用前赋值）
+  opts.env.CECELIA_PROMPT_FILE = `/tmp/cecelia-prompts/${promptFileBasename}`;
+  opts.env.CECELIA_STDOUT_FILE = `/tmp/cecelia-prompts/${stdoutFileBasename}`;
 
   const { args, _envFinal, name, memoryMB, cpuCores, image, cidfile } = buildDockerArgs(opts);
 
