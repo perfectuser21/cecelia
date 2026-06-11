@@ -7,11 +7,12 @@ SCRIPT_START=$(date +%s)
 TMPDIR_PROMPTS=$(mktemp -d)
 TASK_PREFIX="e2e-forensics-$(date +%s)"
 
-cleanup() { rm -rf "$TMPDIR_PROMPTS" /tmp/e2e-forensics-check.mjs 2>/dev/null || true; }
+cleanup() { rm -rf "$TMPDIR_PROMPTS" /workspace/e2e-forensics-check.mjs 2>/dev/null || true; }
 trap cleanup EXIT
 
 # ——— Steps 1-4: Node.js 层文件防覆盖验证 ———
-cat > /tmp/e2e-forensics-check.mjs << 'MEOF'
+# 脚本写到 /workspace 以保证 ./packages/... 的 ESM 相对路径能正确解析
+cat > /workspace/e2e-forensics-check.mjs << 'MEOF'
 import { readFileSync, readdirSync } from "fs";
 import path from "path";
 
@@ -44,7 +45,7 @@ if (matching.length < 2) { console.error("FAIL step4: .prompt 文件数=" + matc
 console.log("OK steps1-4:", matching.join(", "));
 MEOF
 
-CECELIA_PROMPT_DIR="$TMPDIR_PROMPTS" TASK_PREFIX="$TASK_PREFIX" node /tmp/e2e-forensics-check.mjs 2>/dev/null
+CECELIA_PROMPT_DIR="$TMPDIR_PROMPTS" TASK_PREFIX="$TASK_PREFIX" node /workspace/e2e-forensics-check.mjs 2>/dev/null
 echo "✅ steps 1-4 通过"
 
 # ——— Step 5: entrypoint.sh env var 验证 ———
