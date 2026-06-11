@@ -1,0 +1,61 @@
+name: Skill CI
+
+# 独立 skill CI workflow — 当 packages/workflows/skills/ 下文件变更时触发。
+# 负责运行 skill 契约测试（fs 依赖，vitest --changed 无法追踪）。
+# 与 ci.yml 分离以避免污染主 CI 结构。
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - packages/workflows/skills/**
+  push:
+    branches: [main]
+    paths:
+      - packages/workflows/skills/**
+  workflow_dispatch:
+
+concurrency:
+  group: skill-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  skill-ci:
+    name: Skill Contract Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install root dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Install brain dependencies
+        run: cd packages/brain && npm ci
+
+      - name: changed-test-router — 路由 skill 变更文件到 fs 依赖测试
+        id: router
+        run: |
+          # 获取本次 PR/push 涉及的 skill 文件变更（简化：直接列已知路径）
+          CHANGED_FILES=$(git diff --name-only origin/main...HEAD -- 'packages/workflows/skills/**' 2>/dev/null || \
+                          git diff --name-only HEAD~1...HEAD -- 'packages/workflows/skills/**' 2>/dev/null || \
+                          echo "packages/workflows/skills/harness-evaluator/SKILL.md")
+          echo "changed_files<<EOF" >> $GITHUB_OUTPUT
+          echo "$CHANGED_FILES" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+          # 路由到需要额外运行的测试
+          EXTRA_TESTS=$(node packages/brain/scripts/ci/changed-test-router.mjs \
+            --files $CHANGED_FILES 2>/dev/null || true)
+          echo "extra_tests=$EXTRA_TESTS" >> $GITHUB_OUTPUT
+          echo "[skill-ci] 变更文件: $CHANGED_FILES"
+          echo "[skill-ci] 额外测试: $EXTRA_TESTS"
+
+      - name: Run skill contract tests
+        run: |
+          cd packages/brain
+          npm test -- --run src/__tests__/skill-contract.test.js
