@@ -1,0 +1,38 @@
+{
+  "initiative_id": "${INITIATIVE_ID}",
+  "journey_type": "autonomous",
+  "journey_type_reason": "纯后端 Brain 内部节点（evaluateContractNode）重构，无 UI 也无远端 agent 协议",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "evaluateContractNode 职责分离：代码执行 E2E + LLM 裁读 + Brain 覆盖校验 + .brain-result.json coverage 字段",
+      "scope": "新增 executeContractCommands / validateCoverageTable / isLegacyMode 函数到 harness-final-e2e.js；重构 evaluateContractNode 拆分执行与裁读两步，接受 opts.executeContractCommands / opts.judgeWithLlm 依赖注入；.brain-result.json 新增 coverage 字段（节点写盘）；回退开关 EVALUATOR_LEGACY=1；通过/失败型 fixture 进回归测试",
+      "dod": [
+        "[BEHAVIOR] executeContractCommands 已导出：通过型命令 exit_code=0 + stdout 含输出 + duration_ms 为数字",
+        "[BEHAVIOR] executeContractCommands 已导出：失败命令 exit_code 非零 + 失败原文 stderr 保留于执行记录",
+        "[BEHAVIOR] validateCoverageTable 已导出：缺步时返回 {ok: false, missing: [...缺失步骤...]}",
+        "[BEHAVIOR] validateCoverageTable 已导出：空 steps 时所有 GP 步骤均 missing",
+        "[BEHAVIOR] isLegacyMode 已导出：EVALUATOR_LEGACY=1 时返回 true，未设时返回 false",
+        "[BEHAVIOR] 取证唯一命名：同 sprintDir 下两次 executeContractCommands 产生不同 recordPath",
+        "[BEHAVIOR] evaluateContractNode 重构：通过型 fixture 调用 opts.executeContractCommands 且 capturedCmds.length>0（dispatch 语义验证），verdict=PASS",
+        "[BEHAVIOR] evaluateContractNode 重构：coverage 写入结果 evaluate_coverage 字段（每 GP 步骤有映射）",
+        "[BEHAVIOR] evaluateContractNode 重构：coverage 缺步时 Brain 代码强制 FAIL（不信 LLM 自称 PASS）",
+        "[BEHAVIOR] evaluateContractNode 重构：失败型 fixture verdict=FAIL + evaluate_error 含执行记录原文",
+        "[BEHAVIOR] evaluateContractNode 重构：EVALUATOR_LEGACY=1 时不调用 opts.executeContractCommands",
+        "[BEHAVIOR] evaluateContractNode 节点终态：.brain-result.json 含 verdict + coverage 字段（PRD 新增要求）",
+        "[BEHAVIOR] evaluateContractNode 失败型终态：judgeWithLlm 返回 verdict=FAIL + failed_step 时，.brain-result.json 含 verdict=FAIL + failed_step 字段（PRD 失败型路径 #5）",
+        "[BEHAVIOR] 大输出截断：stdout > 4000 字节时截断至 ≤ 4000，头部 TRNK_HEAD + 尾部 TRNK_TAIL 保留，exit_code=9 正确捕获（PRD 边界情况）",
+        "[ARTIFACT] harness-final-e2e.js 含 executeContractCommands / validateCoverageTable / isLegacyMode 导出",
+        "[ARTIFACT] packages/brain/src/__tests__/harness-initiative-evaluate-exec-judge.test.js 含覆盖校验用例"
+      ],
+      "files": [
+        "packages/brain/src/harness-final-e2e.js",
+        "packages/brain/src/workflows/harness-task.graph.js",
+        "packages/brain/src/__tests__/harness-initiative-evaluate-exec-judge.test.js"
+      ],
+      "depends_on": [],
+      "complexity": "M",
+      "estimated_minutes": 90
+    }
+  ]
+}
