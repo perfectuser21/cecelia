@@ -746,6 +746,16 @@ jobs:
         if: steps.detect.outputs.has_dynamic == 'true'
         run: |
           [ ! -f packages/brain/.env ] && cp packages/brain/.env.example packages/brain/.env || true
+      - name: Clone skills SSOT (zenithjoy-skills)
+        # skill-drift 端点的 DoD B6 断言 all(.ssot_version != null) 需要真实 SSOT 在
+        # $HOME/perfect21/zenithjoy-skills（Brain 默认 SKILLS_SSOT_DIR）。SSOT 仓库
+        # 是 private，runner 的 GITHUB_TOKEN 无跨仓库权限，用 DEPLOY_TOKEN 克隆。
+        # 克隆失败仅 warning（不阻断无 SSOT 依赖的其他 PR 的 DoD 命令）。
+        if: steps.detect.outputs.has_dynamic == 'true'
+        run: |
+          git clone --depth 1 "https://x-access-token:${{ secrets.DEPLOY_TOKEN }}@github.com/perfectuser21/zenithjoy-skills" "$HOME/perfect21/zenithjoy-skills" 2>/dev/null \
+            && echo "✅ SSOT cloned to $HOME/perfect21/zenithjoy-skills" \
+            || echo "::warning::SSOT clone 失败（DEPLOY_TOKEN 无权限或网络）— 依赖 SSOT 的 DoD 断言将 FAIL"
       - name: Run Migrations
         if: steps.detect.outputs.has_dynamic == 'true'
         env:
