@@ -35,8 +35,10 @@
 
 import { StateGraph, Annotation, START, END, interrupt } from '@langchain/langgraph';
 import crypto from 'node:crypto';
+import path from 'node:path';
 import { execFile as execFileCb } from 'node:child_process';
 import { promisify } from 'node:util';
+import { runContractGate, formatGateReport } from '../lib/contract-gate.js';
 // Note: legacy `spawn` import removed (Layer 3 uses spawnDockerDetached for fire-and-forget docker run -d)
 import { ensureHarnessWorktree, harnessSubTaskBranchName, cleanupHarnessWorktree } from '../harness-worktree.js';
 import { resolveGitHubToken } from '../harness-credentials.js';
@@ -771,8 +773,15 @@ export async function verifyContractArtifactsForPr(
   const sd = sprintDir || 'sprints';
 
   // fetch PR 分支（确保 origin/<prBranch> 在本地）
+  // 必须用显式 refspec <branch>:refs/remotes/origin/<branch>：裸 `git fetch origin <branch>`
+  // 只更新 FETCH_HEAD，不更新 refs/remotes/origin/<branch> → 后续 `git show origin/<branch>:...`
+  // 必 `invalid object name` → catch fail-open → 门没关（与 git-fence.js 同约定，修当天每条 run fail-open）。
   try {
-    await execFile('git', ['-C', worktreePath, 'fetch', 'origin', prBranch], { timeout: 60_000 });
+    await execFile(
+      'git',
+      ['-C', worktreePath, 'fetch', 'origin', `${prBranch}:refs/remotes/origin/${prBranch}`],
+      { timeout: 60_000 }
+    );
   } catch (e) {
     console.warn(`[artifact-gate] fetch ${prBranch} 失败（fail-open）：${e.message}`);
     return { ran: false };
@@ -934,6 +943,32 @@ export async function evaluateContractNode(state, opts = {}) {
   } catch (gateErr) {
     // 门本身异常 → fail-open，不误杀，继续走 LLM evaluator
     console.warn(`[evaluator] ARTIFACT 门执行异常（fail-open）：${gateErr.message}`);
+  }
+
+  // ── 确定性 Contract Gate 门（反作弊红线代码化，与 ARTIFACT 门并列）─────────────
+  // LLM evaluator 之前先跑 brain 侧确定性 gate（弱 oracle / 作弊 / 环境能力 / 域规则，零 LLM）。
+  // 命中（ok===false）→ 直接 FAIL（挡 merge、打回 generator，feedback 为结构化命中清单），
+  // 不浪费一个 evaluator 容器（每个 ~$5-7）。门跑不起来（异常）→ fail-open，转 LLM evaluator
+  // 兜底（与既有 ARTIFACT 门同样的容错语义；fail-closed 由 CLI/库边界负责）。
+  const runGate = opts.runContractGate || runContractGate;
+  const gateDir = opts.contractGateDir
+    || (state.worktreePath ? path.join(state.worktreePath, sprintDir) : null);
+  if (gateDir) {
+    let cg = null;
+    try {
+      cg = await runGate(gateDir, {});
+    } catch (cgErr) {
+      console.warn(`[evaluator] Contract Gate 执行异常（fail-open，转 LLM evaluator）：${cgErr.message}`);
+      cg = null;
+    }
+    if (cg && cg.ok === false) {
+      const feedback = formatGateReport(cg, `${sprintDir}/contract-dod.md`).slice(0, 1200);
+      console.error(`[evaluator] Contract Gate FAIL（合同含作弊/弱断言/缺工具，spawn 前拦截）：\n${feedback}`);
+      return {
+        evaluate_verdict: 'FAIL',
+        evaluate_error: `Contract Gate 命中（spawn 前确定性拦截，不浪费 evaluator 容器）：\n${feedback}`,
+      };
+    }
   }
 
   const skillContent = loadSkillContent('harness-evaluator');

@@ -154,3 +154,51 @@ describe('evaluateContractText — 纯文本入口（不读盘）', () => {
     expect(r.hits.map((h) => h.ruleId)).toContain('cheat/mock-env');
   });
 });
+
+describe('硬化回归（code review findings — 防误杀/防绕过）', () => {
+  it('H-1：工具名出现在 URL/镜像名子串里不算 env_missing（防误杀正常合同）', () => {
+    const r = evaluateContractText(
+      "  Test: manual:bash -c 'curl https://playwright.dev/docs | jq -e .ok && echo docker.io/img'"
+    );
+    expect(r.envMissing).toHaveLength(0);
+    expect(r.ok).toBe(true);
+  });
+
+  it('H-1：真把 docker/ffprobe 当命令跑 → 仍命中 env_missing', () => {
+    const r = evaluateContractText("  Test: manual:bash -c 'docker run x ffprobe /a.mp4'");
+    expect(r.envMissing.map((e) => e.tool)).toEqual(
+      expect.arrayContaining(['docker', 'ffprobe'])
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('env-missing 可被 gate-allow 豁免（逃生口对 env 同样生效）', () => {
+    const text = [
+      'gate-allow: env-missing 该步骤本地 evaluator 用 mock 跑，docker 仅文档示例',
+      "  Test: manual:bash -c 'docker run x ffprobe /a.mp4'",
+    ].join('\n');
+    const r = evaluateContractText(text);
+    expect(r.envMissing.every((e) => e.exempted)).toBe(true);
+    expect(r.ok).toBe(true);
+    expect(r.exemptions.find((e) => e.ruleId === 'env-missing').matched).toBe(true);
+  });
+
+  it('M-2：未闭合 ```bash 围栏 → 其后散文不被当命令（不因散文里的 || true 自锁）', () => {
+    const text = ['```bash', '本段是未闭合围栏后的散文：不要用 || true 吞错', '（缺闭合栏）'].join(
+      '\n'
+    );
+    const r = evaluateContractText(text);
+    expect(r.hits.map((h) => h.ruleId)).not.toContain('cheat/or-true');
+  });
+
+  it('M-3：块内 ```js 伪闭合不能藏掉后续真命令（防作弊绕过）', () => {
+    const text = ['```bash', 'echo hi', '```js', 'MOCK_TOKEN=x node run.js', '```'].join('\n');
+    const r = evaluateContractText(text);
+    expect(r.hits.map((h) => h.ruleId)).toContain('cheat/mock-env');
+  });
+
+  it('M-4：散文句中的 "Test:" 不被当命令扫描（防误命中）', () => {
+    const r = evaluateContractText('Run the Test: section manually || true to skip.');
+    expect(r.hits.map((h) => h.ruleId)).not.toContain('cheat/or-true');
+  });
+});
