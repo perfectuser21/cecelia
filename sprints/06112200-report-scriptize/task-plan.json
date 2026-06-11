@@ -1,0 +1,34 @@
+{
+  "initiative_id": "ea622a94",
+  "journey_type": "autonomous",
+  "journey_type_reason": "纯 packages/brain/ 后端脚本 + Brain API 回写，无 UI、无 Windows、无 agent 协议",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "实现 harness-report.mjs CLI 脚本 + reportNode 机械段改接线 + vitest 单测",
+      "scope": "新增 packages/brain/scripts/harness-report.mjs（CLI 脚本：生成报告三文件 + Brain API 回写 + 幂等 + 宿主 git 隔离 + 每步独立 try/catch + 分步汇总）；修改 reportNode 机械段优先调此脚本；新增 packages/brain/src/__tests__/harness-report-script.test.js（从 sprints/06112200-report-scriptize/tests/ 复制）；修 2 个 stale：thickness:done → 移除 thickness 字段、awk $NF → $2",
+      "dod": [
+        "[BEHAVIOR] 脚本在 fixture sprint-dir 生成 harness-report.md + learning.md + index.html（三文件存在且格式含 Sprint:/PR #/━━ 之一）",
+        "[BEHAVIOR] 脚本调用后 task status 变 completed（PATCH tasks/{id} status=completed）",
+        "[BEHAVIOR] feature status 变 done，PATCH 无 thickness 字段（thickness:done → Brain 400，stale fix 双验）",
+        "[BEHAVIOR] notes POST 运行时验证：分步汇总含 notes 步骤输出（✅/❌ 均可）；task PATCH 不受 notes 502 影响",
+        "[BEHAVIOR] registry upsert 幂等（第二次运行条目数不增；第二次 exit 1 因 task PATCH 409 为 PRD 预期行为）",
+        "[BEHAVIOR] 宿主 git status --porcelain + branch --show-current 在脚本执行前后完全一致（字节级不变）",
+        "[BEHAVIOR] 边界情况：sprint-prd.md 缺失时脚本输出 WARN/skip + task PATCH 仍成功（其余步骤继续）",
+        "[BEHAVIOR] 边界情况：某步失败（feature 404）后 task PATCH 继续执行 + exit 1 + ❌ 汇总",
+        "[ARTIFACT] packages/brain/scripts/harness-report.mjs 存在且含 CLI 参数解析 + ≥4 个分步 try/catch",
+        "[ARTIFACT] reportNode（harness-initiative.graph.js）含 harness-report.mjs 调用",
+        "[ARTIFACT] packages/brain/src/__tests__/harness-report-script.test.js 存在",
+        "[ARTIFACT] 脚本不含 thickness:done stale"
+      ],
+      "files": [
+        "packages/brain/scripts/harness-report.mjs",
+        "packages/brain/src/workflows/harness-initiative.graph.js",
+        "packages/brain/src/__tests__/harness-report-script.test.js"
+      ],
+      "depends_on": [],
+      "complexity": "M",
+      "estimated_minutes": 90
+    }
+  ]
+}
