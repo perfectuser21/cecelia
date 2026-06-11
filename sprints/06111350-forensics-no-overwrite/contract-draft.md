@@ -331,7 +331,7 @@ echo "✅ E2E 全部通过"
 
 | 功能 | Test File | BEHAVIOR 覆盖 | 预期红证据 |
 |---|---|---|---|
-| writePromptFile 文件名格式 | `tests/forensics-no-overwrite.test.js` | 返回路径含实例标识 | → 1 failure（basename = `{taskId}.prompt`）|
-| writePromptFile 不覆盖 | `tests/forensics-no-overwrite.test.js` | 两次写入路径不同 + 内容独立 | → 2 failures（同路径 + 内容被覆盖）|
-| executeInDocker env 注入（调用链）| `tests/forensics-no-overwrite.test.js` | `opts.env.CECELIA_PROMPT_FILE` 在 `buildDockerArgs` 前赋值 | → 2 failures（源码无此赋值）|
-| entrypoint.sh env 协议 | `tests/forensics-no-overwrite.test.js` | 含 `CECELIA_PROMPT_FILE` 引用 | → 1 failure（文件无此变量）|
+| writePromptFile 文件名格式 | `tests/forensics-no-overwrite.test.js` | 返回路径 basename 不再是旧格式 / 返回路径 basename 匹配 | → 2 failures（basename = `{taskId}.prompt`）|
+| writePromptFile 不覆盖 | `tests/forensics-no-overwrite.test.js` | 两次调用 writePromptFile 返回不同路径 / 第一次写入的内容在第二次写入后仍然完整 | → 2 failures（同路径 + 内容被覆盖）|
+| executeInDocker env 注入（调用链）| `tests/forensics-no-overwrite.test.js` | opts.env.CECELIA_PROMPT_FILE 赋值语句 / opts.env.CECELIA_STDOUT_FILE 赋值语句 | → 2 failures（源码无此赋值）|
+| entrypoint.sh env 协议 | `tests/forensics-no-overwrite.test.js` | CECELIA_PROMPT_FILE 变量引用 / CECELIA_STDOUT_FILE 变量引用 / CECELIA_PROMPT_FILE 使用 fallback 语法 | → 3 failures（文件无此变量）|
