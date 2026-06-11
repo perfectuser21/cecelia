@@ -163,7 +163,8 @@ function writePromptFile(taskId, prompt) {
   if (!existsSync(DEFAULT_PROMPT_DIR)) {
     mkdirSync(DEFAULT_PROMPT_DIR, { recursive: true });
   }
-  const instanceId = `${Date.now()}-${randomBytes(4).toString('hex')}`;
+  const rand = randomBytes(4);
+  const instanceId = `${Date.now()}-${rand.toString('hex')}`;
   const file = path.join(DEFAULT_PROMPT_DIR, `${taskId}.${instanceId}.prompt`);
   writeFileSync(file, prompt, 'utf8');
   return file;

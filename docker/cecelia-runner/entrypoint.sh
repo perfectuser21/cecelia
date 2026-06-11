@@ -114,6 +114,8 @@ fi
 # 拿到 exit code 后向 brain POST callback（让 LangGraph interrupt resume），
 # 再用同一 exit code 退出容器。HARNESS_NODE/CECELIA_TASK_ID 任一为空时
 # 走旧 exec 路径，保持非 harness 任务零变更。
+# harness 注入完整路径 → 直接用；手动 docker run 未注入时 → 兼容旧 ${taskId}.ext 格式
+# 内层 ${CECELIA_TASK_ID:-UNSET} 保证 set -u 下不报 unbound variable
 PROMPT_FILE="${CECELIA_PROMPT_FILE:-/tmp/cecelia-prompts/${CECELIA_TASK_ID:-UNSET}.prompt}"
 STDOUT_FILE="${CECELIA_STDOUT_FILE:-/tmp/cecelia-prompts/${CECELIA_TASK_ID:-UNSET}.stdout}"
 
