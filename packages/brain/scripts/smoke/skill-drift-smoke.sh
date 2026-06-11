@@ -15,8 +15,11 @@ echo "$r" | jq -e 'keys | sort == ["any_drift","skills"]' >/dev/null 2>&1 && ok 
 echo "$r" | jq -e '.skills | all(keys | sort == ["drifted","name","snapshot_version","ssot_version"])' >/dev/null 2>&1 \
   && ok "项级 keys 严格匹配" || fail "项级 keys 不符"
 echo "$r" | jq -e '.any_drift == (.skills | map(.drifted) | any)' >/dev/null 2>&1 && ok "any_drift 内部一致" || fail "any_drift 与数组不一致"
-echo "$r" | jq -e '.skills | all(.drifted == (.ssot_version != .snapshot_version))' >/dev/null 2>&1 \
-  && ok "drifted == 两 version 真实对比" || fail "drifted 不等于真实对比"
+# PRD 边界规则：任一侧 null（文件缺失/无 version 行）→ drifted=true；两侧都非 null 才比值。
+# 不能写 .ssot_version != .snapshot_version：real-env-smoke 容器内两侧都缺失（镜像不含
+# packages/workflows/ 且无 SSOT mount），null != null 为 false 会与 PRD 语义矛盾误报。
+echo "$r" | jq -e '.skills | all(.drifted == (if (.ssot_version == null) or (.snapshot_version == null) then true else (.ssot_version != .snapshot_version) end))' >/dev/null 2>&1 \
+  && ok "drifted 符合 PRD 语义（null→true，否则比值）" || fail "drifted 不符合 PRD 语义"
 code=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$BRAIN/api/brain/harness/skill-drift")
 [[ "$code" != "200" ]] && ok "POST 同路径非 200（方法语义）" || fail "POST 返回了 200"
 
