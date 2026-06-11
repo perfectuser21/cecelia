@@ -1,15 +1,19 @@
 ---
 id: harness-contract-reviewer-skill
 description: |
-  Harness Contract Reviewer — Harness v6.0 GAN Layer 2b：
+  Harness Contract Reviewer — Harness GAN Reviewer Layer 2b：
   Evaluator 角色，对抗性审查 Proposer 提出的 sprint contract，聚焦 **产品/spec 质量**
   而非"防作弊测试框架"。
   核心职责：(1) spec 对齐用户真需求 (2) criteria 可量化无歧义 (3) happy + error + 边界场景全覆盖
   GAN 对抗**多轮**直到双方达成共识。无硬轮数上限，但 Reviewer 真找不出实质 spec/产品漏洞时必须 APPROVED。
-version: 8.2.0
+version: 9.1.0
 created: 2026-04-08
-updated: 2026-05-30
+updated: 2026-06-11
 changelog:
+  - 9.1.0: 链路审计修复 3 项 — (a) Golden Path 覆盖审查检测信号补「只检查文件存在/大小而无内容验证 → 第 1 维直接 0 分」+「逐项核对 proposer 作弊反例清单」；(b) 强化 N/A 规则表述：windows_wechat 第 7 维必须实审 e2e-wechat-rpa.yml 不可填 10，N/A 只适用非 windows_cloud/windows_wechat/linux_server；(c) 第 6 维 verification_oracle_completeness 审查项加入领域验证规则核对（视频 ffprobe / 发布真实出现 / DB 时间窗 / UI 可见断言）+ [BEHAVIOR] ≥ 4 数量检查明确归此维。注意：7 个维度名是与 Brain ReviewerOutputSchema 的接口约定，一个都没改
+  - 9.0.0: Golden Path 覆盖审查新增两条强制问题（[BEHAVIOR] 1:1 对应步骤 + 禁止 mock）；维度 7 扩展覆盖 windows_wechat（e2e-wechat-rpa.yml）；阈值规则和填值规则同步更新
+  - 8.4.0: 第6维评分基准从「PRD Response Schema 段」改为「contract-draft.md Response Schema 推导段」；N/A 任务自动满分
+  - 8.3.0: [跳过，与 8.2.0 合并发布]
   - 8.2.0: B50 收敛模型 — 维度2 scope_match_prd 改双向惩罚（超覆盖也扣分）；维度5 风险登记相对任务不强制≥2；新增 Step 2.5 收敛追踪段（阻塞问题逐轮减少+合同行数趋势+只补PRD真漏覆盖）。根治简单任务合同膨胀发散
   - 8.1.0: 修复 ci_workflow_alignment 7 维对齐 — 非 windows_cloud/linux_server 环境不再跳过第 7 维，改为默认填 10（N/A）；阈值统一为全 7 维 ≥ 7 → APPROVED；防止 Brain computeVerdictFromRubric 因缺字段返回 null 降级到 LLM 文字判断
   - 8.0.0: 新增第 7 维 ci_workflow_alignment，要求 Reviewer 读取 workflow 文件内容验证业务对齐性；windows_cloud/linux_server 目标环境要求 7 维全部 ≥ 7 → APPROVED，其他环境维持原 6 维 ≥ 7 → APPROVED
@@ -33,9 +37,9 @@ changelog:
 > **语言规则: 所有输出必须使用简体中文。严禁日语、韩语或其他语言。**
 > **执行规则: 严格按照下面列出的步骤执行。不要搜索/查找其他 skill 文件。**
 
-# /harness-contract-reviewer — Harness v6.0 Contract Reviewer
+# /harness-contract-reviewer — Harness Contract Reviewer
 
-**角色**: Evaluator（合同对齐审查员）
+**角色**: GAN Reviewer（合同对齐审查员）
 **对应 task_type**: `harness_contract_review`
 
 ---
@@ -71,6 +75,10 @@ Proposer 产出的 `contract-draft.md` 格式是 **Golden Path Steps**：每步 
 2. **每步验证命令真实可执行？** 不是占位符 `# TODO` 也不是无 jq -e 的弱断言
 3. **PRD 的每个 User Story → Golden Path 至少一个 step 对应？** 反之亦然（无多余 step）
 4. **Step 间数据流自洽？** 上一步输出格式 == 下一步输入格式
+5. **每条 [BEHAVIOR] 是否 1:1 对应 Golden Path 一个步骤？**（v9.0 强制）答不出对应步骤 → 第 1 维 DoD 机检性扣分（该条命令无真实 Golden Path 锚点，属假验证）
+6. **验证命令是否在真实 target_environment 执行，无 mock？**（v9.0 强制）检测信号：含 `MOCK_*` 环境变量、`EventEmitter`/`fakeChild`/`downloadImpl: async`、`exit 0` 兜底 → 第 1 维直接 0 分；Golden Path 含微信操作但 target_environment 写 `windows_cloud`（GHA 无微信）→ 第 7 维 0 分
+7. **验证命令是否只检查文件存在/大小而无内容验证？**（v9.1 强制）只 `test -f` / `.size` / `ls -l` 而无 jq -e / ffprobe / DOM 断言 / psql 内容验证 → **第 1 维直接 0 分**（产出物存在 ≠ 行为正确）
+8. **逐项核对 proposer「作弊反例清单」**（v9.1 强制）：对照 proposer SKILL 的 ≥10 条作弊反例（MOCK_*、stub/spy、jest.mock/vi.mock 真路径、无条件 exit 0、断言上 `\|\| true`、只查文件存在/大小、历史数据冒充本轮、dry-run、sleep 后假断言、grep 自己 echo 的串）——合同命中任一 → 对应维度（多数为第 1 维 / 第 6 维）按反例表所列直接低分
 
 少一项 → 第 2 维 scope_match_prd 或第 4 维 internal_consistency 扣分。Golden Path 断链 → 直接 REVISION 不打分。
 
@@ -85,14 +93,14 @@ Proposer 产出的 `contract-draft.md` 格式是 **Golden Path Steps**：每步 
 | 3 | **Test 真红** | 测试文件存在性 + 必须 FAIL 的假设成立 | 显式列 "测试文件在 `tests/...`，不动代码跑 → exit=1 with `at time.test.ts:N`" | 没列 test 文件路径，或无法判断"尚未实现时是否会 FAIL" |
 | 4 | **内部一致** | 合同本身术语 / 字段 / 命令无矛盾 | 每个字段 / 命令只定义一次，引用用稳定 ID | 合同前后定义不一致，或命令在多处粘贴可能漂移 |
 | 5 | **风险登记（相对任务）** | Risks 栏覆盖**该任务真实存在的**风险点 + 每条 mitigation。简单任务风险点少则少列，不强凑数 | 覆盖任务所有真实风险点，每条有 mitigation；简单任务 1 条真风险也算满分 | 无 Risks 栏，或漏掉明显风险点，或为凑数编造 PRD 无关的风险 |
-| 6 | **Verification Oracle 完整性**（v6.1）| PRD 的 Response Schema 段是否被合同 codify 成 jq -e 可执行 oracle | PRD 每个 response 字段都对应至少 1 条 `jq -e '.key == val'` 命令；schema 完整性用 `jq -e 'keys == [...]'` 强卡；禁用字段名清单都有反向 `! jq -e '.禁用key'` 检查 | PRD 写了 schema 但合同只有自然语言描述（"返回 {result, operation}"）没有 jq -e 命令；或 jq -e 命令漏掉某个字段（schema drift 漏网） |
-| 7 | **CI Workflow 内容对齐**（windows_cloud/linux_server 专属）| 凡合同引用 GHA workflow 作为 BEHAVIOR 断言，Reviewer 必须用 Bash 工具读取该 workflow 文件内容，确认 workflow steps 与合同 BEHAVIOR 的用户操作语义一致 | Reviewer 读了 workflow 文件，每条 BEHAVIOR 都能指向 workflow 里的一个真实业务 step | Reviewer 未读 workflow 文件直接批准，或 workflow 里全是文件大小/存在性检查但合同声称验证了业务行为。**非 windows_cloud/linux_server 环境：填 10（N/A，无 GHA workflow 可审查）** |
+| 6 | **Verification Oracle 完整性**（v6.1）| contract-draft.md 中 ## Response Schema 推导段（由 Proposer Step 1.1 写入）是否被 contract-dod.md codify 成 jq -e 可执行 oracle；PRD 无 HTTP 响应时（写了 N/A）本维度自动满分 10 | contract-draft.md 有 Response Schema 推导段，且每个字段对应至少1条 jq -e 验证；或任务明确标注 N/A | contract-draft.md 有 Response Schema 推导段但合同无任何 jq -e 字段验证；或推导段缺失但任务明显有 HTTP 响应 |
+| 7 | **CI Workflow 内容对齐**（windows_cloud/windows_wechat/linux_server 专属）| 凡合同引用 GHA workflow 作为 BEHAVIOR 断言，Reviewer 必须用 Bash 工具读取该 workflow 文件内容，确认 workflow steps 与合同 BEHAVIOR 的用户操作语义一致；对 windows_wechat 额外确认：workflow 跑在 self-hosted `wechat-capable` runner，无 `MOCK_*` 注入 | Reviewer 读了 workflow 文件，每条 BEHAVIOR 都能指向 workflow 里的一个真实业务 step | Reviewer 未读 workflow 文件直接批准；workflow 里全是文件大小/存在性检查；windows_wechat 合同用了 MOCK_WECHAT_VERSION 或 fakeChild。**非 windows_cloud/windows_wechat/linux_server 环境：填 10（N/A，无 GHA workflow 可审查）** |
 
 ### 阈值规则（代码判，Reviewer 不主观综合）
 
 **单轮阈值（不随 round 衰减）**：
-- `target_environment` 为 `windows_cloud` 或 `linux_server` 时：**7 维全部 ≥ 7 → APPROVED**，任何一维 < 7 → REVISION
-- 其他 `target_environment`：全部 7 维 ≥ 7 → APPROVED，任何一维 < 7 → REVISION（ci_workflow_alignment 对非 windows 环境默认填 10，表示 N/A 直接通过）
+- `target_environment` 为 `windows_cloud`、`windows_wechat` 或 `linux_server` 时：**7 维全部 ≥ 7 → APPROVED**，任何一维 < 7 → REVISION
+- 其他 `target_environment`：全部 7 维 ≥ 7 → APPROVED，任何一维 < 7 → REVISION（ci_workflow_alignment 对非 windows/linux 环境默认填 10，表示 N/A 直接通过）
 
 **收敛兜底（无轮数硬 cap）**：
 不设 MAX_ROUNDS。`harness-gan.graph.js` 调 `detectConvergenceTrend(rubricHistory)` 看最近 3 轮 7 维度走势：
@@ -113,11 +121,20 @@ Proposer 产出的 `contract-draft.md` 格式是 **Golden Path Steps**：每步 
 
 ### Verification Oracle 完整性审查清单（第 6 维 0 分判定示例）
 
-- ❌ PRD 写 `{"result": 35, "operation": "multiply"}` 但合同只有 `curl /multiply | jq '.result'`（缺 operation 字段 jq -e）
+- ❌ contract-draft.md 有 Response Schema 推导段写了 {result, operation} 二字段，但 contract-dod.md 只有 `curl /multiply | jq '.result'`（缺 operation 字段 jq -e）
 - ❌ PRD 列出禁用字段 `[sum, product, value]` 但合同没 `! jq -e '.product'` 反向检查
 - ❌ PRD 要求 schema 完整 2 字段，合同没 `jq -e 'keys == ["operation","result"]'` 完整性卡
 - ❌ E2E 脚本只 `curl -f /xxx` 看 HTTP 200，没 jq 校验 body shape
 - ✅ 每个 PRD response 字段 → 对应 1 条 `jq -e '.<key> == <value>'` 命令；schema 完整性卡 + 禁用字段反向检查全齐
+
+**领域验证规则核对（v9.1 — 第 6 维必查，与 proposer/evaluator 死规则呼应）**：sprint 命中以下领域但合同缺对应 oracle → 第 6 维低分：
+
+- ❌ **视频**类（生成/剪辑/转码）合同无 `ffprobe` 验**视频流 + 音频流 + 时长 > 0**
+- ❌ **发布**类合同无"内容真实出现"验证（平台 API 查到帖子 / 截图确认），只 echo / 看 HTTP 200
+- ❌ **DB 写入**类合同 `SELECT count(*)` 无 `created_at > NOW() - interval` 时间窗（历史数据冒充）
+- ❌ **UI 交互**类合同无 `toBeVisible` / `toHaveText` / 截图比对可见状态断言
+
+**[BEHAVIOR] ≥ 4 数量检查（归属第 6 维，v9.1 明确）**：`grep -c '^- \[ \] \[BEHAVIOR\]' contract-dod.md` < 4（至少覆盖 schema 字段 / keys 完整性 / 禁用字段反向 / error path 四类各一条）→ 第 6 维低分 REVISION。**此数量检查由第 6 维负责，不归第 7 维 ci_workflow_alignment**（第 7 维只审 CI Workflow 内容对齐）。
 
 ---
 
@@ -241,7 +258,7 @@ Round N, 阈值固定 7/10（不随 round 衰减）。
 ### 需要 Proposer 修的（只列 block 项，不列 nice-to-have）
 
 **问题 1**（维度：内部一致, 当前 6 分，目标 ≥ 7）
-**描述**：`contract-dod-ws1.md` 和 `contract-draft.md` 两处粘贴同一 node -e 命令，修改任一会漂移。
+**描述**：`contract-dod.md` 和 `contract-draft.md` 两处粘贴同一 node -e 命令，修改任一会漂移。
 **修复**：单源 SSOT — 合同只放稳定 ID 引用（`A1/A2/...`），DoD 文件是唯一文本源。
 
 **问题 2**（维度：风险登记, 当前 5 分，目标 ≥ 7）
@@ -286,7 +303,8 @@ REVISION 时 feedback 必须含具体修改方向。
 
 **ci_workflow_alignment 填值规则**：
 - `target_environment` 为 `windows_cloud` 或 `linux_server`：正常审查 workflow 文件后打分（0-10）
-- 其他环境（mac_web / local_api / playground 等）：直接填 `10`（N/A，无 GHA workflow 可审查）
+- `target_environment` 为 `windows_wechat`：**必须实审 `e2e-wechat-rpa.yml`，禁止填 10（N/A）**。额外检查 runner 标签是否含 `wechat-capable`、有无 `MOCK_*` 注入、有无真实微信进程检测步骤，后打分（0-10）。未执行 `cat .github/workflows/e2e-wechat-rpa.yml` → 第 7 维强制 0 分
+- 其他环境（mac_web / local_api / playground 等）：直接填 `10`（N/A，无 GHA workflow 可审查）。**N/A 只适用于非 windows_cloud / windows_wechat / linux_server 的环境**
 - **禁止省略此字段**：Brain `computeVerdictFromRubric` 要求全 7 维都有值，缺字段返回 null 降级到 LLM 文字判断
 
 ---
@@ -300,7 +318,7 @@ REVISION 时 feedback 必须含具体修改方向。
 const fs = require('fs');
 const SPRINT_DIR = process.env.SPRINT_DIR;
 const BRAIN = process.env.BRAIN_API || 'http://localhost:5221';
-const SPRINT_ID = process.env.SPRINT_ID || 'unknown';
+const SPRINT_ID = process.env.TASK_ID || 'unknown'; // TASK_ID 由 cecelia-run 注入，SPRINT_ID 未注入
 
 const contract = fs.existsSync(`${SPRINT_DIR}/contract-draft.md`)
   ? fs.readFileSync(`${SPRINT_DIR}/contract-draft.md`, 'utf8') : '';
@@ -327,7 +345,7 @@ async function writePlanned() {
           name: `${api.method} ${api.endpoint}`,
           type: 'api',
           status: 'planned',
-          metadata: { sprint_id: SPRINT_ID, method: api.method, endpoint: api.endpoint }
+          metadata: { task_id: SPRINT_ID, method: api.method, endpoint: api.endpoint }
         })
       });
       console.log('✅ api_registry planned:', api.method, api.endpoint);
@@ -344,7 +362,7 @@ async function writePlanned() {
           name: table,
           type: 'db_schema',
           status: 'planned',
-          metadata: { sprint_id: SPRINT_ID }
+          metadata: { task_id: SPRINT_ID }
         })
       });
       console.log('✅ db_schema_registry planned:', table);
