@@ -1,0 +1,33 @@
+{
+  "initiative_id": "da418741-b9c7-4927-979f-b77268b40e10",
+  "journey_type": "autonomous",
+  "journey_type_reason": "纯 CI 脚本 + vitest 测试 + yaml 改动，无 dashboard/UI，无 agent 协议，主体在 packages/brain/scripts/ci/",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "Harness CI 防线 R2 — 路由脚本追加 skill 规则 + skill 契约测试 + 合同存在性 gate + ci.yml 接线",
+      "scope": "追加 changed-test-router.mjs skill 路由规则；新建 check-contract-exists.mjs；新建 packages/brain/tests/skill-contracts/ 目录及契约测试（含篡改 fixture 支持）；追加 ci.yml changes 输出 skills + 新建 skill-tests job + 将 skill-tests 加入 ci-passed needs 列表",
+      "dod": [
+        "[BEHAVIOR] changed-test-router.mjs --files packages/workflows/skills/harness-evaluator/SKILL.md 输出含 packages/brain/tests/skill-contracts 路径",
+        "[BEHAVIOR] npx vitest run packages/brain/tests/skill-contracts/ 对当前快照全绿",
+        "[BEHAVIOR] EVALUATOR_SKILL_FIXTURE=<tampered> 运行契约测试，输出含 env_missing 且非零退出",
+        "[BEHAVIOR] check-contract-exists.mjs 对缺合同 diff 非零退出且指明 contract-draft.md",
+        "[BEHAVIOR] check-contract-exists.mjs 对完整 diff（含 contract-draft.md）0 退出",
+        "[BEHAVIOR] ci.yml yaml 语法合法 + 含 packages/workflows/skills 触发 + 含 skill-contracts job + skill-tests 进入 ci-passed needs 列表",
+        "[ARTIFACT] packages/brain/scripts/ci/changed-test-router.mjs 存在含 skill 路由规则",
+        "[ARTIFACT] packages/brain/scripts/ci/check-contract-exists.mjs 存在含 contract-draft.md 检查",
+        "[ARTIFACT] packages/brain/tests/skill-contracts/ 目录含 .test.ts 文件",
+        "[ARTIFACT] .github/workflows/ci.yml 含 packages/workflows/skills 路径触发 + skill-tests 在 ci-passed needs 内"
+      ],
+      "files": [
+        "packages/brain/scripts/ci/changed-test-router.mjs",
+        "packages/brain/scripts/ci/check-contract-exists.mjs",
+        "packages/brain/tests/skill-contracts/evaluator-invariants.test.ts",
+        ".github/workflows/ci.yml"
+      ],
+      "depends_on": [],
+      "complexity": "M",
+      "estimated_minutes": 60
+    }
+  ]
+}

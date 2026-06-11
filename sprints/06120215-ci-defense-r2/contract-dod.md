@@ -1,6 +1,3 @@
-contract_branch: cp-06120554-ws-da418741-ws1
-sprint_dir: sprints/06120215-ci-defense-r2
-
 ---
 skeleton: false
 journey_type: autonomous
