@@ -12,6 +12,7 @@ nav li a{display:block;padding:8px 16px;color:#333;text-decoration:none;}
 nav li a:hover{background:#e0e0e0;}
 .content{flex:1;overflow-y:auto;padding:24px;}
 .section pre{background:#f8f8f8;border:1px solid #ddd;padding:16px;border-radius:4px;}
+.screenshot{margin-bottom:16px;}
 </style>
 </head>
 <body>
@@ -453,13 +454,13 @@ journey_type: autonomous
   期望: OK（POST → 非 200）
 </pre></div><div id="report" class="section" style="display:none;"><pre style="white-space:pre-wrap;word-break:break-word;">━━━ Sprint: Skill 漂移巡检告警（smoke + 日巡）  PR #3342  2026-06-11 ━━━
 
-PIPELINE  A+B+C phases · 1 eval rounds · - · $0
+PIPELINE  A+B+C phases · 0 eval rounds · - · $0
 
 Phase          Time    Cost    Result
 Proposer       -       -       ✅
 Planner        -       -       ✅
 Generator      -       -       ✅
-Evaluator×1    -       -       ✅
+Evaluator×0    -       -       ✅
 Reporter       -       -       ✅
 
 DOD -/- ✅  FAIL: 无
@@ -473,10 +474,10 @@ DB sync: journey_features · api_registry ✅ · Notion pushed ✅
 
 ## 运行指标
 
-- GAN 轮次：1
-- Evaluator Fix 次数：1
+- GAN 轮次：0
+- Evaluator Fix 次数：0
 - PR：https://github.com/perfectuser21/cecelia/pull/3342
-- Sprint Dir：sprints/06111220-skill-drift-patrol
+- Sprint Dir：/workspace/sprints/06111220-skill-drift-patrol
 
 ## 发现的问题
 
