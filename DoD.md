@@ -1,20 +1,14 @@
-# DoD — 对齐 phase-event/initiative_run_events stale 测试至新 SSOT 契约
+# DoD — h14 账号池回归测试对齐 account1 已回池
 
-**范围**: 4 个测试文件的 stale skill-content 断言改写为断言 Brain 侧 owner（events/initiativeRunEvents.js）。纯测试对齐，不改 src/skill。
-**大小**: S
+**范围**: 改 tests/brain/h14-remove-account3.test.js 的 account-usage.js 断言为 [account1,account2]（禁 account3）。纯测试对齐，不改 src。
+**大小**: XS
 
 ## ARTIFACT 条目
 
-- [x] [ARTIFACT] harness.test.js 不再读 skill SKILL.md 做断言，改断言 Brain 侧 owner
-  Test: manual:node -e "const c=require('fs').readFileSync('packages/brain/src/routes/__tests__/harness.test.js','utf8');if(c.includes('skills/harness-report/SKILL.md'))process.exit(1);if(!c.includes('events/initiativeRunEvents.js'))process.exit(1);console.log('OK')"
-
-- [x] [ARTIFACT] skill-phase-event-calls.test.ts 改断言 Brain 侧 owner（不再 grep SKILL.md）
-  Test: manual:node -e "const c=require('fs').readFileSync('sprints/06040940-harness-phase-metrics/tests/skill-phase-event-calls.test.ts','utf8');if(!c.includes('initiativeRunEvents.js'))process.exit(1);console.log('OK')"
-
-- [x] [ARTIFACT] report-step6-refs-events.test.ts 改断言 events/initiativeRunEvents.js（不再读 harness-report SKILL.md）
-  Test: manual:node -e "const c=require('fs').readFileSync('sprints/06040940-harness-phase-metrics/tests/report-step6-refs-events.test.ts','utf8');if(c.includes('harness-report/SKILL.md'))process.exit(1);if(!c.includes('initiativeRunEvents.js'))process.exit(1);console.log('OK')"
+- [x] [ARTIFACT] 旧 stale describe 标题「= [account2]」已移除，header 记录 account1 凭据恢复
+  Test: manual:node -e "const c=require('fs').readFileSync('tests/brain/h14-remove-account3.test.js','utf8');if(c.includes('ACCOUNTS 数组 = [account2]（account3 org 禁用已移出）'))process.exit(1);if(!c.includes('account1 凭据已恢复'))process.exit(1);console.log('OK')"
 
 ## BEHAVIOR 条目（内嵌可执行 manual: 命令）
 
-- [x] [BEHAVIOR] harness-phase-event.test.ts 的 stale 「skill 含 phase-event 字面」断言已清除并替换为 Brain 侧 owner 断言（brain-unit CI --changed 实跑这 4 个测试文件验证全绿）
-  Test: manual:node -e "const c=require('fs').readFileSync('sprints/06040940-harness-phase-metrics/tests/harness-phase-event.test.ts','utf8');if(c.includes('skills/${skill}/SKILL.md'))process.exit(1);if(!c.includes('INSERT INTO initiative_run_events'))process.exit(1);console.log('OK')"
+- [x] [BEHAVIOR] 守护不变量为禁 account3：account-usage.js 断言含 account1+account2、不含 account3（brain-unit CI --changed 实跑此测试验证）
+  Test: manual:node -e "const c=require('fs').readFileSync('tests/brain/h14-remove-account3.test.js','utf8');const i=c.indexOf('account-usage.js 调度池');const seg=c.slice(i,i+500);if(!seg.includes(\"toContain('account1')\")||!seg.includes(\"toContain('account2')\")||!seg.includes(\"not.toContain('account3')\"))process.exit(1);console.log('OK')"
