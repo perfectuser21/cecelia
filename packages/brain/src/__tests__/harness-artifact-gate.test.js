@@ -136,6 +136,7 @@ describe('evaluateContractNode — ARTIFACT 门强制 FAIL（核心修复）', (
       task: { id: 'task-1', payload: { sprint_dir: 'sprints/open2-verify', journey_type: 'autonomous' } },
     };
     const res = await mod.evaluateContractNode(state, {
+      checkPrMerged: async () => false,
       verifyArtifacts,
       spawnDetached: spawnSpy,
       resolveToken: async () => 'tok',
@@ -162,6 +163,7 @@ describe('evaluateContractNode — ARTIFACT 门强制 FAIL（核心修复）', (
     };
     // interrupt() 会抛（无 checkpointer 上下文），但只要 spawn 被调用即证明走到了 LLM 路径
     await mod.evaluateContractNode(state, {
+      checkPrMerged: async () => false,
       verifyArtifacts,
       spawnDetached: spawnSpy,
       resolveToken: async () => 'tok',

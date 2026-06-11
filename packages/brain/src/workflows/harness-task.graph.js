@@ -36,7 +36,7 @@
 import { StateGraph, Annotation, START, END, interrupt } from '@langchain/langgraph';
 import crypto from 'node:crypto';
 import path from 'node:path';
-import { readFileSync, writeFileSync } from 'node:fs';
+import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { execFile as execFileCb } from 'node:child_process';
 import { promisify } from 'node:util';
 import { runContractGate, formatGateReport } from '../lib/contract-gate.js';
@@ -1007,9 +1007,10 @@ export async function evaluateContractNode(state, opts = {}) {
   // ── 新路径：代码执行 E2E + LLM 裁读（Sprint 06120010，仅 journey_type=autonomous；EVALUATOR_LEGACY=1 回退旧路径）──────
   const isAutonomousJourney = state.task?.payload?.journey_type === 'autonomous';
   const legacyMode = isLegacyMode();
+  const hasDodFile = existsSync(path.join(sprintDir, 'contract-dod.md'));
   const execCmdsFn = legacyMode
     ? null
-    : (opts.executeContractCommands || (isAutonomousJourney ? _execContractCmds : null));
+    : (opts.executeContractCommands || ((isAutonomousJourney && hasDodFile) ? _execContractCmds : null));
   const judgeWithLlm = opts.judgeWithLlm || null;
   if (execCmdsFn) {
     return await _evaluateWithCodeExecution(state, {
