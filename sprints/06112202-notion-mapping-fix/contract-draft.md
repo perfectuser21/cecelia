@@ -369,9 +369,9 @@ echo "✅ Golden Path 全部验证通过（5/5 步骤 PASS）"
 
 | 功能 | Test File | BEHAVIOR 覆盖 | 预期红证据 |
 |---|---|---|---|
-| notion-property-map.js | `tests/notion-property-map.test.ts` | stripUnknownProperties + NOTION_PROPERTY_MAP + notionTask allowlist 不含 Status | → 4 failures（文件不存在）|
-| POST /api/brain/notes → warnings | `tests/notion-property-map.test.ts` | response 含 warnings 字段 | → 1 failure（当前不返回 warnings）|
-| POST /api/brain/notion/task → warnings | `tests/notion-property-map.test.ts` | response 含 warnings 字段 | → 1 failure（当前不返回 warnings）|
+| notion-property-map.js | `tests/notion-property-map.test.ts` | NOTION_PROPERTY_MAP / stripUnknownProperties / notionTask allowedKeys 不含 Status | → 4 failures（文件不存在）|
+| POST /api/brain/notes → warnings | `tests/notion-property-map.test.ts` | 成功路径返回 warnings | → 1 failure（当前不返回 warnings）|
+| POST /api/brain/notion/task → warnings | `tests/notion-property-map.test.ts` | 成功路径返回 warnings | → 1 failure（当前不返回 warnings）|
 
 ### ⚠️ 现有 CI 测试必须由 generator 更新（修代码前 RED，修后 GREEN，必须 commit）
 
