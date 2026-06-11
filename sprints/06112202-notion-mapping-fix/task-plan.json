@@ -1,0 +1,32 @@
+{
+  "initiative_id": "${INITIATIVE_ID}",
+  "journey_type": "autonomous",
+  "journey_type_reason": "全程 packages/brain/ 后端路由 + 定时同步修复，无 UI、无远端 agent 协议",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "Notion 属性映射修复：新建 notion-property-map.js + 三处路由切换新属性名 + 添加 warnings 响应",
+      "scope": "1. 新建 packages/brain/src/notion-property-map.js，导出 NOTION_PROPERTY_MAP（各 DB 当前属性清单，标注 2026-06-10 查询日期；notionTask.allowedKeys 不含 Status）和 stripUnknownProperties(properties, allowedKeys) 函数；2. 修复 routes/notes.js POST /api/brain/notes：将 'Initiative ID' 属性替换为新 schema 属性名，调用 stripUnknownProperties，response 添加 warnings 字段；3. 修复 routes/notes.js POST /api/brain/notion/task：将 Title 属性替换为 Name（或 Tasks DB 实际属性名），response 添加 warnings 字段；4. 修复 notion-push-sync.js pushJourneyStepLinks：移除 Order 属性，按新 Step Links DB schema 构建 payload；5. 更新 packages/brain/src/routes/notes.test.js 三处断言：:45 改四字段含 warnings，:55 将 Initiative ID toBeDefined 反转为 not.toHaveProperty，:137 改四字段含 warnings（这三处在修代码前 RED，修后 GREEN，必须 commit）",
+      "dod": [
+        "[ARTIFACT] packages/brain/src/notion-property-map.js 文件存在，导出 NOTION_PROPERTY_MAP 和 stripUnknownProperties",
+        "[ARTIFACT] notion-push-sync.js pushJourneyStepLinks 不含旧属性 Order:",
+        "[ARTIFACT] routes/notes.js POST /api/brain/notes handler 不含硬编码 'Initiative ID'",
+        "[BEHAVIOR] POST /api/brain/notes 返回 201 + url(string) + warnings(array)",
+        "[BEHAVIOR] POST /api/brain/notion/task 返回 201 + url(string) + warnings(array)",
+        "[BEHAVIOR] POST /api/brain/notes 带未知属性 → 2xx + warnings 非空，含跳过说明",
+        "[BEHAVIOR] POST /api/brain/notes 缺 title → 400 + error(string)",
+        "[BEHAVIOR] notion-push-sync.js 不含旧属性 Order: (grep 静态验证)",
+        "[BEHAVIOR] POST /api/brain/notes 带 initiative_id → DB notes.initiative_id 非 null（风险 R1）",
+        "[BEHAVIOR] NOTION_PROPERTY_MAP.notionTask allowedKeys 不含 Status（风险 R2）"
+      ],
+      "files": [
+        "packages/brain/src/notion-property-map.js",
+        "packages/brain/src/routes/notes.js",
+        "packages/brain/src/notion-push-sync.js"
+      ],
+      "depends_on": [],
+      "complexity": "M",
+      "estimated_minutes": 60
+    }
+  ]
+}
