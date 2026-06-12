@@ -4,7 +4,7 @@
 # 要求：Brain 已在 localhost:5221 运行（real-env smoke）。
 set -euo pipefail
 
-REPO_ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
+REPO_ROOT="$(cd "$(dirname "$0")/../../../.." && pwd)"
 cd "$REPO_ROOT"
 
 echo "=== harness-e2e-runner smoke ==="
