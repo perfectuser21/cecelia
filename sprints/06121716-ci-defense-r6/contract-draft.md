@@ -232,5 +232,5 @@ echo "✅ CI 防线三件套 E2E 全部 5 步验证通过"
 
 | 测试套件 | Test File | BEHAVIOR 覆盖 | 预期红证据 |
 |---|---|---|---|
-| Sprint 本地（brain vitest，由 `brain=true` 触发）| `sprints/06121716-ci-defense-r6/tests/ci-defense-r6.test.ts` | changed-test-router 脚本存在+输出 / check-contract-exists 行为 / ci.yml 扩展（changed-test-router + skills/** + check-contract-exists）/ reviewer 7 维名 / generator 无 gh pr merge / proposer 领域验证 | → 6+ failures（脚本不存在 / ci.yml 未扩展）|
-| Engine skills（engine-tests vitest，由 `engine=true` 触发）| `packages/engine/tests/skills/harness-evaluator.test.ts`（新建）| evaluator env_missing / B-1.6~1.8 / ws_id 残留 / skipIf 模式 | → 4+ failures（文件不存在）|
+| Sprint 本地（brain vitest，由 `brain=true` 触发）| `tests/ci-defense-r6.test.ts` | changed-test-router 脚本存在+输出 / check-contract-exists 行为 / ci.yml 扩展（changed-test-router + skills/** + check-contract-exists）/ reviewer 7 维名 / generator 无 gh pr merge / proposer 领域验证 | → 6+ failures（脚本不存在 / ci.yml 未扩展）|
+| Engine skills（engine-tests vitest，由 `engine=true` 触发）| `../../packages/engine/tests/skills/harness-evaluator.test.ts`（新建）| evaluator env_missing / B-1.6~1.8 / ws_id 残留 / skipIf 模式 | → 4+ failures（文件不存在）|
