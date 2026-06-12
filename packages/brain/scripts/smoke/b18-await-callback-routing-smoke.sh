@@ -13,7 +13,7 @@ const checks = [
   { name: 'routeAfterCallback exported', regex: /export function routeAfterCallback/ },
   { name: 'awaitCallback exit≠0 转 ci_fail（根因2 后 401 分类 auth_failed）', regex: /ci_fail_type:\s*authFailed\s*\?\s*['\"]auth_failed['\"]\s*:\s*['\"]container_exit['\"]/ },
   { name: 'await_callback 条件 edge', regex: /addConditionalEdges\([\s\S]{0,80}['\"]await_callback['\"]\s*,\s*routeAfterCallback/ },
-  { name: 'routeAfterFix 去 cap', regex: /^function routeAfterFix[\s\S]{0,200}return 'spawn'/m },
+  { name: 'routeAfterFix 去 cap', regex: /^(?:export )?function routeAfterFix[\s\S]{0,200}return 'spawn'/m },
 ];
 let fail=false;
 for (const c of checks) {

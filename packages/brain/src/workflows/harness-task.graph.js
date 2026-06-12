@@ -94,6 +94,37 @@ export function normalizeVerdict(raw) {
   return new Set(['PASS', 'FIXED', 'APPROVED']).has(upper) ? 'PASS' : 'FAIL';
 }
 
+// 任务终态集合：父图/Serial gate 把 initiative 标这些状态后，在飞子图实例必须停手。
+export const TERMINAL_TASK_STATUSES = new Set(['failed', 'completed', 'cancelled', 'canceled', 'aborted', 'done']);
+
+/**
+ * 查 initiative 任务在 DB 里的终态信号。
+ * P2 Issue「在飞执行不感知任务终态」实证（run cf4f596c 08:28-08:34）：initiative 已标 failed 后，
+ * 其进程内图实例的 fix loop 仍每 ~2 分钟 spawn 一个 generator，直到手动重启 Brain 才停。
+ * 故 spawn / fix_dispatch / evaluate 入口在起容器前查 tasks.status，已终态 → 走 END。
+ *
+ * fail-open：查不到/查询失败 → terminal=false（不误杀在飞 run），仅 warn。
+ * @returns {Promise<{terminal:boolean, status?:string, initiativeId?:string}>}
+ */
+export async function isInitiativeTerminal(state, opts = {}) {
+  const dbPool = opts.poolOverride || pool;
+  const payload = state?.task?.payload || {};
+  const initiativeId = state?.initiativeId || payload.parent_task_id || payload.initiative_id || state?.task?.id;
+  if (!initiativeId) return { terminal: false };
+  try {
+    const res = await dbPool.query('SELECT status FROM tasks WHERE id = $1', [initiativeId]);
+    const status = res?.rows?.[0]?.status;
+    return {
+      terminal: status ? TERMINAL_TASK_STATUSES.has(String(status).toLowerCase()) : false,
+      status,
+      initiativeId,
+    };
+  } catch (err) {
+    console.warn(`[harness-task.graph] isInitiativeTerminal 查询失败（fail-open，继续）：${err.message}`);
+    return { terminal: false };
+  }
+}
+
 /**
  * sub-graph state schema
  */
@@ -164,6 +195,16 @@ export const TaskState = Annotation.Root({
 export async function spawnNode(state, opts = {}) {
   // 幂等门 1：已 spawn 过容器就直接 passthrough（防 resume 时重 spawn）
   if (state.containerId) return { containerId: state.containerId };
+
+  // 终态门（P2「在飞执行不感知任务终态」）：起容器前查 initiative 是否已被标终态。
+  // 已 failed/completed → 直接走 END（写明确终态 status='aborted'，与问题1 END 终态口径一致），
+  // 不再起 generator（run cf4f596c 实证：initiative failed 后 fix loop 仍每 ~2 分钟 spawn）。
+  const checkTerminal = opts.isInitiativeTerminal || isInitiativeTerminal;
+  const term0 = await checkTerminal(state, opts);
+  if (term0.terminal) {
+    console.warn(`[spawn] initiative ${term0.initiativeId} 已终态 status=${term0.status} → 中止 spawn，不再起 generator`);
+    return { status: 'aborted', error: { node: 'spawn', message: `initiative already terminal (status=${term0.status}); abort generator spawn` } };
+  }
 
   const spawnFn = opts.spawnDetached || spawnDockerDetached;
   const ensureWt = opts.ensureWorktree || ensureHarnessWorktree;
@@ -650,7 +691,16 @@ export function routeAfterMergePr(state) {
   return 'end';
 }
 
-export async function fixDispatchNode(state) {
+export async function fixDispatchNode(state, opts = {}) {
+  // 终态门（P2）：fix loop 路由边在 reset 计数/重 spawn 前查 initiative 终态。
+  // 已终态 → 写明确终态 status='aborted' + error，routeAfterFix 据 error 走 END，
+  // 不再 ++fix_round、不再 reset containerId 触发 spawn（直接终止 fix loop）。
+  const checkTerminal = opts.isInitiativeTerminal || isInitiativeTerminal;
+  const term = await checkTerminal(state, opts);
+  if (term.terminal) {
+    console.warn(`[fix_dispatch] initiative ${term.initiativeId} 已终态 status=${term.status} → 中止 fix loop，走 END`);
+    return { status: 'aborted', error: { node: 'fix_dispatch', message: `initiative already terminal (status=${term.status}); abort fix loop` } };
+  }
   const next = (state.fix_round || 0) + 1;
   return {
     fix_round: next,
@@ -724,6 +774,8 @@ export function isContractArtifactFile(filePath) {
 
 // Pre-merge gate router: post-evaluator verdict → merge / end / fix.
 export function routeAfterEvaluate(state) {
+  // 终态门（P2）：initiative 已终态 → 直接 END，不 merge 也不进 fix loop。
+  if (state.status === 'aborted') return 'end';
   if (state.evaluate_verdict === 'PASS') return 'merge';
   // P1: 合同产物不合格（Contract Gate 命中合同文件本身）→ 终止 initiative，不进 generator fix loop。
   // generator 无权改合同 → 进 fix loop 只会同一行反复命中空转烧轮次（实证 run ea622a94 r0/r1/r2 三连）。
@@ -920,6 +972,19 @@ export async function evaluateContractNode(state, opts = {}) {
   if (state.evaluate_verdict) {
     console.log(`[evaluator] idempotent passthrough verdict=${state.evaluate_verdict}`);
     return { evaluate_verdict: state.evaluate_verdict };
+  }
+
+  // 终态门（P2）：起 evaluator 容器前查 initiative 终态。已终态 → 写明确终态 status='aborted'，
+  // routeAfterEvaluate 据 status==='aborted' 走 END，不浪费一个 evaluator 容器、不进 fix loop。
+  const checkTerminal = opts.isInitiativeTerminal || isInitiativeTerminal;
+  const termE = await checkTerminal(state, opts);
+  if (termE.terminal) {
+    console.warn(`[evaluator] initiative ${termE.initiativeId} 已终态 status=${termE.status} → 中止 evaluate`);
+    return {
+      status: 'aborted',
+      evaluate_verdict: 'FAIL',
+      evaluate_error: `initiative already terminal (status=${termE.status}); abort evaluate`,
+    };
   }
 
   // merged-short-circuit（P1 收尾）：PR 已 merge 时直接 PASS，不 checkout 已删分支跑 E2E、不触发 fix loop。
@@ -1267,7 +1332,7 @@ export async function evaluateContractNode(state, opts = {}) {
   return { evaluate_verdict: verdict, evaluate_error: errorMsg };
 }
 
-function routeAfterFix(state) {
+export function routeAfterFix(state) {
   if (state.error) return 'end';
   // B18: 不再 cap fix_round（用户决定不设硬上限）
   // convergence 不是数轮次，是 verdict 真 PASS；MAX_FIX_ROUNDS 常量保留向后兼容
