@@ -140,6 +140,10 @@ describe('evaluateContractNode — ARTIFACT 门强制 FAIL（核心修复）', (
       spawnDetached: spawnSpy,
       resolveToken: async () => 'tok',
       poolOverride: { query: mockPoolQuery },
+      // 注入 checkPrMerged，解除对真实 gh 的依赖：本测试 pr_url 是已合并的真实 PR #3276，
+      // 本机 gh 已认证时 merged-short-circuit 会短路 PASS（环境性 flake）。固定为未合并，
+      // 让测试聚焦 ARTIFACT 门 FAIL 语义。
+      checkPrMerged: async () => false,
     });
     expect(res.evaluate_verdict).toBe('FAIL');
     expect(res.evaluate_error).toMatch(/ARTIFACT/i);
