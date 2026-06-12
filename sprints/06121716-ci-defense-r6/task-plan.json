@@ -1,0 +1,37 @@
+{
+  "initiative_id": "ci-defense-r6",
+  "journey_type": "dev_pipeline",
+  "journey_type_reason": "涉及 packages/engine/tests/skills/ CI 基础设施和 packages/brain/scripts/ci/，属 hooks/skills/DevGate 领域",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "CI 防线三件套：changed-test-router + skill 契约测试 + check-contract-exists + ci.yml 扩展",
+      "scope": "新建 packages/brain/scripts/ci/changed-test-router.mjs（skill 文件→测试文件映射）；新建 packages/brain/scripts/ci/check-contract-exists.mjs（合同存在性检查）；新建 packages/engine/tests/skills/harness-evaluator.test.ts（evaluator 关键不变量：env_missing / B-1.6/1.7/1.8 / 无 ws_id 残留）；扩展 harness-contract-reviewer.test.ts（7 维度名逐字断言，脱 describe.skip）；扩展 harness-generator.test.ts（无可执行 gh pr merge 断言）；扩展 harness-contract-proposer.test.ts（领域验证规则段存在性断言）；ci.yml 新增 skill-contract-tests step 触发于 packages/workflows/skills/** 变更",
+      "dod": [
+        "[BEHAVIOR] changed-test-router.mjs 对 harness-evaluator SKILL.md 输出含 harness-evaluator.test.ts 路径的清单",
+        "[BEHAVIOR] harness-evaluator.test.ts 含 env_missing / B-1.6/1.7/1.8 / ws_id 不变量断言",
+        "[BEHAVIOR] skill 契约测试套件（packages/engine/tests/skills/）vitest 全绿",
+        "[BEHAVIOR] 篡改 evaluator skill 删除 env_missing 后契约测试报红且指明缺失不变量",
+        "[BEHAVIOR] check-contract-exists.mjs 对缺 contract-draft.md 的文件清单非零退出",
+        "[BEHAVIOR] check-contract-exists.mjs 对含 contract-draft.md 的文件清单退出码 0",
+        "[BEHAVIOR] harness-contract-reviewer.test.ts 含 7 维度名逐字断言（在活跃 it 块中）",
+        "[BEHAVIOR] ci.yml 包含 packages/workflows/skills/** 路径触发的 changed-test-router.mjs 调用",
+        "[ARTIFACT] packages/brain/scripts/ci/changed-test-router.mjs 存在，含 readFileSync 扫描逻辑",
+        "[ARTIFACT] packages/brain/scripts/ci/check-contract-exists.mjs 存在，含 contract-draft.md 检查逻辑",
+        "[ARTIFACT] packages/engine/tests/skills/harness-evaluator.test.ts 存在"
+      ],
+      "files": [
+        "packages/brain/scripts/ci/changed-test-router.mjs",
+        "packages/brain/scripts/ci/check-contract-exists.mjs",
+        "packages/engine/tests/skills/harness-evaluator.test.ts",
+        "packages/engine/tests/skills/harness-contract-reviewer.test.ts",
+        "packages/engine/tests/skills/harness-generator.test.ts",
+        "packages/engine/tests/skills/harness-contract-proposer.test.ts",
+        ".github/workflows/ci.yml"
+      ],
+      "depends_on": [],
+      "complexity": "M",
+      "estimated_minutes": 90
+    }
+  ]
+}
