@@ -106,7 +106,8 @@ function checkContract(contractPath) {
       continue;
     }
     const testContent = fs.readFileSync(testFilePath, "utf-8");
-    const itMatches = [...testContent.matchAll(/\b(?:it|test)\(['"]([^'"]+)['"]/g)];
+    // 兼容 it.skipIf(cond)('name') 和 it.todo('name') 等 vitest 变体
+    const itMatches = [...testContent.matchAll(/\b(?:it|test)(?:\.[a-zA-Z]+(?:\([^)]*\))?)?\(['"]([^'"]+)['"]/g)];
     const itNames = itMatches.map((m) => m[1]);
     if (itNames.length === 0) {
       violations.push(`${row.ws}: ${testFilePath} 无 it()/test() 块`);

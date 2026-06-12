@@ -232,5 +232,5 @@ echo "✅ CI 防线三件套 E2E 全部 5 步验证通过"
 
 | 测试套件 | Test File | BEHAVIOR 覆盖 | 预期红证据 |
 |---|---|---|---|
-| Sprint 本地（brain vitest，由 `brain=true` 触发）| `tests/ci-defense-r6.test.ts` | changed-test-router 脚本存在+输出 / check-contract-exists 行为 / ci.yml 扩展（changed-test-router + skills/** + check-contract-exists）/ reviewer 7 维名 / generator 无 gh pr merge / proposer 领域验证 | → 6+ failures（脚本不存在 / ci.yml 未扩展）|
-| Engine skills（engine-tests vitest，由 `engine=true` 触发）| `../../packages/engine/tests/skills/harness-evaluator.test.ts`（新建）| evaluator env_missing / B-1.6~1.8 / ws_id 残留 / skipIf 模式 | → 4+ failures（文件不存在）|
+| Sprint 本地（brain vitest，由 `brain=true` 触发）| `tests/ci-defense-r6.test.ts` | 脚本文件存在 / harness-evaluator.test.ts 路径 / contract-draft.md 的文件清单 / 7 维度名逐字断言 / gh pr merge 断言 / 领域验证规则段存在性断言 / ci.yml 包含 changed-test-router.mjs 调用 / ci.yml 包含 check-contract-exists.mjs 调用 | → 6+ failures（脚本不存在 / ci.yml 未扩展）|
+| Engine skills（engine-tests vitest，由 `engine=true` 触发）| `../../packages/engine/tests/skills/harness-evaluator.test.ts`（新建）| env_missing FAIL 守卫 / 三步骤均存在 / ws_id 残留 / pre-merge gate | → 4+ failures（文件不存在）|
