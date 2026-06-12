@@ -35,7 +35,7 @@ journey_type: dev_pipeline
   期望: OK
 
 - [x] [BEHAVIOR] skill 契约测试套件全绿——实际运行 vitest 验证 Step2（非仅文件内容检查）
-  Test: manual:bash -c 'VITEST_OUT=$(npx vitest run packages/engine/tests/skills/ 2>&1); VITEST_EXIT=$?; [ "$VITEST_EXIT" = "0" ] || { echo "FAIL: skill契约测试失败 exit=$VITEST_EXIT"; echo "$VITEST_OUT"; exit 1; }; echo OK'
+  Test: manual:bash -c 'VITEST_OUT=$(cd packages/engine && npx vitest run tests/skills/ 2>&1); VITEST_EXIT=$?; [ "$VITEST_EXIT" = "0" ] || { echo "FAIL: skill契约测试失败 exit=$VITEST_EXIT"; echo "$VITEST_OUT"; exit 1; }; echo OK'
   期望: OK
 
 - [x] [BEHAVIOR] 篡改 evaluator skill 删除 env_missing 段后契约测试报红（Step3 验证）
