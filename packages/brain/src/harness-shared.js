@@ -296,6 +296,11 @@ export const EvaluatorOutputSchema = z.object({
   failed_step: z.string().nullable().optional(),    // evaluator v1 format（FAIL 详情）
   log_excerpt: z.string().nullable().optional(),    // evaluator v1 format（FAIL 日志）
   fixes:       z.array(z.string()).nullable().optional(),  // generator FIXED format（B21）
+  coverage:    z.array(z.object({               // evaluator R4 职责分离 — coverage 对照表
+    step:           z.string(),
+    record_segment: z.string().nullable().optional(),
+    passed:         z.boolean(),
+  })).nullable().optional(),
 }).refine(
   d => d.verdict === 'PASS' || d.feedback || d.failed_step || d.log_excerpt || (d.fixes && d.fixes.length > 0),
   { message: 'FAIL/FIXED verdict requires at least one of: feedback, failed_step, log_excerpt, fixes' }
