@@ -50,7 +50,13 @@ echo OK
 **验证命令**:
 ```bash
 # 捕获输出+退出码，避免 |tee 管道吞掉 vitest 退出码
-VITEST_OUT=$(npx vitest run packages/engine/tests/skills/ 2>&1)
+# 注：从 monorepo 根执行需 cd packages/engine，根目录 vitest.config.ts exclude packages/**
+VITEST_OUT=$(cd packages/engine && npx vitest run \
+  tests/skills/harness-evaluator.test.ts \
+  tests/skills/harness-contract-reviewer.test.ts \
+  tests/skills/harness-generator.test.ts \
+  tests/skills/harness-contract-proposer.test.ts \
+  tests/skills/harness-v5-ci-checks.test.ts 2>&1)
 VITEST_EXIT=$?
 echo "$VITEST_OUT"
 [ "$VITEST_EXIT" = "0" ] || { echo "FAIL: skill 契约测试未全绿（exit=$VITEST_EXIT）"; exit 1; }
@@ -74,7 +80,7 @@ BACKUP=$(mktemp)
 cp "$SKILL_ORIG" "$BACKUP"
 sed -i.bak "/env_missing/d" "$SKILL_ORIG"  # -i.bak 兼容 macOS BSD sed（不加参数报错）
 rm -f "${SKILL_ORIG}.bak"
-TAMPER_OUT=$(npx vitest run packages/engine/tests/skills/harness-evaluator.test.ts 2>&1)
+TAMPER_OUT=$(cd packages/engine && npx vitest run tests/skills/harness-evaluator.test.ts 2>&1)
 TAMPER_EXIT=$?
 cp "$BACKUP" "$SKILL_ORIG"
 rm -f "$BACKUP"
@@ -167,8 +173,15 @@ echo "✅ Step 1 通过"
 
 # Step 2a: engine skill 契约测试全绿（packages/engine/tests/skills/）
 # 注：验证新建的 harness-evaluator.test.ts + 扩展后的 reviewer/generator/proposer 测试
+# 注：从 monorepo 根执行需 cd packages/engine，根目录 vitest.config.ts exclude packages/**
+# 注：运行指定文件（与 CI skill-contract-tests job 一致），避免 language-rule.test.ts 等依赖本地 skill 文件的测试干扰
 echo "--- Step 2a: engine skill 契约测试 ---"
-VITEST_OUT=$(npx vitest run packages/engine/tests/skills/ 2>&1)
+VITEST_OUT=$(cd packages/engine && npx vitest run \
+  tests/skills/harness-evaluator.test.ts \
+  tests/skills/harness-contract-reviewer.test.ts \
+  tests/skills/harness-generator.test.ts \
+  tests/skills/harness-contract-proposer.test.ts \
+  tests/skills/harness-v5-ci-checks.test.ts 2>&1)
 VITEST_EXIT=$?
 echo "$VITEST_OUT"
 [ "$VITEST_EXIT" = "0" ] || { echo "FAIL: step2a - skill 契约测试未全绿（exit=$VITEST_EXIT）"; exit 1; }
@@ -192,7 +205,7 @@ if [ -f "$SKILL_ORIG" ]; then
   sed -i.bak "/env_missing/d" "$SKILL_ORIG"  # -i.bak 兼容 macOS BSD sed
   rm -f "${SKILL_ORIG}.bak"
   TAMPER_EXIT=0
-  TAMPER_OUT=$(npx vitest run packages/engine/tests/skills/harness-evaluator.test.ts 2>&1) || TAMPER_EXIT=$?
+  TAMPER_OUT=$(cd packages/engine && npx vitest run tests/skills/harness-evaluator.test.ts 2>&1) || TAMPER_EXIT=$?
   cp "$BACKUP" "$SKILL_ORIG"
   rm -f "$BACKUP"
   [ "$TAMPER_EXIT" != "0" ] || { echo "FAIL: step3 - 篡改后测试应红"; exit 1; }
