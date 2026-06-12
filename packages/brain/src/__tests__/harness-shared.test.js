@@ -53,6 +53,32 @@ describe('readPrFromGitState (Protocol v2)', () => {
     expect(execFile.mock.calls[1][0]).toBe('gh');
   });
 
+  it('gh pr list 调用必须带 cwd=worktreePath（容器 cwd=/app 非 git 仓库时 gh 推断 repo 失败的根因修复）', async () => {
+    const { readPrFromGitState } = await import('../harness-shared.js');
+    const execFile = vi.fn()
+      .mockResolvedValueOnce({ stdout: 'cp-0612-ws-badaf654\n', stderr: '' })  // git rev-parse
+      .mockResolvedValueOnce({ stdout: 'https://github.com/x/y/pull/3367\n', stderr: '' }); // gh pr list
+    await readPrFromGitState('/wt-path', { execFile });
+    // gh 调用（第 2 次）的 opts 必须含 cwd=worktreePath
+    const ghCall = execFile.mock.calls[1];
+    expect(ghCall[0]).toBe('gh');
+    const ghOpts = ghCall[2];
+    expect(ghOpts).toBeDefined();
+    expect(ghOpts.cwd).toBe('/wt-path');
+  });
+
+  it('execFile 抛错时 console.warn 被调用并带 err.message（杜绝静默吞错）', async () => {
+    const { readPrFromGitState } = await import('../harness-shared.js');
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const execFile = vi.fn().mockRejectedValue(new Error('not a git repository'));
+    const result = await readPrFromGitState('/wt-path', { execFile });
+    expect(result).toBeNull();
+    expect(warnSpy).toHaveBeenCalled();
+    const warnArg = warnSpy.mock.calls.map(c => c.join(' ')).join('\n');
+    expect(warnArg).toContain('not a git repository');
+    warnSpy.mockRestore();
+  });
+
   it('git 返回空分支 → 返回 null', async () => {
     const { readPrFromGitState } = await import('../harness-shared.js');
     const execFile = vi.fn().mockResolvedValueOnce({ stdout: '', stderr: '' });

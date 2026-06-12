@@ -200,12 +200,19 @@ export async function readPrFromGitState(worktreePath, opts = {}) {
     const branch = String(branchOut || '').trim();
     if (!branch || branch === 'HEAD') return null;
 
-    const { stdout: prOut } = await execFn('gh', ['pr', 'list', '--head', branch, '--json', 'url', '-q', '.[0].url'], { timeout: 15_000 });
+    // cwd 必须显式指向 worktree（git 仓库目录）：Brain 容器进程 cwd=/app（非 git 仓库），
+    // gh 无 cwd / 无 --repo 时按 cwd 推断 repo，会报 "not a git repository" 并被下方 catch
+    // 静默吞掉 → 兜底返回 null → run 误判 no_pr 终败（run badaf654 实证）。
+    // git rev-parse 已用 -C worktreePath 显式指定，无需 cwd；gh 不支持 -C，故用 cwd。
+    const { stdout: prOut } = await execFn('gh', ['pr', 'list', '--head', branch, '--json', 'url', '-q', '.[0].url'], { cwd: worktreePath, timeout: 15_000 });
     const pr_url = String(prOut || '').trim();
     if (!pr_url || INVALID_LITERALS.has(pr_url.toLowerCase())) return null;
 
     return { pr_url, pr_branch: branch };
-  } catch {
+  } catch (err) {
+    // 静默 catch 吞错是这次排障最贵的部分（run badaf654 排查耗时全在此）：
+    // 至少 warn 出 err.message，保持返回 null 的语义不变（兜底失败不应 throw 打断 pipeline）。
+    console.warn(`[readPrFromGitState] git/gh 读取 PR 失败（worktree=${worktreePath}），兜底返回 null: ${err.message}`);
     return null;
   }
 }
