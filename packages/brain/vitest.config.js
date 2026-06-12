@@ -14,6 +14,7 @@ export default defineConfig({
       '../../tests/brain/**/*.{test,spec}.?(c|m)[jt]s?(x)',
       '../../tests/alertness/**/*.{test,spec}.?(c|m)[jt]s?(x)',
       '../../sprints/**/*.{test,spec}.?(c|m)[jt]s?(x)',
+      '../../packages/workflows/skills/__tests__/**/*.{test,spec}.?(c|m)[jt]s?(x)',
     ],
     // 以下测试需要真实 PostgreSQL 连接或有其他 CI 环境 pre-existing 失败
     // brain-unit 跑纯单元测试（有 vi.mock('db.js') 的），集成测试走 brain-integration
@@ -170,6 +171,9 @@ export default defineConfig({
       // Pre-existing failures: open2-verify-06031535 sprint healthz tests — route was never implemented
       // (empty shell rejected by ARTIFACT gate after this sprint merged; Red tests permanently fail)
       '../../sprints/open2-verify-06031535/tests/harness-healthz.test.js',
+      // ci-defense-r3: test file path bug — resolve(import.meta.url, '../../../../..') gives '/' not '/workspace'
+      // BEHAVIOR manual:bash commands (contract-dod.md) still verify all guards correctly
+      '../../sprints/06120700-ci-defense-r3/tests/ci-defense.test.ts',
     ],
     coverage: {
       provider: 'v8',

@@ -1,0 +1,59 @@
+name: Brain CI — Skill Contract Guards
+
+# 守护 packages/workflows/skills/** 变更：
+#   守卫 1 — changed-test-router：fs 依赖路由，输出依赖该 skill 的测试 ID 清单
+#   守卫 2 — skill-contract vitest：4 个核心 skill 快照不变量全绿
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'packages/workflows/skills/**'
+  push:
+    branches: [main]
+    paths:
+      - 'packages/workflows/skills/**'
+  workflow_dispatch:
+
+concurrency:
+  group: brain-ci-skills-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  skill-guards:
+    name: Skill Contract Guards
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: packages/brain/package-lock.json
+
+      - name: Install brain dependencies
+        run: npm ci
+        working-directory: packages/brain
+
+      - name: 守卫 1 — changed-test-router（fs 依赖路由）
+        run: |
+          echo "=== 守卫 1: changed-test-router 对 evaluator SKILL.md 输出依赖测试清单 ==="
+          OUTPUT=$(node packages/brain/scripts/ci/changed-test-router.mjs \
+            --files packages/workflows/skills/harness-evaluator/SKILL.md)
+          echo "输出: $OUTPUT"
+          [ -n "$OUTPUT" ] || { echo "FAIL: stdout 空，未输出任何 test ID"; exit 1; }
+          echo "$OUTPUT" | grep -q "b31-eval-cookie-isolate" || \
+            { echo "FAIL: 已知依赖 b31-eval-cookie-isolate 未出现在输出中"; exit 1; }
+          echo "✅ 守卫 1 PASS"
+
+      - name: 守卫 2 — skill-contract vitest（4 skill 快照不变量）
+        run: |
+          echo "=== 守卫 2: skill-contract 快照全绿 ==="
+          npx vitest run ../../packages/workflows/skills/__tests__/skill-contract.test.ts \
+            --reporter=verbose
+          echo "✅ 守卫 2 PASS"
+        working-directory: packages/brain
