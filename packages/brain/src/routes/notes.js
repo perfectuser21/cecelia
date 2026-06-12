@@ -24,10 +24,19 @@ function buildRichText(text) {
 
 const router = Router();
 
+async function getDbSchemaProperties(token, dbId) {
+  try {
+    const res = await notionReq(token, `/databases/${dbId}`, 'GET');
+    return res?.properties || {};
+  } catch {
+    return {};
+  }
+}
+
 /**
  * POST /api/brain/notes
  * Body: { title, content, type, initiative_id?, sprint_dir? }
- * Success 201: { id, url, title }
+ * Success 201: { id, url, title, warnings }
  * Error 400: { error } — missing required fields
  * Error 502: { error } — Notion API failure
  */
@@ -39,15 +48,26 @@ router.post('/notes', async (req, res) => {
 
   try {
     const token = getToken();
+    const warnings = [];
+
+    const schemaProperties = await getDbSchemaProperties(token, AI_NOTES_DB);
+
+    const properties = {
+      Title: { title: [{ text: { content: title } }] },
+      ...(type && { Type: { select: { name: type } } }),
+    };
+
+    if (initiative_id) {
+      if ('Initiative ID' in schemaProperties) {
+        properties['Initiative ID'] = { rich_text: [{ type: 'text', text: { content: initiative_id } }] };
+      } else {
+        warnings.push('Initiative ID skipped: property not found in AI Notes DB schema');
+      }
+    }
+
     const page = await notionReq(token, '/pages', 'POST', {
       parent: { database_id: AI_NOTES_DB },
-      properties: {
-        Title: { title: [{ text: { content: title } }] },
-        ...(type && { Type: { select: { name: type } } }),
-        ...(initiative_id && {
-          'Initiative ID': { rich_text: [{ type: 'text', text: { content: initiative_id } }] },
-        }),
-      },
+      properties,
       children: [{
         object: 'block',
         type: 'paragraph',
@@ -67,7 +87,7 @@ router.post('/notes', async (req, res) => {
       console.error('[POST /api/brain/notes] DB insert failed:', dbErr.message);
     }
 
-    return res.status(201).json({ id: page.id, url: page.url, title });
+    return res.status(201).json({ id: page.id, url: page.url, title, warnings });
   } catch (err) {
     console.error('[POST /api/brain/notes]', err.message);
     return res.status(502).json({ error: `notion api error: ${err.message}` });
@@ -127,8 +147,12 @@ router.post('/notion/task', async (req, res) => {
 
   try {
     const token = getToken();
+
+    const schemaProperties = await getDbSchemaProperties(token, TASKS_DB);
+    const titlePropName = Object.entries(schemaProperties).find(([, v]) => v.type === 'title')?.[0] || 'Name';
+
     const properties = {
-      Title: { title: [{ text: { content: fullTitle } }] },
+      [titlePropName]: { title: [{ text: { content: fullTitle } }] },
     };
 
     const page = await notionReq(token, '/pages', 'POST', {

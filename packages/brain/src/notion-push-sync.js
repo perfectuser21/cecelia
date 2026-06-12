@@ -244,12 +244,22 @@ async function pushJourneyStepLinks(pool, token) {
       AND s.notion_id IS NOT NULL
     LIMIT 10
   `);
+  if (rows.length === 0) return;
+
+  let schemaProps = {};
+  try {
+    const schema = await notionReq(token, `/databases/${STEP_LINKS_DB}`, 'GET');
+    schemaProps = schema?.properties || {};
+  } catch {
+    schemaProps = {};
+  }
+
   for (const l of rows) {
     try {
       const properties = {
         Name:   { title: [{ text: { content: `${l.journey_name} — ${l.step_name}` } }] },
         Status: { select: { name: l.status || 'planned' } },
-        Order:  { number: l.step_order },
+        ...('Order' in schemaProps && { Order: { number: l.step_order } }),
       };
       if (l.journey_notion_id) {
         properties['Journey'] = { relation: [{ id: l.journey_notion_id }] };
