@@ -155,7 +155,7 @@ export default defineConfig({
       '../../sprints/dev-visibility-v3/tests/ws2/dev-skill-route-b.test.js',
       '../../sprints/cecelia-harness-viz/tests/ws2/harness-ws-progress-unit.test.js',
       // Sprint test uses SCRIPT='packages/brain/scripts/...' relative path — must run from repo root
-      '../../sprints/06120546-report-scriptize-r3/tests/harness-report.test.mjs',
+      '../../sprints/06120546-report-scriptize-r3/tests/harness-report.test.js',
       // Pre-existing failures: harness-self-heal sprint in progress (BARK_TOKEN/task-router not yet wired)
       '../../sprints/harness-self-heal/tests/ws1/task-router-routing.test.ts',
       // Pre-existing failures: cecelia-pipeline-viz-v2 sprint in progress

@@ -508,6 +508,12 @@ echo "✅ Golden Path E2E 全部 7 个验收点通过"
 
 ---
 
+## Test Contract
+
+| Workstream | Test File | BEHAVIOR 覆盖 | 预期红证据 |
+|---|---|---|---|
+| WS1 | `tests/harness-report.test.js` | 脚本文件存在/harness-report.md 生成/PARTIAL_FAIL/git status --porcelain/重复执行 | WS1 未实现时 9 failures |
+
 ## Risks（结构化风险登记）
 
 | # | 风险 | 触发条件 | 降级行为 | 对应 [BEHAVIOR] |
