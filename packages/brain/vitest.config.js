@@ -138,6 +138,8 @@ export default defineConfig({
       '../../tests/capability-probe-rumination.test.js',
       // Pre-existing failure: process.cwd() relative paths broken in brain-unit (cwd=packages/brain)
       'src/routes/__tests__/harness-feature-propagation.test.js',
+      // Sprint R4 (06120850): process.cwd()-based ESM imports fail from packages/brain cwd → Sprint Tests CI
+      '../../sprints/06120850-e2e-exec-judge-r4/tests/evaluate.test.ts',
       '../../sprints/dev-visibility-smoke/tests/ws1/smoke-verify-script.test.ts',
       '../../sprints/cecelia-sprint-visibility-0528/tests/ws2/skill-step35.test.ts',
       '../../sprints/cecelia-harness-viz/tests/ws2/harness-ws-progress-unit.test.js',
