@@ -46,6 +46,9 @@ import { resolveGitHubToken } from '../harness-credentials.js';
 import { runJudgeGate } from '../harness-judge.js';
 // Note: legacy `writeDockerCallback` import removed (Layer 3 uses callback router POST → Command(resume))
 import { spawnDockerDetached, spawnCodexBridgeDetached } from '../spawn/detached.js';
+import { getHostPromptDir } from '../docker-executor.js';
+// 活容器探测拆到 lib/live-container.js（仅 node 内建依赖），便于 DoD BEHAVIOR 在无 brain node_modules 的 CI job 直跑。
+import { findLiveEvaluateContainer as findLiveEvaluateContainerDefault } from '../lib/live-container.js';
 import { executeOnHost } from '../spawn/host-executor.js';
 import { resolveExecutor as resolveExecutorDefault } from '../routing/resolve-executor.js';
 import { resolveAccount } from '../spawn/middleware/account-rotation.js';
@@ -978,6 +981,9 @@ async function finalizeEvaluation(state, opts, ctx) {
       worktreePath: state.worktreePath,
       sprintDir: ctx.sprintDir,
       instanceLabel: ctx.containerId,
+      // 证据供给：让裁判读 evaluator 完整 stdout 转录（#3345 forensics 文件），不止 callback 4KB tail。
+      promptDir: getHostPromptDir(),
+      taskId: state.task?.id,
     },
     {
       judgeFn: opts.judgeFn,
@@ -1071,7 +1077,8 @@ export async function evaluateContractNode(state, opts = {}) {
 
   const rand = crypto.randomUUID().slice(0, 8);
   const safeId = String(task.id).replace(/[^a-zA-Z0-9-]/g, '');
-  const containerId = `harness-evaluate-${safeId}-r${state.fix_round || 0}-${rand}`;
+  // let（非 const）：B-reentry 幂等门可能把 containerId 改成已存在的活容器名（复用、不重 spawn）。
+  let containerId = `harness-evaluate-${safeId}-r${state.fix_round || 0}-${rand}`;
   // B10: evaluate_contract 在 harness-task graph 内，thread_lookup 必须用 task graph thread_id
   // B47: final_e2e_fix_count 从 payload 读，与 config thread_id 保持一致
   // 合同绑定：与 spawnNode 同口径追加合同后缀，保证 callback router 反查命中同一线程。
@@ -1274,35 +1281,56 @@ export async function evaluateContractNode(state, opts = {}) {
   }
 
   // ── docker 路径（local_api / windows_cloud 等，默认）──────────────────────
+  // B-reentry 幂等门：LangGraph interrupt() 重入会让本节点从头重跑——而 spawn 在 interrupt 之前，
+  // 故每次 resume 都会再 spawn 一个新容器（实证 evaluate-ws1-r4 同时 4 个）。#3372 裁判给回调链路加了
+  // ~6s，拉长了 evaluate 回调窗口，放大了并发 resume 同时重 spawn。spawn 前先查同 (task, fix_round)
+  // 是否已有活 evaluate 容器：有则复用其 containerId、跳过 spawn + thread_lookup INSERT，直接进 interrupt
+  // 等它回调（同 B59-idem proposer「已存在跳过」思路）。检测失败（docker 不可用等）→ fail-open，正常 spawn。
+  const findLiveEval = opts.findLiveEvaluateContainer || findLiveEvaluateContainerDefault;
+  const evalNamePrefix = `harness-evaluate-${safeId}-r${state.fix_round || 0}-`;
+  let reusedLiveContainer = false;
   try {
-    await spawnFn({
-      task: { ...task, task_type: 'harness_evaluate' },
-      prompt: evaluatePrompt,
-      worktreePath: state.worktreePath,
-      containerId,
-      env: {
-        ...baseEvalEnv,
-        BRAIN_URL: 'http://host.docker.internal:5221',
-        HARNESS_CALLBACK_URL: `http://host.docker.internal:5221/api/brain/harness/callback/${containerId}`,
-        DB: 'postgresql://host.docker.internal/cecelia',
-      },
-    });
-  } catch (err) {
-    return { evaluate_verdict: 'FAIL', evaluate_error: `spawn: ${err.message}` };
+    const live = await findLiveEval(evalNamePrefix, {});
+    if (live) {
+      console.warn(`[evaluator] 检测到同 (task=${task.id}, r${state.fix_round || 0}) 已有活 evaluate 容器 ${live} → 复用、跳过重 spawn（B-reentry 幂等）`);
+      containerId = live;
+      reusedLiveContainer = true;
+    }
+  } catch (e) {
+    console.warn(`[evaluator] 活容器检测失败（fail-open，正常 spawn）：${e.message}`);
   }
 
-  try {
-    await dbPool.query(
-      // B10: graph_name='harness-task' (统一 namespace) — evaluate_contract 是 task graph 内的节点。
-      // lookup router 用 harness-task graph compile，callback resume 用同一 thread_id 才能找到
-      // 真正 interrupt 等待的 state。
-      `INSERT INTO walking_skeleton_thread_lookup (container_id, thread_id, graph_name, status)
-       VALUES ($1, $2, 'harness-task', 'spawning')
-       ON CONFLICT (container_id) DO NOTHING`,
-      [containerId, threadId]
-    );
-  } catch (err) {
-    console.warn(`[harness-task.graph] evaluate thread_lookup INSERT failed cid=${containerId}: ${err.message}`);
+  if (!reusedLiveContainer) {
+    try {
+      await spawnFn({
+        task: { ...task, task_type: 'harness_evaluate' },
+        prompt: evaluatePrompt,
+        worktreePath: state.worktreePath,
+        containerId,
+        env: {
+          ...baseEvalEnv,
+          BRAIN_URL: 'http://host.docker.internal:5221',
+          HARNESS_CALLBACK_URL: `http://host.docker.internal:5221/api/brain/harness/callback/${containerId}`,
+          DB: 'postgresql://host.docker.internal/cecelia',
+        },
+      });
+    } catch (err) {
+      return { evaluate_verdict: 'FAIL', evaluate_error: `spawn: ${err.message}` };
+    }
+
+    try {
+      await dbPool.query(
+        // B10: graph_name='harness-task' (统一 namespace) — evaluate_contract 是 task graph 内的节点。
+        // lookup router 用 harness-task graph compile，callback resume 用同一 thread_id 才能找到
+        // 真正 interrupt 等待的 state。
+        `INSERT INTO walking_skeleton_thread_lookup (container_id, thread_id, graph_name, status)
+         VALUES ($1, $2, 'harness-task', 'spawning')
+         ON CONFLICT (container_id) DO NOTHING`,
+        [containerId, threadId]
+      );
+    } catch (err) {
+      console.warn(`[harness-task.graph] evaluate thread_lookup INSERT failed cid=${containerId}: ${err.message}`);
+    }
   }
 
   // Await callback via LangGraph interrupt (mirrors awaitCallbackNode pattern).

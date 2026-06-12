@@ -12,7 +12,7 @@
  *       JUDGE_STRICT=1 时改 fail-closed（裁判失败即终判 FAIL）。
  */
 
-import { readFile, writeFile, mkdir } from 'node:fs/promises';
+import { readFile, writeFile, mkdir, readdir, stat } from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
 
@@ -20,6 +20,9 @@ const DEFAULT_BASE_URL = 'https://toapis.com/v1';
 const DEFAULT_MODEL = 'deepseek-v4-flash';
 const DEFAULT_TIMEOUT_MS = 60_000;
 const TRANSCRIPT_CAP = 16_000;
+// agent 完整 stdout 转录上限（#3345 forensics 文件，比 callback 的 4KB tail 全；
+// 保留尾部 = 脚本执行的命令输出段通常在后半程）。
+const AGENT_STDOUT_CAP = 20_000;
 const TOAPIS_CREDS_FILE = path.join(os.homedir(), '.credentials', 'toapis.env');
 
 // ── 配置解析：env 优先 → ~/.credentials/toapis.env 兜底（容器内此文件 read-only mount） ──
@@ -75,10 +78,54 @@ export function parseGoldenPathSteps(prdText) {
   return steps;
 }
 
+// ── agent 完整 stdout 转录（#3345 forensics 文件） ────────────────────────────
+// evaluator 容器把 claude stdout tee 到 ${promptDir}/<taskId>.<runInstance>.stdout（#3345 命名协议）。
+// callback body 只回传该文件 last 4KB（entrypoint.sh tail -c 4000），裁判据此巧妇难为无米之炊。
+// 这里据 taskId 在 promptDir 里找最新 .stdout（evaluator 回调刚落盘 → 最新 mtime 即本次取证），
+// 读全文交给裁判。runInstance 由 docker-executor 随机生成且不回传，故按 taskId 前缀 + 最新 mtime 定位。
+export async function resolveStdoutFile({ promptDir, taskId }, deps = {}) {
+  if (!promptDir || !taskId) return null;
+  const listDirFn = deps.listDirFn || ((d) => readdir(d));
+  const statFn = deps.statFn || ((p) => stat(p));
+  let names;
+  try {
+    names = await listDirFn(promptDir);
+  } catch {
+    return null; // 目录不存在/不可读 → 退回 callback transcript
+  }
+  const prefix = `${taskId}.`;
+  const cands = (names || []).filter((n) => n.startsWith(prefix) && n.endsWith('.stdout'));
+  if (!cands.length) return null;
+  let best = null;
+  let bestM = -1;
+  for (const n of cands) {
+    const full = path.join(promptDir, n);
+    try {
+      const s = await statFn(full);
+      const m = s.mtimeMs || 0;
+      if (m > bestM) { bestM = m; best = full; }
+    } catch { /* 单文件 stat 失败 → 跳过 */ }
+  }
+  return best;
+}
+
+// 从 forensics stdout 文件内容提取可读转录：
+//   - --output-format json（单对象）→ 取 .result 叙述（去掉 usage/token 噪音）；
+//   - --output-format stream-json（NDJSON，skill 修好后含 tool_result 命令输出）/ 纯文本 → 原样返回。
+export function extractAgentTranscript(raw) {
+  const s = String(raw || '').trim();
+  if (!s) return '';
+  try {
+    const obj = JSON.parse(s);
+    if (obj && typeof obj.result === 'string') return obj.result;
+  } catch { /* 非单对象 JSON（NDJSON/纯文本）→ 原样 */ }
+  return s;
+}
+
 // ── 证据收集 ─────────────────────────────────────────────────────────────────
 export async function collectEvidence(ctx, deps = {}) {
   const readFileFn = deps.readFileFn || ((p) => readFile(p, 'utf8'));
-  const { worktreePath, sprintDir, transcript, brainResult } = ctx;
+  const { worktreePath, sprintDir, transcript, brainResult, promptDir, taskId } = ctx;
   let contractText = '';
   let prdText = '';
   if (worktreePath && sprintDir) {
@@ -95,18 +142,31 @@ export async function collectEvidence(ctx, deps = {}) {
       resolvedBrainResult = JSON.parse(await readFileFn(path.join(worktreePath, '.brain-result.json')));
     } catch { /* 读不到 → null */ }
   }
+  // agent 完整 stdout 转录（比 callback 4KB tail 全；找不到 → 退回 transcript，fail-open）。
+  let agentStdout = '';
+  try {
+    const stdoutFile = await resolveStdoutFile({ promptDir, taskId }, deps);
+    if (stdoutFile) {
+      agentStdout = extractAgentTranscript(await readFileFn(stdoutFile));
+    }
+  } catch { /* 取证文件读失败 → 退回 callback transcript */ }
+  const cappedStdout = agentStdout.length > AGENT_STDOUT_CAP
+    ? agentStdout.slice(-AGENT_STDOUT_CAP)
+    : agentStdout;
+
   const t = String(transcript || '');
   return {
     contractE2E: extractE2ESection(contractText),
     goldenPathSteps: parseGoldenPathSteps(prdText),
     transcript: t.length > TRANSCRIPT_CAP ? t.slice(-TRANSCRIPT_CAP) : t,
+    agentStdout: cappedStdout,
     brainResult: resolvedBrainResult,
   };
 }
 
 // ── 裁判 prompt ─────────────────────────────────────────────────────────────
 export function buildJudgePrompt(input) {
-  const { contractE2E, goldenPathSteps, agentVerdict, transcript, brainResult } = input;
+  const { contractE2E, goldenPathSteps, agentVerdict, transcript, agentStdout, brainResult } = input;
   const gpLines = (goldenPathSteps && goldenPathSteps.length)
     ? goldenPathSteps.map((s, i) => `${i + 1}. ${s}`).join('\n')
     : '（PRD 未声明 Golden Path 步骤）';
@@ -123,8 +183,10 @@ export function buildJudgePrompt(input) {
     '',
     `## 运动员自报 verdict：${agentVerdict}`,
     '',
-    '## 运动员执行证据（取证 stdout 转录 + .brain-result.json）',
-    '### transcript',
+    '## 运动员执行证据（agent 完整 stdout 转录 + callback 尾部 + .brain-result.json）',
+    '### agent 完整 stdout 转录（最权威；含其执行过程/命令输出——若 skill 已落盘）',
+    agentStdout || transcript || '（空）',
+    '### callback transcript（stdout 尾部，补充）',
     transcript || '（空）',
     '### .brain-result.json',
     brainResult ? JSON.stringify(brainResult).slice(0, 2000) : '（无）',
@@ -133,6 +195,9 @@ export function buildJudgePrompt(input) {
     '- 对 Golden Path 每一步，按顺序给出一条 coverage 条目（step 字段回显该步），passed=true/false。',
     '- 证据中能确证该步真实通过 → passed=true，evidence 引用证据原文片段；',
     '- 证据缺失/含糊/与该步无关/显示失败 → passed=false。',
+    '- **若 transcript/stdout 中已含某步骤的实际命令行 stdout/stderr（如测试输出、退出码、grep 命中），',
+    '  即视为该步已执行的证据 → passed=true，不要求运动员再逐行复述或粘贴一遍。**',
+    '- 但若证据中确实缺失某步的执行输出（只有运动员自述结论、无任何命令输出佐证）→ 该步 passed=false。',
     '- 任一 Golden Path 步骤 passed=false，或证据不足以支撑运动员的 PASS → 整体 verdict=FAIL。',
     '- 只有所有步骤都有确凿证据通过时才 verdict=PASS。',
     '',
@@ -244,7 +309,8 @@ async function persistJudgeArtifact(ctx, deps = {}) {
  * runJudgeGate — 独立裁判门。仅对 agent verdict===PASS 生效（运动员说 PASS 才需复核）。
  * 非 PASS（agent 已 FAIL）直接透传走现有 fix loop，不浪费裁判调用。
  *
- * @param {object} ctx  {agentVerdict, agentFeedback, transcript, brainResult, worktreePath, sprintDir, instanceLabel}
+ * @param {object} ctx  {agentVerdict, agentFeedback, transcript, brainResult, worktreePath, sprintDir, instanceLabel, promptDir, taskId}
+ *                       promptDir+taskId 用于定位 evaluator 完整 stdout 转录（#3345 forensics 文件）。
  * @param {object} opts {judgeFn, collectEvidence, strict, config, fetchFn, ...}
  * @returns {Promise<{verdict:'PASS'|'FAIL', feedback:string|null, judged:boolean, judgeError?:string}>}
  */
@@ -263,6 +329,8 @@ export async function runJudgeGate(ctx, opts = {}) {
     sprintDir: ctx.sprintDir,
     transcript: ctx.transcript,
     brainResult: ctx.brainResult,
+    promptDir: ctx.promptDir,
+    taskId: ctx.taskId,
   }, opts);
 
   // 证据门：无合同 E2E 段且无 Golden Path 步骤 → 裁判没有「该验什么」的独立基准，无法做覆盖对照
@@ -280,6 +348,7 @@ export async function runJudgeGate(ctx, opts = {}) {
       goldenPathSteps: ev.goldenPathSteps,
       agentVerdict,
       transcript: ev.transcript,
+      agentStdout: ev.agentStdout,
       brainResult: ev.brainResult,
     }, opts);
   } catch (err) {

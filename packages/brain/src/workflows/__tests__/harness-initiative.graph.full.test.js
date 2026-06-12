@@ -42,6 +42,7 @@ vi.mock('../../harness-credentials.js', () => ({ resolveGitHubToken: (...a) => m
 vi.mock('../../docker-executor.js', () => ({
   writeDockerCallback: (...a) => mockWriteCb(...a),
   executeInDocker: (...a) => mockSpawn(...a),
+  getHostPromptDir: () => '/tmp/cecelia-prompts',
 }));
 // Layer 3: harness-task sub-graph 现在 spawn-and-interrupt（spawn 节点用 docker run -d
 // detached + await_callback 节点 interrupt）。集成 e2e 没法在单进程内"等 callback router

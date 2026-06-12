@@ -1,37 +1,32 @@
 ---
-sprint_dir: sprints/06121644-judge-deepseek
+sprint_dir: sprints/06122058-judge-evidence
 ---
-# DoD — 独立验收裁判（DeepSeek via ToAPIs）judge-rework
+# DoD — 裁判证据供给 + evaluate 重入幂等（#3372 配套缺口）
 
-**范围**: `packages/brain/src/harness-judge.js`（裁判模块），`packages/brain/src/workflows/harness-task.graph.js`（evaluateContractNode 接入裁判门），`scripts/ops/sync-credentials.sh`（ToAPIs notesPlain 解析），`packages/engine/src/harness/{e2e-judge,evaluate,runner}.js`（传输换 toapis + 工具库归位 + 去 EVAL_LEGACY），`packages/brain/src/__tests__/harness-judge.test.js`（单测），`packages/brain/scripts/smoke/harness-judge-smoke.sh`（smoke）
+**范围**: `packages/brain/src/harness-judge.js`（证据收集纳入 agent 完整 stdout + prompt 接受命令证据），`packages/brain/src/workflows/harness-task.graph.js`（finalizeEvaluation 透传 promptDir/taskId；evaluate 重入活容器复用幂等门 + findLiveEvaluateContainerDefault），`packages/brain/src/docker-executor.js`（getHostPromptDir 导出），`packages/brain/src/__tests__/harness-judge.test.js` + `packages/brain/src/workflows/__tests__/harness-evaluate-reentry-idem.test.js`（单测）
 **大小**: M
 
 ---
 
 ## ARTIFACT 条目
 
-- [x] [ARTIFACT] `packages/brain/src/harness-judge.js` 存在，导出 `runJudgeGate`、`callDeepSeekJudge`、`validateCoverage`、`parseGoldenPathSteps`，模型 deepseek-v4-flash 且读 message.content 忽略 reasoning_content
-  Test: node -e "const c=require('fs').readFileSync('packages/brain/src/harness-judge.js','utf8');for(const s of ['runJudgeGate','callDeepSeekJudge','validateCoverage','parseGoldenPathSteps','deepseek-v4-flash','reasoning_content'])if(!c.includes(s))process.exit(1);console.log('OK')"
+- [x] [ARTIFACT] `harness-judge.js` 导出 `resolveStdoutFile` / `extractAgentTranscript`，collectEvidence 返回 `agentStdout`，buildJudgePrompt 含 agentStdout 段
+  Test: manual:node -e "const c=require('fs').readFileSync('packages/brain/src/harness-judge.js','utf8');for(const s of ['resolveStdoutFile','extractAgentTranscript','agentStdout','AGENT_STDOUT_CAP'])if(!c.includes(s))process.exit(1);console.log('OK')"
 
-- [x] [ARTIFACT] `evaluateContractNode` 接入独立裁判门：harness-task.graph.js import 并经 finalizeEvaluation 调用 runJudgeGate
-  Test: node -e "const c=require('fs').readFileSync('packages/brain/src/workflows/harness-task.graph.js','utf8');if(!c.includes('harness-judge.js'))process.exit(1);if(!c.includes('finalizeEvaluation'))process.exit(1);if(!c.includes('runJudgeGate'))process.exit(1);console.log('OK')"
+- [x] [ARTIFACT] `harness-task.graph.js` 导出 `findLiveEvaluateContainerDefault` 并接入 evaluate 复用门，finalizeEvaluation 透传 promptDir/taskId
+  Test: manual:node -e "const c=require('fs').readFileSync('packages/brain/src/workflows/harness-task.graph.js','utf8');for(const s of ['findLiveEvaluateContainerDefault','reusedLiveContainer','getHostPromptDir','promptDir:'])if(!c.includes(s))process.exit(1);console.log('OK')"
 
-- [x] [ARTIFACT] `scripts/ops/sync-credentials.sh` 含 sync_notes 解析 ToAPIs notesPlain（生成合法 toapis.env）
-  Test: node -e "const c=require('fs').readFileSync('scripts/ops/sync-credentials.sh','utf8');if(!c.includes('sync_notes'))process.exit(1);if(!c.includes('ToAPIs'))process.exit(1);if(!c.includes('NOTES'))process.exit(1);console.log('OK')"
-
-- [x] [ARTIFACT] `packages/engine/src/harness/e2e-judge.js` 传输层换 ToAPIs DeepSeek（去 Anthropic 直连）
-  Test: node -e "const c=require('fs').readFileSync('packages/engine/src/harness/e2e-judge.js','utf8');if(!c.includes('callDeepSeekLLM'))process.exit(1);if(!c.includes('chat/completions'))process.exit(1);if(c.includes('api.anthropic.com'))process.exit(1);console.log('OK')"
-
-- [x] [ARTIFACT] `packages/engine/src/harness/evaluate.js` 去除「移交执行权」回退开关接线（isLegacyMode / use_legacy_eval 判定）
-  Test: node -e "const c=require('fs').readFileSync('packages/engine/src/harness/evaluate.js','utf8');if(c.includes('isLegacyMode'))process.exit(1);if(c.includes('use_legacy_eval'))process.exit(1);console.log('OK')"
-
-- [x] [ARTIFACT] `packages/engine/src/harness/runner.js` 标注「可选的脚本化执行记录器，不替代 agent 执行」
-  Test: node -e "const c=require('fs').readFileSync('packages/engine/src/harness/runner.js','utf8');if(!c.includes('不替代'))process.exit(1);if(!c.includes('可选'))process.exit(1);console.log('OK')"
+- [x] [ARTIFACT] `docker-executor.js` 导出 `getHostPromptDir`（forensics stdout 目录 SSOT）
+  Test: manual:node -e "const c=require('fs').readFileSync('packages/brain/src/docker-executor.js','utf8');if(!c.includes('export function getHostPromptDir'))process.exit(1);console.log('OK')"
 
 ---
 
 ## BEHAVIOR 条目（内嵌可执行 manual: 命令）
 
-- [x] [BEHAVIOR] 三权分立裁判门：agent PASS + 裁判 FAIL/覆盖缺步 → 终判 FAIL（裁判优先）；裁判网络错 fail-open 保留 agent verdict；JUDGE_STRICT fail-closed；agent FAIL 不调裁判
-  Test: manual:node sprints/06121644-judge-deepseek/behaviors/b1-judge-gate.mjs
+- [x] [BEHAVIOR] 证据供给：Brain 据 promptDir/taskId 读 evaluator 完整 stdout 转录（#3345 forensics）填入 agentStdout 交裁判；forensics 缺失 fail-open 退回 callback transcript；裁判 prompt 声明「含命令 stdout 即视为执行证据」且保留「证据缺失→FAIL」红线
+  Test: manual:node sprints/06122058-judge-evidence/behaviors/b1-evidence-supply.mjs
+  期望: OK
+
+- [x] [BEHAVIOR] evaluate 重入幂等：findLiveEvaluateContainer 查同 (task, fix_round) 活容器，命中前缀 → 返回容器名供复用（跳过重 spawn），空/异前缀 → null（正常 spawn）
+  Test: manual:node sprints/06122058-judge-evidence/behaviors/b2-reentry-idem.mjs
   期望: OK
