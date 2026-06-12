@@ -1,0 +1,34 @@
+{
+  "initiative_id": "06120700-ci-defense-r3",
+  "journey_type": "autonomous",
+  "journey_type_reason": "全部为 packages/brain/scripts/ci/ 纯后端 CI 脚本 + packages/workflows/skills/__tests__/ 测试套件 + .github/workflows/brain-ci.yml，无 UI/agent 协议/engine hooks 路径",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "实现 Harness CI 防线三件套：changed-test-router + skill 契约测试套件 + contract-existence-check + brain-ci.yml 接线",
+      "scope": "新建 packages/brain/scripts/ci/changed-test-router.mjs（fs 依赖路由逻辑，对 evaluator SKILL.md 必须输出含 b31-eval-cookie-isolate 的 test ID 清单）；新建 packages/workflows/skills/__tests__/skill-contract.test.ts（4 skill 快照 + env_missing 篡改检测负测试，**必须**以 process.env.SKILLS_DIR ?? '<固定前缀>' 读取 skill 路径，禁止硬编码）；新建 packages/brain/scripts/ci/contract-existence-check.mjs（diff-fixture 读取，sprint 目录缺 contract-draft.md → exit 1 + 指明路径）；追加 .github/workflows/brain-ci.yml（监听 packages/workflows/skills/** 变更，**依次跑 changed-test-router 脚本与 skill-contract vitest**，yaml 中明确引用这两个守卫）",
+      "dod": [
+        "[ARTIFACT] packages/brain/scripts/ci/changed-test-router.mjs 存在且可执行",
+        "[ARTIFACT] packages/workflows/skills/__tests__/skill-contract.test.ts 存在且含 4 个 skill describe 块",
+        "[ARTIFACT] skill-contract.test.ts 源码含 SKILLS_DIR 环境变量读取（禁止硬编码路径）",
+        "[ARTIFACT] packages/brain/scripts/ci/contract-existence-check.mjs 存在且可执行",
+        "[ARTIFACT] .github/workflows/brain-ci.yml 存在",
+        "[BEHAVIOR] 守卫 1 — changed-test-router 对 evaluator SKILL.md 路径输出 ≥1 条 test ID 且含 b31-eval-cookie-isolate（exit 0 且 stdout 含已知依赖）",
+        "[BEHAVIOR] 守卫 2 — skill-contract.test.ts vitest 全绿（4 skill 快照通过，从 packages/brain/ 运行）",
+        "[BEHAVIOR] 守卫 3 — 仅删除 evaluator SKILLS_DIR 中 env_missing 段后 vitest 报红且输出含 'env_missing' 字面文本",
+        "[BEHAVIOR] 守卫 4a — contract-existence-check 缺 contract-draft.md → exit 非零 + 输出含 'contract-draft.md'",
+        "[BEHAVIOR] 守卫 4b — contract-existence-check 含 contract-draft.md → exit 0",
+        "[BEHAVIOR] 守卫 5 — brain-ci.yml yaml 语法通过（js-yaml）且含 packages/workflows/skills 触发路径且引用 changed-test-router 与 skill-contract"
+      ],
+      "files": [
+        "packages/brain/scripts/ci/changed-test-router.mjs",
+        "packages/workflows/skills/__tests__/skill-contract.test.ts",
+        "packages/brain/scripts/ci/contract-existence-check.mjs",
+        ".github/workflows/brain-ci.yml"
+      ],
+      "depends_on": [],
+      "complexity": "M",
+      "estimated_minutes": 90
+    }
+  ]
+}
