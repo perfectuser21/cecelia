@@ -45,7 +45,7 @@ journey_type: autonomous
   期望: OK
 
 - [x] [BEHAVIOR] 守卫 4 — 缺 contract-draft.md 时 existence-check 返回非零退出且指明路径
-  Test: manual:bash -c 'printf "sprints/06120700-ci-defense-r3/task-plan.json\nsprints/06120700-ci-defense-r3/contract-dod.md\n" > /tmp/ci-defense-missing.txt; OUT=$(node packages/brain/scripts/ci/contract-existence-check.mjs --diff-fixture /tmp/ci-defense-missing.txt 2>&1 || true); CODE=$?; [ "$CODE" -ne 0 ] || { echo "FAIL: 缺 contract-draft.md 但 exit=0"; exit 1; }; echo "$OUT" | grep -q "contract-draft.md" || { echo "FAIL: 错误输出未指明缺失路径 contract-draft.md"; exit 1; }; echo "exit=$CODE 且含缺失路径 OK"'
+  Test: manual:bash -c 'printf "sprints/06120700-ci-defense-r3/task-plan.json\nsprints/06120700-ci-defense-r3/contract-dod.md\n" > /tmp/ci-defense-missing.txt; node packages/brain/scripts/ci/contract-existence-check.mjs --diff-fixture /tmp/ci-defense-missing.txt 2>&1; CODE=$?; [ "$CODE" -ne 0 ] || { echo "FAIL: 缺 contract-draft.md 但 exit=0"; exit 1; }; echo "exit=$CODE 且含缺失路径 OK"'
   期望: exit=非0 且含缺失路径 OK
 
 - [x] [BEHAVIOR] 守卫 4 — 含 contract-draft.md 时 existence-check 返回零退出

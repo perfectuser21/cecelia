@@ -269,8 +269,8 @@ echo "✅ CI 防线三件套 E2E 全部验证通过"
 
 | 功能 | Test File | BEHAVIOR 覆盖 | 预期红证据 |
 |---|---|---|---|
-| CLI 脚本（router + existence-check） | `tests/ci-defense.test.ts` | 守卫 1/4a/4b/5 | → scripts not found → FAIL × 3 |
-| skill 契约套件（通过 BEHAVIOR 命令驱动） | `packages/workflows/skills/__tests__/skill-contract.test.ts`（ARTIFACT） | 守卫 2/3 | → file not found → FAIL × 2 |
+| CLI 脚本（router + existence-check） | `tests/ci-defense.test.ts` | b31-eval-cookie-isolate/contract-draft.md/brain-ci.yml | → scripts not found → FAIL × 3 |
+| skill 契约套件 | `../../packages/workflows/skills/__tests__/skill-contract.test.ts` | env_missing/B-1.6/ffprobe | → file not found → FAIL × 2 |
 
 **Planner 实现要求**（合同硬约束，Reviewer 第 3 条 test_is_red 明确）：
 - `skill-contract.test.ts` **必须**以 `process.env.SKILLS_DIR ?? '<固定前缀>'` 方式读取 skill 文件路径，**禁止硬编码绝对路径**。否则守卫3的 `SKILLS_DIR="$TMP"` 临时目录注入无效，vitest 读原始文件全绿，篡改必红验证静默 false pass。
