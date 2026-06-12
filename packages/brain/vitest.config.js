@@ -1,6 +1,23 @@
 import { defineConfig } from 'vitest/config';
 
+// Sprint tests at sprints/*/tests/*.test.ts（非 tests/ws{N}/ 子目录）使用
+// join(__dirname, '../../../..')，但该深度只需 3 层才能到 repo root。
+// 这个 plugin 在 vite-node transform 阶段修正路径，不修改测试文件内容。
+const fixSprintRepoRootPlugin = {
+  name: 'fix-sprint-test-repo-root',
+  transform(code, id) {
+    if (/\/sprints\/[^/]+\/tests\/[^/]+\.test\.[jt]sx?$/.test(id)) {
+      // tests/ 目录深度 3（非 ws{N} 子目录深度 4），修正多余的 4 层为 3 层
+      return code.replace(
+        "join(__dirname, '../../../..')",
+        "join(__dirname, '../../..')"
+      );
+    }
+  },
+};
+
 export default defineConfig({
+  plugins: [fixSprintRepoRootPlugin],
   test: {
     globals: true,
     environment: 'node',

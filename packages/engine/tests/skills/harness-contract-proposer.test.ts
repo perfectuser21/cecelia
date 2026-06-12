@@ -49,4 +49,12 @@ describe('harness-contract-proposer 结构', () => {
     const fm = content.slice(0, fmEnd);
     expect(fm).toMatch(/5\.0\.0.*test|5\.0\.0.*\.test\.ts/i);
   });
+
+  it.skipIf(!skillExists)('含「领域验证规则」段（v9.1 强制 — 与 evaluator 死规则呼应）', () => {
+    // v9.1 新增：视频 ffprobe / 发布真实出现 / DB 时间窗 / UI 可见断言
+    // proposer 在合同阶段必须写进去，否则 evaluator 执行时会因 env_missing/弱 oracle 直接 FAIL
+    expect(content).toMatch(/领域验证/);
+    // 具体领域断言（至少覆盖视频类 oracle）
+    expect(content).toMatch(/ffprobe|视频.*流|音频.*流|时长/);
+  });
 });

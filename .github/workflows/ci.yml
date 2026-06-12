@@ -26,6 +26,7 @@ jobs:
       compose: ${{ steps.detect.outputs.compose }}
       dod: ${{ steps.detect.outputs.dod }}
       quality: ${{ steps.detect.outputs.quality }}
+      skills: ${{ steps.detect.outputs.skills }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -49,6 +50,7 @@ jobs:
           echo "workspace=$(echo "$CHANGED" | grep -qE '^apps/' && echo true || echo false)" >> $GITHUB_OUTPUT
           echo "compose=$(echo "$CHANGED" | grep -qE '^(docker-compose\.yml|packages/brain/Dockerfile|scripts/brain-(docker-up|docker-down|build)\.sh)$' && echo true || echo false)" >> $GITHUB_OUTPUT
           echo "dod=$(echo "$CHANGED" | grep -qE '^(DoD\.md|DoD\.cp-|task-card\.md|task-card-|\.task-|\.dod-|TASK_CARD\.cp-|PRD\.cp-)' && echo true || echo false)" >> $GITHUB_OUTPUT
+          echo "skills=$(echo "$CHANGED" | grep -q '^packages/workflows/skills/' && echo true || echo false)" >> $GITHUB_OUTPUT
 
   # ─── Docker Infrastructure Smoke ──────────────────────────
   # 保护 Brain 容器化基础设施（compose / Dockerfile / up/down 脚本）
@@ -324,6 +326,63 @@ jobs:
           fi
       - name: E2E Integrity Check
         run: bash packages/engine/scripts/e2e-integrity-check.sh
+
+  # ─── Skill 契约测试（packages/workflows/skills/** 变更时触发）─────────
+  # 解决：vitest --changed 不感知 fs 读取型测试（改 SKILL.md 但不改 .test.ts → --changed 漏跑）
+  # changed-test-router.mjs：扫描 readFileSync 路径建立 skill 文件→测试文件映射
+  # check-contract-exists.mjs：检查 harness PR 是否包含 contract-draft.md
+  skill-contract-tests:
+    needs: changes
+    if: needs.changes.outputs.skills == 'true' || needs.changes.outputs.engine == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+      - run: npm ci
+      - run: cd packages/engine && npm ci
+      - name: Skill 变更路由检测（changed-test-router）
+        if: needs.changes.outputs.skills == 'true'
+        run: |
+          BASE_REF="origin/${{ github.base_ref || 'main' }}"
+          git fetch origin "${{ github.base_ref || 'main' }}" --quiet 2>/dev/null || true
+          SKILL_FILES=$(git diff --name-only "$BASE_REF"...HEAD 2>/dev/null \
+            | grep '^packages/workflows/skills/' || true)
+          if [ -z "$SKILL_FILES" ]; then
+            echo "⏭️  无 skill 文件变更，跳过路由检测"
+            exit 0
+          fi
+          echo "📡 变更的 skill 文件："
+          echo "$SKILL_FILES"
+          TESTS=$(node packages/brain/scripts/ci/changed-test-router.mjs \
+            --files "$(echo "$SKILL_FILES" | tr '\n' ',' | sed 's/,$//')")
+          if [ -z "$TESTS" ]; then
+            echo "✅ 无 fs 依赖型测试关联此 skill 变更"
+          else
+            echo "🧪 关联测试文件（需补跑）："
+            echo "$TESTS"
+            echo "运行关联测试..."
+            cd packages/engine && npx vitest run $TESTS --reporter=verbose
+          fi
+      - name: Skill 契约测试套件（skill-contract-tests）
+        run: cd packages/engine && npx vitest run tests/skills/ --reporter=verbose
+      - name: 合同存在性检查（check-contract-exists）
+        run: |
+          BASE_REF="origin/${{ github.base_ref || 'main' }}"
+          git fetch origin "${{ github.base_ref || 'main' }}" --quiet 2>/dev/null || true
+          CHANGED_FILES=$(git diff --name-only "$BASE_REF"...HEAD 2>/dev/null || echo "")
+          # 只对 harness PR（含 sprints/ 变更）检查合同文件存在性
+          if echo "$CHANGED_FILES" | grep -q '^sprints/'; then
+            echo "$CHANGED_FILES" | node packages/brain/scripts/ci/check-contract-exists.mjs
+            echo "✅ 合同文件检查通过"
+          else
+            echo "⏭️  非 harness PR（无 sprints/ 变更），跳过合同存在性检查"
+          fi
 
   # ─── Engine: Shell Tests (stop hook 套 — v18.21.0 激活) ──────
   # vitest 不识别 .test.sh，本 job 跑所有 unit/integration/integrity/smoke

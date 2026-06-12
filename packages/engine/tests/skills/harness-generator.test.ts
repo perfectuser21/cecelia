@@ -73,4 +73,13 @@ describe('harness-generator v6.0 结构', () => {
     const fm = content.slice(0, fmEnd);
     expect(fm).toMatch(/5\.0\.0.*(superpowers|TDD|Red.*Green|两次 commit)/i);
   });
+
+  it.skipIf(!skillExists)('v7.5.0 红线：禁止可执行 gh pr merge（含 --auto）', () => {
+    // v7.5.0 删除了 Step 7.5 的 gh pr merge --auto 自合并。
+    // merge 由 Brain mergePrNode 在 evaluator PASS 后执行；generator 自行 merge 绕过 evaluator gate。
+    // 本断言验证 skill 中明确说明了「禁止 gh pr merge」这条红线。
+    expect(content).toContain('gh pr merge');
+    // 必须是「禁止」语境，不能是执行命令（如果 content 包含 `gh pr merge` 且没有禁止语境则失败）
+    expect(content).toMatch(/禁止.*gh pr merge|gh pr merge.*禁止|🚫.*gh pr merge/s);
+  });
 });
