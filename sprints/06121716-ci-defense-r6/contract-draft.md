@@ -206,8 +206,10 @@ fi
 echo "--- Step 4: 合同存在性检查 ---"
 printf "sprints/06121716-ci-defense-r6/contract-draft.md\npackages/brain/src/foo.js\n" | \
   node packages/brain/scripts/ci/check-contract-exists.mjs || { echo "FAIL: step4a - 完整清单应退出码 0"; exit 1; }
-printf "packages/brain/src/foo.js\npackages/brain/src/bar.js\n" | \
-  node packages/brain/scripts/ci/check-contract-exists.mjs && { echo "FAIL: step4b - 缺合同清单应非零退出"; exit 1; } || true
+if printf 'packages/brain/src/foo.js\npackages/brain/src/bar.js\n' | \
+   node packages/brain/scripts/ci/check-contract-exists.mjs 2>/dev/null; then
+  echo "FAIL: step4b - 缺合同清单应非零退出"; exit 1
+fi
 echo "✅ Step 4 通过"
 
 # Step 5: ci.yml 验证

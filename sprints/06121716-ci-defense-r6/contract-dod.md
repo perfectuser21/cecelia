@@ -32,11 +32,11 @@ journey_type: dev_pipeline
   期望: OK
 
 - [x] [BEHAVIOR] skill 契约测试套件全绿——实际运行 vitest 验证 Step2（非仅文件内容检查）
-  Test: manual:bash -c 'VITEST_OUT=$(npx vitest run packages/engine/tests/skills/ 2>&1); VITEST_EXIT=$?; [ "$VITEST_EXIT" = "0" ] || { echo "FAIL: skill契约测试失败 exit=$VITEST_EXIT"; echo "$VITEST_OUT"; exit 1; }; echo OK'
+  Test: manual:bash -c 'VITEST_OUT=$(cd packages/engine && npx vitest run tests/skills/harness-evaluator.test.ts tests/skills/harness-contract-reviewer.test.ts tests/skills/harness-generator.test.ts tests/skills/harness-contract-proposer.test.ts tests/skills/harness-v5-ci-checks.test.ts 2>&1); VITEST_EXIT=$?; [ "$VITEST_EXIT" = "0" ] || { echo "FAIL: skill契约测试失败 exit=$VITEST_EXIT"; echo "$VITEST_OUT"; exit 1; }; echo OK'
   期望: OK
 
 - [x] [BEHAVIOR] 篡改 evaluator skill 删除 env_missing 段后契约测试报红（Step3 验证）
-  Test: manual:bash -c 'SKILL_ORIG="$HOME/.claude/skills/harness-evaluator/SKILL.md"; if [ ! -f "$SKILL_ORIG" ]; then echo "SKIP: skill未安装（前提条件缺失，等同it.skipIf(!skillExists)）"; exit 0; fi; BACKUP=$(mktemp); cp "$SKILL_ORIG" "$BACKUP"; sed -i.bak "/env_missing/d" "$SKILL_ORIG"; rm -f "${SKILL_ORIG}.bak"; TAMPER_OUT=$(npx vitest run packages/engine/tests/skills/harness-evaluator.test.ts 2>&1); TAMPER_EXIT=$?; cp "$BACKUP" "$SKILL_ORIG"; rm -f "$BACKUP"; [ "$TAMPER_EXIT" != "0" ] || { echo "FAIL: 篡改后测试应红"; exit 1; }; echo "$TAMPER_OUT" | grep -q "env_missing" || { echo "FAIL: 红色报错未指明env_missing"; exit 1; }; echo OK'
+  Test: manual:bash -c 'SKILL_ORIG="$HOME/.claude/skills/harness-evaluator/SKILL.md"; if [ ! -f "$SKILL_ORIG" ]; then echo "SKIP: skill未安装（前提条件缺失，等同it.skipIf(!skillExists)）"; exit 0; fi; BACKUP=$(mktemp); cp "$SKILL_ORIG" "$BACKUP"; sed -i.bak "/env_missing/d" "$SKILL_ORIG"; rm -f "${SKILL_ORIG}.bak"; TAMPER_OUT=$(cd packages/engine && npx vitest run tests/skills/harness-evaluator.test.ts 2>&1); TAMPER_EXIT=$?; cp "$BACKUP" "$SKILL_ORIG"; rm -f "$BACKUP"; [ "$TAMPER_EXIT" != "0" ] || { echo "FAIL: 篡改后测试应红"; exit 1; }; echo "$TAMPER_OUT" | grep -q "env_missing" || { echo "FAIL: 红色报错未指明env_missing"; exit 1; }; echo OK'
   期望: OK
   gate-allow: cheat/exit-0-skip skill文件不存在是evaluator前提条件缺失而非代码缺陷，与it.skipIf(!skillExists)语义等同
 
