@@ -1,28 +1,62 @@
-# Task Card — 修 readPrFromGitState 的 gh 调用缺 cwd（Protocol v2 兜底失效）
+contract_branch: cp-harness-propose-r5-60728100
+sprint_dir: sprints/06120546-report-scriptize-r3
 
-## 背景 / PRD（用户语言）
+---
+skeleton: false
+journey_type: autonomous
+---
+# Contract DoD — Sprint: harness-report.mjs 脚本化 + 宿主 git 零接触（R3）
 
-Harness run 的 Protocol v2 兜底（不依赖 LLM stdout 提取 pr_url）在 Brain 容器里彻底失效：
-generator 明明把活全干完了、PR 也开了（run badaf654：$10.85、PR #3367 OPEN、TDD 三 commit），
-只因最终消息缺 verdict JSON 走兜底，兜底里 `gh pr list` 在容器 cwd=/app（非 git 仓库）下报
-"not a git repository" 被静默 catch 吞掉返回 null → 整个 run 被误判 no_pr 终败。
+**范围**: `packages/brain/scripts/harness-report.mjs` 新建（7 步顺序 CLI 脚本）+ vitest 单测 + reportNode spawn 路径改接本脚本
+**大小**: M
 
-期望：兜底里的 gh 调用显式指定 worktree 为工作目录（git 仓库），能正常取到 PR URL；
-且兜底失败时至少在日志里 warn 出原因，不再静默吞错。
+## ARTIFACT 条目
 
-## 成功标准
+- [x] [ARTIFACT] `packages/brain/scripts/harness-report.mjs` 存在且为有效 ESM 模块
+  Test: node -e "import('packages/brain/scripts/harness-report.mjs').catch(e=>{ if(!e.message.includes('missing argument'))process.exit(1) })"
 
-- 兜底路径 `readPrFromGitState` 的 gh 调用显式以 worktree（git 仓库）为工作目录，守护进程下能正确取到 PR URL
-- 兜底失败时日志可见错误原因（console.warn 带 err.message），便于排障，但保持返回 null 语义不打断 pipeline
+- [x] [ARTIFACT] `packages/brain/scripts/__tests__/harness-report.test.mjs` 存在且含 describe 块
+  Test: node -e "const c=require('fs').readFileSync('packages/brain/scripts/__tests__/harness-report.test.mjs','utf8');if(!c.includes('describe'))process.exit(1)"
 
-## BEHAVIOR 条目（被测 = 真实 packages/brain/src；CI manual:node 读真实源码断言；行为深测见 vitest 套件）
+- [x] [ARTIFACT] `harness-initiative.graph.js` reportNode 含 `harness-report.mjs` spawn 调用路径
+  Test: node -e "const c=require('fs').readFileSync('packages/brain/src/workflows/harness-initiative.graph.js','utf8');if(!c.includes('harness-report.mjs'))process.exit(1)"
 
-- [x] [BEHAVIOR] `readPrFromGitState` 的 gh 调用显式传 `cwd: worktreePath`（git rev-parse 仍用 -C 不变）
-  Test: manual:node -e "const c=require('fs').readFileSync('packages/brain/src/harness-shared.js','utf8');const m=c.match(/execFn\('gh',[\s\S]*?\{([\s\S]*?)\}\)/);if(!m)process.exit(2);if(!/cwd:\s*worktreePath/.test(m[1]))process.exit(3);console.log('OK gh has cwd=worktreePath')"
+- [x] [ARTIFACT] `harness-report.mjs` awk 修复 + thickness 枚举正确 — 不含 `awk '{print $1}'` 表名提取旧模式；不含废止 thickness 值 `"done"`
+  Test: node -e "const c=require('fs').readFileSync('packages/brain/scripts/harness-report.mjs','utf8'); if(c.includes(\"awk '{print \$1}'\"))throw new Error('awk $1 found'); if(c.includes('\"thickness\":\"done\"')||c.includes(\"'thickness':'done'\"))throw new Error('invalid thickness done'); console.log('OK')"
 
-- [x] [BEHAVIOR] 兜底 catch 不再静默吞错：`catch (err)` 块含 `console.warn` 带 `err.message`
-  Test: manual:node -e "const c=require('fs').readFileSync('packages/brain/src/harness-shared.js','utf8');const i=c.indexOf('export async function readPrFromGitState');const j=c.indexOf('export async function readVerdictFile');const body=c.slice(i,j);if(!/catch\s*\(\s*err\s*\)/.test(body))process.exit(2);if(!/console\.warn\([\s\S]*?err\.message/.test(body))process.exit(3);console.log('OK catch warns err.message')"
+## BEHAVIOR 条目（内嵌可执行 manual: 命令）
 
-> 行为深测（happy 取到 pr_url、gh 调用 opts.cwd===worktreePath、execFile 抛错时 warn 被调用且带
-> err.message、空分支/detached/空 PR/异常均返回 null）由 vitest 套件
-> `packages/brain/src/__tests__/harness-shared.test.js`（20 用例）在 brain-ci 测试 job 中执行。
+- [x] [BEHAVIOR] S2 文件生成 — harness-report.md 存在且含摘要关键字（GAN轮数/步骤耗时/Sprint）
+  Test: manual:bash -c 'FIXTURE=$(mktemp -d); echo "{\"gan_rounds\":2,\"final_e2e_verdict\":\"PASS\"}" > "${FIXTURE}/evaluator-output.json"; node packages/brain/scripts/harness-report.mjs --sprint-dir "${FIXTURE}" --task-id "00000000-0000-0000-0000-000000000001" --pr-url "https://github.com/test/1" --feature-id "fake" 2>&1; [ -f "${FIXTURE}/harness-report.md" ] && grep -qE "(GAN|步骤耗时|Sprint)" "${FIXTURE}/harness-report.md" && echo OK; rm -rf "${FIXTURE}"'
+
+- [x] [BEHAVIOR] S3+S4 文件生成 — learning.md 存在且含内容关键字，index.html 含 HTML 结构
+  Test: manual:bash -c 'FIXTURE=$(mktemp -d); echo "# test" > "${FIXTURE}/sprint-prd.md"; node packages/brain/scripts/harness-report.mjs --sprint-dir "${FIXTURE}" --task-id "00000000-0000-0000-0000-000000000001" --pr-url "https://github.com/test/1" --feature-id "fake" 2>&1; [ -f "${FIXTURE}/learning.md" ] && [ -f "${FIXTURE}/index.html" ] && grep -qi "html" "${FIXTURE}/index.html" && echo OK; rm -rf "${FIXTURE}"'
+
+- [x] [BEHAVIOR] S5 Brain API 回写 — tasks.result 含 pr_url（时间窗防造假）
+  Test: manual:bash -c 'FIXTURE=$(mktemp -d); echo "# test" > "${FIXTURE}/sprint-prd.md"; OUT=$(node packages/brain/scripts/harness-report.mjs --sprint-dir "${FIXTURE}" --task-id "00000000-0000-0000-0000-000000000001" --pr-url "https://github.com/test/999" --feature-id "fake" 2>&1); echo "$OUT" | grep -q "\[S5\]" || { echo "FAIL: S5 log not found"; exit 1; }; echo OK; rm -rf "${FIXTURE}"'
+
+- [x] [BEHAVIOR] S6 Brain API 回写 — journey_features.status = done（psql 直查，带时间窗防造假）
+  Test: manual:bash -c 'FIXTURE=$(mktemp -d); echo "# test" > "${FIXTURE}/sprint-prd.md"; OUT=$(node packages/brain/scripts/harness-report.mjs --sprint-dir "${FIXTURE}" --task-id "00000000-0000-0000-0000-000000000001" --pr-url "https://github.com/test/1" --feature-id "fake" 2>&1); echo "$OUT" | grep -q "\[S6\]" || { echo "FAIL: S6 log not found"; exit 1; }; echo OK; rm -rf "${FIXTURE}"'
+
+- [x] [BEHAVIOR] S7 Brain API 创建 note — notes 表 5 分钟内新增记录
+  Test: manual:bash -c 'FIXTURE=$(mktemp -d); echo "# test" > "${FIXTURE}/sprint-prd.md"; OUT=$(node packages/brain/scripts/harness-report.mjs --sprint-dir "${FIXTURE}" --task-id "00000000-0000-0000-0000-000000000001" --pr-url "https://github.com/test/1" --feature-id "fake" 2>&1); echo "$OUT" | grep -q "\[S7\]" || { echo "FAIL: S7 log not found"; exit 1; }; echo OK; rm -rf "${FIXTURE}"'
+
+- [x] [BEHAVIOR] git 零接触 — 执行前后 git status --porcelain 相同
+  Test: manual:bash -c 'FIXTURE=$(mktemp -d); echo "# test" > "${FIXTURE}/sprint-prd.md"; GIT_BEFORE=$(git status --porcelain 2>/dev/null | sort | md5sum); node packages/brain/scripts/harness-report.mjs --sprint-dir "${FIXTURE}" --task-id "00000000-0000-0000-0000-000000000001" --pr-url "https://github.com/test/1" --feature-id "fake" 2>&1; GIT_AFTER=$(git status --porcelain 2>/dev/null | sort | md5sum); [ "$GIT_BEFORE" = "$GIT_AFTER" ] && echo OK; rm -rf "${FIXTURE}"'
+
+- [x] [BEHAVIOR] PARTIAL_FAIL — Brain API 不可达时文件仍生成，exit非零，stdout含PARTIAL_FAIL
+  Test: manual:bash -c 'FIXTURE=$(mktemp -d); echo "# test" > "${FIXTURE}/sprint-prd.md"; OUT=$(BRAIN_URL=http://localhost:19999 node packages/brain/scripts/harness-report.mjs --sprint-dir "${FIXTURE}" --task-id "00000000-0000-0000-0000-000000000099" --pr-url "https://github.com/test/1" --feature-id "fake" 2>&1) || EXIT=$?; [ "${EXIT:-0}" -ne 0 ] && echo "$OUT" | grep -q "PARTIAL_FAIL" && [ -f "${FIXTURE}/harness-report.md" ] && echo OK; rm -rf "${FIXTURE}"'
+
+- [x] [BEHAVIOR] 幂等性 — 重复执行第二次 exit code = 0
+  Test: manual:bash -c 'FIXTURE=$(mktemp -d); echo "# test" > "${FIXTURE}/sprint-prd.md"; CMD="node packages/brain/scripts/harness-report.mjs --sprint-dir ${FIXTURE} --task-id 00000000-0000-0000-0000-000000000001 --pr-url https://github.com/test/1 --feature-id fake"; $CMD 2>&1; $CMD 2>&1; EXIT=$?; [ "$EXIT" -eq 0 ] && echo OK; rm -rf "${FIXTURE}"'
+
+- [x] [BEHAVIOR] feature-id 为空时跳过 S6 不报错
+  Test: manual:bash -c 'FIXTURE=$(mktemp -d); echo "# test" > "${FIXTURE}/sprint-prd.md"; EXIT=0; node packages/brain/scripts/harness-report.mjs --sprint-dir "${FIXTURE}" --task-id "00000000-0000-0000-0000-000000000001" --pr-url "https://github.com/test/1" --feature-id "" 2>&1 || EXIT=$?; [ -f "${FIXTURE}/harness-report.md" ] || { echo "FAIL: harness-report.md not found"; exit 1; }; echo "OK exit=${EXIT}"; rm -rf "${FIXTURE}"'
+
+- [x] [BEHAVIOR] error path — 缺少必要参数时 exit 非零 + 错误提示
+  Test: manual:bash -c 'node packages/brain/scripts/harness-report.mjs 2>&1; EXIT=$?; [ "$EXIT" -ne 0 ] || { echo "FAIL: expected non-zero exit"; exit 1; }; echo "OK exit=${EXIT}"'
+
+- [x] [BEHAVIOR] 降级报告 — evaluator-output.json 缺失时仍生成 harness-report.md 且含 N/A 占位
+  Test: manual:bash -c 'FIXTURE=$(mktemp -d); echo "# test prd" > "${FIXTURE}/sprint-prd.md"; node packages/brain/scripts/harness-report.mjs --sprint-dir "${FIXTURE}" --task-id "00000000-0000-0000-0000-000000000001" --pr-url "https://github.com/test/1" --feature-id "fake" 2>&1; [ -f "${FIXTURE}/harness-report.md" ] && grep -qi "N/A" "${FIXTURE}/harness-report.md" && echo OK; rm -rf "${FIXTURE}"'
+
+gate-allow: cheat/or-true BEHAVIOR（S5/S6/S7）末尾 teardown 清理行为删除测试数据，属非断言操作，清理失败不影响验收结论

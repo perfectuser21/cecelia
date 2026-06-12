@@ -1,0 +1,36 @@
+{
+  "initiative_id": "60728100-439b-43c3-9f3f-df2a7c385b69",
+  "journey_type": "autonomous",
+  "journey_type_reason": "纯后端脚本（packages/brain/scripts/）+ Brain API 回写，无 UI 交互",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "实现 harness-report.mjs 7 步顺序报告脚本 + reportNode spawn 改接 + 单测",
+      "scope": "新建 packages/brain/scripts/harness-report.mjs（7 步：读产物→生成 harness-report.md/learning.md/index.html→PATCH tasks result→PATCH journey_features status=done→POST notes）；新建 packages/brain/scripts/__tests__/harness-report.test.mjs；修改 harness-initiative.graph.js reportNode spawn 路径改为执行本脚本；awk 表名提取用 $2（禁 $1）；S6 仅更新 status=done，不写 thickness='done'（无效值）；任何 git 操作均不允许在脚本内部执行",
+      "dod": [
+        "[ARTIFACT] packages/brain/scripts/harness-report.mjs 存在且为有效 ESM 模块",
+        "[ARTIFACT] packages/brain/scripts/__tests__/harness-report.test.mjs 存在且含 describe 块",
+        "[ARTIFACT] harness-initiative.graph.js reportNode 含 harness-report.mjs spawn 调用路径",
+        "[ARTIFACT] harness-report.mjs 不含 awk '{print $1}' 且不含 thickness='done'（废止值）",
+        "[BEHAVIOR] S2 harness-report.md 生成且含摘要关键字",
+        "[BEHAVIOR] S3 learning.md 存在且含内容关键字（sprint/learning/placeholder/report）",
+        "[BEHAVIOR] S4 index.html 存在且含 HTML 结构",
+        "[BEHAVIOR] S5 tasks.result->>pr_url 非空（5 分钟时间窗内写入）",
+        "[BEHAVIOR] S6 journey_features.status = done（psql 直查，带时间窗防造假）",
+        "[BEHAVIOR] S7 notes 表 5 分钟内新增记录",
+        "[BEHAVIOR] 幂等性：重复执行第二次 exit 0",
+        "[BEHAVIOR] git 零接触：git status --porcelain 执行前后相等",
+        "[BEHAVIOR] PARTIAL_FAIL：Brain API 不可达时文件仍生成，exit 非零，stdout 含 PARTIAL_FAIL",
+        "[BEHAVIOR] 降级报告：evaluator-output.json 缺失时 harness-report.md 仍生成且含 N/A 占位"
+      ],
+      "files": [
+        "packages/brain/scripts/harness-report.mjs",
+        "packages/brain/scripts/__tests__/harness-report.test.mjs",
+        "packages/brain/src/workflows/harness-initiative.graph.js"
+      ],
+      "depends_on": [],
+      "complexity": "M",
+      "estimated_minutes": 90
+    }
+  ]
+}

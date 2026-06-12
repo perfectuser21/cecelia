@@ -1433,7 +1433,8 @@ export async function reportNode(state, opts = {}) {
   } catch (err) {
     console.warn(`[harness-initiative.graph] reportNode db update failed: ${err.message}`);
   }
-  // 派 harness_report 子任务（6 步交付：Notion / 飞书 / harness-report.md）
+  // 派 harness_report 子任务 — 执行 packages/brain/scripts/harness-report.mjs 7步报告脚本
+  // （脚本路径: packages/brain/scripts/harness-report.mjs）
   try {
     await dbPool.query(
       `INSERT INTO tasks (title, description, task_type, status, priority, payload)
@@ -1442,6 +1443,7 @@ export async function reportNode(state, opts = {}) {
         `[Harness Report] ${state.task?.title || state.initiativeId}`,
         `Auto-spawned by reportNode for initiative ${state.initiativeId}`,
         JSON.stringify({
+          script_path: 'packages/brain/scripts/harness-report.mjs',
           initiative_id: state.initiativeId,
           final_e2e_verdict: computedVerdict,
           sprint_dir: state.sprintDir,
