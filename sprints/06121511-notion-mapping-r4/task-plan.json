@@ -1,0 +1,35 @@
+{
+  "initiative_id": "2287a04a",
+  "journey_type": "autonomous",
+  "journey_type_reason": "纯 Brain 后端 API 修复（packages/brain/src/），无 UI 交互，所有验证通过 curl + psql + Notion API",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "Brain↔Notion 属性映射修复（R4）— schema 动态查询 + 属性降级",
+      "scope": "1) 新建 lib/notion-schema.js（fetchDBSchema + filterBySchema + 5min 缓存）；2) notes.js /notes 端点查 AI Notes DB schema，Initiative ID 不在 schema 时跳过 + response.warnings；3) notes.js /notion/task 端点查 TASKS_DB schema，用 schema 中 title property 的真实名称写入；4) notion-push-sync.js pushJourneyStepLinks 查 STEP_LINKS_DB schema，过滤 Order 等不存在属性；5) 更新 notes-notion-task.test.js + notion-push-sync.test.js 加降级回归测试",
+      "dod": [
+        "[ARTIFACT] packages/brain/src/lib/notion-schema.js 含 fetchDBSchema、filterBySchema、fetchedAt",
+        "[ARTIFACT] packages/brain/src/routes/notes.js 含 schema 查询 + warnings 字段",
+        "[ARTIFACT] packages/brain/src/notion-push-sync.js step_link 不再硬编码 Order",
+        "[ARTIFACT] packages/brain/src/__tests__/routes/notes-notion-task.test.js 含 Initiative ID 降级回归测试",
+        "[ARTIFACT] packages/brain/src/__tests__/notion-push-sync.test.js 含 Order 降级回归测试",
+        "[BEHAVIOR] POST /notes 带 initiative_id → 201 + id/url/title/warnings 全字段类型正确 + 禁用字段 warning/skipped/errors 不存在 + keys == [id,title,url,warnings]",
+        "[BEHAVIOR] POST /notes 负向 → 201（非 502）+ warnings.length >= 1",
+        "[BEHAVIOR] POST /notion/task → 201 + keys == [id,title,url]，无 warnings",
+        "[BEHAVIOR] error path: POST /notes 缺 title → 400 + error string",
+        "[BEHAVIOR] error path: POST /notion/task 缺 title → 400",
+        "[BEHAVIOR] step_link Order 降级单测全 PASS"
+      ],
+      "files": [
+        "packages/brain/src/lib/notion-schema.js",
+        "packages/brain/src/routes/notes.js",
+        "packages/brain/src/notion-push-sync.js",
+        "packages/brain/src/__tests__/routes/notes-notion-task.test.js",
+        "packages/brain/src/__tests__/notion-push-sync.test.js"
+      ],
+      "depends_on": [],
+      "complexity": "M",
+      "estimated_minutes": 60
+    }
+  ]
+}
