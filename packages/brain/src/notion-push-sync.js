@@ -246,10 +246,10 @@ async function pushJourneyStepLinks(pool, token) {
   `);
   for (const l of rows) {
     try {
+      // Order 属性已于 2026-06-10 从 Step Links DB 移除
       const properties = {
         Name:   { title: [{ text: { content: `${l.journey_name} — ${l.step_name}` } }] },
         Status: { select: { name: l.status || 'planned' } },
-        Order:  { number: l.step_order },
       };
       if (l.journey_notion_id) {
         properties['Journey'] = { relation: [{ id: l.journey_notion_id }] };

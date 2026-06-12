@@ -11,6 +11,7 @@
 import { Router } from 'express';
 import { notionReq, getToken } from '../recurring-notion-sync.js';
 import pool from '../db.js';
+import { NOTION_PROPERTY_MAP, stripUnknownProperties } from '../notion-property-map.js';
 
 // Notion DB IDs
 const AI_NOTES_DB = '185c40c2-ba63-828c-973f-81a9c4582cd6';
@@ -39,15 +40,22 @@ router.post('/notes', async (req, res) => {
 
   try {
     const token = getToken();
+
+    // AI Notes DB 已知属性：Title, Type, Date — 无 Initiative ID（2026-06-10 重构后已删）
+    const rawProps = {
+      Title: { title: [{ text: { content: title } }] },
+      ...(type && { Type: { select: { name: type } } }),
+    };
+    const { props, warnings } = stripUnknownProperties(rawProps, NOTION_PROPERTY_MAP.aiNotes.allowedKeys);
+
+    // initiative_id 仍写入 Brain DB，但不推送到 Notion（AI Notes DB 已删该属性）
+    if (initiative_id) {
+      warnings.push('skip unknown property: "Initiative ID" (not in schema)');
+    }
+
     const page = await notionReq(token, '/pages', 'POST', {
       parent: { database_id: AI_NOTES_DB },
-      properties: {
-        Title: { title: [{ text: { content: title } }] },
-        ...(type && { Type: { select: { name: type } } }),
-        ...(initiative_id && {
-          'Initiative ID': { rich_text: [{ type: 'text', text: { content: initiative_id } }] },
-        }),
-      },
+      properties: props,
       children: [{
         object: 'block',
         type: 'paragraph',
@@ -67,7 +75,7 @@ router.post('/notes', async (req, res) => {
       console.error('[POST /api/brain/notes] DB insert failed:', dbErr.message);
     }
 
-    return res.status(201).json({ id: page.id, url: page.url, title });
+    return res.status(201).json({ id: page.id, url: page.url, title, warnings });
   } catch (err) {
     console.error('[POST /api/brain/notes]', err.message);
     return res.status(502).json({ error: `notion api error: ${err.message}` });
@@ -127,13 +135,15 @@ router.post('/notion/task', async (req, res) => {
 
   try {
     const token = getToken();
-    const properties = {
-      Title: { title: [{ text: { content: fullTitle } }] },
+    // Tasks DB title 属性名是 Name（不是 Title）— 2026-06-10 Notion schema 重构后确认
+    const rawProps = {
+      Name: { title: [{ text: { content: fullTitle } }] },
     };
+    const { props, warnings } = stripUnknownProperties(rawProps, NOTION_PROPERTY_MAP.notionTask.allowedKeys);
 
     const page = await notionReq(token, '/pages', 'POST', {
       parent: { database_id: TASKS_DB },
-      properties,
+      properties: props,
       ...(status && {
         children: [{
           object: 'block',
@@ -143,7 +153,7 @@ router.post('/notion/task', async (req, res) => {
       }),
     });
 
-    return res.status(201).json({ id: page.id, url: page.url, title: fullTitle });
+    return res.status(201).json({ id: page.id, url: page.url, title: fullTitle, warnings });
   } catch (err) {
     console.error('[POST /api/brain/notion/task]', err.message);
     return res.status(502).json({ error: `notion api error: ${err.message}` });
