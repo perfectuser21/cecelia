@@ -205,12 +205,12 @@ try {
     content: [
       `Sprint: ${SPRINT_DIR}`,
       `PR: ${PR_URL}`,
+      `Task: ${TASK_ID}`,
       `GAN Rounds: ${meta.gan_rounds}`,
       `Verdict: ${meta.final_e2e_verdict}`,
       `Generated: ${new Date().toISOString()}`,
     ].join('\n'),
     type: 'report',
-    initiative_id: TASK_ID,
   });
   if (resp.ok) {
     console.log(`[S7] notes record created`);
