@@ -1,49 +1,57 @@
-# Contract DoD — harness 子图 fix loop 感知任务终态（在飞执行不感知终态 P2 修复）
+contract_branch: cp-06121127-ws-badaf654-ws1
+sprint_dir: sprints/06120700-ci-defense-r3
 
-**范围**: `packages/brain/src/workflows/harness-task.graph.js` 在 spawn / fix_dispatch / evaluate 三个
-起容器入口前查 `tasks.status`（新增 `isInitiativeTerminal`）。initiative 已 failed/completed →
-写明确终态 `status='aborted'` 走 END，不再 spawn generator/evaluator。不含改 GAN、改路由拓扑、UI。
-**大小**: S
+---
+skeleton: false
+journey_type: autonomous
+---
+# Contract DoD — Sprint: Harness CI 防线三件套 R3
 
-## 背景
+**范围**: changed-test-router + skill 契约测试套件 + contract-existence-check + brain-ci.yml 接线
+**大小**: M
 
-实证（run cf4f596c 2026-06-12 08:28-08:34）：initiative cf4f596c 已被标 `failed` 后，其**进程内图
-实例**的 fix loop 仍每 ~2 分钟 spawn 一个 generator（r5、r6…），直到手动重启 Brain 才停。这是 P2
-Issue「在飞执行不感知任务终态」的最强实证——子图 fix loop 只看自己内部 verdict，从不回查任务是否
-已被外层/Serial gate 判终态。
+## ARTIFACT 条目
 
-## 成功标准
+- [x] [ARTIFACT] `packages/brain/scripts/ci/changed-test-router.mjs` 存在且可执行
+  Test: node -e "require('fs').accessSync('packages/brain/scripts/ci/changed-test-router.mjs', require('fs').constants.R_OK)"
 
-- harness-task 子图 fix loop 路由边 + generator/evaluator spawn 节点入口，在每次 spawn 前查
-  `tasks.status`；任务已 `failed`/`completed`/`cancelled`/`aborted` → 直接走 END，写明确终态
-  `status='aborted'`（与 #3364 END 终态口径一致）。
-- 任务标 failed 后 fix 路由不再 spawn（fixDispatchNode 返回 aborted + error → routeAfterFix→end）。
-- fail-open：查不到任务行/DB 查询失败 → terminal=false，不误杀在飞 run（仅 warn）。
-- 回归不破坏：#3356 / #3361 / #3364 / #3341 / callback 路由全绿；in_progress 任务正常 fix loop。
+- [x] [ARTIFACT] `packages/workflows/skills/__tests__/skill-contract.test.ts` 存在
+  Test: node -e "require('fs').accessSync('packages/workflows/skills/__tests__/skill-contract.test.ts', require('fs').constants.R_OK)"
 
-## 终态门覆盖点
+- [x] [ARTIFACT] `packages/brain/scripts/ci/contract-existence-check.mjs` 存在且可执行
+  Test: node -e "require('fs').accessSync('packages/brain/scripts/ci/contract-existence-check.mjs', require('fs').constants.R_OK)"
 
-| 入口 | 触发 | 终态后行为 | 路由 → END |
-|---|---|---|---|
-| spawnNode（generator，含 fix loop 重 spawn） | initiative terminal | 返回 `status='aborted'` + error，不调 spawnDetached/ensureWorktree | routeAfterSpawn error→end |
-| fixDispatchNode（fix loop 路由边） | initiative terminal | 返回 `status='aborted'` + error，不 ++fix_round/不 reset containerId | routeAfterFix error→end |
-| evaluateContractNode（evaluator） | initiative terminal | 返回 `status='aborted'` + verdict=FAIL，不调 spawnDetached | routeAfterEvaluate status==='aborted'→end |
+- [x] [ARTIFACT] `.github/workflows/brain-ci.yml` 存在
+  Test: node -e "require('fs').accessSync('.github/workflows/brain-ci.yml', require('fs').constants.R_OK)"
 
-## BEHAVIOR 条目（被测 = 真实 packages/brain/src；CI manual:node 读真实源码断言；行为深测见 vitest 套件）
+- [x] [ARTIFACT] `skill-contract.test.ts` 内含 4 个 skill 的 describe 块
+  Test: node -e "const c=require('fs').readFileSync('packages/workflows/skills/__tests__/skill-contract.test.ts','utf8');['harness-evaluator','harness-contract-reviewer','harness-generator','harness-contract-proposer'].forEach(s=>{if(!c.includes(s))throw new Error('缺 '+s+' describe 块')})"
 
-- [x] [BEHAVIOR] isInitiativeTerminal 存在且查 tasks.status，终态集合含 failed/completed/cancelled
-  Test: manual:node -e "const c=require('fs').readFileSync('packages/brain/src/workflows/harness-task.graph.js','utf8');if(!/export async function isInitiativeTerminal/.test(c))process.exit(2);if(!/SELECT status FROM tasks WHERE id/.test(c))process.exit(3);if(!/TERMINAL_TASK_STATUSES = new Set\(\['failed', 'completed', 'cancelled'/.test(c))process.exit(4);console.log('OK')"
+- [x] [ARTIFACT] `skill-contract.test.ts` 读取 `SKILLS_DIR` 环境变量（禁止硬编码路径，守卫3依赖此接口）
+  Test: node -e "const c=require('fs').readFileSync('packages/workflows/skills/__tests__/skill-contract.test.ts','utf8');if(!c.includes('SKILLS_DIR'))throw new Error('缺 SKILLS_DIR 环境变量读取 — 守卫3篡改测试将失效')"
 
-- [x] [BEHAVIOR] fixDispatchNode 起手查终态：terminal → status=aborted + error(node=fix_dispatch)，先于 ++fix_round
-  Test: manual:node -e "const c=require('fs').readFileSync('packages/brain/src/workflows/harness-task.graph.js','utf8');const m=c.match(/export async function fixDispatchNode[\s\S]*?\n\}/)[0];if(!/isInitiativeTerminal/.test(m))process.exit(2);if(!/status: 'aborted', error: \{ node: 'fix_dispatch'/.test(m))process.exit(3);if(m.indexOf('isInitiativeTerminal')>m.indexOf('fix_round || 0'))process.exit(4);console.log('OK')"
+## BEHAVIOR 条目（内嵌可执行 manual: 命令）
 
-- [x] [BEHAVIOR] spawnNode 幂等门后查终态：terminal → status=aborted（不起 generator）
-  Test: manual:node -e "const c=require('fs').readFileSync('packages/brain/src/workflows/harness-task.graph.js','utf8');if(!/status: 'aborted', error: \{ node: 'spawn'/.test(c))process.exit(2);console.log('OK')"
+- [x] [BEHAVIOR] 守卫 1 — changed-test-router 对 evaluator SKILL.md 输出 ≥ 1 条 test ID 且含 b31-eval-cookie-isolate
+  Test: manual:bash -c 'OUTPUT=$(node packages/brain/scripts/ci/changed-test-router.mjs --files packages/workflows/skills/harness-evaluator/SKILL.md); [ $? -eq 0 ] || exit 1; [ -n "$OUTPUT" ] || { echo "FAIL: 输出为空"; exit 1; }; LINE_COUNT=$(echo "$OUTPUT" | grep -c "." || true); [ "$LINE_COUNT" -ge 1 ] || { echo "FAIL: 输出行数 $LINE_COUNT < 1"; exit 1; }; echo "$OUTPUT" | grep -q "b31-eval-cookie-isolate" || { echo "FAIL: 已知依赖 b31-eval-cookie-isolate 未出现（PRD 要求覆盖所有 fs 依赖）"; exit 1; }; echo OK'
+  期望: OK
 
-- [x] [BEHAVIOR] evaluateContractNode 幂等门后查终态 + routeAfterEvaluate aborted→end
-  Test: manual:node -e "const c=require('fs').readFileSync('packages/brain/src/workflows/harness-task.graph.js','utf8');if(!/status: 'aborted',\s*\n\s*evaluate_verdict: 'FAIL'/.test(c))process.exit(2);if(!/if \(state\.status === 'aborted'\) return 'end'/.test(c))process.exit(3);console.log('OK')"
+- [x] [BEHAVIOR] 守卫 2 — skill 契約 vitest 套件全绿（4 skill 快照通过）
+  Test: manual:bash -c 'cd packages/brain && npx vitest run ../../packages/workflows/skills/__tests__/skill-contract.test.ts --reporter=verbose; EXIT=$?; cd -; [ "$EXIT" -eq 0 ] || { echo "FAIL: skill-contract vitest 失败 exit=$EXIT"; exit 1; }; echo OK'
+  期望: OK
 
-> 行为深测（failed/completed/cancelled→terminal、in_progress/无行/查询抛错→fail-open、fix 路由
-> aborted→end vs in_progress→spawn、spawn/evaluate 终态后不 spawn）由 vitest 套件
-> `packages/brain/src/__tests__/harness-fixloop-terminal-abort.test.js`（12 用例）在 brain-ci 测试
-> job 中执行。
+- [x] [BEHAVIOR] 守卫 3 — 删除 evaluator env_missing 段 → vitest 报红且错误含 "env_missing"
+  Test: manual:bash -c 'TMP=$(mktemp -d); cp -r packages/workflows/skills/harness-contract-reviewer packages/workflows/skills/harness-generator packages/workflows/skills/harness-contract-proposer "$TMP/"; mkdir -p "$TMP/harness-evaluator"; grep -v "env_missing" packages/workflows/skills/harness-evaluator/SKILL.md > "$TMP/harness-evaluator/SKILL.md"; OUT=$(cd packages/brain && SKILLS_DIR="$TMP" npx vitest run ../../packages/workflows/skills/__tests__/skill-contract.test.ts 2>&1 || true); cd -; rm -rf "$TMP"; echo "$OUT" | grep -iqE "FAIL|failed|× " || { echo "FAIL: vitest 未报失败（篡改后应失败）"; exit 1; }; echo "$OUT" | grep -iq "env_missing" || { echo "FAIL: 错误信息未具名 env_missing"; exit 1; }; echo OK'
+  期望: OK
+
+- [x] [BEHAVIOR] 守卫 4 — 缺 contract-draft.md 时 existence-check 返回非零退出且指明路径
+  Test: manual:bash -c 'printf "sprints/06120700-ci-defense-r3/task-plan.json\nsprints/06120700-ci-defense-r3/contract-dod.md\n" > /tmp/ci-defense-missing.txt; OUT=$(node packages/brain/scripts/ci/contract-existence-check.mjs --diff-fixture /tmp/ci-defense-missing.txt 2>&1 || true); CODE=$?; [ "$CODE" -ne 0 ] || { echo "FAIL: 缺 contract-draft.md 但 exit=0"; exit 1; }; echo "$OUT" | grep -q "contract-draft.md" || { echo "FAIL: 错误输出未指明缺失路径 contract-draft.md"; exit 1; }; echo "exit=$CODE 且含缺失路径 OK"'
+  期望: exit=非0 且含缺失路径 OK
+
+- [x] [BEHAVIOR] 守卫 4 — 含 contract-draft.md 时 existence-check 返回零退出
+  Test: manual:bash -c 'printf "sprints/06120700-ci-defense-r3/contract-draft.md\nsprints/06120700-ci-defense-r3/task-plan.json\n" > /tmp/ci-defense-complete.txt; node packages/brain/scripts/ci/contract-existence-check.mjs --diff-fixture /tmp/ci-defense-complete.txt; CODE=$?; [ "$CODE" -eq 0 ] || { echo "FAIL: 含 contract-draft.md 但 exit=$CODE"; exit 1; }; echo OK'
+  期望: OK
+
+- [x] [BEHAVIOR] 守卫 5 — brain-ci.yml yaml 语法通过且含 skills 触发路径且引用守卫脚本
+  Test: manual:bash -c 'test -f .github/workflows/brain-ci.yml || { echo "FAIL: brain-ci.yml 不存在"; exit 1; }; node -e "require(\"js-yaml\").load(require(\"fs\").readFileSync(\".github/workflows/brain-ci.yml\",\"utf8\"))" || { echo "FAIL: yaml 语法错误"; exit 1; }; grep -q "packages/workflows/skills" .github/workflows/brain-ci.yml || { echo "FAIL: 未含 skills 触发路径"; exit 1; }; grep -q "changed-test-router" .github/workflows/brain-ci.yml || { echo "FAIL: 未引用 changed-test-router 脚本"; exit 1; }; grep -q "skill-contract" .github/workflows/brain-ci.yml || { echo "FAIL: 未引用 skill-contract 测试"; exit 1; }; echo OK'
+  期望: OK
