@@ -1,0 +1,37 @@
+{
+  "initiative_id": "5c20be05-d0a3-4b3c-ad05-4ce3e45eb223",
+  "journey_type": "dev_pipeline",
+  "journey_type_reason": "本发修改 harness evaluate 节点（packages/engine/ 执行/裁读流程），属开发工作流引擎",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "evaluate 职责分离：代码执行记录 + LLM 裁读 + payload 回退 + self-hosting",
+      "scope": "在 evaluate.js 编排代码执行（executeAndRecord）+ LLM 裁读（judgeExecution）职责分离；新增 parseE2EScript 函数；支持 EVAL_LEGACY env var 和 EVAL_PAYLOAD use_legacy_eval:true 双回退机制；扩展 EvaluatorOutputSchema 增 coverage 字段；补充 tests/harness/evaluate.test.ts 覆盖 8 项行为",
+      "dod": [
+        "[BEHAVIOR] 通过型 fixture → exec-records/<run_id>.json 落盘，exit_code=0 / stdout 非空 / duration_ms≥0",
+        "[BEHAVIOR] coverage record_segment 含 fixture 已知 sentinel（EXEC_SENTINEL_XK9W），排除 LLM 杜撰",
+        "[BEHAVIOR] 失败型 fixture → verdict=FAIL，failed_step 非空，feedback 引执行记录原文",
+        "[BEHAVIOR] EVAL_LEGACY=1 → exec-records 无新文件",
+        "[BEHAVIOR] EVAL_PAYLOAD use_legacy_eval:true → exec-records 无新文件（payload 回退独立于 env var）",
+        "[BEHAVIOR] .brain-result.json 含 verdict + coverage 字段（EvaluatorOutputSchema 兼容）",
+        "[BEHAVIOR] 空 stdout 脚本 → verdict=FAIL，feedback 标注空记录原因",
+        "[BEHAVIOR] self-hosting 自验 fixture → verdict=PASS，coverage≥5 步",
+        "[ARTIFACT] packages/engine/src/harness/evaluate.js 导出 runEvaluate、parseE2EScript，读取 EVAL_LEGACY / EVAL_PAYLOAD",
+        "[ARTIFACT] packages/engine/src/harness/e2e-judge.js 导出 judgeExecution",
+        "[ARTIFACT] packages/engine/src/harness/runner.js 导出 executeAndRecord，依赖 runScenarioCommand",
+        "[ARTIFACT] packages/brain/src/harness-shared.js EvaluatorOutputSchema 新增 coverage 字段",
+        "[ARTIFACT] packages/engine/tests/harness/evaluate.test.ts 含 pass/fail/EVAL_LEGACY/use_legacy_eval/self-hosting 测试"
+      ],
+      "files": [
+        "packages/engine/src/harness/evaluate.js",
+        "packages/engine/src/harness/runner.js",
+        "packages/engine/src/harness/e2e-judge.js",
+        "packages/brain/src/harness-shared.js",
+        "packages/engine/tests/harness/evaluate.test.ts"
+      ],
+      "depends_on": [],
+      "complexity": "M",
+      "estimated_minutes": 90
+    }
+  ]
+}
