@@ -58,6 +58,13 @@ const DEFAULT_PROMPT_DIR = process.env.CECELIA_PROMPT_DIR || '/tmp/cecelia-promp
 const HOST_PROMPT_DIR = process.env.HOST_PROMPT_DIR || DEFAULT_PROMPT_DIR;
 const DEFAULT_WORKTREE_BASE = process.env.WORKTREE_BASE || '/Users/administrator/perfect21/cecelia';
 
+// 宿主侧 prompt/取证目录（forensics.stdoutFile 的所在目录，与 buildDockerArgs 同源）。
+// detached.js（Brain 进程）即用此路径 writeFileSync 落 prompt → Brain 可读同目录的 .stdout 取证文件。
+// 在 call-time 读 env（不用模块 const），便于测试覆盖 + 运行时 env 变更生效。
+export function getHostPromptDir() {
+  return process.env.HOST_PROMPT_DIR || process.env.CECELIA_PROMPT_DIR || '/tmp/cecelia-prompts';
+}
+
 // resource-tier 配置已迁到 spawn/middleware/resource-tier.js（v2 P2 PR7）
 // 本地 import 供 docker-executor.js 内部使用 + re-export 供外部 caller 继续用旧路径
 import { resolveResourceTier, RESOURCE_TIERS, TASK_TYPE_TIER } from './spawn/middleware/resource-tier.js';

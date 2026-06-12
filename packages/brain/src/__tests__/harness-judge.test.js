@@ -15,6 +15,9 @@ import {
   resolveToapisConfig,
   buildJudgePrompt,
   normalizeJudgeVerdict,
+  resolveStdoutFile,
+  extractAgentTranscript,
+  collectEvidence,
 } from '../harness-judge.js';
 
 // 注入一个不落盘的证据收集（避免 fs）。
@@ -248,5 +251,128 @@ describe('buildJudgePrompt / normalizeJudgeVerdict', () => {
     expect(normalizeJudgeVerdict('FAIL')).toBe('FAIL');
     expect(normalizeJudgeVerdict('maybe')).toBe('FAIL');
     expect(normalizeJudgeVerdict(undefined)).toBe('FAIL');
+  });
+});
+
+// ── 证据供给：裁判要拿到 agent 完整 stdout 转录（#3372 配套缺口） ─────────────────
+describe('resolveStdoutFile — 据 taskId 定位 forensics stdout 转录（最新 mtime）', () => {
+  const TASK = '01f31f66-e6d2-4d32-a6fb-190c6bd3cbf6';
+  const dirEntries = [
+    `${TASK}.aaaa1111.prompt`,    // 非 .stdout，忽略
+    `${TASK}.aaaa1111.stdout`,    // 旧
+    `${TASK}.bbbb2222.stdout`,    // 新（最大 mtime）
+    `other-task.cccc3333.stdout`, // 别的 task，忽略
+  ];
+  const mtimes = {
+    [`/p/${TASK}.aaaa1111.stdout`]: 1000,
+    [`/p/${TASK}.bbbb2222.stdout`]: 2000,
+    [`/p/other-task.cccc3333.stdout`]: 9999,
+  };
+  it('挑同 task 前缀里 mtime 最新的 .stdout，忽略别的 task 与非 stdout', async () => {
+    const f = await resolveStdoutFile(
+      { promptDir: '/p', taskId: TASK },
+      {
+        listDirFn: async () => dirEntries,
+        statFn: async (p) => ({ mtimeMs: mtimes[p] || 0 }),
+      }
+    );
+    expect(f).toBe(`/p/${TASK}.bbbb2222.stdout`);
+  });
+  it('promptDir/taskId 缺失 → null（fail-open）', async () => {
+    expect(await resolveStdoutFile({ promptDir: '', taskId: TASK })).toBeNull();
+    expect(await resolveStdoutFile({ promptDir: '/p', taskId: '' })).toBeNull();
+  });
+  it('目录不可读 → null（不抛）', async () => {
+    const f = await resolveStdoutFile(
+      { promptDir: '/p', taskId: TASK },
+      { listDirFn: async () => { throw new Error('ENOENT'); } }
+    );
+    expect(f).toBeNull();
+  });
+});
+
+describe('extractAgentTranscript — 从 forensics 文件取可读转录', () => {
+  it('单对象 JSON（--output-format json）→ 取 .result 叙述', () => {
+    const raw = JSON.stringify({ type: 'result', result: 'E2E 全过：step1 stdout=ok exit=0', usage: { x: 1 } });
+    expect(extractAgentTranscript(raw)).toBe('E2E 全过：step1 stdout=ok exit=0');
+  });
+  it('NDJSON / 纯文本（含命令输出）→ 原样返回', () => {
+    const raw = '{"type":"tool_result","content":"+ vitest run\\n5 passed"}\n{"type":"result"}';
+    expect(extractAgentTranscript(raw)).toBe(raw);
+  });
+  it('空 → 空串', () => {
+    expect(extractAgentTranscript('')).toBe('');
+    expect(extractAgentTranscript(null)).toBe('');
+  });
+});
+
+describe('collectEvidence — 把 agent 完整 stdout 纳入证据', () => {
+  it('据 promptDir/taskId 读 forensics stdout，extract 后填 agentStdout', async () => {
+    const stdoutRaw = JSON.stringify({ result: '运动员执行：vitest 5 passed，exit=0' });
+    const ev = await collectEvidence(
+      {
+        worktreePath: '/tmp/x',
+        sprintDir: 'sprints/x',
+        transcript: 'callback 4KB tail',
+        brainResult: { verdict: 'PASS' },
+        promptDir: '/p',
+        taskId: 't1',
+      },
+      {
+        // contract/prd 读不到 → 走 catch（空段），不影响 agentStdout 断言
+        readFileFn: async (p) => {
+          if (String(p).endsWith('.stdout')) return stdoutRaw;
+          throw new Error('ENOENT');
+        },
+        listDirFn: async () => ['t1.zzzz9999.stdout'],
+        statFn: async () => ({ mtimeMs: 1 }),
+      }
+    );
+    expect(ev.agentStdout).toBe('运动员执行：vitest 5 passed，exit=0');
+    expect(ev.transcript).toBe('callback 4KB tail');
+  });
+  it('forensics 文件缺失 → agentStdout 空，transcript 仍在（fail-open）', async () => {
+    const ev = await collectEvidence(
+      { worktreePath: '/tmp/x', sprintDir: 'sprints/x', transcript: 'tail only', promptDir: '/p', taskId: 't1' },
+      { readFileFn: async () => { throw new Error('ENOENT'); }, listDirFn: async () => [] }
+    );
+    expect(ev.agentStdout).toBe('');
+    expect(ev.transcript).toBe('tail only');
+  });
+});
+
+describe('buildJudgePrompt — 含 agentStdout + 接受命令 stdout 即证据规则', () => {
+  it('agentStdout 段进 prompt，且声明「含命令 stdout 即视为执行证据」', () => {
+    const p = buildJudgePrompt({
+      contractE2E: 'curl X',
+      goldenPathSteps: ['步骤1'],
+      agentVerdict: 'PASS',
+      transcript: '4KB tail',
+      agentStdout: '完整转录：+ vitest run / 5 passed',
+      brainResult: { verdict: 'PASS' },
+    });
+    expect(p).toContain('完整转录：+ vitest run / 5 passed');
+    expect(p).toContain('即视为该步已执行的证据');
+    // 仍保留「证据缺失 → FAIL」红线
+    expect(p).toContain('确实缺失某步的执行输出');
+  });
+});
+
+describe('runJudgeGate — 把 promptDir/taskId 透传给 collectEvidence', () => {
+  it('collectEvidence 收到 promptDir + taskId', async () => {
+    const collect = vi.fn().mockResolvedValue({
+      contractE2E: '## E2E\ncurl', goldenPathSteps: ['A'], transcript: 't', agentStdout: 's', brainResult: { verdict: 'PASS' },
+    });
+    const judgeFn = vi.fn().mockResolvedValue({ verdict: 'PASS', coverage: [{ step: 'A', passed: true }], feedback: null });
+    const res = await runJudgeGate(
+      { worktreePath: '/tmp/x', sprintDir: 'sprints/x', agentVerdict: 'PASS', transcript: 't', promptDir: '/p', taskId: 'task-xyz' },
+      { judgeFn, collectEvidence: collect, writeFileFn: async () => {} }
+    );
+    expect(res.verdict).toBe('PASS');
+    const passedCtx = collect.mock.calls[0][0];
+    expect(passedCtx.promptDir).toBe('/p');
+    expect(passedCtx.taskId).toBe('task-xyz');
+    // judgeFn 也拿到 agentStdout
+    expect(judgeFn.mock.calls[0][0].agentStdout).toBe('s');
   });
 });
