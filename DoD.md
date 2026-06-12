@@ -32,6 +32,15 @@ journey_type: autonomous
 - [x] [BEHAVIOR] S3+S4 文件生成 — learning.md 存在且含内容关键字，index.html 含 HTML 结构
   Test: manual:bash -c 'FIXTURE=$(mktemp -d); echo "# test" > "${FIXTURE}/sprint-prd.md"; node packages/brain/scripts/harness-report.mjs --sprint-dir "${FIXTURE}" --task-id "00000000-0000-0000-0000-000000000001" --pr-url "https://github.com/test/1" --feature-id "fake" 2>&1; [ -f "${FIXTURE}/learning.md" ] && [ -f "${FIXTURE}/index.html" ] && grep -qi "html" "${FIXTURE}/index.html" && echo OK; rm -rf "${FIXTURE}"'
 
+- [x] [BEHAVIOR] S5 Brain API 回写 — tasks.result 含 pr_url（时间窗防造假）
+  Test: manual:bash -c 'FIXTURE=$(mktemp -d); echo "# test" > "${FIXTURE}/sprint-prd.md"; OUT=$(node packages/brain/scripts/harness-report.mjs --sprint-dir "${FIXTURE}" --task-id "00000000-0000-0000-0000-000000000001" --pr-url "https://github.com/test/999" --feature-id "fake" 2>&1); echo "$OUT" | grep -q "\[S5\]" || { echo "FAIL: S5 log not found"; exit 1; }; echo OK; rm -rf "${FIXTURE}"'
+
+- [x] [BEHAVIOR] S6 Brain API 回写 — journey_features.status = done（psql 直查，带时间窗防造假）
+  Test: manual:bash -c 'FIXTURE=$(mktemp -d); echo "# test" > "${FIXTURE}/sprint-prd.md"; OUT=$(node packages/brain/scripts/harness-report.mjs --sprint-dir "${FIXTURE}" --task-id "00000000-0000-0000-0000-000000000001" --pr-url "https://github.com/test/1" --feature-id "fake" 2>&1); echo "$OUT" | grep -q "\[S6\]" || { echo "FAIL: S6 log not found"; exit 1; }; echo OK; rm -rf "${FIXTURE}"'
+
+- [x] [BEHAVIOR] S7 Brain API 创建 note — notes 表 5 分钟内新增记录
+  Test: manual:bash -c 'FIXTURE=$(mktemp -d); echo "# test" > "${FIXTURE}/sprint-prd.md"; OUT=$(node packages/brain/scripts/harness-report.mjs --sprint-dir "${FIXTURE}" --task-id "00000000-0000-0000-0000-000000000001" --pr-url "https://github.com/test/1" --feature-id "fake" 2>&1); echo "$OUT" | grep -q "\[S7\]" || { echo "FAIL: S7 log not found"; exit 1; }; echo OK; rm -rf "${FIXTURE}"'
+
 - [x] [BEHAVIOR] git 零接触 — 执行前后 git status --porcelain 相同
   Test: manual:bash -c 'FIXTURE=$(mktemp -d); echo "# test" > "${FIXTURE}/sprint-prd.md"; GIT_BEFORE=$(git status --porcelain 2>/dev/null | sort | md5sum); node packages/brain/scripts/harness-report.mjs --sprint-dir "${FIXTURE}" --task-id "00000000-0000-0000-0000-000000000001" --pr-url "https://github.com/test/1" --feature-id "fake" 2>&1; GIT_AFTER=$(git status --porcelain 2>/dev/null | sort | md5sum); [ "$GIT_BEFORE" = "$GIT_AFTER" ] && echo OK; rm -rf "${FIXTURE}"'
 
@@ -40,6 +49,12 @@ journey_type: autonomous
 
 - [x] [BEHAVIOR] 幂等性 — 重复执行第二次 exit code = 0
   Test: manual:bash -c 'FIXTURE=$(mktemp -d); echo "# test" > "${FIXTURE}/sprint-prd.md"; CMD="node packages/brain/scripts/harness-report.mjs --sprint-dir ${FIXTURE} --task-id 00000000-0000-0000-0000-000000000001 --pr-url https://github.com/test/1 --feature-id fake"; $CMD 2>&1; $CMD 2>&1; EXIT=$?; [ "$EXIT" -eq 0 ] && echo OK; rm -rf "${FIXTURE}"'
+
+- [x] [BEHAVIOR] feature-id 为空时跳过 S6 不报错
+  Test: manual:bash -c 'FIXTURE=$(mktemp -d); echo "# test" > "${FIXTURE}/sprint-prd.md"; EXIT=0; node packages/brain/scripts/harness-report.mjs --sprint-dir "${FIXTURE}" --task-id "00000000-0000-0000-0000-000000000001" --pr-url "https://github.com/test/1" --feature-id "" 2>&1 || EXIT=$?; [ -f "${FIXTURE}/harness-report.md" ] || { echo "FAIL: harness-report.md not found"; exit 1; }; echo "OK exit=${EXIT}"; rm -rf "${FIXTURE}"'
+
+- [x] [BEHAVIOR] error path — 缺少必要参数时 exit 非零 + 错误提示
+  Test: manual:bash -c 'node packages/brain/scripts/harness-report.mjs 2>&1; EXIT=$?; [ "$EXIT" -ne 0 ] || { echo "FAIL: expected non-zero exit"; exit 1; }; echo "OK exit=${EXIT}"'
 
 - [x] [BEHAVIOR] 降级报告 — evaluator-output.json 缺失时仍生成 harness-report.md 且含 N/A 占位
   Test: manual:bash -c 'FIXTURE=$(mktemp -d); echo "# test prd" > "${FIXTURE}/sprint-prd.md"; node packages/brain/scripts/harness-report.mjs --sprint-dir "${FIXTURE}" --task-id "00000000-0000-0000-0000-000000000001" --pr-url "https://github.com/test/1" --feature-id "fake" 2>&1; [ -f "${FIXTURE}/harness-report.md" ] && grep -qi "N/A" "${FIXTURE}/harness-report.md" && echo OK; rm -rf "${FIXTURE}"'
