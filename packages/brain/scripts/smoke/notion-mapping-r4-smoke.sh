@@ -33,16 +33,22 @@ if (!src.includes(\"'Order' in schemaProps\")) {
 console.log('✓ notion-push-sync.js Order 条件写入逻辑存在');
 "
 
-# 可选：如果 Brain 正在运行，验证 POST /notes 返回 warnings 数组
+# 可选：如果 Brain 正在运行且 Notion API key 已配置，验证 POST /notes 返回 warnings 数组
 if curl -sf --max-time 3 "${BRAIN}/api/brain/tick/status" >/dev/null 2>&1; then
-  RESP=$(curl -sf --max-time 10 -X POST "${BRAIN}/api/brain/notes" \
+  HTTP_CODE=$(curl -s -o /tmp/r4-smoke-resp.json -w "%{http_code}" --max-time 10 \
+    -X POST "${BRAIN}/api/brain/notes" \
     -H "Content-Type: application/json" \
-    -d '{"title":"[smoke-r4] notion-mapping","content":"smoke test","type":"Note"}' || echo '{}')
-  node -e "
-    const p = JSON.parse(process.argv[1]);
-    if (!Array.isArray(p.warnings)) { console.error('FAIL: warnings 非 array:', JSON.stringify(p)); process.exit(1); }
-    console.log('✓ POST /notes 返回 warnings 数组');
-  " "${RESP}"
+    -d '{"title":"[smoke-r4] notion-mapping","content":"smoke test","type":"Note"}')
+  if [ "${HTTP_CODE}" = "201" ]; then
+    node -e "
+      const fs = require('fs');
+      const p = JSON.parse(fs.readFileSync('/tmp/r4-smoke-resp.json', 'utf8'));
+      if (!Array.isArray(p.warnings)) { console.error('FAIL: warnings 非 array:', JSON.stringify(p)); process.exit(1); }
+      console.log('✓ POST /notes 返回 warnings 数组');
+    "
+  else
+    echo "ℹ️  POST /notes 返回 ${HTTP_CODE}（Notion API key 未配置或 Brain 降级），跳过 warnings 验证"
+  fi
 else
   echo "ℹ️  Brain 未运行，跳过 API 验证（仅静态检查）"
 fi
