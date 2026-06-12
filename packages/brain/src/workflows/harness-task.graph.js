@@ -36,6 +36,7 @@
 import { StateGraph, Annotation, START, END, interrupt } from '@langchain/langgraph';
 import crypto from 'node:crypto';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { execFile as execFileCb } from 'node:child_process';
 import { promisify } from 'node:util';
 import { runContractGate, formatGateReport } from '../lib/contract-gate.js';
@@ -450,6 +451,13 @@ export async function parseCallbackNode(state, opts = {}) {
   const parsed = parseDockerOutput(out);
   const pr_url = extractField(parsed, 'pr_url');
   const pr_branch = extractField(parsed, 'pr_branch');
+  // END 终态规则（图的每条 END 边都是 API）：no_pr 是终局路径（routeAfterParse → END），
+  // 必须写明确 status='no_pr'，否则停在 status channel 默认值 'queued' → 父 runSubTaskNode
+  // getState 读到 queued → Serial gate 误读为 "did not merge (status=queued)"（run cf4f596c
+  // 死线程实证：fix0 线程走到 next=[], status=queued）。
+  if (!pr_url) {
+    return { pr_url: null, pr_branch: pr_branch || null, status: 'no_pr' };
+  }
   return { pr_url, pr_branch };
 }
 
@@ -482,7 +490,9 @@ export async function pollCiNode(state, opts = {}) {
   const pollCount = state.poll_count || 0;
 
   if (pollCount >= MAX_POLL_COUNT) {
-    return { ci_status: 'timeout', poll_count: pollCount };
+    // END 终态规则：timeout 是终局（routeAfterPoll → END），写明确 status='timeout'，
+    // 不留默认 'queued'。
+    return { ci_status: 'timeout', status: 'timeout', poll_count: pollCount };
   }
 
   if (sleepMs > 0) {
@@ -498,8 +508,11 @@ export async function pollCiNode(state, opts = {}) {
   }
 
   if (info.state === 'CLOSED' || info.ciStatus === 'closed') {
+    // END 终态规则：PR 被外部关闭 → 终局失败（routeAfterPoll error → END），
+    // error 与 status 同时写，杜绝默认 'queued'。
     return {
       ci_status: 'fail',
+      status: 'failed',
       poll_count: pollCount + 1,
       error: { node: 'poll_ci', message: 'PR closed externally' },
     };
@@ -559,7 +572,8 @@ export async function mergePrNode(state, opts = {}) {
   const prUrl = state?.pr_url;
 
   if (!prUrl) {
-    return { error: { node: 'merge_pr', message: 'no pr_url available' } };
+    // END 终态规则：merge_pr 所有 error 返回都经 routeAfterMergePr → END，必须带 status='failed'。
+    return { status: 'failed', error: { node: 'merge_pr', message: 'no pr_url available' } };
   }
 
   try {
@@ -599,14 +613,14 @@ export async function mergePrNode(state, opts = {}) {
       const reason = `PR conflicts with base branch (mergeable=${mergeable}, state=${mergeStateStatus}); `
         + `update-branch cannot auto-resolve merge conflicts — needs fix round / manual resolution`;
       console.error(`[merge_pr] CONFLICTING pr=${prUrl}: ${reason}`);
-      return { error: { node: 'merge_pr', reason: 'conflicting', message: reason } };
+      return { status: 'failed', error: { node: 'merge_pr', reason: 'conflicting', message: reason } };
     }
 
     // BEHIND：落后 main（分支保护要求 up-to-date）→ 服务端 update-branch，限次重试。
     const isBehind = mergeStateStatus === 'BEHIND' || BEHIND_RE.test(msg);
     if (!isBehind) {
       console.error(`[merge_pr] non-recoverable merge error pr=${prUrl}: ${msg}`);
-      return { error: { node: 'merge_pr', message: msg } };
+      return { status: 'failed', error: { node: 'merge_pr', message: msg } };
     }
 
     const attempts = state.rebase_attempted || 0;
@@ -614,7 +628,7 @@ export async function mergePrNode(state, opts = {}) {
       const reason = `branch still BEHIND after ${attempts} update-branch attempts `
         + `(max ${MAX_REBASE_ATTEMPTS}); aborting to avoid infinite rebase churn`;
       console.error(`[merge_pr] ${reason} pr=${prUrl}`);
-      return { error: { node: 'merge_pr', reason: 'rebase_exhausted', message: reason } };
+      return { status: 'failed', error: { node: 'merge_pr', reason: 'rebase_exhausted', message: reason } };
     }
 
     console.warn(`[merge_pr] branch behind (attempt ${attempts + 1}/${MAX_REBASE_ATTEMPTS}), calling update-branch pr=${prUrl}`);
@@ -624,7 +638,7 @@ export async function mergePrNode(state, opts = {}) {
       return { ci_status: 'pending', rebase_attempted: attempts + 1 };
     } catch (updateErr) {
       console.error(`[merge_pr] update-branch failed pr=${prUrl}: ${updateErr.message}`);
-      return { error: { node: 'merge_pr', message: `update-branch failed: ${updateErr.message}` } };
+      return { status: 'failed', error: { node: 'merge_pr', message: `update-branch failed: ${updateErr.message}` } };
     }
   }
 }
@@ -752,27 +766,69 @@ export function extractArtifactTests(md) {
   return cmds;
 }
 
+// 宿主仓库 node_modules 路径（本文件运行在 live brain 仓库，依赖已装好）。
+// ARTIFACT 命令在临时 checkout（git worktree add 出来的 PR 分支）跑，那里没有 node_modules
+// → `node -e "import('./src/...')"` 报 `Cannot find package 'zod'`（run 56b5cc39 实证）。
+// 把宿主 node_modules 注入 NODE_PATH，让临时目录里的命令能解析到 brain 依赖。
+// packages/brain/node_modules + 仓库根 node_modules 都进，覆盖 hoist 与未 hoist 两种装法。
+export const HOST_NODE_PATH = (() => {
+  try {
+    const dir = path.dirname(fileURLToPath(import.meta.url)); // .../packages/brain/src/workflows
+    return [
+      path.resolve(dir, '../../node_modules'),       // packages/brain/node_modules
+      path.resolve(dir, '../../../../node_modules'),  // 仓库根 node_modules
+    ].join(path.delimiter);
+  } catch {
+    return '';
+  }
+})();
+
+// ARTIFACT 命令子进程 env：注入 NODE_PATH 让临时 checkout 能解析宿主依赖。
+export function artifactGateEnv(nodePath = HOST_NODE_PATH) {
+  return {
+    ...process.env,
+    NODE_PATH: [nodePath, process.env.NODE_PATH].filter(Boolean).join(path.delimiter),
+  };
+}
+
+// 依赖/环境类错误判定：门的本职是抓"实现没做"，不是抓"门自己环境穷"。
+// 命中（Cannot find package / MODULE_NOT_FOUND / Cannot find module）→ fail-open 跳过，
+// 不算被测者（generator）的失败。
+export function isDependencyError(detail) {
+  return /Cannot find package|ERR_MODULE_NOT_FOUND|MODULE_NOT_FOUND|Cannot find module/i.test(detail || '');
+}
+
 /**
- * 逐条跑 ARTIFACT 命令，任一非零退出 → ok=false。
+ * 逐条跑 ARTIFACT 命令，任一真断言失败（非依赖类）→ ok=false。
+ * 依赖/环境类错误 → 记 skipped（fail-open，warning），不计 FAIL。
  * @param {object} args
  * @param {string[]} args.commands
  * @param {string} args.cwd
- * @param {Function} [args.execShell]  (cmd, {cwd, timeout}) => Promise，非零退出须 reject
+ * @param {Function} [args.execShell]  (cmd, {cwd, timeout, nodePath}) => Promise，非零退出须 reject
  * @param {number} [args.timeoutMs]
- * @returns {Promise<{ok:boolean, failures:{cmd:string,error:string}[]}>}
+ * @param {string} [args.nodePath]     注入 NODE_PATH（默认 HOST_NODE_PATH）
+ * @returns {Promise<{ok:boolean, failures:{cmd:string,error:string}[], skipped:{cmd:string,error:string}[]}>}
  */
-export async function runArtifactGate({ commands, cwd, execShell, timeoutMs = 30000 }) {
-  const run = execShell || ((cmd, o) => execFileDefault('bash', ['-c', cmd], { cwd: o.cwd, timeout: o.timeout }));
+export async function runArtifactGate({ commands, cwd, execShell, timeoutMs = 30000, nodePath = HOST_NODE_PATH }) {
+  const run = execShell
+    || ((cmd, o) => execFileDefault('bash', ['-c', cmd], { cwd: o.cwd, timeout: o.timeout, env: artifactGateEnv(o.nodePath) }));
   const failures = [];
+  const skipped = [];
   for (const cmd of commands || []) {
     try {
-      await run(cmd, { cwd, timeout: timeoutMs });
+      await run(cmd, { cwd, timeout: timeoutMs, nodePath });
     } catch (e) {
       const detail = (e?.stderr || e?.message || 'non-zero exit').toString().slice(0, 300);
+      if (isDependencyError(detail)) {
+        // 门的环境失败 ≠ 被测者的失败：fail-open 跳过，warning 记录，不打回 generator。
+        console.warn(`[artifact-gate] 命令因依赖/环境缺失跳过（fail-open，不计 FAIL）：${cmd} → ${detail}`);
+        skipped.push({ cmd, error: detail });
+        continue;
+      }
       failures.push({ cmd, error: detail });
     }
   }
-  return { ok: failures.length === 0, failures };
+  return { ok: failures.length === 0, failures, skipped };
 }
 
 /**
@@ -848,8 +904,8 @@ export async function verifyContractArtifactsForPr(
   }
 
   try {
-    const { ok, failures } = await runGate(commands, checkoutDir);
-    return { ran: true, ok, failures };
+    const { ok, failures, skipped } = await runGate(commands, checkoutDir);
+    return { ran: true, ok, failures, skipped: skipped || [] };
   } finally {
     await rmWorktree(checkoutDir);
   }
@@ -950,6 +1006,10 @@ export async function evaluateContractNode(state, opts = {}) {
       { prBranch: prBranchEnv, sprintDir, worktreePath: state.worktreePath },
       {}
     );
+    if (gate && gate.ran && gate.skipped && gate.skipped.length) {
+      // 依赖/环境类命令已 fail-open 跳过（不计 FAIL），仅记录可观测性，门继续放行真断言判定。
+      console.warn(`[evaluator] ARTIFACT 门跳过 ${gate.skipped.length} 条依赖/环境失败命令（fail-open，门的环境失败不算 generator 失败）`);
+    }
     if (gate && gate.ran && gate.ok === false) {
       const detail = (gate.failures || [])
         .map((f) => `• ${f.cmd} → ${f.error}`)
@@ -991,8 +1051,12 @@ export async function evaluateContractNode(state, opts = {}) {
       // routeAfterEvaluate 路由直接终止 initiative（END），feedback 带结构化命中清单供重发时 proposer 参考。
       if (isContractArtifactFile(cg.contractFile)) {
         console.error(`[evaluator] Contract Gate FAIL（合同产物 ${cg.contractFile} 不合格，责任在 GAN proposer，终止 initiative 不进 generator fix loop）：\n${feedback}`);
+        // END 终态规则：contract_invalid 经 routeAfterEvaluate → END 直接终止 initiative，
+        // 子图层就写明确 status='contract_invalid'（不再依赖外层 runSubTaskNode 把 queued 上浮成
+        // failure_class）。外层 #3361 的 failure_class 上浮保留为兼容兜底。
         return {
           evaluate_verdict: 'FAIL',
+          status: 'contract_invalid',
           failure_class: 'contract_invalid',
           evaluate_error: `Contract Gate 命中合同产物（${cg.contractFile}）——合同质量缺陷责任在 GAN proposer（generator 无权改合同），终止 initiative，请重发让 proposer 修复后再跑：\n${feedback}`,
         };
