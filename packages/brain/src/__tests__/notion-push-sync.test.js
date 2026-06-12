@@ -137,3 +137,42 @@ describe('runNotionPushSync — new push functions', () => {
     );
   });
 });
+
+describe('runNotionPushSync — step_link Order 属性降级回归 [ARTIFACT R4]', () => {
+  beforeEach(() => {
+    mockQuery.mockReset();
+    mockNotionReq.mockReset();
+    mockQuery.mockResolvedValue({ rows: [] });
+  });
+
+  it('step_link Order 降级：schema 无 Order 时 properties 不含 Order', async () => {
+    const stepLink = {
+      id: 'sl-regr-1', journey_name: 'R4 J', step_name: 'R4 S',
+      step_order: 2, status: 'active',
+      journey_notion_id: 'j-notion-r4', step_notion_id: 's-notion-r4',
+    };
+
+    mockQuery
+      .mockResolvedValueOnce({ rows: [] })          // journeys
+      .mockResolvedValueOnce({ rows: [] })          // features
+      .mockResolvedValueOnce({ rows: [] })          // issues
+      .mockResolvedValueOnce({ rows: [] })          // skill_registry
+      .mockResolvedValueOnce({ rows: [] })          // journey_steps
+      .mockResolvedValueOnce({ rows: [stepLink] }) // journey_step_links → 1 行
+      .mockResolvedValue({ rows: [] });             // decisions / initiative_contracts / UPDATE
+
+    mockNotionReq
+      .mockResolvedValueOnce({ properties: { Name: { type: 'title' }, Status: { type: 'select' } } }) // schema GET（无 Order）
+      .mockResolvedValue({ id: 'sl-notion-r4' }); // pages POST
+
+    const { runNotionPushSync } = await import('../notion-push-sync.js');
+    await runNotionPushSync({ query: mockQuery });
+
+    const createCall = mockNotionReq.mock.calls.find(c => c[2] === 'POST' && c[1] === '/pages');
+    expect(createCall).toBeDefined();
+    // Order 不在 schema → properties 中不含 Order
+    expect(createCall[3].properties).not.toHaveProperty('Order');
+    // Name 应存在
+    expect(createCall[3].properties).toHaveProperty('Name');
+  });
+});

@@ -1,5 +1,5 @@
-contract_branch: cp-harness-propose-r5-60728100
-sprint_dir: sprints/06120546-report-scriptize-r3
+contract_branch: cp-06121556-ws-2287a04a-ws1
+sprint_dir: sprints/06121511-notion-mapping-r4
 
 ---
 skeleton: false
