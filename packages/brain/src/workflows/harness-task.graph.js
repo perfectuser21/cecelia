@@ -43,6 +43,7 @@ import { runContractGate, formatGateReport } from '../lib/contract-gate.js';
 // Note: legacy `spawn` import removed (Layer 3 uses spawnDockerDetached for fire-and-forget docker run -d)
 import { ensureHarnessWorktree, harnessSubTaskBranchName, cleanupHarnessWorktree } from '../harness-worktree.js';
 import { resolveGitHubToken } from '../harness-credentials.js';
+import { runJudgeGate } from '../harness-judge.js';
 // Note: legacy `writeDockerCallback` import removed (Layer 3 uses callback router POST → Command(resume))
 import { spawnDockerDetached, spawnCodexBridgeDetached } from '../spawn/detached.js';
 import { executeOnHost } from '../spawn/host-executor.js';
@@ -963,10 +964,43 @@ export async function verifyContractArtifactsForPr(
   }
 }
 
-// evaluateContractNode — 单一 evaluator pre-merge gate（对齐 Anthropic 官方 Harness 设计）。
+// finalizeEvaluation — 运动员（evaluator agent）算出 verdict 后，过「独立裁判」门再返回。
+// 三权分立：agent 保留人类式执行权（运动员），证据自动留痕（摄像头），裁判独立判读（运动员不能自发奖牌）。
+// 仅 agent verdict===PASS 时调裁判复核；agent FAIL 直接透传走 fix loop（runJudgeGate 内部短路）。
+async function finalizeEvaluation(state, opts, ctx) {
+  const judgeGate = opts.runJudgeGate || runJudgeGate;
+  const res = await judgeGate(
+    {
+      agentVerdict: ctx.agentVerdict,
+      agentFeedback: ctx.agentFeedback,
+      transcript: ctx.transcript || '',
+      brainResult: ctx.brainResult || null,
+      worktreePath: state.worktreePath,
+      sprintDir: ctx.sprintDir,
+      instanceLabel: ctx.containerId,
+    },
+    {
+      judgeFn: opts.judgeFn,
+      collectEvidence: opts.collectEvidence,
+      strict: opts.judgeStrict,
+      config: opts.toapisConfig,
+      fetchFn: opts.judgeFetchFn,
+    }
+  );
+  return {
+    evaluate_verdict: res.verdict,
+    evaluate_error: res.verdict === 'FAIL'
+      ? (res.feedback || ctx.agentFeedback || 'evaluator/judge returned FAIL')
+      : null,
+  };
+}
+
+// evaluateContractNode — evaluator agent pre-merge gate + 独立裁判（对齐 Anthropic 官方 Harness 设计）。
 // Anthropic 原文：一个 Sprint = 一个 Generator + 一个 Evaluator，evaluate 在 merge 之前跑，
 // PASS → merge；FAIL → 带具体反馈打回 Generator 重写（无限对抗）。
 // IS_FINAL_E2E=true：跑 contract-draft.md ## E2E 验收 完整脚本（不再分 Mode A / Mode B）。
+// 用户拍板架构：evaluator agent 亲手执行验证（执行权不被代码取代），回调后由独立 DeepSeek 裁判
+// 据【证据 + 合同 + Golden Path】复核；agent 说 PASS 但裁判 FAIL/覆盖缺步 → 终判 FAIL（裁判优先）。
 export async function evaluateContractNode(state, opts = {}) {
   // 幂等门：Brain 重启或 outer graph 重进时，evaluate_verdict 已存在则直接返回，不重复 spawn。
   if (state.evaluate_verdict) {
@@ -1226,10 +1260,14 @@ export async function evaluateContractNode(state, opts = {}) {
       const data = await readAndValidateBrainResult(state.worktreePath, EvaluatorOutputSchema);
       const normV = normalizeVerdict(data.verdict);
       const feedback = data.feedback || data.log_excerpt || data.failed_step || null;
-      return {
-        evaluate_verdict: normV,
-        evaluate_error: normV === 'FAIL' ? (feedback || 'evaluator returned FAIL') : null,
-      };
+      return await finalizeEvaluation(state, opts, {
+        agentVerdict: normV,
+        agentFeedback: feedback,
+        transcript: hostResult?.stdout || '',
+        brainResult: data,
+        sprintDir,
+        containerId,
+      });
     } catch (e) {
       return { evaluate_verdict: 'FAIL', evaluate_error: `host result read: ${e.message}` };
     }
@@ -1290,10 +1328,14 @@ export async function evaluateContractNode(state, opts = {}) {
     const fileVerdict = await readVerdictFile(state.worktreePath);
     if (fileVerdict) {
       const normV = normalizeVerdict(fileVerdict.verdict);
-      return {
-        evaluate_verdict: normV,
-        evaluate_error: normV === 'FAIL' ? (fileVerdict.feedback || 'evaluator returned FAIL') : null,
-      };
+      return await finalizeEvaluation(state, opts, {
+        agentVerdict: normV,
+        agentFeedback: fileVerdict.feedback || null,
+        transcript: stdout,
+        brainResult: fileVerdict,
+        sprintDir,
+        containerId,
+      });
     }
   }
 
@@ -1313,10 +1355,14 @@ export async function evaluateContractNode(state, opts = {}) {
       }
       const normV = normalizeVerdict(parsed.data.verdict);
       const feedback = parsed.data.feedback || parsed.data.log_excerpt || parsed.data.failed_step || null;
-      return {
-        evaluate_verdict: normV,
-        evaluate_error: normV === 'FAIL' ? (feedback || 'evaluator returned FAIL') : null,
-      };
+      return await finalizeEvaluation(state, opts, {
+        agentVerdict: normV,
+        agentFeedback: feedback,
+        transcript: stdout,
+        brainResult: parsed.data,
+        sprintDir,
+        containerId,
+      });
     } catch (e) {
       if (e.code === 'schema_mismatch') throw e;  // 重新抛出，不被 fallback 吞掉
       // .brain-result.json 不存在或其他错误，继续 Protocol v1 fallback
@@ -1329,7 +1375,14 @@ export async function evaluateContractNode(state, opts = {}) {
   const verdict = normalizeVerdict(verdictRaw);
   const errorMsg = verdict === 'FAIL' ? (cbPayload.error || extractField(stdout, 'error') || 'evaluator returned FAIL') : null;
 
-  return { evaluate_verdict: verdict, evaluate_error: errorMsg };
+  return await finalizeEvaluation(state, opts, {
+    agentVerdict: verdict,
+    agentFeedback: errorMsg,
+    transcript: stdout,
+    brainResult: null,
+    sprintDir,
+    containerId,
+  });
 }
 
 export function routeAfterFix(state) {
