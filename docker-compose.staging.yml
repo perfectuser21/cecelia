@@ -58,9 +58,10 @@ services:
     deploy:
       resources:
         limits:
-          memory: 1G
+          # 同 production：node --max-old-space-size=3072 → 3G 堆，cap 必须 ≥ 堆 + 开销。
+          memory: 4G
         reservations:
-          memory: 256M
+          memory: 1G
     restart: "no"
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:5222/api/brain/tick/status"]

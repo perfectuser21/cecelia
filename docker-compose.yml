@@ -96,16 +96,19 @@ services:
       # Overriding with ${OPENAI_API_KEY} causes empty string when host shell has no export
       # FEISHU_OWNER_OPEN_IDS is provided via env_file (.env.docker) — same reason, do NOT override here
     # compose standalone cgroup 限额（deploy.resources 只在 Docker Swarm 模式生效）
-    mem_limit: 1g
-    mem_reservation: 512m
+    # 容器 memory cap 必须 ≥ 运行时 node 堆上限 + 容器开销余量。
+    # Dockerfile CMD: node --max-old-space-size=3072 → 3G 堆；4G = 3G 堆 + ~1G 容器/native 开销。
+    # 旧值 1G 双 LangGraph 负载下必然 OOM kill（伪装成"神秘 Brain 重启"打断在飞 harness run）。
+    mem_limit: 4g
+    mem_reservation: 1g
     cpus: 2.0
     deploy:
       resources:
         limits:
-          memory: 1G
+          memory: 4G
           cpus: '2'
         reservations:
-          memory: 512M
+          memory: 1G
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:5221/api/brain/tick/status"]
