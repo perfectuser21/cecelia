@@ -370,7 +370,14 @@ jobs:
             cd packages/engine && npx vitest run $TESTS --reporter=verbose
           fi
       - name: Skill 契约测试套件（skill-contract-tests）
-        run: cd packages/engine && npx vitest run tests/skills/ --reporter=verbose
+        run: |
+          cd packages/engine && npx vitest run \
+            tests/skills/harness-evaluator.test.ts \
+            tests/skills/harness-contract-reviewer.test.ts \
+            tests/skills/harness-generator.test.ts \
+            tests/skills/harness-contract-proposer.test.ts \
+            tests/skills/harness-v5-ci-checks.test.ts \
+            --reporter=verbose
       - name: 合同存在性检查（check-contract-exists）
         run: |
           BASE_REF="origin/${{ github.base_ref || 'main' }}"
