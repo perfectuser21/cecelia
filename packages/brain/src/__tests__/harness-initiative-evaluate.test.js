@@ -49,7 +49,12 @@ vi.mock('@langchain/langgraph', () => {
 });
 
 vi.mock('@langchain/langgraph-checkpoint-postgres', () => ({
-  PostgresSaver: class { static fromConnString() { return { setup: vi.fn() }; } },
+  // 支持 new PostgresSaver(pool)（连接超时硬化后的构造路径）与旧 static fromConnString。
+  PostgresSaver: class {
+    constructor(pool) { this.pool = pool; }
+    setup() { return Promise.resolve(); }
+    static fromConnString() { return { setup: () => Promise.resolve() }; }
+  },
 }));
 
 vi.mock('../harness-gan-graph.js', () => ({

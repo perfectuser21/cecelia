@@ -15,11 +15,17 @@ const mockPostgresSaverGet = vi.fn();
 const mockPostgresSaverSetup = vi.fn().mockResolvedValue(undefined);
 
 vi.mock('@langchain/langgraph-checkpoint-postgres', () => ({
-  PostgresSaver: {
-    fromConnString: () => ({
-      get: (...args) => mockPostgresSaverGet(...args),
-      setup: () => mockPostgresSaverSetup(),
-    }),
+  // 支持 new PostgresSaver(pool)（连接超时硬化后的构造路径）与旧 static fromConnString。
+  PostgresSaver: class {
+    constructor(pool) { this.pool = pool; }
+    get(...args) { return mockPostgresSaverGet(...args); }
+    setup() { return mockPostgresSaverSetup(); }
+    static fromConnString() {
+      return {
+        get: (...args) => mockPostgresSaverGet(...args),
+        setup: () => mockPostgresSaverSetup(),
+      };
+    }
   },
 }));
 
