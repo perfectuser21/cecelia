@@ -1,32 +1,34 @@
 ---
-sprint_dir: sprints/06122058-judge-evidence
+branch: cp-06130805-watchdog-gan-stall
+sprint_dir: sprints/06130805-watchdog-gan-stall
+skeleton: false
+journey_type: autonomous
 ---
-# DoD — 裁判证据供给 + evaluate 重入幂等（#3372 配套缺口）
+# DoD — Bug Fix: harness liveness watchdog 覆盖 planner/GAN(A) 阶段静默卡死
 
-**范围**: `packages/brain/src/harness-judge.js`（证据收集纳入 agent 完整 stdout + prompt 接受命令证据），`packages/brain/src/workflows/harness-task.graph.js`（finalizeEvaluation 透传 promptDir/taskId；evaluate 重入活容器复用幂等门 + findLiveEvaluateContainerDefault），`packages/brain/src/docker-executor.js`（getHostPromptDir 导出），`packages/brain/src/__tests__/harness-judge.test.js` + `packages/brain/src/workflows/__tests__/harness-evaluate-reentry-idem.test.js`（单测）
-**大小**: M
-
----
+**范围**: `packages/brain/src/harness-watchdog.js` 的 `resumeStalledHarnessDrivers` 新增 A 阶段
+（planner/GAN）活动复合判据 + fresh-start 重排（受 `MAX_INITIATIVE_FRESH_STARTS` 上限约束），
+让 A 阶段回调丢失致图静默卡死的 harness_initiative 能被自动捞起重试，不再死等人工。
+**大小**: S
 
 ## ARTIFACT 条目
 
-- [x] [ARTIFACT] `harness-judge.js` 导出 `resolveStdoutFile` / `extractAgentTranscript`，collectEvidence 返回 `agentStdout`，buildJudgePrompt 含 agentStdout 段
-  Test: manual:node -e "const c=require('fs').readFileSync('packages/brain/src/harness-judge.js','utf8');for(const s of ['resolveStdoutFile','extractAgentTranscript','agentStdout','AGENT_STDOUT_CAP'])if(!c.includes(s))process.exit(1);console.log('OK')"
+- [x] [ARTIFACT] `harness-watchdog.js` 含 A 阶段覆盖逻辑（A_contract + 活动复合判据 + run_events）
+  Test: manual:node -e "const c=require('fs').readFileSync('packages/brain/src/harness-watchdog.js','utf8');if(!/A_contract/.test(c)||!/GREATEST/.test(c)||!/initiative_run_events/.test(c))process.exit(1);console.log('OK')"
 
-- [x] [ARTIFACT] `harness-task.graph.js` 导出 `findLiveEvaluateContainerDefault` 并接入 evaluate 复用门，finalizeEvaluation 透传 promptDir/taskId
-  Test: manual:node -e "const c=require('fs').readFileSync('packages/brain/src/workflows/harness-task.graph.js','utf8');for(const s of ['findLiveEvaluateContainerDefault','reusedLiveContainer','getHostPromptDir','promptDir:'])if(!c.includes(s))process.exit(1);console.log('OK')"
-
-- [x] [ARTIFACT] `docker-executor.js` 导出 `getHostPromptDir`（forensics stdout 目录 SSOT）
-  Test: manual:node -e "const c=require('fs').readFileSync('packages/brain/src/docker-executor.js','utf8');if(!c.includes('export function getHostPromptDir'))process.exit(1);console.log('OK')"
-
----
+- [x] [ARTIFACT] 回归测试文件存在（A 阶段卡死覆盖）
+  Test: manual:node -e "require('fs').accessSync('packages/brain/src/__tests__/harness-watchdog-gan-stall.test.js');console.log('OK')"
 
 ## BEHAVIOR 条目（内嵌可执行 manual: 命令）
 
-- [x] [BEHAVIOR] 证据供给：Brain 据 promptDir/taskId 读 evaluator 完整 stdout 转录（#3345 forensics）填入 agentStdout 交裁判；forensics 缺失 fail-open 退回 callback transcript；裁判 prompt 声明「含命令 stdout 即视为执行证据」且保留「证据缺失→FAIL」红线
-  Test: manual:node sprints/06122058-judge-evidence/behaviors/b1-evidence-supply.mjs
-  期望: OK
+- [x] [BEHAVIOR] watchdog 捞取范围覆盖 A 阶段：扫 A_contract 且用 GREATEST(心跳, initiative_runs.updated_at, initiative_run_events.ts) 活动复合判据（A 阶段心跳天然陈旧，不能单用心跳）
+  Test: manual:node -e "const c=require('fs').readFileSync('packages/brain/src/harness-watchdog.js','utf8');const a=/A_contract/.test(c),g=/GREATEST/.test(c),e=/initiative_run_events/.test(c),t=/MAX\\(e\\.ts\\)/.test(c);if(!(a&&g&&e&&t)){console.error('A阶段复合判据缺失',{a,g,e,t});process.exit(1)}console.log('OK')"
 
-- [x] [BEHAVIOR] evaluate 重入幂等：findLiveEvaluateContainer 查同 (task, fix_round) 活容器，命中前缀 → 返回容器名供复用（跳过重 spawn），空/异前缀 → null（正常 spawn）
-  Test: manual:node sprints/06122058-judge-evidence/behaviors/b2-reentry-idem.mjs
-  期望: OK
+- [x] [BEHAVIOR] A 阶段命中 → fresh-start 重排（剥离 resume_from_checkpoint，让 executor 重跑 planner 并递增 execution_attempts），区别于 B 阶段的 resume
+  Test: manual:node -e "const c=require('fs').readFileSync('packages/brain/src/harness-watchdog.js','utf8');if(!/fresh-start re-spawn planner/.test(c)){console.error('缺 fresh-start 重排路径');process.exit(1)}console.log('OK')"
+
+- [x] [BEHAVIOR] fresh-start 受 MAX_INITIATIVE_FRESH_STARTS 上限约束：查询带 execution_attempts < 上限（坏任务不无限重试）
+  Test: manual:node -e "const c=require('fs').readFileSync('packages/brain/src/harness-watchdog.js','utf8');if(!/MAX_INITIATIVE_FRESH_STARTS/.test(c)||!/execution_attempts/.test(c)){console.error('缺 fresh-start 上限约束');process.exit(1)}console.log('OK')"
+
+- [x] [BEHAVIOR] B 阶段既有 resume 逻辑保持不变（不破坏 #3356/#3361）：仍有 B_task_loop + resume_from_checkpoint=true 路径
+  Test: manual:node -e "const c=require('fs').readFileSync('packages/brain/src/harness-watchdog.js','utf8');if(!/B_task_loop/.test(c)||!/resume_from_checkpoint/.test(c)){console.error('B阶段resume路径被破坏');process.exit(1)}console.log('OK')"
