@@ -72,7 +72,11 @@ describe('resumeStalledHarnessDrivers — OPEN-2 看门狗', () => {
     let updateSql = '';
     let updateParams = [];
     mockPoolQuery.mockImplementation(async (sql, params) => {
-      if (/SELECT/i.test(sql)) return { rows: [{ id: TASK_ID }] };
+      // 仅 B 阶段查询命中（A 阶段活动判据查询返回空，避免双计数）
+      if (/SELECT/i.test(sql) && /B_task_loop/.test(sql) && !/GREATEST/i.test(sql)) {
+        return { rows: [{ id: TASK_ID }] };
+      }
+      if (/SELECT/i.test(sql)) return { rows: [] };
       if (/UPDATE\s+tasks/i.test(sql)) {
         updateSql = sql;
         updateParams = params;
@@ -98,7 +102,11 @@ describe('resumeStalledHarnessDrivers — OPEN-2 看门狗', () => {
   it('UPDATE 原子守卫返回 0 行（已被别的 tick 抢翻）→ 不计入 resumed', async () => {
     const TASK_ID = 'bbbb1111-2222-3333-4444-555566667777';
     mockPoolQuery.mockImplementation(async (sql) => {
-      if (/SELECT/i.test(sql)) return { rows: [{ id: TASK_ID }] };
+      // 仅 B 阶段查询命中（A 阶段活动判据查询返回空）
+      if (/SELECT/i.test(sql) && /B_task_loop/.test(sql) && !/GREATEST/i.test(sql)) {
+        return { rows: [{ id: TASK_ID }] };
+      }
+      if (/SELECT/i.test(sql)) return { rows: [] };
       if (/UPDATE\s+tasks/i.test(sql)) return { rows: [] }; // 抢翻失败
       return { rows: [] };
     });

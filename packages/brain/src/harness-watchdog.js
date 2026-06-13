@@ -89,9 +89,12 @@ export async function scanStuckHarness({ pool: dbPool = pool, notifier } = {}) {
  * → 任务死等下次重启。本看门狗把它做成 tick 级周期版。
  *
  * 安全设计（杜绝双驱动 / 误杀合法等待）：
- *   - 只扫 phase='B_task_loop'（run_sub_task 阻塞区）。**排除 A_planning**——那是 planner
- *     在 interrupt 等容器 callback 的合法状态，无 in-brain 驱动器是预期的，重排会 thrash。
- *   - 只重排 driver_heartbeat_at 陈旧(>staleMinutes)或 NULL 的任务。活驱动（run_sub_task
+ *   - 区段 B（phase='B_task_loop'，run_sub_task 阻塞区）用**心跳判据**：只重排
+ *     driver_heartbeat_at 陈旧/NULL 的任务（活驱动每 30s 刷心跳 → 新鲜=活，别动）。
+ *   - 区段 A（phase IN A_contract/A_planning，planner/GAN）用**活动复合判据**（见下方
+ *     P1 扩面注释）——A 阶段心跳天然陈旧，必须靠 run_events/updated_at 综合判活。
+ *     （旧版"排除 A_planning"的不变量已废弃：那导致 A 阶段卡死永远没人管，见 P1 扩面。）
+ *   - 心跳判据细节：活驱动（run_sub_task
  *     的 _waitForSubGraphCompletion）每 ~30s 刷心跳 → 心跳新鲜必然=活驱动在 pump（不动）。
  *   - 重排 = status→queued + resume_from_checkpoint=true（executor 走 resume 续 checkpoint）
  *     + 清 claim 三件套（否则 dispatcher 的 claimed_by IS NULL 永远选不出 → 死锁）。
@@ -104,13 +107,42 @@ export async function scanStuckHarness({ pool: dbPool = pool, notifier } = {}) {
  * import git fetch/push、spawn prep），多个慢调用叠加可断流数分钟；3min 阈值会把活
  * driver 误判 parked → 重排 → 并发双驱动（06-06 GAN heartbeat 事故同根因系）。
  *
+ * ── P1 扩面（2026-06-13）：覆盖 planner/GAN(A) 阶段静默卡死 ──
+ * 教训：liveness 巡检的覆盖面必须 = 故障面。旧版只捞 phase='B_task_loop'，于是
+ * planner/GAN(A) 阶段回调丢失致图永久 interrupt-waiting（run b37f04a4 / 7c3a35a5）
+ * 永远没人管，"全自动"就破在最后这一步。
+ *
+ * 但 A 阶段不能套用 B 的心跳判据：driver_heartbeat_at 只在 graph stream 推进时刷
+ * （executor.writeDriverHeartbeat）；planner interrupt 后 stream 结束、驱动器返回，
+ * 等容器 callback 这段窗口 brain 内**本就无驱动器** → 心跳结构性陈旧/NULL，无法区分
+ * "合法等容器" vs "回调丢失永久卡死"。故 A 阶段改用**活动复合判据**：
+ *   phase IN ('A_contract','A_planning') 且
+ *   GREATEST(driver_heartbeat_at, initiative_runs.updated_at, initiative_run_events.ts)
+ *   全部静默超 staleMinutesA（活 GAN/planner 容器每轮回调写 run_events → 新鲜=活，别动）。
+ * 命中 → **fresh-start 重排**（剥离 resume_from_checkpoint，让 executor 走
+ * `existing && !resumeRequested` 分支重跑 planner 并递增 execution_attempts），并以
+ * COALESCE(execution_attempts,0) < MAX_INITIATIVE_FRESH_STARTS 为上限（坏任务不无限重试；
+ * 超限不再重排，由 executor terminal-fail 收尾）。A 阶段无活驱动 → fresh-start 无双驱动风险。
+ *
  * @param {object} [opts]
  * @param {import('pg').Pool} [opts.pool]
- * @param {number} [opts.staleMinutes=10]  心跳陈旧阈值（分钟）
+ * @param {number} [opts.staleMinutes=10]   B 阶段心跳陈旧阈值（分钟）
+ * @param {number} [opts.staleMinutesA=20]  A 阶段活动静默阈值（分钟）
+ * @param {number} [opts.maxFreshStarts]    A 阶段 fresh-start 上限（默认 = executor.MAX_INITIATIVE_FRESH_STARTS）
  * @returns {Promise<{ resumed: string[], scanned: number }>}
  */
-export async function resumeStalledHarnessDrivers({ pool: dbPool = pool, staleMinutes = 10 } = {}) {
-  const stalled = await dbPool.query(
+export async function resumeStalledHarnessDrivers({
+  pool: dbPool = pool,
+  staleMinutes = 10,
+  staleMinutesA = 20,
+  maxFreshStarts,
+} = {}) {
+  const resumed = [];
+  let scanned = 0;
+
+  // ── 区段 B：心跳陈旧 + phase='B_task_loop'（run_sub_task 阻塞区）→ resume_from_checkpoint ──
+  // 既有逻辑保持不变（守护 #3356/#3361 等恢复路径）。
+  const stalledB = await dbPool.query(
     `SELECT t.id
        FROM tasks t
        JOIN initiative_runs ir ON ir.initiative_id = t.id
@@ -124,9 +156,9 @@ export async function resumeStalledHarnessDrivers({ pool: dbPool = pool, staleMi
       LIMIT 20`,
     [String(staleMinutes)]
   );
+  scanned += stalledB.rows.length;
 
-  const resumed = [];
-  for (const row of stalled.rows) {
+  for (const row of stalledB.rows) {
     try {
       const upd = await dbPool.query(
         `UPDATE tasks SET
@@ -153,7 +185,79 @@ export async function resumeStalledHarnessDrivers({ pool: dbPool = pool, staleMi
       );
     }
   }
-  return { resumed, scanned: stalled.rows.length };
+
+  // ── 区段 A：planner/GAN(A) 阶段活动静默 + 未超 fresh-start 上限 → fresh-start 重排 ──
+  let maxFresh = maxFreshStarts;
+  if (maxFresh == null) {
+    // 复用 executor 的 SSOT 上限；懒加载避免把 executor 整个依赖图拉进 watchdog/单测。
+    try {
+      ({ MAX_INITIATIVE_FRESH_STARTS: maxFresh } = await import('./executor.js'));
+    } catch {
+      maxFresh = 3;
+    }
+  }
+
+  const stalledA = await dbPool.query(
+    `SELECT t.id, COALESCE(t.execution_attempts, 0) AS execution_attempts
+       FROM tasks t
+      WHERE t.task_type = 'harness_initiative'
+        AND t.status = 'in_progress'
+        AND COALESCE(t.execution_attempts, 0) < $2::int
+        AND EXISTS (
+              SELECT 1 FROM initiative_runs ir
+               WHERE ir.initiative_id = t.id
+                 AND ir.phase IN ('A_contract', 'A_planning')
+                 AND ir.completed_at IS NULL)
+        AND NOT EXISTS (
+              SELECT 1 FROM initiative_runs ir2
+               WHERE ir2.initiative_id = t.id
+                 AND ir2.phase IN ('B_task_loop', 'C_final_e2e')
+                 AND ir2.completed_at IS NULL)
+        AND GREATEST(
+              COALESCE(EXTRACT(EPOCH FROM t.driver_heartbeat_at), 0),
+              COALESCE((SELECT MAX(EXTRACT(EPOCH FROM ir3.updated_at))
+                          FROM initiative_runs ir3 WHERE ir3.initiative_id = t.id), 0),
+              COALESCE((SELECT MAX(e.ts)
+                          FROM initiative_run_events e WHERE e.initiative_id = t.id), 0)
+            ) < EXTRACT(EPOCH FROM NOW()) - ($1::int * 60)
+      ORDER BY t.id
+      LIMIT 20`,
+    [Number(staleMinutesA), Number(maxFresh)]
+  );
+  scanned += stalledA.rows.length;
+
+  for (const row of stalledA.rows) {
+    try {
+      // fresh-start：剥离 resume_from_checkpoint，executor `existing && !resumeRequested`
+      // 分支会 bump attemptN + 递增 execution_attempts + 重跑 planner（重新 spawn 容器）。
+      const upd = await dbPool.query(
+        `UPDATE tasks SET
+           status = 'queued',
+           claimed_by = NULL,
+           claimed_at = NULL,
+           started_at = NULL,
+           payload = (COALESCE(payload, '{}'::jsonb) - 'resume_from_checkpoint'),
+           updated_at = NOW()
+         WHERE id = $1 AND status = 'in_progress'
+         RETURNING id`,
+        [row.id]
+      );
+      if (upd.rows.length > 0) {
+        resumed.push(row.id);
+        console.warn(
+          `[harness-watchdog] resumed stalled planner/GAN driver: task=${row.id} ` +
+          `(phase=A 活动静默 >${staleMinutesA}min, execution_attempts=${row.execution_attempts}/${maxFresh} ` +
+          `→ fresh-start re-spawn planner)`
+        );
+      }
+    } catch (err) {
+      console.error(
+        `[harness-watchdog] resume stalled planner/GAN driver failed (task=${row.id}) (non-fatal): ${err.message}`
+      );
+    }
+  }
+
+  return { resumed, scanned };
 }
 
 export default { scanStuckHarness, resumeStalledHarnessDrivers };
