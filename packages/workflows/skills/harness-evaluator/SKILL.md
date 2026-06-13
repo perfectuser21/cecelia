@@ -6,10 +6,11 @@ description: |
   evaluator 在 CI 绿之后、PR merge 之前真启服务 + 跑 contract 的 manual:bash 命令验真行为。
   PASS → 允许 merge；FAIL → 不 merge，带反馈打回 Generator 在 PR 分支 fix loop（main 不变动）。
   单模式（harness v2 始终 IS_FINAL_E2E=true）：读 contract-draft.md 的 ## E2E 验收 脚本，按 target_environment 派发跑 Golden Path 端到端真实行为。
-version: 1.15.0
+version: 1.16.0
 created: 2026-05-06
 updated: 2026-06-11
 changelog:
+  - 1.16.0: 删除 Step B-1.7 弱oracle/作弊扫描（机械逻辑下沉 Contract Gate 代码层 #3348，4轮进化规则更强；原粗糙 grep 是死代码+误报复活点）。Deterministic Gate initiative 减肥收尾，践行"机械判定归代码、skill 留语义判断"原则
   - 1.15.0: 链路审计修复 7 项 — (a) 清理模式 A/WS 拆分残留（description/常见错误/变量表统一为单模式 IS_FINAL_E2E=true 跑 contract-draft.md ## E2E 验收，全文清掉 ws_id/contract-dod-ws）；(b) 修 Step B-2 双重执行 bug（删无条件首跑，windows 环境不再 bash 不存在的 .sh，超时 124 判定并入 case 后统一）；(c) 新增 Step B-1.6 环境预检 + localhost 重写（容器内 sed 重写 + 二进制 command -v 缺失即 env_missing FAIL，禁止降级）；(d) 新增 Step B-1.7 弱 oracle/作弊扫描；(e) 新增 Step B-1.8 Golden Path 覆盖核对；(f) 新增「领域验证死规则」（视频 ffprobe / 发布真实出现 / DB 时间窗 / UI 可见断言）；(g) 修注入变量表 WECHAT_RPA_WORKFLOW/WORKSPACE_PATH/mac_web 注解
   - 1.14.0: windows_wechat E2E 路由 3 项修复 — P0: 删除 ;;&fallthrough，windows_wechat 合并入 OR pattern 触发 e2e-wechat-rpa.yml（xian-rog self-hosted）；P1: Step B-1 ps1 提取条件加入 windows_wechat；P2: B33 autonomous 检测排除 windows_cloud/windows_wechat（PowerShell E2E 不含 localhost:5221 是正常的）
   - 1.13.0: 截图路径从 ~/claude-output/ 改为 SPRINT_DIR/screenshots/（与 Report Step8 index.html 对齐）
@@ -335,46 +336,13 @@ fi
 
 **死规则（加粗，必须遵守）**：**禁止在工具缺失时改写验证命令、降级验证、或跳过该步——`env_missing` 就是 FAIL，让 Brain 路由到正确环境，这不是 evaluator 该变通的事。** 例如脚本要 ffprobe 验视频但本机无 ffprobe → 直接 `env_missing` FAIL，绝不允许改成"检查文件大小"凑过。
 
-#### Step B-1.7: 弱 oracle / 作弊扫描（执行前置）
+#### Step B-1.7: 弱 oracle / 作弊扫描 — 已下沉 Contract Gate 代码层
 
-**执行前扫描 /tmp/e2e-verify.sh，命中任一即 FAIL，禁止 PASS。** windows_cloud/windows_wechat 同理扫描 /tmp/e2e-verify.ps1（关键词换成 PowerShell 等价物）。
-
-```bash
-SCAN_FILE=/tmp/e2e-verify.sh
-[[ "$TARGET_ENV" == "windows_cloud" || "$TARGET_ENV" == "windows_wechat" ]] && SCAN_FILE=/tmp/e2e-verify.ps1
-
-# 1) 有 curl 但全文无 jq -e 值校验 → 弱 oracle
-if grep -qE '\bcurl\b' "$SCAN_FILE" && ! grep -qE 'jq -e' "$SCAN_FILE"; then
-  cat > "$WORKSPACE/.brain-result.json" << BREOF
-{"verdict":"FAIL","task_id":"$TASK_ID","failed_step":"weak_oracle","log_excerpt":"脚本含 curl 但全文无 jq -e 值校验，属弱 oracle，schema drift 无法被抓。请在 contract-draft 的 ## E2E 验收 里补 jq -e 值断言后重交。"}
-BREOF
-  exit 0
-fi
-
-# 2) MOCK_ / 无条件 exit 0 兜底 / 断言上吞错的 || true / dry-run
-if grep -qE 'MOCK_|--dry-run|--dryrun|\bdryRun\b' "$SCAN_FILE"; then
-  HIT=$(grep -nE 'MOCK_|--dry-run|--dryrun|\bdryRun\b' "$SCAN_FILE" | head -1)
-  cat > "$WORKSPACE/.brain-result.json" << BREOF
-{"verdict":"FAIL","task_id":"$TASK_ID","failed_step":"cheat_scan","log_excerpt":"脚本含 MOCK_/dry-run 作弊标志（行：$HIT），非真实执行路径。E2E 必须打真实服务/真实产物，禁止 mock 与 dry-run。"}
-BREOF
-  exit 0
-fi
-if grep -qE '\|\|[[:space:]]*true' "$SCAN_FILE" || grep -qE '^[[:space:]]*exit 0[[:space:]]*$' "$SCAN_FILE"; then
-  HIT=$(grep -nE '\|\|[[:space:]]*true|^[[:space:]]*exit 0[[:space:]]*$' "$SCAN_FILE" | head -1)
-  cat > "$WORKSPACE/.brain-result.json" << BREOF
-{"verdict":"FAIL","task_id":"$TASK_ID","failed_step":"cheat_scan","log_excerpt":"脚本含吞错 || true 或无条件 exit 0 兜底（行：$HIT），断言失败也会假绿。删除兜底，让真实 exit code 驱动结果。"}
-BREOF
-  exit 0
-fi
-
-# 3) 只有文件存在/大小检查而无内容断言
-if grep -qE 'test -[ef]|\[ -[ef] |\.size|stat -c|ls -l' "$SCAN_FILE" && ! grep -qE 'jq -e|ffprobe|toBeVisible|toHaveText|psql' "$SCAN_FILE"; then
-  cat > "$WORKSPACE/.brain-result.json" << BREOF
-{"verdict":"FAIL","task_id":"$TASK_ID","failed_step":"weak_oracle","log_excerpt":"脚本只做文件存在/大小检查，无任何内容/行为断言（jq -e / ffprobe / DOM 断言 / psql 均缺）。产出物存在 ≠ 行为正确，请补真实内容断言。"}
-BREOF
-  exit 0
-fi
-```
+> **本步骤已移除**（v1.16.0）。弱 oracle / 作弊检测（缺 jq -e 值校验、MOCK_/dry-run、吞错 || true、只查文件存在）
+> 已由 **Contract Gate**（`packages/brain/src/lib/contract-gate.js`，#3348）在 **GAN 收敛时 + evaluate spawn 前**
+> 确定性拦截，且经 4 轮规则进化（#3351/#3353/#3357/#3358）能识别状态码 oracle、捕获-断言、负向测试等
+> 合法写法——远比本步骤原有的粗糙 grep 强。合同被 spawn 到 evaluator 时必然已 gate-clean，
+> evaluator 无需也不应重复扫描（重复的粗糙规则反而会误伤 gate 放行的合法写法）。
 
 #### Step B-1.8: Golden Path 覆盖核对（LLM 判断步骤）
 
