@@ -18,6 +18,7 @@ import { tickState } from './tick-state.js';
 import { executeTick as _executeTick } from './tick-runner.js'; // Wave 2 废弃，保留供回滚
 import { runScheduler } from './tick-scheduler.js';
 import { startConsciousnessLoop } from './consciousness-loop.js';
+import { startHarnessWatchdogLoop, stopHarnessWatchdogLoop } from './harness-watchdog-loop.js';
 import { publishCognitiveState } from './events/taskEvents.js';
 
 // ───── tickLog: [HH:MM:SS] 前缀 + 每 100 条打一次 summary ─────
@@ -143,6 +144,11 @@ export function startTickLoop() {
   // Wave 2: 启动 LLM 意识循环（每 20 分钟，独立于调度层）
   startConsciousnessLoop();
 
+  // P1 修复（2026-06-13）：启动独立 harness 看门狗循环（默认每 5 分钟，独立于调度层）。
+  // watchdog 原先只接在 Wave-2 废弃的 executeTick，runScheduler 路径从不调用 → 形同虚设。
+  // 改用独立 setInterval：不被 runScheduler 的 circuit_open / no_goals 早 return 或异常跳过。
+  startHarnessWatchdogLoop();
+
   tickLog(`[tick-loop] Started (interval: ${TICK_LOOP_INTERVAL_MS}ms)`);
   return true;
 }
@@ -158,6 +164,8 @@ export function stopTickLoop() {
 
   clearInterval(tickState.loopTimer);
   tickState.loopTimer = null;
+  // 同步停掉独立 harness 看门狗循环（保持 start/stop 对称）
+  stopHarnessWatchdogLoop();
   tickLog('[tick-loop] Stopped');
   return true;
 }

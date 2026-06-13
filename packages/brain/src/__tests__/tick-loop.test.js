@@ -28,6 +28,13 @@ vi.mock('../consciousness-loop.js', () => ({
   stopConsciousnessLoop: vi.fn(),
   _runConsciousnessOnce: vi.fn().mockResolvedValue({ completed: true, actions: [] }),
 }));
+// P1 修复：独立 harness 看门狗循环由 startTickLoop 启动。mock 以验证「被接上」+ 避免拉 db。
+const mockStartHarnessWatchdogLoop = vi.fn().mockReturnValue(true);
+const mockStopHarnessWatchdogLoop = vi.fn();
+vi.mock('../harness-watchdog-loop.js', () => ({
+  startHarnessWatchdogLoop: (...args) => mockStartHarnessWatchdogLoop(...args),
+  stopHarnessWatchdogLoop: (...args) => mockStopHarnessWatchdogLoop(...args),
+}));
 
 import {
   runTickSafe,
@@ -159,6 +166,21 @@ describe('tick-loop', () => {
     it('stopTickLoop 在未 running 时返回 false', () => {
       const r = stopTickLoop();
       expect(r).toBe(false);
+    });
+
+    // P1 回归（2026-06-13）：harness watchdog 必须由 startTickLoop 接上独立循环。
+    // 历史 bug：watchdog 只接在 Wave-2 废弃的 executeTick，runScheduler 路径从不调用 → 形同虚设。
+    it('startTickLoop 启动独立 harness 看门狗循环（startHarnessWatchdogLoop 被调用）', () => {
+      mockStartHarnessWatchdogLoop.mockClear();
+      startTickLoop();
+      expect(mockStartHarnessWatchdogLoop).toHaveBeenCalledTimes(1);
+    });
+
+    it('stopTickLoop 同步停掉 harness 看门狗循环（start/stop 对称）', () => {
+      mockStopHarnessWatchdogLoop.mockClear();
+      startTickLoop();
+      stopTickLoop();
+      expect(mockStopHarnessWatchdogLoop).toHaveBeenCalledTimes(1);
     });
   });
 });
