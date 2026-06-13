@@ -189,8 +189,7 @@ const ZOMBIE_SWEEP_INTERVAL_MS = parseInt(process.env.CECELIA_ZOMBIE_SWEEP_INTER
 // PIPELINE_PATROL_INTERVAL_MS / PIPELINE_WATCHDOG_INTERVAL_MS / CLEANUP_WORKER_INTERVAL_MS
 // 已收口到对应 plugin 内部（D1.7c）— tick-runner.js 不再读这些常量
 const ORPHAN_PR_WORKER_INTERVAL_MS = parseInt(process.env.CECELIA_ORPHAN_PR_WORKER_INTERVAL_MS || String(30 * 60 * 1000), 10);
-// W3: harness initiative deadline_at watchdog（5min/次默认，env 可覆盖）
-const HARNESS_WATCHDOG_INTERVAL_MS = parseInt(process.env.CECELIA_HARNESS_WATCHDOG_INTERVAL_MS || String(5 * 60 * 1000), 10);
+// W3 harness watchdog 间隔已搬到 harness-watchdog-loop.js（2026-06-13 P1 修复）— tick-runner.js 不再读
 // GOAL_EVAL_INTERVAL_MS 已收口到 goal-eval-plugin.js（D1.7c-plugin1）— tick-runner.js 不再读
 
 /** Check if a task is stale (in_progress for too long) — 与 tick.js 同名同义 */
@@ -375,34 +374,11 @@ async function executeTick() {
     console.warn('[tick] pipeline-watchdog plugin failed (non-fatal):', err.message);
   });
 
-  // [感知] Harness Initiative Watchdog (W3)：每 5 分钟兜底扫 initiative_runs.deadline_at
-  // 防止 Brain 重启丢 setTimeout / invoke 卡死不响应 AbortSignal
-  // Spec: docs/superpowers/specs/2026-05-06-harness-langgraph-reliability-design.md §W3
-  const harnessWatchdogElapsed = Date.now() - (tickState.lastHarnessWatchdogTime || 0);
-  if (harnessWatchdogElapsed >= HARNESS_WATCHDOG_INTERVAL_MS) {
-    tickState.lastHarnessWatchdogTime = Date.now();
-    import('./harness-watchdog.js').then(({ scanStuckHarness }) =>
-      scanStuckHarness({ pool, notifier: undefined })
-    ).then(r => {
-      if (r?.flagged?.length > 0) {
-        tickLog(`[tick] harness-watchdog: scanned=${r.scanned} flagged=${r.flagged.length}`);
-      }
-    }).catch(err => {
-      console.warn('[tick] harness-watchdog plugin failed (non-fatal):', err.message);
-    });
-
-    // OPEN-2：重排「驱动器已死」的 parked harness 任务（心跳陈旧 + phase=B_task_loop）。
-    // 把 startup-sync 的 resume 逻辑做成 tick 级周期版，不再死等 brain 重启才自愈。
-    import('./harness-watchdog.js').then(({ resumeStalledHarnessDrivers }) =>
-      resumeStalledHarnessDrivers({ pool })
-    ).then(r => {
-      if (r?.resumed?.length > 0) {
-        tickLog(`[tick] harness-watchdog: resumed ${r.resumed.length} stalled driver(s) (scanned=${r.scanned})`);
-      }
-    }).catch(err => {
-      console.warn('[tick] harness-watchdog resume failed (non-fatal):', err.message);
-    });
-  }
+  // [感知] Harness Initiative Watchdog (W3)：已搬到独立 harness-watchdog-loop.js（2026-06-13 P1 修复）。
+  // 历史 bug：executeTick 自 Wave 2（2026-05-04）起从不被调用（tick-loop.js 改调 runScheduler），
+  // 这里的 watchdog 块因此形同虚设 → GAN/planner 卡死无人自救。修复后由 startTickLoop() 启动的
+  // 独立 setInterval（harness-watchdog-loop.js）周期执行，不依赖 tick body。
+  // 即便紧急回滚到 executeTick 路径，独立循环仍在跑（无双驱动风险），故此处不再重复调用。
 
   // [R4] Orphan worktree 清理：每 10 分钟调一次 shell 脚本（D1.7c plugin）
   // 扫描白名单 worktree，若对应 PR 已 merged 超过 1h 且满足安全守卫则清理
