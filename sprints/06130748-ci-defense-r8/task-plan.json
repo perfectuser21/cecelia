@@ -1,0 +1,33 @@
+{
+  "initiative_id": "9dde3144-665f-4567-ada8-4ec91f93a4c8",
+  "journey_type": "autonomous",
+  "journey_type_reason": "纯后端/CI 防线（packages/brain/scripts/ci + brain CI yaml），无 UI、无远端 agent、无 packages/engine 业务变更。",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "Harness CI 防线三件套：changed-test-router + skill 契约测试 + 合同存在性 + brain CI 接线",
+      "scope": "新建 changed-test-router.mjs（changed skill 文件 → 映射 fs 依赖契约测试清单，JSON stdout）；skill-contract-check.mjs（纯函数 checkEvaluator/checkReviewer/checkGenerator/checkProposer，返回 {ok,missing}）；skill-contract.test.mjs（vitest，5 类不变量守现网快照全绿）；contract-exists.mjs（读 diff 清单 fixture，缺 contract-draft.md 非零退出+点名，含合同/空diff/非harness 退出0）；三份 fixtures；brain-ci-deploy.yml 新增 pull_request + paths:packages/workflows/skills/** 的 job 跑三件套，既有 deploy job 原样保留。What 不写 How，判定逻辑全落在可本地跑 node 脚本。",
+      "dod": [
+        "[BEHAVIOR] changed-test-router 对 evaluator/SKILL.md 输出含 skill-contract 的清单；非 skill 文件不误报",
+        "[BEHAVIOR] skill-contract.test.mjs 对现网快照 vitest exit 0（5 类不变量全 PASS）",
+        "[BEHAVIOR] checkEvaluator 对删 env_missing 的副本 ok=false 且 missing 含 env_missing，真实文件未污染",
+        "[BEHAVIOR] contract-exists.mjs 缺合同非零退出+点名 contract-draft.md，完整/非harness 退出 0",
+        "[BEHAVIOR] brain-ci-deploy.yml 接 skills 路径+PR触发+三件套，既有 deploy job 保留，yaml 合法",
+        "[ARTIFACT] 5 个脚本/测试/fixture 文件存在（见 contract-dod.md ARTIFACT 段）"
+      ],
+      "files": [
+        "packages/brain/scripts/ci/changed-test-router.mjs",
+        "packages/brain/scripts/ci/skill-contract-check.mjs",
+        "packages/brain/scripts/ci/contract-exists.mjs",
+        "packages/brain/scripts/ci/__tests__/skill-contract.test.mjs",
+        "packages/brain/scripts/ci/__tests__/fixtures/diff-missing-contract.txt",
+        "packages/brain/scripts/ci/__tests__/fixtures/diff-complete.txt",
+        "packages/brain/scripts/ci/__tests__/fixtures/diff-non-harness.txt",
+        ".github/workflows/brain-ci-deploy.yml"
+      ],
+      "depends_on": [],
+      "complexity": "M",
+      "estimated_minutes": 90
+    }
+  ]
+}

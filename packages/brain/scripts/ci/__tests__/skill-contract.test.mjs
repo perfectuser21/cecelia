@@ -1,0 +1,50 @@
+import { describe, it, expect } from 'vitest';
+import { readFileSync } from 'fs';
+import { fileURLToPath } from 'url';
+import { dirname, join } from 'path';
+import {
+  checkEvaluator,
+  checkReviewer,
+  checkGenerator,
+  checkProposer,
+  REVIEWER_DIMENSIONS,
+} from '../skill-contract-check.mjs';
+
+const __dir = dirname(fileURLToPath(import.meta.url));
+// __tests__ → ci → scripts → brain → packages → repo root
+const ROOT = join(__dir, '..', '..', '..', '..', '..');
+const read = (p) => readFileSync(join(ROOT, p), 'utf8');
+
+const evaluator = read('packages/workflows/skills/harness-evaluator/SKILL.md');
+const reviewer = read('packages/workflows/skills/harness-contract-reviewer/SKILL.md');
+const generator = read('packages/workflows/skills/harness-generator/SKILL.md');
+const proposer = read('packages/workflows/skills/harness-contract-proposer/SKILL.md');
+const sharedJs = read('packages/brain/src/harness-shared.js');
+
+describe('skill-contract — 5 类不变量守现网快照', () => {
+  it('不变量1: evaluator 正文含 env_missing / B-1.6 / B-1.7 / B-1.8 段', () => {
+    const r = checkEvaluator(evaluator);
+    // 仅看「段缺失」类不变量（排除 ws_id 残留项，由不变量2 单独守）
+    expect(r.missing.filter((x) => x !== 'ws_id_residual')).toEqual([]);
+  });
+
+  it('不变量2: evaluator 正文（frontmatter 之后）无 ws_id 残留', () => {
+    const r = checkEvaluator(evaluator);
+    expect(r.missing).not.toContain('ws_id_residual');
+    expect(r.ok).toBe(true);
+  });
+
+  it('不变量3: reviewer 7 维名与 harness-shared.js ReviewerOutputSchema 逐字一致', () => {
+    expect(checkReviewer(reviewer).ok).toBe(true);
+    // 7 维名同时必须出现在 schema 来源（逐字一致的比对锚点）
+    for (const d of REVIEWER_DIMENSIONS) expect(sharedJs).toContain(d);
+  });
+
+  it('不变量4: generator 无可执行 gh pr merge', () => {
+    expect(checkGenerator(generator).ok).toBe(true);
+  });
+
+  it('不变量5: proposer 含「领域验证规则」段', () => {
+    expect(checkProposer(proposer).ok).toBe(true);
+  });
+});
