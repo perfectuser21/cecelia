@@ -12,8 +12,8 @@ journey_type: autonomous
 - [ ] [ARTIFACT] harness.js 含 /initiative/:id/health 路由
   Test: node -e "const c=require('fs').readFileSync('packages/brain/src/routes/harness.js','utf8');if(!c.includes('/initiative/:id/health'))process.exit(1)"
 
-- [ ] [ARTIFACT] 测试文件存在
-  Test: node -e "require('fs').accessSync('sprints/06141723-harness-initiative-health-endpoint/tests/harness-initiative-health.test.ts')"
+- [ ] [ARTIFACT] 测试文件存在（落在 brain-unit CI lane）
+  Test: node -e "require('fs').accessSync('packages/brain/src/__tests__/harness-initiative-health.test.ts')"
 
 ## BEHAVIOR 条目（autonomous — 测真实 Brain localhost:5221 + psql，全部 seed→断言→cleanup）
 
@@ -43,4 +43,12 @@ journey_type: autonomous
 
 - [ ] [BEHAVIOR] error path — 合法但不存在的 UUID → 404 带 error 字符串
   Test: manual:bash -c 'CODE=$(curl -s -o /dev/null -w "%{http_code}" "localhost:5221/api/brain/harness/initiative/00000000-0000-4000-8000-000000000000/health"); [ "$CODE" = "404" ] || { echo "FAIL code=$CODE"; exit 1; }; curl -s "localhost:5221/api/brain/harness/initiative/00000000-0000-4000-8000-000000000000/health" | jq -e ".error | type == \"string\"" || exit 1; echo OK'
+  期望: OK
+
+- [ ] [BEHAVIOR] PRD 边界 — 同一 initiative 多 run 取 created_at 最新一条（旧 failed + 新 B_task_loop → state≠failed）
+  Test: manual:bash -c 'IID=$(psql "$DB" -t -A -c "SELECT gen_random_uuid()"); psql "$DB" -c "INSERT INTO initiative_runs (initiative_id,phase,created_at) VALUES ('"'"'$IID'"'"','"'"'failed'"'"',NOW()-interval '"'"'1 hour'"'"'),('"'"'$IID'"'"','"'"'B_task_loop'"'"',NOW())"; RESP=$(curl -sf "localhost:5221/api/brain/harness/initiative/$IID/health"); psql "$DB" -c "DELETE FROM initiative_runs WHERE initiative_id='"'"'$IID'"'"'"; echo "$RESP" | jq -e ".state != \"failed\"" || exit 1; echo OK'
+  期望: OK
+
+- [ ] [BEHAVIOR] PRD 边界 — 有 run 无 event → retries/interrupts=0、last_node=null，不报错
+  Test: manual:bash -c 'IID=$(psql "$DB" -t -A -c "SELECT gen_random_uuid()"); psql "$DB" -c "INSERT INTO initiative_runs (initiative_id,phase) VALUES ('"'"'$IID'"'"','"'"'B_task_loop'"'"')"; RESP=$(curl -sf "localhost:5221/api/brain/harness/initiative/$IID/health"); psql "$DB" -c "DELETE FROM initiative_runs WHERE initiative_id='"'"'$IID'"'"'"; echo "$RESP" | jq -e ".retries==0 and .interrupts==0 and .last_node==null" || exit 1; echo OK'
   期望: OK

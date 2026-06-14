@@ -13,7 +13,7 @@ import express from 'express';
 import request from 'supertest';
 
 const mockQuery = vi.hoisted(() => vi.fn());
-vi.mock('../../../packages/brain/src/db.js', () => ({ default: { query: mockQuery } }));
+vi.mock('../db.js', () => ({ default: { query: mockQuery } }));
 
 const nowSec = () => Math.floor(Date.now() / 1000);
 
@@ -31,7 +31,7 @@ beforeEach(async () => {
   vi.resetModules();
   app = express();
   app.use(express.json());
-  const { default: harnessRouter } = await import('../../../packages/brain/src/routes/harness.js');
+  const { default: harnessRouter } = await import('../routes/harness.js');
   app.use('/api/brain/harness', harnessRouter);
 });
 

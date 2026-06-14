@@ -1,4 +1,4 @@
-# Sprint Contract Draft (Round 1)
+# Sprint Contract Draft (Round 3)
 
 > Sprint: Harness Initiative 健康度只读端点 `GET /api/brain/harness/initiative/:id/health`
 > journey_type: autonomous ｜ target_environment: local_api
@@ -52,7 +52,7 @@
 - `last_node` = events 中 `ts` 最大那条的 `node`；无 events → `null`
 - `retries` = `GREATEST(MAX(attempt) - 1, 0)`（无 events → 0）
 - `interrupts` = events 中 `status = 'failed'` 的条数（无 events → 0）
-- `last_activity_ts` = `MAX(ts)`（无 events → run.started_at 的 epoch 秒）
+- `last_activity_ts` = `MAX(ts)`（BIGINT epoch 秒）；**无 events → `EXTRACT(EPOCH FROM run.started_at)::bigint`**（started_at 是 TIMESTAMPTZ，必须转 epoch 秒才能与 ts/now 同口径，见 ## Risks R1）
 - `stuck_minutes` = `floor((now_epoch - last_activity_ts) / 60)`；终态(done/failed)恒为 0
 
 state 判定（**阈值 [AI_ADDED]，对齐现有 harness-watchdog 常量 staleMinutes=10 / staleMinutesA=20，防止 generator 自创阈值**）：
@@ -62,6 +62,11 @@ state 判定（**阈值 [AI_ADDED]，对齐现有 harness-watchdog 常量 staleM
   - `stuck_minutes >= 20` → `state='zombie'`, `healthy=false`
   - `stuck_minutes >= 10` → `state='stuck'`,  `healthy=false`
   - 否则                  → `state='healthy'`,`healthy=true`
+
+## Risks
+
+- **R1（时间口径不一致，会算错 stuck_minutes）**: `initiative_runs.started_at` 是 `TIMESTAMPTZ`，`initiative_run_events.ts` 是 `BIGINT`（Unix 秒）。无 events 的 run 用 started_at 当 `last_activity_ts` 时，若直接拿 TIMESTAMPTZ 去和 `now_epoch`(BIGINT) 相减会类型错误/算错分钟数。**Mitigation**: 无 events 分支必须用 `EXTRACT(EPOCH FROM started_at)::bigint`，与 ts/now 统一为 epoch 秒后再相减（见上「派生字段」）。
+- **R2（多 run 误取旧记录）**: 同一 initiative 有多条历史 run，若不排序会随机取到旧的 failed run 误判健康态。**Mitigation**: `ORDER BY created_at DESC LIMIT 1` 取最新一条作裁决依据，并由 Golden Path Step 5 / BEHAVIOR「多 run 取最新」回归守护。
 
 ## Golden Path
 
@@ -74,7 +79,7 @@ state 判定（**阈值 [AI_ADDED]，对齐现有 harness-watchdog 常量 staleM
 
 **验证命令**:
 ```bash
-IID=$(psql "$DB" -t -A -c "SELECT gen_random_uuid()")
+IID=$(python3 -c "import uuid;print(uuid.uuid4())")
 psql "$DB" -c "INSERT INTO initiative_runs (initiative_id, phase) VALUES ('$IID','B_task_loop')"
 NOW=$(date +%s)
 psql "$DB" -c "INSERT INTO initiative_run_events (initiative_id,node,status,attempt,ts) VALUES ('$IID','prep','running',1,$NOW)"
@@ -83,8 +88,7 @@ psql "$DB" -c "DELETE FROM initiative_run_events WHERE initiative_id='$IID'; DEL
 echo "$RESP" | jq -e '.healthy==true and .state=="healthy" and .last_node=="prep"' || { echo FAIL; exit 1; }
 echo OK
 ```
-**硬阈值**: HTTP 200；新鲜 event(0m) → state=healthy
-**可执行验证**: 见上（`curl -sf` 对未注册路由返 404→非0 退出→FAIL，杜绝假绿）
+**硬阈值**: HTTP 200；新鲜 event(0m) → state=healthy（`curl -sf` 对未注册路由返 404→非0 退出→FAIL，杜绝假绿）
 
 ---
 
@@ -95,7 +99,7 @@ echo OK
 
 **验证命令**:
 ```bash
-IID=$(psql "$DB" -t -A -c "SELECT gen_random_uuid()")
+IID=$(python3 -c "import uuid;print(uuid.uuid4())")
 psql "$DB" -c "INSERT INTO initiative_runs (initiative_id, phase) VALUES ('$IID','B_task_loop')"
 OLD=$(( $(date +%s) - 900 ))
 psql "$DB" -c "INSERT INTO initiative_run_events (initiative_id,node,status,attempt,ts) VALUES ('$IID','prep','failed',1,$((OLD-100))),('$IID','prep','failed',2,$((OLD-50))),('$IID','prep','running',3,$OLD)"
@@ -105,7 +109,6 @@ echo "$RESP" | jq -e '.state=="stuck" and .healthy==false and .last_node=="prep"
 echo OK
 ```
 **硬阈值**: stuck_minutes≥10 且 <20 → stuck；retries=MAX(attempt)-1=2；interrupts=failed 条数=2
-**可执行验证**: 见上
 
 ---
 
@@ -116,7 +119,7 @@ echo OK
 
 **验证命令**:
 ```bash
-IID=$(psql "$DB" -t -A -c "SELECT gen_random_uuid()")
+IID=$(python3 -c "import uuid;print(uuid.uuid4())")
 psql "$DB" -c "INSERT INTO initiative_runs (initiative_id, phase) VALUES ('$IID','failed')"
 RESP=$(curl -sf "localhost:5221/api/brain/harness/initiative/$IID/health")
 psql "$DB" -c "DELETE FROM initiative_runs WHERE initiative_id='$IID'"
@@ -124,7 +127,6 @@ echo "$RESP" | jq -e '.state=="failed" and .healthy==false' || { echo FAIL; exit
 echo OK
 ```
 **硬阈值**: phase=failed → state=failed, healthy=false
-**可执行验证**: 见上
 
 ---
 
@@ -142,7 +144,31 @@ C404=$(curl -s -o /dev/null -w "%{http_code}" "localhost:5221/api/brain/harness/
 echo OK
 ```
 **硬阈值**: 非法 UUID=400（不进 DB）；合法不存在=404
-**可执行验证**: 见上
+
+---
+
+### Step 5: PRD 边界 — 多 run 取最新 + 无 events 不报错
+**来源**: `[FROM_PRD]` — 边界情况「同一 initiative 有多条历史 run → 取最新一条作裁决依据」「无任何 initiative_run_events → retries/interrupts 为 0，不报错」
+
+**可观测行为**: (a) 同一 initiative 先插旧 failed run、后插新 B_task_loop run（created_at 更晚）→ 裁决基于最新那条，`state != "failed"`；(b) 有 run 无 event → 200 且 `retries==0`、`interrupts==0`、`last_node==null`，不抛错
+
+**验证命令**:
+```bash
+# (a) 多 run 取最新
+IID=$(python3 -c "import uuid;print(uuid.uuid4())")
+psql "$DB" -c "INSERT INTO initiative_runs (initiative_id,phase,created_at) VALUES ('$IID','failed',NOW()-interval '1 hour'),('$IID','B_task_loop',NOW())"
+RESP=$(curl -sf "localhost:5221/api/brain/harness/initiative/$IID/health")
+psql "$DB" -c "DELETE FROM initiative_runs WHERE initiative_id='$IID'"
+echo "$RESP" | jq -e '.state != "failed"' || { echo "FAIL: 多 run 未取最新"; exit 1; }
+# (b) 无 events 不报错
+JID=$(python3 -c "import uuid;print(uuid.uuid4())")
+psql "$DB" -c "INSERT INTO initiative_runs (initiative_id,phase) VALUES ('$JID','B_task_loop')"
+RESP=$(curl -sf "localhost:5221/api/brain/harness/initiative/$JID/health")
+psql "$DB" -c "DELETE FROM initiative_runs WHERE initiative_id='$JID'"
+echo "$RESP" | jq -e '.retries==0 and .interrupts==0 and .last_node==null' || { echo "FAIL: 无 events 未正确归零"; exit 1; }
+echo OK
+```
+**硬阈值**: (a) 取 created_at 最新 run → state≠failed；(b) 无 event → 三字段归零/置 null 且 HTTP 200
 
 ---
 
@@ -158,7 +184,7 @@ DB="${DB:-postgresql://localhost/cecelia}"
 FAILED=0
 
 # ── 场景一：健康在跑（新鲜 event）→ state=healthy ──
-IID=$(psql "$DB" -t -A -c "SELECT gen_random_uuid()")
+IID=$(python3 -c "import uuid;print(uuid.uuid4())")
 psql "$DB" -c "INSERT INTO initiative_runs (initiative_id, phase) VALUES ('$IID','B_task_loop')"
 NOW=$(date +%s)
 psql "$DB" -c "INSERT INTO initiative_run_events (initiative_id,node,status,attempt,ts) VALUES ('$IID','prep','running',1,$NOW)"
@@ -169,10 +195,12 @@ echo "$RESP" | jq -e '.healthy==true and .state=="healthy" and .last_node=="prep
   || { echo "FAIL: 健康场景判定错 -> $RESP"; FAILED=1; }
 
 # ── 场景二：卡在 prep 反复重试（最近活动 15 分钟前）→ state=stuck ──
+# 必须先删场景一的 ts=NOW 新鲜 event，否则 last_activity_ts=MAX(ts) 仍取 NOW → stuck_minutes≈0 → 正确实现返回 healthy，断言反而 FAIL
+psql "$DB" -c "DELETE FROM initiative_run_events WHERE initiative_id='$IID'"
 OLD=$(( $(date +%s) - 900 ))
-psql "$DB" -c "INSERT INTO initiative_run_events (initiative_id,node,status,attempt,ts) VALUES ('$IID','prep','failed',2,$((OLD-50))),('$IID','prep','running',3,$OLD)"
+psql "$DB" -c "INSERT INTO initiative_run_events (initiative_id,node,status,attempt,ts) VALUES ('$IID','prep','failed',1,$((OLD-100))),('$IID','prep','failed',2,$((OLD-50))),('$IID','prep','running',3,$OLD)"
 RESP=$(curl -sf "localhost:5221/api/brain/harness/initiative/$IID/health")
-echo "$RESP" | jq -e '.state=="stuck" and .healthy==false and .last_node=="prep" and .retries==2 and .stuck_minutes>=10 and .stuck_minutes<20' \
+echo "$RESP" | jq -e '.state=="stuck" and .healthy==false and .last_node=="prep" and .retries==2 and .interrupts==2 and .stuck_minutes>=10 and .stuck_minutes<20' \
   || { echo "FAIL: stuck 场景判定错 -> $RESP"; FAILED=1; }
 
 # ── 场景二b：僵尸（最近活动 25 分钟前）→ state=zombie ──
@@ -184,18 +212,32 @@ echo "$RESP" | jq -e '.state=="zombie" and .healthy==false and .stuck_minutes>=2
 psql "$DB" -c "DELETE FROM initiative_run_events WHERE initiative_id='$IID'; DELETE FROM initiative_runs WHERE initiative_id='$IID'"
 
 # ── 场景三：已失败 run → state=failed ──
-FID=$(psql "$DB" -t -A -c "SELECT gen_random_uuid()")
+FID=$(python3 -c "import uuid;print(uuid.uuid4())")
 psql "$DB" -c "INSERT INTO initiative_runs (initiative_id, phase) VALUES ('$FID','failed')"
 RESP=$(curl -sf "localhost:5221/api/brain/harness/initiative/$FID/health")
 echo "$RESP" | jq -e '.state=="failed" and .healthy==false' || { echo "FAIL: failed 场景判定错 -> $RESP"; FAILED=1; }
 psql "$DB" -c "DELETE FROM initiative_runs WHERE initiative_id='$FID'"
 
 # ── 场景三b：已完成 run → state=completed ──
-DID=$(psql "$DB" -t -A -c "SELECT gen_random_uuid()")
+DID=$(python3 -c "import uuid;print(uuid.uuid4())")
 psql "$DB" -c "INSERT INTO initiative_runs (initiative_id, phase) VALUES ('$DID','done')"
 RESP=$(curl -sf "localhost:5221/api/brain/harness/initiative/$DID/health")
 echo "$RESP" | jq -e '.state=="completed" and .healthy==true' || { echo "FAIL: completed 场景判定错 -> $RESP"; FAILED=1; }
 psql "$DB" -c "DELETE FROM initiative_runs WHERE initiative_id='$DID'"
+
+# ── 边界一：同一 initiative 多 run → 取 created_at 最新一条（旧 failed + 新 B_task_loop）→ state≠failed ──
+MID=$(python3 -c "import uuid;print(uuid.uuid4())")
+psql "$DB" -c "INSERT INTO initiative_runs (initiative_id,phase,created_at) VALUES ('$MID','failed',NOW()-interval '1 hour'),('$MID','B_task_loop',NOW())"
+RESP=$(curl -sf "localhost:5221/api/brain/harness/initiative/$MID/health")
+echo "$RESP" | jq -e '.state != "failed"' || { echo "FAIL: 多 run 未取最新 -> $RESP"; FAILED=1; }
+psql "$DB" -c "DELETE FROM initiative_runs WHERE initiative_id='$MID'"
+
+# ── 边界二：有 run 无 event → retries/interrupts=0、last_node=null，不报错 ──
+NID=$(python3 -c "import uuid;print(uuid.uuid4())")
+psql "$DB" -c "INSERT INTO initiative_runs (initiative_id,phase) VALUES ('$NID','B_task_loop')"
+RESP=$(curl -sf "localhost:5221/api/brain/harness/initiative/$NID/health")
+echo "$RESP" | jq -e '.retries==0 and .interrupts==0 and .last_node==null' || { echo "FAIL: 无 events 未归零 -> $RESP"; FAILED=1; }
+psql "$DB" -c "DELETE FROM initiative_runs WHERE initiative_id='$NID'"
 
 # ── 异常：非法 UUID → 400；合法不存在 → 404 ──
 C400=$(curl -s -o /dev/null -w "%{http_code}" "localhost:5221/api/brain/harness/initiative/not-a-uuid/health")
@@ -213,4 +255,4 @@ echo "✅ Golden Path 健康端点 E2E 全部通过"
 
 | 功能 | Test File | BEHAVIOR 覆盖 | 预期红证据 |
 |---|---|---|---|
-| /initiative/:id/health 健康裁决 | `tests/harness-initiative-health.test.ts` | healthy/stuck/zombie/completed/failed 五态 + 400/404 + retries/interrupts 计算 + schema keys | → 路由未实现，supertest 收到 404，全部 it 失败 |
+| /initiative/:id/health 健康裁决 | `packages/brain/src/__tests__/harness-initiative-health.test.ts` | healthy/stuck/zombie/completed/failed 五态 + 400/404 + 无 events 归零 + retries/interrupts 计算 + schema keys | → 路由未实现，supertest 收到 404，全部 it 失败（进 brain-unit CI lane） |

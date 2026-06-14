@@ -11,11 +11,12 @@
         "[BEHAVIOR] 健康/卡住/僵尸/失败/完成 五态裁决正确（对真实 Brain localhost:5221 seed→curl→断言，见 contract-dod.md）",
         "[BEHAVIOR] 响应 schema 恰好 8 键，禁用字段 status/phase/node/health 不出现",
         "[BEHAVIOR] 非法 UUID→400、合法不存在→404，均带 error 字符串",
-        "[ARTIFACT] harness.js 含 /initiative/:id/health 路由；tests/harness-initiative-health.test.ts 存在"
+        "[BEHAVIOR] PRD 边界：多 run 取 created_at 最新一条；有 run 无 event 时 retries/interrupts=0、last_node=null 不报错",
+        "[ARTIFACT] harness.js 含 /initiative/:id/health 路由；packages/brain/src/__tests__/harness-initiative-health.test.ts 存在（brain-unit CI lane）"
       ],
       "files": [
         "packages/brain/src/routes/harness.js",
-        "packages/brain/src/__tests__/harness-initiative-health.test.js"
+        "packages/brain/src/__tests__/harness-initiative-health.test.ts"
       ],
       "depends_on": [],
       "complexity": "S",
