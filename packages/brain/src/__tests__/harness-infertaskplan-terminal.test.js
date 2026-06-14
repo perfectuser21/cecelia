@@ -151,4 +151,22 @@ describe('inferTaskPlanNode — 不可恢复失败标 terminal failed（防无�
     expect(fetchAndShowOriginFile).not.toHaveBeenCalled();
     expect(pool.query).not.toHaveBeenCalled();
   });
+
+  it('调 parseTaskPlan 时把 state.initiativeId 作为系统权威注入（修 run ad01edbe 空 iid 致 terminal）', async () => {
+    fetchAndShowOriginFile.mockResolvedValue('{"initiative_id":"","tasks":[{"id":"t1"}]}');
+    parseTaskPlan.mockReturnValue({ initiative_id: 'init-9', tasks: [{ id: 't1' }] });
+    const pool = mkPool();
+    const state = {
+      taskPlan: null,
+      ganResult: { propose_branch: 'cp-harness-propose-r1-abcd1234' },
+      worktreePath: undefined,
+      task: { id: '66666666-6666-6666-6666-666666666666', payload: { sprint_dir: 'sprints' } },
+      initiativeId: 'init-9',
+    };
+
+    await inferTaskPlanNode(state, { pool });
+
+    // 修复点：proposer 产物的 initiative_id 不可信，必须把系统已知值传给 parseTaskPlan 先注入再校验
+    expect(parseTaskPlan).toHaveBeenCalledWith(expect.any(String), { initiativeId: 'init-9' });
+  });
 });
