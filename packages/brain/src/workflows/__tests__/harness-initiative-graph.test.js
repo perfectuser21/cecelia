@@ -205,7 +205,7 @@ describe('parsePrdNode', () => {
       initiativeId: 'init-1', worktreePath: '/wt', plannerOutput: 'OUT',
     };
     const delta = await parsePrdNode(state);
-    expect(mockParseTaskPlan).toHaveBeenCalledWith('OUT');
+    expect(mockParseTaskPlan).toHaveBeenCalledWith('OUT', { initiativeId: 'init-1' });
     expect(delta.taskPlan.initiative_id).toBe('init-1');
     expect(delta.prdContent).toBe('# PRD content');
   });
