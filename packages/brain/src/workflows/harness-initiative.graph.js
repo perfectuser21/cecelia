@@ -374,7 +374,7 @@ export async function parsePrdNode(state) {
   }
   let taskPlan = null;
   try {
-    taskPlan = parseTaskPlan(state.plannerOutput);
+    taskPlan = parseTaskPlan(state.plannerOutput, { initiativeId: state.initiativeId });
   } catch (err) {
     // Planner v8 does not output task-plan.json — that is OK, inferTaskPlanNode reads from propose branch
     console.warn(`[harness-initiative-graph] parsePrd: parseTaskPlan returned null/error (${err.message}), will infer from propose branch`);
@@ -817,7 +817,7 @@ export async function inferTaskPlanNode(state, opts = {}) {
     );
     let plan;
     try {
-      plan = parseTaskPlan(json);
+      plan = parseTaskPlan(json, { initiativeId: state.initiativeId });
     } catch (err) {
       // 解析失败 = proposer 产物坏（旧码 return {} → dbUpsert "tasks required" 非终态 → 无限 fresh-start）
       return failTerminal(`task-plan.json 解析失败（proposer 产物坏，重跑无益）: ${err.message}`);

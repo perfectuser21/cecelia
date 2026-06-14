@@ -38,6 +38,52 @@ function makeValidPlan(tasks) {
   };
 }
 
+// ─── parseTaskPlan: initiative_id 系统注入 ───────────────────────────────────
+// 回归 run ad01edbe (2026-06-14): proposer 产 task-plan.json 的 initiative_id=""
+// → parseTaskPlan 硬拒 → inferTaskPlanNode 的注入兜底不可达 → terminal fail。
+// initiative_id 是系统权威值（HARNESS_INITIATIVE_ID / state.initiativeId），不该由 LLM proposer 负责。
+// 修复：parseTaskPlan 接受 opts.initiativeId，给了就「先注入再校验」。
+describe('parseTaskPlan — initiative_id 系统注入 (opts.initiativeId)', () => {
+  const REAL = '99999999-9999-9999-9999-999999999999';
+
+  function planWith(iid) {
+    const p = makeValidPlan([makeValidTask('ws1')]);
+    if (iid === undefined) delete p.initiative_id;
+    else p.initiative_id = iid;
+    return JSON.stringify(p);
+  }
+
+  it('proposer 写空串 + 注入权威 id → 不抛，用注入值', () => {
+    const out = parseTaskPlan(planWith(''), { initiativeId: REAL });
+    expect(out.initiative_id).toBe(REAL);
+    expect(out.tasks).toHaveLength(1);
+  });
+
+  it('proposer 漏 initiative_id 字段 + 注入 → 不抛，用注入值', () => {
+    const out = parseTaskPlan(planWith(undefined), { initiativeId: REAL });
+    expect(out.initiative_id).toBe(REAL);
+  });
+
+  it('proposer 写占位 "pending" + 注入 → 覆盖为权威值', () => {
+    const out = parseTaskPlan(planWith('pending'), { initiativeId: REAL });
+    expect(out.initiative_id).toBe(REAL);
+  });
+
+  it('proposer 写了个错的非空 id + 注入 → 系统注入值优先（系统权威）', () => {
+    const out = parseTaskPlan(planWith('wrong-id-from-llm'), { initiativeId: REAL });
+    expect(out.initiative_id).toBe(REAL);
+  });
+
+  it('向后兼容：不传 opts 且 initiative_id 空 → 仍抛（其它调用方行为不变）', () => {
+    expect(() => parseTaskPlan(planWith(''))).toThrow(/initiative_id required/);
+  });
+
+  it('向后兼容：不传 opts 的合法 plan 正常解析', () => {
+    const out = parseTaskPlan(planWith('test-initiative-1'));
+    expect(out.initiative_id).toBe('test-initiative-1');
+  });
+});
+
 // ─── parseTaskPlan ──────────────────────────────────────────────────────────
 
 describe('parseTaskPlan', () => {
