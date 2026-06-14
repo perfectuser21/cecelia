@@ -719,7 +719,10 @@ export const FullInitiativeState = Annotation.Root({
 export async function inferTaskPlanNode(state, opts = {}) {
   const dbPool = opts.pool || pool;
   const existing = state?.taskPlan?.tasks;
-  if (Array.isArray(existing) && existing.length >= 1) {
+  // 幂等短路：已有 tasks 直接 passthrough。条件提取成 hasTasks 变量（无嵌套括号），
+  // 满足 scripts/audit/idempotency-check.sh 的「函数前 30 行含 if (...) return {」短路审计。
+  const hasTasks = Array.isArray(existing) && existing.length >= 1;
+  if (hasTasks) {
     return {};
   }
 
