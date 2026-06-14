@@ -148,6 +148,23 @@ export function thresholdForRound(_round) {
   return 7;
 }
 
+// GAN 子图 thread_id 按父图 fresh-start 代际（attemptN = tasks.execution_attempts）版本化。
+// 旧实现用裸 String(taskId)，与父图版本化 thread（harness-initiative:id:attemptN）不一致 →
+// 父图 fresh-start（新 attempt）时 GAN 复用同一裸 thread 的旧 checkpoint，叠加 proposer 旧分支复用 →
+// fresh-start 空转无法自愈。带 attemptN 后每代拿干净 thread；同一 attempt 内（含 brain restart resume，
+// execution_attempts 不变）thread 稳定 → 仍能正确 resume。导出供测试。
+export function ganThreadIdFor(taskId, attemptN = 0) {
+  return `${taskId}:gan:${Number(attemptN) || 0}`;
+}
+
+// proposer 每轮 push 的分支名。带 attempt 后缀，使父图每次 fresh-start 的 proposer 分支互不相同 →
+// B59-idem 幂等门不会跨 attempt 复用上一代旧合同（旧 bug：分支只按 round+taskId 命名 → fresh-start 后
+// 每轮"合同已存在"跳过 spawn，proposer 从不产新合同）。同一 attempt 内分支名稳定 → 幂等仍在 attempt 内生效。
+// 通配 cp-harness-propose-* 的清理/查询逻辑不受后缀影响。导出供测试。
+export function proposeBranchFor(taskId, round, attemptN = 0) {
+  return `cp-harness-propose-r${round}-${String(taskId).slice(0, 8)}-a${Number(attemptN) || 0}`;
+}
+
 // 根据 rubric scores 和 round 计算权威 verdict（代码判 PASS，不信 LLM 文字）
 // 所有 7 维度 ≥ 阈值 → APPROVED；任一低于 → REVISION。
 // scores 缺失或维度不完整 → null（调用方 fallback 到 LLM 文本 verdict）。
@@ -431,6 +448,11 @@ export function createGanContractNodes(executor, ctx) {
     taskId, initiativeId, sprintDir, worktreePath, githubToken, baseRepo,
     plannerOutput = '',
     budgetCapUsd = 10,
+    // attemptN: 父图 fresh-start 代际（来自 tasks.execution_attempts）。proposer 分支名带 attempt 后缀，
+    // 使父图每次 fresh-start 的 proposer 分支互不相同 → B59-idem 幂等门不会跨 attempt 复用上一代旧合同
+    // （旧 bug：分支只按 round+taskId 命名 → fresh-start 后每轮"合同已存在"跳过 spawn，proposer 从不产新合同，
+    // GAN 空转无法自愈）。同一 attempt 内分支名稳定 → B59-idem 幂等仍在 attempt 内生效。
+    attemptN = 0,
     readContractFile = defaultReadContractFile,
     fetchOriginFile: _fetchOriginFile = fetchAndShowOriginFile,
     verifyProposer = verifyContractProposerOutput,
@@ -449,7 +471,8 @@ export function createGanContractNodes(executor, ctx) {
 
   async function proposer(state) {
     const nextRound = (state.round || 0) + 1;
-    const computedBranch = `cp-harness-propose-r${nextRound}-${taskId.slice(0, 8)}`;
+    // attempt 后缀：跨父图 fresh-start 隔离分支，防 B59-idem 复用上一代旧合同（同 attempt 内仍幂等）。
+    const computedBranch = proposeBranchFor(taskId, nextRound, attemptN);
 
     // B59-idem 幂等门：proposer 节点配 retryPolicy=LLM_RETRY(maxAttempts=3)，节点内偶发 throw
     // 会让 LangGraph 重试整节点 → 重复 spawn LLM 容器（实证每轮 2-3 个，纯浪费）。
@@ -800,6 +823,9 @@ export async function runGanContractGraph(opts) {
     executor, worktreePath, githubToken, baseRepo,
     plannerOutput = '',
     budgetCapUsd = 10,
+    // attemptN: 父图 fresh-start 代际（tasks.execution_attempts）。用于把 GAN 子图 thread_id 与
+    // proposer 分支按 attempt 版本化，让父图 fresh-start 拿到干净的 GAN 状态而非复用上一代旧 checkpoint。
+    attemptN = 0,
     checkpointer,
     readContractFile,
     fetchOriginFile,
@@ -818,17 +844,19 @@ export async function runGanContractGraph(opts) {
 
   const nodes = createGanContractNodes(executor, {
     taskId, initiativeId, sprintDir, worktreePath, githubToken, baseRepo,
-    plannerOutput, budgetCapUsd, readContractFile, fetchOriginFile,
+    plannerOutput, budgetCapUsd, attemptN, readContractFile, fetchOriginFile,
     heartbeatFn,
   });
   const graph = buildGanContractGraph(nodes);
   const app = graph.compile({ checkpointer, durability: 'sync' });
 
+  const ganThreadId = ganThreadIdFor(taskId, attemptN);
+
   // B44 fix: 同步等 GAN 完整跑完再返回（WS3 async 已回退，根因 propose_branch 丢失）
   const finalState = await app.invoke(
     { prdContent, round: 0, costUsd: 0, feedback: null },
     {
-      configurable: { thread_id: String(taskId) },
+      configurable: { thread_id: ganThreadId },
       recursionLimit,
     }
   );

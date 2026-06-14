@@ -50,8 +50,25 @@ describe('GAN proposer 幂等门（B59-idem）', () => {
 
     expect(executor).not.toHaveBeenCalled();          // 关键：没重 spawn
     expect(out.contractContent).toBe('# 已 push 的合同');
-    expect(out.proposeBranch).toBe('cp-harness-propose-r1-abc12345');
+    expect(out.proposeBranch).toBe('cp-harness-propose-r1-abc12345-a0'); // attempt 后缀（默认 0）
     expect(out.round).toBe(1);
+  });
+
+  it('attempt 版本化：不同 attemptN → proposer 分支不同（跨 fresh-start 不复用上一代旧合同）', async () => {
+    // attemptN=0 的旧合同存在；本轮 attemptN=2 → 查的是 r1...-a2（不是 -a0）→ 不命中 → 正常 spawn。
+    const executor = vi.fn(async () => ({ exit_code: 0 }));
+    const readContractFromBranch = vi.fn(async (_wt, branch) =>
+      branch.endsWith('-a0') ? '# 上一代旧合同' : null
+    );
+    const nodes = createGanContractNodes(executor, makeCtx({ attemptN: 2, readContractFromBranch }));
+
+    await nodes.proposer({ prdContent: '# PRD', round: 0, costUsd: 0 });
+
+    // 查的分支带 -a2（本代），不复用 -a0 的旧合同 → 正常 spawn 产新合同
+    expect(readContractFromBranch).toHaveBeenCalledWith(
+      '/tmp/wt', 'cp-harness-propose-r1-abc12345-a2', 'sprints', expect.anything()
+    );
+    expect(executor).toHaveBeenCalledOnce();
   });
 
   it('本轮分支无合同 → 正常 spawn executor', async () => {

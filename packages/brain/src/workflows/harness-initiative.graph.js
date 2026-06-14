@@ -472,6 +472,17 @@ export async function runGanLoopNode(state, opts = {}) {
     const checkpointer = opts.checkpointer || await getPgCheckpointer();
     // B51: state.task.id === initiativeId（同一实体，非旧格式 task.initiative_id 字段）
     const heartbeatFn = () => writeDriverHeartbeat(dbPool, state.task.id).catch(() => {});
+    // attemptN：父图 fresh-start 代际。executor.js _driveHarnessInitiative 在 fresh-start 时
+    // 先 UPDATE tasks SET execution_attempts=新值 再 stream graph，故此处读到的是当前 attempt 的代际；
+    // 同一 attempt 内（含 brain restart resume）不变。传入 runGanContractGraph 把 GAN 子图 thread_id
+    // 与 proposer 分支按 attempt 版本化，防 fresh-start 复用上一代旧 GAN checkpoint / 旧 proposer 合同（空转无法自愈）。
+    let attemptN = 0;
+    try {
+      const r = await dbPool.query('SELECT execution_attempts FROM tasks WHERE id=$1::uuid', [state.task.id]);
+      attemptN = Number(r.rows?.[0]?.execution_attempts) || 0;
+    } catch (e) {
+      console.warn(`[ganLoop] 读 execution_attempts 失败（fallback attemptN=0）: ${e.message}`);
+    }
     const ganResult = await runGanContractGraph({
       taskId: state.task.id,
       initiativeId: state.initiativeId,
@@ -482,6 +493,7 @@ export async function runGanLoopNode(state, opts = {}) {
       githubToken: state.githubToken,
       plannerOutput: state.plannerOutput || '',
       budgetCapUsd: budgetUsd,
+      attemptN,
       checkpointer,
       baseRepo: state.task?.payload?.base_repo || undefined,
       heartbeatFn,
