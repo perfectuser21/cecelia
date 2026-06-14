@@ -20,10 +20,14 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
+      - name: Connect to Tailscale
+        uses: tailscale/github-action@v2
+        with:
+          authkey: ${{ secrets.TS_AUTHKEY }}
       - name: Trigger dashboard deploy via Brain webhook
         env:
           DEPLOY_TOKEN: ${{ secrets.DEPLOY_TOKEN }}
-          BRAIN_URL: ${{ secrets.BRAIN_DEPLOY_URL || 'http://38.23.47.81:5221' }}
+          BRAIN_URL: ${{ secrets.BRAIN_DEPLOY_URL || 'http://100.71.151.105:5221' }}
         run: |
           if [ -z "$DEPLOY_TOKEN" ]; then
             echo "::error::DEPLOY_TOKEN secret 未配置"
@@ -57,7 +61,7 @@ jobs:
 
       - name: 等待 deploy 完成
         env:
-          BRAIN_URL: ${{ secrets.BRAIN_DEPLOY_URL || 'http://38.23.47.81:5221' }}
+          BRAIN_URL: ${{ secrets.BRAIN_DEPLOY_URL || 'http://100.71.151.105:5221' }}
         run: |
           echo "轮询 /api/brain/deploy/status（最多 180s）..."
           ELAPSED=0

@@ -74,9 +74,13 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
-      BRAIN_URL: ${{ secrets.BRAIN_DEPLOY_URL || 'http://38.23.47.81:5221' }}
+      BRAIN_URL: ${{ secrets.BRAIN_DEPLOY_URL || 'http://100.71.151.105:5221' }}
       DEPLOY_TOKEN: ${{ secrets.DEPLOY_TOKEN }}
     steps:
+      - name: Connect to Tailscale
+        uses: tailscale/github-action@v2
+        with:
+          authkey: ${{ secrets.TS_AUTHKEY }}
       - uses: actions/checkout@v4
         with:
           fetch-depth: 2
@@ -202,9 +206,13 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     env:
-      BRAIN_URL: ${{ secrets.BRAIN_DEPLOY_URL || 'http://38.23.47.81:5221' }}
+      BRAIN_URL: ${{ secrets.BRAIN_DEPLOY_URL || 'http://100.71.151.105:5221' }}
       DEPLOY_TOKEN: ${{ secrets.DEPLOY_TOKEN }}
     steps:
+      - name: Connect to Tailscale
+        uses: tailscale/github-action@v2
+        with:
+          authkey: ${{ secrets.TS_AUTHKEY }}
       - name: 创建 Brain P0 告警任务
         run: |
           FAILED_SHA="${{ github.sha }}"
