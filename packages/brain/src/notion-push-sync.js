@@ -92,8 +92,11 @@ async function pushJourneyFeatures(pool, token) {
     try {
       const properties = {
         Name: { title: [{ text: { content: f.name } }] },
-        Kind: { select: { name: f.kind || 'feature' } },
-        Status: { select: { name: f.status || 'planned' } },
+        // Kind: Notion select 选项为首字母大写 Ability/Feature；DB 存小写 → 映射，避免自动创建重复小写选项
+        Kind: { select: { name: (f.kind || 'feature') === 'ability' ? 'Ability' : 'Feature' } },
+        // Status: Notion Feature 库该属性是 status 类型（非 select）；发 select 会 400「Status is expected to be status」。
+        // DB 的值(planned/working/building/broken/deprecated/done)与 Notion status 选项一一匹配，仅类型需对齐。
+        Status: { status: { name: f.status || 'planned' } },
       };
       if (f.thickness) {
         properties['Thickness'] = { select: { name: f.thickness } };

@@ -176,3 +176,55 @@ describe('runNotionPushSync — step_link Order 属性降级回归 [ARTIFACT R4]
     expect(createCall[3].properties).toHaveProperty('Name');
   });
 });
+
+describe('runNotionPushSync — feature Status 属性类型回归', () => {
+  beforeEach(() => {
+    mockQuery.mockReset();
+    mockNotionReq.mockReset();
+    mockQuery.mockResolvedValue({ rows: [] });
+  });
+
+  it('feature 推送 Status 用 status 类型而非 select（Notion Feature 库要求 status 类型，发 select 会 400）', async () => {
+    const feature = {
+      id: 'f-regr-1', name: 'X feature', kind: 'feature', status: 'done',
+      thickness: null, journey_notion_id: null, area_notion_id: null, unit_test_path: null,
+    };
+    mockQuery
+      .mockResolvedValueOnce({ rows: [] })        // journeys
+      .mockResolvedValueOnce({ rows: [feature] }) // features → 1 行
+      .mockResolvedValue({ rows: [] });           // 其余 + UPDATE
+
+    mockNotionReq.mockResolvedValue({ id: 'f-notion-1' }); // pages POST
+
+    const { runNotionPushSync } = await import('../notion-push-sync.js');
+    await runNotionPushSync({ query: mockQuery });
+
+    const createCall = mockNotionReq.mock.calls.find(c => c[2] === 'POST' && c[1] === '/pages');
+    expect(createCall).toBeDefined();
+    const props = createCall[3].properties;
+    // Status 必须是 status 类型（{ status: { name } }），不能是 select（否则 Notion 400）
+    expect(props.Status).toHaveProperty('status');
+    expect(props.Status).not.toHaveProperty('select');
+    expect(props.Status.status.name).toBe('done');
+    // Kind 映射为首字母大写，匹配 Notion select 选项 Ability/Feature
+    expect(props.Kind.select.name).toBe('Feature');
+  });
+
+  it('feature kind=ability 映射为 Ability', async () => {
+    const feature = {
+      id: 'f-regr-2', name: 'Y ability', kind: 'ability', status: 'planned',
+      thickness: null, journey_notion_id: null, area_notion_id: null, unit_test_path: null,
+    };
+    mockQuery
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [feature] })
+      .mockResolvedValue({ rows: [] });
+    mockNotionReq.mockResolvedValue({ id: 'f-notion-2' });
+
+    const { runNotionPushSync } = await import('../notion-push-sync.js');
+    await runNotionPushSync({ query: mockQuery });
+
+    const createCall = mockNotionReq.mock.calls.find(c => c[2] === 'POST' && c[1] === '/pages');
+    expect(createCall[3].properties.Kind.select.name).toBe('Ability');
+  });
+});
