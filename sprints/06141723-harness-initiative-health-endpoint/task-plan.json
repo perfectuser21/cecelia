@@ -1,0 +1,25 @@
+{
+  "initiative_id": "",
+  "journey_type": "autonomous",
+  "journey_type_reason": "纯 packages/brain/ 后端只读端点，无 UI、无远端 agent、无 engine 改动",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "新增只读端点 GET /api/brain/harness/initiative/:id/health，基于 initiative_runs + initiative_run_events 裁决健康态",
+      "scope": "在 packages/brain/src/routes/harness.js 注册 /initiative/:id/health 路由：UUID 校验(复用 UUID_RE)→400；读最新 run(initiative_runs ORDER BY created_at DESC LIMIT 1)无记录→404；读 initiative_run_events 派生 last_node/retries/interrupts/stuck_minutes；按 phase + stuck_minutes(阈值 stuck>=10/zombie>=20 对齐 harness-watchdog) 裁决 state(healthy/stuck/zombie/completed/failed) 与 healthy 布尔，返回含 8 键的 JSON。纯只读，无 migration、无写操作。",
+      "dod": [
+        "[BEHAVIOR] 健康/卡住/僵尸/失败/完成 五态裁决正确（对真实 Brain localhost:5221 seed→curl→断言，见 contract-dod.md）",
+        "[BEHAVIOR] 响应 schema 恰好 8 键，禁用字段 status/phase/node/health 不出现",
+        "[BEHAVIOR] 非法 UUID→400、合法不存在→404，均带 error 字符串",
+        "[ARTIFACT] harness.js 含 /initiative/:id/health 路由；tests/harness-initiative-health.test.ts 存在"
+      ],
+      "files": [
+        "packages/brain/src/routes/harness.js",
+        "packages/brain/src/__tests__/harness-initiative-health.test.js"
+      ],
+      "depends_on": [],
+      "complexity": "S",
+      "estimated_minutes": 50
+    }
+  ]
+}
