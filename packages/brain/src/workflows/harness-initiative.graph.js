@@ -716,18 +716,48 @@ export const FullInitiativeState = Annotation.Root({
  * @param {Function} [opts.executor]  spawn 替代（测试注入）
  * @returns {Promise<object>}  state delta（{} 或 { taskPlan: {...} }）
  */
-export async function inferTaskPlanNode(state, _opts = {}) {
+export async function inferTaskPlanNode(state, opts = {}) {
+  const dbPool = opts.pool || pool;
   const existing = state?.taskPlan?.tasks;
   if (Array.isArray(existing) && existing.length >= 1) {
     return {};
+  }
+
+  // 不可恢复失败（proposer 产物坏：无 task-plan.json / 解析失败 / 空 tasks）→ 标 task=failed
+  // + 返回 terminal error，而不是无限 fresh-start。
+  // 根因（生产 run 4225330d）：inferTaskPlan parse-fail 旧返回 {} → dbUpsert 抛
+  // "taskPlan.tasks required"（非终态 error）→ task 留 in_progress → harness-watchdog
+  // （只扫 task_type='harness_initiative' AND status='in_progress'）反复 fresh-start，
+  // 重跑 planner+GAN 烧穿 execution_attempts。重跑解决不了坏的 proposer 产物，必须 fail loud。
+  // 标 status='failed' 移出 watchdog 扫描范围（对齐 ganLoop catch 既有模式）；
+  // error.terminal=true 让 resume 路径（executor existing.channel_values.error.terminal）也判终态。
+  async function failTerminal(message) {
+    const taskId = state.task?.id || state.initiativeId;
+    console.error(`[infer_task_plan][ABORT] ${message}`);
+    if (taskId) {
+      Promise.resolve(
+        dbPool.query(
+          `UPDATE tasks SET status='failed', result=$1::jsonb, updated_at=NOW() WHERE id=$2::uuid`,
+          [JSON.stringify({ node: 'infer_task_plan', message, terminal: true }), taskId]
+        )
+      ).catch((e) => console.warn(`[infer_task_plan] tasks UPDATE failed (non-fatal): ${e.message}`));
+    }
+    if (state.initiative_run_id) {
+      Promise.resolve(
+        dbPool.query(
+          `UPDATE initiative_runs SET phase='failed', failure_reason=$1, updated_at=NOW() WHERE id=$2::uuid`,
+          [String(message).slice(0, 500), state.initiative_run_id]
+        )
+      ).catch((e) => console.warn(`[infer_task_plan] initiative_runs UPDATE failed (non-fatal): ${e.message}`));
+    }
+    return { error: { node: 'infer_task_plan', message, terminal: true } };
   }
 
   const proposeBranch = state?.ganResult?.propose_branch;
   const sprintDir = state.sprintDir || state.task?.payload?.sprint_dir || 'sprints';
 
   if (!proposeBranch) {
-    console.warn('[infer_task_plan] no propose_branch in ganResult, cannot read task-plan.json');
-    return { error: { node: 'infer_task_plan', message: 'propose_branch missing from ganResult — GAN did not produce a proposal' } };
+    return failTerminal('propose_branch missing from ganResult — GAN did not produce a proposal');
   }
 
   // B32: verify propose_branch 真在 origin。LLM 工艺不稳定（W42 proposer container
@@ -774,13 +804,17 @@ export async function inferTaskPlanNode(state, _opts = {}) {
     try {
       plan = parseTaskPlan(json);
     } catch (err) {
-      console.warn(`[infer_task_plan] parseTaskPlan failed: ${err.message}`);
-      return {};
+      // 解析失败 = proposer 产物坏（旧码 return {} → dbUpsert "tasks required" 非终态 → 无限 fresh-start）
+      return failTerminal(`task-plan.json 解析失败（proposer 产物坏，重跑无益）: ${err.message}`);
     }
     if (plan.initiative_id === 'pending' || !plan.initiative_id) {
       plan.initiative_id = state.initiativeId;
     }
-    console.log(`[infer_task_plan] read ${plan.tasks?.length || 0} tasks from ${proposeBranch}:${sprintDir}/task-plan.json`);
+    if (!Array.isArray(plan.tasks) || plan.tasks.length === 0) {
+      // 空 tasks = proposer 未产出子任务（旧码透传 → dbUpsert "tasks required" 非终态 → 无限 fresh-start）
+      return failTerminal(`task-plan.json 解析成功但 tasks 为空（proposer 未产出子任务）: ${proposeBranch}:${sprintDir}/task-plan.json`);
+    }
+    console.log(`[infer_task_plan] read ${plan.tasks.length} tasks from ${proposeBranch}:${sprintDir}/task-plan.json`);
     return { taskPlan: plan };
   } catch (err) {
     const msg = `[infer_task_plan] git show origin/${proposeBranch}:${sprintDir}/task-plan.json failed: ${err.message}`;
