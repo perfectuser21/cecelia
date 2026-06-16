@@ -1,0 +1,26 @@
+{
+  "initiative_id": "9edb3ff9-4c0c-47a4-887d-1a740c7b11e6",
+  "journey_type": "autonomous",
+  "journey_type_reason": "仅涉及 packages/brain/ 纯后端只读端点，无 UI、无远端 agent、无 engine 改动",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "新增只读端点 GET /api/brain/harness/initiative/:id/health — 读 initiative_runs + initiative_run_events 做健康裁决",
+      "scope": "在 packages/brain/src/routes/harness.js 新增 GET /initiative/:id/health 处理器：UUID 校验(非法→400)；查 initiative_runs(无→404)；查 initiative_run_events；纯计算 healthy/state/last_node/retries/interrupts/stuck_minutes/reason 七字段并返回 200。state 枚举 running|stuck|zombie|completed|failed|no_data，阈值 STUCK=15min/ZOMBIE=60min。无 migration、无写库。",
+      "dod": [
+        "[BEHAVIOR] running/stuck/zombie/completed/failed/no_data 六态裁决正确（curl localhost:5221 + 受控随机 initiative_id 注入 initiative_runs/_events，见 contract-dod.md）",
+        "[BEHAVIOR] 顶层 keys 严格等于 PRD 7 字段且禁用字段(status/node/health/message)不出现",
+        "[BEHAVIOR] 非法 UUID→400+error；合法但无 run→404+error（两者区分）",
+        "[ARTIFACT] packages/brain/src/routes/harness.js 注册 /initiative/:id/health 路由",
+        "[ARTIFACT] sprints/06162153-harness-health-endpoint-rerun/tests/health-endpoint.test.ts 单测覆盖六态+schema+错误路径"
+      ],
+      "files": [
+        "packages/brain/src/routes/harness.js",
+        "sprints/06162153-harness-health-endpoint-rerun/tests/health-endpoint.test.ts"
+      ],
+      "depends_on": [],
+      "complexity": "S",
+      "estimated_minutes": 60
+    }
+  ]
+}
