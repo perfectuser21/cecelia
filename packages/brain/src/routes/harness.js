@@ -276,6 +276,115 @@ router.get('/initiative/:id/detail', async (req, res) => {
 });
 
 /**
+ * GET /initiative/:id/health
+ * 只读健康裁决端点：读 initiative_runs + initiative_run_events，纯计算返回 7 字段健康判断。
+ *
+ * 顶层 keys 严格 = { healthy, state, last_node, retries, interrupts, stuck_minutes, reason }
+ *   state 枚举：running | stuck | zombie | completed | failed | no_data
+ *   healthy = (state ∈ {running, completed})
+ *
+ * 查询顺序（单测据此 mock）：query 1 = initiative_runs；query 2 = initiative_run_events
+ * 非法 UUID → 400；合法但 initiative_runs 无该 run → 404；run 存在但无事件 → 200 + no_data。
+ * 无写库、无新表、无缓存。
+ */
+const HEALTH_STUCK_MINUTES = 15;
+const HEALTH_ZOMBIE_MINUTES = 60;
+
+router.get('/initiative/:id/health', async (req, res) => {
+  const { id } = req.params;
+  if (!UUID_RE.test(id)) {
+    return res.status(400).json({ error: 'invalid initiative id: must be a UUID' });
+  }
+  try {
+    // query 1：最新一条 run（取 phase / failure_reason）
+    const { rows: runRows } = await pool.query(
+      `SELECT phase, started_at, completed_at, failure_reason
+       FROM initiative_runs
+       WHERE initiative_id = $1::uuid
+       ORDER BY created_at DESC
+       LIMIT 1`,
+      [id]
+    );
+    if (runRows.length === 0) {
+      return res.status(404).json({ error: 'initiative run not found' });
+    }
+    const run = runRows[0];
+
+    // query 2：该 initiative 的全部节点事件（ts 升序）
+    const { rows: events } = await pool.query(
+      `SELECT node, status, attempt, ts
+       FROM initiative_run_events
+       WHERE initiative_id = $1::uuid
+       ORDER BY ts ASC`,
+      [id]
+    );
+
+    // 无事件 → no_data（可解释，绝不 500）
+    if (events.length === 0) {
+      return res.json({
+        healthy: false,
+        state: 'no_data',
+        last_node: null,
+        retries: 0,
+        interrupts: 0,
+        stuck_minutes: 0,
+        reason: '该 Run 尚无节点事件（未开始或无数据）',
+      });
+    }
+
+    // 计算字段（纯计算，psql 可比对）
+    const last = events[events.length - 1]; // ts 升序，最后一条 = ts 最大
+    const last_node = last.node;
+    const lastNodeAttempts = events
+      .filter(e => e.node === last_node)
+      .map(e => Number(e.attempt) || 0);
+    const retries = Math.max(0, Math.max(...lastNodeAttempts) - 1);
+    const interrupts = events.filter(e => e.status === 'failed').length;
+    const nowSec = Math.floor(Date.now() / 1000);
+    const stuck_minutes = Math.max(0, Math.floor((nowSec - Number(last.ts)) / 60));
+
+    // 裁决
+    let state;
+    let healthy;
+    let reason;
+    if (run.phase === 'done') {
+      state = 'completed';
+      healthy = true;
+      reason = 'Run 已完成（phase=done）';
+    } else if (run.phase === 'failed') {
+      state = 'failed';
+      healthy = false;
+      reason = run.failure_reason || 'Run 已失败（phase=failed）';
+    } else if (stuck_minutes >= HEALTH_ZOMBIE_MINUTES) {
+      state = 'zombie';
+      healthy = false;
+      reason = `Run 已 ${stuck_minutes} 分钟无事件推进（>=${HEALTH_ZOMBIE_MINUTES}min，疑似僵尸/被遗弃）`;
+    } else if (stuck_minutes >= HEALTH_STUCK_MINUTES || (retries >= 1 && last.status === 'failed')) {
+      state = 'stuck';
+      healthy = false;
+      reason = `Run 卡在 ${last_node} 节点（stuck_minutes=${stuck_minutes}, retries=${retries}）`;
+    } else {
+      state = 'running';
+      healthy = true;
+      reason = `Run 正在 ${last_node} 节点正常推进`;
+    }
+
+    return res.json({
+      healthy,
+      state,
+      last_node,
+      retries,
+      interrupts,
+      stuck_minutes,
+      reason,
+    });
+  } catch (err) {
+    console.error('[GET /harness/initiative/:id/health]', err.message);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+/**
  * GET /initiative/:id/ws-progress
  * 返回该 initiative 下所有 WS 的进度状态
  * 从 checkpoint_blobs 表查询 thread_id LIKE 'harness-task:{id}:ws%' 的记录
