@@ -451,7 +451,7 @@ describe('reportNode — B45 Fix1: verdict 从 sub_tasks 推导', () => {
       connect: vi.fn().mockResolvedValue({ query: dbQueryMock, release: vi.fn() }),
       query: vi.fn().mockResolvedValue({ rows: [] }),
     };
-    // 合并抛错，但 reconcile 已确认实际已 merged（_checkPrMerged=true）
+    // PR 未合（_checkPrMerged=false）+ 有 pr_url → 真正进入合并步骤，execFileMock reject 触发 catch
     const execFileMock = vi.fn().mockRejectedValue(new Error('gh transient error'));
     const state = {
       initiativeId: '33333333-3333-3333-3333-333333333333',
@@ -459,8 +459,15 @@ describe('reportNode — B45 Fix1: verdict 从 sub_tasks 推导', () => {
       final_e2e_verdict: null,
       final_e2e_failed_scenarios: [],
     };
-    // 不抛异常即通过（reportNode 内部 try/catch 吞合并错误）
-    await expect(reportNode(state, { pool: mockPool, _checkPrMerged: async () => true, execFile: execFileMock })).resolves.toBeTruthy();
+    // 合并步骤被真正执行且 catch 吞错 → reportNode 不抛
+    await expect(reportNode(state, { pool: mockPool, _checkPrMerged: async () => false, execFile: execFileMock })).resolves.toBeTruthy();
+    // catch 路径前提：gh pr merge 真正被调用（reject 进入 catch）
+    const mergeCall = execFileMock.mock.calls.find(c => c[0] === 'gh' && Array.isArray(c[1]) && c[1].includes('merge'));
+    expect(mergeCall, 'catch 路径前提：合并步骤必须真正被调用').toBeTruthy();
+    // catch 吞错（非致命）→ sub_task 维持未合 → verdict 不应是 PASS → phase !== 'done'
+    const runUpdate = dbQueryMock.mock.calls.find(c => /UPDATE initiative_runs/.test(c[0]));
+    expect(runUpdate).toBeTruthy();
+    expect(runUpdate[1][1]).not.toBe('done');
   });
 });
 

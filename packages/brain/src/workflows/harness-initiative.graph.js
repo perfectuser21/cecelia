@@ -23,6 +23,8 @@ import path from 'node:path';
 // B17 + B32: brain 代为 push 用 execFile（B17 加 final_evaluate PR_BRANCH fallback，B32 加 propose_branch fallback）
 const execFileDefault = promisify(execFileCb);
 const execFile = execFileDefault;
+// 自合 PR 幂等判定：gh pr merge 报"已合/未开/已关"视为成功（与 harness-task.graph.js 同款）
+const ALREADY_MERGED_RE = /already merged|not open|pull request.*closed/i;
 // 走 C3 shim (../harness-gan-graph.js) 而非直连 workflows/harness-gan.graph.js，
 // 保持测试 vi.mock('../../harness-gan-graph.js') 路径兼容。
 // Phase C7 清 shim 前不改。
@@ -1429,7 +1431,7 @@ export async function reportNode(state, opts = {}) {
       return { ...s, status: 'merged' };
     } catch (err) {
       const msg = err?.message || '';
-      if (/already merged|not open|pull request.*closed/i.test(msg)) {
+      if (ALREADY_MERGED_RE.test(msg)) {
         return { ...s, status: 'merged' };
       }
       console.warn(`[reportNode] 自合 PR 失败（非致命）${s.id} ${s.pr_url}: ${msg}`);
@@ -1462,12 +1464,13 @@ export async function reportNode(state, opts = {}) {
       // B45: 使用 computedVerdict（可从 sub_tasks 推导）
       console.error(`[reportNode] computedVerdict=FAIL initiative=${state.initiativeId} → 标 phase='failed'，executor 会标 task.status='failed'`);
     }
-    const scenarioNames = (state.final_e2e_failed_scenarios || []).map(s => s.name).filter(Boolean);
     let reason;
     if (computedVerdict === 'PASS') {
-      reason = `Final E2E PASS: ${scenarioNames.join('; ').slice(0, 500)}`;
+      // PASS 时 failed_scenarios 必空，且 PASS reason 不写库（UPDATE 仅 phase='failed' 才写 failure_reason）
+      reason = 'Final E2E PASS';
     } else {
       // 非空回落：优先失败场景名 → 否则聚合失败 sub_task 的 ci_fail_type/evaluator_feedback → 再否则明确文案
+      const scenarioNames = (state.final_e2e_failed_scenarios || []).map(s => s.name).filter(Boolean);
       let detail = scenarioNames.join('; ');
       if (!detail) {
         const subFails = (reconciledSubTasks || [])
