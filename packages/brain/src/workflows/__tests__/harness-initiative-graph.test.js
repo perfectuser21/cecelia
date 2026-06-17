@@ -398,6 +398,47 @@ describe('reportNode — B45 Fix1: verdict 从 sub_tasks 推导', () => {
     const detail = reason.replace(/^Final E2E FAIL:\s*/, '');
     expect(detail.trim(), 'failure_reason 前缀后必须有非空诊断细节').not.toBe('');
   });
+
+  it('未合并但可合并的 sub_task PR：reportNode 自己合并 → verdict PASS/phase done', async () => {
+    const dbQueryMock = vi.fn().mockResolvedValue({ rows: [] });
+    const mockPool = {
+      connect: vi.fn().mockResolvedValue({ query: dbQueryMock, release: vi.fn() }),
+      query: vi.fn().mockResolvedValue({ rows: [] }),
+    };
+    const execFileMock = vi.fn().mockResolvedValue({ stdout: 'Squashed and merged' });
+    const state = {
+      initiativeId: '22222222-2222-2222-2222-222222222222',
+      sub_tasks: [{ id: 'ws1', status: 'pr_open', pr_url: 'https://github.com/o/r/pull/1' }],
+      final_e2e_verdict: null,
+      final_e2e_failed_scenarios: [],
+    };
+    await reportNode(state, { pool: mockPool, _checkPrMerged: async () => false, execFile: execFileMock });
+    // 断言：调用了 gh pr merge
+    const mergeCall = execFileMock.mock.calls.find(c => c[0] === 'gh' && Array.isArray(c[1]) && c[1].includes('merge'));
+    expect(mergeCall).toBeTruthy();
+    expect(mergeCall[1]).toEqual(expect.arrayContaining(['pr', 'merge', 'https://github.com/o/r/pull/1', '--squash', '--delete-branch']));
+    // 断言：phase=done（合并成功 → 视为 merged → PASS）
+    const runUpdate = dbQueryMock.mock.calls.find(c => /UPDATE initiative_runs/.test(c[0]));
+    expect(runUpdate[1][1]).toBe('done');
+  });
+
+  it('合并 PR 抛错时不致 run failed（非致命）', async () => {
+    const dbQueryMock = vi.fn().mockResolvedValue({ rows: [] });
+    const mockPool = {
+      connect: vi.fn().mockResolvedValue({ query: dbQueryMock, release: vi.fn() }),
+      query: vi.fn().mockResolvedValue({ rows: [] }),
+    };
+    // 合并抛错，但 reconcile 已确认实际已 merged（_checkPrMerged=true）
+    const execFileMock = vi.fn().mockRejectedValue(new Error('gh transient error'));
+    const state = {
+      initiativeId: '33333333-3333-3333-3333-333333333333',
+      sub_tasks: [{ id: 'ws1', status: 'pr_open', pr_url: 'https://github.com/o/r/pull/2' }],
+      final_e2e_verdict: null,
+      final_e2e_failed_scenarios: [],
+    };
+    // 不抛异常即通过（reportNode 内部 try/catch 吞合并错误）
+    await expect(reportNode(state, { pool: mockPool, _checkPrMerged: async () => true, execFile: execFileMock })).resolves.toBeTruthy();
+  });
 });
 
 describe('advanceTaskIndexNode — B45 Fix2: serial gate error → stateHasError', () => {
