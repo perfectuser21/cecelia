@@ -371,6 +371,33 @@ describe('reportNode — B45 Fix1: verdict 从 sub_tasks 推导', () => {
     expect(runsCall, 'initiative_runs should be updated').toBeDefined();
     expect(runsCall[1][1]).toBe('failed');
   });
+
+  it('FAIL 且 failed_scenarios 为空时 failure_reason 不为空串', async () => {
+    const dbQueryMock = vi.fn().mockResolvedValue({ rows: [] });
+    const mockPool = {
+      connect: vi.fn().mockResolvedValue({ query: dbQueryMock, release: vi.fn() }),
+      query: vi.fn().mockResolvedValue({ rows: [] }),
+    };
+    const state = {
+      initiativeId: '11111111-1111-1111-1111-111111111111',
+      sub_tasks: [{ id: 'ws1', status: 'failed', pr_url: null, ci_fail_type: 'ci_red', evaluator_feedback: 'lint failed' }],
+      final_e2e_verdict: null,
+      final_e2e_failed_scenarios: [],
+    };
+    // 不真的合并 / 不真的查 GitHub
+    await reportNode(state, { pool: mockPool, _checkPrMerged: async () => false, execFile: async () => ({ stdout: '' }) });
+    // 找到写 initiative_runs 的 UPDATE 调用，取 failure_reason 参数
+    const runUpdate = dbQueryMock.mock.calls.find(c => /UPDATE initiative_runs/.test(c[0]));
+    expect(runUpdate).toBeTruthy();
+    const reason = runUpdate[1][2]; // [initiativeId, phase, reason]
+    expect(reason).toBeTruthy();
+    expect(reason.trim()).not.toBe('');
+    expect(reason).not.toBe('Final E2E FAIL:');
+    // 核心：前缀后必须有真实诊断细节，不能是空 reason "Final E2E FAIL: "
+    expect(reason.startsWith('Final E2E FAIL:')).toBe(true);
+    const detail = reason.replace(/^Final E2E FAIL:\s*/, '');
+    expect(detail.trim(), 'failure_reason 前缀后必须有非空诊断细节').not.toBe('');
+  });
 });
 
 describe('advanceTaskIndexNode — B45 Fix2: serial gate error → stateHasError', () => {
