@@ -850,6 +850,14 @@ jobs:
               echo "⏭️  跳过 chrome 命令（需 headful browser）: ${CMD%% *} ..."
               continue
             fi
+            # Playwright E2E（[BEHAVIOR:E2E]）需 headful browser + 运行中的 dev server，
+            # 归 evaluator 模式 B / final-e2e（user_facing 走 mac_web、ZenithJoy 走 windows_cloud），
+            # 不在通用 CI 跑（此处无浏览器、无 localhost dev server，必然 "No tests found"/超时）。
+            if [[ "$CMD" == *playwright* ]]; then
+              SKIPPED=$((SKIPPED + 1))
+              echo "⏭️  跳过 playwright E2E 命令（归 evaluator 模式 B / final-e2e，需 headful + dev server）"
+              continue
+            fi
             # 只跑动态类型（node 在 engine-tests 里已跑过）
             if [[ "$CMD" != curl* ]] && [[ "$CMD" != psql* ]] && [[ "$CMD" != bash* ]] && [[ "$CMD" != npm* ]]; then
               continue
