@@ -5,8 +5,9 @@
 # 前置：Brain 在 $BRAIN 跑、migration 303 已应用。
 set -euo pipefail
 
-BRAIN="${BRAIN:-http://localhost:5221}"
-DB_URL="${DB_URL:-postgresql://localhost/cecelia}"
+# real-env-smoke CI 注入 BRAIN_URL + DATABASE_URL（含凭据，DB=cecelia_test）；本地默认 trust-auth
+BRAIN="${BRAIN_URL:-${BRAIN:-http://localhost:5221}}"
+DB_URL="${DATABASE_URL:-${DB_URL:-postgresql://localhost/cecelia}}"
 
 # id 提取避开 psql 命令标签（INSERT 0 1 会污染 -t 输出）
 uuid() { psql "$DB_URL" -t -c "$1" | grep -Eo '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}' | head -1; }
