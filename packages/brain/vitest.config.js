@@ -199,7 +199,12 @@ export default defineConfig({
     poolOptions: {
       forks: {
         minForks: 1,
-        maxForks: 1        // 单 fork 串行：465文件 × ~20MB / fork，ubuntu-latest 7GB 内
+        maxForks: 1,        // 单 fork 串行：465文件 × ~20MB / fork，ubuntu-latest 7GB 内
+        // 给 fork 子进程加堆头空间：isolate:true 每文件重建模块注册表 +
+        // 个别 callback 测试用 import('routes.js?v='+Date.now()) 每测试复制整棵路由树，
+        // 峰值冲爆默认堆 → "Worker exited unexpectedly" 误判同 shard 测试失败
+        // （连带 D5 等本应通过的测试）。8192 在 ubuntu-latest 单 fork 下安全。
+        execArgv: ['--max-old-space-size=8192']
       }
     }
   }
