@@ -1443,7 +1443,23 @@ export async function reportNode(state, opts = {}) {
       // B45: 使用 computedVerdict（可从 sub_tasks 推导）
       console.error(`[reportNode] computedVerdict=FAIL initiative=${state.initiativeId} → 标 phase='failed'，executor 会标 task.status='failed'`);
     }
-    const reason = `Final E2E ${computedVerdict}: ${(state.final_e2e_failed_scenarios || []).map(s => s.name).join('; ').slice(0, 500)}`;
+    const scenarioNames = (state.final_e2e_failed_scenarios || []).map(s => s.name).filter(Boolean);
+    let reason;
+    if (computedVerdict === 'PASS') {
+      reason = `Final E2E PASS: ${scenarioNames.join('; ').slice(0, 500)}`;
+    } else {
+      // 非空回落：优先失败场景名 → 否则聚合失败 sub_task 的 ci_fail_type/evaluator_feedback → 再否则明确文案
+      let detail = scenarioNames.join('; ');
+      if (!detail) {
+        const subFails = (reconciledSubTasks || [])
+          .filter(s => s.status !== 'merged')
+          .map(s => `${s.id}(status=${s.status || 'unknown'}${s.ci_fail_type ? `,ci=${s.ci_fail_type}` : ''}${s.evaluator_feedback ? `,fb=${String(s.evaluator_feedback).slice(0, 80)}` : ''}${s.pr_url ? `,pr=${s.pr_url}` : ''})`);
+        detail = subFails.length
+          ? `no failed scenarios recorded; unmerged/failed sub_tasks: ${subFails.join('; ')}`
+          : 'no failed scenarios and no sub_task detail available';
+      }
+      reason = `Final E2E FAIL: ${detail.slice(0, 500)}`;
+    }
     // B45: 使用 pool.connect() → client.query 确保测试 mock 可验证、支持连接复用
     const client = await dbPool.connect();
     try {
