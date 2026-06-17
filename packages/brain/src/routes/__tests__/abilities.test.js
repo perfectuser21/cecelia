@@ -44,14 +44,16 @@ describe('abilities routes', () => {
   });
 
   it('GET /golden_path 返回数组（按 order_no）', async () => {
-    mockQuery.mockResolvedValueOnce({ rows: [{ id: 'g1', order_no: 1, ability_id: 'a1' }] });
-    const res = await (await req())(await makeApp()).get('/api/brain/golden_path?scope_type=journey&scope_id=j1');
+    // 新模型：按 owner_task_id 过滤、order_no 排序（不再有 scope_type/ability_id）
+    mockQuery.mockResolvedValueOnce({ rows: [{ id: 'g1', owner_task_id: 't1', order_no: 1, feature_id: 'f1' }] });
+    const res = await (await req())(await makeApp()).get('/api/brain/golden_path?owner_task_id=t1');
     expect(res.status).toBe(200);
     expect(Array.isArray(res.body)).toBe(true);
   });
 
   it('POST /golden_path 缺字段返回 400', async () => {
-    const res = await (await req())(await makeApp()).post('/api/brain/golden_path').send({ scope_type: 'journey' });
+    // 新模型：缺 owner_task_id → 400
+    const res = await (await req())(await makeApp()).post('/api/brain/golden_path').send({ order_no: 1 });
     expect(res.status).toBe(400);
   });
 
