@@ -1,7 +1,9 @@
-# Sprint Contract Draft (Round 1) — Decision System 地基
+# Sprint Contract Draft (Round 2) — Decision System 地基
 
 > journey_type: dev_pipeline ｜ target_environment: local_api
 > 一个 Sprint = 一个 Generator = 一个 PR。本合同覆盖：写决策 API + 读 ability 决策清单 API + pushDecisions 映射 Level/Scope/ability relation + 端到端 smoke。
+
+gate-allow: domain/db-no-time-window 取测试目标 ability 的读（SELECT id FROM journey_features WHERE kind='ability' ORDER BY created_at DESC LIMIT 1，draft 第 64/187 行）是「选一行已存在的 fixture ability 当 POST 目标」，非对本轮产出的断言；PRD 假设 ability 为预存历史数据（约 23 个），加 created_at>NOW()-5min 会返空破坏测试，无历史冒充面，确属误判豁免。本轮所有对本轮产出的 decisions 断言（WHERE id=$DEC_ID）均已带 created_at>NOW()-interval 时间窗，豁免不削弱任何真实防造假 oracle。
 
 ---
 

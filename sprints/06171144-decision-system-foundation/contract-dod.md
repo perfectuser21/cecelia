@@ -8,6 +8,8 @@ target_environment: local_api
 **范围**: Brain API 写 ability/feature 级决策（带 level/target_type/target_id/scope 校验）+ 读某 ability 的决策清单；扩 pushDecisions 映射 Level/Scope/ability relation 进 Notion AI Notes；新路由必须挂载到 routes.js 真实可达。**不碰 migration**。
 **大小**: M
 
+gate-allow: domain/db-no-time-window BEHAVIOR 各条用 `SELECT id FROM journey_features WHERE kind='ability' ORDER BY created_at DESC LIMIT 1` 取一行已存在的 fixture ability 当 POST 目标，非对本轮产出的断言；PRD 假设 ability 为预存历史数据（约 23 个），加 created_at>NOW()-5min 会返空破坏测试，无历史冒充面。所有对本轮新增 decisions 的断言均已带 WHERE id=$ID AND created_at>NOW()-interval 时间窗，豁免不削弱任何真实防造假 oracle。
+
 ## ARTIFACT 条目
 
 - [ ] [ARTIFACT] POST /api/brain/decisions 路由已实现且挂载（routes.js 链路可达）
