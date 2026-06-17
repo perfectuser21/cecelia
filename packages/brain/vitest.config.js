@@ -172,6 +172,10 @@ export default defineConfig({
       // Pre-existing failures: open2-verify-06031535 sprint healthz tests — route was never implemented
       // (empty shell rejected by ARTIFACT gate after this sprint merged; Red tests permanently fail)
       '../../sprints/open2-verify-06031535/tests/harness-healthz.test.js',
+      // Frontend (apps/dashboard) harness 任务：React 组件测试需 happy-dom + @testing-library，
+      // 不能在 brain 的 node 环境跑（且 sprints/ 副本无相邻 TaskPrdPage 源）。真实运行在
+      // apps/dashboard 的 workspace-test job（同名副本 src/pages/tasks/TaskPrdPage.prepprd.test.tsx）。
+      '../../sprints/06171618-harness-pipeline-cockpit/tests/TaskPrdPage.prepprd.test.tsx',
     ],
     coverage: {
       provider: 'v8',

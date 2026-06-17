@@ -736,6 +736,19 @@ jobs:
       - name: Install Brain deps
         if: steps.detect.outputs.has_dynamic == 'true'
         run: cd packages/brain && npm ci
+      - name: Install dashboard deps (DoD 含 apps/dashboard 前端 BEHAVIOR 命令时)
+        # 前端 harness 任务的 [BEHAVIOR] 是 `cd apps/dashboard && npx vitest ...`，
+        # 需要 dashboard 自己的 node_modules（vitest/react/testing-library 等）。
+        # 复用 workspace-test 已验证的 `cd apps/dashboard && npm ci` 模式；
+        # 仅当 DoD 命令引用 apps/dashboard 时安装，brain-only DoD（curl/psql）不受影响。
+        if: steps.detect.outputs.has_dynamic == 'true'
+        run: |
+          if grep -qE 'apps/dashboard' "${{ steps.detect.outputs.task_card }}"; then
+            echo "🔧 DoD 含 apps/dashboard 前端命令，安装 dashboard 依赖"
+            cd apps/dashboard && npm ci
+          else
+            echo "⏭️  DoD 无 apps/dashboard 命令，跳过 dashboard 依赖安装"
+          fi
       - name: Setup /workspace symlink + playground deps
         if: steps.detect.outputs.has_dynamic == 'true'
         run: |
