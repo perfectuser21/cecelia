@@ -1407,7 +1407,7 @@ export async function reportNode(state, opts = {}) {
   // merge 状态，已 merge 则纠正为 merged——否则会把"PR 已合并但 graph state 未刷新"误判成
   // Final E2E FAIL（failed_scenarios 为空的空 reason FAIL，实证 PR#50 已 merged 仍判 FAIL）。
   const checkPrMerged = opts._checkPrMerged ?? _checkPrMerged;
-  const reconciledSubTasks = await Promise.all((state.sub_tasks || []).map(async (s) => {
+  let reconciledSubTasks = await Promise.all((state.sub_tasks || []).map(async (s) => {
     if (s && s.status !== 'merged' && s.pr_url) {
       const merged = await checkPrMerged(s.pr_url).catch(() => false);
       if (merged) {
@@ -1416,6 +1416,25 @@ export async function reportNode(state, opts = {}) {
       }
     }
     return s;
+  }));
+
+  // 假摔修复：CI 绿但 PR 未合（CI auto-merge 抽风）时，reportNode 在此可靠合并自己的 PR，
+  // 使 merge-based verdict 自然变正确。非致命：合并失败只 warn，绝不回退 run failed。
+  const execFileForMerge = opts.execFile || execFile;
+  reconciledSubTasks = await Promise.all(reconciledSubTasks.map(async (s) => {
+    if (!s || s.status === 'merged' || !s.pr_url) return s;
+    try {
+      await execFileForMerge('gh', ['pr', 'merge', s.pr_url, '--squash', '--delete-branch'], { timeout: 30_000 });
+      console.log(`[reportNode] 自合 PR 成功 ${s.id} ${s.pr_url} → status=merged`);
+      return { ...s, status: 'merged' };
+    } catch (err) {
+      const msg = err?.message || '';
+      if (/already merged|not open|pull request.*closed/i.test(msg)) {
+        return { ...s, status: 'merged' };
+      }
+      console.warn(`[reportNode] 自合 PR 失败（非致命）${s.id} ${s.pr_url}: ${msg}`);
+      return s;
+    }
   }));
 
   // B45 Fix1: final_e2e_verdict 没有节点主动写时，从 sub_tasks 状态推导
