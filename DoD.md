@@ -1,58 +1,64 @@
-contract_branch: cp-harness-propose-r2-a510eb80-a0
-sprint_dir: sprints/06171144-decision-system-foundation
+contract_branch: cp-harness-propose-r1-466e5b2a-a0
+sprint_dir: sprints/06171509-golden-path-step-nfr-decisions
 
 ---
 skeleton: false
-journey_type: dev_pipeline
-target_environment: local_api
+journey_type: autonomous
 ---
-# Contract DoD — Sprint: Decision System 地基（level/target_type/scope 流程走通 + Notion 同步）
+# Contract DoD — Sprint: Golden Path 重塑为 owner_task_id 模型 + step 级 NFR 决策读写
 
-**范围**: Brain API 写 ability/feature 级决策（带 level/target_type/target_id/scope 校验）+ 读某 ability 的决策清单；扩 pushDecisions 映射 Level/Scope/ability relation 进 Notion AI Notes；新路由必须挂载到 routes.js 真实可达。**不碰 migration**。
+**范围**: migration 303 重塑 golden_path 表（owner_task_id/order_no/feature_id/note）；重写 3 个 golden_path 端点；POST /decisions 补 golden_path target 校验；2 个决策读回视图。
 **大小**: M
-
-gate-allow: domain/db-no-time-window BEHAVIOR 各条用 `SELECT id FROM journey_features WHERE kind='ability' ORDER BY created_at DESC LIMIT 1` 取一行已存在的 fixture ability 当 POST 目标，非对本轮产出的断言；PRD 假设 ability 为预存历史数据（约 23 个），加 created_at>NOW()-5min 会返空破坏测试，无历史冒充面。所有对本轮新增 decisions 的断言均已带 WHERE id=$ID AND created_at>NOW()-interval 时间窗，豁免不削弱任何真实防造假 oracle。
 
 ## ARTIFACT 条目
 
-- [x] [ARTIFACT] POST /api/brain/decisions 路由已实现且挂载（routes.js 链路可达）
-  Test: manual:bash -c 'C=$(curl -s -o /dev/null -w "%{http_code}" -X POST localhost:5221/api/brain/decisions -H "Content-Type: application/json" -d "{}"); [ "$C" = "400" ] || [ "$C" = "201" ] || { echo "FAIL: 路由未挂载 code=$C（404=未注册）"; exit 1; }; echo OK'
-  期望: OK（返回 400 业务校验或 201，非 404 路由缺失）
+- [ ] [ARTIFACT] migration 303 重塑 golden_path 表（新列 owner_task_id/feature_id，移除旧 scope_type/scope_id/ability_id，含 (owner_task_id, order_no) index）
+  Test: bash -c 'F=$(ls packages/brain/migrations/303_*.sql 2>/dev/null | head -1); [ -n "$F" ] || { echo "FAIL: 无 303 migration"; exit 1; } ; grep -q "owner_task_id" "$F" && grep -q "feature_id" "$F" && grep -qi "order_no" "$F" || { echo "FAIL: 缺新模型列"; exit 1; }; echo OK'
 
-- [x] [ARTIFACT] notion-push-sync.js 导出纯映射函数 buildDecisionNotionProperties
-  Test: manual:bash -c 'node -e "import(\"./packages/brain/src/notion-push-sync.js\").then(m=>{if(typeof m.buildDecisionNotionProperties!==\"function\"){console.error(\"FAIL: 未导出 buildDecisionNotionProperties\");process.exit(1)}console.log(\"OK\")}).catch(e=>{console.error(\"FAIL:\",e.message);process.exit(1)})"'
+- [ ] [ARTIFACT] golden_path 端点已重写为 owner_task_id 模型（abilities.js 不再含旧 scope_type/ability_id 写入）
+  Test: bash -c 'grep -q "owner_task_id" packages/brain/src/routes/abilities.js && grep -q "golden-path-decisions" packages/brain/src/routes/abilities.js || { echo "FAIL: 端点未重写"; exit 1; }; echo OK'
+
+## BEHAVIOR 条目（内嵌可执行 manual: 命令 — autonomous，测真实 Brain localhost:5221 + DB）
+
+> 以下 BEHAVIOR 由 evaluator 顺序执行；前置夹具（TASK_ID/FEATURE_ID/STEP_ID）在第 1 条建立后由后续条目复用。
+> DB_URL 默认 postgresql://localhost/cecelia（evaluator 注入）。
+
+- [ ] [BEHAVIOR] POST /golden_path 用真实 owner_task_id + feature_id 建步返回 201 且回吐新模型字段，无旧列（Golden Path Step 1 用户可观察输出）
+  Test: manual:bash -c 'set -e; DB_URL="${DB_URL:-postgresql://localhost/cecelia}"; TASK_ID=$(psql "$DB_URL" -t -c "INSERT INTO tasks (title) VALUES ('"'"'gp-dod-task'"'"') RETURNING id" | tr -d " "); FEATURE_ID=$(psql "$DB_URL" -t -c "INSERT INTO journey_features (name) VALUES ('"'"'gp-dod-feature'"'"') RETURNING id" | tr -d " "); STEP=$(curl -sf -X POST localhost:5221/api/brain/golden_path -H "Content-Type: application/json" -d "{\"owner_task_id\":\"$TASK_ID\",\"order_no\":1,\"feature_id\":\"$FEATURE_ID\"}"); echo "$STEP" | jq -e ".owner_task_id and .feature_id and (.order_no == 1) and (has(\"scope_type\") | not) and (has(\"ability_id\") | not)" || exit 1; echo OK'
   期望: OK
 
-## BEHAVIOR 条目（journey_type=dev_pipeline / target_environment=local_api — curl localhost:5221 + psql + node 确定性）
-
-- [x] [BEHAVIOR] POST 决策 → 201 + 返回 id(string) + level/target_id/scope 回显（Golden Path Step 1）
-  Test: manual:bash -c 'psql "$DB" -c "INSERT INTO journey_features (name,kind,status) SELECT '"'"'dod-seed-ability'"'"','"'"'ability'"'"','"'"'planned'"'"' WHERE NOT EXISTS (SELECT 1 FROM journey_features WHERE kind='"'"'ability'"'"')" >/dev/null 2>&1; AB=$(psql "$DB" -t -c "SELECT id FROM journey_features WHERE kind='"'"'ability'"'"' ORDER BY created_at DESC LIMIT 1" | tr -d " "); R=$(curl -sf -X POST localhost:5221/api/brain/decisions -H "Content-Type: application/json" -d "{\"category\":\"nfr\",\"topic\":\"前后台\",\"decision\":\"后台静默\",\"level\":\"ability\",\"target_type\":\"journey_feature\",\"target_id\":\"$AB\",\"scope\":\"v1\"}"); echo "$R" | jq -e ".id | type == \"string\"" && echo "$R" | jq -e ".level == \"ability\"" && echo "$R" | jq -e ".scope == \"v1\"" && echo "$R" | jq -e ".target_id == \"$AB\""'
-  期望: exit 0
-
-- [x] [BEHAVIOR] 决策落库 — decisions 表新增行 level/target_type/target_id/scope 正确（带时间窗防造假，Golden Path Step 1b）
-  Test: manual:bash -c 'psql "$DB" -c "INSERT INTO journey_features (name,kind,status) SELECT '"'"'dod-seed-ability'"'"','"'"'ability'"'"','"'"'planned'"'"' WHERE NOT EXISTS (SELECT 1 FROM journey_features WHERE kind='"'"'ability'"'"')" >/dev/null 2>&1; AB=$(psql "$DB" -t -c "SELECT id FROM journey_features WHERE kind='"'"'ability'"'"' ORDER BY created_at DESC LIMIT 1" | tr -d " "); R=$(curl -sf -X POST localhost:5221/api/brain/decisions -H "Content-Type: application/json" -d "{\"topic\":\"前后台\",\"decision\":\"后台静默\",\"level\":\"ability\",\"target_type\":\"journey_feature\",\"target_id\":\"$AB\",\"scope\":\"v1\"}"); ID=$(echo "$R" | jq -r ".id"); ROW=$(psql "$DB" -t -c "SELECT level||'"'"'|'"'"'||target_type||'"'"'|'"'"'||scope FROM decisions WHERE id='"'"'$ID'"'"' AND target_id='"'"'$AB'"'"' AND created_at > NOW() - interval '"'"'5 minutes'"'"'" | tr -d " "); [ "$ROW" = "ability|journey_feature|v1" ] || { echo "FAIL: $ROW"; exit 1; }; echo OK'
+- [ ] [BEHAVIOR] POST /golden_path owner_task_id 不存在 → 400 + error(string)（Golden Path Step 1 边界：悬空引用拒写）
+  Test: manual:bash -c 'CODE=$(curl -s -o /tmp/gp_e.json -w "%{http_code}" -X POST localhost:5221/api/brain/golden_path -H "Content-Type: application/json" -d "{\"owner_task_id\":\"00000000-0000-0000-0000-000000000000\",\"order_no\":1,\"feature_id\":\"00000000-0000-0000-0000-000000000000\"}"); [ "$CODE" = "400" ] || { echo "FAIL got $CODE"; exit 1; }; jq -e ".error | type == \"string\"" /tmp/gp_e.json || exit 1; echo OK'
   期望: OK
 
-- [x] [BEHAVIOR] GET /api/brain/abilities/:id/decisions?scope=v1 → 200 + 数组含该决策且全部 scope=v1（Golden Path Step 3）
-  Test: manual:bash -c 'psql "$DB" -c "INSERT INTO journey_features (name,kind,status) SELECT '"'"'dod-seed-ability'"'"','"'"'ability'"'"','"'"'planned'"'"' WHERE NOT EXISTS (SELECT 1 FROM journey_features WHERE kind='"'"'ability'"'"')" >/dev/null 2>&1; AB=$(psql "$DB" -t -c "SELECT id FROM journey_features WHERE kind='"'"'ability'"'"' ORDER BY created_at DESC LIMIT 1" | tr -d " "); R=$(curl -sf -X POST localhost:5221/api/brain/decisions -H "Content-Type: application/json" -d "{\"topic\":\"t\",\"decision\":\"d\",\"level\":\"ability\",\"target_type\":\"journey_feature\",\"target_id\":\"$AB\",\"scope\":\"v1\"}"); ID=$(echo "$R" | jq -r ".id"); L=$(curl -sf "localhost:5221/api/brain/abilities/$AB/decisions?scope=v1"); echo "$L" | jq -e "type == \"array\"" && echo "$L" | jq -e --arg id "$ID" "any(.[]; .id == \$id)" && echo "$L" | jq -e "all(.[]; .scope == \"v1\")"'
-  期望: exit 0
-
-- [x] [BEHAVIOR] error path — 非法 level → 400 + error(string)（Golden Path Step 4）
-  Test: manual:bash -c 'psql "$DB" -c "INSERT INTO journey_features (name,kind,status) SELECT '"'"'dod-seed-ability'"'"','"'"'ability'"'"','"'"'planned'"'"' WHERE NOT EXISTS (SELECT 1 FROM journey_features WHERE kind='"'"'ability'"'"')" >/dev/null 2>&1; AB=$(psql "$DB" -t -c "SELECT id FROM journey_features WHERE kind='"'"'ability'"'"' ORDER BY created_at DESC LIMIT 1" | tr -d " "); C=$(curl -s -o /tmp/dod_e1.json -w "%{http_code}" -X POST localhost:5221/api/brain/decisions -H "Content-Type: application/json" -d "{\"topic\":\"x\",\"decision\":\"y\",\"level\":\"galaxy\",\"target_type\":\"journey_feature\",\"target_id\":\"$AB\",\"scope\":\"v1\"}"); [ "$C" = "400" ] || { echo "FAIL: code=$C"; exit 1; }; jq -e ".error | type == \"string\"" /tmp/dod_e1.json'
-  期望: exit 0
-
-- [x] [BEHAVIOR] error path — 非法 target_id（不存在 journey_features）→ 400 + error(string)（Golden Path Step 4）
-  Test: manual:bash -c 'C=$(curl -s -o /tmp/dod_e2.json -w "%{http_code}" -X POST localhost:5221/api/brain/decisions -H "Content-Type: application/json" -d "{\"topic\":\"x\",\"decision\":\"y\",\"level\":\"ability\",\"target_type\":\"journey_feature\",\"target_id\":\"00000000-0000-0000-0000-000000000000\",\"scope\":\"v1\"}"); [ "$C" = "400" ] || { echo "FAIL: code=$C"; exit 1; }; jq -e ".error | type == \"string\"" /tmp/dod_e2.json'
-  期望: exit 0
-
-- [x] [BEHAVIOR] 空清单 — 无决策的 ability GET → 200 + [] 非报错（Golden Path Step 5）
-  Test: manual:bash -c 'EMPTY=$(psql "$DB" -t -c "INSERT INTO journey_features (name, kind, status) VALUES ('"'"'e2e-empty-'"'"'||floor(extract(epoch from now()))::text, '"'"'ability'"'"', '"'"'planned'"'"') RETURNING id" | grep -oE "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}" | head -1); curl -sf "localhost:5221/api/brain/abilities/$EMPTY/decisions?scope=v1" | jq -e "type == \"array\" and length == 0"'
-  期望: exit 0
-
-- [x] [BEHAVIOR] Notion 映射 — buildDecisionNotionProperties 把 level→Level、scope→Scope、ability→relation（确定性，不打 Notion 网络，Golden Path Step 2）
-  Test: manual:bash -c 'node -e "import(\"./packages/brain/src/notion-push-sync.js\").then(m=>{const p=m.buildDecisionNotionProperties({level:\"ability\",scope:\"v1\",topic:\"t\",decision:\"d\"},\"ab-notion-id\");const lv=p.Level&&(p.Level.select?p.Level.select.name:(p.Level.status?p.Level.status.name:null));const sc=p.Scope&&(p.Scope.select?p.Scope.select.name:(p.Scope.status?p.Scope.status.name:null));if(lv!==\"ability\"){console.error(\"FAIL: Level\",JSON.stringify(p.Level));process.exit(1)}if(sc!==\"v1\"){console.error(\"FAIL: Scope\",JSON.stringify(p.Scope));process.exit(1)}const rel=Object.values(p).some(v=>v&&Array.isArray(v.relation)&&v.relation.some(r=>r.id===\"ab-notion-id\"));if(!rel){console.error(\"FAIL: 缺 ability relation\");process.exit(1)}console.log(\"OK\")}).catch(e=>{console.error(\"FAIL:\",e.message);process.exit(1)})"'
+- [ ] [BEHAVIOR] POST /golden_path owner_task_id 非法 uuid → 400（不可 500）
+  Test: manual:bash -c 'CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST localhost:5221/api/brain/golden_path -H "Content-Type: application/json" -d "{\"owner_task_id\":\"not-a-uuid\",\"order_no\":1,\"feature_id\":\"not-a-uuid\"}"); [ "$CODE" = "400" ] || { echo "FAIL: 非法 uuid 应 400 got $CODE"; exit 1; }; echo OK'
   期望: OK
 
-- [x] [BEHAVIOR] Notion 去重 — pushDecisions 保留 notion_synced_at IS NULL 过滤（已同步不重推，Golden Path Step 2 边界）
-  Test: manual:bash -c 'node -e "const c=require(\"fs\").readFileSync(\"packages/brain/src/notion-push-sync.js\",\"utf8\");const i=c.indexOf(\"function pushDecisions\");if(i<0){console.error(\"FAIL: 无 pushDecisions\");process.exit(1)}const seg=c.slice(i,i+1200);if(!/FROM decisions[\s\S]*?notion_synced_at IS NULL/.test(seg)){console.error(\"FAIL: pushDecisions 缺 notion_synced_at IS NULL 去重\");process.exit(1)}console.log(\"OK\")"'
+- [ ] [BEHAVIOR] POST /decisions target_type=golden_path 指向真实步 → 201 且 level=step/target_type=golden_path（Golden Path Step 2 用户可观察输出）
+  Test: manual:bash -c 'set -e; DB_URL="${DB_URL:-postgresql://localhost/cecelia}"; TASK_ID=$(psql "$DB_URL" -t -c "INSERT INTO tasks (title) VALUES ('"'"'gp-dod-task2'"'"') RETURNING id" | tr -d " "); FEATURE_ID=$(psql "$DB_URL" -t -c "INSERT INTO journey_features (name) VALUES ('"'"'gp-dod-feat2'"'"') RETURNING id" | tr -d " "); STEP_ID=$(curl -sf -X POST localhost:5221/api/brain/golden_path -H "Content-Type: application/json" -d "{\"owner_task_id\":\"$TASK_ID\",\"order_no\":1,\"feature_id\":\"$FEATURE_ID\"}" | jq -r ".id"); DEC=$(curl -sf -X POST localhost:5221/api/brain/decisions -H "Content-Type: application/json" -d "{\"category\":\"nfr\",\"topic\":\"前后台\",\"decision\":\"后台静默\",\"level\":\"step\",\"target_type\":\"golden_path\",\"target_id\":\"$STEP_ID\",\"scope\":\"v1\"}"); echo "$DEC" | jq -e ".level == \"step\" and .target_type == \"golden_path\"" || exit 1; echo OK'
+  期望: OK
+
+- [ ] [BEHAVIOR] POST /decisions golden_path target_id 不存在 → 400 + error(string)（Golden Path Step 2 边界：悬空引用拒写）
+  Test: manual:bash -c 'CODE=$(curl -s -o /tmp/dec_e.json -w "%{http_code}" -X POST localhost:5221/api/brain/decisions -H "Content-Type: application/json" -d "{\"category\":\"nfr\",\"level\":\"step\",\"target_type\":\"golden_path\",\"target_id\":\"00000000-0000-0000-0000-000000000000\",\"scope\":\"v1\"}"); [ "$CODE" = "400" ] || { echo "FAIL got $CODE"; exit 1; }; jq -e ".error | type == \"string\"" /tmp/dec_e.json || exit 1; echo OK'
+  期望: OK
+
+- [ ] [BEHAVIOR] POST /decisions golden_path target_id 非法 uuid → 400（不可 500）
+  Test: manual:bash -c 'CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST localhost:5221/api/brain/decisions -H "Content-Type: application/json" -d "{\"category\":\"nfr\",\"level\":\"step\",\"target_type\":\"golden_path\",\"target_id\":\"not-a-uuid\",\"scope\":\"v1\"}"); [ "$CODE" = "400" ] || { echo "FAIL: 非法 uuid 应 400 got $CODE"; exit 1; }; echo OK'
+  期望: OK
+
+- [ ] [BEHAVIOR] GET /golden_path/:id/decisions?scope=v1 读回该步刚写决策 + DB 时间窗确认本轮写入（Golden Path Step 3 用户可观察输出）
+  Test: manual:bash -c 'set -e; DB_URL="${DB_URL:-postgresql://localhost/cecelia}"; TASK_ID=$(psql "$DB_URL" -t -c "INSERT INTO tasks (title) VALUES ('"'"'gp-dod-task3'"'"') RETURNING id" | tr -d " "); FEATURE_ID=$(psql "$DB_URL" -t -c "INSERT INTO journey_features (name) VALUES ('"'"'gp-dod-feat3'"'"') RETURNING id" | tr -d " "); STEP_ID=$(curl -sf -X POST localhost:5221/api/brain/golden_path -H "Content-Type: application/json" -d "{\"owner_task_id\":\"$TASK_ID\",\"order_no\":1,\"feature_id\":\"$FEATURE_ID\"}" | jq -r ".id"); curl -sf -X POST localhost:5221/api/brain/decisions -H "Content-Type: application/json" -d "{\"category\":\"nfr\",\"topic\":\"前后台\",\"decision\":\"后台静默\",\"level\":\"step\",\"target_type\":\"golden_path\",\"target_id\":\"$STEP_ID\",\"scope\":\"v1\"}" > /dev/null; LIST=$(curl -sf "localhost:5221/api/brain/golden_path/$STEP_ID/decisions?scope=v1"); echo "$LIST" | jq -e --arg s "$STEP_ID" "any(.[]; .target_id == \$s and .scope == \"v1\")" || exit 1; CNT=$(psql "$DB_URL" -t -c "SELECT count(*) FROM decisions WHERE target_type='"'"'golden_path'"'"' AND target_id='"'"'$STEP_ID'"'"' AND created_at > NOW() - interval '"'"'5 minutes'"'"'" | tr -d " "); [ "$CNT" -ge 1 ] || { echo "FAIL: 决策非本轮写入 CNT=$CNT"; exit 1; }; echo OK'
+  期望: OK
+
+- [ ] [BEHAVIOR] GET /golden_path/:id/decisions 不存在的步 → 200 + 空数组（Golden Path Step 3 边界：无匹配不报错）
+  Test: manual:bash -c 'LIST=$(curl -sf "localhost:5221/api/brain/golden_path/00000000-0000-0000-0000-000000000000/decisions?scope=v1"); echo "$LIST" | jq -e "type == \"array\" and length == 0" || exit 1; echo OK'
+  期望: OK
+
+- [ ] [BEHAVIOR] GET /tasks/:id/golden-path-decisions?category=nfr&scope=v1 按 owner_task_id join 出整条 golden path NFR 验收单含刚写决策（Golden Path Step 4 用户可观察输出）
+  Test: manual:bash -c 'set -e; DB_URL="${DB_URL:-postgresql://localhost/cecelia}"; TASK_ID=$(psql "$DB_URL" -t -c "INSERT INTO tasks (title) VALUES ('"'"'gp-dod-task4'"'"') RETURNING id" | tr -d " "); FEATURE_ID=$(psql "$DB_URL" -t -c "INSERT INTO journey_features (name) VALUES ('"'"'gp-dod-feat4'"'"') RETURNING id" | tr -d " "); STEP_ID=$(curl -sf -X POST localhost:5221/api/brain/golden_path -H "Content-Type: application/json" -d "{\"owner_task_id\":\"$TASK_ID\",\"order_no\":1,\"feature_id\":\"$FEATURE_ID\"}" | jq -r ".id"); curl -sf -X POST localhost:5221/api/brain/decisions -H "Content-Type: application/json" -d "{\"category\":\"nfr\",\"topic\":\"前后台\",\"decision\":\"后台静默\",\"level\":\"step\",\"target_type\":\"golden_path\",\"target_id\":\"$STEP_ID\",\"scope\":\"v1\"}" > /dev/null; SHEET=$(curl -sf "localhost:5221/api/brain/tasks/$TASK_ID/golden-path-decisions?category=nfr&scope=v1"); echo "$SHEET" | jq -e --arg s "$STEP_ID" "any(.[]; .target_id == \$s and .category == \"nfr\" and .scope == \"v1\")" || exit 1; echo OK'
+  期望: OK
+
+- [ ] [BEHAVIOR] GET /tasks/:id/golden-path-decisions 不存在的 task → 200 + 空数组（Golden Path Step 4 边界：无匹配不报错）
+  Test: manual:bash -c 'SHEET=$(curl -sf "localhost:5221/api/brain/tasks/00000000-0000-0000-0000-000000000000/golden-path-decisions?category=nfr&scope=v1"); echo "$SHEET" | jq -e "type == \"array\" and length == 0" || exit 1; echo OK'
   期望: OK
