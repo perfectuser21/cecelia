@@ -9,6 +9,8 @@
 
 import { useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 
 interface Task {
   id: string;
@@ -22,7 +24,11 @@ interface Task {
   created_at: string;
   updated_at: string;
   completed_at: string | null;
-  payload: { prd_summary?: string } | null;
+  payload: {
+    prd_summary?: string;
+    // Harness 写入的完整 PrepPRD Markdown 全文（cockpit Phase 1 优先渲染源）
+    prep_prd_body?: string;
+  } | null;
 }
 
 type LoadState =
@@ -52,7 +58,14 @@ function priorityColor(priority: string): string {
 }
 
 function pickPrdContent(task: Task): string {
-  return task.description || task.prd_content || task.payload?.prd_summary || '';
+  // 优先级（自上而下）：完整 PrepPRD 全文 → 旧字段退化链
+  return (
+    task.payload?.prep_prd_body ||
+    task.description ||
+    task.prd_content ||
+    task.payload?.prd_summary ||
+    ''
+  );
 }
 
 export default function TaskPrdPage() {
@@ -124,9 +137,10 @@ export default function TaskPrdPage() {
   return (
     <div className="max-w-4xl mx-auto py-8">
       <div className="mb-6">
-        <h1 className="text-2xl font-semibold text-gray-900 dark:text-white mb-3">
+        {/* 页面标题用 h2：PrepPRD 正文自身的 `#` 作为文档主标题(唯一 h1)，避免与渲染出的 Markdown h1 抢占 level-1 */}
+        <h2 className="text-2xl font-semibold text-gray-900 dark:text-white mb-3">
           {task.title}
-        </h1>
+        </h2>
         <div className="flex flex-wrap gap-2 text-xs">
           <span className={`px-2 py-1 rounded ${statusColor(task.status)}`}>
             {task.status}
@@ -159,9 +173,12 @@ export default function TaskPrdPage() {
           PRD
         </h2>
         {prd ? (
-          <pre className="whitespace-pre-wrap break-words font-mono text-sm leading-relaxed text-gray-800 dark:text-gray-100 bg-gray-50 dark:bg-gray-900 p-4 rounded border border-gray-200 dark:border-gray-700">
-            {prd}
-          </pre>
+          <div
+            data-testid="prd-content"
+            className="max-w-none text-gray-800 dark:text-gray-100 bg-gray-50 dark:bg-gray-900 p-4 rounded border border-gray-200 dark:border-gray-700 [&_h1]:text-xl [&_h1]:font-semibold [&_h1]:mt-0 [&_h1]:mb-3 [&_h2]:text-lg [&_h2]:font-semibold [&_h2]:mt-4 [&_h2]:mb-2 [&_ul]:list-disc [&_ul]:pl-6 [&_ol]:list-decimal [&_ol]:pl-6 [&_li]:my-1 [&_p]:my-2 [&_table]:border-collapse [&_th]:border [&_th]:border-gray-300 [&_th]:dark:border-gray-600 [&_th]:px-2 [&_th]:py-1 [&_td]:border [&_td]:border-gray-300 [&_td]:dark:border-gray-600 [&_td]:px-2 [&_td]:py-1 [&_code]:font-mono [&_pre]:bg-gray-100 [&_pre]:dark:bg-gray-800 [&_pre]:p-3 [&_pre]:rounded [&_pre]:overflow-auto"
+          >
+            <ReactMarkdown remarkPlugins={[remarkGfm]}>{prd}</ReactMarkdown>
+          </div>
         ) : (
           <p className="text-gray-500 italic">
             (No PRD content — this task was created without a description / prd_content / payload.prd_summary.)
