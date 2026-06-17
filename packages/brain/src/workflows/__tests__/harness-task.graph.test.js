@@ -54,6 +54,7 @@ vi.mock('../../harness-credentials.js', () => ({ resolveGitHubToken: (...a) => m
 vi.mock('../../docker-executor.js', () => ({
   writeDockerCallback: (...a) => mockWriteCallback(...a),
   executeInDocker: (...a) => mockSpawn(...a),
+  getHostPromptDir: () => '/tmp/cecelia-prompts',
 }));
 const mockSpawnBridge = vi.fn();
 vi.mock('../../spawn/detached.js', () => ({
@@ -497,7 +498,8 @@ describe('pollCiNode', () => {
 
 describe('mergePrNode', () => {
   // B21: mergePrNode 改用注入 execFile 直接调 `gh pr merge --squash --delete-branch`，
-  // 不再委托 shepherd.executeMerge。失败时写 error.node=merge_pr，不 set status=failed（让 graph END）。
+  // 不再委托 shepherd.executeMerge。失败时写 error.node=merge_pr + status=failed（END 终态规则：
+  // merge_pr 所有 error 返回都经 routeAfterMergePr → END，必须写明确终态，不留默认 'queued'）。
   // B39: 去掉 --auto（仓库未开启 auto-merge，CI 在 poll_ci 已验绿，--auto 多余且报错）。
   it('happy: 调 gh pr merge --squash 写 status=merged', async () => {
     const execFile = vi.fn().mockResolvedValue({ stdout: '✓ merged', stderr: '' });
@@ -511,13 +513,14 @@ describe('mergePrNode', () => {
     expect(delta.ci_status).toBe('merged');
     expect(delta.merge_command).toMatch(/gh pr merge/);
   });
-  it('merge 失败 → 写 error.node=merge_pr + error.message，不 set status=failed', async () => {
+  it('merge 失败（不可恢复）→ 写 error.node=merge_pr + error.message + status=failed（END 终态）', async () => {
     const execFile = vi.fn().mockRejectedValue(new Error('conflict'));
     const delta = await mergePrNode({ pr_url: 'x' }, { execFile });
     expect(delta.error).toBeDefined();
     expect(delta.error.node).toBe('merge_pr');
     expect(delta.error.message).toMatch(/conflict/);
-    expect(delta.status).toBeUndefined();
+    // END 终态规则：merge 失败终局必须写 status=failed，杜绝停在默认 'queued'（run cf4f596c 同根因）。
+    expect(delta.status).toBe('failed');
   });
   it('idempotent: status 已 merged → 跳过', async () => {
     const execFile = vi.fn();

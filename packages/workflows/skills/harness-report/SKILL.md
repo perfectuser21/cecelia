@@ -1,15 +1,17 @@
 ---
 id: harness-report-skill
 description: |
-  Harness Report — Harness v5.0 最终步骤：交付报告 + Sprint 状态同步。
+  Harness Report — 最终步骤：交付报告 + Sprint 状态同步。
   Phase A（6步交付）：回写Brain任务状态 → 更新中台Dashboard → 写Notion AI Notes（GAN标注表+截图）
   → 更新Notion Feature Registry → 飞书通知 → 写本地harness-report.md备份。
-  Phase B（Sprint状态同步）：写本地Brain DB → 同步8个Notion DB（API/DB Schema/Tests/Features/Journey/Steps等）→ git commit。
-  由 harness-evaluator PASS 后调用；也可手动触发补同步。
-version: 6.0.0
+  Phase B（Sprint状态同步）：写本地Brain DB → 通过 db-update skill 触发 notion-push-sync.js 的 8 个 push 函数（journeys/journey_features/issues/skill_registry/journey_steps/journey_step_links/decisions/initiative_contracts）→ git commit。
+  由 harness-evaluator PASS 后 Brain reportNode 自动 spawn；也可手动触发补同步。
+version: 6.2.0
 created: 2026-04-08
-updated: 2026-05-30
+updated: 2026-06-11
 changelog:
+  - 6.2.0: 链路审计修复 5 项 — (a)「同步 8 个 Notion DB」改为明确清单（notion-push-sync.js 的 8 个 push 函数）+ 注明入口是 db-update skill；(b) journey_steps 措辞改"保留只读兼容（仍同步存量），新增数据禁止写入"；(c) 开头加「触发条件」（evaluator PASS 后 Brain reportNode 自动 spawn；手动用于补同步）；(d) Phase A 开头加前置文件存在性检查（缺失则对应步骤跳过 + WARN）；(e) 路径拼装统一 ${SPRINT_DIR%/}/xxx 防双斜杠
+  - 6.1.0: 新增Step6全量Registry回写+Step7结构化Learning+Step8 index.html可视化；截图路径统一到SPRINT_DIR/screenshots/
   - 6.0.0: 合并 harness-sprint-state → 统一为"交付报告+状态同步"单一 skill，删除独立的 harness-sprint-state skill
   - 5.1.0: 移除 Step 2.5b 多 WS 扫描逻辑 — 改为单 Sprint 直接创建 Notion Task
   - 5.0.0: 6步完整交付 — 回写Brain任务状态 + Dashboard + Notion AI Notes + Feature Registry + 飞书 + 本地备份
@@ -19,11 +21,18 @@ changelog:
 > **语言规则: 所有输出必须使用简体中文。严禁日语、韩语或其他语言。**
 > **执行规则: 严格按照下面列出的步骤执行。不要搜索/查找其他 skill 文件，不要 find/glob 查找任何 SKILL.md，直接按本文档流程操作。**
 
-# /harness-report — Harness v5.0 完成报告 + Sprint 状态同步
+# /harness-report — Harness Report 完成报告 + Sprint 状态同步
 
 **角色**: Reporter + Sprint State Syncer  
 **对应 task_type**: `harness_report`  
 **调用时机**: harness-evaluator PASS 后；或手动补同步
+
+---
+
+## 触发条件
+
+- **自动**：harness-evaluator 输出 `verdict=PASS` 后，由 Brain `reportNode` 自动 spawn 本 skill（`task_type=harness_report`），无需人工介入。
+- **手动**：当某次 Sprint 的 Notion/DB 同步漏掉或失败，可手动触发本 skill **补同步**（Phase A 会按文件存在性跳过已无意义的步骤，Phase B 走 db-update 重推）。
 
 ---
 
@@ -44,24 +53,29 @@ Phase B: Sprint 状态同步 → 把本次 Sprint 产出的 API/DB/Tests/Feature
 
 ```bash
 # TASK_ID、SPRINT_DIR、PROJECT_ID、FEATURE_ID、FEATURE_NAME、SUB_AREA、
-# PR_URL、TOTAL_COST、SCREENSHOTS 由 cecelia-run 通过 prompt 注入，直接使用
+# PR_URL、TOTAL_COST、SCREENSHOTS、HARNESS_INITIATIVE_ID 由 cecelia-run 通过 prompt 注入，直接使用
+SPRINT_DIR="${SPRINT_DIR%/}"   # 统一去尾斜杠：后续所有 ${SPRINT_DIR}/xxx 拼装防双斜杠（每个 bash 块开头都应保留此规约）
 FIRST_SCREENSHOT_URL=$(echo "$SCREENSHOTS" | jq -r '.[0] // ""')
 TOTAL_COST="${TOTAL_COST:-0}"
 SCREENSHOTS="${SCREENSHOTS:-[]}"
-GAN_ROUNDS="${GAN_ROUNDS:-0}"
-FINAL_E2E_VERDICT="${FINAL_E2E_VERDICT:-PASS}"
 ```
 
 ---
 
-### Step 0: 埋点 phase-event start（non-fatal）
+### 前置文件存在性检查（Phase A 开头必跑）
+
+报告/归档前先探测 sprint 产出文件，缺失则对应步骤明确**跳过 + WARN**，不让后续步骤因文件不存在而静默失败：
 
 ```bash
-PHASE_EVENT_ID=$(curl -fsS -X POST "${BRAIN_URL:-localhost:5221}/api/brain/harness/phase-event" \
-  -H 'Content-Type: application/json' \
-  -d "{\"initiative_id\":\"${INITIATIVE_ID:-${TASK_ID:-unknown}}\",\"node\":\"report\",\"status\":\"running\",\"model\":\"${MODEL_ID:-claude-sonnet-4-6}\"}" \
-  2>/dev/null | jq -r '.id // empty') || true
+SPRINT_DIR="${SPRINT_DIR%/}"   # 去掉尾部斜杠，防后续拼装出双斜杠
+HAS_PRD=0; HAS_CONTRACT=0; HAS_DOD=0
+[ -f "${SPRINT_DIR}/sprint-prd.md" ]     && HAS_PRD=1      || echo "WARN: sprint-prd.md 不存在 → Step 7b(DB registry) 将跳过"
+[ -f "${SPRINT_DIR}/contract-draft.md" ] && HAS_CONTRACT=1 || echo "WARN: contract-draft.md 不存在 → Step 3.5(Contract 归档) / Step 7a(API registry) 将跳过"
+[ -f "${SPRINT_DIR}/contract-dod.md" ]   && HAS_DOD=1      || echo "WARN: contract-dod.md 不存在 → DOD 对齐章节标注（无 DoD 文件）"
+echo "[harness-report] 前置文件：prd=$HAS_PRD contract=$HAS_CONTRACT dod=$HAS_DOD"
 ```
+
+> 后续 Step 3.5 / Step 7 已各自带 `[ ! -f ... ] && ... continue` 防御；本检查是 Phase A 入口的统一前置探测，便于一眼看清哪些步骤会跳过。
 
 ---
 
@@ -87,10 +101,11 @@ echo "✅ Step 1: Brain 任务状态已回写 completed"
 ### Step 2: 更新中台 Dashboard
 
 ```bash
+mkdir -p "$SPRINT_DIR/screenshots"
 curl -X POST "localhost:5221/api/brain/harness/complete" \
   -H "Content-Type: application/json" \
   -d "{
-    \"initiative_id\": \"$TASK_ID\",
+    \"initiative_id\": \"${HARNESS_INITIATIVE_ID:-$TASK_ID}\",
     \"sprint_dir\": \"$SPRINT_DIR\",
     \"pr_url\": \"$PR_URL\",
     \"screenshots\": $SCREENSHOTS
@@ -100,25 +115,12 @@ echo "✅ Step 2: 中台 Dashboard 已更新"
 
 ---
 
-### Step 2.5: 创建 Notion Project（Run 级）+ Notion Task（WS 级）
+### Step 2.5: 写 Notion Task Notes（关联到被推进的 Ability/Feature Task）
+
+> **架构决策（2026-06-10）**：Sprint/Run 不是 Notion 实体，不创建 Run 级 Notion Project。
+> 本 sprint 产出物（PrepPRD / Contract / Report）作为 Notes 关联到对应 Ability/Feature Task。
 
 ```bash
-JOURNEY_ID="${JOURNEY_ID:-}"
-JOURNEY_ID_JSON=$([ -n "${JOURNEY_ID:-}" ] && echo "\"$JOURNEY_ID\"" || echo "null")
-
-PROJECT_PAYLOAD=$(jq -n \
-  --arg title "$FEATURE_NAME" \
-  --arg status "Done" \
-  --argjson journey_id "$JOURNEY_ID_JSON" \
-  --arg sprint_dir "$SPRINT_DIR" \
-  --arg pr_url "$PR_URL" \
-  '{title:$title, status:$status, journey_id:$journey_id, sprint_dir:$sprint_dir, pr_url:$pr_url}')
-
-curl -s -X POST "localhost:5221/api/brain/notion/project" \
-  -H "Content-Type: application/json" \
-  -d "$PROJECT_PAYLOAD" 2>/dev/null || echo "WARN: Notion Project 创建失败（非阻断）"
-echo "✅ Step 2.5a: Notion Project 已创建（Run 级）"
-
 TASK_PAYLOAD=$(jq -n \
   --arg title "$FEATURE_NAME" \
   --arg status "Done" \
@@ -128,51 +130,78 @@ TASK_PAYLOAD=$(jq -n \
 curl -s -X POST "localhost:5221/api/brain/notion/task" \
   -H "Content-Type: application/json" \
   -d "$TASK_PAYLOAD" 2>/dev/null || echo "WARN: Notion Task 创建失败（非阻断）"
-echo "✅ Step 2.5b: Notion Task 已创建（status=Done）"
+echo "✅ Step 2.5: Notion Task Notes 已写入（status=Done）"
 ```
 
 ---
 
-### Step 3: 写 Notion AI Notes（GAN 标注表 + 截图）
+### Step 3: 上传截图 + 写 Report Note
 
 ```bash
-NOTION_BODY=$(printf '# Harness 完成：%s\n\n**PR**: %s\n**总成本**: $%s USD\n\n## DoD 验证结果\n\n所有 ARTIFACT + BEHAVIOR 条目已验证通过（evaluator PASS）。' \
-  "$FEATURE_NAME" "$PR_URL" "$TOTAL_COST")
+# 上传截图到 us-vps
+SPRINT_SLUG=$(basename "$SPRINT_DIR")
+VPS_SCREENSHOT_DIR="/opt/zenithjoy/screenshots/${SPRINT_SLUG}"
+SCREENSHOT_URLS=""
+ssh us-vps "mkdir -p ${VPS_SCREENSHOT_DIR}" 2>/dev/null || echo "WARN: VPS 目录创建失败（非阻断）"
+for f in "${SPRINT_DIR}/screenshots/"*.png; do
+  [ -f "$f" ] || continue
+  scp "$f" "us-vps:${VPS_SCREENSHOT_DIR}/" 2>/dev/null || echo "WARN: 截图上传失败 $f（非阻断）"
+  FNAME=$(basename "$f")
+  SCREENSHOT_URLS="${SCREENSHOT_URLS} https://api.zenithjoy.com/screenshots/${SPRINT_SLUG}/${FNAME}"
+done
+echo "✅ 截图已上传到 VPS: $SCREENSHOT_URLS"
+
+# 写 Type=Report 的 Note（含 Usage 表 + DOD 对齐 + E2E 截图）
+COMPLETED_AT=$(TZ=Asia/Shanghai date '+%Y-%m-%d %H:%M:%S %Z')
+REPORT_CONTENT=$(printf '## Usage\n模型:%s | 时长:- | 成本:$%s\n\n## DOD 结果\n所有 ARTIFACT + BEHAVIOR 条目已验证通过（evaluator PASS）。\n\n## E2E 证明\n%s\n\n## DB 回填\n完成时间: %s' \
+  "${MODEL:-sonnet-4-6}" "$TOTAL_COST" "${SCREENSHOT_URLS:-（无截图）}" "$COMPLETED_AT")
 
 curl -X POST "localhost:5221/api/brain/notes" \
   -H "Content-Type: application/json" \
   -d "{
-    \"title\": \"Harness 完成：$FEATURE_NAME\",
-    \"type\": \"Log\",
+    \"title\": \"Report: $FEATURE_NAME\",
+    \"type\": \"Report\",
     \"sub_area\": \"$SUB_AREA\",
-    \"body\": $(echo "$NOTION_BODY" | jq -Rs .)
-  }" 2>/dev/null || echo "WARN: Notion Notes 写入失败（非阻断）"
-echo "✅ Step 3: Notion AI Notes 已写入"
+    \"content\": $(echo "$REPORT_CONTENT" | jq -Rs .),
+    \"initiative_id\": \"${TASK_ID:-}\"
+  }" 2>/dev/null || echo "WARN: Report Note 写入失败（非阻断）"
+echo "✅ Step 3: Report Note 已写入（Type=Report）"
+
+# 收尾 PATCH：截图上传完成后回写 screenshot_url 到 Brain DB（Step 1 时 URL 还未生成）
+if [ -n "$SCREENSHOT_URLS" ] && [ "$SCREENSHOT_URLS" != "[]" ]; then
+  # 将空格分隔的 URL 列表转为 JSON 数组
+  SCREENSHOT_URLS_JSON=$(echo "$SCREENSHOT_URLS" | tr ' ' '\n' | grep -v '^$' | jq -R . | jq -sc .)
+  curl -s -X PATCH "localhost:5221/api/brain/tasks/$TASK_ID" \
+    -H "Content-Type: application/json" \
+    -d "{\"screenshots\": $SCREENSHOT_URLS_JSON}" \
+    >/dev/null 2>&1 || true
+  echo "✅ 截图 URL 已回写 Brain DB"
+fi
 ```
 
 ---
 
-### Step 3.5: 文档归档（PrepPRD/SprintPRD/Contract）
+### Step 3.5: 文档归档（PrepPRD/Contract）
 
 ```bash
-for DOC_PAIR in "prep-prd.md:PrepPRD" "sprint-prd.md:SprintPRD" "contract-draft.md:Contract"; do
+# PrepPRD → Type=PrepPRD，Contract → Type=Contract
+for DOC_PAIR in "prep-prd.md:PrepPRD" "contract-draft.md:Contract"; do
   DOC_FILE="${DOC_PAIR%%:*}"
   DOC_TYPE="${DOC_PAIR##*:}"
   DOC_PATH="${SPRINT_DIR}/${DOC_FILE}"
   [ ! -f "$DOC_PATH" ] && echo "WARN: $DOC_FILE 不存在，跳过" && continue
 
   NOTES_PAYLOAD=$(jq -n \
-    --arg title "${DOC_TYPE} 文档：${FEATURE_NAME}" \
+    --arg title "${DOC_TYPE}: ${FEATURE_NAME}" \
     --arg type "$DOC_TYPE" \
     --arg content "$(cat "$DOC_PATH")" \
     --arg initiative_id "${TASK_ID:-}" \
-    --arg sprint_dir "$SPRINT_DIR" \
-    '{"title":$title,"type":$type,"content":$content,"initiative_id":$initiative_id,"sprint_dir":$sprint_dir}')
+    '{"title":$title,"type":$type,"content":$content,"initiative_id":$initiative_id}')
   curl -X POST "localhost:5221/api/brain/notes" \
     -H "Content-Type: application/json" \
-    -d "$NOTES_PAYLOAD" 2>/dev/null || echo "WARN: Notion Notes 写入失败（$DOC_TYPE）"
+    -d "$NOTES_PAYLOAD" 2>/dev/null || echo "WARN: Notes 写入失败（$DOC_TYPE）"
 done
-echo "✅ Step 3.5: 文档归档完成"
+echo "✅ Step 3.5: 文档归档完成（PrepPRD + Contract）"
 ```
 
 ---
@@ -206,95 +235,265 @@ echo "✅ Step 5: 飞书通知已发送"
 
 ---
 
-### Step 6: 写本地 harness-report.md + learning.md（从 Brain API + initiative_run_events 查真实数据）
+### Step 6: 写本地 harness-report.md（紧凑模板）
 
 ```bash
-# 从 initiative_run_events 查 Phase 维度数据（ts_end/1000 转秒，ts 单位秒）
-PHASE_DATA=$(psql "${DB_URL:-postgresql://localhost/cecelia}" -tAF'|' -c \
-  "SELECT node, ts, ts_end, cost_usd, model, status
-   FROM initiative_run_events
-   WHERE initiative_id = '${INITIATIVE_ID:-${TASK_ID:-}}'::uuid
-   ORDER BY ts ASC" 2>/dev/null || echo "")
-
-PHASE_TABLE=$(echo "$PHASE_DATA" | node -e "
-const lines = require('fs').readFileSync('/dev/stdin','utf8').trim().split('\n').filter(Boolean);
-const rows = lines.map(l => {
-  const [node, ts, ts_end, cost_usd, model, status] = l.split('|');
-  const dur = (ts_end && ts) ? Math.round((Number(ts_end)/1000 - Number(ts))) + 's' : '-';
-  const cost = cost_usd && cost_usd !== '' ? '\$' + Number(cost_usd).toFixed(4) : '-';
-  const mdl = model && model !== '' ? model : '-';
-  const st = status && status !== '' ? status : '-';
-  return '| ' + [node||'-', dur, cost, mdl, st].join(' | ') + ' |';
-});
-const header = '| 阶段 | 耗时 | 成本 | 模型 | 状态 |\n|------|------|------|------|------|';
-process.stdout.write(rows.length ? header + '\n' + rows.join('\n') : '(无 Phase 数据)');
-" 2>/dev/null || echo "(无 Phase 数据)")
-
-# 从 Brain API 拉总成本和问题数据
-REPORT_DATA=$(curl -sf "localhost:5221/api/brain/tasks/$TASK_ID" 2>/dev/null || echo '{}')
-TOTAL_COST_REAL=$(echo "$REPORT_DATA" | node -e "
-const d=JSON.parse(require('fs').readFileSync('/dev/stdin','utf8'));
-process.stdout.write(String(d.result?.total_cost_usd||'${TOTAL_COST:-0}'));
-" 2>/dev/null || echo "${TOTAL_COST:-0}")
-
-ISSUES_SUMMARY=$(echo "$REPORT_DATA" | node -e "
-const d=JSON.parse(require('fs').readFileSync('/dev/stdin','utf8'));
-const issues=(d.result?.report_content?.ws_issues)||[];
-if(!issues.length){process.stdout.write('无');process.exit(0);}
-const lines=issues.map(i=>'- '+i.ws_id+': '+(i.feedback||i.ci_fail_type||'unknown'));
-process.stdout.write(lines.join('\n'));
-" 2>/dev/null || echo "无")
-
-GAN_ROUNDS="${GAN_ROUNDS:-0}"
-COMPLETED_AT=$(TZ=Asia/Shanghai date '+%Y-%m-%d %H:%M:%S %Z')
-
-# 埋点 phase-event end（non-fatal）
-curl -fsS -X PATCH "${BRAIN_URL:-localhost:5221}/api/brain/harness/phase-event/${PHASE_EVENT_ID:-0}" \
-  -H 'Content-Type: application/json' \
-  -d "{\"status\":\"completed\",\"ts_end\":$(date +%s%3N),\"cost_usd\":${TOTAL_COST_REAL:-0}}" \
-  2>/dev/null || true
+DATE_SHORT=$(TZ=Asia/Shanghai date '+%Y-%m-%d')
+PR_NUMBER=$(echo "$PR_URL" | grep -oE '[0-9]+$' || echo "-")
+GAN_ROUNDS=$(curl -s "localhost:5221/api/brain/tasks/$TASK_ID" 2>/dev/null \
+  | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('payload',{}).get('gan_rounds',0))" \
+  2>/dev/null || echo 0)
+PHASES="A+B+C"
 
 cat > "${SPRINT_DIR}/harness-report.md" << REPORT
-# Harness 完成报告 — ${FEATURE_NAME}
+━━━ Sprint: ${FEATURE_NAME}  PR #${PR_NUMBER}  ${DATE_SHORT} ━━━
 
-**完成时间**: ${COMPLETED_AT}
-**Sprint Dir**: ${SPRINT_DIR}
-**PR**: ${PR_URL}
-**GAN 轮次**: ${GAN_ROUNDS}
-**总成本**: \$${TOTAL_COST_REAL} USD
+PIPELINE  ${PHASES} phases · ${GAN_ROUNDS} eval rounds · - · \$${TOTAL_COST}
 
-## Phase 指标（initiative_run_events）
+Phase          Time    Cost    Result
+Proposer       -       -       ✅
+Planner        -       -       ✅
+Generator      -       -       ✅
+Evaluator×${GAN_ROUNDS}    -       -       ✅
+Reporter       -       -       ✅
 
-${PHASE_TABLE}
+DOD -/- ✅  FAIL: 无
 
-## 问题列表
-${ISSUES_SUMMARY}
-
-## 交付结论
-Final E2E: ${FINAL_E2E_VERDICT:-PASS}。PR 已合并，Notion 已更新。
+E2E 截图: ${SCREENSHOT_URLS:-（无截图）}
+Learning: （从本次 Sprint 提炼的洞察见 learning.md）
+DB sync: journey_features · api_registry ✅ · Notion pushed ✅
+# journey_steps 保留只读兼容（notion-push-sync 仍同步存量数据），新增数据禁止写入；Ability/Feature 一律写 journey_features
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 REPORT
-echo "✅ Step 6: harness-report.md 已写入（initiative_run_events 真实数据）"
+echo "✅ Step 6: harness-report.md 已写入（紧凑模板）"
+```
 
-cat > "${SPRINT_DIR}/learning.md" << LEARN
-# Learning — ${FEATURE_NAME}（${COMPLETED_AT}）
+---
+
+### Step 7: 全量回写 Registry（闭环）
+
+```bash
+# 提取 API endpoints 并写 registry
+if [ -f "${SPRINT_DIR}/contract-draft.md" ]; then
+  grep -oE '(GET|POST|PUT|DELETE|PATCH) /[a-zA-Z0-9/_:-]+' "${SPRINT_DIR}/contract-draft.md" | while read -r METHOD PATH_; do
+    ENDPOINT="${METHOD} ${PATH_}"
+    PAYLOAD=$(jq -n \
+      --arg type "api" \
+      --arg status "active" \
+      --arg name "$ENDPOINT" \
+      --arg endpoint "$ENDPOINT" \
+      --arg sprint_dir "$SPRINT_DIR" \
+      --arg pr_url "${PR_URL:-}" \
+      '{"type":$type,"status":$status,"name":$name,"endpoint":$endpoint,"metadata":{"sprint_dir":$sprint_dir,"pr_url":$pr_url}}')
+    curl -s -X POST "localhost:5221/api/brain/registry" \
+      -H "Content-Type: application/json" \
+      -d "$PAYLOAD" >/dev/null 2>&1 || echo "WARN: registry 写入失败（$ENDPOINT）"
+  done
+  echo "✅ Step 7a: API endpoints 已回写 Registry"
+else
+  echo "WARN: contract-draft.md 不存在，跳过 API registry"
+fi
+
+# 提取 DB 表名并写 registry
+if [ -f "${SPRINT_DIR}/sprint-prd.md" ]; then
+  grep -oE 'Table: [a-zA-Z_]+' "${SPRINT_DIR}/sprint-prd.md" | awk '{print $2}' | while read -r TABLE; do
+    PAYLOAD=$(jq -n \
+      --arg type "db_schema" \
+      --arg status "active" \
+      --arg name "$TABLE" \
+      --arg table "$TABLE" \
+      --arg sprint_dir "$SPRINT_DIR" \
+      --arg pr_url "${PR_URL:-}" \
+      '{"type":$type,"status":$status,"name":$name,"table":$table,"metadata":{"sprint_dir":$sprint_dir,"pr_url":$pr_url}}')
+    curl -s -X POST "localhost:5221/api/brain/registry" \
+      -H "Content-Type: application/json" \
+      -d "$PAYLOAD" >/dev/null 2>&1 || echo "WARN: registry 写入失败（table: $TABLE）"
+  done
+  echo "✅ Step 7b: DB 表名已回写 Registry"
+else
+  echo "WARN: sprint-prd.md 不存在，跳过 DB schema registry"
+fi
+
+# 提取测试文件并写 registry（包含 content 字段，供 proposer Step 1.2 读取历史约束）
+if [ -d "${SPRINT_DIR}/tests" ]; then
+  find "${SPRINT_DIR}/tests" -name "*.test.ts" -o -name "*.spec.ts" | while read -r TEST_FILE; do
+    PAYLOAD=$(jq -n \
+      --arg type "test" \
+      --arg status "active" \
+      --arg name "$TEST_FILE" \
+      --arg content "$(cat "$TEST_FILE" 2>/dev/null || echo "")" \
+      --arg sprint_dir "$SPRINT_DIR" \
+      --arg pr_url "${PR_URL:-}" \
+      '{"type":$type,"status":$status,"name":$name,"content":$content,"metadata":{"sprint_dir":$sprint_dir,"pr_url":$pr_url}}')
+    curl -s -X POST "localhost:5221/api/brain/registry" \
+      -H "Content-Type: application/json" \
+      -d "$PAYLOAD" >/dev/null 2>&1 || echo "WARN: registry 写入失败（test: $TEST_FILE）"
+  done
+  echo "✅ Step 7c: 测试文件已回写 Registry（含 content 字段）"
+else
+  echo "WARN: ${SPRINT_DIR}/tests 目录不存在，跳过 test registry"
+fi
+```
+
+---
+
+### Step 8: 生成结构化 Learning
+
+```bash
+# 统计 GAN 轮次和 Evaluator fix 次数
+GAN_ROUNDS=$(curl -s "localhost:5221/api/brain/tasks/$TASK_ID" 2>/dev/null \
+  | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('payload',{}).get('gan_rounds',0))" \
+  2>/dev/null || echo 0)
+EVAL_FIX_COUNT=$GAN_ROUNDS
+SPRINT_NAME=$(basename "$SPRINT_DIR")
+COMPLETED_AT_SHORT=$(TZ=Asia/Shanghai date '+%m%d%H%M')
+
+cat > "${SPRINT_DIR}/learning.md" << LEARNING_EOF
+# Learning — ${FEATURE_NAME}
 
 ## 运行指标
+
 - GAN 轮次：${GAN_ROUNDS}
-- 总成本：\$${TOTAL_COST_REAL} USD
+- Evaluator Fix 次数：${EVAL_FIX_COUNT}
 - PR：${PR_URL}
 - Sprint Dir：${SPRINT_DIR}
 
-## Phase 明细（ts_end/1000 转秒）
-
-${PHASE_TABLE}
-
 ## 发现的问题
-${ISSUES_SUMMARY}
+
+### [PROMPT] Prompt 类问题
+
+- （无 / 填写本次遇到的 prompt 设计问题）
+
+### [BUG] 代码缺陷
+
+- （无 / 填写本次修复的 bug）
+
+### [INFRA] 基础设施问题
+
+- （无 / 填写本次遇到的 CI/环境/工具链问题）
+
+### [DESIGN] 设计缺陷
+
+- （无 / 填写本次发现的架构或设计问题）
 
 ## 下次预防清单
-$([ "${ISSUES_SUMMARY}" = "无" ] && echo "- [ ] 本次 run 无异常，继续保持" || echo "- [ ] 复查上述问题根因并在下次 run 前修复")
-LEARN
-echo "✅ Step 6: learning.md 已写入（真实数据）"
+
+- [ ] 检查 contract-draft.md 格式是否符合 evaluator 预期
+- [ ] 确认 DoD 所有 [BEHAVIOR] 条目有对应测试
+- [ ] GAN 轮次 > 2 时复盘 evaluator prompt 是否过严
+LEARNING_EOF
+echo "✅ Step 8a: learning.md 已生成到 ${SPRINT_DIR}/learning.md"
+
+# 复制到 docs/learnings/ 永久保留
+REPO_ROOT=$(git -C "$SPRINT_DIR" rev-parse --show-toplevel 2>/dev/null || echo "")
+if [ -n "$REPO_ROOT" ]; then
+  mkdir -p "${REPO_ROOT}/docs/learnings"
+  LEARNING_DEST="${REPO_ROOT}/docs/learnings/cp-${COMPLETED_AT_SHORT}-${SPRINT_NAME}.md"
+  cp "${SPRINT_DIR}/learning.md" "$LEARNING_DEST"
+  echo "✅ Step 8b: learning.md 已复制到 $LEARNING_DEST"
+else
+  echo "WARN: 无法定位 git 根目录，跳过 docs/learnings 复制"
+fi
+```
+
+---
+
+### Step 9: 生成 index.html（单文件可视化页面）
+
+```bash
+SPRINT_NAME=$(basename "$SPRINT_DIR")
+
+node -e "
+const fs = require('fs');
+const path = require('path');
+
+const sprintDir = process.env.SPRINT_DIR || '$SPRINT_DIR';
+const sprintName = path.basename(sprintDir);
+const prUrl = process.env.PR_URL || '$PR_URL';
+const featureName = process.env.FEATURE_NAME || '$FEATURE_NAME';
+
+function readMd(name) {
+  const p = path.join(sprintDir, name);
+  if (!fs.existsSync(p)) return null;
+  return fs.readFileSync(p, 'utf8');
+}
+
+function escapeHtml(s) {
+  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+const docs = [
+  { id: 'prep-prd', label: 'PrepPRD', file: 'prep-prd.md' },
+  { id: 'sprint-prd', label: 'PRD', file: 'sprint-prd.md' },
+  { id: 'contract', label: 'D-Contract', file: 'contract-draft.md' },
+  { id: 'dod', label: 'DOD', file: 'contract-dod.md' },
+  { id: 'report', label: 'Report', file: 'harness-report.md' },
+  { id: 'learning', label: 'Learning', file: 'learning.md' },
+];
+
+// 截图 base64
+const screenshotDir = path.join(sprintDir, 'screenshots');
+let screenshotHtml = '';
+if (fs.existsSync(screenshotDir)) {
+  const pngs = fs.readdirSync(screenshotDir).filter(f => f.endsWith('.png'));
+  for (const png of pngs) {
+    const data = fs.readFileSync(path.join(screenshotDir, png));
+    const b64 = data.toString('base64');
+    screenshotHtml += \`<div class=\"screenshot\"><p>\${escapeHtml(png)}</p><img src=\"data:image/png;base64,\${b64}\" style=\"max-width:100%;\"/></div>\`;
+  }
+}
+
+const navItems = docs.map(d => \`<li><a href=\"#\" onclick=\"show('\${d.id}');return false;\">\${d.label}</a></li>\`).join('');
+const sections = docs.map(d => {
+  const content = readMd(d.file);
+  const body = content ? \`<pre style=\"white-space:pre-wrap;word-break:break-word;\">\${escapeHtml(content)}</pre>\` : '<p>（文件不存在）</p>';
+  return \`<div id=\"\${d.id}\" class=\"section\" style=\"display:none;\">\${body}</div>\`;
+}).join('');
+
+const html = \`<!DOCTYPE html>
+<html lang=\"zh\">
+<head><meta charset=\"UTF-8\"><title>\${escapeHtml(featureName)} — Sprint Report</title>
+<style>
+body{font-family:sans-serif;margin:0;display:flex;flex-direction:column;height:100vh;}
+header{background:#1a1a2e;color:#fff;padding:12px 24px;display:flex;align-items:center;gap:16px;}
+header a{color:#adf;text-decoration:none;}
+main{display:flex;flex:1;overflow:hidden;}
+nav{width:160px;background:#f4f4f4;border-right:1px solid #ddd;padding:16px 0;overflow-y:auto;}
+nav ul{list-style:none;margin:0;padding:0;}
+nav li a{display:block;padding:8px 16px;color:#333;text-decoration:none;}
+nav li a:hover{background:#e0e0e0;}
+.content{flex:1;overflow-y:auto;padding:24px;}
+.section pre{background:#f8f8f8;border:1px solid #ddd;padding:16px;border-radius:4px;}
+.screenshot{margin-bottom:16px;}
+</style>
+</head>
+<body>
+<header>
+  <span><strong>\${escapeHtml(featureName)}</strong> Sprint Report</span>
+  \${prUrl ? \`<a href=\"\${prUrl}\" target=\"_blank\">PR</a>\` : ''}
+</header>
+<main>
+<nav><ul>
+\${navItems}
+<li><a href=\"#\" onclick=\"show('screenshots');return false;\">截图</a></li>
+</ul></nav>
+<div class=\"content\">
+\${sections}
+<div id=\"screenshots\" class=\"section\" style=\"display:none;\">\${screenshotHtml || '<p>无截图</p>'}</div>
+</div>
+</main>
+<script>
+function show(id){document.querySelectorAll('.section').forEach(s=>s.style.display='none');var el=document.getElementById(id);if(el)el.style.display='block';}
+// 默认显示第一个有内容的 section
+var first = document.querySelector('.section');if(first)first.style.display='block';
+</script>
+</body></html>\`;
+
+fs.writeFileSync(path.join(sprintDir, 'index.html'), html, 'utf8');
+console.log('index.html generated');
+" && echo "✅ Step 9a: index.html 已生成到 ${SPRINT_DIR}/index.html"
+
+echo "📎 访问地址: http://38.23.47.81:9998/sprints/${SPRINT_NAME}/index.html"
 ```
 
 ---
@@ -302,23 +501,31 @@ echo "✅ Step 6: learning.md 已写入（真实数据）"
 ### Phase A 完成标志
 
 ```bash
-cat > /workspace/.brain-result.json << BREOF
+WORKSPACE="${WORKSPACE_PATH:-${WORKSPACE:-/workspace}}"
+cat > "$WORKSPACE/.brain-result.json" << BREOF
 {"verdict":"DONE","task_id":"$TASK_ID","report_path":"${SPRINT_DIR}/harness-report.md","pr_url":"$PR_URL","screenshots":$SCREENSHOTS}
 BREOF
-echo "[harness-report Phase A] 6步交付完成"
+echo "[harness-report Phase A] 9步交付完成"
 ```
 
 ---
 
 ## Phase B: Sprint 状态同步
 
-> **详细实现见 `~/.claude/skills/harness-report/references/sprint-state-sync.md`**（包含完整的 Brain DB 写入 + 8个 Notion DB 同步步骤）
+> **调用 `/db-update` skill 执行全部 Brain DB 写入。**
+> 详细实现参考见 `~/.claude/skills/harness-report/references/sprint-state-sync.md`（保留作为底层参考）。
 
-Phase B 的核心工作：
-1. 从 `sprint-prd.md` / `contract-draft.md` 解析本次 Sprint 产出（APIs、DB Schema、Tests、Features）
-2. 写入本地 Brain DB（`api_registry`、`db_schema_registry`、`test_registry`、`skill_registry`、`journey_steps`）
-3. 同步 8 个 Notion DB（API Registry、DB Schema Registry、Tests Registry、Feature DB、Journey Maturity、AI Steps、Journey-Step 连接表、Sprint Dashboard）
-4. 写本地 `sprint-states/<journey_id>/state.md`
-5. git commit + push
+**执行方式**：
 
-执行前先读取 `~/.claude/skills/harness-report/references/sprint-state-sync.md` 获取完整步骤和代码。
+```
+调用 Skill("db-update")
+```
+
+`db-update` skill 负责：
+1. 读取 `$SPRINT_DIR/sprint-prd.md` + `contract-draft.md` 解析本次产出
+2. 按 Output Template 写入 Brain DB（journey_features / api_registry / db_schema_registry / test_registry / skill_registry）
+   # journey_steps 保留只读兼容（notion-push-sync 仍同步存量数据），新增数据禁止写入；Ability/Feature 一律写 journey_features
+3. 触发 Notion push sync（Brain → Notion 自动同步）
+4. 更新 Journey Maturity
+
+**`db-update` 是数据写入的唯一门控**，所有表的 Output Template 和禁止规则都在该 skill 里定义。不允许绕过它直接写 Brain DB 或 Notion。

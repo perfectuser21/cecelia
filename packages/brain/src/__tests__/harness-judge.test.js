@@ -1,0 +1,378 @@
+/**
+ * harness-judge.js — 独立验收裁判（DeepSeek via ToAPIs）单测。
+ *
+ * 三权分立验证：运动员（agent）保留执行权，证据自动留痕，裁判独立判读。
+ * 覆盖：agent PASS+裁判 PASS→merge；agent PASS+裁判 FAIL→fix 且 feedback=裁判意见；
+ *       覆盖缺步→FAIL；裁判网络错→fail-open 保留 agent verdict；JUDGE_STRICT=1→fail-closed；
+ *       agent FAIL→直接透传不调裁判；coverage 校验 + Golden Path 解析 + 配置解析。
+ */
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import {
+  runJudgeGate,
+  validateCoverage,
+  parseGoldenPathSteps,
+  extractE2ESection,
+  resolveToapisConfig,
+  buildJudgePrompt,
+  normalizeJudgeVerdict,
+  resolveStdoutFile,
+  extractAgentTranscript,
+  collectEvidence,
+} from '../harness-judge.js';
+
+// 注入一个不落盘的证据收集（避免 fs）。
+function fakeEvidence(goldenPathSteps = ['step A', 'step B']) {
+  return async () => ({
+    contractE2E: '## E2E\ncurl localhost',
+    goldenPathSteps,
+    transcript: 'PASS: did A\nPASS: did B',
+    brainResult: { verdict: 'PASS' },
+  });
+}
+
+// 注入不落盘的 writeFileFn，避免 persistJudgeArtifact 真写盘。
+const noopWrite = { writeFileFn: async () => {} };
+// worktreePath 非空（过证据门）；fakeEvidence 提供 Golden Path 步骤。
+const baseCtx = {
+  worktreePath: '/tmp/judge-test',
+  sprintDir: 'sprints/x',
+  instanceLabel: 'harness-evaluate-t1-r0-abcd1234',
+  transcript: 'PASS: did A\nPASS: did B',
+};
+
+describe('runJudgeGate — 三权分立裁判门', () => {
+  const ORIG = process.env.JUDGE_STRICT;
+  afterEach(() => {
+    if (ORIG === undefined) delete process.env.JUDGE_STRICT;
+    else process.env.JUDGE_STRICT = ORIG;
+  });
+
+  it('agent PASS + 裁判 PASS → 终判 PASS（merge 路）', async () => {
+    const judgeFn = vi.fn().mockResolvedValue({
+      verdict: 'PASS',
+      coverage: [{ step: 'step A', passed: true }, { step: 'step B', passed: true }],
+      feedback: null,
+    });
+    const res = await runJudgeGate(
+      { ...baseCtx, agentVerdict: 'PASS', agentFeedback: null },
+      { judgeFn, collectEvidence: fakeEvidence(), ...noopWrite }
+    );
+    expect(res.verdict).toBe('PASS');
+    expect(res.judged).toBe(true);
+    expect(judgeFn).toHaveBeenCalledOnce();
+  });
+
+  it('agent PASS + 裁判 FAIL → 终判 FAIL（fix 路），feedback=裁判意见', async () => {
+    const judgeFn = vi.fn().mockResolvedValue({
+      verdict: 'FAIL',
+      coverage: [{ step: 'step A', passed: true }, { step: 'step B', passed: false }],
+      feedback: '第二步没有真实证据',
+    });
+    const res = await runJudgeGate(
+      { ...baseCtx, agentVerdict: 'PASS', agentFeedback: 'agent 说都过了' },
+      { judgeFn, collectEvidence: fakeEvidence(), ...noopWrite }
+    );
+    expect(res.verdict).toBe('FAIL');
+    expect(res.judged).toBe(true);
+    expect(res.feedback).toContain('第二步没有真实证据');
+  });
+
+  it('裁判 verdict=PASS 但 Golden Path 覆盖缺步 → 终判 FAIL', async () => {
+    const judgeFn = vi.fn().mockResolvedValue({
+      verdict: 'PASS',
+      coverage: [{ step: 'step A', passed: true }], // 缺 step B
+      feedback: null,
+    });
+    const res = await runJudgeGate(
+      { ...baseCtx, agentVerdict: 'PASS', agentFeedback: null },
+      { judgeFn, collectEvidence: fakeEvidence(["step A", "step B"]), ...noopWrite }
+    );
+    expect(res.verdict).toBe('FAIL');
+    expect(res.feedback).toContain('缺步');
+  });
+
+  it('裁判网络错（默认）→ fail-open 保留 agent verdict + judgeError', async () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    delete process.env.JUDGE_STRICT;
+    const judgeFn = vi.fn().mockRejectedValue(new Error('toapis HTTP 429: rate limited'));
+    const res = await runJudgeGate(
+      { ...baseCtx, agentVerdict: 'PASS', agentFeedback: null },
+      { judgeFn, collectEvidence: fakeEvidence(), ...noopWrite }
+    );
+    expect(res.verdict).toBe('PASS'); // 保留运动员 verdict
+    expect(res.judged).toBe(false);
+    expect(res.judgeError).toContain('429');
+    expect(warnSpy).toHaveBeenCalled();
+    warnSpy.mockRestore();
+  });
+
+  it('JUDGE_STRICT=1 + 裁判网络错 → fail-closed 终判 FAIL', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const judgeFn = vi.fn().mockRejectedValue(new Error('timeout'));
+    const res = await runJudgeGate(
+      { ...baseCtx, agentVerdict: 'PASS', agentFeedback: null },
+      { judgeFn, collectEvidence: fakeEvidence(), strict: true, ...noopWrite }
+    );
+    expect(res.verdict).toBe('FAIL');
+    expect(res.feedback).toContain('fail-closed');
+    vi.restoreAllMocks();
+  });
+
+  it('agent FAIL → 直接透传，不调裁判（运动员已失败，走 fix loop）', async () => {
+    const judgeFn = vi.fn();
+    const res = await runJudgeGate(
+      { ...baseCtx, agentVerdict: 'FAIL', agentFeedback: 'happy 路 FAIL' },
+      { judgeFn, collectEvidence: fakeEvidence(), ...noopWrite }
+    );
+    expect(res.verdict).toBe('FAIL');
+    expect(res.feedback).toBe('happy 路 FAIL');
+    expect(judgeFn).not.toHaveBeenCalled();
+  });
+
+  it('无合同/Golden Path 证据 → 证据门跳过裁判，保留 agent verdict（不误杀单测/无证据 run）', async () => {
+    const judgeFn = vi.fn();
+    const emptyEvidence = async () => ({ contractE2E: '', goldenPathSteps: [], transcript: 'x', brainResult: null });
+    const res = await runJudgeGate(
+      { ...baseCtx, agentVerdict: 'PASS', agentFeedback: null },
+      { judgeFn, collectEvidence: emptyEvidence, ...noopWrite }
+    );
+    expect(res.verdict).toBe('PASS');
+    expect(res.judged).toBe(false);
+    expect(judgeFn).not.toHaveBeenCalled();
+  });
+});
+
+describe('validateCoverage — 代码判 coverage 覆盖（不信裁判文字）', () => {
+  it('每步都有 passed=true → ok', () => {
+    const r = validateCoverage(
+      [{ step: 'a', passed: true }, { step: 'b', passed: true }],
+      ['a', 'b']
+    );
+    expect(r.ok).toBe(true);
+  });
+  it('缺步 → missing 非空，ok=false', () => {
+    const r = validateCoverage([{ step: 'a', passed: true }], ['a', 'b']);
+    expect(r.ok).toBe(false);
+    expect(r.missing).toHaveLength(1);
+    expect(r.missing[0].index).toBe(2);
+  });
+  it('某步 passed=false → failed 非空，ok=false', () => {
+    const r = validateCoverage(
+      [{ step: 'a', passed: true }, { step: 'b', passed: false, evidence: '无输出' }],
+      ['a', 'b']
+    );
+    expect(r.ok).toBe(false);
+    expect(r.failed[0].evidence).toBe('无输出');
+  });
+});
+
+describe('parseGoldenPathSteps / extractE2ESection', () => {
+  it('解析 ## Golden Path 段有序步骤', () => {
+    const prd = [
+      '## Golden Path（核心场景）',
+      '',
+      '1. 用户 curl 端点 → 返回 200',
+      '2. 用户看到 6 项数组',
+      '3. any_drift 一致',
+      '',
+      '## 边界情况',
+      '不应解析这里',
+    ].join('\n');
+    const steps = parseGoldenPathSteps(prd);
+    expect(steps).toHaveLength(3);
+    expect(steps[0]).toContain('curl 端点');
+    expect(steps).not.toContain('不应解析这里');
+  });
+  it('无 Golden Path 段 → 空数组', () => {
+    expect(parseGoldenPathSteps('## 其它\n随便')).toEqual([]);
+  });
+  it('提取 ## E2E 验收 段', () => {
+    const contract = '## 背景\nx\n## E2E 验收\n```bash\ncurl localhost\n```\n## 下一段\ny';
+    const e2e = extractE2ESection(contract);
+    expect(e2e).toContain('curl localhost');
+    expect(e2e).not.toContain('下一段');
+  });
+});
+
+describe('resolveToapisConfig — env 优先 → toapis.env 兜底', () => {
+  const ORIG_KEY = process.env.TOAPIS_API_KEY;
+  const ORIG_URL = process.env.TOAPIS_BASE_URL;
+  beforeEach(() => {
+    delete process.env.TOAPIS_API_KEY;
+    delete process.env.TOAPIS_BASE_URL;
+  });
+  afterEach(() => {
+    if (ORIG_KEY === undefined) delete process.env.TOAPIS_API_KEY; else process.env.TOAPIS_API_KEY = ORIG_KEY;
+    if (ORIG_URL === undefined) delete process.env.TOAPIS_BASE_URL; else process.env.TOAPIS_BASE_URL = ORIG_URL;
+  });
+
+  it('env 设了直接用 env', async () => {
+    process.env.TOAPIS_API_KEY = 'sk-env';
+    process.env.TOAPIS_BASE_URL = 'https://env.example/v1';
+    const cfg = await resolveToapisConfig({ readFileFn: async () => 'TOAPIS_API_KEY=sk-file' });
+    expect(cfg.apiKey).toBe('sk-env');
+    expect(cfg.baseUrl).toBe('https://env.example/v1');
+  });
+  it('env 缺失 → 从 toapis.env 文件解析（跳过 # 注释）', async () => {
+    const fileContent = [
+      '# ToAPIs API 凭据',
+      'TOAPIS_API_KEY=sk-test-fromfile',
+      'TOAPIS_BASE_URL=https://toapis.com/v1',
+      '# 注释行 KEY=should_skip',
+    ].join('\n');
+    const cfg = await resolveToapisConfig({ readFileFn: async () => fileContent });
+    expect(cfg.apiKey).toBe('sk-test-fromfile');
+    expect(cfg.baseUrl).toBe('https://toapis.com/v1');
+    expect(cfg.model).toBe('deepseek-v4-flash');
+  });
+  it('全缺失 → apiKey 空 + 默认 baseUrl', async () => {
+    const cfg = await resolveToapisConfig({ readFileFn: async () => { throw new Error('ENOENT'); } });
+    expect(cfg.apiKey).toBe('');
+    expect(cfg.baseUrl).toBe('https://toapis.com/v1');
+  });
+});
+
+describe('buildJudgePrompt / normalizeJudgeVerdict', () => {
+  it('prompt 含合同 E2E + Golden Path + agent verdict + 只输出 JSON 指令', () => {
+    const p = buildJudgePrompt({
+      contractE2E: 'curl X',
+      goldenPathSteps: ['步骤1', '步骤2'],
+      agentVerdict: 'PASS',
+      transcript: 'PASS: ok',
+      brainResult: { verdict: 'PASS' },
+    });
+    expect(p).toContain('curl X');
+    expect(p).toContain('步骤1');
+    expect(p).toContain('运动员自报 verdict：PASS');
+    expect(p).toContain('只输出 JSON');
+  });
+  it('verdict 归一化：含糊/未知 → FAIL（运动员说 PASS，裁判含糊不放行）', () => {
+    expect(normalizeJudgeVerdict('pass')).toBe('PASS');
+    expect(normalizeJudgeVerdict('FAIL')).toBe('FAIL');
+    expect(normalizeJudgeVerdict('maybe')).toBe('FAIL');
+    expect(normalizeJudgeVerdict(undefined)).toBe('FAIL');
+  });
+});
+
+// ── 证据供给：裁判要拿到 agent 完整 stdout 转录（#3372 配套缺口） ─────────────────
+describe('resolveStdoutFile — 据 taskId 定位 forensics stdout 转录（最新 mtime）', () => {
+  const TASK = '01f31f66-e6d2-4d32-a6fb-190c6bd3cbf6';
+  const dirEntries = [
+    `${TASK}.aaaa1111.prompt`,    // 非 .stdout，忽略
+    `${TASK}.aaaa1111.stdout`,    // 旧
+    `${TASK}.bbbb2222.stdout`,    // 新（最大 mtime）
+    `other-task.cccc3333.stdout`, // 别的 task，忽略
+  ];
+  const mtimes = {
+    [`/p/${TASK}.aaaa1111.stdout`]: 1000,
+    [`/p/${TASK}.bbbb2222.stdout`]: 2000,
+    [`/p/other-task.cccc3333.stdout`]: 9999,
+  };
+  it('挑同 task 前缀里 mtime 最新的 .stdout，忽略别的 task 与非 stdout', async () => {
+    const f = await resolveStdoutFile(
+      { promptDir: '/p', taskId: TASK },
+      {
+        listDirFn: async () => dirEntries,
+        statFn: async (p) => ({ mtimeMs: mtimes[p] || 0 }),
+      }
+    );
+    expect(f).toBe(`/p/${TASK}.bbbb2222.stdout`);
+  });
+  it('promptDir/taskId 缺失 → null（fail-open）', async () => {
+    expect(await resolveStdoutFile({ promptDir: '', taskId: TASK })).toBeNull();
+    expect(await resolveStdoutFile({ promptDir: '/p', taskId: '' })).toBeNull();
+  });
+  it('目录不可读 → null（不抛）', async () => {
+    const f = await resolveStdoutFile(
+      { promptDir: '/p', taskId: TASK },
+      { listDirFn: async () => { throw new Error('ENOENT'); } }
+    );
+    expect(f).toBeNull();
+  });
+});
+
+describe('extractAgentTranscript — 从 forensics 文件取可读转录', () => {
+  it('单对象 JSON（--output-format json）→ 取 .result 叙述', () => {
+    const raw = JSON.stringify({ type: 'result', result: 'E2E 全过：step1 stdout=ok exit=0', usage: { x: 1 } });
+    expect(extractAgentTranscript(raw)).toBe('E2E 全过：step1 stdout=ok exit=0');
+  });
+  it('NDJSON / 纯文本（含命令输出）→ 原样返回', () => {
+    const raw = '{"type":"tool_result","content":"+ vitest run\\n5 passed"}\n{"type":"result"}';
+    expect(extractAgentTranscript(raw)).toBe(raw);
+  });
+  it('空 → 空串', () => {
+    expect(extractAgentTranscript('')).toBe('');
+    expect(extractAgentTranscript(null)).toBe('');
+  });
+});
+
+describe('collectEvidence — 把 agent 完整 stdout 纳入证据', () => {
+  it('据 promptDir/taskId 读 forensics stdout，extract 后填 agentStdout', async () => {
+    const stdoutRaw = JSON.stringify({ result: '运动员执行：vitest 5 passed，exit=0' });
+    const ev = await collectEvidence(
+      {
+        worktreePath: '/tmp/x',
+        sprintDir: 'sprints/x',
+        transcript: 'callback 4KB tail',
+        brainResult: { verdict: 'PASS' },
+        promptDir: '/p',
+        taskId: 't1',
+      },
+      {
+        // contract/prd 读不到 → 走 catch（空段），不影响 agentStdout 断言
+        readFileFn: async (p) => {
+          if (String(p).endsWith('.stdout')) return stdoutRaw;
+          throw new Error('ENOENT');
+        },
+        listDirFn: async () => ['t1.zzzz9999.stdout'],
+        statFn: async () => ({ mtimeMs: 1 }),
+      }
+    );
+    expect(ev.agentStdout).toBe('运动员执行：vitest 5 passed，exit=0');
+    expect(ev.transcript).toBe('callback 4KB tail');
+  });
+  it('forensics 文件缺失 → agentStdout 空，transcript 仍在（fail-open）', async () => {
+    const ev = await collectEvidence(
+      { worktreePath: '/tmp/x', sprintDir: 'sprints/x', transcript: 'tail only', promptDir: '/p', taskId: 't1' },
+      { readFileFn: async () => { throw new Error('ENOENT'); }, listDirFn: async () => [] }
+    );
+    expect(ev.agentStdout).toBe('');
+    expect(ev.transcript).toBe('tail only');
+  });
+});
+
+describe('buildJudgePrompt — 含 agentStdout + 接受命令 stdout 即证据规则', () => {
+  it('agentStdout 段进 prompt，且声明「含命令 stdout 即视为执行证据」', () => {
+    const p = buildJudgePrompt({
+      contractE2E: 'curl X',
+      goldenPathSteps: ['步骤1'],
+      agentVerdict: 'PASS',
+      transcript: '4KB tail',
+      agentStdout: '完整转录：+ vitest run / 5 passed',
+      brainResult: { verdict: 'PASS' },
+    });
+    expect(p).toContain('完整转录：+ vitest run / 5 passed');
+    expect(p).toContain('即视为该步已执行的证据');
+    // 仍保留「证据缺失 → FAIL」红线
+    expect(p).toContain('确实缺失某步的执行输出');
+  });
+});
+
+describe('runJudgeGate — 把 promptDir/taskId 透传给 collectEvidence', () => {
+  it('collectEvidence 收到 promptDir + taskId', async () => {
+    const collect = vi.fn().mockResolvedValue({
+      contractE2E: '## E2E\ncurl', goldenPathSteps: ['A'], transcript: 't', agentStdout: 's', brainResult: { verdict: 'PASS' },
+    });
+    const judgeFn = vi.fn().mockResolvedValue({ verdict: 'PASS', coverage: [{ step: 'A', passed: true }], feedback: null });
+    const res = await runJudgeGate(
+      { worktreePath: '/tmp/x', sprintDir: 'sprints/x', agentVerdict: 'PASS', transcript: 't', promptDir: '/p', taskId: 'task-xyz' },
+      { judgeFn, collectEvidence: collect, writeFileFn: async () => {} }
+    );
+    expect(res.verdict).toBe('PASS');
+    const passedCtx = collect.mock.calls[0][0];
+    expect(passedCtx.promptDir).toBe('/p');
+    expect(passedCtx.taskId).toBe('task-xyz');
+    // judgeFn 也拿到 agentStdout
+    expect(judgeFn.mock.calls[0][0].agentStdout).toBe('s');
+  });
+});

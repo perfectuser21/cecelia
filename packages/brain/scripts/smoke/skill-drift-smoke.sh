@@ -1,0 +1,35 @@
+#!/usr/bin/env bash
+set -euo pipefail
+BRAIN="${BRAIN_URL:-http://localhost:5221}"
+PASS=0; FAIL=0
+ok()   { echo "  ✅ $1"; ((PASS++)) || true; }
+fail() { echo "  ❌ $1"; ((FAIL++)) || true; }
+
+echo "── harness skill-drift smoke ──"
+r=$(curl -sf "$BRAIN/api/brain/harness/skill-drift") || { echo "  ❌ skill-drift GET 不可达"; echo "PASS: 0  FAIL: 1"; exit 1; }
+
+echo "$r" | jq -e '.skills | length == 6' >/dev/null 2>&1 && ok "skills 恰好 6 项" || fail "skills 长度 != 6"
+echo "$r" | jq -e '.skills | map(.name) | sort == ["harness-contract-proposer","harness-contract-reviewer","harness-evaluator","harness-generator","harness-planner","harness-report"]' >/dev/null 2>&1 \
+  && ok "name 集合精确等于 6 个 harness skill" || fail "name 集合不符"
+echo "$r" | jq -e 'keys | sort == ["any_drift","skills"]' >/dev/null 2>&1 && ok "顶层 keys 严格匹配" || fail "顶层 keys 不符"
+echo "$r" | jq -e '.skills | all(keys | sort == ["drifted","name","snapshot_version","ssot_version"])' >/dev/null 2>&1 \
+  && ok "项级 keys 严格匹配" || fail "项级 keys 不符"
+echo "$r" | jq -e '.any_drift == (.skills | map(.drifted) | any)' >/dev/null 2>&1 && ok "any_drift 内部一致" || fail "any_drift 与数组不一致"
+# PRD 边界规则：任一侧 null（文件缺失/无 version 行）→ drifted=true；两侧都非 null 才比值。
+# 不能写 .ssot_version != .snapshot_version：real-env-smoke 容器内两侧都缺失（镜像不含
+# packages/workflows/ 且无 SSOT mount），null != null 为 false 会与 PRD 语义矛盾误报。
+echo "$r" | jq -e '.skills | all(.drifted == (if (.ssot_version == null) or (.snapshot_version == null) then true else (.ssot_version != .snapshot_version) end))' >/dev/null 2>&1 \
+  && ok "drifted 符合 PRD 语义（null→true，否则比值）" || fail "drifted 不符合 PRD 语义"
+# PRD 边界规则（#3339 教训）：任一 snapshot_version == null → 必须 FAIL，防静默通过
+null_count=$(echo "$r" | jq '[.skills[] | select(.snapshot_version == null)] | length' 2>/dev/null || echo 1)
+if [[ "$null_count" -eq 0 ]]; then
+  ok "所有 skill snapshot_version 非 null"
+else
+  fail "有 $null_count 个 skill snapshot_version 为 null（#3339 类 bug）"
+fi
+code=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$BRAIN/api/brain/harness/skill-drift")
+[[ "$code" != "200" ]] && ok "POST 同路径非 200（方法语义）" || fail "POST 返回了 200"
+
+echo ""
+echo "PASS: $PASS  FAIL: $FAIL"
+[[ $FAIL -eq 0 ]] && echo "✅ 全部通过" || { echo "❌ 有 $FAIL 项失败"; exit 1; }

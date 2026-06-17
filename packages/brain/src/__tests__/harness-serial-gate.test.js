@@ -15,13 +15,29 @@ describe('advanceTaskIndexNode — serial merge gate', () => {
     expect(result.task_loop_index).toBeUndefined();
   });
 
-  it('上一个 sub-task status=undefined → 返回 error', async () => {
+  it('上一个 sub-task status=undefined 无终败证据（resume 陈旧）→ 不判 FAIL，重跑当前 sub-task', async () => {
+    // resume 终局误判防护：undefined 与 queued 同属 status channel 默认值/resume 透传，
+    // 非真终败 → 不递增 index，重新进入 run_sub_task 复用幂等链路（不再误判 error）。
     const state = {
       task_loop_index: 0,
       taskPlan: { tasks: [{ id: 'ws2' }] },
       sub_tasks: [{ id: 'ws2', status: undefined }],
     };
-    const result = await advanceTaskIndexNode(state);
+    const result = await advanceTaskIndexNode(state, { _checkPrMerged: async () => false });
+    expect(result.error).toBeUndefined();
+    expect(result.task_loop_index).toBeUndefined();  // 不递增 → 重选同一 sub-task
+    expect(result.serial_gate_requeue_count).toBe(1);
+  });
+
+  it('上一个 sub-task status=undefined 但 requeue 超上限 → 仍判 terminal error', async () => {
+    // 防本修复自身死循环：重跑超 SERIAL_GATE_REQUEUE_CAP 仍未收敛 → terminal FAIL。
+    const state = {
+      task_loop_index: 0,
+      taskPlan: { tasks: [{ id: 'ws2' }] },
+      sub_tasks: [{ id: 'ws2', status: undefined }],
+      serial_gate_requeue_count: 2,
+    };
+    const result = await advanceTaskIndexNode(state, { _checkPrMerged: async () => false });
     expect(result.error).toBeDefined();
     expect(result.error.node).toBe('advance');
     expect(result.error.message).toContain('ws2');

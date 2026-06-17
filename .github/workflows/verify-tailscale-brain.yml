@@ -1,0 +1,26 @@
+name: Verify Tailscale → Brain
+
+# 手动触发的诊断 workflow：验证 GitHub 云端 runner 能经 Tailscale 连到 Brain。
+# 用于确认"CI 走 Tailscale 访问 Brain(100.71.151.105:5221)"这条路真正可用。
+on:
+  workflow_dispatch:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Connect to Tailscale
+        uses: tailscale/github-action@v2
+        with:
+          authkey: ${{ secrets.TS_AUTHKEY }}
+
+      - name: Curl Brain health via Tailscale
+        run: |
+          set -e
+          CODE=$(curl -s -o /dev/null -w "%{http_code}" -m 15 http://100.71.151.105:5221/api/brain/health)
+          echo "Brain /api/brain/health HTTP: $CODE"
+          if [ "$CODE" != "200" ]; then
+            echo "❌ FAIL: 期望 200，实际 $CODE — CI 经 Tailscale 连不到 Brain"
+            exit 1
+          fi
+          echo "✅ PASS: GitHub runner 经 Tailscale 成功连到 Brain"

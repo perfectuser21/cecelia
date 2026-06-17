@@ -3,13 +3,15 @@ id: harness-planner-skill
 description: |
   【Brain 内部节点，禁止人类直接调用】
   Harness Planner — Brain executor 在 harness_initiative 任务中自动调用的 Layer 1 节点。
-  人类启动 harness/sprint 的唯一正确入口是 /walking-skeleton（动作5 harness-bridge），
-  它会 POST Brain harness_initiative 任务，Brain 再自动调本 skill。
-  直接调本 skill = 绕过 Brain 调度层，违反 zero-human-gate 原则。
-version: 8.7.0
+  人类启动 harness/sprint 通过 /dev 路径C（POST localhost:5221/api/brain/tasks，task_type=harness_initiative）。
+  Brain tick 自动 pick up 后调本 skill。直接调本 skill = 绕过 Brain 调度层，违反 zero-human-gate 原则。
+version: 8.10.0
 created: 2026-04-08
-updated: 2026-05-30
+updated: 2026-06-11
 changelog:
+  - 8.10.0: 链路审计修复 4 项 — (a) target_environment 推断改为明确 if-elif 优先级链（dashboard→mac_web / windows app→windows_cloud / 微信 RPA→windows_wechat / 服务器→linux_server / 纯 API→local_api / playground 训练→playground），删除含糊的"取起点最靠前"；(b) journey_id 大小写统一为 journey_id（小写）+ 注明来源 task.payload.journey_id；(c) sprint-prd.md 模板补 ## E2E 验收 占位区块（初稿可空，最终脚本由 proposer 产出）+ journey_id/step_id 来源说明；(d) 常见错误 #2 加 ❌/✅ 正反例
+  - 8.9.0: 明确"只做Scope锚定"原则；sprint-prd.md模板加journey_id+step_id强制字段
+  - 8.8.0: 删Response Schema必填段（职责归Proposer Step 1.1）；Step 0.1加initiative_runs Run历史查询
   - 8.7.0: thin-slice 行数上限从 ≤50 调整为 ≤100 — 实测含 smoke script 的真实 PRD 常见 80-110 行，50 行限制在 eval 中持续误报；保留"禁止 254 行 medium/thick PRD"的精神，只放宽数字
   - 8.6.0: 删除 windows_local — 所有 Windows 测试统一走 windows_cloud（GitHub Actions windows-latest）；Cecelia 是内网产品走 mac_web/local_api，无需 windows_local；target_environment 从 6 种缩减为 5 种
   - 8.5.0: 加 target_environment 字段 — Step 0.5 新增推断规则，PRD 模板末尾新增 target_environment 行；evaluator 模式B 按此字段派发到正确机器执行 E2E
@@ -26,7 +28,7 @@ changelog:
 > **语言规则: 所有输出必须使用简体中文。严禁日语、韩语或其他语言。**
 > **执行规则: 严格按照下面列出的步骤执行。不要搜索/查找其他 skill 文件，直接按本文档流程操作。**
 
-# /harness-planner — Harness v5 Initiative Planner（阶段 A · Layer 1）
+# /harness-planner — Harness Initiative Planner（阶段 A · Layer 1）
 
 **角色**: Planner（Initiative 级规划师）
 **对应 task_type**: `harness_initiative`（v2）/ `harness_planner`（v1 兼容）
@@ -35,6 +37,7 @@ changelog:
 
 ## 核心原则
 
+- **只做 Scope 锚定**：Planner 唯一职责 = 把 dev 产出的 Golden Path 映射到具体 Journey Step，写入 sprint-prd.md。不查代码，不查新上下文，只用 PrepPRD 里已有信息做锚定。
 - **只写 What，不写 How**：PRD 描述用户看到的行为，不描述实现路径
 - **Golden Path 优先**：PRD 围绕核心使用场景（入口→关键步骤→出口）组织，不按功能列表
 - **不拆任务**：Planner 只写 PRD；任务 DAG 由 Proposer 在合同 GAN 确认后从 Golden Path 倒推
@@ -57,17 +60,6 @@ changelog:
 
 ## 执行流程
 
-### Step -1: 埋点 phase-event start（non-fatal）
-
-```bash
-PHASE_EVENT_ID=$(curl -fsS -X POST "${BRAIN_URL:-localhost:5221}/api/brain/harness/phase-event" \
-  -H 'Content-Type: application/json' \
-  -d "{\"initiative_id\":\"${HARNESS_INITIATIVE_ID:-unknown}\",\"node\":\"planner\",\"status\":\"running\",\"model\":\"${MODEL_ID:-claude-sonnet-4-6}\"}" \
-  2>/dev/null | jq -r '.id // empty') || true
-```
-
----
-
 ### Step 0: thin_prd 主题死规则（B20 — W41 实证）
 
 **第一件事**：读 `task.payload.thin_prd`，把它当**产品法律**。sprint-prd.md 必须含 thin_prd 关键词字面。
@@ -81,7 +73,7 @@ PHASE_EVENT_ID=$(curl -fsS -X POST "${BRAIN_URL:-localhost:5221}/api/brain/harne
 **自查 checklist**（写完 sprint-prd.md 后必 grep）：
 
 - [ ] grep "## Golden Path" 段含 thin_prd 关键词字面
-- [ ] grep "## Response Schema" 或 endpoint 描述含 thin_prd 主题字面
+- [ ] endpoint 描述含 thin_prd 主题字面
 - [ ] 主题词字面相等（不能同义改写："/ping" 不能改成 "/health-check"）
 
 **违规示例**（禁止）：
@@ -178,20 +170,31 @@ curl localhost:5221/api/brain/context
 
 **边界**：只读运行时上下文，不探索代码实现细节。
 
+**Journey Run 历史（initiative_runs）**：读 `task.payload.journey_id`（统一小写 `journey_id`，来源 = /dev 路径 C 点火时写入的 `payload.journey_id`），非空则：
+
+```bash
+curl "localhost:5221/api/brain/harness/runs?limit=10"
+```
+
+取前 5 条，提取字段：`id` / `phase` / `started_at` / `completed_at` / `failure_reason`，用于感知本 Journey 已跑过的 Sprint 历史、当前卡点与失败原因，避免 PRD 重复已完成范围。
+
 ---
 
 ### Step 0.5: 推断 journey_type + target_environment
 
 **journey_type**（决定"测什么"）：
 
+**明确 if-elif 优先级链（命中即停，不再用含糊的"取起点最靠前"）**：
+
 ```
-if 涉及 apps/dashboard/ → user_facing
-elif 仅涉及 packages/brain/ → autonomous
-elif 涉及 packages/engine/（hooks/skills）→ dev_pipeline
-elif 涉及远端 agent 协议 / bridge / cecelia-run → agent_remote
-elif 同时命中多个 → 取起点最靠前（UI > tick > task dispatch > bridge）
-else（无路径线索）→ 默认 autonomous
+if 涉及 apps/dashboard/                          → user_facing
+elif 涉及远端 agent 协议 / bridge / cecelia-run  → agent_remote
+elif 涉及 packages/engine/（hooks/skills）        → dev_pipeline
+elif 涉及 packages/brain/（或纯后端）             → autonomous
+else（无路径线索）                                → autonomous（默认）
 ```
+
+> 多路径命中时按上面顺序从上往下匹配，第一个命中的即结果（UI > agent 协议 > engine > brain）。
 
 **target_environment**（决定"在哪台机器跑 E2E"）：
 
@@ -199,20 +202,24 @@ else（无路径线索）→ 默认 autonomous
 |---|---|---|---|
 | Cecelia Dashboard / Web UI | `mac_web` | 本机 Playwright | localhost:5174，context 原生隔离 |
 | **Windows 产品**（ZenithJoy Agent 等）| **`windows_cloud`** | **GitHub Actions windows-latest** | 完全干净 VM，public repo 免费无限次，永远无历史状态 |
+| **微信 RPA**（Path 4 个微接管）| **`windows_wechat`** | **xian-rog self-hosted runner** | 真实微信 4.1.8 已登录环境，xian-rog 注册为 GHA self-hosted |
 | 生产 API 验证 | `linux_server` | SSH hk-vps / us-vps | curl + psql |
 | Brain 内部 / 纯后端 | `local_api` | 本地 evaluator | curl localhost:5221 + psql |
 | playground 训练 sprint | `playground` | 本地 | node playground/server.js |
 
-**推断规则**：
+**明确 if-elif 优先级链（命中即停，从上往下第一个命中即结果）**：
 
 ```
-if 涉及 apps/dashboard/ → mac_web
-if Windows App → windows_cloud（GitHub Actions，无论连公网还是内网）
-if 仅 packages/brain/ → local_api
-if 涉及生产部署 → linux_server
-if is_skeleton=true or thin_prd 含 "playground" → playground
-else → local_api（默认）
+if is_skeleton=true 或 thin_prd 含 "playground"        → playground   （playground 训练优先判，避免被后面规则吞掉）
+elif 涉及 apps/dashboard/ 或前端页面 / 浏览器打开 Cecelia → mac_web
+elif Windows App（ZenithJoy Agent / Publisher 安装包等）  → windows_cloud（GitHub Actions windows-latest）
+elif 微信 RPA / wechat_rpa / listen_chat / Path4 个微    → windows_wechat（xian-rog self-hosted 真机）
+elif 涉及生产部署 / 远端服务器                            → linux_server（SSH hk-vps / us-vps）
+elif 仅 packages/brain/ 或纯 API / 后台任务              → local_api
+else                                                    → local_api（默认）
 ```
+
+> 优先级理由：playground 训练 sprint 必须最先判（否则"涉及 brain"会把它误判 local_api）；微信 RPA 必须在 windows_cloud 之后单独判（GHA 无微信，写错会全部假绿）。
 
 记录：`journey_type: <值>` + `target_environment: <值>`，写入 PRD 末尾。两个字段**缺一不可**，proposer 和 evaluator 都依赖这两个字段。
 
@@ -270,48 +277,7 @@ mkdir -p "$SPRINT_DIR"
 2. [系统处理]
 3. [可观测结果]
 
-## Response Schema（API 任务必填，其他任务标 N/A）
-
-> **目的**：把响应字段 codify 成 oracle，让 proposer 把每个字段转成 `jq -e` 命令，evaluator 真起服务真 curl 真校验。避免 generator 自由发挥 key 名（W19 result→sum / W20 result→product 实证）。
->
-> **填法**：
-> - 列出所有 endpoint 的 success response shape（key 名/类型/必填性）
-> - 列出所有 endpoint 的 error response shape（HTTP code + body shape）
-> - 明确禁用字段名清单（避免 generator 用近义词替换）
-> - 不允许仅用自然语言描述（"返回结果对象"无效）；必须给字面 JSON 示例
-
-模板：
-
-```
-### Endpoint: GET /xxx
-
-**Query Parameters**（v8.2 新增 — 强制约束 query param 名，避免 generator 漂移到 a/b）:
-- `<必填 param 名>` (type, 必填): 用途说明
-- 例如: `base` (number-as-string, 必填), `exp` (number-as-string, 必填)
-- **禁用 query 名**: 列出 generator 容易用错的别名（如禁用 `a/b/x/y/p/q/n/m/input1/input2/v1/v2`）
-- **强约束**: generator 必须**字面用** PRD 列出的 query 名；用错 query 名 endpoint 应返 400 或 404
-
-**Success (HTTP 200)**:
-```json
-{"result": <number>, "operation": "<string字面量 'multiply'>"}
-```
-- `result` (number, 必填): 计算结果
-- `operation` (string, 必填): 字面量 `multiply`，禁用变体 `mul`/`multiplication`/`product`/`op`/`method`
-
-**Error (HTTP 400)**:
-```json
-{"error": "<string>"}
-```
-- 必有 `error` key，禁用 `message`/`msg`/`reason` 等替代
-
-**禁用响应字段名**: `sum`/`product`/`value`/`answer`/`data`/`payload`/`response`（generator 不得自由发挥）
-
-**Schema 完整性**: response 顶层 keys 必须**完全等于** `["operation", "result"]`，不允许多余字段
-```
-
-非 API 任务（纯内部 Brain 改动 / 数据库迁移 / CI 流程）此段写 `N/A — 任务无 HTTP 响应`。
-
-**关键**：proposer SKILL v7.4 强制每个 Query Parameter 在合同里有 1 条 [BEHAVIOR] 验。Query 名漂移会被 evaluator jq -e + curl 抓住。
+<!-- Response Schema由Proposer在Step 1.1读api_registry后推导，Planner不负责定义技术规范。 -->
 
 ## 边界情况
 
@@ -330,10 +296,21 @@ mkdir -p "$SPRINT_DIR"
 
 - `path/to/file`: {为何受影响}
 
+## E2E 验收
+
+> Planner 初稿此区块**可留空**（只写占位 + 期望验收点的自然语言描述）。**最终可执行的 E2E 脚本由 proposer 在 GAN 阶段产出**（按 target_environment 选 bash/.ps1 模板，写进 contract-draft.md 的 `## E2E 验收` 区块）。Planner 在此先框定"端到端要验到什么"，供 proposer 翻译成命令。
+
+```bash
+# 占位：proposer 将按 target_environment 填入真实脚本（local_api→curl+psql / mac_web→Playwright / windows_*→ps1）
+# 期望验收点（自然语言）：{从入口到出口，用户/系统可观察到的最终结果}
+```
+
 ## journey_type: autonomous|user_facing|dev_pipeline|agent_remote
 ## journey_type_reason: {1 句推断依据}
-## target_environment: mac_web|windows_cloud|linux_server|local_api|playground
+## target_environment: mac_web|windows_cloud|windows_wechat|linux_server|local_api|playground
 ## target_environment_reason: {1 句推断依据，含目标机器名（如 GitHub Actions、hk-vps、localhost:5174）}
+## journey_id: <Journey UUID，来源 = task.payload.journey_id（/dev 路径 C 点火写入），缺则取 PrepPRD 锚定结果>
+## step_id: <Step UUID 或 step code，如 L01-S5，来源 = PrepPRD Golden Path 锚定结果>
 ```
 
 ---
@@ -345,15 +322,6 @@ git checkout -b "cp-$(TZ=Asia/Shanghai date +%m%d%H%M)-harness-prd"
 git add "$SPRINT_DIR/sprint-prd.md"
 git commit -m "feat(harness): Initiative PRD — {目标}"
 git push origin HEAD 2>/dev/null || echo "[harness-planner] push skipped (no creds), commit retained on local branch"
-```
-
-**最后一条消息之前，埋点 phase-event end（non-fatal）**：
-
-```bash
-curl -fsS -X PATCH "${BRAIN_URL:-localhost:5221}/api/brain/harness/phase-event/${PHASE_EVENT_ID:-0}" \
-  -H 'Content-Type: application/json' \
-  -d "{\"status\":\"completed\",\"ts_end\":$(date +%s%3N),\"cost_usd\":${PHASE_COST_USD:-0}}" \
-  2>/dev/null || true
 ```
 
 **最后一条消息**：
@@ -370,5 +338,7 @@ curl -fsS -X PATCH "${BRAIN_URL:-localhost:5221}/api/brain/harness/phase-event/$
 
 1. **task-plan.json initiative_id 写 "pending"** → 必须使用 `$HARNESS_INITIATIVE_ID` 环境变量（已注入），写 "pending" 会导致 parsePrd 警告 + 下游 DB 写入错误
 2. **PRD 仍用功能需求列表格式** → 必须改为 Golden Path 格式（入口→步骤→出口）
+   - ❌ 功能需求列表：`FR-001 系统应支持登录 / FR-002 系统应支持下载 / FR-003 系统应支持发布`（罗列能力，无用户流，proposer 无法 1:1 映射 [BEHAVIOR]）
+   - ✅ Golden Path：`Step 1: 用户点"抖音登录" → 系统弹二维码 → 扫码后显示"已登录" / Step 2: 用户选视频点"发布" → 系统上传 → 显示帖子链接`（单线性步骤序列，每步 = 用户动作 + 系统可观察响应）
 3. **写实现细节**（"引入 X 库"、"用 async 模式"）→ 违反 What-only 原则
 4. **忘记 journey_type** → 必须在 PRD 末尾标注，Proposer 和 Evaluator 依赖此字段

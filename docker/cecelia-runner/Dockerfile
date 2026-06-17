@@ -22,7 +22,8 @@
 
 FROM node:20-slim
 
-# 基础工具：bash/curl/git/jq/ssh/gh
+# 基础工具：bash/curl/git/jq/ssh/gh/psql
+# postgresql-client：合同 E2E 的 `psql $DB ...` 数据写入验证命令需要（node:20-slim 不自带 psql，缺它全部 command not found）
 # gh 官方 Debian 源：https://cli.github.com/manual/installation
 RUN apt-get update \
   && apt-get install -y --no-install-recommends \
@@ -33,6 +34,7 @@ RUN apt-get update \
        gnupg \
        jq \
        openssh-client \
+       postgresql-client \
        python3 \
        python3-minimal \
   && mkdir -p -m 755 /etc/apt/keyrings \

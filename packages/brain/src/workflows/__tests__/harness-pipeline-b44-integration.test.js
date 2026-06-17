@@ -29,6 +29,7 @@ vi.mock('../../harness-credentials.js', () => ({ resolveGitHubToken: (...a) => m
 vi.mock('../../docker-executor.js', () => ({
   writeDockerCallback: vi.fn(),
   executeInDocker: (...a) => mockSpawn(...a),
+  getHostPromptDir: () => '/tmp/cecelia-prompts',
 }));
 vi.mock('../../spawn/detached.js', () => ({
   spawnDockerDetached: vi.fn(async (o) => ({ containerId: o.containerId })),

@@ -25,6 +25,45 @@ function buildRichText(text) {
   return [{ type: 'text', text: { content: String(text).slice(0, 2000) } }];
 }
 
+/**
+ * 把一条 decision 映射成 Notion AI Notes 库的 properties。
+ * 纯函数 — 不打 Notion 网络，可独立确定性验证（合同 Golden Path Step 2 oracle）。
+ *
+ * - level → Level 属性
+ * - scope → Scope 属性
+ * - ability 的 notion_id → Ability relation（链到对应 ability 页）
+ *
+ * @param {object} decision  decisions 裸行（含 level/scope/topic/decision...）
+ * @param {string|null} abilityNotionId  target ability 的 journey_features.notion_id
+ * @param {object} schemaProps  可选：AI Notes 库的 properties schema（{ Level: {type}, Scope: {type} }）。
+ *   用于把 Level/Scope 发成库实际属性类型（status vs select）—— 参照 Feature 库 Status 必须用
+ *   status 类型的教训（发错类型 Notion 返回 400）。schema 取不到时回退 select。
+ */
+export function buildDecisionNotionProperties(decision = {}, abilityNotionId = null, schemaProps = {}) {
+  const title = decision.topic
+    || (decision.decision ? String(decision.decision).slice(0, 100) : '')
+    || String(decision.id || '');
+  const properties = {
+    Title: { title: [{ text: { content: title } }] },
+    Type: { select: { name: 'Decision' } },
+  };
+  // 按库实际属性类型发 Level/Scope；schema 缺失时默认 select（多数自定义属性为 select）
+  const typedValue = (propName, value) =>
+    schemaProps?.[propName]?.type === 'status'
+      ? { status: { name: value } }
+      : { select: { name: value } };
+  if (decision.level) properties.Level = typedValue('Level', decision.level);
+  if (decision.scope) properties.Scope = typedValue('Scope', decision.scope);
+  // ability relation —— 属性名优先用 schema 里的 relation 字段名，回退 'Ability'
+  if (abilityNotionId) {
+    const relProp = Object.keys(schemaProps || {}).find(
+      (k) => schemaProps[k]?.type === 'relation' && /abilit/i.test(k)
+    ) || 'Ability';
+    properties[relProp] = { relation: [{ id: abilityNotionId }] };
+  }
+  return properties;
+}
+
 // 404 "Could not find page" = stale relation ID，永久标记为已同步阻止无限重试
 function isStaleRelationError(err) {
   return err.message && err.message.includes('Could not find page');
@@ -92,8 +131,11 @@ async function pushJourneyFeatures(pool, token) {
     try {
       const properties = {
         Name: { title: [{ text: { content: f.name } }] },
-        Kind: { select: { name: f.kind || 'feature' } },
-        Status: { select: { name: f.status || 'planned' } },
+        // Kind: Notion select 选项为首字母大写 Ability/Feature；DB 存小写 → 映射，避免自动创建重复小写选项
+        Kind: { select: { name: (f.kind || 'feature') === 'ability' ? 'Ability' : 'Feature' } },
+        // Status: Notion Feature 库该属性是 status 类型（非 select）；发 select 会 400「Status is expected to be status」。
+        // DB 的值(planned/working/building/broken/deprecated/done)与 Notion status 选项一一匹配，仅类型需对齐。
+        Status: { status: { name: f.status || 'planned' } },
       };
       if (f.thickness) {
         properties['Thickness'] = { select: { name: f.thickness } };
@@ -244,12 +286,22 @@ async function pushJourneyStepLinks(pool, token) {
       AND s.notion_id IS NOT NULL
     LIMIT 10
   `);
+  if (rows.length === 0) return;
+
+  let schemaProps = {};
+  try {
+    const schema = await notionReq(token, `/databases/${STEP_LINKS_DB}`, 'GET');
+    schemaProps = schema?.properties || {};
+  } catch {
+    schemaProps = {};
+  }
+
   for (const l of rows) {
     try {
       const properties = {
         Name:   { title: [{ text: { content: `${l.journey_name} — ${l.step_name}` } }] },
         Status: { select: { name: l.status || 'planned' } },
-        Order:  { number: l.step_order },
+        ...('Order' in schemaProps && { Order: { number: l.step_order } }),
       };
       if (l.journey_notion_id) {
         properties['Journey'] = { relation: [{ id: l.journey_notion_id }] };
@@ -273,18 +325,43 @@ async function pushJourneyStepLinks(pool, token) {
 }
 
 async function pushDecisions(pool, token) {
+  // 去重：只取未同步行（notion_synced_at IS NULL）；LEFT JOIN journey_features
+  // 取 target ability 的 notion_id，供映射成 Notion relation 链
   const { rows } = await pool.query(
-    'SELECT * FROM decisions WHERE notion_synced_at IS NULL LIMIT 10'
+    `SELECT d.*, jf.notion_id AS ability_notion_id
+       FROM decisions d
+       LEFT JOIN journey_features jf
+         ON jf.id = d.target_id AND d.target_type = 'journey_feature'
+      WHERE d.notion_synced_at IS NULL
+      LIMIT 10`
   );
+  // 无待同步行直接返回，不触碰 Notion API（与其他 push 函数一致的去重边界）
+  if (rows.length === 0) return;
+
+  // 取一次 AI Notes 库 schema：决定 Level/Scope 属性类型（status vs select），
+  // 并据此判断 Level/Scope/ability relation 等自定义属性是否真实存在 —— 库里没有的属性
+  // 一旦发出 Notion 会 400「is not a property that exists」，故缺列时跳过该属性。
+  let schemaProps = {};
+  try {
+    const schema = await notionReq(token, `/databases/${DECISIONS_DB}`, 'GET');
+    schemaProps = schema?.properties || {};
+  } catch {
+    schemaProps = {};
+  }
 
   for (const d of rows) {
     try {
-      const title = d.topic || d.decision?.slice(0, 100) || String(d.id);
-      const properties = {
-        Title: { title: [{ text: { content: title } }] },
-        Type: { select: { name: 'Decision' } },
-        ...(d.created_at ? { Date: { date: { start: d.created_at.toISOString?.() || d.created_at } } } : {}),
-      };
+      // Type=Decision / Title / Level / Scope / ability relation 由 buildDecisionNotionProperties 统一构造
+      const mapped = buildDecisionNotionProperties(d, d.ability_notion_id, schemaProps);
+      // Title/Type 是 AI Notes 基础属性恒发；其余自定义属性（Level/Scope/Ability）只在库 schema
+      // 真实存在时才发，避免对未建列的库 400（合同 assumption：Level/Scope 字段「已有或可加」）
+      const properties = {};
+      for (const [k, v] of Object.entries(mapped)) {
+        if (k === 'Title' || k === 'Type' || k in schemaProps) properties[k] = v;
+      }
+      if (d.created_at) {
+        properties.Date = { date: { start: d.created_at.toISOString?.() || d.created_at } };
+      }
       const bodyLines = [
         d.decision && `**决策**: ${d.decision}`,
         d.reason && `**原因**: ${d.reason}`,

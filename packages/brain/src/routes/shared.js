@@ -31,7 +31,7 @@ async function getActiveExecutionPaths() {
     FROM okr_initiatives oi
     INNER JOIN okr_scopes os ON os.id = oi.scope_id
     INNER JOIN okr_projects op ON op.id = os.project_id
-    WHERE oi.status IN ('active', 'in_progress')
+    WHERE oi.status IN ('running')
   `);
   return result.rows;
 }

@@ -105,17 +105,25 @@ if [[ -n "${CECELIA_GOAL_SETTINGS:-}" ]]; then
 fi
 
 # 7. 启动 claude headless
-# 优先从 /tmp/cecelia-prompts/${CECELIA_TASK_ID}.prompt 读 prompt 并走 stdin
-# —— 长 prompt（GAN Round N Reviewer 含完整合同历史）不会撞 OS argv 限制
-# （E2BIG: spawn argument list too long）。
-# 文件不在时 fallback 到 argv（backward compat，手动 docker run 仍可工作）。
-#
+# 取证文件路径解析（env-优先协议，v forensics-no-overwrite-r2）：
+#   - CECELIA_PROMPT_FILE / CECELIA_STDOUT_FILE 由 docker-executor 注入完整唯一文件名；
+#     entrypoint 直接采用，不再自拼（防同 task 重跑覆盖）。
+#   - env 缺失时回退旧拼接（向后兼容：滚动部署期老镜像无 env 仍可工作）。
+# 当 CECELIA_ENTRYPOINT_TEST=1 时，立即打印两个变量并 exit 0（短路在所有副作用之前，
+# 供 check-step3-entrypoint-resolve.sh 在 evaluator 容器内纯 bash 验证，无需 docker）。
+PROMPT_FILE="${CECELIA_PROMPT_FILE:-/tmp/cecelia-prompts/${CECELIA_TASK_ID:-UNSET}.prompt}"
+STDOUT_FILE="${CECELIA_STDOUT_FILE:-/tmp/cecelia-prompts/${CECELIA_TASK_ID:-UNSET}.stdout}"
+
+if [[ "${CECELIA_ENTRYPOINT_TEST:-}" == "1" ]]; then
+  echo "PROMPT_FILE=$PROMPT_FILE"
+  echo "STDOUT_FILE=$STDOUT_FILE"
+  exit 0
+fi
+
 # v1.229.0: 不再用 `exec claude` 直接接管进程。改为先在子进程跑 claude，
 # 拿到 exit code 后向 brain POST callback（让 LangGraph interrupt resume），
 # 再用同一 exit code 退出容器。HARNESS_NODE/CECELIA_TASK_ID 任一为空时
 # 走旧 exec 路径，保持非 harness 任务零变更。
-PROMPT_FILE="/tmp/cecelia-prompts/${CECELIA_TASK_ID:-UNSET}.prompt"
-STDOUT_FILE="/tmp/cecelia-prompts/${CECELIA_TASK_ID:-UNSET}.stdout"
 
 run_claude() {
   if [[ -f "$PROMPT_FILE" ]]; then

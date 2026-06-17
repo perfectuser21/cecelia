@@ -35,18 +35,27 @@
 
 import { StateGraph, Annotation, START, END, interrupt } from '@langchain/langgraph';
 import crypto from 'node:crypto';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { execFile as execFileCb } from 'node:child_process';
 import { promisify } from 'node:util';
+import { runContractGate, formatGateReport } from '../lib/contract-gate.js';
 // Note: legacy `spawn` import removed (Layer 3 uses spawnDockerDetached for fire-and-forget docker run -d)
 import { ensureHarnessWorktree, harnessSubTaskBranchName, cleanupHarnessWorktree } from '../harness-worktree.js';
 import { resolveGitHubToken } from '../harness-credentials.js';
+import { runJudgeGate } from '../harness-judge.js';
 // Note: legacy `writeDockerCallback` import removed (Layer 3 uses callback router POST → Command(resume))
 import { spawnDockerDetached, spawnCodexBridgeDetached } from '../spawn/detached.js';
+import { getHostPromptDir } from '../docker-executor.js';
+// 活容器探测拆到 lib/live-container.js（仅 node 内建依赖），便于 DoD BEHAVIOR 在无 brain node_modules 的 CI job 直跑。
+import { findLiveEvaluateContainer as findLiveEvaluateContainerDefault } from '../lib/live-container.js';
+import { executeOnHost } from '../spawn/host-executor.js';
 import { resolveExecutor as resolveExecutorDefault } from '../routing/resolve-executor.js';
 import { resolveAccount } from '../spawn/middleware/account-rotation.js';
+import { checkAuthFailure } from '../spawn/middleware/cap-marking.js';
 import { checkPrStatus, classifyFailedChecks } from '../shepherd.js';
-import { parseDockerOutput, extractField, readPrFromGitState, readVerdictFile, readBrainResult, EvaluatorOutputSchema, loadSkillContent } from '../harness-shared.js';
-import { buildGeneratorPrompt } from '../harness-utils.js';
+import { parseDockerOutput, extractField, readPrFromGitState, readVerdictFile, readBrainResult, readAndValidateBrainResult, EvaluatorOutputSchema, loadSkillContent } from '../harness-shared.js';
+import { buildGeneratorPrompt, harnessContractThreadSuffix } from '../harness-utils.js';
 import { getPgCheckpointer } from '../orchestrator/pg-checkpointer.js';
 import pool from '../db.js';
 import { verifyGeneratorOutput } from '../lib/contract-verify.js';
@@ -89,6 +98,37 @@ export function normalizeVerdict(raw) {
   return new Set(['PASS', 'FIXED', 'APPROVED']).has(upper) ? 'PASS' : 'FAIL';
 }
 
+// 任务终态集合：父图/Serial gate 把 initiative 标这些状态后，在飞子图实例必须停手。
+export const TERMINAL_TASK_STATUSES = new Set(['failed', 'completed', 'cancelled', 'canceled', 'aborted', 'done']);
+
+/**
+ * 查 initiative 任务在 DB 里的终态信号。
+ * P2 Issue「在飞执行不感知任务终态」实证（run cf4f596c 08:28-08:34）：initiative 已标 failed 后，
+ * 其进程内图实例的 fix loop 仍每 ~2 分钟 spawn 一个 generator，直到手动重启 Brain 才停。
+ * 故 spawn / fix_dispatch / evaluate 入口在起容器前查 tasks.status，已终态 → 走 END。
+ *
+ * fail-open：查不到/查询失败 → terminal=false（不误杀在飞 run），仅 warn。
+ * @returns {Promise<{terminal:boolean, status?:string, initiativeId?:string}>}
+ */
+export async function isInitiativeTerminal(state, opts = {}) {
+  const dbPool = opts.poolOverride || pool;
+  const payload = state?.task?.payload || {};
+  const initiativeId = state?.initiativeId || payload.parent_task_id || payload.initiative_id || state?.task?.id;
+  if (!initiativeId) return { terminal: false };
+  try {
+    const res = await dbPool.query('SELECT status FROM tasks WHERE id = $1', [initiativeId]);
+    const status = res?.rows?.[0]?.status;
+    return {
+      terminal: status ? TERMINAL_TASK_STATUSES.has(String(status).toLowerCase()) : false,
+      status,
+      initiativeId,
+    };
+  } catch (err) {
+    console.warn(`[harness-task.graph] isInitiativeTerminal 查询失败（fail-open，继续）：${err.message}`);
+    return { terminal: false };
+  }
+}
+
 /**
  * sub-graph state schema
  */
@@ -110,6 +150,8 @@ export const TaskState = Annotation.Root({
   // Fix #4: executor + 远程 daemonUrl，远程 worker-daemon /health liveness 用。
   executor:         Annotation({ reducer: (_o, n) => n, default: () => null }),
   daemonUrl:        Annotation({ reducer: (_o, n) => n, default: () => null }),
+  // 根因 2（2026-06-10）: resolveAccount 选出的账号，401 callback 时 markAuthFailure 轮换用。
+  accountId:        Annotation({ reducer: (_o, n) => n, default: () => null }),
   pr_url:           Annotation({ reducer: (_o, n) => n, default: () => null }),
   pr_branch:        Annotation({ reducer: (_o, n) => n, default: () => null }),
   fix_round:        Annotation({ reducer: (_o, n) => n, default: () => 0 }),
@@ -124,6 +166,10 @@ export const TaskState = Annotation.Root({
   error:            Annotation({ reducer: (_o, n) => n, default: () => null }),
   evaluate_verdict: Annotation({ reducer: (_o, n) => n, default: () => null }),
   evaluate_error:   Annotation({ reducer: (_o, n) => n, default: () => null }),
+  // P1: 失败分类。'contract_invalid' = Contract Gate 命中合同产物（合同本身不合格）→
+  // 责任在 GAN proposer（有权改合同），generator 无权改合同 → 路由终止 initiative，不进 fix loop。
+  // null = 普通实现缺陷 → 维持 generator fix loop。
+  failure_class:    Annotation({ reducer: (_o, n) => n, default: () => null }),
   prdContent:       Annotation({ reducer: (_o, n) => n, default: () => null }),
 });
 
@@ -153,6 +199,16 @@ export const TaskState = Annotation.Root({
 export async function spawnNode(state, opts = {}) {
   // 幂等门 1：已 spawn 过容器就直接 passthrough（防 resume 时重 spawn）
   if (state.containerId) return { containerId: state.containerId };
+
+  // 终态门（P2「在飞执行不感知任务终态」）：起容器前查 initiative 是否已被标终态。
+  // 已 failed/completed → 直接走 END（写明确终态 status='aborted'，与问题1 END 终态口径一致），
+  // 不再起 generator（run cf4f596c 实证：initiative failed 后 fix loop 仍每 ~2 分钟 spawn）。
+  const checkTerminal = opts.isInitiativeTerminal || isInitiativeTerminal;
+  const term0 = await checkTerminal(state, opts);
+  if (term0.terminal) {
+    console.warn(`[spawn] initiative ${term0.initiativeId} 已终态 status=${term0.status} → 中止 spawn，不再起 generator`);
+    return { status: 'aborted', error: { node: 'spawn', message: `initiative already terminal (status=${term0.status}); abort generator spawn` } };
+  }
 
   const spawnFn = opts.spawnDetached || spawnDockerDetached;
   const ensureWt = opts.ensureWorktree || ensureHarnessWorktree;
@@ -220,10 +276,13 @@ export async function spawnNode(state, opts = {}) {
   const prompt = buildGeneratorPrompt(task, { fixMode, prdContent: state.prdContent || null });
 
   // thread_id 必须跟 harness-initiative.graph runSubTaskNode 用的一致：
-  // `harness-task:${initiativeId}:${subTaskId}:fix${N}` —— callback router 用此 lookup
+  // `harness-task:${initiativeId}:${subTaskId}:fix${N}<合同后缀>` —— callback router 用此 lookup
   // B47: final_e2e_fix_count 从 payload 读，与 config thread_id 保持一致
+  // 合同绑定：thread_id 追加 contractBranch 折出的稳定短 token，合同重新收敛 → 新线程，
+  // 不复用旧终局 checkpoint（run da418741 死线程秒回 root cause）。state.contractBranch
+  // 即父 runSubTaskNode invoke 时传入值，子图内不再变，spawn/evaluate 两处一致。
   const threadFixRound = state.task?.payload?.final_e2e_fix_count ?? 0;
-  const threadId = `harness-task:${initiativeId}:${task.id}:fix${threadFixRound}`;
+  const threadId = `harness-task:${initiativeId}:${task.id}:fix${threadFixRound}${harnessContractThreadSuffix(state.contractBranch)}`;
 
   // 关键：调 resolveAccount 选 claude account → 注入 CECELIA_CREDENTIALS + CECELIA_MODEL。
   // buildDockerArgs 据此加 -v ~/.claude-accountN:/host-claude-config:ro mount。
@@ -348,6 +407,8 @@ export async function spawnNode(state, opts = {}) {
     //         容器走 worker-daemon /health 而非本地 docker inspect（本地查不到远程容器）。
     executor: route?.executor || 'claude',
     daemonUrl: route?.executor === 'codex' ? route.url : null,
+    // 根因 2: 记录本次容器用的账号，callback 401 时 awaitCallbackNode 据此 markAuthFailure。
+    accountId: accountEnv.CECELIA_CREDENTIALS || null,
     ...(contractBranch ? { contractImported: true } : {}),
   };
 }
@@ -361,7 +422,7 @@ export async function spawnNode(state, opts = {}) {
  *
  * 幂等门：state.generator_output 已有（resume 后 graph 重跑此节点）→ passthrough。
  */
-export async function awaitCallbackNode(state) {
+export async function awaitCallbackNode(state, opts = {}) {
   if (state.generator_output) return { generator_output: state.generator_output };
 
   const callbackPayload = interrupt({
@@ -377,11 +438,28 @@ export async function awaitCallbackNode(state) {
 
   if (exitCode !== 0) {
     const errMsg = payload.error || payload.stderr || `container exit_code=${exitCode}`;
+    // 根因 2（2026-06-10）: 识别 401 auth 失败 → markAuthFailure 熔断该账号。
+    // 之前只标 container_exit 重 spawn，resolveAccount 不知道账号坏了 →
+    // 同一个坏账号被反复选中，fix loop 空转烧光轮次。标记后下次 spawn 自动换号。
+    const checkAuth = opts.checkAuthFailure || checkAuthFailure;
+    let authFailed = false;
+    try {
+      const authRes = await checkAuth(
+        {
+          stdout: payload.stdout || (typeof payload.result === 'string' ? payload.result : ''),
+          stderr: `${payload.stderr || ''}\n${payload.error || ''}`,
+        },
+        { env: { CECELIA_CREDENTIALS: state.accountId || null } },
+      );
+      authFailed = !!authRes?.authFailed;
+    } catch (err) {
+      console.warn(`[harness-task.graph] checkAuthFailure 失败（non-fatal）: ${err.message}`);
+    }
     // B18: 不再设 state.error（fatal）→ 转 ci_fail 路径让 fix loop 继续重试
     // 区分 docker daemon 死（true fatal，由 spawnNode throw 抓）vs 容器内业务 fail（应 retry）
     return {
       ci_status: 'fail',
-      ci_fail_type: 'container_exit',
+      ci_fail_type: authFailed ? 'auth_failed' : 'container_exit',
       failed_checks: [errMsg],
     };
   }
@@ -418,6 +496,13 @@ export async function parseCallbackNode(state, opts = {}) {
   const parsed = parseDockerOutput(out);
   const pr_url = extractField(parsed, 'pr_url');
   const pr_branch = extractField(parsed, 'pr_branch');
+  // END 终态规则（图的每条 END 边都是 API）：no_pr 是终局路径（routeAfterParse → END），
+  // 必须写明确 status='no_pr'，否则停在 status channel 默认值 'queued' → 父 runSubTaskNode
+  // getState 读到 queued → Serial gate 误读为 "did not merge (status=queued)"（run cf4f596c
+  // 死线程实证：fix0 线程走到 next=[], status=queued）。
+  if (!pr_url) {
+    return { pr_url: null, pr_branch: pr_branch || null, status: 'no_pr' };
+  }
   return { pr_url, pr_branch };
 }
 
@@ -450,7 +535,9 @@ export async function pollCiNode(state, opts = {}) {
   const pollCount = state.poll_count || 0;
 
   if (pollCount >= MAX_POLL_COUNT) {
-    return { ci_status: 'timeout', poll_count: pollCount };
+    // END 终态规则：timeout 是终局（routeAfterPoll → END），写明确 status='timeout'，
+    // 不留默认 'queued'。
+    return { ci_status: 'timeout', status: 'timeout', poll_count: pollCount };
   }
 
   if (sleepMs > 0) {
@@ -466,8 +553,11 @@ export async function pollCiNode(state, opts = {}) {
   }
 
   if (info.state === 'CLOSED' || info.ciStatus === 'closed') {
+    // END 终态规则：PR 被外部关闭 → 终局失败（routeAfterPoll error → END），
+    // error 与 status 同时写，杜绝默认 'queued'。
     return {
       ci_status: 'fail',
+      status: 'failed',
       poll_count: pollCount + 1,
       error: { node: 'poll_ci', message: 'PR closed externally' },
     };
@@ -527,7 +617,8 @@ export async function mergePrNode(state, opts = {}) {
   const prUrl = state?.pr_url;
 
   if (!prUrl) {
-    return { error: { node: 'merge_pr', message: 'no pr_url available' } };
+    // END 终态规则：merge_pr 所有 error 返回都经 routeAfterMergePr → END，必须带 status='failed'。
+    return { status: 'failed', error: { node: 'merge_pr', message: 'no pr_url available' } };
   }
 
   try {
@@ -567,14 +658,14 @@ export async function mergePrNode(state, opts = {}) {
       const reason = `PR conflicts with base branch (mergeable=${mergeable}, state=${mergeStateStatus}); `
         + `update-branch cannot auto-resolve merge conflicts — needs fix round / manual resolution`;
       console.error(`[merge_pr] CONFLICTING pr=${prUrl}: ${reason}`);
-      return { error: { node: 'merge_pr', reason: 'conflicting', message: reason } };
+      return { status: 'failed', error: { node: 'merge_pr', reason: 'conflicting', message: reason } };
     }
 
     // BEHIND：落后 main（分支保护要求 up-to-date）→ 服务端 update-branch，限次重试。
     const isBehind = mergeStateStatus === 'BEHIND' || BEHIND_RE.test(msg);
     if (!isBehind) {
       console.error(`[merge_pr] non-recoverable merge error pr=${prUrl}: ${msg}`);
-      return { error: { node: 'merge_pr', message: msg } };
+      return { status: 'failed', error: { node: 'merge_pr', message: msg } };
     }
 
     const attempts = state.rebase_attempted || 0;
@@ -582,7 +673,7 @@ export async function mergePrNode(state, opts = {}) {
       const reason = `branch still BEHIND after ${attempts} update-branch attempts `
         + `(max ${MAX_REBASE_ATTEMPTS}); aborting to avoid infinite rebase churn`;
       console.error(`[merge_pr] ${reason} pr=${prUrl}`);
-      return { error: { node: 'merge_pr', reason: 'rebase_exhausted', message: reason } };
+      return { status: 'failed', error: { node: 'merge_pr', reason: 'rebase_exhausted', message: reason } };
     }
 
     console.warn(`[merge_pr] branch behind (attempt ${attempts + 1}/${MAX_REBASE_ATTEMPTS}), calling update-branch pr=${prUrl}`);
@@ -592,7 +683,7 @@ export async function mergePrNode(state, opts = {}) {
       return { ci_status: 'pending', rebase_attempted: attempts + 1 };
     } catch (updateErr) {
       console.error(`[merge_pr] update-branch failed pr=${prUrl}: ${updateErr.message}`);
-      return { error: { node: 'merge_pr', message: `update-branch failed: ${updateErr.message}` } };
+      return { status: 'failed', error: { node: 'merge_pr', message: `update-branch failed: ${updateErr.message}` } };
     }
   }
 }
@@ -604,7 +695,16 @@ export function routeAfterMergePr(state) {
   return 'end';
 }
 
-export async function fixDispatchNode(state) {
+export async function fixDispatchNode(state, opts = {}) {
+  // 终态门（P2）：fix loop 路由边在 reset 计数/重 spawn 前查 initiative 终态。
+  // 已终态 → 写明确终态 status='aborted' + error，routeAfterFix 据 error 走 END，
+  // 不再 ++fix_round、不再 reset containerId 触发 spawn（直接终止 fix loop）。
+  const checkTerminal = opts.isInitiativeTerminal || isInitiativeTerminal;
+  const term = await checkTerminal(state, opts);
+  if (term.terminal) {
+    console.warn(`[fix_dispatch] initiative ${term.initiativeId} 已终态 status=${term.status} → 中止 fix loop，走 END`);
+    return { status: 'aborted', error: { node: 'fix_dispatch', message: `initiative already terminal (status=${term.status}); abort fix loop` } };
+  }
   const next = (state.fix_round || 0) + 1;
   return {
     fix_round: next,
@@ -644,7 +744,12 @@ export function routeAfterSpawn(state) {
 // 此时直接进 fix_dispatch（跟 ci_fail 同等），不走 parse_callback（否则 pr_url=null → END）
 export function routeAfterCallback(state) {
   if (state.error) return 'end';
-  if (state.ci_status === 'fail' && state.ci_fail_type === 'container_exit') return 'fix';
+  // 根因 2: auth_failed 同 container_exit 走 fix 路径 — fix_dispatch 重 spawn 时
+  // resolveAccount 已因 markAuthFailure 熔断换号，否则 401 会掉进 parse → no_pr 直接终止。
+  if (state.ci_status === 'fail'
+      && (state.ci_fail_type === 'container_exit' || state.ci_fail_type === 'auth_failed')) {
+    return 'fix';
+  }
   return 'parse';
 }
 
@@ -662,9 +767,24 @@ export function routeAfterPoll(state) {
   return 'poll'; // pending → loop
 }
 
-// Pre-merge gate router: post-evaluator verdict → merge or fix.
+// 合同产物文件判定：Contract Gate 命中这些文件 = 合同本身不合格（弱断言/作弊/缺工具），
+// 责任在 GAN proposer（有权改合同），不是 generator（CONTRACT IS LAW，generator 无权改合同）。
+// contract-dod.md / contract-draft.md / sprint-contract.md 是合同三态产物。
+export function isContractArtifactFile(filePath) {
+  if (!filePath || typeof filePath !== 'string') return false;
+  const base = filePath.split('/').pop();
+  return /^(contract-dod|contract-draft|sprint-contract|contract)\.md$/.test(base);
+}
+
+// Pre-merge gate router: post-evaluator verdict → merge / end / fix.
 export function routeAfterEvaluate(state) {
+  // 终态门（P2）：initiative 已终态 → 直接 END，不 merge 也不进 fix loop。
+  if (state.status === 'aborted') return 'end';
   if (state.evaluate_verdict === 'PASS') return 'merge';
+  // P1: 合同产物不合格（Contract Gate 命中合同文件本身）→ 终止 initiative，不进 generator fix loop。
+  // generator 无权改合同 → 进 fix loop 只会同一行反复命中空转烧轮次（实证 run ea622a94 r0/r1/r2 三连）。
+  // 修复责任在 GAN proposer：feedback 已带结构化命中清单，供重发时 proposer 参考。
+  if (state.failure_class === 'contract_invalid') return 'end';
   return 'fix';
 }
 
@@ -702,27 +822,69 @@ export function extractArtifactTests(md) {
   return cmds;
 }
 
+// 宿主仓库 node_modules 路径（本文件运行在 live brain 仓库，依赖已装好）。
+// ARTIFACT 命令在临时 checkout（git worktree add 出来的 PR 分支）跑，那里没有 node_modules
+// → `node -e "import('./src/...')"` 报 `Cannot find package 'zod'`（run 56b5cc39 实证）。
+// 把宿主 node_modules 注入 NODE_PATH，让临时目录里的命令能解析到 brain 依赖。
+// packages/brain/node_modules + 仓库根 node_modules 都进，覆盖 hoist 与未 hoist 两种装法。
+export const HOST_NODE_PATH = (() => {
+  try {
+    const dir = path.dirname(fileURLToPath(import.meta.url)); // .../packages/brain/src/workflows
+    return [
+      path.resolve(dir, '../../node_modules'),       // packages/brain/node_modules
+      path.resolve(dir, '../../../../node_modules'),  // 仓库根 node_modules
+    ].join(path.delimiter);
+  } catch {
+    return '';
+  }
+})();
+
+// ARTIFACT 命令子进程 env：注入 NODE_PATH 让临时 checkout 能解析宿主依赖。
+export function artifactGateEnv(nodePath = HOST_NODE_PATH) {
+  return {
+    ...process.env,
+    NODE_PATH: [nodePath, process.env.NODE_PATH].filter(Boolean).join(path.delimiter),
+  };
+}
+
+// 依赖/环境类错误判定：门的本职是抓"实现没做"，不是抓"门自己环境穷"。
+// 命中（Cannot find package / MODULE_NOT_FOUND / Cannot find module）→ fail-open 跳过，
+// 不算被测者（generator）的失败。
+export function isDependencyError(detail) {
+  return /Cannot find package|ERR_MODULE_NOT_FOUND|MODULE_NOT_FOUND|Cannot find module/i.test(detail || '');
+}
+
 /**
- * 逐条跑 ARTIFACT 命令，任一非零退出 → ok=false。
+ * 逐条跑 ARTIFACT 命令，任一真断言失败（非依赖类）→ ok=false。
+ * 依赖/环境类错误 → 记 skipped（fail-open，warning），不计 FAIL。
  * @param {object} args
  * @param {string[]} args.commands
  * @param {string} args.cwd
- * @param {Function} [args.execShell]  (cmd, {cwd, timeout}) => Promise，非零退出须 reject
+ * @param {Function} [args.execShell]  (cmd, {cwd, timeout, nodePath}) => Promise，非零退出须 reject
  * @param {number} [args.timeoutMs]
- * @returns {Promise<{ok:boolean, failures:{cmd:string,error:string}[]}>}
+ * @param {string} [args.nodePath]     注入 NODE_PATH（默认 HOST_NODE_PATH）
+ * @returns {Promise<{ok:boolean, failures:{cmd:string,error:string}[], skipped:{cmd:string,error:string}[]}>}
  */
-export async function runArtifactGate({ commands, cwd, execShell, timeoutMs = 30000 }) {
-  const run = execShell || ((cmd, o) => execFileDefault('bash', ['-c', cmd], { cwd: o.cwd, timeout: o.timeout }));
+export async function runArtifactGate({ commands, cwd, execShell, timeoutMs = 30000, nodePath = HOST_NODE_PATH }) {
+  const run = execShell
+    || ((cmd, o) => execFileDefault('bash', ['-c', cmd], { cwd: o.cwd, timeout: o.timeout, env: artifactGateEnv(o.nodePath) }));
   const failures = [];
+  const skipped = [];
   for (const cmd of commands || []) {
     try {
-      await run(cmd, { cwd, timeout: timeoutMs });
+      await run(cmd, { cwd, timeout: timeoutMs, nodePath });
     } catch (e) {
       const detail = (e?.stderr || e?.message || 'non-zero exit').toString().slice(0, 300);
+      if (isDependencyError(detail)) {
+        // 门的环境失败 ≠ 被测者的失败：fail-open 跳过，warning 记录，不打回 generator。
+        console.warn(`[artifact-gate] 命令因依赖/环境缺失跳过（fail-open，不计 FAIL）：${cmd} → ${detail}`);
+        skipped.push({ cmd, error: detail });
+        continue;
+      }
       failures.push({ cmd, error: detail });
     }
   }
-  return { ok: failures.length === 0, failures };
+  return { ok: failures.length === 0, failures, skipped };
 }
 
 /**
@@ -743,8 +905,15 @@ export async function verifyContractArtifactsForPr(
   const sd = sprintDir || 'sprints';
 
   // fetch PR 分支（确保 origin/<prBranch> 在本地）
+  // 必须用显式 refspec <branch>:refs/remotes/origin/<branch>：裸 `git fetch origin <branch>`
+  // 只更新 FETCH_HEAD，不更新 refs/remotes/origin/<branch> → 后续 `git show origin/<branch>:...`
+  // 必 `invalid object name` → catch fail-open → 门没关（与 git-fence.js 同约定，修当天每条 run fail-open）。
   try {
-    await execFile('git', ['-C', worktreePath, 'fetch', 'origin', prBranch], { timeout: 60_000 });
+    await execFile(
+      'git',
+      ['-C', worktreePath, 'fetch', 'origin', `${prBranch}:refs/remotes/origin/${prBranch}`],
+      { timeout: 60_000 }
+    );
   } catch (e) {
     console.warn(`[artifact-gate] fetch ${prBranch} 失败（fail-open）：${e.message}`);
     return { ran: false };
@@ -791,22 +960,96 @@ export async function verifyContractArtifactsForPr(
   }
 
   try {
-    const { ok, failures } = await runGate(commands, checkoutDir);
-    return { ran: true, ok, failures };
+    const { ok, failures, skipped } = await runGate(commands, checkoutDir);
+    return { ran: true, ok, failures, skipped: skipped || [] };
   } finally {
     await rmWorktree(checkoutDir);
   }
 }
 
-// evaluateContractNode — 单一 evaluator pre-merge gate（对齐 Anthropic 官方 Harness 设计）。
+// finalizeEvaluation — 运动员（evaluator agent）算出 verdict 后，过「独立裁判」门再返回。
+// 三权分立：agent 保留人类式执行权（运动员），证据自动留痕（摄像头），裁判独立判读（运动员不能自发奖牌）。
+// 仅 agent verdict===PASS 时调裁判复核；agent FAIL 直接透传走 fix loop（runJudgeGate 内部短路）。
+async function finalizeEvaluation(state, opts, ctx) {
+  const judgeGate = opts.runJudgeGate || runJudgeGate;
+  const res = await judgeGate(
+    {
+      agentVerdict: ctx.agentVerdict,
+      agentFeedback: ctx.agentFeedback,
+      transcript: ctx.transcript || '',
+      brainResult: ctx.brainResult || null,
+      worktreePath: state.worktreePath,
+      sprintDir: ctx.sprintDir,
+      instanceLabel: ctx.containerId,
+      // 证据供给：让裁判读 evaluator 完整 stdout 转录（#3345 forensics 文件），不止 callback 4KB tail。
+      promptDir: getHostPromptDir(),
+      taskId: state.task?.id,
+    },
+    {
+      judgeFn: opts.judgeFn,
+      collectEvidence: opts.collectEvidence,
+      strict: opts.judgeStrict,
+      config: opts.toapisConfig,
+      fetchFn: opts.judgeFetchFn,
+    }
+  );
+  return {
+    evaluate_verdict: res.verdict,
+    evaluate_error: res.verdict === 'FAIL'
+      ? (res.feedback || ctx.agentFeedback || 'evaluator/judge returned FAIL')
+      : null,
+  };
+}
+
+// evaluateContractNode — evaluator agent pre-merge gate + 独立裁判（对齐 Anthropic 官方 Harness 设计）。
 // Anthropic 原文：一个 Sprint = 一个 Generator + 一个 Evaluator，evaluate 在 merge 之前跑，
 // PASS → merge；FAIL → 带具体反馈打回 Generator 重写（无限对抗）。
 // IS_FINAL_E2E=true：跑 contract-draft.md ## E2E 验收 完整脚本（不再分 Mode A / Mode B）。
+// 用户拍板架构：evaluator agent 亲手执行验证（执行权不被代码取代），回调后由独立 DeepSeek 裁判
+// 据【证据 + 合同 + Golden Path】复核；agent 说 PASS 但裁判 FAIL/覆盖缺步 → 终判 FAIL（裁判优先）。
 export async function evaluateContractNode(state, opts = {}) {
   // 幂等门：Brain 重启或 outer graph 重进时，evaluate_verdict 已存在则直接返回，不重复 spawn。
   if (state.evaluate_verdict) {
     console.log(`[evaluator] idempotent passthrough verdict=${state.evaluate_verdict}`);
     return { evaluate_verdict: state.evaluate_verdict };
+  }
+
+  // 终态门（P2）：起 evaluator 容器前查 initiative 终态。已终态 → 写明确终态 status='aborted'，
+  // routeAfterEvaluate 据 status==='aborted' 走 END，不浪费一个 evaluator 容器、不进 fix loop。
+  const checkTerminal = opts.isInitiativeTerminal || isInitiativeTerminal;
+  const termE = await checkTerminal(state, opts);
+  if (termE.terminal) {
+    console.warn(`[evaluator] initiative ${termE.initiativeId} 已终态 status=${termE.status} → 中止 evaluate`);
+    return {
+      status: 'aborted',
+      evaluate_verdict: 'FAIL',
+      evaluate_error: `initiative already terminal (status=${termE.status}); abort evaluate`,
+    };
+  }
+
+  // merged-short-circuit（P1 收尾）：PR 已 merge 时直接 PASS，不 checkout 已删分支跑 E2E、不触发 fix loop。
+  // 本系统每次 merge 触发 auto-version 重启 brain → checkpoint 大概率断在 merge 节点后 → 成功的
+  // harness run 恢复时会重跑 evaluate；此时 PR 已 merge、分支已删 → checkout 失败 / E2E FAIL →
+  // routeAfterEvaluate 路由 fix → 在【已 merge 的 PR】上 spawn generator（fix loop）。这是常态而非边缘。
+  // 合同已过 CI 合并即视为达标 → PASS。mergePrNode 对已 merge PR 幂等（already-merged→success→end）。
+  const checkPrMerged = opts.checkPrMerged || (async (prUrl) => {
+    try {
+      const { stdout } = await execFileDefault(
+        'gh', ['pr', 'view', prUrl, '--json', 'state', '-q', '.state'], { timeout: 10_000 }
+      );
+      return stdout.trim() === 'MERGED';
+    } catch (err) {
+      // fail-open：查不到状态就当未 merge，继续正常 evaluate（绝不因查询失败误判 PASS）
+      console.warn(`[evaluator] merged-check gh pr view 失败（fail-open，继续正常 evaluate）：${err.message}`);
+      return false;
+    }
+  });
+  if (state.pr_url) {
+    const merged = await checkPrMerged(state.pr_url);
+    if (merged) {
+      console.log(`[evaluator] PR 已 merge（${state.pr_url}）→ merged-short-circuit verdict=PASS（不 checkout 已删分支/不触发 fix loop）`);
+      return { evaluate_verdict: 'PASS', evaluate_error: null };
+    }
   }
 
   const spawnFn = opts.spawnDetached || spawnDockerDetached;
@@ -834,11 +1077,13 @@ export async function evaluateContractNode(state, opts = {}) {
 
   const rand = crypto.randomUUID().slice(0, 8);
   const safeId = String(task.id).replace(/[^a-zA-Z0-9-]/g, '');
-  const containerId = `harness-evaluate-${safeId}-r${state.fix_round || 0}-${rand}`;
+  // let（非 const）：B-reentry 幂等门可能把 containerId 改成已存在的活容器名（复用、不重 spawn）。
+  let containerId = `harness-evaluate-${safeId}-r${state.fix_round || 0}-${rand}`;
   // B10: evaluate_contract 在 harness-task graph 内，thread_lookup 必须用 task graph thread_id
   // B47: final_e2e_fix_count 从 payload 读，与 config thread_id 保持一致
+  // 合同绑定：与 spawnNode 同口径追加合同后缀，保证 callback router 反查命中同一线程。
   const threadFixRound = state.task?.payload?.final_e2e_fix_count ?? 0;
-  const threadId = `harness-task:${initiativeId}:${task.id}:fix${threadFixRound}`;
+  const threadId = `harness-task:${initiativeId}:${task.id}:fix${threadFixRound}${harnessContractThreadSuffix(state.contractBranch)}`;
 
   // B14: PR 分支名传给 evaluator（Step 0a git checkout 用，不传则永远跑 main 看不到改动）
   let prBranchEnv = state.pr_branch || '';
@@ -867,6 +1112,10 @@ export async function evaluateContractNode(state, opts = {}) {
       { prBranch: prBranchEnv, sprintDir, worktreePath: state.worktreePath },
       {}
     );
+    if (gate && gate.ran && gate.skipped && gate.skipped.length) {
+      // 依赖/环境类命令已 fail-open 跳过（不计 FAIL），仅记录可观测性，门继续放行真断言判定。
+      console.warn(`[evaluator] ARTIFACT 门跳过 ${gate.skipped.length} 条依赖/环境失败命令（fail-open，门的环境失败不算 generator 失败）`);
+    }
     if (gate && gate.ran && gate.ok === false) {
       const detail = (gate.failures || [])
         .map((f) => `• ${f.cmd} → ${f.error}`)
@@ -881,6 +1130,50 @@ export async function evaluateContractNode(state, opts = {}) {
   } catch (gateErr) {
     // 门本身异常 → fail-open，不误杀，继续走 LLM evaluator
     console.warn(`[evaluator] ARTIFACT 门执行异常（fail-open）：${gateErr.message}`);
+  }
+
+  // ── 确定性 Contract Gate 门（反作弊红线代码化，与 ARTIFACT 门并列）─────────────
+  // LLM evaluator 之前先跑 brain 侧确定性 gate（弱 oracle / 作弊 / 环境能力 / 域规则，零 LLM）。
+  // 命中（ok===false）→ 直接 FAIL（挡 merge、打回 generator，feedback 为结构化命中清单），
+  // 不浪费一个 evaluator 容器（每个 ~$5-7）。门跑不起来（异常）→ fail-open，转 LLM evaluator
+  // 兜底（与既有 ARTIFACT 门同样的容错语义；fail-closed 由 CLI/库边界负责）。
+  const runGate = opts.runContractGate || runContractGate;
+  const gateDir = opts.contractGateDir
+    || (state.worktreePath ? path.join(state.worktreePath, sprintDir) : null);
+  if (gateDir) {
+    let cg = null;
+    try {
+      cg = await runGate(gateDir, {});
+    } catch (cgErr) {
+      console.warn(`[evaluator] Contract Gate 执行异常（fail-open，转 LLM evaluator）：${cgErr.message}`);
+      cg = null;
+    }
+    if (cg && cg.ok === false) {
+      const feedback = formatGateReport(cg, `${sprintDir}/contract-dod.md`).slice(0, 1200);
+      // P1 修复：Contract Gate 扫的是合同产物（contract-dod.md / contract-draft.md）本身。命中 =
+      // 合同质量缺陷（弱断言/作弊/缺工具），责任在 GAN proposer（有权改合同），不是 generator。
+      // CONTRACT IS LAW：generator 无权改合同 → 进通用 fix loop 只会同一行反复命中空转烧轮次
+      // （实证 run ea622a94 r0/r1/r2 三连）。故 fail-fast：标记 failure_class=contract_invalid，
+      // routeAfterEvaluate 路由直接终止 initiative（END），feedback 带结构化命中清单供重发时 proposer 参考。
+      if (isContractArtifactFile(cg.contractFile)) {
+        console.error(`[evaluator] Contract Gate FAIL（合同产物 ${cg.contractFile} 不合格，责任在 GAN proposer，终止 initiative 不进 generator fix loop）：\n${feedback}`);
+        // END 终态规则：contract_invalid 经 routeAfterEvaluate → END 直接终止 initiative，
+        // 子图层就写明确 status='contract_invalid'（不再依赖外层 runSubTaskNode 把 queued 上浮成
+        // failure_class）。外层 #3361 的 failure_class 上浮保留为兼容兜底。
+        return {
+          evaluate_verdict: 'FAIL',
+          status: 'contract_invalid',
+          failure_class: 'contract_invalid',
+          evaluate_error: `Contract Gate 命中合同产物（${cg.contractFile}）——合同质量缺陷责任在 GAN proposer（generator 无权改合同），终止 initiative，请重发让 proposer 修复后再跑：\n${feedback}`,
+        };
+      }
+      // 命中含实现侧文件（理论分支：当前 gate 只扫合同产物）→ 维持现有 fix loop 行为（generator 可修）。
+      console.error(`[evaluator] Contract Gate FAIL（含实现侧命中，spawn 前拦截，进 fix loop）：\n${feedback}`);
+      return {
+        evaluate_verdict: 'FAIL',
+        evaluate_error: `Contract Gate 命中（spawn 前确定性拦截，不浪费 evaluator 容器）：\n${feedback}`,
+      };
+    }
   }
 
   const skillContent = loadSkillContent('harness-evaluator');
@@ -907,52 +1200,137 @@ export async function evaluateContractNode(state, opts = {}) {
   }
   const accountEnv = acctOpts.env;
 
-  try {
-    await spawnFn({
-      task: { ...task, task_type: 'harness_evaluate' },
-      prompt: evaluatePrompt,
-      worktreePath: state.worktreePath,
-      containerId,
-      env: {
-        ...accountEnv,
-        CECELIA_TASK_TYPE: 'harness_evaluate',
-        HARNESS_NODE: 'evaluate_contract',
-        HARNESS_INITIATIVE_ID: initiativeId,
-        HARNESS_TASK_ID: task.id,
-        IS_FINAL_E2E: 'true',
-        JOURNEY_TYPE: state.task?.payload?.journey_type || 'autonomous',
-        GITHUB_TOKEN: token,
-        CONTRACT_BRANCH: state.contractBranch || payload.contract_branch || '',
-        PR_URL: state.pr_url || '',
-        PR_BRANCH: prBranchEnv,
-        SPRINT_DIR: sprintDir,
-        TARGET_ENV: targetEnv,
-        GITHUB_REPO: githubRepo,
-        WINDOWS_CLOUD_WORKFLOW: windowsCloudWorkflow,
-        BRAIN_URL: 'http://host.docker.internal:5221',
-        HARNESS_CALLBACK_URL: `http://host.docker.internal:5221/api/brain/harness/callback/${containerId}`,
-        DB: 'postgresql://host.docker.internal/cecelia',
-        ...(buildHarnessGoalSettings('The evaluation is complete and .brain-result.json has been written with verdict=PASS or FAIL')
-          ? { CECELIA_GOAL_SETTINGS: buildHarnessGoalSettings('The evaluation is complete and .brain-result.json has been written with verdict=PASS or FAIL') }
-          : {}),
-      },
-    });
-  } catch (err) {
-    return { evaluate_verdict: 'FAIL', evaluate_error: `spawn: ${err.message}` };
+  // evaluator SKILL 变量表声称会注入 WECHAT_RPA_WORKFLOW，实际之前没注入（靠 skill 内
+  // fallback 默认值兜着）。两条路径（host / docker）都补上，payload 可覆盖。
+  const wechatRpaWorkflow = payload.wechat_rpa_workflow || 'e2e-wechat-rpa.yml';
+  const goalSettings = buildHarnessGoalSettings(
+    'The evaluation is complete and .brain-result.json has been written with verdict=PASS or FAIL'
+  );
+
+  // 两路径共享的基础 env（BRAIN_URL / HARNESS_CALLBACK_URL / DB 三个按环境分别覆盖）。
+  const baseEvalEnv = {
+    ...accountEnv,
+    CECELIA_TASK_TYPE: 'harness_evaluate',
+    HARNESS_NODE: 'evaluate_contract',
+    HARNESS_INITIATIVE_ID: initiativeId,
+    HARNESS_TASK_ID: task.id,
+    IS_FINAL_E2E: 'true',
+    JOURNEY_TYPE: state.task?.payload?.journey_type || 'autonomous',
+    GITHUB_TOKEN: token,
+    CONTRACT_BRANCH: state.contractBranch || payload.contract_branch || '',
+    PR_URL: state.pr_url || '',
+    PR_BRANCH: prBranchEnv,
+    SPRINT_DIR: sprintDir,
+    TARGET_ENV: targetEnv,
+    GITHUB_REPO: githubRepo,
+    WINDOWS_CLOUD_WORKFLOW: windowsCloudWorkflow,
+    WECHAT_RPA_WORKFLOW: wechatRpaWorkflow,
+    ...(goalSettings ? { CECELIA_GOAL_SETTINGS: goalSettings } : {}),
+  };
+
+  // ── target_environment 路由 ─────────────────────────────────────────────
+  // mac_web（Cecelia Dashboard，localhost:5174/5221 直接可达 + Playwright 需要真实浏览器）
+  // 必须在宿主 Mac 上跑，不能进无浏览器的 docker 容器（物理不可能做 UI 验证）。
+  // executeOnHost 同步等结果（不走 thread_lookup + interrupt 回调），执行完直接读
+  // .brain-result.json 产生与 docker 回调路径完全相同语义的 state 更新。
+  if (targetEnv === 'mac_web') {
+    const execHost = opts.executeOnHost || executeOnHost;
+    let hostResult;
+    try {
+      hostResult = await execHost({
+        task: { ...task, task_type: 'harness_evaluate' },
+        prompt: evaluatePrompt,
+        worktreePath: state.worktreePath,
+        // host 上 host.docker.internal 不可解析 → 一律 localhost。
+        // WORKSPACE_PATH 由 executeOnHost 自动注入为 worktreePath。
+        env: {
+          ...baseEvalEnv,
+          BRAIN_URL: 'http://localhost:5221',
+          HARNESS_CALLBACK_URL: `http://localhost:5221/api/brain/harness/callback/${containerId}`,
+          DB: 'postgresql://localhost/cecelia',
+        },
+      });
+    } catch (err) {
+      return { evaluate_verdict: 'FAIL', evaluate_error: `host-exec: ${err.message}` };
+    }
+
+    if (!hostResult || hostResult.exit_code !== 0) {
+      const detail = hostResult?.timed_out
+        ? 'host evaluator timed out'
+        : `host evaluator exit_code=${hostResult?.exit_code ?? 'unknown'}`;
+      return { evaluate_verdict: 'FAIL', evaluate_error: detail };
+    }
+
+    // 镜像 docker 回调路径语义：读 .brain-result.json + schema 校验 → verdict/feedback。
+    // 读文件失败 / schema_mismatch → FAIL + evaluate_error（host 路径不 throw，直接收敛）。
+    try {
+      const data = await readAndValidateBrainResult(state.worktreePath, EvaluatorOutputSchema);
+      const normV = normalizeVerdict(data.verdict);
+      const feedback = data.feedback || data.log_excerpt || data.failed_step || null;
+      return await finalizeEvaluation(state, opts, {
+        agentVerdict: normV,
+        agentFeedback: feedback,
+        transcript: hostResult?.stdout || '',
+        brainResult: data,
+        sprintDir,
+        containerId,
+      });
+    } catch (e) {
+      return { evaluate_verdict: 'FAIL', evaluate_error: `host result read: ${e.message}` };
+    }
   }
 
+  // ── docker 路径（local_api / windows_cloud 等，默认）──────────────────────
+  // B-reentry 幂等门：LangGraph interrupt() 重入会让本节点从头重跑——而 spawn 在 interrupt 之前，
+  // 故每次 resume 都会再 spawn 一个新容器（实证 evaluate-ws1-r4 同时 4 个）。#3372 裁判给回调链路加了
+  // ~6s，拉长了 evaluate 回调窗口，放大了并发 resume 同时重 spawn。spawn 前先查同 (task, fix_round)
+  // 是否已有活 evaluate 容器：有则复用其 containerId、跳过 spawn + thread_lookup INSERT，直接进 interrupt
+  // 等它回调（同 B59-idem proposer「已存在跳过」思路）。检测失败（docker 不可用等）→ fail-open，正常 spawn。
+  const findLiveEval = opts.findLiveEvaluateContainer || findLiveEvaluateContainerDefault;
+  const evalNamePrefix = `harness-evaluate-${safeId}-r${state.fix_round || 0}-`;
+  let reusedLiveContainer = false;
   try {
-    await dbPool.query(
-      // B10: graph_name='harness-task' (统一 namespace) — evaluate_contract 是 task graph 内的节点。
-      // lookup router 用 harness-task graph compile，callback resume 用同一 thread_id 才能找到
-      // 真正 interrupt 等待的 state。
-      `INSERT INTO walking_skeleton_thread_lookup (container_id, thread_id, graph_name, status)
-       VALUES ($1, $2, 'harness-task', 'spawning')
-       ON CONFLICT (container_id) DO NOTHING`,
-      [containerId, threadId]
-    );
-  } catch (err) {
-    console.warn(`[harness-task.graph] evaluate thread_lookup INSERT failed cid=${containerId}: ${err.message}`);
+    const live = await findLiveEval(evalNamePrefix, {});
+    if (live) {
+      console.warn(`[evaluator] 检测到同 (task=${task.id}, r${state.fix_round || 0}) 已有活 evaluate 容器 ${live} → 复用、跳过重 spawn（B-reentry 幂等）`);
+      containerId = live;
+      reusedLiveContainer = true;
+    }
+  } catch (e) {
+    console.warn(`[evaluator] 活容器检测失败（fail-open，正常 spawn）：${e.message}`);
+  }
+
+  if (!reusedLiveContainer) {
+    try {
+      await spawnFn({
+        task: { ...task, task_type: 'harness_evaluate' },
+        prompt: evaluatePrompt,
+        worktreePath: state.worktreePath,
+        containerId,
+        env: {
+          ...baseEvalEnv,
+          BRAIN_URL: 'http://host.docker.internal:5221',
+          HARNESS_CALLBACK_URL: `http://host.docker.internal:5221/api/brain/harness/callback/${containerId}`,
+          DB: 'postgresql://host.docker.internal/cecelia',
+        },
+      });
+    } catch (err) {
+      return { evaluate_verdict: 'FAIL', evaluate_error: `spawn: ${err.message}` };
+    }
+
+    try {
+      await dbPool.query(
+        // B10: graph_name='harness-task' (统一 namespace) — evaluate_contract 是 task graph 内的节点。
+        // lookup router 用 harness-task graph compile，callback resume 用同一 thread_id 才能找到
+        // 真正 interrupt 等待的 state。
+        `INSERT INTO walking_skeleton_thread_lookup (container_id, thread_id, graph_name, status)
+         VALUES ($1, $2, 'harness-task', 'spawning')
+         ON CONFLICT (container_id) DO NOTHING`,
+        [containerId, threadId]
+      );
+    } catch (err) {
+      console.warn(`[harness-task.graph] evaluate thread_lookup INSERT failed cid=${containerId}: ${err.message}`);
+    }
   }
 
   // Await callback via LangGraph interrupt (mirrors awaitCallbackNode pattern).
@@ -978,10 +1356,14 @@ export async function evaluateContractNode(state, opts = {}) {
     const fileVerdict = await readVerdictFile(state.worktreePath);
     if (fileVerdict) {
       const normV = normalizeVerdict(fileVerdict.verdict);
-      return {
-        evaluate_verdict: normV,
-        evaluate_error: normV === 'FAIL' ? (fileVerdict.feedback || 'evaluator returned FAIL') : null,
-      };
+      return await finalizeEvaluation(state, opts, {
+        agentVerdict: normV,
+        agentFeedback: fileVerdict.feedback || null,
+        transcript: stdout,
+        brainResult: fileVerdict,
+        sprintDir,
+        containerId,
+      });
     }
   }
 
@@ -1001,10 +1383,14 @@ export async function evaluateContractNode(state, opts = {}) {
       }
       const normV = normalizeVerdict(parsed.data.verdict);
       const feedback = parsed.data.feedback || parsed.data.log_excerpt || parsed.data.failed_step || null;
-      return {
-        evaluate_verdict: normV,
-        evaluate_error: normV === 'FAIL' ? (feedback || 'evaluator returned FAIL') : null,
-      };
+      return await finalizeEvaluation(state, opts, {
+        agentVerdict: normV,
+        agentFeedback: feedback,
+        transcript: stdout,
+        brainResult: parsed.data,
+        sprintDir,
+        containerId,
+      });
     } catch (e) {
       if (e.code === 'schema_mismatch') throw e;  // 重新抛出，不被 fallback 吞掉
       // .brain-result.json 不存在或其他错误，继续 Protocol v1 fallback
@@ -1017,10 +1403,17 @@ export async function evaluateContractNode(state, opts = {}) {
   const verdict = normalizeVerdict(verdictRaw);
   const errorMsg = verdict === 'FAIL' ? (cbPayload.error || extractField(stdout, 'error') || 'evaluator returned FAIL') : null;
 
-  return { evaluate_verdict: verdict, evaluate_error: errorMsg };
+  return await finalizeEvaluation(state, opts, {
+    agentVerdict: verdict,
+    agentFeedback: errorMsg,
+    transcript: stdout,
+    brainResult: null,
+    sprintDir,
+    containerId,
+  });
 }
 
-function routeAfterFix(state) {
+export function routeAfterFix(state) {
   if (state.error) return 'end';
   // B18: 不再 cap fix_round（用户决定不设硬上限）
   // convergence 不是数轮次，是 verdict 真 PASS；MAX_FIX_ROUNDS 常量保留向后兼容
@@ -1055,7 +1448,9 @@ export function buildHarnessTaskGraph() {
     .addConditionalEdges('poll_ci', routeAfterPoll, {
       end: END, merge: 'merge_pr', evaluate: 'evaluate_contract', fix: 'fix_dispatch', timeout: END, poll: 'poll_ci',
     })
-    .addConditionalEdges('evaluate_contract', routeAfterEvaluate, { merge: 'merge_pr', fix: 'fix_dispatch' })
+    // P1: end = Contract Gate 命中合同产物（failure_class=contract_invalid）→ 终止 initiative，
+    // 不进 generator fix loop（generator 无权改合同，进 fix loop 必空转）。
+    .addConditionalEdges('evaluate_contract', routeAfterEvaluate, { merge: 'merge_pr', fix: 'fix_dispatch', end: END })
     .addConditionalEdges('merge_pr', routeAfterMergePr, { end: END, poll: 'poll_ci' })
     .addConditionalEdges('fix_dispatch', routeAfterFix, {
       end: END, failed: END, spawn: 'spawn',

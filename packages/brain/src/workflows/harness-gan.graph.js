@@ -30,6 +30,8 @@ import {
 } from '@langchain/langgraph';
 import { fetchAndShowOriginFile } from '../lib/git-fence.js';
 import { verifyContractProposerOutput } from '../lib/contract-verify.js';
+// P1 治本：GAN 收敛（reviewer APPROVED）前置跑同一确定性 Contract Gate（#3348 共享库，禁复制）。
+import { evaluateContractText, formatGateReport } from '../lib/contract-gate.js';
 import { LLM_RETRY } from './retry-policies.js';
 import { loadSkillContent, readBrainResult, ReviewerOutputSchema } from '../harness-shared.js';
 import { makeSessionRecord as _makeSessionRecord } from '../harness-session-bridge.js';
@@ -144,6 +146,23 @@ export function detectConvergenceTrend(rubricHistory) {
 // 阈值固定 7（对齐 reviewer SKILL v6.4.0+ changelog: 单轮阈值固定 7，不随轮次放宽）。
 export function thresholdForRound(_round) {
   return 7;
+}
+
+// GAN 子图 thread_id 按父图 fresh-start 代际（attemptN = tasks.execution_attempts）版本化。
+// 旧实现用裸 String(taskId)，与父图版本化 thread（harness-initiative:id:attemptN）不一致 →
+// 父图 fresh-start（新 attempt）时 GAN 复用同一裸 thread 的旧 checkpoint，叠加 proposer 旧分支复用 →
+// fresh-start 空转无法自愈。带 attemptN 后每代拿干净 thread；同一 attempt 内（含 brain restart resume，
+// execution_attempts 不变）thread 稳定 → 仍能正确 resume。导出供测试。
+export function ganThreadIdFor(taskId, attemptN = 0) {
+  return `${taskId}:gan:${Number(attemptN) || 0}`;
+}
+
+// proposer 每轮 push 的分支名。带 attempt 后缀，使父图每次 fresh-start 的 proposer 分支互不相同 →
+// B59-idem 幂等门不会跨 attempt 复用上一代旧合同（旧 bug：分支只按 round+taskId 命名 → fresh-start 后
+// 每轮"合同已存在"跳过 spawn，proposer 从不产新合同）。同一 attempt 内分支名稳定 → 幂等仍在 attempt 内生效。
+// 通配 cp-harness-propose-* 的清理/查询逻辑不受后缀影响。导出供测试。
+export function proposeBranchFor(taskId, round, attemptN = 0) {
+  return `cp-harness-propose-r${round}-${String(taskId).slice(0, 8)}-a${Number(attemptN) || 0}`;
 }
 
 // 根据 rubric scores 和 round 计算权威 verdict（代码判 PASS，不信 LLM 文字）
@@ -429,6 +448,11 @@ export function createGanContractNodes(executor, ctx) {
     taskId, initiativeId, sprintDir, worktreePath, githubToken, baseRepo,
     plannerOutput = '',
     budgetCapUsd = 10,
+    // attemptN: 父图 fresh-start 代际（来自 tasks.execution_attempts）。proposer 分支名带 attempt 后缀，
+    // 使父图每次 fresh-start 的 proposer 分支互不相同 → B59-idem 幂等门不会跨 attempt 复用上一代旧合同
+    // （旧 bug：分支只按 round+taskId 命名 → fresh-start 后每轮"合同已存在"跳过 spawn，proposer 从不产新合同，
+    // GAN 空转无法自愈）。同一 attempt 内分支名稳定 → B59-idem 幂等仍在 attempt 内生效。
+    attemptN = 0,
     readContractFile = defaultReadContractFile,
     fetchOriginFile: _fetchOriginFile = fetchAndShowOriginFile,
     verifyProposer = verifyContractProposerOutput,
@@ -447,7 +471,8 @@ export function createGanContractNodes(executor, ctx) {
 
   async function proposer(state) {
     const nextRound = (state.round || 0) + 1;
-    const computedBranch = `cp-harness-propose-r${nextRound}-${taskId.slice(0, 8)}`;
+    // attempt 后缀：跨父图 fresh-start 隔离分支，防 B59-idem 复用上一代旧合同（同 attempt 内仍幂等）。
+    const computedBranch = proposeBranchFor(taskId, nextRound, attemptN);
 
     // B59-idem 幂等门：proposer 节点配 retryPolicy=LLM_RETRY(maxAttempts=3)，节点内偶发 throw
     // 会让 LangGraph 重试整节点 → 重复 spawn LLM 容器（实证每轮 2-3 个，纯浪费）。
@@ -684,6 +709,38 @@ export function createGanContractNodes(executor, ctx) {
       };
     }
 
+    // P1 治本：reviewer 判 APPROVED 后、GAN 退出之前，对合同产物跑同一确定性 Contract Gate
+    // （#3348 共享库）。命中 = 合同含弱断言/作弊/缺工具的硬红线 → 不退出 GAN，verdict 改 REVISION，
+    // 把命中清单作为 feedback 拼进下一轮 proposer 输入（走现有 REVISION 回环），proposer 修合同。
+    // 这样弱合同根本到不了 generator（治本）。gate 命中是确定性反馈（行号+规则名），proposer
+    // 一两轮内应修掉——GAN 无轮数上限是刻意设计，但 gate 命中不是轮数问题。
+    // gate 执行异常 → fail-open，不阻塞 GAN 收敛（语义判断仍归 reviewer）。
+    // 只对确定性红线（作弊/弱断言/缺工具/域规则）拦截，排除 structural/no-assertion 元规则：
+    // GAN 阶段合同的验收脚本可能在外部 tests/ 文件里（contract-draft.md 不内联 bash），
+    // 此时 structural/no-assertion 是格式误报；"无可验收断言"由 evaluator 阶段读 contract-dod.md 兜底。
+    let gateFeedback = '';
+    if (verdict === 'APPROVED' && state.contractContent) {
+      try {
+        const cg = evaluateContractText(state.contractContent);
+        const blockHits = (cg.hits || []).filter(
+          (h) => !h.exempted && h.ruleId !== 'structural/no-assertion'
+        );
+        const blockEnv = (cg.envMissing || []).filter((e) => !e.exempted);
+        if (blockHits.length || blockEnv.length) {
+          const report = formatGateReport(
+            { hits: blockHits, exemptions: [], envMissing: blockEnv },
+            `${sprintDir}/contract-draft.md`
+          ).slice(0, 1200);
+          gateFeedback =
+            '## 确定性 Contract Gate 命中（合同硬红线，必须修复，非主观意见）\n' + report;
+          console.warn(`[harness-gan] round=${currentRound} Contract Gate 命中 → 不退出 GAN，verdict 改 REVISION 打回 proposer 修合同：\n${gateFeedback}`);
+          verdict = 'REVISION';
+        }
+      } catch (gateErr) {
+        console.warn(`[harness-gan] Contract Gate 执行异常（fail-open，不阻塞收敛）：${gateErr.message}`);
+      }
+    }
+
     const patch = {
       costUsd: costAfterSpawn,
       verdict,
@@ -691,7 +748,10 @@ export function createGanContractNodes(executor, ctx) {
       reviewerNoVerdictStreak: noVerdictStreak,
     };
     if (newHistoryEntry) patch.rubricHistory = [newHistoryEntry];
-    if (verdict !== 'APPROVED') patch.feedback = resultData.feedback || '';
+    // verdict 非 APPROVED 时回传 feedback：gate 命中清单优先（确定性红线），再拼 reviewer 散文反馈。
+    if (verdict !== 'APPROVED') {
+      patch.feedback = [gateFeedback, resultData.feedback].filter(Boolean).join('\n\n') || '';
+    }
     return patch;
   }
 
@@ -763,6 +823,9 @@ export async function runGanContractGraph(opts) {
     executor, worktreePath, githubToken, baseRepo,
     plannerOutput = '',
     budgetCapUsd = 10,
+    // attemptN: 父图 fresh-start 代际（tasks.execution_attempts）。用于把 GAN 子图 thread_id 与
+    // proposer 分支按 attempt 版本化，让父图 fresh-start 拿到干净的 GAN 状态而非复用上一代旧 checkpoint。
+    attemptN = 0,
     checkpointer,
     readContractFile,
     fetchOriginFile,
@@ -781,17 +844,19 @@ export async function runGanContractGraph(opts) {
 
   const nodes = createGanContractNodes(executor, {
     taskId, initiativeId, sprintDir, worktreePath, githubToken, baseRepo,
-    plannerOutput, budgetCapUsd, readContractFile, fetchOriginFile,
+    plannerOutput, budgetCapUsd, attemptN, readContractFile, fetchOriginFile,
     heartbeatFn,
   });
   const graph = buildGanContractGraph(nodes);
   const app = graph.compile({ checkpointer, durability: 'sync' });
 
+  const ganThreadId = ganThreadIdFor(taskId, attemptN);
+
   // B44 fix: 同步等 GAN 完整跑完再返回（WS3 async 已回退，根因 propose_branch 丢失）
   const finalState = await app.invoke(
     { prdContent, round: 0, costUsd: 0, feedback: null },
     {
-      configurable: { thread_id: String(taskId) },
+      configurable: { thread_id: ganThreadId },
       recursionLimit,
     }
   );

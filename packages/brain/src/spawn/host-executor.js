@@ -11,6 +11,7 @@
 
 import { spawn as nodeSpawn } from 'node:child_process';
 import { writeFileSync, mkdirSync, existsSync } from 'node:fs';
+import { randomBytes } from 'node:crypto';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -38,9 +39,11 @@ export async function executeOnHost(opts) {
   const timeoutMs = opts.timeoutMs || DEFAULT_TIMEOUT_MS;
   const worktreePath = opts.worktreePath || opts.worktree?.path || process.cwd();
 
-  // Write prompt to file for debug/audit (same pattern as docker-executor)
+  // Write prompt to file for debug/audit (same pattern as docker-executor).
+  // 含运行实例唯一后缀，同一 taskId 重跑互不覆盖（forensics-no-overwrite-r2）。
   if (!existsSync(HOST_PROMPT_DIR)) mkdirSync(HOST_PROMPT_DIR, { recursive: true });
-  writeFileSync(path.join(HOST_PROMPT_DIR, `${taskId}-host.prompt`), opts.prompt, 'utf8');
+  const runInstance = randomBytes(4).toString('hex');
+  writeFileSync(path.join(HOST_PROMPT_DIR, `${taskId}.${runInstance}-host.prompt`), opts.prompt, 'utf8');
 
   // Resolve claude-launch.sh relative to this package
   const thisDir = path.dirname(fileURLToPath(import.meta.url));

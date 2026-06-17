@@ -19,8 +19,9 @@ describe('spawnDockerDetached [BEHAVIOR]', () => {
   });
 });
 
-describe('writePromptFile (test hook) [BEHAVIOR]', () => {
-  it('exports writePromptFile via __test__', () => {
-    expect(typeof __test__.writePromptFile).toBe('function');
+describe('__test__ hook [BEHAVIOR]', () => {
+  it('暴露 buildDockerArgs；本地 writePromptFile 已删除（prompt 落盘统一走 forensics.promptFile）', () => {
+    expect(typeof __test__.buildDockerArgs).toBe('function');
+    expect(__test__.writePromptFile).toBeUndefined();
   });
 });

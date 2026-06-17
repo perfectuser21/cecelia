@@ -13,6 +13,7 @@ import { spawn } from '../spawn/index.js';
 import { spawnDockerDetached } from '../spawn/detached.js';
 import { resolveAccount } from '../spawn/middleware/account-rotation.js';
 import { parseDockerOutput, loadSkillContent } from '../harness-shared.js';
+import { harnessContractThreadSuffix } from '../harness-utils.js';
 import { parseTaskPlan, upsertTaskPlan } from '../harness-dag.js';
 import { ensureHarnessWorktree } from '../harness-worktree.js';
 import { resolveGitHubToken } from '../harness-credentials.js';
@@ -127,8 +128,9 @@ export async function prepInitiativeNode(state, opts = {}) {
     let initiative_run_id = null;
     try {
       const runInsert = await dbPool.query(
-        `INSERT INTO initiative_runs (initiative_id, phase, journey_type, journey_id)
-         VALUES ($1::uuid, 'A_contract', $2, $3)
+        `INSERT INTO initiative_runs (initiative_id, phase, journey_type, journey_id, okr_initiative_id)
+         VALUES ($1::uuid, 'A_contract', $2, $3,
+           (SELECT okr_initiative_id FROM harness_initiative_migration_map WHERE harness_task_id = $1::uuid))
          RETURNING id`,
         [initiativeId, journeyType, journeyId]
       );
@@ -372,7 +374,7 @@ export async function parsePrdNode(state) {
   }
   let taskPlan = null;
   try {
-    taskPlan = parseTaskPlan(state.plannerOutput);
+    taskPlan = parseTaskPlan(state.plannerOutput, { initiativeId: state.initiativeId });
   } catch (err) {
     // Planner v8 does not output task-plan.json — that is OK, inferTaskPlanNode reads from propose branch
     console.warn(`[harness-initiative-graph] parsePrd: parseTaskPlan returned null/error (${err.message}), will infer from propose branch`);
@@ -470,6 +472,17 @@ export async function runGanLoopNode(state, opts = {}) {
     const checkpointer = opts.checkpointer || await getPgCheckpointer();
     // B51: state.task.id === initiativeId（同一实体，非旧格式 task.initiative_id 字段）
     const heartbeatFn = () => writeDriverHeartbeat(dbPool, state.task.id).catch(() => {});
+    // attemptN：父图 fresh-start 代际。executor.js _driveHarnessInitiative 在 fresh-start 时
+    // 先 UPDATE tasks SET execution_attempts=新值 再 stream graph，故此处读到的是当前 attempt 的代际；
+    // 同一 attempt 内（含 brain restart resume）不变。传入 runGanContractGraph 把 GAN 子图 thread_id
+    // 与 proposer 分支按 attempt 版本化，防 fresh-start 复用上一代旧 GAN checkpoint / 旧 proposer 合同（空转无法自愈）。
+    let attemptN = 0;
+    try {
+      const r = await dbPool.query('SELECT execution_attempts FROM tasks WHERE id=$1::uuid', [state.task.id]);
+      attemptN = Number(r.rows?.[0]?.execution_attempts) || 0;
+    } catch (e) {
+      console.warn(`[ganLoop] 读 execution_attempts 失败（fallback attemptN=0）: ${e.message}`);
+    }
     const ganResult = await runGanContractGraph({
       taskId: state.task.id,
       initiativeId: state.initiativeId,
@@ -480,6 +493,7 @@ export async function runGanLoopNode(state, opts = {}) {
       githubToken: state.githubToken,
       plannerOutput: state.plannerOutput || '',
       budgetCapUsd: budgetUsd,
+      attemptN,
       checkpointer,
       baseRepo: state.task?.payload?.base_repo || undefined,
       heartbeatFn,
@@ -582,11 +596,12 @@ export async function dbUpsertNode(state, opts = {}) {
       const runInsert = await client.query(
         `INSERT INTO initiative_runs (
            initiative_id, contract_id, phase,
-           deadline_at, journey_type, journey_id
+           deadline_at, journey_type, journey_id, okr_initiative_id
          )
          VALUES ($1::uuid, $2::uuid, 'B_task_loop',
            NOW() + ($3 || ' seconds')::interval,
-           $4, $5
+           $4, $5,
+           (SELECT okr_initiative_id FROM harness_initiative_migration_map WHERE harness_task_id = $1::uuid)
          )
          RETURNING id`,
         [state.initiativeId, contractId, String(timeoutSec), journeyType, journeyId]
@@ -690,6 +705,8 @@ export const FullInitiativeState = Annotation.Root({
   // Serial evaluate loop state
   task_loop_index:    Annotation({ reducer: (_o, n) => n, default: () => 0 }),
   task_loop_fix_count: Annotation({ reducer: (_o, n) => n, default: () => 0 }),
+  // resume 防护：serial gate 对 status=queued 无终败证据的当前 sub-task 重跑计数（防死循环上限）
+  serial_gate_requeue_count: Annotation({ reducer: (_o, n) => n, default: () => 0 }),
   evaluate_verdict:   Annotation({ reducer: (_o, n) => n, default: () => null }),
   evaluate_feedback:  Annotation({ reducer: (_o, n) => n, default: () => null }),
   final_e2e_fix_count: Annotation({ reducer: (_o, n) => n, default: () => 0 }),
@@ -711,18 +728,51 @@ export const FullInitiativeState = Annotation.Root({
  * @param {Function} [opts.executor]  spawn 替代（测试注入）
  * @returns {Promise<object>}  state delta（{} 或 { taskPlan: {...} }）
  */
-export async function inferTaskPlanNode(state, _opts = {}) {
+export async function inferTaskPlanNode(state, opts = {}) {
+  const dbPool = opts.pool || pool;
   const existing = state?.taskPlan?.tasks;
-  if (Array.isArray(existing) && existing.length >= 1) {
+  // 幂等短路：已有 tasks 直接 passthrough。条件提取成 hasTasks 变量（无嵌套括号），
+  // 满足 scripts/audit/idempotency-check.sh 的「函数前 30 行含 if (...) return {」短路审计。
+  const hasTasks = Array.isArray(existing) && existing.length >= 1;
+  if (hasTasks) {
     return {};
+  }
+
+  // 不可恢复失败（proposer 产物坏：无 task-plan.json / 解析失败 / 空 tasks）→ 标 task=failed
+  // + 返回 terminal error，而不是无限 fresh-start。
+  // 根因（生产 run 4225330d）：inferTaskPlan parse-fail 旧返回 {} → dbUpsert 抛
+  // "taskPlan.tasks required"（非终态 error）→ task 留 in_progress → harness-watchdog
+  // （只扫 task_type='harness_initiative' AND status='in_progress'）反复 fresh-start，
+  // 重跑 planner+GAN 烧穿 execution_attempts。重跑解决不了坏的 proposer 产物，必须 fail loud。
+  // 标 status='failed' 移出 watchdog 扫描范围（对齐 ganLoop catch 既有模式）；
+  // error.terminal=true 让 resume 路径（executor existing.channel_values.error.terminal）也判终态。
+  async function failTerminal(message) {
+    const taskId = state.task?.id || state.initiativeId;
+    console.error(`[infer_task_plan][ABORT] ${message}`);
+    if (taskId) {
+      Promise.resolve(
+        dbPool.query(
+          `UPDATE tasks SET status='failed', result=$1::jsonb, updated_at=NOW() WHERE id=$2::uuid`,
+          [JSON.stringify({ node: 'infer_task_plan', message, terminal: true }), taskId]
+        )
+      ).catch((e) => console.warn(`[infer_task_plan] tasks UPDATE failed (non-fatal): ${e.message}`));
+    }
+    if (state.initiative_run_id) {
+      Promise.resolve(
+        dbPool.query(
+          `UPDATE initiative_runs SET phase='failed', failure_reason=$1, updated_at=NOW() WHERE id=$2::uuid`,
+          [String(message).slice(0, 500), state.initiative_run_id]
+        )
+      ).catch((e) => console.warn(`[infer_task_plan] initiative_runs UPDATE failed (non-fatal): ${e.message}`));
+    }
+    return { error: { node: 'infer_task_plan', message, terminal: true } };
   }
 
   const proposeBranch = state?.ganResult?.propose_branch;
   const sprintDir = state.sprintDir || state.task?.payload?.sprint_dir || 'sprints';
 
   if (!proposeBranch) {
-    console.warn('[infer_task_plan] no propose_branch in ganResult, cannot read task-plan.json');
-    return { error: { node: 'infer_task_plan', message: 'propose_branch missing from ganResult — GAN did not produce a proposal' } };
+    return failTerminal('propose_branch missing from ganResult — GAN did not produce a proposal');
   }
 
   // B32: verify propose_branch 真在 origin。LLM 工艺不稳定（W42 proposer container
@@ -767,15 +817,19 @@ export async function inferTaskPlanNode(state, _opts = {}) {
     );
     let plan;
     try {
-      plan = parseTaskPlan(json);
+      plan = parseTaskPlan(json, { initiativeId: state.initiativeId });
     } catch (err) {
-      console.warn(`[infer_task_plan] parseTaskPlan failed: ${err.message}`);
-      return {};
+      // 解析失败 = proposer 产物坏（旧码 return {} → dbUpsert "tasks required" 非终态 → 无限 fresh-start）
+      return failTerminal(`task-plan.json 解析失败（proposer 产物坏，重跑无益）: ${err.message}`);
     }
     if (plan.initiative_id === 'pending' || !plan.initiative_id) {
       plan.initiative_id = state.initiativeId;
     }
-    console.log(`[infer_task_plan] read ${plan.tasks?.length || 0} tasks from ${proposeBranch}:${sprintDir}/task-plan.json`);
+    if (!Array.isArray(plan.tasks) || plan.tasks.length === 0) {
+      // 空 tasks = proposer 未产出子任务（旧码透传 → dbUpsert "tasks required" 非终态 → 无限 fresh-start）
+      return failTerminal(`task-plan.json 解析成功但 tasks 为空（proposer 未产出子任务）: ${proposeBranch}:${sprintDir}/task-plan.json`);
+    }
+    console.log(`[infer_task_plan] read ${plan.tasks.length} tasks from ${proposeBranch}:${sprintDir}/task-plan.json`);
     return { taskPlan: plan };
   } catch (err) {
     const msg = `[infer_task_plan] git show origin/${proposeBranch}:${sprintDir}/task-plan.json failed: ${err.message}`;
@@ -838,6 +892,38 @@ const LIVENESS_CHECK_EVERY_N = parseInt(process.env.CECELIA_LIVENESS_CHECK_N || 
 export const CALLBACK_TIMEOUT_MS = parseInt(
   process.env.CECELIA_CALLBACK_TIMEOUT_MS || `${100 * 60 * 1000}`, 10,
 );
+
+// 根因 1（2026-06-10）：CALLBACK_TIMEOUT_MS 是 soft timeout——超过它且容器**确认还在
+// running** 时不再 fail-fast（之前会误杀跑超 100min 的健康 generator，尤其 brain 重启
+// resume 后 spawnedAt 已老）。容器 running 就继续等，直到 hard ceiling 才放弃；
+// 放弃时 docker kill 容器，防僵尸容器迟到 callback 污染后续 fix round 状态。
+export const CALLBACK_HARD_CEILING_MS = parseInt(
+  process.env.CECELIA_CALLBACK_HARD_CEILING_MS || `${3 * 60 * 60 * 1000}`, 10,
+);
+
+/**
+ * 放弃等待时强杀容器（hard ceiling 路径）。
+ * 远程 codex 容器本地 docker 杀不到 → no-op（worker-daemon 自己有 WORKER_TIMEOUT 预算）。
+ *
+ * @param {string} containerId
+ * @param {object} [opts]
+ * @param {string} [opts.executor]
+ * @param {Function} [opts.execFileImpl] 注入 execFile（测试用）
+ */
+export async function _killContainer(containerId, opts = {}) {
+  if (opts.executor === 'codex') return;
+  const execFile = opts.execFileImpl || execFileCb;
+  return new Promise((resolve) => {
+    execFile('docker', ['kill', containerId], (err) => {
+      if (err) {
+        console.warn(`[harness-liveness] docker kill ${containerId} failed (non-fatal): ${err.message}`);
+      } else {
+        console.warn(`[harness-liveness] docker kill ${containerId} — hard ceiling 放弃僵尸容器`);
+      }
+      resolve();
+    });
+  });
+}
 
 /**
  * Fix #4: 检查远程 worker-daemon（西安 Codex）是否可达 → 粗判容器活性。
@@ -939,15 +1025,55 @@ export async function _waitForSubGraphCompletion(compiled, config, timeoutMs, op
   // B42: 允许测试注入，避免在生产代码里 mock 全局函数
   const checkLiveness = opts._checkLiveness ?? _checkContainerLiveness;
   const checkPrMerged = opts._checkPrMerged ?? _checkPrMerged;
+  const killContainer = opts._killContainer ?? _killContainer;
 
-  const deadline = Date.now() + timeoutMs;
+  let deadline = Date.now() + timeoutMs;
   let pollCount = 0;
   // OPEN-2：run_sub_task 是父 graph 的阻塞节点，整个 poll 期间父 checkpoint 不变。
   // 每轮 poll 刷父任务心跳，证明「驱动器还活着」，否则看门狗会把这条活跑误判为 parked 重排。
   const hbPool = opts.heartbeatPool || pool;
   const hbInitiativeId = opts.initiativeId || null;
 
-  while (Date.now() < deadline) {
+  while (true) {
+    // ── 外层 deadline liveness 感知（06-08 b249b808 实证）────────────────────
+    // 旧逻辑 deadline 到期直接返回 status channel 默认值 'queued' → Serial gate 报
+    // "did not merge (status=queued)"。且 deadline(90min) < soft timeout(100min from
+    // spawnedAt)，内层 liveness 感知在首轮驱动中轮不到——活 generator 仍被外层砍头。
+    // 新逻辑：到期先验活性，running 且未到 hard ceiling → 延长等待；running 但超
+    // hard ceiling → kill + resume failed（与内层 hard ceiling 同语义）；已死/非
+    // await_callback → 返回 failed（不再透传 'queued'）。
+    if (Date.now() >= deadline) {
+      const st = await compiled.getState(config);
+      if (!st.next || st.next.length === 0) return st.values;
+      const awaitingCb = Array.isArray(st.next) && st.next.includes('await_callback');
+      const cid = st.values?.containerId;
+      const sp = st.values?.spawnedAt;
+      const underHard = sp ? (Date.now() - sp) < CALLBACK_HARD_CEILING_MS : false;
+      const aliveReason = (awaitingCb && cid)
+        ? await checkLiveness(cid, { executor: st.values?.executor, daemonUrl: st.values?.daemonUrl })
+        : 'not_awaiting_callback';
+      if (aliveReason === null && underHard) {
+        console.log('[harness-liveness] 外层 deadline 到期但容器仍 running 且未到 hard ceiling → 延长等待');
+        deadline = Date.now() + Math.max(pollIntervalMs * livenessCheckEveryN, pollIntervalMs);
+      } else if (aliveReason === null && !underHard) {
+        // 活着但超 hard ceiling：kill 止血（codex guard 在 _killContainer 内）+ resume failed
+        await killContainer(cid, { executor: st.values?.executor })
+          .catch((e) => console.warn(`[harness-liveness] kill failed (non-fatal): ${e.message}`));
+        console.warn(
+          `[harness-liveness] 外层 deadline 到期且超 hard ceiling（${CALLBACK_HARD_CEILING_MS}ms）`
+          + ` containerId=${cid} → kill + fail`,
+        );
+        await compiled.invoke(
+          { resume: { status: 'failed', error: 'callback_hard_ceiling' } },
+          config,
+        ).catch((e) => console.warn(`[harness-liveness] resume invoke failed: ${e.message}`));
+        const fs = await compiled.getState(config);
+        return { ...(fs.values || {}), status: 'failed' };
+      } else {
+        const finalStatus = (st.values?.status && st.values.status !== 'queued') ? st.values.status : 'failed';
+        return { ...(st.values || {}), status: finalStatus };
+      }
+    }
     await writeDriverHeartbeat(hbPool, hbInitiativeId);
     const state = await compiled.getState(config);
     if (!state.next || state.next.length === 0) {
@@ -976,10 +1102,13 @@ export async function _waitForSubGraphCompletion(compiled, config, timeoutMs, op
         return { ...(fs.values || {}), status: 'failed' };
       }
 
-      // Fix #3: await_callback 独立总超时 — containerId 存在、容器看似活着、但 callback
-      // 永不来（西安网络阻塞 POST / 容器内 wget 放弃）→ 提前 fail，不等 90min 全局超时。
+      // Fix #3 + 根因 1（liveness 感知）: await_callback 独立总超时 —— containerId 存在但
+      // callback 迟迟不来。soft timeout（CALLBACK_TIMEOUT_MS）只对「容器已死」fail-fast；
+      // 容器确认还在 running → 继续等到 hard ceiling（CALLBACK_HARD_CEILING_MS），
+      // 超 hard ceiling 才放弃，且放弃前 docker kill 防僵尸容器迟到 callback。
       const spawnedAt = state.values?.spawnedAt;
-      if (spawnedAt && (Date.now() - spawnedAt) > CALLBACK_TIMEOUT_MS) {
+      const elapsedSinceSpawn = spawnedAt ? (Date.now() - spawnedAt) : 0;
+      if (spawnedAt && elapsedSinceSpawn > CALLBACK_TIMEOUT_MS) {
         // 与死亡路径一致：fail 前先验 PR 是否已 merged。覆盖「generator 成功 push+merge 但
         // callback POST 丢了」——否则会把一个真成功的 generator 误判 failed、白跑一个 fix round。
         const prUrl = state.values?.pr_url;
@@ -992,12 +1121,35 @@ export async function _waitForSubGraphCompletion(compiled, config, timeoutMs, op
             return { ...(state.values), status: 'merged' };
           }
         }
+        const timeoutDeathReason = await checkLiveness(containerId, {
+          executor: state.values?.executor,
+          daemonUrl: state.values?.daemonUrl,
+        });
+        if (!timeoutDeathReason && elapsedSinceSpawn <= CALLBACK_HARD_CEILING_MS) {
+          // 容器确认还在 running → 不误杀，继续等（liveness 本轮已查过，直接进下一轮 poll）
+          console.warn(
+            `[harness-liveness] await_callback 超 soft timeout（${CALLBACK_TIMEOUT_MS}ms）`
+            + ` 但容器 ${containerId} 仍 running → 继续等到 hard ceiling（${CALLBACK_HARD_CEILING_MS}ms）`,
+          );
+          pollCount++;
+          await new Promise((r) => setTimeout(r, pollIntervalMs));
+          continue;
+        }
+        let giveUpReason;
+        if (timeoutDeathReason) {
+          giveUpReason = `callback_timeout: ${timeoutDeathReason}`;
+        } else {
+          // 超 hard ceiling 容器还在跑 → 僵尸，放弃前 kill 防迟到 callback 污染后续状态
+          giveUpReason = 'callback_hard_ceiling';
+          await killContainer(containerId, { executor: state.values?.executor })
+            .catch((e) => console.warn(`[harness-liveness] kill failed (non-fatal): ${e.message}`));
+        }
         console.warn(
-          `[harness-liveness] await_callback 超过 CALLBACK_TIMEOUT_MS（${CALLBACK_TIMEOUT_MS}ms）`
-          + ` containerId=${containerId} → callback_timeout fail-fast`,
+          `[harness-liveness] await_callback 放弃等待（elapsed=${elapsedSinceSpawn}ms）`
+          + ` containerId=${containerId} → ${giveUpReason}`,
         );
         await compiled.invoke(
-          { resume: { status: 'failed', error: 'callback_timeout' } },
+          { resume: { status: 'failed', error: giveUpReason } },
           config,
         ).catch((e) => console.warn(`[harness-liveness] resume invoke failed: ${e.message}`));
         const fs = await compiled.getState(config);
@@ -1037,7 +1189,11 @@ export async function _waitForSubGraphCompletion(compiled, config, timeoutMs, op
           }
           // resume 后 getState 拿最新状态
           const finalState = await compiled.getState(config);
-          return { ...(finalState.values || {}), status: finalState.values?.status || 'failed' };
+          // 'queued' 是 status channel 默认值，resume 失败时透传它会让 Serial gate 误读
+          // 为 "did not merge (status=queued)" —— 与外层 deadline 同根因，一并钉死为 failed
+          const deathStatus = finalState.values?.status && finalState.values.status !== 'queued'
+            ? finalState.values.status : 'failed';
+          return { ...(finalState.values || {}), status: deathStatus };
         }
       }
     }
@@ -1046,9 +1202,7 @@ export async function _waitForSubGraphCompletion(compiled, config, timeoutMs, op
     // 还在中间节点（通常 await_callback interrupt） — 等下一轮 poll
     await new Promise((r) => setTimeout(r, pollIntervalMs));
   }
-  // 超时 — 拿当前 state 当 final（status 可能 undefined → join 视作 failed）
-  const state = await compiled.getState(config);
-  return { ...(state.values || {}), status: state.values?.status || 'failed' };
+  // 不可达：deadline 处置在循环头完成（延长 / kill+fail / 返回 failed），无自然出口
 }
 
 export async function runSubTaskNode(state, opts = {}) {
@@ -1085,17 +1239,45 @@ export async function runSubTaskNode(state, opts = {}) {
     },
   };
   const compiled = opts.compiledTaskGraph || await _getTaskGraphCompiled();
+  // contractBranch 是子图线程身份的语义版本维度。此处解析一次，既喂 thread_id 也喂 invoke
+  // 输入，保证父子两侧 thread_id 完全一致（子图 spawn/evaluate 用 state.contractBranch 折同一后缀）。
+  const contractBranchForThread = state.contractBranch || state.ganResult?.propose_branch || null;
   // final_e2e_fix_count 追加到 thread_id：final_evaluate FAIL 重跑时用 fresh checkpoint，避免旧状态污染
   // thread_id 含 fix_count 保证 evaluate_contract FAIL 重试时用 fresh checkpoint
-  const config = { configurable: { thread_id: `harness-task:${state.initiativeId}:${subTask.id}:fix${state.final_e2e_fix_count ?? 0}` }, recursionLimit: 200 };
+  // 合同绑定（run da418741 死线程修复）：thread_id 追加 contractBranch 折出的稳定短 token。
+  // 合同经 GAN 重新收敛 → propose 分支变 → token 变 → 新线程，绝不复用旧合同留下的终局
+  // checkpoint（旧 fix0 线程 contract_invalid 已 END，再 invoke 会秒回死状态、无节点执行）。
+  const threadId = `harness-task:${state.initiativeId}:${subTask.id}:fix${state.final_e2e_fix_count ?? 0}${harnessContractThreadSuffix(contractBranchForThread)}`;
+  const config = { configurable: { thread_id: threadId }, recursionLimit: 200 };
   const waitMs = opts.waitMs !== undefined ? opts.waitMs : SUBGRAPH_WAIT_MS;
   // 诊断：进 generator 子图前记录关键上下文，便于 generator 那层失败时定位。
   console.log(
     `[runSubTaskNode] invoke generator sub-graph thread=${config.configurable.thread_id}`
     + ` sub_task=${subTask.id} baseRepo=${state.task?.payload?.base_repo || '(none)'}`
-    + ` contractBranch=${state.contractBranch || state.ganResult?.propose_branch || '(none)'}`
+    + ` contractBranch=${contractBranchForThread || '(none)'}`
     + ` machine=${state.task?.payload?.machine || '-'} executor=${state.task?.payload?.executor || '-'}`
   );
+  // 防御诊断（Fix 3）：合同绑定后目标线程正常应是 fresh（无 checkpoint）。若探到该线程已存在
+  // 终局 checkpoint（next=[] 且 values 非空），说明 thread_id 仍复用了旧终局态——invoke 必然
+  // 秒回死状态、无任何节点执行。留明确告警钩子，便于本类 bug 复发时一眼定位（不阻断流程）。
+  try {
+    const _getState = opts._getStateForDiag || (() => compiled.getState(config));
+    const pre = await _getState();
+    const preVals = pre && pre.values ? pre.values : {};
+    const hasCheckpoint = preVals && Object.keys(preVals).length > 0;
+    const isTerminal = pre && (!pre.next || pre.next.length === 0);
+    if (hasCheckpoint && isTerminal) {
+      console.warn(
+        `[runSubTaskNode] ⚠️ 死线程探测：thread=${config.configurable.thread_id} 已存在终局 checkpoint`
+        + ` (next=[], status=${preVals.status}, failure_class=${preVals.failure_class || '-'})`
+        + ` — invoke 将秒回死状态、无节点执行。若本轮是合同重新收敛，说明 thread_id 合同绑定未生效，`
+        + ` 请检查 contractBranch 传递（当前 contractBranch=${contractBranchForThread || '(none)'}）。`
+      );
+    }
+  } catch (diagErr) {
+    // fresh thread getState 在部分 checkpointer 实现下可能抛错/返回空 — 诊断钩子吞掉不影响主流程。
+    if (process.env.HARNESS_DEBUG) console.warn(`[runSubTaskNode] 死线程探测 getState 失败（忽略）：${diagErr.message}`);
+  }
   let final;
   try {
     const firstResult = await compiled.invoke(
@@ -1107,7 +1289,7 @@ export async function runSubTaskNode(state, opts = {}) {
         // ensureHarnessWorktree 建独立 worktree（用 sub_task.id 作 key）。
         // worktreePath: state.worktreePath,
         githubToken: state.githubToken,
-        contractBranch: state.contractBranch || state.ganResult?.propose_branch || null,
+        contractBranch: contractBranchForThread,
         baseRepo: state.task?.payload?.base_repo || undefined,
         prdContent: state.prdContent || null,
       },
@@ -1137,11 +1319,18 @@ export async function runSubTaskNode(state, opts = {}) {
     );
     final = { status: 'failed', error: { node: 'sub_graph', message: err.message } };
   }
-  // 诊断：记录子图最终结果（status + error），便于复盘 generator 那层。
+  // Fix 2：contract_invalid 终局必须作为「带原因的明确状态」上浮，而非被 "Serial gate: did not
+  // merge (status=queued)" 通用文案掩盖（run da418741 排障要靠日志拼时间线的根因之一）。
+  // 子图 contract_invalid 路径 evaluate→END 时不写 status（停在默认 'queued'），但 final 带
+  // failure_class='contract_invalid' + evaluate_error。这里把它升成显式 ci_fail_type + feedback。
+  const isContractInvalid = final.failure_class === 'contract_invalid';
+  // 诊断：记录子图最终结果（status + error + failure_class），便于复盘 generator 那层。
   if (final.status !== 'merged' && final.status !== 'completed') {
     console.warn(
       `[runSubTaskNode] sub_task=${subTask.id} 非成功终态 status=${final.status}`
+      + ` failure_class=${final.failure_class || '-'}`
       + ` error=${final.error ? JSON.stringify(final.error) : '(none)'} pr_url=${final.pr_url || '(none)'}`
+      + (isContractInvalid ? ' [合同质量缺陷·责任在 GAN proposer，需重发让 proposer 修合同]' : '')
     );
   }
   return {
@@ -1152,9 +1341,12 @@ export async function runSubTaskNode(state, opts = {}) {
       pr_url: final.pr_url,
       fix_round: final.fix_round,
       cost_usd: final.cost_usd,
-      ci_fail_type: final.ci_fail_type,
-      // 透传失败信息（error 或子图自带 evaluator_feedback）→ reportNode ws_issues 可见。
+      // Fix 2：contract_invalid 单独打型，让 reportNode ws_issues 显示明确原因而非通用失败。
+      ci_fail_type: final.ci_fail_type || (isContractInvalid ? 'contract_invalid' : undefined),
+      // 透传失败信息（error / 子图 evaluator_feedback / contract_invalid 的 evaluate_error）→
+      // reportNode ws_issues 可见。evaluate_error 兜底覆盖 contract_invalid 终局原因。
       evaluator_feedback: final.evaluator_feedback
+        || final.evaluate_error
         || (final.error ? (typeof final.error === 'string' ? final.error : JSON.stringify(final.error)) : undefined),
     }],
   };
@@ -1273,6 +1465,13 @@ export async function reportNode(state, opts = {}) {
          WHERE id=$1::uuid`,
         [state.initiativeId, taskStatus, reason, reportContent]
       );
+      // 2b-2b: 镜像同步对应 okr_initiative → done/failed（non-fatal，best-effort）
+      try {
+        const { syncOkrInitiativeStatus } = await import('../okr-initiative-sync.js');
+        await syncOkrInitiativeStatus(client, state.initiativeId, phase === 'done' ? 'done' : 'failed');
+      } catch (syncErr) {
+        console.warn(`[reportNode] okr-initiative sync non-fatal: ${syncErr.message}`);
+      }
     } finally {
       client.release();
     }
@@ -1283,7 +1482,8 @@ export async function reportNode(state, opts = {}) {
   } catch (err) {
     console.warn(`[harness-initiative.graph] reportNode db update failed: ${err.message}`);
   }
-  // 派 harness_report 子任务（6 步交付：Notion / 飞书 / harness-report.md）
+  // 派 harness_report 子任务 — 执行 packages/brain/scripts/harness-report.mjs 7步报告脚本
+  // （脚本路径: packages/brain/scripts/harness-report.mjs）
   try {
     await dbPool.query(
       `INSERT INTO tasks (title, description, task_type, status, priority, payload)
@@ -1292,6 +1492,7 @@ export async function reportNode(state, opts = {}) {
         `[Harness Report] ${state.task?.title || state.initiativeId}`,
         `Auto-spawned by reportNode for initiative ${state.initiativeId}`,
         JSON.stringify({
+          script_path: 'packages/brain/scripts/harness-report.mjs',
           initiative_id: state.initiativeId,
           final_e2e_verdict: computedVerdict,
           sprint_dir: state.sprintDir,
@@ -1335,7 +1536,11 @@ export async function pickSubTaskNode(state) {
   };
 }
 
-export async function advanceTaskIndexNode(state) {
+// Serial gate resume 防护：status=queued 无终败证据时最多重跑当前 sub-task 的次数。
+// 超过则视为真未收敛 → terminal FAIL（杜绝本修复自身在病态 status 下死循环）。
+const SERIAL_GATE_REQUEUE_CAP = 2;
+
+export async function advanceTaskIndexNode(state, opts = {}) {
   // Serial merge gate: 刚完成的 sub-task (tasks[idx]) 必须 merged 才能推进
   const subTasks = state.sub_tasks || [];
   const tasks = state.taskPlan?.tasks || [];
@@ -1345,6 +1550,52 @@ export async function advanceTaskIndexNode(state) {
     const currentId = currentTask?.id || currentTask?.task_id;
     const record = subTasks.find((s) => s.id === currentId);
     if (record && record.status !== 'merged') {
+      // ── Resume 终局误判防护（根因：serial gate 在 resume 路径用陈旧 checkpoint 状态做终局
+      //    判断）。在飞 run 期间另一 PR merge 触发部署重启 → startup-sync re-queue + dispatcher
+      //    resume → 恢复图走到本 gate，sub_task 状态仍是 checkpoint 旧值（queued/未 merged），
+      //    在飞工作其实可恢复，却被直接判终败误杀兄弟 run（实证 d8acba51 / c0e2546b）。
+      //    教训：终局判断必须基于持久事实源，不能信 resume 时的陈旧 checkpoint。
+      const checkPrMerged = opts._checkPrMerged ?? _checkPrMerged;
+
+      // 1) 持久事实源 = GitHub PR 状态。已 merged → 与 reportNode/liveness 既有 merge-race
+      //    纠正（#3341 短路）同语义：纠正 sub_tasks 状态并放行推进，绝不误判 FAIL。
+      if (record.pr_url) {
+        const merged = await checkPrMerged(record.pr_url).catch(() => false);
+        if (merged) {
+          console.log(
+            `[advance] resume merge-race 纠正：${currentId} PR ${record.pr_url} 实际已 merged，serial gate 放行推进`
+          );
+          return {
+            sub_tasks: [{ ...record, status: 'merged' }],  // reducer merge-by-id
+            task_loop_index: idx + 1,
+            task_loop_fix_count: 0,
+            serial_gate_requeue_count: 0,
+            evaluate_verdict: null,
+            evaluate_feedback: null,
+          };
+        }
+      }
+
+      // 2) 无终败证据：status=queued（status channel 默认值，resume 时透传）或缺失，且 PR 未
+      //    merged —— 说明是「在飞工作被重启截断」而非真失败。不判 FAIL，重新进入 run_sub_task
+      //    复用既有幂等链路继续推进当前 sub-task（不递增 task_loop_index → pick_sub_task 重选同一个）。
+      const noTerminalEvidence = !record.status || record.status === 'queued';
+      const requeueCount = state.serial_gate_requeue_count ?? 0;
+      if (noTerminalEvidence && requeueCount < SERIAL_GATE_REQUEUE_CAP) {
+        console.warn(
+          `[advance] resume 防护：${currentId} status=${record.status ?? 'undefined'} 无终败证据`
+          + `（PR 未 merged 或合同/分支仍在飞）→ 重跑当前 sub-task（第 ${requeueCount + 1}/${SERIAL_GATE_REQUEUE_CAP} 次），不判 FAIL`
+        );
+        return {
+          // 不递增 task_loop_index → 重选同一 sub-task → run_sub_task 幂等重跑
+          serial_gate_requeue_count: requeueCount + 1,
+          task_loop_fix_count: 0,
+          evaluate_verdict: null,
+          evaluate_feedback: null,
+        };
+      }
+
+      // 3) genuine 终败（status=failed 等）或 requeue 超上限仍未收敛 → terminal FAIL（保持原语义）。
       return {
         error: {
           node: 'advance',
@@ -1357,6 +1608,7 @@ export async function advanceTaskIndexNode(state) {
   return {
     task_loop_index: idx + 1,
     task_loop_fix_count: 0,
+    serial_gate_requeue_count: 0,
     evaluate_verdict: null,
     evaluate_feedback: null,
   };

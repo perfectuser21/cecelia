@@ -9,7 +9,7 @@
  */
 
 import { Router } from 'express';
-import { readFile } from 'fs/promises';
+import { readFile, access } from 'fs/promises';
 import { execSync } from 'child_process';
 import { join } from 'path';
 import { homedir } from 'os';
@@ -23,7 +23,7 @@ const REPO_ROOT = new URL('../../../..', import.meta.url).pathname;
 
 // LangGraph Harness pipeline 架构图（静态，节点拓扑从 harness-graph.js 对应过来）
 // 前端用 mermaid.render() 画成 SVG
-const HARNESS_MERMAID = `graph TD
+const HARNESS_MERMAID = `graph LR
   Start([START]) --> Planner
   Planner --> Proposer
   Proposer --> Reviewer
@@ -437,7 +437,9 @@ router.get('/pipeline-detail', async (req, res) => {
     );
 
     // 2. 提取 planner 信息（harness_planner 已退役 PR retire-harness-planner，仅保留 sprint_planner）
-    const planner = tasks.find(t => t.task_type === 'sprint_planner');
+    // 新 LangGraph pipeline 入口类型为 harness_initiative，作为回退
+    const planner = tasks.find(t => t.task_type === 'sprint_planner')
+      || tasks.find(t => t.task_type === 'harness_initiative');
     const sprintDir = planner?.payload?.sprint_dir || tasks[0]?.payload?.sprint_dir || 'sprints';
 
     // 3. 构建 GAN 对抗轮次
@@ -780,6 +782,59 @@ const TASK_TYPE_TO_SKILL = {
   sprint_report: 'harness-report',
 };
 
+// LangGraph node name → skill 目录名
+const NODE_TO_SKILL = {
+  planner: 'harness-planner',
+  proposer: 'harness-contract-proposer',
+  reviewer: 'harness-contract-reviewer',
+  generator: 'harness-generator',
+  run_sub_task: 'harness-generator',
+  report: 'harness-report',
+};
+
+// LangGraph node name → system prompt 前缀
+const NODE_SYSTEM_PROMPTS = {
+  planner: '你是 harness-planner agent。按下面 SKILL 指令工作。',
+  proposer: '你是 harness-contract-proposer agent。按下面 SKILL 指令工作。',
+  reviewer: '你是 harness-contract-reviewer agent。按下面 SKILL 指令工作。',
+  generator: '你是 harness-generator agent。按下面 SKILL 指令工作。',
+  run_sub_task: '你是 harness-generator agent。按下面 SKILL 指令工作。',
+  report: '你是 harness-report agent。按下面 SKILL 指令工作。',
+};
+
+// 节点读入的 sprint dir 文件（user input）
+const NODE_INPUT_FILE = {
+  proposer: 'sprint-prd.md',
+  reviewer: 'contract-draft.md',
+  generator: 'task-plan.json',
+  run_sub_task: 'task-plan.json',
+};
+
+// 节点写出的 sprint dir 文件（output）
+const NODE_OUTPUT_FILE = {
+  planner: 'sprint-prd.md',
+  proposer: 'contract-draft.md',
+  report: 'harness-report.md',
+};
+
+async function readSkillFile(skillName) {
+  if (!skillName) return null;
+  try {
+    return await readFile(join(homedir(), '.claude-account1', 'skills', skillName, 'SKILL.md'), 'utf8');
+  } catch {
+    return null;
+  }
+}
+
+async function readSprintFile(sprintDir, filename) {
+  if (!sprintDir || !filename) return null;
+  try {
+    return await readFile(join(REPO_ROOT, sprintDir, filename), 'utf8');
+  } catch {
+    return null;
+  }
+}
+
 /**
  * 读取对应 skill 的 SKILL.md 内容；无则返回 null
  */
@@ -937,18 +992,41 @@ async function buildLangGraphInfo(taskId) {
     state_available: checkpointRows.length > 0,
   };
 
+  // Fetch task data for DB context and sprint_dir
+  let taskData = null;
+  let sprintDir = null;
+  try {
+    const { rows: taskRows } = await pool.query(
+      `SELECT title, description, payload FROM tasks WHERE id = $1::uuid`,
+      [taskId]
+    );
+    if (taskRows[0]) {
+      taskData = taskRows[0];
+      sprintDir = taskRows[0].payload?.sprint_dir || null;
+    }
+  } catch (err) {
+    console.warn(`[buildLangGraphInfo] task query failed: ${err.message}`);
+  }
+
   if (events.length === 0) {
     return { ...empty, checkpoints };
   }
 
-  // 把每条事件 normalize 成 step
-  const steps = events.map((row, idx) => {
+  // 把每条事件 normalize 成 step（async 以便并发读 skill/sprint 文件）
+  const steps = await Promise.all(events.map(async (row, idx) => {
     const p = row.payload || {};
+    const nodeName = p.node || 'unknown';
     // 从 review_verdict / evaluator_verdict 里取一个作为 verdict
     const verdict = p.review_verdict || p.evaluator_verdict || null;
+    const skillName = NODE_TO_SKILL[nodeName] || null;
+    const [skillContent, inputContent, outputContent] = await Promise.all([
+      readSkillFile(skillName),
+      readSprintFile(sprintDir, NODE_INPUT_FILE[nodeName]),
+      readSprintFile(sprintDir, NODE_OUTPUT_FILE[nodeName]),
+    ]);
     return {
       step_index: typeof p.step_index === 'number' ? p.step_index : idx + 1,
-      node: p.node || 'unknown',
+      node: nodeName,
       verdict,
       review_round: p.review_round ?? null,
       eval_round: p.eval_round ?? null,
@@ -962,8 +1040,20 @@ async function buildLangGraphInfo(taskId) {
       error: p.error || null,
       timestamp: row.created_at,
       state_snapshot: p,
+      // Enriched context fields
+      skill_name: skillName,
+      system_prompt: NODE_SYSTEM_PROMPTS[nodeName] || null,
+      skill_content: skillContent,
+      input_content: inputContent,
+      output_content: outputContent,
+      db_context: taskData ? {
+        task_id: taskId,
+        title: taskData.title,
+        description: (taskData.description || '').slice(0, 500),
+        sprint_dir: sprintDir,
+      } : null,
     };
-  });
+  }));
 
   // 按 step_index 稳定排序（防止时间戳相同时顺序错乱）
   steps.sort((a, b) => (a.step_index || 0) - (b.step_index || 0));
@@ -1457,6 +1547,112 @@ router.post('/messages/:initiativeId/:subTaskId', async (req, res) => {
 
 router.get('/ping', (_req, res) => {
   res.json({ ok: true, ts: new Date().toISOString() });
+});
+
+/**
+ * GET /skill-drift
+ * 只读检测 6 个 harness skill 的 SSOT 与快照 SKILL.md frontmatter version 漂移。
+ * SSOT: SKILLS_SSOT_DIR（默认 ~/perfect21/zenithjoy-skills，支持 <name>/SKILL.md 与
+ *       skills/<name>/SKILL.md 两种布局探测）
+ * 快照: SKILLS_SNAPSHOT_DIR（默认 repo 内 packages/workflows/skills/）
+ * 每次请求实读磁盘，不缓存；仅检测，不写文件、无 DB 访问。
+ */
+const HARNESS_DRIFT_SKILLS = [
+  'harness-planner',
+  'harness-contract-proposer',
+  'harness-contract-reviewer',
+  'harness-generator',
+  'harness-evaluator',
+  'harness-report',
+];
+
+// 与合同交叉验证命令 grep -m1 '^version:' 同语义：取文件首个 version: 行的值
+async function readSkillVersion(filePath) {
+  let content;
+  try {
+    content = await readFile(filePath, 'utf8');
+  } catch {
+    return null;
+  }
+  const line = content.split('\n').find((l) => l.startsWith('version:'));
+  if (!line) return null;
+  const value = line.slice('version:'.length).replace(/[\s"]/g, '');
+  return value || null;
+}
+
+async function readSsotSkillVersion(ssotDir, name) {
+  for (const candidate of [join(ssotDir, name, 'SKILL.md'), join(ssotDir, 'skills', name, 'SKILL.md')]) {
+    try {
+      await access(candidate);
+    } catch {
+      continue;
+    }
+    return readSkillVersion(candidate);
+  }
+  return null;
+}
+
+router.get('/skill-drift', async (_req, res) => {
+  try {
+    const ssotDir = process.env.SKILLS_SSOT_DIR || join(homedir(), 'perfect21', 'zenithjoy-skills');
+    // 生产容器修复：模块级 REPO_ROOT 由 import.meta.url 算 → 镜像里是 /app（无 packages/workflows）。
+    // deploy 已把宿主 repo 以绝对路径挂进容器并设 env REPO_ROOT（同 zombie-cleaner/startup-recovery 惯例），
+    // 故快照路径优先用 process.env.REPO_ROOT，复用现成挂载，避免 snapshot_version 全 null。
+    const snapshotRepoRoot = process.env.REPO_ROOT || REPO_ROOT;
+    const snapshotDir = process.env.SKILLS_SNAPSHOT_DIR || join(snapshotRepoRoot, 'packages', 'workflows', 'skills');
+    const skills = [];
+    for (const name of HARNESS_DRIFT_SKILLS) {
+      const ssotVersion = await readSsotSkillVersion(ssotDir, name);
+      const snapshotVersion = await readSkillVersion(join(snapshotDir, name, 'SKILL.md'));
+      // 任一侧 null（文件缺失/无 version 行）按 PRD 边界规则记为漂移
+      const drifted = ssotVersion === null || snapshotVersion === null
+        ? true
+        : ssotVersion !== snapshotVersion;
+      skills.push({ name, ssot_version: ssotVersion, snapshot_version: snapshotVersion, drifted });
+    }
+    return res.json({ skills, any_drift: skills.some((s) => s.drifted) });
+  } catch (err) {
+    console.error('[GET /harness/skill-drift]', err.message);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * GET /skill-drift/patrol-history
+ * 查询 skill-drift 巡检告警历史记录。
+ * Response 200: { alerts: Array<{id, skill_name, ssot_version, snapshot_version, drift_date, detected_at}> }
+ */
+router.get('/skill-drift/patrol-history', async (_req, res) => {
+  try {
+    const { rows } = await pool.query(
+      `SELECT id, skill_name, ssot_version, snapshot_version,
+              to_char(drift_date, 'YYYY-MM-DD') AS drift_date,
+              detected_at
+       FROM skill_drift_alerts
+       ORDER BY detected_at DESC
+       LIMIT 500`
+    );
+    return res.json({ alerts: rows });
+  } catch (err) {
+    console.error('[GET /harness/skill-drift/patrol-history]', err.message);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * POST /skill-drift/patrol-trigger
+ * 手动触发一次 skill-drift 巡检（供 E2E 测试使用，无需等待每日窗口）。
+ * Response 200: { triggered: true, message: string }
+ */
+router.post('/skill-drift/patrol-trigger', async (_req, res) => {
+  try {
+    const { runSkillDriftPatrol } = await import('../cron/skill-drift-patrol.js');
+    await runSkillDriftPatrol();
+    return res.json({ triggered: true, message: 'patrol 已完成' });
+  } catch (err) {
+    console.error('[POST /harness/skill-drift/patrol-trigger]', err.message);
+    return res.status(500).json({ error: err.message });
+  }
 });
 
 /**

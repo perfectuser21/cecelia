@@ -288,32 +288,29 @@ describe('[BEHAVIOR] migration + executor 文件检查', () => {
     expect(src).toMatch(/writeInitiativeRunEvent failed \(non-fatal\)/);
   });
 
-  it('harness-report SKILL.md Step 6 引用 initiative_run_events', () => {
+  // ── initiative_run_events / phase metrics 的 owner 是 Brain 侧，不是 skill ───────────
+  // SSOT 链路审计（zenithjoy-skills #50，2026-06）确认：harness skill 自 06-04 起已无
+  // phase-event 埋点指令，pipeline phase metrics 由 Brain 侧 events/initiativeRunEvents.js
+  // （图节点生命周期 emitGraphNodeUpdate → write/update）唯一写入 initiative_run_events，
+  // skill 侧 curl 埋点自始未在生产生效（生产实测：表 2200+ 行、近 7 天事件全部 Brain 侧写）。
+  // 故旧的「harness skill 含 initiative_run_events / ts_end / phase-event 字面」断言已过时，
+  // 改为断言 Brain 侧 owner 仍在写这张表（对齐新 SSOT 契约 + 保留真实回归防线）。
+  it('initiative_run_events 唯一 owner = Brain 侧 events/initiativeRunEvents.js（INSERT 写入）', () => {
     const src = fs.readFileSync(
-      new URL('../../../../workflows/skills/harness-report/SKILL.md', import.meta.url),
+      new URL('../../events/initiativeRunEvents.js', import.meta.url),
       'utf8'
     );
-    expect(src).toMatch(/initiative_run_events/);
+    expect(src).toMatch(/INSERT INTO initiative_run_events/);
+    expect(src).toMatch(/writeInitiativeRunEvent/);
   });
 
-  it('harness-report SKILL.md Step 6 含 ts_end.*1000 duration 单位转换', () => {
+  it('events/initiativeRunEvents.js 维护 ts_end（节点结束时回填 duration 指标）', () => {
     const src = fs.readFileSync(
-      new URL('../../../../workflows/skills/harness-report/SKILL.md', import.meta.url),
+      new URL('../../events/initiativeRunEvents.js', import.meta.url),
       'utf8'
     );
+    expect(src).toMatch(/UPDATE initiative_run_events/);
     expect(src).toMatch(/ts_end/);
-    expect(src).toMatch(/1000/);
-  });
-
-  it('5 个 harness skill 含 phase-event 字面', () => {
-    const skills = ['harness-planner', 'harness-contract-proposer', 'harness-generator', 'harness-evaluator', 'harness-report'];
-    for (const skill of skills) {
-      const src = fs.readFileSync(
-        new URL(`../../../../workflows/skills/${skill}/SKILL.md`, import.meta.url),
-        'utf8'
-      );
-      expect(src, `${skill} 缺 phase-event`).toMatch(/phase-event/);
-    }
   });
 });
 

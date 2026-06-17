@@ -784,7 +784,7 @@ async function diagnoseKR(krId, pool) {
       const activeTaskCount = parseInt(initiative.active_task_count, 10);
 
       // Detect blockers
-      if (initiative.status === 'active' && taskCount === 0) {
+      if (initiative.status === 'running' && taskCount === 0) {
         const blocker = {
           initiative_id: initiative.id,
           initiative_name: initiative.name,
@@ -793,7 +793,7 @@ async function diagnoseKR(krId, pool) {
         };
         dispatchBlockers.push(blocker);
         console.warn(`[task-router] diagnoseKR: BLOCKER initiative="${initiative.name}" reason=no_tasks_created`);
-      } else if (initiative.status === 'active' && taskCount > 0 && activeTaskCount === 0) {
+      } else if (initiative.status === 'running' && taskCount > 0 && activeTaskCount === 0) {
         // Check if all tasks are completed or failed
         const allCompleted = parseInt(initiative.completed_task_count, 10) === taskCount;
         const allFailed = parseInt(initiative.failed_task_count, 10) === taskCount;
@@ -826,7 +826,7 @@ async function diagnoseKR(krId, pool) {
           dispatchBlockers.push(blocker);
           console.warn(`[task-router] diagnoseKR: BLOCKER initiative="${initiative.name}" reason=no_active_tasks task_count=${taskCount}`);
         }
-      } else if (initiative.status !== 'active') {
+      } else if (initiative.status !== 'running') {
         console.log(`[task-router] diagnoseKR: initiative="${initiative.name}" skipped (status=${initiative.status})`);
       }
 
@@ -869,7 +869,7 @@ async function diagnoseKR(krId, pool) {
 
   // 4. Summary
   const totalInitiatives = initiativesData.length;
-  const activeInitiatives = initiativesData.filter(i => i.status === 'active').length;
+  const activeInitiatives = initiativesData.filter(i => i.status === 'running').length;
   const initiativesWithQueuedTasks = initiativesData.filter(i => i.active_task_count > 0).length;
   const diagnosis = dispatchBlockers.length === 0 ? 'healthy' : 'blocked';
 

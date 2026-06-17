@@ -60,25 +60,22 @@ describe('Harness phase metrics — POST/PATCH /phase-event 路由 [BEHAVIOR]', 
   });
 });
 
-describe('Harness phase metrics — 5 个 skill 首尾埋点 + 吞错 [BEHAVIOR]（PRD 字面：Planner/Proposer/Generator/Evaluator/Reporter，不含 Reviewer）', () => {
-  const skills = [
-    'harness-planner',
-    'harness-contract-proposer',
-    'harness-generator',
-    'harness-evaluator',
-    'harness-report',
-  ];
-
-  for (const skill of skills) {
-    it(`${skill}/SKILL.md 含 phase-event 调用`, () => {
-      const src = fs.readFileSync(path.join(REPO_ROOT, `packages/workflows/skills/${skill}/SKILL.md`), 'utf8');
-      expect(src).toMatch(/phase-event/);
-    });
-  }
-
-  it('executor 现有非致命 warn 字符串保留（回归保护，PRD 边界情况：phase-event 写失败吞错不阻断）', () => {
+// ── phase metrics 的 owner 是 Brain 侧，不是 skill ─────────────────────────────────
+// SSOT 链路审计（zenithjoy-skills #50，2026-06）确认：harness skill 自 06-04 起已无
+// phase-event 埋点指令；pipeline phase metrics 由 Brain 侧（图节点生命周期 emitGraphNodeUpdate
+// → events/initiativeRunEvents.js 写 initiative_run_events）唯一负责，skill 侧 curl 埋点自始
+// 未在生产生效（生产实测：表 2200+ 行、近 7 天事件全部 Brain 侧写）。故旧的「5 个 skill 含
+// phase-event 字面」断言已过时，改为断言 Brain 侧 owner 仍在吞错写库（真实生产机制 + 回归防线）。
+describe('Harness phase metrics — Brain 侧吞错写库 [BEHAVIOR]（owner = events/initiativeRunEvents.js）', () => {
+  it('executor 现有非致命 warn 字符串保留（PRD 边界情况：phase-event 写失败吞错不阻断）', () => {
     const src = fs.readFileSync(path.join(REPO_ROOT, 'packages/brain/src/executor.js'), 'utf8');
     expect(src).toMatch(/writeInitiativeRunEvent failed \(non-fatal\)/);
+  });
+
+  it('events/initiativeRunEvents.js INSERT 写 initiative_run_events（Brain 侧唯一 owner）', () => {
+    const src = fs.readFileSync(path.join(REPO_ROOT, 'packages/brain/src/events/initiativeRunEvents.js'), 'utf8');
+    expect(src).toMatch(/INSERT INTO initiative_run_events/);
+    expect(src).toMatch(/writeInitiativeRunEvent/);
   });
 });
 
@@ -95,27 +92,23 @@ describe('Harness phase metrics — 重复 POST 同一 phase → 最后 model �
   });
 });
 
-describe('Harness phase metrics — Reporter Step 6 引用 events [BEHAVIOR]', () => {
-  it('harness-report SKILL.md 引用 initiative_run_events 表', () => {
-    const src = fs.readFileSync(path.join(REPO_ROOT, 'packages/workflows/skills/harness-report/SKILL.md'), 'utf8');
-    expect(src).toMatch(/initiative_run_events/);
+// Reporter 不再在 SKILL.md 内自己拼 initiative_run_events 查询（#50 移除）；phase 指标的
+// 三列（耗时 ts_end / 成本 cost_usd / 模型 model）由 Brain 侧 events/initiativeRunEvents.js
+// 写入与维护。下列断言改为校验 Brain 侧 owner 写了这三列（对齐新 SSOT + 保留回归防线）。
+describe('Harness phase metrics — 三列指标由 Brain 侧 owner 维护 [BEHAVIOR]', () => {
+  it('events/initiativeRunEvents.js 写/维护 ts_end / cost_usd / model 三列', () => {
+    const src = fs.readFileSync(path.join(REPO_ROOT, 'packages/brain/src/events/initiativeRunEvents.js'), 'utf8');
+    expect(src).toMatch(/UPDATE initiative_run_events/);
+    expect(src).toMatch(/ts_end/);
+    expect(src).toMatch(/cost_usd/);
+    expect(src).toMatch(/\bmodel\b/);
   });
 
-  it('harness-report SKILL.md 含三列字面：耗时(ts_end/duration) / 成本(cost_usd) / 模型(model)', () => {
-    const src = fs.readFileSync(path.join(REPO_ROOT, 'packages/workflows/skills/harness-report/SKILL.md'), 'utf8');
-    expect(src).toMatch(/ts_end|duration|耗时/);
-    expect(src).toMatch(/cost_usd|成本/);
-    expect(src).toMatch(/\bmodel\b|模型/);
-  });
-
-  it('harness-report SKILL.md duration 计算含 /1000 单位转换（ts=秒, ts_end=毫秒 — Reviewer R1）', () => {
-    const src = fs.readFileSync(path.join(REPO_ROOT, 'packages/workflows/skills/harness-report/SKILL.md'), 'utf8');
-    expect(src).toMatch(/ts_end\s*\/\s*1000|ts_end.*1000|duration.*1000|1000\.0/);
-  });
-
-  it('harness-report SKILL.md 含 NULL cost_usd → "-" 守卫逻辑（PRD 边界情况 #2 — Reviewer R2）', () => {
-    const src = fs.readFileSync(path.join(REPO_ROOT, 'packages/workflows/skills/harness-report/SKILL.md'), 'utf8');
-    expect(src).toMatch(/cost_usd.*null|cost_usd.*IS NULL|cost_usd.*\?.*-|null.*cost_usd|cost_usd.*['\"]-['\"]|cost_usd.*:-/i);
+  it('migration 293 定义这三列（ts_end / cost_usd / model）', () => {
+    const sql = fs.readFileSync(path.join(REPO_ROOT, 'packages/brain/migrations/293_initiative_run_events_phase_metrics.sql'), 'utf8');
+    expect(sql).toMatch(/ts_end/);
+    expect(sql).toMatch(/cost_usd/);
+    expect(sql).toMatch(/model/);
   });
 });
 

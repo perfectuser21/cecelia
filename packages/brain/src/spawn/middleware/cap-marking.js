@@ -60,3 +60,62 @@ export async function checkCap(result, opts, ctx = {}) {
   }
   return { capped: true, account, reason: matchedPattern };
 }
+
+/**
+ * checkAuthFailure — 401/凭据失效检测（harness 根因 2，2026-06-10）。
+ *
+ * 职责：检测容器输出是否含 401 / authentication_error / OAuth 过期 / claude CLI
+ * "Not logged in" 特征，若含且账号可知，调 markAuthFailure 熔断该账号。
+ * 下次 resolveAccount（attempt-loop 或 harness fix-round 重 spawn）自动换号。
+ *
+ * 与 checkCap 同构：本模块是 markSpendingCap/markAuthFailure 的唯一合法调用点
+ * （见 README §5 禁忌），harness awaitCallbackNode 通过本函数标记，不直接调。
+ *
+ * @param {object} result  { stdout, stderr }（callback payload 或 runDocker 返回）
+ * @param {object} opts    { env: { CECELIA_CREDENTIALS } }
+ * @param {object} ctx     { deps? } — 测试注入 { markAuthFailure }
+ * @returns {Promise<{ authFailed: boolean, account: string|null, reason: string|null }>}
+ */
+const AUTH_PATTERNS = [
+  /api_error_status:\s*401/i,
+  /"type"\s*:\s*"authentication_error"/i,
+  /OAuth token (has )?(expired|been revoked)/i,
+  /Not logged in/i,
+  /invalid (api key|bearer token)/i,
+];
+
+export async function checkAuthFailure(result, opts, ctx = {}) {
+  if (!result || typeof result !== 'object') {
+    return { authFailed: false, account: null, reason: null };
+  }
+  const combined = `${result.stdout || ''}\n${result.stderr || ''}`;
+  let matchedPattern = null;
+  for (const p of AUTH_PATTERNS) {
+    if (p.test(combined)) {
+      matchedPattern = p.source;
+      break;
+    }
+  }
+  if (!matchedPattern) {
+    return { authFailed: false, account: null, reason: null };
+  }
+  const account = opts?.env?.CECELIA_CREDENTIALS || null;
+  if (!account) {
+    console.warn('[cap-marking] detected auth failure pattern but no CECELIA_CREDENTIALS to mark');
+    return { authFailed: true, account: null, reason: matchedPattern };
+  }
+  try {
+    let markFn;
+    if (ctx.deps?.markAuthFailure) {
+      markFn = ctx.deps.markAuthFailure;
+    } else {
+      const mod = await import('../../account-usage.js');
+      markFn = mod.markAuthFailure;
+    }
+    markFn(account, null, 'api_error');
+    console.log(`[cap-marking] marked ${account} as auth-failed (pattern: ${matchedPattern})`);
+  } catch (err) {
+    console.warn(`[cap-marking] failed to mark auth failure ${account}: ${err.message}`);
+  }
+  return { authFailed: true, account, reason: matchedPattern };
+}

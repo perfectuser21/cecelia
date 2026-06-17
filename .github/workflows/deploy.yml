@@ -142,10 +142,14 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
+      - name: Connect to Tailscale
+        uses: tailscale/github-action@v2
+        with:
+          authkey: ${{ secrets.TS_AUTHKEY }}
       - name: 触发 Staging 部署
         env:
           DEPLOY_TOKEN: ${{ secrets.DEPLOY_TOKEN }}
-          BRAIN_URL: ${{ secrets.BRAIN_DEPLOY_URL || 'http://38.23.47.81:5221' }}
+          BRAIN_URL: ${{ secrets.BRAIN_DEPLOY_URL || 'http://100.71.151.105:5221' }}
         run: |
           echo "🔴 Safe Lane — 先部署到 staging（端口 5222）验证"
           echo ""
@@ -184,7 +188,7 @@ jobs:
 
       - name: 等待 Staging 部署完成
         env:
-          BRAIN_URL: ${{ secrets.BRAIN_DEPLOY_URL || 'http://38.23.47.81:5221' }}
+          BRAIN_URL: ${{ secrets.BRAIN_DEPLOY_URL || 'http://100.71.151.105:5221' }}
         run: |
           echo "Polling /api/brain/deploy/staging/status (max 300s)..."
           MAX_WAIT=300
@@ -225,7 +229,7 @@ jobs:
 
       - name: Staging Smoke Test
         env:
-          BRAIN_URL: ${{ secrets.BRAIN_DEPLOY_URL || 'http://38.23.47.81:5221' }}
+          BRAIN_URL: ${{ secrets.BRAIN_DEPLOY_URL || 'http://100.71.151.105:5221' }}
         run: |
           # 先查询 staging 状态：若已被跳过（无 Docker），跳过 smoke test
           STAGING_STATUS=$(curl -s --connect-timeout 5 --max-time 10 \
@@ -258,7 +262,7 @@ jobs:
         if: failure()
         env:
           DEPLOY_TOKEN: ${{ secrets.DEPLOY_TOKEN }}
-          BRAIN_URL: ${{ secrets.BRAIN_DEPLOY_URL || 'http://38.23.47.81:5221' }}
+          BRAIN_URL: ${{ secrets.BRAIN_DEPLOY_URL || 'http://100.71.151.105:5221' }}
         run: |
           echo "::error::Staging 部署/验证失败，production deploy 已阻止"
           echo "排查步骤："
@@ -293,10 +297,14 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
+      - name: Connect to Tailscale
+        uses: tailscale/github-action@v2
+        with:
+          authkey: ${{ secrets.TS_AUTHKEY }}
       - name: Call Brain deploy webhook
         env:
           DEPLOY_TOKEN: ${{ secrets.DEPLOY_TOKEN }}
-          BRAIN_URL: ${{ secrets.BRAIN_DEPLOY_URL || 'http://38.23.47.81:5221' }}
+          BRAIN_URL: ${{ secrets.BRAIN_DEPLOY_URL || 'http://100.71.151.105:5221' }}
         run: |
           RISK="${{ needs.changes.outputs.risk_level }}"
           if [ "$RISK" = "high" ]; then
@@ -342,7 +350,7 @@ jobs:
 
       - name: Poll deploy status
         env:
-          BRAIN_URL: ${{ secrets.BRAIN_DEPLOY_URL || 'http://38.23.47.81:5221' }}
+          BRAIN_URL: ${{ secrets.BRAIN_DEPLOY_URL || 'http://100.71.151.105:5221' }}
         run: |
           echo "Polling /api/brain/deploy/status (max 300s)..."
           MAX_WAIT=300
@@ -377,7 +385,7 @@ jobs:
 
       - name: Smoke Test — 验证 Brain 健康
         env:
-          BRAIN_URL: ${{ secrets.BRAIN_DEPLOY_URL || 'http://38.23.47.81:5221' }}
+          BRAIN_URL: ${{ secrets.BRAIN_DEPLOY_URL || 'http://100.71.151.105:5221' }}
         run: |
           echo "运行烟雾测试..."
           sleep 5
@@ -401,7 +409,7 @@ jobs:
         if: failure()
         env:
           DEPLOY_TOKEN: ${{ secrets.DEPLOY_TOKEN }}
-          BRAIN_URL: ${{ secrets.BRAIN_DEPLOY_URL || 'http://38.23.47.81:5221' }}
+          BRAIN_URL: ${{ secrets.BRAIN_DEPLOY_URL || 'http://100.71.151.105:5221' }}
           STABLE_SHA: ${{ github.event.before }}
         run: |
           echo "::error::部署失败，触发回滚到稳定版本 $STABLE_SHA"

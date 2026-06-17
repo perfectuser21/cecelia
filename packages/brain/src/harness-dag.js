@@ -25,10 +25,14 @@ const VALID_COMPLEXITY = new Set(['S', 'M', 'L']);
  * 验证并返回 parsed task-plan.json。
  *
  * @param {string} jsonString  Planner 输出的 JSON 原文（可含 Markdown code fence）
+ * @param {object} [opts]
+ * @param {string} [opts.initiativeId]  系统权威 initiative_id。给定时先覆盖 proposer 写的任何值
+ *   （空串 / 'pending' / 漏填 / 错值）再校验——initiative_id 是系统已知值（state.initiativeId /
+ *   HARNESS_INITIATIVE_ID），不该由 LLM proposer 负责，让 validator 硬依赖它即脆弱（run ad01edbe）。
  * @returns {{initiative_id: string, tasks: Array<object>, justification?: string}}
  * @throws {Error} 字段缺失 / 值非法时
  */
-export function parseTaskPlan(jsonString) {
+export function parseTaskPlan(jsonString, opts = {}) {
   if (typeof jsonString !== 'string') {
     throw new Error('parseTaskPlan: jsonString must be a string');
   }
@@ -56,6 +60,10 @@ export function parseTaskPlan(jsonString) {
 
   if (!obj || typeof obj !== 'object') {
     throw new Error('parseTaskPlan: root must be object');
+  }
+  // initiative_id 系统注入：调用方给了权威值就覆盖 proposer 写的任何值（先注入再校验）。
+  if (typeof opts.initiativeId === 'string' && opts.initiativeId.trim()) {
+    obj.initiative_id = opts.initiativeId;
   }
   if (typeof obj.initiative_id !== 'string' || !obj.initiative_id.trim()) {
     throw new Error('parseTaskPlan: initiative_id required (string)');

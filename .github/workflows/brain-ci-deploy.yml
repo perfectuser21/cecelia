@@ -19,21 +19,68 @@ on:
     paths:
       - 'packages/brain/**'
       - 'scripts/brain-deploy.sh'
+  # PR 触发：skill 快照 / CI 防线脚本变更时跑「CI 防线三件套」守卫（不触发部署）
+  pull_request:
+    paths:
+      - 'packages/workflows/skills/**'
+      - 'packages/brain/scripts/ci/**'
+      - '.github/workflows/brain-ci-deploy.yml'
 
 concurrency:
-  group: brain-autodeploy
+  group: brain-autodeploy-${{ github.event_name }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  # ─── Gate 3: Brain HTTP 自动部署 ─────────────────────────────────────────
+  # ─── Skill 契约 CI 防线三件套（仅 PR）─────────────────────────────────────
+  # changed-test-router 选测 + skill 契约测试（5 类不变量）+ 合同存在性。
+  # 判定逻辑全落在可本地跑的 node 脚本里，yaml 只做接线。
+  skill-contract-guard:
+    name: Skill Contract Guard (PR)
+    if: ${{ github.event_name == 'pull_request' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+      - name: 安装依赖
+        run: npm ci
+      - name: 三件套①② changed-test-router 选测 + skill 契约测试（5 类不变量）
+        run: |
+          set -euo pipefail
+          BASE="origin/${{ github.base_ref }}"
+          git fetch origin "${{ github.base_ref }}" --depth=1 || true
+          CHANGED=$(git diff --name-only "$BASE"...HEAD 2>/dev/null || echo "")
+          echo "📋 本 PR 改动文件："; echo "$CHANGED"
+          echo "── changed-test-router fs 依赖选测 ──"
+          node packages/brain/scripts/ci/changed-test-router.mjs $CHANGED || true
+          echo "── 跑 skill 契约测试（守 5 类不变量现网快照）──"
+          npx vitest run packages/brain/scripts/ci/__tests__/skill-contract.test.mjs --reporter=verbose
+      - name: 三件套③ 合同存在性校验（harness PR 必带 contract-draft.md）
+        run: |
+          set -euo pipefail
+          BASE="origin/${{ github.base_ref }}"
+          git diff --name-only "$BASE"...HEAD > /tmp/pr-diff.txt 2>/dev/null || true
+          node packages/brain/scripts/ci/contract-exists.mjs --fixture /tmp/pr-diff.txt
+
+  # ─── Gate 3: Brain HTTP 自动部署（仅 push:main，PR 不部署）────────────────
   deploy:
     name: Deploy Brain (Gate 3)
+    if: ${{ github.event_name == 'push' }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
-      BRAIN_URL: ${{ secrets.BRAIN_DEPLOY_URL || 'http://38.23.47.81:5221' }}
+      BRAIN_URL: ${{ secrets.BRAIN_DEPLOY_URL || 'http://100.71.151.105:5221' }}
       DEPLOY_TOKEN: ${{ secrets.DEPLOY_TOKEN }}
     steps:
+      - name: Connect to Tailscale
+        uses: tailscale/github-action@v2
+        with:
+          authkey: ${{ secrets.TS_AUTHKEY }}
       - uses: actions/checkout@v4
         with:
           fetch-depth: 2
@@ -155,13 +202,17 @@ jobs:
   on_deploy_failure:
     name: Gate 2 — P0 Alert on Failure
     needs: deploy
-    if: failure()
+    if: ${{ failure() && github.event_name == 'push' }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     env:
-      BRAIN_URL: ${{ secrets.BRAIN_DEPLOY_URL || 'http://38.23.47.81:5221' }}
+      BRAIN_URL: ${{ secrets.BRAIN_DEPLOY_URL || 'http://100.71.151.105:5221' }}
       DEPLOY_TOKEN: ${{ secrets.DEPLOY_TOKEN }}
     steps:
+      - name: Connect to Tailscale
+        uses: tailscale/github-action@v2
+        with:
+          authkey: ${{ secrets.TS_AUTHKEY }}
       - name: 创建 Brain P0 告警任务
         run: |
           FAILED_SHA="${{ github.sha }}"

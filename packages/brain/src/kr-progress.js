@@ -39,11 +39,11 @@ export async function updateKrProgress(pool, krId) {
   const statsResult = await pool.query(`
     SELECT
       COUNT(*) AS total,
-      COUNT(*) FILTER (WHERE oi.status = 'completed') AS completed
+      COUNT(*) FILTER (WHERE oi.status = 'done') AS completed
     FROM okr_initiatives oi
     JOIN okr_scopes os ON oi.scope_id = os.id
     WHERE os.project_id = ANY($1)
-      AND oi.status IN ('active', 'in_progress', 'completed')
+      AND oi.status IN ('running', 'done')
   `, [projectIds]);
 
   const total = parseInt(statsResult.rows[0].total, 10);

@@ -147,7 +147,9 @@ describe('selfcheck', () => {
     expect(ok).toBe(true);
   });
 
-  it('EXPECTED_SCHEMA_VERSION should be 293', () => {
+  // 293 是"最低可接受地板"，加 migration 时**不要 bump 它**（issue 14d66027）。
+  // facts-check 只校验地板 <= 最高 migration，不要求相等。bump 会让本断言失败。
+  it('EXPECTED_SCHEMA_VERSION should be 293 (floor, do not bump per migration)', () => {
     expect(EXPECTED_SCHEMA_VERSION).toBe('293');
   });
 

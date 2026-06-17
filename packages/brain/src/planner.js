@@ -215,7 +215,7 @@ async function getGlobalState() {
       SELECT id, title AS name, status, 'initiative' AS type, scope_id AS parent_id,
              NULL AS repo_path, created_at, updated_at, NULL AS domain, NULL AS execution_mode
       FROM okr_initiatives
-      WHERE status IN ('active', 'in_progress', 'pending')
+      WHERE status IN ('running', 'planned')
     `),
     pool.query(`SELECT * FROM tasks WHERE status IN ('queued', 'in_progress') ORDER BY created_at ASC`),
     pool.query(`SELECT * FROM tasks WHERE status = 'completed' ORDER BY completed_at DESC LIMIT 10`),
@@ -226,7 +226,7 @@ async function getGlobalState() {
       SELECT DISTINCT op.kr_id
       FROM okr_projects op
       INNER JOIN okr_scopes os ON os.project_id = op.id AND os.status IN ('active', 'in_progress', 'planning')
-      INNER JOIN okr_initiatives oi ON oi.scope_id = os.id AND oi.status IN ('active', 'in_progress', 'pending')
+      INNER JOIN okr_initiatives oi ON oi.scope_id = os.id AND oi.status IN ('running', 'planned')
       WHERE NOT EXISTS (
         SELECT 1 FROM tasks t
         WHERE t.goal_id = op.kr_id
@@ -341,7 +341,7 @@ async function selectTargetScope(project, state) {
     // Build map: scopeId → set of initiative ids under that scope
     const initiativesByScopeId = {};
     for (const p of allProjects) {
-      if (p.type === 'initiative' && p.status === 'active' && p.parent_id && scopeIds.has(p.parent_id)) {
+      if (p.type === 'initiative' && p.status === 'running' && p.parent_id && scopeIds.has(p.parent_id)) {
         if (!initiativesByScopeId[p.parent_id]) initiativesByScopeId[p.parent_id] = new Set();
         initiativesByScopeId[p.parent_id].add(p.id);
       }
@@ -416,7 +416,7 @@ async function selectTargetProject(kr, state) {
     }
   }
   for (const p of projects) {
-    if (p.type === 'initiative' && p.status === 'active' && p.parent_id) {
+    if (p.type === 'initiative' && p.status === 'running' && p.parent_id) {
       // If initiative's parent is a scope, roll up to the scope's parent (project)
       const rollupProjectId = scopeChildIds[p.parent_id] || p.parent_id;
       initiativeCountByProject[rollupProjectId] = (initiativeCountByProject[rollupProjectId] || 0) + 1;
@@ -454,7 +454,7 @@ async function generateNextTask(kr, project, state, options = {}) {
   if (project.type === 'scope') {
     const { projects: allProjects } = state;
     const childInitiativeIds = allProjects
-      .filter(p => p.type === 'initiative' && p.status === 'active' && p.parent_id === project.id)
+      .filter(p => p.type === 'initiative' && p.status === 'running' && p.parent_id === project.id)
       .map(p => p.id);
     if (childInitiativeIds.length > 0) {
       projectIds = childInitiativeIds;
@@ -569,7 +569,7 @@ async function generateArchitectureDesignTask(kr, project) {
       FROM okr_initiatives i
       JOIN okr_scopes os ON i.scope_id = os.id
       WHERE os.project_id = $1
-        AND i.status IN ('active', 'in_progress', 'pending')
+        AND i.status IN ('running', 'planned')
         AND NOT EXISTS (
           SELECT 1 FROM tasks t
           WHERE t.okr_initiative_id = i.id

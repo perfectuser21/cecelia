@@ -6,8 +6,9 @@
  * 任务 park 在非-END checkpoint。dispatcher 只 claim queued、唯一 re-driver
  * startup-sync 仅 boot 跑 → 任务死等下次重启。
  *
- * resumeStalledHarnessDrivers = tick 级看门狗：只重排「心跳陈旧(>3min) 且停在
- * B_task_loop（run_sub_task 阻塞区）」的 in_progress harness_initiative 任务。
+ * resumeStalledHarnessDrivers = tick 级看门狗：只重排「心跳陈旧(>10min，根因3 从
+ * 3min 加固) 且停在 B_task_loop（run_sub_task 阻塞区）」的 in_progress
+ * harness_initiative 任务。
  *
  * 关键安全不变量（本测试守护）：
  *   1. 只扫 phase='B_task_loop'（排除 A_planning planner-interrupt-wait → 不误杀
@@ -51,6 +52,14 @@ describe('resumeStalledHarnessDrivers — OPEN-2 看门狗', () => {
     expect(sql).toMatch(/IS\s+NULL/i);
   });
 
+  it('默认 staleMinutes=10（根因3：3min 太敏感，driver 长同步操作期间心跳断流被误判重排）', async () => {
+    mockPoolQuery.mockImplementation(async () => ({ rows: [] }));
+    await resumeStalledHarnessDrivers({});
+    const params = mockPoolQuery.mock.calls[0]?.[1] || [];
+    // SELECT 的第一个参数是 staleMinutes 字符串
+    expect(params[0]).toBe('10');
+  });
+
   it('无陈旧任务 → resumed 空', async () => {
     mockPoolQuery.mockImplementation(async () => ({ rows: [] }));
     const r = await resumeStalledHarnessDrivers({});
@@ -63,7 +72,11 @@ describe('resumeStalledHarnessDrivers — OPEN-2 看门狗', () => {
     let updateSql = '';
     let updateParams = [];
     mockPoolQuery.mockImplementation(async (sql, params) => {
-      if (/SELECT/i.test(sql)) return { rows: [{ id: TASK_ID }] };
+      // 仅 B 阶段查询命中（A 阶段活动判据查询返回空，避免双计数）
+      if (/SELECT/i.test(sql) && /B_task_loop/.test(sql) && !/GREATEST/i.test(sql)) {
+        return { rows: [{ id: TASK_ID }] };
+      }
+      if (/SELECT/i.test(sql)) return { rows: [] };
       if (/UPDATE\s+tasks/i.test(sql)) {
         updateSql = sql;
         updateParams = params;
@@ -89,7 +102,11 @@ describe('resumeStalledHarnessDrivers — OPEN-2 看门狗', () => {
   it('UPDATE 原子守卫返回 0 行（已被别的 tick 抢翻）→ 不计入 resumed', async () => {
     const TASK_ID = 'bbbb1111-2222-3333-4444-555566667777';
     mockPoolQuery.mockImplementation(async (sql) => {
-      if (/SELECT/i.test(sql)) return { rows: [{ id: TASK_ID }] };
+      // 仅 B 阶段查询命中（A 阶段活动判据查询返回空）
+      if (/SELECT/i.test(sql) && /B_task_loop/.test(sql) && !/GREATEST/i.test(sql)) {
+        return { rows: [{ id: TASK_ID }] };
+      }
+      if (/SELECT/i.test(sql)) return { rows: [] };
       if (/UPDATE\s+tasks/i.test(sql)) return { rows: [] }; // 抢翻失败
       return { rows: [] };
     });

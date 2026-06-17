@@ -12,9 +12,15 @@ const spawnMock = vi.fn();
 vi.mock('child_process', () => ({
   spawn: (...args) => spawnMock(...args),
 }));
-// buildDockerArgs 依赖 docker-executor，给个最小返回
+// buildDockerArgs 依赖 docker-executor，给个最小返回。
+// 必须含 forensics.promptFile（detached.js 按它落盘 prompt，与容器 CECELIA_PROMPT_FILE 同源）。
+import os from 'node:os';
+import path from 'node:path';
 vi.mock('../../docker-executor.js', () => ({
-  buildDockerArgs: () => ({ args: ['run', '--rm', '--name', 'old', '--cidfile', '/tmp/cid', 'img'] }),
+  buildDockerArgs: () => ({
+    args: ['run', '--rm', '--name', 'old', '--cidfile', '/tmp/cid', 'img'],
+    forensics: { promptFile: path.join(os.tmpdir(), 'detached-logging-test.prompt'), stdoutFile: '', runInstance: 'aaaaaaaa' },
+  }),
 }));
 
 function makeFakeProc() {

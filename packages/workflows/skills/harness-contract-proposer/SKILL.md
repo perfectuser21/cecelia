@@ -4,10 +4,15 @@ description: |
   Harness Contract Proposer — Harness v5 GAN Layer 2a：
   读 PRD，GAN 对抗写 Golden Path 合同（每步含真实验证命令）；
   Reviewer APPROVED 后倒推拆 task-plan.json。
-version: 8.3.0
+version: 9.2.0
 created: 2026-04-08
-updated: 2026-05-30
+updated: 2026-06-11
 changelog:
+  - 9.2.0: 新增「Contract Gate 合规惯用法速查表」— 四轮规则进化（#3351/#3353/#3357/#3358）认可的标准断言写法与 gate-allow 豁免语法，写断言前必读；目标是合同首轮即 gate-clean，终结每条 GAN 用 2-4 轮反馈重新发现惯用法的浪费
+  - 9.1.0: 链路审计修复 7 项 — (a) 截图路径统一 SPRINT_DIR/screenshots/，占位符 <ws_id> 改 <step>；(b) 修正第 7 维表述（7 维 = CI Workflow 内容对齐；[BEHAVIOR] ≥4 数量检查归 proposer 自查 + reviewer 第 6 维）；(c) 新增「领域验证规则（全局强制）」小节（视频 ffprobe / 发布真实出现 / DB 时间窗 / UI 可见断言，写进合同硬条款，与 evaluator 死规则呼应）；(d) windows_cloud/windows_wechat E2E 模板补产物时间戳防造假（LastWriteTime 在脚本启动后 N 分钟内）；(e) 作弊反例清单扩到 10+ 条，每条注明对应 Reviewer 维度；(f) 硬阈值加可执行验证命令转换规则；(g) 清理 v5.0 歧义残留，明确「模式 B final-e2e 由 evaluator 独立 task 执行，GAN 阶段只产出合同与脚本模板」
+  - 9.0.0: 第零纪律 — 每条 [BEHAVIOR] 必须 1:1 对应 Golden Path 步骤，在真实目标环境验证用户可观察输出，禁止 mock 任何 Golden Path 执行路径；target_environment 由 Golden Path 内容自动推断（新增 windows_wechat 路径 → xian-rog 真机）；自查 checklist 新增第 7 条 Golden Path 溯源；windows_wechat E2E 模板新增；禁止事项新增第 6 条
+  - 8.5.0: Step 1.1 加推导结果输出规范（写入 contract-draft.md ## Response Schema 推导段）；自查 checklist 改为检查 contract-draft 而非 PRD
+  - 8.4.0: 新增Step1.1读api/db/test registry技术上下文，消除Proposer技术真空写合同的根因
   - 8.3.0: B50 收敛模型 — 软化 ≥4 BEHAVIOR 硬底（覆盖4类标准场景是下限，上限由PRD定，禁padding）；新增 Step 1.5 精简纪律（修订轮先删后加、净变化趋近0、只补PRD真漏覆盖、scope不蔓延）。配合 reviewer v8.2 + brain B50 合同膨胀检测
   - 8.2.0: 修复自查 checklist 旧格式引用 — contract-dod-ws*.md → contract-dod.md（与 v8.0 单 Sprint 单文件格式对齐）
   - 8.1.0: windows_cloud workflow 内容审查强制规则 — 写任何 windows_cloud BEHAVIOR 引用 GHA workflow 之前，Proposer 必须用 Bash 工具 cat 读取 workflow 实际内容，做用户路径 1:1 映射检查，缺失步骤标注 [CI_GAP]，禁止将文件存在/大小/版本号检查算作业务行为验证；违反直接扣 DoD 第 1 维至 0 分
@@ -26,13 +31,13 @@ changelog:
   - 7.1.0: 修复 task-plan.json 永不生成 (#2819) — Step 3 改成每轮都生成（删 "仅 APPROVED 时执行" 门槛）；APPROVED 分支即最后一轮 proposer 的分支，inferTaskPlan 从此读取
   - 7.0.0: Golden Path 合同 — 格式从"Feature 1/Feature 2"改为 Golden Path Steps（每步含验证命令）；GAN 新增"验证命令可否造假"审查；合同 GAN 收敛后 Proposer 输出 task-plan.json（从 Golden Path 倒推）
   - 6.0.0: Working Skeleton — is_skeleton 检测；按 journey_type 切换 E2E test 模板（4 种）；contract-dod-ws0.md 加 YAML header
-  - 5.0.0: [已废止 — v7.4 起反转] TDD 融合 — 合同产出 3 份产物；Test Contract 索引表；~~严禁 contract-dod-ws 出现 [BEHAVIOR] 条目~~（**v7.4 起反转：BEHAVIOR 必须留 contract-dod-ws*.md 内 + 带 manual:bash 命令；不要再按此条执行**）
+  - 5.0.0: [已废弃] 曾禁止 [BEHAVIOR] 出现在合同中（此规则已被 v7.4 反转）。TDD 融合 — 合同产出 3 份产物；Test Contract 索引表。当前正确规则：[BEHAVIOR] 必须在 contract-dod.md 里，带 manual:bash 命令。
 ---
 
 > **语言规则: 所有输出必须使用简体中文。严禁日语、韩语或其他语言。**
 > **执行规则: 严格按照下面列出的步骤执行。不要搜索/查找其他 skill 文件，直接按本文档流程操作。**
 
-# /harness-contract-proposer — Harness v5 Contract Proposer
+# /harness-contract-proposer — Harness Contract Proposer
 
 **角色**: Generator（合同起草者）
 **对应 task_type**: `harness_contract_propose`
@@ -56,6 +61,62 @@ GAN 收敛（Reviewer APPROVED）后输出第 4 件：
 - Reviewer 审合同是否覆盖 Golden Path 全程
 - Reviewer 审验证命令是否能造假通过（核心新增）
 - GAN 轮次无上限，直到 Reviewer APPROVED
+
+---
+
+## ⚡ 第零纪律：Golden Path → [BEHAVIOR] 1:1 映射（v9.0 核心原则）
+
+**每条 [BEHAVIOR] 必须来自 Golden Path 的一个具体步骤，验证用户可观察到的真实输出。**
+
+### 核心规则
+
+1. **1:1 映射**：每条 [BEHAVIOR] 必须能回答「这是 Golden Path 哪一步的用户可观察输出？」。答不出来 → 删掉这条，或在 Golden Path 里补一个对应步骤。
+
+2. **禁止 mock 任何 Golden Path 执行路径**：Golden Path 写"Agent 下载模块 → 激活运行"，[BEHAVIOR] 必须触发真实下载、确认进程启动——禁止用 `downloadImpl: async () => {}` 或 `fakeChild = new EventEmitter()` 代替。Golden Path 写"用户发微信消息 → 系统写飞书记录"，[BEHAVIOR] 必须真实触发微信消息并断言飞书表新增记录，禁止 `MOCK_WECHAT_VERSION=4.2.0.0` 注入假环境。
+
+3. **target_environment 由 Golden Path 内容自动推断**，无需提前枚举平台表：
+   - Golden Path 步骤含"微信"/"wechat_rpa"/"listen_chat"/"pyautogui"/"个人微信" → `windows_wechat`（xian-rog 自托管真机，含微信 4.1.8 + UIA）
+   - Golden Path 步骤含"抖音发布"/"快手"/"小红书"/"平台发布"/"Agent 安装包" → `windows_cloud`（GHA windows-latest）
+   - Golden Path 步骤含"Dashboard"/"前端页面"/"浏览器打开 Cecelia" → `mac_web`（Playwright 本机 localhost:5174）
+   - Golden Path 步骤含"Brain API"/"数据库"/"后台任务" → `local_api`
+
+### 作弊反例清单（≥10 条，违反立即 FAIL，Reviewer 打回）
+
+| # | 反例 | 问题 | 正确做法 | 对应 Reviewer 维度直接低分 |
+|---|---|---|---|---|
+| 1 | `MOCK_WECHAT_VERSION=4.2.0.0` 等 `MOCK_*` 环境变量 | 注入假环境绕过真机检测 | 真机读真实版本，不注入 `MOCK_*` | 第 1 维 DoD 机检性 0 分；windows_wechat 另扣第 7 维 0 分 |
+| 2 | `stub`/`spy`（sinon.stub / 手写 stub 替身）替代真实依赖 | 真实执行路径未跑 | 打真实服务/真实子进程 | 第 1 维 0 分 |
+| 3 | `jest.mock(...)` / `vi.mock(...)` mock 掉 Golden Path 真路径 | mock 掉被测核心，假绿 | 真路径执行，mock 只允许在与 Golden Path 无关的纯外部边界 | 第 1 维 0 分 |
+| 4 | `downloadImpl: async () => { called++ }` / `fakeChild = new EventEmitter()` | mock 下载/进程，真实模块未启动 | 真实下载确认文件存在且大小合理；真实 fork 确认 pid + ready 事件 | 第 1 维 0 分 |
+| 5 | 无条件 `exit 0` 兜底（`else exit 0` / 末尾 `exit 0`）| API/环境不可用时静默 SKIP 当 PASS | 不可用 = 环境未就绪 = FAIL，禁止兜底 | 第 1 维 0 分 |
+| 6 | 断言命令上挂 `\|\| true`（吞掉失败 exit code）| 断言失败也假绿 | 断言失败必须传播非 0 exit | 第 1 维 0 分 |
+| 7 | 只查文件存在/大小（`test -f` / `.size` / `ls -l`）无内容断言 | 产出物存在 ≠ 行为正确 | 验证业务属性：内容字段/DB 记录/进程状态/UI 变化 | 第 6 维 verification_oracle_completeness 低分 |
+| 8 | 用历史数据冒充本轮产出（DB 查询无时间窗）| 上一轮残留记录被当本轮成功 | `SELECT count(*) ... AND created_at > NOW() - interval '5 minutes'`；产物比 `LastWriteTime` 在脚本启动后 | 第 6 维低分 |
+| 9 | `--dry-run` / `--dryrun` / `dryRun:true` 标志 | 没真执行，只打印计划 | final-e2e 必须真发布/真写库，禁止 dry-run（dry-run 只能在 generator CI-gap 标注，不进 final E2E）| 第 1 维 0 分 |
+| 10 | `sleep N` 后直接 `echo PASS`（无真实断言）| 等待 ≠ 验证 | sleep 后必须跟真实 jq -e / psql / DOM 断言 | 第 1 维 0 分 |
+| 11 | `grep` 自己前面 `echo` 出来的字符串当"验证通过" | 自说自话，验证对象是脚本自身输出 | 断言对象必须是被测系统的真实响应/产物 | 第 1 维 0 分 |
+
+### 自查问题（写完每条 [BEHAVIOR] 必须先回答再继续）
+
+> 「如果对应的 Golden Path 这一步根本没有真实执行，这条 [BEHAVIOR] 命令会 FAIL 吗？」
+
+- **会 FAIL** → 合格
+- **不会 FAIL**（因为 mock/skip/exit 0 兜底）→ 不合格，必须改为真实验证
+
+---
+
+## ⚡ 领域验证规则（全局强制 — 写进合同硬条款，与 evaluator 死规则呼应）
+
+**sprint 涉及下表领域时，合同（contract-draft.md 验证命令 + contract-dod.md [BEHAVIOR] + ## E2E 验收 脚本）必须含对应 oracle，缺则该条 [BEHAVIOR] 作废、Reviewer 第 6 维低分。evaluator 侧有镜像的「领域验证死规则」会在执行前扫描，缺 oracle 直接 FAIL——所以合同阶段必须先写进去。**
+
+| sprint 涉及 | 合同必须含的 oracle（硬条款）| ❌ 不合格写法 |
+|---|---|---|
+| **视频**（生成/剪辑/转码，产出 .mp4/.mov）| `ffprobe` 验**视频流 + 音频流 + 时长合理**（codec_type=video 且 codec_type=audio 且 duration>0）| 只查 `.mp4` 文件存在或大小 > 0 |
+| **发布**（抖音/快手/小红书/视频号/公众号等）| 验证内容**真实出现**：平台 API 查到帖子 ID/URL，或截图确认 | 脚本 `echo "发布成功"` / 只看 HTTP 200 |
+| **DB 写入** | `psql` 查行数且带 **`created_at > NOW() - interval '5 minutes'`** 时间窗 | `SELECT count(*)` 无时间窗（历史数据冒充）|
+| **UI 交互** | 可见状态断言：`toBeVisible` / `toHaveText` / 截图比对 | 只 `page.goto` 不断言 / 只查 console 无报错 |
+
+判断领域以 Golden Path + journey_type + target_environment 为准。视频类合同缺 ffprobe、发布类缺真实出现验证、DB 类缺时间窗、UI 类缺可见断言 → 合同不合格，必须补齐再交 Reviewer。
 
 ---
 
@@ -105,17 +166,6 @@ vitest 测试文件还要写（generator TDD red-green 用），但**不再被 e
 
 ## 执行流程
 
-### Step 0: 埋点 phase-event start（non-fatal）
-
-```bash
-PHASE_EVENT_ID=$(curl -fsS -X POST "${BRAIN_URL:-localhost:5221}/api/brain/harness/phase-event" \
-  -H 'Content-Type: application/json' \
-  -d "{\"initiative_id\":\"${INITIATIVE_ID:-unknown}\",\"node\":\"contract-proposer\",\"status\":\"running\",\"model\":\"${MODEL_ID:-claude-sonnet-4-6}\"}" \
-  2>/dev/null | jq -r '.id // empty') || true
-```
-
----
-
 ### Step 1: 读取 PRD
 
 ```bash
@@ -131,6 +181,68 @@ git show "origin/${PLANNER_BRANCH}:${SPRINT_DIR}/sprint-prd.md" 2>/dev/null || \
 ```bash
 JOURNEY_TYPE=$(grep -m1 "^## journey_type:" "${SPRINT_DIR}/sprint-prd.md" | sed 's/## journey_type: //' | tr -d ' ') || JOURNEY_TYPE="autonomous"
 ```
+
+---
+
+### Step 1.1: 读技术上下文（从registry推导现有规范）
+
+**Proposer负责What→How翻译，翻译必须基于现有系统约定。**
+
+```bash
+# 读取技术上下文，推导字段命名规范、DB约定、测试风格
+curl -sf "localhost:5221/api/brain/registry?type=api&limit=50" > /tmp/api_registry.json 2>/dev/null || echo '[]' > /tmp/api_registry.json
+curl -sf "localhost:5221/api/brain/registry?type=db_schema&limit=50" > /tmp/db_registry.json 2>/dev/null || echo '[]' > /tmp/db_registry.json
+curl -sf "localhost:5221/api/brain/registry?type=test&limit=30" > /tmp/test_registry.json 2>/dev/null || echo '[]' > /tmp/test_registry.json
+```
+
+**三个用途**：
+
+1. **Response Schema推导** — 从api_registry相似端点推导字段命名规范（如已有端点返回`initiative_id`而非`id`，新端点跟进）
+2. **DB字段名对齐** — 从db_schema找status值约定（如已有`queued/in_progress/completed`枚举，不自创新值）
+3. **测试风格统一** — 按test_registry现有文件写tests/（如已有tests用`describe+it`+`vitest`，新测试跟进）
+
+**Registry为空时**：跳过推导，按PRD字面定义，标`[NEW_PATTERN]`。
+
+**推导结果输出规范（必须执行）**：
+完成以上三个用途的推导后，必须在 contract-draft.md 的 Golden Path 段之前写入：
+```markdown
+## Response Schema（推导来源: [PRD字面/api_registry推导/NEW_PATTERN]）
+
+### Endpoint: <METHOD> <path>
+**Success (HTTP 200)**:
+```json
+{"field1": <type>, "field2": <type>}
+```
+- `field1` (type, 必填): 来源——[PRD明确/api_registry端点X的field1/NEW_PATTERN]
+- `field2` (type, 必填): ...
+**禁用字段名**: [...（来自api_registry现有端点的同义替换词）]
+**Error (HTTP 4xx)**:
+```json
+{"error": "<string>"}
+```
+```
+若 PRD 无 HTTP 响应（纯内部改动/DB迁移），写 `N/A — 任务无 HTTP 响应`，Reviewer 第6维自动满分。
+
+---
+
+### Step 1.2：提取已有回归测试约束
+
+基于 PRD 内容识别关键模块，读取相关测试文件，将已知约束写入合同草稿的"已知约束"章节。
+
+操作步骤：
+1. 读取 sprint-prd.md，提取关键词（微信/wechat → line04；视频/video → video；发布/publisher → publishers）
+2. 根据关键词定位测试文件：
+   - 微信相关：`find . -path "*/line04*" -name "*.test.ts" -o -path "*/wechat-rpa*" -name "test_*.py" 2>/dev/null | head -10`
+   - 视频相关：`find . -path "*/video*" -name "*.test.ts" -o -path "*/video*" -name "*.spec.ts" 2>/dev/null | head -10`
+   - 发布相关：`find . -path "*/publisher*" -name "*.test.ts" 2>/dev/null | head -10`
+3. 读取找到的测试文件（头 80 行），提取所有 `it(` / `test(` / `describe(` / `def test_` 的描述文字
+4. 在 contract-draft.md 的 `## 已知约束（来自回归测试）` 章节写入这些描述，格式：
+   ```
+   - [文件名] → [测试描述]
+   ```
+5. 如果找不到任何测试文件，在该章节写 `（暂无已知约束）`，不要留空
+
+这一步确保 Generator 看到历史约束，防止同一 bug 在下个 sprint 重现。
 
 ---
 
@@ -205,9 +317,10 @@ psql $DB -c "SELECT count(*) FROM brain_alerts WHERE task_id='$TASK_ID' AND crea
 ## E2E 验收（最终 final-e2e 跑 — 按 target_environment 选模板）
 
 **journey_type**: {autonomous|user_facing|dev_pipeline|agent_remote}
-**target_environment**: {local_api|mac_web|windows_cloud|linux_server|playground}
+**target_environment**: {local_api|mac_web|windows_cloud|windows_wechat|linux_server|playground}
 
 > **选模板规则**：看 PRD 末尾的 `target_environment` 字段，不是 `journey_type`。evaluator 模式B 按 `target_environment` SSH 派发到正确机器，合同 E2E 脚本必须与目标机器匹配。
+> `windows_wechat` 与 `windows_cloud` 的区别：前者走 xian-rog self-hosted runner（含真实微信 4.1.8），后者走 GHA windows-latest（无微信，适合 Agent 安装包/Publisher 测试）。
 
 ---
 
@@ -283,22 +396,22 @@ const { chromium, expect } = require('@playwright/test');
 
 **BEHAVIOR:E2E 截图 DoD（mac_web user_facing sprint 合约模板末尾必须包含）**
 
-在合约 DoD 的 `## BEHAVIOR:E2E 条目` 段末尾添加以下截图 DoD 条目，evaluator 验收后截图存入 `~/claude-output/harness-screenshots/<ws_id>-<step>.png`：
+在合约 DoD 的 `## BEHAVIOR:E2E 条目` 段末尾添加以下截图 DoD 条目，evaluator 验收后截图存入 `${SPRINT_DIR}/screenshots/<step>.png`：
 
 ```markdown
-- [ ] [BEHAVIOR:E2E:screenshot] evaluator 验收后截图已存入 ~/claude-output/harness-screenshots/
+- [ ] [BEHAVIOR:E2E:screenshot] evaluator 验收后截图已存入 ${SPRINT_DIR}/screenshots/
   Screenshots:
-    - <ws_id>-01-initial.png      期望：操作前页面初始状态，关键元素可见
-    - <ws_id>-02-action.png       期望：用户操作后页面截图，过渡状态可见
-    - <ws_id>-03-result.png       期望：操作完成后结果页面截图，期望变化已发生
-  路径格式：~/claude-output/harness-screenshots/<ws_id>-<step>.png
-  期望：evaluator 完成后截图已复制到 ~/claude-output/harness-screenshots/ 目录
+    - 01-initial.png      期望：操作前页面初始状态，关键元素可见
+    - 02-action.png       期望：用户操作后页面截图，过渡状态可见
+    - 03-result.png       期望：操作完成后结果页面截图，期望变化已发生
+  路径格式：${SPRINT_DIR}/screenshots/<step>.png
+  期望：evaluator 完成后截图已复制到 ${SPRINT_DIR}/screenshots/ 目录
 ```
 
 evaluator 完成验收后必须执行：
 ```bash
-mkdir -p ~/claude-output/harness-screenshots/
-cp screenshots/*.png ~/claude-output/harness-screenshots/ 2>/dev/null || true
+mkdir -p "${SPRINT_DIR}/screenshots/"
+cp screenshots/*.png "${SPRINT_DIR}/screenshots/" 2>/dev/null || true
 ```
 
 ---
@@ -320,6 +433,9 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
+# 0. 记录脚本启动时间（防造假：本轮所有产物的 LastWriteTime 必须晚于此，参照 local_api 的 created_at 时间窗）
+$ScriptStart = Get-Date
+
 # 1. 下载安装包（从公网，模拟用户点击下载）
 $InstallerPath = "$env:TEMP\{app_name}-setup.exe"
 Invoke-WebRequest -Uri $DownloadUrl -OutFile $InstallerPath -UseBasicParsing
@@ -331,6 +447,12 @@ Start-Process -FilePath $InstallerPath -ArgumentList "/S" -Wait -NoNewWindow
 # 3. 验证安装结果
 $AppPath = "${env:ProgramFiles}\{app_name}\{app_exe}"
 if (-not (Test-Path $AppPath)) { throw "FAIL: 安装后程序不存在 $AppPath" }
+
+# 3b. 时间戳防造假：安装产物必须是本轮新写入，不能是历史遗留文件冒充
+$AppWrite = (Get-Item $AppPath).LastWriteTime
+if ($AppWrite -lt $ScriptStart.AddMinutes(-1)) {
+  throw "FAIL: $AppPath LastWriteTime=$AppWrite 早于脚本启动 $ScriptStart — 疑似历史遗留产物冒充本轮安装"
+}
 $InstalledVersion = (Get-Item $AppPath).VersionInfo.ProductVersion
 if ($InstalledVersion -ne $ExpectedVersion) {
   throw "FAIL: 版本不匹配 installed=$InstalledVersion expected=$ExpectedVersion"
@@ -519,6 +641,65 @@ exit 0
 
 ---
 
+### target_environment = windows_wechat（微信 RPA — xian-rog 自托管真机，含微信 4.1.8 + UIA）
+
+> 适用：任何 Golden Path 步骤含"微信"/"listen_chat"/"wechat_rpa"/"pyautogui" 的 Sprint。
+> 机器：xian-rog self-hosted runner，标签 `wechat-capable`，微信版本已锁 4.1.8.107。
+> 触发：evaluator 调 `gh workflow run e2e-wechat-rpa.yml --repo perfectuser21/zenithjoy-workspace`。
+
+**核心禁止（违反 → Reviewer 打回）**：
+- ❌ `MOCK_WECHAT_VERSION=*` — 禁止注入假版本，必须读真实微信版本
+- ❌ `fakeChild = new EventEmitter()` — 禁止 mock 进程
+- ❌ 把此 target 写成 `windows_cloud`（GHA 无微信，BEHAVIOR 全部假绿）
+
+**E2E 验收步骤（写入 `sprints/.../e2e-verify.ps1`，在 xian-rog 执行）**：
+
+```powershell
+# final-e2e 验证脚本 — WeChat RPA（xian-rog 真机）
+# 前提：xian-rog 已安装微信 4.1.8.107，listen_chat.py 已就绪
+Set-StrictMode -Version Latest
+$ErrorActionPreference = "Stop"
+
+# 0. 记录脚本启动时间（防造假：本轮 DB 记录/产出文件的写入时间必须晚于此，参照 local_api 的 created_at 时间窗）
+$ScriptStart = Get-Date
+
+$agentDir = "$env:LOCALAPPDATA\zenithjoy-agent"   # 或 sprint 实际路径
+$pythonExe = "$agentDir\python-embedded\python.exe"
+$listenChat = "$agentDir\wechat-rpa\listen_chat.py"
+
+# 1. dryrun 版本确认（读真实 listen_chat.py 版本，禁止 MOCK_WECHAT_VERSION）
+$ver = & $pythonExe $listenChat --dryrun-print-version
+if ($LASTEXITCODE -ne 0) { throw "FAIL: dryrun-print-version exit=$LASTEXITCODE" }
+Write-Host "listen_chat version: $ver"
+
+# 2. 真实微信进程检测（UIA 控件树验证，不注入假版本）
+$wechatProc = Get-Process -Name WeChat -ErrorAction SilentlyContinue
+if (-not $wechatProc) { throw "FAIL: 微信未运行，xian-rog 预置条件未满足" }
+
+# 3. 验证核心行为（按 Golden Path 步骤写真实断言）
+# 示例：listen_chat.py 监听到新消息后写 DB 记录
+$result = & $pythonExe $listenChat --e2e-smoke 2>&1
+if ($LASTEXITCODE -ne 0) { throw "FAIL: e2e-smoke exit=$LASTEXITCODE output=$result" }
+
+# 3b. 时间戳防造假：本轮产出文件（如 smoke 写出的记录/截图）LastWriteTime 必须晚于脚本启动
+$outFile = "$agentDir\wechat-rpa\last-smoke-result.json"   # 替换为本 sprint 实际产物路径
+if (Test-Path $outFile) {
+  $w = (Get-Item $outFile).LastWriteTime
+  if ($w -lt $ScriptStart.AddMinutes(-1)) {
+    throw "FAIL: $outFile LastWriteTime=$w 早于脚本启动 $ScriptStart — 疑似历史遗留产物冒充本轮产出"
+  }
+}
+
+Write-Host "✅ windows_wechat E2E 验证通过"
+exit 0
+```
+
+**PASS 标准**：脚本 exit 0 + 真实微信版本读取成功 + 核心行为断言通过
+**FAIL 标准**：exit 1 OR 微信未运行 OR MOCK_* 注入（自动检测）
+**GHA workflow**：`.github/workflows/e2e-wechat-rpa.yml`（`workflow_dispatch` + self-hosted `wechat-capable`）
+
+---
+
 ### target_environment = linux_server（生产 API — SSH 到 hk-vps 执行）
 
 ```bash
@@ -566,6 +747,19 @@ echo "✅ 生产环境 Golden Path 验证通过"
 - curl 必须加 `-f` flag（HTTP 5xx 才返回非0 exit code）
 - Playwright 脚本必须含显式 `toBeVisible` / `toHaveText` 断言，不能只 navigate
 
+**硬阈值 → 可执行验证命令转换规则（强制）**：
+
+每条"**硬阈值**"（自然语言写的阈值）**必须**在合同里同时给出可执行的验证命令，禁止只写自然语言。Reviewer 第 1 维 DoD 机检性按此审查：硬阈值无对应命令 → 低分。
+
+| 硬阈值（自然语言）| 必须给出的可执行命令 |
+|---|---|
+| `status = completed 且耗时 < 5s` | `START=$(date +%s); curl -fs localhost:5221/api/brain/tasks/$TID \| jq -e '.status=="completed"'; END=$(date +%s); [ $((END-START)) -lt 5 ] \|\| { echo "FAIL: 耗时 $((END-START))s ≥ 5s"; exit 1; }` |
+| `count ≥ 1，5 分钟内写入` | `C=$(psql $DB -t -c "SELECT count(*) FROM t WHERE task_id='$TID' AND created_at > NOW() - interval '5 minutes'" \| tr -d ' '); [ "$C" -ge 1 ]` |
+| `视频时长 > 0 且有音视频流` | `ffprobe -v error -show_entries stream=codec_type -of json out.mp4 \| jq -e '[.streams[].codec_type] \| (index("video") and index("audio"))'` |
+| `UI 出现成功标志` | `await expect(page.locator('[data-testid="success"]')).toBeVisible({timeout:10000})` |
+
+写硬阈值时，紧跟着写"验证命令"，二者成对出现；Reviewer 看到只有自然语言阈值无命令 → 视为不可机检，扣分。
+
 ### ⚠️ 假绿反模式（v7.12.0 — Bug 10 禁止，必须自查）
 
 **反模式 1：新端点 "404-acceptable" 旁路**（test_is_red 降到 6 的根因）
@@ -600,10 +794,10 @@ echo OK
 **反模式 2：环境操作当 BEHAVIOR**（WS 实现的是代码，不是操作环境）
 
 ```bash
-# ❌ 这三条在 WS5 "写 e2e-screenshot-chain.test.ts" 之前就能通过，不是真红
-mkdir -p ~/claude-output/harness-screenshots/ && echo OK      # mkdir 环境无关
-curl -sf localhost:5221/api/brain/health | jq -e '.ok' && echo OK  # health 检查无关 WS5
-touch ~/claude-output/dummy-test.png && echo OK               # 写别的文件不验实现
+# ❌ 这三条在"写 e2e-screenshot-chain.test.ts"之前就能通过，不是真红
+mkdir -p "${SPRINT_DIR}/screenshots/" && echo OK             # mkdir 环境无关
+curl -sf localhost:5221/api/brain/health | jq -e '.ok' && echo OK  # health 检查无关本实现
+touch "${SPRINT_DIR}/dummy-test.png" && echo OK              # 写别的文件不验实现
 ```
 
 **禁止** ❌：`mkdir`/`touch`/`health curl`/`echo` 等与 WS 实现无关的环境操作当作 BEHAVIOR
@@ -631,6 +825,16 @@ echo OK
 - `[AI_ADDED]` 没附理由 → REVISION
 - 整个合同没有任何 `[AI_ADDED]` 标注但明显有 GAN 加的防造假逻辑 → REVISION（说明 proposer 没诚实标注）
 
+### Response Schema来源优先级
+
+写合同 Response Schema 字段名时，按以下优先级推导：
+
+1. **PRD明确指定** → 字面用（最高优先级，不可覆盖）
+2. **api_registry相似端点** → 推导用（Step 1.1读取，用于补充PRD未指定的字段命名风格）
+3. **都没有** → REST惯例 + 标`[NEW_PATTERN]`注释（说明这是新增模式）
+
+---
+
 ### ⚠️ 死规则（v7.5 — 修 Bug 8 proposer 漂 PRD 字段名）
 
 **PRD 是法律，proposer 是翻译，不许改字段名。**
@@ -650,12 +854,13 @@ PRD `## Response Schema` 段定义的字段名（key 字面值）是**不可改�
 
 写完 contract-dod.md 前 proposer **必须自查**：
 
-1. **提取 PRD response 字段名** → grep 出 `## Response Schema` 段的字面 key 名（如 `result`, `operation`, `error`）
+1. **提取 contract-draft.md Response Schema 推导段字段名** → grep 出 contract-draft.md 中 `## Response Schema` 推导段的字面 key 名（如 `result`, `operation`, `error`）
 2. **提取 contract jq -e 字段名** → grep 出 contract-dod.md 里 `jq -e '.<key>'` 的字面 key 名
-3. **断言**：contract keys 集合 == PRD keys 集合（字面相等）
-4. **断言**：PRD 禁用列表里的字段名 **绝对不在** contract 任何 jq -e 命令的正向断言里出现（只能在反向 `! has(...)` 检查里）
+3. **断言**：contract keys 集合 == contract-draft.md Response Schema 推导段 keys 集合（字面相等）
+4. **断言**：contract-draft.md Response Schema 推导段禁用列表里的字段名 **绝对不在** contract 任何 jq -e 命令的正向断言里出现（只能在反向 `! has(...)` 检查里）
 5. **断言（v7.6 新加 — Bug 9）**：`grep -c '^- \[ \] \[BEHAVIOR\]' contract-dod.md` ≥ 4。少于 4 → contract 作废，按 Step 2b 模板补齐到 ≥ 4 条不同场景（schema 字段 + keys 完整性 + 禁用字段反向 + error path 至少各 1）
 6. **假绿自查（v7.12 新加 — Bug 10）**：对每条 `[BEHAVIOR]` 命令，心想"如果对应代码**一行都没写**，这条命令会 FAIL 吗？"。答案是 YES → 真红，合格；答案是 NO（mkdir/touch/health check/404-acceptable 都能通过）→ **假绿，必须改写**
+7. **Golden Path 溯源（v9.0 新加）**：对每条 `[BEHAVIOR]`，回答「这是 Golden Path 哪一步的用户可观察输出？」——答不出来 → 删掉该条目或补对应 Golden Path 步骤；命令里含 `MOCK_*` 环境变量或 mock 对象 → 不合格；Golden Path 含微信操作但 `target_environment` 写 `windows_cloud` → 路由错误，必须改 `windows_wechat`
 
 任一断言 fail → contract 草案作废，**用 PRD 字面字段名 + ≥ 4 条 [BEHAVIOR] 重写**。
 
@@ -724,7 +929,7 @@ RESP=$(curl -f localhost:3001/multiply?a=7&b=5)
 3. **禁用字段反向**（`! has("X")` 每个禁用名一条）
 4. **error path**（非法输入返 4xx + error 字段存在）
 
-如果 PRD 含 Response Schema 段，**每个字段还要额外 1 条** [BEHAVIOR] 验。Reviewer 第 7 维 behavior_count_position 会 grep 数量；< 4 直接 REVISION。
+如果 PRD 含 Response Schema 段，**每个字段还要额外 1 条** [BEHAVIOR] 验。**[BEHAVIOR] ≥ 4 数量检查由 proposer 自查 checklist 第 5 条（`grep -c` 断言）+ Reviewer 第 6 维 verification_oracle_completeness 把关**（Reviewer 第 7 维 ci_workflow_alignment 审的是 CI Workflow 内容对齐，不负责数 [BEHAVIOR]）；数量 < 4 → 自查作废重写 / Reviewer 第 6 维低分 REVISION。
 
 ### ❌ 禁止借口（v7.6 — Bug 9 实证）
 
@@ -734,11 +939,13 @@ W26 r3 proposer 在 contract-dod 末尾写：
 **这是错的**。下列借口**全部禁止**：
 
 - ❌ "DoD 纯度规则" — 不存在此规则。v7.4 起 DoD 必须含 [BEHAVIOR]
-- ❌ "v5.0 严禁 contract-dod-ws 出现 [BEHAVIOR]" — v5.0 已废止，见 changelog
+- ❌ "v5.0 严禁 DoD 里出现 [BEHAVIOR]" — v5.0 该规则已废止（见 changelog v7.4），现规则相反：DoD 必须内嵌 [BEHAVIOR] + manual:bash
 - ❌ "BEHAVIOR 已搬到 vitest" — vitest 不被 evaluator 读，evaluator 只跑 DoD 文件 manual:bash
 - ❌ "本任务行为简单，1 条够了" — API 任务至少覆盖 4 类标准场景（schema 字段 / keys 完整性 / 禁用字段反向 / error path），这是**覆盖 PRD 的下限**，不是 padding。但**上限也由 PRD 决定**：覆盖完这 4 类 + PRD 列出的字段/路径就够了，禁止为"更严谨"堆更多（见下方精简纪律 B50）
 
 只要看到 `[BEHAVIOR] 条目已搬迁` / `DoD 纯度规则` / `v5.0` 等字眼出现在 contract-dod 文件里 → 草案作废重写。
+
+> **GAN 阶段职责边界（澄清）**：proposer/reviewer 的 GAN 对抗阶段**只产出合同与脚本模板**（contract-draft.md 含 `## E2E 验收` 脚本、contract-dod.md、tests/）。**模式 B final-e2e 由 evaluator 作为独立 task 执行**（Brain 在代码 merge 前 dispatch `harness_evaluate`，evaluator 按 target_environment 派发跑 `## E2E 验收` 脚本）。proposer 不执行 final-e2e，只保证脚本写对、可被 evaluator 直接跑。
 
 ```bash
 mkdir -p "${SPRINT_DIR}"
@@ -850,7 +1057,7 @@ grep -E "FAIL|failed|✗" /tmp/sprint-red.log || { echo "ERROR: 测试未产生 
 ```bash
 cat > "${SPRINT_DIR}/task-plan.json" << 'JSONEOF'
 {
-  "initiative_id": "pending",
+  "initiative_id": "${INITIATIVE_ID}",
   "journey_type": "{journey_type}",
   "journey_type_reason": "{1 句推断依据}",
   "tasks": [
@@ -895,15 +1102,6 @@ git commit -m "feat(contract): round-${PROPOSE_ROUND} Golden Path draft + DoD + 
 git push origin "${PROPOSE_BRANCH}"
 ```
 
-**埋点 phase-event end（non-fatal，每轮 push 后）**：
-
-```bash
-curl -fsS -X PATCH "${BRAIN_URL:-localhost:5221}/api/brain/harness/phase-event/${PHASE_EVENT_ID:-0}" \
-  -H 'Content-Type: application/json' \
-  -d "{\"status\":\"completed\",\"ts_end\":$(date +%s%3N),\"cost_usd\":${PHASE_COST_USD:-0}}" \
-  2>/dev/null || true
-```
-
 **结果文件写入**（每轮 — 含被 REVISION 打回轮）：
 
 ```bash
@@ -936,6 +1134,24 @@ Brain 读此文件获取结果，不解析 stdout。`$PROPOSE_BRANCH` 由 Brain 
 
 ---
 
+## Contract Gate 合规惯用法速查表（v9.2.0 — 写断言前必读）
+
+合同在 GAN 收敛时与 evaluate 前会过**代码层确定性 Contract Gate**（packages/brain/src/lib/contract-gate.js）。
+以下惯用法是 2026-06-11/12 四轮规则进化（#3351/#3353/#3357/#3358）后 gate 认可的标准写法——照写直接过，不照写会被 REVISION 打回烧轮次：
+
+| 意图 | ✅ gate 认可写法 | ❌ 会被命中 |
+|---|---|---|
+| API 值断言 | 同一 pipeline：`curl -sf URL \| jq -e '.field == "x"'`；或捕获后 **5 条语句内**对同名变量断言：`RESP=$(curl -sf URL)` + `echo "$RESP" \| jq -e '...'` | 裸 `curl -f URL` 无任何值校验；捕获后 5 句内无断言 |
+| 状态码 oracle（body 刻意丢弃，如归档/探活） | `CODE=$(curl -s -o /dev/null -w "%{http_code}" ...)` + `[ "$CODE" = "200" ]`（-w %{http_code} 即被识别） | `curl -sf URL -o /dev/null \|\| echo WARN`（不会 fail 的探测） |
+| 负向测试（预期失败） | 单语句：`cmd && { echo FAIL; exit 1; } \|\| true`；或捕获形态：`LOG=$(cmd 2>&1 \|\| true)` + 5 句内断言 `$LOG`；或 `if cmd; then echo FAIL; exit 1; fi` | 裸 `cmd \|\| true`（无捕获无后续断言）——这是吞错 |
+| DB 时效防伪 | **计数/聚合断言**必须带时间窗：`count(*) ... AND created_at > NOW() - interval '5 minutes'`（预捕获时间戳变量比较同样可，但写 NOW() 形态最稳） | 计数无时间窗（历史数据可冒充本轮产出） |
+| DB 定点读 | `SELECT status FROM t WHERE id='$ID'` 直接写，**不需要**时间窗（规则按断言意图分型，定点读/INSERT/UPDATE 不命中） | — |
+| 文件检查 | 一步到位验内容：`grep -q '关键内容' file \|\| { echo FAIL; exit 1; }`（存在性被内容断言隐含覆盖） | 仅 `test -f file`（存在 ≠ 正确）——若确需独立前置守卫，与内容断言相邻或 gate-allow |
+| 注释 | 注释行（行首 #）不参与扫描，可自由解释意图 | — |
+| 确属误报/特例 | 在合同中加独立一行：`gate-allow: <rule-id> <一句话理由>`（豁免留痕，gate 输出会展示）。rule-id 见命中反馈，如 weak-oracle/curl-no-jq、cheat/or-true | 反复改写法绕规则字面而不改实质 |
+
+**写完合同自查**：每条 [BEHAVIOR]/E2E 命令对照上表过一遍，比被 gate 打回一轮便宜得多。
+
 ## 禁止事项
 
 1. **合同格式用 `## Feature 1 / ## Feature 2`** → v7 必须改为 Golden Path Steps
@@ -943,3 +1159,4 @@ Brain 读此文件获取结果，不解析 stdout。`$PROPOSE_BRANCH` 由 Brain 
 3. **autonomous BEHAVIOR 命令测 playground 服务器** → `cd playground && node server.js` 等只能出现在明确标注 `is_skeleton: true` 的 playground 训练 sprint 里；真实功能 sprint 必须测 `localhost:5221`（Brain）
 4. **user_facing 模式B E2E 不含 Playwright 断言** → 只有 curl 没有 `toBeVisible/toHaveText` 等 UI 断言 = 假 E2E，Reviewer 打回
 5. **禁止在 main 分支操作**
+6. **windows_wechat 路由错误**（v9.0）→ Golden Path 含微信操作但 `target_environment` 写成 `windows_cloud` → BEHAVIOR 在 GHA runner（无微信）上全部假绿，Reviewer 打回；反之亦然（非微信功能写 `windows_wechat` 也错）
