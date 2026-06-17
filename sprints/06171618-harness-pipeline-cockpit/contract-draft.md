@@ -226,5 +226,5 @@ test('打开 harness task PRD 页 → 完整 PrepPRD 以 Markdown 渲染', async
 
 | 功能 | Test File | BEHAVIOR 覆盖 | 预期红证据 |
 |---|---|---|---|
-| 整个 Sprint（组件层） | `apps/dashboard/src/pages/tasks/TaskPrdPage.prepprd.test.tsx`（同步副本于 `${SPRINT_DIR}/tests/`） | prep_prd_body 优先 / Markdown 渲染 / 表格列表 / fallback / 错误态守卫 | 当前 `<pre>` + pickPrdContent 不读 prep_prd_body → h1/table 断言 + 优先级断言 FAIL |
-| Golden Path 端到端（UI 层） | `${SPRINT_DIR}/e2e/task-prd.spec.ts` | 完整 PrepPRD 全文小节可见 + DOM 真实 Markdown 元素 | 同上 → Playwright DOM 断言 FAIL |
+| 整个 Sprint（组件层） | `tests/TaskPrdPage.prepprd.test.tsx`（同步副本，对应 `apps/dashboard/src/pages/tasks/`） | prep_prd_body 优先 / Markdown 渲染 / 表格与列表 / 退回旧字段 / 错误态 | 当前 `<pre>` + pickPrdContent 不读 prep_prd_body → h1/table 断言 + 优先级断言 FAIL |
+| Golden Path 端到端（UI 层） | `e2e/task-prd.spec.ts` | 完整 PrepPRD / Markdown 渲染 | 同上 → Playwright DOM 断言 FAIL |
