@@ -1,0 +1,28 @@
+{
+  "initiative_id": "",
+  "journey_type": "user_facing",
+  "journey_type_reason": "改 apps/dashboard/ 前端页面 TaskPrdPage，命中 user_facing 优先级链第一条",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "TaskPrdPage 显示完整 PrepPRD（优先读 payload.prep_prd_body + Markdown 渲染替换 <pre>）",
+      "scope": "让 cockpit 的 PRD 页显示真正的完整 PrepPRD：pickPrdContent 优先读 task.payload.prep_prd_body（空时退回 description/prd_content/prd_summary），用 react-markdown(+remark-gfm) 渲染标题/列表/表格替换原 <pre>，Task payload 类型加 prep_prd_body?: string。不改后端、不新增端点。",
+      "dod": [
+        "[BEHAVIOR] pickPrdContent 优先读 payload.prep_prd_body，旧字段被忽略（vitest -t 'prep_prd_body 优先于旧字段' exit 0）",
+        "[BEHAVIOR] Markdown 渲染为真实 DOM：# 标题→<h1>、表格→<table>、列表→<ul>，主体非 <pre>（vitest -t 'Markdown 渲染为真实 DOM 元素' / '表格与列表按 Markdown 渲染' exit 0）",
+        "[BEHAVIOR] prep_prd_body 为空退回旧字段且 404/网络错误态不回归（vitest 对应用例 exit 0）",
+        "[BEHAVIOR:E2E] mac_web Playwright 打开 /tasks/:id/prd，完整 PrepPRD 全文小节可见 + [data-testid=prd-content] 内含 h1/h2/ul/table（e2e/task-prd.spec.ts exit 0）",
+        "[ARTIFACT] apps/dashboard/package.json 含 react-markdown + remark-gfm",
+        "[ARTIFACT] TaskPrdPage.tsx payload 类型含 prep_prd_body?: string 且 pickPrdContent 字面读 payload.prep_prd_body"
+      ],
+      "files": [
+        "apps/dashboard/src/pages/tasks/TaskPrdPage.tsx",
+        "apps/dashboard/src/pages/tasks/TaskPrdPage.prepprd.test.tsx",
+        "apps/dashboard/package.json"
+      ],
+      "depends_on": [],
+      "complexity": "S",
+      "estimated_minutes": 60
+    }
+  ]
+}
