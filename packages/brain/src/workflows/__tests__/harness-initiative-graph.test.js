@@ -422,6 +422,29 @@ describe('reportNode — B45 Fix1: verdict 从 sub_tasks 推导', () => {
     expect(runUpdate[1][1]).toBe('done');
   });
 
+  it('有真实 failed_scenarios 且未全 merged 时 verdict=FAIL 且 failure_reason 含场景名', async () => {
+    const dbQueryMock = vi.fn().mockResolvedValue({ rows: [] });
+    const mockPool = {
+      connect: vi.fn().mockResolvedValue({ query: dbQueryMock, release: vi.fn() }),
+      query: vi.fn().mockResolvedValue({ rows: [] }),
+    };
+    const state = {
+      initiativeId: '44444444-4444-4444-4444-444444444444',
+      sub_tasks: [{ id: 'ws1', status: 'failed', pr_url: null }],
+      final_e2e_verdict: null,
+      final_e2e_failed_scenarios: [{ name: 'scenario-x' }],
+    };
+    await reportNode(state, { pool: mockPool, _checkPrMerged: async () => false, execFile: async () => ({ stdout: '' }) });
+    const runUpdate = dbQueryMock.mock.calls.find(c => /UPDATE initiative_runs/.test(c[0]));
+    expect(runUpdate).toBeTruthy();
+    // verdict=FAIL → phase=failed
+    expect(runUpdate[1][1]).toBe('failed');
+    const reason = runUpdate[1][2]; // [initiativeId, phase, reason]
+    expect(reason).toBeTruthy();
+    expect(reason.trim()).not.toBe('');
+    expect(reason).toContain('scenario-x');
+  });
+
   it('合并 PR 抛错时不致 run failed（非致命）', async () => {
     const dbQueryMock = vi.fn().mockResolvedValue({ rows: [] });
     const mockPool = {
