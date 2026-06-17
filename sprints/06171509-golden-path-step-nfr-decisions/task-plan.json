@@ -1,0 +1,28 @@
+{
+  "initiative_id": "",
+  "journey_type": "autonomous",
+  "journey_type_reason": "改动全在 packages/brain/（migration 303 + golden_path/decisions 端点），纯后端自治，无 UI/agent 协议/engine 介入",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "Golden Path 重塑为 owner_task_id 模型 + step 级 NFR 决策读写",
+      "scope": "migration 303 重塑 golden_path 表（owner_task_id/order_no/feature_id/note，移除旧 scope_type/scope_id/ability_id，建 index (owner_task_id, order_no)）；重写 3 个 golden_path 端点（GET 列表按 owner_task_id 过滤 / POST 带 task 存在性校验 / PATCH）；POST /decisions 补 target_type=golden_path 存在性校验（含非法 uuid→400）；新增 GET /golden_path/:id/decisions 与 GET /tasks/:id/golden-path-decisions 两个决策读回视图；同步重写旧 golden_path 回归用例对齐新模型",
+      "dod": [
+        "[BEHAVIOR] POST /golden_path 用真实 owner_task_id+feature_id 建步返回 201 且回吐新模型字段、无旧列；owner_task_id 不存在/非法 uuid → 400",
+        "[BEHAVIOR] POST /decisions target_type=golden_path 指向真实步 → 201；target_id 不存在/非法 uuid → 400",
+        "[BEHAVIOR] GET /golden_path/:id/decisions?scope=v1 读回该步决策（无匹配→200+[]）",
+        "[BEHAVIOR] GET /tasks/:id/golden-path-decisions?category=nfr&scope=v1 按 owner_task_id join 返回 NFR 验收单（无匹配→200+[]）",
+        "[ARTIFACT] packages/brain/migrations/303_*.sql 含 owner_task_id/feature_id/order_no，移除旧列",
+        "[ARTIFACT] packages/brain/src/routes/abilities.js 重写为 owner_task_id 模型 + 含 golden-path-decisions 路由"
+      ],
+      "files": [
+        "packages/brain/migrations/303_golden_path_owner_task_model.sql",
+        "packages/brain/src/routes/abilities.js",
+        "packages/brain/src/routes/__tests__/abilities.test.js"
+      ],
+      "depends_on": [],
+      "complexity": "M",
+      "estimated_minutes": 75
+    }
+  ]
+}
