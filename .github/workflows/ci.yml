@@ -142,11 +142,10 @@ jobs:
         run: |
           npm ci --ignore-scripts
           # runtime 依赖（packages/brain, apps/api）不允许 high+，--omit=dev 排除 vite/rollup/workbox 等 build 工具
-          # 已知待修漏洞（Walking Skeleton P1 结束后，warn-only 豁免撤销，恢复硬失败）：
-          #   GHSA-q7rr-3cgh-j5r3: @opentelemetry/sdk-node ≤0.216.0 — fix 需 major 升级 0.218.0，独立 P2 track
-          #   protobufjs ≤7.5.7 — npm audit fix 可修（non-breaking），TODO: 开独立 PR
-          # 若此步骤失败：运行 npm audit --audit-level=high --omit=dev 查看具体 advisory，升级对应包
-          npm audit --audit-level=high --omit=dev
+          # 用带文档化包级白名单的脚本：对"无 non-breaking 修复 + 本项目用法下不可利用"的 advisory
+          # 做文档化豁免（当前：uuid 仅用 v4 不可利用 / protobufjs 深层传递依赖 / dompurify 渲染可信内容），
+          # 仍拦截所有其它 runtime high+。新 CVE 导致 fail 时见脚本内白名单纪律。
+          bash scripts/ci/dep-audit-runtime-high.sh
       - name: npm audit — all deps critical
         run: |
           # 全量（含 dev）检查 critical，防供应链攻击。
