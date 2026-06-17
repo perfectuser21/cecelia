@@ -1,0 +1,27 @@
+{
+  "initiative_id": "a510eb80-a78d-462f-a143-054c1ad06e9f",
+  "journey_type": "dev_pipeline",
+  "journey_type_reason": "Cecelia Harness/Dev 基础设施（决策统一存储白板），服务无头/inline dev 流程，归属 Cecelia Harness Pipeline 这条 dev_pipeline。",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "Decision System 地基：写/读 ability 级决策 API + pushDecisions 映射 Level/Scope/ability relation",
+      "scope": "新增 POST /api/brain/decisions（校验 level∈{area,ability,feature,step}、target_type=journey_feature 时 target_id 必须存在于 journey_features，否则 400+error(string)；写入 level/target_type/target_id/scope，返回创建出的决策裸行含 id，201）；新增 GET /api/brain/abilities/:id/decisions?scope=v1（返回该 ability 的决策裸数组，可按 scope 过滤，无决策返回 []）；两路由必须挂载进 routes.js 真实可达（非 404）；扩 notion-push-sync.js 的 pushDecisions：抽出导出纯函数 buildDecisionNotionProperties(decision, abilityNotionId) 把 level→Level、scope→Scope、ability→relation 映射进 Notion AI Notes 属性（属性类型与库 schema 对齐，参照 Feature 库 Status 用 status 类型的教训），并 JOIN journey_features 取 ability 的 notion_id；保留 notion_synced_at IS NULL 去重不重推。不碰 migration。",
+      "dod": [
+        "[BEHAVIOR] POST /api/brain/decisions 真实 ability → 201 + 返回 id(string) + level/target_id/scope 回显，decisions 表新增行字段正确（5 分钟时间窗）",
+        "[BEHAVIOR] GET /api/brain/abilities/:id/decisions?scope=v1 → 200 数组含该决策且全部 scope=v1；无决策 ability → 200 []",
+        "[BEHAVIOR] 非法 level / 非法 target_id → 400 + error(string)",
+        "[BEHAVIOR] buildDecisionNotionProperties 把 level→Level、scope→Scope、ability→relation 映射正确（确定性，不打 Notion 网络）；pushDecisions 保留 notion_synced_at IS NULL 去重",
+        "[ARTIFACT] POST /decisions 与 GET /abilities/:id/decisions 挂载进 packages/brain/src/routes.js；notion-push-sync.js 导出 buildDecisionNotionProperties"
+      ],
+      "files": [
+        "packages/brain/src/routes/abilities.js",
+        "packages/brain/src/routes.js",
+        "packages/brain/src/notion-push-sync.js"
+      ],
+      "depends_on": [],
+      "complexity": "M",
+      "estimated_minutes": 90
+    }
+  ]
+}

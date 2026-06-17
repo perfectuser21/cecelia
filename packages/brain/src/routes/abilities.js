@@ -6,6 +6,7 @@ const router = express.Router();
 const ABILITY_KINDS = ['ability', 'feature'];
 const ABILITY_STATUS = ['working', 'broken', 'planned', 'building', 'done', 'deprecated'];
 const SCOPE_TYPES = ['run', 'project', 'initiative', 'journey'];
+const DECISION_LEVELS = ['area', 'ability', 'feature', 'step'];
 
 // ---------- abilities (基于 journey_features WHERE kind 筛选) ----------
 
@@ -86,6 +87,57 @@ router.patch('/abilities/:id', async (req, res) => {
     res.json(rows[0]);
   } catch (err) {
     console.error('[abilities] PATCH /abilities/:id error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ---------- decisions (level/target_type/target_id/scope 分层决策) ----------
+
+// POST /api/brain/decisions — 写 ability/feature 级决策
+router.post('/decisions', async (req, res) => {
+  try {
+    const { category, topic, decision, reason, level, target_type, target_id, scope } = req.body;
+    if (!level || !DECISION_LEVELS.includes(level))
+      return res.status(400).json({ error: `level must be one of: ${DECISION_LEVELS.join(',')}` });
+    // target_type=journey_feature 时 target_id 必须真实存在于 journey_features
+    if (target_type === 'journey_feature') {
+      if (!target_id)
+        return res.status(400).json({ error: 'target_id is required when target_type=journey_feature' });
+      let exists;
+      try {
+        exists = await pool.query('SELECT id FROM journey_features WHERE id=$1', [target_id]);
+      } catch {
+        // 非法 uuid 格式 → 视为不存在的 target_id（400 而非 500）
+        return res.status(400).json({ error: `invalid target_id: ${target_id}` });
+      }
+      if (!exists.rows.length)
+        return res.status(400).json({ error: `target_id not found in journey_features: ${target_id}` });
+    }
+    const { rows } = await pool.query(
+      `INSERT INTO decisions (category, topic, decision, reason, level, target_type, target_id, scope)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *`,
+      [category || null, topic || null, decision || null, reason || null,
+       level, target_type || null, target_id || null, scope || null]
+    );
+    res.status(201).json(rows[0]);
+  } catch (err) {
+    console.error('[abilities] POST /decisions error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/brain/abilities/:id/decisions?scope=v1 — 读某 ability 的决策清单
+router.get('/abilities/:id/decisions', async (req, res) => {
+  try {
+    const { scope } = req.query;
+    const params = [req.params.id];
+    let sql = `SELECT * FROM decisions WHERE target_type='journey_feature' AND target_id=$1`;
+    if (scope) { params.push(scope); sql += ` AND scope=$${params.length}`; }
+    sql += ` ORDER BY created_at DESC`;
+    const { rows } = await pool.query(sql, params);
+    res.json(rows);
+  } catch (err) {
+    console.error('[abilities] GET /abilities/:id/decisions error:', err.message);
     res.status(500).json({ error: err.message });
   }
 });
