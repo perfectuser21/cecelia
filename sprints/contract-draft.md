@@ -1,4 +1,4 @@
-# Sprint Contract Draft (Round 1) — playground GET /ping（smoke fire）
+# Sprint Contract Draft (Round 2) — playground GET /ping（smoke fire）
 
 ## 已知约束（来自回归测试）
 
@@ -33,7 +33,8 @@
 ```bash
 # 启动 playground（target_environment=playground 训练 sprint，按 skill playground 例外允许 node playground/server.js）
 cd playground && PLAYGROUND_PORT=3001 node server.js & SPID=$!
-sleep 2
+# Risk R2 mitigation：poll /health 就绪再探测，替代固定 sleep
+for i in $(seq 1 30); do curl -sf "localhost:3001/health" -o /dev/null && break; [ "$i" = 30 ] && { echo "FAIL: server 未就绪（端口占用/启动失败 — R1/R2）"; kill $SPID 2>/dev/null; exit 1; }; sleep 0.5; done
 curl -sf "localhost:3001/ping" -o /dev/null && echo "OK: /ping 可达" || { echo "FAIL: /ping 不可达"; kill $SPID; exit 1; }
 kill $SPID
 ```
@@ -51,7 +52,8 @@ kill $SPID
 **验证命令**:
 ```bash
 cd playground && PLAYGROUND_PORT=3001 node server.js & SPID=$!
-sleep 2
+# Risk R2 mitigation：poll /health 就绪再探测，替代固定 sleep
+for i in $(seq 1 30); do curl -sf "localhost:3001/health" -o /dev/null && break; [ "$i" = 30 ] && { echo "FAIL: server 未就绪（端口占用/启动失败 — R1/R2）"; kill $SPID 2>/dev/null; exit 1; }; sleep 0.5; done
 CODE=$(curl -s -o /dev/null -w "%{http_code}" "localhost:3001/ping")
 [ "$CODE" = "200" ] || { echo "FAIL: 期望 200，实得 $CODE（路由未注册时为 404）"; kill $SPID; exit 1; }
 kill $SPID
@@ -71,7 +73,8 @@ echo "OK: /ping 命中路由 200"
 **验证命令**:
 ```bash
 cd playground && PLAYGROUND_PORT=3001 node server.js & SPID=$!
-sleep 2
+# Risk R2 mitigation：poll /health 就绪再探测，替代固定 sleep
+for i in $(seq 1 30); do curl -sf "localhost:3001/health" -o /dev/null && break; [ "$i" = 30 ] && { echo "FAIL: server 未就绪（端口占用/启动失败 — R1/R2）"; kill $SPID 2>/dev/null; exit 1; }; sleep 0.5; done
 RESP=$(curl -sf "localhost:3001/ping")
 echo "$RESP" | jq -e '.pong == true' || { echo "FAIL: pong != true（实得 $RESP）"; kill $SPID; exit 1; }
 echo "$RESP" | jq -e '.pong | type == "boolean"' || { echo "FAIL: pong 非布尔"; kill $SPID; exit 1; }
@@ -94,7 +97,8 @@ echo "OK: /ping 返回 {\"pong\":true} schema 完整"
 **验证命令**:
 ```bash
 cd playground && PLAYGROUND_PORT=3001 node server.js & SPID=$!
-sleep 2
+# Risk R2 mitigation：poll /health 就绪再探测，替代固定 sleep
+for i in $(seq 1 30); do curl -sf "localhost:3001/health" -o /dev/null && break; [ "$i" = 30 ] && { echo "FAIL: server 未就绪（端口占用/启动失败 — R1/R2）"; kill $SPID 2>/dev/null; exit 1; }; sleep 0.5; done
 RESP=$(curl -sf "localhost:3001/ping?x=1&foo=bar")
 echo "$RESP" | jq -e '.pong == true' || { echo "FAIL: 带 query 时 pong != true"; kill $SPID; exit 1; }
 echo "$RESP" | jq -e 'keys == ["pong"]' || { echo "FAIL: 带 query 时 schema 漂移"; kill $SPID; exit 1; }
@@ -104,6 +108,19 @@ echo "OK: query 参数被忽略，行为一致"
 
 **硬阈值**: 带任意 query → 仍 200 + `{"pong":true}`，无 4xx、无字段漂移。
 **验证命令（硬阈值 codify）**: `curl -sf "localhost:3001/ping?x=1&foo=bar" | jq -e '.pong == true and (keys == ["pong"])'`
+
+---
+
+## Risks（假红来源登记 — smoke fire 目标是确认管道全绿，必须杜绝下列假红）
+
+> 本 sprint 业务逻辑零风险（`/ping` 零参数零计算）。下列 2 条是**验收执行层**的真实假红来源——它们会让管道误判为红（route 未注册/server 不可达），与 generator 实现质量无关，必须登记并在脚本中消除。不编造 PRD 无关风险。
+
+| # | Risk（假红来源）| 触发条件 | 影响 | Mitigation（已落地到本合同验证命令 + E2E 脚本）|
+|---|---|---|---|---|
+| R1 | **端口被占用** — `PLAYGROUND_PORT=3001` 被其他进程占用 → server 绑定失败 → curl 连不上 → 误判 `/ping` 路由未注册（假红）| 上一轮残留 server 未回收 / 本机 3001 已被占 | 路由实现正确仍判 FAIL | 端口可覆盖：`PORT="${PLAYGROUND_PORT:-3001}"`，可指定空闲端口；启动后立即 `trap 'kill $SPID' EXIT` 确保进程回收，不跨轮泄漏端口 |
+| R2 | **启动竞态** — 固定 `sleep 2` 在慢机器/CI 上不足 → server 尚未就绪即被探测 → curl 连不上 → 误判路由未注册（假红）| CI runner 冷启动 / 机器负载高，2s 内 server 未监听 | 路由实现正确仍判 FAIL | 就绪轮询替代固定 sleep：启动后 poll `/health` 直到 200（最多 15s）再跑 `/ping` 断言；超时即显式 FAIL（区分「未就绪」与「路由缺失」），不静默兜底 |
+
+> 说明：mitigation 已落地到下方 `## E2E 验收` 脚本与本合同各 Step 验证命令、`contract-dod.md` 各 [BEHAVIOR] 命令（统一改用就绪轮询 + 可覆盖端口 + trap 回收），不仅在此栏纸面登记。
 
 ---
 
@@ -118,13 +135,23 @@ echo "OK: query 参数被忽略，行为一致"
 #!/bin/bash
 set -e
 
-# 1. 启动 playground server（干净端口 3001）
-cd playground && PLAYGROUND_PORT=3001 node server.js & SPID=$!
+# Risk R1 mitigation：端口可覆盖（默认 3001，被占用时可指定空闲端口）
+PORT="${PLAYGROUND_PORT:-3001}"
+
+# 1. 启动 playground server；trap 确保退出时回收进程（不跨轮泄漏端口 — Risk R1）
+cd playground && PLAYGROUND_PORT="$PORT" node server.js & SPID=$!
 trap 'kill $SPID 2>/dev/null || true' EXIT
-sleep 2
+
+# 1b. Risk R2 mitigation：就绪轮询替代固定 sleep —— poll /health 直到 200（最多 15s）再跑断言
+READY=0
+for i in $(seq 1 30); do
+  curl -sf "localhost:$PORT/health" -o /dev/null && { READY=1; break; }
+  sleep 0.5
+done
+[ "$READY" = "1" ] || { echo "FAIL: server 15s 内未就绪（端口 $PORT 被占用或启动失败 — Risk R1/R2，非路由缺失）"; exit 1; }
 
 # 2. Golden Path 主路径：GET /ping → 200 {"pong":true}
-RESP=$(curl -sf "localhost:3001/ping") || { echo "FAIL: /ping 未返回 2xx（路由未注册）"; exit 1; }
+RESP=$(curl -sf "localhost:$PORT/ping") || { echo "FAIL: /ping 未返回 2xx（路由未注册）"; exit 1; }
 echo "$RESP" | jq -e '.pong == true' || { echo "FAIL: pong != true（实得 $RESP）"; exit 1; }
 echo "$RESP" | jq -e '.pong | type == "boolean"' || { echo "FAIL: pong 非布尔类型"; exit 1; }
 echo "$RESP" | jq -e 'keys == ["pong"]' || { echo "FAIL: 响应 schema 不止 pong（实得 $RESP）"; exit 1; }
@@ -133,15 +160,15 @@ echo "$RESP" | jq -e 'keys == ["pong"]' || { echo "FAIL: 响应 schema 不止 po
 echo "$RESP" | jq -e 'has("ok") | not' || { echo "FAIL: 禁用字段 ok 出现"; exit 1; }
 
 # 4. 状态码 oracle：确实 200（非 404）
-CODE=$(curl -s -o /dev/null -w "%{http_code}" "localhost:3001/ping")
+CODE=$(curl -s -o /dev/null -w "%{http_code}" "localhost:$PORT/ping")
 [ "$CODE" = "200" ] || { echo "FAIL: 状态码 $CODE != 200"; exit 1; }
 
 # 5. 边界：带任意 query 仍 200 {"pong":true}
-RESP2=$(curl -sf "localhost:3001/ping?x=1&foo=bar")
+RESP2=$(curl -sf "localhost:$PORT/ping?x=1&foo=bar")
 echo "$RESP2" | jq -e '.pong == true and (keys == ["pong"])' || { echo "FAIL: 带 query 行为不一致（实得 $RESP2）"; exit 1; }
 
 # 6. 负向行为：POST /ping → express 默认 404（不在实现范围，验证未误注册其他方法）
-PCODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST "localhost:3001/ping")
+PCODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST "localhost:$PORT/ping")
 [ "$PCODE" = "404" ] || { echo "FAIL: POST /ping 期望 404，实得 $PCODE"; exit 1; }
 
 echo "✅ playground /ping 冒烟验证通过"
@@ -155,9 +182,10 @@ echo "✅ playground /ping 冒烟验证通过"
 
 | FROM_PRD 来源步骤 | AI_ADDED 步骤 + 理由 |
 |---|---|
-| Step 1（发起 GET /ping）、Step 2（命中路由）、Step 3（200 {"pong":true}）、Step 4（query 忽略边界）| 无 — 本 smoke fire sprint 全部步骤可在 PRD「Golden Path」+「边界情况」原文逐条对应；未加任何 AI 健壮性步骤（PRD 已含足量验证点，遵循 B50 精简纪律不做超覆盖）|
+| Step 1（发起 GET /ping）、Step 2（命中路由）、Step 3（200 {"pong":true}）、Step 4（query 忽略边界）| **Round 2 加：`## Risks` R1/R2 假红来源登记 + 就绪轮询/可覆盖端口/trap 回收 mitigation**（理由：Reviewer Round 1 指出 smoke fire 目标是确认管道全绿，固定 `sleep 2` 启动竞态与端口占用是两个真实假红来源，会让正确实现误判为红——属验收执行层健壮性，非新增 Golden Path 业务步骤）|
 
-> 说明：E2E 脚本第 6 步「POST /ping → 404」非新增 Golden Path 步骤，仅是对 PRD「边界情况」第 2 条「POST /ping 不在范围（默认 express 404）」的负向行为验证，归属 FROM_PRD。
+> 说明 1：所有 Golden Path 业务步骤均 FROM_PRD，无新增业务步骤；Round 2 唯一 AI_ADDED 内容是「假红消除」的验收健壮性（Risks 栏 + 脚本就绪轮询），不改变任何被验证的行为断言。
+> 说明 2：E2E 脚本第 6 步「POST /ping → 404」非新增 Golden Path 步骤，仅是对 PRD「边界情况」第 2 条「POST /ping 不在范围（默认 express 404）」的负向行为验证，归属 FROM_PRD。
 
 ---
 
