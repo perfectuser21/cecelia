@@ -6,15 +6,18 @@
     {
       "task_id": "ws1",
       "title": "Cockpit Phase 3 — Gate 1 决策面板 + 改决策 + 再来一轮 + 确定点火",
-      "scope": "在详情页 decisions 分区扩出 Gate 1 决策面板（phase=A_contract 时展示待决策项）；改单条决策保存写回 Brain（复用 PUT /api/brain/strategic-decisions/:id）；新增并命中 POST .../fire（A_contract→B_task_loop，含非 Gate1 越权 409）与 POST .../rechallenge（触发既有无头红队，按钮置忙）；非 Gate1 时确定点火 disabled + 语义化降级提示。先写 failing test 再实现。",
+      "scope": "在详情页 decisions 分区扩出 Gate 1 决策面板（phase=A_contract 时列出该 pipeline active 待决策项，list 源 = decisions 表与 edit 同源）；改单条决策保存写回 Brain（复用 PUT /api/brain/strategic-decisions/:id）；新增并命中 POST .../fire（A_contract→B_task_loop，写 node='fire' 留痕，含非 Gate1 越权 409）与 POST .../rechallenge（触发既有无头红队，按钮置忙）；非 Gate1 时确定点火 disabled + 语义化降级提示；Gate1 无待决策显示空态占位；改决策/点火失败内联报错保留输入不崩。先写 failing test 再实现。",
       "dod": [
-        "[BEHAVIOR] POST /api/brain/harness/initiative/:id/fire 推进 phase A_contract→B_task_loop（response.to_phase 且 DB 定点读 phase 双校验）",
+        "[BEHAVIOR] Gate1 该 pipeline 待决策项 list 与 edit 同源（注入 decisions 表 active 行可被 list 源列出）",
+        "[BEHAVIOR] POST /api/brain/harness/initiative/:id/fire 推进 phase A_contract→B_task_loop（response.to_phase + DB 定点读双校验，禁用字段反向 phase/status）",
+        "[BEHAVIOR] 点火留痕：initiative_run_events 写 node='fire' status='done'（带时间窗）",
         "[BEHAVIOR] 非 Gate1（phase=done）fire 返回 409/400 + error 字段且 phase 不变（服务端越权防护）",
         "[BEHAVIOR] POST /api/brain/harness/initiative/:id/rechallenge 返回 ok+rechallenge_triggered",
-        "[BEHAVIOR] PUT /api/brain/strategic-decisions/:id 改 decision 字段（response + DB 定点读）",
+        "[BEHAVIOR] PUT /api/brain/strategic-decisions/:id 改 decision 字段（response + DB 定点读 + 禁用字段反向 value/content）",
         "[BEHAVIOR] fire 不存在 initiative_id 返回 404 + error",
-        "[ARTIFACT] 详情页含 gate1-decision-panel / gate1-fire-btn / gate1-rechallenge-btn 并命中三写端点",
-        "[BEHAVIOR:E2E] mac_web Playwright 走完 Golden Path（打开→改决策→点火→离开 Gate1）含截图"
+        "[ARTIFACT] 详情页含 gate1-decision-panel / gate1-fire-btn / gate1-rechallenge-btn / gate1-empty / gate1-decision-error / gate1-fire-error 并命中三写端点",
+        "[BEHAVIOR:E2E] mac_web Playwright 走完 Golden Path（打开→列出待决策项→改决策→点火→离开 Gate1+留痕）含截图",
+        "[BEHAVIOR:E2E] 边界态：非 Gate1 降级 / Gate1 空态占位 / 写失败内联报错保留输入不崩"
       ],
       "files": [
         "apps/dashboard/src/pages/harness-pipeline/HarnessPipelineDetailPage.tsx",
