@@ -1,4 +1,4 @@
-# Sprint Contract Draft (Round 2)
+# Sprint Contract Draft (Round 3)
 
 > Harness Cockpit Phase 3 — 决策面板（让决策可见可改可点火）
 > journey_type: dev_pipeline ｜ target_environment: mac_web
@@ -99,7 +99,7 @@
 
 **验证命令**:
 ```bash
-TARGET_ID=$(psql "$DB" -t -c "SELECT gen_random_uuid()" | tr -d ' ')
+TARGET_ID=$(python3 -c "import uuid; print(uuid.uuid4())")
 RESP=$(curl -sf -X POST localhost:5221/api/brain/dev/decisions \
   -H 'Content-Type: application/json' \
   -d "{\"topic\":\"用什么框架\",\"decision\":\"vitest\",\"default_value\":\"vitest\",\"level\":\"step\",\"target_id\":\"$TARGET_ID\",\"scope\":\"v1\",\"verify_layer\":\"unit\",\"round\":1,\"generated_by\":\"cockpit-user\"}")
@@ -130,7 +130,7 @@ CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST localhost:5221/api/brain/d
 ROWS=$(curl -sf "localhost:5221/api/brain/dev/decisions?target=$TARGET_ID")
 echo "$ROWS" | jq -e 'type == "array" and length >= 1 and all(.[]; .target == "'"$TARGET_ID"'")' || { echo FAIL; exit 1; }
 # 空态：随机 target 返回 [] 且 HTTP 200，不报错
-EMPTY=$(curl -sf "localhost:5221/api/brain/dev/decisions?target=$(psql "$DB" -t -c "SELECT gen_random_uuid()" | tr -d ' ')")
+EMPTY=$(curl -sf "localhost:5221/api/brain/dev/decisions?target=$(python3 -c "import uuid; print(uuid.uuid4())")")
 echo "$EMPTY" | jq -e 'type == "array" and length == 0' || { echo "FAIL: 空态非 []"; exit 1; }
 ```
 
@@ -145,11 +145,11 @@ echo "$EMPTY" | jq -e 'type == "array" and length == 0' || { echo "FAIL: 空态�
 
 **验证命令**:
 ```bash
-BEFORE=$(psql "$DB" -t -c "SELECT count(*) FROM decisions WHERE target_id='$TARGET_ID'" | tr -d ' ')
+BEFORE=$(psql "$DB" -t -c "SELECT count(*) FROM decisions WHERE target_id='$TARGET_ID' AND created_at > NOW() - interval '5 minutes'" | tr -d ' ')
 curl -sf -X POST localhost:5221/api/brain/dev/decisions -H 'Content-Type: application/json' \
   -d "{\"id\":\"$NEWID\",\"topic\":\"用什么框架\",\"decision\":\"jest\",\"level\":\"step\",\"target_id\":\"$TARGET_ID\"}" \
   | jq -e '.id == "'"$NEWID"'" and .decision == "jest"' || { echo FAIL; exit 1; }
-AFTER=$(psql "$DB" -t -c "SELECT count(*) FROM decisions WHERE target_id='$TARGET_ID'" | tr -d ' ')
+AFTER=$(psql "$DB" -t -c "SELECT count(*) FROM decisions WHERE target_id='$TARGET_ID' AND created_at > NOW() - interval '5 minutes'" | tr -d ' ')
 [ "$BEFORE" = "$AFTER" ] || { echo "FAIL: 编辑新增了行（应 update 不 append）"; exit 1; }
 psql "$DB" -t -c "SELECT decision FROM decisions WHERE id='$NEWID'" | grep -q jest || { echo FAIL; exit 1; }
 ```
@@ -169,7 +169,7 @@ curl -sf -X POST localhost:5221/api/brain/dev/decisions -H 'Content-Type: applic
   -d "{\"topic\":\"用什么框架\",\"decision\":\"<占位>\",\"level\":\"step\",\"target_id\":\"$TARGET_ID\",\"round\":2,\"generated_by\":\"redteam-stub\"}" \
   | jq -e '.round == 2' || { echo FAIL; exit 1; }
 # round 1 历史行仍在，round 2 新增 → 至少 2 个不同 round
-psql "$DB" -t -c "SELECT count(DISTINCT round) FROM decisions WHERE target_id='$TARGET_ID'" | grep -q 2 || { echo "FAIL: round 历史被覆盖"; exit 1; }
+psql "$DB" -t -c "SELECT count(DISTINCT round) FROM decisions WHERE target_id='$TARGET_ID' AND created_at > NOW() - interval '5 minutes'" | grep -q 2 || { echo "FAIL: round 历史被覆盖"; exit 1; }
 ```
 
 **硬阈值**: 存在 round=1 与 round=2 两行（DISTINCT round ≥ 2），历史未被覆盖。
@@ -203,10 +203,10 @@ psql "$DB" -t -c "SELECT count(*) FROM tasks WHERE id='$SUBID' AND task_type='ha
 
 **验证命令**:
 ```bash
-N0=$(psql "$DB" -t -c "SELECT count(*) FROM tasks WHERE task_type='harness_initiative'" | tr -d ' ')
+N0=$(psql "$DB" -t -c "SELECT count(*) FROM tasks WHERE task_type='harness_initiative' AND created_at > NOW() - interval '5 minutes'" | tr -d ' ')
 CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST localhost:5221/api/brain/dev/submit -H 'Content-Type: application/json' -d '{}')
 [ "$CODE" = "400" ] || { echo "FAIL: 缺标识未返 400, code=$CODE"; exit 1; }
-N1=$(psql "$DB" -t -c "SELECT count(*) FROM tasks WHERE task_type='harness_initiative'" | tr -d ' ')
+N1=$(psql "$DB" -t -c "SELECT count(*) FROM tasks WHERE task_type='harness_initiative' AND created_at > NOW() - interval '5 minutes'" | tr -d ' ')
 [ "$N0" = "$N1" ] || { echo "FAIL: 拒绝路径仍建出脏任务"; exit 1; }
 ```
 
@@ -229,10 +229,11 @@ set -e
 DB="${DB_URL:-postgresql://localhost/cecelia}"
 
 # 前置：migration 304 必须已应用（verify_layer/round/generated_by/default_value 列存在）
-psql "$DB" -t -c "SELECT count(*) FROM information_schema.columns WHERE table_name='decisions' AND column_name IN ('verify_layer','round','generated_by','default_value')" | grep -q 4 \
-  || { echo "FAIL: migration 304 未应用，缺新列"; exit 1; }
+# 定点读 4 新列（WHERE id= 定点，列任一缺失则 SQL 报错 → 非零退出 → FAIL；不查历史无时间窗问题）
+psql "$DB" -t -c "SELECT verify_layer, round, generated_by, default_value FROM decisions WHERE id='00000000-0000-0000-0000-000000000000' LIMIT 1" >/dev/null 2>&1 \
+  || { echo "FAIL: migration 304 未应用，缺新列（4 列任一缺失则查询报错）"; exit 1; }
 
-TARGET_ID=$(psql "$DB" -t -c "SELECT gen_random_uuid()" | tr -d ' ')
+TARGET_ID=$(python3 -c "import uuid; print(uuid.uuid4())")
 
 # 场景 A：append 写一轮
 RESP=$(curl -sf -X POST localhost:5221/api/brain/dev/decisions -H 'Content-Type: application/json' \
@@ -242,19 +243,19 @@ echo "$RESP" | jq -e '.target == "'"$TARGET_ID"'" and .round == 1 and .verify_la
 psql "$DB" -t -c "SELECT count(*) FROM decisions WHERE id='$NEWID' AND target_id='$TARGET_ID' AND generated_by='cockpit-user' AND created_at > NOW() - interval '5 minutes'" | grep -q 1 || { echo FAIL_A_DB; exit 1; }
 
 # 场景 C3：编辑（update 指定行，不增行）
-BEFORE=$(psql "$DB" -t -c "SELECT count(*) FROM decisions WHERE target_id='$TARGET_ID'" | tr -d ' ')
+BEFORE=$(psql "$DB" -t -c "SELECT count(*) FROM decisions WHERE target_id='$TARGET_ID' AND created_at > NOW() - interval '5 minutes'" | tr -d ' ')
 curl -sf -X POST localhost:5221/api/brain/dev/decisions -H 'Content-Type: application/json' \
   -d "{\"id\":\"$NEWID\",\"topic\":\"用什么框架\",\"decision\":\"jest\",\"level\":\"step\",\"target_id\":\"$TARGET_ID\"}" | jq -e '.decision == "jest"' || { echo FAIL_C3; exit 1; }
-AFTER=$(psql "$DB" -t -c "SELECT count(*) FROM decisions WHERE target_id='$TARGET_ID'" | tr -d ' ')
+AFTER=$(psql "$DB" -t -c "SELECT count(*) FROM decisions WHERE target_id='$TARGET_ID' AND created_at > NOW() - interval '5 minutes'" | tr -d ' ')
 [ "$BEFORE" = "$AFTER" ] || { echo "FAIL_C3: 编辑 append 了行"; exit 1; }
 
 # 场景 C4：再来一轮 round+1（历史不覆盖）
 curl -sf -X POST localhost:5221/api/brain/dev/decisions -H 'Content-Type: application/json' \
   -d "{\"topic\":\"用什么框架\",\"decision\":\"<占位>\",\"level\":\"step\",\"target_id\":\"$TARGET_ID\",\"round\":2,\"generated_by\":\"redteam-stub\"}" | jq -e '.round == 2' || { echo FAIL_C4; exit 1; }
-psql "$DB" -t -c "SELECT count(DISTINCT round) FROM decisions WHERE target_id='$TARGET_ID'" | grep -q 2 || { echo "FAIL_C4: round 历史被覆盖"; exit 1; }
+psql "$DB" -t -c "SELECT count(DISTINCT round) FROM decisions WHERE target_id='$TARGET_ID' AND created_at > NOW() - interval '5 minutes'" | grep -q 2 || { echo "FAIL_C4: round 历史被覆盖"; exit 1; }
 
 # 场景 C1 空态
-EMPTY=$(curl -sf "localhost:5221/api/brain/dev/decisions?target=$(psql "$DB" -t -c "SELECT gen_random_uuid()" | tr -d ' ')")
+EMPTY=$(curl -sf "localhost:5221/api/brain/dev/decisions?target=$(python3 -c "import uuid; print(uuid.uuid4())")")
 echo "$EMPTY" | jq -e 'type=="array" and length==0' || { echo FAIL_EMPTY; exit 1; }
 
 # 场景 B：点火建 harness_initiative
@@ -265,10 +266,10 @@ echo "$SUB" | jq -e '.task_type == "harness_initiative" and .status == "queued"'
 psql "$DB" -t -c "SELECT count(*) FROM tasks WHERE id='$SUBID' AND task_type='harness_initiative' AND created_at > NOW() - interval '5 minutes'" | grep -q 1 || { echo FAIL_B_DB; exit 1; }
 
 # 场景 B 边界：缺标识拒建脏任务
-N0=$(psql "$DB" -t -c "SELECT count(*) FROM tasks WHERE task_type='harness_initiative'" | tr -d ' ')
+N0=$(psql "$DB" -t -c "SELECT count(*) FROM tasks WHERE task_type='harness_initiative' AND created_at > NOW() - interval '5 minutes'" | tr -d ' ')
 CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST localhost:5221/api/brain/dev/submit -H 'Content-Type: application/json' -d '{}')
 [ "$CODE" = "400" ] || { echo "FAIL_B_GUARD code=$CODE"; exit 1; }
-N1=$(psql "$DB" -t -c "SELECT count(*) FROM tasks WHERE task_type='harness_initiative'" | tr -d ' ')
+N1=$(psql "$DB" -t -c "SELECT count(*) FROM tasks WHERE task_type='harness_initiative' AND created_at > NOW() - interval '5 minutes'" | tr -d ' ')
 [ "$N0" = "$N1" ] || { echo "FAIL_B_GUARD: 建出脏任务"; exit 1; }
 
 # R1 风险：target_id 非 UUID 须 400 非 5xx（不被 DB cast 错冒成 500）
@@ -347,7 +348,7 @@ const { chromium, expect } = require('@playwright/test');
 | # | 风险 | Mitigation（已 codify） |
 |---|---|---|
 | R1 | `target_id` 传非 UUID 字符串时端点可能抛 DB cast 错返 500（应是客户端错 400）| 端点先校验 UUID 格式，非法 → 400 + error；合同加反向断言「非 UUID → 400 非 5xx」（见 contract-dod error path BEHAVIOR）|
-| R2 | migration 304 未应用 → `verify_layer/round/generated_by/default_value` 列缺失，所有写入静默失败 | E2E Part 1 起手前置校验 4 列存在（`information_schema.columns` grep 4），缺列直接 FAIL，不进后续断言 |
+| R2 | migration 304 未应用 → `verify_layer/round/generated_by/default_value` 列缺失，所有写入静默失败 | E2E Part 1 起手定点读 4 新列（`SELECT verify_layer,round,generated_by,default_value ... WHERE id=...`），列任一缺失则 SQL 报错非零退出，直接 FAIL，不进后续断言 |
 | R3 | 「再来一轮」并发追加同 target 多个 round 行 | 追加语义靠 `INSERT` 新行（不 UPDATE 历史行、不 read-modify-write），天然无竞态；DISTINCT round 断言只验历史不被覆盖 |
 
 ## Test Contract
