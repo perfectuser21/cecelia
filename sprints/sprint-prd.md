@@ -1,58 +1,60 @@
-# Sprint PRD — playground 加 GET /subtract endpoint（B1）
+# Sprint PRD — playground 加 GET /ping endpoint（smoke fire）
 
 ## OKR 对齐
 
-- **对应 KR**：Cecelia harness pipeline 端到端验证（接续 W26 /increment）
-- **本次推进预期**：Bug 10（proposer 假绿）+ Bug 11（reviewer 结果文件）修复后管道验证
+- **对应 KR**：Cecelia harness pipeline 端到端验证
+- **本次推进预期**：用最小冒烟端点点火整条 harness 管道（planner→proposer→generator→evaluator→merge gate），确认链路全绿
 
 ## 背景
 
-B1 是 Bug 10 (#3110) + Bug 11 (#3111) 修复后第一个验证 sprint，用最简双参减法端点跑通完整管道，确认两个 bug 均真生效。
+本 sprint 是一次 smoke fire（冒烟点火）——用 playground 最简单的 `/ping` 端点跑通完整 harness 管道，验证调度与各节点当前可用，不引入新业务逻辑。`/ping` 是标准存活探测端点，零参数、零计算，是冒烟测试的最小可行切片。
 
 ## Golden Path（核心场景）
 
-HTTP 客户端从 [发起 `GET /subtract?a=10&b=3`] → 经过 [playground server strict-schema 校验 + 计算] → 到达 [200 响应 `{"result":7,"operation":"subtract"}`]
+HTTP 客户端从 [发起 `GET /ping`] → 经过 [playground server 命中 `/ping` 路由] → 到达 [200 响应 `{"pong":true}`]
 
 具体：
-1. 发送 `GET /subtract?a=10&b=3`
-2. server 校验 a、b 存在且匹配 `^-?\d+(\.\d+)?$`
-3. 返回 HTTP 200：`{"result":7,"operation":"subtract"}`
+1. 客户端发送 `GET /ping`（无 query 参数）
+2. playground server 命中 `/ping` 路由
+3. 返回 HTTP 200：`{"pong":true}`
 
-## Response Schema
-
-### Endpoint: GET /subtract
-
-**Query Parameters**: `a`（被减数，必填）、`b`（减数，必填），匹配 `^-?\d+(\.\d+)?$`；禁用 `x/y/p/q/n/m/v1/v2`
-
-**Success (HTTP 200)**:
-```json
-{"result": 7, "operation": "subtract"}
-```
-- `result` (number): `Number(a) - Number(b)`
-- `operation` (string): 字面量 `subtract`；禁用 `difference`/`diff`/`sub`/`minus`
-- **禁用响应字段**: `difference`/`diff`/`value`/`answer`/`data`
-- **Schema 完整性**: 顶层 keys 完全等于 `["operation","result"]`
-
-**Error (HTTP 400)**: `{"error":"<string>"}` — 缺参或非法格式
+<!-- Response Schema 由 Proposer 在 Step 1.1 读 api_registry 后推导，Planner 不负责定义技术规范。 -->
 
 ## 边界情况
 
-- 缺参 → 400；非法格式（`1e5`/`Inf`/`+1`/`0xFF`）→ 400；结果负数（a=3,b=10 → -7）正常返回
+- 带任意 query 参数（如 `/ping?x=1`）→ 仍正常返回 200 `{"pong":true}`（参数忽略，不报错）
+- 其他 HTTP 方法（POST /ping）→ 不在范围（默认 express 404）
 
 ## 范围限定
 
-**在范围内**：`playground/server.js` 新增 GET /subtract（strict-schema 双参减法）
-**不在范围内**：其他端点修改、overflow/浮点精度
+**在范围内**：`playground/server.js` 加 `GET /ping` 路由；`playground/tests/server.test.js` 加 `describe('GET /ping')`；`playground/README.md` 加 `/ping` 段
+**不在范围内**：不动其他路由 / 零依赖 / 不改 brain/engine/dashboard/apps
 
 ## 假设
 
-- [ASSUMPTION: playground/server.js 已有 `STRICT_NUMBER` regex 可复用]
+- [ASSUMPTION: 无 PrepPRD/thin_prd 提供，"smoke fire" 推断为最小存活端点冒烟，选用标准 `/ping` → `{"pong":true}`]
 
 ## 预期受影响文件
 
-- `playground/server.js`: 新增 GET /subtract 路由
+- `playground/server.js`: 新增 `GET /ping` 路由
+- `playground/tests/server.test.js`: 新增 `/ping` 测试
+- `playground/README.md`: 新增 `/ping` 段
+
+## E2E 验收
+
+```bash
+# 占位：proposer 将按 target_environment=playground 填入真实脚本
+# 期望验收点（自然语言）：启动 playground，GET /ping 返回 200 且 body 为 {"pong":true}
+cd playground && PLAYGROUND_PORT=3001 node server.js & SPID=$!
+sleep 2
+curl -f localhost:3001/ping | jq -e '.pong == true'
+kill $SPID
+echo "✅ playground /ping 冒烟验证通过"
+```
 
 ## journey_type: autonomous
-## journey_type_reason: 仅涉及 playground/server.js，无 UI / 无外部 agent 协议
+## journey_type_reason: 仅动 playground 子项目，无 UI/brain/engine/远端 agent
 ## target_environment: playground
-## target_environment_reason: evaluator 在本地 localhost:3000（或 $PLAYGROUND_PORT）验证
+## target_environment_reason: thin_prd 推断为 playground 训练 sprint，本地 node playground/server.js（localhost:3000/$PLAYGROUND_PORT）
+## journey_id: <task.payload.journey_id 未提供，缺；smoke fire 训练 sprint 无 Journey 锚定>
+## step_id: <无 PrepPRD Golden Path 锚定，smoke 冒烟无 Step 映射>
