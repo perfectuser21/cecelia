@@ -408,7 +408,8 @@ describe('reportNode — B45 Fix1: verdict 从 sub_tasks 推导', () => {
     const execFileMock = vi.fn().mockResolvedValue({ stdout: 'Squashed and merged' });
     const state = {
       initiativeId: '22222222-2222-2222-2222-222222222222',
-      sub_tasks: [{ id: 'ws1', status: 'pr_open', pr_url: 'https://github.com/o/r/pull/1' }],
+      // 假摔场景：裁判已 PASS（evaluate_verdict='PASS'），只是 CI auto-merge 抽风没合 → reportNode 自合
+      sub_tasks: [{ id: 'ws1', status: 'pr_open', pr_url: 'https://github.com/o/r/pull/1', evaluate_verdict: 'PASS' }],
       final_e2e_verdict: null,
       final_e2e_failed_scenarios: [],
     };
@@ -455,7 +456,8 @@ describe('reportNode — B45 Fix1: verdict 从 sub_tasks 推导', () => {
     const execFileMock = vi.fn().mockRejectedValue(new Error('gh transient error'));
     const state = {
       initiativeId: '33333333-3333-3333-3333-333333333333',
-      sub_tasks: [{ id: 'ws1', status: 'pr_open', pr_url: 'https://github.com/o/r/pull/2' }],
+      // 假摔场景：裁判已 PASS，自合步骤真正被调用（execFile reject 测 catch 非致命）
+      sub_tasks: [{ id: 'ws1', status: 'pr_open', pr_url: 'https://github.com/o/r/pull/2', evaluate_verdict: 'PASS' }],
       final_e2e_verdict: null,
       final_e2e_failed_scenarios: [],
     };
