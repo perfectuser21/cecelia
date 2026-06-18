@@ -470,4 +470,33 @@ describe('orphan-pr-worker', () => {
     expect(labeled[0].cmd).toContain('orphan-auto-triage');
     expect(labeled[0].cmd).not.toContain('needs-attention');
   });
+
+  it('case 13: harness sub_task PR（cp-*-ws-<hex>）→ skip harness_subtask_pr，不合不 label', async () => {
+    const merged = [];
+    execSync.mockImplementation(
+      routeExec({
+        prList: [
+          {
+            number: 1300,
+            url: 'https://github.com/o/r/pull/1300',
+            headRefName: 'cp-06181506-ws-3f893d17-ws1',
+            createdAt: hoursAgoIso(5),
+            updatedAt: hoursAgoIso(4),
+          },
+        ],
+        prChecks: { 1300: [{ name: 'ci', state: 'SUCCESS', conclusion: 'SUCCESS' }] },
+        onMerge: (n, cmd) => merged.push({ n, cmd }),
+      })
+    );
+    pool.query.mockResolvedValue({ rows: [] });
+
+    const r = await scanOrphanPrs(pool);
+    expect(r.scanned).toBe(1);
+    expect(r.skipped).toBe(1);
+    expect(r.merged).toBe(0);
+    expect(r.details[0]).toMatchObject({ pr: 1300, action: 'skipped', reason: 'harness_subtask_pr' });
+    expect(merged).toHaveLength(0);
+    // 不应查 Brain DB（豁免在 DB 查询之前）
+    expect(pool.query).not.toHaveBeenCalled();
+  });
 });

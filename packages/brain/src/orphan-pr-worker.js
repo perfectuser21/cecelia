@@ -40,6 +40,11 @@ const DEFAULT_AGE_THRESHOLD_HOURS = parseFloat(
 const DEFAULT_ORPHAN_LABEL =
   process.env.ORPHAN_PR_LABEL || 'needs-attention';
 
+// harness sub_task PR 分支模式 cp-<MMDDHHMM>-ws-<init8>-...（实证 cp-06171703-ws-3f893d17-ws1）。
+// 这类 PR 由 harness sub-graph 的 evaluator pre-merge gate 自管，orphan-worker 绝不偷合
+// （否则会合掉还在等裁判的 PR，绕过 evaluate_verdict gate）。普通 /dev 的 cp-<stamp>-<slug> 不撞。
+const HARNESS_SUBTASK_BRANCH_RE = /^cp-\d{8,10}-ws-[0-9a-f]{6,8}/;
+
 /**
  * 封装 gh CLI 调用。保持 execSync 同步（与现有 brain 脚本一致）。
  * 失败时抛错由外层 try/catch 捕获并转换为日志。
@@ -256,6 +261,20 @@ export async function scanOrphanPrs(pool, opts = {}) {
   // 2) 逐个处理（单个失败不阻止其他）
   for (const pr of candidates) {
     try {
+      // 2.0) harness sub_task PR 豁免：交给 sub-graph merge_pr gate 自管，orphan-worker 不碰
+      // （否则会偷合还在等裁判的 PR，绕过 evaluate_verdict pre-merge gate）。
+      if (HARNESS_SUBTASK_BRANCH_RE.test(pr.headRefName)) {
+        result.skipped++;
+        result.details.push({
+          pr: pr.number,
+          url: pr.url,
+          branch: pr.headRefName,
+          action: 'skipped',
+          reason: 'harness_subtask_pr',
+        });
+        continue;
+      }
+
       // 2a) Brain 有 task 在管 → 不是孤儿，skip
       let active = false;
       try {
