@@ -1,78 +1,77 @@
-contract_branch: cp-harness-propose-r1-3f893d17-a0
-sprint_dir: sprints/06171618-harness-pipeline-cockpit
+contract_branch: cp-harness-propose-r2-da887fa3-a0
+sprint_dir: sprints/06181500-cockpit-phase2-lifecycle
 
 ---
 skeleton: false
 journey_type: user_facing
-target_environment: mac_web
 ---
-# Contract DoD — Sprint: Harness Pipeline Cockpit · Phase 1（TaskPrdPage 显示完整 PrepPRD）
+# Contract DoD — Sprint: Harness Pipeline Cockpit · Phase 2（read-only 全生命周期视图）
 
-**范围**: 纯前端渲染改动——`apps/dashboard/src/pages/tasks/TaskPrdPage.tsx` 的 `pickPrdContent` 优先读 `payload.prep_prd_body`，并用 Markdown 渲染替换 `<pre>`；Task payload 类型加 `prep_prd_body?: string`；新增 react-markdown + remark-gfm 依赖。不改后端、不新增端点。
-**大小**: S
-
-> 验证策略：本 Sprint 无新增 HTTP 端点（复用既有 `GET /api/brain/tasks/:id`），oracle 由组件层 vitest 断言（模式 A，BEHAVIOR）+ Playwright DOM 断言（模式 B，BEHAVIOR:E2E）承载。每条 BEHAVIOR 的 manual:bash 用 vitest `-t` 过滤精确跑一个用例，exit code 即 oracle——对应代码未实现则真实 FAIL（截图反例 #2/#5/#6/#10 已规避：无 mkdir/touch/exit 0 兜底/|| true）。
+**范围**: `apps/dashboard/src/pages/harness-pipeline/` — 把 file-based「文档」Tab（`SprintDocsSection`，渲染「文件不存在」）替换为 read-only 七项全生命周期视图，每项独立读 Brain DB/API，缺失走「未到该步」语义化占位。抽出纯逻辑模块 `lifecycle.ts` 承载分区定义与占位选择。**纯前端 read-only，无新增端点、无写操作。**
+**大小**: M
 
 ## ARTIFACT 条目
 
-- [x] [ARTIFACT] package.json 新增 Markdown 渲染依赖 react-markdown + remark-gfm
-  Test: manual:bash -c 'node -e "const p=require(\"./apps/dashboard/package.json\");const d={...p.dependencies,...p.devDependencies};if(!d[\"react-markdown\"]||!d[\"remark-gfm\"])process.exit(1)" || { echo FAIL; exit 1; }; echo OK'
-  期望: OK
+- [ ] [ARTIFACT] 纯逻辑模块 lifecycle.ts 存在，导出七项分区 + 两类占位常量（NOT_REACHED/FETCH_FAILED）+ 选择函数
+  Test: node -e "const c=require('fs').readFileSync('apps/dashboard/src/pages/harness-pipeline/lifecycle.ts','utf8');if(!/LIFECYCLE_SECTIONS/.test(c)||!/selectSectionContent/.test(c)||!/未到该步/.test(c)||!/取数失败/.test(c))process.exit(1)"
 
-- [x] [ARTIFACT] Task payload 类型新增 prep_prd_body?: string
-  Test: manual:bash -c 'node -e "const c=require(\"fs\").readFileSync(\"apps/dashboard/src/pages/tasks/TaskPrdPage.tsx\",\"utf8\");if(!/prep_prd_body\?:\s*string/.test(c))process.exit(1)" || { echo FAIL; exit 1; }; echo OK'
-  期望: OK
+- [ ] [ARTIFACT] HarnessPipelineDetailPage 文档区改读生命周期模块，不再渲染「文件不存在」
+  Test: node -e "const c=require('fs').readFileSync('apps/dashboard/src/pages/harness-pipeline/HarnessPipelineDetailPage.tsx','utf8');if(c.includes('文件不存在'))process.exit(1)"
 
-- [x] [ARTIFACT] pickPrdContent 字面读取 payload.prep_prd_body（优先级最前，不使用禁用同义词）
-  Test: manual:bash -c 'node -e "const c=require(\"fs\").readFileSync(\"apps/dashboard/src/pages/tasks/TaskPrdPage.tsx\",\"utf8\");const fn=c.slice(c.indexOf(\"function pickPrdContent\"));if(!/payload\?\.prep_prd_body/.test(fn))process.exit(1);if(/prepPrdBody|prep_prd_body_|\.prd_body/.test(fn))process.exit(2)" || { echo FAIL; exit 1; }; echo OK'
-  期望: OK
+- [ ] [ARTIFACT] generator DOM 测试存在并覆盖关键断言（全文/占位/无死字/降级）
+  Test: node -e "const c=require('fs').readFileSync('apps/dashboard/src/pages/harness-pipeline/__tests__/PipelineLifecycle.test.tsx','utf8');for(const k of ['未到该步','文件不存在','prep_prd'])if(!c.includes(k))process.exit(1)"
 
-- [x] [ARTIFACT] PRD 主体改用 react-markdown 渲染（移除包裹原始 Markdown 的 <pre>）
-  Test: manual:bash -c 'node -e "const c=require(\"fs\").readFileSync(\"apps/dashboard/src/pages/tasks/TaskPrdPage.tsx\",\"utf8\");if(!/react-markdown/.test(c))process.exit(1);if(!/data-testid=\"prd-content\"/.test(c))process.exit(2)" || { echo FAIL; exit 1; }; echo OK'
-  期望: OK
+## BEHAVIOR 条目（内嵌可执行 manual:bash，user_facing 前端 → vitest 渲染断言驱动）
 
-## BEHAVIOR 条目（模式 A — 组件层 vitest，manual:bash exit code 即 oracle）
+> 本 Sprint 为纯前端 read-only 渲染改动，无新增 HTTP 端点，故 oracle 用 vitest 执行组件/纯逻辑断言（exit code 驱动，非 echo 假绿）。纯逻辑测试由 proposer 写在 sprints/.../tests/（node env，genuine red）；DOM 测试由 generator 写在 apps/dashboard（happy-dom）。模式 B（mac_web Playwright）见 contract-draft.md `## E2E 验收`。
 
-> 每条对应 Golden Path 一步的用户可观察输出。命令在 `apps/dashboard` 下用 vitest `-t` 精确跑单个用例；未实现则断言 FAIL。
-
-- [x] [BEHAVIOR] (Golden Path Step 1) 打开 PRD 页主体正常渲染，不报错不空白
-  Test: manual:bash -c 'cd apps/dashboard && npx vitest run src/pages/tasks/TaskPrdPage.prepprd.test.tsx -t "页面加载渲染主体不报错" --reporter=dot'
+- [ ] [BEHAVIOR] 七项分区按生命周期顺序定义（Golden Path Step 1）
+  Test: manual:bash -c 'cd packages/brain && npx vitest run sprints/06181500-cockpit-phase2-lifecycle/tests/lifecycle-contract.test.ts -t "七项分区按生命周期顺序"'
   期望: exit 0
 
-- [x] [BEHAVIOR] (Golden Path Step 2) pickPrdContent 优先读 payload.prep_prd_body，旧字段（description/prd_summary）被忽略
-  Test: manual:bash -c 'cd apps/dashboard && npx vitest run src/pages/tasks/TaskPrdPage.prepprd.test.tsx -t "prep_prd_body 优先于旧字段" --reporter=dot'
+- [ ] [BEHAVIOR] 缺失项返回「未到该步」占位、有源项返回 markdown（Golden Path Step 3）
+  Test: manual:bash -c 'cd packages/brain && npx vitest run sprints/06181500-cockpit-phase2-lifecycle/tests/lifecycle-contract.test.ts -t "缺失项返回未到该步占位"'
   期望: exit 0
 
-- [x] [BEHAVIOR] (Golden Path Step 3) Markdown 渲染为真实 DOM：`# 标题`→`<h1>`（文字非字面 #），主体不再是包裹原文的 `<pre>`
-  Test: manual:bash -c 'cd apps/dashboard && npx vitest run src/pages/tasks/TaskPrdPage.prepprd.test.tsx -t "Markdown 渲染为真实 DOM 元素" --reporter=dot'
+- [ ] [BEHAVIOR] 取数失败 → 专属「取数失败」占位，与「未到该步」字面分流（纯逻辑层，Golden Path Step 5 / Risk a,b）
+  Test: manual:bash -c 'cd packages/brain && npx vitest run sprints/06181500-cockpit-phase2-lifecycle/tests/lifecycle-contract.test.ts -t "取数失败与未到该步占位分流"'
   期望: exit 0
 
-- [x] [BEHAVIOR] (边界 2) GFM 表格→`<table>`、列表→`<ul><li>` 正确渲染
-  Test: manual:bash -c 'cd apps/dashboard && npx vitest run src/pages/tasks/TaskPrdPage.prepprd.test.tsx -t "表格与列表按 Markdown 渲染" --reporter=dot'
+- [ ] [BEHAVIOR] DoD/Report 不从 contract 字符串切段冒充（纯逻辑层，Risk c — 解析脆弱性 mitigation）
+  Test: manual:bash -c 'cd packages/brain && npx vitest run sprints/06181500-cockpit-phase2-lifecycle/tests/lifecycle-contract.test.ts -t "DoD 不从 contract 字符串切段冒充"'
   期望: exit 0
 
-- [x] [BEHAVIOR] (边界 1) prep_prd_body 为空 → 退回旧字段，页面仍显示已有内容
-  Test: manual:bash -c 'cd apps/dashboard && npx vitest run src/pages/tasks/TaskPrdPage.prepprd.test.tsx -t "prep_prd_body 为空时退回旧字段" --reporter=dot'
+- [ ] [BEHAVIOR] 任何分区内容都不会是「文件不存在」（纯逻辑负向，Golden Path Step 4）
+  Test: manual:bash -c 'cd packages/brain && npx vitest run sprints/06181500-cockpit-phase2-lifecycle/tests/lifecycle-contract.test.ts -t "占位文案绝不为文件不存在"'
   期望: exit 0
 
-- [x] [BEHAVIOR] (回归守卫) 404 / 网络错误态不回归
-  Test: manual:bash -c 'cd apps/dashboard && npx vitest run src/pages/tasks/TaskPrdPage.prepprd.test.tsx -t "404 与网络错误态不回归" --reporter=dot'
+- [ ] [BEHAVIOR] PrepPRD 显示 DB 全文并 Markdown 渲染（DOM，Golden Path Step 2）
+  Test: manual:bash -c 'cd apps/dashboard && npx vitest run src/pages/harness-pipeline/__tests__/PipelineLifecycle.test.tsx -t "PrepPRD 显示 DB 全文并 Markdown 渲染"'
   期望: exit 0
 
-## BEHAVIOR:E2E 条目（user_facing 专属，模式 B final-e2e 跑 — mac_web Playwright）
+- [ ] [BEHAVIOR] 全页不出现「文件不存在」死字（DOM 负向 + 源码守卫，Golden Path Step 4）
+  Test: manual:bash -c 'cd apps/dashboard && npx vitest run src/pages/harness-pipeline/__tests__/PipelineLifecycle.test.tsx -t "全页不出现文件不存在死字" && cd .. && ! grep -q "文件不存在" apps/dashboard/src/pages/harness-pipeline/lifecycle.ts'
+  期望: exit 0
 
-- [x] [BEHAVIOR:E2E] 用户从 PR body「📋 PRD」打开 `/tasks/:id/prd`，完整 PrepPRD 全文以 Markdown 渲染（截图自验）
-  Test: manual:bash -c 'cd apps/dashboard && npx playwright test ../../sprints/06171618-harness-pipeline-cockpit/e2e/task-prd.spec.ts --reporter=list'
-  期望: exit 0（断言：PrepPRD 小节标题文字可见 + [data-testid=prd-content] 内含 h1/h2/ul/table 且无包裹原文的 pre + 旧 description 不出现）
+- [ ] [BEHAVIOR] 单项 Brain API 取数失败 → 降级占位整页不崩（DOM，Golden Path Step 5）
+  Test: manual:bash -c 'cd apps/dashboard && npx vitest run src/pages/harness-pipeline/__tests__/PipelineLifecycle.test.tsx -t "单项取数失败降级占位不崩页"'
+  期望: exit 0
+
+- [ ] [BEHAVIOR] PrepPRD 渲染等于 DB 注入指纹、非硬编码（DOM 防造假，Golden Path Step 6 / AI_ADDED）
+  Test: manual:bash -c 'cd apps/dashboard && npx vitest run src/pages/harness-pipeline/__tests__/PipelineLifecycle.test.tsx -t "PrepPRD 渲染等于DB注入指纹非硬编码"'
+  期望: exit 0
+
+## BEHAVIOR:E2E 条目（user_facing 专属，Mode B final-e2e 跑 — mac_web Playwright）
+
+- [ ] [BEHAVIOR:E2E] 用户打开 /pipeline/:id → 文档 Tab，走完全生命周期视图，**三项非 prep 分区真实 DB 接线交叉校验** + 截图可视化验证
   Screenshots:
-    - 01-initial.png   期望：PRD 页加载，task 标题「E2E PrepPRD Task」与 PRD 区块可见
-    - 02-action.png    期望：完整 PrepPRD 全文小节标题（Golden Path / 前置 / 验收）以 Markdown 呈现
-    - 03-result.png    期望：表格/列表为真实 DOM 元素，旧 description 文本不出现
-  路径格式：${SPRINT_DIR}/screenshots/<step>.png
-  期望：evaluator 完成后截图已复制到 ${SPRINT_DIR}/screenshots/，Claude Read 图自验通过
-
-> evaluator 完成 E2E 后执行：
-> ```bash
-> mkdir -p "${SPRINT_DIR}/screenshots/"
-> cp apps/dashboard/screenshots/*.png "${SPRINT_DIR}/screenshots/" 2>/dev/null || true
-> ```
+    - 01-initial.png   期望：pipeline 详情页初始加载，标题与 Tab 可见，无白屏/报错
+    - 02-action.png    期望：点击「文档」Tab 后，七项生命周期分区按序渲染
+    - 03-result.png    期望：PrepPRD/正式 PRD/Contract 分区显示 DB 真实正文（含 Markdown 标题），Report 分区显示「未到该步」，全页无「文件不存在」
+  路径格式：sprints/06181500-cockpit-phase2-lifecycle/screenshots/<step>.png
+  期望（修 Reviewer Round 1 verification_oracle_completeness=6 — 不再只校验 PrepPRD）：
+    1. evaluator 注入的 PIPELINE_ID 必须是「已跑到 contract 收敛」的 run（`/api/brain/harness/initiative/:id/detail` 返回非空 prd_content 与 contract_content），否则脚本 step 0 直接 FAIL。
+    2. Playwright 取 `/initiative/:id/detail` 的 prd_content/contract_content head，断言 sprint_prd 分区 `toContainText(prd head)`、contract 分区 `toContainText(contract head)`，且二者均 `not.toContainText('取数失败')`——证明至少两条非 prep 分区真实 DB 接线（接线接错 → 分区显示「取数失败」→ 断言 FAIL，不再全绿）。
+    3. PrepPRD 分区 `toContainText(prep head)`（来自 /api/brain/tasks payload.prep_prd_body）。
+    4. Report 分区「未到该步」、`body.innerText` 不含「文件不存在」。
+    5. Claude Read 图自验通过。
