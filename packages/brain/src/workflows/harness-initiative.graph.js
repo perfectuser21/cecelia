@@ -1350,6 +1350,8 @@ export async function runSubTaskNode(state, opts = {}) {
       evaluator_feedback: final.evaluator_feedback
         || final.evaluate_error
         || (final.error ? (typeof final.error === 'string' ? final.error : JSON.stringify(final.error)) : undefined),
+      // 透传子图裁判 verdict — reportNode 自合 gate 据此判断是否允许自合（防 CI 绿但裁判 FAIL 的 PR 被算 PASS）
+      evaluate_verdict: final.evaluate_verdict ?? null,
     }],
   };
 }
