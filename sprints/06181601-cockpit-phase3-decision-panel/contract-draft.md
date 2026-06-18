@@ -1,4 +1,4 @@
-# Sprint Contract Draft (Round 1)
+# Sprint Contract Draft (Round 2)
 
 > Harness Cockpit Phase 3 — 决策面板（让决策可见可改可点火）
 > journey_type: dev_pipeline ｜ target_environment: mac_web
@@ -104,6 +104,10 @@ RESP=$(curl -sf -X POST localhost:5221/api/brain/dev/decisions \
   -H 'Content-Type: application/json' \
   -d "{\"topic\":\"用什么框架\",\"decision\":\"vitest\",\"default_value\":\"vitest\",\"level\":\"step\",\"target_id\":\"$TARGET_ID\",\"scope\":\"v1\",\"verify_layer\":\"unit\",\"round\":1,\"generated_by\":\"cockpit-user\"}")
 echo "$RESP" | jq -e '.level == "step" and .verify_layer == "unit" and .round == 1 and .generated_by == "cockpit-user" and .target == "'"$TARGET_ID"'"' || { echo FAIL; exit 1; }
+# schema 完整性卡：必含字段集存在
+echo "$RESP" | jq -e 'has("topic") and has("decision") and has("default_value") and has("scope") and has("target_type") and has("created_at")' || { echo "FAIL: 缺必含字段"; exit 1; }
+# 禁用字段名反向断言：同义替换不得出现
+echo "$RESP" | jq -e '(.decision_default or .layer or .gen_by or .iteration) | not' || { echo "FAIL: 禁用字段名出现"; exit 1; }
 NEWID=$(echo "$RESP" | jq -r '.id')
 psql "$DB" -t -c "SELECT count(*) FROM decisions WHERE id='$NEWID' AND target_id='$TARGET_ID' AND verify_layer='unit' AND round=1 AND generated_by='cockpit-user' AND created_at > NOW() - interval '5 minutes'" | grep -q 1 || { echo FAIL; exit 1; }
 ```
@@ -182,6 +186,8 @@ psql "$DB" -t -c "SELECT count(DISTINCT round) FROM decisions WHERE target_id='$
 SUB=$(curl -sf -X POST localhost:5221/api/brain/dev/submit -H 'Content-Type: application/json' \
   -d "{\"target_id\":\"$TARGET_ID\",\"journey_id\":\"line-harness\",\"title\":\"phase3 e2e fire\"}")
 echo "$SUB" | jq -e '.task_type == "harness_initiative" and .status == "queued"' || { echo FAIL; exit 1; }
+# 禁用字段名反向断言：submit 响应不得用 task_id/type/state
+echo "$SUB" | jq -e '(.task_id or .type or .state) | not' || { echo "FAIL: submit 禁用字段名出现"; exit 1; }
 SUBID=$(echo "$SUB" | jq -r '.id')
 psql "$DB" -t -c "SELECT count(*) FROM tasks WHERE id='$SUBID' AND task_type='harness_initiative' AND created_at > NOW() - interval '5 minutes'" | grep -q 1 || { echo FAIL; exit 1; }
 ```
@@ -265,6 +271,10 @@ CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST localhost:5221/api/brain/d
 N1=$(psql "$DB" -t -c "SELECT count(*) FROM tasks WHERE task_type='harness_initiative'" | tr -d ' ')
 [ "$N0" = "$N1" ] || { echo "FAIL_B_GUARD: 建出脏任务"; exit 1; }
 
+# R1 风险：target_id 非 UUID 须 400 非 5xx（不被 DB cast 错冒成 500）
+RCODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST localhost:5221/api/brain/dev/decisions -H 'Content-Type: application/json' -d '{"topic":"t","decision":"d","level":"step","target_id":"not-a-uuid"}')
+[ "$RCODE" = "400" ] || { echo "FAIL_R1: 非UUID target_id 应 400 非 $RCODE"; exit 1; }
+
 echo "✅ Phase 3 Brain 端点链路验证通过 target=$TARGET_ID"
 ```
 
@@ -284,9 +294,10 @@ const { chromium, expect } = require('@playwright/test');
   const page = await context.newPage();
 
   // 1. 打开 Phase 2 pipeline 详情页 → 切到 docs tab → 决策面板
-  await page.goto(`http://localhost:5174/harness/pipeline/${PIPELINE_ID}`);
+  // 路由 = App.tsx 实际 /pipeline/:id（非 /harness/pipeline）；tab testid = HarnessPipelineDetailPage.tsx:1046 现有 docs-tab（非 tab-docs）
+  await page.goto(`http://localhost:5174/pipeline/${PIPELINE_ID}`);
   await page.waitForLoadState('networkidle');
-  await page.click('[data-testid="tab-docs"]');
+  await page.click('[data-testid="docs-tab"]');
   await page.screenshot({ path: 'screenshots/01-initial.png' });
 
   // 2. 决策面板列出本 pipeline 决策（每条含 topic/decision/default_value/verify_layer/round）
@@ -330,6 +341,14 @@ const { chromium, expect } = require('@playwright/test');
 **通过标准**: Part 1 bash exit 0 且 Part 2 Playwright exit 0（含 3 张截图 + 后端交叉验证）。
 
 ---
+
+## Risks
+
+| # | 风险 | Mitigation（已 codify） |
+|---|---|---|
+| R1 | `target_id` 传非 UUID 字符串时端点可能抛 DB cast 错返 500（应是客户端错 400）| 端点先校验 UUID 格式，非法 → 400 + error；合同加反向断言「非 UUID → 400 非 5xx」（见 contract-dod error path BEHAVIOR）|
+| R2 | migration 304 未应用 → `verify_layer/round/generated_by/default_value` 列缺失，所有写入静默失败 | E2E Part 1 起手前置校验 4 列存在（`information_schema.columns` grep 4），缺列直接 FAIL，不进后续断言 |
+| R3 | 「再来一轮」并发追加同 target 多个 round 行 | 追加语义靠 `INSERT` 新行（不 UPDATE 历史行、不 read-modify-write），天然无竞态；DISTINCT round 断言只验历史不被覆盖 |
 
 ## Test Contract
 
