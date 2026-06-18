@@ -43,6 +43,8 @@ describe('runSubTaskNode 透传 evaluate_verdict', () => {
     const state = { initiativeId: INIT_ID, sub_task: { id: 'ws1', title: 't', payload: {} } };
     const out = await runSubTaskNode(state, { pool, compiledTaskGraph, waitMs: 0 });
     expect(out.sub_tasks[0].evaluate_verdict).toBe('PASS');
+    expect(out.sub_tasks[0].status).toBe('merged');
+    expect(out.sub_tasks[0].pr_url).toBe('https://x/pull/1');
   });
 
   it('子图终态带 evaluate_verdict=FAIL → 透传 FAIL', async () => {
@@ -53,5 +55,7 @@ describe('runSubTaskNode 透传 evaluate_verdict', () => {
     const state = { initiativeId: INIT_ID, sub_task: { id: 'ws1', title: 't', payload: {} } };
     const out = await runSubTaskNode(state, { pool, compiledTaskGraph, waitMs: 0 });
     expect(out.sub_tasks[0].evaluate_verdict).toBe('FAIL');
+    expect(out.sub_tasks[0].status).toBe('failed');
+    expect(out.sub_tasks[0].pr_url).toBe('https://x/pull/2');
   });
 });
