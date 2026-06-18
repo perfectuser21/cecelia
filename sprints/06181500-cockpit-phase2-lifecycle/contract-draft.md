@@ -1,4 +1,4 @@
-# Sprint Contract Draft (Round 1)
+# Sprint Contract Draft (Round 2)
 
 > Harness Pipeline Cockpit · Phase 2 — read-only 全生命周期视图
 > journey_type: user_facing · target_environment: mac_web
@@ -18,17 +18,52 @@ PRD「预期受影响文件」列了 `TaskPrdPage.tsx`，但**真正显示裸「
 
 ## 数据源契约（七项 → DB/API，read-only，复用既有端点，不新增写操作）
 
-| # | 分区 key | 标签 | DB-backed 来源 | 字段 | 占位条件 |
-|---|---|---|---|---|---|
-| 1 | `prep_prd` | PrepPRD | `GET /api/brain/tasks/:id` | `payload.prep_prd_body` | 空 → 「未到该步」|
-| 2 | `sprint_prd` | 正式 PRD | `GET /api/brain/harness/initiative/:id/detail` | `prd_content` | null → 「未到该步」|
-| 3 | `contract` | Contract | `GET /api/brain/harness/initiative/:id/detail` | `contract_content` | null → 「未到该步」|
-| 4 | `dod` | DoD | `GET /api/brain/harness/initiative/:id/detail` | `contract_content` 内 DoD 段（无独立字段时同源）| 无 → 「未到该步」|
-| 5 | `decisions` | 决策清单 | `GET /api/brain/decisions`（按 target=该 pipeline 的 ability/step 过滤）| 决策行数组 | 空 → 「暂无决策」|
-| 6 | `progress` | 流水线留痕 | `GET /api/brain/harness/runs/:id/progress` + detail `step_timing` | `pct` / `current_node` / `step_timing` | 无 → 「未到该步」|
-| 7 | `report` | Report | harness 最终报告（DB 化，复用既有 report 取数；当前无独立 DB 字段时取 detail/tasks.result 中的报告）| 报告正文 | 无 → 「未到该步」|
+> **两类占位语义化区分（Risk (b) mitigation，见 ## Risks）**：分区缺数据有两种根因，必须用**不同**占位文案，绝不混为一谈——
+> - `未到该步`（`NOT_REACHED`）：取数**成功**但该项尚未产出（流水线没到该步 / 字段为 null / decisions 查空）。正常生命周期态。
+> - `取数失败`（`FETCH_FAILED`）：该项端点**取数失败**（网络/404/500），是潜在**接线错误**信号，不能伪装成「未到该步」。
+> decisions 查空是「成功但无数据」，用专属文案 `暂无决策`。
 
-> `:id` = 路由 `/pipeline/:id` 的 id（既作 planner_task_id 又作 initiative_id，与现有 `pipeline-detail` 一致）。任一端点 404/网络失败 → 该分区降级占位，不让整页崩。
+| # | 分区 key | 标签 | DB-backed 来源 | 字段 | 成功但无数据 → | 取数失败 → |
+|---|---|---|---|---|---|---|
+| 1 | `prep_prd` | PrepPRD | `GET /api/brain/tasks/:id` | `payload.prep_prd_body` | 未到该步 | 取数失败 |
+| 2 | `sprint_prd` | 正式 PRD | `GET /api/brain/harness/initiative/:id/detail` | `prd_content` | 未到该步 | 取数失败 |
+| 3 | `contract` | Contract | `GET /api/brain/harness/initiative/:id/detail` | `contract_content` | 未到该步 | 取数失败 |
+| 4 | `dod` | DoD | `GET /api/brain/harness/initiative/:id/detail` | `dod_content`（独立 source 字段，**不切 contract 字符串**，见 Risk (c)）| 未到该步 | 取数失败 |
+| 5 | `decisions` | 决策清单 | `GET /api/brain/decisions`（按 target=该 pipeline 的 ability/step 过滤）| 决策行数组 | 暂无决策 | 取数失败 |
+| 6 | `progress` | 流水线留痕 | `GET /api/brain/harness/runs/:id/progress` + detail `step_timing` | `pct` / `current_node` / `step_timing` | 未到该步 | 取数失败 |
+| 7 | `report` | Report | `report_content`（独立 source 字段，wiring 层从 detail/tasks.result 取，**不正则切 contract**，见 Risk (c)）| 未到该步 | 取数失败 |
+
+> `:id` 语义二义性是本 Sprint 头号风险，见下方 `## Risks` (a)。任一端点 404/网络失败 → 该分区降级为 `取数失败` 占位（**非** `未到该步`），不让整页崩。
+
+## Risks
+
+> Reviewer Round 1 risk_registered=5 修复栏。登记 3 个真实风险 + 可机检 mitigation。
+
+### Risk (a) — `:id` 语义二义性导致非 prep 七项全静默 404（**最高，直接打掉 PRD 核心目标**）
+
+**风险**：两组端点对 route `:id` 的解析口径**不一致**（已读 `packages/brain/src/routes/harness.js` 核实）——
+- `GET /pipeline/:planner_task_id` 与 `GET /pipeline-detail`：`WHERE id::text = $1 OR payload->>'planner_task_id' = $1`（**宽松**，OR 两路命中）。
+- `GET /initiative/:id/detail`（line 208）：`WHERE id::text = $1 AND task_type = 'harness_initiative'`（**严格**，只认 initiative task 自身 id）。
+
+若前端把路由 `:id`（可能是某 task 的 `planner_task_id` 值，而非 harness_initiative task 的自身 id）原样喂给 `/initiative/:id/detail`，后者返回 404 → `sprint_prd / contract / dod / report` 四项**全部** 404 → 若降级统一显示「未到该步」，**接线错误被静默伪装成正常占位**，反向打掉 PRD「七项产物逐项可见」核心目标。
+
+**Mitigation（可机检）**：
+1. **占位语义化分流**（同时修 Risk (b)）：404/取数失败 → 显示 `取数失败` 而非 `未到该步`，让接线错误**可见**。final-e2e 注入一个**已知有 contract/正式 PRD 的 run id**，断言 sprint_prd/contract 分区渲染**真实 DB 正文 head**（非占位）——接线接错时该断言 FAIL，不再全绿（见 ## E2E 验收 step 5/6）。
+2. **id 解析单点**：lifecycle 视图取 initiative id 必须走「先 `/pipeline-detail?planner_task_id=:id` 拿回 detail 里的 `initiative_id` / task 自身 id，再用它请求 `/initiative/:id/detail`」，或锁定 `route id == initiative task 自身 id`（实现时二选一，写进 `lifecycle.ts` 注释 + DOM 测试覆盖「id 不匹配时分区显示 取数失败 而非 未到该步」）。
+
+### Risk (b) — 降级占位掩盖真实接线失败
+
+**风险**：PRD 边界情况要求「取数失败 → 降级占位不崩页」，但若失败与「未产出」用**同一**占位文案，则 generator 把端点接错（或根本没接）时，页面照样显示「未到该步」一片绿，QA/Reviewer 无从分辨「真未到该步」与「接线坏了」。
+
+**Mitigation（可机检）**：两个占位常量字面分离——`NOT_REACHED='未到该步'`（取数成功但无数据）vs `FETCH_FAILED='取数失败'`（端点失败）。`selectSectionContent(key, {errors:{[key]:true}})` 必须返回 `FETCH_FAILED`，纯逻辑测试 `取数失败与未到该步占位分流` 断言二者**不相等**。
+
+### Risk (c) — DoD/Report「同源/result 抽取」字符串解析脆弱
+
+**风险**：Round 1 把 DoD 取自「`contract_content` 内 DoD 段」、Report 取自「detail/tasks.result 中的报告」。若实现用**正则/字符串切分**从 contract 大块文本里抠 DoD 段、或从 result JSON 里猜字段，解析脆弱——contract 格式一变就抠错段、result 结构一变就 silently 取空，产生「看似有内容实则错位」的脏渲染。
+
+**Mitigation（可机检）**：DoD 与 Report 各用**独立 source 字段**（`dodContent` / `reportContent`），由 wiring 层显式赋值；`selectSectionContent` 是**纯映射**（key → 其专属 source 字段），**内部不做任何 contract 字符串切段 / result 结构猜测**。Brain 暂无独立 DoD/Report 字段时，wiring 层显式传 `null` → `未到该步`，**绝不用正则切 contract 冒充**。纯逻辑测试断言 `selectSectionContent('dod', {contractContent:'...'})`（只给 contract、不给 dodContent）返回 placeholder（证明不会从 contract 偷内容冒充 DoD）。
+
+---
 
 ## Response Schema（推导来源: PRD 字面）
 
@@ -110,19 +145,19 @@ cd packages/brain && npx vitest run sprints/06181500-cockpit-phase2-lifecycle/te
 
 ---
 
-### Step 5: 单项 Brain API 取数失败 → 该分区降级占位，整页不崩
-**来源**: `[FROM_PRD]` — 边界情况第 3 点「某项 Brain API 取数失败（网络/404）→ 该分区降级为占位文案，不让整页崩」
+### Step 5: 单项 Brain API 取数失败 → 该分区降级为「取数失败」占位（区别于「未到该步」），整页不崩
+**来源**: `[FROM_PRD]` — 边界情况第 3 点「某项 Brain API 取数失败（网络/404）→ 该分区降级为占位文案，不让整页崩」；占位文案分流为 `[AI_ADDED]`（Risk (a)/(b) mitigation，理由：取数失败若与「未到该步」同文案，会把接线错误静默伪装成正常占位，打掉 PRD「七项逐项可见」核心目标）
 
-**可观测行为**: 模拟某端点 reject/404，对应分区显示「未到该步」，其余分区与页面正常渲染（无未捕获异常、无白屏）。
+**可观测行为**: 模拟某端点 reject/404，对应分区显示 **`取数失败`**（**不是** `未到该步`），其余分区与页面正常渲染（无未捕获异常、无白屏）。
 
 **验证命令**:
 ```bash
 (cd apps/dashboard && npx vitest run src/pages/harness-pipeline/__tests__/PipelineLifecycle.test.tsx -t "单项取数失败降级占位不崩页")
-# 期望：exit 0（某 fetch reject → 该分区 placeholder「未到该步」，页面其余分区仍 toBeVisible）
+# 期望：exit 0（某 fetch reject → 该分区 placeholder「取数失败」，页面其余分区仍 toBeVisible）
 ```
 
-**硬阈值**: 失败分区 `kind==='placeholder'`；页面根容器仍渲染（其余分区可见）
-**验证命令**: 同上 + 纯函数 `selectSectionContent(key,{errors:{[key]:true}})` → placeholder（lifecycle-contract.test.ts 覆盖）
+**硬阈值**: 失败分区 `kind==='placeholder'` 且 `text==='取数失败'`（≠「未到该步」）；页面根容器仍渲染（其余分区可见）
+**验证命令**: 同上 + 纯函数 `selectSectionContent(key,{errors:{[key]:true}})` → `{kind:'placeholder',text:'取数失败'}`（lifecycle-contract.test.ts `取数失败与未到该步占位分流` 覆盖）
 
 ---
 
@@ -147,7 +182,8 @@ cd packages/brain && npx vitest run sprints/06181500-cockpit-phase2-lifecycle/te
 **journey_type**: user_facing
 **target_environment**: mac_web（本机 Playwright，localhost:5174）
 
-> 由 evaluator 在 Mac 本机执行；`PIPELINE_ID` 由 evaluator 注入一个真实有 PrepPRD 数据、但未跑到 Report 的 harness run id（覆盖「部分完成」边界）。
+> 由 evaluator 在 Mac 本机执行。`PIPELINE_ID` 由 evaluator 注入一个**已跑到 contract 收敛**的 harness run id——即 `/api/brain/harness/initiative/:id/detail` 必须返回**非空** `prd_content` **与** `contract_content`（证明非 prep 分区真实 DB 接线，修 Reviewer Round 1 verification_oracle_completeness=6）。该 run 同时有 PrepPRD、但未跑到 Report（覆盖「部分完成」边界）。
+> **关键（Risk (a)/(b) oracle）**：脚本先 `page.request.get(/initiative/:id/detail)` 取真实 `prd_content`/`contract_content` head，再 `toContainText(head)` 断言对应分区渲染了**真实 DB 正文**——若 `:id` 接线接错（`/initiative/:id/detail` 404）或分区降级，分区会显示 `取数失败` 占位，head 断言 FAIL，**不再全绿**。
 
 ```javascript
 // final-e2e Playwright 脚本（Mac 本机，localhost:5174）
@@ -161,6 +197,15 @@ const { chromium, expect } = require('@playwright/test');
   const context = await browser.newContext({ storageState: undefined });
   const page = await context.newPage();
 
+  // 0. 前置：注入的 run 必须真有 contract/正式 PRD（否则本 oracle 无意义 → FAIL，逼 evaluator 注入正确 run）
+  const detailResp = await page.request.get(`http://localhost:5221/api/brain/harness/initiative/${PIPELINE_ID}/detail`);
+  if (!detailResp.ok()) { console.error(`FAIL: /initiative/${PIPELINE_ID}/detail 非 200（接线错误 Risk(a)）status=${detailResp.status()}`); process.exit(1); }
+  const detail = await detailResp.json();
+  const prdContent = detail?.prd_content;
+  const contractContent = detail?.contract_content;
+  if (!prdContent || !contractContent) { console.error('FAIL: 注入 run 缺 prd_content/contract_content，无法校验非 prep 分区真实接线'); process.exit(1); }
+  const head = (s) => s.replace(/^#+\s*/, '').split('\n')[0].slice(0, 12);
+
   // 1. 打开 pipeline 详情页 → 文档 Tab
   await page.goto(`http://localhost:5174/pipeline/${PIPELINE_ID}`);
   await page.waitForLoadState('networkidle');
@@ -168,36 +213,46 @@ const { chromium, expect } = require('@playwright/test');
   await page.getByTestId('docs-tab').click();
   await page.screenshot({ path: 'screenshots/02-action.png' });
 
-  // 2. PrepPRD 分区显示完整全文（来自 DB），Markdown 有格式（存在 h1）
+  // 2. PrepPRD 分区显示完整全文（来自 DB），Markdown 有格式（存在标题元素）
   const prep = page.getByTestId('lifecycle-section-prep_prd');
   await expect(prep).toBeVisible({ timeout: 10000 });
-  await expect(prep.locator('h1, h2')).toHaveCount(await prep.locator('h1, h2').count()); // Markdown 渲染（至少有标题元素）
   await expect(prep.locator('h1, h2').first()).toBeVisible();
 
-  // 3. 未产出项（Report）显示「未到该步」占位，而非「文件不存在」
+  // 3. 【新增 oracle — 修 verification_oracle_completeness=6】非 prep 分区交叉校验真实 DB 内容：
+  //    sprint_prd 分区必须渲染 /initiative/:id/detail 的 prd_content head（非占位）
+  const prdSection = page.getByTestId('lifecycle-section-sprint_prd');
+  await expect(prdSection).toBeVisible();
+  await expect(prdSection).toContainText(head(prdContent));
+  await expect(prdSection).not.toContainText('取数失败');
+  await expect(prdSection).not.toContainText('未到该步');
+
+  //    contract 分区必须渲染 contract_content head（非占位）
+  const contractSection = page.getByTestId('lifecycle-section-contract');
+  await expect(contractSection).toBeVisible();
+  await expect(contractSection).toContainText(head(contractContent));
+  await expect(contractSection).not.toContainText('取数失败');
+
+  // 4. 未产出项（Report）显示「未到该步」占位（成功但无数据），而非「文件不存在」「取数失败」
   const report = page.getByTestId('lifecycle-section-report');
   await expect(report).toBeVisible();
   await expect(report).toContainText('未到该步');
 
-  // 4. 全页 DOM 文本不出现「文件不存在」
+  // 5. 全页 DOM 文本不出现「文件不存在」
   const bodyText = await page.locator('body').innerText();
   if (bodyText.includes('文件不存在')) { console.error('FAIL: 页面出现「文件不存在」死字'); process.exit(1); }
   await page.screenshot({ path: 'screenshots/03-result.png' });
 
-  // 5. 交叉验证后端：PrepPRD 渲染文本来自 tasks 端点 payload.prep_prd_body
+  // 6. 交叉验证 PrepPRD 渲染文本来自 tasks 端点 payload.prep_prd_body
   const apiResp = await page.request.get(`http://localhost:5221/api/brain/tasks/${PIPELINE_ID}`);
   if (apiResp.ok()) {
     const data = await apiResp.json();
     const body = data?.payload?.prep_prd_body;
-    if (body) {
-      const head = body.replace(/^#+\s*/, '').split('\n')[0].slice(0, 12);
-      await expect(prep).toContainText(head);
-    }
+    if (body) await expect(prep).toContainText(head(body));
   }
 
   await context.close();
   await browser.close();
-  console.log('✅ Golden Path 全生命周期 UI 验证通过');
+  console.log('✅ Golden Path 全生命周期 UI 验证通过（PrepPRD + 正式PRD + Contract 三项真实 DB 接线已交叉校验）');
 })();
 ```
 

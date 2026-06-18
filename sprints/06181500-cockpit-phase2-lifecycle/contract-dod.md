@@ -9,8 +9,8 @@ journey_type: user_facing
 
 ## ARTIFACT 条目
 
-- [ ] [ARTIFACT] 纯逻辑模块 lifecycle.ts 存在，导出七项分区 + 占位常量 + 选择函数
-  Test: node -e "const c=require('fs').readFileSync('apps/dashboard/src/pages/harness-pipeline/lifecycle.ts','utf8');if(!/LIFECYCLE_SECTIONS/.test(c)||!/selectSectionContent/.test(c)||!/未到该步/.test(c))process.exit(1)"
+- [ ] [ARTIFACT] 纯逻辑模块 lifecycle.ts 存在，导出七项分区 + 两类占位常量（NOT_REACHED/FETCH_FAILED）+ 选择函数
+  Test: node -e "const c=require('fs').readFileSync('apps/dashboard/src/pages/harness-pipeline/lifecycle.ts','utf8');if(!/LIFECYCLE_SECTIONS/.test(c)||!/selectSectionContent/.test(c)||!/未到该步/.test(c)||!/取数失败/.test(c))process.exit(1)"
 
 - [ ] [ARTIFACT] HarnessPipelineDetailPage 文档区改读生命周期模块，不再渲染「文件不存在」
   Test: node -e "const c=require('fs').readFileSync('apps/dashboard/src/pages/harness-pipeline/HarnessPipelineDetailPage.tsx','utf8');if(c.includes('文件不存在'))process.exit(1)"
@@ -30,8 +30,12 @@ journey_type: user_facing
   Test: manual:bash -c 'cd packages/brain && npx vitest run sprints/06181500-cockpit-phase2-lifecycle/tests/lifecycle-contract.test.ts -t "缺失项返回未到该步占位"'
   期望: exit 0
 
-- [ ] [BEHAVIOR] 单项取数失败 → 该分区降级占位（纯逻辑层，Golden Path Step 5）
-  Test: manual:bash -c 'cd packages/brain && npx vitest run sprints/06181500-cockpit-phase2-lifecycle/tests/lifecycle-contract.test.ts -t "取数失败降级占位"'
+- [ ] [BEHAVIOR] 取数失败 → 专属「取数失败」占位，与「未到该步」字面分流（纯逻辑层，Golden Path Step 5 / Risk a,b）
+  Test: manual:bash -c 'cd packages/brain && npx vitest run sprints/06181500-cockpit-phase2-lifecycle/tests/lifecycle-contract.test.ts -t "取数失败与未到该步占位分流"'
+  期望: exit 0
+
+- [ ] [BEHAVIOR] DoD/Report 不从 contract 字符串切段冒充（纯逻辑层，Risk c — 解析脆弱性 mitigation）
+  Test: manual:bash -c 'cd packages/brain && npx vitest run sprints/06181500-cockpit-phase2-lifecycle/tests/lifecycle-contract.test.ts -t "DoD 不从 contract 字符串切段冒充"'
   期望: exit 0
 
 - [ ] [BEHAVIOR] 任何分区内容都不会是「文件不存在」（纯逻辑负向，Golden Path Step 4）
@@ -56,10 +60,15 @@ journey_type: user_facing
 
 ## BEHAVIOR:E2E 条目（user_facing 专属，Mode B final-e2e 跑 — mac_web Playwright）
 
-- [ ] [BEHAVIOR:E2E] 用户打开 /pipeline/:id → 文档 Tab，走完全生命周期视图，截图可视化验证
+- [ ] [BEHAVIOR:E2E] 用户打开 /pipeline/:id → 文档 Tab，走完全生命周期视图，**三项非 prep 分区真实 DB 接线交叉校验** + 截图可视化验证
   Screenshots:
     - 01-initial.png   期望：pipeline 详情页初始加载，标题与 Tab 可见，无白屏/报错
     - 02-action.png    期望：点击「文档」Tab 后，七项生命周期分区按序渲染
-    - 03-result.png    期望：PrepPRD 分区显示 DB 全文（含 Markdown 标题），Report 分区显示「未到该步」，全页无「文件不存在」
+    - 03-result.png    期望：PrepPRD/正式 PRD/Contract 分区显示 DB 真实正文（含 Markdown 标题），Report 分区显示「未到该步」，全页无「文件不存在」
   路径格式：sprints/06181500-cockpit-phase2-lifecycle/screenshots/<step>.png
-  期望：所有截图与期望描述一致；Playwright 断言 PrepPRD 全文（来自 /api/brain/tasks payload.prep_prd_body）可见、Report「未到该步」、`body.innerText` 不含「文件不存在」；Claude Read 图自验通过
+  期望（修 Reviewer Round 1 verification_oracle_completeness=6 — 不再只校验 PrepPRD）：
+    1. evaluator 注入的 PIPELINE_ID 必须是「已跑到 contract 收敛」的 run（`/api/brain/harness/initiative/:id/detail` 返回非空 prd_content 与 contract_content），否则脚本 step 0 直接 FAIL。
+    2. Playwright 取 `/initiative/:id/detail` 的 prd_content/contract_content head，断言 sprint_prd 分区 `toContainText(prd head)`、contract 分区 `toContainText(contract head)`，且二者均 `not.toContainText('取数失败')`——证明至少两条非 prep 分区真实 DB 接线（接线接错 → 分区显示「取数失败」→ 断言 FAIL，不再全绿）。
+    3. PrepPRD 分区 `toContainText(prep head)`（来自 /api/brain/tasks payload.prep_prd_body）。
+    4. Report 分区「未到该步」、`body.innerText` 不含「文件不存在」。
+    5. Claude Read 图自验通过。
