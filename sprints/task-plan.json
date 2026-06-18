@@ -1,31 +1,30 @@
 {
-  "initiative_id": "pending",
-  "journey_type": "autonomous",
-  "journey_type_reason": "仅涉及 playground/server.js 路由 + 测试，无 UI / 无外部 agent 协议；target_environment: playground，evaluator 用 localhost:3XXX 验证",
+  "initiative_id": "46b01405-b2f2-4732-b76a-2c762f22ead0",
+  "journey_type": "user_facing",
+  "journey_type_reason": "改动主体落在 apps/dashboard/ 前端 cockpit 详情页（Gate 1 决策面板），命中 user_facing。",
   "tasks": [
     {
       "task_id": "ws1",
-      "title": "playground/server.js 新增 GET /subtract 路由 + playground/tests/server.test.js 新增 describe 块",
-      "scope": "在 playground/server.js 注册 GET /subtract（复用 STRICT_NUMBER regex ^-?\\d+(\\.\\d+)?$，校验 a/b 存在且合法，计算 Number(a)-Number(b)，返回 {result: <number>, operation: \"subtract\"}；禁用响应字段 difference/diff/value/answer/data；禁用 operation 变体 difference/diff/sub/minus）；在 playground/tests/server.test.js 新增 describe('GET /subtract', ...) 块（happy 正数/负数/零结果、schema 完整性 oracle、禁用字段反向断言、error path 缺参+非法格式）",
+      "title": "Cockpit Phase 3 — Gate 1 决策面板 + 改决策 + 再来一轮 + 确定点火",
+      "scope": "在详情页 decisions 分区扩出 Gate 1 决策面板（phase=A_contract 时展示待决策项）；改单条决策保存写回 Brain（复用 PUT /api/brain/strategic-decisions/:id）；新增并命中 POST .../fire（A_contract→B_task_loop，含非 Gate1 越权 409）与 POST .../rechallenge（触发既有无头红队，按钮置忙）；非 Gate1 时确定点火 disabled + 语义化降级提示。先写 failing test 再实现。",
       "dod": [
-        "[ARTIFACT] playground/server.js 内含 app.get('/subtract' 路由注册",
-        "[ARTIFACT] playground/server.js /subtract 路由响应含字面 operation: \"subtract\"（禁用 difference/diff/sub/minus）",
-        "[ARTIFACT] playground/server.js /subtract 路由响应含字面 result 字段（禁用 difference/diff/value/answer/data）",
-        "[ARTIFACT] playground/tests/server.test.js 内含 describe('GET /subtract' 块",
-        "[BEHAVIOR] GET /subtract?a=10&b=3 → HTTP 200 + {result:7, operation:\"subtract\"}（schema 字段值）",
-        "[BEHAVIOR] GET /subtract?a=10&b=3 → keys | sort == [\"operation\",\"result\"]（schema 完整性）",
-        "[BEHAVIOR] GET /subtract?a=10&b=3 → 禁用字段 difference/diff/value/answer/data 均不存在（反向验证）",
-        "[BEHAVIOR] 缺参 a → HTTP 400 + error 字段类型 string（error path）",
-        "[BEHAVIOR] GET /subtract?a=1e5&b=3 → HTTP 400（非法格式 error path）",
-        "[BEHAVIOR] GET /subtract?a=3&b=10 → HTTP 200 + result=-7（负数结果）"
+        "[BEHAVIOR] POST /api/brain/harness/initiative/:id/fire 推进 phase A_contract→B_task_loop（response.to_phase 且 DB 定点读 phase 双校验）",
+        "[BEHAVIOR] 非 Gate1（phase=done）fire 返回 409/400 + error 字段且 phase 不变（服务端越权防护）",
+        "[BEHAVIOR] POST /api/brain/harness/initiative/:id/rechallenge 返回 ok+rechallenge_triggered",
+        "[BEHAVIOR] PUT /api/brain/strategic-decisions/:id 改 decision 字段（response + DB 定点读）",
+        "[BEHAVIOR] fire 不存在 initiative_id 返回 404 + error",
+        "[ARTIFACT] 详情页含 gate1-decision-panel / gate1-fire-btn / gate1-rechallenge-btn 并命中三写端点",
+        "[BEHAVIOR:E2E] mac_web Playwright 走完 Golden Path（打开→改决策→点火→离开 Gate1）含截图"
       ],
       "files": [
-        "playground/server.js",
-        "playground/tests/server.test.js"
+        "apps/dashboard/src/pages/harness-pipeline/HarnessPipelineDetailPage.tsx",
+        "apps/dashboard/src/pages/harness-pipeline/lifecycle.ts",
+        "apps/dashboard/src/pages/harness-pipeline/__tests__/gate1-panel.test.tsx",
+        "packages/brain/src/routes/harness.js"
       ],
       "depends_on": [],
       "complexity": "M",
-      "estimated_minutes": 30
+      "estimated_minutes": 90
     }
   ]
 }

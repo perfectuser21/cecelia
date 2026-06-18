@@ -1,289 +1,262 @@
-# Sprint Contract Draft (Round 2) — B1 playground GET /subtract
+# Sprint Contract Draft (Round 1) — Cockpit Phase 3 · Gate 1 决策面板 + 点火
 
-> **PR-G 验收承诺**：本合同字段名严格字面照搬 PRD `## Response Schema` 段：
-> - response success keys = `result` + `operation`（字面，**不许漂到 `difference`/`diff`/`value`/`answer`/`data` 等任一禁用名**）
-> - operation 字面值 = `"subtract"`（**禁用变体 `difference`/`diff`/`sub`/`minus`**）
-> - query param 字面名 = `a`/`b`（禁用 `x`/`y`/`p`/`q`/`n`/`m`/`v1`/`v2`）
-> - schema 完整性：成功响应顶层 keys 字面集合完全等于 `["operation","result"]`
->
-> **Proposer 自查 checklist（v7.5 + v7.12 死规则）**：
-> 1. PRD success keys = {`result`, `operation`} ✓ contract jq -e 用 {`result`, `operation`} ✓
-> 2. PRD operation 字面 = `"subtract"` ✓ contract jq -e `.operation == "subtract"` ✓
-> 3. 禁用清单（`difference`/`diff`/`value`/`answer`/`data`）→ 仅在反向 `has("X") | not` ✓
-> 4. PRD keys 完整性 = `["operation","result"]` ✓ contract `keys | sort == ["operation","result"]` ✓
-> 5. BEHAVIOR count ≥ 4：ws1 共 6 条，覆盖 schema 字段值 / keys 完整性 / 禁用字段反向 / error path ✓
-> 6. depends_on：ws1=[]（唯一 workstream）✓
-> 7. 假绿自查：所有 BEHAVIOR 以 `curl -sf` 开头（404 → exit 1）；缺参 400 检查路由未实现返 404≠400 → FAIL ✓
+**journey_type**: user_facing
+**target_environment**: mac_web（Cecelia 内网 Dashboard，Playwright 本机 localhost:5174 + Brain localhost:5221 写副作用校验）
+
+---
+
+## 已知约束（来自回归测试）
+
+- [apps/dashboard/.../__tests__/PipelineLifecycle.test.tsx] → 七项生命周期分区 testid `lifecycle-section-<key>`，docs tab 激活后逐项 fetch；占位三态字面不可改：`未到该步` / `取数失败` / `暂无决策`
+- [apps/dashboard/.../__tests__/PipelineLifecycle.test.tsx] → 取数失败必须显示 `取数失败`（≠ `未到该步`），整页不崩；decisions 空显示 `暂无决策`
+- [packages/brain CI lifecycle-contract.test.ts] → 七项分区顺序为合同 SSOT，Phase 3 不得改动既有七项顺序/key（只在 decisions 分区内扩出 Gate 1 操作面）
+
+---
+
+## Response Schema（推导来源: api_registry 离线 → 读源码 + PRD 锁定）
+
+> Brain 离线、registry 取不到，故按 `packages/brain/src/routes/harness.js`、`strategic-decisions.js`、migration 238 源码现状推导，新端点按 harness 写端点既有风格（`{ok:true,...}` 成功 / `{error:"..."}` 失败）锁定。
+
+### Endpoint A（既有，复用）: PUT /api/brain/strategic-decisions/:id — 改单条决策
+**Success (HTTP 200)**:
+```json
+{"success": true, "data": {"id": "<uuid>", "decision": "<new value>", "status": "active", "updated_at": "<iso>"}}
+```
+- `success` (boolean, 必填): 来源——strategic-decisions.js 既有风格
+- `data.id` (string, 必填): 被改决策 id
+- `data.decision` (string, 必填): 改动后的决策取值（字面回显，用于校验写入成功）
+- `data.updated_at` (string, 必填): 更新时间戳
+
+**禁用字段名**: `value`、`content`（decisions 表列名是 `decision`，不得漂移）
+**Request Body**: `{"decision": "<new value>"}`（可选附 `reason`/`status`）
+**Error (HTTP 404)**: `{"success": false, "error": "Decision not found"}`
+
+### Endpoint B（新增，本 Sprint 锁定）: POST /api/brain/harness/initiative/:initiative_id/fire — 确定点火
+**Success (HTTP 200)**:
+```json
+{"ok": true, "initiative_id": "<uuid>", "from_phase": "A_contract", "to_phase": "B_task_loop", "fired_at": "<iso>"}
+```
+- `ok` (boolean, 必填): 来源——harness.js `/complete`、`/notify` 既有 `{ok:true}` 风格
+- `initiative_id` (string, 必填): 被点火的 initiative
+- `from_phase` (string, 必填): 点火前 phase，固定 `"A_contract"`
+- `to_phase` (string, 必填): 点火后 phase，固定 `"B_task_loop"`（Gate 1 → 执行）
+- `fired_at` (string, 必填): 点火时间戳
+
+**禁用字段名**: `status`、`phase`（必须用 `from_phase`/`to_phase` 二元，禁单 `phase` 含糊）、`success`（fire 走 `ok` 风格不走 `success` 风格）
+**副作用**: `UPDATE initiative_runs SET phase='B_task_loop', updated_at=NOW() WHERE initiative_id=$1 AND phase='A_contract'`；并写一条留痕事件（复用 initiative_run_events，node='fire'）
+**Error (HTTP 409, 非 Gate 1)**: `{"error": "pipeline not in Gate 1 (phase=<current>)"}`（不静默吞错）
+**Error (HTTP 404, initiative 不存在)**: `{"error": "initiative_run not found"}`
+
+### Endpoint C（新增，本 Sprint 锁定）: POST /api/brain/harness/initiative/:initiative_id/rechallenge — 再来一轮无头红队
+**Success (HTTP 200)**:
+```json
+{"ok": true, "initiative_id": "<uuid>", "rechallenge_triggered": true, "round": 2}
+```
+- `ok` (boolean, 必填): 同 harness 写端点风格
+- `rechallenge_triggered` (boolean, 必填): 是否成功触发无头红队再质询（既有 GAN 入口）
+- `round` (number, 必填): 触发后的目标轮次（current_round + 1）
+
+**禁用字段名**: `started`、`queued`（用 `rechallenge_triggered` 字面）
+**副作用**: 触发既有无头红队 GAN 再质询入口（不实现红队算法本身，仅触发既有入口 + 入队/事件留痕）
+**Error (HTTP 409, 非 Gate 1)**: `{"error": "pipeline not in Gate 1 (phase=<current>)"}`
+
+> **Gate 1 判定（[ASSUMPTION] 落地）**：`initiative_runs.phase === 'A_contract'` ⇒ 停在 Gate 1（合同/决策待确认）。前端用既有 `GET /api/brain/harness/runs/:id/progress` 返回的 `phase` 字段判定，不新增状态机（migration 238 既有枚举 `A_contract|B_task_loop|C_final_e2e|done|failed`）。
 
 ---
 
 ## Golden Path
 
+[打开停在 Gate 1 的 pipeline 详情页] → [展开 Gate 1 决策面板列出待决策项] → [改一条决策保存写回 Brain] → [（可选）再来一轮红队再质询] → [确定点火] → [pipeline 离开 Gate 1 进入执行 B_task_loop]
+
+### Step 1: 打开停在 Gate 1 的 pipeline 详情页，决策面板展开
+**来源**: `[FROM_PRD]` — Golden Path 第 1-2 步「打开停在 Gate 1 状态的 pipeline 详情页」「展开 Gate 1 决策面板：列出本轮待决策项」
+
+**可观测行为**: docs tab 下 `decisions` 分区内出现 Gate 1 决策面板（`gate1-decision-panel`），列出待决策项（来自 `GET /api/brain/decisions`），每项可读内容与当前取值。判定条件 `progress.phase === 'A_contract'`。
+
+**验证命令**（UI，Playwright，见 ## E2E 验收）:
+```javascript
+await expect(page.locator('[data-testid="gate1-decision-panel"]')).toBeVisible({ timeout: 10000 });
+await expect(page.locator('[data-testid="gate1-decision-item"]').first()).toBeVisible();
 ```
-[HTTP 客户端发 GET /subtract?a=10&b=3]
-  → [playground server STRICT_NUMBER regex 校验 a、b 存在且匹配 ^-?\d+(\.\d+)?$]
-  → [计算 result = Number(10) - Number(3) = 7]
-  → [返回 HTTP 200 {"result":7,"operation":"subtract"}，keys = ["operation","result"]]
-```
+**硬阈值**: phase=A_contract 时面板可见且至少列出 decisions 中的待决策项
 
 ---
 
-### Step 1: 客户端发合法减法请求 → HTTP 200 + 正确 schema
+### Step 2: 编辑一条决策并保存，写回 Brain
+**来源**: `[FROM_PRD]` — Golden Path 第 3 步「可编辑某一条决策的取值并保存（写回 Brain）」
 
-**来源**: `[FROM_PRD]` — PRD 段落 "Golden Path（核心场景）" 第 1-3 步直接定义
+**可观测行为**: 用户改 `gate1-decision-edit-input` 取值，点 `gate1-decision-save-btn` → 命中 `PUT /api/brain/strategic-decisions/:id` → decisions 表该行 `decision` 字段更新；保存成功 UI 反映新值。
 
-**可观测行为**: GET /subtract?a=10&b=3 → HTTP 200，body `{result:7, operation:"subtract"}`，顶层 keys = `["operation","result"]`
-
-**验证命令**:
+**验证命令**（Mode A，manual:bash，真实 Brain + DB 定点读）:
 ```bash
-PLAYGROUND_PORT=3301 NODE_ENV=production node playground/server.js > /tmp/b1-step1.log 2>&1 &
-SPID=$!; sleep 2
-
-RESP=$(curl -sf "http://localhost:3301/subtract?a=10&b=3") || { kill $SPID; echo "FAIL: 端点未返回 200（路由未注册）"; exit 1; }
-echo "$RESP" | jq -e '.result == 7'                              || { kill $SPID; echo "FAIL: result != 7"; exit 1; }
-echo "$RESP" | jq -e '.operation == "subtract"'                  || { kill $SPID; echo "FAIL: operation != subtract"; exit 1; }
-echo "$RESP" | jq -e '.result | type == "number"'                || { kill $SPID; echo "FAIL: result 非 number 类型"; exit 1; }
-echo "$RESP" | jq -e 'keys | sort == ["operation","result"]'     || { kill $SPID; echo "FAIL: keys 不合规"; exit 1; }
-
-kill $SPID
-echo "✅ Step 1 通过"
+DID=$(psql $DB -t -c "INSERT INTO decisions (category,topic,decision,status) VALUES ('gate1','t','old-val','active') RETURNING id" | tr -d ' ')
+curl -sf -X PUT "localhost:5221/api/brain/strategic-decisions/$DID" -H 'Content-Type: application/json' -d '{"decision":"new-val-e2e"}' | jq -e '.success == true and .data.decision == "new-val-e2e"' || { echo FAIL; exit 1; }
+NEW=$(psql $DB -t -c "SELECT decision FROM decisions WHERE id='$DID'" | tr -d ' ')
+[ "$NEW" = "new-val-e2e" ] || { echo "FAIL: DB 未更新 decision=$NEW"; exit 1; }
+echo OK
 ```
-
-**硬阈值**: HTTP 200；`result === 7`；`operation === "subtract"`；`keys == ["operation","result"]`
+**硬阈值**: response `data.decision == "new-val-e2e"` 且 DB 定点读 `decision` 字段 == 新值
 
 ---
 
-### Step 2: 禁用响应字段反向验证
+### Step 3: （可选）点「再来一轮」触发无头红队再质询
+**来源**: `[FROM_PRD]` — Golden Path 第 4 步「可点『再来一轮』：触发无头红队对当前合同/决策再质询一轮（不需人工干预），结果回灌」
 
-**来源**: `[FROM_PRD]` — PRD 段落 "Response Schema" 下 "禁用响应字段: difference/diff/value/answer/data"
+**可观测行为**: 点 `gate1-rechallenge-btn` → 命中 `POST /api/brain/harness/initiative/:id/rechallenge` → 返回 `rechallenge_triggered:true`；按钮触发后置忙（`disabled`/`aria-busy`），禁止重复触发。
 
-**可观测行为**: 成功响应顶层不包含任何 PRD 禁用字段名
-
-**验证命令**:
+**验证命令**（Mode A，manual:bash，新端点必须 200，404=未注册=FAIL）:
 ```bash
-PLAYGROUND_PORT=3302 NODE_ENV=production node playground/server.js > /tmp/b1-step2.log 2>&1 &
-SPID=$!; sleep 2
-
-RESP=$(curl -sf "http://localhost:3302/subtract?a=10&b=3") || { kill $SPID; echo "FAIL: curl 非 200"; exit 1; }
-for k in difference diff value answer data; do
-  echo "$RESP" | jq -e "has(\"$k\") | not" > /dev/null || { kill $SPID; echo "FAIL: 禁用字段 $k 出现"; exit 1; }
-done
-
-kill $SPID
-echo "✅ Step 2 通过"
+IID=$(psql $DB -t -c "INSERT INTO initiative_runs (initiative_id,phase) VALUES (gen_random_uuid(),'A_contract') RETURNING initiative_id" | tr -d ' ')
+curl -sf -X POST "localhost:5221/api/brain/harness/initiative/$IID/rechallenge" -H 'Content-Type: application/json' -d '{}' | jq -e '.ok == true and .rechallenge_triggered == true' || { echo FAIL; exit 1; }
+echo OK
 ```
-
-**硬阈值**: 5 个 PRD 禁用字段均不存在于响应顶层
+**硬阈值**: HTTP 200 + `ok==true` + `rechallenge_triggered==true`（端点未实现则 curl -f 失败 → FAIL）
 
 ---
 
-### Step 3: 缺参 → HTTP 400 + error 字段
+### Step 4: 确定点火，pipeline 离开 Gate 1 进入执行
+**来源**: `[FROM_PRD]` — Golden Path 第 5 步「点『确定点火』→ 命中点火端点 → pipeline 状态从 Gate 1 推进到执行」
 
-**来源**: `[FROM_PRD]` — PRD 段落 "Response Schema" "Error (HTTP 400)"；"边界情况" "缺参 → 400"
+**可观测行为**: 点 `gate1-fire-btn` → 命中 `POST /api/brain/harness/initiative/:id/fire` → 返回 `to_phase:"B_task_loop"`；`initiative_runs.phase` 由 `A_contract` 真改为 `B_task_loop`。
 
-**可观测行为**: 缺 a 或缺 b → HTTP 400，body `{error:"<string>"}`
-
-**验证命令**:
+**验证命令**（Mode A，manual:bash，新端点 + DB 定点读副作用）:
 ```bash
-PLAYGROUND_PORT=3303 NODE_ENV=production node playground/server.js > /tmp/b1-step3.log 2>&1 &
-SPID=$!; sleep 2
-
-CODE=$(curl -s -o /tmp/b1-err-a.json -w "%{http_code}" "http://localhost:3303/subtract?b=3")
-[ "$CODE" = "400" ] || { kill $SPID; echo "FAIL: 缺 a 应返 400，实际 $CODE"; exit 1; }
-jq -e '.error | type == "string"' /tmp/b1-err-a.json || { kill $SPID; echo "FAIL: error 字段不存在"; exit 1; }
-
-CODE=$(curl -s -o /dev/null -w "%{http_code}" "http://localhost:3303/subtract?a=10")
-[ "$CODE" = "400" ] || { kill $SPID; echo "FAIL: 缺 b 应返 400，实际 $CODE"; exit 1; }
-
-CODE=$(curl -s -o /dev/null -w "%{http_code}" "http://localhost:3303/subtract")
-[ "$CODE" = "400" ] || { kill $SPID; echo "FAIL: 双缺参应返 400，实际 $CODE"; exit 1; }
-
-kill $SPID
-echo "✅ Step 3 通过"
+IID=$(psql $DB -t -c "INSERT INTO initiative_runs (initiative_id,phase) VALUES (gen_random_uuid(),'A_contract') RETURNING initiative_id" | tr -d ' ')
+curl -sf -X POST "localhost:5221/api/brain/harness/initiative/$IID/fire" -H 'Content-Type: application/json' -d '{}' | jq -e '.ok == true and .from_phase == "A_contract" and .to_phase == "B_task_loop"' || { echo FAIL; exit 1; }
+PH=$(psql $DB -t -c "SELECT phase FROM initiative_runs WHERE initiative_id='$IID'" | tr -d ' ')
+[ "$PH" = "B_task_loop" ] || { echo "FAIL: phase 未推进 phase=$PH"; exit 1; }
+echo OK
 ```
-
-**硬阈值**: HTTP 400；error 字段类型为 string
+**硬阈值**: response `to_phase=="B_task_loop"` 且 DB 定点读 `phase == "B_task_loop"`
 
 ---
 
-### Step 4: 非法格式（1e5/Inf/+1/0xFF）→ HTTP 400
+### Step 5: 点火后页面反映 pipeline 已离开 Gate 1
+**来源**: `[FROM_PRD]` — Golden Path 第 6 步「点火后页面反映 pipeline 已离开 Gate 1（状态/留痕更新），Brain 侧记录点火与改动后决策」
 
-**来源**: `[FROM_PRD]` — PRD 段落 "边界情况" "非法格式（1e5/Inf/+1/0xFF）→ 400"；Query Parameters strict `^-?\d+(\.\d+)?$`
+**可观测行为**: 点火返回后页面刷新 `progress`，phase 变为 `B_task_loop`；Gate 1 决策面板按降级规则禁用「确定点火」（已离开 Gate 1）。
 
-**可观测行为**: 格式不符合 regex → HTTP 400
+**验证命令**（UI，Playwright + 后端交叉校验，见 ## E2E 验收）:
+```javascript
+// 点火后交叉验证 Brain 后端 phase
+const r = await page.request.get(`http://localhost:5221/api/brain/harness/runs/${PIPELINE_ID}/progress`);
+const d = await r.json();
+if (d.phase !== 'B_task_loop') { console.error('FAIL: 后端 phase 未离开 Gate 1', d); process.exit(1); }
+```
+**硬阈值**: 点火后后端 `phase == "B_task_loop"`，页面火按钮按离开 Gate 1 降级
 
-**验证命令**:
+---
+
+### Step 6: 非 Gate 1 状态降级（边界）
+**来源**: `[FROM_PRD]` — 边界情况第 1 条「pipeline 不在 Gate 1（已点火/已完成/尚未到 Gate 1）→ 决策面板按状态降级：展示但禁用『确定点火』，给语义化提示，不报错」
+
+**可观测行为**: phase ≠ `A_contract`（如 `done`）时，`gate1-fire-btn` 置 `disabled`，出现语义化提示 `gate1-fire-disabled-hint`，面板不报错、不崩页。
+
+**验证命令**（UI，Playwright，见 ## E2E 验收 降级用例）:
+```javascript
+await expect(page.locator('[data-testid="gate1-fire-btn"]')).toBeDisabled();
+await expect(page.locator('[data-testid="gate1-fire-disabled-hint"]')).toBeVisible();
+```
+**硬阈值**: 非 Gate 1 时 fire 按钮 disabled + 语义化提示可见
+
+---
+
+### Step 7: 点火端点服务端越权防护（防造假/防前端绕过）
+**来源**: `[AI_ADDED]` — 理由：前端 disable 只是 UI 层，generator 可能仅做前端禁用而后端 fire 端点对任意 phase 都放行，导致「非 Gate 1 也能点火」绕过状态校验。要求服务端对非 `A_contract` 状态返回 409 + error，使「禁用」是真实后端约束而非纯前端装饰。
+
+**可观测行为**: 对 phase=`done` 的 initiative 调 fire → 返回 4xx + `error` 字段，phase 不被改动。
+
+**验证命令**（Mode A，manual:bash，negative，捕获状态码）:
 ```bash
-PLAYGROUND_PORT=3304 NODE_ENV=production node playground/server.js > /tmp/b1-step4.log 2>&1 &
-SPID=$!; sleep 2
+IID=$(psql $DB -t -c "INSERT INTO initiative_runs (initiative_id,phase) VALUES (gen_random_uuid(),'done') RETURNING initiative_id" | tr -d ' ')
+CODE=$(curl -s -o /tmp/fire_resp.json -w '%{http_code}' -X POST "localhost:5221/api/brain/harness/initiative/$IID/fire" -H 'Content-Type: application/json' -d '{}')
+[ "$CODE" = "409" ] || [ "$CODE" = "400" ] || { echo "FAIL: 非 Gate1 点火未被拒 code=$CODE"; exit 1; }
+jq -e '.error | type == "string"' /tmp/fire_resp.json || { echo "FAIL: 无 error 字段"; exit 1; }
+PH=$(psql $DB -t -c "SELECT phase FROM initiative_runs WHERE initiative_id='$IID'" | tr -d ' ')
+[ "$PH" = "done" ] || { echo "FAIL: 越权点火改了 phase=$PH"; exit 1; }
+echo OK
+```
+**硬阈值**: 非 Gate 1 fire 返回 409/400 + `error` 字符串字段，phase 保持不变
 
-for bad in "a=1e5&b=3" "a=Inf&b=3" "a=%2B1&b=3" "a=0xFF&b=3"; do
-  CODE=$(curl -s -o /dev/null -w "%{http_code}" "http://localhost:3304/subtract?$bad")
-  [ "$CODE" = "400" ] || { kill $SPID; echo "FAIL: $bad 应返 400，实际 $CODE"; exit 1; }
-done
+---
 
-kill $SPID
-echo "✅ Step 4 通过"
+## 领域验证（UI 交互类 — 强制 oracle）
+
+本 Sprint = UI 交互类（user_facing / mac_web）。合同硬条款：
+- E2E 必须含可见状态断言（`toBeVisible` / `toBeDisabled` / `toHaveText`），禁止只 `page.goto` 不断言（见 ## E2E 验收）。
+- 写副作用必须 DB/API 交叉校验（decision 改值 → DB 定点读；fire → 后端 phase 校验），防前端撒谎。
+
+---
+
+## E2E 验收（最终 final-e2e 跑 — target_environment=mac_web Playwright）
+
+> 由 evaluator 模式 B 在 Mac 本机执行（localhost:5174 真实 Dashboard + localhost:5221 真实 Brain）。GAN 阶段仅产出此脚本模板，proposer 不执行。
+> 前置：脚本启动前用 psql 注入一个 phase=`A_contract` 的 initiative_run 及关联 decisions，并记录其 initiative id 为 `PIPELINE_ID`（用同一 id 直打详情页与三端点，口径与 Phase 2 一致）。
+
+```javascript
+// final-e2e Playwright 脚本（Mac 本机执行）
+const { chromium, expect } = require('@playwright/test');
+const { execSync } = require('child_process');
+
+(async () => {
+  const DB = process.env.DB || 'postgresql://localhost/cecelia';
+  const BRAIN = 'http://localhost:5221';
+  const psql = (sql) => execSync(`psql "${DB}" -t -c "${sql}"`).toString().trim();
+
+  // 0. 注入 Gate 1 待决策 pipeline（phase=A_contract）+ 一条决策
+  const PIPELINE_ID = psql(
+    "INSERT INTO initiative_runs (initiative_id,phase) VALUES (gen_random_uuid(),'A_contract') RETURNING initiative_id"
+  );
+  const DID = psql(
+    "INSERT INTO decisions (category,topic,decision,status) VALUES ('gate1','合同断言取值','old-val','active') RETURNING id"
+  );
+
+  const browser = await chromium.launch();
+  const context = await browser.newContext({ storageState: undefined });
+  const page = await context.newPage();
+
+  // 1. 打开停在 Gate 1 的详情页 → docs tab → Gate 1 决策面板展开
+  await page.goto(`http://localhost:5174/harness-pipeline/${PIPELINE_ID}`);
+  await page.waitForLoadState('networkidle');
+  await page.click('[data-testid="docs-tab"]');
+  await page.screenshot({ path: 'screenshots/01-initial.png' });
+  await expect(page.locator('[data-testid="gate1-decision-panel"]')).toBeVisible({ timeout: 10000 });
+  await expect(page.locator('[data-testid="gate1-decision-item"]').first()).toBeVisible();
+
+  // 2. 改一条决策保存 → 交叉校验 Brain DB
+  await page.fill('[data-testid="gate1-decision-edit-input"]', 'new-val-e2e');
+  await page.click('[data-testid="gate1-decision-save-btn"]');
+  await page.screenshot({ path: 'screenshots/02-action.png' });
+  await page.waitForTimeout(1500);
+  const dbVal = psql(`SELECT decision FROM decisions WHERE id='${DID}'`);
+  if (dbVal !== 'new-val-e2e') { console.error('FAIL: decisions 未写回', dbVal); process.exit(1); }
+
+  // 3. （可选）再来一轮红队 — 按钮置忙
+  await page.click('[data-testid="gate1-rechallenge-btn"]');
+  await expect(page.locator('[data-testid="gate1-rechallenge-btn"]')).toBeDisabled();
+
+  // 4. 确定点火 → pipeline 离开 Gate 1
+  await page.click('[data-testid="gate1-fire-btn"]');
+  await page.screenshot({ path: 'screenshots/03-result.png' });
+  await page.waitForTimeout(1500);
+
+  // 5. 交叉校验后端：phase 已离开 Gate 1 进入 B_task_loop
+  const r = await page.request.get(`${BRAIN}/api/brain/harness/runs/${PIPELINE_ID}/progress`);
+  const d = await r.json();
+  if (d.phase !== 'B_task_loop') { console.error('FAIL: 后端 phase 未离开 Gate 1', d); process.exit(1); }
+
+  await context.close();
+  await browser.close();
+  console.log('✅ Gate 1 决策面板 + 点火 Golden Path UI 验证通过');
+})();
 ```
 
-**硬阈值**: 4 种非法格式全部返 HTTP 400
-
----
-
-### Step 5: 结果为负数 → HTTP 200 正常返回
-
-**来源**: `[FROM_PRD]` — PRD 段落 "边界情况" "结果负数（a=3,b=10 → -7）正常返回"
-
-**可观测行为**: GET /subtract?a=3&b=10 → HTTP 200，`{result:-7, operation:"subtract"}`
-
-**验证命令**:
-```bash
-PLAYGROUND_PORT=3305 NODE_ENV=production node playground/server.js > /tmp/b1-step5.log 2>&1 &
-SPID=$!; sleep 2
-
-RESP=$(curl -sf "http://localhost:3305/subtract?a=3&b=10") || { kill $SPID; echo "FAIL: curl 非 200"; exit 1; }
-echo "$RESP" | jq -e '.result == -7'         || { kill $SPID; echo "FAIL: result 应为 -7"; exit 1; }
-echo "$RESP" | jq -e '.operation == "subtract"' || { kill $SPID; exit 1; }
-
-kill $SPID
-echo "✅ Step 5 通过"
-```
-
-**硬阈值**: HTTP 200；result === -7
-
----
-
-### Step 6: 零结果边界 a=b → HTTP 200 + result=0
-
-**来源**: `[AI_ADDED]` — GAN Round 1 Proposer 加入，理由：防 generator 把零结果当 falsy 误处理（返 400 或 NaN），确保 a=b 时有符号减法结果 0 正常返回 number 类型
-
-**可观测行为**: GET /subtract?a=5&b=5 → HTTP 200，`{result:0, operation:"subtract"}`，result 为 number
-
-**验证命令**:
-```bash
-PLAYGROUND_PORT=3306 NODE_ENV=production node playground/server.js > /tmp/b1-step6.log 2>&1 &
-SPID=$!; sleep 2
-
-RESP=$(curl -sf "http://localhost:3306/subtract?a=5&b=5") || { kill $SPID; echo "FAIL: curl 非 200"; exit 1; }
-echo "$RESP" | jq -e '.result == 0'               || { kill $SPID; echo "FAIL: a=b=5 result 应为 0"; exit 1; }
-echo "$RESP" | jq -e '.result | type == "number"' || { kill $SPID; echo "FAIL: result 类型不是 number"; exit 1; }
-
-kill $SPID
-echo "✅ Step 6 通过"
-```
-
-**硬阈值**: HTTP 200；result === 0（number 类型）
-
----
-
-## E2E 验收（final-e2e — target_environment: playground）
-
-> playground sprint 例外：BEHAVIOR 命令使用 `node playground/server.js`（target_environment: playground）；final-e2e 不混用 Brain API localhost:5221。
-
-**journey_type**: autonomous  
-**target_environment**: playground
-
-```bash
-#!/bin/bash
-# final-e2e — B1 playground GET /subtract Golden Path 端到端验证
-set -e
-
-PPORT=${PLAYGROUND_PORT:-3399}
-
-PLAYGROUND_PORT=$PPORT NODE_ENV=production node playground/server.js > /tmp/b1-e2e.log 2>&1 &
-SPID=$!
-sleep 2
-
-cleanup() { kill $SPID 2>/dev/null || true; }
-trap cleanup EXIT
-
-# Golden Path: GET /subtract?a=10&b=3 → {result:7, operation:"subtract"}
-RESP=$(curl -sf "http://localhost:$PPORT/subtract?a=10&b=3") || { echo "FAIL: 端点未返回 200"; exit 1; }
-echo "$RESP" | jq -e '.result == 7'                              || { echo "FAIL: result != 7"; exit 1; }
-echo "$RESP" | jq -e '.operation == "subtract"'                  || { echo "FAIL: operation != subtract"; exit 1; }
-echo "$RESP" | jq -e 'keys | sort == ["operation","result"]'     || { echo "FAIL: keys 不合规"; exit 1; }
-
-# 禁用字段反向
-for k in difference diff value answer data; do
-  echo "$RESP" | jq -e "has(\"$k\") | not" > /dev/null || { echo "FAIL: 禁用字段 $k"; exit 1; }
-done
-
-# 缺参 → 400
-CODE=$(curl -s -o /dev/null -w "%{http_code}" "http://localhost:$PPORT/subtract?b=3")
-[ "$CODE" = "400" ] || { echo "FAIL: 缺 a 应返 400，实际 $CODE"; exit 1; }
-
-# 非法格式 → 400
-CODE=$(curl -s -o /dev/null -w "%{http_code}" "http://localhost:$PPORT/subtract?a=1e5&b=3")
-[ "$CODE" = "400" ] || { echo "FAIL: 非法格式应返 400，实际 $CODE"; exit 1; }
-
-# 负数结果 → 200 + result=-7
-RESP=$(curl -sf "http://localhost:$PPORT/subtract?a=3&b=10") || { echo "FAIL"; exit 1; }
-echo "$RESP" | jq -e '.result == -7' || { echo "FAIL: result 应为 -7"; exit 1; }
-
-# 零结果 → 200 + result=0
-RESP=$(curl -sf "http://localhost:$PPORT/subtract?a=5&b=5") || { echo "FAIL"; exit 1; }
-echo "$RESP" | jq -e '.result == 0' || { echo "FAIL: result 应为 0"; exit 1; }
-
-echo "✅ B1 Golden Path E2E 全部通过"
-```
-
-**通过标准**: 脚本 exit 0
-
----
-
-## Workstreams
-
-workstream_count: 1
-
-### Workstream 1: playground/server.js 新增 GET /subtract 路由 + playground/tests/server.test.js 新增 describe 块
-
-**范围**: 在 `playground/server.js` 注册 `GET /subtract` 路由（复用已有 `STRICT_NUMBER` regex，校验 a/b 存在且合法，计算 `Number(a) - Number(b)`，返回 `{result: <number>, operation: "subtract"}`）；在 `playground/tests/server.test.js` 新增 `describe('GET /subtract', ...)` 块  
-**大小**: M（server.js ~35 行 + tests ~80 行 = ~115 行净增，2 文件）  
-**依赖**: 无（唯一 workstream）
-
-**辅助回归测试**（Generator TDD red-green 用，不被 evaluator 当 verdict 来源）: `sprints/tests/ws1/subtract.test.ts`
-
----
-
-## Workstreams 切分合规性
-
-- ws_count=1：净增 ~115 行 < 200 行 ✓，2 文件 ≤ 3 ✓
-- ws1 depends_on: []（唯一 workstream）✓
+**降级用例（非 Gate 1，单独跑）**: 注入 phase=`done` 的 pipeline，打开详情页 docs tab，断言 `gate1-fire-btn` `toBeDisabled()` 且 `gate1-fire-disabled-hint` `toBeVisible()`，面板不崩。
 
 ---
 
 ## Test Contract
 
-| Workstream | Test File | BEHAVIOR 覆盖 | 预期红证据 |
+| 功能 | Test File | BEHAVIOR 覆盖 | 预期红证据 |
 |---|---|---|---|
-| WS1 | `sprints/tests/ws1/subtract.test.ts` | happy path / schema 完整性 / 禁用字段反向 / 缺参 400 / 缺 b 400 / 非法格式 400 / 负数结果 / 零结果 | 8 failures（`/subtract` 未实现，supertest 返 404）|
-
----
-
-## Risks
-
-### RISK-1: Bug 10 假绿回归风险（端口冲突导致 BEHAVIOR 命令 exit 0）
-
-**描述**: 若 Generator 没有正确实现 `/subtract` 路由，但测试机器上已有进程占用 3401-3406 端口中某一端口（或上一次测试残留进程未 kill），`node playground/server.js` 在该端口静默启动失败，`curl -sf` 转而连到已存在进程的旧 handler，老路由返回 404 → `curl -sf` exit 1 → BEHAVIOR FAIL。但若旧进程碰巧返回 200（如同端口 Express 兼容响应），则 BEHAVIOR 假绿通过，Generator 不实现也能 PASS。
-
-**缓解措施**:
-1. 每条 BEHAVIOR 命令使用不同端口（3401-3406 分开），降低碰撞概率
-2. 每条命令在 `kill $SPID` 后加 `sleep 1` 以确保端口释放
-3. Evaluator 在跑 BEHAVIOR 前应先 `lsof -ti tcp:3401-3406 | xargs kill -9 2>/dev/null || true` 清空端口
-4. Contract 验证命令用 `PLAYGROUND_PORT` 动态赋值，evaluator 可注入空闲端口
-
-**残余风险**: 低。各 Step 端口已不同；假绿要求旧进程碰巧返回同格式 JSON，概率极低。
-
----
-
-### RISK-2: Bug 11 结果文件缺失风险（Bash 工具未执行导致 Brain 读不到 verdict）
-
-**描述**: Proposer 工具链要求最后一步必须向 `/workspace/.brain-result.json` 写入 JSON（`propose_branch` + `workstream_count` + `task_plan_path`）。若 Bash 工具调用被跳过（如 LLM 在 Step 4 仅写文本而未实际执行），Brain 读到空文件或旧轮次数据，`inferTaskPlan` 拿到错误 `propose_branch`，导致 GAN 合同无法传递给 Generator，整条 pipeline 静默断链。
-
-**缓解措施**:
-1. v7.12 已在 Step 4 强制要求"结果文件写入"作为独立 Bash 命令（不依赖前序 git push 成功与否）
-2. Brain 侧 `harness-gan.graph.js` 在读 `.brain-result.json` 前校验文件 mtime（若超过 5 分钟未更新视为写入失败，触发重试）
-3. 本 Round 2 合同已在 Step 4 之后立即执行 `.brain-result.json` 写入，并 `echo "[proposer] .brain-result.json 写入完成"` 作为可观测确认输出
-4. Reviewer 在审查合同时应验证 Step 4 代码块含 `cat > /workspace/.brain-result.json` 写入命令（非仅 git push）
-
-**残余风险**: 低。Bug 11（#3111）已在 v6.6.0 强制 Bash 工具写结果文件修复；本合同 Step 4 含写入命令。
+| Gate 1 决策面板 + 改决策 + 点火 + 降级（前端） | `sprints/tests/gate1-panel.test.tsx` | 面板展示 / 改决策保存调用 PUT / 点火调用 fire / 非 Gate1 降级禁用 | → 4 failures（组件尚无 Gate 1 面板） |
