@@ -1,0 +1,27 @@
+{
+  "initiative_id": "cfa88adc-ccef-44c1-a289-a1ccd0752926",
+  "journey_type": "dev_pipeline",
+  "journey_type_reason": "核心是 harness/dev 基础设施（决策落库端点 + cockpit 决策面板），服务开发流水线本身；产物归 dev_pipeline 能力轴",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "Harness Cockpit Phase 3 — 决策面板可见可改可点火",
+      "scope": "补 migration 304（decisions 表 verify_layer/round/generated_by/default_value 列，幂等 IF NOT EXISTS）；新增 Brain POST /api/brain/dev/decisions（无 id=append 新行 / 带 id=update 指定行，永不覆盖历史 round）+ GET /api/brain/dev/decisions?target=（按 target_id 过滤、target_id AS target 别名、无匹配返 []）+ POST /api/brain/dev/submit（复用建任务逻辑创建 task_type=harness_initiative，缺 target_id 返 400 不建脏任务）；将 HarnessPipelineDetailPage 的 PipelineLifecycleSection 决策面板从 read-only 升级为可编辑（decision-edit-input/decision-save-btn）+ 可标记 v1/backlog（decision-scope-v1）+ 再来一轮 stub（decision-next-round-btn → POST round+1 占位）+ dashboard API 层调用三端点。决策面板落 HarnessPipelineDetailPage（非 PRD 误指的 TaskPrdPage）。",
+      "dod": [
+        "[BEHAVIOR] POST /dev/decisions 无 id append、带 id update 指定行；GET ?target 过滤+空态[]；POST /dev/submit 建 harness_initiative；缺 target_id/level 各返 400（见 contract-dod.md BEHAVIOR 段 manual:bash）",
+        "[BEHAVIOR:E2E] mac_web Playwright：docs tab 决策面板列出→编辑落库→标记→再来一轮 round+1，后端交叉验证通过（见 contract-draft.md ## E2E 验收 Part 2）",
+        "[ARTIFACT] packages/brain/migrations/304_*.sql 含 4 新列 ADD COLUMN IF NOT EXISTS",
+        "[ARTIFACT] /dev/decisions + /dev/submit 路由已注册；HarnessPipelineDetailPage 含 decision-panel/decision-save-btn/decision-next-round-btn testid"
+      ],
+      "files": [
+        "packages/brain/migrations/304_decisions_phase3_columns.sql",
+        "packages/brain/src/routes/execution.js",
+        "apps/dashboard/src/pages/harness-pipeline/HarnessPipelineDetailPage.tsx",
+        "apps/dashboard/src/pages/harness-pipeline/lifecycle.ts"
+      ],
+      "depends_on": [],
+      "complexity": "M",
+      "estimated_minutes": 110
+    }
+  ]
+}
