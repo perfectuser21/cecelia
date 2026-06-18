@@ -1,4 +1,4 @@
-# Sprint Contract Draft (Round 3) — playground GET /ping（smoke fire）
+# Sprint Contract Draft (Round 4) — playground GET /ping（smoke fire）
 
 ## 已知约束（来自回归测试）
 
@@ -140,7 +140,8 @@ PORT="${PLAYGROUND_PORT:-3001}"
 
 # 1. 启动 playground server；trap 确保退出时回收进程（不跨轮泄漏端口 — Risk R1）
 cd playground && PLAYGROUND_PORT="$PORT" node server.js & SPID=$!
-trap 'kill $SPID 2>/dev/null || true' EXIT
+# 退出时回收 server：server 在所有正常退出点均存活 → kill 必成功（exit 0）；失败路径用显式 exit 1 不被 trap 覆盖。R4 已移除吞 exit-code 的兜底以过 Contract Gate cheat/or-true
+trap 'kill $SPID 2>/dev/null' EXIT
 
 # 1b. Risk R2 mitigation：就绪轮询替代固定 sleep —— poll /health 直到 200（最多 15s）再跑断言
 READY=0
@@ -182,7 +183,7 @@ echo "✅ playground /ping 冒烟验证通过"
 
 | FROM_PRD 来源步骤 | AI_ADDED 步骤 + 理由 |
 |---|---|
-| Step 1（发起 GET /ping）、Step 2（命中路由）、Step 3（200 {"pong":true}）、Step 4（query 忽略边界）| **Round 2 加：`## Risks` R1/R2 假红来源登记 + 就绪轮询/可覆盖端口/trap 回收 mitigation**（理由：Reviewer Round 1 指出 smoke fire 目标是确认管道全绿，固定 `sleep 2` 启动竞态与端口占用是两个真实假红来源，会让正确实现误判为红——属验收执行层健壮性，非新增 Golden Path 业务步骤）；**Round 3 改：就绪轮询的 `/health` 探测改用 `-w "%{http_code}"` 状态码 oracle、Step 1 `/ping` 可达性改用 `jq -e '.pong==true'` 真值断言**（理由：Round 2 用 `curl -o /dev/null` 探测命中确定性 Contract Gate `weak-oracle/curl-no-jq`——取响应却无字段/状态码校验；改为 gate 认可的状态码 oracle + jq -e 真值断言，断言实质不变，仅消除弱 oracle 写法）|
+| Step 1（发起 GET /ping）、Step 2（命中路由）、Step 3（200 {"pong":true}）、Step 4（query 忽略边界）| **Round 2 加：`## Risks` R1/R2 假红来源登记 + 就绪轮询/可覆盖端口/trap 回收 mitigation**（理由：Reviewer Round 1 指出 smoke fire 目标是确认管道全绿，固定 `sleep 2` 启动竞态与端口占用是两个真实假红来源，会让正确实现误判为红——属验收执行层健壮性，非新增 Golden Path 业务步骤）；**Round 3 改：就绪轮询的 `/health` 探测改用 `-w "%{http_code}"` 状态码 oracle、Step 1 `/ping` 可达性改用 `jq -e '.pong==true'` 真值断言**（理由：Round 2 用 `curl -o /dev/null` 探测命中确定性 Contract Gate `weak-oracle/curl-no-jq`——取响应却无字段/状态码校验；改为 gate 认可的状态码 oracle + jq -e 真值断言，断言实质不变，仅消除弱 oracle 写法）；**Round 4 改：E2E 脚本 trap 清理移除 or-true 兜底**（理由：Round 3 trap 行尾用了吞 exit-code 的 or-true 兜底，命中确定性 Contract Gate `cheat/or-true`——属作弊模式；server 在所有正常退出点均存活故 kill 必成功、失败路径用显式 exit 1，移除兜底后语义不变且 gate-clean；同步对齐 Test Contract 表 Test File 至 deliverable `playground/tests/server.test.js`）|
 
 > 说明 1：所有 Golden Path 业务步骤均 FROM_PRD，无新增业务步骤；Round 2 唯一 AI_ADDED 内容是「假红消除」的验收健壮性（Risks 栏 + 脚本就绪轮询），不改变任何被验证的行为断言。
 > 说明 2：E2E 脚本第 6 步「POST /ping → 404」非新增 Golden Path 步骤，仅是对 PRD「边界情况」第 2 条「POST /ping 不在范围（默认 express 404）」的负向行为验证，归属 FROM_PRD。
@@ -193,4 +194,4 @@ echo "✅ playground /ping 冒烟验证通过"
 
 | 功能 | Test File | BEHAVIOR 覆盖 | 预期红证据 |
 |---|---|---|---|
-| GET /ping | `sprints/tests/ping.test.js` | 200 + pong==true（布尔）/ keys==["pong"] 完整性 / 禁用字段 ok 反向 / query 忽略边界 / POST→404 负向 | → 路由未实现时全部 FAIL（404 / pong undefined） |
+| GET /ping | `playground/tests/server.test.js`（deliverable，PRD 范围内的 regression test，对齐 contract-dod.md ARTIFACT）；`sprints/tests/ping.test.js` 为 GAN TDD red 阶段证据，不进 playground 交付 | 200 + pong==true（布尔）/ keys==["pong"] 完整性 / 禁用字段 ok 反向 / query 忽略边界 / POST→404 负向 | → 路由未实现时全部 FAIL（404 / pong undefined） |
