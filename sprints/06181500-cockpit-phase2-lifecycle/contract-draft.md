@@ -262,5 +262,5 @@ const { chromium, expect } = require('@playwright/test');
 
 | 功能 | Test File | BEHAVIOR 覆盖 | 预期红证据 |
 |---|---|---|---|
-| 生命周期映射纯逻辑 | `tests/lifecycle-contract.test.ts`（proposer 红，node env） | 七项顺序 + 占位选择 + 失败降级 + 无「文件不存在」 | → import 失败 / 断言失败（lifecycle.ts 未实现）|
-| 生命周期 DOM 渲染 | `apps/dashboard/src/pages/harness-pipeline/__tests__/PipelineLifecycle.test.tsx`（generator 写，happy-dom） | PrepPRD 全文 / 占位 / 无死字 / 降级 / 防硬编码 | → 组件未改前断言失败 |
+| 生命周期映射纯逻辑 | `tests/lifecycle-contract.test.ts`（proposer 红，node env） | 七项分区按生命周期顺序 / 缺失项返回未到该步占位 / 取数失败与未到该步占位分流 / 占位文案绝不为文件不存在 / DoD 不从 contract 字符串切段冒充 | → import 失败 / 断言失败（lifecycle.ts 未实现）|
+| 生命周期 DOM 渲染 | `../../apps/dashboard/src/pages/harness-pipeline/__tests__/PipelineLifecycle.test.tsx`（generator 写，happy-dom） | PrepPRD 显示 DB 全文并 Markdown 渲染 / 全页不出现文件不存在死字 / 单项取数失败降级占位不崩页 / PrepPRD 渲染等于DB注入指纹非硬编码 | → 组件未改前断言失败 |
