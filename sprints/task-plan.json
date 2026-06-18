@@ -1,30 +1,30 @@
 {
   "initiative_id": "pending",
   "journey_type": "autonomous",
-  "journey_type_reason": "仅涉及 playground/server.js 路由 + 测试，无 UI / 无外部 agent 协议；target_environment: playground，evaluator 用 localhost:3XXX 验证",
+  "journey_type_reason": "仅动 playground/server.js + tests + README，无 UI / 无 Brain / 无外部 agent 协议；target_environment=playground，evaluator 用 localhost:3001 验证",
   "tasks": [
     {
       "task_id": "ws1",
-      "title": "playground/server.js 新增 GET /subtract 路由 + playground/tests/server.test.js 新增 describe 块",
-      "scope": "在 playground/server.js 注册 GET /subtract（复用 STRICT_NUMBER regex ^-?\\d+(\\.\\d+)?$，校验 a/b 存在且合法，计算 Number(a)-Number(b)，返回 {result: <number>, operation: \"subtract\"}；禁用响应字段 difference/diff/value/answer/data；禁用 operation 变体 difference/diff/sub/minus）；在 playground/tests/server.test.js 新增 describe('GET /subtract', ...) 块（happy 正数/负数/零结果、schema 完整性 oracle、禁用字段反向断言、error path 缺参+非法格式）",
+      "title": "playground/server.js 新增 GET /ping 路由 + tests + README 段（smoke fire）",
+      "scope": "在 playground/server.js 注册 GET /ping，无视 query 参数，返回 HTTP 200 + {pong:true}（pong 为布尔字面 true，禁用字段 ok/status/alive/message/data，顶层 keys 仅 [\"pong\"]）；在 playground/tests/server.test.js 新增 describe('GET /ping') 块（200+pong:true / keys 完整性 / 禁用字段反向 / query 忽略边界 / POST→404 负向）；playground/README.md 新增 /ping 段",
       "dod": [
-        "[ARTIFACT] playground/server.js 内含 app.get('/subtract' 路由注册",
-        "[ARTIFACT] playground/server.js /subtract 路由响应含字面 operation: \"subtract\"（禁用 difference/diff/sub/minus）",
-        "[ARTIFACT] playground/server.js /subtract 路由响应含字面 result 字段（禁用 difference/diff/value/answer/data）",
-        "[ARTIFACT] playground/tests/server.test.js 内含 describe('GET /subtract' 块",
-        "[BEHAVIOR] GET /subtract?a=10&b=3 → HTTP 200 + {result:7, operation:\"subtract\"}（schema 字段值）",
-        "[BEHAVIOR] GET /subtract?a=10&b=3 → keys | sort == [\"operation\",\"result\"]（schema 完整性）",
-        "[BEHAVIOR] GET /subtract?a=10&b=3 → 禁用字段 difference/diff/value/answer/data 均不存在（反向验证）",
-        "[BEHAVIOR] 缺参 a → HTTP 400 + error 字段类型 string（error path）",
-        "[BEHAVIOR] GET /subtract?a=1e5&b=3 → HTTP 400（非法格式 error path）",
-        "[BEHAVIOR] GET /subtract?a=3&b=10 → HTTP 200 + result=-7（负数结果）"
+        "[ARTIFACT] playground/server.js 含 app.get('/ping' 路由注册",
+        "[ARTIFACT] playground/server.js /ping 响应含字面 pong 字段（禁用 ok/status/alive/message/data）",
+        "[ARTIFACT] playground/tests/server.test.js 含 describe('GET /ping') 块",
+        "[ARTIFACT] playground/README.md 含 /ping 段",
+        "[BEHAVIOR] GET /ping → HTTP 200 + {pong:true}（schema 字段值，pong 布尔）",
+        "[BEHAVIOR] GET /ping → 顶层 keys 完全等于 [\"pong\"]（schema 完整性）",
+        "[BEHAVIOR] GET /ping → 禁用字段 ok/status/alive 均不存在（反向验证）",
+        "[BEHAVIOR] GET /ping?x=1&foo=bar → 仍 200 + {pong:true}（query 忽略边界）",
+        "[BEHAVIOR] POST /ping → 404（仅 GET 注册的负向验证）"
       ],
       "files": [
         "playground/server.js",
-        "playground/tests/server.test.js"
+        "playground/tests/server.test.js",
+        "playground/README.md"
       ],
       "depends_on": [],
-      "complexity": "M",
+      "complexity": "S",
       "estimated_minutes": 30
     }
   ]
