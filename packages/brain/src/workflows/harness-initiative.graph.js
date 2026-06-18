@@ -1427,6 +1427,14 @@ export async function reportNode(state, opts = {}) {
   const execFileForMerge = opts.execFile || execFile;
   reconciledSubTasks = await Promise.all(reconciledSubTasks.map(async (s) => {
     if (!s || s.status === 'merged' || !s.pr_url) return s;
+    // 合并门 gate：只有子图裁判 evaluate_verdict==='PASS' 才允许自合（与子图 routeAfterEvaluate 同判据）。
+    // 否则不自合，保持非 merged → computedVerdict 自然 FAIL。堵住 CI 绿但裁判 FAIL/未跑的 PR 被强合算 PASS 的旁路。
+    // 注意：只 gate 自合（reportNode 主动行为，持有 sub_task state）；不动上面 merge-race 纠正段
+    // （那段处理 PR 真已被子图合、graph state 未刷新的合法 PASS，无 verdict 字段，加 gate 会破坏 #3398 假摔修复）。
+    if (s.evaluate_verdict !== 'PASS') {
+      console.warn(`[reportNode] 拒绝自合 ${s.id} ${s.pr_url}：evaluate_verdict=${s.evaluate_verdict ?? 'null'}（非 PASS，不许合并算 PASS）`);
+      return s;
+    }
     try {
       await execFileForMerge('gh', ['pr', 'merge', s.pr_url, '--squash', '--delete-branch'], { timeout: 30_000 });
       console.log(`[reportNode] 自合 PR 成功 ${s.id} ${s.pr_url} → status=merged`);
