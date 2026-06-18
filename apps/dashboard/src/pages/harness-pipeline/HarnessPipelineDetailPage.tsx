@@ -10,6 +10,14 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
+import {
+  LIFECYCLE_SECTIONS,
+  selectSectionContent,
+  type LifecycleSources,
+  type DecisionRow,
+} from './lifecycle';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -757,59 +765,134 @@ function SseLogSection({
 
 // ─── Types: Sprint Docs ─────────────────────────────────────────────────────
 
-interface SprintDocs {
-  sprint_dir: string;
-  docs: {
-    prep_prd: string | null;
-    sprint_prd: string | null;
-    contract: string | null;
-    harness_report: string | null;
-  };
-}
+// ─── Section: Lifecycle Docs Tab（Cockpit Phase 2，read-only 全生命周期视图）──
+// 取代旧 file-based SprintDocsSection（读 .md 文件、渲染裸缺失死字）。
+// 七项产物逐项独立读 Brain DB/API，缺失走语义化占位（未到该步 / 取数失败 / 暂无决策），
+// 纯逻辑分区定义 + 占位选择见 ./lifecycle.ts（node + happy-dom 双环境契约测试覆盖）。
+//
+// id 解析（Risk a）：route :id == harness_initiative task 自身 id，三个端点同一个 id 直打。
+// 单项端点失败只标记该 key 的 errors，不影响其余分区，整页不崩（Risk b 降级语义化）。
 
-// ─── Section: Sprint Docs Tab ────────────────────────────────────────────────
-// 吸收自旧 HarnessDetailPage（/harness/:id 退役）：sprint-docs tab，
-// 展示 Prep PRD / Sprint PRD / Contract / Harness Report 四类文档。
+const SECTION_CARD =
+  'border border-slate-200 dark:border-slate-700 rounded-lg overflow-hidden';
+const MD_PROSE =
+  'max-w-none text-sm text-slate-800 dark:text-slate-200 overflow-auto max-h-96 ' +
+  '[&_h1]:text-lg [&_h1]:font-semibold [&_h1]:mt-0 [&_h1]:mb-2 ' +
+  '[&_h2]:text-base [&_h2]:font-semibold [&_h2]:mt-3 [&_h2]:mb-2 ' +
+  '[&_ul]:list-disc [&_ul]:pl-6 [&_ol]:list-decimal [&_ol]:pl-6 [&_li]:my-1 [&_p]:my-2 ' +
+  '[&_table]:border-collapse [&_th]:border [&_th]:border-slate-300 [&_th]:px-2 [&_th]:py-1 ' +
+  '[&_td]:border [&_td]:border-slate-300 [&_td]:px-2 [&_td]:py-1 ' +
+  '[&_code]:font-mono [&_pre]:bg-slate-100 [&_pre]:dark:bg-slate-800 [&_pre]:p-3 [&_pre]:rounded [&_pre]:overflow-auto';
 
-const DOC_SECTIONS: { key: keyof SprintDocs['docs']; label: string }[] = [
-  { key: 'prep_prd', label: 'Prep PRD' },
-  { key: 'sprint_prd', label: 'Sprint PRD' },
-  { key: 'contract', label: 'Contract' },
-  { key: 'harness_report', label: 'Harness Report' },
-];
+function PipelineLifecycleSection({ pipelineId }: { pipelineId: string }) {
+  const [sources, setSources] = useState<LifecycleSources | null>(null);
+  const [loading, setLoading] = useState(true);
 
-function SprintDocsSection({
-  loading,
-  docs,
-}: {
-  loading: boolean;
-  docs: SprintDocs | null;
-}) {
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      setLoading(true);
+      const errors: NonNullable<LifecycleSources['errors']> = {};
+      const next: LifecycleSources = { errors };
+
+      // 1. PrepPRD ← GET /api/brain/tasks/:id → payload.prep_prd_body
+      try {
+        const r = await fetch(`/api/brain/tasks/${encodeURIComponent(pipelineId)}`);
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        const t = await r.json();
+        next.prepPrdBody = t?.payload?.prep_prd_body ?? null;
+      } catch {
+        errors.prep_prd = true;
+      }
+
+      // 2/3. 正式 PRD + Contract ← GET /harness/initiative/:id/detail
+      try {
+        const r = await fetch(
+          `/api/brain/harness/initiative/${encodeURIComponent(pipelineId)}/detail`,
+        );
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        const d = await r.json();
+        next.prdContent = d?.prd_content ?? null;
+        next.contractContent = d?.contract_content ?? null;
+      } catch {
+        errors.sprint_prd = true;
+        errors.contract = true;
+      }
+
+      // 4/7. DoD / Report：Brain 暂无独立 dod_content/report_content 字段 → 显式 null。
+      // Risk (c)：绝不从 contract 字符串正则切段冒充，缺字段一律走「未到该步」。
+      next.dodContent = null;
+      next.reportContent = null;
+
+      // 5. 流水线留痕 ← GET /harness/runs/:id/progress
+      try {
+        const r = await fetch(
+          `/api/brain/harness/runs/${encodeURIComponent(pipelineId)}/progress`,
+        );
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        next.progress = await r.json();
+      } catch {
+        errors.progress = true;
+      }
+
+      // 6. 决策清单 ← GET /api/brain/decisions（按 target 关联该 pipeline 过滤）
+      try {
+        const r = await fetch(`/api/brain/decisions`);
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        const all = await r.json();
+        const rows: DecisionRow[] = Array.isArray(all) ? all : [];
+        // 只保留「明确关联本 pipeline」的决策（合同：按 target=该 pipeline 的 ability/step 过滤）。
+        // 无 target 的全局决策不属于本 pipeline，必须排除，否则会把无关决策误挂上来。
+        next.decisions = rows.filter(
+          (d) => d.target != null && String(d.target).includes(pipelineId),
+        );
+      } catch {
+        errors.decisions = true;
+      }
+
+      if (!cancelled) {
+        setSources(next);
+        setLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [pipelineId]);
+
+  if (loading && !sources) {
+    return (
+      <div data-testid="docs-tab-content" className="text-slate-500 dark:text-slate-400 text-sm">
+        加载生命周期视图...
+      </div>
+    );
+  }
+
+  const src = sources ?? {};
+
   return (
     <div data-testid="docs-tab-content" className="space-y-4">
-      {loading && (
-        <div className="text-slate-500 dark:text-slate-400 text-sm">加载文档中...</div>
-      )}
-      {!loading && !docs && (
-        <div className="text-slate-500 dark:text-slate-400 text-sm">暂无文档（sprint_dir 未知）</div>
-      )}
-      {docs && DOC_SECTIONS.map(({ key, label }) => (
-        <div key={key} className="border border-slate-200 dark:border-slate-700 rounded-lg overflow-hidden">
-          <div className="bg-slate-100 dark:bg-slate-800 px-4 py-2 border-b border-slate-200 dark:border-slate-700">
-            <h3 className="text-sm font-semibold text-slate-700 dark:text-slate-200">{label}</h3>
+      {LIFECYCLE_SECTIONS.map(({ key, label }) => {
+        const content = selectSectionContent(key, src);
+        return (
+          <div key={key} data-testid={`lifecycle-section-${key}`} className={SECTION_CARD}>
+            <div className="bg-slate-100 dark:bg-slate-800 px-4 py-2 border-b border-slate-200 dark:border-slate-700">
+              <h3 className="text-sm font-semibold text-slate-700 dark:text-slate-200">{label}</h3>
+            </div>
+            <div className="p-4 bg-white dark:bg-slate-900/50">
+              {content.kind === 'markdown' ? (
+                <div className={MD_PROSE}>
+                  <ReactMarkdown remarkPlugins={[remarkGfm]}>{content.body}</ReactMarkdown>
+                </div>
+              ) : (
+                <div className="text-slate-400 dark:text-slate-500 text-sm italic">
+                  {content.text}
+                </div>
+              )}
+            </div>
           </div>
-          <div className="p-4 bg-white dark:bg-slate-900/50">
-            {docs.docs[key] ? (
-              <div
-                className="text-xs text-slate-800 dark:text-slate-300 whitespace-pre-wrap font-mono overflow-auto max-h-96"
-                dangerouslySetInnerHTML={{ __html: docs.docs[key] as string }}
-              />
-            ) : (
-              <div className="text-slate-400 dark:text-slate-500 text-sm italic">文件不存在</div>
-            )}
-          </div>
-        </div>
-      ))}
+        );
+      })}
     </div>
   );
 }
@@ -827,8 +910,6 @@ export default function HarnessPipelineDetailPage() {
   const [sseLogs, setSseLogs] = useState<SseLogEntry[]>([]);
   const [sseDone, setSseDone] = useState<SseDoneData | null>(null);
   const [activeTab, setActiveTab] = useState<DetailTab>('pipeline');
-  const [sprintDocs, setSprintDocs] = useState<SprintDocs | null>(null);
-  const [docsLoading, setDocsLoading] = useState(false);
 
   const fetchDetail = useCallback(async () => {
     if (!id) return;
@@ -850,27 +931,11 @@ export default function HarnessPipelineDetailPage() {
     fetchDetail();
   }, [fetchDetail]);
 
-  // sprint-docs 懒加载：切到 docs tab 时按需拉取（吸收自旧 HarnessDetailPage）
-  const loadDocs = useCallback(async () => {
-    const sprintDir = data?.sprint_dir;
-    if (!sprintDir || sprintDocs || docsLoading) return;
-    setDocsLoading(true);
-    try {
-      const res = await fetch(
-        `/api/brain/harness/sprint-docs?sprint_dir=${encodeURIComponent(sprintDir)}`
-      );
-      if (res.ok) setSprintDocs(await res.json());
-    } catch {
-      // ignore — UI 显示「暂无文档」
-    } finally {
-      setDocsLoading(false);
-    }
-  }, [data?.sprint_dir, sprintDocs, docsLoading]);
-
+  // docs tab 改为 read-only 全生命周期视图：切到 docs tab 时由 PipelineLifecycleSection
+  // 自行从 Brain DB/API 逐项取数（不再读 sprint 目录 .md 文件、不再渲染裸缺失死字）。
   const handleTabChange = useCallback((tab: DetailTab) => {
     setActiveTab(tab);
-    if (tab === 'docs') loadDocs();
-  }, [loadDocs]);
+  }, []);
 
   useEffect(() => {
     if (!id || typeof EventSource === 'undefined') return;
@@ -1006,9 +1071,7 @@ export default function HarnessPipelineDetailPage() {
         </>
       )}
 
-      {activeTab === 'docs' && (
-        <SprintDocsSection loading={docsLoading} docs={sprintDocs} />
-      )}
+      {activeTab === 'docs' && <PipelineLifecycleSection pipelineId={id!} />}
     </div>
   );
 }
