@@ -1,0 +1,27 @@
+{
+  "initiative_id": "da887fa3-79e5-49a6-aec6-bd88ae02f2c7",
+  "journey_type": "user_facing",
+  "journey_type_reason": "改动落在 apps/dashboard/ 前端 pipeline 详情页（HarnessPipelineDetailPage 文档 Tab），用户可见 UI 渲染，故 user_facing。",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "pipeline 详情页文档区改为 read-only 七项全生命周期视图（读 Brain DB/API，缺失『未到该步』占位，全页无『文件不存在』）",
+      "scope": "把 HarnessPipelineDetailPage 的文档 Tab 从 file-based SprintDocsSection（渲染『文件不存在』）替换为七项生命周期分区（PrepPRD/正式PRD/Contract/DoD/决策清单/流水线留痕/Report），每项独立读既有 Brain 端点（tasks payload.prep_prd_body、harness/initiative/:id/detail、harness/runs/:id/progress、decisions），有数据 Markdown 渲染、缺失或取数失败一律语义化占位。抽出纯逻辑 lifecycle.ts 承载分区定义+占位选择。read-only，无新增端点/写操作。",
+      "dod": [
+        "[BEHAVIOR] lifecycle.ts 纯逻辑：七项分区按序 + 缺失/失败→『未到该步』占位 + decisions空→『暂无决策』 + 占位绝不为『文件不存在』（lifecycle-contract.test.ts 全绿）",
+        "[BEHAVIOR] DOM：PrepPRD 显示 DB 全文 Markdown、未产出项占位、全页无『文件不存在』、单项取数失败降级不崩、PrepPRD 渲染等于 DB 注入指纹（PipelineLifecycle.test.tsx 全绿）",
+        "[BEHAVIOR:E2E] mac_web Playwright：打开 /pipeline/:id 文档 Tab，PrepPRD 全文可见、Report『未到该步』、body 不含『文件不存在』（含 01/02/03 截图）",
+        "[ARTIFACT] apps/dashboard/src/pages/harness-pipeline/lifecycle.ts 存在并导出 LIFECYCLE_SECTIONS/selectSectionContent/NOT_REACHED",
+        "[ARTIFACT] HarnessPipelineDetailPage.tsx 不再含字面『文件不存在』"
+      ],
+      "files": [
+        "apps/dashboard/src/pages/harness-pipeline/lifecycle.ts",
+        "apps/dashboard/src/pages/harness-pipeline/HarnessPipelineDetailPage.tsx",
+        "apps/dashboard/src/pages/harness-pipeline/__tests__/PipelineLifecycle.test.tsx"
+      ],
+      "depends_on": [],
+      "complexity": "M",
+      "estimated_minutes": 90
+    }
+  ]
+}
