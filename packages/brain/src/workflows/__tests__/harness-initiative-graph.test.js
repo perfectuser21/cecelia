@@ -371,6 +371,104 @@ describe('reportNode — B45 Fix1: verdict 从 sub_tasks 推导', () => {
     expect(runsCall, 'initiative_runs should be updated').toBeDefined();
     expect(runsCall[1][1]).toBe('failed');
   });
+
+  it('FAIL 且 failed_scenarios 为空时 failure_reason 不为空串', async () => {
+    const dbQueryMock = vi.fn().mockResolvedValue({ rows: [] });
+    const mockPool = {
+      connect: vi.fn().mockResolvedValue({ query: dbQueryMock, release: vi.fn() }),
+      query: vi.fn().mockResolvedValue({ rows: [] }),
+    };
+    const state = {
+      initiativeId: '11111111-1111-1111-1111-111111111111',
+      sub_tasks: [{ id: 'ws1', status: 'failed', pr_url: null, ci_fail_type: 'ci_red', evaluator_feedback: 'lint failed' }],
+      final_e2e_verdict: null,
+      final_e2e_failed_scenarios: [],
+    };
+    // 不真的合并 / 不真的查 GitHub
+    await reportNode(state, { pool: mockPool, _checkPrMerged: async () => false, execFile: async () => ({ stdout: '' }) });
+    // 找到写 initiative_runs 的 UPDATE 调用，取 failure_reason 参数
+    const runUpdate = dbQueryMock.mock.calls.find(c => /UPDATE initiative_runs/.test(c[0]));
+    expect(runUpdate).toBeTruthy();
+    const reason = runUpdate[1][2]; // [initiativeId, phase, reason]
+    expect(reason).toBeTruthy();
+    expect(reason.trim()).not.toBe('');
+    expect(reason).not.toBe('Final E2E FAIL:');
+    // 核心：前缀后必须有真实诊断细节，不能是空 reason "Final E2E FAIL: "
+    expect(reason.startsWith('Final E2E FAIL:')).toBe(true);
+    const detail = reason.replace(/^Final E2E FAIL:\s*/, '');
+    expect(detail.trim(), 'failure_reason 前缀后必须有非空诊断细节').not.toBe('');
+  });
+
+  it('未合并但可合并的 sub_task PR：reportNode 自己合并 → verdict PASS/phase done', async () => {
+    const dbQueryMock = vi.fn().mockResolvedValue({ rows: [] });
+    const mockPool = {
+      connect: vi.fn().mockResolvedValue({ query: dbQueryMock, release: vi.fn() }),
+      query: vi.fn().mockResolvedValue({ rows: [] }),
+    };
+    const execFileMock = vi.fn().mockResolvedValue({ stdout: 'Squashed and merged' });
+    const state = {
+      initiativeId: '22222222-2222-2222-2222-222222222222',
+      sub_tasks: [{ id: 'ws1', status: 'pr_open', pr_url: 'https://github.com/o/r/pull/1' }],
+      final_e2e_verdict: null,
+      final_e2e_failed_scenarios: [],
+    };
+    await reportNode(state, { pool: mockPool, _checkPrMerged: async () => false, execFile: execFileMock });
+    // 断言：调用了 gh pr merge
+    const mergeCall = execFileMock.mock.calls.find(c => c[0] === 'gh' && Array.isArray(c[1]) && c[1].includes('merge'));
+    expect(mergeCall).toBeTruthy();
+    expect(mergeCall[1]).toEqual(expect.arrayContaining(['pr', 'merge', 'https://github.com/o/r/pull/1', '--squash', '--delete-branch']));
+    // 断言：phase=done（合并成功 → 视为 merged → PASS）
+    const runUpdate = dbQueryMock.mock.calls.find(c => /UPDATE initiative_runs/.test(c[0]));
+    expect(runUpdate[1][1]).toBe('done');
+  });
+
+  it('有真实 failed_scenarios 且未全 merged 时 verdict=FAIL 且 failure_reason 含场景名', async () => {
+    const dbQueryMock = vi.fn().mockResolvedValue({ rows: [] });
+    const mockPool = {
+      connect: vi.fn().mockResolvedValue({ query: dbQueryMock, release: vi.fn() }),
+      query: vi.fn().mockResolvedValue({ rows: [] }),
+    };
+    const state = {
+      initiativeId: '44444444-4444-4444-4444-444444444444',
+      sub_tasks: [{ id: 'ws1', status: 'failed', pr_url: null }],
+      final_e2e_verdict: null,
+      final_e2e_failed_scenarios: [{ name: 'scenario-x' }],
+    };
+    await reportNode(state, { pool: mockPool, _checkPrMerged: async () => false, execFile: async () => ({ stdout: '' }) });
+    const runUpdate = dbQueryMock.mock.calls.find(c => /UPDATE initiative_runs/.test(c[0]));
+    expect(runUpdate).toBeTruthy();
+    // verdict=FAIL → phase=failed
+    expect(runUpdate[1][1]).toBe('failed');
+    const reason = runUpdate[1][2]; // [initiativeId, phase, reason]
+    expect(reason).toBeTruthy();
+    expect(reason.trim()).not.toBe('');
+    expect(reason).toContain('scenario-x');
+  });
+
+  it('合并 PR 抛错时不致 run failed（非致命）', async () => {
+    const dbQueryMock = vi.fn().mockResolvedValue({ rows: [] });
+    const mockPool = {
+      connect: vi.fn().mockResolvedValue({ query: dbQueryMock, release: vi.fn() }),
+      query: vi.fn().mockResolvedValue({ rows: [] }),
+    };
+    // PR 未合（_checkPrMerged=false）+ 有 pr_url → 真正进入合并步骤，execFileMock reject 触发 catch
+    const execFileMock = vi.fn().mockRejectedValue(new Error('gh transient error'));
+    const state = {
+      initiativeId: '33333333-3333-3333-3333-333333333333',
+      sub_tasks: [{ id: 'ws1', status: 'pr_open', pr_url: 'https://github.com/o/r/pull/2' }],
+      final_e2e_verdict: null,
+      final_e2e_failed_scenarios: [],
+    };
+    // 合并步骤被真正执行且 catch 吞错 → reportNode 不抛
+    await expect(reportNode(state, { pool: mockPool, _checkPrMerged: async () => false, execFile: execFileMock })).resolves.toBeTruthy();
+    // catch 路径前提：gh pr merge 真正被调用（reject 进入 catch）
+    const mergeCall = execFileMock.mock.calls.find(c => c[0] === 'gh' && Array.isArray(c[1]) && c[1].includes('merge'));
+    expect(mergeCall, 'catch 路径前提：合并步骤必须真正被调用').toBeTruthy();
+    // catch 吞错（非致命）→ sub_task 维持未合 → verdict 不应是 PASS → phase !== 'done'
+    const runUpdate = dbQueryMock.mock.calls.find(c => /UPDATE initiative_runs/.test(c[0]));
+    expect(runUpdate).toBeTruthy();
+    expect(runUpdate[1][1]).not.toBe('done');
+  });
 });
 
 describe('advanceTaskIndexNode — B45 Fix2: serial gate error → stateHasError', () => {

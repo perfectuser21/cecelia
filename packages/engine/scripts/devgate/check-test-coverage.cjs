@@ -4,7 +4,8 @@
  *
  * 规则：
  *   合同 `## Test Contract` 表声明的每个 Test File 必须在 PR diff 里存在
- *   合同的 BEHAVIOR 覆盖项名必须能在对应 .test.ts 里找到对应的 it()
+ *   合同的 BEHAVIOR 覆盖项名必须能在对应 test/spec 文件里找到对应的 it()
+ *   支持的扩展名：.test.ts/.tsx/.js/.jsx 与 .spec.ts/.tsx/.js/.jsx（前端组件测试需 tsx）
  *
  * 扫描范围：
  *   PR 里新增的 contract-draft.md 或 sprint-contract.md
@@ -73,7 +74,8 @@ function parseTestContract(content) {
     // 取 backtick 里的路径
     const m = testFileRaw.match(/`([^`]+)`/);
     const testFile = m ? m[1] : testFileRaw;
-    if (!/\.test\.(ts|js)$/.test(testFile)) continue;
+    // 接受 .test.* 与 .spec.*（含 tsx/jsx）：前端组件测试必须 .test.tsx、e2e 用 .spec.ts
+    if (!/\.(test|spec)\.[cm]?[jt]sx?$/.test(testFile)) continue;
     // behavior 覆盖用 '/' 分割
     const behaviors = behaviorsRaw
       .split(/[/,、]/)
@@ -168,7 +170,7 @@ function main() {
     console.log("\n  Test Contract 规则：");
     console.log("    - 合同含 ## Test Contract 表（v5.0 必须）");
     console.log("    - 每行声明的 Test File 必须在 PR 里存在");
-    console.log("    - BEHAVIOR 覆盖项名必须在对应 .test.ts 有 it()");
+    console.log("    - BEHAVIOR 覆盖项名必须在对应 .test.*/.spec.* 有 it()");
     console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
     process.exit(1);
   }

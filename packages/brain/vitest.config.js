@@ -172,6 +172,14 @@ export default defineConfig({
       // Pre-existing failures: open2-verify-06031535 sprint healthz tests — route was never implemented
       // (empty shell rejected by ARTIFACT gate after this sprint merged; Red tests permanently fail)
       '../../sprints/open2-verify-06031535/tests/harness-healthz.test.js',
+      // Frontend (apps/dashboard) harness 任务：React 组件测试需 happy-dom + @testing-library，
+      // 不能在 brain 的 node 环境跑（且 sprints/ 副本无相邻 TaskPrdPage 源）。真实运行在
+      // apps/dashboard 的 workspace-test job（同名副本 src/pages/tasks/TaskPrdPage.prepprd.test.tsx）。
+      '../../sprints/06171618-harness-pipeline-cockpit/tests/TaskPrdPage.prepprd.test.tsx',
+      // 所有 sprint 的 e2e/ 目录 = Playwright spec（import '@playwright/test'），
+      // 在 brain 的 node 环境跑会崩溃 tinypool worker（"Worker exited unexpectedly"），
+      // 连带误判同 shard 的其它测试失败。E2E 归 evaluator 模式 B / final-e2e 跑，不进 brain 单测。
+      '../../sprints/**/e2e/**',
     ],
     coverage: {
       provider: 'v8',
@@ -199,7 +207,12 @@ export default defineConfig({
     poolOptions: {
       forks: {
         minForks: 1,
-        maxForks: 1        // 单 fork 串行：465文件 × ~20MB / fork，ubuntu-latest 7GB 内
+        maxForks: 1,        // 单 fork 串行：465文件 × ~20MB / fork，ubuntu-latest 7GB 内
+        // 给 fork 子进程加堆头空间：isolate:true 每文件重建模块注册表 +
+        // 个别 callback 测试用 import('routes.js?v='+Date.now()) 每测试复制整棵路由树，
+        // 峰值冲爆默认堆 → "Worker exited unexpectedly" 误判同 shard 测试失败
+        // （连带 D5 等本应通过的测试）。8192 在 ubuntu-latest 单 fork 下安全。
+        execArgv: ['--max-old-space-size=8192']
       }
     }
   }

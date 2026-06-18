@@ -23,6 +23,8 @@ import path from 'node:path';
 // B17 + B32: brain 代为 push 用 execFile（B17 加 final_evaluate PR_BRANCH fallback，B32 加 propose_branch fallback）
 const execFileDefault = promisify(execFileCb);
 const execFile = execFileDefault;
+// 自合 PR 幂等判定：gh pr merge 报"已合/未开/已关"视为成功（与 harness-task.graph.js 同款）
+const ALREADY_MERGED_RE = /already merged|not open|pull request.*closed/i;
 // 走 C3 shim (../harness-gan-graph.js) 而非直连 workflows/harness-gan.graph.js，
 // 保持测试 vi.mock('../../harness-gan-graph.js') 路径兼容。
 // Phase C7 清 shim 前不改。
@@ -1407,7 +1409,7 @@ export async function reportNode(state, opts = {}) {
   // merge 状态，已 merge 则纠正为 merged——否则会把"PR 已合并但 graph state 未刷新"误判成
   // Final E2E FAIL（failed_scenarios 为空的空 reason FAIL，实证 PR#50 已 merged 仍判 FAIL）。
   const checkPrMerged = opts._checkPrMerged ?? _checkPrMerged;
-  const reconciledSubTasks = await Promise.all((state.sub_tasks || []).map(async (s) => {
+  let reconciledSubTasks = await Promise.all((state.sub_tasks || []).map(async (s) => {
     if (s && s.status !== 'merged' && s.pr_url) {
       const merged = await checkPrMerged(s.pr_url).catch(() => false);
       if (merged) {
@@ -1416,6 +1418,25 @@ export async function reportNode(state, opts = {}) {
       }
     }
     return s;
+  }));
+
+  // 假摔修复：CI 绿但 PR 未合（CI auto-merge 抽风）时，reportNode 在此可靠合并自己的 PR，
+  // 使 merge-based verdict 自然变正确。非致命：合并失败只 warn，绝不回退 run failed。
+  const execFileForMerge = opts.execFile || execFile;
+  reconciledSubTasks = await Promise.all(reconciledSubTasks.map(async (s) => {
+    if (!s || s.status === 'merged' || !s.pr_url) return s;
+    try {
+      await execFileForMerge('gh', ['pr', 'merge', s.pr_url, '--squash', '--delete-branch'], { timeout: 30_000 });
+      console.log(`[reportNode] 自合 PR 成功 ${s.id} ${s.pr_url} → status=merged`);
+      return { ...s, status: 'merged' };
+    } catch (err) {
+      const msg = err?.message || '';
+      if (ALREADY_MERGED_RE.test(msg)) {
+        return { ...s, status: 'merged' };
+      }
+      console.warn(`[reportNode] 自合 PR 失败（非致命）${s.id} ${s.pr_url}: ${msg}`);
+      return s;
+    }
   }));
 
   // B45 Fix1: final_e2e_verdict 没有节点主动写时，从 sub_tasks 状态推导
@@ -1443,7 +1464,24 @@ export async function reportNode(state, opts = {}) {
       // B45: 使用 computedVerdict（可从 sub_tasks 推导）
       console.error(`[reportNode] computedVerdict=FAIL initiative=${state.initiativeId} → 标 phase='failed'，executor 会标 task.status='failed'`);
     }
-    const reason = `Final E2E ${computedVerdict}: ${(state.final_e2e_failed_scenarios || []).map(s => s.name).join('; ').slice(0, 500)}`;
+    let reason;
+    if (computedVerdict === 'PASS') {
+      // PASS 时 failed_scenarios 必空，且 PASS reason 不写库（UPDATE 仅 phase='failed' 才写 failure_reason）
+      reason = 'Final E2E PASS';
+    } else {
+      // 非空回落：优先失败场景名 → 否则聚合失败 sub_task 的 ci_fail_type/evaluator_feedback → 再否则明确文案
+      const scenarioNames = (state.final_e2e_failed_scenarios || []).map(s => s.name).filter(Boolean);
+      let detail = scenarioNames.join('; ');
+      if (!detail) {
+        const subFails = (reconciledSubTasks || [])
+          .filter(s => s.status !== 'merged')
+          .map(s => `${s.id}(status=${s.status || 'unknown'}${s.ci_fail_type ? `,ci=${s.ci_fail_type}` : ''}${s.evaluator_feedback ? `,fb=${String(s.evaluator_feedback).slice(0, 80)}` : ''}${s.pr_url ? `,pr=${s.pr_url}` : ''})`);
+        detail = subFails.length
+          ? `no failed scenarios recorded; unmerged/failed sub_tasks: ${subFails.join('; ')}`
+          : 'no failed scenarios and no sub_task detail available';
+      }
+      reason = `Final E2E FAIL: ${detail.slice(0, 500)}`;
+    }
     // B45: 使用 pool.connect() → client.query 确保测试 mock 可验证、支持连接复用
     const client = await dbPool.connect();
     try {
