@@ -953,4 +953,89 @@ router.all('/ping-extended', (req, res) => {
   res.status(405).json({ error: 'Method Not Allowed' });
 });
 
+// ==================== Healthz API ====================
+
+const TICK_DEAD_THRESHOLD_MS = 6 * 60 * 1000; // 6分钟 = tick 间隔(2min) × 3
+
+/**
+ * GET /api/brain/healthz
+ * 轻量健康检查：DB 连接状态 + tick 循环存活状态
+ * 无需鉴权（内网运维探针，decision #healthz-auth-exempt）
+ * HTTP 200 = ok，503 = degraded/critical
+ */
+router.get('/healthz', async (req, res) => {
+  const checkedAt = new Date().toISOString();
+  let dbStatus = 'connected';
+  let dbError = undefined;
+  let tickStatus = 'unknown';
+  let lastTickAt = null;
+
+  // ── DB 检查（SELECT 1，2s 超时）────────────────────────────
+  try {
+    const client = await Promise.race([
+      pool.connect(),
+      new Promise((_, reject) => setTimeout(() => reject(new Error('connection_timeout')), 2000))
+    ]);
+    try {
+      await client.query('SELECT 1');
+    } finally {
+      client.release();
+    }
+  } catch (err) {
+    dbStatus = 'error';
+    // 脱敏：只保留错误类型，不含连接字符串或密码
+    const msg = err.message || '';
+    if (msg.includes('timeout')) dbError = 'connection_timeout';
+    else if (msg.includes('ECONNREFUSED')) dbError = 'connection_refused';
+    else if (msg.includes('password') || msg.includes('auth')) dbError = 'authentication_error';
+    else dbError = 'query_error';
+  }
+
+  // ── Tick 检查（读 working_memory.tick_last）──────────────────
+  // 当 DB 可用时才能读 tick 状态
+  if (dbStatus === 'connected') {
+    try {
+      const result = await pool.query(
+        `SELECT value_json FROM working_memory WHERE key = 'tick_last' LIMIT 1`
+      );
+      if (result.rows.length > 0) {
+        lastTickAt = result.rows[0].value_json?.timestamp || null;
+        if (lastTickAt) {
+          const age = Date.now() - new Date(lastTickAt).getTime();
+          tickStatus = age <= TICK_DEAD_THRESHOLD_MS ? 'alive' : 'dead';
+        } else {
+          tickStatus = 'unknown';
+        }
+      } else {
+        tickStatus = 'unknown';
+      }
+    } catch {
+      tickStatus = 'unknown';
+    }
+  }
+
+  // ── status 推导 ───────────────────────────────────────────────
+  let overallStatus;
+  if (dbStatus === 'connected' && tickStatus === 'alive') {
+    overallStatus = 'ok';
+  } else if (dbStatus === 'error' && (tickStatus === 'dead' || tickStatus === 'unknown')) {
+    overallStatus = 'critical';
+  } else {
+    overallStatus = 'degraded';
+  }
+
+  const httpCode = overallStatus === 'ok' ? 200 : 503;
+
+  const body = {
+    status: overallStatus,
+    db: dbStatus,
+    tick: tickStatus,
+    last_tick_at: lastTickAt,
+    checked_at: checkedAt,
+  };
+  if (dbError) body.db_error = dbError;
+
+  res.status(httpCode).json(body);
+});
+
 export default router;
