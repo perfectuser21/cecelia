@@ -166,6 +166,16 @@ export default function MachineDetailPage() {
         </div>
       )}
 
+      {(meta.cpu || meta.gpu || meta.motherboard || meta.memory || meta.disk) && (
+        <Section title="硬件规格">
+          {meta.cpu && <Field label="CPU" value={meta.cpu} />}
+          {meta.gpu && <Field label="GPU" value={meta.gpu} />}
+          {meta.motherboard && <Field label="主板" value={meta.motherboard} />}
+          {meta.memory && <Field label="内存" value={meta.memory} />}
+          {meta.disk && <Field label="硬盘" value={meta.disk} />}
+        </Section>
+      )}
+
       <Section title="网络配置">
         <Field label="Tailscale IP" value={meta.tailscale_ip} />
         <Field label="公网 IP" value={meta.public_ip} />
