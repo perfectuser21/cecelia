@@ -4,6 +4,8 @@ import type { ReactNode } from 'react';
 import {
   Server, Globe, Wifi, WifiOff, AlertTriangle, XCircle,
   ChevronLeft, Trash2, CheckCircle2,
+  Cpu, Zap, MemoryStick, CircuitBoard, HardDrive,
+  type LucideIcon,
 } from 'lucide-react';
 import { machinesApi, Machine, MachineService, MachineDeprecated, MachineConflict } from '../api/machines.api';
 
@@ -23,6 +25,18 @@ function Field({ label, value }: { label: string; value: ReactNode }) {
     <div className="flex items-start gap-4 py-1.5">
       <span className="text-sm text-gray-500 dark:text-gray-400 w-32 flex-shrink-0">{label}</span>
       <span className="text-sm text-gray-900 dark:text-white font-mono">{value || '—'}</span>
+    </div>
+  );
+}
+
+function SpecCard({ icon: Icon, label, value }: { icon: LucideIcon; label: string; value: string }) {
+  return (
+    <div className="bg-gray-50 dark:bg-gray-900/40 rounded-lg border border-gray-200 dark:border-gray-700 p-3">
+      <div className="flex items-center gap-1.5 text-xs text-gray-500 dark:text-gray-400 mb-1.5">
+        <Icon className="w-3.5 h-3.5" />
+        {label}
+      </div>
+      <div className="text-sm font-medium text-gray-900 dark:text-white break-words">{value}</div>
     </div>
   );
 }
@@ -164,6 +178,18 @@ export default function MachineDetailPage() {
             <ConflictBadge key={i} conflict={c} />
           ))}
         </div>
+      )}
+
+      {(meta.cpu || meta.gpu || meta.motherboard || meta.memory || meta.disk) && (
+        <Section title="硬件规格">
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+            {meta.cpu && <SpecCard icon={Cpu} label="CPU" value={meta.cpu} />}
+            {meta.gpu && <SpecCard icon={Zap} label="GPU" value={meta.gpu} />}
+            {meta.memory && <SpecCard icon={MemoryStick} label="内存" value={meta.memory} />}
+            {meta.motherboard && <SpecCard icon={CircuitBoard} label="主板" value={meta.motherboard} />}
+            {meta.disk && <SpecCard icon={HardDrive} label="硬盘" value={meta.disk} />}
+          </div>
+        </Section>
       )}
 
       <Section title="网络配置">
