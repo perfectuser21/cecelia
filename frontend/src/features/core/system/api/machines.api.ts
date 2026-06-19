@@ -23,6 +23,11 @@ export interface MachineConflict {
 
 export interface MachineMetadata {
   hardware?: string;
+  cpu?: string;
+  gpu?: string;
+  motherboard?: string;
+  memory?: string;
+  disk?: string;
   os?: string;
   tailscale_name?: string;
   tailscale_ip?: string;
