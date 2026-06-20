@@ -15,6 +15,7 @@ import { resolveAccount } from '../spawn/middleware/account-rotation.js';
 import { parseDockerOutput, loadSkillContent } from '../harness-shared.js';
 import { harnessContractThreadSuffix } from '../harness-utils.js';
 import { parseTaskPlan, upsertTaskPlan } from '../harness-dag.js';
+import { buildSprintResultContract } from '../sprint-result-contract.js';
 import { ensureHarnessWorktree } from '../harness-worktree.js';
 import { resolveGitHubToken } from '../harness-credentials.js';
 import { fetchAndShowOriginFile } from '../lib/git-fence.js';
@@ -1456,17 +1457,19 @@ export async function reportNode(state, opts = {}) {
     ((reconciledSubTasks.length > 0 && reconciledSubTasks.every(s => s.status === 'merged'))
       ? 'PASS' : 'FAIL');
 
-  const reportContent = JSON.stringify({
+  // 闭环边界：产出 Sprint 产物契约（SSOT）。现可填字段填，Phase2 采集字段留 stub。
+  const contract = buildSprintResultContract({
     initiativeId: state.initiativeId,
-    sub_tasks: reconciledSubTasks,
-    final_e2e_verdict: computedVerdict,
-    failed_scenarios: state.final_e2e_failed_scenarios || [],
-    step_timing,
-    ws_issues,
-    ws_costs,
-    cost_usd: (state.sub_tasks || []).reduce((a, s) => a + (s.cost_usd || 0), 0),
-    completed_at: new Date().toISOString(),
-  }, null, 2);
+    verdict: computedVerdict,
+    failedScenarios: state.final_e2e_failed_scenarios || [],
+    subTasks: reconciledSubTasks,
+    stepTiming: step_timing,
+    wsIssues: ws_issues,
+    wsCosts: ws_costs,
+    costUsd: (state.sub_tasks || []).reduce((a, s) => a + (s.cost_usd || 0), 0),
+    completedAt: new Date().toISOString(),
+  });
+  const reportContent = JSON.stringify(contract, null, 2);
   // 写 initiative_runs phase=done/failed
   try {
     const phase = computedVerdict === 'PASS' ? 'done' : 'failed';
