@@ -197,20 +197,25 @@ router.get('/runs/:id/progress', async (req, res) => {
 
 /**
  * GET /initiative/:id/detail
- * 返回 initiative 详情：6 字段（initiative_id/prd_content/contract_content/gan_rounds/step_timing/screenshot_urls）
+ * 返回 initiative 详情：7 字段（initiative_id/prd_content/contract_content/gan_rounds/step_timing/screenshot_urls/report_content）
  * 来源：tasks + initiative_contracts + task_events + checkpoint_blobs
+ * report_content 取自 tasks.result.report_content（reportNode 写入的 Sprint 产物契约 JSON，
+ *   见 sprint-result-contract.js）——闭环边界「展示」读取者的唯一数据源。
  */
 router.get('/initiative/:id/detail', async (req, res) => {
   try {
     const { id } = req.params;
 
     const { rows: initRows } = await pool.query(
-      `SELECT id FROM tasks WHERE id::text = $1 AND task_type = 'harness_initiative' LIMIT 1`,
+      `SELECT id, result FROM tasks WHERE id::text = $1 AND task_type = 'harness_initiative' LIMIT 1`,
       [id]
     );
     if (initRows.length === 0) {
       return res.status(404).json({ error: 'initiative not found' });
     }
+
+    // Sprint 产物契约（reportNode 写入 result.report_content）。无则 null（前端走 NOT_REACHED 占位）。
+    const report_content = initRows[0].result?.report_content ?? null;
 
     let prd_content = null;
     let contract_content = null;
@@ -266,6 +271,7 @@ router.get('/initiative/:id/detail', async (req, res) => {
       gan_rounds,
       initiative_id: id,
       prd_content,
+      report_content,
       screenshot_urls,
       step_timing,
     });

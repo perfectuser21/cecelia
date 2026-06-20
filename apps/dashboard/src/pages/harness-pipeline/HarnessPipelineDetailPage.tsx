@@ -15,6 +15,7 @@ import remarkGfm from 'remark-gfm';
 import {
   LIFECYCLE_SECTIONS,
   selectSectionContent,
+  renderReportContract,
   type LifecycleSources,
   type DecisionRow,
 } from './lifecycle';
@@ -805,7 +806,9 @@ function PipelineLifecycleSection({ pipelineId }: { pipelineId: string }) {
         errors.prep_prd = true;
       }
 
-      // 2/3. 正式 PRD + Contract ← GET /harness/initiative/:id/detail
+      // 2/3/7. 正式 PRD + Contract + Report ← GET /harness/initiative/:id/detail
+      // Report 源：detail.report_content（tasks.result.report_content 的 Sprint 产物契约对象），
+      // 经 renderReportContract() 渲染成 Markdown。取数失败时 sprint_prd/contract/report 同时降级。
       try {
         const r = await fetch(
           `/api/brain/harness/initiative/${encodeURIComponent(pipelineId)}/detail`,
@@ -814,15 +817,17 @@ function PipelineLifecycleSection({ pipelineId }: { pipelineId: string }) {
         const d = await r.json();
         next.prdContent = d?.prd_content ?? null;
         next.contractContent = d?.contract_content ?? null;
+        // 契约对象 → Markdown；无契约（未产出）→ null → 走「未到该步」占位。
+        next.reportContent = renderReportContract(d?.report_content ?? null);
       } catch {
         errors.sprint_prd = true;
         errors.contract = true;
+        errors.report = true;
       }
 
-      // 4/7. DoD / Report：Brain 暂无独立 dod_content/report_content 字段 → 显式 null。
+      // 4. DoD：Brain 暂无独立 dod_content 字段 → 显式 null（走「未到该步」）。
       // Risk (c)：绝不从 contract 字符串正则切段冒充，缺字段一律走「未到该步」。
       next.dodContent = null;
-      next.reportContent = null;
 
       // 5. 流水线留痕 ← GET /harness/runs/:id/progress
       try {

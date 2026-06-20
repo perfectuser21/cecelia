@@ -30,7 +30,7 @@ describe('GET /harness/initiative/:id/detail', () => {
 
   function mockInitiativeExists() {
     mockPool.query
-      .mockResolvedValueOnce({ rows: [{ id: FAKE_ID }] })   // tasks check
+      .mockResolvedValueOnce({ rows: [{ id: FAKE_ID, result: null }] })  // tasks check（同查 result.report_content）
       .mockResolvedValueOnce({ rows: [] })                    // initiative_contracts
       .mockResolvedValueOnce({ rows: [] })                    // task_events
       .mockResolvedValueOnce({ rows: [] });                   // checkpoint_blobs
@@ -58,23 +58,55 @@ describe('GET /harness/initiative/:id/detail', () => {
     expect(Array.isArray(res.body.screenshot_urls)).toBe(true);
   });
 
-  it('schema 完整性 — 顶层 keys 完全等于 PRD 定义 6 字段', async () => {
+  it('schema 完整性 — 顶层 keys 完全等于 PRD 定义 7 字段（含 report_content）', async () => {
     mockInitiativeExists();
     const res = await request(app).get(`/harness/initiative/${FAKE_ID}/detail`);
     expect(res.status).toBe(200);
     const actualKeys = Object.keys(res.body).sort();
-    const expectedKeys = ['contract_content', 'gan_rounds', 'initiative_id', 'prd_content', 'screenshot_urls', 'step_timing'];
+    const expectedKeys = ['contract_content', 'gan_rounds', 'initiative_id', 'prd_content', 'report_content', 'screenshot_urls', 'step_timing'];
     expect(actualKeys).toEqual(expectedKeys);
   });
 
-  it('禁用字段不出现（steps/timeline/result/data/details/info/content/report）', async () => {
+  it('禁用字段不出现（steps/timeline/data/details/info/content）', async () => {
     mockInitiativeExists();
     const res = await request(app).get(`/harness/initiative/${FAKE_ID}/detail`);
     expect(res.status).toBe(200);
-    const banned = ['steps', 'timeline', 'result', 'data', 'details', 'info', 'content', 'report'];
+    // 注意：result/report 不再 banned — report_content 是闭环边界「展示」的专属字段。
+    const banned = ['steps', 'timeline', 'data', 'details', 'info', 'content'];
     for (const field of banned) {
       expect(res.body).not.toHaveProperty(field);
     }
+  });
+
+  it('report_content 无数据时为 null', async () => {
+    mockInitiativeExists();
+    const res = await request(app).get(`/harness/initiative/${FAKE_ID}/detail`);
+    expect(res.status).toBe(200);
+    expect(res.body.report_content).toBeNull();
+  });
+
+  it('tasks.result.report_content 有数据时原样返回契约对象', async () => {
+    const contract = {
+      contract_version: 1,
+      initiative_id: FAKE_ID,
+      verdict: 'PASS',
+      change_summary: '加了 X 功能',
+      next_action: '继续推进 Y',
+      total_cost: 1.23,
+      failed_scenarios: [],
+      node_telemetry: [{ node: 'proposer', start_ts: null, end_ts: null, tokens: null, cost: null }],
+      produced_assets: { skills: [], tests: [], decisions: [] },
+    };
+    mockPool.query
+      .mockResolvedValueOnce({ rows: [{ id: FAKE_ID, result: { report_content: contract } }] })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [] });
+
+    const res = await request(app).get(`/harness/initiative/${FAKE_ID}/detail`);
+    expect(res.status).toBe(200);
+    expect(res.body.report_content).toEqual(contract);
+    expect(res.body.report_content.verdict).toBe('PASS');
   });
 
   it('prd_content/contract_content 为 string|null，gan_rounds 为 number|null（无数据时默认 null）', async () => {
