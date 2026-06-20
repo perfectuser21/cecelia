@@ -83,6 +83,7 @@ function installFetch(opts: {
   contract?: string | null;
   decisions?: unknown[];
   failInitiative?: boolean;
+  reportContent?: unknown;
 }) {
   const fetchMock = vi.fn((input: RequestInfo | URL) => {
     const u = String(input);
@@ -94,6 +95,7 @@ function installFetch(opts: {
         prd_content: opts.prd ?? null,
         contract_content: opts.contract ?? null,
         gan_rounds: null,
+        report_content: opts.reportContent ?? null,
         step_timing: [],
         screenshot_urls: [],
       });
@@ -181,6 +183,46 @@ describe('PipelineLifecycle — Cockpit Phase 2 [BEHAVIOR]', () => {
     const prep = screen.getByTestId('lifecycle-section-prep_prd');
     expect(within(prep).getByText('Prep 仍正常')).toBeInTheDocument();
     expect(screen.getByTestId('docs-tab-content')).toBeInTheDocument();
+  });
+
+  it('Report 分区渲染 Sprint 产物契约真数据', async () => {
+    // 注入完整契约对象 → Report 分区应渲染 verdict/change_summary/next_action/
+    // total_cost/node_telemetry 表/失败场景/发现四类，且不再显示「未到该步」。
+    installFetch({
+      prepBody: '# Prep',
+      prd: '# PRD',
+      contract: '## Contract',
+      reportContent: {
+        contract_version: 1,
+        initiative_id: 'pipe-1',
+        verdict: 'PASS',
+        change_summary: '展示报告契约真数据-FINGERPRINT',
+        next_action: '推进下一步动作',
+        total_cost: 2.5,
+        failed_scenarios: ['失败场景甲乙丙'],
+        incidental_bugs: ['撞见的 bug X'],
+        improvement_items: ['改进项 Y'],
+        linked_issues: ['ISSUE-9999'],
+        open_issues_with_learnings: ['未解决 issue Z'],
+        node_telemetry: [{ node: 'proposer', start_ts: null, end_ts: null, tokens: 888, cost: null }],
+        produced_assets: { skills: [], tests: [], decisions: [] },
+      },
+      decisions: [],
+    });
+    await openDocsTab();
+
+    const report = screen.getByTestId('lifecycle-section-report');
+    // 真数据全部出现
+    expect(within(report).getByText('展示报告契约真数据-FINGERPRINT')).toBeInTheDocument();
+    expect(within(report).getByText('推进下一步动作')).toBeInTheDocument();
+    expect(within(report).getByText('失败场景甲乙丙')).toBeInTheDocument();
+    expect(within(report).getByText('撞见的 bug X')).toBeInTheDocument();
+    expect(within(report).getByText('ISSUE-9999')).toBeInTheDocument();
+    // node_telemetry 渲染为表格（proposer 节点名 + tokens）
+    expect(within(report).getByText('proposer')).toBeInTheDocument();
+    expect(within(report).getByText('888')).toBeInTheDocument();
+    // 有真数据时绝不显示「未到该步」
+    expect(within(report).queryByText('未到该步')).toBeNull();
   });
 
   it('PrepPRD 渲染等于DB注入指纹非硬编码', async () => {
