@@ -14,8 +14,6 @@
  * 不直接 import pool — 调用者决定用 pool 还是 txn client。
  */
 
-import pool from './db.js';
-
 // ─── Schema 校验 ────────────────────────────────────────────────────────────
 
 const VALID_COMPLEXITY = new Set(['S', 'M', 'L']);
