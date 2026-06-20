@@ -21,8 +21,10 @@
  *
  * ── DoD/Report 反偷源（Risk (c) mitigation）────────────────────────────────
  * selectSectionContent 是纯映射（key → 其「专属」source 字段），内部绝不从 contractContent
- * 正则切段冒充 DoD/Report。Brain 暂无独立 dod_content/report_content 字段 → wiring 显式传 null
- * → 显示「未到该步」，而非从 contract 偷内容。
+ * 正则切段冒充 DoD/Report。DoD 仍无独立字段 → wiring 显式传 null → 显示「未到该步」。
+ * Report 则有专属数据源：tasks.result.report_content（Sprint 产物契约，见
+ *   packages/brain/src/sprint-result-contract.js），经 detail 端点透出。wiring 用
+ *   renderReportContract() 把契约对象渲染成 Markdown 喂给 reportContent，绝不从 contract 偷内容。
  */
 
 export const NOT_REACHED = '未到该步';
@@ -120,6 +122,109 @@ function renderProgress(p: ProgressInfo): string {
   const node = p.current_node ?? '—';
   const phase = p.phase ?? '—';
   return `**进度**: ${pct}\n\n- 当前节点: ${node}\n- 阶段: ${phase}`;
+}
+
+/** 单个节点遥测（Sprint 产物契约 node_telemetry 元素）。 */
+export interface NodeTelemetry {
+  node?: string | null;
+  start_ts?: string | null;
+  end_ts?: string | null;
+  tokens?: number | null;
+  cost?: number | null;
+}
+
+/**
+ * Sprint 产物契约（部分字段；与 packages/brain/src/sprint-result-contract.js 对齐）。
+ * read-only 展示只取需要的字段，缺字段一律安全降级，永不抛。
+ */
+export interface SprintResultContract {
+  verdict?: string | null;
+  change_summary?: string | null;
+  next_action?: string | null;
+  total_cost?: number | null;
+  failed_scenarios?: unknown[];
+  incidental_bugs?: unknown[];
+  improvement_items?: unknown[];
+  linked_issues?: unknown[];
+  open_issues_with_learnings?: unknown[];
+  node_telemetry?: NodeTelemetry[];
+  [k: string]: unknown;
+}
+
+/** 把字符串数组渲染成 Markdown 无序列表；空则返回「无」。 */
+function renderList(items: unknown): string {
+  const arr = Array.isArray(items) ? items : [];
+  if (arr.length === 0) return '无';
+  return arr.map((x) => `- ${String(x)}`).join('\n');
+}
+
+/** node_telemetry → Markdown 表格（节点 / 起 / 止 / tokens / cost）。空则返回「无遥测数据」。 */
+function renderTelemetryTable(rows: NodeTelemetry[] | undefined): string {
+  const arr = Array.isArray(rows) ? rows : [];
+  if (arr.length === 0) return '无遥测数据';
+  const head = '| 节点 | 开始 | 结束 | tokens | cost |\n| --- | --- | --- | --- | --- |';
+  const body = arr
+    .map((r) => {
+      const node = r?.node ?? '—';
+      const start = r?.start_ts ?? '—';
+      const end = r?.end_ts ?? '—';
+      const tokens = r?.tokens != null ? String(r.tokens) : '—';
+      const cost = r?.cost != null ? `$${r.cost}` : '—';
+      return `| ${node} | ${start} | ${end} | ${tokens} | ${cost} |`;
+    })
+    .join('\n');
+  return `${head}\n${body}`;
+}
+
+/**
+ * 把 Sprint 产物契约对象渲染成 Report tab 的 Markdown。
+ * 纯函数，缺字段安全降级，永不抛。非对象输入 → null（上层走 NOT_REACHED 占位）。
+ *
+ * 渲染：verdict / 变更摘要 / 下一步 / 总花费 / 失败场景 / node_telemetry 表 / 发现四类。
+ */
+export function renderReportContract(c: unknown): string | null {
+  if (!c || typeof c !== 'object') return null;
+  const r = c as SprintResultContract;
+
+  const verdict = r.verdict ?? '—';
+  const changeSummary = r.change_summary ?? '—';
+  const nextAction = r.next_action ?? '—';
+  const totalCost = typeof r.total_cost === 'number' ? `$${r.total_cost}` : '—';
+
+  const sections = [
+    `## Sprint 产物报告`,
+    ``,
+    `**裁决（verdict）**: ${verdict}`,
+    ``,
+    `**总花费**: ${totalCost}`,
+    ``,
+    `### 变更摘要`,
+    changeSummary,
+    ``,
+    `### 下一步`,
+    nextAction,
+    ``,
+    `### 失败场景`,
+    renderList(r.failed_scenarios),
+    ``,
+    `### 节点遥测`,
+    renderTelemetryTable(r.node_telemetry),
+    ``,
+    `### 发现`,
+    `**路上撞见的 bug（incidental_bugs）**`,
+    renderList(r.incidental_bugs),
+    ``,
+    `**改进项（improvement_items）**`,
+    renderList(r.improvement_items),
+    ``,
+    `**关联 Issue（linked_issues）**`,
+    renderList(r.linked_issues),
+    ``,
+    `**未解决 Issue + 累积 learning（open_issues_with_learnings）**`,
+    renderList(r.open_issues_with_learnings),
+  ];
+
+  return sections.join('\n');
 }
 
 /**
