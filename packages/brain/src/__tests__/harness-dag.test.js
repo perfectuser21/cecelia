@@ -87,6 +87,21 @@ describe('parseTaskPlan — initiative_id 系统注入 (opts.initiativeId)', () 
 // ─── parseTaskPlan ──────────────────────────────────────────────────────────
 
 describe('parseTaskPlan', () => {
+  it('拒多 task（≥2）—— 1 harness=1 sprint=1 PR 硬约束', () => {
+    const plan = makeValidPlan([
+      makeValidTask('ws1'),
+      makeValidTask('ws2', ['ws1']),
+    ]);
+    expect(() => parseTaskPlan(JSON.stringify(plan)))
+      .toThrow(/!== 1/);
+  });
+
+  it('接受恰好 1 task', () => {
+    const plan = makeValidPlan([makeValidTask('ws1')]);
+    const out = parseTaskPlan(JSON.stringify(plan));
+    expect(out.tasks).toHaveLength(1);
+  });
+
   it('接受合法线性 DAG', () => {
     const plan = makeValidPlan([
       makeValidTask('ws1', []),
