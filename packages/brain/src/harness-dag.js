@@ -9,7 +9,6 @@
  *   - detectCycle(tasks)          — DFS 环检测
  *   - topologicalOrder(tasks)     — Kahn 算法排序
  *   - upsertTaskPlan(...)         — 事务内建 Brain tasks + pr_plans + task_dependencies
- *   - nextRunnableTask(initId)    — 返回依赖全部 completed 的下一个 pending task
  *
  * 所有"数据库"函数接受外部注入的 `client`（便于测试和跨事务复用）。
  * 不直接 import pool — 调用者决定用 pool 还是 txn client。
@@ -71,11 +70,13 @@ export function parseTaskPlan(jsonString, opts = {}) {
   if (!Array.isArray(obj.tasks) || obj.tasks.length === 0) {
     throw new Error('parseTaskPlan: tasks must be non-empty array');
   }
-  if (obj.tasks.length > 8) {
-    throw new Error(`parseTaskPlan: tasks length ${obj.tasks.length} > 8 (hard cap)`);
-  }
-  if (obj.tasks.length > 8 && (!obj.justification || typeof obj.justification !== 'string' || !obj.justification.trim())) {
-    throw new Error('parseTaskPlan: tasks.length > 8 requires non-empty justification');
+  // 1 harness = 1 sprint = 1 PR（workstream 拆分 v8.0.0 已废弃，对齐 Anthropic 官方 v2）。
+  // 旧逻辑放行 ≤8 个 task 是 workstream 模型残留；现从代码层硬保证单 task，
+  // 兜底 proposer LLM 漂移多写 task 直接跑出 N 个 PR。
+  if (obj.tasks.length !== 1) {
+    throw new Error(
+      `parseTaskPlan: tasks length ${obj.tasks.length} !== 1 — 1 harness = 1 sprint = 1 PR（workstream 拆分 v8.0.0 已废弃）`
+    );
   }
 
   const seen = new Set();
@@ -292,39 +293,4 @@ export async function upsertTaskPlan({
   }
 
   return { idMap, insertedTaskIds };
-}
-
-/**
- * 查询 initiative 下一个可运行 task（所有依赖已 completed，自身 queued）。
- * FIFO 按 created_at。
- *
- * 注：tasks 表无 parent_task_id 字段，parent 关系写在 payload.parent_task_id
- * （由 upsertTaskPlan 写入）。用 payload->>'parent_task_id' 过滤子任务。
- *
- * @param {string} initiativeTaskId  harness_initiative task UUID（作为 subtask parent）
- * @param {{ client?: object }} [opts]
- * @returns {Promise<object|null>} 返回 tasks 行或 null
- */
-export async function nextRunnableTask(initiativeTaskId, opts = {}) {
-  if (!initiativeTaskId) throw new Error('nextRunnableTask: initiativeTaskId required');
-  const c = opts.client || pool;
-
-  const sql = `
-    SELECT t.*
-    FROM tasks t
-    WHERE t.task_type = 'harness_task'
-      AND t.payload->>'parent_task_id' = $1
-      AND t.status = 'queued'
-      AND NOT EXISTS (
-        SELECT 1
-        FROM task_dependencies d
-        JOIN tasks dep ON dep.id = d.to_task_id
-        WHERE d.from_task_id = t.id
-          AND dep.status <> 'completed'
-      )
-    ORDER BY t.created_at ASC
-    LIMIT 1
-  `;
-  const { rows } = await c.query(sql, [String(initiativeTaskId)]);
-  return rows[0] || null;
 }

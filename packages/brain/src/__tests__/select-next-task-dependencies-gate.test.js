@@ -7,7 +7,7 @@
  * 并行派发，基于错误 worktree 状态产出冲突 PR。
  *
  * 修复：把 task_dependencies 表检查下沉进主 SELECT 的 WHERE 子句
- * （NOT EXISTS 子查询），参考 harness-dag.js:nextRunnableTask 的同款做法。
+ * （NOT EXISTS 子查询，依赖全部 completed 才可派发）。
  *
  * 本测试断言：
  * 1. 主 SELECT SQL 包含 task_dependencies + from_task_id 的 NOT EXISTS 片段

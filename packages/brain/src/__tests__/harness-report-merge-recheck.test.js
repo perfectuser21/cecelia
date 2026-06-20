@@ -24,7 +24,7 @@ vi.mock('../harness-shared.js', () => ({
 }));
 vi.mock('../harness-dag.js', () => ({
   parseTaskPlan: vi.fn(), upsertTaskPlan: vi.fn(), topologicalOrder: vi.fn(),
-  detectCycle: vi.fn(), nextRunnableTask: vi.fn(),
+  detectCycle: vi.fn(),
 }));
 vi.mock('../harness-worktree.js', () => ({ ensureHarnessWorktree: vi.fn() }));
 vi.mock('../harness-credentials.js', () => ({ resolveGitHubToken: vi.fn() }));

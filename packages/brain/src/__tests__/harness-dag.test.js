@@ -102,17 +102,6 @@ describe('parseTaskPlan', () => {
     expect(out.tasks).toHaveLength(1);
   });
 
-  it('接受合法线性 DAG', () => {
-    const plan = makeValidPlan([
-      makeValidTask('ws1', []),
-      makeValidTask('ws2', ['ws1']),
-      makeValidTask('ws3', ['ws2']),
-    ]);
-    const out = parseTaskPlan(JSON.stringify(plan));
-    expect(out.tasks).toHaveLength(3);
-    expect(out.initiative_id).toBe('test-initiative-1');
-  });
-
   it('接受 Markdown code fence 包裹的 JSON', () => {
     const plan = makeValidPlan([makeValidTask('ws1')]);
     const wrapped = '```json\n' + JSON.stringify(plan, null, 2) + '\n```';
@@ -170,43 +159,11 @@ describe('parseTaskPlan', () => {
       .toThrow(/unknown/);
   });
 
-  it('拒重复 task_id', () => {
-    const plan = makeValidPlan([
-      makeValidTask('ws1'),
-      makeValidTask('ws1'),
-    ]);
-    expect(() => parseTaskPlan(JSON.stringify(plan)))
-      .toThrow(/duplicate/);
-  });
-
-  it('拒环依赖', () => {
-    const plan = makeValidPlan([
-      makeValidTask('ws1', ['ws2']),
-      makeValidTask('ws2', ['ws1']),
-    ]);
-    expect(() => parseTaskPlan(JSON.stringify(plan)))
-      .toThrow(/cycle/);
-  });
-
-  it('拒 >8 tasks 硬上限', () => {
+  it('拒 9 tasks（多 task 一律拒 —— 1 harness=1 sprint=1 PR）', () => {
     const tasks = Array.from({ length: 9 }, (_, i) => makeValidTask(`ws${i + 1}`));
-    const plan = { initiative_id: 'x', tasks, justification: 'many' };
+    const plan = { initiative_id: 'x', tasks };
     expect(() => parseTaskPlan(JSON.stringify(plan)))
-      .toThrow(/> 8/);
-  });
-
-  it('接受 6 tasks 无需 justification（阈值改为 >8）', () => {
-    const tasks = Array.from({ length: 6 }, (_, i) => makeValidTask(`ws${i + 1}`));
-    const plan = { initiative_id: 'x', tasks };
-    const out = parseTaskPlan(JSON.stringify(plan));
-    expect(out.tasks).toHaveLength(6);
-  });
-
-  it('接受 8 tasks 无需 justification（边界 ≤8 全通过）', () => {
-    const tasks = Array.from({ length: 8 }, (_, i) => makeValidTask(`ws${i + 1}`));
-    const plan = { initiative_id: 'x', tasks };
-    const out = parseTaskPlan(JSON.stringify(plan));
-    expect(out.tasks).toHaveLength(8);
+      .toThrow(/!== 1/);
   });
 
   it('拒非字符串 jsonString', () => {

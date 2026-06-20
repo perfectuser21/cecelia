@@ -91,8 +91,8 @@ export async function selectNextDispatchableTask(goalIds, excludeIds = [], optio
         )
       )
       -- 依赖门禁：task_dependencies 表里有未完成 edge 的 task 不可派发
-      -- 参考 harness-dag.js:nextRunnableTask —— from_task_id=本 task，
-      -- to_task_id 的依赖 status 不在 completed/cancelled/canceled 即阻塞。
+      -- 模式：from_task_id=本 task，to_task_id 的依赖 status 不在
+      -- completed/cancelled/canceled 即阻塞（NOT EXISTS 子查询）。
       -- 修复：普通 dispatch 路径原先只看 payload.depends_on，对 task_dependencies
       -- 表的硬边盲视，导致 Initiative 子任务（ws1/ws2/ws3/ws4）在 queued 状态下
       -- 被并行派发，基于错误 worktree 状态产出冲突 PR。
@@ -137,8 +137,8 @@ export async function selectNextDispatchableTask(goalIds, excludeIds = [], optio
     }
 
     // NOTE: task_dependencies 表依赖检查已在主 SELECT 的 WHERE 子句
-    // （NOT EXISTS + from_task_id 子查询）完成，见 harness-dag.js:nextRunnableTask
-    // 的同款做法。本循环此处只需处理 payload.depends_on 的软依赖。
+    // （NOT EXISTS + from_task_id 子查询）完成。本循环此处只需处理
+    // payload.depends_on 的软依赖。
 
     // P0 harness 白名单：给候选打 _bypass_backpressure 标记，
     // 调用方（tick.js dispatch loop）可识别并跳过 burst limit。

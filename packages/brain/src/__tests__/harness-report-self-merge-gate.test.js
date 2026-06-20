@@ -18,7 +18,7 @@ vi.mock('../spawn/index.js', () => ({ spawn: vi.fn() }));
 vi.mock('../spawn/detached.js', () => ({ spawnDockerDetached: vi.fn() }));
 vi.mock('../spawn/middleware/account-rotation.js', () => ({ resolveAccount: vi.fn() }));
 vi.mock('../harness-shared.js', () => ({ parseDockerOutput: vi.fn(), loadSkillContent: vi.fn(() => '') }));
-vi.mock('../harness-dag.js', () => ({ parseTaskPlan: vi.fn(), upsertTaskPlan: vi.fn(), topologicalOrder: vi.fn(), detectCycle: vi.fn(), nextRunnableTask: vi.fn() }));
+vi.mock('../harness-dag.js', () => ({ parseTaskPlan: vi.fn(), upsertTaskPlan: vi.fn(), topologicalOrder: vi.fn(), detectCycle: vi.fn() }));
 vi.mock('../harness-worktree.js', () => ({ ensureHarnessWorktree: vi.fn(), harnessSubTaskBranchName: vi.fn(() => 'cp-test-ws-x'), harnessContractThreadSuffix: vi.fn(() => '') }));
 vi.mock('../harness-credentials.js', () => ({ resolveGitHubToken: vi.fn() }));
 vi.mock('../lib/git-fence.js', () => ({ fetchAndShowOriginFile: vi.fn() }));
