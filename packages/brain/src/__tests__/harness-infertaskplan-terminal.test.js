@@ -22,7 +22,6 @@ vi.mock('../harness-dag.js', () => ({
   upsertTaskPlan: vi.fn().mockResolvedValue({ idMap: {}, insertedTaskIds: [] }),
   topologicalOrder: vi.fn(),
   detectCycle: vi.fn(),
-  nextRunnableTask: vi.fn(),
 }));
 vi.mock('../lib/git-fence.js', () => ({
   fetchAndShowOriginFile: vi.fn(),

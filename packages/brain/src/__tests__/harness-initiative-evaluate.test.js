@@ -25,7 +25,6 @@ vi.mock('../harness-dag.js', () => ({
   upsertTaskPlan: vi.fn().mockResolvedValue({ idMap: {}, insertedTaskIds: [] }),
   topologicalOrder: vi.fn(),
   detectCycle: vi.fn(),
-  nextRunnableTask: vi.fn(),
 }));
 
 vi.mock('../harness-final-e2e.js', () => ({
