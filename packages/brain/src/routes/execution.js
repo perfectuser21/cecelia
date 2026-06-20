@@ -1425,6 +1425,46 @@ ${resultStr.substring(0, 2000)}
               console.log(`[execution-callback] 断链#4 PASS: initiative_verify created project=${projectId}`);
             }
           }
+        } else if (crTask?.task_type === 'code_review' && crPayload.scope === 'daily') {
+          // 漏点④: daily 巡检 code_review 完成 → 按 decision/L1-L2 计数自动立案修复 dev task
+          // daily 任务无 project_id/goal_id（非 initiative），修复 task 用 repo_path 定位、走 auto_fix 系统源。
+          // 严重度优先：l1_count>0 或 CRITICAL_BLOCK → P0；否则 NEEDS_FIX / l2_count>0 → P1；其余（PASS 且无问题）→ 不立案。
+          const resultObj = typeof result === 'object' && result !== null ? result : {};
+          const decision = resultObj.decision || 'PASS';
+          const l1Count = Number(resultObj.l1_count) || 0;
+          const l2Count = Number(resultObj.l2_count) || 0;
+          const repoPath = crPayload.repo_path || null;
+          const hasCritical = decision === 'CRITICAL_BLOCK' || l1Count > 0;
+          const hasFixable = hasCritical || decision === 'NEEDS_FIX' || l2Count > 0;
+
+          if (!hasFixable) {
+            console.log(`[execution-callback] daily code_review=${task_id} decision=${decision} L1=${l1Count} L2=${l2Count}，无需修复，skip`);
+          } else if (!repoPath) {
+            console.warn(`[execution-callback] daily code_review=${task_id} 缺 repo_path，无法立案修复 task，skip`);
+          } else {
+            // 幂等：同 repo 已有未完成的 daily 修复 task 时不重复立案
+            const existingDailyFix = await pool.query(
+              `SELECT id FROM tasks WHERE task_type = 'dev' AND status IN ('queued', 'in_progress', 'dispatched')
+                 AND payload->>'fix_type' = 'daily_review_issues' AND payload->>'repo_path' = $1 LIMIT 1`,
+              [repoPath]
+            );
+            if (existingDailyFix.rows.length > 0) {
+              console.log(`[execution-callback] 漏点④ daily 修复 task 已存在（repo=${repoPath}），跳过`);
+            } else {
+              const priority = hasCritical ? 'P0' : 'P1';
+              const repoName = repoPath.split('/').pop() || repoPath;
+              const { createTask: createDailyFixTask } = await import('../actions.js');
+              await createDailyFixTask({
+                title: `[修复] daily 巡检发现 ${priority} 问题 — ${repoName}`,
+                description: `每日代码巡检（code_review）发现需修复的问题：decision=${decision}，L1=${l1Count}，L2=${l2Count}。\n仓库: ${repoPath}\n原始 code_review task_id: ${task_id}\n修复清单见巡检报告 docs/reviews/CODE-REVIEW-REPORT-*.md，按 L1（必修）/L2（建议修）优先级修复。`,
+                priority,
+                task_type: 'dev',
+                trigger_source: 'auto_fix',
+                payload: { fix_type: 'daily_review_issues', repo_path: repoPath, code_review_task_id: task_id, l1_count: l1Count, l2_count: l2Count, decision },
+              });
+              console.log(`[execution-callback] 漏点④ daily code_review→修复立案: ${priority} dev task created (repo=${repoPath}, decision=${decision}, L1=${l1Count}, L2=${l2Count})`);
+            }
+          }
         } else if (crTask?.task_type === 'code_review') {
           console.log(`[execution-callback] code_review=${task_id} scope=${crPayload.scope || 'none'}, not initiative-level, skip`);
         }
