@@ -3,9 +3,29 @@ import { describe, it, expect, vi } from 'vitest';
 vi.mock('../db.js', () => ({ default: {} }));
 vi.mock('../notifier.js', () => ({ sendFeishu: vi.fn().mockResolvedValue(true) }));
 
+import * as dailyReport from '../daily-report-generator.js';
 import { isInReportTriggerWindow } from '../daily-report-generator.js';
 
 describe('daily-report-generator', () => {
+  describe('step 函数导出（durable 复用基础）', () => {
+    const stepFns = [
+      'hasTodayReport',
+      'markTodayDone',
+      'fetchYesterdayContentOutput',
+      'fetchYesterdayPublishStats',
+      'fetchYesterdayEngagementData',
+      'fetchYesterdayFailureCount',
+      'buildReportText',
+      'saveReportToWorkingMemory',
+      'getYesterdayString',
+    ];
+    for (const fn of stepFns) {
+      it(`导出 ${fn}`, () => {
+        expect(typeof dailyReport[fn]).toBe('function');
+      });
+    }
+  });
+
   describe('isInReportTriggerWindow()', () => {
     it('UTC 01:00 返回 true', () => {
       const now = new Date('2026-03-30T01:00:00Z');
