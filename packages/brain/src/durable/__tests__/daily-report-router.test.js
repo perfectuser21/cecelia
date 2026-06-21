@@ -12,23 +12,25 @@ afterEach(() => {
 describe('routeDailyReport flag 门控', () => {
   const pool = { fake: 'pool' };
 
-  it('flag 关：走原 generateDailyReport，不走 durable', async () => {
+  const now = new Date('2026-06-21T01:00:00Z');
+
+  it('flag 关：走原 generateDailyReport，不走 durable（透传 now）', async () => {
     delete process.env.DBOS_DURABLE_ENABLED;
     const original = vi.fn().mockResolvedValue({ generated: false });
     const durable = vi.fn().mockResolvedValue({ generated: true });
-    await routeDailyReport(pool, { original, durable });
+    await routeDailyReport(pool, { original, durable }, now);
     expect(original).toHaveBeenCalledTimes(1);
-    expect(original).toHaveBeenCalledWith(pool);
+    expect(original).toHaveBeenCalledWith(pool, now);
     expect(durable).not.toHaveBeenCalled();
   });
 
-  it('flag 开：走 durableDailyReport，不走原路径', async () => {
+  it('flag 开：走 durableDailyReport，不走原路径（透传 now）', async () => {
     process.env.DBOS_DURABLE_ENABLED = 'true';
     const original = vi.fn().mockResolvedValue({ generated: false });
     const durable = vi.fn().mockResolvedValue({ generated: true });
-    await routeDailyReport(pool, { original, durable });
+    await routeDailyReport(pool, { original, durable }, now);
     expect(durable).toHaveBeenCalledTimes(1);
-    expect(durable).toHaveBeenCalledWith(pool);
+    expect(durable).toHaveBeenCalledWith(pool, now);
     expect(original).not.toHaveBeenCalled();
   });
 });

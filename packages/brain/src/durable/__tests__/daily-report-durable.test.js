@@ -8,7 +8,7 @@
  *
  * 流程：
  *   1. 建测试库 dbos_durable_test（cecelia 业务表骨架 + step_trace + feishu_sends + dbos schema）
- *   2. spawn MODE=start：跑到 saveReport 前 process.exit137（DBOS_TEST_CRASH_BEFORE_SAVE=1）
+ *   2. spawn MODE=start：跑到 saveReport 前经 beforeSave seam process.exit137（I1：注入而非烤进 step）
  *   3. spawn MODE=recover：DBOS.launch 自动恢复，从断点续，跑完 save+feishu
  *   4. 断言：generateReport 仅 trace 1 次（不重跑）；feishu_sends 恰好 1 行
  */
@@ -91,8 +91,8 @@ describe.skipIf(!RUN)('daily-report durable 崩溃恢复 + exactly-once', () => 
   }, 30_000);
 
   it('崩溃 recover 后 step 不重跑 + 飞书 exactly-once', async () => {
-    // 阶段1：start + 崩溃（saveReport 前 exit137）
-    const startCode = await runRunner('start', { DBOS_TEST_CRASH_BEFORE_SAVE: '1' });
+    // 阶段1：start + 崩溃（beforeSave seam 在 saveReport 前 exit137）
+    const startCode = await runRunner('start');
     expect(startCode).toBe(137); // 确认确实崩溃在 save 前
 
     const db = new pg.Client({ connectionString: TEST_DB_URL });

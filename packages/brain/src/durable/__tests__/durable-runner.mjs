@@ -2,8 +2,10 @@
  * durable-runner.mjs — daily-report-durable 崩溃恢复测试的子进程入口。
  *
  * 被 daily-report-durable.test.js 以 child_process 形式 spawn，验证真 DBOS recover：
- *   MODE=start   → 启动 workflow，在 saveReport 前 CRASH（process.exit137）
+ *   MODE=start   → 启动 workflow，在 saveReport 前经 beforeSave seam CRASH（process.exit137）
  *   MODE=recover → 重启 DBOS.launch() 触发自动 recover，等 workflow 完成
+ *
+ * I1：崩溃不再烤进 shipped step body，而是通过 configureDurableDeps({beforeSave}) 注入（仅测试态）。
  *
  * 断言数据落在 TEST_DB_URL 指向的测试库：
  *   - step_trace：每个 step body 实际执行一次写一行（recover 后已完成 step 不重跑 → 计数不增）
@@ -37,8 +39,14 @@ async function sendFeishu(text) {
 }
 
 async function main() {
-  // 注入依赖（launch 之前）
-  configureDurableDeps({ pool, sendFeishu, trace });
+  // 注入依赖（launch 之前）。MODE=start 时额外注入 beforeSave 崩溃 seam（saveReport 前 exit137）。
+  const beforeSave = MODE === 'start'
+    ? async () => {
+        console.log(`[durable-test] CRASH before saveReport (pid ${process.pid})`);
+        process.exit(137);
+      }
+    : undefined;
+  configureDurableDeps({ pool, sendFeishu, trace, beforeSave });
 
   DBOS.setConfig({
     name: 'durable-daily-report-test',
