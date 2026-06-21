@@ -66,7 +66,6 @@ import { runCaptureDigestion } from './capture-digestion.js';
 import { triggerDailyTopicSelection } from './topic-selection-scheduler.js';
 import { autoPromoteSuggestions } from './topic-suggestion-manager.js';
 import { triggerDailyPublish } from './daily-publish-scheduler.js';
-import { generateDailyReport } from './daily-report-generator.js';
 import { generateWeeklyReport } from './weekly-report-generator.js';
 import { monitorPublishQueue } from './publish-monitor.js';
 import { schedulePostPublishCollection } from './post-publish-data-collector.js';
@@ -1630,8 +1629,11 @@ async function executeTick() {
     .catch(e => console.warn('[tick] 每日发布调度失败:', e.message));
 
   // 10.17d 每日内容日报（UTC 01:00 = 北京时间 09:00，汇总昨日数据，fire-and-forget）
-  Promise.resolve().then(() => generateDailyReport(pool))
-    .catch(e => console.warn('[tick] 每日内容日报失败:', e.message));
+  // flag 门控：DBOS_DURABLE_ENABLED 关=原 generateDailyReport（行为零变化），开=durable 崩溃可恢复路径
+  Promise.resolve().then(async () => {
+    const { routeDailyReport } = await import('./durable/daily-report-router.js');
+    return routeDailyReport(pool);
+  }).catch(e => console.warn('[tick] 每日内容日报失败:', e.message));
 
   // 10.17e 每周内容周报（每周一 UTC 01:00 = 北京时间 09:00，汇总上周数据，fire-and-forget）
   Promise.resolve().then(() => generateWeeklyReport(pool))

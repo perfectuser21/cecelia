@@ -58,7 +58,7 @@ function toDateString(date) {
  * @param {Date} now
  * @returns {string}
  */
-function getYesterdayString(now) {
+export function getYesterdayString(now) {
   const yesterday = new Date(now);
   yesterday.setUTCDate(yesterday.getUTCDate() - 1);
   return toDateString(yesterday);
@@ -73,7 +73,7 @@ function getYesterdayString(now) {
  * @param {string} today - YYYY-MM-DD
  * @returns {Promise<boolean>}
  */
-async function hasTodayReport(dbPool, today) {
+export async function hasTodayReport(dbPool, today) {
   const key = WM_TRIGGER_KEY_PREFIX + today;
   const { rows } = await dbPool.query(
     `SELECT value_json FROM working_memory WHERE key = $1 LIMIT 1`,
@@ -89,7 +89,7 @@ async function hasTodayReport(dbPool, today) {
  * @param {import('pg').Pool} dbPool
  * @param {string} today - YYYY-MM-DD
  */
-async function markTodayDone(dbPool, today) {
+export async function markTodayDone(dbPool, today) {
   const key = WM_TRIGGER_KEY_PREFIX + today;
   const val = JSON.stringify({ already_done: true, triggered_at: new Date().toISOString() });
   await dbPool.query(
@@ -109,7 +109,7 @@ async function markTodayDone(dbPool, today) {
  * @param {string} yesterday - YYYY-MM-DD
  * @returns {Promise<{count: number, keywords: string[]}>}
  */
-async function fetchYesterdayContentOutput(dbPool, yesterday) {
+export async function fetchYesterdayContentOutput(dbPool, yesterday) {
   const { rows } = await dbPool.query(
     `SELECT id, payload
      FROM tasks
@@ -132,7 +132,7 @@ async function fetchYesterdayContentOutput(dbPool, yesterday) {
  * @param {string} yesterday - YYYY-MM-DD
  * @returns {Promise<Array<{platform: string, success: number, failed: number}>>}
  */
-async function fetchYesterdayPublishStats(dbPool, yesterday) {
+export async function fetchYesterdayPublishStats(dbPool, yesterday) {
   const { rows } = await dbPool.query(
     `SELECT platform,
             COUNT(CASE WHEN status = 'completed' THEN 1 END)::int AS success,
@@ -154,7 +154,7 @@ async function fetchYesterdayPublishStats(dbPool, yesterday) {
  * @param {string} yesterday - YYYY-MM-DD
  * @returns {Promise<Array<{platform: string, views: number|null, likes: number|null, comments: number|null}>>}
  */
-async function fetchYesterdayEngagementData(dbPool, yesterday) {
+export async function fetchYesterdayEngagementData(dbPool, yesterday) {
   const { rows } = await dbPool.query(
     `SELECT payload->>'platform' AS platform,
             payload->>'views' AS views,
@@ -188,7 +188,7 @@ async function fetchYesterdayEngagementData(dbPool, yesterday) {
  * @param {string} yesterday - YYYY-MM-DD
  * @returns {Promise<number>}
  */
-async function fetchYesterdayFailureCount(dbPool, yesterday) {
+export async function fetchYesterdayFailureCount(dbPool, yesterday) {
   const { rows } = await dbPool.query(
     `SELECT COUNT(*)::int AS cnt
      FROM content_publish_jobs
@@ -219,7 +219,7 @@ function fmt(val) {
  * @param {number} failureCount
  * @returns {string}
  */
-function buildReportText(reportDate, yesterday, contentOutput, publishStats, engagementData, failureCount) {
+export function buildReportText(reportDate, yesterday, contentOutput, publishStats, engagementData, failureCount) {
   const lines = [];
 
   lines.push(`ZenithJoy 内容日报 ${reportDate}`);
@@ -284,7 +284,7 @@ function buildReportText(reportDate, yesterday, contentOutput, publishStats, eng
  * @param {string} date - YYYY-MM-DD（日报日期，即今天）
  * @param {string} reportText
  */
-async function saveReportToWorkingMemory(dbPool, date, reportText) {
+export async function saveReportToWorkingMemory(dbPool, date, reportText) {
   const key = WM_REPORT_KEY_PREFIX + date;
   const val = JSON.stringify({ date, report: reportText, generated_at: new Date().toISOString() });
   await dbPool.query(
