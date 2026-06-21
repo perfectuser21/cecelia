@@ -5,16 +5,22 @@
  *   MODE=start   → 启动 workflow，在 saveReport 前 CRASH（process.exit137）
  *   MODE=recover → 重启 DBOS.launch() 触发自动 recover，等 workflow 完成
  *
- * 断言数据落在 TEST_PG 指向的测试库：
+ * 断言数据落在 TEST_DB_URL 指向的测试库：
  *   - step_trace：每个 step body 实际执行一次写一行（recover 后已完成 step 不重跑 → 计数不增）
  *   - feishu_sends：sendFeishu 执行一次写一行（exactly-once → 全程恰好 1 行）
  *
- * DBOS 系统表落测试库的 dbos schema（与 spike 同形态，systemDatabaseUrl 指向测试库本身）。
+ * DBOS 系统表落测试库的 dbos schema（systemDatabaseUrl 指向测试库本身）。
+ *
+ * ⚠️ 关键顺序：import 模块（registerStep/Workflow 在 module load 发生）→ configureDurableDeps
+ * （注入 pool/trace/sendFeishu，仍在 launch 前）→ DBOS.setConfig → DBOS.launch。
  */
 
 import { DBOS } from '@dbos-inc/dbos-sdk';
 import pg from 'pg';
-import { buildDurableDailyReport } from '../daily-report-durable.js';
+import {
+  durableDailyReportWorkflow,
+  configureDurableDeps,
+} from '../daily-report-durable.js';
 
 const TEST_DB_URL = process.env.TEST_DB_URL;
 const MODE = process.env.MODE;
@@ -31,6 +37,9 @@ async function sendFeishu(text) {
 }
 
 async function main() {
+  // 注入依赖（launch 之前）
+  configureDurableDeps({ pool, sendFeishu, trace });
+
   DBOS.setConfig({
     name: 'durable-daily-report-test',
     systemDatabaseUrl: TEST_DB_URL,
@@ -39,16 +48,16 @@ async function main() {
   });
   await DBOS.launch();
 
-  // 固定 now → today/yesterday 稳定（业务查询不依赖真数据，空结果即可）
-  const now = new Date('2026-06-21T01:00:00Z');
-  const workflow = buildDurableDailyReport({ pool, sendFeishu, now, trace });
+  // 固定日期 → today/yesterday 稳定（业务查询空结果即可）
+  const today = '2026-06-21';
+  const yesterday = '2026-06-20';
 
   if (MODE === 'start') {
-    const handle = await DBOS.startWorkflow(workflow, { workflowID: WF_ID })();
+    const handle = await DBOS.startWorkflow(durableDailyReportWorkflow, { workflowID: WF_ID })({ today, yesterday });
     try {
       await handle.getResult();
     } catch {
-      // 崩溃路径不会走到这；若走到说明非预期
+      // 崩溃路径不会走到这
     }
   } else {
     // recover：launch 已触发 pending workflow 自动恢复，等其完成
