@@ -66,3 +66,23 @@ export async function shutdownDurable() {
   await DBOS.shutdown();
   _launched = false;
 }
+
+/**
+ * server.js boot 接线逻辑（抽出便于单测）：flag 门控 + try/catch degrade。
+ * flag 关 → no-op；flag 开 → 尝试 init，失败记日志但**绝不抛**（brain 继续启动，降级到非 durable）。
+ *
+ * @param {object} [opts]
+ * @param {() => Promise<void>} [opts.init] - 注入的初始化函数（默认 initDurable，测试可 mock）
+ * @returns {Promise<boolean>} 是否成功启动了 durable 底座
+ */
+export async function bootDurable({ init = initDurable } = {}) {
+  if (!isDurableEnabled()) return false;
+  try {
+    await init();
+    console.log('[startup] DBOS durable 已启动');
+    return true;
+  } catch (e) {
+    console.error('[startup] DBOS initDurable 失败，degrade 到非 durable：', e.message);
+    return false;
+  }
+}

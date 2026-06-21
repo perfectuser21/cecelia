@@ -99,6 +99,7 @@ import { handleChat } from './src/orchestrator-chat.js';
 import { getScanStatus } from './src/task-generator-scheduler.js';
 import { waitForPortFree, listenWithRetry } from './src/startup-port-guard.js';
 import { setupGitCredentials } from './src/lib/git-credentials-setup.js';
+import { bootDurable } from './src/durable/dbos-runtime.js';
 
 // 容器 git 凭据初始化（必须在任何 git clone/fetch/push 之前）：
 // 宿主 ~/.gitconfig 只读挂载进容器、配了容器内不存在的 credential.helper，
@@ -550,6 +551,10 @@ if (!process.env.VITEST) {
     console.error('[FATAL]', e.message);
     process.exit(1);
   }
+
+  // DBOS durable 底座（flag 门控，默认关=行为零变化）。bootDurable 内部 try/catch degrade，
+  // launch 失败只记日志、绝不阻断 brain 启动。放 listen 之前，确保 tick 路由时 DBOS 已就绪。
+  await bootDurable();
 
   await listenWithRetry(server, Number(PORT), { maxAttempts: 3, retryDelayMs: 2_000 });
   // Fire the onListening body now that we own the port.
