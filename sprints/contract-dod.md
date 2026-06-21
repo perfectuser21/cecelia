@@ -18,8 +18,8 @@ journey_type: autonomous
 - [ ] [ARTIFACT] RSS 采样器模块存在并导出 sample/peak 能力
   Test: node -e "const c=require('fs').readFileSync('packages/brain/src/harness-rss-sampler.js','utf8');if(!/export\s+(async\s+)?function\s+(sampleRss|samplePeak|sampleProcessRss)/.test(c))process.exit(1)"
 
-- [ ] [ARTIFACT] 采样 CLI probe 存在（供 BEHAVIOR 对真实进程读真实 RSS）
-  Test: node -e "const c=require('fs').readFileSync('packages/brain/src/scripts/rss-sample-probe.mjs','utf8');if(!c.includes('--interval-ms')||!c.includes('peak_rss_mb'))process.exit(1)"
+- [ ] [ARTIFACT] 采样 CLI probe 存在，支持 --pid（附着已有进程）与 --cmd（自管子进程生命周期，用于采寿命短于采样间隔的进程：spawn 后立即取启动点，进程退出时取退出点）两种模式
+  Test: node -e "const c=require('fs').readFileSync('packages/brain/src/scripts/rss-sample-probe.mjs','utf8');if(!c.includes('--interval-ms')||!c.includes('peak_rss_mb')||!c.includes('--cmd')||!c.includes('--pid'))process.exit(1)"
 
 - [ ] [ARTIFACT] 测量编排模块存在并导出 computeStopBoundary + buildReport
   Test: node -e "const c=require('fs').readFileSync('packages/brain/src/harness-rss-measure.js','utf8');if(!c.includes('computeStopBoundary')||!c.includes('buildReport'))process.exit(1)"
@@ -38,6 +38,10 @@ journey_type: autonomous
 
 - [ ] [BEHAVIOR] RSS 采样器对真实子进程读真实 RSS：峰值 > 0、采样次数 >= 2（无 mock，env 无关逻辑断言）
   Test: manual:bash -c 'node -e "const a=[];for(let i=0;i<2e6;i++)a.push(i);setTimeout(()=>{},2500)" & CPID=$!; OUT=$(node packages/brain/src/scripts/rss-sample-probe.mjs --pid "$CPID" --interval-ms 200 --max-ms 2000); echo "$OUT" | jq -e ".peak_rss_mb > 0" || { echo FAIL-peak; exit 1; }; echo "$OUT" | jq -e ".sample_count >= 2" || { echo FAIL-count; exit 1; }; echo OK'
+  期望: OK
+
+- [ ] [BEHAVIOR] 边界 — 进程寿命 ≪ 一个采样间隔：probe --cmd 自管一个约几十 ms 的进程、间隔 1000ms（interval tick 在 max-ms 内永不触发），仍靠 spawn 启动点 + 进程退出点两点保底得 sample_count>=2 且 peak_rss_mb>0（堵死纯 interval-tick 采样器让 <interval 角色得 0 样本/peak=0 的 PRD 边界逃逸，对应 PRD『采样间隔内未取到样本→至少取启动与退出两点，峰值不得为 0/空』）
+  Test: manual:bash -c 'SUB=$(node packages/brain/src/scripts/rss-sample-probe.mjs --cmd "node -e \"const a=[];for(let i=0;i<1e6;i++)a.push(i)\"" --interval-ms 1000 --max-ms 2000); echo "$SUB" | jq -e ".sample_count >= 2" || { echo "FAIL-count<2(纯interval-tick逃逸,无start+exit两点保底)"; exit 1; }; echo "$SUB" | jq -e ".peak_rss_mb > 0" || { echo FAIL-peak0; exit 1; }; echo OK'
   期望: OK
 
 - [ ] [BEHAVIOR] computeStopBoundary 在 evaluator 后截断：返回恰 4 角色、不含 openPr/writeback（接缝 #2 的逻辑断言）

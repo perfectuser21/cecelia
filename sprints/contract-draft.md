@@ -1,4 +1,4 @@
-# Sprint Contract Draft (Round 1)
+# Sprint Contract Draft (Round 2)
 
 **Sprint**: 实测各 harness 角色容器真实 RSS 峰值（跑到 evaluator 后即停）
 **journey_type**: autonomous
@@ -208,12 +208,12 @@ echo OK
 
 ---
 
-### Step 6: 边界 — 角色提前退出 → incomplete，峰值不为 0/空
-**来源**: `[FROM_PRD]` — 边界情况「某角色进程提前异常退出 → 报告标记该角色 incomplete，已采到的峰值仍记录」「采样间隔内未取到样本 → 至少取启动与退出两点，峰值不得为 0/空」
+### Step 6: 边界 — 角色提前退出 / 进程寿命 < 采样间隔 → 两点保底，峰值不为 0/空
+**来源**: `[FROM_PRD]` — 边界情况「某角色进程提前异常退出 → 报告标记该角色 incomplete，已采到的峰值仍记录」「**角色运行极短、采样间隔内未取到样本 → 至少取启动与退出两点，峰值不得为 0/空**」
 
-**可观测行为**: 角色提前退出时该角色 `status="incomplete"` 但 `peak_rss_mb > 0`（至少启动+退出两点）；error path——非法 run_id 返 4xx + error 字段。
+**可观测行为**: 角色提前退出时该角色 `status="incomplete"` 但 `peak_rss_mb > 0`（至少启动+退出两点）；**当进程寿命远短于一个采样间隔（interval tick 永不触发）时，采样器仍靠 spawn 后立即取的启动点 + 进程退出时取的退出点保底，得 `sample_count >= 2` 且 `peak_rss_mb > 0`**（证明采样器不是纯 interval-tick 实现——纯 interval-tick 会让 < interval 的角色得 0 样本 / peak=0，逃逸 PRD 边界）；error path——非法 run_id 返 4xx + error 字段。
 
-**验证命令**（error path + 边界逻辑）:
+**验证命令**（error path + 两点保底边界）:
 ```bash
 # error path：非 UUID → 400
 CODE=$(curl -s -o /dev/null -w "%{http_code}" "localhost:5221/api/brain/harness/rss-report/not-a-uuid"); [ "$CODE" = "400" ] || { echo "FAIL: 非法 run_id 未返 400 (got $CODE)"; exit 1; }
@@ -225,10 +225,16 @@ node -e 'const a=[];for(let i=0;i<1e6;i++)a.push(i);console.error("PID="+process
 SPID=$!
 OUT=$(node packages/brain/src/scripts/rss-sample-probe.mjs --pid "$SPID" --interval-ms 300 --max-ms 3000)
 echo "$OUT" | jq -e '.peak_rss_mb > 0 and (.sample_count >= 1)' || { echo "FAIL: 提前退出进程峰值为 0/空（违反两点规则）"; exit 1; }
+# ⭐ 子区间边界（核心）：进程寿命（约几十 ms）≪ 采样间隔（1000ms），interval tick 在 max-ms 内永不触发。
+# 必须用 --cmd 让 probe 自管子进程生命周期：spawn 后立即取启动点 + 进程 exit 时取退出点 → 两点保底。
+# 纯 interval-tick 采样器在此场景会得 0 样本 / peak=0（PRD 边界逃逸）；本断言把这条逃逸路径堵死。
+SUB=$(node packages/brain/src/scripts/rss-sample-probe.mjs --cmd "node -e \"const a=[];for(let i=0;i<1e6;i++)a.push(i)\"" --interval-ms 1000 --max-ms 2000)
+echo "$SUB" | jq -e '.sample_count >= 2' || { echo "FAIL: 进程寿命<采样间隔时 sample_count<2（纯 interval-tick 逃逸，无 start+exit 两点保底）"; exit 1; }
+echo "$SUB" | jq -e '.peak_rss_mb > 0' || { echo "FAIL: 进程寿命<采样间隔时 peak_rss_mb 为 0/空（违反 PRD：峰值不得为 0/空）"; exit 1; }
 echo OK
 ```
 
-**硬阈值**: 非法 run_id→400；未知 run_id→404+error；提前退出角色 peak>0 且 sample_count>=1
+**硬阈值**: 非法 run_id→400；未知 run_id→404+error；提前退出角色 peak>0 且 sample_count>=1；**进程寿命≪采样间隔（约几十 ms vs 1000ms）时 sample_count>=2（start+exit 两点保底）且 peak>0**
 
 ---
 

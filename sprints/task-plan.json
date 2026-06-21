@@ -7,10 +7,11 @@
     {
       "task_id": "ws1",
       "title": "harness 角色 RSS 峰值实测：采样器 + 截断控制 + 报告聚合 + 2 端点 + DB 表",
-      "scope": "给 harness 角色运行链路插入 RSS 采样与 evaluator 后即停控制，产出 4 角色真实 RSS 峰值报告（What，不写 How）：(1) harness-rss-sampler.js 对真实进程/容器读真实 RSS 并记峰值（process RSS + docker stats 两条路径）；(2) rss-sample-probe.mjs CLI；(3) harness-rss-measure.js 导出 computeStopBoundary（evaluator 后截断）+ buildReport（peak=max/sample_count/stopped_after）；(4) migration 建表 harness_role_rss(run_id,role,peak_rss_mb,sample_count,status,run_ts,created_at, UNIQUE(run_id,role))；(5) routes/harness.js 新增 POST /rss-measure + GET /rss-report/:run_id；(6) 报告同步落地 sprints/rss-reports/<run_id>.json",
+      "scope": "给 harness 角色运行链路插入 RSS 采样与 evaluator 后即停控制，产出 4 角色真实 RSS 峰值报告（What，不写 How）：(1) harness-rss-sampler.js 对真实进程/容器读真实 RSS 并记峰值（process RSS + docker stats 两条路径）；(2) rss-sample-probe.mjs CLI（--pid 附着已有进程 + --cmd 自管子进程生命周期，spawn 取启动点、退出取退出点，保证进程寿命<采样间隔时仍有两点）；(3) harness-rss-measure.js 导出 computeStopBoundary（evaluator 后截断）+ buildReport（peak=max/sample_count/stopped_after）；(4) migration 建表 harness_role_rss(run_id,role,peak_rss_mb,sample_count,status,run_ts,created_at, UNIQUE(run_id,role))；(5) routes/harness.js 新增 POST /rss-measure + GET /rss-report/:run_id；(6) 报告同步落地 sprints/rss-reports/<run_id>.json",
       "dod": [
         "[BEHAVIOR] POST /api/brain/harness/rss-measure 返回 200 + uuid run_id + status=started（见 contract-dod.md）",
         "[BEHAVIOR] 采样器对真实子进程读真实 RSS：peak_rss_mb>0 且 sample_count>=2（无 mock）",
+        "[BEHAVIOR] 边界：进程寿命≪采样间隔（probe --cmd，约几十 ms vs 1000ms 间隔）仍靠 start+exit 两点保底得 sample_count>=2 且 peak>0（堵纯 interval-tick 逃逸）",
         "[BEHAVIOR] computeStopBoundary 在 evaluator 后截断为恰 4 角色，不含 openPr/writeback",
         "[BEHAVIOR] buildReport 顶层 keys=={roles,run_id,run_ts,stopped_after}、peak=max、禁用字段不漏网",
         "[BEHAVIOR] error path：非 UUID run_id 返 400；未知 UUID 返 404+error",
