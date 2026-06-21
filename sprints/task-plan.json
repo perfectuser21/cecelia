@@ -1,31 +1,33 @@
 {
-  "initiative_id": "pending",
+  "initiative_id": "f654a6ac-80cf-4999-9dff-6e57578b9b22",
   "journey_type": "autonomous",
-  "journey_type_reason": "仅涉及 playground/server.js 路由 + 测试，无 UI / 无外部 agent 协议；target_environment: playground，evaluator 用 localhost:3XXX 验证",
+  "journey_type_reason": "纯 packages/brain/ harness 调度链路的内存实测，无 UI、无远端 agent 协议",
+  "target_environment": "local_api",
   "tasks": [
     {
       "task_id": "ws1",
-      "title": "playground/server.js 新增 GET /subtract 路由 + playground/tests/server.test.js 新增 describe 块",
-      "scope": "在 playground/server.js 注册 GET /subtract（复用 STRICT_NUMBER regex ^-?\\d+(\\.\\d+)?$，校验 a/b 存在且合法，计算 Number(a)-Number(b)，返回 {result: <number>, operation: \"subtract\"}；禁用响应字段 difference/diff/value/answer/data；禁用 operation 变体 difference/diff/sub/minus）；在 playground/tests/server.test.js 新增 describe('GET /subtract', ...) 块（happy 正数/负数/零结果、schema 完整性 oracle、禁用字段反向断言、error path 缺参+非法格式）",
+      "title": "harness 角色 RSS 峰值实测：采样器 + 截断控制 + 报告聚合 + 2 端点 + DB 表",
+      "scope": "给 harness 角色运行链路插入 RSS 采样与 evaluator 后即停控制，产出 4 角色真实 RSS 峰值报告（What，不写 How）：(1) harness-rss-sampler.js 对真实进程/容器读真实 RSS 并记峰值（process RSS + docker stats 两条路径）；(2) rss-sample-probe.mjs CLI；(3) harness-rss-measure.js 导出 computeStopBoundary（evaluator 后截断）+ buildReport（peak=max/sample_count/stopped_after）；(4) migration 建表 harness_role_rss(run_id,role,peak_rss_mb,sample_count,status,run_ts,created_at, UNIQUE(run_id,role))；(5) routes/harness.js 新增 POST /rss-measure + GET /rss-report/:run_id；(6) 报告同步落地 sprints/rss-reports/<run_id>.json",
       "dod": [
-        "[ARTIFACT] playground/server.js 内含 app.get('/subtract' 路由注册",
-        "[ARTIFACT] playground/server.js /subtract 路由响应含字面 operation: \"subtract\"（禁用 difference/diff/sub/minus）",
-        "[ARTIFACT] playground/server.js /subtract 路由响应含字面 result 字段（禁用 difference/diff/value/answer/data）",
-        "[ARTIFACT] playground/tests/server.test.js 内含 describe('GET /subtract' 块",
-        "[BEHAVIOR] GET /subtract?a=10&b=3 → HTTP 200 + {result:7, operation:\"subtract\"}（schema 字段值）",
-        "[BEHAVIOR] GET /subtract?a=10&b=3 → keys | sort == [\"operation\",\"result\"]（schema 完整性）",
-        "[BEHAVIOR] GET /subtract?a=10&b=3 → 禁用字段 difference/diff/value/answer/data 均不存在（反向验证）",
-        "[BEHAVIOR] 缺参 a → HTTP 400 + error 字段类型 string（error path）",
-        "[BEHAVIOR] GET /subtract?a=1e5&b=3 → HTTP 400（非法格式 error path）",
-        "[BEHAVIOR] GET /subtract?a=3&b=10 → HTTP 200 + result=-7（负数结果）"
+        "[BEHAVIOR] POST /api/brain/harness/rss-measure 返回 200 + uuid run_id + status=started（见 contract-dod.md）",
+        "[BEHAVIOR] 采样器对真实子进程读真实 RSS：peak_rss_mb>0 且 sample_count>=2（无 mock）",
+        "[BEHAVIOR] computeStopBoundary 在 evaluator 后截断为恰 4 角色，不含 openPr/writeback",
+        "[BEHAVIOR] buildReport 顶层 keys=={roles,run_id,run_ts,stopped_after}、peak=max、禁用字段不漏网",
+        "[BEHAVIOR] error path：非 UUID run_id 返 400；未知 UUID 返 404+error",
+        "[BEHAVIOR] DB 表 harness_role_rss 列结构正确",
+        "[ARTIFACT] harness-rss-sampler.js / harness-rss-measure.js / rss-sample-probe.mjs / migration / 端点注册均存在"
       ],
       "files": [
-        "playground/server.js",
-        "playground/tests/server.test.js"
+        "packages/brain/src/harness-rss-sampler.js",
+        "packages/brain/src/harness-rss-measure.js",
+        "packages/brain/src/scripts/rss-sample-probe.mjs",
+        "packages/brain/src/routes/harness.js",
+        "packages/brain/migrations/304_harness_role_rss.sql",
+        "packages/brain/src/workflows/harness-initiative.graph.js"
       ],
       "depends_on": [],
-      "complexity": "M",
-      "estimated_minutes": 30
+      "complexity": "L",
+      "estimated_minutes": 110
     }
   ]
 }
