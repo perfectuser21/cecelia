@@ -17,8 +17,11 @@
 
 import { DBOS } from '@dbos-inc/dbos-sdk';
 import pg from 'pg';
-
-let _launched = false;
+// C1：静态 import durable 模块 —— 其顶层 registerStep/registerWorkflow 在本模块加载时即执行，
+// 保证注册早于 DBOS.launch()。生产入口 server.js import 本模块时这条依赖链被拉起，注册先于 launch。
+// configureDurableDeps 在 launch 前注入业务 pool（业务查询用 brain 默认 pool）。
+import { configureDurableDeps } from './daily-report-durable.js';
+import brainPool from '../db.js';
 
 /**
  * 是否启用 durable 底座。默认关（行为零变化）。
@@ -42,29 +45,50 @@ export function ceceliaUrl() {
 /**
  * 启动 DBOS。仅当 enabled 时由 caller 调用。
  * 失败 throw DBOSInitializationError —— 由 caller try/catch degrade，绝不阻断 brain 启动。
+ *
+ * I2：用 DBOS.isInitialized() 作为是否已 launch 的真值来源，避免本地 _launched 标志与 DBOS 内部状态 desync。
+ * I3：sysPool 在 launch() reject 时必须 end()，否则连接泄漏。
+ * C1：launch 之前注入业务 pool（注册早已在 module import 时完成）。
+ *
+ * @param {object} [seams] - 测试注入 DBOS/pg 接缝；生产留空走真实实现。
+ * @param {() => boolean} [seams._isInitialized]
+ * @param {(cfg: any) => void} [seams._setConfig]
+ * @param {() => Promise<void>} [seams._launch]
+ * @param {(url: string) => {end: () => Promise<void>}} [seams._makePool]
  */
-export async function initDurable() {
-  if (_launched) return;
+export async function initDurable(seams = {}) {
+  const isInit = seams._isInitialized || (() => DBOS.isInitialized());
+  const setConfig = seams._setConfig || ((cfg) => DBOS.setConfig(cfg));
+  const launch = seams._launch || (() => DBOS.launch());
+  const makePool = seams._makePool || ((u) => new pg.Pool({ connectionString: u, max: 5 }));
+
+  if (isInit()) return;
   const url = ceceliaUrl();
-  const sysPool = new pg.Pool({ connectionString: url, max: 5 });
-  DBOS.setConfig({
+  const sysPool = makePool(url);
+  // C1：launch 前注入 durable workflow 的业务查询 pool
+  configureDurableDeps({ pool: brainPool });
+  setConfig({
     name: 'cecelia-brain',
     systemDatabaseUrl: url,
     systemDatabaseSchemaName: 'dbos',
     systemDatabasePool: sysPool,
     systemDatabasePoolSize: 5,
   });
-  await DBOS.launch();
-  _launched = true;
+  try {
+    await launch();
+  } catch (e) {
+    // I3：launch 失败 → 释放 sysPool 防泄漏，再把错抛给 bootDurable degrade
+    await sysPool.end().catch(() => {});
+    throw e;
+  }
 }
 
 /**
- * 关闭 DBOS（已 launch 时）。
+ * 关闭 DBOS（已 launch 时）。I2：以 DBOS.isInitialized() 为准。
  */
 export async function shutdownDurable() {
-  if (!_launched) return;
+  if (!DBOS.isInitialized()) return;
   await DBOS.shutdown();
-  _launched = false;
 }
 
 /**
