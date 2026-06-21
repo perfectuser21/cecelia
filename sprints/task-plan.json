@@ -1,31 +1,25 @@
 {
-  "initiative_id": "pending",
+  "initiative_id": "c8ff1ac6-3059-41ad-afbf-8da0f8580f35",
   "journey_type": "autonomous",
-  "journey_type_reason": "仅涉及 playground/server.js 路由 + 测试，无 UI / 无外部 agent 协议；target_environment: playground，evaluator 用 localhost:3XXX 验证",
+  "journey_type_reason": "纯后端 infra 测量任务，无 dashboard/agent协议/engine 路径，落 autonomous",
   "tasks": [
     {
       "task_id": "ws1",
-      "title": "playground/server.js 新增 GET /subtract 路由 + playground/tests/server.test.js 新增 describe 块",
-      "scope": "在 playground/server.js 注册 GET /subtract（复用 STRICT_NUMBER regex ^-?\\d+(\\.\\d+)?$，校验 a/b 存在且合法，计算 Number(a)-Number(b)，返回 {result: <number>, operation: \"subtract\"}；禁用响应字段 difference/diff/value/answer/data；禁用 operation 变体 difference/diff/sub/minus）；在 playground/tests/server.test.js 新增 describe('GET /subtract', ...) 块（happy 正数/负数/零结果、schema 完整性 oracle、禁用字段反向断言、error path 缺参+非法格式）",
+      "title": "实测 planner/GAN 容器真实内存峰值并落盘（量到即停）",
+      "scope": "写采样器 scripts/measure/container-mem-peak.mjs：定位 planner 容器与 GAN/proposer 容器（cecelia-task-* 或承载进程），运行全程以 ≤1s 间隔、≥3 采样点读其 RSS/cgroup memory；分别记录两容器峰值(MB)，peak=max(samples)，落盘 sprints/container-mem-peak.json，量到即停。异常退出标 incomplete，两容器独立不混算。不改资源 limit/镜像/packages/brain/src，不做多轮统计或其他指标。",
       "dod": [
-        "[ARTIFACT] playground/server.js 内含 app.get('/subtract' 路由注册",
-        "[ARTIFACT] playground/server.js /subtract 路由响应含字面 operation: \"subtract\"（禁用 difference/diff/sub/minus）",
-        "[ARTIFACT] playground/server.js /subtract 路由响应含字面 result 字段（禁用 difference/diff/value/answer/data）",
-        "[ARTIFACT] playground/tests/server.test.js 内含 describe('GET /subtract' 块",
-        "[BEHAVIOR] GET /subtract?a=10&b=3 → HTTP 200 + {result:7, operation:\"subtract\"}（schema 字段值）",
-        "[BEHAVIOR] GET /subtract?a=10&b=3 → keys | sort == [\"operation\",\"result\"]（schema 完整性）",
-        "[BEHAVIOR] GET /subtract?a=10&b=3 → 禁用字段 difference/diff/value/answer/data 均不存在（反向验证）",
-        "[BEHAVIOR] 缺参 a → HTTP 400 + error 字段类型 string（error path）",
-        "[BEHAVIOR] GET /subtract?a=1e5&b=3 → HTTP 400（非法格式 error path）",
-        "[BEHAVIOR] GET /subtract?a=3&b=10 → HTTP 200 + result=-7（负数结果）"
+        "[ARTIFACT] scripts/measure/container-mem-peak.mjs 存在，含真实 cgroup/RSS 采样逻辑，导出 summarizePeak 纯函数",
+        "[BEHAVIOR] 落盘 sprints/container-mem-peak.json：planner/gan 各有 target(非空)、samples_mb(len≥3)、interval_ms(≤1000)、peak_rss_mb(0<x≤2048 且==max(samples))、status∈{complete,incomplete}",
+        "[BEHAVIOR] 顶层独立 planner/gan 不混算、无合并峰值字段，measured_at 重跑后 5 分钟内新鲜"
       ],
       "files": [
-        "playground/server.js",
-        "playground/tests/server.test.js"
+        "scripts/measure/container-mem-peak.mjs",
+        "sprints/container-mem-peak.json",
+        "sprints/tests/ws1/peak-summary.test.ts"
       ],
       "depends_on": [],
-      "complexity": "M",
-      "estimated_minutes": 30
+      "complexity": "S",
+      "estimated_minutes": 60
     }
   ]
 }
