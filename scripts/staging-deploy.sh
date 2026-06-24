@@ -147,28 +147,55 @@ echo ""
 
 # ── 健康检查 ──────────────────────────────────────────────────────────────────
 if [[ "$DRY_RUN" == true ]]; then
-    echo "[5/5] [dry-run] 等待 staging 健康检查 localhost:${STAGING_PORT}..."
+    echo "[5/6] [dry-run] 等待 staging 健康检查 localhost:${STAGING_PORT}..."
+    echo "[6/6] [dry-run] bash $SCRIPT_DIR/staging-verify.sh"
     echo ""
     echo "=== [dry-run] Staging Deploy SUCCESS ==="
     exit 0
 fi
 
-echo "[5/5] 等待 staging 健康检查（最多 60s）..."
+echo "[5/6] 等待 staging 健康检查（最多 60s）..."
 TRIES=0
 MAX_TRIES=12
+HEALTHY=false
 while [ $TRIES -lt $MAX_TRIES ]; do
     sleep 5
     TRIES=$((TRIES + 1))
     if curl -sf "http://localhost:${STAGING_PORT}/api/brain/tick/status" > /dev/null 2>&1; then
-        echo ""
-        echo "=== Staging Deploy SUCCESS: cecelia-brain v${VERSION} 在端口 ${STAGING_PORT} 健康 ==="
-        exit 0
+        echo "  ✓ staging 端口 ${STAGING_PORT} 已响应"
+        HEALTHY=true
+        break
     fi
     echo "  Attempt ${TRIES}/${MAX_TRIES}..."
 done
 
+if [[ "$HEALTHY" != true ]]; then
+    echo ""
+    echo "[FAIL] staging 健康检查超时（${MAX_TRIES}次 × 5s）"
+    echo "  日志: docker logs ${STAGING_CONTAINER} --tail 50"
+    echo "  清理: docker stop ${STAGING_CONTAINER} && docker rm ${STAGING_CONTAINER}"
+    exit 1
+fi
 echo ""
-echo "[FAIL] staging 健康检查超时（${MAX_TRIES}次 × 5s）"
-echo "  日志: docker logs ${STAGING_CONTAINER} --tail 50"
-echo "  清理: docker stop ${STAGING_CONTAINER} && docker rm ${STAGING_CONTAINER}"
-exit 1
+
+# ── staging 验证（护栏核心）──────────────────────────────────────────────────
+# health check 只证明端口响应；staging-verify.sh 做真正的验证（tick 隔离 / DB /
+# 端点契约）。verification 失败必须以非 0 退出，让 ops.js 标记 status=failed，
+# CI deploy.yml 据此阻断 production deploy → 生产实例不被触碰，客户无感。
+echo "[6/6] 运行 staging 验证（staging-verify.sh）..."
+VERIFY_SCRIPT="$SCRIPT_DIR/staging-verify.sh"
+if [[ ! -f "$VERIFY_SCRIPT" ]]; then
+    echo "[FAIL] 缺少 $VERIFY_SCRIPT，无法验证 staging — 阻断 production"
+    exit 1
+fi
+if bash "$VERIFY_SCRIPT"; then
+    echo ""
+    echo "=== Staging Deploy SUCCESS: cecelia-brain v${VERSION} 在端口 ${STAGING_PORT} 验证通过 ==="
+    exit 0
+else
+    echo ""
+    echo "[FAIL] staging 验证失败 — 阻断 production deploy（生产端口未触碰）"
+    echo "  日志: docker logs ${STAGING_CONTAINER} --tail 50"
+    echo "  清理: docker stop ${STAGING_CONTAINER} && docker rm ${STAGING_CONTAINER}"
+    exit 1
+fi
