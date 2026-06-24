@@ -59,39 +59,43 @@ cat > "$BAD/index.html" <<'HTML'
 <body><div id="root"></div></body></html>
 HTML
 
+# 用 DASHBOARD_REQUIRED_ENV 显式声明一个必需 env（fixture 无真实 src 目录可推导），
+# 让 A/B/C 三态对 env 检查可确定。VITE_SMOKE_KEY 是本 smoke 专用的假 key。
+REQ="VITE_SMOKE_KEY"
+
 # ── 断言 A：好 dist + env 齐 → OK（退出 0）────────────────────────────────────
 echo ""
 echo "[A] 好 dist + 关键 env 齐 → 期望 OK"
-OUT_A="$(VITE_N8N_WEBHOOK_BASE="https://n8n.example/webhook" bash "$GATE" "$GOOD" 5231 2>&1)"
+OUT_A="$(DASHBOARD_REQUIRED_ENV="$REQ" VITE_SMOKE_KEY="present" bash "$GATE" "$GOOD" 5231 2>&1)"
 RC_A=$?
-if [[ $RC_A -eq 0 ]] && echo "$OUT_A" | grep -q "STAGING_SELFCHECK_OK"; then
+if [[ ${RC_A} -eq 0 ]] && echo "$OUT_A" | grep -q "STAGING_SELFCHECK_OK"; then
   ok "好 dist 通过自检（退出 0 + STAGING_SELFCHECK_OK）"
 else
-  bad "好 dist 未通过（rc=$RC_A）"
+  bad "好 dist 未通过（rc=${RC_A}）"
   echo "$OUT_A" | sed 's/^/    /'
 fi
 
 # ── 断言 B：坏 dist（白屏：入口 bundle 缺失）→ FAIL（退出 1）──────────────────
 echo ""
 echo "[B] 坏 dist（入口 bundle 404 = 白屏）→ 期望 FAIL"
-OUT_B="$(VITE_N8N_WEBHOOK_BASE="https://n8n.example/webhook" bash "$GATE" "$BAD" 5232 2>&1)"
+OUT_B="$(DASHBOARD_REQUIRED_ENV="$REQ" VITE_SMOKE_KEY="present" bash "$GATE" "$BAD" 5232 2>&1)"
 RC_B=$?
-if [[ $RC_B -ne 0 ]] && echo "$OUT_B" | grep -q "STAGING_SELFCHECK_FAIL"; then
-  ok "坏 dist 被拦下（退出 $RC_B + STAGING_SELFCHECK_FAIL）"
+if [[ ${RC_B} -ne 0 ]] && echo "$OUT_B" | grep -q "STAGING_SELFCHECK_FAIL"; then
+  ok "坏 dist 被拦下（退出 ${RC_B} + STAGING_SELFCHECK_FAIL）"
 else
-  bad "坏 dist 未被拦下（rc=$RC_B，gate 漏判白屏！）"
+  bad "坏 dist 未被拦下（rc=${RC_B}，gate 漏判白屏！）"
   echo "$OUT_B" | sed 's/^/    /'
 fi
 
 # ── 断言 C：关键 env 缺失 → FAIL（proven-to-fire 的点）────────────────────────
 echo ""
 echo "[C] 好 dist 但关键 env 缺失 → 期望 FAIL"
-OUT_C="$(env -u VITE_N8N_WEBHOOK_BASE bash "$GATE" "$GOOD" 5233 2>&1)"
+OUT_C="$(env -u VITE_SMOKE_KEY DASHBOARD_REQUIRED_ENV="$REQ" bash "$GATE" "$GOOD" 5233 2>&1)"
 RC_C=$?
-if [[ $RC_C -ne 0 ]] && echo "$OUT_C" | grep -q "STAGING_SELFCHECK_FAIL"; then
-  ok "缺 env 被拦下（退出 $RC_C + STAGING_SELFCHECK_FAIL）"
+if [[ ${RC_C} -ne 0 ]] && echo "$OUT_C" | grep -q "STAGING_SELFCHECK_FAIL"; then
+  ok "缺 env 被拦下（退出 ${RC_C} + STAGING_SELFCHECK_FAIL）"
 else
-  bad "缺 env 未被拦下（rc=$RC_C，gate 漏判缺 env！）"
+  bad "缺 env 未被拦下（rc=${RC_C}，gate 漏判缺 env！）"
   echo "$OUT_C" | sed 's/^/    /'
 fi
 
