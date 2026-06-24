@@ -124,11 +124,24 @@ if [[ "$NEED_BRAIN" == true ]]; then
     echo ""
 fi
 
-# 部署 Dashboard（在主仓库中 build，Docker 容器挂载主仓库 dist/）
+# 部署 Dashboard（轻量 staging：先 build 到 staging slot 自检，全绿才 promote）
+#
+# 流程（PrepPRD Golden Path）：
+#   build → 产物落到 staging 目录（.dist-staging，不碰 live dist/）
+#        → dashboard-staging-selfcheck.sh 在非生产端口自检（起得来/env齐/不白屏/路由通）
+#        → 全绿才 promote：原子换入 live dist/（本机 5211 容器即生效）+ tar+ssh 同步 HK
+#        → 自检红：不碰 live dist/、不 ssh HK，两个生产实例都保持旧版本，退出 1 报红
 if [[ "$NEED_DASHBOARD" == true ]]; then
-    echo "🖥️  Dashboard 改动 → npm run build（主仓库）"
+    DIST_DIR="$MAIN_ROOT/apps/dashboard/dist"
+    STAGING_DIST="$MAIN_ROOT/apps/dashboard/.dist-staging"
+    SELFCHECK="$MAIN_SCRIPTS/dashboard-staging-selfcheck.sh"
+    STAGING_SLOT_PORT="${DASHBOARD_STAGING_PORT:-5223}"
+
+    echo "🖥️  Dashboard 改动 → 构建到 staging slot（先自检，后 promote）"
     if [[ "$DRY_RUN" == true ]]; then
-        echo "  [dry-run] cd $MAIN_ROOT/apps/dashboard && npm run build"
+        echo "  [dry-run] cd $MAIN_ROOT/apps/dashboard && npm run build → $STAGING_DIST"
+        echo "  [dry-run] bash $SELFCHECK $STAGING_DIST $STAGING_SLOT_PORT"
+        echo "  [dry-run] promote: $STAGING_DIST → $DIST_DIR + tar+ssh HK"
     else
         # 确保当前平台的 native 模块已安装（容器 Linux 和宿主 macOS 可能不同）
         cd "$MAIN_ROOT"
@@ -136,8 +149,9 @@ if [[ "$NEED_DASHBOARD" == true ]]; then
             || npm install --cache /tmp/.npm-cache --silent 2>/dev/null \
             || true
 
-        # 检测是否在 Docker 容器内运行（容器内存通常受限，vite build 需要 >1GB heap）
-        # 若在容器内，启动独立构建容器（4GB 内存），避免 OOM
+        # 构建到独立的 staging 输出目录（--outDir），不覆盖 live dist/。
+        # 关键：自检红时 live dist/ 必须原封不动 → 本机 5211 容器仍读旧版本。
+        rm -rf "$STAGING_DIST"
         if [[ -f "/.dockerenv" ]] && command -v docker &>/dev/null; then
             echo "  (容器内构建 → 使用独立 node 容器，4GB 内存限制)"
             docker run --rm \
@@ -147,16 +161,46 @@ if [[ "$NEED_DASHBOARD" == true ]]; then
                 --memory=4g \
                 --memory-swap=4g \
                 node:20-alpine \
-                npm run build
+                npm run build -- --outDir "$STAGING_DIST"
         else
             cd "$MAIN_ROOT/apps/dashboard"
-            NODE_OPTIONS="--max-old-space-size=3072" npm run build
+            NODE_OPTIONS="--max-old-space-size=3072" npm run build -- --outDir "$STAGING_DIST"
         fi
         cd "$MAIN_ROOT"
+        echo ""
+
+        # ── 部署前自检 gate ───────────────────────────────────────────────────
+        # 自检红 → 不 promote、不碰 live dist/、不 ssh HK → 退出 1，两个生产实例保持旧版本。
+        echo "🔬 Dashboard 部署前自检（staging slot :${STAGING_SLOT_PORT}）..."
+        if ! bash "$SELFCHECK" "$STAGING_DIST" "$STAGING_SLOT_PORT"; then
+            echo ""
+            echo "❌ Dashboard 部署前自检失败 → 阻断 promote"
+            echo "   - live dist/ 未改动（本机 5211 保持旧版本）"
+            echo "   - 未 ssh HK（HK 生产保持旧版本）"
+            rm -rf "$STAGING_DIST" 2>/dev/null || true
+            exit 1
+        fi
+        echo "✅ Dashboard 部署前自检全绿 → 允许 promote"
+        echo ""
+
+        # ── Promote：把 staging 产物换入 live dist/（本机 5211 容器立即生效）──────
+        # 原子换入：先 dist.old 备份，rename staging→dist，成功后删 old；失败则回滚。
+        if [[ -d "$DIST_DIR" ]]; then
+            rm -rf "${DIST_DIR}.old" 2>/dev/null || true
+            mv "$DIST_DIR" "${DIST_DIR}.old"
+        fi
+        if mv "$STAGING_DIST" "$DIST_DIR"; then
+            rm -rf "${DIST_DIR}.old" 2>/dev/null || true
+            echo "🟢 Promote 完成：本机 5211 已指向新版本"
+        else
+            echo "❌ Promote 换入失败，回滚 live dist/"
+            [[ -d "${DIST_DIR}.old" ]] && mv "${DIST_DIR}.old" "$DIST_DIR"
+            exit 1
+        fi
     fi
     echo ""
 
-    # 同步构建产物到 HK VPS
+    # 同步构建产物到 HK VPS（promote 的第二个生产实例）
     # 用 Tailscale IP 而非主机名别名——Brain 跑在 Docker 容器里，容器的 ~ 是 /root，
     # 不是宿主机 /Users/administrator，SSH config 里的 hk-vps 别名找不到。
     HK_IP="${CECELIA_HK_IP:-100.86.118.99}"
@@ -164,7 +208,6 @@ if [[ "$NEED_DASHBOARD" == true ]]; then
     HK_SSH_KEY="${CECELIA_HK_SSH_KEY:-/Users/administrator/.ssh/id_rsa}"
     HK_SSH_OPTS="-i $HK_SSH_KEY -o StrictHostKeyChecking=no -o ConnectTimeout=15"
     HK_REMOTE_DIR="/opt/cecelia/frontend"
-    DIST_DIR="$MAIN_ROOT/apps/dashboard/dist"
 
     if [[ -d "$DIST_DIR" ]]; then
         echo "🚀 同步 Dashboard 到 HK VPS ($HK_USER@$HK_IP:$HK_REMOTE_DIR)..."

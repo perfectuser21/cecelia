@@ -98,3 +98,7 @@ packages/quality/.test-phase1/
 # Ralph Loop 模式 dev session 状态（项目根，永远不进 git）
 .cecelia/dev-active-*.json
 node_modules
+
+# 轻量 staging 部署前自检的临时构建目录（promote 前自检用，promote 后即换入 dist/）
+apps/dashboard/.dist-staging/
+apps/dashboard/dist.old/
