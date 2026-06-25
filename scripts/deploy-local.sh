@@ -155,7 +155,7 @@ if [[ "$NEED_DASHBOARD" == true ]]; then
     if [[ "$DRY_RUN" == true ]]; then
         echo "  [dry-run] build → $STAGING_DIST"
         echo "  [dry-run] bash $SELFCHECK $STAGING_DIST $STAGING_SLOT_PORT"
-        echo "  [dry-run] 起常驻 staging :$STAGING_SLOT_PORT + 写 $PENDING_FILE（不自动 promote）"
+        echo "  [dry-run] 起常驻 staging :$STAGING_SLOT_PORT + 写 ${PENDING_FILE}（不自动 promote）"
     else
         rm -rf "$STAGING_DIST"
         rm -f "$DASH_DIR/.staging-notify.log" 2>/dev/null || true
