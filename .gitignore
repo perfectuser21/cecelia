@@ -106,3 +106,4 @@ apps/dashboard/dist.old/
 apps/dashboard/.staging-pending
 apps/dashboard/.staging-slot.pid
 apps/dashboard/.staging-slot.log
+apps/dashboard/.staging-notify.log

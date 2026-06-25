@@ -30,6 +30,7 @@ LIVE_DIST="$DASH/dist"
 STAGING_DIST="$DASH/.dist-staging"
 PENDING="$DASH/.staging-pending"
 PID_FILE="$DASH/.staging-slot.pid"
+NOTIFY="$DASH/.staging-notify.log"
 PORT="${SMOKE_STAGING_PORT:-5251}"
 
 GREEN='\033[0;32m'; RED='\033[0;31m'; NC='\033[0m'
@@ -42,7 +43,7 @@ FIXTURE_NEW="$TMP/fixture-new"
 
 cleanup() {
   [[ -f "$PID_FILE" ]] && kill "$(cat "$PID_FILE" 2>/dev/null)" 2>/dev/null || true
-  rm -rf "$TMP" "$STAGING_DIST" "$PENDING" "$PID_FILE" 2>/dev/null || true
+  rm -rf "$TMP" "$STAGING_DIST" "$PENDING" "$PID_FILE" "$NOTIFY" 2>/dev/null || true
   # 复原 live dist/ 为 smoke 之前不存在的状态（live dist/ 是 gitignore 构建产物）
   [[ "${LIVE_DIST_PREEXISTED:-0}" == "0" ]] && rm -rf "$LIVE_DIST" 2>/dev/null || true
 }
@@ -103,6 +104,12 @@ if [[ "$S_CODE" == "200" ]] && grep -q "NEW_VERSION_SENTINEL" "$TMP/staging-inde
 else
   fail "staging 网址 localhost:${PORT} 打不开或非新版（HTTP ${S_CODE}）"
 fi
+# Bark 待放行通知（测试模式写 .staging-notify.log，不真推送）
+if [[ -f "$NOTIFY" ]] && grep -q "$PORT" "$NOTIFY" 2>/dev/null && grep -qi "promote" "$NOTIFY" 2>/dev/null; then
+  pass "已发 staging 待放行通知（含端口 + promote 提示）"
+else
+  fail "未发 staging 待放行通知（Bark 推送缺失）"
+fi
 echo ""
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -113,12 +120,15 @@ B_RC=$?
 grep -q "NEW_VERSION_SENTINEL" "$LIVE_DIST/index.html" 2>/dev/null \
   && pass "live dist/ 已换成新版（5211 生效）" || fail "live dist/ 未换成新版（promote 没生效）"
 [[ ! -f "$PENDING" ]] && pass ".staging-pending 已清（防重复 promote）" || fail ".staging-pending 未清"
+# HK 已移除：promote 不应再尝试同步 HK（匹配 HK 同步特征串，避免误命中路径里的 nohk）
+grep -qE "HK VPS|tar -czf.*ssh|100\.86\.118" "$TMP/b.log" 2>/dev/null \
+  && fail "promote 仍尝试同步 HK（应已移除，只换本机 5211）" || pass "promote 不再碰 HK（只换本机 5211）"
 echo ""
 
 # ════════════════════════════════════════════════════════════════════════════
 echo "[C] proven-to-fire：自检红 → 生产纹丝不动 + 报红"
 seed_old_live
-rm -f "$PENDING"; rm -rf "$STAGING_DIST"
+rm -f "$PENDING" "$NOTIFY"; rm -rf "$STAGING_DIST"
 [[ -f "$PID_FILE" ]] && kill "$(cat "$PID_FILE" 2>/dev/null)" 2>/dev/null || true
 C_PORT=$((PORT + 1))
 # 强制 selfcheck 红：要求一个绝不存在的 required env
@@ -133,6 +143,7 @@ else
   fail "live dist/ 被改——自检红仍碰了生产"
 fi
 [[ ! -f "$PENDING" ]] && pass "无 .staging-pending（自检红不放行）" || fail "自检红却写了放行标记"
+[[ ! -f "$NOTIFY" ]] && pass "无待放行通知（自检红不通知）" || fail "自检红却发了通知"
 F_CODE=$(curl -s -o /dev/null -w "%{http_code}" "http://localhost:$C_PORT/" --max-time 5 2>/dev/null || echo 000)
 [[ "$F_CODE" != "200" ]] && pass "staging 端口未起（自检红不预览）" || fail "自检红却起了 staging 服务"
 echo ""
