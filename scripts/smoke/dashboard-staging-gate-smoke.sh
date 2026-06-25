@@ -110,6 +110,29 @@ if [[ -f "$NOTIFY" ]] && grep -q "$PORT" "$NOTIFY" 2>/dev/null && grep -qi "prom
 else
   fail "未发 staging 待放行通知（Bark 推送缺失）"
 fi
+# 外部可达（slot 必须绑 0.0.0.0 像 5211，不能只绑回环——否则你电脑打不开，跳百度）
+HOSTIP=$(python3 -c 'import socket
+s=socket.socket(socket.AF_INET,socket.SOCK_DGRAM)
+try:
+    s.connect(("8.8.8.8",80)); print(s.getsockname()[0])
+except Exception:
+    print("")' 2>/dev/null)
+if [[ -n "$HOSTIP" ]]; then
+  H_CODE=$(curl -s -o /dev/null -w "%{http_code}" "http://$HOSTIP:$PORT/" --max-time 6 2>/dev/null || echo 000)
+  [[ "$H_CODE" == "200" ]] && pass "staging 对外可达（${HOSTIP}:${PORT}，绑 0.0.0.0 像 5211）" \
+    || fail "staging 只绑回环、外部不可达（${HOSTIP}:${PORT} HTTP ${H_CODE}）——你电脑打不开"
+else
+  echo "  [-] 取不到本机非回环 IP，跳过外部可达检查"
+fi
+# 横幅运行时注入（一眼知道是 staging + 放行按钮）
+if grep -q "__staging_banner__" "$TMP/staging-index.html" 2>/dev/null && grep -q "__staging__/promote" "$TMP/staging-index.html" 2>/dev/null; then
+  pass "staging 页面已注入横幅 + 放行按钮"
+else
+  fail "staging 页面缺横幅/放行按钮（STAGING_BANNER 注入未生效）"
+fi
+# 横幅只运行时注入、不写进 dist 文件（promote 后生产干净，不带横幅）
+grep -q "__staging_banner__" "$STAGING_DIST/index.html" 2>/dev/null \
+  && fail "横幅写进了 .dist-staging 文件（会漏到生产）" || pass "横幅不在 dist 文件里（生产不会带横幅）"
 echo ""
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -123,6 +146,24 @@ grep -q "NEW_VERSION_SENTINEL" "$LIVE_DIST/index.html" 2>/dev/null \
 # HK 已移除：promote 不应再尝试同步 HK（匹配 HK 同步特征串，避免误命中路径里的 nohk）
 grep -qE "HK VPS|tar -czf.*ssh|100\.86\.118" "$TMP/b.log" 2>/dev/null \
   && fail "promote 仍尝试同步 HK（应已移除，只换本机 5211）" || pass "promote 不再碰 HK（只换本机 5211）"
+echo ""
+
+# ════════════════════════════════════════════════════════════════════════════
+echo "[B2] 放行按钮 endpoint：页面点一下 → POST /__staging__/promote 触发 promote"
+seed_old_live; rm -f "$PENDING" "$NOTIFY"; rm -rf "$STAGING_DIST"
+[[ -f "$PID_FILE" ]] && kill "$(cat "$PID_FILE" 2>/dev/null)" 2>/dev/null || true
+EP_PORT=$((PORT + 2))
+CECELIA_DEPLOY_ROOT="$ROOT_DIR" STAGING_FIXTURE_DIST="$FIXTURE_NEW" DASHBOARD_STAGING_PORT="$EP_PORT" \
+  bash "$DEPLOY" --changed="apps/dashboard/src/App.tsx" > "$TMP/b2deploy.log" 2>&1
+EP_CODE=$(curl -s -o "$TMP/ep.json" -w "%{http_code}" -X POST "http://localhost:$EP_PORT/__staging__/promote" --max-time 8 2>/dev/null || echo 000)
+[[ "$EP_CODE" == "200" ]] && pass "放行 endpoint POST → 200" || fail "放行 endpoint HTTP $EP_CODE（按钮放行不通）"
+# promote 是 detached 异步，轮询等它完成（pending 消失）
+for _ in $(seq 1 15); do [[ ! -f "$PENDING" ]] && break; sleep 1; done
+grep -q "NEW_VERSION_SENTINEL" "$LIVE_DIST/index.html" 2>/dev/null \
+  && pass "点放行后 live dist/ 已换新版（5211 生效）" || fail "点放行后 live dist/ 未更新"
+[[ ! -f "$PENDING" ]] && pass "点放行后 .staging-pending 已清" || fail "点放行后 pending 未清"
+grep -q "__staging_banner__" "$LIVE_DIST/index.html" 2>/dev/null \
+  && fail "live dist/ 含横幅（漏到生产）" || pass "live dist/ 无横幅（生产干净）"
 echo ""
 
 # ════════════════════════════════════════════════════════════════════════════
