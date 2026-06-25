@@ -43,7 +43,8 @@ FIXTURE_NEW="$TMP/fixture-new"
 
 cleanup() {
   [[ -f "$PID_FILE" ]] && kill "$(cat "$PID_FILE" 2>/dev/null)" 2>/dev/null || true
-  rm -rf "$TMP" "$STAGING_DIST" "$PENDING" "$PID_FILE" "$NOTIFY" 2>/dev/null || true
+  [[ -f "$DASH/.dev-preview.pid" ]] && kill "$(cat "$DASH/.dev-preview.pid" 2>/dev/null)" 2>/dev/null || true
+  rm -rf "$TMP" "$STAGING_DIST" "$PENDING" "$PID_FILE" "$NOTIFY" "$DASH/.dist-dev" "$DASH/.dev-preview.pid" "$DASH/.dev-preview.log" 2>/dev/null || true
   # 复原 live dist/ 为 smoke 之前不存在的状态（live dist/ 是 gitignore 构建产物）
   [[ "${LIVE_DIST_PREEXISTED:-0}" == "0" ]] && rm -rf "$LIVE_DIST" 2>/dev/null || true
 }
@@ -176,9 +177,30 @@ F_CODE=$(curl -s -o /dev/null -w "%{http_code}" "http://localhost:$C_PORT/" --ma
 [[ "$F_CODE" != "200" ]] && pass "staging 端口未起（自检红不预览）" || fail "自检红却起了 staging 服务"
 echo ""
 
+# ════════════════════════════════════════════════════════════════════════════
+echo "[D] dev 即时预览：dev-preview.sh → 蓝 DEV 旗（独立端口/产物，不碰 staging/生产）"
+DEVP="$ROOT_DIR/scripts/dev-preview.sh"
+DEV_PORT=$((PORT + 3))
+DEV_PID_FILE="$DASH/.dev-preview.pid"
+[[ -f "$DEV_PID_FILE" ]] && kill "$(cat "$DEV_PID_FILE" 2>/dev/null)" 2>/dev/null || true
+if [[ -f "$DEVP" ]]; then
+  pass "dev-preview.sh 存在"
+  CECELIA_DEPLOY_ROOT="$ROOT_DIR" DEV_FIXTURE_DIST="$FIXTURE_NEW" DEV_PREVIEW_PORT="$DEV_PORT" bash "$DEVP" > "$TMP/d.log" 2>&1
+  D_CODE=$(curl -s -o "$TMP/dev.html" -w "%{http_code}" "http://localhost:$DEV_PORT/" --max-time 8 2>/dev/null || echo 000)
+  [[ "$D_CODE" == "200" ]] && pass "dev 预览端口可达" || fail "dev 预览打不开（HTTP ${D_CODE}）"
+  grep -q ">DEV<" "$TMP/dev.html" 2>/dev/null && pass "dev 预览是 DEV 旗（非 STAGING）" || fail "dev 预览旗文字不是 DEV"
+  grep -q "#3b82f6" "$TMP/dev.html" 2>/dev/null && pass "DEV 旗是蓝色" || fail "DEV 旗颜色不对"
+  grep -q ">STAGING<" "$TMP/dev.html" 2>/dev/null && fail "dev 预览误显示 STAGING" || pass "dev 预览不误显示 STAGING（与 staging 区分）"
+  [[ -d "$DASH/.dist-dev" ]] && pass "dev 用独立 .dist-dev（不碰 staging/生产产物）" || fail "dev 未用独立 .dist-dev"
+  [[ -f "$DEV_PID_FILE" ]] && kill "$(cat "$DEV_PID_FILE" 2>/dev/null)" 2>/dev/null || true
+else
+  fail "dev-preview.sh 不存在"
+fi
+echo ""
+
 echo "========================================"
 if [[ "$FAILED" -eq 0 ]]; then
-  echo -e "${GREEN}STAGING_GATE_SMOKE_OK${NC} — 放行闸三段全绿"
+  echo -e "${GREEN}STAGING_GATE_SMOKE_OK${NC} — 放行闸 + dev 预览全绿"
   exit 0
 else
   echo -e "${RED}STAGING_GATE_SMOKE_FAIL${NC} — ${FAILED} 项红"
