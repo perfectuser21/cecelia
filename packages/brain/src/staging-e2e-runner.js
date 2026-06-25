@@ -30,7 +30,7 @@ export const STAGING_DB_NAME = 'cecelia_staging';
  * @param {object} task  staging_e2e Brain 任务（payload 里有 pr_url/sprint_dir 等）
  * @returns {{ targetEnv:string, stagingPort:number, brainUrl:string, dbUrl:string }}
  */
-export function resolveStagingTarget(task) {
+export function resolveStagingTarget(_task) {
   return {
     targetEnv: 'staging',
     stagingPort: STAGING_PORT,
