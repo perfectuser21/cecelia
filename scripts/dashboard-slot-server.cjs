@@ -36,6 +36,9 @@ const PORT = parseInt(process.env.SLOT_PORT || '5223', 10);
 const HOST = process.env.SLOT_HOST || '0.0.0.0';
 const BANNER_ON = process.env.STAGING_BANNER === '1';
 const STAGING_COMMIT = process.env.STAGING_COMMIT || 'unknown';
+// 标识可配置：staging=橙 STAGING（默认）；dev 预览=蓝 DEV。文字/颜色由 env 覆盖。
+const FLAG_TEXT = (process.env.STAGING_FLAG_TEXT || 'STAGING').replace(/[^A-Za-z0-9_-]/g, '').slice(0, 12) || 'STAGING';
+const FLAG_COLOR = /^#[0-9a-fA-F]{3,8}$/.test(process.env.STAGING_FLAG_COLOR || '') ? process.env.STAGING_FLAG_COLOR : '#f97316';
 
 if (!STATIC_DIR) {
   console.error('[slot-server] DIST_DIR 未设置');
@@ -69,8 +72,8 @@ const MIME_TYPES = {
 function bannerHtml() {
   const c = STAGING_COMMIT.replace(/[^a-zA-Z0-9_.-]/g, '');
   return `
-<div id="__staging_banner__" title="STAGING 预览 · commit ${c} · 生产 5211 未动（命令行 promote-dashboard.sh 放行）" style="position:fixed;top:0;right:0;width:74px;height:74px;overflow:hidden;z-index:2147483647;pointer-events:none">
-  <div style="position:absolute;top:13px;right:-26px;transform:rotate(45deg);width:96px;text-align:center;background:#f97316;color:#fff;font:600 8px/1 -apple-system,system-ui,sans-serif;letter-spacing:.5px;padding:2px 0;box-shadow:0 1px 3px rgba(0,0,0,.3)">STAGING</div>
+<div id="__staging_banner__" title="${FLAG_TEXT} 预览 · commit ${c} · 生产 5211 未动（命令行 promote-dashboard.sh 放行）" style="position:fixed;top:0;right:0;width:74px;height:74px;overflow:hidden;z-index:2147483647;pointer-events:none">
+  <div style="position:absolute;top:13px;right:-26px;transform:rotate(45deg);width:96px;text-align:center;background:${FLAG_COLOR};color:#fff;font:600 8px/1 -apple-system,system-ui,sans-serif;letter-spacing:.5px;padding:2px 0;box-shadow:0 1px 3px rgba(0,0,0,.3)">${FLAG_TEXT}</div>
 </div>`;
 }
 
