@@ -1745,7 +1745,7 @@ router.post('/promote/:resultId', async (req, res) => {
     await client.query('BEGIN');
     // 行级锁 + 仅 pending_promote 可放行（幂等：并发/重复 confirm 只第一次生效）
     const sel = await client.query(
-      `SELECT id, pr_url, verdict, promote_status FROM staging_e2e_results WHERE id = $1::uuid FOR UPDATE`,
+      `SELECT id, initiative_id, pr_url, verdict, promote_status FROM staging_e2e_results WHERE id = $1::uuid FOR UPDATE`,
       [resultId]
     );
     if (sel.rows.length === 0) { await client.query('ROLLBACK'); return res.status(404).json({ error: 'staging_e2e_result not found' }); }
@@ -1758,7 +1758,8 @@ router.post('/promote/:resultId', async (req, res) => {
     await client.query('COMMIT');
 
     // 放行：本 repo 内部线跑 promote 脚本；客户线只记录确认（不跨 repo）。
-    const { resolveLine, runInternalPromote, defaultPromoteExec, getRepoRoot, PROMOTE_STATUS } = await import('../staging-promote.js');
+    const { resolveLine, runInternalPromote, defaultPromoteExec, getRepoRoot, PROMOTE_STATUS,
+            spawnHarnessReport, readProductionInfo, REPORT_KIND } = await import('../staging-promote.js');
     const line = resolveLine(req.body?.base_repo || '');
     let finalStatus = PROMOTE_STATUS.PROMOTED;
     let output = 'owner confirmed';
@@ -1771,9 +1772,27 @@ router.post('/promote/:resultId', async (req, res) => {
       output = `owner confirmed (customer line: real zenithjoy prod promote handled by zenithjoy repo gate)`;
     }
     await pool.query(
-      `UPDATE staging_e2e_results SET promote_status = $2, promote_output = $3, promoted_at = now() WHERE id = $1::uuid`,
-      [resultId, finalStatus, String(output).slice(0, 4000)]
+      `UPDATE staging_e2e_results SET promote_status = $2, promote_output = $3, promoted_at = now(),
+        promoted_by = COALESCE($4, promoted_by) WHERE id = $1::uuid`,
+      [resultId, finalStatus, String(output).slice(0, 4000), req.body?.promoted_by || 'owner']
     );
+    // Slice3：confirm 放行成功 → 派成功交付证书 report（幂等 by initiative_id；失败不派，靠 reportNode 失败路径）。
+    if (finalStatus === PROMOTE_STATUS.PROMOTED) {
+      const prod = readProductionInfo(getRepoRoot());
+      await spawnHarnessReport(
+        { dbQuery: (sql, p) => pool.query(sql, p) },
+        {
+          initiativeId: row.initiative_id, prUrl: row.pr_url,
+          reportKind: REPORT_KIND.SUCCESS,
+          stagingE2eVerdict: row.verdict,
+          promoteStatus: finalStatus,
+          promotedAt: new Date().toISOString(),
+          promotedBy: req.body?.promoted_by || 'owner',
+          productionVersion: prod.productionVersion,
+          rollbackAnchor: prod.rollbackAnchor,
+        },
+      );
+    }
     return res.json({ ok: finalStatus !== PROMOTE_STATUS.PROMOTE_FAILED, resultId, promote_status: finalStatus });
   } catch (err) {
     try { await client.query('ROLLBACK'); } catch { /* noop */ }

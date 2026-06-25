@@ -16,6 +16,7 @@
  */
 
 import { execSync } from 'child_process';
+import { readFileSync as fsReadFileSync } from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 
@@ -28,6 +29,73 @@ export const PROMOTE_STATUS = {
   PROMOTE_FAILED: 'promote_failed',   // promote 失败
   NA: 'n_a',                          // verdict≠PASS，不进 promote
 };
+
+// Slice3：harness_report 三态（决策 B）
+// success = promote 完成的成功交付证书；failure = FAIL/SKIP/promote_failed 的失败报告；
+// pending_promote 不出 report（靠 Slice2 通知+状态可见，等最终走向 promoted 或失败再出）。
+export const REPORT_KIND = { SUCCESS: 'success', FAILURE: 'failure' };
+
+/**
+ * Slice3：构造派 harness_report 任务的 INSERT。
+ * 幂等：按 initiative_id NOT EXISTS 去重（promote 完成点 / reportNode 失败路径都可能调，且可重入）。
+ * payload 补全 staging E2E 结果 + 放行人/时间 + production 版本 + 回档锚点（决策 B 内容补全）。
+ * @returns {{sql:string, params:any[]}|null}  无 initiativeId → null
+ */
+export function buildHarnessReportInsert(args = {}) {
+  const initiativeId = args.initiativeId;
+  if (!initiativeId) return null;
+  const payload = {
+    script_path: 'packages/brain/scripts/harness-report.mjs',
+    initiative_id: initiativeId,
+    report_kind: args.reportKind || REPORT_KIND.SUCCESS,
+    // Slice1/2 已落库数据
+    final_e2e_verdict: args.stagingE2eVerdict || null,
+    staging_e2e_verdict: args.stagingE2eVerdict || null,
+    promote_status: args.promoteStatus || null,
+    promoted_at: args.promotedAt || null,
+    promoted_by: args.promotedBy || null,
+    production_version: args.productionVersion || null,
+    rollback_anchor: args.rollbackAnchor || null,
+    // 沿用原 report 字段
+    sprint_dir: args.sprintDir || null,
+    journey_id: args.journeyId || null,
+    feature_id: args.featureId || null,
+    feature_name: args.featureName || args.title || '',
+    pr_url: args.prUrl || '',
+    pr_urls: args.prUrls || (args.prUrl ? [args.prUrl] : []),
+    sub_tasks: args.subTasks || [],
+    gan_rounds: args.ganRounds || 0,
+    gan_cost_usd: args.ganCostUsd || 0,
+  };
+  const title = `[Harness Report] ${args.title || initiativeId}`;
+  const description = `Auto-spawned (${payload.report_kind}) after ${payload.promote_status || payload.final_e2e_verdict} for initiative ${initiativeId}`;
+  // 幂等：同 initiative 已有 harness_report 则不再派（promote 完成点 / 失败路径只出一份）
+  const sql = `
+    INSERT INTO tasks (title, description, task_type, status, priority, payload)
+    SELECT $1, $2, 'harness_report', 'queued', 'P2', $3::jsonb
+    WHERE NOT EXISTS (
+      SELECT 1 FROM tasks WHERE task_type = 'harness_report' AND payload->>'initiative_id' = $4
+    )`;
+  return { sql, params: [title, description, JSON.stringify(payload), String(initiativeId)] };
+}
+
+/**
+ * Slice3：best-effort 派 harness_report（永不 throw）。
+ * @param {{dbQuery:Function}} deps
+ * @param {object} args  同 buildHarnessReportInsert
+ * @returns {Promise<{spawned:boolean}>}
+ */
+export async function spawnHarnessReport(deps, args = {}) {
+  try {
+    const ins = buildHarnessReportInsert(args);
+    if (!ins) return { spawned: false };
+    await deps.dbQuery(ins.sql, ins.params);
+    return { spawned: true };
+  } catch (err) {
+    console.warn(`[staging-promote] spawnHarnessReport failed (best-effort): ${err.message}`);
+    return { spawned: false };
+  }
+}
 
 /**
  * 按 base_repo 判客户线 vs 内部线。
@@ -105,4 +173,28 @@ export function defaultPromoteExec(repoRoot) {
 export function getRepoRoot() {
   const thisDir = path.dirname(fileURLToPath(import.meta.url));
   return path.resolve(thisDir, '../../..');
+}
+
+/**
+ * Slice3：读 production 版本 + 回档锚点（复用现有件，不新建）。
+ * - production_version：`.brain-versions` 末行（brain-deploy 写的当前生产版本）。
+ * - rollback_anchor：`.production-release` 的 manifest=<tag> 行（rollback-cecelia 账本锚点）。
+ * 读不到 → null（best-effort，不阻断 report）。
+ * @param {string} repoRoot
+ * @param {{readFileSync?:Function}} [deps]  测试可注入
+ */
+export function readProductionInfo(repoRoot, deps = {}) {
+  const readFileSync = deps.readFileSync || fsReadFileSync;
+  let productionVersion = null;
+  let rollbackAnchor = null;
+  try {
+    const bv = readFileSync(path.join(repoRoot, '.brain-versions'), 'utf8').trim().split('\n').filter(Boolean);
+    productionVersion = bv.length ? bv[bv.length - 1].trim() : null;
+  } catch { /* best-effort */ }
+  try {
+    const pr = readFileSync(path.join(repoRoot, '.production-release'), 'utf8');
+    const m = pr.match(/manifest=(\S+)/);
+    rollbackAnchor = m ? m[1] : null;
+  } catch { /* best-effort */ }
+  return { productionVersion, rollbackAnchor };
 }

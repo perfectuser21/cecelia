@@ -1,29 +1,29 @@
-# DoD — Slice 2：人工放行闸 + production promote
+# DoD — Slice 3：report 后移到 production promote 完成后（三态 · 决策 B）
 
-> 分支：cp-0625230344-slice2-promote-gate
-> Spec: docs/superpowers/specs/2026-06-25-phase2-harness-to-production-design.md §3 Slice 2
-> 建立在 Slice1 的 staging_e2e verdict 上。决策1：跨repo边界保持（本repo只到 pending+通知+回流接口）；决策2：base_repo 缺失→保守 pending。
+> 分支：cp-0625232915-slice3-report-postpromote
+> Spec: docs/superpowers/specs/2026-06-25-phase2-harness-to-production-design.md §3 Slice 3
+> 决策 B：promote 完成→成功证书 / FAIL/SKIP/promote_failed→失败报告 / pending_promote 不出（Slice2 通知+状态可见，不饿死）。
 
 ## 验收项
 
-- [x] [ARTIFACT] migration 306 在已合表上 ALTER 加 promote_status 列 + CHECK 约束（不 CREATE TABLE，不动 304/305）
-  Test: manual:node -e "const c=require('fs').readFileSync('packages/brain/migrations/306_staging_e2e_promote_status.sql','utf8');if(/CREATE TABLE/i.test(c)||!/ADD COLUMN/i.test(c)||!c.includes('promote_status'))process.exit(1)"
+- [x] [ARTIFACT] migration 307 ALTER 加 promoted_by（不 CREATE TABLE，不动 304/305/306）
+  Test: manual:node -e "const c=require('fs').readFileSync('packages/brain/migrations/307_staging_e2e_promoted_by.sql','utf8');if(/CREATE TABLE/i.test(c)||!/ADD COLUMN/i.test(c)||!c.includes('promoted_by'))process.exit(1)"
 
-- [x] [BEHAVIOR] 客户线(zenithjoy)/内部线(cecelia) 判定 + base_repo 缺失保守 pending（决策2）
-  Test: manual:node --input-type=module -e "import('./packages/brain/src/staging-promote.js').then(m=>{if(m.resolveLine('x/zenithjoy-workspace')!=='customer'||m.resolveLine('x/cecelia')!=='internal'||m.resolveLine('')!=='unknown')process.exit(1);if(m.decidePromote({verdict:'PASS',baseRepo:''}).action!=='pending')process.exit(1)})"
+- [x] [BEHAVIOR] reportNode 只在 verdict≠PASS 派失败报告；PASS 不派（成功证书挪到 promote 完成点）；生命周期闭合(initiative_runs phase / tasks.status / 容器清理)仍保留在 merge 时
+  Test: manual:node -e "const c=require('fs').readFileSync('packages/brain/src/workflows/harness-initiative.graph.js','utf8');if(!/computedVerdict !== 'PASS'/.test(c)||!/spawnHarnessReport/.test(c)||!/UPDATE initiative_runs SET phase/.test(c)||!/UPDATE tasks SET status/.test(c))process.exit(1)"
 
-- [x] [BEHAVIOR] 内部线 auto-promote 必须注入 promoteExec（fail-safe：无注入拒绝跑真脚本，绝不误打 :5211 live）
-  Test: manual:node --input-type=module -e "import('./packages/brain/src/staging-promote.js').then(async m=>{const r=await m.runInternalPromote({});if(r.ok!==false||r.promoteStatus!=='promote_failed')process.exit(1)})"
+- [x] [BEHAVIOR] 内部线 auto_promoted（staging-e2e-runner）+ 客户线 confirm promoted（routes）各派成功交付证书 report
+  Test: manual:node -e "const r=require('fs').readFileSync('packages/brain/src/staging-e2e-runner.js','utf8');const t=require('fs').readFileSync('packages/brain/src/routes/harness.js','utf8');if(!/spawnHarnessReport/.test(r)||!/spawnHarnessReport/.test(t))process.exit(1)"
 
-- [x] [BEHAVIOR] runStagingE2E PASS 后接 handlePromote 分流；mergePrNode payload 带 base_repo
-  Test: manual:node -e "const r=require('fs').readFileSync('packages/brain/src/staging-e2e-runner.js','utf8');if(!/handlePromote/.test(r)||!/base_repo/.test(r))process.exit(1);const g=require('fs').readFileSync('packages/brain/src/workflows/harness-task.graph.js','utf8');const i=g.indexOf('async function _spawnStagingE2eTask');const h=g.slice(i,g.indexOf('export async function mergePrNode',i));if(!/base_repo/.test(h))process.exit(1)"
+- [x] [BEHAVIOR] 派 harness_report 幂等：按 initiative_id NOT EXISTS 去重（promote 完成点/失败路径只出一份）
+  Test: manual:node -e "const c=require('fs').readFileSync('packages/brain/src/staging-promote.js','utf8');if(!/NOT EXISTS[\s\S]{0,120}initiative_id/i.test(c)||!/buildHarnessReportInsert/.test(c))process.exit(1)"
 
-- [x] [BEHAVIOR] 回流接口 POST /promote/:resultId 幂等状态机（仅 pending_promote 可放行，否则 409；不存在 404；非法 uuid 400）
-  Test: manual:node -e "const c=require('fs').readFileSync('packages/brain/src/routes/harness.js','utf8');if(!c.includes('/promote/:resultId')||!/pending_promote/.test(c)||!/409/.test(c)||!/404/.test(c))process.exit(1)"
+- [x] [BEHAVIOR] report 内容补全：report_kind + staging_e2e_verdict + promote_status + promoted_at + promoted_by + production_version + rollback_anchor（payload + harness-report.mjs 渲染）
+  Test: manual:node --input-type=module -e "import('./packages/brain/src/staging-promote.js').then(m=>{const {params}=m.buildHarnessReportInsert({initiativeId:'i',productionVersion:'1.2.3',rollbackAnchor:'a',promotedBy:'auto',promoteStatus:'auto_promoted',stagingE2eVerdict:'PASS'});const p=JSON.parse(params.find(x=>typeof x==='string'&&x.includes('production_version')));if(p.production_version!=='1.2.3'||p.rollback_anchor!=='a'||p.promoted_by!=='auto'||!p.report_kind)process.exit(1)})"
 
-- [x] [BEHAVIOR] 内部线 auto-promote 集成测试用 mock，证明绝不打真生产（promoteExec 被调但是 mock）
-  Test: manual:node -e "const c=require('fs').readFileSync('packages/brain/src/__tests__/staging-e2e-runner-promote.test.js','utf8');if(!/promoteExec/.test(c)||!/auto_promoted/.test(c)||!/not.toHaveBeenCalled/.test(c))process.exit(1)"
+- [x] [BEHAVIOR] 三态行为单测：PASS reportNode 不派 / FAIL reportNode 派失败报告 / promote 完成点派成功证书 / pending 不饿死（靠 Slice2 可见性）
+  Test: manual:node -e "const c=require('fs').readFileSync('packages/brain/src/__tests__/slice3-report-postpromote.test.js','utf8');if(!/不派 harness_report/.test(c)||!/report_kind.*failure|failure/.test(c)||!/生命周期闭合/.test(c))process.exit(1)"
 
 ## 成功标准
 
-staging E2E PASS 后：内部线(cecelia) 自动 promote（in-repo promote-dashboard.sh，测试必 mock）→ auto_promoted；客户线(zenithjoy)/base_repo缺失 → pending_promote + 飞书通知主理人（DB 状态行挂起、不碰 interrupt）→ 主理人 POST /promote/:resultId confirm → promoted（决策1：不跨 repo 打 zenithjoy 真生产）。promote_status 状态机 + 回流接口校验防重复 promote。
+report 从"合 main 后"摘出，改为 production promote 完成后触发：内部线 auto_promoted / 客户线 confirm promoted → 派**成功交付证书**（含 staging E2E 结果 + 放行人/时间 + production 版本 + 回档锚点）；verdict=FAIL/SKIP → reportNode 终态派**失败报告**（不饿死）；pending_promote 不出（等最终走向，靠 Slice2 通知+状态可见）。生命周期闭合仍在 merge 时（不破坏 done 语义）。harness_report 按 initiative_id 幂等。

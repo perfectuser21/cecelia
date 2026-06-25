@@ -1533,33 +1533,37 @@ export async function reportNode(state, opts = {}) {
   } catch (err) {
     console.warn(`[harness-initiative.graph] reportNode db update failed: ${err.message}`);
   }
-  // 派 harness_report 子任务 — 执行 packages/brain/scripts/harness-report.mjs 7步报告脚本
-  // （脚本路径: packages/brain/scripts/harness-report.mjs）
-  try {
-    await dbPool.query(
-      `INSERT INTO tasks (title, description, task_type, status, priority, payload)
-       VALUES ($1, $2, 'harness_report', 'queued', 'P2', $3::jsonb)`,
-      [
-        `[Harness Report] ${state.task?.title || state.initiativeId}`,
-        `Auto-spawned by reportNode for initiative ${state.initiativeId}`,
-        JSON.stringify({
-          script_path: 'packages/brain/scripts/harness-report.mjs',
-          initiative_id: state.initiativeId,
-          final_e2e_verdict: computedVerdict,
-          sprint_dir: state.sprintDir,
-          journey_id: state.task?.payload?.journey_id,
-          feature_id: state.task?.payload?.feature_id,
-          feature_name: state.task?.payload?.feature_name || state.task?.title || '',
-          pr_url: (state.sub_tasks || [])[0]?.pr_url || '',
-          pr_urls: (state.sub_tasks || []).map((t) => t.pr_url).filter(Boolean),
-          sub_tasks: state.sub_tasks || [],
-          gan_rounds: state.ganResult?.rounds || 0,
-          gan_cost_usd: state.ganResult?.cost_usd || 0,
-        }),
-      ]
-    );
-  } catch (err) {
-    console.warn(`[harness-initiative.graph] reportNode spawn harness_report failed: ${err.message}`);
+  // Slice3（决策 B）：report 后移到 production promote 完成后。
+  // - PASS：**不在此派 report**——成功交付证书等 promote 完成后由 staging-e2e-runner（内部线 auto）
+  //   / routes/harness.js confirm（客户线）派；pending_promote 不出（靠 Slice2 通知+状态可见，不饿死）。
+  // - FAIL/SKIP（永不 promote）：在此派**失败/未上线报告**，避免失败静默消失（报告饿死）。
+  // 幂等：buildHarnessReportInsert 按 initiative_id NOT EXISTS 去重。生命周期闭合（phase=done/task status/
+  // 容器清理）仍在 merge 时完成（上方），只挪了 report 产物。
+  if (computedVerdict !== 'PASS') {
+    try {
+      const { spawnHarnessReport, REPORT_KIND } = await import('../staging-promote.js');
+      await spawnHarnessReport(
+        { dbQuery: (sql, p) => dbPool.query(sql, p) },
+        {
+          initiativeId: state.initiativeId,
+          title: state.task?.title || state.initiativeId,
+          reportKind: REPORT_KIND.FAILURE,
+          stagingE2eVerdict: computedVerdict,
+          promoteStatus: 'n_a',
+          sprintDir: state.sprintDir,
+          journeyId: state.task?.payload?.journey_id,
+          featureId: state.task?.payload?.feature_id,
+          featureName: state.task?.payload?.feature_name || state.task?.title || '',
+          prUrl: (state.sub_tasks || [])[0]?.pr_url || '',
+          prUrls: (state.sub_tasks || []).map((t) => t.pr_url).filter(Boolean),
+          subTasks: state.sub_tasks || [],
+          ganRounds: state.ganResult?.rounds || 0,
+          ganCostUsd: state.ganResult?.cost_usd || 0,
+        },
+      );
+    } catch (err) {
+      console.warn(`[harness-initiative.graph] reportNode spawn failure-report failed: ${err.message}`);
+    }
   }
 
   // 阶段2 Slice1 修正（决策 C）：staging_e2e 派生已挪到 mergePrNode（per-merge，spec §3
