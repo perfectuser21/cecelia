@@ -158,6 +158,7 @@ if [[ "$NEED_DASHBOARD" == true ]]; then
         echo "  [dry-run] 起常驻 staging :$STAGING_SLOT_PORT + 写 $PENDING_FILE（不自动 promote）"
     else
         rm -rf "$STAGING_DIST"
+        rm -f "$DASH_DIR/.staging-notify.log" 2>/dev/null || true
         if [[ -n "${STAGING_FIXTURE_DIST:-}" ]]; then
             # 测试钩子：跳过慢 vite build，直接把 fixture 当构建产物（smoke 用）
             echo "  [test] STAGING_FIXTURE_DIST → 复制 fixture 作为 staging 产物（跳过 npm build）"
@@ -244,8 +245,31 @@ if [[ "$NEED_DASHBOARD" == true ]]; then
         echo "   │  看：① 首页能开不白屏  ② /clips 深层路由通  ③ 你本次改的页面"
         echo "   ├─ 满意后放行 ─────────────────────────────────────────"
         echo "   │  bash $MAIN_SCRIPTS/promote-dashboard.sh"
-        echo "   │  → 原子换入 5211 + 同步 HK 生产"
+        echo "   │  → 原子换入本机 5211（Cecelia 单实例，不碰 HK）"
         echo "   └───────────────────────────────────────────────────────"
+
+        # ── 发 Bark 推送通知你去看 staging（iPhone 收到再放行）──────────────────
+        STAGE_COMMIT=$(git -C "$MAIN_ROOT" rev-parse --short HEAD 2>/dev/null || echo unknown)
+        NOTIFY_TITLE="Cecelia 部署待放行 🟡"
+        NOTIFY_BODY="dashboard 新版已停在 staging。电脑开 perfect21:${STAGING_SLOT_PORT} 看，满意跑 promote-dashboard.sh 放行。commit ${STAGE_COMMIT}"
+        if [[ -n "${CECELIA_DEPLOY_ROOT:-}" ]]; then
+            # 测试模式：写日志文件代替真推送（供 smoke 断言，不打扰真人）
+            printf '%s\n%s\n' "$NOTIFY_TITLE" "$NOTIFY_BODY" > "$DASH_DIR/.staging-notify.log"
+        else
+            [[ -f "$HOME/.credentials/bark.env" ]] && source "$HOME/.credentials/bark.env"
+            if [[ -n "${BARK_TOKEN:-}" ]]; then
+                BARK_BASE="${BARK_API_URL:-https://api.day.app/$BARK_TOKEN}"
+                T_ENC=$(printf '%s' "$NOTIFY_TITLE" | python3 -c 'import sys,urllib.parse;print(urllib.parse.quote(sys.stdin.read().strip()))' 2>/dev/null || echo "Cecelia")
+                B_ENC=$(printf '%s' "$NOTIFY_BODY"  | python3 -c 'import sys,urllib.parse;print(urllib.parse.quote(sys.stdin.read().strip()))' 2>/dev/null || echo "staging-ready")
+                if curl -s -o /dev/null --max-time 10 "${BARK_BASE%/}/${T_ENC}/${B_ENC}?group=Cecelia&level=timeSensitive"; then
+                    echo "📲 已发 Bark 推送到你 iPhone"
+                else
+                    echo "⚠️ Bark 推送失败（不影响 staging 已就绪，可直接开 perfect21:${STAGING_SLOT_PORT}）"
+                fi
+            else
+                echo "ℹ️ 未配 BARK_TOKEN（~/.credentials/bark.env），跳过 Bark 推送"
+            fi
+        fi
     fi
     echo ""
 fi
