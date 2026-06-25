@@ -73,7 +73,9 @@ export async function selectNextDispatchableTask(goalIds, excludeIds = [], optio
       AND t.status = 'queued'
       AND t.claimed_by IS NULL
       AND t.task_type NOT IN ('content-pipeline', 'content-export', 'content-research', 'content-copywriting', 'content-copy-review', 'content-generate', 'content-image-review',
-                               'harness_ci_watch', 'harness_deploy_watch')
+                               'harness_ci_watch', 'harness_deploy_watch',
+                               -- staging_e2e 由 staging-e2e-plugin tick 内联执行，不走外部 executor 派发
+                               'staging_e2e')
       ${excludeClause}
       AND (
         t.payload->>'next_run_at' IS NULL

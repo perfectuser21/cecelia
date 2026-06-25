@@ -31,6 +31,7 @@ const ALREADY_MERGED_RE = /already merged|not open|pull request.*closed/i;
 // Phase C7 清 shim 前不改。
 import { runGanContractGraph } from '../harness-gan-graph.js';
 import { killInitiativeContainers } from '../harness-container-cleanup.js';
+import { createStagingE2eTask } from '../harness-staging-e2e.js';
 
 const DEFAULT_TIMEOUT_SEC = 21600; // 6h，对齐 initiative_contracts.timeout_sec 默认
 const DEFAULT_BUDGET_USD = 10;
@@ -1335,6 +1336,24 @@ export async function runSubTaskNode(state, opts = {}) {
       + ` error=${final.error ? JSON.stringify(final.error) : '(none)'} pr_url=${final.pr_url || '(none)'}`
       + (isContractInvalid ? ' [合同质量缺陷·责任在 GAN proposer，需重发让 proposer 修合同]' : '')
     );
+  }
+  // 阶段2 Slice1：sub_task PR 合并后，创建独立的 staging_e2e Brain 任务
+  // （不是 graph 节点、不碰 interrupt；由 staging-e2e-plugin tick 内联执行）。
+  // 全程 guard：创建失败绝不影响主 graph；dedup 保证节点重放（checkpoint replay）幂等。
+  if (final.status === 'merged') {
+    try {
+      const r = await createStagingE2eTask(_runDbPool, {
+        initiativeId: state.initiativeId,
+        subTaskId: subTask.id,
+        prUrl: final.pr_url || null,
+        journeyId: state.task?.payload?.journey_id || null,
+      });
+      if (r.created) {
+        console.log(`[runSubTaskNode] 已派生 staging_e2e 任务 ${r.taskId} (sub_task=${subTask.id})`);
+      }
+    } catch (stagingErr) {
+      console.error(`[runSubTaskNode] 派生 staging_e2e 任务失败 sub_task=${subTask.id} (non-fatal): ${stagingErr.message}`);
+    }
   }
   return {
     sub_tasks: [{

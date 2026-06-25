@@ -96,6 +96,7 @@ import { triggerCodeQualityScan } from './task-generator-scheduler.js';
 import { zombieSweep } from './zombie-sweep.js';
 import * as pipelinePatrolPlugin from './pipeline-patrol-plugin.js';
 import * as pausedRequeuPlugin from './paused-requeuer-plugin.js';
+import * as stagingE2ePlugin from './staging-e2e-plugin.js';
 import * as pipelineWatchdogPlugin from './pipeline-watchdog-plugin.js';
 import * as krHealthDailyPlugin from './kr-health-daily-plugin.js';
 import * as cleanupWorkerPlugin from './cleanup-worker-plugin.js';
@@ -355,6 +356,12 @@ async function executeTick() {
   // [恢复] Paused 任务重排：每 5 分钟扫 paused>1h+retry<3 → requeue；retry>=3 → archived
   pausedRequeuPlugin.tick({ pool, tickState, tickLog }).catch(err => {
     console.error('[tick] Paused requeuer plugin failed (non-fatal):', err.message);
+  });
+
+  // [执行] Staging E2E（阶段2 Slice1）：每 30s claim 一个 queued staging_e2e 任务，
+  // 复用 staging-deploy.sh 部署 :5222 → 真 staging 跑 contract E2E → verdict 落库。
+  stagingE2ePlugin.tick({ pool, tickState, tickLog }).catch(err => {
+    console.error('[tick] staging-e2e plugin failed (non-fatal):', err.message);
   });
 
   // [Phase 2] Consciousness guard cache reload（每 2 分钟，容错 hook）

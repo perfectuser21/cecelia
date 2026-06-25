@@ -11,6 +11,7 @@
 
 import { DOMAIN_TO_ROLE, ROLES } from './role-registry.js';
 import { handleIntervention } from './harness-intervention-handler.js';
+import { handleStagingE2e } from './harness-staging-e2e.js';
 
 // Valid task types (for failure detection)
 const VALID_TASK_TYPES = [
@@ -56,6 +57,7 @@ const VALID_TASK_TYPES = [
   'harness_final_e2e',     // 阶段 C 最终 E2E 验收
   'harness_evaluate',    // Evaluator 对抗性功能验收（已在 SKILL_WHITELIST）
   'harness_intervention', // 人工干预任务类型（US 本机处理）
+  'staging_e2e',          // 阶段2 Slice1：merge 后 staging 部署 + 自动 E2E（Brain tick 内联）
 ];
 
 // 支持 P2P 异步回调的任务类型
@@ -132,6 +134,7 @@ const SKILL_WHITELIST = {
   'harness_evaluate': '/harness-evaluator',                   // FIX (P0) Layer 3e: Evaluator 对抗性功能验收（运行中应用 curl/Playwright）
   'harness_report': '/harness-report',                        // Layer 4: 最终报告
   'harness_intervention': '/_internal',                       // 人工干预任务类型（Brain 内部处理）
+  'staging_e2e': '/_internal',                                // 阶段2 Slice1：staging 部署 + E2E（staging-e2e-plugin tick 内联执行）
   // Scope 层飞轮（Project→Scope→Initiative）
   'scope_plan': '/decomp',        // Scope 内规划下一个 Initiative
   'project_plan': '/decomp',      // Project 内规划下一个 Scope
@@ -152,6 +155,9 @@ const SKILL_WHITELIST = {
 // WS5: harness_intervention → harness-intervention-handler（读 Docker logs + LLM 分析 → retry/skip/alert）
 const INTERNAL_TASK_HANDLERS = {
   'harness_intervention': handleIntervention,
+  // 阶段2 Slice1：staging_e2e 实际由 staging-e2e-plugin tick 内联 claim+执行，
+  // 这里登记 handler 仅为 '/_internal' 契约的可发现性（getInternalTaskHandler 可解析）。
+  'staging_e2e': handleStagingE2e,
 };
 
 /**
@@ -292,6 +298,7 @@ const LOCATION_MAP = {
   'harness_final_e2e': 'us',      // 阶段 C 最终 E2E（复用 evaluator skill）
   'harness_evaluate': 'us',      // Layer 3e: Evaluator 对抗性功能验收 → US
   'harness_intervention': 'us', // 人工干预任务类型 → US 本机处理
+  'staging_e2e': 'us',          // 阶段2 Slice1：staging 部署 + E2E → US 本机（需 docker + 仓库脚本）
 };
 
 // Default location
