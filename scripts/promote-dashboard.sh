@@ -40,7 +40,8 @@ SLOT_LOG_FILE="$DASH_DIR/.staging-slot.log"
 # ── 部署生命周期 阶段1（spec §1 共享契约）──────────────────────────────────────
 # promote 成功强制三件事一起做：打 tag + 存旧版（留 5 份，不删）+ 记指针。
 RELEASES_DIR="$DASH_DIR/.dist-releases"       # 旧 dist/ 留存区（产物，不进 git）
-RELEASE_FILE="$MAIN_ROOT/.production-release" # 指针 + 历史（git 跟踪）
+RELEASE_FILE="$MAIN_ROOT/.production-release" # 指针 + 历史 + manifest（git 跟踪）
+BRAIN_VERSIONS_FILE="$MAIN_ROOT/.brain-versions" # brain 镜像版本账本（brain-rollback.sh 的 SSOT）
 RETAIN_N=5                                     # 留存份数上限
 TAG_PREFIX="prod-cecelia-v"
 
@@ -154,19 +155,33 @@ if [[ -z "${CECELIA_SKIP_GIT_TAG:-}" ]]; then
         && echo "🏷️  已打 git tag $RELEASE_TAG → ${PROMOTE_COMMIT:0:8}" \
         || echo "⚠️  git tag $RELEASE_TAG 失败（非 git 环境？继续，指针仍写）"
 fi
-# 指针：current 覆盖、history 追加（不覆盖）。
+# 清单法（manifest）：统一 release tag 是面向人的清单，不重造 brain 回档原语。
+# 记一条 manifest 行，登记本版构成的各产物版本 —— 当时 .brain-versions head（promote
+# 时 brain 那一版的镜像已构建进账本，取 head 即可）+ dashboard release tag。
+# rollback 时据此把 brain 子步委托给现有 brain-rollback.sh（见 rollback-cecelia.sh）。
+BRAIN_IMAGE=""
+if [[ -f "$BRAIN_VERSIONS_FILE" ]]; then
+    BRAIN_IMAGE=$(grep -E '.' "$BRAIN_VERSIONS_FILE" | tail -1 | tr -d '[:space:]')
+fi
+
+# 指针：current/commit/promoted_at 覆盖；history + manifest 追加（不覆盖）。
 {
     if [[ -f "$RELEASE_FILE" ]]; then grep '^history=' "$RELEASE_FILE" || true; fi
     echo "history=${RELEASE_TAG} $(date -u +%Y-%m-%dT%H:%M:%SZ) promote commit=${PROMOTE_COMMIT:0:8}"
 } > "${RELEASE_FILE}.hist.tmp"
 {
+    if [[ -f "$RELEASE_FILE" ]]; then grep '^manifest=' "$RELEASE_FILE" || true; fi
+    echo "manifest=${RELEASE_TAG} brain_image=${BRAIN_IMAGE} dashboard_release=${RELEASE_TAG} commit=${PROMOTE_COMMIT:0:8}"
+} > "${RELEASE_FILE}.mani.tmp"
+{
     echo "current=$RELEASE_TAG"
     echo "commit=$PROMOTE_COMMIT"
     echo "promoted_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    cat "${RELEASE_FILE}.mani.tmp"
     cat "${RELEASE_FILE}.hist.tmp"
 } > "$RELEASE_FILE"
-rm -f "${RELEASE_FILE}.hist.tmp"
-echo "📌 指针已更新：.production-release current=$RELEASE_TAG"
+rm -f "${RELEASE_FILE}.hist.tmp" "${RELEASE_FILE}.mani.tmp"
+echo "📌 指针已更新：.production-release current=${RELEASE_TAG}（brain_image=${BRAIN_IMAGE:-none}）"
 
 # ── 4) brain 也到该版（git checkout tag + 重启容器）；测试钩子可跳过 ────────────
 if [[ -z "${CECELIA_SKIP_BRAIN_PROMOTE:-}" ]]; then
