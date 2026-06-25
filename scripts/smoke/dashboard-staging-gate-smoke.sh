@@ -124,15 +124,18 @@ if [[ -n "$HOSTIP" ]]; then
 else
   echo "  [-] 取不到本机非回环 IP，跳过外部可达检查"
 fi
-# 横幅运行时注入（一眼知道是 staging + 放行按钮）
-if grep -q "__staging_banner__" "$TMP/staging-index.html" 2>/dev/null && grep -q "__staging__/promote" "$TMP/staging-index.html" 2>/dev/null; then
-  pass "staging 页面已注入横幅 + 放行按钮"
+# staging 标识运行时注入（右上角斜角 STAGING 小旗，一眼知道是 staging）
+if grep -q "__staging_banner__" "$TMP/staging-index.html" 2>/dev/null && grep -q "STAGING" "$TMP/staging-index.html" 2>/dev/null; then
+  pass "staging 页面已注入 STAGING 角旗标识"
 else
-  fail "staging 页面缺横幅/放行按钮（STAGING_BANNER 注入未生效）"
+  fail "staging 页面缺 STAGING 标识（STAGING_BANNER 注入未生效）"
 fi
-# 横幅只运行时注入、不写进 dist 文件（promote 后生产干净，不带横幅）
+# 角旗必须不挡点击（pointer-events:none，纯视觉标识）
+grep -q "pointer-events:none" "$TMP/staging-index.html" 2>/dev/null \
+  && pass "角旗 pointer-events:none（不挡 dashboard 点击）" || fail "角旗可能挡点击（缺 pointer-events:none）"
+# 标识只运行时注入、不写进 dist 文件（promote 后生产干净，不带标识）
 grep -q "__staging_banner__" "$STAGING_DIST/index.html" 2>/dev/null \
-  && fail "横幅写进了 .dist-staging 文件（会漏到生产）" || pass "横幅不在 dist 文件里（生产不会带横幅）"
+  && fail "标识写进了 .dist-staging 文件（会漏到生产）" || pass "标识不在 dist 文件里（生产不会带标识）"
 echo ""
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -148,23 +151,7 @@ grep -qE "HK VPS|tar -czf.*ssh|100\.86\.118" "$TMP/b.log" 2>/dev/null \
   && fail "promote 仍尝试同步 HK（应已移除，只换本机 5211）" || pass "promote 不再碰 HK（只换本机 5211）"
 echo ""
 
-# ════════════════════════════════════════════════════════════════════════════
-echo "[B2] 放行按钮 endpoint：页面点一下 → POST /__staging__/promote 触发 promote"
-seed_old_live; rm -f "$PENDING" "$NOTIFY"; rm -rf "$STAGING_DIST"
-[[ -f "$PID_FILE" ]] && kill "$(cat "$PID_FILE" 2>/dev/null)" 2>/dev/null || true
-EP_PORT=$((PORT + 2))
-CECELIA_DEPLOY_ROOT="$ROOT_DIR" STAGING_FIXTURE_DIST="$FIXTURE_NEW" DASHBOARD_STAGING_PORT="$EP_PORT" \
-  bash "$DEPLOY" --changed="apps/dashboard/src/App.tsx" > "$TMP/b2deploy.log" 2>&1
-EP_CODE=$(curl -s -o "$TMP/ep.json" -w "%{http_code}" -X POST "http://localhost:$EP_PORT/__staging__/promote" --max-time 8 2>/dev/null || echo 000)
-[[ "$EP_CODE" == "200" ]] && pass "放行 endpoint POST → 200" || fail "放行 endpoint HTTP $EP_CODE（按钮放行不通）"
-# promote 是 detached 异步，轮询等它完成（pending 消失）
-for _ in $(seq 1 15); do [[ ! -f "$PENDING" ]] && break; sleep 1; done
-grep -q "NEW_VERSION_SENTINEL" "$LIVE_DIST/index.html" 2>/dev/null \
-  && pass "点放行后 live dist/ 已换新版（5211 生效）" || fail "点放行后 live dist/ 未更新"
-[[ ! -f "$PENDING" ]] && pass "点放行后 .staging-pending 已清" || fail "点放行后 pending 未清"
-grep -q "__staging_banner__" "$LIVE_DIST/index.html" 2>/dev/null \
-  && fail "live dist/ 含横幅（漏到生产）" || pass "live dist/ 无横幅（生产干净）"
-echo ""
+# 放行走命令行 promote-dashboard.sh（页面零交互，已在 [B] 覆盖），无页面 endpoint。
 
 # ════════════════════════════════════════════════════════════════════════════
 echo "[C] proven-to-fire：自检红 → 生产纹丝不动 + 报红"
