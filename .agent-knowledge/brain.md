@@ -27,6 +27,21 @@
 
 ---
 
+## Harness → Staging → Production（阶段2，2026-06-25）
+
+把 harness「merge=终点」延长到 production：merge → staging E2E → 放行 → production。
+
+| 件 | 文件 | 职责 |
+|----|------|------|
+| Staging E2E Runner | `staging-e2e-runner.js` | Slice1：staging_e2e 任务 native 执行器，部署 :5222 + 真实例跑 contract E2E + verdict 落 `staging_e2e_results`（**不碰 langgraph interrupt**） |
+| Promote 放行 | `staging-promote.js` | Slice2：PASS 后判线分流（`resolveLine`/`decidePromote`/`runInternalPromote`） |
+
+- 触发：`harness-task.graph.js` `mergePrNode` merge 成功后 best-effort 建 `task_type='staging_e2e'`（per-merge，两条 merged 分支，pr_url 幂等）；payload 带 `base_repo`。
+- Slice2 放行（PASS 后，`runStagingE2E` finalize 内 `handlePromote`）：内部线(cecelia) 自动 promote（in-repo `promote-dashboard.sh`，**必须注入 promoteExec，fail-safe 不误打 :5211 live**）→ auto_promoted；客户线(zenithjoy)/base_repo缺失 → `pending_promote` + 飞书通知 + 回流接口 `POST /api/brain/harness/promote/:resultId`（幂等状态机，仅 pending 可放行否则 409）。跨 repo 边界：Cecelia 不打 zenithjoy 真生产。
+- DB：`staging_e2e_results` 表（migration 304）+ pr_url UNIQUE（305）+ promote_status（306）。
+
+---
+
 ## 自驱系统（2026-03 新增）
 
 Cecelia 的"自我感知 → 自我行动"闭环，由四个模块协作：

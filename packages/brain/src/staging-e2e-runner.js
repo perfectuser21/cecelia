@@ -20,6 +20,8 @@ import { execSync } from 'child_process';
 import pool from './db.js';
 import { updateTaskStatus } from './task-updater.js';
 import { normalizeAcceptance } from './harness-final-e2e.js';
+import { decidePromote, runInternalPromote, defaultPromoteExec, getRepoRoot, PROMOTE_STATUS } from './staging-promote.js';
+import { sendFeishu } from './notifier.js';
 
 export const STAGING_PORT = 5222;
 const DEFAULT_DEPLOY_SCRIPT = 'scripts/staging-deploy.sh';
@@ -164,6 +166,62 @@ async function writeTaskResult(dbPool, taskId, resultObj) {
   );
 }
 
+/** Slice2：按 pr_url 更新 promote_status（+ output / promoted_at）。 */
+async function updatePromoteStatus(dbPool, prUrl, status, output = null) {
+  if (!prUrl) return;
+  const promotedAt = (status === PROMOTE_STATUS.PROMOTED || status === PROMOTE_STATUS.AUTO_PROMOTED)
+    ? new Date() : null;
+  await dbPool.query(
+    `UPDATE staging_e2e_results
+       SET promote_status = $2, promote_output = COALESCE($3, promote_output),
+           promoted_at = COALESCE($4, promoted_at)
+     WHERE pr_url = $1`,
+    [prUrl, status, output ? String(output).slice(0, 4000) : null, promotedAt]
+  );
+}
+
+/**
+ * Slice2：staging E2E PASS 后放行分流（决策 C）。
+ * 内部线 → 自动 promote（注入 promoteExec，绝不在测试里打真生产）；
+ * 客户线/unknown → pending_promote + 飞书通知（挂 DB 状态行，不碰 interrupt）。
+ * best-effort：任何失败只告警，不影响 verdict 已落库。
+ * @returns {string} 最终 promote_status
+ */
+async function handlePromote(dbPool, { verdict, baseRepo, prUrl, initiativeId }, opts = {}) {
+  const decision = decidePromote({ verdict, baseRepo });
+  const notify = opts.notify || sendFeishu;
+  try {
+    if (decision.action === 'none') {
+      await updatePromoteStatus(dbPool, prUrl, PROMOTE_STATUS.NA);
+      return PROMOTE_STATUS.NA;
+    }
+    if (decision.action === 'auto') {
+      // 内部线自动 promote。生产注入 defaultPromoteExec；测试注入 mock。
+      const promoteExec = opts.promoteExec || defaultPromoteExec(getRepoRoot());
+      const r = await runInternalPromote({ promoteExec });
+      // 自动 promote 成功用 auto_promoted（区分客户线 confirm 后的 promoted）；失败 promote_failed。
+      const status = r.ok ? PROMOTE_STATUS.AUTO_PROMOTED : PROMOTE_STATUS.PROMOTE_FAILED;
+      await updatePromoteStatus(dbPool, prUrl, status, r.output);
+      return status;
+    }
+    // pending：客户线 / base_repo 缺失 → 挂起 + 通知主理人
+    await updatePromoteStatus(dbPool, prUrl, PROMOTE_STATUS.PENDING_PROMOTE);
+    try {
+      await notify(
+        `⏳ [Pending Promote] staging E2E PASS，等主理人放行上生产\n`
+        + `initiative: ${initiativeId || '?'}\nPR: ${prUrl || '?'}\nbase_repo: ${baseRepo || '(缺失,保守挂起)'}\n`
+        + `confirm: POST /api/brain/harness/promote/<resultId>`
+      );
+    } catch (e) {
+      console.warn(`[staging-e2e] pending_promote 通知失败（忽略）: ${e.message}`);
+    }
+    return PROMOTE_STATUS.PENDING_PROMOTE;
+  } catch (err) {
+    console.warn(`[staging-e2e] handlePromote 失败（best-effort，verdict 已落库）: ${err.message}`);
+    return decision.promoteStatus;
+  }
+}
+
 /**
  * staging_e2e 任务 native 执行器。executor.triggerCeceliaRun 直接调用。
  *
@@ -180,6 +238,7 @@ export async function runStagingE2E(task, opts = {}) {
   const p = task.payload || {};
   const initiativeId = p.initiative_id || p.initiativeId || null;
   const prUrl = p.pr_url || (Array.isArray(p.pr_urls) ? p.pr_urls[0] : null) || null;
+  const baseRepo = p.base_repo || p.baseRepo || '';
 
   const base = {
     taskId: task.id, initiativeId, prUrl, port: STAGING_PORT,
@@ -190,14 +249,21 @@ export async function runStagingE2E(task, opts = {}) {
   // 终局：落库 + 写回 tasks.result + 标 completed
   const finalize = async (verdict, reason, extra = {}) => {
     await recordResult(dbPool, { ...base, ...extra, verdict, reason });
+    // Slice2：PASS 后放行分流（内部线 auto-promote / 客户线 pending+通知 / base_repo 缺失保守 pending）。
+    // best-effort，不影响 verdict 已落库。
+    const promoteStatus = await handlePromote(
+      dbPool, { verdict, baseRepo, prUrl, initiativeId },
+      { promoteExec: opts.promoteExec, notify: opts.notify },
+    );
     await writeTaskResult(dbPool, task.id, {
       verdict, reason,
       scenarios_total: extra.scenariosTotal ?? base.scenariosTotal,
       scenarios_passed: extra.scenariosPassed ?? base.scenariosPassed,
       pr_url: prUrl, initiative_id: initiativeId,
+      promote_status: promoteStatus,
     });
     await updateTaskStatus(task.id, 'completed');
-    return { success: true, taskId: task.id, verdict, reason };
+    return { success: true, taskId: task.id, verdict, reason, promoteStatus };
   };
 
   try {
