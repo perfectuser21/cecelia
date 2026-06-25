@@ -66,6 +66,8 @@ sprint-prd.md
 # Build artifacts
 frontend/dist/
 apps/dashboard/dist/
+# 部署回档留存区（旧 dist/ 产物，不进 git）
+apps/dashboard/.dist-releases/
 
 # Coverage reports
 packages/brain/coverage/
@@ -98,3 +100,16 @@ packages/quality/.test-phase1/
 # Ralph Loop 模式 dev session 状态（项目根，永远不进 git）
 .cecelia/dev-active-*.json
 node_modules
+
+# 轻量 staging 部署前自检的临时构建目录（promote 前自检用，promote 后即换入 dist/）
+apps/dashboard/.dist-staging/
+apps/dashboard/dist.old/
+# 人工放行闸运行时文件：待放行标记 + 常驻 staging 服务 PID/日志
+apps/dashboard/.staging-pending
+apps/dashboard/.staging-slot.pid
+apps/dashboard/.staging-slot.log
+apps/dashboard/.staging-notify.log
+# dev 即时预览（perfect21:5225 蓝 DEV 旗）运行时文件
+apps/dashboard/.dist-dev/
+apps/dashboard/.dev-preview.pid
+apps/dashboard/.dev-preview.log
