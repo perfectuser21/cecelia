@@ -107,3 +107,7 @@ apps/dashboard/.staging-pending
 apps/dashboard/.staging-slot.pid
 apps/dashboard/.staging-slot.log
 apps/dashboard/.staging-notify.log
+# dev 即时预览（perfect21:5225 蓝 DEV 旗）运行时文件
+apps/dashboard/.dist-dev/
+apps/dashboard/.dev-preview.pid
+apps/dashboard/.dev-preview.log
