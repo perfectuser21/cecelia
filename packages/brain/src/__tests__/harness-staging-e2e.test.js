@@ -3,11 +3,12 @@
  *
  * 覆盖：
  *   - runStagingDeploy 解析 success / skip / failed 三种信号
- *   - createStagingE2eTask 防重 + 正常 INSERT
+ *   - createStagingE2eTask 防重（by initiative_id）+ 正常 INSERT
  *   - loadContractAcceptance 取 e2e_acceptance
- *   - persistStagingE2eResult 落库
- *   - handleStagingE2e 全分支 verdict（SKIP-no_contract / SKIP-deploy / FAIL-deploy / PASS / FAIL-e2e / ERROR）
- *   - task-router 对 staging_e2e 的注册（VALID/SKILL/LOCATION/INTERNAL_TASK_HANDLERS）
+ *   - persistStagingE2eResult 落库（对齐 migration 304 schema）
+ *   - handleStagingE2e 全分支 verdict（FAIL-no_init / SKIP-no_contract / SKIP-deploy /
+ *     FAIL-deploy / PASS / FAIL-scenarios / FAIL-exception）
+ *   - task-router 对 staging_e2e 的注册
  */
 import { describe, it, expect, vi } from 'vitest';
 import {
@@ -85,13 +86,12 @@ describe('createStagingE2eTask', () => {
     expect(pool.query).not.toHaveBeenCalled();
   });
 
-  it('已有未结束任务 → dedup 跳过，不 INSERT', async () => {
+  it('同 initiative 已有未结束任务 → dedup 跳过，不 INSERT', async () => {
     const pool = makePool([{ rows: [{ id: 'existing-1' }] }]);
-    const r = await createStagingE2eTask(pool, { initiativeId: 'init-1', subTaskId: 'ws1' });
+    const r = await createStagingE2eTask(pool, { initiativeId: 'init-1' });
     expect(r.created).toBe(false);
     expect(r.reason).toContain('existing-1');
-    // 只查了 dedup，没 INSERT
-    expect(pool.query).toHaveBeenCalledTimes(1);
+    expect(pool.query).toHaveBeenCalledTimes(1); // 只查 dedup
   });
 
   it('无重复 → INSERT 并返回 taskId', async () => {
@@ -100,16 +100,14 @@ describe('createStagingE2eTask', () => {
       { rows: [{ id: 'new-task-1' }] },   // INSERT RETURNING
     ]);
     const r = await createStagingE2eTask(pool, {
-      initiativeId: 'init-1', subTaskId: 'ws1', prUrl: 'https://x/pr/1',
+      initiativeId: 'init-1', prUrl: 'https://x/pr/1',
     });
     expect(r.created).toBe(true);
     expect(r.taskId).toBe('new-task-1');
     const insert = pool.calls[1];
     expect(insert.sql).toMatch(/INSERT INTO tasks/);
-    expect(insert.params[0]).toContain('init-1');
     const payload = JSON.parse(insert.params[2]);
     expect(payload.initiative_id).toBe('init-1');
-    expect(payload.sub_task_id).toBe('ws1');
     expect(payload.pr_url).toBe('https://x/pr/1');
   });
 });
@@ -126,31 +124,34 @@ describe('loadContractAcceptance', () => {
 });
 
 describe('persistStagingE2eResult', () => {
-  it('INSERT 进 staging_e2e_results，序列化 scenarios，返回 id', async () => {
+  it('INSERT 进 staging_e2e_results，列对齐 migration 304，返回 id', async () => {
     const pool = makePool([{ rows: [{ id: 'res-1' }] }]);
     const id = await persistStagingE2eResult(pool, {
-      initiativeId: 'init-1', subTaskId: 'ws1', taskId: 'task-1',
-      verdict: 'PASS', deployStatus: 'success',
-      passedScenarios: [{ name: 's1' }], failedScenarios: [],
+      taskId: 'task-1', initiativeId: 'init-1', prUrl: 'pr',
+      verdict: 'PASS', reason: null,
+      scenariosTotal: 2, scenariosPassed: 2,
+      failedScenarios: [], deployOutput: 'log',
     });
     expect(id).toBe('res-1');
     const c = pool.calls[0];
     expect(c.sql).toMatch(/INSERT INTO staging_e2e_results/);
-    expect(c.params[3]).toBe('PASS');           // verdict
-    expect(c.params[6]).toBe(5222);             // staging_port
-    expect(c.params[9]).toBe(JSON.stringify([{ name: 's1' }])); // passed_scenarios
+    expect(c.params[0]).toBe('task-1');        // task_id
+    expect(c.params[3]).toBe('PASS');          // verdict
+    expect(c.params[5]).toBe(5222);            // staging_port
+    expect(c.params[6]).toBe(2);               // scenarios_total
+    expect(c.params[8]).toBe(JSON.stringify([])); // failed_scenarios
   });
 });
 
 describe('handleStagingE2e — verdict 分支', () => {
   const acc = { scenarios: [{ name: 's', covered_tasks: ['t'], commands: [{ cmd: 'echo ok' }] }] };
-  const task = { id: 'task-1', payload: { initiative_id: 'init-1', sub_task_id: 'ws1', pr_url: 'pr' } };
+  const task = { id: 'task-1', payload: { initiative_id: 'init-1', pr_url: 'pr' } };
 
-  it('缺 initiative_id → ERROR', async () => {
+  it('缺 initiative_id → FAIL(no_initiative_id)', async () => {
     const persist = vi.fn(async () => 'res');
     const r = await handleStagingE2e({ id: 'x', payload: {} }, { pool: {}, persist });
-    expect(r.verdict).toBe('ERROR');
-    expect(persist.mock.calls[0][1].skipReason).toBe('no_initiative_id');
+    expect(r.verdict).toBe('FAIL');
+    expect(r.reason).toBe('no_initiative_id');
   });
 
   it('无合同 → SKIP(no_contract)，不部署', async () => {
@@ -159,18 +160,18 @@ describe('handleStagingE2e — verdict 分支', () => {
     const persist = vi.fn(async () => 'res');
     const r = await handleStagingE2e(task, { pool: {}, loadContract, runDeploy, persist });
     expect(r.verdict).toBe('SKIP');
-    expect(r.skipReason).toBe('no_contract');
+    expect(r.reason).toBe('no_contract');
     expect(runDeploy).not.toHaveBeenCalled();
   });
 
-  it('部署被优雅降级跳过 → SKIP(deploy skipReason)，不跑 E2E', async () => {
+  it('部署被优雅降级跳过 → SKIP(skipReason)，不跑 E2E', async () => {
     const loadContract = vi.fn(async () => acc);
     const runDeploy = vi.fn(async () => ({ status: 'skipped', skipReason: 'no_docker', output: 'x' }));
     const runE2E = vi.fn();
     const persist = vi.fn(async () => 'res');
     const r = await handleStagingE2e(task, { pool: {}, loadContract, runDeploy, runE2E, persist });
     expect(r.verdict).toBe('SKIP');
-    expect(r.skipReason).toBe('no_docker');
+    expect(r.reason).toBe('no_docker');
     expect(runE2E).not.toHaveBeenCalled();
   });
 
@@ -181,27 +182,28 @@ describe('handleStagingE2e — verdict 分支', () => {
     const persist = vi.fn(async () => 'res');
     const r = await handleStagingE2e(task, { pool: {}, loadContract, runDeploy, runE2E, persist });
     expect(r.verdict).toBe('FAIL');
-    expect(r.skipReason).toBe('deploy_failed');
+    expect(r.reason).toBe('deploy_failed');
     expect(runE2E).not.toHaveBeenCalled();
     expect(persist.mock.calls[0][1].failedScenarios[0].name).toMatch(/deploy/i);
   });
 
-  it('部署成功 + E2E PASS → PASS，E2E 用 skipBootstrap', async () => {
+  it('部署成功 + E2E PASS → PASS，E2E 用 skipBootstrap + 写 scenarios 计数', async () => {
     const loadContract = vi.fn(async () => acc);
     const runDeploy = vi.fn(async () => ({ status: 'success', output: 'ok' }));
     const runE2E = vi.fn(async () => ({ verdict: 'PASS', failedScenarios: [], passedScenarios: [{ name: 's' }] }));
     const persist = vi.fn(async () => 'res-pass');
     const r = await handleStagingE2e(task, { pool: {}, loadContract, runDeploy, runE2E, persist });
     expect(r.verdict).toBe('PASS');
-    expect(r.deployStatus).toBe('success');
+    expect(r.reason).toBeNull();
     expect(r.resultId).toBe('res-pass');
-    // 第三参 opts.skipBootstrap=true（部署已就绪）
     expect(runE2E.mock.calls[0][2]).toMatchObject({ skipBootstrap: true });
-    // 合同包进第二参
     expect(runE2E.mock.calls[0][1]).toMatchObject({ e2e_acceptance: acc });
+    const persisted = persist.mock.calls[0][1];
+    expect(persisted.scenariosTotal).toBe(1);
+    expect(persisted.scenariosPassed).toBe(1);
   });
 
-  it('部署成功 + E2E FAIL → FAIL，透传 failedScenarios', async () => {
+  it('部署成功 + E2E FAIL → FAIL(scenarios_failed)，透传 failedScenarios', async () => {
     const loadContract = vi.fn(async () => acc);
     const runDeploy = vi.fn(async () => ({ status: 'success', output: 'ok' }));
     const failed = [{ name: 's', exitCode: 1, output: 'x' }];
@@ -209,16 +211,27 @@ describe('handleStagingE2e — verdict 分支', () => {
     const persist = vi.fn(async () => 'res');
     const r = await handleStagingE2e(task, { pool: {}, loadContract, runDeploy, runE2E, persist });
     expect(r.verdict).toBe('FAIL');
+    expect(r.reason).toBe('scenarios_failed');
     expect(persist.mock.calls[0][1].failedScenarios).toEqual(failed);
   });
 
-  it('内部异常 → ERROR（兜底，不抛）', async () => {
+  it('内部异常 → FAIL(exception)（兜底，不抛）', async () => {
     const loadContract = vi.fn(async () => { throw new Error('db down'); });
     const persist = vi.fn(async () => 'res-err');
     const r = await handleStagingE2e(task, { pool: {}, loadContract, persist });
-    expect(r.verdict).toBe('ERROR');
-    expect(r.skipReason).toBe('exception');
-    expect(persist.mock.calls[0][1].verdict).toBe('ERROR');
+    expect(r.verdict).toBe('FAIL');
+    expect(r.reason).toBe('exception');
+    expect(persist.mock.calls[0][1].verdict).toBe('FAIL');
+  });
+
+  it('合同非法（无 scenarios）→ FAIL(exception)，不部署', async () => {
+    const loadContract = vi.fn(async () => ({}));   // normalizeAcceptance 抛错
+    const runDeploy = vi.fn();
+    const persist = vi.fn(async () => 'res');
+    const r = await handleStagingE2e(task, { pool: {}, loadContract, runDeploy, persist });
+    expect(r.verdict).toBe('FAIL');
+    expect(r.reason).toBe('exception');
+    expect(runDeploy).not.toHaveBeenCalled();
   });
 });
 

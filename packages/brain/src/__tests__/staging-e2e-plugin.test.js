@@ -49,7 +49,7 @@ describe('tick — claim 与执行', () => {
       { rows: [] },         // UPDATE completed
     ]);
     const tickState = { lastStagingE2eTime: 0 };
-    const handler = vi.fn(async () => ({ verdict: 'PASS', deployStatus: 'success', skipReason: null, resultId: 'res-1' }));
+    const handler = vi.fn(async () => ({ verdict: 'PASS', reason: null, resultId: 'res-1' }));
     const r = await tick({ pool, tickState, intervalMs: 0, handler });
 
     expect(handler).toHaveBeenCalledWith(claimed, { pool });
@@ -71,9 +71,10 @@ describe('tick — claim 与执行', () => {
     const tickState = { lastStagingE2eTime: 0 };
     const handler = vi.fn(async () => { throw new Error('kaboom'); });
     const r = await tick({ pool, tickState, intervalMs: 0, handler });
-    expect(r.verdict).toBe('ERROR');
+    expect(r.verdict).toBe('FAIL');
     const result = JSON.parse(pool.calls[1].params[1]);
-    expect(result.verdict).toBe('ERROR');
+    expect(result.verdict).toBe('FAIL');
+    expect(result.reason).toBe('handler_throw');
   });
 
   it('DB 异常 → 返回 error，不抛', async () => {

@@ -1337,24 +1337,6 @@ export async function runSubTaskNode(state, opts = {}) {
       + (isContractInvalid ? ' [合同质量缺陷·责任在 GAN proposer，需重发让 proposer 修合同]' : '')
     );
   }
-  // 阶段2 Slice1：sub_task PR 合并后，创建独立的 staging_e2e Brain 任务
-  // （不是 graph 节点、不碰 interrupt；由 staging-e2e-plugin tick 内联执行）。
-  // 全程 guard：创建失败绝不影响主 graph；dedup 保证节点重放（checkpoint replay）幂等。
-  if (final.status === 'merged') {
-    try {
-      const r = await createStagingE2eTask(_runDbPool, {
-        initiativeId: state.initiativeId,
-        subTaskId: subTask.id,
-        prUrl: final.pr_url || null,
-        journeyId: state.task?.payload?.journey_id || null,
-      });
-      if (r.created) {
-        console.log(`[runSubTaskNode] 已派生 staging_e2e 任务 ${r.taskId} (sub_task=${subTask.id})`);
-      }
-    } catch (stagingErr) {
-      console.error(`[runSubTaskNode] 派生 staging_e2e 任务失败 sub_task=${subTask.id} (non-fatal): ${stagingErr.message}`);
-    }
-  }
   return {
     sub_tasks: [{
       id: subTask.id,
@@ -1475,6 +1457,27 @@ export async function reportNode(state, opts = {}) {
   const computedVerdict = state.final_e2e_verdict ||
     ((reconciledSubTasks.length > 0 && reconciledSubTasks.every(s => s.status === 'merged'))
       ? 'PASS' : 'FAIL');
+
+  // 阶段2 Slice1：sub_task 合并后派生独立的 staging_e2e Brain 任务
+  // （不是 graph 节点、不碰 interrupt；由 staging-e2e-plugin tick 内联执行）。
+  // 触发条件：本 initiative 至少有一个 sub_task 真的 merged（contract E2E 是 initiative
+  // 级，故每个 initiative 只派生一个 staging_e2e，dedup by initiative_id 保证幂等）。
+  // 全程 guard：创建失败绝不影响 reportNode 主流程。
+  if (reconciledSubTasks.some(s => s && s.status === 'merged')) {
+    try {
+      const mergedPr = reconciledSubTasks.find(s => s && s.status === 'merged' && s.pr_url)?.pr_url || null;
+      const r = await createStagingE2eTask(dbPool, {
+        initiativeId: state.initiativeId,
+        prUrl: mergedPr,
+        journeyId: state.task?.payload?.journey_id || null,
+      });
+      if (r.created) {
+        console.log(`[reportNode] 已派生 staging_e2e 任务 ${r.taskId} (initiative=${state.initiativeId})`);
+      }
+    } catch (stagingErr) {
+      console.error(`[reportNode] 派生 staging_e2e 任务失败 initiative=${state.initiativeId} (non-fatal): ${stagingErr.message}`);
+    }
+  }
 
   // 闭环边界：产出 Sprint 产物契约（SSOT）。现可填字段填，Phase2 采集字段留 stub。
   const contract = buildSprintResultContract({

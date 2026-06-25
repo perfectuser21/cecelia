@@ -2,24 +2,27 @@
  * harness-staging-e2e.js — 阶段2 Slice1：merge 后 staging 部署 + 自动 E2E（verdict 落库）
  *
  * 闭环边界：
- *   harness sub_task PR 合并（runSubTaskNode 内 final.status==='merged'）
+ *   harness sub_task PR 合并（reportNode 检测到至少一个 sub_task merged）
  *     → createStagingE2eTask() 在 tasks 表创建一个 task_type=staging_e2e 任务
  *       （独立于 langgraph：不是 graph 节点、不碰 interrupt/checkpoint）
  *     → staging-e2e-plugin tick 内联 claim 该任务 → handleStagingE2e()：
  *         1. 复用 scripts/staging-deploy.sh 把 Brain 部署到 :5222
  *         2. 在真 staging 实例跑 contract（initiative_contracts.e2e_acceptance）E2E
- *         3. verdict（PASS/FAIL/SKIP/ERROR）落 staging_e2e_results 表
+ *         3. verdict（PASS/FAIL/SKIP）落 staging_e2e_results 表（migration 304 建表）
  *
  * 本 Slice 不碰人工放行 / promote / report（Slice2/3）。
  *
- * 关键约束：
- *   - 全程 try-catch，任何异常都降级为 ERROR verdict + 落库，绝不向上抛错让 tick 崩溃。
- *   - staging-deploy.sh 优雅降级（no_docker / no_env）→ verdict=SKIP，不当失败处理。
+ * verdict 语义（与 staging_e2e_results CHECK 一致，只有 PASS/FAIL/SKIP）：
+ *   - SKIP ：staging 部署被优雅降级跳过（no_docker/no_env）或无合同（no_contract）
+ *   - FAIL ：部署失败（deploy_failed）/ contract E2E 有场景失败（scenarios_failed）/ 处理异常（exception）
+ *   - PASS ：staging 部署成功 + 所有 scenario 通过
+ *
+ * 关键约束：全程 try-catch，任何异常都降级为 FAIL(exception) + 落库，绝不向上抛错让 tick 崩溃。
  */
 import { execFile as execFileCb } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { runFinalE2E } from './harness-final-e2e.js';
+import { runFinalE2E, normalizeAcceptance } from './harness-final-e2e.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 // packages/brain/src → 仓库根
@@ -91,42 +94,40 @@ export async function loadContractAcceptance(pool, initiativeId) {
 /**
  * 在 tasks 表创建一个 staging_e2e 任务（带防重）。
  *
- * 防重键：同一 (initiative_id, sub_task_id) 已有未结束（queued/in_progress/pending）的
- * staging_e2e 任务则跳过 —— 保证 langgraph 节点重放（checkpoint replay）幂等。
+ * 防重键：同一 initiative_id 已有未结束（queued/in_progress/pending）的 staging_e2e 任务
+ * 则跳过 —— contract E2E 是 initiative 级，每个 initiative 只需一个 staging_e2e；
+ * 也保证 reportNode 重入（节点重放）幂等。
  *
  * @param {object} pool - pg pool
  * @param {object} info
  * @param {string} info.initiativeId
- * @param {string} [info.subTaskId]
  * @param {string} [info.prUrl]
  * @param {string} [info.journeyId]
  * @returns {Promise<{created:boolean, taskId?:string, reason?:string}>}
  */
 export async function createStagingE2eTask(pool, info = {}) {
-  const { initiativeId, subTaskId = null, prUrl = null, journeyId = null } = info;
+  const { initiativeId, prUrl = null, journeyId = null } = info;
   if (!initiativeId) {
     return { created: false, reason: 'initiativeId required' };
   }
 
-  // 防重：同 initiative + sub_task 已有未结束 staging_e2e 任务则跳过
+  // 防重：同 initiative 已有未结束 staging_e2e 任务则跳过
   const dedup = await pool.query(
     `SELECT id FROM tasks
       WHERE task_type = 'staging_e2e'
         AND payload->>'initiative_id' = $1
-        AND COALESCE(payload->>'sub_task_id', '') = COALESCE($2, '')
         AND status IN ('queued', 'in_progress', 'pending')
       LIMIT 1`,
-    [initiativeId, subTaskId]
+    [initiativeId]
   );
   if (dedup.rows.length > 0) {
     return { created: false, reason: `dedup: 已有任务 ${dedup.rows[0].id}` };
   }
 
-  const title = `[Staging E2E] ${initiativeId}${subTaskId ? ` · ${subTaskId}` : ''}`;
+  const title = `[Staging E2E] ${initiativeId}`;
   const description = [
     `Harness sub_task PR 合并后，在真 staging 实例（:${STAGING_PORT}）跑 contract E2E。`,
     `- Initiative: ${initiativeId}`,
-    subTaskId ? `- Sub task: ${subTaskId}` : '',
     prUrl ? `- PR: ${prUrl}` : '',
   ].filter(Boolean).join('\n');
 
@@ -139,7 +140,6 @@ export async function createStagingE2eTask(pool, info = {}) {
       description,
       JSON.stringify({
         initiative_id: initiativeId,
-        sub_task_id: subTaskId,
         pr_url: prUrl,
         journey_id: journeyId,
         created_at: new Date().toISOString(),
@@ -152,7 +152,7 @@ export async function createStagingE2eTask(pool, info = {}) {
 }
 
 /**
- * verdict 落 staging_e2e_results 表。
+ * verdict 落 staging_e2e_results 表（schema 见 migration 304）。
  *
  * @param {object} pool
  * @param {object} row
@@ -160,22 +160,22 @@ export async function createStagingE2eTask(pool, info = {}) {
  */
 export async function persistStagingE2eResult(pool, row) {
   const {
-    initiativeId, subTaskId = null, taskId = null, verdict,
-    deployStatus = null, skipReason = null, prUrl = null,
-    failedScenarios = [], passedScenarios = [], detail = null,
+    taskId = null, initiativeId, prUrl = null, verdict, reason = null,
+    scenariosTotal = 0, scenariosPassed = 0, failedScenarios = [],
+    deployOutput = null, deployedAt = null, testedAt = null,
   } = row;
   const { rows } = await pool.query(
     `INSERT INTO staging_e2e_results (
-       initiative_id, sub_task_id, task_id, verdict, deploy_status, skip_reason,
-       staging_port, pr_url, failed_scenarios, passed_scenarios, detail
-     ) VALUES ($1::uuid, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10::jsonb, $11::jsonb)
+       task_id, initiative_id, pr_url, verdict, reason, staging_port,
+       scenarios_total, scenarios_passed, failed_scenarios,
+       deploy_output, deployed_at, tested_at
+     ) VALUES ($1, $2::uuid, $3, $4, $5, $6, $7, $8, $9::jsonb, $10, $11, $12)
      RETURNING id`,
     [
-      initiativeId, subTaskId, taskId, verdict, deployStatus, skipReason,
-      STAGING_PORT, prUrl,
+      taskId, initiativeId, prUrl, verdict, reason, STAGING_PORT,
+      scenariosTotal, scenariosPassed,
       JSON.stringify(failedScenarios || []),
-      JSON.stringify(passedScenarios || []),
-      detail ? JSON.stringify(detail) : null,
+      deployOutput, deployedAt, testedAt,
     ]
   );
   return rows[0]?.id || null;
@@ -183,12 +183,6 @@ export async function persistStagingE2eResult(pool, row) {
 
 /**
  * 处理 staging_e2e 任务：staging 部署 → contract E2E → verdict 落库。
- *
- * verdict 语义：
- *   - SKIP  ：staging 部署被优雅降级跳过（no_docker/no_env）或合同缺失（无 e2e_acceptance）
- *   - FAIL  ：部署失败，或 contract E2E 至少一个 scenario 失败
- *   - PASS  ：staging 部署成功 + 所有 scenario 通过
- *   - ERROR ：处理过程异常（兜底，绝不向上抛）
  *
  * 不修改 task.status —— 由调用方（staging-e2e-plugin）负责 claim / 标记终态。
  *
@@ -199,7 +193,7 @@ export async function persistStagingE2eResult(pool, row) {
  * @param {Function} [deps.runE2E]      - E2E 函数（默认 runFinalE2E）
  * @param {Function} [deps.loadContract]- 合同加载（默认 loadContractAcceptance）
  * @param {Function} [deps.persist]     - 落库函数（默认 persistStagingE2eResult）
- * @returns {Promise<{verdict:string, deployStatus:string|null, skipReason:string|null, resultId:string|null}>}
+ * @returns {Promise<{verdict:string, reason:string|null, resultId:string|null}>}
  */
 export async function handleStagingE2e(task, deps = {}) {
   const pool = deps.pool;
@@ -210,78 +204,78 @@ export async function handleStagingE2e(task, deps = {}) {
 
   const payload = task?.payload || {};
   const initiativeId = payload.initiative_id || payload.initiativeId;
-  const subTaskId = payload.sub_task_id || payload.subTaskId || null;
   const prUrl = payload.pr_url || payload.prUrl || null;
-
-  const base = { initiativeId, subTaskId, taskId: task?.id || null, prUrl };
+  const base = { taskId: task?.id || null, initiativeId, prUrl };
 
   try {
     if (!initiativeId) {
-      const resultId = await persist(pool, {
-        ...base, verdict: 'ERROR', skipReason: 'no_initiative_id',
-      });
-      return { verdict: 'ERROR', deployStatus: null, skipReason: 'no_initiative_id', resultId };
+      const resultId = await persist(pool, { ...base, verdict: 'FAIL', reason: 'no_initiative_id' });
+      return { verdict: 'FAIL', reason: 'no_initiative_id', resultId };
     }
 
     // 1. 先确认有合同 E2E 验收，没有就别白部署
     const acceptance = await loadContract(pool, initiativeId);
     if (!acceptance) {
-      const resultId = await persist(pool, {
-        ...base, verdict: 'SKIP', deployStatus: 'skipped', skipReason: 'no_contract',
-      });
+      const resultId = await persist(pool, { ...base, verdict: 'SKIP', reason: 'no_contract' });
       console.warn(`[harness-staging-e2e] initiative=${initiativeId} 无 e2e_acceptance 合同 → SKIP`);
-      return { verdict: 'SKIP', deployStatus: 'skipped', skipReason: 'no_contract', resultId };
+      return { verdict: 'SKIP', reason: 'no_contract', resultId };
     }
+    // 场景总数（合同非法时 normalizeAcceptance 抛错 → 进 catch → FAIL(exception)）
+    const scenariosTotal = normalizeAcceptance(acceptance).scenarios.length;
 
     // 2. 复用 staging-deploy.sh 部署 :5222
     const deploy = await runDeploy();
     if (deploy.status === 'skipped') {
       const resultId = await persist(pool, {
-        ...base, verdict: 'SKIP', deployStatus: 'skipped', skipReason: deploy.skipReason,
-        detail: { deploy: { output: tail(deploy.output) } },
+        ...base, verdict: 'SKIP', reason: deploy.skipReason,
+        scenariosTotal, deployOutput: tail(deploy.output),
       });
       console.warn(`[harness-staging-e2e] staging 部署跳过（${deploy.skipReason}）→ SKIP`);
-      return { verdict: 'SKIP', deployStatus: 'skipped', skipReason: deploy.skipReason, resultId };
+      return { verdict: 'SKIP', reason: deploy.skipReason, resultId };
     }
     if (deploy.status === 'failed') {
       const resultId = await persist(pool, {
-        ...base, verdict: 'FAIL', deployStatus: 'failed', skipReason: 'deploy_failed',
-        failedScenarios: [{ name: 'staging deploy failure', failedCommand: 'bash scripts/staging-deploy.sh', exitCode: deploy.exitCode, output: tail(deploy.output) }],
-        detail: { deploy: { exitCode: deploy.exitCode, output: tail(deploy.output) } },
+        ...base, verdict: 'FAIL', reason: 'deploy_failed',
+        scenariosTotal,
+        failedScenarios: [{ name: 'staging deploy failure', exitCode: deploy.exitCode, output: tail(deploy.output) }],
+        deployOutput: tail(deploy.output),
       });
       console.error(`[harness-staging-e2e] staging 部署失败（exit=${deploy.exitCode}）→ FAIL`);
-      return { verdict: 'FAIL', deployStatus: 'failed', skipReason: 'deploy_failed', resultId };
+      return { verdict: 'FAIL', reason: 'deploy_failed', resultId };
     }
+    const deployedAt = new Date().toISOString();
 
     // 3. 在真 staging 实例跑 contract E2E（部署已就绪 → skipBootstrap）
     const e2e = await runE2E(initiativeId, { e2e_acceptance: acceptance }, { skipBootstrap: true });
+    const passed = (e2e.passedScenarios || []).length;
+    const verdict = e2e.verdict === 'PASS' ? 'PASS' : 'FAIL';
     const resultId = await persist(pool, {
       ...base,
-      verdict: e2e.verdict,
-      deployStatus: 'success',
+      verdict,
+      reason: verdict === 'PASS' ? null : 'scenarios_failed',
+      scenariosTotal,
+      scenariosPassed: passed,
       failedScenarios: e2e.failedScenarios || [],
-      passedScenarios: e2e.passedScenarios || [],
-      detail: { deploy: { output: tail(deploy.output) }, e2e },
+      deployOutput: tail(deploy.output),
+      deployedAt,
+      testedAt: new Date().toISOString(),
     });
-    console.log(`[harness-staging-e2e] initiative=${initiativeId} staging E2E verdict=${e2e.verdict}`);
-    return { verdict: e2e.verdict, deployStatus: 'success', skipReason: null, resultId };
+    console.log(`[harness-staging-e2e] initiative=${initiativeId} staging E2E verdict=${verdict}`);
+    return { verdict, reason: verdict === 'PASS' ? null : 'scenarios_failed', resultId };
   } catch (err) {
-    // 兜底：任何异常都降级为 ERROR + 落库，绝不向上抛
-    console.error(`[harness-staging-e2e] handleStagingE2e 异常 → ERROR: ${err.message}\n${err.stack || ''}`);
+    // 兜底：任何异常都降级为 FAIL(exception) + 落库，绝不向上抛
+    console.error(`[harness-staging-e2e] handleStagingE2e 异常 → FAIL: ${err.message}\n${err.stack || ''}`);
     let resultId = null;
     try {
-      resultId = await persist(pool, {
-        ...base, verdict: 'ERROR', skipReason: 'exception',
-        detail: { error: { message: err.message, stack: err.stack } },
-      });
+      resultId = await persist(pool, { ...base, verdict: 'FAIL', reason: 'exception' });
     } catch (persistErr) {
-      console.error(`[harness-staging-e2e] ERROR verdict 落库也失败: ${persistErr.message}`);
+      console.error(`[harness-staging-e2e] FAIL verdict 落库也失败: ${persistErr.message}`);
     }
-    return { verdict: 'ERROR', deployStatus: null, skipReason: 'exception', resultId };
+    return { verdict: 'FAIL', reason: 'exception', resultId };
   }
 }
 
-// 输出截断，避免 detail JSONB 过大
+// 输出截断，避免 deploy_output 过大
 function tail(str, n = 4000) {
   if (!str || typeof str !== 'string') return str || '';
   return str.length > n ? str.slice(-n) : str;

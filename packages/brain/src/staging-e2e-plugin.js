@@ -73,7 +73,7 @@ export async function tick({ pool, tickState, tickLog, intervalMs, handler } = {
     } catch (handlerErr) {
       // handleStagingE2e 自身已兜底，这里是双保险
       console.error(`[tick] staging-e2e handler 异常 task=${task.id} (non-fatal): ${handlerErr.message}`);
-      outcome = { verdict: 'ERROR', skipReason: 'handler_throw' };
+      outcome = { verdict: 'FAIL', reason: 'handler_throw' };
     }
 
     // staging_e2e 任务本身完成（无论 verdict 如何），verdict 已落 staging_e2e_results。
@@ -84,8 +84,7 @@ export async function tick({ pool, tickState, tickLog, intervalMs, handler } = {
         WHERE id = $1`,
       [task.id, JSON.stringify({
         verdict: outcome.verdict,
-        deploy_status: outcome.deployStatus ?? null,
-        skip_reason: outcome.skipReason ?? null,
+        reason: outcome.reason ?? null,
         staging_e2e_result_id: outcome.resultId ?? null,
       })]
     );
