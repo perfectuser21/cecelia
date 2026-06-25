@@ -147,6 +147,8 @@ const SKILL_WHITELIST = {
   'harness_initiative': '/harness-planner',   // 阶段 A — M1 复用 planner skill
   'harness_task': '/_internal',               // 阶段 B — Brain tick 内部状态机，不派 agent
   'harness_final_e2e': '/harness-evaluator',  // 阶段 C — M1 复用 evaluator skill
+  // 阶段2 Slice 1：staging E2E — Brain 内部 handler（executor triggerCeceliaRun 同步执行，不派 agent）
+  'staging_e2e': '/_internal',
 };
 
 // Internal task handlers — Brain tick 内联处理的 task_type（skill='/_internal'），
