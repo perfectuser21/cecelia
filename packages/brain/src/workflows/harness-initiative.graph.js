@@ -1561,6 +1561,30 @@ export async function reportNode(state, opts = {}) {
   } catch (err) {
     console.warn(`[harness-initiative.graph] reportNode spawn harness_report failed: ${err.message}`);
   }
+
+  // 阶段2 Slice1：sub_task 合并后（computedVerdict=PASS 等价于全部 merged）派生 staging_e2e 任务。
+  // 该任务独立于本 langgraph：部署 :5222 + 在真 staging 实例跑 contract E2E + verdict 落
+  // staging_e2e_results 表。FAIL（无 merged 产物可部署）不派。非致命：失败只 warn。
+  if (computedVerdict === 'PASS') {
+    try {
+      await dbPool.query(
+        `INSERT INTO tasks (title, description, task_type, status, priority, payload)
+         VALUES ($1, $2, 'staging_e2e', 'queued', 'P2', $3::jsonb)`,
+        [
+          `[Staging E2E] ${state.task?.title || state.initiativeId}`,
+          `Auto-spawned by reportNode: deploy :5222 + contract E2E for initiative ${state.initiativeId}`,
+          JSON.stringify({
+            initiative_id: state.initiativeId,
+            journey_id: state.task?.payload?.journey_id,
+            pr_url: (reconciledSubTasks || [])[0]?.pr_url || '',
+            pr_urls: (reconciledSubTasks || []).map((t) => t.pr_url).filter(Boolean),
+          }),
+        ]
+      );
+    } catch (err) {
+      console.warn(`[harness-initiative.graph] reportNode spawn staging_e2e failed: ${err.message}`);
+    }
+  }
   return { report_path: reportContent };
 }
 
