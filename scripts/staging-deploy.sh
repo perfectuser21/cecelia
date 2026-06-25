@@ -185,7 +185,7 @@ echo ""
 echo "[6/6] 运行 staging 验证（staging-verify.sh）..."
 VERIFY_SCRIPT="$SCRIPT_DIR/staging-verify.sh"
 if [[ ! -f "$VERIFY_SCRIPT" ]]; then
-    echo "[FAIL] 缺少 $VERIFY_SCRIPT，无法验证 staging — 阻断 production"
+    echo "[FAIL] 缺少 ${VERIFY_SCRIPT}，无法验证 staging — 阻断 production"
     exit 1
 fi
 if bash "$VERIFY_SCRIPT"; then

@@ -90,7 +90,7 @@ NOW_TAG=$(grep '^current=' "$ROOT/.production-release" | head -1 | cut -d= -f2)
 if [[ "$NOW_TAG" == "prod-cecelia-v1" ]]; then
     pass "★ 回档后 .production-release current 回到 prod-cecelia-v1"
 else
-    fail "★ 回档后 current=$NOW_TAG，应为 prod-cecelia-v1"
+    fail "★ 回档后 current=${NOW_TAG}，应为 prod-cecelia-v1"
 fi
 
 # ── rollback 带不存在的 tag → 报错退出（不猜）─────────────────────────────────
