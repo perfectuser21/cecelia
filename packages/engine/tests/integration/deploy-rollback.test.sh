@@ -23,6 +23,8 @@ trap 'rm -rf "$ROOT"' EXIT
 DASH="$ROOT/apps/dashboard"
 mkdir -p "$DASH" "$ROOT/scripts" "$ROOT/packages/brain/migrations"
 ( cd "$ROOT" && git init -q -b main && git config user.email t@t && git config user.name t )
+# 隔离掉全局/继承的 core.hooksPath（否则本机 pre-commit 守护会拦 main 分支的测试内部提交）
+( cd "$ROOT" && git config core.hooksPath /dev/null )
 echo "seed" > "$ROOT/seed.txt"
 ( cd "$ROOT" && git add -A && git commit -q -m "seed" )
 
@@ -98,25 +100,34 @@ else
     pass "rollback 带不存在 tag → 报错退出（不在留存内不猜）"
 fi
 
-# ── 留存上限 5 份 ─────────────────────────────────────────────────────────────
-# 当前已有 v1,v2（回档后 current=v1）。再 promote v3..v7 共制造 7 个版本。
-for i in 3 4 5 6 7; do
-    echo "v$i" > "$ROOT/seed.txt"
-    ( cd "$ROOT" && git add -A && git commit -q -m "v$i" )
-    stage_version "VERSION-$i"
-    run_promote
+# ── 留存上限 5 份（独立 fresh 根，连续 8 次 promote 确定性验证删最旧）─────────────
+R2=$(mktemp -d)
+D2="$R2/apps/dashboard"
+mkdir -p "$D2" "$R2/packages/brain/migrations"
+( cd "$R2" && git init -q -b main && git config user.email t@t && git config user.name t && git config core.hooksPath /dev/null )
+echo "s" > "$R2/seed.txt"
+( cd "$R2" && git add -A && git commit -q -m "s" )
+for i in 1 2 3 4 5 6 7 8; do
+    echo "v$i" > "$R2/seed.txt"
+    ( cd "$R2" && git add -A && git commit -q -m "v$i" )
+    rm -rf "$D2/.dist-staging"; mkdir -p "$D2/.dist-staging"
+    echo "V$i" > "$D2/.dist-staging/index.html"
+    { echo "staging_dist=$D2/.dist-staging"; echo "staging_port=5223"; echo "commit=t"; } > "$D2/.staging-pending"
+    CECELIA_DEPLOY_ROOT="$R2" CECELIA_SKIP_BRAIN_PROMOTE=1 bash "$PROMOTE" >/dev/null 2>&1
 done
-RETAINED=$(ls -1 "$DASH/.dist-releases/" 2>/dev/null | wc -l | tr -d ' ')
-if [[ "$RETAINED" -le 5 ]]; then
-    pass "留存份数 ≤ 5（实际 $RETAINED，按 tag 序删最旧）"
+# 8 次 promote → 留存的是被换下的旧版 v1..v7（共 7 个），按 5 份上限删到最近 5（v3..v7）。
+RETAINED=$(ls -1 "$D2/.dist-releases/" 2>/dev/null | grep -c '^prod-cecelia-v')
+if [[ "$RETAINED" -eq 5 ]]; then
+    pass "留存份数 == 5（上限生效，实际 ${RETAINED}）"
 else
-    fail "留存份数 $RETAINED > 5，未清旧"
+    fail "留存份数 ${RETAINED} != 5，上限未正确生效"
 fi
-if [[ ! -d "$DASH/.dist-releases/prod-cecelia-v1" ]]; then
-    pass "最旧 prod-cecelia-v1 已被清出留存（超 5 份）"
+if [[ ! -d "$D2/.dist-releases/prod-cecelia-v1" && ! -d "$D2/.dist-releases/prod-cecelia-v2" ]]; then
+    pass "最旧 v1/v2 已被清出留存（按 tag 序删最旧）"
 else
-    fail "最旧 prod-cecelia-v1 仍在留存，未清旧"
+    fail "最旧 v1/v2 仍在留存，未清旧：$(ls "$D2/.dist-releases/" | tr '\n' ' ')"
 fi
+rm -rf "$R2"
 
 # ── brain 回档遇 migration 变动 → 需 --confirm-db ─────────────────────────────
 # 制造一个"无 migration 改动"的 guard 版本，再加 migration 提交并 promote 新版；
