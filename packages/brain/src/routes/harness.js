@@ -1727,4 +1727,61 @@ router.patch('/phase-event/:id', async (req, res) => {
   }
 });
 
+/**
+ * POST /promote/:resultId — Slice2：主理人放行回流接口（客户线 pending_promote → promoted）
+ *
+ * 幂等状态机：仅当 promote_status='pending_promote' 时接受；置 promoting → 终态。
+ * - 内部线（base_repo=cecelia，理论上已 auto_promoted，不会 pending；若 base_repo 缺失走到这）：
+ *   跑 in-repo promote。
+ * - 客户线（base_repo=zenithjoy）：决策1 跨 repo 边界——Cecelia 不跨 repo 伸手打 zenithjoy 生产，
+ *   confirm 只把本 repo 状态标 promoted（记录主理人已放行），真打 zenithjoy 生产由 zenithjoy repo 放行闸接。
+ * 非 pending_promote（已 promoted / auto_promoted / 不存在）→ 409，防重复 promote。
+ */
+router.post('/promote/:resultId', async (req, res) => {
+  const { resultId } = req.params;
+  if (!/^[0-9a-f-]{36}$/i.test(resultId)) return res.status(400).json({ error: 'invalid resultId (uuid required)' });
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    // 行级锁 + 仅 pending_promote 可放行（幂等：并发/重复 confirm 只第一次生效）
+    const sel = await client.query(
+      `SELECT id, pr_url, verdict, promote_status FROM staging_e2e_results WHERE id = $1::uuid FOR UPDATE`,
+      [resultId]
+    );
+    if (sel.rows.length === 0) { await client.query('ROLLBACK'); return res.status(404).json({ error: 'staging_e2e_result not found' }); }
+    const row = sel.rows[0];
+    if (row.promote_status !== 'pending_promote') {
+      await client.query('ROLLBACK');
+      return res.status(409).json({ error: `not pending_promote (current=${row.promote_status})`, promote_status: row.promote_status });
+    }
+    await client.query(`UPDATE staging_e2e_results SET promote_status = 'promoting' WHERE id = $1::uuid`, [resultId]);
+    await client.query('COMMIT');
+
+    // 放行：本 repo 内部线跑 promote 脚本；客户线只记录确认（不跨 repo）。
+    const { resolveLine, runInternalPromote, defaultPromoteExec, getRepoRoot, PROMOTE_STATUS } = await import('../staging-promote.js');
+    const line = resolveLine(req.body?.base_repo || '');
+    let finalStatus = PROMOTE_STATUS.PROMOTED;
+    let output = 'owner confirmed';
+    if (line === 'internal') {
+      const r = await runInternalPromote({ promoteExec: defaultPromoteExec(getRepoRoot()) });
+      finalStatus = r.ok ? PROMOTE_STATUS.PROMOTED : PROMOTE_STATUS.PROMOTE_FAILED;
+      output = r.output;
+    } else {
+      // 客户线/unknown：决策1 不跨 repo 打 zenithjoy 生产，只标已放行
+      output = `owner confirmed (customer line: real zenithjoy prod promote handled by zenithjoy repo gate)`;
+    }
+    await pool.query(
+      `UPDATE staging_e2e_results SET promote_status = $2, promote_output = $3, promoted_at = now() WHERE id = $1::uuid`,
+      [resultId, finalStatus, String(output).slice(0, 4000)]
+    );
+    return res.json({ ok: finalStatus !== PROMOTE_STATUS.PROMOTE_FAILED, resultId, promote_status: finalStatus });
+  } catch (err) {
+    try { await client.query('ROLLBACK'); } catch { /* noop */ }
+    console.error('[POST /harness/promote/:resultId]', err.message);
+    return res.status(500).json({ error: err.message });
+  } finally {
+    client.release();
+  }
+});
+
 export default router;
