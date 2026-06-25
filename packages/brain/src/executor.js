@@ -3149,6 +3149,14 @@ async function triggerCeceliaRun(task) {
     return triggerCodexReview(task);
   }
 
+  // 0.5 staging_e2e（阶段2 Slice1）→ native 执行器，部署 :5222 + 跑 contract E2E + verdict 落库。
+  //     独立于 langgraph / interrupt，不占 claude/codex 槽位。
+  if (task.task_type === 'staging_e2e') {
+    console.log(`[executor] 路由决策: task_type=staging_e2e → Staging E2E Runner (native, no langgraph)`);
+    const { runStagingE2E } = await import('./staging-e2e-runner.js');
+    return runStagingE2E(task);
+  }
+
   // 1. 显式 override（phase 2 单元1）：payload.{machine,executor} → DB 驱动路由。
   //    REVIEW 短路之后、location-map 路由之前。无显式偏好则整段跳过（零回归）。
   //    [MINOR 3] 排除 harness_initiative / retired harness types：这些任务即使误传
