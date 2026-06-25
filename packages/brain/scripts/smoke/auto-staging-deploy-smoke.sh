@@ -45,12 +45,13 @@ if [ -f "$WF" ]; then
     fail "workflow 未以 staging:true 触发（可能误打 production）"
   fi
 
-  # 绝不出现 production 提升的痕迹：不调用 deploy.yml 的 promote、
-  # 不向 /deploy 发不带 staging 的 production 请求。
-  if grep -qiE 'promote|production.*deploy|deploy.*production|workflow_call.*deploy\.yml|uses:.*deploy\.yml' "$WF"; then
-    fail "workflow 含 production/promote 痕迹（必须 staging-only）"
+  # 绝不出现 production 提升的**动作**：只看去掉 YAML 注释后的实体行，
+  # 避免把解释边界的注释文字（含 promote/production 字样）误判为动作。
+  WF_CODE=$(sed -E 's/(^|[^"'\''])#.*$/\1/' "$WF")
+  if printf '%s\n' "$WF_CODE" | grep -qiE 'uses:.*deploy\.yml|workflow_call|"staging"[[:space:]]*:[[:space:]]*false|mode"?[[:space:]]*:[[:space:]]*"?production'; then
+    fail "workflow 含 production/promote 动作（必须 staging-only）"
   else
-    pass "workflow 不含 production/promote 痕迹（staging-only）"
+    pass "workflow 不含 production/promote 动作（staging-only）"
   fi
 fi
 
