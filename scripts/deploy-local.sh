@@ -204,13 +204,16 @@ if [[ "$NEED_DASHBOARD" == true ]]; then
         echo "✅ Dashboard 部署前自检全绿"
         echo ""
 
-        # ── 起【常驻】staging 服务（perfect21:52xx 走 SSH 隧道私密预览）─────────
+        # ── 起【常驻】staging 服务（perfect21:52xx 私密预览，绑 0.0.0.0 对外像 5211）──
         # 杀掉上一轮常驻 staging（若有），再起新的。
+        # STAGING_BANNER=1：注入"待放行横幅 + 放行按钮"；commit 显示在横幅上。
         if [[ -f "$SLOT_PID_FILE" ]]; then
             kill "$(cat "$SLOT_PID_FILE" 2>/dev/null)" 2>/dev/null || true
             rm -f "$SLOT_PID_FILE"
         fi
+        STAGE_COMMIT=$(git -C "$MAIN_ROOT" rev-parse --short HEAD 2>/dev/null || echo unknown)
         DIST_DIR="$STAGING_DIST" SLOT_PORT="$STAGING_SLOT_PORT" \
+            STAGING_BANNER=1 STAGING_COMMIT="$STAGE_COMMIT" \
             nohup node "$SLOT_SERVER" > "$SLOT_LOG_FILE" 2>&1 &
         SLOT_PID=$!
         echo "$SLOT_PID" > "$SLOT_PID_FILE"
