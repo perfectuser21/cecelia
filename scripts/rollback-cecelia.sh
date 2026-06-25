@@ -3,7 +3,7 @@
 #
 # 生产炸了之后用这条命令秒回上一个发布版本（或指定留存版本）。回档动作 = 三件事原子完成：
 #   1) dashboard：把 live dist/ 换回留存区 .dist-releases/<tag>/（换入失败回滚到换入前）
-#   2) brain：git checkout <tag> + 重启容器（跨 DB migration 需 --confirm-db 显式确认）
+#   2) brain：复用 brain-rollback.sh <镜像版本>（image-tag 账本回退，跨 DB migration 需 --confirm-db）
 #   3) 指针：.production-release current 回拨到该 tag + 追加一条回档审计行
 #
 # 用法：
@@ -35,6 +35,7 @@ DASH_DIR="$MAIN_ROOT/apps/dashboard"
 DIST_DIR="$DASH_DIR/dist"
 RELEASES_DIR="$DASH_DIR/.dist-releases"
 RELEASE_FILE="$MAIN_ROOT/.production-release"
+BRAIN_VERSIONS_FILE="$MAIN_ROOT/.brain-versions"  # brain 镜像版本账本（brain-rollback.sh 的 SSOT）
 TAG_PREFIX="prod-cecelia-v"
 
 # ── 参数解析 ──────────────────────────────────────────────────────────────────
@@ -99,6 +100,32 @@ if git -C "$MAIN_ROOT" rev-parse "$CURRENT_TAG" >/dev/null 2>&1 \
     fi
 fi
 
+# ── brain 镜像版本 pre-flight（清单法）：从 target 的 manifest 查 brain_image ──────
+# 收口设计：统一 tag 是清单，brain 回档委托给现有 brain-rollback.sh（image-tag 账本回退），
+# 不再 git checkout 重建。这里先校验目标镜像版本仍在 .brain-versions 账本里——若已被 prune
+# 出账本 → 报错退出（不偷偷 git 重建，与"不在留存内就报错不猜"一致）。校验在动 dashboard
+# 之前做，保证失败时生产/指针均不动。
+TARGET_BRAIN_IMAGE=""
+MANIFEST_LINE=$(grep "^manifest=${TARGET_TAG} " "$RELEASE_FILE" 2>/dev/null | tail -1)
+if [[ -n "$MANIFEST_LINE" ]]; then
+    # 从 "manifest=<tag> brain_image=<ver> ..." 抠出 brain_image
+    for kv in $MANIFEST_LINE; do
+        case "$kv" in brain_image=*) TARGET_BRAIN_IMAGE="${kv#brain_image=}" ;; esac
+    done
+fi
+if [[ -z "${CECELIA_SKIP_BRAIN_PROMOTE:-}" ]]; then
+    if [[ -z "$TARGET_BRAIN_IMAGE" ]]; then
+        echo "❌ ${TARGET_TAG} 的 manifest 没记 brain_image（旧 promote 产生的 release？），无法安全回档 brain。"
+        echo "   生产/指针未动。如只需回 dashboard，可加 --confirm-db 跳过 brain（阶段2 再补）。"
+        [[ "$CONFIRM_DB" != true ]] && exit 1
+    elif [[ -f "$BRAIN_VERSIONS_FILE" ]] \
+         && ! grep -qxF "$TARGET_BRAIN_IMAGE" "$BRAIN_VERSIONS_FILE"; then
+        echo "❌ 目标 brain 镜像版本 ${TARGET_BRAIN_IMAGE} 已不在 .brain-versions 账本（被 prune）。"
+        echo "   brain-rollback.sh 无法回退到不在账本/无本地镜像的版本。生产/指针未动，报错退出（不偷偷 git 重建）。"
+        exit 1
+    fi
+fi
+
 # ── 1) dashboard 原子换入留存版本（换入失败回滚到换入前）──────────────────────
 echo "🟢 回档 dashboard → live dist/ 换回 $TARGET_TAG"
 HAD_LIVE=false
@@ -119,6 +146,11 @@ else
 fi
 
 # ── 2) 指针回拨 + 审计行 ──────────────────────────────────────────────────────
+# 关键：必须保留 manifest= 行（各 vN 的 brain_image 清单），否则回档后该 tag 的清单丢失，
+# 下次再回档它就查不到 brain_image。history= 同样保留追加。
+{
+    if [[ -f "$RELEASE_FILE" ]]; then grep '^manifest=' "$RELEASE_FILE" || true; fi
+} > "${RELEASE_FILE}.mani.tmp"
 {
     if [[ -f "$RELEASE_FILE" ]]; then grep '^history=' "$RELEASE_FILE" || true; fi
     echo "history=${TARGET_TAG} $(date -u +%Y-%m-%dT%H:%M:%SZ) rollback from=${CURRENT_TAG}"
@@ -127,21 +159,27 @@ fi
     echo "current=$TARGET_TAG"
     echo "rolled_back_from=$CURRENT_TAG"
     echo "rolled_back_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    cat "${RELEASE_FILE}.mani.tmp"
     cat "${RELEASE_FILE}.hist.tmp"
 } > "$RELEASE_FILE"
-rm -f "${RELEASE_FILE}.hist.tmp"
+rm -f "${RELEASE_FILE}.hist.tmp" "${RELEASE_FILE}.mani.tmp"
 echo "📌 指针已回拨：.production-release current=${TARGET_TAG}（from ${CURRENT_TAG}）"
 
-# ── 3) brain checkout 该 tag + 重启容器（测试钩子可跳过）──────────────────────
+# ── 3) brain 回档：复用现有 brain-rollback.sh（image-tag 账本回退，非 git checkout）──
+# 清单法：从 target manifest 拿 brain_image（pre-flight 已校验它在 .brain-versions），
+# 委托 brain-rollback.sh <该镜像版本> 换镜像 + 健康检查。cecelia 只有一套 brain 回档原语。
 if [[ -z "${CECELIA_SKIP_BRAIN_PROMOTE:-}" ]]; then
-    if git -C "$MAIN_ROOT" rev-parse "$TARGET_TAG" >/dev/null 2>&1; then
-        echo "🧠 brain → git checkout $TARGET_TAG + 重启"
-        git -C "$MAIN_ROOT" checkout "$TARGET_TAG" >/dev/null 2>&1 \
-            || echo "⚠️  git checkout $TARGET_TAG 失败（继续，dashboard 已回档）"
-        BRAIN_DEPLOY="$MAIN_ROOT/scripts/brain-deploy.sh"
-        [[ -f "$BRAIN_DEPLOY" ]] && { bash "$BRAIN_DEPLOY" || echo "⚠️  brain-deploy 失败"; }
+    if [[ -n "$TARGET_BRAIN_IMAGE" ]]; then
+        BRAIN_ROLLBACK="$MAIN_ROOT/scripts/brain-rollback.sh"
+        if [[ -f "$BRAIN_ROLLBACK" ]]; then
+            echo "🧠 brain → brain-rollback.sh ${TARGET_BRAIN_IMAGE}（复用现有原语，换镜像+健康检查）"
+            bash "$BRAIN_ROLLBACK" "$TARGET_BRAIN_IMAGE" \
+                || echo "⚠️  brain-rollback.sh 失败（dashboard 已回档，brain 保持原状）"
+        else
+            echo "⚠️  scripts/brain-rollback.sh 不存在，跳过 brain 回档（仅 dashboard 回档）"
+        fi
     else
-        echo "⚠️  本地无 git tag ${TARGET_TAG}，跳过 brain 代码回档（仅 dashboard 回档）"
+        echo "⚠️  无 brain_image（manifest 缺失，--confirm-db 已放行）→ 跳过 brain 回档，仅 dashboard 回档"
     fi
 fi
 

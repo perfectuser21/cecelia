@@ -1,39 +1,36 @@
-# 部署生命周期 阶段1 · cecelia 回档
+# 回档收口 · brain 子步复用 brain-rollback.sh（清单法）
 
-> 分支：cp-06251822-cp-deploy-rollback-cecelia
-> spec：docs/superpowers/specs/2026-06-25-deploy-lifecycle-tag-rollback-design.md（§1 共享契约 / §2 cecelia 落地 / §5 测试 / §6 成功标准）
+> 分支：cp-06251847-cp-rollback-reuse-brain
+> 收口对象：PR #3422 的平行 brain 回档路径
 
 ## 背景
-五条部署路径没有一条能在生产炸了之后回档。cecelia dashboard 现有 promote 成功即 `rm -rf dist.old` 删旧版（回档洞）。
-本 PR 给 cecelia（brain + dashboard）装上「生产 release tag + 旧版留存 5 份 + 一键回档」安全网。
+PR #3422 的 `rollback-cecelia.sh` brain 子步是 `git checkout <tag>` + `brain-deploy.sh`（源码重建），
+和 cecelia 已有的 `brain-rollback.sh`（image-tag 账本回退 + 健康检查）平行。本 PR 拆掉平行路径，
+用清单法让统一 tag 委托给 `brain-rollback.sh`，cecelia 只留一套 brain 回档原语。
 
 ## 范围
-- `scripts/promote-dashboard.sh`：旧版留存（不删）+ 打统一 `prod-cecelia-vN` tag + 写 `.production-release`
-- 新增 `scripts/rollback-cecelia.sh`：无参退上一 tag / 带 tag 从留存挑 / 原子换入 / brain 跨 migration 拦 `--confirm-db`
-- 新增 `packages/engine/tests/integration/deploy-rollback.test.sh`：回档 E2E（隔离根，不碰真生产）
-- `.gitignore`：忽略 `apps/dashboard/.dist-releases/`
+- `scripts/promote-dashboard.sh`：写 `.production-release` 多记 `manifest=<tag> brain_image=<.brain-versions head>`
+- `scripts/rollback-cecelia.sh`：brain 子步改调 `brain-rollback.sh <镜像版本>`（从 manifest 取）；
+  pre-flight 校验该版本仍在 `.brain-versions`（被 prune → 报错退出，生产/指针不动）；指针回拨保留 `manifest=` 行
+- `packages/engine/tests/integration/deploy-rollback.test.sh`：加断言（manifest 记 brain_image / brain 子步走 brain-rollback.sh / 镜像被 prune 报错退出 / 不含 git checkout）
 
-## 不做（阶段2，YAGNI 边界）
-- 不建新 staging 环境、不动人工放行 gate、不建 DB migration 向后兼容工具（只在 brain 回档加检测+警告）
-- 不真部署生产、不真打 HK
+## 不做
+- 不改 dashboard 留存/换回逻辑、不改 migration 守护、不改 `brain-rollback.sh` 本身。不真起 docker、不碰生产。
 
 ## ARTIFACT 条目
 
-- [x] [ARTIFACT] 新增 `scripts/rollback-cecelia.sh` 回档脚本且语法合法
-  Test: manual:bash -n scripts/rollback-cecelia.sh
+- [x] [ARTIFACT] rollback-cecelia.sh 不再 git checkout 重建 brain，改调 brain-rollback.sh
+  Test: node -e "const c=require('fs').readFileSync('scripts/rollback-cecelia.sh','utf8');if(c.includes('git -C \"$MAIN_ROOT\" checkout')||!c.includes('brain-rollback.sh'))process.exit(1)"
 
-- [x] [ARTIFACT] promote-dashboard.sh 不再 `rm -rf` 删旧版，改为留存 + 打 tag + 写指针
-  Test: node -e "const c=require('fs').readFileSync('scripts/promote-dashboard.sh','utf8');if(!c.includes('.dist-releases')||!c.includes('prod-cecelia-v')||!c.includes('.production-release'))process.exit(1)"
-
-- [x] [ARTIFACT] `.gitignore` 忽略 `apps/dashboard/.dist-releases/`
-  Test: node -e "const c=require('fs').readFileSync('.gitignore','utf8');if(!c.includes('apps/dashboard/.dist-releases/'))process.exit(1)"
+- [x] [ARTIFACT] promote-dashboard.sh 把 brain_image 写进 manifest 行
+  Test: node -e "const c=require('fs').readFileSync('scripts/promote-dashboard.sh','utf8');if(!c.includes('manifest=')||!c.includes('brain_image='))process.exit(1)"
 
 ## BEHAVIOR 条目
 
-- [x] [BEHAVIOR] promote v1 → promote v2 → rollback → live `dist/` 回到 v1 且 `.production-release` current 回到 v1 tag；留存上限 5 份删最旧；rollback 带不存在 tag 报错退出；brain 回档跨 migration 拦 `--confirm-db`（17/17 PASS，`CECELIA_DEPLOY_ROOT` 隔离根，不碰真生产/真 HK）
+- [x] [BEHAVIOR] promote 记 brain_image 进 manifest；rollback brain 子步调 brain-rollback.sh 并传正确镜像版本（非 git checkout）；目标镜像被 prune 出 .brain-versions → 报错退出生产/指针不动；指针回拨保留 manifest 行（23/23 PASS，mock brain-rollback.sh + CECELIA_DEPLOY_ROOT 隔离根，不真起 docker/不碰生产）
   Test: manual:bash packages/engine/tests/integration/deploy-rollback.test.sh
   期望: exit 0
 
 ## 成功标准
-promote 必打 tag + 留旧版（<=5 份），生产炸了能用一条 `rollback-cecelia.sh [tag]` 秒回上一版或指定留存版；
-dashboard 不再 `rm -rf` 删旧版；brain 回档遇 DB migration 有显式 `--confirm-db` 拦截；回档 E2E 进 CI 永久回归。
+cecelia 只有一套 brain 回档原语（`brain-rollback.sh`）；统一 `prod-cecelia-vN` tag 退化成指向它的清单；
+目标 brain 镜像不在账本时报错退出不偷偷重建；回档 E2E 进 CI 永久回归。
