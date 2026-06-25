@@ -56,6 +56,8 @@ const VALID_TASK_TYPES = [
   'harness_final_e2e',     // 阶段 C 最终 E2E 验收
   'harness_evaluate',    // Evaluator 对抗性功能验收（已在 SKILL_WHITELIST）
   'harness_intervention', // 人工干预任务类型（US 本机处理）
+  // 阶段2 Slice 1：merge 后 staging 部署 + 自动 E2E（Brain 内部 handler，不派 agent、不碰 interrupt）
+  'staging_e2e',
 ];
 
 // 支持 P2P 异步回调的任务类型

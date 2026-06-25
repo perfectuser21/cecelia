@@ -58,6 +58,7 @@ import { parseDockerOutput, extractField, readPrFromGitState, readVerdictFile, r
 import { buildGeneratorPrompt, harnessContractThreadSuffix } from '../harness-utils.js';
 import { getPgCheckpointer } from '../orchestrator/pg-checkpointer.js';
 import pool from '../db.js';
+import { buildStagingE2eTaskInsert } from '../staging-e2e-runner.js';
 import { verifyGeneratorOutput } from '../lib/contract-verify.js';
 import { LLM_RETRY } from './retry-policies.js';
 
@@ -611,6 +612,24 @@ async function queryMergeState(execFn, prUrl) {
   }
 }
 
+/**
+ * Slice 1：merge 成功后 best-effort 建 staging_e2e Brain 任务（独立于 langgraph，不碰 interrupt）。
+ * 铁律：任何失败只 console.warn，**永不 throw** —— staging E2E 建失败绝不能让 merge 倒。
+ * 幂等：INSERT 用 WHERE NOT EXISTS 按 pr_url 去重（buildStagingE2eTaskInsert），
+ * 防 mergePrNode 因 BEHIND 重试 / "已被外部合并"分支多次进入重复建任务。
+ */
+async function _spawnStagingE2eTask(state, opts = {}) {
+  try {
+    const ins = buildStagingE2eTaskInsert(state);
+    if (!ins) return; // 无 pr_url → 不建
+    const dbPool = opts.poolOverride || pool;
+    await dbPool.query(ins.sql, ins.params);
+    console.log(`[merge_pr] spawned staging_e2e task for pr=${state.pr_url}`);
+  } catch (err) {
+    console.warn(`[merge_pr] spawn staging_e2e task failed (best-effort, ignored) pr=${state?.pr_url}: ${err.message}`);
+  }
+}
+
 export async function mergePrNode(state, opts = {}) {
   if (state.status === 'merged') return { status: 'merged' };
   const execFn = opts.execFile || execFileDefault;
@@ -632,6 +651,8 @@ export async function mergePrNode(state, opts = {}) {
     if (state.worktreePath) {
       await cleanupHarnessWorktree(state.worktreePath);
     }
+    // Slice 1：merge 成功 → best-effort 建 staging_e2e 任务（放在 return 前最后一步，永不 throw）
+    await _spawnStagingE2eTask(state, opts);
     return {
       status: 'merged',
       ci_status: 'merged',
@@ -646,6 +667,9 @@ export async function mergePrNode(state, opts = {}) {
     if (ALREADY_MERGED_RE.test(msg)) {
       console.log(`[merge_pr] PR already merged, treating as success pr=${prUrl}`);
       try { if (state.worktreePath) await cleanupHarnessWorktree(state.worktreePath); } catch {}
+      // Slice 1：已被外部合并幂等分支也建 staging_e2e（否则重启后这条永远不进 staging E2E）。
+      // INSERT 自带 pr_url 去重，正常分支已建则此处 no-op。
+      await _spawnStagingE2eTask(state, opts);
       return { status: 'merged', ci_status: 'merged', merged_at: new Date().toISOString() };
     }
 

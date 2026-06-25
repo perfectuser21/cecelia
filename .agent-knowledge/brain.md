@@ -27,6 +27,22 @@
 
 ---
 
+## Harness → Staging E2E（阶段2 Slice 1，2026-06-25 新增）
+
+`staging-e2e-runner.js` — harness merge=终点 → 延长到 staging 真 E2E（根治 silent-success）。
+
+| 件 | 文件 | 职责 |
+|----|------|------|
+| Staging E2E Runner | `staging-e2e-runner.js` | Brain 内部 handler（**不派 agent、不碰 langgraph interrupt**）：部署候选到 :5222 staging → 真实例跑 contract E2E → verdict 落 `staging_e2e_results` |
+
+- 触发：`harness-task.graph.js` 的 `mergePrNode` merge 成功后 best-effort 建 `task_type='staging_e2e'` 任务（两条 merged 分支都建；try/catch 永不让 merge 倒）。
+- 派发：`executor.js` `triggerCeceliaRun` 内 `staging_e2e` 分支同步执行 runner。
+- 皇冠断言：E2E target 钉死 staging:5222（`STAGING_PORT`），绝不退回 production:5221 或 PR 分支活宿主。
+- 幂等：`staging_e2e_results.pr_url` UNIQUE（migration 304）+ 建任务 `WHERE NOT EXISTS` 双闸。
+- 边界：本片只到 verdict 落库；人工放行/promote/report 是 Slice 2/3。
+
+---
+
 ## 自驱系统（2026-03 新增）
 
 Cecelia 的"自我感知 → 自我行动"闭环，由四个模块协作：

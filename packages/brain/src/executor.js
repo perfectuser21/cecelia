@@ -3249,6 +3249,38 @@ async function triggerCeceliaRun(task) {
     }
   }
 
+  // 2.86 阶段2 Slice 1：staging_e2e — Brain 内部 handler（同步执行，不派 agent、不碰 interrupt）。
+  // 由 mergePrNode merge 成功后 best-effort 建任务。部署候选到 :5222 staging → 真实例跑 E2E → verdict 落库。
+  if (task.task_type === 'staging_e2e') {
+    console.log(`[executor] 路由决策: task_type=staging_e2e → Staging E2E Runner (内部 handler)`);
+    try {
+      const { runStagingE2e, resolveStagingTarget, defaultDeployStaging, defaultRunE2eOnStaging, getRepoRoot } =
+        await import('./staging-e2e-runner.js');
+      const { executeOnHost } = await import('./spawn/host-executor.js');
+      const { readBrainResult } = await import('./harness-shared.js');
+      const repoRoot = getRepoRoot();
+      const worktreePath = task.payload?.worktree_path || repoRoot;
+      const res = await runStagingE2e(task, {
+        deployStaging: defaultDeployStaging(repoRoot),
+        runE2eOnStaging: defaultRunE2eOnStaging({
+          executeOnHost,
+          readBrainResult: (wp) => readBrainResult(wp, []),
+          worktreePath,
+        }),
+        dbQuery: (sql, params) => pool.query(sql, params),
+        resolveStagingTarget,
+      });
+      // 本片只到 verdict 落库：fail 也标 completed（任务本身成功跑完，verdict 已记录）。
+      // 放行/重试是 Slice 2/3 的事，本片不阻断。
+      await updateTaskStatus(task.id, 'completed', { result: { staging_e2e_verdict: res.verdict, target_env: res.targetEnv } });
+      return { success: true, taskId: task.id, stagingE2e: true, verdict: res.verdict };
+    } catch (err) {
+      console.error(`[executor] staging_e2e runner error task=${task.id}: ${err.message}`);
+      try { await updateTaskStatus(task.id, 'failed', { error_message: err.message.slice(0, 500) }); } catch {}
+      return { success: true, taskId: task.id, stagingE2e: true, error: err.message?.slice(0, 500) };
+    }
+  }
+
   // Retired harness task_types（_RETIRED_HARNESS_TYPES 在模块顶部定义，override 分支共用）。
   // 老数据派到 executor → 标 terminal failure 防止"复活"。
   if (_RETIRED_HARNESS_TYPES.has(task.task_type)) {
