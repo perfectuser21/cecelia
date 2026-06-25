@@ -374,6 +374,33 @@ jobs:
             echo "::endgroup::"
           done
 
+  # ─── Dashboard 部署放行闸 smoke（repo 根 scripts/smoke/）──────
+  # 守 deploy-local.sh 的两段式部署：自检 → 起常驻 staging + 写放行标记 →【停住】，
+  # 人工跑 promote-dashboard.sh 才换入生产。fixture 模式（不跑 vite build），真链路。
+  # glob 模式：scripts/smoke/ 新加 *-smoke.sh 自动接 CI。
+  dashboard-staging-gate-smoke:
+    name: Dashboard 放行闸 smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Run repo-root staging smoke
+        run: |
+          shopt -s nullglob
+          found=0
+          for s in scripts/smoke/*-smoke.sh; do
+            found=1
+            echo "::group::$(basename "$s")"
+            bash "$s" || exit 1
+            echo "::endgroup::"
+          done
+          if [ "$found" -eq 0 ]; then
+            echo "::error::scripts/smoke/*-smoke.sh 为空（放行闸守卫缺失）"; exit 1
+          fi
+
   # ─── Migration 同号守护 ───────────────────────────────────
   # 扫 packages/brain/migrations/*.sql 提取首数字前缀，发现同号即 fail。
   # 教训：W7.4 / 2026-05 事故 — 264_failure_type_dispatch / 264_fix_progress_ledger
@@ -1331,7 +1358,7 @@ jobs:
   # ─── Gate: 所有检查通过才能合并 ─────────────────────────────
   ci-passed:
     if: always()
-    needs: [secrets-scan, dod-format-check, dep-audit, registry-lint, eslint, pr-size-check, branch-naming, engine-tests, engine-tests-shell, lint-migration-unique-version, brain-unit, brain-unit-all, brain-diff-coverage, brain-integration, workspace-build, workspace-test, e2e-smoke, dod-behavior-dynamic, harness-dod-integrity, harness-contract-lint, docker-infra-smoke, lint-test-pairing, lint-feature-has-smoke, lint-base-fresh, lint-tdd-commit-order, lint-learning-constraint-coverage, lint-test-quality, lint-no-mock-only-test, lint-no-fake-test, lint-single-exit, lint-bypass-not-committed, real-env-smoke, workspace-api-smoke, quality-tests]
+    needs: [secrets-scan, dod-format-check, dep-audit, registry-lint, eslint, pr-size-check, branch-naming, engine-tests, engine-tests-shell, dashboard-staging-gate-smoke, lint-migration-unique-version, brain-unit, brain-unit-all, brain-diff-coverage, brain-integration, workspace-build, workspace-test, e2e-smoke, dod-behavior-dynamic, harness-dod-integrity, harness-contract-lint, docker-infra-smoke, lint-test-pairing, lint-feature-has-smoke, lint-base-fresh, lint-tdd-commit-order, lint-learning-constraint-coverage, lint-test-quality, lint-no-mock-only-test, lint-no-fake-test, lint-single-exit, lint-bypass-not-committed, real-env-smoke, workspace-api-smoke, quality-tests]
     runs-on: ubuntu-latest
     timeout-minutes: 2
     steps:
@@ -1350,6 +1377,7 @@ jobs:
           check "branch-naming"     "${{ needs.branch-naming.result }}"
           check "engine-tests"      "${{ needs.engine-tests.result }}"
           check "engine-tests-shell" "${{ needs.engine-tests-shell.result }}"
+          check "dashboard-staging-gate-smoke" "${{ needs.dashboard-staging-gate-smoke.result }}"
           check "lint-migration-unique-version" "${{ needs.lint-migration-unique-version.result }}"
           check "brain-unit"          "${{ needs.brain-unit.result }}"
           check "brain-unit-all"      "${{ needs.brain-unit-all.result }}"

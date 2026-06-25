@@ -102,3 +102,7 @@ node_modules
 # 轻量 staging 部署前自检的临时构建目录（promote 前自检用，promote 后即换入 dist/）
 apps/dashboard/.dist-staging/
 apps/dashboard/dist.old/
+# 人工放行闸运行时文件：待放行标记 + 常驻 staging 服务 PID/日志
+apps/dashboard/.staging-pending
+apps/dashboard/.staging-slot.pid
+apps/dashboard/.staging-slot.log
