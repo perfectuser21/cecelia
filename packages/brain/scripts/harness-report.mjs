@@ -66,6 +66,19 @@ try {
   }
 } catch (_) { /* degraded mode — use N/A defaults */ }
 
+// ── Slice3: 上线/Production 字段（report 后移补全）──────────────────────────
+// 优先 CLI arg，回退 env（executor 从 task.payload 注入）。读不到 → N/A（降级，不报错）。
+const slice3 = {
+  report_kind:        cliArgs['report-kind']        || process.env.REPORT_KIND        || 'success',
+  staging_e2e_verdict: cliArgs['staging-e2e-verdict'] || process.env.STAGING_E2E_VERDICT || meta.final_e2e_verdict,
+  promote_status:     cliArgs['promote-status']     || process.env.PROMOTE_STATUS     || 'N/A',
+  promoted_by:        cliArgs['promoted-by']        || process.env.PROMOTED_BY        || 'N/A',
+  promoted_at:        cliArgs['promoted-at']        || process.env.PROMOTED_AT        || 'N/A',
+  production_version: cliArgs['production-version'] || process.env.PRODUCTION_VERSION || 'N/A',
+  rollback_anchor:    cliArgs['rollback-anchor']    || process.env.ROLLBACK_ANCHOR    || 'N/A',
+};
+const isFailureReport = slice3.report_kind === 'failure';
+
 // ── S2: Generate harness-report.md ──────────────────────────────────────────
 const reportLines = [
   '# Harness Sprint Report',
@@ -74,6 +87,7 @@ const reportLines = [
   `PR: ${PR_URL}`,
   `GAN Rounds: ${meta.gan_rounds}`,
   `Final E2E Verdict: ${meta.final_e2e_verdict}`,
+  `Report Kind: ${slice3.report_kind}`,
   `Generated: ${new Date().toISOString()}`,
   '',
   '## 摘要',
@@ -81,6 +95,17 @@ const reportLines = [
   meta.gan_rounds === 'N/A'
     ? 'evaluator-output.json 缺失，字段值为 N/A（降级报告）'
     : `Sprint 完成，共 ${meta.gan_rounds} 轮 GAN，最终 E2E 验收：${meta.final_e2e_verdict}`,
+  '',
+  // Slice3：report 后移到 production promote 完成后——补全上线信息。
+  isFailureReport ? '## 未上线（失败报告）' : '## 上线 / Production',
+  '',
+  `- Staging E2E: ${slice3.staging_e2e_verdict}`,
+  `- Promote 状态: ${slice3.promote_status}`,
+  isFailureReport
+    ? '- 本 initiative 未通过验收 / 未上 production（失败报告，无生产版本与回档锚点）'
+    : `- 放行人: ${slice3.promoted_by}  |  放行时间: ${slice3.promoted_at}`,
+  isFailureReport ? '' : `- Production 版本: ${slice3.production_version}`,
+  isFailureReport ? '' : `- 回档锚点: ${slice3.rollback_anchor}`,
   '',
   '## 步骤耗时',
   '',

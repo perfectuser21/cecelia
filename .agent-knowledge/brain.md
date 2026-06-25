@@ -34,11 +34,12 @@
 | 件 | 文件 | 职责 |
 |----|------|------|
 | Staging E2E Runner | `staging-e2e-runner.js` | Slice1：staging_e2e 任务 native 执行器，部署 :5222 + 真实例跑 contract E2E + verdict 落 `staging_e2e_results`（**不碰 langgraph interrupt**） |
-| Promote 放行 | `staging-promote.js` | Slice2：PASS 后判线分流（`resolveLine`/`decidePromote`/`runInternalPromote`） |
+| Promote 放行 | `staging-promote.js` | Slice2：PASS 后判线分流（`resolveLine`/`decidePromote`/`runInternalPromote`）；Slice3：派 report（`buildHarnessReportInsert`/`spawnHarnessReport`/`readProductionInfo`/`REPORT_KIND`） |
 
 - 触发：`harness-task.graph.js` `mergePrNode` merge 成功后 best-effort 建 `task_type='staging_e2e'`（per-merge，两条 merged 分支，pr_url 幂等）；payload 带 `base_repo`。
 - Slice2 放行（PASS 后，`runStagingE2E` finalize 内 `handlePromote`）：内部线(cecelia) 自动 promote（in-repo `promote-dashboard.sh`，**必须注入 promoteExec，fail-safe 不误打 :5211 live**）→ auto_promoted；客户线(zenithjoy)/base_repo缺失 → `pending_promote` + 飞书通知 + 回流接口 `POST /api/brain/harness/promote/:resultId`（幂等状态机，仅 pending 可放行否则 409）。跨 repo 边界：Cecelia 不打 zenithjoy 真生产。
-- DB：`staging_e2e_results` 表（migration 304）+ pr_url UNIQUE（305）+ promote_status（306）。
+- Slice3 report 后移（三态）：report 从"合 main 后"摘到 production promote 完成后。**reportNode 只挪 harness_report 派发**（保留生命周期闭合 phase=done/task status/容器清理在 merge 时）；PASS 不在 reportNode 派——promote 完成点（内部线 auto / 客户线 confirm）派**成功交付证书**；FAIL/SKIP → reportNode 派**失败报告**；`pending_promote` 不出（靠 Slice2 通知+状态可见，不饿死）。report 补 production 版本+回档锚点（.brain-versions/.production-release）+ 放行人/时间。harness_report 按 initiative_id 幂等。
+- DB：`staging_e2e_results` 表（migration 304）+ pr_url UNIQUE（305）+ promote_status（306）+ promoted_by（307）。
 
 ---
 

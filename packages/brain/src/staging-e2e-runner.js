@@ -20,7 +20,7 @@ import { execSync } from 'child_process';
 import pool from './db.js';
 import { updateTaskStatus } from './task-updater.js';
 import { normalizeAcceptance } from './harness-final-e2e.js';
-import { decidePromote, runInternalPromote, defaultPromoteExec, getRepoRoot, PROMOTE_STATUS } from './staging-promote.js';
+import { decidePromote, runInternalPromote, defaultPromoteExec, getRepoRoot, PROMOTE_STATUS, spawnHarnessReport, readProductionInfo, REPORT_KIND } from './staging-promote.js';
 import { sendFeishu } from './notifier.js';
 
 export const STAGING_PORT = 5222;
@@ -202,6 +202,21 @@ async function handlePromote(dbPool, { verdict, baseRepo, prUrl, initiativeId },
       // 自动 promote 成功用 auto_promoted（区分客户线 confirm 后的 promoted）；失败 promote_failed。
       const status = r.ok ? PROMOTE_STATUS.AUTO_PROMOTED : PROMOTE_STATUS.PROMOTE_FAILED;
       await updatePromoteStatus(dbPool, prUrl, status, r.output);
+      // Slice3：内部线 auto_promoted → 派成功交付证书 report；promote_failed → 失败报告。
+      const prod = readProductionInfo(getRepoRoot());
+      await spawnHarnessReport(
+        { dbQuery: (sql, p) => dbPool.query(sql, p) },
+        {
+          initiativeId, prUrl,
+          reportKind: r.ok ? REPORT_KIND.SUCCESS : REPORT_KIND.FAILURE,
+          stagingE2eVerdict: verdict,
+          promoteStatus: status,
+          promotedAt: new Date().toISOString(),
+          promotedBy: 'auto',
+          productionVersion: prod.productionVersion,
+          rollbackAnchor: prod.rollbackAnchor,
+        },
+      );
       return status;
     }
     // pending：客户线 / base_repo 缺失 → 挂起 + 通知主理人

@@ -315,8 +315,8 @@ describe('reportNode', () => {
     expect(delta.report_path).toBe('already-set');
   });
 
-  it('PASS -> mockPool.query 含 INSERT harness_report，且不再派生 staging_e2e（决策 C：挪到 mergePrNode）', async () => {
-    mockPool.query.mockResolvedValue({ rows: [] }); // emitLangGraphStep + step_timing + INSERT harness_report
+  it('PASS -> reportNode 不派 harness_report（Slice3：成功证书等 promote 完成后才派）+ 不派 staging_e2e（Slice1 C）', async () => {
+    mockPool.query.mockResolvedValue({ rows: [] }); // emitLangGraphStep + step_timing（无 report 派发）
     mockClient.query.mockResolvedValue({ rows: [] }); // UPDATE initiative_runs + UPDATE tasks (via connect)
     await reportNode({
       initiativeId: 'i-spawn',
@@ -328,14 +328,11 @@ describe('reportNode', () => {
         payload: { journey_id: 'j1', feature_id: 'f1' },
       },
     });
-    // B45: calls[0]=emit cecelia_events, calls[1]=step_timing SELECT, calls[2]=INSERT harness_report
-    // Slice1 修正：reportNode 不再派 staging_e2e（per-merge 已挪到 mergePrNode）→ 只剩 3 个 query
-    // UPDATE initiative_runs + tasks now via client.query (not mockPool.query)
-    expect(mockPool.query).toHaveBeenCalledTimes(3);
-    const reportInsert = mockPool.query.mock.calls[2];
-    expect(reportInsert[0]).toMatch(/INSERT INTO tasks/i);
-    expect(reportInsert[0]).toContain('harness_report');
-    // 回归守卫：任何 mockPool.query 调用都不得含 staging_e2e 派生
+    // Slice3：PASS 时 reportNode 不再派 harness_report（挪到 promote 完成点）。
+    // 回归守卫：mockPool.query 不得含 harness_report 或 staging_e2e 派发。
+    const reportSpawn = mockPool.query.mock.calls.find(
+      ([sql]) => /INSERT INTO tasks/i.test(String(sql || '')) && String(sql || '').includes('harness_report'));
+    expect(reportSpawn).toBeUndefined();
     const stagingSpawn = mockPool.query.mock.calls.find(
       ([sql]) => /INSERT INTO tasks/i.test(String(sql || '')) && String(sql || '').includes('staging_e2e'));
     expect(stagingSpawn).toBeUndefined();
