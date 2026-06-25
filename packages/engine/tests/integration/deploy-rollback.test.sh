@@ -28,6 +28,20 @@ mkdir -p "$DASH" "$ROOT/scripts" "$ROOT/packages/brain/migrations"
 echo "seed" > "$ROOT/seed.txt"
 ( cd "$ROOT" && git add -A && git commit -q -m "seed" )
 
+# ── brain 回档复用现有原语：seed .brain-versions 账本 + mock brain-rollback.sh ──────
+# 收口设计（清单法）：promote 记当时 .brain-versions head 进 manifest；rollback 不再
+# git checkout 重建，改调 brain-rollback.sh <镜像版本>。本测试用 mock brain-rollback.sh
+# 记录被传的版本（断言走的是这条路径，不是 git checkout），不真起 docker。
+BRAIN_RB_LOG="$ROOT/.brain-rollback-calls.log"
+printf '1.230.15\n1.230.16\n1.230.17\n1.230.18\n' > "$ROOT/.brain-versions"
+cat > "$ROOT/scripts/brain-rollback.sh" <<MOCK
+#!/usr/bin/env bash
+echo "brain-rollback called with: \$*" >> "$BRAIN_RB_LOG"
+echo "\$1" > "$ROOT/.brain-rollback-last-version"
+exit 0
+MOCK
+chmod +x "$ROOT/scripts/brain-rollback.sh"
+
 # 造待放行 staging 产物 + 放行标记（模拟 deploy-local.sh 的产出）
 stage_version() {
     local content="$1"
@@ -55,6 +69,14 @@ if [[ -f "$ROOT/.production-release" ]]; then pass "promote v1 写了 .productio
 if [[ "$V1_TAG" == "prod-cecelia-v1" ]]; then pass "v1 tag = prod-cecelia-v1"; else fail "v1 tag 错: $V1_TAG"; fi
 if [[ "$(cat "$DASH/dist/index.html" 2>/dev/null)" == "VERSION-1" ]]; then pass "live dist = v1"; else fail "live dist 不是 v1"; fi
 if git -C "$ROOT" rev-parse "prod-cecelia-v1" >/dev/null 2>&1; then pass "git tag prod-cecelia-v1 已打"; else fail "git tag prod-cecelia-v1 缺失"; fi
+
+# ★ 清单法：promote 把当时 .brain-versions head（1.230.18）记进 v1 的 manifest 行
+V1_MANIFEST=$(grep "^manifest=prod-cecelia-v1 " "$ROOT/.production-release" 2>/dev/null | head -1)
+if [[ -n "$V1_MANIFEST" && "$V1_MANIFEST" == *"brain_image=1.230.18"* ]]; then
+    pass "★ promote v1 manifest 记了 brain_image=1.230.18（.brain-versions head）"
+else
+    fail "★ promote v1 manifest 缺 brain_image=1.230.18，实际: $V1_MANIFEST"
+fi
 
 # ── promote v2 ────────────────────────────────────────────────────────────────
 echo "v2" > "$ROOT/seed.txt"
@@ -98,6 +120,47 @@ if CECELIA_DEPLOY_ROOT="$ROOT" CECELIA_SKIP_BRAIN_PROMOTE=1 bash "$ROLLBACK" pro
     fail "rollback 带不存在 tag 应报错退出，却退出 0"
 else
     pass "rollback 带不存在 tag → 报错退出（不在留存内不猜）"
+fi
+
+# ── ★ brain 子步复用 brain-rollback.sh（不再 git checkout 重建）──────────────────
+# 不带 CECELIA_SKIP_BRAIN_PROMOTE，让 brain 子步真跑（走 mock brain-rollback.sh）。
+# 当前 current=v1（上一步回档后）。回档到 v1 时 brain 子步应调 brain-rollback.sh，
+# 传 v1 manifest 里记的 brain_image=1.230.18，且不出现 git checkout。
+rm -f "$BRAIN_RB_LOG" "$ROOT/.brain-rollback-last-version"
+ROLLBACK_OUT=$(CECELIA_DEPLOY_ROOT="$ROOT" bash "$ROLLBACK" prod-cecelia-v1 2>&1)
+if [[ -f "$ROOT/.brain-rollback-last-version" ]]; then
+    pass "★ rollback brain 子步调用了 brain-rollback.sh（复用现有原语，非 git checkout）"
+else
+    fail "★ rollback brain 子步没调 brain-rollback.sh（可能还在 git checkout 重建）"
+fi
+if [[ "$(cat "$ROOT/.brain-rollback-last-version" 2>/dev/null)" == "1.230.18" ]]; then
+    pass "★ brain-rollback.sh 收到正确镜像版本 1.230.18（来自 v1 manifest）"
+else
+    fail "★ brain-rollback.sh 收到的版本错: $(cat "$ROOT/.brain-rollback-last-version" 2>/dev/null)"
+fi
+if ! echo "$ROLLBACK_OUT" | grep -q "git checkout"; then
+    pass "★ rollback 输出不含 git checkout（平行路径已拆除）"
+else
+    fail "★ rollback 仍在 git checkout 重建 brain：$(echo "$ROLLBACK_OUT" | grep 'git checkout' | head -1)"
+fi
+
+# ── ★ 目标 vN 的 brain_image 已被 .brain-versions prune → 报错退出（不偷偷重建）────
+# 把账本改成不含 1.230.18（模拟该镜像版本被 prune 出账本），回档 v1 应报错退出。
+printf '1.230.20\n1.230.21\n' > "$ROOT/.brain-versions"
+rm -f "$ROOT/.brain-rollback-last-version"
+if CECELIA_DEPLOY_ROOT="$ROOT" bash "$ROLLBACK" prod-cecelia-v1 >/dev/null 2>&1; then
+    fail "★ 目标镜像版本不在 .brain-versions 应报错退出，却退出 0"
+else
+    pass "★ 目标 brain 镜像版本被 prune 出账本 → 报错退出（不偷偷 git 重建）"
+fi
+# 恢复账本供后续测试
+printf '1.230.15\n1.230.16\n1.230.17\n1.230.18\n' > "$ROOT/.brain-versions"
+# 复位 current 回 v1（上面失败的回档不应改指针；保险起见显式确认）
+NOW_AFTER=$(grep '^current=' "$ROOT/.production-release" | head -1 | cut -d= -f2)
+if [[ "$NOW_AFTER" == "prod-cecelia-v1" ]]; then
+    pass "镜像缺失报错退出后，指针未被改动（仍 current=prod-cecelia-v1）"
+else
+    fail "镜像缺失报错退出却动了指针：current=$NOW_AFTER"
 fi
 
 # ── 留存上限 5 份（独立 fresh 根，连续 8 次 promote 确定性验证删最旧）─────────────
