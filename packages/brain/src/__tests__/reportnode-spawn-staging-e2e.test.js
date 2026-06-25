@@ -1,11 +1,12 @@
 /**
- * 阶段2 Slice1 — reportNode 派生 staging_e2e 任务
+ * 阶段2 Slice1 修正（决策 C）— reportNode 不再派生 staging_e2e
  *
- * sub_task 合并后（computedVerdict=PASS 等价于全部 merged），reportNode 应在 tasks 表
- * 派生一个 task_type='staging_e2e' 的任务（独立于本 langgraph）。FAIL（无 merged 产物）不派。
+ * #3425 曾在 reportNode 按 per-initiative 无去重派生 staging_e2e（取 first sub_task 的 pr_url），
+ * 偏离 spec §3 "sub_task 合并后"（per-merge）原义。本修正把派生挪到 mergePrNode（per-merge，
+ * 两条 merged 分支 + pr_url 幂等，见 slice1-permerge-correction.test.js）。
  *
- * SC-1: 全部 sub_task merged → verdict PASS → 派 staging_e2e（payload 带 initiative_id + pr_url）
- * SC-2: sub_task 未 merged 且 PR 真未 merged → verdict FAIL → 不派 staging_e2e
+ * 本测试退化为**回归守卫**：reportNode 在任何 verdict 下都不得再派生 staging_e2e
+ * （防 per-initiative 无去重派生复活）。
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -43,16 +44,15 @@ function makeMockPool() {
   return { pool, client };
 }
 
-// 从 pool.query 里抓 staging_e2e 的 INSERT INTO tasks 调用
 function findStagingE2eInsert(pool) {
   return pool.query.mock.calls.find(([sql]) =>
     String(sql || '').includes('INSERT INTO tasks') && String(sql || '').includes("'staging_e2e'"));
 }
 
-describe('reportNode 派生 staging_e2e', () => {
+describe('reportNode 不派生 staging_e2e（回归守卫 · 决策 C）', () => {
   beforeEach(() => vi.clearAllMocks());
 
-  it('SC-1: 全部 sub_task merged → 派 staging_e2e（payload 带 initiative_id + pr_url）', async () => {
+  it('全部 sub_task merged（verdict PASS）→ reportNode 仍不派 staging_e2e（已挪到 mergePrNode）', async () => {
     const { pool } = makeMockPool();
     const state = {
       initiativeId: INIT_ID,
@@ -62,15 +62,10 @@ describe('reportNode 派生 staging_e2e', () => {
 
     await reportNode(state, { pool, _checkPrMerged: vi.fn().mockResolvedValue(true) });
 
-    const insert = findStagingE2eInsert(pool);
-    expect(insert).toBeTruthy();
-    const payload = JSON.parse(insert[1][2]);
-    expect(payload.initiative_id).toBe(INIT_ID);
-    expect(payload.pr_url).toBe(PR_URL);
-    expect(payload.journey_id).toBe('line-01');
+    expect(findStagingE2eInsert(pool)).toBeFalsy();
   });
 
-  it('SC-2: PR 真未 merged → verdict FAIL → 不派 staging_e2e', async () => {
+  it('PR 未 merged（verdict FAIL）→ reportNode 不派 staging_e2e', async () => {
     const { pool } = makeMockPool();
     const state = {
       initiativeId: INIT_ID,

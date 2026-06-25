@@ -138,11 +138,14 @@ async function loadE2eAcceptance(dbPool, initiativeId) {
 
 /** verdict 落 staging_e2e_results 表。 */
 async function recordResult(dbPool, r) {
+  // Slice1 修正：pr_url UNIQUE（migration 305）→ ON CONFLICT DO NOTHING 做 DB 级幂等，
+  // 防同一 pr_url 重复落 verdict（per-merge 重入时不抛错、不覆盖既有 verdict）。
   await dbPool.query(
     `INSERT INTO staging_e2e_results
        (task_id, initiative_id, pr_url, verdict, reason, staging_port,
         scenarios_total, scenarios_passed, failed_scenarios, deploy_output, deployed_at, tested_at)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10, $11, $12)`,
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10, $11, $12)
+     ON CONFLICT (pr_url) DO NOTHING`,
     [
       r.taskId, r.initiativeId, r.prUrl, r.verdict, r.reason, r.port,
       r.scenariosTotal || 0, r.scenariosPassed || 0,

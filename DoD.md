@@ -1,36 +1,30 @@
-# 回档收口 · brain 子步复用 brain-rollback.sh（清单法）
+# DoD — Slice1 修正（决策 C）：per-merge 触发 + pr_url 幂等
 
-> 分支：cp-06251847-cp-rollback-reuse-brain
-> 收口对象：PR #3422 的平行 brain 回档路径
+> 分支：cp-0625223242-staging-e2e-permerge-fix
+> 修正对象：#3425（已合 main）的 per-initiative reportNode 无去重派生
+> Spec: docs/superpowers/specs/2026-06-25-phase2-harness-to-production-design.md §3 Slice 1
+> 范围：只到 verdict 落库。不碰人工放行/promote/report（Slice2/3）。复用 #3425 的 runner 骨架。
 
-## 背景
-PR #3422 的 `rollback-cecelia.sh` brain 子步是 `git checkout <tag>` + `brain-deploy.sh`（源码重建），
-和 cecelia 已有的 `brain-rollback.sh`（image-tag 账本回退 + 健康检查）平行。本 PR 拆掉平行路径，
-用清单法让统一 tag 委托给 `brain-rollback.sh`，cecelia 只留一套 brain 回档原语。
+## 验收项
 
-## 范围
-- `scripts/promote-dashboard.sh`：写 `.production-release` 多记 `manifest=<tag> brain_image=<.brain-versions head>`
-- `scripts/rollback-cecelia.sh`：brain 子步改调 `brain-rollback.sh <镜像版本>`（从 manifest 取）；
-  pre-flight 校验该版本仍在 `.brain-versions`（被 prune → 报错退出，生产/指针不动）；指针回拨保留 `manifest=` 行
-- `packages/engine/tests/integration/deploy-rollback.test.sh`：加断言（manifest 记 brain_image / brain 子步走 brain-rollback.sh / 镜像被 prune 报错退出 / 不含 git checkout）
+- [x] [ARTIFACT] migration 305 在已合 304 表上 ALTER 加 pr_url UNIQUE（不 CREATE TABLE，migration 只一份原则）
+  Test: manual:node -e "const c=require('fs').readFileSync('packages/brain/migrations/305_staging_e2e_pr_url_unique.sql','utf8');if(/CREATE TABLE/i.test(c)||!/UNIQUE/i.test(c)||!c.includes('pr_url'))process.exit(1)"
 
-## 不做
-- 不改 dashboard 留存/换回逻辑、不改 migration 守护、不改 `brain-rollback.sh` 本身。不真起 docker、不碰生产。
+- [x] [BEHAVIOR] reportNode 不再派生 staging_e2e（移除 per-initiative 无去重裸 INSERT，回归守卫防复活）
+  Test: manual:node -e "const c=require('fs').readFileSync('packages/brain/src/workflows/harness-initiative.graph.js','utf8');const m=c.match(/export async function reportNode[\s\S]*?\n}\n/);if(m&&/INSERT INTO tasks[\s\S]{0,200}'staging_e2e'/.test(m[0]))process.exit(1)"
 
-## ARTIFACT 条目
+- [x] [BEHAVIOR] mergePrNode per-merge 派生 staging_e2e（两条 merged 分支都建，spec §3 "sub_task 合并后"原义），best-effort try/catch 永不 throw
+  Test: manual:node -e "const c=require('fs').readFileSync('packages/brain/src/workflows/harness-task.graph.js','utf8');const n=(c.match(/_spawnStagingE2eTask\(state, opts\)/g)||[]).length;if(n<2)process.exit(1);const i=c.indexOf('async function _spawnStagingE2eTask');const h=c.slice(i,c.indexOf('export async function mergePrNode',i));if(!/try/.test(h)||!/catch/.test(h)||/\bthrow\b/.test(h))process.exit(1)"
 
-- [x] [ARTIFACT] rollback-cecelia.sh 不再 git checkout 重建 brain，改调 brain-rollback.sh
-  Test: node -e "const c=require('fs').readFileSync('scripts/rollback-cecelia.sh','utf8');if(c.includes('git -C \"$MAIN_ROOT\" checkout')||!c.includes('brain-rollback.sh'))process.exit(1)"
+- [x] [BEHAVIOR] mergePrNode 派生幂等：INSERT 按 pr_url NOT EXISTS 去重（防 tick 重入重复建任务）
+  Test: manual:node -e "const c=require('fs').readFileSync('packages/brain/src/workflows/harness-task.graph.js','utf8');const i=c.indexOf('async function _spawnStagingE2eTask');const h=c.slice(i,c.indexOf('export async function mergePrNode',i));if(!/NOT EXISTS|ON CONFLICT/i.test(h)||!/pr_url/.test(h))process.exit(1)"
 
-- [x] [ARTIFACT] promote-dashboard.sh 把 brain_image 写进 manifest 行
-  Test: node -e "const c=require('fs').readFileSync('scripts/promote-dashboard.sh','utf8');if(!c.includes('manifest=')||!c.includes('brain_image='))process.exit(1)"
+- [x] [BEHAVIOR] recordResult 落 verdict 幂等：INSERT staging_e2e_results 用 ON CONFLICT(pr_url) DO NOTHING（per-merge 重入不抛错、不覆盖既有 verdict）
+  Test: manual:node -e "const c=require('fs').readFileSync('packages/brain/src/staging-e2e-runner.js','utf8');if(!/INSERT INTO staging_e2e_results[\s\S]{0,400}ON CONFLICT[\s\S]{0,40}pr_url[\s\S]{0,40}DO NOTHING/i.test(c))process.exit(1)"
 
-## BEHAVIOR 条目
-
-- [x] [BEHAVIOR] promote 记 brain_image 进 manifest；rollback brain 子步调 brain-rollback.sh 并传正确镜像版本（非 git checkout）；目标镜像被 prune 出 .brain-versions → 报错退出生产/指针不动；指针回拨保留 manifest 行（23/23 PASS，mock brain-rollback.sh + CECELIA_DEPLOY_ROOT 隔离根，不真起 docker/不碰生产）
-  Test: manual:bash packages/engine/tests/integration/deploy-rollback.test.sh
-  期望: exit 0
+- [x] [BEHAVIOR] 皇冠断言保留：staging E2E target 钉死 :5222（STAGING_PORT=5222，runStagingCommand 把 :5221→:5222），不退回 production
+  Test: manual:node -e "const c=require('fs').readFileSync('packages/brain/src/staging-e2e-runner.js','utf8');if(!/STAGING_PORT\s*=\s*5222/.test(c)||!/5221/.test(c))process.exit(1)"
 
 ## 成功标准
-cecelia 只有一套 brain 回档原语（`brain-rollback.sh`）；统一 `prod-cecelia-vN` tag 退化成指向它的清单；
-目标 brain 镜像不在账本时报错退出不偷偷重建；回档 E2E 进 CI 永久回归。
+
+harness sub_task 合并后（per-merge），mergePrNode 自动建 staging_e2e 任务（两条 merged 分支、pr_url 幂等）→ 复用 #3425 runner 部署 :5222 + 真 staging 实例跑 contract E2E → verdict 落 staging_e2e_results（ON CONFLICT 幂等）。reportNode 不再 per-initiative 无去重派生。silent-success 被挡住，且不会重复派任务。
