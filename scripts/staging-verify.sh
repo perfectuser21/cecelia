@@ -11,7 +11,7 @@
 set -euo pipefail
 
 STAGING_PORT=5222
-STAGING_URL="http://localhost:${STAGING_PORT}"
+STAGING_URL="http://${STAGING_HOST:-host.docker.internal}:${STAGING_PORT}"
 FAILED=0
 
 GREEN='\033[0;32m'
