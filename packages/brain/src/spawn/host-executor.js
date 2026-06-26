@@ -19,7 +19,6 @@ import { spawn as nodeSpawn } from 'node:child_process';
 import { writeFileSync, mkdirSync, existsSync } from 'node:fs';
 import { randomBytes } from 'node:crypto';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 
 const HOST_PROMPT_DIR = process.env.CECELIA_HOST_PROMPT_DIR || '/tmp/cecelia-host-prompts';
 const DEFAULT_TIMEOUT_MS = 90 * 60 * 1000; // 90 min
