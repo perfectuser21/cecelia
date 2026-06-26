@@ -18,7 +18,7 @@ import { homedir } from 'os';
 import { join } from 'path';
 import { spawn } from 'child_process';
 import { getActiveProfile } from './model-profile.js';
-import { selectBestAccount, markAuthFailure } from './account-usage.js';
+import { selectBestAccount, markAuthFailure, verifyAccountTokenLive } from './account-usage.js';
 import { reportCall } from './langfuse-reporter.js';
 
 const BRIDGE_URL = process.env.EXECUTOR_BRIDGE_URL || 'http://localhost:3457';
@@ -393,12 +393,24 @@ async function callClaudeViaBridge(prompt, model, timeout, _originalModel, image
         const count = _recordBridgeExit1(accountId);
         console.warn(`[llm-caller] [bridge-circuit] ${accountId} exit-code-1 count=${count}/${BRIDGE_EXIT1_THRESHOLD}`);
         if (count >= BRIDGE_EXIT1_THRESHOLD) {
+          // 限流(429)会让 claude CLI exit-1，但 token 仍有效——不能当 auth 失败熔断。
+          // markAuthFailure 前用 usage API 实时探测二次确认：仅 token 真失效才熔断。
+          let tokenState = 'unknown';
           try {
-            const resetTime = new Date(Date.now() + BRIDGE_EXIT1_RESET_MS).toISOString();
-            markAuthFailure(accountId, resetTime, 'api_error');
-            console.warn(`[llm-caller] [bridge-circuit] ${accountId}: 连续 ${count} 次 bridge exit-code-1，自动熔断 1h`);
-          } catch (mafErr) {
-            console.warn(`[llm-caller] [bridge-circuit] markAuthFailure 失败: ${mafErr.message}`);
+            tokenState = await verifyAccountTokenLive(accountId);
+          } catch (probeErr) {
+            console.warn(`[llm-caller] [bridge-circuit] ${accountId}: token 探测异常 ${probeErr.message}，保守不熔断`);
+          }
+          if (tokenState === 'auth_failed') {
+            try {
+              const resetTime = new Date(Date.now() + BRIDGE_EXIT1_RESET_MS).toISOString();
+              markAuthFailure(accountId, resetTime, 'api_error');
+              console.warn(`[llm-caller] [bridge-circuit] ${accountId}: 连续 ${count} 次 exit-code-1 且 token 探测=auth_failed，熔断 1h`);
+            } catch (mafErr) {
+              console.warn(`[llm-caller] [bridge-circuit] markAuthFailure 失败: ${mafErr.message}`);
+            }
+          } else {
+            console.warn(`[llm-caller] [bridge-circuit] ${accountId}: 连续 ${count} 次 exit-code-1 但 token 探测=${tokenState}（疑似限流，非 auth 失败），不熔断`);
           }
           _resetBridgeExit1(accountId);
         }

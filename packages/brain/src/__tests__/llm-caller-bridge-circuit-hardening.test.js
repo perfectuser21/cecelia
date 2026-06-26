@@ -15,10 +15,12 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 const mockMarkAuthFailure = vi.hoisted(() => vi.fn());
 const mockSelectBestAccount = vi.hoisted(() => vi.fn());
 const mockRaise = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
+const mockVerifyToken = vi.hoisted(() => vi.fn());
 
 vi.mock('../account-usage.js', () => ({
   selectBestAccount: mockSelectBestAccount,
   markAuthFailure: mockMarkAuthFailure,
+  verifyAccountTokenLive: mockVerifyToken,
 }));
 
 vi.mock('../alerting.js', () => ({
@@ -91,6 +93,8 @@ describe('llm-caller — bridge 熔断硬化', () => {
     mockMarkAuthFailure.mockClear();
     mockSelectBestAccount.mockReset();
     mockRaise.mockClear();
+    mockVerifyToken.mockReset();
+    mockVerifyToken.mockResolvedValue('auth_failed'); // 保持原"3次exit-1→熔断"预期
 
     // 默认让 selectBestAccount 返回 account3（用户报告的挂掉账号）
     mockSelectBestAccount.mockResolvedValue({ accountId: 'account3', model: 'sonnet' });
