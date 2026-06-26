@@ -1,9 +1,15 @@
 /**
- * host-executor.js — mac_web 环境专用：直接在宿主 Mac 上运行 Claude Code
+ * host-executor.js — mac_web 环境专用：在宿主 Mac 上运行 Claude Code
  *
  * 适用场景：target_environment=mac_web（Cecelia Dashboard，localhost:5174/5221 直接可达）
- * 区别于 docker-executor：不创建容器，Claude 进程在 Mac host 直接运行，
+ * 区别于 docker-executor：Claude 进程在 Mac host 运行，
  * 因此 Playwright 可访问真实浏览器 + localhost:5174 Dashboard。
+ *
+ * ⚠️ 关键：Brain 本身跑在 docker 容器（cecelia-node-brain）里。容器内无 claude、
+ * PATH 无 /opt/homebrew/bin —— 直接 spawn('claude') 必然 `spawn claude ENOENT`，
+ * 导致所有 mac_web harness 任务卡死。因此检测到 /.dockerenv（容器）时，
+ * 必须 **ssh 逃逸到宿主** 执行 claude（与 docker-executor 用 docker.sock 逃逸同理）。
+ * 裸机直跑 brain（无 /.dockerenv）时保留原直接 spawn 逻辑。
  *
  * WORKSPACE_PATH env var：告知 evaluator SKILL 把 .brain-result.json 写到哪里
  * （Docker 默认 /workspace，host 执行时为 worktreePath）。
@@ -17,6 +23,28 @@ import { fileURLToPath } from 'node:url';
 
 const HOST_PROMPT_DIR = process.env.CECELIA_HOST_PROMPT_DIR || '/tmp/cecelia-host-prompts';
 const DEFAULT_TIMEOUT_MS = 90 * 60 * 1000; // 90 min
+
+// 容器 → 宿主 ssh 逃逸默认配置（可被 env 覆盖）
+const DEFAULT_HOST_SSH_TARGET = 'administrator@host.docker.internal';
+const DEFAULT_HOST_SSH_KEYS = [
+  '/Users/administrator/.ssh/id_ed25519',
+  '/Users/administrator/.ssh/id_rsa',
+];
+// 宿主上 cecelia repo 根（容器内 import.meta.url 解析不出正确 repoRoot，故用固定宿主路径）
+const DEFAULT_HOST_REPO = '/Users/administrator/perfect21/cecelia';
+
+/** 单引号包裹做 shell 转义，安全拼进 ssh 远端命令字符串 */
+function shq(v) {
+  return `'${String(v).replace(/'/g, `'\\''`)}'`;
+}
+
+/** 返回第一个存在的路径（用于自动发现宿主私钥） */
+function firstExisting(paths) {
+  for (const p of paths) {
+    if (p && existsSync(p)) return p;
+  }
+  return null;
+}
 
 /**
  * Runs Claude Code directly on the Mac host (no Docker container).
@@ -45,35 +73,82 @@ export async function executeOnHost(opts) {
   const runInstance = randomBytes(4).toString('hex');
   writeFileSync(path.join(HOST_PROMPT_DIR, `${taskId}.${runInstance}-host.prompt`), opts.prompt, 'utf8');
 
-  // Resolve claude-launch.sh relative to this package
-  const thisDir = path.dirname(fileURLToPath(import.meta.url));
-  const repoRoot = path.resolve(thisDir, '../../../..');
-  const launcherPath = path.join(repoRoot, 'scripts/claude-launch.sh');
+  const spawnFn = opts.spawnFn || nodeSpawn;
 
-  const env = {
-    HOME: process.env.HOME || '/Users/administrator',
-    PATH: process.env.PATH || '/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin',
-    ...process.env,
+  // 容器检测：brain 在 docker 容器内（/.dockerenv 存在）→ 必须 ssh 逃逸到宿主跑 claude。
+  // opts.inContainer 可显式覆盖（测试用）。
+  const inContainer = opts.inContainer ?? existsSync('/.dockerenv');
+
+  // 注入给 claude 进程的 env（宿主执行时 BRAIN_URL 等由 caller 经 opts.env 给 localhost）
+  const injectedEnv = {
     ...(opts.env || {}),
     WORKSPACE_PATH: worktreePath,
     CECELIA_TASK_ID: taskId,
     CECELIA_HEADLESS: 'true',
   };
 
-  const useLocalLauncher = existsSync(launcherPath);
-  const cmdArgs = useLocalLauncher
-    ? ['bash', launcherPath, '--dangerously-skip-permissions', '-p']
-    : ['claude', '--dangerously-skip-permissions', '-p'];
+  // 宿主上 claude-launch.sh 路径（固定宿主 repo 根，不依赖容器内 import.meta.url）
+  const hostRepo = opts.hostRepoRoot || process.env.CECELIA_HOST_REPO || DEFAULT_HOST_REPO;
+  const hostLauncher = path.join(hostRepo, 'scripts/claude-launch.sh');
+
+  let cmdArgs;
+  let spawnEnv;
+  let launcherLabel;
+
+  if (inContainer) {
+    // ── 容器内：ssh 逃逸到宿主执行 ──────────────────────────────────────────
+    const sshTarget = opts.hostSshTarget || process.env.CECELIA_HOST_EXEC_SSH || DEFAULT_HOST_SSH_TARGET;
+    const sshKey = opts.hostSshKey || process.env.CECELIA_HOST_EXEC_SSH_KEY || firstExisting(DEFAULT_HOST_SSH_KEYS);
+
+    // 远端命令：cd 到 worktree → 用 env 前缀注入变量 → 跑宿主 claude-launch.sh（读 stdin）
+    const envPrefix = Object.entries(injectedEnv)
+      .map(([k, v]) => `${k}=${shq(v)}`)
+      .join(' ');
+    const remoteCmd =
+      `cd ${shq(worktreePath)} && env ${envPrefix} ` +
+      `bash ${shq(hostLauncher)} --dangerously-skip-permissions -p`;
+
+    const sshArgs = [];
+    if (sshKey) sshArgs.push('-i', sshKey);
+    sshArgs.push(
+      '-o', 'StrictHostKeyChecking=no',
+      '-o', 'UserKnownHostsFile=/dev/null',
+      '-o', 'BatchMode=yes',
+      sshTarget,
+      remoteCmd,
+    );
+    cmdArgs = ['ssh', ...sshArgs];
+    // ssh 客户端进程自身只需 HOME/PATH 找 ssh 二进制；远端 env 由 remoteCmd 的 env 前缀负责
+    spawnEnv = {
+      HOME: process.env.HOME || '/Users/administrator',
+      PATH: process.env.PATH || '/usr/bin:/bin',
+      ...process.env,
+    };
+    launcherLabel = `ssh→${sshTarget}`;
+  } else {
+    // ── 裸机：直接在本机 spawn（legacy 路径）──────────────────────────────
+    const useLocalLauncher = existsSync(hostLauncher);
+    cmdArgs = useLocalLauncher
+      ? ['bash', hostLauncher, '--dangerously-skip-permissions', '-p']
+      : ['claude', '--dangerously-skip-permissions', '-p'];
+    spawnEnv = {
+      HOME: process.env.HOME || '/Users/administrator',
+      PATH: process.env.PATH || '/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin',
+      ...process.env,
+      ...injectedEnv,
+    };
+    launcherLabel = useLocalLauncher ? 'claude-launch.sh' : 'claude';
+  }
 
   const startedAtMs = Date.now();
   const startedAt = new Date(startedAtMs).toISOString();
 
-  console.log(`[host-executor] spawn task=${taskId} worktree=${worktreePath} launcher=${useLocalLauncher ? 'claude-launch.sh' : 'claude'}`);
+  console.log(`[host-executor] spawn task=${taskId} worktree=${worktreePath} mode=${inContainer ? 'container-ssh' : 'host-direct'} launcher=${launcherLabel}`);
 
   return new Promise((resolve) => {
-    const proc = nodeSpawn(cmdArgs[0], cmdArgs.slice(1), {
-      cwd: worktreePath,
-      env,
+    const proc = spawnFn(cmdArgs[0], cmdArgs.slice(1), {
+      cwd: inContainer ? undefined : worktreePath,
+      env: spawnEnv,
       stdio: ['pipe', 'pipe', 'pipe'],
     });
 
