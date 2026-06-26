@@ -154,9 +154,9 @@ if [[ "$DRY_RUN" == true ]]; then
     exit 0
 fi
 
-echo "[5/6] 等待 staging 健康检查（最多 60s）..."
+echo "[5/6] 等待 staging 健康检查（最多 180s）..."
 TRIES=0
-MAX_TRIES=12
+MAX_TRIES=36
 HEALTHY=false
 while [ $TRIES -lt $MAX_TRIES ]; do
     sleep 5
