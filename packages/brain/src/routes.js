@@ -21,6 +21,7 @@ import socialTrendingRouter from './routes/social-trending.js';
 import topicsRouter from './routes/topics.js';
 // llm-service 在 server.js 里以 /api/brain/llm-service 独立挂载（带 internalAuth 中间件）
 import harnessRouter from './routes/harness.js';
+import harnessSelftestRouter from './routes/harness-selftest.js';
 import warroomRouter from './routes/warroom.js';
 import kr3Router from './routes/kr3.js';
 import dispatchRouter from './routes/dispatch.js';
@@ -29,7 +30,7 @@ export { triggerAutoRCA } from './routes/brain-meta.js';
 export { resolveRelatedFailureMemories } from './routes/shared.js';
 
 const router = Router();
-for (const subRouter of [statusRouter, tasksRouter, tickRouter, actionsRouter, executionRouter, goalsRouter, analyticsRouter, brainMetaRouter, opsRouter, publishResultsRouter, publishJobsRouter, capacityBudgetRouter, devReviewsRouter]) {
+for (const subRouter of [statusRouter, tasksRouter, tickRouter, actionsRouter, executionRouter, goalsRouter, analyticsRouter, brainMetaRouter, opsRouter, publishResultsRouter, publishJobsRouter, capacityBudgetRouter, devReviewsRouter, harnessSelftestRouter]) {
   router.stack.push(...subRouter.stack);
 }
 
