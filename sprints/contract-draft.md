@@ -1,4 +1,4 @@
-# Sprint Contract Draft (Round 1)
+# Sprint Contract Draft (Round 2)
 
 > Sprint: Dashboard 首页 Harness 工厂线贯通状态标识
 > journey_type: **user_facing** ｜ target_environment: **mac_web**（本机 Playwright + 校验 staging:5223 / live:5211）
@@ -113,11 +113,13 @@ echo OK
 **验证命令**（真目标 = 生产 live:5211 实际 serve 的产物）:
 ```bash
 # 取 live 首页 → 提取它引用的 JS bundle → 验该 bundle 真含固定文字
+# 注：响应是 HTML/JS 静态产物（非 JSON），oracle 是 grep -q 逐字内容断言；
+# 用 VAR=$(curl) 捕获 + 同名变量内容断言形态（值校验落在捕获的下一条语句）。
 IDX=$(curl -sf --max-time 10 "http://localhost:5211/") || { echo "FAIL: live:5211 首页不可达"; exit 1; }
+echo "$IDX" | grep -q '/assets/[A-Za-z0-9._-]\+\.js' || { echo "FAIL: live 首页未引用 JS bundle"; exit 1; }
 ASSET=$(printf '%s' "$IDX" | grep -oE '/assets/[A-Za-z0-9._-]+\.js' | head -1)
-[ -n "$ASSET" ] || { echo "FAIL: live 首页未引用 JS bundle"; exit 1; }
-curl -sf --max-time 10 "http://localhost:5211${ASSET}" | grep -q "Cecelia Harness 工厂线已贯通" \
-  || { echo "FAIL: live:5211 生产 bundle 未含固定文字 — promote 未把新代码推上生产"; exit 1; }
+BUNDLE=$(curl -sf --max-time 10 "http://localhost:5211${ASSET}") || { echo "FAIL: live:5211 bundle 不可达"; exit 1; }
+echo "$BUNDLE" | grep -q "Cecelia Harness 工厂线已贯通" || { echo "FAIL: live:5211 生产 bundle 未含固定文字 — promote 未把新代码推上生产"; exit 1; }
 echo OK
 ```
 

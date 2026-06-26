@@ -41,9 +41,9 @@ target_environment: mac_web
   期望: OK（未真验前标 logic-done-pending）
 
 - [ ] [BEHAVIOR] (SEAM) live:5211 生产实际 serve 的 JS bundle 真含逐字固定文字（promote 真把新代码推上生产）
-  Test: manual:bash -c 'IDX=$(curl -sf --max-time 10 "http://localhost:5211/") || { echo "FAIL live unreachable"; exit 1; }; ASSET=$(printf "%s" "$IDX" | grep -oE "/assets/[A-Za-z0-9._-]+\.js" | head -1); [ -n "$ASSET" ] || { echo "FAIL no bundle ref"; exit 1; }; curl -sf --max-time 10 "http://localhost:5211${ASSET}" | grep -q "Cecelia Harness 工厂线已贯通" || { echo "FAIL live bundle 无文字 — promote 未生效"; exit 1; }; echo OK'
+  Test: manual:bash -c 'IDX=$(curl -sf --max-time 10 "http://localhost:5211/") || { echo "FAIL live unreachable"; exit 1; }; echo "$IDX" | grep -q "/assets/[A-Za-z0-9._-]\+\.js" || { echo "FAIL no bundle ref"; exit 1; }; ASSET=$(printf "%s" "$IDX" | grep -oE "/assets/[A-Za-z0-9._-]+\.js" | head -1); BUNDLE=$(curl -sf --max-time 10 "http://localhost:5211${ASSET}") || { echo "FAIL bundle unreachable"; exit 1; }; echo "$BUNDLE" | grep -q "Cecelia Harness 工厂线已贯通" || { echo "FAIL live bundle 无文字 — promote 未生效"; exit 1; }; echo OK'
   期望: OK（未真验前标 logic-done-pending）
-  gate-allow: weak-oracle/curl-no-jq 响应是静态 JS bundle（非 JSON），grep -q 逐字固定文字即内容值断言，jq -e 不适用；本文件仅此一处 curl 无 jq，其余 curl 均为 -w %{http_code} 状态码 oracle
+  gate-allow: weak-oracle/curl-no-jq 响应是静态 JS bundle（非 JSON），grep -q 逐字固定文字即内容值断言，jq -e 不适用；此为单行 bash -c 内的跨语句 capture-then-assert（IDX/BUNDLE 捕获后同行 grep -q 断言），gate 仅跨物理行识别故此处显式豁免；其余 curl 均为 -w %{http_code} 状态码 oracle
 
 ## BEHAVIOR:E2E 条目（user_facing 专属，Mode B final-e2e 跑 — Playwright 本机渲染）
 
