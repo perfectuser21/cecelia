@@ -1,0 +1,28 @@
+{
+  "initiative_id": "",
+  "journey_type": "autonomous",
+  "journey_type_reason": "仅涉及 packages/brain/ 纯后端只读端点，无 UI、无远端 agent、无 engine hooks",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "新增 Brain 只读自检端点 GET /api/brain/harness-selftest",
+      "scope": "在 packages/brain/src/routes/ 新增只读路由，命中 GET /api/brain/harness-selftest 时返回 HTTP 200 + 固定 JSON {ok:true, service:\"harness\"}；零数据库、零副作用、幂等；挂载进 routes.js 顶层 /api/brain 前缀；不修改任何现有端点行为",
+      "dod": [
+        "[BEHAVIOR] GET /api/brain/harness-selftest 返回 HTTP 200（路由真注册，404=未实现=FAIL）",
+        "[BEHAVIOR] 响应 ok === true 且 service === \"harness\"",
+        "[BEHAVIOR] 顶层 keys 恰好 [\"ok\",\"service\"]，不含 version/timestamp/status 等动态字段",
+        "[BEHAVIOR] 两次连续调用响应体逐字节一致（幂等）",
+        "[BEHAVIOR] 既有端点 /api/brain/health 仍返回 200 且含 status 字段",
+        "[ARTIFACT] packages/brain/src/routes/harness-selftest.js 存在并含 harness-selftest 路径与 service 标识",
+        "[ARTIFACT] routes.js 已挂载该路由"
+      ],
+      "files": [
+        "packages/brain/src/routes/harness-selftest.js",
+        "packages/brain/src/routes.js"
+      ],
+      "depends_on": [],
+      "complexity": "S",
+      "estimated_minutes": 30
+    }
+  ]
+}
