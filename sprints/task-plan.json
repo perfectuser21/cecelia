@@ -1,31 +1,27 @@
 {
-  "initiative_id": "pending",
-  "journey_type": "autonomous",
-  "journey_type_reason": "仅涉及 playground/server.js 路由 + 测试，无 UI / 无外部 agent 协议；target_environment: playground，evaluator 用 localhost:3XXX 验证",
+  "initiative_id": "4fd93312-1a3c-4ca9-8d8f-f16b941a7cfc",
+  "journey_type": "user_facing",
+  "journey_type_reason": "改动落在 apps/dashboard/，产出为主理人首页可见的 UI 固定状态标识。",
   "tasks": [
     {
       "task_id": "ws1",
-      "title": "playground/server.js 新增 GET /subtract 路由 + playground/tests/server.test.js 新增 describe 块",
-      "scope": "在 playground/server.js 注册 GET /subtract（复用 STRICT_NUMBER regex ^-?\\d+(\\.\\d+)?$，校验 a/b 存在且合法，计算 Number(a)-Number(b)，返回 {result: <number>, operation: \"subtract\"}；禁用响应字段 difference/diff/value/answer/data；禁用 operation 变体 difference/diff/sub/minus）；在 playground/tests/server.test.js 新增 describe('GET /subtract', ...) 块（happy 正数/负数/零结果、schema 完整性 oracle、禁用字段反向断言、error path 缺参+非法格式）",
+      "title": "Dashboard 首页新增 Harness 工厂线贯通固定状态标识并端到端验证 staging→promote→live",
+      "scope": "在 Cecelia Dashboard 首页常驻可见区新增逐字固定文字 \"Cecelia Harness 工厂线已贯通\"（data-testid=harness-pipeline-status），静态不依赖任何接口数据，暗/亮主题均可见；不改流水线脚本、不新增 API/DB。",
       "dod": [
-        "[ARTIFACT] playground/server.js 内含 app.get('/subtract' 路由注册",
-        "[ARTIFACT] playground/server.js /subtract 路由响应含字面 operation: \"subtract\"（禁用 difference/diff/sub/minus）",
-        "[ARTIFACT] playground/server.js /subtract 路由响应含字面 result 字段（禁用 difference/diff/value/answer/data）",
-        "[ARTIFACT] playground/tests/server.test.js 内含 describe('GET /subtract' 块",
-        "[BEHAVIOR] GET /subtract?a=10&b=3 → HTTP 200 + {result:7, operation:\"subtract\"}（schema 字段值）",
-        "[BEHAVIOR] GET /subtract?a=10&b=3 → keys | sort == [\"operation\",\"result\"]（schema 完整性）",
-        "[BEHAVIOR] GET /subtract?a=10&b=3 → 禁用字段 difference/diff/value/answer/data 均不存在（反向验证）",
-        "[BEHAVIOR] 缺参 a → HTTP 400 + error 字段类型 string（error path）",
-        "[BEHAVIOR] GET /subtract?a=1e5&b=3 → HTTP 400（非法格式 error path）",
-        "[BEHAVIOR] GET /subtract?a=3&b=10 → HTTP 200 + result=-7（负数结果）"
+        "[ARTIFACT] apps/dashboard/src/components/HarnessPipelineStatus.tsx 含逐字文字 + harness-pipeline-status testid",
+        "[ARTIFACT] apps/dashboard/src/App.tsx 壳层挂载 HarnessPipelineStatus（首页可见）",
+        "[BEHAVIOR] 本机 build 后 dist/assets/ 含逐字固定文字",
+        "[BEHAVIOR] sprints/tests/harness-pipeline-status.test.ts 转绿",
+        "[BEHAVIOR:E2E] Playwright 首页 getByTestId('harness-pipeline-status') 暗/亮主题均 toBeVisible 且 toHaveText 逐字相等",
+        "[BEHAVIOR:SEAM] staging:5223 HTTP 200 + promote 后 live:5211 HTTP 200 且生产 bundle 真含固定文字（真目标验，CI 绿 != done）"
       ],
       "files": [
-        "playground/server.js",
-        "playground/tests/server.test.js"
+        "apps/dashboard/src/components/HarnessPipelineStatus.tsx",
+        "apps/dashboard/src/App.tsx"
       ],
       "depends_on": [],
-      "complexity": "M",
-      "estimated_minutes": 30
+      "complexity": "S",
+      "estimated_minutes": 45
     }
   ]
 }

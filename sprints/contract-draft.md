@@ -1,289 +1,238 @@
-# Sprint Contract Draft (Round 2) — B1 playground GET /subtract
+# Sprint Contract Draft (Round 2)
 
-> **PR-G 验收承诺**：本合同字段名严格字面照搬 PRD `## Response Schema` 段：
-> - response success keys = `result` + `operation`（字面，**不许漂到 `difference`/`diff`/`value`/`answer`/`data` 等任一禁用名**）
-> - operation 字面值 = `"subtract"`（**禁用变体 `difference`/`diff`/`sub`/`minus`**）
-> - query param 字面名 = `a`/`b`（禁用 `x`/`y`/`p`/`q`/`n`/`m`/`v1`/`v2`）
-> - schema 完整性：成功响应顶层 keys 字面集合完全等于 `["operation","result"]`
->
-> **Proposer 自查 checklist（v7.5 + v7.12 死规则）**：
-> 1. PRD success keys = {`result`, `operation`} ✓ contract jq -e 用 {`result`, `operation`} ✓
-> 2. PRD operation 字面 = `"subtract"` ✓ contract jq -e `.operation == "subtract"` ✓
-> 3. 禁用清单（`difference`/`diff`/`value`/`answer`/`data`）→ 仅在反向 `has("X") | not` ✓
-> 4. PRD keys 完整性 = `["operation","result"]` ✓ contract `keys | sort == ["operation","result"]` ✓
-> 5. BEHAVIOR count ≥ 4：ws1 共 6 条，覆盖 schema 字段值 / keys 完整性 / 禁用字段反向 / error path ✓
-> 6. depends_on：ws1=[]（唯一 workstream）✓
-> 7. 假绿自查：所有 BEHAVIOR 以 `curl -sf` 开头（404 → exit 1）；缺参 400 检查路由未实现返 404≠400 → FAIL ✓
+> Sprint: Dashboard 首页 Harness 工厂线贯通状态标识
+> journey_type: **user_facing** ｜ target_environment: **mac_web**（本机 Playwright + 校验 staging:5223 / live:5211）
+
+## 已知约束（来自回归测试）
+
+- [scripts/dashboard-staging-selfcheck.sh] staging slot（:5223）必须 HTTP 200、index.html 含 `id="root"`、assets 引用全部可达 → promote 前自检门
+- [scripts/dashboard-slot-server.cjs] staging/live 都是**静态 dist 直出**（SPA fallback 回 index.html）；固定文字属 React 渲染内容，会被打进 `dist/assets/*.js` bundle，**不在裸 index.html 里** → 文字落地 oracle 必须验 bundle 内容或浏览器渲染，不能 grep index.html
+- [scripts/promote-dashboard.sh] promote = 原子换入本机 live dist/（OrbStack 挂载 → :5211 立即生效）；无 `.staging-pending` 拒绝 promote
+
+## 技术上下文（Step 1.1 推导）
+
+- Brain（localhost:5221）本轮不可达 → 跳过 registry 推导，按 PRD 字面 + 现有 dashboard 约定（`data-testid` 选择器、`@testing-library/react` + `happy-dom` + `vitest`、Vite 静态构建）。新组件命名标 `[NEW_PATTERN]`。
+- 测试栈：`apps/dashboard` 已有 `vitest` / `@testing-library/react` / `happy-dom`；本 sprint 红测试用纯 fs 断言（不依赖根目录解析 DOM 库），保证从仓库根可跑。
+
+## Response Schema（推导来源: PRD 字面）
+
+**N/A — 任务无 HTTP 响应**（纯静态前端标识，不新增/改 Brain API，不写 DB）。
+本 sprint 的 oracle 是「构建产物含文字 + 浏览器可见 + 生产 promote 真生效」，不是 JSON schema。Reviewer 第 6 维按 UI/接缝 oracle 审，不按 jq -e schema 审（PRD 无 HTTP 响应 → 第 6 维 schema 项自动满分）。
+
+---
+
+## 固定文字契约（不可改写，逐字）
+
+```
+Cecelia Harness 工厂线已贯通
+```
+
+- 稳定选择器：`data-testid="harness-pipeline-status"`（[NEW_PATTERN]，沿用 dashboard 现有 data-testid 约定）
+- 落点：`apps/dashboard/src/` 首页常驻可见区（App 壳层；generator 定具体落点，须保证首屏可见、不依赖任何接口数据）
+- 暗/亮主题均可见（边界情况硬条款）
 
 ---
 
 ## Golden Path
 
-```
-[HTTP 客户端发 GET /subtract?a=10&b=3]
-  → [playground server STRICT_NUMBER regex 校验 a、b 存在且匹配 ^-?\d+(\.\d+)?$]
-  → [计算 result = Number(10) - Number(3) = 7]
-  → [返回 HTTP 200 {"result":7,"operation":"subtract"}，keys = ["operation","result"]]
-```
+[主理人开 live:5211 首页] → [首页渲染固定状态标识区] → [首页可见处出现 "Cecelia Harness 工厂线已贯通"]
+（背后接缝：generator 写码 → CI 全绿 → 合 main → staging:5223 部署 → staging 自检 → promote → live:5211 生效）
 
----
+### Step 1: 主理人在浏览器打开 live dashboard（:5211）首页
+**来源**: `[FROM_PRD]` — PRD「Golden Path」第 1 步「[入口] 主理人在浏览器打开 live dashboard（:5211）首页」
 
-### Step 1: 客户端发合法减法请求 → HTTP 200 + 正确 schema
-
-**来源**: `[FROM_PRD]` — PRD 段落 "Golden Path（核心场景）" 第 1-3 步直接定义
-
-**可观测行为**: GET /subtract?a=10&b=3 → HTTP 200，body `{result:7, operation:"subtract"}`，顶层 keys = `["operation","result"]`
+**可观测行为**: live dashboard 服务在线，首页可访问（HTTP 200）。
 
 **验证命令**:
 ```bash
-PLAYGROUND_PORT=3301 NODE_ENV=production node playground/server.js > /tmp/b1-step1.log 2>&1 &
-SPID=$!; sleep 2
-
-RESP=$(curl -sf "http://localhost:3301/subtract?a=10&b=3") || { kill $SPID; echo "FAIL: 端点未返回 200（路由未注册）"; exit 1; }
-echo "$RESP" | jq -e '.result == 7'                              || { kill $SPID; echo "FAIL: result != 7"; exit 1; }
-echo "$RESP" | jq -e '.operation == "subtract"'                  || { kill $SPID; echo "FAIL: operation != subtract"; exit 1; }
-echo "$RESP" | jq -e '.result | type == "number"'                || { kill $SPID; echo "FAIL: result 非 number 类型"; exit 1; }
-echo "$RESP" | jq -e 'keys | sort == ["operation","result"]'     || { kill $SPID; echo "FAIL: keys 不合规"; exit 1; }
-
-kill $SPID
-echo "✅ Step 1 通过"
+CODE=$(curl -s -o /dev/null -w "%{http_code}" --max-time 10 "http://localhost:5211/")
+[ "$CODE" = "200" ] || { echo "FAIL: live:5211 首页非 200 (=$CODE)"; exit 1; }
+echo OK
 ```
 
-**硬阈值**: HTTP 200；`result === 7`；`operation === "subtract"`；`keys == ["operation","result"]`
+**硬阈值**: live:5211 `/` 返回 HTTP 200。
 
 ---
 
-### Step 2: 禁用响应字段反向验证
+### Step 2: 首页渲染固定状态标识区（文字打进生产构建产物）
+**来源**: `[FROM_PRD]` — PRD「Golden Path」第 2 步「[系统处理] 首页加载，渲染固定状态标识区」+「预期受影响文件 App.tsx」
 
-**来源**: `[FROM_PRD]` — PRD 段落 "Response Schema" 下 "禁用响应字段: difference/diff/value/answer/data"
-
-**可观测行为**: 成功响应顶层不包含任何 PRD 禁用字段名
+**可观测行为**: 构建产物（dist bundle）确实包含逐字固定文字（证明 generator 真把文字写进首页常驻组件并被打包，而非空实现/假绿）。
 
 **验证命令**:
 ```bash
-PLAYGROUND_PORT=3302 NODE_ENV=production node playground/server.js > /tmp/b1-step2.log 2>&1 &
-SPID=$!; sleep 2
-
-RESP=$(curl -sf "http://localhost:3302/subtract?a=10&b=3") || { kill $SPID; echo "FAIL: curl 非 200"; exit 1; }
-for k in difference diff value answer data; do
-  echo "$RESP" | jq -e "has(\"$k\") | not" > /dev/null || { kill $SPID; echo "FAIL: 禁用字段 $k 出现"; exit 1; }
-done
-
-kill $SPID
-echo "✅ Step 2 通过"
+# 本机 build 后，固定文字必须出现在打包后的 JS bundle 里（React 文本编进 assets/*.js）
+cd apps/dashboard && (npm ci --prefer-offline >/dev/null 2>&1 || npm install >/dev/null 2>&1)
+npm run build >/dev/null 2>&1 || { echo "FAIL: dashboard build 失败"; exit 1; }
+grep -rq "Cecelia Harness 工厂线已贯通" dist/assets/ || { echo "FAIL: 构建产物未含固定文字（generator 未落地）"; exit 1; }
+echo OK
 ```
 
-**硬阈值**: 5 个 PRD 禁用字段均不存在于响应顶层
+**硬阈值**: `dist/assets/` 至少一个文件含逐字固定文字（grep -q exit 0）。
 
 ---
 
-### Step 3: 缺参 → HTTP 400 + error 字段
+### Step 3: 首页可见处出现固定文字 "Cecelia Harness 工厂线已贯通"
+**来源**: `[FROM_PRD]` — PRD「Golden Path」第 3 步「[出口/可观测结果] 首页可见处出现固定文字」+「边界情况 暗/亮主题下均需可见」
 
-**来源**: `[FROM_PRD]` — PRD 段落 "Response Schema" "Error (HTTP 400)"；"边界情况" "缺参 → 400"
+**可观测行为**: 主理人在首页能**看见**该行文字（非 display:none），暗色/亮色主题下均可见。
 
-**可观测行为**: 缺 a 或缺 b → HTTP 400，body `{error:"<string>"}`
+**验证命令**（Playwright 本机渲染，详见 `## E2E 验收`）:
+```javascript
+const el = page.getByTestId('harness-pipeline-status');
+await expect(el).toBeVisible({ timeout: 10000 });
+await expect(el).toHaveText('Cecelia Harness 工厂线已贯通');
+// 暗/亮主题各断言一次 toBeVisible
+```
+
+**硬阈值**: `getByTestId('harness-pipeline-status')` 在默认 + 暗色 + 亮色三态下 `toBeVisible`，且 `toHaveText` 逐字相等。
+
+---
+
+### Step 4【接缝】: staging dashboard（:5223）真部署、可预览（promote 前置门）
+**来源**: `[FROM_PRD]` — PRD「E2E 验收」期望点 1「staging dashboard（:5223）HTTP 200 可访问、可构建」
+
+**可观测行为**: staging slot 服务真起来，主理人能在 :5223 预览到新版本（接缝：CI 绿 ≠ staging 真起；必须真打 :5223）。
 
 **验证命令**:
 ```bash
-PLAYGROUND_PORT=3303 NODE_ENV=production node playground/server.js > /tmp/b1-step3.log 2>&1 &
-SPID=$!; sleep 2
-
-CODE=$(curl -s -o /tmp/b1-err-a.json -w "%{http_code}" "http://localhost:3303/subtract?b=3")
-[ "$CODE" = "400" ] || { kill $SPID; echo "FAIL: 缺 a 应返 400，实际 $CODE"; exit 1; }
-jq -e '.error | type == "string"' /tmp/b1-err-a.json || { kill $SPID; echo "FAIL: error 字段不存在"; exit 1; }
-
-CODE=$(curl -s -o /dev/null -w "%{http_code}" "http://localhost:3303/subtract?a=10")
-[ "$CODE" = "400" ] || { kill $SPID; echo "FAIL: 缺 b 应返 400，实际 $CODE"; exit 1; }
-
-CODE=$(curl -s -o /dev/null -w "%{http_code}" "http://localhost:3303/subtract")
-[ "$CODE" = "400" ] || { kill $SPID; echo "FAIL: 双缺参应返 400，实际 $CODE"; exit 1; }
-
-kill $SPID
-echo "✅ Step 3 通过"
+CODE=$(curl -s -o /dev/null -w "%{http_code}" --max-time 10 "http://localhost:5223/")
+[ "$CODE" = "200" ] || { echo "FAIL: staging:5223 非 200 (=$CODE) — staging 未真部署"; exit 1; }
+echo OK
 ```
 
-**硬阈值**: HTTP 400；error 字段类型为 string
+**硬阈值**: staging:5223 `/` 返回 HTTP 200。
 
 ---
 
-### Step 4: 非法格式（1e5/Inf/+1/0xFF）→ HTTP 400
+### Step 5【接缝】: promote 后 live:5211 生产真出固定文字（最终生效证据）
+**来源**: `[FROM_PRD]` — PRD「E2E 验收」期望点 2「promote 后 live dashboard（:5211）首页 HTTP 200」+ 期望点 3「live 首页可见处出现固定文字」
 
-**来源**: `[FROM_PRD]` — PRD 段落 "边界情况" "非法格式（1e5/Inf/+1/0xFF）→ 400"；Query Parameters strict `^-?\d+(\.\d+)?$`
+**可观测行为**: promote 把含文字的 dist 换入生产后，live:5211 实际服务的 bundle 含逐字固定文字（证明工厂线真的把代码推到生产，而非只在本机/CI 绿）。
 
-**可观测行为**: 格式不符合 regex → HTTP 400
-
-**验证命令**:
+**验证命令**（真目标 = 生产 live:5211 实际 serve 的产物）:
 ```bash
-PLAYGROUND_PORT=3304 NODE_ENV=production node playground/server.js > /tmp/b1-step4.log 2>&1 &
-SPID=$!; sleep 2
-
-for bad in "a=1e5&b=3" "a=Inf&b=3" "a=%2B1&b=3" "a=0xFF&b=3"; do
-  CODE=$(curl -s -o /dev/null -w "%{http_code}" "http://localhost:3304/subtract?$bad")
-  [ "$CODE" = "400" ] || { kill $SPID; echo "FAIL: $bad 应返 400，实际 $CODE"; exit 1; }
-done
-
-kill $SPID
-echo "✅ Step 4 通过"
+# 取 live 首页 → 提取它引用的 JS bundle → 验该 bundle 真含固定文字
+# 注：响应是 HTML/JS 静态产物（非 JSON），oracle 是 grep -q 逐字内容断言；
+# 用 VAR=$(curl) 捕获 + 同名变量内容断言形态（值校验落在捕获的下一条语句）。
+IDX=$(curl -sf --max-time 10 "http://localhost:5211/") || { echo "FAIL: live:5211 首页不可达"; exit 1; }
+echo "$IDX" | grep -q '/assets/[A-Za-z0-9._-]\+\.js' || { echo "FAIL: live 首页未引用 JS bundle"; exit 1; }
+ASSET=$(printf '%s' "$IDX" | grep -oE '/assets/[A-Za-z0-9._-]+\.js' | head -1)
+BUNDLE=$(curl -sf --max-time 10 "http://localhost:5211${ASSET}") || { echo "FAIL: live:5211 bundle 不可达"; exit 1; }
+echo "$BUNDLE" | grep -q "Cecelia Harness 工厂线已贯通" || { echo "FAIL: live:5211 生产 bundle 未含固定文字 — promote 未把新代码推上生产"; exit 1; }
+echo OK
 ```
 
-**硬阈值**: 4 种非法格式全部返 HTTP 400
+**硬阈值**: live:5211 首页引用的 JS bundle 含逐字固定文字。
 
 ---
 
-### Step 5: 结果为负数 → HTTP 200 正常返回
+## 接缝清单（v9.3 — 碰真实世界的点 + 真目标验证方式）
 
-**来源**: `[FROM_PRD]` — PRD 段落 "边界情况" "结果负数（a=3,b=10 → -7）正常返回"
+> 逻辑断言（环境无关，CI/本机可验）：Step 2 构建产物含文字、Step 3 本机 Playwright 渲染可见 → CI/本机绿即真 done。
+> 接缝断言（环境相关，**CI 绿 ≠ done，必须真目标验**）：
 
-**可观测行为**: GET /subtract?a=3&b=10 → HTTP 200，`{result:-7, operation:"subtract"}`
+| # | 碰真实世界的点 | 真目标验证方式 | 未真验前状态 |
+|---|---|---|---|
+| 1 | **staging:5223 真部署** | curl :5223 真返回 200（staging slot 真起来，主理人能真预览） | `logic-done-pending` |
+| 2 | **promote → live:5211 真生效** | curl live:5211 首页 → 取其引用的 JS bundle → 真含逐字固定文字（生产实际 serve 的产物，非本机 dist、非 CI 绿） | `logic-done-pending` |
+| 3 | **CI 全绿是接缝前提，不是 done** | 工厂线 CI（workspace-ci.yml）全绿 + 合 main 触发 staging 部署，真观测 #1 #2 才算 done | `logic-done-pending` |
 
-**验证命令**:
-```bash
-PLAYGROUND_PORT=3305 NODE_ENV=production node playground/server.js > /tmp/b1-step5.log 2>&1 &
-SPID=$!; sleep 2
+**done 判定**：接缝 #1 #2 在真目标（:5223 / :5211）真观测到 → done；任一未真验 → 整体标 `logic-done-pending`，**不得标 done**。
+**禁止写死环境假设值**：本 sprint 无坐标/UIA/env 假设值；端口（5211/5223）来自现有 promote 脚本与 PRD，非臆造。
 
-RESP=$(curl -sf "http://localhost:3305/subtract?a=3&b=10") || { kill $SPID; echo "FAIL: curl 非 200"; exit 1; }
-echo "$RESP" | jq -e '.result == -7'         || { kill $SPID; echo "FAIL: result 应为 -7"; exit 1; }
-echo "$RESP" | jq -e '.operation == "subtract"' || { kill $SPID; exit 1; }
+---
 
-kill $SPID
-echo "✅ Step 5 通过"
+## E2E 验收（最终 final-e2e 跑 — target_environment=mac_web）
+
+**journey_type**: user_facing
+**target_environment**: mac_web（Playwright 本机 + 校验 staging:5223 / live:5211 接缝）
+
+```javascript
+// final-e2e Playwright 脚本（在 Mac 本机执行）
+// 逻辑层：build dashboard → vite preview :5174 → Playwright 断言文字可见（暗/亮主题）
+// 接缝层：curl staging:5223 / live:5211，验生产 promote 真生效
+const { chromium, expect } = require('@playwright/test');
+const { spawn, execSync } = require('child_process');
+const path = require('path');
+
+const DASH = path.resolve(__dirname, '../../apps/dashboard');
+const PREVIEW_PORT = 5174;
+const FIXED_TEXT = 'Cecelia Harness 工厂线已贯通';
+
+function httpCode(url) {
+  try { return execSync(`curl -s -o /dev/null -w "%{http_code}" --max-time 10 "${url}"`).toString().trim(); }
+  catch { return '000'; }
+}
+
+(async () => {
+  // ── 逻辑层：本机构建 + 预览，证明文字真渲染、真可见（环境无关）──
+  execSync('npm ci --prefer-offline || npm install', { cwd: DASH, stdio: 'inherit' });
+  execSync('npm run build', { cwd: DASH, stdio: 'inherit' });
+
+  const server = spawn('npx', ['vite', 'preview', '--port', String(PREVIEW_PORT), '--host'], { cwd: DASH });
+  let ready = false;
+  for (let i = 0; i < 30; i++) {
+    if (httpCode(`http://localhost:${PREVIEW_PORT}/`) === '200') { ready = true; break; }
+    await new Promise(r => setTimeout(r, 1000));
+  }
+  if (!ready) { server.kill('SIGKILL'); console.error('FAIL: vite preview 未就绪'); process.exit(1); }
+
+  const browser = await chromium.launch();
+  try {
+    const context = await browser.newContext({ storageState: undefined });
+    const page = await context.newPage();
+    await page.goto(`http://localhost:${PREVIEW_PORT}/`);
+    await page.waitForLoadState('networkidle');
+    await page.screenshot({ path: 'screenshots/01-initial.png' });
+
+    const el = page.getByTestId('harness-pipeline-status');
+    await expect(el).toBeVisible({ timeout: 10000 });
+    await expect(el).toHaveText(FIXED_TEXT);
+
+    // 暗/亮主题各验一次可见（边界情况硬条款）
+    await page.emulateMedia({ colorScheme: 'dark' });
+    await expect(el).toBeVisible();
+    await page.screenshot({ path: 'screenshots/02-action.png' });
+    await page.emulateMedia({ colorScheme: 'light' });
+    await expect(el).toBeVisible();
+    await page.screenshot({ path: 'screenshots/03-result.png' });
+
+    console.log('✅ 逻辑层：本机构建产物文字可见（暗/亮主题）');
+  } finally {
+    await browser.close();
+    server.kill('SIGKILL');
+  }
+
+  // ── 接缝层：真目标验证（staging:5223 / live:5211），CI 绿 ≠ done ──
+  const sc = httpCode('http://localhost:5223/');
+  if (sc !== '200') { console.error(`FAIL[接缝#1]: staging:5223 非 200 (=${sc}) — staging 未真部署`); process.exit(1); }
+
+  const lc = httpCode('http://localhost:5211/');
+  if (lc !== '200') { console.error(`FAIL[接缝#2]: live:5211 非 200 (=${lc}) — promote 未生效`); process.exit(1); }
+
+  // live 生产 bundle 真含文字（证明 promote 把新代码推上生产）
+  const idx = execSync('curl -sf --max-time 10 "http://localhost:5211/"').toString();
+  const asset = (idx.match(/\/assets\/[A-Za-z0-9._-]+\.js/) || [])[0];
+  if (!asset) { console.error('FAIL[接缝#2]: live 首页未引用 JS bundle'); process.exit(1); }
+  const bundle = execSync(`curl -sf --max-time 10 "http://localhost:5211${asset}"`).toString();
+  if (!bundle.includes(FIXED_TEXT)) {
+    console.error('FAIL[接缝#2]: live:5211 生产 bundle 未含固定文字 — promote 未把新代码推上生产');
+    process.exit(1);
+  }
+
+  console.log('✅ 接缝层：staging:5223 + live:5211 promote 真生效，生产真出固定文字');
+  console.log('✅ Golden Path 端到端验证通过');
+})().catch(e => { console.error('FAIL:', e.message); process.exit(1); });
 ```
 
-**硬阈值**: HTTP 200；result === -7
-
----
-
-### Step 6: 零结果边界 a=b → HTTP 200 + result=0
-
-**来源**: `[AI_ADDED]` — GAN Round 1 Proposer 加入，理由：防 generator 把零结果当 falsy 误处理（返 400 或 NaN），确保 a=b 时有符号减法结果 0 正常返回 number 类型
-
-**可观测行为**: GET /subtract?a=5&b=5 → HTTP 200，`{result:0, operation:"subtract"}`，result 为 number
-
-**验证命令**:
-```bash
-PLAYGROUND_PORT=3306 NODE_ENV=production node playground/server.js > /tmp/b1-step6.log 2>&1 &
-SPID=$!; sleep 2
-
-RESP=$(curl -sf "http://localhost:3306/subtract?a=5&b=5") || { kill $SPID; echo "FAIL: curl 非 200"; exit 1; }
-echo "$RESP" | jq -e '.result == 0'               || { kill $SPID; echo "FAIL: a=b=5 result 应为 0"; exit 1; }
-echo "$RESP" | jq -e '.result | type == "number"' || { kill $SPID; echo "FAIL: result 类型不是 number"; exit 1; }
-
-kill $SPID
-echo "✅ Step 6 通过"
-```
-
-**硬阈值**: HTTP 200；result === 0（number 类型）
-
----
-
-## E2E 验收（final-e2e — target_environment: playground）
-
-> playground sprint 例外：BEHAVIOR 命令使用 `node playground/server.js`（target_environment: playground）；final-e2e 不混用 Brain API localhost:5221。
-
-**journey_type**: autonomous  
-**target_environment**: playground
-
-```bash
-#!/bin/bash
-# final-e2e — B1 playground GET /subtract Golden Path 端到端验证
-set -e
-
-PPORT=${PLAYGROUND_PORT:-3399}
-
-PLAYGROUND_PORT=$PPORT NODE_ENV=production node playground/server.js > /tmp/b1-e2e.log 2>&1 &
-SPID=$!
-sleep 2
-
-cleanup() { kill $SPID 2>/dev/null || true; }
-trap cleanup EXIT
-
-# Golden Path: GET /subtract?a=10&b=3 → {result:7, operation:"subtract"}
-RESP=$(curl -sf "http://localhost:$PPORT/subtract?a=10&b=3") || { echo "FAIL: 端点未返回 200"; exit 1; }
-echo "$RESP" | jq -e '.result == 7'                              || { echo "FAIL: result != 7"; exit 1; }
-echo "$RESP" | jq -e '.operation == "subtract"'                  || { echo "FAIL: operation != subtract"; exit 1; }
-echo "$RESP" | jq -e 'keys | sort == ["operation","result"]'     || { echo "FAIL: keys 不合规"; exit 1; }
-
-# 禁用字段反向
-for k in difference diff value answer data; do
-  echo "$RESP" | jq -e "has(\"$k\") | not" > /dev/null || { echo "FAIL: 禁用字段 $k"; exit 1; }
-done
-
-# 缺参 → 400
-CODE=$(curl -s -o /dev/null -w "%{http_code}" "http://localhost:$PPORT/subtract?b=3")
-[ "$CODE" = "400" ] || { echo "FAIL: 缺 a 应返 400，实际 $CODE"; exit 1; }
-
-# 非法格式 → 400
-CODE=$(curl -s -o /dev/null -w "%{http_code}" "http://localhost:$PPORT/subtract?a=1e5&b=3")
-[ "$CODE" = "400" ] || { echo "FAIL: 非法格式应返 400，实际 $CODE"; exit 1; }
-
-# 负数结果 → 200 + result=-7
-RESP=$(curl -sf "http://localhost:$PPORT/subtract?a=3&b=10") || { echo "FAIL"; exit 1; }
-echo "$RESP" | jq -e '.result == -7' || { echo "FAIL: result 应为 -7"; exit 1; }
-
-# 零结果 → 200 + result=0
-RESP=$(curl -sf "http://localhost:$PPORT/subtract?a=5&b=5") || { echo "FAIL"; exit 1; }
-echo "$RESP" | jq -e '.result == 0' || { echo "FAIL: result 应为 0"; exit 1; }
-
-echo "✅ B1 Golden Path E2E 全部通过"
-```
-
-**通过标准**: 脚本 exit 0
-
----
-
-## Workstreams
-
-workstream_count: 1
-
-### Workstream 1: playground/server.js 新增 GET /subtract 路由 + playground/tests/server.test.js 新增 describe 块
-
-**范围**: 在 `playground/server.js` 注册 `GET /subtract` 路由（复用已有 `STRICT_NUMBER` regex，校验 a/b 存在且合法，计算 `Number(a) - Number(b)`，返回 `{result: <number>, operation: "subtract"}`）；在 `playground/tests/server.test.js` 新增 `describe('GET /subtract', ...)` 块  
-**大小**: M（server.js ~35 行 + tests ~80 行 = ~115 行净增，2 文件）  
-**依赖**: 无（唯一 workstream）
-
-**辅助回归测试**（Generator TDD red-green 用，不被 evaluator 当 verdict 来源）: `sprints/tests/ws1/subtract.test.ts`
-
----
-
-## Workstreams 切分合规性
-
-- ws_count=1：净增 ~115 行 < 200 行 ✓，2 文件 ≤ 3 ✓
-- ws1 depends_on: []（唯一 workstream）✓
+**通过标准**: 脚本 exit 0（逻辑层 Playwright 三态可见 + 接缝层 staging/live 200 + live bundle 含文字）。
+**接缝层失败即整体 FAIL**：staging:5223 / live:5211 任一不可达或 live bundle 不含文字 → promote 未真生效 → 标 `logic-done-pending`，禁止当 done。
 
 ---
 
 ## Test Contract
 
-| Workstream | Test File | BEHAVIOR 覆盖 | 预期红证据 |
+| 功能 | Test File | BEHAVIOR 覆盖 | 预期红证据 |
 |---|---|---|---|
-| WS1 | `sprints/tests/ws1/subtract.test.ts` | happy path / schema 完整性 / 禁用字段反向 / 缺参 400 / 缺 b 400 / 非法格式 400 / 负数结果 / 零结果 | 8 failures（`/subtract` 未实现，supertest 返 404）|
-
----
-
-## Risks
-
-### RISK-1: Bug 10 假绿回归风险（端口冲突导致 BEHAVIOR 命令 exit 0）
-
-**描述**: 若 Generator 没有正确实现 `/subtract` 路由，但测试机器上已有进程占用 3401-3406 端口中某一端口（或上一次测试残留进程未 kill），`node playground/server.js` 在该端口静默启动失败，`curl -sf` 转而连到已存在进程的旧 handler，老路由返回 404 → `curl -sf` exit 1 → BEHAVIOR FAIL。但若旧进程碰巧返回 200（如同端口 Express 兼容响应），则 BEHAVIOR 假绿通过，Generator 不实现也能 PASS。
-
-**缓解措施**:
-1. 每条 BEHAVIOR 命令使用不同端口（3401-3406 分开），降低碰撞概率
-2. 每条命令在 `kill $SPID` 后加 `sleep 1` 以确保端口释放
-3. Evaluator 在跑 BEHAVIOR 前应先 `lsof -ti tcp:3401-3406 | xargs kill -9 2>/dev/null || true` 清空端口
-4. Contract 验证命令用 `PLAYGROUND_PORT` 动态赋值，evaluator 可注入空闲端口
-
-**残余风险**: 低。各 Step 端口已不同；假绿要求旧进程碰巧返回同格式 JSON，概率极低。
-
----
-
-### RISK-2: Bug 11 结果文件缺失风险（Bash 工具未执行导致 Brain 读不到 verdict）
-
-**描述**: Proposer 工具链要求最后一步必须向 `/workspace/.brain-result.json` 写入 JSON（`propose_branch` + `workstream_count` + `task_plan_path`）。若 Bash 工具调用被跳过（如 LLM 在 Step 4 仅写文本而未实际执行），Brain 读到空文件或旧轮次数据，`inferTaskPlan` 拿到错误 `propose_branch`，导致 GAN 合同无法传递给 Generator，整条 pipeline 静默断链。
-
-**缓解措施**:
-1. v7.12 已在 Step 4 强制要求"结果文件写入"作为独立 Bash 命令（不依赖前序 git push 成功与否）
-2. Brain 侧 `harness-gan.graph.js` 在读 `.brain-result.json` 前校验文件 mtime（若超过 5 分钟未更新视为写入失败，触发重试）
-3. 本 Round 2 合同已在 Step 4 之后立即执行 `.brain-result.json` 写入，并 `echo "[proposer] .brain-result.json 写入完成"` 作为可观测确认输出
-4. Reviewer 在审查合同时应验证 Step 4 代码块含 `cat > /workspace/.brain-result.json` 写入命令（非仅 git push）
-
-**残余风险**: 低。Bug 11（#3111）已在 v6.6.0 强制 Bash 工具写结果文件修复；本合同 Step 4 含写入命令。
+| 首页固定状态标识 + 工厂线贯通 | `tests/harness-pipeline-status.test.ts` | 组件存在 / 含逐字文字 + testid / App 壳层挂载 | 组件文件未创建 → 3 个 it 全 FAIL |
