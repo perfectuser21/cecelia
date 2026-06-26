@@ -403,6 +403,36 @@ async function fetchUsageFromAPI(accountId) {
   }
 }
 
+/**
+ * 实时探测账号 OAuth token 有效性（绕过 CACHE_TTL 缓存）。
+ * 用于 markAuthFailure 前二次确认：限流(429)会让 CLI exit-1 但 token 仍有效，不应熔断。
+ * @param {string} accountId
+ * @returns {Promise<'valid'|'auth_failed'|'unknown'>}
+ *   valid       — usage API 200（token 有效）
+ *   auth_failed — 401/403（token 真失效）
+ *   unknown     — 无 token / 429 / 其他状态 / 网络错误（保守：调用方不应据此熔断）
+ */
+export async function verifyAccountTokenLive(accountId) {
+  const token = getAccessToken(accountId);
+  if (!token) return 'unknown';
+  try {
+    const res = await fetch(ANTHROPIC_USAGE_API, {
+      headers: {
+        'Authorization': `Bearer ${token}`,
+        'User-Agent': 'claude-code/2.0.31',
+        'anthropic-beta': 'oauth-2025-04-20',
+        'Accept': 'application/json',
+      },
+      signal: AbortSignal.timeout(8000),
+    });
+    if (res.status === 200) return 'valid';
+    if (res.status === 401 || res.status === 403) return 'auth_failed';
+    return 'unknown';
+  } catch {
+    return 'unknown';
+  }
+}
+
 // ─── Cache ────────────────────────────────────────────────────────────────────
 
 async function upsertCache(accountId, data) {
