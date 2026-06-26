@@ -17,6 +17,7 @@
  */
 
 import { execSync } from 'child_process';
+import path from 'path';
 import pool from './db.js';
 import { updateTaskStatus } from './task-updater.js';
 import { normalizeAcceptance } from './harness-final-e2e.js';
@@ -24,7 +25,6 @@ import { decidePromote, runInternalPromote, defaultPromoteExec, getRepoRoot, PRO
 import { sendFeishu } from './notifier.js';
 
 export const STAGING_PORT = 5222;
-const DEFAULT_DEPLOY_SCRIPT = 'scripts/staging-deploy.sh';
 const DEPLOY_TIMEOUT_MS = 10 * 60 * 1000;
 const SCENARIO_TIMEOUT_MS = 5 * 60 * 1000;
 const OUTPUT_CAP_BYTES = 4000;
@@ -43,11 +43,14 @@ function cap(s) {
  */
 export function deployStaging(opts = {}) {
   const exec = opts.exec || execSync;
-  const script = opts.deployScript || DEFAULT_DEPLOY_SCRIPT;
+  // 容器内 cwd=/app，staging-deploy.sh 在 bind-mount 的 repo 根 scripts/；用绝对路径。
+  // REPO_ROOT env（容器=bind-mount repo 根）优先；getRepoRoot() 仅本地直跑兜底（容器内返回 /）。
+  const repoRoot = opts.cwd || process.env.REPO_ROOT || getRepoRoot();
+  const script = opts.deployScript || path.join(repoRoot, 'scripts/staging-deploy.sh');
   try {
     const raw = exec(`bash ${script}`, {
       encoding: 'utf8',
-      cwd: opts.cwd,
+      cwd: repoRoot,
       timeout: DEPLOY_TIMEOUT_MS,
       maxBuffer: 20 * 1024 * 1024,
     });
