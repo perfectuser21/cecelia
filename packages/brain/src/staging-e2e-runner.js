@@ -21,10 +21,12 @@ import path from 'path';
 import pool from './db.js';
 import { updateTaskStatus } from './task-updater.js';
 import { normalizeAcceptance } from './harness-final-e2e.js';
-import { decidePromote, runInternalPromote, defaultPromoteExec, getRepoRoot, PROMOTE_STATUS, spawnHarnessReport, readProductionInfo, REPORT_KIND } from './staging-promote.js';
+import { resolveLine, decidePromote, runInternalPromote, defaultPromoteExec, getRepoRoot, PROMOTE_STATUS, spawnHarnessReport, readProductionInfo, REPORT_KIND } from './staging-promote.js';
 import { sendFeishu } from './notifier.js';
 
 export const STAGING_PORT = 5222;
+// A 方案：内部线交付 dashboard，staging 用 deploy-local.sh 起的 dashboard 预览端口。
+export const DASHBOARD_STAGING_PORT = 5223;
 const DEPLOY_TIMEOUT_MS = 10 * 60 * 1000;
 const SCENARIO_TIMEOUT_MS = 5 * 60 * 1000;
 const OUTPUT_CAP_BYTES = 4000;
@@ -43,12 +45,24 @@ function cap(s) {
  */
 export function deployStaging(opts = {}) {
   const exec = opts.exec || execSync;
-  // 容器内 cwd=/app，staging-deploy.sh 在 bind-mount 的 repo 根 scripts/；用绝对路径。
+  // 容器内 cwd=/app，部署脚本在 bind-mount 的 repo 根 scripts/；用绝对路径。
   // REPO_ROOT env（容器=bind-mount repo 根）优先；getRepoRoot() 仅本地直跑兜底（容器内返回 /）。
   const repoRoot = opts.cwd || process.env.REPO_ROOT || getRepoRoot();
-  const script = opts.deployScript || path.join(repoRoot, 'scripts/staging-deploy.sh');
+  // A 方案：内部线交付 dashboard → 用 deploy-local.sh 构建 dashboard 到 staging（:5223）
+  // + 写 .staging-pending（promote 步靠它）；非内部线沿用 staging-deploy.sh（brain :5222）。
+  const internal = opts.line === 'internal';
+  const stagingPort = internal ? DASHBOARD_STAGING_PORT : STAGING_PORT;
+  let script;
+  if (opts.deployScript) {
+    script = `bash ${opts.deployScript}`;
+  } else if (internal) {
+    // --changed 显式指定 dashboard：harness 合 main 后在 main 上跑，git diff 为空，必须强制走 dashboard build。
+    script = `bash ${path.join(repoRoot, 'scripts/deploy-local.sh')} --changed=apps/dashboard/`;
+  } else {
+    script = `bash ${path.join(repoRoot, 'scripts/staging-deploy.sh')}`;
+  }
   try {
-    const raw = exec(`bash ${script}`, {
+    const raw = exec(script, {
       encoding: 'utf8',
       cwd: repoRoot,
       timeout: DEPLOY_TIMEOUT_MS,
@@ -56,14 +70,14 @@ export function deployStaging(opts = {}) {
     });
     const out = typeof raw === 'string' ? raw : (raw ? raw.toString('utf8') : '');
     const skip = out.match(/STAGING_SKIP_REASON=(\S+)/);
-    if (skip) return { status: 'skipped', reason: skip[1], output: cap(out) };
-    return { status: 'success', reason: null, output: cap(out) };
+    if (skip) return { status: 'skipped', reason: skip[1], output: cap(out), stagingPort };
+    return { status: 'success', reason: null, output: cap(out), stagingPort };
   } catch (err) {
     const combined = `${err.stdout ? String(err.stdout) : ''}\n${err.stderr ? String(err.stderr) : ''}\n${err.message || ''}`.trim();
     // 脚本即便非 0 退出也可能已打印 skip 原因（如 setup 失败）→ 仍视为 skip 而非 fail
     const skip = combined.match(/STAGING_SKIP_REASON=(\S+)/);
-    if (skip) return { status: 'skipped', reason: skip[1], output: cap(combined) };
-    return { status: 'failed', reason: 'deploy_failed', output: cap(combined) };
+    if (skip) return { status: 'skipped', reason: skip[1], output: cap(combined), stagingPort };
+    return { status: 'failed', reason: 'deploy_failed', output: cap(combined), stagingPort };
   }
 }
 
@@ -203,13 +217,14 @@ async function handlePromote(dbPool, { verdict, baseRepo, prUrl, initiativeId },
     }
     if (decision.action === 'auto') {
       // 内部线自动 promote。生产注入 defaultPromoteExec；测试注入 mock。
-      const promoteExec = opts.promoteExec || defaultPromoteExec(getRepoRoot());
+      // repoRoot 用 REPO_ROOT env（容器=bind-mount repo 根，脚本存在）；裸 getRepoRoot() 容器内返回 / 找不到脚本。
+      const promoteExec = opts.promoteExec || defaultPromoteExec(process.env.REPO_ROOT || getRepoRoot());
       const r = await runInternalPromote({ promoteExec });
       // 自动 promote 成功用 auto_promoted（区分客户线 confirm 后的 promoted）；失败 promote_failed。
       const status = r.ok ? PROMOTE_STATUS.AUTO_PROMOTED : PROMOTE_STATUS.PROMOTE_FAILED;
       await updatePromoteStatus(dbPool, prUrl, status, r.output);
       // Slice3：内部线 auto_promoted → 派成功交付证书 report；promote_failed → 失败报告。
-      const prod = readProductionInfo(getRepoRoot());
+      const prod = readProductionInfo(process.env.REPO_ROOT || getRepoRoot());
       await spawnHarnessReport(
         { dbQuery: (sql, p) => dbPool.query(sql, p) },
         {
@@ -294,17 +309,21 @@ export async function runStagingE2E(task, opts = {}) {
     const acceptance = await loadAcceptance(dbPool, initiativeId);
     if (!acceptance) return await finalize('SKIP', 'no_contract');
 
-    // 2. 部署 staging :5222
-    const dep = deploy({ exec: opts.exec, cwd: opts.cwd });
+    // 2. 部署 staging：内部线(cecelia)走 deploy-local.sh 构建 dashboard 到 :5223；
+    //    非内部线走 staging-deploy.sh 部署 brain 到 :5222。
+    const line = resolveLine(baseRepo);
+    const dep = deploy({ exec: opts.exec, cwd: opts.cwd, line });
     base.deployOutput = dep.output;
     if (dep.status === 'skipped') return await finalize('SKIP', dep.reason);
     if (dep.status === 'failed') return await finalize('FAIL', 'deploy_failed');
     base.deployedAt = new Date();
+    const stagingPort = dep.stagingPort || STAGING_PORT;
+    base.port = stagingPort;
 
-    // 3. 在真 staging 实例跑 contract E2E
+    // 3. 在真 staging 实例跑 contract E2E（命令里的目标端口重写到本次 staging 端口）
     let run;
     try {
-      run = runScenarios(acceptance, { exec: opts.exec, cwd: opts.cwd, port: STAGING_PORT });
+      run = runScenarios(acceptance, { exec: opts.exec, cwd: opts.cwd, port: stagingPort });
     } catch (err) {
       base.testedAt = new Date();
       return await finalize('FAIL', `invalid_contract: ${String(err.message).slice(0, 160)}`);

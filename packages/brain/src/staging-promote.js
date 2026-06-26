@@ -157,12 +157,21 @@ export async function runInternalPromote(deps = {}) {
 /**
  * 生产用默认 promoteExec：跑 in-repo scripts/promote-dashboard.sh（内部线 Cecelia dashboard）。
  * 仅由生产调用方注入；测试绝不用此实现。
+ *
+ * 防自杀：注入 CECELIA_SKIP_BRAIN_PROMOTE=1。promote-dashboard.sh 默认会跑 brain-deploy
+ * 重启 Brain 容器，而 harness promote 正在该 Brain 容器内执行——不跳过会把执行它自己的
+ * Brain 重启掉，pipeline 自杀。内部线只推 dashboard，无需重建 brain。
  */
 export function defaultPromoteExec(repoRoot) {
   return function promoteExec() {
     const script = path.join(repoRoot, 'scripts/promote-dashboard.sh');
     try {
-      const output = execSync(`bash ${script}`, { cwd: repoRoot, encoding: 'utf8', timeout: 120_000 });
+      const output = execSync(`bash ${script}`, {
+        cwd: repoRoot,
+        encoding: 'utf8',
+        timeout: 120_000,
+        env: { ...process.env, CECELIA_SKIP_BRAIN_PROMOTE: '1' },
+      });
       return { ok: true, output };
     } catch (err) {
       return { ok: false, output: `${err.message}\n${err.stdout || ''}\n${err.stderr || ''}` };
