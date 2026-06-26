@@ -80,19 +80,19 @@ describe('deployStaging', () => {
 
 // ─── runStagingCommand ─────────────────────────────────────────────────────────
 describe('runStagingCommand', () => {
-  it('把 :5221 重写为 :5222（合法访问 /api/brain，无 planner_drift 拦截）', () => {
+  it('把 :5221 重写为 host.docker.internal:5222（容器内 localhost 不通 staging，合法访问 /api/brain）', () => {
     let seen = null;
     const exec = (cmd) => { seen = cmd; return 'ok'; };
     const r = runStagingCommand({ cmd: 'curl localhost:5221/api/brain/tick/status' }, { exec });
-    expect(seen).toContain(`localhost:${STAGING_PORT}/api/brain/tick/status`);
+    expect(seen).toContain(`host.docker.internal:${STAGING_PORT}/api/brain/tick/status`);
     expect(r.exitCode).toBe(0);
   });
 
-  it('127.0.0.1:5221 也重写', () => {
+  it('127.0.0.1:5221 也重写为 host.docker.internal:5222', () => {
     let seen = null;
     const exec = (cmd) => { seen = cmd; return 'ok'; };
     runStagingCommand({ cmd: 'curl 127.0.0.1:5221/health' }, { exec });
-    expect(seen).toContain(`127.0.0.1:${STAGING_PORT}/health`);
+    expect(seen).toContain(`host.docker.internal:${STAGING_PORT}/health`);
   });
 
   it('空 cmd → exitCode 1', () => {
