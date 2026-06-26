@@ -25,6 +25,7 @@ import Breadcrumb from './components/Breadcrumb';
 // 配置驱动
 import { filterNavGroups, type NavGroup } from './config/navigation.config';
 import DynamicRouter from './components/DynamicRouter';
+import HarnessPipelineStatus from './components/HarnessPipelineStatus';
 // Context
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { ThemeProvider, useTheme } from './contexts/ThemeContext';
@@ -322,6 +323,8 @@ function AppContent() {
 function App() {
   return (
     <ThemeProvider>
+      {/* 首页常驻贯通状态标识：无条件渲染，不受认证/实例加载守卫影响 */}
+      <HarnessPipelineStatus />
       <InstanceProvider>
         <AuthProvider>
           <AppContent />
