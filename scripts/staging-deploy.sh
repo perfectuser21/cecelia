@@ -154,19 +154,26 @@ if [[ "$DRY_RUN" == true ]]; then
     exit 0
 fi
 
-echo "[5/6] 等待 staging 健康检查（最多 180s）..."
+echo "[5/6] 等待 staging 健康检查（docker health 最多 180s）..."
 TRIES=0
 MAX_TRIES=36
 HEALTHY=false
 while [ $TRIES -lt $MAX_TRIES ]; do
     sleep 5
     TRIES=$((TRIES + 1))
-    if curl -sf "http://localhost:${STAGING_PORT}/api/brain/tick/status" > /dev/null 2>&1; then
-        echo "  ✓ staging 端口 ${STAGING_PORT} 已响应"
+    # staging-e2e-runner 在生产 brain 容器内跑此脚本，容器内 localhost != staging 容器，
+    # 不能 curl localhost:5222。改查 staging 容器自己的 healthcheck（docker socket 已挂）。
+    HSTATUS=$(docker inspect "${STAGING_CONTAINER}" --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' 2>/dev/null || echo "missing")
+    if [ "$HSTATUS" = "healthy" ]; then
+        echo "  staging container ${STAGING_CONTAINER} health=healthy"
         HEALTHY=true
         break
     fi
-    echo "  Attempt ${TRIES}/${MAX_TRIES}..."
+    if [ "$HSTATUS" = "unhealthy" ]; then
+        echo "  staging container health=unhealthy, fail early"
+        break
+    fi
+    echo "  Attempt ${TRIES}/${MAX_TRIES} health=${HSTATUS}"
 done
 
 if [[ "$HEALTHY" != true ]]; then
