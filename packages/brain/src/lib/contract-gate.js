@@ -37,15 +37,18 @@ export const RULES = [
   {
     id: 'weak-oracle/curl-no-jq',
     description: 'curl 取响应却无 jq -e 值校验',
-    // 放行三类合法 oracle：
+    // 放行四类合法 oracle：
     //  - 同一逻辑语句含 jq -e（含反斜杠续行多行 pipeline，预处理已归一为单逻辑行）
     //  - 状态码 oracle：curl -w %{http_code} 捕获状态码 + 后续码断言（body 刻意丢弃，jq 不适用）
     //  - capture-then-assert：VAR=$(curl ...) 捕获响应，后续 K 条逻辑语句内对 $VAR 施加
     //    jq -e / grep -q / [ 比较 / case 值断言（跨语句 oracle，见 hasCaptureThenAssert）
+    //  - inline `curl ... | grep -q '<字面量>'`：验 HTML/文本响应（无法 jq）的合法强 oracle，
+    //    与 capture-then-assert 的 grep -q 放行一致；同义反复另由 weak-oracle/tautology 守（见 hasInlineGrepAssert）
     detect: (line, ctx) =>
       /\bcurl\b/.test(line) &&
       !/\bjq\s+-e\b/.test(line) &&
       !isStatusCodeOracle(line) &&
+      !hasInlineGrepAssert(line) &&
       !hasCaptureThenAssert(line, ctx),
     feedback: ({ line }) =>
       `第 ${line} 行 curl 取响应但未 jq -e 校验字段值——加 | jq -e '.field == ...'`,
@@ -295,6 +298,24 @@ export function hasCaptureThenAssert(line, ctx) {
     if (isValueAssertionOnVar(stmt, varName)) return true;
   }
   return false;
+}
+
+/**
+ * inline curl|grep-q oracle 识别（curl-no-jq 放行第四类）。
+ *
+ * 形态：`curl ... | grep -q[E] '<字面量>'`——curl 响应体直接管道给 grep -q 断言含特定内容。
+ * 这是验 HTML/纯文本响应（无法 jq）的合法强 oracle，与 capture-then-assert 的 grep -q 放行
+ * （见 isValueAssertionOnVar line 263）功能等价，只是不经中间变量。
+ *
+ * 不放水：同义反复（如 `echo X | grep X` 自生成值比对）由 weak-oracle/tautology 单独守；
+ * 此处只判"curl 响应进了 grep -q"这一结构，断言对象是被测系统真实响应。
+ *
+ * @param {string} line  当前逻辑语句内容（curl 与 grep 同一逻辑行 = inline 管道）
+ * @returns {boolean}  true=inline curl|grep-q 断言成立（放行）
+ */
+export function hasInlineGrepAssert(line) {
+  if (typeof line !== 'string') return false;
+  return /\bcurl\b/.test(line) && /\|\s*grep\s+-\w*q\b/.test(line);
 }
 
 /**
