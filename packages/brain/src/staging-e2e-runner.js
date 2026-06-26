@@ -82,9 +82,12 @@ export function runStagingCommand(command, opts = {}) {
   if (!command || typeof command.cmd !== 'string' || !command.cmd.trim()) {
     return { exitCode: 1, output: '(empty cmd)' };
   }
+  // 此脚本在生产 brain 容器内跑，容器内 localhost 不通 staging 容器；重写目标用
+  // host.docker.internal（容器内访问 host 的 staging :5222）。env STAGING_HOST 可覆盖（host 直跑传 localhost）。
+  const host = opts.host || process.env.STAGING_HOST || 'host.docker.internal';
   const cmd = command.cmd
-    .replace(/localhost:5221/g, `localhost:${port}`)
-    .replace(/127\.0\.0\.1:5221/g, `127.0.0.1:${port}`);
+    .replace(/localhost:5221/g, `${host}:${port}`)
+    .replace(/127\.0\.0\.1:5221/g, `${host}:${port}`);
   try {
     const raw = exec(cmd, {
       encoding: 'utf8',
