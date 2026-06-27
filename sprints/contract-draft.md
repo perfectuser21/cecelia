@@ -1,4 +1,4 @@
-# Sprint Contract Draft (Round 2)
+# Sprint Contract Draft (Round 3)
 
 ## Response Schema（推导来源: N/A — 任务无 HTTP 响应）
 
@@ -56,12 +56,12 @@ RESP=$(curl -sf -X POST localhost:5221/api/brain/tasks \
       "journey_type": "dev_pipeline"
     }
   }') || { echo "FAIL: POST /tasks 失败（Brain 未运行）"; exit 1; }
-TASK_ID=$(echo "$RESP" | jq -r '.id // empty')
-[ -n "$TASK_ID" ] || { echo "FAIL: 响应缺 id 字段 resp=$RESP"; exit 1; }
+echo "$RESP" | jq -e '.id | type == "string"' || { echo "FAIL: 响应缺 id 字段或类型非 string resp=$RESP"; exit 1; }
+TASK_ID=$(echo "$RESP" | jq -r '.id')
 echo "OK: task_id=$TASK_ID"
 ```
 
-**硬阈值**: HTTP 200 且响应 JSON 含非空 `id`；5s 内返回
+**硬阈值**: HTTP 200 且响应 JSON `.id` 为 string 类型；5s 内返回
 
 ---
 
@@ -122,21 +122,22 @@ npx vitest run \
 
 ### Step 4: executeOnHost 被真实调用 — host.prompt 文件写入（接缝断言）
 
-**来源**: `[AI_ADDED]` — 防造假：代码存在但运行时未触发（Brain 版本不含 fix / 旧二进制未重启）时此步 FAIL；`host-executor.js` 在 `executeOnHost` 第一行同步 `writeFileSync('/tmp/cecelia-host-prompts/${taskId}.${runId}-host.prompt')`，是调用最直接的证明
+**来源**: `[FROM_PRD]` — PRD 范围："验证 generator spawner 调用 `executeOnHost` 而非 Docker 路径"；`host-executor.js` 在 `executeOnHost` 调用时同步 `writeFileSync('${HOST_PROMPT_DIR}/${taskId}.${runId}-host.prompt')`，是运行时调用的唯一可观测副作用
 
 **可观测行为**: `/tmp/cecelia-host-prompts/` 出现含 `${TASK_ID}` 的 `.host.prompt` 文件
 
 **验证命令**:
 ```bash
+HOST_PROMPT_DIR="${CECELIA_HOST_PROMPT_DIR:-/tmp/cecelia-host-prompts}"
 FOUND=0
 for i in $(seq 1 30); do
-  if ls /tmp/cecelia-host-prompts/ 2>/dev/null | grep -q "${TASK_ID}.*host\.prompt"; then
+  if ls "$HOST_PROMPT_DIR/" 2>/dev/null | grep -q "${TASK_ID}.*host\.prompt"; then
     FOUND=1; break
   fi
   sleep 1
 done
 [ "$FOUND" = "1" ] || {
-  echo "FAIL: 30s 内 /tmp/cecelia-host-prompts/ 未出现 host.prompt（executeOnHost 未被调用）"
+  echo "FAIL: 30s 内 $HOST_PROMPT_DIR/ 未出现 host.prompt（executeOnHost 未被调用）"
   exit 1
 }
 echo "OK: executeOnHost 已被真实调用"
@@ -213,9 +214,13 @@ set -e
 
 DB="${DB_URL:-cecelia}"
 SPRINT_DIR="${SPRINT_DIR:-sprints}"
+HOST_PROMPT_DIR="${CECELIA_HOST_PROMPT_DIR:-/tmp/cecelia-host-prompts}"
 
 echo "=== mac_web pipeline E2E 验证开始 ==="
 START_TIME=$(date -Iseconds)
+
+# 注意：Step 2/3（逻辑断言，无需 Brain 在线）先跑，快速失败以验代码层是否就位；
+# Step 1（接缝断言，触发 Brain）后跑，确保 POST 前代码层已验通过。
 
 # Step 2: Slice4 fix 代码验证（逻辑断言）
 echo "▶ [Step 2] 验证 Slice4 fix 代码就位..."
@@ -251,15 +256,15 @@ RESP=$(curl -sf -X POST localhost:5221/api/brain/tasks \
       "journey_type": "dev_pipeline"
     }
   }') || { echo "FAIL: Brain API 不可达（localhost:5221）"; exit 1; }
-TASK_ID=$(echo "$RESP" | jq -r '.id // empty')
-[ -n "$TASK_ID" ] || { echo "FAIL: 响应缺 id 字段"; exit 1; }
+echo "$RESP" | jq -e '.id | type == "string"' || { echo "FAIL: 响应缺 id 字段或类型非 string"; exit 1; }
+TASK_ID=$(echo "$RESP" | jq -r '.id')
 echo "OK: task_id=$TASK_ID"
 
 # Step 4: executeOnHost 调用验证（接缝断言）
-echo "▶ [Step 4] 等待 executeOnHost 写入 host.prompt 文件..."
+echo "▶ [Step 4] 等待 executeOnHost 写入 host.prompt 文件（目录: $HOST_PROMPT_DIR）..."
 FOUND=0
 for i in $(seq 1 30); do
-  if ls /tmp/cecelia-host-prompts/ 2>/dev/null | grep -q "${TASK_ID}.*host\.prompt"; then
+  if ls "$HOST_PROMPT_DIR/" 2>/dev/null | grep -q "${TASK_ID}.*host\.prompt"; then
     FOUND=1; break
   fi
   sleep 1
