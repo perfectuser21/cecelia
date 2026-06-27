@@ -720,6 +720,8 @@ async function _spawnStagingE2eTask(state, opts = {}) {
       // Slice2：带上 base_repo，供 runStagingE2E 判客户线(zenithjoy)/内部线(cecelia) 放行分流。
       // 缺失 → 保守挂 pending_promote（决策2），不误自动上线。
       base_repo: state.baseRepo || tpayload.base_repo || '',
+      // Slice6：透传 project_id，供二期 coalescing 单实例 patrol 按 project 合并并发 staging 任务。
+      project_id: tpayload.project_id || state.projectId || '',
     };
     await dbPool.query(
       `INSERT INTO tasks (title, description, task_type, status, priority, payload)

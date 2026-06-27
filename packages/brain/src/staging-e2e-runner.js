@@ -347,6 +347,37 @@ async function handlePromote(dbPool, { verdict, baseRepo, prUrl, initiativeId },
  * @param {{id:string, payload?:object}} task
  * @param {{pool?, deploy?, loadAcceptance?, exec?, cwd?}} [opts]
  */
+/**
+ * Slice6: 抢 staging 部署 advisory lock（dedicated client，session 级，避免跨 pool.query 连接漂移）。
+ * 抢到 → 返回 { release }；抢不到（别路正占）→ null。pool 无 connect（测试 mock）/ 抢锁基础设施异常
+ * → fail-open 返回 no-op lock（不因锁机制本身故障阻断 staging，锁只是并发止血不是硬门）。
+ * @returns {Promise<{release: () => Promise<void>}|null>}
+ */
+export async function acquireStagingLock(dbPool, lockKey) {
+  if (!dbPool || typeof dbPool.connect !== 'function') {
+    return { release: async () => {} };
+  }
+  let client;
+  try {
+    client = await dbPool.connect();
+    const r = await client.query('SELECT pg_try_advisory_lock($1) AS locked', [lockKey]);
+    if (!r?.rows?.[0]?.locked) {
+      client.release();
+      return null;
+    }
+    return {
+      release: async () => {
+        try { await client.query('SELECT pg_advisory_unlock($1)', [lockKey]); }
+        finally { client.release(); }
+      },
+    };
+  } catch (err) {
+    if (client) { try { client.release(); } catch { /* ignore */ } }
+    console.warn(`[staging-e2e] advisory lock 获取异常（fail-open）: ${err.message}`);
+    return { release: async () => {} };
+  }
+}
+
 export async function runStagingE2E(task, opts = {}) {
   const dbPool = opts.pool || pool;
   const deploy = opts.deploy || deployStaging;
@@ -392,29 +423,41 @@ export async function runStagingE2E(task, opts = {}) {
     // 2. 部署 staging：内部线(cecelia)走 deploy-local.sh 构建 dashboard 到 :5223；
     //    非内部线走 staging-deploy.sh 部署 brain 到 :5222。
     const line = resolveLine(baseRepo);
-    const dep = deploy({ exec: opts.exec, cwd: opts.cwd, line });
-    base.deployOutput = dep.output;
-    if (dep.status === 'skipped') return await finalize('SKIP', dep.reason);
-    if (dep.status === 'failed') return await finalize('FAIL', 'deploy_failed');
-    base.deployedAt = new Date();
-    const stagingPort = dep.stagingPort || STAGING_PORT;
-    base.port = stagingPort;
 
-    // 3. 在真 staging 实例跑 contract E2E（命令里的目标端口重写到本次 staging 端口）
-    let run;
+    // Slice6: staging 单实例串行 — deploy 前抢 advisory lock，防 N 路并发互相 docker rm 顶掉。
+    // 抢不到（别路正占同端口实例）→ SKIP staging_busy（不部署）；抢到 → finally 必释放。
+    const lockPort = line === 'internal' ? DASHBOARD_STAGING_PORT : STAGING_PORT;
+    const acquireLock = opts.acquireStagingLock || acquireStagingLock;
+    const lock = await acquireLock(dbPool, lockPort);
+    if (!lock) return await finalize('SKIP', 'staging_busy');
+
     try {
-      run = runScenarios(acceptance, { exec: opts.exec, cwd: opts.cwd, port: stagingPort });
-    } catch (err) {
-      base.testedAt = new Date();
-      return await finalize('FAIL', `invalid_contract: ${String(err.message).slice(0, 160)}`);
-    }
-    base.testedAt = new Date();
+      const dep = deploy({ exec: opts.exec, cwd: opts.cwd, line });
+      base.deployOutput = dep.output;
+      if (dep.status === 'skipped') return await finalize('SKIP', dep.reason);
+      if (dep.status === 'failed') return await finalize('FAIL', 'deploy_failed');
+      base.deployedAt = new Date();
+      const stagingPort = dep.stagingPort || STAGING_PORT;
+      base.port = stagingPort;
 
-    return await finalize(run.verdict, run.verdict === 'PASS' ? null : 'scenarios_failed', {
-      scenariosTotal: run.scenariosTotal,
-      scenariosPassed: run.scenariosPassed,
-      failedScenarios: run.failedScenarios,
-    });
+      // 3. 在真 staging 实例跑 contract E2E（命令里的目标端口重写到本次 staging 端口）
+      let run;
+      try {
+        run = runScenarios(acceptance, { exec: opts.exec, cwd: opts.cwd, port: stagingPort });
+      } catch (err) {
+        base.testedAt = new Date();
+        return await finalize('FAIL', `invalid_contract: ${String(err.message).slice(0, 160)}`);
+      }
+      base.testedAt = new Date();
+
+      return await finalize(run.verdict, run.verdict === 'PASS' ? null : 'scenarios_failed', {
+        scenariosTotal: run.scenariosTotal,
+        scenariosPassed: run.scenariosPassed,
+        failedScenarios: run.failedScenarios,
+      });
+    } finally {
+      await lock.release();
+    }
   } catch (err) {
     // 基础设施异常（DB 写失败等）→ task failed，让 dispatcher/重试机制处理
     console.error(`[staging-e2e] runStagingE2E error task=${task.id}: ${err.message}`);
