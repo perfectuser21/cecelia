@@ -22,6 +22,8 @@ const {
   runStagingCommand,
   runScenarios,
   runStagingE2E,
+  handlePromote,
+  checkInitiativeAggregate,
   STAGING_PORT,
   DASHBOARD_STAGING_PORT,
 } = await import('../staging-e2e-runner.js');
@@ -251,5 +253,58 @@ describe('runStagingE2E', () => {
       acquireStagingLock: async () => ({ release }),
     });
     expect(release).toHaveBeenCalledTimes(1);
+  });
+
+  // Slice9: staging 实测的 git SHA 落库（tested_sha），promote 时比对防 SHA 漂移。
+  it('Slice9: PASS 落库含 tested_sha（git SHA 锚定）', async () => {
+    const pool = makeMockPool();
+    const deploy = () => ({ status: 'success', reason: null, output: 'SUCCESS' });
+    await runStagingE2E(task, {
+      pool, deploy, loadAcceptance: async () => ACCEPTANCE, exec: () => 'ok',
+      getSha: () => 'abc123def456',
+    });
+    const ins = insertedResult(pool);
+    expect(ins.params).toContain('abc123def456');
+  });
+});
+
+describe('Slice9: handlePromote initiative 级聚合 gate + SHA 锚定', () => {
+  it('checkInitiativeAggregate: 有 FAIL → allPass=false', async () => {
+    const pool = { query: async () => ({ rows: [{ verdict: 'PASS', tested_sha: 'a' }, { verdict: 'FAIL', tested_sha: 'a' }] }) };
+    const r = await checkInitiativeAggregate(pool, 'init-1');
+    expect(r.allPass).toBe(false);
+  });
+
+  it('checkInitiativeAggregate: 全 PASS/SKIP 无 FAIL → allPass=true，带 tested_sha', async () => {
+    const pool = { query: async () => ({ rows: [{ verdict: 'PASS', tested_sha: 'sha-x' }, { verdict: 'SKIP', tested_sha: null }] }) };
+    const r = await checkInitiativeAggregate(pool, 'init-1');
+    expect(r.allPass).toBe(true);
+    expect(r.testedSha).toBe('sha-x');
+  });
+
+  it('handlePromote auto: 聚合有 FAIL → pending_promote，不调 promoteExec', async () => {
+    const promoteExec = vi.fn();
+    const status = await handlePromote(
+      { query: vi.fn(async () => ({ rows: [] })) },
+      { verdict: 'PASS', baseRepo: 'perfectuser21/cecelia', prUrl: 'p', initiativeId: 'i' },
+      { checkInitiativeAggregate: async () => ({ allPass: false, testedSha: null }), promoteExec, notify: async () => {} },
+    );
+    expect(status).toBe('pending_promote');
+    expect(promoteExec).not.toHaveBeenCalled();
+  });
+
+  it('handlePromote auto: SHA 漂移（tested != current）→ pending_promote，不调 promoteExec', async () => {
+    const promoteExec = vi.fn();
+    const status = await handlePromote(
+      { query: vi.fn(async () => ({ rows: [] })) },
+      { verdict: 'PASS', baseRepo: 'perfectuser21/cecelia', prUrl: 'p', initiativeId: 'i' },
+      {
+        checkInitiativeAggregate: async () => ({ allPass: true, testedSha: 'old-sha' }),
+        getCurrentSha: () => 'new-sha',
+        promoteExec, notify: async () => {},
+      },
+    );
+    expect(status).toBe('pending_promote');
+    expect(promoteExec).not.toHaveBeenCalled();
   });
 });

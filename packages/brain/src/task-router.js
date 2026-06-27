@@ -56,6 +56,7 @@ const VALID_TASK_TYPES = [
   'harness_final_e2e',     // 阶段 C 最终 E2E 验收
   'harness_evaluate',    // Evaluator 对抗性功能验收（已在 SKILL_WHITELIST）
   'harness_intervention', // 人工干预任务类型（US 本机处理）
+  'staging_e2e',          // Slice9: staging E2E native 执行（executor 短路），补登防未知类型拒
 ];
 
 // 支持 P2P 异步回调的任务类型
@@ -131,6 +132,7 @@ const SKILL_WHITELIST = {
   'harness_deploy_watch': '/_internal',                       // Brain tick 内联处理（不派 agent）
   'harness_evaluate': '/harness-evaluator',                   // FIX (P0) Layer 3e: Evaluator 对抗性功能验收（运行中应用 curl/Playwright）
   'harness_report': '/harness-report',                        // Layer 4: 最终报告
+  'staging_e2e': '/_internal',                                // Slice9: native 执行（executor 短路），不派 agent
   'harness_intervention': '/_internal',                       // 人工干预任务类型（Brain 内部处理）
   // Scope 层飞轮（Project→Scope→Initiative）
   'scope_plan': '/decomp',        // Scope 内规划下一个 Initiative
@@ -292,6 +294,7 @@ const LOCATION_MAP = {
   'harness_final_e2e': 'us',      // 阶段 C 最终 E2E（复用 evaluator skill）
   'harness_evaluate': 'us',      // Layer 3e: Evaluator 对抗性功能验收 → US
   'harness_intervention': 'us', // 人工干预任务类型 → US 本机处理
+  'staging_e2e': 'us',          // Slice9: staging E2E native 执行 → US 本机
 };
 
 // Default location
