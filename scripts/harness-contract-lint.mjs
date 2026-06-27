@@ -101,8 +101,10 @@ for (const entry of entries) {
       });
     } else {
       // 规则 3: 白名单检查
-      // 去除 manual: 前缀（运行时标记，不是工具名）
-      const cmdForCheck = testValue.startsWith('manual:') ? testValue.slice(7).trim() : testValue;
+      // 去除 manual:/seam: 前缀（运行时标记，不是工具名；seam: = 接缝断言，evaluator post-pipeline 验证）
+      const cmdForCheck = testValue.startsWith('manual:') ? testValue.slice(7).trim()
+                        : testValue.startsWith('seam:')   ? testValue.slice(5).trim()
+                        : testValue;
 
       // bash -c '...' 内部的管道/分号属于 shell 脚本，不逐段扫描
       // 只校验顶层工具名（bash 在白名单中）
