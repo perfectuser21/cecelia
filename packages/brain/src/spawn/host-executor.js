@@ -103,9 +103,16 @@ export async function executeOnHost(opts) {
     const envPrefix = Object.entries(injectedEnv)
       .map(([k, v]) => `${k}=${shq(v)}`)
       .join(' ');
+    // P1#4（2026-06-27 审计）：超时只 kill 本地 ssh 客户端**杀不掉宿主上的 claude**
+    // （孤儿进程持续占 CPU/内存 + 持有 worktree git 锁，下轮撞锁）。让宿主侧 timeout 自行
+    // 在 timeoutSec 后 SIGTERM、再 10s 后 SIGKILL，不依赖 ssh 客户端存活。timeout/gtimeout
+    // 由 homebrew coreutils 提供（ssh 远端 PATH 含 /opt/homebrew/bin）；万一都没有则降级直接跑。
+    const timeoutSec = Math.ceil(timeoutMs / 1000);
     const remoteCmd =
-      `cd ${shq(worktreePath)} && env ${envPrefix} ` +
-      `bash ${shq(hostLauncher)} --dangerously-skip-permissions -p`;
+      'cd ' + shq(worktreePath) + ' && ' +
+      'TB=$(command -v timeout || command -v gtimeout || true) && ' +
+      'env ' + envPrefix + ' ${TB:+$TB -k 10 ' + timeoutSec + 's} ' +
+      'bash ' + shq(hostLauncher) + ' --dangerously-skip-permissions -p';
 
     const sshArgs = [];
     if (sshKey) sshArgs.push('-i', sshKey);

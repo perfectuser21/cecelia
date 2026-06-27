@@ -59,6 +59,24 @@ describe('host-executor ssh 逃逸（容器内）', () => {
     expect(captured.bin).not.toBe('claude');
   });
 
+  it('P1#4: 远端命令用 timeout 包裹，宿主侧自行超时杀 claude（ssh 客户端 kill 杀不掉远端）', async () => {
+    const captured = {};
+    await executeOnHost({
+      task: baseTask,
+      prompt: 'x',
+      worktreePath: '/Users/administrator/worktrees/wt-x',
+      inContainer: true,
+      hostSshKey: '/k',
+      timeoutMs: 60_000,
+      spawnFn: makeFakeSpawn(captured),
+    });
+    const remote = captured.args[captured.args.length - 1];
+    // 探测 timeout/gtimeout，并用 timeoutSec 包裹（60000ms → 60s），SIGTERM 后 10s SIGKILL
+    expect(remote).toMatch(/command -v timeout/);
+    expect(remote).toContain('-k 10 60s');
+    expect(remote).toMatch(/\$\{TB:\+/);
+  });
+
   it('inContainer=false（裸机）时回退到本机直接 spawn，不走 ssh', async () => {
     const captured = {};
     await executeOnHost({
