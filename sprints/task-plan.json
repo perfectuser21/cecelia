@@ -1,30 +1,25 @@
 {
   "initiative_id": "pending",
-  "journey_type": "autonomous",
-  "journey_type_reason": "仅涉及 playground/server.js 路由 + 测试，无 UI / 无外部 agent 协议；target_environment: playground，evaluator 用 localhost:3XXX 验证",
+  "journey_type": "dev_pipeline",
+  "journey_type_reason": "验证 packages/brain/src/workflows/harness-initiative.graph.js runSubTaskNode → extractTargetEnv → executeOnHost pipeline 机制，无 UI 交互，无新代码变更",
   "tasks": [
     {
       "task_id": "ws1",
-      "title": "playground/server.js 新增 GET /subtract 路由 + playground/tests/server.test.js 新增 describe 块",
-      "scope": "在 playground/server.js 注册 GET /subtract（复用 STRICT_NUMBER regex ^-?\\d+(\\.\\d+)?$，校验 a/b 存在且合法，计算 Number(a)-Number(b)，返回 {result: <number>, operation: \"subtract\"}；禁用响应字段 difference/diff/value/answer/data；禁用 operation 变体 difference/diff/sub/minus）；在 playground/tests/server.test.js 新增 describe('GET /subtract', ...) 块（happy 正数/负数/零结果、schema 完整性 oracle、禁用字段反向断言、error path 缺参+非法格式）",
+      "title": "执行 mac_web pipeline E2E 验证（Slice4 透传 gap 修复确认）",
+      "scope": "运行 final-e2e 脚本：（1）验证 Slice4 fix 代码就位（源码检查）；（2）运行 harness 路由回归单测；（3）POST harness_task（target_environment=mac_web）到 Brain 5221；（4）等待 /tmp/cecelia-host-prompts/ 出现 .host.prompt 文件（executeOnHost 调用证明）；（5）等待任务在 120s 内离开 running 状态；（6）写入 sprints/e2e-verify-report.json（status=PASS）",
       "dod": [
-        "[ARTIFACT] playground/server.js 内含 app.get('/subtract' 路由注册",
-        "[ARTIFACT] playground/server.js /subtract 路由响应含字面 operation: \"subtract\"（禁用 difference/diff/sub/minus）",
-        "[ARTIFACT] playground/server.js /subtract 路由响应含字面 result 字段（禁用 difference/diff/value/answer/data）",
-        "[ARTIFACT] playground/tests/server.test.js 内含 describe('GET /subtract' 块",
-        "[BEHAVIOR] GET /subtract?a=10&b=3 → HTTP 200 + {result:7, operation:\"subtract\"}（schema 字段值）",
-        "[BEHAVIOR] GET /subtract?a=10&b=3 → keys | sort == [\"operation\",\"result\"]（schema 完整性）",
-        "[BEHAVIOR] GET /subtract?a=10&b=3 → 禁用字段 difference/diff/value/answer/data 均不存在（反向验证）",
-        "[BEHAVIOR] 缺参 a → HTTP 400 + error 字段类型 string（error path）",
-        "[BEHAVIOR] GET /subtract?a=1e5&b=3 → HTTP 400（非法格式 error path）",
-        "[BEHAVIOR] GET /subtract?a=3&b=10 → HTTP 200 + result=-7（负数结果）"
+        "[BEHAVIOR] Slice4 fix 代码就位：runSubTaskNode 源码含 target_environment 透传（node -e 静态验证 exit 0）",
+        "[BEHAVIOR] harness-task-evaluator-host-routing.test.js 回归单测全 PASS",
+        "[BEHAVIOR] POST harness_task（target_environment=mac_web）→ Brain 5221 → HTTP 200 + task_id（接缝）",
+        "[BEHAVIOR] /tmp/cecelia-host-prompts/ 30s 内出现 ${TASK_ID}.host.prompt（executeOnHost 真实调用证明，接缝）",
+        "[BEHAVIOR] tasks 表 status 在 120s 内变为 completed 或 failed（不卡死，接缝）",
+        "[ARTIFACT] sprints/e2e-verify-report.json 存在且 status=PASS"
       ],
       "files": [
-        "playground/server.js",
-        "playground/tests/server.test.js"
+        "sprints/e2e-verify-report.json"
       ],
       "depends_on": [],
-      "complexity": "M",
+      "complexity": "S",
       "estimated_minutes": 30
     }
   ]
