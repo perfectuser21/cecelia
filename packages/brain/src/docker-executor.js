@@ -296,6 +296,15 @@ export function buildDockerArgs(opts, ctx = {}) {
     envFinal.CLAUDE_MODEL_OVERRIDE = String(opts.model);
   }
 
+  // P0#2（2026-06-27 审计）：account-rotation/cascade 选出的模型写在 env CECELIA_MODEL
+  // （host bridge cecelia-run.sh 读它），但容器 entrypoint.sh 只读 CLAUDE_MODEL_OVERRIDE →
+  // docker 路径会丢弃 rotation/cascade 选的模型，容器永远跑账号默认模型（cascade 降级、
+  // 指定 Opus 全失效）。桥接：CECELIA_MODEL 兜底填进 CLAUDE_MODEL_OVERRIDE
+  // （opts.model 和显式 CLAUDE_MODEL_OVERRIDE 已在上面优先处理）。
+  if (envFinal.CECELIA_MODEL && !envFinal.CLAUDE_MODEL_OVERRIDE) {
+    envFinal.CLAUDE_MODEL_OVERRIDE = String(envFinal.CECELIA_MODEL);
+  }
+
   // 解析 CECELIA_CREDENTIALS → 注入 Anthropic 凭据（容器内无宿主凭据文件）
   //
   // 容器内 claude 统一使用 /home/cecelia/.claude（可写副本），由 entrypoint.sh

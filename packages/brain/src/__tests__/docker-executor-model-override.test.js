@@ -96,3 +96,39 @@ describe('buildDockerArgs — P0-3 model override', () => {
     expect(envFinal.CLAUDE_MODEL_OVERRIDE).toBe('42');
   });
 });
+
+/**
+ * P0#2（2026-06-27 审计）：account-rotation/cascade 选出的模型写在 env CECELIA_MODEL
+ * （host bridge cecelia-run.sh 读它），但容器 entrypoint.sh **只读 CLAUDE_MODEL_OVERRIDE** →
+ * docker 路径下 rotation/cascade 选的模型被静默丢弃，容器永远跑账号默认模型。
+ * buildDockerArgs 必须把 CECELIA_MODEL 桥接成 CLAUDE_MODEL_OVERRIDE。
+ */
+describe('buildDockerArgs — P0#2 CECELIA_MODEL → CLAUDE_MODEL_OVERRIDE 桥接', () => {
+  const task = { id: 'bbbb-2', task_type: 'harness_planner' };
+  const baseOpts = { task, prompt: 'hi', worktreePath: '/tmp/wt' };
+
+  it('env.CECELIA_MODEL（rotation 注入）→ 桥接到 CLAUDE_MODEL_OVERRIDE，容器能拿到 --model', () => {
+    const { envFinal, args } = buildDockerArgs(
+      { ...baseOpts, env: { CECELIA_MODEL: 'opus' } },
+      { homedir: '/home/fake', existsSyncFn: () => false },
+    );
+    expect(envFinal.CLAUDE_MODEL_OVERRIDE).toBe('opus');
+    expect(args).toContain('CLAUDE_MODEL_OVERRIDE=opus');
+  });
+
+  it('CLAUDE_MODEL_OVERRIDE 已显式设 → CECELIA_MODEL 不覆盖（显式优先）', () => {
+    const { envFinal } = buildDockerArgs(
+      { ...baseOpts, env: { CECELIA_MODEL: 'opus', CLAUDE_MODEL_OVERRIDE: 'haiku' } },
+      { homedir: '/home/fake', existsSyncFn: () => false },
+    );
+    expect(envFinal.CLAUDE_MODEL_OVERRIDE).toBe('haiku');
+  });
+
+  it('无 CECELIA_MODEL → 不注入（走容器默认）', () => {
+    const { envFinal } = buildDockerArgs(
+      baseOpts,
+      { homedir: '/home/fake', existsSyncFn: () => false },
+    );
+    expect(envFinal.CLAUDE_MODEL_OVERRIDE).toBeUndefined();
+  });
+});
