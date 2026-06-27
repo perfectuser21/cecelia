@@ -1,6 +1,3 @@
-contract_branch: cp-06272239-ws-2937fd5e-ws1
-sprint_dir: sprints
-
 ---
 skeleton: false
 journey_type: autonomous

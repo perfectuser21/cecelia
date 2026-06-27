@@ -1,30 +1,26 @@
 {
-  "initiative_id": "pending",
+  "initiative_id": "${INITIATIVE_ID}",
   "journey_type": "autonomous",
-  "journey_type_reason": "仅涉及 playground/server.js 路由 + 测试，无 UI / 无外部 agent 协议；target_environment: playground，evaluator 用 localhost:3XXX 验证",
+  "journey_type_reason": "harness 内部线 pipeline 自动调度执行，无用户界面交互；target_environment=local_api 验查 Brain DB + curl localhost:5211",
   "tasks": [
     {
       "task_id": "ws1",
-      "title": "playground/server.js 新增 GET /subtract 路由 + playground/tests/server.test.js 新增 describe 块",
-      "scope": "在 playground/server.js 注册 GET /subtract（复用 STRICT_NUMBER regex ^-?\\d+(\\.\\d+)?$，校验 a/b 存在且合法，计算 Number(a)-Number(b)，返回 {result: <number>, operation: \"subtract\"}；禁用响应字段 difference/diff/value/answer/data；禁用 operation 变体 difference/diff/sub/minus）；在 playground/tests/server.test.js 新增 describe('GET /subtract', ...) 块（happy 正数/负数/零结果、schema 完整性 oracle、禁用字段反向断言、error path 缺参+非法格式）",
+      "title": "注入最小 dashboard 触点并验证 harness pipeline 贯通（staging→auto_promote→:5211）",
+      "scope": "在 apps/dashboard/index.html <head> 区域添加一行注释 '<!-- harness-pipeline-verify 2026-06-27：9-slice 后首次干净 run 贯通验证，无功能影响 -->'；提交 PR 触发 harness pipeline；验证 staging_e2e_results.verdict=PASS + promote_status=auto_promoted + tested_sha 非空，:5211 HTTP 200，harness_report status=completed",
       "dod": [
-        "[ARTIFACT] playground/server.js 内含 app.get('/subtract' 路由注册",
-        "[ARTIFACT] playground/server.js /subtract 路由响应含字面 operation: \"subtract\"（禁用 difference/diff/sub/minus）",
-        "[ARTIFACT] playground/server.js /subtract 路由响应含字面 result 字段（禁用 difference/diff/value/answer/data）",
-        "[ARTIFACT] playground/tests/server.test.js 内含 describe('GET /subtract' 块",
-        "[BEHAVIOR] GET /subtract?a=10&b=3 → HTTP 200 + {result:7, operation:\"subtract\"}（schema 字段值）",
-        "[BEHAVIOR] GET /subtract?a=10&b=3 → keys | sort == [\"operation\",\"result\"]（schema 完整性）",
-        "[BEHAVIOR] GET /subtract?a=10&b=3 → 禁用字段 difference/diff/value/answer/data 均不存在（反向验证）",
-        "[BEHAVIOR] 缺参 a → HTTP 400 + error 字段类型 string（error path）",
-        "[BEHAVIOR] GET /subtract?a=1e5&b=3 → HTTP 400（非法格式 error path）",
-        "[BEHAVIOR] GET /subtract?a=3&b=10 → HTTP 200 + result=-7（负数结果）"
+        "[ARTIFACT] apps/dashboard/index.html 含 harness-pipeline-verify 2026-06-27 注释行",
+        "[BEHAVIOR] 触点注释 grep -q 'harness-pipeline-verify 2026-06-27' apps/dashboard/index.html → exit 0",
+        "[BEHAVIOR] staging_e2e_results.verdict=PASS（initiative_id=$INITIATIVE_ID，60分钟时间窗）",
+        "[BEHAVIOR] staging_e2e_results.promote_status=auto_promoted（Slice9 复合闸 + auto promote）",
+        "[BEHAVIOR] staging_e2e_results.tested_sha 非空（Slice9 SHA 锚定）",
+        "[BEHAVIOR] curl localhost:5211/ HTTP 200 + 响应体非空",
+        "[BEHAVIOR] tasks.harness_report status=completed（initiative_id=$INITIATIVE_ID）"
       ],
       "files": [
-        "playground/server.js",
-        "playground/tests/server.test.js"
+        "apps/dashboard/index.html"
       ],
       "depends_on": [],
-      "complexity": "M",
+      "complexity": "S",
       "estimated_minutes": 30
     }
   ]
