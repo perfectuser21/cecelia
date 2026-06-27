@@ -3,7 +3,7 @@ skeleton: false
 journey_type: autonomous
 target_environment: local_api
 ---
-# Contract DoD — Sprint: harness 内部线 staging→promote→:5211 贯通验证（Round 3）
+# Contract DoD — Sprint: harness 内部线 staging→promote→:5211 贯通验证（Round 4）
 
 **范围**: 从 initiative 点火到 :5211 可访问的全链路单次端到端验证；仅检查 Brain DB 状态 + :5211 存活，不修复新发现 bug  
 **大小**: M
@@ -46,6 +46,6 @@ target_environment: local_api
   Test: manual:bash -c 'CODE=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:5211/); [ "$CODE" = "200" ] || { echo "FAIL: HTTP $CODE"; exit 1; }; SZ=$(curl -sf http://localhost:5211/ | wc -c | tr -d " "); [ "$SZ" -gt 0 ] || { echo "FAIL: 响应体为空"; exit 1; }; echo "OK: HTTP 200 ${SZ} bytes"'
   期望: OK: HTTP 200 <N> bytes
 
-- [ ] [BEHAVIOR] harness_report 任务 status=completed（Slice3 派报告验收）
-  Test: manual:bash -c '[ -n "$INITIATIVE_ID" ] || { echo "FAIL: INITIATIVE_ID 未设置"; exit 1; }; DB="${DB:-postgresql://localhost/cecelia}"; S=$(psql "$DB" -t -c "SELECT status FROM tasks WHERE task_type='"'"'harness_report'"'"' AND payload->>'"'"'initiative_id'"'"' = '"'"'$INITIATIVE_ID'"'"'" | tr -d " "); [ "$S" = "completed" ] || { echo "FAIL: harness_report status=$S"; exit 1; }; echo OK'
+- [ ] [BEHAVIOR] harness_report 任务 status=completed（Slice3 派报告验收，60分钟时间窗防历史数据冒充）
+  Test: manual:bash -c '[ -n "$INITIATIVE_ID" ] || { echo "FAIL: INITIATIVE_ID 未设置"; exit 1; }; DB="${DB:-postgresql://localhost/cecelia}"; S=$(psql "$DB" -t -c "SELECT status FROM tasks WHERE task_type='"'"'harness_report'"'"' AND payload->>'"'"'initiative_id'"'"' = '"'"'$INITIATIVE_ID'"'"' AND created_at > NOW() - interval '"'"'60 minutes'"'"'" | tr -d " "); [ "$S" = "completed" ] || { echo "FAIL: harness_report status=$S"; exit 1; }; echo OK'
   期望: OK（status=completed）

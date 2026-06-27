@@ -1,4 +1,4 @@
-# Sprint Contract Draft (Round 3) — harness 内部线 staging→promote→:5211 贯通验证
+# Sprint Contract Draft (Round 4) — harness 内部线 staging→promote→:5211 贯通验证
 
 ## Response Schema（推导来源: PRD字面）
 
@@ -136,7 +136,7 @@ echo "OK: :5211 HTTP 200 响应体 ${BODY} bytes"
 
 **验证命令**:
 ```bash
-REPORT_STATUS=$(psql $DB -t -c "SELECT status FROM tasks WHERE task_type='harness_report' AND payload->>'initiative_id' = '$INITIATIVE_ID'" 2>/dev/null | tr -d ' ')
+REPORT_STATUS=$(psql $DB -t -c "SELECT status FROM tasks WHERE task_type='harness_report' AND payload->>'initiative_id' = '$INITIATIVE_ID' AND created_at > NOW() - interval '60 minutes'" 2>/dev/null | tr -d ' ')
 [ "$REPORT_STATUS" = "completed" ] || { echo "FAIL: harness_report status=$REPORT_STATUS（期望 completed）"; exit 1; }
 echo "OK: harness_report completed"
 ```
@@ -190,7 +190,7 @@ FAIL_COUNT=$(psql "$DB" -t -c "SELECT count(*) FROM tasks WHERE payload->>'initi
 }
 echo "✓ Step2: 无 failed 任务"
 
-# ── 断言 3：staging E2E verdict=PASS + tested_sha 非空（时间窗 30 分钟）──
+# ── 断言 3：staging E2E verdict=PASS + tested_sha 非空（时间窗 60 分钟）──
 VERDICT=$(psql "$DB" -t -c "SELECT verdict FROM staging_e2e_results WHERE initiative_id='$INITIATIVE_ID' AND created_at > NOW() - interval '60 minutes'" | tr -d ' ')
 [ "$VERDICT" = "PASS" ] || {
   echo "FAIL [Step3]: staging_e2e_results.verdict=$VERDICT（期望 PASS，时间窗内）"
@@ -225,7 +225,7 @@ BODY_SIZE=$(curl -sf http://localhost:5211/ | wc -c | tr -d ' ')
 echo "✓ Step5: :5211 HTTP 200 响应体 ${BODY_SIZE} bytes"
 
 # ── 断言 6：harness_report completed ──
-REPORT_STATUS=$(psql "$DB" -t -c "SELECT status FROM tasks WHERE task_type='harness_report' AND payload->>'initiative_id' = '$INITIATIVE_ID'" | tr -d ' ')
+REPORT_STATUS=$(psql "$DB" -t -c "SELECT status FROM tasks WHERE task_type='harness_report' AND payload->>'initiative_id' = '$INITIATIVE_ID' AND created_at > NOW() - interval '60 minutes'" | tr -d ' ')
 [ "$REPORT_STATUS" = "completed" ] || {
   echo "FAIL [Step6]: harness_report status=$REPORT_STATUS（期望 completed）"
   exit 1
