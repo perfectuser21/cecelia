@@ -160,16 +160,67 @@ export function runScenarios(acceptance, opts = {}) {
   };
 }
 
-/** 加载该 initiative 的合同 e2e_acceptance（优先 approved，否则最新 version）。 */
+/**
+ * 从合同 markdown 文本解析 ## E2E 验收 段，生成 staging E2E 可运行的 acceptance 对象。
+ * 支持内联命令块（```bash ... ```）与 .ps1/.sh 脚本文件引用两种形态。
+ * @param {string} contractContent
+ * @returns {{scenarios: Array}|null}
+ */
+export function parseE2eAcceptanceFromContract(contractContent) {
+  if (!contractContent || typeof contractContent !== 'string') return null;
+
+  // 按 H2 heading 切分，找 ## E2E 验收 段
+  const sections = contractContent.split(/\n(?=## )/);
+  const e2eSection = sections.find(s => /^## E2E 验收/i.test(s));
+  if (!e2eSection) return null;
+
+  const scenarios = [];
+  const blockRe = /```(?:bash|sh|pwsh|powershell)?\n([\s\S]*?)```/g;
+  let match;
+  let idx = 0;
+
+  while ((match = blockRe.exec(e2eSection)) !== null) {
+    const content = match[1].trim();
+    if (!content) continue;
+
+    let cmd;
+    // 文件引用：block 内容仅为 "<interp>? <path>.sh|ps1"（单行）
+    const fileRef = content.match(/^(?:bash|pwsh|sh|powershell)?\s*([\w./\\-]+\.(?:sh|ps1))\s*$/i);
+    if (fileRef) {
+      const interp = fileRef[1].toLowerCase().endsWith('.ps1') ? 'pwsh' : 'bash';
+      cmd = `${interp} ${fileRef[1]}`;
+    } else {
+      // 内联脚本 → heredoc，避免转义问题
+      const delim = `___E2E_FENCE_${idx}___`;
+      cmd = `bash <<'${delim}'\n${content}\n${delim}`;
+    }
+
+    scenarios.push({
+      name: `E2E 验收 block ${idx + 1}`,
+      covered_tasks: ['00000000-0000-0000-0000-000000000001'],
+      commands: [{ type: 'bash', cmd }],
+    });
+    idx++;
+  }
+
+  return scenarios.length > 0 ? { scenarios } : null;
+}
+
+/** 加载该 initiative 的合同 e2e_acceptance（优先 approved，否则最新 version）。
+ * 若 e2e_acceptance 列为 NULL，回退解析 contract_content 的 ## E2E 验收 段。 */
 async function loadE2eAcceptance(dbPool, initiativeId) {
   const q = await dbPool.query(
-    `SELECT e2e_acceptance FROM initiative_contracts
+    `SELECT e2e_acceptance, contract_content FROM initiative_contracts
      WHERE initiative_id::text = $1
      ORDER BY (CASE WHEN status = 'approved' THEN 0 ELSE 1 END), version DESC
      LIMIT 1`,
     [initiativeId]
   );
-  return q.rows[0]?.e2e_acceptance || null;
+  const row = q.rows[0];
+  if (!row) return null;
+  if (row.e2e_acceptance) return row.e2e_acceptance;
+  // 兜底：从合同正文解析 ## E2E 验收 段
+  return row.contract_content ? parseE2eAcceptanceFromContract(row.contract_content) : null;
 }
 
 /** verdict 落 staging_e2e_results 表。 */
