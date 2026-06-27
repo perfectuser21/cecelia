@@ -30,25 +30,25 @@ target_environment: local_api
   期望: OK
 
 - [x] [BEHAVIOR] initiative 无 failed 任务（60分钟时间窗，验证无死代码干预通道阻断）
-  Test: manual:bash -c '[ -n "$INITIATIVE_ID" ] || { echo "FAIL: INITIATIVE_ID 未设置"; exit 1; }; DB="${DB:-postgresql://localhost/cecelia}"; C=$(psql "$DB" -t -c "SELECT count(*) FROM tasks WHERE payload->>'"'"'initiative_id'"'"' = '"'"'$INITIATIVE_ID'"'"' AND status='"'"'failed'"'"' AND created_at > NOW() - interval '"'"'60 minutes'"'"'" | tr -d " "); [ "$C" = "0" ] || { echo "FAIL: $C 个 failed 任务"; exit 1; }; echo OK'
+  Test: seam:bash -c '[ -n "$INITIATIVE_ID" ] || { echo "FAIL: INITIATIVE_ID 未设置"; exit 1; }; DB="${DB:-postgresql://localhost/cecelia}"; C=$(psql "$DB" -t -c "SELECT count(*) FROM tasks WHERE payload->>'"'"'initiative_id'"'"' = '"'"'$INITIATIVE_ID'"'"' AND status='"'"'failed'"'"' AND created_at > NOW() - interval '"'"'60 minutes'"'"'" | tr -d " "); [ "$C" = "0" ] || { echo "FAIL: $C 个 failed 任务"; exit 1; }; echo OK'
   期望: OK（failed 数 = 0）
 
 - [x] [BEHAVIOR] staging_e2e_results.verdict=PASS（带60分钟时间窗防历史数据冒充）
-  Test: manual:bash -c '[ -n "$INITIATIVE_ID" ] || { echo "FAIL: INITIATIVE_ID 未设置"; exit 1; }; DB="${DB:-postgresql://localhost/cecelia}"; V=$(psql "$DB" -t -c "SELECT verdict FROM staging_e2e_results WHERE initiative_id='"'"'$INITIATIVE_ID'"'"' AND created_at > NOW() - interval '"'"'60 minutes'"'"'" | tr -d " "); [ "$V" = "PASS" ] || { echo "FAIL: verdict=$V"; exit 1; }; echo OK'
+  Test: seam:bash -c '[ -n "$INITIATIVE_ID" ] || { echo "FAIL: INITIATIVE_ID 未设置"; exit 1; }; DB="${DB:-postgresql://localhost/cecelia}"; V=$(psql "$DB" -t -c "SELECT verdict FROM staging_e2e_results WHERE initiative_id='"'"'$INITIATIVE_ID'"'"' AND created_at > NOW() - interval '"'"'60 minutes'"'"'" | tr -d " "); [ "$V" = "PASS" ] || { echo "FAIL: verdict=$V"; exit 1; }; echo OK'
   期望: OK（verdict=PASS）
 
 - [x] [BEHAVIOR] staging_e2e_results.promote_status=auto_promoted（Slice9 复合闸 + auto promote 验收）
-  Test: manual:bash -c '[ -n "$INITIATIVE_ID" ] || { echo "FAIL: INITIATIVE_ID 未设置"; exit 1; }; DB="${DB:-postgresql://localhost/cecelia}"; S=$(psql "$DB" -t -c "SELECT promote_status FROM staging_e2e_results WHERE initiative_id='"'"'$INITIATIVE_ID'"'"'" | tr -d " "); [ "$S" = "auto_promoted" ] || { echo "FAIL: promote_status=$S（期望 auto_promoted）"; exit 1; }; echo OK'
+  Test: seam:bash -c '[ -n "$INITIATIVE_ID" ] || { echo "FAIL: INITIATIVE_ID 未设置"; exit 1; }; DB="${DB:-postgresql://localhost/cecelia}"; S=$(psql "$DB" -t -c "SELECT promote_status FROM staging_e2e_results WHERE initiative_id='"'"'$INITIATIVE_ID'"'"'" | tr -d " "); [ "$S" = "auto_promoted" ] || { echo "FAIL: promote_status=$S（期望 auto_promoted）"; exit 1; }; echo OK'
   期望: OK（promote_status=auto_promoted）
 
 - [x] [BEHAVIOR] staging_e2e_results.tested_sha 非空（Slice9 SHA 锚定验收）
-  Test: manual:bash -c '[ -n "$INITIATIVE_ID" ] || { echo "FAIL: INITIATIVE_ID 未设置"; exit 1; }; DB="${DB:-postgresql://localhost/cecelia}"; SHA=$(psql "$DB" -t -c "SELECT tested_sha FROM staging_e2e_results WHERE initiative_id='"'"'$INITIATIVE_ID'"'"'" | tr -d " "); [ -n "$SHA" ] && [ "$SHA" != "NULL" ] || { echo "FAIL: tested_sha 为空"; exit 1; }; echo "OK: tested_sha=$SHA"'
+  Test: seam:bash -c '[ -n "$INITIATIVE_ID" ] || { echo "FAIL: INITIATIVE_ID 未设置"; exit 1; }; DB="${DB:-postgresql://localhost/cecelia}"; SHA=$(psql "$DB" -t -c "SELECT tested_sha FROM staging_e2e_results WHERE initiative_id='"'"'$INITIATIVE_ID'"'"'" | tr -d " "); [ -n "$SHA" ] && [ "$SHA" != "NULL" ] || { echo "FAIL: tested_sha 为空"; exit 1; }; echo "OK: tested_sha=$SHA"'
   期望: OK: tested_sha=<非空 git SHA>
 
 - [x] [BEHAVIOR] localhost:5211 HTTP 200 + 响应体非空（dashboard 重起成功）
-  Test: manual:bash -c 'CODE=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:5211/); [ "$CODE" = "200" ] || { echo "FAIL: HTTP $CODE"; exit 1; }; SZ=$(curl -sf http://localhost:5211/ | wc -c | tr -d " "); [ "$SZ" -gt 0 ] || { echo "FAIL: 响应体为空"; exit 1; }; echo "OK: HTTP 200 ${SZ} bytes"'
+  Test: seam:bash -c 'CODE=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:5211/); [ "$CODE" = "200" ] || { echo "FAIL: HTTP $CODE"; exit 1; }; SZ=$(curl -sf http://localhost:5211/ | wc -c | tr -d " "); [ "$SZ" -gt 0 ] || { echo "FAIL: 响应体为空"; exit 1; }; echo "OK: HTTP 200 ${SZ} bytes"'
   期望: OK: HTTP 200 <N> bytes
 
 - [x] [BEHAVIOR] harness_report 任务 status=completed（Slice3 派报告验收，60分钟时间窗防历史数据冒充）
-  Test: manual:bash -c '[ -n "$INITIATIVE_ID" ] || { echo "FAIL: INITIATIVE_ID 未设置"; exit 1; }; DB="${DB:-postgresql://localhost/cecelia}"; S=$(psql "$DB" -t -c "SELECT status FROM tasks WHERE task_type='"'"'harness_report'"'"' AND payload->>'"'"'initiative_id'"'"' = '"'"'$INITIATIVE_ID'"'"' AND created_at > NOW() - interval '"'"'60 minutes'"'"'" | tr -d " "); [ "$S" = "completed" ] || { echo "FAIL: harness_report status=$S"; exit 1; }; echo OK'
+  Test: seam:bash -c '[ -n "$INITIATIVE_ID" ] || { echo "FAIL: INITIATIVE_ID 未设置"; exit 1; }; DB="${DB:-postgresql://localhost/cecelia}"; S=$(psql "$DB" -t -c "SELECT status FROM tasks WHERE task_type='"'"'harness_report'"'"' AND payload->>'"'"'initiative_id'"'"' = '"'"'$INITIATIVE_ID'"'"' AND created_at > NOW() - interval '"'"'60 minutes'"'"'" | tr -d " "); [ "$S" = "completed" ] || { echo "FAIL: harness_report status=$S"; exit 1; }; echo OK'
   期望: OK（status=completed）

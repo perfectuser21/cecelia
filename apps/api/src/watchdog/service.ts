@@ -173,6 +173,9 @@ export async function triggerPatrol(agentId: string): Promise<{
       detached: true,
       stdio: 'ignore',
     });
+    patrol.on('error', (err) => {
+      console.error(`[Watchdog] Patrol spawn error for ${agentId}: ${err.message}`);
+    });
     patrol.unref();
 
     return {
