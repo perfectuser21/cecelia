@@ -3,7 +3,7 @@ skeleton: false
 journey_type: autonomous
 target_environment: local_api
 ---
-# Contract DoD — Sprint: harness 内部线 staging→promote→:5211 贯通验证（Round 2）
+# Contract DoD — Sprint: harness 内部线 staging→promote→:5211 贯通验证（Round 3）
 
 **范围**: 从 initiative 点火到 :5211 可访问的全链路单次端到端验证；仅检查 Brain DB 状态 + :5211 存活，不修复新发现 bug  
 **大小**: M

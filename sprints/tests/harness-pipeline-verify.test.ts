@@ -3,10 +3,13 @@
  *
  * 以下测试在 Generator 添加触点注释之前必然 FAIL（红）：
  *   - 触点测试：apps/dashboard/index.html 缺少 harness-pipeline-verify 注释 → FAIL
- *   - promote 逻辑单测：验证 Slice9 复合闸的 resolveLine + decidePromote 对内部线的路由
- *   - SHA 锚定测试：checkInitiativeAggregate 函数对无记录情况的返回值结构
+ *   - 注释位置测试：注释必须在 <head> 区块内（防误加到 body）→ FAIL
  *
- * Generator 添加触点后，触点测试变绿；pipeline 跑完后 E2E script 验证 DB 接缝断言。
+ * Generator 添加触点后，两条测试均变绿。
+ * DB 接缝断言（staging_e2e_results / promote_status / :5211）由 E2E 脚本在 pipeline 完成后验证。
+ *
+ * Round 3 变更：移除了 staging-promote resolveLine/decidePromote 和 checkInitiativeAggregate 测试——
+ * 这些函数已在 Slice1-9 中实现完毕，测试立即为绿，不提供 TDD 红证据；pipeline 接缝由 E2E 脚本验证。
  */
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'fs';
@@ -19,38 +22,13 @@ describe('apps/dashboard/index.html 触点注释 [BEHAVIOR]', () => {
     const content = readFileSync(indexPath, 'utf8');
     expect(content).toContain('harness-pipeline-verify 2026-06-27');
   });
-});
 
-// ── promote 逻辑单测（纯逻辑，环境无关，验证 Slice9 内部线路由）────────────
-describe('staging-promote resolveLine + decidePromote 内部线路由 [BEHAVIOR]', () => {
-  it('resolveLine("cecelia") 返回 internal', async () => {
-    const { resolveLine } = await import('../../../packages/brain/src/staging-promote.js');
-    expect(resolveLine('cecelia')).toBe('internal');
-  });
-
-  it('decidePromote PASS + cecelia → action=auto，promoteStatus=auto_promoted', async () => {
-    const { decidePromote, PROMOTE_STATUS } = await import('../../../packages/brain/src/staging-promote.js');
-    const result = decidePromote({ verdict: 'PASS', baseRepo: 'cecelia' });
-    expect(result.action).toBe('auto');
-    expect(result.promoteStatus).toBe(PROMOTE_STATUS.AUTO_PROMOTED);
-  });
-
-  it('decidePromote FAIL + cecelia → action=none，promoteStatus=n_a', async () => {
-    const { decidePromote, PROMOTE_STATUS } = await import('../../../packages/brain/src/staging-promote.js');
-    const result = decidePromote({ verdict: 'FAIL', baseRepo: 'cecelia' });
-    expect(result.action).toBe('none');
-    expect(result.promoteStatus).toBe(PROMOTE_STATUS.NA);
-  });
-});
-
-// ── checkInitiativeAggregate 空记录边界（逻辑断言）────────────────────────
-describe('checkInitiativeAggregate 空 initiative 边界 [BEHAVIOR]', () => {
-  it('initiative_id=null 时直接返回 {allPass:true, testedSha:null}（不查 DB）', async () => {
-    const { checkInitiativeAggregate } = await import('../../../packages/brain/src/staging-e2e-runner.js');
-    // null initiativeId → 函数跳过 DB 查询直接返回安全默认值
-    const fakePool = { query: async () => { throw new Error('should not be called'); } };
-    const result = await checkInitiativeAggregate(fakePool, null);
-    expect(result.allPass).toBe(true);
-    expect(result.testedSha).toBeNull();
+  it('触点注释在 <head> 区块内（不在 <body>）', () => {
+    const indexPath = resolve(process.cwd(), 'apps/dashboard/index.html');
+    const content = readFileSync(indexPath, 'utf8');
+    const headEnd = content.indexOf('</head>');
+    const commentPos = content.indexOf('harness-pipeline-verify 2026-06-27');
+    expect(commentPos).toBeGreaterThan(-1);
+    expect(commentPos).toBeLessThan(headEnd);
   });
 });

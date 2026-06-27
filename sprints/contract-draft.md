@@ -1,4 +1,4 @@
-# Sprint Contract Draft (Round 2) — harness 内部线 staging→promote→:5211 贯通验证
+# Sprint Contract Draft (Round 3) — harness 内部线 staging→promote→:5211 贯通验证
 
 ## Response Schema（推导来源: PRD字面）
 
@@ -185,7 +185,7 @@ echo "✓ Step1: 触点注释存在"
 # ── 断言 2：initiative 无 failed 任务 ──
 FAIL_COUNT=$(psql "$DB" -t -c "SELECT count(*) FROM tasks WHERE payload->>'initiative_id' = '$INITIATIVE_ID' AND status='failed' AND created_at > NOW() - interval '60 minutes'" | tr -d ' ')
 [ "$FAIL_COUNT" = "0" ] || {
-  echo "FAIL [Step2]: initiative 有 $FAIL_COUNT 个 failed 任务（30分钟内）"
+  echo "FAIL [Step2]: initiative 有 $FAIL_COUNT 个 failed 任务（60分钟内）"
   exit 1
 }
 echo "✓ Step2: 无 failed 任务"
