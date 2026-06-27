@@ -604,3 +604,14 @@ describe('SINGLE_TASK_PATTERNS / FEATURE_PATTERNS 导出', () => {
     }
   });
 });
+
+// Slice9: staging_e2e 是 native 执行（executor.triggerCeceliaRun 短路），但此前 task-router 未登记。
+// 补登让 isValidTaskType 通过（不被当未知类型拒）+ getTaskLocation 有确定值（US 本机）。
+describe('Slice9: staging_e2e 补登 task-router', () => {
+  it('isValidTaskType(staging_e2e) = true', () => {
+    expect(isValidTaskType('staging_e2e')).toBe(true);
+  });
+  it('getTaskLocation(staging_e2e) = us（native 本机执行）', () => {
+    expect(getTaskLocation('staging_e2e')).toBe('us');
+  });
+});

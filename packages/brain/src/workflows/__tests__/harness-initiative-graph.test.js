@@ -349,6 +349,29 @@ describe('reportNode — B45 Fix1: verdict 从 sub_tasks 推导', () => {
     expect(tasksCall[1][1]).toBe('completed');
   });
 
+  // Slice9: 终态写守卫 — reportNode 可能在 run/task 已被别处标终态后晚到（race / 子图 END 漏写
+  // status 裸透传），裸 UPDATE 会把已 completed 的重标 failed。加 NOT IN 守卫防覆盖已终态。
+  it('Slice9: reportNode 终态 UPDATE 带守卫（status/phase NOT IN，防覆盖已终态）', async () => {
+    const dbQueryMock = vi.fn().mockResolvedValue({ rows: [] });
+    const mockPool = {
+      connect: vi.fn().mockResolvedValue({ query: dbQueryMock, release: vi.fn() }),
+      query: vi.fn().mockResolvedValue({ rows: [] }),
+    };
+    const state = {
+      initiativeId: 'test-init-guard',
+      task: { id: 'test-task-guard', title: 'test', payload: {} },
+      sub_tasks: [{ id: 'ws1', status: 'merged', pr_url: 'https://github.com/x/y/pull/1', cost_usd: 0 }],
+      final_e2e_verdict: null, final_e2e_failed_scenarios: [],
+      sprintDir: 'sprints/test-guard', taskPlan: null, prdContent: null,
+    };
+    await reportNode(state, { pool: mockPool });
+    const calls = dbQueryMock.mock.calls;
+    const tasksCall = calls.find(c => typeof c[0] === 'string' && c[0].includes('UPDATE tasks'));
+    expect(tasksCall[0]).toMatch(/status NOT IN/i);
+    const runsCall = calls.find(c => typeof c[0] === 'string' && c[0].includes('UPDATE initiative_runs'));
+    expect(runsCall[0]).toMatch(/phase NOT IN/i);
+  });
+
   it('B45 Fix1: reportNode 从 sub_tasks 推导 FAIL（有未 merged，final_e2e_verdict=null）', async () => {
     const dbQueryMock = vi.fn().mockResolvedValue({ rows: [] });
     const mockPool = {
