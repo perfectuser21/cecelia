@@ -1266,6 +1266,10 @@ export async function runSubTaskNode(state, opts = {}) {
       // 读 task.payload.{machine,executor} 决定 Generator 跑美国 Claude 还是西安 Codex。
       ...(state.task?.payload?.machine ? { machine: state.task.payload.machine } : {}),
       ...(state.task?.payload?.executor ? { executor: state.task.payload.executor } : {}),
+      // Slice4 透传 gap 修复（真 run 2937fd5e 暴露）：透传 target_environment，否则 sub-graph
+      // extractTargetEnv 默认 local_api → generator spawnNode / evaluate_contract 走 docker，
+      // mac_web 的 Playwright 自验在无浏览器容器卡死。透传后 mac_web 走 host 逃逸（executeOnHost）。
+      ...(state.task?.payload?.target_environment ? { target_environment: state.task.payload.target_environment } : {}),
     },
   };
   const compiled = opts.compiledTaskGraph || await _getTaskGraphCompiled();
