@@ -55,7 +55,7 @@ import { resolveAccount } from '../spawn/middleware/account-rotation.js';
 import { checkAuthFailure } from '../spawn/middleware/cap-marking.js';
 import { checkPrStatus, classifyFailedChecks } from '../shepherd.js';
 import { parseDockerOutput, extractField, readPrFromGitState, readVerdictFile, readBrainResult, readAndValidateBrainResult, EvaluatorOutputSchema, loadSkillContent } from '../harness-shared.js';
-import { buildGeneratorPrompt, harnessContractThreadSuffix } from '../harness-utils.js';
+import { buildGeneratorPrompt, buildTaskThreadId } from '../harness-utils.js';
 import { getPgCheckpointer } from '../orchestrator/pg-checkpointer.js';
 import pool from '../db.js';
 import { verifyGeneratorOutput } from '../lib/contract-verify.js';
@@ -282,7 +282,7 @@ export async function spawnNode(state, opts = {}) {
   // 不复用旧终局 checkpoint（run da418741 死线程秒回 root cause）。state.contractBranch
   // 即父 runSubTaskNode invoke 时传入值，子图内不再变，spawn/evaluate 两处一致。
   const threadFixRound = state.task?.payload?.final_e2e_fix_count ?? 0;
-  const threadId = `harness-task:${initiativeId}:${task.id}:fix${threadFixRound}${harnessContractThreadSuffix(state.contractBranch)}`;
+  const threadId = buildTaskThreadId(initiativeId, task.id, threadFixRound, state.contractBranch);
 
   // 关键：调 resolveAccount 选 claude account → 注入 CECELIA_CREDENTIALS + CECELIA_MODEL。
   // buildDockerArgs 据此加 -v ~/.claude-accountN:/host-claude-config:ro mount。
@@ -1131,7 +1131,7 @@ export async function evaluateContractNode(state, opts = {}) {
   // B47: final_e2e_fix_count 从 payload 读，与 config thread_id 保持一致
   // 合同绑定：与 spawnNode 同口径追加合同后缀，保证 callback router 反查命中同一线程。
   const threadFixRound = state.task?.payload?.final_e2e_fix_count ?? 0;
-  const threadId = `harness-task:${initiativeId}:${task.id}:fix${threadFixRound}${harnessContractThreadSuffix(state.contractBranch)}`;
+  const threadId = buildTaskThreadId(initiativeId, task.id, threadFixRound, state.contractBranch);
 
   // B14: PR 分支名传给 evaluator（Step 0a git checkout 用，不传则永远跑 main 看不到改动）
   let prBranchEnv = state.pr_branch || '';

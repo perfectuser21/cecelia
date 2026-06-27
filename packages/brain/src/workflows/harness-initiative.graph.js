@@ -14,7 +14,7 @@ import { spawn } from '../spawn/index.js';
 import { spawnDockerDetached } from '../spawn/detached.js';
 import { resolveAccount } from '../spawn/middleware/account-rotation.js';
 import { parseDockerOutput, loadSkillContent } from '../harness-shared.js';
-import { harnessContractThreadSuffix } from '../harness-utils.js';
+import { buildTaskThreadId } from '../harness-utils.js';
 import { parseTaskPlan, upsertTaskPlan } from '../harness-dag.js';
 import { buildSprintResultContract } from '../sprint-result-contract.js';
 import { ensureHarnessWorktree } from '../harness-worktree.js';
@@ -1251,7 +1251,7 @@ export async function runSubTaskNode(state, opts = {}) {
   // 合同绑定（run da418741 死线程修复）：thread_id 追加 contractBranch 折出的稳定短 token。
   // 合同经 GAN 重新收敛 → propose 分支变 → token 变 → 新线程，绝不复用旧合同留下的终局
   // checkpoint（旧 fix0 线程 contract_invalid 已 END，再 invoke 会秒回死状态、无节点执行）。
-  const threadId = `harness-task:${state.initiativeId}:${subTask.id}:fix${state.final_e2e_fix_count ?? 0}${harnessContractThreadSuffix(contractBranchForThread)}`;
+  const threadId = buildTaskThreadId(state.initiativeId, subTask.id, state.final_e2e_fix_count ?? 0, contractBranchForThread);
   const config = { configurable: { thread_id: threadId }, recursionLimit: 200 };
   const waitMs = opts.waitMs !== undefined ? opts.waitMs : SUBGRAPH_WAIT_MS;
   // 诊断：进 generator 子图前记录关键上下文，便于 generator 那层失败时定位。

@@ -38,6 +38,28 @@ export function harnessContractThreadSuffix(contractBranch) {
 }
 
 /**
+ * sub-task 子图 thread_id 的**唯一 SSOT**（2026-06-27 审计）。
+ *
+ * 格式：`harness-task:<initiativeId>:<subTaskId>:fix<fixRound><合同后缀>`
+ *
+ * 此公式必须被 **3 处**共用，否则父子 thread_id 失配 → callback router 反查不到 /
+ * 复用旧终局 checkpoint 秒回死状态（run da418741 实证的"死线程"bug 根因）：
+ *   - harness-initiative.graph.js runSubTaskNode（父 invoke 子图）
+ *   - harness-task.graph.js spawnNode（写 thread_lookup）
+ *   - harness-task.graph.js evaluateContractNode（写 thread_lookup）
+ * 历史上三处各拼一遍、靠注释纪律保持一致——本函数把公式收成单一来源，杜绝漂移。
+ *
+ * @param {string} initiativeId
+ * @param {string} subTaskId
+ * @param {number|null|undefined} fixRound  缺省按 0
+ * @param {string|null|undefined} contractBranch  无则退回旧格式（无后缀）
+ * @returns {string}
+ */
+export function buildTaskThreadId(initiativeId, subTaskId, fixRound, contractBranch) {
+  return `harness-task:${initiativeId}:${subTaskId}:fix${fixRound ?? 0}${harnessContractThreadSuffix(contractBranch)}`;
+}
+
+/**
  * 返回上海时区（UTC+8）的 MMDDHHMM 8 位字符串。
  * @param {Date} [date]
  */

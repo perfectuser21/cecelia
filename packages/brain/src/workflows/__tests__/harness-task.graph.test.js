@@ -782,10 +782,12 @@ describe('evaluate_contract pre-merge gate', () => {
     const evalFnMatch = src.match(/async function evaluateContractNode[\s\S]*?\n}\n/);
     expect(evalFnMatch).not.toBeNull();
     const body = evalFnMatch[0];
-    // 必须有 const threadId = `harness-task:${initiativeId}:${task.id}`
-    expect(body).toMatch(/const\s+threadId\s*=\s*`harness-task:\$\{/);
-    // 不能再有 const threadId = `harness-evaluate:${...}`
-    expect(body).not.toMatch(/const\s+threadId\s*=\s*`harness-evaluate:\$\{/);
+    // threadId 经 buildTaskThreadId SSOT 生成（公式 SSOT，2026-06-27 审计）。
+    // buildTaskThreadId 内部固定 `harness-task:` 前缀（见 harness-build-task-thread-id.test.js），
+    // 故这里只需断言用了 SSOT 函数，不再 grep 内联模板（已收口）。
+    expect(body).toMatch(/const\s+threadId\s*=\s*buildTaskThreadId\(/);
+    // 不能再有内联 harness-evaluate: 命名空间
+    expect(body).not.toMatch(/`harness-evaluate:\$\{/);
     // INSERT walking_skeleton_thread_lookup 用 graph_name='harness-task'
     expect(body).toMatch(/INSERT INTO walking_skeleton_thread_lookup[\s\S]*'harness-task'/);
     expect(body).not.toMatch(/INSERT INTO walking_skeleton_thread_lookup[\s\S]*'harness-evaluate'/);
