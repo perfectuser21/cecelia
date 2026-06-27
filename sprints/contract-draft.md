@@ -1,4 +1,4 @@
-# Sprint Contract Draft (Round 3)
+# Sprint Contract Draft (Round 4)
 
 ## Response Schema（推导来源: N/A — 任务无 HTTP 响应）
 
@@ -45,19 +45,10 @@ N/A — 任务无 HTTP 响应；Reviewer 第 6 维自动满分（schema oracle �
 **验证命令**:
 ```bash
 START_TIME=$(date -Iseconds)
-RESP=$(curl -sf -X POST localhost:5221/api/brain/tasks \
+TASK_ID=$(curl -sf -X POST localhost:5221/api/brain/tasks \
   -H "Content-Type: application/json" \
-  -d '{
-    "title": "mac_web host-escape smoke (Slice4 verify)",
-    "task_type": "harness_task",
-    "payload": {
-      "target_environment": "mac_web",
-      "sprint_dir": "sprints/",
-      "journey_type": "dev_pipeline"
-    }
-  }') || { echo "FAIL: POST /tasks 失败（Brain 未运行）"; exit 1; }
-echo "$RESP" | jq -e '.id | type == "string"' || { echo "FAIL: 响应缺 id 字段或类型非 string resp=$RESP"; exit 1; }
-TASK_ID=$(echo "$RESP" | jq -r '.id')
+  -d '{"title":"mac_web host-escape smoke (Slice4 verify)","task_type":"harness_task","payload":{"target_environment":"mac_web","sprint_dir":"sprints/","journey_type":"dev_pipeline"}}' \
+  | jq -e -r '.id') || { echo "FAIL: POST /tasks 失败（Brain 未运行或响应缺 id 字段）"; exit 1; }
 echo "OK: task_id=$TASK_ID"
 ```
 
@@ -245,19 +236,10 @@ npx vitest run \
 
 # Step 1: POST 触发 harness 子任务（接缝断言）
 echo "▶ [Step 1] POST harness_task（target_environment=mac_web）到 Brain 5221..."
-RESP=$(curl -sf -X POST localhost:5221/api/brain/tasks \
+TASK_ID=$(curl -sf -X POST localhost:5221/api/brain/tasks \
   -H "Content-Type: application/json" \
-  -d '{
-    "title": "mac_web host-escape smoke (Slice4 E2E verify)",
-    "task_type": "harness_task",
-    "payload": {
-      "target_environment": "mac_web",
-      "sprint_dir": "sprints/",
-      "journey_type": "dev_pipeline"
-    }
-  }') || { echo "FAIL: Brain API 不可达（localhost:5221）"; exit 1; }
-echo "$RESP" | jq -e '.id | type == "string"' || { echo "FAIL: 响应缺 id 字段或类型非 string"; exit 1; }
-TASK_ID=$(echo "$RESP" | jq -r '.id')
+  -d '{"title":"mac_web host-escape smoke (Slice4 E2E verify)","task_type":"harness_task","payload":{"target_environment":"mac_web","sprint_dir":"sprints/","journey_type":"dev_pipeline"}}' \
+  | jq -e -r '.id') || { echo "FAIL: Brain API 不可达（localhost:5221）或响应缺 id 字段"; exit 1; }
 echo "OK: task_id=$TASK_ID"
 
 # Step 4: executeOnHost 调用验证（接缝断言）
