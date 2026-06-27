@@ -24,15 +24,17 @@ describe('harness pipeline P2/P3 修复约定', () => {
     const fnMatch = initCode.match(/export async function runSubTaskNode[\s\S]*?(?=\nexport |\n\/\/ ──)/);
     expect(fnMatch).toBeTruthy();
     const fnBody = fnMatch[0];
-    // threadId 构造含 final_e2e_fix_count，且赋给 config.thread_id
-    expect(fnBody).toMatch(/const\s+threadId\s*=\s*`harness-task:[\s\S]*?final_e2e_fix_count/);
+    // 2026-06-27 审计：thread_id 公式收口进 buildTaskThreadId SSOT。
+    // final_e2e_fix_count 作为 fixRound 入参传入（buildTaskThreadId 单测保证它进 thread_id）。
+    expect(fnBody).toMatch(/const\s+threadId\s*=\s*buildTaskThreadId\([\s\S]*?final_e2e_fix_count/);
     expect(fnBody).toMatch(/thread_id:\s*threadId/);
   });
 
   // 06-12 死线程修复: thread_id 还须绑定合同版本（contractBranch）→ 合同重新收敛用 fresh 线程
-  it('死线程修复: runSubTaskNode thread_id 追加 harnessContractThreadSuffix(合同版本)', () => {
+  it('死线程修复: runSubTaskNode thread_id 经 buildTaskThreadId 绑定 contractBranchForThread(合同版本)', () => {
     const fnMatch = initCode.match(/export async function runSubTaskNode[\s\S]*?(?=\nexport |\n\/\/ ──)/);
     const fnBody = fnMatch[0];
-    expect(fnBody).toMatch(/harnessContractThreadSuffix\(contractBranchForThread\)/);
+    // buildTaskThreadId 第 4 入参 = contractBranch；SSOT 内部追加合同后缀（见 harness-build-task-thread-id.test.js）
+    expect(fnBody).toMatch(/buildTaskThreadId\([\s\S]*?contractBranchForThread/);
   });
 });
