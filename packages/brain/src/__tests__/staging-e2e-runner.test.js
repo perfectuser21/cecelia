@@ -23,6 +23,7 @@ const {
   runScenarios,
   runStagingE2E,
   STAGING_PORT,
+  DASHBOARD_STAGING_PORT,
 } = await import('../staging-e2e-runner.js');
 
 // 构造一个记录所有 query 的 mock pool
@@ -104,6 +105,28 @@ describe('runStagingCommand', () => {
     const r = runStagingCommand({ cmd: 'curl x' }, { exec });
     expect(r.exitCode).toBe(7);
     expect(r.output).toContain('boom');
+  });
+
+  // P1#5（2026-06-27 审计）：内部线 dashboard staging（:5223 是静态站，无 /api/brain）。
+  // mac_web 合同实际引用 localhost:5174(dashboard) + localhost:5221(brain)。旧逻辑把 5221→5223
+  // → brain 断言打到 dashboard 静态站必 FAIL，且 5174 完全不映射。正确：5174→5223，5221 保持活 brain。
+  it('内部线(port=5223)：5174(dashboard)→:5223，5221(brain) 保持活 brain :5221 不打到静态站', () => {
+    let seen = null;
+    const exec = (cmd) => { seen = cmd; return 'ok'; };
+    runStagingCommand(
+      { cmd: 'curl localhost:5174/pipeline/x ; curl localhost:5221/api/brain/tasks/x' },
+      { exec, port: DASHBOARD_STAGING_PORT },
+    );
+    expect(seen).toContain(`host.docker.internal:${DASHBOARD_STAGING_PORT}/pipeline/x`); // dashboard → 5223
+    expect(seen).toContain('host.docker.internal:5221/api/brain/tasks/x');              // brain 保持活 5221
+    expect(seen).not.toContain(`host.docker.internal:${DASHBOARD_STAGING_PORT}/api/brain`); // brain 不打到静态站
+  });
+
+  it('非内部线(port=5222)：维持 5221→:5222（回归不变）', () => {
+    let seen = null;
+    const exec = (cmd) => { seen = cmd; return 'ok'; };
+    runStagingCommand({ cmd: 'curl localhost:5221/api/brain/x' }, { exec, port: STAGING_PORT });
+    expect(seen).toContain(`host.docker.internal:${STAGING_PORT}/api/brain/x`);
   });
 });
 
