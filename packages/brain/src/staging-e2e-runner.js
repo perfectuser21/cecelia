@@ -27,6 +27,8 @@ import { sendFeishu } from './notifier.js';
 export const STAGING_PORT = 5222;
 // A 方案：内部线交付 dashboard，staging 用 deploy-local.sh 起的 dashboard 预览端口。
 export const DASHBOARD_STAGING_PORT = 5223;
+// ZenithJoy 蓝绿护栏：:5200=生产，:5201=staging（ZenithJoy CI push:main→:5201 自动部署）。
+export const ZJ_STAGING_PORT = 5201;
 const DEPLOY_TIMEOUT_MS = 10 * 60 * 1000;
 const SCENARIO_TIMEOUT_MS = 5 * 60 * 1000;
 const OUTPUT_CAP_BYTES = 4000;
@@ -51,7 +53,24 @@ export function deployStaging(opts = {}) {
   // A 方案：内部线交付 dashboard → 用 deploy-local.sh 构建 dashboard 到 staging（:5223）
   // + 写 .staging-pending（promote 步靠它）；非内部线沿用 staging-deploy.sh（brain :5222）。
   const internal = opts.line === 'internal';
-  const stagingPort = internal ? DASHBOARD_STAGING_PORT : STAGING_PORT;
+  const customer = opts.line === 'customer';
+  const stagingPort = internal ? DASHBOARD_STAGING_PORT : customer ? ZJ_STAGING_PORT : STAGING_PORT;
+
+  // ZenithJoy 蓝绿护栏：customer line 的 staging 由 ZenithJoy CI push:main→:5201 自动部署，
+  // Cecelia 不跨 repo 做部署（跨 repo 边界）；只做健康检查——起不来则 FAIL 护栏触发，:5200 不被触碰。
+  if (customer && !opts.deployScript) {
+    const host = process.env.ZJ_STAGING_HOST || 'localhost';
+    const cmd = `curl -sf --connect-timeout 30 --max-time 30 http://${host}:${ZJ_STAGING_PORT}/health`;
+    try {
+      const raw = exec(cmd, { encoding: 'utf8', timeout: 45_000, maxBuffer: 1024 * 1024 });
+      const out = typeof raw === 'string' ? raw : String(raw);
+      return { status: 'success', reason: null, output: cap(out), stagingPort };
+    } catch (err) {
+      const combined = `${err.stdout ? String(err.stdout) : ''}\n${err.stderr ? String(err.stderr) : ''}\n${err.message || ''}`.trim();
+      return { status: 'failed', reason: 'zj_staging_unhealthy', output: cap(combined), stagingPort };
+    }
+  }
+
   let script;
   if (opts.deployScript) {
     script = `bash ${opts.deployScript}`;
@@ -99,10 +118,9 @@ export function runStagingCommand(command, opts = {}) {
   // 此脚本在生产 brain 容器内跑，容器内 localhost 不通 staging 容器；重写目标用
   // host.docker.internal（容器内访问 host 的 staging :5222）。env STAGING_HOST 可覆盖（host 直跑传 localhost）。
   const host = opts.host || process.env.STAGING_HOST || 'host.docker.internal';
-  // P1#5（2026-06-27 审计）：端口重写按线区分。
-  // mac_web 合同实际引用 localhost:5174(dashboard dev) + localhost:5221(brain)。
-  // 内部线 dashboard staging（port=5223 静态站，无 /api/brain）：dashboard 断言 5174→:5223，
-  //   brain 断言 5221 保持活 brain（内部线无 staging brain，brain-deploy 已上线，仅换 host 可达）。
+  // 端口重写按线区分。
+  // 内部线 dashboard staging（port=5223）：5174(dashboard)→:5223，5221(brain) 保持活 brain。
+  // ZenithJoy staging（port=5201）：5200(production)→:5201（合同针对 production 写，重写到 staging）。
   // 非内部线 brain staging（port=5222）：5221→:5222（原行为）。
   let cmd;
   if (port === DASHBOARD_STAGING_PORT) {
@@ -111,6 +129,10 @@ export function runStagingCommand(command, opts = {}) {
       .replace(/127\.0\.0\.1:5174/g, `${host}:${port}`)
       .replace(/localhost:5221/g, `${host}:5221`)
       .replace(/127\.0\.0\.1:5221/g, `${host}:5221`);
+  } else if (port === ZJ_STAGING_PORT) {
+    cmd = command.cmd
+      .replace(/localhost:5200/g, `${host}:${port}`)
+      .replace(/127\.0\.0\.1:5200/g, `${host}:${port}`);
   } else {
     cmd = command.cmd
       .replace(/localhost:5221/g, `${host}:${port}`)
