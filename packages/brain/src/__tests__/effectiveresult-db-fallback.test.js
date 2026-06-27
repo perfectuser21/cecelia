@@ -54,6 +54,7 @@ vi.mock('../tick.js', () => ({
   check48hReport: vi.fn(async () => null),
 }));
 vi.mock('../task-router.js', () => ({
+  getInternalTaskHandler: vi.fn(() => null),
   identifyWorkType: vi.fn(),
   getTaskLocation: vi.fn(),
   routeTaskCreate: vi.fn(),
