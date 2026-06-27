@@ -160,16 +160,73 @@ export function runScenarios(acceptance, opts = {}) {
   };
 }
 
-/** 加载该 initiative 的合同 e2e_acceptance（优先 approved，否则最新 version）。 */
-async function loadE2eAcceptance(dbPool, initiativeId) {
+/**
+ * Slice1 兜底：从合同 contract_content 的 `## E2E 验收` 段抽 ```bash/```sh 围栏块，
+ * 包成规范化 e2e_acceptance（迎合 normalizeAcceptance）。
+ *
+ * 背景：initiative_contracts.e2e_acceptance 列几乎零写入（写入链断点，Slice2 治本），
+ * 但 contract_content 里存着 `## E2E 验收` 的 golden path 脚本。无段/无块/不合格 → null
+ * （让上层走 SKIP，比 FAIL 省资源：FAIL 时 deploy 已白跑）。
+ *
+ * @param {string} contractContent
+ * @param {string} initiativeId
+ * @returns {{scenarios:Array}|null}
+ */
+export function parseE2eAcceptanceFromContract(contractContent, initiativeId) {
+  if (!contractContent || typeof contractContent !== 'string') return null;
+  // 行扫描抽 `## E2E …` 段：从该标题下一行起，到下一个 `## ` 标题或 EOF。
+  const lines = contractContent.split('\n');
+  let start = -1;
+  for (let i = 0; i < lines.length; i++) {
+    if (/^##\s*E2E/.test(lines[i])) { start = i; break; }
+  }
+  if (start === -1) return null;
+  let end = lines.length;
+  for (let i = start + 1; i < lines.length; i++) {
+    if (/^##\s/.test(lines[i])) { end = i; break; }
+  }
+  const section = lines.slice(start + 1, end).join('\n');
+  // 抽 ```bash / ```sh 围栏块
+  const blocks = [];
+  const re = /```(?:bash|sh)\s*\n([\s\S]*?)```/g;
+  let m;
+  while ((m = re.exec(section)) !== null) {
+    const body = m[1].trim();
+    if (body) blocks.push(body);
+  }
+  if (blocks.length === 0) return null;
+  const acceptance = {
+    scenarios: [{
+      name: 'Golden Path E2E (fallback parsed from contract_content)',
+      covered_tasks: [initiativeId || 'fallback'],
+      commands: blocks.map((b) => ({ cmd: b })),
+    }],
+  };
+  try {
+    normalizeAcceptance(acceptance);
+    return acceptance;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * 加载该 initiative 的合同 e2e_acceptance（优先 approved，否则最新 version）。
+ * e2e_acceptance 列为空时，兜底解析同行 contract_content 的 `## E2E 验收` 段（Slice1）。
+ */
+export async function loadE2eAcceptance(dbPool, initiativeId) {
   const q = await dbPool.query(
-    `SELECT e2e_acceptance FROM initiative_contracts
+    `SELECT e2e_acceptance, contract_content FROM initiative_contracts
      WHERE initiative_id::text = $1
      ORDER BY (CASE WHEN status = 'approved' THEN 0 ELSE 1 END), version DESC
      LIMIT 1`,
     [initiativeId]
   );
-  return q.rows[0]?.e2e_acceptance || null;
+  const row = q.rows[0];
+  if (!row) return null;
+  if (row.e2e_acceptance) return row.e2e_acceptance;
+  if (row.contract_content) return parseE2eAcceptanceFromContract(row.contract_content, initiativeId);
+  return null;
 }
 
 /** verdict 落 staging_e2e_results 表。 */
