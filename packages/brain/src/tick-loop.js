@@ -19,6 +19,7 @@ import { executeTick as _executeTick } from './tick-runner.js'; // Wave 2 废弃
 import { runScheduler } from './tick-scheduler.js';
 import { startConsciousnessLoop } from './consciousness-loop.js';
 import { startHarnessWatchdogLoop, stopHarnessWatchdogLoop } from './harness-watchdog-loop.js';
+import { startRecoveryLoop, stopRecoveryLoop } from './recovery-loop.js';
 import { publishCognitiveState } from './events/taskEvents.js';
 
 // ───── tickLog: [HH:MM:SS] 前缀 + 每 100 条打一次 summary ─────
@@ -149,6 +150,12 @@ export function startTickLoop() {
   // 改用独立 setInterval：不被 runScheduler 的 circuit_open / no_goals 早 return 或异常跳过。
   startHarnessWatchdogLoop();
 
+  // P0 修复（2026-06-27）：启动独立任务恢复循环（默认每 5 分钟，独立于调度层）。
+  // cleanupStaleClaims / checkStuckPipelines / autoFailTimedOutTasks 三条恢复网原只接在
+  // Wave-2 废弃的 executeTick → runScheduler 迁移后从不调用，导致 queued+stale-claim 永久卡死、
+  // pipeline 整体 spin 无人 cancel、普通任务超时无人收尾。仿 harness-watchdog-loop 接回独立 loop。
+  startRecoveryLoop();
+
   tickLog(`[tick-loop] Started (interval: ${TICK_LOOP_INTERVAL_MS}ms)`);
   return true;
 }
@@ -164,8 +171,9 @@ export function stopTickLoop() {
 
   clearInterval(tickState.loopTimer);
   tickState.loopTimer = null;
-  // 同步停掉独立 harness 看门狗循环（保持 start/stop 对称）
+  // 同步停掉独立 harness 看门狗循环 + 恢复循环（保持 start/stop 对称）
   stopHarnessWatchdogLoop();
+  stopRecoveryLoop();
   tickLog('[tick-loop] Stopped');
   return true;
 }
