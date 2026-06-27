@@ -17,6 +17,7 @@ import { parseDockerOutput, loadSkillContent } from '../harness-shared.js';
 import { buildTaskThreadId } from '../harness-utils.js';
 import { parseTaskPlan, upsertTaskPlan } from '../harness-dag.js';
 import { buildSprintResultContract } from '../sprint-result-contract.js';
+import { parseE2eAcceptanceFromContract } from '../staging-e2e-runner.js';
 import { ensureHarnessWorktree } from '../harness-worktree.js';
 import { resolveGitHubToken } from '../harness-credentials.js';
 import { fetchAndShowOriginFile } from '../lib/git-fence.js';
@@ -32,6 +33,20 @@ const ALREADY_MERGED_RE = /already merged|not open|pull request.*closed/i;
 // Phase C7 清 shim 前不改。
 import { runGanContractGraph } from '../harness-gan-graph.js';
 import { killInitiativeContainers } from '../harness-container-cleanup.js';
+
+/**
+ * Slice2 治本：合同入库时计算 e2e_acceptance，写满 initiative_contracts.e2e_acceptance 列
+ *（根因：该列此前全流程零写入 → loadE2eAcceptance 必返 null → staging 永久 SKIP）。
+ * 优先用 GAN proposer 产出的结构化 e2e_acceptance（proposer skill 写入），
+ * 缺失时回退解析 contract_content 的 `## E2E 验收` 段（复用 Slice1 parser）。
+ * @param {{e2e_acceptance?:object, contract_content?:string}} ganResult
+ * @returns {object|null}
+ */
+export function computeContractE2eAcceptance(ganResult) {
+  if (!ganResult) return null;
+  if (ganResult.e2e_acceptance) return ganResult.e2e_acceptance;
+  return parseE2eAcceptanceFromContract(ganResult.contract_content) || null;
+}
 
 const DEFAULT_TIMEOUT_SEC = 21600; // 6h，对齐 initiative_contracts.timeout_sec 默认
 const DEFAULT_BUDGET_USD = 10;
@@ -562,13 +577,15 @@ export async function dbUpsertNode(state, opts = {}) {
       );
     }
     // ON CONFLICT (B13): dbUpsertNode 是 graph 节点，restart resume 时 retry 必须幂等。
+    // Slice2：入库即写满 e2e_acceptance 列（治本"列从不写入"→staging 永久 SKIP）。
+    const e2eAcceptance = computeContractE2eAcceptance(state.ganResult);
     const contractInsert = await client.query(
       `INSERT INTO initiative_contracts (
          initiative_id, version, status,
          prd_content, contract_content, review_rounds,
-         budget_cap_usd, timeout_sec, branch, approved_at
+         budget_cap_usd, timeout_sec, branch, e2e_acceptance, approved_at
        )
-       VALUES ($1::uuid, 1, 'approved', $2, $3, $4, $5, $6, $7, NOW())
+       VALUES ($1::uuid, 1, 'approved', $2, $3, $4, $5, $6, $7, $8::jsonb, NOW())
        ON CONFLICT (initiative_id, version) DO UPDATE SET
          status = EXCLUDED.status,
          prd_content = EXCLUDED.prd_content,
@@ -577,9 +594,10 @@ export async function dbUpsertNode(state, opts = {}) {
          budget_cap_usd = EXCLUDED.budget_cap_usd,
          timeout_sec = EXCLUDED.timeout_sec,
          branch = EXCLUDED.branch,
+         e2e_acceptance = COALESCE(EXCLUDED.e2e_acceptance, initiative_contracts.e2e_acceptance),
          approved_at = NOW()
        RETURNING id`,
-      [state.initiativeId, state.plannerOutput, state.ganResult.contract_content, state.ganResult.rounds, budgetUsd, timeoutSec, state.ganResult.propose_branch || null]
+      [state.initiativeId, state.plannerOutput, state.ganResult.contract_content, state.ganResult.rounds, budgetUsd, timeoutSec, state.ganResult.propose_branch || null, e2eAcceptance ? JSON.stringify(e2eAcceptance) : null]
     );
     const contractId = contractInsert.rows[0].id;
     const journeyType = state.taskPlan?.journey_type || 'autonomous';
