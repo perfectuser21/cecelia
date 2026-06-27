@@ -25,7 +25,7 @@ import { buildLearningContext } from './learning-retriever.js';
 import { getDecisionsSummary } from './decisions-context.js';
 import { recordExpectedReward } from './dopamine.js';
 import { getActiveProfile, FALLBACK_PROFILE } from './model-profile.js';
-import { getTaskLocation } from './task-router.js';
+import { getTaskLocation, getInternalTaskHandler } from './task-router.js';
 import { resolveExecutor } from './routing/resolve-executor.js';
 import { loadCache as _loadCache, getCachedLocation, getCachedConfig, refreshCache as _refreshCache } from './task-type-config-cache.js';
 import { updateTaskStatus, updateTaskProgress as _updateTaskProgress } from './task-updater.js';
@@ -3155,6 +3155,25 @@ async function triggerCeceliaRun(task) {
     console.log(`[executor] 路由决策: task_type=staging_e2e → Staging E2E Runner (native, no langgraph)`);
     const { runStagingE2E } = await import('./staging-e2e-runner.js');
     return runStagingE2E(task);
+  }
+
+  // 0.6 Slice5: internal task handler 内联短路 —— harness_intervention 等注册的 internal type 被
+  //     pick up 后直接在 brain 内跑 handler（读 docker logs + LLM 诊断），不当普通任务派 claude/codex。
+  //     否则 pipeline-patrol 建的 harness_intervention 永远无人执行，整条干预通道是死代码。
+  //     必须传 deps.updateTaskResult，否则 handler 无法把诊断结论写回 task.result。
+  const internalHandler = getInternalTaskHandler(task.task_type);
+  if (internalHandler) {
+    console.log(`[executor] 路由决策: task_type=${task.task_type} → 内联 internal handler`);
+    const intResult = await internalHandler(task, {
+      pool,
+      updateTaskResult: async (id, result) => {
+        await pool.query(
+          `UPDATE tasks SET result = $2, status = 'completed', updated_at = NOW() WHERE id = $1`,
+          [id, JSON.stringify(result)],
+        );
+      },
+    });
+    return { success: true, internal: true, taskId: task.id, action: intResult?.action };
   }
 
   // 1. 显式 override（phase 2 单元1）：payload.{machine,executor} → DB 驱动路由。

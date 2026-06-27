@@ -132,6 +132,24 @@ async function createInterventionTask(dbPool, info) {
     `请诊断该 harness initiative 为何停滞，并恢复或终止它。`,
   ].join('\n');
 
+  // Slice5: 查该 initiative 在飞容器塞进 payload，否则 handleIntervention 永远 no_container_id→纯
+  // alert（读不到 docker logs 无法真诊断）。thread_id 格式 harness-task:<initiativeId>:...，取最近
+  // 一条未终态的容器。查询失败/无容器 → null 降级，仍建任务（intervention 至少能 alert）。
+  let containerId = null;
+  try {
+    const cr = await dbPool.query(
+      `SELECT container_id FROM walking_skeleton_thread_lookup
+        WHERE thread_id LIKE 'harness-task:' || $1 || ':%'
+          AND status NOT IN ('completed', 'failed')
+        ORDER BY created_at DESC
+        LIMIT 1`,
+      [initiativeId]
+    );
+    containerId = cr.rows[0]?.container_id || null;
+  } catch (err) {
+    console.warn(`[harness-initiative-patrol] 查在飞容器失败 initiative=${initiativeId} (non-fatal): ${err.message}`);
+  }
+
   const result = await dbPool.query(
     `INSERT INTO tasks (title, description, status, priority, task_type, trigger_source, domain, payload)
      VALUES ($1, $2, 'queued', 'P1', 'harness_intervention', 'brain_auto', 'agent_ops', $3)
@@ -141,6 +159,7 @@ async function createInterventionTask(dbPool, info) {
       description,
       JSON.stringify({
         initiative_id: initiativeId,
+        container_id: containerId,
         phase,
         kind,
         elapsed_ms: elapsedMs,
