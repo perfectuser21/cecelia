@@ -227,4 +227,29 @@ describe('runStagingE2E', () => {
     expect(r.failed).toBe(true);
     expect(updateTaskStatus).toHaveBeenCalledWith('task-1', 'failed', expect.objectContaining({ error_message: expect.any(String) }));
   });
+
+  // Slice6: staging 单实例串行，N 路并发会互相 docker rm 顶掉。deploy 前抢 pg_try_advisory_lock，
+  // 抢不到 → SKIP staging_busy（不部署，让在跑的那路独占）；抢到 → finally 必释放锁。
+  it('Slice6: 抢不到 staging 锁（并发）→ SKIP staging_busy，不 deploy', async () => {
+    const pool = makeMockPool();
+    const deploy = vi.fn();
+    const r = await runStagingE2E(task, {
+      pool, deploy, loadAcceptance: async () => ACCEPTANCE,
+      acquireStagingLock: async () => null, // 抢锁失败（别人持有）
+    });
+    expect(r.verdict).toBe('SKIP');
+    expect(r.reason).toBe('staging_busy');
+    expect(deploy).not.toHaveBeenCalled();
+  });
+
+  it('Slice6: 抢到锁 → 结束必释放（即使 deploy 抛错也 finally release）', async () => {
+    const pool = makeMockPool();
+    const release = vi.fn().mockResolvedValue();
+    const deploy = () => { throw new Error('deploy boom'); };
+    await runStagingE2E(task, {
+      pool, deploy, loadAcceptance: async () => ACCEPTANCE,
+      acquireStagingLock: async () => ({ release }),
+    });
+    expect(release).toHaveBeenCalledTimes(1);
+  });
 });

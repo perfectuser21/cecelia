@@ -63,6 +63,25 @@ describe('修正2：mergePrNode per-merge 派生 staging_e2e（两条 merged 分
     );
     expect(res.status).toBe('merged');
   });
+
+  // Slice6: staging_e2e 派生 payload 带 project_id，供二期 coalescing 单实例 patrol 按 project 合并并发。
+  it('运行时：staging_e2e 派生 payload 含 project_id（从 task.payload 透传）', async () => {
+    const calls = [];
+    const pool = { query: vi.fn(async (sql, params) => { calls.push({ sql, params }); return { rows: [] }; }) };
+    const execFile = vi.fn(async () => ({ stdout: 'merged' }));
+    await mergePrNode(
+      {
+        pr_url: 'https://github.com/x/y/pull/88', pr_branch: 'cp-z',
+        task: { id: 't', payload: { project_id: 'proj-9', initiative_id: 'init-1' } },
+        initiativeId: 'init-1',
+      },
+      { execFile, poolOverride: pool },
+    );
+    const insert = calls.find((c) => /INSERT INTO tasks/.test(c.sql) && /staging_e2e/.test(c.sql));
+    expect(insert).toBeTruthy();
+    const payloadJson = insert.params.find((p) => typeof p === 'string' && p.includes('initiative_id'));
+    expect(JSON.parse(payloadJson).project_id).toBe('proj-9');
+  });
 });
 
 describe('修正3：recordResult 落 verdict 用 ON CONFLICT(pr_url) DO NOTHING（DB 级幂等）', () => {
