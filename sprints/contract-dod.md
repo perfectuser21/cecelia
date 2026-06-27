@@ -3,7 +3,7 @@ skeleton: false
 journey_type: autonomous
 target_environment: local_api
 ---
-# Contract DoD — Sprint: harness 内部线 staging→promote→:5211 贯通验证（Round 1）
+# Contract DoD — Sprint: harness 内部线 staging→promote→:5211 贯通验证（Round 2）
 
 **范围**: 从 initiative 点火到 :5211 可访问的全链路单次端到端验证；仅检查 Brain DB 状态 + :5211 存活，不修复新发现 bug  
 **大小**: M
@@ -26,20 +26,20 @@ target_environment: local_api
   Test: manual:bash -c 'grep -q "harness-pipeline-verify 2026-06-27" apps/dashboard/index.html || { echo "FAIL: 触点注释不存在"; exit 1; }; echo OK'
   期望: OK
 
-- [ ] [BEHAVIOR] initiative 无 failed 任务（30分钟时间窗，验证无死代码干预通道阻断）
-  Test: manual:bash -c 'DB="${DB:-postgresql://localhost/cecelia}"; C=$(psql "$DB" -t -c "SELECT count(*) FROM tasks WHERE payload->>'"'"'initiative_id'"'"' = '"'"'$INITIATIVE_ID'"'"' AND status='"'"'failed'"'"' AND created_at > NOW() - interval '"'"'30 minutes'"'"'" | tr -d " "); [ "$C" = "0" ] || { echo "FAIL: $C 个 failed 任务"; exit 1; }; echo OK'
+- [ ] [BEHAVIOR] initiative 无 failed 任务（60分钟时间窗，验证无死代码干预通道阻断）
+  Test: manual:bash -c '[ -n "$INITIATIVE_ID" ] || { echo "FAIL: INITIATIVE_ID 未设置"; exit 1; }; DB="${DB:-postgresql://localhost/cecelia}"; C=$(psql "$DB" -t -c "SELECT count(*) FROM tasks WHERE payload->>'"'"'initiative_id'"'"' = '"'"'$INITIATIVE_ID'"'"' AND status='"'"'failed'"'"' AND created_at > NOW() - interval '"'"'60 minutes'"'"'" | tr -d " "); [ "$C" = "0" ] || { echo "FAIL: $C 个 failed 任务"; exit 1; }; echo OK'
   期望: OK（failed 数 = 0）
 
-- [ ] [BEHAVIOR] staging_e2e_results.verdict=PASS（带30分钟时间窗防历史数据冒充）
-  Test: manual:bash -c 'DB="${DB:-postgresql://localhost/cecelia}"; V=$(psql "$DB" -t -c "SELECT verdict FROM staging_e2e_results WHERE initiative_id='"'"'$INITIATIVE_ID'"'"' AND created_at > NOW() - interval '"'"'30 minutes'"'"'" | tr -d " "); [ "$V" = "PASS" ] || { echo "FAIL: verdict=$V"; exit 1; }; echo OK'
+- [ ] [BEHAVIOR] staging_e2e_results.verdict=PASS（带60分钟时间窗防历史数据冒充）
+  Test: manual:bash -c '[ -n "$INITIATIVE_ID" ] || { echo "FAIL: INITIATIVE_ID 未设置"; exit 1; }; DB="${DB:-postgresql://localhost/cecelia}"; V=$(psql "$DB" -t -c "SELECT verdict FROM staging_e2e_results WHERE initiative_id='"'"'$INITIATIVE_ID'"'"' AND created_at > NOW() - interval '"'"'60 minutes'"'"'" | tr -d " "); [ "$V" = "PASS" ] || { echo "FAIL: verdict=$V"; exit 1; }; echo OK'
   期望: OK（verdict=PASS）
 
 - [ ] [BEHAVIOR] staging_e2e_results.promote_status=auto_promoted（Slice9 复合闸 + auto promote 验收）
-  Test: manual:bash -c 'DB="${DB:-postgresql://localhost/cecelia}"; S=$(psql "$DB" -t -c "SELECT promote_status FROM staging_e2e_results WHERE initiative_id='"'"'$INITIATIVE_ID'"'"'" | tr -d " "); [ "$S" = "auto_promoted" ] || { echo "FAIL: promote_status=$S（期望 auto_promoted）"; exit 1; }; echo OK'
+  Test: manual:bash -c '[ -n "$INITIATIVE_ID" ] || { echo "FAIL: INITIATIVE_ID 未设置"; exit 1; }; DB="${DB:-postgresql://localhost/cecelia}"; S=$(psql "$DB" -t -c "SELECT promote_status FROM staging_e2e_results WHERE initiative_id='"'"'$INITIATIVE_ID'"'"'" | tr -d " "); [ "$S" = "auto_promoted" ] || { echo "FAIL: promote_status=$S（期望 auto_promoted）"; exit 1; }; echo OK'
   期望: OK（promote_status=auto_promoted）
 
 - [ ] [BEHAVIOR] staging_e2e_results.tested_sha 非空（Slice9 SHA 锚定验收）
-  Test: manual:bash -c 'DB="${DB:-postgresql://localhost/cecelia}"; SHA=$(psql "$DB" -t -c "SELECT tested_sha FROM staging_e2e_results WHERE initiative_id='"'"'$INITIATIVE_ID'"'"'" | tr -d " "); [ -n "$SHA" ] && [ "$SHA" != "NULL" ] || { echo "FAIL: tested_sha 为空"; exit 1; }; echo "OK: tested_sha=$SHA"'
+  Test: manual:bash -c '[ -n "$INITIATIVE_ID" ] || { echo "FAIL: INITIATIVE_ID 未设置"; exit 1; }; DB="${DB:-postgresql://localhost/cecelia}"; SHA=$(psql "$DB" -t -c "SELECT tested_sha FROM staging_e2e_results WHERE initiative_id='"'"'$INITIATIVE_ID'"'"'" | tr -d " "); [ -n "$SHA" ] && [ "$SHA" != "NULL" ] || { echo "FAIL: tested_sha 为空"; exit 1; }; echo "OK: tested_sha=$SHA"'
   期望: OK: tested_sha=<非空 git SHA>
 
 - [ ] [BEHAVIOR] localhost:5211 HTTP 200 + 响应体非空（dashboard 重起成功）
@@ -47,5 +47,5 @@ target_environment: local_api
   期望: OK: HTTP 200 <N> bytes
 
 - [ ] [BEHAVIOR] harness_report 任务 status=completed（Slice3 派报告验收）
-  Test: manual:bash -c 'DB="${DB:-postgresql://localhost/cecelia}"; S=$(psql "$DB" -t -c "SELECT status FROM tasks WHERE task_type='"'"'harness_report'"'"' AND payload->>'"'"'initiative_id'"'"' = '"'"'$INITIATIVE_ID'"'"'" | tr -d " "); [ "$S" = "completed" ] || { echo "FAIL: harness_report status=$S"; exit 1; }; echo OK'
+  Test: manual:bash -c '[ -n "$INITIATIVE_ID" ] || { echo "FAIL: INITIATIVE_ID 未设置"; exit 1; }; DB="${DB:-postgresql://localhost/cecelia}"; S=$(psql "$DB" -t -c "SELECT status FROM tasks WHERE task_type='"'"'harness_report'"'"' AND payload->>'"'"'initiative_id'"'"' = '"'"'$INITIATIVE_ID'"'"'" | tr -d " "); [ "$S" = "completed" ] || { echo "FAIL: harness_report status=$S"; exit 1; }; echo OK'
   期望: OK（status=completed）

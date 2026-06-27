@@ -10,7 +10,7 @@
       "dod": [
         "[ARTIFACT] apps/dashboard/index.html 含 harness-pipeline-verify 2026-06-27 注释行",
         "[BEHAVIOR] 触点注释 grep -q 'harness-pipeline-verify 2026-06-27' apps/dashboard/index.html → exit 0",
-        "[BEHAVIOR] staging_e2e_results.verdict=PASS（initiative_id=$INITIATIVE_ID，30分钟时间窗）",
+        "[BEHAVIOR] staging_e2e_results.verdict=PASS（initiative_id=$INITIATIVE_ID，60分钟时间窗）",
         "[BEHAVIOR] staging_e2e_results.promote_status=auto_promoted（Slice9 复合闸 + auto promote）",
         "[BEHAVIOR] staging_e2e_results.tested_sha 非空（Slice9 SHA 锚定）",
         "[BEHAVIOR] curl localhost:5211/ HTTP 200 + 响应体非空",

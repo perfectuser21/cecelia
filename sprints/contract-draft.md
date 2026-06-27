@@ -1,4 +1,4 @@
-# Sprint Contract Draft (Round 1) — harness 内部线 staging→promote→:5211 贯通验证
+# Sprint Contract Draft (Round 2) — harness 内部线 staging→promote→:5211 贯通验证
 
 ## Response Schema（推导来源: PRD字面）
 
@@ -59,13 +59,15 @@ echo "OK"
 
 **验证命令**:
 ```bash
-# 检查 initiative 下 harness 任务无 FAIL 状态（带 30 分钟时间窗）
-COUNT=$(psql $DB -t -c "SELECT count(*) FROM tasks WHERE payload->>'initiative_id' = '$INITIATIVE_ID' AND status='failed' AND created_at > NOW() - interval '30 minutes'" 2>/dev/null | tr -d ' ')
+# 前置守卫：INITIATIVE_ID 必须非空，否则 psql 查 '' 会假通过
+[ -n "$INITIATIVE_ID" ] || { echo "FAIL: INITIATIVE_ID 未设置"; exit 1; }
+# 检查 initiative 下 harness 任务无 FAIL 状态（带 60 分钟时间窗，覆盖 pipeline >30min 场景）
+COUNT=$(psql $DB -t -c "SELECT count(*) FROM tasks WHERE payload->>'initiative_id' = '$INITIATIVE_ID' AND status='failed' AND created_at > NOW() - interval '60 minutes'" 2>/dev/null | tr -d ' ')
 [ "$COUNT" = "0" ] || { echo "FAIL: initiative 有 $COUNT 个 failed 任务"; exit 1; }
 echo "OK: 无 failed 任务"
 ```
 
-**硬阈值**: failed 任务数 = 0，30 分钟时间窗内
+**硬阈值**: failed 任务数 = 0，60 分钟时间窗内
 
 ---
 
@@ -77,14 +79,16 @@ echo "OK: 无 failed 任务"
 
 **验证命令**:
 ```bash
-ROW=$(psql $DB -t -c "SELECT verdict, tested_sha FROM staging_e2e_results WHERE initiative_id='$INITIATIVE_ID' AND created_at > NOW() - interval '30 minutes'" 2>/dev/null | tr -d ' ')
+# 前置守卫
+[ -n "$INITIATIVE_ID" ] || { echo "FAIL: INITIATIVE_ID 未设置"; exit 1; }
+ROW=$(psql $DB -t -c "SELECT verdict, tested_sha FROM staging_e2e_results WHERE initiative_id='$INITIATIVE_ID' AND created_at > NOW() - interval '60 minutes'" 2>/dev/null | tr -d ' ')
 echo "$ROW" | grep -q "PASS" || { echo "FAIL: verdict 不是 PASS，行内容：$ROW"; exit 1; }
 SHA=$(psql $DB -t -c "SELECT tested_sha FROM staging_e2e_results WHERE initiative_id='$INITIATIVE_ID'" 2>/dev/null | tr -d ' ')
 [ -n "$SHA" ] && [ "$SHA" != "NULL" ] || { echo "FAIL: tested_sha 为空"; exit 1; }
 echo "OK: verdict=PASS tested_sha=$SHA"
 ```
 
-**硬阈值**: verdict=PASS，tested_sha 非空，30 分钟时间窗内落库
+**硬阈值**: verdict=PASS，tested_sha 非空，60 分钟时间窗内落库
 
 ---
 
@@ -141,6 +145,15 @@ echo "OK: harness_report completed"
 
 ---
 
+## Risks
+
+| # | 风险 | 影响 | Mitigation |
+|---|---|---|---|
+| R1 | **评估器时间窗假设** — pipeline 总耗时超过时间窗（原 30min）时，BEHAVIOR 2/3 的 `created_at > NOW() - interval 'X minutes'` 查不到记录，误报 FAIL；无法区分「pipeline 还没跑完」与「pipeline 真失败」 | BEHAVIOR 2/3 假 FAIL，evaluator 错判 pipeline 贯通失败 | 本轮已将时间窗扩大至 **60 分钟**（覆盖已知最长 pipeline 耗时）；长期 mitigation：evaluator 在 pipeline completed 事件后触发，而非定时执行 |
+| R2 | **INITIATIVE_ID 未注入前置条件** — 各 BEHAVIOR 独立执行时若 `$INITIATIVE_ID` 为空，`WHERE initiative_id=''` 对 tasks/staging_e2e_results 均返回 0 行；BEHAVIOR 2（failed 计数 = 0）假通过，BEHAVIOR 3/4/5 因空行返回空字符串而误走错误路径 | BEHAVIOR 2 假通过，其余 BEHAVIOR 错误 FAIL；evaluator 结论不可信 | 本轮已在每条涉及 INITIATIVE_ID 的 BEHAVIOR 命令首行加 `[ -n "$INITIATIVE_ID" ] \|\| { echo "FAIL: INITIATIVE_ID 未设置"; exit 1; }` 守卫；E2E 脚本已有同等守卫（Round 1 已实现） |
+
+---
+
 ## E2E 验收（target_environment = local_api）
 
 **journey_type**: autonomous  
@@ -170,7 +183,7 @@ grep -q 'harness-pipeline-verify 2026-06-27' apps/dashboard/index.html || {
 echo "✓ Step1: 触点注释存在"
 
 # ── 断言 2：initiative 无 failed 任务 ──
-FAIL_COUNT=$(psql "$DB" -t -c "SELECT count(*) FROM tasks WHERE payload->>'initiative_id' = '$INITIATIVE_ID' AND status='failed' AND created_at > NOW() - interval '30 minutes'" | tr -d ' ')
+FAIL_COUNT=$(psql "$DB" -t -c "SELECT count(*) FROM tasks WHERE payload->>'initiative_id' = '$INITIATIVE_ID' AND status='failed' AND created_at > NOW() - interval '60 minutes'" | tr -d ' ')
 [ "$FAIL_COUNT" = "0" ] || {
   echo "FAIL [Step2]: initiative 有 $FAIL_COUNT 个 failed 任务（30分钟内）"
   exit 1
@@ -178,7 +191,7 @@ FAIL_COUNT=$(psql "$DB" -t -c "SELECT count(*) FROM tasks WHERE payload->>'initi
 echo "✓ Step2: 无 failed 任务"
 
 # ── 断言 3：staging E2E verdict=PASS + tested_sha 非空（时间窗 30 分钟）──
-VERDICT=$(psql "$DB" -t -c "SELECT verdict FROM staging_e2e_results WHERE initiative_id='$INITIATIVE_ID' AND created_at > NOW() - interval '30 minutes'" | tr -d ' ')
+VERDICT=$(psql "$DB" -t -c "SELECT verdict FROM staging_e2e_results WHERE initiative_id='$INITIATIVE_ID' AND created_at > NOW() - interval '60 minutes'" | tr -d ' ')
 [ "$VERDICT" = "PASS" ] || {
   echo "FAIL [Step3]: staging_e2e_results.verdict=$VERDICT（期望 PASS，时间窗内）"
   exit 1
