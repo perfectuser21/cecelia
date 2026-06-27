@@ -160,16 +160,82 @@ export function runScenarios(acceptance, opts = {}) {
   };
 }
 
-/** 加载该 initiative 的合同 e2e_acceptance（优先 approved，否则最新 version）。 */
+/**
+ * 从 contract_content（markdown 文本）解析 e2e_acceptance。
+ * 兼容两种形态：
+ *   1. 内联命令块：## E2E 验收 段下的 ```bash 代码块
+ *   2. 脚本文件引用：段内出现 `script: path.sh` / `run: path.ps1` 等行
+ * 返回 {scenarios:[{name,covered_tasks,commands}]} 或 null（无法解析）。
+ */
+export function parseE2eAcceptanceFromContract(content) {
+  if (!content || typeof content !== 'string') return null;
+
+  // 找到 ## E2E 验收 标题（允许括号内注释）
+  const headingMatch = content.match(/^##\s+E2E\s+验收[^\n]*/m);
+  if (!headingMatch) return null;
+
+  // 截取到下一个 ## 级别标题（不含）
+  const afterHeading = content.slice(headingMatch.index + headingMatch[0].length);
+  const nextH2 = afterHeading.match(/^##\s/m);
+  const section = nextH2 ? afterHeading.slice(0, nextH2.index) : afterHeading;
+
+  const scenarios = [];
+
+  // 1. 内联代码块：```bash 或 ```sh 或 ```powershell
+  const codeBlockRe = /```(bash|sh|powershell|ps1)?\n([\s\S]*?)```/g;
+  let match;
+  let blockIdx = 0;
+  while ((match = codeBlockRe.exec(section)) !== null) {
+    const lang = match[1] || 'bash';
+    const scriptContent = match[2];
+    if (!scriptContent || !scriptContent.trim()) continue;
+    blockIdx++;
+    scenarios.push({
+      name: blockIdx === 1 ? 'E2E 验收' : `E2E 验收 #${blockIdx}`,
+      covered_tasks: ['parsed'],
+      commands: [{ type: lang, cmd: scriptContent }],
+    });
+  }
+
+  // 2. 脚本文件引用（script:/run:/file: 开头的行，或裸 .sh/.ps1 路径）
+  if (scenarios.length === 0) {
+    const scriptRefRe = /(?:^|\n)\s*(?:script|run|file):\s*(\S+\.(?:sh|ps1))/g;
+    let refMatch;
+    while ((refMatch = scriptRefRe.exec(section)) !== null) {
+      const filePath = refMatch[1];
+      const isPs1 = filePath.endsWith('.ps1');
+      scenarios.push({
+        name: `E2E 验收 (${filePath})`,
+        covered_tasks: ['parsed'],
+        commands: [{ type: isPs1 ? 'powershell' : 'bash', cmd: isPs1 ? `powershell "${filePath}"` : `bash "${filePath}"` }],
+      });
+    }
+  }
+
+  return scenarios.length > 0 ? { scenarios } : null;
+}
+
+/** 加载该 initiative 的合同 e2e_acceptance（优先 approved，否则最新 version）。
+ * e2e_acceptance 列为 NULL 时回退解析 contract_content 的 ## E2E 验收 段。 */
 async function loadE2eAcceptance(dbPool, initiativeId) {
   const q = await dbPool.query(
-    `SELECT e2e_acceptance FROM initiative_contracts
+    `SELECT e2e_acceptance, contract_content FROM initiative_contracts
      WHERE initiative_id::text = $1
      ORDER BY (CASE WHEN status = 'approved' THEN 0 ELSE 1 END), version DESC
      LIMIT 1`,
     [initiativeId]
   );
-  return q.rows[0]?.e2e_acceptance || null;
+  const row = q.rows[0];
+  if (!row) return null;
+  if (row.e2e_acceptance) return row.e2e_acceptance;
+
+  // 兜底：从 contract_content markdown 解析 ## E2E 验收 段
+  if (row.contract_content) {
+    const parsed = parseE2eAcceptanceFromContract(row.contract_content);
+    if (parsed && parsed.scenarios && parsed.scenarios.length > 0) return parsed;
+  }
+
+  return null;
 }
 
 /** verdict 落 staging_e2e_results 表。 */
