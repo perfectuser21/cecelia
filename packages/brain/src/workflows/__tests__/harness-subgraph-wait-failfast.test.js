@@ -347,6 +347,65 @@ describe('_waitForSubGraphCompletion — 外层 deadline liveness 感知（queue
   });
 });
 
+describe('_waitForSubGraphCompletion — 子图自然 END 但漏写 status 的裸透传兜底（P1 审计 2026-06-27）', () => {
+  // 漏点：子图到 END（next=[]）时若该终态路径漏写 status，落回 channel 默认值 'queued'。
+  // 父图 :1051(deadline 分支) / :1083(正常 poll 分支) 两处裸 return values 会把 'queued'
+  // 漏出去 → serial gate 误判成"在飞→瞎猜重跑"。修复：照搬 :1077 已验证写法
+  // (status && status!=='queued' ? status : 'failed')，把漏写的 'queued' 钉成 'failed'。
+
+  it('正常 poll：子图已 END 但 status=queued（漏写）→ 钉成 failed，不漏 queued', async () => {
+    const compiled = {
+      getState: vi.fn(async () => ({ next: [], values: { status: 'queued', containerId: 'c1' } })),
+      invoke: vi.fn(async () => {}),
+    };
+    // timeoutMs 大 → 不走 deadline 分支，走 :1081 心跳 → :1083 裸 return 路径
+    const result = await _waitForSubGraphCompletion(compiled, {}, 90 * 60 * 1000, {
+      pollIntervalMs: 1,
+      heartbeatPool: { query: async () => ({}) },
+    });
+    expect(result.status).toBe('failed');
+  });
+
+  it('deadline 分支：子图已 END 但 status=queued（漏写）→ 钉成 failed', async () => {
+    const compiled = {
+      getState: vi.fn(async () => ({ next: [], values: { status: 'queued' } })),
+      invoke: vi.fn(async () => {}),
+    };
+    // timeoutMs=0 → 首轮即 deadline 到期 → :1050 getState → :1051 裸 return 路径
+    const result = await _waitForSubGraphCompletion(compiled, {}, 0, {
+      pollIntervalMs: 1,
+      heartbeatPool: { query: async () => ({}) },
+    });
+    expect(result.status).toBe('failed');
+  });
+
+  it('子图 END 带真终态 merged → 原样透传，不误钉 failed', async () => {
+    const compiled = {
+      getState: vi.fn(async () => ({ next: [], values: { status: 'merged', pr_url: 'x' } })),
+      invoke: vi.fn(async () => {}),
+    };
+    const result = await _waitForSubGraphCompletion(compiled, {}, 90 * 60 * 1000, {
+      pollIntervalMs: 1,
+      heartbeatPool: { query: async () => ({}) },
+    });
+    expect(result.status).toBe('merged');
+    expect(result.pr_url).toBe('x');
+  });
+
+  it('子图 END 带真终态 failed → 原样透传', async () => {
+    const compiled = {
+      getState: vi.fn(async () => ({ next: [], values: { status: 'failed', error: 'real' } })),
+      invoke: vi.fn(async () => {}),
+    };
+    const result = await _waitForSubGraphCompletion(compiled, {}, 0, {
+      pollIntervalMs: 1,
+      heartbeatPool: { query: async () => ({}) },
+    });
+    expect(result.status).toBe('failed');
+    expect(result.error).toBe('real');
+  });
+});
+
 describe('CALLBACK_TIMEOUT_MS / CALLBACK_HARD_CEILING_MS 常量', () => {
   it('默认 > worker-daemon 90min job 预算（不误杀健康 generator）', () => {
     expect(CALLBACK_TIMEOUT_MS).toBeGreaterThan(0);
