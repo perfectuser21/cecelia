@@ -44,6 +44,7 @@ vi.mock('../trace.js', () => ({
 
 // Mock task-router
 vi.mock('../task-router.js', () => ({
+  getInternalTaskHandler: vi.fn(() => null),
   getTaskLocation: vi.fn(() => 'us'),
   LOCATION_MAP: {}
 }));

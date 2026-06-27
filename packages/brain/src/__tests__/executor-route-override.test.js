@@ -37,8 +37,11 @@ vi.mock('../task-updater.js', () => ({
 
 // ── task-router：默认 location='us'，可被单测覆写 ──────────────────
 const getTaskLocationMock = vi.fn(() => 'us');
+// Slice5: internal task handler 路由（默认 null=非 internal，不影响现有路径）
+const getInternalTaskHandlerMock = vi.fn(() => null);
 vi.mock('../task-router.js', () => ({
   getTaskLocation: (...args) => getTaskLocationMock(...args),
+  getInternalTaskHandler: (...args) => getInternalTaskHandlerMock(...args),
   TASK_REQUIREMENTS: {},
 }));
 
@@ -80,6 +83,7 @@ describe('triggerCeceliaRun: 显式 executor override 分支（phase 2 单元 1�
   beforeEach(async () => {
     vi.clearAllMocks();
     getTaskLocationMock.mockReturnValue('us');
+    getInternalTaskHandlerMock.mockReturnValue(null);
 
     // fetch：codex bridge /run 命中此 mock；US claude 不走 fetch
     fetchMock = vi.fn(async () => ({ ok: true, json: async () => ({ ok: true, account: 'team3' }) }));
@@ -253,6 +257,50 @@ describe('triggerCeceliaRun: 显式 executor override 分支（phase 2 单元 1�
 
     expect(resolveExecutorMock).not.toHaveBeenCalled();
     expect(codexFetchCalls().length).toBe(0);
+    expect(traceStepMock).toHaveBeenCalled();
+  });
+
+  // Slice5: internal task handler 内联短路 —— harness_intervention 等注册的 internal type 被
+  // pick up 后直接在 brain 内跑 handler，不当普通任务派 claude/codex（否则整条死代码）。
+  it('Slice5: internal type（harness_intervention）→ 内联 handler 短路，传 deps.updateTaskResult，不走 location 派发', async () => {
+    const handlerSpy = vi.fn(async () => ({ action: 'alert' }));
+    getInternalTaskHandlerMock.mockReturnValue(handlerSpy);
+    const task = {
+      id: '99999999-aaaa-bbbb-cccc-dddddddddddd',
+      task_type: 'harness_intervention',
+      title: 't',
+      payload: { container_id: 'harness-task-x-r0-abcd' },
+    };
+
+    const res = await triggerCeceliaRun(task);
+
+    // getInternalTaskHandler 用 task_type 查
+    expect(getInternalTaskHandlerMock).toHaveBeenCalledWith('harness_intervention');
+    // handler 被内联调用
+    expect(handlerSpy).toHaveBeenCalledTimes(1);
+    expect(handlerSpy.mock.calls[0][0]).toBe(task);
+    // 必须传 deps.updateTaskResult（否则 handleIntervention 无法写 task.result）
+    const deps = handlerSpy.mock.calls[0][1];
+    expect(typeof deps.updateTaskResult).toBe('function');
+    // 没走 location 派发（不进 US claude，不调 codex bridge）
+    expect(traceStepMock).not.toHaveBeenCalled();
+    expect(codexFetchCalls().length).toBe(0);
+    expect(res.internal).toBe(true);
+  });
+
+  it('Slice5: 非 internal type（dev）→ getInternalTaskHandler 返回 null，正常走 location 路由（回归保护）', async () => {
+    getInternalTaskHandlerMock.mockReturnValue(null);
+    getTaskLocationMock.mockReturnValue('us');
+    const task = {
+      id: '88888888-aaaa-bbbb-cccc-dddddddddddd',
+      task_type: 'dev',
+      title: 't',
+      payload: {},
+    };
+
+    await triggerCeceliaRun(task);
+
+    // 走正常 US claude 路径
     expect(traceStepMock).toHaveBeenCalled();
   });
 });

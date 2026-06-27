@@ -20,6 +20,7 @@ import { runScheduler } from './tick-scheduler.js';
 import { startConsciousnessLoop } from './consciousness-loop.js';
 import { startHarnessWatchdogLoop, stopHarnessWatchdogLoop } from './harness-watchdog-loop.js';
 import { startRecoveryLoop, stopRecoveryLoop } from './recovery-loop.js';
+import { startPipelinePatrolLoop, stopPipelinePatrolLoop } from './pipeline-patrol-loop.js';
 import { publishCognitiveState } from './events/taskEvents.js';
 
 // ───── tickLog: [HH:MM:SS] 前缀 + 每 100 条打一次 summary ─────
@@ -156,6 +157,11 @@ export function startTickLoop() {
   // pipeline 整体 spin 无人 cancel、普通任务超时无人收尾。仿 harness-watchdog-loop 接回独立 loop。
   startRecoveryLoop();
 
+  // Slice5 P1（2026-06-27）：启动独立 pipeline 巡航循环。runPipelinePatrol（/dev 卡住会话救援）+
+  // runHarnessInitiativePatrol（harness Planner/GAN 卡住 → 建 harness_intervention）原只挂废弃
+  // executeTick → 从不运行 → 干预通道整条死代码。仿 recovery-loop / harness-watchdog-loop 接回。
+  startPipelinePatrolLoop();
+
   tickLog(`[tick-loop] Started (interval: ${TICK_LOOP_INTERVAL_MS}ms)`);
   return true;
 }
@@ -171,9 +177,10 @@ export function stopTickLoop() {
 
   clearInterval(tickState.loopTimer);
   tickState.loopTimer = null;
-  // 同步停掉独立 harness 看门狗循环 + 恢复循环（保持 start/stop 对称）
+  // 同步停掉独立 harness 看门狗循环 + 恢复循环 + pipeline 巡航循环（保持 start/stop 对称）
   stopHarnessWatchdogLoop();
   stopRecoveryLoop();
+  stopPipelinePatrolLoop();
   tickLog('[tick-loop] Stopped');
   return true;
 }

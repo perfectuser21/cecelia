@@ -237,3 +237,55 @@ describe('plugin 集成', () => {
     expect(src).toMatch(/runHarnessInitiativePatrol/);
   });
 });
+
+// Slice5: intervention 任务必须带在飞容器 id，否则 handleIntervention 永远 no_container_id→纯 alert，
+// 无法读 docker logs 做真诊断/干预。createInterventionTask 查 thread_lookup 拿在飞容器塞进 payload。
+describe('Slice5: intervention payload 带 container_id', () => {
+  beforeEach(() => mockQuery.mockReset());
+
+  it('查 thread_lookup 在飞容器 → 塞进 INSERT payload.container_id', async () => {
+    mockQuery.mockImplementation((sql, params) => {
+      if (typeof sql !== 'string') return Promise.resolve({ rows: [] });
+      if (sql.includes('INSERT INTO tasks')) return Promise.resolve({ rows: [{ id: 'task-ci' }] });
+      if (sql.includes('walking_skeleton_thread_lookup')) return Promise.resolve({ rows: [{ container_id: 'harness-task-init1-r0-abcd' }] });
+      if (sql.includes('initiative_run_events')) return Promise.resolve({ rows: [] });
+      if (sql.includes('harness_intervention')) return Promise.resolve({ rows: [] }); // dedup 空
+      if (sql.includes('completed_at IS NULL')) return Promise.resolve({ rows: [
+        { id: 'run-ci', initiative_id: 'init-1', phase: 'A_contract', started_at: agoIso(20 * MIN), updated_at: agoIso(20 * MIN), completed_at: null },
+      ] });
+      return Promise.resolve({ rows: [] });
+    });
+
+    const r = await runHarnessInitiativePatrol();
+    expect(r.intervened).toBe(1);
+
+    // 确实查了 thread_lookup，用 initiativeId
+    const lookupCall = mockQuery.mock.calls.find((c) => typeof c[0] === 'string' && c[0].includes('walking_skeleton_thread_lookup'));
+    expect(lookupCall).toBeTruthy();
+    expect(lookupCall[1].some((p) => String(p).includes('init-1'))).toBe(true);
+
+    // payload.container_id 被塞入
+    const insertCall = mockQuery.mock.calls.find((c) => typeof c[0] === 'string' && c[0].includes('INSERT INTO tasks'));
+    const payloadJson = insertCall[1].find((p) => typeof p === 'string' && p.includes('initiative_id'));
+    expect(JSON.parse(payloadJson).container_id).toBe('harness-task-init1-r0-abcd');
+  });
+
+  it('thread_lookup 无在飞容器 → payload.container_id=null（降级，不报错仍建任务）', async () => {
+    mockQuery.mockImplementation((sql) => {
+      if (typeof sql !== 'string') return Promise.resolve({ rows: [] });
+      if (sql.includes('INSERT INTO tasks')) return Promise.resolve({ rows: [{ id: 'task-ci2' }] });
+      if (sql.includes('walking_skeleton_thread_lookup')) return Promise.resolve({ rows: [] });
+      if (sql.includes('initiative_run_events')) return Promise.resolve({ rows: [] });
+      if (sql.includes('harness_intervention')) return Promise.resolve({ rows: [] });
+      if (sql.includes('completed_at IS NULL')) return Promise.resolve({ rows: [
+        { id: 'run-ci2', initiative_id: 'init-2', phase: 'A_contract', started_at: agoIso(20 * MIN), updated_at: agoIso(20 * MIN), completed_at: null },
+      ] });
+      return Promise.resolve({ rows: [] });
+    });
+
+    await runHarnessInitiativePatrol();
+    const insertCall = mockQuery.mock.calls.find((c) => typeof c[0] === 'string' && c[0].includes('INSERT INTO tasks'));
+    const payloadJson = insertCall[1].find((p) => typeof p === 'string' && p.includes('initiative_id'));
+    expect(JSON.parse(payloadJson).container_id).toBeNull();
+  });
+});

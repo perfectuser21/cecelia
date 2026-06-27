@@ -36,7 +36,8 @@ vi.mock('../model-profile.js', () => ({
     },
   },
 }));
-vi.mock('../task-router.js', () => ({ getTaskLocation: vi.fn(async () => 'local') }));
+vi.mock('../task-router.js', () => ({
+  getInternalTaskHandler: vi.fn(() => null), getTaskLocation: vi.fn(async () => 'local') }));
 vi.mock('../task-type-config-cache.js', () => ({
   loadCache: vi.fn(async () => {}),
   getCachedLocation: vi.fn(() => null),

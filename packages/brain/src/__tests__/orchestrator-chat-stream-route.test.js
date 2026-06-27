@@ -34,6 +34,7 @@ vi.mock('../focus.js', () => ({
   clearDailyFocus: vi.fn(), getFocusSummary: vi.fn(),
 }));
 vi.mock('../task-router.js', () => ({
+  getInternalTaskHandler: vi.fn(() => null),
   identifyWorkType: vi.fn(), getTaskLocation: vi.fn(),
   routeTaskCreate: vi.fn(), getValidTaskTypes: vi.fn().mockReturnValue([]),
   LOCATION_MAP: {},
