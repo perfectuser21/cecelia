@@ -8,6 +8,7 @@
 
 import { execFile as execFileCb } from 'node:child_process';
 import { promisify } from 'node:util';
+import crypto from 'node:crypto';
 import pool from '../db.js';
 import { spawn } from '../spawn/index.js';
 import { spawnDockerDetached } from '../spawn/detached.js';

@@ -180,6 +180,11 @@ export function defaultPromoteExec(repoRoot) {
 }
 
 export function getRepoRoot() {
+  // P1#3（2026-06-27 审计）：Brain 跑在 docker 容器时文件在 /app/src/，
+  // path.resolve(import.meta.url, '../../..') 解析成 '/' → promote 脚本/回档锚点路径全错。
+  // 容器 bind-mount 的 repo 根由 env REPO_ROOT 提供 → 优先用它；裸机直跑（无 REPO_ROOT）回退相对解析。
+  // 一处修好所有 caller（含 routes/harness.js 的 /promote 放行接口此前裸调的两处）。
+  if (process.env.REPO_ROOT) return process.env.REPO_ROOT;
   const thisDir = path.dirname(fileURLToPath(import.meta.url));
   return path.resolve(thisDir, '../../..');
 }
