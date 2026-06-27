@@ -1,4 +1,4 @@
-# Sprint Contract Draft (Round 1)
+# Sprint Contract Draft (Round 2)
 
 ## Response Schema（推导来源: N/A — 任务无 HTTP 响应）
 
@@ -212,7 +212,7 @@ fi
 set -e
 
 DB="${DB_URL:-cecelia}"
-SPRINT_DIR="${SPRINT_DIR:-sprints/}"
+SPRINT_DIR="${SPRINT_DIR:-sprints}"
 
 echo "=== mac_web pipeline E2E 验证开始 ==="
 START_TIME=$(date -Iseconds)
@@ -313,9 +313,19 @@ echo "验证报告已写入 ${SPRINT_DIR}/e2e-verify-report.json"
 
 ---
 
+## Risks
+
+| # | 风险 | 触发条件 | 合同应对 |
+|---|---|---|---|
+| R1 | 旧版 Brain 进程（Slice4 fix 未生效） | 本机跑的 Brain 二进制早于 #3461 合并，runSubTaskNode 源码不含 target_environment 透传 | Step 2 静态代码检查 `node -e` 先行；Slice4 fix 未就位 → exit 1，E2E 流程不继续；不兜底 false-positive |
+| R2 | psql 不可达（cecelia DB 未启动） | 本机 PostgreSQL 未运行或 DB 名错误 | Step 5/6 psql 命令遇 psql: error → exit 1；E2E 脚本 `set -e` 全局传播，报告不写入；避免用 `\|\| true` 兜底 |
+| R3 | generator/evaluator 执行超时或 host 逃逸卡住 | macOS host Playwright 未安装、文件权限不足、host-executor 逻辑 bug | Step 5 超时 120s 后 exit 1（FAIL: 120s 后仍 running）；Step 6 验 failure_reason 非空（有意义错误）；超时卡死状态不被接受 |
+
+---
+
 ## Test Contract
 
 | 功能 | Test File | BEHAVIOR 覆盖 | 预期红证据 |
 |---|---|---|---|
-| Slice4 fix 代码验证 | `tests/mac-web-pipeline-verify.test.ts` | Step 2/3 逻辑断言 | 测试依赖 e2e-verify-report.json（文件不存在 → RED） |
-| E2E 验证报告存在 | `tests/mac-web-pipeline-verify.test.ts` | Step 5 终态验证 | 报告未生成时 FAIL → 1 failure RED |
+| Slice4 fix 代码验证 | `sprints/tests/mac-web-pipeline-verify.test.ts` | Step 2/3 逻辑断言 | 测试依赖 e2e-verify-report.json（文件不存在 → RED） |
+| E2E 验证报告存在 | `sprints/tests/mac-web-pipeline-verify.test.ts` | Step 5 终态验证 | 报告未生成时 FAIL → 1 failure RED |
