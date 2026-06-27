@@ -27,4 +27,14 @@ describe('runSubTaskNode payload [BEHAVIOR]', () => {
     });
     expect(uncommented).toEqual([]);
   });
+
+  // Slice4 透传 gap（真 run 2937fd5e 暴露）：runSubTaskNode 透传了 machine/executor/sprint_dir
+  // 但漏了 target_environment → sub-graph extractTargetEnv 默认 local_api → generator/evaluator
+  // 走 docker，mac_web 的 Playwright 自验在无浏览器容器卡死。透传 target_environment 让其走 host 逃逸。
+  it('Slice4 gap 修复：透传 target_environment 到 sub-task payload（mac_web generator/evaluator 走 host）', () => {
+    const fnMatch = code.match(/export async function runSubTaskNode[\s\S]*?\n\}/);
+    expect(fnMatch).toBeTruthy();
+    const fnBody = fnMatch[0];
+    expect(/target_environment:\s*state\.task\??\.payload\??\.target_environment/.test(fnBody)).toBe(true);
+  });
 });
