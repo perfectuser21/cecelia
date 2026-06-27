@@ -1528,7 +1528,7 @@ export async function reportNode(state, opts = {}) {
       await client.query(
         `UPDATE initiative_runs SET phase=$2, completed_at=NOW(), updated_at=NOW(),
           failure_reason=CASE WHEN $2='failed' THEN $3 ELSE failure_reason END
-         WHERE initiative_id=$1::uuid`,
+         WHERE initiative_id=$1::uuid AND phase NOT IN ('done', 'failed')`,
         [state.initiativeId, phase, reason]
       );
       // B1: 同时回写 tasks.status — 否则 task 永卡 in_progress（graph 不经 executor.js
@@ -1540,7 +1540,7 @@ export async function reportNode(state, opts = {}) {
         `UPDATE tasks SET status=$2::text, completed_at=NOW(), updated_at=NOW(),
           result = COALESCE(result, '{}'::jsonb) || jsonb_build_object('report_content', $4::jsonb),
           error_message=CASE WHEN $2::text='failed' THEN $3::text ELSE error_message END
-         WHERE id=$1::uuid`,
+         WHERE id=$1::uuid AND status NOT IN ('completed', 'failed')`,
         [state.initiativeId, taskStatus, reason, reportContent]
       );
       // 2b-2b: 镜像同步对应 okr_initiative → done/failed（non-fatal，best-effort）

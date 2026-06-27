@@ -245,14 +245,15 @@ async function recordResult(dbPool, r) {
   await dbPool.query(
     `INSERT INTO staging_e2e_results
        (task_id, initiative_id, pr_url, verdict, reason, staging_port,
-        scenarios_total, scenarios_passed, failed_scenarios, deploy_output, deployed_at, tested_at)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10, $11, $12)
+        scenarios_total, scenarios_passed, failed_scenarios, deploy_output, deployed_at, tested_at, tested_sha)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10, $11, $12, $13)
      ON CONFLICT (pr_url) DO NOTHING`,
     [
       r.taskId, r.initiativeId, r.prUrl, r.verdict, r.reason, r.port,
       r.scenariosTotal || 0, r.scenariosPassed || 0,
       JSON.stringify(r.failedScenarios || []),
       r.deployOutput || null, r.deployedAt || null, r.testedAt || null,
+      r.testedSha || null,
     ]
   );
 }
@@ -280,6 +281,17 @@ async function updatePromoteStatus(dbPool, prUrl, status, output = null) {
   );
 }
 
+/** Slice9: 取当前 git HEAD SHA（staging 实测锚点）。失败 → null（不阻断 verdict）。 */
+function defaultGetSha(opts = {}) {
+  try {
+    const exec = opts.exec || execSync;
+    const out = exec('git rev-parse HEAD', { encoding: 'utf8', cwd: opts.cwd });
+    return String(typeof out === 'string' ? out : out).trim();
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Slice2：staging E2E PASS 后放行分流（决策 C）。
  * 内部线 → 自动 promote（注入 promoteExec，绝不在测试里打真生产）；
@@ -287,7 +299,24 @@ async function updatePromoteStatus(dbPool, prUrl, status, output = null) {
  * best-effort：任何失败只告警，不影响 verdict 已落库。
  * @returns {string} 最终 promote_status
  */
-async function handlePromote(dbPool, { verdict, baseRepo, prUrl, initiativeId }, opts = {}) {
+/**
+ * Slice9: initiative 级聚合检查 — 该 initiative 所有 staging_e2e_results 有无 FAIL。
+ * SKIP 是加分项跳过（no_docker 等），不算失败；只要无 FAIL 即放行（PASS/SKIP 都 OK）。
+ * @returns {Promise<{allPass: boolean, testedSha: string|null}>}
+ */
+export async function checkInitiativeAggregate(dbPool, initiativeId) {
+  if (!initiativeId) return { allPass: true, testedSha: null };
+  const r = await dbPool.query(
+    `SELECT verdict, tested_sha FROM staging_e2e_results WHERE initiative_id = $1`,
+    [initiativeId],
+  );
+  const rows = r?.rows || [];
+  const allPass = !rows.some((x) => x.verdict === 'FAIL');
+  const testedSha = rows.find((x) => x.tested_sha)?.tested_sha || null;
+  return { allPass, testedSha };
+}
+
+export async function handlePromote(dbPool, { verdict, baseRepo, prUrl, initiativeId }, opts = {}) {
   const decision = decidePromote({ verdict, baseRepo });
   const notify = opts.notify || sendFeishu;
   try {
@@ -296,6 +325,24 @@ async function handlePromote(dbPool, { verdict, baseRepo, prUrl, initiativeId },
       return PROMOTE_STATUS.NA;
     }
     if (decision.action === 'auto') {
+      // Slice9 复合闸 1：initiative 级聚合 gate — 该 initiative 有任何 staging FAIL → 不 auto-promote，
+      // 挂 pending（等同 initiative 其他 PR 也全绿），防单 PR PASS 就上生产漏掉别 PR 的 FAIL。
+      const aggCheck = opts.checkInitiativeAggregate || checkInitiativeAggregate;
+      const agg = await aggCheck(dbPool, initiativeId);
+      if (!agg.allPass) {
+        console.warn(`[staging-e2e] 聚合 gate: initiative ${initiativeId} 有未通过的 staging → 挂 pending，不 auto-promote`);
+        await updatePromoteStatus(dbPool, prUrl, PROMOTE_STATUS.PENDING_PROMOTE);
+        return PROMOTE_STATUS.PENDING_PROMOTE;
+      }
+      // Slice9 复合闸 2：SHA 锚定 — staging 实测的 SHA != 当前部署目标 SHA（run 在飞期间别 PR merge
+      // 致 main 前进）→ 漂移，promote 会上没经 staging 验证的代码。两端都非空才比（fail-open）。
+      const getCurrentSha = opts.getCurrentSha || defaultGetSha;
+      const currentSha = getCurrentSha({ cwd: process.env.REPO_ROOT || getRepoRoot() });
+      if (agg.testedSha && currentSha && agg.testedSha !== currentSha) {
+        console.warn(`[staging-e2e] SHA 漂移: tested=${agg.testedSha} != current=${currentSha} → 挂 pending，不 auto-promote`);
+        await updatePromoteStatus(dbPool, prUrl, PROMOTE_STATUS.PENDING_PROMOTE);
+        return PROMOTE_STATUS.PENDING_PROMOTE;
+      }
       // 内部线自动 promote。生产注入 defaultPromoteExec；测试注入 mock。
       // repoRoot 用 REPO_ROOT env（容器=bind-mount repo 根，脚本存在）；裸 getRepoRoot() 容器内返回 / 找不到脚本。
       const promoteExec = opts.promoteExec || defaultPromoteExec(process.env.REPO_ROOT || getRepoRoot());
@@ -439,6 +486,8 @@ export async function runStagingE2E(task, opts = {}) {
       base.deployedAt = new Date();
       const stagingPort = dep.stagingPort || STAGING_PORT;
       base.port = stagingPort;
+      // Slice9: 锚定 staging 实测的 git SHA（deploy 后的 HEAD），promote 时比对防 SHA 漂移。
+      base.testedSha = (opts.getSha || defaultGetSha)({ exec: opts.exec, cwd: opts.cwd });
 
       // 3. 在真 staging 实例跑 contract E2E（命令里的目标端口重写到本次 staging 端口）
       let run;
