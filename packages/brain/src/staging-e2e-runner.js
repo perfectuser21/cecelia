@@ -160,16 +160,70 @@ export function runScenarios(acceptance, opts = {}) {
   };
 }
 
-/** 加载该 initiative 的合同 e2e_acceptance（优先 approved，否则最新 version）。 */
+/**
+ * 从 contract markdown 的 "## E2E 验收" 段解析 e2e_acceptance 结构。
+ * 兼容两种形态：
+ *   1. 内联命令块（```bash/sh ... ```）
+ *   2. 脚本文件引用（bash xxx.sh / xxx.ps1）
+ *
+ * 解析结果注入占位 covered_tasks，使输出能通过 normalizeAcceptance 校验。
+ *
+ * @param {string} contractMd
+ * @returns {{scenarios: Array}|null}
+ */
+export function parseE2eAcceptanceFromContract(contractMd) {
+  if (!contractMd || typeof contractMd !== 'string') return null;
+
+  // 按 ## 切分，定位 E2E 验收段
+  const sections = contractMd.split(/^(?=##\s)/m);
+  const e2eSection = sections.find(s => /^##\s+E2E\s+验收/.test(s));
+  if (!e2eSection) return null;
+
+  const commands = [];
+
+  // 1. 内联命令块
+  const codeBlockRe = /```(?:bash|sh)\n([\s\S]*?)```/g;
+  let m;
+  while ((m = codeBlockRe.exec(e2eSection)) !== null) {
+    const cmd = m[1].trim();
+    if (cmd) commands.push({ type: 'bash', cmd });
+  }
+
+  // 2. 脚本文件引用（无内联块时）
+  if (commands.length === 0) {
+    const scriptRefRe = /(?:bash|sh)\s+([\w.\-/]+\.(?:sh|ps1))/g;
+    while ((m = scriptRefRe.exec(e2eSection)) !== null) {
+      const ref = m[1].trim();
+      if (ref) commands.push({ type: 'bash', cmd: `bash ${ref}` });
+    }
+  }
+
+  if (commands.length === 0) return null;
+
+  return {
+    scenarios: [{
+      name: 'E2E 验收',
+      // 占位 UUID：e2e_acceptance 为 NULL 时从合同解析，无真实 task UUID 可绑定
+      covered_tasks: ['00000000-0000-0000-0000-000000000000'],
+      commands,
+    }],
+  };
+}
+
+/** 加载该 initiative 的合同 e2e_acceptance（优先 approved，否则最新 version）。
+ *  e2e_acceptance 为 NULL 时兜底解析 contract_content 的 ## E2E 验收 段。 */
 async function loadE2eAcceptance(dbPool, initiativeId) {
   const q = await dbPool.query(
-    `SELECT e2e_acceptance FROM initiative_contracts
+    `SELECT e2e_acceptance, contract_content FROM initiative_contracts
      WHERE initiative_id::text = $1
      ORDER BY (CASE WHEN status = 'approved' THEN 0 ELSE 1 END), version DESC
      LIMIT 1`,
     [initiativeId]
   );
-  return q.rows[0]?.e2e_acceptance || null;
+  const row = q.rows[0];
+  if (!row) return null;
+  if (row.e2e_acceptance) return row.e2e_acceptance;
+  return parseE2eAcceptanceFromContract(row.contract_content) || null;
 }
 
 /** verdict 落 staging_e2e_results 表。 */
