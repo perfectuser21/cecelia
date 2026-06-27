@@ -99,9 +99,23 @@ export function runStagingCommand(command, opts = {}) {
   // 此脚本在生产 brain 容器内跑，容器内 localhost 不通 staging 容器；重写目标用
   // host.docker.internal（容器内访问 host 的 staging :5222）。env STAGING_HOST 可覆盖（host 直跑传 localhost）。
   const host = opts.host || process.env.STAGING_HOST || 'host.docker.internal';
-  const cmd = command.cmd
-    .replace(/localhost:5221/g, `${host}:${port}`)
-    .replace(/127\.0\.0\.1:5221/g, `${host}:${port}`);
+  // P1#5（2026-06-27 审计）：端口重写按线区分。
+  // mac_web 合同实际引用 localhost:5174(dashboard dev) + localhost:5221(brain)。
+  // 内部线 dashboard staging（port=5223 静态站，无 /api/brain）：dashboard 断言 5174→:5223，
+  //   brain 断言 5221 保持活 brain（内部线无 staging brain，brain-deploy 已上线，仅换 host 可达）。
+  // 非内部线 brain staging（port=5222）：5221→:5222（原行为）。
+  let cmd;
+  if (port === DASHBOARD_STAGING_PORT) {
+    cmd = command.cmd
+      .replace(/localhost:5174/g, `${host}:${port}`)
+      .replace(/127\.0\.0\.1:5174/g, `${host}:${port}`)
+      .replace(/localhost:5221/g, `${host}:5221`)
+      .replace(/127\.0\.0\.1:5221/g, `${host}:5221`);
+  } else {
+    cmd = command.cmd
+      .replace(/localhost:5221/g, `${host}:${port}`)
+      .replace(/127\.0\.0\.1:5221/g, `${host}:${port}`);
+  }
   try {
     const raw = exec(cmd, {
       encoding: 'utf8',
