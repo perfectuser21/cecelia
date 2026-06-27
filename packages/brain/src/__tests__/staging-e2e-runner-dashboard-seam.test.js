@@ -70,10 +70,12 @@ describe('runStagingE2E 内部线 — repoRoot 用 REPO_ROOT + 验 5223', () => 
     expect(defaultPromoteExec).toHaveBeenCalledWith('/fake/repo');
   });
 
-  it('内部线 staging E2E scenario 打 5223（用 deploy 返回的 stagingPort，改动2）', async () => {
+  it('内部线 staging E2E：dashboard 断言(5174) 打 staging 槽位 5223（用 deploy 返回的 stagingPort，改动2）', async () => {
     const pool = { query: vi.fn().mockResolvedValue({ rows: [] }) };
     const deploy = vi.fn(() => ({ status: 'success', output: 'deployed', stagingPort: 5223 }));
-    const loadAcceptance = vi.fn(async () => ({ scenarios: [{ name: 's1', commands: [{ cmd: 'curl -s localhost:5221/' }] }] }));
+    // P1#5：内部线 dashboard 断言引用 localhost:5174（dashboard dev）→ 映射到 staging 槽位 5223。
+    // （旧 fixture 误用 localhost:5221(brain) 并断言→5223，编码的正是被修掉的"brain 打到静态站"bug。）
+    const loadAcceptance = vi.fn(async () => ({ scenarios: [{ name: 's1', commands: [{ cmd: 'curl -s localhost:5174/' }] }] }));
     const execCmds = [];
     const exec = vi.fn((cmd) => { execCmds.push(cmd); return 'ok'; });
     const task = { id: 't-int2', payload: { initiative_id: 'i1', pr_url: 'https://pr/int', base_repo: 'perfectuser21/cecelia' } };
