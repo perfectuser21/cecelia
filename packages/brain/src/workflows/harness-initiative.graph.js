@@ -1048,7 +1048,12 @@ export async function _waitForSubGraphCompletion(compiled, config, timeoutMs, op
     // await_callback → 返回 failed（不再透传 'queued'）。
     if (Date.now() >= deadline) {
       const st = await compiled.getState(config);
-      if (!st.next || st.next.length === 0) return st.values;
+      if (!st.next || st.next.length === 0) {
+        // P1 审计（2026-06-27）：子图已 END 但若该终态路径漏写 status，落回 channel 默认值
+        // 'queued' → serial gate 误判"在飞→瞎猜重跑"。照搬下方 :1077 已验证写法钉成 'failed'。
+        const fs = (st.values?.status && st.values.status !== 'queued') ? st.values.status : 'failed';
+        return { ...(st.values || {}), status: fs };
+      }
       const awaitingCb = Array.isArray(st.next) && st.next.includes('await_callback');
       const cid = st.values?.containerId;
       const sp = st.values?.spawnedAt;
@@ -1081,7 +1086,10 @@ export async function _waitForSubGraphCompletion(compiled, config, timeoutMs, op
     await writeDriverHeartbeat(hbPool, hbInitiativeId);
     const state = await compiled.getState(config);
     if (!state.next || state.next.length === 0) {
-      return state.values;
+      // P1 审计（2026-06-27）：同 :1051——子图 END 漏写 status 落回默认 'queued' 时钉成 'failed'，
+      // 杜绝它漏出去被 serial gate 误判为"在飞"。真终态值（merged/failed/...）原样透传。
+      const fs = (state.values?.status && state.values.status !== 'queued') ? state.values.status : 'failed';
+      return { ...(state.values || {}), status: fs };
     }
 
     // ── 容器活性检测（B2/B3）──────────────────────────────────────────────
