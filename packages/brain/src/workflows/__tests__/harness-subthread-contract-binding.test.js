@@ -206,20 +206,20 @@ describe('F. 回归：子图 spawn/evaluate thread_id 与父节点同口径（�
   const taskSrc = readFileSync(resolve(__dirname, '..', 'harness-task.graph.js'), 'utf8');
   const initSrc = readFileSync(resolve(__dirname, '..', 'harness-initiative.graph.js'), 'utf8');
 
-  it('harness-task.graph spawn/evaluate 两处 thread_id 都追加 harnessContractThreadSuffix(state.contractBranch)', () => {
-    const occurrences = taskSrc.match(/harnessContractThreadSuffix\(state\.contractBranch\)/g) || [];
+  it('harness-task.graph spawn/evaluate 两处 thread_id 都经 buildTaskThreadId SSOT(含 state.contractBranch)', () => {
+    // 2026-06-27 审计：thread_id 公式收口进 buildTaskThreadId SSOT，三处共用 → 父子同口径由函数保证。
+    const occurrences = taskSrc.match(/buildTaskThreadId\([^)]*state\.contractBranch\)/g) || [];
     expect(occurrences.length).toBe(2);
-    // 且 import 了 helper
-    expect(taskSrc).toMatch(/import\s*\{[^}]*harnessContractThreadSuffix[^}]*\}\s*from\s*'\.\.\/harness-utils\.js'/);
-    // 前缀仍为 harness-task:（B10 不变量）
-    expect(taskSrc).toMatch(/const\s+threadId\s*=\s*`harness-task:\$\{/);
+    // 且 import 了 SSOT helper
+    expect(taskSrc).toMatch(/import\s*\{[^}]*buildTaskThreadId[^}]*\}\s*from\s*'\.\.\/harness-utils\.js'/);
+    // 前缀 harness-task: 现由 buildTaskThreadId 内部固定（见 harness-build-task-thread-id.test.js）
   });
 
-  it('runSubTaskNode thread_id 含 harnessContractThreadSuffix + contractBranchForThread 单一解析点', () => {
+  it('runSubTaskNode thread_id 经 buildTaskThreadId(contractBranchForThread) 单一解析点', () => {
     const fnMatch = initSrc.match(/export async function runSubTaskNode[\s\S]*?\n\}/);
     expect(fnMatch).toBeTruthy();
     const body = fnMatch[0];
-    expect(body).toMatch(/harnessContractThreadSuffix\(contractBranchForThread\)/);
+    expect(body).toMatch(/buildTaskThreadId\([\s\S]*?contractBranchForThread\)/);
     // invoke 输入与 thread_id 用同一 contractBranchForThread（父子一致）
     expect(body).toMatch(/contractBranch:\s*contractBranchForThread/);
   });
