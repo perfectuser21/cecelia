@@ -25,16 +25,16 @@ journey_type: user_facing
   Test: manual:bash -c 'node -e "const c=require(\"fs\").readFileSync(\"/workspace/apps/dashboard/src/App.tsx\",\"utf8\");if(!c.includes(\"Cecelia Harness 工厂线已贯通\")){console.error(\"FAIL: 文字不存在\");process.exit(1);}console.log(\"OK\")"'
   期望: OK
 
-- [ ] [BEHAVIOR] `App.tsx` 含 `data-testid="harness-status-banner"` 属性（UI 定位锚点完整性）
-  Test: manual:bash -c 'node -e "const c=require(\"fs\").readFileSync(\"/workspace/apps/dashboard/src/App.tsx\",\"utf8\");if(!c.includes(\"data-testid=\\\\\"harness-status-banner\\\\\"\")){ if(!c.includes(\"harness-status-banner\")){console.error(\"FAIL: data-testid 缺失\");process.exit(1);}}console.log(\"OK\")"'
+- [ ] [BEHAVIOR] `App.tsx` 含精确属性 `data-testid="harness-status-banner"`（UI 定位锚点完整性 — 精确匹配，禁止 className 替代）
+  Test: manual:bash -c 'node -e "const c=require(\"fs\").readFileSync(\"/workspace/apps/dashboard/src/App.tsx\",\"utf8\");if(!c.includes(\"data-testid=\\\"harness-status-banner\\\"\")){console.error(\"FAIL: data-testid=harness-status-banner 缺失\");process.exit(1);}console.log(\"OK\")"'
   期望: OK
 
 - [ ] [BEHAVIOR] 文字实现为静态硬编码，无动态 API 依赖（禁用字段反向等价 — 无 fetch/useEffect 围绕目标文字）
   Test: manual:bash -c 'node -e "const c=require(\"fs\").readFileSync(\"/workspace/apps/dashboard/src/App.tsx\",\"utf8\");const idx=c.indexOf(\"harness-status-banner\");if(idx===-1){console.error(\"FAIL: 元素不存在\");process.exit(1);}const ctx=c.slice(Math.max(0,idx-100),idx+200);if(/useState.*工厂线|useEffect.*工厂线|fetch.*工厂线/.test(ctx)){console.error(\"FAIL: 发现动态依赖\");process.exit(1);}console.log(\"OK\")"'
   期望: OK
 
-- [ ] [BEHAVIOR] 文字所在元素位于 `AppContent` 函数的 JSX 返回值中（位置合理性 — error path 等价）
-  Test: manual:bash -c 'node -e "const c=require(\"fs\").readFileSync(\"/workspace/apps/dashboard/src/App.tsx\",\"utf8\");const inAppContent=c.indexOf(\"function AppContent\")!==-1&&c.indexOf(\"harness-status-banner\")>c.indexOf(\"function AppContent\");if(!inAppContent){console.error(\"FAIL: 元素不在 AppContent 中\");process.exit(1);}console.log(\"OK\")"'
+- [ ] [BEHAVIOR] 文字所在元素位于 `AppContent` 函数中且 **不在** `{isAuthenticated && ...}` 块内（位置合理性 + auth guard 反向断言）
+  Test: manual:bash -c 'node -e "const c=require(\"fs\").readFileSync(\"/workspace/apps/dashboard/src/App.tsx\",\"utf8\");const acStart=c.indexOf(\"function AppContent\");const bannerPos=c.indexOf(\"harness-status-banner\");if(acStart===-1||bannerPos<=acStart){console.error(\"FAIL: 元素不在 AppContent 中\");process.exit(1);}const before=c.slice(0,bannerPos);const authMatches=[...before.matchAll(/\\{isAuthenticated\\s*&&/g)];if(authMatches.length>0){const lastEnd=authMatches[authMatches.length-1].index+authMatches[authMatches.length-1][0].length;const between=c.slice(lastEnd,bannerPos);let depth=1;for(const ch of between){if(ch===\"{\")depth++;if(ch===\"}\"){depth--;if(depth===0)break;}}if(depth>0){console.error(\"FAIL: banner 在 isAuthenticated 块内，depth=\"+depth);process.exit(1);}}console.log(\"OK\")"'
   期望: OK
 
 ---

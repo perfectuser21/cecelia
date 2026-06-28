@@ -28,7 +28,7 @@ describe('Dashboard 首页固定状态标识文字 [BEHAVIOR]', () => {
 
   it('文字附近无动态 API 依赖（纯静态渲染）', () => {
     const bannerIdx = content.indexOf('harness-status-banner');
-    if (bannerIdx === -1) return; // 此测试依赖上面的测试，若不存在则跳过
+    expect(bannerIdx).toBeGreaterThan(-1); // 未实现时强制 RED，不允许 skip
     const ctx = content.slice(Math.max(0, bannerIdx - 100), bannerIdx + 200);
     expect(ctx).not.toMatch(/useState.*工厂线|useEffect.*工厂线|fetch.*工厂线/);
   });

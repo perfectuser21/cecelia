@@ -13,7 +13,7 @@
         "[BEHAVIOR] App.tsx 源码层文字内容完整匹配",
         "[BEHAVIOR] data-testid='harness-status-banner' 属性存在",
         "[BEHAVIOR] 文字附近无动态 API 依赖",
-        "[BEHAVIOR] 元素位于 AppContent 函数 JSX 返回值中",
+        "[BEHAVIOR] 元素位于 AppContent 函数 JSX 返回值中且不在 isAuthenticated 块内",
         "[BEHAVIOR:E2E] Playwright localhost:5174 — data-testid='harness-status-banner' toBeVisible + toHaveText 精确匹配，刷新后持久"
       ],
       "files": [

@@ -1,4 +1,4 @@
-# Sprint Contract Draft (Round 1) — Dashboard 首页加固定状态标识文字
+# Sprint Contract Draft (Round 2) — Dashboard 首页加固定状态标识文字
 
 ## Response Schema（推导来源: PRD 字面 — 本次 sprint 无 HTTP 响应接口）
 
@@ -20,6 +20,14 @@ N/A — 任务无 HTTP 响应，仅涉及前端 JSX 硬编码 + Playwright UI �
 ## 已知约束（来自回归测试）
 
 （暂无 apps/dashboard/ 首页相关已知回归测试约束）
+
+---
+
+## Risks
+
+| # | 风险 | 严重度 | Mitigation |
+|---|---|---|---|
+| 1 | Generator 将 banner 放入 `{isAuthenticated && ...}` 块内，导致未登录时不可见，违反 PRD"不依赖登录状态"要求 | High | BEHAVIOR 4 增加反向断言：banner 位置不在 isAuthenticated 块内；Final E2E 脚本在未登录状态下（直接访问 localhost:5174 无 session）验证 banner 可见 |
 
 ---
 
@@ -60,9 +68,8 @@ echo "OK: HTTP 200, 加载耗时 $((END-START))s"
 
 **可观测行为**: 无论当前登录状态如何，页面 DOM 中存在可见的固定文字 "Cecelia Harness 工厂线已贯通"，定位靠 `data-testid="harness-status-banner"`
 
-**验证命令**:
+**逻辑验证命令**（模式A evaluator，源码层，CI 绿 = 逻辑 done）:
 ```bash
-# 源码层验证（模式 A evaluator，vitest 绿 = 逻辑 done）
 node -e "
 const c = require('fs').readFileSync('/workspace/apps/dashboard/src/App.tsx','utf8');
 if (!c.includes('Cecelia Harness 工厂线已贯通')) { console.error('FAIL: 文字未在源码中'); process.exit(1); }
@@ -71,9 +78,9 @@ console.log('OK');
 "
 ```
 
-**硬阈值**:
-- `data-testid="harness-status-banner"` 元素在 DOM 中可见（Playwright `toBeVisible` timeout 10s）
-- 文字内容完整匹配 "Cecelia Harness 工厂线已贯通"（Playwright `toHaveText` 精确匹配）
+**行为验证硬阈值**（接缝断言，由 Final E2E 执行，真机 Playwright 跑绿才 done）:
+- `data-testid="harness-status-banner"` 元素在 DOM 中可见（`toBeVisible` timeout 10s）
+- 文字内容完整匹配 "Cecelia Harness 工厂线已贯通"（`toHaveText` 精确匹配）
 
 ---
 
@@ -180,4 +187,4 @@ evaluator 验收后截图存入 `${SPRINT_DIR}/screenshots/<step>.png`：
 
 | 功能 | Test File | BEHAVIOR 覆盖 | 预期 Red 证据 |
 |---|---|---|---|
-| 静态文字硬编码 | `tests/harness-status-text.test.ts` | 文字存在 / data-testid / 无动态依赖 / App.tsx 位置合理 | → 2 failures（源码未改，文字未添加）|
+| 静态文字硬编码 | `tests/harness-status-text.test.ts` | 文字存在 / data-testid / 无动态依赖 / 位置在 AppContent 且不在 isAuthenticated 块内 | → 4 failures（源码未改，文字未添加）|
