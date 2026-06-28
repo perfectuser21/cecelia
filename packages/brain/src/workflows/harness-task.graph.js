@@ -753,31 +753,18 @@ export async function mergePrNode(state, opts = {}) {
     return { status: 'failed', error: { node: 'merge_pr', message: 'no pr_url available' } };
   }
 
-  // review_required 人工门：evaluator PASS 后，新功能/UI 变化需要人工确认才 merge。
-  // interrupt() 暂停 graph，等 Brain resume endpoint 收到 { approved: true } 才继续。
-  // fail-open：task.payload 读取失败 → false（不阻塞合并）。
+  // review_required=true → interrupt() 等人工 approve（新功能/UI变化）；false → 自动 merge（bug fix/重构）
   const needsReview = state.task?.payload?.review_required === true;
   if (needsReview) {
-    console.log(`[merge_pr] review_required=true，interrupt 等待人工确认 pr=${prUrl}`);
     const interruptFn = opts.interrupt || interrupt;
-    const reviewPayload = interruptFn({
-      type: 'await_human_review',
-      pr_url: prUrl,
-      message: `evaluator PASS — PR ${prUrl} 需要人工确认后 merge`,
-    });
-    if (!reviewPayload || reviewPayload.approved !== true) {
-      console.warn(`[merge_pr] 人工 review 未批准（payload=${JSON.stringify(reviewPayload)}）→ 终止`);
+    const rv = interruptFn({ type: 'await_human_review', pr_url: prUrl, message: `evaluator PASS — PR ${prUrl} 需人工确认后 merge` });
+    if (!rv || rv.approved !== true) {
       return { status: 'failed', error: { node: 'merge_pr', message: 'human review not approved' } };
     }
-    console.log(`[merge_pr] 人工 review 批准 → 继续 merge pr=${prUrl}`);
   }
 
   try {
-    const { stdout } = await execFn(
-      'gh',
-      ['pr', 'merge', prUrl, '--squash', '--delete-branch'],
-      { timeout: 30_000 }
-    );
+    const { stdout } = await execFn('gh', ['pr', 'merge', prUrl, '--squash', '--delete-branch'], { timeout: 30_000 });
     const tail = (stdout || '').trim().slice(0, 200);
     console.log(`[merge_pr] gh pr merge ok pr=${prUrl}: ${tail}`);
     if (state.worktreePath) {
