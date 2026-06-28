@@ -153,39 +153,44 @@ export async function scanEvolutionIfNeeded(pool) {
   let skipped = 0;
 
   for (const pr of mergedPRs) {
-    // 去重检查
-    const { rowCount } = await pool.query(
-      'SELECT 1 FROM component_evolutions WHERE source_repo=$1 AND pr_number=$2',
-      [SOURCE_REPO, pr.number]
-    );
-    if (rowCount > 0) { skipped++; continue; }
-
-    // 获取变更文件
-    let filePaths = [];
     try {
-      const files = await ghFetch(
-        `/repos/${OWNER}/${REPO}/pulls/${pr.number}/files?per_page=100`
+      // 去重检查
+      const { rowCount } = await pool.query(
+        'SELECT 1 FROM component_evolutions WHERE source_repo=$1 AND pr_number=$2',
+        [SOURCE_REPO, pr.number]
       );
-      filePaths = files.map(f => f.filename);
+      if (rowCount > 0) { skipped++; continue; }
+
+      // 获取变更文件
+      let filePaths = [];
+      try {
+        const files = await ghFetch(
+          `/repos/${OWNER}/${REPO}/pulls/${pr.number}/files?per_page=100`
+        );
+        filePaths = files.map(f => f.filename);
+      } catch (e) {
+        console.warn(`[evolution-scanner] PR #${pr.number} 文件获取失败:`, e.message);
+      }
+
+      const comp = detectComponent(filePaths);
+      if (!comp) { skipped++; continue; }
+
+      const codeFiles = filePaths.filter(f => !SKIP.some(r => r.test(f)));
+      const ver = (pr.title.match(/v(\d+\.\d+\.\d+)/) || [])[1] || null;
+      const date = pr.merged_at.split('T')[0];
+
+      await pool.query(
+        `INSERT INTO component_evolutions
+           (date, component, pr_number, title, significance, changed_files, version, source_repo)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+        [date, comp, pr.number, pr.title, sigScore(pr.title, codeFiles.length), codeFiles, ver, SOURCE_REPO]
+      );
+      inserted++;
+      console.log(`[evolution-scanner] 写入 #${pr.number} [${comp}] ${pr.title.slice(0, 50)}`);
     } catch (e) {
-      console.warn(`[evolution-scanner] PR #${pr.number} 文件获取失败:`, e.message);
+      console.warn(`[evolution-scanner] PR #${pr.number} 处理失败，跳过:`, e.message);
+      skipped++;
     }
-
-    const comp = detectComponent(filePaths);
-    if (!comp) { skipped++; continue; }
-
-    const codeFiles = filePaths.filter(f => !SKIP.some(r => r.test(f)));
-    const ver = (pr.title.match(/v(\d+\.\d+\.\d+)/) || [])[1] || null;
-    const date = pr.merged_at.split('T')[0];
-
-    await pool.query(
-      `INSERT INTO component_evolutions
-         (date, component, pr_number, title, significance, changed_files, version, source_repo)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
-      [date, comp, pr.number, pr.title, sigScore(pr.title, codeFiles.length), codeFiles, ver, SOURCE_REPO]
-    );
-    inserted++;
-    console.log(`[evolution-scanner] 写入 #${pr.number} [${comp}] ${pr.title.slice(0, 50)}`);
   }
 
   // 更新门控时间
