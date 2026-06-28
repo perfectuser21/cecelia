@@ -108,7 +108,10 @@ export async function executeOnHost(opts) {
     // 在 timeoutSec 后 SIGTERM、再 10s 后 SIGKILL，不依赖 ssh 客户端存活。timeout/gtimeout
     // 由 homebrew coreutils 提供（ssh 远端 PATH 含 /opt/homebrew/bin）；万一都没有则降级直接跑。
     const timeoutSec = Math.ceil(timeoutMs / 1000);
-    const remoteCmd =
+    // macOS 默认 shell 是 zsh，SSH 远端命令走 zsh 时 ${TB:+$TB -k 10 Xs} 不做 word splitting，
+    // env 把 "/opt/homebrew/bin/timeout -k 10 10800s" 当一个命令名 → "No such file or directory" → exit 127。
+    // 修复（2026-06-28）：用 bash -c 包裹，强制 bash 执行；bash 正确做 word splitting。
+    const innerCmd =
       'cd ' + shq(worktreePath) + ' && ' +
       // SSH BatchMode=yes 不加载 shell profile，PATH 默认无 /opt/homebrew/bin。
       // claude binary 在 /opt/homebrew/bin/claude → claude-launch.sh `command -v claude` 返回空 → exit 127。
@@ -117,6 +120,7 @@ export async function executeOnHost(opts) {
       'TB=$(command -v timeout || command -v gtimeout || true) && ' +
       'env ' + envPrefix + ' ${TB:+$TB -k 10 ' + timeoutSec + 's} ' +
       'bash ' + shq(hostLauncher) + ' --dangerously-skip-permissions -p';
+    const remoteCmd = 'bash -c ' + shq(innerCmd);
 
     const sshArgs = [];
     if (sshKey) sshArgs.push('-i', sshKey);
