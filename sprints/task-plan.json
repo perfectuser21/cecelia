@@ -1,30 +1,26 @@
 {
-  "initiative_id": "pending",
-  "journey_type": "autonomous",
-  "journey_type_reason": "仅涉及 playground/server.js 路由 + 测试，无 UI / 无外部 agent 协议；target_environment: playground，evaluator 用 localhost:3XXX 验证",
+  "initiative_id": "cf8bbc81-a0",
+  "journey_type": "user_facing",
+  "journey_type_reason": "涉及 apps/dashboard/ 前端页面，需浏览器渲染验证，Playwright 跑 localhost:5174",
   "tasks": [
     {
       "task_id": "ws1",
-      "title": "playground/server.js 新增 GET /subtract 路由 + playground/tests/server.test.js 新增 describe 块",
-      "scope": "在 playground/server.js 注册 GET /subtract（复用 STRICT_NUMBER regex ^-?\\d+(\\.\\d+)?$，校验 a/b 存在且合法，计算 Number(a)-Number(b)，返回 {result: <number>, operation: \"subtract\"}；禁用响应字段 difference/diff/value/answer/data；禁用 operation 变体 difference/diff/sub/minus）；在 playground/tests/server.test.js 新增 describe('GET /subtract', ...) 块（happy 正数/负数/零结果、schema 完整性 oracle、禁用字段反向断言、error path 缺参+非法格式）",
+      "title": "apps/dashboard/src/App.tsx 主布局区域添加固定状态标识文字",
+      "scope": "在 AppContent 函数的 JSX 返回值中（h-screen div 内，auth guard 外侧）添加一个带 data-testid='harness-status-banner' 的元素，内容为硬编码字符串 'Cecelia Harness 工厂线已贯通'；元素样式为 fixed 定位底部右侧小型文字标签（不影响现有布局）；不调用任何 API，无 useState/useEffect 依赖",
       "dod": [
-        "[ARTIFACT] playground/server.js 内含 app.get('/subtract' 路由注册",
-        "[ARTIFACT] playground/server.js /subtract 路由响应含字面 operation: \"subtract\"（禁用 difference/diff/sub/minus）",
-        "[ARTIFACT] playground/server.js /subtract 路由响应含字面 result 字段（禁用 difference/diff/value/answer/data）",
-        "[ARTIFACT] playground/tests/server.test.js 内含 describe('GET /subtract' 块",
-        "[BEHAVIOR] GET /subtract?a=10&b=3 → HTTP 200 + {result:7, operation:\"subtract\"}（schema 字段值）",
-        "[BEHAVIOR] GET /subtract?a=10&b=3 → keys | sort == [\"operation\",\"result\"]（schema 完整性）",
-        "[BEHAVIOR] GET /subtract?a=10&b=3 → 禁用字段 difference/diff/value/answer/data 均不存在（反向验证）",
-        "[BEHAVIOR] 缺参 a → HTTP 400 + error 字段类型 string（error path）",
-        "[BEHAVIOR] GET /subtract?a=1e5&b=3 → HTTP 400（非法格式 error path）",
-        "[BEHAVIOR] GET /subtract?a=3&b=10 → HTTP 200 + result=-7（负数结果）"
+        "[ARTIFACT] apps/dashboard/src/App.tsx 源码含 'Cecelia Harness 工厂线已贯通'",
+        "[ARTIFACT] apps/dashboard/src/App.tsx 含 data-testid='harness-status-banner'",
+        "[BEHAVIOR] App.tsx 源码层文字内容完整匹配",
+        "[BEHAVIOR] data-testid='harness-status-banner' 属性存在",
+        "[BEHAVIOR] 文字附近无动态 API 依赖",
+        "[BEHAVIOR] 元素位于 AppContent 函数 JSX 返回值中且不在 isAuthenticated 块内",
+        "[BEHAVIOR:E2E] Playwright localhost:5174 — data-testid='harness-status-banner' toBeVisible + toHaveText 精确匹配，刷新后持久"
       ],
       "files": [
-        "playground/server.js",
-        "playground/tests/server.test.js"
+        "apps/dashboard/src/App.tsx"
       ],
       "depends_on": [],
-      "complexity": "M",
+      "complexity": "S",
       "estimated_minutes": 30
     }
   ]
