@@ -851,13 +851,13 @@ export async function reviewGateNode(state, opts = {}) {
        )`,
       [taskId, JSON.stringify({ pr_url: prUrl, task_id: taskId, title: state.task?.title }), prUrl]
     );
-  } catch (e) { /* best-effort, 不阻断流程 */ }
+  } catch { /* best-effort, 不阻断流程 */ }
 
   // Bark 通知（best-effort）
   try {
     const { notifyHarnessReviewPending } = await import('../notifier.js');
     await notifyHarnessReviewPending({ task_id: taskId, pr_url: prUrl, title: state.task?.title });
-  } catch (e) { /* best-effort */ }
+  } catch { /* best-effort */ }
 
   const interruptFn = opts.interrupt || interrupt;
   const rv = interruptFn({ type: 'await_human_review', pr_url: prUrl, message: `evaluator PASS — PR ${prUrl} 需人工确认后 merge` });
