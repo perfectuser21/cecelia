@@ -9,6 +9,15 @@ journey_type: user_facing
 
 ---
 
+## Risks
+
+| # | 风险 | Mitigation |
+|---|---|---|
+| R1 | E2E 依赖 localhost:5174 已就绪 | curl 前置守卫（curl -sf http://localhost:5174 失败 = FAIL，不兜底）；已在 contract-draft.md E2E 脚本第 0 步显式登记 |
+| R2 | dark mode 对比度不足（WCAG AA < 4.5:1）| Generator 须在 dark: class 下设满足 WCAG AA 颜色；evaluator 从截图 04-dark-mode.png 视觉核查 |
+
+---
+
 ## ARTIFACT 条目
 
 - [ ] [ARTIFACT] `apps/dashboard/src/App.tsx` 含目标文字字符串

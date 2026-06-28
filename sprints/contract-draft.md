@@ -1,4 +1,4 @@
-# Sprint Contract Draft (Round 1) — Cecelia Dashboard 首页固定状态标识文字
+# Sprint Contract Draft (Round 2) — Cecelia Dashboard 首页固定状态标识文字
 
 ## Response Schema（推导来源: N/A）
 
@@ -166,6 +166,15 @@ const { chromium, expect } = require('@playwright/test');
   process.exit(0);
 })().catch(e => { console.error('FAIL:', e.message); process.exit(1); });
 ```
+
+---
+
+## Risks
+
+| # | 风险 | 概率 | 影响 | Mitigation |
+|---|---|---|---|---|
+| R1 | E2E 执行时 localhost:5174 dev server 未就绪（未提前启动 Vite）| 中 | E2E 全程 FAIL | E2E 脚本第 0 步已有 `curl -sf http://localhost:5174` 前置守卫；curl 失败 = FAIL 而非静默跳过，evaluator 会明确报错而非假绿 |
+| R2 | Dark mode 下文字与背景对比度不足，不满足 WCAG AA（4.5:1）| 低 | 可访问性违规，深色主题用户不可见 | Generator 须在 dark: Tailwind class 下配置满足 WCAG AA 的文字/背景色；evaluator 从截图 `04-dark-mode.png` 视觉核查文字可见性 |
 
 ---
 
