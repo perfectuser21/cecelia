@@ -1,4 +1,4 @@
-# Sprint Contract Draft (Round 2) — Dashboard 首页加固定状态标识文字
+# Sprint Contract Draft (Round 3) — Dashboard 首页加固定状态标识文字
 
 ## Response Schema（推导来源: PRD 字面 — 本次 sprint 无 HTTP 响应接口）
 
@@ -132,8 +132,9 @@ await expect(page.locator('[data-testid="harness-status-banner"]')).toHaveText('
 **执行机器**: 本机 Mac，localhost:5174（Cecelia Dashboard 内网，Playwright 本机执行）
 
 ```javascript
-// final-e2e Playwright 脚本 — sprints/e2e-verify.mjs
+// final-e2e Playwright 脚本 — sprints/e2e-verify.cjs
 // 前提: Dashboard 已启动（cd apps/dashboard && npm run dev），服务在 localhost:5174
+// 注意: 使用 .cjs 扩展名（CommonJS），避免 .mjs 文件中 require() 报 ReferenceError
 
 const { chromium, expect } = require('@playwright/test');
 
