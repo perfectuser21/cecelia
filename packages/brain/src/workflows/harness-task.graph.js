@@ -836,6 +836,29 @@ export async function reviewGateNode(state, opts = {}) {
   const needsReview = state.task?.payload?.review_required === true;
   if (!needsReview) return {};
   const prUrl = state?.pr_url;
+  const taskId = state.task?.id;
+
+  // 幂等写入 human_review_pending 事件（interrupt 重入时跳过重复写）
+  const dbPool = opts.pool || (await import('../db.js')).default;
+  try {
+    await dbPool.query(
+      `INSERT INTO task_events (task_id, event_type, payload, created_at)
+       SELECT $1, 'human_review_pending', $2::jsonb, NOW()
+       WHERE NOT EXISTS (
+         SELECT 1 FROM task_events
+         WHERE task_id = $1 AND event_type = 'human_review_pending'
+           AND payload->>'pr_url' = $3
+       )`,
+      [taskId, JSON.stringify({ pr_url: prUrl, task_id: taskId, title: state.task?.title }), prUrl]
+    );
+  } catch (e) { /* best-effort, 不阻断流程 */ }
+
+  // Bark 通知（best-effort）
+  try {
+    const { notifyHarnessReviewPending } = await import('../notifier.js');
+    await notifyHarnessReviewPending({ task_id: taskId, pr_url: prUrl, title: state.task?.title });
+  } catch (e) { /* best-effort */ }
+
   const interruptFn = opts.interrupt || interrupt;
   const rv = interruptFn({ type: 'await_human_review', pr_url: prUrl, message: `evaluator PASS — PR ${prUrl} 需人工确认后 merge` });
   if (!rv || rv.approved !== true) {
