@@ -94,9 +94,10 @@ import {
 import { runRumination } from '../../rumination.js';
 import { generateDailyDiaryIfNeeded } from '../../diary-scheduler.js';
 import { runDesireSystem } from '../../desire/index.js';
-import { scanEvolutionIfNeeded } from '../../evolution-scanner.js';
+// scanEvolutionIfNeeded 不在此列：已移出 consciousness 守护（纯 GitHub API 调用，不消耗 LLM），
+// consciousness=false 时仍正常运行，不应断言它被跳过。
 
-const CONSCIOUSNESS_MOCKS = [runRumination, generateDailyDiaryIfNeeded, runDesireSystem, scanEvolutionIfNeeded];
+const CONSCIOUSNESS_MOCKS = [runRumination, generateDailyDiaryIfNeeded, runDesireSystem];
 
 /**
  * 跑 executeTick 并吞掉 ReferenceError（源码里 tick.js 在 guard=false 分支末尾 return 用到

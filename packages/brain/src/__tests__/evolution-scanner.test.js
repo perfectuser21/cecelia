@@ -178,9 +178,11 @@ describe('scanEvolutionIfNeeded', () => {
       expect(options.headers['Authorization']).toBe('Bearer ghp_test_token');
     });
 
-    it('GitHub API 返回非 200 时抛出错误', async () => {
+    it('GitHub API 返回非 200 时返回 { ok: false } 而非抛出', async () => {
       const pool = {
-        query: vi.fn().mockResolvedValueOnce({ rows: [], rowCount: 0 })
+        query: vi.fn()
+          .mockResolvedValueOnce({ rows: [], rowCount: 0 }) // 读门控
+          .mockResolvedValueOnce({ rows: [], rowCount: 0 }) // 更新门控（记录错误）
       };
 
       mockFetch.mockResolvedValueOnce({
@@ -189,7 +191,55 @@ describe('scanEvolutionIfNeeded', () => {
         statusText: 'Forbidden',
       });
 
-      await expect(scanEvolutionIfNeeded(pool)).rejects.toThrow('GitHub API 403 Forbidden');
+      const result = await scanEvolutionIfNeeded(pool);
+      expect(result.ok).toBe(false);
+      expect(result.error).toMatch(/403/);
+    });
+
+    it('GitHub API 失败时写入 working_memory 门控（防止每 tick 重试）', async () => {
+      const today = new Date().toISOString().slice(0, 10);
+      const updatedKeys = [];
+
+      const pool = {
+        query: vi.fn()
+          .mockResolvedValueOnce({ rows: [], rowCount: 0 })   // 读门控
+          .mockImplementationOnce((sql, params) => {            // 更新门控
+            updatedKeys.push({ key: params?.[0], value: JSON.parse(params?.[1]) });
+            return Promise.resolve({ rows: [], rowCount: 1 });
+          })
+      };
+
+      mockFetch.mockResolvedValueOnce({
+        ok: false,
+        status: 429,
+        statusText: 'Too Many Requests',
+      });
+
+      await scanEvolutionIfNeeded(pool);
+
+      expect(updatedKeys).toHaveLength(1);
+      expect(updatedKeys[0].key).toBe('evolution_last_scan_date');
+      expect(updatedKeys[0].value.date).toBe(today);
+      expect(updatedKeys[0].value.error).toMatch(/429/);
+    });
+
+    it('GitHub API 失败且 working_memory 写入也失败时不崩溃', async () => {
+      const pool = {
+        query: vi.fn()
+          .mockResolvedValueOnce({ rows: [], rowCount: 0 })          // 读门控
+          .mockRejectedValueOnce(new Error('DB write failed'))        // 更新门控失败
+      };
+
+      mockFetch.mockResolvedValueOnce({
+        ok: false,
+        status: 500,
+        statusText: 'Internal Server Error',
+      });
+
+      // 不应 throw
+      const result = await scanEvolutionIfNeeded(pool);
+      expect(result.ok).toBe(false);
+      expect(result.error).toMatch(/500/);
     });
 
     it('请求 URL 包含正确的 owner/repo', async () => {
@@ -214,9 +264,10 @@ describe('scanEvolutionIfNeeded', () => {
   // ── PR 过滤：只处理最近 2 天合并的 PR ──────────────────
 
   describe('PR 过滤', () => {
-    it('只处理 2 天内合并的 PR，过期 PR 被过滤', async () => {
+    it('只处理 2 天内合并的 PR，过期 PR 被过滤（gate 为昨天，正常2天窗口）', async () => {
       const recentMergedAt = new Date(Date.now() - 1 * 24 * 60 * 60 * 1000).toISOString(); // 1天前
       const oldMergedAt = new Date(Date.now() - 5 * 24 * 60 * 60 * 1000).toISOString();   // 5天前
+      const yesterday = new Date(Date.now() - 1 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
 
       const prs = [
         makePR({ number: 1, title: 'feat: 新功能', merged_at: recentMergedAt }),
@@ -225,7 +276,7 @@ describe('scanEvolutionIfNeeded', () => {
 
       const pool = {
         query: vi.fn()
-          .mockResolvedValueOnce({ rows: [], rowCount: 0 })          // 读门控
+          .mockResolvedValueOnce({ rows: [{ value_json: { date: yesterday } }], rowCount: 1 }) // gate → 昨天（≤2天，不触发 catchup）
           .mockResolvedValueOnce({ rows: [], rowCount: 0 })          // 去重查询 PR#1
           .mockResolvedValueOnce({ rows: [{ id: 1 }], rowCount: 1 }) // INSERT PR#1
           .mockResolvedValueOnce({ rows: [], rowCount: 0 })          // 更新门控
@@ -1187,5 +1238,103 @@ describe('synthesizeEvolutionIfNeeded', () => {
       expect(result.days_since).toBe(0);
       expect(result.skipped).toBe('synthesized_within_7_days');
     });
+  });
+});
+
+// ══════════════════════════════════════════════════════════
+// scanEvolutionIfNeeded — catchup 模式（从 gate 日期推算回溯窗口）
+// ══════════════════════════════════════════════════════════
+
+describe('scanEvolutionIfNeeded catchup 模式', () => {
+
+  it('从未扫描（gate 为空）时使用 30 天回溯，10 天前的 PR 被插入', async () => {
+    const tenDaysAgo = new Date(Date.now() - 10 * 24 * 60 * 60 * 1000).toISOString();
+    const prs = [makePR({ number: 70, title: 'fix: 旧修复', merged_at: tenDaysAgo })];
+
+    const insertArgs = [];
+    const pool = {
+      query: vi.fn()
+        .mockResolvedValueOnce({ rows: [], rowCount: 0 })   // 读门控 → 无记录 → 首次扫描
+        .mockResolvedValueOnce({ rows: [], rowCount: 0 })   // 去重：不存在
+        .mockImplementationOnce((sql, params) => {           // INSERT
+          insertArgs.push(params);
+          return Promise.resolve({ rows: [], rowCount: 1 });
+        })
+        .mockResolvedValueOnce({ rows: [], rowCount: 0 }),   // 更新门控
+    };
+
+    mockFetch.mockResolvedValueOnce({ ok: true, json: () => Promise.resolve(prs) });
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: () => Promise.resolve([{ filename: 'packages/brain/src/cortex.js' }]),
+    });
+
+    const result = await scanEvolutionIfNeeded(pool);
+    expect(result.inserted).toBe(1);
+    expect(insertArgs[0][1]).toBe('brain');
+  });
+
+  it('上次扫描 10 天前时回溯 11 天（覆盖空档），10 天前的 PR 被捕获', async () => {
+    const tenDaysAgo = new Date(Date.now() - 10 * 24 * 60 * 60 * 1000);
+    const lastScanDate = tenDaysAgo.toISOString().slice(0, 10);
+    const prMergedAt = new Date(tenDaysAgo.getTime() + 1000).toISOString(); // 比 gate 晚 1s
+
+    const prs = [makePR({ number: 73, title: 'fix: 空档期修复', merged_at: prMergedAt })];
+
+    const insertArgs = [];
+    const pool = {
+      query: vi.fn()
+        .mockResolvedValueOnce({ rows: [{ value_json: { date: lastScanDate } }], rowCount: 1 }) // gate → 10天前
+        .mockResolvedValueOnce({ rows: [], rowCount: 0 })   // 去重：不存在
+        .mockImplementationOnce((sql, params) => {           // INSERT
+          insertArgs.push(params);
+          return Promise.resolve({ rows: [], rowCount: 1 });
+        })
+        .mockResolvedValueOnce({ rows: [], rowCount: 0 }),   // 更新门控
+    };
+
+    mockFetch.mockResolvedValueOnce({ ok: true, json: () => Promise.resolve(prs) });
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: () => Promise.resolve([{ filename: 'packages/brain/src/tick.js' }]),
+    });
+
+    const result = await scanEvolutionIfNeeded(pool);
+    expect(result.inserted).toBe(1);
+  });
+
+  it('上次扫描在正常 2 天内时，10 天前的 PR 被跳过（不触发 catchup）', async () => {
+    const yesterday = new Date(Date.now() - 1 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+    const tenDaysAgo = new Date(Date.now() - 10 * 24 * 60 * 60 * 1000).toISOString();
+    const prs = [makePR({ number: 71, title: 'fix: 旧修复', merged_at: tenDaysAgo })];
+
+    const pool = {
+      query: vi.fn()
+        .mockResolvedValueOnce({ rows: [{ value_json: { date: yesterday } }], rowCount: 1 }) // gate → 昨天
+        .mockResolvedValueOnce({ rows: [], rowCount: 0 }),   // 更新门控
+    };
+
+    mockFetch.mockResolvedValueOnce({ ok: true, json: () => Promise.resolve(prs) });
+
+    const result = await scanEvolutionIfNeeded(pool);
+    expect(result.checked).toBe(0); // 10天前PR在2天窗口外
+    expect(result.inserted).toBe(0);
+  });
+
+  it('gate 读取失败时回退到 2 天窗口且不崩溃', async () => {
+    const tenDaysAgo = new Date(Date.now() - 10 * 24 * 60 * 60 * 1000).toISOString();
+    const prs = [makePR({ number: 72, title: 'fix: 旧修复', merged_at: tenDaysAgo })];
+
+    const pool = {
+      query: vi.fn()
+        .mockRejectedValueOnce(new Error('DB error'))        // 读门控失败
+        .mockResolvedValueOnce({ rows: [], rowCount: 0 }),   // 更新门控
+    };
+
+    mockFetch.mockResolvedValueOnce({ ok: true, json: () => Promise.resolve(prs) });
+
+    const result = await scanEvolutionIfNeeded(pool);
+    expect(result.ok).toBe(true);
+    expect(result.checked).toBe(0); // 回退到2天，10天前PR不在窗口内
   });
 });

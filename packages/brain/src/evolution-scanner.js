@@ -101,7 +101,8 @@ async function ghFetch(path) {
 export async function scanEvolutionIfNeeded(pool) {
   const today = new Date().toISOString().slice(0, 10);
 
-  // 门控：今日已扫则跳过
+  // 门控：今日已扫则跳过；同时从 gate 日期推算回溯窗口（避免漏扫）
+  let lookbackDays = 2;
   try {
     const { rows } = await pool.query(
       `SELECT value_json FROM working_memory WHERE key = 'evolution_last_scan_date' LIMIT 1`
@@ -109,15 +110,43 @@ export async function scanEvolutionIfNeeded(pool) {
     if (rows[0]?.value_json?.date === today) {
       return { ok: true, skipped: 'already_scanned_today' };
     }
+    const lastDate = rows[0]?.value_json?.date;
+    if (!lastDate) {
+      // 从未扫描过（表可能为空），使用 30 天追溯
+      lookbackDays = 30;
+      console.log('[evolution-scanner] 首次扫描，启用 30 天追溯');
+    } else {
+      const daysSince = Math.floor((Date.now() - new Date(lastDate).getTime()) / 86400000);
+      if (daysSince > 2) {
+        lookbackDays = Math.min(daysSince + 1, 30);
+        console.log(`[evolution-scanner] 距上次扫描 ${daysSince} 天，回溯 ${lookbackDays} 天`);
+      }
+    }
   } catch (e) {
     console.warn('[evolution-scanner] 读取 working_memory 失败:', e.message);
   }
 
-  // 获取最近 2 天合并的 PR（多取一天防遗漏）
-  const since = new Date(Date.now() - 2 * 24 * 60 * 60 * 1000).toISOString();
-  const prs = await ghFetch(
-    `/repos/${OWNER}/${REPO}/pulls?state=closed&sort=updated&direction=desc&per_page=50`
-  );
+  // 获取最近 N 天合并的 PR
+  const since = new Date(Date.now() - lookbackDays * 24 * 60 * 60 * 1000).toISOString();
+  let prs;
+  try {
+    prs = await ghFetch(
+      `/repos/${OWNER}/${REPO}/pulls?state=closed&sort=updated&direction=desc&per_page=50`
+    );
+  } catch (e) {
+    console.warn('[evolution-scanner] GitHub API 获取 PR 列表失败:', e.message);
+    // 更新门控，防止每次 tick 重试轰炸 GitHub API（记录错误，明日再扫）
+    try {
+      await pool.query(
+        `INSERT INTO working_memory (key, value_json, updated_at) VALUES ($1,$2,NOW())
+         ON CONFLICT (key) DO UPDATE SET value_json=$2, updated_at=NOW()`,
+        ['evolution_last_scan_date', JSON.stringify({ date: today, error: e.message, inserted: 0, skipped: 0, checked: 0 })]
+      );
+    } catch (dbErr) {
+      console.warn('[evolution-scanner] 更新 working_memory 失败:', dbErr.message);
+    }
+    return { ok: false, error: e.message };
+  }
   const mergedPRs = prs.filter(pr => pr.merged_at && pr.merged_at >= since);
 
   let inserted = 0;

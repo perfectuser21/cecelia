@@ -455,9 +455,45 @@ async function probeEvolution() {
   const lastDate = result.rows[0]?.last_date
     ? new Date(result.rows[0].last_date).toISOString().slice(0, 10)
     : null;
+
+  if (cnt > 0) {
+    return { ok: true, detail: `7d_pr_evolutions=${cnt} last_date=${lastDate}` };
+  }
+
+  // 无 7 天内记录 — 读取扫描状态判断是"空闲态"还是真实故障
+  // 空闲态：扫描器 2 天内正常运行但近期无 PR 合并 → 非故障
+  try {
+    const { rows } = await pool.query(
+      `SELECT value_json FROM working_memory WHERE key = 'evolution_last_scan_date' LIMIT 1`
+    );
+    const sd = rows[0]?.value_json;
+    if (!sd) {
+      return { ok: false, detail: `7d_pr_evolutions=0 last_date=never scan=never` };
+    }
+    if (sd.error) {
+      return {
+        ok: false,
+        detail: `7d_pr_evolutions=0 last_date=${lastDate || 'never'} scan_error="${sd.error.slice(0, 80)}"`,
+      };
+    }
+    const daysSinceScan = Math.floor((Date.now() - new Date(sd.date).getTime()) / 86400000);
+    if (daysSinceScan <= 1) {
+      // 扫描器 2 天内正常运行，无可写 PR → 空闲状态，非故障
+      return {
+        ok: true,
+        detail: `7d_pr_evolutions=0 last_date=never last_scan=${sd.date} checked=${sd.checked ?? 0} (idle: no_merged_prs_in_window)`,
+      };
+    }
+    // 扫描器超过 2 天未运行（consciousness 禁用或 tick 停止）
+    return {
+      ok: false,
+      detail: `7d_pr_evolutions=0 last_date=${lastDate || 'never'} last_scan=${sd.date}(${daysSinceScan}d_ago) (scanner_stale)`,
+    };
+  } catch { /* non-fatal */ }
+
   return {
-    ok: cnt > 0,
-    detail: `7d_pr_evolutions=${cnt} last_date=${lastDate || 'never'}`,
+    ok: false,
+    detail: `7d_pr_evolutions=0 last_date=${lastDate || 'never'} (scan_diag_unavailable)`,
   };
 }
 

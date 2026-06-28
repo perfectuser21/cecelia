@@ -50,13 +50,18 @@ describe('consciousness-guard', () => {
         'thalamus', 'rumination', 'rumination-scheduler', 'narrative',
         'diary-scheduler', 'conversation-digest', 'conversation-consolidator',
         'capture-digestion', 'self-report', 'notebook-feeder',
-        'proactive-mouth', 'evolution-scanner', 'evolution-synthesizer',
+        'proactive-mouth', 'evolution-synthesizer',
         'desire-system', 'suggestion-cycle',
         'dept-heartbeat', 'pending-followups',
+        // evolution-scanner 不在守护列表（不消耗 LLM，不受 consciousness 门控）
       ];
       for (const mod of expected) {
         expect(GUARDED_MODULES).toContain(mod);
       }
+    });
+
+    test('evolution-scanner 不在守护列表（GitHub API 扫描，不消耗 LLM）', () => {
+      expect(GUARDED_MODULES).not.toContain('evolution-scanner');
     });
   });
 
