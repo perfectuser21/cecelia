@@ -489,7 +489,7 @@ async function probeEvolution() {
       ok: false,
       detail: `7d_pr_evolutions=0 last_date=${lastDate || 'never'} last_scan=${sd.date}(${daysSinceScan}d_ago) (scanner_stale)`,
     };
-  } catch (_e) { /* non-fatal */ }
+  } catch { /* non-fatal */ }
 
   return {
     ok: false,
