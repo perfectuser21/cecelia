@@ -327,10 +327,15 @@ git push origin HEAD 2>/dev/null || echo "[harness-planner] push skipped (no cre
 **最后一条消息**：
 
 ```
-{"verdict": "DONE", "branch": "cp-...", "sprint_dir": "sprints/run-...", "planner_branch": "cp-..."}
+{"verdict": "DONE", "branch": "cp-...", "sprint_dir": "sprints/run-...", "planner_branch": "cp-...", "review_required": false}
 ```
 
 说明：`planner_branch` 字段供 Brain `runGanLoopNode` 读取，作为 GAN proposer 的 `PLANNER_BRANCH` env，避免回退到 main 读 PRD。
+
+**`review_required` 判断规则**：
+- `true` — 新功能、UI 变化、行为变更（evaluator PASS 后需人工确认才 merge）
+- `false` — bug fix、重构、配置调整、文档更新（evaluator PASS 后自动 merge）
+- **默认**: false（不确定时选 false）
 
 ---
 
