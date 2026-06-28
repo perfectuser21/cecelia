@@ -1,4 +1,4 @@
-# Sprint Contract Draft (Round 2) — Cecelia Dashboard 首页固定状态标识文字
+# Sprint Contract Draft (Round 3) — Cecelia Dashboard 首页固定状态标识文字
 
 ## Response Schema（推导来源: N/A）
 
@@ -17,7 +17,7 @@ N/A — 任务无 HTTP 响应（纯静态 UI 变更，无新增 API 端点）
 
 | # | 接缝点 | 真实世界位置 | 真目标验证方式 |
 |---|---|---|---|
-| 1 | localhost:5174 dev server 可访问 | 本机 Vite dev server | E2E 脚本启动前 `curl -sf http://localhost:5174` 返回 200；超时 = FAIL |
+| 1 | localhost:5174 dev server 可访问 | 本机 Vite dev server | E2E 脚本启动前 `CODE=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:5174); [ "$CODE" = "200" ]`；非 200 = FAIL |
 | 2 | 浏览器渲染 App.tsx 可见区 | mac_web Playwright headless Chromium | `page.getByTestId('harness-status-banner').isInViewport()` 真实验证 |
 
 > 本 sprint 为纯前端静态 UI 变更，无 DB 写入、无外部 API 调用、无真机 RPA。两个接缝均在 mac_web 本机验证，CI 绿 = 真 done。
@@ -38,11 +38,12 @@ N/A — 任务无 HTTP 响应（纯静态 UI 变更，无新增 API 端点）
 
 **验证命令**:
 ```bash
-curl -sf http://localhost:5174 -o /dev/null || { echo "FAIL: Dashboard 未就绪"; exit 1; }
+CODE=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:5174)
+[ "$CODE" = "200" ] || { echo "FAIL: Dashboard 未就绪 status=$CODE"; exit 1; }
 echo "OK: localhost:5174 可访问"
 ```
 
-**硬阈值**: HTTP 200，curl exit 0
+**硬阈值**: HTTP 200（`$CODE` = "200"，非 200 exit 1）
 
 ---
 
@@ -173,7 +174,7 @@ const { chromium, expect } = require('@playwright/test');
 
 | # | 风险 | 概率 | 影响 | Mitigation |
 |---|---|---|---|---|
-| R1 | E2E 执行时 localhost:5174 dev server 未就绪（未提前启动 Vite）| 中 | E2E 全程 FAIL | E2E 脚本第 0 步已有 `curl -sf http://localhost:5174` 前置守卫；curl 失败 = FAIL 而非静默跳过，evaluator 会明确报错而非假绿 |
+| R1 | E2E 执行时 localhost:5174 dev server 未就绪（未提前启动 Vite）| 中 | E2E 全程 FAIL | E2E 脚本第 0 步已有状态码 oracle 前置守卫（`CODE=$(curl -s -o /dev/null -w "%{http_code}" ...)` + `[ "$CODE" = "200" ]`）；非 200 = FAIL，不静默跳过 |
 | R2 | Dark mode 下文字与背景对比度不足，不满足 WCAG AA（4.5:1）| 低 | 可访问性违规，深色主题用户不可见 | Generator 须在 dark: Tailwind class 下配置满足 WCAG AA 的文字/背景色；evaluator 从截图 `04-dark-mode.png` 视觉核查文字可见性 |
 
 ---
