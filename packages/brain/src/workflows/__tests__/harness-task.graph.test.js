@@ -641,6 +641,45 @@ describe('mergePrNode', () => {
     expect(delta.status).toBe('merged');
     expect(mockCleanupWorktree).not.toHaveBeenCalled();
   });
+
+  it('review_required=true → interrupt 被调用，approved=true → 继续 merge', async () => {
+    const execFile = vi.fn().mockResolvedValue({ stdout: '✓ merged', stderr: '' });
+    const mockInterrupt = vi.fn().mockReturnValue({ approved: true });
+    const delta = await mergePrNode(
+      { pr_url: 'https://x/pull/42', task: { payload: { review_required: true } } },
+      { execFile, interrupt: mockInterrupt }
+    );
+    expect(mockInterrupt).toHaveBeenCalledOnce();
+    expect(mockInterrupt).toHaveBeenCalledWith(expect.objectContaining({ type: 'await_human_review' }));
+    expect(execFile).toHaveBeenCalledTimes(1);
+    expect(delta.status).toBe('merged');
+  });
+
+  it('review_required=true → interrupt 返回 approved=false → status=failed，不 merge', async () => {
+    const execFile = vi.fn();
+    const mockInterrupt = vi.fn().mockReturnValue({ approved: false });
+    const delta = await mergePrNode(
+      { pr_url: 'https://x/pull/42', task: { payload: { review_required: true } } },
+      { execFile, interrupt: mockInterrupt }
+    );
+    expect(mockInterrupt).toHaveBeenCalledOnce();
+    expect(execFile).not.toHaveBeenCalled();
+    expect(delta.status).toBe('failed');
+    expect(delta.error.node).toBe('merge_pr');
+    expect(delta.error.message).toMatch(/not approved/);
+  });
+
+  it('review_required=false（默认）→ interrupt 不调用，直接 merge', async () => {
+    const execFile = vi.fn().mockResolvedValue({ stdout: '✓ merged', stderr: '' });
+    const mockInterrupt = vi.fn();
+    const delta = await mergePrNode(
+      { pr_url: 'https://x/pull/42', task: { payload: { review_required: false } } },
+      { execFile, interrupt: mockInterrupt }
+    );
+    expect(mockInterrupt).not.toHaveBeenCalled();
+    expect(execFile).toHaveBeenCalledTimes(1);
+    expect(delta.status).toBe('merged');
+  });
 });
 
 describe('fixDispatchNode', () => {
