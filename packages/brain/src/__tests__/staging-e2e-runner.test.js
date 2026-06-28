@@ -3,7 +3,9 @@
  *
  * 覆盖：
  *   - deployStaging: success / skipped(STAGING_SKIP_REASON) / failed(throw)
+ *   - deployStaging ZenithJoy customer line: :5201 健康 → success；:5201 挂 → failed（护栏触发）
  *   - runStagingCommand: :5221→:5222 端口重写 / 合法访问 /api/brain（无 planner_drift 拦截）/ 非 0 退出
+ *   - runStagingCommand ZenithJoy: :5200→:5201 端口重写
  *   - runScenarios: 全 PASS / 部分 FAIL（failedScenarios 正确）
  *   - runStagingE2E: no_initiative_id / no_contract / deploy skip / deploy fail / PASS / scenario FAIL
  *     —— verdict 落 staging_e2e_results + 写回 tasks.result + 标 completed
@@ -26,6 +28,7 @@ const {
   checkInitiativeAggregate,
   STAGING_PORT,
   DASHBOARD_STAGING_PORT,
+  ZJ_STAGING_PORT,
 } = await import('../staging-e2e-runner.js');
 
 // 构造一个记录所有 query 的 mock pool
@@ -81,6 +84,41 @@ describe('deployStaging', () => {
   });
 });
 
+// ─── deployStaging — ZenithJoy customer line 蓝绿护栏 ─────────────────────────
+describe('deployStaging — ZenithJoy customer line（:5201 护栏）', () => {
+  it(':5201 健康响应 → success（护栏 pass，准备跑 E2E）', () => {
+    let seen = null;
+    const exec = (cmd) => { seen = cmd; return '{"status":"ok"}'; };
+    const r = deployStaging({ exec, line: 'customer' });
+    expect(r.status).toBe('success');
+    expect(r.stagingPort).toBe(ZJ_STAGING_PORT);
+    expect(seen).toContain(`:${ZJ_STAGING_PORT}`);
+  });
+
+  it(':5201 健康检查失败（连接拒绝）→ failed，reason=zj_staging_unhealthy（护栏触发,:5200 不被触碰）', () => {
+    const exec = () => { const e = new Error('connect ECONNREFUSED'); e.status = 7; throw e; };
+    const r = deployStaging({ exec, line: 'customer' });
+    expect(r.status).toBe('failed');
+    expect(r.reason).toBe('zj_staging_unhealthy');
+    expect(r.stagingPort).toBe(ZJ_STAGING_PORT);
+  });
+
+  it(':5201 健康检查超时 → failed', () => {
+    const exec = () => { const e = new Error('ETIMEDOUT'); e.status = 28; e.stderr = 'curl timeout'; throw e; };
+    const r = deployStaging({ exec, line: 'customer' });
+    expect(r.status).toBe('failed');
+    expect(r.reason).toBe('zj_staging_unhealthy');
+  });
+
+  it('opts.deployScript 有值时走 script（覆盖 customer 健康检查路径，供测试用）', () => {
+    let seen = null;
+    const exec = (cmd) => { seen = cmd; return '=== Staging Deploy SUCCESS ===\n'; };
+    const r = deployStaging({ exec, line: 'customer', deployScript: '/tmp/my-zj-deploy.sh' });
+    expect(r.status).toBe('success');
+    expect(seen).toContain('/tmp/my-zj-deploy.sh');
+  });
+});
+
 // ─── runStagingCommand ─────────────────────────────────────────────────────────
 describe('runStagingCommand', () => {
   it('把 :5221 重写为 host.docker.internal:5222（容器内 localhost 不通 staging，合法访问 /api/brain）', () => {
@@ -129,6 +167,22 @@ describe('runStagingCommand', () => {
     const exec = (cmd) => { seen = cmd; return 'ok'; };
     runStagingCommand({ cmd: 'curl localhost:5221/api/brain/x' }, { exec, port: STAGING_PORT });
     expect(seen).toContain(`host.docker.internal:${STAGING_PORT}/api/brain/x`);
+  });
+
+  // ZenithJoy 蓝绿护栏：合同里 :5200（production）→ :5201（staging）重写
+  it('ZenithJoy(port=ZJ_STAGING_PORT)：:5200→:5201（合同 production 端口重写到 staging）', () => {
+    let seen = null;
+    const exec = (cmd) => { seen = cmd; return 'ok'; };
+    runStagingCommand({ cmd: 'curl localhost:5200/health' }, { exec, port: ZJ_STAGING_PORT });
+    expect(seen).toContain(`host.docker.internal:${ZJ_STAGING_PORT}/health`);
+    expect(seen).not.toContain('localhost:5200');
+  });
+
+  it('ZenithJoy：127.0.0.1:5200 也重写到 :5201', () => {
+    let seen = null;
+    const exec = (cmd) => { seen = cmd; return 'ok'; };
+    runStagingCommand({ cmd: 'curl 127.0.0.1:5200/api/v1/test' }, { exec, port: ZJ_STAGING_PORT });
+    expect(seen).toContain(`host.docker.internal:${ZJ_STAGING_PORT}/api/v1/test`);
   });
 });
 
