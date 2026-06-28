@@ -1,6 +1,3 @@
-contract_branch: cp-06281122-ws-cf8bbc81-ws1
-sprint_dir: sprints
-
 ---
 skeleton: false
 journey_type: user_facing
