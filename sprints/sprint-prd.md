@@ -1,58 +1,68 @@
-# Sprint PRD — playground 加 GET /subtract endpoint（B1）
+# Sprint PRD — Cecelia Dashboard 首页固定状态标识文字
 
 ## OKR 对齐
 
-- **对应 KR**：Cecelia harness pipeline 端到端验证（接续 W26 /increment）
-- **本次推进预期**：Bug 10（proposer 假绿）+ Bug 11（reviewer 结果文件）修复后管道验证
+- **对应 KR**：Cecelia harness pipeline 内部线 staging→production 端到端贯通验证
+- **当前进度**：待 Brain API 采集（本次 Brain 不可达）
+- **本次推进预期**：验证 harness 完整链路可驱动 UI 变更并被 E2E 确认
 
 ## 背景
 
-B1 是 Bug 10 (#3110) + Bug 11 (#3111) 修复后第一个验证 sprint，用最简双参减法端点跑通完整管道，确认两个 bug 均真生效。
+harness 内部线（staging→production）是否贯通需要一个可观察的端到端信号。本 sprint 以最小 UI 变更（在 Cecelia Dashboard 首页插入固定状态文字）作为 harness 产出物，由 E2E 验证该文字在真实浏览器中可见，证明 harness 链路从 plan→generate→review→merge 走通。
 
 ## Golden Path（核心场景）
 
-HTTP 客户端从 [发起 `GET /subtract?a=10&b=3`] → 经过 [playground server strict-schema 校验 + 计算] → 到达 [200 响应 `{"result":7,"operation":"subtract"}`]
+用户从 [打开 localhost:5174] → 经过 [登录 Dashboard，首屏渲染] → 到达 [页面上可见文字 'Cecelia Harness 工厂线已贯通']
 
 具体：
-1. 发送 `GET /subtract?a=10&b=3`
-2. server 校验 a、b 存在且匹配 `^-?\d+(\.\d+)?$`
-3. 返回 HTTP 200：`{"result":7,"operation":"subtract"}`
-
-## Response Schema
-
-### Endpoint: GET /subtract
-
-**Query Parameters**: `a`（被减数，必填）、`b`（减数，必填），匹配 `^-?\d+(\.\d+)?$`；禁用 `x/y/p/q/n/m/v1/v2`
-
-**Success (HTTP 200)**:
-```json
-{"result": 7, "operation": "subtract"}
-```
-- `result` (number): `Number(a) - Number(b)`
-- `operation` (string): 字面量 `subtract`；禁用 `difference`/`diff`/`sub`/`minus`
-- **禁用响应字段**: `difference`/`diff`/`value`/`answer`/`data`
-- **Schema 完整性**: 顶层 keys 完全等于 `["operation","result"]`
-
-**Error (HTTP 400)**: `{"error":"<string>"}` — 缺参或非法格式
+1. 浏览器访问 localhost:5174，完成认证
+2. Dashboard 首页渲染完成
+3. 页面上存在文字元素，内容精确为 `Cecelia Harness 工厂线已贯通`，用户无需滚动即可看到
 
 ## 边界情况
 
-- 缺参 → 400；非法格式（`1e5`/`Inf`/`+1`/`0xFF`）→ 400；结果负数（a=3,b=10 → -7）正常返回
+- 文字在 light 模式和 dark 模式下均可见（对比度足够）
+- 文字为静态硬编码，无需数据请求，不受网络状态影响
+- 不影响现有导航、页面内容、路由功能
 
 ## 范围限定
 
-**在范围内**：`playground/server.js` 新增 GET /subtract（strict-schema 双参减法）
-**不在范围内**：其他端点修改、overflow/浮点精度
+**在范围内**：在 `apps/dashboard/src/App.tsx` 或首页渲染路径中添加一行静态状态文字
+**不在范围内**：动态数据、后端 API 变更、多语言、动画效果、其他页面
 
 ## 假设
 
-- [ASSUMPTION: playground/server.js 已有 `STRICT_NUMBER` regex 可复用]
+- [ASSUMPTION: "首页" 指用户登录 Dashboard 后默认看到的界面，实现位置为 App.tsx 的 authenticated 布局区域（header 内或 main 区域顶部），使其在 localhost:5174 首次渲染时无需导航即可见]
+- [ASSUMPTION: Dashboard 开发服务器在 localhost:5174 可启动，Playwright E2E 在本机运行]
 
 ## 预期受影响文件
 
-- `playground/server.js`: 新增 GET /subtract 路由
+- `apps/dashboard/src/App.tsx`: 在首页可见区域插入静态文字元素
 
-## journey_type: autonomous
-## journey_type_reason: 仅涉及 playground/server.js，无 UI / 无外部 agent 协议
-## target_environment: playground
-## target_environment_reason: evaluator 在本地 localhost:3000（或 $PLAYGROUND_PORT）验证
+## NFR 约束
+
+<!-- 来源: decisions 表 category=nfr，本次 Brain API 不可达，副源为空；PrepPRD 未指定 -->
+- 超时/延迟: 待定（PrepPRD 未指定）
+- 频控: 不适用（纯静态 UI）
+- 版本要求: 无
+- 可观测: E2E 截图 + 文字断言必须通过
+
+## E2E 验收
+
+```bash
+# 占位：proposer 将按 target_environment=mac_web 填入 Playwright 脚本
+# 期望验收点（自然语言）：
+#   1. 启动 Dashboard dev server（localhost:5174）
+#   2. Playwright 打开浏览器，访问 localhost:5174
+#   3. 完成登录流程（或绕过认证，视 dev 环境配置）
+#   4. 断言页面中存在文字 'Cecelia Harness 工厂线已贯通'（精确匹配）
+#   5. 截图留证
+# 执行位置: 本机 Playwright（mac_web）
+```
+
+## journey_type: user_facing
+## journey_type_reason: 涉及 apps/dashboard/ 前端页面，用户在浏览器中可见
+## target_environment: mac_web
+## target_environment_reason: Cecelia Dashboard 是内网产品，E2E 用本机 Playwright 访问 localhost:5174
+## journey_id: <待补：Cecelia Harness Pipeline journey UUID，Brain API 不可达时 proposer 从 /api/brain/harness/runs 补全>
+## step_id: <待补：PrepPRD 未提供，proposer 从 journey 查询补全>
