@@ -907,6 +907,83 @@ describe('scanEvolutionIfNeeded', () => {
       expect(result.ok).toBe(true);
     });
 
+    it('去重查询 DB 抛异常时仍更新门控（单 PR 失败不阻断整个扫描）', async () => {
+      // 根因复现：component_evolutions 缺少 source_repo 列时 SELECT 抛出
+      // 期望：即使单 PR 处理失败，gate 仍被写入，probe 不再 scanner_stale
+      const today = new Date().toISOString().slice(0, 10);
+      const mergedAt = new Date(Date.now() - 30 * 60 * 1000).toISOString();
+      const prs = [
+        makePR({ number: 80, title: 'feat: PR A', merged_at: mergedAt }),
+        makePR({ number: 81, title: 'feat: PR B', merged_at: mergedAt }),
+      ];
+
+      const updatedKeys = [];
+      const pool = {
+        query: vi.fn()
+          .mockResolvedValueOnce({ rows: [], rowCount: 0 })   // 读门控
+          .mockRejectedValueOnce(new Error('column "source_repo" of relation "component_evolutions" does not exist')) // PR#80 去重失败
+          .mockResolvedValueOnce({ rows: [], rowCount: 0 })   // PR#81 去重
+          .mockResolvedValueOnce({ rows: [], rowCount: 0 })   // PR#81 INSERT
+          .mockImplementationOnce((sql, params) => {           // 更新门控
+            updatedKeys.push({ key: params?.[0], value: JSON.parse(params?.[1]) });
+            return Promise.resolve({ rows: [], rowCount: 1 });
+          })
+      };
+
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve(prs),
+      });
+      // PR#81 文件列表
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve([{ filename: 'packages/brain/src/tick.js' }]),
+      });
+
+      const result = await scanEvolutionIfNeeded(pool);
+      // 门控被写入（这是核心验收）
+      expect(updatedKeys).toHaveLength(1);
+      expect(updatedKeys[0].key).toBe('evolution_last_scan_date');
+      expect(updatedKeys[0].value.date).toBe(today);
+      // PR#80 失败计入 skipped，PR#81 成功
+      expect(result.skipped).toBeGreaterThanOrEqual(1);
+      expect(result.inserted).toBeGreaterThanOrEqual(1);
+      expect(result.ok).toBe(true);
+    });
+
+    it('INSERT 抛异常时仍更新门控（单 PR 失败不阻断扫描）', async () => {
+      const today = new Date().toISOString().slice(0, 10);
+      const mergedAt = new Date(Date.now() - 30 * 60 * 1000).toISOString();
+      const prs = [makePR({ number: 82, title: 'feat: PR', merged_at: mergedAt })];
+
+      const updatedKeys = [];
+      const pool = {
+        query: vi.fn()
+          .mockResolvedValueOnce({ rows: [], rowCount: 0 })   // 读门控
+          .mockResolvedValueOnce({ rows: [], rowCount: 0 })   // 去重：不存在
+          .mockRejectedValueOnce(new Error('INSERT failed: column source_repo does not exist')) // INSERT 失败
+          .mockImplementationOnce((sql, params) => {           // 更新门控
+            updatedKeys.push({ key: params?.[0], value: JSON.parse(params?.[1]) });
+            return Promise.resolve({ rows: [], rowCount: 1 });
+          })
+      };
+
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve(prs),
+      });
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve([{ filename: 'packages/brain/src/tick.js' }]),
+      });
+
+      const result = await scanEvolutionIfNeeded(pool);
+      // 门控必须被写入
+      expect(updatedKeys).toHaveLength(1);
+      expect(updatedKeys[0].value.date).toBe(today);
+      expect(result.ok).toBe(true);
+    });
+
     it('返回值中 checked 等于 mergedPRs 数量', async () => {
       const mergedAt = new Date(Date.now() - 30 * 60 * 1000).toISOString();
       const prs = [
