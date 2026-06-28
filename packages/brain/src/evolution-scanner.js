@@ -101,7 +101,8 @@ async function ghFetch(path) {
 export async function scanEvolutionIfNeeded(pool) {
   const today = new Date().toISOString().slice(0, 10);
 
-  // 门控：今日已扫则跳过
+  // 门控：今日已扫则跳过；同时从 gate 日期推算回溯窗口（避免漏扫）
+  let lookbackDays = 2;
   try {
     const { rows } = await pool.query(
       `SELECT value_json FROM working_memory WHERE key = 'evolution_last_scan_date' LIMIT 1`
@@ -109,12 +110,24 @@ export async function scanEvolutionIfNeeded(pool) {
     if (rows[0]?.value_json?.date === today) {
       return { ok: true, skipped: 'already_scanned_today' };
     }
+    const lastDate = rows[0]?.value_json?.date;
+    if (!lastDate) {
+      // 从未扫描过（表可能为空），使用 30 天追溯
+      lookbackDays = 30;
+      console.log('[evolution-scanner] 首次扫描，启用 30 天追溯');
+    } else {
+      const daysSince = Math.floor((Date.now() - new Date(lastDate).getTime()) / 86400000);
+      if (daysSince > 2) {
+        lookbackDays = Math.min(daysSince + 1, 30);
+        console.log(`[evolution-scanner] 距上次扫描 ${daysSince} 天，回溯 ${lookbackDays} 天`);
+      }
+    }
   } catch (e) {
     console.warn('[evolution-scanner] 读取 working_memory 失败:', e.message);
   }
 
-  // 获取最近 2 天合并的 PR（多取一天防遗漏）
-  const since = new Date(Date.now() - 2 * 24 * 60 * 60 * 1000).toISOString();
+  // 获取最近 N 天合并的 PR
+  const since = new Date(Date.now() - lookbackDays * 24 * 60 * 60 * 1000).toISOString();
   let prs;
   try {
     prs = await ghFetch(
