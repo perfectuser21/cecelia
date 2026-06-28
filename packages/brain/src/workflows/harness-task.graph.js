@@ -842,6 +842,12 @@ export async function fixDispatchNode(state, opts = {}) {
     return { status: 'aborted', error: { node: 'fix_dispatch', message: `initiative already terminal (status=${term.status}); abort fix loop` } };
   }
   const next = (state.fix_round || 0) + 1;
+  // 修复（2026-06-28）：B18 删除了此上限，导致 exit 127 类永久失败→无限 loop → 撞 LangGraph recursion 200。
+  // 恢复上限：超限后返回明确 status=failed，调用方看到清晰错误而非不透明 recursion limit error。
+  if (next > MAX_FIX_ROUNDS) {
+    console.warn(`[fix_dispatch] max fix rounds (${MAX_FIX_ROUNDS}) exceeded → 中止 fix loop`);
+    return { status: 'failed', error: { node: 'fix_dispatch', message: `max fix rounds exceeded (${MAX_FIX_ROUNDS})` } };
+  }
   return {
     fix_round: next,
     generator_output: null,
@@ -1544,8 +1550,8 @@ export async function evaluateContractNode(state, opts = {}) {
 
 export function routeAfterFix(state) {
   if (state.error) return 'end';
-  // B18: 不再 cap fix_round（用户决定不设硬上限）
-  // convergence 不是数轮次，是 verdict 真 PASS；MAX_FIX_ROUNDS 常量保留向后兼容
+  // MAX_FIX_ROUNDS 上限在 fixDispatchNode 执行，超限返回 error → 此处走 'end'。
+  // B18 曾删除上限（认为 convergence 靠 PASS），r3 run 36446078 实证永久失败会撞 LangGraph recursion 200。
   return 'spawn';
 }
 

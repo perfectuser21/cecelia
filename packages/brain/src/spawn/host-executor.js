@@ -110,6 +110,10 @@ export async function executeOnHost(opts) {
     const timeoutSec = Math.ceil(timeoutMs / 1000);
     const remoteCmd =
       'cd ' + shq(worktreePath) + ' && ' +
+      // SSH BatchMode=yes 不加载 shell profile，PATH 默认无 /opt/homebrew/bin。
+      // claude binary 在 /opt/homebrew/bin/claude → claude-launch.sh `command -v claude` 返回空 → exit 127。
+      // 修复（2026-06-28）：remoteCmd 头部显式 export PATH，确保 claude/timeout/gtimeout 均可找到。
+      'export PATH=/opt/homebrew/bin:/usr/local/bin:/usr/sbin:/sbin:/bin:$HOME/.local/bin:$PATH && ' +
       'TB=$(command -v timeout || command -v gtimeout || true) && ' +
       'env ' + envPrefix + ' ${TB:+$TB -k 10 ' + timeoutSec + 's} ' +
       'bash ' + shq(hostLauncher) + ' --dangerously-skip-permissions -p';
