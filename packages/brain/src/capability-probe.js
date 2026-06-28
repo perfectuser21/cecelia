@@ -455,9 +455,30 @@ async function probeEvolution() {
   const lastDate = result.rows[0]?.last_date
     ? new Date(result.rows[0].last_date).toISOString().slice(0, 10)
     : null;
+
+  if (cnt > 0) {
+    return { ok: true, detail: `7d_pr_evolutions=${cnt} last_date=${lastDate}` };
+  }
+
+  // 诊断：读取上次扫描状态，帮助定位根因
+  let scanDiag = '';
+  try {
+    const { rows } = await pool.query(
+      `SELECT value_json FROM working_memory WHERE key = 'evolution_last_scan_date' LIMIT 1`
+    );
+    const sd = rows[0]?.value_json;
+    if (!sd) {
+      scanDiag = ' scan=never';
+    } else if (sd.error) {
+      scanDiag = ` scan_error="${sd.error.slice(0, 80)}"`;
+    } else {
+      scanDiag = ` last_scan=${sd.date} checked=${sd.checked ?? 0}`;
+    }
+  } catch (_e) { /* non-fatal */ }
+
   return {
-    ok: cnt > 0,
-    detail: `7d_pr_evolutions=${cnt} last_date=${lastDate || 'never'}`,
+    ok: false,
+    detail: `7d_pr_evolutions=${cnt} last_date=${lastDate || 'never'}${scanDiag}`,
   };
 }
 

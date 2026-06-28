@@ -178,9 +178,11 @@ describe('scanEvolutionIfNeeded', () => {
       expect(options.headers['Authorization']).toBe('Bearer ghp_test_token');
     });
 
-    it('GitHub API 返回非 200 时抛出错误', async () => {
+    it('GitHub API 返回非 200 时返回 { ok: false } 而非抛出', async () => {
       const pool = {
-        query: vi.fn().mockResolvedValueOnce({ rows: [], rowCount: 0 })
+        query: vi.fn()
+          .mockResolvedValueOnce({ rows: [], rowCount: 0 }) // 读门控
+          .mockResolvedValueOnce({ rows: [], rowCount: 0 }) // 更新门控（记录错误）
       };
 
       mockFetch.mockResolvedValueOnce({
@@ -189,7 +191,55 @@ describe('scanEvolutionIfNeeded', () => {
         statusText: 'Forbidden',
       });
 
-      await expect(scanEvolutionIfNeeded(pool)).rejects.toThrow('GitHub API 403 Forbidden');
+      const result = await scanEvolutionIfNeeded(pool);
+      expect(result.ok).toBe(false);
+      expect(result.error).toMatch(/403/);
+    });
+
+    it('GitHub API 失败时写入 working_memory 门控（防止每 tick 重试）', async () => {
+      const today = new Date().toISOString().slice(0, 10);
+      const updatedKeys = [];
+
+      const pool = {
+        query: vi.fn()
+          .mockResolvedValueOnce({ rows: [], rowCount: 0 })   // 读门控
+          .mockImplementationOnce((sql, params) => {            // 更新门控
+            updatedKeys.push({ key: params?.[0], value: JSON.parse(params?.[1]) });
+            return Promise.resolve({ rows: [], rowCount: 1 });
+          })
+      };
+
+      mockFetch.mockResolvedValueOnce({
+        ok: false,
+        status: 429,
+        statusText: 'Too Many Requests',
+      });
+
+      await scanEvolutionIfNeeded(pool);
+
+      expect(updatedKeys).toHaveLength(1);
+      expect(updatedKeys[0].key).toBe('evolution_last_scan_date');
+      expect(updatedKeys[0].value.date).toBe(today);
+      expect(updatedKeys[0].value.error).toMatch(/429/);
+    });
+
+    it('GitHub API 失败且 working_memory 写入也失败时不崩溃', async () => {
+      const pool = {
+        query: vi.fn()
+          .mockResolvedValueOnce({ rows: [], rowCount: 0 })          // 读门控
+          .mockRejectedValueOnce(new Error('DB write failed'))        // 更新门控失败
+      };
+
+      mockFetch.mockResolvedValueOnce({
+        ok: false,
+        status: 500,
+        statusText: 'Internal Server Error',
+      });
+
+      // 不应 throw
+      const result = await scanEvolutionIfNeeded(pool);
+      expect(result.ok).toBe(false);
+      expect(result.error).toMatch(/500/);
     });
 
     it('请求 URL 包含正确的 owner/repo', async () => {

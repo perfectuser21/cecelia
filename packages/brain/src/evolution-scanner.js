@@ -115,9 +115,25 @@ export async function scanEvolutionIfNeeded(pool) {
 
   // 获取最近 2 天合并的 PR（多取一天防遗漏）
   const since = new Date(Date.now() - 2 * 24 * 60 * 60 * 1000).toISOString();
-  const prs = await ghFetch(
-    `/repos/${OWNER}/${REPO}/pulls?state=closed&sort=updated&direction=desc&per_page=50`
-  );
+  let prs;
+  try {
+    prs = await ghFetch(
+      `/repos/${OWNER}/${REPO}/pulls?state=closed&sort=updated&direction=desc&per_page=50`
+    );
+  } catch (e) {
+    console.warn('[evolution-scanner] GitHub API 获取 PR 列表失败:', e.message);
+    // 更新门控，防止每次 tick 重试轰炸 GitHub API（记录错误，明日再扫）
+    try {
+      await pool.query(
+        `INSERT INTO working_memory (key, value_json, updated_at) VALUES ($1,$2,NOW())
+         ON CONFLICT (key) DO UPDATE SET value_json=$2, updated_at=NOW()`,
+        ['evolution_last_scan_date', JSON.stringify({ date: today, error: e.message, inserted: 0, skipped: 0, checked: 0 })]
+      );
+    } catch (dbErr) {
+      console.warn('[evolution-scanner] 更新 working_memory 失败:', dbErr.message);
+    }
+    return { ok: false, error: e.message };
+  }
   const mergedPRs = prs.filter(pr => pr.merged_at && pr.merged_at >= since);
 
   let inserted = 0;
