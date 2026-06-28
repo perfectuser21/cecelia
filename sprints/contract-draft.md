@@ -131,6 +131,11 @@ await expect(page.locator('[data-testid="harness-status-banner"]')).toHaveText('
 **target_environment**: mac_web  
 **执行机器**: 本机 Mac，localhost:5174（Cecelia Dashboard 内网，Playwright 本机执行）
 
+```bash
+# E2E 验收：运行 Playwright 脚本验证 Dashboard 固定状态标识文字
+node sprints/e2e-verify.cjs
+```
+
 ```javascript
 // final-e2e Playwright 脚本 — sprints/e2e-verify.cjs
 // 前提: Dashboard 已启动（cd apps/dashboard && npm run dev），服务在 localhost:5174
