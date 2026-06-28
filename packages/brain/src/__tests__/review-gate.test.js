@@ -13,6 +13,7 @@ vi.mock('../db.js', () => ({
 
 // Mock task-router.js
 vi.mock('../task-router.js', () => ({
+  getInternalTaskHandler: vi.fn(() => null),
   getTaskLocation: vi.fn(() => 'hk'),
 }));
 

@@ -17,6 +17,7 @@ import { parseDockerOutput, loadSkillContent } from '../harness-shared.js';
 import { buildTaskThreadId } from '../harness-utils.js';
 import { parseTaskPlan, upsertTaskPlan } from '../harness-dag.js';
 import { buildSprintResultContract } from '../sprint-result-contract.js';
+import { parseE2eAcceptanceFromContract } from '../staging-e2e-runner.js';
 import { ensureHarnessWorktree } from '../harness-worktree.js';
 import { resolveGitHubToken } from '../harness-credentials.js';
 import { fetchAndShowOriginFile } from '../lib/git-fence.js';
@@ -32,6 +33,20 @@ const ALREADY_MERGED_RE = /already merged|not open|pull request.*closed/i;
 // Phase C7 清 shim 前不改。
 import { runGanContractGraph } from '../harness-gan-graph.js';
 import { killInitiativeContainers } from '../harness-container-cleanup.js';
+
+/**
+ * Slice2 治本：合同入库时计算 e2e_acceptance，写满 initiative_contracts.e2e_acceptance 列
+ *（根因：该列此前全流程零写入 → loadE2eAcceptance 必返 null → staging 永久 SKIP）。
+ * 优先用 GAN proposer 产出的结构化 e2e_acceptance（proposer skill 写入），
+ * 缺失时回退解析 contract_content 的 `## E2E 验收` 段（复用 Slice1 parser）。
+ * @param {{e2e_acceptance?:object, contract_content?:string}} ganResult
+ * @returns {object|null}
+ */
+export function computeContractE2eAcceptance(ganResult) {
+  if (!ganResult) return null;
+  if (ganResult.e2e_acceptance) return ganResult.e2e_acceptance;
+  return parseE2eAcceptanceFromContract(ganResult.contract_content) || null;
+}
 
 const DEFAULT_TIMEOUT_SEC = 21600; // 6h，对齐 initiative_contracts.timeout_sec 默认
 const DEFAULT_BUDGET_USD = 10;
@@ -104,6 +119,7 @@ export const InitiativeState = Annotation.Root({
   planner_session:   Annotation({ reducer: (_o, n) => n, default: () => null }),
   evaluator_session: Annotation({ reducer: (_o, n) => n, default: () => null }),
   planner_container_id: Annotation({ reducer: (_o, n) => n, default: () => null }),
+  review_required:      Annotation({ reducer: (_o, n) => n, default: () => false }),
 });
 
 // 节点 stub — Task 2-6 逐个填充。
@@ -459,7 +475,12 @@ export async function parsePrdNode(state) {
       console.error(`[harness-initiative-graph] readdir failed (${readdirErr.message}), falling back to planner stdout`);
     }
   }
-  return { taskPlan, prdContent, sprintDir };  // taskPlan may be null — that is OK
+  // 从 planner verdict JSON 提取 review_required（harness-planner v8.x+ 输出）
+  // fail-open：字段不存在 → false（老版本 planner 兼容）
+  const rvMatch = (state.plannerOutput || '').match(/"review_required"\s*:\s*(true|false)/);
+  const reviewRequired = rvMatch ? rvMatch[1] === 'true' : false;
+
+  return { taskPlan, prdContent, sprintDir, review_required: reviewRequired };  // taskPlan may be null — that is OK
 }
 export async function runGanLoopNode(state, opts = {}) {
   if (state.ganResult) return { ganResult: state.ganResult };
@@ -561,14 +582,25 @@ export async function dbUpsertNode(state, opts = {}) {
         [insertedTaskIds, JSON.stringify({ sprint_dir: effectiveSprintDir })]
       );
     }
+    // 透传 review_required 到子任务 payload（merge_pr node 读取决定自动/人工 merge）
+    if (insertedTaskIds?.length > 0 && state.review_required) {
+      await client.query(
+        `UPDATE tasks
+         SET payload = COALESCE(payload, '{}'::jsonb) || $2::jsonb
+         WHERE id = ANY($1::uuid[])`,
+        [insertedTaskIds, JSON.stringify({ review_required: state.review_required })]
+      );
+    }
     // ON CONFLICT (B13): dbUpsertNode 是 graph 节点，restart resume 时 retry 必须幂等。
+    // Slice2：入库即写满 e2e_acceptance 列（治本"列从不写入"→staging 永久 SKIP）。
+    const e2eAcceptance = computeContractE2eAcceptance(state.ganResult);
     const contractInsert = await client.query(
       `INSERT INTO initiative_contracts (
          initiative_id, version, status,
          prd_content, contract_content, review_rounds,
-         budget_cap_usd, timeout_sec, branch, approved_at
+         budget_cap_usd, timeout_sec, branch, e2e_acceptance, approved_at
        )
-       VALUES ($1::uuid, 1, 'approved', $2, $3, $4, $5, $6, $7, NOW())
+       VALUES ($1::uuid, 1, 'approved', $2, $3, $4, $5, $6, $7, $8::jsonb, NOW())
        ON CONFLICT (initiative_id, version) DO UPDATE SET
          status = EXCLUDED.status,
          prd_content = EXCLUDED.prd_content,
@@ -577,9 +609,10 @@ export async function dbUpsertNode(state, opts = {}) {
          budget_cap_usd = EXCLUDED.budget_cap_usd,
          timeout_sec = EXCLUDED.timeout_sec,
          branch = EXCLUDED.branch,
+         e2e_acceptance = COALESCE(EXCLUDED.e2e_acceptance, initiative_contracts.e2e_acceptance),
          approved_at = NOW()
        RETURNING id`,
-      [state.initiativeId, state.plannerOutput, state.ganResult.contract_content, state.ganResult.rounds, budgetUsd, timeoutSec, state.ganResult.propose_branch || null]
+      [state.initiativeId, state.plannerOutput, state.ganResult.contract_content, state.ganResult.rounds, budgetUsd, timeoutSec, state.ganResult.propose_branch || null, e2eAcceptance ? JSON.stringify(e2eAcceptance) : null]
     );
     const contractId = contractInsert.rows[0].id;
     const journeyType = state.taskPlan?.journey_type || 'autonomous';
@@ -715,6 +748,7 @@ export const FullInitiativeState = Annotation.Root({
   evaluate_feedback:  Annotation({ reducer: (_o, n) => n, default: () => null }),
   final_e2e_fix_count: Annotation({ reducer: (_o, n) => n, default: () => 0 }),
   planner_container_id: Annotation({ reducer: (_o, n) => n, default: () => null }),
+  review_required:      Annotation({ reducer: (_o, n) => n, default: () => false }),
 });
 
 /**
@@ -1248,6 +1282,10 @@ export async function runSubTaskNode(state, opts = {}) {
       // 读 task.payload.{machine,executor} 决定 Generator 跑美国 Claude 还是西安 Codex。
       ...(state.task?.payload?.machine ? { machine: state.task.payload.machine } : {}),
       ...(state.task?.payload?.executor ? { executor: state.task.payload.executor } : {}),
+      // Slice4 透传 gap 修复（真 run 2937fd5e 暴露）：透传 target_environment，否则 sub-graph
+      // extractTargetEnv 默认 local_api → generator spawnNode / evaluate_contract 走 docker，
+      // mac_web 的 Playwright 自验在无浏览器容器卡死。透传后 mac_web 走 host 逃逸（executeOnHost）。
+      ...(state.task?.payload?.target_environment ? { target_environment: state.task.payload.target_environment } : {}),
     },
   };
   const compiled = opts.compiledTaskGraph || await _getTaskGraphCompiled();
@@ -1510,7 +1548,7 @@ export async function reportNode(state, opts = {}) {
       await client.query(
         `UPDATE initiative_runs SET phase=$2, completed_at=NOW(), updated_at=NOW(),
           failure_reason=CASE WHEN $2='failed' THEN $3 ELSE failure_reason END
-         WHERE initiative_id=$1::uuid`,
+         WHERE initiative_id=$1::uuid AND phase NOT IN ('done', 'failed')`,
         [state.initiativeId, phase, reason]
       );
       // B1: 同时回写 tasks.status — 否则 task 永卡 in_progress（graph 不经 executor.js
@@ -1522,7 +1560,7 @@ export async function reportNode(state, opts = {}) {
         `UPDATE tasks SET status=$2::text, completed_at=NOW(), updated_at=NOW(),
           result = COALESCE(result, '{}'::jsonb) || jsonb_build_object('report_content', $4::jsonb),
           error_message=CASE WHEN $2::text='failed' THEN $3::text ELSE error_message END
-         WHERE id=$1::uuid`,
+         WHERE id=$1::uuid AND status NOT IN ('completed', 'failed')`,
         [state.initiativeId, taskStatus, reason, reportContent]
       );
       // 2b-2b: 镜像同步对应 okr_initiative → done/failed（non-fatal，best-effort）

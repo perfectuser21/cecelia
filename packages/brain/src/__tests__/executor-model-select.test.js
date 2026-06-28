@@ -19,7 +19,8 @@ import { describe, it, expect, vi, beforeAll } from 'vitest';
 // Mock 所有 executor 依赖
 vi.mock('../db.js', () => ({ default: { query: vi.fn() } }));
 vi.mock('../trace.js', () => ({ traceStep: vi.fn(() => ({ start: vi.fn(), end: vi.fn() })), LAYER: {}, STATUS: {}, EXECUTOR_HOSTS: {} }));
-vi.mock('../task-router.js', () => ({ getTaskLocation: vi.fn(() => 'us'), LOCATION_MAP: {} }));
+vi.mock('../task-router.js', () => ({
+  getInternalTaskHandler: vi.fn(() => null), getTaskLocation: vi.fn(() => 'us'), LOCATION_MAP: {} }));
 vi.mock('../task-updater.js', () => ({ updateTask: vi.fn() }));
 vi.mock('../learning.js', () => ({ recordLearning: vi.fn() }));
 

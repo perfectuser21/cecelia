@@ -289,6 +289,20 @@ async function notifyHarnessBudgetWarning(info) {
   return sendRateLimited(`harness_warn_${info.kind}_${info.initiative_id}`, text);
 }
 
+/**
+ * Evaluator PASS，PR 等待人工验收后才 merge
+ * @param {{ task_id: string, pr_url: string, title?: string, preview_url?: string }} info
+ */
+async function notifyHarnessReviewPending(info) {
+  const title = info.title || info.task_id;
+  const preview = info.preview_url ? `\n预览：${info.preview_url}` : '';
+  const pr = info.pr_url ? `\nPR：${info.pr_url}` : '';
+  return sendBark(
+    `🔍 待验收：${title}`,
+    `Evaluator PASS，请验收后批准 merge。${preview}${pr}`
+  );
+}
+
 export {
   sendFeishu,
   notifyTaskCompleted,
@@ -300,5 +314,6 @@ export {
   notifyHarnessTaskMerged,
   notifyHarnessFinalE2E,
   notifyHarnessBudgetWarning,
+  notifyHarnessReviewPending,
   RATE_LIMIT_MS
 };

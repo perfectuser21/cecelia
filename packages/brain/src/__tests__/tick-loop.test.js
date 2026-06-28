@@ -35,6 +35,13 @@ vi.mock('../harness-watchdog-loop.js', () => ({
   startHarnessWatchdogLoop: (...args) => mockStartHarnessWatchdogLoop(...args),
   stopHarnessWatchdogLoop: (...args) => mockStopHarnessWatchdogLoop(...args),
 }));
+// Slice5：独立 pipeline 巡航循环由 startTickLoop 启动。mock 以验证「被接上」+ 避免拉 db。
+const mockStartPipelinePatrolLoop = vi.fn().mockReturnValue(true);
+const mockStopPipelinePatrolLoop = vi.fn();
+vi.mock('../pipeline-patrol-loop.js', () => ({
+  startPipelinePatrolLoop: (...args) => mockStartPipelinePatrolLoop(...args),
+  stopPipelinePatrolLoop: (...args) => mockStopPipelinePatrolLoop(...args),
+}));
 
 import {
   runTickSafe,
@@ -181,6 +188,21 @@ describe('tick-loop', () => {
       startTickLoop();
       stopTickLoop();
       expect(mockStopHarnessWatchdogLoop).toHaveBeenCalledTimes(1);
+    });
+
+    // Slice5 回归：pipeline-patrol 巡航必须由 startTickLoop 接上独立循环。
+    // 历史 bug：只挂在 Wave-2 废弃的 executeTick，runScheduler 路径从不调用 → harness_intervention 死代码。
+    it('startTickLoop 启动独立 pipeline 巡航循环（startPipelinePatrolLoop 被调用）', () => {
+      mockStartPipelinePatrolLoop.mockClear();
+      startTickLoop();
+      expect(mockStartPipelinePatrolLoop).toHaveBeenCalledTimes(1);
+    });
+
+    it('stopTickLoop 同步停掉 pipeline 巡航循环（start/stop 对称）', () => {
+      mockStopPipelinePatrolLoop.mockClear();
+      startTickLoop();
+      stopTickLoop();
+      expect(mockStopPipelinePatrolLoop).toHaveBeenCalledTimes(1);
     });
   });
 });

@@ -182,16 +182,82 @@ export function runScenarios(acceptance, opts = {}) {
   };
 }
 
-/** 加载该 initiative 的合同 e2e_acceptance（优先 approved，否则最新 version）。 */
+/**
+ * 从 contract_content（markdown 文本）解析 e2e_acceptance。
+ * 兼容两种形态：
+ *   1. 内联命令块：## E2E 验收 段下的 ```bash 代码块
+ *   2. 脚本文件引用：段内出现 `script: path.sh` / `run: path.ps1` 等行
+ * 返回 {scenarios:[{name,covered_tasks,commands}]} 或 null（无法解析）。
+ */
+export function parseE2eAcceptanceFromContract(content) {
+  if (!content || typeof content !== 'string') return null;
+
+  // 找到 ## E2E 验收 标题（允许括号内注释）
+  const headingMatch = content.match(/^##\s+E2E\s+验收[^\n]*/m);
+  if (!headingMatch) return null;
+
+  // 截取到下一个 ## 级别标题（不含）
+  const afterHeading = content.slice(headingMatch.index + headingMatch[0].length);
+  const nextH2 = afterHeading.match(/^##\s/m);
+  const section = nextH2 ? afterHeading.slice(0, nextH2.index) : afterHeading;
+
+  const scenarios = [];
+
+  // 1. 内联代码块：```bash 或 ```sh 或 ```powershell
+  const codeBlockRe = /```(bash|sh|powershell|ps1)?\n([\s\S]*?)```/g;
+  let match;
+  let blockIdx = 0;
+  while ((match = codeBlockRe.exec(section)) !== null) {
+    const lang = match[1] || 'bash';
+    const scriptContent = match[2];
+    if (!scriptContent || !scriptContent.trim()) continue;
+    blockIdx++;
+    scenarios.push({
+      name: blockIdx === 1 ? 'E2E 验收' : `E2E 验收 #${blockIdx}`,
+      covered_tasks: ['parsed'],
+      commands: [{ type: lang, cmd: scriptContent }],
+    });
+  }
+
+  // 2. 脚本文件引用（script:/run:/file: 开头的行，或裸 .sh/.ps1 路径）
+  if (scenarios.length === 0) {
+    const scriptRefRe = /(?:^|\n)\s*(?:script|run|file):\s*(\S+\.(?:sh|ps1))/g;
+    let refMatch;
+    while ((refMatch = scriptRefRe.exec(section)) !== null) {
+      const filePath = refMatch[1];
+      const isPs1 = filePath.endsWith('.ps1');
+      scenarios.push({
+        name: `E2E 验收 (${filePath})`,
+        covered_tasks: ['parsed'],
+        commands: [{ type: isPs1 ? 'powershell' : 'bash', cmd: isPs1 ? `powershell "${filePath}"` : `bash "${filePath}"` }],
+      });
+    }
+  }
+
+  return scenarios.length > 0 ? { scenarios } : null;
+}
+
+/** 加载该 initiative 的合同 e2e_acceptance（优先 approved，否则最新 version）。
+ * e2e_acceptance 列为 NULL 时回退解析 contract_content 的 ## E2E 验收 段。 */
 async function loadE2eAcceptance(dbPool, initiativeId) {
   const q = await dbPool.query(
-    `SELECT e2e_acceptance FROM initiative_contracts
+    `SELECT e2e_acceptance, contract_content FROM initiative_contracts
      WHERE initiative_id::text = $1
      ORDER BY (CASE WHEN status = 'approved' THEN 0 ELSE 1 END), version DESC
      LIMIT 1`,
     [initiativeId]
   );
-  return q.rows[0]?.e2e_acceptance || null;
+  const row = q.rows[0];
+  if (!row) return null;
+  if (row.e2e_acceptance) return row.e2e_acceptance;
+
+  // 兜底：从 contract_content markdown 解析 ## E2E 验收 段
+  if (row.contract_content) {
+    const parsed = parseE2eAcceptanceFromContract(row.contract_content);
+    if (parsed && parsed.scenarios && parsed.scenarios.length > 0) return parsed;
+  }
+
+  return null;
 }
 
 /** verdict 落 staging_e2e_results 表。 */
@@ -201,14 +267,15 @@ async function recordResult(dbPool, r) {
   await dbPool.query(
     `INSERT INTO staging_e2e_results
        (task_id, initiative_id, pr_url, verdict, reason, staging_port,
-        scenarios_total, scenarios_passed, failed_scenarios, deploy_output, deployed_at, tested_at)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10, $11, $12)
+        scenarios_total, scenarios_passed, failed_scenarios, deploy_output, deployed_at, tested_at, tested_sha)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10, $11, $12, $13)
      ON CONFLICT (pr_url) DO NOTHING`,
     [
       r.taskId, r.initiativeId, r.prUrl, r.verdict, r.reason, r.port,
       r.scenariosTotal || 0, r.scenariosPassed || 0,
       JSON.stringify(r.failedScenarios || []),
       r.deployOutput || null, r.deployedAt || null, r.testedAt || null,
+      r.testedSha || null,
     ]
   );
 }
@@ -236,6 +303,17 @@ async function updatePromoteStatus(dbPool, prUrl, status, output = null) {
   );
 }
 
+/** Slice9: 取当前 git HEAD SHA（staging 实测锚点）。失败 → null（不阻断 verdict）。 */
+function defaultGetSha(opts = {}) {
+  try {
+    const exec = opts.exec || execSync;
+    const out = exec('git rev-parse HEAD', { encoding: 'utf8', cwd: opts.cwd });
+    return String(typeof out === 'string' ? out : out).trim();
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Slice2：staging E2E PASS 后放行分流（决策 C）。
  * 内部线 → 自动 promote（注入 promoteExec，绝不在测试里打真生产）；
@@ -243,7 +321,24 @@ async function updatePromoteStatus(dbPool, prUrl, status, output = null) {
  * best-effort：任何失败只告警，不影响 verdict 已落库。
  * @returns {string} 最终 promote_status
  */
-async function handlePromote(dbPool, { verdict, baseRepo, prUrl, initiativeId }, opts = {}) {
+/**
+ * Slice9: initiative 级聚合检查 — 该 initiative 所有 staging_e2e_results 有无 FAIL。
+ * SKIP 是加分项跳过（no_docker 等），不算失败；只要无 FAIL 即放行（PASS/SKIP 都 OK）。
+ * @returns {Promise<{allPass: boolean, testedSha: string|null}>}
+ */
+export async function checkInitiativeAggregate(dbPool, initiativeId) {
+  if (!initiativeId) return { allPass: true, testedSha: null };
+  const r = await dbPool.query(
+    `SELECT verdict, tested_sha FROM staging_e2e_results WHERE initiative_id = $1`,
+    [initiativeId],
+  );
+  const rows = r?.rows || [];
+  const allPass = !rows.some((x) => x.verdict === 'FAIL');
+  const testedSha = rows.find((x) => x.tested_sha)?.tested_sha || null;
+  return { allPass, testedSha };
+}
+
+export async function handlePromote(dbPool, { verdict, baseRepo, prUrl, initiativeId }, opts = {}) {
   const decision = decidePromote({ verdict, baseRepo });
   const notify = opts.notify || sendFeishu;
   try {
@@ -252,6 +347,24 @@ async function handlePromote(dbPool, { verdict, baseRepo, prUrl, initiativeId },
       return PROMOTE_STATUS.NA;
     }
     if (decision.action === 'auto') {
+      // Slice9 复合闸 1：initiative 级聚合 gate — 该 initiative 有任何 staging FAIL → 不 auto-promote，
+      // 挂 pending（等同 initiative 其他 PR 也全绿），防单 PR PASS 就上生产漏掉别 PR 的 FAIL。
+      const aggCheck = opts.checkInitiativeAggregate || checkInitiativeAggregate;
+      const agg = await aggCheck(dbPool, initiativeId);
+      if (!agg.allPass) {
+        console.warn(`[staging-e2e] 聚合 gate: initiative ${initiativeId} 有未通过的 staging → 挂 pending，不 auto-promote`);
+        await updatePromoteStatus(dbPool, prUrl, PROMOTE_STATUS.PENDING_PROMOTE);
+        return PROMOTE_STATUS.PENDING_PROMOTE;
+      }
+      // Slice9 复合闸 2：SHA 锚定 — staging 实测的 SHA != 当前部署目标 SHA（run 在飞期间别 PR merge
+      // 致 main 前进）→ 漂移，promote 会上没经 staging 验证的代码。两端都非空才比（fail-open）。
+      const getCurrentSha = opts.getCurrentSha || defaultGetSha;
+      const currentSha = getCurrentSha({ cwd: process.env.REPO_ROOT || getRepoRoot() });
+      if (agg.testedSha && currentSha && agg.testedSha !== currentSha) {
+        console.warn(`[staging-e2e] SHA 漂移: tested=${agg.testedSha} != current=${currentSha} → 挂 pending，不 auto-promote`);
+        await updatePromoteStatus(dbPool, prUrl, PROMOTE_STATUS.PENDING_PROMOTE);
+        return PROMOTE_STATUS.PENDING_PROMOTE;
+      }
       // 内部线自动 promote。生产注入 defaultPromoteExec；测试注入 mock。
       // repoRoot 用 REPO_ROOT env（容器=bind-mount repo 根，脚本存在）；裸 getRepoRoot() 容器内返回 / 找不到脚本。
       const promoteExec = opts.promoteExec || defaultPromoteExec(process.env.REPO_ROOT || getRepoRoot());
@@ -303,6 +416,37 @@ async function handlePromote(dbPool, { verdict, baseRepo, prUrl, initiativeId },
  * @param {{id:string, payload?:object}} task
  * @param {{pool?, deploy?, loadAcceptance?, exec?, cwd?}} [opts]
  */
+/**
+ * Slice6: 抢 staging 部署 advisory lock（dedicated client，session 级，避免跨 pool.query 连接漂移）。
+ * 抢到 → 返回 { release }；抢不到（别路正占）→ null。pool 无 connect（测试 mock）/ 抢锁基础设施异常
+ * → fail-open 返回 no-op lock（不因锁机制本身故障阻断 staging，锁只是并发止血不是硬门）。
+ * @returns {Promise<{release: () => Promise<void>}|null>}
+ */
+export async function acquireStagingLock(dbPool, lockKey) {
+  if (!dbPool || typeof dbPool.connect !== 'function') {
+    return { release: async () => {} };
+  }
+  let client;
+  try {
+    client = await dbPool.connect();
+    const r = await client.query('SELECT pg_try_advisory_lock($1) AS locked', [lockKey]);
+    if (!r?.rows?.[0]?.locked) {
+      client.release();
+      return null;
+    }
+    return {
+      release: async () => {
+        try { await client.query('SELECT pg_advisory_unlock($1)', [lockKey]); }
+        finally { client.release(); }
+      },
+    };
+  } catch (err) {
+    if (client) { try { client.release(); } catch { /* ignore */ } }
+    console.warn(`[staging-e2e] advisory lock 获取异常（fail-open）: ${err.message}`);
+    return { release: async () => {} };
+  }
+}
+
 export async function runStagingE2E(task, opts = {}) {
   const dbPool = opts.pool || pool;
   const deploy = opts.deploy || deployStaging;
@@ -348,29 +492,43 @@ export async function runStagingE2E(task, opts = {}) {
     // 2. 部署 staging：内部线(cecelia)走 deploy-local.sh 构建 dashboard 到 :5223；
     //    非内部线走 staging-deploy.sh 部署 brain 到 :5222。
     const line = resolveLine(baseRepo);
-    const dep = deploy({ exec: opts.exec, cwd: opts.cwd, line });
-    base.deployOutput = dep.output;
-    if (dep.status === 'skipped') return await finalize('SKIP', dep.reason);
-    if (dep.status === 'failed') return await finalize('FAIL', 'deploy_failed');
-    base.deployedAt = new Date();
-    const stagingPort = dep.stagingPort || STAGING_PORT;
-    base.port = stagingPort;
 
-    // 3. 在真 staging 实例跑 contract E2E（命令里的目标端口重写到本次 staging 端口）
-    let run;
+    // Slice6: staging 单实例串行 — deploy 前抢 advisory lock，防 N 路并发互相 docker rm 顶掉。
+    // 抢不到（别路正占同端口实例）→ SKIP staging_busy（不部署）；抢到 → finally 必释放。
+    const lockPort = line === 'internal' ? DASHBOARD_STAGING_PORT : STAGING_PORT;
+    const acquireLock = opts.acquireStagingLock || acquireStagingLock;
+    const lock = await acquireLock(dbPool, lockPort);
+    if (!lock) return await finalize('SKIP', 'staging_busy');
+
     try {
-      run = runScenarios(acceptance, { exec: opts.exec, cwd: opts.cwd, port: stagingPort });
-    } catch (err) {
-      base.testedAt = new Date();
-      return await finalize('FAIL', `invalid_contract: ${String(err.message).slice(0, 160)}`);
-    }
-    base.testedAt = new Date();
+      const dep = deploy({ exec: opts.exec, cwd: opts.cwd, line });
+      base.deployOutput = dep.output;
+      if (dep.status === 'skipped') return await finalize('SKIP', dep.reason);
+      if (dep.status === 'failed') return await finalize('FAIL', 'deploy_failed');
+      base.deployedAt = new Date();
+      const stagingPort = dep.stagingPort || STAGING_PORT;
+      base.port = stagingPort;
+      // Slice9: 锚定 staging 实测的 git SHA（deploy 后的 HEAD），promote 时比对防 SHA 漂移。
+      base.testedSha = (opts.getSha || defaultGetSha)({ exec: opts.exec, cwd: opts.cwd });
 
-    return await finalize(run.verdict, run.verdict === 'PASS' ? null : 'scenarios_failed', {
-      scenariosTotal: run.scenariosTotal,
-      scenariosPassed: run.scenariosPassed,
-      failedScenarios: run.failedScenarios,
-    });
+      // 3. 在真 staging 实例跑 contract E2E（命令里的目标端口重写到本次 staging 端口）
+      let run;
+      try {
+        run = runScenarios(acceptance, { exec: opts.exec, cwd: opts.cwd, port: stagingPort });
+      } catch (err) {
+        base.testedAt = new Date();
+        return await finalize('FAIL', `invalid_contract: ${String(err.message).slice(0, 160)}`);
+      }
+      base.testedAt = new Date();
+
+      return await finalize(run.verdict, run.verdict === 'PASS' ? null : 'scenarios_failed', {
+        scenariosTotal: run.scenariosTotal,
+        scenariosPassed: run.scenariosPassed,
+        failedScenarios: run.failedScenarios,
+      });
+    } finally {
+      await lock.release();
+    }
   } catch (err) {
     // 基础设施异常（DB 写失败等）→ task failed，让 dispatcher/重试机制处理
     console.error(`[staging-e2e] runStagingE2E error task=${task.id}: ${err.message}`);

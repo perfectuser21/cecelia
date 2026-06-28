@@ -1601,13 +1601,12 @@ async function executeTick() {
   Promise.resolve().then(() => check48hReport(pool))
     .catch(e => console.warn('[tick] 48h 简报检查失败:', e.message));
 
-  // 10.14 + 10.15 进化日志扫描 & 叙事合成（CONSCIOUSNESS_ENABLED=false 时跳过）
-  if (isConsciousnessEnabled()) {
-    // 10.14 进化日志扫描（每日一次，自动记录 cecelia repo 新 PR，fire-and-forget）
-    Promise.resolve().then(() => scanEvolutionIfNeeded(pool))
-      .catch(e => console.warn('[tick] 进化日志扫描失败:', e.message));
+  // 10.14 进化日志扫描（每日一次，GitHub API 扫描，不依赖 LLM，consciousness 不门控）
+  Promise.resolve().then(() => scanEvolutionIfNeeded(pool))
+    .catch(e => console.warn('[tick] 进化日志扫描失败:', e.message));
 
-    // 10.15 进化叙事合成（每 7 天一次，更新各器官叙事摘要，fire-and-forget）
+  // 10.15 进化叙事合成（每 7 天一次，更新各器官叙事摘要，依赖 LLM，CONSCIOUSNESS_ENABLED=false 时跳过）
+  if (isConsciousnessEnabled()) {
     Promise.resolve().then(() => synthesizeEvolutionIfNeeded(pool))
       .catch(e => console.warn('[tick] 进化叙事合成失败:', e.message));
   }

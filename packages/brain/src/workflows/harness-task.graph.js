@@ -171,10 +171,35 @@ export const TaskState = Annotation.Root({
   // null = 普通实现缺陷 → 维持 generator fix loop。
   failure_class:    Annotation({ reducer: (_o, n) => n, default: () => null }),
   prdContent:       Annotation({ reducer: (_o, n) => n, default: () => null }),
+  review_required:  Annotation({ reducer: (_o, n) => n, default: () => false }),
 });
 
 // ──────────────────────────────────────────────────────────────────────────
 // 节点
+
+/**
+ * 提取 target_environment（SSOT）：消除 spawnNode 与 evaluate_contract 两处提取漂移。
+ * 优先 prdContent 注释头，回退 task.payload.target_environment，默认 local_api。
+ */
+export function extractTargetEnv(state) {
+  const payload = state?.task?.payload || {};
+  return (state?.prdContent || '').match(/^##?\s*target_environment:\s*(\S+)/m)?.[1]
+    || payload.target_environment
+    || 'local_api';
+}
+
+/**
+ * 构造 mac_web host 执行专用 env：host 上 host.docker.internal 不可解析 → 三件套一律 localhost。
+ * generator（spawnNode）与 evaluator（evaluate_contract）的 host 分支共用。
+ */
+export function buildHostLocalEnv(baseEnv, containerId) {
+  return {
+    ...baseEnv,
+    BRAIN_URL: 'http://localhost:5221',
+    HARNESS_CALLBACK_URL: `http://localhost:5221/api/brain/harness/callback/${containerId}`,
+    DB: 'postgresql://localhost/cecelia',
+  };
+}
 
 /**
  * Layer 3 spawnNode — spawn detached docker container 立即 return（不阻塞）。
@@ -325,6 +350,57 @@ export async function spawnNode(state, opts = {}) {
     },
   };
 
+  // ── Slice4: mac_web 宿主逃逸 ──────────────────────────────────────────────
+  // mac_web 必须在宿主 Mac 跑（真实浏览器 + localhost:5174/5221 直达），不能进无浏览器 docker
+  // 容器（物理不可能做 Playwright UI 自验 → generator 自验跑不通、fix loop 空转烧轮次）。
+  // generator 两段式（spawn detached → awaitCallback interrupt）在 host 退化为同步：executeOnHost
+  // 跑完直接拿 stdout，作 generator_output 返回 → 命中 awaitCallback 幂等门跳过 interrupt → parse。
+  // 与 evaluate_contract 的 mac_web host 分支同口径（executeOnHost + buildHostLocalEnv localhost 覆盖）。
+  const targetEnv = extractTargetEnv(state);
+  if (targetEnv === 'mac_web') {
+    const execHost = opts.executeOnHost || executeOnHost;
+    let hostResult;
+    try {
+      hostResult = await execHost({
+        task: { ...task, task_type: 'harness_task' },
+        prompt,
+        worktreePath,
+        env: buildHostLocalEnv(dockerArgs.env, finalContainerId),
+      });
+    } catch (err) {
+      return { containerId: finalContainerId, status: 'failed', error: { node: 'spawn', message: `host-exec: ${err.message}` } };
+    }
+    if (!hostResult || hostResult.exit_code !== 0) {
+      const detail = hostResult?.timed_out
+        ? 'host generator timed out'
+        : `host generator exit_code=${hostResult?.exit_code ?? 'unknown'}`;
+      // host 无 docker callback 可等 → 落 ci_status=fail，awaitCallback passthrough → fix_dispatch 重试。
+      return { containerId: finalContainerId, ci_status: 'fail', ci_fail_type: 'container_exit', failed_checks: [detail] };
+    }
+    // thread_lookup（与 docker 路径同口径，可观测/反查；失败不阻塞）
+    try {
+      await dbPool.query(
+        `INSERT INTO walking_skeleton_thread_lookup (container_id, thread_id, graph_name, status)
+         VALUES ($1, $2, 'harness-task', 'done')
+         ON CONFLICT (container_id) DO NOTHING`,
+        [finalContainerId, threadId]
+      );
+    } catch (err) {
+      console.warn(`[harness-task.graph] host thread_lookup INSERT failed cid=${finalContainerId}: ${err.message}`);
+    }
+    return {
+      containerId: finalContainerId,
+      worktreePath,
+      githubToken: token,
+      // stdout 作 generator_output → awaitCallback passthrough（不再 interrupt 等 docker callback）
+      generator_output: hostResult.stdout || '',
+      spawnedAt: Date.now(),
+      executor: 'claude',
+      accountId: accountEnv.CECELIA_CREDENTIALS || null,
+      ...(contractBranch ? { contractImported: true } : {}),
+    };
+  }
+
   // 机器+执行器统一路由（取代旧的西安全局开关 env）：
   //   resolveExecutor 据 payload.{machine,executor} > 半显式 > 标签默认 > us-m4/claude 兜底。
   //   executor=claude → 现有 docker 派发（美国本地 cecelia/runner）。
@@ -424,6 +500,17 @@ export async function spawnNode(state, opts = {}) {
  */
 export async function awaitCallbackNode(state, opts = {}) {
   if (state.generator_output) return { generator_output: state.generator_output };
+
+  // Slice4: mac_web host 同步路径失败时 spawnNode 已落 ci_status=fail（无 generator_output、无
+  // docker callback 可等）。必须 passthrough 这个失败信号，否则会 interrupt 死等一个永不到来的
+  // 回调。passthrough → routeAfterCallback 走 fix_dispatch 重试，与 docker 容器 exit 同等语义。
+  if (state.ci_status === 'fail') {
+    return {
+      ci_status: state.ci_status,
+      ci_fail_type: state.ci_fail_type,
+      failed_checks: state.failed_checks,
+    };
+  }
 
   const callbackPayload = interrupt({
     type: 'wait_harness_task_callback',
@@ -634,6 +721,8 @@ async function _spawnStagingE2eTask(state, opts = {}) {
       // Slice2：带上 base_repo，供 runStagingE2E 判客户线(zenithjoy)/内部线(cecelia) 放行分流。
       // 缺失 → 保守挂 pending_promote（决策2），不误自动上线。
       base_repo: state.baseRepo || tpayload.base_repo || '',
+      // Slice6：透传 project_id，供二期 coalescing 单实例 patrol 按 project 合并并发 staging 任务。
+      project_id: tpayload.project_id || state.projectId || '',
     };
     await dbPool.query(
       `INSERT INTO tasks (title, description, task_type, status, priority, payload)
@@ -665,11 +754,7 @@ export async function mergePrNode(state, opts = {}) {
   }
 
   try {
-    const { stdout } = await execFn(
-      'gh',
-      ['pr', 'merge', prUrl, '--squash', '--delete-branch'],
-      { timeout: 30_000 }
-    );
+    const { stdout } = await execFn('gh', ['pr', 'merge', prUrl, '--squash', '--delete-branch'], { timeout: 30_000 });
     const tail = (stdout || '').trim().slice(0, 200);
     console.log(`[merge_pr] gh pr merge ok pr=${prUrl}: ${tail}`);
     if (state.worktreePath) {
@@ -743,6 +828,50 @@ export function routeAfterMergePr(state) {
   return 'end';
 }
 
+/**
+ * reviewGateNode — evaluator PASS 后，新功能/UI 变更 review_required=true 时 interrupt() 等人工确认。
+ * 架构约束：merge 节点（mergePrNode）必须同步返回，interrupt 收归本节点。
+ */
+export async function reviewGateNode(state, opts = {}) {
+  const needsReview = state.task?.payload?.review_required === true;
+  if (!needsReview) return {};
+  const prUrl = state?.pr_url;
+  const taskId = state.task?.id;
+
+  // 幂等写入 human_review_pending 事件（interrupt 重入时跳过重复写）
+  const dbPool = opts.pool || (await import('../db.js')).default;
+  try {
+    await dbPool.query(
+      `INSERT INTO task_events (task_id, event_type, payload, created_at)
+       SELECT $1, 'human_review_pending', $2::jsonb, NOW()
+       WHERE NOT EXISTS (
+         SELECT 1 FROM task_events
+         WHERE task_id = $1 AND event_type = 'human_review_pending'
+           AND payload->>'pr_url' = $3
+       )`,
+      [taskId, JSON.stringify({ pr_url: prUrl, task_id: taskId, title: state.task?.title }), prUrl]
+    );
+  } catch { /* best-effort, 不阻断流程 */ }
+
+  // Bark 通知（best-effort）
+  try {
+    const { notifyHarnessReviewPending } = await import('../notifier.js');
+    await notifyHarnessReviewPending({ task_id: taskId, pr_url: prUrl, title: state.task?.title });
+  } catch { /* best-effort */ }
+
+  const interruptFn = opts.interrupt || interrupt;
+  const rv = interruptFn({ type: 'await_human_review', pr_url: prUrl, message: `evaluator PASS — PR ${prUrl} 需人工确认后 merge` });
+  if (!rv || rv.approved !== true) {
+    return { status: 'failed', error: { node: 'review_gate', message: 'human review not approved' } };
+  }
+  return {};
+}
+
+export function routeAfterReviewGate(state) {
+  if (state.status === 'failed') return 'end';
+  return 'merge';
+}
+
 export async function fixDispatchNode(state, opts = {}) {
   // 终态门（P2）：fix loop 路由边在 reset 计数/重 spawn 前查 initiative 终态。
   // 已终态 → 写明确终态 status='aborted' + error，routeAfterFix 据 error 走 END，
@@ -754,6 +883,12 @@ export async function fixDispatchNode(state, opts = {}) {
     return { status: 'aborted', error: { node: 'fix_dispatch', message: `initiative already terminal (status=${term.status}); abort fix loop` } };
   }
   const next = (state.fix_round || 0) + 1;
+  // 修复（2026-06-28）：B18 删除了此上限，导致 exit 127 类永久失败→无限 loop → 撞 LangGraph recursion 200。
+  // 恢复上限：超限后返回明确 status=failed，调用方看到清晰错误而非不透明 recursion limit error。
+  if (next > MAX_FIX_ROUNDS) {
+    console.warn(`[fix_dispatch] max fix rounds (${MAX_FIX_ROUNDS}) exceeded → 中止 fix loop`);
+    return { status: 'failed', error: { node: 'fix_dispatch', message: `max fix rounds exceeded (${MAX_FIX_ROUNDS})` } };
+  }
   return {
     fix_round: next,
     generator_output: null,
@@ -1108,10 +1243,8 @@ export async function evaluateContractNode(state, opts = {}) {
   const payload = task?.payload || {};
   const initiativeId = state.initiativeId || payload.parent_task_id || payload.initiative_id || task?.id;
 
-  // target_environment: 从 prdContent 提取（同 initiative graph 逻辑）
-  const targetEnv = (state.prdContent || '').match(/^##?\s*target_environment:\s*(\S+)/m)?.[1]
-    || payload.target_environment
-    || 'local_api';
+  // target_environment（SSOT extractTargetEnv，与 spawnNode 同口径，消两处提取漂移）
+  const targetEnv = extractTargetEnv(state);
   const _baseRepo = (state.baseRepo || payload.base_repo || '').toLowerCase();
   const githubRepo = _baseRepo.includes('zenithjoy') ? 'perfectuser21/zenithjoy-workspace' : 'perfectuser21/cecelia';
   const windowsCloudWorkflow = _baseRepo.includes('zenithjoy') ? 'agent-e2e-video.yml' : 'e2e-windows.yml';
@@ -1289,14 +1422,9 @@ export async function evaluateContractNode(state, opts = {}) {
         task: { ...task, task_type: 'harness_evaluate' },
         prompt: evaluatePrompt,
         worktreePath: state.worktreePath,
-        // host 上 host.docker.internal 不可解析 → 一律 localhost。
+        // host 上 host.docker.internal 不可解析 → buildHostLocalEnv 一律 localhost。
         // WORKSPACE_PATH 由 executeOnHost 自动注入为 worktreePath。
-        env: {
-          ...baseEvalEnv,
-          BRAIN_URL: 'http://localhost:5221',
-          HARNESS_CALLBACK_URL: `http://localhost:5221/api/brain/harness/callback/${containerId}`,
-          DB: 'postgresql://localhost/cecelia',
-        },
+        env: buildHostLocalEnv(baseEvalEnv, containerId),
       });
     } catch (err) {
       return { evaluate_verdict: 'FAIL', evaluate_error: `host-exec: ${err.message}` };
@@ -1463,8 +1591,8 @@ export async function evaluateContractNode(state, opts = {}) {
 
 export function routeAfterFix(state) {
   if (state.error) return 'end';
-  // B18: 不再 cap fix_round（用户决定不设硬上限）
-  // convergence 不是数轮次，是 verdict 真 PASS；MAX_FIX_ROUNDS 常量保留向后兼容
+  // MAX_FIX_ROUNDS 上限在 fixDispatchNode 执行，超限返回 error → 此处走 'end'。
+  // B18 曾删除上限（认为 convergence 靠 PASS），r3 run 36446078 实证永久失败会撞 LangGraph recursion 200。
   return 'spawn';
 }
 
@@ -1478,6 +1606,7 @@ export function buildHarnessTaskGraph() {
     .addNode('verify_generator', verifyGeneratorNode, { retryPolicy: LLM_RETRY })
     .addNode('poll_ci', pollCiNode)
     .addNode('evaluate_contract', evaluateContractNode)
+    .addNode('review_gate', reviewGateNode)
     .addNode('merge_pr', mergePrNode)
     .addNode('fix_dispatch', fixDispatchNode)
     .addEdge(START, 'spawn')
@@ -1494,11 +1623,12 @@ export function buildHarnessTaskGraph() {
     })
     .addEdge('verify_generator', 'poll_ci')
     .addConditionalEdges('poll_ci', routeAfterPoll, {
-      end: END, merge: 'merge_pr', evaluate: 'evaluate_contract', fix: 'fix_dispatch', timeout: END, poll: 'poll_ci',
+      end: END, merge: 'review_gate', evaluate: 'evaluate_contract', fix: 'fix_dispatch', timeout: END, poll: 'poll_ci',
     })
     // P1: end = Contract Gate 命中合同产物（failure_class=contract_invalid）→ 终止 initiative，
     // 不进 generator fix loop（generator 无权改合同，进 fix loop 必空转）。
-    .addConditionalEdges('evaluate_contract', routeAfterEvaluate, { merge: 'merge_pr', fix: 'fix_dispatch', end: END })
+    .addConditionalEdges('evaluate_contract', routeAfterEvaluate, { merge: 'review_gate', fix: 'fix_dispatch', end: END })
+    .addConditionalEdges('review_gate', routeAfterReviewGate, { end: END, merge: 'merge_pr' })
     .addConditionalEdges('merge_pr', routeAfterMergePr, { end: END, poll: 'poll_ci' })
     .addConditionalEdges('fix_dispatch', routeAfterFix, {
       end: END, failed: END, spawn: 'spawn',

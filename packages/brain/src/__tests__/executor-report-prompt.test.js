@@ -30,6 +30,7 @@ vi.mock('child_process', () => ({
 }));
 
 vi.mock('../task-router.js', () => ({
+  getInternalTaskHandler: vi.fn(() => null),
   getTaskLocation: vi.fn(() => 'us'),
 }));
 

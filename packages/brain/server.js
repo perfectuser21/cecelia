@@ -68,6 +68,7 @@ import notesRoutes from './src/routes/notes.js';
 import harnessRoutes from './src/routes/harness.js';
 import harnessRoutesRouter from './src/routes/harness.routes.js';
 import harnessInterruptsRouter from './src/routes/harness-interrupts.js';
+import harnessReviewsRouter from './src/routes/harness-pending-reviews.js';
 import harnessCallbackRouter from './src/routes/harness-callback.js';
 import walkingSkeletonRouter from './src/routes/walking-skeleton.js';
 import initiativesRoutes from './src/routes/initiatives.js';
@@ -359,6 +360,7 @@ app.use('/api/brain', abilitiesRouter);
 app.use('/api/brain/harness', harnessRoutesRouter);
 app.use('/api/brain/harness', harnessRoutes);
 app.use('/api/brain/harness-interrupts', harnessInterruptsRouter);
+app.use('/api/brain/harness/pending-reviews', harnessReviewsRouter);
 app.use('/api/brain/initiatives', initiativesRoutes);
 app.use('/api/brain/backup', backupRoutes);
 

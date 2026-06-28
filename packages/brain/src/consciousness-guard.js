@@ -6,9 +6,10 @@ export const GUARDED_MODULES = [
   'thalamus', 'rumination', 'rumination-scheduler', 'narrative',
   'diary-scheduler', 'conversation-digest', 'conversation-consolidator',
   'capture-digestion', 'self-report', 'notebook-feeder',
-  'proactive-mouth', 'evolution-scanner', 'evolution-synthesizer',
+  'proactive-mouth', 'evolution-synthesizer',
   'desire-system', 'suggestion-cycle',
   'dept-heartbeat', 'pending-followups',
+  // evolution-scanner 不在此列：GitHub API 扫描，不消耗 LLM token，不受 consciousness 门控
 ];
 
 let _deprecationWarned = false;

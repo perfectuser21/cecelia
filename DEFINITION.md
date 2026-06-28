@@ -6,7 +6,7 @@
 
 
 
-**Brain 版本**: 1.231.0
+**Brain 版本**: 1.232.0
 
 **状态**: 生产运行中
 
@@ -526,6 +526,7 @@ queued → in_progress → completed
 | harness_task | US | Harness v2 阶段 B — Task 级执行（内部 Generator/CI/Evaluator 状态机） | Sonnet / - | 默认 anthropic |
 | harness_final_e2e | US | Harness v2 阶段 C — Initiative 级真实 E2E 验收 | Sonnet / - | 默认 anthropic |
 | harness_intervention | US | Harness 巡逻干预任务（卡住检测 + 自动重置） | - | /_internal |
+| staging_e2e | US | Harness staging E2E native 执行（部署 :5222/5223 + contract E2E + promote 分流） | - | /_internal |
 | content-pipeline | 西安 | 内容工厂 Pipeline 编排入口 (/content-creator) | - | general |
 | content-research | 西安 | 内容调研阶段 (/notebooklm) | - | general |
 | content-copywriting | 西安 | 文案生成阶段 (/content-creator) | - | general |

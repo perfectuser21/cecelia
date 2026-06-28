@@ -68,6 +68,7 @@ vi.mock('../model-profile.js', () => ({
 }));
 
 vi.mock('../task-router.js', () => ({
+  getInternalTaskHandler: vi.fn(() => null),
   getTaskLocation: vi.fn(() => 'local'),
 }));
 

@@ -39,6 +39,7 @@ vi.mock('fs', () => ({
 }));
 
 vi.mock('../task-router.js', () => ({
+  getInternalTaskHandler: vi.fn(() => null),
   getTaskLocation: vi.fn(() => 'us')
 }));
 

@@ -103,6 +103,8 @@ import {
   verifyGeneratorNode,
   pollCiNode,
   mergePrNode,
+  reviewGateNode,
+  routeAfterReviewGate,
   fixDispatchNode,
   TaskState,
   MAX_FIX_ROUNDS,
@@ -111,6 +113,7 @@ import {
   routeAfterEvaluate,
   routeAfterPoll,
   routeAfterCallback,
+  extractTargetEnv,
 } from '../harness-task.graph.js';
 import { MemorySaver, Command } from '@langchain/langgraph';
 import { ContractViolation } from '../../lib/contract-verify.js';
@@ -220,6 +223,61 @@ describe('spawnNode (Layer 3 spawn-and-interrupt)', () => {
     expect(delta.containerId).toBe('cached-cid');
   });
 
+  // Slice 4: mac_web 必须在宿主 Mac 跑（真实浏览器 + localhost 直达），不能进无浏览器 docker。
+  // generator 是两段式（spawn detached → awaitCallback interrupt），host 走同步：executeOnHost
+  // 跑完把 stdout 作 generator_output 返回 → 命中 awaitCallback 幂等门跳过 interrupt → parse。
+  it('Slice4: targetEnv=mac_web → 同步 executeOnHost（非 docker），stdout 作 generator_output', async () => {
+    mockEnsureWorktree.mockResolvedValueOnce('/wt/abc');
+    mockResolveToken.mockResolvedValueOnce('ghp_x');
+    const executeOnHost = vi.fn().mockResolvedValue({
+      exit_code: 0, stdout: 'PR_URL: https://github.com/x/y/pull/1',
+    });
+    const delta = await spawnNode(
+      { task: { id: 's', payload: {} }, initiativeId: 'i', prdContent: '## target_environment: mac_web' },
+      { executeOnHost },
+    );
+    expect(executeOnHost).toHaveBeenCalledTimes(1);
+    expect(mockSpawnDetached).not.toHaveBeenCalled();
+    // host env 用 localhost 覆盖（host 上 host.docker.internal 不可解析）
+    const hostArg = executeOnHost.mock.calls[0][0];
+    expect(hostArg.env.BRAIN_URL).toBe('http://localhost:5221');
+    expect(hostArg.env.HARNESS_CALLBACK_URL).toContain('localhost:5221');
+    expect(hostArg.worktreePath).toBe('/wt/abc');
+    // generator_output 灌入 → 下游 awaitCallback passthrough（不再 interrupt 等 docker callback）
+    expect(delta.generator_output).toBe('PR_URL: https://github.com/x/y/pull/1');
+    expect(delta.containerId).toMatch(/^harness-task-s-r0-/);
+    expect(delta.error).toBeUndefined();
+  });
+
+  it('Slice4: targetEnv=mac_web host 失败（exit_code!=0）→ ci_status=fail，不带 generator_output', async () => {
+    mockEnsureWorktree.mockResolvedValueOnce('/wt');
+    mockResolveToken.mockResolvedValueOnce('t');
+    const executeOnHost = vi.fn().mockResolvedValue({ exit_code: 1, stdout: '', timed_out: false });
+    const delta = await spawnNode(
+      { task: { id: 's', payload: { target_environment: 'mac_web' } }, initiativeId: 'i' },
+      { executeOnHost },
+    );
+    expect(executeOnHost).toHaveBeenCalledTimes(1);
+    expect(delta.ci_status).toBe('fail');
+    expect(delta.ci_fail_type).toBe('container_exit');
+    expect(delta.generator_output).toBeUndefined();
+    expect(mockSpawnDetached).not.toHaveBeenCalled();
+  });
+
+  it('Slice4: targetEnv=local_api（缺省）→ 仍走 docker spawnDetached，不调 executeOnHost（不回归）', async () => {
+    mockEnsureWorktree.mockResolvedValueOnce('/wt');
+    mockResolveToken.mockResolvedValueOnce('t');
+    const executeOnHost = vi.fn();
+    mockSpawnDetached.mockResolvedValueOnce({});
+    const delta = await spawnNode(
+      { task: { id: 's', payload: {} }, initiativeId: 'i' },
+      { executeOnHost },
+    );
+    expect(executeOnHost).not.toHaveBeenCalled();
+    expect(mockSpawnDetached).toHaveBeenCalledTimes(1);
+    expect(delta.containerId).toBeDefined();
+  });
+
   it('thread_lookup INSERT 失败不污染成功 spawn', async () => {
     mockEnsureWorktree.mockResolvedValueOnce('/wt');
     mockResolveToken.mockResolvedValueOnce('t');
@@ -321,12 +379,38 @@ describe('spawnNode — resolveExecutor 路由（Unit 3 收编 harness）', () =
   });
 });
 
+describe('extractTargetEnv (Slice 4 SSOT — 消 spawn/evaluate 两处提取漂移)', () => {
+  it('prdContent 含 ## target_environment: mac_web → mac_web', () => {
+    expect(extractTargetEnv({ prdContent: '## target_environment: mac_web' })).toBe('mac_web');
+  });
+  it('prdContent 无 → 回退 task.payload.target_environment', () => {
+    expect(extractTargetEnv({ task: { payload: { target_environment: 'windows_cloud' } } })).toBe('windows_cloud');
+  });
+  it('都无 → 默认 local_api', () => {
+    expect(extractTargetEnv({})).toBe('local_api');
+  });
+});
+
 describe('awaitCallbackNode (Layer 3 interrupt yield)', () => {
   it('idempotent: state.generator_output 已有 → 直接返回，不 interrupt', async () => {
     const delta = await awaitCallbackNode({
       generator_output: 'cached', containerId: 'c1',
     });
     expect(delta.generator_output).toBe('cached');
+  });
+
+  // Slice 4: host 同步路径失败时 spawnNode 已落 ci_status=fail（无 generator_output）。
+  // awaitCallback 必须 passthrough 这个失败信号，否则没有 generator_output 会 interrupt 死等
+  // 一个永不到来的 docker callback。passthrough → routeAfterCallback 走 fix_dispatch 重试。
+  it('Slice4: state.ci_status=fail（host 同步失败）→ passthrough 返回 ci_status，不 interrupt', async () => {
+    const delta = await awaitCallbackNode({
+      ci_status: 'fail', ci_fail_type: 'container_exit',
+      failed_checks: ['host generator exit_code=1'], containerId: 'c1',
+    });
+    expect(delta.ci_status).toBe('fail');
+    expect(delta.ci_fail_type).toBe('container_exit');
+    expect(delta.failed_checks).toEqual(['host generator exit_code=1']);
+    expect(delta.generator_output).toBeUndefined();
   });
 });
 
@@ -558,6 +642,50 @@ describe('mergePrNode', () => {
     );
     expect(delta.status).toBe('merged');
     expect(mockCleanupWorktree).not.toHaveBeenCalled();
+  });
+
+});
+
+describe('reviewGateNode', () => {
+  it('review_required=true → interrupt 被调用，approved=true → 继续（返回 {}）', async () => {
+    const mockInterrupt = vi.fn().mockReturnValue({ approved: true });
+    const delta = await reviewGateNode(
+      { pr_url: 'https://x/pull/42', task: { payload: { review_required: true } } },
+      { interrupt: mockInterrupt }
+    );
+    expect(mockInterrupt).toHaveBeenCalledOnce();
+    expect(mockInterrupt).toHaveBeenCalledWith(expect.objectContaining({ type: 'await_human_review' }));
+    expect(delta).toEqual({});
+  });
+
+  it('review_required=true → interrupt 返回 approved=false → status=failed', async () => {
+    const mockInterrupt = vi.fn().mockReturnValue({ approved: false });
+    const delta = await reviewGateNode(
+      { pr_url: 'https://x/pull/42', task: { payload: { review_required: true } } },
+      { interrupt: mockInterrupt }
+    );
+    expect(mockInterrupt).toHaveBeenCalledOnce();
+    expect(delta.status).toBe('failed');
+    expect(delta.error.node).toBe('review_gate');
+    expect(delta.error.message).toMatch(/not approved/);
+  });
+
+  it('review_required=false（默认）→ interrupt 不调用，返回 {}', async () => {
+    const mockInterrupt = vi.fn();
+    const delta = await reviewGateNode(
+      { pr_url: 'https://x/pull/42', task: { payload: { review_required: false } } },
+      { interrupt: mockInterrupt }
+    );
+    expect(mockInterrupt).not.toHaveBeenCalled();
+    expect(delta).toEqual({});
+  });
+
+  it('routeAfterReviewGate: status=failed → end', () => {
+    expect(routeAfterReviewGate({ status: 'failed' })).toBe('end');
+  });
+
+  it('routeAfterReviewGate: status 正常 → merge', () => {
+    expect(routeAfterReviewGate({})).toBe('merge');
   });
 });
 

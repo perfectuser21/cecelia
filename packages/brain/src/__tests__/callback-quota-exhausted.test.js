@@ -51,7 +51,8 @@ vi.mock('../quarantine.js', () => ({
 vi.mock('../actions.js', () => ({ createTask: vi.fn(), updateTask: vi.fn(), createGoal: vi.fn(), updateGoal: vi.fn(), triggerN8n: vi.fn(), setMemory: vi.fn(), batchUpdateTasks: vi.fn() }));
 vi.mock('../focus.js', () => ({ getDailyFocus: vi.fn(), setDailyFocus: vi.fn(), clearDailyFocus: vi.fn(), getFocusSummary: vi.fn() }));
 vi.mock('../tick.js', () => ({ getTickStatus: vi.fn(), enableTick: vi.fn(), disableTick: vi.fn(), executeTick: vi.fn(), runTickSafe: vi.fn(async () => ({ actions_taken: [] })), routeTask: vi.fn(), TASK_TYPE_AGENT_MAP: {} }));
-vi.mock('../task-router.js', () => ({ identifyWorkType: vi.fn(), getTaskLocation: vi.fn(), routeTaskCreate: vi.fn(), getValidTaskTypes: vi.fn(), LOCATION_MAP: {} }));
+vi.mock('../task-router.js', () => ({
+  getInternalTaskHandler: vi.fn(() => null), identifyWorkType: vi.fn(), getTaskLocation: vi.fn(), routeTaskCreate: vi.fn(), getValidTaskTypes: vi.fn(), LOCATION_MAP: {} }));
 vi.mock('../okr-tick.js', () => ({ executeOkrTick: vi.fn(), runOkrTickSafe: vi.fn(), startOkrTickLoop: vi.fn(), stopOkrTickLoop: vi.fn(), getOkrTickStatus: vi.fn(), addQuestionToGoal: vi.fn(), answerQuestionForGoal: vi.fn(), getPendingQuestions: vi.fn(), OKR_STATUS: {} }));
 vi.mock('../nightly-tick.js', () => ({ executeNightlyAlignment: vi.fn(), runNightlyAlignmentSafe: vi.fn(), startNightlyScheduler: vi.fn(), stopNightlyScheduler: vi.fn(), getNightlyTickStatus: vi.fn(), getDailyReports: vi.fn() }));
 vi.mock('../intent.js', () => ({ parseIntent: vi.fn(), parseAndCreate: vi.fn(), INTENT_TYPES: {}, INTENT_ACTION_MAP: {}, extractEntities: vi.fn(), classifyIntent: vi.fn(), getSuggestedAction: vi.fn() }));

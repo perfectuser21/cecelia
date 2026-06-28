@@ -107,6 +107,7 @@ vi.mock('../memory.js', () => ({
 }));
 
 vi.mock('../task-router.js', () => ({
+  getInternalTaskHandler: vi.fn(() => null),
   getTaskLocation: vi.fn(() => ({ location: 'us' })),
   LOCATION_MAP: {},
 }));

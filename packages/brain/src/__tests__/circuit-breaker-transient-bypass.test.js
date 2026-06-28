@@ -63,6 +63,7 @@ vi.mock('../tick.js', () => ({
   TASK_TYPE_AGENT_MAP: {},
 }));
 vi.mock('../task-router.js', () => ({
+  getInternalTaskHandler: vi.fn(() => null),
   identifyWorkType: vi.fn(),
   getTaskLocation: vi.fn(),
   routeTaskCreate: vi.fn(),

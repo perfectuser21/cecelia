@@ -44,7 +44,6 @@ export default defineConfig({
       'src/__tests__/desire-feedback.test.js',
       'src/__tests__/desire-suggestions.test.js',
       'src/__tests__/emotion-layer.test.js',
-      'src/__tests__/evolution-scanner.test.js',
       'src/__tests__/evolution-synthesizer.test.js',
       'src/__tests__/execution-strategy-session-kr-link.test.js',
       'src/__tests__/executor-retry-strategy.test.js',

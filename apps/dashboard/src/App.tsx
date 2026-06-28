@@ -314,6 +314,13 @@ function AppContent() {
           <CeceliaChat />
         </Suspense>
       )}
+
+      <div
+        data-testid="harness-status-banner"
+        className="fixed bottom-2 right-2 text-xs text-slate-400/60 dark:text-slate-500/50 pointer-events-none select-none z-50"
+      >
+        Cecelia Harness 工厂线已贯通
+      </div>
     </div>
     </CeceliaProvider>
   );
