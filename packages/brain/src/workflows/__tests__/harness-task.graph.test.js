@@ -103,6 +103,8 @@ import {
   verifyGeneratorNode,
   pollCiNode,
   mergePrNode,
+  reviewGateNode,
+  routeAfterReviewGate,
   fixDispatchNode,
   TaskState,
   MAX_FIX_ROUNDS,
@@ -640,6 +642,50 @@ describe('mergePrNode', () => {
     );
     expect(delta.status).toBe('merged');
     expect(mockCleanupWorktree).not.toHaveBeenCalled();
+  });
+
+});
+
+describe('reviewGateNode', () => {
+  it('review_required=true → interrupt 被调用，approved=true → 继续（返回 {}）', async () => {
+    const mockInterrupt = vi.fn().mockReturnValue({ approved: true });
+    const delta = await reviewGateNode(
+      { pr_url: 'https://x/pull/42', task: { payload: { review_required: true } } },
+      { interrupt: mockInterrupt }
+    );
+    expect(mockInterrupt).toHaveBeenCalledOnce();
+    expect(mockInterrupt).toHaveBeenCalledWith(expect.objectContaining({ type: 'await_human_review' }));
+    expect(delta).toEqual({});
+  });
+
+  it('review_required=true → interrupt 返回 approved=false → status=failed', async () => {
+    const mockInterrupt = vi.fn().mockReturnValue({ approved: false });
+    const delta = await reviewGateNode(
+      { pr_url: 'https://x/pull/42', task: { payload: { review_required: true } } },
+      { interrupt: mockInterrupt }
+    );
+    expect(mockInterrupt).toHaveBeenCalledOnce();
+    expect(delta.status).toBe('failed');
+    expect(delta.error.node).toBe('review_gate');
+    expect(delta.error.message).toMatch(/not approved/);
+  });
+
+  it('review_required=false（默认）→ interrupt 不调用，返回 {}', async () => {
+    const mockInterrupt = vi.fn();
+    const delta = await reviewGateNode(
+      { pr_url: 'https://x/pull/42', task: { payload: { review_required: false } } },
+      { interrupt: mockInterrupt }
+    );
+    expect(mockInterrupt).not.toHaveBeenCalled();
+    expect(delta).toEqual({});
+  });
+
+  it('routeAfterReviewGate: status=failed → end', () => {
+    expect(routeAfterReviewGate({ status: 'failed' })).toBe('end');
+  });
+
+  it('routeAfterReviewGate: status 正常 → merge', () => {
+    expect(routeAfterReviewGate({})).toBe('merge');
   });
 });
 

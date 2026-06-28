@@ -171,6 +171,7 @@ export const TaskState = Annotation.Root({
   // null = 普通实现缺陷 → 维持 generator fix loop。
   failure_class:    Annotation({ reducer: (_o, n) => n, default: () => null }),
   prdContent:       Annotation({ reducer: (_o, n) => n, default: () => null }),
+  review_required:  Annotation({ reducer: (_o, n) => n, default: () => false }),
 });
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -753,11 +754,7 @@ export async function mergePrNode(state, opts = {}) {
   }
 
   try {
-    const { stdout } = await execFn(
-      'gh',
-      ['pr', 'merge', prUrl, '--squash', '--delete-branch'],
-      { timeout: 30_000 }
-    );
+    const { stdout } = await execFn('gh', ['pr', 'merge', prUrl, '--squash', '--delete-branch'], { timeout: 30_000 });
     const tail = (stdout || '').trim().slice(0, 200);
     console.log(`[merge_pr] gh pr merge ok pr=${prUrl}: ${tail}`);
     if (state.worktreePath) {
@@ -829,6 +826,27 @@ export function routeAfterMergePr(state) {
   if (state.error) return 'end';
   if (state.ci_status === 'pending') return 'poll';
   return 'end';
+}
+
+/**
+ * reviewGateNode — evaluator PASS 后，新功能/UI 变更 review_required=true 时 interrupt() 等人工确认。
+ * 架构约束：merge 节点（mergePrNode）必须同步返回，interrupt 收归本节点。
+ */
+export async function reviewGateNode(state, opts = {}) {
+  const needsReview = state.task?.payload?.review_required === true;
+  if (!needsReview) return {};
+  const prUrl = state?.pr_url;
+  const interruptFn = opts.interrupt || interrupt;
+  const rv = interruptFn({ type: 'await_human_review', pr_url: prUrl, message: `evaluator PASS — PR ${prUrl} 需人工确认后 merge` });
+  if (!rv || rv.approved !== true) {
+    return { status: 'failed', error: { node: 'review_gate', message: 'human review not approved' } };
+  }
+  return {};
+}
+
+export function routeAfterReviewGate(state) {
+  if (state.status === 'failed') return 'end';
+  return 'merge';
 }
 
 export async function fixDispatchNode(state, opts = {}) {
@@ -1565,6 +1583,7 @@ export function buildHarnessTaskGraph() {
     .addNode('verify_generator', verifyGeneratorNode, { retryPolicy: LLM_RETRY })
     .addNode('poll_ci', pollCiNode)
     .addNode('evaluate_contract', evaluateContractNode)
+    .addNode('review_gate', reviewGateNode)
     .addNode('merge_pr', mergePrNode)
     .addNode('fix_dispatch', fixDispatchNode)
     .addEdge(START, 'spawn')
@@ -1581,11 +1600,12 @@ export function buildHarnessTaskGraph() {
     })
     .addEdge('verify_generator', 'poll_ci')
     .addConditionalEdges('poll_ci', routeAfterPoll, {
-      end: END, merge: 'merge_pr', evaluate: 'evaluate_contract', fix: 'fix_dispatch', timeout: END, poll: 'poll_ci',
+      end: END, merge: 'review_gate', evaluate: 'evaluate_contract', fix: 'fix_dispatch', timeout: END, poll: 'poll_ci',
     })
     // P1: end = Contract Gate 命中合同产物（failure_class=contract_invalid）→ 终止 initiative，
     // 不进 generator fix loop（generator 无权改合同，进 fix loop 必空转）。
-    .addConditionalEdges('evaluate_contract', routeAfterEvaluate, { merge: 'merge_pr', fix: 'fix_dispatch', end: END })
+    .addConditionalEdges('evaluate_contract', routeAfterEvaluate, { merge: 'review_gate', fix: 'fix_dispatch', end: END })
+    .addConditionalEdges('review_gate', routeAfterReviewGate, { end: END, merge: 'merge_pr' })
     .addConditionalEdges('merge_pr', routeAfterMergePr, { end: END, poll: 'poll_ci' })
     .addConditionalEdges('fix_dispatch', routeAfterFix, {
       end: END, failed: END, spawn: 'spawn',

@@ -119,6 +119,7 @@ export const InitiativeState = Annotation.Root({
   planner_session:   Annotation({ reducer: (_o, n) => n, default: () => null }),
   evaluator_session: Annotation({ reducer: (_o, n) => n, default: () => null }),
   planner_container_id: Annotation({ reducer: (_o, n) => n, default: () => null }),
+  review_required:      Annotation({ reducer: (_o, n) => n, default: () => false }),
 });
 
 // 节点 stub — Task 2-6 逐个填充。
@@ -474,7 +475,12 @@ export async function parsePrdNode(state) {
       console.error(`[harness-initiative-graph] readdir failed (${readdirErr.message}), falling back to planner stdout`);
     }
   }
-  return { taskPlan, prdContent, sprintDir };  // taskPlan may be null — that is OK
+  // 从 planner verdict JSON 提取 review_required（harness-planner v8.x+ 输出）
+  // fail-open：字段不存在 → false（老版本 planner 兼容）
+  const rvMatch = (state.plannerOutput || '').match(/"review_required"\s*:\s*(true|false)/);
+  const reviewRequired = rvMatch ? rvMatch[1] === 'true' : false;
+
+  return { taskPlan, prdContent, sprintDir, review_required: reviewRequired };  // taskPlan may be null — that is OK
 }
 export async function runGanLoopNode(state, opts = {}) {
   if (state.ganResult) return { ganResult: state.ganResult };
@@ -574,6 +580,15 @@ export async function dbUpsertNode(state, opts = {}) {
          SET payload = COALESCE(payload, '{}'::jsonb) || $2::jsonb
          WHERE id = ANY($1::uuid[])`,
         [insertedTaskIds, JSON.stringify({ sprint_dir: effectiveSprintDir })]
+      );
+    }
+    // 透传 review_required 到子任务 payload（merge_pr node 读取决定自动/人工 merge）
+    if (insertedTaskIds?.length > 0 && state.review_required) {
+      await client.query(
+        `UPDATE tasks
+         SET payload = COALESCE(payload, '{}'::jsonb) || $2::jsonb
+         WHERE id = ANY($1::uuid[])`,
+        [insertedTaskIds, JSON.stringify({ review_required: state.review_required })]
       );
     }
     // ON CONFLICT (B13): dbUpsertNode 是 graph 节点，restart resume 时 retry 必须幂等。
@@ -733,6 +748,7 @@ export const FullInitiativeState = Annotation.Root({
   evaluate_feedback:  Annotation({ reducer: (_o, n) => n, default: () => null }),
   final_e2e_fix_count: Annotation({ reducer: (_o, n) => n, default: () => 0 }),
   planner_container_id: Annotation({ reducer: (_o, n) => n, default: () => null }),
+  review_required:      Annotation({ reducer: (_o, n) => n, default: () => false }),
 });
 
 /**
