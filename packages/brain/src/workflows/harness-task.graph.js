@@ -171,6 +171,7 @@ export const TaskState = Annotation.Root({
   // null = 普通实现缺陷 → 维持 generator fix loop。
   failure_class:    Annotation({ reducer: (_o, n) => n, default: () => null }),
   prdContent:       Annotation({ reducer: (_o, n) => n, default: () => null }),
+  review_required:  Annotation({ reducer: (_o, n) => n, default: () => false }),
 });
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -750,6 +751,25 @@ export async function mergePrNode(state, opts = {}) {
   if (!prUrl) {
     // END 终态规则：merge_pr 所有 error 返回都经 routeAfterMergePr → END，必须带 status='failed'。
     return { status: 'failed', error: { node: 'merge_pr', message: 'no pr_url available' } };
+  }
+
+  // review_required 人工门：evaluator PASS 后，新功能/UI 变化需要人工确认才 merge。
+  // interrupt() 暂停 graph，等 Brain resume endpoint 收到 { approved: true } 才继续。
+  // fail-open：task.payload 读取失败 → false（不阻塞合并）。
+  const needsReview = state.task?.payload?.review_required === true;
+  if (needsReview) {
+    console.log(`[merge_pr] review_required=true，interrupt 等待人工确认 pr=${prUrl}`);
+    const interruptFn = opts.interrupt || interrupt;
+    const reviewPayload = interruptFn({
+      type: 'await_human_review',
+      pr_url: prUrl,
+      message: `evaluator PASS — PR ${prUrl} 需要人工确认后 merge`,
+    });
+    if (!reviewPayload || reviewPayload.approved !== true) {
+      console.warn(`[merge_pr] 人工 review 未批准（payload=${JSON.stringify(reviewPayload)}）→ 终止`);
+      return { status: 'failed', error: { node: 'merge_pr', message: 'human review not approved' } };
+    }
+    console.log(`[merge_pr] 人工 review 批准 → 继续 merge pr=${prUrl}`);
   }
 
   try {
