@@ -1,4 +1,4 @@
-# Sprint Contract Draft (Round 4)
+# Sprint Contract Draft (Round 5)
 
 ## Response Schema（推导来源: PRD字面 + NEW_PATTERN）
 
@@ -206,6 +206,79 @@ echo "✅ 端口 $PORT 已关闭，DB 记录已清除"
 ```
 
 **硬阈值**: DB count = 0，curl 连接超时/拒绝（exit code 非 0）
+
+---
+
+### Step 7: dist 目录不存在时优雅跳过（PRD 边界情况）
+
+**来源**: `[FROM_PRD]` — PRD 边界情况："Dashboard build 产物不存在（未构建）：跳过启动，写日志 `[review-env] Dashboard dist 目录不存在，跳过`"
+
+**可观测行为**: allocate 请求传入不存在的 dist_dir → 返回 `{ skipped: true, port: null, pid: null }`，不启动服务、不占用端口，HTTP 200（不报错）
+
+**验证命令**:
+```bash
+NO_DIST_TID=$(python3 -c "import uuid; print(uuid.uuid4())")
+RESP_NODIST=$(curl -sf -X POST localhost:5221/api/brain/harness/review-env/allocate \
+  -H "Content-Type: application/json" \
+  -d "{\"initiative_id\":\"$NO_DIST_TID\",\"dist_dir\":\"/nonexistent/path/dist-$(date +%s)\"}")
+echo "$RESP_NODIST" | jq -e '.skipped == true' || { echo "FAIL: dist不存在时skipped应为true"; exit 1; }
+echo "$RESP_NODIST" | jq -e '.port == null' || { echo "FAIL: dist不存在时port应为null"; exit 1; }
+echo "$RESP_NODIST" | jq -e '.pid == null' || { echo "FAIL: dist不存在时pid应为null"; exit 1; }
+```
+
+**硬阈值**: skipped = true，port = null，pid = null，HTTP 200
+
+---
+
+### Step 8: 同一 initiative 二次 PASS → 旧进程 kill + 重新分配（PRD 边界情况）
+
+**来源**: `[FROM_PRD]` — PRD 边界情况："同一 initiative 二次 PASS（fix 轮重测）：释放旧端口再重新分配，不累积孤立进程"；Risks 表 Risk 3 Mitigation："先调用 releaseReviewEnv 停止旧进程 + 删除旧记录，再重新分配新端口"
+
+**可观测行为**: 对同一 initiative_id 调用两次 allocate → 旧端口服务被终止（连接拒绝），新端口服务就绪（HTTP 200），DB 中该 initiative_id 仅存 1 条记录
+
+**验证命令**:
+
+gate-allow: weak-oracle/curl-no-jq 旧端口关闭负向测试——curl 成功反为 FAIL，无 JSON body 可 jq-e
+gate-allow: domain/db-no-time-window count=1 是唯一性断言（非存在性）；REALLOC_TID 为当场 UUID，无历史数据污染，时间窗无语义
+
+```bash
+DIST_DIR=$(mktemp -d); echo "<html/>" > "$DIST_DIR/index.html"
+REALLOC_TID=$(python3 -c "import uuid; print(uuid.uuid4())")
+# 第一次分配
+RESP1=$(curl -sf -X POST localhost:5221/api/brain/harness/review-env/allocate \
+  -H "Content-Type: application/json" \
+  -d "{\"initiative_id\":\"$REALLOC_TID\",\"dist_dir\":\"$DIST_DIR\"}")
+echo "$RESP1" | jq -e '.skipped == false' || { echo "FAIL: 第一次分配skipped应为false"; rm -rf "$DIST_DIR"; exit 1; }
+PORT1=$(echo "$RESP1" | jq -r '.port')
+sleep 1
+# 确认第一次服务就绪
+HTTP1=$(curl -s -o /dev/null -w "%{http_code}" "http://localhost:$PORT1/" 2>/dev/null || echo "000")
+[ "$HTTP1" = "200" ] || { echo "FAIL: 第一次分配后端口$PORT1未就绪"; rm -rf "$DIST_DIR"; exit 1; }
+# 第二次分配（同一 initiative_id）
+RESP2=$(curl -sf -X POST localhost:5221/api/brain/harness/review-env/allocate \
+  -H "Content-Type: application/json" \
+  -d "{\"initiative_id\":\"$REALLOC_TID\",\"dist_dir\":\"$DIST_DIR\"}")
+echo "$RESP2" | jq -e '.skipped == false' || { echo "FAIL: 二次分配skipped应为false"; rm -rf "$DIST_DIR"; exit 1; }
+PORT2=$(echo "$RESP2" | jq -r '.port')
+sleep 1
+# 旧端口应已关闭（旧进程被 kill）
+if curl -sf --connect-timeout 2 "http://localhost:$PORT1/" 2>/dev/null; then
+  echo "FAIL: 旧端口$PORT1在二次分配后仍在服务（旧进程未 kill）"; rm -rf "$DIST_DIR"; exit 1
+fi
+# 新端口应可访问
+HTTP2=$(curl -s -o /dev/null -w "%{http_code}" "http://localhost:$PORT2/" 2>/dev/null || echo "000")
+[ "$HTTP2" = "200" ] || { echo "FAIL: 新端口$PORT2未就绪 code=$HTTP2"; rm -rf "$DIST_DIR"; exit 1; }
+# DB 中该 initiative_id 应只有 1 条记录（旧记录已删除，新记录写入）
+DB_URL="${DATABASE_URL:-postgresql://localhost/cecelia}"
+DB_CNT=$(psql "$DB_URL" -t -c "SELECT count(*) FROM review_environments WHERE initiative_id='$REALLOC_TID'" | tr -d ' ')
+[ "$DB_CNT" = "1" ] || { echo "FAIL: DB应有1条记录实际=$DB_CNT（旧记录未删或写入失败）"; rm -rf "$DIST_DIR"; exit 1; }
+# 清理
+curl -sf -X POST localhost:5221/api/brain/harness/review-env/release \
+  -H "Content-Type: application/json" -d "{\"initiative_id\":\"$REALLOC_TID\"}" > /dev/null
+rm -rf "$DIST_DIR"
+```
+
+**硬阈值**: 旧端口 curl 拒绝连接，新端口 HTTP 200，DB count = 1（唯一性）
 
 ---
 

@@ -14,6 +14,8 @@
         "[BEHAVIOR] POST /api/brain/harness/review-env/release 返回 { released:true, initiative_id }，端口关闭，DB 记录删除",
         "[BEHAVIOR] GET /api/brain/harness/review-env/:id 返回 { allocated_at, initiative_id, pid, port }；未知 ID 404",
         "[BEHAVIOR] error path: 缺少 initiative_id → HTTP 400 + error 字段",
+        "[BEHAVIOR] dist_dir 不存在时 allocate 返回 { skipped:true, port:null, pid:null }（不影响主流程）",
+        "[BEHAVIOR] 同一 initiative_id 二次 allocate → 旧端口关闭（curl拒绝）+ 新端口HTTP200 + DB count=1",
         "[ARTIFACT] packages/brain/src/review-env-manager.js 导出 4 个函数",
         "[ARTIFACT] packages/brain/src/db/migrations/012-review-environments.sql 含 CREATE TABLE review_environments"
       ],

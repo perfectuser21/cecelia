@@ -230,11 +230,63 @@ journey_type: user_facing
     echo OK'
   期望: OK
 
+### 10. dist 目录不存在时 allocate 返回 skipped=true + port=null + pid=null
+
+- [ ] [BEHAVIOR] dist_dir 路径不存在时 allocate 返回 { skipped:true, port:null, pid:null }，HTTP 200
+  Test: manual:bash -c '
+    TID=$(python3 -c "import uuid; print(uuid.uuid4())")
+    RESP=$(curl -sf -X POST localhost:5221/api/brain/harness/review-env/allocate \
+      -H "Content-Type: application/json" \
+      -d "{\"initiative_id\":\"$TID\",\"dist_dir\":\"/nonexistent/path/dist-$$\"}")
+    echo "$RESP" | jq -e ".skipped == true" || { echo "FAIL: dist不存在时skipped应为true"; exit 1; }
+    echo "$RESP" | jq -e ".port == null" || { echo "FAIL: dist不存在时port应为null"; exit 1; }
+    echo "$RESP" | jq -e ".pid == null" || { echo "FAIL: dist不存在时pid应为null"; exit 1; }
+    echo OK'
+  期望: OK
+
+### 11. 同一 initiative 二次 allocate → 旧端口关闭 + 新端口可用 + DB count=1
+
+- [ ] [BEHAVIOR] 对同一 initiative_id 调用两次 allocate → 旧端口服务停止（curl拒绝），新端口HTTP200，DB count=1
+
+gate-allow: weak-oracle/curl-no-jq 旧端口关闭负向测试——curl成功反为FAIL；无JSON可jq-e
+gate-allow: domain/db-no-time-window count=1是唯一性断言；TID为当场UUID，无历史污染，时间窗无意义
+
+  Test: manual:bash -c '
+    DIST_DIR=$(mktemp -d); echo "<html/>" > "$DIST_DIR/index.html"
+    TID=$(python3 -c "import uuid; print(uuid.uuid4())")
+    RESP1=$(curl -sf -X POST localhost:5221/api/brain/harness/review-env/allocate \
+      -H "Content-Type: application/json" \
+      -d "{\"initiative_id\":\"$TID\",\"dist_dir\":\"$DIST_DIR\"}")
+    echo "$RESP1" | jq -e ".skipped == false" || { echo "FAIL: 第一次分配skipped应false"; rm -rf "$DIST_DIR"; exit 1; }
+    PORT1=$(echo "$RESP1" | jq -r ".port")
+    sleep 1
+    HTTP1=$(curl -s -o /dev/null -w "%{http_code}" "http://localhost:$PORT1/" 2>/dev/null || echo "000")
+    [ "$HTTP1" = "200" ] || { echo "FAIL: 第一次端口$PORT1未就绪"; rm -rf "$DIST_DIR"; exit 1; }
+    RESP2=$(curl -sf -X POST localhost:5221/api/brain/harness/review-env/allocate \
+      -H "Content-Type: application/json" \
+      -d "{\"initiative_id\":\"$TID\",\"dist_dir\":\"$DIST_DIR\"}")
+    echo "$RESP2" | jq -e ".skipped == false" || { echo "FAIL: 二次分配skipped应false"; rm -rf "$DIST_DIR"; exit 1; }
+    PORT2=$(echo "$RESP2" | jq -r ".port")
+    sleep 1
+    if curl -sf --connect-timeout 2 "http://localhost:$PORT1/" 2>/dev/null; then
+      echo "FAIL: 旧端口$PORT1在二次分配后仍在服务"; rm -rf "$DIST_DIR"; exit 1
+    fi
+    HTTP2=$(curl -s -o /dev/null -w "%{http_code}" "http://localhost:$PORT2/" 2>/dev/null || echo "000")
+    [ "$HTTP2" = "200" ] || { echo "FAIL: 新端口$PORT2未就绪 code=$HTTP2"; rm -rf "$DIST_DIR"; exit 1; }
+    DB_URL="${DATABASE_URL:-postgresql://localhost/cecelia}"
+    DB_CNT=$(psql "$DB_URL" -t -c "SELECT count(*) FROM review_environments WHERE initiative_id='"'"'$TID'"'"'" | tr -d " ")
+    [ "$DB_CNT" = "1" ] || { echo "FAIL: DB应有1条记录实际=$DB_CNT"; rm -rf "$DIST_DIR"; exit 1; }
+    curl -sf -X POST localhost:5221/api/brain/harness/review-env/release \
+      -H "Content-Type: application/json" -d "{\"initiative_id\":\"$TID\"}" > /dev/null
+    rm -rf "$DIST_DIR"
+    echo OK'
+  期望: OK
+
 ---
 
 ## BEHAVIOR 自查 Checklist
 
-- [x] ≥ 4 条 [BEHAVIOR]（实际 9 条，覆盖：schema字段 / keys完整性 / 禁用字段反向 / error path / 功能行为 / DB时效 / 接缝验证）
+- [x] ≥ 4 条 [BEHAVIOR]（实际 11 条，覆盖：schema字段 / keys完整性 / 禁用字段反向 / error path / 功能行为 / DB时效 / 接缝验证 / dist不存在边界 / 二次allocate唯一性）
 - [x] 每条 BEHAVIOR 命令：若对应代码一行没写，会 FAIL 吗？→ 全部会（API 端点不存在 → curl -sf 非 0 退出）
 - [x] PRD Response Schema 字段 codify 到 jq -e 命令（initiative_id/port/pid/skipped/released/allocated_at 均有对应断言）
 - [x] 禁用字段（listen_port/server_port/process_id/freed/created_at 等）有 ! has() 反向检查
