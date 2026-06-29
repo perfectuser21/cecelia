@@ -15,6 +15,11 @@ const mockQuery = vi.hoisted(() => vi.fn());
 
 // ── 顶层 mock：所有 capability-probe.js 依赖 ────────────────
 
+// mock evolution-scanner 防止 probeEvolution self-heal 真实调用 GitHub API
+vi.mock('../evolution-scanner.js', () => ({
+  scanEvolutionIfNeeded: vi.fn().mockResolvedValue({ ok: true, inserted: 0, checked: 0, skipped: 0 }),
+  synthesizeEvolutionIfNeeded: vi.fn(),
+}));
 vi.mock('../db.js', () => ({ default: { query: mockQuery } }));
 vi.mock('../auto-fix.js', () => ({ shouldAutoFix: vi.fn(() => false), dispatchToDevSkill: vi.fn() }));
 vi.mock('../executor.js', () => ({ getActiveProcessCount: vi.fn(() => 0), MAX_SEATS: 10 }));
@@ -198,6 +203,54 @@ describe('probeEvolution — 无记录且扫描器真实故障', () => {
 });
 
 // ══════════════════════════════════════════════════════════
+// 路径 4：scanner_stale 自愈（fire-and-forget 触发扫描）
+// ══════════════════════════════════════════════════════════
+
+describe('probeEvolution — scanner_stale 自愈', () => {
+  it('scanner_stale 时 detail 包含 self_heal 标记（代码路径验证）', async () => {
+    const threeDaysAgo = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+    const pool = makeEvolutionPool({
+      cnt: 0,
+      workingMemory: { date: threeDaysAgo, inserted: 0, skipped: 0, checked: 0 },
+    });
+    const result = await runEvolutionProbe(pool);
+    expect(result.ok).toBe(false);
+    expect(result.detail).toContain('scanner_stale');
+    expect(result.detail).toContain('self_heal=direct_scan(bg)');
+  });
+
+  it('scanner_stale 自愈 detail 包含 daysSinceScan 标记（11 天前）', async () => {
+    const elevenDaysAgo = new Date(Date.now() - 11 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+    const pool = makeEvolutionPool({
+      cnt: 0,
+      workingMemory: { date: elevenDaysAgo, inserted: 0, skipped: 0, checked: 0 },
+    });
+    const result = await runEvolutionProbe(pool);
+    expect(result.detail).toContain('11d_ago');
+    expect(result.detail).toContain('self_heal=direct_scan(bg)');
+  });
+
+  it('scan=never 路径不包含 self_heal 标记（不同故障路径）', async () => {
+    const pool = makeEvolutionPool({ cnt: 0, workingMemory: undefined });
+    const result = await runEvolutionProbe(pool);
+    // scan=never 直接返回，不进入 stale 分支，无 self_heal
+    expect(result.detail).toContain('scan=never');
+    expect(result.detail).not.toContain('self_heal');
+  });
+
+  it('scan_error 路径不包含 self_heal 标记（错误路径不触发额外扫描）', async () => {
+    const today = new Date().toISOString().slice(0, 10);
+    const pool = makeEvolutionPool({
+      cnt: 0,
+      workingMemory: { date: today, error: 'GitHub API 403', inserted: 0 },
+    });
+    const result = await runEvolutionProbe(pool);
+    expect(result.detail).toContain('scan_error');
+    expect(result.detail).not.toContain('self_heal');
+  });
+});
+
+// ══════════════════════════════════════════════════════════
 // 静态代码约束验证
 // ══════════════════════════════════════════════════════════
 
@@ -230,5 +283,11 @@ describe('probeEvolution — 静态代码约束', () => {
 
   it('从 working_memory 读取 evolution_last_scan_date', () => {
     expect(evFn).toContain('evolution_last_scan_date');
+  });
+
+  it('scanner_stale 分支有 self_heal 触发逻辑（evolution-scanner 动态 import）', () => {
+    expect(evFn).toContain('evolution-scanner');
+    expect(evFn).toContain('scanEvolutionIfNeeded');
+    expect(evFn).toContain('self_heal=direct_scan(bg)');
   });
 });

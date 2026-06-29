@@ -484,10 +484,17 @@ async function probeEvolution() {
         detail: `7d_pr_evolutions=0 last_date=never last_scan=${sd.date} checked=${sd.checked ?? 0} (idle: no_merged_prs_in_window)`,
       };
     }
-    // 扫描器超过 2 天未运行（consciousness 禁用或 tick 停止）
+    // 扫描器超过 2 天未运行（consciousness 禁用或 tick 停止）—— 自愈：fire-and-forget 直接触发一次扫描
+    import('./evolution-scanner.js').then(({ scanEvolutionIfNeeded }) => scanEvolutionIfNeeded(pool))
+      .then(r => {
+        console.log(`[Probe] evolution scanner_stale self-heal: scan completed inserted=${r?.inserted ?? 0} checked=${r?.checked ?? 0}`);
+      })
+      .catch(e => {
+        console.warn('[Probe] evolution scanner_stale self-heal failed:', e.message);
+      });
     return {
       ok: false,
-      detail: `7d_pr_evolutions=0 last_date=${lastDate || 'never'} last_scan=${sd.date}(${daysSinceScan}d_ago) (scanner_stale)`,
+      detail: `7d_pr_evolutions=0 last_date=${lastDate || 'never'} last_scan=${sd.date}(${daysSinceScan}d_ago) (scanner_stale) self_heal=direct_scan(bg)`,
     };
   } catch { /* non-fatal */ }
 
