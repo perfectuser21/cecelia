@@ -299,6 +299,16 @@ export async function shepherdOpenPRs(pool) {
   }
 
   console.log(`[shepherd] 完成: processed=${result.processed} merged=${result.merged} failed=${result.failed} pending=${result.pending} errors=${result.errors}`);
+
+  // best-effort 清理已完成/失败 initiative 的 review 环境
+  try {
+    const { cleanupHarnessReviewEnvs } = await import('./review-env-manager.js');
+    const cleaned = await cleanupHarnessReviewEnvs(pool);
+    if (cleaned > 0) console.log(`[shepherd] review-env cleanup: ${cleaned} 个环境已释放`);
+  } catch (cleanupErr) {
+    console.warn(`[shepherd] cleanupHarnessReviewEnvs failed (non-fatal): ${cleanupErr.message}`);
+  }
+
   return result;
 }
 

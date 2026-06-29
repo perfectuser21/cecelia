@@ -1803,4 +1803,74 @@ router.post('/promote/:resultId', async (req, res) => {
   }
 });
 
+// ─── Review Environment API ───────────────────────────────────────────────────
+
+/**
+ * POST /api/brain/harness/review-env/allocate
+ * Allocate a localhost port (5300-5399) and start a Dashboard static server.
+ */
+router.post('/review-env/allocate', async (req, res) => {
+  const { initiative_id, dist_dir } = req.body ?? {};
+  if (!initiative_id) {
+    return res.status(400).json({ error: 'initiative_id is required' });
+  }
+  try {
+    const { allocateReviewEnv } = await import('../review-env-manager.js');
+    const opts = dist_dir ? { distDir: dist_dir } : {};
+    const result = await allocateReviewEnv(initiative_id, pool, opts);
+    return res.json(result);
+  } catch (err) {
+    console.error('[POST /harness/review-env/allocate]', err.message);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * POST /api/brain/harness/review-env/release
+ * Stop the static server and free the port for an initiative.
+ */
+router.post('/review-env/release', async (req, res) => {
+  const { initiative_id } = req.body ?? {};
+  if (!initiative_id) {
+    return res.status(400).json({ error: 'initiative_id is required' });
+  }
+  try {
+    const { releaseReviewEnv } = await import('../review-env-manager.js');
+    const result = await releaseReviewEnv(initiative_id, pool);
+    return res.json(result);
+  } catch (err) {
+    console.error('[POST /harness/review-env/release]', err.message);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * GET /api/brain/harness/review-env/:initiative_id
+ * Return the currently allocated review environment for an initiative.
+ */
+router.get('/review-env/:initiative_id', async (req, res) => {
+  const { initiative_id } = req.params;
+  try {
+    const { rows } = await pool.query(
+      `SELECT initiative_id, port, pid, allocated_at
+       FROM review_environments
+       WHERE initiative_id = $1`,
+      [initiative_id]
+    );
+    if (rows.length === 0) {
+      return res.status(404).json({ error: 'review environment not found' });
+    }
+    const row = rows[0];
+    return res.json({
+      allocated_at: row.allocated_at,
+      initiative_id: row.initiative_id,
+      pid: row.pid,
+      port: row.port,
+    });
+  } catch (err) {
+    console.error('[GET /harness/review-env/:initiative_id]', err.message);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
 export default router;

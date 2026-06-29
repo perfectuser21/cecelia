@@ -762,6 +762,17 @@ export async function mergePrNode(state, opts = {}) {
     }
     // Slice1 修正：merge 成功 → best-effort 建 staging_e2e 任务（return 前最后一步，永不 throw）
     await _spawnStagingE2eTask(state, opts);
+    // best-effort 分配 review 环境（evaluator PASS 后验收者可浏览）
+    try {
+      const initiativeId = state.task?.payload?.initiative_id ?? state.initiative_id;
+      if (initiativeId) {
+        const { allocateReviewEnv } = await import('../review-env-manager.js');
+        const pool = (await import('../db.js')).default;
+        await allocateReviewEnv(initiativeId, pool);
+      }
+    } catch (reviewEnvErr) {
+      console.warn(`[merge_pr] allocateReviewEnv best-effort failed (ignored): ${reviewEnvErr.message}`);
+    }
     return {
       status: 'merged',
       ci_status: 'merged',
