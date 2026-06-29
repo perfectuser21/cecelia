@@ -66,7 +66,7 @@ describe('spawnNode — accountId 写进 state（轮换闭环前提）', () => {
       opts.env.CECELIA_MODEL = 'claude-sonnet-4-6';
     });
     const delta = await spawnNode({
-      task: { id: 'ws1', title: 'T', payload: { parent_task_id: 'init-1' } },
+      task: { id: 'ws1', title: 'T', payload: { parent_task_id: 'init-1', sprint_dir: 'sprints/auth-test' } },
       initiativeId: 'init-1',
     });
     expect(delta.error).toBeUndefined();

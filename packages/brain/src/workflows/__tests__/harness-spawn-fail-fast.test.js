@@ -28,7 +28,7 @@ describe('routeAfterSpawn — spawn 失败结构性 fail-fast', () => {
 });
 
 describe('spawnNode catch 块带 containerId（Fix #6）', () => {
-  const baseTask = { id: 'ws1', payload: {}, task_type: 'harness_task' };
+  const baseTask = { id: 'ws1', payload: { sprint_dir: 'sprints/test-spawn-fail-fast' }, task_type: 'harness_task' };
 
   it('spawn 抛错 → 返回 error.node==spawn 且带 harness-task- 前缀 containerId', async () => {
     const result = await spawnNode(

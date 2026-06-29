@@ -307,6 +307,23 @@ export const EvaluatorOutputSchema = z.object({
 );
 
 /**
+ * 校验 sprint_dir 合法性（输入层防御）。
+ * 裸 'sprints'（root fallback）或缺值 → throw，防止 LLM 读到 root-level 陈旧文件。
+ * 合法路径示例：'sprints/06291104-feature-slug'（含子路径分隔符即合法）。
+ */
+export function assertSprintDir(sprintDir, context = '') {
+  if (!sprintDir || sprintDir === 'sprints') {
+    const err = new Error(
+      `ConfigViolation: invalid_sprint_dir — sprint_dir="${sprintDir}" in ${context}. ` +
+      `Must be a specific sprint path like "sprints/MMDDHHNN-feature-slug", not the root "sprints/" directory.`
+    );
+    err.code = 'invalid_sprint_dir';
+    throw err;
+  }
+  return sprintDir;
+}
+
+/**
  * readBrainResult + Zod schema 深度验证。
  * 失败时 throw Error with code='schema_mismatch'。
  */
