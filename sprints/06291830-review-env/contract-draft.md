@@ -1,4 +1,4 @@
-# Sprint Contract Draft (Round 2)
+# Sprint Contract Draft (Round 3)
 
 ## Response Schema（推导来源: PRD字面 + NEW_PATTERN）
 
@@ -130,13 +130,16 @@ PORT_DB=$(psql $DATABASE_URL -t -c "SELECT port FROM review_environments WHERE i
 **可观测行为**: `http://localhost:<port>/` 返回 HTTP 200 且响应体含 HTML；Content-Type 含 `text/html`
 
 **验证命令**:
+
+gate-allow: weak-oracle/curl-no-jq 静态服务返回 HTML 非 JSON，grep 替代 jq-e；状态码用 -w "%{http_code}" oracle 模式
+
 ```bash
 PORT=$(echo "$RESP" | jq -r '.port')
 sleep 1  # 等服务就绪
-HTML=$(curl -sf "http://localhost:$PORT/" || { echo "FAIL: 端口 $PORT 无法访问"; exit 1; })
-echo "$HTML" | grep -qi '<html' || { echo "FAIL: 响应不含 HTML 标签"; exit 1; }
 HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" "http://localhost:$PORT/")
-[ "$HTTP_CODE" = "200" ] || { echo "FAIL: HTTP 状态码 $HTTP_CODE 非 200"; exit 1; }
+[ "$HTTP_CODE" = "200" ] || { echo "FAIL: HTTP 状态码 $HTTP_CODE 非 200，静态服务未就绪"; exit 1; }
+HTML=$(curl -sf "http://localhost:$PORT/")
+echo "$HTML" | grep -qi '<html' || { echo "FAIL: 响应不含 HTML 标签"; exit 1; }
 ```
 
 **硬阈值**: HTTP 200，响应含 `<html`，首次响应 < 3s
@@ -189,6 +192,9 @@ echo "$REL_RESP" | jq -e 'keys == ["initiative_id","released"]' || { echo "FAIL:
 **可观测行为**: 静态服务进程已停止（curl 返回 ECONNREFUSED）；DB `review_environments` 记录已删除
 
 **验证命令**:
+
+gate-allow: weak-oracle/curl-no-jq 负向测试——期望端口拒绝连接，curl 成功反为 FAIL；无 JSON body 可 jq-e 断言
+
 ```bash
 PORT_RELEASED=$(psql $DATABASE_URL -t -c "SELECT port FROM review_environments WHERE initiative_id='$TEST_INITIATIVE_ID'" | tr -d ' ')
 [ -z "$PORT_RELEASED" ] || { echo "FAIL: DB 记录未删除 port=$PORT_RELEASED"; exit 1; }
@@ -214,6 +220,8 @@ echo "✅ 端口 $PORT 已关闭，DB 记录已清除"
 ### Scenario 1: allocate-review-env-and-serve-html
 <!-- GOLDEN_SMOKE_SCENARIO: allocate-review-env-and-serve-html -->
 <!-- GOLDEN_SMOKE_TIMEOUT_MS: 30000 -->
+
+gate-allow: weak-oracle/curl-no-jq HTML 静态文件内容验证用 grep（非 JSON，无 jq-e 字段）；状态码等待循环用 -w "%{http_code}" oracle 模式
 
 ```bash
 #!/bin/bash
@@ -242,10 +250,11 @@ done
 # STEP: 验证 HTML 响应
 HTML=$(curl -sf "http://localhost:$PORT/")
 echo "$HTML" | grep -qi 'Dashboard Review Test' || { echo "FAIL: HTML 内容不符"; rm -rf "$DIST_DIR"; exit 1; }
-# 清理
-curl -sf -X POST "$BRAIN_URL/api/brain/harness/review-env/release" \
+# 清理（同时验证 release 响应）
+REL=$(curl -sf -X POST "$BRAIN_URL/api/brain/harness/review-env/release" \
   -H "Content-Type: application/json" \
-  -d "{\"initiative_id\":\"$TEST_ID\"}" > /dev/null
+  -d "{\"initiative_id\":\"$TEST_ID\"}")
+echo "$REL" | jq -e '.released == true' || { echo "FAIL: cleanup release 返回非 true"; rm -rf "$DIST_DIR"; exit 1; }
 rm -rf "$DIST_DIR"
 echo "✅ Scenario 1 通过"
 ```
@@ -253,6 +262,8 @@ echo "✅ Scenario 1 通过"
 ### Scenario 2: release-review-env-stops-service
 <!-- GOLDEN_SMOKE_SCENARIO: release-review-env-stops-service -->
 <!-- GOLDEN_SMOKE_TIMEOUT_MS: 30000 -->
+
+gate-allow: weak-oracle/curl-no-jq HTML 内容用 grep 验证（非 JSON）；端口关闭负向测试 if-then-exit 模式——curl 成功反为 FAIL，无 JSON body 可 jq-e
 
 ```bash
 #!/bin/bash
@@ -265,9 +276,12 @@ TEST_ID=$(python3 -c "import uuid; print(uuid.uuid4())")
 ALLOC=$(curl -sf -X POST "$BRAIN_URL/api/brain/harness/review-env/allocate" \
   -H "Content-Type: application/json" \
   -d "{\"initiative_id\":\"$TEST_ID\",\"dist_dir\":\"$DIST_DIR\"}")
+echo "$ALLOC" | jq -e '.skipped == false' || { echo "FAIL: alloc skipped=true"; rm -rf "$DIST_DIR"; exit 1; }
+echo "$ALLOC" | jq -e '.port >= 5300 and .port <= 5399' || { echo "FAIL: alloc port 越界"; rm -rf "$DIST_DIR"; exit 1; }
 PORT=$(echo "$ALLOC" | jq -r '.port')
 sleep 1
-curl -sf "http://localhost:$PORT/" > /dev/null || { echo "FAIL: 服务启动后端口无法访问"; rm -rf "$DIST_DIR"; exit 1; }
+HTML=$(curl -sf "http://localhost:$PORT/" || { echo "FAIL: 服务启动后端口无法访问"; rm -rf "$DIST_DIR"; exit 1; })
+echo "$HTML" | grep -qi 'Release Test' || { echo "FAIL: HTML 内容不符（期望 'Release Test'）"; rm -rf "$DIST_DIR"; exit 1; }
 # STEP: 调用 release
 REL=$(curl -sf -X POST "$BRAIN_URL/api/brain/harness/review-env/release" \
   -H "Content-Type: application/json" \
@@ -332,9 +346,10 @@ DIST_DIR=$(mktemp -d)
 echo '<html/>' > "$DIST_DIR/index.html"
 TEST_ID=$(python3 -c "import uuid; print(uuid.uuid4())")
 # STEP: allocate
-curl -sf -X POST "$BRAIN_URL/api/brain/harness/review-env/allocate" \
+ALLOC_PRE=$(curl -sf -X POST "$BRAIN_URL/api/brain/harness/review-env/allocate" \
   -H "Content-Type: application/json" \
-  -d "{\"initiative_id\":\"$TEST_ID\",\"dist_dir\":\"$DIST_DIR\"}" > /dev/null
+  -d "{\"initiative_id\":\"$TEST_ID\",\"dist_dir\":\"$DIST_DIR\"}")
+echo "$ALLOC_PRE" | jq -e '.skipped == false' || { echo "FAIL: alloc skipped=true"; rm -rf "$DIST_DIR"; exit 1; }
 # STEP: GET schema 验证
 GET_RESP=$(curl -sf "$BRAIN_URL/api/brain/harness/review-env/$TEST_ID")
 echo "$GET_RESP" | jq -e '.port >= 5300 and .port <= 5399' || { echo "FAIL: GET port 无效"; exit 1; }
@@ -349,9 +364,10 @@ NONEXIST_ID=$(python3 -c "import uuid; print(uuid.uuid4())")
 HTTP_404=$(curl -s -o /dev/null -w "%{http_code}" "$BRAIN_URL/api/brain/harness/review-env/$NONEXIST_ID")
 [ "$HTTP_404" = "404" ] || { echo "FAIL: 不存在 initiative 应返 404，实际=$HTTP_404"; exit 1; }
 # 清理
-curl -sf -X POST "$BRAIN_URL/api/brain/harness/review-env/release" \
+REL_S4=$(curl -sf -X POST "$BRAIN_URL/api/brain/harness/review-env/release" \
   -H "Content-Type: application/json" \
-  -d "{\"initiative_id\":\"$TEST_ID\"}" > /dev/null
+  -d "{\"initiative_id\":\"$TEST_ID\"}")
+echo "$REL_S4" | jq -e '.released == true' || { echo "FAIL: cleanup release failed"; rm -rf "$DIST_DIR"; exit 1; }
 rm -rf "$DIST_DIR"
 echo "✅ Scenario 4 通过"
 ```
