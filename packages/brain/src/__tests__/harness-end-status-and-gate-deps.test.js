@@ -80,7 +80,7 @@ describe('问题1 · END 终态 — 节点级（每条 END 前写明确 status�
         initiativeId: 'init-1',
         worktreePath: '/tmp/wt',
         prdContent: '## target_environment: local_api',
-        task: { id: 'task-1', payload: { sprint_dir: 'sprints' } },
+        task: { id: 'task-1', payload: { sprint_dir: 'sprints/test-gate-deps' } },
       },
       {
         verifyArtifacts: async () => ({ ran: false }),

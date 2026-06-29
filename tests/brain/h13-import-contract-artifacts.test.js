@@ -7,7 +7,7 @@ import { spawnNode } from '../../packages/brain/src/workflows/harness-task.graph
 
 function makeBaseState(overrides = {}) {
   return {
-    task: { id: 'ws1', title: 'Sub task', payload: {} },
+    task: { id: 'ws1', title: 'Sub task', payload: { sprint_dir: 'sprints/h13-test' } },
     initiativeId: 'feddcf5e-init',
     githubToken: undefined,
     worktreePath: undefined,
