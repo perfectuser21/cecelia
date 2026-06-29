@@ -1,4 +1,4 @@
-# Sprint Contract Draft (Round 1)
+# Sprint Contract Draft (Round 2)
 
 ## Response Schema（推导来源: PRD字面 + NEW_PATTERN）
 
@@ -61,6 +61,16 @@
 | 1 | `http.createServer` 绑定端口 | 进程真实侦听指定端口 | curl 到 allocated port 返回 200 (E2E 可验) |
 | 2 | `process.kill(pid)` 终止进程 | 静态服务进程真正停止 | release 后 curl 连接被拒绝 (E2E 可验) |
 | 3 | Brain 重启清理孤立进程 | Brain 启动时读 DB pid 列表执行 kill | 需真实 Brain 重启验证 → **logic-done-pending**（E2E 不覆盖） |
+
+---
+
+## Risks
+
+| # | 风险 | 影响 | Mitigation |
+|---|---|---|---|
+| 1 | Brain 重启后孤立进程清理失败 | 已分配的静态服务进程在 Brain 重启后持续占用端口，端口池泄漏 | Brain 启动时从 `review_environments` 表读取 pid 列表，对每个 pid 尝试 `process.kill(pid, 0)` 探活后执行 `kill`；无论 kill 成功与否都清空 DB 记录。已标注 **logic-done-pending**（需真实 Brain 重启验证，E2E 不覆盖） |
+| 2 | 端口耗尽（5300-5399 全占满）时影响 evaluator PASS 主流程 | 100 个 initiative 同时处于 review 中后，新 PASS 的 initiative 无法分配端口，可能阻塞 evaluator 回调 | `allocateReviewEnv` 实现为 best-effort：端口耗尽时返回 `{ skipped: true, port: null, pid: null }` 并写日志 `[review-env] 端口耗尽（5300-5399 已满）`，**不抛异常、不影响 evaluator PASS 回调的主流程**。NFR 要求 10s 内完成，跳过路径无 IO 等待 |
+| 3 | 同一 initiative 二次 PASS（fix 轮重测）导致旧进程残留 | 旧静态服务进程持续占用旧端口；新分配端口不同，验收者收到两个不同端口链接，混淆 | `allocateReviewEnv` 在分配前先查询 `review_environments` 是否已存在该 `initiative_id`；若存在则先调用 `releaseReviewEnv` 停止旧进程 + 删除旧记录，再重新分配新端口。确保每个 initiative 同时最多一个 review 环境 |
 
 ---
 
