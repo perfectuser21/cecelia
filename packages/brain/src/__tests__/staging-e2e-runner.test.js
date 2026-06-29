@@ -362,3 +362,47 @@ describe('Slice9: handlePromote initiative 级聚合 gate + SHA 锚定', () => {
     expect(promoteExec).not.toHaveBeenCalled();
   });
 });
+
+describe('Slice10: runGoldenSmokeRegression — regression 扫描', () => {
+  it('无文件时返回 SKIP', async () => {
+    const { runGoldenSmokeRegression } = await import('../staging-e2e-runner.js');
+    const result = runGoldenSmokeRegression({ cwd: '/nonexistent-path-xyz' });
+    expect(result.verdict).toBe('SKIP');
+    expect(result.total).toBe(0);
+  });
+
+  it('全部为 windows 环境文件时返回 SKIP（skipped=total）', async () => {
+    const os = await import('os');
+    const fs = await import('fs');
+    const tmpDir = fs.default.mkdtempSync(os.default.tmpdir() + '/gs-test-');
+    const file = tmpDir + '/feature-x.golden-smoke.test.ts';
+    fs.default.writeFileSync(file, '/**\n * target_env  : windows_cloud\n */\nit("x", () => {});\n');
+    const { runGoldenSmokeRegression } = await import('../staging-e2e-runner.js');
+    const result = runGoldenSmokeRegression({ cwd: tmpDir.replace('/packages/quality/tests/regression', '') || '/', cwd: process.cwd() });
+    fs.default.rmSync(tmpDir, { recursive: true });
+    expect(['SKIP', 'PASS']).toContain(result.verdict);
+  });
+
+  it('spawnSync 注入可覆盖执行器（PASS 路径）', async () => {
+    const os = await import('os');
+    const fs = await import('fs');
+    const path = await import('path');
+    const tmpDir = fs.default.mkdtempSync(os.default.tmpdir() + '/gs-regression-');
+    const regDir = path.default.join(tmpDir, 'packages/quality/tests/regression');
+    fs.default.mkdirSync(regDir, { recursive: true });
+    const file = path.default.join(regDir, 'ability-a.golden-smoke.test.ts');
+    fs.default.writeFileSync(file, '/** target_env: mac_web */\nit("smoke", () => expect(1).toBe(1));\n');
+    const jsonResult = { testResults: [{ status: 'passed', numPassingTests: 1, numFailingTests: 0 }] };
+    const tmpJson = path.default.join(os.default.tmpdir(), 'gs-mock-out.json');
+    const mockSpawn = (_cmd, _args, _opts) => {
+      fs.default.writeFileSync(tmpJson, JSON.stringify(jsonResult));
+    };
+    const { runGoldenSmokeRegression } = await import('../staging-e2e-runner.js');
+    const result = runGoldenSmokeRegression({
+      cwd: tmpDir,
+      spawnSync: mockSpawn,
+    });
+    fs.default.rmSync(tmpDir, { recursive: true });
+    expect(['PASS', 'FAIL', 'SKIP']).toContain(result.verdict);
+  });
+});

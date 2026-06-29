@@ -16,7 +16,9 @@
  *   SKIP  — staging 是"加分项"：无 docker / 无 .env.staging / 无合同 时跳过（非失败）
  */
 
-import { execSync } from 'child_process';
+import { execSync, spawnSync } from 'child_process';
+import fs from 'fs';
+import os from 'os';
 import path from 'path';
 import pool from './db.js';
 import { updateTaskStatus } from './task-updater.js';
@@ -31,6 +33,7 @@ export const DASHBOARD_STAGING_PORT = 5223;
 export const ZJ_STAGING_PORT = 5201;
 const DEPLOY_TIMEOUT_MS = 10 * 60 * 1000;
 const SCENARIO_TIMEOUT_MS = 5 * 60 * 1000;
+const REGRESSION_TIMEOUT_MS = 5 * 60 * 1000;
 const OUTPUT_CAP_BYTES = 4000;
 
 function cap(s) {
@@ -447,6 +450,119 @@ export async function acquireStagingLock(dbPool, lockKey) {
   }
 }
 
+
+/**
+ * 读取 golden-smoke test 文件头部注释中的 target_env 字段。
+ * 格式：* target_env  : xxx
+ * @returns {string|null}
+ */
+function readTargetEnv(filePath) {
+  try {
+    const content = fs.readFileSync(filePath, 'utf8');
+    const match = content.match(/\*\s+target_env\s*:\s*(\S+)/);
+    return match ? match[1].trim() : null;
+  } catch {
+    return null;
+  }
+}
+
+const WINDOWS_ENVS = new Set(['windows_cloud', 'windows_wechat']);
+
+/**
+ * 全量 regression golden-smoke 扫描。
+ * 扫描 packages/quality/tests/regression/*.golden-smoke.test.ts，
+ * 过滤 windows 环境文件，用 spawnSync npx vitest run 执行，返回 verdict。
+ * @returns {{ verdict:'PASS'|'FAIL'|'SKIP', total:number, passed:number, failed:number, skipped:number, files:string[] }}
+ */
+export function runGoldenSmokeRegression(opts = {}) {
+  const repoRoot = opts.cwd || process.env.REPO_ROOT || getRepoRoot();
+  const regressionDir = path.join(repoRoot, 'packages/quality/tests/regression');
+
+  // 1. 扫描文件（Node 22 fs.globSync，或 readdirSync 兜底）
+  let allFiles = [];
+  try {
+    if (typeof fs.globSync === 'function') {
+      allFiles = fs.globSync(path.join(regressionDir, '*.golden-smoke.test.ts'));
+    } else {
+      const entries = fs.readdirSync(regressionDir);
+      allFiles = entries
+        .filter((f) => f.endsWith('.golden-smoke.test.ts'))
+        .map((f) => path.join(regressionDir, f));
+    }
+  } catch {
+    allFiles = [];
+  }
+
+  if (allFiles.length === 0) {
+    return { verdict: 'SKIP', total: 0, passed: 0, failed: 0, skipped: 0, files: [] };
+  }
+
+  // 2. 过滤 windows 环境文件（staging 跑在 linux 服务器，windows 路径不可运行）
+  const filteredFiles = allFiles.filter((f) => {
+    const env = readTargetEnv(f);
+    return !env || !WINDOWS_ENVS.has(env);
+  });
+
+  if (filteredFiles.length === 0) {
+    return {
+      verdict: 'SKIP',
+      total: allFiles.length,
+      passed: 0,
+      failed: 0,
+      skipped: allFiles.length,
+      files: [],
+    };
+  }
+
+  // 3. 执行：spawnSync npx vitest run --reporter=json
+  const tmpJsonPath = path.join(os.tmpdir(), `golden-smoke-${Date.now()}.json`);
+  const stagingPort = opts.stagingPort || STAGING_PORT;
+  const spawnFn = opts.spawnSync || spawnSync;
+  const env = {
+    ...process.env,
+    BRAIN_URL: `http://localhost:${stagingPort}`,
+  };
+
+  spawnFn(
+    'npx',
+    ['vitest', 'run', '--reporter=json', '--outputFile', tmpJsonPath, ...filteredFiles],
+    { cwd: repoRoot, timeout: REGRESSION_TIMEOUT_MS, env },
+  );
+
+  // 4. 解析结果
+  let total = filteredFiles.length;
+  let passed = 0;
+  let failed = 0;
+  let skipped = 0;
+
+  try {
+    if (fs.existsSync(tmpJsonPath)) {
+      const jsonOut = JSON.parse(fs.readFileSync(tmpJsonPath, 'utf8'));
+      passed = jsonOut.numPassedTests ?? 0;
+      failed = jsonOut.numFailedTests ?? 0;
+      skipped = jsonOut.numPendingTests ?? 0;
+      total = passed + failed + skipped;
+      try { fs.unlinkSync(tmpJsonPath); } catch { /* ignore */ }
+    } else {
+      // 无输出文件，视全部失败
+      failed = filteredFiles.length;
+      total = filteredFiles.length;
+    }
+  } catch {
+    failed = filteredFiles.length;
+    total = filteredFiles.length;
+  }
+
+  return {
+    verdict: failed > 0 ? 'FAIL' : 'PASS',
+    total,
+    passed,
+    failed,
+    skipped,
+    files: filteredFiles.map((f) => path.relative(repoRoot, f)),
+  };
+}
+
 export async function runStagingE2E(task, opts = {}) {
   const dbPool = opts.pool || pool;
   const deploy = opts.deploy || deployStaging;
@@ -477,6 +593,7 @@ export async function runStagingE2E(task, opts = {}) {
       scenarios_passed: extra.scenariosPassed ?? base.scenariosPassed,
       pr_url: prUrl, initiative_id: initiativeId,
       promote_status: promoteStatus,
+      ...(extra.regressionSmokeResult ? { regression_smoke_result: extra.regressionSmokeResult } : {}),
     });
     await updateTaskStatus(task.id, 'completed');
     return { success: true, taskId: task.id, verdict, reason, promoteStatus };
@@ -521,10 +638,34 @@ export async function runStagingE2E(task, opts = {}) {
       }
       base.testedAt = new Date();
 
+      // 3b. 全量 regression golden-smoke 扫描（contract E2E PASS 后、promote 前）
+      let regressionSmokeResult;
+      if (run.verdict === 'PASS') {
+        try {
+          regressionSmokeResult = (opts.runGoldenSmokeRegression || runGoldenSmokeRegression)({
+            cwd: opts.cwd,
+            stagingPort,
+            spawnSync: opts.spawnSync,
+          });
+        } catch (err) {
+          console.warn(`[staging-e2e] golden-smoke regression 扫描异常（视为 SKIP）: ${err.message}`);
+          regressionSmokeResult = { verdict: 'SKIP', total: 0, passed: 0, failed: 0, skipped: 0, files: [], error: String(err.message) };
+        }
+        if (regressionSmokeResult && regressionSmokeResult.verdict === 'FAIL') {
+          return await finalize('FAIL', 'regression_golden_smoke_fail', {
+            scenariosTotal: run.scenariosTotal,
+            scenariosPassed: run.scenariosPassed,
+            failedScenarios: run.failedScenarios,
+            regressionSmokeResult,
+          });
+        }
+      }
+
       return await finalize(run.verdict, run.verdict === 'PASS' ? null : 'scenarios_failed', {
         scenariosTotal: run.scenariosTotal,
         scenariosPassed: run.scenariosPassed,
         failedScenarios: run.failedScenarios,
+        ...(regressionSmokeResult ? { regressionSmokeResult } : {}),
       });
     } finally {
       await lock.release();

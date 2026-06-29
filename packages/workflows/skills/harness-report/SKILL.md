@@ -6,10 +6,11 @@ description: |
   → 更新Notion Feature Registry → 飞书通知 → 写本地harness-report.md备份。
   Phase B（Sprint状态同步）：写本地Brain DB → 通过 db-update skill 触发 notion-push-sync.js 的 8 个 push 函数（journeys/journey_features/issues/skill_registry/journey_steps/journey_step_links/decisions/initiative_contracts）→ git commit。
   由 harness-evaluator PASS 后 Brain reportNode 自动 spawn；也可手动触发补同步。
-version: 6.2.0
+version: 6.3.0
 created: 2026-04-08
 updated: 2026-06-11
 changelog:
+  - 6.3.0: 新增 golden-smoke 回归沉淀确认步骤 — evaluator PASS + merge 后验证 packages/quality/tests/regression/ 已包含本 Sprint 的 golden-smoke 文件，缺失则补写
   - 6.2.0: 链路审计修复 5 项 — (a)「同步 8 个 Notion DB」改为明确清单（notion-push-sync.js 的 8 个 push 函数）+ 注明入口是 db-update skill；(b) journey_steps 措辞改"保留只读兼容（仍同步存量），新增数据禁止写入"；(c) 开头加「触发条件」（evaluator PASS 后 Brain reportNode 自动 spawn；手动用于补同步）；(d) Phase A 开头加前置文件存在性检查（缺失则对应步骤跳过 + WARN）；(e) 路径拼装统一 ${SPRINT_DIR%/}/xxx 防双斜杠
   - 6.1.0: 新增Step6全量Registry回写+Step7结构化Learning+Step8 index.html可视化；截图路径统一到SPRINT_DIR/screenshots/
   - 6.0.0: 合并 harness-sprint-state → 统一为"交付报告+状态同步"单一 skill，删除独立的 harness-sprint-state skill

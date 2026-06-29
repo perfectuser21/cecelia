@@ -4,10 +4,11 @@ description: |
   Harness Contract Proposer — Harness v5 GAN Layer 2a：
   读 PRD，GAN 对抗写 Golden Path 合同（每步含真实验证命令）；
   Reviewer APPROVED 后倒推拆 task-plan.json。
-version: 9.4.0
+version: 9.5.0
 created: 2026-04-08
 updated: 2026-06-29
 changelog:
+  - 9.5.0: golden-smoke 格式约束 — ## E2E 验收 每个 Scenario 必须带 <!-- GOLDEN_SMOKE_SCENARIO: name --> 标记，ability slug 用 <!-- GOLDEN_SMOKE_ABILITY_SLUG: slug --> 声明，供 generator Step 2.5 自动生成持久化回归测试
   - 9.4.0: 变体C 补后端启动 + 禁 page.route() — 变体C 模板新增 Step 2.5 启动 apps/api server（port 3000）+ 等待就绪；Playwright spec 必须打真实后端，禁止使用 page.route() 拦截 API 请求；新增「变体C 死规则」段（5 条禁令）；修 contract-draft.md ## E2E 验收 禁止写"不依赖真后端/stub"字样
   - 9.3.0: 补「接缝断言」规则（修真环境逐个炸根因）— (a)「领域验证规则（全局强制）」表新增「真机 RPA / 生产环境集成」一行：微信/抖音真机操控、依赖生产中台 env 的链路，Final E2E 必须在【真目标】上验证（真机微信真收真回屏幕不闪 / 生产 env 真出 reply），不是 mock/CI 绿；(b) 新增「DoD 必须分两类断言（接缝 vs 逻辑）」小节：逻辑断言(环境无关)CI/单测验绿=真done；接缝断言(环境相关:真机UIA/生产env/真实调用方)必须真目标验，产出合同时列「接缝清单」(1-3条)每条写明真目标验证方式，未真验标 logic-done-pending 不得标 done；写断言前必答「这功能在哪几个点碰真实世界」；禁止写死环境假设值(屏幕外坐标/UIA阈值/假设调用方传X/假设env有Y)，必从环境推导或真机校准
   - 9.2.0: 新增「Contract Gate 合规惯用法速查表」— 四轮规则进化（#3351/#3353/#3357/#3358）认可的标准断言写法与 gate-allow 豁免语法，写断言前必读；目标是合同首轮即 gate-clean，终结每条 GAN 用 2-4 轮反馈重新发现惯用法的浪费
