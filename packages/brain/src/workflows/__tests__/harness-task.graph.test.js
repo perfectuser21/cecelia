@@ -93,6 +93,10 @@ vi.mock('../../orchestrator/pg-checkpointer.js', () => ({
     putWrites: vi.fn().mockResolvedValue(undefined),
   }),
 }));
+vi.mock('../../harness-shared.js', async (importOriginal) => {
+  const actual = await importOriginal();
+  return { ...actual, assertSprintDir: vi.fn((v) => v || 'sprints/test-default') };
+});
 
 import {
   buildHarnessTaskGraph,

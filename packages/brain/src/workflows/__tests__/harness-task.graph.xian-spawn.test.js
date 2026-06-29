@@ -20,6 +20,7 @@ vi.mock('../../harness-shared.js', () => ({
   parseDockerOutput: vi.fn(),
   loadSkillContent: vi.fn(() => ''),
   readBrainResult: vi.fn(async () => ({})),
+  assertSprintDir: vi.fn((v) => v),
 }));
 vi.mock('../../harness-pg-checkpointer.js', () => ({ getPgCheckpointer: vi.fn() }));
 vi.mock('../../harness-session-bridge.js', () => ({
@@ -71,6 +72,7 @@ function baseState(overrides = {}) {
         machine: 'mac-mini-m4-xian',
         executor: 'codex',
         base_repo: 'https://github.com/perfectuser21/infrastructure.git',
+        sprint_dir: 'sprints/xian-spawn-test',
       },
     },
     initiativeId: 'abcdef12-0000-0000-0000-000000000000',

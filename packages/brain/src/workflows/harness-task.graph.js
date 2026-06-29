@@ -54,7 +54,7 @@ import { resolveExecutor as resolveExecutorDefault } from '../routing/resolve-ex
 import { resolveAccount } from '../spawn/middleware/account-rotation.js';
 import { checkAuthFailure } from '../spawn/middleware/cap-marking.js';
 import { checkPrStatus, classifyFailedChecks } from '../shepherd.js';
-import { parseDockerOutput, extractField, readPrFromGitState, readVerdictFile, readBrainResult, readAndValidateBrainResult, EvaluatorOutputSchema, loadSkillContent } from '../harness-shared.js';
+import { parseDockerOutput, extractField, readPrFromGitState, readVerdictFile, readBrainResult, readAndValidateBrainResult, EvaluatorOutputSchema, loadSkillContent, assertSprintDir } from '../harness-shared.js';
 import { buildGeneratorPrompt, buildTaskThreadId } from '../harness-utils.js';
 import { getPgCheckpointer } from '../orchestrator/pg-checkpointer.js';
 import pool from '../db.js';
@@ -336,7 +336,7 @@ export async function spawnNode(state, opts = {}) {
       HARNESS_BRANCH_NAME: precomputedBranch,
       GITHUB_TOKEN: token,
       CONTRACT_BRANCH: payload.contract_branch || state.contractBranch || '',
-      SPRINT_DIR: payload.sprint_dir || 'sprints',
+      SPRINT_DIR: assertSprintDir(payload.sprint_dir, 'generatorSpawnEnv'),
       BRAIN_URL: 'http://host.docker.internal:5221',
       // CALLBACK_URL 容器跑完 wget 这个 URL POST stdout
       HARNESS_CALLBACK_URL: callbackUrl,
@@ -1281,7 +1281,7 @@ export async function evaluateContractNode(state, opts = {}) {
     }
   }
 
-  const sprintDir = payload.sprint_dir || 'sprints';
+  const sprintDir = assertSprintDir(payload.sprint_dir, 'evaluateContractNode');
 
   // ── 确定性 ARTIFACT 门（fidelity-gate 修复）──────────────────────────────────
   // LLM evaluator 之前先跑 brain 侧确定性检查：checkout PR 分支 + 跑 contract-dod.md 的
