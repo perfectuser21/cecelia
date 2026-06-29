@@ -4,10 +4,12 @@ description: |
   Harness Contract Proposer — Harness v5 GAN Layer 2a：
   读 PRD，GAN 对抗写 Golden Path 合同（每步含真实验证命令）；
   Reviewer APPROVED 后倒推拆 task-plan.json。
-version: 9.2.0
+version: 9.4.0
 created: 2026-04-08
-updated: 2026-06-11
+updated: 2026-06-29
 changelog:
+  - 9.4.0: 变体C 补后端启动 + 禁 page.route() — 变体C 模板新增 Step 2.5 启动 apps/api server（port 3000）+ 等待就绪；Playwright spec 必须打真实后端，禁止使用 page.route() 拦截 API 请求；新增「变体C 死规则」段（5 条禁令）；修 contract-draft.md ## E2E 验收 禁止写"不依赖真后端/stub"字样
+  - 9.3.0: 补「接缝断言」规则（修真环境逐个炸根因）— (a)「领域验证规则（全局强制）」表新增「真机 RPA / 生产环境集成」一行：微信/抖音真机操控、依赖生产中台 env 的链路，Final E2E 必须在【真目标】上验证（真机微信真收真回屏幕不闪 / 生产 env 真出 reply），不是 mock/CI 绿；(b) 新增「DoD 必须分两类断言（接缝 vs 逻辑）」小节：逻辑断言(环境无关)CI/单测验绿=真done；接缝断言(环境相关:真机UIA/生产env/真实调用方)必须真目标验，产出合同时列「接缝清单」(1-3条)每条写明真目标验证方式，未真验标 logic-done-pending 不得标 done；写断言前必答「这功能在哪几个点碰真实世界」；禁止写死环境假设值(屏幕外坐标/UIA阈值/假设调用方传X/假设env有Y)，必从环境推导或真机校准
   - 9.2.0: 新增「Contract Gate 合规惯用法速查表」— 四轮规则进化（#3351/#3353/#3357/#3358）认可的标准断言写法与 gate-allow 豁免语法，写断言前必读；目标是合同首轮即 gate-clean，终结每条 GAN 用 2-4 轮反馈重新发现惯用法的浪费
   - 9.1.0: 链路审计修复 7 项 — (a) 截图路径统一 SPRINT_DIR/screenshots/，占位符 <ws_id> 改 <step>；(b) 修正第 7 维表述（7 维 = CI Workflow 内容对齐；[BEHAVIOR] ≥4 数量检查归 proposer 自查 + reviewer 第 6 维）；(c) 新增「领域验证规则（全局强制）」小节（视频 ffprobe / 发布真实出现 / DB 时间窗 / UI 可见断言，写进合同硬条款，与 evaluator 死规则呼应）；(d) windows_cloud/windows_wechat E2E 模板补产物时间戳防造假（LastWriteTime 在脚本启动后 N 分钟内）；(e) 作弊反例清单扩到 10+ 条，每条注明对应 Reviewer 维度；(f) 硬阈值加可执行验证命令转换规则；(g) 清理 v5.0 歧义残留，明确「模式 B final-e2e 由 evaluator 独立 task 执行，GAN 阶段只产出合同与脚本模板」
   - 9.0.0: 第零纪律 — 每条 [BEHAVIOR] 必须 1:1 对应 Golden Path 步骤，在真实目标环境验证用户可观察输出，禁止 mock 任何 Golden Path 执行路径；target_environment 由 Golden Path 内容自动推断（新增 windows_wechat 路径 → xian-rog 真机）；自查 checklist 新增第 7 条 Golden Path 溯源；windows_wechat E2E 模板新增；禁止事项新增第 6 条
@@ -115,8 +117,26 @@ GAN 收敛（Reviewer APPROVED）后输出第 4 件：
 | **发布**（抖音/快手/小红书/视频号/公众号等）| 验证内容**真实出现**：平台 API 查到帖子 ID/URL，或截图确认 | 脚本 `echo "发布成功"` / 只看 HTTP 200 |
 | **DB 写入** | `psql` 查行数且带 **`created_at > NOW() - interval '5 minutes'`** 时间窗 | `SELECT count(*)` 无时间窗（历史数据冒充）|
 | **UI 交互** | 可见状态断言：`toBeVisible` / `toHaveText` / 截图比对 | 只 `page.goto` 不断言 / 只查 console 无报错 |
+| **真机 RPA / 生产环境集成**（微信/抖音真机操控、依赖生产中台 env 的链路）| Final E2E 必须在【真目标】上验证：真机微信真收真回（屏幕全程不闪）、生产 env 真返回结果（如 draft-generate 真出 reply），**不是 mock/CI 绿** | 假环境（CI/mock/开发机）跑绿就标 done；屏幕外坐标 / 假版本 / 假 env 值兜过 |
 
-判断领域以 Golden Path + journey_type + target_environment 为准。视频类合同缺 ffprobe、发布类缺真实出现验证、DB 类缺时间窗、UI 类缺可见断言 → 合同不合格，必须补齐再交 Reviewer。
+判断领域以 Golden Path + journey_type + target_environment 为准。视频类合同缺 ffprobe、发布类缺真实出现验证、DB 类缺时间窗、UI 类缺可见断言、真机 RPA/生产 env 类缺真目标验证 → 合同不合格，必须补齐再交 Reviewer。
+
+---
+
+## ⚡ DoD 必须分两类断言（接缝 vs 逻辑）（核心 — 真环境炸的根因）
+
+**根因：很多"修复"在假环境（CI/mock/开发机）绿了就标 done，碰真环境（真机微信几何/UIA、生产 mmv env、真实 agent 调用方）逐个炸，来回修二十几轮。DoD 的验收标准定在了照不到真实世界的地方。** 解法：写断言时强制区分两类，接缝类必须在真目标验证。
+
+| 类型 | 定义 | 验证位置 | done 判定 |
+|---|---|---|---|
+| **逻辑断言** | 环境无关：纯函数 / 解析 / 计算 / 数据逻辑 | CI / 单测验 | 绿 = 真 done |
+| **接缝断言** | 环境相关：真机 UIA 读写 / 生产 env / 真实调用方行为 | **必须在真目标验证**，CI 绿 ≠ done | 真目标验过才 done；未真验 → 标 `logic-done-pending`，**不得标 done** |
+
+**产出合同时必须列「接缝清单」（通常 1-3 条）**：每条写明这个点碰真实世界在哪、真目标验证方式是什么。清单里**未真验过**的功能，合同里标 `logic-done-pending`，不得标 done。
+
+**写断言前必答**：「这功能在哪几个点碰真实世界？」→ 那几点全部进接缝清单。
+
+**禁止写死环境假设值**（违反 → Reviewer 打回）：屏幕外坐标（如 `-2600`）、UIA 气泡阈值、假设调用方传 `X`、假设 `.env` 有 `Y` 等——要么**从环境推导**，要么**真机校准**；这类值本质是接缝，**必真验**，不许直接写死兜过。
 
 ---
 
@@ -535,16 +555,24 @@ exit 0
 > 适用：sprint 目标是验证 Dashboard（React + Vite）新页面/交互，在 GitHub Actions windows-latest 上用 Playwright 真实浏览器验收。
 > 典型场景：super admin 管理页、客户管理、任何 `apps/dashboard/` 下的新 UI 功能。
 
+**🚫 变体C 死规则（违反任意一条 → Reviewer 第 1 维 0 分，直接 REVISION）**：
+1. **禁止 `page.route()`**：Playwright spec 禁止拦截任何 API 请求，所有请求必须打真实后端
+2. **禁止写"不依赖真后端"/"stub"/"mock API"**：contract-draft.md `## E2E 验收` 区块严禁出现此类字样
+3. **后端必须启动**：e2e-verify.ps1 必须在跑 Playwright 之前启动 `apps/api` server 并等待其就绪
+4. **API 端口必须传给 Vite**：通过 `VITE_API_URL` 或 vite proxy 确保前端 API 请求打到本地真实后端
+5. **Playwright spec 不得含 VITE_SKIP_AUTH=true 以外的 mock 环境变量**
+
 **⚠️ Windows PS1 强制规则（4 条，违反会导致 CI 失败）**：
 1. `npm run dev` / `npm run preview` 必须用 `Start-Process` + `-WorkingDirectory "$scriptDir\..\.."` 显式指定工作目录
 2. `npx` / `npm` 在 Windows 需要 `.cmd` shim：用 `cmd.exe /c npx.cmd ...` 或 `cmd.exe /c npm.cmd ...`
-3. localhost 端口检测必须用 `Test-NetConnection -ComputerName localhost -Port $VitePort`（避免 IPv6 解析失败）
-4. Vite 端口固定 `$VitePort = 5174`，与 playwright `baseURL` 保持一致；`npm run preview` 用 `--port $VitePort`
+3. localhost 端口检测必须用 `Test-NetConnection -ComputerName localhost -Port $Port`（避免 IPv6 解析失败）
+4. Vite 端口固定 `$VitePort = 5174`，与 playwright `baseURL` 保持一致；API 端口固定 `$ApiPort = 3000`
 
 **E2E 验收步骤（写入 `sprints/.../e2e-verify.ps1`）**：
 
 ```powershell
 # final-e2e 验证脚本 — ZenithJoy Dashboard Playwright（windows-latest）
+# ⚠️ 必须打真实后端，禁止 page.route() stub
 param(
   [string]$BaseUrl = "http://localhost:5174",
   [string]$SuperAdminEmail = $env:E2E_SUPER_ADMIN_EMAIL,
@@ -555,6 +583,7 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
 $VitePort = 5174
+$ApiPort = 3000
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $repoRoot = Resolve-Path "$scriptDir\..\.."
 
@@ -573,12 +602,29 @@ $playwrightProc = Start-Process -FilePath "cmd.exe" `
   -Wait -PassThru -NoNewWindow
 if ($playwrightProc.ExitCode -ne 0) { throw "FAIL: playwright install failed" }
 
+# 2.5. 启动后端 API server（必须，禁止用 page.route() 代替）
+Write-Host "▶ Starting API server on port $ApiPort..."
+$env:DATABASE_URL = $env:E2E_DATABASE_URL
+$env:NODE_ENV = "test"
+$apiProc = Start-Process -FilePath "cmd.exe" `
+  -ArgumentList "/c npm.cmd start" `
+  -WorkingDirectory "$repoRoot\apps\api" `
+  -PassThru -NoNewWindow
+$maxWait = 30; $waited = 0
+do {
+  Start-Sleep -Seconds 1; $waited++
+  $conn = Test-NetConnection -ComputerName localhost -Port $ApiPort -WarningAction SilentlyContinue
+} while (-not $conn.TcpTestSucceeded -and $waited -lt $maxWait)
+if (-not $conn.TcpTestSucceeded) { throw "FAIL: API server 未在 ${maxWait}s 内就绪 port=$ApiPort" }
+Write-Host "✅ API server 就绪 port=$ApiPort"
+
 # 3. Build + 启动 Vite preview（preview 比 dev 更快就绪）
 Write-Host "▶ Building dashboard..."
 $buildProc = Start-Process -FilePath "cmd.exe" `
   -ArgumentList "/c npm.cmd run build" `
   -WorkingDirectory "$repoRoot\apps\dashboard" `
-  -Wait -PassThru -NoNewWindow
+  -Wait -PassThru -NoNewWindow `
+  -Environment @{ VITE_SKIP_AUTH = "true" }
 if ($buildProc.ExitCode -ne 0) { throw "FAIL: build failed" }
 
 Write-Host "▶ Starting Vite preview on port $VitePort..."
@@ -587,38 +633,36 @@ $serverProc = Start-Process -FilePath "cmd.exe" `
   -WorkingDirectory "$repoRoot\apps\dashboard" `
   -PassThru -NoNewWindow
 
-# 4. 等待服务就绪（Test-NetConnection 兼容 IPv6/IPv4）
-$maxWait = 30
-$waited = 0
+# 4. 等待 Vite 就绪
+$maxWait = 30; $waited = 0
 do {
-  Start-Sleep -Seconds 1
-  $waited++
+  Start-Sleep -Seconds 1; $waited++
   $conn = Test-NetConnection -ComputerName localhost -Port $VitePort -WarningAction SilentlyContinue
 } while (-not $conn.TcpTestSucceeded -and $waited -lt $maxWait)
 if (-not $conn.TcpTestSucceeded) { throw "FAIL: Vite 未在 ${maxWait}s 内就绪 port=$VitePort" }
 Write-Host "✅ Vite 就绪 port=$VitePort"
 
-# 5. 跑 Playwright E2E（写在 apps/dashboard/e2e/<feature>.spec.ts）
+# 5. 跑 Playwright E2E（spec 禁止 page.route()，所有请求打真实后端 localhost:$ApiPort）
 $e2eProc = Start-Process -FilePath "cmd.exe" `
   -ArgumentList "/c npx.cmd playwright test e2e\{feature}.spec.ts --reporter=list" `
   -WorkingDirectory "$repoRoot\apps\dashboard" `
   -Wait -PassThru -NoNewWindow `
   -Environment @{
-    BASE_URL = $BaseUrl
-    E2E_EMAIL = $SuperAdminEmail
+    E2E_BASE_URL = $BaseUrl
+    E2E_EMAIL    = $SuperAdminEmail
     E2E_PASSWORD = $SuperAdminPassword
   }
 
 Stop-Process -Id $serverProc.Id -Force -ErrorAction SilentlyContinue
+Stop-Process -Id $apiProc.Id -Force -ErrorAction SilentlyContinue
 if ($e2eProc.ExitCode -ne 0) { throw "FAIL: Playwright E2E 失败 exit=$($e2eProc.ExitCode)" }
-Write-Host "✅ windows_cloud Dashboard E2E 验证通过"
+Write-Host "✅ windows_cloud Dashboard E2E 验证通过（真实后端）"
 exit 0
 ```
 
-**PASS 标准**：`e2eProc.ExitCode -eq 0` + Playwright 所有 spec 通过
-**FAIL 标准**：任何 step exit≠0 OR Playwright 失败 OR Vite 30s 内未就绪
-**GHA workflow**：`.github/workflows/e2e-windows.yml`（`workflow_dispatch` + `windows-latest`）
-**secrets 必须**：`E2E_SUPER_ADMIN_EMAIL`、`E2E_SUPER_ADMIN_PASSWORD`（在 sprint PRD 的认证前提条件段中声明）
+**PASS 标准**：`e2eProc.ExitCode -eq 0` + Playwright 所有 spec 通过 + API server 已启动（无 stub）
+**FAIL 标准**：任何 step exit≠0 OR API 未就绪 OR Playwright 失败 OR Vite 30s 内未就绪
+**GHA workflow secrets 必须**：`E2E_SUPER_ADMIN_EMAIL`、`E2E_SUPER_ADMIN_PASSWORD`、`E2E_DATABASE_URL`（在 sprint PRD 的前置条件段中声明）
 
 ---
 
