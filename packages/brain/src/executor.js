@@ -32,7 +32,7 @@ import { updateTaskStatus, updateTaskProgress as _updateTaskProgress } from './t
 import { traceStep, LAYER, STATUS, EXECUTOR_HOSTS } from './trace.js';
 import { getAccountUsage } from './account-usage.js';
 import { writeDockerCallback, resolveResourceTier, isDockerAvailable } from './docker-executor.js';
-import { loadSkillContent } from './harness-shared.js';
+import { loadSkillContent, assertSprintDir } from './harness-shared.js';
 import { writeInitiativeRunEvent } from './events/initiativeRunEvents.js';
 import { spawn as spawnDocker } from './spawn/index.js';
 import {
@@ -1918,7 +1918,7 @@ function _prepareProjectPlanPrompt(task) {
 
 function _prepareSprintPrompt(task, taskType) {
   const payload = task.payload || {};
-  const sprintDir = payload.sprint_dir || 'sprints';
+  const sprintDir = assertSprintDir(payload.sprint_dir, '_prepareSprintPrompt');
   const evalRound = payload.eval_round || 0;
   const isFixMode = ['sprint_fix', 'harness_fix'].includes(taskType);
   const isHarnessV4 = ['harness_generate', 'harness_fix'].includes(taskType);
@@ -1942,7 +1942,7 @@ ${task.description || task.title}`;
 
 function _prepareSprintEvaluatePrompt(task) {
   const payload = task.payload || {};
-  const sprintDir = payload.sprint_dir || 'sprints';
+  const sprintDir = assertSprintDir(payload.sprint_dir, '_prepareSprintEvaluatePrompt');
   const devTaskId = payload.dev_task_id || '';
   const evalRound = payload.eval_round || 1;
   return `/sprint-evaluator
@@ -1961,7 +1961,7 @@ function _prepareSprintEvaluatePrompt(task) {
 
 async function _prepareHarnessEvaluatePrompt(task) {
   const payload = task.payload || {};
-  const sprintDir = payload.sprint_dir || 'sprints';
+  const sprintDir = assertSprintDir(payload.sprint_dir, '_prepareHarnessEvaluatePrompt');
   const prUrl = payload.pr_url || '';
   const evalRound = payload.eval_round || 1;
   const contractBranch = payload.contract_branch || '';
@@ -2107,7 +2107,7 @@ ${task.description || task.title}
 
 async function _prepareHarnessGeneratePrompt(task) {
   const taskType = task.task_type || 'dev';
-  const sprintDir = task.payload?.sprint_dir || 'sprints';
+  const sprintDir = assertSprintDir(task.payload?.sprint_dir, '_prepareHarnessGeneratePrompt');
   const contractBranch = task.payload?.contract_branch || null;
   let basePrompt = _prepareSprintPrompt(task, taskType);
   if (contractBranch) {
@@ -2121,7 +2121,7 @@ async function _prepareHarnessGeneratePrompt(task) {
 }
 
 function _prepareHarnessReportPrompt(task, taskType) {
-  const sprintDir = task.payload?.sprint_dir || 'sprints';
+  const sprintDir = assertSprintDir(task.payload?.sprint_dir, '_prepareHarnessReportPrompt');
   const totalCost = (task.payload?.sub_tasks || []).reduce((a, s) => a + (s.cost_usd || 0), 0);
   // 参数块（task_id/sprint_dir/pr_url/...），与原实现一致。
   const paramsBlock = `## Harness v4.0 — Report\n\ntask_id: ${task.id}\nsprint_dir: ${sprintDir}\npr_url: ${task.payload?.pr_url || ''}\ninitiative_id: ${task.payload?.initiative_id || task.id}\nfeature_id: ${task.payload?.feature_id || ''}\nfeature_name: ${task.payload?.feature_name || task.title || ''}\njourney_id: ${task.payload?.journey_id || ''}\ntotal_cost: ${totalCost}\nscreenshots: ${JSON.stringify(task.payload?.screenshots || [])}\npr_urls: ${JSON.stringify(task.payload?.pr_urls || [])}\n\n${task.description || task.title}`;
@@ -2150,12 +2150,12 @@ function _prepareHarnessReportPrompt(task, taskType) {
 
 function _prepareHarnessPlannerPrompt(task, _taskType) {
   // harness_planner task_type 已退役（retire-harness-planner PR），此函数仅 sprint_planner 调用
-  const sprintDir = task.payload?.sprint_dir || 'sprints';
+  const sprintDir = assertSprintDir(task.payload?.sprint_dir, '_prepareHarnessPlannerPrompt');
   return `/sprint-planner\n\n## Harness v4.0 — Planner\n\ntask_id: ${task.id}\nsprint_dir: ${sprintDir}\n\n${task.description || task.title}`;
 }
 
 async function _prepareContractProposePrompt(task, taskType) {
-  const sprintDir = task.payload?.sprint_dir || 'sprints';
+  const sprintDir = assertSprintDir(task.payload?.sprint_dir, '_prepareContractProposePrompt');
   const proposeRound = task.payload?.propose_round || 1;
   const plannerBranch = task.payload?.planner_branch || null;
   const reviewBranch = task.payload?.review_branch || null;
@@ -2177,7 +2177,7 @@ async function _prepareContractProposePrompt(task, taskType) {
 }
 
 async function _prepareContractReviewPrompt(task, taskType) {
-  const sprintDir = task.payload?.sprint_dir || 'sprints';
+  const sprintDir = assertSprintDir(task.payload?.sprint_dir, '_prepareContractReviewPrompt');
   const plannerBranch = task.payload?.planner_branch || null;
   const proposeBranch = task.payload?.propose_branch || null;
   const skillName = taskType === 'harness_contract_review' ? '/harness-contract-reviewer' : '/sprint-contract-reviewer';
