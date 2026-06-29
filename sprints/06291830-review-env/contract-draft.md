@@ -1,4 +1,4 @@
-# Sprint Contract Draft (Round 3)
+# Sprint Contract Draft (Round 4)
 
 ## Response Schema（推导来源: PRD字面 + NEW_PATTERN）
 
@@ -264,6 +264,7 @@ echo "✅ Scenario 1 通过"
 <!-- GOLDEN_SMOKE_TIMEOUT_MS: 30000 -->
 
 gate-allow: weak-oracle/curl-no-jq HTML 内容用 grep 验证（非 JSON）；端口关闭负向测试 if-then-exit 模式——curl 成功反为 FAIL，无 JSON body 可 jq-e
+gate-allow: domain/db-no-time-window 删除验证（期望 count=0）——确认 release 后记录已被删除，非存在性探测；TEST_ID 为当场生成 UUID，无历史数据污染风险，时间窗无意义
 
 ```bash
 #!/bin/bash
@@ -375,6 +376,8 @@ echo "✅ Scenario 4 通过"
 ---
 
 ## 完整 final-e2e 脚本（local_api — 串行执行上面 4 个 Scenario）
+
+gate-allow: domain/db-no-time-window DDL 层表存在性探测（SELECT 1 ... LIMIT 0）——验证 migration 是否已建表，非数据聚合，无时间窗语义
 
 ```bash
 #!/bin/bash
