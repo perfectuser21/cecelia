@@ -6,10 +6,11 @@ description: |
   而非"防作弊测试框架"。
   核心职责：(1) spec 对齐用户真需求 (2) criteria 可量化无歧义 (3) happy + error + 边界场景全覆盖
   GAN 对抗**多轮**直到双方达成共识。无硬轮数上限，但 Reviewer 真找不出实质 spec/产品漏洞时必须 APPROVED。
-version: 9.1.0
+version: 9.2.0
 created: 2026-04-08
 updated: 2026-06-11
 changelog:
+  - 9.1.0 → 9.2.0: 新增第 8 维检查 — ## E2E 验收 脚本必须带 # STEP: 注释，可被 generator 转为 golden-smoke.test.ts
   - 9.1.0: 链路审计修复 3 项 — (a) Golden Path 覆盖审查检测信号补「只检查文件存在/大小而无内容验证 → 第 1 维直接 0 分」+「逐项核对 proposer 作弊反例清单」；(b) 强化 N/A 规则表述：windows_wechat 第 7 维必须实审 e2e-wechat-rpa.yml 不可填 10，N/A 只适用非 windows_cloud/windows_wechat/linux_server；(c) 第 6 维 verification_oracle_completeness 审查项加入领域验证规则核对（视频 ffprobe / 发布真实出现 / DB 时间窗 / UI 可见断言）+ [BEHAVIOR] ≥ 4 数量检查明确归此维。注意：7 个维度名是与 Brain ReviewerOutputSchema 的接口约定，一个都没改
   - 9.0.0: Golden Path 覆盖审查新增两条强制问题（[BEHAVIOR] 1:1 对应步骤 + 禁止 mock）；维度 7 扩展覆盖 windows_wechat（e2e-wechat-rpa.yml）；阈值规则和填值规则同步更新
   - 8.4.0: 第6维评分基准从「PRD Response Schema 段」改为「contract-draft.md Response Schema 推导段」；N/A 任务自动满分
@@ -386,6 +387,33 @@ writePlanned().then(() => console.log('Step 5 完成：', apis.length, 'API +', 
 3. **禁止在 non-blocking observation 栏位列一堆**。non-blocking 本质是没用的，Reviewer 若真觉得非阻塞就不列
 4. **禁止让合同膨胀到 200+ 行专门写防作弊元数据**。合同行数目标 < 150 行，超过说明走偏了
 5. **禁止要求 Generator 在合同阶段就证明代码不作弊**。那是代码阶段 Evaluator 跑 curl/playwright 的职责
+
+---
+
+## 第 8 维：golden_smoke_extractability（golden-smoke 可提取性）
+
+**审查问题**：合同 `## E2E 验收` 段的 Scenario 是否满足 harness-generator Step 8 自动提取 golden-smoke.test.ts 的格式要求？
+
+**审查清单（全部 YES 才能得 ≥ 7 分）**：
+
+| # | 检查项 | 判断依据 |
+|---|--------|---------|
+| 1 | 合同含 `<!-- GOLDEN_SMOKE_ABILITY_SLUG: xxx -->` 注释 | grep 合同文件，存在且 slug 为全小写连字符格式 |
+| 2 | 合同含 `<!-- GOLDEN_SMOKE_TARGET_ENV: xxx -->` 注释 | 枚举值必须是 local_api/mac_web/windows_cloud/windows_wechat/linux_server 之一 |
+| 3 | 每个 Scenario 有 `<!-- GOLDEN_SMOKE_SCENARIO: name -->` 标记 | name 为英文小写连字符（如 create-task-verify-db） |
+| 4 | 每个 Scenario bash 块自包含（`set -e`，不引用 harness 专属变量） | 检查 bash 块是否含 `$SPRINT_DIR` / `$TASK_ID` / `$CONTRACT_BRANCH` 等 |
+| 5 | windows_cloud / windows_wechat Scenario 有 `<!-- GOLDEN_SMOKE_SKIP_IN_CI: true -->` | 这类 Scenario 在 CI 自动 skip，不是不写 |
+| 6 | 至少 1 个非 skip 的 Scenario（mac_web 或 local_api 目标的合同必须有能在 CI 跑的场景） | windows-only 合同可豁免（所有 Scenario 均 skip），其他不可 |
+
+**评分标准**：
+- 6 项全满足 → **10 分**
+- 第 4 项失败（bash 块引用 harness 专属变量）→ **0 分**（golden-smoke 在 regression CI 里根本跑不了）
+- 第 1/2 项缺失 → **3 分**（Step 8 无法找到 ability_slug，沉淀中止）
+- 其余任一不满足 → **5 分**
+
+**N/A 规则**：若 PRD 明确标注 `golden_smoke: skip`（极少数情况，如一次性迁移任务），本维度填 10（N/A）。所有常规 ability/feature Sprint 必须审查本维度，不得跳过。
+
+**Reviewer 操作**：逐项 grep 合同文件验证，不允许凭肉眼估计，每项结论注明 "grep 结果：存在/不存在"。
 
 ---
 
