@@ -1,0 +1,32 @@
+{
+  "initiative_id": "5417f890-e3e8-4334-b89b-1ec56c3c6df4",
+  "journey_type": "user_facing",
+  "journey_type_reason": "功能最终产物是在浏览器可访问的 Dashboard 静态服务；验收者通过 curl/浏览器 localhost:53xx 核查 UI 变化",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "实现 Review 环境自动分配：review-env-manager.js + Brain API 端点 + harness/shepherd 集成 + DB migration",
+      "scope": "新建 packages/brain/src/review-env-manager.js（allocateReviewEnv/releaseReviewEnv/cleanupHarnessReviewEnvs/findFreePort）；新建 DB migration 012-review-environments.sql；在 routes/harness.js 注册 3 个 review-env 端点（allocate/release/GET）；在 harness-task.graph.js mergePrNode 成功分支调用 allocateReviewEnv（best-effort）；在 shepherd.js 末尾调用 cleanupHarnessReviewEnvs",
+      "dod": [
+        "[BEHAVIOR] POST /api/brain/harness/review-env/allocate 返回 { initiative_id, port∈[5300,5399], pid>0, skipped:false }，端口耗尽时 { skipped:true, port:null }",
+        "[BEHAVIOR] 分配的端口 curl HTTP 200 + <html 响应（真实 Node.js 静态服务）",
+        "[BEHAVIOR] DB review_environments 有 allocated_at 时间窗记录",
+        "[BEHAVIOR] POST /api/brain/harness/review-env/release 返回 { released:true, initiative_id }，端口关闭，DB 记录删除",
+        "[BEHAVIOR] GET /api/brain/harness/review-env/:id 返回 { allocated_at, initiative_id, pid, port }；未知 ID 404",
+        "[BEHAVIOR] error path: 缺少 initiative_id → HTTP 400 + error 字段",
+        "[ARTIFACT] packages/brain/src/review-env-manager.js 导出 4 个函数",
+        "[ARTIFACT] packages/brain/src/db/migrations/012-review-environments.sql 含 CREATE TABLE review_environments"
+      ],
+      "files": [
+        "packages/brain/src/review-env-manager.js",
+        "packages/brain/src/db/migrations/012-review-environments.sql",
+        "packages/brain/src/routes/harness.js",
+        "packages/brain/src/workflows/harness-task.graph.js",
+        "packages/brain/src/shepherd.js"
+      ],
+      "depends_on": [],
+      "complexity": "M",
+      "estimated_minutes": 90
+    }
+  ]
+}
