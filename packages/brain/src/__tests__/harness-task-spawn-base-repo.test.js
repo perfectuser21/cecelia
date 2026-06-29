@@ -20,6 +20,7 @@ vi.mock('../harness-shared.js', () => ({
   parseDockerOutput: vi.fn(),
   loadSkillContent: vi.fn(() => ''),
   readBrainResult: vi.fn(async () => ({})),
+  assertSprintDir: vi.fn((v) => v || 'sprints/test-default'),
 }));
 vi.mock('../harness-pg-checkpointer.js', () => ({ getPgCheckpointer: vi.fn() }));
 vi.mock('../harness-session-bridge.js', () => ({

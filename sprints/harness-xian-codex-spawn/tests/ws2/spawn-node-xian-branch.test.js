@@ -10,7 +10,7 @@ import { spawnNode } from '../../../../packages/brain/src/workflows/harness-task
 
 function makeState(overrides = {}) {
   return {
-    task: { id: 'ws2', title: 'Test task', task_type: 'harness_task', payload: {} },
+    task: { id: 'ws2', title: 'Test task', task_type: 'harness_task', payload: { sprint_dir: 'sprints/xian-branch-test' } },
     initiativeId: 'init-test-001',
     githubToken: 'gh-mock-token',
     worktreePath: '/mock-wt',
