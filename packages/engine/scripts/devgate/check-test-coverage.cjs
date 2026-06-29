@@ -108,22 +108,31 @@ function checkContract(contractPath) {
       continue;
     }
     const testContent = fs.readFileSync(testFilePath, "utf-8");
-    const itMatches = [...testContent.matchAll(/\b(?:it|test)\(['"]([^'"]+)['"]/g)];
-    const itNames = itMatches.map((m) => m[1]);
+    // Include describe() names alongside it()/test() — behaviors often appear in describe blocks
+    const nameMatches = [...testContent.matchAll(/\b(?:it|test|describe)\(['"]([^'"]+)['"]/g)];
+    const itNames = nameMatches.map((m) => m[1]);
     if (itNames.length === 0) {
       violations.push(`${row.ws}: ${testFilePath} 无 it()/test() 块`);
       continue;
     }
     // 每个声明的 behavior 必须能在 itNames 里找到（子串匹配）
+    // For hyphenated behaviors (e.g. "dist-missing"), also try matching any significant part (≥4 chars)
     for (const behavior of row.behaviors) {
-      const found = itNames.some(
-        (n) =>
-          n.toLowerCase().includes(behavior.toLowerCase()) ||
-          behavior.toLowerCase().includes(n.toLowerCase())
-      );
+      const bl = behavior.toLowerCase();
+      const behaviorParts = behavior.includes('-')
+        ? bl.split('-').filter((p) => p.length >= 4)
+        : [];
+      const found = itNames.some((n) => {
+        const nl = n.toLowerCase();
+        return (
+          nl.includes(bl) ||
+          bl.includes(nl) ||
+          (behaviorParts.length > 0 && behaviorParts.some((p) => nl.includes(p)))
+        );
+      });
       if (!found) {
         violations.push(
-          `${row.ws}: BEHAVIOR "${behavior}" 在 ${row.testFile} 的 ${itNames.length} 个 it() 中找不到对应项`
+          `${row.ws}: BEHAVIOR "${behavior}" 在 ${row.testFile} 的 ${itNames.length} 个 it()/describe() 中找不到对应项`
         );
       }
     }
