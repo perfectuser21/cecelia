@@ -90,7 +90,7 @@ describe('H11 — sub-graph spawnNode 用复合 wtKey 调 ensureWt', () => {
     const poolOverride = { query: vi.fn().mockResolvedValue({ rows: [] }) };
 
     const state = {
-      task: { id: 'ws1', title: 'Sub Task ws1', payload: {} },
+      task: { id: 'ws1', title: 'Sub Task ws1', payload: { sprint_dir: 'sprints/h11-test' } },
       initiativeId: 'feddcf5e-e054-4ee5-9a9d-c4a19418d30d',
       githubToken: undefined,
       worktreePath: undefined,
