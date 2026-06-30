@@ -52,7 +52,7 @@ router.delete('/:pr_number', async (req, res) => {
         const pidFile = `/tmp/review-preview-${port}.pid`;
         const pid = readFileSync(pidFile, 'utf8').trim();
         if (pid) process.kill(Number(pid));
-      } catch (_) { /* 进程已不存在，忽略 */ }
+      } catch { /* 进程已不存在，忽略 */ }
     }
     await stopPreview(prNumber);
     res.json({ stopped: true });
