@@ -24,9 +24,7 @@ export async function allocatePort(prNumber, branchName, baseRepo, dbPool = pool
 
 export async function stopPreview(prNumber, dbPool = pool) {
   await dbPool.query(
-    `UPDATE preview_environments
-     SET status='stopped', stopped_at=NOW()
-     WHERE pr_number=$1 AND status='active'`,
+    `DELETE FROM preview_environments WHERE pr_number=$1`,
     [prNumber]
   );
 }
