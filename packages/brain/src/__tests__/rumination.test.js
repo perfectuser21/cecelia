@@ -817,8 +817,32 @@ describe('rumination', () => {
 
   // ── runRuminationForce 测试 ──────────────────────────────
 
+  /**
+   * runRuminationForce 现在在 learnings 查询前先写入 rumination_invoke 事件（DB call #1），
+   * 测试 mock 序列需在 setupLearningsOnly 之前加一个 invoke INSERT 响应。
+   */
+  function setupForceRumination(pool, learnings) {
+    mockQuery.mockResolvedValueOnce({ rows: [] }); // rumination_invoke INSERT（新增）
+    setupLearningsOnly(pool, learnings);
+  }
+
   describe('runRuminationForce', () => {
+    it('调用前写入 rumination_invoke 事件 — 供 probe invocations_24h 统计', async () => {
+      // invoke INSERT（新增）+ 无 learnings
+      mockQuery.mockResolvedValueOnce({ rows: [] }); // rumination_invoke INSERT
+      mockQuery.mockResolvedValueOnce({ rows: [] }); // 无 learnings
+
+      await runRuminationForce(pool);
+
+      // 验证 rumination_invoke INSERT 被调用
+      expect(mockQuery).toHaveBeenCalledWith(
+        expect.stringContaining("'rumination_invoke'"),
+        expect.anything()
+      );
+    });
+
     it('无未消化知识时返回 {processed: 0, insights: []}', async () => {
+      mockQuery.mockResolvedValueOnce({ rows: [] }); // rumination_invoke INSERT（新增）
       mockQuery.mockResolvedValueOnce({ rows: [] }); // 无 learnings
 
       const result = await runRuminationForce(pool);
@@ -827,10 +851,11 @@ describe('rumination', () => {
 
     it('绕过 cooldown：反刍后立即再次 force 仍可执行', async () => {
       // 先消化一次（触发冷却期）
-      setupLearningsOnly(pool, [{ id: 'l1', title: '知识1', content: '内容1', category: 'tech' }]);
+      setupForceRumination(pool, [{ id: 'l1', title: '知识1', content: '内容1', category: 'tech' }]);
       await runRuminationForce(pool);
 
       // 立即再次 force — 不受冷却期限制
+      mockQuery.mockResolvedValueOnce({ rows: [] }); // rumination_invoke INSERT（新增）
       mockQuery.mockResolvedValueOnce({ rows: [] }); // 无 learnings
       const result = await runRuminationForce(pool);
       // 不应该返回 skipped: 'cooldown'
@@ -841,7 +866,7 @@ describe('rumination', () => {
     it('绕过 daily_budget：预算耗尽后 force 仍可执行', async () => {
       _setDailyCount(DAILY_BUDGET + 10); // 超出预算
 
-      setupLearningsOnly(pool, [{ id: 'l1', title: '知识1', content: '内容1', category: 'tech' }]);
+      setupForceRumination(pool, [{ id: 'l1', title: '知识1', content: '内容1', category: 'tech' }]);
 
       const result = await runRuminationForce(pool);
       // 不因预算耗尽跳过
@@ -854,7 +879,7 @@ describe('rumination', () => {
         id: `force-l${i}`, title: `积压知识${i}`, content: `内容${i}`, category: 'user_shared',
       }));
 
-      setupLearningsOnly(pool, learnings);
+      setupForceRumination(pool, learnings);
 
       const result = await runRuminationForce(pool);
       expect(result.processed).toBe(9);
@@ -870,7 +895,7 @@ describe('rumination', () => {
     });
 
     it('写入 working_memory key=rumination_force_result', async () => {
-      setupLearningsOnly(pool, [{ id: 'l1', title: '测试知识', content: '内容', category: 'tech' }]);
+      setupForceRumination(pool, [{ id: 'l1', title: '测试知识', content: '内容', category: 'tech' }]);
 
       await runRuminationForce(pool);
 
@@ -882,7 +907,7 @@ describe('rumination', () => {
     });
 
     it('返回格式包含 processed 和 insights 字段', async () => {
-      setupLearningsOnly(pool, [{ id: 'l1', title: '知识', content: '内容', category: 'tech' }]);
+      setupForceRumination(pool, [{ id: 'l1', title: '知识', content: '内容', category: 'tech' }]);
 
       const result = await runRuminationForce(pool);
       expect(result).toHaveProperty('processed');
