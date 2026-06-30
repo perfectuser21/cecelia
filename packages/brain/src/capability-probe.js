@@ -381,6 +381,34 @@ async function probeRumination() {
       console.warn('[capability-probe] tick_last lookup failed (non-blocking):', e.message);
     }
 
+    // Grace period: 2h 内已有自愈事件 + 30min 内有 rumination_invoke 证据
+    // → 上次自愈正在生效，不重复触发 + 返回 ok=true 避免重复派发 auto-fix 任务
+    let selfHealGrace = false;
+    try {
+      const [healEvt, invokeEvt] = await Promise.all([
+        pool.query(
+          `SELECT max(created_at) AS ts FROM cecelia_events
+           WHERE event_type = 'rumination_self_heal_initiated'
+             AND created_at > NOW() - INTERVAL '2 hours'`
+        ),
+        pool.query(
+          `SELECT max(created_at) AS ts FROM cecelia_events
+           WHERE event_type = 'rumination_invoke'
+             AND created_at > NOW() - INTERVAL '30 minutes'`
+        ),
+      ]);
+      const hasRecentHeal = healEvt.rows[0]?.ts != null;
+      const hasRecentInvoke = invokeEvt.rows[0]?.ts != null;
+      selfHealGrace = hasRecentHeal && hasRecentInvoke;
+    } catch { /* non-blocking */ }
+
+    if (selfHealGrace) {
+      return {
+        ok: true,
+        detail: `48h_count=0 last_run=${lastRun || 'never'} undigested=${undigested} (loop_dead: self_heal_grace_period heal_active invoke_confirmed)${loopDeadContext}`,
+      };
+    }
+
     // loop_dead 自愈：
     //   A. consciousness 被 DB 禁用（非 env override、非 minimal_mode 人工开关）→ 自动重新启用
     //   B. consciousness 已启用 + minimal_mode 未设 → 直接调用 runRumination 解堵
@@ -409,18 +437,21 @@ async function probeRumination() {
           loopDeadContext += ` self_heal_loop_fail=${loopErr.message.slice(0, 40)}`;
           console.warn('[Probe] rumination consciousness loop restart failed:', loopErr.message);
         }
-        // Wave 3 (Case A): fire-and-forget runRumination — 不 await 防止 LLM 调用阻塞 30s probe 超时
+        // Wave 3 (Case A): fire-and-forget runRuminationForce — 绕过冷却期/预算，确保 invocations_24h 事件被写入
+        // 用 Force 而非 runRumination 的原因：同进程内若已有近期调用记录（_lastRunAt），
+        // runRumination 冷却检查会直接返回，导致 rumination_invoke 事件未写入，
+        // 下次 probe 仍看到 invocations_24h=0 → 误报 loop_dead。Force 版本绕过所有限制。
         loopDeadContext += ' self_heal=direct_run(bg)';
-        import('./rumination.js').then(({ runRumination }) => runRumination(pool)).then(r => {
-          console.log(`[Probe] rumination Case A self-heal: direct_run completed digested=${r?.digested ?? 0}`);
+        import('./rumination.js').then(({ runRuminationForce }) => runRuminationForce(pool)).then(r => {
+          console.log(`[Probe] rumination Case A self-heal: direct_run(force) completed processed=${r?.processed ?? 0}`);
         }).catch(e => {
           console.warn('[Probe] rumination Case A self-heal direct_run failed:', e.message);
         });
       } else {
-        // Case B: fire-and-forget runRumination — 不 await 防止 LLM 调用阻塞 30s probe 超时
+        // Case B: fire-and-forget runRuminationForce — 绕过冷却期，确保 invocations_24h 事件被写入
         loopDeadContext += ' self_heal=direct_run(bg)';
-        import('./rumination.js').then(({ runRumination }) => runRumination(pool)).then(r => {
-          console.log(`[Probe] rumination loop_dead self-heal: direct_run completed digested=${r?.digested ?? 0}`);
+        import('./rumination.js').then(({ runRuminationForce }) => runRuminationForce(pool)).then(r => {
+          console.log(`[Probe] rumination loop_dead self-heal: direct_run(force) completed processed=${r?.processed ?? 0}`);
         }).catch(e => {
           console.warn('[Probe] rumination self-heal direct_run failed:', e.message);
         });
@@ -435,6 +466,12 @@ async function probeRumination() {
           console.warn('[Probe] rumination consciousness loop restart failed (Case B):', loopErr.message);
         }
       }
+      // 自愈已触发：写入可观测性事件，供下次 probe 检查 grace period（防重复派发 auto-fix）
+      pool.query(
+        `INSERT INTO cecelia_events (event_type, source, payload)
+         VALUES ('rumination_self_heal_initiated', 'capability-probe', $1::jsonb)`,
+        [JSON.stringify({ ts: new Date().toISOString() })]
+      ).catch(e => console.warn('[Probe] self_heal_initiated event write failed (non-blocking):', e.message));
     }
   }
 

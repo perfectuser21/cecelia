@@ -142,9 +142,11 @@ describe('probeRumination — loop_dead 自愈机制（PROBE_FAIL_RUMINATION cp-
     expect(ruminationFn).toContain('consciousness_reenabled');
   });
 
-  it('consciousness 已启用但 loop_dead 时动态导入 runRumination 直接运行（绕过 tick）', () => {
+  it('loop_dead 时动态导入 rumination.js 并调用 runRuminationForce（绕过 tick 且绕过冷却期）', () => {
     expect(ruminationFn).toContain("import('./rumination.js')");
-    expect(ruminationFn).toContain('runRumination(pool)');
+    // 使用 Force 版本绕过 _lastRunAt 冷却检查，确保 rumination_invoke 事件始终被写入
+    expect(ruminationFn).toContain('runRuminationForce(pool)');
+    expect(ruminationFn).not.toContain('runRumination(pool)');
     expect(ruminationFn).toContain('direct_run');
   });
 
@@ -160,25 +162,35 @@ describe('probeRumination — loop_dead 自愈机制（PROBE_FAIL_RUMINATION cp-
   });
 });
 
-describe('probeRumination — 自愈 runRumination 必须异步（防探针超时）', () => {
-  it('self-heal direct_run 不阻塞探针 — runRumination(pool) 不使用 await（fire-and-forget）', () => {
-    // BUG: await runRumination(pool) 触发 LLM/NotebookLM 调用，耗时 >30s → probe timeout
-    // 修复: runRumination(pool).then().catch() 异步执行，探针立即返回
-    expect(ruminationFn).not.toContain('await runRumination(pool)');
+describe('probeRumination — 自愈 runRuminationForce 必须异步（防探针超时）', () => {
+  it('self-heal direct_run 不阻塞探针 — runRuminationForce(pool) 不使用 await（fire-and-forget）', () => {
+    // BUG: await runRuminationForce(pool) 触发 LLM/NotebookLM 调用，耗时 >30s → probe timeout
+    // 修复: runRuminationForce(pool).then().catch() 异步执行，探针立即返回
+    expect(ruminationFn).not.toContain('await runRuminationForce(pool)');
   });
 
   it('self-heal 启动后 loopDeadContext 包含 direct_run 标记（可观测性保持）', () => {
     // 即使 fire-and-forget，仍须在 detail 中记录自愈已触发
     expect(ruminationFn).toContain('self_heal=direct_run');
   });
+
+  it('self-heal 使用 runRuminationForce 而非 runRumination — 冷却期不阻断 invocations_24h 写入', () => {
+    // runRumination 有 _lastRunAt 冷却检查（10 分钟），若同进程内已有近期调用则跳过 rumination_invoke 事件写入
+    // 导致下次 probe 仍看到 invocations_24h=0 → 误报 loop_dead。Force 版本绕过所有限制。
+    expect(ruminationFn).toContain('runRuminationForce(pool)');
+    expect(ruminationFn).not.toContain('runRumination(pool)');
+  });
 });
 
 describe('probeRumination — Case A 自愈立即 direct_run（cp-05200001）', () => {
-  it('Case A 和 Case B 都包含 import rumination.js（两处 direct_run 确保两种 loop_dead 场景都立即反刍）', () => {
+  it('Case A 和 Case B 都包含 import rumination.js + runRuminationForce（两处 direct_run 确保两种 loop_dead 场景都立即反刍）', () => {
     // 修复前：只有 Case B 有 import('./rumination.js')，count=1
     // 修复后：Case A（consciousness 重新启用后）也立即运行，count≥2
     const importCount = (ruminationFn.match(/import\('\.\/rumination\.js'\)/g) || []).length;
     expect(importCount).toBeGreaterThanOrEqual(2);
+    // 所有 direct_run 使用 Force 版本，而非标准 runRumination（标准版有冷却期可能阻断）
+    const forceCount = (ruminationFn.match(/runRuminationForce\(pool\)/g) || []).length;
+    expect(forceCount).toBeGreaterThanOrEqual(2);
   });
 
   it('consciousness_reenabled 标记与 direct_run 标记都出现在函数体中（Case A 完整自愈链）', () => {
@@ -192,5 +204,53 @@ describe('probeRumination — Case A 自愈立即 direct_run（cp-05200001）', 
     expect(loopRestartedIdx).toBeLessThan(firstDirectRunIdx);
     // consciousness_reenabled（Case A Wave 1）先于第一个 direct_run（Case A Wave 3）
     expect(reenabledIdx).toBeLessThan(firstDirectRunIdx);
+  });
+});
+
+describe('probeRumination — loop_dead 自愈 grace period（防重复 auto-fix 派发）', () => {
+  it('probe 函数体内查询 rumination_self_heal_initiated 事件（grace period 检测）', () => {
+    expect(ruminationFn).toContain("event_type = 'rumination_self_heal_initiated'");
+    expect(ruminationFn).toContain('selfHealGrace');
+  });
+
+  it('grace period 同时要求 rumination_invoke 在 30min 内（防止仅凭旧 heal 事件误判）', () => {
+    expect(ruminationFn).toContain("event_type = 'rumination_invoke'");
+    expect(ruminationFn).toContain('hasRecentInvoke');
+    expect(ruminationFn).toContain('30 minutes');
+  });
+
+  it('grace period 检查窗口为 2 小时', () => {
+    expect(ruminationFn).toContain('2 hours');
+    expect(ruminationFn).toContain('hasRecentHeal');
+  });
+
+  it('grace period 生效时 detail 包含 self_heal_grace_period 标记（可观测性）', () => {
+    expect(ruminationFn).toContain('self_heal_grace_period');
+    expect(ruminationFn).toContain('heal_active');
+    expect(ruminationFn).toContain('invoke_confirmed');
+  });
+
+  it('grace period 生效时返回 ok: true（避免重复派发 auto-fix）', () => {
+    // grace period return 必须在自愈动作之前（先检查是否已在愈合中，再决定是否重新自愈）
+    const graceIdx = ruminationFn.indexOf('self_heal_grace_period');
+    const directRunIdx = ruminationFn.indexOf('self_heal=direct_run(bg)');
+    expect(graceIdx).toBeGreaterThanOrEqual(0);
+    expect(directRunIdx).toBeGreaterThanOrEqual(0);
+    expect(graceIdx).toBeLessThan(directRunIdx);
+  });
+
+  it('自愈触发后写入 rumination_self_heal_initiated 事件（供下次 probe grace period 检查）', () => {
+    expect(ruminationFn).toContain("'rumination_self_heal_initiated'");
+    expect(ruminationFn).toContain("'capability-probe'");
+    // 必须是 fire-and-forget（.catch）不阻塞 probe
+    expect(ruminationFn).toContain('self_heal_initiated event write failed');
+  });
+
+  it('grace period 检查先于自愈动作（grace check → self-heal actions 顺序正确）', () => {
+    const gracePeriodQueryIdx = ruminationFn.indexOf('selfHealGrace');
+    const consEnabledSetIdx = ruminationFn.indexOf('setConsciousnessEnabled(pool, true)');
+    expect(gracePeriodQueryIdx).toBeGreaterThanOrEqual(0);
+    expect(consEnabledSetIdx).toBeGreaterThanOrEqual(0);
+    expect(gracePeriodQueryIdx).toBeLessThan(consEnabledSetIdx);
   });
 });

@@ -858,12 +858,26 @@ export async function getUndigestedCount(dbPool) {
 /**
  * 强制反刍（绕过所有限制：isSystemIdle / cooldown / daily_budget）
  * 一次性消化最多 9 条 digested=false 的 learning，并将结果写入 working_memory
+ *
+ * 注意：调用前写入 rumination_invoke 心跳事件（与 runRumination 保持一致），
+ * 供 capability-probe 的 loop_dead 自愈链路正确统计 invocations_24h。
  * @param {object} [dbPool] - 数据库连接池
  * @returns {Promise<{processed: number, insights: string[]}>}
  */
 export async function runRuminationForce(dbPool) {
   const db = dbPool || pool;
   const FORCE_LIMIT = 9;
+
+  // 调用心跳：与 runRumination 保持一致，供 probe invocations_24h 统计
+  try {
+    await db.query(
+      `INSERT INTO cecelia_events (event_type, source, payload)
+       VALUES ('rumination_invoke', 'rumination', $1::jsonb)`,
+      [JSON.stringify({ ts: new Date().toISOString(), mode: 'force' })]
+    );
+  } catch (invErr) {
+    console.warn('[rumination] force: invoke heartbeat failed (non-blocking):', invErr.message);
+  }
 
   let learnings;
   try {
