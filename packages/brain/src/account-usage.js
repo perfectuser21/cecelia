@@ -46,8 +46,8 @@ function isAccountEligibleForTier(account, tier) {
 
   switch (tier) {
     case 'sonnet':
-      // Sonnet：7d_Sonnet 未满
-      return account.sevenDaySonnetPct < SONNET_7D_THRESHOLD;
+      // Sonnet：7d_Sonnet 未满 AND 总量未完全耗尽（总量满时 API 拒绝所有请求）
+      return account.sevenDaySonnetPct < SONNET_7D_THRESHOLD && account.sevenDayPct < HAIKU_7D_THRESHOLD;
     case 'opus':
       // Opus：7d_total < 95%（Opus 耗 token 多，以总量衡量）
       return account.sevenDayPct < OPUS_7D_THRESHOLD;
