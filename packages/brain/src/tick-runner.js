@@ -88,10 +88,7 @@ import {
 import { collectSelfReport } from './self-report-collector.js';
 import { runDailyConsolidationIfNeeded } from './consolidation.js';
 import { flushAlertsIfNeeded } from './alerting.js';
-import {
-  scanEvolutionIfNeeded,
-  synthesizeEvolutionIfNeeded,
-} from './evolution-scanner.js';
+// scanEvolutionIfNeeded / synthesizeEvolutionIfNeeded 已移至 evolution-scanner-loop.js（独立循环）
 import { triggerCodeQualityScan } from './task-generator-scheduler.js';
 import { zombieSweep } from './zombie-sweep.js';
 import * as pipelinePatrolPlugin from './pipeline-patrol-plugin.js';
@@ -1601,15 +1598,11 @@ async function executeTick() {
   Promise.resolve().then(() => check48hReport(pool))
     .catch(e => console.warn('[tick] 48h 简报检查失败:', e.message));
 
-  // 10.14 进化日志扫描（每日一次，GitHub API 扫描，不依赖 LLM，consciousness 不门控）
-  Promise.resolve().then(() => scanEvolutionIfNeeded(pool))
-    .catch(e => console.warn('[tick] 进化日志扫描失败:', e.message));
+  // 10.14 进化日志扫描（已移至 evolution-scanner-loop.js 独立循环，不再挂 executeTick）
+  // 原 PR #3469 移到此处，但 executeTick() 自 Wave 2 起从不被调用 → 仍是死代码。
+  // 2026-06-30 修复：evolution-scanner-loop.startEvolutionScannerLoop() 在 startTickLoop() 接回。
 
-  // 10.15 进化叙事合成（每 7 天一次，更新各器官叙事摘要，依赖 LLM，CONSCIOUSNESS_ENABLED=false 时跳过）
-  if (isConsciousnessEnabled()) {
-    Promise.resolve().then(() => synthesizeEvolutionIfNeeded(pool))
-      .catch(e => console.warn('[tick] 进化叙事合成失败:', e.message));
-  }
+  // 10.15 进化叙事合成（已随 scanEvolution 移至 evolution-scanner-loop.js）
 
   // 10.16 每日契约扫描（UTC 03:00，检查模块边界是否有测试覆盖，fire-and-forget）
   Promise.resolve().then(() => triggerContractScan(pool))

@@ -42,6 +42,13 @@ vi.mock('../pipeline-patrol-loop.js', () => ({
   startPipelinePatrolLoop: (...args) => mockStartPipelinePatrolLoop(...args),
   stopPipelinePatrolLoop: (...args) => mockStopPipelinePatrolLoop(...args),
 }));
+// P1 修复（2026-06-30）：独立进化扫描循环由 startTickLoop 启动。mock 以验证「被接上」。
+const mockStartEvolutionScannerLoop = vi.fn().mockReturnValue(true);
+const mockStopEvolutionScannerLoop = vi.fn();
+vi.mock('../evolution-scanner-loop.js', () => ({
+  startEvolutionScannerLoop: (...args) => mockStartEvolutionScannerLoop(...args),
+  stopEvolutionScannerLoop: (...args) => mockStopEvolutionScannerLoop(...args),
+}));
 
 import {
   runTickSafe,
@@ -203,6 +210,22 @@ describe('tick-loop', () => {
       startTickLoop();
       stopTickLoop();
       expect(mockStopPipelinePatrolLoop).toHaveBeenCalledTimes(1);
+    });
+
+    // P1 回归（2026-06-30）：evolution-scanner 必须由 startTickLoop 接上独立循环。
+    // 历史 bug：PR #3469 把 scanEvolutionIfNeeded 移进 executeTick()，但 executeTick() 自
+    // Wave 2 起从不被调用 → scanner 自 2026-06-18 不再运行，probe=PROBE_FAIL_EVOLUTION(scanner_stale)。
+    it('startTickLoop 启动独立进化扫描循环（startEvolutionScannerLoop 被调用）', () => {
+      mockStartEvolutionScannerLoop.mockClear();
+      startTickLoop();
+      expect(mockStartEvolutionScannerLoop).toHaveBeenCalledTimes(1);
+    });
+
+    it('stopTickLoop 同步停掉进化扫描循环（start/stop 对称）', () => {
+      mockStopEvolutionScannerLoop.mockClear();
+      startTickLoop();
+      stopTickLoop();
+      expect(mockStopEvolutionScannerLoop).toHaveBeenCalledTimes(1);
     });
   });
 });

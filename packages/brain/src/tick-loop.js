@@ -21,6 +21,7 @@ import { startConsciousnessLoop } from './consciousness-loop.js';
 import { startHarnessWatchdogLoop, stopHarnessWatchdogLoop } from './harness-watchdog-loop.js';
 import { startRecoveryLoop, stopRecoveryLoop } from './recovery-loop.js';
 import { startPipelinePatrolLoop, stopPipelinePatrolLoop } from './pipeline-patrol-loop.js';
+import { startEvolutionScannerLoop, stopEvolutionScannerLoop } from './evolution-scanner-loop.js';
 import { publishCognitiveState } from './events/taskEvents.js';
 
 // ───── tickLog: [HH:MM:SS] 前缀 + 每 100 条打一次 summary ─────
@@ -162,6 +163,11 @@ export function startTickLoop() {
   // executeTick → 从不运行 → 干预通道整条死代码。仿 recovery-loop / harness-watchdog-loop 接回。
   startPipelinePatrolLoop();
 
+  // P1 修复（2026-06-30）：启动独立进化扫描循环（每 30 分钟）。scanEvolutionIfNeeded 原挂在
+  // PR #3469 移入的 executeTick（本身死代码） → 依然从不调用，probe=PROBE_FAIL_EVOLUTION(scanner_stale)。
+  // 仿 recovery-loop / pipeline-patrol-loop 接回独立 setInterval。内部每日门控确保不轰炸 GitHub API。
+  startEvolutionScannerLoop();
+
   tickLog(`[tick-loop] Started (interval: ${TICK_LOOP_INTERVAL_MS}ms)`);
   return true;
 }
@@ -177,10 +183,11 @@ export function stopTickLoop() {
 
   clearInterval(tickState.loopTimer);
   tickState.loopTimer = null;
-  // 同步停掉独立 harness 看门狗循环 + 恢复循环 + pipeline 巡航循环（保持 start/stop 对称）
+  // 同步停掉独立 harness 看门狗循环 + 恢复循环 + pipeline 巡航循环 + 进化扫描循环（保持 start/stop 对称）
   stopHarnessWatchdogLoop();
   stopRecoveryLoop();
   stopPipelinePatrolLoop();
+  stopEvolutionScannerLoop();
   tickLog('[tick-loop] Stopped');
   return true;
 }
