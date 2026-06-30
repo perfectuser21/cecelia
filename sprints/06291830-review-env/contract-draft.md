@@ -1,4 +1,4 @@
-# Sprint Contract Draft (Round 3)
+# Sprint Contract Draft (Round 4)
 
 ## Response Schema（推导来源: N/A）
 
@@ -218,9 +218,8 @@ echo "✅ Step 8 cleanup workflow 验证通过"
 #!/bin/bash
 set -e
 
-# STEP: 验证 preview-deploy.yml 存在且含 pull_request trigger（内容断言，消除 file-existence-only）
-test -f .github/workflows/preview-deploy.yml && \
-  grep -q "pull_request" .github/workflows/preview-deploy.yml || \
+# STEP: 验证 preview-deploy.yml 含 pull_request trigger（内容断言隐含文件存在）
+grep -q "pull_request" .github/workflows/preview-deploy.yml || \
   { echo "FAIL: preview-deploy.yml 不存在或缺 pull_request trigger"; exit 1; }
 grep -qE "opened|synchronize" .github/workflows/preview-deploy.yml || { echo "FAIL: 缺 PR 事件类型"; exit 1; }
 
@@ -241,19 +240,16 @@ grep -qiE "healthcheck|health.check|health_check" .github/workflows/preview-depl
   { echo "FAIL: 缺 preview URL health check 步骤（HTTP 200 验证）"; exit 1; }
 echo "✅ health check 步骤存在"
 
-# STEP: 验证 preview-cleanup.yml 存在且含 closed trigger（内容断言，消除 file-existence-only）
-test -f .github/workflows/preview-cleanup.yml && \
-  grep -q "closed" .github/workflows/preview-cleanup.yml || \
+# STEP: 验证 preview-cleanup.yml 含 closed trigger（内容断言隐含文件存在）
+grep -q "closed" .github/workflows/preview-cleanup.yml || \
   { echo "FAIL: preview-cleanup.yml 不存在或缺 closed trigger"; exit 1; }
 
-# STEP: 验证部署脚本存在且含 --print-port 实现（内容断言）
-test -f scripts/preview-deploy.sh && \
-  grep -q "\-\-print-port" scripts/preview-deploy.sh || \
+# STEP: 验证部署脚本含 --print-port 实现（内容断言隐含文件存在）
+grep -q "\-\-print-port" scripts/preview-deploy.sh || \
   { echo "FAIL: preview-deploy.sh 不存在或缺 --print-port 接口"; exit 1; }
 
-# STEP: 验证清理脚本存在且含进程停止逻辑（内容断言）
-test -f scripts/preview-cleanup.sh && \
-  grep -qiE "kill|pkill|stop" scripts/preview-cleanup.sh || \
+# STEP: 验证清理脚本含进程停止逻辑（内容断言隐含文件存在）
+grep -qiE "kill|pkill|stop" scripts/preview-cleanup.sh || \
   { echo "FAIL: preview-cleanup.sh 不存在或缺进程停止逻辑"; exit 1; }
 
 # STEP: 验证端口范围配置（8000-8999）
@@ -277,9 +273,8 @@ echo "✅ Scenario 1 通过"
 #!/bin/bash
 set -e
 
-# STEP: preview-deploy.sh 必须存在且实现 --print-port 接口
-test -f scripts/preview-deploy.sh || { echo "FAIL: preview-deploy.sh 不存在"; exit 1; }
-grep -qE "\-\-print-port" scripts/preview-deploy.sh || { echo "FAIL: --print-port 接口未实现"; exit 1; }
+# STEP: preview-deploy.sh 必须实现 --print-port 接口（内容断言隐含文件存在）
+grep -qE "\-\-print-port" scripts/preview-deploy.sh || { echo "FAIL: preview-deploy.sh 不存在或缺 --print-port 接口"; exit 1; }
 
 BRANCH_NAME="cp-test-feature-abc123"
 
