@@ -45,7 +45,21 @@ jobs:
           echo "port=$PORT" >> $GITHUB_OUTPUT
           echo "Preview port: $PORT"
 
+      - name: 检查 SSH secrets 是否配置
+        id: check_secrets
+        run: |
+          if [ -n "$SECRET_HOST" ]; then
+            echo "configured=true" >> $GITHUB_OUTPUT
+            echo "SSH secrets 已配置，继续部署"
+          else
+            echo "configured=false" >> $GITHUB_OUTPUT
+            echo "⚠️ HK_VPS_HOST secret 未配置，跳过 SSH 部署（预览功能需在 repo secrets 中配置）"
+          fi
+        env:
+          SECRET_HOST: ${{ secrets.HK_VPS_HOST }}
+
       - name: SSH 部署到 hk-vps
+        if: steps.check_secrets.outputs.configured == 'true'
         uses: appleboy/ssh-action@v1.0.0
         with:
           host: ${{ secrets.HK_VPS_HOST }}
@@ -62,6 +76,7 @@ jobs:
             [ -f /tmp/preview-${PORT}.pid ] && kill $(cat /tmp/preview-${PORT}.pid) 2>/dev/null || true
 
       - name: 上传构建产物到 hk-vps
+        if: steps.check_secrets.outputs.configured == 'true'
         uses: appleboy/scp-action@v0.1.7
         with:
           host: ${{ secrets.HK_VPS_HOST }}
@@ -73,6 +88,7 @@ jobs:
           strip_components: 3
 
       - name: 启动静态服务并写 PID
+        if: steps.check_secrets.outputs.configured == 'true'
         uses: appleboy/ssh-action@v1.0.0
         with:
           host: ${{ secrets.HK_VPS_HOST }}
@@ -91,6 +107,7 @@ jobs:
 
       - name: Preview URL health check（HTTP 200）
         id: healthcheck
+        if: steps.check_secrets.outputs.configured == 'true'
         run: |
           PORT=${{ steps.port.outputs.port }}
           HOST="${{ secrets.HK_VPS_HOST }}"
@@ -111,7 +128,7 @@ jobs:
           exit 1
 
       - name: PR 评论写入预览 URL
-        if: success()
+        if: steps.check_secrets.outputs.configured == 'true' && success()
         uses: actions/github-script@v7
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
@@ -124,6 +141,21 @@ jobs:
               repo: context.repo.repo,
               issue_number: context.issue.number,
               body: `## 🚀 预览环境已就绪\n\n**Branch**: \`${branch}\`\n**Preview URL**: ${previewUrl}\n**Port**: ${port}\n\n> 此预览环境在 PR 关闭时自动清理。`,
+            });
+
+      - name: PR 评论写入（SSH secrets 未配置）
+        if: steps.check_secrets.outputs.configured == 'false'
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const branch = '${{ github.head_ref }}';
+            const port = '${{ steps.port.outputs.port }}';
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body: `## ⚠️ 预览环境未部署\n\n**Branch**: \`${branch}\` | **Port**: ${port}\n\n预览功能需在 repo secrets 中配置 \`HK_VPS_HOST\`、\`HK_VPS_USER\`、\`HK_VPS_SSH_KEY\`。`,
             });
 
       - name: PR 评论写入失败原因

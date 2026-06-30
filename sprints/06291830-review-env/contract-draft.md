@@ -351,7 +351,7 @@ echo "✅ Scenario 3 通过（GitHub API 验证 workflow 文件存在，评论�
 
 | 功能 | Test File | BEHAVIOR 覆盖 | 预期红证据 |
 |---|---|---|---|
-| preview-deploy.yml 存在且触发正确 + main 过滤 + health check | `tests/preview-env.test.ts` | workflow 文件存在 + trigger 配置 + Step 5 health check | → 文件不存在 → FAIL |
-| preview-cleanup.yml 存在且触发正确 | `tests/preview-env.test.ts` | cleanup 文件存在 + closed trigger | → 文件不存在 → FAIL |
-| scripts 存在且含端口逻辑 + --print-port 接口 | `tests/preview-env.test.ts` | deploy.sh + cleanup.sh 存在 + 端口范围 + CLI 接口 | → 文件不存在 → FAIL |
-| 端口范围约束 + 幂等性 | `tests/preview-env.test.ts` | 8000-8999 范围定义 + --print-port 实现 | → grep 不匹配 → FAIL |
+| preview-deploy.yml 存在且触发正确 + main 过滤 + health check | `tests/preview-env.test.ts` | deploy.yml 必须存在/pull_request trigger/opened/pull-requests/PR comment/failure()/SSH 部署/health check/main 分支 | → 文件不存在 → FAIL |
+| preview-cleanup.yml 存在且触发正确 | `tests/preview-env.test.ts` | cleanup.yml 必须存在/closed 事件 | → 文件不存在 → FAIL |
+| scripts 存在且含端口逻辑 + --print-port 接口 | `tests/preview-env.test.ts` | preview-deploy.sh 必须存在/preview-cleanup.sh 必须存在/端口范围约束/--print-port CLI | → 文件不存在 → FAIL |
+| 端口范围约束 + 幂等性 | `tests/preview-env.test.ts` | --print-port 执行输出/--print-port 对同一 branch | → grep 不匹配 → FAIL |
