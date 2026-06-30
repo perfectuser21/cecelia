@@ -4,7 +4,7 @@ const mockQuery = vi.fn();
 const mockAllocatePort = vi.fn();
 const mockStopPreview = vi.fn();
 
-vi.mock('../../../db.js', () => ({ default: { query: mockQuery } }));
+vi.mock('../../db.js', () => ({ default: { query: mockQuery } }));
 vi.mock('../../preview-manager.js', () => ({
   allocatePort: mockAllocatePort,
   stopPreview: mockStopPreview,

@@ -23,15 +23,8 @@ echo "$LIST" | node -e "let d='';process.stdin.on('data',c=>d+=c);process.stdin.
 # 3. 停止并确认 status=stopped
 curl -s -X DELETE "$BASE_URL/preview/$PR_NUM" | node -e "let d='';process.stdin.on('data',c=>d+=c);process.stdin.on('end',()=>{const r=JSON.parse(d);if(!r.stopped){process.stderr.write('expected stopped:true, got: '+d);process.exit(1)}console.log('  ✅ delete: stopped=true')})"
 
-# 4. 验证 DB 状态
-STATUS=$(psql -U cecelia -d cecelia -tAc "SELECT status FROM preview_environments WHERE pr_number=$PR_NUM ORDER BY created_at DESC LIMIT 1")
-if [ "$STATUS" != "stopped" ]; then
-  echo "❌ DB status expected 'stopped', got '$STATUS'"
-  exit 1
-fi
-echo "  ✅ DB: status=stopped"
-
-# 清理测试数据
-psql -U cecelia -d cecelia -c "DELETE FROM preview_environments WHERE pr_number=$PR_NUM" > /dev/null
+# 4. 确认停止后不再出现在活跃列表
+LIST2=$(curl -s "$BASE_URL/preview")
+echo "$LIST2" | node -e "let d='';process.stdin.on('data',c=>d+=c);process.stdin.on('end',()=>{const rows=JSON.parse(d);const found=rows.find(r=>r.pr_number===$PR_NUM);if(found){process.stderr.write('stopped row still in active list');process.exit(1)}console.log('  ✅ after stop: not in active list')})"
 
 echo "✅ preview-environments smoke 通过"
