@@ -305,6 +305,7 @@ async function notifyHarnessReviewPending(info) {
 
 export {
   sendFeishu,
+  sendBark,
   notifyTaskCompleted,
   notifyTaskFailed,
   notifyCircuitOpen,
