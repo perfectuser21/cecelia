@@ -14,6 +14,12 @@ vi.mock('../tick-runner.js', () => ({
   executeTick: (...args) => mockExecuteTick(...args),
 }));
 
+// Mock db.js pool（tick_last 更新，避免拉实际数据库）
+const mockPoolQuery = vi.fn().mockResolvedValue({ rows: [] });
+vi.mock('../db.js', () => ({
+  default: { query: (...args) => mockPoolQuery(...args) },
+}));
+
 // Mock taskEvents.publishCognitiveState
 vi.mock('../events/taskEvents.js', () => ({
   publishCognitiveState: vi.fn(),
@@ -58,6 +64,8 @@ describe('tick-loop', () => {
     resetTickStateForTests();
     mockExecuteTick.mockReset();
     mockRunScheduler.mockReset();
+    mockPoolQuery.mockReset();
+    mockPoolQuery.mockResolvedValue({ rows: [] });
   });
 
   afterEach(() => {
@@ -145,6 +153,42 @@ describe('tick-loop', () => {
       mockRunScheduler.mockResolvedValueOnce({ dispatched: true, actions_taken: [] });
       await runTickSafe('manual');
       expect(mockRunScheduler).toHaveBeenCalledTimes(1);
+    });
+
+    // 回归测试（PROBE_FAIL_RUMINATION fix）：
+    // Wave 2 迁移后 runScheduler 取代 executeTick，但 executeTick 才更新 tick_last。
+    // 结果：tick_last 停留在 May 5（迁移前最后一次 executeTick），probe 误判为 loop_dead。
+    // 修复：runTickSafe 成功后 fire-and-forget 更新 tick_last。
+    it('tick 成功执行后更新 working_memory tick_last（修复 probe 误判 loop_dead）', async () => {
+      const tickFn = vi.fn().mockResolvedValue({ actions_taken: [] });
+      await runTickSafe('manual', tickFn);
+      // pool.query 被调用，且包含 tick_last 的 INSERT/UPDATE
+      const tickLastCall = mockPoolQuery.mock.calls.find(
+        call => typeof call[0] === 'string' && call[0].includes('tick_last')
+      );
+      expect(tickLastCall).toBeDefined();
+      // 第二个参数是 [JSON.stringify({ timestamp: ... })]
+      const payload = JSON.parse(tickLastCall[1][0]);
+      expect(payload).toHaveProperty('timestamp');
+      expect(typeof payload.timestamp).toBe('string');
+    });
+
+    it('tick 失败时不更新 tick_last（仅成功时更新）', async () => {
+      const tickFn = vi.fn().mockRejectedValue(new Error('tick boom'));
+      await runTickSafe('manual', tickFn);
+      const tickLastCall = mockPoolQuery.mock.calls.find(
+        call => typeof call[0] === 'string' && call[0].includes('tick_last')
+      );
+      expect(tickLastCall).toBeUndefined();
+    });
+
+    it('节流时不更新 tick_last（tick 未执行）', async () => {
+      tickState.lastExecuteTime = Date.now() - 30 * 1000; // 30s ago，未到 2min
+      await runTickSafe('loop');
+      const tickLastCall = mockPoolQuery.mock.calls.find(
+        call => typeof call[0] === 'string' && call[0].includes('tick_last')
+      );
+      expect(tickLastCall).toBeUndefined();
     });
   });
 

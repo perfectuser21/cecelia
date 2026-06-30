@@ -17,6 +17,7 @@
 import { tickState } from './tick-state.js';
 import { executeTick as _executeTick } from './tick-runner.js'; // Wave 2 废弃，保留供回滚
 import { runScheduler } from './tick-scheduler.js';
+import pool from './db.js';
 import { startConsciousnessLoop } from './consciousness-loop.js';
 import { startHarnessWatchdogLoop, stopHarnessWatchdogLoop } from './harness-watchdog-loop.js';
 import { startRecoveryLoop, stopRecoveryLoop } from './recovery-loop.js';
@@ -90,6 +91,13 @@ export async function runTickSafe(source = 'loop', tickFn) {
     const result = await doTick();
     tickState.lastExecuteTime = Date.now();
     tickLog(`[tick-loop] Tick completed (source: ${source}), actions: ${result.actions_taken?.length || 0}`);
+    // 更新 tick_last（供 capability-probe 读取诊断信息）
+    // executeTick（已废弃）才更新此键；迁移到 runScheduler 后此键停止更新，导致 probe 误判 loop_dead
+    pool.query(
+      `INSERT INTO working_memory (key, value_json, updated_at) VALUES ('tick_last', $1, NOW())
+       ON CONFLICT (key) DO UPDATE SET value_json = $1, updated_at = NOW()`,
+      [JSON.stringify({ timestamp: new Date().toISOString() })]
+    ).catch(e => console.warn('[tick-loop] tick_last update failed (non-blocking):', e.message));
     return result;
   } catch (err) {
     console.error(`[tick-loop] Tick failed (source: ${source}):`, err.message);
