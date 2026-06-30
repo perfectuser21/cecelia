@@ -1,4 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
+import express from 'express';
+import request from 'supertest';
 
 const mockPool = {
   query: vi.fn(),
@@ -11,11 +13,7 @@ vi.mock('../../preview-manager.js', () => ({
 }));
 
 const { allocatePort, stopPreview } = await import('../../preview-manager.js');
-
-// 延迟导入路由避免 db mock 未注入
 const { default: previewRouter } = await import('../preview.js');
-import express from 'express';
-import request from 'supertest';
 
 function makeApp() {
   const app = express();

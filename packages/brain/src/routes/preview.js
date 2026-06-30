@@ -7,6 +7,7 @@
  */
 
 import { Router } from 'express';
+import pool from '../db.js';
 import { allocatePort, stopPreview } from '../preview-manager.js';
 
 const router = Router();
@@ -26,7 +27,6 @@ router.post('/allocate', async (req, res) => {
 
 router.get('/', async (req, res) => {
   try {
-    const { default: pool } = await import('../db.js');
     const { rows } = await pool.query(
       "SELECT * FROM preview_environments WHERE status='active' ORDER BY created_at DESC"
     );
