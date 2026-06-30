@@ -661,6 +661,21 @@ export async function runStagingE2E(task, opts = {}) {
         }
       }
 
+      // evaluator PASS 后触发 per-branch review 环境（fire-and-forget，不阻塞 verdict）
+      if (run.verdict === 'PASS') {
+        try {
+          const { allocatePort } = await import('./preview-manager.js');
+          const prNum = task?.payload?.pr_number || task?.metadata?.pr_number || 0;
+          const branch = task?.payload?.branch_name || task?.metadata?.branch_name || 'unknown';
+          if (prNum) {
+            const port = await allocatePort(prNum, branch, task?.payload?.base_repo, dbPool);
+            console.log(`[review-env] PR #${prNum} preview on port ${port}`);
+          }
+        } catch (err) {
+          console.warn('[staging-e2e] review env deploy 失败（不影响 PASS）:', err.message);
+        }
+      }
+
       return await finalize(run.verdict, run.verdict === 'PASS' ? null : 'scenarios_failed', {
         scenariosTotal: run.scenariosTotal,
         scenariosPassed: run.scenariosPassed,

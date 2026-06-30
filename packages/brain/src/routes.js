@@ -25,6 +25,7 @@ import harnessSelftestRouter from './routes/harness-selftest.js';
 import warroomRouter from './routes/warroom.js';
 import kr3Router from './routes/kr3.js';
 import dispatchRouter from './routes/dispatch.js';
+import previewRouter from './routes/preview.js';
 
 export { triggerAutoRCA } from './routes/brain-meta.js';
 export { resolveRelatedFailureMemories } from './routes/shared.js';
@@ -66,5 +67,9 @@ router.use('/kr3', kr3Router);
 
 // dispatch 诊断 — GET /dispatch/recent（B6: dispatch_events 可观察性）
 router.use('/', dispatchRouter);
+
+
+// 预览环境端口分配 — POST/GET /preview, DELETE /preview/:pr_number
+router.use('/preview', previewRouter);
 
 export default router;
