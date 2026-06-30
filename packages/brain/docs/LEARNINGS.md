@@ -1,5 +1,20 @@
 # Development Learnings
 
+## [2026-06-30] PROBE_FAIL_RUMINATION — self-heal 触发 runRumination 被冷却期阻断，改为 runRuminationForce (cp-06301637)
+
+### 根本原因
+`probeRumination` 检测到 `loop_dead`（`invocations_24h=0 AND heartbeats_24h=0`）后触发自愈，调用 `runRumination(pool)` fire-and-forget。但 `runRumination` 有 **10 分钟内存冷却期**（`_lastRunAt`），若同进程内 tick/consciousness-loop 最近已调用过，`runRumination` 会在冷却检查处直接返回，**不写入 `rumination_invoke` 事件**。下次 probe 仍看到 `invocations_24h=0` → 再次误报 `loop_dead` → 再次派发 auto-fix → 无限循环。
+
+### 修复方案（3 层）
+1. **self-heal 改用 `runRuminationForce`**（`capability-probe.js`）：Case A（consciousness re-enabled）和 Case B（consciousness 已启用但 loop_dead）的 direct_run 都从 `runRumination(pool)` 换成 `runRuminationForce(pool)`，绕过冷却期和每日预算限制。
+2. **`runRuminationForce` 写入 `rumination_invoke` 事件**（`rumination.js`）：Force 版本在 learnings 查询前写入 `rumination_invoke`（带 `mode: 'force'`），确保 `invocations_24h` 统计正确。
+3. **grace period 机制**（`capability-probe.js`）：自愈触发后写入 `rumination_self_heal_initiated` 事件，下次 probe 若检测到 2h 内有 self_heal + 30min 内有 `rumination_invoke` → 返回 `ok: true`，避免重复派发 auto-fix。
+
+### 教训
+- **自愈逻辑不能依赖有冷却期的入口**：任何 self-heal fire-and-forget 必须用 `runRuminationForce`（绕过所有限制），否则冷却期可能使事件写入静默失败，probe 无法感知自愈已触发。
+- **probe 自愈需要 grace period**：自愈是异步的（fire-and-forget），probe 下次运行时自愈可能仍在进行中。没有 grace period 保护，probe 会重复认为 loop_dead 并无限派发修复任务。
+- **测试 mock 序列须跟随函数签名变化**：`runRuminationForce` 新增 DB 调用（invoke INSERT）后，现有使用 `setupLearningsOnly` 的测试必须同步添加 mock（否则 mock 序列错位，测试通过但验证的是错误行为）。
+
 ## [2026-05-20] PROBE_FAIL_RUMINATION — Case A 自愈缺少即时 direct_run (cp-05200001)
 
 ### 根本原因
