@@ -1,0 +1,34 @@
+{
+  "initiative_id": "4fed44f7-a000-0000-0000-000000000000",
+  "journey_type": "dev_pipeline",
+  "journey_type_reason": "交付物是 GitHub Actions CI workflow 文件（preview-deploy.yml + preview-cleanup.yml）+ bash 脚本，属于开发流水线基础设施，归 packages/engine/ 职责范畴。",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "per-branch 预览环境 — CI workflow + 部署/清理脚本",
+      "scope": "新建 .github/workflows/preview-deploy.yml（PR push 触发，main branch 不触发；构建 apps/dashboard；SSH 部署到 hk-vps 哈希端口 8000-8999；curl health check 验 HTTP 200；PR 写评论含 URL；failure() 写失败原因）+ .github/workflows/preview-cleanup.yml（PR closed 触发，SSH 清理端口）+ scripts/preview-deploy.sh（build + 端口哈希 + --print-port CLI 接口 + SSH 上传 + 启动静态服务 + PID 文件写入）+ scripts/preview-cleanup.sh（通过 PID 文件 kill 进程 + 端口释放）",
+      "dod": [
+        "[ARTIFACT] .github/workflows/preview-deploy.yml 存在",
+        "[ARTIFACT] .github/workflows/preview-cleanup.yml 存在",
+        "[ARTIFACT] scripts/preview-deploy.sh 存在",
+        "[ARTIFACT] scripts/preview-cleanup.sh 存在",
+        "[BEHAVIOR] preview-deploy.yml 含 pull_request trigger + opened/synchronize 事件；main 分支不触发",
+        "[BEHAVIOR] preview-deploy.yml 含 pull-requests: write 权限 + PR comment 写入步骤",
+        "[BEHAVIOR] preview-deploy.yml 含 SSH 部署步骤 + hk-vps SSH key secret 引用",
+        "[BEHAVIOR] preview-deploy.yml 含 preview URL health check 步骤（curl HTTP 200，在 PR comment 之前）",
+        "[BEHAVIOR] preview-deploy.yml 含 failure() 条件错误评论步骤（error path）",
+        "[BEHAVIOR] preview-cleanup.yml 含 pull_request closed 触发",
+        "[BEHAVIOR] preview-deploy.sh 含端口哈希计算逻辑（范围 8000-8999）+ --print-port CLI 接口（stdout 输出4位端口，幂等）"
+      ],
+      "files": [
+        ".github/workflows/preview-deploy.yml",
+        ".github/workflows/preview-cleanup.yml",
+        "scripts/preview-deploy.sh",
+        "scripts/preview-cleanup.sh"
+      ],
+      "depends_on": [],
+      "complexity": "M",
+      "estimated_minutes": 90
+    }
+  ]
+}
