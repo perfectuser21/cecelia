@@ -910,6 +910,22 @@ describe('account-usage', () => {
       expect(result.model).toBe('haiku');
     });
 
+    it('total 7d = 100% 时 sonnet 阶段应跳过该账号（total 满载 = API 拒绝所有请求）', async () => {
+      // account1: sonnet 7d 仅 10%，但 total 7d 100% — API 会返回 weekly limit
+      // account2: 正常，应被选中
+      setupUsageData({
+        account1: { five_hour_pct: 10, seven_day_pct: 100, seven_day_sonnet_pct: 10, resets_at: null, extra_used: false },
+        account2: { five_hour_pct: 20, seven_day_pct: 8,   seven_day_sonnet_pct: 7,  resets_at: null, extra_used: false },
+        account3: { five_hour_pct: 0,  seven_day_pct: 21,  seven_day_sonnet_pct: 6,  resets_at: null, extra_used: false },
+      });
+
+      const result = await selectBestAccount();
+      // account1 total 满 → 应被跳过；account2 正常 → 应被选中
+      expect(result).not.toBeNull();
+      expect(result.accountId).toBe('account2');
+      expect(result.model).toBe('sonnet');
+    });
+
     it('只有一个账号可用时应选该账号', async () => {
       const futureTime = new Date(Date.now() + 7200000).toISOString();
       markSpendingCap('account1', futureTime);
