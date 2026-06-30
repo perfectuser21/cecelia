@@ -38,11 +38,11 @@ describe('allocatePort', () => {
 describe('stopPreview', () => {
   beforeEach(() => vi.clearAllMocks());
 
-  it('updates status to stopped', async () => {
+  it('deletes the row to release the port', async () => {
     mockPool.query.mockResolvedValue({ rows: [] });
     await stopPreview(1);
     expect(mockPool.query).toHaveBeenCalledWith(
-      expect.stringContaining("status='stopped'"),
+      expect.stringMatching(/DELETE FROM preview_environments/i),
       [1]
     );
   });
