@@ -53,21 +53,39 @@ describe('POST /allocate', () => {
 describe('GET /', () => {
   beforeEach(() => vi.clearAllMocks());
 
-  it('returns active preview environments', async () => {
-    const fakeRows = [{ id: 'abc', pr_number: 1, port: 5300, status: 'active' }];
+  it('returns all preview environments', async () => {
+    const fakeRows = [{ id: 'abc', pr_number: 1, port: 5300 }];
     mockQuery.mockResolvedValue({ rows: fakeRows });
     const res = await (await getRequest())(await makeApp()).get('/');
     expect(res.status).toBe(200);
     expect(res.body).toEqual(fakeRows);
+    expect(mockQuery).toHaveBeenCalledWith(
+      expect.stringMatching(/SELECT \* FROM preview_environments/),
+    );
   });
 });
 
 describe('DELETE /:pr_number', () => {
   beforeEach(() => vi.clearAllMocks());
 
-  it('stops preview and returns stopped:true', async () => {
+  it('kills the review process, deletes DB row, and returns stopped:true', async () => {
+    // First call: SELECT port; Second call would be from stopPreview (mocked via preview-manager)
+    mockQuery.mockResolvedValue({ rows: [{ port: 5300 }] });
     mockStopPreview.mockResolvedValue(undefined);
     const res = await (await getRequest())(await makeApp()).delete('/1');
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ stopped: true });
+    expect(mockQuery).toHaveBeenCalledWith(
+      expect.stringMatching(/SELECT port FROM preview_environments/),
+      [1],
+    );
+    expect(mockStopPreview).toHaveBeenCalledWith(1);
+  });
+
+  it('still succeeds when no DB row found for pr_number', async () => {
+    mockQuery.mockResolvedValue({ rows: [] });
+    mockStopPreview.mockResolvedValue(undefined);
+    const res = await (await getRequest())(await makeApp()).delete('/999');
     expect(res.status).toBe(200);
     expect(res.body).toEqual({ stopped: true });
   });

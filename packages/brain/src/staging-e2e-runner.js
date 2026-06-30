@@ -24,7 +24,7 @@ import pool from './db.js';
 import { updateTaskStatus } from './task-updater.js';
 import { normalizeAcceptance } from './harness-final-e2e.js';
 import { resolveLine, decidePromote, runInternalPromote, defaultPromoteExec, getRepoRoot, PROMOTE_STATUS, spawnHarnessReport, readProductionInfo, REPORT_KIND } from './staging-promote.js';
-import { sendFeishu } from './notifier.js';
+import { sendFeishu, sendBark } from './notifier.js';
 
 export const STAGING_PORT = 5222;
 // A 方案：内部线交付 dashboard，staging 用 deploy-local.sh 起的 dashboard 预览端口。
@@ -661,19 +661,35 @@ export async function runStagingE2E(task, opts = {}) {
         }
       }
 
-      // evaluator PASS 后触发 per-branch review 环境（fire-and-forget，不阻塞 verdict）
+      // evaluator PASS 后：起 per-PR review 环境 + Bark 通知（fire-and-forget，不阻塞 verdict）
       if (run.verdict === 'PASS') {
-        try {
-          const { allocatePort } = await import('./preview-manager.js');
-          const prNum = task?.payload?.pr_number || task?.metadata?.pr_number || 0;
-          const branch = task?.payload?.branch_name || task?.metadata?.branch_name || 'unknown';
-          if (prNum) {
+        (async () => {
+          try {
+            const { allocatePort } = await import('./preview-manager.js');
+            const prNum = task?.payload?.pr_number || task?.metadata?.pr_number || 0;
+            const branch = task?.payload?.branch_name || task?.metadata?.branch_name || 'unknown';
+            if (!prNum) return;
             const port = await allocatePort(prNum, branch, task?.payload?.base_repo, dbPool);
-            console.log(`[review-env] PR #${prNum} preview on port ${port}`);
+            // 起 review 预览（复用 staging build 产物）
+            const repoRoot = getRepoRoot();
+            const reviewScript = path.join(repoRoot, 'scripts/review-preview.sh');
+            const distDir = path.join(repoRoot, 'apps/dashboard/.dist-staging');
+            const r = spawnSync('bash', [reviewScript, String(port), String(prNum), distDir], {
+              encoding: 'utf8', timeout: 30000,
+            });
+            if (r.status === 0) {
+              console.log(`[review-env] PR #${prNum} review ready on port ${port}`);
+              await sendBark(
+                `✅ Review Ready — PR #${prNum}`,
+                `${branch} 已过 E2E，打开 http://38.23.47.81:${port} 验收`
+              );
+            } else {
+              console.warn('[review-env] review-preview.sh 失败:', r.stderr?.slice(0, 200));
+            }
+          } catch (err) {
+            console.warn('[staging-e2e] review env deploy 失败（不影响 PASS）:', err.message);
           }
-        } catch (err) {
-          console.warn('[staging-e2e] review env deploy 失败（不影响 PASS）:', err.message);
-        }
+        })();
       }
 
       return await finalize(run.verdict, run.verdict === 'PASS' ? null : 'scenarios_failed', {
