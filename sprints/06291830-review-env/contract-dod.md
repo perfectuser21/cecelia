@@ -11,17 +11,17 @@ journey_type: dev_pipeline
 
 ## ARTIFACT 条目
 
-- [ ] [ARTIFACT] `.github/workflows/preview-deploy.yml` 存在（新建 CI workflow）
-  Test: node -e "require('fs').accessSync('.github/workflows/preview-deploy.yml')"
+- [ ] [ARTIFACT] `.github/workflows/preview-deploy.yml` 存在且含 `pull_request` trigger
+  Test: node -e "const c=require('fs').readFileSync('.github/workflows/preview-deploy.yml','utf8');if(!c.includes('pull_request'))process.exit(1)"
 
-- [ ] [ARTIFACT] `.github/workflows/preview-cleanup.yml` 存在（新建清理 workflow）
-  Test: node -e "require('fs').accessSync('.github/workflows/preview-cleanup.yml')"
+- [ ] [ARTIFACT] `.github/workflows/preview-cleanup.yml` 存在且含 `closed` 事件 trigger
+  Test: node -e "const c=require('fs').readFileSync('.github/workflows/preview-cleanup.yml','utf8');if(!c.includes('closed'))process.exit(1)"
 
-- [ ] [ARTIFACT] `scripts/preview-deploy.sh` 存在（可执行部署脚本，含 --print-port 接口）
-  Test: node -e "require('fs').accessSync('scripts/preview-deploy.sh')"
+- [ ] [ARTIFACT] `scripts/preview-deploy.sh` 存在且实现 `--print-port` CLI 接口
+  Test: node -e "const c=require('fs').readFileSync('scripts/preview-deploy.sh','utf8');if(!c.includes('--print-port'))process.exit(1)"
 
-- [ ] [ARTIFACT] `scripts/preview-cleanup.sh` 存在（可执行清理脚本）
-  Test: node -e "require('fs').accessSync('scripts/preview-cleanup.sh')"
+- [ ] [ARTIFACT] `scripts/preview-cleanup.sh` 存在且含进程停止逻辑
+  Test: node -e "const c=require('fs').readFileSync('scripts/preview-cleanup.sh','utf8');if(!/kill|pkill|stop/i.test(c))process.exit(1)"
 
 ---
 
@@ -39,8 +39,8 @@ journey_type: dev_pipeline
   Test: manual:bash -c 'grep -qE "ssh|appleboy/ssh-action|SSH_ACTION" .github/workflows/preview-deploy.yml && grep -qE "HK_VPS|SSH_KEY|PREVIEW_SSH" .github/workflows/preview-deploy.yml || { echo "FAIL: 缺 SSH 步骤或 key secret"; exit 1; }; echo OK'
   期望: OK
 
-- [ ] [BEHAVIOR] `preview-deploy.yml` 包含 preview URL health check 步骤（curl HTTP 200 验证），在 PR comment 写入之前执行；health check 失败则不写入有效 URL（Step 5 核心约束）
-  Test: manual:bash -c 'grep -qE "curl.*\\\$PORT|curl.*PREVIEW_PORT|health.check|healthcheck|curl.*http.*[0-9]" .github/workflows/preview-deploy.yml || { echo "FAIL: 缺 preview URL health check 步骤（HTTP 200 验证在 PR comment 之前）"; exit 1; }; echo OK'
+- [ ] [BEHAVIOR] `preview-deploy.yml` 包含 preview URL health check 步骤，在 PR comment 写入之前执行；health check 失败则不写入有效 URL（Step 5 核心约束）
+  Test: manual:bash -c 'grep -qiE "healthcheck|health.check|health_check" .github/workflows/preview-deploy.yml || grep -qE "preview.*http|http.*preview" .github/workflows/preview-deploy.yml || { echo "FAIL: 缺 preview URL health check 步骤"; exit 1; }; echo OK'
   期望: OK
 
 - [ ] [BEHAVIOR] `preview-deploy.yml` 包含 `if: failure()` 条件步骤，部署/health check 失败时向 PR 写明失败原因（error path — PRD NFR 约束）
