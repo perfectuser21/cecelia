@@ -2,9 +2,9 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import express from 'express';
 import request from 'supertest';
 
-const mockPool = {
-  query: vi.fn(),
-};
+const { mockPool } = vi.hoisted(() => {
+  return { mockPool: { query: vi.fn() } };
+});
 
 vi.mock('../../../db.js', () => ({ default: mockPool }));
 vi.mock('../../preview-manager.js', () => ({
