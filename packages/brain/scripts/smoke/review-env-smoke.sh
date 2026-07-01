@@ -31,4 +31,13 @@ grep -q 'REVIEW' "$REVIEW_SCRIPT" || { echo "❌ 缺少 REVIEW 字样" >&2; exit
 echo "  ✅ 紫色横幅配置存在"
 
 echo ""
+
+# 4. staging-e2e-runner.js 包含 SSH 逃逸关键词
+echo "Step 4: SSH 逃逸实现校验"
+RUNNER_FILE="$SCRIPT_DIR/packages/brain/src/staging-e2e-runner.js"
+grep -q '\.dockerenv' "$RUNNER_FILE" || { echo "  ❌ 缺少 /.dockerenv 检测" >&2; exit 1; }
+grep -q 'host\.docker\.internal' "$RUNNER_FILE" || { echo "  ❌ 缺少 host.docker.internal SSH 目标" >&2; exit 1; }
+echo "  ✅ SSH 逃逸实现存在"
+
+echo ""
 echo "✅ review-env smoke 通过"

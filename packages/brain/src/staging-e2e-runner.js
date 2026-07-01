@@ -17,7 +17,7 @@
  */
 
 import { execSync, spawnSync } from 'child_process';
-import fs from 'fs';
+import fs, { existsSync } from 'fs';
 import os from 'os';
 import path from 'path';
 import pool from './db.js';
@@ -563,6 +563,39 @@ export function runGoldenSmokeRegression(opts = {}) {
   };
 }
 
+/**
+ * 起 per-PR review 预览进程。
+ * 若在 Docker 容器内（检测 /.dockerenv），SSH 逃逸到宿主机执行，否则本地直跑。
+ * opts.inContainer 可显式覆盖（测试用）。
+ */
+export function spawnReviewPreview(port, prNum, opts = {}) {
+  const HOST_REPO = process.env.CECELIA_HOST_REPO || '/Users/administrator/perfect21/cecelia';
+  const SSH_TARGET = process.env.CECELIA_HOST_EXEC_SSH || 'administrator@host.docker.internal';
+  const SSH_KEYS = ['/Users/administrator/.ssh/id_ed25519', '/Users/administrator/.ssh/id_rsa'];
+  const sshKey = SSH_KEYS.find(k => existsSync(k)) || SSH_KEYS[0];
+  const distDir = path.join(HOST_REPO, 'apps/dashboard/.dist-staging');
+  const reviewScript = path.join(HOST_REPO, 'scripts/review-preview.sh');
+
+  const inContainer = opts.inContainer ?? existsSync('/.dockerenv');
+
+  if (inContainer) {
+    const remoteCmd =
+      `export PATH=/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:$PATH && ` +
+      `bash ${reviewScript} ${port} ${prNum} ${distDir}`;
+    return spawnSync('ssh', [
+      '-i', sshKey,
+      '-o', 'StrictHostKeyChecking=no',
+      '-o', 'BatchMode=yes',
+      '-o', 'ConnectTimeout=10',
+      SSH_TARGET,
+      remoteCmd,
+    ], { encoding: 'utf8', timeout: 35000 });
+  }
+  return spawnSync('bash', [reviewScript, String(port), String(prNum), distDir], {
+    encoding: 'utf8', timeout: 30000,
+  });
+}
+
 export async function runStagingE2E(task, opts = {}) {
   const dbPool = opts.pool || pool;
   const deploy = opts.deploy || deployStaging;
@@ -670,21 +703,16 @@ export async function runStagingE2E(task, opts = {}) {
             const branch = task?.payload?.branch_name || task?.metadata?.branch_name || 'unknown';
             if (!prNum) return;
             const port = await allocatePort(prNum, branch, task?.payload?.base_repo, dbPool);
-            // 起 review 预览（复用 staging build 产物）
-            const repoRoot = getRepoRoot();
-            const reviewScript = path.join(repoRoot, 'scripts/review-preview.sh');
-            const distDir = path.join(repoRoot, 'apps/dashboard/.dist-staging');
-            const r = spawnSync('bash', [reviewScript, String(port), String(prNum), distDir], {
-              encoding: 'utf8', timeout: 30000,
-            });
+            // 起 review 预览（容器内 SSH 逃逸到宿主；非容器直跑）
+            const r = spawnReviewPreview(port, prNum);
             if (r.status === 0) {
-              console.log(`[review-env] PR #${prNum} review ready on port ${port}`);
+              console.log(`[review-env] PR #${prNum} review ready → http://38.23.47.81:${port}`);
               await sendBark(
                 `✅ Review Ready — PR #${prNum}`,
                 `${branch} 已过 E2E，打开 http://38.23.47.81:${port} 验收`
               );
             } else {
-              console.warn('[review-env] review-preview.sh 失败:', r.stderr?.slice(0, 200));
+              console.warn('[review-env] review-preview.sh 失败:', (r.stderr || r.stdout || '').slice(0, 300));
             }
           } catch (err) {
             console.warn('[staging-e2e] review env deploy 失败（不影响 PASS）:', err.message);
