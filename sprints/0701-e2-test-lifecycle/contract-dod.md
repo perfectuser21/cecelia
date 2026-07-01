@@ -142,3 +142,20 @@ journey_type: autonomous
   grep -q "runTestLifecyclePatrol" /workspace/packages/brain/src/tick-runner.js || { echo "FAIL: 未调用 runTestLifecyclePatrol"; exit 1; }
   echo OK'
   期望: OK
+
+- [ ] [BEHAVIOR] 24h 去重实际生效：patrol 跑一次后 isInLifecyclePatrolWindow() 返回 false（不重复运行）
+  Test: manual:bash -c '
+  cd /workspace && node -e "
+    const patrol = require('"'"'./packages/brain/src/test-lifecycle-patrol.js'"'"');
+    patrol.runTestLifecyclePatrol({ force: true }).then(() => {
+      return patrol.isInLifecyclePatrolWindow();
+    }).then(shouldRun => {
+      if (shouldRun !== false) {
+        console.error('"'"'FAIL: 24h 内 isInLifecyclePatrolWindow() 应返回 false，实际返回'"'"', shouldRun);
+        process.exit(1);
+      }
+      console.log('"'"'OK: 24h 窗口正确跳过 shouldRun='"'"' + shouldRun);
+      process.exit(0);
+    }).catch(e => { console.error(e); process.exit(1); });
+  "'
+  期望: OK（shouldRun=false，24h 窗口内第二次调用跳过）

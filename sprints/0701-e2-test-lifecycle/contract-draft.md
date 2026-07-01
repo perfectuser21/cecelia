@@ -1,4 +1,4 @@
-# Sprint Contract Draft (Round 3)
+# Sprint Contract Draft (Round 4)
 
 ## Response Schema（推导来源: N/A）
 
@@ -81,19 +81,25 @@ echo "✅ Migration 311 列就位"
 
 **验证命令**:
 ```bash
-# 模拟：先跑一次 patrol（更新 lifecycle_checked_at），再立即跑第二次，验证第二次不修改任何行
-# （用 Node 调用 patrol 函数两次，比较第二次返回的 skipped=true）
+# 先用 force:true 跑一次 patrol（更新 lifecycle_checked_at 到 NOW()）
+# 再立即调 isInLifecyclePatrolWindow()，此时 24h 内已运行 → 必须返回 false（跳过）
 node -e "
+process.chdir('/workspace');
 const patrol = require('./packages/brain/src/test-lifecycle-patrol.js');
-patrol.isInLifecyclePatrolWindow().then(shouldRun => {
-  if (shouldRun !== true && shouldRun !== false) process.exit(1);
-  console.log('window_check OK:', shouldRun);
+patrol.runTestLifecyclePatrol({ force: true }).then(() => {
+  return patrol.isInLifecyclePatrolWindow();
+}).then(shouldRun => {
+  if (shouldRun !== false) {
+    console.error('FAIL: 24h 内 isInLifecyclePatrolWindow() 应返回 false，实际返回', shouldRun);
+    process.exit(1);
+  }
+  console.log('OK: 24h 窗口正确跳过 shouldRun=' + shouldRun);
   process.exit(0);
 }).catch(e => { console.error(e); process.exit(1); });
-" || { echo "FAIL: isInLifecyclePatrolWindow 函数不存在或抛出"; exit 1; }
+" || { echo "FAIL: 24h 去重验证失败"; exit 1; }
 ```
 
-**硬阈值**: `isInLifecyclePatrolWindow()` 返回 boolean，无异常抛出
+**硬阈值**: `runTestLifecyclePatrol({ force: true })` 执行后，立即调 `isInLifecyclePatrolWindow()` → **必须返回 `false`**（24h 内不重复运行）
 
 ---
 
