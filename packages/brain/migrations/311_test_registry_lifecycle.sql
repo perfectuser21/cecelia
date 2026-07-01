@@ -7,9 +7,13 @@ ALTER TABLE test_registry
   ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'active'
     CHECK (status IN ('active','orphan','deprecated'));
 
+-- feature_id 是软引用，故意不加 REFERENCES 约束：
+-- 若加 FK + ON DELETE SET NULL，能力被删的瞬间 feature_id 就被 Postgres 自动置 NULL，
+-- 巡检就永远看不到"这行曾经指向一个已删除的能力"，feature_deleted 判定会失效成死代码。
+-- 巡检自己做存在性 JOIN 判断（SELECT id FROM journey_features WHERE id = ANY(...)），
+-- 不依赖 DB 级联，这样能力删除后 feature_id 会保留原值，巡检才能判定 feature_deleted。
 ALTER TABLE test_registry
-  ADD COLUMN IF NOT EXISTS feature_id UUID
-    REFERENCES journey_features(id) ON DELETE SET NULL;
+  ADD COLUMN IF NOT EXISTS feature_id UUID;
 
 ALTER TABLE test_registry
   ADD COLUMN IF NOT EXISTS orphan_reason TEXT;
