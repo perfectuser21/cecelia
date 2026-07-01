@@ -45,6 +45,14 @@ export async function runTestLifecyclePatrol(db = pool, now = new Date()) {
 
     const featureDeleted = row.feature_id != null && !aliveFeatureIds.has(row.feature_id);
 
+    if (!featureDeleted && row.status === 'orphan') {
+      await db.query(
+        `UPDATE test_registry SET status = 'active', orphan_reason = NULL, lifecycle_checked_at = NOW() WHERE id = $1`,
+        [row.id]
+      );
+      continue;
+    }
+
     if (featureDeleted) {
       await db.query(
         `UPDATE test_registry SET status = 'orphan', orphan_reason = $1, lifecycle_checked_at = NOW() WHERE id = $2`,
