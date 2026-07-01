@@ -14,10 +14,12 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { readFileSync, existsSync } from 'fs';
+import { readFileSync, existsSync, writeFileSync, unlinkSync } from 'fs';
 import { join } from 'path';
 import { fileURLToPath } from 'url';
 import { dirname } from 'path';
+import { spawnSync } from 'child_process';
+import { tmpdir } from 'os';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = join(__dirname, '..', '..', '..');
@@ -66,6 +68,22 @@ describe('core-regression 无条件闸 — CI 基础设施合同', () => {
       expect(content, '脚本缺 contract 文件引用').toMatch(
         /regression-contract\.yaml|CONTRACT_FILE/
       );
+    });
+
+    it('yq 解析格式错误 YAML 时 exit 非零（FROM_PRD 边界情况）', () => {
+      const scriptPath = join(REPO_ROOT, 'scripts', 'ci', 'run-core-regression.sh');
+      expect(existsSync(scriptPath), 'run-core-regression.sh 不存在').toBe(true);
+      const tmpFile = join(tmpdir(), `bad-contract-${Date.now()}.yaml`);
+      writeFileSync(tmpFile, 'version: [broken\nentries: {invalid_yaml');
+      try {
+        const result = spawnSync('bash', [scriptPath], {
+          env: { ...process.env, TRIGGER_TYPE: 'PR', CONTRACT_FILE: tmpFile },
+          stdio: 'pipe',
+        });
+        expect(result.status, 'yq 解析格式错误 YAML 应 exit 非零').not.toBe(0);
+      } finally {
+        unlinkSync(tmpFile);
+      }
     });
   });
 
@@ -122,6 +140,20 @@ describe('core-regression 无条件闸 — CI 基础设施合同', () => {
       const needsList = needsMatch?.[1] ?? '';
       expect(needsList, 'ci-passed needs 仍含 regression-smoke').not.toContain(
         'regression-smoke'
+      );
+    });
+
+    it('ci-passed run 块不含 check "regression-smoke"（两处引用均清除）', () => {
+      const content = readFileSync(ciPath, 'utf8');
+      expect(content, 'ci-passed run 块仍含 check "regression-smoke"').not.toContain(
+        'check "regression-smoke"'
+      );
+    });
+
+    it('ci-passed run 块含 check "core-regression"', () => {
+      const content = readFileSync(ciPath, 'utf8');
+      expect(content, 'ci-passed run 块缺 check "core-regression"').toContain(
+        'check "core-regression"'
       );
     });
   });

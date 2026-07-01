@@ -1,4 +1,4 @@
-# Sprint Contract Draft (Round 1)
+# Sprint Contract Draft (Round 2)
 
 ## Response Schema（推导来源: N/A）
 
@@ -57,6 +57,30 @@ echo "✅ Step 2 验证通过"
 ```
 
 **硬阈值**: 脚本存在 + 含 `yq` 解析 + 含 `exit 1` 空守卫 + 引用 regression-contract.yaml
+
+---
+
+### Step 2b: yq 解析 regression-contract.yaml 格式错误 → job fail
+
+**来源**: `[FROM_PRD]` — PRD "边界情况：yq 解析 regression-contract.yaml 失败（yaml 格式错误）→ job fail，报 yq 错误"
+
+**可观测行为**: 向 run-core-regression.sh 传入格式损坏的 YAML 时，脚本 exit 非零并输出人类可读错误（不静默跳过）
+
+**验证命令**:
+```bash
+# 创建格式错误 YAML，验证脚本 exit 非零（不静默通过）
+TMPCONTRACT=$(mktemp)
+printf 'version: [broken\nentries: {invalid_yaml' > "$TMPCONTRACT"
+if TRIGGER_TYPE=PR CONTRACT_FILE="$TMPCONTRACT" bash scripts/ci/run-core-regression.sh 2>/dev/null; then
+  rm "$TMPCONTRACT"
+  echo "FAIL: 格式错误 YAML 应 exit 非零但脚本 exit 0"
+  exit 1
+fi
+rm "$TMPCONTRACT"
+echo "✅ Step 2b yq 解析失败守卫通过"
+```
+
+**硬阈值**: 格式错误 YAML → 脚本 exit 非零
 
 ---
 
@@ -159,14 +183,17 @@ echo "✅ Step 5 失败传播验证通过"
 grep -qE '^  regression-smoke:' .github/workflows/ci.yml && { echo "FAIL: regression-smoke job 仍存在"; exit 1; }
 # golden-smoke.test.ts 扫描逻辑已删除
 grep -q 'golden-smoke.test.ts' .github/workflows/ci.yml && { echo "FAIL: golden-smoke.test.ts 引用仍存在"; exit 1; }
-# ci-passed needs 含 core-regression
-NEEDS_LINE=$(grep -A2 'ci-passed:' .github/workflows/ci.yml | grep 'needs:')
+# ci-passed needs 行：含 core-regression，不含 regression-smoke
+NEEDS_LINE=$(grep -A3 'ci-passed:' .github/workflows/ci.yml | grep 'needs:' | head -1)
 echo "$NEEDS_LINE" | grep -q 'core-regression' || { echo "FAIL: ci-passed needs 缺 core-regression"; exit 1; }
 echo "$NEEDS_LINE" | grep -q 'regression-smoke' && { echo "FAIL: ci-passed needs 仍含 regression-smoke"; exit 1; }
+# ci-passed run 块：不含 check "regression-smoke"，含 check "core-regression"
+grep -q 'check "regression-smoke"' .github/workflows/ci.yml && { echo "FAIL: ci-passed run 块仍含 check regression-smoke"; exit 1; }
+grep -q 'check "core-regression"' .github/workflows/ci.yml || { echo "FAIL: ci-passed run 块缺 check core-regression"; exit 1; }
 echo "✅ Step 6 验证通过"
 ```
 
-**硬阈值**: ci.yml 不含 `regression-smoke:` job；ci-passed needs 含 core-regression 不含 regression-smoke
+**硬阈值**: ci.yml 不含 `regression-smoke:` job；ci-passed needs 行和 run 块均不含 regression-smoke，均含 core-regression
 
 ---
 
@@ -253,9 +280,13 @@ echo "✅ Scenario 4 通过"
 set -e
 REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
 CI="$REPO_ROOT/.github/workflows/ci.yml"
+# 验证 needs: 行（与 Step 6 统一用 grep -A3）
 NEEDS_LINE=$(grep -A3 'ci-passed:' "$CI" | grep 'needs:' | head -1)
 echo "$NEEDS_LINE" | grep -q 'core-regression' || { echo "FAIL: ci-passed needs 缺 core-regression"; exit 1; }
 echo "$NEEDS_LINE" | grep -q 'regression-smoke' && { echo "FAIL: ci-passed needs 仍含 regression-smoke"; exit 1; }
+# 验证 run 块内 check 调用（两处引用都必须清除）
+grep -q 'check "regression-smoke"' "$CI" && { echo "FAIL: ci-passed run 块仍含 check regression-smoke"; exit 1; }
+grep -q 'check "core-regression"' "$CI" || { echo "FAIL: ci-passed run 块缺 check core-regression"; exit 1; }
 echo "✅ Scenario 5 通过"
 ```
 
@@ -285,8 +316,41 @@ rm "$TMPCONTRACT"
 echo "✅ Scenario 6 空守卫验证通过"
 ```
 
+### Scenario 7: yq-parse-failure-exits-nonzero
+<!-- GOLDEN_SMOKE_SCENARIO: yq-parse-failure-exits-nonzero -->
+<!-- GOLDEN_SMOKE_TIMEOUT_MS: 10000 -->
+
+```bash
+#!/bin/bash
+set -e
+REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+SCRIPT="$REPO_ROOT/scripts/ci/run-core-regression.sh"
+[ -f "$SCRIPT" ] || { echo "FAIL: run-core-regression.sh 不存在"; exit 1; }
+TMPCONTRACT=$(mktemp)
+printf 'version: [broken\nentries: {invalid_yaml' > "$TMPCONTRACT"
+if TRIGGER_TYPE=PR CONTRACT_FILE="$TMPCONTRACT" bash "$SCRIPT" 2>/dev/null; then
+  rm "$TMPCONTRACT"
+  echo "FAIL: 格式错误 YAML 应 exit 非零但脚本 exit 0"
+  exit 1
+fi
+rm "$TMPCONTRACT"
+echo "✅ Scenario 7 通过"
+```
+
+---
+
+## Risks（风险登记）
+
+| # | 风险 | 触发条件 | Mitigation |
+|---|---|---|---|
+| R1 | yq 在 ubuntu-latest runner 上不可用 | GHA runner 镜像更新后 yq 被移除 | 脚本头部检测 `which yq \|\| { echo "FAIL: yq 不可用"; exit 1; }`；Step 2 BEHAVIOR 覆盖 yq 调用存在性，CI 首次运行即暴露 |
+| R2 | regression-contract.yaml YAML 格式错误导致 yq 解析静默跳过 | 手动编辑引入缩进/冒号错误 | 脚本捕获 yq exit code 非零即 exit 1 并打印可读错误；Step 2b [FROM_PRD] BEHAVIOR + Scenario 7 专项覆盖（本 Round 新增）|
+| R3 | test_command 路径漂移（文件重命名/删除后条目未更新）| regression-contract.yaml 内 test_command 指向的测试文件被删除 | 脚本执行 test_command 前不作存在性预检，直接 bash -c 执行，文件不存在 → exit 非零；Step 5 BEHAVIOR 覆盖"命令失败 → exit 1"路径 |
+
+---
+
 ## Test Contract
 
 | 功能 | Test File | BEHAVIOR 覆盖 | 预期红证据 |
 |---|---|---|---|
-| 整个 Sprint | `tests/core-regression.test.ts` | 6 项文件结构断言 | → 5 failures（文件尚未创建）|
+| 整个 Sprint | `tests/core-regression.test.ts` | 15 项断言（3 项因脚本未创建条件跳过） | → 10 failures（实现前 Red 状态，已验证）|
