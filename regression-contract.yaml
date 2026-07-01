@@ -12,11 +12,18 @@ version: "1.0.0"
 updated: "2026-02-04"
 
 # ============================================================================
-# 核心功能回归契约（待补充）
+# 核心功能回归契约
 # ============================================================================
 core: []
 
 # ============================================================================
-# Golden Paths（E2E 链路，待补充）
+# Golden Paths（must-never-break 核心断言）
 # ============================================================================
-golden_paths: []
+golden_paths:
+  - id: CORE-001
+    name: "Brain 入口 server.js 语法可解析（must-never-break 核心冒烟）"
+    priority: P0
+    trigger: [PR, Release]
+    method: auto
+    test_command: "node --check packages/brain/server.js"
+    must_never_break: true
