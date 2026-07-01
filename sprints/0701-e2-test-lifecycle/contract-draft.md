@@ -1,4 +1,4 @@
-# Sprint Contract Draft (Round 1)
+# Sprint Contract Draft (Round 2)
 
 ## Response Schema（推导来源: N/A）
 
@@ -139,6 +139,62 @@ echo "✅ file_missing 判定正确"
 **硬阈值**:
 - `status = 'orphan'` 且 `lifecycle_checked_at > NOW() - interval '5 minutes'`
 - `orphan_reason = 'file_missing'`
+
+---
+
+### Step 3b: file_missing + feature_deleted 同时成立 → file_missing 优先
+
+**来源**: `[FROM_PRD]` — PRD 边界情况第4条"同一行 file_missing + feature_id 非NULL且能力deleted → 以 file_missing 为准"
+
+**可观测行为**: 若同一行既满足 file_path 不存在（file_missing），又满足 feature_id 指向 status='deprecated' 的能力，patrol 以 file_missing 判定为准：status='orphan', orphan_reason='file_missing'；该行不出现在 featureDeletedList 中
+
+**验证命令**:
+```bash
+# 插入 deprecated feature
+FEAT_ID=$(psql $DATABASE_URL -t -c "
+  INSERT INTO journey_features (name, status, thickness)
+  VALUES ('__e2e_prio_deprecated', 'deprecated', 'thin')
+  RETURNING id
+" | tr -d ' ')
+
+# 插入 file_path 不存在 + feature_id 指向 deprecated feature 的行
+NONEXIST="/tmp/__e2e_prio_nonexist_$(date +%s).test.ts"
+rm -f "$NONEXIST"
+ROW_ID=$(psql $DATABASE_URL -t -c "
+  INSERT INTO test_registry (file_path, test_count, covered_behaviors, feature_id)
+  VALUES ('$NONEXIST', 0, '{}', '$FEAT_ID')
+  ON CONFLICT (file_path) DO UPDATE SET status='active', orphan_reason=NULL, feature_id='$FEAT_ID'
+  RETURNING id
+" | tr -d ' ')
+
+# 调用 patrol
+node -e "
+const patrol = require('./packages/brain/src/test-lifecycle-patrol.js');
+patrol.runTestLifecyclePatrol({ force: true }).then(r => {
+  const inFeatureList = (r.featureDeletedList || []).some(x => x.id === '$ROW_ID');
+  if (inFeatureList) { console.error('FAIL: 行被错误加入 featureDeletedList（file_missing 应优先）'); process.exit(1); }
+  process.exit(0);
+}).catch(e => { console.error(e); process.exit(1); });
+"
+
+# 断言 status='orphan', orphan_reason='file_missing'（带时间窗口）
+STATUS=$(psql $DATABASE_URL -t -c "
+  SELECT status FROM test_registry
+  WHERE id='$ROW_ID' AND lifecycle_checked_at > NOW() - interval '5 minutes'
+" | tr -d ' ')
+[ "$STATUS" = "orphan" ] || { echo "FAIL: status=$STATUS (expected orphan)"; exit 1; }
+
+REASON=$(psql $DATABASE_URL -t -c "
+  SELECT orphan_reason FROM test_registry WHERE id='$ROW_ID'
+" | tr -d ' ')
+[ "$REASON" = "file_missing" ] || { echo "FAIL: orphan_reason=$REASON (expected file_missing)"; exit 1; }
+
+echo "✅ file_missing 优先于 feature_deleted"
+```
+
+**硬阈值**:
+- `status = 'orphan'` 且 `orphan_reason = 'file_missing'`（不是 feature_deleted）
+- 该行不出现在 `featureDeletedList`
 
 ---
 
@@ -531,3 +587,67 @@ psql "$DB" -c "DELETE FROM test_registry WHERE id='$ROW_ID'" > /dev/null
 
 echo "✅ Scenario 5 通过"
 ```
+
+### Scenario 6: file-missing-wins-over-feature-deleted
+<!-- GOLDEN_SMOKE_SCENARIO: file-missing-wins-over-feature-deleted -->
+<!-- GOLDEN_SMOKE_TIMEOUT_MS: 60000 -->
+
+```bash
+#!/bin/bash
+set -e
+
+DB="${DATABASE_URL:-postgresql://localhost/cecelia}"
+NONEXIST="/tmp/__smoke_prio_$(date +%s)_nonexistent.test.ts"
+rm -f "$NONEXIST"
+
+# 插入 deprecated feature
+FEAT_ID=$(psql "$DB" -t -c "
+  INSERT INTO journey_features (name, status, thickness)
+  VALUES ('__smoke_prio_deprecated', 'deprecated', 'thin')
+  RETURNING id
+" | tr -d ' ')
+
+# 插入 file_path 不存在 + feature_id → deprecated 的行（双重条件）
+ROW_ID=$(psql "$DB" -t -c "
+  INSERT INTO test_registry (file_path, test_count, covered_behaviors, feature_id)
+  VALUES ('$NONEXIST', 0, '{}', '$FEAT_ID')
+  ON CONFLICT (file_path) DO UPDATE SET status='active', orphan_reason=NULL, feature_id='$FEAT_ID'
+  RETURNING id
+" | tr -d ' ')
+
+# 触发 patrol
+node -e "
+process.chdir('/workspace');
+const patrol = require('./packages/brain/src/test-lifecycle-patrol.js');
+patrol.runTestLifecyclePatrol({ force: true }).then(r => {
+  const inFeatureList = (r.featureDeletedList || []).some(x => x.id === '$ROW_ID');
+  if (inFeatureList) { console.error('FAIL: 行被错误加入 featureDeletedList'); process.exit(1); }
+  process.exit(0);
+}).catch(e => { console.error(e); process.exit(1); });
+"
+
+# 断言 file_missing 优先：status='orphan', orphan_reason='file_missing'
+STATUS=$(psql "$DB" -t -c "
+  SELECT status FROM test_registry
+  WHERE id='$ROW_ID' AND lifecycle_checked_at > NOW() - interval '5 minutes'
+" | tr -d ' ')
+[ "$STATUS" = "orphan" ] || { echo "FAIL: status=$STATUS (expected orphan)"; exit 1; }
+
+REASON=$(psql "$DB" -t -c "SELECT orphan_reason FROM test_registry WHERE id='$ROW_ID'" | tr -d ' ')
+[ "$REASON" = "file_missing" ] || { echo "FAIL: orphan_reason=$REASON (expected file_missing)"; exit 1; }
+
+# 清理
+psql "$DB" -c "DELETE FROM test_registry WHERE id='$ROW_ID'" > /dev/null
+psql "$DB" -c "DELETE FROM journey_features WHERE id='$FEAT_ID'" > /dev/null
+
+echo "✅ Scenario 6 通过"
+```
+
+---
+
+## Risks
+
+| # | 风险 | 概率 | 影响 | Mitigation |
+|---|------|------|------|-----------|
+| R1 | **Migration 311 在存量大表上执行超时/部分失败**：test_registry 若已有数万行，`ALTER TABLE ADD COLUMN` + `DEFAULT 'active'` 可能锁表超时，导致 migration 部分成功（新列存在但 DEFAULT 未回填） | 低（本地开发库行数有限，但生产 cecelia 行数未知） | 中（存量行 status=NULL，BEHAVIOR 1 验证直接 FAIL） | 1) Migration SQL 用 `ADD COLUMN ... DEFAULT 'active' NOT NULL`（PostgreSQL 11+ 即时模式，无需回填锁）；2) 上线前先 `SELECT count(*) FROM test_registry` 确认行数；3) 若 > 10 万行，拆为先 `ADD COLUMN ... DEFAULT NULL`、再单独 `UPDATE` 分批回填、最后 `SET NOT NULL` |
+| R2 | **patrol 扫描中途 DB 中断 → lifecycle_checked_at 脏污**：patrol 逐行 UPDATE 时 DB 连接断开，部分行 lifecycle_checked_at 已更新但其余行未处理，下次 24h 窗口判断因 MAX(lifecycle_checked_at) 已更新而跳过全量扫描 | 中（pool 超时或网络抖动均可触发） | 低（最多延迟 24h 再次扫描，不造成误判） | 1) patrol 用单事务批量 UPDATE 而非逐行 commit，中断即全量回滚；2) 24h 窗口检查改为"本轮 patrol 完整完成时才 SET lifecycle_checked_at"（完成标记写在 finally 块），中断则不写窗口 |

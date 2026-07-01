@@ -17,6 +17,7 @@
         "[BEHAVIOR] feature_id IS NULL → 不出现在 featureDeletedList",
         "[BEHAVIOR] 自愈场景：文件回来 → status='active', orphan_reason=NULL",
         "[BEHAVIOR] DB 查询异常 → patrol 不抛出",
+        "[BEHAVIOR] file_missing + feature_deleted 同时成立 → file_missing 优先（status='orphan', orphan_reason='file_missing'，不进 featureDeletedList）",
         "[BEHAVIOR] tick-runner.js 集成：grep import + 调用均通过"
       ],
       "files": [

@@ -112,6 +112,29 @@ journey_type: autonomous
   "'
   期望: OK
 
+- [ ] [BEHAVIOR] file_missing + feature_deleted 同时成立 → file_missing 优先（status='orphan', orphan_reason='file_missing'，不进 featureDeletedList）
+  Test: manual:bash -c '
+  DB="${DATABASE_URL:-postgresql://localhost/cecelia}"
+  NONEXIST="/tmp/__dod_prio_$(date +%s)_noexist.test.ts"
+  rm -f "$NONEXIST"
+  FID=$(psql "$DB" -t -c "INSERT INTO journey_features (name,status,thickness) VALUES ('"'"'__dod_prio_dep'"'"','"'"'deprecated'"'"','"'"'thin'"'"') RETURNING id" | tr -d " ")
+  RID=$(psql "$DB" -t -c "INSERT INTO test_registry (file_path,test_count,covered_behaviors,feature_id) VALUES ('"'"'$NONEXIST'"'"',0,'"'"'{}'"'"','"'"'$FID'"'"') ON CONFLICT (file_path) DO UPDATE SET status='"'"'active'"'"',orphan_reason=NULL,feature_id='"'"'$FID'"'"' RETURNING id" | tr -d " ")
+  cd /workspace && node -e "
+    const p=require('"'"'./packages/brain/src/test-lifecycle-patrol.js'"'"');
+    p.runTestLifecyclePatrol({force:true}).then(r=>{
+      const bad=(r.featureDeletedList||[]).some(x=>x.id==='"'"'$RID'"'"');
+      if(bad){console.error('"'"'FAIL: 行被错入 featureDeletedList'"'"');process.exit(1);}
+      process.exit(0);
+    }).catch(e=>{console.error(e);process.exit(1);});"
+  S=$(psql "$DB" -t -c "SELECT status FROM test_registry WHERE id='"'"'$RID'"'"' AND lifecycle_checked_at > NOW() - interval '"'"'5 minutes'"'"'" | tr -d " ")
+  [ "$S" = "orphan" ] || { echo "FAIL: status=$S"; exit 1; }
+  R=$(psql "$DB" -t -c "SELECT orphan_reason FROM test_registry WHERE id='"'"'$RID'"'"'" | tr -d " ")
+  [ "$R" = "file_missing" ] || { echo "FAIL: orphan_reason=$R"; exit 1; }
+  psql "$DB" -c "DELETE FROM test_registry WHERE id='"'"'$RID'"'"'" > /dev/null
+  psql "$DB" -c "DELETE FROM journey_features WHERE id='"'"'$FID'"'"'" > /dev/null
+  echo OK'
+  期望: OK
+
 - [ ] [BEHAVIOR] tick-runner.js 集成：含 test-lifecycle-patrol import + runTestLifecyclePatrol fire-and-forget 调用
   Test: manual:bash -c '
   grep -q "test-lifecycle-patrol" /workspace/packages/brain/src/tick-runner.js || { echo "FAIL: 未 import"; exit 1; }
