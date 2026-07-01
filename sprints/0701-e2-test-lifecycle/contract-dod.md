@@ -25,6 +25,7 @@ journey_type: autonomous
   DB="${DATABASE_URL:-postgresql://localhost/cecelia}"
   COL_COUNT=$(psql "$DB" -t -c "SELECT count(*) FROM information_schema.columns WHERE table_name='"'"'test_registry'"'"' AND column_name IN ('"'"'status'"'"','"'"'feature_id'"'"','"'"'orphan_reason'"'"','"'"'lifecycle_checked_at'"'"')" | tr -d " ")
   [ "$COL_COUNT" = "4" ] || { echo "FAIL: 列数=$COL_COUNT"; exit 1; }
+  # gate-allow: domain/db-no-time-window 校验 migration DEFAULT 是否对所有行生效（schema 不变量），非时序探活；时间窗口语义不适用
   NULL_COUNT=$(psql "$DB" -t -c "SELECT count(*) FROM test_registry WHERE status IS NULL" | tr -d " ")
   [ "$NULL_COUNT" = "0" ] || { echo "FAIL: status NULL_COUNT=$NULL_COUNT"; exit 1; }
   echo OK'
@@ -57,6 +58,7 @@ journey_type: autonomous
       if(!r.featureDeletedList||r.featureDeletedList.length===0){console.error('"'"'FAIL: featureDeletedList empty'"'"');process.exit(1);}
       process.exit(0);
     }).catch(e=>{console.error(e);process.exit(1);});"
+  # gate-allow: domain/db-no-time-window WHERE id='$RID' 为定点读按主键精确匹配，非聚合探活
   CNT=$(psql "$DB" -t -c "SELECT count(*) FROM test_registry WHERE id='"'"'$RID'"'"'" | tr -d " ")
   [ "$CNT" = "1" ] || { echo "FAIL: 行被误删 count=$CNT"; exit 1; }
   psql "$DB" -c "DELETE FROM test_registry WHERE id='"'"'$RID'"'"'" > /dev/null
@@ -137,6 +139,7 @@ journey_type: autonomous
 
 - [ ] [BEHAVIOR] tick-runner.js 集成：含 test-lifecycle-patrol import + isInLifecyclePatrolWindow 窗口检查 + runTestLifecyclePatrol fire-and-forget
   Test: manual:bash -c '
+  # PRD 写 tick.js，实际集成文件是 tick-runner.js（与 skill-drift-patrol 等 cron 任务一致）
   grep -q "test-lifecycle-patrol" /workspace/packages/brain/src/tick-runner.js || { echo "FAIL: 未 import test-lifecycle-patrol"; exit 1; }
   grep -q "isInLifecyclePatrolWindow" /workspace/packages/brain/src/tick-runner.js || { echo "FAIL: 未调用 isInLifecyclePatrolWindow 窗口检查（24h 去重必须显式在 tick-runner 里判断）"; exit 1; }
   grep -q "runTestLifecyclePatrol" /workspace/packages/brain/src/tick-runner.js || { echo "FAIL: 未调用 runTestLifecyclePatrol"; exit 1; }

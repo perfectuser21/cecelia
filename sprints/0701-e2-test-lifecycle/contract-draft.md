@@ -1,4 +1,4 @@
-# Sprint Contract Draft (Round 4)
+# Sprint Contract Draft (Round 5)
 
 ## Response Schema（推导来源: N/A）
 
@@ -61,8 +61,17 @@ PRD 假设 "[ASSUMPTION: journey_features 表 active 状态通过 status='active
 psql $DATABASE_URL -c "\d test_registry" | grep -E "status|feature_id|orphan_reason|lifecycle_checked_at" | wc -l | grep -E "^[4-9]$" || { echo "FAIL: 列数不足"; exit 1; }
 
 # 验证存量行 DEFAULT 已生效（status 不为 NULL）
+# gate-allow: domain/db-no-time-window 校验 migration DEFAULT 是否对所有行生效（schema 不变量），不是"最近插入数据"探活；时间窗口语义不适用
 NULL_COUNT=$(psql $DATABASE_URL -t -c "SELECT count(*) FROM test_registry WHERE status IS NULL" | tr -d ' ')
 [ "$NULL_COUNT" = "0" ] || { echo "FAIL: 存量行 status IS NULL count=$NULL_COUNT"; exit 1; }
+
+# 验证两个索引已创建（防止 Generator 漏建索引而 E2E 仍绿）
+IDX_COUNT=$(psql $DATABASE_URL -t -c "
+  SELECT count(*) FROM pg_indexes
+  WHERE tablename='test_registry'
+    AND indexname IN ('idx_test_registry_status','idx_test_registry_feature_id')
+" | tr -d ' ')
+[ "$IDX_COUNT" = "2" ] || { echo "FAIL: 索引数=$IDX_COUNT (expected 2)"; exit 1; }
 
 echo "✅ Migration 311 列就位"
 ```
@@ -350,24 +359,22 @@ echo "✅ 自愈成功"
 **验证命令**:
 ```bash
 # 用 vitest 单测 mock pool 抛出异常（见 tests/test-lifecycle-patrol.test.js）
-node -e "
-// 单测层验证（BEHAVIOR 5），此命令检查单测文件存在且含 db_error 覆盖
-const fs = require('fs');
-const content = fs.readFileSync('sprints/0701-e2-test-lifecycle/tests/test-lifecycle-patrol.test.js', 'utf8');
-if (!content.includes('db_error') && !content.includes('query failed')) {
-  console.error('FAIL: 单测缺 DB 错误场景覆盖'); process.exit(1);
-}
-console.log('OK: DB error 场景有单测覆盖');
-" || exit 1
+cd /workspace && npx vitest run sprints/0701-e2-test-lifecycle/tests/test-lifecycle-patrol.test.js --reporter=verbose 2>&1 | tee /tmp/step7-vitest.log
+grep -E "✓|PASS" /tmp/step7-vitest.log | grep -i "db_error\|query failed\|dbError\|db error" || \
+  grep -E "✓.*db|✓.*error|✓.*skip" /tmp/step7-vitest.log || \
+  { echo "FAIL: 单测缺 DB 错误场景覆盖（vitest 无对应 PASS 行）"; exit 1; }
+echo "✅ DB error 场景单测通过"
 ```
 
-**硬阈值**: 单测文件存在且含 DB 异常场景覆盖
+**硬阈值**: vitest 运行通过且含 DB 异常场景的测试 PASS
 
 ---
 
 ### Step 8: Tick 集成 — fire-and-forget + 24h 去重注册
 
 **来源**: `[FROM_PRD]` — PRD "tick 集成：挂 Brain tick-runner，复用 fire-and-forget 模式 + 24h 去重（lifecycle_checked_at 判窗口）"
+
+> ⚠️ **注**: PRD 写的是 `tick.js`，但实际 patrol 集成文件是 `tick-runner.js`（skill-drift-patrol 等 cron 任务也在此文件集成，见 `tick-runner.js:108`）。Generator 应修改 `packages/brain/src/tick-runner.js`，不改 `tick.js`。
 
 **可观测行为**: tick-runner.js 新增 import + `isInLifecyclePatrolWindow` 窗口检查 + fire-and-forget 调用块（格式与 skill-drift-patrol 集成一致）；24h 窗口内重复 tick 不触发 patrol
 
@@ -425,6 +432,14 @@ HAS_DEFAULT=$(psql "$DB" -t -c "
   WHERE table_name='test_registry' AND column_name='status' AND column_default LIKE '%active%'
 " | tr -d ' ')
 [ "$HAS_DEFAULT" = "1" ] || { echo "FAIL: status 列无 DEFAULT 'active'"; exit 1; }
+
+# 验证两个索引实际存在（防止 Generator 漏建索引）
+IDX_COUNT=$(psql "$DB" -t -c "
+  SELECT count(*) FROM pg_indexes
+  WHERE tablename='test_registry'
+    AND indexname IN ('idx_test_registry_status','idx_test_registry_feature_id')
+" | tr -d ' ')
+[ "$IDX_COUNT" = "2" ] || { echo "FAIL: 索引数=$IDX_COUNT (expected 2，缺 idx_test_registry_status 或 idx_test_registry_feature_id)"; exit 1; }
 
 echo "✅ Scenario 1 通过"
 ```
@@ -509,7 +524,7 @@ patrol.runTestLifecyclePatrol({ force: true }).then(r => {
 }).catch(e => { console.error(e); process.exit(1); });
 "
 
-# 验证行未被删除
+# 验证行未被删除（gate-allow: domain/db-no-time-window WHERE id='$ROW_ID' 为定点读按主键精确匹配，非聚合探活）
 ROW_COUNT=$(psql "$DB" -t -c "SELECT count(*) FROM test_registry WHERE id='$ROW_ID'" | tr -d ' ')
 [ "$ROW_COUNT" = "1" ] || { echo "FAIL: test_registry 行被误删"; exit 1; }
 
