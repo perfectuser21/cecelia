@@ -15,8 +15,8 @@ journey_type: autonomous
 - [ ] [ARTIFACT] `packages/brain/src/test-lifecycle-patrol.js` 存在且导出 `runTestLifecyclePatrol` 和 `isInLifecyclePatrolWindow`
   Test: node -e "const m=require('./packages/brain/src/test-lifecycle-patrol.js');if(typeof m.runTestLifecyclePatrol!=='function'||typeof m.isInLifecyclePatrolWindow!=='function'){console.error('FAIL: 导出缺失');process.exit(1);}console.log('OK')"
 
-- [ ] [ARTIFACT] `packages/brain/src/tick-runner.js` 含 test-lifecycle-patrol import 和 fire-and-forget 调用
-  Test: node -e "const c=require('fs').readFileSync('packages/brain/src/tick-runner.js','utf8');if(!c.includes('test-lifecycle-patrol')||!c.includes('runTestLifecyclePatrol')){console.error('FAIL: tick-runner 未集成');process.exit(1);}console.log('OK')"
+- [ ] [ARTIFACT] `packages/brain/src/tick-runner.js` 含 test-lifecycle-patrol import、isInLifecyclePatrolWindow 窗口检查 + fire-and-forget 调用
+  Test: node -e "const c=require('fs').readFileSync('packages/brain/src/tick-runner.js','utf8');if(!c.includes('test-lifecycle-patrol')||!c.includes('isInLifecyclePatrolWindow')||!c.includes('runTestLifecyclePatrol')){console.error('FAIL: tick-runner 未集成窗口检查');process.exit(1);}console.log('OK')"
 
 ## BEHAVIOR 条目（内嵌可执行 manual: 命令）
 
@@ -135,9 +135,10 @@ journey_type: autonomous
   echo OK'
   期望: OK
 
-- [ ] [BEHAVIOR] tick-runner.js 集成：含 test-lifecycle-patrol import + runTestLifecyclePatrol fire-and-forget 调用
+- [ ] [BEHAVIOR] tick-runner.js 集成：含 test-lifecycle-patrol import + isInLifecyclePatrolWindow 窗口检查 + runTestLifecyclePatrol fire-and-forget
   Test: manual:bash -c '
-  grep -q "test-lifecycle-patrol" /workspace/packages/brain/src/tick-runner.js || { echo "FAIL: 未 import"; exit 1; }
-  grep -q "runTestLifecyclePatrol" /workspace/packages/brain/src/tick-runner.js || { echo "FAIL: 未调用"; exit 1; }
+  grep -q "test-lifecycle-patrol" /workspace/packages/brain/src/tick-runner.js || { echo "FAIL: 未 import test-lifecycle-patrol"; exit 1; }
+  grep -q "isInLifecyclePatrolWindow" /workspace/packages/brain/src/tick-runner.js || { echo "FAIL: 未调用 isInLifecyclePatrolWindow 窗口检查（24h 去重必须显式在 tick-runner 里判断）"; exit 1; }
+  grep -q "runTestLifecyclePatrol" /workspace/packages/brain/src/tick-runner.js || { echo "FAIL: 未调用 runTestLifecyclePatrol"; exit 1; }
   echo OK'
   期望: OK

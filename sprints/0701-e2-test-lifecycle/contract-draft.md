@@ -1,4 +1,4 @@
-# Sprint Contract Draft (Round 2)
+# Sprint Contract Draft (Round 3)
 
 ## Response Schema（推导来源: N/A）
 
@@ -361,14 +361,17 @@ console.log('OK: DB error 场景有单测覆盖');
 
 ### Step 8: Tick 集成 — fire-and-forget + 24h 去重注册
 
-**来源**: `[FROM_PRD]` — PRD "tick 集成：挂 Brain tick-runner，复用 fire-and-forget 模式 + 24h 去重"
+**来源**: `[FROM_PRD]` — PRD "tick 集成：挂 Brain tick-runner，复用 fire-and-forget 模式 + 24h 去重（lifecycle_checked_at 判窗口）"
 
-**可观测行为**: tick-runner.js 新增 import + fire-and-forget 调用块（格式与 skill-drift-patrol 集成一致）；24h 窗口内重复 tick 不触发 patrol
+**可观测行为**: tick-runner.js 新增 import + `isInLifecyclePatrolWindow` 窗口检查 + fire-and-forget 调用块（格式与 skill-drift-patrol 集成一致）；24h 窗口内重复 tick 不触发 patrol
 
 **验证命令**:
 ```bash
 # 验证 tick-runner.js 已 import test-lifecycle-patrol
 grep -q "test-lifecycle-patrol" /workspace/packages/brain/src/tick-runner.js || { echo "FAIL: tick-runner 未 import test-lifecycle-patrol"; exit 1; }
+
+# 验证 24h 窗口检查（isInLifecyclePatrolWindow）— 防止 Generator 绕过去重直接调 patrol
+grep -q "isInLifecyclePatrolWindow" /workspace/packages/brain/src/tick-runner.js || { echo "FAIL: tick-runner 未调用 isInLifecyclePatrolWindow 窗口检查"; exit 1; }
 
 # 验证有 fire-and-forget 调用模式
 grep -q "runTestLifecyclePatrol\|testLifecyclePatrol" /workspace/packages/brain/src/tick-runner.js || { echo "FAIL: tick-runner 未调用 patrol"; exit 1; }
@@ -378,6 +381,7 @@ echo "✅ tick 集成就位"
 
 **硬阈值**:
 - `grep -q "test-lifecycle-patrol"` 通过
+- `grep -q "isInLifecyclePatrolWindow"` 通过（24h 去重窗口检查必须在 tick-runner 显式调用）
 - `grep -q "runTestLifecyclePatrol"` 通过
 
 ---

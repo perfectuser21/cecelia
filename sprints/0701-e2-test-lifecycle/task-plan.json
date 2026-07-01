@@ -10,7 +10,7 @@
       "dod": [
         "[ARTIFACT] packages/brain/migrations/311_test_registry_lifecycle.sql 存在且含 status/feature_id/orphan_reason/lifecycle_checked_at 四列",
         "[ARTIFACT] packages/brain/src/test-lifecycle-patrol.js 存在且导出 runTestLifecyclePatrol + isInLifecyclePatrolWindow",
-        "[ARTIFACT] tick-runner.js 含 test-lifecycle-patrol import + fire-and-forget 调用",
+        "[ARTIFACT] tick-runner.js 含 test-lifecycle-patrol import + isInLifecyclePatrolWindow 窗口检查 + fire-and-forget 调用",
         "[BEHAVIOR] migration 311 四列在 DB 中存在，存量行 status='active'",
         "[BEHAVIOR] file_missing 场景：patrol 后 status='orphan', orphan_reason='file_missing'（5min 时间窗口）",
         "[BEHAVIOR] feature_deleted 场景：行保留，featureDeletedList 非空，无 test 文件被删",
@@ -18,7 +18,7 @@
         "[BEHAVIOR] 自愈场景：文件回来 → status='active', orphan_reason=NULL",
         "[BEHAVIOR] DB 查询异常 → patrol 不抛出",
         "[BEHAVIOR] file_missing + feature_deleted 同时成立 → file_missing 优先（status='orphan', orphan_reason='file_missing'，不进 featureDeletedList）",
-        "[BEHAVIOR] tick-runner.js 集成：grep import + 调用均通过"
+        "[BEHAVIOR] tick-runner.js 集成：grep import + isInLifecyclePatrolWindow 窗口检查 + runTestLifecyclePatrol 调用均通过"
       ],
       "files": [
         "packages/brain/migrations/311_test_registry_lifecycle.sql",
