@@ -1,22 +1,23 @@
 {
   "initiative_id": "bd7e251c-a0",
   "journey_type": "dev_pipeline",
-  "journey_type_reason": "改 CI 流水线（ci.yml + scripts/ci/）= 开发工作流基础设施，无用户界面也无 Brain API 变更",
+  "journey_type_reason": "本 Sprint 改 CI 流水线（ci.yml + scripts/ci/）= 开发工作流基础设施",
   "tasks": [
     {
       "task_id": "ws1",
-      "title": "新增 core-regression 无条件 CI 闸 + 删除 regression-smoke 僵尸 job",
-      "scope": "新增 regression-contract.yaml entries（≥1 P0+PR trigger）；新增 scripts/ci/run-core-regression.sh（yq 解析 + 档过滤 + 空守卫 + 执行）；ci.yml 新增 core-regression job（无路径门）、删除 regression-smoke job、更新 ci-passed needs",
+      "title": "无条件核心回归闸（B1）— regression-contract.yaml 重构 + run-core-regression.sh + ci.yml 更新",
+      "scope": "1) 将 regression-contract.yaml 从 core:[]/golden_paths:[] schema 重构为 entries:[] schema，填入 ≥1 条 P0 Brain 测试条目（test_command: 'cd packages/brain && npx vitest run tests/autonomous-sessions.test.js --reporter=verbose'）；2) 新增 scripts/ci/run-core-regression.sh（yq 解析 entries + 档过滤 + 空守卫 + 失败传播）；3) 在 ci.yml 新增无路径门 core-regression job，删除 regression-smoke job，更新 ci-passed needs 和 check 调用",
       "dod": [
-        "[BEHAVIOR] regression-contract.yaml 含 ≥1 条 P0+PR trigger 条目（node -e 验证）",
-        "[BEHAVIOR] run-core-regression.sh 存在 + 含 yq + exit 1 空守卫（grep + bash -n 验证）",
-        "[BEHAVIOR] ci.yml core-regression job 无路径门 if（awk 段落提取 + grep 验证）",
-        "[BEHAVIOR] ci.yml 不含 regression-smoke job 及 golden-smoke.test.ts（grep 验证）",
-        "[BEHAVIOR] ci-passed needs 含 core-regression 不含 regression-smoke（grep 验证）",
-        "[BEHAVIOR] run-core-regression.sh 空档守卫 — PR 档无 PR trigger 条目 → exit 1（临时合同测试）",
-        "[BEHAVIOR] ci.yml core-regression 含 push-main 全集触发逻辑（grep 验证）",
-        "[ARTIFACT] scripts/ci/run-core-regression.sh 文件存在",
-        "[ARTIFACT] regression-contract.yaml entries 非空"
+        "[ARTIFACT] regression-contract.yaml 使用 entries: schema，旧 core:/golden_paths: key 已删除，P0 条目 test_command = 'cd packages/brain && npx vitest run tests/autonomous-sessions.test.js --reporter=verbose'",
+        "[ARTIFACT] scripts/ci/run-core-regression.sh 存在，含 yq + exit 1 守卫 + entries key 引用",
+        "[ARTIFACT] ci.yml 含 core-regression job，不含 regression-smoke job",
+        "[BEHAVIOR] regression-contract.yaml entries schema 完整（含旧 key 已删 + test_command 精确匹配）",
+        "[BEHAVIOR] run-core-regression.sh 结构合法（yq + entries + exit 1 + bash -n 通过）",
+        "[BEHAVIOR] core-regression job 无路径门 if",
+        "[BEHAVIOR] regression-smoke 已删除（job + golden-smoke.test.ts 引用）",
+        "[BEHAVIOR] ci-passed needs/check 同步更新（含 core-regression，不含 regression-smoke）",
+        "[BEHAVIOR] 空档守卫 — PR 档无 PR trigger 条目 → exit 1",
+        "[BEHAVIOR] yq 格式错误守卫 — 格式错误 YAML → exit 非零"
       ],
       "files": [
         "regression-contract.yaml",
