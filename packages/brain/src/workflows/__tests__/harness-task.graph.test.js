@@ -97,6 +97,10 @@ vi.mock('../../harness-shared.js', async (importOriginal) => {
   const actual = await importOriginal();
   return { ...actual, assertSprintDir: vi.fn((v) => v || 'sprints/test-default') };
 });
+const mockAllocatePort = vi.fn();
+vi.mock('../../preview-manager.js', () => ({ allocatePort: mockAllocatePort }));
+const mockSpawnReviewPreview = vi.fn();
+vi.mock('../../staging-e2e-runner.js', () => ({ spawnReviewPreview: mockSpawnReviewPreview }));
 
 import {
   buildHarnessTaskGraph,
@@ -682,6 +686,30 @@ describe('reviewGateNode', () => {
     );
     expect(mockInterrupt).not.toHaveBeenCalled();
     expect(delta).toEqual({});
+  });
+
+  it('review_required=true + 有效 pr_url → 启动 review 预览环境并通知含 preview_url', async () => {
+    mockAllocatePort.mockResolvedValue(5301);
+    mockSpawnReviewPreview.mockReturnValue({ status: 0, stdout: '', stderr: '' });
+    const mockInterrupt = vi.fn().mockReturnValue({ approved: true });
+    const mockNotify = vi.fn().mockResolvedValue(undefined);
+    const mockPool = { query: vi.fn().mockResolvedValue({ rows: [] }) };
+
+    await reviewGateNode(
+      {
+        pr_url: 'https://github.com/perfectuser21/cecelia/pull/42',
+        task: {
+          id: 't1',
+          title: 'test',
+          payload: { review_required: true, branch: 'cp-test', base_repo: 'https://github.com/perfectuser21/cecelia.git' },
+        },
+      },
+      { interrupt: mockInterrupt, pool: mockPool, notifyFn: mockNotify }
+    );
+
+    expect(mockAllocatePort).toHaveBeenCalledWith(42, 'cp-test', 'https://github.com/perfectuser21/cecelia.git', mockPool);
+    expect(mockSpawnReviewPreview).toHaveBeenCalledWith(5301, 42);
+    expect(mockNotify).toHaveBeenCalledWith(expect.objectContaining({ preview_url: 'http://38.23.47.81:5301' }));
   });
 
   it('routeAfterReviewGate: status=failed → end', () => {
