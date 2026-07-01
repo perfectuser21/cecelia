@@ -82,6 +82,14 @@ if (isInPatrolWindow(now)) {
 
 `isInPatrolWindow` 复用现有导入（来自 `./cron/skill-drift-patrol.js`），不重复实现。
 
+## 实施后修正（与本文档早期草稿的出入，以此节为准）
+
+1. **`feature_id` 不加 FK**：原方案写 `REFERENCES journey_features(id) ON DELETE SET NULL`。实现阶段发现：能力被删的瞬间 Postgres 会自动把 `feature_id` 置 NULL，而 `feature_id IS NULL` 按规则又不判 `feature_deleted`——两条规则叠加导致 `feature_deleted` 分支在正常删除路径下永远触发不到，变成死代码。最终改为**不加 FK 约束的纯 UUID 列**（软引用），巡检自己做存在性 JOIN 判断，能力删除后 `feature_id` 保留原值，巡检才能真正识别。migration 311 内联注释已写明这个决策理由，防止后人"好心"把 FK 加回去。
+2. **Notion Issue 创建方式**：原方案写 `node scripts/notion-create-issue.js`。实际实现改为**巡检模块直接 `INSERT INTO issues` 表**（`notion_synced_at` 留 NULL），由既有 `notion-push-sync.js` 的 tick 任务自动同步——因为巡检本身运行在 Brain 同进程内，不必跨进程 shell 出子脚本。
+3. **告警优先级**：实现用 `raise('P2', ...)`（非 P1）——孤儿 test 是"需要人确认但不紧急"的信号，不是生产事故级别，P2 更贴切。
+4. **同日去重加固**：最终代码审查发现，巡检窗口(UTC 02:00-02:05)内 tick 若触发 2-3 次，会对同一 `feature_deleted` 行重复 `raise()` + 建 issue（`test_lifecycle_alerts` 的按天 UNIQUE 去重只挡住了重复写 alert 行本身，没有拦下后续动作）。修复：`INSERT INTO test_lifecycle_alerts ... RETURNING id`，只有真正插入成功（今天首次发现）才继续 `raise()`+建 issue；`UPDATE test_registry` 本身幂等，每次都执行不受影响。
+5. **已知遗留（不阻塞本次交付，后续工作项）**：`staleAlerts`（stale_scan 弱告警）目前只是函数返回值，`tick-runner.js` 的 fire-and-forget 调用没有消费它，暂无出口（不写日志、不建 issue）。后续可在 tick-runner 里把返回值汇总打日志，或攒够阈值再告警。
+
 ## 数据流
 
 `test_registry` 行 → 巡检读 → 分三类判定 → file_missing 直接改 DB；feature_deleted 改 DB + 落 `test_lifecycle_alerts` + 飞书(`alerting.raise`) + Notion Issue；stale_scan 只汇总不改库。
