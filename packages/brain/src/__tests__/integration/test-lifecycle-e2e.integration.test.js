@@ -37,7 +37,7 @@ describe('E2E fixture: 删掉一个 journey_features + 它的 test → 巡检标
         }
         if (sql.includes('INSERT INTO test_lifecycle_alerts')) {
           state.alerts.push({ file_path: params[0], orphan_reason: params[1], feature_id: params[2] });
-          return { rows: [] };
+          return { rows: [{ id: state.alerts.length }] }; // 今天首次插入成功
         }
         if (sql.includes('INSERT INTO issues')) {
           state.issues.push({ title: params[0], body: params[1] });

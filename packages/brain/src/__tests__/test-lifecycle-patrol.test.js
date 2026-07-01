@@ -19,6 +19,9 @@ function makePool(rows) {
       if (sql.includes('SELECT id FROM journey_features WHERE id = ANY')) {
         return { rows: [] }; // 默认：查到的 feature_id 全部不存在（能力已删）
       }
+      if (sql.includes('INSERT INTO test_lifecycle_alerts')) {
+        return { rows: [{ id: 1 }] }; // 默认：今天首次插入成功
+      }
       return { rows: [] };
     }),
   };
@@ -79,6 +82,38 @@ describe('runTestLifecyclePatrol — feature_deleted', () => {
     const upd = pool.calls.find(c => c.sql.includes('UPDATE test_registry'));
     expect(upd).toBeFalsy();
     expect(raise).not.toHaveBeenCalled();
+  });
+
+  it('同一天内第二次巡检命中同一 feature_deleted 行 → 不重复 raise/建issue（去重生效）', async () => {
+    const pool = makePool([
+      { id: 20, file_path: 'packages/brain/src/dup-orphan.test.js', status: 'active', feature_id: 'a1b2c3d4-0000-0000-0000-000000000201', scanned_at: new Date() },
+    ]);
+    existsSync.mockReturnValue(true);
+    // 模拟 test_lifecycle_alerts 的 ON CONFLICT DO NOTHING RETURNING id：今天已经插过一次，这次返回空行
+    pool.query.mockImplementation(async (sql, params) => {
+      pool.calls.push({ sql, params });
+      if (sql.includes('SELECT id, file_path, status, feature_id, scanned_at FROM test_registry')) {
+        return { rows: [{ id: 20, file_path: 'packages/brain/src/dup-orphan.test.js', status: 'active', feature_id: 'a1b2c3d4-0000-0000-0000-000000000201', scanned_at: new Date() }] };
+      }
+      if (sql.includes('SELECT id FROM journey_features WHERE id = ANY')) {
+        return { rows: [] };
+      }
+      if (sql.includes('INSERT INTO test_lifecycle_alerts')) {
+        return { rows: [] }; // 已存在同 file_path+patrol_date，DO NOTHING 未插入新行
+      }
+      return { rows: [] };
+    });
+
+    await runTestLifecyclePatrol(pool);
+
+    // UPDATE test_registry 仍然执行（幂等更新时间戳没问题）
+    const upd = pool.calls.find(c => c.sql.includes('UPDATE test_registry') && c.sql.includes('orphan'));
+    expect(upd).toBeTruthy();
+
+    // 但不应该再次 raise 或建 issue（今天已经处理过）
+    expect(raise).not.toHaveBeenCalled();
+    const issueInsert = pool.calls.find(c => c.sql.includes('INSERT INTO issues'));
+    expect(issueInsert).toBeFalsy();
   });
 });
 

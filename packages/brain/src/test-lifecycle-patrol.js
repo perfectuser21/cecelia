@@ -59,24 +59,32 @@ export async function runTestLifecyclePatrol(db = pool, now = new Date()) {
         ['feature_deleted', row.id]
       );
 
-      await raise('P2', 'test_lifecycle_orphan_feature_deleted', `孤儿 test：${row.file_path} 关联能力(feature_id=${row.feature_id})已不存在`)
-        .catch(e => console.warn('[test-lifecycle-patrol] raise failed:', e.message));
-
-      await db.query(
+      const alertResult = await db.query(
         `INSERT INTO test_lifecycle_alerts (file_path, orphan_reason, feature_id, patrol_date, detected_at)
          VALUES ($1, $2, $3, $4::date, NOW())
-         ON CONFLICT (file_path, patrol_date) DO NOTHING`,
+         ON CONFLICT (file_path, patrol_date) DO NOTHING
+         RETURNING id`,
         [row.file_path, 'feature_deleted', row.feature_id, patrolDate]
-      ).catch(e => console.error('[test-lifecycle-patrol] alert insert failed:', e.message));
+      ).catch(e => {
+        console.error('[test-lifecycle-patrol] alert insert failed:', e.message);
+        return { rows: [] };
+      });
 
-      await db.query(
-        `INSERT INTO issues (title, priority, status, sub_area, body, notion_synced_at)
-         VALUES ($1, 'P2', 'In progress', 'brain', $2, NULL)`,
-        [
-          `孤儿 test：${row.file_path}`,
-          `巡检发现 test_registry 中 ${row.file_path} 关联的 journey_features(id=${row.feature_id}) 已不存在。请确认该 test 是否仍有效；若确认无效，走 /dev 删除该 test 文件。`,
-        ]
-      ).catch(e => console.error('[test-lifecycle-patrol] issue insert failed:', e.message));
+      const isFirstAlertToday = alertResult.rows.length > 0;
+
+      if (isFirstAlertToday) {
+        await raise('P2', 'test_lifecycle_orphan_feature_deleted', `孤儿 test：${row.file_path} 关联能力(feature_id=${row.feature_id})已不存在`)
+          .catch(e => console.warn('[test-lifecycle-patrol] raise failed:', e.message));
+
+        await db.query(
+          `INSERT INTO issues (title, priority, status, sub_area, body, notion_synced_at)
+           VALUES ($1, 'P2', 'In progress', 'brain', $2, NULL)`,
+          [
+            `孤儿 test：${row.file_path}`,
+            `巡检发现 test_registry 中 ${row.file_path} 关联的 journey_features(id=${row.feature_id}) 已不存在。请确认该 test 是否仍有效；若确认无效，走 /dev 删除该 test 文件。`,
+          ]
+        ).catch(e => console.error('[test-lifecycle-patrol] issue insert failed:', e.message));
+      }
 
       continue;
     }
