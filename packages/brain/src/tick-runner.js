@@ -106,6 +106,7 @@ import { calculateAndWrite as calculateKR3Progress } from './kr3-progress-calcul
 import { updatePublishSuccessKRs } from './kr1-kr2-updater.js';
 import { runDailySmoke } from './cron/daily-real-business-smoke.js';
 import { runSkillDriftPatrol, isInPatrolWindow } from './cron/skill-drift-patrol.js';
+import { runTestLifecyclePatrol, isInPatrolWindow as isInTestLifecyclePatrolWindow } from './test-lifecycle-patrol.js';
 import { runCredentialsHealthCheck } from './credentials-health-scheduler.js';
 import { scheduleDailyBackup } from './daily-backup-scheduler.js';
 // Sprint 1: harness-watcher.js retired (Phase B/C 进 LangGraph，sub-graph poll_ci 自管)
@@ -1698,6 +1699,12 @@ async function executeTick() {
   if (isInPatrolWindow(now)) {
     Promise.resolve().then(() => runSkillDriftPatrol(pool))
       .catch(e => console.warn('[tick] skill-drift 巡检失败:', e.message));
+  }
+
+  // 10.24 test 生命周期巡检（每天 UTC 02:00 = 北京时间 10:00，孤儿 test → orphan + 告警，fire-and-forget）
+  if (isInTestLifecyclePatrolWindow(now)) {
+    Promise.resolve().then(() => runTestLifecyclePatrol(pool))
+      .catch(e => console.warn('[tick] test 生命周期巡检失败:', e.message));
   }
 
   } // end !MINIMAL_MODE (10.x 所有自动调度)
