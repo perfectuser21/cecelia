@@ -853,10 +853,33 @@ export async function reviewGateNode(state, opts = {}) {
     );
   } catch { /* best-effort, 不阻断流程 */ }
 
+  // 起 per-PR review 预览环境（best-effort，不阻断 interrupt）
+  let previewUrl = null;
+  try {
+    const { allocatePort } = await import('../preview-manager.js');
+    const { spawnReviewPreview } = await import('../staging-e2e-runner.js');
+    const prNum = prUrl?.match(/\/pull\/(\d+)/)?.[1];
+    const branch = state.task?.payload?.branch || state.branch || 'unknown';
+    const baseRepo = state.task?.payload?.base_repo;
+    if (prNum) {
+      const port = await allocatePort(Number(prNum), branch, baseRepo, dbPool);
+      const r = spawnReviewPreview(port, Number(prNum));
+      if (r.status === 0) {
+        previewUrl = `http://38.23.47.81:${port}`;
+        console.log(`[review-gate] review ready → ${previewUrl}`);
+      } else {
+        console.warn('[review-gate] review-preview.sh 失败:', (r.stderr || r.stdout || '').slice(0, 300));
+      }
+    }
+  } catch (err) {
+    console.warn('[review-gate] review env 启动失败（不阻断流程）:', err.message);
+  }
+
   // Bark 通知（best-effort）
   try {
     const { notifyHarnessReviewPending } = await import('../notifier.js');
-    await notifyHarnessReviewPending({ task_id: taskId, pr_url: prUrl, title: state.task?.title });
+    const notifyFn = opts.notifyFn || notifyHarnessReviewPending;
+    await notifyFn({ task_id: taskId, pr_url: prUrl, title: state.task?.title, preview_url: previewUrl });
   } catch { /* best-effort */ }
 
   const interruptFn = opts.interrupt || interrupt;
