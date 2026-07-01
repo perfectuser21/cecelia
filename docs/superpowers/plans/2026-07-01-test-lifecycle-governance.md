@@ -8,6 +8,8 @@
 
 **Tech Stack:** Node.js (ESM) + PostgreSQL + vitest。Brain 后端代码，`packages/brain/`。
 
+> **Task 1 执行中发现并修正的 bug**：`journey_features.id` 实际类型是 `UUID`（`gen_random_uuid()`），不是 INTEGER。migration 311 的 `feature_id` 列已改为 `UUID` 类型（原方案文档写的 `INTEGER` 是错的）。下面 Task 2/4 里所有 `feature_id` 测试 fixture 一律用 UUID 字符串（如 `'a1b2c3d4-0000-0000-0000-000000000001'`），不用数字。
+
 ---
 
 ## 文件清单
@@ -235,7 +237,7 @@ git commit -m "feat(brain): test-lifecycle-patrol — file_missing 自动收敛"
 describe('runTestLifecyclePatrol — feature_deleted', () => {
   it('文件存在但关联能力已删 → 标 orphan + raise + 建 issue，不删行', async () => {
     const pool = makePool([
-      { id: 2, file_path: 'packages/brain/src/still-here.test.js', status: 'active', feature_id: 99, scanned_at: new Date() },
+      { id: 2, file_path: 'packages/brain/src/still-here.test.js', status: 'active', feature_id: 'a1b2c3d4-0000-0000-0000-000000000099', scanned_at: new Date() },
     ]);
     existsSync.mockReturnValue(true); // 文件还在
 
@@ -391,16 +393,16 @@ describe('runTestLifecyclePatrol — stale_scan', () => {
 describe('runTestLifecyclePatrol — 自愈复位', () => {
   it('此前 orphan 的行，本轮 file 存在且 feature 存活 → 复位 active', async () => {
     const pool = makePool([
-      { id: 5, file_path: 'packages/brain/src/recovered.test.js', status: 'orphan', feature_id: 42, scanned_at: new Date() },
+      { id: 5, file_path: 'packages/brain/src/recovered.test.js', status: 'orphan', feature_id: 'a1b2c3d4-0000-0000-0000-000000000042', scanned_at: new Date() },
     ]);
     existsSync.mockReturnValue(true);
     pool.query.mockImplementation(async (sql, params) => {
       pool.calls.push({ sql, params });
       if (sql.includes('SELECT id, file_path, status, feature_id, scanned_at FROM test_registry')) {
-        return { rows: [{ id: 5, file_path: 'packages/brain/src/recovered.test.js', status: 'orphan', feature_id: 42, scanned_at: new Date() }] };
+        return { rows: [{ id: 5, file_path: 'packages/brain/src/recovered.test.js', status: 'orphan', feature_id: 'a1b2c3d4-0000-0000-0000-000000000042', scanned_at: new Date() }] };
       }
       if (sql.includes('SELECT id FROM journey_features WHERE id = ANY')) {
-        return { rows: [{ id: 42 }] }; // feature 复活了
+        return { rows: [{ id: 'a1b2c3d4-0000-0000-0000-000000000042' }] }; // feature 复活了
       }
       return { rows: [] };
     });
@@ -416,7 +418,7 @@ describe('runTestLifecyclePatrol — 自愈复位', () => {
 describe('runTestLifecyclePatrol — 24h/同日去重', () => {
   it('同一 file_path 同一天 ON CONFLICT DO NOTHING 生效（SQL 层去重，非应用层重复插入）', async () => {
     const pool = makePool([
-      { id: 6, file_path: 'packages/brain/src/dup.test.js', status: 'active', feature_id: 7, scanned_at: new Date() },
+      { id: 6, file_path: 'packages/brain/src/dup.test.js', status: 'active', feature_id: 'a1b2c3d4-0000-0000-0000-000000000007', scanned_at: new Date() },
     ]);
     existsSync.mockReturnValue(true);
 
@@ -584,12 +586,13 @@ import { runTestLifecyclePatrol } from '../../test-lifecycle-patrol.js';
 
 describe('E2E fixture: 删掉一个 journey_features + 它的 test → 巡检标 orphan', () => {
   it('journey_features 行已删、test 文件仍在磁盘 → test_registry 该行 status=orphan, orphan_reason=feature_deleted, issues 表有新记录', async () => {
-    // fixture: 模拟一张已存在但对应能力(feature_id=123)已被删除的 test 行
+    // fixture: 模拟一张已存在但对应能力(feature_id='...123')已被删除的 test 行
+    const FEATURE_ID = 'a1b2c3d4-0000-0000-0000-000000000123';
     const testRegistryRow = {
       id: 10,
       file_path: 'packages/brain/src/__tests__/deleted-feature.test.js',
       status: 'active',
-      feature_id: 123,
+      feature_id: FEATURE_ID,
       scanned_at: new Date(),
     };
 
@@ -602,7 +605,7 @@ describe('E2E fixture: 删掉一个 journey_features + 它的 test → 巡检标
           return { rows: [state.registryRow] };
         }
         if (sql.includes('SELECT id FROM journey_features WHERE id = ANY')) {
-          return { rows: [] }; // feature_id=123 查无此能力 → 已删
+          return { rows: [] }; // feature_id=FEATURE_ID 查无此能力 → 已删
         }
         if (sql.includes('UPDATE test_registry')) {
           state.registryRow.status = 'orphan';
@@ -628,7 +631,7 @@ describe('E2E fixture: 删掉一个 journey_features + 它的 test → 巡检标
     expect(state.issues).toHaveLength(1);
     expect(state.issues[0].title).toContain('deleted-feature.test.js');
     expect(state.alerts).toHaveLength(1);
-    expect(raise).toHaveBeenCalledWith('P2', 'test_lifecycle_orphan_feature_deleted', expect.stringContaining('feature_id=123'));
+    expect(raise).toHaveBeenCalledWith('P2', 'test_lifecycle_orphan_feature_deleted', expect.stringContaining(FEATURE_ID));
   });
 
   it('对比：磁盘文件已删的行走 file_missing 路径，直接删行，不建 issue', async () => {
