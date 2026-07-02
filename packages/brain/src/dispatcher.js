@@ -503,6 +503,7 @@ export async function dispatchNextTask(goalIds) {
   }
 
   // 4. Update task status to in_progress
+  try {
   const updateResult = await updateTask({
     task_id: nextTask.id,
     status: 'in_progress'
@@ -603,6 +604,12 @@ export async function dispatchNextTask(goalIds) {
   if (!execResult.success) {
     console.warn(`[dispatch] triggerCeceliaRun failed for task ${nextTask.id}: ${execResult.error || execResult.reason}`);
     await updateTask({ task_id: nextTask.id, status: 'queued' });
+    // fabf6bd6: 必须同时释放 claim，否则 status=queued 但 claimed_by 仍设，atomic claim
+    // 的 `WHERE claimed_by IS NULL` 永远选不中这个 task，等于换了个状态的同款死锁。
+    await pool.query(
+      `UPDATE tasks SET claimed_by = NULL, claimed_at = NULL WHERE id = $1`,
+      [nextTask.id]
+    );
     // configError 表示系统配置错误（如容器漏装 codex CLI），不属于运行时执行失败，
     // 不应累积 cecelia-run breaker（否则配置漂移会 trip breaker 阻断所有 dispatch）。
     if (execResult.configError) {
@@ -687,6 +694,28 @@ export async function dispatchNextTask(goalIds) {
   await recordDispatchResult(pool, true);
 
   return { dispatched: true, task_id: nextTask.id, run_id: execResult.runId, actions };
+  } catch (err) {
+    // C1 fix (fabf6bd6): claim 成功后到这里之间任何未预期异常都会让 task 永久卡在
+    // claimed_by 已设 + status=in_progress（graph 从未真正 invoke）。兜底释放 claim + 标 failed，
+    // 绝不 rethrow — dispatcher 调用方（tick-runner.js）没有包 try/catch。
+    console.error(`[dispatch] unexpected exception after claim, task=${nextTask?.id}: ${err.message}`);
+    if (nextTask?.id) {
+      try {
+        await pool.query(
+          `UPDATE tasks SET claimed_by = NULL, claimed_at = NULL WHERE id = $1`,
+          [nextTask.id]
+        );
+        await pool.query(
+          `UPDATE tasks SET status = 'failed', error_message = $2 WHERE id = $1`,
+          [nextTask.id, String(err.message || 'dispatch_exception').slice(0, 500)]
+        );
+      } catch (cleanupErr) {
+        console.error(`[dispatch] claim-leak cleanup failed (task=${nextTask.id}): ${cleanupErr.message}`);
+      }
+    }
+    await recordDispatchResult(pool, false, 'dispatch_exception');
+    return { dispatched: false, reason: 'dispatch_exception', task_id: nextTask?.id, error: err.message, actions };
+  }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
