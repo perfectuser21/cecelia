@@ -108,6 +108,39 @@ export async function fetchLineContext({ pool }, { taskId = null, abilityId = nu
 }
 
 /**
+ * 三角色注入共用 helper（proposer/generator/evaluator）：task → ids → fetch → format 一步到位。
+ * task 自带 ability_id / payload.journey_id 时直接用；两者全缺（GAN 图只有 taskId）时
+ * 查 tasks 行补齐。内部全吞错返回 ''（注入是增强不是门禁，绝不影响 spawn/评估）。
+ *
+ * @param {{ pool: object }} deps
+ * @param {{ id: string, ability_id?: string|null, payload?: object|string|null }} task
+ * @returns {Promise<string>} formatLineContextForPrompt 结果，或 ''
+ */
+export async function fetchAndFormatLineContext({ pool } = {}, task) {
+  try {
+    if (!pool || !task?.id) return '';
+    const payload = typeof task.payload === 'string' ? JSON.parse(task.payload) : (task.payload || {});
+    let abilityId = task.ability_id ?? payload.ability_id ?? null;
+    let journeyId = payload.journey_id ?? null;
+    if (abilityId == null && journeyId == null) {
+      // 调用方只有 taskId（GAN 图场景）→ 查 tasks 行补齐
+      const { rows } = await pool.query('SELECT ability_id, payload FROM tasks WHERE id=$1', [task.id]);
+      const row = rows?.[0];
+      if (row) {
+        const rowPayload = typeof row.payload === 'string' ? JSON.parse(row.payload) : (row.payload || {});
+        abilityId = row.ability_id ?? rowPayload.ability_id ?? null;
+        journeyId = rowPayload.journey_id ?? null;
+      }
+    }
+    const ctx = await fetchLineContext({ pool }, { taskId: task.id, abilityId, journeyId });
+    return formatLineContextForPrompt(ctx);
+  } catch (err) {
+    console.warn(`[line-context] fetchAndFormatLineContext failed (non-fatal): ${err.message}`);
+    return '';
+  }
+}
+
+/**
  * 标签：topic 里 `]` 后短语（如 `[Line04]不进群` → `不进群`）；
  * `]` 后为空（如 `[Line04]`）或无 `]` → 回落到去掉方括号字符后的 topic 前 6 字，
  * 保证不产出空标签 `- []`。
