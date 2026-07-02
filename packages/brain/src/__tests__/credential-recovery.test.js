@@ -21,11 +21,15 @@ vi.mock('../actions.js', () => ({
 vi.mock('../alerting.js', () => ({
   raise: vi.fn().mockResolvedValue(undefined),
 }));
+vi.mock('../notifier.js', () => ({
+  sendBark: vi.fn().mockResolvedValue(true),
+}));
 
 import { readFileSync, existsSync } from 'fs';
 import { recoverAuthQuarantinedTasks, checkAndAlertExpiringCredentials, _resetAlertDedup } from '../credential-expiry-checker.js';
 import { createTask } from '../actions.js';
 import { raise } from '../alerting.js';
+import { sendBark } from '../notifier.js';
 
 // Helper: build a fresh mock pool
 function makePool({ accountUsageRows = [], candidateRows = [], updateOk = true } = {}) {
@@ -239,11 +243,12 @@ describe('checkAndAlertExpiringCredentials', () => {
     const result = await checkAndAlertExpiringCredentials(pool, ['account2', 'account3']);
 
     expect(result.alerted).toBe(2); // 两个账号都告警
-    expect(raise).toHaveBeenCalledWith(
-      'P0',
-      expect.stringContaining('credential_stuck_account'),
+    // Claude 账号告警走 Bark（手机推送），不走飞书/raise（回归：决策 7702b938）
+    expect(sendBark).toHaveBeenCalledWith(
+      expect.any(String),
       expect.stringContaining('cron 自动刷新失败')
     );
+    expect(raise).not.toHaveBeenCalled();
     expect(createTask).not.toHaveBeenCalled();
   });
 
@@ -273,7 +278,9 @@ describe('checkAndAlertExpiringCredentials', () => {
     const result = await checkAndAlertExpiringCredentials(pool, ['account2', 'account3']);
 
     expect(result.alerted).toBe(2);
-    expect(raise).toHaveBeenCalledWith('P0', expect.any(String), expect.stringContaining('缺失'));
+    // Claude 账号告警走 Bark，不走飞书/raise（回归：决策 7702b938）
+    expect(sendBark).toHaveBeenCalledWith(expect.any(String), expect.stringContaining('缺失'));
+    expect(raise).not.toHaveBeenCalled();
   });
 
   it('凭据健康（剩余 7h）：不告警', async () => {
