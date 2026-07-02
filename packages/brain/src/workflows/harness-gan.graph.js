@@ -34,6 +34,7 @@ import { verifyContractProposerOutput } from '../lib/contract-verify.js';
 import { evaluateContractText, formatGateReport } from '../lib/contract-gate.js';
 import { LLM_RETRY } from './retry-policies.js';
 import { loadSkillContent, readBrainResult, ReviewerOutputSchema } from '../harness-shared.js';
+import { fetchAndFormatLineContext } from '../harness-line-context.js';
 import { makeSessionRecord as _makeSessionRecord } from '../harness-session-bridge.js';
 import { resolveAccount } from '../spawn/middleware/account-rotation.js';
 
@@ -453,6 +454,9 @@ export function createGanContractNodes(executor, ctx) {
     // （旧 bug：分支只按 round+taskId 命名 → fresh-start 后每轮"合同已存在"跳过 spawn，proposer 从不产新合同，
     // GAN 空转无法自愈）。同一 attempt 内分支名稳定 → B59-idem 幂等仍在 attempt 内生效。
     attemptN = 0,
+    // A-1 Context Manifest：runGanContractGraph 入口 fetch 一次的本 line 上下文
+    // （invariant 铁律 + 累积 FR），GAN 多轮复用同一段，proposer 每轮 prompt append。
+    lineContextText = '',
     readContractFile = defaultReadContractFile,
     fetchOriginFile: _fetchOriginFile = fetchAndShowOriginFile,
     verifyProposer = verifyContractProposerOutput,
@@ -503,11 +507,18 @@ export function createGanContractNodes(executor, ctx) {
     const hbTimer = heartbeatFn
       ? setInterval(() => { heartbeatFn().catch(() => {}); }, 60_000)
       : null;
+    // A-1 Context Manifest：base prompt 后 append 本 line 上下文段（invariant 铁律 + 累积 FR）。
+    // lineContextText 空（无数据/fetch 失败降级）→ 不写占位段，减少噪音。
+    const basePrompt = buildProposerPrompt(state.prdContent, state.feedback, nextRound, computedBranch);
+    const proposerPrompt = lineContextText
+      ? `${basePrompt}\n\n${lineContextText}\n\n合同的 [BEHAVIOR] 断言不得与上述铁律冲突；已验收行为只能引用不得重做。`
+      : basePrompt;
+
     let result;
     try {
       result = await executor({
         task: { id: taskId, task_type: 'harness_contract_propose' },
-        prompt: buildProposerPrompt(state.prdContent, state.feedback, nextRound, computedBranch),
+        prompt: proposerPrompt,
         worktreePath,
         env: {
           ...acctOpts.env,
@@ -842,9 +853,20 @@ export async function runGanContractGraph(opts) {
     );
   }
 
+  // A-1 Context Manifest：入口 fetch 一次本 line 上下文（invariant 铁律 + 累积 FR），
+  // GAN 多轮复用同一段（proposer 每轮 append），避免每轮重查。
+  // best-effort：helper 内部吞错返回 ''，这里再兜一层 —— 注入是增强不是门禁，失败绝不阻塞 GAN。
+  let lineContextText = '';
+  try {
+    const dbPool = opts.pool || (await import('../db.js')).default;
+    lineContextText = await fetchAndFormatLineContext({ pool: dbPool }, { id: taskId });
+  } catch (err) {
+    console.warn(`[harness-gan] line-context 注入降级（non-fatal）: ${err.message}`);
+  }
+
   const nodes = createGanContractNodes(executor, {
     taskId, initiativeId, sprintDir, worktreePath, githubToken, baseRepo,
-    plannerOutput, budgetCapUsd, attemptN, readContractFile, fetchOriginFile,
+    plannerOutput, budgetCapUsd, attemptN, lineContextText, readContractFile, fetchOriginFile,
     heartbeatFn,
   });
   const graph = buildGanContractGraph(nodes);

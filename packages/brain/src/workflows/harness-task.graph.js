@@ -56,6 +56,7 @@ import { checkAuthFailure } from '../spawn/middleware/cap-marking.js';
 import { checkPrStatus, classifyFailedChecks } from '../shepherd.js';
 import { parseDockerOutput, extractField, readPrFromGitState, readVerdictFile, readBrainResult, readAndValidateBrainResult, EvaluatorOutputSchema, loadSkillContent, assertSprintDir } from '../harness-shared.js';
 import { buildGeneratorPrompt, buildTaskThreadId } from '../harness-utils.js';
+import { fetchAndFormatLineContext } from '../harness-line-context.js';
 import { getPgCheckpointer } from '../orchestrator/pg-checkpointer.js';
 import pool from '../db.js';
 import { verifyGeneratorOutput } from '../lib/contract-verify.js';
@@ -298,7 +299,15 @@ export async function spawnNode(state, opts = {}) {
   // harnessSubTaskBranchName 是纯函数，幂等调用安全（ensureWt 也用了同参数调用）
   const precomputedBranch = harnessSubTaskBranchName(initiativeId, task.id);
 
-  const prompt = buildGeneratorPrompt(task, { fixMode, prdContent: state.prdContent || null });
+  let prompt = buildGeneratorPrompt(task, { fixMode, prdContent: state.prdContent || null });
+  // A-1 Context Manifest：append 本 line 上下文段（invariant 铁律 + 累积 FR）。
+  // helper 内部全吞错返回 ''（注入是增强不是门禁），再兜一层 try 保证绝不影响 spawn。
+  try {
+    const lineCtx = await fetchAndFormatLineContext({ pool: dbPool }, task);
+    if (lineCtx) prompt += `\n\n${lineCtx}\n\n实现代码不得违反上述铁律。`;
+  } catch (err) {
+    console.warn(`[spawn] line-context 注入降级（non-fatal）: ${err.message}`);
+  }
 
   // thread_id 必须跟 harness-initiative.graph runSubTaskNode 用的一致：
   // `harness-task:${initiativeId}:${subTaskId}:fix${N}<合同后缀>` —— callback router 用此 lookup
@@ -1381,7 +1390,7 @@ export async function evaluateContractNode(state, opts = {}) {
   }
 
   const skillContent = loadSkillContent('harness-evaluator');
-  const evaluatePrompt = [
+  let evaluatePrompt = [
     '你是 harness-evaluator agent。按下面 SKILL 指令工作。',
     '',
     skillContent,
@@ -1395,6 +1404,16 @@ export async function evaluateContractNode(state, opts = {}) {
     `TARGET_ENV=${targetEnv}`,
     `GITHUB_REPO=${githubRepo}`,
   ].join('\n');
+  // A-1 Context Manifest：append 本 line 上下文段（invariant 铁律 + 累积 FR）+ 红线自查指令。
+  // helper 内部全吞错返回 ''（注入是增强不是门禁），再兜一层 try 保证绝不影响评估。
+  try {
+    const lineCtx = await fetchAndFormatLineContext({ pool: dbPool }, task);
+    if (lineCtx) {
+      evaluatePrompt += `\n\n${lineCtx}\n\nPASS 判定前逐条自查上述 Invariant：任何一条被违反 → 必须 FAIL 并在 feedback 指明违反哪条。`;
+    }
+  } catch (err) {
+    console.warn(`[evaluator] line-context 注入降级（non-fatal）: ${err.message}`);
+  }
 
   const acctOpts = { task: { ...task, task_type: 'harness_evaluate' }, env: {} };
   try {
