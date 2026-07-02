@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="zh"><head><meta charset="UTF-8"><title>Cecelia Harness — 无条件核心回归闸（B1） — Sprint Report</title>
+<style>body{font-family:sans-serif;margin:0;display:flex;flex-direction:column;height:100vh;}
+header{background:#1a1a2e;color:#fff;padding:12px 24px;display:flex;align-items:center;gap:16px;}
+header a{color:#adf;text-decoration:none;}main{display:flex;flex:1;overflow:hidden;}
+nav{width:160px;background:#f4f4f4;border-right:1px solid #ddd;padding:16px 0;overflow-y:auto;}
+nav ul{list-style:none;margin:0;padding:0;}nav li a{display:block;padding:8px 16px;color:#333;text-decoration:none;}
+nav li a:hover{background:#e0e0e0;}.content{flex:1;overflow-y:auto;padding:24px;}
+.section pre{background:#f8f8f8;border:1px solid #ddd;padding:16px;border-radius:4px;}</style>
+</head><body>
+<header><span><strong>Cecelia Harness — 无条件核心回归闸（B1）</strong> Sprint Report ⚠️ 失败补同步</span></header>
+<main><nav><ul><li><a href="#" onclick="show('prep-prd');return false;">PrepPRD</a></li><li><a href="#" onclick="show('sprint-prd');return false;">PRD</a></li><li><a href="#" onclick="show('contract');return false;">D-Contract</a></li><li><a href="#" onclick="show('dod');return false;">DOD</a></li><li><a href="#" onclick="show('report');return false;">Report</a></li><li><a href="#" onclick="show('learning');return false;">Learning</a></li><li><a href="#" onclick="show('screenshots');return false;">截图</a></li></ul></nav>
+<div class="content"><div id="prep-prd" class="section" style="display:none;"><pre style="white-space:pre-wrap;word-break:break-word;"># PrepPRD：Cecelia Harness Pipeline — 无条件核心回归闸（B1）
+
+## 本次对话涵盖的所有事项（防信息丢失）
+- [x] 新增无条件 core-regression CI job（脱离路径门；PR 档跑 P0/P1 策展子集、push-main 档跑全集）
+- [x] 干掉假绿灯 regression-smoke（ci.yml:716 扫不存在的 *.golden-smoke.test.ts 目录、静默 exit 0）
+- [x] regression-contract.yaml 播种 ≥1 条真实 cecelia must-never-break golden path + 空契约守卫
+- [ ] 另立 Sprint（本次不做）：A1 动态加载 / A3 自动 promotion / CS 客服专属 test（跨 ZenithJoy 仓库）
+
+## Journey 当前状态
+- ✅ Harness Pipeline 骨架
+- 🔄 无条件核心回归闸 — 本次新增
+
+## 本次要做的
+现在 CI 有个洞：只有改了某目录才跑那目录的测试，别的目录（如 packages/brain）改动把它打坏时测试被跳过、绿灯照放（跨服务运行时耦合，路径门算不进）。本次新增一条"核心回归"检查，不管改了哪里都无条件跑一批"绝不能坏"的断言；同时删掉一个假装在跑、实则扫空目录永远绿的僵尸检查。
+
+## Golden Path
+1. 定义 regression-contract.yaml schema，对齐 packages/quality/contracts/regression-contract.template.yaml（triggers / test_command / must_never_break / priority 字段）
+2. 往根目录 regression-contract.yaml 填 ≥1 条真实的、已有 committed 测试支撑的 must-never-break golden path（P0，选一条现有 Brain 契约/selfcheck 类测试）
+3. 新增 scripts/ci/run-core-regression.sh：用 yq 解析 regression-contract.yaml，按档执行对应 test_command，任一失败 exit 1（引用文件不存在也 fail，不静默）
+4. ci.yml 新增 core-regression job：无 workspace 路径门 if（永远跑）；PR 档跑 P0/P1 子集，push-main 档（复用 `|| github.ref=='refs/heads/main'` 先例）跑全集
+5. 空契约守卫：release 全集为空 → job fail（防退化成假绿灯）
+6. 删除或改造 regression-smoke（ci.yml:716）：删掉，或改成真正消费 regression-contract
+7. core-regression 接入 ci-passed 汇总（因永远真跑不会是 skipped）
+
+**错误路径**：yq 解析失败 → job fail 报错；test_command 引用文件不存在 → job fail（不静默 exit 0）
+
+## 涉及的 Ability / Feature
+- 无条件核心回归闸（新增 feature，kind=feature）
+
+## 不包含
+- A1 动态加载 line context（另 Sprint）
+- A3 evaluator PASS 自动 promotion（另 Sprint）
+- CS 客服专属 golden-path test（在 ZenithJoy autopilot 仓库，另 Sprint）
+- 真机 tests/rog（P2）
+
+## 前置工作（已逐项确认，无 TBD）
+- [x] regression-contract.yaml 已存在（根目录，当前 core:[] golden_paths:[]）
+- [x] packages/quality/contracts/regression-contract.template.yaml schema 参考已在仓库
+- [x] yq 在 ubuntu-latest CI runner 可用（自带或 apt 装）
+
+## 验收标准（Final E2E）
+- [ ] regression-contract.yaml 含 ≥1 条真实 golden path，非空（node -e readFileSync grep 验证）
+- [ ] scripts/ci/run-core-regression.sh 本地跑 exit 0
+- [ ] ci.yml 的 core-regression job 无路径门 if、含 push-main 全集档（grep 验证不含 workspace== 门、含 refs/heads/main）
+- [ ] 旧 regression-smoke 已删或已改造成真消费 contract（grep 验证不再扫空的 *.golden-smoke.test.ts）
+- [ ] 空契约守卫存在（release 集为空则 fail）
+- [ ] CI 全绿
+
+**invariant 约束（必须遵守）**：真环境验证才算done；测试默认多租户；禁止写死环境假设值；端点鉴权。
+
+**参考方案文档**：docs/current/harness-verify-redesign/B1-ci-unconditional-regression.md
+</pre></div><div id="sprint-prd" class="section" style="display:none;"><p>（文件不存在）</p></div><div id="contract" class="section" style="display:none;"><p>（文件不存在）</p></div><div id="dod" class="section" style="display:none;"><p>（文件不存在）</p></div><div id="report" class="section" style="display:none;"><pre style="white-space:pre-wrap;word-break:break-word;">━━━ Sprint: Cecelia Harness — 无条件核心回归闸（B1）  PR #-  2026-07-02 ━━━
+
+PIPELINE  A(failure) phases · 0 eval rounds · - · $0
+STATUS    Auto-spawned (failure) — no evaluator PASS, no PR produced
+
+Phase          Time    Cost    Result
+Proposer       -       -       -
+Planner        -       -       -
+Generator      -       -       -
+Evaluator×0    -       -       ❌ FAIL
+Reporter       -       -       ✅ (补同步)
+
+DOD N/A  FAIL: 流水线在 Evaluator 前失败
+
+E2E 截图: （无截图）
+Learning: 见 learning.md
+DB sync: Brain task → completed ✅ · Notion push: Phase B
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+</pre></div><div id="learning" class="section" style="display:none;"><pre style="white-space:pre-wrap;word-break:break-word;"># Learning — Cecelia Harness — 无条件核心回归闸（B1）
+
+## 运行指标
+
+- GAN 轮次：0
+- Evaluator Fix 次数：0
+- PR：（无 — 流水线未完成）
+- Sprint Dir：/workspace/sprints/07012109-b1-core-regression
+
+## 发现的问题
+
+### [INFRA] 流水线提前终止
+
+- Auto-spawned after failure — 本次 harness-report 由 Brain reportNode 在流水线失败后自动触发补同步。
+- sprint-prd.md / contract-draft.md / contract-dod.md 均缺失，说明流水线在 Proposer/Planner 阶段即已中断。
+
+### [PROMPT] Prompt 类问题
+
+- （待人工复盘）
+
+### [BUG] 代码缺陷
+
+- （待人工复盘）
+
+### [DESIGN] 设计缺陷
+
+- （待人工复盘）
+
+## 下次预防清单
+
+- [ ] 确认 B1 核心回归闸触发条件是否符合预期
+- [ ] 检查 Proposer 为何未生成 sprint-prd.md
+- [ ] 检查 harness initiative 状态是否正确推进
+</pre></div><div id="screenshots" class="section" style="display:none;"><p>无截图</p></div></div></main>
+<script>function show(id){document.querySelectorAll('.section').forEach(s=>s.style.display='none');var el=document.getElementById(id);if(el)el.style.display='block';}
+var first=document.querySelector('.section');if(first)first.style.display='block';</script>
+</body></html>
