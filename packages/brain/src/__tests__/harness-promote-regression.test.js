@@ -127,3 +127,124 @@ describe('mergeGoldenPaths', () => {
     expect(mergeGoldenPaths(undefined, [{ id: 'GP-a-001' }], 'GP-a-')).toHaveLength(1);
   });
 });
+
+describe('promoteToRegression', () => {
+  const TASK = {
+    id: 'bd7e251c-0000-0000-0000-000000000001',
+    payload: {
+      journey_id: 'bb8cc561-b3ee-4fec-b74d-2255694bd963',
+      feature_id: 'fe000000-0000-0000-0000-000000000001',
+    },
+  };
+  const SPRINT_DIR = 'sprints/0702-demo';
+  const WT = '/tmp/fake-worktree';
+
+  function makeDeps({ lsFilesFails = false, files = {} } = {}) {
+    const queries = [];
+    const client = {
+      query: vi.fn(async (sql, params) => {
+        queries.push({ sql, params });
+        if (/SELECT id FROM journey_features/i.test(sql)) return { rows: [{ id: TASK.payload.feature_id }] };
+        return { rows: [] };
+      }),
+      release: vi.fn(),
+    };
+    const poolMock = { connect: vi.fn(async () => client) };
+    const execFileCalls = [];
+    const execFileMock = vi.fn(async (cmd, args, opts2) => {
+      execFileCalls.push({ cmd, args });
+      if (cmd === 'git' && args[0] === 'ls-files' && lsFilesFails) {
+        const e = new Error('not tracked'); e.code = 1; throw e;
+      }
+      return { stdout: '', stderr: '' };
+    });
+    const fsMock = {
+      readFileSync: vi.fn((p) => {
+        const key = Object.keys(files).find((k) => String(p).endsWith(k));
+        if (key) return files[key];
+        const e = new Error(`ENOENT ${p}`); e.code = 'ENOENT'; throw e;
+      }),
+      writeFileSync: vi.fn(),
+      existsSync: vi.fn((p) => Object.keys(files).some((k) => String(p).endsWith(k))),
+    };
+    return { poolMock, client, queries, execFileMock, execFileCalls, fsMock };
+  }
+
+  const GOOD_FILES = {
+    'sprint-prd.md': '## Golden Path\n1. 步骤一\n2. 步骤二\n',
+    'contract-dod.md': '- [ ] [BEHAVIOR] 行为一\n  Test: manual:true\n',
+    'regression-contract.yaml': 'version: "1.0.0"\nupdated: "2026-02-04"\ncore: []\ngolden_paths: []\n',
+  };
+
+  let promoteToRegression;
+  beforeEach(async () => {
+    ({ promoteToRegression } = await import('../harness-promote-regression.js'));
+  });
+
+  it('happy path：DB 覆盖写（DELETE 后 INSERT，事务）+ yaml auto-PR 流程走完', async () => {
+    const d = makeDeps({ files: GOOD_FILES });
+    const r = await promoteToRegression(
+      { pool: d.poolMock, execFile: d.execFileMock, fsImpl: d.fsMock },
+      { task: TASK, sprintDir: SPRINT_DIR, subTasks: [{ pr_url: 'https://github.com/x/y/pull/9' }], worktreePath: WT },
+    );
+    expect(r.ok).toBe(true);
+    expect(r.dbWritten).toBe(true);
+    const sqls = d.queries.map((q) => q.sql);
+    expect(sqls.some((s) => /BEGIN/i.test(s))).toBe(true);
+    expect(sqls.some((s) => /DELETE FROM golden_path WHERE owner_task_id/i.test(s))).toBe(true);
+    expect(sqls.some((s) => /INSERT INTO golden_path/i.test(s))).toBe(true);
+    expect(sqls.some((s) => /COMMIT/i.test(s))).toBe(true);
+    // yaml 写入 + git 流程被调用（checkout -b / commit / push / gh pr create）
+    expect(d.fsMock.writeFileSync).toHaveBeenCalled();
+    const gitArgs = d.execFileCalls.map((c) => `${c.cmd} ${c.args.join(' ')}`);
+    expect(gitArgs.some((s) => s.includes('checkout -b'))).toBe(true);
+    expect(gitArgs.some((s) => s.startsWith('gh pr create'))).toBe(true);
+  });
+
+  it('commit 校验失败（contract-dod.md 未被 git 跟踪）→ yaml 跳过但 DB 保留', async () => {
+    const d = makeDeps({ files: GOOD_FILES, lsFilesFails: true });
+    const r = await promoteToRegression(
+      { pool: d.poolMock, execFile: d.execFileMock, fsImpl: d.fsMock },
+      { task: TASK, sprintDir: SPRINT_DIR, subTasks: [], worktreePath: WT },
+    );
+    expect(r.dbWritten).toBe(true);
+    expect(r.yamlPrUrl == null).toBe(true);
+    expect(d.fsMock.writeFileSync).not.toHaveBeenCalled();
+  });
+
+  it('worktreePath/sprintDir 为空 → 整体 skipped，不碰 DB', async () => {
+    const d = makeDeps({ files: GOOD_FILES });
+    const r = await promoteToRegression(
+      { pool: d.poolMock, execFile: d.execFileMock, fsImpl: d.fsMock },
+      { task: TASK, sprintDir: null, subTasks: [], worktreePath: WT },
+    );
+    expect(r.skipped).toBe(true);
+    expect(d.poolMock.connect).not.toHaveBeenCalled();
+  });
+
+  it('sprint-prd 无 Golden Path 段 → 降级用 BEHAVIOR 序号写 golden_path 表', async () => {
+    const files = { ...GOOD_FILES, 'sprint-prd.md': '# 没有 golden path 段' };
+    const d = makeDeps({ files });
+    const r = await promoteToRegression(
+      { pool: d.poolMock, execFile: d.execFileMock, fsImpl: d.fsMock },
+      { task: TASK, sprintDir: SPRINT_DIR, subTasks: [], worktreePath: WT },
+    );
+    expect(r.dbWritten).toBe(true);
+    const ins = d.queries.find((q) => /INSERT INTO golden_path/i.test(q.sql));
+    expect(ins.params.join(' ')).toContain('行为一'); // 降级 note = BEHAVIOR 描述
+  });
+
+  it('DB 阶段抛错 → ROLLBACK 且不抛出（best-effort，返回 ok:false）', async () => {
+    const d = makeDeps({ files: GOOD_FILES });
+    d.client.query.mockImplementation(async (sql) => {
+      if (/INSERT INTO golden_path/i.test(sql)) throw new Error('db boom');
+      d.queries.push({ sql });
+      return { rows: [] };
+    });
+    const r = await promoteToRegression(
+      { pool: d.poolMock, execFile: d.execFileMock, fsImpl: d.fsMock },
+      { task: TASK, sprintDir: SPRINT_DIR, subTasks: [], worktreePath: WT },
+    );
+    expect(r.ok).toBe(false);
+  });
+});
