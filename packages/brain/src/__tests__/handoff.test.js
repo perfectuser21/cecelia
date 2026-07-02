@@ -36,13 +36,18 @@ describe('buildHandoff', () => {
     const long = 'x'.repeat(300);
     const h = buildHandoff({ task_id: TASK_ID, done: Array.from({ length: 30 }, () => long) });
     expect(h.done).toHaveLength(20);
-    expect(h.done[0].length).toBeLessThanOrEqual(201);
+    expect(h.done[0].length).toBe(201);
     expect(h.done[0].endsWith('…')).toBe(true);
   });
 
   it('过滤非字符串与空白项', () => {
     const h = buildHandoff({ task_id: TASK_ID, done: ['ok', '', '  ', null, 42] });
     expect(h.done).toEqual(['ok']);
+  });
+
+  it('data_sources 全为无效项 → clamp 后为空，回落基线', () => {
+    const h = buildHandoff({ task_id: TASK_ID, data_sources: [42] });
+    expect(h.data_sources).toEqual(BASELINE_DATA_SOURCES);
   });
 });
 
@@ -83,6 +88,13 @@ describe('saveHandoff', () => {
     expect(r.dbWritten).toBe(true);
     expect(r.mirrorPath).toMatch(new RegExp(`${TASK_ID.slice(0, 8)}\\.md$`));
     expect(fs.readFileSync(r.mirrorPath, 'utf8')).toContain('# Handoff');
+  });
+
+  it('task 不存在（rowCount=0）→ 抛错且不写镜像（防分裂态）', async () => {
+    const pool = { query: vi.fn(async () => ({ rowCount: 0 })) };
+    const h = buildHandoff({ task_id: TASK_ID });
+    await expect(saveHandoff({ pool }, h)).rejects.toThrow(/task not found/);
+    expect(fs.readdirSync(tmpDir)).toHaveLength(0);
   });
 
   it('DB 失败 → 抛错且不写镜像文件（防分裂态）', async () => {
@@ -145,6 +157,12 @@ describe('formatHandoffsForPrompt', () => {
     expect(t).not.toContain('d4');
     expect(t).not.toContain('n3');
     expect(t).not.toContain('s3');
+  });
+
+  it('handoff=null 行不抛错且输出含段头', () => {
+    const t = formatHandoffsForPrompt([{ id: 'x', title: 't', handoff: null }]);
+    expect(t).toContain('## 最近 Handoff');
+    expect(t).toContain('t（verdict=N/A）');
   });
 
   it('总长截断 ≤2000 字', () => {

@@ -38,6 +38,8 @@ function clampList(list) {
 
 export function buildHandoff(input = {}) {
   if (!input.task_id) throw new Error('buildHandoff: task_id is required');
+  // 先 clamp 再判空：全为无效项（如 [42]）时也回落基线
+  const dataSources = clampList(input.data_sources);
   return {
     schema_version: HANDOFF_SCHEMA_VERSION,
     task_id: input.task_id,
@@ -48,7 +50,7 @@ export function buildHandoff(input = {}) {
     done: clampList(input.done),
     not_done: clampList(input.not_done),
     next_steps: clampList(input.next_steps),
-    data_sources: clampList(input.data_sources?.length ? input.data_sources : BASELINE_DATA_SOURCES),
+    data_sources: dataSources.length ? dataSources : clampList(BASELINE_DATA_SOURCES),
     decision_refs: clampList(input.decision_refs),
     artifacts: {
       pr_urls: clampList(input.artifacts?.pr_urls),
@@ -100,11 +102,13 @@ export function renderHandoffMarkdown(h) {
  * DB 失败直接抛（调用方决定是否吞）；镜像失败仅 warn。
  */
 export async function saveHandoff({ pool }, handoff) {
-  await pool.query(
+  const res = await pool.query(
     `UPDATE tasks SET result = COALESCE(result, '{}'::jsonb) || jsonb_build_object('handoff', $2::jsonb), updated_at = NOW()
      WHERE id = $1::uuid`,
     [handoff.task_id, JSON.stringify(handoff)]
   );
+  // task 不存在 → UPDATE 影响 0 行：抛错（也就不写镜像），防"DB 没写成却有镜像"的分裂态
+  if (res.rowCount === 0) throw new Error(`saveHandoff: task not found: ${handoff.task_id}`);
   let mirrorPath = null;
   try {
     const dir = process.env.HANDOFF_DOCS_DIR || DEFAULT_DOCS_DIR;
