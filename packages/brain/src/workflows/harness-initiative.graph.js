@@ -274,7 +274,23 @@ ${state.task?.payload?.prep_prd_body || '（未提供，Planner 从 sprint-prd.m
   } catch (err) {
     console.warn(`[harness-initiative] fetchRunHistory failed (non-blocking): ${err.message}`);
   }
-  const plannerPromptFinal = runHistoryText ? `${prompt}${runHistoryText}` : prompt;
+  // 方案B（handoff 自动化，2026-07-02）：注入本 journey 最近交接单（失败不阻塞，与 runHistoryText 同纪律）
+  let handoffText = '';
+  try {
+    const journeyId = state.task?.payload?.journey_id;
+    if (journeyId) {
+      const { getRecentHandoffs, formatHandoffsForPrompt } = await import('../handoff.js');
+      const handoffRows = await getRecentHandoffs({ pool: dbPool }, {
+        journeyId,
+        limit: 3,
+        excludeTaskId: state.task?.id || null,
+      });
+      handoffText = formatHandoffsForPrompt(handoffRows);
+    }
+  } catch (err) {
+    console.warn(`[harness-initiative] fetchHandoffs failed (non-blocking): ${err.message}`);
+  }
+  const plannerPromptFinal = [prompt, runHistoryText, handoffText].filter(Boolean).join('');
 
   const acctOpts = { task: { ...state.task, task_type: 'harness_planner' }, env: {} };
   try {
@@ -1582,6 +1598,7 @@ export async function reportNode(state, opts = {}) {
   }
   // A3 Promotion（harness 验证模型重构）：PASS → 冻结登记（golden_path 表 + regression-contract.yaml）。
   // best-effort：冻结失败绝不阻断生命周期闭合（内部已告警）；只 PASS 触发，FAIL/SKIP 不冻结。
+  let a3Promoted = false;
   if (computedVerdict === 'PASS') {
     try {
       const { promoteToRegression } = await import('../harness-promote-regression.js');
@@ -1594,9 +1611,46 @@ export async function reportNode(state, opts = {}) {
           worktreePath: state.worktreePath,
         },
       );
+      a3Promoted = true;
     } catch (err) {
       console.warn(`[reportNode] promoteToRegression failed (non-fatal): ${err.message}`);
     }
+  }
+
+  // 方案B（handoff 自动化，2026-07-02）：终态交接单——PASS/FAIL 都产（失败的交接价值更大）。
+  // best-effort：失败绝不阻断生命周期闭合。DB=SSOT，镜像 best-effort（handoff.js 内部处理）。
+  try {
+    const { buildHandoff, saveHandoff } = await import('../handoff.js');
+    const failDetail = ws_issues
+      .map((w) => `${w.ws_id}${w.ci_fail_type ? `[${w.ci_fail_type}]` : ''}: ${String(w.feedback || '').slice(0, 80)}`)
+      .join('; ');
+    const handoff = buildHandoff({
+      task_id: state.initiativeId,
+      initiative_id: state.initiativeId,
+      journey_id: state.task?.payload?.journey_id || null,
+      title: state.task?.title || '',
+      verdict: computedVerdict,
+      done: reconciledSubTasks
+        .filter((s) => s.status === 'merged')
+        .map((s) => `${s.id} 已合并${s.pr_url ? `: ${s.pr_url}` : ''}`),
+      not_done: reconciledSubTasks
+        .filter((s) => s.status !== 'merged')
+        .map((s) => `${s.id}(status=${s.status || 'unknown'}${s.ci_fail_type ? `,ci=${s.ci_fail_type}` : ''})`),
+      next_steps: computedVerdict === 'PASS'
+        ? [a3Promoted
+          ? '本 ability 已验收，golden_path 已冻结（A3）；下一 sprint 可加厚本 ability 或推进本 line 下一个 ability'
+          : '本 ability 已验收；A3 冻结未确认（见 warn 日志），下一 sprint 前先核对 golden_path']
+        : [`修复后重试${failDetail ? `。失败摘要：${failDetail.slice(0, 180)}` : ''}`],
+      artifacts: {
+        pr_urls: reconciledSubTasks.map((s) => s.pr_url).filter(Boolean),
+        sprint_dir: state.sprintDir || null,
+        branch: null,
+        docs: [],
+      },
+    });
+    await saveHandoff({ pool: dbPool }, handoff);
+  } catch (err) {
+    console.warn(`[reportNode] handoff generation failed (non-fatal): ${err.message}`);
   }
 
   // Slice3（决策 B）：report 后移到 production promote 完成后。
