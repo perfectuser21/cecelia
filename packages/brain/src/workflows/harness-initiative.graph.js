@@ -1580,6 +1580,25 @@ export async function reportNode(state, opts = {}) {
   } catch (err) {
     console.warn(`[harness-initiative.graph] reportNode db update failed: ${err.message}`);
   }
+  // A3 Promotion（harness 验证模型重构）：PASS → 冻结登记（golden_path 表 + regression-contract.yaml）。
+  // best-effort：冻结失败绝不阻断生命周期闭合（内部已告警）；只 PASS 触发，FAIL/SKIP 不冻结。
+  if (computedVerdict === 'PASS') {
+    try {
+      const { promoteToRegression } = await import('../harness-promote-regression.js');
+      await promoteToRegression(
+        { pool: dbPool, execFile: opts.execFile },
+        {
+          task: state.task,
+          sprintDir: state.sprintDir,
+          subTasks: reconciledSubTasks,
+          worktreePath: state.worktreePath,
+        },
+      );
+    } catch (err) {
+      console.warn(`[reportNode] promoteToRegression failed (non-fatal): ${err.message}`);
+    }
+  }
+
   // Slice3（决策 B）：report 后移到 production promote 完成后。
   // - PASS：**不在此派 report**——成功交付证书等 promote 完成后由 staging-e2e-runner（内部线 auto）
   //   / routes/harness.js confirm（客户线）派；pending_promote 不出（靠 Slice2 通知+状态可见，不饿死）。
