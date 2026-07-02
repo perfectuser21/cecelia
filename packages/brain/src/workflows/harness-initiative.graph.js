@@ -274,7 +274,23 @@ ${state.task?.payload?.prep_prd_body || '（未提供，Planner 从 sprint-prd.m
   } catch (err) {
     console.warn(`[harness-initiative] fetchRunHistory failed (non-blocking): ${err.message}`);
   }
-  const plannerPromptFinal = runHistoryText ? `${prompt}${runHistoryText}` : prompt;
+  // 方案B（handoff 自动化，2026-07-02）：注入本 journey 最近交接单（失败不阻塞，与 runHistoryText 同纪律）
+  let handoffText = '';
+  try {
+    const journeyId = state.task?.payload?.journey_id;
+    if (journeyId) {
+      const { getRecentHandoffs, formatHandoffsForPrompt } = await import('../handoff.js');
+      const handoffRows = await getRecentHandoffs({ pool: dbPool }, {
+        journeyId,
+        limit: 3,
+        excludeTaskId: state.task?.id || null,
+      });
+      handoffText = formatHandoffsForPrompt(handoffRows);
+    }
+  } catch (err) {
+    console.warn(`[harness-initiative] fetchHandoffs failed (non-blocking): ${err.message}`);
+  }
+  const plannerPromptFinal = [prompt, runHistoryText, handoffText].filter(Boolean).join('');
 
   const acctOpts = { task: { ...state.task, task_type: 'harness_planner' }, env: {} };
   try {
