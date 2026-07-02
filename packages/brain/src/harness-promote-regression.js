@@ -109,4 +109,131 @@ export function mergeGoldenPaths(existing, fresh, taskPrefix) {
   return [...kept, ...fresh];
 }
 
-export default { parseBehaviorEntries, parseGoldenPathSteps, buildGoldenPathEntries, mergeGoldenPaths };
+/**
+ * promoteToRegression — PASS 后冻结登记主函数（best-effort，绝不 throw）。
+ *
+ * @param {{pool?: object, execFile?: Function, fsImpl?: object, now?: string}} deps
+ * @param {{task: object, sprintDir: string, subTasks: Array, worktreePath: string}} params
+ * @returns {Promise<{ok: boolean, dbWritten: boolean, yamlPrUrl?: string|null, skipped?: boolean, reason?: string}>}
+ */
+export async function promoteToRegression(deps = {}, params = {}) {
+  const dbPool = deps.pool || pool;
+  const execFile = deps.execFile || defaultExecFile;
+  const fsImpl = deps.fsImpl || fs;
+  const now = deps.now || new Date().toISOString();
+  const { task, sprintDir, subTasks, worktreePath } = params;
+
+  const taskId = task?.id;
+  if (!taskId || !sprintDir || !worktreePath) {
+    console.warn(`[promote-regression] skipped: 缺 taskId/sprintDir/worktreePath (task=${taskId} sprintDir=${sprintDir} wt=${worktreePath})`);
+    await _alert(`A3 冻结跳过：task=${taskId} 缺 sprintDir/worktreePath`);
+    return { ok: false, dbWritten: false, skipped: true, reason: 'missing_inputs' };
+  }
+
+  // ── 解析原料 ──
+  const readOrNull = (p) => { try { return fsImpl.readFileSync(p, 'utf8'); } catch { return null; } };
+  const prdText = readOrNull(path.join(worktreePath, sprintDir, 'sprint-prd.md'));
+  const dodText = readOrNull(path.join(worktreePath, sprintDir, 'contract-dod.md'));
+  const behaviors = parseBehaviorEntries(dodText || '');
+  let steps = parseGoldenPathSteps(prdText || '');
+  if (steps.length === 0 && behaviors.length > 0) {
+    // 降级：BEHAVIOR 条目序号当步骤（note=描述），不依赖 sprint-prd 解析
+    steps = behaviors.map((b, i) => ({ order_no: i + 1, note: b.desc }));
+  }
+  if (steps.length === 0 && behaviors.length === 0) {
+    console.warn(`[promote-regression] skipped: ${sprintDir} 无 Golden Path 也无 [BEHAVIOR] 可冻结`);
+    await _alert(`A3 冻结跳过：task=${taskId} 无可冻结内容（${sprintDir}）`);
+    return { ok: false, dbWritten: false, skipped: true, reason: 'nothing_to_freeze' };
+  }
+
+  // ── ① golden_path 表覆盖写（事务）──
+  let dbWritten = false;
+  try {
+    const client = await dbPool.connect();
+    try {
+      await client.query('BEGIN');
+      // feature_id 验证存在，失败留 NULL（schema ON DELETE SET NULL 语义一致）
+      let featureId = null;
+      const rawFeatureId = task?.payload?.feature_id;
+      if (rawFeatureId) {
+        try {
+          const fe = await client.query('SELECT id FROM journey_features WHERE id=$1', [rawFeatureId]);
+          featureId = fe.rows[0]?.id || null;
+        } catch { featureId = null; }
+      }
+      await client.query('DELETE FROM golden_path WHERE owner_task_id=$1', [taskId]);
+      for (const s of steps) {
+        await client.query(
+          'INSERT INTO golden_path (owner_task_id, order_no, feature_id, note) VALUES ($1,$2,$3,$4)',
+          [taskId, s.order_no, featureId, s.note],
+        );
+      }
+      await client.query('COMMIT');
+      dbWritten = true;
+    } catch (err) {
+      try { await client.query('ROLLBACK'); } catch { /* noop */ }
+      throw err;
+    } finally {
+      client.release();
+    }
+  } catch (err) {
+    console.error(`[promote-regression] golden_path DB 写失败 task=${taskId}: ${err.message}`);
+    await _alert(`A3 冻结 DB 写失败：task=${taskId} ${err.message}`);
+    return { ok: false, dbWritten: false, reason: 'db_write_failed' };
+  }
+
+  // ── ② commit 校验（防假卡）── behaviors 为空则没有 yaml 可冻，直接返回
+  if (behaviors.length === 0) {
+    console.warn(`[promote-regression] DB 已写但无 [BEHAVIOR] 命令，yaml 冻结跳过 task=${taskId}`);
+    return { ok: true, dbWritten, yamlPrUrl: null, reason: 'no_behavior_commands' };
+  }
+  try {
+    await execFile('git', ['ls-files', '--error-unmatch', path.join(sprintDir, 'contract-dod.md')], { cwd: worktreePath });
+  } catch {
+    console.error(`[promote-regression] contract-dod.md 未被 git 跟踪，拒绝冻结假卡 task=${taskId}`);
+    await _alert(`A3 冻结拒绝（假卡防护）：task=${taskId} contract-dod.md 未入库`);
+    return { ok: true, dbWritten, yamlPrUrl: null, reason: 'dod_not_committed' };
+  }
+
+  // ── ③ yaml 冻结 + 专属 auto-PR ──
+  try {
+    const contractPath = path.join(worktreePath, 'regression-contract.yaml');
+    const raw = readOrNull(contractPath) || 'version: "1.0.0"\ncore: []\ngolden_paths: []\n';
+    const doc = yaml.load(raw) || {};
+    const prUrl = (subTasks || []).map((t) => t?.pr_url).filter(Boolean)[0] || null;
+    const fresh = buildGoldenPathEntries({
+      taskId, journeyId: task?.payload?.journey_id, behaviors, prUrl, sprintDir, now,
+    });
+    const prefix = `GP-${String(taskId).slice(0, 8)}-`;
+    doc.golden_paths = mergeGoldenPaths(doc.golden_paths, fresh, prefix);
+    doc.updated = now.slice(0, 10);
+    fsImpl.writeFileSync(contractPath, CONTRACT_HEADER + yaml.dump(doc, { lineWidth: 200 }), 'utf8');
+
+    // 专属 auto-PR（reportNode 时 sub-task PR 已 merge，yaml 没有别的顺风车上 main）
+    const branch = `cp-${now.slice(5, 16).replace(/[-T:]/g, '')}-promote-regression-${String(taskId).slice(0, 8)}`;
+    const run = (args) => execFile('git', args, { cwd: worktreePath });
+    await run(['checkout', '-b', branch]);
+    await run(['add', 'regression-contract.yaml']);
+    await run(['commit', '-m', `feat(regression): freeze golden path GP-${String(taskId).slice(0, 8)} (A3 promotion)`]);
+    await run(['push', '-u', 'origin', branch]);
+    const pr = await execFile('gh', ['pr', 'create', '--fill', '--title', `feat(regression): A3 冻结 ${String(taskId).slice(0, 8)} 验收卡片`], { cwd: worktreePath });
+    const yamlPrUrl = String(pr.stdout || '').trim().split('\n').pop() || null;
+    try { await execFile('gh', ['pr', 'merge', '--auto', '--squash', yamlPrUrl], { cwd: worktreePath }); } catch { /* auto-merge best-effort */ }
+    console.log(`[promote-regression] 冻结完成 task=${taskId} → ${yamlPrUrl}`);
+    return { ok: true, dbWritten, yamlPrUrl };
+  } catch (err) {
+    console.error(`[promote-regression] yaml 冻结/auto-PR 失败（DB 已写）task=${taskId}: ${err.message}`);
+    await _alert(`A3 yaml 冻结失败（DB 已登记）：task=${taskId} ${err.message}`);
+    return { ok: true, dbWritten, yamlPrUrl: null, reason: 'yaml_freeze_failed' };
+  }
+}
+
+/** best-effort 飞书告警（缺 token/失败静默，与 reportNode non-fatal 风格一致） */
+async function _alert(text) {
+  try {
+    const { sendFeishu } = await import('./notifier.js');
+    await sendFeishu(`⚠️ [A3 promote-regression] ${text}`);
+  } catch { /* non-fatal */ }
+}
+
+export default { parseBehaviorEntries, parseGoldenPathSteps, buildGoldenPathEntries, mergeGoldenPaths, promoteToRegression };
