@@ -1,0 +1,146 @@
+/**
+ * harness-line-context.js — A-1 Context Manifest（诊断方案 A-1，2026-07-02）
+ *
+ * 把本 line 的 invariant 铁律 + 累积 FR（已验收行为）从"skill 里 curl 靠自觉"
+ * 升级为 graph 节点代码注入（技术保证），供 proposer/generator/evaluator 三角色使用：
+ *   - fetchLineContext：三源 invariant（step/journey_feature/area，按 decision id 去重）
+ *     + 累积 FR（journey 下 ability_status IN ('done','working') 的 golden_path，按 owner_task_id 分组）。
+ *     SQL 与 routes/abilities.js 对应端点同源（直接 pool 查询不走 HTTP）；
+ *     任何一路失败 → 该路空数组 + warn，绝不 throw（角色注入是增强不是门禁）。
+ *   - formatLineContextForPrompt：行格式与 harness-planner v8.12.0 Step 0.4 逐字同构（E1 解析契约，不可变）。
+ * Spec: docs/superpowers/specs/2026-07-02-a1-context-manifest-design.md
+ */
+
+const MAX_INVARIANT_LEN = 200;   // 单条铁律文字截断
+const MAX_FR_LINE_LEN = 120;     // 累积 FR 单行截断
+const MAX_FR_ABILITIES = 20;     // 累积 FR 最多列 20 个 ability，超出加注
+const PROMPT_MAX_LEN = 4000;     // 总长兜底截断
+
+// E1 解析契约段头（与 spec 逐字一致，不可变）
+export const INVARIANT_SECTION_HEADER = '## Invariant 约束（铁律，本角色产出不得违反）';
+export const CUMULATIVE_FR_SECTION_HEADER = '## 累积 FR（本 line 已验收行为，不得回退/重复实现）';
+
+function clamp(s, max) {
+  const str = String(s ?? '');
+  return str.length > max ? `${str.slice(0, max)}…` : str;
+}
+
+/**
+ * 拉取本 line 上下文。三源 invariant + 累积 FR，全部 best-effort：
+ * 参数缺省跳过对应路；单路失败仅 warn 降级为空数组，绝不 throw。
+ * @returns {Promise<{ invariants: object[], cumulativeFR: object[] }>}
+ */
+export async function fetchLineContext({ pool }, { taskId = null, abilityId = null, journeyId = null } = {}) {
+  const safeQuery = async (label, sql, params) => {
+    try {
+      const { rows } = await pool.query(sql, params);
+      return rows;
+    } catch (err) {
+      console.warn(`[line-context] ${label} fetch failed (non-fatal): ${err.message}`);
+      return [];
+    }
+  };
+
+  // 1. step 级：同源 GET /tasks/:id/golden-path-decisions?category=invariant（routes/abilities.js:250）
+  const stepRows = taskId
+    ? await safeQuery('step invariants', `
+      SELECT d.*, gp.order_no
+      FROM decisions d
+      JOIN golden_path gp ON gp.id = d.target_id
+      WHERE d.target_type='golden_path' AND gp.owner_task_id=$1 AND d.category=$2
+      ORDER BY gp.order_no ASC, d.created_at DESC`, [taskId, 'invariant'])
+    : [];
+
+  // 2. journey_feature 级：同源 GET /invariants?target_type=journey_feature&target_id=（routes/abilities.js:325）
+  const featureRows = abilityId
+    ? await safeQuery('journey_feature invariants',
+      `SELECT * FROM decisions WHERE category='invariant' AND status='active' AND target_type=$1 AND target_id=$2 ORDER BY created_at DESC`,
+      ['journey_feature', abilityId])
+    : [];
+
+  // 3. area 级：同源 GET /invariants?level=area
+  const areaRows = await safeQuery('area invariants',
+    `SELECT * FROM decisions WHERE category='invariant' AND status='active' AND level=$1 ORDER BY created_at DESC`,
+    ['area']);
+
+  // 三源按 decision id 去重合并，附 source_level（step 最具体，优先保留）
+  const invariants = [];
+  const seen = new Set();
+  for (const [source_level, rows] of [['step', stepRows], ['journey_feature', featureRows], ['area', areaRows]]) {
+    for (const row of rows) {
+      if (seen.has(row.id)) continue;
+      seen.add(row.id);
+      invariants.push({ ...row, source_level });
+    }
+  }
+
+  // 累积 FR：同源 GET /journeys/:id/golden-paths（routes/abilities.js:277），
+  // 过滤 ability_status IN ('done','working')，按 owner_task_id 分组（ability:run=1:N）
+  let cumulativeFR = [];
+  if (journeyId) {
+    const frRows = await safeQuery('cumulative FR', `
+      SELECT jf.id AS ability_id, jf.name AS ability_name, jf.status AS ability_status,
+             gp.owner_task_id, gp.id, gp.order_no, gp.feature_id, gp.note
+      FROM golden_path gp
+      JOIN tasks t ON gp.owner_task_id = t.id
+      JOIN journey_features jf ON t.ability_id = jf.id
+      WHERE jf.journey_id = $1 AND jf.status IN ('done','working')
+      ORDER BY gp.owner_task_id, gp.order_no ASC`, [journeyId]);
+    const groups = new Map();
+    for (const r of frRows) {
+      if (!groups.has(r.owner_task_id)) {
+        groups.set(r.owner_task_id, {
+          ability_id: r.ability_id,
+          ability_name: r.ability_name,
+          ability_status: r.ability_status,
+          owner_task_id: r.owner_task_id,
+          steps: [],
+        });
+      }
+      groups.get(r.owner_task_id).steps.push({
+        id: r.id, order_no: r.order_no, feature_id: r.feature_id, note: r.note,
+      });
+    }
+    cumulativeFR = [...groups.values()];
+  }
+
+  return { invariants, cumulativeFR };
+}
+
+/** 标签：topic 里 `]` 后短语（如 `[Line04]不进群` → `不进群`）；无 `]` 用 topic 前 6 字。 */
+function invariantLabel(topic) {
+  const t = String(topic ?? '').trim();
+  const idx = t.lastIndexOf(']');
+  return idx >= 0 ? t.slice(idx + 1).trim() : t.slice(0, 6);
+}
+
+/**
+ * 压缩为 prompt 注入段。空段省略、双空返回 ''。
+ * Invariant 行格式 `- [标签] 铁律文字（来源: <层级>）` 与 planner Step 0.4 逐字同构（E1 契约，不可变）。
+ */
+export function formatLineContextForPrompt(ctx) {
+  const inv = Array.isArray(ctx?.invariants) ? ctx.invariants : [];
+  const fr = Array.isArray(ctx?.cumulativeFR) ? ctx.cumulativeFR : [];
+  const sections = [];
+
+  if (inv.length) {
+    const lines = inv.map((d) =>
+      `- [${invariantLabel(d.topic)}] ${clamp(d.decision, MAX_INVARIANT_LEN)}（来源: ${d.source_level}）`);
+    sections.push([INVARIANT_SECTION_HEADER, ...lines].join('\n'));
+  }
+
+  if (fr.length) {
+    const shown = fr.slice(0, MAX_FR_ABILITIES);
+    const lines = shown.map((a) => {
+      const steps = (a.steps || [])
+        .map((s) => `Step${s.order_no}${s.note ? ` ${s.note}` : ''}`)
+        .join(' → ');
+      return clamp(`- ${a.ability_name}: ${steps}`, MAX_FR_LINE_LEN);
+    });
+    if (fr.length > MAX_FR_ABILITIES) lines.push(`（另有 ${fr.length - MAX_FR_ABILITIES} 个 ability 略）`);
+    sections.push([CUMULATIVE_FR_SECTION_HEADER, ...lines].join('\n'));
+  }
+
+  if (!sections.length) return '';
+  return clamp(sections.join('\n\n'), PROMPT_MAX_LEN);
+}
