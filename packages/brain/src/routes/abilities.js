@@ -267,4 +267,78 @@ router.get('/tasks/:id/golden-path-decisions', async (req, res) => {
   }
 });
 
+// ---------- A1 P0 端点（harness 验证模型重构 HANDOFF 第 5 节）----------
+
+// GET /api/brain/journeys/:journey_id/golden-paths?status=done
+//   按 line 聚合已验收 ability 的 golden_path（累积 FR）。
+//   桥：golden_path.owner_task_id → tasks.ability_id → journey_features.journey_id。
+//   按 owner_task_id 分组（ability:run=1:N，按 ability 分组会让不同 task 的 order_no 交错）。
+//   无匹配返回空数组（200，不报错）。
+router.get('/journeys/:journey_id/golden-paths', async (req, res) => {
+  try {
+    const { status } = req.query;
+    if (status && !ABILITY_STATUS.includes(status))
+      return res.status(400).json({ error: `status must be one of: ${ABILITY_STATUS.join(',')}` });
+    const params = [req.params.journey_id];
+    let sql = `
+      SELECT jf.id AS ability_id, jf.name AS ability_name, jf.status AS ability_status,
+             gp.owner_task_id, gp.id, gp.order_no, gp.feature_id, gp.note
+      FROM golden_path gp
+      JOIN tasks t ON gp.owner_task_id = t.id
+      JOIN journey_features jf ON t.ability_id = jf.id
+      WHERE jf.journey_id = $1`;
+    if (status) { params.push(status); sql += ` AND jf.status = $${params.length}`; }
+    sql += ` ORDER BY gp.owner_task_id, gp.order_no ASC`;
+    let rows;
+    try {
+      ({ rows } = await pool.query(sql, params));
+    } catch (err) {
+      if (err.code === '22P02')
+        return res.status(400).json({ error: `invalid journey_id: ${req.params.journey_id}` });
+      throw err;
+    }
+    const groups = new Map();
+    for (const r of rows) {
+      if (!groups.has(r.owner_task_id)) {
+        groups.set(r.owner_task_id, {
+          ability_id: r.ability_id,
+          ability_name: r.ability_name,
+          ability_status: r.ability_status,
+          owner_task_id: r.owner_task_id,
+          steps: [],
+        });
+      }
+      groups.get(r.owner_task_id).steps.push({
+        id: r.id, order_no: r.order_no, feature_id: r.feature_id, note: r.note,
+      });
+    }
+    res.json([...groups.values()]);
+  } catch (err) {
+    console.error('[abilities] GET /journeys/:journey_id/golden-paths error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/brain/invariants?level=&target_type=&target_id=
+//   干净的 invariant 读取端点：读 decisions 表（非 decision_log 审计表）。
+//   替代坏的 GET /decisions?category=（status.js:270 读错表且忽略 category）。
+router.get('/invariants', async (req, res) => {
+  try {
+    const { level, target_type, target_id } = req.query;
+    if (level && !DECISION_LEVELS.includes(level))
+      return res.status(400).json({ error: `level must be one of: ${DECISION_LEVELS.join(',')}` });
+    const params = [];
+    let sql = `SELECT * FROM decisions WHERE category='invariant' AND status='active'`;
+    if (level)       { params.push(level);       sql += ` AND level=$${params.length}`; }
+    if (target_type) { params.push(target_type); sql += ` AND target_type=$${params.length}`; }
+    if (target_id)   { params.push(target_id);   sql += ` AND target_id=$${params.length}`; }
+    sql += ` ORDER BY created_at DESC`;
+    const { rows } = await pool.query(sql, params);
+    res.json(rows);
+  } catch (err) {
+    console.error('[abilities] GET /invariants error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 export default router;
