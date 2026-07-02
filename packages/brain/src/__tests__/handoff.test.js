@@ -93,7 +93,11 @@ describe('saveHandoff', () => {
   });
 
   it('镜像写失败 → 不抛错，dbWritten 仍 true，mirrorPath=null', async () => {
-    process.env.HANDOFF_DOCS_DIR = path.join(tmpDir, 'no-such', '\0bad');
+    // 注：不能用 '\0' 注入（process.env 赋值会在 \0 处截断，mkdirSync 反而成功）；
+    // 改用"父级是普通文件"让 mkdirSync 必抛 ENOTDIR。
+    const blocker = path.join(tmpDir, 'blocker');
+    fs.writeFileSync(blocker, '');
+    process.env.HANDOFF_DOCS_DIR = path.join(blocker, 'sub');
     const pool = { query: vi.fn(async () => ({ rowCount: 1 })) };
     const r = await saveHandoff({ pool }, buildHandoff({ task_id: TASK_ID }));
     expect(r.dbWritten).toBe(true);
