@@ -1,0 +1,40 @@
+{
+  "skill_name": "harness-planner",
+  "evals": [
+    {
+      "id": 0,
+      "eval_name": "nfr-injection",
+      "prompt": "你是 harness-planner。现有一个 sprint 任务：\n\n**任务标题**：抖音定时发布 — thin 骨架\n**PrepPRD 摘要**：用户在 Dashboard 设置发布时间，系统在指定时间自动发布视频到抖音，并将帖子链接写回 Brain DB。\n\n请生成 sprint-prd.md 内容（不需要真实写文件，只在输出里展示内容）。规则：必须包含 `## NFR 约束` 章节，内容从两个来源合并：1) Brain decisions 表沉淀的活跃 NFR 决策；2) PrepPRD 里用户提到的延迟/规模/频控需求。\n\n**Brain API mock 数据**（本次不真实调用 API，假设 NFR 决策端点返回以下内容）：\n```json\n[\n  {\"id\": \"nfr-001\", \"topic\": \"抖音 API 频控\", \"decision\": \"每60秒最多调用3次\", \"category\": \"nfr\"},\n  {\"id\": \"nfr-002\", \"topic\": \"发布延迟容忍\", \"decision\": \"允许最多5秒延迟\", \"category\": \"nfr\"}\n]\n```\n\n请展示完整的 sprint-prd.md 内容，重点展示 NFR 约束章节如何合并两个来源。",
+      "expected_output": "sprint-prd.md 输出包含 `## NFR 约束` 章节，该章节同时包含：(1) 来自 decisions 的频控决策（每60秒3次）和延迟决策（5秒），并注明来源 decision ID；(2) PrepPRD 中的用户需求（如有）。不能只有一个来源。",
+      "assertions": [
+        { "id": "p0", "name": "NFR章节存在", "description": "输出中包含 `## NFR 约束` 或 `## NFR` 章节标题" },
+        { "id": "p1", "name": "NFR-来源1-decisions", "description": "NFR 章节包含来自 decisions 的内容（如频控 nfr-001、延迟 nfr-002，或提及 decision ID）" },
+        { "id": "p2", "name": "NFR-双源合并", "description": "NFR 章节说明了两个来源（decisions + PrepPRD），而不只引用一个来源" }
+      ]
+    },
+    {
+      "id": 1,
+      "eval_name": "line04-invariant-injection",
+      "prompt": "模拟 Brain harness_initiative 的 planner 容器调用（真实 curl localhost:5221）。\n\n你是 harness-planner agent。按 SKILL 指令工作。\n\n## 本次任务参数\n**task_id**: 154159b8-ae7f-4b73-81a9-d2dc16084d01\n**initiative_id**: 154159b8-ae7f-4b73-81a9-d2dc16084d01\n**sprint_dir**: <输出目录>\n\n## 任务描述\nLine04 微信客服：高峰期排队安抚\n\n## PrepPRD（产品语言，用户确认过的需求文档）\n（未提供，Planner 从任务 payload 的 thin_prd 推断）\n\n注意：$TASK_PAYLOAD 环境变量不存在，按 SKILL 里的 curl 方式从 Brain API 取数据；跳过一切 git push/commit；只把 sprint-prd.md 写到输出目录。",
+      "expected_output": "sprint-prd.md 含 `## Invariant 约束` 段且至少命中一条 Line04 铁律关键词（不进群/不回自己/防假成功/后台静默/租户隔离）；含 `## 累积 FR` 段（golden_path 为空 → 占位「本 line 暂无历史」）；含 `## NFR 约束` 段。",
+      "assertions": [
+        { "id": "a1", "name": "产出sprint-prd.md", "description": "输出目录存在 sprint-prd.md 文件" },
+        { "id": "a2", "name": "Invariant段存在", "description": "sprint-prd.md 包含 `## Invariant 约束` 章节标题" },
+        { "id": "a3", "name": "Line04铁律真实注入", "description": "Invariant 段至少包含一条 Line04 铁律关键词：不进群 / 不回自己 / 防假成功 / 后台静默 / 租户（证明 invariant 从 DB 走到了合同，而非只有模板文字）" },
+        { "id": "a4", "name": "累积FR段占位", "description": "sprint-prd.md 包含 `## 累积 FR` 章节，且因 golden_path 为空写有占位文字（本 line 暂无历史），非空段" },
+        { "id": "a5", "name": "未用坏端点", "description": "执行过程未调用 GET /api/brain/decisions?category=（读错 decision_log 表的坏门）" }
+      ]
+    },
+    {
+      "id": 2,
+      "eval_name": "no-history-graceful",
+      "prompt": "模拟 Brain harness_initiative 的 planner 容器调用（真实 curl localhost:5221）。\n\n你是 harness-planner agent。按 SKILL 指令工作。\n\n## 本次任务参数\n**task_id**: 49ec2792-7d81-4690-bbbd-42c534e1fb1c\n**initiative_id**: 49ec2792-7d81-4690-bbbd-42c534e1fb1c\n**sprint_dir**: <输出目录>\n\n## 任务描述\n给 Brain /api/brain/status 端点新增 uptime_seconds 字段（进程启动至今秒数）\n\n## PrepPRD（产品语言，用户确认过的需求文档）\n用户在 status 接口能看到 Brain 已运行多久（秒），字段名 uptime_seconds。\n\n注意：该任务无 ability_id、payload 无 journey_id（非路径 C 点火）。$TASK_PAYLOAD 环境变量不存在，按 SKILL 里的 curl 方式取数据；跳过一切 git push/commit；只把 sprint-prd.md 写到输出目录。",
+      "expected_output": "无 line 历史时优雅降级：sprint-prd.md 仍产出，`## Invariant 约束` 与 `## 累积 FR` 两段存在但写占位「本 line 暂无历史」（area 级 invariant 若读到也可注入），流程不报错中断。",
+      "assertions": [
+        { "id": "b1", "name": "产出sprint-prd.md", "description": "输出目录存在 sprint-prd.md 文件，流程未因缺 journey_id/ability_id 中断" },
+        { "id": "b2", "name": "两段存在且非空段", "description": "sprint-prd.md 同时包含 `## Invariant 约束` 与 `## 累积 FR` 章节；无数据的段写占位文字（本 line 暂无历史），不是空段也不是缺失" },
+        { "id": "b3", "name": "PRD正文正常", "description": "sprint-prd.md 包含 Golden Path 与 E2E 验收等常规段，主题围绕 uptime_seconds（未被历史约束逻辑带偏）" }
+      ]
+    }
+  ]
+}
