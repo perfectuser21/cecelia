@@ -59,7 +59,7 @@ vi.mock('@langchain/langgraph', () => {
   };
 });
 
-import { reportNode } from '../workflows/harness-initiative.graph.js';
+import { reportNode, runPlannerNode } from '../workflows/harness-initiative.graph.js';
 
 function makePool() {
   return {
@@ -108,5 +108,35 @@ describe('reportNode handoff 接线', () => {
     saveMock.mockRejectedValueOnce(new Error('boom'));
     const r = await reportNode(makeState('merged'), { pool: makePool(), _checkPrMerged: async () => true });
     expect(r.report_path).toBeTruthy();
+  });
+});
+
+describe('runPlannerNode handoff 注入', () => {
+  beforeEach(() => { vi.clearAllMocks(); });
+
+  function plannerState() {
+    return {
+      initiativeId: INIT_ID,
+      task: { id: INIT_ID, title: 't', payload: { journey_id: 'j1', sprint_dir: 'sprints/x' } },
+      worktreePath: '/tmp/wt',
+    };
+  }
+
+  it('有 handoff 时 prompt 含注入段', async () => {
+    getRecentMock.mockResolvedValueOnce([{ id: 'prev', title: 'p', handoff: { verdict: 'PASS' } }]);
+    formatMock.mockReturnValueOnce('\n\n## 最近 Handoff（本 line 交接）\n### Handoff 1: p（verdict=PASS）');
+    const spawnDetached = vi.fn(async () => ({}));
+    await runPlannerNode(plannerState(), { spawnDetached, pool: makePool() }).catch(() => {});
+    expect(getRecentMock).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ journeyId: 'j1', excludeTaskId: INIT_ID }));
+    expect(spawnDetached).toHaveBeenCalled();
+    expect(spawnDetached.mock.calls[0][0].prompt).toContain('## 最近 Handoff');
+  });
+
+  it('getRecentHandoffs 抛错 → spawn 照常，prompt 无注入段', async () => {
+    getRecentMock.mockRejectedValueOnce(new Error('db down'));
+    const spawnDetached = vi.fn(async () => ({}));
+    await runPlannerNode(plannerState(), { spawnDetached, pool: makePool() }).catch(() => {});
+    expect(spawnDetached).toHaveBeenCalled();
+    expect(spawnDetached.mock.calls[0][0].prompt).not.toContain('## 最近 Handoff');
   });
 });
