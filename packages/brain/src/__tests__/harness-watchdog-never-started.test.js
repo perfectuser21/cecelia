@@ -41,7 +41,10 @@ describe('resumeStalledHarnessDrivers — never-started branch (fabf6bd6)', () =
     let updateSql = '';
     let updateParams = [];
     mockPoolQuery.mockImplementation(async (sql, params) => {
-      if (/SELECT/i.test(sql) && /NOT\s+EXISTS/i.test(sql) && /initiative_runs/.test(sql)) {
+      // scope tightly to the 区段 C "never started" SELECT — section A also has
+      // NOT EXISTS + initiative_runs in its subquery, but only 区段 C also filters
+      // on t.claimed_at, so require that too to avoid cross-matching section A.
+      if (/SELECT/i.test(sql) && /NOT\s+EXISTS/i.test(sql) && /initiative_runs/.test(sql) && /claimed_at/i.test(sql)) {
         return { rows: [{ id: TASK_ID }] };
       }
       if (/SELECT/i.test(sql)) return { rows: [] };
