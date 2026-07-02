@@ -194,10 +194,13 @@ describe('promoteToRegression', () => {
     expect(sqls.some((s) => /DELETE FROM golden_path WHERE owner_task_id/i.test(s))).toBe(true);
     expect(sqls.some((s) => /INSERT INTO golden_path/i.test(s))).toBe(true);
     expect(sqls.some((s) => /COMMIT/i.test(s))).toBe(true);
-    // yaml 写入 + git 流程被调用（checkout -b / commit / push / gh pr create）
+    // yaml 写入 + git 流程被调用（fetch origin main / checkout -b <branch> origin/main / commit pathspec / push / gh pr create）
     expect(d.fsMock.writeFileSync).toHaveBeenCalled();
     const gitArgs = d.execFileCalls.map((c) => `${c.cmd} ${c.args.join(' ')}`);
-    expect(gitArgs.some((s) => s.includes('checkout -b'))).toBe(true);
+    expect(gitArgs.some((s) => s === 'git fetch origin main')).toBe(true);
+    expect(gitArgs.some((s) => s.includes('checkout -b') && s.endsWith('origin/main'))).toBe(true);
+    const commitCall = d.execFileCalls.find((c) => c.cmd === 'git' && c.args[0] === 'commit');
+    expect(commitCall.args.slice(-2)).toEqual(['--', 'regression-contract.yaml']);
     expect(gitArgs.some((s) => s.startsWith('gh pr create'))).toBe(true);
   });
 

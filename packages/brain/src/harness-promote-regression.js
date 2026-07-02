@@ -188,6 +188,8 @@ export async function promoteToRegression(deps = {}, params = {}) {
     return { ok: true, dbWritten, yamlPrUrl: null, reason: 'no_behavior_commands' };
   }
   try {
+    // 注意：此检查必须在切分支之前跑（当前还在 contract 分支上）——
+    // contract-dod.md 存在于 contract 分支，不一定在 main 上。
     await execFile('git', ['ls-files', '--error-unmatch', path.join(sprintDir, 'contract-dod.md')], { cwd: worktreePath });
   } catch {
     console.error(`[promote-regression] contract-dod.md 未被 git 跟踪，拒绝冻结假卡 task=${taskId}`);
@@ -197,6 +199,15 @@ export async function promoteToRegression(deps = {}, params = {}) {
 
   // ── ③ yaml 冻结 + 专属 auto-PR ──
   try {
+    // 专属 auto-PR（reportNode 时 sub-task PR 已 merge，yaml 没有别的顺风车上 main）。
+    // 分支必须基于 origin/main 而非当前 contract 分支——否则 PR 会把 contract 分支上
+    // 尚未进 main 的差异悄悄带上 main；先切分支再读 yaml，保证读到的是 main 最新版本
+    // （并发 promotion 不会互相覆盖）。
+    const branch = `cp-${now.slice(5, 16).replace(/[-T:]/g, '')}-promote-regression-${String(taskId).slice(0, 8)}`;
+    const run = (args) => execFile('git', args, { cwd: worktreePath });
+    await run(['fetch', 'origin', 'main']);
+    await run(['checkout', '-b', branch, 'origin/main']);
+
     const contractPath = path.join(worktreePath, 'regression-contract.yaml');
     const raw = readOrNull(contractPath) || 'version: "1.0.0"\ncore: []\ngolden_paths: []\n';
     const doc = yaml.load(raw) || {};
@@ -209,16 +220,17 @@ export async function promoteToRegression(deps = {}, params = {}) {
     doc.updated = now.slice(0, 10);
     fsImpl.writeFileSync(contractPath, CONTRACT_HEADER + yaml.dump(doc, { lineWidth: 200 }), 'utf8');
 
-    // 专属 auto-PR（reportNode 时 sub-task PR 已 merge，yaml 没有别的顺风车上 main）
-    const branch = `cp-${now.slice(5, 16).replace(/[-T:]/g, '')}-promote-regression-${String(taskId).slice(0, 8)}`;
-    const run = (args) => execFile('git', args, { cwd: worktreePath });
-    await run(['checkout', '-b', branch]);
     await run(['add', 'regression-contract.yaml']);
-    await run(['commit', '-m', `feat(regression): freeze golden path GP-${String(taskId).slice(0, 8)} (A3 promotion)`]);
+    // pathspec 限定提交范围，防止 worktree index 里残留的其他暂存文件搭车
+    await run(['commit', '-m', `feat(regression): freeze golden path GP-${String(taskId).slice(0, 8)} (A3 promotion)`, '--', 'regression-contract.yaml']);
     await run(['push', '-u', 'origin', branch]);
     const pr = await execFile('gh', ['pr', 'create', '--fill', '--title', `feat(regression): A3 冻结 ${String(taskId).slice(0, 8)} 验收卡片`], { cwd: worktreePath });
     const yamlPrUrl = String(pr.stdout || '').trim().split('\n').pop() || null;
-    try { await execFile('gh', ['pr', 'merge', '--auto', '--squash', yamlPrUrl], { cwd: worktreePath }); } catch { /* auto-merge best-effort */ }
+    try {
+      await execFile('gh', ['pr', 'merge', '--auto', '--squash', yamlPrUrl], { cwd: worktreePath });
+    } catch (mergeErr) {
+      console.warn(`[promote-regression] auto-merge 设置失败（PR 已开，需人工 merge）${yamlPrUrl}: ${mergeErr.message}`);
+    }
     console.log(`[promote-regression] 冻结完成 task=${taskId} → ${yamlPrUrl}`);
     return { ok: true, dbWritten, yamlPrUrl };
   } catch (err) {
