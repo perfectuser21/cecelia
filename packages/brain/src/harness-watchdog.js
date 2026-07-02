@@ -257,6 +257,52 @@ export async function resumeStalledHarnessDrivers({
     }
   }
 
+  // ── 区段 C：从未真正开始（fabf6bd6）——claim 成功、status=in_progress，但连
+  // initiative_runs 行都没有，说明 graph 从未被 invoke（dispatcher 侧异常吞掉了）。
+  // 区段 A/B 都靠 JOIN/EXISTS initiative_runs 判活，这类任务对它们完全不可见。
+  // 没有 checkpoint 可续 → 不是 resume，直接标 failed 释放 claim，让上游/用户重新点火。
+  const neverStartedThresholdMin = staleMinutesA; // 复用 A 阶段阈值，不新增参数
+  const neverStarted = await dbPool.query(
+    `SELECT t.id
+       FROM tasks t
+      WHERE t.task_type = 'harness_initiative'
+        AND t.status = 'in_progress'
+        AND NOT EXISTS (SELECT 1 FROM initiative_runs ir WHERE ir.initiative_id = t.id)
+        AND t.claimed_at IS NOT NULL
+        AND t.claimed_at < NOW() - ($1 || ' minutes')::interval
+      ORDER BY t.claimed_at ASC
+      LIMIT 20`,
+    [String(neverStartedThresholdMin)]
+  );
+  scanned += neverStarted.rows.length;
+
+  for (const row of neverStarted.rows) {
+    try {
+      const upd = await dbPool.query(
+        `UPDATE tasks SET
+           status = 'failed',
+           claimed_by = NULL,
+           claimed_at = NULL,
+           error_message = 'harness_initiative never started graph (no initiative_runs row, claimed_at stale)',
+           updated_at = NOW()
+         WHERE id = $1 AND status = 'in_progress'
+         RETURNING id`,
+        [row.id]
+      );
+      if (upd.rows.length > 0) {
+        resumed.push(row.id);
+        console.warn(
+          `[harness-watchdog] marked never-started harness task failed: task=${row.id} ` +
+          `(no initiative_runs row, claimed_at stale >${neverStartedThresholdMin}min)`
+        );
+      }
+    } catch (err) {
+      console.error(
+        `[harness-watchdog] mark never-started failed (task=${row.id}) (non-fatal): ${err.message}`
+      );
+    }
+  }
+
   return { resumed, scanned };
 }
 
