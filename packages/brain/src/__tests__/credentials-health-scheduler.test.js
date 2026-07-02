@@ -30,12 +30,17 @@ vi.mock('../actions.js', () => ({
   createTask: vi.fn().mockResolvedValue({ id: 'mock-task-id' }),
 }));
 
+vi.mock('../notifier.js', () => ({
+  sendBark: vi.fn().mockResolvedValue(true),
+}));
+
 // fetch mock（全局）
 global.fetch = vi.fn();
 
 import { readFileSync, existsSync } from 'fs';
 import { raise } from '../alerting.js';
 import { createTask } from '../actions.js';
+import { sendBark } from '../notifier.js';
 import {
   isInCredentialsHealthWindow,
   checkClaudeCredentials,
@@ -174,6 +179,15 @@ describe('checkClaudeCredentials', () => {
     for (const r of results) {
       expect(r.status).toBe('error');
     }
+  });
+
+  it('监控账号包含 account1（回归：曾被漏排除导致故障永远无告警，决策 7702b938）', () => {
+    existsSync.mockReturnValue(true);
+    readFileSync.mockReturnValue(makeCredJson(Date.now() + 60 * DAY_MS));
+
+    const results = checkClaudeCredentials();
+    const names = results.map(r => r.account);
+    expect(names).toContain('account1');
   });
 });
 
@@ -337,7 +351,9 @@ describe('runCredentialsHealthCheck', () => {
 
     await runCredentialsHealthCheck(pool, now);
 
-    expect(raise).toHaveBeenCalledWith('P0', expect.stringContaining('claude_'), expect.stringContaining('过期'));
+    // Claude 账号告警走 Bark（手机推送），不走飞书/raise（回归：决策 7702b938）
+    expect(sendBark).toHaveBeenCalledWith(expect.any(String), expect.stringContaining('过期'));
+    expect(raise.mock.calls.some(c => c[1]?.startsWith('cred_health_claude_'))).toBe(false);
     expect(createTask).toHaveBeenCalledWith(expect.objectContaining({ priority: 'P0' }));
   });
 
@@ -355,9 +371,10 @@ describe('runCredentialsHealthCheck', () => {
 
     await runCredentialsHealthCheck(pool, now);
 
-    const p0Call = raise.mock.calls.find(c => c[0] === 'P0' && c[1].startsWith('cred_health_claude_'));
-    expect(p0Call).toBeTruthy();
-    expect(p0Call[2]).toMatch(/[23] 天/);
+    // Claude 账号告警走 Bark，不走飞书/raise（回归：决策 7702b938）
+    const barkCall = sendBark.mock.calls.find(c => /[23] 天/.test(c[1]));
+    expect(barkCall).toBeTruthy();
+    expect(raise.mock.calls.some(c => c[1]?.startsWith('cred_health_claude_'))).toBe(false);
 
     const taskCall = createTask.mock.calls.find(c => c[0].priority === 'P1');
     expect(taskCall).toBeTruthy();
@@ -377,8 +394,9 @@ describe('runCredentialsHealthCheck', () => {
 
     await runCredentialsHealthCheck(pool, now);
 
-    const p1Call = raise.mock.calls.find(c => c[0] === 'P1' && c[1].startsWith('cred_health_claude_'));
-    expect(p1Call).toBeTruthy();
+    // Claude 账号告警走 Bark，不走飞书/raise（回归：决策 7702b938）
+    expect(sendBark).toHaveBeenCalled();
+    expect(raise.mock.calls.some(c => c[1]?.startsWith('cred_health_claude_'))).toBe(false);
 
     const p2Task = createTask.mock.calls.find(c => c[0].priority === 'P2');
     expect(p2Task).toBeTruthy();
