@@ -1598,6 +1598,7 @@ export async function reportNode(state, opts = {}) {
   }
   // A3 Promotion（harness 验证模型重构）：PASS → 冻结登记（golden_path 表 + regression-contract.yaml）。
   // best-effort：冻结失败绝不阻断生命周期闭合（内部已告警）；只 PASS 触发，FAIL/SKIP 不冻结。
+  let a3Promoted = false;
   if (computedVerdict === 'PASS') {
     try {
       const { promoteToRegression } = await import('../harness-promote-regression.js');
@@ -1610,6 +1611,7 @@ export async function reportNode(state, opts = {}) {
           worktreePath: state.worktreePath,
         },
       );
+      a3Promoted = true;
     } catch (err) {
       console.warn(`[reportNode] promoteToRegression failed (non-fatal): ${err.message}`);
     }
@@ -1635,7 +1637,9 @@ export async function reportNode(state, opts = {}) {
         .filter((s) => s.status !== 'merged')
         .map((s) => `${s.id}(status=${s.status || 'unknown'}${s.ci_fail_type ? `,ci=${s.ci_fail_type}` : ''})`),
       next_steps: computedVerdict === 'PASS'
-        ? ['本 ability 已验收，golden_path 已冻结（A3）；下一 sprint 可加厚本 ability 或推进本 line 下一个 ability']
+        ? [a3Promoted
+          ? '本 ability 已验收，golden_path 已冻结（A3）；下一 sprint 可加厚本 ability 或推进本 line 下一个 ability'
+          : '本 ability 已验收；A3 冻结未确认（见 warn 日志），下一 sprint 前先核对 golden_path']
         : [`修复后重试${failDetail ? `。失败摘要：${failDetail.slice(0, 180)}` : ''}`],
       artifacts: {
         pr_urls: reconciledSubTasks.map((s) => s.pr_url).filter(Boolean),

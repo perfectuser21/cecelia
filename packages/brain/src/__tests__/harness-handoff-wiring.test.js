@@ -112,7 +112,11 @@ describe('reportNode handoff 接线', () => {
 });
 
 describe('runPlannerNode handoff 注入', () => {
-  beforeEach(() => { vi.clearAllMocks(); });
+  beforeEach(() => {
+    vi.clearAllMocks();
+    // stub fetch：runHistoryText 块会 fetch localhost:5221，stub 掉消除对本机 brain 的隐性网络依赖
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: false })));
+  });
 
   function plannerState() {
     return {
@@ -126,6 +130,7 @@ describe('runPlannerNode handoff 注入', () => {
     getRecentMock.mockResolvedValueOnce([{ id: 'prev', title: 'p', handoff: { verdict: 'PASS' } }]);
     formatMock.mockReturnValueOnce('\n\n## 最近 Handoff（本 line 交接）\n### Handoff 1: p（verdict=PASS）');
     const spawnDetached = vi.fn(async () => ({}));
+    // mock 的 interrupt() 返回 undefined → runPlannerNode 在 spawn 后抛错/返回 error，此处只断言 spawn 收到的 prompt
     await runPlannerNode(plannerState(), { spawnDetached, pool: makePool() }).catch(() => {});
     expect(getRecentMock).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ journeyId: 'j1', excludeTaskId: INIT_ID }));
     expect(spawnDetached).toHaveBeenCalled();
@@ -135,6 +140,7 @@ describe('runPlannerNode handoff 注入', () => {
   it('getRecentHandoffs 抛错 → spawn 照常，prompt 无注入段', async () => {
     getRecentMock.mockRejectedValueOnce(new Error('db down'));
     const spawnDetached = vi.fn(async () => ({}));
+    // mock 的 interrupt() 返回 undefined → runPlannerNode 在 spawn 后抛错/返回 error，此处只断言 spawn 收到的 prompt
     await runPlannerNode(plannerState(), { spawnDetached, pool: makePool() }).catch(() => {});
     expect(spawnDetached).toHaveBeenCalled();
     expect(spawnDetached.mock.calls[0][0].prompt).not.toContain('## 最近 Handoff');
