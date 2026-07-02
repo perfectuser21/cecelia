@@ -282,6 +282,7 @@ export async function dispatchNextTask(goalIds) {
       if (!xianBypass) {
         const slotReason = slotBudget.user.mode === 'team' ? 'user_team_mode' :
                            slotBudget.taskPool.budget === 0 ? 'pool_exhausted' : 'pool_c_full';
+        tickLog(`[tick] dispatch 停止: ${slotReason}（slot budget 不足，本 tick 不派发）`);
         await recordDispatchResult(pool, false, slotReason);
         return {
           dispatched: false,
@@ -324,20 +325,56 @@ export async function dispatchNextTask(goalIds) {
   // 3. Select next task (with dependency check + pre-flight validation)
   //    If pre-flight fails, skip that task and try the next candidate (max 5 retries).
   //    HOL fix: non-P0 codex tasks blocked by full pool → release claim, skip, try next.
+  //    HOL fix (issue 0014cd42): no_executor（bridge 不可用）也跳过该候选试下一个，
+  //    防止队头一个需要 bridge 的任务把不需要 bridge 的 harness_initiative 堵死。
   //    Max MAX_SKIP_HEAD_FOR_BLOCKED HOL skips before giving up.
   const MAX_PRE_FLIGHT_RETRIES = 5;
   const MAX_SKIP_HEAD_FOR_BLOCKED = 10;
   const preFlightFailedIds = [];
-  const holSkipIds = [];       // IDs skipped due to HOL blocking (codex pool full, non-P0)
+  const holSkipIds = [];        // IDs skipped due to HOL blocking (codex pool full, non-P0)
+  const noExecutorSkipIds = []; // IDs skipped due to executor/bridge unavailable (0014cd42)
   let nextTask = null;
 
   const { preFlightCheck, alertOnPreFlightFail } = await import('./pre-flight-check.js');
   const claimerId = process.env.BRAIN_RUNNER_ID || `brain-tick-${process.pid}`;
 
+  // C1 fix (fabf6bd6): claim 成功后到 triggerCeceliaRun 判定之间任何未预期异常都会让 task 永久卡在
+  // claimed_by 已设 + status=in_progress（graph 从未真正 invoke）。统一兜底释放 claim + 标 failed，
+  // 绝不 rethrow — dispatcher 调用方（tick-runner.js）没有包 try/catch。
+  const postClaimException = async (err) => {
+    console.error(`[dispatch] unexpected exception after claim, task=${nextTask?.id}: ${err.message}`);
+    if (nextTask?.id) {
+      try {
+        await pool.query(
+          `UPDATE tasks SET claimed_by = NULL, claimed_at = NULL WHERE id = $1`,
+          [nextTask.id]
+        );
+        await pool.query(
+          `UPDATE tasks SET status = 'failed', error_message = $2 WHERE id = $1`,
+          [nextTask.id, String(err.message || 'dispatch_exception').slice(0, 500)]
+        );
+      } catch (cleanupErr) {
+        console.error(`[dispatch] claim-leak cleanup failed (task=${nextTask.id}): ${cleanupErr.message}`);
+      }
+    }
+    await recordDispatchResult(pool, false, 'dispatch_exception');
+    return { dispatched: false, reason: 'dispatch_exception', task_id: nextTask?.id, error: err.message, actions };
+  };
+
+  // HOL fix (0014cd42)：外层循环把「claim 之后的 executor 可用性检查」纳入候选重选——
+  // no_executor 时 revert + 记入 noExecutorSkipIds，回来选下一个候选，而不是整个 tick 直接放弃。
+  // circuit_breaker / cortex / retired / harness 并发上限等分支保持原「直接 return 让位」语义不变。
+  dispatchLoop: for (;;) {
+  nextTask = null;
   for (let attempt = 0; attempt <= MAX_PRE_FLIGHT_RETRIES; attempt++) {
-    const skipIds = [...preFlightFailedIds, ...holSkipIds];
+    const skipIds = [...preFlightFailedIds, ...holSkipIds, ...noExecutorSkipIds];
     const candidate = await selectNextDispatchableTask(goalIds, skipIds, { priorityFilter: _quotaPriorityFilter });
     if (!candidate) {
+      if (noExecutorSkipIds.length > 0) {
+        // 全部剩余候选都因 executor 不可用被跳过 → 最终结论仍是 no_executor（与修复前一致）
+        tickLog(`[tick] no_executor: 已跳过 ${noExecutorSkipIds.length} 个候选后队列耗尽，本 tick 放弃派发`);
+        return { dispatched: false, reason: 'no_executor', no_executor_skipped: noExecutorSkipIds.length, actions };
+      }
       return { dispatched: false, reason: 'no_dispatchable_task', actions };
     }
 
@@ -502,8 +539,8 @@ export async function dispatchNextTask(goalIds) {
     return { dispatched: false, reason: 'all_candidates_failed_pre_flight', skipped: preFlightFailedIds.length, actions };
   }
 
-  // 4. Update task status to in_progress
-  let execResult;
+  // 4. Update task status to in_progress + 5. executor 可用性检查
+  //    （claim 已持有，任何未预期异常走 postClaimException 兜底）
   try {
   const updateResult = await updateTask({
     task_id: nextTask.id,
@@ -559,9 +596,28 @@ export async function dispatchNextTask(goalIds) {
       { success: false, warning: 'cecelia-run not available, task reverted to queued' }
     );
     await recordDispatchResult(pool, false, 'no_executor');
-    return { dispatched: false, reason: 'no_executor', task_id: nextTask.id, actions };
+
+    // HOL fix (0014cd42)：不再整个 tick 直接 return 放弃——把该候选记入跳过列表，
+    // 回到候选选择循环选下一个（如豁免 bridge 的 harness_initiative）。
+    noExecutorSkipIds.push(nextTask.id);
+    if (noExecutorSkipIds.length >= MAX_SKIP_HEAD_FOR_BLOCKED) {
+      tickLog(`[tick] no_executor: 跳过数达上限 (${MAX_SKIP_HEAD_FOR_BLOCKED})，本 tick 放弃派发`);
+      return { dispatched: false, reason: 'no_executor', task_id: nextTask.id, no_executor_skipped: noExecutorSkipIds.length, actions };
+    }
+    tickLog(`[tick] no_executor: task=${String(nextTask.id).slice(0, 8)} (${ceceliaAvailable.error || 'executor unavailable'}) 跳过，试下一候选`);
+    continue dispatchLoop;
+  }
+  } catch (err) {
+    return await postClaimException(err);
   }
 
+  // 通过全部 executor 检查 → 跳出外层循环，派发 nextTask
+  break;
+  } // dispatchLoop
+
+  // 6. 真正派发（claim 已持有；任何未预期异常仍走 postClaimException 兜底）
+  let execResult;
+  try {
   const fullTaskResult = await pool.query('SELECT * FROM tasks WHERE id = $1', [nextTask.id]);
   if (fullTaskResult.rows.length === 0) {
     await recordDispatchResult(pool, false, 'task_not_found');
@@ -628,26 +684,7 @@ export async function dispatchNextTask(goalIds) {
     return { dispatched: false, reason: execResult.configError ? 'config_error' : 'executor_failed', task_id: nextTask.id, error: execResult.error || execResult.reason, configError: !!execResult.configError, actions };
   }
   } catch (err) {
-    // C1 fix (fabf6bd6): claim 成功后到 triggerCeceliaRun 判定之间任何未预期异常都会让 task 永久卡在
-    // claimed_by 已设 + status=in_progress（graph 从未真正 invoke）。兜底释放 claim + 标 failed，
-    // 绝不 rethrow — dispatcher 调用方（tick-runner.js）没有包 try/catch。
-    console.error(`[dispatch] unexpected exception after claim, task=${nextTask?.id}: ${err.message}`);
-    if (nextTask?.id) {
-      try {
-        await pool.query(
-          `UPDATE tasks SET claimed_by = NULL, claimed_at = NULL WHERE id = $1`,
-          [nextTask.id]
-        );
-        await pool.query(
-          `UPDATE tasks SET status = 'failed', error_message = $2 WHERE id = $1`,
-          [nextTask.id, String(err.message || 'dispatch_exception').slice(0, 500)]
-        );
-      } catch (cleanupErr) {
-        console.error(`[dispatch] claim-leak cleanup failed (task=${nextTask.id}): ${cleanupErr.message}`);
-      }
-    }
-    await recordDispatchResult(pool, false, 'dispatch_exception');
-    return { dispatched: false, reason: 'dispatch_exception', task_id: nextTask?.id, error: err.message, actions };
+    return await postClaimException(err);
   }
 
   // ─────────────────────────────────────────────────────────────────────────
