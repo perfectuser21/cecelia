@@ -5,16 +5,26 @@
  * Spec: docs/superpowers/specs/2026-07-02-a1-context-manifest-design.md
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { fetchLineContext, formatLineContextForPrompt } from '../harness-line-context.js';
+import {
+  fetchLineContext,
+  formatLineContextForPrompt,
+  fetchAndFormatLineContext,
+  INVARIANT_SECTION_HEADER,
+} from '../harness-line-context.js';
 
 const TASK_ID = '11111111-2222-3333-4444-555555555555';
 const ABILITY_ID = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
 const JOURNEY_ID = 'ffffffff-0000-1111-2222-333333333333';
 
-// 按 SQL 内容路由的 mock pool：step 查询 join golden_path，feature/area 查 decisions，FR 查 journey_features
-function makePool({ step = [], feature = [], area = [], fr = [], fail = {} } = {}) {
+// 按 SQL 内容路由的 mock pool：step 查询 join golden_path，feature/area 查 decisions，
+// FR 查 journey_features，taskRow 查 tasks 行（fetchAndFormatLineContext GAN 场景补齐用）
+function makePool({ step = [], feature = [], area = [], fr = [], taskRow = null, fail = {} } = {}) {
   return {
     query: vi.fn(async (sql, params) => {
+      if (/FROM tasks WHERE id=\$1/.test(sql)) {
+        if (fail.taskRow) throw new Error('task row query down');
+        return { rows: taskRow ? [taskRow] : [] };
+      }
       if (/JOIN golden_path gp ON gp\.id = d\.target_id/.test(sql)) {
         if (fail.step) throw new Error('step query down');
         return { rows: step };
@@ -176,6 +186,39 @@ describe('fetchLineContext — 三源 invariant SQL（与 routes/abilities.js �
     );
     expect(r).toEqual({ invariants: [], cumulativeFR: [] });
     expect(warnSpy).toHaveBeenCalledTimes(4);
+  });
+});
+
+describe('fetchAndFormatLineContext — 三角色注入共用 helper（task→ids→fetch→format）', () => {
+  it('task 自带 ability_id / payload.journey_id → 不查 tasks 行，直接返回格式化文本', async () => {
+    const pool = makePool({ feature: [{ id: 'd1', topic: '[Line04]不进群', decision: '只私聊', category: 'invariant' }] });
+    const text = await fetchAndFormatLineContext(
+      { pool }, { id: TASK_ID, ability_id: ABILITY_ID, payload: { journey_id: JOURNEY_ID } }
+    );
+    expect(text).toContain(INVARIANT_SECTION_HEADER);
+    expect(text).toContain('- [不进群] 只私聊（来源: journey_feature）');
+    expect(findCall(pool, /FROM tasks WHERE id=\$1/)).toBeUndefined();
+  });
+
+  it('只有 task.id（GAN 图场景）→ 先查 tasks 行补齐 ability_id/journey_id 再 fetch', async () => {
+    const pool = makePool({
+      taskRow: { ability_id: ABILITY_ID, payload: { journey_id: JOURNEY_ID } },
+      feature: [{ id: 'd1', topic: '[Line04]不进群', decision: '只私聊', category: 'invariant' }],
+    });
+    const text = await fetchAndFormatLineContext({ pool }, { id: TASK_ID });
+    const rowCall = findCall(pool, /FROM tasks WHERE id=\$1/);
+    expect(rowCall).toBeTruthy();
+    expect(rowCall[1]).toEqual([TASK_ID]);
+    expect(findCall(pool, /target_type=\$1/)[1]).toEqual(['journey_feature', ABILITY_ID]);
+    expect(findCall(pool, /JOIN journey_features jf/)[1]).toEqual([JOURNEY_ID]);
+    expect(text).toContain(INVARIANT_SECTION_HEADER);
+  });
+
+  it('全吞错：pool 缺 / task 无 id / 查询全炸 → 返回 "" 绝不 throw', async () => {
+    expect(await fetchAndFormatLineContext({ pool: null }, { id: TASK_ID })).toBe('');
+    expect(await fetchAndFormatLineContext({ pool: makePool() }, null)).toBe('');
+    const pool = { query: vi.fn(async () => { throw new Error('db down'); }) };
+    expect(await fetchAndFormatLineContext({ pool }, { id: TASK_ID })).toBe('');
   });
 });
 
