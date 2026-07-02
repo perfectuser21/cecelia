@@ -40,11 +40,11 @@
 - ✅ **T3 = E2 合并**（PR #3495 → main，2026-07-01）：`test_registry` 生命周期治理。migration 311（status/feature_id软引用UUID/orphan_reason/lifecycle_checked_at + test_lifecycle_alerts表）+ `test-lifecycle-patrol.js`（file_missing自动收敛/feature_deleted告警建issue/stale_scan弱告警/自愈复位/同日去重）+ tick-runner 10.24 挂载 + smoke脚本。**关键坑**：原方案 feature_id 加 `ON DELETE SET NULL` FK 会让 feature_deleted 检测变死代码（能力删除瞬间被自动置空），实现时改为不加FK的软引用；smoke脚本第4步真实调用 patrol 曾在本地误删50行 test_registry（因 worktree 文件树落后 main），已改用事务 BEGIN...ROLLBACK 规避。design doc 见 `2026-07-01-test-lifecycle-governance-design.md`（含"实施后修正"节）。
 - ✅ 架构决策 `decisions` id **cdf028cc**（全图）+ **3940dbc8**（B1 feature）。
 - ✅ 8 份方案 in `docs/current/harness-verify-redesign/`；设计+计划已随 PR 进 main（docs/superpowers/）。
+- ✅ **Brain 版本漂移已修**（PR #3498 → main，2026-07-02）：根因是 `scripts/check-version-sync.sh` 用 `grep -oP`（PCRE `\K`）接管道 `| head -1`，BSD grep（macOS）遇到不支持的 `-P` 报错退出，但管道退出码由 `head -1` 决定（成功），`set -e` 抓不到，DEFINITION.md 漂移被误判成"没找到该行"而放行。改用 `sed -nE` 可移植写法；顺带同步了实际漂移的 4 处版本号（package-lock.json / .brain-versions / DEFINITION.md / 根 package-lock.json workspace 引用）到 1.237.0。回归测试 `tests/check-version-sync.test.js`。`node scripts/facts-check.mjs` 现全绿。
 
 ## 5. 下一步（优先级）
-1. **修 2 个 bug**（解锁后续）：
+1. **修 1 个 bug**（解锁后续，Brain 版本漂移已修，见上）：
    - **dispatcher bug**（Notion issue **fabf6bd6**）：harness_initiative claim 后不建 initiative_run、占死并发槽(MAX=2)、豁免 zombie-reaper → 死锁所有 headless 派发。**这就是为什么现在只能走本机 /dev、不能用 headless 并行。** 根因待深挖（claim 后 graph 未 spawn，疑 staging brain 镜像 schema drift）。
-   - **Brain 版本漂移**：package.json 1.237.0 ≠ DEFINITION.md 1.233.1 → facts-check 红。修掉后可把 facts-check 升成 B1 的真种子（现是 `node --check server.js` 冒烟）。
 2. 之后 A1/A3（需先 P0 端点）→ 真机簇 D1→C1→A2 → E1。
 
 ## 6. 关键 ground truth（验证过 + 坑）
