@@ -5,10 +5,11 @@ description: |
   Harness Planner — Brain executor 在 harness_initiative 任务中自动调用的 Layer 1 节点。
   人类启动 harness/sprint 通过 /dev 路径C（POST localhost:5221/api/brain/tasks，task_type=harness_initiative）。
   Brain tick 自动 pick up 后调本 skill。直接调本 skill = 绕过 Brain 调度层，违反 zero-human-gate 原则。
-version: 8.12.0
+version: 8.12.1
 created: 2026-04-08
 updated: 2026-07-02
 changelog:
+  - 8.12.1: 补回 Step 3 最后一条消息的 review_required 字段 + 判断规则 — 该字段只存在于 cecelia 镜像（B22 时代直改镜像未进 SSOT 的历史漂移），v8.12.0 镜像同步时被覆盖丢失，b22-review-required-smoke 抓到；Brain graph 从 planner verdict JSON 消费此字段
   - 8.12.0: 新增 Step 0.4 加载整条 line 的历史约束（A1，harness 验证模型重构）— step/journey_feature/area 三源 invariant + 按 journey 聚合的累积 FR，注入 sprint-prd.md「## Invariant 约束」「## 累积 FR」两段（格式即 E1 的解析契约）；修 Step 0.3 坏查询 — 旧 GET /decisions?category=nfr 读的是 decision_log 审计表且忽略 category 参数，改用 golden-path-decisions + abilities/:id/decisions 精确端点
   - 8.11.0: 新增 Step 0.3 NFR 双源读取 — 从 decisions?category=nfr 取活跃 NFR 决策 + 从 PrepPRD 取用户显式 NFR，合并注入 sprint-prd.md ## NFR 约束章节；双源缺一不可
   - 8.10.0: 链路审计修复 4 项 — target_environment 推断改为明确 if-elif 优先级链；journey_id 大小写统一；sprint-prd.md 模板补 ## E2E 验收 占位区块；常见错误 #2 加正反例
@@ -450,10 +451,15 @@ git push origin HEAD 2>/dev/null || echo "[harness-planner] push skipped (no cre
 **最后一条消息**：
 
 ```
-{"verdict": "DONE", "branch": "cp-...", "sprint_dir": "sprints/run-...", "planner_branch": "cp-..."}
+{"verdict": "DONE", "branch": "cp-...", "sprint_dir": "sprints/run-...", "planner_branch": "cp-...", "review_required": false}
 ```
 
 说明：`planner_branch` 字段供 Brain `runGanLoopNode` 读取，作为 GAN proposer 的 `PLANNER_BRANCH` env，避免回退到 main 读 PRD。
+
+**`review_required` 判断规则**（Brain 从 planner verdict JSON 提取，决定 evaluator PASS 后是否需人工确认才 merge）：
+- `true` — 新功能、UI 变化、行为变更（evaluator PASS 后需人工确认才 merge）
+- `false` — bug fix、重构、配置调整、文档更新（evaluator PASS 后自动 merge）
+- **默认**: false（不确定时选 false）
 
 ---
 
