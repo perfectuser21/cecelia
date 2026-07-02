@@ -47,7 +47,7 @@ export async function fetchLineContext({ pool }, { taskId = null, abilityId = nu
       SELECT d.*, gp.order_no
       FROM decisions d
       JOIN golden_path gp ON gp.id = d.target_id
-      WHERE d.target_type='golden_path' AND gp.owner_task_id=$1 AND d.category=$2
+      WHERE d.target_type='golden_path' AND gp.owner_task_id=$1 AND d.category=$2 AND d.status='active'
       ORDER BY gp.order_no ASC, d.created_at DESC`, [taskId, 'invariant'])
     : [];
 
@@ -107,11 +107,19 @@ export async function fetchLineContext({ pool }, { taskId = null, abilityId = nu
   return { invariants, cumulativeFR };
 }
 
-/** 标签：topic 里 `]` 后短语（如 `[Line04]不进群` → `不进群`）；无 `]` 用 topic 前 6 字。 */
+/**
+ * 标签：topic 里 `]` 后短语（如 `[Line04]不进群` → `不进群`）；
+ * `]` 后为空（如 `[Line04]`）或无 `]` → 回落到去掉方括号字符后的 topic 前 6 字，
+ * 保证不产出空标签 `- []`。
+ */
 function invariantLabel(topic) {
   const t = String(topic ?? '').trim();
   const idx = t.lastIndexOf(']');
-  return idx >= 0 ? t.slice(idx + 1).trim() : t.slice(0, 6);
+  if (idx >= 0) {
+    const after = t.slice(idx + 1).trim();
+    if (after) return after;
+  }
+  return t.replace(/[[\]]/g, '').trim().slice(0, 6);
 }
 
 /**

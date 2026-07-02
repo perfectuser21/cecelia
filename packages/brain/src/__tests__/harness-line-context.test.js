@@ -61,6 +61,8 @@ describe('fetchLineContext — 三源 invariant SQL（与 routes/abilities.js �
     expect(stepSql).toMatch(/d\.target_type='golden_path'/);
     expect(stepSql).toMatch(/gp\.owner_task_id=\$1/);
     expect(stepSql).toMatch(/d\.category=\$2/);
+    // 审查修正：三源语义一致 — step 路也只取 active decision（与 feature/area 路一致）
+    expect(stepSql).toMatch(/d\.status='active'/);
     expect(stepSql).toMatch(/ORDER BY gp\.order_no ASC, d\.created_at DESC/);
     expect(stepParams).toEqual([TASK_ID, 'invariant']);
   });
@@ -212,6 +214,15 @@ describe('formatLineContextForPrompt — 与 planner Step 0.4 逐字同构（E1 
     const lines = text.split('\n').filter((l) => l.startsWith('- '));
     expect(lines).toHaveLength(1);
     expect(lines[0]).toMatch(/^- \[.+\] .+（来源: .+）$/);
+  });
+
+  it('标签：topic "]" 后为空时回落（去掉方括号后取前 6 字），不产出空标签', () => {
+    const text = formatLineContextForPrompt({
+      invariants: [{ id: 'd1', topic: '[Line04]', decision: '只私聊', source_level: 'journey_feature' }],
+      cumulativeFR: [],
+    });
+    expect(text).toContain('- [Line04] 只私聊（来源: journey_feature）');
+    expect(text).not.toContain('- [] ');
   });
 
   it('标签：topic 无 "]" 时取前 6 字', () => {
