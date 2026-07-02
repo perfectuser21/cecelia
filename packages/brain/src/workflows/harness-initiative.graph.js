@@ -1599,6 +1599,40 @@ export async function reportNode(state, opts = {}) {
     }
   }
 
+  // 方案B（handoff 自动化，2026-07-02）：终态交接单——PASS/FAIL 都产（失败的交接价值更大）。
+  // best-effort：失败绝不阻断生命周期闭合。DB=SSOT，镜像 best-effort（handoff.js 内部处理）。
+  try {
+    const { buildHandoff, saveHandoff } = await import('../handoff.js');
+    const failDetail = ws_issues
+      .map((w) => `${w.ws_id}${w.ci_fail_type ? `[${w.ci_fail_type}]` : ''}: ${String(w.feedback || '').slice(0, 80)}`)
+      .join('; ');
+    const handoff = buildHandoff({
+      task_id: state.initiativeId,
+      initiative_id: state.initiativeId,
+      journey_id: state.task?.payload?.journey_id || null,
+      title: state.task?.title || '',
+      verdict: computedVerdict,
+      done: reconciledSubTasks
+        .filter((s) => s.status === 'merged')
+        .map((s) => `${s.id} 已合并${s.pr_url ? `: ${s.pr_url}` : ''}`),
+      not_done: reconciledSubTasks
+        .filter((s) => s.status !== 'merged')
+        .map((s) => `${s.id}(status=${s.status || 'unknown'}${s.ci_fail_type ? `,ci=${s.ci_fail_type}` : ''})`),
+      next_steps: computedVerdict === 'PASS'
+        ? ['本 ability 已验收，golden_path 已冻结（A3）；下一 sprint 可加厚本 ability 或推进本 line 下一个 ability']
+        : [`修复后重试${failDetail ? `。失败摘要：${failDetail.slice(0, 180)}` : ''}`],
+      artifacts: {
+        pr_urls: reconciledSubTasks.map((s) => s.pr_url).filter(Boolean),
+        sprint_dir: state.sprintDir || null,
+        branch: null,
+        docs: [],
+      },
+    });
+    await saveHandoff({ pool: dbPool }, handoff);
+  } catch (err) {
+    console.warn(`[reportNode] handoff generation failed (non-fatal): ${err.message}`);
+  }
+
   // Slice3（决策 B）：report 后移到 production promote 完成后。
   // - PASS：**不在此派 report**——成功交付证书等 promote 完成后由 staging-e2e-runner（内部线 auto）
   //   / routes/harness.js confirm（客户线）派；pending_promote 不出（靠 Slice2 通知+状态可见，不饿死）。
