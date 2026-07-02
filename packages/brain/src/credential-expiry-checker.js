@@ -18,6 +18,7 @@
 import { readFileSync, existsSync } from 'fs';
 import { homedir } from 'os';
 import { createTask } from './actions.js';
+import { sendBark } from './notifier.js';
 
 // token 过期超过此时长 → cron 已连续失败，需人工介入
 const STUCK_EXPIRED_MS = 60 * 60 * 1000; // 1 小时（cron 每 2h 一次，1h 说明至少错过一次）
@@ -25,7 +26,10 @@ const STUCK_EXPIRED_MS = 60 * 60 * 1000; // 1 小时（cron 每 2h 一次，1h �
 // Dashboard 展示用：token 剩余 <X 时显示为 expiring_soon（不触发告警）
 const DISPLAY_THRESHOLD_MS = 4 * 60 * 60 * 1000; // 4 小时
 
-const ACCOUNTS = ['account2']; // B53: account3 org 订阅禁用(403)，移出池；account1 无凭据。仅 account2 可用
+// account3：org 订阅禁用(403)，未充值不派任务，移出监控池
+// account1：2026-07-01 起被证实曾"无凭据"的判断是过时信息——它一直有凭据在正常工作，
+// 只是当时被漏排除，导致其故障(invalid_grant)从未被任何监控覆盖，用户完全不知情（决策 7702b938）
+const ACCOUNTS = ['account1', 'account2'];
 
 /**
  * 读取单个账号的 OAuth token 状态
@@ -114,7 +118,6 @@ export async function checkAndAlertExpiringCredentials(_pool, accountList = ACCO
     return { checked: accounts.length, alerted: 0, skipped: accounts.length };
   }
 
-  const { raise } = await import('./alerting.js');
   let alerted = 0;
 
   for (const acc of alertAccounts) {
@@ -132,12 +135,13 @@ export async function checkAndAlertExpiringCredentials(_pool, accountList = ACCO
 
     const msg = `🚨 [凭据失效] ${acc.account} ${reason}`;
     try {
-      await raise('P0', `credential_stuck_${acc.account}`, msg);
+      // Claude 账号需要立即人工处理，走 Bark 手机推送而非飞书（决策 7702b938）
+      await sendBark(`凭据失效：${acc.account}`, msg);
       _alertDedup.set(dedupKey, Date.now());
       alerted++;
       console.log(`[credential-checker] 🚨 ${acc.account} 凭据失效告警已发送`);
     } catch (err) {
-      console.error(`[credential-checker] raise() 失败 (${acc.account}):`, err.message);
+      console.error(`[credential-checker] sendBark() 失败 (${acc.account}):`, err.message);
     }
   }
 

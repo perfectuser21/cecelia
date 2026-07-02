@@ -22,6 +22,7 @@ import { readFileSync, existsSync } from 'fs';
 import { homedir } from 'os';
 import { raise } from './alerting.js';
 import { createTask } from './actions.js';
+import { sendBark } from './notifier.js';
 
 // ── 告警阈值 ─────────────────────────────────────────────────────────────────
 
@@ -40,7 +41,10 @@ const CODEX_BRIDGE_URL = process.env.XIAN_CODEX_BRIDGE_URL || 'http://100.86.57.
 
 // ── 账号列表 ──────────────────────────────────────────────────────────────────
 
-const CLAUDE_ACCOUNTS = ['account2']; // B53: account3 org 订阅禁用(403)，移出池；account1 无凭据。仅 account2 可用
+// account3：org 订阅禁用(403)，未充值不派任务，移出监控池
+// account1：2026-07-01 起被证实曾"无凭据"的判断是过时信息——它一直有凭据在正常工作，
+// 只是当时被漏排除，导致其故障(invalid_grant)从未被任何监控覆盖，用户完全不知情（决策 7702b938）
+const CLAUDE_ACCOUNTS = ['account1', 'account2'];
 const CODEX_ACCOUNTS  = ['team1', 'team2', 'team3', 'team4', 'team5'];
 const PUBLISHER_PLATFORMS = ['douyin', 'xiaohongshu', 'zhihu', 'weibo', 'toutiao', 'kuaishou', 'wechat'];
 
@@ -189,13 +193,14 @@ export async function checkCodexAuth() {
 // ── 告警 + 任务创建 ───────────────────────────────────────────────────────────
 
 /**
- * 发送 Feishu 告警并创建 Brain 任务（内存去重）
+ * 发送告警并创建 Brain 任务（内存去重）
  * @param {string} credKey  - 去重 key（如 "notebooklm", "claude_account1"）
  * @param {'P0'|'P1'|'P2'} level
  * @param {string} message  - 告警消息
  * @param {'P0'|'P1'|'P2'|null} taskPriority - null 表示不创建任务
+ * @param {'feishu'|'bark'} [channel='feishu'] - 'bark' 用于需要用户立即处理的凭据失效（决策 7702b938）
  */
-async function alertAndMaybeCreateTask(credKey, level, message, taskPriority = null) {
+async function alertAndMaybeCreateTask(credKey, level, message, taskPriority = null, channel = 'feishu') {
   const dedupKey = `${credKey}_${level}`;
   const lastAlert = _alertDedup.get(dedupKey);
   if (lastAlert && (Date.now() - lastAlert) < ALERT_DEDUP_MS) {
@@ -203,7 +208,13 @@ async function alertAndMaybeCreateTask(credKey, level, message, taskPriority = n
   }
   _alertDedup.set(dedupKey, Date.now());
 
-  await raise(level, `cred_health_${credKey}`, message);
+  if (channel === 'bark') {
+    await sendBark(`凭据健康巡检：${credKey}`, message).catch(err =>
+      console.error(`[cred-health] Bark 推送失败 (${credKey}):`, err.message)
+    );
+  } else {
+    await raise(level, `cred_health_${credKey}`, message);
+  }
 
   if (taskPriority) {
     try {
@@ -272,19 +283,19 @@ export async function runCredentialsHealthCheck(pool, now = new Date()) {
         await alertAndMaybeCreateTask(
           `claude_${acc.account}`, 'P0',
           `🚨 Claude ${acc.account} 凭据已过期！去 Claude.ai 重新登录，scp ~/.claude-${acc.account}/.credentials.json 到服务器。`,
-          'P0'
+          'P0', 'bark'
         );
       } else if (acc.status === 'critical') {
         await alertAndMaybeCreateTask(
           `claude_${acc.account}`, 'P0',
           `🚨 Claude ${acc.account} 凭据还有 ${days} 天过期（${acc.expiresAt}），请立即刷新！`,
-          'P1'
+          'P1', 'bark'
         );
       } else if (acc.status === 'warning') {
         await alertAndMaybeCreateTask(
           `claude_${acc.account}`, 'P1',
           `⚠️ Claude ${acc.account} 凭据还有 ${days} 天过期（${acc.expiresAt}），记得在 30 天内刷新。`,
-          'P2'
+          'P2', 'bark'
         );
       } else if (acc.status === 'ok') {
         console.log(`[cred-health] ✅ Claude ${acc.account} ok（还有 ${days} 天）`);
