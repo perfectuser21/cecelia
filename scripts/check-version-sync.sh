@@ -45,7 +45,9 @@ fi
 
 # Check DEFINITION.md "Brain 版本" line
 if [[ -f "DEFINITION.md" ]]; then
-    DOC_VERSION=$(grep -oP 'Brain\s+版本[^:]*:\s*\K\S+' DEFINITION.md | head -1)
+    # sed -E（非 grep -oP）：PCRE 的 \K/-P 在 macOS 自带 BSD grep 上不支持会报错，
+    # 若接在管道里会被 head -1 的成功退出码盖掉、被 set -e 漏抓，见本文件同名回归测试
+    DOC_VERSION=$(sed -nE 's/.*Brain[[:space:]]+版本[^:]*:[[:space:]]*([^[:space:]]+).*/\1/p' DEFINITION.md | head -1)
     if [[ -z "$DOC_VERSION" ]]; then
         echo "⚠️  DEFINITION.md: no 'Brain 版本' line found, skipping"
     elif [[ "$DOC_VERSION" != "$BASE_VERSION" ]]; then
