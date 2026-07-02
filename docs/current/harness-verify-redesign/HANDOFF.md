@@ -44,7 +44,8 @@
 
 ## 5. 下一步（优先级）
 1. ✅ **dispatcher bug 已修**（Notion issue **fabf6bd6**，PR #3502 → main，2026-07-02）：根因确认为 `dispatchNextTask()` 原子 claim 成功后无 top-level try/catch，中途异常导致 claim 永久卡死（claimed_by 已设+status=in_progress+initiative_runs=0，graph 从未真正 invoke）；另发现 `execResult.success===false` 路径也漏释放 claim，一并修复。同时给 `harness-watchdog.js::resumeStalledHarnessDrivers()` 加了"区段 C"：覆盖已有心跳机制看不到的"从未起步"（无 initiative_runs 行）僵尸任务。**"schema drift（retry_count 列缺失）"猜测已核实证伪**（`\d checkpoints`/`\d initiative_runs` 均无该列依赖），不需要重建 staging brain 镜像。回归测试：`dispatcher-claim-leak.test.js` + `harness-watchdog-never-started.test.js`。headless harness 派发死锁已解除。
-2. 之后 A1/A3（需先 P0 端点）→ 真机簇 D1→C1→A2 → E1。
+2. ✅ **P0 端点已补**（PR #3504 → main，2026-07-02）：`GET /api/brain/journeys/:journey_id/golden-paths?status=`（按 line 聚合已验收 ability 的 golden_path，三表桥 `golden_path.owner_task_id → tasks.ability_id → journey_features.journey_id`，按 owner_task_id 分组——ability:run=1:N 按 ability 分组会让 order_no 交错）+ `GET /api/brain/invariants?level=&target_type=&target_id=`（读 `decisions` 表 `category='invariant' AND status='active'`，替代读错 decision_log 表的 `GET /decisions?category=`）。配套 real-env smoke `journey-goldenpaths-invariants-smoke.sh`（真容器+真DB 全链路，本机 scratch express 已实测通过：area 铁律 7 条读回、聚合形态正确、6 个边界全对）。注意：`golden_path` 表当前为空（0 行），聚合端点是 A1 读取侧前置基础设施，数据要等 A3（promotion 冻结）落地后才写入。**A1 解除阻塞**。
+3. 下一步 **A1**（harness-planner Step 0.4，SSOT 在 zenithjoy-skills，走 skill-creator）+ **A3**（reportNode PASS 分支挂 promoteToRegression，packages/brain）→ 真机簇 D1→C1→A2 → E1。
 
 ## 6. 关键 ground truth（验证过 + 坑）
 - **改代码只能走 /dev**（铁律，禁 Agent 直接改推）；harness skill 改动走 skill-creator，SSOT 在 `~/perfect21/zenithjoy-skills/`（**cecelia 仓库里那份是 v8.8.0 过时镜像，别改错**）。
