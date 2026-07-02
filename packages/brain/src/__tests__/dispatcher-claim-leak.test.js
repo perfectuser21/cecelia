@@ -133,4 +133,43 @@ describe('dispatchNextTask — claim leak on mid-flight exception (fabf6bd6)', (
     expect(releasedClaim).toBe(true);
     expect(markedFailed).toBe(true);
   });
+
+  it('triggerCeceliaRun 成功后若事后记账(working_memory INSERT)抛异常 → 不释放 claim / 不标 failed，dispatch 结果仍为 dispatched:true', async () => {
+    let releasedClaim = false;
+    let markedFailed = false;
+
+    mockQuery.mockImplementation((sql, params) => {
+      if (/UPDATE tasks SET claimed_by\s*=\s*\$1/.test(sql)) {
+        // atomic claim succeeds
+        return Promise.resolve({ rows: [{ id: TASK_ID }] });
+      }
+      if (/SELECT \* FROM tasks WHERE id/.test(sql)) {
+        // succeeds normally this time — task really gets dispatched
+        return Promise.resolve({ rows: [{ id: TASK_ID, task_type: 'harness_initiative', title: 'harness task' }] });
+      }
+      if (/INSERT INTO working_memory/.test(sql) && params?.[0] === 'tick_last_dispatch') {
+        // simulate a transient DB hiccup on the post-success dispatch-info bookkeeping insert
+        return Promise.reject(new Error('simulated transient DB error on working_memory upsert'));
+      }
+      if (/UPDATE tasks SET claimed_by\s*=\s*NULL/.test(sql)) {
+        releasedClaim = true;
+        return Promise.resolve({ rows: [] });
+      }
+      if (/UPDATE tasks SET status\s*=\s*'failed'/.test(sql)) {
+        markedFailed = true;
+        return Promise.resolve({ rows: [] });
+      }
+      return Promise.resolve({ rows: [] });
+    });
+
+    const { dispatchNextTask } = await import('../dispatcher.js');
+    const result = await dispatchNextTask([]);
+
+    // The dispatch already succeeded (triggerCeceliaRun.success=true) before the
+    // bookkeeping insert blew up — must NOT be undone, and must NOT throw.
+    expect(result.dispatched).toBe(true);
+    expect(result.task_id).toBe(TASK_ID);
+    expect(releasedClaim).toBe(false);
+    expect(markedFailed).toBe(false);
+  });
 });

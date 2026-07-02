@@ -503,6 +503,7 @@ export async function dispatchNextTask(goalIds) {
   }
 
   // 4. Update task status to in_progress
+  let execResult;
   try {
   const updateResult = await updateTask({
     task_id: nextTask.id,
@@ -598,7 +599,7 @@ export async function dispatchNextTask(goalIds) {
     };
   }
 
-  const execResult = await triggerCeceliaRun(taskToDispatch);
+  execResult = await triggerCeceliaRun(taskToDispatch);
 
   // 5a. Check if executor actually succeeded — revert to queued if not
   if (!execResult.success) {
@@ -626,76 +627,8 @@ export async function dispatchNextTask(goalIds) {
     await recordDispatchResult(pool, false, execResult.configError ? 'config_error' : 'executor_failed');
     return { dispatched: false, reason: execResult.configError ? 'config_error' : 'executor_failed', task_id: nextTask.id, error: execResult.error || execResult.reason, configError: !!execResult.configError, actions };
   }
-
-  _lastDispatchTime = Date.now();
-
-  // Publish WebSocket event: task started (non-blocking, errors don't break dispatch)
-  try {
-    publishTaskStarted({
-      id: nextTask.id,
-      run_id: execResult.runId,
-      title: nextTask.title
-    });
-
-    // Executor status is now available via GET /api/brain/slots (slot budget)
-  } catch (wsErr) {
-    console.error(`[tick] WebSocket broadcast failed: ${wsErr.message}`);
-  }
-
-  await emit('task_dispatched', 'tick', {
-    task_id: nextTask.id,
-    title: nextTask.title,
-    run_id: execResult.runId,
-    success: execResult.success
-  });
-
-  // Record dispatch info in working_memory
-  await pool.query(`
-    INSERT INTO working_memory (key, value_json, updated_at)
-    VALUES ($1, $2, NOW())
-    ON CONFLICT (key) DO UPDATE SET value_json = $2, updated_at = NOW()
-  `, [TICK_LAST_DISPATCH_KEY, {
-    task_id: nextTask.id,
-    task_title: nextTask.title,
-    run_id: execResult.runId,
-    dispatched_at: new Date().toISOString(),
-    success: execResult.success
-  }]);
-
-  await logTickDecision(
-    'tick',
-    `Dispatched cecelia-run for task: ${nextTask.title}`,
-    { action: 'dispatch', task_id: nextTask.id, run_id: execResult.runId },
-    execResult
-  );
-
-  actions.push({
-    action: 'dispatch',
-    task_id: nextTask.id,
-    title: nextTask.title,
-    run_id: execResult.runId,
-    success: execResult.success
-  });
-
-  // Record pre-flight check statistics
-  try {
-    const { getPreFlightStats } = await import('./pre-flight-check.js');
-    const stats = await getPreFlightStats(pool);
-    await pool.query(`
-      INSERT INTO working_memory (key, value_json, updated_at)
-      VALUES ($1, $2, NOW())
-      ON CONFLICT (key) DO UPDATE SET value_json = $2, updated_at = NOW()
-    `, ['pre_flight_stats', stats]);
-  } catch (statsErr) {
-    console.error(`[dispatch] Failed to record pre-flight stats: ${statsErr.message}`);
-  }
-
-  // Record dispatch success to rolling window stats
-  await recordDispatchResult(pool, true);
-
-  return { dispatched: true, task_id: nextTask.id, run_id: execResult.runId, actions };
   } catch (err) {
-    // C1 fix (fabf6bd6): claim 成功后到这里之间任何未预期异常都会让 task 永久卡在
+    // C1 fix (fabf6bd6): claim 成功后到 triggerCeceliaRun 判定之间任何未预期异常都会让 task 永久卡在
     // claimed_by 已设 + status=in_progress（graph 从未真正 invoke）。兜底释放 claim + 标 failed，
     // 绝不 rethrow — dispatcher 调用方（tick-runner.js）没有包 try/catch。
     console.error(`[dispatch] unexpected exception after claim, task=${nextTask?.id}: ${err.message}`);
@@ -716,6 +649,85 @@ export async function dispatchNextTask(goalIds) {
     await recordDispatchResult(pool, false, 'dispatch_exception');
     return { dispatched: false, reason: 'dispatch_exception', task_id: nextTask?.id, error: err.message, actions };
   }
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // triggerCeceliaRun 已经 success=true → task 已真正派发出去（进程/graph 已 spawn）。
+  // 下面全是"事后记账"（事件广播/working_memory/日志/统计），任何一步失败都绝不能
+  // 触发释放 claim / 标 failed（否则下个 tick 会把已经在跑的同一个 task 重新派发一次，
+  // 造成重复执行 —— 比修复前的死锁问题更糟）。只记日志，吞掉异常。
+  // ─────────────────────────────────────────────────────────────────────────
+  try {
+    _lastDispatchTime = Date.now();
+
+    // Publish WebSocket event: task started (non-blocking, errors don't break dispatch)
+    try {
+      publishTaskStarted({
+        id: nextTask.id,
+        run_id: execResult.runId,
+        title: nextTask.title
+      });
+
+      // Executor status is now available via GET /api/brain/slots (slot budget)
+    } catch (wsErr) {
+      console.error(`[tick] WebSocket broadcast failed: ${wsErr.message}`);
+    }
+
+    await emit('task_dispatched', 'tick', {
+      task_id: nextTask.id,
+      title: nextTask.title,
+      run_id: execResult.runId,
+      success: execResult.success
+    });
+
+    // Record dispatch info in working_memory
+    await pool.query(`
+      INSERT INTO working_memory (key, value_json, updated_at)
+      VALUES ($1, $2, NOW())
+      ON CONFLICT (key) DO UPDATE SET value_json = $2, updated_at = NOW()
+    `, [TICK_LAST_DISPATCH_KEY, {
+      task_id: nextTask.id,
+      task_title: nextTask.title,
+      run_id: execResult.runId,
+      dispatched_at: new Date().toISOString(),
+      success: execResult.success
+    }]);
+
+    await logTickDecision(
+      'tick',
+      `Dispatched cecelia-run for task: ${nextTask.title}`,
+      { action: 'dispatch', task_id: nextTask.id, run_id: execResult.runId },
+      execResult
+    );
+
+    actions.push({
+      action: 'dispatch',
+      task_id: nextTask.id,
+      title: nextTask.title,
+      run_id: execResult.runId,
+      success: execResult.success
+    });
+
+    // Record pre-flight check statistics
+    try {
+      const { getPreFlightStats } = await import('./pre-flight-check.js');
+      const stats = await getPreFlightStats(pool);
+      await pool.query(`
+        INSERT INTO working_memory (key, value_json, updated_at)
+        VALUES ($1, $2, NOW())
+        ON CONFLICT (key) DO UPDATE SET value_json = $2, updated_at = NOW()
+      `, ['pre_flight_stats', stats]);
+    } catch (statsErr) {
+      console.error(`[dispatch] Failed to record pre-flight stats: ${statsErr.message}`);
+    }
+
+    // Record dispatch success to rolling window stats
+    await recordDispatchResult(pool, true);
+  } catch (bookkeepingErr) {
+    // 事后记账失败：task 已经真实派发成功，绝不能释放 claim / 标 failed，只记日志。
+    console.error(`[dispatch] post-success bookkeeping failed for task=${nextTask.id} (dispatch itself succeeded, claim NOT released): ${bookkeepingErr.message}`);
+  }
+
+  return { dispatched: true, task_id: nextTask.id, run_id: execResult.runId, actions };
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
