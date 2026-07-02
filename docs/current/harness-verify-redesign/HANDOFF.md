@@ -43,8 +43,7 @@
 - ✅ **Brain 版本漂移已修**（PR #3498 → main，2026-07-02）：根因是 `scripts/check-version-sync.sh` 用 `grep -oP`（PCRE `\K`）接管道 `| head -1`，BSD grep（macOS）遇到不支持的 `-P` 报错退出，但管道退出码由 `head -1` 决定（成功），`set -e` 抓不到，DEFINITION.md 漂移被误判成"没找到该行"而放行。改用 `sed -nE` 可移植写法；顺带同步了实际漂移的 4 处版本号（package-lock.json / .brain-versions / DEFINITION.md / 根 package-lock.json workspace 引用）到 1.237.0。回归测试 `tests/check-version-sync.test.js`。`node scripts/facts-check.mjs` 现全绿。
 
 ## 5. 下一步（优先级）
-1. **修 1 个 bug**（解锁后续，Brain 版本漂移已修，见上）：
-   - **dispatcher bug**（Notion issue **fabf6bd6**）：harness_initiative claim 后不建 initiative_run、占死并发槽(MAX=2)、豁免 zombie-reaper → 死锁所有 headless 派发。**这就是为什么现在只能走本机 /dev、不能用 headless 并行。** 根因待深挖（claim 后 graph 未 spawn，疑 staging brain 镜像 schema drift）。
+1. ✅ **dispatcher bug 已修**（Notion issue **fabf6bd6**，PR #3502 → main，2026-07-02）：根因确认为 `dispatchNextTask()` 原子 claim 成功后无 top-level try/catch，中途异常导致 claim 永久卡死（claimed_by 已设+status=in_progress+initiative_runs=0，graph 从未真正 invoke）；另发现 `execResult.success===false` 路径也漏释放 claim，一并修复。同时给 `harness-watchdog.js::resumeStalledHarnessDrivers()` 加了"区段 C"：覆盖已有心跳机制看不到的"从未起步"（无 initiative_runs 行）僵尸任务。**"schema drift（retry_count 列缺失）"猜测已核实证伪**（`\d checkpoints`/`\d initiative_runs` 均无该列依赖），不需要重建 staging brain 镜像。回归测试：`dispatcher-claim-leak.test.js` + `harness-watchdog-never-started.test.js`。headless harness 派发死锁已解除。
 2. 之后 A1/A3（需先 P0 端点）→ 真机簇 D1→C1→A2 → E1。
 
 ## 6. 关键 ground truth（验证过 + 坑）
