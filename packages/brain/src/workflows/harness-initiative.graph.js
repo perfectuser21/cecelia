@@ -1551,12 +1551,13 @@ export async function reportNode(state, opts = {}) {
       if (!detail) {
         const subFails = (reconciledSubTasks || [])
           .filter(s => s.status !== 'merged')
-          .map(s => `${s.id}(status=${s.status || 'unknown'}${s.ci_fail_type ? `,ci=${s.ci_fail_type}` : ''}${s.evaluator_feedback ? `,fb=${String(s.evaluator_feedback).slice(0, 80)}` : ''}${s.pr_url ? `,pr=${s.pr_url}` : ''})`);
+          .map(s => `${s.id}(status=${s.status || 'unknown'}${s.ci_fail_type ? `,ci=${s.ci_fail_type}` : ''}${s.evaluator_feedback ? `,fb=${String(s.evaluator_feedback).slice(0, 2000)}` : ''}${s.pr_url ? `,pr=${s.pr_url}` : ''})`);
         detail = subFails.length
           ? `no failed scenarios recorded; unmerged/failed sub_tasks: ${subFails.join('; ')}`
           : 'no failed scenarios and no sub_task detail available';
       }
-      reason = `Final E2E FAIL: ${detail.slice(0, 500)}`;
+      // failure_reason / error_message 列类型为 TEXT（无长度上限），4000 仅防极端异常日志撑爆单行
+      reason = `Final E2E FAIL: ${detail.slice(0, 4000)}`;
     }
     // B45: 使用 pool.connect() → client.query 确保测试 mock 可验证、支持连接复用
     const client = await dbPool.connect();
