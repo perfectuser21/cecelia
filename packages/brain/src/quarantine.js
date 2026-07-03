@@ -109,6 +109,12 @@ const NETWORK_PATTERNS = [
   /upstream\s+connect\s+error/i,
   /database.*connection|pool.*exhausted/i,
   /deadlock\s+detected|lock\s+timeout/i,
+  // 外部 API 流中断（如 chatgpt.com stream disconnected）
+  // 与 OOM(exit=137) 不同，这类故障根因在外部服务，应走 network 路径（skipCount=true）
+  /stream\s+disconnected/i,
+  /stream\s+interrupted|stream\s+error/i,
+  /chatgpt\.com.*stream|stream.*chatgpt\.com/i,
+  /external.*api.*disconnect|api.*stream.*disconnect/i,
 ];
 
 const RESOURCE_PATTERNS = [
