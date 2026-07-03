@@ -423,6 +423,35 @@ describe('Pattern Groups', () => {
 });
 
 // ============================================================
+// 外部 API 流中断（Learning 2f561d31）→ NETWORK
+// ============================================================
+
+describe('外部 API stream disconnect → NETWORK', () => {
+  it('classifies "stream disconnected" as NETWORK', () => {
+    expect(classifyFailure('chatgpt.com stream disconnected').class).toBe(FAILURE_CLASS.NETWORK);
+  });
+
+  it('classifies "stream interrupted" as NETWORK', () => {
+    expect(classifyFailure('API stream interrupted during response').class).toBe(FAILURE_CLASS.NETWORK);
+  });
+
+  it('classifies "chatgpt.com stream" as NETWORK', () => {
+    expect(classifyFailure('Error: chatgpt.com stream failed at byte 4096').class).toBe(FAILURE_CLASS.NETWORK);
+  });
+
+  it('NETWORK 分类应包含 retry_strategy.should_retry=true', () => {
+    const result = classifyFailure('stream disconnected');
+    expect(result.retry_strategy).toBeDefined();
+    expect(result.retry_strategy.should_retry).toBe(true);
+  });
+
+  it('NETWORK_PATTERNS 已包含 stream disconnect 规则', () => {
+    const hasStreamDisconnect = NETWORK_PATTERNS.some(p => p.test('stream disconnected'));
+    expect(hasStreamDisconnect).toBe(true);
+  });
+});
+
+// ============================================================
 // Priority: BILLING_CAP before RATE_LIMIT
 // ============================================================
 

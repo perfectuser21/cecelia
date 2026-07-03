@@ -41,6 +41,7 @@ export async function processExecutionCallback(data, pool) {
     exit_code,
     stderr,
     coding_type,
+    failure_class: callbackFailureClass,
   } = data;
 
   if (!task_id) throw new Error('task_id is required');
@@ -278,13 +279,25 @@ export async function processExecutionCallback(data, pool) {
       const errorMsg = (result !== null && typeof result === 'object')
         ? (result.result || result.error || result.stderr || JSON.stringify(result))
         : String(result || status);
-      const classification = classifyFailure(errorMsg, { payload: taskPayload });
+
+      // OOM killed（exit=137）：docker 容器被 cgroup OOM killer 杀死
+      // 根因是资源配置，通常首次重试即可解决，不应计入持续性失败计数
+      // callbackFailureClass='docker_oom_killed' 由 docker-executor.js 设定并经 callback_queue 传递
+      const isOomKilled = callbackFailureClass === 'docker_oom_killed' || exit_code === 137;
+
+      const classification = isOomKilled
+        ? { class: 'resource', pattern: 'docker_oom_killed', confidence: 1.0 }
+        : classifyFailure(errorMsg, { payload: taskPayload });
+
       const isTransientApiError = ['rate_limit', 'network', 'auth'].includes(classification.class);
       const isBillingCap = classification.class === 'billing_cap';
 
       const isCodexReview = coding_type === 'codex-review';
 
-      if (isBillingCap || isTransientApiError) {
+      if (isOomKilled) {
+        // OOM 不计入熔断失败：资源问题由 docker-executor 已发 P1 alert，不归因于 cecelia-run
+        console.log(`[callback-processor] OOM killed（exit=137）：跳过熔断计数，requeue 重试（task=${task_id}）`);
+      } else if (isBillingCap || isTransientApiError) {
         console.log(`[callback-processor] 外部/凭据错误：跳过熔断计数（task=${task_id}）`);
       } else if (isCodexReview) {
         // codex-review 走独立执行池，失败不归因 cecelia-run 熔断器
@@ -295,7 +308,9 @@ export async function processExecutionCallback(data, pool) {
         raise('P2', 'task_failed', `任务失败：${task_id}（${status}）`).catch(() => {});
       }
 
-      const skipCount = isTransientApiError;
+      // OOM 与外部 API transient 错误一样：只 requeue 不累积 failure_count
+      // 防止"资源配置问题"被错误计入"任务本身持续性故障"触发隔离
+      const skipCount = isOomKilled || isTransientApiError;
       const quarantineResult = await handleTaskFailure(task_id, { skipCount });
       if (quarantineResult.quarantined) {
         console.log(`[callback-processor] Task ${task_id} quarantined: ${quarantineResult.result?.reason}`);
