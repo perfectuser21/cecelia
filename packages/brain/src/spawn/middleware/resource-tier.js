@@ -32,7 +32,7 @@ export const TASK_TYPE_TIER = {
   sprint_planner: 'light',
   report: 'light',
   sprint_report: 'light',
-  harness_report: 'light',
+  harness_report: 'normal',   // loads journey history + decisions context; 512MB OOM risk
   daily_report: 'light',
   briefing: 'light',
   content_export: 'light',
