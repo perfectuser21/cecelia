@@ -851,6 +851,9 @@ const _EXT_DEP_PATTERNS = [
   { re: /connection\s+refused|connection\s+reset|network\s+error|socket\s+hang\s+up/i, class: 'network' },
   { re: /service\s+unavailable|bad\s+gateway|upstream\s+connect/i, class: 'network' },
   { re: /5\d{2}\s+error|internal\s+server\s+error/i, class: 'network' },
+  // 外部 API 流中断（如 chatgpt.com stream disconnected）—— 属于外部依赖网络故障
+  { re: /stream\s+disconnect(ed)?|disconnected\s+from\s+stream/i, class: 'network' },
+  { re: /SSE.*error|EventSource.*close|event.?stream.*abort/i, class: 'network' },
   // 限流类
   { re: /too\s+many\s+requests|rate\s+limit|429|overloaded|quota\s+exceeded/i, class: 'rate_limit' },
   // 账单上限

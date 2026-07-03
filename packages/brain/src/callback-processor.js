@@ -281,11 +281,14 @@ export async function processExecutionCallback(data, pool) {
       const classification = classifyFailure(errorMsg, { payload: taskPayload });
       const isTransientApiError = ['rate_limit', 'network', 'auth'].includes(classification.class);
       const isBillingCap = classification.class === 'billing_cap';
+      // exit=137 = SIGKILL，通常是 cgroup OOM。资源配置问题，首次重试即可，不计入失败次数。
+      const isOomKilled = exit_code === 137;
 
       const isCodexReview = coding_type === 'codex-review';
 
-      if (isBillingCap || isTransientApiError) {
-        console.log(`[callback-processor] 外部/凭据错误：跳过熔断计数（task=${task_id}）`);
+      if (isBillingCap || isTransientApiError || isOomKilled) {
+        const bypassReason = isBillingCap ? 'billing_cap' : (isOomKilled ? 'oom_killed(exit=137)' : 'rate_limit/network/auth');
+        console.log(`[callback-processor] 外部/资源错误（${bypassReason}）：跳过熔断计数（task=${task_id}）`);
       } else if (isCodexReview) {
         // codex-review 走独立执行池，失败不归因 cecelia-run 熔断器
         console.log(`[callback-processor] codex-review 失败，跳过 cecelia-run 熔断计数（task=${task_id}）`);
@@ -295,7 +298,9 @@ export async function processExecutionCallback(data, pool) {
         raise('P2', 'task_failed', `任务失败：${task_id}（${status}）`).catch(() => {});
       }
 
-      const skipCount = isTransientApiError;
+      // OOM kill 与网络瞬断一样，skipCount=true：requeue 不累加失败次数
+      // OOM 是资源配置问题（首次重试通常成功），不应归入"任务反复失败→隔离"路径
+      const skipCount = isTransientApiError || isOomKilled;
       const quarantineResult = await handleTaskFailure(task_id, { skipCount });
       if (quarantineResult.quarantined) {
         console.log(`[callback-processor] Task ${task_id} quarantined: ${quarantineResult.result?.reason}`);

@@ -109,6 +109,9 @@ const NETWORK_PATTERNS = [
   /upstream\s+connect\s+error/i,
   /database.*connection|pool.*exhausted/i,
   /deadlock\s+detected|lock\s+timeout/i,
+  // 外部 API 流中断（如 chatgpt.com stream disconnected）
+  /stream\s+disconnect(ed)?|disconnected\s+from\s+stream/i,
+  /SSE.*error|EventSource.*close|event.?stream.*abort/i,
 ];
 
 const RESOURCE_PATTERNS = [
