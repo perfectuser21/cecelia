@@ -37,8 +37,55 @@ import { loadSkillContent, readBrainResult, ReviewerOutputSchema } from '../harn
 import { fetchAndFormatLineContext } from '../harness-line-context.js';
 import { makeSessionRecord as _makeSessionRecord } from '../harness-session-bridge.js';
 import { resolveAccount } from '../spawn/middleware/account-rotation.js';
+import { markAuthFailure } from '../account-usage.js';
 
 const execFile = promisify(execFileCb);
+
+// 账号认证失败特征：executor 秒退（exit!=0）时 stdout 常装着未登录信息，
+// 例如 {"result":"Not logged in · Please run /login",...}。命中则把当前账号
+// 计入熔断器（markAuthFailure），否则 resolveAccount 下次仍会重选这个登出账号，
+// 反复空转直到 cap/watchdog 耗尽（pipeline 成功率长期 11-15% 根因之一）。
+// 数组形式方便以后追加新特征。
+const AUTH_FAILURE_PATTERNS = [
+  /Not logged in/i,
+  /please run \/login/i,
+  /invalid_grant/i,
+];
+
+// 熔断退避窗口：1h（与 llm-caller bridge-circuit 一致）。
+const AUTH_FAILURE_RESET_MS = 60 * 60 * 1000;
+
+/**
+ * GAN 节点 executor 失败（exit_code!=0 / timed_out）统一处理：
+ *   1. 解析 stdout/stderr 是否匹配认证失败特征 → markAuthFailure 计入熔断器
+ *      （accountId 取不到就跳过，不报错）；
+ *   2. 无论是否认证失败，抛出的 Error 都带 stdout/stderr 尾部摘要，
+ *      让下游 reportNode 的 failure_reason 能看出真实原因（不只裸 exit_code）。
+ * proposer / reviewer 复用同一段逻辑，函数永远 throw。
+ *
+ * @param {'proposer'|'reviewer'} node
+ * @param {{exit_code:number, timed_out?:boolean, stdout?:string, stderr?:string}} result
+ * @param {string|undefined} accountId  resolveAccount 后的 opts.env.CECELIA_CREDENTIALS
+ */
+export function handleExecutorFailure(node, result, accountId) {
+  const stdout = result.stdout || '';
+  const stderr = result.stderr || '';
+  const combined = `${stdout}\n${stderr}`;
+  const isAuthFailure = AUTH_FAILURE_PATTERNS.some(re => re.test(combined));
+
+  if (isAuthFailure && accountId) {
+    try {
+      const resetTime = new Date(Date.now() + AUTH_FAILURE_RESET_MS).toISOString();
+      markAuthFailure(accountId, resetTime, 'harness_gan');
+      console.warn(`[harness-gan] ${node}: 检测到账号认证失败特征，熔断账号 ${accountId} 至 ${resetTime}`);
+    } catch (err) {
+      console.warn(`[harness-gan] ${node}: markAuthFailure 失败: ${err.message}`);
+    }
+  }
+
+  const tail = combined.trim().slice(-300);
+  throw new Error(`${node}_failed: exit=${result.exit_code} timed_out=${!!result.timed_out} stdout_tail=${tail}`);
+}
 
 // 递归上限：GAN 对抗无轮次上限（budgetCapUsd 才是硬保护），但 LangGraph 默认 25 不够。
 // 100 = 50 轮 propose+review 预留一倍。
@@ -540,7 +587,7 @@ export function createGanContractNodes(executor, ctx) {
     }
 
     if (result.exit_code !== 0 || result.timed_out) {
-      throw new Error(`proposer_failed: exit=${result.exit_code}`);
+      handleExecutorFailure('proposer', result, acctOpts.env.CECELIA_CREDENTIALS);
     }
 
     const contractContent = await readContractFile(worktreePath, sprintDir);
@@ -621,7 +668,7 @@ export function createGanContractNodes(executor, ctx) {
     }
 
     if (result.exit_code !== 0 || result.timed_out) {
-      throw new Error(`reviewer_failed: exit=${result.exit_code}`);
+      handleExecutorFailure('reviewer', result, acctOpts.env.CECELIA_CREDENTIALS);
     }
 
     const costAfterSpawn = state.costUsd || 0;
