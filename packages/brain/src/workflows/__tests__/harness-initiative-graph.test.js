@@ -422,6 +422,48 @@ describe('reportNode — B45 Fix1: verdict 从 sub_tasks 推导', () => {
     expect(detail.trim(), 'failure_reason 前缀后必须有非空诊断细节').not.toBe('');
   });
 
+  it('evaluator_feedback 200 字符时 failure_reason 完整保留（不再被砍到 80）', async () => {
+    const dbQueryMock = vi.fn().mockResolvedValue({ rows: [] });
+    const mockPool = {
+      connect: vi.fn().mockResolvedValue({ query: dbQueryMock, release: vi.fn() }),
+      query: vi.fn().mockResolvedValue({ rows: [] }),
+    };
+    const fb200 = 'X'.repeat(200);
+    const state = {
+      initiativeId: '22222222-2222-2222-2222-222222222222',
+      sub_tasks: [{ id: 'ws1', status: 'contract_invalid', pr_url: null, ci_fail_type: 'contract_invalid', evaluator_feedback: fb200 }],
+      final_e2e_verdict: null,
+      final_e2e_failed_scenarios: [],
+    };
+    await reportNode(state, { pool: mockPool, _checkPrMerged: async () => false, execFile: async () => ({ stdout: '' }) });
+    const runUpdate = dbQueryMock.mock.calls.find(c => /UPDATE initiative_runs/.test(c[0]));
+    expect(runUpdate).toBeTruthy();
+    const reason = runUpdate[1][2];
+    // 核心：完整 200 字符必须原样出现，不能被旧 slice(0,80) 硬砍
+    expect(reason.includes(fb200), 'evaluator_feedback 200 字符应完整保留在 failure_reason 中').toBe(true);
+  });
+
+  it('evaluator_feedback 超硬上限（25000 字符）时兜底截断，不导致字段无限增长', async () => {
+    const dbQueryMock = vi.fn().mockResolvedValue({ rows: [] });
+    const mockPool = {
+      connect: vi.fn().mockResolvedValue({ query: dbQueryMock, release: vi.fn() }),
+      query: vi.fn().mockResolvedValue({ rows: [] }),
+    };
+    const fbHuge = 'Y'.repeat(25000);
+    const state = {
+      initiativeId: '33333333-3333-3333-3333-333333333333',
+      sub_tasks: [{ id: 'ws1', status: 'failed', pr_url: null, ci_fail_type: 'ci_red', evaluator_feedback: fbHuge }],
+      final_e2e_verdict: null,
+      final_e2e_failed_scenarios: [],
+    };
+    await reportNode(state, { pool: mockPool, _checkPrMerged: async () => false, execFile: async () => ({ stdout: '' }) });
+    const runUpdate = dbQueryMock.mock.calls.find(c => /UPDATE initiative_runs/.test(c[0]));
+    expect(runUpdate).toBeTruthy();
+    const reason = runUpdate[1][2];
+    // 兜底：整体 failure_reason 长度必须有上限，不能把 25000 字符整个塞进去
+    expect(reason.length, 'failure_reason 必须有兜底上限，防止字段无限增长').toBeLessThanOrEqual(20000);
+  });
+
   it('未合并但可合并的 sub_task PR：reportNode 自己合并 → verdict PASS/phase done', async () => {
     const dbQueryMock = vi.fn().mockResolvedValue({ rows: [] });
     const mockPool = {
