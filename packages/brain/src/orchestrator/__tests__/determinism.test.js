@@ -6,8 +6,7 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 
-// TODO(Task B)：counters.js 落地时必须把它加进 PURE_FILES（spec §测试策略 §5 要求）
-const PURE_FILES = ['derive.js', 'gates.js', 'constants.js'];
+const PURE_FILES = ['derive.js', 'gates.js', 'constants.js', 'counters.js'];
 const FORBIDDEN = ['Date.now(', 'Math.random(', 'new Date('];
 
 describe('确定性守卫：纯函数层禁非确定性调用', () => {
