@@ -66,9 +66,10 @@ run_script() {
 }
 
 echo "== 静态断言 =="
-# PATH 显式设置必须出现在任何 docker 调用之前
+# PATH 显式设置必须出现在任何真实 docker 调用之前（忽略注释行）
 path_line=$(grep -n 'export PATH=' "$TARGET" | head -1 | cut -d: -f1)
-docker_line=$(grep -n '\bdocker\b' "$TARGET" | head -1 | cut -d: -f1)
+docker_line=$(grep -nE 'command -v docker|docker[[:space:]]+(inspect|info|compose)' "$TARGET" \
+  | grep -vE '^[0-9]+:[[:space:]]*#' | head -1 | cut -d: -f1)
 if [[ -n "$path_line" && -n "$docker_line" && "$path_line" -lt "$docker_line" ]]; then
   ok "export PATH 出现在首个 docker 调用之前 (行 $path_line < $docker_line)"
 else

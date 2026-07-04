@@ -27,3 +27,11 @@ golden_paths:
     method: auto
     test_command: "node --check packages/brain/server.js"
     must_never_break: true
+
+  - id: CORE-002
+    name: "brain-keepalive 在极简 PATH 下能找到 docker 且区分命令缺失/daemon不可用"
+    priority: P0
+    trigger: [PR, Release]
+    method: auto
+    test_command: "bash scripts/__tests__/brain-keepalive-path.test.sh"
+    must_never_break: true

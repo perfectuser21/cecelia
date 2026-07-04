@@ -1,9 +1,16 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# cron/launchd 用极简 PATH（不含 /opt/homebrew/bin），否则 docker 命令找不到会被
+# 误判成 daemon 不可用，永远走不到重启逻辑。显式前置 homebrew bin，兼容 Apple
+# Silicon(/opt/homebrew/bin) 与 Intel(/usr/local/bin)。默认值即生产行为，env 可覆盖（测试用）。
+export PATH="${BRAIN_KEEPALIVE_PATH:-/opt/homebrew/bin:/usr/local/bin}:$PATH"
+
 CONTAINER_NAME="cecelia-node-brain"
-STATE_FILE="/tmp/brain-keepalive.alerting"
-DAEMON_STATE_FILE="/tmp/brain-keepalive-daemon.alerting"
+STATE_DIR="${BRAIN_KEEPALIVE_STATE_DIR:-/tmp}"
+STATE_FILE="$STATE_DIR/brain-keepalive.alerting"
+DAEMON_STATE_FILE="$STATE_DIR/brain-keepalive-daemon.alerting"
+MISSING_CMD_STATE_FILE="$STATE_DIR/brain-keepalive-nodocker.alerting"
 SILENCED_TTL=300    # 5 分钟后重试重启
 DAEMON_TTL=600      # 10 分钟后重新发 daemon 不可用告警
 WEBHOOK_URL="${FEISHU_BOT_WEBHOOK:-}"
@@ -30,6 +37,21 @@ file_age_seconds() {
   mtime=$(stat -f %m "$file" 2>/dev/null || echo 0)
   echo $((now - mtime))
 }
+
+# 先确认 docker 命令本身能找到。命令缺失 = 脚本 PATH 配置问题（脚本 bug），
+# 绝不是 daemon 挂了——用独立分支/文案，避免像历史 bug 那样把两者混为一谈误诊。
+if ! command -v docker >/dev/null 2>&1; then
+  if [[ ! -f "$MISSING_CMD_STATE_FILE" ]] || [[ $(file_age_seconds "$MISSING_CMD_STATE_FILE") -gt $DAEMON_TTL ]]; then
+    echo "$LOG_PREFIX ERROR: docker command not found in PATH (PATH=$PATH) — 请检查脚本 PATH 配置，非 daemon 故障"
+    send_feishu "🚨 [P0] brain-keepalive 找不到 docker 命令（PATH 配置问题，非 daemon 故障），需检查脚本 PATH"
+    touch "$MISSING_CMD_STATE_FILE"
+  else
+    echo "$LOG_PREFIX SILENCED (no-docker-cmd): docker command still not found, $(file_age_seconds "$MISSING_CMD_STATE_FILE")s since last alert"
+  fi
+  exit 0
+fi
+# docker 命令可用 — 清除命令缺失 state
+rm -f "$MISSING_CMD_STATE_FILE"
 
 STATUS=$(docker inspect "$CONTAINER_NAME" --format '{{.State.Status}}' 2>/dev/null || echo "not_found")
 
