@@ -1,14 +1,16 @@
-# DoD: migration 312 orchestrator DB 结构
+# DoD: T2 orchestrator 骨架（reconcile loop + 路由/门禁纯函数）
 
-sprint_dir: sprints/07041024-orchestrator-db-migration
+sprint_dir: docs/superpowers/specs/2026-07-04-orchestrator-skeleton-design.md
 
-- [x] [ARTIFACT] packages/brain/migrations/312_orchestrator_runs_state.sql 存在且含 initiative_runs 增列 + phase 扩枚举 + orchestrator_decision_log 表
-  Test: manual:node -e "const c=require('fs').readFileSync('packages/brain/migrations/312_orchestrator_runs_state.sql','utf8');if(!/orchestrator_decision_log/.test(c)||!/orchestrator_version/.test(c))process.exit(1)"
-- [x] [BEHAVIOR] phase CHECK 扩枚举包含存量值 A_planning 与新值 planning/gan/generate/evaluate（存量库不被打爆）
-  Test: manual:node -e "const c=require('fs').readFileSync('packages/brain/migrations/312_orchestrator_runs_state.sql','utf8');for(const p of ['A_planning','planning','gan','generate','evaluate'])if(!c.includes(\"'\"+p+\"'\"))process.exit(1)"
-- [x] [BEHAVIOR] orchestrator_decision_log 为 append-only（存在禁 UPDATE/DELETE 的 trigger 完整 SQL）且 UNIQUE(run_id,hop)
-  Test: manual:node -e "const c=require('fs').readFileSync('packages/brain/migrations/312_orchestrator_runs_state.sql','utf8');if(!/BEFORE UPDATE OR DELETE ON orchestrator_decision_log/.test(c)||!/UNIQUE\s*\(run_id,\s*hop\)/.test(c))process.exit(1)"
-- [x] [BEHAVIOR] selfcheck EXPECTED_SCHEMA_VERSION 保持地板 293 不随 migration bump（issue 14d66027 既有决策；312 bump 归 T2 首个依赖方）
-  Test: manual:node -e "const c=require('fs').readFileSync('packages/brain/src/selfcheck.js','utf8');if(!/EXPECTED_SCHEMA_VERSION = '293'/.test(c))process.exit(1)"
-- [x] [ARTIFACT] CI 测试 packages/brain/src/__tests__/migration-312-orchestrator.test.js 存在
-  Test: manual:node -e "if(!require('fs').existsSync('packages/brain/src/__tests__/migration-312-orchestrator.test.js'))process.exit(1)"
+- [x] [ARTIFACT] orchestrator 模块 8 文件齐全（constants/derive/gates/counters/decision-log/heartbeat/ground-truth/loop/run）
+  Test: manual:node -e "const fs=require('fs');for(const f of ['constants','derive','gates','counters','decision-log','heartbeat','ground-truth','loop','run'])if(!fs.existsSync('packages/brain/src/orchestrator/'+f+'.js'))process.exit(1)"
+- [x] [BEHAVIOR] 路由/门禁是确定性纯函数：derive.js/gates.js/counters.js 源码不含 Date.now/Math.random/new Date(（DoD F2 的可测形式）
+  Test: manual:node -e "const fs=require('fs');for(const f of ['derive','gates','counters']){const c=fs.readFileSync('packages/brain/src/orchestrator/'+f+'.js','utf8');if(/Date\.now\(|Math\.random\(|new Date\(/.test(c))process.exit(1)}"
+- [x] [BEHAVIOR] merge 硬门禁存在且 SHA 锚定：gates.js 含 mergeGate 且拒绝 stale verdict（evaluate/judge 双 PASS + sha 匹配才放行）
+  Test: manual:node -e "const c=require('fs').readFileSync('packages/brain/src/orchestrator/gates.js','utf8');if(!/mergeGate/.test(c)||!/pr_head_sha/.test(c))process.exit(1)"
+- [x] [BEHAVIOR] selfcheck EXPECTED_SCHEMA_VERSION 已 bump 312（T1 承诺兑现：首个依赖 312 列的代码）
+  Test: manual:node -e "const c=require('fs').readFileSync('packages/brain/src/selfcheck.js','utf8');if(!/EXPECTED_SCHEMA_VERSION = '312'/.test(c))process.exit(1)"
+- [x] [BEHAVIOR] T3 写入契约集中声明：constants.js 含 LOG_ACTION（verdict:*）与 ACTION 枚举
+  Test: manual:node -e "const c=require('fs').readFileSync('packages/brain/src/orchestrator/constants.js','utf8');if(!/LOG_ACTION/.test(c)||!/verdict:evaluate/.test(c)||!/persist_contract_approval/.test(c))process.exit(1)"
+- [x] [ARTIFACT] 全分支单测在 repo（derive/gates/counters/decision-log/loop/ground-truth/determinism 7 个测试文件）
+  Test: manual:node -e "const fs=require('fs');for(const f of ['derive','gates','counters','decision-log','loop','ground-truth','determinism'])if(!fs.existsSync('packages/brain/src/orchestrator/__tests__/'+f+'.test.js'))process.exit(1)"
