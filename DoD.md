@@ -12,35 +12,35 @@ journey_type: autonomous
 
 ## ARTIFACT 条目
 
-- [ ] [ARTIFACT] 路由实现文件存在且含端点声明
+- [x] [ARTIFACT] 路由实现文件存在且含端点声明
   Test: node -e "const c=require('fs').readFileSync('packages/brain/src/routes/initiatives.js','utf8');if(!c.includes('relay-runs'))process.exit(1);console.log('OK')"
 
-- [ ] [ARTIFACT] 单元测试文件存在且含核心场景
+- [x] [ARTIFACT] 单元测试文件存在且含核心场景
   Test: node -e "const c=require('fs').readFileSync('packages/brain/src/__tests__/relay-runs.test.js','utf8');if(!c.includes('relay-runs')||!c.includes('orchestrator_version'))process.exit(1);console.log('OK')"
 
 ## BEHAVIOR 条目（内嵌可执行 manual: 命令）
 
-- [ ] [BEHAVIOR] GET /api/brain/orchestrator/relay-runs 返回 HTTP 200 + JSON 数组（端点已注册）
+- [x] [BEHAVIOR] GET /api/brain/orchestrator/relay-runs 返回 HTTP 200 + JSON 数组（端点已注册）
   Test: manual:bash -c 'RESP=$(curl -sf localhost:5221/api/brain/orchestrator/relay-runs) || { echo "FAIL: 端点未返回 200 — 路由未注册"; exit 1; }; echo "$RESP" | jq -e '"'"'type == "array"'"'"' || { echo "FAIL: body 不是 JSON 数组"; exit 1; }; echo OK'
   期望: OK
 
-- [ ] [BEHAVIOR] 响应数组每项含 PRD 指定必填字段（id/initiative_id/phase/started_at）
+- [x] [BEHAVIOR] 响应数组每项含 PRD 指定必填字段（id/initiative_id/phase/started_at）
   Test: manual:bash -c 'RESP=$(curl -sf localhost:5221/api/brain/orchestrator/relay-runs) || exit 1; LEN=$(echo "$RESP" | jq "length"); if [ "$LEN" -gt 0 ]; then echo "$RESP" | jq -e '"'"'first | has("id") and has("initiative_id") and has("phase") and has("started_at")'"'"' || { echo "FAIL: 缺少必填字段"; exit 1; }; fi; echo OK'
   期望: OK
 
-- [ ] [BEHAVIOR] ?limit=N 参数生效——返回条数 ≤ N
+- [x] [BEHAVIOR] ?limit=N 参数生效——返回条数 ≤ N
   Test: manual:bash -c 'COUNT=$(curl -sf "localhost:5221/api/brain/orchestrator/relay-runs?limit=2" | jq "length"); [ "$COUNT" -le 2 ] || { echo "FAIL: limit=2 但返回 $COUNT 条"; exit 1; }; echo OK'
   期望: OK
 
-- [ ] [BEHAVIOR] 无 v2 run 时返回空数组 [] 而非 null 或报错（单元测试覆盖）
+- [x] [BEHAVIOR] 无 v2 run 时返回空数组 [] 而非 null 或报错（单元测试覆盖）
   Test: manual:bash -c 'node -e "const c=require(\"fs\").readFileSync(\"packages/brain/src/__tests__/relay-runs.test.js\",\"utf8\");if(!c.includes(\"[]\") && !c.includes(\"empty\") && !c.includes(\"rows: []\"))process.exit(1);console.log(\"OK: 单元测试覆盖空结果场景\")"'
   期望: OK: 单元测试覆盖空结果场景
 
-- [ ] [BEHAVIOR] DB 查询失败返回 HTTP 500 + JSON error 字段（单元测试覆盖）
+- [x] [BEHAVIOR] DB 查询失败返回 HTTP 500 + JSON error 字段（单元测试覆盖）
   Test: manual:bash -c 'node -e "const c=require(\"fs\").readFileSync(\"packages/brain/src/__tests__/relay-runs.test.js\",\"utf8\");if(!c.includes(\"500\")||!c.includes(\"error\"))process.exit(1);console.log(\"OK: 单元测试覆盖 500 + error 字段\")"'
   期望: OK: 单元测试覆盖 500 + error 字段
 
-- [ ] [BEHAVIOR] 端点仅返回 orchestrator_version='v2' 的 runs（v1 run 不在结果中，单元测试覆盖）
+- [x] [BEHAVIOR] 端点仅返回 orchestrator_version='v2' 的 runs（v1 run 不在结果中，单元测试覆盖）
   Test: manual:bash -c 'node -e "const c=require(\"fs\").readFileSync(\"packages/brain/src/__tests__/relay-runs.test.js\",\"utf8\");if(!c.includes(\"v2\")||!c.includes(\"v1\"))process.exit(1);console.log(\"OK: 单元测试覆盖 v2 过滤\")"'
   期望: OK: 单元测试覆盖 v2 过滤
 
