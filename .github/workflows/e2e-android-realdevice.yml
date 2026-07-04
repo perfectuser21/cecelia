@@ -2,15 +2,17 @@ name: Harness E2E (Android Real Device)
 
 # Generic harness E2E entry point for android_realdevice target_environment.
 # Triggered by evaluator SKILL when target_environment=android_realdevice on ZenithJoy sprints.
-# Runs e2e-verify-android.sh from the sprint directory on the Mac mini self-hosted runner,
-# which reaches the Honor test phone via Tailscale + ADB over TCP.
+# Runs e2e-verify-android.sh from the sprint directory on a GitHub-hosted ubuntu-latest
+# runner that joins the tailnet for the job duration (tailscale/github-action, same pattern
+# as verify-tailscale-brain.yml) and reaches the Honor test phone via ADB over TCP.
+# No self-hosted runner required — no persistent infra, no dedicated machine.
 #
-# Runner setup: packages/engine/runners/android/setup-mac-mini-runner.sh
 # Script template: packages/engine/runners/android/e2e-verify-android-template.sh
 #
 # Secrets required:
-#   HONOR_DEVICE_ADB_TARGET  — "100.x.x.x:5555" (phone Tailscale IP + ADB TCP port)
-#   BRAIN_CALLBACK_TOKEN     — token for Brain task result callback
+#   TS_AUTHKEY               — existing Tailscale auth key (already used by verify-tailscale-brain.yml)
+#   HONOR_DEVICE_ADB_TARGET   — "100.x.x.x:5555" (phone Tailscale IP + ADB TCP port)
+#   BRAIN_CALLBACK_TOKEN      — token for Brain task result callback
 
 on:
   workflow_dispatch:
@@ -42,7 +44,7 @@ on:
 jobs:
   android-e2e:
     name: Android Real Device E2E
-    runs-on: [self-hosted, mac-mini, android]
+    runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
       TASK_ID: ${{ inputs.task_id }}
@@ -55,6 +57,16 @@ jobs:
         with:
           ref: ${{ inputs.pr_branch || 'main' }}
           fetch-depth: 1
+
+      - name: Connect to Tailscale
+        uses: tailscale/github-action@v2
+        with:
+          authkey: ${{ secrets.TS_AUTHKEY }}
+
+      - name: Install Android Platform Tools (adb)
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq android-tools-adb
 
       - name: Verify ADB device connectivity
         run: |

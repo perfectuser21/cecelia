@@ -1,33 +1,32 @@
-# DoD — Self-hosted 安卓真机测试接入
+# DoD — 安卓真机测试接入（云端 runner + Tailscale，无需自建）
 
 task_id: cp-07040134-android-realdevice-runner
-branch: cp-07040134-zj-bluegreen-guardrail-bark
+
+## 架构决策（与最初设计的变更）
+
+最初方案是在 Mac mini 上自建 self-hosted runner。改为：**GitHub 云端 `ubuntu-latest` runner，用官方 `tailscale/github-action@v2` 临时加入 tailnet**（与现有 `verify-tailscale-brain.yml` 同一模式，复用已有 `TS_AUTHKEY` secret），任务结束即断开连接。
+
+优点：不需要任何专用机器、不需要 sudo 装常驻服务、不给生产机器引入"执行任意 CI 代码"的风险面。
 
 ## 交付物
 
 ### 1. `.github/workflows/e2e-android-realdevice.yml`
 - `workflow_dispatch` 触发，参数：`task_id / sprint_dir / pr_branch / apk_run_id / device_serial`
-- runs-on: `[self-hosted, mac-mini, android]`
-- 步骤：设备连通性验证 → APK 下载（来自上游 run 的 artifact）→ 执行 sprint 目录的 `e2e-verify-android.sh` → 收集 logcat + 截图
+- runs-on: `ubuntu-latest`（云端，非自建）
+- 步骤：Checkout → Tailscale 连接（`tailscale/github-action@v2`）→ 装 adb（`apt-get install android-tools-adb`）→ 设备连通性验证 → APK 下载 → 执行 `e2e-verify-android.sh` → 收集 logcat + 截图
 
 ### 2. `packages/engine/runners/android/e2e-verify-android-template.sh`
 - Sprint Generator 生成真机 E2E 脚本时的参考模板
 - 5 步验收：设备确认 → APK 安装 → 应用重置 → 唤起抖音 + 采集 → 断言（进程存活 + 无崩溃）
 
-### 3. `packages/engine/runners/android/setup-mac-mini-runner.sh`
-- Mac mini 注册 self-hosted runner 的一次性脚本
-- 检查 adb / Tailscale → 下载 runner → config + launchd 服务安装
-
 ## 验收标准
 
-- [ ] `e2e-android-realdevice.yml` 可被 evaluator SKILL 以 `target_environment=android_realdevice` 触发
-- [ ] runner label `[self-hosted, mac-mini, android]` 与 Mac mini 注册时 `--labels` 一致
-- [ ] `HONOR_DEVICE_ADB_TARGET` secret 设置后，`adb connect` 步骤能连上 Honor 手机
-- [ ] APK artifact 来自 Task 6 build run，通过 `apk_run_id` 参数传入后能正确下载安装
-- [ ] 脚本完成后 `screenshots/` 目录有截图和 logcat，上传为 GitHub artifact
+- [x] `e2e-android-realdevice.yml` 改为 `ubuntu-latest` + Tailscale action，不依赖自建 runner
+- [x] Tailscale 连接复用现有 `TS_AUTHKEY` secret（已存在，`verify-tailscale-brain.yml` 已在用）
+- [x] `adb connect` 步骤支持通过 `device_serial` 输入参数覆盖 secret，便于不设 secret 也能手动测试
+- [x] 手机侧已切换到固定端口 `adb tcpip 5555`（不用每次变化的无线调试临时端口）
 
-## 手工配置项（不在代码里，需人工完成）
+## 手工配置项（不在代码里，需人工完成，非本 PR 阻塞项）
 
-1. 在 Mac mini 上跑 `setup-mac-mini-runner.sh`，注册 runner（runner name: `mac-mini-android-runner`）
-2. 在 GitHub repo Settings → Secrets 写入 `HONOR_DEVICE_ADB_TARGET`（格式：`<tailscale-ip>:5555`）
-3. Honor 手机端持续保持 `adb tcpip 5555`（重启后需重新执行，建议用 Tasker 自动化）
+1. **`HONOR_DEVICE_ADB_TARGET` secret 写入 GitHub repo**：值为 `100.91.227.1:5555`（当前 Honor 测试机 Tailscale IP + 固定 adb 端口）。当前 `gh` CLI 的 PAT 缺少 secrets 写权限（403），需要 Alex 去 GitHub UI 手动设置，或提供权限更全的 PAT。设置前可以用 `device_serial` 输入参数手动测试，不阻塞验证。
+2. **手机保持 `adb tcpip 5555` 常开**：手机重启后需要重新执行 `adb tcpip 5555`（可以考虑用 Tasker 之类的工具在开机时自动执行，这个不在本次范围内）。
