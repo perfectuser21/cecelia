@@ -1,11 +1,10 @@
 /**
  * decision-log.test.js —— mock pool（vi.fn 断言 SQL 形状 + 参数顺序），不跑真 pg。
  * append-only 行为已由 migration 312 的真库 trigger 覆盖（spec §测试策略）。
- * heartbeat（同为 IO 薄层）一并在此测。
+ * heartbeat 测试在 heartbeat.test.js（lint-test-pairing 配对要求）。
  */
 import { describe, it, expect, vi } from 'vitest';
 import { appendHop, nextHop, SingletonConflictError } from '../decision-log.js';
-import { writeHeartbeat } from '../heartbeat.js';
 
 const RUN_ID = '11111111-2222-3333-4444-555555555555';
 
@@ -103,22 +102,5 @@ describe('nextHop', () => {
   it('已有 hop=7 → 8', async () => {
     const pool = mockPool({ rows: [{ next_hop: 8 }] });
     await expect(nextHop(pool, RUN_ID)).resolves.toBe(8);
-  });
-});
-
-describe('writeHeartbeat', () => {
-  it('UPDATE initiative_runs 三列，now 从参数注入不自取时间', async () => {
-    const pool = mockPool();
-    const now = new Date('2026-07-04T12:00:00Z');
-    await writeHeartbeat(pool, { runId: RUN_ID, host: 'mac-mini-us', pid: 4242, now });
-
-    expect(pool.query).toHaveBeenCalledTimes(1);
-    const [sql, params] = pool.query.mock.calls[0];
-    expect(sql).toContain('UPDATE initiative_runs');
-    for (const col of ['orchestrator_heartbeat_at', 'orchestrator_host', 'orchestrator_pid']) {
-      expect(sql).toContain(col);
-    }
-    expect(sql).toMatch(/WHERE id = \$1/);
-    expect(params).toEqual([RUN_ID, now, 'mac-mini-us', 4242]);
   });
 });
