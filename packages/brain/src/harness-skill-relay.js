@@ -79,7 +79,7 @@ export async function spawnSkillRelaySession(task, deps = {}) {
 
     // 5. github token
     const tokenFn = deps.tokenFn
-      || (await import('./harness-utils.js')).resolveGitHubToken;
+      || (await import('./harness-credentials.js')).resolveGitHubToken;
     const githubToken = await tokenFn();
 
     // 6. prompt：skill 全文 inline + 上下文头（与图节点的 loadSkillContent 注入模式一致）
