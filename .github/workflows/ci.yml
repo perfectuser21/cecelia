@@ -416,6 +416,17 @@ jobs:
       - name: Self-test (fixture cases)
         run: bash .github/workflows/scripts/__tests__/lint-migration-unique-version.test.sh
 
+  # ─── Auto-merge 决策脚本自测 ───────────────────────────────────
+  # 守卫 should-auto-merge.sh：确保 feat(harness): PR 被跳过（交给 harness 裁判 gate），
+  # 普通 fix/feat PR 正常合并。防止未来改动误删跳过逻辑或误伤手动 /dev 流程。
+  lint-auto-merge-decision:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - uses: actions/checkout@v4
+      - name: Self-test (auto-merge decision cases)
+        run: bash .github/workflows/scripts/__tests__/should-auto-merge.test.sh
+
   # ─── Brain: Unit Tests (4-shard matrix + Test Impact Analysis) ─
   # PR 模式：vitest --changed 仅跑被改文件影响的 test（Gate 1 升级，目标 < 5 min）
   # push 模式：跑全量 test 保 main 绿
@@ -1386,7 +1397,7 @@ jobs:
   # ─── Gate: 所有检查通过才能合并 ─────────────────────────────
   ci-passed:
     if: always()
-    needs: [secrets-scan, dod-format-check, dep-audit, registry-lint, eslint, pr-size-check, branch-naming, engine-tests, engine-tests-shell, dashboard-staging-gate-smoke, lint-migration-unique-version, brain-unit, brain-unit-all, brain-diff-coverage, brain-integration, workspace-build, workspace-test, e2e-smoke, core-regression, dod-behavior-dynamic, harness-dod-integrity, harness-contract-lint, docker-infra-smoke, lint-test-pairing, lint-feature-has-smoke, lint-base-fresh, lint-tdd-commit-order, lint-learning-constraint-coverage, lint-test-quality, lint-no-mock-only-test, lint-no-fake-test, lint-single-exit, lint-bypass-not-committed, real-env-smoke, workspace-api-smoke, quality-tests]
+    needs: [secrets-scan, dod-format-check, dep-audit, registry-lint, eslint, pr-size-check, branch-naming, engine-tests, engine-tests-shell, dashboard-staging-gate-smoke, lint-migration-unique-version, lint-auto-merge-decision, brain-unit, brain-unit-all, brain-diff-coverage, brain-integration, workspace-build, workspace-test, e2e-smoke, core-regression, dod-behavior-dynamic, harness-dod-integrity, harness-contract-lint, docker-infra-smoke, lint-test-pairing, lint-feature-has-smoke, lint-base-fresh, lint-tdd-commit-order, lint-learning-constraint-coverage, lint-test-quality, lint-no-mock-only-test, lint-no-fake-test, lint-single-exit, lint-bypass-not-committed, real-env-smoke, workspace-api-smoke, quality-tests]
     runs-on: ubuntu-latest
     timeout-minutes: 2
     steps:
@@ -1407,6 +1418,7 @@ jobs:
           check "engine-tests-shell" "${{ needs.engine-tests-shell.result }}"
           check "dashboard-staging-gate-smoke" "${{ needs.dashboard-staging-gate-smoke.result }}"
           check "lint-migration-unique-version" "${{ needs.lint-migration-unique-version.result }}"
+          check "lint-auto-merge-decision" "${{ needs.lint-auto-merge-decision.result }}"
           check "brain-unit"          "${{ needs.brain-unit.result }}"
           check "brain-unit-all"      "${{ needs.brain-unit-all.result }}"
           check "brain-diff-coverage" "${{ needs.brain-diff-coverage.result }}"
@@ -1448,17 +1460,27 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
+      - name: Checkout（取 should-auto-merge.sh 决策脚本）
+        uses: actions/checkout@v4
       - name: Auto-merge cp-* PR（含重试 + Brain 失败回写）
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           BRAIN_URL: ${{ vars.BRAIN_URL || 'http://localhost:5221' }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           PR_BODY: ${{ github.event.pull_request.body }}
+          # PR_TITLE / HEAD_BRANCH 走 env 而非内联 ${{ }}：分支名和标题是用户可控输入，
+          # 直接内联进 run 脚本存在 shell 注入面（GHA 已知问题）。
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          HEAD_BRANCH: ${{ github.head_ref }}
         run: |
-          # 所有 cp-* 分支 PR CI 绿即自动合并（stop hook 删除后统一由此机制处理）
-          HEAD_BRANCH="${{ github.head_ref }}"
-          if ! echo "$HEAD_BRANCH" | grep -qE '^cp-'; then
-            echo "ℹ️  Not a cp-* branch, skipping auto-merge"
+          # 合并决策抽到 should-auto-merge.sh（可单测，见 __tests__/should-auto-merge.test.sh）。
+          # 关键：harness generator 产出的 PR 也用 cp-* 分支，但走 harness 自己的
+          # evaluator+DeepSeek 裁判 gate 决定 merge。若此处仍按「cp-* + CI 绿」抢先合并，会
+          # 架空裁判裁决权（用户曾见「裁判说不放行，代码还是被 merge」）。脚本按 PR 标题
+          # feat(harness): 前缀识别 harness-owned PR 并跳过，把 merge 交还给 harness gate。
+          DECISION="$(bash .github/workflows/scripts/should-auto-merge.sh "$HEAD_BRANCH" "$PR_TITLE")"
+          echo "$DECISION"
+          if [[ "$DECISION" == SKIP:* ]]; then
             exit 0
           fi
 
