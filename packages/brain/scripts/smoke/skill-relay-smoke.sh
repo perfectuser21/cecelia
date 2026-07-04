@@ -25,6 +25,14 @@ const a = parseCliArgs(['--task-id','t','--sprint-dir','s','--worktree','/w']);
 if (a.taskId !== 't' || a.worktree !== '/w') process.exit(1);
 " && ok "judge-cli 全参解析" || fail "judge-cli 解析"
 
+# 4. P2-1 review 分级判定(纯函数,离线)
+node --input-type=module -e "
+import { deriveReviewRequired } from './src/harness-skill-relay.js';
+if (deriveReviewRequired({ title: 'fix: x', payload: {} }) !== false) process.exit(1);
+if (deriveReviewRequired({ title: 'feat: 新功能', payload: {} }) !== true) process.exit(1);
+if (deriveReviewRequired({ title: 'feat: y', payload: { review_required: false } }) !== false) process.exit(1);
+" && ok "review 分级判定(fix→auto/feat→人审/显式赢)" || fail "review 分级判定"
+
 echo ""
 echo "PASS: $PASS  FAIL: $FAIL"
 [[ $FAIL -eq 0 ]] && echo "✅ 全部通过" || { echo "❌ 有 $FAIL 项失败"; exit 1; }
