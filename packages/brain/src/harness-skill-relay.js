@@ -108,6 +108,10 @@ export async function spawnSkillRelaySession(task, deps = {}) {
       env: {
         ...acctOpts.env,
         CECELIA_TASK_TYPE: 'harness_controller',
+        // v1.0.1：HARNESS_NODE 使 entrypoint tee stdout（过程观测）+ 结束 POST callback；
+        // relay 容器无 thread_lookup，callback 由 harness-callback 路由 200 ack（免 5×404 重试尾巴）
+        HARNESS_NODE: 'controller',
+        HARNESS_CALLBACK_URL: `http://host.docker.internal:5221/api/brain/harness/callback/${containerId}`,
         HARNESS_TASK_ID: task.id,
         HARNESS_INITIATIVE_ID: initiativeId,
         HARNESS_SPRINT_DIR: sprintDir,
