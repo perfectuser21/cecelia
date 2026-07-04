@@ -251,6 +251,20 @@ describe('runStagingE2E', () => {
     expect(r.reason).toBe('deploy_failed');
   });
 
+  it('ZenithJoy :5201 健康检查失败 → FAIL reason=zj_staging_unhealthy（原因透传，不被覆盖为 deploy_failed）', async () => {
+    const pool = makeMockPool();
+    const curlErr = 'curl: (7) Failed to connect to localhost port 5201: Connection refused';
+    const deploy = () => ({ status: 'failed', reason: 'zj_staging_unhealthy', output: curlErr, stagingPort: 5201 });
+    const notifyMsgs = [];
+    const notify = async (msg) => { notifyMsgs.push(msg); };
+    const zjTask = { id: 'task-zj', payload: { initiative_id: 'init-zj', pr_url: 'https://pr/zj', base_repo: 'perfectuser21/zenithjoy' } };
+    const r = await runStagingE2E(zjTask, { pool, deploy, loadAcceptance: async () => ACCEPTANCE, notify });
+    expect(r.verdict).toBe('FAIL');
+    expect(r.reason).toBe('zj_staging_unhealthy');
+    // 飞书通知含诊断输出（curl 错误）
+    expect(notifyMsgs.some((m) => m.includes('Connection refused'))).toBe(true);
+  });
+
   it('部署成功 + scenario 全过 → PASS，verdict 落库 + 写回 tasks.result', async () => {
     const pool = makeMockPool();
     const deploy = () => ({ status: 'success', reason: null, output: 'SUCCESS' });
@@ -379,6 +393,28 @@ describe('handlePromote — ZenithJoy staging FAIL 护栏通知', () => {
     expect(notifyMsgs[0]).toContain('ZJ 护栏触发');
     expect(notifyMsgs[0]).toContain('5201');
     expect(notifyMsgs[0]).toContain('5200');
+  });
+
+  it('FAIL + customer line + deployOutput → 通知含诊断输出（开发者无需查 CI 日志）', async () => {
+    const notifyMsgs = [];
+    const notify = async (msg) => { notifyMsgs.push(msg); };
+    const pool = { query: vi.fn(async () => ({ rows: [] })) };
+    const status = await handlePromote(
+      pool,
+      {
+        verdict: 'FAIL',
+        baseRepo: 'perfectuser21/zenithjoy',
+        prUrl: 'https://github.com/pr/2',
+        initiativeId: 'init-zj-2',
+        deployOutput: 'curl: (7) Failed to connect to localhost port 5201: Connection refused',
+      },
+      { notify },
+    );
+    expect(status).toBe('n_a');
+    expect(notifyMsgs).toHaveLength(1);
+    expect(notifyMsgs[0]).toContain('ZJ 护栏触发');
+    expect(notifyMsgs[0]).toContain('诊断');
+    expect(notifyMsgs[0]).toContain('Connection refused');
   });
 
   it('SKIP + customer line → 不通知（配置缺省非真失败）', async () => {
