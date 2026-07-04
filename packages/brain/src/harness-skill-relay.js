@@ -18,6 +18,21 @@ import pool from './db.js';
 const RELAY_FLAG = 'skill-relay';
 const RELAY_DEADLINE_HOURS = 6;
 
+/**
+ * P2-1 review 分级判定（主理人规矩：新功能人审，非新功能 auto merge——risk-based gating）。
+ * 显式 payload.review_required 永远赢；fix/chore/修复/bug 类标题或 change_kind∈{fix,small,thicken} → false；
+ * 其余（新功能/判定不出）→ true（安全方向：宁可多看一眼）。
+ */
+export function deriveReviewRequired(task) {
+  const explicit = task?.payload?.review_required;
+  if (typeof explicit === 'boolean') return explicit;
+  const kind = task?.payload?.change_kind;
+  if (['fix', 'small', 'thicken'].includes(kind)) return false;
+  const title = String(task?.title || '');
+  if (/^(fix|hotfix|chore)\b|^(fix|hotfix|chore)\(|修复|\bbug\b/i.test(title)) return false;
+  return true;
+}
+
 /** 双轨路由判断：payload.orchestrator==='skill-relay' 才走 relay */
 export function isSkillRelayTask(task) {
   return task?.payload?.orchestrator === RELAY_FLAG;
@@ -67,6 +82,18 @@ export async function spawnSkillRelaySession(task, deps = {}) {
     const sprintDir = task.payload?.sprint_dir
       || `sprints/${stampMMDDHHNN(now())}-relay-${short}`;
 
+    // 3.5 P2-1 review 分级：点火时判定并持久化（controller 经 GET task 读 payload.review_required）
+    const reviewRequired = deriveReviewRequired(task);
+    try {
+      await dbPool.query(
+        `UPDATE tasks SET payload = COALESCE(payload, '{}'::jsonb) || jsonb_build_object('review_required', $2::boolean)
+          WHERE id = $1`,
+        [task.id, reviewRequired]
+      );
+    } catch (err) {
+      console.warn(`[skill-relay] review_required 持久化失败（不阻塞，controller 以 prompt 头为准）: ${err.message}`);
+    }
+
     // 4. 账号轮换/熔断（原地改 env）
     const acctOpts = { env: {} };
     const resolveAccountFn = deps.resolveAccountFn
@@ -93,6 +120,7 @@ export async function spawnSkillRelaySession(task, deps = {}) {
       `HARNESS_TASK_ID=${task.id}`,
       `SPRINT_DIR=${sprintDir}`,
       `BRAIN_URL=http://host.docker.internal:5221`,
+      `REVIEW_REQUIRED=${reviewRequired}`,
       `任务标题：${task.title || ''}`,
     ].join('\n');
 

@@ -129,3 +129,53 @@ describe('默认 deps 的 import 来源（N4 run-1 实证 bug：resolveGitHubTok
     expect(typeof mod.resolveGitHubToken).toBe('function');
   });
 });
+
+describe('deriveReviewRequired(P2-1:新功能人审/非新功能 auto merge)', () => {
+  let deriveReviewRequired;
+  beforeAll(async () => { ({ deriveReviewRequired } = await import('../harness-skill-relay.js')); });
+
+  it('显式 payload.review_required 永远赢(true/false 都尊重)', () => {
+    expect(deriveReviewRequired({ title: 'feat: 新东西', payload: { review_required: false } })).toBe(false);
+    expect(deriveReviewRequired({ title: 'fix: 修个小事', payload: { review_required: true } })).toBe(true);
+  });
+
+  it('fix/chore/修复/bug 类标题 → false(auto merge)', () => {
+    for (const t of ['fix: relay 空指针', 'fix(brain): x', 'chore: 清理', 'hotfix: 紧急', '修复 evaluator 误判', 'bug: 掉线']) {
+      expect(deriveReviewRequired({ title: t, payload: {} }), t).toBe(false);
+    }
+  });
+
+  it('payload.change_kind ∈ {fix,small,thicken} → false(加厚/小改不算新面)', () => {
+    for (const k of ['fix', 'small', 'thicken']) {
+      expect(deriveReviewRequired({ title: '随便', payload: { change_kind: k } })).toBe(false);
+    }
+  });
+
+  it('新功能/默认(判定不出) → true(安全方向:宁可多看一眼)', () => {
+    expect(deriveReviewRequired({ title: 'feat: 新增导出功能', payload: {} })).toBe(true);
+    expect(deriveReviewRequired({ title: '视频批量下载', payload: {} })).toBe(true);
+    expect(deriveReviewRequired({ title: '', payload: {} })).toBe(true);
+  });
+
+  it('spawn 时把判定结果持久化进 task payload(controller 经 API 读得到)并注入 prompt', async () => {
+    const { spawnSkillRelaySession } = await import('../harness-skill-relay.js');
+    const deps = {
+      pool: { query: vi.fn().mockResolvedValue({ rows: [] }) },
+      spawnFn: vi.fn().mockResolvedValue({}),
+      loadSkill: vi.fn().mockReturnValue('SKILL'),
+      ensureWt: vi.fn().mockResolvedValue('/tmp/wt'),
+      resolveAccountFn: vi.fn().mockResolvedValue(undefined),
+      tokenFn: vi.fn().mockResolvedValue('t'),
+      now: () => new Date('2026-07-05T12:00:00Z'),
+    };
+    const task = { id: 'aaaabbbb-cccc-dddd-eeee-ffff00001111', title: 'feat: 全新能力', payload: { orchestrator: 'skill-relay', sprint_dir: 's' } };
+    const r = await spawnSkillRelaySession(task, deps);
+    expect(r.ok).toBe(true);
+    // payload 持久化
+    const upd = deps.pool.query.mock.calls.find(([sql]) => /UPDATE tasks/.test(sql) && /review_required/.test(sql));
+    expect(upd, '必须 UPDATE tasks payload.review_required').toBeTruthy();
+    // prompt 注入
+    const prompt = deps.spawnFn.mock.calls[0][0].prompt;
+    expect(prompt).toMatch(/REVIEW_REQUIRED=true/);
+  });
+});
