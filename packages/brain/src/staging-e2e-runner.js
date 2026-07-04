@@ -341,12 +341,28 @@ export async function checkInitiativeAggregate(dbPool, initiativeId) {
   return { allPass, testedSha };
 }
 
-export async function handlePromote(dbPool, { verdict, baseRepo, prUrl, initiativeId }, opts = {}) {
+export async function handlePromote(dbPool, { verdict, baseRepo, prUrl, initiativeId, deployOutput }, opts = {}) {
   const decision = decidePromote({ verdict, baseRepo });
   const notify = opts.notify || sendFeishu;
   try {
     if (decision.action === 'none') {
       await updatePromoteStatus(dbPool, prUrl, PROMOTE_STATUS.NA);
+      // ZenithJoy customer line staging FAIL → 飞书通知（护栏触发，:5200 未触碰）。
+      // SKIP（无合同/无 docker）不通知：不是真失败，是配置缺省。
+      if (verdict === 'FAIL' && decision.line === 'customer') {
+        try {
+          const outputSnippet = deployOutput
+            ? `\n诊断: ${String(deployOutput).trim().slice(-400)}`
+            : '';
+          await notify(
+            `🚨 [ZJ 护栏触发] ZenithJoy staging :5201 失败，:5200 生产未触碰\n`
+            + `initiative: ${initiativeId || '?'}\nPR: ${prUrl || '?'}${outputSnippet}\n`
+            + `下一步: 检查 ZenithJoy CI deploy 日志，修复后重推 main 触发重跑`
+          );
+        } catch (e) {
+          console.warn(`[staging-e2e] ZJ 护栏触发通知失败（忽略）: ${e.message}`);
+        }
+      }
       return PROMOTE_STATUS.NA;
     }
     if (decision.action === 'auto') {
@@ -617,7 +633,7 @@ export async function runStagingE2E(task, opts = {}) {
     // Slice2：PASS 后放行分流（内部线 auto-promote / 客户线 pending+通知 / base_repo 缺失保守 pending）。
     // best-effort，不影响 verdict 已落库。
     const promoteStatus = await handlePromote(
-      dbPool, { verdict, baseRepo, prUrl, initiativeId },
+      dbPool, { verdict, baseRepo, prUrl, initiativeId, deployOutput: base.deployOutput },
       { promoteExec: opts.promoteExec, notify: opts.notify },
     );
     await writeTaskResult(dbPool, task.id, {
@@ -654,7 +670,7 @@ export async function runStagingE2E(task, opts = {}) {
       const dep = deploy({ exec: opts.exec, cwd: opts.cwd, line });
       base.deployOutput = dep.output;
       if (dep.status === 'skipped') return await finalize('SKIP', dep.reason);
-      if (dep.status === 'failed') return await finalize('FAIL', 'deploy_failed');
+      if (dep.status === 'failed') return await finalize('FAIL', dep.reason || 'deploy_failed');
       base.deployedAt = new Date();
       const stagingPort = dep.stagingPort || STAGING_PORT;
       base.port = stagingPort;
