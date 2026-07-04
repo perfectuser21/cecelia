@@ -747,6 +747,28 @@ jobs:
         if: github.ref == 'refs/heads/main'
         run: bash scripts/ci/run-core-regression.sh --tier release
 
+  # ─── Invariant→契约桥：红线裸奔检测（CL-2 cicd-closeloop）────────────
+  # 读 Brain invariant 全集（CI 无 Brain → 读 config/invariants-snapshot.json 快照），
+  # 对账 regression-contract.yaml golden_paths[].invariant_ids：
+  #   有红线无对应守卫 → 报「invariant #X 裸奔」清单。
+  # 告警模式：报告但 exit 0，不进 ci-passed 依赖列表（additive）。
+  # 转强制：给 step 加 env INVARIANT_BRIDGE_STRICT=1（裸奔即 exit 1）。
+  # 快照刷新：本地 Brain 活着时 node scripts/ci/export-invariants-snapshot.mjs
+  #（快照超 30 天脚本自动告警提醒）。
+  invariant-bridge:
+    needs: [changes]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: 红线裸奔检测（invariants ↔ regression-contract 对账）
+        env:
+          INVARIANT_BRIDGE_SOURCE: snapshot   # CI 确定性：不探测 Brain API
+        run: node scripts/ci/check-invariant-coverage.mjs
+
   # ─── DoD BEHAVIOR 动态命令执行（curl/psql/bash/npm 真跑）────────────
   # 与 engine-tests 中的 "DoD BEHAVIOR 命令执行" 分工：
   #   engine-tests：只跑 node 命令（无服务依赖，快速）

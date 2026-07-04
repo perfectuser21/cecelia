@@ -92,6 +92,22 @@ describe('parseContractInvariantIds', () => {
     expect(byId['CORE-INV-03']).toEqual(['cccc3333-0000-0000-0000-000000000003']);
     expect(byId['CORE-001']).toEqual([]); // 无字段 → 空数组，不报错（additive 兼容）
   });
+
+  it('容忍尾注释（真实契约写法：invariant_ids 后带 # 人读备注）', () => {
+    const entries = parseContractInvariantIds(`
+golden_paths:
+  - id: CORE-INV-01
+    test_command: "true"
+    invariant_ids: [aaaa1111-0000-0000-0000-000000000001]  # 真环境验证才算done
+  - id: CORE-INV-02
+    test_command: "true"
+    invariant_ids:
+      - bbbb2222-0000-0000-0000-000000000002  # 租户隔离
+`);
+    const byId = Object.fromEntries(entries.map((e) => [e.id, e.invariantIds]));
+    expect(byId['CORE-INV-01']).toEqual(['aaaa1111-0000-0000-0000-000000000001']);
+    expect(byId['CORE-INV-02']).toEqual(['bbbb2222-0000-0000-0000-000000000002']);
+  });
 });
 
 describe('computeCoverage', () => {
