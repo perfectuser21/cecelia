@@ -1,0 +1,229 @@
+/**
+ * ground-truth.js —— 观测采集（IO 薄层）：每跳现查外部真相，组装 derive 消费的 observed。
+ *
+ * 语义 SSOT：docs/superpowers/specs/2026-07-04-orchestrator-skeleton-design.md
+ *   §关键设计决策 2（在途观测）/ 3（verdict 锚定 SHA）/ 4（exit·auth 通道）。
+ * deps 全注入（不测真外部）：
+ *   pool       —— pg pool（../db.js 复用，run.js 组装）
+ *   execCmd(cmd) → stdout string —— gh/git/docker 封装；非零退出应 throw 且 err.stdout 带输出
+ *                  （gh pr checks 对 pending/fail 会非零退出，本文件用 err.stdout 兜底解析）
+ *   fileExists(path) → boolean
+ *   readFile(path) → string
+ *   readAuthCircuit() → rows —— 可选注入；缺省查 account_usage_cache
+ *                  （markAuthFailure 写入表，见 src/account-usage.js:194-202；D9 熔断经 DB 共享）
+ *   listHostPids({runId}) → number[] —— 可选注入；主机执行（mac_web 类）pid 检查，T3 接线，缺省 []
+ */
+
+/** gh check state → 三态 ci 映射 */
+const CI_FAIL_STATES = new Set(['FAILURE', 'ERROR', 'CANCELLED', 'TIMED_OUT', 'ACTION_REQUIRED', 'STARTUP_FAILURE']);
+const CI_PASS_STATES = new Set(['SUCCESS', 'SKIPPED', 'NEUTRAL']);
+
+function mapCiStatus(checkRows) {
+  if (!Array.isArray(checkRows) || checkRows.length === 0) return 'pending'; // CI 尚未挂上 → 视为 pending
+  if (checkRows.some((c) => CI_FAIL_STATES.has(c.state))) return 'fail';
+  if (checkRows.every((c) => CI_PASS_STATES.has(c.state))) return 'pass';
+  return 'pending'; // PENDING/QUEUED/IN_PROGRESS/EXPECTED 等
+}
+
+/** execCmd 容忍非零退出（gh pr checks 对 pending=8 / fail=1），用 err.stdout 兜底 */
+function execTolerant(execCmd, cmd) {
+  try {
+    return execCmd(cmd);
+  } catch (err) {
+    if (typeof err.stdout === 'string' && err.stdout.length > 0) return err.stdout;
+    throw err;
+  }
+}
+
+/** jsonb 列兼容：pg 返回对象，fake/旧数据可能是 string */
+function asJson(value) {
+  if (value == null) return null;
+  if (typeof value === 'string') {
+    try { return JSON.parse(value); } catch { return null; }
+  }
+  return value;
+}
+
+/** docker --format "{{json .}}" 输出（每行一个 JSON）→ 对象数组 */
+function parseJsonLines(stdout) {
+  return String(stdout || '')
+    .split('\n')
+    .map((l) => l.trim())
+    .filter(Boolean)
+    .map((l) => JSON.parse(l));
+}
+
+/** docker ps 的 Labels 字段（"a=b,c=d"）→ Map */
+function parseLabels(labelsStr) {
+  const map = {};
+  for (const kv of String(labelsStr || '').split(',')) {
+    const idx = kv.indexOf('=');
+    if (idx > 0) map[kv.slice(0, idx)] = kv.slice(idx + 1);
+  }
+  return map;
+}
+
+/** 决策日志里最新（hop 最大）的指定 action 行 */
+function latestRow(logRows, predicate) {
+  let best = null;
+  for (const r of logRows) {
+    if (predicate(r) && (best == null || r.hop > best.hop)) best = r;
+  }
+  return best;
+}
+
+/**
+ * lastAgentExit —— 严格按最新 spawn:* intent hop 作用域（derive.js 3d 契约）：
+ * 只取本 run 最新 spawn intent hop 对应容器（label cecelia.hop=<hop>）的 ExitCode；
+ * fix 后新 intent hop 无对应已退容器 → {code:null}，旧 exit 不残留、不会反复命中 3d 白吃 fix round。
+ * auth_failed 同作用域：仅当作用域容器存在时才采信 callback 文件的 auth 标记。
+ */
+function scopeLastAgentExit({ execCmd, exitedContainers, logRows, callbackResult }) {
+  const lastSpawn = latestRow(logRows, (r) => typeof r.action === 'string' && r.action.startsWith('spawn:'));
+  if (!lastSpawn) return { code: null, auth_failed: false };
+
+  const scoped = exitedContainers.find(
+    (c) => parseLabels(c.Labels)['cecelia.hop'] === String(lastSpawn.hop),
+  );
+  if (!scoped) return { code: null, auth_failed: false };
+
+  const stateJson = execTolerant(execCmd, `docker inspect ${scoped.ID} --format "{{json .State}}"`);
+  const state = asJson(stateJson) ?? {};
+  const authFailed =
+    callbackResult != null &&
+    (callbackResult.ci_fail_type === 'auth_failed' || callbackResult.auth_failed === true);
+  return { code: state.ExitCode ?? null, auth_failed: authFailed };
+}
+
+/**
+ * collectGroundTruth(deps, {taskId, runId, prdPath?, callbackResultPath?}) → observed
+ * 返回 derive(observed) 所需全部字段（counters 除外——loop 用 deriveCounters(decisionLog) 补齐），
+ * 外加原始 decisionLog / authCircuit / callbackResult 供 loop 与 T3 dispatcher 消费。
+ */
+export async function collectGroundTruth(deps, opts) {
+  const { pool, execCmd, fileExists, readFile } = deps;
+  const { taskId, runId, prdPath = 'sprint-prd.md', callbackResultPath = '.brain-result.json' } = opts;
+
+  // ---- DB 五路 ----
+  const runRes = await pool.query('SELECT * FROM initiative_runs WHERE id = $1', [runId]);
+  const run = runRes.rows[0];
+  if (!run) throw new Error(`collectGroundTruth: initiative_runs 无此 run 行: ${runId}`);
+
+  let contractRow = null;
+  if (run.contract_id) {
+    const cRes = await pool.query('SELECT * FROM initiative_contracts WHERE id = $1', [run.contract_id]);
+    contractRow = cRes.rows[0] ?? null;
+  }
+  const contract = { approved: contractRow?.status === 'approved', id: run.contract_id ?? null, row: contractRow };
+
+  const tRes = await pool.query('SELECT * FROM tasks WHERE id = $1', [taskId]);
+  const task = tRes.rows[0] ?? null;
+  if (!task) throw new Error(`collectGroundTruth: tasks 无此 task 行: ${taskId}`);
+
+  const logRes = await pool.query(
+    'SELECT hop, action, observed, derived_phase, gate_verdict, detail FROM orchestrator_decision_log WHERE run_id = $1 ORDER BY hop',
+    [runId],
+  );
+  const decisionLog = logRes.rows;
+
+  // 熔断状态（P0-3 通道②）：markAuthFailure 写 account_usage_cache（src/account-usage.js:194-202）。
+  // derive 不读——熔断换号分路归 T3 dispatcher；这里只透传观测。
+  let authCircuit;
+  if (deps.readAuthCircuit) {
+    authCircuit = await deps.readAuthCircuit();
+  } else {
+    const acRes = await pool.query(
+      'SELECT account_id, is_auth_failed, auth_fail_resets_at, auth_fail_count FROM account_usage_cache WHERE is_auth_failed = true',
+    );
+    authCircuit = acRes.rows;
+  }
+
+  // ---- 文件通道 ----
+  const prdExists = Boolean(fileExists(prdPath));
+  let callbackResult = null;
+  if (fileExists(callbackResultPath)) {
+    try {
+      callbackResult = JSON.parse(readFile(callbackResultPath));
+    } catch {
+      callbackResult = null; // 半写/损坏文件 → 视为无 callback（下一跳外部真相仍在）
+    }
+  }
+
+  // ---- PR 状态（gh 封装）----
+  let pr = null;
+  if (run.pr_url) {
+    const view = asJson(execTolerant(execCmd, `gh pr view ${run.pr_url} --json state,mergeStateStatus,headRefOid`)) ?? {};
+    const checks = asJson(execTolerant(execCmd, `gh pr checks ${run.pr_url} --json state`)) ?? [];
+    pr = {
+      url: run.pr_url,
+      state: view.state ?? null,
+      mergeStateStatus: view.mergeStateStatus ?? null,
+      merged: view.state === 'MERGED',
+      head_sha: view.headRefOid ?? null,
+      ci: mapCiStatus(checks),
+    };
+  }
+
+  // ---- propose 分支 rN（外部真相，ganRound 唯一权威）----
+  const lsRemote = execTolerant(execCmd, 'git ls-remote --heads origin "cp-harness-propose-r*"');
+  let proposeBranchRn = 0;
+  for (const m of String(lsRemote).matchAll(/cp-harness-propose-r(\d+)-/g)) {
+    proposeBranchRn = Math.max(proposeBranchRn, Number(m[1]));
+  }
+
+  // ---- docker 在途/已退（P0-1 / P0-3；dispatcher spawn 时必打 label：run_id+hop+role）----
+  const psOut = execTolerant(execCmd, `docker ps --filter "label=cecelia.run_id=${runId}" --format "{{json .}}"`);
+  const containers = parseJsonLines(psOut);
+  const hostPids = deps.listHostPids ? await deps.listHostPids({ runId }) : []; // 主机执行 pid 检查，T3 接线
+  const psExitedOut = execTolerant(
+    execCmd,
+    `docker ps -a --filter "label=cecelia.run_id=${runId}" --filter "status=exited" --format "{{json .}}"`,
+  );
+  const exitedContainers = parseJsonLines(psExitedOut);
+  const lastAgentExit = scopeLastAgentExit({ execCmd, exitedContainers, logRows: decisionLog, callbackResult });
+
+  // ---- 决策日志推导字段（verdict 权威 = 决策日志行，P0-2；initiative_runs 的 verdict 列只是展示缓存）----
+  const generatorSpawned = decisionLog.some(
+    (r) => r.action === 'spawn:generator' || r.action === 'spawn:generator-fix',
+  );
+  const evalRow = latestRow(decisionLog, (r) => r.action === 'verdict:evaluate');
+  const judgeRow = latestRow(decisionLog, (r) => r.action === 'verdict:judge');
+  const evaluateVerdict = evalRow ? asJson(evalRow.detail) : null;
+  const judgeVerdict = judgeRow ? asJson(judgeRow.detail) : null;
+
+  // GAN 本轮 verdict：只认 detail.rn === 当前分支 rN 的 reviewer verdict（旧轮不算）
+  const reviewerRow = latestRow(decisionLog, (r) => r.action === 'verdict:reviewer');
+  const reviewerDetail = reviewerRow ? asJson(reviewerRow.detail) : null;
+  const ganLatestRoundVerdict =
+    reviewerDetail && reviewerDetail.rn === proposeBranchRn ? reviewerDetail.verdict ?? null : null;
+
+  // review gate：required 来自 tasks.payload（harness-initiative 透传 review_required）；
+  // approved 权威 = 决策日志 verdict:human_review 行，锚定当前 head_sha（stale 批准不放行）
+  const payload = asJson(task.payload) ?? {};
+  const reviewRequired = payload.review_required === true;
+  const hrRow = latestRow(decisionLog, (r) => r.action === 'verdict:human_review');
+  const hrDetail = hrRow ? asJson(hrRow.detail) : null;
+  const reviewApproved = Boolean(
+    hrDetail && hrDetail.approved === true && pr && hrDetail.pr_head_sha === pr.head_sha,
+  );
+
+  return {
+    run,
+    task,
+    prdExists,
+    contract,
+    pr,
+    inflight: { containers, host_pids: hostPids },
+    lastAgentExit,
+    proposeBranchRn,
+    ganLatestRoundVerdict,
+    generatorSpawned,
+    evaluateVerdict,
+    judgeVerdict,
+    reviewRequired,
+    reviewApproved,
+    decisionLog,
+    authCircuit,
+    callbackResult,
+  };
+}

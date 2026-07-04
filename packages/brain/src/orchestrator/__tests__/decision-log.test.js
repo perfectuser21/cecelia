@@ -68,6 +68,17 @@ describe('appendHop', () => {
     await expect(appendHop(pool, entry)).rejects.toThrow(new RegExp(`${RUN_ID}.*hop.*3|hop.*3.*${RUN_ID}`));
   });
 
+  it('observed 为 null → fail-fast throw，不发 SQL（空快照=静默丢观测）', async () => {
+    const pool = mockPool();
+    await expect(appendHop(pool, { ...entry, observed: null })).rejects.toThrow(/observed/);
+    expect(pool.query).not.toHaveBeenCalled();
+  });
+
+  it('observed 为 undefined → fail-fast throw', async () => {
+    const pool = mockPool();
+    await expect(appendHop(pool, { ...entry, observed: undefined })).rejects.toThrow(/observed/);
+  });
+
   it('非 23505 错误原样抛出，不吞不包装', async () => {
     const err = new Error('connection refused');
     err.code = 'ECONNREFUSED';

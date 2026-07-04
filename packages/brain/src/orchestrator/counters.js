@@ -17,12 +17,17 @@
  *   noPushStreak    = 尾部连续的 spawn:proposer 行中 observed.propose_branch_advanced === false 的个数，
  *                     出现 true 即断；缺字段（旧行/崩溃窗口）保守断开不计
  *   noVerdictStreak = 同理，spawn:reviewer 行 × observed.verdict_parsed
+ *   crossCheckMismatch = proposerCount !== proposeBranchMaxRn（崩溃窗口漏记 / 记了没派的交叉校验信号，
+ *                        loop 把它写进 appendHop detail 供回放排障）
  */
+import { ACTION } from './constants.js';
 
 /**
  * 从 (action, observed) 子序列尾部数连续 streak：
  * 只看 action 匹配的行（GAN 交替中夹的其他行不打断）；
  * flagKey === false 计入，其余（true/缺失）即断。
+ * 缺字段（旧行/崩溃窗口）保守断开的代价：streak 熔断更晚触发——安全兜底依赖 MAX_HOPS(200)+budget cap，
+ * 不会因此放松任何硬上限，只是 GAN 守护可能多跑几跳才停。
  */
 function tailStreak(rows, action, flagKey) {
   let streak = 0;
@@ -57,19 +62,19 @@ export function deriveCounters(logRows, options) {
       return true;
     });
 
-  const fixRound = rows.filter((r) => r.action === 'spawn:generator-fix').length;
+  const fixRound = rows.filter((r) => r.action === ACTION.SPAWN_GENERATOR_FIX).length;
 
   // ganRound：分支 rN 是唯一权威（外部真相）；proposer intent COUNT 只作交叉校验，
-  // 不一致（崩溃窗口漏记 / 记了没派）一律取分支值。
-  const proposerCount = rows.filter((r) => r.action === 'spawn:proposer').length;
-  const ganRound = proposeBranchMaxRn; // proposerCount !== proposeBranchMaxRn 时以分支为准
-  void proposerCount; // 交叉校验值保留在此，供未来 detail 记录差异（T3）
+  // 不一致（崩溃窗口漏记 / 记了没派）一律取分支值，mismatch 信号由 loop 写进 appendHop detail。
+  const proposerCount = rows.filter((r) => r.action === ACTION.SPAWN_PROPOSER).length;
+  const ganRound = proposeBranchMaxRn;
 
   return {
     hops: rows.length,
     fixRound,
     ganRound,
-    noPushStreak: tailStreak(rows, 'spawn:proposer', 'propose_branch_advanced'),
-    noVerdictStreak: tailStreak(rows, 'spawn:reviewer', 'verdict_parsed'),
+    noPushStreak: tailStreak(rows, ACTION.SPAWN_PROPOSER, 'propose_branch_advanced'),
+    noVerdictStreak: tailStreak(rows, ACTION.SPAWN_REVIEWER, 'verdict_parsed'),
+    crossCheckMismatch: proposerCount !== proposeBranchMaxRn,
   };
 }

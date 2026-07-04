@@ -27,6 +27,10 @@ export class SingletonConflictError extends Error {
  * observed/detail 显式 JSON.stringify（jsonb 列），detail 缺省 → null。
  */
 export async function appendHop(pool, { runId, hop, observed, derivedPhase, gateVerdict, action, detail }) {
+  if (observed == null) {
+    // fail-fast：observed 快照是回放与 streak 推导的原料，空快照 = 静默丢观测（Task B review Minor ③）
+    throw new Error(`appendHop: observed is required (run ${runId} hop ${hop})`);
+  }
   try {
     await pool.query(
       `INSERT INTO orchestrator_decision_log

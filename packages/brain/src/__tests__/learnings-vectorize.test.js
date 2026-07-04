@@ -431,7 +431,7 @@ describe('selfcheck schema version', () => {
     }));
 
     const { EXPECTED_SCHEMA_VERSION } = await import('../selfcheck.js');
-    // 293 是地板，加 migration 不要 bump（issue 14d66027）。
-    expect(EXPECTED_SCHEMA_VERSION).toBe('293');
+    // 312 = orchestrator 代码强依赖 312 列；issue 14d66027 语义不变：只有代码依赖才 bump。
+    expect(EXPECTED_SCHEMA_VERSION).toBe('312');
   });
 });

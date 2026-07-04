@@ -47,20 +47,22 @@ export const BLOCKED_SAME_STATE_CAP = 2;
  * - persist_contract_approval —— reviewer 已 APPROVED 但 contract.approved 未落库（崩溃窗口），
  *                                loop/dispatcher 补落库，不 spawn
  */
-export const ACTIONS = Object.freeze([
-  'spawn:planner',
-  'spawn:proposer',
-  'spawn:reviewer',
-  'spawn:generator',
-  'spawn:generator-fix',
-  'spawn:evaluator',
-  'spawn:judge',
-  'wait:running',
-  'wait:poll_ci',
-  'wait:human_review',
-  'merge_pr',
-  'report',
-  'exit',
-  'mark_failed',
-  'persist_contract_approval',
-]);
+export const ACTION = Object.freeze({
+  SPAWN_PLANNER: 'spawn:planner',
+  SPAWN_PROPOSER: 'spawn:proposer',
+  SPAWN_REVIEWER: 'spawn:reviewer',
+  SPAWN_GENERATOR: 'spawn:generator',
+  SPAWN_GENERATOR_FIX: 'spawn:generator-fix',
+  SPAWN_EVALUATOR: 'spawn:evaluator',
+  SPAWN_JUDGE: 'spawn:judge',
+  WAIT_RUNNING: 'wait:running',
+  WAIT_POLL_CI: 'wait:poll_ci',
+  WAIT_HUMAN_REVIEW: 'wait:human_review',
+  MERGE_PR: 'merge_pr',
+  REPORT: 'report',
+  EXIT: 'exit',
+  MARK_FAILED: 'mark_failed',
+  PERSIST_CONTRACT_APPROVAL: 'persist_contract_approval',
+});
+
+export const ACTIONS = Object.freeze(Object.values(ACTION));

@@ -22,6 +22,7 @@ describe('deriveCounters：空日志', () => {
       ganRound: 0,
       noPushStreak: 0,
       noVerdictStreak: 0,
+      crossCheckMismatch: false,
     });
   });
 
@@ -97,6 +98,16 @@ describe('deriveCounters：ganRound 权威与交叉校验', () => {
       row(3, 'spawn:proposer'),
     ]; // COUNT=3
     expect(deriveCounters(rows, { proposeBranchMaxRn: 1 }).ganRound).toBe(1);
+  });
+
+  it('crossCheckMismatch：COUNT 与分支 rN 不一致 → true（loop 写进 appendHop detail）', () => {
+    const rows = [row(1, 'spawn:proposer')];
+    expect(deriveCounters(rows, { proposeBranchMaxRn: 3 }).crossCheckMismatch).toBe(true);
+  });
+
+  it('crossCheckMismatch：一致 → false', () => {
+    const rows = [row(1, 'spawn:proposer'), row(2, 'spawn:proposer')];
+    expect(deriveCounters(rows, { proposeBranchMaxRn: 2 }).crossCheckMismatch).toBe(false);
   });
 });
 
