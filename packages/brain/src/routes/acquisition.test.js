@@ -20,7 +20,7 @@ beforeEach(async () => {
   app = express();
   app.use(express.json());
 
-  const { default: acquisitionRouter } = await import('../routes/acquisition.js');
+  const { default: acquisitionRouter } = await import('./acquisition.js');
   app.use('/api/brain', acquisitionRouter);
 });
 

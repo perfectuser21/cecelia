@@ -25,7 +25,7 @@ beforeEach(async () => {
   app = express();
   app.use(express.json());
 
-  const { default: agentCreditRouter } = await import('../routes/agent-credit.js');
+  const { default: agentCreditRouter } = await import('./agent-credit.js');
   app.use('/api/brain', agentCreditRouter);
 });
 
