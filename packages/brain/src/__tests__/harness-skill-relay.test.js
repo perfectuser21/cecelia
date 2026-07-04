@@ -115,3 +115,17 @@ describe('router 集成：flag 命中不碰图', async () => {
     expect(deps.spawnFn).toHaveBeenCalledOnce();
   });
 });
+
+describe('默认 deps 的 import 来源（N4 run-1 实证 bug：resolveGitHubToken 不在 harness-utils）', () => {
+  it('源码从 harness-credentials.js 取 resolveGitHubToken', async () => {
+    const { readFileSync } = await import('node:fs');
+    const src = readFileSync(new URL('../harness-skill-relay.js', import.meta.url), 'utf8');
+    expect(src).toMatch(/harness-credentials\.js.*resolveGitHubToken|resolveGitHubToken[\s\S]{0,80}harness-credentials\.js/);
+    expect(src).not.toMatch(/harness-utils\.js'\)\)\.resolveGitHubToken/);
+  });
+
+  it('harness-credentials.js 真的导出 resolveGitHubToken（防再猜错模块）', async () => {
+    const mod = await import('../harness-credentials.js');
+    expect(typeof mod.resolveGitHubToken).toBe('function');
+  });
+});
