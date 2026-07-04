@@ -37,7 +37,7 @@ if [ -f "$PID_FILE" ]; then
   fi
   rm -f "$PID_FILE"
 else
-  echo "[preview-cleanup] 未找到 PID 文件 $PID_FILE，尝试 pkill 兜底"
+  echo "[preview-cleanup] 未找到 PID 文件 ${PID_FILE}，尝试 pkill 兜底"
   pkill -f "http.server ${PORT}" 2>/dev/null || true
 fi
 

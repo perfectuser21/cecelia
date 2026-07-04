@@ -1160,3 +1160,10 @@ changelog:
     date: "2026-05-29"
     type: "feat"
     description: "engine-ship 从 packages/engine/skills/ 移除（已在 zenithjoy-skills）。engine-ship TERMINAL IMPERATIVE 改为调用 engine-pr-watchdog（PR 合并守卫）。dev/SKILL.md 接力链补全 engine-pr-watchdog。write-current-state 测试移除对 engine-ship 路径的硬引用。"
+  - version: "19.2.6"
+    date: "2026-07-04"
+    type: "feat"
+    description: "新增 packages/engine/runners/android/e2e-verify-android-template.sh（Sprint Generator 生成安卓真机 E2E 脚本的参考模板）+ .github/workflows/e2e-android-realdevice.yml（Harness android_realdevice target_environment 的 E2E 触发入口，云端 ubuntu-latest runner + tailscale/github-action@v2 临时入网，不自建 self-hosted runner）。对应 Initiative：获客 Agent 安卓设备接入。"
+    files:
+      - "packages/engine/runners/android/e2e-verify-android-template.sh"
+      - "../../.github/workflows/e2e-android-realdevice.yml"
