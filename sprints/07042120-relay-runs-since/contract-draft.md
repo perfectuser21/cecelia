@@ -9,22 +9,13 @@
 
 ## Test Contract
 
-| # | [BEHAVIOR] 描述 | 测试命令 / 断言 |
-|---|----------------|----------------|
-| B-01 | FR-19: `?since=2026-07-04T00:00:00Z` → HTTP 200，SQL 含 `started_at >= $N` 绑定 | `GET /relay-runs?since=2026-07-04T00:00:00Z` → `res.status === 200`；`sql.match(/started_at\s*>=\s*\$\d+/i)` |
-| B-02 | FR-19: `?since` 使用参数化绑定（非字符串拼接）— ISO 字符串不出现在 SQL 文本中 | `sql` 不含裸 ISO 字符串字面量；`params` 数组含 `'2026-07-04T00:00:00Z'` |
-| B-03 | FR-19: 返回数组中每项都含 `started_at` 字段（防字段丢失回归） | `body[0]` 含 `started_at` 属性 |
-| B-04 | FR-21: `?since=T&phase=A_planning&limit=5` → SQL 同时含三条件，params 含三值 | SQL 含 `/started_at\s*>=\s*\$\d+/i` AND `/phase\s*=\s*\$\d+/i`；`params` 含 `'2026-07-04T00:00:00Z'`、`'A_planning'`、`5` |
-| B-05 | FR-21: `?since=T&limit=3`（无 phase）→ SQL 含 since 条件，不含 phase 条件 | SQL 含 since 条件；`sql` 不匹配 `/phase\s*=\s*\$\d+/i`；`params` 含 `3` |
-| B-06 | FR-21: `?since=T&phase=done`（无 limit）→ SQL 含 since + phase 条件，默认 limit=20 | SQL 含 since 和 phase 条件；`params` 含 `20` |
-| B-07 | FR-22: `?since=not-a-date` → HTTP 400 + `{ error: string }`，不执行 DB 查询 | `res.status === 400`；`typeof body.error === 'string'`；`mockPool.query` 未调用 |
-| B-08 | FR-23: `?since=`（空字符串）→ HTTP 400 + `{ error: string }`，不执行 DB 查询 | `res.status === 400`；`typeof body.error === 'string'`；`mockPool.query` 未调用 |
-| B-09 | FR-22: `?since=2026-13-99T00:00:00Z`（非法日期）→ HTTP 400 + `{ error: string }` | `res.status === 400`；`typeof body.error === 'string'` |
-| B-10 | INV-3: `?since` 非法时，400 响应 `Content-Type: application/json` | `res.headers['content-type']` 匹配 `/application\/json/` |
-| B-11 | INV-5: 不带 `?since` → SQL 不含 `started_at >=` 条件（向后兼容） | `sql` 不匹配 `/started_at\s*>=/i` |
-| B-12 | INV-5: 不带 `?since`，`?limit=10` → SQL 不含 since，`params` 含 `10` | `sql` 不匹配 `/started_at\s*>=/i`；`params` 含 `10` |
-| B-13 | INV-5: 不带任何参数 → 默认 limit=20，无 since/phase 条件（完整 INV-5 回归） | `params` 含 `20`；`sql` 不匹配 `/started_at\s*>=/i`；`sql` 不匹配 `/phase\s*=\s*\$\d+/i` |
-| B-14 | FR-24: colErr 回退路径中 since 条件同样生效 — 第一次 query 抛含 'pr_url' 错误 → 回退 SQL 含 since | `mockPool.query` 调用两次；第二次 `sql` 匹配 `/started_at\s*>=\s*\$\d+/i`；第二次 `params` 含 since 值 |
+| 功能 | Test File | BEHAVIOR 覆盖 | 预期红证据 |
+|---|---|---|---|
+| since 过滤生效 | `../../packages/brain/src/__tests__/relay-runs-since.test.js` | B-01: ?since=2026-07-04T00:00:00Z → HTTP 200，SQL 含 started_at >= $N/B-02: ?since 使用参数化绑定（非字符串拼接）/B-03: 返回数组中每项都含 started_at 字段（防字段丢失回归） | 路由未加 since 解析 → SQL 无 started_at 条件 → 断言 FAIL |
+| since+phase+limit 三参组合 | `../../packages/brain/src/__tests__/relay-runs-since.test.js` | B-04: ?since=T&phase=A_planning&limit=5 → SQL 同时含三条件，params 含三值（INV-9: 单次 DB 查询）/B-05: ?since=T&limit=3（无 phase）→ SQL 含 since 条件，不含 phase 条件/B-06: ?since=T&phase=done（无 limit）→ SQL 含 since + phase 条件，默认 limit=20 | 条件未 AND 合并 → SQL 缺条件 → FAIL |
+| 非法 since → 400 | `../../packages/brain/src/__tests__/relay-runs-since.test.js` | B-07: ?since=not-a-date → HTTP 400 + { error: string }，不执行 DB 查询/B-08: ?since=（空字符串）→ HTTP 400 + { error: string }，不执行 DB 查询/B-09: ?since=2026-13-99T00:00:00Z（非法日期）→ HTTP 400 + { error: string }/B-10: INV-3: 400 响应 Content-Type: application/json（非法 since） | 无校验直接查 DB → 200 非 400 → FAIL |
+| 向后兼容（INV-5） | `../../packages/brain/src/__tests__/relay-runs-since.test.js` | B-11: 不带 ?since → SQL 不含 started_at >= 条件/B-12: 不带 ?since，?limit=10 → SQL 不含 since，params 含 10/B-13: 不带任何参数 → 默认 limit=20，无 since/phase 条件（完整 INV-5 回归） | 改动破坏默认路径 → SQL 多余条件 → FAIL |
+| colErr 回退路径 since 生效 | `../../packages/brain/src/__tests__/relay-runs-since.test.js` | B-14: ?since=T → 第一次 query 抛 pr_url 错误 → 回退路径 SQL 含 since 条件 | colErr 回退未共享 conditions → 回退 SQL 无 since → FAIL |
 
 ---
 
