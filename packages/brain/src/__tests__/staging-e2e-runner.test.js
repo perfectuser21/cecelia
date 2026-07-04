@@ -363,6 +363,51 @@ describe('Slice9: handlePromote initiative 级聚合 gate + SHA 锚定', () => {
   });
 });
 
+// ─── handlePromote — ZenithJoy customer line FAIL 护栏通知 ─────────────────────
+describe('handlePromote — ZenithJoy staging FAIL 护栏通知', () => {
+  it('FAIL + customer line → 飞书通知 + 返回 NA（:5200 不被触碰）', async () => {
+    const notifyMsgs = [];
+    const notify = async (msg) => { notifyMsgs.push(msg); };
+    const pool = { query: vi.fn(async () => ({ rows: [] })) };
+    const status = await handlePromote(
+      pool,
+      { verdict: 'FAIL', baseRepo: 'perfectuser21/zenithjoy', prUrl: 'https://github.com/pr/1', initiativeId: 'init-zj-1' },
+      { notify },
+    );
+    expect(status).toBe('n_a');
+    expect(notifyMsgs).toHaveLength(1);
+    expect(notifyMsgs[0]).toContain('ZJ 护栏触发');
+    expect(notifyMsgs[0]).toContain('5201');
+    expect(notifyMsgs[0]).toContain('5200');
+  });
+
+  it('SKIP + customer line → 不通知（配置缺省非真失败）', async () => {
+    const notifyMsgs = [];
+    const notify = async (msg) => { notifyMsgs.push(msg); };
+    const pool = { query: vi.fn(async () => ({ rows: [] })) };
+    const status = await handlePromote(
+      pool,
+      { verdict: 'SKIP', baseRepo: 'perfectuser21/zenithjoy', prUrl: 'p', initiativeId: 'i' },
+      { notify },
+    );
+    expect(status).toBe('n_a');
+    expect(notifyMsgs).toHaveLength(0);
+  });
+
+  it('FAIL + internal line → 不通知（内部线 Cecelia 失败，非 ZJ 护栏场景）', async () => {
+    const notifyMsgs = [];
+    const notify = async (msg) => { notifyMsgs.push(msg); };
+    const pool = { query: vi.fn(async () => ({ rows: [] })) };
+    const status = await handlePromote(
+      pool,
+      { verdict: 'FAIL', baseRepo: 'perfectuser21/cecelia', prUrl: 'p', initiativeId: 'i' },
+      { notify },
+    );
+    expect(status).toBe('n_a');
+    expect(notifyMsgs).toHaveLength(0);
+  });
+});
+
 describe('Slice10: runGoldenSmokeRegression — regression 扫描', () => {
   it('无文件时返回 SKIP', async () => {
     const { runGoldenSmokeRegression } = await import('../staging-e2e-runner.js');

@@ -347,6 +347,19 @@ export async function handlePromote(dbPool, { verdict, baseRepo, prUrl, initiati
   try {
     if (decision.action === 'none') {
       await updatePromoteStatus(dbPool, prUrl, PROMOTE_STATUS.NA);
+      // ZenithJoy customer line staging FAIL → 飞书通知（护栏触发，:5200 未触碰）。
+      // SKIP（无合同/无 docker）不通知：不是真失败，是配置缺省。
+      if (verdict === 'FAIL' && decision.line === 'customer') {
+        try {
+          await notify(
+            `🚨 [ZJ 护栏触发] ZenithJoy staging :5201 失败，:5200 生产未触碰\n`
+            + `initiative: ${initiativeId || '?'}\nPR: ${prUrl || '?'}\n`
+            + `下一步: 检查 ZenithJoy CI deploy 日志，修复后重推 main 触发重跑`
+          );
+        } catch (e) {
+          console.warn(`[staging-e2e] ZJ 护栏触发通知失败（忽略）: ${e.message}`);
+        }
+      }
       return PROMOTE_STATUS.NA;
     }
     if (decision.action === 'auto') {
