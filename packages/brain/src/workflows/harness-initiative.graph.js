@@ -1551,12 +1551,19 @@ export async function reportNode(state, opts = {}) {
       if (!detail) {
         const subFails = (reconciledSubTasks || [])
           .filter(s => s.status !== 'merged')
-          .map(s => `${s.id}(status=${s.status || 'unknown'}${s.ci_fail_type ? `,ci=${s.ci_fail_type}` : ''}${s.evaluator_feedback ? `,fb=${String(s.evaluator_feedback).slice(0, 80)}` : ''}${s.pr_url ? `,pr=${s.pr_url}` : ''})`);
+          // fb 上限 2000（原 80）：80 字符会把关键诊断（如 "Contract Gate 命中合同产物…"）
+          // 硬砍在半句，销毁 failure_reason 的可读性，逼人手翻 stdout 原始证据（观测黑洞根因）。
+          // 2000 足够容纳一条完整 evaluator 反馈；failure_reason 列是 text 无长度上限。
+          .map(s => `${s.id}(status=${s.status || 'unknown'}${s.ci_fail_type ? `,ci=${s.ci_fail_type}` : ''}${s.evaluator_feedback ? `,fb=${String(s.evaluator_feedback).slice(0, 2000)}` : ''}${s.pr_url ? `,pr=${s.pr_url}` : ''})`);
         detail = subFails.length
           ? `no failed scenarios recorded; unmerged/failed sub_tasks: ${subFails.join('; ')}`
           : 'no failed scenarios and no sub_task detail available';
       }
-      reason = `Final E2E FAIL: ${detail.slice(0, 500)}`;
+      // detail 上限 4000（原 500）：500 同样会砍掉多 sub_task 聚合后的后半段诊断。
+      // 4000 与上面单条 fb 2000 匹配（可容纳 ~2 条完整反馈）。
+      // 兜底硬上限 20000：防御性——个别异常场景（如误把整个日志塞进 evaluator_feedback）
+      // 不会把 failure_reason 撑到不合理大小；正常诊断远不及此。
+      reason = `Final E2E FAIL: ${detail.slice(0, 4000)}`.slice(0, 20000);
     }
     // B45: 使用 pool.connect() → client.query 确保测试 mock 可验证、支持连接复用
     const client = await dbPool.connect();
