@@ -244,7 +244,8 @@ router.get('/relay-runs', async (req, res) => {
       result = await pool.query(
         `SELECT id, initiative_id, phase,
                 orchestrator_heartbeat_at, orchestrator_host,
-                pr_url, started_at, deadline_at
+                pr_url, started_at, deadline_at,
+                evaluate_verdict, judge_verdict, cost_usd, completed_at, failure_reason
          FROM initiative_runs
          WHERE orchestrator_version = 'v2'
          ${phaseCondition}
@@ -258,7 +259,8 @@ router.get('/relay-runs', async (req, res) => {
         result = await pool.query(
           `SELECT id, initiative_id, phase,
                   orchestrator_heartbeat_at, orchestrator_host,
-                  started_at, deadline_at
+                  started_at, deadline_at,
+                  evaluate_verdict, judge_verdict, cost_usd, completed_at, failure_reason
            FROM initiative_runs
            WHERE orchestrator_version = 'v2'
            ${phaseCondition}
@@ -293,7 +295,7 @@ router.get('/relay-runs/:initiative_id', async (req, res) => {
       `SELECT id, initiative_id, phase, started_at, deadline_at, completed_at,
               failure_reason, orchestrator_version, orchestrator_heartbeat_at,
               orchestrator_host, orchestrator_pid, pr_url, round,
-              evaluate_verdict, judge_verdict
+              evaluate_verdict, judge_verdict, cost_usd
        FROM initiative_runs
        WHERE initiative_id = $1 AND orchestrator_version = 'v2'
        LIMIT 1`,
