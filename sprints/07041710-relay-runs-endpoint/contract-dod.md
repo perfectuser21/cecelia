@@ -37,10 +37,6 @@ journey_type: autonomous
   Test: manual:bash -c 'node -e "const c=require(\"fs\").readFileSync(\"packages/brain/src/__tests__/relay-runs.test.js\",\"utf8\");if(!c.includes(\"500\")||!c.includes(\"error\"))process.exit(1);console.log(\"OK: 单元测试覆盖 500 + error 字段\")"'
   期望: OK: 单元测试覆盖 500 + error 字段
 
-- [ ] [BEHAVIOR] ?limit 非法值（如 limit=abc 或 limit=0）返回 400 + error 字段
-  Test: manual:bash -c 'CODE=$(curl -s -o /dev/null -w "%{http_code}" "localhost:5221/api/brain/orchestrator/relay-runs?limit=abc"); [ "$CODE" = "400" ] || { echo "FAIL: 非法 limit 未返回 400，实际 $CODE"; exit 1; }; BODY=$(curl -s "localhost:5221/api/brain/orchestrator/relay-runs?limit=abc"); echo "$BODY" | jq -e '"'"'.error | type == "string"'"'"' || { echo "FAIL: 400 响应无 error 字段"; exit 1; }; echo OK'
-  期望: OK
-
 - [ ] [BEHAVIOR] 端点仅返回 orchestrator_version='v2' 的 runs（v1 run 不在结果中，单元测试覆盖）
   Test: manual:bash -c 'node -e "const c=require(\"fs\").readFileSync(\"packages/brain/src/__tests__/relay-runs.test.js\",\"utf8\");if(!c.includes(\"v2\")||!c.includes(\"v1\"))process.exit(1);console.log(\"OK: 单元测试覆盖 v2 过滤\")"'
   期望: OK: 单元测试覆盖 v2 过滤

@@ -105,7 +105,77 @@ echo OK
 
 ---
 
-### Step 3: ?limit=N 参数限制返回条数
+### Step 3: v1 run 不出现在响应中（版本过滤正确性）
+
+**来源**: `[FROM_PRD]` — PRD Golden Path 第 2 步「查询 initiative_runs WHERE orchestrator_version='v2'」，隐含 v1 run 应被过滤排除
+
+**可观测行为**: 端点响应数组不含 orchestrator_version='v1' 的 run
+
+**验证命令**:
+```bash
+# 插入 1 条 v1 run，验证端点不返回该记录
+V1_INIT_ID=$(psql "$DB" -t -c \
+  "INSERT INTO initiatives (id, task_id, journey_id, status) VALUES (gen_random_uuid(), gen_random_uuid(), gen_random_uuid(), 'running') RETURNING id" \
+  2>/dev/null | tr -d ' \n') || V1_INIT_ID=$(psql "$DB" -t -c "SELECT gen_random_uuid()" | tr -d ' \n')
+
+V1_RUN_ID=$(psql "$DB" -t -c \
+  "INSERT INTO initiative_runs (initiative_id, phase, orchestrator_version, started_at)
+   VALUES ('$V1_INIT_ID', 'A_planning', 'v1', NOW())
+   RETURNING id" | tr -d ' \n')
+[ -n "$V1_RUN_ID" ] || { echo "FAIL: 无法插入测试 v1 run"; exit 1; }
+echo "插入 v1 test run: $V1_RUN_ID"
+
+RESP=$(curl -sf "$BRAIN/api/brain/orchestrator/relay-runs")
+echo "$RESP" | jq -e --arg rid "$V1_RUN_ID" '[.[] | .id] | index($rid) == null' \
+  || { echo "FAIL: v1 run 出现在响应中，应被过滤"; psql "$DB" -c "DELETE FROM initiative_runs WHERE id='$V1_RUN_ID'" > /dev/null 2>&1; exit 1; }
+echo "PASS: v1 run 未出现在响应数组中"
+
+# 清理
+psql "$DB" -c "DELETE FROM initiative_runs WHERE id='$V1_RUN_ID'" > /dev/null 2>&1 || true
+```
+
+**硬阈值**: v1 run 不出现在响应数组（`[.[] | .id] | index($V1_RUN_ID) == null`）
+
+---
+
+### Step 4: started_at DESC 排序正确性
+
+**来源**: `[FROM_PRD]` — PRD Golden Path 第 2 步「按 started_at DESC 排序，返回指定条数」
+
+**可观测行为**: 插入 2 条不同时间戳的 v2 run，响应中较新的 run（started_at 更大）排在前面
+
+**验证命令**:
+```bash
+# 插入 2 条 v2 run，时间戳间隔 10 秒
+OLDER_INIT_ID=$(psql "$DB" -t -c "SELECT gen_random_uuid()" | tr -d ' \n')
+NEWER_INIT_ID=$(psql "$DB" -t -c "SELECT gen_random_uuid()" | tr -d ' \n')
+
+OLDER_RUN_ID=$(psql "$DB" -t -c \
+  "INSERT INTO initiative_runs (initiative_id, phase, orchestrator_version, started_at)
+   VALUES ('$OLDER_INIT_ID', 'A_planning', 'v2', NOW() - interval '10 seconds')
+   RETURNING id" | tr -d ' \n')
+NEWER_RUN_ID=$(psql "$DB" -t -c \
+  "INSERT INTO initiative_runs (initiative_id, phase, orchestrator_version, started_at)
+   VALUES ('$NEWER_INIT_ID', 'A_planning', 'v2', NOW())
+   RETURNING id" | tr -d ' \n')
+[ -n "$OLDER_RUN_ID" ] && [ -n "$NEWER_RUN_ID" ] || { echo "FAIL: 无法插入排序测试 runs"; exit 1; }
+
+RESP=$(curl -sf "$BRAIN/api/brain/orchestrator/relay-runs?limit=20")
+echo "$RESP" | jq -e '.[0].started_at >= .[1].started_at' \
+  || { echo "FAIL: 响应未按 started_at DESC 排序"; \
+       psql "$DB" -c "DELETE FROM initiative_runs WHERE id IN ('$OLDER_RUN_ID','$NEWER_RUN_ID')" > /dev/null 2>&1; \
+       exit 1; }
+echo "PASS: 响应按 started_at DESC 排序"
+
+# 清理
+psql "$DB" -c "DELETE FROM initiative_runs WHERE id IN ('$OLDER_RUN_ID','$NEWER_RUN_ID')" > /dev/null 2>&1 || true
+```
+
+**硬阈值**: `.[0].started_at >= .[1].started_at`（第一项时间戳 ≥ 第二项）
+
+---
+
+### Step 6: ?limit=N 参数限制返回条数
 
 **来源**: `[FROM_PRD]` — PRD Golden Path 第 2 步「返回指定条数」 + 边界情况「?limit=N → 最多返回 N 条」
 
@@ -127,7 +197,7 @@ echo OK
 
 ---
 
-### Step 4: 无 v2 run 时返回空数组，HTTP 200
+### Step 7: 无 v2 run 时返回空数组，HTTP 200
 
 **来源**: `[FROM_PRD]` — PRD 边界情况「无 v2 run → 返回 []，HTTP 200，不报错」
 
@@ -146,7 +216,7 @@ echo OK
 
 ---
 
-### Step 5: DB 查询失败返回 HTTP 500 + JSON error 字段
+### Step 8: DB 查询失败返回 HTTP 500 + JSON error 字段
 
 **来源**: `[FROM_PRD]` — PRD 边界情况「DB 查询失败 → HTTP 500 + {"error": "<message>"} JSON，不崩进程」
 
@@ -167,7 +237,7 @@ node -e "
 
 ---
 
-### Step 6: 端点返回字段完整性（keys 集合符合 PRD 定义）
+### Step 9: 端点返回字段完整性（keys 集合符合 PRD 定义）
 
 **来源**: `[AI_ADDED]` — GAN Round 1 Proposer 加入，理由：防止 generator 返回多余字段（如 orchestrator_version 泄露内部 flag）或遗漏 PRD 必填字段；schema drift 是常见假通过根因
 
@@ -189,6 +259,15 @@ echo OK
 
 ---
 
+## Risks
+
+| # | 风险 | 触发条件 | 影响 | Mitigation |
+|---|---|---|---|---|
+| R1 | `pr_url` 列不存在 | migration 312 未包含 pr_url 列，或 DB 是旧版 schema | SELECT 语句包含 pr_url 时返回 500（列不存在错误） | Generator 在 SELECT 列表中用 `COALESCE` 或动态检测列存在性；PRD ASSUMPTION 已说明「列不存在则 SELECT 去掉该字段，不阻塞端点实现」；接缝清单 #2 标记为 `logic-done-pending` |
+| R2 | migration 312 未跑 | 测试/生产环境 DB 未执行 migration-312-orchestrator | `orchestrator_version` 列不存在 → 端点 INSERT/SELECT 返回 500 | 测试 setup 文件（`relay-runs.test.js`）必须确保 migration 已跑（import migration 执行脚本或 seed 时包含该列）；E2E 脚本在 INSERT 失败时打印提示「migration 312 是否已跑？」 |
+
+---
+
 ## 接缝清单
 
 **本 sprint 接缝分析**：「这功能在哪几个点碰真实世界？」
@@ -203,6 +282,7 @@ echo OK
 ## E2E 验收
 
 <!-- GOLDEN_SMOKE_ABILITY_SLUG: relay-runs-endpoint -->
+<!-- GOLDEN_SMOKE_TARGET_ENV: local_api -->
 
 **journey_type**: autonomous
 **target_environment**: local_api
@@ -253,13 +333,48 @@ echo "$RESP" | jq -e 'first | has("id") and has("initiative_id") and has("phase"
   || { echo "FAIL: 响应项缺少必填字段（id/initiative_id/phase/started_at）"; exit 1; }
 echo "PASS: 必填字段存在"
 
-echo "=== Step 4: limit 参数生效 ==="
+echo "=== Step 4: v1 run 不出现在响应中（过滤正确性）==="
+# 插入 1 条 v1 run，验证端点不返回
+V1_INIT_ID=$(psql "$DB" -t -c "SELECT gen_random_uuid()" | tr -d ' \n')
+V1_RUN_ID=$(psql "$DB" -t -c \
+  "INSERT INTO initiative_runs (initiative_id, phase, orchestrator_version, started_at)
+   VALUES ('$V1_INIT_ID', 'A_planning', 'v1', NOW())
+   RETURNING id" | tr -d ' \n')
+[ -n "$V1_RUN_ID" ] || { echo "FAIL: 无法插入 v1 run"; exit 1; }
+RESP_AFTER_V1=$(curl -sf "$BRAIN/api/brain/orchestrator/relay-runs")
+echo "$RESP_AFTER_V1" | jq -e --arg rid "$V1_RUN_ID" '[.[] | .id] | index($rid) == null' \
+  || { echo "FAIL: v1 run 出现在响应中，过滤失败"; psql "$DB" -c "DELETE FROM initiative_runs WHERE id='$V1_RUN_ID'" > /dev/null 2>&1; exit 1; }
+echo "PASS: v1 run 未出现在响应中"
+psql "$DB" -c "DELETE FROM initiative_runs WHERE id='$V1_RUN_ID'" > /dev/null 2>&1 || true
+
+echo "=== Step 5: started_at DESC 排序正确性 ==="
+# 插入 2 条 v2 run，时间戳间隔 10 秒
+OLDER_INIT_ID=$(psql "$DB" -t -c "SELECT gen_random_uuid()" | tr -d ' \n')
+NEWER_INIT_ID=$(psql "$DB" -t -c "SELECT gen_random_uuid()" | tr -d ' \n')
+OLDER_RUN_ID=$(psql "$DB" -t -c \
+  "INSERT INTO initiative_runs (initiative_id, phase, orchestrator_version, started_at)
+   VALUES ('$OLDER_INIT_ID', 'A_planning', 'v2', NOW() - interval '10 seconds')
+   RETURNING id" | tr -d ' \n')
+NEWER_RUN_ID=$(psql "$DB" -t -c \
+  "INSERT INTO initiative_runs (initiative_id, phase, orchestrator_version, started_at)
+   VALUES ('$NEWER_INIT_ID', 'A_planning', 'v2', NOW())
+   RETURNING id" | tr -d ' \n')
+[ -n "$OLDER_RUN_ID" ] && [ -n "$NEWER_RUN_ID" ] || { echo "FAIL: 无法插入排序测试 runs"; exit 1; }
+SORT_RESP=$(curl -sf "$BRAIN/api/brain/orchestrator/relay-runs?limit=20")
+echo "$SORT_RESP" | jq -e '.[0].started_at >= .[1].started_at' \
+  || { echo "FAIL: 响应未按 started_at DESC 排序"; \
+       psql "$DB" -c "DELETE FROM initiative_runs WHERE id IN ('$OLDER_RUN_ID','$NEWER_RUN_ID')" > /dev/null 2>&1; \
+       exit 1; }
+echo "PASS: 响应按 started_at DESC 排序"
+psql "$DB" -c "DELETE FROM initiative_runs WHERE id IN ('$OLDER_RUN_ID','$NEWER_RUN_ID')" > /dev/null 2>&1 || true
+
+echo "=== Step 6: limit 参数生效 ==="
 LIMIT_RESP=$(curl -sf "$BRAIN/api/brain/orchestrator/relay-runs?limit=1")
 COUNT=$(echo "$LIMIT_RESP" | jq 'length')
 [ "$COUNT" -le 1 ] || { echo "FAIL: limit=1 返回了 $COUNT 条"; exit 1; }
 echo "PASS: limit 参数生效"
 
-echo "=== Step 5: 无 v2 run 或有 v2 run 均返回 200 + 数组 ==="
+echo "=== Step 7: 无 v2 run 或有 v2 run 均返回 200 + 数组 ==="
 RESP2=$(curl -sf "$BRAIN/api/brain/orchestrator/relay-runs") || { echo "FAIL: 端点 500"; exit 1; }
 echo "$RESP2" | jq -e 'type == "array"' || { echo "FAIL: body 不是数组"; exit 1; }
 echo "PASS: 空/非空均返回数组"
