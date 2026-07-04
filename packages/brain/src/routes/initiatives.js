@@ -186,4 +186,61 @@ router.get('/:id/dag', async (req, res) => {
   }
 });
 
+/**
+ * GET /api/brain/orchestrator/relay-runs
+ *
+ * 列出 orchestrator_version='v2' 的 initiative_runs，按 started_at DESC 排序
+ * 支持 ?limit=N 参数（默认 20，最大 100）
+ */
+router.get('/relay-runs', async (req, res) => {
+  // 解析并校验 limit 参数
+  const rawLimit = req.query.limit;
+  let limit = 20;
+  if (rawLimit !== undefined) {
+    const parsed = Number(rawLimit);
+    if (!Number.isInteger(parsed) || parsed < 1 || isNaN(parsed) || String(parsed) !== String(rawLimit)) {
+      return res.status(400).json({ error: 'limit 参数必须为正整数' });
+    }
+    limit = Math.min(parsed, 100);
+  }
+
+  try {
+    // 尝试含 pr_url 的查询；若列不存在（R1 风险）则回退到不含 pr_url 的查询
+    let result;
+    try {
+      result = await pool.query(
+        `SELECT id, initiative_id, phase,
+                orchestrator_heartbeat_at, orchestrator_host,
+                pr_url, started_at, deadline_at
+         FROM initiative_runs
+         WHERE orchestrator_version = 'v2'
+         ORDER BY started_at DESC
+         LIMIT $1`,
+        [limit]
+      );
+    } catch (colErr) {
+      if (colErr.message && colErr.message.includes('pr_url')) {
+        // pr_url 列不存在，回退
+        result = await pool.query(
+          `SELECT id, initiative_id, phase,
+                  orchestrator_heartbeat_at, orchestrator_host,
+                  started_at, deadline_at
+           FROM initiative_runs
+           WHERE orchestrator_version = 'v2'
+           ORDER BY started_at DESC
+           LIMIT $1`,
+          [limit]
+        );
+      } else {
+        throw colErr;
+      }
+    }
+
+    return res.json(result.rows);
+  } catch (err) {
+    console.error('[GET /orchestrator/relay-runs]', err.message);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
 export default router;

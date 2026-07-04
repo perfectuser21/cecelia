@@ -362,6 +362,7 @@ app.use('/api/brain/harness', harnessRoutes);
 app.use('/api/brain/harness-interrupts', harnessInterruptsRouter);
 app.use('/api/brain/harness/pending-reviews', harnessReviewsRouter);
 app.use('/api/brain/initiatives', initiativesRoutes);
+app.use('/api/brain/orchestrator', initiativesRoutes);
 app.use('/api/brain/backup', backupRoutes);
 
 // LLM 服务对外入口（供 zenithjoy pipeline-worker 等内部系统调用）
