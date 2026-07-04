@@ -49,7 +49,7 @@ function fixOrFail(counters, reason) {
 
 export function derive(observed) {
   assertObservedShape(observed);
-  const { run, task, prdExists, contract, pr, inflight, lastAgentExit, counters } = observed;
+  const { run, task, prdExists, contract, pr, inflight, counters } = observed;
 
   // 0. terminal（P2 修订：aborted/cancelled 也终局；routeAfterEvaluate status==='aborted'→end）
   if (run.phase === 'done' || run.phase === 'failed') {

@@ -37,3 +37,21 @@ describe('constants', () => {
     );
   });
 });
+
+// ─── 确定性守卫（原 determinism.test.js，lint-test-pairing 要求测试文件 import 同名实现，
+//     该守卫无实现文件故并入本文件；守卫对象是纯函数层源码文本，spec §测试策略 §5）───
+import { readFileSync } from 'node:fs';
+
+const PURE_FILES = ['derive.js', 'gates.js', 'constants.js', 'counters.js'];
+const FORBIDDEN = ['Date.now(', 'Math.random(', 'new Date('];
+
+describe('确定性守卫：纯函数层禁非确定性调用', () => {
+  for (const file of PURE_FILES) {
+    for (const token of FORBIDDEN) {
+      it(`${file} 不含 ${token}`, () => {
+        const src = readFileSync(new URL(`../${file}`, import.meta.url), 'utf8');
+        expect(src.includes(token)).toBe(false);
+      });
+    }
+  }
+});
