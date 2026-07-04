@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">ZenithJoy Agent</string>
+    <string name="notification_channel_name">Agent 后台服务</string>
+    <string name="notification_text">ZenithJoy Agent 运行中</string>
+</resources>
