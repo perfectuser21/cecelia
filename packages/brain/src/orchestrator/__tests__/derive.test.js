@@ -134,6 +134,13 @@ describe('规则 2：GAN（prd 存在 && contract 未 approved）', () => {
     expect(r.action).toBe('spawn:proposer');
   });
 
+  it('崩溃窗口：APPROVED 已出但 contract.approved 未落库 → persist_contract_approval，不 spawn proposer', () => {
+    const r = derive(gan({ proposeBranchRn: 2, ganLatestRoundVerdict: 'APPROVED' }));
+    expect(r.phase).toBe('gan');
+    expect(r.action).toBe('persist_contract_approval');
+    expect(r.reason).toBe('approved_pending_persist');
+  });
+
   it('守护：budgetCapUsd(10) → failed', () => {
     const r = derive(gan({
       counters: { hops: 1, fixRound: 0, pollCount: 0, noPushStreak: 0, noVerdictStreak: 0, ganCostUsd: BUDGET_CAP_USD },

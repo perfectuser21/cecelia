@@ -44,6 +44,8 @@ export const BLOCKED_SAME_STATE_CAP = 2;
  * 控制类（loop 自消费，不派 dispatcher）：
  * - exit                      —— terminal（run done/failed 或 task aborted/cancelled）
  * - mark_failed               —— 守护/上限触发，run 置 failed
+ * - persist_contract_approval —— reviewer 已 APPROVED 但 contract.approved 未落库（崩溃窗口），
+ *                                loop/dispatcher 补落库，不 spawn
  */
 export const ACTIONS = Object.freeze([
   'spawn:planner',
@@ -60,4 +62,5 @@ export const ACTIONS = Object.freeze([
   'report',
   'exit',
   'mark_failed',
+  'persist_contract_approval',
 ]);

@@ -108,9 +108,14 @@ function deriveGan(observed) {
 
   // rN 从 propose 分支现查（外部真相，非内存）：
   // 最新 rN 合同存在且无本轮 verdict → reviewer；否则 proposer（proposerRouter/reviewerRouter 交替）。
-  // reviewer APPROVED → contract approved 落库出环（走不到这里的 else）。
   if (proposeBranchRn >= 1 && ganLatestRoundVerdict == null) {
     return { phase: 'gan', action: 'spawn:reviewer', reason: `contract_r${proposeBranchRn}_awaiting_review` };
+  }
+
+  // 崩溃窗口：reviewer 已出 APPROVED 但 contract.approved 尚未落库
+  // → 只补落库不 spawn（否则误路由 proposer 白烧一轮）。loop/dispatcher 消费此控制 action。
+  if (ganLatestRoundVerdict === 'APPROVED') {
+    return { phase: 'gan', action: 'persist_contract_approval', reason: 'approved_pending_persist' };
   }
   return { phase: 'gan', action: 'spawn:proposer', reason: proposeBranchRn >= 1 ? 'revision_requested' : 'no_contract_yet' };
 }
@@ -134,6 +139,8 @@ function deriveTask(observed) {
   // 3d. exit/auth 观测分路（P0-3）——优先于 CI 状态判定：
   // routeAfterCallback 语义：ci_fail_type∈{container_exit,auth_failed}→fix（agent 死了不必等 CI）。
   // 熔断/换号由 T3 dispatcher 依 DB 熔断状态处理，derive 只分路。
+  // 契约（T2-C/T3 实现责任）：ground-truth 必须按最新 intent hop 作用域提供 lastAgentExit——
+  // fix 后残留旧 exit code 会让本分支反复命中、白吃 fix round。
   if (lastAgentExit.auth_failed || (lastAgentExit.code != null && lastAgentExit.code !== 0)) {
     return fixOrFail(counters, lastAgentExit.auth_failed ? 'auth_failed' : 'container_exit');
   }
