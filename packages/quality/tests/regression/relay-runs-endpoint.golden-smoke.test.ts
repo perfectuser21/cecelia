@@ -12,7 +12,16 @@ import { spawnSync } from 'child_process';
 
 const TARGET_ENV = 'local_api' as const;
 const CI_SKIP_ENVS = ['windows_cloud', 'windows_wechat'] as const;
-const shouldSkip = (CI_SKIP_ENVS as readonly string[]).includes(TARGET_ENV);
+// local_api 需要真实本地 Brain + Postgres（generic ubuntu-latest CI runner 上两者都不存在），
+// 运行时探测可达性，不可达则跳过而非硬失败 —— 生成模板里没有这个检查，导致这条测试在
+// 任何不带真实 Brain/Postgres 的 CI job 里必然报"路由未注册"。
+function isBrainReachable(): boolean {
+  const r = spawnSync('curl', ['-sf', '-m', '3', '-o', '/dev/null', 'localhost:5221/api/brain/context'], {
+    encoding: 'utf8',
+  });
+  return r.status === 0;
+}
+const shouldSkip = (CI_SKIP_ENVS as readonly string[]).includes(TARGET_ENV) || !isBrainReachable();
 
 interface RunResult { ok: boolean; stdout: string; stderr: string; status: number | null; }
 
