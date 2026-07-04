@@ -187,10 +187,27 @@ router.get('/:id/dag', async (req, res) => {
 });
 
 /**
+ * phase 枚举白名单（来自 migration 312 CHECK 约束）
+ */
+const ALLOWED_PHASES = [
+  'A_planning',
+  'A_contract',
+  'B_task_loop',
+  'C_final_e2e',
+  'done',
+  'failed',
+  'planning',
+  'gan',
+  'generate',
+  'evaluate',
+];
+
+/**
  * GET /api/brain/orchestrator/relay-runs
  *
  * 列出 orchestrator_version='v2' 的 initiative_runs，按 started_at DESC 排序
  * 支持 ?limit=N 参数（默认 20，最大 100）
+ * 支持 ?phase=<phase> 参数过滤（枚举白名单，来自 migration 312）
  */
 router.get('/relay-runs', async (req, res) => {
   // 解析并校验 limit 参数
@@ -204,9 +221,25 @@ router.get('/relay-runs', async (req, res) => {
     limit = Math.min(parsed, 100);
   }
 
+  // 解析并校验 phase 参数（新增）
+  const rawPhase = req.query.phase;
+  if (rawPhase !== undefined && !ALLOWED_PHASES.includes(rawPhase)) {
+    return res.status(400).json({
+      error: `phase 参数非法，合法值：${ALLOWED_PHASES.join(',')}`,
+      allowed: ALLOWED_PHASES,
+    });
+  }
+
   try {
-    // 尝试含 pr_url 的查询；若列不存在（R1 风险）则回退到不含 pr_url 的查询
+    // 构建动态 WHERE 子句（按 phase 有无追加条件）
     let result;
+    const params = [limit];
+    let phaseCondition = '';
+    if (rawPhase !== undefined) {
+      params.push(rawPhase);
+      phaseCondition = `AND phase = $${params.length}`;
+    }
+
     try {
       result = await pool.query(
         `SELECT id, initiative_id, phase,
@@ -214,9 +247,10 @@ router.get('/relay-runs', async (req, res) => {
                 pr_url, started_at, deadline_at
          FROM initiative_runs
          WHERE orchestrator_version = 'v2'
+         ${phaseCondition}
          ORDER BY started_at DESC
          LIMIT $1`,
-        [limit]
+        params
       );
     } catch (colErr) {
       if (colErr.message && colErr.message.includes('pr_url')) {
@@ -227,9 +261,10 @@ router.get('/relay-runs', async (req, res) => {
                   started_at, deadline_at
            FROM initiative_runs
            WHERE orchestrator_version = 'v2'
+           ${phaseCondition}
            ORDER BY started_at DESC
            LIMIT $1`,
-          [limit]
+          params
         );
       } else {
         throw colErr;
@@ -239,7 +274,38 @@ router.get('/relay-runs', async (req, res) => {
     return res.json(result.rows);
   } catch (err) {
     console.error('[GET /orchestrator/relay-runs]', err.message);
-    return res.status(500).json({ error: err.message });
+    return res.status(500).json({ error: 'internal server error' });
+  }
+});
+
+/**
+ * GET /api/brain/orchestrator/relay-runs/:initiative_id
+ *
+ * 查询指定 initiative_id 的最新 v2 run 详情（含全量字段）
+ * 找到 → 200 + 完整对象
+ * 不找到 → 404 + { error: "not found" }
+ * DB 失败 → 500 + { error: err.message }
+ */
+router.get('/relay-runs/:initiative_id', async (req, res) => {
+  const { initiative_id } = req.params;
+  try {
+    const result = await pool.query(
+      `SELECT id, initiative_id, phase, started_at, deadline_at, completed_at,
+              failure_reason, orchestrator_version, orchestrator_heartbeat_at,
+              orchestrator_host, orchestrator_pid, pr_url, round,
+              evaluate_verdict, judge_verdict
+       FROM initiative_runs
+       WHERE initiative_id = $1 AND orchestrator_version = 'v2'
+       LIMIT 1`,
+      [initiative_id]
+    );
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'not found' });
+    }
+    return res.json(result.rows[0]);
+  } catch (err) {
+    console.error('[GET /orchestrator/relay-runs/:initiative_id]', err.message);
+    return res.status(500).json({ error: 'internal server error' });
   }
 });
 
