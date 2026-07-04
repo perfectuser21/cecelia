@@ -389,4 +389,4 @@ echo "✅ relay-runs Golden Path 验证通过"
 
 | 功能 | Test File | BEHAVIOR 覆盖 | 预期红证据 |
 |---|---|---|---|
-| relay-runs 端点 | `../../packages/brain/src/__tests__/relay-runs.test.js` | 正常返回 / limit / DB 错误 500 / 空结果 | → 4 failures（路由未注册时） |
+| relay-runs 端点 | `../../packages/brain/src/__tests__/relay-runs.test.js` | 正常返回 v2 runs / limit=5 参数传给 SQL / DB 查询失败 → HTTP 500 / 无 v2 run 时返回空数组 | → 4 failures（路由未注册时） |
