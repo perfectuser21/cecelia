@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 vi.mock('../db.js', () => ({ default: { query: vi.fn().mockResolvedValue({ rows: [] }) } }));
 vi.mock('../task-updater.js', () => ({ updateTaskStatus: vi.fn().mockResolvedValue(undefined) }));
-vi.mock('../notifier.js', () => ({ sendFeishu: vi.fn().mockResolvedValue(undefined) }));
+vi.mock('../notifier.js', () => ({ sendFeishu: vi.fn().mockResolvedValue(undefined), sendBark: vi.fn().mockResolvedValue(false) }));
 
 import { runStagingE2E } from '../staging-e2e-runner.js';
 

@@ -344,10 +344,11 @@ export async function checkInitiativeAggregate(dbPool, initiativeId) {
 export async function handlePromote(dbPool, { verdict, baseRepo, prUrl, initiativeId, deployOutput }, opts = {}) {
   const decision = decidePromote({ verdict, baseRepo });
   const notify = opts.notify || sendFeishu;
+  const notifyBark = opts.notifyBark || sendBark;
   try {
     if (decision.action === 'none') {
       await updatePromoteStatus(dbPool, prUrl, PROMOTE_STATUS.NA);
-      // ZenithJoy customer line staging FAIL → 飞书通知（护栏触发，:5200 未触碰）。
+      // ZenithJoy customer line staging FAIL → 飞书 + Bark 双通知（护栏触发，:5200 未触碰）。
       // SKIP（无合同/无 docker）不通知：不是真失败，是配置缺省。
       if (verdict === 'FAIL' && decision.line === 'customer') {
         try {
@@ -362,6 +363,11 @@ export async function handlePromote(dbPool, { verdict, baseRepo, prUrl, initiati
         } catch (e) {
           console.warn(`[staging-e2e] ZJ 护栏触发通知失败（忽略）: ${e.message}`);
         }
+        // Bark 移动通知（fire-and-forget，不阻塞主流程）。
+        notifyBark(
+          '🚨 ZJ 护栏触发',
+          `staging :5201 失败，:5200 生产未触碰。initiative: ${initiativeId || '?'}`,
+        ).catch(() => {});
       }
       return PROMOTE_STATUS.NA;
     }
