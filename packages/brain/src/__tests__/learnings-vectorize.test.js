@@ -431,7 +431,8 @@ describe('selfcheck schema version', () => {
     }));
 
     const { EXPECTED_SCHEMA_VERSION } = await import('../selfcheck.js');
-    // 312 = orchestrator 代码强依赖 312 列；issue 14d66027 语义不变：只有代码依赖才 bump。
-    expect(EXPECTED_SCHEMA_VERSION).toBe('312');
+    // 313 = agent-credit/acquisition 路由强依赖 licenses.credit_balance 列（313 migration）；
+    // issue 14d66027 语义不变：只有代码依赖才 bump。
+    expect(EXPECTED_SCHEMA_VERSION).toBe('313');
   });
 });
