@@ -17,6 +17,7 @@ import {
   isCaptureNegativeThenAssert,
   isCommentLine,
   isAggregateDbProbeWithoutWindow,
+  isTenantProbeWithoutIsolation,
   formatGateReport,
   RULES,
   ENV_CAPABILITY,
@@ -600,5 +601,65 @@ describe('formatGateReport — 逃生口提示头部', () => {
   it('干净合同（无命中）报告为空串，不输出提示头部', async () => {
     const r = await runContractGate(path.join(FX, 'clean'));
     expect(formatGateReport(r, 'contract-dod.md')).toBe('');
+  });
+});
+
+describe('isTenantProbeWithoutIsolation — 租户隔离红线（P0 铁律 CORE-INV-02，additive）', () => {
+  it('多租户面 SELECT 无 tenant_id 约束 → 命中', () => {
+    expect(
+      isTenantProbeWithoutIsolation(
+        'psql "$DB" -c "SELECT email FROM tenant_users WHERE status = \'active\'"'
+      )
+    ).toBe(true);
+  });
+
+  it('UPDATE/DELETE 涉及 tenant 面无约束 → 命中（跨租户误改红线）', () => {
+    expect(
+      isTenantProbeWithoutIsolation(
+        'psql "$DB" -c "UPDATE tenant_settings SET flag = true WHERE key = \'x\'"'
+      )
+    ).toBe(true);
+    expect(
+      isTenantProbeWithoutIsolation('psql "$DB" -c "DELETE FROM tenants WHERE name LIKE \'%test%\'"')
+    ).toBe(true);
+  });
+
+  it('带 tenant_id = / IN 隔离约束 → 放行', () => {
+    expect(
+      isTenantProbeWithoutIsolation(
+        'psql "$DB" -c "SELECT email FROM tenant_users WHERE tenant_id = \'$T\' AND status=\'active\'"'
+      )
+    ).toBe(false);
+    expect(
+      isTenantProbeWithoutIsolation(
+        'psql "$DB" -c "SELECT 1 FROM tenant_users WHERE tenant_id IN (\'$T\')"'
+      )
+    ).toBe(false);
+  });
+
+  it('不涉及 tenant 面 / 非 psql / INSERT 写新行 → 不命中（保守面）', () => {
+    expect(isTenantProbeWithoutIsolation('psql "$DB" -c "SELECT 1 FROM posts WHERE id = 3"')).toBe(false);
+    expect(isTenantProbeWithoutIsolation('echo "SELECT * FROM tenant_users"')).toBe(false);
+    expect(
+      isTenantProbeWithoutIsolation(
+        'psql "$DB" -c "INSERT INTO tenant_users (tenant_id, email) VALUES (\'$T\', \'a@b.c\')"'
+      )
+    ).toBe(false);
+  });
+
+  it('evaluateContractText 集成：命中 domain/tenant-no-isolation 且 gate-allow 可单条豁免', () => {
+    const violating = [
+      '```bash',
+      'psql "$DB" -c "SELECT email FROM tenant_users WHERE status = \'active\'"',
+      '```',
+    ].join('\n');
+    const r = evaluateContractText(violating);
+    expect(r.ok).toBe(false);
+    expect(r.hits.some((h) => h.ruleId === 'domain/tenant-no-isolation')).toBe(true);
+
+    const exempted = ['gate-allow: domain/tenant-no-isolation 单租户共享配置表', violating].join('\n');
+    const r2 = evaluateContractText(exempted);
+    const hit = r2.hits.find((h) => h.ruleId === 'domain/tenant-no-isolation');
+    expect(hit.exempted).toBe(true);
   });
 });

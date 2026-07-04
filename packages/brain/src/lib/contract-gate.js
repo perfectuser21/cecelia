@@ -107,7 +107,40 @@ export const RULES = [
       `第 ${line} 行 DB 聚合/存在性探测缺时间窗——加 AND created_at > NOW() - interval '5 minutes'` +
       `（定点读 WHERE id=... 不需要；若确为定点读被误判可 gate-allow 豁免）`,
   },
+  {
+    id: 'domain/tenant-no-isolation',
+    description: '涉及多租户面的 DB 探测缺租户隔离约束（跨租户读/改红线）',
+    detect: (line) => isTenantProbeWithoutIsolation(line),
+    feedback: ({ line }) =>
+      `第 ${line} 行涉及多租户面（tenant）的 DB 探测缺租户隔离约束——加 WHERE tenant_id = '<本租户>'` +
+      `（跨租户读写红线；确属单租户面误报可 gate-allow: domain/tenant-no-isolation 豁免留痕）`,
+  },
 ];
+
+/**
+ * 租户隔离红线判定（P0 铁律「租户隔离」，保守正则 + gate-allow 逃生口）。
+ *
+ * 本意：防"验收探测跨租户扫全表"——多租户面上的 SELECT/UPDATE/DELETE 若不带
+ * tenant_id 等值/IN 约束，读到的可能是别的租户的数据（拿别人的行冒充本租户产出，
+ * 或验收误改别的租户）。保守面收口三重，宁缺勿滥：
+ *  1. 只管 psql DB 探测（API 层多租户断言形态太散，暂不强判，避免误伤面失控）；
+ *  2. 语句必须出现 tenant 词根（tenant_id 列 / tenants 表 / tenant_users 等）才算
+ *     "涉及多租户面"——不含 tenant 字样的单租户表不命中；
+ *  3. 已带 `tenant_id =` / `tenant_id IN` 隔离约束 → 放行；INSERT（写新行、列值里
+ *     显式给 tenant_id）不命中。
+ * 误报逃生口：gate-allow: domain/tenant-no-isolation <理由>（单条豁免留痕，fail-open）。
+ *
+ * @param {string} line  单条逻辑语句
+ * @returns {boolean}  true=命中 domain/tenant-no-isolation
+ */
+export function isTenantProbeWithoutIsolation(line) {
+  if (typeof line !== 'string' || line.length > 2000) return false;
+  if (!/\bpsql\b/.test(line)) return false; // 只管 DB 探测
+  if (!/tenant/i.test(line)) return false; // 未涉及多租户面
+  if (!/\b(?:SELECT|UPDATE|DELETE)\b/i.test(line)) return false; // INSERT/DDL 不命中
+  if (/\btenant_id\s*(?:=|IN\b)/i.test(line)) return false; // 已有租户隔离约束
+  return true;
+}
 
 /**
  * 同义反复检测（精确，避免误伤 `echo "$OUT" | grep "<真实期望>"`）：
