@@ -87,7 +87,7 @@ describe('relay-runs since 过滤 — Contract Tests', () => {
       expect(sql).toMatch(/started_at\s*>=\s*\$\d+/i);
     });
 
-    it('B-02: ?since=2026-07-04T00:00:00Z → SQL 使用参数化绑定（ISO 字符串不出现在 SQL 文本中）', async () => {
+    it('B-02: ?since 使用参数化绑定（非字符串拼接）——ISO 字符串不出现在 SQL 文本中', async () => {
       mockPool.query.mockResolvedValueOnce({ rows: [V2_RUN] });
 
       await request(app)
@@ -117,7 +117,7 @@ describe('relay-runs since 过滤 — Contract Tests', () => {
   // 描述块 2：FR-21 三参数组合同时生效
   // =========================================================
   describe('FR-21 三参数组合同时生效', () => {
-    it('B-04: ?since=T&phase=A_planning&limit=5 → SQL 含三条件，params 含三值（INV-9: 单次 DB 查询）', async () => {
+    it('B-04: ?since=T&phase=A_planning&limit=5 → SQL 同时含三条件，params 含三值（INV-9: 单次 DB 查询）', async () => {
       mockPool.query.mockResolvedValueOnce({ rows: [V2_RUN_PLANNING] });
 
       const res = await request(app)
