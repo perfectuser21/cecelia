@@ -274,7 +274,7 @@ router.get('/relay-runs', async (req, res) => {
     return res.json(result.rows);
   } catch (err) {
     console.error('[GET /orchestrator/relay-runs]', err.message);
-    return res.status(500).json({ error: err.message });
+    return res.status(500).json({ error: 'internal server error' });
   }
 });
 
@@ -305,7 +305,7 @@ router.get('/relay-runs/:initiative_id', async (req, res) => {
     return res.json(result.rows[0]);
   } catch (err) {
     console.error('[GET /orchestrator/relay-runs/:initiative_id]', err.message);
-    return res.status(500).json({ error: err.message });
+    return res.status(500).json({ error: 'internal server error' });
   }
 });
 

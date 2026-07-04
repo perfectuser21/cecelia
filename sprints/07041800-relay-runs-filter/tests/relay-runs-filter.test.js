@@ -91,7 +91,7 @@ const MIGRATION_312_PHASES = [
 
 describe('relay-runs 过滤与详情 — Contract Tests', () => {
   beforeEach(async () => {
-    vi.clearAllMocks();
+    vi.resetAllMocks();
     app = await buildApp();
   });
 
