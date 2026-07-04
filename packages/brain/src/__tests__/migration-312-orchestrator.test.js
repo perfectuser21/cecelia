@@ -70,11 +70,10 @@ describe('migration 312：orchestrator runs state', () => {
     expect(c).not.toMatch(/INSERT INTO schema_version/);
   });
 
-  // 决策修正（T1 实现期发现）：EXPECTED_SCHEMA_VERSION 是"最低可接受地板"，
-  // 仓库既有决策（issue 14d66027）明确"加 migration 不要 bump，只有代码真依赖新 schema 才 bump"。
-  // T1 无任何代码消费 312 新列 → 不 bump；bump 由 T2（orchestrator 骨架，首个依赖方）负责。
-  it('selfcheck EXPECTED_SCHEMA_VERSION 保持地板 293 不随 migration bump（issue 14d66027；312 bump 归 T2）', () => {
+  // T2 已兑现 bump（orchestrator 代码强依赖 312 列：orchestrator_decision_log + initiative_runs 心跳列）。
+  // issue 14d66027 语义不变：加 migration 本身不 bump，只有代码真依赖新 schema 才 bump。
+  it('selfcheck EXPECTED_SCHEMA_VERSION = 312（T2 兑现的代码依赖 bump；issue 14d66027 语义不变）', () => {
     const c = readFileSync(selfcheckPath, 'utf8');
-    expect(c).toMatch(/EXPECTED_SCHEMA_VERSION = '293'/);
+    expect(c).toMatch(/EXPECTED_SCHEMA_VERSION = '312'/);
   });
 });
