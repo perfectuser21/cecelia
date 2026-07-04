@@ -7,7 +7,7 @@
 
 ## [BEHAVIOR] 条目
 
-### [BEHAVIOR-1] 路由可访问，页面组件存在
+### [BEHAVIOR] [BEHAVIOR-1] 路由可访问，页面组件存在
 
 访问 `http://localhost:5174/relay-progress`，页面不返回 404，`RelayProgressPage.tsx` 组件已挂载。
 
@@ -25,7 +25,7 @@ grep -n "relay-progress" apps/dashboard/src/components/DynamicRouter.tsx | head 
 
 ---
 
-### [BEHAVIOR-2] 七段进度条 HTML 结构正确，视觉状态有区分
+### [BEHAVIOR] [BEHAVIOR-2] 七段进度条 HTML 结构正确，视觉状态有区分
 
 页面渲染进度条时，七段 phase（planning/gan/generate/evaluate/judge/merge/report）均作为独立 DOM 节点存在，且对已完成/当前进行中/未到达三种状态应用不同 CSS class。
 
@@ -39,7 +39,7 @@ curl -s http://localhost:5174/relay-progress | grep -iE "planning|generate|evalu
 
 ---
 
-### [BEHAVIOR-3] 每行显示 initiative_id 前 8 位短码 + 当前 phase badge
+### [BEHAVIOR] [BEHAVIOR-3] 每行显示 initiative_id 前 8 位短码 + 当前 phase badge
 
 有活跃 relay 时，每行显示短码（`initiative_id.slice(0, 8)`）和 `current_phase` 文字标签。
 
@@ -58,7 +58,7 @@ echo "期望在页面看到短码: $FIRST_ID"
 
 ---
 
-### [BEHAVIOR-4] 无活跃 relay 时显示空态文案
+### [BEHAVIOR] [BEHAVIOR-4] 无活跃 relay 时显示空态文案
 
 当 API 返回 `{ "runs": [] }` 时，页面显示「暂无进行中的 relay」，`[data-testid="relay-empty-state"]` 元素可见。
 
@@ -76,7 +76,7 @@ curl -s "http://localhost:5221/api/brain/orchestrator/relay-runs?limit=20" | nod
 
 ---
 
-### [BEHAVIOR-5] 页面每 15 秒自动刷新一次 API
+### [BEHAVIOR] [BEHAVIOR-5] 页面每 15 秒自动刷新一次 API
 
 页面挂载后启动 `setInterval(15000)`，每 15 秒重新调用 `GET /api/brain/orchestrator/relay-runs`，组件卸载时 `clearInterval` 清理。
 
@@ -120,11 +120,11 @@ npx playwright test apps/dashboard/e2e/relay-progress.spec.ts --reporter=list
 
 | 编号 | 验收条目 | 类型 | 状态 |
 |-----|---------|------|------|
-| BEHAVIOR-1 | 路由可访问，组件文件存在 | behavior | [ ] |
-| BEHAVIOR-2 | 七段进度条 HTML 结构正确 | behavior | [ ] |
-| BEHAVIOR-3 | 短码 + phase badge 渲染 | behavior | [ ] |
-| BEHAVIOR-4 | 空态文案显示 | behavior | [ ] |
-| BEHAVIOR-5 | 15 秒自动刷新 | behavior | [ ] |
+| [BEHAVIOR] 路由可访问 | 路由可访问，组件文件存在 | behavior | [ ] |
+| [BEHAVIOR] 七段进度条 | 七段进度条 HTML 结构正确 | behavior | [ ] |
+| [BEHAVIOR] 短码渲染 | 短码 + phase badge 渲染 | behavior | [ ] |
+| [BEHAVIOR] 空态文案 | 空态文案显示 | behavior | [ ] |
+| [BEHAVIOR] 自动刷新 | 15 秒自动刷新 | behavior | [ ] |
 | BUILD | npm run build 零编译错误 | build | [ ] |
 | E2E-TC1 | 进度条容器可见 | e2e | [ ] |
 | E2E-TC2 | 七段标签全在 DOM | e2e | [ ] |
