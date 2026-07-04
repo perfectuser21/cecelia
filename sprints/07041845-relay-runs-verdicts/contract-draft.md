@@ -71,7 +71,7 @@ cd /workspace && npx vitest run packages/brain/src/__tests__/
 
 | WS | Test File | BEHAVIOR 覆盖 | 预期红证据 |
 |---|---|---|---|
-| WS1 | `packages/brain/src/__tests__/relay-runs-verdicts.test.js` | 列表含五字段,null 语义键存在值 null,snake_case 无 camelCase,colErr 回退路径含新字段,详情含 cost_usd,DB 失败 500 | Red：7 fail / 18 pass（实现前列表 SQL 缺五字段，详情缺 cost_usd） |
+| WS1 | `../../packages/brain/src/__tests__/relay-runs-verdicts.test.js` | 列表含五字段,null 语义键存在值 null,snake_case 无 camelCase,colErr 回退路径含新字段,详情含 cost_usd,DB 失败 500 | Red：7 fail / 18 pass（实现前列表 SQL 缺五字段，详情缺 cost_usd） |
 
 ---
 
