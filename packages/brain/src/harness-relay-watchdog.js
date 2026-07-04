@@ -29,7 +29,7 @@ export async function resumeStalledRelayRuns(deps = {}) {
   const out = { scanned: 0, resumed: 0, capped: 0, housekept: 0 };
 
   // 每个 initiative 取最新一行 + 点火次数（每次 spawn INSERT 一行 = attempts 天然计数）
-  const runs = await dbPool.query(
+  const runsQ = await dbPool.query(
     `SELECT DISTINCT ON (initiative_id)
             initiative_id, phase, deadline_at,
             (SELECT COUNT(*) FROM initiative_runs r2
@@ -41,9 +41,11 @@ export async function resumeStalledRelayRuns(deps = {}) {
       ORDER BY initiative_id, started_at DESC
       LIMIT 20`
   );
-  out.scanned = runs.rows.length;
+  // 护栏:注入的 pool 对未知 SQL 返回 undefined 时(集成测试 fake),按空处理
+  const runs = runsQ && Array.isArray(runsQ.rows) ? runsQ.rows : [];
+  out.scanned = runs.length;
 
-  for (const run of runs.rows) {
+  for (const run of runs) {
     try {
       const taskQ = await dbPool.query(
         `SELECT id, status, title, description, payload FROM tasks WHERE id = $1`,
