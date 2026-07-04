@@ -89,7 +89,7 @@
 
 | WS | Test File | BEHAVIOR 覆盖 | 预期红证据 |
 |---|---|---|---|
-| WS1 | `packages/brain/src/__tests__/relay-runs-filter.test.js` | phase过滤200/phase过滤SQL/无效phase400/向后兼容/详情200/详情字段/404/500 | Red commit 1c2815c：路由未添加 phase 过滤和 /:initiative_id，30 个用例全 FAIL |
+| WS1 | `tests/relay-runs-filter.test.js` | phase=A_planning → HTTP 200,SQL 含 WHERE phase,invalid_phase → HTTP 400,不带 ?phase → HTTP 200,存在的 initiative_id,详情响应含 failure_reason,不存在的 id → HTTP 404,列表端点 DB 失败 | Red commit 1c2815c：路由未添加 phase 过滤和 /:initiative_id，30 个用例全 FAIL |
 
 ---
 
