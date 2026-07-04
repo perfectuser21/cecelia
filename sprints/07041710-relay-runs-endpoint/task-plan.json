@@ -1,0 +1,27 @@
+{
+  "initiative_id": "${INITIATIVE_ID}",
+  "journey_type": "autonomous",
+  "journey_type_reason": "纯 Brain 后端端点，packages/brain/src/routes/ 实现，无 UI/前端交互",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "实现 GET /api/brain/orchestrator/relay-runs 只读端点",
+      "scope": "在 packages/brain/src/routes/initiatives.js 新增路由，查 initiative_runs WHERE orchestrator_version='v2'，支持 limit 参数，返回 PRD 指定字段，注册到 server.js /api/brain/orchestrator 前缀",
+      "dod": [
+        "[BEHAVIOR] GET /api/brain/orchestrator/relay-runs 返回 HTTP 200 + JSON 数组",
+        "[BEHAVIOR] 响应仅含 orchestrator_version='v2' runs，按 started_at DESC",
+        "[BEHAVIOR] ?limit=N 生效，非法值返回 400 + error",
+        "[BEHAVIOR] DB 失败返回 500 + JSON error 字段",
+        "[ARTIFACT] packages/brain/src/__tests__/relay-runs.test.js 存在且全绿"
+      ],
+      "files": [
+        "packages/brain/src/routes/initiatives.js",
+        "packages/brain/src/server.js",
+        "packages/brain/src/__tests__/relay-runs.test.js"
+      ],
+      "depends_on": [],
+      "complexity": "S",
+      "estimated_minutes": 45
+    }
+  ]
+}
