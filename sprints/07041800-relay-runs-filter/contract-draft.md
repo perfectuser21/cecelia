@@ -85,6 +85,14 @@
 
 ---
 
+## Test Contract
+
+| WS | Test File | BEHAVIOR 覆盖 | 预期红证据 |
+|---|---|---|---|
+| WS1 | `packages/brain/src/__tests__/relay-runs-filter.test.js` | phase过滤200/phase过滤SQL/无效phase400/向后兼容/详情200/详情字段/404/500 | Red commit 1c2815c：路由未添加 phase 过滤和 /:initiative_id，30 个用例全 FAIL |
+
+---
+
 ## 场景覆盖矩阵
 
 | 场景 | BEHAVIOR 断言 | ARTIFACT 命令 |
