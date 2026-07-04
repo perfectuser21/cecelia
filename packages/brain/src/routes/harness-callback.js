@@ -54,6 +54,14 @@ router.post('/harness/callback/:containerId', async (req, res) => {
     return res.status(400).json({ ok: false, error: 'result or error required' });
   }
 
+  // v1.0.1：skill-relay controller session（cecelia-relay-*）没有 thread_lookup（不走
+  // LangGraph resume），直接 200 ack——否则 entrypoint 对 404 重试 5 次（~36s/session 白等）。
+  // stdout 落盘由 entrypoint tee 完成，状态回写由 controller 的 report 步骤走 PATCH relay-runs。
+  if (containerId.startsWith('cecelia-relay-')) {
+    console.log(`[harness-callback] relay 容器 ${containerId} 回调 ack（exit=${exit_code ?? '?'}，无 resume）`);
+    return res.json({ ok: true, relayAck: true, containerId });
+  }
+
   // 幂等 claim（同步 check-and-set，原子）：已 claim 过 = 重复回调（curl 重试 / 并发），
   // 直接 ack，绝不重入 resume（重入会重 spawn 容器 —— 正是本 P0 bug）。
   const nowMs = Date.now();

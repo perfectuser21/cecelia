@@ -288,6 +288,41 @@ router.get('/relay-runs', async (req, res) => {
  * 不找到 → 404 + { error: "not found" }
  * DB 失败 → 500 + { error: err.message }
  */
+/**
+ * PATCH /api/brain/orchestrator/relay-runs/:initiative_id
+ *
+ * controller session report 步骤回写终态（skill v1.1.0 配套；治巡逻 Stuck 误报）。
+ * 只接受 phase ∈ {done, failed}（中间态由 v2 观测从外部真相推导，不接受写入）；
+ * 只允许改 orchestrator_version='v2' 的行；failed 可带 failure_reason。
+ */
+router.patch('/relay-runs/:initiative_id', async (req, res) => {
+  const { initiative_id } = req.params;
+  const { phase, failure_reason } = req.body || {};
+  const ALLOWED = ['done', 'failed'];
+  if (!ALLOWED.includes(phase)) {
+    return res.status(400).json({ error: 'invalid phase', allowed: ALLOWED });
+  }
+  try {
+    const result = await pool.query(
+      `UPDATE initiative_runs
+         SET phase = $2,
+             completed_at = COALESCE(completed_at, NOW()),
+             failure_reason = COALESCE($3, failure_reason)
+       WHERE initiative_id = $1 AND orchestrator_version = 'v2'
+       RETURNING id, initiative_id, phase, completed_at, failure_reason`,
+      [initiative_id, phase, failure_reason || null]
+    );
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'v2 run not found for initiative_id' });
+    }
+    return res.json(result.rows[0]);
+  } catch (err) {
+    // 500 不暴露内部 err.message（信息卫生，run-2 同规矩）
+    console.error('[PATCH /orchestrator/relay-runs/:id]', err.message);
+    return res.status(500).json({ error: 'internal error' });
+  }
+});
+
 router.get('/relay-runs/:initiative_id', async (req, res) => {
   const { initiative_id } = req.params;
   try {
