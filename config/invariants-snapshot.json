@@ -1,0 +1,141 @@
+{
+  "exported_at": "2026-07-04T16:27:39.349Z",
+  "source": "http://localhost:5221/api/brain/invariants",
+  "note": "由 scripts/ci/export-invariants-snapshot.mjs 导出；CI 无 Brain 时 check-invariant-coverage.mjs 读此文件",
+  "count": 19,
+  "invariants": [
+    {
+      "id": "c1d0abce-3b30-49b6-8bb3-54d11cad13e5",
+      "topic": "替换核心驱动/调度器/graph 必清孤儿（migration-orphan-audit）",
+      "priority": "P2",
+      "created_at": "2026-06-26T15:44:43.740Z",
+      "digest": "替换核心驱动(如 executeTick→runScheduler)、调度器、graph 拓扑、主循环时，必须 grep 旧驱动挂的每一个副作用/安全网/节点/watchdog 的真实调用点，逐个确认「已迁到新驱动 or 显式删除」，禁止留"
+    },
+    {
+      "id": "4d560f85-21b1-48c0-b905-f57cec66f028",
+      "topic": "框架原生优先，禁手搓框架已有能力（native-first）",
+      "priority": "P2",
+      "created_at": "2026-06-26T15:44:43.717Z",
+      "digest": "在 LangGraph / 任何框架上实现 retry / 持久化-resume / human-in-loop / 状态机循环 / 子图组合 之前，先查框架原生有没有。LangGraph 原生已提供：RetryPolicy(节点重试)、c"
+    },
+    {
+      "id": "80da99cc-d8f4-454f-93bc-fd13b37cd138",
+      "topic": "覆盖:Line04 客户名单/状态管理从飞书Bitable改为中台AI-native CRM",
+      "priority": "P2",
+      "created_at": "2026-06-23T23:59:14.533Z",
+      "digest": "旧决策(运行时配置走中台Postgres/人审名单画像走飞书Bitable)中,名单+状态部分改为走中台CRM;飞书降级为可选导出口,第一刀不接;无审批回复期没有草稿要审,飞书移动审批价值暂不存在(主动营销阶段再评估审批面)"
+    },
+    {
+      "id": "05fb262c-3b92-4925-97be-656f53f49b9e",
+      "topic": "产线发布即冻结:研发不动客户版本钉子,客户跑稳定 tag,受控才升级(release 纪律)",
+      "priority": "P2",
+      "created_at": "2026-06-22T15:46:36.715Z",
+      "digest": "客户跑哪个版本只由中台 required_version 钉子决定,与 main 研发到哪解耦。①已交付产线打 stable tag 冻结(客服基线=cs-stable-v2.0.24=core 2.0.24+模块1.0.56,xian-r"
+    },
+    {
+      "id": "04c34b86-8cc0-4a2e-a9cb-5ef29c05ad16",
+      "topic": "Line04 每客服配置 存储分层：运行时配置走中台Postgres，人审名单/画像走飞书Bitable",
+      "priority": "P2",
+      "created_at": "2026-06-22T02:29:45.243Z",
+      "digest": "按数据性质分两层：①每客服运行时配置(真发开关/营业时间/关键人/绑定微信号/生效快照)+真发gate=中台Postgres，前台客户管理页编辑，客户机轮询读；②客户名单/白名单SSOT/营销画像/审核台/互动记录=飞书Bitable，运营"
+    },
+    {
+      "id": "616c9bf8-0fae-452e-86a0-fe5564731628",
+      "topic": "A路线人审护栏被auto-agent gating取代",
+      "priority": "P2",
+      "created_at": "2026-06-21T15:34:17.629Z",
+      "digest": "Line04微信客服原'A路线人审护栏(approval_source禁system,AI一律不自动发必人审)'正式被auto-agent gating模型取代:auto_agent_enabled=ON+名单内+营业时间内+未超daily"
+    },
+    {
+      "id": "9d2234ba-8975-4e6e-928c-79f586f6203d",
+      "topic": "iLink/ClawBot 微信协议彻底否决",
+      "priority": "P2",
+      "created_at": "2026-06-19T14:08:24.176Z",
+      "digest": "iLink/ClawBot 永久出局,不是 AI 客服方案,任何时候都不要再提。微信客服只有两条路:个微=pywinauto RPA(隐形替本人回客户私聊,已跑通)、陌生流量=企微官方API。删除 main 里所有 iLink 代码(ili"
+    },
+    {
+      "id": "5e125909-a05b-487f-ba44-00dd4e0bdc2d",
+      "topic": "[系统]禁止写死环境假设值",
+      "priority": "P2",
+      "created_at": "2026-06-18T02:25:50.449Z",
+      "digest": "屏幕外坐标/UIA气泡阈值/假设调用方传X/假设.env有Y 等环境假设值禁止写死，要么从环境推导要么真机校准——这类值是接缝，必真验"
+    },
+    {
+      "id": "3c30394c-ee76-4ff9-b087-bafa137e1d75",
+      "topic": "[系统]真环境验证才算done",
+      "priority": "P2",
+      "created_at": "2026-06-18T02:25:50.437Z",
+      "digest": "依赖真机/生产env/真实调用方的【接缝断言】必须在真目标上验证过才算done；未真验的只能标 logic-done-pending，绝不标 done。接缝清单通常1-3条，不是全功能跑真机。"
+    },
+    {
+      "id": "056d93be-e249-4492-843c-804846f3fd34",
+      "topic": "[Line04]记忆按租户×联系人隔离",
+      "priority": "P2",
+      "created_at": "2026-06-17T15:53:30.411Z",
+      "digest": "对话记忆库按 租户×联系人 隔离,绝不串"
+    },
+    {
+      "id": "615f57ab-3b1b-4070-a35b-6155736a434d",
+      "topic": "[Line04]防假成功",
+      "priority": "P2",
+      "created_at": "2026-06-17T15:53:30.410Z",
+      "digest": "发送后必须确认真发出,气泡未刷新不得判成功"
+    },
+    {
+      "id": "c985f7e7-da18-45c6-91d4-5623d6bdcf95",
+      "topic": "[Line04]后台静默发送",
+      "priority": "P2",
+      "created_at": "2026-06-17T15:53:30.408Z",
+      "digest": "只走后台 UIA;禁前台键鼠全局注入(抢焦点/发错人)"
+    },
+    {
+      "id": "beba0634-1f12-42e3-a509-c67e691d6758",
+      "topic": "[Line04]不进群",
+      "priority": "P2",
+      "created_at": "2026-06-17T15:53:30.407Z",
+      "digest": "只私聊;群一律跳过(读方向/成员结构判定,不只靠名字)"
+    },
+    {
+      "id": "8389b6cc-438a-45b9-add6-0909984c3147",
+      "topic": "[Line04]不回自己",
+      "priority": "P2",
+      "created_at": "2026-06-17T15:53:30.405Z",
+      "digest": "只对【对方发来】的消息回,读最后一条气泡方向;永不回自己/AI发出的"
+    },
+    {
+      "id": "55b8eb46-2b50-4a75-ba96-f84436ba08e8",
+      "topic": "[系统]测试默认多租户",
+      "priority": "P2",
+      "created_at": "2026-06-17T15:53:30.403Z",
+      "digest": "单元/E2E 测试默认种≥2个租户并断言互不串(让隔离漏洞当场暴露)"
+    },
+    {
+      "id": "564802ee-cec8-4735-ad23-bfa165127f45",
+      "topic": "[系统]凭据安全",
+      "priority": "P2",
+      "created_at": "2026-06-17T15:53:30.401Z",
+      "digest": "secrets 不硬编码、不进 git、不进日志"
+    },
+    {
+      "id": "459b6ff9-1392-46a5-a33f-9054b6c4b9a2",
+      "topic": "[系统]日志脱敏",
+      "priority": "P2",
+      "created_at": "2026-06-17T15:53:30.399Z",
+      "digest": "客户隐私/PII/聊天内容不得明文进日志"
+    },
+    {
+      "id": "50954d28-8eb7-4148-9e70-3b5eb82f386c",
+      "topic": "[系统]端点鉴权",
+      "priority": "P2",
+      "created_at": "2026-06-17T15:53:30.397Z",
+      "digest": "每个 API 端点必须有 auth;无鉴权端点不准 ship"
+    },
+    {
+      "id": "68976b17-3f9b-4ffb-9c23-83ae1d2ce4c0",
+      "topic": "[系统]租户隔离",
+      "priority": "P2",
+      "created_at": "2026-06-17T15:53:30.394Z",
+      "digest": "碰租户数据的查询/写入必须 scope 到当前租户;跨租户数据绝不混读/混写"
+    }
+  ]
+}
