@@ -18,7 +18,7 @@ const SHORT = 'aaaabbbb';
 function makeDeps({ taskStatus = 'in_progress', attempts = 2, containerRunning = false, orchestrator = 'skill-relay' } = {}) {
   const pool = { query: vi.fn() };
   pool.query.mockImplementation(async (sql) => {
-    if (/FROM initiative_runs/.test(sql) && /orchestrator_version\s*=\s*'v2'/.test(sql) && /COUNT/.test(sql) === false && /GROUP BY/.test(sql) === false) {
+    if (/DISTINCT ON \(initiative_id\)/.test(sql)) {
       return { rows: [{ initiative_id: TASK_ID, phase: 'planning', attempts: String(attempts), deadline_at: new Date(Date.now() + 3600e3).toISOString() }] };
     }
     if (/FROM tasks/.test(sql)) {
@@ -75,7 +75,7 @@ describe('resumeStalledRelayRuns', () => {
   });
 
   it('payload 非 skill-relay → 跳过（安全护栏，不碰 v1 任务）', async () => {
-    const deps = makeDeps({ orchestrator: undefined });
+    const deps = makeDeps({ orchestrator: null });
     const r = await resumeStalledRelayRuns(deps);
     expect(deps.spawnFn).not.toHaveBeenCalled();
     expect(r.resumed).toBe(0);

@@ -51,12 +51,23 @@ describe('PATCH /relay-runs/:initiative_id（controller 终态回写）', () => 
     expect(params).toContain('账号 401');
   });
 
-  it('phase 白名单外（如 planning）→ 400 + allowed 列表，零 DB 调用', async () => {
+  // 行为变更（relay-watchdog PR）：白名单扩到 312 中间态（进度条数据源），
+  // planning/gan/generate/evaluate 从 400 变为合法——本测试同步到新语义。
+  it('phase 白名单外（如 bogus）→ 400 + allowed 列表，零 DB 调用', async () => {
     const app = await buildApp();
-    const r = await request(app).patch(`/api/brain/orchestrator/relay-runs/${ID}`).send({ phase: 'planning' });
+    const r = await request(app).patch(`/api/brain/orchestrator/relay-runs/${ID}`).send({ phase: 'bogus' });
     expect(r.status).toBe(400);
-    expect(r.body.allowed).toEqual(['done', 'failed']);
+    expect(r.body.allowed).toEqual(['planning', 'gan', 'generate', 'evaluate', 'done', 'failed']);
     expect(mockPool.query).not.toHaveBeenCalled();
+  });
+
+  it('中间态 phase=generate → 200 且不写 completed_at（进度上报语义）', async () => {
+    mockPool.query.mockResolvedValueOnce({ rows: [{ initiative_id: ID, phase: 'generate' }] });
+    const app = await buildApp();
+    const r = await request(app).patch(`/api/brain/orchestrator/relay-runs/${ID}`).send({ phase: 'generate' });
+    expect(r.status).toBe(200);
+    const [sql] = mockPool.query.mock.calls[0];
+    expect(sql).toMatch(/CASE WHEN \$2 IN \('done','failed'\)/);
   });
 
   it('目标不存在或非 v2 → 404 JSON', async () => {

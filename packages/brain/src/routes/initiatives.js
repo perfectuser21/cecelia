@@ -327,7 +327,8 @@ router.get('/relay-runs', async (req, res) => {
 router.patch('/relay-runs/:initiative_id', async (req, res) => {
   const { initiative_id } = req.params;
   const { phase, failure_reason } = req.body || {};
-  const ALLOWED = ['done', 'failed'];
+  // 中间态 = controller 每棒完成后的进度上报（migration 312 枚举预留；进度条数据源）
+  const ALLOWED = ['planning', 'gan', 'generate', 'evaluate', 'done', 'failed'];
   if (!ALLOWED.includes(phase)) {
     return res.status(400).json({ error: 'invalid phase', allowed: ALLOWED });
   }
@@ -335,7 +336,7 @@ router.patch('/relay-runs/:initiative_id', async (req, res) => {
     const result = await pool.query(
       `UPDATE initiative_runs
          SET phase = $2,
-             completed_at = COALESCE(completed_at, NOW()),
+             completed_at = CASE WHEN $2 IN ('done','failed') THEN COALESCE(completed_at, NOW()) ELSE completed_at END,
              failure_reason = COALESCE($3, failure_reason)
        WHERE initiative_id = $1 AND orchestrator_version = 'v2'
        RETURNING id, initiative_id, phase, completed_at, failure_reason`,

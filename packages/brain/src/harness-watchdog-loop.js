@@ -63,10 +63,22 @@ export async function runHarnessWatchdogOnce({ pool: dbPool = pool } = {}) {
     console.warn(`[harness-watchdog] resume failed (non-fatal): ${err.message}`);
   }
 
-  // 3. 无条件可观测性：每次执行都打一行「我在跑」，即使 scanned=0 resumed=0
-  console.log(`[harness-watchdog] scanned=${scanned} flagged=${flagged} resumed=${resumed}`);
+  // 2.5 resumeStalledRelayRuns — skill-relay run 重点火（eval-1 实证：session 早退是常态，
+  //     外部有界重点火是根治；v2 run 归此函数独占管辖，patrol 已排除 v2）
+  let relay = 0;
+  try {
+    const { resumeStalledRelayRuns } = await import('./harness-relay-watchdog.js');
+    const r = await resumeStalledRelayRuns({ pool: dbPool });
+    relay = r?.resumed || 0;
+    scanned += r?.scanned || 0;
+  } catch (err) {
+    console.warn(`[harness-watchdog] relay resume failed (non-fatal): ${err.message}`);
+  }
 
-  return { scanned, flagged, resumed };
+  // 3. 无条件可观测性：每次执行都打一行「我在跑」，即使 scanned=0 resumed=0
+  console.log(`[harness-watchdog] scanned=${scanned} flagged=${flagged} resumed=${resumed} relay=${relay}`);
+
+  return { scanned, flagged, resumed, relay };
 }
 
 /**
