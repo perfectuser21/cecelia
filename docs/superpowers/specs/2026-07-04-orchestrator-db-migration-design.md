@@ -81,7 +81,7 @@ CREATE TRIGGER trg_orchestrator_decision_log_append_only
 
 ### 2. `packages/brain/src/selfcheck.js`
 
-`EXPECTED_SCHEMA_VERSION` → `'312'`（orchestrator 后续代码强依赖新列；同 PR bump 让旧库跑新代码时 selfcheck 报警）。
+**不改（T1 实现期决策修正）**：EXPECTED_SCHEMA_VERSION 是"最低可接受地板"，仓库既有决策（issue 14d66027）明确"加 migration 不要 bump，只有代码真依赖新 schema 才 bump"。T1 无任何代码消费 312 新列，bump 由 T2（orchestrator 骨架，首个依赖方）负责。原 spec 的"同 PR bump"与该既有决策冲突，既有决策优先。
 
 ### 3. 文档入库
 

@@ -8,7 +8,7 @@ sprint_dir: sprints/07041024-orchestrator-db-migration
   Test: manual:node -e "const c=require('fs').readFileSync('packages/brain/migrations/312_orchestrator_runs_state.sql','utf8');for(const p of ['A_planning','planning','gan','generate','evaluate'])if(!c.includes(\"'\"+p+\"'\"))process.exit(1)"
 - [x] [BEHAVIOR] orchestrator_decision_log 为 append-only（存在禁 UPDATE/DELETE 的 trigger 完整 SQL）且 UNIQUE(run_id,hop)
   Test: manual:node -e "const c=require('fs').readFileSync('packages/brain/migrations/312_orchestrator_runs_state.sql','utf8');if(!/BEFORE UPDATE OR DELETE ON orchestrator_decision_log/.test(c)||!/UNIQUE\s*\(run_id,\s*hop\)/.test(c))process.exit(1)"
-- [x] [BEHAVIOR] selfcheck EXPECTED_SCHEMA_VERSION 已 bump 到 312
-  Test: manual:node -e "const c=require('fs').readFileSync('packages/brain/src/selfcheck.js','utf8');if(!/EXPECTED_SCHEMA_VERSION = '312'/.test(c))process.exit(1)"
+- [x] [BEHAVIOR] selfcheck EXPECTED_SCHEMA_VERSION 保持地板 293 不随 migration bump（issue 14d66027 既有决策；312 bump 归 T2 首个依赖方）
+  Test: manual:node -e "const c=require('fs').readFileSync('packages/brain/src/selfcheck.js','utf8');if(!/EXPECTED_SCHEMA_VERSION = '293'/.test(c))process.exit(1)"
 - [x] [ARTIFACT] CI 测试 packages/brain/src/__tests__/migration-312-orchestrator.test.js 存在
   Test: manual:node -e "if(!require('fs').existsSync('packages/brain/src/__tests__/migration-312-orchestrator.test.js'))process.exit(1)"
