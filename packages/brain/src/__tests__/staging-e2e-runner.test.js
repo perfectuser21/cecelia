@@ -395,6 +395,34 @@ describe('handlePromote — ZenithJoy staging FAIL 护栏通知', () => {
     expect(notifyMsgs[0]).toContain('5200');
   });
 
+  it('FAIL + customer line → Bark 移动通知（双通知保证可达性）', async () => {
+    const barkCalls = [];
+    const notifyBark = async (title, body) => { barkCalls.push({ title, body }); };
+    const pool = { query: vi.fn(async () => ({ rows: [] })) };
+    await handlePromote(
+      pool,
+      { verdict: 'FAIL', baseRepo: 'perfectuser21/zenithjoy', prUrl: 'https://github.com/pr/9', initiativeId: 'init-zj-9' },
+      { notify: async () => {}, notifyBark },
+    );
+    expect(barkCalls).toHaveLength(1);
+    expect(barkCalls[0].title).toContain('ZJ 护栏触发');
+    expect(barkCalls[0].body).toContain('5201');
+    expect(barkCalls[0].body).toContain('5200');
+    expect(barkCalls[0].body).toContain('init-zj-9');
+  });
+
+  it('SKIP + customer line → 不发 Bark（配置缺省非真失败）', async () => {
+    const barkCalls = [];
+    const notifyBark = async (title, body) => { barkCalls.push({ title, body }); };
+    const pool = { query: vi.fn(async () => ({ rows: [] })) };
+    await handlePromote(
+      pool,
+      { verdict: 'SKIP', baseRepo: 'perfectuser21/zenithjoy', prUrl: 'p', initiativeId: 'i' },
+      { notify: async () => {}, notifyBark },
+    );
+    expect(barkCalls).toHaveLength(0);
+  });
+
   it('FAIL + customer line + deployOutput → 通知含诊断输出（开发者无需查 CI 日志）', async () => {
     const notifyMsgs = [];
     const notify = async (msg) => { notifyMsgs.push(msg); };
