@@ -221,7 +221,7 @@ router.get('/relay-runs', async (req, res) => {
     limit = Math.min(parsed, 100);
   }
 
-  // 解析并校验 phase 参数（新增）
+  // 解析并校验 phase 参数
   const rawPhase = req.query.phase;
   if (rawPhase !== undefined && !ALLOWED_PHASES.includes(rawPhase)) {
     return res.status(400).json({
@@ -230,42 +230,71 @@ router.get('/relay-runs', async (req, res) => {
     });
   }
 
+  // 解析并校验 since 参数（FR-19/FR-22/FR-23）
+  const rawSince = req.query.since;
+  let sinceDate = null;
+  if (rawSince !== undefined) {
+    // 空字符串 → 400（FR-23）
+    if (rawSince === '') {
+      return res.status(400).json({ error: 'Invalid since parameter: must be ISO8601 format' });
+    }
+    const d = new Date(rawSince);
+    if (isNaN(d.getTime())) {
+      return res.status(400).json({ error: 'Invalid since parameter: must be ISO8601 format' });
+    }
+    sinceDate = rawSince;
+  }
+
   try {
-    // 构建动态 WHERE 子句（按 phase 有无追加条件）
+    // 构建动态 WHERE 条件数组（conditions + params）
     let result;
-    const params = [limit];
-    let phaseCondition = '';
-    if (rawPhase !== undefined) {
-      params.push(rawPhase);
-      phaseCondition = `AND phase = $${params.length}`;
+
+    function buildConditionsAndParams() {
+      const conditions = ["orchestrator_version = 'v2'"];
+      const params = [];
+
+      if (sinceDate !== null) {
+        params.push(sinceDate);
+        conditions.push(`started_at >= $${params.length}`);
+      }
+
+      if (rawPhase !== undefined) {
+        params.push(rawPhase);
+        conditions.push(`phase = $${params.length}`);
+      }
+
+      params.push(limit);
+      const limitParam = `$${params.length}`;
+
+      return { conditions, params, limitParam };
     }
 
     try {
+      const { conditions, params, limitParam } = buildConditionsAndParams();
       result = await pool.query(
         `SELECT id, initiative_id, phase,
                 orchestrator_heartbeat_at, orchestrator_host,
                 pr_url, started_at, deadline_at,
                 evaluate_verdict, judge_verdict, cost_usd, completed_at, failure_reason
          FROM initiative_runs
-         WHERE orchestrator_version = 'v2'
-         ${phaseCondition}
+         WHERE ${conditions.join(' AND ')}
          ORDER BY started_at DESC
-         LIMIT $1`,
+         LIMIT ${limitParam}`,
         params
       );
     } catch (colErr) {
       if (colErr.message && colErr.message.includes('pr_url')) {
-        // pr_url 列不存在，回退
+        // pr_url 列不存在，回退（FR-24：回退路径中 since 条件同样生效）
+        const { conditions, params, limitParam } = buildConditionsAndParams();
         result = await pool.query(
           `SELECT id, initiative_id, phase,
                   orchestrator_heartbeat_at, orchestrator_host,
                   started_at, deadline_at,
                   evaluate_verdict, judge_verdict, cost_usd, completed_at, failure_reason
            FROM initiative_runs
-           WHERE orchestrator_version = 'v2'
-           ${phaseCondition}
+           WHERE ${conditions.join(' AND ')}
            ORDER BY started_at DESC
-           LIMIT $1`,
+           LIMIT ${limitParam}`,
           params
         );
       } else {
