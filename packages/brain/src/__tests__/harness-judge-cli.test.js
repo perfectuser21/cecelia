@@ -55,7 +55,13 @@ describe('main', () => {
   });
 
   it('agent verdict 非 PASS → 透传 FAIL、judged=false、exit 2（judge 不烧钱）', async () => {
-    const deps = makeDeps();
+    // fake 如实模拟 runJudgeGate 的透传语义：agentVerdict!==PASS → 原样返回、judged=false
+    const deps = makeDeps({
+      judgeGateFn: vi.fn().mockImplementation(async (ctx) =>
+        ctx.agentVerdict !== 'PASS'
+          ? { verdict: ctx.agentVerdict, feedback: ctx.agentFeedback || null, judged: false }
+          : { verdict: 'PASS', feedback: null, judged: true }),
+    });
     const code = await main([...BASE_ARGS, '--agent-verdict', 'FAIL'], deps);
     expect(code).toBe(2);
     // runJudgeGate 内部对非 PASS 透传（本 CLI 直接传入让其透传，judgeGateFn 收到 FAIL）

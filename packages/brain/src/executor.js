@@ -2886,6 +2886,18 @@ export async function runHarnessInitiativeRouter(task, opts = {}) {
 
 async function _driveHarnessInitiative(task, opts = {}) {
   const dbPool = opts.pool || pool;
+
+  // N3 skill-relay 双轨分支（主理人 2026-07-04 拍板）：payload.orchestrator==='skill-relay'
+  // → spawn 单 claude session 跑 harness-controller skill，不 compile / 不 invoke 图。
+  // flag 缺省 → 走下方原 LangGraph 路径，零行为变化。
+  {
+    const { isSkillRelayTask, spawnSkillRelaySession } = await import('./harness-skill-relay.js');
+    if (isSkillRelayTask(task)) {
+      const relayDeps = { pool: dbPool, ...(opts.skillRelayDeps || {}) };
+      return await spawnSkillRelaySession(task, relayDeps);
+    }
+  }
+
   const { compileHarnessFullGraph } = await import('./workflows/harness-initiative.graph.js');
   const { getPgCheckpointer } = await import('./orchestrator/pg-checkpointer.js');
   const { emitGraphNodeUpdate } = await import('./events/taskEvents.js');
