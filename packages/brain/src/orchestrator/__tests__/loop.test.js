@@ -255,6 +255,24 @@ describe('runLoop：控制 action 自消费', () => {
     expect(failSql[1]).toEqual(expect.arrayContaining([RUN_ID, 'hop_cap']));
   });
 
+  it('persist_contract_approval 但 contract 行缺失（id=null）→ failed(approved_but_no_contract_row)，不死转热循环', async () => {
+    const observedSeq = [
+      obs({ contract: { approved: false, id: null }, proposeBranchRn: 1, ganLatestRoundVerdict: 'APPROVED' }),
+    ];
+    const { deps, sqls, sleeps } = makeEnv({ observedSeq });
+
+    const result = await runLoop(deps, { taskId: TASK_ID, runId: RUN_ID });
+
+    expect(result.exitReason).toBe('approved_but_no_contract_row');
+    expect(deps.dispatch).not.toHaveBeenCalled();
+    expect(sleeps).toHaveLength(0);
+    const failSql = sqls.find(([sql]) => sql.includes('initiative_runs') && sql.includes("'failed'"));
+    expect(failSql).toBeTruthy();
+    expect(failSql[1]).toEqual(expect.arrayContaining([RUN_ID, 'approved_but_no_contract_row']));
+    // 没有打向 initiative_contracts 的 0 行 UPDATE
+    expect(sqls.some(([sql]) => sql.includes('initiative_contracts'))).toBe(false);
+  });
+
   it('exit（terminal）→ 直接退出，无任何写入', async () => {
     const observedSeq = [obs({ task: { status: 'aborted' } })];
     const { deps, appended, sqls } = makeEnv({ observedSeq });
@@ -370,12 +388,13 @@ describe('runLoop：appendHop detail 携带 crossCheckMismatch（Task B Minor �
 });
 
 describe('runLoop：runId 缺省解析', () => {
-  it('未传 runId → 由 current_task_id 查 initiative_runs 最新一条', async () => {
+  it('未传 runId → 由 current_task_id 查 initiative_runs 最新一条，且带 orchestrator_version=v2 过滤（双轨期不误伤 v1）', async () => {
     const observedSeq = [obs({ run: { id: RUN_ID, phase: 'done', cost_usd: 0 } })];
     const { deps } = makeEnv({ observedSeq });
     deps.pool.query = vi.fn(async (sql, params) => {
       if (sql.includes('FROM initiative_runs') && sql.includes('current_task_id')) {
         expect(params).toEqual([TASK_ID]);
+        expect(sql).toContain("orchestrator_version = 'v2'");
         return { rows: [{ id: RUN_ID }] };
       }
       return { rows: [] };

@@ -19,17 +19,19 @@ import { deriveCounters } from './counters.js';
 import { collectGroundTruth as defaultCollect } from './ground-truth.js';
 import { appendHop as defaultAppendHop, nextHop as defaultNextHop, SingletonConflictError } from './decision-log.js';
 import { writeHeartbeat as defaultWriteHeartbeat } from './heartbeat.js';
-import { ACTION, BLOCKED_SAME_STATE_CAP, POLL_INTERVAL_MS } from './constants.js';
+import { ACTION, LOG_ACTION, BLOCKED_SAME_STATE_CAP, POLL_INTERVAL_MS } from './constants.js';
 
 const defaultSleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
-/** runId 缺省解析：task 当前挂着的最新 run */
+/** runId 缺省解析：task 当前挂着的最新 v2 run（双轨期 D7：过滤 orchestrator_version，防误伤 v1/LangGraph run） */
 async function resolveRunId(pool, taskId) {
   const { rows } = await pool.query(
-    'SELECT id FROM initiative_runs WHERE current_task_id = $1 ORDER BY created_at DESC LIMIT 1',
+    `SELECT id FROM initiative_runs
+      WHERE current_task_id = $1 AND orchestrator_version = 'v2'
+      ORDER BY created_at DESC LIMIT 1`,
     [taskId],
   );
-  if (!rows[0]) throw new Error(`runLoop: task ${taskId} 无对应 initiative_runs 行（需先建 run）`);
+  if (!rows[0]) throw new Error(`runLoop: task ${taskId} 无对应 v2 initiative_runs 行（需先建 run）`);
   return rows[0].id;
 }
 
@@ -68,7 +70,7 @@ function buildSnapshot(observed, counters, action) {
     const prevReviewer = prev(ACTION.SPAWN_REVIEWER);
     if (prevReviewer) {
       snapshot.verdict_parsed = observed.decisionLog.some(
-        (r) => r.action === 'verdict:reviewer' && r.hop > prevReviewer.hop,
+        (r) => r.action === LOG_ACTION.VERDICT_REVIEWER && r.hop > prevReviewer.hop,
       );
     }
   }
@@ -127,6 +129,12 @@ export async function runLoop(deps, { taskId, runId, dryRun = false }) {
       return { exitReason: decision.reason, hops };
     }
     if (decision.action === ACTION.PERSIST_CONTRACT_APPROVAL) {
+      // 护栏：contract 行缺失（run.contract_id 为空）时 UPDATE 匹配 0 行 →
+      // 观测永不变 → 无 sleep 无 hop 的死转热循环。直接终局，交人工/上游修数据。
+      if (!observed.contract.id) {
+        await markRunFailed(deps.pool, resolvedRunId, 'approved_but_no_contract_row');
+        return { exitReason: 'approved_but_no_contract_row', hops };
+      }
       // 崩溃窗口补落库（reviewer APPROVED 已出但 contract 未 approved），补完继续下一跳
       await deps.pool.query(
         `UPDATE initiative_contracts SET status = 'approved', approved_at = $2, updated_at = $2 WHERE id = $1`,

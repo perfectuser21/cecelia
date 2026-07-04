@@ -66,3 +66,15 @@ export const ACTION = Object.freeze({
 });
 
 export const ACTIONS = Object.freeze(Object.values(ACTION));
+
+/**
+ * LOG_ACTION —— 决策日志 verdict 行的 action 值（T3 dispatcher 写入契约，spec 决策 3：
+ * verdict 权威 = 决策日志行，detail={verdict, pr_head_sha}[, rn / approved]）。
+ * ground-truth/loop 与 T3 必须引用同一常量，magic string 拼错会静默丢 verdict。
+ */
+export const LOG_ACTION = Object.freeze({
+  VERDICT_EVALUATE: 'verdict:evaluate',
+  VERDICT_JUDGE: 'verdict:judge',
+  VERDICT_REVIEWER: 'verdict:reviewer',
+  VERDICT_HUMAN_REVIEW: 'verdict:human_review',
+});

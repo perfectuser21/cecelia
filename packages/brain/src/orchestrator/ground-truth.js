@@ -13,6 +13,7 @@
  *                  （markAuthFailure 写入表，见 src/account-usage.js:194-202；D9 熔断经 DB 共享）
  *   listHostPids({runId}) → number[] —— 可选注入；主机执行（mac_web 类）pid 检查，T3 接线，缺省 []
  */
+import { ACTION, LOG_ACTION } from './constants.js';
 
 /** gh check state → 三态 ci 映射 */
 const CI_FAIL_STATES = new Set(['FAILURE', 'ERROR', 'CANCELLED', 'TIMED_OUT', 'ACTION_REQUIRED', 'STARTUP_FAILURE']);
@@ -165,9 +166,17 @@ export async function collectGroundTruth(deps, opts) {
   }
 
   // ---- propose 分支 rN（外部真相，ganRound 唯一权威）----
-  const lsRemote = execTolerant(execCmd, 'git ls-remote --heads origin "cp-harness-propose-r*"');
+  // 必须按 task 作用域过滤：分支命名 cp-harness-propose-r{N}-{taskId前8}-a{attempt}
+  //（harness-gan.graph.js proposeBranchFor）。不带 taskId 过滤会吃全仓所有 task 的 rN，
+  // 并发 initiative 时 ganRound 被污染。
+  const shortTask = String(taskId).slice(0, 8);
+  const lsRemote = execTolerant(
+    execCmd,
+    `git ls-remote --heads origin "cp-harness-propose-r*-${shortTask}-*"`,
+  );
   let proposeBranchRn = 0;
-  for (const m of String(lsRemote).matchAll(/cp-harness-propose-r(\d+)-/g)) {
+  const rnPattern = new RegExp(`cp-harness-propose-r(\\d+)-${shortTask}-`, 'g');
+  for (const m of String(lsRemote).matchAll(rnPattern)) {
     proposeBranchRn = Math.max(proposeBranchRn, Number(m[1]));
   }
 
@@ -184,15 +193,15 @@ export async function collectGroundTruth(deps, opts) {
 
   // ---- 决策日志推导字段（verdict 权威 = 决策日志行，P0-2；initiative_runs 的 verdict 列只是展示缓存）----
   const generatorSpawned = decisionLog.some(
-    (r) => r.action === 'spawn:generator' || r.action === 'spawn:generator-fix',
+    (r) => r.action === ACTION.SPAWN_GENERATOR || r.action === ACTION.SPAWN_GENERATOR_FIX,
   );
-  const evalRow = latestRow(decisionLog, (r) => r.action === 'verdict:evaluate');
-  const judgeRow = latestRow(decisionLog, (r) => r.action === 'verdict:judge');
+  const evalRow = latestRow(decisionLog, (r) => r.action === LOG_ACTION.VERDICT_EVALUATE);
+  const judgeRow = latestRow(decisionLog, (r) => r.action === LOG_ACTION.VERDICT_JUDGE);
   const evaluateVerdict = evalRow ? asJson(evalRow.detail) : null;
   const judgeVerdict = judgeRow ? asJson(judgeRow.detail) : null;
 
   // GAN 本轮 verdict：只认 detail.rn === 当前分支 rN 的 reviewer verdict（旧轮不算）
-  const reviewerRow = latestRow(decisionLog, (r) => r.action === 'verdict:reviewer');
+  const reviewerRow = latestRow(decisionLog, (r) => r.action === LOG_ACTION.VERDICT_REVIEWER);
   const reviewerDetail = reviewerRow ? asJson(reviewerRow.detail) : null;
   const ganLatestRoundVerdict =
     reviewerDetail && reviewerDetail.rn === proposeBranchRn ? reviewerDetail.verdict ?? null : null;
@@ -201,7 +210,7 @@ export async function collectGroundTruth(deps, opts) {
   // approved 权威 = 决策日志 verdict:human_review 行，锚定当前 head_sha（stale 批准不放行）
   const payload = asJson(task.payload) ?? {};
   const reviewRequired = payload.review_required === true;
-  const hrRow = latestRow(decisionLog, (r) => r.action === 'verdict:human_review');
+  const hrRow = latestRow(decisionLog, (r) => r.action === LOG_ACTION.VERDICT_HUMAN_REVIEW);
   const hrDetail = hrRow ? asJson(hrRow.detail) : null;
   const reviewApproved = Boolean(
     hrDetail && hrDetail.approved === true && pr && hrDetail.pr_head_sha === pr.head_sha,

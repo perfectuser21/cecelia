@@ -224,6 +224,21 @@ describe('collectGroundTruth：propose 分支 rN 解析', () => {
     const o = await collectGroundTruth(deps, { taskId: TASK_ID, runId: RUN_ID });
     expect(o.proposeBranchRn).toBe(0);
   });
+
+  it('task 作用域：跨 task 分支不计入（并发 initiative 的 rN 不污染 ganRound），ls-remote pattern 带 taskId 前 8 位', async () => {
+    const deps = makeDeps({
+      exec: {
+        lsRemote: [
+          'aaa\trefs/heads/cp-harness-propose-r2-11111111-a0', // 本 task（TASK_ID 前 8 位）
+          'bbb\trefs/heads/cp-harness-propose-r9-deadbeef-a0', // 别的 task，禁止计入
+        ].join('\n'),
+      },
+    });
+    const o = await collectGroundTruth(deps, { taskId: TASK_ID, runId: RUN_ID });
+    expect(o.proposeBranchRn).toBe(2);
+    const lsCmd = deps.execCmd.calls.find((c) => c.includes('ls-remote'));
+    expect(lsCmd).toContain('cp-harness-propose-r*-11111111-*');
+  });
 });
 
 describe('collectGroundTruth：inflight（P0-1）', () => {
