@@ -147,11 +147,11 @@ describe('selfcheck', () => {
     expect(ok).toBe(true);
   });
 
-  // 312 = orchestrator 代码强依赖 312 列（orchestrator_decision_log + initiative_runs 心跳列）；
+  // 313 = agent-credit 路由强依赖 licenses.credit_balance 列（migration 313）；
   // issue 14d66027 语义不变：只有代码依赖才 bump，加 migration 本身**不要 bump**。
   // facts-check 只校验地板 <= 最高 migration，不要求相等。
-  it('EXPECTED_SCHEMA_VERSION should be 312 (floor, bump only on code dependency)', () => {
-    expect(EXPECTED_SCHEMA_VERSION).toBe('312');
+  it('EXPECTED_SCHEMA_VERSION should be 313 (floor, bump only on code dependency)', () => {
+    expect(EXPECTED_SCHEMA_VERSION).toBe('313');
   });
 
   it('should pass when DB schema version is ahead of expected (>= check)', async () => {

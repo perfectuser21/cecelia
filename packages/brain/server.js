@@ -36,6 +36,8 @@ import perceptionSignalsRoutes from './src/routes/perception-signals.js';
 import architectureRoutes from './src/routes/architecture.js';
 import taskRouterDiagnoseRoutes from './src/routes/task-router-diagnose.js';
 import licenseRoutes from './src/routes/license.js';
+import agentCreditRoutes from './src/routes/agent-credit.js';
+import acquisitionRoutes from './src/routes/acquisition.js';
 import notebookAuditRoutes from './src/routes/notebook-audit.js';
 import alertingRoutes from './src/routes/alerting.js';
 import systemReportsRoutes from './src/routes/system-reports.js';
@@ -379,6 +381,8 @@ app.get('/api/brain/autonomous/sessions', createAutonomousRouter(join(dirname(fi
 app.use('/api/brain/tasks', taskTasksRoutes);
 
 app.use('/api/brain', licenseRoutes);
+app.use('/api/brain', agentCreditRoutes);
+app.use('/api/brain', acquisitionRoutes);
 
 // Mount cecelia task execution routes
 app.use('/api/cecelia', ceceliaRoutes);
