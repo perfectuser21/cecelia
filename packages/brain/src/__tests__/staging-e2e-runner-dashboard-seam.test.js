@@ -8,7 +8,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 vi.mock('../db.js', () => ({ default: { query: vi.fn().mockResolvedValue({ rows: [] }) } }));
 vi.mock('../task-updater.js', () => ({ updateTaskStatus: vi.fn().mockResolvedValue(undefined) }));
-vi.mock('../notifier.js', () => ({ sendFeishu: vi.fn().mockResolvedValue(undefined) }));
+vi.mock('../notifier.js', () => ({ sendFeishu: vi.fn().mockResolvedValue(undefined), sendBark: vi.fn().mockResolvedValue(false) }));
 vi.mock('../harness-final-e2e.js', () => ({ normalizeAcceptance: (a) => ({ scenarios: a.scenarios || [] }) }));
 
 // 保留 staging-promote 真实实现，仅 spy defaultPromoteExec 以断言它收到的 repoRoot。
