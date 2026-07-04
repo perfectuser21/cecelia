@@ -1,0 +1,63 @@
+/**
+ * Orchestrator 常量（T2 骨架）。
+ * 全部照抄旧图数值，出处：docs/current/harness-orchestration-redesign/routing-extraction.md。
+ * 纯常量文件——禁任何运行时计算/非确定性调用。
+ */
+
+// Task Graph routeAfterFix：error→end(超 MAX_FIX_ROUNDS=20)
+export const MAX_FIX_ROUNDS = 20;
+
+// Task Graph routeAfterPoll：pending→回环 poll，超限 timeout（20 次 × 90s）
+export const MAX_POLL_COUNT = 20;
+export const POLL_INTERVAL_MS = 90000;
+
+// GAN Contract Graph 硬保护：budgetCapUsd(10)/MAX_NO_PUSH_STREAK(2)/MAX_NO_VERDICT_STREAK(3)
+export const MAX_NO_PUSH_STREAK = 2;
+export const MAX_NO_VERDICT_STREAK = 3;
+export const BUDGET_CAP_USD = 10;
+
+// mergePrNode：BEHIND→update-branch(≤3)
+export const MAX_REBASE_ATTEMPTS = 3;
+
+// 新增（spec P2）：整条 run 的 hop 硬上限，防 reconcile loop 失控
+export const MAX_HOPS = 200;
+
+// loop 四态最小语义：NEEDS_CONTEXT/BLOCKED 连续 2 次同态 → failed
+// （"绝不同模型无变化重试"铁律骨架版；对应父图 serial_gate requeue CAP(2) 精神）
+export const BLOCKED_SAME_STATE_CAP = 2;
+
+/**
+ * action 枚举（spec §action 枚举，T3 dispatcher 认领清单，防漏项）：
+ * - spawn:planner
+ * - spawn:proposer
+ * - spawn:reviewer            —— GAN feedback 随 propose 分支 push（决策 10，重拉可能换主机）
+ * - spawn:generator
+ * - spawn:generator-fix       —— fix 同 PR（fixDispatch 不 reset pr_url/pr_branch）
+ * - spawn:evaluator           —— 前置 ARTIFACT 门 + Contract Gate，归 T3
+ * - spawn:judge
+ * - wait:running              —— 在途容器/pid 存在，只写心跳不派发（P0-1）
+ * - wait:poll_ci
+ * - wait:human_review         —— 副作用（Bark 通知+spawnReviewPreview+allocatePort）归 T3
+ * - merge_pr                  —— 含 BEHIND update-branch≤3 / CONFLICTING→failed / ALREADY_MERGED 幂等
+ * - report                    —— 六步链（promoteToRegression/buildHandoff/syncOkrInitiativeStatus/
+ *                                _spawnStagingE2eTask/killInitiativeContainers），归 T3
+ * 控制类（loop 自消费，不派 dispatcher）：
+ * - exit                      —— terminal（run done/failed 或 task aborted/cancelled）
+ * - mark_failed               —— 守护/上限触发，run 置 failed
+ */
+export const ACTIONS = Object.freeze([
+  'spawn:planner',
+  'spawn:proposer',
+  'spawn:reviewer',
+  'spawn:generator',
+  'spawn:generator-fix',
+  'spawn:evaluator',
+  'spawn:judge',
+  'wait:running',
+  'wait:poll_ci',
+  'wait:human_review',
+  'merge_pr',
+  'report',
+  'exit',
+  'mark_failed',
+]);
