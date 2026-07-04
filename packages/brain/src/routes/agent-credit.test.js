@@ -68,7 +68,7 @@ describe('GET /api/brain/agent/credit/balance', () => {
 // POST /api/brain/agent/credit/deduct
 // ─────────────────────────────────────────────────────
 describe('POST /api/brain/agent/credit/deduct', () => {
-  const makeClient = (rows, status = 'active') => {
+  const makeClient = (rows) => {
     const client = {
       query: vi.fn(),
       release: vi.fn(),
