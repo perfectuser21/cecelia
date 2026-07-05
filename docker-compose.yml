@@ -21,6 +21,10 @@ services:
       # B57: zenithjoy-skills SSOT — .claude/skills/* 是指向这里的 symlink，
       # 不 mount 则容器内 symlink 悬空 → harness SKILL 加载失败（loadSkillContent 全 miss → 空 SKILL 凑合跑 / B56 后 fail-fast）
       - /Users/administrator/perfect21/zenithjoy-skills:/Users/administrator/perfect21/zenithjoy-skills:ro
+      # B58(2026-07-05): relay 三 skill 的 .claude/skills/* symlink 实际指向 zenithjoy-skills-DIST
+      # （git archive origin/main，根治工作 checkout 停 feature 分支读旧版的坑），dist 未 mount 则
+      # 容器内 loadSkillContent 悬空 → Brain 无法 dispatch relay / watchdog 无法重点火（只能宿主 ignite）。
+      - /Users/administrator/perfect21/zenithjoy-skills-dist:/Users/administrator/perfect21/zenithjoy-skills-dist:ro
       # Credentials + Claude accounts — 保持宿主路径不 remap
       # HOST_HOME=/Users/administrator + Dockerfile ENV HOME 也对齐宿主路径，
       # 这样 Brain os.homedir() 和 docker-executor 构造的子容器 mount 源都能解析。
