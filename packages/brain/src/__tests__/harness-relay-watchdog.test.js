@@ -23,6 +23,8 @@ function makeDeps({
   containerRunning = false,
   orchestrator = 'skill-relay',
   prUrl = null,
+  taskPrUrl = null,     // tasks.pr_url 列（fallback source 1）
+  payloadPrUrl = null,  // tasks.payload.pr_url（fallback source 2）
   prState = null,   // 'MERGED' | 'OPEN' | 'CLOSED' | null（execFn 返回的 gh pr view JSON）
 } = {}) {
   const pool = { query: vi.fn() };
@@ -31,7 +33,10 @@ function makeDeps({
       return { rows: [{ initiative_id: TASK_ID, phase: 'planning', attempts: String(attempts), deadline_at: new Date(Date.now() + 3600e3).toISOString(), pr_url: prUrl }] };
     }
     if (/FROM tasks/.test(sql)) {
-      return { rows: [{ id: TASK_ID, status: taskStatus, title: 't', payload: { orchestrator } }] };
+      const payload = payloadPrUrl
+        ? { orchestrator, pr_url: payloadPrUrl }
+        : { orchestrator };
+      return { rows: [{ id: TASK_ID, status: taskStatus, title: 't', payload, pr_url: taskPrUrl }] };
     }
     return { rows: [] };
   });
@@ -180,5 +185,64 @@ describe('PATCH phase 白名单扩展（进度条数据源）', () => {
     for (const ph of ['planning', 'gan', 'generate', 'evaluate', 'done', 'failed']) {
       expect(src, `PATCH 白名单缺 ${ph}`).toMatch(new RegExp(`ALLOWED[^\\]]*'${ph}'`));
     }
+  });
+});
+
+describe('pr_url fallback 数据源（watchdog）', () => {
+  it('run.pr_url null + task.pr_url 有值 + PR MERGED → 标 completed/done，不重点火', async () => {
+    const deps = makeDeps({ prUrl: null, taskPrUrl: PR_URL, prState: 'MERGED' });
+    const r = await resumeStalledRelayRuns(deps);
+    expect(deps.spawnFn).not.toHaveBeenCalled();
+    // 必须调用 gh pr view 查状态（fallback 来自 task.pr_url）
+    const ghCall = deps.execFn.mock.calls.find(c => /gh pr view/.test(c[0]));
+    expect(ghCall).toBeTruthy();
+    expect(ghCall[0]).toContain(PR_URL);
+    // task → completed, run → done
+    const updates = deps.pool.query.mock.calls.map(c => c[0]);
+    expect(updates.some(s => /UPDATE tasks/.test(s) && /'completed'/.test(s))).toBe(true);
+    expect(updates.some(s => /UPDATE initiative_runs/.test(s) && /'done'/.test(s))).toBe(true);
+    expect(r.mergedPr).toBe(1);
+  });
+
+  it('run.pr_url null + task.pr_url null + payload.pr_url 有值 + PR MERGED → 标 completed/done', async () => {
+    const deps = makeDeps({ prUrl: null, taskPrUrl: null, payloadPrUrl: PR_URL, prState: 'MERGED' });
+    const r = await resumeStalledRelayRuns(deps);
+    expect(deps.spawnFn).not.toHaveBeenCalled();
+    const ghCall = deps.execFn.mock.calls.find(c => /gh pr view/.test(c[0]));
+    expect(ghCall).toBeTruthy();
+    expect(ghCall[0]).toContain(PR_URL);
+    const updates = deps.pool.query.mock.calls.map(c => c[0]);
+    expect(updates.some(s => /UPDATE tasks/.test(s) && /'completed'/.test(s))).toBe(true);
+    expect(updates.some(s => /UPDATE initiative_runs/.test(s) && /'done'/.test(s))).toBe(true);
+    expect(r.mergedPr).toBe(1);
+  });
+
+  it('taskQ SELECT 含 pr_url 列（源码断言）', async () => {
+    const { readFileSync } = await import('node:fs');
+    const src = readFileSync(new URL('../harness-relay-watchdog.js', import.meta.url), 'utf8');
+    // taskQ SELECT 必须包含 pr_url 列
+    expect(src).toMatch(/SELECT[^`]*pr_url[^`]*FROM tasks/s);
+  });
+});
+
+describe('PATCH /relay-runs/:id 接受 pr_url（源码断言）', () => {
+  it('PATCH handler 从 req.body 解构 pr_url', async () => {
+    const { readFileSync } = await import('node:fs');
+    const src = readFileSync(new URL('../routes/initiatives.js', import.meta.url), 'utf8');
+    // PATCH relay-runs handler 必须包含 pr_url 解构
+    expect(src).toMatch(/const\s*\{[^}]*pr_url[^}]*\}\s*=\s*req\.body/);
+  });
+
+  it('PATCH handler 校验 pr_url 须以 https://github.com/ 开头', async () => {
+    const { readFileSync } = await import('node:fs');
+    const src = readFileSync(new URL('../routes/initiatives.js', import.meta.url), 'utf8');
+    expect(src).toMatch(/https:\/\/github\.com\//);
+  });
+
+  it('PATCH handler 用 COALESCE 写 pr_url（只增不清）', async () => {
+    const { readFileSync } = await import('node:fs');
+    const src = readFileSync(new URL('../routes/initiatives.js', import.meta.url), 'utf8');
+    // COALESCE(pr_url, ...) 或 COALESCE($N, pr_url) 写法确保 only-set-never-clear
+    expect(src).toMatch(/COALESCE.*pr_url|pr_url.*COALESCE/s);
   });
 });
