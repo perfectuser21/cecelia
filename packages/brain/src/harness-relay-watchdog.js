@@ -29,6 +29,10 @@ export async function resumeStalledRelayRuns(deps = {}) {
   const out = { scanned: 0, resumed: 0, capped: 0, housekept: 0 };
 
   // 每个 initiative 取最新一行 + 点火次数（每次 spawn INSERT 一行 = attempts 天然计数）
+  // 已知缺口（Notion Issue 1ea53e09-b088-4d2a-b03a-ad8c976bbc6c）：这个计数只统计
+  // initiative_runs 里已成功 INSERT 的行，早期 spawn 失败（例如 spawn 前就挂掉，
+  // 从未写入 initiative_runs）不计数，可能导致 attempts 长期低估、MAX_RELAY_ATTEMPTS
+  // 封顶判断失效，从而无限重跑不收敛。暂未修，先记录跟踪。
   const runsQ = await dbPool.query(
     `SELECT DISTINCT ON (initiative_id)
             initiative_id, phase, deadline_at,

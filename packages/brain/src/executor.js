@@ -2910,6 +2910,15 @@ async function _driveHarnessInitiative(task, opts = {}) {
   const relayDeps = { pool: dbPool, ...(opts.skillRelayDeps || {}) };
   return await spawnSkillRelaySession(task, relayDeps);
 
+  // 死代码（有意保留，2026-07-05 orchestrator 硬校验后不可达）：
+  // LangGraph 图路径 compileHarnessFullGraph 及其后续调用，因为上面的硬校验
+  // 保证 orchestrator 必须是 'skill-relay'，本段代码物理上不会再被执行到。
+  // 保留观察期，待确认 skill-relay 路径完全稳定后再物理删除本段及
+  // packages/brain/src/workflows/harness-initiative.graph.js 中对应部分
+  // （注意：harness-initiative.graph.js 文件本身不是完全死代码——其中的
+  // reportNode 仍被 packages/brain/scripts/smoke/reportnode-task-writeback-smoke.sh
+  // 直接 import 使用，只有 compileHarnessFullGraph 这条调用路径不可达）。
+  /* eslint-disable no-unreachable */
   const { compileHarnessFullGraph } = await import('./workflows/harness-initiative.graph.js');
   const { getPgCheckpointer } = await import('./orchestrator/pg-checkpointer.js');
   const { emitGraphNodeUpdate } = await import('./events/taskEvents.js');
@@ -3074,6 +3083,7 @@ async function _driveHarnessInitiative(task, opts = {}) {
       error: final?.error,
     },
   };
+  /* eslint-enable no-unreachable */
 }
 
 /**
