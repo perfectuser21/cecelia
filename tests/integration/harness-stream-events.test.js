@@ -5,6 +5,17 @@
  *
  * 验证：runHarnessInitiativeRouter 用 streamMode='updates'，每个 node 完成
  *       emitGraphNodeUpdate 被调一次，写一条 task_events 行。
+ *
+ * ── 2026-07-05 更新（orchestrator 硬校验落地后）──────────────────
+ * `_driveHarnessInitiative` 加了 orchestrator 硬校验：task.payload.orchestrator
+ * !== 'skill-relay' 会在函数最顶部被拒绝（terminal failed，
+ * failure_class='missing_orchestrator_flag'），不再到达本文件测试的 W4
+ * streamMode/emitGraphNodeUpdate 图内部行为。`describe('harness streamMode
+ * events（W4）')` 下 3 个用例测的场景（task 不带 orchestrator 时仍能到达
+ * graph stream 逻辑）在新现实下已不可能发生，现在是永久不可达代码（保留
+ * 待观察期后物理清理），已改为 it.skip 并说明原因，不删除，保留骨架待
+ * 未来这套保护迁移到 skill-relay 路径时复用。`summarizeNodeState helper`
+ * 这个 describe 测的是与 orchestrator 判断无关的纯辅助函数，不受影响，未改动。
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -56,7 +67,7 @@ beforeEach(async () => {
 });
 
 describe('harness streamMode events（W4）', () => {
-  it('5 节点 stream → emitGraphNodeUpdate 被调 5 次', async () => {
+  it.skip('5 节点 stream → emitGraphNodeUpdate 被调 5 次（2026-07-05 orchestrator 硬校验后已不可达，skip）', async () => {
     mockGraphStream.mockImplementation(async () => (async function* () {
       yield { prepInitiative: { initiativeId: 'x' } };
       yield { runPlanner: { planner_done: true } };
@@ -82,7 +93,7 @@ describe('harness streamMode events（W4）', () => {
     expect(mockEmitGraphNodeUpdate.mock.calls[0][0].threadId).toContain(task.id);
   });
 
-  it('emit 失败被 catch，不阻断 stream', async () => {
+  it.skip('emit 失败被 catch，不阻断 stream（2026-07-05 orchestrator 硬校验后已不可达，skip）', async () => {
     mockEmitGraphNodeUpdate.mockRejectedValueOnce(new Error('DB temporarily down'));
     mockGraphStream.mockImplementation(async () => (async function* () {
       yield { nodeA: { ok: true } };
@@ -101,7 +112,7 @@ describe('harness streamMode events（W4）', () => {
     expect(mockEmitGraphNodeUpdate).toHaveBeenCalledTimes(2);
   });
 
-  it('stream config 必含 streamMode=updates', async () => {
+  it.skip('stream config 必含 streamMode=updates（2026-07-05 orchestrator 硬校验后已不可达，skip）', async () => {
     mockGraphStream.mockImplementation(async () => (async function* () {})());
 
     const task = {

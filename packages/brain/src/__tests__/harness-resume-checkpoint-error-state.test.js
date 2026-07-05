@@ -18,6 +18,20 @@
  * SC-004: 坏 checkpoint → DB UPDATE execution_attempts 被调用
  * SC-005: 好 checkpoint（channel_values 存在但 error 为 null）→ 仍走 resume
  * SC-005b: 好 checkpoint（channel_values 存在但 error 为 undefined）→ 仍走 resume
+ *
+ * ── 2026-07-05 更新（orchestrator 硬校验落地后）──────────────────
+ * `_driveHarnessInitiative` 加了 orchestrator 硬校验：task.payload.orchestrator
+ * !== 'skill-relay' 会在函数最顶部被拒绝（terminal failed，
+ * failure_class='missing_orchestrator_flag'），不再到达本文件测试的坏
+ * checkpoint 检测 / 图级并发 invoke 互斥逻辑。SC-001~SC-005b 以及「同一
+ * initiative 并发两次 invoke」这几个用例测的场景（task 不带 orchestrator
+ * 时仍能到达 checkpoint 检测/graph invoke/并发锁逻辑）在新现实下已不可能
+ * 发生，现在是永久不可达代码（保留待观察期后物理清理），已改为 it.skip
+ * 并说明原因，不删除，保留骨架待未来这套保护迁移到 skill-relay 路径时复用。
+ * 「锁在驱动结束后释放」这个用例的断言只要求 r1.skipped/r2.skipped 均为
+ * falsy，硬校验路径下两次 invoke 都会 terminal failed（不设置 skipped 字段，
+ * 天然 falsy），恰好也满足，仍能通过，但它现在测的不再是并发锁释放场景本身；
+ * 保留为 it()（未失败，不 skip），仅在此注明。
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -243,7 +257,7 @@ const BASE_TASK = {
 
 describe('runHarnessInitiativeRouter — 坏 checkpoint 检测（resume-checkpoint 无限循环修复）', () => {
 
-  it('SC-001: 坏 checkpoint（channel_values.error 有值）+ resumeRequested → fresh start（input = { task }）', async () => {
+  it.skip('SC-001: 坏 checkpoint（channel_values.error 有值）+ resumeRequested → fresh start（input = { task }）（2026-07-05 orchestrator 硬校验后已不可达，skip）', async () => {
     // 返回一个处于 error 状态的 checkpoint（ganLoop 失败）
     mockCheckpointerGet.mockResolvedValue({
       channel_values: {
@@ -258,7 +272,7 @@ describe('runHarnessInitiativeRouter — 坏 checkpoint 检测（resume-checkpoi
     expect(capturedStreamInput).toEqual({ task: BASE_TASK });
   });
 
-  it('SC-002: 好 checkpoint（channel_values 无 error）+ resumeRequested → resume（input = null）', async () => {
+  it.skip('SC-002: 好 checkpoint（channel_values 无 error）+ resumeRequested → resume（input = null）（2026-07-05 orchestrator 硬校验后已不可达，skip）', async () => {
     // 返回一个正常 checkpoint（无 error 字段）
     mockCheckpointerGet.mockResolvedValue({
       channel_values: {
@@ -273,7 +287,7 @@ describe('runHarnessInitiativeRouter — 坏 checkpoint 检测（resume-checkpoi
     expect(capturedStreamInput).toBeNull();
   });
 
-  it('SC-003: 坏 checkpoint → attemptN 被升（execution_attempts+1+1），threadId 包含新 attemptN', async () => {
+  it.skip('SC-003: 坏 checkpoint → attemptN 被升（execution_attempts+1+1），threadId 包含新 attemptN（2026-07-05 orchestrator 硬校验后已不可达，skip）', async () => {
     mockCheckpointerGet.mockResolvedValue({
       channel_values: { error: 'ganLoop failed' },
     });
@@ -286,7 +300,7 @@ describe('runHarnessInitiativeRouter — 坏 checkpoint 检测（resume-checkpoi
     expect(result.threadId).toContain(`:${expectedAttemptN}`);
   });
 
-  it('SC-004: 坏 checkpoint → DB UPDATE execution_attempts 被调用（避免重复使用旧 attemptN）', async () => {
+  it.skip('SC-004: 坏 checkpoint → DB UPDATE execution_attempts 被调用（避免重复使用旧 attemptN）（2026-07-05 orchestrator 硬校验后已不可达，skip）', async () => {
     mockCheckpointerGet.mockResolvedValue({
       channel_values: { error: 'ganLoop node threw exception' },
     });
@@ -304,7 +318,7 @@ describe('runHarnessInitiativeRouter — 坏 checkpoint 检测（resume-checkpoi
     expect(updateCall).toBeTruthy();
   });
 
-  it('SC-005: 好 checkpoint（channel_values 存在但 error 为 null）→ 走 resume（input = null）', async () => {
+  it.skip('SC-005: 好 checkpoint（channel_values 存在但 error 为 null）→ 走 resume（input = null）（2026-07-05 orchestrator 硬校验后已不可达，skip）', async () => {
     mockCheckpointerGet.mockResolvedValue({
       channel_values: {
         error: null,  // 明确设为 null，不应触发 fresh start
@@ -317,7 +331,7 @@ describe('runHarnessInitiativeRouter — 坏 checkpoint 检测（resume-checkpoi
     expect(capturedStreamInput).toBeNull();
   });
 
-  it('SC-005b: 好 checkpoint（channel_values 存在但 error 为 undefined）→ 走 resume（input = null）', async () => {
+  it.skip('SC-005b: 好 checkpoint（channel_values 存在但 error 为 undefined）→ 走 resume（input = null）（2026-07-05 orchestrator 硬校验后已不可达，skip）', async () => {
     mockCheckpointerGet.mockResolvedValue({
       channel_values: {
         task: BASE_TASK,
@@ -348,7 +362,7 @@ describe('runHarnessInitiativeRouter — 图级并发 invoke 互斥（防双图�
     execution_attempts: 0,
   };
 
-  it('同一 initiative 并发两次 invoke → 第二个被跳过（skipped），stream 只被调一次', async () => {
+  it.skip('同一 initiative 并发两次 invoke → 第二个被跳过（skipped），stream 只被调一次（2026-07-05 orchestrator 硬校验后已不可达，skip）', async () => {
     // fresh start（无 checkpoint），让第一个 invoke 顺利进到 stream 并持锁
     mockCheckpointerGet.mockResolvedValue(null);
 
@@ -366,7 +380,7 @@ describe('runHarnessInitiativeRouter — 图级并发 invoke 互斥（防双图�
     expect(mockCompiled.stream).toHaveBeenCalledTimes(1);
   });
 
-  it('锁在驱动结束后释放：同一 initiative 顺序两次 invoke 都能正常跑（不误判 skipped）', async () => {
+  it('锁在驱动结束后释放：同一 initiative 顺序两次 invoke 都能正常跑（不误判 skipped）（2026-07-05 起：断言不依赖具体走的是哪条代码路径，硬校验路径下天然满足）', async () => {
     mockCheckpointerGet.mockResolvedValue(null);
 
     const r1 = await runHarnessInitiativeRouter(CONCURRENT_TASK, { pool: { query: mockQuery } });
