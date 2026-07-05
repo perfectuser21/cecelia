@@ -15,20 +15,34 @@ import { resumeStalledRelayRuns, MAX_RELAY_ATTEMPTS } from '../harness-relay-wat
 const TASK_ID = 'aaaabbbb-cccc-dddd-eeee-ffff00001111';
 const SHORT = 'aaaabbbb';
 
-function makeDeps({ taskStatus = 'in_progress', attempts = 2, containerRunning = false, orchestrator = 'skill-relay' } = {}) {
+const PR_URL = 'https://github.com/org/repo/pull/42';
+
+function makeDeps({
+  taskStatus = 'in_progress',
+  attempts = 2,
+  containerRunning = false,
+  orchestrator = 'skill-relay',
+  prUrl = null,
+  prState = null,   // 'MERGED' | 'OPEN' | 'CLOSED' | null（execFn 返回的 gh pr view JSON）
+} = {}) {
   const pool = { query: vi.fn() };
   pool.query.mockImplementation(async (sql) => {
     if (/DISTINCT ON \(initiative_id\)/.test(sql)) {
-      return { rows: [{ initiative_id: TASK_ID, phase: 'planning', attempts: String(attempts), deadline_at: new Date(Date.now() + 3600e3).toISOString() }] };
+      return { rows: [{ initiative_id: TASK_ID, phase: 'planning', attempts: String(attempts), deadline_at: new Date(Date.now() + 3600e3).toISOString(), pr_url: prUrl }] };
     }
     if (/FROM tasks/.test(sql)) {
       return { rows: [{ id: TASK_ID, status: taskStatus, title: 't', payload: { orchestrator } }] };
     }
     return { rows: [] };
   });
+  const execFn = vi.fn().mockImplementation((cmd) => {
+    if (/docker ps/.test(cmd)) return containerRunning ? 'abc123\n' : '';
+    if (/gh pr view/.test(cmd) && prState) return JSON.stringify({ state: prState });
+    return '';
+  });
   return {
     pool,
-    execFn: vi.fn().mockReturnValue(containerRunning ? 'abc123\n' : ''),
+    execFn,
     spawnFn: vi.fn().mockResolvedValue({ ok: true, containerId: 'cecelia-relay-x' }),
   };
 }
@@ -85,6 +99,59 @@ describe('resumeStalledRelayRuns', () => {
     const deps = makeDeps({ taskStatus: 'queued' });
     const r = await resumeStalledRelayRuns(deps);
     expect(deps.spawnFn).not.toHaveBeenCalled();
+  });
+
+  it('容器消失 + pr_url 存在 + PR MERGED → 标 completed/done，不重点火', async () => {
+    const deps = makeDeps({ prUrl: PR_URL, prState: 'MERGED' });
+    const r = await resumeStalledRelayRuns(deps);
+    expect(deps.spawnFn).not.toHaveBeenCalled();
+    expect(r.resumed).toBe(0);
+    // 必须调用 gh pr view 查状态
+    const ghCall = deps.execFn.mock.calls.find(c => /gh pr view/.test(c[0]));
+    expect(ghCall).toBeTruthy();
+    expect(ghCall[0]).toContain(PR_URL);
+    // task → completed
+    const updates = deps.pool.query.mock.calls.map(c => c[0]);
+    expect(updates.some(s => /UPDATE tasks/.test(s) && /'completed'/.test(s))).toBe(true);
+    // run → done
+    expect(updates.some(s => /UPDATE initiative_runs/.test(s) && /'done'/.test(s))).toBe(true);
+    expect(r.mergedPr).toBe(1);
+  });
+
+  it('容器消失 + pr_url 存在 + PR OPEN → 正常重点火流程', async () => {
+    const deps = makeDeps({ prUrl: PR_URL, prState: 'OPEN' });
+    const r = await resumeStalledRelayRuns(deps);
+    expect(deps.spawnFn).toHaveBeenCalledOnce();
+    expect(r.resumed).toBe(1);
+    expect(r.mergedPr).toBe(0);
+  });
+
+  it('容器消失 + pr_url 存在 + gh pr view 抛错 → 保守跳过（不盲目重点火）', async () => {
+    const pool = makeDeps().pool;
+    pool.query.mockImplementation(async (sql) => {
+      if (/DISTINCT ON \(initiative_id\)/.test(sql)) {
+        return { rows: [{ initiative_id: TASK_ID, phase: 'planning', attempts: '2', deadline_at: new Date(Date.now() + 3600e3).toISOString(), pr_url: PR_URL }] };
+      }
+      if (/FROM tasks/.test(sql)) {
+        return { rows: [{ id: TASK_ID, status: 'in_progress', title: 't', payload: { orchestrator: 'skill-relay' } }] };
+      }
+      return { rows: [] };
+    });
+    const execFn = vi.fn().mockImplementation((cmd) => {
+      if (/docker ps/.test(cmd)) return '';
+      if (/gh pr view/.test(cmd)) throw new Error('gh: not found');
+    });
+    const r = await resumeStalledRelayRuns({ pool, execFn, spawnFn: vi.fn() });
+    expect(r.resumed).toBe(0);
+    expect(r.mergedPr).toBe(0);
+  });
+
+  it('容器消失 + pr_url 为 null → 直接走重点火（不调 gh pr view）', async () => {
+    const deps = makeDeps({ prUrl: null });
+    const r = await resumeStalledRelayRuns(deps);
+    const ghCall = deps.execFn.mock.calls.find(c => /gh pr view/.test(c[0]));
+    expect(ghCall).toBeFalsy();
+    expect(deps.spawnFn).toHaveBeenCalledOnce();
   });
 });
 
