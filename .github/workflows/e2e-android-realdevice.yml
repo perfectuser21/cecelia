@@ -2,16 +2,24 @@ name: Harness E2E (Android Real Device)
 
 # Generic harness E2E entry point for android_realdevice target_environment.
 # Triggered by evaluator SKILL when target_environment=android_realdevice on ZenithJoy sprints.
-# Runs e2e-verify-android.sh from the sprint directory on a GitHub-hosted ubuntu-latest
-# runner that joins the tailnet for the job duration (tailscale/github-action, same pattern
-# as verify-tailscale-brain.yml) and reaches the Honor test phone via ADB over TCP.
-# No self-hosted runner required — no persistent infra, no dedicated machine.
+# Runs e2e-verify-android.sh from the sprint directory on the ROG Windows self-hosted runner,
+# reaching the Honor test phone via USB (preferred, most stable) or ADB-over-TCP (Tailscale).
+#
+# 2026-07-05: 迁移 ubuntu-latest+tailscale → ROG Windows self-hosted runner。ROG 常年开、
+# 微信已登录(windows_wechat 同机)，手机 USB 直插即可，一台机器伺候 Windows+Android 两条线。
+# USB 直连比"云 runner 每次临时入网穿 Tailscale"更稳、无 authkey 外泄、无登录态暴露到云。
+#
+# ROG runner 前置(一次性，人工在 ROG 上做)：
+#   1. 注册 GitHub self-hosted runner，打标签 [self-hosted, windows, android]
+#   2. 装 Git for Windows —— 提供 git-bash，让下方 shell: bash 步骤在 Windows 上跑
+#   3. 装 Android platform-tools(adb) 加入 PATH；装荣耀 OEM USB 驱动
+#   4. 手机 USB 直插 ROG(DEVICE_SERIAL=USB serial，adb connect 被 || true 跳过)；
+#      或走 TCP 时 DEVICE_SERIAL="100.x.x.x:5555"(ROG 已在 tailnet，无需 per-job tailscale)
 #
 # Script template: packages/engine/runners/android/e2e-verify-android-template.sh
 #
 # Secrets required:
-#   TS_AUTHKEY               — existing Tailscale auth key (already used by verify-tailscale-brain.yml)
-#   HONOR_DEVICE_ADB_TARGET   — "100.x.x.x:5555" (phone Tailscale IP + ADB TCP port)
+#   HONOR_DEVICE_ADB_TARGET   — USB serial(直插) 或 "100.x.x.x:5555"(Tailscale TCP)
 #   BRAIN_CALLBACK_TOKEN      — token for Brain task result callback
 
 on:
@@ -44,8 +52,11 @@ on:
 jobs:
   android-e2e:
     name: Android Real Device E2E
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, windows, android]
     timeout-minutes: 30
+    defaults:
+      run:
+        shell: bash   # ROG 上由 Git for Windows 提供 git-bash，跑下方 bash + adb 步骤
     env:
       TASK_ID: ${{ inputs.task_id }}
       SPRINT_DIR: ${{ inputs.sprint_dir }}
@@ -58,15 +69,14 @@ jobs:
           ref: ${{ inputs.pr_branch || 'main' }}
           fetch-depth: 1
 
-      - name: Connect to Tailscale
-        uses: tailscale/github-action@v2
-        with:
-          authkey: ${{ secrets.TS_AUTHKEY }}
-
-      - name: Install Android Platform Tools (adb)
+      - name: Verify adb is available (ROG 一次性前置装好 platform-tools)
         run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq android-tools-adb
+          set -euo pipefail
+          if ! command -v adb >/dev/null 2>&1; then
+            echo "❌ adb 不在 PATH。请在 ROG 上装 Android platform-tools 并加入 PATH（一次性前置）。"
+            exit 1
+          fi
+          adb version
 
       - name: Verify ADB device connectivity
         run: |
