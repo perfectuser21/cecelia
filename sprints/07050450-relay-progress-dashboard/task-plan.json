@@ -1,0 +1,29 @@
+{
+  "initiative_id": "07050450",
+  "journey_type": "user_facing",
+  "journey_type_reason": "涉及 apps/dashboard/ 前端页面新增，Golden Path 含 Dashboard/前端页面/浏览器打开 Cecelia，命中 mac_web 路由规则",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "新增 Relay 进度条 Dashboard 页面（RelayProgressPage + 路由注册）",
+      "scope": "在 apps/dashboard/src/pages/relay-progress/ 新建 RelayProgressPage.tsx，实现七棒横向进度条渲染、A_ 前缀剥离、空态、错误态、15s 自动刷新；在 App.tsx 或路由配置注册 /relay-progress 路由",
+      "dod": [
+        "[BEHAVIOR] GET /api/brain/orchestrator/relay-runs 返回 200 + JSON 数组",
+        "[BEHAVIOR] 七段 phase 标签（planning/gan/generate/evaluate/judge/merge/report）渲染在 DOM",
+        "[BEHAVIOR] initiative_id 前 8 位短码出现在页面",
+        "[BEHAVIOR] A_ 前缀剥离后 phase 文字正确显示",
+        "[BEHAVIOR] 空态时渲染 data-testid=relay-progress-empty 且文案为「暂无进行中的 relay」",
+        "[BEHAVIOR] 错误态时渲染 data-testid=relay-progress-error，不崩溃",
+        "[ARTIFACT] apps/dashboard/src/pages/relay-progress/RelayProgressPage.tsx 存在",
+        "[ARTIFACT] 组件含 15000ms 刷新间隔"
+      ],
+      "files": [
+        "apps/dashboard/src/pages/relay-progress/RelayProgressPage.tsx",
+        "apps/dashboard/src/App.tsx"
+      ],
+      "depends_on": [],
+      "complexity": "S",
+      "estimated_minutes": 60
+    }
+  ]
+}
