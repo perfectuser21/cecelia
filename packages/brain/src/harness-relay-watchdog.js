@@ -26,7 +26,7 @@ function shortId(id) {
 export async function resumeStalledRelayRuns(deps = {}) {
   const dbPool = deps.pool || pool;
   const execFn = deps.execFn || ((cmd) => execSync(cmd, { encoding: 'utf8', timeout: 10000 }));
-  const out = { scanned: 0, resumed: 0, capped: 0, housekept: 0 };
+  const out = { scanned: 0, resumed: 0, capped: 0, housekept: 0, mergedPr: 0 };
 
   // 每个 initiative 取最新一行 + 点火次数（每次 spawn INSERT 一行 = attempts 天然计数）
   // 已知缺口（Notion Issue 1ea53e09-b088-4d2a-b03a-ad8c976bbc6c）：这个计数只统计
@@ -35,7 +35,7 @@ export async function resumeStalledRelayRuns(deps = {}) {
   // 封顶判断失效，从而无限重跑不收敛。暂未修，先记录跟踪。
   const runsQ = await dbPool.query(
     `SELECT DISTINCT ON (initiative_id)
-            initiative_id, phase, deadline_at,
+            initiative_id, phase, deadline_at, pr_url,
             (SELECT COUNT(*) FROM initiative_runs r2
               WHERE r2.initiative_id = r.initiative_id
                 AND r2.orchestrator_version = 'v2') AS attempts
@@ -91,6 +91,34 @@ export async function resumeStalledRelayRuns(deps = {}) {
         running = execFn(`docker ps -q --filter "name=cecelia-relay-${short}"`).trim();
       } catch { running = ''; /* docker 不可用时保守跳过（不盲目重点火） */ continue; }
       if (running) continue;
+
+      // PR merge 状态前置检查：容器消失时，先查 PR 是否已 MERGED
+      // MERGED → 直接标 completed/done，不重点火不标 failed
+      if (run.pr_url) {
+        try {
+          const ghOut = execFn(`gh pr view "${run.pr_url}" --json state`);
+          const prState = JSON.parse(ghOut).state;
+          if (prState === 'MERGED') {
+            await dbPool.query(
+              `UPDATE initiative_runs SET phase='done', completed_at=NOW()
+                WHERE initiative_id=$1 AND orchestrator_version='v2' AND phase NOT IN ('done','failed')`,
+              [run.initiative_id]
+            );
+            await dbPool.query(
+              `UPDATE tasks SET status='completed', completed_at=NOW()
+                WHERE id=$1 AND status='in_progress'`,
+              [run.initiative_id]
+            );
+            out.mergedPr++;
+            console.log(`[relay-watchdog] PR 已 MERGED → 标 completed initiative=${run.initiative_id} pr=${run.pr_url}`);
+            continue;
+          }
+        } catch {
+          // gh 不可用或 PR 查询失败 → 保守跳过，不盲目重点火
+          console.warn(`[relay-watchdog] gh pr view 失败，initiative=${run.initiative_id} 保守跳过`);
+          continue;
+        }
+      }
 
       // 上限熔断
       const attempts = parseInt(run.attempts, 10) || 0;
