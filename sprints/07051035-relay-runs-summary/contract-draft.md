@@ -11,11 +11,11 @@
 
 | 功能 | Test File | BEHAVIOR 覆盖 | 预期红证据 |
 |---|---|---|---|
-| 正常返回六个 phase 计数 | `../../packages/brain/src/__tests__/relay-runs-summary.test.js` | B-01: GET /summary → HTTP 200，body.phases 含六个 key（planning/gan/generate/evaluate/done/failed）/B-02: 有数据时 phases 里对应 phase count > 0/B-03: body.total === 各 phase count 之和 | 端点未实现 → 404 或 summary 被 :initiative_id 路由捕获 → FAIL |
-| 无数据时全部为 0 | `../../packages/brain/src/__tests__/relay-runs-summary.test.js` | B-04: DB 返回空结果 → phases 每个 key=0, total=0（不报错）/B-05: 返回 HTTP 200（不是 404/500） | 无数据时路由返回空对象或报错 → FAIL |
-| 路由顺序（summary 在 :id 前） | `../../packages/brain/src/__tests__/relay-runs-summary.test.js` | B-06: GET /relay-runs/summary 返回 200（不被 :initiative_id 路由拦截）| summary 路由注册在 :id 之后 → 被当 UUID 查询 → 500 |
-| 只统计 v2 runs | `../../packages/brain/src/__tests__/relay-runs-summary.test.js` | B-07: SQL 包含 orchestrator_version = 'v2' 过滤条件 | 无版本过滤 → 把 v1 runs 也计入 |
-| 500 不暴露内部信息 | `../../packages/brain/src/__tests__/relay-runs-summary.test.js` | B-08: DB 抛异常 → HTTP 500 + body 仅含 error 字段（无 SQL/stack trace） | 暴露 err.message → FAIL |
+| 正常返回六个 phase 计数 | `../../packages/brain/src/__tests__/relay-runs-summary.test.js` | B-01/B-02/B-03 | 端点未实现 → 404 或 summary 被 :initiative_id 路由捕获 → FAIL |
+| 无数据时全部为 0 | `../../packages/brain/src/__tests__/relay-runs-summary.test.js` | B-04/B-05 | 无数据时路由返回空对象或报错 → FAIL |
+| 路由顺序（summary 在 :id 前） | `../../packages/brain/src/__tests__/relay-runs-summary.test.js` | B-06 | summary 路由注册在 :id 之后 → 被当 UUID 查询 → 500 |
+| 只统计 v2 runs | `../../packages/brain/src/__tests__/relay-runs-summary.test.js` | B-07 | 无版本过滤 → 把 v1 runs 也计入 |
+| 500 不暴露内部信息 | `../../packages/brain/src/__tests__/relay-runs-summary.test.js` | B-08 | 暴露 err.message → FAIL |
 
 ---
 
