@@ -24,8 +24,13 @@ describe('canary tick gate', () => {
     const loop = await import('../tick-loop.js');
     const { initTickLoop } = await import('../tick-recovery.js');
     const r = await initTickLoop();
+    // canary 模式：tick loop 绝不启动
     expect(loop.startTickLoop).not.toHaveBeenCalled();
-    expect(r).toMatchObject({ canary: true, loop_running: false });
+    // 早返返回体明确标记 canary + 未启用 + loop 未跑
+    expect(r.canary).toBe(true);
+    expect(r.enabled).toBe(false);
+    expect(r.loop_running).toBe(false);
+    expect(r.success).toBe(true);
     vi.unstubAllEnvs();
   });
 });
