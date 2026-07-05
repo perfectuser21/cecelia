@@ -120,6 +120,14 @@
 
 ---
 
+## Test Contract
+
+| Workstream | Test File | BEHAVIOR 覆盖 | 预期红证据 |
+|---|---|---|---|
+| WS1 | `../../apps/dashboard/e2e/relay-progress.spec.ts` | TC-1 / TC-2 / TC-3 / TC-4 | 存根 return null → 四条测试全红 |
+
+---
+
 ## 不在本 Sprint 范围
 
 - relay-runs API 修改（已上线，本 sprint 只消费）
