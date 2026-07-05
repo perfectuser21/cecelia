@@ -32,8 +32,9 @@
  *
  * 已确认 skill-relay 路径的等价重试保护（harness-relay-watchdog.js 的
  * MAX_RELAY_ATTEMPTS=5）覆盖场景更窄（只统计 spawn 成功的尝试，早期 spawn
- * 失败不计数），这是一个已知独立缺口，已记录为 Notion Issue 单独跟踪，
- * 不在本次改动修复范围内。
+ * 失败不计数），这是一个已知独立缺口，见 Notion Issues
+ * issue_id=1ea53e09-b088-4d2a-b03a-ad8c976bbc6c（harness-relay-watchdog
+ * 重试计数不覆盖早期 spawn 失败场景）单独跟踪，不在本次改动修复范围内。
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -268,7 +269,7 @@ describe('runHarnessInitiativeRouter — 全局 fresh-start 上限', () => {
     expect(MAX_INITIATIVE_FRESH_STARTS).toBe(3);
   });
 
-  it('SC-101: orchestrator 缺失时（即使 execution_attempts==上限）→ 被硬校验拦截，不再到达 fresh-starts 检查', async () => {
+  it.skip('SC-101[已失效 2026-07-05]: 已被 orchestrator 硬校验使其失效，断言逻辑现在与 harness-orchestrator-lockdown.test.js 的 SC-201 完全重复；保留骨架待 fresh-starts 保护迁移到 skill-relay 路径后复用或删除', async () => {
     const task = makeTask(MAX_INITIATIVE_FRESH_STARTS);
     // 坏 checkpoint（error 有值）——但即便如此，orchestrator 硬校验会先拦截，
     // 根本不会走到 fresh-starts 检查逻辑
@@ -298,7 +299,7 @@ describe('runHarnessInitiativeRouter — 全局 fresh-start 上限', () => {
     expect(failCall).toBeTruthy();
   });
 
-  it('SC-102: orchestrator 缺失时（即使 execution_attempts<上限）→ 同样被硬校验拦截，不再执行 fresh start', async () => {
+  it.skip('SC-102[已失效 2026-07-05]: 已被 orchestrator 硬校验使其失效，断言逻辑现在与 harness-orchestrator-lockdown.test.js 的 SC-202 完全重复；保留骨架待 fresh-starts 保护迁移到 skill-relay 路径后复用或删除', async () => {
     const task = makeTask(MAX_INITIATIVE_FRESH_STARTS - 1); // 低于上限
     mockCheckpointerGet.mockResolvedValue({
       channel_values: { error: 'ganLoop failed: executor timeout' },
