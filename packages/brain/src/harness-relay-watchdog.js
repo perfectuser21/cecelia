@@ -52,7 +52,7 @@ export async function resumeStalledRelayRuns(deps = {}) {
   for (const run of runs) {
     try {
       const taskQ = await dbPool.query(
-        `SELECT id, status, title, description, payload FROM tasks WHERE id = $1`,
+        `SELECT id, status, title, description, payload, pr_url FROM tasks WHERE id = $1`,
         [run.initiative_id]
       );
       const task = taskQ.rows[0];
@@ -93,10 +93,14 @@ export async function resumeStalledRelayRuns(deps = {}) {
       if (running) continue;
 
       // PR merge 状态前置检查：容器消失时，先查 PR 是否已 MERGED
+      // fallback 链：run.pr_url → tasks.pr_url → task.payload.pr_url
+      // 防御：只取经 https://github.com/ 前缀校验的字符串，杜绝 payload JSON blob 注入 shell
+      const rawPrUrl = run.pr_url || task.pr_url || task.payload?.pr_url || null;
+      const effectivePrUrl = (typeof rawPrUrl === 'string' && rawPrUrl.startsWith('https://github.com/')) ? rawPrUrl : null;
       // MERGED → 直接标 completed/done，不重点火不标 failed
-      if (run.pr_url) {
+      if (effectivePrUrl) {
         try {
-          const ghOut = execFn(`gh pr view "${run.pr_url}" --json state`);
+          const ghOut = execFn(`gh pr view "${effectivePrUrl}" --json state`);
           const prState = JSON.parse(ghOut).state;
           if (prState === 'MERGED') {
             await dbPool.query(
@@ -110,7 +114,7 @@ export async function resumeStalledRelayRuns(deps = {}) {
               [run.initiative_id]
             );
             out.mergedPr++;
-            console.log(`[relay-watchdog] PR 已 MERGED → 标 completed initiative=${run.initiative_id} pr=${run.pr_url}`);
+            console.log(`[relay-watchdog] PR 已 MERGED → 标 completed initiative=${run.initiative_id} pr=${effectivePrUrl}`);
             continue;
           }
         } catch {
