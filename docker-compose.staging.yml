@@ -5,6 +5,10 @@
 # 部署: bash scripts/staging-deploy.sh
 # 验证: bash scripts/staging-verify.sh
 
+# 独立 compose project，与生产 project `cecelia` 隔离——否则 staging 部署会把
+# 生产容器(cecelia-node-brain/cecelia-frontend)当 orphan 误扫（issue f38f989f 次因）。
+name: cecelia-staging
+
 services:
   node-brain-staging:
     image: cecelia-brain:${BRAIN_VERSION:-latest}
