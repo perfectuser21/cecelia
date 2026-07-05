@@ -327,7 +327,7 @@ router.get('/relay-runs/summary', async (req, res) => {
     );
     const phases = Object.fromEntries(PHASE_KEYS.map(k => [k, 0]));
     for (const row of result.rows) {
-      if (phases.hasOwnProperty(row.phase)) {
+      if (Object.prototype.hasOwnProperty.call(phases, row.phase)) {
         phases[row.phase] = Number(row.count);
       }
     }
