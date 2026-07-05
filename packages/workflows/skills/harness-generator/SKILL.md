@@ -4,11 +4,12 @@ description: |
   Harness Generator — 严格合同执行者 × Superpowers 融合。
   读取 GAN 对抗已批准的 contract-draft.md + tests/*.test.ts + contract-dod.md，按 TDD 纪律两次 commit（commit 1 = 测试 Red / commit 2 = 实现 Green）。
   融入 4 个 superpowers：test-driven-development / verification-before-completion / systematic-debugging / requesting-code-review。
-  CONTRACT IS LAW：合同里有的全实现，合同外一字不加；测试文件从合同原样复制，commit 1 后不可修改（CI 强校验）。一个 Sprint = 一个 Generator = 一个 PR。
-version: 7.6.0
+  CONTRACT IS LAW：合同里有的全实现，合同外一字不加；测试文件从合同原样复制，commit 1 后不可修改（CI `lint-contract-test-immutability` 机械闸强校验 sprints/*/tests/**/*.test.ts）。一个 Sprint = 一个 Generator = 一个 PR。
+version: 7.7.0
 created: 2026-04-08
-updated: 2026-06-11
+updated: 2026-07-05
 changelog:
+  - 7.6.0 → 7.7.0: 修正 CI 强校验措辞 — "CI 强校验" 改为 "CI `lint-contract-test-immutability` 机械闸强校验 sprints/*/tests/**/*.test.ts"（zenithjoy ci-l1-process.yml 新增该 job，声明由此成真）
   - 7.5.0 → 7.6.0: 新增 Step 2.5 golden-smoke.test.ts — TDD Red 阶段从 ## E2E 验收 生成持久化 happy path 测试文件
   - 7.5.0: 🚫 删除 Step 7.5 的 gh pr merge --auto 自合并 — generator 职责到 CI 全绿为止，merge 由 Brain mergePrNode 在 evaluator PASS 后执行；否则 evaluator pre-merge gate 被绕过（2026-06-11 PR #3342 实证：CI 绿即自动合并，evaluator 从未运行）。循环退出条件从 MERGED 改为 CI 全绿（保留 MERGED/CLOSED 容错出口）
   - 7.4.0: 链路审计修复 5 项 — (a) 回流「防照抄示例占位 PR URL」保护到 Step 8（含 verdict JSON schema 表 DONE/FIXED/FAILED 三态）；(b) Step 6.5 镜像注释改指向 evaluator 新增 Step B-1.6（名称引用，不写行号）；(c) Step 3 Red 验证从 grep 日志符号改为 `npx vitest run --reporter=json` 统计 failed/passed（确定性）；(d) Step 6.5 失败补「重试工作流」（修实现→commit→重跑，连续 3 轮仍 FAIL 标 [BEHAVIOR_FAIL] 并 push 交 evaluator）
@@ -43,7 +44,7 @@ changelog:
 ```
 合同里有的：全部实现
 合同里没有的：一个字不加
-测试文件（从合同 checkout）：commit 1 后绝对不可修改，CI 强校验
+测试文件（从合同 checkout）：commit 1 后绝对不可修改，CI `lint-contract-test-immutability` 机械闸强校验
 发现其他问题：写进 PR description，不实现
 ```
 
@@ -395,7 +396,7 @@ git add <实现文件> docs/learnings/cp-*.md <配置文件>
 git commit -m "feat(harness): sprint implementation (Green)"
 ```
 
-**硬约束**（CI 强校验）：
+**硬约束**（CI `lint-contract-test-immutability` 机械闸）：
 
 1. commit 1 之后，任何 commit 都**不许修改** `sprints/*/tests/**/*.test.ts`
 2. commit 2+ 必须包含实现代码（`packages/` 或 `apps/` 目录变更），不能只改 docs
@@ -521,7 +522,7 @@ if [ "$ROUND" -ge 3 ]; then
 fi
 ```
 
-**死规则**：重试期间**只能改实现代码**，绝不允许改 contract / 改测试文件来迁就（违反 CONTRACT IS LAW，CI 强校验测试 diff）。
+**死规则**：重试期间**只能改实现代码**，绝不允许改 contract / 改测试文件来迁就（违反 CONTRACT IS LAW，CI `lint-contract-test-immutability` 机械闸拦截）。
 
 ### Step 7: Push + PR
 
@@ -712,7 +713,7 @@ commit 2: feat(harness): skeleton implementation (Skeleton Green)
 
 1. **禁止自写 contract-draft.md** —— 合同是上游 GAN 阶段产出，Generator 只读
 2. **禁止加合同外内容** —— 安全阀/额外测试/顺手修复全不加；测试文件也是合同一部分
-3. **禁止修改从合同 checkout 的测试文件** —— 测试一旦 commit 1 Red，就**不可改**（CI 强校验 git log：测试文件 diff 在 commit 2+ 里必须为空）
+3. **禁止修改从合同 checkout 的测试文件** —— 测试一旦 commit 1 Red，就**不可改**（CI `lint-contract-test-immutability` 机械闸：sprints/*/tests/**/*.test.ts 首次引入后 diff 必须为空）
 4. **禁止自判 PASS** —— Evaluator / CI 才是判官
 5. **禁止在 main 分支操作**
 6. **禁止广泛文件搜索** —— `find /Users`、`find /home` 或任何绝对路径搜索；只能在当前目录内（`find .`）
