@@ -35,6 +35,7 @@ echo "ARGS=$*"
       ...process.env,
       PATH: `${mockDir}:${process.env.PATH}`,
       CLAUDE_SESSION_ID: 'inherited-test-uuid',
+      CECELIA_NO_AUTO_WORKTREE: '1',
     };
     delete env.CLAUDE_CODE_EXECPATH;
     const out = execSync(`bash "${LAUNCHER}" --help`, { shell: '/bin/bash', env }).toString();
@@ -44,7 +45,7 @@ echo "ARGS=$*"
   });
 
   it('无 env 时生成符合 UUID 格式的 session_id', () => {
-    const env = { ...process.env, PATH: `${mockDir}:${process.env.PATH}` };
+    const env = { ...process.env, PATH: `${mockDir}:${process.env.PATH}`, CECELIA_NO_AUTO_WORKTREE: '1' };
     delete env.CLAUDE_SESSION_ID;
     delete env.CLAUDE_CODE_EXECPATH;
     const out = execSync(`bash "${LAUNCHER}" --help`, { shell: '/bin/bash', env }).toString();
@@ -59,11 +60,67 @@ echo "ARGS=$*"
       ...process.env,
       PATH: `${mockDir}:${process.env.PATH}`,
       CLAUDE_SESSION_ID: 'fixed',
+      CECELIA_NO_AUTO_WORKTREE: '1',
     };
     delete env.CLAUDE_CODE_EXECPATH;
     const out = execSync(`bash "${LAUNCHER}" -p test-prompt --dangerously-skip-permissions`, { shell: '/bin/bash', env }).toString();
     expect(out).toContain('-p test-prompt');
     expect(out).toContain('--dangerously-skip-permissions');
     expect(out).toContain('--session-id fixed');
+  });
+});
+
+describe('Phase 7.7 claude-launch.sh 自动 worktree — --dry-run 契约', () => {
+  let repoDir: string;
+
+  beforeAll(() => {
+    repoDir = mkdtempSync(join(tmpdir(), 'claude-launch-mainrepo-'));
+    execSync('git init -q', { cwd: repoDir });
+    execSync('git config user.email test@test.com', { cwd: repoDir });
+    execSync('git config user.name Test', { cwd: repoDir });
+    writeFileSync(join(repoDir, 'README.md'), 'x');
+    execSync('git add . && git commit -q -m init', { cwd: repoDir });
+  });
+
+  afterAll(() => {
+    rmSync(repoDir, { recursive: true, force: true });
+  });
+
+  it('主仓根 + 交互模式 → dry-run 输出含 worktree 建立步骤', () => {
+    const env: Record<string, string> = { ...process.env, CLAUDE_SESSION_ID: 'abc12345-0000-0000-0000-000000000000' };
+    delete env.CLAUDE_CODE_EXECPATH;
+    delete env.CECELIA_NO_AUTO_WORKTREE;
+    const out = execSync(`bash "${LAUNCHER}" --dry-run`, { cwd: repoDir, env }).toString();
+    expect(out).toContain('worktree add');
+  });
+
+  it('headless（-p）→ dry-run 输出不含 worktree 建立步骤', () => {
+    const env: Record<string, string> = { ...process.env, CLAUDE_SESSION_ID: 'abc12345-0000-0000-0000-000000000000' };
+    delete env.CLAUDE_CODE_EXECPATH;
+    delete env.CECELIA_NO_AUTO_WORKTREE;
+    const out = execSync(`bash "${LAUNCHER}" --dry-run -p "hi"`, { cwd: repoDir, env }).toString();
+    expect(out).not.toContain('worktree add');
+  });
+
+  it('CECELIA_NO_AUTO_WORKTREE=1 → dry-run 输出不含 worktree 建立步骤', () => {
+    const env: Record<string, string> = {
+      ...process.env,
+      CLAUDE_SESSION_ID: 'abc12345-0000-0000-0000-000000000000',
+      CECELIA_NO_AUTO_WORKTREE: '1',
+    };
+    delete env.CLAUDE_CODE_EXECPATH;
+    const out = execSync(`bash "${LAUNCHER}" --dry-run`, { cwd: repoDir, env }).toString();
+    expect(out).not.toContain('worktree add');
+  });
+
+  it('cwd 已在 worktree 内 → dry-run 输出不含 worktree 建立步骤', () => {
+    const wtDir = join(repoDir, '..', 'precreated-wt');
+    execSync(`git worktree add -q -b precreated "${wtDir}"`, { cwd: repoDir });
+    const env: Record<string, string> = { ...process.env, CLAUDE_SESSION_ID: 'abc12345-0000-0000-0000-000000000000' };
+    delete env.CLAUDE_CODE_EXECPATH;
+    delete env.CECELIA_NO_AUTO_WORKTREE;
+    const out = execSync(`bash "${LAUNCHER}" --dry-run`, { cwd: wtDir, env }).toString();
+    expect(out).not.toContain('worktree add');
+    execSync(`git worktree remove "${wtDir}" --force`, { cwd: repoDir });
   });
 });
