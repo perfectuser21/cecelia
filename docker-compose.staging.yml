@@ -5,6 +5,17 @@
 # 部署: bash scripts/staging-deploy.sh
 # 验证: bash scripts/staging-verify.sh
 
+# 独立 compose project，与生产 project `cecelia` 隔离——否则 staging 部署会把
+# 生产容器(cecelia-node-brain/cecelia-frontend)当 orphan 误扫（issue f38f989f 次因）。
+#
+# 改名安全性核查（不影响现有 staging 流程）：
+#   - staging-deploy.sh 用 `docker compose -f docker-compose.staging.yml up -d`（无 -p），
+#     直接吃本文件的 name: → 自动落到 cecelia-staging project，无需改脚本。
+#   - container_name 显式指定（cecelia-node-brain-staging），改 project 不改容器名。
+#   - 全仓无脚本假设 staging 挂在旧 project `cecelia` 下（grep 核查为空）。
+#   - 环境变量(.env.staging)/网络(network_mode:host)由本文件承载，与 project 名无关。
+name: cecelia-staging
+
 services:
   node-brain-staging:
     image: cecelia-brain:${BRAIN_VERSION:-latest}

@@ -138,6 +138,13 @@ async function tryRecoverTickLoop() {
  * every INIT_RECOVERY_INTERVAL_MS until tick loop is successfully started.
  */
 async function initTickLoop() {
+  // BRAIN_DEPLOY_CANARY=1：蓝绿部署的 green canary 只验证镜像健康，绝不跑 tick——
+  // 否则 green 与 blue 连同一 DB 会 double-dispatch 抢任务（issue f38f989f）。
+  // 必须在 auto-enable / alertness / watchdog 之前早返。
+  if (process.env.BRAIN_DEPLOY_CANARY === '1') {
+    tickLog('[tick-loop] BRAIN_DEPLOY_CANARY=1 — canary 模式，跳过 tick loop 启动');
+    return { success: true, enabled: false, loop_running: false, canary: true };
+  }
   try {
     // Initialize alertness system
     try {

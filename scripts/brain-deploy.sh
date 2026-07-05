@@ -7,6 +7,10 @@ VERSIONS_FILE="$ROOT_DIR/.brain-versions"
 BRAIN_DIR="$ROOT_DIR/packages/brain"
 DEPLOY_STATUS_FILE="/tmp/cecelia-deploy-status.json"
 
+# 蓝绿切换 + Bark 告警工具（顶层 source，保证 Docker/launchd 两模式都有 send_bark/bluegreen_swap）
+# shellcheck disable=SC1091
+source "$SCRIPT_DIR/lib/bluegreen.sh"
+
 VERSION=$(node -e "console.log(require('$BRAIN_DIR/package.json').version)")
 ENV_REGION="${ENV_REGION:-us}"
 
@@ -220,12 +224,26 @@ if [[ "$DEPLOY_MODE" == "docker" ]]; then
         exit 0
     fi
 
-    # 无条件清理所有名为 cecelia-node-brain 的容器（任意状态），避免命名冲突
-    # 使用精确名称 ^/cecelia-node-brain$ 防止前缀误匹配其他容器
-    EXISTING_IDS=$(docker ps -a --filter "name=^/cecelia-node-brain$" -q 2>/dev/null || true)
-    if [[ -n "$EXISTING_IDS" ]]; then
-        echo "  Removing existing cecelia-node-brain container(s) before recreate..."
-        echo "$EXISTING_IDS" | xargs docker rm -f 2>/dev/null || true
+    # ── Blue-green canary：green 验证健康后才删 blue（根治 outage，issue f38f989f）──
+    # 原"先删后建"（无条件 docker rm -f blue → compose up）会在坏镜像/中断时留 5221 空窗。
+    # 改为：green 临时端口(5223)起 + BRAIN_DEPLOY_CANARY 关 tick + health 全过 → 才删 blue。
+    # green 失败则 blue(5221) 原封不动 + Bark 告警 + 终止部署（exit 1）。
+    # （bluegreen.sh 已在脚本顶层 source）
+    if [[ "$DRY_RUN" == false ]] && docker inspect cecelia-node-brain >/dev/null 2>&1; then
+        # blue 在跑 → 走 canary。GREEN_RUN_ARGS 复用 blue 的 env/mounts（同配置验镜像）。
+        # blue 是 bridge 网络（docker ps 显示 0.0.0.0:5221->5221），green 用 bridge + -p 5223:5221，
+        # 不加 --network host（否则 green 抢占 host 5221 与 blue 冲突）。
+        GREEN_ENV=$(docker inspect cecelia-node-brain --format '{{range .Config.Env}}-e {{.}} {{end}}' 2>/dev/null || echo "")
+        GREEN_VOL=$(docker inspect cecelia-node-brain --format '{{range .Mounts}}-v {{.Source}}:{{.Destination}}{{if not .RW}}:ro{{end}} {{end}}' 2>/dev/null || echo "")
+        export GREEN_RUN_ARGS="${GREEN_ENV} ${GREEN_VOL}"
+        if ! TARGET_VERSION="${VERSION}" BLUE_NAME=cecelia-node-brain \
+             GREEN_NAME=cecelia-node-brain-green TEMP_PORT=5223 HEALTH_TIMEOUT=90 bluegreen_swap; then
+            echo "[FAIL] green canary 未通过，已保留旧生产容器(5221 不受影响)，终止部署"
+            exit 1
+        fi
+    else
+        # 无 blue（首次部署）→ 无 outage 风险，跳过 canary 直接起
+        echo "  [首次部署] 无旧生产容器，跳过 canary，直接起新容器"
     fi
 
     if [[ "$DRY_RUN" == true ]]; then
@@ -423,6 +441,9 @@ done
 # Health check failed
 echo ""
 echo "[FAIL] Health check timed out after 60s."
+
+# 环境守卫：部署后 5221 未响应 = 控制面 outage 风险，Bark 告警（issue 8ae2e116）
+send_bark "部署后自检失败：Brain 5221 (/api/brain/tick/status) 60s 未响应，v${VERSION} 可能未起来，请立即检查"
 
 if [[ "$DEPLOY_MODE" == "launchd" ]]; then
     echo "  Brain failed to start. Check logs: tail -50 $ROOT_DIR/logs/brain-error.log"
