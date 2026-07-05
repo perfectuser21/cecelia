@@ -310,6 +310,36 @@ router.get('/relay-runs', async (req, res) => {
 });
 
 /**
+ * GET /api/brain/orchestrator/relay-runs/summary
+ *
+ * 返回各 phase 的 v2 relay run 计数，供 dashboard 全局分布展示。
+ * 无数据时返回六个 phase 全 0（不报错）。
+ * 必须注册在 :initiative_id 路由之前，防止 "summary" 被当作 UUID 匹配。
+ */
+router.get('/relay-runs/summary', async (req, res) => {
+  const PHASE_KEYS = ['planning', 'gan', 'generate', 'evaluate', 'done', 'failed'];
+  try {
+    const result = await pool.query(
+      `SELECT phase, COUNT(*) AS count
+         FROM initiative_runs
+        WHERE orchestrator_version = 'v2'
+        GROUP BY phase`
+    );
+    const phases = Object.fromEntries(PHASE_KEYS.map(k => [k, 0]));
+    for (const row of result.rows) {
+      if (Object.prototype.hasOwnProperty.call(phases, row.phase)) {
+        phases[row.phase] = Number(row.count);
+      }
+    }
+    const total = Object.values(phases).reduce((a, b) => a + b, 0);
+    return res.json({ phases, total });
+  } catch (err) {
+    console.error('[GET /orchestrator/relay-runs/summary]', err.message);
+    return res.status(500).json({ error: 'internal server error' });
+  }
+});
+
+/**
  * GET /api/brain/orchestrator/relay-runs/:initiative_id
  *
  * 查询指定 initiative_id 的最新 v2 run 详情（含全量字段）
