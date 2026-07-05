@@ -2887,17 +2887,38 @@ export async function runHarnessInitiativeRouter(task, opts = {}) {
 async function _driveHarnessInitiative(task, opts = {}) {
   const dbPool = opts.pool || pool;
 
-  // N3 skill-relay 双轨分支（主理人 2026-07-04 拍板）：payload.orchestrator==='skill-relay'
-  // → spawn 单 claude session 跑 harness-controller skill，不 compile / 不 invoke 图。
-  // flag 缺省 → 走下方原 LangGraph 路径，零行为变化。
-  // 注意：flag 判断内联、动态 import 只在命中时发生——v1 路径不多一次模块加载
-  //（fake-timer 集成测试对 v1 路径的时序敏感，CI 实证：harness-watchdog W3 用例）。
-  if (task?.payload?.orchestrator === 'skill-relay') {
-    const { spawnSkillRelaySession } = await import('./harness-skill-relay.js');
-    const relayDeps = { pool: dbPool, ...(opts.skillRelayDeps || {}) };
-    return await spawnSkillRelaySession(task, relayDeps);
+  // N4 orchestrator 硬校验（主理人 2026-07-05 拍板，见 memory harness-skill-relay-pivot）：
+  // skill-relay 已验证优于 LangGraph 图（3/3~4/4 merged vs 旧图 30 天基线 21.7%），
+  // 不再允许 orchestrator 缺省时隐式降级到 LangGraph 图——必须显式声明 skill-relay，
+  // 否则直接 terminal failed。LangGraph 图代码本次保留（观察期后再物理删除）。
+  if (task?.payload?.orchestrator !== 'skill-relay') {
+    await markInitiativeTerminalFailed(
+      dbPool,
+      task.id,
+      'missing_orchestrator_flag',
+      `harness_initiative requires payload.orchestrator==='skill-relay'; got: ${task?.payload?.orchestrator ?? '(missing)'}`
+    );
+    console.error(
+      `[executor] task=${task.id} 缺少/非法 orchestrator flag（值=${task?.payload?.orchestrator ?? '(missing)'}），标 terminal failed（不再降级走 LangGraph 图）`
+    );
+    return { ok: false, error: 'missing_orchestrator_flag', terminal: true };
   }
 
+  // N3 skill-relay 分支（主理人 2026-07-04 拍板）：spawn 单 claude session 跑
+  // harness-controller skill，不 compile / 不 invoke 图。
+  const { spawnSkillRelaySession } = await import('./harness-skill-relay.js');
+  const relayDeps = { pool: dbPool, ...(opts.skillRelayDeps || {}) };
+  return await spawnSkillRelaySession(task, relayDeps);
+
+  // 死代码（有意保留，2026-07-05 orchestrator 硬校验后不可达）：
+  // LangGraph 图路径 compileHarnessFullGraph 及其后续调用，因为上面的硬校验
+  // 保证 orchestrator 必须是 'skill-relay'，本段代码物理上不会再被执行到。
+  // 保留观察期，待确认 skill-relay 路径完全稳定后再物理删除本段及
+  // packages/brain/src/workflows/harness-initiative.graph.js 中对应部分
+  // （注意：harness-initiative.graph.js 文件本身不是完全死代码——其中的
+  // reportNode 仍被 packages/brain/scripts/smoke/reportnode-task-writeback-smoke.sh
+  // 直接 import 使用，只有 compileHarnessFullGraph 这条调用路径不可达）。
+  /* eslint-disable no-unreachable */
   const { compileHarnessFullGraph } = await import('./workflows/harness-initiative.graph.js');
   const { getPgCheckpointer } = await import('./orchestrator/pg-checkpointer.js');
   const { emitGraphNodeUpdate } = await import('./events/taskEvents.js');
@@ -3062,6 +3083,7 @@ async function _driveHarnessInitiative(task, opts = {}) {
       error: final?.error,
     },
   };
+  /* eslint-enable no-unreachable */
 }
 
 /**

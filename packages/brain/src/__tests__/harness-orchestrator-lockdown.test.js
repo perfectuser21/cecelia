@@ -1,30 +1,26 @@
 /**
- * harness-initiative-executor-writeback.test.js
+ * Regression test — harness_initiative 点火路径隔离（硬校验）
  *
- * 验证 executor.js triggerCeceliaRun() 中 harness_initiative 分支
- * 在 runHarnessInitiativeRouter() 返回后正确调用 updateTaskStatus。
+ * 背景：2026-07-04 主理人拍板全面转向 skill-relay 接力模式。
+ * 之前 payload.orchestrator !== 'skill-relay' 时会默认 fallthrough 到
+ * LangGraph 图路径（compileHarnessFullGraph），30 天基线成功率仅 21.7%，
+ * 且这个降级是隐式的——忘记带 flag 不会报错，只会悄悄跑更差的路径。
  *
- * 修复前 bug：compiled.invoke() 成功后从不调用 updateTaskStatus，
- * 导致任务永远卡在 in_progress。
- * 修复 PR：#2816
+ * 修复：_driveHarnessInitiative 顶部加硬校验。
+ * - payload.orchestrator !== 'skill-relay' → 立即 markInitiativeTerminalFailed
+ *   (failure_class='missing_orchestrator_flag')，返回
+ *   { ok:false, error:'missing_orchestrator_flag', terminal:true }，
+ *   不 import/调用 compileHarnessFullGraph。
+ * - payload.orchestrator === 'skill-relay' → 行为不变，走 spawnSkillRelaySession。
  *
- * ── 2026-07-05 更新（orchestrator 硬校验落地后）──────────────────
- * `_driveHarnessInitiative` 加了 orchestrator 硬校验：task.payload.orchestrator
- * !== 'skill-relay' 会在函数最顶部被拒绝（terminal failed，
- * failure_class='missing_orchestrator_flag'），graph 从不被 invoke。
- * - 「graph ok=true → updateTaskStatus("completed")」和「graph 抛出异常 →
- *   updateTaskStatus("failed")且带 LangGraph 错误信息」这两个用例依赖的
- *   graph invoke 前提已不可达，改为 it.skip 并说明原因。
- * - 「graph final.error 存在（ok=false）→ updateTaskStatus("failed")」这个
- *   用例的断言只要求 updateTaskStatus 被调用且带任意字符串 error_message，
- *   恰好与硬校验路径的 failed+error_message='missing_orchestrator_flag'
- *   兼容，仍能通过，但它现在测的不再是 graph final.error 场景本身，而是
- *   硬校验路径的 failed 回写；保留为 it()（未失败，不 skip），仅在此注明。
+ * SC-201: orchestrator 缺失 → 拒绝，不 invoke LangGraph 图，task 标 failed
+ * SC-202: orchestrator='langgraph'（非法值）→ 同样拒绝
+ * SC-203: orchestrator='skill-relay' → 正常调用 spawnSkillRelaySession，行为不变
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-// ── mock 所有 executor.js 的外部依赖 ──────────────────────────
+// ── mock 所有 executor.js 的外部依赖（与 harness-max-fresh-starts.test.js 完全一致）──
 
 const mockQuery = vi.fn();
 vi.mock('../db.js', () => ({
@@ -129,7 +125,7 @@ vi.mock('../model-profile.js', () => ({
       executor: {
         default_provider: 'anthropic',
         model_map: {
-          dev:               { anthropic: 'claude-sonnet-4-6', minimax: null },
+          dev:                { anthropic: 'claude-sonnet-4-6', minimax: null },
           harness_initiative: { anthropic: 'claude-sonnet-4-6', minimax: null },
         },
         fixed_provider: {},
@@ -183,17 +179,25 @@ vi.mock('../auto-learning.js', () => ({
   processExecutionAutoLearning: vi.fn().mockResolvedValue(undefined),
 }));
 
-// ── mock harness graph 动态导入 ────────────────────────────────
+// ── mock harness graph 动态导入 ─────────────────────────────────
 
-const mockCompiled = { stream: vi.fn() };
+let streamCallCount = 0;
 
+const mockCompiled = {
+  stream: vi.fn(async function* (input) {
+    streamCallCount++;
+    yield { dbUpsert: { sub_tasks: [] } };
+  }),
+};
+
+const mockCompileHarnessFullGraph = vi.fn().mockResolvedValue(mockCompiled);
 vi.mock('../workflows/harness-initiative.graph.js', () => ({
-  compileHarnessFullGraph: vi.fn().mockResolvedValue(mockCompiled),
+  compileHarnessFullGraph: (...args) => mockCompileHarnessFullGraph(...args),
 }));
 
 vi.mock('../orchestrator/pg-checkpointer.js', () => ({
   getPgCheckpointer: vi.fn().mockResolvedValue({
-    get: vi.fn().mockResolvedValue(null),  // null = fresh start
+    get: vi.fn().mockResolvedValue(null),
   }),
 }));
 
@@ -201,82 +205,83 @@ vi.mock('../events/taskEvents.js', () => ({
   emitGraphNodeUpdate: vi.fn().mockResolvedValue(undefined),
 }));
 
-// ── 被测函数 ─────────────────────────────────────────────────
+// mock spawnSkillRelaySession（skill-relay 分支依赖，验证 SC-203 时需要它被调用）
+const mockSpawnSkillRelaySession = vi.fn().mockResolvedValue({ ok: true, relay: true });
+vi.mock('../harness-skill-relay.js', () => ({
+  spawnSkillRelaySession: (...args) => mockSpawnSkillRelaySession(...args),
+}));
 
-let triggerCeceliaRun;
+// ── 被测函数 ──────────────────────────────────────────────────
+
+let runHarnessInitiativeRouter;
 
 beforeEach(async () => {
   vi.clearAllMocks();
+  streamCallCount = 0;
   mockQuery.mockResolvedValue({ rows: [] });
   mockUpdateTaskStatus.mockResolvedValue(undefined);
+  mockSpawnSkillRelaySession.mockResolvedValue({ ok: true, relay: true });
   vi.resetModules();
   const mod = await import('../executor.js');
-  triggerCeceliaRun = mod.triggerCeceliaRun;
+  runHarnessInitiativeRouter = mod.runHarnessInitiativeRouter;
 });
 
-const HARNESS_TASK = {
-  id: 'aaaabbbb-1234-5678-9012-abcdef012345',
-  task_type: 'harness_initiative',
-  title: 'Test harness initiative',
-  payload: {
-    prd: '## 测试 PRD',
-    initiative_id: 'initiative-001',
-  },
-  status: 'in_progress',
-  retry_count: 0,
-  execution_attempts: 0,
-};
+function makeTask(orchestrator) {
+  return {
+    id: 'task-orch-lockdown-1',
+    task_type: 'harness_initiative',
+    title: 'harness init orchestrator lockdown test',
+    payload: {
+      initiative_id: 'init-orch-lockdown-001',
+      ...(orchestrator !== undefined ? { orchestrator } : {}),
+    },
+    status: 'in_progress',
+    retry_count: 0,
+    execution_attempts: 0,
+  };
+}
 
-// ── 测试 ─────────────────────────────────────────────────────
+describe('_driveHarnessInitiative — orchestrator 硬校验', () => {
 
-describe('triggerCeceliaRun — harness_initiative 状态回写（PR #2816 fix）', () => {
+  it('SC-201: orchestrator 缺失 → 拒绝，不 invoke LangGraph 图，task 标 failed', async () => {
+    const task = makeTask(undefined);
 
-  it.skip('graph ok=true → updateTaskStatus("completed") 被调用（2026-07-05 orchestrator 硬校验后已不可达，skip）', async () => {
-    // graph stream 返回无 error 的 state，并包含 report_path（B48：标志 reportNode 完成）
-    mockCompiled.stream.mockImplementation(async function* () {
-      yield { dbUpsert: { sub_tasks: [{ task_id: 'ws1' }] } };
-      yield { report: { report_path: 'sprints/test/report.json' } };
-    });
+    const result = await runHarnessInitiativeRouter(task, { pool: { query: mockQuery } });
 
-    const result = await triggerCeceliaRun(HARNESS_TASK);
+    expect(mockCompileHarnessFullGraph).not.toHaveBeenCalled();
+    expect(streamCallCount).toBe(0);
+    expect(result.ok).toBe(false);
+    expect(result.terminal).toBe(true);
+    expect(result.error).toBe('missing_orchestrator_flag');
 
-    expect(result.success).toBe(true);
-    expect(result.initiative).toBe(true);
-    expect(mockUpdateTaskStatus).toHaveBeenCalledWith(
-      HARNESS_TASK.id,
-      'completed',
+    const failCall = mockQuery.mock.calls.find(
+      (call) => typeof call[0] === 'string' &&
+        /UPDATE tasks SET[\s\S]*status\s*=\s*'failed'/.test(call[0]) &&
+        Array.isArray(call[1]) &&
+        call[1].includes(task.id) &&
+        call[1].some((p) => String(p).includes('missing_orchestrator_flag'))
     );
+    expect(failCall).toBeTruthy();
   });
 
-  it('graph final.error 存在（ok=false）→ updateTaskStatus("failed") 被调用（2026-07-05 起：断言不依赖具体走的是哪条代码路径，硬校验的 failed 回写同样满足）', async () => {
-    mockCompiled.stream.mockImplementation(async function* () {
-      yield { prep: { error: 'plan generation failed' } };
-    });
+  it('SC-202: orchestrator 为非法值（如遗留的 "langgraph"）→ 同样拒绝', async () => {
+    const task = makeTask('langgraph');
 
-    const result = await triggerCeceliaRun(HARNESS_TASK);
+    const result = await runHarnessInitiativeRouter(task, { pool: { query: mockQuery } });
 
-    expect(result.success).toBe(true);
-    expect(mockUpdateTaskStatus).toHaveBeenCalledWith(
-      HARNESS_TASK.id,
-      'failed',
-      expect.objectContaining({ error_message: expect.any(String) }),
-    );
+    expect(mockCompileHarnessFullGraph).not.toHaveBeenCalled();
+    expect(result.ok).toBe(false);
+    expect(result.terminal).toBe(true);
+    expect(result.error).toBe('missing_orchestrator_flag');
   });
 
-  it.skip('graph 抛出异常 → updateTaskStatus("failed") 被调用且 success=true（2026-07-05 orchestrator 硬校验后已不可达，skip）', async () => {
-    mockCompiled.stream.mockImplementation(async function* () {
-      throw new Error('LangGraph internal error');
-    });
+  it('SC-203: orchestrator="skill-relay" → 正常调用 spawnSkillRelaySession，行为不变', async () => {
+    const task = makeTask('skill-relay');
 
-    const result = await triggerCeceliaRun(HARNESS_TASK);
+    const result = await runHarnessInitiativeRouter(task, { pool: { query: mockQuery } });
 
-    expect(result.success).toBe(true);
-    expect(mockUpdateTaskStatus).toHaveBeenCalledWith(
-      HARNESS_TASK.id,
-      'failed',
-      expect.objectContaining({
-        error_message: expect.stringContaining('LangGraph internal error'),
-      }),
-    );
+    expect(mockSpawnSkillRelaySession).toHaveBeenCalledTimes(1);
+    expect(mockCompileHarnessFullGraph).not.toHaveBeenCalled();
+    expect(result).toEqual({ ok: true, relay: true });
   });
 });

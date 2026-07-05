@@ -71,9 +71,14 @@ describe('migration 312：orchestrator runs state', () => {
   });
 
   // T2 已兑现 bump（orchestrator 代码强依赖 312 列：orchestrator_decision_log + initiative_runs 心跳列）。
-  // issue 14d66027 语义不变：加 migration 本身不 bump，只有代码真依赖新 schema 才 bump。
-  it('selfcheck EXPECTED_SCHEMA_VERSION = 312（T2 兑现的代码依赖 bump；issue 14d66027 语义不变）', () => {
+  // 此后 313（licenses.credit_balance）、314（tasks.custom_props）又各自因真实代码依赖再 bump。
+  // issue 14d66027 语义不变：加 migration 本身不 bump，只有代码真依赖新 schema 才 bump；
+  // 本用例只验证地板号 >= 312（T2 的下限），不再断言精确等于某个历史值（否则每次后续
+  // 合理 bump 都要来改这个不相关的文件）。
+  it('selfcheck EXPECTED_SCHEMA_VERSION >= 312（T2 兑现的代码依赖 bump；issue 14d66027 语义不变）', () => {
     const c = readFileSync(selfcheckPath, 'utf8');
-    expect(c).toMatch(/EXPECTED_SCHEMA_VERSION = '312'/);
+    const match = c.match(/EXPECTED_SCHEMA_VERSION = '(\d+)'/);
+    expect(match, 'selfcheck.js 里找不到 EXPECTED_SCHEMA_VERSION').toBeTruthy();
+    expect(Number(match[1])).toBeGreaterThanOrEqual(312);
   });
 });

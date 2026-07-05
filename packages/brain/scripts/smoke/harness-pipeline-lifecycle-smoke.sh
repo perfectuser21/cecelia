@@ -55,7 +55,8 @@ TASK_JSON=$(curl -sf -m 10 -X POST "${BRAIN_URL}/api/brain/tasks" \
     \"title\": \"[smoke] harness-pipeline-lifecycle $(date +%Y%m%d-%H%M%S)\",
     \"payload\": {
       \"sprint_dir\": \"${SPRINT_DIR}\",
-      \"smoke_test\": true
+      \"smoke_test\": true,
+      \"orchestrator\": \"skill-relay\"
     }
   }" 2>/dev/null) || fail "POST /api/brain/tasks 失败"
 

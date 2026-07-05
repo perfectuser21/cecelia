@@ -147,11 +147,14 @@ describe('selfcheck', () => {
     expect(ok).toBe(true);
   });
 
-  // 313 = agent-credit 路由强依赖 licenses.credit_balance 列（migration 313）；
-  // issue 14d66027 语义不变：只有代码依赖才 bump，加 migration 本身**不要 bump**。
+  // 314 = executor.js 的 markInitiativeTerminalFailed（harness_initiative 终态标记）
+  // 强依赖 tasks.custom_props 列（migration 314）；该列此前不存在，导致 UPDATE
+  // 整句在真实 Postgres 报错、被 try/catch 静默吞掉，status/failure_class 从未
+  // 真正落库——由 harness-orchestrator-lockdown-smoke.sh 在 real-env-smoke 首次
+  // 暴露。issue 14d66027 语义不变：只有代码依赖才 bump，加 migration 本身**不要 bump**。
   // facts-check 只校验地板 <= 最高 migration，不要求相等。
-  it('EXPECTED_SCHEMA_VERSION should be 313 (floor, bump only on code dependency)', () => {
-    expect(EXPECTED_SCHEMA_VERSION).toBe('313');
+  it('EXPECTED_SCHEMA_VERSION should be 314 (floor, bump only on code dependency)', () => {
+    expect(EXPECTED_SCHEMA_VERSION).toBe('314');
   });
 
   it('should pass when DB schema version is ahead of expected (>= check)', async () => {

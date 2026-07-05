@@ -431,8 +431,9 @@ describe('selfcheck schema version', () => {
     }));
 
     const { EXPECTED_SCHEMA_VERSION } = await import('../selfcheck.js');
-    // 313 = agent-credit/acquisition 路由强依赖 licenses.credit_balance 列（313 migration）；
-    // issue 14d66027 语义不变：只有代码依赖才 bump。
-    expect(EXPECTED_SCHEMA_VERSION).toBe('313');
+    // 314 = markInitiativeTerminalFailed（harness_initiative 终态标记）强依赖
+    // tasks.custom_props 列（314 migration）；issue 14d66027 语义不变：只有
+    // 代码依赖才 bump。
+    expect(EXPECTED_SCHEMA_VERSION).toBe('314');
   });
 });
