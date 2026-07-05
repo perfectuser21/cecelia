@@ -66,6 +66,8 @@ echo "ARGS=$*"
       ...process.env,
       PATH: `${mockDir}:${process.env.PATH}`,
       CLAUDE_SESSION_ID: 'phase74-s1-fixed-uuid',
+      // Phase 7.7: S1 只验 session-id 透传，关掉自动 worktree（CI 主仓 checkout 会误触发真建）
+      CECELIA_NO_AUTO_WORKTREE: '1',
     };
     // launcher 优先 CLAUDE_CODE_EXECPATH，必须 unset 才能让 PATH 里 mock claude 生效
     delete env.CLAUDE_CODE_EXECPATH;
