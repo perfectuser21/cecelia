@@ -279,3 +279,26 @@ describe('RelayProgressPage — 有数据时渲染', () => {
     });
   });
 });
+
+describe('RelayProgressPage — 自动刷新间隔', () => {
+  it('每 15 秒触发一次数据刷新', async () => {
+    vi.useFakeTimers()
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => [],
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const { default: RelayProgressPage } = await import(
+      '../../../apps/dashboard/src/pages/relay-progress/RelayProgressPage'
+    );
+    render(<RelayProgressPage />)
+    expect(fetchMock).toHaveBeenCalledTimes(1) // 初始加载
+    await act(async () => {
+      vi.advanceTimersByTime(15000)
+      await Promise.resolve()
+    })
+    expect(fetchMock).toHaveBeenCalledTimes(2) // 刷新一次
+    vi.useRealTimers()
+    vi.unstubAllGlobals()
+  })
+});

@@ -208,6 +208,7 @@ console.log('OK');
 **target_environment**: mac_web（Playwright 本机真实浏览器，localhost:5174）
 
 <!-- GOLDEN_SMOKE_ABILITY_SLUG: relay-progress-dashboard -->
+<!-- GOLDEN_SMOKE_TARGET_ENV: mac_web -->
 
 <!-- GOLDEN_SMOKE_SCENARIO: relay-progress-happy-path -->
 ### Scenario: 有活跃 relay 时渲染进度条
@@ -285,3 +286,11 @@ const { chromium, expect, request } = require('@playwright/test');
 |---|---|---|---|
 | 整个 Sprint | `tests/relay-progress.test.tsx` | Step 4 前缀剥离 / Step 5 空态 / Step 6 错误态 / Step 7 刷新间隔 | → 4+ failures（RelayProgressPage 未实现时） |
 | E2E Playwright | `tests/e2e-relay-progress.spec.ts` | Step 1-3 完整 Golden Path | → test failures（页面/API 未实现时） |
+
+---
+
+## Risks
+
+- Risk 1: relay-runs API 端点不可达 → mitigation: E2E 开始前 curl -sf localhost:5221/api/brain/orchestrator/relay-runs 探活；端点 404 则测试 fail-fast
+- Risk 2: Vite proxy /api/brain 未配置 → mitigation: generator 需确认 vite.config.ts 中已有 proxy 配置（/api/brain → localhost:5221）
+- Risk 3: 空态验证在 CI 中可能无真实数据 → mitigation: 单元测试已用 fetch mock 覆盖空数组 [] 路径，E2E 空态验证为可选

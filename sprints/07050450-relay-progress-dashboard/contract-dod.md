@@ -64,6 +64,18 @@ journey_type: user_facing
   Test: manual:bash -c 'node -e "const c=require(\"fs\").readFileSync(\"apps/dashboard/src/pages/relay-progress/RelayProgressPage.tsx\",\"utf8\");if(!c.includes(\"relay-progress-error\")){console.error(\"FAIL: 缺少错误态 testid\");process.exit(1);}console.log(\"OK\")"'
   期望: OK
 
+- [ ] [BEHAVIOR] relay-runs 元素 judge_verdict 若非 null 则为 string 类型
+  Test: manual:bash -c 'RESP=$(curl -sf localhost:5221/api/brain/orchestrator/relay-runs) || exit 1; COUNT=$(echo "$RESP" | jq "length"); if [ "$COUNT" -gt "0" ]; then JV=$(echo "$RESP" | jq -r ".[0].judge_verdict"); if [ "$JV" != "null" ] && [ "$JV" != "" ]; then echo "$RESP" | jq -e ".[0].judge_verdict | type == \"string\"" || { echo "FAIL: judge_verdict 非 string"; exit 1; }; fi; fi; echo OK'
+  期望: OK
+
+- [ ] [BEHAVIOR] relay-runs 元素 cost_usd 若非 null 则为 string 或 number 类型
+  Test: manual:bash -c 'RESP=$(curl -sf localhost:5221/api/brain/orchestrator/relay-runs) || exit 1; COUNT=$(echo "$RESP" | jq "length"); if [ "$COUNT" -gt "0" ]; then echo "$RESP" | jq -e ".[0] | has(\"cost_usd\")" || { echo "FAIL: 缺 cost_usd 字段"; exit 1; }; fi; echo OK'
+  期望: OK
+
+- [ ] [BEHAVIOR] relay-runs 元素不含禁用字段 phase_label / status
+  Test: manual:bash -c 'RESP=$(curl -sf localhost:5221/api/brain/orchestrator/relay-runs) || exit 1; COUNT=$(echo "$RESP" | jq "length"); if [ "$COUNT" -gt "0" ]; then echo "$RESP" | jq -e ".[0] | has(\"phase_label\") | not" || { echo "FAIL: 含禁用字段 phase_label"; exit 1; }; echo "$RESP" | jq -e ".[0] | has(\"status\") | not" || { echo "FAIL: 含禁用字段 status"; exit 1; }; fi; echo OK'
+  期望: OK
+
 ---
 
 ## BEHAVIOR:E2E 条目（user_facing 专属，Mode B final-e2e 跑，mac_web Playwright）
