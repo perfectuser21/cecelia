@@ -94,7 +94,9 @@ export async function resumeStalledRelayRuns(deps = {}) {
 
       // PR merge 状态前置检查：容器消失时，先查 PR 是否已 MERGED
       // fallback 链：run.pr_url → tasks.pr_url → task.payload.pr_url
-      const effectivePrUrl = run.pr_url || task.pr_url || task.payload?.pr_url || null;
+      // 防御：只取经 https://github.com/ 前缀校验的字符串，杜绝 payload JSON blob 注入 shell
+      const rawPrUrl = run.pr_url || task.pr_url || task.payload?.pr_url || null;
+      const effectivePrUrl = (typeof rawPrUrl === 'string' && rawPrUrl.startsWith('https://github.com/')) ? rawPrUrl : null;
       // MERGED → 直接标 completed/done，不重点火不标 failed
       if (effectivePrUrl) {
         try {
