@@ -2906,11 +2906,9 @@ async function _driveHarnessInitiative(task, opts = {}) {
 
   // N3 skill-relay 分支（主理人 2026-07-04 拍板）：spawn 单 claude session 跑
   // harness-controller skill，不 compile / 不 invoke 图。
-  {
-    const { spawnSkillRelaySession } = await import('./harness-skill-relay.js');
-    const relayDeps = { pool: dbPool, ...(opts.skillRelayDeps || {}) };
-    return await spawnSkillRelaySession(task, relayDeps);
-  }
+  const { spawnSkillRelaySession } = await import('./harness-skill-relay.js');
+  const relayDeps = { pool: dbPool, ...(opts.skillRelayDeps || {}) };
+  return await spawnSkillRelaySession(task, relayDeps);
 
   const { compileHarnessFullGraph } = await import('./workflows/harness-initiative.graph.js');
   const { getPgCheckpointer } = await import('./orchestrator/pg-checkpointer.js');
