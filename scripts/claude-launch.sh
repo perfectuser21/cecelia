@@ -75,7 +75,8 @@ if [[ "$AUTO_WORKTREE" == "1" ]]; then
     mkdir -p "$_WT_BASE"
     if [[ ! -d "$_WT_PATH" ]]; then
         git -C "$_MAIN_REPO" fetch origin main --quiet 2>/dev/null || true
-        git -C "$_MAIN_REPO" worktree add "$_WT_PATH" -b "$_WT_BRANCH" origin/main
+        # stdout 留给 claude 本体；git 的提示信息走 stderr
+        git -C "$_MAIN_REPO" worktree add "$_WT_PATH" -b "$_WT_BRANCH" origin/main 1>&2
     fi
     cd "$_WT_PATH"
 fi
@@ -128,8 +129,8 @@ if [[ "$_DIRTY" == "0" ]]; then
         _UNPUSHED="$(git -C "$_WT_PATH" log "origin/main..HEAD" --oneline 2>/dev/null)"
     fi
     if [[ -z "$_UNPUSHED" ]]; then
-        git -C "$_MAIN_REPO" worktree remove "$_WT_PATH" --force 2>/dev/null || true
-        git -C "$_MAIN_REPO" branch -D "$_WT_BRANCH" 2>/dev/null || true
+        git -C "$_MAIN_REPO" worktree remove "$_WT_PATH" --force >/dev/null 2>&1 || true
+        git -C "$_MAIN_REPO" branch -D "$_WT_BRANCH" >/dev/null 2>&1 || true
     fi
 fi
 
