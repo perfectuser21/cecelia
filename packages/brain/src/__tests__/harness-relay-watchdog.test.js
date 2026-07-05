@@ -182,3 +182,124 @@ describe('PATCH phase 白名单扩展（进度条数据源）', () => {
     }
   });
 });
+
+// ── 新增：pr_url fallback 链 + PATCH pr_url 写入 ─────────────────────
+
+describe('resumeStalledRelayRuns — pr_url fallback 链（#3560 跟进）', () => {
+  it('taskQ SELECT 含 pr_url 列', async () => {
+    // run.pr_url=null → 需要从 tasks.pr_url 取，所以 SELECT 必须含该列
+    const taskSqls = [];
+    const pool = {
+      query: vi.fn(async (sql) => {
+        if (/DISTINCT ON \(initiative_id\)/.test(sql)) {
+          return { rows: [{ initiative_id: TASK_ID, phase: 'generate', attempts: '1', deadline_at: null, pr_url: null }] };
+        }
+        if (/FROM tasks/.test(sql)) {
+          taskSqls.push(sql);
+          return { rows: [{ id: TASK_ID, status: 'in_progress', title: 't', pr_url: null, payload: { orchestrator: 'skill-relay' } }] };
+        }
+        return { rows: [] };
+      }),
+    };
+    const execFn = vi.fn((cmd) => {
+      if (/docker ps/.test(cmd)) return '';
+      return '';
+    });
+    await resumeStalledRelayRuns({ pool, execFn, spawnFn: vi.fn().mockResolvedValue({ ok: true }) });
+    expect(taskSqls.length).toBeGreaterThan(0);
+    expect(taskSqls[0]).toMatch(/\bpr_url\b/);
+  });
+
+  it('run.pr_url=null，tasks.pr_url 有值 → MERGED → 标 completed，不重点火', async () => {
+    const TASK_PR = 'https://github.com/owner/repo/pull/42';
+    const updates = [];
+    const pool = {
+      query: vi.fn(async (sql, params) => {
+        if (/DISTINCT ON \(initiative_id\)/.test(sql)) {
+          return { rows: [{ initiative_id: TASK_ID, phase: 'generate', attempts: '1', deadline_at: null, pr_url: null }] };
+        }
+        if (/FROM tasks/.test(sql)) {
+          return { rows: [{ id: TASK_ID, status: 'in_progress', title: 't', pr_url: TASK_PR, payload: { orchestrator: 'skill-relay' } }] };
+        }
+        if (/UPDATE/.test(sql)) { updates.push(sql); return { rows: [{ id: TASK_ID }] }; }
+        return { rows: [] };
+      }),
+    };
+    const ghCalls = [];
+    const execFn = vi.fn((cmd) => {
+      if (/docker ps/.test(cmd)) return '';
+      if (/gh pr view/.test(cmd)) { ghCalls.push(cmd); return JSON.stringify({ state: 'MERGED' }); }
+      return '';
+    });
+    const spawnFn = vi.fn().mockResolvedValue({ ok: true });
+
+    const out = await resumeStalledRelayRuns({ pool, execFn, spawnFn });
+
+    expect(ghCalls.length).toBeGreaterThan(0);
+    expect(ghCalls[0]).toContain(TASK_PR);
+    expect(spawnFn).not.toHaveBeenCalled();
+    expect(out.mergedPr).toBe(1);
+    expect(updates.some((s) => /initiative_runs/.test(s) && /'done'/.test(s))).toBe(true);
+    expect(updates.some((s) => /UPDATE tasks/.test(s) && /'completed'/.test(s))).toBe(true);
+  });
+
+  it('run.pr_url=null, tasks.pr_url=null, payload.pr_url 有值 → MERGED → 标 completed', async () => {
+    const PAYLOAD_PR = 'https://github.com/owner/repo/pull/99';
+    const updates = [];
+    const pool = {
+      query: vi.fn(async (sql, params) => {
+        if (/DISTINCT ON \(initiative_id\)/.test(sql)) {
+          return { rows: [{ initiative_id: TASK_ID, phase: 'generate', attempts: '1', deadline_at: null, pr_url: null }] };
+        }
+        if (/FROM tasks/.test(sql)) {
+          return { rows: [{ id: TASK_ID, status: 'in_progress', title: 't', pr_url: null, payload: { orchestrator: 'skill-relay', pr_url: PAYLOAD_PR } }] };
+        }
+        if (/UPDATE/.test(sql)) { updates.push(sql); return { rows: [{ id: TASK_ID }] }; }
+        return { rows: [] };
+      }),
+    };
+    const ghCalls = [];
+    const execFn = vi.fn((cmd) => {
+      if (/docker ps/.test(cmd)) return '';
+      if (/gh pr view/.test(cmd)) { ghCalls.push(cmd); return JSON.stringify({ state: 'MERGED' }); }
+      return '';
+    });
+    const spawnFn = vi.fn().mockResolvedValue({ ok: true });
+
+    const out = await resumeStalledRelayRuns({ pool, execFn, spawnFn });
+
+    expect(ghCalls.length).toBeGreaterThan(0);
+    expect(ghCalls[0]).toContain(PAYLOAD_PR);
+    expect(spawnFn).not.toHaveBeenCalled();
+    expect(out.mergedPr).toBe(1);
+  });
+});
+
+describe('PATCH /orchestrator/relay-runs — pr_url 字段写入（#3560 跟进）', () => {
+  it('PATCH handler 从 req.body 解构 pr_url', async () => {
+    const { readFileSync } = await import('node:fs');
+    const src = readFileSync(new URL('../routes/initiatives.js', import.meta.url), 'utf8');
+    const patchIdx = src.indexOf("router.patch('/relay-runs/");
+    expect(patchIdx).toBeGreaterThan(-1);
+    const block = src.slice(patchIdx, patchIdx + 1500);
+    expect(block).toMatch(/pr_url/);
+  });
+
+  it('PATCH handler 校验 pr_url 须以 https://github.com/ 开头（非法时 400）', async () => {
+    const { readFileSync } = await import('node:fs');
+    const src = readFileSync(new URL('../routes/initiatives.js', import.meta.url), 'utf8');
+    const patchIdx = src.indexOf("router.patch('/relay-runs/");
+    const block = src.slice(patchIdx, patchIdx + 1500);
+    expect(block).toMatch(/https:\/\/github\.com\//);
+    expect(block).toMatch(/400/);
+  });
+
+  it('PATCH UPDATE SQL 用 COALESCE 保护 pr_url（只增不清）', async () => {
+    const { readFileSync } = await import('node:fs');
+    const src = readFileSync(new URL('../routes/initiatives.js', import.meta.url), 'utf8');
+    const patchIdx = src.indexOf("router.patch('/relay-runs/");
+    const block = src.slice(patchIdx, patchIdx + 1500);
+    expect(block).toMatch(/COALESCE/i);
+    expect(block).toMatch(/pr_url/);
+  });
+});

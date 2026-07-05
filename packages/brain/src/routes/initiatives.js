@@ -356,21 +356,28 @@ router.get('/relay-runs/summary', async (req, res) => {
  */
 router.patch('/relay-runs/:initiative_id', async (req, res) => {
   const { initiative_id } = req.params;
-  const { phase, failure_reason } = req.body || {};
+  const { phase, failure_reason, pr_url } = req.body || {};
   // 中间态 = controller 每棒完成后的进度上报（migration 312 枚举预留；进度条数据源）
   const ALLOWED = ['planning', 'gan', 'generate', 'evaluate', 'done', 'failed'];
   if (!ALLOWED.includes(phase)) {
     return res.status(400).json({ error: 'invalid phase', allowed: ALLOWED });
+  }
+  // pr_url 可选：非空必须以 https://github.com/ 开头
+  if (pr_url !== undefined && pr_url !== null) {
+    if (typeof pr_url !== 'string' || pr_url === '' || !pr_url.startsWith('https://github.com/')) {
+      return res.status(400).json({ error: 'pr_url 非法，须以 https://github.com/ 开头' });
+    }
   }
   try {
     const result = await pool.query(
       `UPDATE initiative_runs
          SET phase = $2,
              completed_at = CASE WHEN $2 IN ('done','failed') THEN COALESCE(completed_at, NOW()) ELSE completed_at END,
-             failure_reason = COALESCE($3, failure_reason)
+             failure_reason = COALESCE($3, failure_reason),
+             pr_url = COALESCE($4, pr_url)
        WHERE initiative_id = $1 AND orchestrator_version = 'v2'
-       RETURNING id, initiative_id, phase, completed_at, failure_reason`,
-      [initiative_id, phase, failure_reason || null]
+       RETURNING id, initiative_id, phase, completed_at, failure_reason, pr_url`,
+      [initiative_id, phase, failure_reason || null, pr_url || null]
     );
     if (result.rows.length === 0) {
       return res.status(404).json({ error: 'v2 run not found for initiative_id' });
