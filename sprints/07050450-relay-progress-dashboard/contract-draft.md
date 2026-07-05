@@ -284,8 +284,8 @@ const { chromium, expect, request } = require('@playwright/test');
 
 | 功能 | Test File | BEHAVIOR 覆盖 | 预期红证据 |
 |---|---|---|---|
-| 整个 Sprint | `tests/relay-progress.test.tsx` | Step 4 前缀剥离 / Step 5 空态 / Step 6 错误态 / Step 7 刷新间隔 | → 4+ failures（RelayProgressPage 未实现时） |
-| E2E Playwright | `tests/e2e-relay-progress.spec.ts` | Step 1-3 完整 Golden Path | → test failures（页面/API 未实现时） |
+| 整个 Sprint | `tests/relay-progress.test.tsx` | 前缀 / 空态 / 错误态 / 15 秒 | → 4+ failures（RelayProgressPage 未实现时） |
+| E2E Playwright | `tests/e2e-relay-progress.spec.ts` | Step 1 | → test failures（页面/API 未实现时） |
 
 ---
 
