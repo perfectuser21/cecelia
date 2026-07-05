@@ -16,6 +16,22 @@
 - 新分支必须放在 `_driveHarnessInitiative` 函数体最前面（`executor.js:2887` 函数声明之后），早于现有的 `skill-relay` if 判断（第 2895 行），确保任何非法 payload 都先被拦下
 - 测试必须照抄 `packages/brain/src/__tests__/harness-max-fresh-starts.test.js` 的 mock 骨架（同一份 vi.mock 列表），不得引入新的 mock 策略
 
+## 范围扩展记录（Task 3 执行中发现，2026-07-05）
+
+Task 1 的 brief（Step 5）只预料了 4 个既有测试文件的回归检查，遗漏了另外 5 个同样通过
+`runHarnessInitiativeRouter`（无 orchestrator flag）测试 LangGraph 图路径具体行为的既有
+regression test 文件。用基线对比（改动前 commit `45b93518e` vs 改动后）确认：这 5 个文件
+的失败是本次改动的真实、直接副作用（不是环境/DB 问题——环境类失败在两次跑里数量一致）：
+
+- `../../tests/integration/harness-stream-events.test.js`（W4 streamMode events）
+- `../../tests/integration/harness-thread-id-versioning.test.js`（W1 thread_id 版本化）
+- `../../tests/integration/harness-watchdog.test.js`（W3 AbortSignal watchdog）
+- `src/__tests__/harness-initiative-executor-writeback.test.js`
+- `src/__tests__/harness-resume-checkpoint-error-state.test.js`
+
+处理原则与 `harness-max-fresh-starts.test.js` 一致：这些测试测的行为现在都是永久不可达代码
+（硬校验在到达这些逻辑之前就 return 了），不是测试本身写错。追加 **Task 4** 处理。
+
 ---
 
 ### Task 1: executor.js 硬校验 + regression test
@@ -497,3 +513,78 @@ Expected: 三者均通过（本次改动不涉及 DEFINITION.md 描述的事实�
 - [ ] **Step 3: 记录 zenithjoy-skills 侧待办（不在本 PR 范围内，仅书面提醒）**
 
 不需要写代码，仅在 PR description 里注明：`packages/engine/skills/dev/SKILL.md` 是 legacy 拷贝，真正 SSOT 在 `perfect21/zenithjoy-skills` 仓库的 `dev/SKILL.md`（第 305-322 行路径 C 点火 curl 模板），当前该模板缺少 `orchestrator` 字段。本次 cecelia 侧硬校验合并后，`/dev` 路径 C 若不同步更新该模板会被新校验拦下。这个更新必须走 `skill-creator` skill 在 zenithjoy-skills 仓库单独开 PR，不属于本次 /dev 流程范围，需要作为紧接着的下一个动作单独处理（会话内继续，不等待本 PR 合并）。
+
+---
+
+### Task 4（范围扩展）：修复另外 5 个因 orchestrator 硬校验而回归的既有测试文件
+
+**Files:**
+- Modify: `packages/brain/tests/integration/harness-stream-events.test.js`
+- Modify: `packages/brain/tests/integration/harness-thread-id-versioning.test.js`
+- Modify: `packages/brain/tests/integration/harness-watchdog.test.js`
+- Modify: `packages/brain/src/__tests__/harness-initiative-executor-writeback.test.js`
+- Modify: `packages/brain/src/__tests__/harness-resume-checkpoint-error-state.test.js`
+
+**Interfaces:**
+- Consumes：Task 1 的硬校验行为（`_driveHarnessInitiative` 对缺 orchestrator 的任务立即 `{ok:false, error:'missing_orchestrator_flag', terminal:true}`）
+- Produces：无（纯测试修复，不影响其他任务）
+
+**背景**：这 5 个文件都是通过 `runHarnessInitiativeRouter(task, opts)` 调用、task 不带 `orchestrator` 字段来测试 LangGraph 图路径的具体行为（W1 thread_id 版本化 / W3 AbortSignal watchdog / W4 streamMode events / executor writeback / checkpoint resume 坏检测）。Task 1 落地后，这些 task 会在到达被测逻辑之前就被硬校验拦截，导致断言全部落空。已用基线对比（改动前 commit `45b93518e` vs 改动后）确认这是本次改动的直接副作用，不是环境问题（两次跑环境类失败数量一致）。
+
+**处理原则**：与已经修过的 `harness-max-fresh-starts.test.js` 一致——不删除测试文件，而是：
+1. 在每个文件顶部文档注释追加说明：2026-07-05 起 `_driveHarnessInitiative` 加了 orchestrator 硬校验，本文件测的场景（task 不带 orchestrator 时仍能到达 LangGraph 图内部逻辑）已不可能发生，这段代码路径变成永久不可达（保留待观察期后物理清理），故以下用例改为 `it.skip` 并说明原因
+2. 把每个文件里所有依赖"task 不带 orchestrator 也能到达图内部逻辑"这个前提的 `it(...)` 用例改成 `it.skip(...)`，标题追加"（2026-07-05 orchestrator 硬校验后已不可达，skip）"这类说明，**不删除测试体**（保留骨架待 fresh-starts/W1/W3/W4 这些保护逻辑如果未来迁移到 skill-relay 路径时复用）
+3. 如果文件里有些用例本来就不依赖这个前提（比如纯粹测试某个不涉及 orchestrator 判断的辅助函数），不要动，只改真正因为硬校验而不可达的那些
+4. 每个文件改完后，在其顶部文档注释里加一句指向本次 lockdown 改动的说明（可以照抄 `harness-max-fresh-starts.test.js` 顶部注释的类似措辞，保持项目内一致性）
+
+**这不是要重新设计 W1/W3/W4 保护逻辑迁移到 skill-relay 路径**——那是一个更大的独立问题（已经在 Task 1 里把 relay-watchdog 覆盖面窄的问题记录为 Notion Issue `1ea53e09-b088-4d2a-b03a-ad8c976bbc6c`）。本任务只负责让测试套件如实反映"这些具体保护逻辑测试的代码已不可达"这个事实，不引入新设计。
+
+- [ ] **Step 1: 逐文件确认当前失败断言**
+
+对 5 个文件各跑一次单文件测试，记录当前失败的具体用例列表：
+```bash
+cd packages/brain
+npx vitest run tests/integration/harness-stream-events.test.js
+npx vitest run tests/integration/harness-thread-id-versioning.test.js
+npx vitest run tests/integration/harness-watchdog.test.js
+npx vitest run src/__tests__/harness-initiative-executor-writeback.test.js
+npx vitest run src/__tests__/harness-resume-checkpoint-error-state.test.js
+```
+Expected: 每个文件都有部分或全部用例 FAIL，具体失败原因应该是"expected X to be called/expected Y" 之类的断言失败（不是 import/语法错误）——如果发现语法错误或 import 报错，说明不是本任务预期的回归类型，需要先报告，不要直接动手改。
+
+- [ ] **Step 2: 逐文件按处理原则修改**
+
+对每个文件应用上面"处理原则"里的 1-4 步。每个文件里具体哪些 `it(...)` 需要改成 `it.skip(...)`，需要根据 Step 1 跑出来的实际 FAIL 列表逐一核对（不要凭猜测判断哪些用例受影响，以实跑结果为准）。
+
+- [ ] **Step 3: 跑 5 个文件确认全部 PASS（含 skip）**
+
+```bash
+cd packages/brain
+npx vitest run tests/integration/harness-stream-events.test.js tests/integration/harness-thread-id-versioning.test.js tests/integration/harness-watchdog.test.js src/__tests__/harness-initiative-executor-writeback.test.js src/__tests__/harness-resume-checkpoint-error-state.test.js
+```
+Expected: 全部 PASS 或 skipped，0 failed。
+
+- [ ] **Step 4: 跑一次全量 brain 测试套件，和基线（改动前 commit `45b93518e`）比对，确认失败文件数不再增加**
+
+```bash
+cd packages/brain && npx vitest run --pool=forks --poolOptions.forks.maxForks=2
+```
+Expected: 失败的测试文件集合应该和改动前 baseline（11 个失败文件，主要是需要真实 PostgreSQL/DB 的 integration test 和 schema version selfcheck 类，这些是环境问题、与本次改动无关）一致或更少，不应该再多出任何和 harness_initiative/orchestrator 相关的新增失败。
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add packages/brain/tests/integration/harness-stream-events.test.js \
+        packages/brain/tests/integration/harness-thread-id-versioning.test.js \
+        packages/brain/tests/integration/harness-watchdog.test.js \
+        packages/brain/src/__tests__/harness-initiative-executor-writeback.test.js \
+        packages/brain/src/__tests__/harness-resume-checkpoint-error-state.test.js
+git commit -m "test(brain): 修复 orchestrator 硬校验导致的 5 个既有测试文件回归
+
+W1/W3/W4 三个 integration test + writeback + resume-checkpoint 测试的都是
+LangGraph 图路径内部行为（task 不带 orchestrator）。硬校验落地后这些场景
+永久不可达，与 harness-max-fresh-starts.test.js 同样处理：受影响用例改
+it.skip 并说明原因，不删除，保留骨架待未来保护逻辑迁移到 skill-relay 路径
+时复用。基线对比（commit 45b93518e vs 本分支）确认这是本次改动的直接
+副作用而非环境问题。"
+```
