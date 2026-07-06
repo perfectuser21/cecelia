@@ -48,7 +48,23 @@ if (!/ZJ_STAGING_PORT[\s\S]{0,100}localhost:5200/.test(runner) &&
   process.exit(1);
 }
 
-console.log('[smoke] L1 PASS: ZJ_STAGING_PORT + 健康检查路径 + zj_staging_unhealthy + 端口重写');
+// 默认重试参数：maxAttempts >= 5 且 retryDelayMs >= 30000（总窗口 >= 4.5 分钟，覆盖 ZJ CI 部署时间）
+if (!/maxAttempts\s*\?\?\s*5/.test(runner)) {
+  console.error('L1 FAIL: 默认 maxAttempts 未升级到 5（当前不够覆盖 ZJ CI 2-3 分钟部署窗口）');
+  process.exit(1);
+}
+if (!/retryDelayMs\s*\?\?\s*30_000/.test(runner)) {
+  console.error('L1 FAIL: 默认 retryDelayMs 未升级到 30_000（当前 20s 间隔不足）');
+  process.exit(1);
+}
+
+// 失败 output 包含尝试次数说明
+if (!/尝试.*次均失败/.test(runner)) {
+  console.error('L1 FAIL: 重试耗尽 output 缺少诊断信息（尝试 N 次均失败）');
+  process.exit(1);
+}
+
+console.log('[smoke] L1 PASS: ZJ_STAGING_PORT + 健康检查路径 + zj_staging_unhealthy + 端口重写 + 5次重试参数 + 诊断输出');
 " || exit 1
 
 # ZJ_STAGING_HOST 必须在 docker-compose.yml 中配置（容器内 localhost 无法访问宿主 :5201）

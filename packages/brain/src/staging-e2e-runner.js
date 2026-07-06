@@ -62,11 +62,12 @@ export async function deployStaging(opts = {}) {
   // ZenithJoy 蓝绿护栏：customer line 的 staging 由 ZenithJoy CI push:main→:5201 自动部署，
   // Cecelia 不跨 repo 做部署（跨 repo 边界）；只做健康检查——起不来则 FAIL 护栏触发，:5200 不被触碰。
   // 重试逻辑：ZenithJoy CI deploy 需 2-3 分钟，staging 检查在 merge 后立即触发，容器重启窗口内
-  // 单次 curl 失败即判死是误判。重试 maxAttempts 次（默认 3），间隔 retryDelayMs（默认 20s）。
+  // 单次 curl 失败即判死是误判。重试 maxAttempts 次（默认 5），间隔 retryDelayMs（默认 30s）。
+  // 默认总窗口：5×30s + 4×30s = 270s ≈ 4.5 分钟，覆盖 ZJ CI 全部部署时间。
   if (customer && !opts.deployScript) {
     const host = process.env.ZJ_STAGING_HOST || 'localhost';
-    const maxAttempts = opts.maxAttempts ?? 3;
-    const retryDelayMs = opts.retryDelayMs ?? 20_000;
+    const maxAttempts = opts.maxAttempts ?? 5;
+    const retryDelayMs = opts.retryDelayMs ?? 30_000;
     const sleep = opts.sleep || ((ms) => new Promise((r) => setTimeout(r, ms)));
     let lastErr;
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
@@ -83,7 +84,8 @@ export async function deployStaging(opts = {}) {
         }
       }
     }
-    const combined = `${lastErr?.stdout ? String(lastErr.stdout) : ''}\n${lastErr?.stderr ? String(lastErr.stderr) : ''}\n${lastErr?.message || ''}`.trim();
+    const errMsg = `${lastErr?.stdout ? String(lastErr.stdout) : ''}\n${lastErr?.stderr ? String(lastErr.stderr) : ''}\n${lastErr?.message || ''}`.trim();
+    const combined = `[尝试 ${maxAttempts} 次均失败，总等待 ${Math.round((maxAttempts - 1) * retryDelayMs / 1000)}s] ${errMsg}`;
     return { status: 'failed', reason: 'zj_staging_unhealthy', output: cap(combined), stagingPort };
   }
 
