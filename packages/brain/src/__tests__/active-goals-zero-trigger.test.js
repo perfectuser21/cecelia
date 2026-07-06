@@ -25,7 +25,7 @@ function makePool({
       calls.push({ sql: sql.trim(), params });
       const s = sql.trim();
 
-      if (s.includes('FROM objectives') && s.includes("status = 'in_progress'")) {
+      if (s.includes('FROM objectives') && s.includes("status IN ('active', 'in_progress')")) {
         return { rows: [{ cnt: String(activeGoals) }] };
       }
 
