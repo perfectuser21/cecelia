@@ -1189,3 +1189,10 @@ changelog:
     description: "launcher 检测 --resume/-r/--continue/-c 自动追加 --fork-session，修 claude --resume 经 launcher 启动秒退"
     files:
       - "../../scripts/claude-launch.sh (resume/continue fork-session 检测)"
+  - version: "19.4.2"
+    date: "2026-07-06"
+    type: "fix"
+    description: "账号切换（claude-switch cs/cn）guard 从「CLAUDE_CONFIG_DIR 是否已设置」改判「是否 headless」。旧 guard 无法区分 headless 显式设置与从父 claude 进程继承（嵌套 shell/session），导致嵌套场景下 CLAUDE_CONFIG_DIR 早已非空、switch 文件永远读不到，账号切换永久失效。headless（-p/--print）继续保留显式传入值不被覆盖。"
+    files:
+      - "../../scripts/claude-launch.sh (账号切换 guard 改判 _is_headless)"
+      - "packages/engine/tests/launcher/claude-launch.test.ts (加 2 case)"
