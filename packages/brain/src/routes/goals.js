@@ -158,6 +158,8 @@ router.get('/health', async (req, res) => {
     const uptimeSeconds = Math.floor(process.uptime());
     res.json({
       status: healthy ? 'healthy' : 'degraded',
+      // Gate3 部署效果确认依赖 version：assert-deploy-effect.sh 断言"跑的是预期版本 + uptime 新鲜"
+      version: pkg.version,
       xian_bridge_status,
       uptime: uptimeSeconds,
       uptime_seconds: uptimeSeconds,
