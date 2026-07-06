@@ -150,11 +150,13 @@ describe('selfcheck', () => {
   // 314 = executor.js 的 markInitiativeTerminalFailed（harness_initiative 终态标记）
   // 强依赖 tasks.custom_props 列（migration 314）；该列此前不存在，导致 UPDATE
   // 整句在真实 Postgres 报错、被 try/catch 静默吞掉，status/failure_class 从未
-  // 真正落库——由 harness-orchestrator-lockdown-smoke.sh 在 real-env-smoke 首次
-  // 暴露。issue 14d66027 语义不变：只有代码依赖才 bump，加 migration 本身**不要 bump**。
-  // facts-check 只校验地板 <= 最高 migration，不要求相等。
-  it('EXPECTED_SCHEMA_VERSION should be 314 (floor, bump only on code dependency)', () => {
-    expect(EXPECTED_SCHEMA_VERSION).toBe('314');
+  // 真正落库——由 harness-orchestrator-lockdown-smoke.sh 在 real-env-smoke 首次暴露。
+  // issue 14d66027 语义：地板只在"代码依赖新 schema"时才 bump。
+  // 315（九要素存储 action_receipts + decisions.review_after）是作战循环回执/复盘系统
+  // 的必备底座（预期即将被依赖），故随 migration 315 推进地板到 315。
+  // facts-check 校验地板 <= 最高 migration（315 <= 315 通过）。
+  it('EXPECTED_SCHEMA_VERSION should be 315 (floor, bumped for 九要素存储 substrate)', () => {
+    expect(EXPECTED_SCHEMA_VERSION).toBe('315');
   });
 
   it('should pass when DB schema version is ahead of expected (>= check)', async () => {
