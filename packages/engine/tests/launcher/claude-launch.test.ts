@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { execSync } from 'node:child_process';
-import { mkdtempSync, writeFileSync, chmodSync, rmSync, existsSync, statSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, chmodSync, rmSync, existsSync, statSync, lstatSync, readlinkSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 
@@ -92,6 +92,15 @@ describe('Phase 7.7 claude-launch.sh 自动 worktree — --dry-run 契约', () =
     delete env.CECELIA_NO_AUTO_WORKTREE;
     const out = execSync(`bash "${LAUNCHER}" --dry-run`, { cwd: repoDir, env }).toString();
     expect(out).toContain('worktree add');
+  });
+
+  it('主仓根 + 交互模式 → dry-run 输出含软链建立步骤（projects symlink）', () => {
+    const env: Record<string, string> = { ...process.env, CLAUDE_SESSION_ID: 'abc12345-0000-0000-0000-000000000000' };
+    delete env.CLAUDE_CODE_EXECPATH;
+    delete env.CECELIA_NO_AUTO_WORKTREE;
+    const out = execSync(`bash "${LAUNCHER}" --dry-run`, { cwd: repoDir, env }).toString();
+    expect(out).toContain('ln -s');
+    expect(out).toContain('projects');
   });
 
   it('headless（-p）→ dry-run 输出不含 worktree 建立步骤', () => {
@@ -209,5 +218,69 @@ describe('Phase 7.7 claude-launch.sh 自动 worktree — 真实建立与清理',
     const expectedWt = join(worktreeBase, 'main', `session-${sid.slice(0, 8)}`);
     expect(out.trim()).toBe(expectedWt);
     expect(existsSync(join(expectedWt, 'uncommitted.txt'))).toBe(true);
+  });
+
+  it('干净退出 → ~/.claude/projects/<worktree-slug> 软链创建并在清理后删除，主仓记录目录不受影响', () => {
+    writeMockClaude(`#!/usr/bin/env bash\nexit 0\n`);
+    const sid = 'aa000000-bbbb-cccc-dddd-eeeeeeeeeeee';
+    const claudeConfigDir = mkdtempSync(join(tmpdir(), 'claude-cfg-'));
+    const env: Record<string, string> = {
+      ...process.env,
+      PATH: `${mockDir}:${process.env.PATH}`,
+      CLAUDE_SESSION_ID: sid,
+      WORKTREE_BASE: worktreeBase,
+      CLAUDE_CONFIG_DIR: claudeConfigDir,
+    };
+    delete env.CLAUDE_CODE_EXECPATH;
+    delete env.CECELIA_NO_AUTO_WORKTREE;
+
+    const wtPath = join(worktreeBase, 'main', `session-${sid.slice(0, 8)}`);
+    const mainSlug = mainRepo.replace(/\//g, '-');
+    const wtSlug = wtPath.replace(/\//g, '-');
+    const projectsDir = join(claudeConfigDir, 'projects');
+    const mainProjectDir = join(projectsDir, mainSlug);
+    const wtProjectDir = join(projectsDir, wtSlug);
+
+    execSync(`bash "${LAUNCHER}"`, { cwd: mainRepo, env });
+
+    // 主仓记录目录必须存在
+    expect(existsSync(mainProjectDir)).toBe(true);
+    // worktree 软链必须被清理（干净退出）
+    expect(existsSync(wtProjectDir)).toBe(false);
+
+    rmSync(claudeConfigDir, { recursive: true, force: true });
+  });
+
+  it('脏退出 → ~/.claude/projects/<worktree-slug> 软链保留，主仓记录目录也保留', () => {
+    writeMockClaude(`#!/usr/bin/env bash\necho dirty > uncommitted2.txt\nexit 0\n`);
+    const sid = 'ff000000-bbbb-cccc-dddd-eeeeeeeeeeee';
+    const claudeConfigDir = mkdtempSync(join(tmpdir(), 'claude-cfg2-'));
+    const env: Record<string, string> = {
+      ...process.env,
+      PATH: `${mockDir}:${process.env.PATH}`,
+      CLAUDE_SESSION_ID: sid,
+      WORKTREE_BASE: worktreeBase,
+      CLAUDE_CONFIG_DIR: claudeConfigDir,
+    };
+    delete env.CLAUDE_CODE_EXECPATH;
+    delete env.CECELIA_NO_AUTO_WORKTREE;
+
+    const wtPath = join(worktreeBase, 'main', `session-${sid.slice(0, 8)}`);
+    const mainSlug = mainRepo.replace(/\//g, '-');
+    const wtSlug = wtPath.replace(/\//g, '-');
+    const projectsDir = join(claudeConfigDir, 'projects');
+    const mainProjectDir = join(projectsDir, mainSlug);
+    const wtProjectDir = join(projectsDir, wtSlug);
+
+    execSync(`bash "${LAUNCHER}"`, { cwd: mainRepo, env });
+
+    // 主仓记录目录存在
+    expect(existsSync(mainProjectDir)).toBe(true);
+    // 脏退出：worktree 保留，软链也保留
+    expect(lstatSync(wtProjectDir).isSymbolicLink()).toBe(true);
+    // 软链指向主仓记录目录
+    expect(readlinkSync(wtProjectDir)).toBe(mainProjectDir);
+
+    rmSync(claudeConfigDir, { recursive: true, force: true });
   });
 });

@@ -2,6 +2,7 @@
 # Cecelia 统一 claude 启动器
 # 保证 headless / interactive / parallel 所有 claude 实例都有 --session-id + export 到子进程
 # 交互模式下、cwd=主仓工作树时，自动建/复用 per-session worktree，隔离多 session 互踩（session 隔离根治）
+# 软链 ~/.claude/projects/<worktree-slug> → ~/.claude/projects/<main-repo-slug>，让 /resume 跨 session 可见
 # 用法：
 #   直接用:     bash scripts/claude-launch.sh [-p PROMPT] [其他 claude 参数]
 #   交互 alias:  alias claude='bash /absolute/path/to/scripts/claude-launch.sh'
@@ -65,12 +66,16 @@ if [[ "$DRY_RUN" == "1" ]]; then
         echo "git -C \"$_MAIN_REPO\" fetch origin main --quiet"
         echo "git -C \"$_MAIN_REPO\" worktree add \"$_WT_PATH\" -b \"$_WT_BRANCH\" origin/main"
         echo "cd \"$_WT_PATH\""
+        _MAIN_SLUG="${_MAIN_REPO//\//-}"
+        _WT_SLUG="${_WT_PATH//\//-}"
+        echo "ln -s \"~/.claude/projects/${_MAIN_SLUG}\" \"~/.claude/projects/${_WT_SLUG}\""
     fi
     echo "$_CLAUDE_BIN --session-id $SID ${ARGS[@]+${ARGS[@]}}"
     exit 0
 fi
 
 # 真实执行：交互模式 + 主仓工作树 → 建立/复用 per-session worktree 并 cd 进去
+_WT_PROJECT_DIR=""
 if [[ "$AUTO_WORKTREE" == "1" ]]; then
     mkdir -p "$_WT_BASE"
     if [[ ! -d "$_WT_PATH" ]]; then
@@ -79,6 +84,32 @@ if [[ "$AUTO_WORKTREE" == "1" ]]; then
         git -C "$_MAIN_REPO" worktree add "$_WT_PATH" -b "$_WT_BRANCH" origin/main 1>&2
     fi
     cd "$_WT_PATH"
+
+    # 软链 ~/.claude/projects/<worktree-slug> → ~/.claude/projects/<main-repo-slug>
+    # 让所有 session 的对话记录汇聚到同一个池子，/resume 跨 session 可见
+    # 须在 claude 写第一条记录之前完成
+    _CLAUDE_CFG="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
+    _PROJECTS_DIR="$_CLAUDE_CFG/projects"
+    _MAIN_SLUG="${_MAIN_REPO//\//-}"
+    _WT_SLUG="${_WT_PATH//\//-}"
+    _MAIN_PROJECT_DIR="$_PROJECTS_DIR/$_MAIN_SLUG"
+    _WT_PROJECT_DIR="$_PROJECTS_DIR/$_WT_SLUG"
+    mkdir -p "$_MAIN_PROJECT_DIR"
+    if [[ -L "$_WT_PROJECT_DIR" ]]; then
+        # 已是软链：目标不对则重建
+        if [[ "$(readlink "$_WT_PROJECT_DIR")" != "$_MAIN_PROJECT_DIR" ]]; then
+            rm "$_WT_PROJECT_DIR"
+            ln -s "$_MAIN_PROJECT_DIR" "$_WT_PROJECT_DIR"
+        fi
+    elif [[ -d "$_WT_PROJECT_DIR" ]]; then
+        # 先跑后链：真实目录已存在，把记录并入主仓目录再替换成软链
+        cp -rn "$_WT_PROJECT_DIR/." "$_MAIN_PROJECT_DIR/" 2>/dev/null || true
+        rm -rf "$_WT_PROJECT_DIR"
+        ln -s "$_MAIN_PROJECT_DIR" "$_WT_PROJECT_DIR"
+    else
+        mkdir -p "$_PROJECTS_DIR"
+        ln -s "$_MAIN_PROJECT_DIR" "$_WT_PROJECT_DIR"
+    fi
 fi
 
 # Phase 7.6: 用绝对路径/command 跳过 shell function + alias，避免递归陷阱。
@@ -131,6 +162,8 @@ if [[ "$_DIRTY" == "0" ]]; then
     if [[ -z "$_UNPUSHED" ]]; then
         git -C "$_MAIN_REPO" worktree remove "$_WT_PATH" --force >/dev/null 2>&1 || true
         git -C "$_MAIN_REPO" branch -D "$_WT_BRANCH" >/dev/null 2>&1 || true
+        # 只删软链本身，绝不触碰主仓记录目录（_MAIN_PROJECT_DIR）
+        [[ -n "${_WT_PROJECT_DIR:-}" && -L "$_WT_PROJECT_DIR" ]] && rm -f "$_WT_PROJECT_DIR"
     fi
 fi
 
