@@ -217,6 +217,59 @@ describe('Phase 7.7 claude-launch.sh 自动 worktree — 真实建立与清理',
   });
 });
 
+describe('账号切换（cs/cn）— guard 应区分 headless 与嵌套继承', () => {
+  let mockDir: string;
+  let homeDir: string;
+  let acctDirCs: string;
+
+  beforeAll(() => {
+    mockDir = mkdtempSync(join(tmpdir(), 'claude-launch-acct-mock-'));
+    const mockClaude = join(mockDir, 'claude');
+    writeFileSync(mockClaude, `#!/usr/bin/env bash\necho "CLAUDE_CONFIG_DIR=$CLAUDE_CONFIG_DIR"\n`);
+    chmodSync(mockClaude, 0o755);
+
+    homeDir = mkdtempSync(join(tmpdir(), 'claude-launch-acct-home-'));
+    mkdirSync(join(homeDir, '.claude'), { recursive: true });
+    acctDirCs = join(homeDir, '.claude-account2');
+    mkdirSync(acctDirCs, { recursive: true });
+    writeFileSync(join(homeDir, '.claude', '.active-account-dir'), acctDirCs);
+  });
+
+  afterAll(() => {
+    rmSync(mockDir, { recursive: true, force: true });
+    rmSync(homeDir, { recursive: true, force: true });
+  });
+
+  it('交互模式 + CLAUDE_CONFIG_DIR 已从父进程继承（嵌套场景）→ 仍应读 switch 文件并覆盖', () => {
+    const env: Record<string, string> = {
+      ...process.env,
+      PATH: `${mockDir}:${process.env.PATH}`,
+      HOME: homeDir,
+      CLAUDE_SESSION_ID: 'fixed-acct-test',
+      CECELIA_NO_AUTO_WORKTREE: '1',
+      // 模拟从正在运行的父 claude 进程继承来的 env（不是用户显式为本次调用设置的）
+      CLAUDE_CONFIG_DIR: join(homeDir, '.claude-account1'),
+    };
+    delete env.CLAUDE_CODE_EXECPATH;
+    const out = execSync(`bash "${LAUNCHER}"`, { env }).toString();
+    expect(out).toContain(`CLAUDE_CONFIG_DIR=${acctDirCs}`);
+  });
+
+  it('headless（-p）+ CLAUDE_CONFIG_DIR 显式设置 → 不被 switch 文件覆盖', () => {
+    const env: Record<string, string> = {
+      ...process.env,
+      PATH: `${mockDir}:${process.env.PATH}`,
+      HOME: homeDir,
+      CLAUDE_SESSION_ID: 'fixed-acct-test-headless',
+      CECELIA_NO_AUTO_WORKTREE: '1',
+      CLAUDE_CONFIG_DIR: join(homeDir, '.claude-account1'),
+    };
+    delete env.CLAUDE_CODE_EXECPATH;
+    const out = execSync(`bash "${LAUNCHER}" -p "hi"`, { env }).toString();
+    expect(out).toContain(`CLAUDE_CONFIG_DIR=${join(homeDir, '.claude-account1')}`);
+  });
+});
+
 describe('resume 历史软链 — per-session projects key 软链回主仓', () => {
   let base: string;
   let bareDir: string;

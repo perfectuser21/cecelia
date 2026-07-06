@@ -151,7 +151,11 @@ if [[ -z "$_CLAUDE_BIN" || ! -x "$_CLAUDE_BIN" ]]; then
 fi
 
 # 账号切换：claude-switch cs/cn 写入 ~/.claude/.active-account-dir
-if [[ -z "${CLAUDE_CONFIG_DIR:-}" ]]; then
+# 用 _is_headless 判断而非"CLAUDE_CONFIG_DIR 是否已设置"——后者会被从父 claude 进程
+# 继承来的 env 误伤（嵌套 shell/session 里 CLAUDE_CONFIG_DIR 早已非空），导致
+# claude-switch 在这类场景下永久失效。headless 调用（-p/--print）始终保留其
+# 显式传入的 CLAUDE_CONFIG_DIR，不被 switch 文件覆盖。
+if ! _is_headless; then
     _ACCT_DIR_FILE="$HOME/.claude/.active-account-dir"
     if [[ -f "$_ACCT_DIR_FILE" ]]; then
         _ACCT_DIR=$(cat "$_ACCT_DIR_FILE")
