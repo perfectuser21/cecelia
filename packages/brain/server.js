@@ -799,6 +799,14 @@ async function onBrainListening() {
     console.warn('[Server] Notion Push Sync init failed (non-fatal):', e.message);
   }
 
+  // scheduler-jobs：声明式定时任务注册表（作战循环 P1-PR1，恢复 Wave 2 断掉的定时任务）
+  try {
+    const { startSchedulerJobsLoop } = await import('./src/scheduler-jobs.js');
+    startSchedulerJobsLoop(pool);
+  } catch (e) {
+    console.warn('[Server] scheduler-jobs init failed (non-fatal):', e.message);
+  }
+
   // Initialize Daily Memory Consolidation (每 30 分钟轮询，内部 elapsed-time 闸门按 CONSOLIDATION_INTERVAL_HOURS 节流)
   // Wave 2 重构后 tick-runner.js 已废弃，原 step 10.x 调用断点；此处恢复独立调度，修 PROBE_FAIL_CONSOLIDATION 真因
   // 初次 setTimeout 用 5s（小于 capability-probe 的 30s 首发延迟），避免 cold-start 上 probe 先于 consolidation 跑
