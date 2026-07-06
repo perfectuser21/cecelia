@@ -24,6 +24,20 @@ for arg in "$@"; do
     fi
 done
 
+# resume/continue 与强制注入的 --session-id 同用时，claude CLI 要求 --fork-session：
+# 恢复的对话 fork 到本次 launcher 分配的新 session-id 下（与 per-session worktree 模型自洽）。
+# 已知可接受边角：某 flag 的值恰为字符串 -r/-c 会误判追加（claude CLI 无此组合场景）。
+_HAS_RESUME=0; _HAS_FORK=0
+for arg in ${ARGS[@]+"${ARGS[@]}"}; do
+    case "$arg" in
+        --resume|--resume=*|-r|--continue|--continue=*|-c) _HAS_RESUME=1 ;;
+        --fork-session) _HAS_FORK=1 ;;
+    esac
+done
+if [[ "$_HAS_RESUME" == "1" && "$_HAS_FORK" == "0" ]]; then
+    ARGS+=("--fork-session")
+fi
+
 # 是否 headless（-p/--print）—— headless 走 cecelia-run.sh 自己的 worktree 逻辑，不自动建 worktree
 _is_headless() {
     local a
