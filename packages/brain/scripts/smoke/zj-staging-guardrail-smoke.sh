@@ -51,6 +51,14 @@ if (!/ZJ_STAGING_PORT[\s\S]{0,100}localhost:5200/.test(runner) &&
 console.log('[smoke] L1 PASS: ZJ_STAGING_PORT + 健康检查路径 + zj_staging_unhealthy + 端口重写');
 " || exit 1
 
+# ZJ_STAGING_HOST 必须在 docker-compose.yml 中配置（容器内 localhost 无法访问宿主 :5201）
+COMPOSE_FILE="docker-compose.yml"
+if ! grep -q "ZJ_STAGING_HOST" "$COMPOSE_FILE" 2>/dev/null; then
+  echo "[smoke] L1 FAIL: ZJ_STAGING_HOST 未在 $COMPOSE_FILE 中配置（Brain 容器内 localhost 不通宿主 :5201）"
+  exit 1
+fi
+echo "[smoke] L1 PASS: ZJ_STAGING_HOST 已在 docker-compose.yml 配置"
+
 # ── L2 Brain health gate ─────────────────────────────────────────────────
 if ! curl -sf "$BRAIN/api/brain/health" >/dev/null 2>&1; then
   echo "[smoke] L2 SKIP: Brain 不可达（$BRAIN）— L1 静态已 PASS"
