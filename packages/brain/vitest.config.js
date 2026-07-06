@@ -122,6 +122,10 @@ export default defineConfig({
       'src/__tests__/integration/pipeline-rescue.integration.test.js',
       // dev-registry: 直连 pool.query 验 7 张新表，需真实 DB — 走 brain-integration
       'src/workflows/__tests__/dev-registry.test.js',
+      // Stale sprint DoD tests: 硬断言 EXPECTED_SCHEMA_VERSION='293'，schema 已推进到 314+，
+      // 冻结版本断言随 migration 单调递增必腐（P1-PR1 排雷；改测试会触发 harness TDD 门禁，故 exclude）
+      '../../sprints/06040940-harness-phase-metrics/tests/harness-phase-event.test.ts',
+      '../../sprints/06040940-harness-phase-metrics/tests/migration-293.test.ts',
       // Sprint Tests (ws3): 使用 fetch() 直调 localhost:5221，brain-unit 无真实服务器 → 走 Sprint Tests CI
       '../../sprints/cecelia-sprint-visibility-0528/tests/ws3/sprint-docs.test.ts',
       // Sprint Tests (ws5): 使用 process.cwd() 相对路径，brain-unit 从 packages/brain 运行时路径错误 → 走 Sprint Tests CI

@@ -1040,6 +1040,7 @@ async function executeTick() {
     let zeroGoalsTrigger = null;
     try {
       const { maybeTriggerStrategySession } = await import('./active-goals-zero-trigger.js');
+      // DEPRECATED(P1-PR1 2026-07-06): 已迁移 scheduler-jobs.js。executeTick 自 Wave 2 起不被调用；若未来复活本函数，必须先移除此调用以防双跑。
       zeroGoalsTrigger = await maybeTriggerStrategySession(pool);
       if (zeroGoalsTrigger.created) {
         tickLog(`[tick] active_goals=0 trigger: dispatched strategy_session task ${zeroGoalsTrigger.taskId}`);
@@ -1541,6 +1542,7 @@ async function executeTick() {
   }
 
   // 10.1 每4小时 arch_review 巡检（guard: 上次 review 后至少1个 dev 任务完成）
+  // DEPRECATED(P1-PR1 2026-07-06): 已迁移 scheduler-jobs.js。executeTick 自 Wave 2 起不被调用；若未来复活本函数，必须先移除此调用以防双跑。
   Promise.resolve().then(() => triggerArchReview(pool))
     .catch(e => console.warn('[tick] arch review scheduler 失败:', e.message));
 
@@ -1554,10 +1556,12 @@ async function executeTick() {
   if (isConsciousnessEnabled()) {
 
   // 10.3 对话日志提炼（每 5 分钟扫描 ~/.claude-account1/projects/ .jsonl 文件）
+  // DEPRECATED(P1-PR1 2026-07-06): 已迁移 scheduler-jobs.js。executeTick 自 Wave 2 起不被调用；若未来复活本函数，必须先移除此调用以防双跑。
   Promise.resolve().then(() => runConversationDigest())
     .catch(e => console.warn('[tick] conversation digest 失败:', e.message));
 
   // 10.4 Capture 消化（扫描 inbox captures → LLM 拆解为 atoms）
+  // DEPRECATED(P1-PR1 2026-07-06): 已迁移 scheduler-jobs.js。executeTick 自 Wave 2 起不被调用；若未来复活本函数，必须先移除此调用以防双跑。
   Promise.resolve().then(() => runCaptureDigestion())
     .catch(e => console.warn('[tick] capture digestion 失败:', e.message));
 
