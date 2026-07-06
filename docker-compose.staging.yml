@@ -57,8 +57,11 @@ services:
       - DB_USER=${DB_USER:-cecelia}
       - DB_PASSWORD=${DB_PASSWORD:-cecelia}
       - BRAIN_PORT=5222
-      # Staging: 禁用 tick，防止抢 production 任务
+      # Staging: 禁用 tick，防止抢 production 任务。
+      # HARD_OFF 是硬关（无视 DB 值与缺省 true，也不启 watchdog/auto-recover）——
+      # 2026-07-06 实锤：仅靠 TICK_ENABLED=false 时 staging tick 越权跑、调度打到生产 bridge。
       - CECELIA_TICK_ENABLED=false
+      - CECELIA_TICK_HARD_OFF=1
       - CECELIA_MAX_SEATS=3
       - CECELIA_BUDGET_SLOTS=2
       - CECELIA_TICK_INTERVAL_MS=5000

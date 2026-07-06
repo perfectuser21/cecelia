@@ -54,6 +54,7 @@ describe('tick-recovery', () => {
     resetTickStateForTests();
     vi.clearAllMocks();
     delete process.env.CECELIA_TICK_ENABLED;
+    delete process.env.CECELIA_TICK_HARD_OFF;
   });
 
   afterEach(() => {
@@ -197,10 +198,10 @@ describe('tick-recovery', () => {
       expect(tickState.recoveryTimer).toBeNull();
     });
 
-    // 2026-07-06 staging 隔离硬关：recovery 路径同样必须尊重 env=false（否则后台恢复
+    // 2026-07-06 staging 隔离硬关：recovery 路径同样必须尊重 hard-off（否则后台恢复
     // timer 会把 staging tick 重新拉起来，硬关只关一半）。
-    it('CECELIA_TICK_ENABLED=false → recovery 绝不启动 loop 并清掉恢复 timer', async () => {
-      process.env.CECELIA_TICK_ENABLED = 'false';
+    it('CECELIA_TICK_HARD_OFF=1 → recovery 绝不启动 loop 并清掉恢复 timer', async () => {
+      process.env.CECELIA_TICK_HARD_OFF = '1';
       mockGetTickStatus.mockResolvedValue({ enabled: true });
       mockQuery.mockResolvedValue({ rows: [] });
 
@@ -232,9 +233,9 @@ describe('tick-recovery', () => {
     });
 
     // 2026-07-06 staging 隔离硬关（真实事故：staging tick 越权跑抢生产 bridge）：
-    // env=false 时无论 DB 说什么都不得启动 loop，也不得启动 watchdog（watchdog 会自动拉回）。
-    it('CECELIA_TICK_ENABLED=false → 硬关：DB enabled=true 也绝不启动 loop/watchdog', async () => {
-      process.env.CECELIA_TICK_ENABLED = 'false';
+    // hard-off 时无论 DB 说什么都不得启动 loop，也不得启动 watchdog（watchdog 会自动拉回）。
+    it('CECELIA_TICK_HARD_OFF=1 → 硬关：DB enabled=true 也绝不启动 loop/watchdog', async () => {
+      process.env.CECELIA_TICK_HARD_OFF = '1';
       mockGetTickStatus.mockResolvedValue({ enabled: true });
       mockQuery.mockResolvedValue({ rows: [] });
 

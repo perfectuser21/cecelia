@@ -49,10 +49,12 @@ async function getTickStatus() {
     memory[row.key] = row.value_json;
   }
 
-  // staging 隔离硬关（2026-07-06）：env 显式 false 时无视 DB 值与「key 缺失默认 true」。
+  // staging 隔离硬关（2026-07-06）：CECELIA_TICK_HARD_OFF=1 时无视 DB 值与「key 缺失默认 true」。
   // 真实事故：cecelia_staging 库无 tick_enabled key → 缺省 true → staging tick 越权跑，
   // 调度打到生产 bridge(3457)，Auto Staging Deploy 因此 12 连红。
-  const enabled = process.env.CECELIA_TICK_ENABLED === 'false'
+  // 注意不能复用 CECELIA_TICK_ENABLED=false：CI real-env 用它起 Brain 后靠 API 动态 enableTick，
+  // 把它变成永久锁死会打死 11 个 tick 类 smoke（PR #3566 首轮实锤）。
+  const enabled = process.env.CECELIA_TICK_HARD_OFF === '1'
     ? false
     : (memory[TICK_ENABLED_KEY]?.enabled ?? true);
   const lastTick = memory[TICK_LAST_KEY]?.timestamp || null;
