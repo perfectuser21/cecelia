@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 vi.mock('../daily-review-scheduler.js', () => ({
   triggerArchReview: vi.fn().mockResolvedValue({ triggered: false, skipped_window: true }),
@@ -13,7 +13,13 @@ vi.mock('../capture-digestion.js', () => ({
   runCaptureDigestion: vi.fn().mockResolvedValue({ processed: 0 }),
 }));
 
-import { runSchedulerJobsOnce, JOBS, SENTINEL_KEY_PREFIX } from '../scheduler-jobs.js';
+import {
+  runSchedulerJobsOnce,
+  startSchedulerJobsLoop,
+  stopSchedulerJobsLoop,
+  JOBS,
+  SENTINEL_KEY_PREFIX,
+} from '../scheduler-jobs.js';
 import { triggerArchReview } from '../daily-review-scheduler.js';
 import { maybeTriggerStrategySession } from '../active-goals-zero-trigger.js';
 import { runConversationDigest } from '../conversation-digest.js';
@@ -82,5 +88,51 @@ describe('scheduler-jobs 注册表', () => {
     const results = await runSchedulerJobsOnce(pool);
     expect(results).toHaveLength(4);
     expect(results.every((r) => r.ok)).toBe(true);
+  });
+});
+
+describe('scheduler-jobs loop 幂等与重入守卫', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.useFakeTimers();
+  });
+  afterEach(() => {
+    stopSchedulerJobsLoop();
+    vi.useRealTimers();
+  });
+
+  it('重复调用 startSchedulerJobsLoop 返回同一 timer', () => {
+    const pool = makePool();
+    const t1 = startSchedulerJobsLoop(pool);
+    const t2 = startSchedulerJobsLoop(pool);
+    expect(t2).toBe(t1);
+  });
+
+  it('前进 60s 触发一轮，4 个 handler 各被调用一次', async () => {
+    const pool = makePool();
+    startSchedulerJobsLoop(pool);
+    await vi.advanceTimersByTimeAsync(60 * 1000);
+    expect(triggerArchReview).toHaveBeenCalledTimes(1);
+    expect(maybeTriggerStrategySession).toHaveBeenCalledTimes(1);
+    expect(runConversationDigest).toHaveBeenCalledTimes(1);
+    expect(runCaptureDigestion).toHaveBeenCalledTimes(1);
+  });
+
+  it('重入守卫：慢 handler 挂起时前进 120s 不叠加并发', async () => {
+    const pool = makePool();
+    triggerArchReview.mockImplementationOnce(() => new Promise(() => {}));
+    startSchedulerJobsLoop(pool);
+    await vi.advanceTimersByTimeAsync(120 * 1000);
+    // 首轮在 arch-review 处挂起，running 仍为 true，第二次 tick 应被守卫短路，
+    // arch-review 只被调用一次（无守卫则会被第二轮再调一次）。
+    expect(triggerArchReview).toHaveBeenCalledTimes(1);
+  });
+
+  it('stopSchedulerJobsLoop 后前进 60s 不再触发', async () => {
+    const pool = makePool();
+    startSchedulerJobsLoop(pool);
+    stopSchedulerJobsLoop();
+    await vi.advanceTimersByTimeAsync(60 * 1000);
+    expect(triggerArchReview).not.toHaveBeenCalled();
   });
 });
