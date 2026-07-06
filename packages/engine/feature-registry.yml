@@ -1183,3 +1183,9 @@ changelog:
     description: "resume 历史软链（cp-07061211）— claude-launch.sh 建 per-session worktree 后把 ~/.claude/projects/<wt_key> 软链到主仓 key（key 按物理路径派生，孤儿真实目录先迁移合并），干净退出随 worktree 清理软链（_PROJ_LINK_CREATED 记账只删自己建的链），--dry-run 追加 ln -s 契约行，CLAUDE_PROJECTS_ROOT 可覆盖供测试沙箱。修 #3557 副作用：/resume 按 cwd 过滤导致历史全部不可见。全段 best-effort 不阻断启动（含只读 root 守卫测试）。8 case TDD + 既有真实执行测试补沙箱。"
     files:
       - "../../scripts/claude-launch.sh (projects key 软链建立/迁移/清理)"
+  - version: "19.4.1"
+    date: "2026-07-06"
+    type: "fix"
+    description: "launcher 检测 --resume/-r/--continue/-c 自动追加 --fork-session，修 claude --resume 经 launcher 启动秒退"
+    files:
+      - "../../scripts/claude-launch.sh (resume/continue fork-session 检测)"
