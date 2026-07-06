@@ -83,7 +83,9 @@ jobs:
         shell: bash
         run: |
           set -uo pipefail
-          OPEN_TITLES=$(curl -s -m 15 "$BRAIN_URL/api/brain/issues?status=open" || echo '[]')
+          # 去重必须查 "In progress"：POST /api/brain/issues 新建默认 status=In progress 而非 open
+          #（0706 首跑实锤：查 status=open 恒空 → 每 6h 会重复开一遍同名 issue）
+          OPEN_TITLES=$(curl -s -m 15 "$BRAIN_URL/api/brain/issues?status=In%20progress&limit=200" || echo '[]')
           NEW=0
           SUMMARY=""
           while IFS=$'\t' read -r R WF_NAME WF_PATH; do
