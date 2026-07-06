@@ -12,6 +12,7 @@ import { triggerArchReview } from './daily-review-scheduler.js';
 import { maybeTriggerStrategySession } from './active-goals-zero-trigger.js';
 import { runConversationDigest } from './conversation-digest.js';
 import { runCaptureDigestion } from './capture-digestion.js';
+import { scheduleDailyBackup } from './daily-backup-scheduler.js';
 
 const LOOP_INTERVAL_MS = 60 * 1000;
 const DEFAULT_TIMEOUT_MS = 5 * 60 * 1000;
@@ -22,6 +23,7 @@ export const JOBS = [
   { name: 'strategy-trigger', needsPool: true, timeoutMs: DEFAULT_TIMEOUT_MS, handler: maybeTriggerStrategySession, description: '战略会应急触发（自带active_goals gate+24h冷却）' },
   { name: 'conversation-digest', needsPool: false, timeoutMs: DEFAULT_TIMEOUT_MS, handler: runConversationDigest, description: '对话提炼' },
   { name: 'capture-digestion', needsPool: false, timeoutMs: DEFAULT_TIMEOUT_MS, handler: runCaptureDigestion, description: 'capture 消化（想法箱进箱通道）' },
+  { name: 'daily-backup', needsPool: true, timeoutMs: DEFAULT_TIMEOUT_MS, handler: scheduleDailyBackup, description: '每日 DB 备份任务创建（自带窗口+当日去重；作战史单库保命符）' },
 ];
 
 function raceWithTimeout(promise, timeoutMs) {
