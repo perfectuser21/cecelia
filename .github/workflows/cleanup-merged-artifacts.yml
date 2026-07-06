@@ -29,7 +29,8 @@ jobs:
           #   新命名：DoD.cp-*.md / PRD.cp-*.md / TASK_CARD.cp-*.md（大写、无前导点）
           # 不匹配 DoD.md / PRD.md（活跃 PR 使用，无 .cp- 后缀）
           # Phase 7.5: 补齐 .dod-* 前缀，之前漏抓导致 3 个 .dod-cp-* 残留积累
-          FILES=$(git ls-files | grep -E '^(\.prd-|\.task-|\.dod-|DoD\.cp-|PRD\.cp-|TASK_CARD\.cp-)' || true)
+          # 2026-07-06 补齐 .dev-mode./.dev-seal./.enriched-prd-（审计发现 main 积了 13 个此类残留）
+          FILES=$(git ls-files | grep -E '^(\.prd-|\.task-|\.dod-|\.dev-mode\.|\.dev-seal\.|\.enriched-prd-|DoD\.cp-|PRD\.cp-|TASK_CARD\.cp-)' || true)
 
           if [ -z "$FILES" ]; then
             echo "✅ 无 prd/task 残留文件，跳过"
