@@ -30,6 +30,7 @@ jobs:
       WATCH_REPOS: perfectuser21/cecelia perfectuser21/zenithjoy-workspace perfectuser21/zenithjoy-skills perfectuser21/infrastructure
       BRAIN_URL: http://100.71.151.105:5221
       CONSECUTIVE_N: '3'
+      RECENT_DAYS: '7'
     steps:
       - name: 检查 GH_PAT_BOT 已配置
         run: |
@@ -53,10 +54,19 @@ jobs:
             echo "── 扫描 $R"
             while IFS=$'\t' read -r WF_ID WF_NAME WF_PATH; do
               [ -z "${WF_ID:-}" ] && continue
-              CONCLUSIONS=$(gh api "repos/$R/actions/workflows/$WF_ID/runs?status=completed&per_page=$CONSECUTIVE_N" \
-                --jq '[.workflow_runs[].conclusion] | join(",")' 2>/dev/null || echo "api_error")
+              RUNS_JSON=$(gh api "repos/$R/actions/workflows/$WF_ID/runs?status=completed&per_page=$CONSECUTIVE_N" 2>/dev/null || echo '{}')
+              CONCLUSIONS=$(echo "$RUNS_JSON" | jq -r '[.workflow_runs[].conclusion] | join(",")' 2>/dev/null || echo "api_error")
+              LATEST_AT=$(echo "$RUNS_JSON" | jq -r '.workflow_runs[0].created_at // empty' 2>/dev/null)
               EXPECT=$(printf 'failure,%.0s' $(seq 1 $CONSECUTIVE_N)); EXPECT=${EXPECT%,}
-              if [ "$CONCLUSIONS" = "$EXPECT" ]; then
+              # 时效过滤：最近一次运行超过 RECENT_DAYS 天的不告警——陈年 workflow_dispatch
+              # 实验（如 5/30 的 sandbox real publish）会永远占着尾窗，告警没有可行动性。
+              RECENT=false
+              if [ -n "$LATEST_AT" ]; then
+                LATEST_EPOCH=$(date -d "$LATEST_AT" +%s 2>/dev/null || echo 0)
+                CUTOFF=$(( $(date +%s) - RECENT_DAYS * 86400 ))
+                [ "$LATEST_EPOCH" -ge "$CUTOFF" ] && RECENT=true
+              fi
+              if [ "$CONCLUSIONS" = "$EXPECT" ] && [ "$RECENT" = "true" ]; then
                 echo "::warning::$R｜$WF_NAME（$WF_PATH）连续 ${CONSECUTIVE_N} 次失败"
                 printf '%s\t%s\t%s\n' "$R" "$WF_NAME" "$WF_PATH" >> /tmp/alerts.txt
               fi
