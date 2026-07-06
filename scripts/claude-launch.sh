@@ -43,6 +43,9 @@ _in_main_repo_worktree() {
     [[ "$gd" == "$cmn" ]]
 }
 
+# Claude Code projects key：绝对路径中 / 和 . 逐字符替换为 -（纯 bash，免 fork）
+_path_to_project_key() { printf '%s' "${1//[\/.]/-}"; }
+
 AUTO_WORKTREE=0
 if ! _is_headless && [[ "${CECELIA_NO_AUTO_WORKTREE:-0}" != "1" ]] && _in_main_repo_worktree; then
     AUTO_WORKTREE=1
@@ -65,6 +68,11 @@ if [[ "$DRY_RUN" == "1" ]]; then
         echo "git -C \"$_MAIN_REPO\" fetch origin main --quiet"
         echo "git -C \"$_MAIN_REPO\" worktree add \"$_WT_PATH\" -b \"$_WT_BRANCH\" origin/main"
         echo "cd \"$_WT_PATH\""
+        _PROJ_ROOT="${CLAUDE_PROJECTS_ROOT:-$HOME/.claude/projects}"
+        # key 按物理路径派生（与 Claude Code process.cwd() 一致）；dry-run 时 worktree
+        # 未建，cd 失败回退原字符串——dry-run 是意图契约，可接受。
+        _WT_PHYS="$(cd "$_WT_PATH" 2>/dev/null && pwd -P)" || _WT_PHYS="$_WT_PATH"
+        echo "ln -s \"$_PROJ_ROOT/$(_path_to_project_key "$_MAIN_REPO")\" \"$_PROJ_ROOT/$(_path_to_project_key "$_WT_PHYS")\""
     fi
     echo "$_CLAUDE_BIN --session-id $SID ${ARGS[@]+${ARGS[@]}}"
     exit 0
@@ -79,6 +87,40 @@ if [[ "$AUTO_WORKTREE" == "1" ]]; then
         git -C "$_MAIN_REPO" worktree add "$_WT_PATH" -b "$_WT_BRANCH" origin/main 1>&2
     fi
     cd "$_WT_PATH"
+fi
+
+# 会话历史软链：<wt_key> → <main_key>，让 transcript 汇聚主仓池子，/resume 可见全部历史。
+# key 一律按物理路径派生（Claude Code 用 process.cwd()=物理路径取 key，
+# ~/.claude/projects/ 实存 -private-tmp-* 条目为证；_MAIN_REPO 来自 git 已是物理路径）。
+# best-effort：任何失败只警告，绝不阻断 claude 启动。
+_link_projects_dir() {
+    local root="${CLAUDE_PROJECTS_ROOT:-$HOME/.claude/projects}"
+    local target link wt_phys f
+    target="$root/$(_path_to_project_key "$_MAIN_REPO")"
+    wt_phys="$(cd "$_WT_PATH" 2>/dev/null && pwd -P)" || wt_phys="$_WT_PATH"
+    link="$root/$(_path_to_project_key "$wt_phys")"
+    mkdir -p "$target" || return 1
+    if [[ -L "$link" ]]; then
+        if [[ "$(readlink "$link")" != "$target" ]]; then
+            rm "$link" || return 1
+            ln -s "$target" "$link" || return 1
+        fi
+    elif [[ -d "$link" ]]; then
+        # 孤儿真实目录：内容并回主仓池子；任一 mv 失败则中止（保留真实目录，不建软链）
+        for f in "$link"/* "$link"/.[!.]*; do
+            [[ -e "$f" ]] || continue
+            mv "$f" "$target/" || return 1
+        done
+        rmdir "$link" || return 1
+        ln -s "$target" "$link" || return 1
+    else
+        ln -s "$target" "$link" || return 1
+    fi
+    # 存变量供清理段复用（清理时 worktree 可能已被 remove，无法二次物理化）
+    _PROJ_LINK_CREATED="$link"
+}
+if [[ "$AUTO_WORKTREE" == "1" ]]; then
+    _link_projects_dir || echo "[claude-launch] ⚠️ projects 软链失败，本 session 历史将不共享（不影响启动）" >&2
 fi
 
 # Phase 7.6: 用绝对路径/command 跳过 shell function + alias，避免递归陷阱。
@@ -131,6 +173,10 @@ if [[ "$_DIRTY" == "0" ]]; then
     if [[ -z "$_UNPUSHED" ]]; then
         git -C "$_MAIN_REPO" worktree remove "$_WT_PATH" --force >/dev/null 2>&1 || true
         git -C "$_MAIN_REPO" branch -D "$_WT_BRANCH" >/dev/null 2>&1 || true
+        # 只删软链本身（-L 先验），绝不跟随进主仓文件夹；路径复用建链时存的变量
+        if [[ -n "${_PROJ_LINK_CREATED:-}" && -L "$_PROJ_LINK_CREATED" ]]; then
+            rm "$_PROJ_LINK_CREATED" 2>/dev/null || true
+        fi
     fi
 fi
 

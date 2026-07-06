@@ -34,10 +34,12 @@ describe('harness-v5 CI checks 结构', () => {
     expect(workflow).toMatch(/^\s*skeleton-shape-check:/m);
   });
 
-  it('workflow 只在 sprints/ + packages/workflows/skills/harness-contract-* 改动时跑', () => {
-    // paths 过滤存在
-    expect(workflow).toMatch(/paths:/);
+  it('workflow 通过 changes job 过滤——只在合同相关改动时真跑（required 化后无 workflow 级 paths）', () => {
+    // 2026-07-06 required 化（#3565）：workflow 级 paths 过滤移除，
+    // 改为 changes job 三点 diff 检测 + 各 job 条件 skip
+    expect(workflow).toMatch(/^\s*changes:/m);
     expect(workflow).toMatch(/sprints\//);
+    expect(workflow).toMatch(/needs\.changes\.outputs\.contracts == 'true'/);
   });
 
   it('check-dod-purity 脚本存在', () => {

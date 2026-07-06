@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { execSync } from 'node:child_process';
-import { mkdtempSync, writeFileSync, chmodSync, rmSync, existsSync, statSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, chmodSync, rmSync, existsSync, statSync, mkdirSync, lstatSync, realpathSync, symlinkSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 
@@ -131,6 +131,7 @@ describe('Phase 7.7 claude-launch.sh 自动 worktree — 真实建立与清理',
   let mainRepo: string;
   let mockDir: string;
   let worktreeBase: string;
+  let projectsRoot: string;
 
   beforeAll(() => {
     base = mkdtempSync(join(tmpdir(), 'claude-launch-real-'));
@@ -146,6 +147,7 @@ describe('Phase 7.7 claude-launch.sh 自动 worktree — 真实建立与清理',
     execSync('git push -q -u origin main', { cwd: mainRepo });
 
     worktreeBase = join(base, 'worktrees-base');
+    projectsRoot = join(base, 'projects-root');
     mockDir = mkdtempSync(join(tmpdir(), 'claude-launch-mockbin-'));
   });
 
@@ -168,6 +170,7 @@ describe('Phase 7.7 claude-launch.sh 自动 worktree — 真实建立与清理',
       PATH: `${mockDir}:${process.env.PATH}`,
       CLAUDE_SESSION_ID: sid,
       WORKTREE_BASE: worktreeBase,
+      CLAUDE_PROJECTS_ROOT: projectsRoot,
     };
     delete env.CLAUDE_CODE_EXECPATH;
     delete env.CECELIA_NO_AUTO_WORKTREE;
@@ -185,6 +188,7 @@ describe('Phase 7.7 claude-launch.sh 自动 worktree — 真实建立与清理',
       PATH: `${mockDir}:${process.env.PATH}`,
       CLAUDE_SESSION_ID: sid,
       WORKTREE_BASE: worktreeBase,
+      CLAUDE_PROJECTS_ROOT: projectsRoot,
     };
     delete env.CLAUDE_CODE_EXECPATH;
     delete env.CECELIA_NO_AUTO_WORKTREE;
@@ -201,6 +205,7 @@ describe('Phase 7.7 claude-launch.sh 自动 worktree — 真实建立与清理',
       PATH: `${mockDir}:${process.env.PATH}`,
       CLAUDE_SESSION_ID: sid,
       WORKTREE_BASE: worktreeBase,
+      CLAUDE_PROJECTS_ROOT: projectsRoot,
     };
     delete env.CLAUDE_CODE_EXECPATH;
     delete env.CECELIA_NO_AUTO_WORKTREE;
@@ -209,5 +214,185 @@ describe('Phase 7.7 claude-launch.sh 自动 worktree — 真实建立与清理',
     const expectedWt = join(worktreeBase, 'main', `session-${sid.slice(0, 8)}`);
     expect(out.trim()).toBe(expectedWt);
     expect(existsSync(join(expectedWt, 'uncommitted.txt'))).toBe(true);
+  });
+});
+
+describe('resume 历史软链 — per-session projects key 软链回主仓', () => {
+  let base: string;
+  let bareDir: string;
+  let mainRepo: string;
+  let mainRepoPhys: string;
+  let mockDir: string;
+  let worktreeBase: string;
+  let worktreeBasePhys: string;
+  let projectsRoot: string;
+
+  const toKey = (p: string): string => p.replace(/[/.]/g, '-');
+
+  beforeAll(() => {
+    base = mkdtempSync(join(tmpdir(), 'claude-launch-symlink-'));
+    bareDir = join(base, 'origin.git');
+    execSync(`git init -q --bare "${bareDir}"`);
+    mainRepo = join(base, 'main');
+    execSync(`git clone -q "${bareDir}" "${mainRepo}"`);
+    execSync('git config user.email test@test.com', { cwd: mainRepo });
+    execSync('git config user.name Test', { cwd: mainRepo });
+    writeFileSync(join(mainRepo, 'README.md'), 'x');
+    execSync('git add . && git commit -q -m init', { cwd: mainRepo });
+    execSync('git branch -M main', { cwd: mainRepo });
+    execSync('git push -q -u origin main', { cwd: mainRepo });
+    worktreeBase = join(base, 'worktrees-base');
+    projectsRoot = join(base, 'projects-root');
+    // 合同修正：真实 Claude Code 的 projects key 按物理路径派生（Node process.cwd() 返回
+    // 物理路径，~/.claude/projects/ 里实存 -private-tmp-* 条目为证）。macOS 下 mkdtemp
+    // 落在 /var→/private/var 软链下，期望 key 一律用 realpath 后的物理路径计算。
+    mkdirSync(worktreeBase, { recursive: true });
+    worktreeBasePhys = realpathSync(worktreeBase);
+    mainRepoPhys = realpathSync(mainRepo);
+    mockDir = mkdtempSync(join(tmpdir(), 'claude-launch-symlink-mock-'));
+  });
+
+  afterAll(() => {
+    rmSync(base, { recursive: true, force: true });
+    rmSync(mockDir, { recursive: true, force: true });
+  });
+
+  function writeMockClaude(script: string): void {
+    const mockClaude = join(mockDir, 'claude');
+    writeFileSync(mockClaude, script);
+    chmodSync(mockClaude, 0o755);
+  }
+
+  function makeEnv(sid: string): Record<string, string> {
+    const env: Record<string, string> = {
+      ...process.env,
+      PATH: `${mockDir}:${process.env.PATH}`,
+      CLAUDE_SESSION_ID: sid,
+      WORKTREE_BASE: worktreeBase,
+      CLAUDE_PROJECTS_ROOT: projectsRoot,
+    };
+    delete env.CLAUDE_CODE_EXECPATH;
+    delete env.CECELIA_NO_AUTO_WORKTREE;
+    return env;
+  }
+
+  it('auto-worktree 启动 → claude 运行期内 <wt_key> 是指向 <main_key> 的软链', () => {
+    const sid = 'aaaa0001-1111-2222-3333-444444444444';
+    const wtPathPhys = join(worktreeBasePhys, 'main', `session-${sid.slice(0, 8)}`);
+    const link = join(projectsRoot, toKey(wtPathPhys));
+    writeMockClaude(`#!/usr/bin/env bash
+if [[ -L "${link}" ]]; then echo "LINK_TARGET=$(readlink "${link}")"; else echo "LINK_TARGET=MISSING"; fi
+exit 0
+`);
+    const out = execSync(`bash "${LAUNCHER}"`, { cwd: mainRepo, env: makeEnv(sid) }).toString();
+    expect(out).toContain(`LINK_TARGET=${join(projectsRoot, toKey(mainRepoPhys))}`);
+  });
+
+  it('孤儿真实目录 → 内容迁入主仓文件夹并原位替换为软链', () => {
+    const sid = 'aaaa0002-1111-2222-3333-444444444444';
+    const wtPathPhys = join(worktreeBasePhys, 'main', `session-${sid.slice(0, 8)}`);
+    const orphanDir = join(projectsRoot, toKey(wtPathPhys));
+    mkdirSync(orphanDir, { recursive: true });
+    writeFileSync(join(orphanDir, 'old-session.jsonl'), '{"role":"user"}\n');
+    writeMockClaude(`#!/usr/bin/env bash
+if [[ -L "${orphanDir}" ]]; then echo "IS_LINK=yes"; else echo "IS_LINK=no"; fi
+exit 0
+`);
+    const out = execSync(`bash "${LAUNCHER}"`, { cwd: mainRepo, env: makeEnv(sid) }).toString();
+    expect(out).toContain('IS_LINK=yes');
+    expect(existsSync(join(projectsRoot, toKey(mainRepoPhys), 'old-session.jsonl'))).toBe(true);
+  });
+
+  it('干净退出 → 软链被删除，经软链写入主仓文件夹的 transcript 完好', () => {
+    const sid = 'aaaa0003-1111-2222-3333-444444444444';
+    const wtPathPhys = join(worktreeBasePhys, 'main', `session-${sid.slice(0, 8)}`);
+    const link = join(projectsRoot, toKey(wtPathPhys));
+    writeMockClaude(`#!/usr/bin/env bash
+echo '{"x":1}' > "${link}/${sid}.jsonl"
+exit 0
+`);
+    execSync(`bash "${LAUNCHER}"`, { cwd: mainRepo, env: makeEnv(sid) });
+    expect(existsSync(link)).toBe(false);
+    expect(lstatSync(link, { throwIfNoEntry: false })).toBeUndefined();
+    expect(existsSync(join(projectsRoot, toKey(mainRepoPhys), `${sid}.jsonl`))).toBe(true);
+  });
+
+  it('脏 worktree 保留 → 软链同步保留', () => {
+    const sid = 'aaaa0004-1111-2222-3333-444444444444';
+    const wtPathPhys = join(worktreeBasePhys, 'main', `session-${sid.slice(0, 8)}`);
+    const link = join(projectsRoot, toKey(wtPathPhys));
+    writeMockClaude(`#!/usr/bin/env bash
+echo dirty > uncommitted.txt
+exit 0
+`);
+    execSync(`bash "${LAUNCHER}"`, { cwd: mainRepo, env: makeEnv(sid) });
+    expect(existsSync(join(wtPathPhys, 'uncommitted.txt'))).toBe(true);
+    expect(lstatSync(link).isSymbolicLink()).toBe(true);
+  });
+
+  it('--dry-run（auto-worktree 分支）→ 输出含 ln -s 契约行', () => {
+    const sid = 'aaaa0005-1111-2222-3333-444444444444';
+    const env = makeEnv(sid);
+    const out = execSync(`bash "${LAUNCHER}" --dry-run`, { cwd: mainRepo, env }).toString();
+    expect(out).toContain('ln -s');
+    expect(out).toContain(toKey(mainRepoPhys));
+  });
+
+  it('best-effort 铁律：projects root 只读 → 软链失败不阻断启动，退出码透传，stderr 警告', () => {
+    const sid = 'aaaa0006-1111-2222-3333-444444444444';
+    const roRoot = join(base, 'readonly-projects-root');
+    mkdirSync(roRoot, { recursive: true });
+    chmodSync(roRoot, 0o555);
+    writeMockClaude(`#!/usr/bin/env bash
+echo "MOCK_RAN=yes"
+exit 7
+`);
+    const env = { ...makeEnv(sid), CLAUDE_PROJECTS_ROOT: roRoot };
+    let status = -1;
+    let stdout = '';
+    let stderr = '';
+    try {
+      execSync(`bash "${LAUNCHER}"`, { cwd: mainRepo, env });
+    } catch (e) {
+      const err = e as { status: number; stdout: Buffer; stderr: Buffer };
+      status = err.status;
+      stdout = err.stdout.toString();
+      stderr = err.stderr.toString();
+    }
+    chmodSync(roRoot, 0o755);
+    expect(stdout).toContain('MOCK_RAN=yes');
+    expect(status).toBe(7);
+    expect(stderr).toContain('软链失败');
+  });
+
+  it('已存在指向正确目标的软链 → 幂等 no-op，运行期内仍是正确软链', () => {
+    const sid = 'aaaa0007-1111-2222-3333-444444444444';
+    const wtPathPhys = join(worktreeBasePhys, 'main', `session-${sid.slice(0, 8)}`);
+    const link = join(projectsRoot, toKey(wtPathPhys));
+    const target = join(projectsRoot, toKey(mainRepoPhys));
+    mkdirSync(target, { recursive: true });
+    symlinkSync(target, link);
+    writeMockClaude(`#!/usr/bin/env bash
+if [[ -L "${link}" ]]; then echo "LINK_TARGET=$(readlink "${link}")"; else echo "LINK_TARGET=MISSING"; fi
+exit 0
+`);
+    const out = execSync(`bash "${LAUNCHER}"`, { cwd: mainRepo, env: makeEnv(sid) }).toString();
+    expect(out).toContain(`LINK_TARGET=${target}`);
+  });
+
+  it('已存在指向错误目标的软链 → 启动后被替换为指向主仓 key', () => {
+    const sid = 'aaaa0008-1111-2222-3333-444444444444';
+    const wtPathPhys = join(worktreeBasePhys, 'main', `session-${sid.slice(0, 8)}`);
+    const link = join(projectsRoot, toKey(wtPathPhys));
+    const target = join(projectsRoot, toKey(mainRepoPhys));
+    const wrongTarget = join(projectsRoot, 'wrong-target');
+    mkdirSync(wrongTarget, { recursive: true });
+    symlinkSync(wrongTarget, link);
+    writeMockClaude(`#!/usr/bin/env bash
+if [[ -L "${link}" ]]; then echo "LINK_TARGET=$(readlink "${link}")"; else echo "LINK_TARGET=MISSING"; fi
+exit 0
+`);
+    const out = execSync(`bash "${LAUNCHER}"`, { cwd: mainRepo, env: makeEnv(sid) }).toString();
+    expect(out).toContain(`LINK_TARGET=${target}`);
   });
 });
