@@ -431,9 +431,9 @@ describe('selfcheck schema version', () => {
     }));
 
     const { EXPECTED_SCHEMA_VERSION } = await import('../selfcheck.js');
-    // 314 = markInitiativeTerminalFailed（harness_initiative 终态标记）强依赖
-    // tasks.custom_props 列（314 migration）；issue 14d66027 语义不变：只有
-    // 代码依赖才 bump。
-    expect(EXPECTED_SCHEMA_VERSION).toBe('314');
+    // 315 = migration 315 九要素存储（action_receipts 台账 + decisions.review_after）；
+    // 地板随 migration 号推进（facts-check selfcheck_version_sync 卡：地板 <= 最高 migration）。
+    // issue 14d66027 语义不变：只有代码/schema 依赖才 bump。
+    expect(EXPECTED_SCHEMA_VERSION).toBe('315');
   });
 });
