@@ -106,6 +106,18 @@ describe('scheduler-jobs loop 幂等与重入守卫', () => {
     vi.useRealTimers();
   });
 
+  it('start 时写入 scheduler_jobs_expected 预期数（供死人开关比对）', async () => {
+    const pool = makePool();
+    startSchedulerJobsLoop(pool);
+    await Promise.resolve();
+    await Promise.resolve();
+    const call = pool.query.mock.calls.find(
+      ([sql, params]) => sql.includes('working_memory') && Array.isArray(params) && params[0] === 'scheduler_jobs_expected',
+    );
+    expect(call).toBeTruthy();
+    expect(JSON.parse(call[1][1])).toEqual({ count: JOBS.length });
+  });
+
   it('重复调用 startSchedulerJobsLoop 返回同一 timer', () => {
     const pool = makePool();
     const t1 = startSchedulerJobsLoop(pool);

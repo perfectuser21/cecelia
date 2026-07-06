@@ -44,17 +44,21 @@ function summarize(result) {
   }
 }
 
-async function writeSentinel(pool, jobName, record) {
+async function writeSentinelRaw(pool, key, record) {
   try {
     await pool.query(
       `INSERT INTO working_memory (key, value_json, updated_at)
        VALUES ($1, $2, NOW())
        ON CONFLICT (key) DO UPDATE SET value_json = $2, updated_at = NOW()`,
-      [`${SENTINEL_KEY_PREFIX}${jobName}`, JSON.stringify(record)],
+      [key, JSON.stringify(record)],
     );
   } catch (e) {
-    console.warn(`[scheduler-jobs] sentinel write failed for ${jobName}:`, e.message);
+    console.warn(`[scheduler-jobs] sentinel write failed for ${key}:`, e.message);
   }
+}
+
+function writeSentinel(pool, jobName, record) {
+  return writeSentinelRaw(pool, `${SENTINEL_KEY_PREFIX}${jobName}`, record);
 }
 
 /**
@@ -91,6 +95,8 @@ let running = false;
 /** 启动 60s 轮询 loop（幂等：重复调用返回同一 timer）。 */
 export function startSchedulerJobsLoop(pool) {
   if (loopTimer) return loopTimer;
+  // 供死人开关比对：预期 job 数写库，加 job 自动同步，哨兵脚本无需硬编码
+  writeSentinelRaw(pool, 'scheduler_jobs_expected', { count: JOBS.length });
   loopTimer = setInterval(() => {
     // 重入守卫：一轮 job 最长可达 ~20min（4×5min timeout），慢 handler 会让
     // 60s tick 叠加并发调用同一 handler，踩中各模块自 gate 的先查后写(TOCTOU)竞态。

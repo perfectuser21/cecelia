@@ -79,7 +79,7 @@ Tick Loop（派发 → /dev 执行 → CI 验证）
 | Pipeline 巡航 | `pipeline-patrol.js` | 扫描所有 .dev-mode 文件，检测卡住的 /dev 会话，自动创建 pipeline_rescue 任务 |
 | 免疫系统 | `immune-system.js` | 失败签名分析、自动修复路径 |
 | KR3 进度报告 | `kr3-progress-scheduler.js` | UTC 06:00 每日触发，查询 KR3 微信小程序进度 + dev 任务统计，输出结构化日志 |
-| 定时任务注册表 | `scheduler-jobs.js` | 声明式注册表（60s loop + 模块自 gate + 错误隔离/timeout/working_memory 观测哨兵 scheduler_job_last_run:*），P1-PR1 救活 4 个 Wave 2 死 job：arch-review / strategy-trigger / conversation-digest / capture-digestion |
+| 定时任务注册表 | `scheduler-jobs.js` | 声明式注册表（60s loop + 模块自 gate + 错误隔离/timeout/working_memory 观测哨兵 scheduler_job_last_run:*），P1-PR1/PR2 救活 5 个 Wave 2 死 job：arch-review / strategy-trigger / conversation-digest / capture-digestion / daily-backup；启动写 scheduler_jobs_expected 供体外死人开关（scripts/sentinel/dead-man-switch.sh）比对 |
 
 ---
 
