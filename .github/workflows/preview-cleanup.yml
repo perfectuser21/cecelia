@@ -19,7 +19,23 @@ jobs:
       - name: Checkout 代码
         uses: actions/checkout@v4
 
+      # 与 preview-deploy 同款兜底（2026-07-06）：HK_VPS secrets 未配置时 deploy 本来就没
+      # 部署任何东西（跳过 SSH），cleanup 再去 SSH 必失败——21 连红即此因。secrets 配齐前
+      # 干净跳过；预览体系真启用/删除待拍板（Brain issue 39452ad0）。
+      - name: 检查 SSH secrets 是否配置
+        id: check_secrets
+        run: |
+          if [ -n "$SECRET_HOST" ]; then
+            echo "configured=true" >> $GITHUB_OUTPUT
+          else
+            echo "configured=false" >> $GITHUB_OUTPUT
+            echo "⚠️ HK_VPS_HOST secret 未配置，跳过清理（与 preview-deploy 的跳过行为对齐）"
+          fi
+        env:
+          SECRET_HOST: ${{ secrets.HK_VPS_HOST }}
+
       - name: 计算预览端口
+        if: steps.check_secrets.outputs.configured == 'true'
         id: port
         run: |
           PORT=$(bash scripts/preview-deploy.sh --print-port "${{ github.head_ref }}")
@@ -27,6 +43,7 @@ jobs:
           echo "清理端口: $PORT (branch: ${{ github.head_ref }})"
 
       - name: SSH 清理 hk-vps 预览进程
+        if: steps.check_secrets.outputs.configured == 'true'
         uses: appleboy/ssh-action@v1.0.0
         with:
           host: ${{ secrets.HK_VPS_HOST }}
@@ -38,7 +55,7 @@ jobs:
             bash ~/scripts/preview-cleanup.sh ${{ steps.port.outputs.port }} "${{ github.head_ref }}"
 
       - name: PR 评论写入清理结果
-        if: always()
+        if: always() && steps.check_secrets.outputs.configured == 'true'
         uses: actions/github-script@v7
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
