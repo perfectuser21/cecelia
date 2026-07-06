@@ -48,7 +48,7 @@ function cap(s) {
  *
  * @returns {{status:'success'|'skipped'|'failed', reason:string|null, output:string}}
  */
-export function deployStaging(opts = {}) {
+export async function deployStaging(opts = {}) {
   const exec = opts.exec || execSync;
   // 容器内 cwd=/app，部署脚本在 bind-mount 的 repo 根 scripts/；用绝对路径。
   // REPO_ROOT env（容器=bind-mount repo 根）优先；getRepoRoot() 仅本地直跑兜底（容器内返回 /）。
@@ -61,17 +61,30 @@ export function deployStaging(opts = {}) {
 
   // ZenithJoy 蓝绿护栏：customer line 的 staging 由 ZenithJoy CI push:main→:5201 自动部署，
   // Cecelia 不跨 repo 做部署（跨 repo 边界）；只做健康检查——起不来则 FAIL 护栏触发，:5200 不被触碰。
+  // 重试逻辑：ZenithJoy CI deploy 需 2-3 分钟，staging 检查在 merge 后立即触发，容器重启窗口内
+  // 单次 curl 失败即判死是误判。重试 maxAttempts 次（默认 3），间隔 retryDelayMs（默认 20s）。
   if (customer && !opts.deployScript) {
     const host = process.env.ZJ_STAGING_HOST || 'localhost';
-    const cmd = `curl -sf --connect-timeout 30 --max-time 30 http://${host}:${ZJ_STAGING_PORT}/health`;
-    try {
-      const raw = exec(cmd, { encoding: 'utf8', timeout: 45_000, maxBuffer: 1024 * 1024 });
-      const out = typeof raw === 'string' ? raw : String(raw);
-      return { status: 'success', reason: null, output: cap(out), stagingPort };
-    } catch (err) {
-      const combined = `${err.stdout ? String(err.stdout) : ''}\n${err.stderr ? String(err.stderr) : ''}\n${err.message || ''}`.trim();
-      return { status: 'failed', reason: 'zj_staging_unhealthy', output: cap(combined), stagingPort };
+    const maxAttempts = opts.maxAttempts ?? 3;
+    const retryDelayMs = opts.retryDelayMs ?? 20_000;
+    const sleep = opts.sleep || ((ms) => new Promise((r) => setTimeout(r, ms)));
+    let lastErr;
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      const cmd = `curl -sf --connect-timeout 30 --max-time 30 http://${host}:${ZJ_STAGING_PORT}/health`;
+      try {
+        const raw = exec(cmd, { encoding: 'utf8', timeout: 45_000, maxBuffer: 1024 * 1024 });
+        const out = typeof raw === 'string' ? raw : String(raw);
+        return { status: 'success', reason: null, output: cap(out), stagingPort };
+      } catch (err) {
+        lastErr = err;
+        if (attempt < maxAttempts) {
+          console.warn(`[staging-e2e] ZJ staging :${ZJ_STAGING_PORT} 健康检查失败（attempt ${attempt}/${maxAttempts}），${retryDelayMs / 1000}s 后重试`);
+          await sleep(retryDelayMs);
+        }
+      }
     }
+    const combined = `${lastErr?.stdout ? String(lastErr.stdout) : ''}\n${lastErr?.stderr ? String(lastErr.stderr) : ''}\n${lastErr?.message || ''}`.trim();
+    return { status: 'failed', reason: 'zj_staging_unhealthy', output: cap(combined), stagingPort };
   }
 
   let script;
@@ -673,7 +686,7 @@ export async function runStagingE2E(task, opts = {}) {
     if (!lock) return await finalize('SKIP', 'staging_busy');
 
     try {
-      const dep = deploy({ exec: opts.exec, cwd: opts.cwd, line });
+      const dep = await deploy({ exec: opts.exec, cwd: opts.cwd, line });
       base.deployOutput = dep.output;
       if (dep.status === 'skipped') return await finalize('SKIP', dep.reason);
       if (dep.status === 'failed') return await finalize('FAIL', dep.reason || 'deploy_failed');

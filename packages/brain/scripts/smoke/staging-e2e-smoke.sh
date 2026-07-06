@@ -30,7 +30,7 @@ node -e "
 const fs=require('fs');
 const runner=fs.readFileSync('$RUNNER_FILE','utf8');
 if(!/export async function runStagingE2E/.test(runner)){console.error('L1 FAIL: runStagingE2E 未导出');process.exit(1)}
-if(!/export function deployStaging/.test(runner)){console.error('L1 FAIL: deployStaging 未导出');process.exit(1)}
+if(!/export (?:async )?function deployStaging/.test(runner)){console.error('L1 FAIL: deployStaging 未导出');process.exit(1)}
 if(!/staging_e2e_results/.test(runner)){console.error('L1 FAIL: runner 未写 staging_e2e_results');process.exit(1)}
 // 修正3：verdict 落库幂等 ON CONFLICT(pr_url) DO NOTHING
 if(!/INSERT INTO staging_e2e_results[\s\S]{0,400}ON CONFLICT[\s\S]{0,40}pr_url[\s\S]{0,40}DO NOTHING/i.test(runner)){

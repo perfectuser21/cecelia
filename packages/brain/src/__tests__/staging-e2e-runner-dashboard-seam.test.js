@@ -30,9 +30,9 @@ describe('deployStaging — 内部线走 deploy-local.sh（改动1）', () => {
     if (origEnv === undefined) delete process.env.REPO_ROOT; else process.env.REPO_ROOT = origEnv;
   });
 
-  it('internal → deploy-local.sh --changed=apps/dashboard + stagingPort 5223', () => {
+  it('internal → deploy-local.sh --changed=apps/dashboard + stagingPort 5223', async () => {
     const exec = vi.fn(() => '');
-    const r = deployStaging({ exec, line: 'internal' });
+    const r = await deployStaging({ exec, line: 'internal' });
     const [cmd, optsArg] = exec.mock.calls[0];
     expect(cmd).toContain('/fake/repo/scripts/deploy-local.sh');
     expect(cmd).toContain('--changed=apps/dashboard');
@@ -40,9 +40,9 @@ describe('deployStaging — 内部线走 deploy-local.sh（改动1）', () => {
     expect(r.stagingPort).toBe(5223);
   });
 
-  it('非内部线 → staging-deploy.sh + stagingPort 5222（不回归 brain 路径）', () => {
+  it('非内部线 → staging-deploy.sh + stagingPort 5222（不回归 brain 路径）', async () => {
     const exec = vi.fn(() => '');
-    const r = deployStaging({ exec });
+    const r = await deployStaging({ exec });
     expect(exec.mock.calls[0][0]).toBe('bash /fake/repo/scripts/staging-deploy.sh');
     expect(r.stagingPort).toBe(5222);
   });

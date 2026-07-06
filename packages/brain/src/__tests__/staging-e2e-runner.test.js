@@ -55,30 +55,30 @@ beforeEach(() => {
 
 // ─── deployStaging ───────────────────────────────────────────────────────────
 describe('deployStaging', () => {
-  it('正常输出 → success', () => {
+  it('正常输出 → success', async () => {
     const exec = () => '=== Staging Deploy SUCCESS ===\n';
-    const r = deployStaging({ exec });
+    const r = await deployStaging({ exec });
     expect(r.status).toBe('success');
     expect(r.reason).toBeNull();
   });
 
-  it('STAGING_SKIP_REASON=no_docker → skipped（非失败）', () => {
+  it('STAGING_SKIP_REASON=no_docker → skipped（非失败）', async () => {
     const exec = () => 'blah\nSTAGING_SKIP_REASON=no_docker\n';
-    const r = deployStaging({ exec });
+    const r = await deployStaging({ exec });
     expect(r.status).toBe('skipped');
     expect(r.reason).toBe('no_docker');
   });
 
-  it('脚本抛错但 stdout 含 skip 原因 → 仍 skipped', () => {
+  it('脚本抛错但 stdout 含 skip 原因 → 仍 skipped', async () => {
     const exec = () => { const e = new Error('boom'); e.status = 1; e.stdout = 'STAGING_SKIP_REASON=no_env'; throw e; };
-    const r = deployStaging({ exec });
+    const r = await deployStaging({ exec });
     expect(r.status).toBe('skipped');
     expect(r.reason).toBe('no_env');
   });
 
-  it('脚本抛错且无 skip 原因 → failed', () => {
+  it('脚本抛错且无 skip 原因 → failed', async () => {
     const exec = () => { const e = new Error('real fail'); e.status = 1; throw e; };
-    const r = deployStaging({ exec });
+    const r = await deployStaging({ exec });
     expect(r.status).toBe('failed');
     expect(r.reason).toBe('deploy_failed');
   });
@@ -86,36 +86,57 @@ describe('deployStaging', () => {
 
 // ─── deployStaging — ZenithJoy customer line 蓝绿护栏 ─────────────────────────
 describe('deployStaging — ZenithJoy customer line（:5201 护栏）', () => {
-  it(':5201 健康响应 → success（护栏 pass，准备跑 E2E）', () => {
+  it(':5201 健康响应 → success（护栏 pass，准备跑 E2E）', async () => {
     let seen = null;
     const exec = (cmd) => { seen = cmd; return '{"status":"ok"}'; };
-    const r = deployStaging({ exec, line: 'customer' });
+    const r = await deployStaging({ exec, line: 'customer' });
     expect(r.status).toBe('success');
     expect(r.stagingPort).toBe(ZJ_STAGING_PORT);
     expect(seen).toContain(`:${ZJ_STAGING_PORT}`);
   });
 
-  it(':5201 健康检查失败（连接拒绝）→ failed，reason=zj_staging_unhealthy（护栏触发,:5200 不被触碰）', () => {
+  it(':5201 健康检查失败（连接拒绝）→ failed，reason=zj_staging_unhealthy（护栏触发,:5200 不被触碰）', async () => {
     const exec = () => { const e = new Error('connect ECONNREFUSED'); e.status = 7; throw e; };
-    const r = deployStaging({ exec, line: 'customer' });
+    const r = await deployStaging({ exec, line: 'customer', maxAttempts: 1, sleep: async () => {} });
     expect(r.status).toBe('failed');
     expect(r.reason).toBe('zj_staging_unhealthy');
     expect(r.stagingPort).toBe(ZJ_STAGING_PORT);
   });
 
-  it(':5201 健康检查超时 → failed', () => {
+  it(':5201 健康检查超时 → failed', async () => {
     const exec = () => { const e = new Error('ETIMEDOUT'); e.status = 28; e.stderr = 'curl timeout'; throw e; };
-    const r = deployStaging({ exec, line: 'customer' });
+    const r = await deployStaging({ exec, line: 'customer', maxAttempts: 1, sleep: async () => {} });
     expect(r.status).toBe('failed');
     expect(r.reason).toBe('zj_staging_unhealthy');
   });
 
-  it('opts.deployScript 有值时走 script（覆盖 customer 健康检查路径，供测试用）', () => {
+  it('opts.deployScript 有值时走 script（覆盖 customer 健康检查路径，供测试用）', async () => {
     let seen = null;
     const exec = (cmd) => { seen = cmd; return '=== Staging Deploy SUCCESS ===\n'; };
-    const r = deployStaging({ exec, line: 'customer', deployScript: '/tmp/my-zj-deploy.sh' });
+    const r = await deployStaging({ exec, line: 'customer', deployScript: '/tmp/my-zj-deploy.sh' });
     expect(r.status).toBe('success');
     expect(seen).toContain('/tmp/my-zj-deploy.sh');
+  });
+
+  it('重试：第 1 次失败（容器重启窗口），第 2 次成功 → success（ZJ CI deploy 时序竞争修复）', async () => {
+    let callCount = 0;
+    const exec = () => {
+      callCount++;
+      if (callCount === 1) { const e = new Error('connect ECONNREFUSED'); e.status = 7; throw e; }
+      return '{"status":"ok"}';
+    };
+    const r = await deployStaging({ exec, line: 'customer', maxAttempts: 3, sleep: async () => {} });
+    expect(r.status).toBe('success');
+    expect(callCount).toBe(2);
+  });
+
+  it('重试：全部 maxAttempts 次均失败 → failed，reason=zj_staging_unhealthy', async () => {
+    let callCount = 0;
+    const exec = () => { callCount++; const e = new Error('ECONNREFUSED'); e.status = 7; throw e; };
+    const r = await deployStaging({ exec, line: 'customer', maxAttempts: 3, sleep: async () => {} });
+    expect(r.status).toBe('failed');
+    expect(r.reason).toBe('zj_staging_unhealthy');
+    expect(callCount).toBe(3);
   });
 });
 
