@@ -49,9 +49,9 @@ describe('deployStaging 绝对路径', () => {
     expect(exec.mock.calls[0][1].cwd).toBe('/override');
   });
 
-  it('STAGING_SKIP_REASON → skipped（不回归降级行为）', () => {
+  it('STAGING_SKIP_REASON → skipped（不回归降级行为）', async () => {
     process.env.REPO_ROOT = '/fake/repo';
     const exec = vi.fn(() => 'STAGING_SKIP_REASON=no_docker');
-    expect(deployStaging({ exec }).status).toBe('skipped');
+    expect((await deployStaging({ exec })).status).toBe('skipped');
   });
 });
