@@ -84,12 +84,19 @@ export async function runSchedulerJobsOnce(pool, jobs = JOBS) {
 }
 
 let loopTimer = null;
+let running = false;
 
 /** 启动 60s 轮询 loop（幂等：重复调用返回同一 timer）。 */
 export function startSchedulerJobsLoop(pool) {
   if (loopTimer) return loopTimer;
   loopTimer = setInterval(() => {
-    runSchedulerJobsOnce(pool).catch((e) => console.warn('[scheduler-jobs] loop iteration failed:', e.message));
+    // 重入守卫：一轮 job 最长可达 ~20min（4×5min timeout），慢 handler 会让
+    // 60s tick 叠加并发调用同一 handler，踩中各模块自 gate 的先查后写(TOCTOU)竞态。
+    if (running) return;
+    running = true;
+    runSchedulerJobsOnce(pool)
+      .catch((e) => console.warn('[scheduler-jobs] loop iteration failed:', e.message))
+      .finally(() => { running = false; });
   }, LOOP_INTERVAL_MS);
   if (typeof loopTimer.unref === 'function') loopTimer.unref();
   console.log(`[scheduler-jobs] started (${LOOP_INTERVAL_MS / 1000}s loop, ${JOBS.length} jobs)`);
@@ -102,4 +109,5 @@ export function stopSchedulerJobsLoop() {
     clearInterval(loopTimer);
     loopTimer = null;
   }
+  running = false;
 }
