@@ -98,6 +98,16 @@ async function tryRecoverTickLoop() {
     return;
   }
 
+  // staging 隔离硬关：env=false 时 recovery 也绝不拉起 loop（否则硬关只关一半）
+  if (process.env.CECELIA_TICK_ENABLED === 'false') {
+    tickLog('[tick-loop] Recovery skipped: CECELIA_TICK_ENABLED=false（env 硬关，staging 隔离）');
+    if (tickState.recoveryTimer) {
+      clearInterval(tickState.recoveryTimer);
+      tickState.recoveryTimer = null;
+    }
+    return;
+  }
+
   tickLog('[tick-loop] Recovery: attempting to start tick loop...');
 
   try {
@@ -144,6 +154,12 @@ async function initTickLoop() {
   if (process.env.BRAIN_DEPLOY_CANARY === '1') {
     tickLog('[tick-loop] BRAIN_DEPLOY_CANARY=1 — canary 模式，跳过 tick loop 启动');
     return { success: true, enabled: false, loop_running: false, canary: true };
+  }
+  // staging 隔离硬关（2026-07-06）：env 显式 false = 绝不启动 loop/watchdog/auto-recover，
+  // 无论 DB 怎么说。真实事故：staging 容器 tick 越权跑，任务调度打到生产 bridge(3457)。
+  if (process.env.CECELIA_TICK_ENABLED === 'false') {
+    tickLog('[tick-loop] CECELIA_TICK_ENABLED=false — env 硬关（staging 隔离），跳过 tick loop/watchdog 启动');
+    return { success: true, enabled: false, loop_running: false, env_hard_off: true };
   }
   try {
     // Initialize alertness system

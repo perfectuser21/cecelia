@@ -49,7 +49,12 @@ async function getTickStatus() {
     memory[row.key] = row.value_json;
   }
 
-  const enabled = memory[TICK_ENABLED_KEY]?.enabled ?? true;
+  // staging 隔离硬关（2026-07-06）：env 显式 false 时无视 DB 值与「key 缺失默认 true」。
+  // 真实事故：cecelia_staging 库无 tick_enabled key → 缺省 true → staging tick 越权跑，
+  // 调度打到生产 bridge(3457)，Auto Staging Deploy 因此 12 连红。
+  const enabled = process.env.CECELIA_TICK_ENABLED === 'false'
+    ? false
+    : (memory[TICK_ENABLED_KEY]?.enabled ?? true);
   const lastTick = memory[TICK_LAST_KEY]?.timestamp || null;
   const actionsToday = memory[TICK_ACTIONS_TODAY_KEY]?.count || 0;
 
