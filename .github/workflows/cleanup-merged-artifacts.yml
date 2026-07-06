@@ -56,9 +56,15 @@ jobs:
         if: steps.cleanup.outputs.changed == 'true'
         env:
           COUNT: ${{ steps.cleanup.outputs.count }}
-          GH_TOKEN: ${{ secrets.DEPLOY_TOKEN }}
+          # 必须是 GitHub PAT：DEPLOY_TOKEN 是 Brain API bearer 不是 PAT（0706 纠正）；
+          # GITHUB_TOKEN 建的 PR 不触发 CI → required checks 永远 pending 卡死 auto-merge。
+          GH_TOKEN: ${{ secrets.GH_PAT_BOT }}
         run: |
           set -euo pipefail
+          if [ -z "${GH_TOKEN:-}" ]; then
+            echo "::error::GH_PAT_BOT secret 未配置（建清理 PR 必需 PAT）。请在 repo Settings → Secrets 添加。"
+            exit 1
+          fi
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           BRANCH="cp-$(TZ=Asia/Shanghai date +%m%d%H%M)-cleanup-artifacts"

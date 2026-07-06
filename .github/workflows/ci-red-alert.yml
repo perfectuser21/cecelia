@@ -1,0 +1,108 @@
+name: CI Red Alert
+
+# CI 反馈闭环（2026-07-06 全 CI 审计根治项）：
+# 任何 workflow 连续 3 次 completed=failure → 开 Brain issue + 飞书通知。
+# 杀死"红着没人管"：审计实锤 zenithjoy 真机闸 40+ 连红、cecelia Auto Staging Deploy 12 连红、
+# Preview Cleanup 21 连红，全部静默无人知晓。
+#
+# 依赖 secrets：
+#   GH_PAT_BOT — GitHub PAT（repo + actions:read scope）。跨仓读 Actions runs 必须 PAT
+#                （GITHUB_TOKEN 只能读本仓）。缺失时本 job 直接红 + 明确指引，不许糊绿。
+#   TS_AUTHKEY — Tailscale（连 Brain，已有）。
+# 告警器自身也在扫描范围内：它连续红会被下一轮的自己抓到（若它还能跑）；
+# schedule 静默失效的兜底 = Brain issue 里的告警长期不更新会被人察觉。
+
+on:
+  schedule:
+    - cron: '17 1,7,13,19 * * *'   # 每 6 小时（UTC），北京 9/15/21/3 点
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  scan:
+    name: Red Alert Scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      GH_TOKEN: ${{ secrets.GH_PAT_BOT }}
+      WATCH_REPOS: perfectuser21/cecelia perfectuser21/zenithjoy-workspace perfectuser21/zenithjoy-skills perfectuser21/infrastructure
+      BRAIN_URL: http://100.71.151.105:5221
+      CONSECUTIVE_N: '3'
+    steps:
+      - name: 检查 GH_PAT_BOT 已配置
+        run: |
+          if [ -z "${GH_TOKEN:-}" ]; then
+            echo "::error::GH_PAT_BOT secret 未配置。请在 repo Settings → Secrets → Actions 添加一个具有 repo+actions:read scope 的 GitHub PAT（跨仓扫描必需，GITHUB_TOKEN 只能读本仓）。"
+            exit 1
+          fi
+
+      - name: Connect to Tailscale
+        uses: tailscale/github-action@v2
+        with:
+          authkey: ${{ secrets.TS_AUTHKEY }}
+
+      - name: 扫描连续红 workflow
+        id: scan
+        shell: bash
+        run: |
+          set -uo pipefail
+          : > /tmp/alerts.txt
+          for R in $WATCH_REPOS; do
+            echo "── 扫描 $R"
+            while IFS=$'\t' read -r WF_ID WF_NAME WF_PATH; do
+              [ -z "${WF_ID:-}" ] && continue
+              CONCLUSIONS=$(gh api "repos/$R/actions/workflows/$WF_ID/runs?status=completed&per_page=$CONSECUTIVE_N" \
+                --jq '[.workflow_runs[].conclusion] | join(",")' 2>/dev/null || echo "api_error")
+              EXPECT=$(printf 'failure,%.0s' $(seq 1 $CONSECUTIVE_N)); EXPECT=${EXPECT%,}
+              if [ "$CONCLUSIONS" = "$EXPECT" ]; then
+                echo "::warning::$R｜$WF_NAME（$WF_PATH）连续 ${CONSECUTIVE_N} 次失败"
+                printf '%s\t%s\t%s\n' "$R" "$WF_NAME" "$WF_PATH" >> /tmp/alerts.txt
+              fi
+            done < <(gh api "repos/$R/actions/workflows" --paginate \
+              --jq '.workflows[] | select(.state=="active") | [.id, .name, .path] | @tsv' 2>/dev/null)
+          done
+          COUNT=$(grep -c . /tmp/alerts.txt || true)
+          echo "count=$COUNT" >> "$GITHUB_OUTPUT"
+          echo "共发现 $COUNT 个连续红 workflow"
+          {
+            echo "## CI Red Alert 扫描结果"
+            echo ""
+            if [ "$COUNT" = "0" ]; then
+              echo "✅ 无连续 ${CONSECUTIVE_N} 红的 workflow"
+            else
+              echo "| Repo | Workflow | 文件 |"
+              echo "|---|---|---|"
+              awk -F'\t' '{printf "| %s | %s | %s |\n", $1, $2, $3}' /tmp/alerts.txt
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: 开 Brain issue（去重）+ 飞书通知
+        if: steps.scan.outputs.count != '0'
+        shell: bash
+        run: |
+          set -uo pipefail
+          OPEN_TITLES=$(curl -s -m 15 "$BRAIN_URL/api/brain/issues?status=open" || echo '[]')
+          NEW=0
+          SUMMARY=""
+          while IFS=$'\t' read -r R WF_NAME WF_PATH; do
+            TITLE="[CI红灯] $R｜$WF_NAME 连续3次失败"
+            if echo "$OPEN_TITLES" | grep -qF "$TITLE"; then
+              echo "已有同名 open issue，跳过：$TITLE"
+              continue
+            fi
+            BODY="ci-red-alert 自动检测：$R 的 workflow「$WF_NAME」（$WF_PATH）最近 3 次 completed 运行全部 failure。请排查根因；若该 workflow 已无存在价值请删除（红着当装饰=没有闸）。"
+            curl -s -m 15 -X POST "$BRAIN_URL/api/brain/issues" \
+              -H 'Content-Type: application/json' \
+              -d "$(python3 -c "import json,sys;print(json.dumps({'title':sys.argv[1],'body':sys.argv[2],'priority':'P1'}))" "$TITLE" "$BODY")" >/dev/null \
+              && NEW=$((NEW+1)) && SUMMARY="$SUMMARY\n- $R｜$WF_NAME"
+          done < /tmp/alerts.txt
+          if [ "$NEW" -gt 0 ]; then
+            MSG=$(printf "CI Red Alert：%d 个 workflow 连续 3 次失败（已开 Brain issue）%b" "$NEW" "$SUMMARY")
+            curl -s -m 15 -X POST "$BRAIN_URL/api/brain/harness/notify" \
+              -H 'Content-Type: application/json' \
+              -d "$(python3 -c "import json,sys;print(json.dumps({'type':'general','title':'🔴 CI Red Alert','message':sys.argv[1]}))" "$MSG")" >/dev/null || \
+              echo "::warning::飞书通知发送失败（Brain notify 不可达），issue 已开"
+          fi
+          echo "新开 issue：$NEW 个"
