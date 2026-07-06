@@ -61,17 +61,32 @@ export function deployStaging(opts = {}) {
 
   // ZenithJoy 蓝绿护栏：customer line 的 staging 由 ZenithJoy CI push:main→:5201 自动部署，
   // Cecelia 不跨 repo 做部署（跨 repo 边界）；只做健康检查——起不来则 FAIL 护栏触发，:5200 不被触碰。
+  // 重试逻辑：ZenithJoy CI 部署需要时间（通常 1-3 min），单次检查会因时序误报护栏触发。
+  // 默认 6 次 × 30s = 最多等 150s；maxRetries/retryIntervalMs 可注入（测试用）。
   if (customer && !opts.deployScript) {
     const host = process.env.ZJ_STAGING_HOST || 'localhost';
+    const maxRetries = opts.maxRetries ?? 6;
+    const retryIntervalMs = opts.retryIntervalMs ?? 30_000;
+    // sleep 注入（测试覆盖）；生产走 execSync('sleep N')，容器内不依赖 setTimeout。
+    const sleep = opts.sleep || ((ms) => {
+      try { exec(`sleep ${Math.ceil(ms / 1000)}`, { encoding: 'utf8', timeout: ms + 5000 }); }
+      catch { /* ignore */ }
+    });
     const cmd = `curl -sf --connect-timeout 30 --max-time 30 http://${host}:${ZJ_STAGING_PORT}/health`;
-    try {
-      const raw = exec(cmd, { encoding: 'utf8', timeout: 45_000, maxBuffer: 1024 * 1024 });
-      const out = typeof raw === 'string' ? raw : String(raw);
-      return { status: 'success', reason: null, output: cap(out), stagingPort };
-    } catch (err) {
-      const combined = `${err.stdout ? String(err.stdout) : ''}\n${err.stderr ? String(err.stderr) : ''}\n${err.message || ''}`.trim();
-      return { status: 'failed', reason: 'zj_staging_unhealthy', output: cap(combined), stagingPort };
+    let lastError = '';
+    for (let attempt = 0; attempt < maxRetries; attempt++) {
+      if (attempt > 0) sleep(retryIntervalMs);
+      try {
+        const raw = exec(cmd, { encoding: 'utf8', timeout: 45_000, maxBuffer: 1024 * 1024 });
+        const out = typeof raw === 'string' ? raw : String(raw);
+        return { status: 'success', reason: null, output: cap(out), stagingPort };
+      } catch (err) {
+        const combined = `${err.stdout ? String(err.stdout) : ''}\n${err.stderr ? String(err.stderr) : ''}\n${err.message || ''}`.trim();
+        lastError = combined;
+        console.log(`[deployStaging] ZJ staging :${ZJ_STAGING_PORT} attempt ${attempt + 1}/${maxRetries} failed`);
+      }
     }
+    return { status: 'failed', reason: 'zj_staging_unhealthy', output: cap(lastError), stagingPort };
   }
 
   let script;
@@ -667,7 +682,8 @@ export async function runStagingE2E(task, opts = {}) {
 
     // Slice6: staging 单实例串行 — deploy 前抢 advisory lock，防 N 路并发互相 docker rm 顶掉。
     // 抢不到（别路正占同端口实例）→ SKIP staging_busy（不部署）；抢到 → finally 必释放。
-    const lockPort = line === 'internal' ? DASHBOARD_STAGING_PORT : STAGING_PORT;
+    // customer line 用 ZJ_STAGING_PORT(5201) 作锁 key，防并发 ZenithJoy staging E2E 互相干扰。
+    const lockPort = line === 'internal' ? DASHBOARD_STAGING_PORT : line === 'customer' ? ZJ_STAGING_PORT : STAGING_PORT;
     const acquireLock = opts.acquireStagingLock || acquireStagingLock;
     const lock = await acquireLock(dbPool, lockPort);
     if (!lock) return await finalize('SKIP', 'staging_busy');

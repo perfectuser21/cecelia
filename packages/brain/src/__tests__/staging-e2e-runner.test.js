@@ -95,19 +95,36 @@ describe('deployStaging — ZenithJoy customer line（:5201 护栏）', () => {
     expect(seen).toContain(`:${ZJ_STAGING_PORT}`);
   });
 
-  it(':5201 健康检查失败（连接拒绝）→ failed，reason=zj_staging_unhealthy（护栏触发,:5200 不被触碰）', () => {
+  it(':5201 健康检查失败（连接拒绝）→ 全部重试用尽后 failed，reason=zj_staging_unhealthy（护栏触发,:5200 不被触碰）', () => {
     const exec = () => { const e = new Error('connect ECONNREFUSED'); e.status = 7; throw e; };
-    const r = deployStaging({ exec, line: 'customer' });
+    const sleep = vi.fn();
+    const r = deployStaging({ exec, line: 'customer', maxRetries: 3, retryIntervalMs: 100, sleep });
     expect(r.status).toBe('failed');
     expect(r.reason).toBe('zj_staging_unhealthy');
     expect(r.stagingPort).toBe(ZJ_STAGING_PORT);
+    // 3 次尝试 → 2 次 sleep（第一次不 sleep）
+    expect(sleep).toHaveBeenCalledTimes(2);
   });
 
-  it(':5201 健康检查超时 → failed', () => {
+  it(':5201 健康检查超时 → 全部重试用尽后 failed', () => {
     const exec = () => { const e = new Error('ETIMEDOUT'); e.status = 28; e.stderr = 'curl timeout'; throw e; };
-    const r = deployStaging({ exec, line: 'customer' });
+    const r = deployStaging({ exec, line: 'customer', maxRetries: 1, sleep: vi.fn() });
     expect(r.status).toBe('failed');
     expect(r.reason).toBe('zj_staging_unhealthy');
+  });
+
+  it('前几次失败，第 N 次成功 → success（重试保护，避免 CI 时序误报）', () => {
+    let calls = 0;
+    const exec = () => {
+      calls++;
+      if (calls < 3) { const e = new Error('ECONNREFUSED'); e.status = 7; throw e; }
+      return '{"status":"ok"}';
+    };
+    const sleep = vi.fn();
+    const r = deployStaging({ exec, line: 'customer', maxRetries: 5, retryIntervalMs: 0, sleep });
+    expect(r.status).toBe('success');
+    expect(calls).toBe(3);
+    expect(sleep).toHaveBeenCalledTimes(2); // 3 次尝试 → 2 次 sleep
   });
 
   it('opts.deployScript 有值时走 script（覆盖 customer 健康检查路径，供测试用）', () => {
@@ -321,6 +338,21 @@ describe('runStagingE2E', () => {
       acquireStagingLock: async () => ({ release }),
     });
     expect(release).toHaveBeenCalledTimes(1);
+  });
+
+  // Slice6: customer line 用 ZJ_STAGING_PORT(5201) 作 advisory lock key，防并发 ZJ E2E 互相干扰。
+  it('Slice6: customer line 用 ZJ_STAGING_PORT(5201) 作 advisory lock key', async () => {
+    const pool = makeMockPool();
+    const lockKeys = [];
+    const zjTask = { id: 'task-zj2', payload: { initiative_id: 'init-zj2', pr_url: 'https://pr/zj2', base_repo: 'perfectuser21/zenithjoy' } };
+    await runStagingE2E(zjTask, {
+      pool,
+      deploy: vi.fn().mockReturnValue({ status: 'success', reason: null, output: '', stagingPort: ZJ_STAGING_PORT }),
+      loadAcceptance: async () => ACCEPTANCE,
+      exec: () => 'ok',
+      acquireStagingLock: async (_, key) => { lockKeys.push(key); return { release: vi.fn().mockResolvedValue() }; },
+    });
+    expect(lockKeys[0]).toBe(ZJ_STAGING_PORT);
   });
 
   // Slice9: staging 实测的 git SHA 落库（tested_sha），promote 时比对防 SHA 漂移。

@@ -29,8 +29,9 @@ if (!/export const ZJ_STAGING_PORT\s*=\s*5201/.test(runner)) {
 }
 
 // customer line 走健康检查（curl /health），不跑 staging-deploy.sh
-if (!/customer[\s\S]{0,200}curl[\s\S]{0,100}ZJ_STAGING_PORT/.test(runner) &&
-    !/ZJ_STAGING_PORT[\s\S]{0,300}curl/.test(runner)) {
+// 允许 customer 到 curl 之间有重试逻辑代码，窗口放宽到 800 chars
+if (!/customer[\s\S]{0,800}curl[\s\S]{0,200}ZJ_STAGING_PORT/.test(runner) &&
+    !/customer[\s\S]{0,800}ZJ_STAGING_PORT[\s\S]{0,200}health/.test(runner)) {
   console.error('L1 FAIL: deployStaging customer 分支未见 curl 健康检查');
   process.exit(1);
 }
@@ -48,7 +49,13 @@ if (!/ZJ_STAGING_PORT[\s\S]{0,100}localhost:5200/.test(runner) &&
   process.exit(1);
 }
 
-console.log('[smoke] L1 PASS: ZJ_STAGING_PORT + 健康检查路径 + zj_staging_unhealthy + 端口重写');
+// 重试逻辑：customer 健康检查有 maxRetries 参数（防 CI 时序误报护栏触发）
+if (!/maxRetries/.test(runner)) {
+  console.error('L1 FAIL: deployStaging customer 分支缺 maxRetries 重试逻辑（单次检查会因 CI 时序误报护栏）');
+  process.exit(1);
+}
+
+console.log('[smoke] L1 PASS: ZJ_STAGING_PORT + 健康检查路径 + zj_staging_unhealthy + 端口重写 + maxRetries 重试');
 " || exit 1
 
 # ── L2 Brain health gate ─────────────────────────────────────────────────
