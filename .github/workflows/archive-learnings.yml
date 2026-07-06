@@ -103,7 +103,9 @@ jobs:
             echo "::error::GH_PAT_BOT secret 未配置（开归档 PR 必需 PAT）"
             exit 1
           fi
-          BRANCH="cp-archive-$(date -u +%Y%m%d-%H%M)-learnings"
+          # 分支名必须匹配 branch-naming lint 的 ^cp-[0-9]{8,10}-（0706 首次真跑到此路径才暴露：
+          # 旧格式 cp-archive-YYYYMMDD-HHMM 被 ci-passed 里的 branch-naming 拒 → PR 永远合不进）
+          BRANCH="cp-$(TZ=Asia/Shanghai date +%m%d%H%M)-archive-learnings"
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git checkout -b "$BRANCH"
