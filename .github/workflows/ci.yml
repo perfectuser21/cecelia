@@ -427,6 +427,17 @@ jobs:
       - name: Self-test (auto-merge decision cases)
         run: bash .github/workflows/scripts/__tests__/should-auto-merge.test.sh
 
+  # 守卫 list-fs-guard-tests.sh：CI 快路用 vitest --changed 会漏跑 fs 读取型守卫测试
+  # （#3506 / 2026-07-02 两次应验）。本 job 强制守护 selector 选择逻辑（Tier A，无需 vitest）；
+  # Tier B（真 vitest 漏跑->必跑 实证）在有 vitest 的环境自动运行，无则自跳过。
+  lint-fs-guard-selection:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - uses: actions/checkout@v4
+      - name: Self-test (fs-guard test selection)
+        run: bash .github/workflows/scripts/__tests__/list-fs-guard-tests.test.sh
+
   # ─── Brain: Unit Tests (4-shard matrix + Test Impact Analysis) ─
   # PR 模式：vitest --changed 仅跑被改文件影响的 test（Gate 1 升级，目标 < 5 min）
   # push 模式：跑全量 test 保 main 绿
@@ -482,25 +493,48 @@ jobs:
         # 即使所有测试均已通过。此脚本在 exit 非 0 时检查是否无 test 失败，
         # 若无则认为是 OOM worker exit（非测试失败），返回 0。
         # PR 模式额外：--changed 过滤命中 0 测试也视为 pass（变更不影响 brain test）。
+        #
+        # fs 读取型守卫测试根治（#3506 / 2026-07-02 两次应验）：
+        #   vitest --changed 只跑静态 import 依赖图命中的测试；但大量守卫测试用 fs.readFileSync
+        #   在运行时读源/脚本文件做断言，被读文件不在 import 图里 => 改被读文件时守卫漏跑。
+        #   实证确认 `--changed <files>` 是【交集】非并集，故守卫组无法并入 --changed 调用，
+        #   必须【第二次独立调用】强制全跑（selector 自动检测 readFileSync 标记，见
+        #   .github/workflows/scripts/list-fs-guard-tests.sh + 其 __tests__ 回归测试）。
         run: |
           cd packages/brain
-          EXTRA=""
+          SHARD=${{ matrix.shard }}
+          # 单次 vitest 调用 + OOM/0命中 容错封装
+          run_vitest() {
+            local label="$1"; local covdir="$2"; shift 2
+            set +e
+            npx vitest run --shard=$SHARD/4 "$@" --exclude='src/__tests__/integration/**' --reporter=verbose --coverage --coverage.reporter=lcov --coverage.reportsDirectory="$covdir" 2>&1 | tee /tmp/vitest-$label.txt
+            local exit=${PIPESTATUS[0]}
+            if [ $exit -ne 0 ]; then
+              if grep -qE "Tests.*[0-9]+ passed" /tmp/vitest-$label.txt && ! grep -qE "Tests.*[0-9]+ failed" /tmp/vitest-$label.txt; then
+                echo "[brain-unit shard $SHARD/4 · $label] OOM worker exit but all tests passed — treating as success"
+                return 0
+              fi
+              if grep -qiE "No test files found|filter matched no test files" /tmp/vitest-$label.txt; then
+                echo "[brain-unit shard $SHARD/4 · $label] 过滤命中 0 测试 — 视为 pass"
+                return 0
+              fi
+              return $exit
+            fi
+            return 0
+          }
           if [ "${{ steps.scope.outputs.mode }}" = "changed" ]; then
-            EXTRA="--changed origin/${{ github.base_ref }}"
-          fi
-          set +e
-          npx vitest run --shard=${{ matrix.shard }}/4 $EXTRA --exclude='src/__tests__/integration/**' --reporter=verbose --coverage --coverage.reporter=lcov --coverage.reportsDirectory=coverage/shard-${{ matrix.shard }} 2>&1 | tee /tmp/vitest-out.txt
-          EXIT=${PIPESTATUS[0]}
-          if [ $EXIT -ne 0 ]; then
-            if grep -qE "Tests.*[0-9]+ passed" /tmp/vitest-out.txt && ! grep -qE "Tests.*[0-9]+ failed" /tmp/vitest-out.txt; then
-              echo "[brain-unit shard ${{ matrix.shard }}/4] OOM worker exit but all tests passed — treating as success"
-              exit 0
+            # 快路：import 依赖图命中的测试
+            run_vitest changed "coverage/shard-$SHARD" --changed origin/${{ github.base_ref }} || exit $?
+            # 守卫组：fs 读取型测试强制全跑（第二次独立调用，无 --changed）。
+            # 独立 coverage 目录避免覆盖 shard-1 主 lcov（diff-cover 依赖后者）。
+            GUARDS=$(bash "$GITHUB_WORKSPACE/.github/workflows/scripts/list-fs-guard-tests.sh" src/__tests__ | tr '\n' ' ')
+            if [ -n "$GUARDS" ]; then
+              echo "🛡️  fs 读取型守卫组强制全跑（shard $SHARD/4）：$(echo $GUARDS | wc -w | tr -d ' ') 个文件"
+              run_vitest guards "coverage/guards-shard-$SHARD" $GUARDS || exit $?
             fi
-            if [ -n "$EXTRA" ] && grep -qiE "No test files found|filter matched no test files" /tmp/vitest-out.txt; then
-              echo "[brain-unit shard ${{ matrix.shard }}/4] --changed 过滤命中 0 测试 — 视为 pass"
-              exit 0
-            fi
-            exit $EXIT
+          else
+            # 全量模式（push）：已包含全部测试，无需额外守卫组
+            run_vitest full "coverage/shard-$SHARD" || exit $?
           fi
 
       - name: Upload coverage artifact (shard 1 only)
@@ -1419,7 +1453,7 @@ jobs:
   # ─── Gate: 所有检查通过才能合并 ─────────────────────────────
   ci-passed:
     if: always()
-    needs: [secrets-scan, dod-format-check, dep-audit, registry-lint, eslint, pr-size-check, branch-naming, engine-tests, engine-tests-shell, dashboard-staging-gate-smoke, lint-migration-unique-version, lint-auto-merge-decision, brain-unit, brain-unit-all, brain-diff-coverage, brain-integration, workspace-build, workspace-test, e2e-smoke, core-regression, dod-behavior-dynamic, harness-dod-integrity, harness-contract-lint, docker-infra-smoke, lint-test-pairing, lint-feature-has-smoke, lint-base-fresh, lint-tdd-commit-order, lint-learning-constraint-coverage, lint-test-quality, lint-no-mock-only-test, lint-no-fake-test, lint-single-exit, lint-bypass-not-committed, real-env-smoke, workspace-api-smoke, quality-tests]
+    needs: [secrets-scan, dod-format-check, dep-audit, registry-lint, eslint, pr-size-check, branch-naming, engine-tests, engine-tests-shell, dashboard-staging-gate-smoke, lint-migration-unique-version, lint-auto-merge-decision, lint-fs-guard-selection, brain-unit, brain-unit-all, brain-diff-coverage, brain-integration, workspace-build, workspace-test, e2e-smoke, core-regression, dod-behavior-dynamic, harness-dod-integrity, harness-contract-lint, docker-infra-smoke, lint-test-pairing, lint-feature-has-smoke, lint-base-fresh, lint-tdd-commit-order, lint-learning-constraint-coverage, lint-test-quality, lint-no-mock-only-test, lint-no-fake-test, lint-single-exit, lint-bypass-not-committed, real-env-smoke, workspace-api-smoke, quality-tests]
     runs-on: ubuntu-latest
     timeout-minutes: 2
     steps:
