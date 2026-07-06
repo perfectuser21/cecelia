@@ -138,6 +138,25 @@ describe('deployStaging — ZenithJoy customer line（:5201 护栏）', () => {
     expect(r.reason).toBe('zj_staging_unhealthy');
     expect(callCount).toBe(3);
   });
+
+  it('默认 maxAttempts=8（覆盖 ZJ CI 慢构建场景，第 8 次成功）', async () => {
+    let callCount = 0;
+    const exec = () => {
+      callCount++;
+      if (callCount < 8) { const e = new Error('ECONNREFUSED'); e.status = 7; throw e; }
+      return '{"status":"ok"}';
+    };
+    const r = await deployStaging({ exec, line: 'customer', sleep: async () => {} });
+    expect(r.status).toBe('success');
+    expect(callCount).toBe(8);
+  });
+
+  it(':5201 FAIL 且输出含 ECONNREFUSED（连接拒绝，容器未启动）→ output 透传供通知诊断', async () => {
+    const exec = () => { const e = new Error('connect ECONNREFUSED 127.0.0.1:5201'); e.status = 7; e.stderr = 'curl: (7) Failed to connect to host.docker.internal port 5201: Connection refused'; throw e; };
+    const r = await deployStaging({ exec, line: 'customer', maxAttempts: 1, sleep: async () => {} });
+    expect(r.status).toBe('failed');
+    expect(r.output).toMatch(/Connection refused|ECONNREFUSED/);
+  });
 });
 
 // ─── runStagingCommand ─────────────────────────────────────────────────────────

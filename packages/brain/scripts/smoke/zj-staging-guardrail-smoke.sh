@@ -29,7 +29,8 @@ if (!/export const ZJ_STAGING_PORT\s*=\s*5201/.test(runner)) {
 }
 
 // customer line 走健康检查（curl /health），不跑 staging-deploy.sh
-if (!/customer[\s\S]{0,200}curl[\s\S]{0,100}ZJ_STAGING_PORT/.test(runner) &&
+// 注：变量声明在 if(customer) 与 curl cmd 之间，{0,800} 覆盖声明段
+if (!/customer[\s\S]{0,800}curl[\s\S]{0,100}ZJ_STAGING_PORT/.test(runner) &&
     !/ZJ_STAGING_PORT[\s\S]{0,300}curl/.test(runner)) {
   console.error('L1 FAIL: deployStaging customer 分支未见 curl 健康检查');
   process.exit(1);
@@ -48,7 +49,14 @@ if (!/ZJ_STAGING_PORT[\s\S]{0,100}localhost:5200/.test(runner) &&
   process.exit(1);
 }
 
-console.log('[smoke] L1 PASS: ZJ_STAGING_PORT + 健康检查路径 + zj_staging_unhealthy + 端口重写');
+// maxAttempts 默认值 >= 8（保证 ZJ CI 慢构建场景有足够等待窗口）
+const maxAttemptsMatch = runner.match(/maxAttempts\s*\?\?\s*(\d+)/);
+if (!maxAttemptsMatch || parseInt(maxAttemptsMatch[1], 10) < 8) {
+  console.error('L1 FAIL: maxAttempts 默认值 < 8（不足以覆盖 ZJ CI 慢构建场景）');
+  process.exit(1);
+}
+
+console.log('[smoke] L1 PASS: ZJ_STAGING_PORT + 健康检查路径 + zj_staging_unhealthy + 端口重写 + maxAttempts>=8');
 " || exit 1
 
 # ZJ_STAGING_HOST 必须在 docker-compose.yml 中配置（容器内 localhost 无法访问宿主 :5201）

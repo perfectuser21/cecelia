@@ -61,12 +61,13 @@ export async function deployStaging(opts = {}) {
 
   // ZenithJoy 蓝绿护栏：customer line 的 staging 由 ZenithJoy CI push:main→:5201 自动部署，
   // Cecelia 不跨 repo 做部署（跨 repo 边界）；只做健康检查——起不来则 FAIL 护栏触发，:5200 不被触碰。
-  // 重试逻辑：ZenithJoy CI deploy 需 2-3 分钟，staging 检查在 merge 后立即触发，容器重启窗口内
-  // 单次 curl 失败即判死是误判。重试 maxAttempts 次（默认 3），间隔 retryDelayMs（默认 20s）。
+  // 重试逻辑：ZenithJoy CI deploy 需 3-5 分钟（含镜像构建），staging_e2e 任务在 merge 后
+  // 最快数十秒即被 tick 调度，容器重启/首次部署窗口内判死是误判。
+  // maxAttempts=8（间隔 30s）→ 最长等待约 8 分钟，覆盖 ZJ CI 慢构建场景。
   if (customer && !opts.deployScript) {
     const host = process.env.ZJ_STAGING_HOST || 'localhost';
-    const maxAttempts = opts.maxAttempts ?? 3;
-    const retryDelayMs = opts.retryDelayMs ?? 20_000;
+    const maxAttempts = opts.maxAttempts ?? 8;
+    const retryDelayMs = opts.retryDelayMs ?? 30_000;
     const sleep = opts.sleep || ((ms) => new Promise((r) => setTimeout(r, ms)));
     let lastErr;
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
@@ -365,13 +366,22 @@ export async function handlePromote(dbPool, { verdict, baseRepo, prUrl, initiati
       // SKIP（无合同/无 docker）不通知：不是真失败，是配置缺省。
       if (verdict === 'FAIL' && decision.line === 'customer') {
         try {
-          const outputSnippet = deployOutput
-            ? `\n诊断: ${String(deployOutput).trim().slice(-400)}`
+          const deploySnippet = deployOutput
+            ? String(deployOutput).trim()
             : '';
+          // 区分 "连接拒绝（未部署/容器不存在）" 和 "HTTP 错误（部署了但不健康）"
+          const isConnRefused = deploySnippet.includes('ECONNREFUSED') || deploySnippet.includes('Connection refused') || deploySnippet.includes('Failed to connect');
+          const diagHint = isConnRefused
+            ? '连接被拒绝（容器可能未启动或 ZJ CI 未触发）'
+            : '连接超时或 HTTP 非 2xx（容器异常或启动中崩溃）';
+          const outputSnippet = deploySnippet
+            ? `\n诊断: ${diagHint}\n输出: ${deploySnippet.slice(-300)}`
+            : `\n诊断: ${diagHint}`;
           await notify(
             `🚨 [ZJ 护栏触发] ZenithJoy staging :5201 失败，:5200 生产未触碰\n`
             + `initiative: ${initiativeId || '?'}\nPR: ${prUrl || '?'}${outputSnippet}\n`
-            + `下一步: 检查 ZenithJoy CI deploy 日志，修复后重推 main 触发重跑`
+            + `下一步: ① 查 ZenithJoy CI logs 确认 deploy 是否成功 `
+            + `② 如 CI 失败 → 修复代码后 re-run CI 或重推 ③ 如容器崩溃 → docker logs 查根因`
           );
         } catch (e) {
           console.warn(`[staging-e2e] ZJ 护栏触发通知失败（忽略）: ${e.message}`);
