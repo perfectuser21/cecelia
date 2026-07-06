@@ -1337,6 +1337,48 @@ router.get('/stream', async (req, res) => {
  */
 router.get('/stats', async (req, res) => {
   try {
+    // ── 战况室数据层（P2）：?by=journey 按 Line 聚合 run 数 / 成功率 / 最近战况 / 卡点 ──
+    // 数据卫生：INNER JOIN journeys 天然排除无 journey 孤儿 run；再显式过滤 smoke-* 测试任务。
+    if (req.query.by === 'journey') {
+      let days = parseInt(req.query.days, 10);
+      if (!Number.isInteger(days) || days < 1 || days > 365) days = 30;
+      const { rows } = await pool.query(`
+        SELECT j.id   AS journey_id,
+               j.name AS journey_name,
+               COUNT(*)                                     AS runs,
+               COUNT(*) FILTER (WHERE ir.phase = 'done')    AS done,
+               COUNT(*) FILTER (WHERE ir.phase = 'failed')  AS failed,
+               MAX(ir.created_at)                           AS last_run_at,
+               (ARRAY_AGG(ir.failure_reason ORDER BY ir.created_at DESC)
+                  FILTER (WHERE ir.failure_reason IS NOT NULL))[1] AS last_failure
+        FROM initiative_runs ir
+        JOIN journeys j ON j.id = ir.journey_id
+        LEFT JOIN tasks t ON t.id = ir.initiative_id
+        WHERE ir.created_at >= NOW() - make_interval(days => $1)
+          AND ir.journey_id IS NOT NULL                    -- 排除无 journey 孤儿 run
+          AND (t.title IS NULL OR t.title NOT ILIKE 'smoke-%')  -- 过滤 smoke-* 测试任务
+        GROUP BY j.id, j.name
+        ORDER BY runs DESC, last_run_at DESC NULLS LAST
+      `, [days]);
+      const journeys = rows.map((r) => {
+        const done = parseInt(r.done, 10) || 0;
+        const failed = parseInt(r.failed, 10) || 0;
+        const terminal = done + failed;
+        return {
+          journey_id: r.journey_id,
+          journey_name: r.journey_name,
+          runs: parseInt(r.runs, 10) || 0,
+          done,
+          failed,
+          // 成功率 = done/(done+failed)（只算终态 run，进行中不计入分母）
+          success_rate: terminal > 0 ? Math.round((done / terminal) * 100) / 100 : 0,
+          last_run_at: r.last_run_at,
+          last_failure: r.last_failure || null,
+        };
+      });
+      return res.json({ by: 'journey', period_days: days, journeys });
+    }
+
     // 最近 30 天 pipeline 总数
     // 注：harness_planner 已退役（PR retire-harness-planner），改用 harness_initiative 作为 pipeline 主轴
     const { rows: totalRows } = await pool.query(`
