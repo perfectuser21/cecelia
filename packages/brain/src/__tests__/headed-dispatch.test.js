@@ -397,3 +397,48 @@ describe('6. 雷6：ssh 目标容器感知 + 非交互 flags', () => {
     expect(sshCalls.every((c) => c.cmd.includes('me@custom-host'))).toBe(true);
   });
 });
+
+/**
+ * 雷7：ssh 缺 -i 私钥（R3 首航 dd9642d8 实证 Permission denied）。
+ * compose 把宿主 ~/.ssh 以同路径 :ro 挂进容器，host-executor.js 靠候选列表发现 key 并传 -i；
+ * headed 分支必须同样传 -i（deps.sshKeyFn 可注入，env HEADED_SSH_KEY 可覆盖）。
+ */
+describe('7. 雷7：ssh 私钥自动发现（-i）', () => {
+  function makeNoSshDeps(overrides = {}) {
+    return {
+      pool: { query: vi.fn().mockResolvedValue({ rows: [] }) },
+      spawnFn: vi.fn().mockResolvedValue({ containerId: 'should-not-be-called' }),
+      sshSpawnFn: undefined,
+      loadSkill: vi.fn().mockReturnValue('SKILL_CONTENT_MARKER'),
+      ensureWt: vi.fn().mockResolvedValue('/tmp/wt/task-aaaabbbb'),
+      resolveAccountFn: vi.fn().mockResolvedValue(undefined),
+      tokenFn: vi.fn().mockResolvedValue('gh-token'),
+      now: () => new Date('2026-07-07T12:00:00Z'),
+      execFn: vi.fn().mockReturnValue(''),
+      ...overrides,
+    };
+  }
+
+  it('sshKeyFn 发现到 key 时，所有 ssh 调用带 -i <key>', async () => {
+    const calls = [];
+    const execFn = vi.fn((cmd, opts) => { calls.push({ cmd, opts }); return ''; });
+    const deps = makeNoSshDeps({ execFn, inDockerFn: () => true, sshKeyFn: () => '/fake/.ssh/id_ed25519' });
+    const r = await spawnSkillRelaySession(HEADED_TASK, deps);
+    expect(r.ok).toBe(true);
+    const sshCalls = calls.filter((c) => /^ssh /.test(c.cmd));
+    expect(sshCalls.length).toBeGreaterThanOrEqual(2);
+    for (const c of sshCalls) {
+      expect(c.cmd).toContain('-i /fake/.ssh/id_ed25519');
+    }
+  });
+
+  it('sshKeyFn 未发现 key 时不加 -i（宿主直跑用默认 key 链）', async () => {
+    const calls = [];
+    const execFn = vi.fn((cmd, opts) => { calls.push({ cmd, opts }); return ''; });
+    const deps = makeNoSshDeps({ execFn, inDockerFn: () => false, sshKeyFn: () => null });
+    const r = await spawnSkillRelaySession(HEADED_TASK, deps);
+    expect(r.ok).toBe(true);
+    const sshCalls = calls.filter((c) => /^ssh /.test(c.cmd));
+    expect(sshCalls.every((c) => !c.cmd.includes(' -i '))).toBe(true);
+  });
+});
