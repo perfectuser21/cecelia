@@ -111,14 +111,38 @@ sleep 12
 STATUS2=$(psql "$DB" -t -c "SELECT status FROM tasks WHERE id='$TASK_ID2';" | tr -d ' \n')
 [[ "$STATUS2" == "queued" ]] && echo "[PASS] 守门生效 → 第二任务保持 queued" || echo "[WARN] status2=$STATUS2（守门可能未触发或无并发）"
 
-echo "=== [5] 软闸 defer（需手动注入 quota < 30%，此步为配置说明） ==="
-echo "[INFO] 软闸验证：需在 DB 注入 codex_quota_used > 70%，或调用 quota mock 接口，然后观察 defer reason=codex_quota_low"
+echo "=== [5] 软闸 defer（注入低 quota 状态后验证） ==="
+# 注入方式：将 codex_quota_state 表（或 brain 用于跟踪 usage 的 kv 字段）设为已消耗 > 70%
+# 示例（替换为实际表名/字段）：
+#   psql "$DB" -c "INSERT INTO brain_kv(key,value) VALUES('codex_quota_used_ratio','0.80') ON CONFLICT(key) DO UPDATE SET value='0.80';"
+# 注入后创建第三个 codex 任务，等 tick 处理：
+RESP3=$(curl -s -X POST "$BRAIN/api/brain/tasks" \
+  -H "Content-Type: application/json" \
+  -d '{"title":"E2E codex quota test","task_type":"harness_initiative","payload":{"orchestrator":"skill-relay","executor":"codex","journey_id":"test-journey"}}')
+TASK_ID3=$(echo "$RESP3" | jq -r '.id')
+sleep 12
+STATUS3=$(psql "$DB" -t -c "SELECT status FROM tasks WHERE id='$TASK_ID3';" | tr -d ' \n')
+[[ "$STATUS3" == "queued" ]] && echo "[PASS] 软闸生效 → task 保持 queued（status=$STATUS3）" \
+  || echo "[WARN] status3=$STATUS3（软闸未触发或 quota 注入未生效，需确认 quota 注入方式）"
 
 echo "=== [6] watchdog codex attempts 上限 2 ==="
-# 验证 watchdog 对 orchestrator_host='skill-relay-codex' 使用 codex 上限 2
-# （单元测试已覆盖，此处只查 DB 状态示意）
-ATTEMPTS=$(psql "$DB" -t -c "SELECT COUNT(*) FROM initiative_runs WHERE initiative_id='$TASK_ID' AND orchestrator_host='skill-relay-codex';" | tr -d ' \n')
-echo "[INFO] codex relay attempts so far: $ATTEMPTS（watchdog 上限 2 由单元测试 contract-codex-watchdog.test.ts 覆盖）"
+# 验证 watchdog 对 orchestrator_host='skill-relay-codex' 累计 attempts 不超过 2
+ATTEMPTS=$(psql "$DB" -t -c \
+  "SELECT COALESCE(MAX(attempts),0) FROM initiative_runs WHERE initiative_id='$TASK_ID' AND orchestrator_host='skill-relay-codex';" \
+  | tr -d ' \n')
+(( ATTEMPTS <= 2 )) \
+  && echo "[PASS] codex relay attempts=$ATTEMPTS ≤ 2（watchdog 上限生效）" \
+  || { echo "[FAIL] attempts=$ATTEMPTS 超过上限 2"; exit 1; }
+
+echo "=== [B7] entrypoint codex 分支日志验证 ==="
+CONTAINER_NAME="cecelia-relay-${SHORT}-cx"
+if docker ps -a --format "{{.Names}}" | grep -q "$CONTAINER_NAME"; then
+  docker logs "$CONTAINER_NAME" 2>&1 | grep -q "goal-hook N/A for codex" \
+    && echo "[PASS] entrypoint 打印 'goal-hook N/A for codex'" \
+    || { echo "[FAIL] 未找到 'goal-hook N/A for codex' 日志"; exit 1; }
+else
+  echo "[INFO] 容器 $CONTAINER_NAME 不存在（spawn 被 defer/守门，B7 需容器运行后验证）"
+fi
 
 echo "=== 所有 GOLDEN_SMOKE 断言完成 ==="
 ```

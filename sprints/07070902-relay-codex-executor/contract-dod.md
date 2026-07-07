@@ -78,6 +78,26 @@
 
 ---
 
+### [BEHAVIOR] B8 — 8h 逾期 scanStuckHarness 收尸
+**描述**：`scanStuckHarness` 处理 `deadline_at < NOW()` 且 `orchestrator_host='skill-relay-codex'` 的 run 行时：
+- `phase` 更新为 `'failed'`
+- `failure_reason` 设为 `'relay_deadline_exceeded'`
+- 关联 task `status` 更新为 `'failed'`
+
+**测试覆盖**：`tests/contract-codex-stale-cleanup.test.ts`
+
+---
+
+## [RISK] 技术风险登记
+
+| # | 风险描述 | 影响 | 缓解措施 |
+|---|---------|------|---------|
+| R1 | `@openai/codex` npm 包安装失败 | Docker 镜像 build 失败，无法运行 codex executor | Dockerfile 在 `npm i -g @openai/codex` 后立即执行 `codex --version` 冒烟断言，build 阶段失败可快速暴露；CI 中 A1 断言覆盖 |
+| R2 | codex usage 查询 API 不可用（网络故障/权限不足/CLI 版本变更） | 无法获取 team2 5h 窗口额度数据 | B3 已设计 fail-open：查询报错时保守通过（不阻塞 spawn），仅打 warn 日志；不影响主路径 |
+| R3 | `CODEX_RELAY_HOME` 环境变量未设置 | Docker 挂载命令行为未定义，`~/.codex-team2` 路径可能缺失 | `harness-skill-relay.js` 需确认是否有默认值逻辑（`process.env.CODEX_RELAY_HOME \|\| path.join(os.homedir(), '.codex-team2')`）；E2E 前置检查目录存在 |
+
+---
+
 ## [ARTIFACT] 条目
 
 ### A1 — @openai/codex 安装到 Docker 镜像
@@ -86,7 +106,7 @@
 
 ### A2 — 测试文件落库
 **路径**：`sprints/07070902-relay-codex-executor/tests/*.test.ts`
-**断言**：至少 6 个测试文件，vitest 可识别，Red 阶段均失败（功能未实现前 `npm test` 中至少有这些测试失败）。
+**断言**：至少 7 个测试文件（含 B8 的 contract-codex-stale-cleanup.test.ts），vitest 可识别，Red 阶段均失败（功能未实现前 `npm test` 中至少有这些测试失败）。
 
 ### A3 — task-plan.json
 **路径**：`sprints/07070902-relay-codex-executor/task-plan.json`
@@ -98,7 +118,7 @@
 
 以下条件**全部满足**方可标 DONE：
 
-- [ ] B1–B7 所有 [BEHAVIOR] 单元测试 Green
+- [ ] B1–B8 所有 [BEHAVIOR] 单元测试 Green
 - [ ] E2E 验收脚本（contract-draft.md ## E2E 验收 块）手动执行通过（local_api）
 - [ ] A1：Docker 镜像 build 成功，`docker run --rm cecelia/runner:latest codex --version` 输出版本
 - [ ] A2：测试文件存在且覆盖 B1-B7
