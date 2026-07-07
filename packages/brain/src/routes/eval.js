@@ -36,20 +36,20 @@ const router = Router();
 const MAX_ZIP_MB = parseInt(process.env.MAX_ZIP_MB || '10', 10);
 const MAX_ZIP_BYTES = MAX_ZIP_MB * 1024 * 1024;
 const SKILL_EVAL_STAGING_DIR = process.env.SKILL_EVAL_STAGING_DIR || '/tmp/skill-eval-staging';
-const EVAL_PROXY_TOKEN = process.env.EVAL_PROXY_TOKEN || '';
 
 // ─── 鉴权中间件 ───────────────────────────────────────────────────────────
 
 function requireEvalProxyToken(req, res, next) {
+  const evalProxyToken = process.env.EVAL_PROXY_TOKEN || '';
   const token = req.headers['x-eval-proxy-token'];
 
-  if (!EVAL_PROXY_TOKEN) {
+  if (!evalProxyToken) {
     // 未配置 token（开发环境降级）
     console.warn('[skill-eval] EVAL_PROXY_TOKEN not set — auth disabled (dev mode)');
     return next();
   }
 
-  if (!token || token !== EVAL_PROXY_TOKEN) {
+  if (!token || token !== evalProxyToken) {
     return res.status(403).json({
       error: 'forbidden: invalid or missing X-Eval-Proxy-Token',
     });
@@ -220,8 +220,8 @@ router.get('/status/:task_id', async (req, res) => {
   try {
     const { task_id } = req.params;
 
-    if (!task_id || !/^[0-9a-f-]{36}$/.test(task_id)) {
-      return res.status(400).json({ error: 'invalid task_id format' });
+    if (!task_id) {
+      return res.status(400).json({ error: 'task_id required' });
     }
 
     const result = await pool.query(
