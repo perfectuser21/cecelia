@@ -242,9 +242,14 @@ router.post('/upload', requireProxyToken, upload.single('file'), async (req, res
   }
 });
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 // GET /api/eval/tasks/:id
 router.get('/tasks/:id', async (req, res) => {
   const { id } = req.params;
+  if (!UUID_RE.test(id)) {
+    return res.status(404).json({ error: 'task not found' });
+  }
   try {
     const { rows } = await pool.query(
       `SELECT e.task_id, e.skill_name, e.platform, e.line, e.submitter,
