@@ -2,7 +2,7 @@
 
 ## [BEHAVIOR] 条目
 
-### B1 — executor 白名单 + 组合校验
+### [BEHAVIOR] B1 — executor 白名单 + 组合校验
 **描述**：POST /api/brain/tasks 必须校验 payload.executor 字段。
 - executor 为 null/undefined/缺失 → 允许通过（向后兼容，默认 claude 路径）
 - executor = "claude" → 允许
@@ -14,7 +14,7 @@
 
 ---
 
-### B2 — 双层并发守门 MAX=1
+### [BEHAVIOR] B2 — 双层并发守门 MAX=1
 **描述**：spawnSkillRelaySession executor=codex 路径必须执行双层守门。
 - 层 1（进程内）：`_activeCodexRelays` 原子计数，> 0 时 defer，不进入 DB 检查
 - 层 2（DB）：`SELECT COUNT(*) FROM initiative_runs WHERE orchestrator_host='skill-relay-codex' AND phase NOT IN ('done','failed') AND deadline_at > NOW() AND initiative_id != $self`，> 0 时 defer
@@ -24,7 +24,7 @@
 
 ---
 
-### B3 — 额度软闸 defer（team2 quota < 30%）
+### [BEHAVIOR] B3 — 额度软闸 defer（team2 quota < 30%）
 **描述**：spawnSkillRelaySession executor=codex 路径在守门前检查 team2 5h 窗口额度。
 - 查询方式：通过 DB 或 codex CLI `codex usage` 获取 team2 当前用量
 - 剩余 < 30% → 返回 `{ok:false, deferred:true, reason:'codex_quota_low'}`，不烧 attempts，task 保持 queued
@@ -34,7 +34,7 @@
 
 ---
 
-### B4 — spawn 失败回滚（无 run 行落库 + task 复位）
+### [BEHAVIOR] B4 — spawn 失败回滚（无 run 行落库 + task 复位）
 **描述**：spawnDockerDetached 抛出异常时（容器未起）必须执行完整回滚。
 - 打印 `[skill-relay][ALERT]` 级别日志（含 error message）
 - UPDATE tasks SET status='queued', claimed_by=NULL, claimed_at=NULL WHERE id=$task_id
@@ -45,7 +45,7 @@
 
 ---
 
-### B5 — initiative_runs 落行包含 orchestrator_host + 8h deadline
+### [BEHAVIOR] B5 — initiative_runs 落行包含 orchestrator_host + 8h deadline
 **描述**：spawnSkillRelaySession executor=codex 成功 spawn 后，initiative_runs 必须落行：
 - `orchestrator_host = 'skill-relay-codex'`（区别于 claude 路径的 'skill-relay-session'）
 - `deadline_at = NOW() + INTERVAL '8 hours'`（不是 6h）
@@ -56,7 +56,7 @@
 
 ---
 
-### B6 — watchdog attempts 上限按 orchestrator_host 分支
+### [BEHAVIOR] B6 — watchdog attempts 上限按 orchestrator_host 分支
 **描述**：`resumeStalledRelayRuns` 处理 orchestrator_host='skill-relay-codex' 的 run 时，上限为 2（不是 claude 的 5）。
 - orchestrator_host='skill-relay-codex' AND attempts >= 2 → 标 failed，不重点火
 - orchestrator_host='skill-relay-session'（claude）AND attempts >= 5 → 标 failed（原逻辑不变）
@@ -66,7 +66,7 @@
 
 ---
 
-### B7 — entrypoint CECELIA_EXECUTOR=codex 分支 + 退出码真实性
+### [BEHAVIOR] B7 — entrypoint CECELIA_EXECUTOR=codex 分支 + 退出码真实性
 **描述**：entrypoint.sh 在 `CECELIA_EXECUTOR=codex` 时走 codex 执行分支：
 - 执行 `codex exec -c approval_policy="never" -c sandbox_mode="danger-full-access" < "$PROMPT_FILE"`
 - 用 `PIPESTATUS[0]`（不是 `$?`）取真退出码
