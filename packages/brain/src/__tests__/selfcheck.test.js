@@ -156,9 +156,9 @@ describe('selfcheck', () => {
   // （旧约束下 type='battle_report' 会被 CHECK 拒），故随 migration 316 推进地板到 316。
   // facts-check 校验地板 <= 最高 migration（316 <= 316 通过）。
   // 317（initiative_runs.tmux_killed_at）被 harness-relay-watchdog 收窗 UPDATE 直接依赖
-  // （列不存在则 UPDATE 整句报错被吞，收窗永不生效——与上述 314 事故同类），故推进地板到 317。
-  it('EXPECTED_SCHEMA_VERSION should be 317 (floor, bumped for tmux_killed_at headed 收窗)', () => {
-    expect(EXPECTED_SCHEMA_VERSION).toBe('317');
+  // 318（skill_eval_tasks）被 skill-evals 路由 DB 查询直接依赖，故推进地板到 318。
+  it('EXPECTED_SCHEMA_VERSION should be 318 (floor, bumped for skill_eval_tasks)', () => {
+    expect(EXPECTED_SCHEMA_VERSION).toBe('318');
   });
 
   it('should pass when DB schema version is ahead of expected (>= check)', async () => {
