@@ -176,14 +176,20 @@ describe('skill-eval-validator.js — checkSlotAvailable', () => {
   beforeEach(() => { vi.clearAllMocks(); });
 
   it('pending < MAX_SKILL_EVAL_QUEUE → queueFull=false', async () => {
-    mockPool.query.mockResolvedValue({ rows: [{ pending_count: 5 }] });
+    // 两个独立查询：in_progress 和 pending（都用 count 别名）
+    mockPool.query
+      .mockResolvedValueOnce({ rows: [{ count: '0' }] }) // in_progress
+      .mockResolvedValueOnce({ rows: [{ count: '5' }] }); // pending
     const result = await checkSlotAvailable(mockPool);
     expect(result.queueFull).toBe(false);
   });
 
   it('pending >= MAX_SKILL_EVAL_QUEUE → queueFull=true', async () => {
     const maxQueue = parseInt(process.env.MAX_SKILL_EVAL_QUEUE || '20', 10);
-    mockPool.query.mockResolvedValue({ rows: [{ pending_count: maxQueue }] });
+    // 两个独立查询：in_progress 和 pending（都用 count 别名）
+    mockPool.query
+      .mockResolvedValueOnce({ rows: [{ count: '0' }] }) // in_progress
+      .mockResolvedValueOnce({ rows: [{ count: String(maxQueue) }] }); // pending >= maxQueue
     const result = await checkSlotAvailable(mockPool);
     expect(result.queueFull).toBe(true);
   });
@@ -202,9 +208,10 @@ describe('skill-eval-validator.js — checkQuotaSufficient', () => {
     warnSpy.mockRestore();
   });
 
-  it('5h 额度充足 → canDispatch=true', async () => {
+  it('5h 额度充足（≥85% remaining）→ canDispatch=true', async () => {
+    // 5h remaining=90% >= 85%, 7d remaining=95% >= 90% → 允许派发
     mockPool.query.mockResolvedValue({
-      rows: [{ pool_5h_remaining_pct: 50, pool_7d_remaining_pct: 60 }],
+      rows: [{ pool_5h_remaining_pct: 90, pool_7d_remaining_pct: 95 }],
     });
     const result = await checkQuotaSufficient(mockPool, 'account2');
     expect(result.canDispatch).toBe(true);

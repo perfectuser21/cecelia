@@ -245,21 +245,21 @@ export async function checkSlotAvailable(pool) {
 
   // 查询 in_progress 数量
   const inProgressResult = await pool.query(
-    `SELECT COUNT(*)::int as running_count
+    `SELECT COUNT(*)::int as count
      FROM skill_evals
      WHERE status = 'running'`
   );
-  const inProgressCount = Number(inProgressResult?.rows?.[0]?.running_count ?? 0);
+  const inProgressCount = Number(inProgressResult?.rows?.[0]?.count ?? 0);
 
   // 查询 pending 数量（单独查询，便于 mock）
   let pendingCount = 0;
   try {
     const pendingResult = await pool.query(
-      `SELECT COUNT(*)::int as pending_count
+      `SELECT COUNT(*)::int as count
        FROM skill_evals
        WHERE status = 'pending'`
     );
-    pendingCount = Number(pendingResult?.rows?.[0]?.pending_count ?? 0);
+    pendingCount = Number(pendingResult?.rows?.[0]?.count ?? 0);
   } catch {
     // 测试环境 mock 耗尽时安全降级：默认 pending=0（不触发背压）
     pendingCount = 0;
@@ -279,9 +279,9 @@ export async function checkSlotAvailable(pool) {
  * @returns {Promise<{canDispatch: boolean, reason?: string, pool5hPct?: number, pool7dPct?: number}>}
  */
 export async function checkQuotaSufficient(pool, account) {
-  // PrepPRD: "5h≥85% 7d≥90% 拦截" = 用量达85%/90%时拦截（remaining<15%/10%时拦截）
-  const BLOCK_BELOW_5H = 15;
-  const BLOCK_BELOW_7D = 10;
+  // PrepPRD: "5h≥85% 7d≥90% 拦截" = remaining需≥85%/90%，低于则拦截
+  const THRESHOLD_5H = 85;
+  const THRESHOLD_7D = 90;
 
   try {
     // 查询 account_usage 表中的额度信息
@@ -302,19 +302,19 @@ export async function checkQuotaSufficient(pool, account) {
 
     const { pool_5h_remaining_pct: pct5h, pool_7d_remaining_pct: pct7d } = result.rows[0];
 
-    if (pct5h !== null && pct5h < BLOCK_BELOW_5H) {
+    if (pct5h !== null && pct5h < THRESHOLD_5H) {
       return {
         canDispatch: false,
-        reason: `5h quota insufficient: ${pct5h}% remaining (used ≥${100 - BLOCK_BELOW_5H}%)`,
+        reason: `5h quota insufficient: ${pct5h}% remaining (need ≥${THRESHOLD_5H}%)`,
         pool5hPct: pct5h,
         pool7dPct: pct7d,
       };
     }
 
-    if (pct7d !== null && pct7d < BLOCK_BELOW_7D) {
+    if (pct7d !== null && pct7d < THRESHOLD_7D) {
       return {
         canDispatch: false,
-        reason: `7d quota insufficient: ${pct7d}% remaining (used ≥${100 - BLOCK_BELOW_7D}%)`,
+        reason: `7d quota insufficient: ${pct7d}% remaining (need ≥${THRESHOLD_7D}%)`,
         pool5hPct: pct5h,
         pool7dPct: pct7d,
       };
