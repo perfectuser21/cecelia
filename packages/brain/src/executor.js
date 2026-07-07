@@ -3277,6 +3277,10 @@ async function triggerCeceliaRun(task) {
       // 留 in_progress，reportNode B1 fix 会在完成时回写 completed/failed。
       if (result.ok === null) {
         console.log(`[executor] harness graph interrupted/waiting task=${task.id} thread=${result.threadId}, leaving in_progress`);
+      } else if (result.ok && result.mode === 'skill-relay') {
+        // relay 的 ok=true 只代表 session spawn 成功（detached 在跑），不是 sprint 跑完。
+        // 完成态由 harness-report 回写（Issue df107724：spawn 成功即标 completed 是假成功）。
+        console.log(`[executor] skill-relay session spawned task=${task.id} container=${result.containerId}, leaving in_progress`);
       } else if (result.ok) {
         await updateTaskStatus(task.id, 'completed');
       } else {
