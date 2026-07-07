@@ -50,7 +50,7 @@ generated: 2026-07-07
 
 ### E2E-02：headed dry-run 派发 tmux session
 
-**前置条件**：宿主机可 ssh 访问，tmux 可用，CODEX_RELAY_HOME 配置正确
+**前置条件**：host.docker.internal 可 ssh 访问，tmux 可用，CODEX_RELAY_HOME 配置正确
 
 **步骤**：
 1. 触发一个 `mode=headed` 的 codex run（dry-run / echo 型短 prompt）
@@ -59,11 +59,12 @@ generated: 2026-07-07
 4. 检查宿主 prompt 文件
 
 **期望结果**：
-- `ssh 宿主 tmux has-session -t codex-relay-<short>` 返回 exit 0
+- `ssh host.docker.internal tmux has-session -t codex-relay-<short>` 返回 exit 0
 - `/tmp/cecelia-host-prompts/<taskid>.<instance>.prompt` 文件存在
-- 文件内容 sha256 与发送内容匹配
+- 文件内容 sha256 与发送内容匹配（sha256sum 比对）
+- 文件权限为 0600（chmod 验证）
 - `initiative_runs` 表中 `orchestrator_host='skill-relay-codex-headed'` 行存在
-- deadline 设置为 8h
+- deadline 设置为 8h（DB 查询 deadline 字段验证）
 
 ---
 
@@ -128,4 +129,6 @@ generated: 2026-07-07
 | AC-07 | 收窗幂等，tmux_killed_at 不重复 | E2E-04 DB + 日志 |
 | AC-08 | 默认无头路径零回归 | E2E-05 |
 | AC-09 | CI 全绿，含单测 | CI pipeline |
-| AC-10 | tui.log 洗敏，无裸露 token | 日志检查 |
+| AC-10 | tui.log 洗敏，无裸露 token | 日志检查（B-06） |
+| AC-11 | prompt 传递非 $(cat) 内联 | 代码 grep（B-07） |
+| AC-12 | 未引入账号池逻辑 | 代码/DB grep（B-08） |
