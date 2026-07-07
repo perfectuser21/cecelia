@@ -17,6 +17,7 @@ import { getAvailableMemoryMB } from '../platform-utils.js';
 import { raise } from '../alerting.js';
 import { handleTaskFailure } from '../quarantine.js';
 import { triggerCeceliaRun } from '../executor.js';
+import { REVIEW_TASK_TYPES } from '../lib/review-task-types.js';
 import { updateDesireFromTask } from '../desire-feedback.js';
 import { checkAndCreateCodeReviewTrigger } from '../code-review-trigger.js';
 import { resolveRelatedFailureMemories } from './shared.js';
@@ -652,6 +653,7 @@ router.post('/execution-callback', async (req, res) => {
       let quarantined = false;
       let isBillingCap = false;
       let isTransientApiError = false;
+      let isReviewTask = false;
       try {
         // Extract error message from result
         // Note: typeof null === 'object', so we must check result !== null first
@@ -676,6 +678,7 @@ router.post('/execution-callback', async (req, res) => {
           || classification.class === 'network'
           || classification.class === 'auth'
           || exit_code === 137;
+        isReviewTask = REVIEW_TASK_TYPES.includes(taskType);
 
         console.log(`[execution-callback] Failure classified: task=${task_id} class=${classification.class} pattern=${classification.pattern}`);
 
@@ -814,9 +817,13 @@ router.post('/execution-callback', async (req, res) => {
       //   rate_limit   — 429 限流，指数退避后自动恢复
       //   network      — 网络抖动，与 cecelia-run 健康状况无关
       //   auth         — 凭据过期/无效（OAuth token expired 等），是凭据问题而非系统故障
+      //   review tasks — 走本机 Codex CLI，执行主体不是 cecelia-run
       if (isBillingCap || isTransientApiError) {
         const bypassReason = isBillingCap ? 'billing_cap' : (isTransientApiError ? 'rate_limit/network/auth' : 'unknown');
         console.log(`[execution-callback] 外部/凭据错误（${bypassReason}）：跳过熔断计数（task=${task_id}）`);
+      } else if (isReviewTask) {
+        console.log(`[execution-callback] review 类任务（${taskType}）失败，跳过 cecelia-run 熔断计数（task=${task_id}）`);
+        raise('P2', 'task_failed', `任务失败：${task_id}（${status}）`).catch(err => console.error('[routes] silent error:', err));
       } else {
         await cbFailure('cecelia-run');
         raise('P2', 'task_failed', `任务失败：${task_id}（${status}）`).catch(err => console.error('[routes] silent error:', err));

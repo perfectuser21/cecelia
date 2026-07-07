@@ -17,6 +17,7 @@ import { handleTaskFailure } from './quarantine.js';
 import { updateDesireFromTask } from './desire-feedback.js';
 import { resolveRelatedFailureMemories } from './routes/shared.js';
 import { normalizeCallbackStatus, extractPrNumber, maybeMarkCompletedNoPr, buildExecMetaJson, buildFailureFields, extractFindingsValue, buildLastRunResult } from './lib/callback-utils.js';
+import { REVIEW_TASK_TYPES } from './lib/review-task-types.js';
 
 /**
  * processExecutionCallback(data, pool)
@@ -275,6 +276,7 @@ export async function processExecutionCallback(data, pool) {
       const { classifyFailure } = await import('./quarantine.js');
       const taskRow = await pool.query('SELECT task_type, payload FROM tasks WHERE id = $1', [task_id]);
       const taskPayload = taskRow.rows[0]?.payload || {};
+      const taskType = taskRow.rows[0]?.task_type;
       const errorMsg = (result !== null && typeof result === 'object')
         ? (result.result || result.error || result.stderr || JSON.stringify(result))
         : String(result || status);
@@ -285,13 +287,14 @@ export async function processExecutionCallback(data, pool) {
       const isOomKilled = exit_code === 137;
 
       const isCodexReview = coding_type === 'codex-review';
+      const isReviewTask = REVIEW_TASK_TYPES.includes(taskType);
 
       if (isBillingCap || isTransientApiError || isOomKilled) {
         const bypassReason = isBillingCap ? 'billing_cap' : (isOomKilled ? 'oom_killed(exit=137)' : 'rate_limit/network/auth');
         console.log(`[callback-processor] 外部/资源错误（${bypassReason}）：跳过熔断计数（task=${task_id}）`);
-      } else if (isCodexReview) {
-        // codex-review 走独立执行池，失败不归因 cecelia-run 熔断器
-        console.log(`[callback-processor] codex-review 失败，跳过 cecelia-run 熔断计数（task=${task_id}）`);
+      } else if (isCodexReview || isReviewTask) {
+        // codex-review / review 类任务走本机 Codex CLI，失败不归因 cecelia-run 熔断器
+        console.log(`[callback-processor] review 类任务（${isCodexReview ? 'codex-review' : taskType}）失败，跳过 cecelia-run 熔断计数（task=${task_id}）`);
         raise('P2', 'task_failed', `任务失败：${task_id}（${status}）`).catch(() => {});
       } else {
         await cbFailure('cecelia-run');
