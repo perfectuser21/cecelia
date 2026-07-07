@@ -23,6 +23,7 @@ import topicsRouter from './routes/topics.js';
 import harnessRouter from './routes/harness.js';
 import harnessSelftestRouter from './routes/harness-selftest.js';
 import warroomRouter from './routes/warroom.js';
+import warroomDataRouter from './routes/warroom-data.js';
 import kr3Router from './routes/kr3.js';
 import dispatchRouter from './routes/dispatch.js';
 import previewRouter from './routes/preview.js';
@@ -61,6 +62,9 @@ router.use('/harness', harnessRouter);
 
 // 战情室统一 feed — GET /warroom/feed（聚合所有任务，按 Area/Group 分组）
 router.use('/warroom', warroomRouter);
+
+// 战情室只读数据层 — GET /handoffs, GET /sentinel/health, GET /decisions/recent
+router.use('/', warroomDataRouter);
 
 // KR3 小程序配置状态 — GET /kr3/check-config, POST /kr3/mark-wx-pay, POST /kr3/mark-admin-oid
 router.use('/kr3', kr3Router);
