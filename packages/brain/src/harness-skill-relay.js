@@ -333,7 +333,17 @@ async function _spawnHeadedSession(task, { dbPool, now, short, initiativeId, dep
   const inDocker = (deps.inDockerFn || (() => { try { return existsSync('/.dockerenv'); } catch { return false; } }))();
   const sshHost = task.payload?.ssh_host || process.env.HEADED_SSH_HOST
     || (inDocker ? 'administrator@host.docker.internal' : 'localhost');
-  const SSH_OPTS = '-o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null';
+  // 雷7（R3 dd9642d8 实证 Permission denied）：compose 把宿主 ~/.ssh 同路径 :ro 挂进容器，
+  // 对齐 spawn/host-executor.js 的 key 自动发现（候选列表同源），env HEADED_SSH_KEY 可覆盖。
+  const defaultSshKeyFn = () => {
+    if (process.env.HEADED_SSH_KEY) return process.env.HEADED_SSH_KEY;
+    for (const k of ['/Users/administrator/.ssh/id_ed25519', '/Users/administrator/.ssh/id_rsa']) {
+      try { if (existsSync(k)) return k; } catch { /* ignore */ }
+    }
+    return null;
+  };
+  const sshKey = (deps.sshKeyFn || defaultSshKeyFn)();
+  const SSH_OPTS = `${sshKey ? `-i ${sshKey} ` : ''}-o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null`;
   const tmuxSession = `codex-relay-${short}`;
   const promptFile = `/tmp/cecelia-host-prompts/${task.id}.${short}.prompt`;
 
