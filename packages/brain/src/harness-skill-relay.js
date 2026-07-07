@@ -15,6 +15,7 @@
  */
 import pool from './db.js';
 import { execSync } from 'node:child_process';
+import { existsSync } from 'node:fs';
 
 const RELAY_FLAG = 'skill-relay';
 const RELAY_DEADLINE_HOURS = 6;
@@ -327,7 +328,12 @@ async function _spawnHeadedSession(task, { dbPool, now, short, initiativeId, dep
 
   const sprintDir = task.payload?.sprint_dir
     || `sprints/${stampMMDDHHNN(now())}-relay-${short}`;
-  const sshHost = task.payload?.ssh_host || process.env.HEADED_SSH_HOST || 'localhost';
+  // 容器内 'localhost' = 容器自己（R2 8e2bbaef 实证 Connection refused）——对齐
+  // spawn/host-executor.js 先例：/.dockerenv 存在时用宿主别名，ssh 加 BatchMode 三件套。
+  const inDocker = (deps.inDockerFn || (() => { try { return existsSync('/.dockerenv'); } catch { return false; } }))();
+  const sshHost = task.payload?.ssh_host || process.env.HEADED_SSH_HOST
+    || (inDocker ? 'administrator@host.docker.internal' : 'localhost');
+  const SSH_OPTS = '-o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null';
   const tmuxSession = `codex-relay-${short}`;
   const promptFile = `/tmp/cecelia-host-prompts/${task.id}.${short}.prompt`;
 
@@ -367,7 +373,7 @@ async function _spawnHeadedSession(task, { dbPool, now, short, initiativeId, dep
     // 双引号/tmux 单引号时被反引号/引号/$ 炸穿（printf + JSON.stringify 内联已实证必炸）。
     try {
       execFn(
-        `ssh ${sshHost} "mkdir -p /tmp/cecelia-host-prompts && cat > ${promptFile} && chmod 600 ${promptFile}"`,
+        `ssh ${SSH_OPTS} ${sshHost} "mkdir -p /tmp/cecelia-host-prompts && cat > ${promptFile} && chmod 600 ${promptFile}"`,
         { input: prompt }
       );
     } catch (err) {
@@ -382,7 +388,7 @@ async function _spawnHeadedSession(task, { dbPool, now, short, initiativeId, dep
     // codex 位置参数从远端文件展开（--prompt-file 是编造的 flag，codex TUI 只吃 [PROMPT] 位置参数）
     try {
       execFn(
-        `ssh ${sshHost} "tmux new-session -d -s ${tmuxSession} 'cd ${worktreePath} && CODEX_HOME=${codexRelayHome || ''} codex \\"\\$(cat ${promptFile})\\"'"`
+        `ssh ${SSH_OPTS} ${sshHost} "tmux new-session -d -s ${tmuxSession} 'cd ${worktreePath} && CODEX_HOME=${codexRelayHome || ''} codex \\"\\$(cat ${promptFile})\\"'"`
       );
     } catch (spawnErr) {
       console.error(`[skill-relay][headed][ALERT] ssh tmux spawn failed: ${spawnErr.message}`);
