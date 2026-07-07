@@ -8,10 +8,10 @@ description: |
   GAN 对抗**多轮**直到双方达成共识。无硬轮数上限，但 Reviewer 真找不出实质 spec/产品漏洞时必须 APPROVED。
 version: 9.3.0
 created: 2026-04-08
-updated: 2026-06-11
+updated: 2026-07-07
 changelog:
-  - 9.3.0: golden_smoke_convertibility 精化 — ## E2E 验收 GOLDEN_SMOKE_ABILITY_SLUG + GOLDEN_SMOKE_SCENARIO 标记格式收严，bash 块禁 harness 专属变量
-  - 9.2.0: 新增第 8 维检查 — ## E2E 验收 脚本必须带 # STEP: 注释，可被 generator 转为 golden-smoke.test.ts
+  - 9.3.0: 八要素 checklist 审查 + 判定点登记表打回规则（decisions 27b57469/e035dad8）— Golden Path 覆盖审查新增第 11/12/13 条：(11) 合同 ## 八要素需求规范 段缺失 → 第 1 维扣分（proposer 9.6.0 起必含此段）；(12) 涉及真机/RPA/外部状态推断任务缺判定点登记表 → 打回；(13) 失败语义和效果确认要素留空/N/A 而任务明显有对外动作 → 第 5/6 维扣分；输入对抗面：对外暴露 agent 任务缺此项 → 打回
+  - 9.2.0: 补「接缝断言」打回信号（修真环境逐个炸根因）— Golden Path 覆盖审查段新增两条强制打回信号：(9)「接缝只用 mock 断言 → 打回」：涉及真机 UIA/生产 env/真实调用方的 [BEHAVIOR]，若 DoD 只用 mock/CI 断言、无真目标验证项 → 第 1 维/第 6 维扣分/打回，要求补接缝断言或显式标 logic-done-pending；(10)「写死环境假设值无真验 → 打回」：引入屏幕坐标/UIA 阈值/假设调用方传值/假设 env 有值等环境假设且无真机校准/真验证项 → 打回，要求从环境推导或真机校准。第 6 维 verification_oracle_completeness 领域验证核对清单同步新增「真机 RPA/生产 env 集成」一行。**未改任何维度名**——7 个维度名（dod_machineability/scope_match_prd/test_is_red/internal_consistency/risk_registered/verification_oracle_completeness/ci_workflow_alignment）是与 Brain ReviewerOutputSchema 的接口约定，一个都没动，只在维度描述/审查项里加内容
   - 9.1.0: 链路审计修复 3 项 — (a) Golden Path 覆盖审查检测信号补「只检查文件存在/大小而无内容验证 → 第 1 维直接 0 分」+「逐项核对 proposer 作弊反例清单」；(b) 强化 N/A 规则表述：windows_wechat 第 7 维必须实审 e2e-wechat-rpa.yml 不可填 10，N/A 只适用非 windows_cloud/windows_wechat/linux_server；(c) 第 6 维 verification_oracle_completeness 审查项加入领域验证规则核对（视频 ffprobe / 发布真实出现 / DB 时间窗 / UI 可见断言）+ [BEHAVIOR] ≥ 4 数量检查明确归此维。注意：7 个维度名是与 Brain ReviewerOutputSchema 的接口约定，一个都没改
   - 9.0.0: Golden Path 覆盖审查新增两条强制问题（[BEHAVIOR] 1:1 对应步骤 + 禁止 mock）；维度 7 扩展覆盖 windows_wechat（e2e-wechat-rpa.yml）；阈值规则和填值规则同步更新
   - 8.4.0: 第6维评分基准从「PRD Response Schema 段」改为「contract-draft.md Response Schema 推导段」；N/A 任务自动满分
@@ -81,6 +81,11 @@ Proposer 产出的 `contract-draft.md` 格式是 **Golden Path Steps**：每步 
 6. **验证命令是否在真实 target_environment 执行，无 mock？**（v9.0 强制）检测信号：含 `MOCK_*` 环境变量、`EventEmitter`/`fakeChild`/`downloadImpl: async`、`exit 0` 兜底 → 第 1 维直接 0 分；Golden Path 含微信操作但 target_environment 写 `windows_cloud`（GHA 无微信）→ 第 7 维 0 分
 7. **验证命令是否只检查文件存在/大小而无内容验证？**（v9.1 强制）只 `test -f` / `.size` / `ls -l` 而无 jq -e / ffprobe / DOM 断言 / psql 内容验证 → **第 1 维直接 0 分**（产出物存在 ≠ 行为正确）
 8. **逐项核对 proposer「作弊反例清单」**（v9.1 强制）：对照 proposer SKILL 的 ≥10 条作弊反例（MOCK_*、stub/spy、jest.mock/vi.mock 真路径、无条件 exit 0、断言上 `\|\| true`、只查文件存在/大小、历史数据冒充本轮、dry-run、sleep 后假断言、grep 自己 echo 的串）——合同命中任一 → 对应维度（多数为第 1 维 / 第 6 维）按反例表所列直接低分
+9. **接缝只用 mock 断言 → 打回**（v9.2 强制）：凡涉及**真机 UIA / 生产 env / 真实调用方**的 `[BEHAVIOR]`，若 DoD 只用 mock/CI 断言、没有真目标验证项 → 该维（第 1 维 / 第 6 维）扣分/打回，要求 proposer 补接缝断言，或显式在合同标 `logic-done-pending`（接缝未真验时唯一合法状态，不得标 done）。判据：先答「这功能在哪几个点碰真实世界」→ 那几点都得有真目标验证或 logic-done-pending 标注
+10. **写死环境假设值无真验 → 打回**（v9.2 强制）：合同/代码引入屏幕坐标（如 `-2600`）、UIA 气泡阈值、假设调用方传值、假设 env 有值等**环境假设**，且无真机校准 / 真验证项 → 打回，要求从环境推导或真机校准（这类值本质是接缝，必真验）
+11. **合同缺 ## 八要素需求规范 段 → 第 1 维扣分**（v9.3 强制 — decisions 27b57469）：proposer 9.6.0 起必须在 contract-draft.md 内嵌八要素 checklist 段；该段缺失或任一要素既无答案又无显式 N/A → 视为合同不完整，第 1 维 dod_machineability 扣分。轻微漏填（如 NFR 空白但任务明显无 NFR 要求）仅提醒，不强制打回。
+12. **涉及真机/RPA/外部状态推断任务缺判定点登记表 → 打回**（v9.3 强制 — decisions e035dad8）：凡 Golden Path 含「系统推断外部真实状态」（微信群是否发送 / RPA 当前状态 / API 返回解读 / 真机反馈识别），若合同 ## 八要素需求规范 → 判定点登记表 留空或写 N/A → 直接 REVISION，要求 proposer 逐条登记候选方法/所选/依据/误判后果。无接缝判定点的任务显式写「N/A」才算合规。
+13. **对外暴露 agent 缺输入对抗面 → 打回**（v9.3 强制 — decisions 27b57469 第9要素）：Golden Path 涉及「外部用户可写入 / 客服 agent 接收外部输入 / 爬虫内容入 pipeline」，若输入对抗面表留空（无信任等级/无 prompt injection 防护/无越权拒绝策略）→ REVISION；纯内部任务显式填 N/A 则放行。
 
 少一项 → 第 2 维 scope_match_prd 或第 4 维 internal_consistency 扣分。Golden Path 断链 → 直接 REVISION 不打分。
 
@@ -135,6 +140,7 @@ Proposer 产出的 `contract-draft.md` 格式是 **Golden Path Steps**：每步 
 - ❌ **发布**类合同无"内容真实出现"验证（平台 API 查到帖子 / 截图确认），只 echo / 看 HTTP 200
 - ❌ **DB 写入**类合同 `SELECT count(*)` 无 `created_at > NOW() - interval` 时间窗（历史数据冒充）
 - ❌ **UI 交互**类合同无 `toBeVisible` / `toHaveText` / 截图比对可见状态断言
+- ❌ **真机 RPA / 生产 env 集成**类（微信/抖音真机操控、依赖生产中台 env）合同的接缝点只用 mock/CI 断言、无真目标验证项（真机微信真收真回 / 生产 env 真出结果），且未标 `logic-done-pending` → 第 1 维 / 第 6 维低分（详见上方 Golden Path 覆盖审查第 9、10 条）
 
 **[BEHAVIOR] ≥ 4 数量检查（归属第 6 维，v9.1 明确）**：`grep -c '^- \[ \] \[BEHAVIOR\]' contract-dod.md` < 4（至少覆盖 schema 字段 / keys 完整性 / 禁用字段反向 / error path 四类各一条）→ 第 6 维低分 REVISION。**此数量检查由第 6 维负责，不归第 7 维 ci_workflow_alignment**（第 7 维只审 CI Workflow 内容对齐）。
 
@@ -388,33 +394,6 @@ writePlanned().then(() => console.log('Step 5 完成：', apis.length, 'API +', 
 3. **禁止在 non-blocking observation 栏位列一堆**。non-blocking 本质是没用的，Reviewer 若真觉得非阻塞就不列
 4. **禁止让合同膨胀到 200+ 行专门写防作弊元数据**。合同行数目标 < 150 行，超过说明走偏了
 5. **禁止要求 Generator 在合同阶段就证明代码不作弊**。那是代码阶段 Evaluator 跑 curl/playwright 的职责
-
----
-
-## 第 8 维：golden_smoke_extractability（golden-smoke 可提取性）
-
-**审查问题**：合同 `## E2E 验收` 段的 Scenario 是否满足 harness-generator Step 8 自动提取 golden-smoke.test.ts 的格式要求？
-
-**审查清单（全部 YES 才能得 ≥ 7 分）**：
-
-| # | 检查项 | 判断依据 |
-|---|--------|---------|
-| 1 | 合同含 `<!-- GOLDEN_SMOKE_ABILITY_SLUG: xxx -->` 注释 | grep 合同文件，存在且 slug 为全小写连字符格式 |
-| 2 | 合同含 `<!-- GOLDEN_SMOKE_TARGET_ENV: xxx -->` 注释 | 枚举值必须是 local_api/mac_web/windows_cloud/windows_wechat/linux_server 之一 |
-| 3 | 每个 Scenario 有 `<!-- GOLDEN_SMOKE_SCENARIO: name -->` 标记 | name 为英文小写连字符（如 create-task-verify-db） |
-| 4 | 每个 Scenario bash 块自包含（`set -e`，不引用 harness 专属变量） | 检查 bash 块是否含 `$SPRINT_DIR` / `$TASK_ID` / `$CONTRACT_BRANCH` 等 |
-| 5 | windows_cloud / windows_wechat Scenario 有 `<!-- GOLDEN_SMOKE_SKIP_IN_CI: true -->` | 这类 Scenario 在 CI 自动 skip，不是不写 |
-| 6 | 至少 1 个非 skip 的 Scenario（mac_web 或 local_api 目标的合同必须有能在 CI 跑的场景） | windows-only 合同可豁免（所有 Scenario 均 skip），其他不可 |
-
-**评分标准**：
-- 6 项全满足 → **10 分**
-- 第 4 项失败（bash 块引用 harness 专属变量）→ **0 分**（golden-smoke 在 regression CI 里根本跑不了）
-- 第 1/2 项缺失 → **3 分**（Step 8 无法找到 ability_slug，沉淀中止）
-- 其余任一不满足 → **5 分**
-
-**N/A 规则**：若 PRD 明确标注 `golden_smoke: skip`（极少数情况，如一次性迁移任务），本维度填 10（N/A）。所有常规 ability/feature Sprint 必须审查本维度，不得跳过。
-
-**Reviewer 操作**：逐项 grep 合同文件验证，不允许凭肉眼估计，每项结论注明 "grep 结果：存在/不存在"。
 
 ---
 
