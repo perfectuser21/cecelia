@@ -314,7 +314,7 @@ describe('runScenarios', () => {
 
 // ─── runStagingE2E 全流程 ───────────────────────────────────────────────────────
 describe('runStagingE2E', () => {
-  const task = { id: 'task-1', payload: { initiative_id: 'init-1', pr_url: 'https://pr/1' } };
+  const task = { id: 'task-1', payload: { initiative_id: 'init-1', pr_url: 'https://pr/1', base_repo: 'perfectuser21/cecelia' } };
 
   function insertedResult(pool) {
     return pool.calls.find((c) => /INSERT INTO staging_e2e_results/.test(c.sql));
@@ -427,6 +427,27 @@ describe('runStagingE2E', () => {
       acquireStagingLock: async () => ({ release }),
     });
     expect(release).toHaveBeenCalledTimes(1);
+  });
+
+  it('unknown base_repo → 不触发 deploy，SKIP + pending_promote + 飞书通知', async () => {
+    const pool = makeMockPool();
+    const deploy = vi.fn();
+    const notifyMsgs = [];
+    const notify = async (msg) => { notifyMsgs.push(msg); };
+    const unknownTask = { id: 'task-u', payload: { initiative_id: 'init-u', pr_url: 'https://pr/u', base_repo: 'some-other/repo' } };
+    const r = await runStagingE2E(unknownTask, { pool, deploy, loadAcceptance: async () => ACCEPTANCE, notify });
+    expect(r.verdict).toBe('SKIP');
+    expect(r.reason).toBe('unknown_repo');
+    expect(r.promoteStatus).toBe('pending_promote');
+    expect(deploy).not.toHaveBeenCalled();
+    // 飞书通知含 pending 关键信息
+    expect(notifyMsgs.length).toBeGreaterThan(0);
+    expect(notifyMsgs[0]).toContain('Unknown Repo');
+    expect(notifyMsgs[0]).toContain('some-other/repo');
+    // staging_e2e_results 落库 verdict=SKIP
+    const ins = insertedResult(pool);
+    expect(ins.params[3]).toBe('SKIP');
+    expect(updateTaskStatus).toHaveBeenCalledWith('task-u', 'completed');
   });
 
   // Slice9: staging 实测的 git SHA 落库（tested_sha），promote 时比对防 SHA 漂移。

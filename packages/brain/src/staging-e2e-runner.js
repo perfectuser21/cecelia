@@ -712,6 +712,30 @@ export async function runStagingE2E(task, opts = {}) {
     //    非内部线走 staging-deploy.sh 部署 brain 到 :5222。
     const line = resolveLine(baseRepo);
 
+    // unknown 线（第三方 repo）：不跑任何 deploy，直接 pending_promote + 飞书通知。
+    // 避免把 cecelia brain 错误部署到 :5222（错误目标）。
+    if (line === 'unknown') {
+      await recordResult(dbPool, { ...base, verdict: 'SKIP', reason: 'unknown_repo' });
+      await updatePromoteStatus(dbPool, prUrl, PROMOTE_STATUS.PENDING_PROMOTE);
+      const notify = opts.notify || sendFeishu;
+      try {
+        await notify(
+          `⏳ [Unknown Repo] staging E2E 跳过（未知 base_repo），等主理人确认后手动上线\n`
+          + `initiative: ${initiativeId || '?'}\nPR: ${prUrl || '?'}\nbase_repo: ${baseRepo || '(缺失)'}\n`
+          + `confirm: POST /api/brain/harness/promote/<resultId>`
+        );
+      } catch (e) {
+        console.warn(`[staging-e2e] unknown repo pending 通知失败（忽略）: ${e.message}`);
+      }
+      await writeTaskResult(dbPool, task.id, {
+        verdict: 'SKIP', reason: 'unknown_repo',
+        pr_url: prUrl, initiative_id: initiativeId,
+        promote_status: PROMOTE_STATUS.PENDING_PROMOTE,
+      });
+      await updateTaskStatus(task.id, 'completed');
+      return { success: true, taskId: task.id, verdict: 'SKIP', reason: 'unknown_repo', promoteStatus: PROMOTE_STATUS.PENDING_PROMOTE };
+    }
+
     // Slice6: staging 单实例串行 — deploy 前抢 advisory lock，防 N 路并发互相 docker rm 顶掉。
     // 抢不到（别路正占同端口实例）→ SKIP staging_busy（不部署）；抢到 → finally 必释放。
     const lockPort = line === 'internal' ? DASHBOARD_STAGING_PORT : STAGING_PORT;

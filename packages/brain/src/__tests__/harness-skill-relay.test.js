@@ -252,4 +252,11 @@ describe('deriveReviewRequired(P2-1:新功能人审/非新功能 auto merge)', (
     const prompt = deps.spawnFn.mock.calls[0][0].prompt;
     expect(prompt).toMatch(/REVIEW_REQUIRED=true/);
   });
+
+  it('spawn env 含 HARNESS_WORKTREE_HOST（宿主 worktree 绝对路径，供 controller Step 5 curl judge API）', async () => {
+    const deps = makeDeps({ ensureWt: vi.fn().mockResolvedValue('/workspace/.claude/worktrees/harness-v2/task-aaaa') });
+    await spawnSkillRelaySession(TASK, deps);
+    const spawnOpts = deps.spawnFn.mock.calls[0][0];
+    expect(spawnOpts.env.HARNESS_WORKTREE_HOST).toBe('/workspace/.claude/worktrees/harness-v2/task-aaaa');
+  });
 });
