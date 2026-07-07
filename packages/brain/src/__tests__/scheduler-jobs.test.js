@@ -15,6 +15,9 @@ vi.mock('../capture-digestion.js', () => ({
 vi.mock('../daily-backup-scheduler.js', () => ({
   scheduleDailyBackup: vi.fn().mockResolvedValue({ inWindow: false, triggered: false, alreadyDone: false }),
 }));
+vi.mock('../battle-report.js', () => ({
+  maybeGenerateBattleReport: vi.fn().mockResolvedValue({ skipped: true, reason: 'outside_window' }),
+}));
 
 import {
   runSchedulerJobsOnce,
@@ -28,6 +31,7 @@ import { maybeTriggerStrategySession } from '../active-goals-zero-trigger.js';
 import { runConversationDigest } from '../conversation-digest.js';
 import { runCaptureDigestion } from '../capture-digestion.js';
 import { scheduleDailyBackup } from '../daily-backup-scheduler.js';
+import { maybeGenerateBattleReport } from '../battle-report.js';
 
 function makePool() {
   return { query: vi.fn().mockResolvedValue({ rows: [] }) };
@@ -38,9 +42,9 @@ describe('scheduler-jobs 注册表', () => {
     vi.clearAllMocks();
   });
 
-  it('JOBS 注册了 4 个首批 job', () => {
+  it('JOBS 注册了 6 个 job', () => {
     expect(JOBS.map((j) => j.name)).toEqual([
-      'arch-review', 'strategy-trigger', 'conversation-digest', 'capture-digestion', 'daily-backup',
+      'arch-review', 'strategy-trigger', 'conversation-digest', 'capture-digestion', 'daily-backup', 'battle-report',
     ]);
   });
 
@@ -52,7 +56,8 @@ describe('scheduler-jobs 注册表', () => {
     expect(runConversationDigest).toHaveBeenCalledWith();
     expect(runCaptureDigestion).toHaveBeenCalledWith();
     expect(scheduleDailyBackup).toHaveBeenCalledWith(pool);
-    expect(results).toHaveLength(5);
+    expect(maybeGenerateBattleReport).toHaveBeenCalledWith(pool);
+    expect(results).toHaveLength(6);
     expect(results.every((r) => r.ok)).toBe(true);
   });
 
@@ -80,7 +85,7 @@ describe('scheduler-jobs 注册表', () => {
     const pool = makePool();
     await runSchedulerJobsOnce(pool);
     const sentinelCalls = pool.query.mock.calls.filter(([sql]) => sql.includes('working_memory'));
-    expect(sentinelCalls).toHaveLength(5);
+    expect(sentinelCalls).toHaveLength(6);
     expect(sentinelCalls[0][0]).toMatch(/ON CONFLICT \(key\) DO UPDATE/);
     expect(sentinelCalls[0][1][0]).toBe(`${SENTINEL_KEY_PREFIX}arch-review`);
     const payload = JSON.parse(sentinelCalls[0][1][1]);
@@ -91,7 +96,7 @@ describe('scheduler-jobs 注册表', () => {
   it('哨兵写入失败不影响 job 结果也不抛', async () => {
     const pool = { query: vi.fn().mockRejectedValue(new Error('db down')) };
     const results = await runSchedulerJobsOnce(pool);
-    expect(results).toHaveLength(5);
+    expect(results).toHaveLength(6);
     expect(results.every((r) => r.ok)).toBe(true);
   });
 });
@@ -125,7 +130,7 @@ describe('scheduler-jobs loop 幂等与重入守卫', () => {
     expect(t2).toBe(t1);
   });
 
-  it('前进 60s 触发一轮，4 个 handler 各被调用一次', async () => {
+  it('前进 60s 触发一轮，各 handler 各被调用一次', async () => {
     const pool = makePool();
     startSchedulerJobsLoop(pool);
     await vi.advanceTimersByTimeAsync(60 * 1000);
