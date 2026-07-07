@@ -21,6 +21,8 @@ DMS="scripts/sentinel/dead-man-switch.sh"
 if [[ -f "$DMS" ]] && bash -n "$DMS" 2>/dev/null; then ok "dead-man-switch.sh 存在且语法正确"; else fail "dead-man-switch.sh 缺失/语法错"; fi
 grep -q "scheduler_jobs_expected" "$DMS" && ok "哨兵读库中预期数（非硬编码）" || fail "哨兵仍硬编码预期数"
 [[ -f "scripts/sentinel/com.cecelia.dead-man-switch.plist" ]] && ok "launchd plist 模板在位" || fail "plist 缺失"
+grep -q "date '+%m-%d %H:%M:%S'" "$DMS" && ok "日志带时间戳前缀" || fail "日志缺时间戳"
+grep -q "orbctl start" "$DMS" && ok "含 docker 引擎自愈分支（orbctl start）" || fail "缺 docker 引擎自愈分支"
 
 echo "  结果: $PASS 通过 / $FAIL 失败"
 [[ "$FAIL" == "0" ]] || exit 1
