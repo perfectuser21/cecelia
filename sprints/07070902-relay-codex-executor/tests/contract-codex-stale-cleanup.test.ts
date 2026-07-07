@@ -20,7 +20,7 @@ const mockDb = {
   query: vi.fn(),
 };
 
-vi.mock('../../../../packages/brain/src/db.js', () => ({
+vi.mock('../../../packages/brain/src/db.js', () => ({
   default: mockDb,
   query: (...args: unknown[]) => mockDb.query(...args),
 }));
@@ -34,7 +34,7 @@ let scanStuckHarness: () => Promise<void>;
 beforeEach(async () => {
   vi.resetAllMocks();
   // Dynamic import so mock is applied first
-  const mod = await import('../../../../packages/brain/src/harness-relay-watchdog.js');
+  const mod = await import('../../../packages/brain/src/harness-relay-watchdog.js');
   scanStuckHarness = (mod as { scanStuckHarness: () => Promise<void> }).scanStuckHarness;
 });
 

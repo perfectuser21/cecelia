@@ -6,8 +6,12 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'fs';
 import path from 'path';
+import { fileURLToPath } from 'url';
 
-const ENTRYPOINT = path.resolve('/workspace/docker/cecelia-runner/entrypoint.sh');
+// 测试文件位于 sprints/<sprint-dir>/tests/，向上 3 层到 repo root
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const REPO_ROOT = path.resolve(__dirname, '../../../');
+const ENTRYPOINT = path.join(REPO_ROOT, 'docker/cecelia-runner/entrypoint.sh');
 
 describe('B7: entrypoint.sh CECELIA_EXECUTOR=codex 分支', () => {
   it('entrypoint.sh 包含 CECELIA_EXECUTOR=codex 条件分支', () => {
