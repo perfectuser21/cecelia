@@ -162,4 +162,12 @@ describe('resumeStalledHarnessDrivers — A 阶段(planner/GAN) 静默卡死覆�
     expect(sqlB).not.toBe('');
     expect(bUpdSql).toMatch(/"resume_from_checkpoint":\s*true/);
   });
+
+  it('phase A 查询排除 skill-relay 任务（relay 不写活性信号，误判会双 spawn，Issue df107724）', async () => {
+    mockPoolQuery.mockImplementation(async () => ({ rows: [] }));
+    await resumeStalledHarnessDrivers(OPTS);
+    const sqlA = findPhaseASelect();
+    expect(sqlA).not.toBe('');
+    expect(sqlA).toMatch(/orchestrator'\s+IS\s+DISTINCT\s+FROM\s+'skill-relay'/i);
+  });
 });
