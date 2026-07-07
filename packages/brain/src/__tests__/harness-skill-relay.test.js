@@ -27,6 +27,8 @@ function makeDeps(overrides = {}) {
     resolveAccountFn: vi.fn().mockResolvedValue(undefined),
     tokenFn: vi.fn().mockResolvedValue('gh-token'),
     now: () => new Date('2026-07-04T12:00:00Z'),
+    // 去重守卫默认放行（无存活容器）；单独测试里覆盖为返回容器 id 模拟"容器仍在跑"
+    execFn: vi.fn().mockReturnValue(''),
     ...overrides,
   };
 }
@@ -97,6 +99,40 @@ describe('spawnSkillRelaySession', () => {
     const r = await spawnSkillRelaySession(TASK, deps);
     expect(r.ok).toBe(false);
     expect(deps.spawnFn).not.toHaveBeenCalled();
+  });
+});
+
+describe('live-container 去重守卫（P1 bug 39b97ade：Brain 重启后误 requeue 导致双 spawn）', () => {
+  it('docker ps 发现同名容器仍在跑 → 不 spawn，返回 deferred=true reason=live_container_guard', async () => {
+    const deps = makeDeps({
+      execFn: vi.fn().mockReturnValue('c0ffee123456\n'),
+    });
+    const r = await spawnSkillRelaySession(TASK, deps);
+
+    expect(r.ok).toBe(false);
+    expect(r.deferred).toBe(true);
+    expect(r.reason).toBe('live_container_guard');
+    expect(deps.spawnFn).not.toHaveBeenCalled();
+    // docker ps 过滤条件必须匹配 harness-relay-watchdog.js 同款命名规约（cecelia-relay-<task8>）
+    expect(deps.execFn).toHaveBeenCalledWith(
+      expect.stringContaining('cecelia-relay-aaaabbbb')
+    );
+  });
+
+  it('docker ps 无匹配容器（空输出）→ 正常 spawn', async () => {
+    const deps = makeDeps({ execFn: vi.fn().mockReturnValue('') });
+    const r = await spawnSkillRelaySession(TASK, deps);
+    expect(r.ok).toBe(true);
+    expect(deps.spawnFn).toHaveBeenCalledOnce();
+  });
+
+  it('docker ps 命令报错（docker 不可达）→ fail-open，仍正常 spawn', async () => {
+    const deps = makeDeps({
+      execFn: vi.fn(() => { throw new Error('docker daemon unreachable'); }),
+    });
+    const r = await spawnSkillRelaySession(TASK, deps);
+    expect(r.ok).toBe(true);
+    expect(deps.spawnFn).toHaveBeenCalledOnce();
   });
 });
 
