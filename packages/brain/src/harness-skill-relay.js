@@ -374,11 +374,34 @@ async function _spawnHeadedSession(task, { dbPool, now, short, initiativeId, dep
     `任务标题：${task.title || ''}`,
   ].join('\n');
 
+  // 降级：real ssh 执行（生产路径）。用文件顶部已 import 的 execSync（ESM 下 require 未定义会直接崩）。
+  // 提到函数级作用域：雷9 trust preseed 与下方 prompt/tmux 写入共用同一条 execFn 通道
+  // （生产环境 deps.sshSpawnFn 恒为 undefined，只有测试会注入它——trust preseed 因此
+  // 始终经 execFn 走，与是否注入 sshSpawnFn 无关，两条通道不会打架）。
+  const execFn = deps.execFn
+    || ((cmd, opts) => execSync(cmd, { encoding: 'utf8', timeout: 30000, ...opts }));
+
+  // ─── 雷9：codex TUI 首次进新目录会卡"Do you trust the contents of this directory?"
+  // 交互确认——trust 记忆按精确项目目录写进 $CODEX_HOME/config.toml 的 [projects."<dir>"]，
+  // 每条 harness worktree 都是新路径 → 每次首航都卡门（R4 靠人工 send-keys Enter 放行）。
+  // 在起 tmux 之前，经同一条 ssh 通道幂等预写 trust 段：
+  //   ①config.toml 不存在（账号未初始化）→ 跳过 + warn，不硬造文件，让 codex 自己处理
+  //   ②该 worktree 表已存在 → grep 命中跳过，不产生重复 TOML 表
+  if (codexRelayHome) {
+    const codexConfigPath = `${codexRelayHome}/config.toml`;
+    try {
+      execFn(
+        `ssh ${SSH_OPTS} ${sshHost} "if [ -f ${codexConfigPath} ]; then grep -qF '[projects.\\"${worktreePath}\\"]' ${codexConfigPath} || printf '\\n[projects.\\"${worktreePath}\\"]\\ntrust_level = \\"trusted\\"\\n' >> ${codexConfigPath}; else echo 'codex config.toml not found, skip trust preseed' >&2; fi"`
+      );
+    } catch (trustErr) {
+      console.warn(`[skill-relay][headed] trust preseed 失败（non-fatal，交给 codex 自行处理交互确认）: ${trustErr.message}`);
+    }
+  } else {
+    console.warn('[skill-relay][headed] CODEX_RELAY_HOME 未配置，跳过 trust preseed');
+  }
+
   const sshSpawnFn = deps.sshSpawnFn;
   if (!sshSpawnFn) {
-    // 降级：real ssh 执行（生产路径）。用文件顶部已 import 的 execSync（ESM 下 require 未定义会直接崩）。
-    const execFn = deps.execFn
-      || ((cmd, opts) => execSync(cmd, { encoding: 'utf8', timeout: 30000, ...opts }));
     // 写 prompt 文件到宿主（0600 权限）——用 ssh stdin 交付，避免 prompt 内联进
     // 双引号/tmux 单引号时被反引号/引号/$ 炸穿（printf + JSON.stringify 内联已实证必炸）。
     try {

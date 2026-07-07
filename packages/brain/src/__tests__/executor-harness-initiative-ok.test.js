@@ -180,6 +180,12 @@ describe('classifyHarnessRelayAction — P1 bug 39b97ade：deferred 结果之前
     expect(classifyHarnessRelayAction({ ok: true })).toBe('completed');
   });
 
+  it('雷8（headed 变体·2856dada R4 实证）：ok=true + mode=skill-relay-codex-headed → relay_spawned，不是 completed', () => {
+    expect(
+      classifyHarnessRelayAction({ ok: true, mode: 'skill-relay-codex-headed', tmuxSession: 'codex-relay-abc' })
+    ).toBe('relay_spawned');
+  });
+
   it('ok=false 且非 deferred → failed', () => {
     expect(classifyHarnessRelayAction({ ok: false, error: 'boom' })).toBe('failed');
   });

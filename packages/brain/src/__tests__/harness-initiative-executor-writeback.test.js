@@ -312,4 +312,14 @@ describe('triggerCeceliaRun — skill-relay spawn 语义（Issue df107724）', (
       expect.objectContaining({ error_message: expect.any(String) })
     );
   });
+
+  it('雷8（headed 变体·2856dada R4 实证）：relay spawn 成功（ok=true, mode=skill-relay-codex-headed）→ 不得标 completed/failed，留 in_progress', async () => {
+    mockSpawnRelay.mockResolvedValue({ ok: true, mode: 'skill-relay-codex-headed', tmuxSession: 'codex-relay-test-1' });
+    const result = await triggerCeceliaRun(RELAY_TASK);
+    expect(result.success).toBe(true);
+    expect(mockSpawnRelay).toHaveBeenCalledTimes(1);
+    const statuses = mockUpdateTaskStatus.mock.calls.map((c) => c[1]);
+    expect(statuses).not.toContain('completed');
+    expect(statuses).not.toContain('failed');
+  });
 });
