@@ -13,7 +13,7 @@ target_environment: mmv（生产派发）+ hk-vps（HK 网关/报告发布）
 1. **单 slot 串行**：Brain 同时只跑 1 个 skill_eval 任务（MAX_CONCURRENT_SKILL_EVAL=1）
 2. **背压拒绝**：pending skill_eval ≥ 20 → 拒新，返回"排队已满"，不建 task
 3. **额度预检**：派发前验 5h Sonnet 池 ≥ 85% 且 7d 池 ≥ 90%；不足 → 拦截 + 飞书告警，task 保持 pending
-4. **硬校验五件套**：zip 魔数 / 解压 ≤ 50MB / 压缩比 ≤ 100:1（≤2000 文件）/ 必含唯一 SKILL.md / 无路径穿越
+4. **硬校验六件套**：zip 魔数 / zip 大小 ≤ MAX_ZIP_MB / 解压 ≤ 50MB 且 ≤2000 文件 / 压缩比 ≤ 100:1 / 必含唯一 SKILL.md / 无路径穿越
 5. **代理令牌隔离**：HK 反代注入 X-Eval-Proxy-Token；Brain 端点验此令牌（403 否则）；令牌存 1Password CS + ~/.credentials/
 6. **hash 去重**：zip SHA-256 命中 completed → 直返历史 report_url；命中 in_progress → 合流返回既有 task_id，不新建
 7. **报告 Basic Auth**：report_url 不带 Basic Auth → 401；报告文件永久留存

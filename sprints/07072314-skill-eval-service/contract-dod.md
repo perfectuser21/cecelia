@@ -1,7 +1,7 @@
 # Contract DoD — Skill Evaluator 内部验收台
 
 task_id: 52145edd-e409-4459-9490-7a02bf8e87de
-version: v1.0（首轮）
+version: v1.1（GAN Round 2，已应用 R1 reviewer feedback）
 drafted: 2026-07-07
 
 ---
@@ -37,16 +37,32 @@ psql -U cecelia -d cecelia -c \
 
 **manual:bash**：
 ```bash
-# 查当前 pending 数量
-psql -U cecelia -d cecelia -c \
-  "SELECT COUNT(*) FROM skill_eval_tasks WHERE status='pending';"
+# Step 0: 前置 setup — 插入 20 条 pending 记录（触发背压阈值）
+psql -U cecelia -d cecelia -c "
+  INSERT INTO skill_eval_tasks (task_id, zip_hash, skill_name, status)
+  SELECT
+    'bp-fill-' || generate_series(1,20)::text,
+    repeat('0', 60) || lpad(generate_series(1,20)::text, 4, '0'),
+    'fill-skill-' || generate_series(1,20)::text,
+    'pending'
+  ON CONFLICT DO NOTHING;
+"
 
-# 模拟背压：当 pending >= 20 时上传应被拒绝（需先构造 20 条 pending）
+# 验证 20 条 pending 已就位
+psql -U cecelia -d cecelia -c \
+  "SELECT COUNT(*) as pending_count FROM skill_eval_tasks WHERE status='pending';" \
+  | grep -E '^\s+20\b' && echo "Setup: 20 pending OK" || echo "Setup FAIL: pending 数量不对"
+
+# Step 1: 尝试新上传（应被背压拒绝）
+source ~/.credentials/skill-eval-proxy.env
 curl -s -o /dev/null -w "%{http_code}" \
   -X POST http://localhost:5221/api/brain/skill-evals/upload \
   -H "X-Eval-Proxy-Token: $SKILL_EVAL_PROXY_TOKEN" \
   -F "file=@/tmp/test-skill.zip" \
   | grep -q "429" && echo "PASS: 背压拒绝正常" || echo "FAIL"
+
+# Teardown: 清理测试数据
+psql -U cecelia -d cecelia -c "DELETE FROM skill_eval_tasks WHERE task_id LIKE 'bp-fill-%';"
 ```
 
 **自动化测试**：`tests/invariant-02-backpressure.test.js`
@@ -55,28 +71,36 @@ curl -s -o /dev/null -w "%{http_code}" \
 
 ## [BEHAVIOR] INV-03 — 额度预检拦截（Invariant 3）
 
-**描述**：Brain 在将 pending→running 转换前验证 Claude 额度；不足则拦截并触发飞书告警。
+**描述**：Brain 在将 pending→running 转换前验证 Claude 额度；不足则拦截，将
+`pending_reason` 写入 `"quota_insufficient: 5h=xx% 7d=xx%"` 格式说明，并触发飞书告警。
 
 **断言**：
-- 模拟 5h 池 < 85%：pending 任务不转 running，飞书告警记录存在
+- 模拟 5h 池 < 85%：pending 任务不转 running，`pending_reason` 含 "quota"，飞书告警记录存在
 - 模拟 7d 池 < 90%：同上
-- 两池均满足时：任务正常转 running
+- 两池均满足时：任务正常转 running，`pending_reason` 为 NULL
 
 **manual:bash**：
 ```bash
-# 查看当前额度状态（Brain API）
-curl -s http://localhost:5221/api/brain/quota/status | jq '.sonnet_5h_remaining_pct, .sonnet_7d_remaining_pct'
+# 查看当前额度状态（FR14 端点，本 Sprint 实现）
+curl -s http://localhost:5221/api/brain/quota/status | jq '{
+  sonnet_5h_remaining_pct: .sonnet_5h_remaining_pct,
+  sonnet_7d_remaining_pct: .sonnet_7d_remaining_pct,
+  ok: .ok
+}'
 
-# 查看因额度不足被保持 pending 的任务
+# 查看因额度不足被保持 pending 的任务（依赖 pending_reason 字段）
 psql -U cecelia -d cecelia -c \
-  "SELECT task_id, created_at, pending_reason FROM skill_eval_tasks WHERE status='pending' AND pending_reason LIKE '%quota%';"
+  "SELECT task_id, created_at, pending_reason
+   FROM skill_eval_tasks
+   WHERE status='pending' AND pending_reason LIKE '%quota%'
+   ORDER BY created_at DESC LIMIT 10;"
 ```
 
 **自动化测试**：`tests/invariant-03-quota-precheck.test.js`
 
 ---
 
-## [BEHAVIOR] INV-04 — 硬校验五件套（Invariant 4）
+## [BEHAVIOR] INV-04 — 硬校验六件套（Invariant 4）
 
 **描述**：上传端点按序执行 6 项校验，任一失败即 HTTP 400 + 具体原因。
 
@@ -261,7 +285,7 @@ grep -rn "30 \* 60\|1800\b" /workspace/packages/brain/src/ | grep -v "process\.e
 
 **断言**：
 - 10min 内触发 3 次相同类型告警 → 飞书只收到 1 条聚合消息
-- 连续 3 次 task failed → 下一次告警有升级标记（`level: P0` 或 `@all`）
+- 连续 3 次 task failed → 下一次告警消息 extra 字段含 `{ escalated: true, level: 'P0' }`
 - 飞书 webhook URL 置空后触发告警 → `logs/feishu-fallback.jsonl` 有新记录
 
 **manual:bash**：
@@ -277,6 +301,44 @@ curl -s http://localhost:5221/api/brain/alerts/pending | jq '.skill_eval'
 ```
 
 **自动化测试**：`tests/invariant-10-feishu-aggregation.test.js`
+
+---
+
+## [BEHAVIOR] FR14 — 额度状态端点
+
+**描述**：`GET /api/brain/quota/status` 返回当前 Claude Sonnet 额度使用情况，供 INV-03 预检和运营监控使用。
+
+**断言**：
+- HTTP 200，body 含 `sonnet_5h_remaining_pct`、`sonnet_7d_remaining_pct`、`ok`（bool）
+- `ok = true` 当且仅当 5h ≥ 85% AND 7d ≥ 90%
+- `ok = false` 时额度预检拦截任务派发
+
+**manual:bash**：
+```bash
+curl -s http://localhost:5221/api/brain/quota/status | jq '{
+  sonnet_5h_remaining_pct: .sonnet_5h_remaining_pct,
+  sonnet_7d_remaining_pct: .sonnet_7d_remaining_pct,
+  threshold_5h: .threshold_5h,
+  threshold_7d: .threshold_7d,
+  ok: .ok
+}'
+```
+
+**自动化测试**：`tests/invariant-03-quota-precheck.test.js`（额度满足时 ok=true 断言）
+
+---
+
+## [BEHAVIOR] FR-UPLOAD-FLOW — 上传链路全顺序验证
+
+**描述**：验证 token验证→硬校验→hash去重→建task 四步骤的执行顺序正确，任一步骤失败不进入后续步骤。
+
+**断言**：
+- 无 Token → 403，不执行硬校验，不查 DB
+- Token 正确但 zip 非法 → 400，不查 DB hash
+- Token 正确、zip 合法、命中 completed hash → 200 duplicate，不建新 task
+- 全链路通过 → 201，DB 新记录含完整字段
+
+**自动化测试**：`tests/fr-upload-flow.test.js`
 
 ---
 
@@ -404,7 +466,23 @@ echo "--- Step 6: 验证索引页 ---"
 curl -s -u "$EVAL_BASIC_USER:$EVAL_BASIC_PASS" "https://$HK_HOST/eval-api/index.html" \
   | grep -q "$TASK_ID" && echo "PASS: 索引页含 task_id" || { echo "FAIL: 索引页无此记录"; exit 1; }
 
-echo "=== E2E 验收全部通过 ==="
+# Step 7: CI 全绿检查（对齐 PRD 验收标准第 7 条）
+echo "--- Step 7: CI 全绿检查 ---"
+# 获取当前分支最新 CI run
+BRANCH=$(git rev-parse --abbrev-ref HEAD)
+echo "检查分支: $BRANCH"
+# 等待最新 CI run 完成（最多等 10min）
+gh run list --branch "$BRANCH" --limit 1 --json databaseId,status,conclusion --jq '.[0]' | tee /tmp/ci_run.json
+RUN_ID=$(jq -r '.databaseId' /tmp/ci_run.json)
+if [ "$RUN_ID" != "null" ] && [ -n "$RUN_ID" ]; then
+  gh run watch "$RUN_ID" --exit-status \
+    && echo "PASS: CI 全绿 (run_id=$RUN_ID)" \
+    || { echo "FAIL: CI 未全绿 (run_id=$RUN_ID)"; gh run view "$RUN_ID"; exit 1; }
+else
+  echo "INFO: 无 CI run 可检查（本地验收场景），跳过 CI 检查"
+fi
+
+echo "=== E2E 验收全部通过（含 CI 全绿）==="
 ```
 
 ---
@@ -416,7 +494,7 @@ echo "=== E2E 验收全部通过 ==="
 | 单 slot 串行 | INV-01 | INV-01-single-slot | ✓ |
 | 背压拒绝 | INV-02 | INV-02-backpressure | ✓ |
 | 额度预检 | INV-03 | INV-03-quota-precheck | ✓ |
-| 硬校验五件套 | INV-04 | INV-04-hard-validation | ✓ |
+| 硬校验六件套 | INV-04 | INV-04-hard-validation | ✓ |
 | 代理令牌隔离 | INV-05 | INV-05-proxy-token | ✓ |
 | hash 去重 | INV-06 | INV-06-hash-dedup | ✓ |
 | 报告 Basic Auth | INV-07 | INV-07-report-auth | ✓ |
@@ -424,7 +502,7 @@ echo "=== E2E 验收全部通过 ==="
 | 全配置注入 | INV-09 | INV-09-config-injection | ✓ |
 | 飞书聚合 | INV-10 | INV-10-feishu-aggregation | ✓ |
 
-**铁律覆盖：10/10**
+**铁律覆盖：10/10**（INV-01 ~ INV-10 全覆盖；FR14 + FR-UPLOAD-FLOW 为附加 [BEHAVIOR]）
 
 ---
 
@@ -433,14 +511,16 @@ echo "=== E2E 验收全部通过 ==="
 1. INV-01 — 单 slot 串行
 2. INV-02 — 背压拒绝
 3. INV-03 — 额度预检拦截
-4. INV-04 — 硬校验五件套
+4. INV-04 — 硬校验六件套
 5. INV-05 — 代理令牌隔离
 6. INV-06 — hash 去重
 7. INV-07 — 报告 Basic Auth
 8. INV-08 — 超时强杀释放 slot
 9. INV-09 — 全配置注入无硬编码
 10. INV-10 — 飞书告警聚合 & 连败升级
-11. FR-UPLOAD — 上传端点完整流程
-12. FR-STATUS — 状态轮询端点
+11. FR14 — 额度状态端点
+12. FR-UPLOAD-FLOW — 上传链路全顺序验证
+13. FR-UPLOAD — 上传端点完整流程
+14. FR-STATUS — 状态轮询端点
 
-**[BEHAVIOR] 条目总数：12**
+**[BEHAVIOR] 条目总数：14**

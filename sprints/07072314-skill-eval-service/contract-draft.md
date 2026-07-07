@@ -3,7 +3,7 @@
 task_id: 52145edd-e409-4459-9490-7a02bf8e87de
 sprint_dir: sprints/07072314-skill-eval-service
 drafted: 2026-07-07
-version: v1.0（首轮，无 reviewer feedback）
+version: v1.1（GAN Round 2，已应用 R1 reviewer feedback）
 
 ---
 
@@ -37,6 +37,12 @@ docker-executor（mmv）
 
 ---
 
+## FR 列表补充
+
+> **FR14（P2）**：`GET /api/brain/quota/status` 端点，返回 `{ sonnet_5h_remaining_pct, sonnet_7d_remaining_pct, threshold_5h: 85, threshold_7d: 90, ok: bool }`。INV-03 manual:bash 依赖此端点进行手动验证。
+
+---
+
 ## 核心约定
 
 ### C1 — 代理令牌隔离
@@ -45,7 +51,7 @@ Brain POST /api/brain/skill-evals/upload 端点在入口处验证此头：
 - 缺失或值不匹配 → 立即 HTTP 403，不做任何业务处理。
 - 令牌存储于 1Password CS vault + `~/.credentials/skill-eval-proxy.env`（chmod 600）。
 
-### C2 — 上传硬校验五件套（顺序执行，任一失败即 HTTP 400）
+### C2 — 上传硬校验六件套（顺序执行，任一失败即 HTTP 400）
 1. zip 魔数：前 4 字节 = `50 4B 03 04`
 2. 压缩后文件大小 ≤ MAX_ZIP_MB（默认 10MB）
 3. 解压后总大小 ≤ 50MB 且文件数 ≤ 2000
@@ -67,7 +73,10 @@ pending 队列 ≥ 20 时，新上传请求返回 HTTP 429 `{ "error": "排队�
 Brain 在将 pending → running 转换前验证 Claude 额度：
 - 5h Sonnet 池剩余 ≥ 85%
 - 7d Sonnet 池剩余 ≥ 90%
-不足任一条件 → task 保持 pending，触发飞书告警（告警线：5h<70% 或 7d<80% 时加倍告警）。
+不足任一条件 → task 保持 pending，在 `skill_eval_tasks.pending_reason` 字段写入
+`"quota_insufficient: 5h=xx% 7d=xx%"` 形式的说明，同时触发飞书告警（告警线：5h<70% 或 7d<80% 时加倍告警）。
+
+额度状态通过 `GET /api/brain/quota/status` 可查（见 FR14）。
 
 ### C6 — 超时强杀
 评估进程运行超 `SKILL_EVAL_TIMEOUT`（默认 30min）→ 强杀容器 → task 状态 → `failed`（reason: timeout）→ 释放 slot → 飞书告警。
@@ -80,7 +89,7 @@ Brain 在将 pending → running 转换前验证 Claude 额度：
 
 ### C8 — 飞书告警聚合
 同类告警事件（同 type 字段）10min 内合并为 1 条消息。
-连续失败 ≥ 3 次 → 升级告警（@所有人 或加 P0 标签）。
+连续失败 ≥ 3 次 → 升级告警，告警消息中携带标记 `{ escalated: true, level: 'P0' }`（JSON 结构体注入飞书消息 extra 字段）。
 飞书 webhook 调用失败 → 本地日志文件兜底（`logs/feishu-fallback.jsonl`）。
 
 ### C9 — 全配置注入
@@ -101,8 +110,14 @@ Brain 在将 pending → running 转换前验证 Claude 额度：
 
 ### 场景 E1 — 正常上传 & 评估完成
 
+**Fixture 文件来源**：
+`~/incoming/日报skill-v1.2-7.7.zip` 由 ZenithJoy mmv 宿主机生成。
+生成步骤：在 mmv 上运行 `skill-evaluator pack --skill 日报skill --version v1.2` 输出到 `~/outgoing/`，
+再通过 `scp mmv:~/outgoing/日报skill-v1.2-7.7.zip ~/incoming/` 拉取到本地。
+文件含合法 `SKILL.md`（根目录唯一），解压后 < 50MB，文件数 < 2000。
+
 **前提**：
-- `~/incoming/日报skill-v1.2-7.7.zip` 存在（含合法 SKILL.md，未超限）
+- `~/incoming/日报skill-v1.2-7.7.zip` 已按上述步骤准备（含合法 SKILL.md，未超限）
 - HK Caddy 已配置 Basic Auth + `/eval-api/` 反代
 - mmv docker-executor 就绪，account2 可用
 
