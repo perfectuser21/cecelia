@@ -10,6 +10,8 @@
  * 这些测试在实现前都应 FAIL（TDD Red 阶段）。
  */
 import { describe, it, expect, vi, afterEach } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { spawnSkillRelaySession, isSkillRelayTask, _setActiveCodexRelays } from '../harness-skill-relay.js';
 
 // 静态导入在整个测试文件内共享同一份模块实例，_activeCodexRelays 是模块级计数器，
@@ -208,5 +210,129 @@ describe('4. ssh spawn 失败 → B4 回滚（ALERT + 回 queued）', () => {
       ([sql]) => /UPDATE tasks.*status.*queued/i.test(sql)
     );
     expect(rollbackCall, 'ssh 失败时必须回滚 task 到 queued').toBeTruthy();
+  });
+});
+
+/**
+ * 五连雷返修回归（task b2fdfd2b，首航 bc2b3ace 实证 spawn 即炸）：
+ * 之前的测试全部注入 sshSpawnFn（测试专用路径），从未真正跑过生产用的
+ * execFn 降级路径（无 sshSpawnFn 注入时的 real ssh 分支），把 ESM require 崩溃
+ * 等一系列生产 bug 全部藏住了。以下用例强制走 execFn 降级路径，覆盖生产真实形状。
+ */
+describe('5. 五连雷返修回归（execFn 降级路径 = 生产真实路径）', () => {
+  function makeNoSshDeps(overrides = {}) {
+    return {
+      pool: { query: vi.fn().mockResolvedValue({ rows: [] }) },
+      spawnFn: vi.fn().mockResolvedValue({ containerId: 'should-not-be-called' }),
+      sshSpawnFn: undefined, // 强制走 execFn 降级路径（生产真实形状）
+      loadSkill: vi.fn().mockReturnValue('SKILL_CONTENT_MARKER harness-controller 指令全文'),
+      ensureWt: vi.fn().mockResolvedValue('/tmp/wt/task-aaaabbbb'),
+      resolveAccountFn: vi.fn().mockResolvedValue(undefined),
+      tokenFn: vi.fn().mockResolvedValue('gh-token'),
+      now: () => new Date('2026-07-07T12:00:00Z'),
+      execFn: vi.fn().mockReturnValue(''),
+      ...overrides,
+    };
+  }
+
+  describe('雷1：ESM require 崩溃', () => {
+    it('源码不含 require( 调用（ESM 纯度守卫，防复发）', () => {
+      const filePath = fileURLToPath(new URL('../harness-skill-relay.js', import.meta.url));
+      const source = readFileSync(filePath, 'utf8');
+      expect(source).not.toMatch(/\brequire\(/);
+    });
+  });
+
+  describe('雷2：prompt 内联引号炸弹 → 改 ssh stdin 交付', () => {
+    it('无 sshSpawnFn 时，prompt 通过 execFn stdin(input) 写入，不用 printf/JSON 内联', async () => {
+      const calls = [];
+      const execFn = vi.fn((cmd, opts) => { calls.push({ cmd, opts }); return ''; });
+      const deps = makeNoSshDeps({ execFn });
+
+      const r = await spawnSkillRelaySession(HEADED_TASK, deps);
+      expect(r.ok).toBe(true);
+
+      const writeCall = calls.find((c) => /mkdir -p \/tmp\/cecelia-host-prompts/.test(c.cmd));
+      expect(writeCall, 'prompt 写入命令必须出现').toBeTruthy();
+      expect(writeCall.cmd).toContain('cat >');
+      expect(writeCall.cmd).not.toContain('printf');
+      expect(writeCall.cmd).not.toMatch(/JSON\.stringify/);
+      expect(writeCall.opts?.input).toBeTruthy();
+      expect(writeCall.opts.input).toContain('SKILL_CONTENT_MARKER');
+    });
+  });
+
+  describe('雷3：编造的 --prompt-file flag → 改远端 $(cat) 展开', () => {
+    it('tmux pane 命令用 codex "$(cat <promptFile>)"，不含 --prompt-file', async () => {
+      const calls = [];
+      const execFn = vi.fn((cmd, opts) => { calls.push({ cmd, opts }); return ''; });
+      const deps = makeNoSshDeps({ execFn });
+
+      const r = await spawnSkillRelaySession(HEADED_TASK, deps);
+      expect(r.ok).toBe(true);
+
+      const tmuxCall = calls.find((c) => /tmux new-session/.test(c.cmd));
+      expect(tmuxCall, 'tmux new-session 命令必须出现').toBeTruthy();
+      expect(tmuxCall.cmd).not.toContain('--prompt-file');
+      expect(tmuxCall.cmd).toMatch(/codex \\?"\\?\$\(cat /);
+    });
+  });
+
+  describe('雷4：缺 worktree → codex 在宿主 $HOME 裸奔', () => {
+    it('headed 分支调用 ensureWt 建 worktree，tmux 命令 cd 进该路径', async () => {
+      const calls = [];
+      const execFn = vi.fn((cmd, opts) => { calls.push({ cmd, opts }); return ''; });
+      const deps = makeNoSshDeps({ execFn });
+
+      const r = await spawnSkillRelaySession(HEADED_TASK, deps);
+      expect(r.ok).toBe(true);
+
+      expect(deps.ensureWt).toHaveBeenCalledOnce();
+      expect(deps.ensureWt).toHaveBeenCalledWith(
+        expect.objectContaining({ taskId: HEADED_TASK.id })
+      );
+
+      const tmuxCall = calls.find((c) => /tmux new-session/.test(c.cmd));
+      expect(tmuxCall).toBeTruthy();
+      expect(tmuxCall.cmd).toContain('cd /tmp/wt/task-aaaabbbb');
+    });
+  });
+
+  describe('雷5：缺 CODEX_HOME 注入 → 烧宿主默认账号', () => {
+    const ORIGINAL_CODEX_RELAY_HOME = process.env.CODEX_RELAY_HOME;
+
+    afterEach(() => {
+      if (ORIGINAL_CODEX_RELAY_HOME === undefined) {
+        delete process.env.CODEX_RELAY_HOME;
+      } else {
+        process.env.CODEX_RELAY_HOME = ORIGINAL_CODEX_RELAY_HOME;
+      }
+    });
+
+    it('CODEX_RELAY_HOME 已配置时，tmux pane 命令注入 CODEX_HOME=<值>', async () => {
+      process.env.CODEX_RELAY_HOME = '/Users/administrator/.codex-team2';
+      const calls = [];
+      const execFn = vi.fn((cmd, opts) => { calls.push({ cmd, opts }); return ''; });
+      const deps = makeNoSshDeps({ execFn });
+
+      const r = await spawnSkillRelaySession(HEADED_TASK, deps);
+      expect(r.ok).toBe(true);
+
+      const tmuxCall = calls.find((c) => /tmux new-session/.test(c.cmd));
+      expect(tmuxCall).toBeTruthy();
+      expect(tmuxCall.cmd).toContain('CODEX_HOME=/Users/administrator/.codex-team2');
+    });
+
+    it('CODEX_RELAY_HOME 显式配置为空字符串时，headed 分支 loud-fail（不绕过 B6 门禁）', async () => {
+      process.env.CODEX_RELAY_HOME = '';
+      const deps = makeNoSshDeps();
+
+      const r = await spawnSkillRelaySession(HEADED_TASK, deps);
+
+      expect(r.ok).toBe(false);
+      expect(r.error).toMatch(/CODEX_RELAY_HOME/);
+      // 门禁在 spawn 任何东西之前拦截
+      expect(deps.ensureWt).not.toHaveBeenCalled();
+    });
   });
 });
