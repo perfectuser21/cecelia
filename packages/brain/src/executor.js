@@ -3291,22 +3291,14 @@ async function triggerCeceliaRun(task) {
 
     try {
       const result = await runHarnessInitiativeRouter(task);
+      // B48 ok=null=waiting；relay_spawned=spawn成功非完成（Issue df107724）；
+      // deferred=软闸/去重护栏非失败（P1 bug 39b97ade，见 classifyHarnessRelayAction）。
       const action = classifyHarnessRelayAction(result);
       if (action === 'waiting') {
-        // B48: ok=null → graph 在 interrupt 等待（planner/callback 还没回来），
-        // 留 in_progress，reportNode B1 fix 会在完成时回写 completed/failed。
         console.log(`[executor] harness graph interrupted/waiting task=${task.id} thread=${result.threadId}, leaving in_progress`);
       } else if (action === 'relay_spawned') {
-        // relay 的 ok=true 只代表 session spawn 成功（detached 在跑），不是 sprint 跑完。
-        // 完成态由 harness-report 回写（Issue df107724：spawn 成功即标 completed 是假成功）。
         console.log(`[executor] skill-relay session spawned task=${task.id} container=${result.containerId}, leaving in_progress`);
       } else if (action === 'deferred') {
-        // deferred（codex_concurrent_limit / codex_quota_low / live_container_guard 等）：
-        // 这是"暂不点火"的软闸/去重护栏语义，不是失败——之前这里没有专门分支，
-        // ok=false 会直接落到最终 else 被标 failed（P1 bug 39b97ade 修复的一部分：
-        // spawnSkillRelaySession 新增的 live_container_guard 若被标 failed，会让仍在跑的
-        // relay 任务被判定为终态，反而制造出新的重复 spawn 触发点）。留 in_progress，
-        // task 行由 dispatcher 已 claim/in_progress，等下次 tick 或看门狗自然处理。
         console.log(`[executor] skill-relay session deferred task=${task.id} reason=${result.reason || 'unknown'}, leaving in_progress`);
       } else if (action === 'completed') {
         await updateTaskStatus(task.id, 'completed');
