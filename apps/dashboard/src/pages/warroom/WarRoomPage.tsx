@@ -19,6 +19,7 @@ import {
   FileText, ExternalLink, Activity, CircleDot, Maximize, Minimize,
   Crosshair, Archive, EyeOff, Map as MapIcon, ChevronRight,
 } from 'lucide-react';
+import { BattleBanner, HandoffStream, DecisionStream } from './WarRoomPanels';
 
 const ARCHIVE_LS_KEY = 'warroom:archived:v1';
 // 时间范围选项 → 后端 ?days=
@@ -1326,6 +1327,8 @@ export default function WarRoomPage() {
         </div>
       </div>
 
+      <BattleBanner />
+
       {/* ── 三栏 ── */}
       <div className="flex flex-1 overflow-hidden">
         {/* 左：筛选 + Area 导航 */}
@@ -1509,6 +1512,10 @@ export default function WarRoomPage() {
             />
           ) : (
             <>
+              <div className="grid grid-cols-1 xl:grid-cols-2 gap-3 px-4 pt-3">
+                <HandoffStream />
+                <DecisionStream />
+              </div>
               {loading && !data && (
                 <div className="flex items-center gap-2 px-4 py-8 text-slate-600 text-sm">
                   <div className="w-4 h-4 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" /> 加载中…
