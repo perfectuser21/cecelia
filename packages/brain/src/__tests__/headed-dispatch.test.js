@@ -10,7 +10,7 @@
  * 这些测试在实现前都应 FAIL（TDD Red 阶段）。
  */
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { spawnSkillRelaySession, isSkillRelayTask } from '../../../packages/brain/src/harness-skill-relay.js';
+import { spawnSkillRelaySession, isSkillRelayTask } from '../harness-skill-relay.js';
 
 const HEADED_TASK = {
   id: 'aaaabbbb-cccc-dddd-eeee-ffff00002222',

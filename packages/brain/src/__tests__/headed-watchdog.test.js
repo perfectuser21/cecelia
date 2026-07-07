@@ -9,7 +9,7 @@
  * 这些测试在实现前都应 FAIL（TDD Red 阶段）。
  */
 import { describe, it, expect, vi } from 'vitest';
-import { resumeStalledRelayRuns } from '../../../packages/brain/src/harness-relay-watchdog.js';
+import { resumeStalledRelayRuns } from '../harness-relay-watchdog.js';
 
 /** 构造 headed run 的 DB 行 */
 function makeHeadedRun(overrides = {}) {
