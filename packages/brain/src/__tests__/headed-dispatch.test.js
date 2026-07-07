@@ -336,3 +336,64 @@ describe('5. 五连雷返修回归（execFn 降级路径 = 生产真实路径）
     });
   });
 });
+
+/**
+ * 雷6：ssh 目标容器内错配（R2 首航 8e2bbaef 实证）。
+ * brain 跑在容器里时，默认 'ssh localhost' 连到容器自己（无 sshd）→ Connection refused。
+ * 修法对齐 spawn/host-executor.js 先例：/.dockerenv 存在 → administrator@host.docker.internal，
+ * 且 ssh 必须带 BatchMode/StrictHostKeyChecking/UserKnownHostsFile 三件套（非交互环境）。
+ */
+describe('6. 雷6：ssh 目标容器感知 + 非交互 flags', () => {
+  function makeNoSshDeps(overrides = {}) {
+    return {
+      pool: { query: vi.fn().mockResolvedValue({ rows: [] }) },
+      spawnFn: vi.fn().mockResolvedValue({ containerId: 'should-not-be-called' }),
+      sshSpawnFn: undefined,
+      loadSkill: vi.fn().mockReturnValue('SKILL_CONTENT_MARKER'),
+      ensureWt: vi.fn().mockResolvedValue('/tmp/wt/task-aaaabbbb'),
+      resolveAccountFn: vi.fn().mockResolvedValue(undefined),
+      tokenFn: vi.fn().mockResolvedValue('gh-token'),
+      now: () => new Date('2026-07-07T12:00:00Z'),
+      execFn: vi.fn().mockReturnValue(''),
+      ...overrides,
+    };
+  }
+
+  it('容器内（inDockerFn=true）→ ssh 目标 administrator@host.docker.internal + BatchMode 三件套', async () => {
+    const calls = [];
+    const execFn = vi.fn((cmd, opts) => { calls.push({ cmd, opts }); return ''; });
+    const deps = makeNoSshDeps({ execFn, inDockerFn: () => true });
+    const r = await spawnSkillRelaySession(HEADED_TASK, deps);
+    expect(r.ok).toBe(true);
+    const sshCalls = calls.filter((c) => /^ssh /.test(c.cmd));
+    expect(sshCalls.length).toBeGreaterThanOrEqual(2);
+    for (const c of sshCalls) {
+      expect(c.cmd).toContain('administrator@host.docker.internal');
+      expect(c.cmd).toContain('-o BatchMode=yes');
+      expect(c.cmd).toContain('-o StrictHostKeyChecking=no');
+      expect(c.cmd).toContain('-o UserKnownHostsFile=/dev/null');
+      expect(c.cmd).not.toMatch(/ssh (-o [^ ]+ )*localhost/);
+    }
+  });
+
+  it('非容器（inDockerFn=false）→ 默认 localhost（宿主直跑场景）', async () => {
+    const calls = [];
+    const execFn = vi.fn((cmd, opts) => { calls.push({ cmd, opts }); return ''; });
+    const deps = makeNoSshDeps({ execFn, inDockerFn: () => false });
+    const r = await spawnSkillRelaySession(HEADED_TASK, deps);
+    expect(r.ok).toBe(true);
+    const sshCalls = calls.filter((c) => /^ssh /.test(c.cmd));
+    expect(sshCalls.some((c) => c.cmd.includes('localhost'))).toBe(true);
+  });
+
+  it('payload.ssh_host 显式指定时永远赢', async () => {
+    const calls = [];
+    const execFn = vi.fn((cmd, opts) => { calls.push({ cmd, opts }); return ''; });
+    const deps = makeNoSshDeps({ execFn, inDockerFn: () => true });
+    const task = { ...HEADED_TASK, payload: { ...HEADED_TASK.payload, ssh_host: 'me@custom-host' } };
+    const r = await spawnSkillRelaySession(task, deps);
+    expect(r.ok).toBe(true);
+    const sshCalls = calls.filter((c) => /^ssh /.test(c.cmd));
+    expect(sshCalls.every((c) => c.cmd.includes('me@custom-host'))).toBe(true);
+  });
+});
