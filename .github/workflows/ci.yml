@@ -14,6 +14,15 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
+# B6（extraMounts 凭据挂载接线）：executor=codex 的 harness-skill-relay 分支现要求
+# CODEX_RELAY_HOME 已配置，未配置时 loud-fail 不 spawn（demo task a150998c 根治）。
+# CI 里跑既有 sprints/07070902-relay-codex-executor/tests/*.test.ts（CONTRACT IS LAW，
+# 不可改测试文件本身）需要这个 env 才能触发到各自测的并发/quota/落行逻辑，
+# 否则会在新凭据 gate 处提前短路。全工作流统一注入假值，不影响生产（生产走
+# docker-compose.yml 的 CODEX_RELAY_HOME）。
+env:
+  CODEX_RELAY_HOME: /tmp/ci-fake-codex-home
+
 jobs:
   # ─── 变更检测 ──────────────────────────────────────────────
   changes:
