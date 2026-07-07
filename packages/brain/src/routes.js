@@ -28,7 +28,7 @@ import handoffsRouter from './routes/handoffs.js';
 import sentinelRouter from './routes/sentinel.js';
 import dispatchRouter from './routes/dispatch.js';
 import previewRouter from './routes/preview.js';
-import { createSkillEvalRouter, getSkillEvalConfigHandler } from './routes/skill-evals.js';
+import { createSkillEvalRouter } from './routes/skill-evals.js';
 import pool from './db.js';
 
 export { triggerAutoRCA } from './routes/brain-meta.js';
