@@ -24,7 +24,7 @@ DOCKER="$(command -v docker || echo /usr/local/bin/docker)"
 ORBCTL="$(command -v orbctl || echo /usr/local/bin/orbctl)"
 
 STALE_MINUTES="${STALE_MINUTES:-15}"       # loop 60s 一轮，15min 容忍重启/部署窗口
-EXPECT_KEYS_FALLBACK="${EXPECT_KEYS_FALLBACK:-4}"  # DB 无预期键时兜底（旧版 brain）
+EXPECT_KEYS_FALLBACK="${EXPECT_KEYS_FALLBACK:-6}"  # DB 无预期键时兜底（旧版 brain）
 REALERT_MINUTES="${REALERT_MINUTES:-60}"   # 同一故障告警间隔
 DOCKER_ENGINE_RETRY_SECONDS="${DOCKER_ENGINE_RETRY_SECONDS:-60}"  # orbctl start 后等待重试秒数
 STATE_FILE="/tmp/dead-man-switch.last-alert"
