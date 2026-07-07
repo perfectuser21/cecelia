@@ -4,7 +4,7 @@
 #   1. src/battle-report.js 导出六函数
 #   2. scheduler-jobs.js 已注册 battle-report job
 #   3. migrations/316_design_docs_battle_report.sql 白名单含 battle_report
-#   4. selfcheck.js EXPECTED_SCHEMA_VERSION = 316
+#   4. selfcheck.js EXPECTED_SCHEMA_VERSION >= 316（地板语义：后续 migration 会继续推进）
 set -euo pipefail
 
 echo "[battle-report-smoke] 1. battle-report.js 导出六函数"
@@ -54,15 +54,16 @@ if (!src.includes('design_docs_type_check')) {
 console.log('migration 316 白名单正确 ✓');
 "
 
-echo "[battle-report-smoke] 4. selfcheck EXPECTED_SCHEMA_VERSION = 316"
+echo "[battle-report-smoke] 4. selfcheck EXPECTED_SCHEMA_VERSION >= 316"
 node -e "
 const fs = require('fs');
 const src = fs.readFileSync('packages/brain/src/selfcheck.js', 'utf8');
-if (!/EXPECTED_SCHEMA_VERSION\s*=\s*'316'/.test(src)) {
-  console.error('FAIL: selfcheck.js EXPECTED_SCHEMA_VERSION 不是 316');
+const m = src.match(/EXPECTED_SCHEMA_VERSION\s*=\s*'(\d+)'/);
+if (!m || parseInt(m[1], 10) < 316) {
+  console.error('FAIL: selfcheck.js EXPECTED_SCHEMA_VERSION 低于 316（地板不得回退）');
   process.exit(1);
 }
-console.log('selfcheck 316 正确 ✓');
+console.log('selfcheck 地板 >= 316 正确 ✓');
 "
 
 echo "[battle-report-smoke] ✅ 全部通过"
