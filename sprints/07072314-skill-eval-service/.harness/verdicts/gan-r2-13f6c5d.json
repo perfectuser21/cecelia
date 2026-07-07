@@ -1,0 +1,16 @@
+{
+  "round": 2,
+  "task_id": "52145edd-e409-4459-9490-7a02bf8e87de",
+  "scores": {
+    "exit1_coverage": 5,
+    "assertion_strength": 4,
+    "seam_annotation": 5,
+    "db_time_window": 5,
+    "artifact_completeness": 4,
+    "executability": 5,
+    "scenario_coverage": 4
+  },
+  "total": 32,
+  "max": 35,
+  "verdict": "APPROVED"
+}

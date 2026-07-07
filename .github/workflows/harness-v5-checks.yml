@@ -184,6 +184,7 @@ jobs:
           BRAIN_PORT: 5221
           NODE_ENV: development
           CECELIA_TICK_ENABLED: 'false'
+          EVAL_PROXY_TOKEN: 'ci-harness-test-token'
         run: |
           cd packages/brain && node server.js &
           for i in $(seq 1 60); do
@@ -218,6 +219,7 @@ jobs:
         if: steps.check-tests.outputs.has_tests == 'true'
         env:
           DB: postgresql://cecelia:cecelia@localhost:5432/cecelia
+          EVAL_PROXY_TOKEN: 'ci-harness-test-token'
         run: |
           set -euo pipefail
           # Capture test file list (GHA template expansion produces multiline string)

@@ -1,0 +1,408 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Skill Evaluator — 内部验收台</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      background: #0f1117;
+      color: #e2e8f0;
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 24px;
+    }
+    .card {
+      background: #1a1f2e;
+      border: 1px solid #2d3748;
+      border-radius: 12px;
+      padding: 32px;
+      max-width: 520px;
+      width: 100%;
+      box-shadow: 0 4px 24px rgba(0,0,0,0.4);
+    }
+    h1 {
+      font-size: 20px;
+      font-weight: 600;
+      color: #7c3aed;
+      margin-bottom: 6px;
+    }
+    .subtitle {
+      font-size: 13px;
+      color: #64748b;
+      margin-bottom: 28px;
+    }
+    label {
+      display: block;
+      font-size: 13px;
+      color: #94a3b8;
+      margin-bottom: 6px;
+      font-weight: 500;
+    }
+    input[type="text"], select {
+      width: 100%;
+      background: #0f1117;
+      border: 1px solid #2d3748;
+      border-radius: 6px;
+      padding: 10px 12px;
+      color: #e2e8f0;
+      font-size: 14px;
+      margin-bottom: 16px;
+      outline: none;
+      transition: border-color 0.15s;
+    }
+    input[type="text"]:focus, select:focus {
+      border-color: #7c3aed;
+    }
+    .drop-zone {
+      border: 2px dashed #2d3748;
+      border-radius: 8px;
+      padding: 32px;
+      text-align: center;
+      cursor: pointer;
+      transition: border-color 0.15s, background 0.15s;
+      margin-bottom: 16px;
+    }
+    .drop-zone:hover, .drop-zone.drag-over {
+      border-color: #7c3aed;
+      background: rgba(124,58,237,0.05);
+    }
+    .drop-zone input[type="file"] {
+      display: none;
+    }
+    .drop-zone-text {
+      font-size: 14px;
+      color: #64748b;
+    }
+    .drop-zone-text strong {
+      color: #7c3aed;
+    }
+    .file-selected {
+      font-size: 13px;
+      color: #34d399;
+      margin-top: 8px;
+    }
+    .file-error {
+      font-size: 13px;
+      color: #f87171;
+      margin-top: 8px;
+    }
+    .btn {
+      width: 100%;
+      background: #7c3aed;
+      color: white;
+      border: none;
+      border-radius: 6px;
+      padding: 12px;
+      font-size: 15px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 0.15s, opacity 0.15s;
+    }
+    .btn:hover { background: #6d28d9; }
+    .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+    .status-panel {
+      margin-top: 20px;
+      background: #0f1117;
+      border: 1px solid #2d3748;
+      border-radius: 8px;
+      padding: 16px;
+      display: none;
+    }
+    .status-panel.visible { display: block; }
+    .status-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 13px;
+      margin-bottom: 8px;
+    }
+    .status-row:last-child { margin-bottom: 0; }
+    .status-label { color: #64748b; }
+    .status-value { color: #e2e8f0; font-family: monospace; }
+    .badge {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 4px;
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+    }
+    .badge-queued { background: #1e3a5f; color: #60a5fa; }
+    .badge-in_progress { background: #1c3325; color: #34d399; }
+    .badge-completed { background: #1c3325; color: #4ade80; }
+    .badge-failed { background: #3b1c1c; color: #f87171; }
+    .report-link {
+      display: inline-block;
+      margin-top: 12px;
+      padding: 8px 16px;
+      background: #14532d;
+      color: #4ade80;
+      text-decoration: none;
+      border-radius: 6px;
+      font-size: 13px;
+      font-weight: 600;
+    }
+    .report-link:hover { background: #166534; }
+    .poll-indicator {
+      font-size: 11px;
+      color: #475569;
+      margin-top: 8px;
+    }
+    .error-msg {
+      color: #f87171;
+      font-size: 13px;
+      margin-top: 12px;
+      padding: 10px;
+      background: #1c0a0a;
+      border-radius: 6px;
+      display: none;
+    }
+    .error-msg.visible { display: block; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>Skill Evaluator</h1>
+    <p class="subtitle">上传 skill zip 包，自动触发内部验收评估</p>
+
+    <label for="skill_name">Skill 名称 <span style="color:#f87171">*</span></label>
+    <input type="text" id="skill_name" placeholder="例：日报-skill" maxlength="100" required>
+
+    <label for="platform">平台 <span style="color:#f87171">*</span></label>
+    <select id="platform">
+      <option value="">— 请选择 —</option>
+      <option value="claude">Claude</option>
+      <option value="gemini">Gemini</option>
+      <option value="gpt4">GPT-4</option>
+      <option value="other">其他</option>
+    </select>
+
+    <label for="line">所属 Line <span style="color:#f87171">*</span></label>
+    <input type="text" id="line" placeholder="例：Line00" maxlength="50" required>
+
+    <label for="submitter">提交人（可选）</label>
+    <input type="text" id="submitter" placeholder="例：alex" maxlength="50">
+
+    <label>Skill Zip 包 <span style="color:#f87171">*</span></label>
+    <div class="drop-zone" id="dropZone" onclick="document.getElementById('fileInput').click()">
+      <input type="file" id="fileInput" accept=".zip">
+      <div class="drop-zone-text">
+        拖拽 .zip 文件到此处，或 <strong>点击选择</strong>
+      </div>
+      <div id="fileStatus"></div>
+    </div>
+
+    <button class="btn" id="submitBtn" disabled onclick="handleSubmit()">上传评估</button>
+
+    <div class="error-msg" id="errorMsg"></div>
+
+    <div class="status-panel" id="statusPanel">
+      <div class="status-row">
+        <span class="status-label">Task ID</span>
+        <span class="status-value" id="stTaskId">—</span>
+      </div>
+      <div class="status-row">
+        <span class="status-label">状态</span>
+        <span id="stStatus">—</span>
+      </div>
+      <div class="status-row" id="stPositionRow" style="display:none">
+        <span class="status-label">队列位次</span>
+        <span class="status-value" id="stPosition">—</span>
+      </div>
+      <div class="status-row" id="stDedupRow" style="display:none">
+        <span class="status-label">去重命中</span>
+        <span class="status-value" style="color:#fbbf24">✓ 历史结果复用</span>
+      </div>
+      <div id="reportLinkContainer"></div>
+      <div class="poll-indicator" id="pollIndicator"></div>
+    </div>
+  </div>
+
+  <script>
+    // 配置：上传端点（由 HK nginx /eval-api/ 反代，Basic Auth 由浏览器弹窗处理）
+    const UPLOAD_URL = '/eval-api/upload';
+    const STATUS_URL = (id) => `/eval-api/tasks/${id}`;
+    const MAX_SIZE = 10 * 1024 * 1024; // 10MB 前端预校验
+
+    let selectedFile = null;
+    let currentTaskId = null;
+    let pollTimer = null;
+    let pollInterval = 5000; // 5s 起步
+    let pollCount = 0;
+
+    const dropZone = document.getElementById('dropZone');
+    const fileInput = document.getElementById('fileInput');
+    const fileStatus = document.getElementById('fileStatus');
+    const submitBtn = document.getElementById('submitBtn');
+    const errorMsg = document.getElementById('errorMsg');
+    const statusPanel = document.getElementById('statusPanel');
+
+    // 拖拽事件
+    dropZone.addEventListener('dragover', (e) => { e.preventDefault(); dropZone.classList.add('drag-over'); });
+    dropZone.addEventListener('dragleave', () => dropZone.classList.remove('drag-over'));
+    dropZone.addEventListener('drop', (e) => {
+      e.preventDefault();
+      dropZone.classList.remove('drag-over');
+      const f = e.dataTransfer.files[0];
+      if (f) handleFileSelect(f);
+    });
+    fileInput.addEventListener('change', (e) => {
+      if (e.target.files[0]) handleFileSelect(e.target.files[0]);
+    });
+
+    function handleFileSelect(f) {
+      if (!f.name.toLowerCase().endsWith('.zip')) {
+        fileStatus.innerHTML = '<div class="file-error">✗ 仅接受 .zip 文件</div>';
+        selectedFile = null;
+        updateSubmitState();
+        return;
+      }
+      if (f.size > MAX_SIZE) {
+        fileStatus.innerHTML = `<div class="file-error">✗ 文件过大 (${(f.size/1024/1024).toFixed(1)}MB > 10MB)</div>`;
+        selectedFile = null;
+        updateSubmitState();
+        return;
+      }
+      selectedFile = f;
+      fileStatus.innerHTML = `<div class="file-selected">✓ ${f.name} (${(f.size/1024).toFixed(0)} KB)</div>`;
+      updateSubmitState();
+    }
+
+    function updateSubmitState() {
+      const skillName = document.getElementById('skill_name').value.trim();
+      const platform = document.getElementById('platform').value;
+      const line = document.getElementById('line').value.trim();
+      submitBtn.disabled = !selectedFile || !skillName || !platform || !line;
+    }
+
+    ['skill_name', 'platform', 'line', 'submitter'].forEach(id => {
+      document.getElementById(id).addEventListener('input', updateSubmitState);
+    });
+
+    function showError(msg) {
+      errorMsg.textContent = msg;
+      errorMsg.classList.add('visible');
+    }
+
+    function clearError() {
+      errorMsg.classList.remove('visible');
+    }
+
+    async function handleSubmit() {
+      clearError();
+      const skillName = document.getElementById('skill_name').value.trim();
+      const platform = document.getElementById('platform').value;
+      const line = document.getElementById('line').value.trim();
+      const submitter = document.getElementById('submitter').value.trim();
+
+      if (!skillName || !platform || !line || !selectedFile) {
+        showError('请填写所有必填项并选择 zip 文件');
+        return;
+      }
+
+      submitBtn.disabled = true;
+      submitBtn.textContent = '上传中…';
+
+      const formData = new FormData();
+      formData.append('file', selectedFile);
+      formData.append('skill_name', skillName);
+      formData.append('platform', platform);
+      formData.append('line', line);
+      if (submitter) formData.append('submitter', submitter);
+
+      try {
+        const resp = await fetch(UPLOAD_URL, { method: 'POST', body: formData });
+        const data = await resp.json();
+
+        if (!resp.ok) {
+          showError(data.message || data.error || `上传失败 (${resp.status})`);
+          submitBtn.disabled = false;
+          submitBtn.textContent = '上传评估';
+          return;
+        }
+
+        currentTaskId = data.task_id;
+        submitBtn.textContent = '已提交';
+        statusPanel.classList.add('visible');
+        document.getElementById('stTaskId').textContent = currentTaskId;
+        if (data.dedup) document.getElementById('stDedupRow').style.display = 'flex';
+
+        startPolling(currentTaskId, data.status);
+      } catch (e) {
+        showError('网络错误：' + e.message);
+        submitBtn.disabled = false;
+        submitBtn.textContent = '上传评估';
+      }
+    }
+
+    function startPolling(taskId, initialStatus) {
+      if (pollTimer) clearTimeout(pollTimer);
+      pollCount = 0;
+      pollInterval = 5000;
+      updateStatusUI({ task_id: taskId, status: initialStatus, position: null });
+
+      if (initialStatus === 'completed' || initialStatus === 'failed') return;
+      schedulePoll(taskId);
+    }
+
+    function schedulePoll(taskId) {
+      pollTimer = setTimeout(async () => {
+        try {
+          const resp = await fetch(STATUS_URL(taskId));
+          if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+          const data = await resp.json();
+          updateStatusUI(data);
+          pollCount++;
+
+          if (data.status === 'completed' || data.status === 'failed') {
+            document.getElementById('pollIndicator').textContent = '评估已结束';
+            return;
+          }
+
+          // 指数退避：5s → 10s → 20s，最大 60s
+          pollInterval = Math.min(pollInterval * 1.5, 60000);
+          const nextSec = Math.round(pollInterval / 1000);
+          document.getElementById('pollIndicator').textContent = `${nextSec}s 后自动刷新状态…`;
+          schedulePoll(taskId);
+        } catch (e) {
+          document.getElementById('pollIndicator').textContent = `轮询出错：${e.message}，5s 后重试`;
+          pollInterval = 5000;
+          schedulePoll(taskId);
+        }
+      }, pollInterval);
+    }
+
+    function updateStatusUI(data) {
+      const statusEl = document.getElementById('stStatus');
+      const badge = `<span class="badge badge-${data.status}">${statusLabel(data.status)}</span>`;
+      statusEl.innerHTML = badge;
+
+      const posRow = document.getElementById('stPositionRow');
+      if (data.status === 'queued' && data.position != null) {
+        posRow.style.display = 'flex';
+        document.getElementById('stPosition').textContent = `第 ${data.position} 位`;
+      } else {
+        posRow.style.display = 'none';
+      }
+
+      const linkContainer = document.getElementById('reportLinkContainer');
+      if (data.status === 'completed' && data.report_url) {
+        linkContainer.innerHTML = `<a href="${data.report_url}" target="_blank" class="report-link">查看评估报告 →</a>`;
+      } else if (data.status === 'failed' && data.failure_stage) {
+        linkContainer.innerHTML = `<div style="color:#f87171;font-size:13px;margin-top:8px">失败阶段：${data.failure_stage}</div>`;
+      } else {
+        linkContainer.innerHTML = '';
+      }
+    }
+
+    function statusLabel(s) {
+      return { queued: '排队中', in_progress: '评估中', completed: '已完成', failed: '失败' }[s] || s;
+    }
+  </script>
+</body>
+</html>

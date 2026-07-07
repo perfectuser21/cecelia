@@ -1,0 +1,62 @@
+{
+  "task_id": "52145edd-e409-4459-9490-7a02bf8e87de",
+  "sprint": "07072314-skill-eval-service",
+  "workstreams": [
+    {
+      "id": "ws1",
+      "title": "Skill Evaluator 内部验收台（形态B）thin 贯穿",
+      "description": "实现 Brain POST /api/eval/upload + GET /api/eval/tasks/:id 端点（验令牌/硬校验/hash去重/建task）+ Brain tick 单slot串行派发（skill_eval task_type, account2 docker-executor）+ 报告SSH发布HK + 索引追加 + 最小上传页HTML",
+      "files_to_create": [
+        "packages/brain/src/routes/eval.js",
+        "packages/brain/scripts/smoke/skill-eval-smoke.sh",
+        "sprints/07072314-skill-eval-service/e2e-verify.sh"
+      ],
+      "files_to_modify": [
+        "packages/brain/src/server.js",
+        "packages/brain/src/tick.js",
+        "packages/brain/src/docker-executor.js"
+      ],
+      "contract_dod": "sprints/07072314-skill-eval-service/contract-dod.md",
+      "contract_draft": "sprints/07072314-skill-eval-service/contract-draft.md",
+      "tests_dir": "sprints/07072314-skill-eval-service/tests/",
+      "depends_on": [],
+      "journey_type": "service_integration",
+      "target_environment": "local_api",
+      "artifacts": [
+        "ARTIFACT-1: packages/brain/src/routes/eval.js (POST /api/eval/upload + GET /api/eval/tasks/:id)",
+        "ARTIFACT-2: Brain tick skill_eval 派发分支 + docker-executor account2 sonnet",
+        "ARTIFACT-3: HK Caddy/nginx /eval-api/ 反代配置（config 文件）",
+        "ARTIFACT-4: 最小上传页 index.html（表单+轮询）",
+        "ARTIFACT-5: 报告SSH发布逻辑 + 索引追加"
+      ],
+      "behaviors": [
+        "BEHAVIOR: 无令牌 → 403",
+        "BEHAVIOR: 合法上传 → 200 + task_id + position + DB 记录",
+        "BEHAVIOR: 非ZIP → 422",
+        "BEHAVIOR: GET tasks/:id → 结构含 status + report_url + failure_stage",
+        "BEHAVIOR: 单slot串行（in_progress ≤ 1）",
+        "BEHAVIOR: hash去重（同zip → 同task_id + dedup=true）",
+        "BEHAVIOR: SSH发布 HK 目录 + 索引条目（logic-done-pending）",
+        "BEHAVIOR: report_url 永久可访问（logic-done-pending）"
+      ]
+    }
+  ],
+  "nfr": {
+    "MAX_ZIP_MB": 10,
+    "MAX_DECOMPRESS_MB": 50,
+    "MAX_COMPRESS_RATIO": 100,
+    "MAX_FILES": 2000,
+    "SKILL_EVAL_TIMEOUT": "30min",
+    "MAX_CONCURRENT_SKILL_EVAL": 1,
+    "BACKPRESSURE_THRESHOLD": 20,
+    "POLL_INITIAL_MS": 5000,
+    "POLL_MAX_MS": 30000,
+    "STAGING_SUCCESS_TTL_DAYS": 3,
+    "STAGING_FAIL_TTL_DAYS": 14,
+    "CREDIT_CHECK_5H_PCT": 85,
+    "CREDIT_CHECK_7D_PCT": 90,
+    "ALERT_5H_PCT": 70,
+    "ALERT_7D_PCT": 80,
+    "FEISHU_AGGREGATE_MIN": 10
+  }
+}
