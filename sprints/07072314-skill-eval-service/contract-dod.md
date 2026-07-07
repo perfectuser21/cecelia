@@ -1,7 +1,7 @@
 # DoD：Skill Evaluator 内部验收台（形态B）thin 贯穿
 
 task_id: 52145edd-e409-4459-9490-7a02bf8e87de
-propose_round: 1
+propose_round: 2
 
 ---
 
@@ -27,7 +27,8 @@ Test: manual:bash
 CODE=$(curl -s -o /dev/null -w "%{http_code}" \
   -F "file=@sprints/07072314-skill-eval-service/tests/fixtures/valid-skill.zip" \
   http://localhost:5221/api/eval/upload)
-[ "$CODE" = "403" ] && echo "PASS" || echo "FAIL (got $CODE)"
+[ "$CODE" = "403" ] || { echo "FAIL: 期望403,实得$CODE"; exit 1; }
+echo "PASS"
 ```
 
 [BEHAVIOR] 带正确令牌上传合法 zip 返回 200 含 task_id 和 position
@@ -39,7 +40,14 @@ RESP=$(curl -sf \
   -F "file=@sprints/07072314-skill-eval-service/tests/fixtures/valid-skill.zip" \
   -F "skill_name=test-skill" -F "platform=claude" -F "line=Line00" \
   http://localhost:5221/api/eval/upload)
-echo "$RESP" | jq -e '.task_id' && echo "$RESP" | jq -e '.position' && echo "PASS" || echo "FAIL"
+TASK_ID=$(echo "$RESP" | jq -r '.task_id')
+POSITION=$(echo "$RESP" | jq -r '.position')
+[ -n "$TASK_ID" ] && [ "$TASK_ID" != "null" ] || { echo "FAIL: 无 task_id"; exit 1; }
+[ -n "$POSITION" ] && [ "$POSITION" != "null" ] || { echo "FAIL: 无 position"; exit 1; }
+# DB 时间窗验证
+COUNT=$(psql "${DATABASE_URL:-postgresql://localhost/cecelia}" -tAc "SELECT count(*) FROM tasks WHERE task_type='skill_eval' AND created_at > NOW() - interval '2 minutes'")
+[ "$COUNT" -ge 1 ] || { echo "FAIL: DB 无新建 skill_eval task"; exit 1; }
+echo "PASS: task_id=$TASK_ID position=$POSITION"
 ```
 
 [BEHAVIOR] 上传非 ZIP 文件（zip 魔数校验）返回 422
@@ -52,7 +60,8 @@ CODE=$(curl -s -o /dev/null -w "%{http_code}" \
   -F "file=@/tmp/fake.zip" \
   -F "skill_name=fake" -F "platform=claude" -F "line=Line00" \
   http://localhost:5221/api/eval/upload)
-[ "$CODE" = "422" ] && echo "PASS" || echo "FAIL (got $CODE)"
+[ "$CODE" = "422" ] || { echo "FAIL: 期望422,实得$CODE"; exit 1; }
+echo "PASS"
 ```
 
 [BEHAVIOR] GET /api/eval/tasks/:id 对已建任务返回结构含 status/report_url/failure_stage
@@ -62,21 +71,24 @@ TOKEN="${EVAL_PROXY_TOKEN:?}"
 TASK_ID=$(curl -sf \
   -H "X-Eval-Proxy-Token: $TOKEN" \
   -F "file=@sprints/07072314-skill-eval-service/tests/fixtures/valid-skill.zip" \
-  -F "skill_name=dod-test" -F "platform=claude" -F "line=Line00" \
+  -F "skill_name=struct-test" -F "platform=claude" -F "line=Line00" \
   http://localhost:5221/api/eval/upload | jq -r '.task_id')
 RESP=$(curl -sf "http://localhost:5221/api/eval/tasks/$TASK_ID")
-echo "$RESP" | jq -e '.status' && \
-echo "$RESP" | jq 'has("report_url")' | grep -q true && \
-echo "$RESP" | jq 'has("failure_stage")' | grep -q true && \
-echo "PASS" || echo "FAIL"
+echo "$RESP" | jq -e 'has("status") and has("report_url") and has("failure_stage")' > /dev/null \
+  || { echo "FAIL: response 缺必要字段"; exit 1; }
+STATUS=$(echo "$RESP" | jq -r '.status')
+[[ "$STATUS" =~ ^(queued|in_progress|completed|failed)$ ]] \
+  || { echo "FAIL: status 非法值 $STATUS"; exit 1; }
+echo "PASS: status=$STATUS"
 ```
 
 [BEHAVIOR] Brain tick 单 slot 串行：in_progress 状态的 skill_eval 任务最多 1 个
 Test: manual:bash
 ```bash
-COUNT=$(psql $DATABASE_URL -At -c \
+COUNT=$(psql "${DATABASE_URL:-postgresql://localhost/cecelia}" -tAc \
   "SELECT COUNT(*) FROM tasks WHERE task_type='skill_eval' AND status='in_progress'")
-[ "$COUNT" -le "1" ] && echo "PASS (in_progress=$COUNT)" || echo "FAIL (in_progress=$COUNT, expected ≤1)"
+[ "$COUNT" -le 1 ] || { echo "FAIL: in_progress slot数=$COUNT,期望≤1"; exit 1; }
+echo "PASS: in_progress=$COUNT"
 ```
 
 [BEHAVIOR] 同一 zip 内容（SHA256 相同）二次上传命中去重，返回历史 task_id（dedup=true）
@@ -93,14 +105,31 @@ UPLOAD() {
 R1=$(UPLOAD); R2=$(UPLOAD)
 TID1=$(echo "$R1" | jq -r '.task_id'); TID2=$(echo "$R2" | jq -r '.task_id')
 DEDUP=$(echo "$R2" | jq -r '.dedup')
-[ "$TID1" = "$TID2" ] && [ "$DEDUP" = "true" ] && echo "PASS" || echo "FAIL (tid1=$TID1 tid2=$TID2 dedup=$DEDUP)"
+[ "$TID1" = "$TID2" ] || { echo "FAIL: 去重失效 tid1=$TID1 tid2=$TID2"; exit 1; }
+[ "$DEDUP" = "true" ] || { echo "FAIL: dedup 字段非 true"; exit 1; }
+echo "PASS: dedup=$DEDUP task_id=$TID1"
 ```
 
 [BEHAVIOR] 评估完成后报告 SSH 发布 HK + 索引页含 task_id 条目（需 HK 环境）
 Test: manual:bash
 ```bash
-# 需在能 SSH 到 HK 服务器且 Brain 已配置 SSH key 的环境下执行
+# [logic-done-pending] 需真实 HK 服务器 SSH 访问，CI 阶段 skip，Final E2E 执行
 TASK_ID="${1:?需传入 task_id}"
-ssh hk-vps "ls /data/docs/skill-evals/ | grep $TASK_ID" && echo "PASS:dir-exists" || echo "FAIL:dir-missing"
-ssh hk-vps "grep '$TASK_ID' /data/docs/skill-evals/index.html" && echo "PASS:index-entry" || echo "FAIL:index-missing"
+ssh hk-vps "ls /data/docs/skill-evals/ | grep '$TASK_ID'" \
+  || { echo "FAIL: HK 无该 task 目录"; exit 1; }
+ssh hk-vps "grep '$TASK_ID' /data/docs/skill-evals/index.html" \
+  || { echo "FAIL: 索引无该条目"; exit 1; }
+echo "PASS: HK 目录+索引均有 $TASK_ID"
+```
+
+[BEHAVIOR] 评估完成报告永久可访问（report_url 持久有效）
+Test: manual:bash
+```bash
+# [logic-done-pending] 需已完成的 task 和 HK 真实环境
+TASK_ID="${COMPLETED_TASK_ID:?}"
+REPORT_URL=$(curl -sf "http://localhost:5221/api/eval/tasks/$TASK_ID" | jq -r '.report_url')
+[ -n "$REPORT_URL" ] && [ "$REPORT_URL" != "null" ] || { echo "FAIL: report_url 为空"; exit 1; }
+CODE=$(curl -s -o /dev/null -w "%{http_code}" -u "$DOCS_BASIC_AUTH" "$REPORT_URL")
+[ "$CODE" = "200" ] || { echo "FAIL: report_url 返回 $CODE"; exit 1; }
+echo "PASS: report_url=$REPORT_URL"
 ```
