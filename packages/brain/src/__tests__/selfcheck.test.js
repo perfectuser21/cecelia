@@ -152,11 +152,11 @@ describe('selfcheck', () => {
   // 整句在真实 Postgres 报错、被 try/catch 静默吞掉，status/failure_class 从未
   // 真正落库——由 harness-orchestrator-lockdown-smoke.sh 在 real-env-smoke 首次暴露。
   // issue 14d66027 语义：地板只在"代码依赖新 schema"时才 bump。
-  // 315（九要素存储 action_receipts + decisions.review_after）是作战循环回执/复盘系统
-  // 的必备底座（预期即将被依赖），故随 migration 315 推进地板到 315。
-  // facts-check 校验地板 <= 最高 migration（315 <= 315 通过）。
-  it('EXPECTED_SCHEMA_VERSION should be 315 (floor, bumped for 九要素存储 substrate)', () => {
-    expect(EXPECTED_SCHEMA_VERSION).toBe('315');
+  // 316（design_docs type 白名单加 battle_report）被 battle-report.js INSERT 直接依赖
+  // （旧约束下 type='battle_report' 会被 CHECK 拒），故随 migration 316 推进地板到 316。
+  // facts-check 校验地板 <= 最高 migration（316 <= 316 通过）。
+  it('EXPECTED_SCHEMA_VERSION should be 316 (floor, bumped for battle_report design_docs type)', () => {
+    expect(EXPECTED_SCHEMA_VERSION).toBe('316');
   });
 
   it('should pass when DB schema version is ahead of expected (>= check)', async () => {

@@ -27,7 +27,8 @@ describe('Migration 315 — action_receipts + decisions.review_after', () => {
     expect(SQL).toMatch(/ALTER TABLE decisions ADD COLUMN IF NOT EXISTS review_after/);
   });
 
-  it('selfcheck EXPECTED_SCHEMA_VERSION 地板已推进到 315', () => {
-    expect(EXPECTED_SCHEMA_VERSION).toBe('315');
+  it('selfcheck EXPECTED_SCHEMA_VERSION 地板已推进到至少 315', () => {
+    // >= 而非 ===：后续 migration 推进地板不应回头改本文件（316 起实证）
+    expect(parseInt(EXPECTED_SCHEMA_VERSION, 10)).toBeGreaterThanOrEqual(315);
   });
 });
