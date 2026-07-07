@@ -20,7 +20,10 @@ target_environment: local_api
 ## ARTIFACT 条目
 
 - [ ] [ARTIFACT] `scripts/relay-demo/sort-json-keys.mjs` 文件存在，且入口以 JSON 文件路径参数驱动
-  Test: manual:bash -c 'TMP_JSON="$(mktemp)"; trap "rm -f \"$TMP_JSON\"" EXIT; printf '"'"'{"b":1,"a":2}\n'"'"' > "$TMP_JSON"; OUT=$(node scripts/relay-demo/sort-json-keys.mjs "$TMP_JSON"); STATUS=$?; [ "$STATUS" -eq 0 ] && echo "$OUT" | jq -e '"'"'. == {"a":2,"b":1}'"'"' >/dev/null'
+  Test: manual:bash -c 'TMP_JSON="$(mktemp)"; trap "rm -f \"$TMP_JSON\"" EXIT; cat > "$TMP_JSON" <<JSON
+{"b":1,"a":2}
+JSON
+OUT="$(node scripts/relay-demo/sort-json-keys.mjs "$TMP_JSON")"; STATUS=$?; [ "$STATUS" -eq 0 ] && echo "$OUT" | jq -e ". == {\"a\":2,\"b\":1}" >/dev/null'
   期望: OK
 
 - [ ] [ARTIFACT] `scripts/relay-demo/sort-json-keys.mjs` 实现包含递归排序意图，并以 `stdout` 输出结果
@@ -38,7 +41,10 @@ target_environment: local_api
 ## BEHAVIOR 条目（内嵌可执行 manual:bash 命令）
 
 - [ ] [BEHAVIOR] Step 1：提供一个可读取 JSON 文件路径后，CLI 以该路径作为唯一输入成功执行并返回退出码 0
-  Test: manual:bash -c 'TMP_JSON="$(mktemp)"; trap "rm -f \"$TMP_JSON\"" EXIT; printf '"'"'{"b":1,"a":2}\n'"'"' > "$TMP_JSON"; OUT=$(node scripts/relay-demo/sort-json-keys.mjs "$TMP_JSON"); STATUS=$?; [ "$STATUS" -eq 0 ] && echo "$OUT" | jq -e '"'"'. == {"a":2,"b":1}'"'"' >/dev/null'
+  Test: manual:bash -c 'TMP_JSON="$(mktemp)"; trap "rm -f \"$TMP_JSON\"" EXIT; cat > "$TMP_JSON" <<JSON
+{"b":1,"a":2}
+JSON
+OUT="$(node scripts/relay-demo/sort-json-keys.mjs "$TMP_JSON")"; STATUS=$?; [ "$STATUS" -eq 0 ] && echo "$OUT" | jq -e ". == {\"a\":2,\"b\":1}" >/dev/null'
   期望: OK
 
 - [ ] [BEHAVIOR] Step 2：CLI 递归按字典序排序对象键，且已排序输入保持语义一致并且不增删字段
@@ -50,7 +56,18 @@ target_environment: local_api
   期望: OK
 
 - [ ] [BEHAVIOR] Step 4：空对象保持为空对象，且本地 vitest 三个合同用例全部通过
-  Test: manual:bash -c 'TMP_JSON="$(mktemp)"; TMP_CFG="$(mktemp /tmp/relay-vitest-config-XXXX.mjs)"; trap "rm -f \"$TMP_JSON\" \"$TMP_CFG\"" EXIT; printf '"'"'{"outer":{}}\n'"'"' > "$TMP_JSON"; OUT=$(node scripts/relay-demo/sort-json-keys.mjs "$TMP_JSON"); STATUS=$?; echo "$OUT" | jq -e '"'"'. == {"outer":{}}'"'"' >/dev/null && [ "$STATUS" -eq 0 ] && cat > "$TMP_CFG" <<'"'"'EOF'"'"'\nexport default {\n  test: {\n    environment: "node",\n    globals: false,\n  },\n};\nEOF\nnpm exec --workspace packages/brain vitest -- --config "$TMP_CFG" run sprints/07071247-relay-demo-codex-r2/tests/sort-json-keys.contract.test.ts --reporter=verbose 2>&1 | tee /tmp/relay-demo-vitest.log; VITEST_STATUS=${PIPESTATUS[0]}; [ "$VITEST_STATUS" -eq 0 ] && grep -Eq "3 passed|3 tests" /tmp/relay-demo-vitest.log'
+  Test: manual:bash -c 'TMP_JSON="$(mktemp)"; TMP_CFG="$(mktemp /tmp/relay-vitest-config-XXXX.mjs)"; trap "rm -f \"$TMP_JSON\" \"$TMP_CFG\"" EXIT; cat > "$TMP_JSON" <<JSON
+{"outer":{}}
+JSON
+OUT="$(node scripts/relay-demo/sort-json-keys.mjs "$TMP_JSON")"; STATUS=$?; echo "$OUT" | jq -e ". == {\"outer\":{}}" >/dev/null && [ "$STATUS" -eq 0 ] && cat > "$TMP_CFG" <<EOF
+export default {
+  test: {
+    environment: "node",
+    globals: false,
+  },
+};
+EOF
+npm exec --workspace packages/brain vitest -- --config "$TMP_CFG" run sprints/07071247-relay-demo-codex-r2/tests/sort-json-keys.contract.test.ts --reporter=verbose 2>&1 | tee /tmp/relay-demo-vitest.log; VITEST_STATUS=${PIPESTATUS[0]}; [ "$VITEST_STATUS" -eq 0 ] && grep -Eq "3 passed|3 tests" /tmp/relay-demo-vitest.log'
   期望: OK
 
 - [ ] [BEHAVIOR] Red 前提：当 `scripts/relay-demo/sort-json-keys.mjs` 未实现时，直接运行合同测试必须非零失败，并出现缺失实现的失败定位
