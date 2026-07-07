@@ -3098,6 +3098,24 @@ export function computeHarnessInitiativeOk(final) {
 }
 
 /**
+ * P1 bug 39b97ade 修复：runHarnessInitiativeRouter 结果 → dispatch 分支动作分类（纯函数，便于测试）。
+ *
+ * 之前 result.deferred（codex_concurrent_limit / codex_quota_low / spawnSkillRelaySession 新增的
+ * live_container_guard）没有专门分支，ok=false 直接落到最终 else 被标 failed —— 对 live_container_guard
+ * 场景尤其危险：意味着仍在跑的 relay 任务会被判定为终态，反而制造新的重复 spawn 触发点。
+ *
+ * @param {{ok: boolean|null, mode?: string, deferred?: boolean}} result
+ * @returns {'waiting'|'relay_spawned'|'deferred'|'completed'|'failed'}
+ */
+export function classifyHarnessRelayAction(result) {
+  if (result?.ok === null) return 'waiting';
+  if (result?.ok && result?.mode === 'skill-relay') return 'relay_spawned';
+  if (result?.deferred) return 'deferred';
+  if (result?.ok) return 'completed';
+  return 'failed';
+}
+
+/**
  * Bug 3 fix: 计算 harness initiative 失败时的 error_message
  * 优先使用 final.error；其次从 final_e2e_verdict=FAIL 的 failed_scenarios 拼装
  * 保证 ≤ 500 字符（DB 字段长度限制）
@@ -3273,15 +3291,24 @@ async function triggerCeceliaRun(task) {
 
     try {
       const result = await runHarnessInitiativeRouter(task);
-      // B48: ok=null → graph 在 interrupt 等待（planner/callback 还没回来），
-      // 留 in_progress，reportNode B1 fix 会在完成时回写 completed/failed。
-      if (result.ok === null) {
+      const action = classifyHarnessRelayAction(result);
+      if (action === 'waiting') {
+        // B48: ok=null → graph 在 interrupt 等待（planner/callback 还没回来），
+        // 留 in_progress，reportNode B1 fix 会在完成时回写 completed/failed。
         console.log(`[executor] harness graph interrupted/waiting task=${task.id} thread=${result.threadId}, leaving in_progress`);
-      } else if (result.ok && result.mode === 'skill-relay') {
+      } else if (action === 'relay_spawned') {
         // relay 的 ok=true 只代表 session spawn 成功（detached 在跑），不是 sprint 跑完。
         // 完成态由 harness-report 回写（Issue df107724：spawn 成功即标 completed 是假成功）。
         console.log(`[executor] skill-relay session spawned task=${task.id} container=${result.containerId}, leaving in_progress`);
-      } else if (result.ok) {
+      } else if (action === 'deferred') {
+        // deferred（codex_concurrent_limit / codex_quota_low / live_container_guard 等）：
+        // 这是"暂不点火"的软闸/去重护栏语义，不是失败——之前这里没有专门分支，
+        // ok=false 会直接落到最终 else 被标 failed（P1 bug 39b97ade 修复的一部分：
+        // spawnSkillRelaySession 新增的 live_container_guard 若被标 failed，会让仍在跑的
+        // relay 任务被判定为终态，反而制造出新的重复 spawn 触发点）。留 in_progress，
+        // task 行由 dispatcher 已 claim/in_progress，等下次 tick 或看门狗自然处理。
+        console.log(`[executor] skill-relay session deferred task=${task.id} reason=${result.reason || 'unknown'}, leaving in_progress`);
+      } else if (action === 'completed') {
         await updateTaskStatus(task.id, 'completed');
       } else {
         await updateTaskStatus(task.id, 'failed', { error_message: String(result.error || 'harness graph failed').slice(0, 500) });

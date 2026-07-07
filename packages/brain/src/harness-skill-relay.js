@@ -14,6 +14,7 @@
  *   与 T3 多容器模式不同，不需要 fencing——见 decision「N3 skill-relay 最小接线设计」）
  */
 import pool from './db.js';
+import { execSync } from 'node:child_process';
 
 const RELAY_FLAG = 'skill-relay';
 const RELAY_DEADLINE_HOURS = 6;
@@ -69,6 +70,22 @@ export async function spawnSkillRelaySession(task, deps = {}) {
   const initiativeId = task.payload?.initiative_id || task.id; // B51: initiative_id = task.id
   const short = shortId(task.id);
   const isCodex = task.payload?.executor === 'codex';
+
+  // 去重守卫（P1 bug 39b97ade / 今日两次实证 a3d61486、4cedf175）：
+  // Brain 重启后误 requeue 的存量 skill-relay 任务被 dispatcher 重新 claim 并再次调用本函数时，
+  // 若旧 relay 容器仍在跑（未被杀），直接堵死双 spawn——命名规约与
+  // harness-relay-watchdog.js::resumeStalledRelayRuns 一致（cecelia-relay-<short8>）。
+  // fail-open：docker 不可达/命令报错时保守放行 spawn（不能让 docker 抽风挡住正常调度）。
+  const execFn = deps.execFn || ((cmd) => execSync(cmd, { encoding: 'utf8', timeout: 10000 }));
+  try {
+    const running = execFn(`docker ps -q --filter "name=cecelia-relay-${short}"`).trim();
+    if (running) {
+      console.warn(`[skill-relay][GUARD] live container exists, skip duplicate spawn: task=${task.id} container=${running}`);
+      return { ok: false, mode: RELAY_FLAG, deferred: true, reason: 'live_container_guard', containerId: running };
+    }
+  } catch (err) {
+    console.warn(`[skill-relay][GUARD] docker ps 检查失败（保守放行 spawn）: ${err.message}`);
+  }
 
   // B6: codex 容器凭据挂载（demo task a150998c 实证：容器内无任何凭据，
   // codex CLI `401 Unauthorized: Missing bearer` 秒退）。宿主 team2 codex 凭据目录
