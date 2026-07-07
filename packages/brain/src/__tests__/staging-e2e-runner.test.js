@@ -162,6 +162,34 @@ describe('deployStaging — ZenithJoy customer line（:5201 护栏）', () => {
     expect(r.output).toMatch(/尝试 3 次均失败/);
     expect(r.output).toMatch(/总等待 60s/);
   });
+
+  it('成功时健康响应为 JSON → 提取 stagingSha 和 buildTime 写入 output', async () => {
+    const healthJson = JSON.stringify({
+      status: 'ok',
+      build: { sha: '8ecf9249378936b1a27395eb5a7efcb179a3fd23', version: '1.0.1', buildTime: '2026-07-07T08:14:34Z' },
+    });
+    const exec = () => healthJson;
+    const r = await deployStaging({ exec, line: 'customer', sleep: async () => {} });
+    expect(r.status).toBe('success');
+    expect(r.stagingSha).toBe('8ecf9249378936b1a27395eb5a7efcb179a3fd23');
+    expect(r.output).toContain('[ZJ staging SHA: 8ecf9249378936b1a27395eb5a7efcb179a3fd23');
+    expect(r.output).toContain('buildTime:2026-07-07T08:14:34Z');
+  });
+
+  it('成功时健康响应为非 JSON（纯文本 ok）→ stagingSha=null，向前兼容', async () => {
+    const exec = () => 'ok';
+    const r = await deployStaging({ exec, line: 'customer', sleep: async () => {} });
+    expect(r.status).toBe('success');
+    expect(r.stagingSha).toBeNull();
+    expect(r.output).toContain('ok');
+  });
+
+  it('成功时健康响应 build.sha 缺失 → stagingSha=null，不崩溃', async () => {
+    const exec = () => JSON.stringify({ status: 'ok', build: {} });
+    const r = await deployStaging({ exec, line: 'customer', sleep: async () => {} });
+    expect(r.status).toBe('success');
+    expect(r.stagingSha).toBeNull();
+  });
 });
 
 // ─── runStagingCommand ─────────────────────────────────────────────────────────
@@ -517,6 +545,35 @@ describe('handlePromote — ZenithJoy staging FAIL 护栏通知', () => {
     );
     expect(status).toBe('n_a');
     expect(notifyMsgs).toHaveLength(0);
+  });
+
+  it('FAIL + deployOutput 含 ZJ staging SHA → 通知里出现最后已知 SHA（诊断可见）', async () => {
+    const notifyMsgs = [];
+    const notify = async (msg) => { notifyMsgs.push(msg); };
+    const pool = { query: vi.fn(async () => ({ rows: [] })) };
+    // deployOutput 模拟一次成功健康检查后的 output（含 SHA 诊断行），紧接着下一次失败
+    const deployOutput = 'ok\n[ZJ staging SHA: 8ecf9249378936b1a27395eb5a7efcb179a3fd23 buildTime:2026-07-07T08:14:34Z]';
+    await handlePromote(
+      pool,
+      { verdict: 'FAIL', baseRepo: 'perfectuser21/zenithjoy', prUrl: 'p', initiativeId: 'i', deployOutput },
+      { notify },
+    );
+    expect(notifyMsgs).toHaveLength(1);
+    expect(notifyMsgs[0]).toContain('最后已知 staging SHA: 8ecf9249');
+  });
+
+  it('FAIL + deployOutput 无 SHA → 通知不含 SHA 行（向前兼容）', async () => {
+    const notifyMsgs = [];
+    const notify = async (msg) => { notifyMsgs.push(msg); };
+    const pool = { query: vi.fn(async () => ({ rows: [] })) };
+    await handlePromote(
+      pool,
+      { verdict: 'FAIL', baseRepo: 'perfectuser21/zenithjoy', prUrl: 'p', initiativeId: 'i', deployOutput: 'curl: (7) ECONNREFUSED' },
+      { notify },
+    );
+    expect(notifyMsgs).toHaveLength(1);
+    expect(notifyMsgs[0]).not.toContain('最后已知 staging SHA');
+    expect(notifyMsgs[0]).toContain('ZJ 护栏触发');
   });
 });
 

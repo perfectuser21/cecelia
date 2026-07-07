@@ -75,7 +75,16 @@ export async function deployStaging(opts = {}) {
       try {
         const raw = exec(cmd, { encoding: 'utf8', timeout: 45_000, maxBuffer: 1024 * 1024 });
         const out = typeof raw === 'string' ? raw : String(raw);
-        return { status: 'success', reason: null, output: cap(out), stagingPort };
+        // 从健康检查 JSON 提取候选 SHA + buildTime，供护栏通知和审计追踪使用。
+        let stagingSha = null;
+        let stagingBuildTime = null;
+        try {
+          const parsed = JSON.parse(out.trim());
+          stagingSha = parsed?.build?.sha || null;
+          stagingBuildTime = parsed?.build?.buildTime || null;
+        } catch { /* 非 JSON 响应，忽略 */ }
+        const shaLine = stagingSha ? `\n[ZJ staging SHA: ${stagingSha}${stagingBuildTime ? ' buildTime:' + stagingBuildTime : ''}]` : '';
+        return { status: 'success', reason: null, output: cap(out + shaLine), stagingPort, stagingSha };
       } catch (err) {
         lastErr = err;
         if (attempt < maxAttempts) {
@@ -367,12 +376,16 @@ export async function handlePromote(dbPool, { verdict, baseRepo, prUrl, initiati
       // SKIP（无合同/无 docker）不通知：不是真失败，是配置缺省。
       if (verdict === 'FAIL' && decision.line === 'customer') {
         try {
-          const outputSnippet = deployOutput
-            ? `\n诊断: ${String(deployOutput).trim().slice(-400)}`
+          const deployStr = deployOutput ? String(deployOutput).trim() : '';
+          // 从 deployOutput 提取最后已知 staging SHA（deployStaging 成功时追加的诊断行）
+          const shaMatch = deployStr.match(/\[ZJ staging SHA:\s*([0-9a-f]{7,40})[^\]]*\]/);
+          const shaLine = shaMatch ? `\n最后已知 staging SHA: ${shaMatch[1].slice(0, 12)}` : '';
+          const outputSnippet = deployStr
+            ? `\n诊断: ${deployStr.slice(-400)}`
             : '';
           await notify(
             `🚨 [ZJ 护栏触发] ZenithJoy staging :5201 失败，:5200 生产未触碰\n`
-            + `initiative: ${initiativeId || '?'}\nPR: ${prUrl || '?'}${outputSnippet}\n`
+            + `initiative: ${initiativeId || '?'}\nPR: ${prUrl || '?'}${shaLine}${outputSnippet}\n`
             + `下一步: 检查 ZenithJoy CI deploy 日志，修复后重推 main 触发重跑`
           );
         } catch (e) {
