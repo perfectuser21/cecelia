@@ -66,7 +66,7 @@ describe('INV-02: 背压拒绝', () => {
   it('拒绝后数据库记录数不增加', async () => {
     await fillPendingQueue(20);
 
-    const { before } = await db.one('SELECT COUNT(*) as before FROM skill_eval_tasks');
+    const { cnt_before } = await db.one('SELECT COUNT(*) as cnt_before FROM skill_eval_tasks');
 
     const zip = makeValidZipBuffer();
     await request(app)
@@ -75,8 +75,8 @@ describe('INV-02: 背压拒绝', () => {
       .attach('file', zip, { filename: 'skill.zip', contentType: 'application/zip' })
       .field('skill_name', 'test-skill');
 
-    const { after } = await db.one('SELECT COUNT(*) as after FROM skill_eval_tasks');
-    expect(parseInt(after)).toBe(parseInt(before));
+    const { cnt_after } = await db.one('SELECT COUNT(*) as cnt_after FROM skill_eval_tasks');
+    expect(parseInt(cnt_after)).toBe(parseInt(cnt_before));
   });
 
   it('SKILL_EVAL_PENDING_LIMIT 可通过环境变量配置（设为 5 时，5 个 pending 即拒绝）', async () => {

@@ -1,5 +1,5 @@
 /**
- * INV-04: 硬校验五件套
+ * INV-04: 硬校验六件套
  * zip 魔数 / 解压 ≤ 50MB / 压缩比 ≤ 100:1 / 文件数 ≤ 2000 / 唯一 SKILL.md / 无路径穿越
  */
 
@@ -14,11 +14,12 @@ import {
   makeZipWithMultipleSkillMd,
   makeZipWithPathTraversal,
   makeZipExceedingFileCount,
+  makeHighCompressionRatioZip,
 } from './helpers/zip-factory.js';
 
 const TOKEN = 'test-proxy-token';
 
-describe('INV-04: 硬校验五件套', () => {
+describe('INV-04: 硬校验六件套', () => {
   let app;
   let db;
 
@@ -117,5 +118,17 @@ describe('INV-04: 硬校验五件套', () => {
     expect(res.body).toHaveProperty('error');
     expect(typeof res.body.error).toBe('string');
     expect(res.body.error.length).toBeGreaterThan(5);
+  });
+
+  it('压缩比 > 100:1 → HTTP 400', async () => {
+    const zip = await makeHighCompressionRatioZip();
+    const res = await request(app)
+      .post('/api/brain/skill-evals/upload')
+      .set('X-Eval-Proxy-Token', TOKEN)
+      .attach('file', zip, { filename: 'bomb.zip', contentType: 'application/zip' })
+      .field('skill_name', 'zip-bomb');
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/compress|ratio|比/i);
   });
 });

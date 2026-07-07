@@ -78,8 +78,8 @@ describe('FR-UPLOAD-FLOW: 上传链路顺序', () => {
     });
 
     it('无 SKILL.md 的 zip → HTTP 400，错误信息明确', async () => {
-      const { makeZipWithoutSkillMd } = await import('./helpers/zip-factory.js');
-      const zip = makeZipWithoutSkillMd();
+      const { makeZipWithNoSkillMd } = await import('./helpers/zip-factory.js');
+      const zip = await makeZipWithNoSkillMd();
 
       const res = await request(app)
         .post('/api/brain/skill-evals/upload')
