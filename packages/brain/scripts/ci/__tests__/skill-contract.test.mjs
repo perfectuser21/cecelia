@@ -22,7 +22,7 @@ const proposer = read('packages/workflows/skills/harness-contract-proposer/SKILL
 const sharedJs = read('packages/brain/src/harness-shared.js');
 
 describe('skill-contract — 5 类不变量守现网快照', () => {
-  it('不变量1: evaluator 正文含 env_missing / B-1.6 / B-1.7 / B-1.8 段', () => {
+  it('不变量1: evaluator 正文含 env_missing / B-1.6 / B-1.8 段（B-1.7 已下沉 Contract Gate 代码层，v1.16.0）', () => {
     const r = checkEvaluator(evaluator);
     // 仅看「段缺失」类不变量（排除 ws_id 残留项，由不变量2 单独守）
     expect(r.missing.filter((x) => x !== 'ws_id_residual')).toEqual([]);

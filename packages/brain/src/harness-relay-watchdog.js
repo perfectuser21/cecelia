@@ -83,6 +83,10 @@ export async function resumeStalledRelayRuns(deps = {}) {
       if (task.status !== 'in_progress') continue;
       // 安全护栏：只碰 skill-relay 任务
       if (task.payload?.orchestrator !== 'skill-relay') continue;
+      // 前台点火 run（POST /relay-runs 建档，host='foreground'）没有 cecelia-relay-* 容器，
+      // "容器消失=死跑"判据对它恒真——跳过重点火，防 spawn 无头容器与前台会话双跑。
+      // 前台崩溃恢复靠人（用户在场是前台模式的定义）；上方 house-keeping 分支仍对其生效。
+      if (run.orchestrator_host === 'foreground') continue;
       // deadline 逾期归 scanStuckHarness
       if (run.deadline_at && new Date(run.deadline_at).getTime() < Date.now()) continue;
 

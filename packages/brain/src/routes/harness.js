@@ -15,6 +15,7 @@ import { join } from 'path';
 import { homedir } from 'os';
 import { randomUUID } from 'crypto';
 import pool from '../db.js';
+import { runJudgeGate } from '../harness-judge.js';
 
 const router = Router();
 
@@ -1842,6 +1843,61 @@ router.post('/promote/:resultId', async (req, res) => {
     return res.status(500).json({ error: err.message });
   } finally {
     client.release();
+  }
+});
+
+/**
+ * POST /api/brain/harness/judge — judge 环 API 化（跨 repo 刀2）。
+ * 语义镜像 scripts/harness-judge-cli.mjs main()（该 CLI 保留兼容）：
+ * 三必填校验 → verdict 回退读 .brain-result.json → FIXED 归一 PASS → runJudgeGate 透传。
+ * HTTP 恒 200 承载裁决（等价 CLI exit 0/2 由调用方按 body.verdict 分支）。
+ */
+router.post('/judge', async (req, res) => {
+  const { task_id, sprint_dir, worktree, agent_verdict, agent_feedback, prompt_dir, transcript_file } = req.body || {};
+  if (!task_id || !sprint_dir || !worktree) {
+    return res.status(400).json({ error: 'task_id/sprint_dir/worktree 必填' });
+  }
+  if (typeof worktree !== 'string' || !worktree.startsWith('/')) {
+    return res.status(400).json({ error: 'worktree 必须是绝对路径' });
+  }
+  try { await access(worktree); } catch {
+    return res.status(400).json({ error: 'worktree 目录不存在' });
+  }
+
+  let verdict = agent_verdict;
+  let feedback = agent_feedback;
+  if (!verdict) {
+    try {
+      const br = JSON.parse(await readFile(join(worktree, '.brain-result.json'), 'utf8'));
+      verdict = br.verdict;
+      if (feedback === undefined) feedback = br.feedback;
+    } catch { /* 下方统一 400 */ }
+  }
+  if (!verdict) {
+    return res.status(400).json({ error: 'agent_verdict 缺失且 .brain-result.json 不可读' });
+  }
+  if (verdict === 'FIXED') verdict = 'PASS'; // 前科语义归一（memory: harness-evaluator-verdict-bug）
+
+  let transcript;
+  if (transcript_file) {
+    try { transcript = await readFile(transcript_file, 'utf8'); } catch { /* 读失败不阻塞，与 CLI 一致 */ }
+  }
+
+  try {
+    const result = await runJudgeGate({
+      agentVerdict: verdict,
+      agentFeedback: feedback,
+      worktreePath: worktree,
+      sprintDir: sprint_dir,
+      taskId: task_id,
+      promptDir: prompt_dir,
+      transcript,
+      instanceLabel: `judge-api-${String(task_id).slice(0, 8)}`,
+    });
+    return res.json(result);
+  } catch (err) {
+    console.error('[POST /harness/judge]', err.message);
+    return res.status(500).json({ error: 'internal error' });
   }
 });
 
