@@ -1,0 +1,42 @@
+# Smoke PASS 基线（allowlist）
+# 列表内脚本失败 → CI 红（棘轮闸）
+# 新增脚本默认须加入此文件或 smoke-denylist.txt（新债不许欠）
+# 更新方式：在 CI 通过后从 smoke-debt.txt 迁移经确认能通过的脚本到此处
+
+abilities-api-smoke.sh
+agent-credit-smoke.sh
+battle-report-smoke.sh
+circuit-breaker-persist-smoke.sh
+circuit-breaker-reset-smoke.sh
+decision-system-smoke.sh
+feature-registry-smoke.sh
+harness-detail-smoke.sh
+harness-echo-smoke.sh
+harness-ping-smoke.sh
+harness-planner-async-smoke.sh
+harness-planner-v8-smoke.sh
+harness-protocol-smoke.sh
+harness-report-mjs-smoke.sh
+harness-reporter-smoke.sh
+harness-runs-api-smoke.sh
+harness-runs-by-id-smoke.sh
+harness-schema-validation-smoke.sh
+harness-stats-by-journey-smoke.sh
+healthz-smoke.sh
+initiative-lifecycle-smoke.sh
+judge-api-smoke.sh
+kr1-kr2-updater-smoke.sh
+line-context-smoke.sh
+okr-initiative-mirror-smoke.sh
+relay-runs-filter-smoke.sh
+relay-runs-since-smoke.sh
+relay-runs-smoke.sh
+relay-runs-summary-smoke.sh
+relay-runs-verdicts-smoke.sh
+scheduler-jobs-smoke.sh
+skill-relay-smoke.sh
+slot-accounting-smoke.sh
+tasks-ability-id-smoke.sh
+version-endpoint-smoke.sh
+warroom-readonly-api-smoke.sh
+warroom-smoke.sh
