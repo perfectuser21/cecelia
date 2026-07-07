@@ -24,6 +24,8 @@ import harnessRouter from './routes/harness.js';
 import harnessSelftestRouter from './routes/harness-selftest.js';
 import warroomRouter from './routes/warroom.js';
 import kr3Router from './routes/kr3.js';
+import handoffsRouter from './routes/handoffs.js';
+import sentinelRouter from './routes/sentinel.js';
 import dispatchRouter from './routes/dispatch.js';
 import previewRouter from './routes/preview.js';
 
@@ -64,6 +66,12 @@ router.use('/warroom', warroomRouter);
 
 // KR3 小程序配置状态 — GET /kr3/check-config, POST /kr3/mark-wx-pay, POST /kr3/mark-admin-oid
 router.use('/kr3', kr3Router);
+
+// 交接单只读流 — GET /handoffs（warroom 接力史，relay-baton4 item1）
+router.use('/handoffs', handoffsRouter);
+
+// 调度哨兵健康 — GET /sentinel/health（warroom 哨兵灯，relay-baton4 item1）
+router.use('/sentinel', sentinelRouter);
 
 // dispatch 诊断 — GET /dispatch/recent（B6: dispatch_events 可观察性）
 router.use('/', dispatchRouter);
