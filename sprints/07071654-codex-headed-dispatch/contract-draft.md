@@ -135,17 +135,9 @@ generated: 2026-07-07
 
 ---
 
-## Test Contract 表（TDD 单测覆盖映射）
+## Test Contract
 
-| [BEHAVIOR] | 测试描述（it() 子串） | 测试文件 |
-|------------|----------------------|----------|
-| B-01 | claude+headed → 400 / validateHeadedMode(executor=claude, mode=headed) | `codex-headed-dispatch.test.js` |
-| B-01 | codex+headed → ok / validateHeadedMode(executor=codex, mode=headed) | `codex-headed-dispatch.test.js` |
-| B-02 | mode 缺省/headless → docker 路径零回归 | `codex-headed-dispatch.test.js` |
-| B-03 | mode=headed → sshFn 被调用（tmux new-session）| `codex-headed-dispatch.test.js` |
-| B-03 | mode=headed → initiative_runs 落行 orchestrator_host=skill-relay-codex-headed | `codex-headed-dispatch.test.js` |
-| B-03 | mode=headed → deadline=8h | `codex-headed-dispatch.test.js` |
-| B-03 | mode=headed → prompt 通过文件方式传递（不含 $(cat) 内联） | `codex-headed-dispatch.test.js` |
-| B-04 | watchdog headed：ssh 失败 → fail-open 不重点火 | `codex-headed-dispatch.test.js` |
-| B-05 | tmux_killed_at 已有值 → 不再调用 sshFn kill-session（幂等） | `codex-headed-dispatch.test.js` |
-| B-05 | tmux_killed_at 为 null → sshFn kill-session 被调用，并更新 DB | `codex-headed-dispatch.test.js` |
+| 功能 | Test File | BEHAVIOR 覆盖 | 预期红证据 |
+|------|-----------|--------------|-----------|
+| headed 模式校验与 ssh+tmux 派发 | `../../packages/brain/src/__tests__/codex-headed-dispatch.test.js` | validateHeadedMode(executor=claude, mode=headed) / validateHeadedMode(executor=codex, mode=headed) / mode 缺省 → spawnFn / mode=headed → sshFn 被调用（tmux new-session）/ mode=headed → initiative_runs 落行 orchestrator_host=skill-relay-codex-headed / mode=headed → deadline=8h / mode=headed → prompt 通过文件方式传递（不含 $(cat) 内联） | → 7 failures（harness-skill-relay.js 无 headed 分支）|
+| watchdog fail-open 与收窗幂等 | `../../packages/brain/src/__tests__/codex-headed-dispatch.test.js` | ssh 命令失败（exitCode!=0）→ watchdog 不递增 attempts / tmux_killed_at 已有值 → 不再调用 sshFn kill-session / tmux_killed_at 为 null → sshFn kill-session 被调用，并更新 DB tmux_killed_at | → 3 failures（harness-relay-watchdog.js 无 headed 分支）|

@@ -174,7 +174,7 @@ export async function spawnSkillRelaySession(task, deps = {}) {
 
     // 3. sprint_dir：/dev 交接优先，缺省按 relay 规约生成
     const sprintDir = task.payload?.sprint_dir
-      || `sprints/${stampMMDDHHNN(deps.now ? deps.now() : new Date())}-relay-${short}`;
+      || `sprints/${stampMMDDHHNN(now())}-relay-${short}`;
 
     // 3.5 P2-1 review 分级：点火时判定并持久化（controller 经 GET task 读 payload.review_required）
     const reviewRequired = deriveReviewRequired(task);
