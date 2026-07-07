@@ -64,6 +64,7 @@ describe('spawnSkillRelaySession', () => {
     expect(spawnOpts.env.HARNESS_TASK_ID).toBe(TASK.id);
     expect(spawnOpts.env.HARNESS_INITIATIVE_ID).toBe(TASK.id);            // B51: initiative_id=task.id
     expect(spawnOpts.env.HARNESS_SPRINT_DIR).toBe('sprints/07049999-test');
+    expect(spawnOpts.env.HARNESS_WORKTREE_HOST).toBe('/tmp/wt/task-aaaabbbb'); // 宿主 worktree 路径注入
     expect(spawnOpts.env.GITHUB_TOKEN).toBe('gh-token');
     expect(spawnOpts.env.CECELIA_TASK_TYPE).toBe('harness_controller');
 

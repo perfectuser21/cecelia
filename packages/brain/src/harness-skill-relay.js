@@ -233,6 +233,9 @@ export async function spawnSkillRelaySession(task, deps = {}) {
           HARNESS_TASK_ID: task.id,
           HARNESS_INITIATIVE_ID: initiativeId,
           HARNESS_SPRINT_DIR: sprintDir,
+          // 宿主 worktree 绝对路径，供 controller Step 5 curl judge API 传 worktree 参数。
+          // relay 容器内路径与宿主同（bind-mount），Brain 容器同路径可见。
+          HARNESS_WORKTREE_HOST: worktreePath,
           CECELIA_JOURNEY_ID: task.payload?.journey_id || '',
           GITHUB_TOKEN: githubToken,
           BRAIN_URL: 'http://host.docker.internal:5221',

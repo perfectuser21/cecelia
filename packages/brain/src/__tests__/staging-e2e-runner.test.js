@@ -337,6 +337,32 @@ describe('runStagingE2E', () => {
     expect(deploy).not.toHaveBeenCalled();
   });
 
+  it('unknown 线（第三方 repo）→ SKIP unknown_line_no_deploy，不触发 deploy，发飞书通知', async () => {
+    const pool = makeMockPool();
+    const deploy = vi.fn();
+    const notify = vi.fn().mockResolvedValue(undefined);
+    const task3p = { id: 'task-3p', payload: { initiative_id: 'init-1', pr_url: 'https://pr/1', base_repo: 'some-org/some-repo' } };
+    const r = await runStagingE2E(task3p, { pool, deploy, loadAcceptance: async () => ACCEPTANCE, notify });
+    expect(r.verdict).toBe('SKIP');
+    expect(r.reason).toBe('unknown_line_no_deploy');
+    expect(deploy).not.toHaveBeenCalled();
+    expect(notify).toHaveBeenCalledOnce();
+    expect(notify.mock.calls[0][0]).toContain('unknown 线');
+    expect(notify.mock.calls[0][0]).toContain('some-org/some-repo');
+    expect(updateTaskStatus).toHaveBeenCalledWith('task-3p', 'completed');
+  });
+
+  it('unknown 线通知失败 → 不抛错，仍 SKIP 完成', async () => {
+    const pool = makeMockPool();
+    const deploy = vi.fn();
+    const notify = vi.fn().mockRejectedValue(new Error('feishu 超时'));
+    const task3p = { id: 'task-3p2', payload: { initiative_id: 'init-1', pr_url: 'https://pr/2', base_repo: 'other/repo' } };
+    const r = await runStagingE2E(task3p, { pool, deploy, loadAcceptance: async () => ACCEPTANCE, notify });
+    expect(r.verdict).toBe('SKIP');
+    expect(r.reason).toBe('unknown_line_no_deploy');
+    expect(deploy).not.toHaveBeenCalled();
+  });
+
   it('deploy skipped(no_docker) → SKIP，不算失败', async () => {
     const pool = makeMockPool();
     const deploy = () => ({ status: 'skipped', reason: 'no_docker', output: '' });
