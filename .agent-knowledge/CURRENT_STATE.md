@@ -1,12 +1,12 @@
 ---
-generated: 2026-05-22 16:28:46 CST
+generated: 2026-07-08 00:23:39 CST
 source: write-current-state.sh
 ---
 
 # Cecelia 系统当前状态
 
 > 由 `/dev` Stage 4 自动生成，每次 PR 合并后更新。
-> 生成时间：2026-05-22 16:28:46 CST
+> 生成时间：2026-07-08 00:23:39 CST
 
 ---
 
@@ -14,33 +14,33 @@ source: write-current-state.sh
 
 | 指标 | 状态 |
 |------|------|
-| Brain API | healthy |
+| Brain API | unknown |
 | 警觉等级 | 1 - CALM |
 
 ---
 
 ## Capability Probe（能力链路探针）
 
-> 最后探针时间：2026-05-22 08:07:24 UTC | 总计：10 | ✅ 通过：10 | ❌ 失败：0
+> 最后探针时间：2026-07-07 16:22:58 UTC | 总计：10 | ✅ 通过：10 | ❌ 失败：0
 
 | 探针名 | 描述 | 状态 | 耗时 |
 |--------|------|------|------|
-| `db` | 数据库连接+核心表可读 | ✅ | 13ms |
-| `dispatch` | 任务派发链路（tasks表可写+executor模块可import） | ✅ | 3ms |
+| `db` | 数据库连接+核心表可读 | ✅ | 22ms |
+| `dispatch` | 任务派发链路（tasks表可写+executor模块可import） | ✅ | 4ms |
 | `auto_fix` | auto-fix链路dry-run（shouldAutoFix函数可调用） | ✅ | 0ms |
-| `notify` | 飞书通知链路（alerting模块可import+函数可调用） | ✅ | 1ms |
+| `notify` | 飞书通知链路（alerting模块可import+函数可调用） | ✅ | 0ms |
 | `cortex` | CortexRCA链路（cortex模块可import） | ✅ | 0ms |
 | `monitor_loop` | MonitorLoop运行状态 | ✅ | 0ms |
-| `rumination` | 反刍系统（24h内是否有产出） | ✅ | 4ms |
+| `rumination` | 反刍系统（24h内是否有产出） | ✅ | 2ms |
 | `evolution` | 进化追踪（是否有evolution记录） | ✅ | 2ms |
-| `consolidation` | 记忆合并（48h内是否有合并记录） | ✅ | 0ms |
-| `geo_website` | geoSEO网站（zenithjoyai.com）可访问+blog+posts有内容 | ✅ | 469ms |
+| `consolidation` | 记忆合并（48h内是否有合并记录） | ✅ | 1ms |
+| `geo_website` | geoSEO网站（zenithjoyai.com）可访问+blog+posts有内容 | ✅ | 113ms |
 
 ---
 
 ## 进行中任务
 
-（无进行中任务）
+- [P1] Skill Evaluator 内部验收台（形态B）thin 贯穿 (harness_initiative)
 
 ---
 
@@ -56,16 +56,16 @@ source: write-current-state.sh
 
 ## P0 Issues
 
-- ❌ [failed] ZenithJoy API 部署失败 — [reaper] zombie: in_progress idle >60min
-- ❌ [failed] ZenithJoy 智能获客 — 新增 GET /api/acquisition/overview — Command failed: git clone --branch main --single-b
-- ❌ [failed] ZenithJoy API 部署失败
-- ❌ [failed] ZenithJoy 智能获客 — 新增 GET /api/acquisition/overview 端点 — verifyProposerOutput: cannot read GitHub URL from 
-- ❌ [failed] ZenithJoy API 部署失败 — [reaper] zombie: in_progress idle >60min
-- ❌ [failed] ZenithJoy 智能获客 — 新增 GET /api/acquisition/overview 端点 — Command failed: git clone --local --no-hardlinks -
-- ❌ [failed] ZenithJoy 智能获客能力概览 API（thin） — Command failed: git clone --local --no-hardlinks -
-- ❌ [failed] ZenithJoy 智能获客能力概览端点（harness 验证） — Command failed: git clone --local --no-hardlinks -
-- ❌ [failed] ZenithJoy Dashboard 部署失败
-- ❌ [failed] ZenithJoy API 部署失败 — [reaper] zombie: in_progress idle >60min
+- ❌ [failed] relay-demo: pretty-bytes 小工具（headed 派发首航） — prompt write failed: require is not defined
+- ❌ [failed] /reports 日报骨架：battle-report 生成器 + scheduler job + 列表页接 desig — [reaper] zombie: in_progress idle >60min
+- ❌ [failed] dod-behavior1
+- ❌ [failed] codex-token-refresh-repo — missing_orchestrator_flag
+- ❌ [failed] relay-demo: JSON 键排序小工具（codex one-session 实证） — relay watchdog: 重点火 2 次仍未收敛到 merge
+- ❌ [failed] 机器管理-安卓设备账号模型 — missing_orchestrator_flag
+- ❌ [failed] 抖音私信触达-搜索定位+热身互动 — missing_orchestrator_flag
+- ❌ [failed] 抖音私信主动触达-Android执行路径 — missing_orchestrator_flag
+- ❌ [failed] Relay 进度条 Dashboard 页面 — loadSkillContent: SKILL.md not found for "harness-
+- ❌ [failed] Line02 Dashboard IA重做 — Serial gate: sub-task ws1 did not merge (status=fa
 
 ---
 
@@ -73,11 +73,11 @@ source: write-current-state.sh
 
 | 状态 | 结论 | 工作流 | 分支 | 时间 |
 |------|------|--------|------|------|
-| 🔄 in_progress | - | Brain CI Deploy (Gate 3) | main | 2026-05-22 08:28 |
-| ✅ completed | success | Auto Version | main | 2026-05-22 08:28 |
-| 🔄 queued | - | CI | main | 2026-05-22 08:28 |
-| ✅ completed | success | Cleanup Merged Artifacts | main | 2026-05-22 08:28 |
-| ❌ completed | failure | .github/workflows/archive-lear | main | 2026-05-22 08:28 |
+| ✅ completed | success | Preview Deploy | cp-0708000139-fix-headed- | 2026-07-07 16:17 |
+| ✅ completed | success | Harness v5 Checks | cp-0708000139-fix-headed- | 2026-07-07 16:17 |
+| ✅ completed | success | PR Auto Review (DeepSeek) | cp-0708000139-fix-headed- | 2026-07-07 16:17 |
+| 🔄 in_progress | - | Smoke Glob Runner（棘轮闸） | cp-0708000139-fix-headed- | 2026-07-07 16:17 |
+| 🔄 in_progress | - | CI | cp-0708000139-fix-headed- | 2026-07-07 16:17 |
 
 ---
 
