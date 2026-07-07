@@ -21,7 +21,7 @@ propose_round: 1
 
 ## [BEHAVIOR] 行为验证
 
-[BEHAVIOR-1] 无令牌直打 Brain 上传端点返回 403
+[BEHAVIOR] 无令牌直打 Brain 上传端点返回 403
 Test: manual:bash
 ```bash
 CODE=$(curl -s -o /dev/null -w "%{http_code}" \
@@ -30,7 +30,7 @@ CODE=$(curl -s -o /dev/null -w "%{http_code}" \
 [ "$CODE" = "403" ] && echo "PASS" || echo "FAIL (got $CODE)"
 ```
 
-[BEHAVIOR-2] 带正确令牌上传合法 zip 返回 200 含 task_id 和 position
+[BEHAVIOR] 带正确令牌上传合法 zip 返回 200 含 task_id 和 position
 Test: manual:bash
 ```bash
 TOKEN="${EVAL_PROXY_TOKEN:?需设置 EVAL_PROXY_TOKEN}"
@@ -42,7 +42,7 @@ RESP=$(curl -sf \
 echo "$RESP" | jq -e '.task_id' && echo "$RESP" | jq -e '.position' && echo "PASS" || echo "FAIL"
 ```
 
-[BEHAVIOR-3] 上传非 ZIP 文件（zip 魔数校验）返回 422
+[BEHAVIOR] 上传非 ZIP 文件（zip 魔数校验）返回 422
 Test: manual:bash
 ```bash
 TOKEN="${EVAL_PROXY_TOKEN:?}"
@@ -55,7 +55,7 @@ CODE=$(curl -s -o /dev/null -w "%{http_code}" \
 [ "$CODE" = "422" ] && echo "PASS" || echo "FAIL (got $CODE)"
 ```
 
-[BEHAVIOR-4] GET /api/eval/tasks/:id 对已建任务返回结构含 status/report_url/failure_stage
+[BEHAVIOR] GET /api/eval/tasks/:id 对已建任务返回结构含 status/report_url/failure_stage
 Test: manual:bash
 ```bash
 TOKEN="${EVAL_PROXY_TOKEN:?}"
@@ -71,7 +71,7 @@ echo "$RESP" | jq 'has("failure_stage")' | grep -q true && \
 echo "PASS" || echo "FAIL"
 ```
 
-[BEHAVIOR-5] Brain tick 单 slot 串行：in_progress 状态的 skill_eval 任务最多 1 个
+[BEHAVIOR] Brain tick 单 slot 串行：in_progress 状态的 skill_eval 任务最多 1 个
 Test: manual:bash
 ```bash
 COUNT=$(psql $DATABASE_URL -At -c \
@@ -79,7 +79,7 @@ COUNT=$(psql $DATABASE_URL -At -c \
 [ "$COUNT" -le "1" ] && echo "PASS (in_progress=$COUNT)" || echo "FAIL (in_progress=$COUNT, expected ≤1)"
 ```
 
-[BEHAVIOR-6] 同一 zip 内容（SHA256 相同）二次上传命中去重，返回历史 task_id（dedup=true）
+[BEHAVIOR] 同一 zip 内容（SHA256 相同）二次上传命中去重，返回历史 task_id（dedup=true）
 Test: manual:bash
 ```bash
 TOKEN="${EVAL_PROXY_TOKEN:?}"
@@ -96,7 +96,7 @@ DEDUP=$(echo "$R2" | jq -r '.dedup')
 [ "$TID1" = "$TID2" ] && [ "$DEDUP" = "true" ] && echo "PASS" || echo "FAIL (tid1=$TID1 tid2=$TID2 dedup=$DEDUP)"
 ```
 
-[BEHAVIOR-7] 评估完成后报告 SSH 发布 HK + 索引页含 task_id 条目（需 HK 环境）
+[BEHAVIOR] 评估完成后报告 SSH 发布 HK + 索引页含 task_id 条目（需 HK 环境）
 Test: manual:bash
 ```bash
 # 需在能 SSH 到 HK 服务器且 Brain 已配置 SSH key 的环境下执行
