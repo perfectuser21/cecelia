@@ -87,7 +87,6 @@ export async function deployStaging(opts = {}) {
         let parsed;
         try { parsed = JSON.parse(out.trim()); } catch { /* non-JSON → 视为不健康 */ }
         if (parsed && parsed.status === 'ok') {
-          const sha = parsed.sha ? ` sha=${parsed.sha}` : '';
           return { status: 'success', reason: null, output: cap(out), stagingPort, zjSha: parsed.sha || null };
         }
         // 服务进程活着但 /health 未返回 ok JSON（旧版本 SPA fallback 或服务启动中）
