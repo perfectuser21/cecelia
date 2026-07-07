@@ -100,6 +100,12 @@ describe('spawnSkillRelaySession', () => {
     expect(r.ok).toBe(false);
     expect(deps.spawnFn).not.toHaveBeenCalled();
   });
+  it('env 注入宿主 worktree 绝对路径 HARNESS_WORKTREE_HOST（刀3：controller 容器内 curl judge API 用）', async () => {
+    const deps = makeDeps();
+    await spawnSkillRelaySession(TASK, deps);
+    const spawnOpts = deps.spawnFn.mock.calls[0][0];
+    expect(spawnOpts.env.HARNESS_WORKTREE_HOST).toBe('/tmp/wt/task-aaaabbbb');
+  });
 });
 
 describe('live-container 去重守卫（P1 bug 39b97ade：Brain 重启后误 requeue 导致双 spawn）', () => {

@@ -247,6 +247,10 @@ export async function spawnSkillRelaySession(task, deps = {}) {
           HARNESS_TASK_ID: task.id,
           HARNESS_INITIATIVE_ID: initiativeId,
           HARNESS_SPRINT_DIR: sprintDir,
+          // 刀3（跨 repo 化）：宿主 worktree 绝对路径。controller 在容器内（cwd=/workspace），
+          // Step 5 curl Brain judge API 时 worktree 参数必须传宿主路径——Brain 容器把
+          // ~/perfect21/cecelia 与 .claude/worktrees 按宿主同路径挂载，judge 按此读 .brain-result.json。
+          HARNESS_WORKTREE_HOST: worktreePath,
           CECELIA_JOURNEY_ID: task.payload?.journey_id || '',
           GITHUB_TOKEN: githubToken,
           BRAIN_URL: 'http://host.docker.internal:5221',

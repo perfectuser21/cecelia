@@ -41,3 +41,4 @@ version-endpoint-smoke.sh
 warroom-readonly-api-smoke.sh
 warroom-smoke.sh
 codex-headed-dispatch-smoke.sh
+staging-unknown-line-smoke.sh
