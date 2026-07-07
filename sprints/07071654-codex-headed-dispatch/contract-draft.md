@@ -132,3 +132,20 @@ generated: 2026-07-07
 | AC-10 | tui.log 洗敏，无裸露 token | 日志检查（B-06） |
 | AC-11 | prompt 传递非 $(cat) 内联 | 代码 grep（B-07） |
 | AC-12 | 未引入账号池逻辑 | 代码/DB grep（B-08） |
+
+---
+
+## Test Contract 表（TDD 单测覆盖映射）
+
+| [BEHAVIOR] | 测试描述（it() 子串） | 测试文件 |
+|------------|----------------------|----------|
+| B-01 | claude+headed → 400 / validateHeadedMode(executor=claude, mode=headed) | `codex-headed-dispatch.test.js` |
+| B-01 | codex+headed → ok / validateHeadedMode(executor=codex, mode=headed) | `codex-headed-dispatch.test.js` |
+| B-02 | mode 缺省/headless → docker 路径零回归 | `codex-headed-dispatch.test.js` |
+| B-03 | mode=headed → sshFn 被调用（tmux new-session）| `codex-headed-dispatch.test.js` |
+| B-03 | mode=headed → initiative_runs 落行 orchestrator_host=skill-relay-codex-headed | `codex-headed-dispatch.test.js` |
+| B-03 | mode=headed → deadline=8h | `codex-headed-dispatch.test.js` |
+| B-03 | mode=headed → prompt 通过文件方式传递（不含 $(cat) 内联） | `codex-headed-dispatch.test.js` |
+| B-04 | watchdog headed：ssh 失败 → fail-open 不重点火 | `codex-headed-dispatch.test.js` |
+| B-05 | tmux_killed_at 已有值 → 不再调用 sshFn kill-session（幂等） | `codex-headed-dispatch.test.js` |
+| B-05 | tmux_killed_at 为 null → sshFn kill-session 被调用，并更新 DB | `codex-headed-dispatch.test.js` |

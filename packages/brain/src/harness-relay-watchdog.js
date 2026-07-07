@@ -206,3 +206,122 @@ export async function scanStuckHarness(opts = {}) {
     }
   }
 }
+
+/**
+ * B-04: headed 分支看门狗 — 检测 tmux session 存活，ssh 失败 fail-open。
+ *
+ * 扫描 orchestrator_host='skill-relay-codex-headed' 的 in-progress runs，
+ * 通过 sshFn 检查 tmux has-session；
+ * ssh 命令本身失败（网络/权限）→ fail-open 跳过，不递增 attempts，不触发重点火。
+ * session 消失 + run 未 done + PR 未 MERGED → 重点火（逻辑与 resumeStalledRelayRuns 同）。
+ *
+ * @param {{ pool?: object, sshFn?: Function, spawnFn?: Function }} deps
+ * @returns {Promise<{scanned:number, resumed:number, failOpen:number}>}
+ */
+export async function resumeHeadedRelayRuns(deps = {}) {
+  const dbPool = deps.pool || pool;
+  const sshFn = deps.sshFn || ((cmd) => execSync(`ssh -o StrictHostKeyChecking=no host.docker.internal ${cmd}`, { encoding: 'utf8', timeout: 10000 }));
+  const out = { scanned: 0, resumed: 0, failOpen: 0 };
+
+  const runsQ = await dbPool.query(
+    `SELECT DISTINCT ON (initiative_id)
+            id, initiative_id, phase, deadline_at, tmux_killed_at,
+            (SELECT COUNT(*) FROM initiative_runs r2
+              WHERE r2.initiative_id = r.initiative_id
+                AND r2.orchestrator_host = 'skill-relay-codex-headed') AS attempts
+       FROM initiative_runs r
+      WHERE orchestrator_host = 'skill-relay-codex-headed'
+        AND phase NOT IN ('done', 'failed')
+      ORDER BY initiative_id, started_at DESC
+      LIMIT 20`
+  );
+  const runs = (runsQ && Array.isArray(runsQ.rows)) ? runsQ.rows : [];
+  out.scanned = runs.length;
+
+  for (const run of runs) {
+    try {
+      // deadline 逾期归 scanStuckHarness
+      if (run.deadline_at && new Date(run.deadline_at).getTime() < Date.now()) continue;
+
+      const taskQ = await dbPool.query(
+        `SELECT id, status, payload FROM tasks WHERE id = $1`,
+        [run.initiative_id]
+      );
+      const task = taskQ.rows[0];
+      if (!task || !['in_progress'].includes(task.status)) continue;
+      if (task.payload?.orchestrator !== 'skill-relay') continue;
+
+      const runShort = shortId(run.initiative_id);
+      const sessionName = `codex-relay-${runShort}`;
+
+      // B-04: headed 存活检测 — ssh 失败 fail-open
+      let sessionAlive = false;
+      try {
+        await sshFn(`tmux has-session -t ${sessionName} 2>/dev/null`);
+        sessionAlive = true;
+      } catch (sshErr) {
+        // ssh 命令失败（非 session 消失，而是 ssh 本身出问题）→ fail-open 跳过
+        if (sshErr.message?.includes('has-session') || sshErr.status === 1 || sshErr.code === 1) {
+          // tmux has-session 返回 1 = session 不存在，正常处理（exit code 1 = session gone）
+          sessionAlive = false;
+        } else {
+          // ssh 连接失败（网络/权限）→ fail-open，保守跳过
+          console.warn(`[relay-watchdog][headed] ssh 失败 fail-open: session=${sessionName} err=${sshErr.message}`);
+          out.failOpen++;
+          continue;
+        }
+      }
+
+      if (sessionAlive) continue;
+
+      // session 消失 → 触发重点火（与 docker 路径同逻辑）
+      const spawnFn = deps.spawnFn
+        || (await import('./harness-skill-relay.js')).spawnSkillRelaySession;
+      const r = await spawnFn(task, { pool: dbPool });
+      if (r?.ok) {
+        out.resumed++;
+        console.log(`[relay-watchdog][headed] 重点火 initiative=${run.initiative_id} session=${sessionName}`);
+      }
+    } catch (err) {
+      console.warn(`[relay-watchdog][headed] initiative=${run.initiative_id} 处理失败（non-fatal）: ${err.message}`);
+    }
+  }
+  return out;
+}
+
+/**
+ * B-05: 收窗幂等 — tmux_killed_at 标记后不重复 kill。
+ *
+ * @param {{ id: string, initiative_id: string, tmux_killed_at: string|null, phase: string, short_id?: string }} run
+ * @param {{ pool?: object, sshFn?: Function }} deps
+ * @returns {Promise<{killed?:boolean, skipped?:boolean, reason?:string}>}
+ */
+export async function cleanupHeadedRun(run, deps = {}) {
+  const dbPool = deps.pool || pool;
+  const sshFn = deps.sshFn || ((cmd) => execSync(`ssh -o StrictHostKeyChecking=no host.docker.internal ${cmd}`, { encoding: 'utf8', timeout: 10000 }));
+
+  // 幂等：已收窗 → 跳过
+  if (run.tmux_killed_at) {
+    return { skipped: true, reason: `already killed at ${run.tmux_killed_at} (tmux_killed_at idempotent)` };
+  }
+
+  const runShort = run.short_id || shortId(run.initiative_id);
+  const sessionName = `codex-relay-${runShort}`;
+
+  // 执行 kill-session
+  try {
+    await sshFn(`tmux kill-session -t ${sessionName} 2>/dev/null || true`);
+  } catch (err) {
+    // kill-session 失败不阻塞（session 可能已消失）
+    console.warn(`[relay-watchdog][headed] kill-session failed (non-fatal): ${err.message}`);
+  }
+
+  // 更新 DB tmux_killed_at
+  await dbPool.query(
+    `UPDATE initiative_runs SET tmux_killed_at = NOW() WHERE id = $1`,
+    [run.id]
+  );
+
+  console.log(`[relay-watchdog][headed] cleanupHeadedRun: killed session=${sessionName} run=${run.id}`);
+  return { killed: true };
+}

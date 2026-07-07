@@ -15,6 +15,16 @@
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
+// ─── module state reset between tests ───────────────────────────────────────
+// _activeCodexRelays 是模块级变量，每次 spawnFn happy-path 后 +1，测试间必须重置
+beforeEach(async () => {
+  const mod = await import('../harness-skill-relay.js');
+  if (typeof mod._setActiveCodexRelays === 'function') {
+    mod._setActiveCodexRelays(0);
+  }
+  vi.unstubAllEnvs();
+});
+
 // ─── B-01 / B-02: 入队路由校验 ─────────────────────────────────────────────
 
 describe('B-01: 入队路由校验 — claude+headed → 400', () => {
@@ -65,7 +75,7 @@ describe('B-02: mode 缺省/headless → docker 路径零回归', () => {
     const { spawnSkillRelaySession } = await import('../harness-skill-relay.js');
     const sshFn = vi.fn();
     const deps = {
-      pool: { query: vi.fn().mockResolvedValue({ rows: [] }) },
+      pool: { query: vi.fn().mockResolvedValue({ rows: [{ count: '0' }] }) },
       spawnFn: vi.fn().mockResolvedValue({ containerId: 'cid' }),
       loadSkill: vi.fn().mockReturnValue('SKILL'),
       ensureWt: vi.fn().mockResolvedValue('/tmp/wt'),
@@ -78,7 +88,6 @@ describe('B-02: mode 缺省/headless → docker 路径零回归', () => {
     expect(r.ok).toBe(true);
     expect(deps.spawnFn).toHaveBeenCalledOnce(); // docker path called
     expect(sshFn).not.toHaveBeenCalled();        // ssh NOT called
-    vi.unstubAllEnvs();
   });
 
   it('mode=headless → spawnFn 被调用，无 sshFn 调用', async () => {
@@ -87,7 +96,7 @@ describe('B-02: mode 缺省/headless → docker 路径零回归', () => {
     const sshFn = vi.fn();
     const task = { ...TASK_HEADLESS, payload: { ...TASK_HEADLESS.payload, mode: 'headless' } };
     const deps = {
-      pool: { query: vi.fn().mockResolvedValue({ rows: [] }) },
+      pool: { query: vi.fn().mockResolvedValue({ rows: [{ count: '0' }] }) },
       spawnFn: vi.fn().mockResolvedValue({ containerId: 'cid' }),
       loadSkill: vi.fn().mockReturnValue('SKILL'),
       ensureWt: vi.fn().mockResolvedValue('/tmp/wt'),
@@ -100,7 +109,6 @@ describe('B-02: mode 缺省/headless → docker 路径零回归', () => {
     expect(r.ok).toBe(true);
     expect(deps.spawnFn).toHaveBeenCalledOnce();
     expect(sshFn).not.toHaveBeenCalled();
-    vi.unstubAllEnvs();
   });
 });
 
@@ -134,8 +142,6 @@ describe('B-03: mode=headed → ssh+tmux 路径', () => {
     };
   }
 
-  beforeEach(() => vi.unstubAllEnvs());
-
   it('mode=headed → sshFn 被调用（tmux new-session），spawnFn（docker）不被调用', async () => {
     vi.stubEnv('CODEX_RELAY_HOME', '/tmp/fake-codex-home');
     const { spawnSkillRelaySession } = await import('../harness-skill-relay.js');
@@ -144,7 +150,6 @@ describe('B-03: mode=headed → ssh+tmux 路径', () => {
     expect(r.ok).toBe(true);
     expect(deps.sshFn).toHaveBeenCalled();
     expect(deps.spawnFn).not.toHaveBeenCalled(); // docker NOT called
-    vi.unstubAllEnvs();
   });
 
   it('mode=headed → sshFn 调用参数含 tmux new-session + codex-relay-<short>', async () => {
@@ -152,12 +157,10 @@ describe('B-03: mode=headed → ssh+tmux 路径', () => {
     const { spawnSkillRelaySession } = await import('../harness-skill-relay.js');
     const deps = makeHeadedDeps();
     await spawnSkillRelaySession(TASK_HEADED, deps);
-    const sshCall = deps.sshFn.mock.calls[0][0];
-    // sshFn 第一个参数是命令字符串或对象，应含 tmux new-session 和 codex-relay-ccccdddd
-    const callStr = typeof sshCall === 'string' ? sshCall : JSON.stringify(sshCall);
-    expect(callStr).toMatch(/tmux.*new-session|new-session.*tmux/i);
-    expect(callStr).toContain('codex-relay-ccccdddd');
-    vi.unstubAllEnvs();
+    // sshFn 第二次调用（第一次是 mkdir+write prompt，第二次是 tmux new-session）
+    const allCalls = deps.sshFn.mock.calls.map(c => String(c[0])).join(' ');
+    expect(allCalls).toMatch(/tmux.*new-session|new-session.*tmux/i);
+    expect(allCalls).toContain('codex-relay-ccccdddd');
   });
 
   it('mode=headed → initiative_runs 落行 orchestrator_host=skill-relay-codex-headed', async () => {
@@ -171,7 +174,6 @@ describe('B-03: mode=headed → ssh+tmux 路径', () => {
     const [sql, params] = insertCall;
     const allText = sql + JSON.stringify(params ?? []);
     expect(allText).toContain('skill-relay-codex-headed');
-    vi.unstubAllEnvs();
   });
 
   it('mode=headed → deadline=8h（initiative_runs INSERT SQL 含 8 hours）', async () => {
@@ -180,8 +182,8 @@ describe('B-03: mode=headed → ssh+tmux 路径', () => {
     const deps = makeHeadedDeps();
     await spawnSkillRelaySession(TASK_HEADED, deps);
     const insertCall = deps.pool.query.mock.calls.find(([sql]) => /INSERT INTO initiative_runs/.test(sql));
+    expect(insertCall, '必须 INSERT initiative_runs').toBeTruthy();
     expect(insertCall[0]).toMatch(/8 hours/);
-    vi.unstubAllEnvs();
   });
 
   it('mode=headed → prompt 通过文件方式传递（不含 $(cat) 内联）', async () => {
@@ -192,7 +194,6 @@ describe('B-03: mode=headed → ssh+tmux 路径', () => {
     // 验证 sshFn 调用中不含 $(cat) 内联
     const allCalls = deps.sshFn.mock.calls.map(c => JSON.stringify(c)).join(' ');
     expect(allCalls).not.toMatch(/\$\(cat/);
-    vi.unstubAllEnvs();
   });
 });
 
@@ -208,7 +209,7 @@ describe('B-04: watchdog headed 分支 — ssh 失败 → fail-open 不重点火
     const pool = { query: vi.fn() };
     // 返回一个 headed in-progress run
     pool.query.mockImplementation(async (sql) => {
-      if (/SELECT.*initiative_runs/.test(sql)) {
+      if (/initiative_runs/.test(sql) && /orchestrator_host.*skill-relay-codex-headed|skill-relay-codex-headed.*orchestrator_host|DISTINCT ON/.test(sql)) {
         return {
           rows: [{
             id: RUN_ID,

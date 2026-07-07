@@ -99,11 +99,19 @@ router.post('/', async (req, res) => {
     // ─── B1: executor 白名单 + 组合校验 ─────────────────────────────
     const executor = payload?.executor;
     const orchestrator = payload?.orchestrator;
+    const mode = payload?.mode;
     if (executor !== undefined && executor !== null && executor !== 'claude' && executor !== 'codex') {
       return res.status(400).json({ error: 'executor must be claude or codex' });
     }
     if (executor === 'codex' && orchestrator !== 'skill-relay') {
       return res.status(400).json({ error: 'executor=codex requires orchestrator=skill-relay' });
+    }
+    // B-01: claude+headed → 400（headed 模式仅限 codex）
+    if (mode === 'headed' && executor !== 'codex') {
+      return res.status(400).json({
+        error: `executor=${executor ?? 'unset'} + mode=headed not supported; only executor=codex supports headed mode`,
+        code: 'HEADED_MODE_CODEX_ONLY',
+      });
     }
     // ─── end B1 ─────────────────────────────────────────────────────
 

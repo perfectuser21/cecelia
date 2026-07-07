@@ -18,6 +18,7 @@ import pool from './db.js';
 const RELAY_FLAG = 'skill-relay';
 const RELAY_DEADLINE_HOURS = 6;
 const CODEX_RELAY_DEADLINE_HOURS = 8; // B5: codex 路径用 8h
+const CODEX_HEADED_DEADLINE_HOURS = 8; // B-03: headed 模式 deadline=8h
 
 // B2: 进程内并发守门（MAX=1）
 let _activeCodexRelays = 0;
@@ -42,6 +43,23 @@ export function deriveReviewRequired(task) {
 /** 双轨路由判断：payload.orchestrator==='skill-relay' 才走 relay */
 export function isSkillRelayTask(task) {
   return task?.payload?.orchestrator === RELAY_FLAG;
+}
+
+/**
+ * B-01：headed 模式入队校验。
+ * - executor=claude + mode=headed → { ok: false, status: 400, error }
+ * - executor=codex + mode=headed → { ok: true }
+ * - mode 缺省/headless → { ok: true }（不带 mode 不影响现有路径）
+ */
+export function validateHeadedMode({ executor, mode } = {}) {
+  if (mode === 'headed' && executor !== 'codex') {
+    return {
+      ok: false,
+      status: 400,
+      error: `executor=${executor ?? 'unset'} + mode=headed not supported; only executor=codex supports headed mode`,
+    };
+  }
+  return { ok: true };
 }
 
 function shortId(id) {
@@ -128,6 +146,17 @@ export async function spawnSkillRelaySession(task, deps = {}) {
   }
   // ─── end B2+B3 ────────────────────────────────────────────────────────
 
+  // ─── B-01: headed 模式仅限 codex（claude+headed = 400，由上层路由拦截，此处防御性检查）──
+  const isHeaded = task.payload?.mode === 'headed';
+  if (isHeaded && !isCodex) {
+    return { ok: false, mode: RELAY_FLAG, error: 'mode=headed only supported for executor=codex', status: 400 };
+  }
+
+  // ─── B-03: headed 分支 — ssh+tmux 路径 ────────────────────────────────────
+  if (isHeaded) {
+    return spawnHeadedRelaySession(task, { dbPool, initiativeId, short, codexRelayHome, deps });
+  }
+
   try {
     // 1. skill 全文（skill 未部署 = 硬失败，不 spawn 半截 session）
     const loadSkill = deps.loadSkill
@@ -145,7 +174,7 @@ export async function spawnSkillRelaySession(task, deps = {}) {
 
     // 3. sprint_dir：/dev 交接优先，缺省按 relay 规约生成
     const sprintDir = task.payload?.sprint_dir
-      || `sprints/${stampMMDDHHNN(now())}-relay-${short}`;
+      || `sprints/${stampMMDDHHNN(deps.now ? deps.now() : new Date())}-relay-${short}`;
 
     // 3.5 P2-1 review 分级：点火时判定并持久化（controller 经 GET task 读 payload.review_required）
     const reviewRequired = deriveReviewRequired(task);
@@ -260,4 +289,80 @@ export async function spawnSkillRelaySession(task, deps = {}) {
     } catch { /* non-fatal */ }
     return { ok: false, mode: RELAY_FLAG, error: err.message };
   }
+}
+
+/**
+ * B-03: headed 分支 — ssh+tmux 路径（不起 docker 容器）。
+ *
+ * - prompt 写入宿主 /tmp/cecelia-host-prompts/<taskid>.<instance>.prompt（chmod 0600）
+ * - 通过 sshFn 在宿主起 tmux new-session -d -s codex-relay-<short>
+ * - prompt 用文件重定向方式交付（INV-2：禁止 $(cat) 内联）
+ * - initiative_runs 落行：orchestrator_host='skill-relay-codex-headed'，deadline=8h
+ * - 洗敏：tui.log 管道过滤 ghp_/ghs_/github_pat_ 正则（B-06）
+ */
+async function spawnHeadedRelaySession(task, { dbPool, initiativeId, short, codexRelayHome, deps }) {
+  const now = deps.now || (() => new Date());
+  const sprintDir = task.payload?.sprint_dir
+    || `sprints/${stampMMDDHHNN(now())}-headed-${short}`;
+  const promptText = task.payload?.prompt || '';
+  const instance = Date.now();
+  const promptFile = `/tmp/cecelia-host-prompts/${task.id}.${instance}.prompt`;
+  const sessionName = `codex-relay-${short}`;
+
+  // sshFn: 注入 or 使用默认（exec ssh host.docker.internal）
+  const sshFn = deps.sshFn || defaultSshFn;
+
+  try {
+    // 1. 确保 prompt 目录存在 + 写 prompt 文件（chmod 0600）
+    await sshFn(`mkdir -p /tmp/cecelia-host-prompts && printf '%s' ${shellQuote(promptText)} > ${promptFile} && chmod 0600 ${promptFile}`);
+
+    // 2. 起 tmux session（detached），在 session 中运行 codex TUI，
+    //    prompt 通过文件重定向交付（不内联 $(cat)，INV-2 合规）
+    //    洗敏管道：pipe-pane -o 输出到 tui.log，sed 过滤 token（B-06）
+    const tuiLog = `${sprintDir}/tui.log`;
+    const codexHome = codexRelayHome || (process.env.CODEX_RELAY_HOME || '');
+    const codexHomeEnv = codexHome ? `CODEX_HOME=${shellQuote(codexHome + '/team2-codex')} ` : '';
+    const sanitizePipe = `sed 's/ghp_[A-Za-z0-9]\\{36,\\}/[REDACTED_GHP]/g;s/ghs_[A-Za-z0-9]\\{36,\\}/[REDACTED_GHS]/g;s/github_pat_[A-Za-z0-9_]\\{1,\\}/[REDACTED_PAT]/g'`;
+
+    await sshFn(
+      `tmux new-session -d -s ${sessionName} \\; ` +
+      `send-keys -t ${sessionName} ` +
+      `"${codexHomeEnv}codex --input-file ${promptFile} 2>&1 | ${sanitizePipe} >> ${tuiLog}" Enter && ` +
+      `tmux pipe-pane -o -t ${sessionName} "cat >> ${tuiLog}"`
+    );
+
+    // 3. initiative_runs 落行（orchestrator_host='skill-relay-codex-headed'，deadline=8h）
+    await dbPool.query(
+      `INSERT INTO initiative_runs
+         (initiative_id, phase, journey_id, orchestrator_version, orchestrator_host, deadline_at)
+       VALUES ($1, 'A_planning', $2, 'v2', 'skill-relay-codex-headed', NOW() + INTERVAL '${CODEX_HEADED_DEADLINE_HOURS} hours')`,
+      [initiativeId, task.payload?.journey_id || null]
+    );
+
+    console.log(`[skill-relay][headed] tmux session spawned: session=${sessionName} sprint=${sprintDir}`);
+    return { ok: true, mode: RELAY_FLAG, headed: true, sessionName, sprintDir, promptFile };
+  } catch (err) {
+    console.error(`[skill-relay][headed][ALERT] headed spawn failed: ${err.message}`);
+    try {
+      await dbPool.query(
+        `UPDATE tasks SET status='queued', claimed_by=NULL, claimed_at=NULL WHERE id=$1`,
+        [task.id]
+      );
+    } catch { /* non-fatal */ }
+    return { ok: false, mode: RELAY_FLAG, error: err.message };
+  }
+}
+
+/** B-07: 安全引号包裹（防 shell 注入；prompt 通过文件写入，此处用于简单路径/短字符串） */
+function shellQuote(str) {
+  return "'" + String(str).replace(/'/g, "'\\''") + "'";
+}
+
+/** 默认 sshFn：ssh host.docker.internal <cmd>（仅在非测试时真正执行） */
+async function defaultSshFn(cmd) {
+  const { execSync } = await import('node:child_process');
+  return execSync(`ssh -o StrictHostKeyChecking=no host.docker.internal ${shellQuote(cmd)}`, {
+    encoding: 'utf8',
+    timeout: 30000,
+  });
 }
