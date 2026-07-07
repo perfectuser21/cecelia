@@ -53,6 +53,21 @@
 
 ---
 
+## Test Contract
+
+| WS | Test File | BEHAVIOR 覆盖 | 预期红证据 |
+|----|-----------|--------------|-----------|
+| B1 | `tests/contract-executor-validation.test.ts` | `executor=codex + orchestrator=skill-relay → 201 入队` | task-tasks.js 尚无 executor 白名单校验，非法值不会 400 |
+| B2 | `tests/contract-codex-concurrency-gate.test.ts` | `DB 层：有活跃 codex run 时 → defer，不烧 attempts` | harness-skill-relay.js 尚无 _activeCodexRelays + DB 守门逻辑 |
+| B3 | `tests/contract-codex-quota-gate.test.ts` | `quota 剩余 < 30% → defer reason=codex_quota_low，不烧 attempts` | harness-skill-relay.js 尚无 quota 软闸逻辑 |
+| B4 | `tests/contract-codex-spawn-failure.test.ts` | `spawn 失败 → initiative_runs 无新行（不落库）` | executor=codex 路径尚未实现，spawn 失败回滚缺失 |
+| B5 | `tests/contract-codex-run-row.test.ts` | `executor=codex → deadline = 8h（不是 6h）` | 当前硬编码 skill-relay-session + 6h |
+| B6 | `tests/contract-codex-watchdog.test.ts` | `orchestrator_host=skill-relay-codex + attempts=2 → 标 failed（达上限）` | harness-relay-watchdog.js 使用固定 MAX_RELAY_ATTEMPTS=5，未按 host 分支 |
+| B7 | `tests/contract-entrypoint-codex-branch.test.ts` | `entrypoint.sh 包含 CECELIA_EXECUTOR=codex 条件分支` | entrypoint.sh 尚无 CECELIA_EXECUTOR=codex 分支逻辑 |
+| B8 | `tests/contract-codex-stale-cleanup.test.ts` | `marks overdue codex run as failed with relay_deadline_exceeded` | scanStuckHarness 未实现 codex deadline 收尸逻辑 |
+
+---
+
 ## E2E 验收
 
 > target_environment=local_api；所有命令在宿主执行，Brain 运行于 localhost:5221。
