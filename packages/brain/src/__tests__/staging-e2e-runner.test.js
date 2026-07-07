@@ -440,6 +440,42 @@ describe('runStagingE2E', () => {
     const ins = insertedResult(pool);
     expect(ins.params).toContain('abc123def456');
   });
+
+  it('base_repo=第三方 repo → 不 deploy，SKIP unknown_line + pending_promote + 飞书通知', async () => {
+    const pool = makeMockPool();
+    const deploy = vi.fn();
+    const notifyMsgs = [];
+    const notify = async (m) => notifyMsgs.push(m);
+    const task3p = {
+      id: 'task-3p',
+      payload: { initiative_id: 'init-1', pr_url: 'https://pr/3p', base_repo: 'https://github.com/acme/other-product.git' },
+    };
+    const r = await runStagingE2E(task3p, { pool, deploy, loadAcceptance: async () => ACCEPTANCE, notify });
+    // 不跑任何 deploy（cecelia 没有第三方 repo 的 staging 部署目标）
+    expect(deploy).not.toHaveBeenCalled();
+    expect(r.verdict).toBe('SKIP');
+    expect(r.reason).toBe('unknown_line');
+    expect(r.promoteStatus).toBe('pending_promote');
+    // verdict 落 staging_e2e_results
+    expect(insertedResult(pool).params[3]).toBe('SKIP');
+    // promote_status=pending_promote 落库
+    const upd = pool.calls.find((c) => /UPDATE staging_e2e_results/.test(c.sql) && /promote_status/.test(c.sql));
+    expect(upd).toBeTruthy();
+    expect(upd.params).toContain('pending_promote');
+    // 飞书通知一次，文案含 pending 语义
+    expect(notifyMsgs.length).toBe(1);
+    expect(notifyMsgs[0]).toMatch(/pending/i);
+    expect(updateTaskStatus).toHaveBeenCalledWith('task-3p', 'completed');
+  });
+
+  it('base_repo 为空（legacy）→ 保持旧行为，照常 deploy', async () => {
+    const pool = makeMockPool();
+    const deploy = vi.fn(() => ({ status: 'skipped', reason: 'no_docker', output: '' }));
+    // 复用文件顶部 task fixture（payload 无 base_repo）
+    const r = await runStagingE2E(task, { pool, deploy, loadAcceptance: async () => ACCEPTANCE });
+    expect(deploy).toHaveBeenCalledOnce();
+    expect(r.reason).toBe('no_docker');
+  });
 });
 
 describe('Slice9: handlePromote initiative 级聚合 gate + SHA 锚定', () => {
