@@ -122,8 +122,8 @@ export async function spawnSkillRelaySession(task, deps = {}) {
 
   // ─── B2+B3: codex 路径守门（在 try 外，defer 不抛异常）─────────────────
   if (isCodex) {
-    // B2 层 1：进程内守门（测试注入 spawnFn 时跳过，防跨 it 状态污染）
-    if (_activeCodexRelays > 0 && !deps.spawnFn) {
+    // B2 层 1：进程内守门
+    if (_activeCodexRelays > 0) {
       return { ok: false, deferred: true, reason: 'codex_concurrent_limit' };
     }
 
@@ -276,9 +276,8 @@ export async function spawnSkillRelaySession(task, deps = {}) {
       [initiativeId, task.payload?.journey_id || null, orchestratorHost]
     );
 
-    // 进程内守门计数：只在非测试注入路径（无 deps.spawnFn）时递增
-    // 测试通过 deps.spawnFn 注入 mock，不需要跨 it 持久计数（每个 it 独立验证）
-    if (isCodex && !deps.spawnFn) _activeCodexRelays++;
+    // 进程内守门计数
+    if (isCodex) _activeCodexRelays++;
 
     console.log(`[skill-relay] session spawned: container=${containerId} sprint=${sprintDir} executor=${isCodex ? 'codex' : 'claude'}`);
     return { ok: true, mode: RELAY_FLAG, containerId, sprintDir, worktreePath };

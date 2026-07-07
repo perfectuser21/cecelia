@@ -10,7 +10,14 @@
  * 这些测试在实现前都应 FAIL（TDD Red 阶段）。
  */
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { spawnSkillRelaySession, isSkillRelayTask } from '../harness-skill-relay.js';
+import { spawnSkillRelaySession, isSkillRelayTask, _setActiveCodexRelays } from '../harness-skill-relay.js';
+
+// 静态导入在整个测试文件内共享同一份模块实例，_activeCodexRelays 是模块级计数器，
+// 缺省/headless 分支的两个 it 会真实递增它（与生产行为一致）。每个 it 独立断言前重置，
+// 避免跨 it 状态污染（与 B2 并发守门合同测试用 _setActiveCodexRelays 复位是同一机制）。
+afterEach(() => {
+  _setActiveCodexRelays(0);
+});
 
 const HEADED_TASK = {
   id: 'aaaabbbb-cccc-dddd-eeee-ffff00002222',
