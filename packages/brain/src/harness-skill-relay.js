@@ -17,6 +17,12 @@ import pool from './db.js';
 
 const RELAY_FLAG = 'skill-relay';
 const RELAY_DEADLINE_HOURS = 6;
+const CODEX_RELAY_DEADLINE_HOURS = 8; // B5: codex 路径用 8h
+
+// B2: 进程内并发守门（MAX=1）
+let _activeCodexRelays = 0;
+/** 仅供测试注入（_setActiveCodexRelays(1) 模拟已有活跃 relay）*/
+export function _setActiveCodexRelays(n) { _activeCodexRelays = n; }
 
 /**
  * P2-1 review 分级判定（主理人规矩：新功能人审，非新功能 auto merge——risk-based gating）。
@@ -62,6 +68,46 @@ export async function spawnSkillRelaySession(task, deps = {}) {
   const now = deps.now || (() => new Date());
   const initiativeId = task.payload?.initiative_id || task.id; // B51: initiative_id = task.id
   const short = shortId(task.id);
+  const isCodex = task.payload?.executor === 'codex';
+
+  // ─── B2+B3: codex 路径守门（在 try 外，defer 不抛异常）─────────────────
+  if (isCodex) {
+    // B2 层 1：进程内守门
+    if (_activeCodexRelays > 0) {
+      return { ok: false, deferred: true, reason: 'codex_concurrent_limit' };
+    }
+
+    // B2 层 2：DB 守门
+    try {
+      const concQ = await dbPool.query(
+        `SELECT COUNT(*) FROM initiative_runs
+          WHERE orchestrator_host = 'skill-relay-codex'
+            AND phase NOT IN ('done','failed')
+            AND deadline_at > NOW()
+            AND initiative_id != $1`,
+        [initiativeId]
+      );
+      const count = parseInt(concQ.rows[0]?.count ?? '0', 10);
+      if (count > 0) {
+        return { ok: false, deferred: true, reason: 'codex_concurrent_limit' };
+      }
+    } catch (err) {
+      console.warn(`[skill-relay] codex DB 守门查询失败（保守通过）: ${err.message}`);
+    }
+
+    // B3: 额度软闸（team2 quota < 30%）
+    if (typeof deps.quotaFn === 'function') {
+      try {
+        const quota = await deps.quotaFn();
+        if (quota?.remaining_pct !== undefined && quota.remaining_pct < 0.30) {
+          return { ok: false, deferred: true, reason: 'codex_quota_low' };
+        }
+      } catch (err) {
+        console.warn(`[skill-relay] codex quota 软闸查询失败（保守通过）: ${err.message}`);
+      }
+    }
+  }
+  // ─── end B2+B3 ────────────────────────────────────────────────────────
 
   try {
     // 1. skill 全文（skill 未部署 = 硬失败，不 spawn 半截 session）
@@ -125,42 +171,73 @@ export async function spawnSkillRelaySession(task, deps = {}) {
     ].join('\n');
 
     // 7. spawn detached session
-    const containerId = `cecelia-relay-${short}-${Math.random().toString(16).slice(2, 10)}`;
+    // B5: codex 路径容器名用 -cx 后缀
+    const containerId = isCodex
+      ? `cecelia-relay-${short}-cx`
+      : `cecelia-relay-${short}-${Math.random().toString(16).slice(2, 10)}`;
     const spawnFn = deps.spawnFn
       || (await import('./spawn/detached.js')).spawnDockerDetached;
-    await spawnFn({
-      task: { ...task, task_type: 'harness_controller' },
-      prompt,
-      worktreePath,
-      containerId,
-      env: {
-        ...acctOpts.env,
-        CECELIA_TASK_TYPE: 'harness_controller',
-        // v1.0.1：HARNESS_NODE 使 entrypoint tee stdout（过程观测）+ 结束 POST callback；
-        // relay 容器无 thread_lookup，callback 由 harness-callback 路由 200 ack（免 5×404 重试尾巴）
-        HARNESS_NODE: 'controller',
-        HARNESS_CALLBACK_URL: `http://host.docker.internal:5221/api/brain/harness/callback/${containerId}`,
-        HARNESS_TASK_ID: task.id,
-        HARNESS_INITIATIVE_ID: initiativeId,
-        HARNESS_SPRINT_DIR: sprintDir,
-        CECELIA_JOURNEY_ID: task.payload?.journey_id || '',
-        GITHUB_TOKEN: githubToken,
-        BRAIN_URL: 'http://host.docker.internal:5221',
-      },
-    });
 
-    // 8. initiative_runs 落行：A_planning（watchdog overdue 白名单内）+ v2 + 6h deadline
+    // B4: spawn 失败回滚（在 spawn 前不落 initiative_runs 行）
+    try {
+      await spawnFn({
+        containerId,
+        task: { ...task, task_type: 'harness_controller' },
+        prompt,
+        worktreePath,
+        env: {
+          ...acctOpts.env,
+          CECELIA_TASK_TYPE: 'harness_controller',
+          CECELIA_EXECUTOR: isCodex ? 'codex' : 'claude',
+          // v1.0.1：HARNESS_NODE 使 entrypoint tee stdout（过程观测）+ 结束 POST callback；
+          // relay 容器无 thread_lookup，callback 由 harness-callback 路由 200 ack（免 5×404 重试尾巴）
+          HARNESS_NODE: 'controller',
+          HARNESS_CALLBACK_URL: `http://host.docker.internal:5221/api/brain/harness/callback/${containerId}`,
+          HARNESS_TASK_ID: task.id,
+          HARNESS_INITIATIVE_ID: initiativeId,
+          HARNESS_SPRINT_DIR: sprintDir,
+          CECELIA_JOURNEY_ID: task.payload?.journey_id || '',
+          GITHUB_TOKEN: githubToken,
+          BRAIN_URL: 'http://host.docker.internal:5221',
+        },
+      });
+    } catch (spawnErr) {
+      // B4: spawn 失败 → 回滚 task，不落 initiative_runs
+      console.error(`[skill-relay][ALERT] codex spawn failed: ${spawnErr.message}`);
+      try {
+        await dbPool.query(
+          `UPDATE tasks SET status='queued', claimed_by=NULL, claimed_at=NULL WHERE id=$1`,
+          [task.id]
+        );
+      } catch (rollbackErr) {
+        console.warn(`[skill-relay] task 回滚失败（non-fatal）: ${rollbackErr.message}`);
+      }
+      return { ok: false, mode: RELAY_FLAG, error: spawnErr.message };
+    }
+
+    // 8. initiative_runs 落行：A_planning + v2 + deadline（codex=8h, claude=6h）+ orchestrator_host 区分
+    const deadlineHours = isCodex ? CODEX_RELAY_DEADLINE_HOURS : RELAY_DEADLINE_HOURS;
+    const orchestratorHost = isCodex ? 'skill-relay-codex' : 'skill-relay-session';
     await dbPool.query(
       `INSERT INTO initiative_runs
          (initiative_id, phase, journey_id, orchestrator_version, orchestrator_host, deadline_at)
-       VALUES ($1, 'A_planning', $2, 'v2', $3, NOW() + INTERVAL '${RELAY_DEADLINE_HOURS} hours')`,
-      [initiativeId, task.payload?.journey_id || null, 'skill-relay-session']
+       VALUES ($1, 'A_planning', $2, 'v2', $3, NOW() + INTERVAL '${deadlineHours} hours')`,
+      [initiativeId, task.payload?.journey_id || null, orchestratorHost]
     );
 
-    console.log(`[skill-relay] session spawned: container=${containerId} sprint=${sprintDir}`);
+    if (isCodex) _activeCodexRelays++;
+
+    console.log(`[skill-relay] session spawned: container=${containerId} sprint=${sprintDir} executor=${isCodex ? 'codex' : 'claude'}`);
     return { ok: true, mode: RELAY_FLAG, containerId, sprintDir, worktreePath };
   } catch (err) {
-    console.error(`[skill-relay] spawn failed: ${err.message}`);
+    console.error(`[skill-relay][ALERT] spawn failed: ${err.message}`);
+    // B4: 通用回滚（非 spawn 内部错误也回滚）
+    try {
+      await dbPool.query(
+        `UPDATE tasks SET status='queued', claimed_by=NULL, claimed_at=NULL WHERE id=$1`,
+        [task.id]
+      );
+    } catch { /* non-fatal */ }
     return { ok: false, mode: RELAY_FLAG, error: err.message };
   }
 }
