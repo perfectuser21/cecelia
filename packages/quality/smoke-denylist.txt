@@ -1,0 +1,36 @@
+# Smoke DENYLIST（环境不兼容）
+# 列表内脚本跳过执行（不计入 PASS/FAIL，仅 SKIP）
+# 原则：仅用于"CI 环境根本无法提供所需服务"的脚本
+# 清偿方式：要么改造脚本使其 CI 可用，要么确认永久依赖外部服务后保留此处
+
+# === 需要 Notion API 凭据 ===
+clips-notion-smoke.sh
+notion-brain-first-smoke.sh
+notion-endpoints-smoke.sh
+notion-mapping-r4-smoke.sh
+notion-push-sync-smoke.sh
+
+# === 需要 Langfuse API 凭据 ===
+langfuse-recent-smoke.sh
+langfuse-trace-detail-smoke.sh
+
+# === 需要 WeChat/ZenithJoy 凭据 ===
+wechat-token-alert-smoke.sh
+
+# === 需要 Staging/Preview 真实部署环境 ===
+auto-staging-deploy-smoke.sh
+dashboard-staging-selfcheck-smoke.sh
+preview-environments-smoke.sh
+review-gate-preview-smoke.sh
+staging-e2e-permerge-smoke.sh
+staging-e2e-smoke.sh
+staging-promote-smoke.sh
+zj-staging-guardrail-smoke.sh
+
+# === 需要 xian 远端机器 ===
+harness-xian-spawn-smoke.sh
+xian-bridge-health-smoke.sh
+xian-generator-routing-smoke.sh
+
+# === 运行时间过长（>30 分钟），不适合 CI ===
+harness-pipeline-lifecycle-smoke.sh
