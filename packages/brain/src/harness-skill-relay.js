@@ -308,6 +308,23 @@ const HEADED_RELAY_DEADLINE_HOURS = 8;
  * 不走 docker，不产生 extraMounts，不注入 GITHUB_TOKEN 进 tmux 命令串。
  */
 async function _spawnHeadedSession(task, { dbPool, now, short, initiativeId, deps }) {
+  // B6 门禁在 headed 分支同样生效（headed 早退绕过了 spawnSkillRelaySession 主体里的
+  // CODEX_RELAY_HOME 检查——headed 恒为 codex executor，缺凭据目录同样不能裸 spawn）。
+  // 未配置（undefined）→ 放行（本地/测试环境）；显式配置为空字符串 → loud-fail。
+  const codexRelayHome = process.env.CODEX_RELAY_HOME;
+  if (codexRelayHome !== undefined && !codexRelayHome) {
+    console.error('[skill-relay][headed][ALERT] CODEX_RELAY_HOME 未配置，codex executor 无法挂载凭据');
+    try {
+      await dbPool.query(
+        `UPDATE tasks SET status='queued', claimed_by=NULL, claimed_at=NULL WHERE id=$1`,
+        [task.id]
+      );
+    } catch (rollbackErr) {
+      console.warn(`[skill-relay][headed] task 回滚失败（non-fatal）: ${rollbackErr.message}`);
+    }
+    return { ok: false, mode: HEADED_ORCHESTRATOR_HOST, error: 'CODEX_RELAY_HOME 未配置' };
+  }
+
   const sprintDir = task.payload?.sprint_dir
     || `sprints/${stampMMDDHHNN(now())}-relay-${short}`;
   const sshHost = task.payload?.ssh_host || process.env.HEADED_SSH_HOST || 'localhost';
@@ -317,6 +334,16 @@ async function _spawnHeadedSession(task, { dbPool, now, short, initiativeId, dep
   const loadSkill = deps.loadSkill
     || (await import('./harness-shared.js')).loadSkillContent;
   const skillContent = loadSkill('harness-controller');
+
+  // worktree（幂等；headed 分支之前漏调，codex 会在宿主 $HOME 裸奔——worktree 路径经
+  // compose rw 挂载容器内外一致，宿主可直接 cd 进去）
+  const ensureWt = deps.ensureWt
+    || (await import('./harness-worktree.js')).ensureHarnessWorktree;
+  const worktreePath = await ensureWt({
+    taskId: task.id,
+    initiativeId,
+    baseRepo: task.payload?.base_repo,
+  });
 
   const prompt = [
     `你是 harness-controller session（headed 模式）。按下面 SKILL 指令跑完整条 sprint。`,
@@ -333,11 +360,16 @@ async function _spawnHeadedSession(task, { dbPool, now, short, initiativeId, dep
 
   const sshSpawnFn = deps.sshSpawnFn;
   if (!sshSpawnFn) {
-    // 降级：real ssh 执行（生产路径）
-    const execFn = deps.execFn || ((cmd) => { const { execSync } = require('child_process'); return execSync(cmd, { encoding: 'utf8', timeout: 30000 }); });
-    // 写 prompt 文件到宿主（0600 权限）
+    // 降级：real ssh 执行（生产路径）。用文件顶部已 import 的 execSync（ESM 下 require 未定义会直接崩）。
+    const execFn = deps.execFn
+      || ((cmd, opts) => execSync(cmd, { encoding: 'utf8', timeout: 30000, ...opts }));
+    // 写 prompt 文件到宿主（0600 权限）——用 ssh stdin 交付，避免 prompt 内联进
+    // 双引号/tmux 单引号时被反引号/引号/$ 炸穿（printf + JSON.stringify 内联已实证必炸）。
     try {
-      execFn(`ssh ${sshHost} "mkdir -p /tmp/cecelia-host-prompts && printf '%s' ${JSON.stringify(prompt)} > ${promptFile} && chmod 600 ${promptFile}"`);
+      execFn(
+        `ssh ${sshHost} "mkdir -p /tmp/cecelia-host-prompts && cat > ${promptFile} && chmod 600 ${promptFile}"`,
+        { input: prompt }
+      );
     } catch (err) {
       console.error(`[skill-relay][headed] prompt 文件写入失败: ${err.message}`);
       await dbPool.query(
@@ -346,9 +378,12 @@ async function _spawnHeadedSession(task, { dbPool, now, short, initiativeId, dep
       );
       return { ok: false, mode: HEADED_ORCHESTRATOR_HOST, error: `prompt write failed: ${err.message}` };
     }
-    // tmux new-session
+    // tmux new-session：cd 进 worktree + 注入 CODEX_HOME（不注入=烧宿主默认账号）+
+    // codex 位置参数从远端文件展开（--prompt-file 是编造的 flag，codex TUI 只吃 [PROMPT] 位置参数）
     try {
-      execFn(`ssh ${sshHost} "tmux new-session -d -s ${tmuxSession} 'codex --prompt-file ${promptFile}'"`);
+      execFn(
+        `ssh ${sshHost} "tmux new-session -d -s ${tmuxSession} 'cd ${worktreePath} && CODEX_HOME=${codexRelayHome || ''} codex \\"\\$(cat ${promptFile})\\"'"`
+      );
     } catch (spawnErr) {
       console.error(`[skill-relay][headed][ALERT] ssh tmux spawn failed: ${spawnErr.message}`);
       await dbPool.query(
