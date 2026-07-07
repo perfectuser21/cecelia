@@ -197,12 +197,14 @@ export async function resumeStalledHarnessDrivers({
     }
   }
 
+  // skill-relay 不写下方三个活性信号（心跳/run updated_at/run_events），静默≠卡死；其兜底归 harness-relay-watchdog（docker ps 存活 + PR 核验）。区段B 无需排（relay 不产生 B_task_loop），区段C 保留（relay spawn 失败无 run 行时由它捞回）。
   const stalledA = await dbPool.query(
     `SELECT t.id, COALESCE(t.execution_attempts, 0) AS execution_attempts
        FROM tasks t
       WHERE t.task_type = 'harness_initiative'
         AND t.status = 'in_progress'
         AND COALESCE(t.execution_attempts, 0) < $2::int
+        AND t.payload->>'orchestrator' IS DISTINCT FROM 'skill-relay'
         AND EXISTS (
               SELECT 1 FROM initiative_runs ir
                WHERE ir.initiative_id = t.id
