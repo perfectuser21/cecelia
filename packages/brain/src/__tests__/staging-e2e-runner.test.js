@@ -163,32 +163,62 @@ describe('deployStaging — ZenithJoy customer line（:5201 护栏）', () => {
     expect(r.output).toMatch(/总等待 60s/);
   });
 
-  it('成功时健康响应为 JSON → 提取 stagingSha 和 buildTime 写入 output', async () => {
+  // JSON 层健康验证：防 SPA fallback 误判，同时提取 SHA
+  it(':5201/health 返回 { status:"ok", sha } → success，zjSha + stagingSha 均携带', async () => {
+    const exec = () => '{"status":"ok","sha":"abc123def456","service":"zenithjoy-api"}';
+    const r = await deployStaging({ exec, line: 'customer', sleep: async () => {} });
+    expect(r.status).toBe('success');
+    expect(r.zjSha).toBe('abc123def456');
+    expect(r.stagingSha).toBe('abc123def456');
+    expect(r.output).toContain('[ZJ staging SHA: abc123def456');
+  });
+
+  it(':5201/health 返回旧格式 { status:"ok", build.sha } → success，stagingSha 兼容提取', async () => {
     const healthJson = JSON.stringify({
       status: 'ok',
-      build: { sha: '8ecf9249378936b1a27395eb5a7efcb179a3fd23', version: '1.0.1', buildTime: '2026-07-07T08:14:34Z' },
+      build: { sha: '8ecf9249378936b1a27395eb5a7efcb179a3fd23', buildTime: '2026-07-07T08:14:34Z' },
     });
     const exec = () => healthJson;
     const r = await deployStaging({ exec, line: 'customer', sleep: async () => {} });
     expect(r.status).toBe('success');
     expect(r.stagingSha).toBe('8ecf9249378936b1a27395eb5a7efcb179a3fd23');
+    expect(r.zjSha).toBeNull();
     expect(r.output).toContain('[ZJ staging SHA: 8ecf9249378936b1a27395eb5a7efcb179a3fd23');
     expect(r.output).toContain('buildTime:2026-07-07T08:14:34Z');
   });
 
-  it('成功时健康响应为非 JSON（纯文本 ok）→ stagingSha=null，向前兼容', async () => {
-    const exec = () => 'ok';
+  it(':5201/health 返回 {"status":"ok"} 无 sha → success，zjSha=null stagingSha=null', async () => {
+    const exec = () => '{"status":"ok"}';
     const r = await deployStaging({ exec, line: 'customer', sleep: async () => {} });
     expect(r.status).toBe('success');
+    expect(r.zjSha).toBeNull();
     expect(r.stagingSha).toBeNull();
-    expect(r.output).toContain('ok');
   });
 
-  it('成功时健康响应 build.sha 缺失 → stagingSha=null，不崩溃', async () => {
-    const exec = () => JSON.stringify({ status: 'ok', build: {} });
-    const r = await deployStaging({ exec, line: 'customer', sleep: async () => {} });
+  it(':5201/health 返回 HTML（SPA fallback）→ failed，reason=zj_staging_html_fallback（护栏触发）', async () => {
+    const exec = () => '<!DOCTYPE html><html><head><title>ZenithJoy</title></head><body>app</body></html>';
+    const r = await deployStaging({ exec, line: 'customer', maxAttempts: 1, sleep: async () => {} });
+    expect(r.status).toBe('failed');
+    expect(r.reason).toBe('zj_staging_html_fallback');
+  });
+
+  it(':5201/health 返回 {"status":"starting"} → failed，reason=zj_staging_unhealthy（非 ok JSON）', async () => {
+    const exec = () => '{"status":"starting"}';
+    const r = await deployStaging({ exec, line: 'customer', maxAttempts: 1, sleep: async () => {} });
+    expect(r.status).toBe('failed');
+    expect(r.reason).toBe('zj_staging_unhealthy');
+  });
+
+  it('重试：前两次返回 HTML，第三次返回 ok → success（冷启动期）', async () => {
+    let callCount = 0;
+    const exec = () => {
+      callCount++;
+      if (callCount < 3) return '<!DOCTYPE html><html>app</html>';
+      return '{"status":"ok"}';
+    };
+    const r = await deployStaging({ exec, line: 'customer', maxAttempts: 5, sleep: async () => {} });
     expect(r.status).toBe('success');
-    expect(r.stagingSha).toBeNull();
+    expect(callCount).toBe(3);
   });
 });
 
@@ -519,6 +549,39 @@ describe('handlePromote — ZenithJoy staging FAIL 护栏通知', () => {
     expect(notifyMsgs[0]).toContain('ZJ 护栏触发');
     expect(notifyMsgs[0]).toContain('诊断');
     expect(notifyMsgs[0]).toContain('Connection refused');
+  });
+
+  it('FAIL + customer line + zjSha → 通知含候选 SHA（方便定位哪个 ZJ 版本坏了）', async () => {
+    const notifyMsgs = [];
+    const notify = async (msg) => { notifyMsgs.push(msg); };
+    const pool = { query: vi.fn(async () => ({ rows: [] })) };
+    await handlePromote(
+      pool,
+      {
+        verdict: 'FAIL',
+        baseRepo: 'perfectuser21/zenithjoy',
+        prUrl: 'https://github.com/pr/3',
+        initiativeId: 'init-zj-3',
+        zjSha: '8ecf9249378936b1a27395eb5a7efcb179a3fd23',
+      },
+      { notify },
+    );
+    expect(notifyMsgs).toHaveLength(1);
+    expect(notifyMsgs[0]).toContain('候选');
+    expect(notifyMsgs[0]).toContain('8ecf9249378936b1a27395eb5a7efcb179a3fd23');
+  });
+
+  it('FAIL + customer line + zjSha=unknown → 通知不含候选行（避免"候选: unknown"干扰）', async () => {
+    const notifyMsgs = [];
+    const notify = async (msg) => { notifyMsgs.push(msg); };
+    const pool = { query: vi.fn(async () => ({ rows: [] })) };
+    await handlePromote(
+      pool,
+      { verdict: 'FAIL', baseRepo: 'perfectuser21/zenithjoy', prUrl: 'p', initiativeId: 'i', zjSha: 'unknown' },
+      { notify },
+    );
+    expect(notifyMsgs).toHaveLength(1);
+    expect(notifyMsgs[0]).not.toContain('候选');
   });
 
   it('SKIP + customer line → 不通知（配置缺省非真失败）', async () => {
