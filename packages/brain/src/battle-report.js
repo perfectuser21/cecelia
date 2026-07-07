@@ -139,6 +139,23 @@ function shanghaiDay(now = new Date()) {
   return new Intl.DateTimeFormat('sv-SE', { timeZone: 'Asia/Shanghai' }).format(now);
 }
 
+/** 上海时间短格式 MM-DD HH:mm；null/非法输入返回空串 */
+function formatShanghaiShort(date) {
+  if (date == null) return '';
+  const d = date instanceof Date ? date : new Date(date);
+  if (Number.isNaN(d.getTime())) return '';
+  const parts = new Intl.DateTimeFormat('zh-CN', {
+    timeZone: 'Asia/Shanghai',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  }).formatToParts(d);
+  const get = (t) => parts.find((p) => p.type === t)?.value ?? '';
+  return `${get('month')}-${get('day')} ${get('hour')}:${get('minute')}`;
+}
+
 /**
  * 渲染 L1 Summary 四段 markdown，空段渲染"暂无"。
  * @param {Awaited<ReturnType<typeof buildBattleReportData>>} data
@@ -174,7 +191,7 @@ export function renderBattleReportMarkdown(data) {
     lines.push('暂无');
   } else {
     for (const d of data.userDecisions) {
-      lines.push(`- ${d.topic ?? '(无主题)'}（${d.created_at}）`);
+      lines.push(`- ${d.topic ?? '(无主题)'}（${formatShanghaiShort(d.created_at)}）`);
     }
   }
 

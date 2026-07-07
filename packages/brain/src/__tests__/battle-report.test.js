@@ -129,7 +129,7 @@ describe('renderBattleReportMarkdown — L1 Summary 四段', () => {
     const md = renderBattleReportMarkdown({
       mergedPrs: [{ pr_title: '修复 X', pr_url: 'https://github.com/p/1' }],
       journeyRuns: [{ journey_name: 'Line 05', runs: 3, done: 2, failed: 1, last_failure: 'boom' }],
-      userDecisions: [{ topic: '决定 Y', created_at: '2026-07-07T00:00:00Z' }],
+      userDecisions: [{ topic: '决定 Y', created_at: new Date('2026-07-07T00:00:00Z') }],
       sentinel: {
         expected: 1,
         healthy: true,
@@ -143,6 +143,9 @@ describe('renderBattleReportMarkdown — L1 Summary 四段', () => {
     expect(md).toMatch(/修复 X/);
     expect(md).toMatch(/Line 05/);
     expect(md).toMatch(/决定 Y/);
+    // 决策时间渲染为上海短格式 MM-DD HH:mm（UTC 00:00 = 上海 08:00），不泄漏 Date 默认英文串
+    expect(md).toMatch(/07-07 08:00/);
+    expect(md).not.toMatch(/GMT/);
     expect(md).toMatch(/arch-review/);
   });
 
