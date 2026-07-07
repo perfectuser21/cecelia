@@ -1,0 +1,29 @@
+{
+  "initiative_id": "07071247-relay-demo-codex-r2",
+  "journey_type": "autonomous",
+  "journey_type_reason": "交付物是本地 CLI 工具与 vitest 合同测试，无前端或远端依赖，验收完全通过 local CLI 完成",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "实现 sort-json-keys CLI 并打通本 sprint 合同",
+      "scope": "1) 新增 scripts/relay-demo/sort-json-keys.mjs，读取 JSON 文件路径参数；2) 递归按字典序排序所有对象键，数组保持原顺序但内部对象继续递归排序；3) 将排序后的 JSON 输出到 stdout；4) 不引入外部依赖；5) 跑通 sprints/07071247-relay-demo-codex-r2/tests/sort-json-keys.contract.test.ts 三个用例",
+      "dod": [
+        "[ARTIFACT] scripts/relay-demo/sort-json-keys.mjs 存在且入口读取 JSON 文件路径参数",
+        "[ARTIFACT] 工具实现不引入外部依赖",
+        "[BEHAVIOR] 嵌套对象输出为递归字典序排序后的合法 JSON",
+        "[BEHAVIOR] 数组顺序保持不变，数组内对象元素递归排序",
+        "[BEHAVIOR] 空对象保持为空对象",
+        "[BEHAVIOR] vitest 合同测试三用例全部通过"
+      ],
+      "files": [
+        "scripts/relay-demo/sort-json-keys.mjs",
+        "sprints/07071247-relay-demo-codex-r2/tests/sort-json-keys.contract.test.ts",
+        "sprints/07071247-relay-demo-codex-r2/contract-draft.md",
+        "sprints/07071247-relay-demo-codex-r2/contract-dod.md"
+      ],
+      "depends_on": [],
+      "complexity": "S",
+      "estimated_minutes": 30
+    }
+  ]
+}
