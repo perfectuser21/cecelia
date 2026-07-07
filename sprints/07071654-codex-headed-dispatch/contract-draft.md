@@ -366,5 +366,5 @@ echo "✅ Golden Path E2E 全部验证通过"
 
 | 功能 | Test File | BEHAVIOR 覆盖 | 预期红证据 |
 |---|---|---|---|
-| mode=headed 路由分支 | `tests/headed-dispatch.test.js` | headed→ssh+tmux路径、缺省→docker零回归、claude+headed→400 | → 3 failures（函数未实现）|
-| watchdog headed 分支 | `tests/headed-watchdog.test.js` | ssh失败fail-open（单测注入）、收窗幂等 | → 2 failures（watchdog headed 分支未实现）|
+| mode=headed 路由分支 | `tests/headed-dispatch.test.js` | sshSpawnFn(tmux) 被调用、docker spawnFn（现有路径不变）、executor=claude + mode=headed | → 3 failures（函数未实现）|
+| watchdog headed 分支 | `tests/headed-watchdog.test.js` | fail-open：不重点火、tmux_killed_at（已收过） | → 2 failures（watchdog headed 分支未实现）|
