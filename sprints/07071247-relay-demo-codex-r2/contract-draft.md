@@ -145,11 +145,12 @@ rm -f "$TMP_JSON"
 
 **未实现状态验证命令**:
 ```bash
-TMP_REPO="$(mktemp -d)"
+TMP_REPO="$(mktemp -d /workspace/packages/brain/tmp-red-XXXXXX)"
 TMP_CFG="$(mktemp /tmp/relay-vitest-config-XXXX.mjs)"
 trap 'rm -rf "$TMP_REPO"; rm -f "$TMP_CFG"' EXIT
 mkdir -p "$TMP_REPO/sprints/07071247-relay-demo-codex-r2/tests"
 cp sprints/07071247-relay-demo-codex-r2/tests/sort-json-keys.contract.test.ts "$TMP_REPO/sprints/07071247-relay-demo-codex-r2/tests/"
+REL_TEST="${TMP_REPO#/workspace/packages/brain/}/sprints/07071247-relay-demo-codex-r2/tests/sort-json-keys.contract.test.ts"
 cat > "$TMP_CFG" <<'EOF'
 export default {
   test: {
@@ -158,15 +159,15 @@ export default {
   },
 };
 EOF
-npm exec --workspace packages/brain vitest -- --config "$TMP_CFG" run "$TMP_REPO/sprints/07071247-relay-demo-codex-r2/tests/sort-json-keys.contract.test.ts" --reporter=verbose 2>&1 | tee "$TMP_REPO/red-missing.log"
+npm exec --workspace packages/brain vitest -- --config "$TMP_CFG" run "$REL_TEST" --reporter=verbose 2>&1 | tee "$TMP_REPO/red-missing.log"
 STATUS=${PIPESTATUS[0]}
 [ "$STATUS" -ne 0 ]
-grep -Eq 'Error: Cannot find module|ERR_MODULE_NOT_FOUND|Failed Suites' "$TMP_REPO/red-missing.log"
+grep -Eq '嵌套对象会递归按字典序排序|数组顺序保持不变|空对象保持为空对象|expected 1 to be \+0|AssertionError' "$TMP_REPO/red-missing.log"
 ```
 
 **错误实现状态验证命令**:
 ```bash
-TMP_REPO="$(mktemp -d)"
+TMP_REPO="$(mktemp -d /workspace/packages/brain/tmp-red-XXXXXX)"
 TMP_CFG="$(mktemp /tmp/relay-vitest-config-XXXX.mjs)"
 trap 'rm -rf "$TMP_REPO"; rm -f "$TMP_CFG"' EXIT
 mkdir -p "$TMP_REPO/scripts/relay-demo" "$TMP_REPO/sprints/07071247-relay-demo-codex-r2/tests"
@@ -174,8 +175,12 @@ cp sprints/07071247-relay-demo-codex-r2/tests/sort-json-keys.contract.test.ts "$
 cat > "$TMP_REPO/scripts/relay-demo/sort-json-keys.mjs" <<'EOF'
 import { readFileSync } from 'node:fs';
 const input = JSON.parse(readFileSync(process.argv[2], 'utf8'));
+if (Array.isArray(input.items)) {
+  input.items = [...input.items].reverse();
+}
 process.stdout.write(`${JSON.stringify(input)}\n`);
 EOF
+REL_TEST="${TMP_REPO#/workspace/packages/brain/}/sprints/07071247-relay-demo-codex-r2/tests/sort-json-keys.contract.test.ts"
 cat > "$TMP_CFG" <<'EOF'
 export default {
   test: {
@@ -184,13 +189,13 @@ export default {
   },
 };
 EOF
-npm exec --workspace packages/brain vitest -- --config "$TMP_CFG" run "$TMP_REPO/sprints/07071247-relay-demo-codex-r2/tests/sort-json-keys.contract.test.ts" --reporter=verbose 2>&1 | tee "$TMP_REPO/red-broken.log"
+npm exec --workspace packages/brain vitest -- --config "$TMP_CFG" run "$REL_TEST" --reporter=verbose 2>&1 | tee "$TMP_REPO/red-broken.log"
 STATUS=${PIPESTATUS[0]}
 [ "$STATUS" -ne 0 ]
-grep -Eq '数组顺序保持不变|嵌套对象会递归按字典序排序|AssertionError|expected' "$TMP_REPO/red-broken.log"
+grep -Eq '数组顺序保持不变|AssertionError|to deeply equal|expected' "$TMP_REPO/red-broken.log"
 ```
 
-**硬阈值**: 上述 Red 验证命令都必须返回非零失败信号；未实现状态至少出现 `Cannot find module` / `ERR_MODULE_NOT_FOUND` / `Failed Suites` 之一；错误实现状态至少出现具体用例名或 `AssertionError`/`expected` 断言摘要
+**硬阈值**: 上述 Red 验证命令都必须返回非零失败信号；未实现状态至少出现具体用例名或 `expected 1 to be +0` / `AssertionError` 这类断言失败摘要；错误实现状态至少出现 `数组顺序保持不变` 用例名或 `AssertionError` / `to deeply equal` / `expected` 断言摘要
 
 ## E2E 验收
 
@@ -201,39 +206,11 @@ grep -Eq '数组顺序保持不变|嵌套对象会递归按字典序排序|Asser
 <!-- GOLDEN_SMOKE_SCENARIO: local-cli-json-sort -->
 
 ```bash
-#!/bin/bash
-set -euo pipefail
-
-SPRINT_DIR="sprints/07071247-relay-demo-codex-r2"
-TMP_DIR="$(mktemp -d)"
-trap 'rm -rf "$TMP_DIR"' EXIT
-
-cat > "$TMP_DIR/nested.json" <<'JSON'
-{"z":1,"a":{"d":4,"c":3},"items":[{"b":2,"a":1},"plain"],"empty":{}}
-JSON
-
-OUT="$(node scripts/relay-demo/sort-json-keys.mjs "$TMP_DIR/nested.json")"
-STATUS=$?
-[ "$STATUS" -eq 0 ]
-
-echo "$OUT" | jq -e '. == {"a":{"c":3,"d":4},"empty":{},"items":[{"a":1,"b":2},"plain"],"z":1}'
-TMP_CFG="$(mktemp /tmp/relay-vitest-config-XXXX.mjs)"
-cat > "$TMP_CFG" <<'EOF'
-export default {
-  test: {
-    environment: 'node',
-    globals: false,
-  },
-};
-EOF
-npm exec --workspace packages/brain vitest -- --config "$TMP_CFG" run "$SPRINT_DIR/tests/sort-json-keys.contract.test.ts" --reporter=verbose | tee "$TMP_DIR/vitest.log"
-VITEST_STATUS=$?
-rm -f "$TMP_CFG"
-test "$VITEST_STATUS" -eq 0
-grep -Eq '3 passed|3 tests' "$TMP_DIR/vitest.log"
-
-git status --porcelain --untracked-files=all -- . ":(exclude)scripts/relay-demo" ":(exclude)$SPRINT_DIR" | tee "$TMP_DIR/out-of-scope.log"
-OUT_OF_SCOPE_COUNT="$(wc -l < "$TMP_DIR/out-of-scope.log")"
-test "$OUT_OF_SCOPE_COUNT" -eq 0
-echo "OK: relay-demo sort-json-keys golden path"
+bash sprints/07071247-relay-demo-codex-r2/smoke-verify.sh
 ```
+
+## Test Contract
+
+| Workstream | Test File | BEHAVIOR 覆盖 | 预期红证据 |
+| --- | --- | --- | --- |
+| WS1 | `tests/sort-json-keys.contract.test.ts` | `嵌套对象会递归按字典序排序` / `数组顺序保持不变` / `空对象保持为空对象` | 未实现时 `vitest` 退出非零，输出含对应用例名或断言失败摘要 |
