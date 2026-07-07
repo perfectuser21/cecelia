@@ -201,6 +201,11 @@ vi.mock('../events/taskEvents.js', () => ({
   emitGraphNodeUpdate: vi.fn().mockResolvedValue(undefined),
 }));
 
+const mockSpawnRelay = vi.hoisted(() => vi.fn());
+vi.mock('../harness-skill-relay.js', () => ({
+  spawnSkillRelaySession: (...args) => mockSpawnRelay(...args),
+}));
+
 // ── 被测函数 ─────────────────────────────────────────────────
 
 let triggerCeceliaRun;
@@ -225,6 +230,12 @@ const HARNESS_TASK = {
   status: 'in_progress',
   retry_count: 0,
   execution_attempts: 0,
+};
+
+const RELAY_TASK = {
+  ...HARNESS_TASK,
+  id: 'ccccdddd-1234-5678-9012-abcdef012345',
+  payload: { ...HARNESS_TASK.payload, orchestrator: 'skill-relay' },
 };
 
 // ── 测试 ─────────────────────────────────────────────────────
@@ -277,6 +288,28 @@ describe('triggerCeceliaRun — harness_initiative 状态回写（PR #2816 fix�
       expect.objectContaining({
         error_message: expect.stringContaining('LangGraph internal error'),
       }),
+    );
+  });
+});
+
+describe('triggerCeceliaRun — skill-relay spawn 语义（Issue df107724）', () => {
+  it('relay spawn 成功（ok=true, mode=skill-relay）→ 不得标 completed/failed，留 in_progress', async () => {
+    mockSpawnRelay.mockResolvedValue({ ok: true, mode: 'skill-relay', containerId: 'cecelia-relay-test-1' });
+    const result = await triggerCeceliaRun(RELAY_TASK);
+    expect(result.success).toBe(true);
+    expect(mockSpawnRelay).toHaveBeenCalledTimes(1);
+    const statuses = mockUpdateTaskStatus.mock.calls.map((c) => c[1]);
+    expect(statuses).not.toContain('completed');
+    expect(statuses).not.toContain('failed');
+  });
+
+  it('relay spawn 失败（ok=false）→ 照旧标 failed（既有行为守护）', async () => {
+    mockSpawnRelay.mockResolvedValue({ ok: false, mode: 'skill-relay', error: 'docker run failed' });
+    await triggerCeceliaRun(RELAY_TASK);
+    expect(mockUpdateTaskStatus).toHaveBeenCalledWith(
+      RELAY_TASK.id,
+      'failed',
+      expect.objectContaining({ error_message: expect.any(String) })
     );
   });
 });
