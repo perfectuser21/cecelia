@@ -100,6 +100,44 @@ describe('spawnSkillRelaySession', () => {
   });
 });
 
+describe('codex executor 凭据挂载（extraMounts 接线，demo task a150998c 根治）', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it('executor=codex + CODEX_RELAY_HOME 已配置 → spawnFn 收到 extraMounts 含凭据挂载', async () => {
+    vi.stubEnv('CODEX_RELAY_HOME', '/tmp/fake-codex-home');
+    const deps = makeDeps();
+    const task = { ...TASK, payload: { ...TASK.payload, executor: 'codex' } };
+    const r = await spawnSkillRelaySession(task, deps);
+
+    expect(r.ok).toBe(true);
+    expect(deps.spawnFn).toHaveBeenCalledOnce();
+    const spawnOpts = deps.spawnFn.mock.calls[0][0];
+    expect(spawnOpts.extraMounts).toContain('/tmp/fake-codex-home:/home/cecelia/.codex:rw');
+  });
+
+  it('executor 缺省（claude）→ extraMounts 为空/未定义', async () => {
+    vi.stubEnv('CODEX_RELAY_HOME', '/tmp/fake-codex-home');
+    const deps = makeDeps();
+    const r = await spawnSkillRelaySession(TASK, deps);
+
+    expect(r.ok).toBe(true);
+    const spawnOpts = deps.spawnFn.mock.calls[0][0];
+    expect(spawnOpts.extraMounts ?? []).toHaveLength(0);
+  });
+
+  it('executor=codex 且 CODEX_RELAY_HOME 未设 → 不 spawn，ok=false（B4 回滚语义）', async () => {
+    vi.stubEnv('CODEX_RELAY_HOME', '');
+    const deps = makeDeps();
+    const task = { ...TASK, payload: { ...TASK.payload, executor: 'codex' } };
+    const r = await spawnSkillRelaySession(task, deps);
+
+    expect(deps.spawnFn).not.toHaveBeenCalled();
+    expect(r.ok).toBe(false);
+  });
+});
+
 describe('router 集成：flag 命中不碰图', async () => {
   it('runHarnessInitiativeRouter 对 skill-relay 任务不 compile 图', async () => {
     const { runHarnessInitiativeRouter } = await import('../executor.js');

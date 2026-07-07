@@ -70,6 +70,25 @@ export async function spawnSkillRelaySession(task, deps = {}) {
   const short = shortId(task.id);
   const isCodex = task.payload?.executor === 'codex';
 
+  // B6: codex 容器凭据挂载（demo task a150998c 实证：容器内无任何凭据，
+  // codex CLI `401 Unauthorized: Missing bearer` 秒退）。宿主 team2 codex 凭据目录
+  // 由 CODEX_RELAY_HOME 指定（docker-compose 注入），挂到容器内 codex 默认读取路径
+  // /home/cecelia/.codex。禁止在此写死 /Users 路径（铁律：不写死环境假设值）——
+  // 缺配置时 loud 失败，不静默降级成"无凭据容器照样 spawn 再秒退"。
+  const codexRelayHome = process.env.CODEX_RELAY_HOME;
+  if (isCodex && !codexRelayHome) {
+    console.error('[skill-relay][ALERT] CODEX_RELAY_HOME 未配置，codex executor 无法挂载凭据');
+    try {
+      await dbPool.query(
+        `UPDATE tasks SET status='queued', claimed_by=NULL, claimed_at=NULL WHERE id=$1`,
+        [task.id]
+      );
+    } catch (rollbackErr) {
+      console.warn(`[skill-relay] task 回滚失败（non-fatal）: ${rollbackErr.message}`);
+    }
+    return { ok: false, mode: RELAY_FLAG, error: 'CODEX_RELAY_HOME 未配置' };
+  }
+
   // ─── B2+B3: codex 路径守门（在 try 外，defer 不抛异常）─────────────────
   if (isCodex) {
     // B2 层 1：进程内守门
@@ -185,6 +204,7 @@ export async function spawnSkillRelaySession(task, deps = {}) {
         task: { ...task, task_type: 'harness_controller' },
         prompt,
         worktreePath,
+        extraMounts: isCodex ? [`${codexRelayHome}:/home/cecelia/.codex:rw`] : undefined,
         env: {
           ...acctOpts.env,
           CECELIA_TASK_TYPE: 'harness_controller',
