@@ -3,19 +3,20 @@
  * 覆盖：告警发送、10min 聚合窗口、连败升级、webhook 失败降级
  */
 
+import { vi, describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { createFeishuAlerter } from '../feishu-alerter.js';
 
 describe('feishu-alerter', () => {
   beforeEach(() => {
-    jest.useFakeTimers();
+    vi.useFakeTimers();
   });
 
   afterEach(() => {
-    jest.useRealTimers();
+    vi.useRealTimers();
   });
 
   it('send() 把事件放入聚合缓冲区，窗口结束后调用 webhookFn', async () => {
-    const webhookFn = jest.fn().mockResolvedValue(undefined);
+    const webhookFn = vi.fn().mockResolvedValue(undefined);
     const alerter = createFeishuAlerter({ webhookFn, aggregationWindowMs: 5000 });
 
     alerter.send({ type: 'eval_failed', task_id: 't1' });
@@ -25,7 +26,7 @@ describe('feishu-alerter', () => {
     expect(webhookFn).not.toHaveBeenCalled();
 
     // 推进时间，触发 flush
-    jest.advanceTimersByTime(5001);
+    vi.advanceTimersByTime(5001);
     await Promise.resolve();
 
     expect(webhookFn).toHaveBeenCalledTimes(1);
@@ -38,7 +39,7 @@ describe('feishu-alerter', () => {
   });
 
   it('默认聚合窗口为 10 分钟（600000ms），窗口内多次 send 只触发一次 flush', async () => {
-    const webhookFn = jest.fn().mockResolvedValue(undefined);
+    const webhookFn = vi.fn().mockResolvedValue(undefined);
     const alerter = createFeishuAlerter({ webhookFn });
 
     alerter.send({ type: 'timeout', task_id: 'a' });
@@ -46,12 +47,12 @@ describe('feishu-alerter', () => {
     alerter.send({ type: 'timeout', task_id: 'c' });
 
     // 9 分钟内不触发
-    jest.advanceTimersByTime(9 * 60 * 1000);
+    vi.advanceTimersByTime(9 * 60 * 1000);
     await Promise.resolve();
     expect(webhookFn).not.toHaveBeenCalled();
 
     // 10 分钟后触发
-    jest.advanceTimersByTime(60 * 1000 + 100);
+    vi.advanceTimersByTime(60 * 1000 + 100);
     await Promise.resolve();
     expect(webhookFn).toHaveBeenCalledTimes(1);
     expect(webhookFn.mock.calls[0][0].count).toBe(3);
@@ -60,7 +61,7 @@ describe('feishu-alerter', () => {
   });
 
   it('recordFailure 连败 ≥3 时，flush payload 带 escalated=true 和 level=P0', async () => {
-    const webhookFn = jest.fn().mockResolvedValue(undefined);
+    const webhookFn = vi.fn().mockResolvedValue(undefined);
     const alerter = createFeishuAlerter({
       webhookFn,
       aggregationWindowMs: 100,
@@ -71,7 +72,7 @@ describe('feishu-alerter', () => {
     alerter.recordFailure({ type: 'eval_failed', task_id: 'x2' });
     alerter.recordFailure({ type: 'eval_failed', task_id: 'x3' });
 
-    jest.advanceTimersByTime(200);
+    vi.advanceTimersByTime(200);
     await Promise.resolve();
 
     expect(webhookFn).toHaveBeenCalled();
@@ -83,7 +84,7 @@ describe('feishu-alerter', () => {
   });
 
   it('recordSuccess 重置连败计数，后续 flush 不带 escalated', async () => {
-    const webhookFn = jest.fn().mockResolvedValue(undefined);
+    const webhookFn = vi.fn().mockResolvedValue(undefined);
     const alerter = createFeishuAlerter({
       webhookFn,
       aggregationWindowMs: 100,
@@ -94,7 +95,7 @@ describe('feishu-alerter', () => {
     alerter.recordFailure({ type: 'eval_failed', task_id: 'y1' });
     alerter.recordFailure({ type: 'eval_failed', task_id: 'y2' });
     alerter.recordFailure({ type: 'eval_failed', task_id: 'y3' });
-    jest.advanceTimersByTime(200);
+    vi.advanceTimersByTime(200);
     await Promise.resolve();
 
     // 成功重置
@@ -102,7 +103,7 @@ describe('feishu-alerter', () => {
 
     // 再发一次失败（连败归 1，不升级）
     alerter.recordFailure({ type: 'eval_failed', task_id: 'y4' });
-    jest.advanceTimersByTime(200);
+    vi.advanceTimersByTime(200);
     await Promise.resolve();
 
     const lastPayload = webhookFn.mock.calls[webhookFn.mock.calls.length - 1][0];
@@ -112,13 +113,14 @@ describe('feishu-alerter', () => {
   });
 
   it('webhook 失败时调用 fallbackFn 做本地日志兜底', async () => {
-    const webhookFn = jest.fn().mockRejectedValue(new Error('network error'));
-    const fallbackFn = jest.fn().mockResolvedValue(undefined);
+    const webhookFn = vi.fn().mockRejectedValue(new Error('network error'));
+    const fallbackFn = vi.fn().mockResolvedValue(undefined);
     const alerter = createFeishuAlerter({ webhookFn, fallbackFn, aggregationWindowMs: 50 });
 
     alerter.send({ type: 'eval_failed', task_id: 'z1' });
-    jest.advanceTimersByTime(100);
-    await Promise.resolve();
+    vi.advanceTimersByTime(100);
+    // drain multiple microtask turns: timer fires sync, then awaits webhookFn (rejects), then catch awaits fallbackFn
+    for (let i = 0; i < 10; i++) await Promise.resolve();
 
     expect(webhookFn).toHaveBeenCalled();
     expect(fallbackFn).toHaveBeenCalled();
@@ -130,13 +132,13 @@ describe('feishu-alerter', () => {
   });
 
   it('不同 type 的事件进入不同 bucket，各自独立 flush', async () => {
-    const webhookFn = jest.fn().mockResolvedValue(undefined);
+    const webhookFn = vi.fn().mockResolvedValue(undefined);
     const alerter = createFeishuAlerter({ webhookFn, aggregationWindowMs: 200 });
 
     alerter.send({ type: 'timeout' });
     alerter.send({ type: 'quota_insufficient' });
 
-    jest.advanceTimersByTime(300);
+    vi.advanceTimersByTime(300);
     await Promise.resolve();
 
     expect(webhookFn).toHaveBeenCalledTimes(2);

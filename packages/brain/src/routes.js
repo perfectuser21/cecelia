@@ -28,6 +28,8 @@ import handoffsRouter from './routes/handoffs.js';
 import sentinelRouter from './routes/sentinel.js';
 import dispatchRouter from './routes/dispatch.js';
 import previewRouter from './routes/preview.js';
+import { createSkillEvalRouter, getSkillEvalConfigHandler } from './routes/skill-evals.js';
+import pool from './db.js';
 
 export { triggerAutoRCA } from './routes/brain-meta.js';
 export { resolveRelatedFailureMemories } from './routes/shared.js';
@@ -79,5 +81,14 @@ router.use('/', dispatchRouter);
 
 // 预览环境端口分配 — POST/GET /preview, DELETE /preview/:pr_number
 router.use('/preview', previewRouter);
+
+// Skill Eval 内部验收台 — POST /skill-evals/upload, GET /skill-evals/:id/status, GET /skill-evals/list
+const skillEvalDb = {
+  oneOrNone: async (sql, vals) => { const r = await pool.query(sql, vals); return r.rows[0] || null; },
+  one: async (sql, vals) => { const r = await pool.query(sql, vals); return r.rows[0]; },
+  none: async (sql, vals) => { await pool.query(sql, vals); },
+  manyOrNone: async (sql, vals) => { const r = await pool.query(sql, vals); return r.rows; },
+};
+router.use('/skill-evals', createSkillEvalRouter({ db: skillEvalDb }));
 
 export default router;
