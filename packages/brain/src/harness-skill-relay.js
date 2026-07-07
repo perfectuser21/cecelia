@@ -333,7 +333,26 @@ async function _spawnHeadedSession(task, { dbPool, now, short, initiativeId, dep
   const inDocker = (deps.inDockerFn || (() => { try { return existsSync('/.dockerenv'); } catch { return false; } }))();
   const sshHost = task.payload?.ssh_host || process.env.HEADED_SSH_HOST
     || (inDocker ? 'administrator@host.docker.internal' : 'localhost');
-  const SSH_OPTS = '-o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null';
+  // SSH key 自动发现（对齐 spawn/host-executor.js 先例，R3 dd9642d8 实证 Permission denied）。
+  // 优先级：payload.ssh_key > deps.resolveSSHKeyFn() > HEADED_SSH_KEY/CECELIA_HOST_EXEC_SSH_KEY > 默认路径。
+  const HEADED_DEFAULT_SSH_KEYS = [
+    '/Users/administrator/.ssh/id_ed25519',
+    '/Users/administrator/.ssh/id_rsa',
+  ];
+  const sshKey = task.payload?.ssh_key
+    || (deps.resolveSSHKeyFn
+      ? deps.resolveSSHKeyFn()
+      : (() => {
+          const envKey = process.env.HEADED_SSH_KEY || process.env.CECELIA_HOST_EXEC_SSH_KEY;
+          if (envKey) return envKey;
+          return HEADED_DEFAULT_SSH_KEYS.find(p => { try { return existsSync(p); } catch { return false; } }) || null;
+        })());
+  const SSH_OPTS = [
+    '-o BatchMode=yes',
+    '-o StrictHostKeyChecking=no',
+    '-o UserKnownHostsFile=/dev/null',
+    ...(sshKey ? [`-i ${sshKey}`] : []),
+  ].join(' ');
   const tmuxSession = `codex-relay-${short}`;
   const promptFile = `/tmp/cecelia-host-prompts/${task.id}.${short}.prompt`;
 
@@ -403,6 +422,7 @@ async function _spawnHeadedSession(task, { dbPool, now, short, initiativeId, dep
     try {
       await sshSpawnFn({
         sshHost,
+        sshKey,
         tmuxSession,
         promptFile,
         prompt,

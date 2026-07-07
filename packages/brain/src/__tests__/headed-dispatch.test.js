@@ -397,3 +397,86 @@ describe('6. 雷6：ssh 目标容器感知 + 非交互 flags', () => {
     expect(sshCalls.every((c) => c.cmd.includes('me@custom-host'))).toBe(true);
   });
 });
+
+/**
+ * 雷7：headed ssh 缺 -i key（R3 dd9642d8 实证 Permission denied）。
+ * 对齐 spawn/host-executor.js 先例：key 自动发现，优先级
+ *   payload.ssh_key > resolveSSHKeyFn() > HEADED_SSH_KEY/CECELIA_HOST_EXEC_SSH_KEY > 默认路径。
+ */
+describe('7. 雷7：headed ssh -i key 自动注入', () => {
+  function makeNoSshDeps(overrides = {}) {
+    return {
+      pool: { query: vi.fn().mockResolvedValue({ rows: [] }) },
+      spawnFn: vi.fn().mockResolvedValue({ containerId: 'should-not-be-called' }),
+      sshSpawnFn: undefined,
+      loadSkill: vi.fn().mockReturnValue('SKILL_CONTENT_MARKER'),
+      ensureWt: vi.fn().mockResolvedValue('/tmp/wt/task-aaaabbbb'),
+      resolveAccountFn: vi.fn().mockResolvedValue(undefined),
+      tokenFn: vi.fn().mockResolvedValue('gh-token'),
+      now: () => new Date('2026-07-07T12:00:00Z'),
+      execFn: vi.fn().mockReturnValue(''),
+      ...overrides,
+    };
+  }
+
+  it('resolveSSHKeyFn 注入 key → 两条 ssh 命令均含 -i <key>', async () => {
+    const calls = [];
+    const execFn = vi.fn((cmd, opts) => { calls.push({ cmd, opts }); return ''; });
+    const deps = makeNoSshDeps({
+      execFn,
+      resolveSSHKeyFn: () => '/Users/administrator/.ssh/id_ed25519',
+    });
+    const r = await spawnSkillRelaySession(HEADED_TASK, deps);
+    expect(r.ok).toBe(true);
+    const sshCalls = calls.filter((c) => /^ssh /.test(c.cmd));
+    expect(sshCalls.length).toBeGreaterThanOrEqual(2);
+    for (const c of sshCalls) {
+      expect(c.cmd).toContain('-i /Users/administrator/.ssh/id_ed25519');
+    }
+  });
+
+  it('resolveSSHKeyFn 返回 null → ssh 命令不含 -i（无 key 降级场景，不炸）', async () => {
+    const calls = [];
+    const execFn = vi.fn((cmd, opts) => { calls.push({ cmd, opts }); return ''; });
+    const deps = makeNoSshDeps({
+      execFn,
+      resolveSSHKeyFn: () => null,
+    });
+    const r = await spawnSkillRelaySession(HEADED_TASK, deps);
+    expect(r.ok).toBe(true);
+    const sshCalls = calls.filter((c) => /^ssh /.test(c.cmd));
+    for (const c of sshCalls) {
+      expect(c.cmd).not.toContain(' -i ');
+    }
+  });
+
+  it('payload.ssh_key 显式指定 → 胜过 resolveSSHKeyFn，ssh 含 -i <payload key>', async () => {
+    const calls = [];
+    const execFn = vi.fn((cmd, opts) => { calls.push({ cmd, opts }); return ''; });
+    const resolveSSHKeyFn = vi.fn(() => '/should/not/be/used');
+    const task = { ...HEADED_TASK, payload: { ...HEADED_TASK.payload, ssh_key: '/explicit/id_ed25519' } };
+    const deps = makeNoSshDeps({ execFn, resolveSSHKeyFn });
+    const r = await spawnSkillRelaySession(task, deps);
+    expect(r.ok).toBe(true);
+    const sshCalls = calls.filter((c) => /^ssh /.test(c.cmd));
+    expect(sshCalls.length).toBeGreaterThanOrEqual(2);
+    for (const c of sshCalls) {
+      expect(c.cmd).toContain('-i /explicit/id_ed25519');
+      expect(c.cmd).not.toContain('/should/not/be/used');
+    }
+    expect(resolveSSHKeyFn).not.toHaveBeenCalled();
+  });
+
+  it('sshSpawnFn 测试路径同样收到 sshKey 字段', async () => {
+    const sshSpawnFn = vi.fn().mockResolvedValue({});
+    const deps = makeNoSshDeps({
+      sshSpawnFn,
+      resolveSSHKeyFn: () => '/Users/administrator/.ssh/id_rsa',
+    });
+    const r = await spawnSkillRelaySession(HEADED_TASK, deps);
+    expect(r.ok).toBe(true);
+    expect(sshSpawnFn).toHaveBeenCalledOnce();
+    const arg = sshSpawnFn.mock.calls[0][0];
+    expect(arg.sshKey).toBe('/Users/administrator/.ssh/id_rsa');
+  });
+});
