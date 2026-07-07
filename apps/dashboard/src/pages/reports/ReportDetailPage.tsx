@@ -5,7 +5,7 @@
  */
 
 import { useState, useEffect } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 
 interface KRProgress {
   id?: string;
@@ -98,15 +98,49 @@ function StatBox({ label, value, color = '#e6edf3' }: { label: string; value: nu
   );
 }
 
+interface DesignDoc {
+  id: string;
+  title: string | null;
+  content: string | null;
+  created_at: string;
+  [key: string]: unknown;
+}
+
 export default function ReportDetailPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const isDesignDoc = searchParams.get('source') === 'design_docs';
   const [report, setReport] = useState<Report | null>(null);
+  const [doc, setDoc] = useState<DesignDoc | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!id) return;
+
+    // design_docs 源（作战日报等）：独立获取路径，不动现有 reports 路径
+    if (isDesignDoc) {
+      const fetchDoc = async () => {
+        try {
+          setError(null);
+          const res = await fetch(`/api/brain/design-docs/${id}`);
+          if (res.status === 404) {
+            setError('简报不存在');
+            return;
+          }
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+          const json = await res.json();
+          setDoc(json.data ?? null);
+        } catch (err) {
+          setError(err instanceof Error ? err.message : '加载失败');
+        } finally {
+          setLoading(false);
+        }
+      };
+      fetchDoc();
+      return;
+    }
 
     const fetchReport = async () => {
       try {
@@ -127,7 +161,7 @@ export default function ReportDetailPage() {
     };
 
     fetchReport();
-  }, [id]);
+  }, [id, isDesignDoc]);
 
   if (loading) {
     return (
@@ -140,6 +174,82 @@ export default function ReportDetailPage() {
         color: '#8b949e',
       }}>
         加载中...
+      </div>
+    );
+  }
+
+  // ── design_docs 源渲染（作战日报）：独立早返回分支，不动现有渲染路径 ──────────
+  if (isDesignDoc) {
+    if (error || !doc) {
+      return (
+        <div style={{
+          minHeight: '100vh',
+          background: 'linear-gradient(135deg, #0d1117 0%, #161b22 100%)',
+          color: '#e6edf3',
+          padding: '32px',
+        }}>
+          <button
+            onClick={() => navigate('/reports')}
+            style={{
+              padding: '8px 16px',
+              borderRadius: '8px',
+              border: '1px solid rgba(255,255,255,0.1)',
+              background: 'rgba(255,255,255,0.05)',
+              color: '#8b949e',
+              fontSize: '13px',
+              cursor: 'pointer',
+              marginBottom: '24px',
+            }}
+          >
+            ← 返回列表
+          </button>
+          <div style={{
+            padding: '16px',
+            borderRadius: '8px',
+            background: 'rgba(248,81,73,0.1)',
+            border: '1px solid rgba(248,81,73,0.2)',
+            color: '#f85149',
+          }}>
+            ⚠️ {error || '简报不存在'}
+          </div>
+        </div>
+      );
+    }
+
+    const docCreatedAt = new Date(doc.created_at);
+    const docDate = `${docCreatedAt.getFullYear()}/${docCreatedAt.getMonth() + 1}/${docCreatedAt.getDate()} ${String(docCreatedAt.getHours()).padStart(2, '0')}:${String(docCreatedAt.getMinutes()).padStart(2, '0')}`;
+
+    return (
+      <div style={{
+        minHeight: '100vh',
+        background: 'linear-gradient(135deg, #0d1117 0%, #161b22 100%)',
+        color: '#e6edf3',
+        padding: '32px',
+      }}>
+        <button
+          onClick={() => navigate('/reports')}
+          style={{
+            padding: '8px 16px',
+            borderRadius: '8px',
+            border: '1px solid rgba(255,255,255,0.1)',
+            background: 'rgba(255,255,255,0.05)',
+            color: '#8b949e',
+            fontSize: '13px',
+            cursor: 'pointer',
+            marginBottom: '16px',
+          }}
+        >
+          ← 返回列表
+        </button>
+        <h1 style={{ fontSize: '22px', fontWeight: 700, color: '#e6edf3', margin: '0 0 4px 0' }}>
+          {doc.title || `简报 #${doc.id.slice(0, 8)}`}
+        </h1>
+        <div style={{ display: 'flex', gap: '16px', fontSize: '12px', color: '#6e7681', marginBottom: '24px' }}>
+          <span>生成时间：{docDate}</span>
+        </div>
+        <pre style={{ padding: '16px', borderRadius: '8px', background: 'rgba(0,0,0,0.3)', border: '1px solid rgba(255,255,255,0.06)', fontSize: '13px', color: '#e6edf3', overflow: 'auto', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+          {doc.content}
+        </pre>
       </div>
     );
   }

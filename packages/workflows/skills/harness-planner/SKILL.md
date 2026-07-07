@@ -1,14 +1,17 @@
 ---
 id: harness-planner-skill
 description: |
-  【Brain 内部节点，禁止人类直接调用】
-  Harness Planner — Brain executor 在 harness_initiative 任务中自动调用的 Layer 1 节点。
-  人类启动 harness/sprint 通过 /dev 路径C（POST localhost:5221/api/brain/tasks，task_type=harness_initiative）。
-  Brain tick 自动 pick up 后调本 skill。直接调本 skill = 绕过 Brain 调度层，违反 zero-human-gate 原则。
-version: 8.12.1
+  【Harness 内部节点，禁止人类直接调用】
+  Harness Planner — skill-relay 接力链第一棒：Brain 派发 harness_initiative（payload.orchestrator=skill-relay）后
+  spawn 单 session harness-controller，由 controller Step 1 调用本 skill 产出 sprint-prd.md。
+  人类启动 harness/sprint 通过 /dev 路径C（POST localhost:5221/api/brain/tasks，payload 必须带 orchestrator=skill-relay）。
+  直接调本 skill = 绕过 controller 接力链，违反 zero-human-gate 原则。
+  （2026-07-05 cecelia #3554 起 LangGraph 图编排已废弃，"Brain executor Layer 1 节点"为过时语义。）
+version: 8.13.0
 created: 2026-04-08
-updated: 2026-07-02
+updated: 2026-07-05
 changelog:
+  - 8.13.0: description 更新为 skill-relay 语义 — LangGraph 图编排已废弃（cecelia #3554，2026-07-05），本 skill 现由 harness-controller 单 session 接力调用，不再是 Brain executor 图节点；正文流程不变
   - 8.12.1: 补回 Step 3 最后一条消息的 review_required 字段 + 判断规则 — 该字段只存在于 cecelia 镜像（B22 时代直改镜像未进 SSOT 的历史漂移），v8.12.0 镜像同步时被覆盖丢失，b22-review-required-smoke 抓到；Brain graph 从 planner verdict JSON 消费此字段
   - 8.12.0: 新增 Step 0.4 加载整条 line 的历史约束（A1，harness 验证模型重构）— step/journey_feature/area 三源 invariant + 按 journey 聚合的累积 FR，注入 sprint-prd.md「## Invariant 约束」「## 累积 FR」两段（格式即 E1 的解析契约）；修 Step 0.3 坏查询 — 旧 GET /decisions?category=nfr 读的是 decision_log 审计表且忽略 category 参数，改用 golden-path-decisions + abilities/:id/decisions 精确端点
   - 8.11.0: 新增 Step 0.3 NFR 双源读取 — 从 decisions?category=nfr 取活跃 NFR 决策 + 从 PrepPRD 取用户显式 NFR，合并注入 sprint-prd.md ## NFR 约束章节；双源缺一不可

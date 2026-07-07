@@ -24,11 +24,12 @@ function makeDeps({
   orchestrator = 'skill-relay',
   prUrl = null,
   prState = null,   // 'MERGED' | 'OPEN' | 'CLOSED' | null（execFn 返回的 gh pr view JSON）
+  orchestratorHost = 'skill-relay-session',
 } = {}) {
   const pool = { query: vi.fn() };
   pool.query.mockImplementation(async (sql) => {
     if (/DISTINCT ON \(initiative_id\)/.test(sql)) {
-      return { rows: [{ initiative_id: TASK_ID, phase: 'planning', attempts: String(attempts), deadline_at: new Date(Date.now() + 3600e3).toISOString(), pr_url: prUrl }] };
+      return { rows: [{ initiative_id: TASK_ID, phase: 'planning', attempts: String(attempts), deadline_at: new Date(Date.now() + 3600e3).toISOString(), pr_url: prUrl, orchestrator_host: orchestratorHost }] };
     }
     if (/FROM tasks/.test(sql)) {
       return { rows: [{ id: TASK_ID, status: taskStatus, title: 't', payload: { orchestrator } }] };
@@ -152,6 +153,21 @@ describe('resumeStalledRelayRuns', () => {
     const ghCall = deps.execFn.mock.calls.find(c => /gh pr view/.test(c[0]));
     expect(ghCall).toBeFalsy();
     expect(deps.spawnFn).toHaveBeenCalledOnce();
+  });
+});
+
+describe('foreground 护栏（刀2：前台建档 run 不得被重点火）', () => {
+  it('orchestrator_host=foreground 且容器消失 → 跳过，不 spawn', async () => {
+    const deps = makeDeps({ orchestratorHost: 'foreground', containerRunning: false });
+    const out = await resumeStalledRelayRuns(deps);
+    expect(deps.spawnFn).not.toHaveBeenCalled();
+    expect(out.resumed).toBe(0);
+  });
+
+  it('对照：普通 relay run 容器消失仍会重点火（护栏不误伤）', async () => {
+    const deps = makeDeps({ orchestratorHost: 'skill-relay-session', containerRunning: false });
+    await resumeStalledRelayRuns(deps);
+    expect(deps.spawnFn).toHaveBeenCalled();
   });
 });
 

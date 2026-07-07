@@ -17,11 +17,13 @@ function stripFrontmatter(content) {
   return content;
 }
 
-// 不变量 1+2：evaluator 正文含 env_missing / B-1.6 / B-1.7 / B-1.8 段，且正文无 ws_id 残留。
+// 不变量 1+2：evaluator 正文含 env_missing / B-1.6 / B-1.8 段，且正文无 ws_id 残留。
+// B-1.7 弱 oracle/作弊扫描已于 evaluator v1.16.0 拍板下沉 Contract Gate 代码层（#3348），
+// 不再是 skill 正文契约——快照 1.20.0 起墓碑标题也已移除，断言同步删除。
 export function checkEvaluator(content) {
   const body = stripFrontmatter(content);
   const missing = [];
-  for (const tok of ['env_missing', 'B-1.6', 'B-1.7', 'B-1.8']) {
+  for (const tok of ['env_missing', 'B-1.6', 'B-1.8']) {
     if (!body.includes(tok)) missing.push(tok);
   }
   if (body.includes('ws_id')) missing.push('ws_id_residual');

@@ -348,6 +348,54 @@ router.get('/relay-runs/summary', async (req, res) => {
  * DB 失败 → 500 + { error: err.message }
  */
 /**
+ * POST /api/brain/orchestrator/relay-runs/:initiative_id — 前台点火建档。
+ * 人工前台接管 controller 时没有 Brain spawnSkillRelaySession 的 INSERT（Issue 968b6f58），
+ * 进度上报/PR 回写全 404。本端点补建档：幂等（已有 v2 非终态行则返回现有行），
+ * orchestrator_host='foreground'（relay-watchdog 对该 host 跳过重点火——前台无 relay 容器，
+ * "容器消失=死跑"判据对它恒真，会 spawn 无头容器与前台会话双跑）。
+ * 列对齐 harness-skill-relay.js spawnSkillRelaySession 的 INSERT。
+ */
+router.post('/relay-runs/:initiative_id', async (req, res) => {
+  const { initiative_id } = req.params;
+  const { phase, journey_id } = req.body || {};
+  const ALLOWED = ['planning', 'gan', 'generate', 'evaluate'];
+  const startPhase = phase || 'planning';
+  if (!ALLOWED.includes(startPhase)) {
+    return res.status(400).json({ error: 'invalid phase', allowed: ALLOWED });
+  }
+  try {
+    const taskQ = await pool.query(`SELECT id, task_type, payload FROM tasks WHERE id = $1`, [initiative_id]);
+    const task = taskQ.rows[0];
+    if (!task || task.task_type !== 'harness_initiative') {
+      return res.status(404).json({ error: 'harness_initiative task not found' });
+    }
+    const existing = await pool.query(
+      `SELECT id, initiative_id, phase, orchestrator_host, started_at
+         FROM initiative_runs
+        WHERE initiative_id = $1 AND orchestrator_version = 'v2'
+          AND phase NOT IN ('done','failed')
+        LIMIT 1`,
+      [initiative_id]
+    );
+    if (existing.rows.length > 0) {
+      return res.json({ created: false, run: existing.rows[0] });
+    }
+    const journeyId = journey_id || task.payload?.journey_id || null;
+    const ins = await pool.query(
+      `INSERT INTO initiative_runs
+         (initiative_id, phase, journey_id, orchestrator_version, orchestrator_host, deadline_at)
+       VALUES ($1, $2, $3, 'v2', 'foreground', NOW() + INTERVAL '6 hours')
+       RETURNING id, initiative_id, phase, orchestrator_host, started_at, deadline_at`,
+      [initiative_id, startPhase, journeyId]
+    );
+    return res.status(201).json({ created: true, run: ins.rows[0] });
+  } catch (err) {
+    console.error('[POST /orchestrator/relay-runs/:id]', err.message);
+    return res.status(500).json({ error: 'internal error' });
+  }
+});
+
+/**
  * PATCH /api/brain/orchestrator/relay-runs/:initiative_id
  *
  * controller session report 步骤回写终态（skill v1.1.0 配套；治巡逻 Stuck 误报）。

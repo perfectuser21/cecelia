@@ -22,6 +22,7 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 DEST_DIR="$REPO_ROOT/packages/workflows/skills"
 
 SKILLS=(
+  harness-controller
   harness-planner
   harness-contract-proposer
   harness-contract-reviewer
