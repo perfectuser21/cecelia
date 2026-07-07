@@ -3275,8 +3275,12 @@ async function triggerCeceliaRun(task) {
       const result = await runHarnessInitiativeRouter(task);
       // B48: ok=null → graph 在 interrupt 等待（planner/callback 还没回来），
       // 留 in_progress，reportNode B1 fix 会在完成时回写 completed/failed。
+      // skill-relay spawn 成功（ok=true, mode='skill-relay'）：容器已启动但 session
+      // 还在跑，完成态由 harness-report callback 回写，不在此标 completed。
       if (result.ok === null) {
         console.log(`[executor] harness graph interrupted/waiting task=${task.id} thread=${result.threadId}, leaving in_progress`);
+      } else if (result.ok && result.mode === 'skill-relay') {
+        console.log(`[executor] skill-relay session spawned task=${task.id} container=${result.containerId}, leaving in_progress`);
       } else if (result.ok) {
         await updateTaskStatus(task.id, 'completed');
       } else {
