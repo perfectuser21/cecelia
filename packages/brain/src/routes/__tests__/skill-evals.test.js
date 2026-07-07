@@ -37,7 +37,7 @@ function validZipBuffer() {
 function makeApp(db, env = {}) {
   // 设置环境变量（测试 token）
   process.env.SKILL_EVAL_PROXY_TOKEN = env.token || 'test-token';
-  process.env.MAX_ZIP_MB = String(env.MAX_ZIP_MB || 10);
+  process.env.MAX_ZIP_MB = String(env.MAX_ZIP_MB ?? 10);
   process.env.SKILL_EVAL_PENDING_LIMIT = String(env.pendingLimit || 20);
   process.env.MAX_CONCURRENT_SKILL_EVAL = '1';
 
@@ -45,6 +45,10 @@ function makeApp(db, env = {}) {
   app.use(express.json());
   app.use('/api/brain/skill-evals', createSkillEvalRouter({ db }));
   app.get('/api/brain/config', getSkillEvalConfigHandler());
+  // eslint-disable-next-line no-unused-vars
+  app.use((err, req, res, _next) => {
+    return res.status(400).json({ error: err.message || 'Bad Request' });
+  });
   return app;
 }
 
