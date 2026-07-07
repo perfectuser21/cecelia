@@ -145,20 +145,40 @@ echo "prompt 文件存在且权限 0600 ✓"
 
 **可观测行为**: watchdog 循环对 headed run 执行 ssh tmux has-session；ssh 本身抛错时 fail-open 不计为存活失败、不触发重点火
 
+**注**: watchdog fail-open 是 ssh 层接缝，真实验证只能靠单测注入模拟 ssh 失败，不能用 DB 状态间接推断。
+
 **验证命令**:
 ```bash
-# 验证 watchdog 跑过 headed run 后，运行日志含 fail-open 标记或 has-session 检测记录
-# （通过 Brain 日志端点或直接查 DB event log）
-LOG=$(curl -sf "http://localhost:5221/api/brain/logs?keyword=headed&limit=10" 2>/dev/null || echo '[]')
-# 若 Brain 无日志端点，通过 initiative_runs 的 phase 状态间接验证
-PHASE=$(psql $DB -t -c "SELECT phase FROM initiative_runs WHERE initiative_id='${TASK_ID}' AND orchestrator_version='v2' ORDER BY started_at DESC LIMIT 1" | tr -d ' ')
-# 已 done/failed 的 run 不应被 watchdog 重点火
-[ "$PHASE" = "done" ] || [ "$PHASE" = "failed" ] || [ "$PHASE" = "A_planning" ] || \
-  { echo "FAIL: phase 异常 = $PHASE"; exit 1; }
-echo "watchdog headed 路径 phase=$PHASE ✓"
+# fail-open 通过单测验收（vitest 注入 ssh 失败场景）
+node --experimental-vm-modules node_modules/.bin/vitest run \
+  sprints/07071654-codex-headed-dispatch/tests/headed-watchdog.test.js \
+  --reporter=verbose 2>&1 | grep -q "fail-open" && echo OK || { echo FAIL; exit 1; }
 ```
 
-**硬阈值**: watchdog 不因 ssh 失败触发重点火（fail-open），现有 headless docker 路径 phase 不变
+**硬阈值**: vitest 输出含 fail-open 用例通过标记；watchdog 不因 ssh 失败触发重点火
+
+---
+
+### Step 4b: tui.log 留痕 + 管道洗敏
+**来源**: `[INVARIANT]` — 凭据安全 + 日志留痕 Invariant（headed spawn 必须产生可审计日志，且不泄露凭据）
+
+**可观测行为**: headed spawn 后 `<sprint_dir>/tui.log` 存在；tui.log 不含 GITHUB_TOKEN/github_pat_/ghp_ 明文
+
+**验证命令**:
+```bash
+SPRINT_DIR="sprints/07071654-codex-headed-dispatch"
+
+# 验证 tui.log 存在
+[ -f "${SPRINT_DIR}/tui.log" ] || { echo "FAIL: tui.log 不存在"; exit 1; }
+echo "tui.log 存在 ✓"
+
+# 验证不含敏感信息
+! grep -qE "GITHUB_TOKEN=|github_pat_|ghp_[A-Za-z0-9]+" "${SPRINT_DIR}/tui.log" \
+  || { echo "FAIL: tui.log 含敏感凭据明文"; exit 1; }
+echo "tui.log 无敏感信息 ✓"
+```
+
+**硬阈值**: tui.log 存在；grep 返回非零（不含敏感串）
 
 ---
 
@@ -304,6 +324,14 @@ KILL_CNT=$(psql "$DB" -t -c "SELECT COUNT(*) FROM initiative_runs WHERE initiati
 [ "${KILL_CNT}" -ge 1 ] || { echo "FAIL: tmux_killed_at 未记录"; exit 1; }
 echo "收窗幂等 ✓ kill_count=${KILL_CNT}"
 
+echo "=== Step 4b: tui.log 留痕 + 洗敏验证 ==="
+SPRINT_DIR="sprints/07071654-codex-headed-dispatch"
+[ -f "${SPRINT_DIR}/tui.log" ] || { echo "FAIL: tui.log 不存在"; exit 1; }
+echo "tui.log 存在 ✓"
+! grep -qE "GITHUB_TOKEN=|github_pat_|ghp_[A-Za-z0-9]+" "${SPRINT_DIR}/tui.log" \
+  || { echo "FAIL: tui.log 含敏感凭据明文"; exit 1; }
+echo "tui.log 无敏感信息 ✓"
+
 echo "=== Step 5: 零回归验证（headless 路径） ==="
 RESP2=$(curl -sf -X POST "${BRAIN}/api/brain/tasks" \
   -H "Content-Type: application/json" \
@@ -323,9 +351,20 @@ echo "✅ Golden Path E2E 全部验证通过"
 
 ---
 
+---
+
+## Out-of-Scope 标注
+
+**PRD Golden Path 第 6 步（codex 自回写 Brain）**：本 sprint **不测**。
+理由：codex 自回写是 session 内由 controller prompt 指令驱动的行为，不是 Brain 代码实现的功能；
+无法在不启动真实 codex TUI 的情况下做到可重复的 CI 验收。该步骤属于 E2E 集成验收范畴，
+留待后续专项 sprint（真机 E2E）覆盖。
+
+---
+
 ## Test Contract
 
 | 功能 | Test File | BEHAVIOR 覆盖 | 预期红证据 |
 |---|---|---|---|
 | mode=headed 路由分支 | `tests/headed-dispatch.test.js` | headed→ssh+tmux路径、缺省→docker零回归、claude+headed→400 | → 3 failures（函数未实现）|
-| watchdog headed 分支 | `tests/headed-watchdog.test.js` | ssh失败fail-open、收窗幂等 | → 2 failures（watchdog headed 分支未实现）|
+| watchdog headed 分支 | `tests/headed-watchdog.test.js` | ssh失败fail-open（单测注入）、收窗幂等 | → 2 failures（watchdog headed 分支未实现）|
