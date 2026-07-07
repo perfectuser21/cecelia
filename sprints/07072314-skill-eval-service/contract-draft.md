@@ -165,18 +165,18 @@ Brain 在将 pending → running 转换前验证 Claude 额度：
 
 | Workstream | Test File | BEHAVIOR 覆盖 | 红证据 |
 |-----------|-----------|--------------|--------|
-| INV-01 单 slot 串行 | `../../packages/brain/tests/skill-eval/invariant-01-single-slot.test.js` | 第二任务等待/slot释放后继续/running计数不超1 | Red 2ae5b5f |
-| INV-02 背压拒绝 | `../../packages/brain/tests/skill-eval/invariant-02-backpressure.test.js` | pending≥20拒绝429/pending=19接受/DB记录不增 | Red 2ae5b5f |
-| INV-03 额度预检 | `../../packages/brain/tests/skill-eval/invariant-03-quota-precheck.test.js` | 5h不足拦截/7d不足拦截/两池均满足通过 | Red 2ae5b5f |
-| INV-04 硬校验六件套 | `../../packages/brain/tests/skill-eval/invariant-04-hard-validation.test.js` | zip魔数/文件大小/解压大小/压缩比/SKILL.md/路径穿越 | Red 2ae5b5f |
-| INV-05 代理令牌隔离 | `../../packages/brain/tests/skill-eval/invariant-05-proxy-token.test.js` | 无token 403/错误token 403/正确token通过 | Red 2ae5b5f |
-| INV-06 hash去重 | `../../packages/brain/tests/skill-eval/invariant-06-hash-dedup.test.js` | 命中completed返回report_url/命中in_progress合流 | Red 2ae5b5f |
-| INV-07 报告BasicAuth | `../../packages/brain/tests/skill-eval/invariant-07-report-auth.test.js` | 无Auth 401/有Auth 200 | Red 2ae5b5f |
-| INV-08 超时释放 | `../../packages/brain/tests/skill-eval/invariant-08-timeout-release.test.js` | 超时强杀/slot释放/飞书告警 | Red 2ae5b5f |
-| INV-09 全配置注入 | `../../packages/brain/tests/skill-eval/invariant-09-config-injection.test.js` | MAX_ZIP_MB/PENDING_LIMIT/TIMEOUT/MAX_CONCURRENT | Red 2ae5b5f |
-| INV-10 飞书聚合 | `../../packages/brain/tests/skill-eval/invariant-10-feishu-aggregation.test.js` | 10min聚合/连败升级/webhook失败fallback | Red 2ae5b5f |
-| FR-UPLOAD | `../../packages/brain/tests/skill-eval/fr-upload-flow.test.js` | 全链路token→硬校验→hash去重→建task | Red 2ae5b5f |
-| FR-STATUS | `../../packages/brain/src/routes/__tests__/skill-evals.test.js` | status查询200/不存在404/config端点 | Red 2ae5b5f |
+| INV-01 单 slot 串行 | `../../packages/brain/tests/skill-eval/invariant-01-single-slot.test.js` | slot 被占用/slot 释放后/不超过 1 | Red 2ae5b5f |
+| INV-02 背压拒绝 | `../../packages/brain/tests/skill-eval/invariant-02-backpressure.test.js` | pending = 19/pending = 20/数据库记录数不增加 | Red 2ae5b5f |
+| INV-03 额度预检 | `../../packages/brain/tests/skill-eval/invariant-03-quota-precheck.test.js` | 5h 池/7d 池/两池均满足 | Red 2ae5b5f |
+| INV-04 硬校验六件套 | `../../packages/brain/tests/skill-eval/invariant-04-hard-validation.test.js` | zip 魔数/缺少 SKILL.md/路径穿越/压缩比 > 100:1 | Red 2ae5b5f |
+| INV-05 代理令牌隔离 | `../../packages/brain/tests/skill-eval/invariant-05-proxy-token.test.js` | 不带 X-Eval-Proxy-Token/错误的 X-Eval-Proxy-Token/正确的 X-Eval-Proxy-Token | Red 2ae5b5f |
+| INV-06 hash去重 | `../../packages/brain/tests/skill-eval/invariant-06-hash-dedup.test.js` | 命中 completed/命中 in_progress | Red 2ae5b5f |
+| INV-07 报告BasicAuth | `../../packages/brain/tests/skill-eval/invariant-07-report-auth.test.js` | 无 Authorization 头/带正确 Basic Auth | Red 2ae5b5f |
+| INV-08 超时释放 | `../../packages/brain/tests/skill-eval/invariant-08-timeout-release.test.js` | 超时任务被标记/超时后 slot 释放/超时后触发飞书 | Red 2ae5b5f |
+| INV-09 全配置注入 | `../../packages/brain/tests/skill-eval/invariant-09-config-injection.test.js` | MAX_ZIP_MB 从环境变量/PENDING_LIMIT 从环境变量/MAX_CONCURRENT | Red 2ae5b5f |
+| INV-10 飞书聚合 | `../../packages/brain/tests/skill-eval/invariant-10-feishu-aggregation.test.js` | 聚合窗口内/连续失败 ≥ 3 次/webhook 调用失败 | Red 2ae5b5f |
+| FR-UPLOAD | `../../packages/brain/tests/skill-eval/fr-upload-flow.test.js` | 无 X-Eval-Proxy-Token/命中 completed hash/全链路通过 | Red 2ae5b5f |
+| FR-STATUS | `../../packages/brain/src/routes/__tests__/skill-evals.test.js` | status 存在时/status 不存在时/config 返回配置 | Red 2ae5b5f |
 
 ---
 
