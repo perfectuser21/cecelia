@@ -688,7 +688,12 @@ export async function runStagingE2E(task, opts = {}) {
     let promoteStatus;
     if (o.promoteStatus) {
       promoteStatus = o.promoteStatus;
-      await updatePromoteStatus(dbPool, prUrl, o.promoteStatus);
+      // best-effort：DB 失败不冒泡（冒泡会让 task 标 failed → dispatcher 重试 → 重复 SKIP 行 + 重复飞书）
+      try {
+        await updatePromoteStatus(dbPool, prUrl, o.promoteStatus);
+      } catch (e) {
+        console.warn(`[staging-e2e] unknown 线 promote_status 落库失败（忽略）: ${e.message}`);
+      }
       if (o.notifyMessage) {
         try {
           await (opts.notify || sendFeishu)(o.notifyMessage);

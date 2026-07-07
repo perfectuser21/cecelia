@@ -446,13 +446,15 @@ describe('runStagingE2E', () => {
     const deploy = vi.fn();
     const notifyMsgs = [];
     const notify = async (m) => notifyMsgs.push(m);
+    const acquireStagingLock = vi.fn();
     const task3p = {
       id: 'task-3p',
       payload: { initiative_id: 'init-1', pr_url: 'https://pr/3p', base_repo: 'https://github.com/acme/other-product.git' },
     };
-    const r = await runStagingE2E(task3p, { pool, deploy, loadAcceptance: async () => ACCEPTANCE, notify });
-    // 不跑任何 deploy（cecelia 没有第三方 repo 的 staging 部署目标）
+    const r = await runStagingE2E(task3p, { pool, deploy, loadAcceptance: async () => ACCEPTANCE, notify, acquireStagingLock });
+    // 不跑任何 deploy、不抢 staging 锁（cecelia 没有第三方 repo 的 staging 部署目标）
     expect(deploy).not.toHaveBeenCalled();
+    expect(acquireStagingLock).not.toHaveBeenCalled();
     expect(r.verdict).toBe('SKIP');
     expect(r.reason).toBe('unknown_line');
     expect(r.promoteStatus).toBe('pending_promote');
