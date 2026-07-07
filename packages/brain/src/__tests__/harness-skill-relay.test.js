@@ -100,6 +100,54 @@ describe('spawnSkillRelaySession', () => {
   });
 });
 
+describe('B59: codex relay team2 凭据挂载（executor=codex 401 秒退根因）', () => {
+  const CODEX_TASK = {
+    id: 'ccccdddd-eeee-ffff-aaaa-bbbbcccc1111',
+    title: 'fix: codex relay 凭据',
+    payload: {
+      orchestrator: 'skill-relay',
+      executor: 'codex',
+      sprint_dir: 'sprints/07079999-codex-test',
+      journey_id: 'j-2',
+    },
+  };
+
+  it('executor=codex + codexRelayHome 注入 → spawnFn.extraMounts 含 team2 目录 + env.CODEX_HOME 指容器内路径', async () => {
+    const deps = makeDeps({ codexRelayHome: '/fake/home/.codex-team2' });
+    const r = await spawnSkillRelaySession(CODEX_TASK, deps);
+
+    expect(r.ok).toBe(true);
+    const spawnOpts = deps.spawnFn.mock.calls[0][0];
+
+    expect(Array.isArray(spawnOpts.extraMounts), 'extraMounts 必须是数组').toBe(true);
+    const team2Mount = spawnOpts.extraMounts.find((m) => m.src === '/fake/home/.codex-team2');
+    expect(team2Mount, 'team2 宿主目录必须在 extraMounts').toBeTruthy();
+    expect(team2Mount.dst).toBe('/home/cecelia/.codex-relay');
+    expect(team2Mount.mode).toBe('ro');
+
+    expect(spawnOpts.env.CODEX_HOME).toBe('/home/cecelia/.codex-relay');
+  });
+
+  it('executor=codex codexRelayHome 未设置 → deferred(保守拒绝，不 spawn 无凭据容器)', async () => {
+    const deps = makeDeps({ codexRelayHome: null });
+    const r = await spawnSkillRelaySession(CODEX_TASK, deps);
+
+    expect(r.ok).toBe(false);
+    expect(r.deferred).toBe(true);
+    expect(r.reason).toBe('codex_relay_home_missing');
+    expect(deps.spawnFn).not.toHaveBeenCalled();
+  });
+
+  it('executor≠codex → extraMounts 空（非 codex 路径不受影响）', async () => {
+    const deps = makeDeps();
+    const r = await spawnSkillRelaySession(TASK, deps);
+
+    expect(r.ok).toBe(true);
+    const spawnOpts = deps.spawnFn.mock.calls[0][0];
+    expect(spawnOpts.extraMounts ?? []).toHaveLength(0);
+  });
+});
+
 describe('router 集成：flag 命中不碰图', async () => {
   it('runHarnessInitiativeRouter 对 skill-relay 任务不 compile 图', async () => {
     const { runHarnessInitiativeRouter } = await import('../executor.js');

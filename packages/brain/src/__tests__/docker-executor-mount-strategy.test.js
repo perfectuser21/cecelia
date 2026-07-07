@@ -78,3 +78,43 @@ describe('buildDockerArgs — CLAUDE_CONFIG_DIR 挂载策略', () => {
     expect(flatArgs).not.toContain(':/host-claude-config:ro');
   });
 });
+
+describe('buildDockerArgs — opts.extraMounts 透传（B59 codex relay team2 凭据接线）', () => {
+  const task = { id: 'bbbb-2', task_type: 'harness_controller' };
+  const baseOpts = { task, prompt: 'hi', worktreePath: '/tmp/wt' };
+
+  it('opts.extraMounts 包含的挂载出现在 args 中', () => {
+    const { args } = buildDockerArgs(
+      {
+        ...baseOpts,
+        env: {},
+        extraMounts: [
+          { src: '/host/.codex-team2', dst: '/home/cecelia/.codex-relay', mode: 'ro' },
+        ],
+      },
+      { homedir: '/home/fake', existsSyncFn: () => false },
+    );
+    const flatArgs = args.join(' ');
+    expect(flatArgs).toContain('-v /host/.codex-team2:/home/cecelia/.codex-relay:ro');
+  });
+
+  it('opts.extraMounts 为空数组 → 不追加额外 -v（与无 extraMounts 行为相同）', () => {
+    const { args } = buildDockerArgs(
+      { ...baseOpts, env: {}, extraMounts: [] },
+      { homedir: '/home/fake', existsSyncFn: () => false },
+    );
+    // 无自定义挂载目录（只有标准 /workspace 和 /tmp/cecelia-prompts）
+    const vArgs = args.filter((a, i) => a === '-v').map((_, i) => {
+      const idx = args.indexOf('-v', i === 0 ? 0 : args.indexOf('-v') + 1);
+      return args[idx + 1];
+    });
+    expect(args.join(' ')).not.toContain('/home/cecelia/.codex-relay');
+  });
+
+  it('opts.extraMounts 缺省（未传）→ 不报错，无额外挂载', () => {
+    expect(() => buildDockerArgs(
+      { ...baseOpts, env: {} },
+      { homedir: '/home/fake', existsSyncFn: () => false },
+    )).not.toThrow();
+  });
+});

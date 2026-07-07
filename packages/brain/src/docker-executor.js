@@ -398,6 +398,13 @@ export function buildDockerArgs(opts, ctx = {}) {
     extraVolumes.push('-v', `${hostSshDir}:/home/cecelia/.ssh:ro`);
   }
 
+  // opts.extraMounts: [{src, dst, mode}] — 调用方追加自定义挂载（如 codex relay team2 凭据目录）
+  if (Array.isArray(opts.extraMounts)) {
+    for (const m of opts.extraMounts) {
+      extraVolumes.push('-v', `${m.src}:${m.dst}:${m.mode || 'ro'}`);
+    }
+  }
+
   // 宿主侧取证路径（prompt/cid）含 runInstance 后缀；容器内 stdout 路径也同名。
   // HOST_PROMPT_DIR 是宿主视角路径（docker -v mount 源），DEFAULT_PROMPT_DIR 是容器内挂载目标（/tmp/cecelia-prompts）。
   // basename 保持一致，容器通过 CECELIA_PROMPT_FILE / CECELIA_STDOUT_FILE env 读到正确文件。

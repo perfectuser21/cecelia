@@ -70,8 +70,18 @@ export async function spawnSkillRelaySession(task, deps = {}) {
   const short = shortId(task.id);
   const isCodex = task.payload?.executor === 'codex';
 
-  // ─── B2+B3: codex 路径守门（在 try 外，defer 不抛异常）─────────────────
+  // ─── B2+B3+B59: codex 路径守门（在 try 外，defer 不抛异常）────────────────
+  // B59: codex relay 凭据路径（CODEX_RELAY_HOME 由 compose 注入；deps.codexRelayHome 供测试注入）
+  const codexRelayHome = isCodex
+    ? (deps.codexRelayHome !== undefined ? deps.codexRelayHome : (process.env.CODEX_RELAY_HOME || null))
+    : null;
+
   if (isCodex) {
+    // B59: 凭据未配置 → 保守拒绝，不 spawn 无凭据容器（否则 401 秒退）
+    if (!codexRelayHome) {
+      return { ok: false, deferred: true, reason: 'codex_relay_home_missing' };
+    }
+
     // B2 层 1：进程内守门
     if (_activeCodexRelays > 0) {
       return { ok: false, deferred: true, reason: 'codex_concurrent_limit' };
@@ -178,6 +188,12 @@ export async function spawnSkillRelaySession(task, deps = {}) {
     const spawnFn = deps.spawnFn
       || (await import('./spawn/detached.js')).spawnDockerDetached;
 
+    // B59: codex 路径挂载 team2 凭据（容器内固定路径 /home/cecelia/.codex-relay）
+    const CODEX_RELAY_CONTAINER_PATH = '/home/cecelia/.codex-relay';
+    const extraMounts = isCodex && codexRelayHome
+      ? [{ src: codexRelayHome, dst: CODEX_RELAY_CONTAINER_PATH, mode: 'ro' }]
+      : [];
+
     // B4: spawn 失败回滚（在 spawn 前不落 initiative_runs 行）
     try {
       await spawnFn({
@@ -185,6 +201,7 @@ export async function spawnSkillRelaySession(task, deps = {}) {
         task: { ...task, task_type: 'harness_controller' },
         prompt,
         worktreePath,
+        extraMounts,
         env: {
           ...acctOpts.env,
           CECELIA_TASK_TYPE: 'harness_controller',
@@ -199,6 +216,8 @@ export async function spawnSkillRelaySession(task, deps = {}) {
           CECELIA_JOURNEY_ID: task.payload?.journey_id || '',
           GITHUB_TOKEN: githubToken,
           BRAIN_URL: 'http://host.docker.internal:5221',
+          // B59: codex relay 容器用 team2 凭据（CODEX_HOME 指向挂载目标）
+          ...(isCodex && codexRelayHome ? { CODEX_HOME: CODEX_RELAY_CONTAINER_PATH } : {}),
         },
       });
     } catch (spawnErr) {

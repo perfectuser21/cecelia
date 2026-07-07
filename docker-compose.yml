@@ -34,6 +34,8 @@ services:
       - /Users/administrator/.claude-account3:/Users/administrator/.claude-account3:ro
       # Codex CLI auth (~/.codex-team1/auth.json)：容器内 triggerCodexReview spawn 时需要凭据
       - /Users/administrator/.codex-team1:/Users/administrator/.codex-team1:ro
+      # B59: codex relay team2 凭据 — harness-skill-relay 派 executor=codex 容器时挂入 relay 容器
+      - /Users/administrator/.codex-team2:/Users/administrator/.codex-team2:ro
       # Workflows: staff + skills + agents (read-only for staff/skills-registry API)
       - /Users/administrator/perfect21/cecelia/packages/workflows:/Users/administrator/perfect21/cecelia/packages/workflows:ro
       # Config: OKR validation spec (read-only, mounted at /config for validate-okr-structure.js)
@@ -92,6 +94,8 @@ services:
       - CODEX_BIN=/usr/local/bin/codex
       # Codex CLI 找凭据用 $CODEX_HOME/auth.json（mount 自 host ~/.codex-team1）
       - CODEX_HOME=/Users/administrator/.codex-team1
+      # B59: codex relay 容器的 team2 凭据宿主路径（harness-skill-relay 读此构造 extraMounts）
+      - CODEX_RELAY_HOME=/Users/administrator/.codex-team2
       # Brain 容器里 /tmp/cecelia-prompts 对应的宿主路径（docker-executor 用它构造子容器 mount 源）
       - HOST_PROMPT_DIR=/Users/administrator/claude-output/cecelia-prompts
       # ZenithJoy API — harness-sprint-state skill 写 sprint_states/journey_steps 用
