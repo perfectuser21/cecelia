@@ -1,7 +1,7 @@
 /**
  * Harness v2 — Initiative Graph（Phase A + B LangGraph 实现）
  *
- * 唯一执行路径：executor.js harness_initiative → compileHarnessFullGraph()
+ * 执行路径：skill-relay（executor.js → spawnSkillRelaySession）；LangGraph 路径已退役
  * Phase A: prep → planner → parsePrd → ganLoop → inferTaskPlan → dbUpsert
  * Phase B: pick_sub_task → run_sub_task（loop）→ report
  */
@@ -74,7 +74,7 @@ const HARNESS_PHASE_GOALS = {
 };
 
 // ─── Brain v2 C8a — LangGraph 真图实现（阶段 A）────────────────────────
-// harness_initiative 任务的唯一执行路径（dispatcher → executor → compileHarnessFullGraph）。
+// harness_initiative Phase A 图节点（Phase A 编排入口，buildHarnessInitiativeGraph()）。
 //
 // 节点拓扑：START → prep → planner → parsePrd → ganLoop → dbUpsert → END
 //                    ↓error  ↓error    ↓error    ↓error
@@ -1882,7 +1882,3 @@ export function buildHarnessFullGraph(nodeOverrides = {}) {
     .addEdge('report', END);
 }
 
-export async function compileHarnessFullGraph() {
-  const checkpointer = await getPgCheckpointer();
-  return buildHarnessFullGraph().compile({ checkpointer, durability: 'sync' });
-}

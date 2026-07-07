@@ -396,7 +396,8 @@ router.patch('/tasks/:task_id', async (req, res) => {
         // 场景：PR 已合 main 但 Brain 内部 task 被 quarantine/pause，无 API 可回写 completed
         // quarantine release API 只能回 queued，paused 完全无 release API
         'quarantined': ['queued', 'completed', 'failed', 'cancelled'],
-        'paused': ['queued', 'in_progress', 'completed', 'failed', 'cancelled']
+        'paused': ['queued', 'in_progress', 'completed', 'failed', 'cancelled'],
+        'canceled': ['queued', 'completed', 'failed', 'cancelled']
       };
 
       if (!allowedTransitions[currentStatus]?.includes(status)) {

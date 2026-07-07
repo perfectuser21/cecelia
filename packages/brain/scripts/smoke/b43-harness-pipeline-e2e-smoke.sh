@@ -3,7 +3,7 @@
 # B43 regression guard：harness pipeline A→B→C 静态 + routing 函数验证
 # Case 1: buildHarnessFullGraph 支持 nodeOverrides（runSubTaskFn）
 # Case 2: routeFromPickSubTask 路由逻辑正确（单一 evaluator 设计，tasks done → report）
-# Case 3: compileHarnessFullGraph export 存在（静态 grep）
+# （Case 3 已删除：compileHarnessFullGraph 随 LangGraph 路径退役一并物理删除，2026-07-08）
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -52,13 +52,5 @@ if (r3 !== 'end') throw new Error(`Case 2c FAIL: expected end on error, got ${r3
 console.log('[smoke:b43] Case 2 PASS: routeFromPickSubTask routing 正确（done→report）');
 JS
 
-# ── Case 3: compileHarnessFullGraph export exists ─────────────────────────────
-echo "[smoke:b43] Case 3: compileHarnessFullGraph export 存在"
-if ! grep -q 'export async function compileHarnessFullGraph' src/workflows/harness-initiative.graph.js; then
-  echo "[smoke:b43] FAIL Case 3: compileHarnessFullGraph 未 export"
-  exit 1
-fi
-echo "[smoke:b43] Case 3 PASS: compileHarnessFullGraph 已 export"
-
-echo "✅ [smoke:b43] All 3 cases PASS (nodeOverrides + routing + export)"
+echo "✅ [smoke:b43] All 2 cases PASS (nodeOverrides + routing)"
 exit 0
