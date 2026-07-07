@@ -118,7 +118,7 @@ describe('POST /api/brain/harness/judge — 正常路径', () => {
     mockReadFile.mockResolvedValueOnce(JSON.stringify({ verdict: 'PASS', status: 'success' }));
     mockRunJudgeGate.mockResolvedValueOnce({ verdict: 'PASS', feedback: null, judged: true });
 
-    const { agent_verdict, ...bodyWithoutVerdict } = VALID_BODY;
+    const { agent_verdict: _av, ...bodyWithoutVerdict } = VALID_BODY;
     const res = await request(app)
       .post('/api/brain/harness/judge')
       .send(bodyWithoutVerdict);
@@ -132,7 +132,7 @@ describe('POST /api/brain/harness/judge — 正常路径', () => {
     mockReadFile.mockRejectedValueOnce(new Error('ENOENT'));
     mockRunJudgeGate.mockResolvedValueOnce({ verdict: 'FAIL', feedback: null, judged: false });
 
-    const { agent_verdict, ...bodyWithoutVerdict } = VALID_BODY;
+    const { agent_verdict: _av, ...bodyWithoutVerdict } = VALID_BODY;
     const res = await request(app)
       .post('/api/brain/harness/judge')
       .send(bodyWithoutVerdict);

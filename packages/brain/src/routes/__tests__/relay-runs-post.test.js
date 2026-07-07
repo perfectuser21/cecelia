@@ -135,7 +135,7 @@ describe('POST /api/brain/orchestrator/relay-runs/:initiative_id', () => {
       ([sql]) => /INSERT INTO initiative_runs/i.test(sql)
     );
     expect(insertCall, 'INSERT 未调用').toBeTruthy();
-    const [sql, params] = insertCall;
+    const [sql, _params] = insertCall;
     expect(sql).toMatch(/orchestrator_version/);
     expect(sql).toMatch(/'v2'/);
     expect(sql).toMatch(/'foreground'/);
