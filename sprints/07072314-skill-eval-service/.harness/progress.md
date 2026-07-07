@@ -1,0 +1,7 @@
+planner: done (sprint-prd.md@9b4dd0f, invariants=10, fr=13)
+gan: done (contract-draft.md@f841eac r3, verdict=APPROVED, 铁律覆盖=10/10, rubric=.harness/verdicts/gan-f841eac.json)
+generator: done (pr=#3626, red=2ae5b5f, green=34b1904, head=def2d5ad)
+ci: green (all checks passed, 2026-07-07)
+evaluator: done (verdict=PASS, ci_status=green)
+judge: done (verdict=DONE, 2026-07-07)
+merge: waiting_review (review_required=true, pr=#3626 rebased onto main)

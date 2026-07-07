@@ -1,0 +1,18 @@
+{
+  "phase": "gan",
+  "sha": "f841eac98e2bcc6b3ae8f54a43a1747c09fd21bd",
+  "rounds": 3,
+  "final_verdict": "APPROVED",
+  "rubric_total": 8.5,
+  "dimensions": {
+    "r1_feedback_resolution": "10/10",
+    "invariant_coverage": "10/10",
+    "test_executability": "9/10",
+    "contract_precision": "8/10",
+    "e2e_fixture_clarity": "9/10"
+  },
+  "invariant_coverage": "10/10",
+  "behavior_count": 18,
+  "test_files": 11,
+  "timestamp": "2026-07-07"
+}
