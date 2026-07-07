@@ -288,15 +288,15 @@ echo "report_url: $REPORT_URL"
 
 ## DoD 检查清单
 
-- [ ] B01: 无 token → 403
-- [ ] B02: zip 硬校验（魔数 / 大小 / 压缩比 / 文件数 / SKILL.md / 路径穿越）
-- [ ] B03: SHA-256 去重三态正确
-- [ ] B04: 单 slot 串行保证（DB running ≤ 1）
-- [ ] B05: 额度预检（5h ≥85% AND 7d ≥90%）
-- [ ] B06: 背压（pending ≥20 → 429）
-- [ ] B07: evals 表每次落库
-- [ ] B08: 报告 401 保护
-- [ ] B09: 状态查询端点正确（含 404）
-- [ ] B10: 索引页追加条目
+- [x] B01: 无 token → 403
+- [x] B02: zip 硬校验（魔数 / 大小 / 压缩比 / 文件数 / SKILL.md / 路径穿越）
+- [x] B03: SHA-256 去重三态正确
+- [x] B04: 单 slot 串行保证（DB running ≤ 1）
+- [x] B05: 额度预检（5h ≥85% AND 7d ≥90%）
+- [x] B06: 背压（pending ≥20 → 429）
+- [x] B07: evals 表每次落库
+- [x] B08: 报告 401 保护
+- [x] B09: 状态查询端点正确（含 404）
+- [x] B10: 索引页追加条目
 - [ ] Final E2E: 真实 zip 上传全链路通过
-- [ ] Brain unit tests: upload-handler / dispatcher / publisher 全绿
+- [x] Brain unit tests: upload-handler / dispatcher / publisher 全绿

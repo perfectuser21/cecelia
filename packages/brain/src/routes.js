@@ -28,6 +28,7 @@ import handoffsRouter from './routes/handoffs.js';
 import sentinelRouter from './routes/sentinel.js';
 import dispatchRouter from './routes/dispatch.js';
 import previewRouter from './routes/preview.js';
+import skillEvalRouter from './routes/skill-eval.js';
 
 export { triggerAutoRCA } from './routes/brain-meta.js';
 export { resolveRelatedFailureMemories } from './routes/shared.js';
@@ -79,5 +80,8 @@ router.use('/', dispatchRouter);
 
 // 预览环境端口分配 — POST/GET /preview, DELETE /preview/:pr_number
 router.use('/preview', previewRouter);
+
+// Skill Eval 验收台 — POST /skill-eval/upload, GET /skill-eval/status/:task_id
+router.use('/skill-eval', skillEvalRouter);
 
 export default router;
