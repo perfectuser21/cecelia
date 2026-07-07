@@ -76,11 +76,11 @@ async function validateZip(buffer) {
   let zip;
   try {
     zip = await JSZip.loadAsync(buffer);
-  } catch (e) {
+  } catch (_e) {
     return { ok: false, status: 400, error: 'Invalid zip: failed to parse zip file' };
   }
 
-  const entries = Object.values(zip.files).filter(f => !f.dir);
+  const _entries = Object.values(zip.files).filter(f => !f.dir);
   const entryNames = Object.keys(zip.files);
 
   // c. 文件数量检查
