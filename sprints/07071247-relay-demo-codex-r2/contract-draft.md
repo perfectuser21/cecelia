@@ -139,6 +139,59 @@ rm -f "$TMP_JSON"
 
 **硬阈值**: 空对象语义保持不变；vitest 命令退出码必须为 0；输出必须表明三个合同用例全部通过
 
+## Red 前提（test_is_red）
+
+在 `scripts/relay-demo/sort-json-keys.mjs` 未实现或错误实现时，直接运行合同测试必须以非零退出码失败；失败输出必须能定位到具体合同用例名或断言摘要，不能出现“实现缺失/错误但合同测试仍为 0”的假绿。
+
+**未实现状态验证命令**:
+```bash
+TMP_REPO="$(mktemp -d)"
+TMP_CFG="$(mktemp /tmp/relay-vitest-config-XXXX.mjs)"
+trap 'rm -rf "$TMP_REPO"; rm -f "$TMP_CFG"' EXIT
+mkdir -p "$TMP_REPO/sprints/07071247-relay-demo-codex-r2/tests"
+cp sprints/07071247-relay-demo-codex-r2/tests/sort-json-keys.contract.test.ts "$TMP_REPO/sprints/07071247-relay-demo-codex-r2/tests/"
+cat > "$TMP_CFG" <<'EOF'
+export default {
+  test: {
+    environment: 'node',
+    globals: false,
+  },
+};
+EOF
+npm exec --workspace packages/brain vitest -- --config "$TMP_CFG" run "$TMP_REPO/sprints/07071247-relay-demo-codex-r2/tests/sort-json-keys.contract.test.ts" --reporter=verbose 2>&1 | tee "$TMP_REPO/red-missing.log"
+STATUS=${PIPESTATUS[0]}
+[ "$STATUS" -ne 0 ]
+grep -Eq 'Error: Cannot find module|ERR_MODULE_NOT_FOUND|Failed Suites' "$TMP_REPO/red-missing.log"
+```
+
+**错误实现状态验证命令**:
+```bash
+TMP_REPO="$(mktemp -d)"
+TMP_CFG="$(mktemp /tmp/relay-vitest-config-XXXX.mjs)"
+trap 'rm -rf "$TMP_REPO"; rm -f "$TMP_CFG"' EXIT
+mkdir -p "$TMP_REPO/scripts/relay-demo" "$TMP_REPO/sprints/07071247-relay-demo-codex-r2/tests"
+cp sprints/07071247-relay-demo-codex-r2/tests/sort-json-keys.contract.test.ts "$TMP_REPO/sprints/07071247-relay-demo-codex-r2/tests/"
+cat > "$TMP_REPO/scripts/relay-demo/sort-json-keys.mjs" <<'EOF'
+import { readFileSync } from 'node:fs';
+const input = JSON.parse(readFileSync(process.argv[2], 'utf8'));
+process.stdout.write(`${JSON.stringify(input)}\n`);
+EOF
+cat > "$TMP_CFG" <<'EOF'
+export default {
+  test: {
+    environment: 'node',
+    globals: false,
+  },
+};
+EOF
+npm exec --workspace packages/brain vitest -- --config "$TMP_CFG" run "$TMP_REPO/sprints/07071247-relay-demo-codex-r2/tests/sort-json-keys.contract.test.ts" --reporter=verbose 2>&1 | tee "$TMP_REPO/red-broken.log"
+STATUS=${PIPESTATUS[0]}
+[ "$STATUS" -ne 0 ]
+grep -Eq '数组顺序保持不变|嵌套对象会递归按字典序排序|AssertionError|expected' "$TMP_REPO/red-broken.log"
+```
+
+**硬阈值**: 上述 Red 验证命令都必须返回非零失败信号；未实现状态至少出现 `Cannot find module` / `ERR_MODULE_NOT_FOUND` / `Failed Suites` 之一；错误实现状态至少出现具体用例名或 `AssertionError`/`expected` 断言摘要
+
 ## E2E 验收
 
 **journey_type**: autonomous
@@ -179,7 +232,8 @@ rm -f "$TMP_CFG"
 test "$VITEST_STATUS" -eq 0
 grep -Eq '3 passed|3 tests' "$TMP_DIR/vitest.log"
 
-git diff --name-only -- . ":(exclude)scripts/relay-demo" ":(exclude)$SPRINT_DIR" | tee "$TMP_DIR/out-of-scope.log"
-test ! -s "$TMP_DIR/out-of-scope.log"
+git status --porcelain --untracked-files=all -- . ":(exclude)scripts/relay-demo" ":(exclude)$SPRINT_DIR" | tee "$TMP_DIR/out-of-scope.log"
+OUT_OF_SCOPE_COUNT="$(wc -l < "$TMP_DIR/out-of-scope.log")"
+test "$OUT_OF_SCOPE_COUNT" -eq 0
 echo "OK: relay-demo sort-json-keys golden path"
 ```
