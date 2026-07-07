@@ -429,6 +429,23 @@ describe('runStagingE2E', () => {
     expect(release).toHaveBeenCalledTimes(1);
   });
 
+  // 3b. unknown 线（第三方 repo）：不跑 deploy，直接 SKIP + 飞书通知，避免把 cecelia brain 部署到 :5222。
+  it('unknown 线（第三方 repo）→ SKIP unknown_line，不触发 deploy，飞书通知', async () => {
+    const pool = makeMockPool();
+    const deploy = vi.fn();
+    const notifyMsgs = [];
+    const notify = async (msg) => { notifyMsgs.push(msg); };
+    const unknownTask = { id: 'task-x', payload: { initiative_id: 'init-x', pr_url: 'https://pr/x', base_repo: 'otheruser/third-party-repo' } };
+    const r = await runStagingE2E(unknownTask, { pool, deploy, loadAcceptance: async () => ACCEPTANCE, notify });
+    expect(r.verdict).toBe('SKIP');
+    expect(r.reason).toBe('unknown_line');
+    expect(deploy).not.toHaveBeenCalled();
+    // 飞书通知含 base_repo 信息，便于主理人识别来源
+    expect(notifyMsgs.length).toBeGreaterThan(0);
+    expect(notifyMsgs[0]).toContain('third-party-repo');
+    expect(updateTaskStatus).toHaveBeenCalledWith('task-x', 'completed');
+  });
+
   // Slice9: staging 实测的 git SHA 落库（tested_sha），promote 时比对防 SHA 漂移。
   it('Slice9: PASS 落库含 tested_sha（git SHA 锚定）', async () => {
     const pool = makeMockPool();

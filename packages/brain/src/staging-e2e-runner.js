@@ -712,6 +712,22 @@ export async function runStagingE2E(task, opts = {}) {
     //    非内部线走 staging-deploy.sh 部署 brain 到 :5222。
     const line = resolveLine(baseRepo);
 
+    // unknown 线（非 cecelia/zenithjoy 的第三方 repo）：staging-deploy.sh 目标是 cecelia brain :5222，
+    // 对第三方 repo 是错误部署目标，必须拦截。直接 SKIP + 飞书通知主理人介入。
+    if (line === 'unknown') {
+      const notify = opts.notify || sendFeishu;
+      try {
+        await notify(
+          `⚠️ [Staging Skipped - Unknown Repo] base_repo="${baseRepo}" 不在已知线路（cecelia/zenithjoy），跳过 staging deploy\n`
+          + `initiative: ${initiativeId || '?'}\nPR: ${prUrl || '?'}\n`
+          + `如需支持此 repo，请在 staging-promote.js resolveLine() 添加映射`
+        );
+      } catch (e) {
+        console.warn(`[staging-e2e] unknown 线通知失败（忽略）: ${e.message}`);
+      }
+      return await finalize('SKIP', 'unknown_line');
+    }
+
     // Slice6: staging 单实例串行 — deploy 前抢 advisory lock，防 N 路并发互相 docker rm 顶掉。
     // 抢不到（别路正占同端口实例）→ SKIP staging_busy（不部署）；抢到 → finally 必释放。
     const lockPort = line === 'internal' ? DASHBOARD_STAGING_PORT : STAGING_PORT;

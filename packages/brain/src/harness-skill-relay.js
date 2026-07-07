@@ -233,6 +233,7 @@ export async function spawnSkillRelaySession(task, deps = {}) {
           HARNESS_TASK_ID: task.id,
           HARNESS_INITIATIVE_ID: initiativeId,
           HARNESS_SPRINT_DIR: sprintDir,
+          HARNESS_WORKTREE_HOST: worktreePath,
           CECELIA_JOURNEY_ID: task.payload?.journey_id || '',
           GITHUB_TOKEN: githubToken,
           BRAIN_URL: 'http://host.docker.internal:5221',
