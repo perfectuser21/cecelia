@@ -64,27 +64,42 @@ export async function deployStaging(opts = {}) {
   // 重试逻辑：ZenithJoy CI deploy 需 2-3 分钟，staging 检查在 merge 后立即触发，容器重启窗口内
   // 单次 curl 失败即判死是误判。重试 maxAttempts 次（默认 5），间隔 retryDelayMs（默认 30s）。
   // 默认总窗口：5×30s + 4×30s = 270s ≈ 4.5 分钟，覆盖 ZJ CI 全部部署时间。
+  //
+  // 健康检查语义（2026-07-07 增强）：
+  //   - :5201/health 必须返回 JSON { status: 'ok' } 才算健康。
+  //   - ZJ API server 旧版本无 /health 路由时，SPA fallback 返回 200+HTML（不含 "status":"ok"），
+  //     视为 zj_staging_html_fallback（服务起来了但版本太旧 / 路由未就绪），触发护栏。
+  //   - ECONNREFUSED（进程未起）仍触发 zj_staging_unhealthy。
   if (customer && !opts.deployScript) {
     const host = process.env.ZJ_STAGING_HOST || 'localhost';
     const maxAttempts = opts.maxAttempts ?? 5;
     const retryDelayMs = opts.retryDelayMs ?? 30_000;
     const sleep = opts.sleep || ((ms) => new Promise((r) => setTimeout(r, ms)));
     let lastErr;
+    let lastOut;
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
       const cmd = `curl -sf --connect-timeout 30 --max-time 30 http://${host}:${ZJ_STAGING_PORT}/health`;
       try {
         const raw = exec(cmd, { encoding: 'utf8', timeout: 45_000, maxBuffer: 1024 * 1024 });
         const out = typeof raw === 'string' ? raw : String(raw);
-        // 从健康检查 JSON 提取候选 SHA + buildTime，供护栏通知和审计追踪使用。
-        let stagingSha = null;
-        let stagingBuildTime = null;
-        try {
-          const parsed = JSON.parse(out.trim());
-          stagingSha = parsed?.build?.sha || null;
-          stagingBuildTime = parsed?.build?.buildTime || null;
-        } catch { /* 非 JSON 响应，忽略 */ }
-        const shaLine = stagingSha ? `\n[ZJ staging SHA: ${stagingSha}${stagingBuildTime ? ' buildTime:' + stagingBuildTime : ''}]` : '';
-        return { status: 'success', reason: null, output: cap(out + shaLine), stagingPort, stagingSha };
+        lastOut = out;
+        // JSON 层验证：/health 必须返回含 "status":"ok" 的 JSON，防 SPA fallback 返回 HTML 误判健康。
+        let parsed;
+        try { parsed = JSON.parse(out.trim()); } catch { /* non-JSON → 视为不健康 */ }
+        if (parsed && parsed.status === 'ok') {
+          // SHA 兼容两种格式：新端点 { sha } / 旧格式 { build: { sha } }
+          const stagingSha = parsed.sha || parsed?.build?.sha || null;
+          const stagingBuildTime = parsed?.build?.buildTime || null;
+          const shaLine = stagingSha ? `\n[ZJ staging SHA: ${stagingSha}${stagingBuildTime ? ' buildTime:' + stagingBuildTime : ''}]` : '';
+          return { status: 'success', reason: null, output: cap(out + shaLine), stagingPort, stagingSha, zjSha: parsed.sha || null };
+        }
+        // 服务进程活着但 /health 未返回 ok JSON（旧版本 SPA fallback 或服务启动中）
+        const htmlHint = !parsed ? ' [非JSON,可能SPA fallback或旧版本未含/health端点]' : ` [status=${parsed.status}]`;
+        lastErr = new Error(`zj /health 未返回 ok${htmlHint}`);
+        if (attempt < maxAttempts) {
+          console.warn(`[staging-e2e] ZJ staging :${ZJ_STAGING_PORT} /health 响应非 ok（attempt ${attempt}/${maxAttempts}），${retryDelayMs / 1000}s 后重试${htmlHint}`);
+          await sleep(retryDelayMs);
+        }
       } catch (err) {
         lastErr = err;
         if (attempt < maxAttempts) {
@@ -94,8 +109,10 @@ export async function deployStaging(opts = {}) {
       }
     }
     const errMsg = `${lastErr?.stdout ? String(lastErr.stdout) : ''}\n${lastErr?.stderr ? String(lastErr.stderr) : ''}\n${lastErr?.message || ''}`.trim();
+    // 如果最后一次是 HTML fallback（进程活但不健康），区分原因。
+    const reason = lastOut && !lastOut.trim().startsWith('{') ? 'zj_staging_html_fallback' : 'zj_staging_unhealthy';
     const combined = `[尝试 ${maxAttempts} 次均失败，总等待 ${Math.round((maxAttempts - 1) * retryDelayMs / 1000)}s] ${errMsg}`;
-    return { status: 'failed', reason: 'zj_staging_unhealthy', output: cap(combined), stagingPort };
+    return { status: 'failed', reason, output: cap(combined), stagingPort };
   }
 
   let script;
@@ -365,7 +382,7 @@ export async function checkInitiativeAggregate(dbPool, initiativeId) {
   return { allPass, testedSha };
 }
 
-export async function handlePromote(dbPool, { verdict, baseRepo, prUrl, initiativeId, deployOutput }, opts = {}) {
+export async function handlePromote(dbPool, { verdict, baseRepo, prUrl, initiativeId, deployOutput, zjSha }, opts = {}) {
   const decision = decidePromote({ verdict, baseRepo });
   const notify = opts.notify || sendFeishu;
   const notifyBark = opts.notifyBark || sendBark;
@@ -377,9 +394,11 @@ export async function handlePromote(dbPool, { verdict, baseRepo, prUrl, initiati
       if (verdict === 'FAIL' && decision.line === 'customer') {
         try {
           const deployStr = deployOutput ? String(deployOutput).trim() : '';
-          // 从 deployOutput 提取最后已知 staging SHA（deployStaging 成功时追加的诊断行）
-          const shaMatch = deployStr.match(/\[ZJ staging SHA:\s*([0-9a-f]{7,40})[^\]]*\]/);
-          const shaLine = shaMatch ? `\n最后已知 staging SHA: ${shaMatch[1].slice(0, 12)}` : '';
+          // zjSha 优先（新端点 /health 直接返回）；回退到 deployOutput 诊断行（旧格式兼容）
+          const shaFromOutput = deployStr.match(/\[ZJ staging SHA:\s*([0-9a-f]{7,40})[^\]]*\]/)?.[1];
+          const shaLine = (zjSha && zjSha !== 'unknown')
+            ? `\n候选: ${zjSha}`
+            : (shaFromOutput ? `\n最后已知 staging SHA: ${shaFromOutput.slice(0, 12)}` : '');
           const outputSnippet = deployStr
             ? `\n诊断: ${deployStr.slice(-400)}`
             : '';
@@ -667,7 +686,7 @@ export async function runStagingE2E(task, opts = {}) {
     // Slice2：PASS 后放行分流（内部线 auto-promote / 客户线 pending+通知 / base_repo 缺失保守 pending）。
     // best-effort，不影响 verdict 已落库。
     const promoteStatus = await handlePromote(
-      dbPool, { verdict, baseRepo, prUrl, initiativeId, deployOutput: base.deployOutput },
+      dbPool, { verdict, baseRepo, prUrl, initiativeId, deployOutput: base.deployOutput, zjSha: base.zjSha || null },
       { promoteExec: opts.promoteExec, notify: opts.notify },
     );
     await writeTaskResult(dbPool, task.id, {
@@ -703,6 +722,7 @@ export async function runStagingE2E(task, opts = {}) {
     try {
       const dep = await deploy({ exec: opts.exec, cwd: opts.cwd, line });
       base.deployOutput = dep.output;
+      base.zjSha = dep.zjSha || null;
       if (dep.status === 'skipped') return await finalize('SKIP', dep.reason);
       if (dep.status === 'failed') return await finalize('FAIL', dep.reason || 'deploy_failed');
       base.deployedAt = new Date();
