@@ -1,0 +1,35 @@
+{
+  "initiative_id": "4cedf175-3b56-4d41-91b6-73de559f58c9",
+  "journey_type": "autonomous",
+  "journey_type_reason": "纯 packages/brain/src/ 后端改动（skill-relay.js + watchdog + tasks 路由），无 UI / agent 协议 / engine 变更",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "codex headed tmux dispatch — mode=headed 分支 + watchdog headed 存活检测 + 收窗幂等 + mode 白名单",
+      "scope": "1) harness-skill-relay.js 新增 mode=headed 分支：ssh 逃逸宿主、prompt 写文件（/tmp/cecelia-host-prompts/<taskid>.<instance>.prompt，0600）、tmux new-session 启动 codex TUI（不产生 docker extraMounts，不注入 GITHUB_TOKEN 进 tmux 命令串），initiative_runs 落行 orchestrator_host='skill-relay-codex-headed'；claude+headed 在入口校验层拒绝；2) harness-relay-watchdog.js 新增 headed 分支：ssh tmux has-session 存活检测（ssh 本身失败→fail-open 不重点火），run done > 30min → ssh kill-session（写 tmux_killed_at 幂等标）；3) routes/tasks.js POST /api/brain/tasks 入口新增 mode 白名单校验（缺省/headless/headed），claude+headed → 400；4) DB migration 新增 initiative_runs.tmux_killed_at 字段",
+      "dod": [
+        "[BEHAVIOR] POST tasks(executor=codex, mode=headed) → HTTP 200 + id 字段存在",
+        "[BEHAVIOR] POST tasks(executor=claude, mode=headed) → HTTP 400",
+        "[BEHAVIOR] headed 任务 tick 后 initiative_runs.orchestrator_host='skill-relay-codex-headed'（5分钟时间窗）",
+        "[BEHAVIOR] headless 缺省路径 orchestrator_host ≠ 'skill-relay-codex-headed'",
+        "[BEHAVIOR] watchdog ssh 失败 → fail-open（spawnFn 不被调用）",
+        "[BEHAVIOR] run done > 30min → tmux kill-session 被调用，tmux_killed_at 写 DB",
+        "[BEHAVIOR] 已有 tmux_killed_at → 二次 watchdog 不重复 kill（幂等）",
+        "[ARTIFACT] harness-skill-relay.js 含 mode=headed 分支 + ssh+tmux spawn",
+        "[ARTIFACT] harness-relay-watchdog.js 含 headed tmux has-session + fail-open + 收窗幂等",
+        "[ARTIFACT] routes/tasks.js 含 mode 白名单 + claude+headed→400"
+      ],
+      "files": [
+        "packages/brain/src/harness-skill-relay.js",
+        "packages/brain/src/harness-relay-watchdog.js",
+        "packages/brain/src/routes/tasks.js",
+        "packages/brain/migrations/",
+        "packages/brain/src/__tests__/headed-dispatch.test.js",
+        "packages/brain/src/__tests__/headed-watchdog.test.js"
+      ],
+      "depends_on": [],
+      "complexity": "M",
+      "estimated_minutes": 90
+    }
+  ]
+}
