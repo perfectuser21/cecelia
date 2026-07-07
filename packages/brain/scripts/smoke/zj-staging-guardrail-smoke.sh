@@ -64,7 +64,19 @@ if (!/尝试.*次均失败/.test(runner)) {
   process.exit(1);
 }
 
-console.log('[smoke] L1 PASS: ZJ_STAGING_PORT + 健康检查路径 + zj_staging_unhealthy + 端口重写 + 5次重试参数 + 诊断输出');
+// 成功时提取 stagingSha（健康检查 JSON 中的 build.sha，护栏通知和审计用）
+if (!/stagingSha/.test(runner)) {
+  console.error('L1 FAIL: deployStaging 缺少 stagingSha 返回字段（候选 SHA 可见性）');
+  process.exit(1);
+}
+
+// 护栏 FAIL 通知含最后已知 SHA 诊断
+if (!/最后已知 staging SHA/.test(runner)) {
+  console.error('L1 FAIL: handlePromote FAIL 通知缺少最后已知 staging SHA 诊断行');
+  process.exit(1);
+}
+
+console.log('[smoke] L1 PASS: ZJ_STAGING_PORT + 健康检查路径 + zj_staging_unhealthy + 端口重写 + 5次重试参数 + 诊断输出 + stagingSha + SHA诊断通知');
 " || exit 1
 
 # ZJ_STAGING_HOST 必须在 docker-compose.yml 中配置（容器内 localhost 无法访问宿主 :5201）
