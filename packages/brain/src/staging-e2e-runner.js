@@ -681,14 +681,29 @@ export async function runStagingE2E(task, opts = {}) {
   };
 
   // 终局：落库 + 写回 tasks.result + 标 completed
-  const finalize = async (verdict, reason, extra = {}) => {
+  // o.promoteStatus（刀3b）：跳过 handlePromote 分流，直接落指定 promote_status + best-effort 通知
+  //（unknown 线用：verdict 恒非 PASS，decidePromote 会误落 n_a，且需要带说明的专属通知文案）。
+  const finalize = async (verdict, reason, extra = {}, o = {}) => {
     await recordResult(dbPool, { ...base, ...extra, verdict, reason });
-    // Slice2：PASS 后放行分流（内部线 auto-promote / 客户线 pending+通知 / base_repo 缺失保守 pending）。
-    // best-effort，不影响 verdict 已落库。
-    const promoteStatus = await handlePromote(
-      dbPool, { verdict, baseRepo, prUrl, initiativeId, deployOutput: base.deployOutput, zjSha: base.zjSha || null },
-      { promoteExec: opts.promoteExec, notify: opts.notify },
-    );
+    let promoteStatus;
+    if (o.promoteStatus) {
+      promoteStatus = o.promoteStatus;
+      await updatePromoteStatus(dbPool, prUrl, o.promoteStatus);
+      if (o.notifyMessage) {
+        try {
+          await (opts.notify || sendFeishu)(o.notifyMessage);
+        } catch (e) {
+          console.warn(`[staging-e2e] unknown 线通知失败（忽略）: ${e.message}`);
+        }
+      }
+    } else {
+      // Slice2：PASS 后放行分流（内部线 auto-promote / 客户线 pending+通知 / base_repo 缺失保守 pending）。
+      // best-effort，不影响 verdict 已落库。
+      promoteStatus = await handlePromote(
+        dbPool, { verdict, baseRepo, prUrl, initiativeId, deployOutput: base.deployOutput, zjSha: base.zjSha || null },
+        { promoteExec: opts.promoteExec, notify: opts.notify },
+      );
+    }
     await writeTaskResult(dbPool, task.id, {
       verdict, reason,
       scenarios_total: extra.scenariosTotal ?? base.scenariosTotal,
@@ -711,6 +726,21 @@ export async function runStagingE2E(task, opts = {}) {
     // 2. 部署 staging：内部线(cecelia)走 deploy-local.sh 构建 dashboard 到 :5223；
     //    非内部线走 staging-deploy.sh 部署 brain 到 :5222。
     const line = resolveLine(baseRepo);
+
+    // 刀3b（harness 跨 repo 化）：base_repo 非空但既非 cecelia 也非 zenithjoy = 第三方 repo。
+    // cecelia 没有它的 staging 部署目标——旧行为落进 deployStaging 的 else 分支跑
+    // staging-deploy.sh，把 cecelia brain 部署到 :5222（错误目标）。显式策略：不抢锁、
+    // 不跑任何 deploy，SKIP(unknown_line) + promote_status=pending_promote + 飞书通知主理人。
+    // base_repo 为空（legacy cecelia 流）保持旧行为——promote 侧决策2 的保守 pending 已兜底。
+    if (line === 'unknown' && baseRepo) {
+      return await finalize('SKIP', 'unknown_line', {}, {
+        promoteStatus: PROMOTE_STATUS.PENDING_PROMOTE,
+        notifyMessage:
+          `⏳ [Unknown 线] staging_e2e 收到第三方 repo，无 staging 部署目标，已挂 pending 等人工决策\n`
+          + `initiative: ${initiativeId || '?'}\nPR: ${prUrl || '?'}\nbase_repo: ${baseRepo}\n`
+          + `confirm: POST /api/brain/harness/promote/<resultId>`,
+      });
+    }
 
     // Slice6: staging 单实例串行 — deploy 前抢 advisory lock，防 N 路并发互相 docker rm 顶掉。
     // 抢不到（别路正占同端口实例）→ SKIP staging_busy（不部署）；抢到 → finally 必释放。
