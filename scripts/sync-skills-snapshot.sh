@@ -28,6 +28,7 @@ SKILLS=(
   harness-generator
   harness-evaluator
   harness-report
+  harness-controller
 )
 
 if [[ ! -d "$SSOT_DIR" ]]; then

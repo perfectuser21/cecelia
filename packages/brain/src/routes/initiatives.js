@@ -203,6 +203,68 @@ const ALLOWED_PHASES = [
 ];
 
 /**
+ * POST /api/brain/orchestrator/relay-runs/:initiative_id
+ *
+ * 前台点火建档端点（人工前台接管 controller 用）：
+ * 为 initiative_id 对应的 harness_initiative 任务建 initiative_runs 行。
+ * orchestrator_version='v2', orchestrator_host='foreground', phase 默认 'planning'。
+ *
+ * 幂等：该 initiative 已有 v2 未终态行（phase NOT IN ('done','failed')）→ 200 返回现有行。
+ * initiative_id 不存在或 task_type≠harness_initiative → 404。
+ * 成功新建 → 201 + 建档对象。
+ */
+router.post('/relay-runs/:initiative_id', async (req, res) => {
+  const { initiative_id } = req.params;
+
+  try {
+    // 1. 校验 task 存在且 task_type=harness_initiative
+    const taskQ = await pool.query(
+      `SELECT id, task_type FROM tasks WHERE id = $1 LIMIT 1`,
+      [initiative_id]
+    );
+    const task = taskQ.rows[0];
+    if (!task) {
+      return res.status(404).json({ error: 'initiative task not found' });
+    }
+    if (task.task_type !== 'harness_initiative') {
+      return res.status(404).json({ error: `task_type must be harness_initiative, got: ${task.task_type}` });
+    }
+
+    // 2. 幂等检查：已有 v2 未终态行
+    const existingQ = await pool.query(
+      `SELECT id, initiative_id, phase, orchestrator_version, orchestrator_host,
+              started_at, deadline_at, completed_at, failure_reason
+       FROM initiative_runs
+       WHERE initiative_id = $1
+         AND orchestrator_version = 'v2'
+         AND phase NOT IN ('done', 'failed')
+       ORDER BY started_at DESC
+       LIMIT 1`,
+      [initiative_id]
+    );
+    if (existingQ.rows.length > 0) {
+      return res.status(200).json(existingQ.rows[0]);
+    }
+
+    // 3. INSERT 新行（deadline 6h 兜底，与 harness-skill-relay.js 一致）
+    const deadlineAt = new Date(Date.now() + 6 * 60 * 60 * 1000).toISOString();
+    const insertQ = await pool.query(
+      `INSERT INTO initiative_runs
+         (initiative_id, phase, orchestrator_version, orchestrator_host, started_at, deadline_at)
+       VALUES ($1, 'planning', 'v2', 'foreground', NOW(), $2)
+       RETURNING id, initiative_id, phase, orchestrator_version, orchestrator_host,
+                 started_at, deadline_at, completed_at, failure_reason`,
+      [initiative_id, deadlineAt]
+    );
+
+    return res.status(201).json(insertQ.rows[0]);
+  } catch (err) {
+    console.error('[POST /orchestrator/relay-runs/:id]', err.message);
+    return res.status(500).json({ error: 'internal error' });
+  }
+});
+
+/**
  * GET /api/brain/orchestrator/relay-runs
  *
  * 列出 orchestrator_version='v2' 的 initiative_runs，按 started_at DESC 排序
