@@ -170,4 +170,12 @@ describe('resumeStalledHarnessDrivers — A 阶段(planner/GAN) 静默卡死覆�
     expect(sqlA).not.toBe('');
     expect(sqlA).toMatch(/orchestrator'\s+IS\s+DISTINCT\s+FROM\s+'skill-relay'/i);
   });
+
+  it('phase B 查询同样排除 skill-relay 任务（防 LangGraph 僵尸 B_task_loop 行 + relay 心跳恒 NULL 的组合误判）', async () => {
+    mockPoolQuery.mockImplementation(async () => ({ rows: [] }));
+    await resumeStalledHarnessDrivers(OPTS);
+    const sqlB = findPhaseBSelect();
+    expect(sqlB).not.toBe('');
+    expect(sqlB).toMatch(/orchestrator'\s+IS\s+DISTINCT\s+FROM\s+'skill-relay'/i);
+  });
 });
