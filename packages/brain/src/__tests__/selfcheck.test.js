@@ -155,8 +155,10 @@ describe('selfcheck', () => {
   // 316（design_docs type 白名单加 battle_report）被 battle-report.js INSERT 直接依赖
   // （旧约束下 type='battle_report' 会被 CHECK 拒），故随 migration 316 推进地板到 316。
   // facts-check 校验地板 <= 最高 migration（316 <= 316 通过）。
-  it('EXPECTED_SCHEMA_VERSION should be 316 (floor, bumped for battle_report design_docs type)', () => {
-    expect(EXPECTED_SCHEMA_VERSION).toBe('316');
+  // 317（initiative_runs.tmux_killed_at）被 harness-relay-watchdog 收窗 UPDATE 直接依赖
+  // （列不存在则 UPDATE 整句报错被吞，收窗永不生效——与上述 314 事故同类），故推进地板到 317。
+  it('EXPECTED_SCHEMA_VERSION should be 317 (floor, bumped for tmux_killed_at headed 收窗)', () => {
+    expect(EXPECTED_SCHEMA_VERSION).toBe('317');
   });
 
   it('should pass when DB schema version is ahead of expected (>= check)', async () => {

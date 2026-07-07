@@ -36,16 +36,7 @@ export async function resumeStalledRelayRuns(deps = {}) {
   // 从未写入 initiative_runs）不计数，可能导致 attempts 长期低估、MAX_RELAY_ATTEMPTS
   // 封顶判断失效，从而无限重跑不收敛。暂未修，先记录跟踪。
   const runsQ = await dbPool.query(
-    `SELECT DISTINCT ON (initiative_id)
-            initiative_id, phase, deadline_at, pr_url, orchestrator_host,
-            (SELECT COUNT(*) FROM initiative_runs r2
-              WHERE r2.initiative_id = r.initiative_id
-                AND r2.orchestrator_version = 'v2') AS attempts
-       FROM initiative_runs r
-      WHERE orchestrator_version = 'v2'
-        AND phase NOT IN ('done', 'failed')
-      ORDER BY initiative_id, started_at DESC
-      LIMIT 20`
+    `SELECT DISTINCT ON (initiative_id) initiative_id, phase, deadline_at, pr_url, orchestrator_host, completed_at, tmux_killed_at, (SELECT COUNT(*) FROM initiative_runs r2 WHERE r2.initiative_id = r.initiative_id AND r2.orchestrator_version = 'v2') AS attempts FROM initiative_runs r WHERE orchestrator_version = 'v2' AND (phase NOT IN ('done', 'failed') OR (orchestrator_host = 'skill-relay-codex-headed' AND phase = 'done' AND tmux_killed_at IS NULL)) ORDER BY initiative_id, started_at DESC LIMIT 20`
   );
   // 护栏:注入的 pool 对未知 SQL 返回 undefined 时(集成测试 fake),按空处理
   const runs = runsQ && Array.isArray(runsQ.rows) ? runsQ.rows : [];
@@ -90,8 +81,29 @@ export async function resumeStalledRelayRuns(deps = {}) {
       // deadline 逾期归 scanStuckHarness
       if (run.deadline_at && new Date(run.deadline_at).getTime() < Date.now()) continue;
 
-      // 在跑容器存活检查（spawn 命名规约 cecelia-relay-<task8>-*）
       const short = shortId(task.id);
+
+      // ─── headed 分支：ssh+tmux 存活检测 + 收窗幂等 ────────────────────────
+      if (run.orchestrator_host === 'skill-relay-codex-headed') {
+        const { needsRefire } = await _handleHeadedRun(run, task, { dbPool, execFn, short });
+        if (needsRefire) {
+          // session 消失 → 重点火（走 spawnFn，即 headed 路径）
+          const spawnFn = deps.spawnFn
+            || (await import('./harness-skill-relay.js')).spawnSkillRelaySession;
+          const r = await spawnFn(task, { pool: dbPool });
+          // r?.ok===true（spawnSkillRelaySession 结果）或 r 非 falsy（直接 mock spawnFn 结果）时计 resumed
+          if (r?.ok !== false && r) {
+            out.resumed++;
+            console.log(`[relay-watchdog][headed] 重点火 initiative=${run.initiative_id}`);
+          } else {
+            console.warn(`[relay-watchdog][headed] 重点火失败 initiative=${run.initiative_id}: ${r?.error}`);
+          }
+        }
+        continue;
+      }
+      // ─── end headed ────────────────────────────────────────────────────────
+
+      // 在跑容器存活检查（spawn 命名规约 cecelia-relay-<task8>-*）
       let running = '';
       try {
         running = execFn(`docker ps -q --filter "name=cecelia-relay-${short}"`).trim();
@@ -169,6 +181,84 @@ export async function resumeStalledRelayRuns(deps = {}) {
   }
   return out;
 }
+
+// ─── headed 辅助：tmux 存活检测 + 收窗幂等 ───────────────────────────────────
+
+const HEADED_TMUX_SESSION_PREFIX = 'codex-relay-';
+// run done 后多久触发收窗（毫秒）
+const HEADED_KILL_AFTER_MS = 30 * 60 * 1000; // 30 分钟
+
+/**
+ * 处理 headed run。
+ * 返回 { needsRefire: boolean } 告知调用方是否需要重点火。
+ *
+ * 逻辑：
+ * 1. run phase=done + tmux_killed_at 已有 → 幂等跳过
+ * 2. run phase=done + completed_at 超 30min + tmux_killed_at 为空 → kill-session + 写 tmux_killed_at
+ * 3. run phase=A_planning → ssh tmux has-session 检查（fail-open on ssh 连接失败）
+ *    - ssh 本身失败（连接错误/超时）→ fail-open，不重点火
+ *    - session 消失（exit 非零，status=1）→ 返回 { needsRefire: true }
+ *    - session 存在 → 正常，不重点火
+ */
+async function _handleHeadedRun(run, task, { dbPool, execFn, short }) {
+  const tmuxSession = `${HEADED_TMUX_SESSION_PREFIX}${short}`;
+  const sshHost = task.payload?.ssh_host || process.env.HEADED_SSH_HOST || 'localhost';
+
+  // 收窗逻辑：run done
+  if (run.phase === 'done') {
+    // 幂等：已收窗跳过
+    if (run.tmux_killed_at) {
+      return { needsRefire: false };
+    }
+    const completedAt = run.completed_at ? new Date(run.completed_at).getTime() : 0;
+    if (completedAt && Date.now() - completedAt > HEADED_KILL_AFTER_MS) {
+      // 触发收窗（ssh 失败 fail-open 不阻塞 tmux_killed_at 写入）
+      try {
+        execFn(`ssh ${sshHost} "tmux kill-session -t ${tmuxSession}"`);
+        console.log(`[relay-watchdog][headed] 收窗 kill-session: session=${tmuxSession} initiative=${run.initiative_id}`);
+      } catch (err) {
+        console.warn(`[relay-watchdog][headed] kill-session ssh 失败（fail-open）: ${err.message}`);
+      }
+      // 写 tmux_killed_at（幂等标）
+      await dbPool.query(
+        `UPDATE initiative_runs SET tmux_killed_at=NOW()
+          WHERE initiative_id=$1 AND orchestrator_version='v2' AND tmux_killed_at IS NULL`,
+        [run.initiative_id]
+      );
+      console.log(`[relay-watchdog][headed] tmux_killed_at 已写入 initiative=${run.initiative_id}`);
+    }
+    return { needsRefire: false };
+  }
+
+  // 存活检测：A_planning 阶段 → ssh tmux has-session（fail-open on ssh 连接错误）
+  if (run.phase === 'A_planning') {
+    try {
+      execFn(`ssh ${sshHost} "tmux has-session -t ${tmuxSession}"`);
+      // exit 0 → session 存在，正常
+      return { needsRefire: false };
+    } catch (err) {
+      // 区分 ssh 连接失败（fail-open）vs tmux session 消失（触发重点火）
+      const isSshFailure = err.message?.includes('Connection refused')
+        || err.message?.includes('connection refused')
+        || err.message?.includes('timed out')
+        || err.message?.includes('ETIMEDOUT')
+        || err.code === 'ETIMEDOUT'
+        || err.code === 'ECONNREFUSED';
+      if (isSshFailure) {
+        // ssh 本身失败：fail-open，跳过（不重点火）
+        console.warn(`[relay-watchdog][headed] ssh 失败 fail-open，initiative=${run.initiative_id}: ${err.message}`);
+        return { needsRefire: false };
+      }
+      // session 消失（tmux has-session exit 1）→ 需要重点火
+      console.log(`[relay-watchdog][headed] session 消失，触发重点火 initiative=${run.initiative_id}`);
+      return { needsRefire: true };
+    }
+  }
+
+  return { needsRefire: false };
+}
+
+// ─── end headed ──────────────────────────────────────────────────────────────
 
 /**
  * B8 — 8h 逾期 scanStuckHarness 收尸（orchestrator_host='skill-relay-codex'）。
