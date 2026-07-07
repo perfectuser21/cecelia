@@ -138,6 +138,30 @@ describe('deployStaging — ZenithJoy customer line（:5201 护栏）', () => {
     expect(r.reason).toBe('zj_staging_unhealthy');
     expect(callCount).toBe(3);
   });
+
+  it('默认 maxAttempts=5（覆盖 ZJ CI 2-3 分钟部署窗口）', async () => {
+    let callCount = 0;
+    const exec = () => { callCount++; const e = new Error('ECONNREFUSED'); e.status = 7; throw e; };
+    const r = await deployStaging({ exec, line: 'customer', sleep: async () => {} });
+    expect(r.status).toBe('failed');
+    expect(callCount).toBe(5);
+  });
+
+  it('默认 retryDelayMs=30000（30s 间隔，注入 sleep 验证延迟参数）', async () => {
+    const delays = [];
+    const exec = () => { const e = new Error('ECONNREFUSED'); e.status = 7; throw e; };
+    const sleep = async (ms) => { delays.push(ms); };
+    await deployStaging({ exec, line: 'customer', sleep });
+    expect(delays.length).toBe(4); // maxAttempts=5，间隔 4 次
+    delays.forEach(d => expect(d).toBe(30_000));
+  });
+
+  it('全部重试失败 → output 包含尝试次数和总等待时间', async () => {
+    const exec = () => { const e = new Error('connect ECONNREFUSED :5201'); e.status = 7; throw e; };
+    const r = await deployStaging({ exec, line: 'customer', maxAttempts: 3, retryDelayMs: 30_000, sleep: async () => {} });
+    expect(r.output).toMatch(/尝试 3 次均失败/);
+    expect(r.output).toMatch(/总等待 60s/);
+  });
 });
 
 // ─── runStagingCommand ─────────────────────────────────────────────────────────
