@@ -14,6 +14,8 @@ import pool from './db.js';
 import { execSync } from 'node:child_process';
 
 export const MAX_RELAY_ATTEMPTS = 5;
+// B6: codex 路径上限更低（外部 codex API 更贵，不允许无限重试）
+export const MAX_CODEX_RELAY_ATTEMPTS = 2;
 
 function shortId(id) {
   return String(id).replace(/-/g, '').slice(0, 8);
@@ -35,7 +37,7 @@ export async function resumeStalledRelayRuns(deps = {}) {
   // 封顶判断失效，从而无限重跑不收敛。暂未修，先记录跟踪。
   const runsQ = await dbPool.query(
     `SELECT DISTINCT ON (initiative_id)
-            initiative_id, phase, deadline_at, pr_url,
+            initiative_id, phase, deadline_at, pr_url, orchestrator_host,
             (SELECT COUNT(*) FROM initiative_runs r2
               WHERE r2.initiative_id = r.initiative_id
                 AND r2.orchestrator_version = 'v2') AS attempts
@@ -124,9 +126,12 @@ export async function resumeStalledRelayRuns(deps = {}) {
         }
       }
 
-      // 上限熔断
+      // B6: 上限熔断（codex=2，claude=5）
       const attempts = parseInt(run.attempts, 10) || 0;
-      if (attempts >= MAX_RELAY_ATTEMPTS) {
+      const maxAttempts = run.orchestrator_host === 'skill-relay-codex'
+        ? MAX_CODEX_RELAY_ATTEMPTS
+        : MAX_RELAY_ATTEMPTS;
+      if (attempts >= maxAttempts) {
         await dbPool.query(
           `UPDATE initiative_runs SET phase='failed', completed_at=NOW(),
                   failure_reason='relay_watchdog_attempt_cap'
@@ -159,4 +164,45 @@ export async function resumeStalledRelayRuns(deps = {}) {
     }
   }
   return out;
+}
+
+/**
+ * B8 — 8h 逾期 scanStuckHarness 收尸（orchestrator_host='skill-relay-codex'）。
+ * 扫描 deadline_at < NOW() 且 orchestrator_host='skill-relay-codex' 的 initiative_runs，
+ * 标 phase='failed', failure_reason='relay_deadline_exceeded' 并更新关联 task status='failed'。
+ */
+export async function scanStuckHarness(opts = {}) {
+  const dbPool = opts.pool || pool;
+
+  const overdueQ = await dbPool.query(
+    `SELECT id, initiative_id, orchestrator_host, phase, deadline_at
+       FROM initiative_runs
+      WHERE orchestrator_host = 'skill-relay-codex'
+        AND deadline_at < NOW()
+        AND phase NOT IN ('done', 'failed')
+        AND completed_at IS NULL
+      LIMIT 50`
+  );
+
+  const rows = overdueQ?.rows ?? [];
+  for (const row of rows) {
+    try {
+      await dbPool.query(
+        `UPDATE initiative_runs
+            SET phase = 'failed',
+                failure_reason = $2,
+                completed_at = NOW()
+          WHERE id = $1`,
+        [row.id, 'relay_deadline_exceeded']
+      );
+      await dbPool.query(
+        `UPDATE tasks SET status = 'failed', completed_at = NOW()
+          WHERE id = $1 AND status NOT IN ('completed', 'cancelled', 'canceled')`,
+        [row.initiative_id]
+      );
+      console.warn(`[relay-watchdog] scanStuckHarness: overdue codex run id=${row.id} initiative=${row.initiative_id} deadline=${row.deadline_at}`);
+    } catch (err) {
+      console.error(`[relay-watchdog] scanStuckHarness cleanup failed for run ${row.id}: ${err.message}`);
+    }
+  }
 }

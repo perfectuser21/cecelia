@@ -144,11 +144,44 @@ if [[ -z "${CECELIA_TASK_ID:-}" || -z "${HARNESS_NODE:-}" ]]; then
   fi
 fi
 
-# Harness 任务路径：跑完 → POST callback → 用 claude exit code 退出
-# set -e 已开，必须临时关掉避免 claude 失败时跳过 callback
+# Harness 任务路径：跑完 → POST callback → 用 exit code 退出
+# set -e 已开，必须临时关掉避免失败时跳过 callback
+
+# B7: CECELIA_EXECUTOR=codex 分支
+# CODEX_RELAY_HOME 挂载目录（~/.codex-team2，含 auth/config）
+CODEX_RELAY_HOME="${CODEX_RELAY_HOME:-/home/cecelia/.codex-team2}"
+
 set +e
-run_claude "$@"
-EXIT_CODE=$?
+if [[ "${CECELIA_EXECUTOR:-}" = "codex" ]]; then
+  # B7: codex exec 分支
+  if [[ -f "$PROMPT_FILE" ]]; then
+    codex exec -c approval_policy="never" -c sandbox_mode="danger-full-access" < "$PROMPT_FILE" 2>&1 | tee "$STDOUT_FILE"
+  else
+    codex exec -c approval_policy="never" -c sandbox_mode="danger-full-access" "$@" 2>&1 | tee "$STDOUT_FILE"
+  fi
+  EXIT_CODE=${PIPESTATUS[0]}
+
+  # B7: exit=0 但 stdout 含错误关键词 → 覆写为退出码 1（真实性校验）
+  if [[ $EXIT_CODE -eq 0 ]] && grep -qE '401|unauthorized|usage limit|stream error' "$STDOUT_FILE" 2>/dev/null; then
+    echo "[entrypoint] codex exit=0 but error keyword detected → overriding EXIT_CODE=1" >&2
+    EXIT_CODE=1
+  fi
+
+  # B7: token 洗敏（ghp_/gho_/ghs_/github_pat_ 替换为 ***REDACTED***）
+  if [[ -f "$STDOUT_FILE" ]]; then
+    sed -i \
+      -e 's/ghp_[A-Za-z0-9_]*/***REDACTED***/g' \
+      -e 's/gho_[A-Za-z0-9_]*/***REDACTED***/g' \
+      -e 's/ghs_[A-Za-z0-9_]*/***REDACTED***/g' \
+      -e 's/github_pat_[A-Za-z0-9_]*/***REDACTED***/g' \
+      "$STDOUT_FILE" 2>/dev/null || true
+  fi
+
+  echo "[entrypoint] goal-hook N/A for codex" >&2
+else
+  run_claude "$@"
+  EXIT_CODE=$?
+fi
 set -e
 
 STDOUT_CONTENT=""

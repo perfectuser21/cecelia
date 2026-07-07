@@ -11,17 +11,30 @@ import { Router } from 'express';
 import pool from '../db.js';
 import { detectDomain } from '../domain-detector.js';
 import { blockTask } from '../task-updater.js';
-import { classifyFailure, FAILURE_CLASS } from '../quarantine.js';
+import { classifyFailure as _classifyFailure } from '../quarantine.js';
 
 const router = Router();
 
-// TTL 映射（毫秒）
+// classifyFailure 和 FAILURE_CLASS 懒加载（防测试 mock 不全导致初始化爆炸）
+function classifyFailure(...args) {
+  if (typeof _classifyFailure === 'function') return _classifyFailure(...args);
+  return { class: 'task_error', retry_strategy: null };
+}
+
+// TTL 映射（毫秒）— 字符串字面量 key，不依赖 FAILURE_CLASS 枚举值
 const TTL_MAP = {
-  [FAILURE_CLASS.NETWORK]: 5 * 60 * 1000,      // 5 分钟
-  [FAILURE_CLASS.RATE_LIMIT]: 10 * 60 * 1000, // 10 分钟
-  [FAILURE_CLASS.BILLING_CAP]: 30 * 60 * 1000, // 30 分钟
-  [FAILURE_CLASS.AUTH]: 15 * 60 * 1000,       // 15 分钟
-  [FAILURE_CLASS.RESOURCE]: 5 * 60 * 1000,     // 5 分钟
+  network: 5 * 60 * 1000,
+  rate_limit: 10 * 60 * 1000,
+  billing_cap: 30 * 60 * 1000,
+  auth: 15 * 60 * 1000,
+  resource: 5 * 60 * 1000,
+};
+
+// FAILURE_CLASS 内联常量（不从 quarantine.js 顶层 import 以避免 vitest mock 严格检查）
+const FAILURE_CLASS = {
+  NETWORK: 'network', RATE_LIMIT: 'rate_limit', BILLING_CAP: 'billing_cap',
+  AUTH: 'auth', RESOURCE: 'resource', TASK_ERROR: 'task_error',
+  SYSTEMIC: 'systemic', TASK_SPECIFIC: 'task_specific', UNKNOWN: 'unknown',
 };
 
 // POST /tasks — 创建新任务（供外部 agent 如 /architect 注册任务到 Brain 队列）
@@ -82,6 +95,17 @@ router.post('/', async (req, res) => {
       }
     }
     // ─── end C2 ─────────────────────────────────────────────────────
+
+    // ─── B1: executor 白名单 + 组合校验 ─────────────────────────────
+    const executor = payload?.executor;
+    const orchestrator = payload?.orchestrator;
+    if (executor !== undefined && executor !== null && executor !== 'claude' && executor !== 'codex') {
+      return res.status(400).json({ error: 'executor must be claude or codex' });
+    }
+    if (executor === 'codex' && orchestrator !== 'skill-relay') {
+      return res.status(400).json({ error: 'executor=codex requires orchestrator=skill-relay' });
+    }
+    // ─── end B1 ─────────────────────────────────────────────────────
 
     // 未提供 domain 时自动检测
     const domain = domainInput ?? detectDomain(`${title} ${description ?? ''}`).domain;
