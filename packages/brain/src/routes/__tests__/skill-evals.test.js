@@ -3,6 +3,7 @@
  * 覆盖：Token 验证 403、硬校验拒绝 400、成功上传 201、状态查询 200
  */
 
+import { vi } from 'vitest';
 import express from 'express';
 import request from 'supertest';
 import { createSkillEvalRouter, getSkillEvalConfigHandler } from '../skill-evals.js';
@@ -12,16 +13,16 @@ function makeDb(overrides = {}) {
   const store = [];
   return {
     _store: store,
-    oneOrNone: jest.fn(async (sql, vals) => {
+    oneOrNone: vi.fn(async (sql, vals) => {
       if (overrides.oneOrNone) return overrides.oneOrNone(sql, vals);
       return null;
     }),
-    one: jest.fn(async (sql, vals) => {
+    one: vi.fn(async (sql, vals) => {
       if (overrides.one) return overrides.one(sql, vals);
       return { pending_count: '0', queue_pos: '0', running_count: '0' };
     }),
-    none: jest.fn(async () => null),
-    manyOrNone: jest.fn(async () => overrides.rows || []),
+    none: vi.fn(async () => null),
+    manyOrNone: vi.fn(async () => overrides.rows || []),
   };
 }
 

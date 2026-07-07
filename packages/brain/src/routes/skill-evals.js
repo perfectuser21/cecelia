@@ -76,7 +76,7 @@ async function validateZip(buffer) {
   let zip;
   try {
     zip = await JSZip.loadAsync(buffer);
-  } catch (_e) {
+  } catch {
     return { ok: false, status: 400, error: 'Invalid zip: failed to parse zip file' };
   }
 
