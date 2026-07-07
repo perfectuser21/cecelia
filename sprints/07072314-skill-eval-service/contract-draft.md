@@ -161,6 +161,26 @@ Brain 在将 pending → running 转换前验证 Claude 额度：
 
 ---
 
+## Test Contract
+
+| BEHAVIOR | Test File | it() 覆盖 |
+|----------|-----------|-----------|
+| INV-01 单 slot 串行 | packages/brain/tests/skill-eval/invariant-01-single-slot.test.js | 第二任务等待/slot 释放后继续/running 计数不超 1 |
+| INV-02 背压拒绝 | packages/brain/tests/skill-eval/invariant-02-backpressure.test.js | pending≥20 拒绝 429/pending=19 接受/DB 记录不增/阈值可配置 |
+| INV-03 额度预检 | packages/brain/tests/skill-eval/invariant-03-quota-precheck.test.js | 5h不足拦截/7d不足拦截/两池均满足通过/告警触发 |
+| INV-04 硬校验六件套 | packages/brain/tests/skill-eval/invariant-04-hard-validation.test.js | zip魔数/文件大小/解压大小/文件数/压缩比/SKILL.md/路径穿越 |
+| INV-05 代理令牌隔离 | packages/brain/tests/skill-eval/invariant-05-proxy-token.test.js | 无token 403/错误token 403/正确token通过/状态查询不需token |
+| INV-06 hash 去重 | packages/brain/tests/skill-eval/invariant-06-hash-dedup.test.js | 命中completed返回report_url/命中in_progress合流/不同hash新建 |
+| INV-07 报告 Basic Auth | packages/brain/tests/skill-eval/invariant-07-report-auth.test.js | 无Auth 401/有Auth 200/报告永久留存 |
+| INV-08 超时释放 | packages/brain/tests/skill-eval/invariant-08-timeout-release.test.js | 超时强杀/slot释放/飞书告警/正常任务不受影响 |
+| INV-09 全配置注入 | packages/brain/tests/skill-eval/invariant-09-config-injection.test.js | MAX_ZIP_MB/PENDING_LIMIT/TIMEOUT/MAX_CONCURRENT 可配置 |
+| INV-10 飞书聚合 | packages/brain/tests/skill-eval/invariant-10-feishu-aggregation.test.js | 10min聚合/连败≥3升级/webhook失败本地fallback |
+| FR-UPLOAD | packages/brain/tests/skill-eval/fr-upload-flow.test.js | 全链路顺序token→硬校验→hash去重→建task |
+| FR-STATUS | packages/brain/src/routes/__tests__/skill-evals.test.js | status查询200/不存在404 |
+| FR14 | packages/brain/src/routes/__tests__/skill-evals.test.js | config端点返回当前配置 |
+
+---
+
 ## 非功能约束汇总
 
 | 参数 | 值 |
