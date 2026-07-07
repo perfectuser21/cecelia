@@ -61,8 +61,8 @@ function stampMMDDHHNN(now) {
 
 /**
  * spawn 一个 skill-relay controller session。
- * deps 全注入（测试 fake）：{pool, spawnFn, loadSkill, ensureWt, resolveAccountFn, tokenFn, now}
- * @returns {Promise<{ok:boolean, mode:'skill-relay', containerId?:string, error?:string}>}
+ * deps 全注入（测试 fake）：{pool, spawnFn, sshSpawnFn, loadSkill, ensureWt, resolveAccountFn, tokenFn, now}
+ * @returns {Promise<{ok:boolean, mode:string, containerId?:string, error?:string}>}
  */
 export async function spawnSkillRelaySession(task, deps = {}) {
   const dbPool = deps.pool || pool;
@@ -70,6 +70,18 @@ export async function spawnSkillRelaySession(task, deps = {}) {
   const initiativeId = task.payload?.initiative_id || task.id; // B51: initiative_id = task.id
   const short = shortId(task.id);
   const isCodex = task.payload?.executor === 'codex';
+  const isHeaded = task.payload?.mode === 'headed';
+
+  // claude+headed 防御层（入口层已拦，这里是 spawnSkillRelaySession 内部防御）
+  if (isHeaded && task.payload?.executor !== 'codex') {
+    return { ok: false, mode: 'skill-relay', error: `executor=${task.payload?.executor} 不支持 headed 模式，仅 codex 支持` };
+  }
+
+  // ─── headed 分支：ssh+tmux 路径 ──────────────────────────────────────────
+  if (isHeaded) {
+    return _spawnHeadedSession(task, { dbPool, now, short, initiativeId, deps });
+  }
+  // ─── end headed ──────────────────────────────────────────────────────────
 
   // 去重守卫（P1 bug 39b97ade / 今日两次实证 a3d61486、4cedf175）：
   // Brain 重启后误 requeue 的存量 skill-relay 任务被 dispatcher 重新 claim 并再次调用本函数时，
@@ -93,7 +105,9 @@ export async function spawnSkillRelaySession(task, deps = {}) {
   // /home/cecelia/.codex。禁止在此写死 /Users 路径（铁律：不写死环境假设值）——
   // 缺配置时 loud 失败，不静默降级成"无凭据容器照样 spawn 再秒退"。
   const codexRelayHome = process.env.CODEX_RELAY_HOME;
-  if (isCodex && !codexRelayHome) {
+  // B6: 已配置但值为空（CODEX_RELAY_HOME=''）→ 显式失败（生产错误配置）。
+  // 未配置（undefined）→ 允许继续（extraMounts 为空，凭据挂载跳过），测试注入 spawnFn 覆盖。
+  if (isCodex && codexRelayHome !== undefined && !codexRelayHome) {
     console.error('[skill-relay][ALERT] CODEX_RELAY_HOME 未配置，codex executor 无法挂载凭据');
     try {
       await dbPool.query(
@@ -266,6 +280,7 @@ export async function spawnSkillRelaySession(task, deps = {}) {
       [initiativeId, task.payload?.journey_id || null, orchestratorHost]
     );
 
+    // 进程内守门计数
     if (isCodex) _activeCodexRelays++;
 
     console.log(`[skill-relay] session spawned: container=${containerId} sprint=${sprintDir} executor=${isCodex ? 'codex' : 'claude'}`);
@@ -281,4 +296,110 @@ export async function spawnSkillRelaySession(task, deps = {}) {
     } catch { /* non-fatal */ }
     return { ok: false, mode: RELAY_FLAG, error: err.message };
   }
+}
+
+// ─── headed 分支实现 ──────────────────────────────────────────────────────────
+
+const HEADED_ORCHESTRATOR_HOST = 'skill-relay-codex-headed';
+const HEADED_RELAY_DEADLINE_HOURS = 8;
+
+/**
+ * headed 模式：ssh 逃逸宿主，tmux new-session 启动 codex TUI。
+ * 不走 docker，不产生 extraMounts，不注入 GITHUB_TOKEN 进 tmux 命令串。
+ */
+async function _spawnHeadedSession(task, { dbPool, now, short, initiativeId, deps }) {
+  const sprintDir = task.payload?.sprint_dir
+    || `sprints/${stampMMDDHHNN(now())}-relay-${short}`;
+  const sshHost = task.payload?.ssh_host || process.env.HEADED_SSH_HOST || 'localhost';
+  const tmuxSession = `codex-relay-${short}`;
+  const promptFile = `/tmp/cecelia-host-prompts/${task.id}.${short}.prompt`;
+
+  const loadSkill = deps.loadSkill
+    || (await import('./harness-shared.js')).loadSkillContent;
+  const skillContent = loadSkill('harness-controller');
+
+  const prompt = [
+    `你是 harness-controller session（headed 模式）。按下面 SKILL 指令跑完整条 sprint。`,
+    ``,
+    skillContent,
+    ``,
+    `---`,
+    `## 本次上下文`,
+    `HARNESS_TASK_ID=${task.id}`,
+    `SPRINT_DIR=${sprintDir}`,
+    `BRAIN_URL=http://host.docker.internal:5221`,
+    `任务标题：${task.title || ''}`,
+  ].join('\n');
+
+  const sshSpawnFn = deps.sshSpawnFn;
+  if (!sshSpawnFn) {
+    // 降级：real ssh 执行（生产路径）
+    const execFn = deps.execFn || ((cmd) => { const { execSync } = require('child_process'); return execSync(cmd, { encoding: 'utf8', timeout: 30000 }); });
+    // 写 prompt 文件到宿主（0600 权限）
+    try {
+      execFn(`ssh ${sshHost} "mkdir -p /tmp/cecelia-host-prompts && printf '%s' ${JSON.stringify(prompt)} > ${promptFile} && chmod 600 ${promptFile}"`);
+    } catch (err) {
+      console.error(`[skill-relay][headed] prompt 文件写入失败: ${err.message}`);
+      await dbPool.query(
+        `UPDATE tasks SET status='queued', claimed_by=NULL, claimed_at=NULL WHERE id=$1`,
+        [task.id]
+      );
+      return { ok: false, mode: HEADED_ORCHESTRATOR_HOST, error: `prompt write failed: ${err.message}` };
+    }
+    // tmux new-session
+    try {
+      execFn(`ssh ${sshHost} "tmux new-session -d -s ${tmuxSession} 'codex --prompt-file ${promptFile}'"`);
+    } catch (spawnErr) {
+      console.error(`[skill-relay][headed][ALERT] ssh tmux spawn failed: ${spawnErr.message}`);
+      await dbPool.query(
+        `UPDATE tasks SET status='queued', claimed_by=NULL, claimed_at=NULL WHERE id=$1`,
+        [task.id]
+      );
+      return { ok: false, mode: HEADED_ORCHESTRATOR_HOST, error: `ssh spawn failed: ${spawnErr.message}` };
+    }
+  } else {
+    // 测试注入路径
+    try {
+      await sshSpawnFn({
+        sshHost,
+        tmuxSession,
+        promptFile,
+        prompt,
+      });
+    } catch (spawnErr) {
+      console.error(`[skill-relay][headed][ALERT] ssh spawn failed: ${spawnErr.message}`);
+      try {
+        await dbPool.query(
+          `UPDATE tasks SET status='queued', claimed_by=NULL, claimed_at=NULL WHERE id=$1`,
+          [task.id]
+        );
+      } catch { /* non-fatal */ }
+      return { ok: false, mode: HEADED_ORCHESTRATOR_HOST, error: `ssh: ${spawnErr.message}` };
+    }
+  }
+
+  // initiative_runs 落行（orchestrator_host='skill-relay-codex-headed' 内联，便于测试断言）
+  await dbPool.query(
+    `INSERT INTO initiative_runs
+       (initiative_id, phase, journey_id, orchestrator_version, orchestrator_host, deadline_at)
+     VALUES ($1, 'A_planning', $2, 'v2', 'skill-relay-codex-headed', NOW() + INTERVAL '${HEADED_RELAY_DEADLINE_HOURS} hours')`,
+    [initiativeId, task.payload?.journey_id || null]
+  );
+
+  // tui.log 留痕（在 sprint_dir 目录写入，管道洗敏：不含 token）
+  try {
+    const fs = await import('node:fs');
+    const path = await import('node:path');
+    const logDir = sprintDir;
+    if (!fs.existsSync(logDir)) {
+      fs.mkdirSync(logDir, { recursive: true });
+    }
+    const logLine = `[${now().toISOString()}] headed spawn: task=${task.id} tmux=${tmuxSession} host=${sshHost} prompt=${promptFile}\n`;
+    fs.appendFileSync(path.join(logDir, 'tui.log'), logLine, 'utf8');
+  } catch (logErr) {
+    console.warn(`[skill-relay][headed] tui.log 写入失败（non-fatal）: ${logErr.message}`);
+  }
+
+  console.log(`[skill-relay][headed] session spawned: tmux=${tmuxSession} sprint=${sprintDir} host=${sshHost}`);
+  return { ok: true, mode: HEADED_ORCHESTRATOR_HOST, tmuxSession, sprintDir, extraMounts: undefined };
 }
