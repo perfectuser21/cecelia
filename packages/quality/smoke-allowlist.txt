@@ -40,3 +40,4 @@ tasks-ability-id-smoke.sh
 version-endpoint-smoke.sh
 warroom-readonly-api-smoke.sh
 warroom-smoke.sh
+staging-unknown-line-smoke.sh
