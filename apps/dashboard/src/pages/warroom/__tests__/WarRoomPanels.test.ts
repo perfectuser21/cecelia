@@ -6,7 +6,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   pctLabel, journeyStatRows, handoffRows, decisionRows,
-  sentinelLight, sentinelRows, SENTINEL_STALE_SECONDS,
+  sentinelLight, sentinelRows, sentinelVisible, SENTINEL_STALE_SECONDS,
 } from '../WarRoomPanels';
 
 describe('pctLabel（成功率 0-1 → 百分比）', () => {
@@ -120,5 +120,12 @@ describe('sentinelLight / sentinelRows（/api/brain/sentinel/health）', () => {
   it('某灯 yellow → healthy=false', () => {
     const s = sentinelRows({ jobs: [{ name: 'a', ok: true, age_seconds: 60 }, { name: 'b', ok: false, age_seconds: 60 }], expected: 2 });
     expect(s.healthy).toBe(false);
+  });
+  it('sentinelVisible：哨兵全灭（jobs=[] 但 expected=5）→ true（最需要报警不能隐藏）', () => {
+    expect(sentinelVisible({ lights: [], expected: 5, healthy: false })).toBe(true);
+  });
+  it('sentinelVisible：无灯且 expected 未知 → false；有灯 → true', () => {
+    expect(sentinelVisible({ lights: [], expected: null, healthy: false })).toBe(false);
+    expect(sentinelVisible({ lights: [{ name: 'a', light: 'green', age_seconds: 60 }], expected: null, healthy: false })).toBe(true);
   });
 });

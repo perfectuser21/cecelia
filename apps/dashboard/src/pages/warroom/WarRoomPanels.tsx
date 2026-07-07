@@ -115,6 +115,14 @@ export function sentinelRows(resp: unknown): SentinelSummary {
   return { lights, expected, healthy };
 }
 
+/**
+ * 哨兵区是否渲染：有灯 or 应有灯却全灭（jobs=[] 但 expected 已知且不健康）。
+ * 后者是调度器全死/心跳键被清——最需要报警的状态，绝不能整区隐藏。
+ */
+export function sentinelVisible(sum: SentinelSummary): boolean {
+  return sum.lights.length > 0 || (sum.expected !== null && !sum.healthy);
+}
+
 // ====================== 数据钩子 ======================
 
 /** 轮询 GET：失败静默置 null（板块自行降级），60s 间隔，卸载清理 */
@@ -147,7 +155,8 @@ export function BattleBanner() {
   const sentinel = usePolled<unknown>('/api/brain/sentinel/health');
   const rows = journeyStatRows(stats);
   const sen = sentinelRows(sentinel);
-  if (rows.length === 0 && sen.lights.length === 0) return null;
+  const senVisible = sentinelVisible(sen);
+  if (rows.length === 0 && !senVisible) return null;
   return (
     <div className="flex items-center gap-3 h-9 px-4 border-b border-slate-800/60 bg-slate-900/40 flex-shrink-0 text-[12px]">
       <span className="text-[11px] tracking-[0.12em] uppercase text-slate-600 font-bold flex-shrink-0">战况 30D</span>
@@ -167,7 +176,7 @@ export function BattleBanner() {
           </div>
         ))}
       </div>
-      {sen.lights.length > 0 && (
+      {senVisible && (
         <div className="flex items-center gap-1.5 flex-shrink-0 pl-3 border-l border-slate-800/60">
           <span className="text-[11px] tracking-wider uppercase text-slate-600 font-bold">哨兵</span>
           {sen.lights.map((l) => (
