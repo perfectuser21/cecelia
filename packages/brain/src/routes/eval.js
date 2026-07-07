@@ -161,7 +161,7 @@ router.post(
 
       // 6. 建 task + skill_evals 行
       const taskId = randomUUID();
-      const slugName = (skill_name || 'unknown')
+      const _slugName = (skill_name || 'unknown')
         .toLowerCase()
         .replace(/[^a-z0-9]+/g, '-')
         .slice(0, 50);

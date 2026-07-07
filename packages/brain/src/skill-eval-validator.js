@@ -19,10 +19,7 @@ const MAX_UNZIP_SIZE_BYTES = 50 * 1024 * 1024;
 const MAX_ENTRY_COUNT = 2000;
 // zip 魔数
 const ZIP_MAGIC_PK = Buffer.from([0x50, 0x4b, 0x03, 0x04]);
-// pending 上限（超过 → 429）
-const MAX_QUEUE_DEPTH = parseInt(process.env.MAX_SKILL_EVAL_QUEUE || '20', 10);
-// 并发槽位
-const MAX_CONCURRENT_SKILL_EVAL = parseInt(process.env.MAX_CONCURRENT_SKILL_EVAL || '1', 10);
+// pending 上限和并发槽位从 env 读取（在各调用处 inline 读，避免模块级缓存与测试 mock 冲突）
 
 /**
  * 校验 zip Buffer 是否合法
@@ -263,7 +260,7 @@ export async function checkSlotAvailable(pool) {
        WHERE status = 'pending'`
     );
     pendingCount = Number(pendingResult?.rows?.[0]?.count ?? 0);
-  } catch (_e) {
+  } catch {
     // 测试环境 mock 耗尽时安全降级：默认 pending=0（不触发背压）
     pendingCount = 0;
   }
