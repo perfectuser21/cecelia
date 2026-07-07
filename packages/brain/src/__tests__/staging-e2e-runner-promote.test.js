@@ -75,3 +75,47 @@ describe('runStagingE2E PASS 后 promote 分流', () => {
     expect(promoteExec).not.toHaveBeenCalled();
   });
 });
+
+// 刀3-3b：unknown 线不跑 deploy，直接置 pending_promote + 飞书通知
+describe('unknown 线显式策略（刀3-3b）', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it('unknown base_repo → SKIP verdict + pending_promote，不触发 deploy', async () => {
+    const { pool, queries } = makeQueries();
+    const deploy = vi.fn();
+    const notify = vi.fn(async () => {});
+    const task = {
+      id: 't-unk',
+      payload: { initiative_id: 'i-unk', pr_url: 'https://pr/unk', base_repo: 'someorg/other-repo' },
+    };
+
+    const res = await runStagingE2E(task, { pool, deploy, notify, loadAcceptance: vi.fn(async () => ({ scenarios: [] })) });
+
+    expect(res.verdict).toBe('SKIP');
+    expect(res.reason).toBe('unknown_line_no_deploy');
+    expect(res.promoteStatus).toBe('pending_promote');
+    expect(deploy).not.toHaveBeenCalled();
+    expect(notify).toHaveBeenCalledTimes(1);
+    expect(notify.mock.calls[0][0]).toContain('Unknown 线 Pending');
+    expect(notify.mock.calls[0][0]).toContain('someorg/other-repo');
+    // pending_promote 落库
+    const upd = queries.find((q) => /UPDATE staging_e2e_results[\s\S]*promote_status/i.test(q.sql) && q.params.includes('pending_promote'));
+    expect(upd).toBeTruthy();
+  });
+
+  it('unknown 线，base_repo 缺失 → 同样 SKIP + pending，不 deploy', async () => {
+    const { pool } = makeQueries();
+    const deploy = vi.fn();
+    const task = {
+      id: 't-unk2',
+      payload: { initiative_id: 'i-unk2', pr_url: 'https://pr/unk2' }, // 无 base_repo
+    };
+
+    const res = await runStagingE2E(task, { pool, deploy, notify: vi.fn(), loadAcceptance: vi.fn(async () => ({ scenarios: [] })) });
+
+    // base_repo 缺失 → resolveLine 返回 'unknown' → 同路径
+    expect(res.verdict).toBe('SKIP');
+    expect(res.reason).toBe('unknown_line_no_deploy');
+    expect(deploy).not.toHaveBeenCalled();
+  });
+});
