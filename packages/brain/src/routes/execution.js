@@ -654,6 +654,7 @@ router.post('/execution-callback', async (req, res) => {
       let isBillingCap = false;
       let isTransientApiError = false;
       let isReviewTask = false;
+      let failureTaskType = null;
       try {
         // Extract error message from result
         // Note: typeof null === 'object', so we must check result !== null first
@@ -667,6 +668,7 @@ router.post('/execution-callback', async (req, res) => {
         const taskRow = await pool.query('SELECT task_type, payload FROM tasks WHERE id = $1', [task_id]);
         const taskPayload = taskRow.rows[0]?.payload || {};
         const taskType = taskRow.rows[0]?.task_type;
+        failureTaskType = taskType;
         const classification = classifyFailure(errorMsg, { payload: taskPayload });
         isBillingCap = classification.class === 'billing_cap';
         // rate_limit / network / auth 均不代表 cecelia-run 系统故障，跳过熔断计数：
@@ -822,7 +824,7 @@ router.post('/execution-callback', async (req, res) => {
         const bypassReason = isBillingCap ? 'billing_cap' : (isTransientApiError ? 'rate_limit/network/auth' : 'unknown');
         console.log(`[execution-callback] 外部/凭据错误（${bypassReason}）：跳过熔断计数（task=${task_id}）`);
       } else if (isReviewTask) {
-        console.log(`[execution-callback] review 类任务（${taskType}）失败，跳过 cecelia-run 熔断计数（task=${task_id}）`);
+        console.log(`[execution-callback] review 类任务（${failureTaskType}）失败，跳过 cecelia-run 熔断计数（task=${task_id}）`);
         raise('P2', 'task_failed', `任务失败：${task_id}（${status}）`).catch(err => console.error('[routes] silent error:', err));
       } else {
         await cbFailure('cecelia-run');
