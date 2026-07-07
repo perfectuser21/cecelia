@@ -442,3 +442,100 @@ describe('7. 雷7：ssh 私钥自动发现（-i）', () => {
     expect(sshCalls.every((c) => !c.cmd.includes(' -i '))).toBe(true);
   });
 });
+
+/**
+ * 雷9：codex TUI 首次进新目录卡"Do you trust the contents of this directory?"交互确认
+ * （R4 首航靠人工 send-keys Enter 放行）。trust 记忆按精确 worktree 路径写进
+ * $CODEX_HOME/config.toml 的 [projects."<dir>"]——每条 harness worktree 都是新路径，
+ * 必须在起 tmux 之前经同一条 ssh 通道幂等预写，否则每次首航都卡门。
+ */
+describe('8. 雷9：codex trust 预写（config.toml [projects.] 幂等预写）', () => {
+  function makeNoSshDeps(overrides = {}) {
+    return {
+      pool: { query: vi.fn().mockResolvedValue({ rows: [] }) },
+      spawnFn: vi.fn().mockResolvedValue({ containerId: 'should-not-be-called' }),
+      sshSpawnFn: undefined,
+      loadSkill: vi.fn().mockReturnValue('SKILL_CONTENT_MARKER'),
+      ensureWt: vi.fn().mockResolvedValue('/tmp/wt/task-aaaabbbb'),
+      resolveAccountFn: vi.fn().mockResolvedValue(undefined),
+      tokenFn: vi.fn().mockResolvedValue('gh-token'),
+      now: () => new Date('2026-07-07T12:00:00Z'),
+      execFn: vi.fn().mockReturnValue(''),
+      ...overrides,
+    };
+  }
+
+  const ORIGINAL_CODEX_RELAY_HOME = process.env.CODEX_RELAY_HOME;
+  afterEach(() => {
+    if (ORIGINAL_CODEX_RELAY_HOME === undefined) {
+      delete process.env.CODEX_RELAY_HOME;
+    } else {
+      process.env.CODEX_RELAY_HOME = ORIGINAL_CODEX_RELAY_HOME;
+    }
+  });
+
+  it('CODEX_RELAY_HOME 已配置：起 tmux 之前存在一条含 config.toml + worktree 路径 + trust_level + grep 幂等判断的 ssh 调用', async () => {
+    process.env.CODEX_RELAY_HOME = '/Users/administrator/.codex-team2';
+    const calls = [];
+    const execFn = vi.fn((cmd, opts) => { calls.push({ cmd, opts }); return ''; });
+    const deps = makeNoSshDeps({ execFn });
+
+    const r = await spawnSkillRelaySession(HEADED_TASK, deps);
+    expect(r.ok).toBe(true);
+
+    const trustCallIdx = calls.findIndex((c) => c.cmd.includes('config.toml'));
+    expect(trustCallIdx, 'trust preseed ssh 调用必须出现').toBeGreaterThanOrEqual(0);
+    const trustCall = calls[trustCallIdx];
+    expect(trustCall.cmd).toContain('/Users/administrator/.codex-team2/config.toml');
+    expect(trustCall.cmd).toContain('/tmp/wt/task-aaaabbbb'); // worktree 路径
+    expect(trustCall.cmd).toContain('trust_level');
+    expect(trustCall.cmd).toMatch(/grep -qF/); // 幂等判断
+
+    // 必须发生在 tmux new-session 之前
+    const tmuxCallIdx = calls.findIndex((c) => /tmux new-session/.test(c.cmd));
+    expect(tmuxCallIdx, 'tmux new-session 命令必须出现').toBeGreaterThanOrEqual(0);
+    expect(trustCallIdx).toBeLessThan(tmuxCallIdx);
+  });
+
+  it('CODEX_RELAY_HOME 未配置：跳过 trust preseed（不产生 config.toml ssh 调用），不影响 spawn 成功', async () => {
+    delete process.env.CODEX_RELAY_HOME;
+    const calls = [];
+    const execFn = vi.fn((cmd, opts) => { calls.push({ cmd, opts }); return ''; });
+    const deps = makeNoSshDeps({ execFn });
+
+    const r = await spawnSkillRelaySession(HEADED_TASK, deps);
+    expect(r.ok).toBe(true);
+    expect(calls.some((c) => c.cmd.includes('config.toml'))).toBe(false);
+  });
+
+  it('trust preseed 命令本身对不存在的 config.toml 幂等跳过（不硬造文件）', async () => {
+    process.env.CODEX_RELAY_HOME = '/Users/administrator/.codex-team2';
+    const calls = [];
+    const execFn = vi.fn((cmd, opts) => { calls.push({ cmd, opts }); return ''; });
+    const deps = makeNoSshDeps({ execFn });
+
+    const r = await spawnSkillRelaySession(HEADED_TASK, deps);
+    expect(r.ok).toBe(true);
+
+    const trustCall = calls.find((c) => c.cmd.includes('config.toml'));
+    expect(trustCall).toBeTruthy();
+    // 远端脚本必须先判存在再写，不存在时不落盘（不能无条件 printf >> ）
+    expect(trustCall.cmd).toMatch(/if \[ -f .*config\.toml \]; then/);
+  });
+
+  it('trust preseed 失败（ssh 报错）不阻断 headed spawn（non-fatal，交给 codex 自行处理交互确认）', async () => {
+    process.env.CODEX_RELAY_HOME = '/Users/administrator/.codex-team2';
+    let call = 0;
+    const execFn = vi.fn((cmd) => {
+      call += 1;
+      if (cmd.includes('config.toml')) {
+        throw new Error('ssh: connection reset');
+      }
+      return '';
+    });
+    const deps = makeNoSshDeps({ execFn });
+
+    const r = await spawnSkillRelaySession(HEADED_TASK, deps);
+    expect(r.ok).toBe(true);
+  });
+});
