@@ -430,6 +430,29 @@ export async function dispatchNextTask(goalIds) {
       return { dispatched: false, reason: 'retired_task_type', task_id: candidate.id, task_type: candidate.task_type, retired: true, actions };
     }
 
+    // 3b'. skill_eval 单 slot 串行控制（MAX_CONCURRENT_SKILL_EVAL=1）
+    //       放在原子 claim 之前，被 cap 时无需释放 claim。
+    if (candidate.task_type === 'skill_eval') {
+      const { rows: evalRunning } = await pool.query(
+        "SELECT count(*)::int AS n FROM tasks WHERE task_type='skill_eval' AND status='in_progress' AND id != $1",
+        [candidate.id]
+      );
+      const runningEvals = evalRunning[0]?.n ?? 0;
+      const maxSlot = parseInt(process.env.MAX_CONCURRENT_SKILL_EVAL || '1', 10);
+      if (runningEvals >= maxSlot) {
+        tickLog(`[dispatch] skill_eval slot 已满 ${runningEvals}/${maxSlot}，延后派发 ${candidate.id}`);
+        await recordDispatchResult(pool, false, 'skill_eval_slot_full');
+        return {
+          dispatched: false,
+          reason: 'skill_eval_slot_full',
+          running: runningEvals,
+          max: maxSlot,
+          task_id: candidate.id,
+          actions,
+        };
+      }
+    }
+
     // 3b''. 全局 harness_initiative 并发上限（OPEN-1 OOM 防线）。
     //       放在原子 claim 之前 → 被 cap 时无需释放 claim。
     //       只对 harness_initiative 生效；dev / content 等任务不受影响。

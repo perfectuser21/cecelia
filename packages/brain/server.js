@@ -80,6 +80,7 @@ import featuresRoutes from './src/routes/features.js';
 import clipsRoutes from './src/routes/clips.js';
 import journeysRouter from './src/routes/journeys.js';
 import abilitiesRouter from './src/routes/abilities.js';
+import evalRoutes from './src/routes/eval.js';
 import { internalAuth } from './src/middleware/internal-auth.js';
 import createAutonomousRouter from './src/routes/autonomous.js';
 import { initTickLoop } from './src/tick.js';
@@ -383,6 +384,9 @@ app.use('/api/brain/tasks', taskTasksRoutes);
 app.use('/api/brain', licenseRoutes);
 app.use('/api/brain', agentCreditRoutes);
 app.use('/api/brain', acquisitionRoutes);
+
+// Skill Evaluator 内部验收台
+app.use('/api/eval', evalRoutes);
 
 // Mount cecelia task execution routes
 app.use('/api/cecelia', ceceliaRoutes);
