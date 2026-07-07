@@ -4,7 +4,7 @@ import globals from 'globals';
 export default [
   js.configs.recommended,
   {
-    ignores: ['node_modules/**', 'coverage/**', 'src/__tests__/**', 'src/**/*.mjs'],
+    ignores: ['node_modules/**', 'coverage/**', 'src/__tests__/**', 'src/**/__tests__/**', 'src/**/*.mjs'],
   },
   {
     files: ['src/**/*.js'],
