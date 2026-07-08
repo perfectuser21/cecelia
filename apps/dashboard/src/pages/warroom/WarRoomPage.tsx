@@ -917,29 +917,38 @@ function DetailPanel({ task, onOpen }: { task: FeedTask | null; onOpen: (t: Feed
 
 // ====================== Line 视图子组件（PR-B）======================
 
-/** 左栏单条 Line：名称 + roadmap 进度(done/total) + running 数（在跑高亮） */
-function LineNavItem({ line, active, onSelect }: {
+/** 左栏单条 Line：名称 + roadmap 进度(done/total) + running 数（在跑高亮） + 下钻入口 */
+function LineNavItem({ line, active, onSelect, onDrillDown }: {
   line: LineSummary; active: boolean; onSelect: (l: LineSummary) => void;
+  onDrillDown: (l: LineSummary) => void;
 }) {
   const prog = lineProgress(line);
   const running = Number(line.running) || 0;
   const hot = running > 0;
   return (
-    <button
-      onClick={() => onSelect(line)}
-      className={`w-full flex flex-col gap-1 px-2 py-1.5 rounded text-[12px] transition-colors ${
-        active ? 'bg-blue-500/15 text-blue-200' : 'hover:bg-slate-400/5 text-slate-400'
-      }`}
-    >
-      <div className="flex items-center gap-1.5 w-full">
+    <div className={`group relative w-full flex flex-col gap-1 px-2 py-1.5 rounded text-[12px] transition-colors ${
+      active ? 'bg-blue-500/15 text-blue-200' : 'hover:bg-slate-400/5 text-slate-400'
+    }`}>
+      <button
+        onClick={() => onSelect(line)}
+        className="flex items-center gap-1.5 w-full text-left"
+      >
         <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${hot ? 'bg-blue-400 wr-pulse' : 'bg-slate-600/50'}`} />
-        <span className={`truncate ${active ? 'font-semibold' : ''}`}>{line.name}</span>
+        <span className={`truncate flex-1 ${active ? 'font-semibold' : ''}`}>{line.name}</span>
         {hot && (
-          <span className="ml-auto flex-shrink-0 text-[11px] font-mono px-1 rounded bg-blue-500/15 text-blue-300 border border-blue-500/25">
+          <span className="flex-shrink-0 text-[11px] font-mono px-1 rounded bg-blue-500/15 text-blue-300 border border-blue-500/25">
             {running} 跑
           </span>
         )}
-      </div>
+      </button>
+      {/* 下钻入口：hover 时出现 → 指挥页 */}
+      <button
+        onClick={(e) => { e.stopPropagation(); onDrillDown(line); }}
+        className="absolute right-1 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 transition-opacity p-1 rounded hover:bg-slate-600/40 text-slate-500 hover:text-slate-200"
+        title="打开指挥页"
+      >
+        <ChevronRight className="w-3 h-3" />
+      </button>
       {prog.total > 0 && (
         <div className="flex items-center gap-1.5 w-full pl-3">
           <div className="h-[3px] flex-1 rounded-full bg-slate-800 overflow-hidden">
@@ -948,7 +957,7 @@ function LineNavItem({ line, active, onSelect }: {
           <span className="text-[11px] text-slate-600 font-mono flex-shrink-0">{prog.done}/{prog.total}</span>
         </div>
       )}
-    </button>
+    </div>
   );
 }
 
@@ -1507,6 +1516,7 @@ export default function WarRoomPage() {
                       line={l}
                       active={selectedLineId === l.id}
                       onSelect={(line) => selectLine(line.id)}
+                      onDrillDown={(line) => navigate(`/warroom/line/${encodeURIComponent(line.id)}`)}
                     />
                   ))}
                 </div>
