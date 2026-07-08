@@ -10,7 +10,7 @@
 
 ## 2. 三个单元（各自单一职责、独立可测）
 
-### 单元 A · DB schema（migration 319）
+### 单元 A · DB schema（migration 320）
 新表 `advancement_items` = 推进账本。字段：
 
 | 列 | 类型 | 约束 |
@@ -85,7 +85,7 @@ war room → GET /abilities/:id/advancements → {items, progress{done,total,pct
 - run_id 列本 PR 建好但不写入（PR2 relay 认领时才填）
 
 ## 7. 触及文件
-- 新增 `packages/brain/migrations/319_advancement_items.sql`
+- 新增 `packages/brain/migrations/320_advancement_items.sql`
 - 改 `packages/brain/src/routes/abilities.js`（加 3 endpoint）
 - 新增 API integration test（`packages/brain/` 测试目录约定）
 - 改/新增 `apps/dashboard/src/pages/warroom/`（进度组件 + 纯函数 + 单测）

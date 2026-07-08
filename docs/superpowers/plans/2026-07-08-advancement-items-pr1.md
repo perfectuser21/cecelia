@@ -10,15 +10,15 @@
 
 ---
 
-### Task 1: Migration 319 — advancement_items 表
+### Task 1: migration 320 — advancement_items 表
 
 **Files:**
-- Create: `packages/brain/migrations/319_advancement_items.sql`
+- Create: `packages/brain/migrations/320_advancement_items.sql`
 
 - [ ] **Step 1: 写迁移 SQL**
 
 ```sql
--- Migration 319: 推进项完成度模型 — advancement_items 推进账本
+-- migration 320: 推进项完成度模型 — advancement_items 推进账本
 -- ability(journey_features kind=ability) 底下挂一串推进项。进度 done/total 由 API 现算，不落列。
 -- run_id 本 PR 建好不写入（PR2 relay 认领时填）。参见 docs/superpowers/specs/2026-07-08-advancement-items-model-design.md
 CREATE TABLE IF NOT EXISTS advancement_items (
@@ -39,21 +39,21 @@ CREATE INDEX IF NOT EXISTS idx_advancement_items_ability_id ON advancement_items
 
 Run:
 ```bash
-psql -d cecelia -f packages/brain/migrations/319_advancement_items.sql
+psql -d cecelia -f packages/brain/migrations/320_advancement_items.sql
 psql -d cecelia -c "\d advancement_items"
 ```
 Expected: 表建成，显示 9 列；含 `advancement_items_status_check`（CHECK）、`advancement_items_ability_id_fkey`（→journey_features）、`advancement_items_run_id_fkey`（→initiative_runs）、索引 `idx_advancement_items_ability_id`。
 
 - [ ] **Step 3: 验证幂等**
 
-Run: `psql -d cecelia -f packages/brain/migrations/319_advancement_items.sql`
+Run: `psql -d cecelia -f packages/brain/migrations/320_advancement_items.sql`
 Expected: 无报错（IF NOT EXISTS 生效），无副作用。
 
 - [ ] **Step 4: Commit**
 
 ```bash
-git add packages/brain/migrations/319_advancement_items.sql
-git commit -m "feat(brain): migration 319 — advancement_items 推进账本表"
+git add packages/brain/migrations/320_advancement_items.sql
+git commit -m "feat(brain): migration 320 — advancement_items 推进账本表"
 ```
 
 ---
