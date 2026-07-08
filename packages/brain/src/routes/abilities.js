@@ -349,7 +349,7 @@ router.get('/invariants', async (req, res) => {
 router.get('/abilities/:id/advancements', async (req, res) => {
   try {
     const { id } = req.params;
-    const ab = await pool.query(`SELECT id FROM journey_features WHERE id=$1`, [id]);
+    const ab = await pool.query(`SELECT id FROM journey_features WHERE id=$1 AND kind='ability'`, [id]);
     if (ab.rows.length === 0) return res.status(404).json({ error: 'ability not found' });
     const items = await pool.query(
       `SELECT * FROM advancement_items WHERE ability_id=$1
@@ -378,7 +378,7 @@ router.post('/abilities/:id/advancements', async (req, res) => {
     const { id } = req.params;
     const { title, priority } = req.body;
     if (!title) return res.status(400).json({ error: 'title is required' });
-    const ab = await pool.query(`SELECT id FROM journey_features WHERE id=$1`, [id]);
+    const ab = await pool.query(`SELECT id FROM journey_features WHERE id=$1 AND kind='ability'`, [id]);
     if (ab.rows.length === 0) return res.status(404).json({ error: 'ability not found' });
     const { rows } = await pool.query(
       `INSERT INTO advancement_items (ability_id, title, priority)
