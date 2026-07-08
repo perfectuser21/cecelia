@@ -15,13 +15,27 @@ vi.mock('../tick-stats.js', () => ({ recordTickExecution: vi.fn().mockResolvedVa
 
 import { startTickLoop, stopTickLoop } from '../tick-loop.js';
 import { startProbeLoop } from '../capability-probe.js';
+import { startHarnessWatchdogLoop } from '../harness-watchdog-loop.js';
+import { startRecoveryLoop } from '../recovery-loop.js';
+import { startPipelinePatrolLoop } from '../pipeline-patrol-loop.js';
 
 beforeEach(() => vi.clearAllMocks());
 afterEach(() => stopTickLoop());
 
 describe('startTickLoop', () => {
-  it('启动时调用 startProbeLoop（probe 复活）', () => {
+  it('启动时调用 startProbeLoop（probe 复活），且并排的兄弟 loop 都各启动一次', () => {
     startTickLoop();
+    expect(startProbeLoop).toHaveBeenCalledOnce();
+    // 锁定 probe 与其余并排启动的 loop 的架构约定：
+    // 未来若有人把 probe 挪走时顺手删了别的 loop，这里会炸
+    expect(startHarnessWatchdogLoop).toHaveBeenCalledOnce();
+    expect(startRecoveryLoop).toHaveBeenCalledOnce();
+    expect(startPipelinePatrolLoop).toHaveBeenCalledOnce();
+  });
+
+  it('loop 已在跑时重复调用 startTickLoop 提前退出，startProbeLoop 幂等仍只调用一次', () => {
+    startTickLoop();
+    startTickLoop(); // 第二次调用应因 isRunning 提前 return false，不重复启动内部 loop
     expect(startProbeLoop).toHaveBeenCalledOnce();
   });
 });
