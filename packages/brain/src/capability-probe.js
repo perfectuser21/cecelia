@@ -929,6 +929,12 @@ async function runProbeCycle() {
  * Start periodic probe cycle.
  */
 export function startProbeLoop() {
+  // CI 干净沙箱跑自驱探针=噪音+Auto-Fix 任务挤占派发，只在真机跑；GHA 默认 CI=true
+  if (process.env.CI === 'true') {
+    console.log('[Probe] CI environment detected, skipping capability probe loop');
+    return;
+  }
+
   if (_probeTimer) {
     console.log('[Probe] Loop already running');
     return;
