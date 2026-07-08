@@ -28,6 +28,7 @@ import { emit } from './event-bus.js';
 import { isAllowed, recordFailure } from './circuit-breaker.js';
 import { publishTaskStarted } from './events/taskEvents.js';
 import { recordDispatchResult } from './dispatch-stats.js';
+import { incrementActionsToday } from './tick-stats.js';
 import { proactiveTokenCheck } from './account-usage.js';
 import { checkQuotaGuard } from './quota-guard.js';
 import { updateTask } from './actions.js';
@@ -647,6 +648,8 @@ export async function dispatchNextTask(goalIds) {
   // dev 任务走 L2 workflow runtime → runWorkflow 接线（fire-and-forget）
   const v2Result = await _dispatchViaWorkflowRuntime(taskToDispatch);
   if (v2Result.handled) {
+    // Wave-2 断链修复：派发成功计入当日 actions（fire-and-forget，吞错）
+    incrementActionsToday(1).catch(() => {});
     return {
       dispatched: true,
       task_id: v2Result.task_id,
@@ -764,6 +767,8 @@ export async function dispatchNextTask(goalIds) {
     console.error(`[dispatch] post-success bookkeeping failed for task=${nextTask.id} (dispatch itself succeeded, claim NOT released): ${bookkeepingErr.message}`);
   }
 
+  // Wave-2 断链修复：派发成功计入当日 actions（fire-and-forget，吞错）
+  incrementActionsToday(1).catch(() => {});
   return { dispatched: true, task_id: nextTask.id, run_id: execResult.runId, actions };
 }
 

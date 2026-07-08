@@ -15,6 +15,7 @@
  * 老 caller (routes/tick.js, __tests__/tick-throttle.test.js 等) 不受影响。
  */
 import { tickState } from './tick-state.js';
+import { recordTickExecution } from './tick-stats.js';
 import { executeTick as _executeTick } from './tick-runner.js'; // Wave 2 废弃，保留供回滚
 import { runScheduler } from './tick-scheduler.js';
 import { startConsciousnessLoop } from './consciousness-loop.js';
@@ -22,6 +23,7 @@ import { startHarnessWatchdogLoop, stopHarnessWatchdogLoop } from './harness-wat
 import { startRecoveryLoop, stopRecoveryLoop } from './recovery-loop.js';
 import { startPipelinePatrolLoop, stopPipelinePatrolLoop } from './pipeline-patrol-loop.js';
 import { publishCognitiveState } from './events/taskEvents.js';
+import { startProbeLoop } from './capability-probe.js';
 
 // ───── tickLog: [HH:MM:SS] 前缀 + 每 100 条打一次 summary ─────
 const { log: _tickWrite } = console;
@@ -75,6 +77,10 @@ export async function runTickSafe(source = 'loop', tickFn) {
 
   tickState.tickRunning = true;
   tickState.tickLockTime = Date.now();
+  // 局部时间戳：耗时基准不依赖 tickState.tickLockTime——该共享状态在 doTick 超过
+  // TICK_TIMEOUT_MS 时会被上面的 FORCE-RELEASE 分支或下面的 _forceReleaseTimer 异步置 null，
+  // 届时 `Date.now() - null` 会污染成当前时间戳（~1.7e12ms），把 last_duration_ms 冲成天文数字。
+  const _tickStartMs = Date.now();
 
   // 保底 setTimeout：无论 doTick() 是否 resolve，TICK_TIMEOUT_MS 后强制释放锁
   // 解决 tickState.tickLockTime 被清但 tickState.tickRunning 未清的边界情况
@@ -89,6 +95,8 @@ export async function runTickSafe(source = 'loop', tickFn) {
   try {
     const result = await doTick();
     tickState.lastExecuteTime = Date.now();
+    // Wave-2 断链修复：统计写入接回活路径（fire-and-forget，吞错）
+    recordTickExecution(Date.now() - _tickStartMs).catch(() => {});
     tickLog(`[tick-loop] Tick completed (source: ${source}), actions: ${result.actions_taken?.length || 0}`);
     return result;
   } catch (err) {
@@ -161,6 +169,9 @@ export function startTickLoop() {
   // runHarnessInitiativePatrol（harness Planner/GAN 卡住 → 建 harness_intervention）原只挂废弃
   // executeTick → 从不运行 → 干预通道整条死代码。仿 recovery-loop / harness-watchdog-loop 接回。
   startPipelinePatrolLoop();
+
+  // Wave-2 断链修复：capability-probe 复活（模块自带 1h interval + 幂等 guard）
+  startProbeLoop();
 
   tickLog(`[tick-loop] Started (interval: ${TICK_LOOP_INTERVAL_MS}ms)`);
   return true;
