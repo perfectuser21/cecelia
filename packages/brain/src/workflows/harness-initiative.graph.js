@@ -1,7 +1,8 @@
 /**
  * Harness v2 — Initiative Graph（Phase A + B LangGraph 实现）
  *
- * 唯一执行路径：executor.js harness_initiative → compileHarnessFullGraph()
+ * 注：executor.js 已切 skill-relay 路径（2026-07-04），compileHarnessFullGraph 不可达已删除。
+ * reportNode / runSubTaskNode 等节点仍被 smoke 脚本 + 测试直接 import，文件保留。
  * Phase A: prep → planner → parsePrd → ganLoop → inferTaskPlan → dbUpsert
  * Phase B: pick_sub_task → run_sub_task（loop）→ report
  */
@@ -74,7 +75,7 @@ const HARNESS_PHASE_GOALS = {
 };
 
 // ─── Brain v2 C8a — LangGraph 真图实现（阶段 A）────────────────────────
-// harness_initiative 任务的唯一执行路径（dispatcher → executor → compileHarnessFullGraph）。
+// 注：生产执行路径已切 skill-relay；下方节点函数仍被 smoke 脚本 / 测试 import，保留。
 //
 // 节点拓扑：START → prep → planner → parsePrd → ganLoop → dbUpsert → END
 //                    ↓error  ↓error    ↓error    ↓error
@@ -722,51 +723,6 @@ import { buildHarnessTaskGraph as _buildTaskGraph } from './harness-task.graph.j
  * 注：sub_task (单数) 字段用于 Send fanout 把子状态注入 run_sub_task node。
  * sub_tasks (复数) 是累计聚合，reducer = mergeBy id。
  */
-export const FullInitiativeState = Annotation.Root({
-  task:           Annotation({ reducer: (_o, n) => n, default: () => null }),
-  initiativeId:   Annotation({ reducer: (_o, n) => n, default: () => null }),
-  worktreePath:   Annotation({ reducer: (_o, n) => n, default: () => null }),
-  githubToken:    Annotation({ reducer: (_o, n) => n, default: () => null }),
-  plannerOutput:  Annotation({ reducer: (_o, n) => n, default: () => null }),
-  taskPlan:       Annotation({ reducer: (_o, n) => n, default: () => null }),
-  prdContent:     Annotation({ reducer: (_o, n) => n, default: () => null }),
-  sprintDir:      Annotation({ reducer: (_o, n) => n, default: () => null }),
-  ganResult:      Annotation({ reducer: (_o, n) => n, default: () => null }),
-  result:         Annotation({ reducer: (_o, n) => n, default: () => null }),
-  error:          Annotation({ reducer: (_o, n) => n, default: () => null }),
-  initiative_run_id: Annotation({ reducer: (_o, n) => n, default: () => null }),
-  contract:       Annotation({ reducer: (_o, n) => n, default: () => null }),
-  contractBranch: Annotation({ reducer: (_o, n) => n, default: () => null }),
-
-  // Send fanout 注入子状态
-  sub_task:       Annotation({ reducer: (_o, n) => n, default: () => null }),
-
-  // 累计：merge by id
-  sub_tasks: Annotation({
-    reducer: (curr, upd) => {
-      if (!Array.isArray(upd) || upd.length === 0) return curr || [];
-      const map = new Map((curr || []).map((s) => [s.id, s]));
-      for (const s of upd) map.set(s.id, { ...(map.get(s.id) || {}), ...s });
-      return [...map.values()];
-    },
-    default: () => [],
-  }),
-  all_sub_tasks_done: Annotation({ reducer: (_o, n) => n, default: () => false }),
-  final_e2e_verdict: Annotation({ reducer: (_o, n) => n, default: () => null }),
-  final_e2e_failed_scenarios: Annotation({ reducer: (_o, n) => n, default: () => [] }),
-  report_path: Annotation({ reducer: (_o, n) => n, default: () => null }),
-  // Serial evaluate loop state
-  task_loop_index:    Annotation({ reducer: (_o, n) => n, default: () => 0 }),
-  task_loop_fix_count: Annotation({ reducer: (_o, n) => n, default: () => 0 }),
-  // resume 防护：serial gate 对 status=queued 无终败证据的当前 sub-task 重跑计数（防死循环上限）
-  serial_gate_requeue_count: Annotation({ reducer: (_o, n) => n, default: () => 0 }),
-  evaluate_verdict:   Annotation({ reducer: (_o, n) => n, default: () => null }),
-  evaluate_feedback:  Annotation({ reducer: (_o, n) => n, default: () => null }),
-  final_e2e_fix_count: Annotation({ reducer: (_o, n) => n, default: () => 0 }),
-  planner_container_id: Annotation({ reducer: (_o, n) => n, default: () => null }),
-  review_required:      Annotation({ reducer: (_o, n) => n, default: () => false }),
-});
-
 /**
  * inferTaskPlanNode: graph node — 在 fanout 前保证 state.taskPlan.tasks 非空。
  *
@@ -777,7 +733,7 @@ export const FullInitiativeState = Annotation.Root({
  * 解决：Planner SKILL 没输出合规 task_plan 时，fanout 看不到 tasks 直接跳 join，
  *      Final E2E 找不到 sub_task 报 FAIL（Sprint 1 E2E-v10 真实根因）。
  *
- * @param {object} state  FullInitiativeState
+ * @param {object} state  initiative graph state
  * @param {object} [opts]
  * @param {Function} [opts.executor]  spawn 替代（测试注入）
  * @returns {Promise<object>}  state delta（{} 或 { taskPlan: {...} }）
@@ -1845,44 +1801,4 @@ export function _routeAfterFinalE2E(state) {
   if (state.error) return 'report';
   if (state.final_e2e_verdict === 'PASS' || state.final_e2e_verdict === 'PASS_WITH_OVERRIDE') return 'report';
   return 'pick_sub_task'; // FAIL → 重跑所有 sub-tasks
-}
-
-export function buildHarnessFullGraph(nodeOverrides = {}) {
-  const {
-    runSubTaskFn = runSubTaskNode,
-  } = nodeOverrides;
-  // 节点级 RetryPolicy（W2）—— 见 packages/brain/src/workflows/retry-policies.js
-  // LLM_RETRY: planner / ganLoop / run_sub_task
-  // DB_RETRY:  dbUpsert / report
-  // NO_RETRY:  prep / parsePrd / inferTaskPlan / pick_sub_task / advance
-  // 单一 evaluator 设计：per-task evaluate_contract 节点（IS_FINAL_E2E=true）在 harness-task.graph.js
-  // 子图内完成 pre-merge 全量 E2E 验收，initiative graph 不再有独立 final_evaluate 节点。
-  // 对齐 Anthropic 官方 Harness 设计（单 evaluator pre-merge 迭代循环）。
-  return new StateGraph(FullInitiativeState)
-    .addNode('prep', prepInitiativeNode, { retryPolicy: NO_RETRY })
-    .addNode('planner', runPlannerNode, { retryPolicy: LLM_RETRY })
-    .addNode('parsePrd', parsePrdNode, { retryPolicy: NO_RETRY })
-    .addNode('ganLoop', runGanLoopNode, { retryPolicy: LLM_RETRY })
-    .addNode('inferTaskPlan', inferTaskPlanNode, { retryPolicy: NO_RETRY })
-    .addNode('dbUpsert', dbUpsertNode, { retryPolicy: DB_RETRY })
-    .addNode('pick_sub_task', pickSubTaskNode, { retryPolicy: NO_RETRY })
-    .addNode('run_sub_task', runSubTaskFn, { retryPolicy: LLM_RETRY })
-    .addNode('advance', advanceTaskIndexNode, { retryPolicy: NO_RETRY })
-    .addNode('report', reportNode, { retryPolicy: DB_RETRY })
-    .addEdge(START, 'prep')
-    .addConditionalEdges('prep', stateHasError, { error: END, ok: 'planner' })
-    .addConditionalEdges('planner', stateHasError, { error: END, ok: 'parsePrd' })
-    .addConditionalEdges('parsePrd', stateHasError, { error: END, ok: 'ganLoop' })
-    .addConditionalEdges('ganLoop', stateHasError, { error: END, ok: 'inferTaskPlan' })
-    .addConditionalEdges('inferTaskPlan', stateHasError, { error: END, ok: 'dbUpsert' })
-    .addConditionalEdges('dbUpsert', stateHasError, { error: END, ok: 'pick_sub_task' })
-    .addConditionalEdges('pick_sub_task', routeFromPickSubTask, { run_sub_task: 'run_sub_task', report: 'report', end: END })
-    .addEdge('run_sub_task', 'advance')
-    .addConditionalEdges('advance', stateHasError, { error: 'report', ok: 'pick_sub_task' })
-    .addEdge('report', END);
-}
-
-export async function compileHarnessFullGraph() {
-  const checkpointer = await getPgCheckpointer();
-  return buildHarnessFullGraph().compile({ checkpointer, durability: 'sync' });
 }

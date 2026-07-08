@@ -1277,7 +1277,7 @@ export async function evaluateContractNode(state, opts = {}) {
 
   // target_environment（SSOT extractTargetEnv，与 spawnNode 同口径，消两处提取漂移）
   const targetEnv = extractTargetEnv(state);
-  const _baseRepo = (state.baseRepo || payload.base_repo || '').toLowerCase();
+  const _baseRepo = (payload.base_repo || '').toLowerCase();
   const githubRepo = _baseRepo.includes('zenithjoy') ? 'perfectuser21/zenithjoy-workspace' : 'perfectuser21/cecelia';
   const windowsCloudWorkflow = _baseRepo.includes('zenithjoy') ? 'agent-e2e-video.yml' : 'e2e-windows.yml';
 
