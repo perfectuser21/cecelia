@@ -4,6 +4,7 @@
 # 更新方式：在 CI 通过后从 smoke-debt.txt 迁移经确认能通过的脚本到此处
 
 abilities-api-smoke.sh
+advancement-items-smoke.sh
 agent-credit-smoke.sh
 battle-report-smoke.sh
 circuit-breaker-persist-smoke.sh
