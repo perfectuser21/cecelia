@@ -397,7 +397,8 @@ router.patch('/tasks/:task_id', async (req, res) => {
         // quarantine release API 只能回 queued，paused 完全无 release API
         'quarantined': ['queued', 'completed', 'failed', 'cancelled'],
         'paused': ['queued', 'in_progress', 'completed', 'failed', 'cancelled'],
-        'canceled': ['queued', 'completed', 'failed', 'cancelled']
+        'canceled': ['queued', 'completed', 'failed', 'cancelled'],
+        'cancelled': ['queued', 'completed', 'failed']
       };
 
       if (!allowedTransitions[currentStatus]?.includes(status)) {

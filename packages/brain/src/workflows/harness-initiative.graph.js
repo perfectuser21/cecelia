@@ -1882,3 +1882,7 @@ export function buildHarnessFullGraph(nodeOverrides = {}) {
     .addEdge('report', END);
 }
 
+export async function compileHarnessFullGraph() {
+  const checkpointer = await getPgCheckpointer();
+  return buildHarnessFullGraph().compile({ checkpointer, durability: 'sync' });
+}

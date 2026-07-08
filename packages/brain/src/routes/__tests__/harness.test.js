@@ -280,14 +280,6 @@ describe('[BEHAVIOR] migration + executor 文件检查', () => {
     expect(src).toMatch(/completed/i);
   });
 
-  it('executor.js 保留 writeInitiativeRunEvent failed (non-fatal) warn 字符串', () => {
-    const src = fs.readFileSync(
-      new URL('../../executor.js', import.meta.url),
-      'utf8'
-    );
-    expect(src).toMatch(/writeInitiativeRunEvent failed \(non-fatal\)/);
-  });
-
   // ── initiative_run_events / phase metrics 的 owner 是 Brain 侧，不是 skill ───────────
   // SSOT 链路审计（zenithjoy-skills #50，2026-06）确认：harness skill 自 06-04 起已无
   // phase-event 埋点指令，pipeline phase metrics 由 Brain 侧 events/initiativeRunEvents.js
