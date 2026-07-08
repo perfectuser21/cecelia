@@ -1901,4 +1901,45 @@ router.post('/judge', async (req, res) => {
   }
 });
 
+/**
+ * POST /staging-e2e — staging_e2e 派生端点（刀4 重构阶段1，决策 76ab76ea）。
+ * 背景：原派生源 mergePrNode._spawnStagingE2eTask 属 LangGraph 图，skill-relay 迁移后图不跑
+ * → staging→production 放行层悬空。本端点把派生迁到图外，供 controller merge 成功后调用；
+ * 删图（阶段3）后成为唯一生产者。幂等：按 payload->>'pr_url' WHERE NOT EXISTS 去重（复刻原逻辑）。
+ */
+router.post('/staging-e2e', async (req, res) => {
+  const { pr_url, pr_branch, sub_task_id, initiative_id, journey_id, base_repo, project_id } = req.body || {};
+  if (!pr_url) return res.status(400).json({ error: 'pr_url 必填' });
+  const payload = {
+    pr_url,
+    pr_branch: pr_branch || '',
+    sub_task_id: sub_task_id || '',
+    initiative_id: initiative_id || '',
+    journey_id: journey_id || '',
+    base_repo: base_repo || '',
+    project_id: project_id || '',
+  };
+  try {
+    const r = await pool.query(
+      `INSERT INTO tasks (title, description, task_type, status, priority, payload)
+       SELECT $1, $2, 'staging_e2e', 'queued', 'P2', $3::jsonb
+       WHERE NOT EXISTS (
+         SELECT 1 FROM tasks WHERE task_type = 'staging_e2e' AND payload->>'pr_url' = $4
+       )`,
+      [
+        `[Staging E2E] ${pr_branch || pr_url}`,
+        `Auto-spawned by controller relay (post-merge): deploy :5222 + contract E2E for ${pr_url}`,
+        JSON.stringify(payload),
+        pr_url,
+      ]
+    );
+    const created = r.rowCount > 0;
+    if (created) console.log(`[staging-e2e endpoint] spawned staging_e2e task for pr=${pr_url}`);
+    return res.json(created ? { created: true } : { created: false, reason: 'already_exists' });
+  } catch (err) {
+    console.error('[POST /harness/staging-e2e]', err.message);
+    return res.status(500).json({ error: 'internal error' });
+  }
+});
+
 export default router;
