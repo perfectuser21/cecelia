@@ -2896,6 +2896,14 @@ async function _driveHarnessInitiative(task, opts = {}) {
     return { ok: false, error: 'missing_orchestrator_flag', terminal: true };
   }
 
+  // 2b-2b: harness 开跑 → 镜像同步对应 okr_initiative → running（non-fatal，best-effort）
+  try {
+    const { syncOkrInitiativeStatus } = await import('./okr-initiative-sync.js');
+    await syncOkrInitiativeStatus(dbPool, task.id, 'running');
+  } catch (syncErr) {
+    console.warn(`[executor] okr-initiative sync(running) non-fatal: ${syncErr.message}`);
+  }
+
   // N3 skill-relay 分支（主理人 2026-07-04 拍板）：spawn 单 claude session 跑
   // harness-controller skill，不 compile / 不 invoke 图。
   const { spawnSkillRelaySession } = await import('./harness-skill-relay.js');

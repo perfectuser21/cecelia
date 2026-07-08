@@ -3,7 +3,7 @@
 #
 # 3 层验证：
 #   L1 (静态)  : executor.js 的 _driveHarnessInitiative 含 orchestrator 硬校验锚点
-#                （missing_orchestrator_flag 判断先于 compileHarnessFullGraph import）
+#                （missing_orchestrator_flag 判断存在；LangGraph 段已物理删除 — 刀4 完成）
 #   L2 (gate)  : Brain 健康 + DB 可连；不可达 SKIP exit 0 with reason
 #   L3 (真验)  : INSERT 一个不带 orchestrator 的 harness_initiative task → 真调
 #                runHarnessInitiativeRouter → 断言立即 terminal failed（不 invoke
@@ -29,11 +29,8 @@ const fnMatch=src.match(/async function _driveHarnessInitiative[\s\S]*?\n}\n/);
 if(!fnMatch){console.error('_driveHarnessInitiative 函数找不到');process.exit(1)}
 const body=fnMatch[0];
 const guardIdx=body.indexOf('missing_orchestrator_flag');
-const graphImportIdx=body.indexOf('compileHarnessFullGraph');
 if(guardIdx===-1){console.error('L1 FAIL: 缺 missing_orchestrator_flag 硬校验锚点');process.exit(1)}
-if(graphImportIdx===-1){console.error('L1 FAIL: compileHarnessFullGraph import 找不到（不应被删除，只应变不可达）');process.exit(1)}
-if(guardIdx>=graphImportIdx){console.error('L1 FAIL: 硬校验必须先于 compileHarnessFullGraph import（否则不能拦截所有非法 payload）');process.exit(1)}
-console.log('[smoke] L1 PASS: orchestrator 硬校验先于 LangGraph 图 import');
+console.log('[smoke] L1 PASS: missing_orchestrator_flag 硬校验存在（LangGraph 段已物理删除，刀4 完成）');
 " || exit 1
 
 # ── L2 Brain health gate ───────────────────────────────────────────────
