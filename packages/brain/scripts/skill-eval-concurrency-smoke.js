@@ -41,11 +41,11 @@ async function main() {
   };
 
   const taskIds = [];
-  taskIds.push(await insertOne(1));
-  taskIds.push(await insertOne(2));
-
   let exitCode = 1;
   try {
+    taskIds.push(await insertOne(1));
+    taskIds.push(await insertOne(2));
+
     const [a, b] = await Promise.all([claimPendingTask(), claimPendingTask()]);
     const claimedCount = [a, b].filter(Boolean).length;
 
