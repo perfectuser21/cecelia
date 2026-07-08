@@ -28,7 +28,7 @@ function shortId(id) {
 export async function resumeStalledRelayRuns(deps = {}) {
   const dbPool = deps.pool || pool;
   const execFn = deps.execFn || ((cmd) => execSync(cmd, { encoding: 'utf8', timeout: 10000 }));
-  const out = { scanned: 0, resumed: 0, capped: 0, housekept: 0, mergedPr: 0 };
+  const out = { scanned: 0, resumed: 0, capped: 0, housekept: 0, mergedPr: 0, openPrFound: 0 };
 
   // 每个 initiative 取最新一行 + 点火次数（每次 spawn INSERT 一行 = attempts 天然计数）
   // 已知缺口（Notion Issue 1ea53e09-b088-4d2a-b03a-ad8c976bbc6c）：这个计数只统计
@@ -139,6 +139,61 @@ export async function resumeStalledRelayRuns(deps = {}) {
           // gh 不可用或 PR 查询失败 → 保守跳过，不盲目重点火
           console.warn(`[relay-watchdog] gh pr view 失败，initiative=${run.initiative_id} 保守跳过`);
           continue;
+        }
+      }
+
+      // B_probe — 容器消失且 DB 无 pr_url：用 gh pr list 按 base_repo + 分支含 short id 探查
+      if (!effectivePrUrl) {
+        const baseRepo = task.payload?.base_repo;
+        if (baseRepo && /^[\w._-]+\/[\w._-]+$/.test(baseRepo)) {
+          try {
+            const ghListOut = execFn(
+              `gh pr list --repo "${baseRepo}" --state all --json url,state,headRefName --limit 50`
+            );
+            const prs = JSON.parse(ghListOut);
+            const matching = Array.isArray(prs)
+              ? prs.filter(p => p.headRefName && p.headRefName.includes(short))
+              : [];
+            const mergedPr = matching.find(p => p.state === 'MERGED');
+            const openPr = matching.find(p => p.state === 'OPEN');
+
+            if (mergedPr) {
+              await dbPool.query(
+                `UPDATE initiative_runs SET phase='done', completed_at=NOW(), pr_url=$2
+                  WHERE initiative_id=$1 AND orchestrator_version='v2' AND phase NOT IN ('done','failed')`,
+                [run.initiative_id, mergedPr.url]
+              );
+              await dbPool.query(
+                `UPDATE tasks SET status='completed', completed_at=NOW(), pr_url=$2
+                  WHERE id=$1 AND status='in_progress'`,
+                [run.initiative_id, mergedPr.url]
+              );
+              out.mergedPr++;
+              console.log(`[relay-watchdog] gh 探查 MERGED PR → completed initiative=${run.initiative_id} pr=${mergedPr.url}`);
+              continue;
+            }
+
+            if (openPr) {
+              // 已有 OPEN PR → 回写 pr_url 到 DB，跳过重点火（下轮 watchdog 接续）
+              await dbPool.query(
+                `UPDATE initiative_runs SET pr_url=$2
+                  WHERE initiative_id=$1 AND orchestrator_version='v2' AND phase NOT IN ('done','failed')`,
+                [run.initiative_id, openPr.url]
+              );
+              await dbPool.query(
+                `UPDATE tasks SET pr_url=$2
+                  WHERE id=$1 AND status='in_progress'`,
+                [run.initiative_id, openPr.url]
+              );
+              out.openPrFound++;
+              console.log(`[relay-watchdog] gh 探查 OPEN PR → 回写 pr_url 跳过重点火 initiative=${run.initiative_id} pr=${openPr.url}`);
+              continue;
+            }
+            // 无匹配 PR → fall-through 到重点火流程
+          } catch (err) {
+            console.warn(`[relay-watchdog] gh pr list 探查失败（保守跳过）initiative=${run.initiative_id}: ${err.message}`);
+            continue;
+          }
         }
       }
 

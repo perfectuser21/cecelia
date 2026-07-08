@@ -147,12 +147,166 @@ describe('resumeStalledRelayRuns', () => {
     expect(r.mergedPr).toBe(0);
   });
 
-  it('容器消失 + pr_url 为 null → 直接走重点火（不调 gh pr view）', async () => {
+  it('容器消失 + pr_url 为 null + 无 base_repo → 直接走重点火（不调 gh）', async () => {
+    // payload 无 base_repo → 跳过 gh pr list 探查，直接重点火
     const deps = makeDeps({ prUrl: null });
     const r = await resumeStalledRelayRuns(deps);
-    const ghCall = deps.execFn.mock.calls.find(c => /gh pr view/.test(c[0]));
+    const ghCall = deps.execFn.mock.calls.find(c => /gh pr/.test(c[0]));
     expect(ghCall).toBeFalsy();
     expect(deps.spawnFn).toHaveBeenCalledOnce();
+  });
+});
+
+// ── B_probe：pr_url=null 时 gh pr list 探查已有 PR ───────────────────────────
+
+function makeProbePool({ taskPrUrl = null, baseRepo = 'org/repo', attempts = 2 } = {}) {
+  const pool = { query: vi.fn() };
+  pool.query.mockImplementation(async (sql) => {
+    if (/DISTINCT ON \(initiative_id\)/.test(sql)) {
+      return {
+        rows: [{
+          initiative_id: TASK_ID,
+          phase: 'planning',
+          attempts: String(attempts),
+          deadline_at: new Date(Date.now() + 3600e3).toISOString(),
+          pr_url: null,
+          orchestrator_host: 'skill-relay-session',
+        }],
+      };
+    }
+    if (/FROM tasks/.test(sql)) {
+      return {
+        rows: [{
+          id: TASK_ID,
+          status: 'in_progress',
+          title: 't',
+          pr_url: taskPrUrl,
+          payload: { orchestrator: 'skill-relay', base_repo: baseRepo },
+        }],
+      };
+    }
+    return { rows: [] };
+  });
+  return pool;
+}
+
+describe('B_probe — pr_url=null 时用 gh pr list 探查已有 PR', () => {
+  it('探查到 MERGED PR（分支含 short）→ 标 completed/done，不重点火', async () => {
+    const pool = makeProbePool();
+    const updates = [];
+    pool.query.mockImplementation(async (sql, params) => {
+      if (/DISTINCT ON \(initiative_id\)/.test(sql)) {
+        return { rows: [{ initiative_id: TASK_ID, phase: 'planning', attempts: '2', deadline_at: new Date(Date.now() + 3600e3).toISOString(), pr_url: null, orchestrator_host: 'skill-relay-session' }] };
+      }
+      if (/FROM tasks/.test(sql)) {
+        return { rows: [{ id: TASK_ID, status: 'in_progress', title: 't', pr_url: null, payload: { orchestrator: 'skill-relay', base_repo: 'org/repo' } }] };
+      }
+      if (/UPDATE/.test(sql)) { updates.push(sql); return { rows: [] }; }
+      return { rows: [] };
+    });
+    const foundPrUrl = `https://github.com/org/repo/pull/99`;
+    const execFn = vi.fn().mockImplementation((cmd) => {
+      if (/docker ps/.test(cmd)) return '';
+      if (/gh pr list/.test(cmd)) {
+        return JSON.stringify([
+          { url: foundPrUrl, state: 'MERGED', headRefName: `sprints/0708-relay-${SHORT}` },
+        ]);
+      }
+      return '';
+    });
+    const spawnFn = vi.fn();
+    const out = await resumeStalledRelayRuns({ pool, execFn, spawnFn });
+
+    expect(spawnFn).not.toHaveBeenCalled();
+    expect(out.mergedPr).toBe(1);
+    const ghCall = execFn.mock.calls.find(c => /gh pr list/.test(c[0]));
+    expect(ghCall).toBeTruthy();
+    expect(ghCall[0]).toContain('org/repo');
+    expect(updates.some(s => /initiative_runs/.test(s) && /'done'/.test(s))).toBe(true);
+    expect(updates.some(s => /UPDATE tasks/.test(s) && /'completed'/.test(s))).toBe(true);
+  });
+
+  it('探查到 OPEN PR（分支含 short）→ 回写 pr_url，跳过重点火', async () => {
+    const updates = [];
+    const pool = { query: vi.fn() };
+    pool.query.mockImplementation(async (sql, params) => {
+      if (/DISTINCT ON \(initiative_id\)/.test(sql)) {
+        return { rows: [{ initiative_id: TASK_ID, phase: 'planning', attempts: '2', deadline_at: new Date(Date.now() + 3600e3).toISOString(), pr_url: null, orchestrator_host: 'skill-relay-session' }] };
+      }
+      if (/FROM tasks/.test(sql)) {
+        return { rows: [{ id: TASK_ID, status: 'in_progress', title: 't', pr_url: null, payload: { orchestrator: 'skill-relay', base_repo: 'org/repo' } }] };
+      }
+      if (/UPDATE/.test(sql)) { updates.push(sql); return { rows: [] }; }
+      return { rows: [] };
+    });
+    const openPrUrl = `https://github.com/org/repo/pull/42`;
+    const execFn = vi.fn().mockImplementation((cmd) => {
+      if (/docker ps/.test(cmd)) return '';
+      if (/gh pr list/.test(cmd)) {
+        return JSON.stringify([
+          { url: openPrUrl, state: 'OPEN', headRefName: `sprints/0708-relay-${SHORT}` },
+        ]);
+      }
+      return '';
+    });
+    const spawnFn = vi.fn();
+    const out = await resumeStalledRelayRuns({ pool, execFn, spawnFn });
+
+    expect(spawnFn).not.toHaveBeenCalled();
+    expect(out.openPrFound).toBe(1);
+    expect(updates.some(s => /initiative_runs/.test(s) && /pr_url/.test(s))).toBe(true);
+    expect(updates.some(s => /UPDATE tasks/.test(s) && /pr_url/.test(s))).toBe(true);
+  });
+
+  it('探查无匹配分支 → 正常重点火', async () => {
+    const pool = { query: vi.fn() };
+    pool.query.mockImplementation(async (sql) => {
+      if (/DISTINCT ON \(initiative_id\)/.test(sql)) {
+        return { rows: [{ initiative_id: TASK_ID, phase: 'planning', attempts: '2', deadline_at: new Date(Date.now() + 3600e3).toISOString(), pr_url: null, orchestrator_host: 'skill-relay-session' }] };
+      }
+      if (/FROM tasks/.test(sql)) {
+        return { rows: [{ id: TASK_ID, status: 'in_progress', title: 't', pr_url: null, payload: { orchestrator: 'skill-relay', base_repo: 'org/repo' } }] };
+      }
+      return { rows: [] };
+    });
+    const execFn = vi.fn().mockImplementation((cmd) => {
+      if (/docker ps/.test(cmd)) return '';
+      // PR 存在但分支不含 SHORT（不同任务的 PR）
+      if (/gh pr list/.test(cmd)) {
+        return JSON.stringify([
+          { url: 'https://github.com/org/repo/pull/1', state: 'OPEN', headRefName: 'sprints/0708-relay-xxxxxxxx' },
+        ]);
+      }
+      return '';
+    });
+    const spawnFn = vi.fn().mockResolvedValue({ ok: true, containerId: 'x' });
+    const out = await resumeStalledRelayRuns({ pool, execFn, spawnFn });
+
+    expect(spawnFn).toHaveBeenCalledOnce();
+    expect(out.resumed).toBe(1);
+  });
+
+  it('gh pr list 抛错 → 保守跳过，不重点火', async () => {
+    const pool = { query: vi.fn() };
+    pool.query.mockImplementation(async (sql) => {
+      if (/DISTINCT ON \(initiative_id\)/.test(sql)) {
+        return { rows: [{ initiative_id: TASK_ID, phase: 'planning', attempts: '2', deadline_at: new Date(Date.now() + 3600e3).toISOString(), pr_url: null, orchestrator_host: 'skill-relay-session' }] };
+      }
+      if (/FROM tasks/.test(sql)) {
+        return { rows: [{ id: TASK_ID, status: 'in_progress', title: 't', pr_url: null, payload: { orchestrator: 'skill-relay', base_repo: 'org/repo' } }] };
+      }
+      return { rows: [] };
+    });
+    const execFn = vi.fn().mockImplementation((cmd) => {
+      if (/docker ps/.test(cmd)) return '';
+      if (/gh pr list/.test(cmd)) throw new Error('gh: not found');
+      return '';
+    });
+    const spawnFn = vi.fn();
+    const out = await resumeStalledRelayRuns({ pool, execFn, spawnFn });
+
+    expect(spawnFn).not.toHaveBeenCalled();
+    expect(out.resumed).toBe(0);
   });
 });
 
