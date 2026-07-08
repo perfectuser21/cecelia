@@ -169,7 +169,7 @@ router.post(
 
       // 建 tasks 行
       await pool.query(
-        `INSERT INTO tasks (id, type, status, title, metadata, created_at, updated_at)
+        `INSERT INTO tasks (id, task_type, status, title, metadata, created_at, updated_at)
          VALUES ($1, 'skill_eval', 'pending', $2, $3, now(), now())`,
         [
           taskId,
