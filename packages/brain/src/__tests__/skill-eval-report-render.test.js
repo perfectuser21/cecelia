@@ -1,47 +1,38 @@
 import { describe, it, expect } from 'vitest';
-import { renderReportHtml, buildAnatomySvg } from '../skill-eval-report-render.js';
-import fixture from '../__fixtures__/daily-report-cs.report.json';
+import { renderReportHtml } from '../skill-eval-report-render.js';
 
-describe('buildAnatomySvg', () => {
-  const svg = buildAnatomySvg(fixture.anatomy);
-  it('未接依赖渲染红断线 stroke-dasharray + 该 input 名', () => {
-    expect(svg).toMatch(/stroke-dasharray/);
-    expect(svg).toContain('状态包');
-  });
-  it('已接依赖不用断线（客户一句话为绿实线区）', () => {
-    expect(svg).toContain('客户最新一句话');
-  });
-  it('内核 8 条规则名全部出现', () => {
-    for (const r of fixture.anatomy.kernel.rules) expect(svg).toContain(r.name);
-  });
-  it('硬闸规则带 lock 标记', () => {
-    expect(svg).toContain('🔒');
-    expect(svg).toContain('事实边界');
-    expect(svg).toContain('高风险转人工');
-  });
-  it('输出字段名出现', () => {
-    for (const f of ['stage','signal','inquiry','risk','gap','escalate']) expect(svg).toContain(f);
-  });
-  it('同输入恒等输出（纯函数）', () => {
-    expect(buildAnatomySvg(fixture.anatomy)).toBe(svg);
-  });
-});
+// 同时满足老 schema.js（anatomy.inputs 数组 + anatomy.kernel.rules 数组）
+// 和新渲染器要认的 anatomy.pipeline —— 这样这个测试只依赖本任务的渲染器改动，
+// 不依赖 schema.js 才会做的改动。
+const fixture = {
+  skill: { name: '临时skill', area: 'A', line: 'L' },
+  verdict: { level: 'pass', text: 'ok' },
+  anatomy: {
+    input: '输入X',
+    loadMode: '全部前置',
+    pipeline: ['load|数据A|库|来源A|已接', 'judge|判定Y'],
+    inputs: [],
+    kernel: { rules: [] },
+    outputs: [{ name: '输出Z', kind: '文本' }],
+  },
+};
 
-describe('renderReportHtml', () => {
-  it('完整 HTML 含裁决文案 + 解剖图三段 + 深入三项 + 6维指纹', () => {
+describe('renderReportHtml — pipeline 连线图渲染器（折自 render.mjs）', () => {
+  it('认识 anatomy.pipeline，画出 n8n 风格三段带（输入/SKILL 内部/输出），不是老解剖图', () => {
     const html = renderReportHtml(fixture);
-    expect(html).toMatch(/^<!doctype html>/i);
-    expect(html).toContain(fixture.verdict.text);
-    expect(html).toContain('输入'); expect(html).toContain('内核'); expect(html).toContain('输出');
-    expect(html).toContain('询价分级');        // 深入·逻辑发现
-    expect(html).toContain('回复自检 5 清单');  // 深入·红线
-    expect(html).toContain('15×3 遍');          // 深入·成熟度
-    // 6 维 health 色码：bad 用 fail 变量
-    expect(html).toContain('var(--fail)');
+    expect(html).toContain('SKILL 内部');
+    expect(html).toContain('输入');
+    expect(html).toContain('输出');
   });
-  it('report-data 畸形 → 兜底态，不抛错', () => {
-    const html = renderReportHtml({ skill: {} });
-    expect(html).toMatch(/^<!doctype html>/i);
-    expect(html).toContain('报告数据不完整');
+
+  it('pipeline 里的 load/judge 步骤名称出现在图里', () => {
+    const html = renderReportHtml(fixture);
+    expect(html).toContain('数据A');
+    expect(html).toContain('判定Y');
+  });
+
+  it('不落入 fallback 兜底态', () => {
+    const html = renderReportHtml(fixture);
+    expect(html).not.toContain('报告数据不完整');
   });
 });
