@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 const { mockPool } = vi.hoisted(() => ({ mockPool: { query: vi.fn() } }));
-vi.mock('../db.js', () => ({ default: mockPool }));
+vi.mock('../../src/db.js', () => ({ default: mockPool }));
 
 import { sanitizeJsonString, extractReportJson, claimPendingTask } from '../skill-eval-worker.js';
 
@@ -100,5 +100,16 @@ describe('claimPendingTask — 原子取任务，消除并发竞态', () => {
     expect(second).not.toBeNull();
     expect(first.task_id).not.toBe(second.task_id);
     expect(new Set([first.task_id, second.task_id])).toEqual(new Set(['task-a', 'task-b']));
+
+    // 加固断言：不仅验证互斥结果，还验证调用方确实只发了「单条原子 UPDATE...RETURNING 语句」
+    // ——每次 claimPendingTask() 调用各产生一次 query（不是两步式 SELECT+UPDATE）；
+    // 若有人把实现悄悄改回两步式，这里的调用次数/SQL 内容断言会先失败。
+    expect(mockPool.query).toHaveBeenCalledTimes(2);
+    for (const call of mockPool.query.mock.calls) {
+      const sql = call[0];
+      expect(sql).toMatch(/UPDATE skill_evals/);
+      expect(sql).toMatch(/FOR UPDATE SKIP LOCKED/);
+      expect(sql).toMatch(/RETURNING task_id::text, staging_path/);
+    }
   });
 });

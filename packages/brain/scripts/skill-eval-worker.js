@@ -175,6 +175,8 @@ async function postComplete(taskId, reportData) {
  * 原子取一条 pending 任务并标记为 running。
  * SELECT 子查询 + FOR UPDATE SKIP LOCKED 保证并发 worker 之间互相跳过对方正在锁的行，
  * 选取和状态迁移在同一条语句内完成，消除"先 SELECT 再 UPDATE"两步式的竞态窗口。
+ * 标记 running 也满足 checkSlotAvailable 的槽位统计口径：routes/eval.js 的背压检查
+ * 按 status='running' 数槽位，worker 取到任务后必须先占位，否则背压计数会漏掉正在处理的任务。
  * @returns {Promise<{task_id: string, staging_path: string} | null>}
  */
 export async function claimPendingTask() {
