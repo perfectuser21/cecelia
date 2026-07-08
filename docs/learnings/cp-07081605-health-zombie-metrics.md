@@ -9,3 +9,4 @@ Wave-2 把 executeTick 换成 runScheduler 时，统计写入（tick_execution_s
 - [ ] 架构迁移（换主循环/换调度器）时必须 grep 旧路径体内全部副作用（统计/启动/巡检），逐个迁移或显式声明放弃
 - [ ] 观测指标要配"新鲜度哨兵"：health 端点对 updated_at 超过 N 天的统计字段标 stale，而不是原样透传
 - [ ] 看板显示的每个字段，问一句"写入方还活着吗"——僵尸指标比没有指标更危险
+- [ ] smoke 的 SKIP 分支不得输出 PASS——SKIP 恒真=测试假活，要么真跑要么显式退役
