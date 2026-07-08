@@ -541,12 +541,15 @@ describe('8. 雷9：codex trust 预写（config.toml [projects.] 幂等预写）
 });
 
 /**
- * 雷10：headed 模式 tmux 起 codex TUI 时，team2 config.toml 的 approval="never" 全局值
- * 交互 TUI 不吃（和无头 codex exec 语义不同）——每类命令首次执行都弹批准框，卡死零人为
- * 交互。修法：tmux 命令行显式传 -a never（--ask-for-approval never，语义同无头 exec 的
- * approval_policy=never）+ -s workspace-write（--sandbox，保留写沙箱保护，不裸奔）。
+ * 雷10→雷12（主理人 2026-07-08 改判）：headed 模式 tmux 起 codex TUI 时，
+ * 原 -a never -s workspace-write 压不住 GitHub MCP 插件建分支的批准框（MCP 工具批准
+ * 独立于 -a never 的另一层）。逐个预置 permission 是打地鼠——改用整体 bypass：
+ * --dangerously-bypass-approvals-and-sandbox（codex 版 bypass permissions，一个 flag
+ * 跳过 trust 确认 + shell 命令批准 + GitHub MCP 工具批准），与无头 docker 里 claude 的
+ * --dangerously-skip-permissions 对等——worktree 隔离（cp 分支）+ 有头可 esc 打断，
+ * 是"externally sandboxed 受控环境"，适用场景成立。
  */
-describe('9. 雷10：headed codex TUI 批准框 → CLI flag 显式免交互', () => {
+describe('9. 雷12：headed codex TUI 批准框（含 GitHub MCP）→ 整体 bypass flag', () => {
   function makeNoSshDeps(overrides = {}) {
     return {
       pool: { query: vi.fn().mockResolvedValue({ rows: [] }) },
@@ -562,7 +565,7 @@ describe('9. 雷10：headed codex TUI 批准框 → CLI flag 显式免交互', (
     };
   }
 
-  it('tmux new-session 命令含 codex -a never -s workspace-write', async () => {
+  it('tmux new-session 命令含 codex --dangerously-bypass-approvals-and-sandbox（不再含 -a never）', async () => {
     const calls = [];
     const execFn = vi.fn((cmd, opts) => { calls.push({ cmd, opts }); return ''; });
     const deps = makeNoSshDeps({ execFn });
@@ -572,6 +575,109 @@ describe('9. 雷10：headed codex TUI 批准框 → CLI flag 显式免交互', (
 
     const tmuxCall = calls.find((c) => /tmux new-session/.test(c.cmd));
     expect(tmuxCall, 'tmux new-session 命令必须出现').toBeTruthy();
-    expect(tmuxCall.cmd).toContain('codex -a never -s workspace-write');
+    expect(tmuxCall.cmd).toContain('codex --dangerously-bypass-approvals-and-sandbox');
+    expect(tmuxCall.cmd).not.toMatch(/-a never/);
+    expect(tmuxCall.cmd).not.toMatch(/-s workspace-write/);
+  });
+});
+
+/**
+ * 雷11：Brain 重启后 startup-sync 误把 skill-relay 当 LangGraph requeue（executor.js
+ * 已在另一测试文件 executor-startup-sync.test.js 覆盖），dispatcher 重新 claim 后再次调
+ * spawnSkillRelaySession（headed 分支）——若旧 tmux session 仍存活（R5 首航实证：Brain
+ * 重启但宿主 tmux 未死），会撞名 `tmux new-session` 报错，第二次 spawn 失败标 task=failed，
+ * 而第一次的真 session 还活着，无人知道。对齐无头 docker 分支既有的
+ * `docker ps -q --filter name=cecelia-relay-<short>` 去重守卫（同一函数内 headless
+ * 分支已有），headed 分支必须补一条 `tmux has-session` 存活守卫：命中（exit 0）→
+ * 不重复 spawn，返回 deferred。
+ */
+describe('10. 雷11：headed tmux 去重守卫（防 Brain 重启后双 spawn 撞名）', () => {
+  function makeNoSshDeps(overrides = {}) {
+    return {
+      pool: { query: vi.fn().mockResolvedValue({ rows: [] }) },
+      spawnFn: vi.fn().mockResolvedValue({ containerId: 'should-not-be-called' }),
+      sshSpawnFn: undefined,
+      loadSkill: vi.fn().mockReturnValue('SKILL_CONTENT_MARKER'),
+      ensureWt: vi.fn().mockResolvedValue('/tmp/wt/task-aaaabbbb'),
+      resolveAccountFn: vi.fn().mockResolvedValue(undefined),
+      tokenFn: vi.fn().mockResolvedValue('gh-token'),
+      now: () => new Date('2026-07-07T12:00:00Z'),
+      execFn: vi.fn().mockReturnValue(''),
+      ...overrides,
+    };
+  }
+
+  it('tmux has-session 存活（stdout=TMUX_ALIVE）→ 不重复 spawn，返回 deferred，不写 prompt/不起新 tmux', async () => {
+    const calls = [];
+    const execFn = vi.fn((cmd) => {
+      calls.push(cmd);
+      if (/tmux has-session -t codex-relay-aaaabbbb/.test(cmd)) {
+        return 'TMUX_ALIVE'; // 远端 shell && / || 已把 exit code 转成 stdout 字符串
+      }
+      return '';
+    });
+    const deps = makeNoSshDeps({ execFn });
+
+    const r = await spawnSkillRelaySession(HEADED_TASK, deps);
+
+    expect(r.ok).toBe(false);
+    expect(r.deferred).toBe(true);
+    expect(r.reason).toBe('live_tmux_guard');
+
+    // 存活守卫命中后不应再起新 tmux session，也不应写 prompt 文件
+    expect(calls.some((c) => /tmux new-session/.test(c))).toBe(false);
+    expect(calls.some((c) => /mkdir -p \/tmp\/cecelia-host-prompts/.test(c))).toBe(false);
+    // 不应调用 ensureWt（守卫在建 worktree 之前拦截，省资源）
+    expect(deps.ensureWt).not.toHaveBeenCalled();
+  });
+
+  it('tmux has-session 未存活（stdout=TMUX_DEAD）→ 正常继续 spawn', async () => {
+    const calls = [];
+    const execFn = vi.fn((cmd) => {
+      calls.push(cmd);
+      if (/tmux has-session -t codex-relay-aaaabbbb/.test(cmd)) {
+        return 'TMUX_DEAD';
+      }
+      return '';
+    });
+    const deps = makeNoSshDeps({ execFn });
+
+    const r = await spawnSkillRelaySession(HEADED_TASK, deps);
+
+    expect(r.ok).toBe(true);
+    expect(calls.some((c) => /tmux new-session/.test(c))).toBe(true);
+  });
+
+  it('tmux 存活检查 ssh 本身抛错（连接失败）→ fail-open，正常继续 spawn', async () => {
+    const calls = [];
+    const execFn = vi.fn((cmd) => {
+      calls.push(cmd);
+      if (/tmux has-session -t codex-relay-aaaabbbb/.test(cmd)) {
+        throw new Error('ssh: connect to host localhost port 22: Connection refused');
+      }
+      return '';
+    });
+    const deps = makeNoSshDeps({ execFn });
+
+    const r = await spawnSkillRelaySession(HEADED_TASK, deps);
+
+    expect(r.ok).toBe(true);
+    expect(calls.some((c) => /tmux new-session/.test(c))).toBe(true);
+  });
+
+  it('去重守卫命中时不写 initiative_runs INSERT（未真正 spawn，不产生新 run 行）', async () => {
+    const execFn = vi.fn((cmd) => {
+      if (/tmux has-session -t codex-relay-aaaabbbb/.test(cmd)) return 'TMUX_ALIVE';
+      return '';
+    });
+    const poolQuery = vi.fn().mockResolvedValue({ rows: [] });
+    const deps = makeNoSshDeps({ execFn, pool: { query: poolQuery } });
+
+    await spawnSkillRelaySession(HEADED_TASK, deps);
+
+    const insertCall = poolQuery.mock.calls.find(
+      ([sql]) => /INSERT INTO initiative_runs/.test(sql)
+    );
+    expect(insertCall).toBeFalsy();
   });
 });
