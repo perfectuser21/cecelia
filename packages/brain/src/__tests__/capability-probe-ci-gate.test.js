@@ -36,4 +36,16 @@ describe('capability-probe CI 门', () => {
 
     expect(getProbeStatus().running).toBe(false);
   });
+
+  // real-env-smoke 的 brain 跑在 docker 容器里（ci.yml `docker run -e NODE_ENV=test`），
+  // 容器内没有 CI 变量、只有 NODE_ENV=test，门条件必须也认这个信号，否则 probe 照跑。
+  // 注意：vitest 进程本身 NODE_ENV 就是 test，此用例其实一直被"环境本身就是 test"兜底，
+  // 但仍显式 stub 以固化契约，防止将来 vitest 配置变化导致门失效而无感知。
+  it('NODE_ENV=test 时 startProbeLoop() 不启动定时器，getProbeStatus().running 为 false', () => {
+    vi.stubEnv('NODE_ENV', 'test');
+
+    startProbeLoop();
+
+    expect(getProbeStatus().running).toBe(false);
+  });
 });

@@ -929,9 +929,13 @@ async function runProbeCycle() {
  * Start periodic probe cycle.
  */
 export function startProbeLoop() {
-  // CI 干净沙箱跑自驱探针=噪音+Auto-Fix 任务挤占派发，只在真机跑；GHA 默认 CI=true
-  if (process.env.CI === 'true') {
-    console.log('[Probe] CI environment detected, skipping capability probe loop');
+  // CI 干净沙箱跑自驱探针=噪音+Auto-Fix 任务挤占派发，只在真机跑；GHA 默认 CI=true。
+  // real-env-smoke 的 brain 是跑在 docker 容器里的（.github/workflows/ci.yml docker run
+  // -e NODE_ENV=test），容器内不带 CI 变量，只有 NODE_ENV=test，所以门条件必须把它也覆盖，
+  // 否则容器里的 probe 照跑，PROBE_FAIL_EVOLUTION 等 Auto-Fix 任务继续挤占派发。
+  // 生产 docker-compose.yml 的 node-brain 服务未设置 NODE_ENV（非 test/CI），不受影响。
+  if (process.env.CI === 'true' || process.env.NODE_ENV === 'test') {
+    console.log('[Probe] CI/test environment detected, skipping capability probe loop');
     return;
   }
 
