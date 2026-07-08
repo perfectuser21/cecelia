@@ -44,3 +44,4 @@ codex-headed-dispatch-smoke.sh
 staging-unknown-line-smoke.sh
 skill-eval-smoke.sh
 staging-e2e-endpoint-smoke.sh
+skill-eval-report-smoke.sh
