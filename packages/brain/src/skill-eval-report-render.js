@@ -6,10 +6,7 @@ const esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, (c) => ({ '&': 
 const trunc = (s, n) => { const str = String(s == null ? '' : s); return str.length > n ? str.slice(0, n - 1) + '…' : str; };
 // 取第一段（遇到分隔符就断），再兜底截断——名字尽量短、少出现「…」
 const shortName = (s) => { const seg = String(s == null ? '' : s).split(/[／/（(【、,，·|｜:：\s]/)[0].trim() || String(s == null ? '' : s); return trunc(seg, 6); };
-const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
-const HEALTH_COLOR = { ok: 'var(--pass)', warn: 'var(--warn)', bad: 'var(--fail)', neutral: 'var(--line)' };
 const VERDICT_LABEL = { pass: '可以用', partial: '改了能用', fail: '还不能用' };
-const SEV_LABEL = { high: '要紧', mid: '次要', low: '小事' };
 
 // 类型元数据：图标 + 颜色（左右同类型同色）。图标用 currentColor 描边。
 const ICON = {
@@ -24,31 +21,9 @@ const ICON = {
   修改动作: '<path d="M10.5 2.5 l3 3 l-8 8 h-3 v-3 z" fill="none"/><line x1="9" y1="4" x2="12" y2="7"/>',
   输入: '<circle cx="8" cy="8" r="5.5" fill="none"/>',
 };
-// 类型只靠图标形状区分，不用颜色（避免彩虹）。颜色只留红=未接。
-const svgIcon = (kind) => `<svg class="ticon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round" stroke-linecap="round">${ICON[kind] || ICON['输入']}</svg>`;
-
-// 按类型归堆
-function groupByKind(items) {
-  const m = new Map();
-  for (const it of items) { const k = it.kind || '输入'; if (!m.has(k)) m.set(k, []); m.get(k).push(it); }
-  return [...m.entries()];
-}
-function typeGroup([kind, items]) {
-  const anyBad = items.some((i) => i.connected === false);
-  const tiles = items.map((i) => {
-    const bad = i.connected === false;
-    return `<span class="titem${bad ? ' bad' : ''}">${esc(trunc((i.name || '').split(/[／/（(【、,，·|｜:：\s]/)[0], 6))}</span>`;
-  }).join('');
-  const flag = anyBad ? '<span class="tflag">未接</span>' : '';
-  return `<div class="tgroup${anyBad ? ' bad' : ''}">
-    <div class="tghead">${svgIcon(kind)}<span class="tgname">${esc(kind)}</span><span class="tgn">${items.length} 个</span>${flag}</div>
-    <div class="tgitems">${tiles}</div>
-  </div>`;
-}
-
 // 解析 pipeline：兼容新老 schema，产出统一的 steps（load/judge/gate）
 function parsePipeline(anatomy) {
-  const { inputs = [], kernel = {}, outputs = [] } = anatomy || {};
+  const { inputs = [], kernel = {} } = anatomy || {};
   if (anatomy.pipeline && anatomy.pipeline.length) {
     return anatomy.pipeline.map((s) => {
       const p = String(s).split('|').map((x) => x.trim());
