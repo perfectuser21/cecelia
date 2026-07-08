@@ -48,3 +48,4 @@ staging-e2e-endpoint-smoke.sh
 skill-eval-report-smoke.sh
 skill-eval-formb-smoke.sh
 warroom-line-command-smoke.sh
+packages/brain/scripts/smoke/compute-ssh-reachability-smoke.sh
