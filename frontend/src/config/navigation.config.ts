@@ -14,6 +14,7 @@ import {
   Users,
   KeyRound,
   LayoutGrid,
+  ClipboardCheck,
 } from 'lucide-react';
 
 // ============ 类型定义 ============
@@ -65,6 +66,7 @@ export const autopilotPageComponents: Record<string, () => Promise<{ default: Co
   'AiEmployeeDetailPage': () => import('../pages/AiEmployeeDetailPage'),
   'AiAbilityDetailPage': () => import('../pages/AiAbilityDetailPage'),
   'AccountsList': () => import('../pages/accounts/AccountsList'),
+  'SkillEvalPage': () => import('../pages/SkillEvalPage'),
   // FeatureDashboard and CommandCenter moved to Core features/business
 };
 
@@ -118,6 +120,18 @@ export const autopilotNavGroups: NavGroup[] = [
         component: 'AccountsList'
       },
       // 管理员设置已迁移到 Core: core.zenjoymedia.media
+    ]
+  },
+  {
+    title: '内部工具',
+    items: [
+      {
+        path: '/skill-eval',
+        icon: ClipboardCheck,
+        label: 'Skill 评估',
+        featureKey: 'skill-eval',
+        component: 'SkillEvalPage',
+      },
     ]
   }
 ];

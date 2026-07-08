@@ -136,6 +136,11 @@ export default defineConfig({
         target: 'http://localhost:5221',
         changeOrigin: true,
       },
+      // Skill eval API → Brain direct
+      '/api/skill-eval': {
+        target: 'http://localhost:5221',
+        changeOrigin: true,
+      },
       // Other APIs
       '/api': {
         target: 'http://localhost:3000',
