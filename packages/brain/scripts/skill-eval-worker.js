@@ -127,6 +127,8 @@ function runClaudeEval(skillDir) {
 
     const child = spawn(CLAUDE_BIN, ['-p', prompt, '--model', 'sonnet', '--output-format', 'json'], {
       env: { ...process.env, CLAUDE_CONFIG_DIR },
+      // pm2/headless 环境没有 tty stdin，不传 ignore 则 claude 等 3s 后退出 143
+      stdio: ['ignore', 'pipe', 'pipe'],
     });
 
     let stdout = '';
