@@ -119,11 +119,11 @@ describe('resumeStalledRelayRuns', () => {
     expect(r.mergedPr).toBe(1);
   });
 
-  it('容器消失 + pr_url 存在 + PR OPEN → 正常重点火流程', async () => {
+  it('容器消失 + pr_url 存在 + PR OPEN → 跳过不重点火（在途 PR 等 CI/merge）', async () => {
     const deps = makeDeps({ prUrl: PR_URL, prState: 'OPEN' });
     const r = await resumeStalledRelayRuns(deps);
-    expect(deps.spawnFn).toHaveBeenCalledOnce();
-    expect(r.resumed).toBe(1);
+    expect(deps.spawnFn).not.toHaveBeenCalled();
+    expect(r.resumed).toBe(0);
     expect(r.mergedPr).toBe(0);
   });
 

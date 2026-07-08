@@ -22,11 +22,17 @@ const BASE_REPO = 'https://github.com/org/repo.git';
 const OPEN_PR = { headRefName: `cp-07081025-ws-${SHORT}`, url: 'https://github.com/org/repo/pull/7', state: 'OPEN' };
 const MERGED_PR = { headRefName: `cp-07080901-${SHORT}`, url: 'https://github.com/org/repo/pull/6', state: 'MERGED' };
 
-function makeDeps({ baseRepo = BASE_REPO, ghList = null, ghListThrows = false } = {}) {
+function makeDeps({
+  baseRepo = BASE_REPO,
+  ghList = null,
+  ghListThrows = false,
+  runPrUrl = null,     // 第二轮回归：模拟 DB 里 run.pr_url 已非空（第一轮已发现并回写）
+  prViewState = null,  // 配合 runPrUrl：execFn 对 `gh pr view` 的返回 state
+} = {}) {
   const pool = { query: vi.fn() };
   pool.query.mockImplementation(async (sql) => {
     if (/DISTINCT ON \(initiative_id\)/.test(sql)) {
-      return { rows: [{ initiative_id: TASK_ID, phase: 'planning', attempts: '2', deadline_at: new Date(Date.now() + 3600e3).toISOString(), pr_url: null, orchestrator_host: 'skill-relay-session' }] };
+      return { rows: [{ initiative_id: TASK_ID, phase: 'planning', attempts: '2', deadline_at: new Date(Date.now() + 3600e3).toISOString(), pr_url: runPrUrl, orchestrator_host: 'skill-relay-session' }] };
     }
     if (/FROM tasks/.test(sql)) {
       return { rows: [{ id: TASK_ID, status: 'in_progress', title: 't', pr_url: null, payload: { orchestrator: 'skill-relay', base_repo: baseRepo } }] };
@@ -35,6 +41,7 @@ function makeDeps({ baseRepo = BASE_REPO, ghList = null, ghListThrows = false } 
   });
   const execFn = vi.fn().mockImplementation((cmd) => {
     if (/docker ps/.test(cmd)) return ''; // 容器已消失
+    if (/gh pr view/.test(cmd) && prViewState) return JSON.stringify({ state: prViewState });
     if (/gh pr list/.test(cmd)) {
       if (ghListThrows) throw new Error('gh boom');
       return JSON.stringify(ghList ?? []);
@@ -83,6 +90,16 @@ describe('watchdog PR 发现护栏', () => {
     expect(deps.execFn.mock.calls.every((c) => !/gh pr list/.test(c[0]))).toBe(true);
     expect(deps.spawnFn).toHaveBeenCalledOnce();
     expect(r.resumed).toBe(1);
+  });
+
+  it('跨轮回归：run.pr_url 第二轮已非空（第一轮已回写）+ PR 仍 OPEN → 不重点火（终审 Critical 修复）', async () => {
+    const deps = makeDeps({ runPrUrl: 'https://github.com/org/repo/pull/7', prViewState: 'OPEN' });
+    const r = await resumeStalledRelayRuns(deps);
+    expect(deps.spawnFn).not.toHaveBeenCalled();
+    expect(r.resumed).toBe(0);
+    // 走的是既有 effectivePrUrl 护栏（gh pr view），不应再落到 gh pr list 反查分支
+    const ghCall = deps.execFn.mock.calls.find((c) => /gh pr view/.test(c[0]));
+    expect(ghCall).toBeTruthy();
   });
 
   it('gh pr list 抛错 → 保守跳过：不重点火、不标 failed', async () => {

@@ -41,7 +41,8 @@ export function _parseBaseRepo(baseRepo) {
 export function _discoverPrFromGithub(task, short, execFn) {
   const repo = _parseBaseRepo(task.payload?.base_repo);
   if (!repo) return null;
-  const raw = execFn(`gh pr list --repo "${repo}" --state all --limit 50 --json headRefName,url,state`);
+  // limit 100（非 50）：高流量 repo 短时间内 PR 数多，窗口太小会把目标 PR 挤出结果
+  const raw = execFn(`gh pr list --repo "${repo}" --state all --limit 100 --json headRefName,url,state`);
   const prs = JSON.parse(raw);
   if (!Array.isArray(prs)) return null;
   const matches = prs.filter((p) => typeof p?.headRefName === 'string' && p.headRefName.includes(short));
@@ -162,6 +163,12 @@ export async function resumeStalledRelayRuns(deps = {}) {
             console.log(`[relay-watchdog] PR 已 MERGED → 标 completed initiative=${run.initiative_id} pr=${effectivePrUrl}`);
             continue;
           }
+          if (prState === 'OPEN') {
+            // 在途 PR 等 CI/merge，不重点火（跨轮回归：避免第二轮重复点火出重复 PR）
+            console.log(`[relay-watchdog] PR 仍 OPEN，等 CI/merge → 跳过重点火 initiative=${run.initiative_id} pr=${effectivePrUrl}`);
+            continue;
+          }
+          // CLOSED（工作被否决）→ 落穿走原逻辑，允许重跑
         } catch {
           // gh 不可用或 PR 查询失败 → 保守跳过，不盲目重点火
           console.warn(`[relay-watchdog] gh pr view 失败，initiative=${run.initiative_id} 保守跳过`);

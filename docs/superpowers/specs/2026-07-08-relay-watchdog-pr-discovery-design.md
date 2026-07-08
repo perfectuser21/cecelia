@@ -30,7 +30,7 @@ relay session（harness-controller）不回写 pr_url；watchdog 判死=容器�
 ## 安全性论证
 - 退化安全：发现失败/无命中 → 行为与今日完全一致
 - 误收敛不可能：MERGED 裁决用 gh 真值，与既有 L121-137 同一真相源
-- 误挂起有限：OPEN PR 命中后不再重点火——若该 PR 被 close 而非 merge，下轮 scan pr_url 护栏查到非 MERGED → 不收敛也不重点火（既有语义）；此为已知边界，记录于 Issue 198ba8db 阶段二
+- 误挂起有限：OPEN PR 命中后不再重点火——下轮 scan 走既有 pr_url 护栏（`gh pr view`）：MERGED → 收敛为 done；**OPEN → 本次修复已改为显式 continue 跳过重点火**（终审 Critical 修复前旧语义是落穿走重点火，导致跨轮重复点火出重复 PR）；CLOSED（工作被否决）→ 落穿走原逻辑允许重跑
 
 ## 版本
 brain patch bump（1.243.x → +1），四处同步（check-version-sync.sh）。
