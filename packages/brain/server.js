@@ -16,7 +16,6 @@ import langfuseRoutes from './src/routes/langfuse.js';
 import memoryRoutes from './src/routes/memory.js';
 import settingsRoutes from './src/routes/settings.js';
 import janitorRoutes from './src/routes/janitor.js';
-import { runJob } from './src/janitor.js';
 import profileFactsRoutes from './src/routes/profile-facts.js';
 import clusterRoutes from './src/routes/cluster.js';
 import vpsMonitorRoutes from './src/routes/vps-monitor.js';
@@ -853,19 +852,8 @@ async function onBrainListening() {
   // Auto-start cecelia-bridge if not already running
   await startCeceliaBridge();
 
-  // Janitor 自动调度：每 6h 清理 docker 容器/镜像，启动时立即跑一次清遗留容器
-  try {
-    const JANITOR_DOCKER_PRUNE_INTERVAL_MS = 6 * 60 * 60 * 1000;
-    const runDockerPrune = () =>
-      runJob(pool, 'docker-prune').catch(e =>
-        console.warn('[janitor-auto] docker-prune failed:', e.message)
-      );
-    runDockerPrune();
-    setInterval(runDockerPrune, JANITOR_DOCKER_PRUNE_INTERVAL_MS);
-    console.log('[Server] Janitor docker-prune scheduled (startup + 6h interval)');
-  } catch (e) {
-    console.warn('[Server] Janitor auto-schedule init failed (non-fatal):', e.message);
-  }
+  // Janitor docker-prune 自动调度已取消（2026-07-08 用户拍板：旧机制 + 部署自杀竞态 Issue 97cf5a41）。
+  // REGISTRY 已清空（src/janitor.js），janitor 框架保留，新 job 接入时在此补调度即可。
 
   // Sync Learning rules into learnings table (non-blocking, best-effort)
   // Ensures learning-retriever.js has data to inject into /dev task prompts

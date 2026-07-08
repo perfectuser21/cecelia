@@ -23,6 +23,7 @@ import { startHarnessWatchdogLoop, stopHarnessWatchdogLoop } from './harness-wat
 import { startRecoveryLoop, stopRecoveryLoop } from './recovery-loop.js';
 import { startPipelinePatrolLoop, stopPipelinePatrolLoop } from './pipeline-patrol-loop.js';
 import { publishCognitiveState } from './events/taskEvents.js';
+import { startProbeLoop } from './capability-probe.js';
 
 // ───── tickLog: [HH:MM:SS] 前缀 + 每 100 条打一次 summary ─────
 const { log: _tickWrite } = console;
@@ -168,6 +169,9 @@ export function startTickLoop() {
   // runHarnessInitiativePatrol（harness Planner/GAN 卡住 → 建 harness_intervention）原只挂废弃
   // executeTick → 从不运行 → 干预通道整条死代码。仿 recovery-loop / harness-watchdog-loop 接回。
   startPipelinePatrolLoop();
+
+  // Wave-2 断链修复：capability-probe 复活（模块自带 1h interval + 幂等 guard）
+  startProbeLoop();
 
   tickLog(`[tick-loop] Started (interval: ${TICK_LOOP_INTERVAL_MS}ms)`);
   return true;
