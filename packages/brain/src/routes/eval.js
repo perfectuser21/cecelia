@@ -160,30 +160,8 @@ router.post(
         return res.status(500).json({ error: 'failed to stage uploaded file' });
       }
 
-      // 6. 建 task + skill_evals 行
+      // 6. 建 skill_evals 行（task_id 是独立 UUID，不再 FK 引用 tasks 表，见 migration 321）
       const taskId = randomUUID();
-      const _slugName = (skill_name || 'unknown')
-        .toLowerCase()
-        .replace(/[^a-z0-9]+/g, '-')
-        .slice(0, 50);
-
-      // 建 tasks 行
-      await pool.query(
-        `INSERT INTO tasks (id, type, status, title, metadata, created_at, updated_at)
-         VALUES ($1, 'skill_eval', 'pending', $2, $3, now(), now())`,
-        [
-          taskId,
-          `Skill Eval: ${skill_name}`,
-          JSON.stringify({
-            skill_name: skill_name.trim(),
-            source_platform: platform || null,
-            journey_id: journey_id || null,
-            submitter: submitter || null,
-            zip_hash: zipHash,
-            staging_path: stagingPath,
-          }),
-        ]
-      );
 
       // 建 skill_evals 行
       await pool.query(
