@@ -218,7 +218,7 @@ cd packages/brain && npm version patch --no-git-tag-version && cd ../..
 ```bash
 node scripts/facts-check.mjs
 bash scripts/check-version-sync.sh
-node packages/engine/scripts/devgate/check-dod-mapping.cjs
+node packages/quality/scripts/devgate/check-dod-mapping.cjs
 ```
 Expected: 全绿;check-version-sync 若报其他文件需同步,按提示改齐后重跑。
 
