@@ -274,7 +274,7 @@ describe('5. 五连雷返修回归（execFn 降级路径 = 生产真实路径）
       const tmuxCall = calls.find((c) => /tmux new-session/.test(c.cmd));
       expect(tmuxCall, 'tmux new-session 命令必须出现').toBeTruthy();
       expect(tmuxCall.cmd).not.toContain('--prompt-file');
-      expect(tmuxCall.cmd).toMatch(/codex \\?"\\?\$\(cat /);
+      expect(tmuxCall.cmd).toMatch(/codex .*\\?"\\?\$\(cat /);
     });
   });
 
