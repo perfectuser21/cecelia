@@ -44,12 +44,21 @@ function makeMockPool(overrides = {}) {
   };
 }
 
+// 桩掉 checkComputeSshReachability 的 execFn，避免单测真实 ssh 到 Tailscale 内网 IP
+// （原因见 packages/brain/src/__tests__/selfcheck-ssh-reachability.test.js 的注入点设计）
+function mockSshExecFn() {
+  return vi.fn().mockResolvedValue({ stdout: 'ok\n', stderr: '' });
+}
+
 describe('selfcheck', () => {
+  let sshExecFn;
+
   beforeEach(() => {
     vi.stubEnv('ENV_REGION', 'us');
     vi.stubEnv('DB_HOST', 'localhost');
     vi.stubEnv('DB_PORT', '5432');
     vi.stubEnv('DB_NAME', 'cecelia');
+    sshExecFn = mockSshExecFn();
   });
 
   afterEach(() => {
@@ -58,20 +67,20 @@ describe('selfcheck', () => {
 
   it('should pass all checks with correct config', async () => {
     const pool = makeMockPool();
-    const ok = await runSelfCheck(pool, { envRegion: 'us' });
+    const ok = await runSelfCheck(pool, { envRegion: 'us', sshReachability: { execFn: sshExecFn } });
     expect(ok).toBe(true);
   });
 
   it('should fail when ENV_REGION is missing', async () => {
     vi.stubEnv('ENV_REGION', '');
     const pool = makeMockPool();
-    const ok = await runSelfCheck(pool, { envRegion: '' });
+    const ok = await runSelfCheck(pool, { envRegion: '', sshReachability: { execFn: sshExecFn } });
     expect(ok).toBe(false);
   });
 
   it('should fail when ENV_REGION is invalid', async () => {
     const pool = makeMockPool();
-    const ok = await runSelfCheck(pool, { envRegion: 'eu' });
+    const ok = await runSelfCheck(pool, { envRegion: 'eu', sshReachability: { execFn: sshExecFn } });
     expect(ok).toBe(false);
   });
 
@@ -84,7 +93,7 @@ describe('selfcheck', () => {
       return { rows: [] };
     });
 
-    const ok = await runSelfCheck(pool, { envRegion: 'us' });
+    const ok = await runSelfCheck(pool, { envRegion: 'us', sshReachability: { execFn: sshExecFn } });
     expect(ok).toBe(false);
   });
 
@@ -92,7 +101,7 @@ describe('selfcheck', () => {
     const pool = makeMockPool({
       'brain_config_region': { rows: [{ value: 'hk' }] },
     });
-    const ok = await runSelfCheck(pool, { envRegion: 'us' });
+    const ok = await runSelfCheck(pool, { envRegion: 'us', sshReachability: { execFn: sshExecFn } });
     expect(ok).toBe(false);
   });
 
@@ -104,7 +113,7 @@ describe('selfcheck', () => {
         // missing the rest
       ]},
     });
-    const ok = await runSelfCheck(pool, { envRegion: 'us' });
+    const ok = await runSelfCheck(pool, { envRegion: 'us', sshReachability: { execFn: sshExecFn } });
     expect(ok).toBe(false);
   });
 
@@ -112,7 +121,7 @@ describe('selfcheck', () => {
     const pool = makeMockPool({
       'schema_version': { rows: [{ max_ver: '003' }] },
     });
-    const ok = await runSelfCheck(pool, { envRegion: 'us' });
+    const ok = await runSelfCheck(pool, { envRegion: 'us', sshReachability: { execFn: sshExecFn } });
     expect(ok).toBe(false);
   });
 
@@ -126,7 +135,7 @@ describe('selfcheck', () => {
     const pool = makeMockPool({
       'config_fingerprint': { rows: [{ value: fp }] },
     });
-    const ok = await runSelfCheck(pool, { envRegion: 'us' });
+    const ok = await runSelfCheck(pool, { envRegion: 'us', sshReachability: { execFn: sshExecFn } });
     expect(ok).toBe(true);
   });
 
@@ -135,7 +144,7 @@ describe('selfcheck', () => {
       'config_fingerprint': { rows: [{ value: 'old_fingerprint' }] },
     });
     // Fingerprint mismatch is a warning, not a failure
-    const ok = await runSelfCheck(pool, { envRegion: 'us' });
+    const ok = await runSelfCheck(pool, { envRegion: 'us', sshReachability: { execFn: sshExecFn } });
     expect(ok).toBe(true);
   });
 
@@ -143,7 +152,7 @@ describe('selfcheck', () => {
     // Simulate: MAX(version) WHERE version ~ '^[0-9]{1,4}$' returns correct migration number
     // even when dirty entries like '20260305' exist (filtered by regex)
     const pool = makeMockPool();
-    const ok = await runSelfCheck(pool, { envRegion: 'us' });
+    const ok = await runSelfCheck(pool, { envRegion: 'us', sshReachability: { execFn: sshExecFn } });
     expect(ok).toBe(true);
   });
 
@@ -165,7 +174,7 @@ describe('selfcheck', () => {
     const pool = makeMockPool({
       'schema_version': { rows: [{ max_ver: '999' }] },
     });
-    const ok = await runSelfCheck(pool, { envRegion: 'us' });
+    const ok = await runSelfCheck(pool, { envRegion: 'us', sshReachability: { execFn: sshExecFn } });
     expect(ok).toBe(true);
   });
 
@@ -176,6 +185,7 @@ describe('selfcheck', () => {
       await runSelfCheck(pool, {
         envRegion: 'us',
         watchdogThresholds: { total_mem_mb: 16384, rss_kill_mb: 2400 },
+        sshReachability: { execFn: sshExecFn },
       });
       const infoLines = logSpy.mock.calls.flat().filter(s => typeof s === 'string' && s.includes('Watchdog RSS Sanity 通过'));
       expect(infoLines.length).toBeGreaterThan(0);
@@ -188,6 +198,7 @@ describe('selfcheck', () => {
       await runSelfCheck(pool, {
         envRegion: 'us',
         watchdogThresholds: { total_mem_mb: 256, rss_kill_mb: 89 },
+        sshReachability: { execFn: sshExecFn },
       });
       const warnLines = warnSpy.mock.calls.flat().filter(s => typeof s === 'string' && s.includes('total_mem_mb=256'));
       expect(warnLines.length).toBeGreaterThan(0);
@@ -200,6 +211,7 @@ describe('selfcheck', () => {
       await runSelfCheck(pool, {
         envRegion: 'us',
         watchdogThresholds: { total_mem_mb: 1024, rss_kill_mb: 10 },
+        sshReachability: { execFn: sshExecFn },
       });
       const warnLines = warnSpy.mock.calls.flat().filter(s => typeof s === 'string' && s.includes('rss_kill_mb=10'));
       expect(warnLines.length).toBeGreaterThan(0);
@@ -211,6 +223,7 @@ describe('selfcheck', () => {
       const ok = await runSelfCheck(pool, {
         envRegion: 'us',
         watchdogThresholds: { total_mem_mb: 128, rss_kill_mb: 5 },
+        sshReachability: { execFn: sshExecFn },
       });
       // Watchdog RSS sanity is WARN-only, must not block overall selfcheck result
       expect(ok).toBe(true);

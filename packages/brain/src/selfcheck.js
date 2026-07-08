@@ -43,6 +43,9 @@ const CORE_TABLES = [
  * @param {string} [opts.envRegion] - override ENV_REGION (for testing)
  * @param {object} [opts.watchdogThresholds] - override watchdog thresholds for testing
  *   { total_mem_mb, rss_kill_mb }
+ * @param {object} [opts.sshReachability] - injected opts passed through to
+ *   checkComputeSshReachability(opts.sshReachability)，测试用于注入 execFn 桩，
+ *   避免单测真实 ssh 到内网机器
  * @returns {Promise<boolean>} true if all checks pass
  */
 export async function runSelfCheck(pool, opts = {}) {
@@ -229,7 +232,7 @@ export async function runSelfCheck(pool, opts = {}) {
 
   // 9. Compute SSH Reachability (non-blocking WARN，同 7/8 既有模式)
   try {
-    const { ok: sshOk, unreachable } = await checkComputeSshReachability();
+    const { ok: sshOk, unreachable } = await checkComputeSshReachability(opts.sshReachability);
     if (!sshOk) {
       console.warn(`  [WARN] compute_ssh_reachability: 以下机器 ssh 不可达 — ${unreachable.map(u => `${u.id}(${u.error})`).join('; ')}`);
     } else {
