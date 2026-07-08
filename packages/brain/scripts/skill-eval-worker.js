@@ -144,6 +144,24 @@ function runClaudeEval(skillDir) {
   });
 }
 
+// ─── running 超时回收（进程崩溃后解除死锁）──────────────────────────────────
+
+const STUCK_TIMEOUT_MINUTES = parseInt(process.env.EVAL_STUCK_TIMEOUT_MINUTES || '15', 10);
+
+export async function reclaimStuckTasks() {
+  const { rowCount } = await pool.query(
+    `UPDATE skill_evals
+     SET status = 'pending', updated_at = now()
+     WHERE status = 'running'
+       AND updated_at < now() - ($1 || ' minutes')::interval`,
+    [STUCK_TIMEOUT_MINUTES]
+  );
+  if (rowCount > 0) {
+    console.log(`[skill-eval-worker] 回收 ${rowCount} 条 stuck running 任务 → pending`);
+  }
+  return rowCount ?? 0;
+}
+
 // ─── 失败/成功路径写回 ──────────────────────────────────────────────────────
 
 async function markFailed(taskId, reason) {
@@ -196,6 +214,7 @@ export async function claimPendingTask() {
 }
 
 export async function runOnce() {
+  await reclaimStuckTasks();
   const claimed = await claimPendingTask();
 
   if (!claimed) {
