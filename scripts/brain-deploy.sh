@@ -58,7 +58,7 @@ run_post_deploy_smoke() {
     local ran=0 failed=0 sf
     # 去重缓存（避免同一 smoke 在多 PR 都改过时跑多次）— 用临时文件兼容老 bash
     local seen_file
-    seen_file=$(mktemp -t post_deploy_smoke_seen.XXXXXX)
+    seen_file=$(mktemp "${TMPDIR:-/tmp}/post_deploy_smoke_seen.XXXXXX")
     # shellcheck disable=SC2064
     trap "rm -f '$seen_file'" RETURN
 
