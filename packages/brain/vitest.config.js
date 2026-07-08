@@ -6,6 +6,7 @@ export default defineConfig({
     environment: 'node',
     include: [
       'src/**/*.{test,spec}.?(c|m)[jt]s?(x)',
+      'scripts/**/*.{test,spec}.?(c|m)[jt]s?(x)',
       'tests/**/*.{test,spec}.?(c|m)[jt]s?(x)',
       '../../tests/packages/brain/**/*.{test,spec}.?(c|m)[jt]s?(x)',
       '../../tests/integration/**/*.{test,spec}.?(c|m)[jt]s?(x)',

@@ -171,22 +171,40 @@ async function postComplete(taskId, reportData) {
 
 // ─── 主流程：单次轮询一条 pending 任务 ──────────────────────────────────────
 
-export async function runOnce() {
+/**
+ * 原子取一条 pending 任务并标记为 running。
+ * SELECT 子查询 + FOR UPDATE SKIP LOCKED 保证并发 worker 之间互相跳过对方正在锁的行，
+ * 选取和状态迁移在同一条语句内完成，消除"先 SELECT 再 UPDATE"两步式的竞态窗口。
+ * 标记 running 也满足 checkSlotAvailable 的槽位统计口径：routes/eval.js 的背压检查
+ * 按 status='running' 数槽位，worker 取到任务后必须先占位，否则背压计数会漏掉正在处理的任务。
+ * @returns {Promise<{task_id: string, staging_path: string} | null>}
+ */
+export async function claimPendingTask() {
   const { rows } = await pool.query(
-    `SELECT task_id::text, staging_path FROM skill_evals WHERE status = 'pending' ORDER BY created_at ASC LIMIT 1`
+    `UPDATE skill_evals
+     SET status = 'running', updated_at = now()
+     WHERE task_id = (
+       SELECT task_id FROM skill_evals
+       WHERE status = 'pending'
+       ORDER BY created_at ASC
+       LIMIT 1
+       FOR UPDATE SKIP LOCKED
+     )
+     RETURNING task_id::text, staging_path`
   );
+  return rows[0] || null;
+}
 
-  if (!rows.length) {
+export async function runOnce() {
+  const claimed = await claimPendingTask();
+
+  if (!claimed) {
     console.log('[skill-eval-worker] 没有 pending 任务，退出');
     return null;
   }
 
-  const { task_id: taskId, staging_path: stagingPath } = rows[0];
+  const { task_id: taskId, staging_path: stagingPath } = claimed;
   console.log(`[skill-eval-worker] 取到任务 ${taskId}，staging_path=${stagingPath}`);
-
-  // 标记 running，防止并发 worker 重复取同一条（也满足 checkSlotAvailable 的槽位统计口径：
-  // routes/eval.js 的背压检查按 status='running' 数槽位，worker 取到任务后必须先占位）。
-  await pool.query(`UPDATE skill_evals SET status = 'running', updated_at = now() WHERE task_id = $1`, [taskId]);
 
   const tmpDir = path.join(os.tmpdir(), `skill-eval-worker-${randomUUID()}`);
 
