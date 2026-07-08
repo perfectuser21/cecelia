@@ -28,6 +28,7 @@ import {
   checkSlotAvailable,
   getEvalQueuePosition,
 } from '../skill-eval-validator.js';
+import { renderReportHtml } from '../skill-eval-report-render.js';
 
 const router = Router();
 
@@ -270,24 +271,47 @@ router.get('/status/:task_id', async (req, res) => {
   }
 });
 
+// ─── GET /api/skill-eval/report/:task_id ──────────────────────────────────
+
+router.get('/report/:task_id', async (req, res) => {
+  try {
+    const { task_id } = req.params;
+    const result = await pool.query(
+      `SELECT report_data FROM skill_evals WHERE task_id = $1 LIMIT 1`,
+      [task_id]
+    );
+    if (result.rows.length === 0 || !result.rows[0].report_data) {
+      return res.status(404).json({ error: '报告未就绪或任务不存在' });
+    }
+    const reportData = result.rows[0].report_data;
+    if (req.query.format === 'json') return res.json(reportData);
+    res.set('Content-Type', 'text/html; charset=utf-8');
+    return res.send(renderReportHtml(reportData));
+  } catch (err) {
+    console.error('[skill-eval] report error:', err.message);
+    return res.status(500).json({ error: `internal server error: ${err.message}` });
+  }
+});
+
 // ─── POST /api/skill-eval/complete（内部回调，发布脚本调用）──────────────────
 
 router.post('/complete', requireEvalProxyToken, async (req, res) => {
   try {
-    const { task_id, report_url } = req.body;
+    const { task_id, report_url, report_data } = req.body;
 
     if (!task_id || !report_url) {
       return res.status(400).json({ error: 'task_id and report_url required' });
     }
 
-    // 回写 skill_evals
+    // 回写 skill_evals（report_data body 传了才写，未传保留原值）
     await pool.query(
       `UPDATE skill_evals
        SET status = 'completed',
            report_url = $1,
+           report_data = COALESCE($2::jsonb, report_data),
            updated_at = now()
-       WHERE task_id = $2`,
-      [report_url, task_id]
+       WHERE task_id = $3`,
+      [report_url, report_data ? JSON.stringify(report_data) : null, task_id]
     );
 
     // 回写 tasks
