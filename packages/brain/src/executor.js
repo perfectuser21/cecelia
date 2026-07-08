@@ -33,6 +33,7 @@ import { traceStep, LAYER, STATUS, EXECUTOR_HOSTS } from './trace.js';
 import { getAccountUsage } from './account-usage.js';
 import { writeDockerCallback, resolveResourceTier, isDockerAvailable } from './docker-executor.js';
 import { loadSkillContent, assertSprintDir } from './harness-shared.js';
+import { writeInitiativeRunEvent } from './events/initiativeRunEvents.js';
 import { spawn as spawnDocker } from './spawn/index.js';
 import { REVIEW_TASK_TYPES } from './lib/review-task-types.js';
 import {
@@ -2908,7 +2909,15 @@ async function _driveHarnessInitiative(task, opts = {}) {
   // harness-controller skill，不 compile / 不 invoke 图。
   const { spawnSkillRelaySession } = await import('./harness-skill-relay.js');
   const relayDeps = { pool: dbPool, ...(opts.skillRelayDeps || {}) };
-  return await spawnSkillRelaySession(task, relayDeps);
+  const relayResult = await spawnSkillRelaySession(task, relayDeps);
+  // ws3: 记录 skill-relay dispatch 事件（non-fatal）
+  try {
+    const initiativeId = task.payload?.initiative_id || task.id;
+    await writeInitiativeRunEvent({ initiativeId, node: 'skill-relay-dispatch', status: 'done', attempt: 1 });
+  } catch (ireErr) {
+    console.warn(`[executor] writeInitiativeRunEvent failed (non-fatal): ${ireErr.message}`);
+  }
+  return relayResult;
 }
 
 /**
