@@ -102,7 +102,7 @@ router.post(
         return res.status(400).json({ error: 'no file uploaded (field name: file)' });
       }
 
-      const { skill_name, platform, journey_id, submitter } = req.body;
+      const { skill_name, platform, journey_id: _journey_id, submitter } = req.body;
 
       if (!skill_name || !skill_name.trim()) {
         return res.status(400).json({ error: 'skill_name is required' });
