@@ -20,6 +20,8 @@ import {
   Crosshair, Archive, EyeOff, Map as MapIcon, ChevronRight,
 } from 'lucide-react';
 import { BattleBanner, HandoffStream, DecisionStream } from './WarRoomPanels';
+import { AbilityProgress } from './AbilityProgress';
+import type { AdvancementItem } from './advancement-util';
 
 const ARCHIVE_LS_KEY = 'warroom:archived:v1';
 // 时间范围选项 → 后端 ?days=
@@ -172,6 +174,34 @@ export interface LineDetail {
   };
   steps: LineStep[];
   tasks: FeedTask[];
+}
+
+/** /warroom/line/:id/advancements 返回的扁平推进项（带 ability_id/ability_name） */
+export interface LineAdvancementItem extends AdvancementItem {
+  ability_id: string;
+  ability_name: string;
+}
+/** 按 ability 分组后的推进项（喂给 AbilityProgress 逐个渲染） */
+export interface AbilityAdvancementGroup {
+  ability_id: string;
+  ability_name: string;
+  items: AdvancementItem[];
+}
+
+/** 把扁平推进项按 ability_id 分组，保持后端返回顺序（已按 ability_name + priority 排序）。 */
+export function groupAdvancementsByAbility(items: LineAdvancementItem[]): AbilityAdvancementGroup[] {
+  const order: string[] = [];
+  const byId = new Map<string, AbilityAdvancementGroup>();
+  for (const it of items) {
+    let g = byId.get(it.ability_id);
+    if (!g) {
+      g = { ability_id: it.ability_id, ability_name: it.ability_name, items: [] };
+      byId.set(it.ability_id, g);
+      order.push(it.ability_id);
+    }
+    g.items.push({ id: it.id, title: it.title, status: it.status, priority: it.priority, pr_url: it.pr_url });
+  }
+  return order.map((k) => byId.get(k)!);
 }
 
 // ====================== 纯展示函数（单测覆盖）======================
@@ -925,6 +955,7 @@ function LineNavItem({ line, active, onSelect }: {
 /** 中栏 Line 视图：头部 + Roadmap + 正在跑（左右两栏，复用 FeedRow） */
 function LineView({
   detail, loading, selectedId, onSelectTask, onArchive, archivedSet,
+  advancements, advancementsError,
 }: {
   detail: LineDetail | null;
   loading: boolean;
@@ -932,6 +963,8 @@ function LineView({
   onSelectTask: (t: FeedTask) => void;
   onArchive: (id: string) => void;
   archivedSet: Set<string>;
+  advancements: AbilityAdvancementGroup[];
+  advancementsError: boolean;
 }) {
   if (loading && !detail) {
     return (
@@ -1035,6 +1068,28 @@ function LineView({
         )}
       </div>
       </div>
+
+      {/* 推进项（各 ability 完成度进度条 + 三栏） */}
+      <div className="mt-6 rounded-lg border border-slate-800/60 bg-slate-900/20 p-4">
+        <div className="flex items-center gap-2 mb-3">
+          <Activity className="w-4 h-4 text-emerald-400" />
+          <span className="text-[13px] tracking-[0.1em] uppercase text-slate-300 font-bold">推进项 · 完成度</span>
+          {advancements.length > 0 && (
+            <span className="text-[12px] text-slate-600 font-mono">{advancements.length} 个 Ability</span>
+          )}
+        </div>
+        {advancementsError ? (
+          <div className="text-[13px] text-amber-500/80 pl-6 py-2">进度加载失败</div>
+        ) : advancements.length === 0 ? (
+          <div className="text-[13px] text-slate-700 pl-6 py-2">暂无推进项</div>
+        ) : (
+          <div className="rounded border border-slate-800/60 overflow-hidden">
+            {advancements.map((a) => (
+              <AbilityProgress key={a.ability_id} abilityName={a.ability_name} items={a.items} />
+            ))}
+          </div>
+        )}
+      </div>
     </div>
   );
 }
@@ -1092,6 +1147,8 @@ export default function WarRoomPage() {
   const [selectedLineId, setSelectedLineId] = useState<string | null>(null); // null = "全部"（跨线总览）
   const [lineDetail, setLineDetail] = useState<LineDetail | null>(null);
   const [lineDetailLoading, setLineDetailLoading] = useState(false);
+  const [lineAdvancements, setLineAdvancements] = useState<AbilityAdvancementGroup[]>([]);
+  const [lineAdvancementsError, setLineAdvancementsError] = useState(false);
 
   const toggleArchive = useCallback((id: string) => {
     setHidden((prev) => {
@@ -1173,6 +1230,29 @@ export default function WarRoomPage() {
     };
     load();
     const poll = setInterval(() => load(true), 15_000);
+    return () => { alive = false; clearInterval(poll); };
+  }, [selectedLineId]);
+
+  // ── 选中一条 Line → 拉推进项（/warroom/line/:id/advancements）按 ability 分组；选回"全部"清空 ──
+  useEffect(() => {
+    if (!selectedLineId) { setLineAdvancements([]); setLineAdvancementsError(false); return; }
+    let alive = true;
+    const load = async () => {
+      try {
+        const res = await fetch(`/api/brain/warroom/line/${encodeURIComponent(selectedLineId)}/advancements`);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const json: { items?: LineAdvancementItem[] } = await res.json();
+        if (alive) {
+          setLineAdvancements(groupAdvancementsByAbility(Array.isArray(json?.items) ? json.items : []));
+          setLineAdvancementsError(false);
+        }
+      } catch {
+        // 推进项加载失败：置错误标志，中栏显示占位而非白屏
+        if (alive) { setLineAdvancements([]); setLineAdvancementsError(true); }
+      }
+    };
+    load();
+    const poll = setInterval(load, 15_000);
     return () => { alive = false; clearInterval(poll); };
   }, [selectedLineId]);
 
@@ -1509,6 +1589,8 @@ export default function WarRoomPage() {
               onSelectTask={setSelected}
               onArchive={toggleArchive}
               archivedSet={hidden}
+              advancements={lineAdvancements}
+              advancementsError={lineAdvancementsError}
             />
           ) : (
             <>
