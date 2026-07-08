@@ -68,7 +68,7 @@ function parsePipeline(anatomy) {
   const judges = (kernel.steps || []).map((s) => {
     const str = String(s).trim();
     const gate = /^闸|转人工|禁止|一票|拦截|不足禁/.test(str);
-    const text = str.replace(/^闸[·、\-]?\s*/, '');
+    const text = str.replace(/^闸[·、-]?\s*/, '');
     if (gate) return { type: 'gate', text, action: /转人工/.test(str) ? '转人工' : /禁|拦|一票|不足/.test(str) ? '拦截' : /标注/.test(str) ? '标注' : '闸' };
     return { type: 'judge', text };
   });
