@@ -274,7 +274,7 @@ describe('5. 五连雷返修回归（execFn 降级路径 = 生产真实路径）
       const tmuxCall = calls.find((c) => /tmux new-session/.test(c.cmd));
       expect(tmuxCall, 'tmux new-session 命令必须出现').toBeTruthy();
       expect(tmuxCall.cmd).not.toContain('--prompt-file');
-      expect(tmuxCall.cmd).toMatch(/codex \\?"\\?\$\(cat /);
+      expect(tmuxCall.cmd).toMatch(/codex .*\\?"\\?\$\(cat /);
     });
   });
 
@@ -537,5 +537,41 @@ describe('8. 雷9：codex trust 预写（config.toml [projects.] 幂等预写）
 
     const r = await spawnSkillRelaySession(HEADED_TASK, deps);
     expect(r.ok).toBe(true);
+  });
+});
+
+/**
+ * 雷10：headed 模式 tmux 起 codex TUI 时，team2 config.toml 的 approval="never" 全局值
+ * 交互 TUI 不吃（和无头 codex exec 语义不同）——每类命令首次执行都弹批准框，卡死零人为
+ * 交互。修法：tmux 命令行显式传 -a never（--ask-for-approval never，语义同无头 exec 的
+ * approval_policy=never）+ -s workspace-write（--sandbox，保留写沙箱保护，不裸奔）。
+ */
+describe('9. 雷10：headed codex TUI 批准框 → CLI flag 显式免交互', () => {
+  function makeNoSshDeps(overrides = {}) {
+    return {
+      pool: { query: vi.fn().mockResolvedValue({ rows: [] }) },
+      spawnFn: vi.fn().mockResolvedValue({ containerId: 'should-not-be-called' }),
+      sshSpawnFn: undefined,
+      loadSkill: vi.fn().mockReturnValue('SKILL_CONTENT_MARKER'),
+      ensureWt: vi.fn().mockResolvedValue('/tmp/wt/task-aaaabbbb'),
+      resolveAccountFn: vi.fn().mockResolvedValue(undefined),
+      tokenFn: vi.fn().mockResolvedValue('gh-token'),
+      now: () => new Date('2026-07-07T12:00:00Z'),
+      execFn: vi.fn().mockReturnValue(''),
+      ...overrides,
+    };
+  }
+
+  it('tmux new-session 命令含 codex -a never -s workspace-write', async () => {
+    const calls = [];
+    const execFn = vi.fn((cmd, opts) => { calls.push({ cmd, opts }); return ''; });
+    const deps = makeNoSshDeps({ execFn });
+
+    const r = await spawnSkillRelaySession(HEADED_TASK, deps);
+    expect(r.ok).toBe(true);
+
+    const tmuxCall = calls.find((c) => /tmux new-session/.test(c.cmd));
+    expect(tmuxCall, 'tmux new-session 命令必须出现').toBeTruthy();
+    expect(tmuxCall.cmd).toContain('codex -a never -s workspace-write');
   });
 });

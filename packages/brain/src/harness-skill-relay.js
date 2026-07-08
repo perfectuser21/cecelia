@@ -421,7 +421,7 @@ async function _spawnHeadedSession(task, { dbPool, now, short, initiativeId, dep
     // codex 位置参数从远端文件展开（--prompt-file 是编造的 flag，codex TUI 只吃 [PROMPT] 位置参数）
     try {
       execFn(
-        `ssh ${SSH_OPTS} ${sshHost} "tmux new-session -d -s ${tmuxSession} 'cd ${worktreePath} && CODEX_HOME=${codexRelayHome || ''} codex \\"\\$(cat ${promptFile})\\"'"`
+        `ssh ${SSH_OPTS} ${sshHost} "tmux new-session -d -s ${tmuxSession} 'cd ${worktreePath} && CODEX_HOME=${codexRelayHome || ''} codex -a never -s workspace-write \\"\\$(cat ${promptFile})\\"'"`
       );
     } catch (spawnErr) {
       console.error(`[skill-relay][headed][ALERT] ssh tmux spawn failed: ${spawnErr.message}`);
