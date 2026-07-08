@@ -80,6 +80,7 @@ import featuresRoutes from './src/routes/features.js';
 import clipsRoutes from './src/routes/clips.js';
 import journeysRouter from './src/routes/journeys.js';
 import abilitiesRouter from './src/routes/abilities.js';
+import skillEvalRoutes from './src/routes/eval.js';
 import { internalAuth } from './src/middleware/internal-auth.js';
 import createAutonomousRouter from './src/routes/autonomous.js';
 import { initTickLoop } from './src/tick.js';
@@ -340,6 +341,8 @@ app.use('/api/brain/registry', registryRoutes);
 // 而 harnessRoutes 挂在 /api/brain/harness 路径，没有 callback 子路径不会冲突，
 // 但保险起见仍按照先 specific 后 generic 的顺序排列。
 app.use('/api/brain', harnessCallbackRouter);
+// Skill Evaluator 端点（POST /upload 需 X-Eval-Proxy-Token，GET /status 无需 token）
+app.use('/api/skill-eval', skillEvalRoutes);
 app.use('/api/brain', walkingSkeletonRouter);
 app.use('/api/brain', journeysRouter);
 // GET /api/brain/issues — skills 期望的端点（journey_features 里有 issues，此处提供独立路由）
