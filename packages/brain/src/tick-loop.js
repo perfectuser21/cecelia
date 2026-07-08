@@ -76,6 +76,10 @@ export async function runTickSafe(source = 'loop', tickFn) {
 
   tickState.tickRunning = true;
   tickState.tickLockTime = Date.now();
+  // 局部时间戳：耗时基准不依赖 tickState.tickLockTime——该共享状态在 doTick 超过
+  // TICK_TIMEOUT_MS 时会被上面的 FORCE-RELEASE 分支或下面的 _forceReleaseTimer 异步置 null，
+  // 届时 `Date.now() - null` 会污染成当前时间戳（~1.7e12ms），把 last_duration_ms 冲成天文数字。
+  const _tickStartMs = Date.now();
 
   // 保底 setTimeout：无论 doTick() 是否 resolve，TICK_TIMEOUT_MS 后强制释放锁
   // 解决 tickState.tickLockTime 被清但 tickState.tickRunning 未清的边界情况
@@ -91,7 +95,7 @@ export async function runTickSafe(source = 'loop', tickFn) {
     const result = await doTick();
     tickState.lastExecuteTime = Date.now();
     // Wave-2 断链修复：统计写入接回活路径（fire-and-forget，吞错）
-    recordTickExecution(Date.now() - tickState.tickLockTime).catch(() => {});
+    recordTickExecution(Date.now() - _tickStartMs).catch(() => {});
     tickLog(`[tick-loop] Tick completed (source: ${source}), actions: ${result.actions_taken?.length || 0}`);
     return result;
   } catch (err) {
