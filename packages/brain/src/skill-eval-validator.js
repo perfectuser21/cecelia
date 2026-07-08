@@ -98,69 +98,52 @@ export async function validateZipBuffer(buf, opts = {}) {
     return { valid: true, entries };
   }
 
-  // 真实 zip 解析（使用 unzipper）
+  // 真实 zip 解析（使用 unzipper.Open.buffer，支持标准 zip 格式）
   try {
     const { default: unzipper } = await import('unzipper');
-    const { Readable } = await import('stream');
+
+    // unzipper.Open.buffer 读取 Central Directory，比 Readable+Parse 流更可靠
+    const directory = await unzipper.Open.buffer(buf);
 
     const entries = [];
     let totalUnzipSize = 0;
     let hasSkillMd = 0;
     let traversalDetected = null;
 
-    const stream = Readable.from(buf);
-    const directory = await stream.pipe(unzipper.Parse({ forceStream: true }));
+    for (const file of directory.files) {
+      const entryPath = file.path;
 
-    await new Promise((resolve, reject) => {
-      directory.on('entry', (entry) => {
-        const entryPath = entry.path;
+      // 路径穿越检查
+      if (entryPath.includes('../') || entryPath.startsWith('/')) {
+        traversalDetected = entryPath;
+        break;
+      }
 
-        // 路径穿越检查
-        if (entryPath.includes('../') || entryPath.startsWith('/')) {
-          traversalDetected = entryPath;
-          entry.autodrain();
-          return;
-        }
+      entries.push(entryPath);
 
-        entries.push(entryPath);
+      // 文件数检查
+      if (entries.length > MAX_ENTRY_COUNT) {
+        return {
+          valid: false,
+          error: `too many entries: ${entries.length} > ${MAX_ENTRY_COUNT} (compression ratio / entry count limit)`,
+        };
+      }
 
-        // 文件数检查
-        if (entries.length > MAX_ENTRY_COUNT) {
-          entry.autodrain();
-          return;
-        }
+      // 追踪 SKILL.md（目录条目 path 末尾为 '/'，split+pop 为空字符串，不会误匹配）
+      const filename = entryPath.split('/').pop();
+      if (filename === 'SKILL.md') {
+        hasSkillMd++;
+      }
 
-        // 追踪 SKILL.md
-        const filename = entryPath.split('/').pop();
-        if (filename === 'SKILL.md') {
-          hasSkillMd++;
-        }
-
-        // 追踪解压大小
-        entry.on('data', (chunk) => {
-          totalUnzipSize += chunk.length;
-        });
-
-        entry.autodrain();
-      });
-
-      directory.on('finish', resolve);
-      directory.on('error', reject);
-    });
+      // 累计解压大小（uncompressedSize 字段）
+      totalUnzipSize += file.uncompressedSize || 0;
+    }
 
     // 路径穿越
     if (traversalDetected) {
       return {
         valid: false,
         error: `path traversal detected: entry "${traversalDetected}" contains dangerous path component`,
-      };
-    }
-
-    // 文件数/压缩比
-    if (entries.length > MAX_ENTRY_COUNT) {
-      return {
-        valid: false,
-        error: `too many entries: ${entries.length} > ${MAX_ENTRY_COUNT} (compression ratio / entry count limit)`,
       };
     }
 
