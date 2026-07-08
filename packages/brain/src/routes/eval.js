@@ -293,6 +293,36 @@ router.get('/report/:task_id', async (req, res) => {
   }
 });
 
+// ─── GET /api/skill-eval/staging/:task_id（内部：worker 拉取 zip 内容）─────
+// Brain 跑在 Docker 容器里，上传的 zip 落盘在容器内的 SKILL_EVAL_STAGING_DIR；
+// 常驻 worker（pm2）跑在宿主机，两者不共享文件系统，worker 不能直接 fs.readFile
+// staging_path。worker 改走这个内部 HTTP 端点拉取 zip 字节，由 Brain（容器内）
+// 自己读自己的文件再把内容传出去。
+
+router.get('/staging/:task_id', requireEvalProxyToken, async (req, res) => {
+  try {
+    const { task_id } = req.params;
+    const result = await pool.query(
+      `SELECT staging_path FROM skill_evals WHERE task_id = $1 LIMIT 1`,
+      [task_id]
+    );
+    if (result.rows.length === 0 || !result.rows[0].staging_path) {
+      return res.status(404).json({ error: 'task not found or staging_path missing' });
+    }
+    let buf;
+    try {
+      buf = await fs.promises.readFile(result.rows[0].staging_path);
+    } catch (readErr) {
+      return res.status(404).json({ error: `staging file not found: ${readErr.message}` });
+    }
+    res.set('Content-Type', 'application/zip');
+    return res.send(buf);
+  } catch (err) {
+    console.error('[skill-eval] staging download error:', err.message);
+    return res.status(500).json({ error: `internal server error: ${err.message}` });
+  }
+});
+
 // ─── POST /api/skill-eval/complete（内部回调，发布脚本调用）──────────────────
 
 router.post('/complete', requireEvalProxyToken, async (req, res) => {

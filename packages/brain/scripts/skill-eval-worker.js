@@ -171,6 +171,27 @@ async function markFailed(taskId, reason) {
   );
 }
 
+/**
+ * 通过 HTTP 从 Brain 拉取 staging zip 的字节内容，写入宿主机本地临时文件。
+ * Brain 跑在 Docker 容器里，直接用 claimPendingTask() 返回的 staging_path
+ * （容器内路径）在宿主机 fs.readFile 会 ENOENT——容器和宿主机不共享文件系统。
+ * @param {string} taskId
+ * @returns {Promise<string>} 本地临时 zip 文件路径
+ */
+export async function downloadZipToTemp(taskId) {
+  const url = `${BRAIN_BASE_URL}/api/skill-eval/staging/${taskId}`;
+  const res = await fetch(url, {
+    headers: { 'X-Eval-Proxy-Token': EVAL_PROXY_TOKEN },
+  });
+  if (!res.ok) {
+    throw new Error(`下载 staging zip 失败: HTTP ${res.status}`);
+  }
+  const buf = Buffer.from(await res.arrayBuffer());
+  const localZipPath = path.join(os.tmpdir(), `skill-eval-download-${randomUUID()}.zip`);
+  await fs.promises.writeFile(localZipPath, buf);
+  return localZipPath;
+}
+
 async function postComplete(taskId, reportData) {
   const reportUrl = `${BRAIN_BASE_URL}/api/skill-eval/report/${taskId}`;
   const res = await fetch(`${BRAIN_BASE_URL}/api/skill-eval/complete`, {
@@ -223,12 +244,14 @@ export async function runOnce() {
   }
 
   const { task_id: taskId, staging_path: stagingPath } = claimed;
-  console.log(`[skill-eval-worker] 取到任务 ${taskId}，staging_path=${stagingPath}`);
+  console.log(`[skill-eval-worker] 取到任务 ${taskId}，staging_path=${stagingPath}（容器内路径，经 HTTP 拉取）`);
 
   const tmpDir = path.join(os.tmpdir(), `skill-eval-worker-${randomUUID()}`);
+  let localZipPath;
 
   try {
-    await extractZip(stagingPath, tmpDir);
+    localZipPath = await downloadZipToTemp(taskId);
+    await extractZip(localZipPath, tmpDir);
     const skillDir = findSkillDir(tmpDir);
     const stdout = await runClaudeEval(skillDir);
     const reportData = extractReportJson(stdout);
@@ -243,6 +266,9 @@ export async function runOnce() {
     return null;
   } finally {
     await fs.promises.rm(tmpDir, { recursive: true, force: true }).catch(() => {});
+    if (localZipPath) {
+      await fs.promises.unlink(localZipPath).catch(() => {});
+    }
   }
 }
 
