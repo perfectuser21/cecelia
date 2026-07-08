@@ -607,12 +607,12 @@ describe('10. 雷11：headed tmux 去重守卫（防 Brain 重启后双 spawn �
     };
   }
 
-  it('tmux has-session 命中存活（exit 0）→ 不重复 spawn，返回 deferred，不写 prompt/不起新 tmux', async () => {
+  it('tmux has-session 存活（stdout=TMUX_ALIVE）→ 不重复 spawn，返回 deferred，不写 prompt/不起新 tmux', async () => {
     const calls = [];
     const execFn = vi.fn((cmd) => {
       calls.push(cmd);
       if (/tmux has-session -t codex-relay-aaaabbbb/.test(cmd)) {
-        return ''; // exit 0：session 存活
+        return 'TMUX_ALIVE'; // 远端 shell && / || 已把 exit code 转成 stdout 字符串
       }
       return '';
     });
@@ -631,12 +631,29 @@ describe('10. 雷11：headed tmux 去重守卫（防 Brain 重启后双 spawn �
     expect(deps.ensureWt).not.toHaveBeenCalled();
   });
 
-  it('tmux has-session 未命中（exit 非零/抛错）→ 正常继续 spawn', async () => {
+  it('tmux has-session 未存活（stdout=TMUX_DEAD）→ 正常继续 spawn', async () => {
     const calls = [];
     const execFn = vi.fn((cmd) => {
       calls.push(cmd);
       if (/tmux has-session -t codex-relay-aaaabbbb/.test(cmd)) {
-        throw new Error('can\'t find session: codex-relay-aaaabbbb'); // exit 1
+        return 'TMUX_DEAD';
+      }
+      return '';
+    });
+    const deps = makeNoSshDeps({ execFn });
+
+    const r = await spawnSkillRelaySession(HEADED_TASK, deps);
+
+    expect(r.ok).toBe(true);
+    expect(calls.some((c) => /tmux new-session/.test(c))).toBe(true);
+  });
+
+  it('tmux 存活检查 ssh 本身抛错（连接失败）→ fail-open，正常继续 spawn', async () => {
+    const calls = [];
+    const execFn = vi.fn((cmd) => {
+      calls.push(cmd);
+      if (/tmux has-session -t codex-relay-aaaabbbb/.test(cmd)) {
+        throw new Error('ssh: connect to host localhost port 22: Connection refused');
       }
       return '';
     });
@@ -650,7 +667,7 @@ describe('10. 雷11：headed tmux 去重守卫（防 Brain 重启后双 spawn �
 
   it('去重守卫命中时不写 initiative_runs INSERT（未真正 spawn，不产生新 run 行）', async () => {
     const execFn = vi.fn((cmd) => {
-      if (/tmux has-session -t codex-relay-aaaabbbb/.test(cmd)) return '';
+      if (/tmux has-session -t codex-relay-aaaabbbb/.test(cmd)) return 'TMUX_ALIVE';
       return '';
     });
     const poolQuery = vi.fn().mockResolvedValue({ rows: [] });

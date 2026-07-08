@@ -347,6 +347,34 @@ async function _spawnHeadedSession(task, { dbPool, now, short, initiativeId, dep
   const tmuxSession = `codex-relay-${short}`;
   const promptFile = `/tmp/cecelia-host-prompts/${task.id}.${short}.prompt`;
 
+  // 降级：real ssh 执行（生产路径）。用文件顶部已 import 的 execSync（ESM 下 require 未定义会直接崩）。
+  // 提前到 worktree/prompt 构建之前：雷11 去重守卫需要在做任何昂贵前置工作
+  // （ensureWt/loadSkill/写 prompt 文件）之前先探活，命中就提前返回，不浪费资源。
+  const execFn = deps.execFn
+    || ((cmd, opts) => execSync(cmd, { encoding: 'utf8', timeout: 30000, ...opts }));
+
+  // ─── 雷11：tmux 去重守卫（防 Brain 重启后 startup-sync/dispatcher 双 spawn 撞名）───
+  // 对齐同一函数内 headless 分支既有的 docker ps 去重守卫（P1 bug 39b97ade / #3604）：
+  // 用 shell 内 && / || 把 tmux has-session 的 exit code 转成可判读的 stdout 字符串，
+  // 而不是靠 execFn 是否抛错来判断——execSync 的"命令失败即抛错"语义在 ssh 套壳后
+  // 无法区分"ssh 连接失败"与"tmux session 不存在"，且远程 shell 命令始终 exit 0
+  // （&&/|| 已经吃掉内层 exit code），不会抛错，判断只能靠 stdout 内容。
+  // R5 首航实证：Brain 重启后旧 tmux session 未死，第二次 spawn 撞名 `tmux new-session`
+  // 直接报错。命中存活 session → 不重复 spawn，返回 deferred。
+  // fail-open：ssh 本身抛错（连接失败等）时保守放行 spawn（不能让探活抽风挡住正常调度）。
+  try {
+    const guardOut = execFn(
+      `ssh ${SSH_OPTS} ${sshHost} "tmux has-session -t ${tmuxSession} 2>/dev/null && echo TMUX_ALIVE || echo TMUX_DEAD"`
+    );
+    if (String(guardOut).includes('TMUX_ALIVE')) {
+      console.warn(`[skill-relay][headed][GUARD] live tmux session exists, skip duplicate spawn: task=${task.id} session=${tmuxSession}`);
+      return { ok: false, mode: HEADED_ORCHESTRATOR_HOST, deferred: true, reason: 'live_tmux_guard', tmuxSession };
+    }
+  } catch (err) {
+    console.warn(`[skill-relay][headed][GUARD] tmux 存活检查失败（保守放行 spawn）: ${err.message}`);
+  }
+  // ─── end 雷11 ────────────────────────────────────────────────────────────────
+
   const loadSkill = deps.loadSkill
     || (await import('./harness-shared.js')).loadSkillContent;
   const skillContent = loadSkill('harness-controller');
@@ -373,13 +401,6 @@ async function _spawnHeadedSession(task, { dbPool, now, short, initiativeId, dep
     `BRAIN_URL=http://host.docker.internal:5221`,
     `任务标题：${task.title || ''}`,
   ].join('\n');
-
-  // 降级：real ssh 执行（生产路径）。用文件顶部已 import 的 execSync（ESM 下 require 未定义会直接崩）。
-  // 提到函数级作用域：雷9 trust preseed 与下方 prompt/tmux 写入共用同一条 execFn 通道
-  // （生产环境 deps.sshSpawnFn 恒为 undefined，只有测试会注入它——trust preseed 因此
-  // 始终经 execFn 走，与是否注入 sshSpawnFn 无关，两条通道不会打架）。
-  const execFn = deps.execFn
-    || ((cmd, opts) => execSync(cmd, { encoding: 'utf8', timeout: 30000, ...opts }));
 
   // ─── 雷9：codex TUI 首次进新目录会卡"Do you trust the contents of this directory?"
   // 交互确认——trust 记忆按精确项目目录写进 $CODEX_HOME/config.toml 的 [projects."<dir>"]，
@@ -419,9 +440,15 @@ async function _spawnHeadedSession(task, { dbPool, now, short, initiativeId, dep
     }
     // tmux new-session：cd 进 worktree + 注入 CODEX_HOME（不注入=烧宿主默认账号）+
     // codex 位置参数从远端文件展开（--prompt-file 是编造的 flag，codex TUI 只吃 [PROMPT] 位置参数）
+    // 雷12（主理人 2026-07-08 改判）：原 -a never -s workspace-write 压不住 codex 内置
+    // GitHub MCP 插件的建分支批准框（MCP 工具批准独立于 -a never 的另一层，R5 首航
+    // 实证卡死）。逐个预置 permission 是打地鼠，改用整体 bypass：
+    // --dangerously-bypass-approvals-and-sandbox，一个 flag 跳过 trust 确认 + shell 命令
+    // 批准 + MCP 工具批准，与无头 docker 里 claude 的 --dangerously-skip-permissions 对等
+    // （worktree 隔离 + 有头可 esc 打断 = externally sandboxed 受控环境，适用场景成立）。
     try {
       execFn(
-        `ssh ${SSH_OPTS} ${sshHost} "tmux new-session -d -s ${tmuxSession} 'cd ${worktreePath} && CODEX_HOME=${codexRelayHome || ''} codex -a never -s workspace-write \\"\\$(cat ${promptFile})\\"'"`
+        `ssh ${SSH_OPTS} ${sshHost} "tmux new-session -d -s ${tmuxSession} 'cd ${worktreePath} && CODEX_HOME=${codexRelayHome || ''} codex --dangerously-bypass-approvals-and-sandbox \\"\\$(cat ${promptFile})\\"'"`
       );
     } catch (spawnErr) {
       console.error(`[skill-relay][headed][ALERT] ssh tmux spawn failed: ${spawnErr.message}`);

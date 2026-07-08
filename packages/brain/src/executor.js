@@ -3922,6 +3922,19 @@ async function syncOrphanTasksOnStartup() {
   const LANGGRAPH_TYPES = new Set(['harness_initiative']);
 
   for (const task of result.rows) {
+    // 雷11（R5 首航实证 39b97ade/a3d61486/4cedf175/174dea35 同源）：
+    // skill-relay（payload.orchestrator==='skill-relay'）虽然 task_type 也是
+    // harness_initiative，但它不是 LangGraph（已废弃）——它有真实进程（无头=docker
+    // 容器 / 有头=宿主 tmux），存活恢复归 harness-relay-watchdog.js::resumeStalledRelayRuns
+    // 专管（该函数已对 skill-relay 任务做完整的容器/tmux 存活检测 + PR 状态检查 +
+    // 重点火上限熔断）。startup-sync 若把它当 LangGraph 无脑 requeue，会导致 dispatcher
+    // 重新 claim 并再次 spawn，与仍存活的旧进程撞名（headed 分支 tmux new-session 报错），
+    // 第二次 spawn 失败标 task=failed，而第一次的真 session 还活着，无人知道。
+    // → 整个跳过，交给 harness-relay-watchdog 处理，不 requeue、不清 claim、不计数。
+    if (task.payload?.orchestrator === 'skill-relay') {
+      console.log(`[startup-sync] skip skill-relay task=${task.id} title="${task.title}"（归 harness-relay-watchdog 管）`);
+      continue;
+    }
     if (LANGGRAPH_TYPES.has(task.task_type)) {
       // Bug A fix: requeue 时必须清 claim 三件套，否则死 runner 残留的 claimed_by
       // 让 dispatch-helpers.js 的 `AND t.claimed_by IS NULL` 永远选不出该任务，
