@@ -38,6 +38,10 @@ const EVAL_PROXY_TOKEN = process.env.EVAL_PROXY_TOKEN || '';
 const BRAIN_BASE_URL =
   process.env.BRAIN_BASE_URL || `http://localhost:${process.env.PORT || process.env.BRAIN_PORT || 5221}`;
 
+// reapStaleRunning() 超时阈值：优先读 env，缺失或解析失败时兜底默认 10 分钟。
+const parsedStaleTimeout = Number.parseInt(process.env.STALE_RUNNING_TIMEOUT_MINUTES, 10);
+const STALE_RUNNING_TIMEOUT_MINUTES = Number.isFinite(parsedStaleTimeout) ? parsedStaleTimeout : 10;
+
 // ─── 纯函数：JSON 加固（可脱离 claude 二进制单测）──────────────────────────
 
 /**
@@ -173,8 +177,14 @@ async function postComplete(taskId, reportData) {
 
 /**
  * 回收超时卡死的 running 任务：worker 进程崩溃/被杀后，claimPendingTask 抢到的任务
- * 会永久卡在 status='running'（原实现遗留问题）。常驻多实例部署后这个问题会被放大，
- * 因此每次 runOnce() 之前先扫一次，把超过阈值仍未完成的任务退回 pending 重新排队。
+ * 会永久卡在 status='running'（原实现遗留问题）。因此每次 runOnce() 之前先扫一次，
+ * 把超过阈值仍未完成的任务退回 pending 重新排队。
+ *
+ * 限制（当前只在单 worker 实例部署下安全）：如果扩展到 ≥2 个常驻实例，且某个任务
+ * 处理耗时超过 timeoutMinutes（例如 claude 评估恰好跑很久），另一个实例的回收扫描
+ * 会把仍在合法处理中的任务误判为"卡死"并重置回 pending，导致被第二个实例重复认领、
+ * 重复评估。扩展到多实例部署前，必须给处理中的任务加心跳机制（定期刷新 updated_at），
+ * 否则长耗时任务会被误回收重复认领。
  * @param {number} timeoutMinutes 超时阈值（分钟），默认 10
  * @returns {Promise<{recovered: number}>}
  */
@@ -214,7 +224,7 @@ export async function claimPendingTask() {
 }
 
 export async function runOnce() {
-  const { recovered } = await reapStaleRunning();
+  const { recovered } = await reapStaleRunning(STALE_RUNNING_TIMEOUT_MINUTES);
   if (recovered > 0) {
     console.log(`[skill-eval-worker] 回收 ${recovered} 个超时 running 任务`);
   }
