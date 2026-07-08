@@ -3,7 +3,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 const { mockPool } = vi.hoisted(() => ({ mockPool: { query: vi.fn() } }));
 vi.mock('../../src/db.js', () => ({ default: mockPool }));
 
-import { sanitizeJsonString, extractReportJson, claimPendingTask } from '../skill-eval-worker.js';
+import { sanitizeJsonString, extractReportJson, claimPendingTask, reclaimStuckTasks } from '../skill-eval-worker.js';
 
 describe('sanitizeJsonString — 清理字符串值内部未转义的双引号', () => {
   it('把夹在普通字符中间的英文双引号删掉，使原本非法的 JSON 变得可解析', () => {
@@ -111,5 +111,32 @@ describe('claimPendingTask — 原子取任务，消除并发竞态', () => {
       expect(sql).toMatch(/FOR UPDATE SKIP LOCKED/);
       expect(sql).toMatch(/RETURNING task_id::text, staging_path/);
     }
+  });
+});
+
+describe('reclaimStuckTasks — 超时回收 running 任务', () => {
+  beforeEach(() => {
+    mockPool.query.mockReset();
+  });
+
+  it('回收 N 条 stuck running → 返回 rowCount', async () => {
+    mockPool.query.mockResolvedValueOnce({ rowCount: 2 });
+
+    const count = await reclaimStuckTasks();
+
+    expect(count).toBe(2);
+    const sql = mockPool.query.mock.calls[0][0];
+    expect(sql).toMatch(/UPDATE skill_evals/);
+    expect(sql).toMatch(/status = 'running'/);
+    expect(sql).toMatch(/status = 'pending'/);
+    expect(sql).toMatch(/interval/i);
+  });
+
+  it('没有 stuck 任务时 rowCount=0，返回 0', async () => {
+    mockPool.query.mockResolvedValueOnce({ rowCount: 0 });
+
+    const count = await reclaimStuckTasks();
+
+    expect(count).toBe(0);
   });
 });
