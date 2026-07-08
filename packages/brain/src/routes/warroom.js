@@ -355,4 +355,31 @@ router.get('/line/:id', async (req, res) => {
   }
 });
 
+/**
+ * GET /api/brain/warroom/line/:id/advancements
+ *   该 Line（journey_id=:id）下所有 kind='ability' 的 journey_features 名下 advancement_items 扁平列表，
+ *   带 ability_id + ability_name，供前端按 ability 分组渲染进度条。
+ *   返回 { line_id, items }；无推进项返回空数组（200）。
+ */
+router.get('/line/:id/advancements', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { rows } = await pool.query(
+      `SELECT ai.id, ai.ability_id, jf.name AS ability_name,
+              ai.title, ai.status, ai.priority, ai.pr_url, ai.created_at
+       FROM advancement_items ai
+       JOIN journey_features jf ON jf.id = ai.ability_id
+       WHERE jf.journey_id = $1 AND jf.kind = 'ability'
+       ORDER BY jf.name,
+                CASE ai.priority WHEN 'P0' THEN 0 WHEN 'P1' THEN 1 WHEN 'P2' THEN 2 ELSE 3 END,
+                ai.created_at`,
+      [id]
+    );
+    res.json({ line_id: id, items: rows });
+  } catch (err) {
+    console.error('[GET /warroom/line/:id/advancements]', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 export default router;
