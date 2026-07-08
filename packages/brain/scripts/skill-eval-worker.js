@@ -172,6 +172,24 @@ async function postComplete(taskId, reportData) {
 // ─── 主流程：单次轮询一条 pending 任务 ──────────────────────────────────────
 
 /**
+ * 回收超时卡死的 running 任务：worker 进程崩溃/被杀后，claimPendingTask 抢到的任务
+ * 会永久卡在 status='running'（原实现遗留问题）。常驻多实例部署后这个问题会被放大，
+ * 因此每次 runOnce() 之前先扫一次，把超过阈值仍未完成的任务退回 pending 重新排队。
+ * @param {number} timeoutMinutes 超时阈值（分钟），默认 10
+ * @returns {Promise<{recovered: number}>}
+ */
+export async function reapStaleRunning(timeoutMinutes = 10) {
+  const { rowCount } = await pool.query(
+    `UPDATE skill_evals
+     SET status = 'pending', updated_at = now()
+     WHERE status = 'running'
+       AND updated_at < now() - ($1 * interval '1 minute')`,
+    [timeoutMinutes]
+  );
+  return { recovered: rowCount };
+}
+
+/**
  * 原子取一条 pending 任务并标记为 running。
  * SELECT 子查询 + FOR UPDATE SKIP LOCKED 保证并发 worker 之间互相跳过对方正在锁的行，
  * 选取和状态迁移在同一条语句内完成，消除"先 SELECT 再 UPDATE"两步式的竞态窗口。
@@ -196,6 +214,11 @@ export async function claimPendingTask() {
 }
 
 export async function runOnce() {
+  const { recovered } = await reapStaleRunning();
+  if (recovered > 0) {
+    console.log(`[skill-eval-worker] 回收 ${recovered} 个超时 running 任务`);
+  }
+
   const claimed = await claimPendingTask();
 
   if (!claimed) {

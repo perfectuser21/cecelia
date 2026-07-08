@@ -3,7 +3,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 const { mockPool } = vi.hoisted(() => ({ mockPool: { query: vi.fn() } }));
 vi.mock('../../src/db.js', () => ({ default: mockPool }));
 
-import { sanitizeJsonString, extractReportJson, claimPendingTask } from '../skill-eval-worker.js';
+import { sanitizeJsonString, extractReportJson, claimPendingTask, reapStaleRunning } from '../skill-eval-worker.js';
 
 describe('sanitizeJsonString — 清理字符串值内部未转义的双引号', () => {
   it('把夹在普通字符中间的英文双引号删掉，使原本非法的 JSON 变得可解析', () => {
@@ -111,5 +111,30 @@ describe('claimPendingTask — 原子取任务，消除并发竞态', () => {
       expect(sql).toMatch(/FOR UPDATE SKIP LOCKED/);
       expect(sql).toMatch(/RETURNING task_id::text, staging_path/);
     }
+  });
+});
+
+describe('reapStaleRunning — 超时 running 任务回收', () => {
+  beforeEach(() => {
+    mockPool.query.mockReset();
+  });
+
+  it('发出 UPDATE 把超时的 running 任务重置为 pending，并返回重置行数', async () => {
+    mockPool.query.mockResolvedValueOnce({ rowCount: 2, rows: [] });
+    const result = await reapStaleRunning(10);
+    expect(mockPool.query).toHaveBeenCalledTimes(1);
+    const [sql, params] = mockPool.query.mock.calls[0];
+    expect(sql).toMatch(/UPDATE\s+skill_evals/i);
+    expect(sql).toMatch(/SET\s+status\s*=\s*'pending'/i);
+    expect(sql).toMatch(/WHERE\s+status\s*=\s*'running'/i);
+    expect(sql).toMatch(/updated_at\s*<\s*now\(\)\s*-\s*\(?\$1\s*\*\s*interval/i);
+    expect(result).toEqual({ recovered: 2 });
+  });
+
+  it('默认超时阈值为 10 分钟', async () => {
+    mockPool.query.mockResolvedValueOnce({ rowCount: 0, rows: [] });
+    await reapStaleRunning();
+    const [, params] = mockPool.query.mock.calls[0];
+    expect(params).toContain(10);
   });
 });
