@@ -22,6 +22,33 @@ function shortId(id) {
 }
 
 /**
+ * 从 payload.base_repo 解析 owner/repo。
+ * 只放行 https://github.com/<owner>/<repo>[.git][/]，owner/repo 限 [\w.-]
+ * （防 shell 注入——结果会拼进 execFn 命令）。其余返回 null。
+ */
+export function _parseBaseRepo(baseRepo) {
+  if (typeof baseRepo !== 'string') return null;
+  const m = baseRepo.match(/^https:\/\/github\.com\/([\w.-]+\/[\w.-]+?)(?:\.git)?\/?$/);
+  return m ? m[1] : null;
+}
+
+/**
+ * 从 GitHub 反查该 task 的 PR（Issue 198ba8db：relay session 不回写 pr_url，
+ * DB 侧护栏失明）。按分支名含 task short 匹配（spawn/controller 分支规约
+ * cp-*-<short>* / cp-*-ws-<short>*）。MERGED 优先于 OPEN；仅 CLOSED 视为无命中。
+ * gh 调用/解析失败会抛错——调用方必须保守跳过（不盲目重点火）。
+ */
+export function _discoverPrFromGithub(task, short, execFn) {
+  const repo = _parseBaseRepo(task.payload?.base_repo);
+  if (!repo) return null;
+  const raw = execFn(`gh pr list --repo "${repo}" --state all --limit 50 --json headRefName,url,state`);
+  const prs = JSON.parse(raw);
+  if (!Array.isArray(prs)) return null;
+  const matches = prs.filter((p) => typeof p?.headRefName === 'string' && p.headRefName.includes(short));
+  return matches.find((p) => p.state === 'MERGED') || matches.find((p) => p.state === 'OPEN') || null;
+}
+
+/**
  * @param {{pool?: object, execFn?: (cmd:string)=>string, spawnFn?: Function}} deps
  * @returns {Promise<{scanned:number, resumed:number, capped:number, housekept:number}>}
  */
@@ -140,6 +167,48 @@ export async function resumeStalledRelayRuns(deps = {}) {
           console.warn(`[relay-watchdog] gh pr view 失败，initiative=${run.initiative_id} 保守跳过`);
           continue;
         }
+      }
+
+      // PR 发现护栏（Issue 198ba8db）：relay session 不回写 pr_url，DB 三处全空时
+      // 上方 MERGED 护栏失明——先从 GitHub 按分支名含 short 反查，防止
+      // "已有 PR 在等 CI/审批" 被误判死跑而重复点火出重复 PR。
+      if (!effectivePrUrl) {
+        let discovered = null;
+        try {
+          discovered = _discoverPrFromGithub(task, short, execFn);
+        } catch (err) {
+          console.warn(`[relay-watchdog] PR 发现失败，initiative=${run.initiative_id} 保守跳过: ${err.message}`);
+          continue;
+        }
+        if (discovered && discovered.state === 'MERGED') {
+          await dbPool.query(
+            `UPDATE initiative_runs SET phase='done', completed_at=NOW(), pr_url=$2
+              WHERE initiative_id=$1 AND orchestrator_version='v2' AND phase NOT IN ('done','failed')`,
+            [run.initiative_id, discovered.url]
+          );
+          await dbPool.query(
+            `UPDATE tasks SET status='completed', completed_at=NOW(), pr_url=$2
+              WHERE id=$1 AND status='in_progress'`,
+            [run.initiative_id, discovered.url]
+          );
+          out.mergedPr++;
+          console.log(`[relay-watchdog] GitHub 发现已 MERGED PR → 标 completed initiative=${run.initiative_id} pr=${discovered.url}`);
+          continue;
+        }
+        if (discovered && discovered.state === 'OPEN') {
+          await dbPool.query(
+            `UPDATE initiative_runs SET pr_url=$2
+              WHERE initiative_id=$1 AND orchestrator_version='v2' AND phase NOT IN ('done','failed')`,
+            [run.initiative_id, discovered.url]
+          );
+          await dbPool.query(
+            `UPDATE tasks SET pr_url=$2 WHERE id=$1 AND pr_url IS NULL`,
+            [run.initiative_id, discovered.url]
+          );
+          console.log(`[relay-watchdog] GitHub 发现在途 OPEN PR → 回写 pr_url 跳过重点火 initiative=${run.initiative_id} pr=${discovered.url}`);
+          continue;
+        }
+        // 仅 CLOSED / 无命中 → 走原逻辑（attempt cap → 重点火）
       }
 
       // B6: 上限熔断（codex=2，claude=5）
