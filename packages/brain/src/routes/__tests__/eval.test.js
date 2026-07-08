@@ -25,6 +25,7 @@ const { mockPool, mockValidateZipBuffer, mockComputeZipHash, mockCheckZipDuplica
     mkdir: vi.fn().mockResolvedValue(undefined),
     writeFile: vi.fn().mockResolvedValue(undefined),
     unlink: vi.fn().mockResolvedValue(undefined),
+    readFile: vi.fn().mockResolvedValue(Buffer.from('fake zip bytes')),
   };
   const mockRandomUUID = vi.fn().mockReturnValue('test-uuid-1234');
   return {
@@ -259,6 +260,79 @@ describe('routes/eval.js — GET /api/skill-eval/status/:task_id', () => {
 
     expect(res.status).toBe(500);
     expect(res.body.error).toMatch(/internal server error/);
+  });
+});
+
+describe('routes/eval.js — GET /api/skill-eval/staging/:task_id（worker 拉取 zip 内容）', () => {
+  let app;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockFsPromises.readFile.mockResolvedValue(Buffer.from('fake zip bytes'));
+    delete process.env.EVAL_PROXY_TOKEN;
+    app = buildApp();
+  });
+
+  it('找到任务且 staging 文件存在 → 200 返回 zip 字节流', async () => {
+    mockPool.query.mockResolvedValueOnce({
+      rows: [{ staging_path: '/tmp/skill-eval-staging/abc.zip' }],
+    });
+
+    const res = await request(app)
+      .get('/api/skill-eval/staging/task-abc')
+      .buffer(true)
+      .parse((res, cb) => {
+        const chunks = [];
+        res.on('data', (c) => chunks.push(c));
+        res.on('end', () => cb(null, Buffer.concat(chunks)));
+      });
+
+    expect(res.status).toBe(200);
+    expect(res.headers['content-type']).toMatch(/application\/zip/);
+    expect(Buffer.from(res.body).toString()).toBe('fake zip bytes');
+    expect(mockFsPromises.readFile).toHaveBeenCalledWith('/tmp/skill-eval-staging/abc.zip');
+  });
+
+  it('task_id 不存在 → 404', async () => {
+    mockPool.query.mockResolvedValueOnce({ rows: [] });
+
+    const res = await request(app).get('/api/skill-eval/staging/no-such-task');
+
+    expect(res.status).toBe(404);
+  });
+
+  it('staging_path 记录存在但文件已不在磁盘 → 404', async () => {
+    mockPool.query.mockResolvedValueOnce({
+      rows: [{ staging_path: '/tmp/skill-eval-staging/gone.zip' }],
+    });
+    mockFsPromises.readFile.mockRejectedValueOnce(Object.assign(new Error('ENOENT'), { code: 'ENOENT' }));
+
+    const res = await request(app).get('/api/skill-eval/staging/task-gone');
+
+    expect(res.status).toBe(404);
+  });
+
+  it('配置了 EVAL_PROXY_TOKEN 但请求未携带 token → 403', async () => {
+    process.env.EVAL_PROXY_TOKEN = 'secret-token';
+    app = buildApp();
+
+    const res = await request(app).get('/api/skill-eval/staging/task-abc');
+
+    expect(res.status).toBe(403);
+  });
+
+  it('携带正确 token → 通过鉴权继续处理', async () => {
+    process.env.EVAL_PROXY_TOKEN = 'correct-token';
+    app = buildApp();
+    mockPool.query.mockResolvedValueOnce({
+      rows: [{ staging_path: '/tmp/skill-eval-staging/abc.zip' }],
+    });
+
+    const res = await request(app)
+      .get('/api/skill-eval/staging/task-abc')
+      .set('X-Eval-Proxy-Token', 'correct-token');
+
+    expect(res.status).toBe(200);
   });
 });
 
