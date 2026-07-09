@@ -58,11 +58,9 @@ router.post('/:taskId/approve', async (req, res) => {
   const { taskId } = req.params;
   const dbPool = req.app.get('pool') || pool;
 
-  let task;
   try {
-    const r = await dbPool.query('SELECT id, payload, execution_attempts FROM tasks WHERE id = $1::uuid', [taskId]);
+    const r = await dbPool.query('SELECT id FROM tasks WHERE id = $1::uuid', [taskId]);
     if (r.rowCount === 0) return res.status(404).json({ error: 'task not found' });
-    task = r.rows[0];
   } catch (err) {
     return res.status(500).json({ error: `db: ${err.message}` });
   }
