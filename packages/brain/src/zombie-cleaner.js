@@ -230,6 +230,22 @@ async function cleanupOrphanWorktrees(pool) {
       const ageMin = Math.round(ageMs / 60000);
       console.log(`[zombie-cleaner] Orphan worktree: ${wtPath} age=${ageMin}min taskId=${taskId || 'unknown'}`);
 
+      // Guard A: 未提交改动 → skip（照抄 cleanup-merged-worktrees.sh Guard A 模式）
+      try {
+        const dirty = execSync(`git -C "${wtPath}" status --porcelain`, {
+          encoding: 'utf8',
+          timeout: 5000,
+          stdio: 'pipe',
+        });
+        if (dirty.trim()) {
+          console.log(`[zombie-cleaner] Skipping ${wtPath} — has uncommitted changes`);
+          continue;
+        }
+      } catch {
+        // git status 失败（路径不存在等）→ 保守 skip
+        continue;
+      }
+
       // 持锁删 worktree — 跟 startup-recovery / cleanup-merged-worktrees / cecelia-run trap
       // 互斥，避免并发撕坏 .git/worktrees 元数据
       const removed = await withLock({}, async () => {
@@ -324,4 +340,5 @@ export {
   STALE_SLOT_MIN_AGE_MS,
   ORPHAN_WORKTREE_MIN_AGE_MS,
   ACTIVE_WORKTREE_SIGNAL_THRESHOLD_MS,
+  WORKTREE_BASE,
 };

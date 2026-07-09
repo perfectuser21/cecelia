@@ -45,6 +45,7 @@ import { existsSync, readFileSync, rmSync, statSync, readdirSync } from 'fs';
 import { execSync } from 'child_process';
 import { resolveTaskPids } from '../watchdog.js';
 import { removeActiveProcess } from '../executor.js';
+import { withLock } from '../utils/cleanup-lock.js';
 
 import {
   cleanupStaleSlots,
@@ -55,6 +56,7 @@ import {
   STALE_SLOT_MIN_AGE_MS,
   ORPHAN_WORKTREE_MIN_AGE_MS,
   ACTIVE_WORKTREE_SIGNAL_THRESHOLD_MS,
+  WORKTREE_BASE,
 } from '../zombie-cleaner.js';
 
 // ============================================================
@@ -203,7 +205,7 @@ describe('findTaskIdForWorktree', () => {
   });
 
   it('.dev-mode 包含 UUID → 返回 UUID', () => {
-    existsSync.mockReturnValue(true);
+    readdirSync.mockReturnValue(['.dev-mode']);
     readFileSync.mockReturnValue('branch: cp-xxx\ntask_id: abc12345-1234-1234-1234-abcdef123456\n');
 
     const result = findTaskIdForWorktree('/some/worktree');
@@ -211,14 +213,14 @@ describe('findTaskIdForWorktree', () => {
   });
 
   it('.dev-mode 不存在 → 返回 null', () => {
-    existsSync.mockReturnValue(false);
+    readdirSync.mockReturnValue([]); // no .dev-mode* files
 
     const result = findTaskIdForWorktree('/some/worktree');
     expect(result).toBeNull();
   });
 
   it('.dev-mode 没有 UUID → 返回 null', () => {
-    existsSync.mockReturnValue(true);
+    readdirSync.mockReturnValue(['.dev-mode']);
     readFileSync.mockReturnValue('branch: cp-03071033\nstarted: 2026-03-07\n');
 
     const result = findTaskIdForWorktree('/some/worktree');
@@ -226,7 +228,7 @@ describe('findTaskIdForWorktree', () => {
   });
 
   it('readFileSync 抛异常 → 返回 null 不崩溃', () => {
-    existsSync.mockReturnValue(true);
+    readdirSync.mockReturnValue(['.dev-mode']);
     readFileSync.mockImplementation(() => { throw new Error('read error'); });
 
     const result = findTaskIdForWorktree('/some/worktree');
@@ -243,6 +245,8 @@ describe('cleanupOrphanWorktrees', () => {
     vi.resetAllMocks(); // 清掉 mock 实现（含 once 队列），避免 test 间残留
     // 默认无 .dev-mode* 文件（isWorktreeActive 返回 false），不影响原有 case 行为
     readdirSync.mockReturnValue([]);
+    // resetAllMocks 会清掉 withLock 实现，需要重新设置
+    withLock.mockImplementation(async (_opts, fn) => fn());
   });
 
   it('git worktree list 失败 → 返回 errors，不崩溃', async () => {
@@ -268,7 +272,7 @@ describe('cleanupOrphanWorktrees', () => {
   });
 
   it('DB 查询失败 → 返回 errors，不清理', async () => {
-    const WORKTREE_BASE = process.env.WORKTREE_BASE || '/Users/administrator/perfect21/cecelia/.claude/worktrees';
+
     execSync.mockReturnValue(`worktree ${WORKTREE_BASE}/some-wt\nHEAD abc123\nbranch cp-xxx\n\n`);
 
     const pool = { query: vi.fn().mockRejectedValue(new Error('db error')) };
@@ -280,7 +284,7 @@ describe('cleanupOrphanWorktrees', () => {
   });
 
   it('worktree 有对应活跃任务 → 不清理', async () => {
-    const WORKTREE_BASE = process.env.WORKTREE_BASE || '/Users/administrator/perfect21/cecelia/.claude/worktrees';
+
     const wtPath = `${WORKTREE_BASE}/task-uuid-wt`;
     const taskId = 'aabbccdd-1234-1234-1234-aabbccddeeff';
 
@@ -296,12 +300,13 @@ describe('cleanupOrphanWorktrees', () => {
     const result = await cleanupOrphanWorktrees(pool);
 
     expect(result.removed).toBe(0);
-    // execSync 只调用了 git worktree list，没有 remove
-    expect(execSync).toHaveBeenCalledTimes(1);
+    // 没有调用 git worktree remove
+    const removeCalls = execSync.mock.calls.filter(c => String(c[0]).includes('worktree remove'));
+    expect(removeCalls).toHaveLength(0);
   });
 
   it('worktree 年龄 < 30min → 不清理', async () => {
-    const WORKTREE_BASE = process.env.WORKTREE_BASE || '/Users/administrator/perfect21/cecelia/.claude/worktrees';
+
     const wtPath = `${WORKTREE_BASE}/some-wt`;
 
     execSync.mockReturnValueOnce(`worktree ${wtPath}\nHEAD abc123\nbranch cp-xxx\n\n`);
@@ -319,13 +324,15 @@ describe('cleanupOrphanWorktrees', () => {
   });
 
   it('孤儿 worktree 年龄 > 30min → 执行 git worktree remove', async () => {
-    const WORKTREE_BASE = process.env.WORKTREE_BASE || '/Users/administrator/perfect21/cecelia/.claude/worktrees';
+
     const wtPath = `${WORKTREE_BASE}/orphan-wt`;
 
     // First call: git worktree list
-    // Second call: git worktree remove
+    // Second call: git status --porcelain (Guard A, clean)
+    // Third call: git worktree remove
     execSync
       .mockReturnValueOnce(`worktree ${wtPath}\nHEAD abc123\nbranch cp-xxx\n\n`)
+      .mockReturnValueOnce('') // git status --porcelain → clean
       .mockReturnValueOnce(''); // git worktree remove --force
 
     existsSync.mockReturnValue(true);
@@ -346,11 +353,12 @@ describe('cleanupOrphanWorktrees', () => {
   });
 
   it('git worktree remove 失败 → 降级到 rmSync', async () => {
-    const WORKTREE_BASE = process.env.WORKTREE_BASE || '/Users/administrator/perfect21/cecelia/.claude/worktrees';
+
     const wtPath = `${WORKTREE_BASE}/orphan-wt`;
 
     execSync
       .mockReturnValueOnce(`worktree ${wtPath}\nHEAD abc123\nbranch cp-xxx\n\n`) // list
+      .mockReturnValueOnce('') // git status --porcelain → clean (Guard A)
       .mockImplementationOnce(() => { throw new Error('remove failed'); })         // remove --force
       .mockReturnValueOnce(''); // git worktree prune
 
@@ -368,7 +376,7 @@ describe('cleanupOrphanWorktrees', () => {
 
   it('worktree 有 fresh .dev-mode.branch → 跳过清理（活跃信号预检）', async () => {
     const now = Date.now();
-    execSync.mockReturnValue('worktree /Users/administrator/worktrees/cecelia/active-wt\n\n');
+    execSync.mockReturnValue(`worktree ${WORKTREE_BASE}/active-wt\n\n`);
     existsSync.mockReturnValue(true);
     statSync.mockImplementation((p) => {
       if (p.endsWith('.dev-mode.cp-yyy')) return { mtimeMs: now - 10_000 };
@@ -387,10 +395,54 @@ describe('cleanupOrphanWorktrees', () => {
     expect(removeCalls).toHaveLength(0);
   });
 
+  it('Guard A: worktree 有未提交改动 → skip，不删除', async () => {
+
+    const wtPath = `${WORKTREE_BASE}/dirty-wt`;
+
+    execSync.mockImplementation((cmd) => {
+      if (cmd.includes('worktree list')) return `worktree ${wtPath}\nHEAD abc123\nbranch cp-xxx\n\n`;
+      if (cmd.includes('status --porcelain')) return ' M modified-file.js\n'; // dirty
+      return '';
+    });
+    existsSync.mockReturnValue(true);
+    // 年龄 > 30min
+    statSync.mockReturnValue({ mtimeMs: Date.now() - 45 * 60 * 1000 });
+    readdirSync.mockReturnValue([]);
+
+    const pool = makePool([]);
+    const result = await cleanupOrphanWorktrees(pool);
+
+    expect(result.removed).toBe(0);
+    const removeCalls = execSync.mock.calls.filter(c => String(c[0]).includes('worktree remove'));
+    expect(removeCalls).toHaveLength(0);
+  });
+
+  it('Guard A: git status 抛出异常 → 保守 skip，不删除', async () => {
+
+    const wtPath = `${WORKTREE_BASE}/broken-wt`;
+
+    execSync.mockImplementation((cmd) => {
+      if (cmd.includes('worktree list')) return `worktree ${wtPath}\nHEAD abc123\nbranch cp-xxx\n\n`;
+      if (cmd.includes('status --porcelain')) throw new Error('not a git repo');
+      return '';
+    });
+    existsSync.mockReturnValue(true);
+    statSync.mockReturnValue({ mtimeMs: Date.now() - 45 * 60 * 1000 });
+    readdirSync.mockReturnValue([]);
+
+    const pool = makePool([]);
+    const result = await cleanupOrphanWorktrees(pool);
+
+    expect(result.removed).toBe(0);
+    const removeCalls = execSync.mock.calls.filter(c => String(c[0]).includes('worktree remove'));
+    expect(removeCalls).toHaveLength(0);
+  });
+
   it('worktree 无 .dev-mode* 文件 → 正常清理（不受新信号影响）', async () => {
     const now = Date.now();
     execSync
-      .mockReturnValueOnce('worktree /Users/administrator/worktrees/cecelia/dead-wt\n\n')
+      .mockReturnValueOnce(`worktree ${WORKTREE_BASE}/dead-wt\n\n`)
+      .mockReturnValueOnce('') // git status --porcelain → clean
       .mockReturnValueOnce(''); // git worktree remove 成功
     existsSync.mockReturnValue(true);
     statSync.mockReturnValue({ mtimeMs: now - 60 * 60 * 1000 }); // 1h age 超 grace

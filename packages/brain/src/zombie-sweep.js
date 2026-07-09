@@ -181,6 +181,23 @@ async function sweepStaleWorktrees() {
       continue;
     }
 
+    // Guard A: 未提交改动 → skip（照抄 cleanup-merged-worktrees.sh Guard A 模式）
+    try {
+      const dirty = execSync(`git -C "${wt.path}" status --porcelain`, {
+        encoding: 'utf8',
+        timeout: 5000
+      });
+      if (dirty.trim()) {
+        console.log(`[zombie-sweep] Skipping ${wt.path} — has uncommitted changes`);
+        result.skipped++;
+        continue;
+      }
+    } catch {
+      // git status 失败（路径不存在等）→ 保守 skip
+      result.skipped++;
+      continue;
+    }
+
     // Remove stale worktree — 持锁互斥（cleanup-lock 跨 zombie-cleaner / cecelia-run trap 等）
     const removed = await withLock({}, async () => {
       try {

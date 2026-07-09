@@ -105,7 +105,6 @@ export default defineConfig({
       'src/__tests__/tick-rampup.test.js',
       'src/__tests__/tick-watchdog-quarantine.test.js',
       'src/__tests__/watchdog-quarantine-race.test.js',
-      'src/__tests__/zombie-cleaner.test.js',
       // Mock 不完整或代码逻辑变更导致失败（pre-existing issue）
       // content-pipeline-{executors,llm,error-message,etc}.test.js 全部已删除
       // （in-Brain content-pipeline 编排搬到 ZJ pipeline-worker，PR zenithjoy#216）
