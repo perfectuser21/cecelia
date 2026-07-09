@@ -48,4 +48,25 @@ describe('ANOMALY_PATTERNS.MEMORY_LEAK', () => {
 
     expect(ANOMALY_PATTERNS.MEMORY_LEAK.checks(metrics, history)).toBe(true);
   });
+
+  it('时间窗恰好 2 分钟且增长率超阈值时，边界条件应判定为泄漏（验证 timeDiffMinutes===2 不被短路）', () => {
+    const now = 1000000;
+    // 10 个采样点，恰好跨越 2 分钟（120000ms）
+    // 200MB 涨到 350MB，增长 150MB，速率 75MB/分钟 > 50MB/分钟阈值
+    const history = buildHistory([
+      { value: 200, timestamp: now },
+      { value: 216.67, timestamp: now + 12000 },
+      { value: 233.33, timestamp: now + 24000 },
+      { value: 250, timestamp: now + 36000 },
+      { value: 266.67, timestamp: now + 48000 },
+      { value: 283.33, timestamp: now + 60000 },
+      { value: 300, timestamp: now + 72000 },
+      { value: 316.67, timestamp: now + 84000 },
+      { value: 333.33, timestamp: now + 96000 },
+      { value: 350, timestamp: now + 120000 }, // 2 分钟窗口，150MB 增长
+    ]);
+    const metrics = { memory: { value: 350 } };
+
+    expect(ANOMALY_PATTERNS.MEMORY_LEAK.checks(metrics, history)).toBe(true);
+  });
 });
