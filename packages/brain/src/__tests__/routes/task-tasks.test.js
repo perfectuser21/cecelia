@@ -24,6 +24,16 @@ function createApp() {
   return app;
 }
 
+// 区分去重查询（含 status IN）和 INSERT/SELECT，避免 dedup 护栏误判为重复
+function setupDedupMock(insertRows) {
+  mockPool.query.mockImplementation((sql) => {
+    if (typeof sql === 'string' && sql.includes('status IN')) {
+      return Promise.resolve({ rows: [] }); // dedup check → 无重复
+    }
+    return Promise.resolve({ rows: insertRows || [] });
+  });
+}
+
 describe('task-tasks routes', () => {
   let app;
 
@@ -96,17 +106,15 @@ describe('task-tasks routes', () => {
 
   describe('POST /tasks', () => {
     it('creates task with title only → 201', async () => {
-      mockPool.query.mockResolvedValueOnce({
-        rows: [{
-          id: 'new-uuid',
-          title: 'New Task',
-          status: 'queued',
-          task_type: 'dev',
-          priority: 'P2',
-          project_id: null,
-          created_at: '2026-03-06T00:00:00Z',
-        }],
-      });
+      setupDedupMock([{
+        id: 'new-uuid',
+        title: 'New Task',
+        status: 'queued',
+        task_type: 'dev',
+        priority: 'P2',
+        project_id: null,
+        created_at: '2026-03-06T00:00:00Z',
+      }]);
 
       const res = await request(app).post('/tasks').send({ title: 'New Task' });
       expect(res.status).toBe(201);
@@ -126,17 +134,15 @@ describe('task-tasks routes', () => {
     });
 
     it('passes all optional fields to INSERT', async () => {
-      mockPool.query.mockResolvedValueOnce({
-        rows: [{
-          id: 'arch-uuid',
-          title: 'Architecture Task',
-          status: 'queued',
-          task_type: 'architecture_design',
-          priority: 'P1',
-          project_id: 'proj-123',
-          created_at: '2026-03-06T00:00:00Z',
-        }],
-      });
+      setupDedupMock([{
+        id: 'arch-uuid',
+        title: 'Architecture Task',
+        status: 'queued',
+        task_type: 'architecture_design',
+        priority: 'P1',
+        project_id: 'proj-123',
+        created_at: '2026-03-06T00:00:00Z',
+      }]);
 
       const res = await request(app).post('/tasks').send({
         title: 'Architecture Task',
@@ -149,7 +155,8 @@ describe('task-tasks routes', () => {
       });
 
       expect(res.status).toBe(201);
-      const [sql, params] = mockPool.query.mock.calls[0];
+      // INSERT 是第二次 query call（calls[0] 是 dedup check）
+      const [sql, params] = mockPool.query.mock.calls[1];
       expect(sql).toContain('INSERT INTO tasks');
       expect(params).toContain('Architecture Task');
       expect(params).toContain('architecture_design');
@@ -161,41 +168,38 @@ describe('task-tasks routes', () => {
     // ── 回归测试：Bug1/Bug2/Bug3 修复验证 ──
 
     it('[Bug1] 传 payload 字段 → INSERT params 包含 payload JSON', async () => {
-      mockPool.query.mockResolvedValueOnce({
-        rows: [{ id: 'x', title: 'T', status: 'queued', task_type: 'dev', priority: 'P2', project_id: null, created_at: '' }],
-      });
+      setupDedupMock([{ id: 'x', title: 'T', status: 'queued', task_type: 'dev', priority: 'P2', project_id: null, created_at: '' }]);
 
       await request(app).post('/tasks').send({
         title: 'T',
         payload: { depends_on: ['task-a', 'task-b'], architecture_ref: 'arch.md' },
       });
 
-      const [, params] = mockPool.query.mock.calls[0];
+      // INSERT 是第二次 query call（calls[0] 是 dedup check）
+      const [, params] = mockPool.query.mock.calls[1];
       const payloadParam = params.find(p => typeof p === 'string' && p.includes('depends_on'));
       expect(payloadParam).toBeDefined();
       expect(JSON.parse(payloadParam)).toEqual({ depends_on: ['task-a', 'task-b'], architecture_ref: 'arch.md' });
     });
 
     it('[Bug2] 不传 location → INSERT params 第8个参数为 "us"（不是 null）', async () => {
-      mockPool.query.mockResolvedValueOnce({
-        rows: [{ id: 'x', title: 'T', status: 'queued', task_type: 'dev', priority: 'P2', project_id: null, created_at: '' }],
-      });
+      setupDedupMock([{ id: 'x', title: 'T', status: 'queued', task_type: 'dev', priority: 'P2', project_id: null, created_at: '' }]);
 
       await request(app).post('/tasks').send({ title: 'T' });
 
       // params 顺序：title, description, priority, task_type, project_id, area_id, goal_id, location, payload, trigger_source
-      const [, params] = mockPool.query.mock.calls[0];
+      // INSERT 是第二次 query call（calls[0] 是 dedup check）
+      const [, params] = mockPool.query.mock.calls[1];
       expect(params[7]).toBe('us'); // location 在第8个位置（index 7）
     });
 
     it('[Bug3] 不传 trigger_source → INSERT params 包含 "auto"（不是 "api"）', async () => {
-      mockPool.query.mockResolvedValueOnce({
-        rows: [{ id: 'x', title: 'T', status: 'queued', task_type: 'dev', priority: 'P2', project_id: null, created_at: '' }],
-      });
+      setupDedupMock([{ id: 'x', title: 'T', status: 'queued', task_type: 'dev', priority: 'P2', project_id: null, created_at: '' }]);
 
       await request(app).post('/tasks').send({ title: 'T' });
 
-      const [, params] = mockPool.query.mock.calls[0];
+      // INSERT 是第二次 query call（calls[0] 是 dedup check）
+      const [, params] = mockPool.query.mock.calls[1];
       expect(params).toContain('auto');
       expect(params).not.toContain('api');
     });
@@ -218,11 +222,9 @@ describe('task-tasks routes', () => {
 
     it('passes okr_initiative_id to INSERT when provided', async () => {
       const initId = 'c0362394-ba7c-44c7-9386-e7947f604237';
-      mockPool.query.mockResolvedValueOnce({
-        rows: [{ id: 'new-uuid', title: 'T', status: 'queued', task_type: 'dev',
-          priority: 'P2', project_id: null, goal_id: null,
-          okr_initiative_id: initId, created_at: '' }],
-      });
+      setupDedupMock([{ id: 'new-uuid', title: 'T', status: 'queued', task_type: 'dev',
+        priority: 'P2', project_id: null, goal_id: null,
+        okr_initiative_id: initId, created_at: '' }]);
 
       const res = await request(app).post('/tasks').send({
         title: 'T',
@@ -230,20 +232,20 @@ describe('task-tasks routes', () => {
       });
 
       expect(res.status).toBe(201);
-      const [sql, params] = mockPool.query.mock.calls[0];
+      // INSERT 是第二次 query call（calls[0] 是 dedup check）
+      const [sql, params] = mockPool.query.mock.calls[1];
       expect(sql).toContain('okr_initiative_id');
       expect(params).toContain(initId);
     });
 
     it('passes null okr_initiative_id when not provided', async () => {
-      mockPool.query.mockResolvedValueOnce({
-        rows: [{ id: 'x', title: 'T', status: 'queued', task_type: 'dev',
-          priority: 'P2', project_id: null, okr_initiative_id: null, created_at: '' }],
-      });
+      setupDedupMock([{ id: 'x', title: 'T', status: 'queued', task_type: 'dev',
+        priority: 'P2', project_id: null, okr_initiative_id: null, created_at: '' }]);
 
       await request(app).post('/tasks').send({ title: 'T' });
 
-      const [sql, params] = mockPool.query.mock.calls[0];
+      // INSERT 是第二次 query call（calls[0] 是 dedup check）
+      const [sql, params] = mockPool.query.mock.calls[1];
       expect(sql).toContain('okr_initiative_id');
       // last param should be null (okr_initiative_id default)
       expect(params[params.length - 1]).toBeNull();
@@ -305,9 +307,7 @@ describe('task-tasks routes', () => {
 
   describe('POST /tasks — B51 harness_initiative journey_id warning', () => {
     it('harness_initiative without journey_id → 201 with warnings field', async () => {
-      mockPool.query.mockResolvedValueOnce({
-        rows: [{ id: 'hi-uuid', title: 'Test Initiative', status: 'queued', task_type: 'harness_initiative' }],
-      });
+      setupDedupMock([{ id: 'hi-uuid', title: 'Test Initiative', status: 'queued', task_type: 'harness_initiative' }]);
 
       const res = await request(app).post('/tasks').send({
         title: 'Test Initiative',
@@ -321,9 +321,7 @@ describe('task-tasks routes', () => {
     });
 
     it('harness_initiative with journey_id → 201 without warnings', async () => {
-      mockPool.query.mockResolvedValueOnce({
-        rows: [{ id: 'hi-uuid2', title: 'Test Initiative', status: 'queued', task_type: 'harness_initiative' }],
-      });
+      setupDedupMock([{ id: 'hi-uuid2', title: 'Test Initiative', status: 'queued', task_type: 'harness_initiative' }]);
 
       const res = await request(app).post('/tasks').send({
         title: 'Test Initiative',

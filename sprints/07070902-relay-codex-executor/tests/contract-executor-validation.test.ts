@@ -54,8 +54,14 @@ describe('B1: executor 白名单校验', () => {
 
   beforeEach(async () => {
     vi.clearAllMocks();
-    mockPool.query.mockResolvedValue({
-      rows: [{ id: 'test-uuid-1234', title: 'test', status: 'queued', task_type: 'harness_initiative' }],
+    // 区分去重查询（含 status IN）和 INSERT，避免 dedup 护栏误判为重复
+    mockPool.query.mockImplementation((sql: string) => {
+      if (typeof sql === 'string' && sql.includes('status IN')) {
+        return Promise.resolve({ rows: [] }); // dedup check → 无重复
+      }
+      return Promise.resolve({
+        rows: [{ id: 'test-uuid-1234', title: 'test', status: 'queued', task_type: 'harness_initiative' }],
+      });
     });
 
     app = express();
