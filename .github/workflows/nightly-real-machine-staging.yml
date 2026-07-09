@@ -1,0 +1,357 @@
+name: Nightly Real Machine Staging
+
+# 真机每晚回归闸 — 补 6站2轨模型④站空白
+#
+# 每晚在 ROG(staging 指向) 跑两条关键链路：
+#   1. 微信气泡门 — 通过 Brain staging 派发 wechat smoke task，
+#      验证 WeChat RPA 真实收到消息、气泡可见
+#   2. 抖音 keyword 读侧 — 通过 Brain staging 派发 douyin keyword 探针，
+#      验证内容上线后 keyword 检索可命中
+#
+# 结果红（任意一条失败）→ 自动开 GitHub Issue（去重）
+# 本 workflow 不触碰 production，只读 staging Brain (5222)。
+#
+# Secrets 依赖:
+#   TS_AUTHKEY       — Tailscale 连接（已有）
+#   DEPLOY_TOKEN     — Brain API 认证（已有）
+#   GH_PAT_BOT       — 开 Issue 用（已有，repo scope）
+#
+# Brain staging URL: http://100.71.151.105:5222
+
+on:
+  schedule:
+    - cron: '30 22 * * *'   # UTC 22:30 = 北京 06:30（每晚）
+  workflow_dispatch:
+    inputs:
+      skip_issue:
+        description: '跳过 Issue 创建（调试用）'
+        required: false
+        default: 'false'
+        type: string
+
+concurrency:
+  group: nightly-real-machine-staging
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  real_machine_check:
+    name: Real Machine Staging Full Check
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      BRAIN_STAGING_URL: http://100.71.151.105:5222
+      DEPLOY_TOKEN: ${{ secrets.DEPLOY_TOKEN }}
+      GH_TOKEN: ${{ secrets.GH_PAT_BOT || secrets.GITHUB_TOKEN }}
+      SKIP_ISSUE: ${{ inputs.skip_issue || 'false' }}
+      POLL_INTERVAL: '15'
+      TASK_TIMEOUT: '600'
+
+    steps:
+      - name: Connect to Tailscale
+        uses: tailscale/github-action@v2
+        with:
+          authkey: ${{ secrets.TS_AUTHKEY }}
+
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: 验证 Brain staging 可达
+        run: |
+          set -uo pipefail
+          echo "Brain staging URL: ${BRAIN_STAGING_URL}"
+          HTTP=$(curl -s -o /dev/null -w "%{http_code}" -m 15 "${BRAIN_STAGING_URL}/api/brain/health" || echo "000")
+          if [ "$HTTP" != "200" ]; then
+            echo "::error::Brain staging (${BRAIN_STAGING_URL}) 不可达，HTTP=$HTTP。请确认 ROG 在线 + Tailscale 连通。"
+            exit 1
+          fi
+          echo "✅ Brain staging 可达 (HTTP $HTTP)"
+
+      - name: 检查①：微信气泡门
+        id: wechat_bubble
+        run: |
+          set -uo pipefail
+          SMOKE_TAG="nightly-wechat-bubble-$(date +%Y%m%d)"
+
+          echo "── 微信气泡门 smoke task ──"
+          TASK_BODY=$(python3 -c "
+          import json, sys
+          print(json.dumps({
+            'title': 'nightly: wechat bubble gate [${SMOKE_TAG}]',
+            'task_type': 'content_publish',
+            'priority': 'P1',
+            'trigger_source': 'nightly-real-machine-staging',
+            'payload': {
+              'platform': 'wechat',
+              'content_type': 'text',
+              'title': 'Cecelia 每夜回归 — 微信气泡门',
+              'content': '自动化每夜回归 Nightly smoke — 验证微信消息气泡可见性。标签: ${SMOKE_TAG}',
+              'smoke_test': True,
+              'smoke_tag': '${SMOKE_TAG}',
+              'check_type': 'bubble_gate',
+              'nightly': True
+            }
+          }))
+          ")
+
+          RESP=$(curl -s -m 30 \
+            -X POST "${BRAIN_STAGING_URL}/api/brain/tasks" \
+            -H "Authorization: Bearer ${DEPLOY_TOKEN}" \
+            -H "Content-Type: application/json" \
+            -d "$TASK_BODY") || { echo "::error::微信气泡门 task 创建请求失败"; exit 1; }
+
+          TASK_ID=$(echo "$RESP" | python3 -c "import sys,json; print(json.load(sys.stdin).get('id',''))" 2>/dev/null || echo "")
+          if [ -z "$TASK_ID" ]; then
+            echo "::error::微信气泡门 task 创建失败，响应: $RESP"
+            echo "status=failed" >> "$GITHUB_OUTPUT"
+            echo "error=task_create_failed" >> "$GITHUB_OUTPUT"
+            exit 0   # 不立即退出，继续跑抖音检查
+          fi
+          echo "任务创建: task_id=$TASK_ID"
+          echo "task_id=$TASK_ID" >> "$GITHUB_OUTPUT"
+
+          # 轮询等待完成
+          START=$(date +%s)
+          DEADLINE=$((START + TASK_TIMEOUT))
+          FINAL_STATUS=""
+          while [ "$(date +%s)" -lt "$DEADLINE" ]; do
+            STATUS=$(curl -s -m 10 "${BRAIN_STAGING_URL}/api/brain/tasks/${TASK_ID}" \
+              -H "Authorization: Bearer ${DEPLOY_TOKEN}" \
+              | python3 -c "import sys,json; print(json.load(sys.stdin).get('status','unknown'))" 2>/dev/null || echo "api_error")
+            case "$STATUS" in
+              completed|failed|terminal_failure|canceled)
+                FINAL_STATUS="$STATUS"; break ;;
+              api_error)
+                echo "  轮询 API 错误，等待重试..."; sleep "$POLL_INTERVAL" ;;
+              *)
+                echo "  status=$STATUS ($(( $(date +%s) - START ))s elapsed)..."
+                sleep "$POLL_INTERVAL" ;;
+            esac
+          done
+
+          [ -z "$FINAL_STATUS" ] && FINAL_STATUS="timeout"
+
+          echo "微信气泡门结果: $FINAL_STATUS"
+          echo "status=$FINAL_STATUS" >> "$GITHUB_OUTPUT"
+
+          if [ "$FINAL_STATUS" != "completed" ]; then
+            ERROR_MSG=$(curl -s -m 10 "${BRAIN_STAGING_URL}/api/brain/tasks/${TASK_ID}" \
+              -H "Authorization: Bearer ${DEPLOY_TOKEN}" \
+              | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('error_message') or str(d.get('result',{})))" 2>/dev/null || echo "unknown")
+            echo "error=$ERROR_MSG" >> "$GITHUB_OUTPUT"
+            echo "::warning::微信气泡门失败: $ERROR_MSG"
+          else
+            echo "✅ 微信气泡门通过"
+          fi
+
+      - name: 检查②：抖音 keyword 读侧
+        id: douyin_keyword
+        run: |
+          set -uo pipefail
+          SMOKE_TAG="nightly-douyin-keyword-$(date +%Y%m%d)"
+
+          echo "── 抖音 keyword 读侧探针 ──"
+          TASK_BODY=$(python3 -c "
+          import json, sys
+          print(json.dumps({
+            'title': 'nightly: douyin keyword read [${SMOKE_TAG}]',
+            'task_type': 'content_publish',
+            'priority': 'P1',
+            'trigger_source': 'nightly-real-machine-staging',
+            'payload': {
+              'platform': 'douyin',
+              'content_type': 'idea',
+              'title': 'Cecelia 每夜回归 — 抖音keyword',
+              'content': '自动化每夜回归 Nightly smoke — 验证抖音 keyword 读侧链路。标签: ${SMOKE_TAG}',
+              'smoke_test': True,
+              'smoke_tag': '${SMOKE_TAG}',
+              'check_type': 'keyword_read',
+              'nightly': True
+            }
+          }))
+          ")
+
+          RESP=$(curl -s -m 30 \
+            -X POST "${BRAIN_STAGING_URL}/api/brain/tasks" \
+            -H "Authorization: Bearer ${DEPLOY_TOKEN}" \
+            -H "Content-Type: application/json" \
+            -d "$TASK_BODY") || { echo "::error::抖音 keyword task 创建请求失败"; exit 1; }
+
+          TASK_ID=$(echo "$RESP" | python3 -c "import sys,json; print(json.load(sys.stdin).get('id',''))" 2>/dev/null || echo "")
+          if [ -z "$TASK_ID" ]; then
+            echo "::error::抖音 keyword task 创建失败，响应: $RESP"
+            echo "status=failed" >> "$GITHUB_OUTPUT"
+            echo "error=task_create_failed" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "任务创建: task_id=$TASK_ID"
+          echo "task_id=$TASK_ID" >> "$GITHUB_OUTPUT"
+
+          # 轮询等待完成
+          START=$(date +%s)
+          DEADLINE=$((START + TASK_TIMEOUT))
+          FINAL_STATUS=""
+          while [ "$(date +%s)" -lt "$DEADLINE" ]; do
+            STATUS=$(curl -s -m 10 "${BRAIN_STAGING_URL}/api/brain/tasks/${TASK_ID}" \
+              -H "Authorization: Bearer ${DEPLOY_TOKEN}" \
+              | python3 -c "import sys,json; print(json.load(sys.stdin).get('status','unknown'))" 2>/dev/null || echo "api_error")
+            case "$STATUS" in
+              completed|failed|terminal_failure|canceled)
+                FINAL_STATUS="$STATUS"; break ;;
+              api_error)
+                echo "  轮询 API 错误，等待重试..."; sleep "$POLL_INTERVAL" ;;
+              *)
+                echo "  status=$STATUS ($(( $(date +%s) - START ))s elapsed)..."
+                sleep "$POLL_INTERVAL" ;;
+            esac
+          done
+
+          [ -z "$FINAL_STATUS" ] && FINAL_STATUS="timeout"
+
+          echo "抖音 keyword 读侧结果: $FINAL_STATUS"
+          echo "status=$FINAL_STATUS" >> "$GITHUB_OUTPUT"
+
+          if [ "$FINAL_STATUS" != "completed" ]; then
+            ERROR_MSG=$(curl -s -m 10 "${BRAIN_STAGING_URL}/api/brain/tasks/${TASK_ID}" \
+              -H "Authorization: Bearer ${DEPLOY_TOKEN}" \
+              | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('error_message') or str(d.get('result',{})))" 2>/dev/null || echo "unknown")
+            echo "error=$ERROR_MSG" >> "$GITHUB_OUTPUT"
+            echo "::warning::抖音 keyword 读侧失败: $ERROR_MSG"
+          else
+            echo "✅ 抖音 keyword 读侧通过"
+          fi
+
+      - name: 汇总结果
+        id: summary
+        if: always()
+        run: |
+          WX="${{ steps.wechat_bubble.outputs.status }}"
+          DY="${{ steps.douyin_keyword.outputs.status }}"
+
+          FAILED_CHECKS=""
+          [ "$WX" != "completed" ] && FAILED_CHECKS="$FAILED_CHECKS 微信气泡门($WX)"
+          [ "$DY" != "completed" ] && FAILED_CHECKS="$FAILED_CHECKS 抖音keyword读侧($DY)"
+
+          echo ""
+          echo "════════════════════════════════════════════"
+          echo " Nightly Real Machine Staging 结果汇总"
+          echo "════════════════════════════════════════════"
+          echo " 微信气泡门 : ${WX:-skipped}"
+          echo " 抖音keyword: ${DY:-skipped}"
+          echo ""
+
+          if [ -z "$FAILED_CHECKS" ]; then
+            echo "✅ 全部通过"
+            echo "all_passed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "❌ 失败:$FAILED_CHECKS"
+            echo "all_passed=false" >> "$GITHUB_OUTPUT"
+            echo "failed_checks=$FAILED_CHECKS" >> "$GITHUB_OUTPUT"
+          fi
+
+          # GitHub Step Summary
+          {
+            echo "## 🔧 Nightly Real Machine Staging"
+            echo ""
+            echo "| 检查项 | 状态 |"
+            echo "|--------|------|"
+            printf "| 微信气泡门 | %s |\n" "${WX:-skipped}"
+            printf "| 抖音keyword读侧 | %s |\n" "${DY:-skipped}"
+            echo ""
+            if [ -z "$FAILED_CHECKS" ]; then
+              echo "✅ **全部通过**"
+            else
+              echo "❌ **失败：**$FAILED_CHECKS"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: 自动开 Issue（失败时）
+        if: always() && steps.summary.outputs.all_passed == 'false' && env.SKIP_ISSUE != 'true'
+        env:
+          REPO: ${{ github.repository }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          WX_STATUS: ${{ steps.wechat_bubble.outputs.status }}
+          WX_ERROR: ${{ steps.wechat_bubble.outputs.error }}
+          DY_STATUS: ${{ steps.douyin_keyword.outputs.status }}
+          DY_ERROR: ${{ steps.douyin_keyword.outputs.error }}
+          FAILED_CHECKS: ${{ steps.summary.outputs.failed_checks }}
+        run: |
+          set -uo pipefail
+          TODAY=$(date +%Y-%m-%d)
+          TITLE="[Nightly真机] ROG staging 回归失败 — ${TODAY}"
+
+          # 去重：已有同名 open issue 则跳过
+          EXISTING=$(gh api "repos/${REPO}/issues?state=open&labels=nightly-real-machine&per_page=50" \
+            --jq "[.[] | select(.title==\"${TITLE}\")] | length" 2>/dev/null || echo "0")
+          if [ "$EXISTING" -gt 0 ]; then
+            echo "已有同名 open issue，跳过创建: $TITLE"
+            exit 0
+          fi
+
+          BODY="## Nightly Real Machine Staging 失败报告
+
+**日期**: ${TODAY}
+**CI Run**: ${RUN_URL}
+
+### 失败检查项
+${FAILED_CHECKS}
+
+### 详细状态
+| 检查项 | 状态 | 错误信息 |
+|--------|------|---------|
+| 微信气泡门 | ${WX_STATUS:-skipped} | ${WX_ERROR:-无} |
+| 抖音keyword读侧 | ${DY_STATUS:-skipped} | ${DY_ERROR:-无} |
+
+### 排查建议
+1. 确认 ROG 机器在线（xian-rog）
+2. 确认 Brain staging (${BRAIN_STAGING_URL}) 正常运行
+3. 确认 WeChat / 抖音 RPA session 有效（登录态未过期）
+4. 查看 Brain staging 任务日志
+
+> 本 Issue 由 nightly-real-machine-staging.yml 自动创建。修复验证后请手动关闭。"
+
+          gh issue create \
+            --repo "${REPO}" \
+            --title "${TITLE}" \
+            --body "${BODY}" \
+            --label "nightly-real-machine,P1" \
+            2>/dev/null || \
+          gh issue create \
+            --repo "${REPO}" \
+            --title "${TITLE}" \
+            --body "${BODY}" \
+            || echo "::warning::Issue 创建失败（可能标签不存在），跳过"
+
+          echo "✅ GitHub Issue 已创建: $TITLE"
+
+      - name: 关闭已过期失败 Issue（全通过时）
+        if: always() && steps.summary.outputs.all_passed == 'true'
+        env:
+          REPO: ${{ github.repository }}
+        run: |
+          set -uo pipefail
+          # 查找所有 nightly-real-machine 标签的 open issues（最多20条）
+          OPEN_ISSUES=$(gh api "repos/${REPO}/issues?state=open&labels=nightly-real-machine&per_page=20" \
+            --jq '.[].number' 2>/dev/null || echo "")
+          if [ -z "$OPEN_ISSUES" ]; then
+            echo "无需关闭 issue（无 open 的 nightly-real-machine issue）"
+            exit 0
+          fi
+          for ISSUE_NUM in $OPEN_ISSUES; do
+            gh issue close "$ISSUE_NUM" \
+              --repo "${REPO}" \
+              --comment "✅ Nightly real machine 回归通过（$(date +%Y-%m-%d)），自动关闭。" \
+              2>/dev/null || echo "::warning::关闭 issue #${ISSUE_NUM} 失败，跳过"
+            echo "关闭 issue #${ISSUE_NUM}"
+          done
+
+      - name: 置 job 红（有失败时）
+        if: always() && steps.summary.outputs.all_passed == 'false'
+        run: |
+          echo "::error::Nightly 真机回归失败：${{ steps.summary.outputs.failed_checks }}"
+          exit 1
