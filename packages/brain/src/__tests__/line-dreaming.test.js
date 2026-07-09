@@ -6,6 +6,9 @@ import {
   getActiveJourneys,
   buildLineDreamData,
   renderLineLedgerMarkdown,
+  upsertLineLedger,
+  generateLineLedger,
+  maybeRunLineDreaming,
 } from '../line-dreaming.js';
 
 beforeEach(() => {
@@ -120,5 +123,66 @@ describe('renderLineLedgerMarkdown — 空段渲染"暂无"，有数据渲染条
       strategistNotes: [{ id: 'n1', title: '军师决策[Line A]: 挑下一个推进项', created_at: '2026-07-10T00:00:00Z' }],
     });
     expect(md).toContain('军师决策[Line A]: 挑下一个推进项');
+  });
+});
+
+describe('upsertLineLedger — 20h 内存在则 UPDATE，否则 INSERT', () => {
+  it('存在近期记录 → UPDATE', async () => {
+    const pool = {
+      query: vi.fn(async (sql) => {
+        if (/SELECT id FROM design_docs/.test(sql)) return { rows: [{ id: 'doc-1' }] };
+        return { rows: [] };
+      }),
+    };
+    await expect(
+      // @ts-ignore - 函数还未定义
+      upsertLineLedger(pool, 'journey-1', 'Line A', '# content')
+    ).resolves.not.toThrow();
+    const updateCall = pool.query.mock.calls.find((c) => /UPDATE design_docs/.test(c[0]));
+    expect(updateCall).toBeTruthy();
+    expect(updateCall[1]).toContain('doc-1');
+  });
+
+  it('不存在 → INSERT', async () => {
+    const pool = { query: vi.fn().mockResolvedValue({ rows: [] }) };
+    await expect(
+      // @ts-ignore - 函数还未定义
+      upsertLineLedger(pool, 'journey-1', 'Line A', '# content')
+    ).resolves.not.toThrow();
+    const insertCall = pool.query.mock.calls.find((c) => /INSERT INTO design_docs/.test(c[0]));
+    expect(insertCall).toBeTruthy();
+    expect(insertCall[0]).toMatch(/line_ledger/);
+  });
+});
+
+describe('maybeRunLineDreaming — 非窗口期不执行；窗口期遍历 active journeys', () => {
+  it('非窗口期 → triggered=false', async () => {
+    const pool = { query: vi.fn() };
+    // @ts-ignore - 函数还未定义
+    const result = await maybeRunLineDreaming(pool, new Date(Date.UTC(2026, 6, 10, 10, 0)));
+    expect(result.triggered).toBe(false);
+    expect(pool.query).not.toHaveBeenCalled();
+  });
+
+  it('窗口期 → 遍历 active journeys，单条失败不阻断其他 journey', async () => {
+    let journeyCall = 0;
+    const pool = {
+      query: vi.fn(async (sql) => {
+        if (/FROM journeys WHERE status/.test(sql)) {
+          return { rows: [{ id: 'j1', name: 'Line A' }, { id: 'j2', name: 'Line B' }] };
+        }
+        if (/type = 'line_ledger'.*journey_id = \$1/s.test(sql)) {
+          journeyCall++;
+          if (journeyCall === 1) throw new Error('j1 去重检查挂了');
+          return { rows: [] };
+        }
+        return { rows: [] };
+      }),
+    };
+    // @ts-ignore - 函数还未定义
+    const result = await maybeRunLineDreaming(pool, new Date(Date.UTC(2026, 6, 10, 21, 0)));
+    expect(result.triggered).toBe(true);
+    expect(result.failed).toBe(1);
+    expect(result.dreamed).toBe(1);
   });
 });

@@ -195,3 +195,82 @@ export function renderLineLedgerMarkdown(journeyName, data) {
 
   return lines.join('\n');
 }
+
+/**
+ * 落库：20h 内该 journey 已有记录则 UPDATE，否则 INSERT。
+ * @param {import('pg').Pool} pool
+ * @param {string} journeyId
+ * @param {string} journeyName
+ * @param {string} markdown
+ * @returns {Promise<void>}
+ */
+export async function upsertLineLedger(pool, journeyId, journeyName, markdown) {
+  const { rows } = await pool.query(
+    `SELECT id FROM design_docs
+     WHERE type = 'line_ledger' AND journey_id = $1
+       AND created_at >= NOW() - INTERVAL '20 hours'
+     LIMIT 1`,
+    [journeyId]
+  );
+
+  if (rows.length > 0) {
+    await pool.query(
+      `UPDATE design_docs SET content = $2, updated_at = NOW() WHERE id = $1`,
+      [rows[0].id, markdown]
+    );
+    return;
+  }
+
+  await pool.query(
+    `INSERT INTO design_docs (type, title, content, journey_id, author)
+     VALUES ('line_ledger', $1, $2, $3, 'cecelia')`,
+    [`${journeyName} — 24h 账本`, markdown, journeyId]
+  );
+}
+
+/**
+ * 组合：拉切片 → 渲染 → 落库。
+ * @param {import('pg').Pool} pool
+ * @param {string} journeyId
+ * @param {string} journeyName
+ * @returns {Promise<void>}
+ */
+export async function generateLineLedger(pool, journeyId, journeyName) {
+  const data = await buildLineDreamData(pool, journeyId, journeyName);
+  const markdown = renderLineLedgerMarkdown(journeyName, data);
+  await upsertLineLedger(pool, journeyId, journeyName, markdown);
+}
+
+/**
+ * 夜间蒸馏主入口：窗口内遍历所有 active journey，逐条去重+生成，单条失败不影响其他 journey。
+ * @param {import('pg').Pool} pool
+ * @param {Date} [now]
+ * @returns {Promise<{triggered: boolean, dreamed: number, skipped: number, failed: number}>}
+ */
+export async function maybeRunLineDreaming(pool, now = new Date()) {
+  if (!isInLineDreamingWindow(now)) {
+    return { triggered: false, dreamed: 0, skipped: 0, failed: 0 };
+  }
+
+  const journeys = await getActiveJourneys(pool);
+  let dreamed = 0;
+  let skipped = 0;
+  let failed = 0;
+
+  for (const journey of journeys) {
+    try {
+      const already = await alreadyDreamedToday(pool, journey.id);
+      if (already) {
+        skipped++;
+        continue;
+      }
+      await generateLineLedger(pool, journey.id, journey.name);
+      dreamed++;
+    } catch (err) {
+      console.warn(`[line-dreaming] journey ${journey.id} 蒸馏失败（跳过）:`, err.message);
+      failed++;
+    }
+  }
+
+  return { triggered: true, dreamed, skipped, failed };
+}
