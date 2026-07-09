@@ -1,3 +1,37 @@
+# task-tasks.js POST /tasks 服务端去重护栏 Implementation Plan
+
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+
+**Goal:** `POST /api/brain/tasks` 在建任务前检查是否已存在同 title/goal_id/project_id 且状态仍是 queued/in_progress 的任务，命中则返回已有任务不新建，堵住 2026-07-09 实测的"同一功能跨时间窗口独立重复点火"问题（issue 655691d2）。
+
+**Architecture:** 单文件核心改动（`task-tasks.js` 加一段 SELECT 查询），配套更新同目录下已有测试文件（因为新增的 SELECT 会让每个请求多一次 `pool.query` 调用，原有测试里所有 `mockPool.query.mock.calls[0]` 的下标引用需要相应调整）。
+
+**Tech Stack:** Node.js（Express route），vitest + supertest（测试，沿用文件已有的 mock 模式）。
+
+## Global Constraints
+
+- 只加去重查询，不改变现有成功路径的响应结构（除新增可选的 `deduplicated` 字段）
+- 只做精确 title 匹配，不做语义/模糊匹配（已在 spec 里明确排除）
+- 不加数据库 unique constraint（已在 spec 里明确排除，不做 migration）
+- 参考实现必须对齐 `packages/brain/src/actions.js` `createTask()` 第107-118行的查询写法（`IS NOT DISTINCT FROM` 处理 null）
+
+---
+
+### Task 1: 去重查询 + 测试
+
+**Files:**
+- Modify: `packages/brain/src/routes/task-tasks.js`（`POST /` handler，第131-133行之间插入）
+- Modify: `packages/brain/src/routes/__tests__/task-tasks.test.js`（全文件替换，见下方完整内容）
+
+**Interfaces:**
+- Consumes：`pool.query`（已在文件顶部 import，`import pool from '../db.js'`）
+- Produces：无新增导出，只改动路由内部行为——命中去重时响应体新增 `deduplicated: true` 字段
+
+- [ ] **Step 1: 写失败测试（含新增 dedup 测试 + 修复现有测试的 mock 调用序）**
+
+用下面的完整内容**整体替换** `packages/brain/src/routes/__tests__/task-tasks.test.js`：
+
+```javascript
 /**
  * task-tasks.test.js (routes/__tests__) — lint-test-pairing 配套
  *
@@ -237,3 +271,77 @@ describe('task-tasks routes — C3 服务端去重护栏（issue 655691d2）', (
     expect(dedupParams).toContain('goal-b');
   });
 });
+```
+
+- [ ] **Step 2: 跑测试确认失败**
+
+Run: `cd packages/brain && npx vitest run src/routes/__tests__/task-tasks.test.js`
+Expected: 新增的"C3 服务端去重护栏"describe 块里的 4 个测试 FAIL（去重查询还不存在，`POST /tasks`
+永远直接 INSERT，返回 201 而不是去重命中的 200，`mockPool.query` 调用次数不匹配预期）。
+已有的其他 describe 块测试也会 FAIL（因为它们现在多 mock 了一次 `{rows:[]}` 但实际代码还只调用
+一次 query，导致 mock 序列错位）——这是预期的，Step 4 实现后会一起变绿。
+
+- [ ] **Step 3: 实现修复**
+
+编辑 `packages/brain/src/routes/task-tasks.js`，在第131行（B51 warning 判断结束）之后、
+第133行 `const result = await pool.query(` 之前，插入：
+
+```js
+    // C3: 服务端去重护栏（issue 655691d2）——title 精确匹配 + goal_id/project_id 一致
+    // + 仍是活跃状态，命中则直接返回已有任务，不重新 INSERT。
+    // 防止外部 agent/人工反复对同一意图重新注册 task（2026-07-09 实测 5 个重复 PR 的根因）。
+    const dedupResult = await pool.query(
+      `SELECT id, title, status, task_type, priority, project_id, area_id, goal_id, okr_initiative_id, ability_id, payload, created_at
+       FROM tasks
+       WHERE title = $1
+         AND (goal_id IS NOT DISTINCT FROM $2)
+         AND (project_id IS NOT DISTINCT FROM $3)
+         AND status IN ('queued', 'in_progress')
+       LIMIT 1`,
+      [title.trim(), goal_id, project_id]
+    );
+    if (dedupResult.rows.length > 0) {
+      return res.status(200).json({ ...dedupResult.rows[0], deduplicated: true });
+    }
+
+```
+
+- [ ] **Step 4: 跑测试确认通过**
+
+Run: `cd packages/brain && npx vitest run src/routes/__tests__/task-tasks.test.js`
+Expected: 全部 PASS
+
+- [ ] **Step 5: 跑 task-tasks 相关全部测试确认无回归**
+
+Run: `cd packages/brain && npx vitest run src/routes/__tests__/task-tasks*.test.js`
+Expected: 全部 PASS（含本文件和其他 `task-tasks-*.test.js` 命名的兄弟测试文件，如果存在）
+
+- [ ] **Step 6: Commit（TDD 两段式）**
+
+```bash
+git add packages/brain/src/routes/__tests__/task-tasks.test.js
+git commit -m "test(brain): POST /tasks 服务端去重护栏失败测试(TDD red)
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>"
+
+git add packages/brain/src/routes/task-tasks.js
+git commit -m "fix(brain): task-tasks.js POST /tasks 补服务端去重护栏
+
+issue 655691d2 根因：POST /api/brain/tasks 路由完全没有去重逻辑，
+2026-07-09 实测同一功能需求被跨时间窗口独立重复点火3组（共5个冗余PR
+已关闭）。对比同库 actions.js 的 createTask()（L107-118）已有精确
+title+goal_id/project_id 匹配去重，这个路由是完全裸露的。
+
+新增去重查询（仿 actions.js 模式）：title 精确匹配 + goal_id/project_id
+一致（IS NOT DISTINCT FROM 处理 null）+ status IN (queued,in_progress)，
+命中返回已有任务（200 + deduplicated:true）不重新 INSERT。
+
+比已修的 /dev skill Phase 0(claim)/2.5(GitHub检查) 更底层——那两处是
+skill 层客户端纪律，这里下沉到 API 本身，不管谁调用都拦得住。
+
+已知不完整（spec 已明确排除，非本次范围）：只做精确 title 匹配不做
+语义/模糊匹配；不加 DB 层 unique constraint，亚秒级并发竞态仍可能
+双写——今天实测的重复都是分钟到小时级独立点火，本方案已覆盖真实场景。
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>"
+```
