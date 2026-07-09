@@ -8,7 +8,8 @@
  *     --priority P1 \
  *     --sub-area brain \
  *     --body "问题描述..." \
- *     --pr-url "https://github.com/..."
+ *     --pr-url "https://github.com/..." \
+ *     --journey-id "<journey_uuid>"
  */
 
 const path = require('path');
@@ -49,7 +50,7 @@ async function main() {
   const args = parseArgs(process.argv);
 
   if (!args.title) {
-    console.error('Usage: node scripts/notion-create-issue.js --title "..." [--priority P1] [--sub-area brain] [--body "..."] [--pr-url "..."]');
+    console.error('Usage: node scripts/notion-create-issue.js --title "..." [--priority P1] [--sub-area brain] [--body "..."] [--pr-url "..."] [--journey-id "<uuid>"]');
     process.exit(1);
   }
 
@@ -58,6 +59,7 @@ async function main() {
   const subArea = (args['sub-area'] || inferSubAreaFromGit() || null);
   const body = args.body || '';
   const prUrl = args['pr-url'] || '';
+  const journeyId = args['journey-id'] || null;
 
   const resp = await fetch(`${BRAIN_URL}/api/brain/issues`, {
     method: 'POST',
@@ -68,6 +70,7 @@ async function main() {
       sub_area: subArea,
       body: body || null,
       pr_url: prUrl || null,
+      journey_id: journeyId,
     }),
   });
 

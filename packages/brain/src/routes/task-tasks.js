@@ -56,7 +56,13 @@ router.post('/', async (req, res) => {
       domain: domainInput = null,
       okr_initiative_id = null,
       ability_id = null,
+      journey_id = null,
     } = req.body;
+
+    // 顶层 journey_id → 合入 payload，避免调用方必须知道 payload 嵌套格式
+    if (journey_id) {
+      payload = { ...(payload || {}), journey_id };
+    }
 
     if (!title || title.trim() === '') {
       return res.status(400).json({ error: 'title is required' });
