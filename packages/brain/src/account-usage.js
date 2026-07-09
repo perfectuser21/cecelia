@@ -318,7 +318,10 @@ export async function proactiveTokenCheck() {
         console.log(`[account-usage] [proactive-check] ${accountId}: token 将在 ${Math.floor(minsRemaining)} 分钟后过期`);
         try {
           const { raise } = await import('./alerting.js');
-          raise('P1', `token_expiring_soon_${accountId}`, `⏰ ${accountId} OAuth token 将在 ${Math.floor(minsRemaining)} 分钟后过期 — 请提前刷新凭证`).catch(() => {});
+          raise('P1', `token_expiring_soon_${accountId}`,
+            `⏰ ${accountId} OAuth token 将在 ${Math.floor(minsRemaining)} 分钟后过期 — 请提前刷新凭证`,
+            { debounce: { n: 2, cooldownMs: 2 * 60 * 60 * 1000 } } // 连续2个检查周期确认才响，响后2h冷却
+          ).catch(() => {});
         } catch { /* 告警失败不阻断主流程 */ }
       }
     } else {
