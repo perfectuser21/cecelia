@@ -47,6 +47,7 @@ describe('SYSTEM_AUTO_TRIGGER_SOURCES', () => {
 
 describe('pauseLowPriorityTasks (graceful_degrade)', () => {
   it('只暂停 trigger_source 在系统白名单内的任务，并写 error_message + status_history', async () => {
+    mockQuery.mockClear();
     mockQuery.mockResolvedValue({ rowCount: 0, rows: [] });
 
     const { executeResponse, SYSTEM_AUTO_TRIGGER_SOURCES } = await import('../escalation.js');
@@ -54,6 +55,7 @@ describe('pauseLowPriorityTasks (graceful_degrade)', () => {
       actions: [{ type: 'pause_low_priority', params: { priorities: ['P2', 'P3'] } }]
     });
 
+    // pool.query 第一次调用是 pauseLowPriorityTasks 里的 UPDATE，第二次是 updateEscalationActions
     const updateCall = mockQuery.mock.calls[0];
     const sql = updateCall[0];
     const params = updateCall[1];
