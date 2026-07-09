@@ -31,3 +31,16 @@ describe('CANCEL_EXEMPT_TYPES', () => {
     expect(exemptParam).not.toContain('content-publish');
   });
 });
+
+describe('SYSTEM_AUTO_TRIGGER_SOURCES', () => {
+  it('只包含系统自产来源，不包含用户来源', async () => {
+    const { SYSTEM_AUTO_TRIGGER_SOURCES } = await import('../escalation.js');
+    expect(SYSTEM_AUTO_TRIGGER_SOURCES).toContain('brain_auto');
+    expect(SYSTEM_AUTO_TRIGGER_SOURCES).toContain('content_pipeline_orchestrator');
+    expect(SYSTEM_AUTO_TRIGGER_SOURCES).toContain('harness_task_dispatch');
+    expect(SYSTEM_AUTO_TRIGGER_SOURCES).not.toContain('manual');
+    expect(SYSTEM_AUTO_TRIGGER_SOURCES).not.toContain('user');
+    expect(SYSTEM_AUTO_TRIGGER_SOURCES).not.toContain('user_headed');
+    expect(SYSTEM_AUTO_TRIGGER_SOURCES).not.toContain('owner_input');
+  });
+});
