@@ -423,7 +423,10 @@ async function pushInitiativeContracts(pool, token) {
 }
 
 async function pushAdvancementItems(pool, token) {
-  // 按 ability 聚合：只处理该 ability 已有 Notion 页面、且存在未同步推进项的组
+  // 按 ability 聚合该 ability **全部**推进项的累积进度（非仅未同步子集）——
+  // WHERE 子查询只用来判断"这个 ability 这一轮有没有变化值得推"，
+  // 但 COUNT 必须覆盖全量行，否则 done/total 只反映本轮新增/变化的子集，
+  // 会把之前已推的正确进度（如 2/4=50%）覆盖成错误的子集进度（如 0/1=0%）。
   const { rows } = await pool.query(`
     SELECT ai.ability_id, jf.notion_id AS ability_notion_id,
            COUNT(*) FILTER (WHERE ai.status='done')  AS done,
@@ -431,7 +434,10 @@ async function pushAdvancementItems(pool, token) {
            COUNT(*) FILTER (WHERE ai.status='todo')  AS todo
     FROM advancement_items ai
     JOIN journey_features jf ON jf.id = ai.ability_id
-    WHERE ai.notion_synced_at IS NULL AND jf.notion_id IS NOT NULL
+    WHERE jf.notion_id IS NOT NULL
+      AND ai.ability_id IN (
+        SELECT ability_id FROM advancement_items WHERE notion_synced_at IS NULL
+      )
     GROUP BY ai.ability_id, jf.notion_id
     LIMIT 10
   `);
@@ -462,6 +468,10 @@ async function pushAdvancementItems(pool, token) {
       }
       // 无论是否真的发了 PATCH（属性不存在时跳过），都标记已同步——
       // 属性缺失是"Notion 库未建列"的运维状态，不是"应无限重试"的瞬时错误
+      // 已知限制（PR3 前提）：PATCH /api/brain/advancements/:itemId（routes/abilities.js）
+      // 改 status 时不会把 notion_synced_at 重置回 NULL，所以已同步过的推进项状态再变化
+      // 不会触发下一轮重新推送——这需要改 abilities.js 的 PATCH 端点（本 PR 范围外，不动
+      // 现有三个 advancement 端点），留给 PR3 军师上游 producer 一并接线。
       await pool.query(
         `UPDATE advancement_items SET notion_synced_at=NOW() WHERE ability_id=$1 AND notion_synced_at IS NULL`,
         [r.ability_id]

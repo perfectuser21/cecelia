@@ -269,6 +269,15 @@ describe('runNotionPushSync — pushAdvancementItems', () => {
     );
     expect(updateCall).toBeTruthy();
     expect(updateCall[1]).toContain('ab-1');
+
+    // 聚合必须覆盖该 ability 全量推进项（累积进度），不能只统计未同步子集——
+    // 否则一轮只新增 1 个 todo 就会把之前已推的正确进度覆盖成错误的子集进度
+    const selectCall = mockQuery.mock.calls.find(
+      c => typeof c[0] === 'string' && c[0].includes('FROM advancement_items ai')
+    );
+    expect(selectCall).toBeTruthy();
+    expect(selectCall[0]).not.toMatch(/WHERE ai\.notion_synced_at IS NULL AND/);
+    expect(selectCall[0]).toMatch(/ai\.ability_id IN \(\s*SELECT ability_id FROM advancement_items WHERE notion_synced_at IS NULL\s*\)/);
   });
 
   it('Feature 库无 Advancement Progress 属性 → 跳过 PATCH 但仍标记已同步（避免死循环重试）', async () => {
