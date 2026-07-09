@@ -1,26 +1,124 @@
 {
-  "skill": { "name": "daily-report-cs", "version": "v1.0.0", "source": "ChatGPT", "type": "判断型 · prompt 内核", "area": "ZenithJoy", "line": "Line 04 私域AI接管", "ability": "客服判断", "submitter": "张三", "evaluatedAt": "2026-07-08" },
-  "verdict": { "level": "partial", "text": "逻辑·输出·红线达标；主路径输入未接真 DB，上线前必须先接。" },
-  "stats": { "功能线": "1", "依赖缺失": "1", "红线": "✓", "成熟度": "thin", "诚实度": "A+", "耗时": "12′" },
-  "anatomy": {
-    "inputs": [
-      { "name": "状态包", "fields": ["上一阶段","风险等级","推进状态","未完成事项","询价背景","禁忌话术","历史缺口","上次下一步"], "status": "red", "connected": false, "note": "8 字段无一真实填充" },
-      { "name": "客户最新一句话", "fields": [], "status": "green", "connected": true, "note": "真实测过" }
-    ],
-    "kernel": { "model": "gpt-5.4-mini", "promptNote": "SKILL.md · 判定逻辑 8 步（按序走）", "redlineGate": true,
-      "rules": [
-        { "name": "A1–A4 阶段", "hardGate": false }, { "name": "推进信号档", "hardGate": false },
-        { "name": "四感缺口", "hardGate": false }, { "name": "询价分级", "hardGate": false },
-        { "name": "回复自检", "hardGate": false }, { "name": "生产接入建议", "hardGate": false },
-        { "name": "事实边界", "hardGate": true }, { "name": "高风险转人工", "hardGate": true }
-      ] },
-    "outputs": [
-      { "name": "回复正文", "sub": "可直接发给客户", "fields": [] },
-      { "name": "判断标签 JSON", "sub": "", "fields": ["stage","signal","inquiry","risk","gap","escalate"] }
-    ]
+  "skill": {
+    "name": "daily-report-cs",
+    "area": "ZenithJoy",
+    "line": "Line 04 私域AI接管",
+    "ability": "客服判断",
+    "submitter": "张三",
+    "evaluatedAt": "2026-07-08T10:00:00Z"
   },
-  "findings": [ { "name": "询价分级", "tag": "有缺陷史 47→87%", "severity": "flag" }, { "name": "收口优先", "tag": "向导已定义为第五值", "severity": "ok" } ],
-  "redlines": [ { "name": "事实边界", "tag": "一票否决" }, { "name": "回复自检 5 清单", "tag": "" }, { "name": "代码层编造检测", "tag": "" } ],
-  "maturity": { "生产接线": "0 条", "真实数据库": "未连接", "已验证": "15×3 遍", "模型选型": "gpt-5.4-mini", "诚实待办": "主动列出" },
-  "health": [ { "dim": "是什么", "state": "ok" }, { "dim": "输入", "state": "bad" }, { "dim": "逻辑", "state": "warn" }, { "dim": "输出", "state": "ok" }, { "dim": "红线", "state": "ok" }, { "dim": "成熟", "state": "neutral" } ]
+  "verdict": {
+    "level": "partial",
+    "text": "逻辑·输出·红线达标；主路径输入未接真 DB，上线前必须先接。"
+  },
+  "stats": {
+    "function_count": 1,
+    "dep_gaps": 1,
+    "defects_high": 0,
+    "defects_mid_low": 2,
+    "cost_estimate_usd": null,
+    "eval_minutes": 12
+  },
+  "dimensions": {
+    "functional_map": {
+      "rows": [
+        {
+          "no": 1,
+          "name": "客服回复判断",
+          "trigger": "客户发送最新一句话",
+          "inputs": "状态包（8字段）+ 客户最新一句话",
+          "outputs": "回复正文 + 判断标签 JSON",
+          "dep_health": "warning",
+          "dep_health_note": "状态包 8 字段无一真实填充，上线前必须接真实数据库"
+        }
+      ]
+    },
+    "dependency_audit": {
+      "items": [
+        {
+          "dep": "状态包",
+          "source_type": "上下文",
+          "source_desc": "需从真实数据库获取，含上一阶段/风险等级/推进状态等8字段",
+          "status": "questionable",
+          "note": "8 字段无一真实填充，当前为 mock 数据"
+        },
+        {
+          "dep": "客户最新一句话",
+          "source_type": "上下文",
+          "source_desc": "用户输入，实测通过",
+          "status": "confirmed",
+          "note": "真实测过"
+        }
+      ]
+    },
+    "logic_soundness": {
+      "rules": ["A1–A4 阶段判断", "推进信号档", "四感缺口检测", "询价分级", "回复自检", "事实边界（一票否决）", "高风险转人工"],
+      "contradictions": [],
+      "undefined_fields": [],
+      "hard_stops": ["事实边界：禁止编造价格/承诺", "高风险场景强制转人工"],
+      "score": "minor_issues"
+    },
+    "output_verifiability": {
+      "items": [
+        {
+          "output_name": "回复正文",
+          "format": "自然语言文本",
+          "machine_verifiable": false,
+          "verification_method": "需人工判断是否自然、合规"
+        },
+        {
+          "output_name": "判断标签 JSON",
+          "format": "JSON: stage/signal/inquiry/risk/gap/escalate",
+          "machine_verifiable": true,
+          "verification_method": "JSON schema 校验 + 枚举值比对"
+        }
+      ]
+    },
+    "redline": {
+      "hallucination_risk": "low",
+      "risk_reason": "有事实边界一票否决 + 回复自检 5 清单，编造风险受控",
+      "hard_stops": ["事实边界一票否决", "回复自检 5 清单", "代码层编造检测"],
+      "gaps": []
+    },
+    "maturity": {
+      "production_connected": false,
+      "production_details": "0 条生产接线",
+      "real_db_connected": false,
+      "real_db_details": "未连接真实数据库",
+      "tested_rounds": 15,
+      "real_sample_validated": true,
+      "honest_about_gaps": true,
+      "undocumented_assumptions": [],
+      "score": "mvp"
+    }
+  },
+  "defects": [
+    {
+      "id": "M1",
+      "severity": "mid",
+      "title": "状态包未接真实数据库",
+      "section_ref": "SKILL.md · 输入依赖",
+      "description": "状态包 8 个字段均无真实数据填充，上线后输入数据为空，判断结果不可信",
+      "fix": "在上线前接入真实 CRM 数据库，确保状态包 8 字段有真实值"
+    },
+    {
+      "id": "M2",
+      "severity": "mid",
+      "title": "回复正文无机械校验方式",
+      "section_ref": "SKILL.md · 输出格式",
+      "description": "回复正文为自然语言，无法机械校验，QA 依赖人工判断",
+      "fix": "增加输出模板约束或关键词白/黑名单校验"
+    }
+  ],
+  "model_recommendation": "gpt-5.4-mini 已验证15轮，性价比合适；上线前建议补 claude 对比测试",
+  "anatomy": {
+    "pipeline": ["状态包读取", "意图判断", "回复生成"],
+    "outputs": ["回复正文", "判断标签 JSON"],
+    "input": "客户最新一句话 + 状态包"
+  },
+  "summary": "逻辑健全，输出有判断标签可机械校验，红线通过；主要缺口是状态包未接真数据库，MVP 级别，上线前必须补齐依赖。",
+  "nextSteps": [
+    { "issue": "状态包未接真实数据库", "fix": "接入 CRM 系统，确保 8 字段有真实值", "severity": "high" },
+    { "issue": "回复正文无机械校验", "fix": "增加输出约束或关键词校验", "severity": "mid" }
+  ]
 }
