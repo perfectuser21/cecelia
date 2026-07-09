@@ -9,7 +9,6 @@
  */
 import { registerWorkflow, listWorkflows } from '../orchestrator/workflow-registry.js';
 import { compileDevTaskGraph } from './dev-task.graph.js';
-import { compileHarnessInitiativeGraph } from './harness-initiative.graph.js';
 import { getCompiledConsciousnessGraph } from './consciousness.graph.js';
 
 let _initialized = false;
@@ -26,11 +25,6 @@ export async function initializeWorkflows() {
   if (!existing.includes('dev-task')) {
     const devTaskGraph = await compileDevTaskGraph();
     registerWorkflow('dev-task', devTaskGraph);
-  }
-
-  if (!existing.includes('harness-initiative')) {
-    const harnessInitiativeGraph = await compileHarnessInitiativeGraph();
-    registerWorkflow('harness-initiative', harnessInitiativeGraph);
   }
 
   // 预热 consciousness graph（不注册到 registry，由 consciousness-loop.js 直接调用）

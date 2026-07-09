@@ -33,7 +33,6 @@ import { traceStep, LAYER, STATUS, EXECUTOR_HOSTS } from './trace.js';
 import { getAccountUsage } from './account-usage.js';
 import { writeDockerCallback, resolveResourceTier, isDockerAvailable } from './docker-executor.js';
 import { loadSkillContent, assertSprintDir } from './harness-shared.js';
-import { writeInitiativeRunEvent } from './events/initiativeRunEvents.js';
 import { spawn as spawnDocker } from './spawn/index.js';
 import { REVIEW_TASK_TYPES } from './lib/review-task-types.js';
 import {
@@ -1336,6 +1335,7 @@ function getSkillForTaskType(taskType, payload) {
     'pipeline_rescue': '/dev',       // 卡住的 pipeline 接管修复 → /dev 全流程
     'codex_test_gen': '/codex-test-gen',  // Codex 自动生成测试 → 西安 M4
     'platform_scraper': '/media-scraping', // 平台数据采集 → CN Mac mini (/media-scraping skill)
+    'strategist_decision': '/line-strategist',  // Line 军师决策（PR3674 终态钩子派发，见 line-strategist-dispatch.js）
     // 注意：harness_generate/harness_fix 等不在此处
     // 它们由 preparePrompt() 提前路由，不经过 skillMap。
     // 实际路由见 task-router.js LOCATION_MAP。
@@ -2141,6 +2141,30 @@ function _prepareHarnessReportPrompt(task, taskType) {
   return `/sprint-report\n\n${paramsBlock}`;
 }
 
+function _prepareStrategistDecisionPrompt(task) {
+  const skillContent = loadSkillContent('line-strategist');
+  const payload = task.payload || {};
+  const paramsBlock = `## Line 军师决策任务
+
+LINE_ID: ${payload.journey_id || ''}
+TRIGGER: ${payload.trigger || 'manual'}
+TRIGGER_CONTEXT: ${JSON.stringify(payload.trigger_context || {})}
+BRAIN_TASK_ID: ${task.id}
+DRY_RUN: false
+
+${task.description || task.title}`;
+
+  return [
+    '你是 line-strategist session。按下面 SKILL 指令完成一次决策。',
+    '',
+    skillContent,
+    '',
+    '---',
+    '',
+    paramsBlock,
+  ].join('\n');
+}
+
 function _prepareHarnessPlannerPrompt(task, _taskType) {
   // harness_planner task_type 已退役（retire-harness-planner PR），此函数仅 sprint_planner 调用
   const sprintDir = assertSprintDir(task.payload?.sprint_dir, '_prepareHarnessPlannerPrompt');
@@ -2251,6 +2275,7 @@ const _TASK_ROUTES = {
   audit:                    _prepareCodeReviewArgs,
   research:                 _prepareResearchPrompt,
   code_review:              _prepareCodeReviewArgs,
+  strategist_decision:      _prepareStrategistDecisionPrompt,
 };
 
 // ─── preparePrompt 主入口（dispatcher）────────────────────────────────────────
@@ -2883,7 +2908,7 @@ async function _driveHarnessInitiative(task, opts = {}) {
   // N4 orchestrator 硬校验（主理人 2026-07-05 拍板，见 memory harness-skill-relay-pivot）：
   // skill-relay 已验证优于 LangGraph 图（3/3~4/4 merged vs 旧图 30 天基线 21.7%），
   // 不再允许 orchestrator 缺省时隐式降级到 LangGraph 图——必须显式声明 skill-relay，
-  // 否则直接 terminal failed。LangGraph 图代码本次保留（观察期后再物理删除）。
+  // 否则直接 terminal failed。LangGraph 图调用死代码已在刀4阶段3物理删除。
   if (task?.payload?.orchestrator !== 'skill-relay') {
     await markInitiativeTerminalFailed(
       dbPool,
@@ -2897,49 +2922,11 @@ async function _driveHarnessInitiative(task, opts = {}) {
     return { ok: false, error: 'missing_orchestrator_flag', terminal: true };
   }
 
-  // N3 skill-relay 分支（主理人 2026-07-04 拍板）：spawn 单 claude session 跑
-  // harness-controller skill，不 compile / 不 invoke 图。
-  const { spawnSkillRelaySession } = await import('./harness-skill-relay.js');
-  const relayDeps = { pool: dbPool, ...(opts.skillRelayDeps || {}) };
-  return await spawnSkillRelaySession(task, relayDeps);
-
-  // 死代码（有意保留，2026-07-05 orchestrator 硬校验后不可达）：
-  // LangGraph 图路径 compileHarnessFullGraph 及其后续调用，因为上面的硬校验
-  // 保证 orchestrator 必须是 'skill-relay'，本段代码物理上不会再被执行到。
-  // 保留观察期，待确认 skill-relay 路径完全稳定后再物理删除本段及
-  // packages/brain/src/workflows/harness-initiative.graph.js 中对应部分
-  // （注意：harness-initiative.graph.js 文件本身不是完全死代码——其中的
-  // reportNode 仍被 packages/brain/scripts/smoke/reportnode-task-writeback-smoke.sh
-  // 直接 import 使用，只有 compileHarnessFullGraph 这条调用路径不可达）。
-  /* eslint-disable no-unreachable */
-  const { compileHarnessFullGraph } = await import('./workflows/harness-initiative.graph.js');
-  const { getPgCheckpointer } = await import('./orchestrator/pg-checkpointer.js');
-  const { emitGraphNodeUpdate } = await import('./events/taskEvents.js');
-  const compiled = opts.compiled || await compileHarnessFullGraph();
-  const initiativeId = task.payload?.initiative_id || task.id;
-
-  // W1 — thread_id 版本化
-  const baseAttemptN = (task.execution_attempts || 0) + 1;
-  let attemptN = baseAttemptN;
-  let threadId = `harness-initiative:${initiativeId}:${attemptN}`;
-
-  // 全局 fresh-start 上限 — execution_attempts 已达上限 → 不再 fresh-start / 不 invoke graph，
-  // 直接 terminal failed，杜绝坏 checkpoint 导致的无限重跑（20+ planner 容器、永不收敛）。
-  if ((task.execution_attempts || 0) >= MAX_INITIATIVE_FRESH_STARTS) {
-    await markInitiativeTerminalFailed(
-      dbPool,
-      task.id,
-      'max_fresh_starts_exceeded',
-      `max_fresh_starts_exceeded: execution_attempts=${task.execution_attempts} >= ${MAX_INITIATIVE_FRESH_STARTS}`
-    );
-    console.error(
-      `[startup-sync] task=${task.id} 达 fresh-start 上限 ${MAX_INITIATIVE_FRESH_STARTS}，标 terminal failed（停止重跑）`
-    );
-    return { ok: false, error: 'max_fresh_starts_exceeded', terminal: true, threadId, attemptN };
-  }
-
   // 2b-2b: harness 开跑 → 镜像同步对应 okr_initiative → running（non-fatal，best-effort，
-  // 解析/新建对应 okr_initiatives 行使规划侧 Initiative 成为实时真相；绝不阻断 harness）
+  // 解析/新建对应 okr_initiatives 行使规划侧 Initiative 成为实时真相；绝不阻断 harness）。
+  // 刀4阶段3发现：此调用原本躺在物理不可达的旧图调用死代码块里（orchestrator 硬校验后
+  // 从未真正执行过），随死代码一并被删除时才暴露这层同步早已失效，移到硬校验通过后的
+  // 活路径上，让它真正生效。
   try {
     const { syncOkrInitiativeStatus } = await import('./okr-initiative-sync.js');
     await syncOkrInitiativeStatus(dbPool, task.id, 'running');
@@ -2947,136 +2934,23 @@ async function _driveHarnessInitiative(task, opts = {}) {
     console.warn(`[executor] okr-initiative sync(running) non-fatal: ${syncErr.message}`);
   }
 
-  const checkpointer = await getPgCheckpointer();
-  const existing = await checkpointer.get({ configurable: { thread_id: threadId } });
-  const resumeRequested = task.payload?.resume_from_checkpoint === true;
-  let input;
-  if (existing && resumeRequested) {
-    // Wave 2b 钩子：checkpoint 显式标 error.terminal===true → 永久失败，不再 fresh-start。
-    // 即便现在没人 set 也无害（普通 error 仍走下方 fresh-start 分支）。
-    if (existing.channel_values?.error?.terminal === true) {
-      await markInitiativeTerminalFailed(
-        dbPool,
-        task.id,
-        'checkpoint_terminal',
-        'checkpoint marked terminal (error.terminal=true)'
-      );
-      console.error(
-        `[startup-sync] task=${task.id} checkpoint 标 terminal，标 terminal failed（停止重跑）`
-      );
-      return { ok: false, error: 'checkpoint_terminal', terminal: true, threadId, attemptN };
-    }
-    // 检查 checkpoint 是否处于 error 状态（如 ganLoop 节点执行失败）
-    // 若 error 有值，resume 会立即路由到 END → final=null → task failed → 每 2min 死循环
-    const ckError = existing.channel_values?.error;
-    if (ckError) {
-      // 坏 checkpoint：升 N，fresh start，避免无限 resume→END→loop
-      attemptN = baseAttemptN + 1;
-      threadId = `harness-initiative:${initiativeId}:${attemptN}`;
-      input = { task };
-      await dbPool.query('UPDATE tasks SET execution_attempts=$1 WHERE id=$2', [attemptN, task.id]);
-      console.log(`[startup-sync] Bad checkpoint (error state) for task=${task.id}, fresh start attempt=${attemptN}`);
-    } else {
-      input = null;  // 显式 resume from checkpoint
-    }
-  } else if (existing && !resumeRequested) {
-    // 同 attemptN 已有 checkpoint 但未 resume → 升 N，留旧 checkpoint 诊断
-    attemptN = baseAttemptN + 1;
-    threadId = `harness-initiative:${initiativeId}:${attemptN}`;
-    input = { task };
-    await dbPool.query('UPDATE tasks SET execution_attempts=$1 WHERE id=$2', [attemptN, task.id]);
-  } else {
-    input = { task };  // fresh start
-  }
-
-  // W3 — AbortSignal + watchdog
-  const deadlineRow = await dbPool.query(
-    'SELECT deadline_at FROM initiative_runs WHERE initiative_id=$1 ORDER BY created_at DESC LIMIT 1',
-    [initiativeId]
-  );
-  const deadlineAt = deadlineRow.rows[0]?.deadline_at;
-  const deadlineMs = computeDeadlineMs(deadlineAt);
-  const ctrl = new AbortController();
-  const timer = setTimeout(
-    () => ctrl.abort(new Error(`harness_watchdog: deadline exceeded for ${initiativeId} thread=${threadId}`)),
-    deadlineMs
-  );
-
-  // OPEN-2：驱动开始即写一次心跳，标记「本 brain 进程正在驱动该 graph」。
-  const { writeDriverHeartbeat } = await import('./harness-heartbeat.js');
-  await writeDriverHeartbeat(dbPool, initiativeId);
-
-  let final = null;
+  // W4 initiative_run_events 留痕（供 GET /api/brain/harness/stream SSE 消费）：
+  // 旧图逐节点（pick_sub_task/run_sub_task/...）写事件的模式随图一起删除——skill-relay
+  // 单 session 模型没有离散节点，改在 spawn 这个粗粒度节点上留一条 running 记录，
+  // 让该 SSE 流对 skill-relay initiative 至少还有起点信号（non-fatal，best-effort）。
   try {
-    // W4 — streamMode='updates' 逐节点推 task_events
-    const stream = await compiled.stream(input, {
-      configurable: { thread_id: threadId },
-      recursionLimit: 500,
-      signal: ctrl.signal,
-      streamMode: 'updates',
-    });
-    let nodeCount = 0;
-    const MAX_EVENTS = 100;  // 防写爆
-    for await (const update of stream) {
-      // OPEN-2：每个 node 推进都刷心跳，覆盖节点间的 gap（pick_sub_task→run_sub_task 等）。
-      await writeDriverHeartbeat(dbPool, initiativeId);
-      for (const [nodeName, partialState] of Object.entries(update || {})) {
-        if (nodeCount < MAX_EVENTS) {
-          try {
-            await emitGraphNodeUpdate({
-              taskId: task.id,
-              initiativeId,
-              threadId,
-              nodeName,
-              attemptN,
-              payloadSummary: summarizeNodeState(partialState),
-            });
-          } catch (emitErr) {
-            console.warn(`[executor] emitGraphNodeUpdate failed (non-fatal): ${emitErr.message}`);
-          }
-          try {
-            await writeInitiativeRunEvent({ initiativeId, node: nodeName, status: 'done', attempt: attemptN });
-          } catch (ireErr) {
-            console.warn(`[executor] writeInitiativeRunEvent failed (non-fatal): ${ireErr.message}`);
-          }
-          nodeCount++;
-        }
-        final = { ...(final || {}), ...partialState };
-      }
-    }
-  } catch (err) {
-    if (err.name === 'AbortError' || /watchdog/i.test(err.message)) {
-      try {
-        await dbPool.query(
-          `UPDATE tasks SET error_message=$1,
-             custom_props = jsonb_set(COALESCE(custom_props,'{}'::jsonb), '{failure_class}', '"watchdog_deadline"'::jsonb)
-           WHERE id=$2`,
-          [`watchdog deadline at ${new Date().toISOString()}`, task.id]
-        );
-      } catch (markErr) {
-        console.warn(`[executor] mark watchdog failure failed (non-fatal): ${markErr.message}`);
-      }
-      return { ok: false, threadId, attemptN, error: 'watchdog_deadline' };
-    }
-    throw err;
-  } finally {
-    clearTimeout(timer);
+    const { writeInitiativeRunEvent } = await import('./events/initiativeRunEvents.js');
+    const initiativeId = task.payload?.initiative_id || task.id;
+    await writeInitiativeRunEvent({ initiativeId, node: 'skill-relay-spawn', status: 'running', dbPool });
+  } catch (ireErr) {
+    console.warn(`[executor] writeInitiativeRunEvent failed (non-fatal): ${ireErr.message}`);
   }
 
-  return {
-    ok: computeHarnessInitiativeOk(final),
-    error: computeHarnessInitiativeError(final),
-    threadId,
-    attemptN,
-    finalState: {
-      initiativeId,
-      sub_tasks: final?.sub_tasks,
-      final_e2e_verdict: final?.final_e2e_verdict,
-      final_e2e_failed_scenarios: final?.final_e2e_failed_scenarios,
-      error: final?.error,
-    },
-  };
-  /* eslint-enable no-unreachable */
+  // N3 skill-relay 分支（主理人 2026-07-04 拍板）：spawn 单 claude session 跑
+  // harness-controller skill，不 compile / 不 invoke 图。
+  const { spawnSkillRelaySession } = await import('./harness-skill-relay.js');
+  const relayDeps = { pool: dbPool, ...(opts.skillRelayDeps || {}) };
+  return await spawnSkillRelaySession(task, relayDeps);
 }
 
 /**
