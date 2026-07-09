@@ -169,7 +169,7 @@ router.post('/', async (req, res) => {
 // GET /tasks — 列出任务
 router.get('/', async (req, res) => {
   try {
-    const { status, area_id, project_id, task_type, limit = '200', offset = '0' } = req.query;
+    const { status, area_id, project_id, task_type, journey_id, limit = '200', offset = '0' } = req.query;
 
     const conditions = [];
     const params = [];
@@ -190,6 +190,11 @@ router.get('/', async (req, res) => {
     if (task_type) {
       conditions.push(`task_type = $${paramIndex++}`);
       params.push(task_type);
+    }
+    // journey_id 存于 payload JSONB（tasks 表无顶层 journey_id 列），不能当普通列名处理
+    if (journey_id) {
+      conditions.push(`payload->>'journey_id' = $${paramIndex++}`);
+      params.push(journey_id);
     }
 
     let query = 'SELECT id, title, status, priority, task_type, project_id, area_id, created_at, completed_at, updated_at FROM tasks';

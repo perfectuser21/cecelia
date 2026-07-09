@@ -253,6 +253,7 @@ export async function spawnSkillRelaySession(task, deps = {}) {
           // ~/perfect21/cecelia 与 .claude/worktrees 按宿主同路径挂载，judge 按此读 .brain-result.json。
           HARNESS_WORKTREE_HOST: worktreePath,
           CECELIA_JOURNEY_ID: task.payload?.journey_id || '',
+          CECELIA_ABILITY_ID: task.ability_id || task.payload?.ability_id || '',
           GITHUB_TOKEN: githubToken,
           BRAIN_URL: 'http://host.docker.internal:5221',
         },
@@ -274,11 +275,12 @@ export async function spawnSkillRelaySession(task, deps = {}) {
     // 8. initiative_runs 落行：A_planning + v2 + deadline（codex=8h, claude=6h）+ orchestrator_host 区分
     const deadlineHours = isCodex ? CODEX_RELAY_DEADLINE_HOURS : RELAY_DEADLINE_HOURS;
     const orchestratorHost = isCodex ? 'skill-relay-codex' : 'skill-relay-session';
+    const abilityId = task.ability_id || task.payload?.ability_id || null;
     await dbPool.query(
       `INSERT INTO initiative_runs
-         (initiative_id, phase, journey_id, orchestrator_version, orchestrator_host, deadline_at)
-       VALUES ($1, 'A_planning', $2, 'v2', $3, NOW() + INTERVAL '${deadlineHours} hours')`,
-      [initiativeId, task.payload?.journey_id || null, orchestratorHost]
+         (initiative_id, phase, journey_id, orchestrator_version, orchestrator_host, deadline_at, ability_id)
+       VALUES ($1, 'A_planning', $2, 'v2', $3, NOW() + INTERVAL '${deadlineHours} hours', $4)`,
+      [initiativeId, task.payload?.journey_id || null, orchestratorHost, abilityId]
     );
 
     // 进程内守门计数
@@ -480,11 +482,12 @@ async function _spawnHeadedSession(task, { dbPool, now, short, initiativeId, dep
   }
 
   // initiative_runs 落行（orchestrator_host='skill-relay-codex-headed' 内联，便于测试断言）
+  const headedAbilityId = task.ability_id || task.payload?.ability_id || null;
   await dbPool.query(
     `INSERT INTO initiative_runs
-       (initiative_id, phase, journey_id, orchestrator_version, orchestrator_host, deadline_at)
-     VALUES ($1, 'A_planning', $2, 'v2', 'skill-relay-codex-headed', NOW() + INTERVAL '${HEADED_RELAY_DEADLINE_HOURS} hours')`,
-    [initiativeId, task.payload?.journey_id || null]
+       (initiative_id, phase, journey_id, orchestrator_version, orchestrator_host, deadline_at, ability_id)
+     VALUES ($1, 'A_planning', $2, 'v2', 'skill-relay-codex-headed', NOW() + INTERVAL '${HEADED_RELAY_DEADLINE_HOURS} hours', $3)`,
+    [initiativeId, task.payload?.journey_id || null, headedAbilityId]
   );
 
   // tui.log 留痕（在 sprint_dir 目录写入，管道洗敏：不含 token）

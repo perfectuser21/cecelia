@@ -287,13 +287,28 @@ echo "✅ Step 3.5: 文档归档完成（PrepPRD + Contract）"
 
 ---
 
-### Step 4: 更新 Notion Feature Registry
+### Step 4: 更新 Notion Feature Registry + 回写推进项
 
 ```bash
+# thickness 合法值只有 thin/medium/thick/mature（routes/journeys.js VALID_THICKNESS），
+# "done" 非法值会 400（此前一直被 || echo WARN 静默吞掉、从未真正生效）——只传 status，不传 thickness
 [ -n "$FEATURE_ID" ] && curl -s -X PATCH "localhost:5221/api/brain/journey_features/$FEATURE_ID" \
   -H "Content-Type: application/json" \
-  -d '{"thickness":"done","status":"done"}' >/dev/null 2>&1 || echo "WARN: Feature Registry 更新失败（非阻断）"
+  -d '{"status":"done"}' >/dev/null 2>&1 || echo "WARN: Feature Registry 更新失败（非阻断）"
 echo "✅ Step 4: Notion Feature Registry status → done"
+
+# 推进项回写：若本次 task 关联了 advancement_item_id（军师上游派发时会带，PR2 阶段通常为空，属预期）
+if [ -n "$TASK_ID" ]; then
+  ADVANCEMENT_ITEM_ID=$(curl -s "localhost:5221/api/brain/tasks/$TASK_ID" 2>/dev/null \
+    | jq -r '.payload.advancement_item_id // empty' 2>/dev/null)
+  if [ -n "$ADVANCEMENT_ITEM_ID" ]; then
+    curl -s -X PATCH "localhost:5221/api/brain/advancements/$ADVANCEMENT_ITEM_ID" \
+      -H "Content-Type: application/json" \
+      -d "{\"status\":\"done\",\"pr_url\":\"${PR_URL}\"}" >/dev/null 2>&1 \
+      || echo "WARN: 推进项回写失败（非阻断）"
+    echo "✅ Step 4.5: 推进项 $ADVANCEMENT_ITEM_ID → done, pr_url=$PR_URL"
+  fi
+fi
 ```
 
 ---

@@ -66,6 +66,12 @@ describe('runTestLifecyclePatrol — feature_deleted', () => {
 
     const issueInsert = pool.calls.find(c => c.sql.includes('INSERT INTO issues'));
     expect(issueInsert).toBeTruthy();
+    // journey_id 显式列出为 NULL：feature 已删，语境里无法推断其原 journey 归属
+    // （journey_id 与 notion_synced_at 一样以 SQL 字面量 NULL 给出，不占位绑定参数，
+    //  故断言 SQL 文本包含该列 + VALUES 子句里对应位置的字面量 NULL，而非 params 数组）
+    expect(issueInsert.sql).toMatch(/journey_id/);
+    expect(issueInsert.sql).toMatch(/VALUES \(\$1, 'P2', 'In progress', 'brain', \$2, NULL, NULL\)/);
+    expect(issueInsert.params).toHaveLength(2);
 
     const alertInsert = pool.calls.find(c => c.sql.includes('INSERT INTO test_lifecycle_alerts'));
     expect(alertInsert).toBeTruthy();
