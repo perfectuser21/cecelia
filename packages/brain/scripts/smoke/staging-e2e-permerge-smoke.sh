@@ -2,40 +2,34 @@
 # Smoke: Slice1 修正（决策 C）— per-merge 触发 + pr_url 幂等
 #
 # 验证修正真正落地（不是占位）：
-#   L1 (静态)  : reportNode 不再派生 staging_e2e；mergePrNode 两条 merged 分支 best-effort
-#                派生（pr_url NOT EXISTS 去重，永不 throw）；recordResult ON CONFLICT(pr_url)；
+#   L1 (静态)  : routes/harness.js POST /staging-e2e 端点按 payload->>'pr_url' WHERE NOT EXISTS
+#                去重派生 staging_e2e 任务；recordResult ON CONFLICT(pr_url)；
 #                migration 305 ALTER 加 pr_url UNIQUE（不 CREATE TABLE）。
 #   L2 (gate)  : Brain 健康；不可达 SKIP exit 0。
 #   L3 (真验)  : 真 DB 上 pr_url UNIQUE 生效 —— 同 pr_url 重复 INSERT 被挡、不覆盖 verdict。
 set -euo pipefail
 
-INIT_GRAPH="packages/brain/src/workflows/harness-initiative.graph.js"
-TASK_GRAPH="packages/brain/src/workflows/harness-task.graph.js"
+ROUTE="packages/brain/src/routes/harness.js"
 RUNNER="packages/brain/src/staging-e2e-runner.js"
 MIG305="packages/brain/migrations/305_staging_e2e_pr_url_unique.sql"
 BRAIN="${BRAIN_URL:-http://localhost:5221}"
 DB="${DATABASE_URL:-postgresql://cecelia:cecelia@localhost:5432/cecelia}"
 
 echo "[smoke] L1: per-merge 修正静态断言"
-for f in "$INIT_GRAPH" "$TASK_GRAPH" "$RUNNER" "$MIG305"; do
+for f in "$ROUTE" "$RUNNER" "$MIG305"; do
   test -f "$f" || { echo "[smoke] L1 FAIL: $f 不存在"; exit 1; }
 done
 
 node -e "
 const fs=require('fs');
-const init=fs.readFileSync('$INIT_GRAPH','utf8');
-const rfn=init.match(/export async function reportNode[\s\S]*?\n}\n/);
-if(rfn && /INSERT INTO tasks[\s\S]{0,200}'staging_e2e'/.test(rfn[0])){
-  console.error('L1 FAIL: reportNode 仍含 staging_e2e 派生（应已挪到 mergePrNode）');process.exit(1)}
-
-const tg=fs.readFileSync('$TASK_GRAPH','utf8');
-const i=tg.indexOf('async function _spawnStagingE2eTask');
-if(i<0){console.error('L1 FAIL: 缺 _spawnStagingE2eTask helper');process.exit(1)}
-const h=tg.slice(i, tg.indexOf('export async function mergePrNode', i));
-if(!/(NOT EXISTS|ON CONFLICT)/i.test(h) || !/pr_url/.test(h)){console.error('L1 FAIL: helper 缺 pr_url 幂等');process.exit(1)}
-if(/\bthrow\b/.test(h)){console.error('L1 FAIL: helper 含 throw（应 best-effort）');process.exit(1)}
-const n=(tg.match(/_spawnStagingE2eTask\(state, opts\)/g)||[]).length;
-if(n<2){console.error('L1 FAIL: 未在两条 merged 分支都派生（calls='+n+'）');process.exit(1)}
+const rt=fs.readFileSync('$ROUTE','utf8');
+const si=rt.indexOf(\"router.post('/staging-e2e'\");
+if(si<0){console.error('L1 FAIL: routes/harness.js 缺 POST /staging-e2e 端点');process.exit(1)}
+const sh=rt.slice(si, rt.indexOf('router.', si+20));
+if(!/WHERE NOT EXISTS/i.test(sh) || !/payload->>'pr_url'/.test(sh)){
+  console.error('L1 FAIL: POST /staging-e2e 缺 pr_url 幂等去重（WHERE NOT EXISTS payload->>pr_url）');process.exit(1)}
+if(!/task_type\s*=\s*'staging_e2e'/.test(sh)){
+  console.error('L1 FAIL: POST /staging-e2e 未派生 task_type=staging_e2e');process.exit(1)}
 
 const r=fs.readFileSync('$RUNNER','utf8');
 if(!/INSERT INTO staging_e2e_results[\s\S]{0,400}ON CONFLICT[\s\S]{0,40}pr_url[\s\S]{0,40}DO NOTHING/i.test(r)){
@@ -44,7 +38,7 @@ if(!/INSERT INTO staging_e2e_results[\s\S]{0,400}ON CONFLICT[\s\S]{0,40}pr_url[\
 const m=fs.readFileSync('$MIG305','utf8');
 if(/CREATE TABLE/i.test(m)){console.error('L1 FAIL: 305 不该 CREATE TABLE');process.exit(1)}
 if(!/UNIQUE/i.test(m) || !/pr_url/.test(m)){console.error('L1 FAIL: 305 缺 pr_url UNIQUE');process.exit(1)}
-console.log('[smoke] L1 PASS: reportNode无派生 + mergePrNode幂等per-merge + recordResult/305 幂等齐全');
+console.log('[smoke] L1 PASS: POST /staging-e2e 幂等去重 + recordResult/305 幂等齐全');
 " || exit 1
 
 if ! curl -sf "$BRAIN/api/brain/health" >/dev/null 2>&1; then

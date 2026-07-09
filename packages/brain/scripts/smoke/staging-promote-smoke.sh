@@ -3,7 +3,8 @@
 #
 # 验证链路真落地（不是占位）：
 #   L1 (静态)  : staging-promote.js 导出 resolveLine/decidePromote/runInternalPromote；
-#                runStagingE2E finalize 接 handlePromote；_spawnStagingE2eTask payload 带 base_repo；
+#                runStagingE2E finalize 接 handlePromote；routes/harness.js POST /staging-e2e
+#                端点解析请求体 base_repo 字段并写入 payload；
 #                harness.js 有 POST /promote/:resultId 幂等回流接口；
 #                migration 306 ALTER 加 promote_status（不 CREATE TABLE）。
 #   L2 (gate)  : Brain 健康；不可达 SKIP exit 0。
@@ -13,14 +14,13 @@ set -euo pipefail
 
 PROMOTE="packages/brain/src/staging-promote.js"
 RUNNER="packages/brain/src/staging-e2e-runner.js"
-TASK_GRAPH="packages/brain/src/workflows/harness-task.graph.js"
 ROUTE="packages/brain/src/routes/harness.js"
 MIG306="packages/brain/migrations/306_staging_e2e_promote_status.sql"
 BRAIN="${BRAIN_URL:-http://localhost:5221}"
 DB="${DATABASE_URL:-postgresql://cecelia:cecelia@localhost:5432/cecelia}"
 
 echo "[smoke] L1: Slice2 放行闸静态断言"
-for f in "$PROMOTE" "$RUNNER" "$TASK_GRAPH" "$ROUTE" "$MIG306"; do
+for f in "$PROMOTE" "$RUNNER" "$ROUTE" "$MIG306"; do
   test -f "$f" || { echo "[smoke] L1 FAIL: $f 不存在"; exit 1; }
 done
 
@@ -37,12 +37,12 @@ const r=fs.readFileSync('$RUNNER','utf8');
 if(!/handlePromote/.test(r)){console.error('L1 FAIL: runStagingE2E 未接 handlePromote');process.exit(1)}
 if(!/base_repo/.test(r)){console.error('L1 FAIL: runner 未读 base_repo');process.exit(1)}
 
-const tg=fs.readFileSync('$TASK_GRAPH','utf8');
-const i=tg.indexOf('async function _spawnStagingE2eTask');
-const h=tg.slice(i, tg.indexOf('export async function mergePrNode', i));
-if(!/base_repo/.test(h)){console.error('L1 FAIL: _spawnStagingE2eTask payload 未带 base_repo');process.exit(1)}
-
 const rt=fs.readFileSync('$ROUTE','utf8');
+const si=rt.indexOf(\"router.post('/staging-e2e'\");
+if(si<0){console.error('L1 FAIL: routes/harness.js 缺 POST /staging-e2e 端点');process.exit(1)}
+const sh=rt.slice(si, rt.indexOf('router.', si+20));
+if(!/base_repo/.test(sh)){console.error('L1 FAIL: POST /staging-e2e 未解析请求体 base_repo 并写入 payload');process.exit(1)}
+
 if(!/\/promote\/:resultId/.test(rt)){console.error('L1 FAIL: harness.js 缺 POST /promote/:resultId');process.exit(1)}
 if(!/pending_promote/.test(rt) || !/409/.test(rt)){console.error('L1 FAIL: 回流接口缺幂等校验（pending_promote + 409）');process.exit(1)}
 
