@@ -60,6 +60,70 @@ _in_main_repo_worktree() {
 # Claude Code projects key：绝对路径中 / 和 . 逐字符替换为 -（纯 bash，免 fork）
 _path_to_project_key() { printf '%s' "${1//[\/.]/-}"; }
 
+# 孤儿 worktree 自检与重建。
+# 触发条件：cwd 路径符合 per-session 规则（*/worktrees/*/session-*）但 git rev-parse 失败
+# 或 cwd 不在 git worktree list 里（注册被摘掉，目录残留）。
+# 重建：从 <wt_path>.meta 读主仓路径 → git worktree add；无 meta 则显著告警并 exit 1。
+_handle_orphaned_worktree() {
+    [[ "${CECELIA_NO_AUTO_WORKTREE:-0}" == "1" ]] && return 1
+    local cwd; cwd="$(pwd 2>/dev/null)"
+    [[ "$cwd" == *"/worktrees/"*"/session-"* ]] || return 1
+
+    # git 正常且已在 worktree list → 健康，跳过
+    if git rev-parse --show-toplevel &>/dev/null; then
+        local cwd_real; cwd_real="$(pwd -P 2>/dev/null || pwd)"
+        git worktree list --porcelain 2>/dev/null | grep -qF "worktree $cwd_real" && return 1
+    fi
+
+    local branch; branch="$(basename "$cwd")"
+    local meta_file="${cwd}.meta"
+    local main_repo=""
+    [[ -f "$meta_file" ]] && main_repo="$(cat "$meta_file" 2>/dev/null)"
+
+    if [[ -z "$main_repo" || ! -d "$main_repo/.git" ]]; then
+        echo "[claude-launch] ❌ 孤儿 worktree 检测：$cwd" >&2
+        echo "[claude-launch] ❌ git 注册丢失且无法定位主仓（${cwd}.meta 缺失或失效）" >&2
+        echo "[claude-launch] ❌ 禁止静默使用空目录。请 cd 到主仓重新启动，或设 CECELIA_NO_AUTO_WORKTREE=1 跳过检查" >&2
+        exit 1
+    fi
+
+    echo "[claude-launch] ⚠️  孤儿 worktree：$cwd（git 注册已丢失）" >&2
+    echo "[claude-launch] 🔧 主仓：$main_repo，分支：$branch，开始重建..." >&2
+
+    # git worktree add 拒绝非空目录；若目录存在（含 .claude/ 等残留），临时移开后再重建，完成后还原
+    local _orphan_backup=""
+    if [[ -d "$cwd" ]]; then
+        _orphan_backup="${cwd}.orphan-backup-$$"
+        if ! mv "$cwd" "$_orphan_backup" 2>&1 >&2; then
+            echo "[claude-launch] ❌ 无法移动孤儿目录，中止" >&2; exit 1
+        fi
+    fi
+
+    local _rebuild_ok=0
+    if git -C "$main_repo" rev-parse --verify "$branch" &>/dev/null; then
+        git -C "$main_repo" worktree add "$cwd" "$branch" 1>&2 && _rebuild_ok=1
+    else
+        echo "[claude-launch] ⚠️  分支 $branch 不存在，从 origin/main 新建" >&2
+        git -C "$main_repo" fetch origin main --quiet 2>/dev/null || true
+        git -C "$main_repo" worktree add "$cwd" -b "$branch" origin/main 1>&2 && _rebuild_ok=1
+    fi
+
+    if [[ "$_rebuild_ok" == "0" ]]; then
+        # 失败时还原孤儿目录，避免丢失 .claude/ 历史
+        [[ -n "$_orphan_backup" ]] && mv "$_orphan_backup" "$cwd" 2>/dev/null || true
+        echo "[claude-launch] ❌ worktree add 失败，已还原孤儿目录，中止" >&2; exit 1
+    fi
+
+    # 还原 .claude/ 对话历史（若有）
+    if [[ -n "$_orphan_backup" && -d "$_orphan_backup/.claude" ]]; then
+        cp -r "$_orphan_backup/.claude" "$cwd/.claude" 2>/dev/null || true
+    fi
+    [[ -n "$_orphan_backup" ]] && rm -rf "$_orphan_backup" 2>/dev/null || true
+
+    echo "[claude-launch] ✅ worktree 重建完成" >&2
+    return 0
+}
+
 AUTO_WORKTREE=0
 if ! _is_headless && [[ "${CECELIA_NO_AUTO_WORKTREE:-0}" != "1" ]] && _in_main_repo_worktree; then
     AUTO_WORKTREE=1
@@ -92,6 +156,9 @@ if [[ "$DRY_RUN" == "1" ]]; then
     exit 0
 fi
 
+# 孤儿 worktree 自检（仅非 dry-run；headless/交互均适用）
+_handle_orphaned_worktree || true
+
 # 真实执行：交互模式 + 主仓工作树 → 建立/复用 per-session worktree 并 cd 进去
 if [[ "$AUTO_WORKTREE" == "1" ]]; then
     mkdir -p "$_WT_BASE"
@@ -99,6 +166,8 @@ if [[ "$AUTO_WORKTREE" == "1" ]]; then
         git -C "$_MAIN_REPO" fetch origin main --quiet 2>/dev/null || true
         # stdout 留给 claude 本体；git 的提示信息走 stderr
         git -C "$_MAIN_REPO" worktree add "$_WT_PATH" -b "$_WT_BRANCH" origin/main 1>&2
+        # 记录主仓路径，供孤儿恢复时定位
+        echo "$_MAIN_REPO" > "${_WT_PATH}.meta"
     fi
     cd "$_WT_PATH"
 fi
