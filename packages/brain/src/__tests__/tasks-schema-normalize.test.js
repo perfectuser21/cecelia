@@ -56,16 +56,28 @@ function mockReqRes(body) {
   return { req, res };
 }
 
+const TASK_ROW = {
+  id: 'test-uuid', title: 'Test', status: 'queued', task_type: 'dev',
+  priority: 'P2', project_id: null, area_id: null, goal_id: null,
+  okr_initiative_id: null, created_at: '2026-04-16T00:00:00Z',
+};
+
+// 使用 mockImplementation 区分去重查询（含 "status IN"）和 INSERT，
+// 避免每个测试都需要手动 mock 两次 query。
+// 各测试可通过 mockResolvedValueOnce 覆盖 INSERT 的返回值。
+function setupDefaultMocks(insertRows = [TASK_ROW]) {
+  mockQuery.mockReset();
+  mockQuery.mockImplementation((sql) => {
+    if (typeof sql === 'string' && sql.includes('status IN')) {
+      return Promise.resolve({ rows: [] }); // dedup check → 无重复
+    }
+    return Promise.resolve({ rows: insertRows }); // INSERT
+  });
+}
+
 describe('POST /tasks schema normalize (C2)', () => {
   beforeEach(() => {
-    mockQuery.mockReset();
-    mockQuery.mockResolvedValue({
-      rows: [{
-        id: 'test-uuid', title: 'Test', status: 'queued', task_type: 'dev',
-        priority: 'P2', project_id: null, area_id: null, goal_id: null,
-        okr_initiative_id: null, created_at: '2026-04-16T00:00:00Z',
-      }],
-    });
+    setupDefaultMocks();
   });
 
   describe('payload.prd_summary → description fallback', () => {
@@ -77,8 +89,8 @@ describe('POST /tasks schema normalize (C2)', () => {
       });
       await postHandler(req, res);
       expect(res._status).toBe(201);
-      // description is param index 1 (title=0, description=1)
-      const params = mockQuery.mock.calls[0][1];
+      // INSERT 是第二次 query call（index 1）
+      const params = mockQuery.mock.calls[1][1];
       expect(params[1]).toBe('PRD from payload field');
     });
 
@@ -90,14 +102,14 @@ describe('POST /tasks schema normalize (C2)', () => {
       });
       await postHandler(req, res);
       expect(res._status).toBe(201);
-      expect(mockQuery.mock.calls[0][1][1]).toBe('Original');
+      expect(mockQuery.mock.calls[1][1][1]).toBe('Original');
     });
 
     it('leaves description null when both are absent', async () => {
       const { req, res } = mockReqRes({ title: 'Test' });
       await postHandler(req, res);
       expect(res._status).toBe(201);
-      expect(mockQuery.mock.calls[0][1][1]).toBeNull();
+      expect(mockQuery.mock.calls[1][1][1]).toBeNull();
     });
   });
 
@@ -106,35 +118,33 @@ describe('POST /tasks schema normalize (C2)', () => {
       const { req, res } = mockReqRes({ title: 'Test', priority: 'normal' });
       await postHandler(req, res);
       expect(res._status).toBe(201);
-      expect(mockQuery.mock.calls[0][1][2]).toBe('P2');
+      expect(mockQuery.mock.calls[1][1][2]).toBe('P2');
     });
 
     it('normalizes "high" to P1', async () => {
       const { req, res } = mockReqRes({ title: 'Test', priority: 'high' });
       await postHandler(req, res);
       expect(res._status).toBe(201);
-      expect(mockQuery.mock.calls[0][1][2]).toBe('P1');
+      expect(mockQuery.mock.calls[1][1][2]).toBe('P1');
     });
 
     it('normalizes "urgent" to P0', async () => {
       const { req, res } = mockReqRes({ title: 'Test', priority: 'urgent' });
       await postHandler(req, res);
       expect(res._status).toBe(201);
-      expect(mockQuery.mock.calls[0][1][2]).toBe('P0');
+      expect(mockQuery.mock.calls[1][1][2]).toBe('P0');
     });
 
     it('normalizes "Critical" to P0 (case-insensitive)', async () => {
       const { req, res } = mockReqRes({ title: 'Test', priority: 'Critical' });
       await postHandler(req, res);
       expect(res._status).toBe(201);
-      expect(mockQuery.mock.calls[0][1][2]).toBe('P0');
+      expect(mockQuery.mock.calls[1][1][2]).toBe('P0');
     });
 
     it('passes P0/P1/P2 through unchanged', async () => {
       for (const p of ['P0', 'P1', 'P2']) {
-        mockQuery.mockResolvedValueOnce({
-          rows: [{ id: 'x', title: 'T', status: 'queued', task_type: 'dev', priority: p, project_id: null, area_id: null, goal_id: null, okr_initiative_id: null, created_at: '2026' }],
-        });
+        setupDefaultMocks([{ ...TASK_ROW, priority: p }]);
         const { req, res } = mockReqRes({ title: 'Test', priority: p });
         await postHandler(req, res);
         expect(res._status).toBe(201);
@@ -147,6 +157,7 @@ describe('POST /tasks schema normalize (C2)', () => {
       expect(res._status).toBe(400);
       expect(res._json.error).toContain('Invalid priority');
       expect(res._json.allowed).toEqual(['P0', 'P1', 'P2']);
+      // 优先级校验在去重查询之前，不应触发任何 DB 查询
       expect(mockQuery).not.toHaveBeenCalled();
     });
   });
