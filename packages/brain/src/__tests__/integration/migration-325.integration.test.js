@@ -2,7 +2,7 @@ import { describe, it, expect, beforeAll } from 'vitest';
 let pool;
 
 beforeAll(async () => {
-  pool = (await import('../db.js')).default;
+  pool = (await import('../../db.js')).default;
 });
 
 describe('migration 325: advancement_items journey_id + ability_id nullable', () => {
