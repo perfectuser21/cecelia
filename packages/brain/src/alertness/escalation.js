@@ -83,6 +83,24 @@ export const CANCEL_EXEMPT_TYPES = [
 ];
 
 // ============================================================
+// 系统自产 trigger_source 白名单
+// escalation 的批量 pause/cancel 动作只准碰这里列出的来源。
+// manual/user*/owner_input/chat_mouth/test 等用户或人工来源天然被排除，
+// 不需要单独维护黑名单——新增来源默认视为"不可动"，比默认视为"可动"更安全。
+// 见 Issue 9db1da44：白名单缺失导致用户注册任务被静默取消。
+// ============================================================
+
+export const SYSTEM_AUTO_TRIGGER_SOURCES = [
+  'brain_auto', 'auto',
+  'content_pipeline_orchestrator', 'content_pipeline_api',
+  'execution_callback_harness', 'execution_callback_harness_serial',
+  'self_drive', 'cortex', 'auto_fix', 'recurring', 'api',
+  'harness_task_dispatch', 'harness_watcher', 'harness_deploy_watch',
+  'brain_cron_smoke_alert', 'brain_cron_daily_smoke',
+  'rca', 'active_goals_zero', 'accumulation_trigger',
+];
+
+// ============================================================
 // 升级状态管理
 // ============================================================
 
