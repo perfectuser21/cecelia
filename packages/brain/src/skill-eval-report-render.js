@@ -4,6 +4,7 @@
 import { validateReportData } from './skill-eval-report-schema.js';
 
 const esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+const trunc = (s, n) => { const str = String(s == null ? '' : s); return str.length > n ? str.slice(0, n - 1) + '…' : str; };
 
 const VERDICT_LABEL = { pass: '可以用', partial: '改了能用', fail: '还不能用' };
 
