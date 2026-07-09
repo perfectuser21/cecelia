@@ -6,16 +6,16 @@
   Test: manual:node -e "const c=require('fs').readFileSync('packages/brain/src/__tests__/quarantine-timeout-server-error.test.js','utf8');if(!c.includes(\"toBe('server_error')\")||!c.includes(\"toBe('timeout')\"))process.exit(1)"
 
 - [x] [BEHAVIOR] getRetryStrategy 返回结构不变（should_retry/next_run_at/needs_human_review/billing_pause/reason），timeout 3/6/12min、server_error 1/5/15min 退避
-  Test: manual:node -e "const c=require('fs').readFileSync('packages/brain/src/__tests__/retry-policy.test.js','utf8');if(!c.includes('12 * 60_000')||!c.includes('15 * 60_000'))process.exit(1)"
+  Test: manual:node -e "const c=require('fs').readFileSync('packages/brain/src/lib/__tests__/retry-policy.test.js','utf8');if(!c.includes('12 * 60_000')||!c.includes('15 * 60_000'))process.exit(1)"
 
 - [x] [BEHAVIOR] 下游瞬态判定同步：callback-processor/routes/execution 改用 isTransientClass，timeout/server_error 不被误计失败误隔离
   Test: manual:node -e "const c=require('fs').readFileSync('packages/brain/src/__tests__/transient-class-sync.test.js','utf8');if(!c.includes('isTransientClass'))process.exit(1)"
 
 - [x] [BEHAVIOR] 告警去抖 opt-in：连续 N 次才放行 + 冷却期静默 + resetDebounce 清零；不传 debounce 参数 25 处存量 raise 零变更；三层限流串联不吞第一次真告警
-  Test: manual:node -e "const c=require('fs').readFileSync('packages/brain/src/__tests__/alert-debounce.test.js','utf8');if(!c.includes('组合行为')||!c.includes('resetDebounce'))process.exit(1)"
+  Test: manual:node -e "const c=require('fs').readFileSync('packages/brain/src/lib/__tests__/alert-debounce.test.js','utf8');if(!c.includes('组合行为')||!c.includes('resetDebounce'))process.exit(1)"
 
 - [x] [BEHAVIOR] side_effect_dedupe 原子抢占：并发 10 claim 恰 1 胜、过期重占、DB 故障 fail-open 返回 degraded + P2 降级告警
-  Test: manual:node -e "const c=require('fs').readFileSync('packages/brain/src/__tests__/dedupe.test.js','utf8');if(!c.includes('fail-open')||!c.includes('degraded'))process.exit(1)"
+  Test: manual:node -e "const c=require('fs').readFileSync('packages/brain/src/lib/__tests__/dedupe.test.js','utf8');if(!c.includes('fail-open')||!c.includes('degraded'))process.exit(1)"
 
 - [x] [BEHAVIOR] createTask 可选 dedupe_key：命中返回 deduplicated:true 不建新任务；INSERT 失败释放 key；不传零变更
   Test: manual:node -e "const c=require('fs').readFileSync('packages/brain/src/__tests__/actions-dedupe-key.test.js','utf8');if(!c.includes('dedupe_key_hit'))process.exit(1)"
