@@ -95,6 +95,7 @@ import {
 import { triggerCodeQualityScan } from './task-generator-scheduler.js';
 import { zombieSweep } from './zombie-sweep.js';
 import * as pipelinePatrolPlugin from './pipeline-patrol-plugin.js';
+import * as lineStrategistDispatchPlugin from './line-strategist-dispatch-plugin.js';
 import * as pausedRequeuPlugin from './paused-requeuer-plugin.js';
 import * as pipelineWatchdogPlugin from './pipeline-watchdog-plugin.js';
 import * as krHealthDailyPlugin from './kr-health-daily-plugin.js';
@@ -351,6 +352,11 @@ async function executeTick() {
   // [感知] Pipeline Patrol 巡航：每 5 分钟检测卡住/孤儿 pipeline（D1.7c plugin）
   pipelinePatrolPlugin.tick({ pool, tickState, tickLog }).catch(err => {
     console.error('[tick] Pipeline patrol plugin failed (non-fatal):', err.message);
+  });
+
+  // [感知] Line 军师终态派发：每 10 分钟扫描落终态任务，按 line 建 strategist_decision
+  lineStrategistDispatchPlugin.tick({ pool, tickState, tickLog }).catch(err => {
+    console.error('[tick] Line-strategist dispatch plugin failed (non-fatal):', err.message);
   });
 
   // [恢复] Paused 任务重排：每 5 分钟扫 paused>1h+retry<3 → requeue；retry>=3 → archived

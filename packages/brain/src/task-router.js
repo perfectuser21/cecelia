@@ -57,6 +57,7 @@ const VALID_TASK_TYPES = [
   'harness_evaluate',    // Evaluator 对抗性功能验收（已在 SKILL_WHITELIST）
   'harness_intervention', // 人工干预任务类型（US 本机处理）
   'staging_e2e',          // Slice9: staging E2E native 执行（executor 短路），补登防未知类型拒
+  'strategist_decision',  // Line 军师决策：task 落终态后按 line 派发（line-strategist-dispatch-plugin.js）
 ];
 
 // 支持 P2P 异步回调的任务类型
@@ -127,6 +128,7 @@ const SKILL_WHITELIST = {
   'harness_contract_propose': '/harness-contract-proposer',   // Layer 2a: 提合同草案
   'harness_contract_review': '/harness-contract-reviewer',    // Layer 2b: 挑战合同
   'harness_generate': '/harness-generator',                   // Layer 3a: Generator 写代码
+  'strategist_decision': '/line-strategist',
   'harness_ci_watch': '/_internal',                           // Brain tick 内联处理（不派 agent）
   'harness_fix': '/harness-generator',                        // Layer 3d: Generator 修复（同 generator skill）
   'harness_deploy_watch': '/_internal',                       // Brain tick 内联处理（不派 agent）
@@ -270,6 +272,7 @@ const LOCATION_MAP = {
   'harness_contract_propose': 'us',   // Layer 2a: Generator 提合同草案 → US
   'harness_contract_review': 'us',    // Layer 2b: Evaluator 挑战合同 → US
   'harness_generate': 'us',           // Layer 3a: Generator 写代码 → US
+  'strategist_decision': 'us',  // line-strategist 需读 git 历史 + decisions API → US
   'harness_ci_watch': 'us',           // Layer 3b: CI 监控（Brain tick 内联处理）→ US
   'harness_fix': 'us',                // Layer 3d: Generator 修复 → US
   'harness_deploy_watch': 'us',       // Layer 3e: Deploy 监控（Brain tick 内联处理）→ US
@@ -307,6 +310,7 @@ const DEFAULT_LOCATION = 'us';
 const TASK_REQUIREMENTS = {
   // A类 - 需要 git/代码访问（US M4 独有）
   'dev':                ['has_git'],
+  'strategist_decision':['has_git'],
   'review':             ['has_git'],
   'qa':                 ['has_git'],
   'audit':              ['has_git'],
