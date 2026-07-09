@@ -184,6 +184,11 @@ export default defineConfig({
       // 在 brain 的 node 环境跑会崩溃 tinypool worker（"Worker exited unexpectedly"），
       // 连带误判同 shard 的其它测试失败。E2E 归 evaluator 模式 B / final-e2e 跑，不进 brain 单测。
       '../../sprints/**/e2e/**',
+      // 归档老 sprint（已交付，root vitest.config.js 同样排除）：合同测试文件内的相对 import
+      // 路径（如 '../../../packages/brain/...'）是按归档前的目录深度写死的，搬进
+      // sprints/archive/ 后多一层目录会全部解析失败。CONTRACT-IS-LAW 禁止改测试文件本身，
+      // 归档后不再需要在 brain-unit 里重跑，配置层排除是正确出口。
+      '../../sprints/archive/**',
     ],
     coverage: {
       provider: 'v8',
