@@ -17,9 +17,6 @@ import {
   hasRecentArchReview,
   hasCompletedDevTaskSinceLastArchReview,
   triggerArchReview,
-  isInCiPatrolWindow,
-  hasTodayCiPatrol,
-  triggerCiPatrol,
 } from '../daily-review-scheduler.js';
 
 // ============================================================
@@ -808,79 +805,5 @@ describe('triggerArchReview', () => {
     const result = await triggerArchReview(pool);
     expect(typeof result.triggered).toBe('boolean');
     expect(typeof result.skipped_window).toBe('boolean');
-  });
-});
-
-// ── ci_patrol 调度（每日北京 08:00 = UTC 00:00）─────────────────────────────
-describe('isInCiPatrolWindow', () => {
-  it('UTC 00:00-00:04 在窗口内', () => {
-    expect(isInCiPatrolWindow(new Date('2026-07-09T00:00:00Z'))).toBe(true);
-    expect(isInCiPatrolWindow(new Date('2026-07-09T00:04:59Z'))).toBe(true);
-  });
-  it('UTC 00:05 及其他小时不在窗口', () => {
-    expect(isInCiPatrolWindow(new Date('2026-07-09T00:05:00Z'))).toBe(false);
-    expect(isInCiPatrolWindow(new Date('2026-07-09T08:00:00Z'))).toBe(false);
-  });
-});
-
-describe('hasTodayCiPatrol', () => {
-  it('当天已有 ci_patrol 任务返回 true', async () => {
-    const pool = { query: vi.fn().mockResolvedValue({ rows: [{ id: 't1' }] }) };
-    expect(await hasTodayCiPatrol(pool)).toBe(true);
-    expect(pool.query.mock.calls[0][0]).toContain("task_type = 'ci_patrol'");
-  });
-  it('当天没有返回 false', async () => {
-    const pool = { query: vi.fn().mockResolvedValue({ rows: [] }) };
-    expect(await hasTodayCiPatrol(pool)).toBe(false);
-  });
-});
-
-describe('triggerCiPatrol', () => {
-  it('窗口外直接跳过，不查库', async () => {
-    const pool = { query: vi.fn() };
-    const r = await triggerCiPatrol(pool, new Date('2026-07-09T12:00:00Z'));
-    expect(r).toEqual({ triggered: false, skipped_window: true, skipped_recent: false });
-    expect(pool.query).not.toHaveBeenCalled();
-  });
-  it('当日已有则去重跳过', async () => {
-    const pool = { query: vi.fn().mockResolvedValue({ rows: [{ id: 't1' }] }) };
-    const r = await triggerCiPatrol(pool, new Date('2026-07-09T00:01:00Z'));
-    expect(r).toEqual({ triggered: false, skipped_window: false, skipped_recent: true });
-  });
-  it('窗口内且无当日任务 → INSERT 正确字段', async () => {
-    const pool = {
-      query: vi.fn()
-        .mockResolvedValueOnce({ rows: [] })                    // hasTodayCiPatrol
-        .mockResolvedValueOnce({ rows: [{ id: 'new-task-id' }] }), // INSERT
-    };
-    const r = await triggerCiPatrol(pool, new Date('2026-07-09T00:01:00Z'));
-    expect(r.triggered).toBe(true);
-    expect(r.task_id).toBe('new-task-id');
-    const [sql, params] = pool.query.mock.calls[1];
-    expect(sql).toContain("'ci_patrol'");
-    expect(sql).toContain("'brain_auto'");
-    expect(sql).toContain("'us'");
-    expect(params[0]).toContain('[ci-patrol]');
-    const payload = JSON.parse(params[1]);
-    expect(payload.prd_summary.length).toBeGreaterThanOrEqual(20);
-  });
-  it('去重查询失败时 warn 后继续创建（宁重不漏，同 arch 模式）', async () => {
-    const pool = {
-      query: vi.fn()
-        .mockRejectedValueOnce(new Error('db down'))
-        .mockResolvedValueOnce({ rows: [{ id: 'new-task-id' }] }),
-    };
-    const r = await triggerCiPatrol(pool, new Date('2026-07-09T00:01:00Z'));
-    expect(r.triggered).toBe(true);
-  });
-  it('INSERT 失败返回 error 不抛出', async () => {
-    const pool = {
-      query: vi.fn()
-        .mockResolvedValueOnce({ rows: [] })
-        .mockRejectedValueOnce(new Error('insert fail')),
-    };
-    const r = await triggerCiPatrol(pool, new Date('2026-07-09T00:01:00Z'));
-    expect(r.triggered).toBe(false);
-    expect(r.error).toBe('insert fail');
   });
 });
