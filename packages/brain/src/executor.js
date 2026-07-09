@@ -1296,6 +1296,7 @@ function getSkillForTaskType(taskType, payload) {
     'research': '',          // 研究：完全只读，不挂 skill，由 preparePrompt 直接构建 prompt
     'dept_heartbeat': '/repo-lead heartbeat', // 部门主管心跳：MiniMax
     'code_review': '/code-review', // 代码审查：Sonnet + /code-review skill
+    'ci_patrol': '/ci-patrol', // CI/CD 巡检：每日按 line 报硬伤（ci-patrol skill）
     // Initiative 执行循环
     'initiative_plan': '/decomp',     // Phase 2 规划下一个 PR：/decomp
     'initiative_verify': '/architect', // Initiative 收尾验收 → /architect Mode 3
