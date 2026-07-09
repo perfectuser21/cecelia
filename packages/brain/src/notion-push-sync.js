@@ -1,4 +1,5 @@
 import { notionReq, getToken } from './recurring-notion-sync.js';
+import { computeProgress } from './advancement-progress.js';
 
 const JOURNEY_DB = '358c40c2-ba63-8148-bde7-e313d789931a';
 const FEATURE_DB = '358c40c2-ba63-81e3-96c5-d762b3d34dff';
@@ -421,6 +422,57 @@ async function pushInitiativeContracts(pool, token) {
   }
 }
 
+async function pushAdvancementItems(pool, token) {
+  // 按 ability 聚合：只处理该 ability 已有 Notion 页面、且存在未同步推进项的组
+  const { rows } = await pool.query(`
+    SELECT ai.ability_id, jf.notion_id AS ability_notion_id,
+           COUNT(*) FILTER (WHERE ai.status='done')  AS done,
+           COUNT(*) FILTER (WHERE ai.status='doing') AS doing,
+           COUNT(*) FILTER (WHERE ai.status='todo')  AS todo
+    FROM advancement_items ai
+    JOIN journey_features jf ON jf.id = ai.ability_id
+    WHERE ai.notion_synced_at IS NULL AND jf.notion_id IS NOT NULL
+    GROUP BY ai.ability_id, jf.notion_id
+    LIMIT 10
+  `);
+  if (rows.length === 0) return;
+
+  // 取一次 Feature 库 schema：只有目标属性真实存在才 PATCH，避免对未建列的库 400
+  // （同 pushDecisions 的 schema-check 安全模式）
+  let schemaProps = {};
+  try {
+    const schema = await notionReq(token, `/databases/${FEATURE_DB}`, 'GET');
+    schemaProps = schema?.properties || {};
+  } catch {
+    schemaProps = {};
+  }
+  const progressProp = Object.keys(schemaProps).find((k) => /advancement.*progress/i.test(k));
+
+  for (const r of rows) {
+    try {
+      if (progressProp) {
+        const { done, total, pct } = computeProgress({
+          done: Number(r.done), doing: Number(r.doing), todo: Number(r.todo),
+        });
+        await notionReq(token, `/pages/${r.ability_notion_id}`, 'PATCH', {
+          properties: {
+            [progressProp]: { rich_text: buildRichText(`${done}/${total} 完成 (${pct}%)`) },
+          },
+        });
+      }
+      // 无论是否真的发了 PATCH（属性不存在时跳过），都标记已同步——
+      // 属性缺失是"Notion 库未建列"的运维状态，不是"应无限重试"的瞬时错误
+      await pool.query(
+        `UPDATE advancement_items SET notion_synced_at=NOW() WHERE ability_id=$1 AND notion_synced_at IS NULL`,
+        [r.ability_id]
+      );
+    } catch (err) {
+      console.warn(`[notion-push-sync] advancement ability ${r.ability_id} 推送失败: ${err.message}`);
+      await logSyncError(pool, err.message);
+    }
+  }
+}
+
 export async function runNotionPushSync(pool) {
   let token;
   try {
@@ -437,4 +489,5 @@ export async function runNotionPushSync(pool) {
   await pushJourneyStepLinks(pool, token);
   await pushDecisions(pool, token);
   await pushInitiativeContracts(pool, token);
+  await pushAdvancementItems(pool, token);
 }

@@ -4,6 +4,10 @@ const JOURNEY_DB  = '358c40c2-ba63-8148-bde7-e313d789931a';
 const FEATURE_DB  = '358c40c2-ba63-81e3-96c5-d762b3d34dff';
 const ISSUES_DB   = 'a17c40c2-ba63-82fb-9888-8152cefe29ec';
 
+const FEATURE_SCHEMA_WITH_PROGRESS = {
+  properties: { 'Advancement Progress': { type: 'rich_text' } },
+};
+
 const mockQuery    = vi.fn();
 const mockNotionReq = vi.fn();
 
@@ -226,5 +230,70 @@ describe('runNotionPushSync — feature Status 属性类型回归', () => {
 
     const createCall = mockNotionReq.mock.calls.find(c => c[2] === 'POST' && c[1] === '/pages');
     expect(createCall[3].properties.Kind.select.name).toBe('Ability');
+  });
+});
+
+describe('runNotionPushSync — pushAdvancementItems', () => {
+  beforeEach(() => {
+    mockQuery.mockReset();
+    mockNotionReq.mockReset();
+  });
+
+  it('advancement_items 有未同步聚合且 Feature 库有 Advancement Progress 属性 → PATCH ability 页面并标记已同步', async () => {
+    mockQuery.mockResolvedValueOnce({ rows: [] }); // journeys
+    mockQuery.mockResolvedValueOnce({ rows: [] }); // features
+    mockQuery.mockResolvedValueOnce({ rows: [] }); // issues
+    mockQuery.mockResolvedValueOnce({ rows: [] }); // skill_registry
+    mockQuery.mockResolvedValueOnce({ rows: [] }); // journey_steps
+    mockQuery.mockResolvedValueOnce({ rows: [] }); // journey_step_links
+    mockQuery.mockResolvedValueOnce({ rows: [] }); // decisions
+    mockQuery.mockResolvedValueOnce({ rows: [] }); // initiative_contracts
+    // pushAdvancementItems 内部第一条 query：按 ability 聚合未同步推进项
+    mockQuery.mockResolvedValueOnce({
+      rows: [{ ability_id: 'ab-1', ability_notion_id: 'notion-ab-1', done: '2', doing: '1', todo: '1' }],
+    });
+    mockNotionReq.mockResolvedValueOnce(FEATURE_SCHEMA_WITH_PROGRESS); // GET database schema
+    mockNotionReq.mockResolvedValueOnce({}); // PATCH page
+    mockQuery.mockResolvedValueOnce({ rows: [] }); // UPDATE advancement_items
+
+    const { runNotionPushSync } = await import('../notion-push-sync.js');
+    await runNotionPushSync({ query: mockQuery });
+
+    const patchCall = mockNotionReq.mock.calls.find(c => c[2] === 'PATCH');
+    expect(patchCall).toBeTruthy();
+    expect(patchCall[1]).toBe('/pages/notion-ab-1');
+    expect(patchCall[3].properties['Advancement Progress'].rich_text[0].text.content).toContain('2/4');
+
+    const updateCall = mockQuery.mock.calls.find(
+      c => typeof c[0] === 'string' && c[0].includes('UPDATE advancement_items')
+    );
+    expect(updateCall).toBeTruthy();
+    expect(updateCall[1]).toContain('ab-1');
+  });
+
+  it('Feature 库无 Advancement Progress 属性 → 跳过 PATCH 但仍标记已同步（避免死循环重试）', async () => {
+    mockQuery.mockResolvedValueOnce({ rows: [] });
+    mockQuery.mockResolvedValueOnce({ rows: [] });
+    mockQuery.mockResolvedValueOnce({ rows: [] });
+    mockQuery.mockResolvedValueOnce({ rows: [] });
+    mockQuery.mockResolvedValueOnce({ rows: [] });
+    mockQuery.mockResolvedValueOnce({ rows: [] });
+    mockQuery.mockResolvedValueOnce({ rows: [] });
+    mockQuery.mockResolvedValueOnce({ rows: [] });
+    mockQuery.mockResolvedValueOnce({
+      rows: [{ ability_id: 'ab-2', ability_notion_id: 'notion-ab-2', done: '0', doing: '0', todo: '1' }],
+    });
+    mockNotionReq.mockResolvedValueOnce({ properties: {} }); // GET schema，无目标属性
+    mockQuery.mockResolvedValueOnce({ rows: [] }); // UPDATE advancement_items
+
+    const { runNotionPushSync } = await import('../notion-push-sync.js');
+    await runNotionPushSync({ query: mockQuery });
+
+    const patchCall = mockNotionReq.mock.calls.find(c => c[2] === 'PATCH');
+    expect(patchCall).toBeUndefined();
+    const updateCall = mockQuery.mock.calls.find(
+      c => typeof c[0] === 'string' && c[0].includes('UPDATE advancement_items')
+    );
+    expect(updateCall).toBeTruthy();
   });
 });
