@@ -3,387 +3,700 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Skill 评估上传 — ZenithJoy 内部</title>
+  <title>Skill 评估台 — ZenithJoy 内部</title>
   <style>
-    * { box-sizing: border-box; margin: 0; padding: 0; }
-    body {
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-      background: #f0f2f5;
-      min-height: 100vh;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      padding: 24px;
-    }
-    .card {
-      background: #fff;
-      border-radius: 12px;
-      box-shadow: 0 2px 16px rgba(0,0,0,0.08);
-      padding: 40px;
-      width: 100%;
-      max-width: 560px;
-    }
-    h1 { font-size: 22px; font-weight: 700; color: #1a1a2e; margin-bottom: 8px; }
-    .subtitle { font-size: 14px; color: #666; margin-bottom: 32px; }
-    label { display: block; font-size: 14px; font-weight: 600; color: #333; margin-bottom: 6px; }
-    label span.req { color: #e53e3e; margin-left: 2px; }
-    input[type="text"], select {
-      width: 100%;
-      padding: 10px 14px;
-      border: 1.5px solid #d1d5db;
-      border-radius: 8px;
-      font-size: 14px;
-      outline: none;
-      transition: border-color 0.2s;
-      margin-bottom: 20px;
-    }
-    input[type="text"]:focus, select:focus { border-color: #5b6af0; }
-    .dropzone {
-      border: 2px dashed #c3c9f4;
-      border-radius: 10px;
-      padding: 32px;
-      text-align: center;
-      cursor: pointer;
-      transition: all 0.2s;
-      margin-bottom: 20px;
-      background: #f8f9ff;
-    }
-    .dropzone:hover, .dropzone.dragover { border-color: #5b6af0; background: #eef0ff; }
-    .dropzone .icon { font-size: 36px; margin-bottom: 10px; }
-    .dropzone p { color: #555; font-size: 14px; }
-    .dropzone .hint { font-size: 12px; color: #999; margin-top: 6px; }
-    #fileInput { display: none; }
-    .file-info {
-      display: none;
-      background: #e9f7ef;
-      border-radius: 8px;
-      padding: 10px 14px;
-      font-size: 13px;
-      color: #27ae60;
-      margin-top: -12px;
-      margin-bottom: 20px;
-    }
-    .file-info.shown { display: block; }
-    .btn {
-      width: 100%;
-      padding: 12px;
-      background: #5b6af0;
-      color: #fff;
-      border: none;
-      border-radius: 8px;
-      font-size: 15px;
-      font-weight: 600;
-      cursor: pointer;
-      transition: background 0.2s;
-    }
-    .btn:hover:not(:disabled) { background: #4a59d8; }
-    .btn:disabled { background: #a0a8f5; cursor: not-allowed; }
-    .error-msg {
-      color: #e53e3e;
-      font-size: 13px;
-      margin-top: 12px;
-      padding: 10px 14px;
-      background: #fff5f5;
-      border-radius: 8px;
-      border: 1px solid #fed7d7;
-      display: none;
-    }
-    .error-msg.shown { display: block; }
-    .status-panel {
-      display: none;
-      margin-top: 24px;
-      padding: 20px;
-      border-radius: 10px;
-      border: 1.5px solid #e2e8f0;
-    }
-    .status-panel.shown { display: block; }
-    .status-label { font-size: 13px; color: #666; margin-bottom: 6px; }
-    .status-value { font-size: 16px; font-weight: 700; color: #1a1a2e; }
-    .status-value.pending { color: #d69e2e; }
-    .status-value.running { color: #3182ce; }
-    .status-value.completed { color: #38a169; }
-    .status-value.failed { color: #e53e3e; }
-    .task-id { font-size: 12px; color: #999; margin-top: 4px; font-family: monospace; }
-    .queue-info { font-size: 13px; color: #555; margin-top: 8px; }
-    .report-link {
-      display: inline-block;
-      margin-top: 16px;
-      padding: 10px 20px;
-      background: #38a169;
-      color: #fff;
-      border-radius: 8px;
-      text-decoration: none;
-      font-size: 14px;
-      font-weight: 600;
-    }
-    .report-link:hover { background: #2f855a; }
-    .spinner {
-      display: inline-block;
-      width: 16px;
-      height: 16px;
-      border: 2px solid #c3c9f4;
-      border-top-color: #5b6af0;
-      border-radius: 50%;
-      animation: spin 0.8s linear infinite;
-      vertical-align: middle;
-      margin-right: 6px;
-    }
-    @keyframes spin { to { transform: rotate(360deg); } }
+    :root{--bg:#F6F8FB;--surface:#fff;--surface2:#EFF2F7;--ink:#181C24;--muted:#5B6575;--line:#E2E6ED;--accent:#2A5DA6;--accent-soft:#E8EFF8;--accent-ink:#204A86;--pass:#1E7D46;--pass-soft:#E5F1EA;--warn:#9A6510;--warn-soft:#FAF0DC;--fail:#BE3A34;--fail-soft:#F9E7E5;--mono:"SF Mono",ui-monospace,Menlo,Consolas,monospace;--r:12px;}
+    *{box-sizing:border-box;margin:0;padding:0;}
+    body{font:15px/1.6 -apple-system,"PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;background:var(--bg);color:var(--ink);min-height:100vh;}
+    /* ─── Tab 导航 ─── */
+    .topbar{background:var(--surface);border-bottom:1px solid var(--line);padding:0 24px;display:flex;align-items:center;gap:0;position:sticky;top:0;z-index:100;box-shadow:0 1px 4px rgba(0,0,0,.06);}
+    .logo{font:700 14px -apple-system,"PingFang SC",sans-serif;color:var(--accent-ink);padding:14px 20px 14px 0;border-right:1px solid var(--line);margin-right:4px;white-space:nowrap;}
+    .tabs{display:flex;gap:0;flex:1;}
+    .tab{padding:14px 20px;font:600 13.5px -apple-system,"PingFang SC",sans-serif;color:var(--muted);cursor:pointer;border-bottom:2.5px solid transparent;transition:all .15s;white-space:nowrap;user-select:none;}
+    .tab:hover{color:var(--ink);}
+    .tab.active{color:var(--accent-ink);border-bottom-color:var(--accent);}
+    .tab.disabled{opacity:.4;cursor:not-allowed;}
+    .tab .tnum{display:inline-flex;align-items:center;justify-content:center;width:18px;height:18px;border-radius:50%;background:var(--surface2);font-size:10px;font-weight:800;font-family:var(--mono);margin-left:6px;vertical-align:middle;}
+    .tab.active .tnum{background:var(--accent);color:#fff;}
+    /* ─── 页面容器 ─── */
+    .pages{max-width:720px;margin:0 auto;padding:36px 24px 96px;}
+    .page{display:none;}.page.active{display:block;}
+    /* ─── 卡片/表单 ─── */
+    .card{background:var(--surface);border-radius:var(--r);box-shadow:0 1px 3px rgba(0,0,0,.05),0 4px 18px rgba(0,0,0,.06);padding:36px;}
+    .page-title{font-size:22px;font-weight:800;margin-bottom:6px;letter-spacing:-.018em;}
+    .page-sub{font-size:14px;color:var(--muted);margin-bottom:28px;line-height:1.6;}
+    label{display:block;font-size:13.5px;font-weight:700;margin-bottom:6px;color:var(--ink);}
+    label .req{color:var(--fail);margin-left:2px;}
+    .field{margin-bottom:20px;}
+    input[type="text"],select,.select-fake{width:100%;padding:10px 14px;border:1.5px solid var(--line);border-radius:9px;font:15px -apple-system,"PingFang SC",sans-serif;color:var(--ink);background:var(--surface);outline:none;transition:border-color .15s;appearance:none;}
+    input[type="text"]:focus,select:focus{border-color:var(--accent);}
+    /* ─── 三级归属选择器 ─── */
+    .cascade{display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;}
+    @media(max-width:600px){.cascade{grid-template-columns:1fr;}}
+    /* ─── 来源格式胶囊 ─── */
+    .source-pills{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:20px;}
+    .pill{padding:7px 18px;border-radius:999px;border:1.5px solid var(--line);font:600 13px -apple-system,"PingFang SC",sans-serif;cursor:pointer;transition:all .15s;background:var(--surface);color:var(--muted);}
+    .pill.active{border-color:var(--accent);background:var(--accent-soft);color:var(--accent-ink);}
+    .pill:hover:not(.active){border-color:var(--accent);color:var(--accent-ink);}
+    /* ─── 拖拽区 ─── */
+    .dropzone{border:2px dashed var(--line);border-radius:var(--r);padding:32px;text-align:center;cursor:pointer;transition:all .2s;background:var(--surface2);margin-bottom:8px;}
+    .dropzone:hover,.dropzone.dragover{border-color:var(--accent);background:var(--accent-soft);}
+    .dropzone-icon{font-size:36px;margin-bottom:10px;}
+    .dropzone p{color:var(--muted);font-size:14px;}
+    .dropzone .hint{font-size:12px;color:var(--line);margin-top:4px;}
+    #fileInput{display:none;}
+    .file-info{display:none;background:var(--pass-soft);border-radius:8px;padding:10px 14px;font-size:13px;color:var(--pass);margin-bottom:16px;}
+    .file-info.shown{display:block;}
+    /* ─── 进度条步骤 ─── */
+    .progress-steps{display:flex;align-items:flex-start;gap:0;margin:24px 0 0;overflow-x:auto;padding-bottom:4px;}
+    .pstep{flex:1;min-width:80px;text-align:center;position:relative;}
+    .pstep:not(:last-child)::after{content:"";position:absolute;top:14px;left:50%;width:100%;height:2px;background:var(--line);z-index:0;}
+    .pstep.done::after{background:var(--accent);}
+    .pnum{width:28px;height:28px;border-radius:50%;background:var(--surface2);border:2px solid var(--line);font:700 12px var(--mono);display:flex;align-items:center;justify-content:center;margin:0 auto 6px;position:relative;z-index:1;color:var(--muted);}
+    .pstep.active .pnum{background:var(--accent);border-color:var(--accent);color:#fff;}
+    .pstep.done .pnum{background:var(--pass-soft);border-color:var(--pass);color:var(--pass);}
+    .plabel{font:500 11px -apple-system,"PingFang SC",sans-serif;color:var(--muted);line-height:1.3;max-width:70px;margin:0 auto;}
+    .pstep.active .plabel{color:var(--accent-ink);font-weight:700;}
+    .pstep.done .plabel{color:var(--pass);}
+    /* ─── 按钮 ─── */
+    .btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;padding:11px 22px;border-radius:9px;font:600 14px -apple-system,"PingFang SC",sans-serif;cursor:pointer;transition:all .15s;border:none;outline:none;}
+    .btn-primary{background:var(--accent);color:#fff;width:100%;}
+    .btn-primary:hover:not(:disabled){background:var(--accent-ink);}
+    .btn-primary:disabled{background:#a0a8f5;cursor:not-allowed;}
+    .btn-secondary{background:var(--surface2);color:var(--ink);border:1.5px solid var(--line);}
+    .btn-secondary:hover{border-color:var(--accent);color:var(--accent-ink);}
+    .btn-link{background:none;color:var(--muted);font-size:13px;padding:6px 0;}
+    .btn-link:hover{color:var(--accent-ink);}
+    /* ─── 错误/状态 ─── */
+    .error-msg{display:none;background:var(--fail-soft);border:1px solid var(--fail);color:var(--fail);border-radius:8px;padding:10px 14px;font-size:13px;margin-bottom:16px;}
+    .error-msg.shown{display:block;}
+    .spinner{display:inline-block;width:16px;height:16px;border:2px solid rgba(255,255,255,.4);border-top-color:#fff;border-radius:50%;animation:spin .7s linear infinite;}
+    .spinner.dark{border-color:rgba(0,0,0,.1);border-top-color:var(--accent);}
+    @keyframes spin{to{transform:rotate(360deg)}}
+    /* ─── 向导页 ─── */
+    .wizard-waiting{text-align:center;padding:40px 20px;}
+    .wizard-waiting .big-spinner{width:48px;height:48px;border:3px solid var(--line);border-top-color:var(--accent);border-radius:50%;animation:spin 1s linear infinite;margin:0 auto 16px;}
+    .wizard-question{background:var(--surface);border:1.5px solid var(--line);border-radius:var(--r);padding:20px 22px;margin-bottom:14px;transition:border-color .15s;}
+    .wizard-question.answered{border-color:var(--accent);}
+    .qnum{font:700 11px var(--mono);color:var(--muted);margin-bottom:6px;}
+    .qtext{font-size:15px;font-weight:700;margin-bottom:8px;line-height:1.45;}
+    .qreason{font-size:13px;color:var(--muted);margin-bottom:14px;line-height:1.5;}
+    .qans{display:flex;gap:8px;flex-wrap:wrap;}
+    .qbtn{padding:7px 18px;border-radius:999px;border:1.5px solid var(--line);font:600 13px -apple-system,"PingFang SC",sans-serif;cursor:pointer;background:var(--surface);color:var(--muted);transition:all .15s;}
+    .qbtn:hover{border-color:var(--accent);color:var(--accent-ink);}
+    .qbtn.sel-yes{background:var(--pass-soft);border-color:var(--pass);color:var(--pass);}
+    .qbtn.sel-no{background:var(--fail-soft);border-color:var(--fail);color:var(--fail);}
+    .qbtn.sel-skip{background:var(--surface2);border-color:var(--line);color:var(--muted);}
+    /* ─── 状态面板 ─── */
+    .status-panel{display:none;margin-top:24px;padding:22px;border-radius:var(--r);border:1.5px solid var(--line);background:var(--surface);}
+    .status-panel.shown{display:block;}
+    .slabel{font-size:12px;color:var(--muted);margin-bottom:4px;font:600 11px var(--mono);text-transform:uppercase;letter-spacing:.06em;}
+    .svalue{font-size:18px;font-weight:800;color:var(--ink);}
+    .svalue.pending{color:var(--warn)}.svalue.running{color:var(--accent)}.svalue.completed{color:var(--pass)}.svalue.failed{color:var(--fail)}
+    .stid{font-size:11px;color:var(--muted);font-family:var(--mono);margin-top:4px;}
+    /* ─── 报告页 ─── */
+    .report-frame{width:100%;border:none;border-radius:var(--r);display:block;background:var(--surface);min-height:600px;}
+    .report-loading{text-align:center;padding:60px 20px;color:var(--muted);}
+    /* ─── 技能库页 ─── */
+    .lib-controls{display:flex;gap:10px;margin-bottom:20px;flex-wrap:wrap;}
+    .lib-controls select{flex:1;min-width:160px;}
+    .skill-line-group{margin-bottom:28px;}
+    .line-header{font:700 13px var(--mono);letter-spacing:.08em;text-transform:uppercase;color:var(--muted);padding:10px 14px;background:var(--surface2);border-radius:8px;margin-bottom:10px;display:flex;align-items:center;justify-content:space-between;}
+    .line-badge{font:700 11px var(--mono);color:var(--accent-ink);background:var(--accent-soft);border-radius:999px;padding:2px 10px;}
+    .skill-card{background:var(--surface);border:1.5px solid var(--line);border-radius:var(--r);padding:16px 18px;margin-bottom:10px;cursor:pointer;transition:border-color .15s;}
+    .skill-card:hover{border-color:var(--accent);}
+    .skill-card-head{display:flex;align-items:center;gap:10px;margin-bottom:6px;}
+    .skill-card-name{font-size:15px;font-weight:700;flex:1;}
+    .vtag{font:700 10px var(--mono);border-radius:5px;padding:2px 8px;}
+    .vpass{background:var(--pass-soft);color:var(--pass)}.vpartial{background:var(--warn-soft);color:var(--warn)}.vfail{background:var(--fail-soft);color:var(--fail)}.vpending{background:var(--surface2);color:var(--muted)}
+    .skill-card-meta{font-size:12.5px;color:var(--muted);}
+    .versions-list{margin-top:8px;display:none;}
+    .versions-list.open{display:block;}
+    .ver-item{display:flex;align-items:center;gap:8px;padding:7px 0;border-top:1px solid var(--line);font-size:13px;}
+    .ver-item a{color:var(--accent-ink);font-size:12px;margin-left:auto;}
+    /* ─── 空状态 ─── */
+    .empty{text-align:center;padding:60px 20px;color:var(--muted);}
+    .empty .ei{font-size:48px;margin-bottom:12px;}
   </style>
 </head>
 <body>
-  <div class="card">
-    <h1>Skill 评估上传</h1>
-    <p class="subtitle">将 Skill zip 包上传至评估台，获取验收报告</p>
 
-    <form id="uploadForm" novalidate>
-      <label>Skill 名称<span class="req">*</span></label>
-      <input type="text" id="skillName" name="skill_name" placeholder="例：日报生成 Skill" maxlength="100" />
+<!-- 顶部导航 -->
+<div class="topbar">
+  <div class="logo">⚙ Skill 评估台</div>
+  <div class="tabs">
+    <div class="tab active" data-tab="upload">上传 <span class="tnum">1</span></div>
+    <div class="tab disabled" id="tab-wizard" data-tab="wizard">梳理向导 <span class="tnum">2</span></div>
+    <div class="tab disabled" id="tab-report" data-tab="report">验收报告 <span class="tnum">3</span></div>
+    <div class="tab" data-tab="library">技能库 <span class="tnum">4</span></div>
+  </div>
+</div>
 
-      <label>来源平台<span class="req">*</span></label>
-      <select id="platform" name="platform">
-        <option value="">请选择平台</option>
-        <option value="Claude">Claude</option>
-        <option value="Codex">Codex</option>
-        <option value="ChatGPT">ChatGPT</option>
-        <option value="Other">其他</option>
-      </select>
+<!-- 页面内容 -->
+<div class="pages">
 
-      <label>归属线<span class="req">*</span></label>
-      <select id="journeyId" name="journey_id">
-        <option value="">请选择归属线</option>
-        <option value="line00">Line 00 — ZenithJoy 运营中枢</option>
-        <option value="line01">Line 01 — 智能发布</option>
-        <option value="line02">Line 02 — 客户智能获客路径</option>
-        <option value="line03">Line 03 — GEO</option>
-        <option value="line04">Line 04 — 客户私域 AI 接管</option>
-        <option value="line05">Line 05 — 视频剪辑</option>
-        <option value="line06">Line 06 — 小龙虾</option>
-        <option value="line07">Line 07 — AI 爆款视频翻拍</option>
-        <option value="line10">Line 10 — ZenithJoy 客户管理</option>
-      </select>
+  <!-- ① 上传页 -->
+  <div class="page active" id="page-upload">
+    <div class="card">
+      <div class="page-title">上传 Skill 包</div>
+      <p class="page-sub">拖入 .zip 包，选择归属，提交后 AI 自动解析并生成梳理问题（约 1-2 分钟）</p>
 
-      <label>提交人（选填）</label>
-      <input type="text" id="submitter" name="submitter" placeholder="你的姓名或花名" maxlength="50" />
+      <form id="uploadForm" novalidate>
+        <!-- 三级归属 -->
+        <div class="field">
+          <label>归属 <span class="req">*</span></label>
+          <div class="cascade">
+            <select id="areaSelect">
+              <option value="">AREA（大区）</option>
+              <option value="ZenithJoy">ZenithJoy</option>
+              <option value="客户业务">客户业务</option>
+              <option value="内容运营">内容运营</option>
+              <option value="基础设施">基础设施</option>
+            </select>
+            <select id="lineSelect">
+              <option value="">LINE（业务线）</option>
+              <option value="line00">Line 00 — 运营中枢</option>
+              <option value="line01">Line 01 — 智能发布</option>
+              <option value="line02">Line 02 — 智能获客</option>
+              <option value="line03">Line 03 — GEO</option>
+              <option value="line04">Line 04 — 私域AI接管</option>
+              <option value="line05">Line 05 — 视频剪辑</option>
+              <option value="line06">Line 06 — 小龙虾</option>
+              <option value="line07">Line 07 — AI爆款翻拍</option>
+              <option value="line10">Line 10 — 客户管理</option>
+            </select>
+            <input type="text" id="abilityInput" placeholder="ABILITY（能力名，选填）" maxlength="60" />
+          </div>
+        </div>
 
-      <label>Skill zip 包<span class="req">*</span></label>
-      <div class="dropzone" id="dropzone">
-        <div class="icon">📦</div>
-        <p>拖拽 .zip 文件到这里，或点击选择</p>
-        <p class="hint">仅支持 .zip 格式，最大 10MB</p>
-        <input type="file" id="fileInput" accept=".zip" />
-      </div>
-      <div class="file-info" id="fileInfo"></div>
+        <!-- 来源格式 -->
+        <div class="field">
+          <label>来源格式 <span class="req">*</span></label>
+          <div class="source-pills">
+            <div class="pill active" data-platform="Claude">Claude</div>
+            <div class="pill" data-platform="Codex">Codex</div>
+            <div class="pill" data-platform="ChatGPT">ChatGPT</div>
+            <div class="pill" data-platform="Other">其他</div>
+          </div>
+          <input type="hidden" id="platformInput" value="Claude" />
+        </div>
 
-      <div class="error-msg" id="errorMsg"></div>
+        <!-- Skill 名称（从文件名自动填入，可修改） -->
+        <div class="field">
+          <label>Skill 名称 <span class="req">*</span></label>
+          <input type="text" id="skillName" placeholder="例：客户日报生成 Skill" maxlength="100" />
+        </div>
 
-      <button type="submit" class="btn" id="submitBtn">提交评估</button>
-    </form>
+        <!-- 提交人 -->
+        <div class="field">
+          <label>提交人（选填）</label>
+          <input type="text" id="submitter" placeholder="你的姓名或花名" maxlength="50" />
+        </div>
 
-    <div class="status-panel" id="statusPanel">
-      <div class="status-label">评估状态</div>
-      <div class="status-value" id="statusValue">--</div>
-      <div class="task-id" id="taskIdDisplay"></div>
-      <div class="queue-info" id="queueInfo"></div>
-      <div id="reportArea"></div>
+        <!-- 拖拽区 -->
+        <div class="field">
+          <label>Skill zip 包 <span class="req">*</span></label>
+          <div class="dropzone" id="dropzone">
+            <div class="dropzone-icon">📦</div>
+            <p>拖拽 .zip 文件到这里，或点击选择</p>
+            <p class="hint">仅支持 .zip 格式 · 最大 10MB · 需包含 SKILL.md</p>
+            <input type="file" id="fileInput" accept=".zip" />
+          </div>
+          <div class="file-info" id="fileInfo"></div>
+        </div>
+
+        <div class="error-msg" id="errorMsg"></div>
+
+        <!-- 进度步骤（提交后显示） -->
+        <div class="progress-steps" id="progressSteps" style="display:none">
+          <div class="pstep done" id="ps-upload"><div class="pnum">✓</div><div class="plabel">上传成功</div></div>
+          <div class="pstep active" id="ps-parse"><div class="pnum spinner dark" style="border:2px solid rgba(42,93,166,.2);border-top-color:var(--accent)"></div><div class="plabel">AI 解析中</div></div>
+          <div class="pstep" id="ps-wizard"><div class="pnum">2</div><div class="plabel">你来答题</div></div>
+          <div class="pstep" id="ps-eval"><div class="pnum">3</div><div class="plabel">自动评估</div></div>
+          <div class="pstep" id="ps-done"><div class="pnum">4</div><div class="plabel">报告就绪</div></div>
+        </div>
+
+        <button type="submit" class="btn btn-primary" id="submitBtn" style="margin-top:20px">提交评估</button>
+      </form>
     </div>
   </div>
 
-  <script>
-    // ─── 配置 ─────────────────────────────────────────────────────────────
-    const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
-    // 轮询退避：5s 起，×1.5，上限 30s（用整数运算，不用 bc）
-    const POLL_MIN_MS = 5000;
-    const POLL_MAX_MS = 30000;
+  <!-- ② 梳理向导页 -->
+  <div class="page" id="page-wizard">
+    <div class="card">
+      <div class="page-title">梳理向导</div>
+      <p class="page-sub">AI 读完 Skill 后，把说不清楚的地方整理成 7 道是/否题。你的每个回答都会变成一条评估断言，直接影响功能地图里的边界判定。</p>
 
-    // ─── 元素引用 ──────────────────────────────────────────────────────────
-    const dropzone = document.getElementById('dropzone');
-    const fileInput = document.getElementById('fileInput');
-    const fileInfo = document.getElementById('fileInfo');
-    const form = document.getElementById('uploadForm');
-    const errorMsg = document.getElementById('errorMsg');
-    const submitBtn = document.getElementById('submitBtn');
-    const statusPanel = document.getElementById('statusPanel');
-    const statusValue = document.getElementById('statusValue');
-    const taskIdDisplay = document.getElementById('taskIdDisplay');
-    const queueInfo = document.getElementById('queueInfo');
-    const reportArea = document.getElementById('reportArea');
+      <!-- 等待生成 -->
+      <div class="wizard-waiting" id="wizardWaiting">
+        <div class="big-spinner"></div>
+        <p style="font-size:15px;font-weight:700;margin-bottom:6px">AI 正在读取 Skill 并生成问题…</p>
+        <p style="font-size:13px;color:var(--muted)">通常需要 1-2 分钟，页面会自动刷新</p>
+      </div>
 
-    let selectedFile = null;
-    let pollTimer = null;
-    let currentTaskId = null;
+      <!-- 问题列表 -->
+      <div id="wizardQuestions" style="display:none">
+        <div id="questionList"></div>
+        <div class="error-msg" id="wizardError"></div>
+        <div style="display:flex;gap:10px;margin-top:20px;flex-wrap:wrap">
+          <button class="btn btn-primary" id="submitWizardBtn" style="flex:1">提交回答，开始评估</button>
+          <button class="btn btn-secondary" id="skipWizardBtn">跳过向导，直接评估</button>
+        </div>
+        <p style="font-size:12px;color:var(--muted);margin-top:10px;text-align:center">「不确定」回答会让评估员根据 Skill 原文自行判断</p>
+      </div>
+    </div>
+  </div>
 
-    // ─── 拖拽 & 点击选文件 ─────────────────────────────────────────────────
-    dropzone.addEventListener('click', () => fileInput.click());
-    dropzone.addEventListener('dragover', (e) => { e.preventDefault(); dropzone.classList.add('dragover'); });
-    dropzone.addEventListener('dragleave', () => dropzone.classList.remove('dragover'));
-    dropzone.addEventListener('drop', (e) => {
-      e.preventDefault();
-      dropzone.classList.remove('dragover');
-      const file = e.dataTransfer.files[0];
-      if (file) setFile(file);
+  <!-- ③ 验收报告页 -->
+  <div class="page" id="page-report">
+    <div id="reportLoading" class="report-loading">
+      <div class="big-spinner" style="width:40px;height:40px;border:3px solid var(--line);border-top-color:var(--accent);border-radius:50%;animation:spin 1s linear infinite;margin:0 auto 16px;"></div>
+      <p>评估正在进行，通常需要 3-40 分钟…</p>
+      <p style="font-size:13px;color:var(--muted);margin-top:8px">页面每 10 秒自动刷新状态</p>
+    </div>
+    <iframe id="reportFrame" class="report-frame" style="display:none" sandbox="allow-scripts allow-modals allow-same-origin"></iframe>
+  </div>
+
+  <!-- ④ 技能库页 -->
+  <div class="page" id="page-library">
+    <div class="page-title" style="margin-bottom:6px">技能库</div>
+    <p class="page-sub">按业务线浏览所有历史评估，同一 Skill 多版本串成改进曲线。</p>
+
+    <div class="lib-controls">
+      <select id="libLineFilter">
+        <option value="">全部业务线</option>
+        <option value="line00">Line 00 — 运营中枢</option>
+        <option value="line01">Line 01 — 智能发布</option>
+        <option value="line02">Line 02 — 智能获客</option>
+        <option value="line03">Line 03 — GEO</option>
+        <option value="line04">Line 04 — 私域AI接管</option>
+        <option value="line05">Line 05 — 视频剪辑</option>
+        <option value="line06">Line 06 — 小龙虾</option>
+        <option value="line07">Line 07 — AI爆款翻拍</option>
+        <option value="line10">Line 10 — 客户管理</option>
+      </select>
+      <button class="btn btn-secondary" id="libRefreshBtn">刷新</button>
+    </div>
+    <div id="libContent">
+      <div class="empty"><div class="ei">📚</div><p>加载中…</p></div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+// ─── 状态 ─────────────────────────────────────────────────────────────────
+const API = '/eval-api';
+let currentTaskId = null;
+let pollTimer = null;
+let wizardPollTimer = null;
+let currentWizardAnswers = {};
+let selectedPlatform = 'Claude';
+
+// ─── Tab 切换 ──────────────────────────────────────────────────────────────
+function switchTab(tabName) {
+  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+  document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+  const tabEl = document.querySelector(`.tab[data-tab="${tabName}"]`);
+  if (tabEl && !tabEl.classList.contains('disabled')) {
+    tabEl.classList.add('active');
+    document.getElementById('page-' + tabName).classList.add('active');
+    if (tabName === 'library') loadLibrary();
+    if (tabName === 'wizard' && currentTaskId) startWizardPoll();
+    if (tabName === 'report' && currentTaskId) startReportPoll();
+  }
+}
+
+document.querySelectorAll('.tab:not(.disabled)').forEach(t => {
+  t.addEventListener('click', () => switchTab(t.dataset.tab));
+});
+
+// ─── 来源格式胶囊 ─────────────────────────────────────────────────────────
+document.querySelectorAll('.pill').forEach(p => {
+  p.addEventListener('click', () => {
+    document.querySelectorAll('.pill').forEach(x => x.classList.remove('active'));
+    p.classList.add('active');
+    selectedPlatform = p.dataset.platform;
+    document.getElementById('platformInput').value = selectedPlatform;
+  });
+});
+
+// ─── 文件拖拽选择 ─────────────────────────────────────────────────────────
+const dropzone = document.getElementById('dropzone');
+const fileInput = document.getElementById('fileInput');
+const fileInfo = document.getElementById('fileInfo');
+let selectedFile = null;
+
+dropzone.addEventListener('click', () => fileInput.click());
+dropzone.addEventListener('dragover', e => { e.preventDefault(); dropzone.classList.add('dragover'); });
+dropzone.addEventListener('dragleave', () => dropzone.classList.remove('dragover'));
+dropzone.addEventListener('drop', e => {
+  e.preventDefault();
+  dropzone.classList.remove('dragover');
+  if (e.dataTransfer.files[0]) setFile(e.dataTransfer.files[0]);
+});
+fileInput.addEventListener('change', () => { if (fileInput.files[0]) setFile(fileInput.files[0]); });
+
+function setFile(file) {
+  clearError();
+  if (!file.name.toLowerCase().endsWith('.zip')) { showError('请选择 .zip 格式文件'); return; }
+  if (file.size > 10 * 1024 * 1024) { showError('文件过大：最大 10MB'); return; }
+  selectedFile = file;
+  // 自动填充 skill 名称（从文件名 strip .zip）
+  const skillNameEl = document.getElementById('skillName');
+  if (!skillNameEl.value.trim()) {
+    skillNameEl.value = file.name.replace(/\.zip$/i, '').replace(/[-_]/g, ' ');
+  }
+  fileInfo.textContent = `已选择：${file.name}（${(file.size / 1024).toFixed(0)} KB）`;
+  fileInfo.classList.add('shown');
+}
+
+function showError(msg) { const el = document.getElementById('errorMsg'); el.textContent = msg; el.classList.add('shown'); }
+function clearError() { document.getElementById('errorMsg').classList.remove('shown'); }
+
+// ─── 表单提交 ─────────────────────────────────────────────────────────────
+document.getElementById('uploadForm').addEventListener('submit', async e => {
+  e.preventDefault();
+  clearError();
+
+  const lineEl = document.getElementById('lineSelect');
+  const areaEl = document.getElementById('areaSelect');
+  const skillName = document.getElementById('skillName').value.trim();
+  const journeyId = lineEl.value;
+  const area = areaEl.value;
+  const ability = document.getElementById('abilityInput').value.trim();
+  const submitter = document.getElementById('submitter').value.trim();
+
+  if (!journeyId) { showError('请选择归属业务线'); return; }
+  if (!skillName) { showError('请填写 Skill 名称'); return; }
+  if (!selectedFile) { showError('请选择 .zip 文件'); return; }
+
+  const submitBtn = document.getElementById('submitBtn');
+  submitBtn.disabled = true;
+  submitBtn.innerHTML = '<span class="spinner"></span> 提交中…';
+
+  try {
+    const formData = new FormData();
+    formData.append('file', selectedFile);
+    formData.append('skill_name', skillName);
+    formData.append('platform', selectedPlatform);
+    formData.append('journey_id', journeyId);
+    if (area) formData.append('area', area);
+    if (ability) formData.append('ability', ability);
+    if (submitter) formData.append('submitter', submitter);
+
+    const resp = await fetch(API + '/upload', { method: 'POST', body: formData });
+    const data = await resp.json();
+
+    if (!resp.ok) { showError(data.error || `上传失败 (HTTP ${resp.status})`); submitBtn.disabled = false; submitBtn.textContent = '提交评估'; return; }
+
+    // 已有历史报告
+    if (data.deduped && data.report_url) {
+      gotoReport(data.task_id, data.report_url);
+      return;
+    }
+
+    currentTaskId = data.task_id;
+    // 显示进度条
+    document.getElementById('progressSteps').style.display = 'flex';
+    submitBtn.style.display = 'none';
+
+    // 启用向导 tab，切过去
+    enableTab('wizard');
+    switchTab('wizard');
+    startWizardPoll();
+
+  } catch (err) {
+    showError('网络错误，请检查后重试');
+    submitBtn.disabled = false;
+    submitBtn.textContent = '提交评估';
+  }
+});
+
+function enableTab(tabName) {
+  const t = document.querySelector(`.tab[data-tab="${tabName}"]`);
+  if (t) { t.classList.remove('disabled'); t.id = ''; }
+}
+
+// ─── 向导轮询 ─────────────────────────────────────────────────────────────
+function startWizardPoll() {
+  if (!currentTaskId) return;
+  if (wizardPollTimer) clearTimeout(wizardPollTimer);
+  checkWizard();
+}
+
+async function checkWizard() {
+  try {
+    const resp = await fetch(API + '/wizard/' + currentTaskId);
+    if (!resp.ok) return scheduleWizardPoll();
+    const data = await resp.json();
+    const { wizard_status, wizard_questions } = data;
+
+    if (wizard_status === 'ready' && wizard_questions && wizard_questions.length) {
+      renderWizardQuestions(wizard_questions);
+    } else if (wizard_status === 'answered' || wizard_status === 'skipped') {
+      // 向导完成，切报告页
+      enableTab('report');
+      switchTab('report');
+      startReportPoll();
+    } else {
+      // generating / none：继续等
+      scheduleWizardPoll();
+    }
+  } catch (err) {
+    scheduleWizardPoll();
+  }
+}
+
+function scheduleWizardPoll() {
+  wizardPollTimer = setTimeout(checkWizard, 8000);
+}
+
+function renderWizardQuestions(questions) {
+  document.getElementById('wizardWaiting').style.display = 'none';
+  document.getElementById('wizardQuestions').style.display = 'block';
+
+  const list = document.getElementById('questionList');
+  list.innerHTML = '';
+  questions.forEach((q, idx) => {
+    const id = q.id || (idx + 1);
+    const div = document.createElement('div');
+    div.className = 'wizard-question';
+    div.dataset.qid = id;
+    div.innerHTML = `
+      <div class="qnum">问题 ${id} / ${questions.length} · ${q.dimension || ''}</div>
+      <div class="qtext">${escHtml(q.question)}</div>
+      <div class="qreason">为什么问：${escHtml(q.reason)}</div>
+      <div class="qans">
+        <button class="qbtn" data-ans="yes">是</button>
+        <button class="qbtn" data-ans="no">否</button>
+        <button class="qbtn" data-ans="skip">不确定，让评估员判断</button>
+      </div>`;
+    div.querySelectorAll('.qbtn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        div.querySelectorAll('.qbtn').forEach(b => b.className = 'qbtn');
+        btn.classList.add('sel-' + btn.dataset.ans);
+        div.classList.add('answered');
+        currentWizardAnswers[id] = btn.dataset.ans;
+      });
     });
-    fileInput.addEventListener('change', () => {
-      if (fileInput.files[0]) setFile(fileInput.files[0]);
+    list.appendChild(div);
+  });
+}
+
+document.getElementById('submitWizardBtn').addEventListener('click', async () => {
+  const btn = document.getElementById('submitWizardBtn');
+  // 补全未答的题为 skip
+  document.querySelectorAll('.wizard-question').forEach(q => {
+    const id = q.dataset.qid;
+    if (!currentWizardAnswers[id]) currentWizardAnswers[id] = 'skip';
+  });
+
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner"></span> 提交中…';
+
+  try {
+    const resp = await fetch(API + '/wizard/' + currentTaskId + '/answers', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ answers: currentWizardAnswers }),
     });
+    if (resp.ok) {
+      enableTab('report');
+      switchTab('report');
+      startReportPoll();
+    } else {
+      const d = await resp.json();
+      document.getElementById('wizardError').textContent = d.error || '提交失败，请重试';
+      document.getElementById('wizardError').classList.add('shown');
+      btn.disabled = false;
+      btn.textContent = '提交回答，开始评估';
+    }
+  } catch (err) {
+    document.getElementById('wizardError').textContent = '网络错误，请重试';
+    document.getElementById('wizardError').classList.add('shown');
+    btn.disabled = false;
+    btn.textContent = '提交回答，开始评估';
+  }
+});
 
-    function setFile(file) {
-      clearError();
-      if (!file.name.toLowerCase().endsWith('.zip')) {
-        showError('请选择 .zip 格式文件');
-        return;
-      }
-      if (file.size > MAX_FILE_SIZE) {
-        showError(`文件过大：${(file.size / 1024 / 1024).toFixed(1)}MB，最大 10MB`);
-        return;
-      }
-      selectedFile = file;
-      fileInfo.textContent = `已选择：${file.name}（${(file.size / 1024).toFixed(0)} KB）`;
-      fileInfo.classList.add('shown');
+document.getElementById('skipWizardBtn').addEventListener('click', async () => {
+  try {
+    await fetch(API + '/wizard/' + currentTaskId + '/answers', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ answers: {}, skipped: true }),
+    });
+  } catch (e) {}
+  enableTab('report');
+  switchTab('report');
+  startReportPoll();
+});
+
+// ─── 报告轮询 ─────────────────────────────────────────────────────────────
+function startReportPoll() {
+  if (!currentTaskId) return;
+  if (pollTimer) clearTimeout(pollTimer);
+  checkReport();
+}
+
+let pollInterval = 10000;
+async function checkReport() {
+  try {
+    const resp = await fetch(API + '/status/' + currentTaskId);
+    if (!resp.ok) { scheduleReportPoll(); return; }
+    const data = await resp.json();
+
+    if (data.status === 'completed' && data.report_url) {
+      gotoReport(currentTaskId, data.report_url);
+    } else if (data.status === 'failed') {
+      document.getElementById('reportLoading').innerHTML = `<div style="color:var(--fail);font-weight:700">评估失败：${escHtml(data.failure_reason || '未知原因')}</div><button class="btn btn-secondary" onclick="switchTab('upload')" style="margin-top:16px">重新提交</button>`;
+    } else {
+      scheduleReportPoll();
+    }
+  } catch (e) {
+    scheduleReportPoll();
+  }
+}
+
+function scheduleReportPoll() {
+  pollInterval = Math.min(pollInterval * 1.4, 30000);
+  pollTimer = setTimeout(checkReport, pollInterval);
+}
+
+function gotoReport(taskId, reportUrl) {
+  if (pollTimer) clearTimeout(pollTimer);
+  currentTaskId = taskId;
+  enableTab('report');
+  // 切换到报告页
+  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+  document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+  document.querySelector('.tab[data-tab="report"]').classList.add('active');
+  document.getElementById('page-report').classList.add('active');
+
+  const loading = document.getElementById('reportLoading');
+  const frame = document.getElementById('reportFrame');
+  loading.style.display = 'none';
+  frame.style.display = 'block';
+  frame.src = reportUrl;
+  // 自动撑高
+  frame.onload = () => {
+    try {
+      const h = frame.contentDocument.body.scrollHeight;
+      if (h > 300) frame.style.height = h + 'px';
+    } catch (e) { frame.style.height = '900px'; }
+  };
+}
+
+// ─── 技能库 ───────────────────────────────────────────────────────────────
+async function loadLibrary() {
+  const filter = document.getElementById('libLineFilter').value;
+  const url = filter ? API + '/library?journey_id=' + encodeURIComponent(filter) : API + '/library';
+  const libContent = document.getElementById('libContent');
+  libContent.innerHTML = '<div class="empty"><div class="ei">⏳</div><p>加载中…</p></div>';
+
+  try {
+    const resp = await fetch(url);
+    if (!resp.ok) throw new Error('HTTP ' + resp.status);
+    const data = await resp.json();
+
+    if (!data.items || data.items.length === 0) {
+      libContent.innerHTML = '<div class="empty"><div class="ei">📭</div><p>暂无评估记录</p></div>';
+      return;
     }
 
-    // ─── 错误显示 ──────────────────────────────────────────────────────────
-    function showError(msg) {
-      errorMsg.textContent = msg;
-      errorMsg.classList.add('shown');
+    // 按 line 分组，按 skill_name 子分组
+    const byLine = {};
+    for (const item of data.items) {
+      const lineKey = item.journey_id || 'unknown';
+      if (!byLine[lineKey]) byLine[lineKey] = {};
+      const sk = item.skill_name || '未命名';
+      if (!byLine[lineKey][sk]) byLine[lineKey][sk] = [];
+      byLine[lineKey][sk].push(item);
     }
-    function clearError() {
-      errorMsg.classList.remove('shown');
-    }
 
-    // ─── 表单提交 ──────────────────────────────────────────────────────────
-    form.addEventListener('submit', async (e) => {
-      e.preventDefault();
-      clearError();
+    const LINE_LABEL = {
+      'line00': 'Line 00 — 运营中枢', 'line01': 'Line 01 — 智能发布',
+      'line02': 'Line 02 — 智能获客', 'line03': 'Line 03 — GEO',
+      'line04': 'Line 04 — 私域AI接管', 'line05': 'Line 05 — 视频剪辑',
+      'line06': 'Line 06 — 小龙虾', 'line07': 'Line 07 — AI爆款翻拍',
+      'line10': 'Line 10 — 客户管理', 'unknown': '未分类',
+    };
+    const VERDICT_CLS = { pass: 'vpass', partial: 'vpartial', fail: 'vfail' };
+    const VERDICT_LABEL = { pass: '可以用', partial: '改了能用', fail: '还不能用' };
 
-      const skillName = document.getElementById('skillName').value.trim();
-      const platform = document.getElementById('platform').value;
-      const journeyId = document.getElementById('journeyId').value;
-      const submitter = document.getElementById('submitter').value.trim();
+    let html = '';
+    for (const [lineKey, skills] of Object.entries(byLine)) {
+      const skillCount = Object.keys(skills).length;
+      html += `<div class="skill-line-group">
+        <div class="line-header">${escHtml(LINE_LABEL[lineKey] || lineKey)}<span class="line-badge">${skillCount} 个 Skill</span></div>`;
 
-      if (!skillName) { showError('请填写 Skill 名称'); return; }
-      if (!platform) { showError('请选择来源平台'); return; }
-      if (!journeyId) { showError('请选择归属线'); return; }
-      if (!selectedFile) { showError('请选择 .zip 文件'); return; }
+      for (const [skillName, versions] of Object.entries(skills)) {
+        const latest = versions[0];
+        const vLevel = latest.verdict_level;
+        const vCls = VERDICT_CLS[vLevel] || 'vpending';
+        const vLabel = VERDICT_LABEL[vLevel] || (latest.status === 'completed' ? '未知' : latest.status === 'running' ? '评估中' : '排队中');
+        html += `<div class="skill-card" onclick="toggleVersions(this)">
+          <div class="skill-card-head">
+            <div class="skill-card-name">${escHtml(skillName)}</div>
+            <span class="vtag ${vCls}">${escHtml(vLabel)}</span>
+          </div>
+          <div class="skill-card-meta">${versions.length} 个版本 · 最新：${fmtDate(latest.created_at)} · ${escHtml(latest.submitter || '未知')} · ${escHtml(latest.area || '')} ${escHtml(latest.ability || '')}</div>
+          <div class="versions-list">`;
 
-      submitBtn.disabled = true;
-      submitBtn.innerHTML = '<span class="spinner"></span>提交中…';
-
-      try {
-        const formData = new FormData();
-        formData.append('file', selectedFile);
-        formData.append('skill_name', skillName);
-        formData.append('platform', platform);
-        formData.append('journey_id', journeyId);
-        if (submitter) formData.append('submitter', submitter);
-
-        const resp = await fetch('/eval-api/upload', {
-          method: 'POST',
-          body: formData,
-        });
-
-        const data = await resp.json();
-
-        if (!resp.ok) {
-          showError(data.error || `上传失败（HTTP ${resp.status}）`);
-          submitBtn.disabled = false;
-          submitBtn.textContent = '提交评估';
-          return;
+        for (const v of versions) {
+          const vLevelV = v.verdict_level;
+          const vClsV = VERDICT_CLS[vLevelV] || 'vpending';
+          const vLabelV = VERDICT_LABEL[vLevelV] || v.status;
+          html += `<div class="ver-item">
+            <span class="vtag ${vClsV}" style="font-size:10px">${escHtml(vLabelV)}</span>
+            <span style="color:var(--muted)">${fmtDate(v.created_at)}</span>
+            <span style="color:var(--muted)">${escHtml(v.submitter || '')}</span>
+            ${v.report_url ? `<a href="${escHtml(v.report_url)}" target="_blank" rel="noopener" onclick="event.stopPropagation()">查看报告 →</a>` : '<span style="color:var(--line);margin-left:auto">报告未就绪</span>'}
+          </div>`;
         }
 
-        // 成功
-        currentTaskId = data.task_id;
-        taskIdDisplay.textContent = `任务 ID：${currentTaskId}`;
-
-        if (data.deduped && data.report_url) {
-          showCompleted(data.report_url);
-          return;
-        }
-
-        const pos = data.queue_position || 1;
-        queueInfo.textContent = `已进队列，前面还有 ${Math.max(0, pos - 1)} 个任务`;
-
-        statusPanel.classList.add('shown');
-        setStatus('pending');
-        startPolling(currentTaskId);
-
-        submitBtn.disabled = false;
-        submitBtn.textContent = '提交评估';
-      } catch (err) {
-        showError('网络错误，请检查连接后重试');
-        submitBtn.disabled = false;
-        submitBtn.textContent = '提交评估';
+        html += `</div></div>`;
       }
-    });
-
-    // ─── 状态展示 ──────────────────────────────────────────────────────────
-    function setStatus(status, extraMsg) {
-      const labels = {
-        pending: '⏳ 排队中',
-        running: '🔄 评估中',
-        completed: '✅ 评估完成',
-        failed: '❌ 评估失败',
-        unknown: '⚪ 未知',
-      };
-      statusValue.textContent = labels[status] || status;
-      statusValue.className = 'status-value ' + status;
-      if (extraMsg) queueInfo.textContent = extraMsg;
+      html += `</div>`;
     }
+    libContent.innerHTML = html;
+  } catch (err) {
+    libContent.innerHTML = `<div class="empty"><div class="ei">⚠️</div><p>加载失败：${escHtml(err.message)}</p></div>`;
+  }
+}
 
-    function showCompleted(reportUrl) {
-      setStatus('completed');
-      statusPanel.classList.add('shown');
-      queueInfo.textContent = '评估已完成！';
-      reportArea.innerHTML = `<a class="report-link" href="${reportUrl}" target="_blank" rel="noopener">查看验收报告 →</a>`;
-    }
+function toggleVersions(card) {
+  const vl = card.querySelector('.versions-list');
+  vl.classList.toggle('open');
+}
 
-    // ─── 指数退避轮询（awk 等价整数计算）──────────────────────────────────
-    function calcNextInterval(currentMs) {
-      // 退避：current * 1.5，上限 30000ms（整数运算）
-      const next = Math.floor(currentMs * 3 / 2);
-      return Math.min(next, POLL_MAX_MS);
-    }
+document.getElementById('libLineFilter').addEventListener('change', loadLibrary);
+document.getElementById('libRefreshBtn').addEventListener('click', loadLibrary);
 
-    function startPolling(taskId) {
-      let intervalMs = POLL_MIN_MS;
+// ─── 工具函数 ─────────────────────────────────────────────────────────────
+function escHtml(s) {
+  return String(s == null ? '' : s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+}
+function fmtDate(iso) {
+  if (!iso) return '';
+  try { return new Date(iso).toLocaleDateString('zh-CN', {month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'}); } catch(e) { return iso; }
+}
 
-      function poll() {
-        fetch(`/eval-api/status/${taskId}`)
-          .then((r) => r.json())
-          .then((data) => {
-            const status = data.status || 'unknown';
-
-            if (status === 'completed') {
-              showCompleted(data.report_url || '#');
-              return;
-            }
-
-            if (status === 'failed') {
-              setStatus('failed', `评估失败：${data.failure_reason || '未知原因'}，可重新提交`);
-              return;
-            }
-
-            if (status === 'pending') {
-              const pos = data.queue_position || '?';
-              setStatus('pending', `排队中，队列位置：${pos}`);
-            } else if (status === 'running') {
-              setStatus('running', '容器正在评估 Skill…');
-            }
-
-            // 继续轮询
-            intervalMs = calcNextInterval(intervalMs);
-            pollTimer = setTimeout(poll, intervalMs);
-          })
-          .catch(() => {
-            // 网络抖动：不误判失败，继续轮询
-            queueInfo.textContent = '连接中断，任务仍在运行中…';
-            intervalMs = calcNextInterval(intervalMs);
-            pollTimer = setTimeout(poll, intervalMs);
-          });
-      }
-
-      pollTimer = setTimeout(poll, intervalMs);
-    }
-  </script>
+// URL 参数恢复（刷新后继续）
+(function() {
+  const params = new URLSearchParams(location.search);
+  const tid = params.get('task_id');
+  const tab = params.get('tab');
+  if (tid) {
+    currentTaskId = tid;
+    enableTab('wizard');
+    enableTab('report');
+    if (tab === 'report') { switchTab('report'); startReportPoll(); }
+    else if (tab === 'wizard') { switchTab('wizard'); startWizardPoll(); }
+  }
+  if (!tid && tab === 'library') switchTab('library');
+})();
+</script>
 </body>
 </html>

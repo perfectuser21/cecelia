@@ -28,9 +28,16 @@ import pool from '../src/db.js';
 // child_process.spawn 走的是真实 execve，必须给绝对路径，否则报 ENOENT。
 const CLAUDE_BIN = process.env.CLAUDE_BIN || '/opt/homebrew/bin/claude';
 const CLAUDE_CONFIG_DIR = process.env.CLAUDE_CONFIG_DIR || '/Users/administrator/.claude-account2';
+// eval-prompt-v2.txt 现在存在 repo 内，可随 brain docker 打包
+const _workerDir = path.dirname(new URL(import.meta.url).pathname);
+const DEFAULT_EVAL_PROMPT = path.join(_workerDir, '..', 'src', 'skill-eval-formb-assets', 'eval-prompt-v2.txt');
+const DEFAULT_WIZARD_PROMPT = path.join(_workerDir, '..', 'src', 'skill-eval-formb-assets', 'wizard-prompt.txt');
+
 const EVAL_PROMPT_PATH =
-  process.env.EVAL_PROMPT_PATH || '/Users/administrator/perfect21/skill-eval-formb-assets/eval-prompt.txt';
-// eval-prompt.txt 里硬编码了一个示例路径（daily-report-v1-2 的调研路径），
+  process.env.EVAL_PROMPT_PATH || (fs.existsSync(DEFAULT_EVAL_PROMPT) ? DEFAULT_EVAL_PROMPT : '/Users/administrator/perfect21/skill-eval-formb-assets/eval-prompt.txt');
+const WIZARD_PROMPT_PATH =
+  process.env.WIZARD_PROMPT_PATH || (fs.existsSync(DEFAULT_WIZARD_PROMPT) ? DEFAULT_WIZARD_PROMPT : '/Users/administrator/perfect21/skill-eval-formb-assets/wizard-prompt.txt');
+// 旧版 eval-prompt.txt 里硬编码了一个示例路径（daily-report-v1-2 的调研路径），
 // 每次真实运行时要把它替换成本次解压出来的目标 skill 目录。
 const PROMPT_EXAMPLE_PATH = '/tmp/eval-exp/daily-report-v1-2';
 
@@ -118,30 +125,94 @@ function findSkillDir(rootDir) {
   throw new Error(`解压后未找到 SKILL.md（搜索根目录: ${rootDir}）`);
 }
 
-// ─── spawn claude ──────────────────────────────────────────────────────────
+// ─── spawn claude（通用）──────────────────────────────────────────────────
 
-function runClaudeEval(skillDir) {
+function runClaude(prompt) {
   return new Promise((resolve, reject) => {
-    const promptTemplate = fs.readFileSync(EVAL_PROMPT_PATH, 'utf8');
-    const prompt = promptTemplate.split(PROMPT_EXAMPLE_PATH).join(skillDir);
-
     const child = spawn(CLAUDE_BIN, ['-p', prompt, '--model', 'sonnet', '--output-format', 'json'], {
       env: { ...process.env, CLAUDE_CONFIG_DIR },
     });
-
     let stdout = '';
     let stderr = '';
     child.stdout.on('data', (d) => { stdout += d; });
     child.stderr.on('data', (d) => { stderr += d; });
     child.on('error', (err) => reject(new Error(`claude 进程启动失败: ${err.message}`)));
     child.on('close', (code) => {
-      if (code !== 0) {
-        reject(new Error(`claude 退出码非 0: ${code}, stderr: ${stderr.slice(0, 2000)}`));
-        return;
-      }
+      if (code !== 0) { reject(new Error(`claude 退出码非 0: ${code}, stderr: ${stderr.slice(0, 2000)}`)); return; }
       resolve(stdout);
     });
   });
+}
+
+// ─── spawn claude eval ──────────────────────────────────────────────────────
+
+function runClaudeEval(skillDir, wizardAssertions) {
+  return new Promise((resolve, reject) => {
+    const promptTemplate = fs.readFileSync(EVAL_PROMPT_PATH, 'utf8');
+    const assertionText = wizardAssertions && wizardAssertions.length
+      ? wizardAssertions.map((a) => `- ${a}`).join('\n')
+      : '（无额外断言）';
+    const prompt = promptTemplate
+      .split(PROMPT_EXAMPLE_PATH).join(skillDir)
+      .replace('__SKILL_DIR__', skillDir)
+      .replace('__WIZARD_ASSERTIONS__', assertionText);
+
+    const child = spawn(CLAUDE_BIN, ['-p', prompt, '--model', 'sonnet', '--output-format', 'json'], {
+      env: { ...process.env, CLAUDE_CONFIG_DIR },
+    });
+    let stdout = '';
+    let stderr = '';
+    child.stdout.on('data', (d) => { stdout += d; });
+    child.stderr.on('data', (d) => { stderr += d; });
+    child.on('error', (err) => reject(new Error(`claude eval 进程启动失败: ${err.message}`)));
+    child.on('close', (code) => {
+      if (code !== 0) { reject(new Error(`claude eval 退出码非 0: ${code}, stderr: ${stderr.slice(0, 2000)}`)); return; }
+      resolve(stdout);
+    });
+  });
+}
+
+// ─── 向导：生成7道是/否题 ─────────────────────────────────────────────────
+
+async function runWizardQuestions(skillDir) {
+  const skillMdPath = path.join(skillDir, 'SKILL.md');
+  let skillContent = '';
+  try {
+    skillContent = (await fs.promises.readFile(skillMdPath, 'utf8')).slice(0, 4000);
+  } catch (err) {
+    throw new Error(`读取 SKILL.md 失败: ${err.message}`);
+  }
+
+  if (!fs.existsSync(WIZARD_PROMPT_PATH)) {
+    throw new Error(`wizard-prompt.txt 不存在: ${WIZARD_PROMPT_PATH}`);
+  }
+  const promptTemplate = fs.readFileSync(WIZARD_PROMPT_PATH, 'utf8');
+  const prompt = promptTemplate.replace('__SKILL_CONTENT__', skillContent);
+  const stdout = await runClaude(prompt);
+
+  let envelope;
+  try { envelope = JSON.parse(stdout); } catch (e) { throw new Error(`wizard claude stdout 非法 JSON: ${e.message}`); }
+  const resultText = envelope && envelope.result;
+  if (!resultText) throw new Error('wizard claude envelope 缺 result');
+
+  let wizardResult;
+  try { wizardResult = JSON.parse(resultText); } catch (e) {
+    const cleaned = sanitizeJsonString(resultText);
+    try { wizardResult = JSON.parse(cleaned); } catch (e2) { throw new Error(`wizard questions JSON 解析失败: ${e2.message}`); }
+  }
+  const questions = wizardResult && Array.isArray(wizardResult.questions) ? wizardResult.questions : [];
+  return questions;
+}
+
+// 把向导答案转成评估断言字符串列表
+function buildWizardAssertions(wizardQuestions, wizardAnswers) {
+  if (!wizardQuestions || !wizardAnswers) return [];
+  return wizardQuestions
+    .filter((q) => wizardAnswers[q.id] && wizardAnswers[q.id] !== 'skip')
+    .map((q) => {
+      const ans = wizardAnswers[q.id] === 'yes' ? '是' : '否';
+      return `[用户确认] ${q.question} → 答：${ans}`;
+    });
 }
 
 // ─── running 超时回收（进程崩溃后解除死锁）──────────────────────────────────
@@ -218,6 +289,7 @@ async function postComplete(taskId, reportData) {
  * 按 status='running' 数槽位，worker 取到任务后必须先占位，否则背压计数会漏掉正在处理的任务。
  * @returns {Promise<{task_id: string, staging_path: string} | null>}
  */
+// 取一条「准备好跑全量评估」的 pending 任务（wizard 已答/跳过/旧数据）
 export async function claimPendingTask() {
   const { rows } = await pool.query(
     `UPDATE skill_evals
@@ -225,6 +297,24 @@ export async function claimPendingTask() {
      WHERE task_id = (
        SELECT task_id FROM skill_evals
        WHERE status = 'pending'
+         AND (wizard_status IN ('answered', 'skipped', 'none') OR wizard_status IS NULL)
+       ORDER BY created_at ASC
+       LIMIT 1
+       FOR UPDATE SKIP LOCKED
+     )
+     RETURNING task_id::text, staging_path, wizard_questions, wizard_answers`
+  );
+  return rows[0] || null;
+}
+
+// 取一条「需要生成向导问题」的任务（wizard_status='generating'）
+export async function claimWizardTask() {
+  const { rows } = await pool.query(
+    `UPDATE skill_evals
+     SET wizard_status = 'generating_locked', updated_at = now()
+     WHERE task_id = (
+       SELECT task_id FROM skill_evals
+       WHERE status = 'pending' AND wizard_status = 'generating'
        ORDER BY created_at ASC
        LIMIT 1
        FOR UPDATE SKIP LOCKED
@@ -234,17 +324,75 @@ export async function claimPendingTask() {
   return rows[0] || null;
 }
 
+// 向导问题生成完成后，回写并重置为 pending（等用户答题）
+async function postWizardQuestions(taskId, questions) {
+  const res = await fetch(`${BRAIN_BASE_URL}/api/skill-eval/wizard-ready/${taskId}`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-Eval-Proxy-Token': EVAL_PROXY_TOKEN,
+    },
+    body: JSON.stringify({ questions }),
+  });
+  if (!res.ok) {
+    const body = await res.text().catch(() => '');
+    throw new Error(`/wizard-ready 回调失败: HTTP ${res.status} ${body.slice(0, 500)}`);
+  }
+}
+
+// ─── 向导流程：取任务 → 生成7题 → 回写 → 等用户 ──────────────────────────
+export async function runWizardOnce() {
+  const claimed = await claimWizardTask();
+  if (!claimed) return null;
+
+  const { task_id: taskId } = claimed;
+  console.log(`[skill-eval-worker] 向导任务 ${taskId} 开始生成问题`);
+
+  const tmpDir = path.join(os.tmpdir(), `skill-eval-wizard-${randomUUID()}`);
+  let localZipPath;
+  try {
+    localZipPath = await downloadZipToTemp(taskId);
+    await extractZip(localZipPath, tmpDir);
+    const skillDir = findSkillDir(tmpDir);
+    const questions = await runWizardQuestions(skillDir);
+    await postWizardQuestions(taskId, questions);
+    console.log(`[skill-eval-worker] 向导任务 ${taskId} 生成了 ${questions.length} 道题，等待用户回答`);
+    return { taskId, questions };
+  } catch (err) {
+    console.error(`[skill-eval-worker] 向导任务 ${taskId} 失败: ${err.message}`);
+    // 向导生成失败 → 直接跳到可评估状态（不因向导失败阻塞整个流程）
+    await pool.query(
+      `UPDATE skill_evals SET wizard_status = 'skipped', updated_at = now() WHERE task_id = $1`,
+      [taskId]
+    );
+    return null;
+  } finally {
+    await fs.promises.rm(tmpDir, { recursive: true, force: true }).catch(() => {});
+    if (localZipPath) await fs.promises.unlink(localZipPath).catch(() => {});
+  }
+}
+
+// ─── 全量评估流程 ──────────────────────────────────────────────────────────
 export async function runOnce() {
   await reclaimStuckTasks();
-  const claimed = await claimPendingTask();
 
+  // 先跑向导（如果有生成中的任务）
+  await runWizardOnce();
+
+  const claimed = await claimPendingTask();
   if (!claimed) {
-    console.log('[skill-eval-worker] 没有 pending 任务，退出');
+    console.log('[skill-eval-worker] 没有准备好评估的任务，退出');
     return null;
   }
 
-  const { task_id: taskId, staging_path: stagingPath } = claimed;
-  console.log(`[skill-eval-worker] 取到任务 ${taskId}，staging_path=${stagingPath}（容器内路径，经 HTTP 拉取）`);
+  const { task_id: taskId, staging_path: stagingPath, wizard_questions, wizard_answers } = claimed;
+  console.log(`[skill-eval-worker] 取到评估任务 ${taskId}，staging_path=${stagingPath}`);
+
+  // 把向导答案转为评估断言
+  const assertions = buildWizardAssertions(
+    wizard_questions ? (typeof wizard_questions === 'string' ? JSON.parse(wizard_questions) : wizard_questions) : [],
+    wizard_answers ? (typeof wizard_answers === 'string' ? JSON.parse(wizard_answers) : wizard_answers) : {}
+  );
 
   const tmpDir = path.join(os.tmpdir(), `skill-eval-worker-${randomUUID()}`);
   let localZipPath;
@@ -253,22 +401,18 @@ export async function runOnce() {
     localZipPath = await downloadZipToTemp(taskId);
     await extractZip(localZipPath, tmpDir);
     const skillDir = findSkillDir(tmpDir);
-    const stdout = await runClaudeEval(skillDir);
+    const stdout = await runClaudeEval(skillDir, assertions);
     const reportData = extractReportJson(stdout);
     await postComplete(taskId, reportData);
     console.log(`[skill-eval-worker] 任务 ${taskId} 完成`);
     return { taskId, reportData };
   } catch (err) {
     console.error(`[skill-eval-worker] 任务 ${taskId} 失败: ${err.message}`);
-    // 失败路径直接写库，不经 /api/skill-eval/complete ——
-    // 该端点目前只处理成功路径（见 routes/eval.js 的 /complete 实现，只写 status='completed'）。
     await markFailed(taskId, err.message);
     return null;
   } finally {
     await fs.promises.rm(tmpDir, { recursive: true, force: true }).catch(() => {});
-    if (localZipPath) {
-      await fs.promises.unlink(localZipPath).catch(() => {});
-    }
+    if (localZipPath) await fs.promises.unlink(localZipPath).catch(() => {});
   }
 }
 

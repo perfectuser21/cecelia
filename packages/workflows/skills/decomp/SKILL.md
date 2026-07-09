@@ -4,10 +4,11 @@ description: |
   全链路 Project Management 拆解引擎（秋米驱动）。将 OKR/KR/Project/Scope/Initiative/Task 层级目标拆解成可执行任务。
   当用户需要拆解目标、规划项目、把大想法变成具体 PR 列表时触发。
   触发词：/decomp、帮我拆解、拆一下、把这个拆成任务、规划 Initiative、OKR 怎么拆、项目怎么做。
-version: 2.1.0
+version: 3.0.0
 created: 2026-01-01
-updated: 2026-03-21
+updated: 2026-07-09
 changelog:
+  - 3.0.0: 合并 decomp-check 为内部质检子阶段（不再是独立 skill，质检逻辑内联在 Stage 4）；新增 ability_id 分支（读取 CECELIA_ABILITY_ID 环境变量，拆解任务挂载到具体 Ability）
   - 1.0.0: 初始版本
   - 1.1.0: 添加 initiative_plan 模式
   - 1.2.0: 完善 OKR 层级结构
@@ -237,7 +238,7 @@ CAPACITY=$(curl -s "$BRAIN_URL/api/brain/capacity-budget" 2>/dev/null)
 
 **校准检查时机**：
 - Phase 1 拆解完成后，对照 `layer_budgets` 校验
-- decomp-check 质检时，调用 capacity-budget API 检查 PR 数量是否在合理区间
+- Stage 4b 内置质检时，调用 capacity-budget API 检查 PR 数量是否在合理区间
 - 飞轮规划（Phase 2/3/4）时，发现粒度偏差及时调整
 
 ---
@@ -510,14 +511,34 @@ description: |
 - 渐进式拆解：先拆 Scope，执行到某个 Scope 时再拆其下的 Initiative
 - 持续时间：每个 Project 持续 1 周
 
-### Stage 4：质检 & 写入 DB
+### Stage 4：内置质检 & 写入 DB
 
-**decomp-check 三态裁决**：
+**⚠️ v3.0.0 起，质检内联执行，不再调用外部 decomp-check skill。**
+
+#### Stage 4a：ability_id 感知
+
+```bash
+# 读取 harness-skill-relay 注入的 Ability 上下文
+ABILITY_ID="${CECELIA_ABILITY_ID:-}"
+if [ -n "$ABILITY_ID" ]; then
+  echo "[decomp] 感知到 ability_id=$ABILITY_ID，Task 将挂载到此 Ability"
+  ABILITY_INFO=$(curl -s "http://localhost:5221/api/brain/abilities/$ABILITY_ID" 2>/dev/null)
+  ABILITY_SQL="'$ABILITY_ID'::uuid"
+else
+  ABILITY_SQL="NULL"
+fi
+```
+
+**ability_id 行为**：非空时，拆解出的 Task 挂载到该 Ability（tasks.ability_id 字段，双轴模型 GTD↔能力台账十字边）。空时写 NULL。
+
+#### Stage 4b：内置质检（三态裁决）
+
+执行"内置质检子阶段"（见本文末章节）的检查标准：
 - `approved` → 直接写入 DB
-- `needs_revision` → 根据反馈修改，重新质检
-- `rejected` → 从头重拆，不允许强行写入
+- `needs_revision` → 修改后重新质检（最多 3 次）
+- `rejected` → 从头重拆（3 次后升为 needs_human_review）
 
-**写入 DB**：
+#### Stage 4c：写入 DB（含 ability_id）
 
 ```bash
 # 写入 Project
@@ -534,10 +555,10 @@ docker exec cecelia-postgres psql cecelia -c "
   RETURNING id, name;
 "
 
-# 写入 Task（仅 Initiative 拆解时）
+# 写入 Task（仅 Initiative 拆解时，含 ability_id 挂载）
 docker exec cecelia-postgres psql cecelia -c "
-  INSERT INTO tasks (title, task_type, project_id, description, priority)
-  VALUES ('[title]', 'dev', '[initiative_id]', '[prd]', 'P1')
+  INSERT INTO tasks (title, task_type, project_id, description, priority, ability_id)
+  VALUES ('[title]', 'dev', '[initiative_id]', '[prd]', 'P1', $ABILITY_SQL)
   RETURNING id, title;
 "
 ```
@@ -628,10 +649,12 @@ docker exec cecelia-postgres psql cecelia -c "
 ### Step 3b：Initiative 未完成，规划下一个 PR
 
 ```bash
+ABILITY_SQL=$([ -n "${CECELIA_ABILITY_ID:-}" ] && echo "'$CECELIA_ABILITY_ID'::uuid" || echo "NULL")
+
 docker exec cecelia-postgres psql cecelia -c "
-  INSERT INTO tasks (title, task_type, project_id, description, priority, status)
+  INSERT INTO tasks (title, task_type, project_id, description, priority, status, ability_id)
   VALUES ('[下一个 PR 标题]', 'dev', '$INITIATIVE_ID',
-    '[完整 PRD：背景、目标、验收标准、技术要点]', 'P1', 'queued')
+    '[完整 PRD：背景、目标、验收标准、技术要点]', 'P1', 'queued', $ABILITY_SQL)
   RETURNING id, title;
 "
 ```
