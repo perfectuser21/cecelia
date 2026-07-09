@@ -3,7 +3,7 @@
 - 日期：2026-07-09
 - Brain task：9f4b0647-fcfd-475a-8241-7cf40d57a06f（作战清单 T2，P2）
 - Decision：4ea9dcc5（设计拍板）
-- PrepPRD：sprints/07092000-protocol-hygiene-pack/prep-prd.md
+- PrepPRD：docs/superpowers/specs/2026-07-09-protocol-hygiene-pack-prep-prd.md
 
 ## 目标
 
