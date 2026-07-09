@@ -83,3 +83,30 @@ Decision: `d7239f6d-000d-4ce8-8aab-0dcca9292cd0`。
 - 白名单可能遗漏未来新增的系统 trigger_source，导致新的自动化任务不再被
   escalation 管控（漏管而非误杀，风险方向已从"伤用户"转为"系统降级动作变少"，
   可接受，且比现状安全）。
+- **白名单遗漏不止是"未来"风险，当前代码里已有约十几个系统来源
+  （`okr_tick`/`execution_callback_auto`/`daily_topic_selection`/`rumination`/
+  `curiosity`/`desire_system`/`suggestion_dispatcher`/`learnings_received`/
+  `execution_callback`/`watchdog`/`circuit_breaker`/`review_gate_auto`/
+  `orphan_detection`/`liveness_probe`/`daily_publish_scheduler`/`architect`
+  等）不在 `SYSTEM_AUTO_TRIGGER_SOURCES` 里，escalation 上线当天就管不到它们
+  （2026-07-09 最终 code review 发现，Assessment: Ready to merge with fixes）。
+- **纠正过度承诺**：本设计文档先前声称"用户/人工注册的任务天然不在白名单内，
+  不会被 pause"——这个说法不完全成立。`packages/brain/src/routes/actions.js`
+  等 API 创建任务路径若调用方未显式传 `trigger_source`，会落到默认值
+  `brain_auto`（在白名单内），该任务仍会被 escalation 的 pause 动作触碰。
+  白名单**不是**本次修复防止用户任务受影响的主要机制——真正兜底的是
+  Task 3 把 `cancelPendingTasks`/`pauseLowPriorityTasks` 从终态 `canceled`
+  改成可逆的 `paused`：即使白名单漏放行了某个实际是用户的任务，它也只会被
+  暂停（1 小时内被 `paused-requeuer.js` 自动 requeue 回 `queued`），不会像
+  修复前那样永久静默丢失。白名单是第二层防御（减少被误碰的次数），不是
+  唯一防线。
+- **平行表冲突（已知需收敛，不阻塞本次合并）**：`packages/brain/src/routes/actions.js`
+  已有 `systemSources`（`isSystemTask` 用，含 `manual`/`watchdog`/
+  `circuit_breaker`/`rumination` 等 9 项）和 `SYSTEM_TRIGGER_SOURCES`（3 项），
+  与本次新增的 `SYSTEM_AUTO_TRIGGER_SOURCES`（20 项）对同一个"是不是系统任务"
+  问题给出三份不完全一致的答案，存在漂移风险。收敛为单一 SSOT 列为独立
+  follow-up（见 Brain Issue，见下）。
+- `paused` 任务经 `paused-requeuer.js` 自动 requeue，重试次数计入
+  `retry_count`；系统任务反复被误判 escalation（3 次以上）会耗尽重试预算
+  进入终态 `archived`。仅影响白名单内的系统任务（用户任务不受此路径影响），
+  比修复前的立即 `canceled` 安全得多，但设计时未记录这个交互，此处补充说明。
