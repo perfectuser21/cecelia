@@ -355,12 +355,20 @@ async function pauseLowPriorityTasks(priorities) {
     // harness_* 系列：harness v2 DAG 的 Initiative / Planner / Contract /
     // Generator / Evaluator 等阶段任务（upsertTaskPlan 默认创建为 P0，
     // 但此处做 task_type 层双保险，避免未来误改回 P2 再次踩坑）。
+    //
+    // trigger_source = ANY($3)：只准碰系统自产任务（见 SYSTEM_AUTO_TRIGGER_SOURCES 注释），
+    // 用户/人工注册的任务（manual/user*/owner_input 等）天然不在白名单内，不会被 pause。
     const result = await client.query(`
       UPDATE tasks
       SET status = 'paused',
+          error_message = $3,
+          status_history = status_history || jsonb_build_array(
+            jsonb_build_object('from', status, 'to', 'paused', 'changed_at', NOW(), 'source', $3)
+          ),
           updated_at = NOW()
       WHERE status IN ('queued', 'pending')
         AND priority = ANY($1)
+        AND trigger_source = ANY($2)
         AND task_type NOT IN (
           'sprint_planner', 'sprint_contract_propose', 'sprint_contract_review',
           'sprint_generate', 'sprint_evaluate', 'sprint_fix', 'arch_review',
@@ -372,7 +380,7 @@ async function pauseLowPriorityTasks(priorities) {
           'harness_ci_watch', 'harness_deploy_watch', 'harness_report'
         )
       RETURNING id
-    `, [priorities]);
+    `, [priorities, SYSTEM_AUTO_TRIGGER_SOURCES, 'escalation_graceful_degrade']);
 
     console.log(`[Escalation] Paused ${result.rowCount} low priority tasks`);
     return result.rowCount;
