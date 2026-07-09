@@ -35,6 +35,7 @@
 | `stop-dev.sh` | 会话结束 | 检查 PR 是否合并，未合并时 exit 2 循环 |
 | `bash-guard.sh` | Bash 命令 | 主仓库 main 分支禁止危险 bash 命令 |
 | `credential-guard.sh` | Write | 防止凭据写入代码文件 |
+| `pre-commit` | git commit（本机全局，`~/.git-hooks` core.hooksPath，对所有仓库生效） | 强制 cp-*分支+`.dev-mode`才能提交；**例外**：git remote origin 命中 `zenithjoy-skills`（basename锚定正则 `/zenithjoy-skills(\.git)?/?$`，非子串匹配，避免误伤 `zenithjoy-skills-v2` 等同前缀仓库）直接放行——该仓库是纯 skill SSOT，改 skill 走 skill-creator→PR 不走 /dev（PR #3666 / #3668）。测试：`packages/engine/tests/integration/pre-commit.test.sh`（被下方 `engine-tests-shell` job 自动 glob 扫描，是 `ci-passed` 必过项，改坏了 CI 会红）。|
 
 ---
 
@@ -62,18 +63,18 @@ Engine Skills/Hooks 改动的三要素：
 
 **1. PR title 含 `[CONFIG]`**（触发 engine-ci.yml）
 
-**2. 版本 bump 5 个文件**（`packages/engine/ci/scripts/check-version-sync.sh` 强制校验）：
+**2. 版本 bump 6 个文件**（`packages/engine/scripts/devgate/check-engine-hygiene.cjs` 强制校验，`node packages/engine/scripts/devgate/check-engine-hygiene.cjs` 手动跑一遍确认同步）：
 ```
 packages/engine/package.json       (.version 字段)
 packages/engine/package-lock.json
 packages/engine/VERSION
+packages/engine/hooks/VERSION       # 独立于上面的 VERSION，容易漏（2026-07-09 PR #3666 亲身踩过）
 packages/engine/.hook-core-version
 packages/engine/regression-contract.yaml
 ```
 
 **3. 文档更新**：
-- `packages/engine/features/feature-registry.yml` — 新增 changelog 条目
-- 运行 `bash packages/engine/scripts/generate-path-views.sh` 重新生成路径视图
+- `packages/engine/feature-registry.yml` — 新增 changelog 条目（注意：不在 `features/` 子目录下，路径是仓库根 `packages/engine/` 直属）
 
 commit 前缀 `[CONFIG]` 触发 engine-ci.yml。
 
