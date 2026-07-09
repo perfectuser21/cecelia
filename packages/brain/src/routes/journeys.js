@@ -200,7 +200,7 @@ router.patch('/journey_features/:id', async (req, res) => {
 // POST /api/brain/issues
 router.post('/issues', async (req, res) => {
   try {
-    const { title, priority, status, sub_area, body: bodyText, pr_url } = req.body;
+    const { title, priority, status, sub_area, body: bodyText, pr_url, journey_id } = req.body;
     if (!title) return res.status(400).json({ error: 'title is required' });
     if (priority && !VALID_PRIORITY.includes(priority)) {
       return res.status(400).json({ error: `priority must be one of: ${VALID_PRIORITY.join(',')}` });
@@ -208,8 +208,8 @@ router.post('/issues', async (req, res) => {
 
     const { rows } = await pool.query(
       `INSERT INTO issues
-         (title, priority, status, sub_area, body, pr_url, notion_synced_at)
-       VALUES ($1,$2,$3,$4,$5,$6,NULL)
+         (title, priority, status, sub_area, body, pr_url, journey_id, notion_synced_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,NULL)
        RETURNING *`,
       [
         title,
@@ -218,6 +218,7 @@ router.post('/issues', async (req, res) => {
         sub_area || null,
         bodyText || null,
         pr_url || null,
+        journey_id || null,
       ]
     );
     res.status(201).json(rows[0]);
