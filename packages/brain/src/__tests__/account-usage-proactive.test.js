@@ -17,6 +17,13 @@ vi.mock('os', () => ({ homedir: vi.fn(() => '/mock/home') }));
 const mockRaise = vi.fn().mockResolvedValue(undefined);
 vi.mock('../alerting.js', () => ({ raise: mockRaise }));
 
+const { mockResetDebounce } = vi.hoisted(() => ({ mockResetDebounce: vi.fn() }));
+vi.mock('../lib/alert-debounce.js', () => ({
+  resetDebounce: mockResetDebounce,
+  shouldFire: vi.fn(),
+  _debounceStatus: vi.fn(() => ({ entries: 0 })),
+}));
+
 import {
   proactiveTokenCheck,
   markAuthFailure,
@@ -60,7 +67,7 @@ describe('proactiveTokenCheck', () => {
     );
   });
 
-  it('token < 30min 过期 → 触发 P1 告警，但不 markAuthFailure', async () => {
+  it('token < 30min 过期 → 触发 P1 告警（带 debounce opts），但不 markAuthFailure', async () => {
     const soonExpiry = Date.now() + 15 * 60 * 1000; // 15min later
     mockReadFileSync.mockImplementation(() => makeCredentials(soonExpiry));
 
@@ -70,8 +77,36 @@ describe('proactiveTokenCheck', () => {
     expect(mockRaise).toHaveBeenCalledWith(
       'P1',
       'token_expiring_soon_account2',
-      expect.stringContaining('分钟')
+      expect.stringContaining('分钟'),
+      { debounce: { n: 2, cooldownMs: 2 * 60 * 60 * 1000 } }
     );
+  });
+
+  it('expiring 状态连续两个检查周期 → raise 每周期都被调用（去重完全交给 debounce，无一次性 guard）', async () => {
+    const soonExpiry = Date.now() + 15 * 60 * 1000;
+    mockReadFileSync.mockImplementation(() => makeCredentials(soonExpiry));
+
+    await proactiveTokenCheck(); // 第 1 个检查周期
+    await proactiveTokenCheck(); // 第 2 个检查周期
+
+    const expiringCalls = mockRaise.mock.calls.filter(
+      ([, eventType]) => eventType === 'token_expiring_soon_account2'
+    );
+    // 若 guard 存在，第 2 周期不会调用 raise，debounce{n:2} 永远无法放行（静默失效）
+    expect(expiringCalls.length).toBe(2);
+    for (const call of expiringCalls) {
+      expect(call[3]).toEqual({ debounce: { n: 2, cooldownMs: 2 * 60 * 60 * 1000 } });
+    }
+  });
+
+  it('token 恢复有效 → 调用 resetDebounce 清零残留计数', async () => {
+    mockResetDebounce.mockClear();
+    const futureExpiry = Date.now() + 2 * 60 * 60 * 1000; // 2h valid
+    mockReadFileSync.mockImplementation(() => makeCredentials(futureExpiry));
+
+    await proactiveTokenCheck();
+
+    expect(mockResetDebounce).toHaveBeenCalledWith('token_expiring_soon_account2');
   });
 
   it('token 有效 + 之前 token_expired 熔断 → 清除熔断（token 刷新场景）', async () => {

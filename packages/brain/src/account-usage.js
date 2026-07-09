@@ -12,6 +12,7 @@
 import { readFileSync } from 'fs';
 import { homedir } from 'os';
 import pool from './db.js';
+import { resetDebounce } from './lib/alert-debounce.js';
 
 const ACCOUNTS = ['account1', 'account2']; // account3 org 订阅禁用(403)，移出池。account1 凭据已恢复(Jun 2026)，与 account2 轮换。
 const CACHE_TTL_MINUTES = 3;
@@ -273,7 +274,6 @@ export async function loadAuthFailuresFromDB() {
 // ─── Proactive Token Expiry Check ─────────────────────────────────────────────
 
 const EXPIRY_WARN_MINUTES = 30; // 提前告警阈值（分钟）
-const _expiryAlertedAccounts = new Set(); // 防重复告警
 
 /**
  * 读取账号 OAuth token 的过期信息（不缓存，直接读文件）
@@ -296,7 +296,7 @@ function getTokenExpiryInfo(accountId) {
 /**
  * 主动检测所有账号 OAuth token 过期状态，无需等待 401 回调：
  * - token 已过期 → 立即 markAuthFailure()，阻止派发
- * - token < 30min 过期 → 触发 P1 告警（每个账号只告警一次）
+ * - token < 30min 过期 → 每周期调用 raise()，去重由 debounce 负责（连续2周期确认+2h冷却）
  * - token 有效 + 之前已 markAuthFailure → 清除熔断（token 已刷新）
  */
 export async function proactiveTokenCheck() {
@@ -313,19 +313,22 @@ export async function proactiveTokenCheck() {
         } catch { /* 告警失败不阻断主流程 */ }
       }
     } else if (minsRemaining !== null && minsRemaining < EXPIRY_WARN_MINUTES) {
-      if (!_expiryAlertedAccounts.has(accountId)) {
-        _expiryAlertedAccounts.add(accountId);
-        console.log(`[account-usage] [proactive-check] ${accountId}: token 将在 ${Math.floor(minsRemaining)} 分钟后过期`);
-        try {
-          const { raise } = await import('./alerting.js');
-          raise('P1', `token_expiring_soon_${accountId}`, `⏰ ${accountId} OAuth token 将在 ${Math.floor(minsRemaining)} 分钟后过期 — 请提前刷新凭证`).catch(() => {});
-        } catch { /* 告警失败不阻断主流程 */ }
-      }
+      // proactiveTokenCheck 每个 dispatch tick 都调用一次，本分支每次都会执行到这里；
+      // 去重靠 raise() 的 debounce：n:2 表示要连续 2 个 tick 都确认过期才真正告警响铃，
+      // 响铃后进入 2h 冷却，冷却期内即使继续满足条件也不会重复响——真正防重复靠这个 2h 冷却。
+      console.log(`[account-usage] [proactive-check] ${accountId}: token 将在 ${Math.floor(minsRemaining)} 分钟后过期`);
+      try {
+        const { raise } = await import('./alerting.js');
+        raise('P1', `token_expiring_soon_${accountId}`,
+          `⏰ ${accountId} OAuth token 将在 ${Math.floor(minsRemaining)} 分钟后过期 — 请提前刷新凭证`,
+          { debounce: { n: 2, cooldownMs: 2 * 60 * 60 * 1000 } } // 连续2个检查周期确认才响，响后2h冷却
+        ).catch(() => {});
+      } catch { /* 告警失败不阻断主流程 */ }
     } else {
-      // token 有效：清除过期告警标记
+      // token 恢复有效：清零 debounce 计数（防恢复后残留计数导致下次误放行）
       // 只清除 source=token_expired 的熔断（token 文件已更新，说明凭据已刷新）
       // source=api_error 的熔断（Anthropic API 返回 401）不受 token 文件影响，等 resetTime 自然过期
-      _expiryAlertedAccounts.delete(accountId);
+      resetDebounce(`token_expiring_soon_${accountId}`);
       if (isAuthFailed(accountId)) {
         const entry = _authFailureMap.get(accountId);
         if (entry?.source === 'token_expired') {

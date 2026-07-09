@@ -24,6 +24,8 @@ function classifyFailure(...args) {
 // TTL 映射（毫秒）— 字符串字面量 key，不依赖 FAILURE_CLASS 枚举值
 const TTL_MAP = {
   network: 5 * 60 * 1000,
+  timeout: 5 * 60 * 1000,
+  server_error: 5 * 60 * 1000,
   rate_limit: 10 * 60 * 1000,
   billing_cap: 30 * 60 * 1000,
   auth: 15 * 60 * 1000,
@@ -32,7 +34,7 @@ const TTL_MAP = {
 
 // FAILURE_CLASS 内联常量（不从 quarantine.js 顶层 import 以避免 vitest mock 严格检查）
 const FAILURE_CLASS = {
-  NETWORK: 'network', RATE_LIMIT: 'rate_limit', BILLING_CAP: 'billing_cap',
+  NETWORK: 'network', TIMEOUT: 'timeout', SERVER_ERROR: 'server_error', RATE_LIMIT: 'rate_limit', BILLING_CAP: 'billing_cap',
   AUTH: 'auth', RESOURCE: 'resource', TASK_ERROR: 'task_error',
   SYSTEMIC: 'systemic', TASK_SPECIFIC: 'task_specific', UNKNOWN: 'unknown',
 };
@@ -128,6 +130,23 @@ router.post('/', async (req, res) => {
     const warnings = [];
     if (task_type === 'harness_initiative' && !(payload?.journey_id)) {
       warnings.push('journey_id missing in payload — initiative_run.journey_id will be null, Notion Project will be orphaned');
+    }
+
+    // C3: 服务端去重护栏（issue 655691d2）——title 精确匹配 + goal_id/project_id 一致
+    // + 仍是活跃状态，命中则直接返回已有任务，不重新 INSERT。
+    // 防止外部 agent/人工反复对同一意图重新注册 task（2026-07-09 实测 5 个重复 PR 的根因）。
+    const dedupResult = await pool.query(
+      `SELECT id, title, status, task_type, priority, project_id, area_id, goal_id, okr_initiative_id, ability_id, payload, created_at
+       FROM tasks
+       WHERE title = $1
+         AND (goal_id IS NOT DISTINCT FROM $2)
+         AND (project_id IS NOT DISTINCT FROM $3)
+         AND status IN ('queued', 'in_progress')
+       LIMIT 1`,
+      [title.trim(), goal_id, project_id]
+    );
+    if (dedupResult.rows.length > 0) {
+      return res.status(200).json({ ...dedupResult.rows[0], deduplicated: true });
     }
 
     const result = await pool.query(
