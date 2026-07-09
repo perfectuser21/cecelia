@@ -126,6 +126,13 @@ features:
 # Changelog（细粒度改动历史）
 # ============================================================================
 changelog:
+  - version: "19.4.3"
+    date: "2026-07-09"
+    change: '[CONFIG] pre-commit hook 对 zenithjoy-skills 仓库例外放行'
+    description: "全局 pre-commit hook（通过 ~/.git-hooks 对所有仓库生效）新增仓库识别：git remote origin 匹配 zenithjoy-skills 时直接 exit 0 放行，跳过 cp-*分支名+.dev-mode 强制检查。zenithjoy-skills 是纯 skill SSOT 仓库，按既有决策改 skill 走 skill-creator→PR 不走 /dev（branch-protect.sh 已有同类先例但本 hook 之前未跟进迁移），导致该仓库任何提交被误拦。"
+    files:
+      - packages/engine/hooks/pre-commit
+      - tests/hooks/test-pre-commit.sh
   - version: "19.2.4"
     date: 2026-06-03
     change: '[CONFIG] harness-report SKILL Step 6 查 Brain API 写真实 harness-report.md/learning.md'
