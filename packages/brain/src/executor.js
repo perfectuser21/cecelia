@@ -2896,6 +2896,18 @@ async function _driveHarnessInitiative(task, opts = {}) {
     return { ok: false, error: 'missing_orchestrator_flag', terminal: true };
   }
 
+  // 2b-2b: harness 开跑 → 镜像同步对应 okr_initiative → running（non-fatal，best-effort，
+  // 解析/新建对应 okr_initiatives 行使规划侧 Initiative 成为实时真相；绝不阻断 harness）。
+  // 刀4阶段3发现：此调用原本躺在物理不可达的旧图调用死代码块里（orchestrator 硬校验后
+  // 从未真正执行过），随死代码一并被删除时才暴露这层同步早已失效，移到硬校验通过后的
+  // 活路径上，让它真正生效。
+  try {
+    const { syncOkrInitiativeStatus } = await import('./okr-initiative-sync.js');
+    await syncOkrInitiativeStatus(dbPool, task.id, 'running');
+  } catch (syncErr) {
+    console.warn(`[executor] okr-initiative sync(running) non-fatal: ${syncErr.message}`);
+  }
+
   // N3 skill-relay 分支（主理人 2026-07-04 拍板）：spawn 单 claude session 跑
   // harness-controller skill，不 compile / 不 invoke 图。
   const { spawnSkillRelaySession } = await import('./harness-skill-relay.js');
