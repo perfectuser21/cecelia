@@ -17,6 +17,7 @@ import {
   hasRecentArchReview,
   hasCompletedDevTaskSinceLastArchReview,
   triggerArchReview,
+  fetchAllLineLedgersDigest,
 } from '../daily-review-scheduler.js';
 
 // ============================================================
@@ -706,6 +707,7 @@ describe('triggerArchReview', () => {
         .mockResolvedValueOnce({ rows: [] })                               // hasRecentArchReview -> false
         .mockResolvedValueOnce({ rows: [{ created_at: lastReviewTime }] }) // 上次 arch_review
         .mockResolvedValueOnce({ rows: [{ id: 'dev-completed' }] })        // guard 通过
+        .mockResolvedValueOnce({ rows: [] })                               // fetchAllLineLedgersDigest
         .mockResolvedValueOnce({ rows: [{ id: 'arch-task-new' }] }),       // INSERT
     };
     const triggerTime = new Date('2026-03-23T04:02:00Z');
@@ -722,11 +724,12 @@ describe('triggerArchReview', () => {
       query: vi.fn()
         .mockResolvedValueOnce({ rows: [] })      // hasRecentArchReview -> false
         .mockResolvedValueOnce({ rows: [] })      // 从未 arch_review → guard 通过
+        .mockResolvedValueOnce({ rows: [] })      // fetchAllLineLedgersDigest
         .mockResolvedValueOnce({ rows: [{ id: 'new-ar' }] }), // INSERT
     };
     const triggerTime = new Date('2026-03-23T08:00:00Z');
     await triggerArchReview(pool, triggerTime);
-    const insertSQL = pool.query.mock.calls[2][0];
+    const insertSQL = pool.query.mock.calls[3][0];
     expect(insertSQL).toContain("'arch_review'");
     expect(insertSQL).toContain("'xian'");
     expect(insertSQL).toContain("'brain_auto'");
@@ -738,11 +741,12 @@ describe('triggerArchReview', () => {
       query: vi.fn()
         .mockResolvedValueOnce({ rows: [] })
         .mockResolvedValueOnce({ rows: [] })
+        .mockResolvedValueOnce({ rows: [] })      // fetchAllLineLedgersDigest
         .mockResolvedValueOnce({ rows: [{ id: 'ar-title-test' }] }),
     };
     const triggerTime = new Date('2026-03-23T12:03:00Z');
     await triggerArchReview(pool, triggerTime);
-    const params = pool.query.mock.calls[2][1];
+    const params = pool.query.mock.calls[3][1];
     expect(params[0]).toContain('[arch-review]');
     expect(params[0]).toContain('2026-03-23');
   });
@@ -752,11 +756,12 @@ describe('triggerArchReview', () => {
       query: vi.fn()
         .mockResolvedValueOnce({ rows: [] })
         .mockResolvedValueOnce({ rows: [] })
+        .mockResolvedValueOnce({ rows: [] })      // fetchAllLineLedgersDigest
         .mockResolvedValueOnce({ rows: [{ id: 'ar-payload-test' }] }),
     };
     const triggerTime = new Date('2026-03-23T16:00:00Z');
     await triggerArchReview(pool, triggerTime);
-    const params = pool.query.mock.calls[2][1];
+    const params = pool.query.mock.calls[3][1];
     const payload = JSON.parse(params[1]);
     expect(payload.scope).toBe('scheduled');
     expect(payload.trigger).toBe('4h');
@@ -767,6 +772,7 @@ describe('triggerArchReview', () => {
       query: vi.fn()
         .mockResolvedValueOnce({ rows: [] })  // hasRecentArchReview -> false
         .mockResolvedValueOnce({ rows: [] })  // 无历史 arch_review → guard 通过
+        .mockResolvedValueOnce({ rows: [] })  // fetchAllLineLedgersDigest
         .mockResolvedValueOnce({ rows: [{ id: 'first-ar' }] }),
     };
     const triggerTime = new Date('2026-03-23T00:01:00Z');
@@ -780,6 +786,7 @@ describe('triggerArchReview', () => {
       query: vi.fn()
         .mockRejectedValueOnce(new Error('dedup DB error'))  // hasRecentArchReview 失败
         .mockResolvedValueOnce({ rows: [] })                 // guard: 无历史 → 通过
+        .mockResolvedValueOnce({ rows: [] })                 // fetchAllLineLedgersDigest
         .mockResolvedValueOnce({ rows: [{ id: 'ar-after-dedup-fail' }] }),
     };
     const triggerTime = new Date('2026-03-23T04:00:00Z');
@@ -792,6 +799,7 @@ describe('triggerArchReview', () => {
       query: vi.fn()
         .mockResolvedValueOnce({ rows: [] })
         .mockResolvedValueOnce({ rows: [] })
+        .mockResolvedValueOnce({ rows: [] })      // fetchAllLineLedgersDigest
         .mockRejectedValueOnce(new Error('INSERT constraint')),
     };
     const triggerTime = new Date('2026-03-23T08:01:00Z');
@@ -805,5 +813,60 @@ describe('triggerArchReview', () => {
     const result = await triggerArchReview(pool);
     expect(typeof result.triggered).toBe('boolean');
     expect(typeof result.skipped_window).toBe('boolean');
+  });
+
+  it('创建任务时 prd_summary 追加 line_ledger 摘要段', async () => {
+    const pool = {
+      query: vi.fn()
+        .mockResolvedValueOnce({ rows: [] })  // hasRecentArchReview -> false
+        .mockResolvedValueOnce({ rows: [] })  // 无历史 arch_review → guard 通过
+        .mockResolvedValueOnce({              // fetchAllLineLedgersDigest
+          rows: [{ title: 'Line A — 24h 账本', content: '摘要A' }],
+        })
+        .mockResolvedValueOnce({ rows: [{ id: 'ar-with-digest' }] }), // INSERT
+    };
+    const triggerTime = new Date('2026-03-23T20:00:00Z');
+    const result = await triggerArchReview(pool, triggerTime);
+    expect(result.triggered).toBe(true);
+    const params = pool.query.mock.calls[3][1];
+    const payload = JSON.parse(params[1]);
+    expect(payload.prd_summary).toContain('Line A — 24h 账本');
+    expect(payload.prd_summary).toContain('摘要A');
+  });
+
+  it('line_ledger 查询失败时不影响任务创建（catch 兜底）', async () => {
+    const pool = {
+      query: vi.fn()
+        .mockResolvedValueOnce({ rows: [] })  // hasRecentArchReview -> false
+        .mockResolvedValueOnce({ rows: [] })  // guard 通过
+        .mockRejectedValueOnce(new Error('line_ledger query failed')) // fetchAllLineLedgersDigest
+        .mockResolvedValueOnce({ rows: [{ id: 'ar-digest-fail' }] }), // INSERT
+    };
+    const triggerTime = new Date('2026-03-23T20:01:00Z');
+    const result = await triggerArchReview(pool, triggerTime);
+    expect(result.triggered).toBe(true);
+    expect(result.task_id).toBe('ar-digest-fail');
+  });
+});
+
+// ============================================================
+// fetchAllLineLedgersDigest（拼接所有 line_ledger 为一段摘要）
+// ============================================================
+describe('fetchAllLineLedgersDigest — 拼接所有 line_ledger 为一段摘要', () => {
+  it('无记录 → 空串', async () => {
+    const pool = { query: vi.fn().mockResolvedValue({ rows: [] }) };
+    await expect(fetchAllLineLedgersDigest(pool)).resolves.toBe('');
+  });
+
+  it('有记录 → 拼接 title+content', async () => {
+    const pool = {
+      query: vi.fn().mockResolvedValue({
+        rows: [{ title: 'Line A — 24h 账本', content: '摘要A' }, { title: 'Line B — 24h 账本', content: '摘要B' }],
+      }),
+    };
+    const digest = await fetchAllLineLedgersDigest(pool);
+    expect(digest).toContain('Line A — 24h 账本');
+    expect(digest).toContain('摘要A');
+    expect(digest).toContain('Line B — 24h 账本');
   });
 });

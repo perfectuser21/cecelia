@@ -50,6 +50,22 @@ export async function getActiveRepoPaths(pool) {
   return rows.map(r => r.repo_path);
 }
 
+/**
+ * 拉 20h 内所有 line_ledger，拼成一段纯文本摘要（供 arch_review/strategy_session
+ * 任务的 prd_summary 注入，替代各自重新调研 24h 事实）。
+ * @param {import('pg').Pool} pool
+ * @returns {Promise<string>}
+ */
+export async function fetchAllLineLedgersDigest(pool) {
+  const { rows } = await pool.query(
+    `SELECT title, content FROM design_docs
+     WHERE type = 'line_ledger' AND created_at >= NOW() - INTERVAL '20 hours'
+     ORDER BY title`
+  );
+  if (rows.length === 0) return '';
+  return rows.map((r) => `### ${r.title}\n${r.content}`).join('\n\n');
+}
+
 /** @module daily-review-scheduler
  * 检查今天是否已经为某个 repo 创建过 code_review task
  * @param {import('pg').Pool} pool
@@ -289,6 +305,10 @@ export async function triggerArchReview(pool, now = new Date()) {
 
   try {
     const timestamp = now.toISOString().slice(0, 16).replace('T', ' ');
+    const lineLedgerDigest = await fetchAllLineLedgersDigest(pool).catch(() => '');
+    const prdSummary = lineLedgerDigest
+      ? `架构巡检：扫描 ${timestamp} UTC 时点的 drift / 未收敛模式 / 依赖异常，输出 4A/4B 报告供复盘。\n\n## 各线 24h 账本（line_ledger 摘要）\n${lineLedgerDigest}`
+      : `架构巡检：扫描 ${timestamp} UTC 时点的 drift / 未收敛模式 / 依赖异常，输出 4A/4B 报告供复盘。`;
     const { rows } = await pool.query(
       `INSERT INTO tasks (title, task_type, status, priority, created_by, payload, trigger_source, location)
        VALUES ($1, 'arch_review', 'queued', 'P2', 'cecelia-brain', $2, 'brain_auto', 'xian')
@@ -298,7 +318,7 @@ export async function triggerArchReview(pool, now = new Date()) {
         JSON.stringify({
           scope: 'scheduled',
           trigger: '4h',
-          prd_summary: `架构巡检：扫描 ${timestamp} UTC 时点的 drift / 未收敛模式 / 依赖异常，输出 4A/4B 报告供复盘。`,
+          prd_summary: prdSummary,
         }),
       ]
     );
