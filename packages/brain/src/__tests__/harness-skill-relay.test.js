@@ -78,6 +78,30 @@ describe('spawnSkillRelaySession', () => {
     expect(sql).toMatch(/deadline_at/);
   });
 
+  it('task.ability_id 存在时，initiative_runs INSERT 带上 ability_id 参数', async () => {
+    const deps = makeDeps();
+    const task = { ...TASK, ability_id: 'ability-uuid-1' };
+    await spawnSkillRelaySession(task, deps);
+
+    const insertCall = deps.pool.query.mock.calls.find(
+      ([sql]) => /INSERT INTO initiative_runs/.test(sql)
+    );
+    expect(insertCall).toBeTruthy();
+    const [sql, params] = insertCall;
+    expect(sql).toMatch(/ability_id/);
+    expect(params).toContain('ability-uuid-1');
+  });
+
+  it('task.ability_id 缺省时，ability_id 参数为 null（不报错）', async () => {
+    const deps = makeDeps();
+    await spawnSkillRelaySession(TASK, deps); // TASK 本身无 ability_id 顶层字段
+    const insertCall = deps.pool.query.mock.calls.find(
+      ([sql]) => /INSERT INTO initiative_runs/.test(sql)
+    );
+    const [, params] = insertCall;
+    expect(params).toContain(null);
+  });
+
   it('spawn 失败 → ok=false 带错误，不落 initiative_runs 成功语义', async () => {
     const deps = makeDeps({ spawnFn: vi.fn().mockRejectedValue(new Error('docker down')) });
     const r = await spawnSkillRelaySession(TASK, deps);
