@@ -672,8 +672,12 @@ export async function dispatchNextTask(goalIds) {
     );
     // configError 表示系统配置错误（如容器漏装 codex CLI），不属于运行时执行失败，
     // 不应累积 cecelia-run breaker（否则配置漂移会 trip breaker 阻断所有 dispatch）。
+    // spawn_deduplicated 是 DB 级去重命中（良性防重入，跨进程/跨重启防双 spawn），
+    // 不是执行故障，同样不应计入熔断（否则抖动期的正常去重会误停派全系统）。
     if (execResult.configError) {
       console.warn(`[dispatch] configError detected (reason=${execResult.reason}) — skipping cecelia-run breaker count`);
+    } else if (execResult.reason === 'spawn_deduplicated') {
+      console.warn(`[dispatch] spawn_deduplicated detected — skipping cecelia-run breaker count`);
     } else {
       await recordFailure('cecelia-run');
     }

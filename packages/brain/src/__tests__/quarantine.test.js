@@ -64,9 +64,9 @@ describe('quarantine', () => {
       expect(result.class).toBe(FAILURE_CLASS.RESOURCE);
     });
 
-    it('should classify 500 error as NETWORK', () => {
+    it('should classify 500 error as SERVER_ERROR（协议卫生包：拆自 NETWORK）', () => {
       const result = classifyFailure('500 Internal Server Error');
-      expect(result.class).toBe(FAILURE_CLASS.NETWORK);
+      expect(result.class).toBe(FAILURE_CLASS.SERVER_ERROR);
     });
 
     it('should classify database connection error as NETWORK', () => {

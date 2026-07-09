@@ -14,6 +14,7 @@
  */
 
 import { sendFeishu } from './notifier.js';
+import { shouldFire } from './lib/alert-debounce.js';
 
 const VALID_LEVELS = ['P0', 'P1', 'P2', 'P3'];
 
@@ -37,11 +38,21 @@ const P2_FLUSH_INTERVAL_MS = 24 * 60 * 60 * 1000;  // 24 小时
  * @param {'P0'|'P1'|'P2'|'P3'} level
  * @param {string} eventType  - 事件类型标识（用于 P0 限流 key）
  * @param {string} message    - 人可读的报警信息
+ * @param {Object} [opts]     - { debounce?: { n, cooldownMs } } 连续 N 次才响 + 冷却期（opt-in）
+ *                              ⚠️ P0 宕机/熔断类事件禁止套 debounce——P0 的价值是首击即响；
+ *                              debounce 只给抖动型事件（每周期重复触发的状态检测）。
  */
-async function raise(level, eventType, message) {
+async function raise(level, eventType, message, opts = {}) {
   if (!VALID_LEVELS.includes(level)) {
     console.warn(`[alerting] 未知级别 ${level}，忽略`);
     return;
+  }
+
+  if (opts.debounce) {
+    if (!shouldFire(eventType, opts.debounce)) {
+      console.log(`[alerting] ${level} ${eventType} debounce 未达阈值/冷却中，跳过`);
+      return;
+    }
   }
 
   console.log(`[alerting] ${level} ${eventType}: ${message}`);
