@@ -91,7 +91,7 @@ function buildInsertStatement(commonParams, { domainInput, ownerRoleInput, deliv
  * @param {string} params.domain - Business domain (coding/quality/agent_ops/...)
  * @param {string} params.owner_role - Role owning this task (auto-inferred from domain if omitted)
  */
-async function createTask({ title, description, priority, project_id, goal_id, tags, task_type, context, prd_content, execution_profile, payload, trigger_source, domain: domainInput, owner_role: ownerRoleInput, delivery_type }) {
+async function createTask({ title, description, priority, project_id, goal_id, tags, task_type, context, prd_content, execution_profile, payload, trigger_source, domain: domainInput, owner_role: ownerRoleInput, delivery_type, journey_id }) {
   // Validate goal_id (required for most tasks except system tasks)
   if (!goal_id && !isSystemTask(task_type, trigger_source)) {
     const error = `goal_id is required for task_type="${task_type}" trigger_source="${trigger_source}"`;
@@ -123,7 +123,8 @@ async function createTask({ title, description, priority, project_id, goal_id, t
     return { success: true, task: existing, deduplicated: true };
   }
 
-  const commonParams = buildCommonParams({ title, description, context, priority, project_id, goal_id, tags, task_type, prd_content, execution_profile, payload, trigger_source });
+  const effectivePayload = journey_id ? { ...(payload ?? {}), journey_id } : payload;
+  const commonParams = buildCommonParams({ title, description, context, priority, project_id, goal_id, tags, task_type, prd_content, execution_profile, payload: effectivePayload, trigger_source });
   const { sql, params } = buildInsertStatement(commonParams, { domainInput, ownerRoleInput, deliveryType: delivery_type, title, description, context });
 
   const result = await pool.query(sql, params);

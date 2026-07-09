@@ -56,6 +56,7 @@ router.post('/', async (req, res) => {
       domain: domainInput = null,
       okr_initiative_id = null,
       ability_id = null,
+      journey_id = null,
     } = req.body;
 
     if (!title || title.trim() === '') {
@@ -118,6 +119,11 @@ router.post('/', async (req, res) => {
     // 未提供 domain 时自动检测
     const domain = domainInput ?? detectDomain(`${title} ${description ?? ''}`).domain;
 
+    // 顶层 journey_id 合并进 payload（支持调用方直接传 journey_id 而非嵌套在 payload 里）
+    if (journey_id) {
+      payload = { ...(payload ?? {}), journey_id };
+    }
+
     // B51: harness_initiative 任务缺 journey_id 会导致 initiative_runs + Notion 游离，提前 warn
     const warnings = [];
     if (task_type === 'harness_initiative' && !(payload?.journey_id)) {
@@ -131,7 +137,7 @@ router.post('/', async (req, res) => {
          payload, trigger_source, domain, okr_initiative_id, ability_id
        )
        VALUES ($1, $2, $3, $4, 'queued', $5, $6, $7, $8, $9, $10, $11, $12, $13)
-       RETURNING id, title, status, task_type, priority, project_id, area_id, goal_id, okr_initiative_id, ability_id, created_at`,
+       RETURNING id, title, status, task_type, priority, project_id, area_id, goal_id, okr_initiative_id, ability_id, payload, created_at`,
       [
         title.trim(),
         description,
