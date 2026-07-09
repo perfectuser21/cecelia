@@ -1,30 +1,29 @@
 ---
 name: decomp-check
-version: 2.1.0
+version: 3.0.0
 model: claude-sonnet-4-6
 created: 2026-02-27
-updated: 2026-03-21
+updated: 2026-07-09
+deprecated: true
+deprecated_reason: 质检逻辑已在 decomp v3.0.0 中内联，decomp-check 不再作为独立 skill 调用。
 changelog:
+  - 3.0.0: DEPRECATED — 合并进 decomp v3.0.0 内置质检子阶段。不再单独调用。
   - 2.1.0: 新增 PR 数量校验（基于 capacity-budget API 动态产能），confidence 容差规则，findings 新增 PR 数量字段
   - 2.0.0: 新增 Project→Scope 和 Scope→Initiative 审查标准；支持 SPIDR 拆分质检；更新输入格式支持 scope 类型
   - 1.2.0: 对齐产能模型 — Initiative 数量改为动态范围、新增 Initiative→Task 和 KR→Project 数量检查、修正 Initiative 内部串联依赖定义
   - 1.1.0: 加入 type 字段验证和层级跳跃检测，rejected 条件加入层级跳跃
   - 1.0.0: 从 /vivian 重写。改名 decomp-check，升级为 Sonnet，覆盖所有层，加入打回重拆机制
 description: |
-  OKR 拆解质检引擎。供 Vivian 角色调用，用 Sonnet 模型审查 /decomp 的产出质量。
-  覆盖所有层级（OKR→KR / KR→Project / Project→Scope / Scope→Initiative）。
-  给出 approved / needs_revision / rejected 三态裁决。
-  rejected 时自动触发秋米重拆。
-  触发词：审查拆解、质检、decomp-check、Vivian 被调用。
+  【已废弃 v3.0.0】OKR 拆解质检引擎已合并进 decomp v3.0.0 的 Stage 4b 内置质检子阶段。
+  不再作为独立 skill 调用。所有质检逻辑请参考 decomp/SKILL.md "内置质检子阶段"章节。
 ---
 
-> **CRITICAL LANGUAGE RULE: 所有输出必须使用简体中文。**
+> **⚠️ DEPRECATED（v3.0.0）**：本 skill 已合并进 `/decomp` v3.0.0 作为内置质检子阶段。
+> 请使用 `/decomp`，质检由 Stage 4b 自动执行，无需单独调用 `/decomp-check`。
 
-# Decomp-Check — 拆解质检引擎
+# Decomp-Check — 拆解质检引擎（已废弃）
 
-**唯一职责**：审查 /decomp 的产出，给出明确裁决，bad 的直接打回重拆。
-
-不做拆解，不改方向，不建议。只判断：**这次拆解好不好？**
+**此文件保留仅供历史参考。质检逻辑请查看 `/packages/workflows/skills/decomp/SKILL.md` 的"内置质检子阶段"章节。**
 
 ---
 
