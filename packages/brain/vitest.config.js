@@ -105,12 +105,15 @@ export default defineConfig({
       'src/__tests__/tick-rampup.test.js',
       'src/__tests__/tick-watchdog-quarantine.test.js',
       'src/__tests__/watchdog-quarantine-race.test.js',
-      // zombie-cleaner.test.js 移出 exclude（2026-07-09）：原标注"DB 集成测试"不准确——
-      // makePool() 全程用 vi.fn() mock，不连真实 pool。真实原因是三处独立 fixture 陈旧
-      // 导致这个文件从未真正在 CI 里跑绿过（resetAllMocks 误清 withLock 工厂 mock/
-      // WORKTREE_BASE 硬编码值跟生产代码 fallback 不一致/findTaskIdForWorktree 相关测试
-      // 用 existsSync 而非 readdirSync mock，实现早已改用 readdirSync 扫描）。三处已修，
-      // 62/62 全绿，作为 zombie-cleaner.js 数据丢失防护的 proven-to-fire CI 守卫接入。
+      // zombie-cleaner.test.js：曾尝试移出 exclude（2026-07-09），本地62/62全绿，
+      // 但CI里连续3次在完全相同的4个用例上失败，均紧跟shard内heap撞到~8092MB附近的
+      // OOM崩溃之后——这个shard的既有文件总量本就贴着packages/brain/vitest.config.js
+      // 里注释写明的8192MB上限，把这个文件加回shard刚好把内存推过界，不是逻辑bug。
+      // 放回exclude维持原状；三处修好的fixture陈旧问题（resetAllMocks误清withLock工厂
+      // mock/WORKTREE_BASE硬编码值不一致/findTaskIdForWorktree mock字段不匹配实现）
+      // 依然留在文件里，本地`npx vitest run src/__tests__/zombie-cleaner.test.js`可
+      // 随时验证62/62绿，只是CI暂不跑它——需要先解决shard内存分配才能重新接入。
+      'src/__tests__/zombie-cleaner.test.js',
       // Mock 不完整或代码逻辑变更导致失败（pre-existing issue）
       // content-pipeline-{executors,llm,error-message,etc}.test.js 全部已删除
       // （in-Brain content-pipeline 编排搬到 ZJ pipeline-worker，PR zenithjoy#216）
