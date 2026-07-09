@@ -8,7 +8,7 @@
  * active_goals gate+24h 冷却）。注册表只负责：错误隔离、timeout、观测哨兵。
  * 哨兵只作观测（死人开关/战报查"最近一跑"），幂等由模块自 gate 负责。
  */
-import { triggerArchReview } from './daily-review-scheduler.js';
+import { triggerArchReview, triggerCiPatrol } from './daily-review-scheduler.js';
 import { maybeTriggerStrategySession } from './active-goals-zero-trigger.js';
 import { runConversationDigest } from './conversation-digest.js';
 import { runCaptureDigestion } from './capture-digestion.js';
@@ -21,6 +21,7 @@ export const SENTINEL_KEY_PREFIX = 'scheduler_job_last_run:';
 
 export const JOBS = [
   { name: 'arch-review', needsPool: true, timeoutMs: DEFAULT_TIMEOUT_MS, handler: triggerArchReview, description: '架构巡检（自带4h窗口+guard）' },
+  { name: 'ci-patrol', needsPool: true, timeoutMs: DEFAULT_TIMEOUT_MS, handler: triggerCiPatrol, description: 'CI/CD 巡检（自带北京08:00窗口+当日去重）' },
   { name: 'strategy-trigger', needsPool: true, timeoutMs: DEFAULT_TIMEOUT_MS, handler: maybeTriggerStrategySession, description: '战略会应急触发（自带active_goals gate+24h冷却）' },
   { name: 'conversation-digest', needsPool: false, timeoutMs: DEFAULT_TIMEOUT_MS, handler: runConversationDigest, description: '对话提炼' },
   { name: 'capture-digestion', needsPool: false, timeoutMs: DEFAULT_TIMEOUT_MS, handler: runCaptureDigestion, description: 'capture 消化（想法箱进箱通道）' },

@@ -357,3 +357,76 @@ export async function triggerDailyReview(pool, now = new Date()) {
 
   return { triggered, skipped, skipped_window: false, results };
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ci_patrol 调度器（每日北京 08:00 = UTC 00:00，等 03:00 刀A + 04:30 刀B nightly 跑完）
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * 判断当前 UTC 时间是否在 ci_patrol 每日触发窗口内（00:00-00:05 UTC）
+ * @param {Date} [now] - 可注入时间（测试用）
+ * @returns {boolean}
+ */
+export function isInCiPatrolWindow(now = new Date()) {
+  return now.getUTCHours() === 0 && now.getUTCMinutes() < 5;
+}
+
+/**
+ * 检查今天是否已创建过 ci_patrol 任务（当日去重）
+ * @param {import('pg').Pool} pool
+ * @returns {Promise<boolean>}
+ */
+export async function hasTodayCiPatrol(pool) {
+  const { rows } = await pool.query(
+    `SELECT id FROM tasks
+     WHERE task_type = 'ci_patrol'
+       AND created_at >= CURRENT_DATE::timestamptz
+       AND created_at < (CURRENT_DATE + INTERVAL '1 day')::timestamptz
+     LIMIT 1`
+  );
+  return rows.length > 0;
+}
+
+/**
+ * ci_patrol 定时调度入口（每日，scheduler-jobs 60s 轮询调用，自带窗口+当日去重）
+ * @param {import('pg').Pool} pool
+ * @param {Date} [now] - 可注入时间（测试用）
+ * @returns {Promise<{ triggered: boolean, skipped_window: boolean, skipped_recent: boolean }>}
+ */
+export async function triggerCiPatrol(pool, now = new Date()) {
+  if (!isInCiPatrolWindow(now)) {
+    return { triggered: false, skipped_window: true, skipped_recent: false };
+  }
+
+  try {
+    if (await hasTodayCiPatrol(pool)) {
+      return { triggered: false, skipped_window: false, skipped_recent: true };
+    }
+  } catch (err) {
+    console.warn('[ci-patrol] 去重检查失败（继续执行）:', err.message);
+  }
+
+  try {
+    const today = now.toISOString().slice(0, 10);
+    const { rows } = await pool.query(
+      `INSERT INTO tasks (title, task_type, status, priority, created_by, payload, trigger_source, location)
+       VALUES ($1, 'ci_patrol', 'queued', 'P2', 'cecelia-brain', $2, 'brain_auto', 'us')
+       RETURNING id`,
+      [
+        `[ci-patrol] CI/CD 巡检日报 ${today}`,
+        JSON.stringify({
+          scope: 'scheduled',
+          trigger: 'daily',
+          date: today,
+          prd_summary: `每日 CI/CD 巡检：按 line 报 4 硬伤（没写/写了没进CI/假绿/正在红），产出日报到 AI Notes + 棘轮 guard。`,
+        }),
+      ]
+    );
+    const task_id = rows[0].id;
+    console.log(`[ci-patrol] Created ci_patrol task ${task_id}`);
+    return { triggered: true, skipped_window: false, skipped_recent: false, task_id };
+  } catch (err) {
+    console.error('[ci-patrol] 创建任务失败:', err.message);
+    return { triggered: false, skipped_window: false, skipped_recent: false, error: err.message };
+  }
+}
