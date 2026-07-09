@@ -1,41 +1,39 @@
 #!/bin/bash
-# smoke: reviewGateNode interrupt 前启动 review 预览环境
+# smoke: evaluator PASS 后 runStagingE2E 内 fire-and-forget 启动 review 预览环境
+# 死图迁移说明：原 harness-task.graph.js reviewGateNode 已废弃（skill-relay 架构下不再
+# 被 invoke），review 预览环境的启动逻辑真实生产者是 staging-e2e-runner.js
+# runStagingE2E 内 verdict==='PASS' 分支的 fire-and-forget IIFE（见该文件 ~L802-824）。
 set -e
 
-GRAPH="packages/brain/src/workflows/harness-task.graph.js"
+RUNNER="packages/brain/src/staging-e2e-runner.js"
 
 fail() { echo "❌ FAIL: $1"; exit 1; }
 pass() { echo "✅ PASS: $1"; }
 
-# 1. reviewGateNode 引入 preview-manager
-grep -q 'preview-manager' "$GRAPH" && \
-  pass "harness-task.graph.js: preview-manager import 存在" || \
-  fail "harness-task.graph.js: 缺少 preview-manager import"
+# 1. 引入 preview-manager（allocatePort 来源）
+grep -q 'preview-manager' "$RUNNER" && \
+  pass "staging-e2e-runner.js: preview-manager import 存在" || \
+  fail "staging-e2e-runner.js: 缺少 preview-manager import"
 
-# 2. reviewGateNode 引入 staging-e2e-runner
-grep -q 'staging-e2e-runner' "$GRAPH" && \
-  pass "harness-task.graph.js: staging-e2e-runner import 存在" || \
-  fail "harness-task.graph.js: 缺少 staging-e2e-runner import"
+# 2. allocatePort 调用
+grep -q 'allocatePort' "$RUNNER" && \
+  pass "staging-e2e-runner.js: allocatePort 调用存在" || \
+  fail "staging-e2e-runner.js: 缺少 allocatePort 调用"
 
-# 3. allocatePort 调用
-grep -q 'allocatePort' "$GRAPH" && \
-  pass "harness-task.graph.js: allocatePort 调用存在" || \
-  fail "harness-task.graph.js: 缺少 allocatePort 调用"
+# 3. spawnReviewPreview 调用
+grep -q 'spawnReviewPreview' "$RUNNER" && \
+  pass "staging-e2e-runner.js: spawnReviewPreview 调用存在" || \
+  fail "staging-e2e-runner.js: 缺少 spawnReviewPreview 调用"
 
-# 4. spawnReviewPreview 调用
-grep -q 'spawnReviewPreview' "$GRAPH" && \
-  pass "harness-task.graph.js: spawnReviewPreview 调用存在" || \
-  fail "harness-task.graph.js: 缺少 spawnReviewPreview 调用"
+# 4. review 预览地址（含端口）通过 sendBark 传给通知函数
+grep -q 'sendBark' "$RUNNER" && grep -q '38.23.47.81:\${port}' "$RUNNER" && \
+  pass "staging-e2e-runner.js: preview 地址(含port)传给 sendBark 通知存在" || \
+  fail "staging-e2e-runner.js: 缺少 preview 地址传递给通知函数"
 
-# 5. preview_url 传给通知函数
-grep -q 'preview_url' "$GRAPH" && \
-  pass "harness-task.graph.js: preview_url 传递存在" || \
-  fail "harness-task.graph.js: 缺少 preview_url 传递"
-
-# 6. opts.notifyFn 注入（测试可 mock）
-grep -q 'opts\.notifyFn' "$GRAPH" && \
-  pass "harness-task.graph.js: opts.notifyFn 注入存在" || \
-  fail "harness-task.graph.js: 缺少 opts.notifyFn 注入"
+# 5. fire-and-forget：review 环境部署异常被 catch，不影响已返回的 verdict='PASS'
+grep -q "review env deploy 失败（不影响 PASS）" "$RUNNER" && \
+  pass "staging-e2e-runner.js: review 环境部署异常不阻塞 verdict 存在" || \
+  fail "staging-e2e-runner.js: 缺少 review 环境部署异常隔离（应 catch 且不影响 verdict）"
 
 echo ""
 echo "review-gate-preview smoke: 全部通过"

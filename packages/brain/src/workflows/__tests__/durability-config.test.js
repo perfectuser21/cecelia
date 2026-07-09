@@ -20,8 +20,6 @@ describe('durability config [BEHAVIOR]', () => {
     'consciousness.graph.js',
     'dev-task.graph.js',
     'harness-gan.graph.js',
-    'harness-task.graph.js',
-    'harness-initiative.graph.js',
   ];
 
   for (const file of FILES) {

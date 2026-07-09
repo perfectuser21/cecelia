@@ -6,8 +6,9 @@
  *
  * 表 walking_skeleton_thread_lookup 是通用的 harness thread mapping 表（命名遗留 Stream 5
  * walking-skeleton 实证；schema 通用，graph_name 字段区分 graph 类型）：
- *   - walking-skeleton-1node    Stream 5 端到端实证 graph
- *   - harness-task              Layer 3 真实生产 sub-task graph（spawn detached + interrupt）
+ *   - walking-skeleton-1node    Stream 5 端到端实证 graph（唯一仍活跃的 dispatch 分支；
+ *     其余 graph_name 分支——harness-task/harness-evaluate/harness-gan/harness-initiative——
+ *     随刀4阶段3 orchestrator 硬校验后已物理不可达，已删除，见 2026-07-09 commit）
  *
  * 流程：
  *   1. 查 walking_skeleton_thread_lookup 表（containerId → thread_id, graph_name）
@@ -22,20 +23,6 @@
 import pool from '../db.js';
 import { getPgCheckpointer } from '../orchestrator/pg-checkpointer.js';
 import { getCompiledWalkingSkeleton } from '../workflows/walking-skeleton-1node.graph.js';
-import { compileHarnessTaskGraph } from '../workflows/harness-task.graph.js';
-
-// 模块缓存 harness-task compiled graph（PG checkpointer 单例下，只编一次）
-let _compiledHarnessTask = null;
-async function getCompiledHarnessTask() {
-  if (_compiledHarnessTask) return _compiledHarnessTask;
-  _compiledHarnessTask = await compileHarnessTaskGraph();
-  return _compiledHarnessTask;
-}
-
-// 测试 hook
-export function _resetHarnessTaskCacheForTests() {
-  _compiledHarnessTask = null;
-}
 
 /**
  * 更新某 harness thread 的生命周期状态。
@@ -78,50 +65,6 @@ export async function lookupHarnessThread(containerId) {
       return { compiledGraph, threadId };
     } catch (err) {
       console.error(`[harness-thread-lookup] compile walking-skeleton failed containerId=${containerId}: ${err.message}`);
-      return null;
-    }
-  }
-
-  if (graphName === 'harness-task') {
-    try {
-      const compiledGraph = await getCompiledHarnessTask();
-      return { compiledGraph, threadId };
-    } catch (err) {
-      console.error(`[harness-thread-lookup] compile harness-task failed containerId=${containerId}: ${err.message}`);
-      return null;
-    }
-  }
-
-  // B9 (Walking Skeleton P1 cascade fix):
-  // PR #2901 加 evaluate_contract 节点（task sub-graph 内部）spawn evaluator container 时
-  // 写 graph_name='harness-evaluate'，但 lookup 当时只 dispatch walking-skeleton-1node / harness-task →
-  // unknown graph → 404 → callback 失配 → graph 永久卡 await_callback。W30 实证。
-  // 修：harness-evaluate dispatch 到同一 compiledHarnessTask（evaluate_contract 节点在 task graph 内部）。
-  if (graphName === 'harness-evaluate') {
-    try {
-      const compiledGraph = await getCompiledHarnessTask();
-      return { compiledGraph, threadId };
-    } catch (err) {
-      console.error(`[harness-thread-lookup] compile harness-evaluate (via task graph) failed containerId=${containerId}: ${err.message}`);
-      return null;
-    }
-  }
-
-  // B44: harness-gan 已改回同步，不再写 thread_lookup，此分支保留作兼容（返回 null 即可）
-  if (graphName === 'harness-gan') {
-    console.warn(`[harness-thread-lookup] harness-gan is now synchronous (B44), graph_name=${graphName} should not appear in thread_lookup`);
-    return null;
-  }
-
-  // B44 fix: harness-initiative 用全图（compileHarnessFullGraph，executor 用的图）
-  // 原来的 compileHarnessInitiativeGraph 只含 Phase A 节点，无法处理 callback resume
-  if (graphName === 'harness-initiative') {
-    try {
-      const { compileHarnessFullGraph } = await import('../workflows/harness-initiative.graph.js');
-      const compiledGraph = await compileHarnessFullGraph();
-      return { compiledGraph, threadId };
-    } catch (err) {
-      console.error(`[harness-thread-lookup] compile harness-initiative failed containerId=${containerId}: ${err.message}`);
       return null;
     }
   }

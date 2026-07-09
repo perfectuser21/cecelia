@@ -52,3 +52,4 @@ warroom-line-command-smoke.sh
 compute-ssh-reachability-smoke.sh
 journey-id-entry-points-smoke.sh
 line-strategist-dispatch-smoke.sh
+ws3-ire-module-smoke.sh
