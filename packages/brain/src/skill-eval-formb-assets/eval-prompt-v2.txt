@@ -143,6 +143,25 @@ __WIZARD_ASSERTIONS__
     }
   ],
   "model_recommendation": "推荐使用哪个模型运行此Skill，理由（≤60字）",
+  "model_comparisons": [
+    {
+      "model_id": "评估所用模型ID（如 claude-sonnet-4-6）",
+      "label": "展示标签（如「Sonnet 4.6（主评）」）",
+      "is_primary": true,
+      "verdict_level": "pass|partial|fail",
+      "verdict_text": "一句话裁决（≤40字）",
+      "dimension_scores": {
+        "functional_map": "ok|partial|fail",
+        "dependency_audit": "ok|partial|fail",
+        "logic_soundness": "ok|partial|fail",
+        "output_verifiability": "ok|partial|fail",
+        "redline": "low|medium|high",
+        "maturity": "ok|partial|fail"
+      },
+      "defects_high": 0,
+      "defects_total": 0
+    }
+  ],
   "anatomy": {
     "pipeline": [],
     "outputs": [],

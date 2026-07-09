@@ -121,6 +121,51 @@ function buildLegacySteps(steps) {
   return buildDefects(steps.map((s) => ({ title: s.issue || '', fix: s.fix || '', severity: s.severity || 'mid' })));
 }
 
+const DIM_LABELS = {
+  functional_map: '功能地图',
+  dependency_audit: '依赖审计',
+  logic_soundness: '逻辑健全性',
+  output_verifiability: '输出可验证性',
+  redline: '红线',
+  maturity: '成熟度',
+};
+const MC_SCORE_CLS = { ok: 'mcs-ok', partial: 'mcs-warn', fail: 'mcs-fail', low: 'mcs-ok', medium: 'mcs-warn', high: 'mcs-fail' };
+const MC_SCORE_LABEL = { ok: '✅', partial: '⚠️', fail: '❌', low: '🟢低', medium: '🟡中', high: '🔴高' };
+
+function buildModelComparisonTable(comparisons) {
+  if (!comparisons || !comparisons.length) return '';
+  const dims = Object.keys(DIM_LABELS);
+  const colHeaders = comparisons.map((m) => `<th class="mc-mhd${m.is_primary ? ' mc-primary' : ''}">${esc(m.label)}</th>`).join('');
+  const dimRows = dims.map((dim) => {
+    const cells = comparisons.map((m) => {
+      const score = m.dimension_scores && m.dimension_scores[dim];
+      const cls = MC_SCORE_CLS[score] || '';
+      const lbl = MC_SCORE_LABEL[score] || esc(score || '—');
+      return `<td class="mc-cell ${cls}">${lbl}</td>`;
+    }).join('');
+    return `<tr><td class="mc-dim">${esc(DIM_LABELS[dim])}</td>${cells}</tr>`;
+  }).join('');
+  const verdictCells = comparisons.map((m) => {
+    const cls = m.verdict_level === 'pass' ? 'mcs-ok' : m.verdict_level === 'fail' ? 'mcs-fail' : 'mcs-warn';
+    return `<td class="mc-cell mc-verdict ${cls}">${esc(VERDICT_LABEL[m.verdict_level] || m.verdict_level)}</td>`;
+  }).join('');
+  const defectCells = comparisons.map((m) => {
+    const hi = m.defects_high || 0;
+    return `<td class="mc-cell">${hi > 0 ? `<span class="mcs-fail">${hi}高危</span>` : '—'} / ${esc(m.defects_total || 0)}条</td>`;
+  }).join('');
+
+  return `<div class="dimcard mc-wrap">
+    <div class="dimhd"><span class="dimno">⊞</span>多模型逐线对比</div>
+    <div class="tscroll"><table class="mc-table dtable">
+      <thead><tr><th class="mc-dim">维度</th>${colHeaders}</tr></thead>
+      <tbody>${dimRows}
+        <tr class="mc-verdict-row"><td class="mc-dim">总裁决</td>${verdictCells}</tr>
+        <tr><td class="mc-dim">缺陷数</td>${defectCells}</tr>
+      </tbody>
+    </table></div>
+  </div>`;
+}
+
 export function renderReportBody(reportData) {
   const v = validateReportData(reportData);
   if (!v.valid) return `<div class="fallback">报告数据不完整：${esc(v.errors.join('；'))}</div>`;
@@ -149,6 +194,7 @@ export function renderReportBody(reportData) {
     ${reportContent}
     <div class="sectitle">缺陷清单</div>
     ${defectSection}
+    ${buildModelComparisonTable(d.model_comparisons)}
     ${d.model_recommendation ? `<div class="mrec"><div class="mrec-t">生产选型建议</div><p>${esc(d.model_recommendation)}</p></div>` : ''}
     <div class="foot">${esc(d.skill.submitter || '')} · ${esc(d.skill.evaluatedAt || '')}</div>`;
 }
@@ -234,5 +280,13 @@ body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.6 -apple-system,
 .cmpsec{border-bottom:8px solid var(--surface2)}.cmpsec:last-child{border-bottom:0}
 .cmphd{max-width:1060px;margin:0 auto;padding:28px 24px 0;font:700 12px var(--mono);letter-spacing:.14em;text-transform:uppercase;color:var(--accent-ink)}
 .cmpsec .wrap{padding-top:16px}
+.mc-wrap .dimno{background:var(--muted)}
+.mc-dim{font:700 12px var(--mono);color:var(--muted);white-space:nowrap;padding-right:16px}
+.mc-mhd{font:700 12px -apple-system,"PingFang SC",sans-serif;color:var(--ink);text-align:center;padding:8px 14px}
+.mc-mhd.mc-primary{color:var(--accent-ink);background:var(--accent-soft)}
+.mc-cell{text-align:center;font-size:13px;padding:8px 12px}
+.mc-verdict{font-weight:700;font-size:13.5px}
+.mc-verdict-row td{border-top:2px solid var(--line)}
+.mcs-ok{color:var(--pass)}.mcs-warn{color:var(--warn)}.mcs-fail{color:var(--fail)}
 @media(max-width:640px){.head h1{font-size:22px}.statsbar{gap:8px}.mchecks{grid-template-columns:1fr 1fr}}
 `;
