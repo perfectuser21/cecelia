@@ -57,6 +57,17 @@ _in_main_repo_worktree() {
     [[ "$gd" == "$cmn" ]]
 }
 
+# 判断 $1 是否为 $2（主仓）登记承认的合法 worktree。
+# 两个条件都要满足：目录自身认为在某个 git 结构里 + 主仓的 worktree 登记表里查得到它的物理路径。
+# 只查前者不够——孤儿目录里残留的 .git 文件可能指向已经不存在的元数据。
+_is_registered_worktree() {
+    local dir="$1" main_repo="$2"
+    local phys
+    git -C "$dir" rev-parse --git-dir &>/dev/null || return 1
+    phys="$(cd "$dir" 2>/dev/null && pwd -P)" || return 1
+    git -C "$main_repo" worktree list --porcelain 2>/dev/null | grep -Fqx "worktree $phys"
+}
+
 # Claude Code projects key：绝对路径中 / 和 . 逐字符替换为 -（纯 bash，免 fork）
 _path_to_project_key() { printf '%s' "${1//[\/.]/-}"; }
 
@@ -95,10 +106,25 @@ fi
 # 真实执行：交互模式 + 主仓工作树 → 建立/复用 per-session worktree 并 cd 进去
 if [[ "$AUTO_WORKTREE" == "1" ]]; then
     mkdir -p "$_WT_BASE"
+
+    # 孤儿目录自愈：目录存在但已不是主仓登记的合法 worktree（例如注册被意外摘除、
+    # 目录残留）→ 备份后重建，不能静默把它当普通目录复用（session-isolation #3567）。
+    if [[ -d "$_WT_PATH" ]] && ! _is_registered_worktree "$_WT_PATH" "$_MAIN_REPO"; then
+        _ORPHAN_BACKUP="${_WT_PATH}.orphan-$(date +%s)"
+        echo "[claude-launch] ⚠️ 孤儿 session 目录（非主仓登记 worktree）：$_WT_PATH → 备份到 $_ORPHAN_BACKUP" >&2
+        mv "$_WT_PATH" "$_ORPHAN_BACKUP" \
+            || { echo "[claude-launch] ❌ 备份孤儿目录失败，中止启动" >&2; exit 1; }
+    fi
+
     if [[ ! -d "$_WT_PATH" ]]; then
         git -C "$_MAIN_REPO" fetch origin main --quiet 2>/dev/null || true
         # stdout 留给 claude 本体；git 的提示信息走 stderr
-        git -C "$_MAIN_REPO" worktree add "$_WT_PATH" -b "$_WT_BRANCH" origin/main 1>&2
+        if git -C "$_MAIN_REPO" rev-parse --verify "$_WT_BRANCH" &>/dev/null; then
+            # 原分支还在（孤儿场景里分支未必被清理）→ checkout 已有分支，不能再 -b
+            git -C "$_MAIN_REPO" worktree add "$_WT_PATH" "$_WT_BRANCH" 1>&2
+        else
+            git -C "$_MAIN_REPO" worktree add "$_WT_PATH" -b "$_WT_BRANCH" origin/main 1>&2
+        fi
     fi
     cd "$_WT_PATH"
 fi
