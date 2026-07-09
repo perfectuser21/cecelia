@@ -2908,6 +2908,18 @@ async function _driveHarnessInitiative(task, opts = {}) {
     console.warn(`[executor] okr-initiative sync(running) non-fatal: ${syncErr.message}`);
   }
 
+  // W4 initiative_run_events 留痕（供 GET /api/brain/harness/stream SSE 消费）：
+  // 旧图逐节点（pick_sub_task/run_sub_task/...）写事件的模式随图一起删除——skill-relay
+  // 单 session 模型没有离散节点，改在 spawn 这个粗粒度节点上留一条 running 记录，
+  // 让该 SSE 流对 skill-relay initiative 至少还有起点信号（non-fatal，best-effort）。
+  try {
+    const { writeInitiativeRunEvent } = await import('./events/initiativeRunEvents.js');
+    const initiativeId = task.payload?.initiative_id || task.id;
+    await writeInitiativeRunEvent({ initiativeId, node: 'skill-relay-spawn', status: 'running', dbPool });
+  } catch (ireErr) {
+    console.warn(`[executor] writeInitiativeRunEvent failed (non-fatal): ${ireErr.message}`);
+  }
+
   // N3 skill-relay 分支（主理人 2026-07-04 拍板）：spawn 单 claude session 跑
   // harness-controller skill，不 compile / 不 invoke 图。
   const { spawnSkillRelaySession } = await import('./harness-skill-relay.js');
