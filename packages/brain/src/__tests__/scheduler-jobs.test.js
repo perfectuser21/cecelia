@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 vi.mock('../daily-review-scheduler.js', () => ({
   triggerArchReview: vi.fn().mockResolvedValue({ triggered: false, skipped_window: true }),
+  triggerCiPatrol: vi.fn().mockResolvedValue({ triggered: false, skipped_window: true }),
 }));
 vi.mock('../active-goals-zero-trigger.js', () => ({
   maybeTriggerStrategySession: vi.fn().mockResolvedValue({ created: false, reason: 'active_goals_present' }),
@@ -26,7 +27,7 @@ import {
   JOBS,
   SENTINEL_KEY_PREFIX,
 } from '../scheduler-jobs.js';
-import { triggerArchReview } from '../daily-review-scheduler.js';
+import { triggerArchReview, triggerCiPatrol } from '../daily-review-scheduler.js';
 import { maybeTriggerStrategySession } from '../active-goals-zero-trigger.js';
 import { runConversationDigest } from '../conversation-digest.js';
 import { runCaptureDigestion } from '../capture-digestion.js';
@@ -52,12 +53,13 @@ describe('scheduler-jobs 注册表', () => {
     const pool = makePool();
     const results = await runSchedulerJobsOnce(pool);
     expect(triggerArchReview).toHaveBeenCalledWith(pool);
+    expect(triggerCiPatrol).toHaveBeenCalledWith(pool);
     expect(maybeTriggerStrategySession).toHaveBeenCalledWith(pool);
     expect(runConversationDigest).toHaveBeenCalledWith();
     expect(runCaptureDigestion).toHaveBeenCalledWith();
     expect(scheduleDailyBackup).toHaveBeenCalledWith(pool);
     expect(maybeGenerateBattleReport).toHaveBeenCalledWith(pool);
-    expect(results).toHaveLength(6);
+    expect(results).toHaveLength(7);
     expect(results.every((r) => r.ok)).toBe(true);
   });
 
@@ -85,7 +87,7 @@ describe('scheduler-jobs 注册表', () => {
     const pool = makePool();
     await runSchedulerJobsOnce(pool);
     const sentinelCalls = pool.query.mock.calls.filter(([sql]) => sql.includes('working_memory'));
-    expect(sentinelCalls).toHaveLength(6);
+    expect(sentinelCalls).toHaveLength(7);
     expect(sentinelCalls[0][0]).toMatch(/ON CONFLICT \(key\) DO UPDATE/);
     expect(sentinelCalls[0][1][0]).toBe(`${SENTINEL_KEY_PREFIX}arch-review`);
     const payload = JSON.parse(sentinelCalls[0][1][1]);
@@ -96,7 +98,7 @@ describe('scheduler-jobs 注册表', () => {
   it('哨兵写入失败不影响 job 结果也不抛', async () => {
     const pool = { query: vi.fn().mockRejectedValue(new Error('db down')) };
     const results = await runSchedulerJobsOnce(pool);
-    expect(results).toHaveLength(6);
+    expect(results).toHaveLength(7);
     expect(results.every((r) => r.ok)).toBe(true);
   });
 });
