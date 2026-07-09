@@ -1,0 +1,202 @@
+name: Nightly Real-Machine Staging（真机每晚回归闸）
+
+# 真机 nightly 回归：补 6站2轨模型④站真机 nightly 空白，替掉人肉 staging 复测。
+#
+# 每晚在 ROG（staging 指向 Brain:5222）跑两项真机检查：
+#   1. 微信气泡门   — WeChat：发消息 → 确认气泡出现（DELIVERED）
+#   2. 抖音 keyword 读侧 — Douyin：发内容 → 搜索关键字确认内容可被读侧
+#
+# 红（任一失败）→ 自动开 Brain issue（去重）+ 飞书通知
+#
+# 必要 Secrets：
+#   TS_AUTHKEY         — Tailscale 认证（已有，共用）
+#   ROG_SSH_KEY        — ROG 机器 SSH 私钥（administrator 用户）
+#   ROG_TAILSCALE_IP   — ROG 机器的 Tailscale IP（xian-rog）
+
+on:
+  schedule:
+    - cron: '0 18 * * *'   # UTC 18:00 = 北京次日 02:00（避开生产流量高峰）
+  workflow_dispatch:        # 支持手动补跑/debug
+
+permissions:
+  contents: read
+
+env:
+  BRAIN_URL: http://100.71.151.105:5221        # 生产 Brain（开 issue / 发飞书通知）
+  STAGING_BRAIN_URL: http://100.71.151.105:5222 # Staging Brain（真机检查指向）
+  ROG_USER: administrator
+  ROG_DEPLOY_DIR: /opt/cecelia/nightly
+  CHECK_TIMEOUT: '420'   # 单项检查超时（秒）
+
+jobs:
+  real-machine-checks:
+    name: 真机 Staging 回归（ROG）
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Connect to Tailscale
+        uses: tailscale/github-action@v2
+        with:
+          authkey: ${{ secrets.TS_AUTHKEY }}
+
+      - name: 验证生产 Brain 可达（用于开 issue）
+        run: |
+          CODE=$(curl -s -o /dev/null -w "%{http_code}" -m 15 "$BRAIN_URL/api/brain/health")
+          if [ "$CODE" != "200" ]; then
+            echo "::error::生产 Brain $BRAIN_URL 不可达（HTTP $CODE）"
+            exit 1
+          fi
+          echo "✅ Brain 连通"
+
+      - name: 验证 Staging Brain 可达（ROG 检查指向）
+        run: |
+          CODE=$(curl -s -o /dev/null -w "%{http_code}" -m 15 "$STAGING_BRAIN_URL/api/brain/health")
+          if [ "$CODE" != "200" ]; then
+            echo "::warning::Staging Brain $STAGING_BRAIN_URL 不可达（HTTP $CODE）— staging 可能未启动"
+            echo "STAGING_UNREACHABLE=1" >> "$GITHUB_ENV"
+          else
+            echo "✅ Staging Brain 连通"
+          fi
+
+      - name: 配置 ROG SSH（via Tailscale）
+        env:
+          ROG_SSH_KEY: ${{ secrets.ROG_SSH_KEY }}
+          ROG_TAILSCALE_IP: ${{ secrets.ROG_TAILSCALE_IP }}
+        run: |
+          if [ -z "${ROG_SSH_KEY:-}" ]; then
+            echo "::error::ROG_SSH_KEY secret 未配置。请在 repo Settings → Secrets → Actions 添加 ROG administrator 的 SSH 私钥。"
+            exit 1
+          fi
+          if [ -z "${ROG_TAILSCALE_IP:-}" ]; then
+            echo "::error::ROG_TAILSCALE_IP secret 未配置。请在 Settings 添加 xian-rog 的 Tailscale IP（格式：100.x.x.x）。"
+            exit 1
+          fi
+          mkdir -p ~/.ssh
+          echo "$ROG_SSH_KEY" > ~/.ssh/rog_key
+          chmod 600 ~/.ssh/rog_key
+          cat >> ~/.ssh/config <<EOF
+          Host rog-staging
+            HostName ${ROG_TAILSCALE_IP}
+            User ${ROG_USER}
+            IdentityFile ~/.ssh/rog_key
+            StrictHostKeyChecking no
+            ConnectTimeout 15
+            ServerAliveInterval 30
+          EOF
+          echo "✅ SSH 配置完成（rog-staging → ${ROG_TAILSCALE_IP}）"
+
+      - name: 检查 ROG SSH 可达性
+        run: |
+          if ! ssh -o ConnectTimeout=15 rog-staging 'echo rog-ok' 2>/dev/null; then
+            echo "::error::ROG 机器 SSH 不可达（Tailscale 隧道或机器状态异常）"
+            exit 1
+          fi
+          echo "✅ ROG SSH 连通"
+
+      - name: 同步检查脚本到 ROG
+        run: |
+          ssh rog-staging "mkdir -p ${ROG_DEPLOY_DIR}"
+          scp scripts/nightly/check-wechat-bubble-gate.sh \
+              scripts/nightly/check-douyin-keyword-read.sh \
+              rog-staging:"${ROG_DEPLOY_DIR}/"
+          ssh rog-staging "chmod +x ${ROG_DEPLOY_DIR}/check-wechat-bubble-gate.sh \
+                                    ${ROG_DEPLOY_DIR}/check-douyin-keyword-read.sh"
+
+      # ── 检查 1：微信气泡门 ─────────────────────────────────────────────────
+      - name: 微信气泡门检查（WeChat Bubble Gate）
+        id: wechat_bubble
+        continue-on-error: true
+        env:
+          STAGING_BRAIN_URL: ${{ env.STAGING_BRAIN_URL }}
+          CHECK_TIMEOUT: ${{ env.CHECK_TIMEOUT }}
+        run: |
+          set -uo pipefail
+          echo "── 微信气泡门：staging_brain=$STAGING_BRAIN_URL"
+          ssh rog-staging \
+            "BRAIN_URL='$STAGING_BRAIN_URL' TIMEOUT='$CHECK_TIMEOUT' \
+             bash ${ROG_DEPLOY_DIR}/check-wechat-bubble-gate.sh" \
+            2>&1 | tee /tmp/wechat_bubble.log
+          EXIT="${PIPESTATUS[0]}"
+          echo "exit_code=$EXIT" >> "$GITHUB_OUTPUT"
+          exit "$EXIT"
+
+      # ── 检查 2：抖音 keyword 读侧 ──────────────────────────────────────────
+      - name: 抖音 keyword 读侧检查（Douyin Keyword Read）
+        id: douyin_keyword
+        continue-on-error: true
+        env:
+          STAGING_BRAIN_URL: ${{ env.STAGING_BRAIN_URL }}
+          CHECK_TIMEOUT: ${{ env.CHECK_TIMEOUT }}
+        run: |
+          set -uo pipefail
+          echo "── 抖音 keyword 读侧：staging_brain=$STAGING_BRAIN_URL"
+          ssh rog-staging \
+            "BRAIN_URL='$STAGING_BRAIN_URL' TIMEOUT='$CHECK_TIMEOUT' \
+             bash ${ROG_DEPLOY_DIR}/check-douyin-keyword-read.sh" \
+            2>&1 | tee /tmp/douyin_keyword.log
+          EXIT="${PIPESTATUS[0]}"
+          echo "exit_code=$EXIT" >> "$GITHUB_OUTPUT"
+          exit "$EXIT"
+
+      # ── 结果汇总 ───────────────────────────────────────────────────────────
+      - name: 汇总结果（GitHub Step Summary）
+        if: always()
+        run: |
+          WX="${{ steps.wechat_bubble.outcome }}"
+          DY="${{ steps.douyin_keyword.outcome }}"
+          {
+            echo "## Nightly 真机 Staging 回归结果"
+            echo ""
+            echo "| 检查项 | 状态 |"
+            echo "|---|---|"
+            [ "$WX" = "success" ] && echo "| 微信气泡门 | ✅ 通过 |" || echo "| 微信气泡门 | ❌ 失败 |"
+            [ "$DY" = "success" ] && echo "| 抖音 keyword 读侧 | ✅ 通过 |" || echo "| 抖音 keyword 读侧 | ❌ 失败 |"
+            echo ""
+            echo "Staging Brain: \`$STAGING_BRAIN_URL\` | ROG: \`$ROG_USER@${{ secrets.ROG_TAILSCALE_IP }}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # ── 红灯：开 Brain Issue + 飞书通知 ────────────────────────────────────
+      - name: 红灯 → 开 Brain Issue（去重）+ 飞书通知
+        if: always() && (steps.wechat_bubble.outcome == 'failure' || steps.douyin_keyword.outcome == 'failure')
+        run: |
+          set -uo pipefail
+          WX="${{ steps.wechat_bubble.outcome }}"
+          DY="${{ steps.douyin_keyword.outcome }}"
+
+          FAILED=""
+          [ "$WX" != "success" ] && FAILED="${FAILED}微信气泡门 "
+          [ "$DY" != "success" ] && FAILED="${FAILED}抖音keyword读侧"
+          FAILED="${FAILED% }"
+
+          TITLE="[真机Staging] 每晚回归失败：${FAILED}"
+          BODY="nightly-real-machine-staging 自动检测：ROG staging 环境「${FAILED}」检查失败。请排查根因或手动到 ROG 上复测。Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+
+          # 去重：查 In progress 同名 issue（实锤：查 open 恒空，必须查 In progress）
+          OPEN_TITLES=$(curl -s -m 15 "$BRAIN_URL/api/brain/issues?status=In%20progress&limit=200" || echo '[]')
+          if echo "$OPEN_TITLES" | grep -qF "$TITLE"; then
+            echo "已有同名 In progress issue，跳过重开：$TITLE"
+          else
+            curl -s -m 15 -X POST "$BRAIN_URL/api/brain/issues" \
+              -H 'Content-Type: application/json' \
+              -d "$(python3 -c "import json,sys; print(json.dumps({'title':sys.argv[1],'body':sys.argv[2],'priority':'P1'}))" "$TITLE" "$BODY")"
+            echo "已开 Brain issue：$TITLE"
+          fi
+
+          # 飞书通知
+          curl -s -m 15 -X POST "$BRAIN_URL/api/brain/harness/notify" \
+            -H 'Content-Type: application/json' \
+            -d "$(python3 -c "import json,sys; print(json.dumps({'type':'general','title':'🔴 真机 Staging 回归失败','message':sys.argv[1]}))" "ROG staging 检查失败：${FAILED}（已开 Brain issue）")" \
+            || echo "::warning::飞书通知发送失败（Brain notify 不可达），issue 已开"
+
+      # ── 最终红灯退出（让 CI 红）─────────────────────────────────────────────
+      - name: 最终红灯退出
+        if: steps.wechat_bubble.outcome == 'failure' || steps.douyin_keyword.outcome == 'failure'
+        run: |
+          echo "❌ 真机 Staging 回归失败，详见上方各步输出"
+          exit 1
