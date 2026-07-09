@@ -148,3 +148,50 @@ export async function buildLineDreamData(pool, journeyId, journeyName) {
 
   return { decisions, advancementItems, issues, runs, learnings, strategistNotes };
 }
+
+/**
+ * 渲染一个数据段为 markdown 列表；空数组渲染"暂无"。
+ * @param {Array<object>} rows
+ * @param {(row: object) => string} formatter
+ * @returns {string[]}
+ */
+function renderSection(rows, formatter) {
+  if (rows.length === 0) return ['暂无'];
+  return rows.map(formatter);
+}
+
+/**
+ * 渲染 line_ledger 的 markdown 摘要（六段，空段"暂无"）。
+ * @param {string} journeyName
+ * @param {{decisions: Array, advancementItems: Array, issues: Array, runs: Array, learnings: Array, strategistNotes: Array}} data
+ * @returns {string}
+ */
+export function renderLineLedgerMarkdown(journeyName, data) {
+  const lines = [`# ${journeyName} — 24h 账本`, ''];
+
+  lines.push('## 决策');
+  lines.push(...renderSection(data.decisions, (d) => `- ${d.topic ?? '(无主题)'}：${d.decision ?? ''}`));
+  lines.push('');
+
+  lines.push('## 推进项变化');
+  lines.push(...renderSection(data.advancementItems, (a) => `- ${a.title ?? '(无标题)'}（${a.status ?? '?'}）`));
+  lines.push('');
+
+  lines.push('## Issue 变化');
+  lines.push(...renderSection(data.issues, (i) => `- [${i.priority ?? '?'}] ${i.title ?? '(无标题)'}（${i.status ?? '?'}）`));
+  lines.push('');
+
+  lines.push('## Run 战况');
+  lines.push(...renderSection(data.runs, (r) => `- phase=${r.phase ?? '?'}${r.failure_reason ? `，失败原因：${r.failure_reason}` : ''}`));
+  lines.push('');
+
+  lines.push('## Learnings');
+  lines.push(...renderSection(data.learnings, (l) => `- ${(l.content ?? '').slice(0, 100)}`));
+  lines.push('');
+
+  lines.push('## 军师留痕');
+  lines.push(...renderSection(data.strategistNotes, (n) => `- ${n.title ?? '(无标题)'}`));
+  lines.push('');
+
+  return lines.join('\n');
+}

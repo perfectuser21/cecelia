@@ -5,6 +5,7 @@ import {
   alreadyDreamedToday,
   getActiveJourneys,
   buildLineDreamData,
+  renderLineLedgerMarkdown,
 } from '../line-dreaming.js';
 
 beforeEach(() => {
@@ -91,5 +92,33 @@ describe('buildLineDreamData — 六段 24h 切片，单段失败不影响其他
     const notesCall = pool.query.mock.calls.find((c) => /FROM notes/.test(c[0]));
     expect(notesCall[0]).toMatch(/title LIKE/);
     expect(notesCall[1]).toContain('军师决策[Line A]%');
+  });
+});
+
+describe('renderLineLedgerMarkdown — 空段渲染"暂无"，有数据渲染条目', () => {
+  it('全空 → 每段都是"暂无"', () => {
+    const md = renderLineLedgerMarkdown('Line A', {
+      decisions: [], advancementItems: [], issues: [], runs: [], learnings: [], strategistNotes: [],
+    });
+    expect(md).toContain('# Line A — 24h 账本');
+    expect(md).toContain('## 决策');
+    expect((md.match(/暂无/g) || []).length).toBe(6);
+  });
+
+  it('有决策数据 → 渲染 topic', () => {
+    const md = renderLineLedgerMarkdown('Line A', {
+      decisions: [{ id: 'd1', topic: '铁律X', decision: '决定Y', created_at: '2026-07-10T00:00:00Z' }],
+      advancementItems: [], issues: [], runs: [], learnings: [], strategistNotes: [],
+    });
+    expect(md).toContain('铁律X');
+    expect(md).toContain('决定Y');
+  });
+
+  it('有军师留痕 → 渲染 title', () => {
+    const md = renderLineLedgerMarkdown('Line A', {
+      decisions: [], advancementItems: [], issues: [], runs: [], learnings: [],
+      strategistNotes: [{ id: 'n1', title: '军师决策[Line A]: 挑下一个推进项', created_at: '2026-07-10T00:00:00Z' }],
+    });
+    expect(md).toContain('军师决策[Line A]: 挑下一个推进项');
   });
 });
