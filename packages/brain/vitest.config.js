@@ -105,6 +105,14 @@ export default defineConfig({
       'src/__tests__/tick-rampup.test.js',
       'src/__tests__/tick-watchdog-quarantine.test.js',
       'src/__tests__/watchdog-quarantine-race.test.js',
+      // zombie-cleaner.test.js：曾尝试移出 exclude（2026-07-09），本地62/62全绿，
+      // 但CI里连续3次在完全相同的4个用例上失败，均紧跟shard内heap撞到~8092MB附近的
+      // OOM崩溃之后——这个shard的既有文件总量本就贴着packages/brain/vitest.config.js
+      // 里注释写明的8192MB上限，把这个文件加回shard刚好把内存推过界，不是逻辑bug。
+      // 放回exclude维持原状；三处修好的fixture陈旧问题（resetAllMocks误清withLock工厂
+      // mock/WORKTREE_BASE硬编码值不一致/findTaskIdForWorktree mock字段不匹配实现）
+      // 依然留在文件里，本地`npx vitest run src/__tests__/zombie-cleaner.test.js`可
+      // 随时验证62/62绿，只是CI暂不跑它——需要先解决shard内存分配才能重新接入。
       'src/__tests__/zombie-cleaner.test.js',
       // Mock 不完整或代码逻辑变更导致失败（pre-existing issue）
       // content-pipeline-{executors,llm,error-message,etc}.test.js 全部已删除
