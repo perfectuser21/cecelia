@@ -105,7 +105,12 @@ export default defineConfig({
       'src/__tests__/tick-rampup.test.js',
       'src/__tests__/tick-watchdog-quarantine.test.js',
       'src/__tests__/watchdog-quarantine-race.test.js',
-      'src/__tests__/zombie-cleaner.test.js',
+      // zombie-cleaner.test.js 移出 exclude（2026-07-09）：原标注"DB 集成测试"不准确——
+      // makePool() 全程用 vi.fn() mock，不连真实 pool。真实原因是三处独立 fixture 陈旧
+      // 导致这个文件从未真正在 CI 里跑绿过（resetAllMocks 误清 withLock 工厂 mock/
+      // WORKTREE_BASE 硬编码值跟生产代码 fallback 不一致/findTaskIdForWorktree 相关测试
+      // 用 existsSync 而非 readdirSync mock，实现早已改用 readdirSync 扫描）。三处已修，
+      // 62/62 全绿，作为 zombie-cleaner.js 数据丢失防护的 proven-to-fire CI 守卫接入。
       // Mock 不完整或代码逻辑变更导致失败（pre-existing issue）
       // content-pipeline-{executors,llm,error-message,etc}.test.js 全部已删除
       // （in-Brain content-pipeline 编排搬到 ZJ pipeline-worker，PR zenithjoy#216）

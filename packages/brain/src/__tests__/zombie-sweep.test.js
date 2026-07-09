@@ -267,6 +267,50 @@ branch refs/heads/cp-02020000-active-task`;
       expect(result.errors).toHaveLength(1);
       expect(result.removed).toBe(0);
     });
+
+    it('有未提交改动的 stale worktree 不删除（数据丢失防护）', async () => {
+      // active-wt 通过 Channel 1 branch 匹配跳过（保持跟其它测试一致的 DB mock 方式），
+      // stale-wt 无对应 in_progress 任务，走到新加的 git status 检查
+      pool.query.mockResolvedValueOnce({
+        rows: [{ branch: 'cp-02020000-active-task', id: '1', status: 'in_progress' }]
+      });
+      statSync.mockReturnValue({ birthtimeMs: Date.now() - GRACE_PERIOD_MS - 1000 });
+
+      execSync.mockImplementation((cmd) => {
+        if (cmd.includes('rev-parse --show-toplevel')) return MAIN_REPO + '\n';
+        if (cmd.includes('worktree list --porcelain')) return PORCELAIN_OUTPUT;
+        if (cmd.includes('status --porcelain')) return ' M some-file.js\n'; // stale-wt 有未提交改动
+        return '';
+      });
+
+      const result = await sweepStaleWorktrees();
+
+      // 两个 worktree 都不应被删除：active-wt 因 branch 匹配跳过，stale-wt 因未提交改动跳过
+      expect(result.removed).toBe(0);
+      expect(result.skipped).toBe(2);
+      const removeCalls = execSync.mock.calls.filter(c =>
+        String(c[0]).includes('worktree remove') && String(c[0]).includes('/tmp/stale-wt')
+      );
+      expect(removeCalls).toHaveLength(0);
+    });
+
+    it('git status 检查本身失败时保守跳过不删除', async () => {
+      pool.query.mockResolvedValueOnce({
+        rows: [{ branch: 'cp-02020000-active-task', id: '1', status: 'in_progress' }]
+      });
+      statSync.mockReturnValue({ birthtimeMs: Date.now() - GRACE_PERIOD_MS - 1000 });
+
+      execSync.mockImplementation((cmd) => {
+        if (cmd.includes('rev-parse --show-toplevel')) return MAIN_REPO + '\n';
+        if (cmd.includes('worktree list --porcelain')) return PORCELAIN_OUTPUT;
+        if (cmd.includes('status --porcelain')) throw new Error('not a git repo');
+        return '';
+      });
+
+      const result = await sweepStaleWorktrees();
+      const removeCalls = execSync.mock.calls.filter(c => String(c[0]).includes('worktree remove'));
+      expect(removeCalls).toHaveLength(0);
+    });
   });
 
   // ─── sweepOrphanProcesses ─────────────────────────────────────────────────
