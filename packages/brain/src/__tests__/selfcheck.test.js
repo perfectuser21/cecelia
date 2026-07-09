@@ -172,8 +172,10 @@ describe('selfcheck', () => {
   // （列不存在则 INSERT 整句报错被吞，ability_id 落行永不生效——同类接缝）。
   // 324（advancement_items.notion_synced_at）被 notion-push-sync.js 的 pushAdvancementItems
   // 去重查询直接依赖（列不存在则 SELECT/UPDATE 整句报错被吞，去重恒不生效），故推进地板到 324。
-  it('EXPECTED_SCHEMA_VERSION should be 324 (floor, bumped for initiative_runs.ability_id + advancement_items.notion_synced_at)', () => {
-    expect(EXPECTED_SCHEMA_VERSION).toBe('324');
+  // 326（side_effect_dedupe 表）被 lib/dedupe.js claimDedupeKey 的 INSERT..ON CONFLICT 直接依赖
+  // （表不存在则 fail-open 降级恒触发，三入口幂等全部失效——同类接缝），故推进地板到 326。
+  it('EXPECTED_SCHEMA_VERSION should be 326 (floor, bumped for side_effect_dedupe)', () => {
+    expect(EXPECTED_SCHEMA_VERSION).toBe('326');
   });
 
   it('should pass when DB schema version is ahead of expected (>= check)', async () => {
