@@ -436,8 +436,11 @@ describe('selfcheck schema version', () => {
     // issue 14d66027 语义不变：只有代码/schema 依赖才 bump。
     // 322 = migration 322 issues.journey_id（warroom.js 全景图查询直接依赖），故推进地板到 322。
     // 323 = migration 323 initiative_runs.ability_id（harness-skill-relay.js spawn INSERT 直接依赖）；
-    // 324 = migration 324 advancement_items.notion_synced_at（pushAdvancementItems 去重查询直接依赖），
-    // 故推进地板到 324。
-    expect(EXPECTED_SCHEMA_VERSION).toBe('324');
+    // 324 = migration 324 advancement_items.notion_synced_at（pushAdvancementItems 去重查询直接依赖）；
+    // 325 = migration 325 skill_evals area/ability/wizard 字段（skill-eval-worker 评估流程依赖）；
+    // 326 = migration 326 skill_evals journey_id/eval_model/eval_dimensions/version_of；
+    // 327 = migration 327 skill_evals line_name（三级归属，upload INSERT 直接依赖）；
+    // 故推进地板到 327。
+    expect(EXPECTED_SCHEMA_VERSION).toBe('327');
   });
 });

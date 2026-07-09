@@ -178,3 +178,87 @@ describe('renderComparePage — 导出面保留验证（无新调用方，但需
     expect(html).toContain('realtime-reply-cs');
   });
 });
+
+describe('多模型逐线对比表 — model_comparisons 渲染', () => {
+  const dataWithComparisons = {
+    skill: { name: '测试Skill', area: 'ZenithJoy', line: 'Line 04', ability: '客服' },
+    verdict: { level: 'partial', text: '核心可跑，依赖存疑' },
+    summary: '核心功能可跑',
+    dimensions: {
+      functional_map: { rows: [{ no: 1, name: '主流程', trigger: '定时', inputs: 'DB', outputs: '报告', dep_health: 'ok' }] },
+      dependency_audit: { items: [] },
+      logic_soundness: { rules: [], score: 'sound' },
+      output_verifiability: { items: [] },
+      redline: { hallucination_risk: 'low', hard_stops: [], gaps: [] },
+      maturity: { production_connected: false, tested_rounds: 1, score: 'prototype' },
+    },
+    model_comparisons: [
+      {
+        model_id: 'claude-sonnet-4-6',
+        label: 'Sonnet 4.6（主评）',
+        is_primary: true,
+        verdict_level: 'partial',
+        verdict_text: '核心可跑，依赖存疑',
+        dimension_scores: {
+          functional_map: 'ok',
+          dependency_audit: 'partial',
+          logic_soundness: 'ok',
+          output_verifiability: 'ok',
+          redline: 'low',
+          maturity: 'prototype',
+        },
+        defects_high: 0,
+        defects_total: 1,
+      },
+      {
+        model_id: 'claude-opus-4-8',
+        label: 'Opus 4.8（对照）',
+        is_primary: false,
+        verdict_level: 'fail',
+        verdict_text: '依赖审计失败，无法投产',
+        dimension_scores: {
+          functional_map: 'ok',
+          dependency_audit: 'fail',
+          logic_soundness: 'ok',
+          output_verifiability: 'partial',
+          redline: 'medium',
+          maturity: 'prototype',
+        },
+        defects_high: 1,
+        defects_total: 3,
+      },
+    ],
+  };
+
+  const html = renderReportHtml(dataWithComparisons);
+
+  it('不落入 fallback', () => {
+    expect(html).not.toContain('报告数据不完整');
+  });
+
+  it('多模型对比表：表头含两个模型标签', () => {
+    expect(html).toContain('Sonnet 4.6（主评）');
+    expect(html).toContain('Opus 4.8（对照）');
+  });
+
+  it('多模型对比表：各维度行出现', () => {
+    expect(html).toContain('功能地图');
+    expect(html).toContain('依赖审计');
+    expect(html).toContain('逻辑健全');
+    expect(html).toContain('输出可验证');
+    expect(html).toContain('红线');
+    expect(html).toContain('成熟度');
+  });
+
+  it('多模型对比表：总裁决行出现', () => {
+    expect(html).toContain('总裁决');
+  });
+
+  it('多模型对比表：Opus的fail裁决出现', () => {
+    expect(html).toContain('还不能用');
+  });
+
+  it('有 model_comparisons 时出现 mc-table 容器', () => {
+    expect(html).toContain('mc-table');
+  });
+});
