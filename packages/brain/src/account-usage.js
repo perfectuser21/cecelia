@@ -313,7 +313,9 @@ export async function proactiveTokenCheck() {
         } catch { /* 告警失败不阻断主流程 */ }
       }
     } else if (minsRemaining !== null && minsRemaining < EXPIRY_WARN_MINUTES) {
-      // 去重完全交给 raise() 的 debounce（n:2 连续确认 + 2h 冷却），每个检查周期都调用
+      // proactiveTokenCheck 每个 dispatch tick 都调用一次，本分支每次都会执行到这里；
+      // 去重靠 raise() 的 debounce：n:2 表示要连续 2 个 tick 都确认过期才真正告警响铃，
+      // 响铃后进入 2h 冷却，冷却期内即使继续满足条件也不会重复响——真正防重复靠这个 2h 冷却。
       console.log(`[account-usage] [proactive-check] ${accountId}: token 将在 ${Math.floor(minsRemaining)} 分钟后过期`);
       try {
         const { raise } = await import('./alerting.js');

@@ -3402,18 +3402,6 @@ async function triggerCeceliaRun(task) {
       activeProcesses.delete(task.id);
     }
 
-    // 协议卫生包：DB 级 spawn 幂等（跨进程/跨重启防 tick 重入双 spawn；120s 短 TTL）
-    // 内存 activeProcesses 检查覆盖同进程场景；本检查覆盖蓝绿窗口期双 Brain / 重启后状态丢失场景。
-    // ⚠️ 不碰 harness-callback.js 的 containerId claim（那是 callback 重入幂等，语义不同）。
-    const dedupeMod = await import('./lib/dedupe.js');
-    releaseDedupeKey = dedupeMod.releaseDedupeKey;
-    spawnClaim = await dedupeMod.claimDedupeKey('spawn', String(task.id), 120);
-    if (!spawnClaim.claimed) {
-      console.log(`[executor] Task ${task.id} spawn dedupe hit (DB), skipping`);
-      await trace.end({ status: STATUS.FAILED, error: new Error('Spawn deduplicated') });
-      return { success: false, taskId: task.id, reason: 'spawn_deduplicated' };
-    }
-
     // === RESOURCE CHECK ===
     const resources = checkServerResources();
     if (!resources.ok) {
@@ -3430,6 +3418,20 @@ async function triggerCeceliaRun(task) {
         metrics: resources.metrics,
       };
     }
+
+    // 协议卫生包：DB 级 spawn 幂等（跨进程/跨重启防 tick 重入双 spawn；120s 短 TTL）
+    // 内存 activeProcesses 检查覆盖同进程场景；本检查覆盖蓝绿窗口期双 Brain / 重启后状态丢失场景。
+    // ⚠️ 不碰 harness-callback.js 的 containerId claim（那是 callback 重入幂等，语义不同）。
+    // 放在资源检查之后：资源过载路径不 spawn，不该占用 dedupe key（挪之前泄漏 key 120s）。
+    const dedupeMod = await import('./lib/dedupe.js');
+    releaseDedupeKey = dedupeMod.releaseDedupeKey;
+    spawnClaim = await dedupeMod.claimDedupeKey('spawn', String(task.id), 120);
+    if (!spawnClaim.claimed) {
+      console.log(`[executor] Task ${task.id} spawn dedupe hit (DB), skipping`);
+      await trace.end({ status: STATUS.FAILED, error: new Error('Spawn deduplicated') });
+      return { success: false, taskId: task.id, reason: 'spawn_deduplicated' };
+    }
+
     const checkpointId = `cp-${task.id.slice(0, 8)}`;
 
     // 检查 task_type 合理性（warning 级别，不阻塞执行）

@@ -90,6 +90,8 @@ function buildInsertStatement(commonParams, { domainInput, ownerRoleInput, deliv
  * @param {Object} params.payload - Additional payload (initiative_id, kr_goal)
  * @param {string} params.domain - Business domain (coding/quality/agent_ops/...)
  * @param {string} params.owner_role - Role owning this task (auto-inferred from domain if omitted)
+ * @param {string} [params.dedupe_key] - DB 级幂等键，≤255 字符；超长调用方自行 hash（超长会抛错）
+ * @param {number} [params.dedupe_ttl_sec] - dedupe_key 的存活时长（秒），默认 3600
  */
 async function createTask({ title, description, priority, project_id, goal_id, tags, task_type, context, prd_content, execution_profile, payload, trigger_source, domain: domainInput, owner_role: ownerRoleInput, delivery_type, journey_id, dedupe_key, dedupe_ttl_sec }) {
   // Validate goal_id (required for most tasks except system tasks)
