@@ -120,6 +120,9 @@ _handle_orphaned_worktree() {
     fi
     [[ -n "$_orphan_backup" ]] && rm -rf "$_orphan_backup" 2>/dev/null || true
 
+    # mv 之后 shell CWD 在已删除的 backup 目录，必须 cd 回重建后的 worktree
+    cd "$cwd" || { echo "[claude-launch] ❌ 无法进入重建后的 worktree，中止" >&2; exit 1; }
+
     echo "[claude-launch] ✅ worktree 重建完成" >&2
     return 0
 }

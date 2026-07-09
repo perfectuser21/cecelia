@@ -449,3 +449,151 @@ exit 0
     expect(out).toContain(`LINK_TARGET=${target}`);
   });
 });
+
+describe('孤儿 worktree 自检与重建', () => {
+  let base: string;
+  let bareDir: string;
+  let mainRepo: string;
+  let mockDir: string;
+
+  beforeAll(() => {
+    base = mkdtempSync(join(tmpdir(), 'claude-launch-orphan-'));
+    bareDir = join(base, 'origin.git');
+    execSync(`git init -q --bare "${bareDir}"`);
+    mainRepo = join(base, 'main');
+    execSync(`git clone -q "${bareDir}" "${mainRepo}"`);
+    execSync('git config user.email test@test.com', { cwd: mainRepo });
+    execSync('git config user.name Test', { cwd: mainRepo });
+    writeFileSync(join(mainRepo, 'README.md'), 'x');
+    execSync('git add . && git commit -q -m init', { cwd: mainRepo });
+    execSync('git branch -M main', { cwd: mainRepo });
+    execSync('git push -q -u origin main', { cwd: mainRepo });
+    mockDir = mkdtempSync(join(tmpdir(), 'claude-launch-orphan-mock-'));
+  });
+
+  afterAll(() => {
+    rmSync(base, { recursive: true, force: true });
+    rmSync(mockDir, { recursive: true, force: true });
+  });
+
+  function writeMockClaude(script: string): void {
+    const bin = join(mockDir, 'claude');
+    writeFileSync(bin, script);
+    chmodSync(bin, 0o755);
+  }
+
+  it('孤儿目录 + .meta 文件 + 分支已存在 → 自动重建 worktree，claude 正常启动', () => {
+    const branch = 'session-orphan01';
+    const wtPath = join(base, 'worktrees', 'main', branch);
+    execSync(`git -C "${mainRepo}" worktree add -q -b "${branch}" "${wtPath}" origin/main`);
+    // worktree remove 移除注册但保留分支，模拟孤儿场景
+    execSync(`git -C "${mainRepo}" worktree remove --force "${wtPath}"`);
+    // 重建孤儿状态：目录残留（含 .claude/），.meta 指向主仓
+    mkdirSync(join(wtPath, '.claude'), { recursive: true });
+    writeFileSync(join(wtPath, '.claude', 'session.jsonl'), '{"test":1}');
+    writeFileSync(`${wtPath}.meta`, mainRepo);
+
+    writeMockClaude(`#!/usr/bin/env bash\necho "STARTED_IN=$(pwd)"\nexit 0\n`);
+    const env: Record<string, string> = {
+      ...process.env,
+      PATH: `${mockDir}:${process.env.PATH}`,
+      CLAUDE_SESSION_ID: 'orphantest-0000-0000-0000-000000000001',
+    };
+    delete env.CLAUDE_CODE_EXECPATH;
+    delete env.CECELIA_NO_AUTO_WORKTREE;
+    const out = execSync(`bash "${LAUNCHER}"`, { cwd: wtPath, env }).toString();
+    expect(out).toContain('STARTED_IN=');
+    // .claude/ 历史应被还原
+    expect(existsSync(join(wtPath, '.claude', 'session.jsonl'))).toBe(true);
+  });
+
+  it('孤儿目录 + .meta 文件 + 分支不存在 → 从 origin/main 新建分支并重建', () => {
+    const branch = 'session-orphan02';
+    const orphanDir = join(base, 'worktrees', 'main', branch);
+    mkdirSync(orphanDir, { recursive: true });
+    writeFileSync(`${orphanDir}.meta`, mainRepo);
+
+    writeMockClaude(`#!/usr/bin/env bash\necho "GIT_OK=$(git rev-parse --show-toplevel 2>/dev/null || echo FAIL)"\nexit 0\n`);
+    const env: Record<string, string> = {
+      ...process.env,
+      PATH: `${mockDir}:${process.env.PATH}`,
+      CLAUDE_SESSION_ID: 'orphantest-0000-0000-0000-000000000002',
+    };
+    delete env.CLAUDE_CODE_EXECPATH;
+    delete env.CECELIA_NO_AUTO_WORKTREE;
+    const out = execSync(`bash "${LAUNCHER}"`, { cwd: orphanDir, env }).toString();
+    // git should work after rebuild (show-toplevel succeeds)
+    expect(out).not.toContain('GIT_OK=FAIL');
+  });
+
+  it('孤儿目录 + 无 .meta 文件 → exit 1 且 stderr 含明确告警', () => {
+    const branch = 'session-orphan03';
+    const orphanDir = join(base, 'worktrees', 'main', branch);
+    mkdirSync(orphanDir, { recursive: true });
+    // 故意不写 .meta 文件
+    writeMockClaude(`#!/usr/bin/env bash\necho "SHOULD_NOT_RUN"\nexit 0\n`);
+    const env: Record<string, string> = {
+      ...process.env,
+      PATH: `${mockDir}:${process.env.PATH}`,
+      CLAUDE_SESSION_ID: 'orphantest-0000-0000-0000-000000000003',
+    };
+    delete env.CLAUDE_CODE_EXECPATH;
+    delete env.CECELIA_NO_AUTO_WORKTREE;
+    let exitCode = -1;
+    let stderr = '';
+    let stdout = '';
+    try {
+      execSync(`bash "${LAUNCHER}"`, { cwd: orphanDir, env });
+    } catch (e) {
+      const err = e as { status: number; stdout: Buffer; stderr: Buffer };
+      exitCode = err.status;
+      stderr = err.stderr.toString();
+      stdout = err.stdout.toString();
+    }
+    expect(exitCode).not.toBe(0);
+    expect(stderr).toContain('孤儿');
+    expect(stdout).not.toContain('SHOULD_NOT_RUN');
+  });
+
+  it('CECELIA_NO_AUTO_WORKTREE=1 → 孤儿检测跳过，直接启动 claude（逃生阀）', () => {
+    const branch = 'session-orphan04';
+    const orphanDir = join(base, 'worktrees', 'main', branch);
+    mkdirSync(orphanDir, { recursive: true });
+    // 无 .meta，但设了逃生阀
+    writeMockClaude(`#!/usr/bin/env bash\necho "ESCAPE_VALVE_OK"\nexit 0\n`);
+    const env: Record<string, string> = {
+      ...process.env,
+      PATH: `${mockDir}:${process.env.PATH}`,
+      CLAUDE_SESSION_ID: 'orphantest-0000-0000-0000-000000000004',
+      CECELIA_NO_AUTO_WORKTREE: '1',
+    };
+    delete env.CLAUDE_CODE_EXECPATH;
+    // 注意：CECELIA_NO_AUTO_WORKTREE=1 跳过孤儿检测，直接执行（与正常 non-worktree 路径一致）
+    // 但孤儿函数本身也检查此环境变量，所以 CECELIA_NO_AUTO_WORKTREE=1 时直接 return 1
+    // 此处同时把 cwd 设为孤儿目录，但孤儿函数不触发，launcher 继续执行 claude
+    const out = execSync(`bash "${LAUNCHER}"`, { cwd: orphanDir, env }).toString();
+    expect(out).toContain('ESCAPE_VALVE_OK');
+  });
+
+  it('创建新 worktree 时写入 .meta 文件记录主仓路径', () => {
+    const worktreeBase = join(base, 'wt-meta-test');
+    mkdirSync(worktreeBase, { recursive: true });
+    const sid = 'meta-file-1111-2222-3333-444444444444';
+    writeMockClaude(`#!/usr/bin/env bash\npwd\nexit 0\n`);
+    const env: Record<string, string> = {
+      ...process.env,
+      PATH: `${mockDir}:${process.env.PATH}`,
+      CLAUDE_SESSION_ID: sid,
+      WORKTREE_BASE: worktreeBase,
+      CLAUDE_PROJECTS_ROOT: join(base, 'pr-meta'),
+    };
+    delete env.CLAUDE_CODE_EXECPATH;
+    delete env.CECELIA_NO_AUTO_WORKTREE;
+    execSync(`bash "${LAUNCHER}"`, { cwd: mainRepo, env });
+    const wtName = `session-${sid.slice(0, 8)}`;
+    const metaFile = join(worktreeBase, 'main', `${wtName}.meta`);
+    expect(existsSync(metaFile)).toBe(true);
+    const metaContent = execSync(`cat "${metaFile}"`).toString().trim();
+    expect(metaContent).toBe(mainRepo);
+  });
+});
