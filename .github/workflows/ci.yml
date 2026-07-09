@@ -509,7 +509,10 @@ jobs:
       - name: Unit Tests (shard ${{ matrix.shard }}/4)
         if: steps.scope.outputs.mode != 'skip'
         env:
-          NODE_OPTIONS: '--max-old-space-size=4096'
+          # 6144（原 4096）：本 PR 触及 task-router.js/tick-runner.js/tick-loop.js 等被广泛 import
+          # 的核心模块，vitest --changed 依赖图命中的测试文件数显著增加，4096 在 shard 2 上稳定
+          # OOM（4/4 次复现，非偶发 flake，见 FATAL ERROR: Reached heap limit 日志）。
+          NODE_OPTIONS: '--max-old-space-size=6144'
         # vitest forks 模式下，fork 进程跑完后可能因内存碎片 OOM 退出，
         # tinypool 报 "Worker exited unexpectedly"，导致 vitest 返回 exit 1，
         # 即使所有测试均已通过。此脚本在 exit 非 0 时检查是否无 test 失败，
