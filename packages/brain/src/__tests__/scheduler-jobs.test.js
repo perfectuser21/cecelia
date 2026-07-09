@@ -42,9 +42,9 @@ describe('scheduler-jobs 注册表', () => {
     vi.clearAllMocks();
   });
 
-  it('JOBS 注册了 6 个 job', () => {
+  it('JOBS 注册了 7 个 job', () => {
     expect(JOBS.map((j) => j.name)).toEqual([
-      'arch-review', 'strategy-trigger', 'conversation-digest', 'capture-digestion', 'daily-backup', 'battle-report',
+      'arch-review', 'ci-patrol', 'strategy-trigger', 'conversation-digest', 'capture-digestion', 'daily-backup', 'battle-report',
     ]);
   });
 
