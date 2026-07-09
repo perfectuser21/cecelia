@@ -30,6 +30,25 @@ describe('CANCEL_EXEMPT_TYPES', () => {
     expect(exemptParam).toContain('content_publish');
     expect(exemptParam).not.toContain('content-publish');
   });
+
+  it('cancel_pending 动作现在是可逆 pause，不是终态 canceled，且写 trigger_source 过滤 + 留痕', async () => {
+    mockQuery.mockClear();
+    mockQuery.mockResolvedValue({ rowCount: 0, rows: [] });
+
+    const { executeResponse, SYSTEM_AUTO_TRIGGER_SOURCES } = await import('../escalation.js');
+    await executeResponse({ actions: [{ type: 'cancel_pending', params: { keepCritical: true } }] });
+
+    const updateCall = mockQuery.mock.calls[0];
+    const sql = updateCall[0];
+    const params = updateCall[1];
+
+    expect(sql).toContain("SET status = 'paused'");
+    expect(sql).not.toContain("'canceled'");
+    expect(sql).toContain('trigger_source = ANY');
+    expect(sql).toContain('error_message');
+    expect(sql).toContain('status_history');
+    expect(params).toContain(SYSTEM_AUTO_TRIGGER_SOURCES);
+  });
 });
 
 describe('SYSTEM_AUTO_TRIGGER_SOURCES', () => {
