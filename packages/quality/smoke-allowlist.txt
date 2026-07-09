@@ -49,3 +49,4 @@ skill-eval-report-smoke.sh
 skill-eval-formb-smoke.sh
 warroom-line-command-smoke.sh
 compute-ssh-reachability-smoke.sh
+journey-id-entry-points-smoke.sh
