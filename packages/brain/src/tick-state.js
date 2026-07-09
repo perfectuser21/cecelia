@@ -31,6 +31,7 @@ export const tickState = {
   lastCleanupWorkerTime: 0,     // R4 orphan worktree cleanup
   lastOrphanPrWorkerTime: 0,    // Phase 1 orphan PR scan
   lastPausedRequeuTime: 0,      // paused task requeue/archive scan
+  lastLineStrategistDispatchTime: 0, // line-strategist 终态派发扫描
   lastHarnessWatchdogTime: 0,   // W3 — harness initiative deadline_at watchdog
 
   // === 5 个 loop / consciousness 控制态 ===
@@ -61,6 +62,7 @@ export function resetTickStateForTests() {
   tickState.lastCleanupWorkerTime = 0;
   tickState.lastOrphanPrWorkerTime = 0;
   tickState.lastPausedRequeuTime = 0;
+  tickState.lastLineStrategistDispatchTime = 0;
   tickState.lastHarnessWatchdogTime = 0;
   tickState.loopTimer = null;
   tickState.recoveryTimer = null;
@@ -95,6 +97,8 @@ export function _resetLastZombieSweepTime() { tickState.lastZombieSweepTime = 0;
 export function _resetLastPipelinePatrolTime() { tickState.lastPipelinePatrolTime = 0; }
 /** Reset paused requeue timer — for testing only */
 export function _resetLastPausedRequeuTime() { tickState.lastPausedRequeuTime = 0; }
+/** Reset line-strategist dispatch timer — for testing only */
+export function _resetLastLineStrategistDispatchTime() { tickState.lastLineStrategistDispatchTime = 0; }
 
 export default {
   tickState,
@@ -108,5 +112,6 @@ export default {
   _resetLastGoalEvalTime,
   _resetLastZombieSweepTime,
   _resetLastPipelinePatrolTime,
-  _resetLastPausedRequeuTime
+  _resetLastPausedRequeuTime,
+  _resetLastLineStrategistDispatchTime
 };

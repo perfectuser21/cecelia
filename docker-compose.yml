@@ -84,6 +84,8 @@ services:
       - CECELIA_TICK_INTERVAL_MS=${CECELIA_TICK_INTERVAL_MS:-5000}
       - DISPATCH_TIMEOUT_MINUTES=${DISPATCH_TIMEOUT_MINUTES:-60}
       - FEISHU_BOT_WEBHOOK=${FEISHU_BOT_WEBHOOK:-}
+      # Bark 告警推送 token（source ~/.credentials/bark.env 后由宿主 shell 展开）
+      - BARK_TOKEN=${BARK_TOKEN:-}
       - CECELIA_RUN_PATH=/Users/administrator/perfect21/cecelia/packages/brain/scripts/cecelia-run.sh
       - HOST_HOME=/Users/administrator
       - REPO_ROOT=/Users/administrator/perfect21/cecelia
