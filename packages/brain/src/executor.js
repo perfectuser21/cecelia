@@ -2166,6 +2166,30 @@ ${task.description || task.title}`;
   ].join('\n');
 }
 
+function _prepareCiPatrolPrompt(task) {
+  // 容器内 headless claude -p 不展开 slash command（同 harness-report Bug B），
+  // 裸 /ci-patrol 会让巡检 agent 零 SKILL 指令即兴发挥——日报只留 stdout、notes/棘轮全丢、任务假 completed。
+  const skillContent = loadSkillContent('ci-patrol');
+  const payload = task.payload || {};
+  const paramsBlock = `## CI/CD 巡检任务
+
+BRAIN_TASK_ID: ${task.id}
+DATE: ${payload.date || ''}
+TRIGGER: ${payload.trigger || 'manual'}
+
+${task.description || task.title}`;
+
+  return [
+    '你是 ci-patrol 巡检员 session。按下面 SKILL 指令完成一次巡检。',
+    '',
+    skillContent,
+    '',
+    '---',
+    '',
+    paramsBlock,
+  ].join('\n');
+}
+
 function _prepareHarnessPlannerPrompt(task, _taskType) {
   // harness_planner task_type 已退役（retire-harness-planner PR），此函数仅 sprint_planner 调用
   const sprintDir = assertSprintDir(task.payload?.sprint_dir, '_prepareHarnessPlannerPrompt');
@@ -2277,6 +2301,7 @@ const _TASK_ROUTES = {
   research:                 _prepareResearchPrompt,
   code_review:              _prepareCodeReviewArgs,
   strategist_decision:      _prepareStrategistDecisionPrompt,
+  ci_patrol:                _prepareCiPatrolPrompt,
 };
 
 // ─── preparePrompt 主入口（dispatcher）────────────────────────────────────────
