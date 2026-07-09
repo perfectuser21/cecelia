@@ -9,11 +9,12 @@ import { describe, test, expect } from 'vitest';
 import path from 'node:path';
 import {
   harnessTaskWorktreePath,
-  harnessSubTaskWorktreePath,
   DEFAULT_BASE_REPO,
 } from '../../packages/brain/src/harness-worktree.js';
 import { shortTaskId } from '../../packages/brain/src/harness-utils.js';
-import { evaluateSubTaskNode } from '../../packages/brain/src/workflows/harness-initiative.graph.js';
+// 刀4阶段3：harness-initiative.graph.js 已物理删除（LangGraph 图路径废弃，orchestrator 硬校验
+// 后全走 skill-relay）。下方原先测 evaluateSubTaskNode（死图节点，且用例本身已全部 .skip）的
+// describe 块已删除，只保留测 harness-worktree.js 活代码 helper 的用例。
 
 describe('H8 — harnessTaskWorktreePath helper', () => {
   test('返回 <baseRepo>/.claude/worktrees/harness-v2/task-<shortTaskId>', () => {
@@ -33,52 +34,5 @@ describe('H8 — harnessTaskWorktreePath helper', () => {
     const got = harnessTaskWorktreePath(taskId, { baseRepo: '/tmp/custom-base' });
     expect(got.startsWith(DEFAULT_BASE_REPO)).toBe(true);
     expect(got.endsWith(`task-${shortTaskId(taskId)}`)).toBe(true);
-  });
-});
-
-// evaluateSubTaskNode 已在 cp-0511182214 迁移为子图节点，不再单独 export，以下测试 skip
-describe('H8 — evaluateSubTaskNode worktreePath 切到 sub-task worktree', () => {
-  function makeSpyExecutor() {
-    const calls = [];
-    const spy = async (opts) => {
-      calls.push(opts);
-      return { exit_code: 0, stdout: '{"verdict":"PASS","feedback":null}', stderr: '', timed_out: false };
-    };
-    spy.calls = calls;
-    return spy;
-  }
-
-  test.skip('worktreePath 传给 executor 的值 = harnessSubTaskWorktreePath(initiativeId, sub_task.id)（H11 修正），不是 state.worktreePath', async () => {
-    const spy = makeSpyExecutor();
-    const state = {
-      task: { id: 'task-h8-test-uuid', payload: { sprint_dir: 'sprints/test' } },
-      sub_task: { id: 'ws1' },
-      initiativeId: 'feddcf5e-e054-4ee5-9a9d-c4a19418d30d',
-      worktreePath: '/initiative/main/path',
-      task_loop_index: 0,
-      taskPlan: { journey_type: 'autonomous' },
-      githubToken: 'ghs_test',
-      evaluate_verdict: null,
-    };
-    // H15: mock verifyEvaluator 通过，避免默认 verifyEvaluatorWorktree 真去 stat 不存在的 worktree
-    await evaluateSubTaskNode(state, { executor: spy, verifyEvaluator: async () => undefined });
-    expect(spy.calls.length).toBe(1);
-    const passedWtPath = spy.calls[0].worktreePath;
-    expect(passedWtPath).toBe(harnessSubTaskWorktreePath(state.initiativeId, 'ws1'));
-    expect(passedWtPath).not.toBe('/initiative/main/path');
-  });
-
-  test.skip('幂等门：state.evaluate_verdict 非空时直接 return，不调 executor', async () => {
-    const spy = makeSpyExecutor();
-    const state = {
-      task: { id: 'task-h8-idem' },
-      worktreePath: '/whatever',
-      evaluate_verdict: 'PASS',
-      evaluate_feedback: 'cached',
-    };
-    const out = await evaluateSubTaskNode(state, { executor: spy });
-    expect(spy.calls.length).toBe(0);
-    expect(out.evaluate_verdict).toBe('PASS');
-    expect(out.evaluate_feedback).toBe('cached');
   });
 });
