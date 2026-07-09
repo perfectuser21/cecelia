@@ -4,15 +4,11 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 // Mock dev-task compile 避免真连 pg（vi.hoisted 防 top-level 变量 hoisting 冲突）
-const { mockCompile, mockCompileHarness } = vi.hoisted(() => ({
+const { mockCompile } = vi.hoisted(() => ({
   mockCompile: () => Promise.resolve({ invoke: () => {} }),
-  mockCompileHarness: () => Promise.resolve({ invoke: () => {} }),
 }));
 vi.mock('../dev-task.graph.js', () => ({
   compileDevTaskGraph: mockCompile,
-}));
-vi.mock('../harness-initiative.graph.js', () => ({
-  compileHarnessInitiativeGraph: mockCompileHarness,
 }));
 // Mock consciousness graph 避免真连 pg（预热调用不注册到 registry）
 vi.mock('../consciousness.graph.js', () => ({
@@ -57,24 +53,5 @@ describe('initializeWorkflows()', () => {
     _resetInitializedForTests();
     await initializeWorkflows();
     expect(listWorkflows()).toContain('dev-task');
-  });
-});
-
-describe('initializeWorkflows — harness-initiative', () => {
-  beforeEach(() => {
-    _clearRegistryForTests();
-    _resetInitializedForTests();
-  });
-
-  it('注册 harness-initiative workflow', async () => {
-    await initializeWorkflows();
-    const names = listWorkflows();
-    expect(names).toContain('harness-initiative');
-    expect(names).toContain('dev-task');
-  });
-
-  it('幂等：二次调不抛', async () => {
-    await initializeWorkflows();
-    await expect(initializeWorkflows()).resolves.toBeUndefined();
   });
 });

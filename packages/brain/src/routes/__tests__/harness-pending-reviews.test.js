@@ -9,14 +9,6 @@ vi.mock('../../db.js', () => ({ default: { query: (...a) => mockQuery(...a) } })
 vi.mock('@langchain/langgraph', () => ({
   Command: class { constructor(x) { this.x = x; } },
 }));
-vi.mock('../../workflows/harness-task.graph.js', () => ({
-  compileHarnessTaskGraph: vi.fn().mockResolvedValue({
-    stream: vi.fn().mockReturnValue((async function*() {})()),
-  }),
-}));
-vi.mock('../../harness-utils.js', () => ({
-  buildTaskThreadId: vi.fn().mockReturnValue('harness-task:i:t:fix0'),
-}));
 
 import router from '../harness-pending-reviews.js';
 
