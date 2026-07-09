@@ -30,6 +30,7 @@ function shouldFire(eventKey, { n, cooldownMs }) {
   if (_states.size >= _MAX_ENTRIES) _gc(now);
   if (_states.size >= _MAX_ENTRIES) {
     // 兜底：仍超限则删最旧（防 eventKey 基数失控撑爆内存）
+    // 注意：极端情况（条目数超上限）可能误删活跃条目，导致该 key 计数重来，接受此权衡
     const oldest = [..._states.entries()].sort((a, b) => a[1].lastAt - b[1].lastAt)[0];
     if (oldest) _states.delete(oldest[0]);
   }
