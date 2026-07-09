@@ -3375,6 +3375,7 @@ async function triggerCeceliaRun(task) {
   // 协议卫生包：spawnClaim/releaseDedupeKey 需要在外层 catch 里也可见（fail 路径要 release）
   let spawnClaim = null;
   let releaseDedupeKey = null;
+  let spawned = false; // spawn 真实发生后置 true，outer catch 不再 release（防提前打开重入窗口）
 
   try {
     // Start trace
@@ -3549,6 +3550,9 @@ async function triggerCeceliaRun(task) {
         docker: true,
         container: dockerResult.container,
       });
+      // spawn 已真实发生（容器跑过），不 release dedupe key——即使 exit_code≠0 也一样：
+      // release 会打开 120s 内重复 spawn 窗口；TTL 自然过期兜底。
+      spawned = true;
 
       // 完成后写 callback_queue（保持下游路径兼容）
       try {
@@ -3626,6 +3630,8 @@ async function triggerCeceliaRun(task) {
       checkpointId,
       bridge: true
     });
+    // spawn 已真实发生（bridge 已接单），此后即使 return 前抛异常也不 release dedupe key
+    spawned = true;
 
     console.log(`[executor] Bridge dispatched task=${task.id} checkpoint=${checkpointId}`);
 
@@ -3663,8 +3669,9 @@ async function triggerCeceliaRun(task) {
       error: err,
     });
 
-    // 协议卫生包：spawn 抛错（未确认真正起来），释放 dedupe key 让 120s 内的合法重派不被误挡
-    if (spawnClaim && !spawnClaim.degraded && releaseDedupeKey) await releaseDedupeKey('spawn', String(task.id)).catch(() => {});
+    // 协议卫生包：spawn 未真实发生时才释放 dedupe key，让 120s 内的合法重派不被误挡；
+    // spawned=true 说明进程/容器已起，release 反而打开重入窗口。
+    if (spawnClaim && !spawnClaim.degraded && releaseDedupeKey && !spawned) await releaseDedupeKey('spawn', String(task.id)).catch(() => {});
 
     return {
       success: false,
