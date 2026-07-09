@@ -48,6 +48,7 @@ skill-eval-smoke.sh
 staging-e2e-endpoint-smoke.sh
 skill-eval-report-smoke.sh
 skill-eval-formb-smoke.sh
+skill-eval-4page-smoke.sh
 warroom-line-command-smoke.sh
 compute-ssh-reachability-smoke.sh
 journey-id-entry-points-smoke.sh
