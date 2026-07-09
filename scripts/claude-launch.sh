@@ -65,7 +65,7 @@ _is_registered_worktree() {
     local phys
     git -C "$dir" rev-parse --git-dir &>/dev/null || return 1
     phys="$(cd "$dir" 2>/dev/null && pwd -P)" || return 1
-    git -C "$main_repo" worktree list --porcelain 2>/dev/null | grep -qx "worktree $phys"
+    git -C "$main_repo" worktree list --porcelain 2>/dev/null | grep -Fqx "worktree $phys"
 }
 
 # Claude Code projects key：绝对路径中 / 和 . 逐字符替换为 -（纯 bash，免 fork）
