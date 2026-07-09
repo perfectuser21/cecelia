@@ -1335,6 +1335,7 @@ function getSkillForTaskType(taskType, payload) {
     'pipeline_rescue': '/dev',       // 卡住的 pipeline 接管修复 → /dev 全流程
     'codex_test_gen': '/codex-test-gen',  // Codex 自动生成测试 → 西安 M4
     'platform_scraper': '/media-scraping', // 平台数据采集 → CN Mac mini (/media-scraping skill)
+    'strategist_decision': '/line-strategist',  // Line 军师决策（PR3674 终态钩子派发，见 line-strategist-dispatch.js）
     // 注意：harness_generate/harness_fix 等不在此处
     // 它们由 preparePrompt() 提前路由，不经过 skillMap。
     // 实际路由见 task-router.js LOCATION_MAP。
@@ -2140,6 +2141,30 @@ function _prepareHarnessReportPrompt(task, taskType) {
   return `/sprint-report\n\n${paramsBlock}`;
 }
 
+function _prepareStrategistDecisionPrompt(task) {
+  const skillContent = loadSkillContent('line-strategist');
+  const payload = task.payload || {};
+  const paramsBlock = `## Line 军师决策任务
+
+LINE_ID: ${payload.journey_id || ''}
+TRIGGER: ${payload.trigger || 'manual'}
+TRIGGER_CONTEXT: ${JSON.stringify(payload.trigger_context || {})}
+BRAIN_TASK_ID: ${task.id}
+DRY_RUN: false
+
+${task.description || task.title}`;
+
+  return [
+    '你是 line-strategist session。按下面 SKILL 指令完成一次决策。',
+    '',
+    skillContent,
+    '',
+    '---',
+    '',
+    paramsBlock,
+  ].join('\n');
+}
+
 function _prepareHarnessPlannerPrompt(task, _taskType) {
   // harness_planner task_type 已退役（retire-harness-planner PR），此函数仅 sprint_planner 调用
   const sprintDir = assertSprintDir(task.payload?.sprint_dir, '_prepareHarnessPlannerPrompt');
@@ -2250,6 +2275,7 @@ const _TASK_ROUTES = {
   audit:                    _prepareCodeReviewArgs,
   research:                 _prepareResearchPrompt,
   code_review:              _prepareCodeReviewArgs,
+  strategist_decision:      _prepareStrategistDecisionPrompt,
 };
 
 // ─── preparePrompt 主入口（dispatcher）────────────────────────────────────────
