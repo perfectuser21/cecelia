@@ -435,6 +435,9 @@ describe('selfcheck schema version', () => {
     // 地板随 migration 号推进（facts-check selfcheck_version_sync 卡：地板 <= 最高 migration）。
     // issue 14d66027 语义不变：只有代码/schema 依赖才 bump。
     // 322 = migration 322 issues.journey_id（warroom.js 全景图查询直接依赖），故推进地板到 322。
-    expect(EXPECTED_SCHEMA_VERSION).toBe('322');
+    // 323 = migration 323 initiative_runs.ability_id（harness-skill-relay.js spawn INSERT 直接依赖）；
+    // 324 = migration 324 advancement_items.notion_synced_at（pushAdvancementItems 去重查询直接依赖），
+    // 故推进地板到 324。
+    expect(EXPECTED_SCHEMA_VERSION).toBe('324');
   });
 });

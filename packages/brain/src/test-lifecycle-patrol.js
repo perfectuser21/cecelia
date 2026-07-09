@@ -76,9 +76,11 @@ export async function runTestLifecyclePatrol(db = pool, now = new Date()) {
         await raise('P2', 'test_lifecycle_orphan_feature_deleted', `孤儿 test：${row.file_path} 关联能力(feature_id=${row.feature_id})已不存在`)
           .catch(e => console.warn('[test-lifecycle-patrol] raise failed:', e.message));
 
+        // journey_id 显式传 NULL：feature 已被删除，巡检语境里无法推断其原 journey 归属，
+        // 显式列出优于隐式缺省（一眼可辨"已考虑过、确实不可推断"vs"遗漏未写"）
         await db.query(
-          `INSERT INTO issues (title, priority, status, sub_area, body, notion_synced_at)
-           VALUES ($1, 'P2', 'In progress', 'brain', $2, NULL)`,
+          `INSERT INTO issues (title, priority, status, sub_area, body, notion_synced_at, journey_id)
+           VALUES ($1, 'P2', 'In progress', 'brain', $2, NULL, NULL)`,
           [
             `孤儿 test：${row.file_path}`,
             `巡检发现 test_registry 中 ${row.file_path} 关联的 journey_features(id=${row.feature_id}) 已不存在。请确认该 test 是否仍有效；若确认无效，走 /dev 删除该 test 文件。`,
