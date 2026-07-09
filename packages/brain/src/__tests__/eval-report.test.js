@@ -16,13 +16,13 @@ const app = express(); app.use(express.json()); app.use('/api/skill-eval', route
 beforeEach(() => mockPool.query.mockReset());
 
 describe('GET /api/skill-eval/report/:task_id', () => {
-  it('有 report_data → 200 text/html 含解剖图三段', async () => {
+  it('有 report_data → 200 text/html 含6维度报告内容', async () => {
     mockPool.query.mockResolvedValueOnce({ rows: [{ report_data: fixture }] });
     const res = await request(app).get('/api/skill-eval/report/abc');
     expect(res.status).toBe(200);
     expect(res.headers['content-type']).toMatch(/text\/html/);
-    expect(res.text).toContain('输入'); expect(res.text).toContain('内核'); expect(res.text).toContain('输出');
-    expect(res.text).toContain('stroke-dasharray');
+    expect(res.text).toContain('功能地图'); expect(res.text).toContain('依赖审计'); expect(res.text).toContain('输出可验证性');
+    expect(res.text).toContain('dimcard');
   });
   it('?format=json → 原始 report-data', async () => {
     mockPool.query.mockResolvedValueOnce({ rows: [{ report_data: fixture }] });

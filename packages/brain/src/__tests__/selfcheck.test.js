@@ -172,8 +172,11 @@ describe('selfcheck', () => {
   // （列不存在则 INSERT 整句报错被吞，ability_id 落行永不生效——同类接缝）。
   // 324（advancement_items.notion_synced_at）被 notion-push-sync.js 的 pushAdvancementItems
   // 去重查询直接依赖（列不存在则 SELECT/UPDATE 整句报错被吞，去重恒不生效），故推进地板到 324。
-  it('EXPECTED_SCHEMA_VERSION should be 324 (floor, bumped for initiative_runs.ability_id + advancement_items.notion_synced_at)', () => {
-    expect(EXPECTED_SCHEMA_VERSION).toBe('324');
+  // 325（skill_evals.area/ability/wizard_*）被 skill-eval upload + worker wizard 流程直接依赖
+  // 326（skill_evals.journey_id/eval_model/eval_dimensions/version_of）被 library + worker 评估结果写入依赖
+  // 两列缺失则 INSERT/SELECT 报错被吞，向导+技能库功能完全静默失败，故推进地板到 326。
+  it('EXPECTED_SCHEMA_VERSION should be 327 (floor, bumped for skill_eval line_name fix)', () => {
+    expect(EXPECTED_SCHEMA_VERSION).toBe('327');
   });
 
   it('should pass when DB schema version is ahead of expected (>= check)', async () => {

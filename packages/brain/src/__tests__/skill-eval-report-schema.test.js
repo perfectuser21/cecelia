@@ -32,10 +32,39 @@ describe('validateReportData — 真实 fixture 回归套件', () => {
     expect(r.valid).toBe(true);
   });
 
-  it('anatomy 既无 pipeline 也无 inputs → 报错', () => {
+  it('anatomy 既无 pipeline 也无 inputs → 报错（旧格式）', () => {
     const r = validateReportData({ skill: { name: 'x' }, verdict: { level: 'pass' }, anatomy: { outputs: [] } });
     expect(r.valid).toBe(false);
-    expect(r.errors.join()).toMatch(/pipeline.*inputs|inputs.*pipeline/);
+    expect(r.errors.join()).toMatch(/pipeline.*inputs|inputs.*pipeline|dimensions/);
+  });
+
+  it('v2格式：dimensions 含全部6维度 → 合法，不需要 anatomy', () => {
+    const r = validateReportData({
+      skill: { name: 'x' },
+      verdict: { level: 'pass' },
+      dimensions: {
+        functional_map: { rows: [{ no: 1, name: 'f1', trigger: 't', inputs: 'i', outputs: 'o', dep_health: 'ok' }] },
+        dependency_audit: { items: [] },
+        logic_soundness: { rules: [], score: 'sound' },
+        output_verifiability: { items: [] },
+        redline: { hallucination_risk: 'low', hard_stops: [], gaps: [] },
+        maturity: { production_connected: false, tested_rounds: 0, score: 'prototype' },
+      },
+    });
+    expect(r.valid).toBe(true);
+    expect(r.version).toBe('v2');
+  });
+
+  it('v2格式：dimensions 缺少维度 → 报错', () => {
+    const r = validateReportData({
+      skill: { name: 'x' },
+      verdict: { level: 'pass' },
+      dimensions: {
+        functional_map: { rows: [] },
+      },
+    });
+    expect(r.valid).toBe(false);
+    expect(r.errors.some((e) => e.includes('dimensions.'))).toBe(true);
   });
 
   it('缺 skill.name 报错', () => {
