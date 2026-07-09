@@ -23,7 +23,6 @@ b21-merge-pr-auto-smoke.sh
 b22-review-required-smoke.sh
 b32-proposer-push-verify-smoke.sh
 b43-harness-pipeline-e2e-smoke.sh
-b44-harness-phase-done-smoke.sh
 b52-harness-progress-smoke.sh
 base-repo-support-smoke.sh
 brain-guidance-smoke.sh
@@ -156,5 +155,4 @@ wave2-scheduler-consciousness-smoke.sh
 wave2-tick-scheduler-smoke.sh
 ws1-initiative-runs-journey-id-smoke.sh
 ws3-initiative-run-events-smoke.sh
-ws3-ire-module-smoke.sh
 zombie-reaper-smoke.sh
