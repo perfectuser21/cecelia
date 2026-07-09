@@ -498,3 +498,67 @@ EOF
 ```
 
 - [ ] **Step 3: 交给 engine-ship + engine-pr-watchdog 走完剩余流程**（合并后自动回写 handoff）
+
+---
+
+## Task 3.5（补充任务）：清理 41 个漏扫的死 smoke/混合 smoke/集成测试
+
+> 背景：Task 4 首次执行时 BLOCKED——原计划遗漏了对 `.sh` smoke 脚本的系统扫描，发现41个文件仍真实引用两个待删图文件。已逐一分类，见下。此外发现两处真实生产功能缺口（sprint失败报告生成 + okr_initiatives.done同步，均只有死图reportNode在做，早已随orchestrator硬校验失效），已登记 Notion/Brain issue `6de4fd22-7615-4882-ab35-e95f27d6b12b`（P2），不在本任务修复范围。
+
+### A类：25个直接删除
+
+```
+packages/brain/scripts/smoke/harness-pre-merge-gate-smoke.sh
+packages/brain/scripts/smoke/b14-evaluator-pr-branch-smoke.sh
+packages/brain/scripts/smoke/b18-await-callback-routing-smoke.sh
+packages/brain/scripts/smoke/b19-fix-dispatch-keep-pr-url-smoke.sh
+packages/brain/scripts/smoke/b21-merge-pr-auto-smoke.sh
+packages/brain/scripts/smoke/b22-review-required-smoke.sh
+packages/brain/scripts/smoke/b32-proposer-push-verify-smoke.sh
+packages/brain/scripts/smoke/b43-harness-pipeline-e2e-smoke.sh
+packages/brain/scripts/smoke/base-repo-support-smoke.sh
+packages/brain/scripts/smoke/subtask-payload-smoke.sh
+packages/brain/scripts/smoke/harness-task-spawn-base-repo-smoke.sh
+packages/brain/scripts/smoke/harness-task-spawn-interrupt-smoke.sh
+packages/brain/scripts/smoke/spawn-credentials-smoke.sh
+packages/brain/scripts/smoke/ganloop-checkpointer-smoke.sh
+packages/brain/scripts/smoke/harness-evaluate-smoke.sh
+packages/brain/scripts/smoke/harness-planner-async-smoke.sh
+packages/brain/scripts/smoke/harness-planner-run-history-smoke.sh
+packages/brain/scripts/smoke/dev-visibility-prd-inject-smoke.sh
+packages/brain/scripts/smoke/harness-protocol-v2-smoke.sh
+packages/brain/scripts/smoke/harness-task-plan-smoke.sh
+packages/brain/scripts/smoke/infer-task-plan-fetch-smoke.sh
+packages/brain/scripts/smoke/idempotency-guards-smoke.sh
+packages/brain/scripts/audit/idempotency-check.sh
+packages/brain/scripts/smoke/reportnode-fields-smoke.sh
+packages/brain/scripts/smoke/reportnode-task-writeback-smoke.sh
+packages/brain/src/__tests__/integration/c8a-checkpoint-resume.integration.test.js
+```
+
+（`b43-harness-pipeline-e2e-smoke.sh` 是范围修正——原计划里只打算改一条断言，调研后确认整个脚本都在测死图导出，改为整删）
+
+### B类：11个保留脚本，删/改死图相关部分
+
+| 文件 | 处理方式 |
+|---|---|
+| `staging-e2e-smoke.sh` | 删对 harness-initiative.graph.js(reportNode派生)/harness-task.graph.js(_spawnStagingE2eTask幂等/base_repo) 的死图断言；改为断言 `routes/harness.js` 的 `POST /staging-e2e` 端点的 `WHERE NOT EXISTS ... payload->>'pr_url'` 幂等去重逻辑存在 |
+| `staging-promote-smoke.sh` | 删 TASK_GRAPH 对 `_spawnStagingE2eTask` payload 带 base_repo 的断言；改为断言 `routes/harness.js` `POST /staging-e2e` 请求体解析 `base_repo` 字段并写入 payload |
+| `staging-e2e-permerge-smoke.sh` | 删 INIT_GRAPH/TASK_GRAPH 两段死图断言；改为断言同上 `POST /staging-e2e` 的 pr_url 去重逻辑 |
+| `review-gate-preview-smoke.sh` | 6条断言全部改 GRAPH 变量指向 `staging-e2e-runner.js`（活代码，preview-manager 真实调用者），断言含 preview-manager import + allocatePort + spawnReviewPreview + preview_url 传递 |
+| `harness-report-mjs-smoke.sh` | 删最后一段对死图 reportNode 含 spawnHarnessReport 的断言，不需要找替代（SUCCESS路径已由其他脚本覆盖，FAIL路径缺口已登记issue，不在本任务修复） |
+| `harness-xian-spawn-smoke.sh` | 删第一段（死图 resolveExecutor 路由）；保留第二段（executor.js 不再透传 HARNESS_XIAN_* 死开关，活代码） |
+| `ws1-initiative-runs-journey-id-smoke.sh` | Case1/2/4保留（活代码）；Case3 GRAPH_FILE 改指向 `packages/brain/src/harness-skill-relay.js`（该文件有独立的 `INSERT INTO initiative_runs` 语句，skill-relay架构下的真实生产者） |
+| `okr-initiative-mirror-smoke.sh` | helper导出测试和DB不变量测试独立可留，删除任何对两个死图的直接引用（若无实质死图断言只是注释提及则不改） |
+| `harness-session-bridge-smoke.sh` | 只删 C4（测死图 InitiativeState 的 planner_session 字段）这一项；C1(cecelia-run.sh)/C2/C3(reconnectOrSpawn，孤立函数但与本次删图无关)保留；**C5（测 harness-gan.graph.js）本次不动**——harness-gan.graph.js 不在本次删除范围内 |
+| `harness-reporter-smoke.sh` | 删除对死图 reportNode（FAIL路径 gan_rounds/gan_cost_usd 流向 buildHarnessReportInsert）的断言。真实功能缺口已登记issue `6de4fd22`，本任务只删测试，不重建活代码等价物 |
+| `report-postpromote-smoke.sh` | 删除"仅!=='PASS'才派失败报告"这半条断言（功能缺口已登记issue，不重建）；"生命周期闭合"那半条断言改为指向 `harness-relay-watchdog.js`（已查证其对completed/failed/PR MERGED三种情况都会UPDATE initiative_runs SET phase，是活等价物） |
+
+### Task 3.5 执行步骤
+
+- [ ] **Step 1**：git rm 上述25个A类文件（含1个integration test）
+- [ ] **Step 2**：逐个编辑11个B类文件，按上表处理方式删/改
+- [ ] **Step 3**：`bash -n` 语法检查所有改动的 .sh 文件；`node --check` 检查 .test.js（已删除，跳过）
+- [ ] **Step 4**：能本地跑的 smoke 脚本抽样跑几个确认不因文件不存在而崩（大部分smoke需要真实Brain+DB环境，跑不了的记录说明，不强求）
+- [ ] **Step 5**：全仓库 grep 复核 `harness-task\.graph\.js|harness-initiative\.graph\.js` 只剩图文件自身 + Task4即将删除的运行时import
+- [ ] **Step 6**：commit
