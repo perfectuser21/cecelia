@@ -71,4 +71,11 @@ describe('dispatchStrategistDecisions', () => {
 
     expect(result).toEqual({ scanned: 2, dispatched: 1, skipped_duplicate: 0, marked: 2 });
   });
+
+  it('excludes strategist_decision tasks themselves from the scan to prevent a self-perpetuating loop', async () => {
+    mockPool.query.mockResolvedValueOnce({ rows: [] }); // 空扫描结果即可验证 SQL 文本
+    await dispatchStrategistDecisions(mockPool);
+    const [scanSql] = mockPool.query.mock.calls[0];
+    expect(scanSql).toMatch(/task_type\s*<>\s*'strategist_decision'/);
+  });
 });
