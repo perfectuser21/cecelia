@@ -193,12 +193,14 @@ router.post(
         ]
       );
 
-      // 建 skill_evals 行
+      // 建 skill_evals 行（wizard_status 不设置，让 worker 走向导生成流程）
+      const { line_name } = req.body;
       await pool.query(
         `INSERT INTO skill_evals
-           (task_id, zip_hash, skill_name, source_platform, submitter, journey_id, area, ability,
-            status, wizard_status, staging_path, created_at, updated_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'pending', 'generating', $9, now(), now())`,
+           (task_id, zip_hash, skill_name, source_platform, submitter, journey_id,
+            area, line_name, ability,
+            status, staging_path, created_at, updated_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'pending', $10, now(), now())`,
         [
           taskId,
           zipHash,
@@ -207,6 +209,7 @@ router.post(
           submitter || null,
           journey_id || null,
           area || null,
+          line_name || null,
           ability || null,
           stagingPath,
         ]
@@ -241,6 +244,8 @@ router.get('/status/:task_id', async (req, res) => {
       `SELECT
          se.task_id::text,
          se.status,
+         se.wizard_status,
+         se.wizard_questions,
          se.report_url,
          se.failure_reason,
          se.queue_position,
@@ -271,6 +276,8 @@ router.get('/status/:task_id', async (req, res) => {
     return res.json({
       task_id: row.task_id,
       status: row.status,
+      wizard_status: row.wizard_status || null,
+      wizard_questions: row.wizard_status === 'ready' ? row.wizard_questions : null,
       queue_position: queuePosition,
       report_url: row.status === 'completed' ? row.report_url : null,
       failure_reason: row.status === 'failed' ? row.failure_reason : null,
