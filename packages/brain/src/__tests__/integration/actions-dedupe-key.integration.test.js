@@ -4,8 +4,8 @@ let pool, createTask;
 const TITLE = 'test-dedupe-key-task';
 
 beforeAll(async () => {
-  pool = (await import('../db.js')).default;
-  ({ createTask } = await import('../actions.js'));
+  pool = (await import('../../db.js')).default;
+  ({ createTask } = await import('../../actions.js'));
   await pool.query(`DELETE FROM tasks WHERE title LIKE $1`, [`${TITLE}%`]);
   await pool.query(`DELETE FROM side_effect_dedupe WHERE kind = 'create_task' AND dedupe_key LIKE 'test-dk-%'`);
 });
