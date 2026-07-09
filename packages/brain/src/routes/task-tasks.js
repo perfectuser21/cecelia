@@ -56,6 +56,7 @@ router.post('/', async (req, res) => {
       domain: domainInput = null,
       okr_initiative_id = null,
       ability_id = null,
+      journey_id = null,
     } = req.body;
 
     if (!title || title.trim() === '') {
@@ -118,9 +119,16 @@ router.post('/', async (req, res) => {
     // 未提供 domain 时自动检测
     const domain = domainInput ?? detectDomain(`${title} ${description ?? ''}`).domain;
 
+    // 顶层 journey_id 参数合并进 payload，兼容旧 payload.journey_id 写法
+    const effectivePayload = payload ?? metadata ?? {};
+    if (journey_id && !effectivePayload.journey_id) {
+      effectivePayload.journey_id = journey_id;
+    }
+    const serializedPayload = Object.keys(effectivePayload).length > 0 ? JSON.stringify(effectivePayload) : null;
+
     // B51: harness_initiative 任务缺 journey_id 会导致 initiative_runs + Notion 游离，提前 warn
     const warnings = [];
-    if (task_type === 'harness_initiative' && !(payload?.journey_id)) {
+    if (task_type === 'harness_initiative' && !(effectivePayload.journey_id)) {
       warnings.push('journey_id missing in payload — initiative_run.journey_id will be null, Notion Project will be orphaned');
     }
 
@@ -141,7 +149,7 @@ router.post('/', async (req, res) => {
         area_id,
         goal_id,
         location,
-        (payload ?? metadata) ? JSON.stringify(payload ?? metadata) : null,
+        serializedPayload,
         trigger_source,
         domain,
         okr_initiative_id,

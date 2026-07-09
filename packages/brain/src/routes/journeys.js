@@ -200,16 +200,26 @@ router.patch('/journey_features/:id', async (req, res) => {
 // POST /api/brain/issues
 router.post('/issues', async (req, res) => {
   try {
-    const { title, priority, status, sub_area, body: bodyText, pr_url } = req.body;
+    const { title, priority, status, sub_area, body: bodyText, pr_url, journey_id = null } = req.body;
     if (!title) return res.status(400).json({ error: 'title is required' });
     if (priority && !VALID_PRIORITY.includes(priority)) {
       return res.status(400).json({ error: `priority must be one of: ${VALID_PRIORITY.join(',')}` });
     }
 
+    // journey_id 可传 UUID 或 notion_id，统一解析为 UUID
+    let resolvedJourneyId = null;
+    if (journey_id) {
+      const jr = await pool.query(
+        'SELECT id FROM journeys WHERE id::text=$1 OR notion_id=$1 LIMIT 1',
+        [journey_id]
+      );
+      resolvedJourneyId = jr.rows[0]?.id ?? null;
+    }
+
     const { rows } = await pool.query(
       `INSERT INTO issues
-         (title, priority, status, sub_area, body, pr_url, notion_synced_at)
-       VALUES ($1,$2,$3,$4,$5,$6,NULL)
+         (title, priority, status, sub_area, body, pr_url, journey_id, notion_synced_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,NULL)
        RETURNING *`,
       [
         title,
@@ -218,6 +228,7 @@ router.post('/issues', async (req, res) => {
         sub_area || null,
         bodyText || null,
         pr_url || null,
+        resolvedJourneyId,
       ]
     );
     res.status(201).json(rows[0]);

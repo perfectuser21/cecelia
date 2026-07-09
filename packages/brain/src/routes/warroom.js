@@ -468,17 +468,17 @@ router.get('/line/:id/command', async (req, res) => {
       activeTasks = atRows;
     } catch { /* tasks 查询失败优雅降级 */ }
 
-    // 6. open issues（该 journey 关联）
+    // 6. open issues（该 journey 关联，查 journey_id 列）
     let openIssues = [];
     try {
       const { rows: issueRows } = await pool.query(
         `SELECT id, title, priority, status, created_at
          FROM issues
-         WHERE payload->>'journey_id' = ANY($1)
+         WHERE journey_id = $1
            AND status NOT IN ('closed', 'resolved')
          ORDER BY created_at DESC
          LIMIT 20`,
-        [keys]
+        [journey.id]
       );
       openIssues = issueRows;
     } catch { /* issues 表缺失优雅降级 */ }
