@@ -1,0 +1,52 @@
+{
+  "skill_name": "dev",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "抖音文章发布一直报错 TypeError: Cannot read properties of undefined (reading 'cookie')，从昨天开始就这样了，之前是好的",
+      "expected_output": "查 10 张 Brain DB 表 → 判断为 Bug → 生成 Bug PrepPRD（含症状/根因假设/修法/regression test 计划）→ 等用户确认 → 写 decision(category=bug-fix) → 调用 systematic-debugging skill",
+      "files": [],
+      "assertions": [
+        {"name": "queries-brain-db", "description": "输出中包含 Brain DB 查询（localhost:5221/api/brain 或说明 API 不可用）"},
+        {"name": "classifies-as-bug", "description": "明确判断为 Bug 路径（出现 'Bug PrepPRD' 或 '路径 A' 或 'Bug'）"},
+        {"name": "preprd-has-symptom", "description": "Bug PrepPRD 包含'症状'段"},
+        {"name": "preprd-has-root-cause", "description": "Bug PrepPRD 包含'根因假设'段"},
+        {"name": "preprd-has-regression-test", "description": "Bug PrepPRD 包含'Regression Test'段"},
+        {"name": "routes-to-systematic-debugging", "description": "输出提到路由到 systematic-debugging"},
+        {"name": "writes-decision-bug-fix", "description": "输出包含 POST decisions 且 category=bug-fix"}
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "给 journey_features 表加个 priority 字段，P0/P1/P2，默认 P1",
+      "expected_output": "查 10 张 Brain DB 表 → 判断为小改动 → 生成小改动 PrepPRD（含改什么/为什么/影响范围/验收）→ 等用户确认 → 写 decision(category=small-change) → 调用 engine-worktree skill",
+      "files": [],
+      "assertions": [
+        {"name": "queries-brain-db", "description": "输出中包含 Brain DB 查询"},
+        {"name": "classifies-as-small-change", "description": "判断为小改动路径（出现'小改动 PrepPRD'）"},
+        {"name": "preprd-format-correct", "description": "PrepPRD 包含'改什么'和'影响范围'段"},
+        {"name": "preprd-mentions-migration", "description": "PrepPRD 提到 migration（加字段必须有 DB migration）"},
+        {"name": "routes-to-engine-worktree", "description": "输出提到路由到 engine-worktree"},
+        {"name": "writes-decision-small-change", "description": "输出包含 POST decisions 且 category=small-change"}
+      ]
+    },
+    {
+      "id": 3,
+      "prompt": "我想做快手内容发布功能，现在只有抖音这边有，快手完全没有，需要能发图文和视频",
+      "expected_output": "查 10 张 Brain DB 表（特别是 journeys/journey_steps/journey_features）→ 判断为大功能 → 多角色检测 → 语义查重 → 生成大功能 PrepPRD → 等用户确认 → 写 decision(category=feature) → Harness 点火",
+      "files": [],
+      "assertions": [
+        {"name": "queries-brain-db", "description": "包含 journeys 或 journey_features 查询"},
+        {"name": "classifies-as-big-feature", "description": "判断为大功能路径（出现 PrepPRD 大功能格式）"},
+        {"name": "multi-role-check-done", "description": "做了多角色检测（提到'角色'或'单一用户'或通过检测）"},
+        {"name": "semantic-dedup-done", "description": "做了语义查重（提到快手 vs 抖音的对比，决定新建步骤）"},
+        {"name": "preprd-has-journey-status", "description": "PrepPRD 包含 Journey 当前状态段"},
+        {"name": "preprd-has-features-list", "description": "PrepPRD 包含涉及的脚本(Feature)列表"},
+        {"name": "preprd-has-preconditions", "description": "PrepPRD 包含执行前提条件段"},
+        {"name": "base-repo-is-github-url", "description": "Harness 点火参数中 base_repo 使用 GitHub URL（而非本地路径）"},
+        {"name": "fires-harness", "description": "输出包含 harness_initiative"},
+        {"name": "writes-decision-feature", "description": "输出包含 POST decisions 且 category=feature"}
+      ]
+    }
+  ]
+}

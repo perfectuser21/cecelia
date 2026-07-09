@@ -126,13 +126,20 @@ features:
 # Changelog（细粒度改动历史）
 # ============================================================================
 changelog:
+  - version: "19.4.4"
+    date: "2026-07-09"
+    change: '[CONFIG] pre-commit hook zenithjoy-skills 豁免收紧 + 测试接入CI'
+    description: "PR #3666 final review 的两个 nice-to-have：① zenithjoy-skills 判断从子串匹配收紧为 basename 锚定正则（`/zenithjoy-skills(\\.git)?/?$`），避免误豁免 zenithjoy-skills-v2 等同前缀仓库；② 测试文件从 tests/hooks/test-pre-commit.sh 迁移到 packages/engine/tests/integration/pre-commit.test.sh，被既有 engine-tests-shell job 的 glob 自动捡起，成为 ci-passed 必过项（不新增 workflow，不改 ci.yml 的 needs 数组）。"
+    files:
+      - packages/engine/hooks/pre-commit
+      - packages/engine/tests/integration/pre-commit.test.sh
   - version: "19.4.3"
     date: "2026-07-09"
     change: '[CONFIG] pre-commit hook 对 zenithjoy-skills 仓库例外放行'
     description: "全局 pre-commit hook（通过 ~/.git-hooks 对所有仓库生效）新增仓库识别：git remote origin 匹配 zenithjoy-skills 时直接 exit 0 放行，跳过 cp-*分支名+.dev-mode 强制检查。zenithjoy-skills 是纯 skill SSOT 仓库，按既有决策改 skill 走 skill-creator→PR 不走 /dev（branch-protect.sh 已有同类先例但本 hook 之前未跟进迁移），导致该仓库任何提交被误拦。"
     files:
       - packages/engine/hooks/pre-commit
-      - tests/hooks/test-pre-commit.sh
+      - packages/engine/tests/integration/pre-commit.test.sh
   - version: "19.2.4"
     date: 2026-06-03
     change: '[CONFIG] harness-report SKILL Step 6 查 Brain API 写真实 harness-report.md/learning.md'
