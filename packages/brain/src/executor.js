@@ -33,7 +33,6 @@ import { traceStep, LAYER, STATUS, EXECUTOR_HOSTS } from './trace.js';
 import { getAccountUsage } from './account-usage.js';
 import { writeDockerCallback, resolveResourceTier, isDockerAvailable } from './docker-executor.js';
 import { loadSkillContent, assertSprintDir } from './harness-shared.js';
-import { writeInitiativeRunEvent } from './events/initiativeRunEvents.js';
 import { spawn as spawnDocker } from './spawn/index.js';
 import { REVIEW_TASK_TYPES } from './lib/review-task-types.js';
 import {
@@ -2883,7 +2882,7 @@ async function _driveHarnessInitiative(task, opts = {}) {
   // N4 orchestrator 硬校验（主理人 2026-07-05 拍板，见 memory harness-skill-relay-pivot）：
   // skill-relay 已验证优于 LangGraph 图（3/3~4/4 merged vs 旧图 30 天基线 21.7%），
   // 不再允许 orchestrator 缺省时隐式降级到 LangGraph 图——必须显式声明 skill-relay，
-  // 否则直接 terminal failed。LangGraph 图代码本次保留（观察期后再物理删除）。
+  // 否则直接 terminal failed。LangGraph 图调用死代码已在刀4阶段3物理删除。
   if (task?.payload?.orchestrator !== 'skill-relay') {
     await markInitiativeTerminalFailed(
       dbPool,
