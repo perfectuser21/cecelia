@@ -49,3 +49,102 @@ export async function getActiveJourneys(pool) {
   );
   return rows.map((r) => ({ id: r.id, name: r.name }));
 }
+
+/**
+ * 单段查询容错包装：失败返回空数组，不抛出、不阻断其他段。
+ * @param {Promise<{rows: Array}>} queryPromise
+ * @param {string} label
+ * @returns {Promise<Array>}
+ */
+async function safeRows(queryPromise, label) {
+  try {
+    const { rows } = await queryPromise;
+    return rows;
+  } catch (err) {
+    console.warn(`[line-dreaming] ${label} 查询失败（该段留空）:`, err.message);
+    return [];
+  }
+}
+
+/**
+ * 拉一条 line 的 24h 六段切片：decisions/推进项/issues/runs/learnings/军师留痕。
+ * @param {import('pg').Pool} pool
+ * @param {string} journeyId
+ * @param {string} journeyName
+ * @returns {Promise<{decisions: Array, advancementItems: Array, issues: Array, runs: Array, learnings: Array, strategistNotes: Array}>}
+ */
+export async function buildLineDreamData(pool, journeyId, journeyName) {
+  const [decisions, advancementItems, issues, runs, learnings, strategistNotes] = await Promise.all([
+    safeRows(
+      pool.query(
+        `SELECT d.id, d.topic, d.decision, d.created_at
+         FROM decisions d
+         JOIN journey_features jf ON d.target_id = jf.id
+         WHERE d.target_type = 'journey_feature'
+           AND jf.journey_id = $1
+           AND d.created_at >= NOW() - INTERVAL '24 hours'
+         ORDER BY d.created_at DESC`,
+        [journeyId]
+      ),
+      'decisions'
+    ),
+    safeRows(
+      pool.query(
+        `SELECT id, title, status, priority, updated_at
+         FROM advancement_items
+         WHERE journey_id = $1
+           AND updated_at >= NOW() - INTERVAL '24 hours'
+         ORDER BY updated_at DESC`,
+        [journeyId]
+      ),
+      'advancement_items'
+    ),
+    safeRows(
+      pool.query(
+        `SELECT id, title, priority, status, updated_at
+         FROM issues
+         WHERE journey_id = $1
+           AND updated_at >= NOW() - INTERVAL '24 hours'
+         ORDER BY updated_at DESC`,
+        [journeyId]
+      ),
+      'issues'
+    ),
+    safeRows(
+      pool.query(
+        `SELECT id, phase, failure_reason, created_at
+         FROM initiative_runs
+         WHERE journey_id = $1
+           AND created_at >= NOW() - INTERVAL '24 hours'
+         ORDER BY created_at DESC`,
+        [journeyId]
+      ),
+      'initiative_runs'
+    ),
+    safeRows(
+      pool.query(
+        `SELECT l.id, l.content, l.created_at
+         FROM learnings l
+         JOIN tasks t ON l.task_id = t.id
+         WHERE t.payload->>'journey_id' = $1
+           AND l.created_at >= NOW() - INTERVAL '24 hours'
+         ORDER BY l.created_at DESC`,
+        [journeyId]
+      ),
+      'learnings'
+    ),
+    safeRows(
+      pool.query(
+        `SELECT id, title, content, created_at
+         FROM notes
+         WHERE title LIKE $1
+           AND created_at >= NOW() - INTERVAL '24 hours'
+         ORDER BY created_at DESC`,
+        [`军师决策[${journeyName}]%`]
+      ),
+      'strategist_notes'
+    ),
+  ]);
+
+  return { decisions, advancementItems, issues, runs, learnings, strategistNotes };
+}
