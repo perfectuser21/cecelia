@@ -55,11 +55,25 @@ export async function fetchTodayFailedTasks(pool, today) {
 }
 
 /**
+ * 拉 20h 内所有 line_ledger 摘要（L1 dreaming job 产出），供日报"各线动态"段落使用。
+ * @param {import('pg').Pool} pool
+ * @returns {Promise<Array<{title: string, content: string}>>}
+ */
+export async function fetchLineLedgersSummary(pool) {
+  const { rows } = await pool.query(
+    `SELECT title, content FROM design_docs
+     WHERE type = 'line_ledger' AND created_at >= NOW() - INTERVAL '20 hours'
+     ORDER BY title`
+  );
+  return rows;
+}
+
+/**
  * 生成日报内容
- * @param {{ today: string, prs: number, decisions: number, completedTasks: number, krProgress: Array<{title: string, progress: number}>, failedTasks: number }} stats
+ * @param {{ today: string, prs: number, decisions: number, completedTasks: number, krProgress: Array<{title: string, progress: number}>, failedTasks: number, lineLedgers: Array<{title: string, content: string}> }} stats
  * @returns {string}
  */
-export function buildDiaryContent({ today, prs, decisions, completedTasks, krProgress = [], failedTasks = 0 }) {
+export function buildDiaryContent({ today, prs, decisions, completedTasks, krProgress = [], failedTasks = 0, lineLedgers = [] }) {
   const lines = [
     `# ${today} 管家日报`,
     '',
@@ -82,6 +96,20 @@ export function buildDiaryContent({ today, prs, decisions, completedTasks, krPro
     for (const kr of krProgress) {
       const bar = buildProgressBar(kr.progress);
       lines.push(`- ${kr.title}：${bar} ${kr.progress}%`);
+    }
+  }
+  lines.push('');
+
+  // ── 各线动态 ────────────────────────────────────────────────────────────
+  lines.push('## 各线动态');
+  lines.push('');
+  if (lineLedgers.length === 0) {
+    lines.push('暂无各线动态');
+  } else {
+    for (const ledger of lineLedgers) {
+      lines.push(`### ${ledger.title}`);
+      lines.push(ledger.content);
+      lines.push('');
     }
   }
   lines.push('');
@@ -131,7 +159,7 @@ export async function generateDailyDiaryIfNeeded(pool) {
     if (existing.length > 0) return;
 
     // 并发查询所有数据
-    const [prsResult, decisionsResult, tasksResult, krProgress, failedTasks] = await Promise.all([
+    const [prsResult, decisionsResult, tasksResult, krProgress, failedTasks, lineLedgers] = await Promise.all([
       pool.query(
         `SELECT count(*) FROM dev_records WHERE merged_at::date = $1`,
         [today]
@@ -146,6 +174,7 @@ export async function generateDailyDiaryIfNeeded(pool) {
       ),
       fetchKRProgress(pool),
       fetchTodayFailedTasks(pool, today),
+      fetchLineLedgersSummary(pool),
     ]);
 
     const stats = {
@@ -155,6 +184,7 @@ export async function generateDailyDiaryIfNeeded(pool) {
       completedTasks: parseInt(tasksResult.rows[0].count),
       krProgress,
       failedTasks,
+      lineLedgers,
     };
 
     const content = buildDiaryContent(stats);
