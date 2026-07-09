@@ -398,12 +398,22 @@ async function stopDispatch() {
 async function cancelPendingTasks(keepCritical) {
   const client = await pool.connect();
   try {
+    // 2026-07-09 修复(Issue 9db1da44)：不再 SET status = 'canceled'（终态，
+    // 一旦误伤无法恢复），改为可逆的 'paused'，并加 trigger_source 白名单
+    // 过滤（只碰系统自产任务）+ error_message/status_history 留痕。
+    // jsonb_build_object 里的 'status' 引用的是 UPDATE 前的旧值（Postgres
+    // SET 子句求值语义），天然拿到正确的 from。
     let query = `
       UPDATE tasks
-      SET status = 'canceled',
+      SET status = 'paused',
+          error_message = $3,
+          status_history = status_history || jsonb_build_array(
+            jsonb_build_object('from', status, 'to', 'paused', 'changed_at', NOW(), 'source', $3)
+          ),
           updated_at = NOW()
       WHERE status IN ('queued', 'pending')
         AND NOT (task_type = ANY($1))
+        AND trigger_source = ANY($2)
     `;
 
     if (keepCritical) {
@@ -412,8 +422,8 @@ async function cancelPendingTasks(keepCritical) {
 
     query += ` RETURNING id`;
 
-    const result = await client.query(query, [CANCEL_EXEMPT_TYPES]);
-    console.log(`[Escalation] Canceled ${result.rowCount} pending tasks`);
+    const result = await client.query(query, [CANCEL_EXEMPT_TYPES, SYSTEM_AUTO_TRIGGER_SOURCES, 'escalation_emergency_brake']);
+    console.log(`[Escalation] Paused (was: canceled) ${result.rowCount} pending tasks`);
     return result.rowCount;
   } finally {
     client.release();
