@@ -7,7 +7,7 @@ import { isTransientClass } from '../lib/retry-policy.js';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const src = (p) => readFileSync(join(__dirname, '..', p), 'utf8');
 
-describe('下游瞬态判定同步（协议卫生包：防 5xx/timeout 被误计失败误隔离）', () => {
+describe('transient-class-sync：下游瞬态判定同步，被测模块 lib/retry-policy.js isTransientClass（防 5xx/timeout 被误计失败误隔离）', () => {
   it('isTransientClass 覆盖 callback-processor 语义（含 auth）', () => {
     expect(isTransientClass('server_error')).toBe(true);
     expect(isTransientClass('timeout')).toBe(true);
