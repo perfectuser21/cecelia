@@ -3372,6 +3372,10 @@ async function triggerCeceliaRun(task) {
     },
   });
 
+  // 协议卫生包：spawnClaim/releaseDedupeKey 需要在外层 catch 里也可见（fail 路径要 release）
+  let spawnClaim = null;
+  let releaseDedupeKey = null;
+
   try {
     // Start trace
     await trace.start();
@@ -3395,6 +3399,18 @@ async function triggerCeceliaRun(task) {
     // Clean stale entry if process is dead
     if (existing) {
       activeProcesses.delete(task.id);
+    }
+
+    // 协议卫生包：DB 级 spawn 幂等（跨进程/跨重启防 tick 重入双 spawn；120s 短 TTL）
+    // 内存 activeProcesses 检查覆盖同进程场景；本检查覆盖蓝绿窗口期双 Brain / 重启后状态丢失场景。
+    // ⚠️ 不碰 harness-callback.js 的 containerId claim（那是 callback 重入幂等，语义不同）。
+    const dedupeMod = await import('./lib/dedupe.js');
+    releaseDedupeKey = dedupeMod.releaseDedupeKey;
+    spawnClaim = await dedupeMod.claimDedupeKey('spawn', String(task.id), 120);
+    if (!spawnClaim.claimed) {
+      console.log(`[executor] Task ${task.id} spawn dedupe hit (DB), skipping`);
+      await trace.end({ status: STATUS.FAILED, error: new Error('Spawn deduplicated') });
+      return { success: false, taskId: task.id, reason: 'spawn_deduplicated' };
     }
 
     // === RESOURCE CHECK ===
@@ -3592,6 +3608,8 @@ async function triggerCeceliaRun(task) {
 
     if (!result.ok) {
       console.log(`[executor] Bridge rejected: ${result.error}`);
+      // 协议卫生包：spawn 没起来（bridge 拒绝），释放 dedupe key 让 120s 内的合法重派不被误挡
+      if (spawnClaim && !spawnClaim.degraded) await releaseDedupeKey('spawn', String(task.id)).catch(() => {});
       return {
         success: false,
         taskId: task.id,
@@ -3644,6 +3662,9 @@ async function triggerCeceliaRun(task) {
       status: STATUS.FAILED,
       error: err,
     });
+
+    // 协议卫生包：spawn 抛错（未确认真正起来），释放 dedupe key 让 120s 内的合法重派不被误挡
+    if (spawnClaim && !spawnClaim.degraded && releaseDedupeKey) await releaseDedupeKey('spawn', String(task.id)).catch(() => {});
 
     return {
       success: false,
