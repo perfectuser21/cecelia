@@ -83,6 +83,7 @@ run_test_with_origin() {
 
 run_test_with_origin "zenithjoy-skills 仓库 main 分支直接放行" 0 "main" "https://github.com/perfectuser21/zenithjoy-skills.git"
 run_test_with_origin "非 zenithjoy-skills 仓库 main 分支仍被拒绝（对照组，防误伤）" 1 "main" "https://github.com/perfectuser21/cecelia.git"
+run_test_with_origin "zenithjoy-skills-v2 仓库不应被误豁免（收紧匹配）" 1 "main" "https://github.com/perfectuser21/zenithjoy-skills-v2.git"
 
 echo ""
 echo "结果: $PASS 通过, $FAIL 失败"
