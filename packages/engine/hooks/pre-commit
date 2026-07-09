@@ -16,7 +16,7 @@ fi
 # zenithjoy-skills 是纯 skill SSOT 仓库，改 skill 走 skill-creator→PR，不走 /dev
 # （decision: pre-commit hook 对 zenithjoy-skills 仓库例外放行）
 ORIGIN_URL=$(git remote get-url origin 2>/dev/null || echo "")
-if [[ "$ORIGIN_URL" == *"zenithjoy-skills"* ]]; then
+if [[ "$ORIGIN_URL" =~ /zenithjoy-skills(\.git)?/?$ ]]; then
     exit 0
 fi
 
