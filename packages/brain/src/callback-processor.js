@@ -281,7 +281,8 @@ export async function processExecutionCallback(data, pool) {
         ? (result.result || result.error || result.stderr || JSON.stringify(result))
         : String(result || status);
       const classification = classifyFailure(errorMsg, { payload: taskPayload });
-      const isTransientApiError = ['rate_limit', 'network', 'auth'].includes(classification.class);
+      const { isTransientClass } = await import('./lib/retry-policy.js');
+      const isTransientApiError = isTransientClass(classification.class);
       const isBillingCap = classification.class === 'billing_cap';
       // exit=137 = SIGKILL，通常是 cgroup OOM。资源配置问题，首次重试即可，不计入失败次数。
       const isOomKilled = exit_code === 137;
@@ -290,7 +291,7 @@ export async function processExecutionCallback(data, pool) {
       const isReviewTask = REVIEW_TASK_TYPES.includes(taskType);
 
       if (isBillingCap || isTransientApiError || isOomKilled) {
-        const bypassReason = isBillingCap ? 'billing_cap' : (isOomKilled ? 'oom_killed(exit=137)' : 'rate_limit/network/auth');
+        const bypassReason = isBillingCap ? 'billing_cap' : (isOomKilled ? 'oom_killed(exit=137)' : 'transient(rate_limit/network/timeout/server_error/auth)');
         console.log(`[callback-processor] 外部/资源错误（${bypassReason}）：跳过熔断计数（task=${task_id}）`);
       } else if (isCodexReview || isReviewTask) {
         // codex-review / review 类任务走本机 Codex CLI，失败不归因 cecelia-run 熔断器

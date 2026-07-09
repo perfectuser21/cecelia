@@ -24,6 +24,8 @@ function classifyFailure(...args) {
 // TTL 映射（毫秒）— 字符串字面量 key，不依赖 FAILURE_CLASS 枚举值
 const TTL_MAP = {
   network: 5 * 60 * 1000,
+  timeout: 5 * 60 * 1000,
+  server_error: 5 * 60 * 1000,
   rate_limit: 10 * 60 * 1000,
   billing_cap: 30 * 60 * 1000,
   auth: 15 * 60 * 1000,
@@ -32,7 +34,7 @@ const TTL_MAP = {
 
 // FAILURE_CLASS 内联常量（不从 quarantine.js 顶层 import 以避免 vitest mock 严格检查）
 const FAILURE_CLASS = {
-  NETWORK: 'network', RATE_LIMIT: 'rate_limit', BILLING_CAP: 'billing_cap',
+  NETWORK: 'network', TIMEOUT: 'timeout', SERVER_ERROR: 'server_error', RATE_LIMIT: 'rate_limit', BILLING_CAP: 'billing_cap',
   AUTH: 'auth', RESOURCE: 'resource', TASK_ERROR: 'task_error',
   SYSTEMIC: 'systemic', TASK_SPECIFIC: 'task_specific', UNKNOWN: 'unknown',
 };
