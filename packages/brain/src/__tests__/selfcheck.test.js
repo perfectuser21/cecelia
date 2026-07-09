@@ -168,8 +168,12 @@ describe('selfcheck', () => {
   // （列不存在则 UPDATE 整句报错被吞，收窗永不生效——与上述 314 事故同类），故推进地板到 317。
   // 322（issues.journey_id）被 warroom.js /line/:id/command 全景图查询直接依赖
   // （列不存在则 SELECT 整句报错被吞，open_issues 恒为空——同类接缝），故推进地板到 322。
-  it('EXPECTED_SCHEMA_VERSION should be 322 (floor, bumped for issues.journey_id warroom 全景图)', () => {
-    expect(EXPECTED_SCHEMA_VERSION).toBe('322');
+  // 323（initiative_runs.ability_id）被 harness-skill-relay.js spawn 时的 INSERT 直接依赖
+  // （列不存在则 INSERT 整句报错被吞，ability_id 落行永不生效——同类接缝）。
+  // 324（advancement_items.notion_synced_at）被 notion-push-sync.js 的 pushAdvancementItems
+  // 去重查询直接依赖（列不存在则 SELECT/UPDATE 整句报错被吞，去重恒不生效），故推进地板到 324。
+  it('EXPECTED_SCHEMA_VERSION should be 324 (floor, bumped for initiative_runs.ability_id + advancement_items.notion_synced_at)', () => {
+    expect(EXPECTED_SCHEMA_VERSION).toBe('324');
   });
 
   it('should pass when DB schema version is ahead of expected (>= check)', async () => {

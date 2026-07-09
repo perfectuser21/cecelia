@@ -58,6 +58,15 @@ describe('task-tasks routes', () => {
       expect(params[1]).toBe('proj-1');
     });
 
+    it('filters by journey_id（存于 payload JSONB，非顶层列）', async () => {
+      mockPool.query.mockResolvedValueOnce({ rows: [] });
+
+      await request(app).get('/tasks?journey_id=journey-uuid-1');
+      const [sql, params] = mockPool.query.mock.calls[0];
+      expect(sql).toMatch(/payload->>'journey_id' = \$1/);
+      expect(params[0]).toBe('journey-uuid-1');
+    });
+
     it('respects custom limit and offset', async () => {
       mockPool.query.mockResolvedValueOnce({ rows: [] });
 
