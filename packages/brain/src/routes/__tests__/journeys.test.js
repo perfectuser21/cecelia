@@ -83,6 +83,48 @@ describe('POST /api/brain/issues', () => {
     expect(res.status).toBe(201);
     expect(res.body.notion_synced_at).toBeNull();
   });
+
+  it('传入 journey_id → SQL 含 journey_id 列且参数传递正确', async () => {
+    const fakeRow = { id: 'issue-j', title: 'Bug with journey', priority: 'P1', journey_id: 'j-line04', notion_synced_at: null };
+    mockQuery.mockResolvedValueOnce({ rows: [fakeRow] });
+
+    const { default: router } = await import('../journeys.js');
+    const express = await import('express');
+    const app = express.default();
+    app.use(express.default.json());
+    app.use('/api/brain', router);
+
+    const request = await import('supertest');
+    const res = await request.default(app)
+      .post('/api/brain/issues')
+      .send({ title: 'Bug with journey', priority: 'P1', journey_id: 'j-line04' });
+
+    expect(res.status).toBe(201);
+    expect(res.body.journey_id).toBe('j-line04');
+    const [sql, params] = mockQuery.mock.calls[0];
+    expect(sql).toMatch(/journey_id/);
+    expect(params).toContain('j-line04');
+  });
+
+  it('不传 journey_id → SQL 仍传 null（不报错）', async () => {
+    const fakeRow = { id: 'issue-nj', title: 'Bug no journey', priority: 'P2', journey_id: null, notion_synced_at: null };
+    mockQuery.mockResolvedValueOnce({ rows: [fakeRow] });
+
+    const { default: router } = await import('../journeys.js');
+    const express = await import('express');
+    const app = express.default();
+    app.use(express.default.json());
+    app.use('/api/brain', router);
+
+    const request = await import('supertest');
+    const res = await request.default(app)
+      .post('/api/brain/issues')
+      .send({ title: 'Bug no journey' });
+
+    expect(res.status).toBe(201);
+    const [, params] = mockQuery.mock.calls[0];
+    expect(params).toContain(null);
+  });
 });
 
 describe('POST /api/brain/journey_features', () => {
