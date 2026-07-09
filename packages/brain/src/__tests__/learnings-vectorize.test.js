@@ -434,6 +434,7 @@ describe('selfcheck schema version', () => {
     // 316 = migration 316 design_docs type 白名单加 battle_report（battle-report.js INSERT 依赖）；
     // 地板随 migration 号推进（facts-check selfcheck_version_sync 卡：地板 <= 最高 migration）。
     // issue 14d66027 语义不变：只有代码/schema 依赖才 bump。
-    expect(EXPECTED_SCHEMA_VERSION).toBe('317');
+    // 322 = migration 322 issues.journey_id（warroom.js 全景图查询直接依赖），故推进地板到 322。
+    expect(EXPECTED_SCHEMA_VERSION).toBe('322');
   });
 });

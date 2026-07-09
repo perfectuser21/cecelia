@@ -137,7 +137,7 @@ router.post('/', async (req, res) => {
          payload, trigger_source, domain, okr_initiative_id, ability_id
        )
        VALUES ($1, $2, $3, $4, 'queued', $5, $6, $7, $8, $9, $10, $11, $12, $13)
-       RETURNING id, title, status, task_type, priority, project_id, area_id, goal_id, okr_initiative_id, ability_id, created_at`,
+       RETURNING id, title, status, task_type, priority, project_id, area_id, goal_id, okr_initiative_id, ability_id, payload, created_at`,
       [
         title.trim(),
         description,
