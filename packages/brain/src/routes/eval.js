@@ -1,10 +1,18 @@
 /**
- * eval.js — Skill Evaluator 上传与状态查询路由
- * Sprint: 07072314-skill-eval-service
+ * eval.js — Skill Evaluator 路由（完整4页设计）
+ * Sprint: skill-eval-full-4page
  *
  * 端点：
- *   POST /api/skill-eval/upload  — 上传 zip（需 X-Eval-Proxy-Token）
- *   GET  /api/skill-eval/status/:task_id — 查询评估状态（不需 token）
+ *   POST /api/skill-eval/upload              — 上传 zip（需 X-Eval-Proxy-Token）
+ *   GET  /api/skill-eval/status/:task_id     — 查询评估状态
+ *   GET  /api/skill-eval/report/:task_id     — 获取评估报告（HTML/JSON）
+ *   GET  /api/skill-eval/staging/:task_id    — 内部：worker 拉取 zip
+ *   POST /api/skill-eval/complete            — 内部：worker 回调完成
+ *   GET  /api/skill-eval/wizard/:task_id     — 获取梳理向导问题
+ *   POST /api/skill-eval/wizard/:task_id/answers — 提交向导回答
+ *   POST /api/skill-eval/wizard-ready/:task_id   — 内部：worker 回传问题
+ *   GET  /api/skill-eval/library             — 技能库列表
+ *   GET  /api/skill-eval/library/:journey_id — 某条线的历史评估
  *
  * 铁律：
  * - X-Eval-Proxy-Token 从 env EVAL_PROXY_TOKEN 校验
@@ -102,7 +110,7 @@ router.post(
         return res.status(400).json({ error: 'no file uploaded (field name: file)' });
       }
 
-      const { skill_name, platform, journey_id, submitter } = req.body;
+      const { skill_name, platform, journey_id, area, ability, submitter } = req.body;
 
       if (!skill_name || !skill_name.trim()) {
         return res.status(400).json({ error: 'skill_name is required' });
@@ -188,14 +196,18 @@ router.post(
       // 建 skill_evals 行
       await pool.query(
         `INSERT INTO skill_evals
-           (task_id, zip_hash, skill_name, source_platform, submitter, status, staging_path, created_at, updated_at)
-         VALUES ($1, $2, $3, $4, $5, 'pending', $6, now(), now())`,
+           (task_id, zip_hash, skill_name, source_platform, submitter, journey_id, area, ability,
+            status, wizard_status, staging_path, created_at, updated_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'pending', 'generating', $9, now(), now())`,
         [
           taskId,
           zipHash,
           skill_name.trim(),
           platform || null,
           submitter || null,
+          journey_id || null,
+          area || null,
+          ability || null,
           stagingPath,
         ]
       );
@@ -357,6 +369,187 @@ router.post('/complete', requireEvalProxyToken, async (req, res) => {
     return res.json({ ok: true, task_id, report_url });
   } catch (err) {
     console.error('[skill-eval] complete callback error:', err.message);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// ─── GET /api/skill-eval/wizard/:task_id ─────────────────────────────────
+// 返回向导状态与问题列表
+router.get('/wizard/:task_id', async (req, res) => {
+  try {
+    const { task_id } = req.params;
+    const result = await pool.query(
+      `SELECT wizard_status, wizard_questions FROM skill_evals WHERE task_id = $1 LIMIT 1`,
+      [task_id]
+    );
+    if (result.rows.length === 0) return res.status(404).json({ error: 'task not found' });
+    const { wizard_status, wizard_questions } = result.rows[0];
+    return res.json({ task_id, wizard_status: wizard_status || 'none', wizard_questions });
+  } catch (err) {
+    console.error('[skill-eval] wizard get error:', err.message);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// ─── POST /api/skill-eval/wizard/:task_id/answers ────────────────────────
+// 提交向导回答 → 触发评估（答案记录到 wizard_answers，wizard_status→answered）
+router.post('/wizard/:task_id/answers', async (req, res) => {
+  try {
+    const { task_id } = req.params;
+    const { answers } = req.body; // { "1": "yes"|"no"|"skip", ... }
+
+    if (!answers || typeof answers !== 'object') {
+      return res.status(400).json({ error: 'answers object required' });
+    }
+
+    // 先检查当前状态是否允许提交
+    const checkResult = await pool.query(
+      `SELECT wizard_status FROM skill_evals WHERE task_id = $1 LIMIT 1`,
+      [task_id]
+    );
+    if (checkResult.rows.length === 0) return res.status(404).json({ error: 'task not found' });
+    const { wizard_status } = checkResult.rows[0];
+    if (!['ready', 'generating', 'skipped', 'none'].includes(wizard_status)) {
+      return res.status(409).json({ error: `wizard already in status: ${wizard_status}` });
+    }
+
+    await pool.query(
+      `UPDATE skill_evals
+       SET wizard_answers = $1::jsonb,
+           wizard_status = 'answered',
+           updated_at = now()
+       WHERE task_id = $2`,
+      [JSON.stringify(answers), task_id]
+    );
+
+    return res.json({ ok: true, task_id, wizard_status: 'answered' });
+  } catch (err) {
+    console.error('[skill-eval] wizard answers error:', err.message);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// ─── POST /api/skill-eval/wizard-ready/:task_id（内部：worker 回传问题）──
+router.post('/wizard-ready/:task_id', requireEvalProxyToken, async (req, res) => {
+  try {
+    const { task_id } = req.params;
+    const { questions } = req.body; // array of {id, question, reason, dimension}
+
+    if (!Array.isArray(questions)) {
+      return res.status(400).json({ error: 'questions array required' });
+    }
+
+    await pool.query(
+      `UPDATE skill_evals
+       SET wizard_questions = $1::jsonb,
+           wizard_status = 'ready',
+           updated_at = now()
+       WHERE task_id = $2`,
+      [JSON.stringify(questions), task_id]
+    );
+
+    return res.json({ ok: true, task_id, question_count: questions.length });
+  } catch (err) {
+    console.error('[skill-eval] wizard-ready error:', err.message);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// ─── GET /api/skill-eval/library ──────────────────────────────────────────
+// 技能库：按 journey_id 聚合返回所有历史评估
+router.get('/library', async (req, res) => {
+  try {
+    const { journey_id, limit = '50', offset = '0' } = req.query;
+    const params = [parseInt(limit, 10), parseInt(offset, 10)];
+    let where = '';
+    if (journey_id) {
+      where = `WHERE se.journey_id = $3`;
+      params.push(journey_id);
+    }
+
+    const result = await pool.query(
+      `SELECT
+         se.task_id::text,
+         se.skill_name,
+         se.journey_id,
+         se.area,
+         se.ability,
+         se.source_platform,
+         se.submitter,
+         se.status,
+         se.report_url,
+         se.created_at,
+         se.updated_at,
+         (se.report_data->'verdict'->>'level') AS verdict_level,
+         (se.report_data->'stats'->>'function_count')::int AS function_count,
+         (se.report_data->'stats'->>'defects_high')::int AS defects_high
+       FROM skill_evals se
+       ${where}
+       ORDER BY se.created_at DESC
+       LIMIT $1 OFFSET $2`,
+      params
+    );
+
+    // 按 journey_id 分组
+    const byLine = {};
+    for (const row of result.rows) {
+      const key = row.journey_id || 'unknown';
+      if (!byLine[key]) byLine[key] = [];
+      byLine[key].push(row);
+    }
+
+    return res.json({
+      total: result.rowCount,
+      by_line: byLine,
+      items: result.rows,
+    });
+  } catch (err) {
+    console.error('[skill-eval] library error:', err.message);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// ─── GET /api/skill-eval/library/:journey_id ─────────────────────────────
+// 特定 line 的技能历史（含多版本时间线）
+router.get('/library/:journey_id', async (req, res) => {
+  try {
+    const { journey_id } = req.params;
+    const result = await pool.query(
+      `SELECT
+         se.task_id::text,
+         se.skill_name,
+         se.journey_id,
+         se.area,
+         se.ability,
+         se.source_platform,
+         se.submitter,
+         se.status,
+         se.report_url,
+         se.created_at,
+         (se.report_data->'verdict'->>'level') AS verdict_level,
+         (se.report_data->'verdict'->>'text') AS verdict_text,
+         (se.report_data->'stats') AS stats
+       FROM skill_evals se
+       WHERE se.journey_id = $1 AND se.status = 'completed'
+       ORDER BY se.skill_name, se.created_at DESC`,
+      [journey_id]
+    );
+
+    // 按 skill_name 分组，形成「改进曲线」
+    const bySkill = {};
+    for (const row of result.rows) {
+      const key = row.skill_name || 'unknown';
+      if (!bySkill[key]) bySkill[key] = { skill_name: key, versions: [] };
+      bySkill[key].versions.push(row);
+    }
+
+    return res.json({
+      journey_id,
+      skills: Object.values(bySkill),
+      total: result.rowCount,
+    });
+  } catch (err) {
+    console.error('[skill-eval] library journey error:', err.message);
     return res.status(500).json({ error: err.message });
   }
 });
