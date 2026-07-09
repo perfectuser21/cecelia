@@ -44,3 +44,24 @@ describe('SYSTEM_AUTO_TRIGGER_SOURCES', () => {
     expect(SYSTEM_AUTO_TRIGGER_SOURCES).not.toContain('owner_input');
   });
 });
+
+describe('pauseLowPriorityTasks (graceful_degrade)', () => {
+  it('只暂停 trigger_source 在系统白名单内的任务，并写 error_message + status_history', async () => {
+    mockQuery.mockResolvedValue({ rowCount: 0, rows: [] });
+
+    const { executeResponse, SYSTEM_AUTO_TRIGGER_SOURCES } = await import('../escalation.js');
+    await executeResponse({
+      actions: [{ type: 'pause_low_priority', params: { priorities: ['P2', 'P3'] } }]
+    });
+
+    const updateCall = mockQuery.mock.calls[0];
+    const sql = updateCall[0];
+    const params = updateCall[1];
+
+    expect(sql).toContain("SET status = 'paused'");
+    expect(sql).toContain('trigger_source = ANY');
+    expect(sql).toContain('error_message');
+    expect(sql).toContain('status_history');
+    expect(params).toContain(SYSTEM_AUTO_TRIGGER_SOURCES);
+  });
+});
