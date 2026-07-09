@@ -17,6 +17,7 @@ export async function dispatchStrategistDecisions(pool, { windowMinutes = 10 } =
     `SELECT id, payload->>'journey_id' AS journey_id, status
      FROM tasks
      WHERE status IN ('completed', 'failed')
+       AND task_type <> 'strategist_decision'
        AND payload->>'journey_id' IS NOT NULL
        AND updated_at > NOW() - ($1 || ' minutes')::INTERVAL
        AND NOT (payload ? 'strategist_dispatched')`,
