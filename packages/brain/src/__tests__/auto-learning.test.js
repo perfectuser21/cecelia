@@ -185,9 +185,10 @@ describe('Auto Learning Module', () => {
           rows: [{ id: 'existing-learning' }] // Duplicate found
         });
 
+      // T9 后 completed 路径已停写，去重逻辑用 failed 路径覆盖
       const result = await processExecutionAutoLearning(
         'dup-task',
-        'completed',
+        'failed',
         'Duplicate content'
       );
 
@@ -267,20 +268,21 @@ describe('Auto Learning Module', () => {
           rows: []
         })
         .mockResolvedValueOnce({
-          rows: [{ id: 'learning-string', title: '任务完成：string-task' }]
+          rows: [{ id: 'learning-string', title: '任务失败：string-task' }]
         });
 
+      // T9 后 completed 路径已停写，内容组装用 failed 路径覆盖
       await processExecutionAutoLearning(
         'string-task',
-        'completed',
+        'failed',
         'Simple string result'
       );
 
       const insertCall = mockPool.query.mock.calls[2];
       const content = insertCall[1][3];
 
-      expect(content).toContain('任务成功完成。类型：research');
-      expect(content).toContain('摘要：Simple string result');
+      expect(content).toContain('任务执行失败');
+      expect(content).toContain('错误摘要：Simple string result');
     });
 
     it('should handle object results', async () => {
@@ -294,12 +296,13 @@ describe('Auto Learning Module', () => {
           rows: []
         })
         .mockResolvedValueOnce({
-          rows: [{ id: 'learning-obj', title: '任务完成：obj-task' }]
+          rows: [{ id: 'learning-obj', title: '任务失败：obj-task' }]
         });
 
+      // T9 后 completed 路径已停写，内容组装用 failed 路径覆盖
       await processExecutionAutoLearning(
         'obj-task',
-        'completed',
+        'failed',
         {
           result: 'Feature implemented',
           findings: 'All tests pass'
@@ -309,8 +312,8 @@ describe('Auto Learning Module', () => {
       const insertCall = mockPool.query.mock.calls[2];
       const content = insertCall[1][3];
 
-      expect(content).toContain('任务成功完成。类型：dev');
-      expect(content).toContain('摘要：Feature implemented');
+      expect(content).toContain('任务执行失败');
+      expect(content).toContain('错误摘要：Feature implemented');
     });
 
     it('should truncate long content', async () => {
@@ -326,12 +329,13 @@ describe('Auto Learning Module', () => {
           rows: []
         })
         .mockResolvedValueOnce({
-          rows: [{ id: 'learning-long', title: '任务完成：long-task' }]
+          rows: [{ id: 'learning-long', title: '任务失败：long-task' }]
         });
 
+      // T9 后 completed 路径已停写，截断逻辑用 failed 路径覆盖
       await processExecutionAutoLearning(
         'long-task',
-        'completed',
+        'failed',
         longResult
       );
 
@@ -339,7 +343,7 @@ describe('Auto Learning Module', () => {
       const content = insertCall[1][3];
 
       expect(content.length).toBeLessThan(600);
-      expect(content).toContain('任务成功完成。类型：dev');
+      expect(content).toContain('任务执行失败');
     });
 
     it('should extract error_details from failed task result', async () => {
