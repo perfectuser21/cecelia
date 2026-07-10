@@ -8,7 +8,7 @@
  *       读 key=golden_path.feature_id 直连，07-10 T2 对齐；不再绕 tasks.ability_id）
  *     + 最新 line_ledger 蒸馏摘要（design_docs，T3 接线）。
  *     SQL 与 routes/abilities.js 对应端点同源（直接 pool 查询不走 HTTP）；
- *     任何一路失败 → 该路空数组 + warn，绝不 throw（角色注入是增强不是门禁）。
+ *     任何一路失败 → 该路降级（空数组/null）+ warn，绝不 throw（角色注入是增强不是门禁）。
  *   - formatLineContextForPrompt：行格式与 harness-planner v8.12.0 Step 0.4 逐字同构（E1 解析契约，不可变）。
  * Spec: docs/superpowers/specs/2026-07-02-a1-context-manifest-design.md
  */
@@ -32,7 +32,7 @@ function clamp(s, max) {
 /**
  * 拉取本 line 上下文。三源 invariant + 累积 FR，全部 best-effort：
  * 参数缺省跳过对应路；单路失败仅 warn 降级为空数组，绝不 throw。
- * @returns {Promise<{ invariants: object[], cumulativeFR: object[], ledger: { content: string, created_at: * }|null }>}
+ * @returns {Promise<{ invariants: object[], cumulativeFR: object[], ledger: { content: string, created_at: string|Date }|null }>}
  */
 export async function fetchLineContext({ pool }, { taskId = null, abilityId = null, journeyId = null } = {}) {
   const safeQuery = async (label, sql, params) => {
