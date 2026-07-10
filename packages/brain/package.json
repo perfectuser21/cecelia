@@ -44,5 +44,5 @@
     "supertest": "^7.2.2",
     "vitest": "^1.6.1"
   },
-  "version": "1.248.0"
+  "version": "1.249.0"
 }
