@@ -13,6 +13,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { processExecutionCallback } from '../callback-processor.js';
 
 // ─── Mock DB pool（支持事务：pool.query + pool.connect + client）─────────────
 const mockClient = {
@@ -290,5 +291,60 @@ describe('callback-processor — docker contract status mapping', () => {
     );
     const update = findUpdateCall();
     expect(update[1][1]).toBe('completed');
+  });
+});
+
+describe('C1/C3: 回调写库协议(updated_at + terminal 清 claim + applied)', () => {
+  beforeEach(() => {
+    mockClient.query.mockReset();
+    mockClient.query.mockResolvedValue({ rows: [], rowCount: 1 });
+    mockPool.query.mockReset();
+    mockPool.query.mockResolvedValue({ rows: [], rowCount: 0 });
+  });
+
+  function findMainUpdate() {
+    return mockClient.query.mock.calls.find(
+      (c) => typeof c[0] === 'string' && /UPDATE tasks/.test(c[0]) && /status = \$2/.test(c[0])
+    );
+  }
+
+  it('completed 回调:UPDATE 必须刷 updated_at 且 terminal 参数为 true(清 claim)', async () => {
+    await processExecutionCallback(
+      { task_id: '11111111-1111-1111-1111-111111111111', run_id: 'r-1', status: 'completed', result: { ok: 1 } },
+      mockPool
+    );
+    const call = findMainUpdate();
+    expect(call).toBeTruthy();
+    expect(call[0]).toMatch(/updated_at = NOW\(\)/);
+    expect(call[0]).toMatch(/claimed_by = CASE WHEN \$13::boolean THEN NULL ELSE claimed_by END/);
+    expect(call[0]).toMatch(/claimed_at = CASE WHEN \$13::boolean THEN NULL ELSE claimed_at END/);
+    expect(call[1][12]).toBe(true);
+  });
+
+  it('quota_exhausted 回调:非 terminal,claim 参数为 false 不清', async () => {
+    await processExecutionCallback(
+      { task_id: '11111111-1111-1111-1111-111111111111', run_id: 'r-2', status: 'quota_exhausted', result: {} },
+      mockPool
+    );
+    const call = findMainUpdate();
+    expect(call).toBeTruthy();
+    expect(call[1][12]).toBe(false);
+  });
+
+  it('rowCount=0(迟到回调被 WHERE 守卫拦下)返回 applied:false', async () => {
+    mockClient.query.mockResolvedValue({ rows: [], rowCount: 0 });
+    const ret = await processExecutionCallback(
+      { task_id: '11111111-1111-1111-1111-111111111111', run_id: 'r-3', status: 'completed', result: {} },
+      mockPool
+    );
+    expect(ret && ret.applied).toBe(false);
+  });
+
+  it('rowCount=1 正常落地返回 applied:true', async () => {
+    const ret = await processExecutionCallback(
+      { task_id: '11111111-1111-1111-1111-111111111111', run_id: 'r-4', status: 'completed', result: {} },
+      mockPool
+    );
+    expect(ret && ret.applied).toBe(true);
   });
 });
