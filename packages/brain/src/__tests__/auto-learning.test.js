@@ -506,7 +506,7 @@ describe('Auto Learning Module', () => {
       );
 
       const insertCall = mockPool.query.mock.calls[2];
-      const metadataJson = insertCall[1][4];
+      const metadataJson = insertCall[1][5];
       const metadata = JSON.parse(metadataJson);
 
       expect(metadata).toMatchObject({
@@ -540,7 +540,7 @@ describe('Auto Learning Module', () => {
       );
 
       const insertCall = mockPool.query.mock.calls[2];
-      const metadataJson = insertCall[1][4];
+      const metadataJson = insertCall[1][5];
       const metadata = JSON.parse(metadataJson);
 
       expect(metadata).toMatchObject({
@@ -549,6 +549,33 @@ describe('Auto Learning Module', () => {
         retry_count: 3,
         auto_generated: true
       });
+    });
+  });
+
+  describe('summary generation (regression: T9 noise filter)', () => {
+    it('createAutoLearning 应在 INSERT 中写入 summary 字段（非 null）', async () => {
+      const { processExecutionAutoLearning } = await import('../auto-learning.js');
+
+      mockPool.query
+        .mockResolvedValueOnce({
+          rows: [{ task_type: 'dev', title: 'Summary test task', error_message: null }]
+        })
+        .mockResolvedValueOnce({ rows: [] }) // dedup check
+        .mockResolvedValueOnce({
+          rows: [{ id: 'learning-sum', title: '任务完成：summary-task' }]
+        });
+
+      await processExecutionAutoLearning('summary-task', 'completed', 'all tests green');
+
+      const insertCall = mockPool.query.mock.calls[2];
+      const sql = insertCall[0];
+      const params = insertCall[1];
+
+      // summary 列应在 INSERT 中
+      expect(sql).toContain('summary');
+      // summary 参数（index 4）应是字符串且非空
+      expect(typeof params[4]).toBe('string');
+      expect(params[4].length).toBeGreaterThan(0);
     });
   });
 });

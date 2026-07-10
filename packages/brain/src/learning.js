@@ -746,11 +746,12 @@ export async function upsertLearning({ title, content = '', category = 'general'
     return { id: row.id, upserted: false };
   }
 
+  const summary = generateL0Summary(`${title} ${content}`);
   const result = await p.query(
-    `INSERT INTO learnings (title, category, trigger_event, content, frequency_count, last_reinforced_at, task_id)
-     VALUES ($1, $2, $3, $4, 1, NOW(), $5)
+    `INSERT INTO learnings (title, category, trigger_event, content, summary, frequency_count, last_reinforced_at, task_id)
+     VALUES ($1, $2, $3, $4, $5, 1, NOW(), $6)
      RETURNING id`,
-    [title, category, triggerEvent, content, task_id || null]
+    [title, category, triggerEvent, content, summary, task_id || null]
   );
   return { id: result.rows[0].id, upserted: true };
 }

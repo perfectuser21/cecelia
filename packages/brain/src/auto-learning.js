@@ -11,6 +11,7 @@
 
 import crypto from 'crypto';
 import pool from './db.js';
+import { generateL0Summary } from './memory-utils.js';
 
 // ── 配置 ──────────────────────────────────────────────────
 export const DAILY_AUTO_LEARNING_BUDGET = 50;
@@ -86,15 +87,17 @@ async function createAutoLearning({ title, category, content, triggerEvent, meta
     && /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(taskIdRaw);
 
   try {
+    const summary = generateL0Summary(`${title} ${content}`);
     const result = await dbPool.query(`
-      INSERT INTO learnings (title, category, trigger_event, content, metadata, content_hash, version, is_latest, digested, task_id)
-      VALUES ($1, $2, $3, $4, $5, $6, 1, true, false, $7)
+      INSERT INTO learnings (title, category, trigger_event, content, summary, metadata, content_hash, version, is_latest, digested, task_id)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, 1, true, false, $8)
       RETURNING id, title
     `, [
       title,
       category,
       triggerEvent,
       content,
+      summary,
       JSON.stringify(metadata || {}),
       contentHash,
       taskIdValid ? taskIdRaw : null,
