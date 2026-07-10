@@ -1,16 +1,14 @@
 /**
- * Brain v2 Phase D Part 1.5 — dispatchNextTask + _dispatchViaWorkflowRuntime 抽出。
+ * Brain v2 Phase D Part 1.5 — dispatchNextTask 抽出。
  *
- * 原在 tick.js L706-L1115（dispatchNextTask）+ L3020-L3061（_dispatchViaWorkflowRuntime
- * — dev 任务走 L2 workflow runtime），瘦身抽出独立模块。
+ * 原在 tick.js L706-L1115（dispatchNextTask），瘦身抽出独立模块。
+ * dev 任务与其他 task_type 一样走 triggerCeceliaRun 本地 spawn（活性信号已通）。
  *
  * 模块状态：
- * - `_lastDispatchTime` 私有计时器（旧逻辑只写不读，留作潜在 telemetry hook，未来若确认死代码可清）
+ * - `_lastDispatchTime` 私有计时器（旧逻辑只写不读，留作潜在 telemetry hook）
  *
  * 本模块复制 tickLog / logTickDecision 两个 helper（tick.js 内部 helper，无 module 状态依赖），
  * 保持原 [tick]/[dispatch] 日志前缀不变。
- *
- * tick.js 通过 import + re-export 维持既有 caller 兼容（_dispatchViaWorkflowRuntime test）。
  */
 
 import pool from './db.js';
@@ -33,7 +31,6 @@ import { proactiveTokenCheck } from './account-usage.js';
 import { checkQuotaGuard } from './quota-guard.js';
 import { updateTask } from './actions.js';
 import { selectNextDispatchableTask, processCortexTask } from './dispatch-helpers.js';
-import { EXECUTOR_KIND_FOR } from './executor-contracts.js';
 
 const MINIMAL_MODE = process.env.BRAIN_MINIMAL_MODE === 'true';
 const TICK_LAST_DISPATCH_KEY = 'tick_last_dispatch';
@@ -676,19 +673,6 @@ export async function dispatchNextTask(goalIds) {
     console.warn(`[dispatch] shouldDowngrade check failed: ${err.message}, proceeding with original executor`);
   }
 
-  // dev 任务走 L2 workflow runtime → runWorkflow 接线（fire-and-forget）
-  const v2Result = await _dispatchViaWorkflowRuntime(taskToDispatch);
-  if (v2Result.handled) {
-    // Wave-2 断链修复：派发成功计入当日 actions（fire-and-forget，吞错）
-    incrementActionsToday(1).catch(() => {});
-    return {
-      dispatched: true,
-      task_id: v2Result.task_id,
-      runtime: 'v2',
-      actions: [...actions, ...v2Result.actions],
-    };
-  }
-
   execResult = await triggerCeceliaRun(taskToDispatch);
 
   // 5a. Check if executor actually succeeded — revert to queued if not
@@ -807,59 +791,3 @@ export async function dispatchNextTask(goalIds) {
   return { dispatched: true, task_id: nextTask.id, run_id: execResult.runId, actions };
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
-
-/**
- * task_type=dev 任务一律走 L2 orchestrator runWorkflow('dev-task')，
- * fire-and-forget 派发。其他 task_type 返回 {handled:false} 让 caller fall through。
- *
- * @param {object} taskToDispatch Brain task row（含 id / task_type / retry_count 等）
- * @returns {Promise<{handled:boolean, runtime?:string, task_id?:string, actions?:Array}>}
- */
-export async function _dispatchViaWorkflowRuntime(taskToDispatch) {
-  if (taskToDispatch?.task_type !== 'dev') return { handled: false };
-
-  const { runWorkflow } = await import('./orchestrator/graph-runtime.js');
-  const attemptN = (taskToDispatch.payload?.attempt_n ?? taskToDispatch.retry_count ?? 0) + 1;
-
-  // 打标：dev 派发暂标 brain-local（迁离 LangGraph 后走本地 spawn，活性信号已通）
-  pool.query(
-    `UPDATE tasks SET executor_kind = $1, updated_at = NOW() WHERE id = $2`,
-    [EXECUTOR_KIND_FOR.dev, taskToDispatch.id]
-  ).catch(err => console.warn(`[dispatcher] setExecutorKind dev failed: ${err.message}`));
-
-  // fire-and-forget：graph 层 pg checkpointer 负责崩溃 resume；.catch 落 logTickDecision 排障
-  runWorkflow('dev-task', taskToDispatch.id, attemptN, { task: taskToDispatch })
-    .catch((err) => {
-      logTickDecision(
-        'tick',
-        `runWorkflow dev-task failed: ${err.message}`,
-        {
-          action: 'workflow_runtime_error',
-          task_id: taskToDispatch.id,
-          runtime: 'v2',
-          attemptN,
-          error: err.message,
-        },
-        { success: false },
-      );
-    });
-
-  _lastDispatchTime = Date.now();
-  await recordDispatchResult(pool, true, 'workflow_runtime_v2');
-  await emit('task_dispatched', 'tick', {
-    task_id: taskToDispatch.id,
-    title: taskToDispatch.title,
-    runtime: 'v2',
-    success: true,
-  });
-
-  const actions = [{
-    action: 'dispatch_v2_workflow',
-    task_id: taskToDispatch.id,
-    runtime: 'v2',
-    attemptN,
-  }];
-
-  return { handled: true, runtime: 'v2', task_id: taskToDispatch.id, actions };
-}
