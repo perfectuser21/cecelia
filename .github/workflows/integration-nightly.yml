@@ -85,6 +85,8 @@ jobs:
         run: docker build -f packages/brain/Dockerfile -t cecelia-brain:ci .
 
       - name: 启动 Brain 容器（network=host → 直连 postgres service）
+        env:
+          CI_DB_PASSWORD: ${{ secrets.CI_DB_PASSWORD }}
         run: |
           docker run -d --name cecelia-brain-nightly \
             --network host \
@@ -92,13 +94,13 @@ jobs:
             -e DB_PORT=5432 \
             -e DB_NAME=cecelia_test \
             -e DB_USER=cecelia \
-            -e DB_PASSWORD=${{ secrets.CI_DB_PASSWORD }} \
+            -e DB_PASSWORD="$CI_DB_PASSWORD" \
             -e BRAIN_PORT=5221 \
             -e NODE_ENV=test \
             -e CECELIA_TICK_ENABLED=false \
             -e ENV_REGION=us \
             -e REPO_ROOT=/repo_root \
-            -v $GITHUB_WORKSPACE/packages/workflows:/repo_root/packages/workflows:ro \
+            -v "$GITHUB_WORKSPACE/packages/workflows:/repo_root/packages/workflows:ro" \
             cecelia-brain:ci
 
           # 等待 Brain 就绪（最多 90s）

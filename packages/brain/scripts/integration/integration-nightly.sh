@@ -85,9 +85,9 @@ CREATE_RESP=$(curl -s -m 15 \
   -H "Content-Type: application/json" \
   -d '{
     "title": "integration-nightly: dev 路由贯通 E2E",
+    "description": "刀B integration nightly 自动创建的探针任务，验证 POST /tasks → PATCH 回调 → DB 最终态全链路贯通。",
     "task_type": "dev",
-    "priority": "P3",
-    "created_by": "integration-nightly",
+    "priority": "P2",
     "trigger_source": "integration-nightly"
   }' 2>/dev/null)
 
