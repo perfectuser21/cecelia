@@ -531,50 +531,6 @@ router.post('/execution-callback', async (req, res) => {
         console.warn(`[execution-callback] desire feedback failed (non-fatal): ${err.message}`)
       );
 
-      // 任务完成 → learnings 闭环：把完成结果写入 learnings 表（让反刍系统消化）
-      try {
-        const taskMeta = await pool.query(
-          'SELECT title, task_type, description FROM tasks WHERE id = $1',
-          [task_id]
-        );
-        if (taskMeta.rows[0]) {
-          const { title: taskTitle, task_type: taskType } = taskMeta.rows[0];
-          // findingsValue 原在上方 try 块内作用域，此处不可达（历史遗留）；保持实际行为：summary 为 null
-          const findingsSummary = null;
-          const learningContent = [
-            `任务完成：${taskTitle}`,
-            `类型：${taskType}`,
-            findingsSummary ? `产出摘要：${findingsSummary}` : null,
-            pr_url ? `PR：${pr_url}` : null,
-          ].filter(Boolean).join('\n');
-
-          const crypto = await import('crypto');
-          const contentHash = crypto.createHash('sha256').update(learningContent).digest('hex');
-
-          // 去重：同一 hash 不重复写
-          const existing = await pool.query(
-            'SELECT id FROM learnings WHERE content_hash = $1 AND is_latest = true LIMIT 1',
-            [contentHash]
-          );
-          if (!existing.rows.length) {
-            await pool.query(
-              `INSERT INTO learnings (title, category, trigger_event, content, metadata, content_hash, version, is_latest, digested, task_id)
-               VALUES ($1, 'task_completion', 'task_completed', $2, $3, $4, 1, true, false, $5)`,
-              [
-                `完成：${taskTitle}`,
-                learningContent,
-                JSON.stringify({ task_id, task_type: taskType, pr_url: pr_url || null }),
-                contentHash,
-                task_id || null,
-              ]
-            );
-            console.log(`[execution-callback] 任务完成写入 learnings: ${taskTitle}`);
-          }
-        }
-      } catch (learningErr) {
-        console.warn(`[execution-callback] learnings 写入失败（非致命）: ${learningErr.message}`);
-      }
-
       // content_publish 完成 → 写入 zenithjoy.publish_logs（fire-and-forget）
       Promise.resolve().then(async () => {
         try {

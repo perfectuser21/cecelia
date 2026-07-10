@@ -237,7 +237,9 @@ export async function processCortexTask(task, actions) {
       console.error(`[tick] autoCreateTasksFromCortex error: ${autoCreateErr.message}`);
     }
 
-    // If this is a learning task, record learning and apply strategy adjustments
+    // RCA learning path: only triggered when task explicitly sets requires_learning=true.
+    // This is set by createLearningTask() in learning.js — an intentional opt-in path.
+    // Auto-dispatch does NOT set requires_learning; task_completion noise was removed from execution.js.
     if (task.payload.requires_learning === true) {
       try {
         const { recordLearning, applyStrategyAdjustments } = await import('./learning.js');
