@@ -47,3 +47,14 @@ describe('刀C Release Gate', () => {
     expect(() => read(`.github/workflows/${m[1]}`)).not.toThrow();
   });
 });
+
+describe('三把刀 workflow YAML 必须可解析（07-10 实锤：顶格 **markdown** 在 run 块里被当 alias，0-job startup failure，刀A/刀B 完全失效）', () => {
+  it.each([
+    '.github/workflows/nightly-regression.yml',
+    '.github/workflows/integration-nightly.yml',
+    '.github/workflows/promote-dashboard-prod.yml',
+  ])('%s 可被 YAML 解析', async (p) => {
+    const { load } = await import('js-yaml');
+    expect(() => load(read(p))).not.toThrow();
+  });
+});
