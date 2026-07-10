@@ -25,6 +25,6 @@ describe('T9 noise source removal', () => {
     const tasks = src('routes/tasks.js');
     const idx = tasks.indexOf("'dev_experience'");
     const insertBlock = tasks.slice(Math.max(0, idx - 600), idx + 600);
-    expect(insertBlock).toMatch(/summary/);
+    expect(insertBlock).toMatch(/INSERT INTO learnings[^;]*summary/s);
   });
 });
