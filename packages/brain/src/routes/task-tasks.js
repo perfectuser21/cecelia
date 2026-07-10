@@ -250,6 +250,7 @@ router.get('/:id', async (req, res) => {
 router.patch('/:id', async (req, res) => {
   try {
     const { status, priority, title, okr_initiative_id, pr_url, result: taskResult } = req.body;
+    const sessionId = req.headers?.['x-session-id'] || 'engine-patch';
 
     // 状态机保护：已终止的任务不能回退到非终止状态
     const TERMINAL_STATUSES = ['completed', 'cancelled'];
@@ -278,6 +279,11 @@ router.patch('/:id', async (req, res) => {
       // 自动设置时间戳
       if (status === 'in_progress') {
         setClauses.push(`started_at = COALESCE(started_at, NOW())`);
+        // 认领协议统一（T4）: status → in_progress 时自动打标 claimed_by + executor_kind
+        setClauses.push(`claimed_by = COALESCE(claimed_by, $${paramIndex++})`);
+        params.push(`session:${sessionId}`);
+        setClauses.push(`executor_kind = COALESCE(executor_kind, $${paramIndex++})`);
+        params.push('headed-session');
       }
       if (status === 'completed') {
         setClauses.push(`completed_at = COALESCE(completed_at, NOW())`);
@@ -331,16 +337,16 @@ router.patch('/:id', async (req, res) => {
 router.post('/:id/claim', async (req, res) => {
   try {
     const { id } = req.params;
-    const { claimer } = req.body || {};
+    const { claimer, executor_kind = 'headed-session' } = req.body || {};
     if (!claimer) {
       return res.status(400).json({ error: 'claimer is required' });
     }
 
     const result = await pool.query(
-      `UPDATE tasks SET claimed_by = $1, claimed_at = NOW()
-       WHERE id = $2 AND claimed_by IS NULL
-       RETURNING id, claimed_by, claimed_at`,
-      [claimer, id]
+      `UPDATE tasks SET claimed_by = $1, claimed_at = NOW(), executor_kind = $2
+       WHERE id = $3 AND claimed_by IS NULL
+       RETURNING id, claimed_by, claimed_at, executor_kind`,
+      [claimer, executor_kind, id]
     );
 
     if (result.rows.length === 0) {
