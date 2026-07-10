@@ -25,3 +25,19 @@
 
 - [ ] N1: 无新增 L1 bug（code_review 无 BLOCK）
 - [ ] N2: Brain CI 全通过；promoteToRegression 接入为 fail-open（其失败不阻塞任务终态回写）
+
+## Addendum 01 功能验收条件（07-10 追加：执行遥测复活 + 统一收件箱）
+
+- [ ] F8: phase-event 复活 — 验证方式: 新跑一次 harness_initiative 任务，`initiative_run_events` 出现该任务对应 node 记录，非 07-04 前的历史数据
+- [ ] F9: zombie-reaper 不再误杀有心跳任务 — 验证方式: 手工制造一个 phase-event 心跳新鲜但 `tasks.updated_at` 超 60min 的场景，reaper 不将其标记 failed
+- [ ] F10: decisions 垃圾归零 — 验证方式: `SELECT count(*) FROM decisions WHERE topic IS NULL AND decision IS NULL` 清理后为 0，且此后 consciousness_loop 触发不再产生内容相同的重复行
+- [ ] F11: learnings 噪音过滤生效 — 验证方式: 新的 task_completion 类任务完成不再在 `learnings` 表产生新行
+- [ ] F12: learnings 摘要生成可靠性提升 — 验证方式: 新产出的非噪音 learning，`summary` 字段非空比例较修复前（6%）显著提升（目标 ≥80%）
+- [ ] F13: 统一收件箱通电 — 验证方式: 新产出一条 handoff/learning/issue 后，`capture_atoms` 出现对应 `status='pending_review'` 记录
+- [ ] F14: 分诊 tick 生效 — 验证方式: capture-triage tick 跑过一轮后，F13 产出的记录 status 变为非 pending_review（已分诊），`routed_to_table`/`routed_to_id` 有值
+- [ ] F15: Invariant Gate 拦截生效 — 验证方式: 构造一条与既有铁律冲突的候选内容，分诊后落 `pending_review` 而非直接写入 `decisions category=invariant`
+
+## Addendum 01 架构对齐条件
+
+- [ ] A4: 数据模型零新表零 migration（全部复用 `initiative_run_events`/`decisions`/`learnings`/`capture_atoms` 既有 schema）
+- [ ] A5: 关键决策落地——phase-event 由 skill markdown 自报（非 Brain 后端拦截）、收件箱进箱方式为推非拉、分诊为异步 tick 非同步阻塞写入路径
