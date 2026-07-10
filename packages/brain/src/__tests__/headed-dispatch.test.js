@@ -166,32 +166,27 @@ describe('mode=headed 路由分支', () => {
   });
 });
 
-describe('3. claude+headed → 拒绝路由', () => {
-  /**
-   * 注意：claude+headed 的拒绝发生在 routes/tasks.js（POST /api/brain/tasks 入口）层，
-   * 不是在 spawnSkillRelaySession 层。
-   * 这里测试 spawnSkillRelaySession 对 claude+headed 的防御性处理。
-   */
-  it('executor=claude + mode=headed → spawnSkillRelaySession 返回 ok=false（防御层）', async () => {
-    const deps = makeHeadedDeps();
-    const claudeHeadedTask = {
-      id: 'aaaabbbb-cccc-dddd-eeee-ffff00004444',
-      title: 'claude headed invalid',
-      payload: {
-        orchestrator: 'skill-relay',
-        executor: 'claude',
-        mode: 'headed',
-        sprint_dir: 'sprints/07071654-codex-headed-dispatch',
-      },
+describe('3. claude+headed → 放行（T6 解锁）', () => {
+  it('executor=claude + mode=headed → 不再被 spawnSkillRelaySession 内部防御拒绝', async () => {
+    const task = {
+      id: '00000000-0000-0000-0000-00000000c1de',
+      title: 'claude headed unlocked',
+      payload: { orchestrator: 'skill-relay', executor: 'claude', mode: 'headed' },
     };
-    const r = await spawnSkillRelaySession(claudeHeadedTask, deps);
-
-    // TDD Red: claude+headed 组合不合法，应被拒绝
-    expect(r.ok).toBe(false);
-    expect(r.error || r.reason).toBeTruthy();
-    // 不应产生任何 spawn
-    expect(deps.spawnFn).not.toHaveBeenCalled();
-    expect(deps.sshSpawnFn).not.toHaveBeenCalled();
+    const calls = [];
+    const fakePool = { query: vi.fn().mockResolvedValue({ rows: [] }) };
+    const result = await spawnSkillRelaySession(task, {
+      pool: fakePool,
+      execFn: (cmd) => { calls.push(cmd); return 'TMUX_DEAD'; },
+      inDockerFn: () => false,
+      sshKeyFn: () => null,
+      loadSkill: () => 'SKILL CONTENT',
+      ensureWt: async () => '/tmp/fake-worktree',
+      now: () => new Date('2026-07-10T04:00:00Z'),
+    });
+    // 不再返回"不支持 headed"错误；走 headed 分支（mode 为 claude headed host 值）
+    expect(result.error || '').not.toMatch(/不支持 headed/);
+    expect(result.mode).toBe('skill-relay-claude-headed');
   });
 });
 
