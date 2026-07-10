@@ -35,6 +35,7 @@ import { writeDockerCallback, resolveResourceTier, isDockerAvailable } from './d
 import { loadSkillContent, assertSprintDir } from './harness-shared.js';
 import { spawn as spawnDocker } from './spawn/index.js';
 import { REVIEW_TASK_TYPES } from './lib/review-task-types.js';
+import { EXECUTOR_KIND_FOR } from './executor-contracts.js';
 import {
   sampleCpuUsage as platformSampleCpuUsage,
   _resetCpuSampler as platformResetCpuSampler,
@@ -57,6 +58,21 @@ export function computeDeadlineMs(deadlineAt) {
   if (!deadlineAt) return 6 * 3600 * 1000;
   const remaining = new Date(deadlineAt).getTime() - Date.now();
   return remaining > 0 ? remaining : 6 * 3600 * 1000;
+}
+
+/**
+ * 打标助手：在派发点写入 executor_kind，让守护刀用合同判活。
+ * P3 级别：失败不阻塞派发。
+ */
+async function setExecutorKind(taskId, kind) {
+  try {
+    await pool.query(
+      `UPDATE tasks SET executor_kind = $1, updated_at = NOW() WHERE id = $2`,
+      [kind, taskId]
+    );
+  } catch (err) {
+    console.warn(`[executor] setExecutorKind failed task=${taskId} kind=${kind}: ${err.message}`);
+  }
 }
 
 // ─── Resource Cache ─────────────────────────────────────────────────────────
@@ -2830,6 +2846,8 @@ async function triggerLocalCodexExec(task) {
 
     const proc = spawn('bash', [tmpScriptFile], { detached: true, stdio: 'ignore' });
     proc.unref();
+    // 打标：本地 codex-bin spawn → brain-local
+    await setExecutorKind(task.id, EXECUTOR_KIND_FOR.__local_spawn);
 
     console.log(`[executor] Local Codex spawned task=${task.id} pid=${proc.pid} slot=${path.basename(slotPath)}`);
     return { success: true, taskId: task.id, runId, executor: 'local-codex', pid: proc.pid };
@@ -3165,6 +3183,11 @@ async function triggerCeceliaRun(task) {
   if (!forceUsClaude && location === 'xian') {
     const src = dynamicLocation ? 'dynamic-cache' : 'location-map';
     console.log(`[executor] 路由决策: task_type=${task.task_type} → Codex Bridge (location=xian, src=${src})`);
+    // 打标：content-pipeline 系由外部 ZJ pipeline-worker 管 → external-worker；其余 xian 任务 → bridge
+    const xianKind = Object.prototype.hasOwnProperty.call(EXECUTOR_KIND_FOR, task.task_type)
+      ? EXECUTOR_KIND_FOR[task.task_type]
+      : EXECUTOR_KIND_FOR.__bridge_path;
+    await setExecutorKind(task.id, xianKind);
     return triggerCodexBridge(task);
   }
 
@@ -3192,6 +3215,8 @@ async function triggerCeceliaRun(task) {
   // 实现下沉到 runHarnessInitiativeRouter，便于测试 + 复用。
   if (task.task_type === 'harness_initiative') {
     console.log(`[executor] 路由决策: task_type=${task.task_type} → Harness Full Graph (A+B+C)`);
+    // 打标：harness_initiative 走 skill-relay docker session → relay-container
+    await setExecutorKind(task.id, EXECUTOR_KIND_FOR.harness_initiative);
 
     // OAuth token 自动刷新，无需 session ≥ 4h 的 pre-check
 
@@ -3534,6 +3559,8 @@ async function triggerCeceliaRun(task) {
     });
     // spawn 已真实发生（bridge 已接单），此后即使 return 前抛异常也不 release dedupe key
     spawned = true;
+    // 打标：cecelia-bridge(localhost:3457) 派发 → bridge
+    await setExecutorKind(task.id, EXECUTOR_KIND_FOR.__bridge_path);
 
     console.log(`[executor] Bridge dispatched task=${task.id} checkpoint=${checkpointId}`);
 
