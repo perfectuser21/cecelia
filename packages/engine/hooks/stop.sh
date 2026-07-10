@@ -77,7 +77,10 @@ disown $! 2>/dev/null || true
 #   1. flock 互斥 —— 本机同时多个 worktree session 各自触发 stop.sh，全部无锁在同一份
 #      共享 .git/worktrees 元数据上操作会互相撕坏（Brain 侧 startup-recovery.js 注释已言明此风险）
 #   2. git status --porcelain 未提交改动检查 —— 非空则跳过，不强制删
-#   3. .dev-lock / .dev-mode.* 活跃锁检查 —— 存在则跳过（活跃 dev session 不删）
+#   3. .dev-lock.* / .dev-mode.* 活跃锁检查 —— 存在则跳过（活跃 dev session 不删）
+#      判定逻辑抽取到 lib/worktree-guard.sh，与 tests/stop-worktree-guard.manual-test.sh 共用同一份
+#      （2026-07-10 审查修复：此前测试脚本手抄了一份独立逻辑，与本文件不同步）
+source "$SCRIPT_DIR/lib/worktree-guard.sh"
 {
     _orphan_git_common="$(git -C "$PROJECT_ROOT" rev-parse --git-common-dir 2>/dev/null || echo "$PROJECT_ROOT/.git")"
     _orphan_lock_file="${_orphan_git_common}/stop-worktree-cleanup.lock"
@@ -94,13 +97,9 @@ disown $! 2>/dev/null || true
             _orphan_wt_branch="${_orphan_line#branch refs/heads/}"
             # 跳过主仓库自身（不清理主仓库）
             [[ "$_orphan_wt_path" == "$PROJECT_ROOT" ]] && continue
-            # 跳过有活跃 .dev-lock / .dev-mode.* 的 worktree（正在被别的 session 用）
-            if [[ -f "$_orphan_wt_path/.dev-lock" ]] || ls "$_orphan_wt_path"/.dev-mode.* >/dev/null 2>&1; then
-                continue
-            fi
-            # 跳过有未提交改动的 worktree（不强制删活跃工作）
-            if [[ -n "$(git -C "$_orphan_wt_path" status --porcelain 2>/dev/null)" ]]; then
-                echo "[Stop Hook] 跳过（有未提交改动）: $_orphan_wt_path" >&2
+            # 跳过有活跃锁（.dev-lock.* / .dev-mode.*）或未提交改动的 worktree
+            # （不强制删活跃 dev session 正在用的 worktree）
+            if stop_hook_should_skip_worktree "$_orphan_wt_path" >/dev/null; then
                 continue
             fi
             # 检查该 worktree 对应的 PR 是否已 merged

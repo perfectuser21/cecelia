@@ -3,6 +3,9 @@
 # 用法：bash packages/engine/hooks/tests/stop-worktree-guard.manual-test.sh
 set -euo pipefail
 
+# 在任何 cd 之前解析好共享判定逻辑库的绝对路径
+LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
 TMPDIR_TEST="$(mktemp -d)"
 trap 'rm -rf "$TMPDIR_TEST"' EXIT
 
@@ -28,21 +31,24 @@ git branch merged-dirty
 git worktree add -q "$TMPDIR_TEST/wt-dirty" merged-dirty
 echo "uncommitted change" >> "$TMPDIR_TEST/wt-dirty/README.md"
 
-# 场景 3：worktree 有 .dev-lock
+# 场景 3：worktree 有 .dev-lock.<branch>（真实写法：按分支后缀命名，从不写裸 .dev-lock，
+#          见 packages/engine/skills/dev/scripts/worktree-manage.sh:242
+#          和 packages/engine/runners/codex/runner.sh:168）
 git branch merged-locked
 git worktree add -q "$TMPDIR_TEST/wt-locked" merged-locked
-touch "$TMPDIR_TEST/wt-locked/.dev-lock"
+touch "$TMPDIR_TEST/wt-locked/.dev-lock.merged-locked"
 
-echo "=== 提取 stop.sh 的 Guard A 判定逻辑，独立跑一遍三层检查 ==="
-# 不跑整个 stop.sh（它依赖 stdin JSON + gh API），直接抽取判定逻辑验证
+echo "=== source stop.sh 的共享判定逻辑库，跑一遍三层检查 ==="
+# 不跑整个 stop.sh（它依赖 stdin JSON + gh API），但判定逻辑本身是
+# 从 stop.sh source 出来的同一份共享文件（lib/worktree-guard.sh），
+# 而不是手抄副本 —— 保证测试验证的是真实逻辑，不会与 stop.sh 脱节漂移。
+source "$LIB_DIR/lib/worktree-guard.sh"
+
 check_worktree() {
     local wt_path="$1"
-    if [[ -f "$wt_path/.dev-lock" ]] || ls "$wt_path"/.dev-mode.* >/dev/null 2>&1; then
-        echo "SKIP(active-lock): $wt_path"
-        return
-    fi
-    if [[ -n "$(git -C "$wt_path" status --porcelain 2>/dev/null)" ]]; then
-        echo "SKIP(dirty): $wt_path"
+    local reason
+    if reason=$(stop_hook_should_skip_worktree "$wt_path" 2>/dev/null); then
+        echo "SKIP($reason): $wt_path"
         return
     fi
     echo "WOULD-DELETE: $wt_path"
@@ -59,6 +65,6 @@ RESULT_LOCKED=$(check_worktree "$TMPDIR_TEST/wt-locked")
 
 [[ "$RESULT_CLEAN" == WOULD-DELETE:* ]] || { echo "FAIL: clean worktree 应被标记删除"; exit 1; }
 [[ "$RESULT_DIRTY" == SKIP\(dirty\):* ]] || { echo "FAIL: dirty worktree 应被跳过"; exit 1; }
-[[ "$RESULT_LOCKED" == SKIP\(active-lock\):* ]] || { echo "FAIL: locked worktree 应被跳过"; exit 1; }
+[[ "$RESULT_LOCKED" == SKIP\(active-lock\):* ]] || { echo "FAIL: locked（.dev-lock.<branch>）worktree 应被跳过（问题1回归验证：曾因裸文件名匹配漏判）"; exit 1; }
 
-echo "=== 全部场景通过 ==="
+echo "=== 全部场景通过（含 .dev-lock.<branch> 真实命名格式回归验证） ==="
