@@ -64,3 +64,4 @@ bluegreen-bark-nojq-smoke.sh
 callback-postprocess-smoke.sh
 t6-battle-command-smoke.sh
 t4-claim-protocol-smoke.sh
+t6-dev-dispatch-migration-smoke.sh
