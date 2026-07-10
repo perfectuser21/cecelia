@@ -33,6 +33,7 @@ import { proactiveTokenCheck } from './account-usage.js';
 import { checkQuotaGuard } from './quota-guard.js';
 import { updateTask } from './actions.js';
 import { selectNextDispatchableTask, processCortexTask } from './dispatch-helpers.js';
+import { EXECUTOR_KIND_FOR } from './executor-contracts.js';
 
 const MINIMAL_MODE = process.env.BRAIN_MINIMAL_MODE === 'true';
 const TICK_LAST_DISPATCH_KEY = 'tick_last_dispatch';
@@ -790,6 +791,12 @@ export async function _dispatchViaWorkflowRuntime(taskToDispatch) {
 
   const { runWorkflow } = await import('./orchestrator/graph-runtime.js');
   const attemptN = (taskToDispatch.payload?.attempt_n ?? taskToDispatch.retry_count ?? 0) + 1;
+
+  // 打标：dev 派发暂标 brain-local（迁离 LangGraph 后走本地 spawn，活性信号已通）
+  pool.query(
+    `UPDATE tasks SET executor_kind = $1, updated_at = NOW() WHERE id = $2`,
+    [EXECUTOR_KIND_FOR.dev, taskToDispatch.id]
+  ).catch(err => console.warn(`[dispatcher] setExecutorKind dev failed: ${err.message}`));
 
   // fire-and-forget：graph 层 pg checkpointer 负责崩溃 resume；.catch 落 logTickDecision 排障
   runWorkflow('dev-task', taskToDispatch.id, attemptN, { task: taskToDispatch })
