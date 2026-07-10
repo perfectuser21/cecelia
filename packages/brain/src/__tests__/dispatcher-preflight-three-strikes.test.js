@@ -115,7 +115,7 @@ function setupSingleTickReject(task) {
   mockQuery.mockResolvedValueOnce({ rows: [] });           // [3] select → empty
 }
 
-describe('pre-flight 三振持久终结', () => {
+describe('dispatcher: pre-flight 三振持久终结', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockPreFlightCheck.mockResolvedValue({
