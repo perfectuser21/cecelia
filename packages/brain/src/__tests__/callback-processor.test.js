@@ -310,7 +310,7 @@ describe('C1/C3: 回调写库协议(updated_at + terminal 清 claim + applied)',
 
   it('completed 回调:UPDATE 必须刷 updated_at 且 terminal 参数为 true(清 claim)', async () => {
     await processExecutionCallback(
-      { task_id: '11111111-1111-1111-1111-111111111111', run_id: 'r-1', status: 'completed', result: { ok: 1 } },
+      { task_id: '11111111-1111-1111-1111-111111111111', run_id: 'r-1', status: 'AI Done', result: { ok: 1 } },
       mockPool
     );
     const call = findMainUpdate();
@@ -323,7 +323,7 @@ describe('C1/C3: 回调写库协议(updated_at + terminal 清 claim + applied)',
 
   it('quota_exhausted 回调:非 terminal,claim 参数为 false 不清', async () => {
     await processExecutionCallback(
-      { task_id: '11111111-1111-1111-1111-111111111111', run_id: 'r-2', status: 'quota_exhausted', result: {} },
+      { task_id: '11111111-1111-1111-1111-111111111111', run_id: 'r-2', status: 'AI Quota Exhausted', result: {} },
       mockPool
     );
     const call = findMainUpdate();
@@ -334,7 +334,7 @@ describe('C1/C3: 回调写库协议(updated_at + terminal 清 claim + applied)',
   it('rowCount=0(迟到回调被 WHERE 守卫拦下)返回 applied:false', async () => {
     mockClient.query.mockResolvedValue({ rows: [], rowCount: 0 });
     const ret = await processExecutionCallback(
-      { task_id: '11111111-1111-1111-1111-111111111111', run_id: 'r-3', status: 'completed', result: {} },
+      { task_id: '11111111-1111-1111-1111-111111111111', run_id: 'r-3', status: 'AI Done', result: {} },
       mockPool
     );
     expect(ret && ret.applied).toBe(false);
@@ -342,7 +342,7 @@ describe('C1/C3: 回调写库协议(updated_at + terminal 清 claim + applied)',
 
   it('rowCount=1 正常落地返回 applied:true', async () => {
     const ret = await processExecutionCallback(
-      { task_id: '11111111-1111-1111-1111-111111111111', run_id: 'r-4', status: 'completed', result: {} },
+      { task_id: '11111111-1111-1111-1111-111111111111', run_id: 'r-4', status: 'AI Done', result: {} },
       mockPool
     );
     expect(ret && ret.applied).toBe(true);
