@@ -1335,6 +1335,7 @@ function getSkillForTaskType(taskType, payload) {
     'pipeline_rescue': '/dev',       // 卡住的 pipeline 接管修复 → /dev 全流程
     'codex_test_gen': '/codex-test-gen',  // Codex 自动生成测试 → 西安 M4
     'platform_scraper': '/media-scraping', // 平台数据采集 → CN Mac mini (/media-scraping skill)
+    'strategist_decision': '/line-strategist',  // Line 军师决策（PR3674 终态钩子派发，见 line-strategist-dispatch.js）
     // 注意：harness_generate/harness_fix 等不在此处
     // 它们由 preparePrompt() 提前路由，不经过 skillMap。
     // 实际路由见 task-router.js LOCATION_MAP。
@@ -2140,6 +2141,30 @@ function _prepareHarnessReportPrompt(task, taskType) {
   return `/sprint-report\n\n${paramsBlock}`;
 }
 
+function _prepareStrategistDecisionPrompt(task) {
+  const skillContent = loadSkillContent('line-strategist');
+  const payload = task.payload || {};
+  const paramsBlock = `## Line 军师决策任务
+
+LINE_ID: ${payload.journey_id || ''}
+TRIGGER: ${payload.trigger || 'manual'}
+TRIGGER_CONTEXT: ${JSON.stringify(payload.trigger_context || {})}
+BRAIN_TASK_ID: ${task.id}
+DRY_RUN: false
+
+${task.description || task.title}`;
+
+  return [
+    '你是 line-strategist session。按下面 SKILL 指令完成一次决策。',
+    '',
+    skillContent,
+    '',
+    '---',
+    '',
+    paramsBlock,
+  ].join('\n');
+}
+
 function _prepareHarnessPlannerPrompt(task, _taskType) {
   // harness_planner task_type 已退役（retire-harness-planner PR），此函数仅 sprint_planner 调用
   const sprintDir = assertSprintDir(task.payload?.sprint_dir, '_prepareHarnessPlannerPrompt');
@@ -2250,6 +2275,7 @@ const _TASK_ROUTES = {
   audit:                    _prepareCodeReviewArgs,
   research:                 _prepareResearchPrompt,
   code_review:              _prepareCodeReviewArgs,
+  strategist_decision:      _prepareStrategistDecisionPrompt,
 };
 
 // ─── preparePrompt 主入口（dispatcher）────────────────────────────────────────
@@ -3747,6 +3773,136 @@ async function probeTaskLiveness() {
 }
 
 /**
+ * Brain 重启后从 lock slot + docker relay 容器重建 activeProcesses Map。
+ * 在 syncOrphanTasksOnStartup 之前调用，使后续孤儿检测能正确区分
+ * "进程还活着" vs "真正消失"，避免误杀友军。
+ *
+ * 认领策略：
+ *   1. /tmp/cecelia-locks/slot-* /info.json → pid/child_pid 直接探活
+ *   2. docker ps --filter name=cecelia-relay- → relay 容器存活
+ *   3. touch tasks.updated_at → 给 zombie-reaper / recovery-loop 续命
+ *
+ * fail-open：docker/fs 探测失败只 warn，不抛错，不误标任务死亡。
+ *
+ * @param {object} dbPool - pg Pool 实例
+ * @returns {Promise<{ reattached: number, touched: number, errors: string[] }>}
+ */
+async function reAttachActiveExecutors(dbPool) {
+  const result = { reattached: 0, touched: 0, errors: [] };
+  const taskIdsToTouch = new Set();
+  const lockDir = process.env.LOCK_DIR || '/tmp/cecelia-locks';
+
+  // ── 1. Lock slot scan ────────────────────────────────────────────────────
+  try {
+    const entries = readdirSync(lockDir, { withFileTypes: true });
+    for (const entry of entries) {
+      if (!entry.isDirectory() || !entry.name.startsWith('slot-')) continue;
+      const infoPath = path.join(lockDir, entry.name, 'info.json');
+      try {
+        const info = JSON.parse(readFileSync(infoPath, 'utf-8'));
+        const taskId = info.task_id;
+        if (!taskId || typeof taskId !== 'string') continue;
+
+        // child_pid 优先（更精确），fallback pid
+        let alivePid = null;
+        for (const p of [info.child_pid, info.pid]) {
+          const n = p ? Number(p) : NaN;
+          if (Number.isFinite(n) && n > 0 && isProcessAlive(n)) { alivePid = n; break; }
+        }
+        if (!alivePid) continue;
+
+        if (!activeProcesses.has(taskId)) {
+          activeProcesses.set(taskId, {
+            pid: alivePid,
+            pgid: info.pgid ? Number(info.pgid) : alivePid,
+            startedAt: info.started || new Date().toISOString(),
+            runId: null,
+            bridge: false,
+            source: 'reattach_slot',
+          });
+          result.reattached++;
+          taskIdsToTouch.add(taskId);
+          console.log(`[reattach] slot ${entry.name}: task=${taskId} pid=${alivePid}`);
+        }
+      } catch { /* corrupt info.json 或 slot 已清理 */ }
+    }
+  } catch (err) {
+    if (err.code !== 'ENOENT') {
+      result.errors.push(`slot_scan: ${err.message}`);
+      console.warn('[reattach] lock slot scan failed (non-fatal):', err.message);
+    }
+  }
+
+  // ── 2. Docker relay container scan ────────────────────────────────────────
+  try {
+    const dockerOut = execSync(
+      "docker ps --filter 'name=cecelia-relay-' --format '{{.Names}}'",
+      { encoding: 'utf-8', timeout: 8000, stdio: 'pipe' }
+    ).trim();
+    const containerNames = dockerOut ? dockerOut.split('\n').filter(Boolean) : [];
+
+    if (containerNames.length > 0) {
+      // 命名规约: cecelia-relay-<short8>[-cx|-<rand>]，short8 = task.id 前 8 字符
+      const shortPrefixes = new Set();
+      for (const name of containerNames) {
+        const match = name.match(/^cecelia-relay-([0-9a-f]{8})/i);
+        if (match) shortPrefixes.add(match[1].toLowerCase());
+      }
+
+      if (shortPrefixes.size > 0) {
+        const prefixArr = Array.from(shortPrefixes);
+        const { rows } = await dbPool.query(
+          `SELECT id, started_at, payload
+             FROM tasks
+            WHERE status = 'in_progress'
+              AND LEFT(id::text, 8) = ANY($1::text[])`,
+          [prefixArr]
+        );
+        for (const row of rows) {
+          if (!activeProcesses.has(row.id)) {
+            activeProcesses.set(row.id, {
+              pid: null,
+              startedAt: row.started_at || new Date().toISOString(),
+              runId: row.payload?.current_run_id || null,
+              bridge: true,
+              source: 'reattach_docker',
+            });
+            result.reattached++;
+            taskIdsToTouch.add(row.id);
+            console.log(`[reattach] docker relay: task=${row.id}`);
+          }
+        }
+      }
+    }
+  } catch (err) {
+    result.errors.push(`docker_scan: ${err.message}`);
+    console.warn('[reattach] docker relay scan failed (non-fatal):', err.message);
+  }
+
+  // ── 3. Touch updated_at — 给 zombie-reaper 续命 ───────────────────────────
+  if (taskIdsToTouch.size > 0) {
+    try {
+      const ids = Array.from(taskIdsToTouch);
+      const touchResult = await dbPool.query(
+        `UPDATE tasks SET updated_at = NOW()
+          WHERE id = ANY($1::uuid[])
+            AND status = 'in_progress'
+          RETURNING id`,
+        [ids]
+      );
+      result.touched = touchResult.rowCount || 0;
+      console.log(`[reattach] updated_at touched for ${result.touched} tasks`);
+    } catch (err) {
+      result.errors.push(`touch_updated_at: ${err.message}`);
+      console.warn('[reattach] touch updated_at failed (non-fatal):', err.message);
+    }
+  }
+
+  console.log(`[reattach] done reattached=${result.reattached} touched=${result.touched} errors=${result.errors.length}`);
+  return result;
+}
+
+/**
  * Synchronize DB state with actual processes on Brain startup.
  * Finds all in_progress tasks and checks if they have matching processes.
  * Tasks without processes are marked as failed (orphan_detected).
@@ -3967,6 +4123,7 @@ export {
   XIAN_CODEX_BRIDGE_URL,
   // v4: State drift elimination
   probeTaskLiveness,
+  reAttachActiveExecutors,
   syncOrphanTasksOnStartup,
   recordHeartbeat,
   isRunIdProcessAlive,
