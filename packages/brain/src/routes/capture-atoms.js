@@ -122,7 +122,9 @@ router.patch('/:id', async (req, res) => {
     const finalSubtype = target_subtype !== undefined ? target_subtype : atom.target_subtype;
     const finalAreaId = suggested_area_id !== undefined ? suggested_area_id : atom.suggested_area_id;
 
-    // T10：三类系统产出来源由 capture-triage tick 自动分诊，不走人工 confirm 路由
+    // T10：三类系统产出来源由 capture-triage tick 自动分诊，不走人工 confirm 路由。
+    // 守卫刻意检查请求覆盖后的 finalType（而非 atom.target_type）：人工改判 target_type
+    // 为非自动分诊类型后即可走本路由——这是 triage 留箱（pending_review）条目的人工复核出路。
     if (AUTO_TRIAGE_SOURCE_TYPES.includes(finalType)) {
       await client.query('ROLLBACK');
       return res.status(400).json({
