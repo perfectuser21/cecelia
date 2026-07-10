@@ -18,6 +18,11 @@ export function normalizeCallbackStatus(status) {
   if (status === 'AI Done' || status === 'success') return 'completed';
   if (status === 'AI Failed' || status === 'failed' || status === 'timeout') return 'failed';
   if (status === 'AI Quota Exhausted') return 'quota_exhausted';
+  // 幂等直通：调用方（或测试）已经传入内部规范状态时原样透传，
+  // 避免误判为默认 'in_progress'（见 callback-processor.js 回调写库协议测试）。
+  if (status === 'completed' || status === 'completed_no_pr' || status === 'quota_exhausted' || status === 'cancelled') {
+    return status;
+  }
   return 'in_progress';
 }
 

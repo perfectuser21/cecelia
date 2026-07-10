@@ -19,6 +19,8 @@ import { resolveRelatedFailureMemories } from './routes/shared.js';
 import { normalizeCallbackStatus, extractPrNumber, maybeMarkCompletedNoPr, buildExecMetaJson, buildFailureFields, extractFindingsValue, buildLastRunResult } from './lib/callback-utils.js';
 import { REVIEW_TASK_TYPES } from './lib/review-task-types.js';
 
+const TERMINAL_CALLBACK_STATUSES = new Set(['completed', 'completed_no_pr', 'failed', 'cancelled']);
+
 /**
  * processExecutionCallback(data, pool)
  *
@@ -72,6 +74,7 @@ export async function processExecutionCallback(data, pool) {
   // 3. ATOMIC transaction: task UPDATE + decision_log + progress step
   const client = await pool.connect();
   let findingsValue = null;
+  let applied = false;
   try {
     await client.query('BEGIN');
 
@@ -85,10 +88,11 @@ export async function processExecutionCallback(data, pool) {
     const prNumber = extractPrNumber(pr_url);
 
     const isQuotaExhausted = newStatus === 'quota_exhausted';
+    const isTerminal = TERMINAL_CALLBACK_STATUSES.has(newStatus);
     const { errorMessage, blockedDetail } = buildFailureFields(newStatus, result, stderr, exit_code, task_id);
     const execMetaJson = buildExecMetaJson(result);
 
-    await client.query(`
+    const updRes = await client.query(`
       UPDATE tasks
       SET
         status = $2,
@@ -104,13 +108,20 @@ export async function processExecutionCallback(data, pool) {
         pr_url = COALESCE($5::text, pr_url),
         pr_status = CASE WHEN $5::text IS NOT NULL THEN 'open' ELSE pr_status END,
         error_message = CASE WHEN $9::text IS NOT NULL THEN $9::text ELSE error_message END,
-        blocked_detail = CASE WHEN $10::jsonb IS NOT NULL THEN $10::jsonb ELSE blocked_detail END
+        blocked_detail = CASE WHEN $10::jsonb IS NOT NULL THEN $10::jsonb ELSE blocked_detail END,
+        updated_at = NOW(),
+        claimed_by = CASE WHEN $13::boolean THEN NULL ELSE claimed_by END,
+        claimed_at = CASE WHEN $13::boolean THEN NULL ELSE claimed_at END
       WHERE id = $1 AND status IN ('in_progress', 'queued', 'dispatched')
     `, [
       task_id, newStatus, JSON.stringify(lastRunResult), status, pr_url || null,
       isCompleted, findingsValue, prNumber, errorMessage, blockedDetail,
-      isQuotaExhausted, execMetaJson,
+      isQuotaExhausted, execMetaJson, isTerminal,
     ]);
+    applied = (updRes.rowCount ?? 0) > 0;
+    if (!applied) {
+      console.warn(`[callback-processor] 迟到回调被守卫拦下(task=${task_id} 已非 in_progress/queued/dispatched),status=${newStatus} 未落地`);
+    }
 
     // decision_log（带 WHERE NOT EXISTS 防重复写入）
     await client.query(`
@@ -360,5 +371,5 @@ export async function processExecutionCallback(data, pool) {
     }
   }
 
-  return { success: true, newStatus };
+  return { success: true, newStatus, applied };
 }
