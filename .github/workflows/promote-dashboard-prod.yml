@@ -24,6 +24,25 @@ jobs:
     timeout-minutes: 10
     if: github.event.inputs.confirm == 'PROMOTE'
     steps:
+      - name: Checkout（刀C Release Gate 需要脚本）
+        uses: actions/checkout@v4
+
+      - name: 刀C Release Gate — 查最近 nightly 绿证据
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: |
+          set -uo pipefail
+          chmod +x scripts/ci/release-gate-check.sh
+          # 落章：gate 通过后输出到 job summary
+          GH_TOKEN="${GITHUB_TOKEN}" bash scripts/ci/release-gate-check.sh 24 | tee /tmp/release-gate-result.txt
+          RESULT=$(cat /tmp/release-gate-result.txt)
+          echo "## 🔒 刀C Release Gate" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "$RESULT" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "**放行时间**: $(date -u '+%Y-%m-%dT%H:%M:%SZ')" >> "$GITHUB_STEP_SUMMARY"
+
       - name: Connect to Tailscale
         uses: tailscale/github-action@v2
         with:

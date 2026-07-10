@@ -278,17 +278,49 @@ jobs:
               --connect-timeout 10 --max-time 20 2>/dev/null || true
           fi
 
+  # ─── Release Gate 刀C：nightly 绿证据检查（两条 lane 共用前置）─────────────
+  # 功能：查最近 auto-staging-deploy.yml 成功记录（48h 内），无则硬红阻断 production deploy。
+  # "落章"：通过后写 GitHub Step Summary，形成可追溯的部署放行记录。
+
+  release_gate:
+    name: Release Gate (刀C) — nightly 绿证据
+    needs: changes
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+      - name: 查最近 auto-staging-deploy 绿证据（窗口 48h）
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash scripts/ci/release-gate-check.sh 48
+      - name: 落章 — 写 Step Summary（部署放行凭证）
+        if: success()
+        run: |
+          echo "## ✅ Release Gate (刀C) 通过" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| 项目 | 值 |" >> $GITHUB_STEP_SUMMARY
+          echo "|---|---|" >> $GITHUB_STEP_SUMMARY
+          echo "| 检查时间 | $(date -u '+%Y-%m-%d %H:%M UTC') |" >> $GITHUB_STEP_SUMMARY
+          echo "| 触发方式 | ${{ github.event_name }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| 绿证据窗口 | 48h |" >> $GITHUB_STEP_SUMMARY
+          echo "| Workflow | auto-staging-deploy.yml |" >> $GITHUB_STEP_SUMMARY
+
   # ─── Trigger Deploy via Brain Webhook ─────────────────────────────────────
 
   deploy:
     name: Trigger Deploy
-    needs: [changes, risk_gate, staging_deploy]
+    needs: [changes, risk_gate, staging_deploy, release_gate]
     # Fast Lane: risk_gate 通过（staging_deploy 跳过）
     # Safe Lane: staging_deploy 通过（risk_gate 跳过）
     # always() 配合条件判断，确保两种 lane 都能触发
     # 注意：job-level concurrency 已移除，workflow-level concurrency 已负责串行
     if: |
       always() &&
+      needs.release_gate.result == 'success' &&
       (needs.changes.outputs.brain == 'true' || needs.changes.outputs.workspace == 'true') &&
       (
         (needs.changes.outputs.risk_level == 'low' && needs.risk_gate.result == 'success') ||
