@@ -5,7 +5,7 @@
  * 测试 mode=headed 新分支逻辑（harness-skill-relay.js）：
  * 1. headed → ssh+tmux 路径（无 docker extraMounts）
  * 2. 缺省/headless → docker 路径零回归
- * 3. claude+headed → 400 拒绝
+ * 3. claude+headed → ssh+tmux 路径（T6 88e0b448 解锁后，原"400 拒绝"已反转）
  *
  * 这些测试在实现前都应 FAIL（TDD Red 阶段）。
  */
@@ -164,32 +164,34 @@ describe('mode=headed 路由分支', () => {
   });
 });
 
-describe('3. claude+headed → 拒绝路由', () => {
+describe('3. claude+headed → ssh+tmux 路径（T6 88e0b448 解锁后）', () => {
   /**
-   * 注意：claude+headed 的拒绝发生在 routes/tasks.js（POST /api/brain/tasks 入口）层，
-   * 不是在 spawnSkillRelaySession 层。
-   * 这里测试 spawnSkillRelaySession 对 claude+headed 的防御性处理。
+   * T6（88e0b448，routing-doctrine：Claude=有头）解锁 claude+headed 派发后，
+   * routes/tasks.js 入口白名单已放行 executor=claude + mode=headed；
+   * spawnSkillRelaySession 层同步泛化，走 _spawnHeadedSession 的 ssh+tmux 路径，
+   * host 值/tmux 前缀按 HEADED_HOSTS.claude / HEADED_TMUX_PREFIXES.claude 映射。
+   * 本用例原为"claude+headed 应被拒绝"的防御层测试，随此次策略反转同步更新。
    */
-  it('executor=claude + mode=headed → spawnSkillRelaySession 返回 ok=false（防御层）', async () => {
+  it('executor=claude + mode=headed → spawnSkillRelaySession 返回 ok=true，走 sshSpawnFn（不走 docker）', async () => {
     const deps = makeHeadedDeps();
     const claudeHeadedTask = {
       id: 'aaaabbbb-cccc-dddd-eeee-ffff00004444',
-      title: 'claude headed invalid',
+      title: 'claude headed valid',
       payload: {
         orchestrator: 'skill-relay',
         executor: 'claude',
         mode: 'headed',
         sprint_dir: 'sprints/07071654-codex-headed-dispatch',
+        journey_id: 'bb8cc561-b3ee-4fec-b74d-2255694bd963',
       },
     };
     const r = await spawnSkillRelaySession(claudeHeadedTask, deps);
 
-    // TDD Red: claude+headed 组合不合法，应被拒绝
-    expect(r.ok).toBe(false);
-    expect(r.error || r.reason).toBeTruthy();
-    // 不应产生任何 spawn
+    expect(r.ok).toBe(true);
+    expect(r.mode).toBe('skill-relay-claude-headed');
+    // claude headed 路径同样不走 docker，走 tmux
     expect(deps.spawnFn).not.toHaveBeenCalled();
-    expect(deps.sshSpawnFn).not.toHaveBeenCalled();
+    expect(deps.sshSpawnFn).toHaveBeenCalledOnce();
   });
 });
 
