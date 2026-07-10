@@ -5,6 +5,11 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { EventEmitter } from 'events';
+
+// Mock child_process.spawn（用于 callClaudeDirectStream）
+const mockSpawnForStream = vi.hoisted(() => vi.fn());
+vi.mock('child_process', () => ({ spawn: mockSpawnForStream }));
 
 // Mock 外部依赖
 vi.mock('../model-profile.js', () => ({
@@ -566,27 +571,43 @@ describe('llm-caller', () => {
   });
 
   // ═══════════════════════════════════════════════════════════
-  // callLLMStream - 非 MiniMax provider（降级到非流式）
+  // callLLMStream - 非 MiniMax provider（直接 spawn stream-json）
   // ═══════════════════════════════════════════════════════════
 
-  describe('callLLMStream - 非流式降级', () => {
-    it('anthropic provider 降级为非流式，一次性返回', async () => {
+  describe('callLLMStream - anthropic 直接 spawn', () => {
+    it('anthropic provider 使用 callClaudeDirectStream（spawn，不走 bridge）', async () => {
       getActiveProfile.mockReturnValueOnce({
         config: {
           cortex: { provider: 'anthropic', model: 'claude-sonnet-4-6' },
         },
       });
-      global.fetch.mockResolvedValueOnce(makeBridgeResponse('完整回复'));
+
+      // 创建 mock 进程
+      const mockProc = new EventEmitter();
+      mockProc.stdout = new EventEmitter();
+      mockProc.stderr = new EventEmitter();
+      mockSpawnForStream.mockReturnValueOnce(mockProc);
 
       const chunks = [];
-      await callLLMStream('cortex', '测试', {}, (delta, isDone) => {
+      const p = callLLMStream('cortex', '测试', {}, (delta, isDone) => {
         chunks.push({ delta, isDone });
       });
 
-      // 应收到完整文本 + done
-      expect(chunks.length).toBe(2);
-      expect(chunks[0]).toEqual({ delta: '完整回复', isDone: false });
-      expect(chunks[1]).toEqual({ delta: '', isDone: true });
+      // 模拟 claude stream-json NDJSON 输出
+      setImmediate(() => {
+        mockProc.stdout.emit('data', Buffer.from(
+          JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text: '完整回复' }] } }) + '\n'
+        ));
+        mockProc.stdout.emit('end');
+        mockProc.emit('close', 0);
+      });
+
+      await p;
+
+      expect(chunks).toContainEqual({ delta: '完整回复', isDone: false });
+      expect(chunks[chunks.length - 1]).toEqual({ delta: '', isDone: true });
+      // 不应调用 bridge（fetch）
+      expect(global.fetch).not.toHaveBeenCalled();
     });
   });
 
