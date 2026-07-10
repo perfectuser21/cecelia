@@ -6,7 +6,7 @@
 
 
 
-**Brain 版本**: 1.244.0
+**Brain 版本**: 1.244.3
 
 **状态**: 生产运行中
 
@@ -527,6 +527,7 @@ queued → in_progress → completed
 | harness_final_e2e | US | Harness v2 阶段 C — Initiative 级真实 E2E 验收 | Sonnet / - | 默认 anthropic |
 | harness_intervention | US | Harness 巡逻干预任务（卡住检测 + 自动重置） | - | /_internal |
 | staging_e2e | US | Harness staging E2E native 执行（部署 :5222/5223 + contract E2E + promote 分流） | - | /_internal |
+| ci_patrol | US | CI/CD 巡检员（每日按 line 报 4 硬伤 + 棘轮 guard）| Sonnet / - | 默认 anthropic |
 | strategist_decision | US | Line 军师决策（task 落终态后按 line 派发，line-strategist-loop 独立巡航接入） | - | /line-strategist |
 | content-pipeline | 西安 | 内容工厂 Pipeline 编排入口 (/content-creator) | - | general |
 | content-research | 西安 | 内容调研阶段 (/notebooklm) | - | general |
