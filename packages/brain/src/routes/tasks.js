@@ -372,7 +372,7 @@ router.patch('/tasks/:task_id', async (req, res) => {
 
 
     // Get current task
-    const taskResult = await pool.query('SELECT id, status FROM tasks WHERE id = $1', [task_id]);
+    const taskResult = await pool.query('SELECT id, status, claimed_by, executor_kind FROM tasks WHERE id = $1', [task_id]);
     if (taskResult.rows.length === 0) {
       return res.status(404).json({
         success: false,
@@ -429,6 +429,19 @@ router.patch('/tasks/:task_id', async (req, res) => {
       if (status === 'failed' || status === 'completed') {
         setClauses.push('claimed_by = NULL');
         setClauses.push('claimed_at = NULL');
+      }
+      // 认领协议统一（T4）: in_progress 时自动写 claimed_by + executor_kind
+      // 防止 dispatcher selectNextDispatchableTask(claimed_by IS NULL 过滤)重复抢跑
+      if (status === 'in_progress') {
+        const sessionId = req.headers['x-session-id'] || 'engine-patch';
+        setClauses.push(`claimed_by = COALESCE(claimed_by, $${paramIdx++})`);
+        params.push(`session:${sessionId}`);
+        setClauses.push(`claimed_at = COALESCE(claimed_at, NOW())`);
+        // 仅在 executor_kind 为 NULL 时打标，不覆盖 Brain 已设置的 kind
+        if (task.executor_kind === null || task.executor_kind === undefined) {
+          setClauses.push(`executor_kind = $${paramIdx++}`);
+          params.push('headed-session');
+        }
       }
     }
 

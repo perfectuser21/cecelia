@@ -275,6 +275,13 @@ router.patch('/:id', async (req, res) => {
       // 自动设置时间戳
       if (status === 'in_progress') {
         setClauses.push(`started_at = COALESCE(started_at, NOW())`);
+        // 认领协议统一（T4）: in_progress 时补写 claimed_by + executor_kind
+        // 防止 dispatcher 重复抢跑（07-10 事故：注册后未 claim，Brain 几分钟内重复派发）
+        setClauses.push(`claimed_by = COALESCE(claimed_by, $${paramIndex++})`);
+        params.push(`session:${req.headers?.['x-session-id'] || 'engine-patch'}`);
+        setClauses.push(`claimed_at = COALESCE(claimed_at, NOW())`);
+        setClauses.push(`executor_kind = COALESCE(executor_kind, $${paramIndex++})`);
+        params.push('headed-session');
       }
       if (status === 'completed') {
         setClauses.push(`completed_at = COALESCE(completed_at, NOW())`);
@@ -356,16 +363,17 @@ router.patch('/:id', async (req, res) => {
 router.post('/:id/claim', async (req, res) => {
   try {
     const { id } = req.params;
-    const { claimer } = req.body || {};
+    const { claimer, executor_kind: rawExecutorKind } = req.body || {};
     if (!claimer) {
       return res.status(400).json({ error: 'claimer is required' });
     }
+    const executorKind = rawExecutorKind || 'headed-session';
 
     const result = await pool.query(
-      `UPDATE tasks SET claimed_by = $1, claimed_at = NOW()
+      `UPDATE tasks SET claimed_by = $1, claimed_at = NOW(), executor_kind = COALESCE(executor_kind, $3)
        WHERE id = $2 AND claimed_by IS NULL
-       RETURNING id, claimed_by, claimed_at`,
-      [claimer, id]
+       RETURNING id, claimed_by, claimed_at, executor_kind`,
+      [claimer, id, executorKind]
     );
 
     if (result.rows.length === 0) {
