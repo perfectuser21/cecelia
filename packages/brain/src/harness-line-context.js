@@ -4,7 +4,8 @@
  * 把本 line 的 invariant 铁律 + 累积 FR（已验收行为）从"skill 里 curl 靠自觉"
  * 升级为 graph 节点代码注入（技术保证），供 proposer/generator/evaluator 三角色使用：
  *   - fetchLineContext：三源 invariant（step/journey_feature/area，按 decision id 去重）
- *     + 累积 FR（journey 下 ability_status IN ('done','working') 的 golden_path，按 owner_task_id 分组）。
+ *     + 累积 FR（journey 下 ability_status IN ('done','working') 的 golden_path，按 owner_task_id 分组；
+ *       读 key=golden_path.feature_id 直连，07-10 T2 对齐；不再绕 tasks.ability_id）。
  *     SQL 与 routes/abilities.js 对应端点同源（直接 pool 查询不走 HTTP）；
  *     任何一路失败 → 该路空数组 + warn，绝不 throw（角色注入是增强不是门禁）。
  *   - formatLineContextForPrompt：行格式与 harness-planner v8.12.0 Step 0.4 逐字同构（E1 解析契约，不可变）。
@@ -82,8 +83,7 @@ export async function fetchLineContext({ pool }, { taskId = null, abilityId = nu
       SELECT jf.id AS ability_id, jf.name AS ability_name, jf.status AS ability_status,
              gp.owner_task_id, gp.id, gp.order_no, gp.feature_id, gp.note
       FROM golden_path gp
-      JOIN tasks t ON gp.owner_task_id = t.id
-      JOIN journey_features jf ON t.ability_id = jf.id
+      JOIN journey_features jf ON gp.feature_id = jf.id
       WHERE jf.journey_id = $1 AND jf.status IN ('done','working')
       ORDER BY gp.owner_task_id, gp.order_no ASC`, [journeyId]);
     const groups = new Map();
