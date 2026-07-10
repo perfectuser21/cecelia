@@ -16,7 +16,6 @@ import { promisify } from 'util';
 import { readdirSync, readFileSync, existsSync } from 'fs';
 import pool from '../db.js';
 import { emit } from '../event-bus.js';
-import { processExists } from '../platform-utils.js';
 import { assessTaskLiveness } from '../executor-contracts.js';
 
 const execAsync = promisify(exec);
@@ -33,11 +32,6 @@ const LOCK_DIR = '/tmp/cecelia-locks';
 // 不可重试的失败类别
 const NON_RETRYABLE_FAILURE_CLASSES = ['auth', 'resource', 'code_error', 'pipeline_terminal_failure'];
 
-// ============================================================
-// 进程存活检测（跨平台）— 统一使用 platform-utils.processExists()
-// ============================================================
-
-const isProcessAlive = processExists;
 
 /**
  * 读取 slot 目录获取 task_id 到 pid 的映射

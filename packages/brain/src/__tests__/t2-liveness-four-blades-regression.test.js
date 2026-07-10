@@ -96,7 +96,7 @@ function extractDeadTaskResetBlock(src) {
 // 回归用例（07-10 事故参数：四刀均不杀活跃任务）
 // ══════════════════════════════════════════════════════════════
 
-describe('回归用例 — 07-10 事故：四刀均不杀 alive 任务', () => {
+describe('T2 Liveness 回归 — 07-10 事故：四刀均不杀 alive 任务', () => {
 
   // ──── 刀①: zombie-reaper 回归 ────────────────────────────────
   describe('刀① zombie-reaper: assessTaskLiveness=alive 时跳过不杀', () => {

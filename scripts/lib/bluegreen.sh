@@ -8,23 +8,39 @@
 # 不变量：任何 docker rm -f <blue> 只能在 green canary health 通过之后发生。
 set -uo pipefail
 
-# send_bark <msg>：紧急部署告警走 Bark（不走飞书）。未配 token 静默跳过。
-send_bark() {
-  local msg="$1"
-  # shellcheck disable=SC1091
-  [[ -f "$HOME/.credentials/bark.env" ]] && source "$HOME/.credentials/bark.env"
-  if [[ -z "${BARK_TOKEN:-}" ]]; then
-    echo "  [bark] 未配 BARK_TOKEN，跳过推送"
-    return 0
-  fi
-  local title body
-  title=$(printf '%s' "Brain部署" | jq -sRr @uri)
-  body=$(printf '%s' "$msg" | jq -sRr @uri)
-  if curl -sf --max-time 10 "https://api.day.app/${BARK_TOKEN}/${title}/${body}?group=brain-deploy" >/dev/null 2>&1; then
-    echo "  [bark] 已推送: $msg"
+# _url_encode <str>：URL 百分比编码。优先 jq，兜底 python3，均无则原样返回（ASCII 正常，不 fatal）。
+_url_encode() {
+  local str="$1"
+  if command -v jq >/dev/null 2>&1; then
+    printf '%s' "$str" | jq -sRr @uri
+  elif command -v python3 >/dev/null 2>&1; then
+    python3 -c "import urllib.parse,sys; print(urllib.parse.quote(sys.stdin.read()),end='')" <<<"$str"
   else
-    echo "  [bark] 推送失败(不阻塞): $msg"
+    printf '%s' "$str"
   fi
+}
+
+# send_bark <msg>：紧急部署告警走 Bark（不走飞书）。未配 token 静默跳过。
+# 整个函数 non-fatal：通知失败不阻塞部署（避免容器内无 jq 等依赖缺失致 exit 127）。
+send_bark() {
+  # shellcheck disable=SC1091
+  (
+    set +e
+    local msg="$1"
+    [[ -f "$HOME/.credentials/bark.env" ]] && source "$HOME/.credentials/bark.env"
+    if [[ -z "${BARK_TOKEN:-}" ]]; then
+      echo "  [bark] 未配 BARK_TOKEN，跳过推送"
+      return 0
+    fi
+    local title body
+    title=$(_url_encode "Brain部署")
+    body=$(_url_encode "$msg")
+    if curl -sf --max-time 10 "https://api.day.app/${BARK_TOKEN}/${title}/${body}?group=brain-deploy" >/dev/null 2>&1; then
+      echo "  [bark] 已推送: $msg"
+    else
+      echo "  [bark] 推送失败(不阻塞): $msg"
+    fi
+  ) || true
 }
 
 # bluegreen_swap：green canary 验证后原子切。入参走 env：
