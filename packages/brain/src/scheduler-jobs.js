@@ -16,6 +16,7 @@ import { scheduleDailyBackup } from './daily-backup-scheduler.js';
 import { maybeRunLineDreaming } from './line-dreaming.js';
 import { maybeGenerateBattleReport } from './battle-report.js';
 import { maybeRunLedgerHygiene } from './ledger-hygiene.js';
+import { runCaptureTriage } from './capture-triage.js';
 
 const LOOP_INTERVAL_MS = 60 * 1000;
 const DEFAULT_TIMEOUT_MS = 5 * 60 * 1000;
@@ -31,6 +32,7 @@ export const JOBS = [
   { name: 'line-dreaming', needsPool: true, timeoutMs: DEFAULT_TIMEOUT_MS, handler: maybeRunLineDreaming, description: 'L1 line 级夜间蒸馏（自带北京05:00窗口+20h去重，晨报前跑完）' },
   { name: 'ledger-hygiene', needsPool: true, timeoutMs: DEFAULT_TIMEOUT_MS, handler: maybeRunLedgerHygiene, description: '账本保鲜守卫（自带北京05:10窗口+20h去重，5指标+棘轮击穿开issue）' },
   { name: 'battle-report', needsPool: true, timeoutMs: DEFAULT_TIMEOUT_MS, handler: maybeGenerateBattleReport, description: '作战日报（北京06:00窗口+当日去重自 gate）' },
+  { name: 'capture-triage', needsPool: true, timeoutMs: DEFAULT_TIMEOUT_MS, handler: runCaptureTriage, description: '收件箱四路分诊（自带10min间隔gate+批量上限，T10）' },
 ];
 
 function raceWithTimeout(promise, timeoutMs) {
