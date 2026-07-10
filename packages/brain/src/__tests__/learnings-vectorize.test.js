@@ -439,7 +439,7 @@ describe('selfcheck schema version', () => {
     // 324 = migration 324 advancement_items.notion_synced_at（pushAdvancementItems 去重查询直接依赖）；
     // 326 = migration 326 side_effect_dedupe 表（lib/dedupe.js claimDedupeKey INSERT..ON CONFLICT 直接依赖，
     // 表不存在则 fail-open 降级恒触发）；
-    // 330 = migration 330 learnings 谱系两列 + summary backfill（T9 学习账本可靠性依赖），故推进地板到 330。
-    expect(EXPECTED_SCHEMA_VERSION).toBe('330');
+    // 331 = migration 331 learnings 谱系两列 + summary backfill（T9 学习账本可靠性依赖），故推进地板到 331。
+    expect(EXPECTED_SCHEMA_VERSION).toBe('331');
   });
 });

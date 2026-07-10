@@ -174,10 +174,10 @@ describe('selfcheck', () => {
   // 去重查询直接依赖（列不存在则 SELECT/UPDATE 整句报错被吞，去重恒不生效），故推进地板到 324。
   // 326（side_effect_dedupe 表）被 lib/dedupe.js claimDedupeKey 的 INSERT..ON CONFLICT 直接依赖
   // （表不存在则 fail-open 降级恒触发，三入口幂等全部失效——同类接缝），故推进地板到 326。
-  // 330（learnings 谱系两列 + summary backfill + task_completion 清理）为 T9 学习账本
-  // 可靠性依赖（parent_learning_id/verified_effective 列缺失则谱系写入整句报错被吞），故推进地板到 330。
-  it('EXPECTED_SCHEMA_VERSION should be 330 (floor, bumped for learnings lineage)', () => {
-    expect(EXPECTED_SCHEMA_VERSION).toBe('330');
+  // 331（learnings 谱系两列 + summary backfill + task_completion 清理）为 T9 学习账本
+  // 可靠性依赖（parent_learning_id/verified_effective 列缺失则谱系写入整句报错被吞），故推进地板到 331。
+  it('EXPECTED_SCHEMA_VERSION should be 331 (floor, bumped for learnings lineage)', () => {
+    expect(EXPECTED_SCHEMA_VERSION).toBe('331');
   });
 
   it('should pass when DB schema version is ahead of expected (>= check)', async () => {

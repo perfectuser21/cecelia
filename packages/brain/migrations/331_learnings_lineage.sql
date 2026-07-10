@@ -1,4 +1,4 @@
--- Migration 330: learnings 谱系两列 + summary backfill + task_completion 历史噪音清理
+-- Migration 331: learnings 谱系两列 + summary backfill + task_completion 历史噪音清理
 -- 依据: docs/architecture/2026-07-10-nine-elements-integrity/addendum-01（T9）
 -- parent_learning_id: 事件层→原子准则层归纳链（自引用）。注意与既有 parent_id（migration 063 去重版本链）语义不同，并存。
 -- verified_effective: NULL=未验证 / true/false=验证结论。
@@ -18,5 +18,5 @@ WHERE summary IS NULL;
 DELETE FROM learnings WHERE category = 'task_completion';
 
 INSERT INTO schema_version (version, description)
-VALUES ('330', 'learnings lineage columns + summary backfill + task_completion noise cleanup')
+VALUES ('331', 'learnings lineage columns + summary backfill + task_completion noise cleanup')
 ON CONFLICT (version) DO NOTHING;
