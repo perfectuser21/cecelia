@@ -60,6 +60,22 @@ describe('generateDecision 写入去重（T8）', () => {
     expect(result.deduped).toBeUndefined();
   });
 
+  it('dedup 前置查询必须排除已执行记录（executed_at IS NULL）并带 id DESC tie-break', async () => {
+    // 回归守卫：dedup 若返回已 executed 的 decision_id，tick-runner 调 executeDecision
+    // 会抛 'Decision already executed'，失败任务的第 2/3 次自动重试被静默压制。
+    // mock 层无法真实执行 SQL 过滤，用 SQL 文本断言防止这个 filter 被误删。
+    setupPool({ prevRows: [] });
+
+    await generateDecision({ trigger: 'consciousness_loop' });
+
+    const dedupCall = pool.query.mock.calls.find(
+      ([sql]) => sql.includes('FROM decisions') && sql.includes('ORDER BY created_at DESC')
+    );
+    expect(dedupCall).toBeDefined();
+    expect(dedupCall[0]).toContain('executed_at IS NULL');
+    expect(dedupCall[0]).toContain('id DESC');
+  });
+
   it('无前置记录 → 照常 INSERT', async () => {
     setupPool({ prevRows: [] });
 

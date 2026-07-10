@@ -297,12 +297,15 @@ export async function generateDecision(context = {}) {
     goal_count: comparison.goals.length
   };
 
-  // T8 写入去重：同 trigger 上一条内容相同则跳过 INSERT（jsonb 语义相等，避免 JS 键序陷阱）
+  // T8 写入去重：同 trigger 上一条内容相同则跳过 INSERT（jsonb 语义相等，避免 JS 键序陷阱）。
+  // 只比对未执行记录：dedup 若返回已 executed 的 id，tick 调 executeDecision 会抛
+  // 'Decision already executed'，静默压制失败任务的自动重试链。
   const prevResult = await pool.query(`
     SELECT id, (actions = $2::jsonb AND context = $3::jsonb) AS same
     FROM decisions
     WHERE trigger = $1
-    ORDER BY created_at DESC
+      AND executed_at IS NULL
+    ORDER BY created_at DESC, id DESC
     LIMIT 1
   `, [trigger, JSON.stringify(actions), JSON.stringify(contextPayload)]);
 
