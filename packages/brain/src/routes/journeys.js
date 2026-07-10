@@ -228,6 +228,30 @@ router.post('/issues', async (req, res) => {
   }
 });
 
+// GET /api/brain/issues — 列表（战斗室 Issues 面板 + line-strategist skill 消费；T6 88e0b448）
+router.get('/issues', async (req, res) => {
+  try {
+    const limit = Math.min(parseInt(req.query.limit) || 20, 100);
+    const params = [];
+    const clauses = [];
+    if (req.query.status) { params.push(req.query.status); clauses.push(`status=$${params.length}`); }
+    if (req.query.journey_id) { params.push(req.query.journey_id); clauses.push(`journey_id=$${params.length}`); }
+    const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
+    params.push(limit);
+    const { rows } = await pool.query(
+      `SELECT id, title, priority, status, sub_area, journey_id, pr_url, created_at
+       FROM issues ${where}
+       ORDER BY priority ASC, created_at DESC
+       LIMIT $${params.length}`,
+      params
+    );
+    res.json({ issues: rows });
+  } catch (err) {
+    console.error('[journeys] GET /issues error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // GET /api/brain/journey_steps
 router.get('/journey_steps', async (req, res) => {
   try {

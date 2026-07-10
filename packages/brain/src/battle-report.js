@@ -176,7 +176,7 @@ function formatShanghaiShort(date) {
 }
 
 /**
- * 渲染 L1 Summary 四段 markdown，空段渲染"暂无"。
+ * 渲染 L1 Summary 五段 markdown，空段渲染"暂无"。
  * @param {Awaited<ReturnType<typeof buildBattleReportData>>} data
  * @returns {string}
  */
