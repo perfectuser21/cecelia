@@ -5,7 +5,7 @@
  */
 import { describe, it, expect } from 'vitest';
 import {
-  pctLabel, journeyStatRows, handoffRows, decisionRows,
+  pctLabel, journeyStatRows, handoffRows, decisionRows, issueRows,
   sentinelLight, sentinelRows, sentinelVisible, SENTINEL_STALE_SECONDS,
 } from '../WarRoomPanels';
 
@@ -90,6 +90,25 @@ describe('decisionRows（/api/brain/decisions 裸数组）', () => {
   it('非数组（含 {data} 包装误传）→ []', () => {
     expect(decisionRows(null)).toEqual([]);
     expect(decisionRows({ data: [] })).toEqual([]);
+  });
+});
+
+describe('issueRows（T6 Issues 面板）', () => {
+  it('{issues:[...]} 包装 → 行映射', () => {
+    const rows = issueRows({ issues: [
+      { id: 'i1', title: '收割器误删', priority: 'P0', status: 'In progress', sub_area: 'brain', created_at: '2026-07-10T01:00:00Z' },
+    ] });
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ id: 'i1', title: '收割器误删', priority: 'P0', status: 'In progress', sub_area: 'brain' });
+  });
+  it('非法输入（null/缺 issues/非数组）→ 空数组', () => {
+    expect(issueRows(null)).toEqual([]);
+    expect(issueRows({})).toEqual([]);
+    expect(issueRows({ issues: 'x' })).toEqual([]);
+  });
+  it('字段缺省容错', () => {
+    const rows = issueRows({ issues: [{}] });
+    expect(rows[0]).toMatchObject({ id: '', title: '', priority: '', status: '', sub_area: '', created_at: null });
   });
 });
 

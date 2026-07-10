@@ -6,6 +6,7 @@
  *   ② 24h 按线 run 聚合（同 routes/harness.js ?by=journey 口径）
  *   ③ 24h 用户决策（decisions made_by='user'）
  *   ④ 哨兵摘要（同 routes/sentinel.js 口径：ok && age<=1800）
+ *   ⑤ 军师决策（notes 表 line-strategist 落痕：type='Decision' + 标题前缀"军师决策["，按 Line 分组）
  * 落 design_docs(type='battle_report') + 飞书链接（best-effort，失败不回滚）。
  *
  * 调度：scheduler-jobs.js 60s 轮询 + 本模块自 gate（窗口 + 20h 去重），
@@ -46,9 +47,9 @@ export async function alreadyGeneratedToday(pool) {
 }
 
 /**
- * 采集 24h 窗口四段数据。
+ * 采集 24h 窗口五段数据。
  * @param {import('pg').Pool} pool
- * @returns {Promise<{mergedPrs: Array, journeyRuns: Array, userDecisions: Array, sentinel: object}>}
+ * @returns {Promise<{mergedPrs: Array, journeyRuns: Array, userDecisions: Array, strategistDecisions: Array, sentinel: object}>}
  */
 export async function buildBattleReportData(pool) {
   // ① merged PR（dev_records 断供容忍：恒空则渲染"暂无"）
@@ -131,7 +132,25 @@ export async function buildBattleReportData(pool) {
     jobs.length >= expected &&
     jobs.every((j) => j.ok && j.age_seconds <= SENTINEL_STALE_SECONDS);
 
-  return { mergedPrs, journeyRuns, userDecisions, sentinel: { jobs, expected, healthy } };
+  // ⑤ 军师决策（notes 表，line-strategist 落痕：type='Decision' + 标题前缀"军师决策["；
+  //    照 warroom.js:404 先例 try/catch 降级——notes 表缺失/查询失败不拖垮整份日报）
+  let strategistDecisions = [];
+  try {
+    const { rows } = await pool.query(
+      `SELECT title, content, created_at
+       FROM notes
+       WHERE type = 'Decision'
+         AND title LIKE '军师决策[%'
+         AND created_at >= NOW() - interval '24 hours'
+       ORDER BY created_at DESC
+       LIMIT 50`
+    );
+    strategistDecisions = rows;
+  } catch (err) {
+    console.warn(`[battle-report] 军师决策查询失败（降级空）: ${err.message}`);
+  }
+
+  return { mergedPrs, journeyRuns, userDecisions, strategistDecisions, sentinel: { jobs, expected, healthy } };
 }
 
 /** 上海日 YYYY-MM-DD（sv-SE locale 即 ISO 格式） */
@@ -157,7 +176,7 @@ function formatShanghaiShort(date) {
 }
 
 /**
- * 渲染 L1 Summary 四段 markdown，空段渲染"暂无"。
+ * 渲染 L1 Summary 五段 markdown，空段渲染"暂无"。
  * @param {Awaited<ReturnType<typeof buildBattleReportData>>} data
  * @returns {string}
  */
@@ -192,6 +211,28 @@ export function renderBattleReportMarkdown(data) {
   } else {
     for (const d of data.userDecisions) {
       lines.push(`- ${d.topic ?? '(无主题)'}（${formatShanghaiShort(d.created_at)}）`);
+    }
+  }
+
+  lines.push('');
+  lines.push('## 军师决策（24h）');
+  const sd = data.strategistDecisions || [];
+  if (sd.length === 0) {
+    lines.push('暂无');
+  } else {
+    const byLine = new Map();
+    for (const n of sd) {
+      const m = /^军师决策\[([^\]]*)\]/.exec(n.title || '');
+      const lineName = (m && m[1]) || '未知线';
+      if (!byLine.has(lineName)) byLine.set(lineName, []);
+      byLine.get(lineName).push(n);
+    }
+    for (const [lineName, items] of byLine) {
+      lines.push(`### ${lineName}`);
+      for (const n of items) {
+        const summary = (n.title || '').replace(/^军师决策\[[^\]]*\]:?\s*/, '') || '(无标题)';
+        lines.push(`- ${summary}（${formatShanghaiShort(n.created_at)}）`);
+      }
     }
   }
 

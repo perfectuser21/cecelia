@@ -19,13 +19,13 @@ echo "$RESP" | python3 -c "import sys,json;d=json.load(sys.stdin);exit(0 if isin
   && ok "POST tasks(mode=headed) → 200 + id 字段存在" \
   || fail "POST tasks(mode=headed) 响应异常: $RESP"
 
-# 2. POST tasks(mode=headed, executor=claude) → 400
+# 2. POST tasks(mode=headed, executor=claude) → 200/201（T6 88e0b448 解锁后，原 400 拒绝已反转）
 CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$BRAIN/api/brain/tasks" \
   -H "Content-Type: application/json" \
-  -d '{"task_type":"harness_initiative","title":"bad-combo","payload":{"orchestrator":"skill-relay","executor":"claude","mode":"headed"}}' 2>/dev/null || echo "000")
-[ "$CODE" = "400" ] \
-  && ok "POST tasks(executor=claude, mode=headed) → 400 拒绝" \
-  || fail "POST tasks(executor=claude, mode=headed) 应返 400，实际 $CODE"
+  -d '{"task_type":"harness_initiative","title":"claude-headed-smoke","payload":{"orchestrator":"skill-relay","executor":"claude","mode":"headed","journey_id":"bb8cc561-b3ee-4fec-b74d-2255694bd963"}}' 2>/dev/null || echo "000")
+[ "$CODE" = "200" ] || [ "$CODE" = "201" ] \
+  && ok "POST tasks(executor=claude, mode=headed) → 200/201 放行" \
+  || fail "POST tasks(executor=claude, mode=headed) 应返 200/201，实际 $CODE"
 
 # 3. POST tasks(mode=headless) → 200（合法模式）
 CODE2=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$BRAIN/api/brain/tasks" \

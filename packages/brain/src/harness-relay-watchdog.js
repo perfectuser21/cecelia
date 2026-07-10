@@ -12,6 +12,9 @@
  */
 import pool from './db.js';
 import { execSync } from 'node:child_process';
+import { HEADED_HOSTS, HEADED_TMUX_PREFIXES } from './harness-skill-relay.js';
+
+const HEADED_HOST_VALUES = Object.values(HEADED_HOSTS); // ['skill-relay-codex-headed','skill-relay-claude-headed']
 
 export const MAX_RELAY_ATTEMPTS = 5;
 // B6: codex 路径上限更低（外部 codex API 更贵，不允许无限重试）
@@ -64,7 +67,7 @@ export async function resumeStalledRelayRuns(deps = {}) {
   // 从未写入 initiative_runs）不计数，可能导致 attempts 长期低估、MAX_RELAY_ATTEMPTS
   // 封顶判断失效，从而无限重跑不收敛。暂未修，先记录跟踪。
   const runsQ = await dbPool.query(
-    `SELECT DISTINCT ON (initiative_id) initiative_id, phase, deadline_at, pr_url, orchestrator_host, completed_at, tmux_killed_at, (SELECT COUNT(*) FROM initiative_runs r2 WHERE r2.initiative_id = r.initiative_id AND r2.orchestrator_version = 'v2') AS attempts FROM initiative_runs r WHERE orchestrator_version = 'v2' AND (phase NOT IN ('done', 'failed') OR (orchestrator_host = 'skill-relay-codex-headed' AND phase = 'done' AND tmux_killed_at IS NULL)) ORDER BY initiative_id, started_at DESC LIMIT 20`
+    `SELECT DISTINCT ON (initiative_id) initiative_id, phase, deadline_at, pr_url, orchestrator_host, completed_at, tmux_killed_at, (SELECT COUNT(*) FROM initiative_runs r2 WHERE r2.initiative_id = r.initiative_id AND r2.orchestrator_version = 'v2') AS attempts FROM initiative_runs r WHERE orchestrator_version = 'v2' AND (phase NOT IN ('done', 'failed') OR (orchestrator_host IN ('skill-relay-codex-headed','skill-relay-claude-headed') AND phase = 'done' AND tmux_killed_at IS NULL)) ORDER BY initiative_id, started_at DESC LIMIT 20`
   );
   // 护栏:注入的 pool 对未知 SQL 返回 undefined 时(集成测试 fake),按空处理
   const runs = runsQ && Array.isArray(runsQ.rows) ? runsQ.rows : [];
@@ -112,7 +115,7 @@ export async function resumeStalledRelayRuns(deps = {}) {
       const short = shortId(task.id);
 
       // ─── headed 分支：ssh+tmux 存活检测 + 收窗幂等 ────────────────────────
-      if (run.orchestrator_host === 'skill-relay-codex-headed') {
+      if (HEADED_HOST_VALUES.includes(run.orchestrator_host)) {
         const { needsRefire } = await _handleHeadedRun(run, task, { dbPool, execFn, short });
         if (needsRefire) {
           // session 消失 → 重点火（走 spawnFn，即 headed 路径）
@@ -260,7 +263,6 @@ export async function resumeStalledRelayRuns(deps = {}) {
 
 // ─── headed 辅助：tmux 存活检测 + 收窗幂等 ───────────────────────────────────
 
-const HEADED_TMUX_SESSION_PREFIX = 'codex-relay-';
 // run done 后多久触发收窗（毫秒）
 const HEADED_KILL_AFTER_MS = 30 * 60 * 1000; // 30 分钟
 
@@ -277,7 +279,9 @@ const HEADED_KILL_AFTER_MS = 30 * 60 * 1000; // 30 分钟
  *    - session 存在 → 正常，不重点火
  */
 async function _handleHeadedRun(run, task, { dbPool, execFn, short }) {
-  const tmuxSession = `${HEADED_TMUX_SESSION_PREFIX}${short}`;
+  const prefix = run.orchestrator_host === HEADED_HOSTS.claude
+    ? HEADED_TMUX_PREFIXES.claude : HEADED_TMUX_PREFIXES.codex;
+  const tmuxSession = `${prefix}${short}`;
   const sshHost = task.payload?.ssh_host || process.env.HEADED_SSH_HOST || 'localhost';
 
   // 收窗逻辑：run done
