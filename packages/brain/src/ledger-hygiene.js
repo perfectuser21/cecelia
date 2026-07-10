@@ -132,7 +132,8 @@ export async function computeMetrics(pool) {
          AND created_at >= NOW() - INTERVAL '30 days'`
     );
     const cnt = toInt(rows[0]?.cnt);
-    return { key: 'm5', name: '判定点活性', value: cnt, debt: cnt === 0 ? 1 : 0, enabled: true };
+    // absolute：断电是绝对条件（debt>0 即击穿），不走棘轮相对比较
+    return { key: 'm5', name: '判定点活性', value: cnt, debt: cnt === 0 ? 1 : 0, enabled: true, absolute: true };
   }, { key: 'm5', name: '判定点活性', value: null, debt: 0 });
 
   return { m1, m2, m3, m4, m5 };
@@ -156,10 +157,12 @@ export function evaluateRatchet(metrics, prev, today) {
     if (state.baseline[m.key] === undefined) state.baseline[m.key] = m.debt;
     const prevDebt = prev?.last?.[m.key];
     const prevStreak = prev?.streaks?.[m.key] ?? 0;
-    if (prevDebt !== undefined && m.debt > prevDebt) {
+    // absolute 指标（如 m5 断电）debt>0 即击穿（含首跑）；普通指标走棘轮相对比较
+    const isBreach = m.absolute ? m.debt > 0 : prevDebt !== undefined && m.debt > prevDebt;
+    if (isBreach) {
       const streak = prevStreak + 1;
       state.streaks[m.key] = streak;
-      breaches.push({ key: m.key, name: m.name, prevDebt, debt: m.debt, streak });
+      breaches.push({ key: m.key, name: m.name, prevDebt: prevDebt ?? 0, debt: m.debt, streak });
     } else {
       state.streaks[m.key] = 0;
     }
@@ -226,6 +229,14 @@ async function raiseBreachAlerts(pool, breaches, today) {
     const priority = escalated ? 'P1' : 'P2';
     const title = `[ledger-hygiene] ${b.name} 欠账上升 ${b.prevDebt}→${b.debt}（${today}）`;
     try {
+      // 每指标每日最多一条 issue：当日已有同指标 issue 则跳过 INSERT 与 Bark
+      const { rows: dup } = await pool.query(
+        `SELECT 1 FROM issues
+         WHERE title LIKE $1 AND created_at >= CURRENT_DATE
+         LIMIT 1`,
+        [`[ledger-hygiene] ${b.name}%`]
+      );
+      if (dup.length > 0) continue;
       await pool.query(
         `INSERT INTO issues (title, priority, status, sub_area, body, journey_id)
          VALUES ($1, $2, 'In progress', 'brain', $3, NULL)`,

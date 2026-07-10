@@ -170,6 +170,31 @@ describe('evaluateRatchet — 棘轮逻辑', () => {
     expect(breaches[0].streak).toBe(3);
   });
 
+  it('absolute 指标 debt=1、无 prev → 首跑即击穿（断电首日就报）', () => {
+    const m = { m5: { key: 'm5', name: '判定点活性', value: 0, debt: 1, enabled: true, absolute: true } };
+    const { state, breaches } = evaluateRatchet(m, null, '2026-07-10');
+    expect(breaches).toHaveLength(1);
+    expect(breaches[0]).toMatchObject({ key: 'm5', prevDebt: 0, debt: 1, streak: 1 });
+    expect(state.streaks.m5).toBe(1);
+  });
+
+  it('absolute 指标 debt 持平 → 仍击穿且 streak 递增', () => {
+    const m = { m5: { key: 'm5', name: '判定点活性', value: 0, debt: 1, enabled: true, absolute: true } };
+    const prev = { baseline: { m5: 1 }, last: { m5: 1 }, streaks: { m5: 1 }, baseline_date: '2026-07-09' };
+    const { state, breaches } = evaluateRatchet(m, prev, '2026-07-10');
+    expect(breaches).toHaveLength(1);
+    expect(breaches[0]).toMatchObject({ key: 'm5', prevDebt: 1, debt: 1, streak: 2 });
+    expect(state.streaks.m5).toBe(2);
+  });
+
+  it('absolute 指标 debt=0 → 不击穿，streak 清零', () => {
+    const m = { m5: { key: 'm5', name: '判定点活性', value: 3, debt: 0, enabled: true, absolute: true } };
+    const prev = { baseline: { m5: 1 }, last: { m5: 1 }, streaks: { m5: 2 }, baseline_date: '2026-07-09' };
+    const { state, breaches } = evaluateRatchet(m, prev, '2026-07-10');
+    expect(breaches).toEqual([]);
+    expect(state.streaks.m5).toBe(0);
+  });
+
   it('disabled 指标不参与棘轮', () => {
     const m = { m3: { key: 'm3', name: 'm3', value: null, debt: 9, enabled: false } };
     const prev = { baseline: {}, last: {}, streaks: {}, baseline_date: '2026-07-09' };
@@ -207,6 +232,7 @@ describe('maybeRunLedgerHygiene — 主入口', () => {
       { match: 'FROM action_receipts LIMIT 1', rows: [] },
       { match: 'review_after < NOW()', rows: [{ debt: '0' }] },
       { match: "category = 'judgment' LIMIT 1", rows: [] },
+      { match: 'title LIKE', rows: overrides.issueDup ?? [] },
       { match: RATCHET_KEY, rows: overrides.ratchet ?? [] },
     ];
   }
@@ -276,6 +302,28 @@ describe('maybeRunLedgerHygiene — 主入口', () => {
     const issueInsert = pool.calls.find((c) => c.sql.includes('INSERT INTO issues'));
     expect(issueInsert.params[1]).toBe('P1');
     expect(sendBark).toHaveBeenCalledTimes(1);
+  });
+
+  it('当日已有同指标 issue → 跳过 INSERT 与 Bark（每指标每日最多一条）', async () => {
+    const prev = {
+      baseline: { m1: 0, m2: 0, m4: 0 },
+      last: { m1: 1, m2: 0, m4: 0 },
+      streaks: { m1: 2, m2: 0, m4: 0 },
+      baseline_date: '2026-07-07',
+    };
+    const pool = makePool(
+      fullRoutes({
+        m1debt: '2',
+        ratchet: [{ value_json: JSON.stringify(prev) }],
+        issueDup: [{ '?column?': 1 }],
+      })
+    );
+    const r = await maybeRunLedgerHygiene(pool, IN_WINDOW);
+    expect(r.breaches).toBe(1);
+    const issueInsert = pool.calls.find((c) => c.sql.includes('INSERT INTO issues'));
+    expect(issueInsert).toBeUndefined();
+    expect(sendBark).not.toHaveBeenCalled();
+    expect(pool.calls.find((c) => c.sql.includes('INSERT INTO design_docs'))).toBeTruthy();
   });
 
   it('issue 写入失败不阻断落库', async () => {
