@@ -228,6 +228,40 @@ router.post('/issues', async (req, res) => {
   }
 });
 
+// GET /api/brain/issues — 列表（战斗室 Issues 面板 + line-strategist skill 消费；T6 88e0b448）
+router.get('/issues', async (req, res) => {
+  try {
+    const limit = Math.min(parseInt(req.query.limit) || 20, 100);
+    const params = [];
+    const clauses = [];
+    if (req.query.status) {
+      if (String(req.query.status).toLowerCase() === 'open') {
+        // status=open 特判为"未关闭"：issues.status 是 Notion 风格词表（默认 'In progress'，
+        // 库里实际有 In progress/open/Open/Closed/closed/Resolved），不存在统一的 'open' 精确值。
+        // 消费方（line-strategist SKILL、IssuesPanel）用 open 表达"还没关的"，
+        // 这里对齐 warroom.js 先例并大小写不敏感，涵盖 closed/resolved/done 语义。
+        clauses.push(`LOWER(status) NOT IN ('closed','resolved','done')`);
+      } else {
+        params.push(req.query.status); clauses.push(`status=$${params.length}`);
+      }
+    }
+    if (req.query.journey_id) { params.push(req.query.journey_id); clauses.push(`journey_id=$${params.length}`); }
+    const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
+    params.push(limit);
+    const { rows } = await pool.query(
+      `SELECT id, title, priority, status, sub_area, journey_id, pr_url, created_at
+       FROM issues ${where}
+       ORDER BY priority ASC, created_at DESC
+       LIMIT $${params.length}`,
+      params
+    );
+    res.json({ issues: rows });
+  } catch (err) {
+    console.error('[journeys] GET /issues error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // GET /api/brain/journey_steps
 router.get('/journey_steps', async (req, res) => {
   try {

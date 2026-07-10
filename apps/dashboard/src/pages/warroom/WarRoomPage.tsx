@@ -19,7 +19,7 @@ import {
   FileText, ExternalLink, Activity, CircleDot, Maximize, Minimize,
   Crosshair, Archive, EyeOff, Map as MapIcon, ChevronRight,
 } from 'lucide-react';
-import { BattleBanner, HandoffStream, DecisionStream } from './WarRoomPanels';
+import { BattleBanner, HandoffStream, DecisionStream, IssuesPanel } from './WarRoomPanels';
 import { AbilityProgress } from './AbilityProgress';
 import type { AdvancementItem } from './advancement-util';
 
@@ -1604,9 +1604,10 @@ export default function WarRoomPage() {
             />
           ) : (
             <>
-              <div className="grid grid-cols-1 xl:grid-cols-2 gap-3 px-4 pt-3">
+              <div className="grid grid-cols-1 xl:grid-cols-3 gap-3 px-4 pt-3">
                 <HandoffStream />
                 <DecisionStream />
+                <IssuesPanel />
               </div>
               {loading && !data && (
                 <div className="flex items-center gap-2 px-4 py-8 text-slate-600 text-sm">
