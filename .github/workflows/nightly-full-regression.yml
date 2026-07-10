@@ -1,0 +1,161 @@
+# ═══════════════════════════════════════════════════════════════════
+# 刀A：nightly 全量回归闸（cecelia 版，对齐 zenithjoy nightly-real-machine-staging）
+#
+# 诚实声明：全程 ubuntu 云机，无真机。守的是「PR CI 结构性漏跑的回归」：
+#   - PR 模式 brain-unit 用 vitest --changed + 路径过滤 → 无关改动的回归漏网
+#   - src/__tests__/integration/**（真 Postgres）被 brain-unit 永久 exclude，
+#     在 CI 里从来没跑过 → 本 workflow 是它们唯一的常态执行点
+#   - dashboard 全量 build 只在 dashboard 路径改动时跑
+#
+# 定位：
+#   - 每晚全量回归主防线（抓无关改动误伤 + 依赖漂移）
+#   - Release Gate（刀C）的证据源：promote 前查「最近 nightly 绿」
+#
+# 红 → 自动开 [nightly-red] Issue（按标题去重），不阻塞任何 PR。
+# ═══════════════════════════════════════════════════════════════════
+
+name: "Nightly Full Regression（全量回归闸）"
+
+on:
+  schedule:
+    - cron: '30 19 * * *'   # UTC 19:30 = 北京 03:30，错开 zenithjoy 刀A(03:00)/刀B(04:30)
+  workflow_dispatch:
+    inputs:
+      fire_test:
+        description: '传 1 = 故意断言失败（proven-to-fire 验证）'
+        required: false
+        default: '0'
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: nightly-full-regression
+  cancel-in-progress: false
+
+jobs:
+  # ─── brain 全量 unit（不筛 --changed，不分 PR 路径）──────────────
+  brain-full:
+    name: brain 全量 vitest（unit）
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+      - run: cd packages/brain && npm ci
+      - name: Full unit tests (shard ${{ matrix.shard }}/4)
+        if: github.event.inputs.fire_test != '1'
+        env:
+          NODE_OPTIONS: '--max-old-space-size=4096'
+        # OOM 容错与 brain-unit 同款：worker 内存碎片退出但无测试失败 → 视为 pass
+        run: |
+          cd packages/brain
+          set +e
+          npx vitest run --shard=${{ matrix.shard }}/4 \
+            --exclude='src/__tests__/integration/**' \
+            --reporter=verbose 2>&1 | tee /tmp/vitest-nightly.txt
+          exit=${PIPESTATUS[0]}
+          if [ $exit -ne 0 ]; then
+            if grep -qE "Tests.*[0-9]+ passed" /tmp/vitest-nightly.txt && ! grep -qE "Tests.*[0-9]+ failed" /tmp/vitest-nightly.txt; then
+              echo "OOM worker exit but all tests passed — treating as success"
+              exit 0
+            fi
+            exit $exit
+          fi
+      - name: Fire test（故意失败，验证报警链路）
+        if: github.event.inputs.fire_test == '1'
+        run: |
+          echo "::error::fire_test=1 — 故意失败验证 [nightly-red] Issue 链路"
+          exit 1
+
+  # ─── integration/**：真 Postgres + 全量 migrations（PR CI 从不跑）──
+  brain-integration:
+    name: brain integration（真 Postgres + 全量 migrations）
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_USER: cecelia
+          POSTGRES_PASSWORD: cecelia
+          POSTGRES_DB: cecelia_test
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      NODE_ENV: test
+      DB_HOST: localhost
+      DB_PORT: 5432
+      DB_NAME: cecelia_test
+      DB_USER: cecelia
+      DB_PASSWORD: cecelia
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+      - run: cd packages/brain && npm ci
+      - name: 全量 migrations（migrate.js 跑通所有版本 = migrations 组合本身的回归）
+        run: cd packages/brain && node src/migrate.js
+      - name: Integration tests（src/__tests__/integration/**）
+        if: github.event.inputs.fire_test != '1'
+        env:
+          NODE_OPTIONS: '--max-old-space-size=4096'
+        run: |
+          cd packages/brain
+          npx vitest run 'src/__tests__/integration/**' --reporter=verbose
+
+  # ─── dashboard 全量 build（vite 装配漂移守卫）─────────────────────
+  dashboard-build:
+    name: dashboard 全量 build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+      - run: npm ci
+      - name: Build
+        if: github.event.inputs.fire_test != '1'
+        run: npm run build
+
+  # ─── 红 → 开 [nightly-red] Issue（按当日标题去重），不阻塞 PR ────
+  open-issue-on-red:
+    name: 红时开 Issue
+    needs: [brain-full, brain-integration, dashboard-build]
+    if: always() && contains(needs.*.result, 'failure')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Open dedup issue
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TITLE="[nightly-red] Nightly Full Regression 失败 $(date -u +%Y-%m-%d)"
+          EXISTING=$(gh issue list --repo "${{ github.repository }}" --state open \
+            --search "in:title [nightly-red]" --json title --jq '.[].title' || echo "")
+          if echo "$EXISTING" | grep -qF "$TITLE"; then
+            echo "同日 issue 已存在，去重跳过"
+            exit 0
+          fi
+          BODY="Nightly 全量回归红：${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          BODY="$BODY"$'\n\n'"失败 job：brain-full=${{ needs.brain-full.result }} / brain-integration=${{ needs.brain-integration.result }} / dashboard-build=${{ needs.dashboard-build.result }}"
+          BODY="$BODY"$'\n\n'"刀A 定位：PR CI 漏跑的回归（--changed 过滤 / integration 永久 exclude / dashboard 路径过滤）由本闸兜底。请按 systematic-debugging 排查，别只重跑。"
+          gh issue create --repo "${{ github.repository }}" \
+            --title "$TITLE" \
+            --body "$BODY"
