@@ -4,7 +4,7 @@
  * 缺失导致串行链不解锁(2026-07-10 活性合同 T2→T3 实证)。本文件直测共享模块本体。
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { serialUnlockNext, writeReviewResult } from '../lib/callback-postprocess.js';
+import { serialUnlockNext, writeReviewResult } from '../callback-postprocess.js';
 
 function makePool() {
   return { query: vi.fn() };
