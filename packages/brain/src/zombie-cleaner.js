@@ -18,6 +18,7 @@ import { join } from 'path';
 import { resolveTaskPids } from './watchdog.js';
 import { removeActiveProcess } from './executor.js';
 import { withLock } from './utils/cleanup-lock.js';
+import { anyProcessHasCwdUnder } from './platform-utils.js';
 
 const LOCK_DIR = process.env.LOCK_DIR || '/tmp/cecelia-locks';
 const WORKTREE_BASE = process.env.WORKTREE_BASE || `${process.env.HOME}/worktrees/cecelia`;
@@ -245,6 +246,34 @@ async function cleanupOrphanWorktrees(pool) {
         }
       } catch (err) {
         console.log(`[zombie-cleaner] Skip ${wtPath}: git status 检查失败（${err.message}），保守不删`);
+        continue;
+      }
+
+      // Guard C: 活任务/活进程双检查（Guard A 语义盲区同 zombie-sweep）
+      // C-1: claimed_by 检查（in_progress 已在上方 activeTasks.has(taskId) 处覆盖）
+      if (taskId) {
+        try {
+          const r = await pool.query(
+            `SELECT id FROM tasks WHERE id = $1 AND claimed_by IS NOT NULL`,
+            [taskId]
+          );
+          if (r.rows.length > 0) {
+            console.log(`[zombie-cleaner] Guard C-1: skip ${wtPath} — task ${taskId} is claimed`);
+            continue;
+          }
+        } catch (err) {
+          console.log(`[zombie-cleaner] Guard C-1: claimed_by check failed (${err.message}), 保守 skip`);
+          continue;
+        }
+      }
+      // C-2: 活进程持有 cwd 检查
+      try {
+        if (anyProcessHasCwdUnder(wtPath)) {
+          console.log(`[zombie-cleaner] Guard C-2: skip ${wtPath} — live process holds cwd`);
+          continue;
+        }
+      } catch (err) {
+        console.log(`[zombie-cleaner] Guard C-2: cwd check failed (${err.message}), 保守 skip`);
         continue;
       }
 
