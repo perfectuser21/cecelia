@@ -92,7 +92,9 @@ describe('decision engine', () => {
         .mockResolvedValueOnce({
           rows: [{ id: 'task-1', title: 'Failed Task', goal_id: null }]
         })
-        // 3rd call: INSERT INTO decisions
+        // 3rd call: dedup check — no prior row, proceed to insert
+        .mockResolvedValueOnce({ rows: [] })
+        // 4th call: INSERT INTO decisions
         .mockResolvedValueOnce({
           rows: [{ id: 'decision-123' }]
         });
@@ -114,6 +116,7 @@ describe('decision engine', () => {
       pool.query
         .mockResolvedValueOnce({ rows: [] })         // goals
         .mockResolvedValueOnce({ rows: [] })          // failed tasks (filtered by retry_count < 3)
+        .mockResolvedValueOnce({ rows: [] })          // dedup check — no prior row
         .mockResolvedValueOnce({                      // INSERT
           rows: [{ id: 'decision-456' }]
         });
@@ -158,6 +161,8 @@ describe('decision engine', () => {
         .mockResolvedValueOnce({
           rows: [{ id: 'failed-task', title: 'Failed B', goal_id: null }]
         })
+        // dedup check — no prior row
+        .mockResolvedValueOnce({ rows: [] })
         // INSERT
         .mockResolvedValueOnce({
           rows: [{ id: 'decision-789' }]
@@ -181,16 +186,59 @@ describe('decision engine', () => {
       const insertSpy = pool.query
         .mockResolvedValueOnce({ rows: [] })         // goals
         .mockResolvedValueOnce({ rows: [] })          // failed tasks
+        .mockResolvedValueOnce({ rows: [] })          // dedup check — no prior row
         .mockResolvedValueOnce({                      // INSERT
           rows: [{ id: 'decision-ok' }]
         });
 
       await generateDecision({ trigger: 'tick' });
 
-      // The INSERT call is the 3rd one
-      const insertCall = insertSpy.mock.calls[2];
+      // The INSERT call is the 4th one (index 3), after goals + failed_tasks + dedup
+      const insertCall = insertSpy.mock.calls[3];
       // 5th param is status
       expect(insertCall[1][4]).toBe('approved');
+    });
+  });
+
+  describe('dedup logic', () => {
+    it('should skip insert when last row has identical actions and health', async () => {
+      const { generateDecision } = await import('../decision.js');
+
+      pool.query
+        .mockResolvedValueOnce({ rows: [] })         // goals (no goals → actions will be [])
+        .mockResolvedValueOnce({ rows: [] })          // failed tasks
+        // dedup check returns a prior row with same empty actions + healthy
+        .mockResolvedValueOnce({
+          rows: [{ actions: [], context: { comparison_summary: 'healthy' } }]
+        });
+
+      const result = await generateDecision({ trigger: 'consciousness_loop' });
+
+      expect(result.skipped).toBe(true);
+      expect(result.decision_id).toBeNull();
+      // Should NOT have called INSERT (only 3 mock calls used)
+      expect(pool.query).toHaveBeenCalledTimes(3);
+    });
+
+    it('should proceed with insert when actions differ from last row', async () => {
+      const { generateDecision } = await import('../decision.js');
+
+      pool.query
+        .mockResolvedValueOnce({ rows: [] })         // goals
+        .mockResolvedValueOnce({                      // failed tasks — one new failure
+          rows: [{ id: 'task-new', title: 'New Fail', goal_id: null }]
+        })
+        // dedup check: prior row had empty actions (different from current retry action)
+        .mockResolvedValueOnce({
+          rows: [{ actions: [], context: { comparison_summary: 'healthy' } }]
+        })
+        // INSERT proceeds
+        .mockResolvedValueOnce({ rows: [{ id: 'decision-new' }] });
+
+      const result = await generateDecision({ trigger: 'consciousness_loop' });
+
+      expect(result.skipped).toBeUndefined();
+      expect(result.decision_id).toBe('decision-new');
     });
   });
 

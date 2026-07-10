@@ -292,6 +292,36 @@ export async function generateDecision(context = {}) {
   const requiresApproval = confidence < HIGH_CONFIDENCE_THRESHOLD ||
     actions.some(a => a.type === 'escalate');
 
+  const contextPayload = { comparison_summary: comparison.overall_health, goal_count: comparison.goals.length };
+  const actionsJson = JSON.stringify(actions);
+
+  // Dedup: skip insert if last record with same trigger has identical actions + context
+  const lastRow = await pool.query(`
+    SELECT actions, context FROM decisions
+    WHERE trigger = $1
+    ORDER BY created_at DESC
+    LIMIT 1
+  `, [trigger]);
+  if (lastRow.rows.length > 0) {
+    const prev = lastRow.rows[0];
+    const prevActions = JSON.stringify(prev.actions ?? []);
+    const prevHealth = (prev.context ?? {}).comparison_summary;
+    if (prevActions === actionsJson && prevHealth === contextPayload.comparison_summary) {
+      return {
+        decision_id: null,
+        actions,
+        confidence,
+        skipped: true,
+        requires_approval: requiresApproval,
+        context: {
+          trigger,
+          overall_health: comparison.overall_health,
+          goals_analyzed: comparison.goals.length
+        }
+      };
+    }
+  }
+
   // Store decision
   const decisionResult = await pool.query(`
     INSERT INTO decisions (trigger, context, actions, confidence, status)
@@ -299,8 +329,8 @@ export async function generateDecision(context = {}) {
     RETURNING id
   `, [
     trigger,
-    JSON.stringify({ comparison_summary: comparison.overall_health, goal_count: comparison.goals.length }),
-    JSON.stringify(actions),
+    JSON.stringify(contextPayload),
+    actionsJson,
     confidence,
     requiresApproval ? 'pending' : 'approved'
   ]);
