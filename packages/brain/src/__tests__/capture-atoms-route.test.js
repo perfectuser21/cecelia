@@ -185,6 +185,29 @@ describe('capture-atoms route', () => {
       expect(res.body.error).toContain('confirmed');
     });
 
+    it.each(['handoff', 'learning', 'issue'])(
+      'confirm 自动分诊来源 %s 返回 400（由 capture-triage 分诊，不支持人工路由）',
+      async (autoType) => {
+        const autoAtom = Object.assign({}, MOCK_ATOM, { target_type: autoType });
+        const mockClient = {
+          query: vi.fn(),
+          release: vi.fn(),
+        };
+        mockClient.query.mockResolvedValueOnce({});
+        mockClient.query.mockResolvedValueOnce({ rows: [autoAtom] });
+        mockClient.query.mockResolvedValueOnce({});
+        mockPool.connect.mockResolvedValueOnce(mockClient);
+
+        const res = await request(app)
+          .patch('/api/brain/capture-atoms/' + MOCK_ATOM.id)
+          .send({ action: 'confirm' });
+
+        expect(res.status).toBe(400);
+        expect(res.body.error).toContain('capture-triage');
+        expect(res.body.error).toContain(autoType);
+      }
+    );
+
     it('confirm 操作路由 task atom 到 tasks 表', async () => {
       const mockClient = {
         query: vi.fn(),

@@ -18,7 +18,7 @@ export async function pushCaptureAtom(pool, { content, targetType, targetSubtype
     );
     return rows[0]?.id ?? null;
   } catch (err) {
-    console.warn(`[capture-inbox] push failed (non-fatal): ${err.message}`);
+    console.warn(`[capture-inbox] push failed (non-fatal, targetType=${targetType}, source=${routedToTable}/${routedToId}): ${err.message}`);
     return null;
   }
 }
