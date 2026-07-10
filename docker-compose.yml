@@ -3,6 +3,9 @@
 # Build first: bash scripts/brain-build.sh
 # Deploy:      bash scripts/brain-deploy.sh
 
+# 项目名与目录解耦，防换部署根跑 compose 时容器名冲突
+name: cecelia
+
 services:
   node-brain:
     image: cecelia-brain:${BRAIN_VERSION:-latest}
@@ -56,6 +59,8 @@ services:
       - /Users/administrator/.config/gh:/Users/administrator/.config/gh:ro
       # 主仓库全目录（deploy webhook 需要 git pull/tag + scripts/ — rw 允许写 .git）
       - /Users/administrator/perfect21/cecelia:/Users/administrator/perfect21/cecelia:rw
+      # CD 专用部署根（REPO_ROOT 指向此仓，deploy-local.sh 在这里 pull/reset/build）
+      - /Users/administrator/perfect21/cecelia-deploy-main:/Users/administrator/perfect21/cecelia-deploy-main:rw
       # Prompt 文件目录：Brain 写 prompt 文件这里（docker-executor writePromptFile），
       # 子容器 mount 源必须由宿主 docker daemon 解析 → 必须宿主路径。compose 里 bind-mount
       # 宿主 ~/claude-output/cecelia-prompts → Brain 容器 /tmp/cecelia-prompts，
@@ -88,7 +93,10 @@ services:
       - BARK_TOKEN=${BARK_TOKEN:-}
       - CECELIA_RUN_PATH=/Users/administrator/perfect21/cecelia/packages/brain/scripts/cecelia-run.sh
       - HOST_HOME=/Users/administrator
-      - REPO_ROOT=/Users/administrator/perfect21/cecelia
+      # 部署根=CD 专用仓（非活人主仓），deploy-local.sh 从此仓 pull/reset origin/main 后 build
+      - REPO_ROOT=/Users/administrator/perfect21/cecelia-deploy-main
+      # 专用部署根，deploy-local.sh 守卫自愈到 origin/main（脏/落后时硬 reset 而非静默降级）
+      - CECELIA_DEPLOY_AUTORESET=1
       # Codex CLI 容器内位置（由 Dockerfile npm install -g @openai/codex 装到 /usr/local/bin/codex）
       # 覆盖 executor.js 默认值 /opt/homebrew/bin/codex（host 路径，容器里不存在）
       - CODEX_BIN=/usr/local/bin/codex
