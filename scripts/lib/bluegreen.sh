@@ -142,11 +142,26 @@ bluegreen_swap() {
   if [[ -n "$root_dir" ]]; then
     docker rm -f "$sidecar_name" >/dev/null 2>&1 || true  # 清理上次残留
 
+    # ── 打 blue-fallback 快照（sidecar compose up 失败时回退用）──────────────
+    # 在任何 rm -f 之前完成；tag 存在即可，不阻塞部署
+    local blue_img
+    blue_img=$(docker inspect "$blue" --format '{{.Image}}' 2>/dev/null || true)
+    if [[ -n "$blue_img" ]]; then
+      docker tag "$blue_img" "cecelia-brain:blue-fallback" 2>/dev/null || true
+      echo "[bluegreen] blue-fallback 已 tag: ${blue_img:0:20}..."
+    fi
+
+    # ── 读取 BARK_TOKEN（供 sidecar 告警用）──────────────────────────────────
+    local bark_token=""
+    # shellcheck disable=SC1091
+    [[ -f "$HOME/.credentials/bark.env" ]] && \
+      bark_token=$(bash -c 'source "$1"; echo "${BARK_TOKEN:-}"' _ "$HOME/.credentials/bark.env" 2>/dev/null) || true
+
     echo "[bluegreen] 启动 compose sidecar（${sidecar_name}）以规避自杀竞态..."
     # 使用 cecelia-brain 镜像（已含 docker-cli + docker-cli-compose），
     # 挂载 docker.sock 和部署根目录，等 blue 消失后执行 compose up。
-    # 单引号内不展开（BRAIN_VERSION / ENV_REGION / DEPLOY_ROOT 通过 -e 传入容器）
-    # shellcheck disable=SC2016
+    # sidecar 脚本（bluegreen-sidecar.sh）通过 root_dir 挂载可访问，
+    # 失败时自动用 blue-fallback tag 恢复（见 bluegreen-sidecar.sh）。
     if docker run -d --rm \
         --name "$sidecar_name" \
         -v /var/run/docker.sock:/var/run/docker.sock \
@@ -155,19 +170,10 @@ bluegreen_swap() {
         -e "BRAIN_VERSION=${version}" \
         -e "ENV_REGION=${env_region}" \
         -e "DEPLOY_ROOT=${root_dir}" \
+        -e "BARK_TOKEN=${bark_token}" \
         "cecelia-brain:${version}" \
-        bash -c '
-          echo "[sidecar] 等待 blue 容器消失..."
-          for i in $(seq 1 20); do
-            docker inspect cecelia-node-brain >/dev/null 2>&1 || break
-            sleep 1
-          done
-          echo "[sidecar] 执行 docker compose up -d node-brain..."
-          BRAIN_VERSION="$BRAIN_VERSION" ENV_REGION="$ENV_REGION" \
-            docker compose -f "$DEPLOY_ROOT/docker-compose.yml" up -d node-brain 2>&1
-          echo "[sidecar] compose up 完成 exit=$?"
-        ' >/dev/null 2>&1; then
-      echo "[bluegreen] ✅ sidecar 已启动，将在 blue 删除后完成 compose up"
+        bash "${root_dir}/scripts/lib/bluegreen-sidecar.sh" >/dev/null 2>&1; then
+      echo "[bluegreen] ✅ sidecar 已启动，将在 blue 删除后完成 compose up（失败自动回退 blue-fallback）"
     else
       echo "[bluegreen] ❌ sidecar 启动失败，终止切换（blue 保留，5221 不受影响）"
       send_bark "⚠️ 蓝绿 sidecar 启动失败 v${version}，已保留 blue（5221 仍用旧版），请检查 docker 状态"
