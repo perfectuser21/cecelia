@@ -1,0 +1,226 @@
+# ═══════════════════════════════════════════════════════════════════
+# 刀B：cecelia 跨组件 integration nightly
+#
+# Brain + 真 Postgres + 全量 migrations + 关键路由/回调贯通 E2E
+#
+# 对齐 ZenithJoy 刀B（cross-line 云端后端 nightly，04:30 北京）
+# decision: 92b5cd56
+#
+# 覆盖的盲区（PR CI 不守的）：
+#   - 全量 migrations 在全新 DB 的可重复性（PR CI 只跑有变更时）
+#   - Brain HTTP 容器层的关键路由贯通（不仅是单测）
+#   - 回调链路端到端（PATCH /tasks/:id → DB 最终态）
+#   - executor_kind 字段存在性（migration 329）
+#
+# 红 → 自动开 [integration-red] Issue（按日期去重）
+# 绿 → 自动关已有 [integration-red] Issue
+# ═══════════════════════════════════════════════════════════════════
+
+name: "Integration Nightly（刀B 跨组件 E2E）"
+
+on:
+  schedule:
+    - cron: '30 20 * * *'   # UTC 20:30 = 北京 04:30（刀A 19:30 跑完后）
+  workflow_dispatch:
+    inputs:
+      fire_test:
+        description: '传 1 = 故意断言失败（proven-to-fire 验证）'
+        required: false
+        default: '0'
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: integration-nightly
+  cancel-in-progress: false
+
+jobs:
+  integration:
+    name: 跨组件 integration E2E（Brain + 真 Postgres）
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    outputs:
+      passed: ${{ steps.run.outputs.passed }}
+
+    services:
+      postgres:
+        image: pgvector/pgvector:pg15
+        env:
+          POSTGRES_USER: cecelia
+          POSTGRES_PASSWORD: ${{ secrets.CI_DB_PASSWORD }}
+          POSTGRES_DB: cecelia_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: 安装 Brain 依赖 + 全量 migrations
+        env:
+          DB_HOST: localhost
+          DB_PORT: '5432'
+          DB_NAME: cecelia_test
+          DB_USER: cecelia
+          DB_PASSWORD: ${{ secrets.CI_DB_PASSWORD }}
+        run: |
+          cd packages/brain
+          npm ci
+          echo "── 全量 migrations（共 $(ls migrations/*.sql 2>/dev/null | wc -l) 个 SQL 文件）──"
+          node src/migrate.js
+          echo "✅ 全量 migrations 完成"
+
+      - name: 构建 cecelia-brain 镜像
+        run: docker build -f packages/brain/Dockerfile -t cecelia-brain:ci .
+
+      - name: 启动 Brain 容器（network=host → 直连 postgres service）
+        env:
+          CI_DB_PASSWORD: ${{ secrets.CI_DB_PASSWORD }}
+        run: |
+          docker run -d --name cecelia-brain-nightly \
+            --network host \
+            -e DB_HOST=localhost \
+            -e DB_PORT=5432 \
+            -e DB_NAME=cecelia_test \
+            -e DB_USER=cecelia \
+            -e DB_PASSWORD="$CI_DB_PASSWORD" \
+            -e BRAIN_PORT=5221 \
+            -e NODE_ENV=test \
+            -e CECELIA_TICK_ENABLED=false \
+            -e ENV_REGION=us \
+            -e REPO_ROOT=/repo_root \
+            -v "$GITHUB_WORKSPACE/packages/workflows:/repo_root/packages/workflows:ro" \
+            cecelia-brain:ci
+
+          # 等待 Brain 就绪（最多 90s）
+          echo "等待 Brain 就绪..."
+          for i in $(seq 1 90); do
+            if curl -sf http://localhost:5221/api/brain/tick/status >/dev/null 2>&1; then
+              echo "✅ Brain 就绪（${i}s）"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "::error::Brain 90s 内未就绪"
+          docker logs cecelia-brain-nightly
+          exit 1
+
+      - name: 关键路由 + 回调贯通 E2E
+        id: run
+        env:
+          BRAIN_URL: http://localhost:5221
+          FIRE_TEST: ${{ github.event.inputs.fire_test || '0' }}
+        run: |
+          set +e
+          bash packages/brain/scripts/integration/integration-nightly.sh
+          EXIT_CODE=$?
+          set -e
+          if [ $EXIT_CODE -eq 0 ]; then
+            echo "passed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "passed=false" >> "$GITHUB_OUTPUT"
+          fi
+          exit $EXIT_CODE
+
+      - name: 清理 Brain 容器
+        if: always()
+        run: |
+          docker logs cecelia-brain-nightly 2>&1 | tail -50 || true
+          docker rm -f cecelia-brain-nightly 2>/dev/null || true
+
+  # ─── Issue 管理 ──────────────────────────────────────────────────────────
+  open-issue-on-failure:
+    name: 开 [integration-red] Issue
+    needs: integration
+    if: always() && needs.integration.result == 'failure'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      GH_TOKEN: ${{ secrets.GH_PAT_BOT || secrets.GITHUB_TOKEN }}
+      REPO: ${{ github.repository }}
+      RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+    steps:
+      - name: 开 Issue（按日期去重）
+        run: |
+          set -uo pipefail
+          TODAY=$(date -u +%Y-%m-%d)
+          TITLE="[integration-nightly] 跨组件 E2E 失败 — ${TODAY}"
+
+          # 去重：同名 open issue 已存在则跳过
+          EXISTING=$(gh api "repos/${REPO}/issues?state=open&labels=integration-red&per_page=50" \
+            --jq "[.[] | select(.title==\"${TITLE}\")] | length" 2>/dev/null || echo "0")
+          if [ "$EXISTING" -gt 0 ]; then
+            echo "已有同名 open issue，跳过: $TITLE"
+            exit 0
+          fi
+
+          BODY="## Integration Nightly 失败报告
+
+**日期**: ${TODAY}
+**CI Run**: ${RUN_URL}
+
+### 覆盖范围（刀B：跨组件 E2E）
+- Brain + 真 Postgres 全量 migrations
+- 关键路由：POST /tasks / POST /route-task
+- 回调贯通：PATCH /tasks/:id → DB 最终态
+- executor_kind 字段（migration 329）
+
+### 排查建议
+1. 查看 CI Run 日志中的 ❌ 失败项
+2. 确认全量 migrations 完整（migration 329 executor_kind）
+3. 确认 Brain 容器正常启动（Brain 就绪步骤日志）
+4. 确认关键路由端点响应正常
+
+> 本 Issue 由 integration-nightly.yml 自动创建。修复后将在下次绿跑时自动关闭。"
+
+          gh issue create \
+            --repo "${REPO}" \
+            --title "${TITLE}" \
+            --body "${BODY}" \
+            --label "integration-red,P1" \
+            2>/dev/null || \
+          gh issue create \
+            --repo "${REPO}" \
+            --title "${TITLE}" \
+            --body "${BODY}" \
+            || echo "::warning::Issue 创建失败（可能标签不存在），跳过"
+
+          echo "✅ GitHub Issue 已创建: $TITLE"
+
+  close-issue-on-success:
+    name: 关闭 [integration-red] Issue
+    needs: integration
+    if: always() && needs.integration.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      GH_TOKEN: ${{ secrets.GH_PAT_BOT || secrets.GITHUB_TOKEN }}
+      REPO: ${{ github.repository }}
+    steps:
+      - name: 关闭 open 的 integration-red issues
+        run: |
+          set -uo pipefail
+          OPEN_ISSUES=$(gh api "repos/${REPO}/issues?state=open&labels=integration-red&per_page=20" \
+            --jq '.[].number' 2>/dev/null || echo "")
+          if [ -z "$OPEN_ISSUES" ]; then
+            echo "无需关闭（无 open integration-red issue）"
+            exit 0
+          fi
+          while IFS= read -r ISSUE_NUM; do
+            gh issue close "$ISSUE_NUM" \
+              --comment "integration-nightly 已恢复绿，自动关闭。" \
+              --repo "${REPO}" \
+              2>/dev/null || echo "::warning::关闭 issue #${ISSUE_NUM} 失败"
+            echo "✅ 已关闭 issue #$ISSUE_NUM"
+          done <<< "$OPEN_ISSUES"

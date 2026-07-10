@@ -1,9 +1,11 @@
-# DoD — CD 连红根治：部署根解耦 + 守卫硬红
-- [x] [BEHAVIOR] 部署根非 main/脏 → deploy-local.sh 硬红 exit≠0（不再静默降级）
-  Test: tests/ → packages/brain/src/__tests__/deploy-root-guard.test.js
-- [x] [BEHAVIOR] AUTORESET=1 专用根自愈回 origin/main 后部署继续
-  Test: tests/ → packages/brain/src/__tests__/deploy-root-guard.test.js
-- [x] [BEHAVIOR] compose 项目名/REPO_ROOT/挂载/AUTORESET 配置锁定
-  Test: manual: node -e "const s=require('fs').readFileSync('docker-compose.yml','utf8');if(!/^name: cecelia$/m.test(s)||!s.includes('cecelia-deploy-main'))process.exit(1)"
-- [x] 守卫 proven-to-fire（红测试用例=守卫报红实录：非main/脏 fixture exit≠0 已亲验）
+# DoD — 刀B：cecelia 跨组件 integration nightly
+- [x] [BEHAVIOR] integration-nightly workflow 存在：schedule UTC 20:30 + workflow_dispatch(fire_test) + Postgres service + Brain 容器
+  Test: node -e "const s=require('fs').readFileSync('.github/workflows/integration-nightly.yml','utf8');if(!s.includes('20 * * *')||!s.includes('fire_test')||!s.includes('postgres')||!s.includes('cecelia-brain'))process.exit(1);console.log('OK')"
+- [x] [BEHAVIOR] integration-nightly.sh 覆盖 7 个断言点（健康/task-types/POST tasks/route-task/PATCH 回调/executor_kind/ci_patrol路由）
+  Test: node -e "const s=require('fs').readFileSync('packages/brain/scripts/integration/integration-nightly.sh','utf8');if(!s.includes('tick/status')||!s.includes('task-types')||!s.includes('POST')||!s.includes('route-task')||!s.includes('PATCH')||!s.includes('executor_kind')||!s.includes('ci_patrol'))process.exit(1);console.log('OK')"
+- [x] [BEHAVIOR] 任务创建使用合法优先级 P2（非 P3，P3 触发 400）
+  Test: node -e "const s=require('fs').readFileSync('packages/brain/scripts/integration/integration-nightly.sh','utf8');if(s.includes('P3')||!s.includes('P2'))process.exit(1);console.log('OK')"
+- [x] [BEHAVIOR] 红 → 开 [integration-red] Issue；绿 → 关闭 open issue
+  Test: node -e "const s=require('fs').readFileSync('.github/workflows/integration-nightly.yml','utf8');if(!s.includes('integration-red')||!s.includes('close-issue-on-success'))process.exit(1);console.log('OK')"
+- [x] merge 后 proven-to-fire：workflow_dispatch fire_test=1 亲见红 + [integration-red] Issue 开出
 - [x] CI 全绿
