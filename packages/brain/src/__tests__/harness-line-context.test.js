@@ -107,8 +107,8 @@ describe('fetchLineContext — 三源 invariant SQL（与 routes/abilities.js �
     const [sql, params] = call;
     expect(sql).toMatch(/SELECT jf\.id AS ability_id, jf\.name AS ability_name, jf\.status AS ability_status/);
     expect(sql).toMatch(/FROM golden_path gp/);
-    expect(sql).toMatch(/JOIN tasks t ON gp\.owner_task_id = t\.id/);
-    expect(sql).toMatch(/JOIN journey_features jf ON t\.ability_id = jf\.id/);
+    expect(sql).toContain('JOIN journey_features jf ON gp.feature_id = jf.id');
+    expect(sql).not.toContain('JOIN tasks t');
     expect(sql).toMatch(/jf\.journey_id = \$1/);
     expect(sql).toMatch(/jf\.status IN \('done','working'\)/);
     expect(sql).toMatch(/ORDER BY gp\.owner_task_id, gp\.order_no ASC/);
