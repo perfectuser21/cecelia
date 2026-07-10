@@ -78,6 +78,41 @@ else
 fi
 echo ""
 
+# ── 部署根守卫（07-10 Gate3 五连红根治）──────────────────────────────
+# 真实模式必跑；CECELIA_DEPLOY_ROOT 测试隔离模式默认跳过（现有 smoke 兼容），
+# 测试要验守卫时用 CECELIA_DEPLOY_FORCE_GUARD=1 强制开启。
+RUN_GUARD=true
+[[ -n "${CECELIA_DEPLOY_ROOT:-}" && "${CECELIA_DEPLOY_FORCE_GUARD:-0}" != "1" ]] && RUN_GUARD=false
+[[ "$DRY_RUN" == true ]] && RUN_GUARD=false
+
+if [[ "$RUN_GUARD" == true ]]; then
+    if [[ "${CECELIA_DEPLOY_AUTORESET:-0}" == "1" ]]; then
+        # 专用部署根（机器独占，无人类工作）：自愈到 origin/main
+        echo "🔒 部署根守卫（专用根自愈）: fetch + checkout -f + reset --hard origin/$BASE_BRANCH"
+        git -C "$MAIN_ROOT" fetch origin "$BASE_BRANCH" \
+            || { echo "❌ 部署根守卫: git fetch origin $BASE_BRANCH 失败，拒绝部署"; exit 1; }
+        git -C "$MAIN_ROOT" checkout -f "$BASE_BRANCH" \
+            || { echo "❌ 部署根守卫: checkout $BASE_BRANCH 失败，拒绝部署"; exit 1; }
+        git -C "$MAIN_ROOT" reset --hard "origin/$BASE_BRANCH" \
+            || { echo "❌ 部署根守卫: reset --hard origin/$BASE_BRANCH 失败，拒绝部署"; exit 1; }
+    else
+        # 可能是活人仓：绝不自动改动，任何异常状态硬红（禁止静默降级用脏代码部署）
+        CURRENT_BRANCH=$(git -C "$MAIN_ROOT" symbolic-ref --short HEAD 2>/dev/null || echo "DETACHED")
+        if [[ "$CURRENT_BRANCH" != "$BASE_BRANCH" ]]; then
+            echo "❌ 部署根守卫: $MAIN_ROOT 在分支 ${CURRENT_BRANCH}（要求 ${BASE_BRANCH}），拒绝部署。"
+            echo "   部署根疑似被工作会话占用；专用根请设 CECELIA_DEPLOY_AUTORESET=1。"
+            exit 1
+        fi
+        if [[ -n "$(git -C "$MAIN_ROOT" status --porcelain --untracked-files=no)" ]]; then
+            echo "❌ 部署根守卫: $MAIN_ROOT 有未提交 tracked 改动，拒绝部署（禁止用脏代码部署）。"
+            exit 1
+        fi
+        git -C "$MAIN_ROOT" pull --ff-only origin "$BASE_BRANCH" \
+            || { echo "❌ 部署根守卫: git pull --ff-only 失败（分叉/网络），拒绝部署"; exit 1; }
+    fi
+    echo ""
+fi
+
 # 判断需要哪些部署步骤
 NEED_BRAIN=false
 NEED_DASHBOARD=false
@@ -106,19 +141,6 @@ if [[ "$NEED_BRAIN" == false && "$NEED_DASHBOARD" == false && "$NEED_WORKFLOW_SK
     echo "⏭️  跳过：没有 Brain、Dashboard 或 Workflow Skills 改动，无需部署"
     exit 0
 fi
-
-# 在主仓库拉取最新代码（确保 .env.docker 等文件存在，且代码是最新的）
-echo "📥 拉取主仓库最新代码..."
-if [[ -n "${CECELIA_DEPLOY_ROOT:-}" ]]; then
-    echo "  [test] CECELIA_DEPLOY_ROOT 已设置，跳过 git pull（隔离自洽）"
-elif [[ "$DRY_RUN" == true ]]; then
-    echo "  [dry-run] git -C $MAIN_ROOT pull origin $BASE_BRANCH"
-else
-    git -C "$MAIN_ROOT" pull origin "$BASE_BRANCH" || {
-        echo "⚠️  git pull 失败，继续使用现有代码部署"
-    }
-fi
-echo ""
 
 # 部署 Brain（在主仓库中执行，确保 .env.docker 等文件可用）
 if [[ "$NEED_BRAIN" == true ]]; then
