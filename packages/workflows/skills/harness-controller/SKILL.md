@@ -7,9 +7,10 @@ description: |
   移植 Superpowers 6.0 subagent-driven-development 零件：进度台账 / 文件接力 / 四态出口协议 / 单评审双裁决 / compaction 恢复。
   点火方：Brain harness dispatch（无头）或人工前台（同一份 skill 两种触发，行为一致）。
   /dev 仍是唯一需求入口：本 skill 消费 /dev 路径C 的交接契约（PrepPRD + 铁律清单 + NFR），不做需求对抗。
-version: 1.4.0
+version: 1.5.0
 created: 2026-07-04
 changelog:
+  - 1.5.0: 台账三件套——每阶段新增 POST/PATCH /harness/phase-event 自报（T7 phase-event 复活）；zombie-reaper 凭此判活防误杀（今日 T5/T6 两次被误杀根因：initiative_run_events 07-04 起零写入，心跳信号断链）
   - 1.4.0: Step 0 新增 0.3 前台点火防护（07-06 infrastructure 任务 8e281976 实证分裂：payload 缺 orchestrator 字段被 Brain 41 秒标 terminal failed，前台 session 浑然不觉继续裸跑）——人工前台接管必做两步：a.确认任务未被标 failed（missing_orchestrator_flag 秒杀）b.PATCH status=in_progress 认领防 tick 双 spawn；并写明前台无 initiative_run 行时 relay-runs 上报 404 是预期行为
   - 1.3.2: Step 3 generator 验收 PR 存在后立即早上报 pr_url（PATCH relay-runs phase=generate + pr_url，非阻塞；端点未上线时 400 忽略）；CI 配套硬规矩 + Step 3 prompt 测试文件措辞改为"由 evaluator CONTRACT-IS-LAW 与 judge 复核把关；CI 机械闸 lint-contract-test-immutability 落地后由其强制"（消除虚假 CI 强校验宣称，对齐 zenithjoy 当前 lint 实际能力）
   - 1.3.1: description 更新 — 由"替代 LangGraph 图的编排位置"改为"唯一编排路径"（cecelia #3554 硬校验 orchestrator=skill-relay，图废弃进入观察期）
@@ -99,7 +100,20 @@ git log --grep='(Red)' --oneline <PR分支>
 
 查不到 (Red) commit → **不默认通过**，派 fix 轮要求 generator 补 TDD 纪律说明（说明 Red 基线在哪个 commit / 为何缺失 + 补跑合同测试证明先红后绿），核对通过后才继续接手。
 
-**台账写入是硬性动作，不是可选项**（N4 三跑均未写台账，恢复全靠翻 git——本版修正）。每阶段完成必须执行**两个动作**（台账 + 进度上报，后者是 dashboard 进度条的数据源）：
+**台账写入是硬性动作，不是可选项**（N4 三跑均未写台账，恢复全靠翻 git——本版修正）。每阶段必须执行**三个动作**（台账 + 进度上报 + phase-event 心跳，三者共同构成活性信号）：
+
+**阶段开始时（派 subagent 前）**：
+
+```bash
+# phase-event 心跳上报（活性信号——zombie-reaper 据此判活，防误杀）
+# node 取值：planner / gan / generator / evaluator / judge / merge / report
+PHASE_EVENT_ID=$(curl -s -m 10 -X POST "$BRAIN/api/brain/harness/phase-event" \
+  -H "Content-Type: application/json" \
+  -d "{\"initiative_id\":\"${HARNESS_INITIATIVE_ID}\",\"node\":\"<阶段名>\",\"status\":\"running\"}" \
+  | jq -r '.id // empty' 2>/dev/null) || PHASE_EVENT_ID=""
+```
+
+**阶段完成时（验收产物后）**：
 
 ```bash
 echo "<阶段>: done (<关键证据>)" >> .harness/progress.md
@@ -107,7 +121,14 @@ echo "<阶段>: done (<关键证据>)" >> .harness/progress.md
 # judge PASS 后→由 report 步骤报 done。失败终局报 failed。上报失败不阻塞流程,warn 即可）
 curl -s -m 10 -X PATCH "$BRAIN/api/brain/orchestrator/relay-runs/${HARNESS_INITIATIVE_ID}" \
   -H "Content-Type: application/json" -d '{"phase":"<下一阶段:planning|gan|generate|evaluate>"}' || true
+# phase-event 结束标记（status=completed 或 failed）
+[ -n "${PHASE_EVENT_ID:-}" ] && curl -s -m 10 -X PATCH \
+  "$BRAIN/api/brain/harness/phase-event/${PHASE_EVENT_ID}" \
+  -H "Content-Type: application/json" \
+  -d "{\"status\":\"completed\",\"ts_end\":$(date +%s)}" || true
 ```
+
+> **为何要 phase-event**（T7）：initiative_run_events 是 zombie-reaper 判断 relay 任务是否存活的心跳来源。07-04 起 harness-controller 从未上报，导致今日 T5/T6 被误判死亡重排。缺 jq 时忽略 PHASE_EVENT_ID 为空即可，自报失败不阻塞流程。
 
 ## Step 1: Planner（写 PRD）
 
