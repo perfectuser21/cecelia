@@ -1,6 +1,6 @@
-# DoD — nightly 去重 + 三把刀三件套守卫
-- [x] [BEHAVIOR] 重复的 nightly-full-regression.yml 已删除（#3717 nightly-regression.yml 为幸存刀A）
-  Test: manual: node -e "const fs=require('fs');if(fs.existsSync('.github/workflows/nightly-full-regression.yml'))process.exit(1);if(!fs.existsSync('.github/workflows/nightly-regression.yml'))process.exit(1)"
-- [x] [BEHAVIOR] 三把刀三件套受守卫测试保护（刀A schedule+issue/刀B 真Postgres/刀C nightly_gate+脚本指向存活文件）
+# DoD — 修复刀A/刀B workflow YAML unparseable（0-job startup failure）
+- [x] [BEHAVIOR] nightly-regression.yml 与 integration-nightly.yml 可被 YAML 解析（顶格 markdown alias 病根治）
+  Test: tests/ → packages/brain/src/__tests__/nightly-regression-config.test.js（yaml-parse 断言，先红后绿）
+- [x] [BEHAVIOR] 三把刀三件套 yaml-parse 守卫永久进 CI（防同类病复发）
   Test: tests/ → packages/brain/src/__tests__/nightly-regression-config.test.js
 - [x] CI 全绿
