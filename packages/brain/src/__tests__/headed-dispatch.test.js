@@ -190,7 +190,67 @@ describe('3. claude+headed → 放行（T6 解锁）', () => {
   });
 });
 
-describe('4. ssh spawn 失败 → B4 回滚（ALERT + 回 queued）', () => {
+describe('4. claude headed 分支（T6）', () => {
+  function makeDeps(calls, insertCapture) {
+    return {
+      // 现文件既有 codex 用例断言 host 内联在 INSERT SQL 里，这里捕获 [sql, params] 整体做断言
+      pool: { query: vi.fn(async (sql, params) => { if (/INSERT INTO initiative_runs/i.test(sql)) insertCapture.push([sql, params]); return { rows: [] }; }) },
+      execFn: (cmd) => { calls.push(cmd); return 'TMUX_DEAD'; },
+      inDockerFn: () => false,
+      sshKeyFn: () => null,
+      loadSkill: () => 'SKILL CONTENT',
+      ensureWt: async () => '/tmp/fake-worktree',
+      now: () => new Date('2026-07-10T04:00:00Z'),
+    };
+  }
+
+  it('executor=claude → tmux 命令跑 claude-launch.sh，session 前缀 claude-relay-，不含 CODEX_HOME', async () => {
+    const calls = []; const inserts = [];
+    const task = { id: '00000000-0000-0000-0000-00000000c1de', title: 't', payload: { orchestrator: 'skill-relay', executor: 'claude', mode: 'headed' } };
+    const result = await spawnSkillRelaySession(task, makeDeps(calls, inserts));
+    expect(result.ok).toBe(true);
+    expect(result.mode).toBe('skill-relay-claude-headed');
+    expect(result.tmuxSession).toMatch(/^claude-relay-/);
+    const tmuxCmd = calls.find((c) => c.includes('tmux new-session'));
+    expect(tmuxCmd).toContain('claude-launch.sh');
+    expect(tmuxCmd).toContain('--dangerously-skip-permissions');
+    expect(tmuxCmd).not.toContain('CODEX_HOME');
+    expect(tmuxCmd).not.toContain(' codex ');
+  });
+
+  it('executor=claude → 跳过 codex trust preseed（无 config.toml 写入命令）', async () => {
+    const calls = []; const inserts = [];
+    process.env.CODEX_RELAY_HOME = '/tmp/fake-codex-home';
+    try {
+      const task = { id: '00000000-0000-0000-0000-00000000c1df', title: 't', payload: { orchestrator: 'skill-relay', executor: 'claude', mode: 'headed' } };
+      await spawnSkillRelaySession(task, makeDeps(calls, inserts));
+      expect(calls.some((c) => c.includes('config.toml'))).toBe(false);
+    } finally { delete process.env.CODEX_RELAY_HOME; }
+  });
+
+  it('executor=claude → initiative_runs 落 orchestrator_host=skill-relay-claude-headed', async () => {
+    const calls = []; const inserts = [];
+    const task = { id: '00000000-0000-0000-0000-00000000c1e0', title: 't', payload: { orchestrator: 'skill-relay', executor: 'claude', mode: 'headed' } };
+    await spawnSkillRelaySession(task, makeDeps(calls, inserts));
+    expect(JSON.stringify(inserts[0])).toContain('skill-relay-claude-headed');
+  });
+
+  it('codex headed 路径不回归：仍 codex-relay- 前缀 + CODEX_HOME 注入', async () => {
+    const calls = []; const inserts = [];
+    process.env.CODEX_RELAY_HOME = '/tmp/fake-codex-home';
+    try {
+      const task = { id: '00000000-0000-0000-0000-00000000c1e1', title: 't', payload: { orchestrator: 'skill-relay', executor: 'codex', mode: 'headed' } };
+      const result = await spawnSkillRelaySession(task, makeDeps(calls, inserts));
+      expect(result.ok).toBe(true);
+      expect(result.mode).toBe('skill-relay-codex-headed');
+      expect(result.tmuxSession).toMatch(/^codex-relay-/);
+      const tmuxCmd = calls.find((c) => c.includes('tmux new-session'));
+      expect(tmuxCmd).toContain('CODEX_HOME');
+    } finally { delete process.env.CODEX_RELAY_HOME; }
+  });
+});
+
+describe('5. ssh spawn 失败 → B4 回滚（ALERT + 回 queued）', () => {
   it('sshSpawnFn 抛错 → ok=false，task 状态回滚至 queued（与 docker 路径对齐）', async () => {
     const deps = makeHeadedDeps({
       sshSpawnFn: vi.fn().mockRejectedValue(new Error('ssh: connection refused')),
