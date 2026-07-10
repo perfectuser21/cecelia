@@ -11,6 +11,7 @@
  */
 
 import { execSync } from 'child_process';
+import defaultPool from './db.js';
 
 export const VALID_EXECUTOR_KINDS = [
   'brain-local',
@@ -81,19 +82,49 @@ export const EXECUTOR_CONTRACTS = {
 
   /**
    * relay-container: skill-relay docker/tmux session
-   * 活性：docker ps 容器名前缀匹配
+   * 活性（双信号）：
+   *   1. docker ps 容器名前缀匹配（快路径）
+   *   2. initiative_run_events 心跳（harness-controller phase-event 自报）
+   *      - docker dead 时作为兜底信号：30min 内有写入 → alive（T7 防误杀）
+   *      - docker 抛异常时同理
    */
   'relay-container': {
     probe: async (task, _ctx) => {
       const shortId = task.id?.substring(0, 8)?.toLowerCase();
-      if (!shortId) return 'unknown';
+      let dockerResult = 'unknown'; // 'alive' | 'dead' | 'unknown'
+
+      if (shortId) {
+        try {
+          const out = execSync(
+            `docker ps --filter "name=cecelia-relay-${shortId}" --format "{{.Names}}"`,
+            { encoding: 'utf-8', timeout: 5000, stdio: 'pipe' }
+          ).trim();
+          dockerResult = out ? 'alive' : 'dead';
+        } catch {
+          dockerResult = 'unknown';
+        }
+      }
+
+      // 快路径：docker 已确认存活
+      if (dockerResult === 'alive') return 'alive';
+
+      // 次信号：查 initiative_run_events 心跳（phase-event 自报）
+      // 30min 内有事件 → 任务仍在活跃地跑各阶段
+      const HEARTBEAT_MINUTES = 30;
       try {
-        const out = execSync(
-          `docker ps --filter "name=cecelia-relay-${shortId}" --format "{{.Names}}"`,
-          { encoding: 'utf-8', timeout: 5000, stdio: 'pipe' }
-        ).trim();
-        return out ? 'alive' : 'dead';
+        const { rows } = await defaultPool.query(
+          `SELECT MAX(ts) AS last_ts FROM initiative_run_events WHERE initiative_id = $1`,
+          [task.id]
+        );
+        const lastTs = rows[0]?.last_ts;
+        if (lastTs != null) {
+          const minutesSince = (Date.now() / 1000 - Number(lastTs)) / 60;
+          if (minutesSince < HEARTBEAT_MINUTES) return 'alive';
+        }
+        // 有心跳数据但已过期，或无心跳数据：沿用 docker 结论
+        return dockerResult === 'dead' ? 'dead' : 'unknown';
       } catch {
+        // DB 不可达 → fail-open
         return 'unknown';
       }
     },
