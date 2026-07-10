@@ -424,6 +424,15 @@ router.patch('/tasks/:task_id', async (req, res) => {
       params.push(status);
       setClauses.push(`status_history = status_history || $${paramIdx++}::jsonb`);
       params.push(JSON.stringify([historyEntry]));
+      // 认领协议统一（T4）: status → in_progress 时自动打标 claimed_by + executor_kind
+      // 防止 dispatcher selectNextDispatchableTask (claimed_by IS NULL 过滤) 重复抢派
+      if (status === 'in_progress') {
+        const sessionId = req.headers['x-session-id'] || 'engine-patch';
+        setClauses.push(`claimed_by = COALESCE(claimed_by, $${paramIdx++})`);
+        params.push(`session:${sessionId}`);
+        setClauses.push(`executor_kind = COALESCE(executor_kind, $${paramIdx++})`);
+        params.push('headed-session');
+      }
       // Clear claim on terminal states — prevents zombie locks where claimed_by residue
       // blocks selectNextDispatchableTask (which filters claimed_by IS NULL)
       if (status === 'failed' || status === 'completed') {
