@@ -25,7 +25,11 @@ describe('brain-deploy blue-green contract', () => {
   });
 
   it('bluegreen_swap 失败时终止部署（exit 1，不继续 compose up 起新容器）', () => {
-    // 必须有 "if ! ... bluegreen_swap; then ... exit 1" 的守卫
-    expect(SH).toMatch(/bluegreen_swap[\s\S]{0,120}exit 1/);
+    // 必须有 "if ! ... bluegreen_swap; then ... exit 1 ... fi" 的守卫。
+    // 原断言用 120 字符邻近窗口，#3700 在守卫块内插入 drain-cancel 恢复逻辑后被撑爆（契约语义未破）；
+    // 改为结构化匹配：if ! …bluegreen_swap; then 块内（fi 之前）必须出现 exit 1。
+    const guard = SH.match(/if\s+!\s[\s\S]*?bluegreen_swap;\s*then([\s\S]*?)\n\s*fi\b/);
+    expect(guard, '缺少 if ! ... bluegreen_swap; then 守卫').not.toBeNull();
+    expect(guard[1]).toMatch(/exit 1/);
   });
 });
