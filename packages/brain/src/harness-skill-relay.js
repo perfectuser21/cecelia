@@ -73,11 +73,6 @@ export async function spawnSkillRelaySession(task, deps = {}) {
   const isCodex = task.payload?.executor === 'codex';
   const isHeaded = task.payload?.mode === 'headed';
 
-  // claude+headed 防御层（入口层已拦，这里是 spawnSkillRelaySession 内部防御）
-  if (isHeaded && task.payload?.executor !== 'codex') {
-    return { ok: false, mode: 'skill-relay', error: `executor=${task.payload?.executor} 不支持 headed 模式，仅 codex 支持` };
-  }
-
   // ─── headed 分支：ssh+tmux 路径 ──────────────────────────────────────────
   if (isHeaded) {
     return _spawnHeadedSession(task, { dbPool, now, short, initiativeId, deps });

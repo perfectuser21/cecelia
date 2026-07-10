@@ -109,12 +109,9 @@ router.post('/', async (req, res) => {
     if (executor === 'codex' && orchestrator !== 'skill-relay') {
       return res.status(400).json({ error: 'executor=codex requires orchestrator=skill-relay' });
     }
-    // mode 白名单校验：缺省/headless/headed 合法；claude+headed 不支持
+    // mode 白名单：缺省/headless/headed 合法（claude+headed 已解锁，T6 88e0b448）
     if (mode !== undefined && mode !== null && !['headless', 'headed'].includes(mode)) {
       return res.status(400).json({ error: `mode must be headless or headed, got: ${mode}` });
-    }
-    if (executor === 'claude' && mode === 'headed') {
-      return res.status(400).json({ error: 'executor=claude 不支持 mode=headed，headed 模式仅支持 executor=codex' });
     }
     // ─── end B1 ─────────────────────────────────────────────────────
 
