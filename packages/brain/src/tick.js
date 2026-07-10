@@ -34,10 +34,9 @@ import {
   selectNextDispatchableTask,
   processCortexTask,
 } from './dispatch-helpers.js';
-// Phase D Part 1.5: dispatchNextTask + _dispatchViaWorkflowRuntime 搬出 tick.js（仅 re-export）
+// Phase D Part 1.5: dispatchNextTask 搬出 tick.js（仅 re-export）
 import {
   dispatchNextTask,
-  _dispatchViaWorkflowRuntime,
 } from './dispatcher.js';
 // Phase D Part 1.6: routeTask / autoFailTimedOutTasks / getRampedDispatchMax 搬出 tick.js（仅 re-export）
 import {
@@ -140,7 +139,6 @@ export {
   _recordRecoveryAttempt,
   ensureCodexImmune,
   dispatchNextTask,
-  _dispatchViaWorkflowRuntime,
   processCortexTask,
   selectNextDispatchableTask,
   autoFailTimedOutTasks,

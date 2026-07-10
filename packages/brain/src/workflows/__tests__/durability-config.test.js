@@ -16,9 +16,9 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const WORKFLOW_DIR = resolve(__dirname, '..');
 
 describe('durability config [BEHAVIOR]', () => {
+  // dev-task.graph.js 已于 T6 物理删除（迁离 LangGraph，走 triggerCeceliaRun）
   const FILES = [
     'consciousness.graph.js',
-    'dev-task.graph.js',
     'harness-gan.graph.js',
   ];
 
