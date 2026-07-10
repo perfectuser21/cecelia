@@ -392,11 +392,12 @@ router.patch('/tasks/:task_id', async (req, res) => {
         'in_progress': ['completed', 'failed'],
         'completed': [],
         'failed': [],
-        // 补齐 quarantined / paused 两态出路，消除 allowed:[] 死锁
-        // 场景：PR 已合 main 但 Brain 内部 task 被 quarantine/pause，无 API 可回写 completed
+        // 补齐 quarantined / paused / canceled 三态出路，消除 allowed:[] 死锁
+        // 场景：PR 已合 main 但 Brain 内部 task 被 quarantine/pause/cancel，无 API 可回写 completed
         // quarantine release API 只能回 queued，paused 完全无 release API
         'quarantined': ['queued', 'completed', 'failed', 'cancelled'],
-        'paused': ['queued', 'in_progress', 'completed', 'failed', 'cancelled']
+        'paused': ['queued', 'in_progress', 'completed', 'failed', 'cancelled'],
+        'canceled': ['queued', 'completed', 'failed', 'cancelled']
       };
 
       if (!allowedTransitions[currentStatus]?.includes(status)) {
