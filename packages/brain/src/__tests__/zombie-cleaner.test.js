@@ -49,10 +49,18 @@ vi.mock('../utils/cleanup-lock.js', () => ({
   LOCK_DIR_DEFAULT: '/tmp/cecelia-cleanup.lock',
 }));
 
+// Mock platform-utils — anyProcessHasCwdUnder 默认返回 false（无存活进程持有 cwd）
+vi.mock('../platform-utils.js', () => ({
+  anyProcessHasCwdUnder: vi.fn().mockReturnValue(false),
+  IS_DARWIN: false,
+  IS_LINUX: true,
+}));
+
 import { existsSync, readFileSync, rmSync, statSync, readdirSync } from 'fs';
 import { execSync } from 'child_process';
 import { resolveTaskPids } from '../watchdog.js';
 import { removeActiveProcess } from '../executor.js';
+import { anyProcessHasCwdUnder } from '../platform-utils.js';
 
 import {
   cleanupStaleSlots,
@@ -461,6 +469,113 @@ describe('cleanupOrphanWorktrees', () => {
     const removeCalls = execSync.mock.calls.filter(c => String(c[0]).includes('worktree remove'));
     expect(removeCalls).toHaveLength(0);
     expect(rmSync).not.toHaveBeenCalled();
+  });
+
+  // ─── Guard C ──────────────────────────────────────────────────────────────
+  describe('Guard C', () => {
+    // zombie-cleaner.js 的 WORKTREE_BASE 常量在 ESM 模块加载时求值，此时 process.env.WORKTREE_BASE
+    // 尚未被第 12 行赋值，因此使用 HOME fallback。测试 wtPath 必须与模块实际值对齐。
+    const ZOMBIE_CLEANER_WORKTREE_BASE = `${process.env.HOME}/worktrees/cecelia`;
+    const wtPath = `${ZOMBIE_CLEANER_WORKTREE_BASE}/guard-c-wt`;
+    const taskId = 'aabb1122-0000-0000-0000-aabbccddeeff';
+
+    beforeEach(() => {
+      // 孤儿 worktree 基础 setup：存在 >30min，git status 干净，找到 taskId
+      // statSync.mockImplementation 区分 .dev-mode 文件（25h → isWorktreeActive=false）
+      // 与 worktree 目录本身（45min → age check 通过 >30min）
+      //
+      // execSync.mockReset()：pre-existing failing tests（WORKTREE_BASE 路径不匹配导致 managedWorktrees=[]
+      // 提前返回）会在 execSync 队列里留下未消耗的 mockReturnValueOnce 值，污染后续测试。
+      // vi.clearAllMocks() 只清 calls，不清 once 队列；必须在 inner beforeEach 显式 reset。
+      execSync.mockReset();
+      execSync
+        .mockReturnValueOnce(`worktree ${wtPath}\nHEAD abc123\nbranch cp-gc-test\n\n`)
+        .mockReturnValueOnce(''); // git status --porcelain clean
+      existsSync.mockReturnValue(true);
+      statSync.mockImplementation((p) => {
+        if (String(p).includes('.dev-mode')) {
+          // 25h > ACTIVE_WORKTREE_SIGNAL_THRESHOLD_MS(24h) → isWorktreeActive=false，不提前 skip
+          return { mtimeMs: Date.now() - 25 * 60 * 60 * 1000 };
+        }
+        return { mtimeMs: Date.now() - 45 * 60 * 1000 }; // 45min > 30min grace
+      });
+      readdirSync.mockReturnValue(['.dev-mode']); // findTaskIdForWorktree 能找到 taskId
+      readFileSync.mockReturnValue(`branch: cp-gc-test\ntask_id: ${taskId}\n`);
+      anyProcessHasCwdUnder.mockReturnValue(false);
+    });
+
+    it('C-1: task claimed_by 非空 → skip', async () => {
+      // 模拟 .dev-mode mtime 过期（isWorktreeActive=false）→ 跳过 B2 活跃预检
+      // activeTasks query: task NOT in_progress（已完成 or 其他状态）
+      // Guard C-1 claimed_by query: IS NOT NULL → skip
+      const pool = {
+        query: vi.fn()
+          .mockResolvedValueOnce({ rows: [] })               // activeTasks: task not in_progress
+          .mockResolvedValueOnce({ rows: [{ id: taskId }] }), // Guard C-1 claimed_by: claimed!
+      };
+
+      const result = await cleanupOrphanWorktrees(pool);
+
+      expect(result.removed).toBe(0);
+      const removeCalls = execSync.mock.calls.filter(c => String(c[0]).includes('worktree remove'));
+      expect(removeCalls).toHaveLength(0);
+    });
+
+    it('C-2: 存活进程持有 cwd → skip', async () => {
+      anyProcessHasCwdUnder.mockReturnValue(true);
+      const pool = {
+        query: vi.fn()
+          .mockResolvedValueOnce({ rows: [] })  // activeTasks
+          .mockResolvedValueOnce({ rows: [] }), // Guard C-1 claimed_by: not claimed
+      };
+
+      const result = await cleanupOrphanWorktrees(pool);
+
+      expect(result.removed).toBe(0);
+      expect(anyProcessHasCwdUnder).toHaveBeenCalledWith(wtPath);
+    });
+
+    it('C-2: 进程已死 → 正常删除', async () => {
+      anyProcessHasCwdUnder.mockReturnValue(false);
+      // beforeEach 已注入: [worktree-list, git-status]，追加第 3 个调用 worktree remove
+      execSync.mockReturnValueOnce(''); // git worktree remove --force
+      const pool = {
+        query: vi.fn()
+          .mockResolvedValueOnce({ rows: [] })  // activeTasks
+          .mockResolvedValueOnce({ rows: [] }), // Guard C-1 claimed_by: not claimed
+      };
+
+      const result = await cleanupOrphanWorktrees(pool);
+
+      expect(result.removed).toBe(1);
+    });
+
+    it('C-2: cwd 检查抛出异常 → 保守 skip', async () => {
+      anyProcessHasCwdUnder.mockImplementation(() => { throw new Error('lsof failed'); });
+      const pool = {
+        query: vi.fn()
+          .mockResolvedValueOnce({ rows: [] })  // activeTasks
+          .mockResolvedValueOnce({ rows: [] }), // Guard C-1 claimed_by
+      };
+
+      const result = await cleanupOrphanWorktrees(pool);
+
+      expect(result.removed).toBe(0);
+      const removeCalls = execSync.mock.calls.filter(c => String(c[0]).includes('worktree remove'));
+      expect(removeCalls).toHaveLength(0);
+    });
+
+    it('C-1 claimed_by 查询抛出异常 → 保守 skip', async () => {
+      const pool = {
+        query: vi.fn()
+          .mockResolvedValueOnce({ rows: [] })         // activeTasks
+          .mockRejectedValueOnce(new Error('DB down')), // Guard C-1 claimed_by throws
+      };
+
+      const result = await cleanupOrphanWorktrees(pool);
+
+      expect(result.removed).toBe(0);
+    });
   });
 });
 

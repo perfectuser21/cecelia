@@ -12,6 +12,7 @@ circuit-breaker-persist-smoke.sh
 circuit-breaker-reset-smoke.sh
 decision-system-smoke.sh
 executor-liveness-t1-smoke.sh
+t2-liveness-four-blades-smoke.sh
 feature-registry-smoke.sh
 harness-detail-smoke.sh
 harness-echo-smoke.sh
@@ -59,3 +60,5 @@ ws3-ire-module-smoke.sh
 protocol-hygiene-smoke.sh
 task-tasks-dedup-smoke.sh
 line-dreaming-smoke.sh
+bluegreen-bark-nojq-smoke.sh
+callback-postprocess-smoke.sh

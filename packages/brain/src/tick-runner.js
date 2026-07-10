@@ -1287,10 +1287,8 @@ async function executeTick() {
   }
 
   // 6.6. Dead task reset — execution_attempts=0 stuck tasks (in_progress/queued > 10min) → queued
-  //      T2 合同化：改为按 executor_kind 精确限定，只重置确认是"本地进程/bridge"的任务。
-  //      headed-session/relay-container/external-worker/null(legacy) 全部不触碰——
-  //      null 任务 fail-open（告警不杀），relay-container 由 relay-watchdog 专管，
-  //      headed-session 由 zombie-reaper release-claim 专管。
+  //      T2: 改用 executor_kind 白名单（brain-local / bridge）精确限定范围，
+  //      避免误伤 relay-container / headed-session / external-worker 等执行者。
   try {
     const deadResult = await pool.query(`
       UPDATE tasks

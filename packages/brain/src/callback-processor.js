@@ -18,6 +18,7 @@ import { updateDesireFromTask } from './desire-feedback.js';
 import { resolveRelatedFailureMemories } from './routes/shared.js';
 import { normalizeCallbackStatus, extractPrNumber, maybeMarkCompletedNoPr, buildExecMetaJson, buildFailureFields, extractFindingsValue, buildLastRunResult } from './lib/callback-utils.js';
 import { REVIEW_TASK_TYPES } from './lib/review-task-types.js';
+import { serialUnlockNext, writeReviewResult } from './lib/callback-postprocess.js';
 
 const TERMINAL_CALLBACK_STATUSES = new Set(['completed', 'completed_no_pr', 'failed', 'cancelled']);
 
@@ -277,6 +278,16 @@ export async function processExecutionCallback(data, pool) {
       }
     }).catch(err =>
       console.warn(`[callback-processor] code-review-trigger 失败（非致命）: ${err.message}`)
+    );
+
+    // 5c8b. 审查任务完成 → 写入 review_result（共享后处理管道）
+    await writeReviewResult(task_id, result, pool).catch(err =>
+      console.error(`[callback-processor] writeReviewResult 失败 (non-fatal): ${err.message}`)
+    );
+
+    // 5c11. 串行调度：dev task 完成 → 解锁下一个 blocked 串行 task（共享后处理管道）
+    await serialUnlockNext(task_id, result, pr_url, pool).catch(err =>
+      console.error(`[callback-processor] serialUnlockNext 失败 (non-fatal): ${err.message}`)
     );
 
   } else if (newStatus === 'failed') {

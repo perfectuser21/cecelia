@@ -16,9 +16,7 @@ import { promisify } from 'util';
 import { readdirSync, readFileSync, existsSync } from 'fs';
 import pool from '../db.js';
 import { emit } from '../event-bus.js';
-import { processExists } from '../platform-utils.js';
 import { assessTaskLiveness } from '../executor-contracts.js';
-import { sendFeishu } from '../notifier.js';
 
 const execAsync = promisify(exec);
 
@@ -34,11 +32,6 @@ const LOCK_DIR = '/tmp/cecelia-locks';
 // 不可重试的失败类别
 const NON_RETRYABLE_FAILURE_CLASSES = ['auth', 'resource', 'code_error', 'pipeline_terminal_failure'];
 
-// ============================================================
-// 进程存活检测（跨平台）— 统一使用 platform-utils.processExists()
-// ============================================================
-
-const isProcessAlive = processExists;
 
 /**
  * 读取 slot 目录获取 task_id 到 pid 的映射
@@ -616,9 +609,9 @@ async function archiveOldTasks() {
 async function restartStuckExecutors() {
   const client = await pool.connect();
   try {
-    // T2：删 content-pipeline 硬编码特判，改用 assessTaskLiveness 合同判活
+    // 扫描卡住的任务，SELECT 含 executor_kind/last_attempt_at/claimed_by 供 assessTaskLiveness 使用
     const stuckTasksResult = await client.query(`
-      SELECT id, title, started_at, payload, executor_kind, updated_at, claimed_by, last_attempt_at
+      SELECT id, title, started_at, payload, executor_kind, last_attempt_at, claimed_by, updated_at
       FROM tasks
       WHERE status = 'in_progress'
         AND updated_at < NOW() - INTERVAL '30 minutes'
@@ -629,64 +622,45 @@ async function restartStuckExecutors() {
       return { executorsRestarted: 0 };
     }
 
-    // 读取 slot 信息获取 PID 映射（供 brain-local probe 使用）
+    // 读取 slot 信息供 assessTaskLiveness ctx 使用（activeProcesses）
     const slotInfo = readSlotInfo();
-    const activeProcesses = new Map();
-    for (const [taskId, info] of slotInfo.entries()) {
-      activeProcesses.set(taskId, { pid: info.pid });
-    }
 
     let restartedCount = 0;
     let stuckButAliveCount = 0;
-    let releasedCount = 0;
 
     for (const task of stuckTasksResult.rows) {
-      const { verdict, onStale, kind } = await assessTaskLiveness(task, { activeProcesses });
+      const liveness = await assessTaskLiveness(task, { activeProcesses: slotInfo });
 
-      if (verdict === 'alive') {
-        console.log(`[Healing] Task alive (kind=${kind}): ${task.title}`);
+      if (liveness.verdict === 'alive' || liveness.verdict === 'unknown') {
+        console.log(`[Healing] Task alive/unknown, skip: ${task.title} (verdict=${liveness.verdict})`);
         stuckButAliveCount++;
         continue;
       }
 
-      if (verdict === 'unknown') {
-        // fail-open：unknown 一律不杀，仅告警
-        console.warn(`[Healing] Task liveness unknown (kind=${kind}), skipping: ${task.id}`);
-        continue;
-      }
-
-      // verdict=dead
-      if (onStale === 'fail') {
-        // brain-local：重置回 queued
+      // dead — 按 onStale 分支处置
+      if (liveness.onStale === 'fail' || liveness.onStale === 'requeue') {
         await client.query(`
           UPDATE tasks
           SET status = 'queued', claimed_by = NULL, claimed_at = NULL, started_at = NULL, updated_at = NOW()
           WHERE id = $1
         `, [task.id]);
-        console.log(`[Healing] Restarted stuck executor (kind=${kind}, probe=dead): ${task.title}`);
+        console.log(`[Healing] Restarted stuck executor (dead): ${task.title}`);
         restartedCount++;
-
-      } else if (onStale === 'release-claim-and-alert') {
-        // headed-session：绝不 failed，释放 claim 回 queued + 飞书告警
+      } else if (liveness.onStale === 'release-claim-and-alert') {
         await client.query(`
           UPDATE tasks
           SET status = 'queued', claimed_by = NULL, claimed_at = NULL, started_at = NULL, updated_at = NOW()
           WHERE id = $1
         `, [task.id]);
-        releasedCount++;
-        const alertMsg = `[healing] headed-session 已断开，释放 claim → queued: task=${task.id} title=${task.title}`;
-        console.warn(`[Healing] ${alertMsg}`);
-        sendFeishu(alertMsg).catch(e =>
-          console.error('[Healing] feishu alert failed:', e.message)
-        );
-
+        console.warn(`[Healing] headed-session stale: released claim id=${task.id}`);
+        restartedCount++;
       } else {
-        // reignite/requeue/never → 专属组件负责
-        console.log(`[Healing] task=${task.id} kind=${kind} onStale=${onStale} — skip`);
+        // never / reignite / 其他 → 跳过
+        console.log(`[Healing] Skip task id=${task.id} onStale=${liveness.onStale}`);
       }
     }
 
-    console.log(`[Healing] restart_stuck_executors: restarted=${restartedCount}, released=${releasedCount}, stuck_but_alive=${stuckButAliveCount}`);
+    console.log(`[Healing] restart_stuck_executors: restarted=${restartedCount}, stuck_but_alive=${stuckButAliveCount}`);
     return { executorsRestarted: restartedCount };
   } catch (error) {
     console.error('[Healing] Failed to restart stuck executors:', error.message);

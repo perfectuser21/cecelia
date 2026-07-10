@@ -18,6 +18,7 @@ import { raise } from '../alerting.js';
 import { handleTaskFailure } from '../quarantine.js';
 import { triggerCeceliaRun } from '../executor.js';
 import { REVIEW_TASK_TYPES } from '../lib/review-task-types.js';
+import { serialUnlockNext, writeReviewResult } from '../lib/callback-postprocess.js';
 import { updateDesireFromTask } from '../desire-feedback.js';
 import { checkAndCreateCodeReviewTrigger } from '../code-review-trigger.js';
 import { resolveRelatedFailureMemories } from './shared.js';
@@ -1505,106 +1506,15 @@ ${resultStr.substring(0, 2000)}
         console.error(`[execution-callback] code_review routing failed (non-fatal): ${crErr.message}`);
       }
 
-      // 5c8b. Codex Gate 审查任务完成 → 将审查结论写入任务自身 + 父任务的 review_result
-      // 适用类型：prd_review, spec_review, code_review_gate, initiative_review
-      const REVIEW_TASK_TYPES = new Set(['prd_review', 'spec_review', 'code_review_gate', 'initiative_review']);
-      try {
-        const reviewRow = await pool.query(
-          'SELECT task_type, payload FROM tasks WHERE id = $1',
-          [task_id]
-        );
-        const reviewTask = reviewRow.rows[0];
+      // 5c8b. 审查任务完成 → 写入 review_result（共享后处理管道）
+      await writeReviewResult(task_id, result, pool).catch(err =>
+        console.error(`[execution-callback] writeReviewResult 失败 (non-fatal): ${err.message}`)
+      );
 
-        if (reviewTask && REVIEW_TASK_TYPES.has(reviewTask.task_type)) {
-          const reviewPayload = reviewTask.payload || {};
-          const parentTaskId = reviewPayload.parent_task_id;
-
-          // 从 req.body 提取审查结论
-          const resultObj = typeof result === 'object' && result !== null ? result : {};
-          const decision = resultObj.decision || (typeof result === 'string' ? result : 'PASS');
-          const summary = resultObj.summary || (typeof result === 'string' ? result : '');
-          const l1Count = resultObj.l1_count ?? 0;
-          const l2Count = resultObj.l2_count ?? 0;
-
-          // 构建 review_result 字符串
-          const reviewResultText = [
-            `决定: ${decision}`,
-            summary ? `摘要: ${summary}` : '',
-            `L1问题: ${l1Count}, L2问题: ${l2Count}`,
-          ].filter(Boolean).join('\n');
-
-          // 1. 写入审查任务自身的 review_result
-          await pool.query(
-            'UPDATE tasks SET review_result = $1 WHERE id = $2',
-            [reviewResultText, task_id]
-          );
-          console.log(`[execution-callback] review_result 写入 ${reviewTask.task_type} task ${task_id}, decision=${decision}`);
-
-          // 2. 写入父任务的 review_result（供父任务查看审查结论）
-          if (parentTaskId) {
-            await pool.query(
-              'UPDATE tasks SET review_result = $1 WHERE id = $2',
-              [reviewResultText, parentTaskId]
-            );
-            console.log(`[execution-callback] review_result 写入 parent task ${parentTaskId}, decision=${decision}`);
-          } else {
-            console.warn(`[execution-callback] ${reviewTask.task_type} ${task_id} 无 parent_task_id，仅写入自身 review_result`);
-          }
-        }
-      } catch (reviewErr) {
-        console.error(`[execution-callback] review_result 写入失败 (non-fatal): ${reviewErr.message}`);
-      }
-
-      // 5c11. 串行调度: dev task 完成（有 sequence_order）→ 解锁并注入上下文到下一个串行 task
-      // 适用场景：Initiative 内有明确依赖顺序的 dev tasks
-      // 触发条件：payload.sequence_order != null && payload.depends_on_prev = true（由下一个 task 携带）
-      // 独立 task（sequence_order=null）直接走断链#5，不受影响
-      try {
-        const seqRow = await pool.query(
-          'SELECT task_type, project_id, goal_id, title, payload FROM tasks WHERE id = $1',
-          [task_id]
-        );
-        const seqTask = seqRow.rows[0];
-        if (seqTask?.task_type === 'dev' && seqTask.project_id && seqTask.payload?.sequence_order != null) {
-          const projectId = seqTask.project_id;
-          const currentSeq = Number(seqTask.payload.sequence_order);
-          // 找 sequence_order = currentSeq + 1 且 status = 'blocked' 且 depends_on_prev = true 的下一个 task
-          const nextTaskRow = await pool.query(
-            `SELECT id, title, payload FROM tasks
-             WHERE project_id = $1 AND task_type = 'dev' AND status = 'blocked'
-               AND (payload->>'sequence_order')::int = $2
-               AND payload->>'depends_on_prev' = 'true'
-             LIMIT 1`,
-            [projectId, currentSeq + 1]
-          );
-          if (nextTaskRow.rows.length > 0) {
-            const nextTask = nextTaskRow.rows[0];
-            // 构建 prev_task_result 上下文（注入到下一个 task 的 payload）
-            const prevTaskResult = {
-              task_id: task_id,
-              summary: typeof result === 'object' && result !== null
-                ? (result.summary || result.findings || 'completed')
-                : String(result || 'completed'),
-              pr_url: pr_url || null,
-              sequence_order: currentSeq
-            };
-            const newPayload = { ...(nextTask.payload || {}), prev_task_result: prevTaskResult };
-            // 原子性：更新 payload + unblock（blocked → queued）
-            await pool.query(
-              `UPDATE tasks SET status = 'queued', claimed_by = NULL, claimed_at = NULL, payload = $1::jsonb,
-               blocked_at = NULL, blocked_reason = NULL, blocked_detail = NULL,
-               blocked_until = NULL, started_at = NULL, updated_at = NOW()
-               WHERE id = $2 AND status = 'blocked'`,
-              [JSON.stringify(newPayload), nextTask.id]
-            );
-            console.log(`[execution-callback] 串行调度: task=${task_id} (seq=${currentSeq}) → 解锁 next=${nextTask.id} (seq=${currentSeq + 1}) with prev_task_result`);
-          } else {
-            console.log(`[execution-callback] 串行调度: task=${task_id} (seq=${currentSeq}) 无下一个串行 task，由断链#5 继续`);
-          }
-        }
-      } catch (serialErr) {
-        console.error(`[execution-callback] dev 串行调度失败 (non-fatal): ${serialErr.message}`);
-      }
+      // 5c11. 串行调度: dev task 完成 → 解锁下一个 blocked 串行 task（共享后处理管道）
+      await serialUnlockNext(task_id, result, pr_url, pool).catch(err =>
+        console.error(`[execution-callback] serialUnlockNext 失败 (non-fatal): ${err.message}`)
+      );
 
       // 5c-harness. Harness v4.0 断链（对标 Anthropic 论文）
       // Planner → GAN 对抗 → Generator 写代码 → CI watch → Evaluator 验证 diff → auto-merge → Deploy watch → Report

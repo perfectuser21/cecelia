@@ -46,6 +46,15 @@ vi.mock('../zombie-cleaner.js', () => ({
   isWorktreeActive: vi.fn(),
 }));
 
+// Mock platform-utils — anyProcessHasCwdUnder 默认返回 false（无存活进程持有 cwd）
+// listProcessesWithPpid 改为可直接控制返回值（不再耦合 execSync ps 输出格式）
+vi.mock('../platform-utils.js', () => ({
+  listProcessesWithPpid: vi.fn().mockReturnValue([]),
+  anyProcessHasCwdUnder: vi.fn().mockReturnValue(false),
+  IS_DARWIN: false,
+  IS_LINUX: true,
+}));
+
 // Mock cleanup-lock — fs 被 mock 了，真锁会失败，pass-through 让单测走原路径
 vi.mock('../utils/cleanup-lock.js', () => ({
   withLock: vi.fn(async (_opts, fn) => fn()),
@@ -59,6 +68,7 @@ import { existsSync, readdirSync, rmSync, readFileSync, statSync } from 'fs';
 import pool from '../db.js';
 import { getActiveProcesses } from '../executor.js';
 import { findTaskIdForWorktree, isWorktreeActive } from '../zombie-cleaner.js';
+import { listProcessesWithPpid, anyProcessHasCwdUnder } from '../platform-utils.js';
 import {
   parseWorktreeList,
   sweepStaleWorktrees,
@@ -152,6 +162,8 @@ branch refs/heads/cp-02020000-active-task`;
         if (cmd.includes('worktree list --porcelain')) return PORCELAIN_OUTPUT;
         return '';
       });
+      // Guard C-1 called_by 检查默认返回空（不影响已有用例的 remove 断言）
+      pool.query.mockResolvedValue({ rows: [] });
     });
 
     it('移除对应任务已完成的 stale worktree', async () => {
@@ -243,21 +255,25 @@ branch refs/heads/cp-02020000-active-task`;
       expect(isWorktreeActive).toHaveBeenCalledWith('/tmp/stale-wt');
     });
 
-    it('T1 Channel 2: UUID 命中但 mtime stale → 仍清理（短路失效）', async () => {
+    it('Guard C-1: task in_progress + mtime stale → skip（07-10 实证，全 commit 后 .dev-mode 过期）', async () => {
+      // 模拟 07-10 事故：有头会话全部 commit 后 .dev-mode mtime 过期
+      // Channel 2 需要 mtime fresh（isWorktreeActive=false → miss），Guard A 通过（全 clean）
+      // Guard C-1 检测到 taskId in inProgressTaskIds → 保护，不删
       pool.query.mockResolvedValueOnce({
         rows: [
           { branch: 'cp-02020000-active-task', id: 'task-uuid-1' },
-          { branch: null, id: 'task-uuid-stale' },
+          { branch: null, id: 'task-uuid-stale' }, // in_progress 但 mtime stale
         ],
       });
       statSync.mockReturnValue({ birthtimeMs: Date.now() - GRACE_PERIOD_MS - 1000 });
 
       findTaskIdForWorktree.mockReturnValue('task-uuid-stale');
-      isWorktreeActive.mockReturnValue(false); // mtime 都过期
+      isWorktreeActive.mockReturnValue(false); // mtime 过期 → Channel 2 miss
 
       const result = await sweepStaleWorktrees();
-      // Channel 2 的 AND isWorktreeActive 条件失败 → stale-wt 被清
-      expect(result.removed).toBe(1);
+      // Guard C-1 补正：in_progress 无 mtime 要求 → skip
+      expect(result.removed).toBe(0);
+      expect(result.skipped).toBe(2);
     });
 
     it('DB 查询失败时返回 error 且不删除任何 worktree', async () => {
@@ -330,28 +346,104 @@ branch refs/heads/cp-02020000-active-task`;
       expect(result.removed).toBe(2);
       expect(result.skipped).toBe(0);
     });
+
+    // ─── Guard C ────────────────────────────────────────────────────────────
+    describe('Guard C', () => {
+      // 公共 setup：stale-wt 无 in_progress 任务匹配 + git status 干净
+      beforeEach(() => {
+        pool.query.mockResolvedValueOnce({
+          rows: [{ branch: 'cp-02020000-active-task', id: 'task-uuid-active' }],
+        });
+        statSync.mockReturnValue({ birthtimeMs: Date.now() - GRACE_PERIOD_MS - 1000 });
+        execSync.mockImplementation((cmd) => {
+          if (cmd.includes('rev-parse --show-toplevel')) return MAIN_REPO + '\n';
+          if (cmd.includes('worktree list --porcelain')) return PORCELAIN_OUTPUT;
+          if (cmd.includes('status --porcelain')) return ''; // Guard A 通过
+          if (cmd.includes('worktree remove')) return '';
+          return '';
+        });
+        findTaskIdForWorktree.mockReturnValue(null);
+        isWorktreeActive.mockReturnValue(false);
+        anyProcessHasCwdUnder.mockReturnValue(false); // 默认无存活进程
+      });
+
+      it('C-1: task claimed_by 非空（branch 匹配）→ skip', async () => {
+        // 第一次 pool.query 已由 beforeEach 消费（initial DB query），
+        // Guard C-1 branch check 使用默认 mockResolvedValue({ rows: [] })
+        // 这里覆盖 branch check 结果：claimed_by IS NOT NULL 命中
+        pool.query
+          .mockResolvedValueOnce({ rows: [{ id: 'task-claimed' }] }); // Guard C-1 claimed_by check
+
+        const result = await sweepStaleWorktrees();
+
+        // stale-wt 被 Guard C-1 保护，active-wt 被 Channel 1 skip
+        expect(result.removed).toBe(0);
+        expect(result.skipped).toBe(2);
+        const removeCalls = execSync.mock.calls.filter(c =>
+          String(c[0]).includes('worktree remove') && String(c[0]).includes('/tmp/stale-wt')
+        );
+        expect(removeCalls).toHaveLength(0);
+      });
+
+      it('C-2: 存活进程持有 cwd → skip', async () => {
+        anyProcessHasCwdUnder.mockReturnValue(true); // 存活进程在 worktree 内
+
+        const result = await sweepStaleWorktrees();
+
+        expect(result.removed).toBe(0);
+        expect(result.skipped).toBe(2); // stale-wt (Guard C-2) + active-wt (Channel 1)
+        expect(anyProcessHasCwdUnder).toHaveBeenCalledWith('/tmp/stale-wt');
+      });
+
+      it('C-2: 进程已死 → 正常删除', async () => {
+        anyProcessHasCwdUnder.mockReturnValue(false);
+
+        const result = await sweepStaleWorktrees();
+
+        // stale-wt 无保护 → remove; active-wt Channel 1 skip
+        expect(result.removed).toBe(1);
+      });
+
+      it('C-2: cwd 检查抛出异常 → 保守 skip', async () => {
+        anyProcessHasCwdUnder.mockImplementation(() => { throw new Error('lsof failed'); });
+
+        const result = await sweepStaleWorktrees();
+
+        // 保守 skip：宁可漏删不误删
+        expect(result.removed).toBe(0);
+        const removeCalls = execSync.mock.calls.filter(c =>
+          String(c[0]).includes('worktree remove') && String(c[0]).includes('/tmp/stale-wt')
+        );
+        expect(removeCalls).toHaveLength(0);
+      });
+
+      it('C-1 claimed_by 检查抛出异常 → 保守 skip', async () => {
+        // Guard C-1 第一个 pool.query（initial DB）已由 beforeEach mockResolvedValueOnce 消费
+        // 第二个调用（Guard C-1 branch check）抛出
+        pool.query.mockRejectedValueOnce(new Error('DB timeout'));
+
+        const result = await sweepStaleWorktrees();
+
+        expect(result.removed).toBe(0);
+      });
+    });
   });
 
   // ─── sweepOrphanProcesses ─────────────────────────────────────────────────
 
   describe('sweepOrphanProcesses', () => {
-    // 模拟 ps -eo pid=,ppid=,args= 的输出
-    const makePsOutput = (procs) =>
-      procs.map(p => `  ${p.pid}   ${p.ppid} ${p.cmd}`).join('\n');
-
     it('杀死 ppid=1 的孤儿 claude 进程', async () => {
       vi.useFakeTimers();
 
-      // ps 返回：tracked claude -p 进程 + 孤儿 subagent（ppid=1）
-      execSync.mockReturnValueOnce(makePsOutput([
+      listProcessesWithPpid.mockReturnValueOnce([
         { pid: 1001, ppid: 100, cmd: 'claude -p "do stuff"' },
-        { pid: 1002, ppid: 1, cmd: 'claude' },    // 孤儿 subagent
-        { pid: 100, ppid: 1, cmd: 'bash' },        // 非 claude 进程
-      ]));
+        { pid: 1002, ppid: 1,   cmd: 'claude' },   // 孤儿 subagent
+        { pid: 100,  ppid: 1,   cmd: 'bash' },     // 非 claude
+      ]);
 
       getActiveProcesses.mockReturnValue([{ pid: 1001, taskId: 'task-1' }]);
       pool.query.mockResolvedValueOnce({ rows: [] });
-      existsSync.mockReturnValue(false); // no lock slot dir
+      existsSync.mockReturnValue(false);
 
       const killSpy = vi.spyOn(process, 'kill').mockImplementation((pid, sig) => {
         if (sig === 0) throw new Error('ESRCH');
@@ -362,7 +454,6 @@ branch refs/heads/cp-02020000-active-task`;
       await vi.runAllTimersAsync();
       const result = await sweepPromise;
 
-      // 1001 tracked, 1002 孤儿 → 2 checked, 1 killed
       expect(result.checked).toBe(2);
       expect(result.killed).toBe(1);
 
@@ -373,12 +464,11 @@ branch refs/heads/cp-02020000-active-task`;
     it('tracked 进程的子进程（subagent）不被杀', async () => {
       vi.useFakeTimers();
 
-      // ps: tracked 主进程 1001，其 subagent 1002（ppid=1001）
-      execSync.mockReturnValueOnce(makePsOutput([
-        { pid: 1001, ppid: 100, cmd: 'claude -p "task"' },
-        { pid: 1002, ppid: 1001, cmd: 'claude' },   // subagent of tracked
-        { pid: 100, ppid: 1, cmd: 'bash' },
-      ]));
+      listProcessesWithPpid.mockReturnValueOnce([
+        { pid: 1001, ppid: 100,  cmd: 'claude -p "task"' },
+        { pid: 1002, ppid: 1001, cmd: 'claude' },  // subagent of tracked
+        { pid: 100,  ppid: 1,   cmd: 'bash' },
+      ]);
 
       getActiveProcesses.mockReturnValue([{ pid: 1001, taskId: 'task-1' }]);
       pool.query.mockResolvedValueOnce({ rows: [] });
@@ -390,7 +480,6 @@ branch refs/heads/cp-02020000-active-task`;
       await vi.runAllTimersAsync();
       const result = await sweepPromise;
 
-      // 1002 是 1001 的后代，不应被杀
       expect(result.killed).toBe(0);
 
       killSpy.mockRestore();
@@ -400,11 +489,10 @@ branch refs/heads/cp-02020000-active-task`;
     it('交互式 claude 会话（非 -p，ppid!=1）不被杀', async () => {
       vi.useFakeTimers();
 
-      // ps: 用户手动启动的 claude（没有 -p，ppid 不是 1）
-      execSync.mockReturnValueOnce(makePsOutput([
-        { pid: 2001, ppid: 500, cmd: 'claude' },   // 交互式会话
-        { pid: 500, ppid: 1, cmd: 'zsh' },
-      ]));
+      listProcessesWithPpid.mockReturnValueOnce([
+        { pid: 2001, ppid: 500, cmd: 'claude' },  // 交互式会话
+        { pid: 500,  ppid: 1,   cmd: 'zsh' },
+      ]);
 
       getActiveProcesses.mockReturnValue([]);
       pool.query.mockResolvedValueOnce({ rows: [] });
@@ -423,11 +511,10 @@ branch refs/heads/cp-02020000-active-task`;
     });
 
     it('ps 无 claude 进程时返回空结果', async () => {
-      // ps 返回非 claude 进程
-      execSync.mockReturnValueOnce(makePsOutput([
-        { pid: 1, ppid: 0, cmd: 'launchd' },
+      listProcessesWithPpid.mockReturnValueOnce([
+        { pid: 1,   ppid: 0, cmd: 'launchd' },
         { pid: 100, ppid: 1, cmd: 'bash' },
-      ]));
+      ]);
 
       getActiveProcesses.mockReturnValue([]);
 
@@ -437,9 +524,9 @@ branch refs/heads/cp-02020000-active-task`;
     });
 
     it('DB 失败时不杀任何进程（保守策略）', async () => {
-      execSync.mockReturnValueOnce(makePsOutput([
+      listProcessesWithPpid.mockReturnValueOnce([
         { pid: 5001, ppid: 1, cmd: 'claude -p "orphan"' },
-      ]));
+      ]);
       getActiveProcesses.mockReturnValue([]);
       pool.query.mockRejectedValueOnce(new Error('DB error'));
 
@@ -454,15 +541,14 @@ branch refs/heads/cp-02020000-active-task`;
     it('lock slot 中的 PID 受保护', async () => {
       vi.useFakeTimers();
 
-      execSync.mockReturnValueOnce(makePsOutput([
-        { pid: 3001, ppid: 1, cmd: 'claude -p "task"' },   // ppid=1 但在 lock slot 中
-      ]));
+      listProcessesWithPpid.mockReturnValueOnce([
+        { pid: 3001, ppid: 1, cmd: 'claude -p "task"' },  // ppid=1 但在 lock slot 中
+      ]);
 
       getActiveProcesses.mockReturnValue([]);
       pool.query.mockResolvedValueOnce({ rows: [] });
 
-      // lock slot 包含 pid 3001
-      existsSync.mockImplementation((p) => true);
+      existsSync.mockImplementation(() => true);
       readdirSync.mockReturnValue(['slot-0']);
       readFileSync.mockReturnValue(JSON.stringify({ pid: 3001, child_pid: 3002 }));
 
