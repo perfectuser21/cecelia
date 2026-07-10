@@ -292,6 +292,35 @@ export async function generateDecision(context = {}) {
   const requiresApproval = confidence < HIGH_CONFIDENCE_THRESHOLD ||
     actions.some(a => a.type === 'escalate');
 
+  const contextPayload = {
+    comparison_summary: comparison.overall_health,
+    goal_count: comparison.goals.length
+  };
+
+  // T8 写入去重：同 trigger 上一条内容相同则跳过 INSERT（jsonb 语义相等，避免 JS 键序陷阱）
+  const prevResult = await pool.query(`
+    SELECT id, (actions = $2::jsonb AND context = $3::jsonb) AS same
+    FROM decisions
+    WHERE trigger = $1
+    ORDER BY created_at DESC
+    LIMIT 1
+  `, [trigger, JSON.stringify(actions), JSON.stringify(contextPayload)]);
+
+  if (prevResult.rows[0]?.same) {
+    return {
+      decision_id: prevResult.rows[0].id,
+      actions,
+      confidence,
+      requires_approval: requiresApproval,
+      deduped: true,
+      context: {
+        trigger,
+        overall_health: comparison.overall_health,
+        goals_analyzed: comparison.goals.length
+      }
+    };
+  }
+
   // Store decision
   const decisionResult = await pool.query(`
     INSERT INTO decisions (trigger, context, actions, confidence, status)
@@ -299,7 +328,7 @@ export async function generateDecision(context = {}) {
     RETURNING id
   `, [
     trigger,
-    JSON.stringify({ comparison_summary: comparison.overall_health, goal_count: comparison.goals.length }),
+    JSON.stringify(contextPayload),
     JSON.stringify(actions),
     confidence,
     requiresApproval ? 'pending' : 'approved'
