@@ -299,6 +299,8 @@ if [[ "$DEPLOY_MODE" == "docker" ]]; then
         GREEN_ENV=$(docker inspect cecelia-node-brain --format '{{range .Config.Env}}-e {{.}} {{end}}' 2>/dev/null || echo "")
         GREEN_VOL=$(docker inspect cecelia-node-brain --format '{{range .Mounts}}-v {{.Source}}:{{.Destination}}{{if not .RW}}:ro{{end}} {{end}}' 2>/dev/null || echo "")
         export GREEN_RUN_ARGS="${GREEN_ENV} ${GREEN_VOL}"
+        # sidecar 需要知道部署根和 region（bluegreen.sh 通过 env 读取）
+        export DEPLOY_ROOT_DIR="$ROOT_DIR"
         if ! TARGET_VERSION="${VERSION}" BLUE_NAME=cecelia-node-brain \
              GREEN_NAME=cecelia-node-brain-green TEMP_PORT=5223 HEALTH_TIMEOUT=90 bluegreen_swap; then
             echo "[FAIL] green canary 未通过，已保留旧生产容器(5221 不受影响)，终止部署"

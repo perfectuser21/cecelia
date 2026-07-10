@@ -1,8 +1,7 @@
 import express, { Router } from 'express';
 import pool from '../db.js';
-import { readFileSync, writeFileSync, openSync, writeSync, closeSync } from 'fs';
+import { readFileSync, writeFileSync, openSync, writeSync, closeSync, mkdirSync } from 'fs';
 import { join as pathJoin } from 'node:path';
-import { tmpdir } from 'node:os';
 import { callLLM, callLLMStream } from '../llm-caller.js';
 import { handleChat } from '../orchestrator-chat.js';
 import { check48hReport } from '../tick.js';
@@ -2854,11 +2853,12 @@ router.post('/deploy', async (req, res) => {
   }
   args.push('main');
 
-  // v1.1.0 (2026-05-05): 把 deploy-local.sh stdout/stderr 写到日志文件，
-  // 旧版 stdio:'ignore' 会丢掉 npm ci EUSAGE 等关键 error，运维只能看到
-  // "deploy-local.sh exited code=1" 没法调试。
+  // 部署日志写到宿主机挂载目录（repoRoot/logs/），容器死亡后日志不丢失。
+  // 历史：原先写 /tmp/（容器 tmpfs），brain 容器自杀后日志随容器消失，失败根因不可考。
   const logTimestamp = new Date().toISOString().replace(/[:.]/g, '-');
-  const logFile = pathJoin(tmpdir(), `cecelia-deploy-${logTimestamp}.log`);
+  const logsDir = pathJoin(repoRoot, 'logs');
+  try { mkdirSync(logsDir, { recursive: true }); } catch { /* 目录已存在 */ }
+  const logFile = pathJoin(logsDir, `cecelia-deploy-${logTimestamp}.log`);
   let logFd;
   try {
     logFd = openSync(logFile, 'a');

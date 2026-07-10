@@ -388,20 +388,50 @@ export async function dispatchNextTask(goalIds) {
     // 3b. Pre-flight Check — validate task quality before dispatch
     const checkResult = await preFlightCheck(candidate);
     if (!checkResult.passed) {
-      // Pre-flight failed — record and skip to next candidate
-      console.warn(`[dispatch] Pre-flight check failed for task ${candidate.id} (attempt ${attempt + 1}/${MAX_PRE_FLIGHT_RETRIES + 1}):`, checkResult.issues);
-      await pool.query(
-        `UPDATE tasks SET metadata = COALESCE(metadata, '{}'::jsonb) || $2::jsonb WHERE id = $1`,
-        [candidate.id, JSON.stringify({
-          pre_flight_failed: true,
-          pre_flight_issues: checkResult.issues,
-          pre_flight_suggestions: checkResult.suggestions,
-          failed_at: new Date().toISOString()
-        })]
-      );
+      const currentStrikes = (candidate.metadata?.pre_flight_fail_count ?? 0);
+      const newStrikes = currentStrikes + 1;
+      const PRE_FLIGHT_MAX_STRIKES = 3;
+
+      console.warn(`[dispatch] Pre-flight check failed for task ${candidate.id} (strike ${newStrikes}/${PRE_FLIGHT_MAX_STRIKES}):`, checkResult.issues);
+
+      if (newStrikes >= PRE_FLIGHT_MAX_STRIKES) {
+        // 三振出局：置 blocked，告警一次后因 blocked 不再入候选，自然止血
+        const blockedDetail = {
+          issues: checkResult.issues,
+          suggestions: checkResult.suggestions,
+          strikes: newStrikes,
+        };
+        await pool.query(
+          `UPDATE tasks
+           SET status = 'blocked',
+               blocked_reason = 'pre_flight_rejected',
+               blocked_at = NOW(),
+               blocked_detail = $2::jsonb,
+               metadata = COALESCE(metadata, '{}'::jsonb) || $3::jsonb
+           WHERE id = $1`,
+          [
+            candidate.id,
+            JSON.stringify(blockedDetail),
+            JSON.stringify({ pre_flight_fail_count: newStrikes, pre_flight_issues: checkResult.issues }),
+          ]
+        );
+        await alertOnPreFlightFail(pool, candidate, { ...checkResult, strikes: newStrikes, blocked: true });
+      } else {
+        // 尚未三振：累加计数，继续跳过
+        await pool.query(
+          `UPDATE tasks SET metadata = COALESCE(metadata, '{}'::jsonb) || $2::jsonb WHERE id = $1`,
+          [candidate.id, JSON.stringify({
+            pre_flight_fail_count: newStrikes,
+            pre_flight_failed: true,
+            pre_flight_issues: checkResult.issues,
+            pre_flight_suggestions: checkResult.suggestions,
+            failed_at: new Date().toISOString()
+          })]
+        );
+        await alertOnPreFlightFail(pool, candidate, checkResult);
+      }
+
       await recordDispatchResult(pool, false, 'pre_flight_check_failed');
-      // C4: 通过飞书告警推送 pre-flight cancel，防止任务静默堆积（不抛异常，不影响 dispatch）
-      await alertOnPreFlightFail(pool, candidate, checkResult);
       preFlightFailedIds.push(candidate.id);
       continue;
     }

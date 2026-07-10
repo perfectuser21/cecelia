@@ -246,7 +246,7 @@ router.get('/:id', async (req, res) => {
 // PATCH /tasks/:id — 更新 task 字段
 router.patch('/:id', async (req, res) => {
   try {
-    const { status, priority, title, okr_initiative_id, pr_url, result: taskResult } = req.body;
+    const { status, priority, title, okr_initiative_id, pr_url, result: taskResult, description } = req.body;
 
     // 状态机保护：已终止的任务不能回退到非终止状态
     const TERMINAL_STATUSES = ['completed', 'cancelled'];
@@ -288,6 +288,10 @@ router.patch('/:id', async (req, res) => {
       setClauses.push(`title = $${paramIndex++}`);
       params.push(title);
     }
+    if (description !== undefined) {
+      setClauses.push(`description = $${paramIndex++}`);
+      params.push(description);
+    }
     if (okr_initiative_id !== undefined) {
       setClauses.push(`okr_initiative_id = $${paramIndex++}`);
       params.push(okr_initiative_id);
@@ -303,6 +307,30 @@ router.patch('/:id', async (req, res) => {
 
     if (setClauses.length === 0) {
       return res.status(400).json({ error: 'No fields to update' });
+    }
+
+    // 复活路径：description 被补齐时，若任务因 pre-flight 三振被 blocked，自动回 queued 并清零计数
+    if (description !== undefined && description) {
+      const currentTask = await pool.query(
+        'SELECT status, blocked_reason, metadata FROM tasks WHERE id = $1',
+        [req.params.id]
+      );
+      if (currentTask.rows.length > 0) {
+        const t = currentTask.rows[0];
+        if (t.status === 'blocked' && t.blocked_reason === 'pre_flight_rejected') {
+          setClauses.push(`status = 'queued'`);
+          setClauses.push(`blocked_reason = NULL`);
+          setClauses.push(`blocked_at = NULL`);
+          setClauses.push(`blocked_detail = NULL`);
+          const cleanedMeta = Object.assign({}, t.metadata || {});
+          delete cleanedMeta.pre_flight_fail_count;
+          delete cleanedMeta.pre_flight_failed;
+          delete cleanedMeta.pre_flight_issues;
+          delete cleanedMeta.pre_flight_suggestions;
+          setClauses.push(`metadata = $${paramIndex++}::jsonb`);
+          params.push(JSON.stringify(cleanedMeta));
+        }
+      }
     }
 
     setClauses.push(`updated_at = NOW()`);

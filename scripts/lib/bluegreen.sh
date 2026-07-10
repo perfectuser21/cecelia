@@ -6,6 +6,8 @@
 # 根因：brain-deploy.sh 原先"先删后建"——docker rm -f blue → compose up 建新，
 # 坏镜像/中断时旧容器已删致 5221 outage（2026-07-05 实证，issue f38f989f）。
 # 不变量：任何 docker rm -f <blue> 只能在 green canary health 通过之后发生。
+#
+# 2026-07-10 追加：自杀竞态修法（sidecar）+ blue 存活守卫（bluegreen_guard_blue）
 set -uo pipefail
 
 # _url_encode <str>：URL 百分比编码。优先 jq，兜底 python3，均无则原样返回（ASCII 正常，不 fatal）。
@@ -43,12 +45,44 @@ send_bark() {
   ) || true
 }
 
+# bluegreen_guard_blue <name>: 验证 blue 容器仍在运行，否则尝试 docker start + Bark 告警。
+# 在任何部署失败路径中调用，确保 5221 生产流量不中断。
+bluegreen_guard_blue() {
+  local blue="${1:-cecelia-node-brain}"
+  local state
+  state=$(docker inspect --format '{{.State.Status}}' "$blue" 2>/dev/null || echo "missing")
+  case "$state" in
+    running)
+      echo "[bluegreen-guard] ✅ blue($blue) 仍在运行"
+      return 0
+      ;;
+    exited|created|paused|restarting)
+      echo "[bluegreen-guard] ⚠️ blue($blue) 状态=${state}，尝试 docker start..."
+      if docker start "$blue" >/dev/null 2>&1; then
+        echo "[bluegreen-guard] ✅ docker start $blue 成功，蓝绿已恢复"
+        send_bark "⚠️ 蓝绿守卫：blue($blue) 在失败路径后停止(state=${state})，已 docker start 恢复。请检查部署日志。"
+      else
+        echo "[bluegreen-guard] ❌ docker start $blue 失败"
+        send_bark "🚨 蓝绿守卫：blue($blue) 停止且无法恢复！5221 可能宕机，请立即人工介入。"
+      fi
+      ;;
+    missing)
+      echo "[bluegreen-guard] ❌ blue($blue) 容器不存在！蓝绿承诺已被打破。"
+      send_bark "🚨 蓝绿承诺被打破：blue($blue) 容器不存在！5221 可能宕机，请立即人工介入。"
+      ;;
+    *)
+      echo "[bluegreen-guard] ⚠️ blue($blue) 未知状态=${state}"
+      ;;
+  esac
+}
+
 # bluegreen_swap：green canary 验证后原子切。入参走 env：
 #   BLUE_NAME(默认 cecelia-node-brain) / GREEN_NAME(默认 cecelia-node-brain-green)
 #   TEMP_PORT(默认 5223) / TARGET_VERSION(必填，镜像 tag) / HEALTH_TIMEOUT(默认 60)
 #   GREEN_RUN_ARGS(可选，起 green 的额外 docker run 参数：env/mounts 等)
-# 返回：0 = green 健康、blue 已删、可由调用方 compose up 起新生产容器
-#       1 = green 未通过、blue 原封不动（调用方应 exit 1 终止部署）
+#   DEPLOY_ROOT_DIR(可选，设置后启动 compose sidecar 规避自杀竞态)
+# 返回：0 = green 健康、blue 已删（或 sidecar 已启动将删）、compose up 将由 sidecar 完成
+#       1 = green 未通过 或 sidecar 启动失败、blue 原封不动（调用方应 exit 1 终止部署）
 bluegreen_swap() {
   local blue="${BLUE_NAME:-cecelia-node-brain}"
   local green="${GREEN_NAME:-cecelia-node-brain-green}"
@@ -65,6 +99,7 @@ bluegreen_swap() {
     echo "[bluegreen] green 起容器失败，保留 blue"
     docker rm -f "$green" >/dev/null 2>&1 || true
     send_bark "green 镜像 v${version} 启动失败，已保留旧版(5221不受影响)"
+    bluegreen_guard_blue "$blue"
     return 1
   fi
 
@@ -85,11 +120,64 @@ bluegreen_swap() {
     echo "[bluegreen] ❌ green 健康检查未通过，保留 blue($blue) 原封不动"
     docker rm -f "$green" >/dev/null 2>&1 || true
     send_bark "green 镜像 v${version} 健康检查失败，已保留旧版(5221不受影响)"
+    bluegreen_guard_blue "$blue"
     return 1
   fi
 
-  echo "[bluegreen] ✅ green 健康，切换：清 canary → 删 blue"
+  echo "[bluegreen] ✅ green 健康，切换：清 canary → 启 compose sidecar → 删 blue"
   docker rm -f "$green" >/dev/null 2>&1 || true   # canary 仅验证用，切换前清掉
-  docker rm -f "$blue" >/dev/null 2>&1 || true    # ← 仅在 green 通过后才删 blue
+
+  # ── 自杀竞态防护（2026-07-10 生产宕机根因）────────────────────────────────
+  # 问题：brain-deploy.sh 在 cecelia-node-brain 容器内运行，直接调
+  # "docker rm -f blue" 会即刻 SIGKILL 本进程，后续 compose up 永远无法执行 →
+  # 5221 空窗宕机（本次 incident 根因）。
+  # 解法：在删 blue 之前，先在宿主侧启动独立 sidecar 容器（不受 brain 容器
+  # 生命周期影响）。sidecar 等 blue 消失后执行 docker compose up -d，新 Brain
+  # 接管 5221。若 sidecar 启动失败则终止切换，blue 保留（fail-safe）。
+  # ─────────────────────────────────────────────────────────────────────────
+  local root_dir="${DEPLOY_ROOT_DIR:-}"
+  local env_region="${ENV_REGION:-us}"
+  local sidecar_name="cecelia-bluegreen-sidecar"
+
+  if [[ -n "$root_dir" ]]; then
+    docker rm -f "$sidecar_name" >/dev/null 2>&1 || true  # 清理上次残留
+
+    echo "[bluegreen] 启动 compose sidecar（${sidecar_name}）以规避自杀竞态..."
+    # 使用 cecelia-brain 镜像（已含 docker-cli + docker-cli-compose），
+    # 挂载 docker.sock 和部署根目录，等 blue 消失后执行 compose up。
+    # 单引号内不展开（BRAIN_VERSION / ENV_REGION / DEPLOY_ROOT 通过 -e 传入容器）
+    # shellcheck disable=SC2016
+    if docker run -d --rm \
+        --name "$sidecar_name" \
+        -v /var/run/docker.sock:/var/run/docker.sock \
+        -v "${root_dir}:${root_dir}:rw" \
+        -w "${root_dir}" \
+        -e "BRAIN_VERSION=${version}" \
+        -e "ENV_REGION=${env_region}" \
+        -e "DEPLOY_ROOT=${root_dir}" \
+        "cecelia-brain:${version}" \
+        bash -c '
+          echo "[sidecar] 等待 blue 容器消失..."
+          for i in $(seq 1 20); do
+            docker inspect cecelia-node-brain >/dev/null 2>&1 || break
+            sleep 1
+          done
+          echo "[sidecar] 执行 docker compose up -d node-brain..."
+          BRAIN_VERSION="$BRAIN_VERSION" ENV_REGION="$ENV_REGION" \
+            docker compose -f "$DEPLOY_ROOT/docker-compose.yml" up -d node-brain 2>&1
+          echo "[sidecar] compose up 完成 exit=$?"
+        ' >/dev/null 2>&1; then
+      echo "[bluegreen] ✅ sidecar 已启动，将在 blue 删除后完成 compose up"
+    else
+      echo "[bluegreen] ❌ sidecar 启动失败，终止切换（blue 保留，5221 不受影响）"
+      send_bark "⚠️ 蓝绿 sidecar 启动失败 v${version}，已保留 blue（5221 仍用旧版），请检查 docker 状态"
+      return 1  # fail-safe：不删 blue
+    fi
+  else
+    echo "[bluegreen] ℹ️ DEPLOY_ROOT_DIR 未设置，跳过 sidecar（launchd 模式下正常，compose up 由调用方负责）"
+  fi
+
+  docker rm -f "$blue" >/dev/null 2>&1 || true    # ← 仅在 green 通过且 sidecar 已启动后才删 blue
+  # Docker 模式下本行及以下不会执行（docker rm -f 自杀），launchd 模式下正常执行。
   return 0
 }
