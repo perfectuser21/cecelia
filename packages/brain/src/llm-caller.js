@@ -553,6 +553,106 @@ async function callMiniMaxAPIStream(prompt, model, timeout, onChunk) {
 }
 
 /**
+ * 直接 spawn claude --output-format stream-json 做真实流式输出
+ * 用于 callLLMStream 的 anthropic/anthropic-api provider 路径
+ *
+ * stream-json 真实 NDJSON 格式（与平铺 {type:text,text} 不同）：
+ *   {type:'assistant', message:{content:[{type:'text',text:'...'}]}}
+ *   {type:'result', subtype:'success'}
+ *
+ * @param {string} prompt
+ * @param {string} claudeModelFlag - 'haiku'|'sonnet'|'opus'
+ * @param {number} timeout - 毫秒
+ * @param {Function} onChunk - (delta: string, isDone: boolean) => void
+ */
+async function callClaudeDirectStream(prompt, claudeModelFlag, timeout, onChunk) {
+  const FALLBACK_ACCOUNT = process.env.CECELIA_FALLBACK_ACCOUNT || 'account1';
+  let accountId = FALLBACK_ACCOUNT;
+  try {
+    const selection = await selectBestAccount({ model: claudeModelFlag });
+    if (selection) {
+      accountId = selection.accountId;
+    } else {
+      console.warn(`[llm-caller] callClaudeDirectStream: selectBestAccount 返回 null，使用 fallback_account=${FALLBACK_ACCOUNT}`);
+    }
+  } catch (err) {
+    console.warn('[llm-caller] callClaudeDirectStream: selectBestAccount failed, using fallback:', err.message);
+  }
+
+  const claudeConfigDir = join(homedir(), `.claude-${accountId}`);
+  const claudeBin = process.env.CLAUDE_BIN || '/opt/homebrew/bin/claude';
+
+  return new Promise((resolve, reject) => {
+    const child = spawn(
+      claudeBin,
+      ['-p', prompt, '--model', claudeModelFlag, '--output-format', 'stream-json', '--no-markdown'],
+      { env: { ...process.env, CLAUDE_CONFIG_DIR: claudeConfigDir } }
+    );
+
+    let buffer = '';
+    let stderr = '';
+    let settled = false;
+    let doneCalled = false;
+
+    const timeoutId = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      child.kill('SIGTERM');
+      reject(new Error(`[llm-caller] callClaudeDirectStream timeout after ${timeout}ms`));
+    }, timeout);
+
+    child.stdout.on('data', (chunk) => {
+      buffer += chunk.toString();
+      const lines = buffer.split('\n');
+      buffer = lines.pop() ?? '';
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed) continue;
+        let parsed;
+        try {
+          parsed = JSON.parse(trimmed);
+        } catch { continue; }
+
+        if (parsed.type === 'assistant') {
+          const content = parsed.message?.content;
+          if (Array.isArray(content)) {
+            for (const block of content) {
+              if (block.type === 'text' && block.text) {
+                onChunk(block.text, false);
+              }
+            }
+          }
+        }
+      }
+    });
+
+    child.stderr.on('data', (d) => { stderr += d.toString(); });
+
+    child.on('error', (err) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeoutId);
+      reject(new Error(`[llm-caller] callClaudeDirectStream spawn error: ${err.message}`));
+    });
+
+    child.on('close', (code) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeoutId);
+      if (code !== 0) {
+        reject(new Error(`[llm-caller] callClaudeDirectStream exited ${code}: ${stderr.slice(0, 500)}`));
+        return;
+      }
+      if (!doneCalled) {
+        doneCalled = true;
+        onChunk('', true);
+      }
+      resolve();
+    });
+  });
+}
+
+/**
  * 流式 LLM 调用入口
  * @param {string} agentId - agent ID
  * @param {string} prompt - 完整 prompt
@@ -569,11 +669,10 @@ export async function callLLMStream(agentId, prompt, options = {}, onChunk) {
   if (provider === 'minimax') {
     await callMiniMaxAPIStream(prompt, model, timeout, onChunk);
   } else {
-    // Anthropic via bridge 不支持流式 → 降级到非流式，一次性返回
-    console.warn(`[llm-caller] callLLMStream: provider ${provider} does not support streaming, falling back`);
-    const text = await callClaudeViaBridge(prompt, model, timeout);
-    onChunk(text, false);
-    onChunk('', true);
+    // Anthropic provider：直接 spawn claude --output-format stream-json（真实流式）
+    // 使用 account1/2 账号池（selectBestAccount），不依赖 OAuth 可能已过期的默认账号
+    const claudeModelFlag = CLAUDE_MODEL_FLAG[model] || 'haiku';
+    await callClaudeDirectStream(prompt, claudeModelFlag, timeout, onChunk);
   }
 }
 
