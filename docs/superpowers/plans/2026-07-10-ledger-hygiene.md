@@ -12,15 +12,15 @@
 
 ---
 
-### Task 1: Migration 331 — design_docs.type 加 ledger_hygiene
+### Task 1: Migration 332 — design_docs.type 加 ledger_hygiene
 
 **Files:**
-- Create: `packages/brain/migrations/331_design_docs_ledger_hygiene.sql`
+- Create: `packages/brain/migrations/332_design_docs_ledger_hygiene.sql`
 
 - [ ] **Step 1: 写 migration**
 
 ```sql
--- Migration 331: design_docs.type CHECK 加 'ledger_hygiene'
+-- Migration 332: design_docs.type CHECK 加 'ledger_hygiene'
 -- 账本保鲜守卫（九要素 T1）每晚卫生分落库用。先例：328 加 line_ledger 同法。
 
 ALTER TABLE design_docs
@@ -48,14 +48,14 @@ ALTER TABLE design_docs
 
 - [ ] **Step 2: 语法冒烟（无 DB，仅确认文件非空可读）**
 
-Run: `node -e "const s=require('fs').readFileSync('packages/brain/migrations/331_design_docs_ledger_hygiene.sql','utf8'); if(!s.includes('ledger_hygiene')) process.exit(1); console.log('ok')"`
+Run: `node -e "const s=require('fs').readFileSync('packages/brain/migrations/332_design_docs_ledger_hygiene.sql','utf8'); if(!s.includes('ledger_hygiene')) process.exit(1); console.log('ok')"`
 Expected: `ok`
 
 - [ ] **Step 3: Commit**
 
 ```bash
-git add packages/brain/migrations/331_design_docs_ledger_hygiene.sql
-git commit -m "feat(brain): migration 331 design_docs.type 加 ledger_hygiene"
+git add packages/brain/migrations/332_design_docs_ledger_hygiene.sql
+git commit -m "feat(brain): migration 332 design_docs.type 加 ledger_hygiene"
 ```
 
 ---
@@ -841,6 +841,6 @@ git commit -m "feat(brain): ledger-hygiene smoke 脚本 + version 1.246.0"
 - [x] [BEHAVIOR] 窗口内首跑产出卫生分文档且不告警 — Test: tests/ `packages/brain/src/__tests__/ledger-hygiene.test.js`
 - [x] [BEHAVIOR] 欠账上升棘轮击穿开 [ledger-hygiene] P2 issue，连续 3 天升 P1+Bark — Test: tests/ `packages/brain/src/__tests__/ledger-hygiene.test.js`
 - [x] [BEHAVIOR] scheduler-jobs 注册表含 ledger-hygiene 且 handler 被调用 — Test: tests/ `packages/brain/src/__tests__/scheduler-jobs.test.js`
-- [x] migration 331 加 ledger_hygiene 类型 — Test: manual: `node -e "const s=require('fs').readFileSync('packages/brain/migrations/331_design_docs_ledger_hygiene.sql','utf8'); if(!s.includes('ledger_hygiene')) process.exit(1); console.log('ok')"`
+- [x] migration 332 加 ledger_hygiene 类型 — Test: manual: `node -e "const s=require('fs').readFileSync('packages/brain/migrations/332_design_docs_ledger_hygiene.sql','utf8'); if(!s.includes('ledger_hygiene')) process.exit(1); console.log('ok')"`
 - [x] smoke 脚本语法有效 — Test: manual: `node --check packages/brain/scripts/smoke-ledger-hygiene.mjs`
 - [x] CI 全绿
