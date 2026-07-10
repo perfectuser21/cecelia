@@ -315,7 +315,7 @@ export { HEADED_HOSTS, HEADED_TMUX_PREFIXES };
  * 不走 docker，不产生 extraMounts，不注入 GITHUB_TOKEN 进 tmux 命令串。
  */
 async function _spawnHeadedSession(task, { dbPool, now, short, initiativeId, deps }) {
-  const headedExecutor = task.payload?.executor === 'claude' ? 'claude' : 'codex';
+  const headedExecutor = task.payload?.executor === 'claude' ? 'claude' : 'codex'; // executor 缺省时按 codex 处理（入口白名单已限 claude/codex/缺省）
   const headedHost = HEADED_HOSTS[headedExecutor];
   const isClaudeHeaded = headedExecutor === 'claude';
 

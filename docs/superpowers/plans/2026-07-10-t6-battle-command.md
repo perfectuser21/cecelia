@@ -494,6 +494,8 @@ const HEADED_RELAY_DEADLINE_HOURS = 8;
 
 9. 文件顶部导出（供 watchdog 复用映射）：`export { HEADED_HOSTS, HEADED_TMUX_PREFIXES };`（放常量定义后）。
 
+> **实现偏差说明（Step 8）**：实现保持 orchestrator_host 内联进 SQL（`'${headedHost}'`），未参数化——既有 codex 用例对 INSERT SQL 文本断言 `sql.toContain('skill-relay-codex-headed')`，参数化会破坏回归；headedHost 来自 HEADED_HOSTS 固定映射，无注入面。
+
 - [ ] **Step 5: 跑测试确认全绿**（headed-dispatch.test.js 全文件 + harness-skill-relay.test.js 回归）
 
 Run: `cd packages/brain && npx vitest run src/__tests__/headed-dispatch.test.js src/__tests__/harness-skill-relay.test.js --reporter=basic`

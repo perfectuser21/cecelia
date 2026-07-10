@@ -235,6 +235,15 @@ describe('4. claude headed 分支（T6）', () => {
     expect(JSON.stringify(inserts[0])).toContain('skill-relay-claude-headed');
   });
 
+  it('executor 缺省（payload 无 executor）+ mode=headed → fallback 走 codex 分支', async () => {
+    const calls = []; const inserts = [];
+    const task = { id: '00000000-0000-0000-0000-00000000c1e2', title: 't', payload: { orchestrator: 'skill-relay', mode: 'headed' } };
+    const result = await spawnSkillRelaySession(task, makeDeps(calls, inserts));
+    expect(result.ok).toBe(true);
+    expect(result.mode).toBe('skill-relay-codex-headed');
+    expect(result.tmuxSession).toMatch(/^codex-relay-/);
+  });
+
   it('codex headed 路径不回归：仍 codex-relay- 前缀 + CODEX_HOME 注入', async () => {
     const calls = []; const inserts = [];
     process.env.CODEX_RELAY_HOME = '/tmp/fake-codex-home';
