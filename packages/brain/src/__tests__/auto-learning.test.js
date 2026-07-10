@@ -70,20 +70,12 @@ describe('Auto Learning Module', () => {
   });
 
   describe('processExecutionAutoLearning', () => {
-    it('should create learning for completed dev task', async () => {
+    it('should NOT create learning for completed task (T9: event-layer noise)', async () => {
       const { processExecutionAutoLearning } = await import('../auto-learning.js');
 
-      // Mock database responses
-      mockPool.query
-        .mockResolvedValueOnce({
-          rows: [{ task_type: 'dev', title: 'Fix bug' }]
-        }) // Task query
-        .mockResolvedValueOnce({
-          rows: []
-        }) // Duplicate check - not found
-        .mockResolvedValueOnce({
-          rows: [{ id: 'learning-123', title: '任务完成：test-task' }]
-        }); // Insert learning
+      mockPool.query.mockResolvedValueOnce({
+        rows: [{ task_type: 'dev', title: 'Fix bug' }]
+      }); // Task query
 
       const result = await processExecutionAutoLearning(
         'test-task',
@@ -91,32 +83,41 @@ describe('Auto Learning Module', () => {
         'Task completed successfully'
       );
 
-      expect(result).toEqual({
-        id: 'learning-123',
-        title: '任务完成：test-task'
-      });
+      expect(result).toBeNull();
+      // 只查了 task 信息，没有 dedup 查询、没有 INSERT
+      expect(mockPool.query).toHaveBeenCalledTimes(1);
+    });
 
-      // Verify database calls
-      expect(mockPool.query).toHaveBeenCalledTimes(3);
-      expect(mockPool.query).toHaveBeenNthCalledWith(
-        1,
-        'SELECT task_type, title, error_message FROM tasks WHERE id = $1',
-        ['test-task']
-      );
-      expect(mockPool.query).toHaveBeenNthCalledWith(
-        2,
-        'SELECT id FROM learnings WHERE content_hash = $1 AND is_latest = true LIMIT 1',
-        ['mock-hash-1234']
-      );
-      expect(mockPool.query).toHaveBeenNthCalledWith(
-        3,
-        expect.stringContaining('INSERT INTO learnings'),
-        expect.arrayContaining([
-          '任务完成：test-task',
-          'execution_result',
-          'task_completed_auto'
-        ])
-      );
+    it('should write non-empty summary column for failed task learning', async () => {
+      const { processExecutionAutoLearning } = await import('../auto-learning.js');
+
+      mockPool.query
+        .mockResolvedValueOnce({ rows: [{ task_type: 'dev', title: 'Broken task', error_message: null }] })
+        .mockResolvedValueOnce({ rows: [] })
+        .mockResolvedValueOnce({ rows: [{ id: 'learning-fail-1', title: '任务失败：fail-task' }] });
+
+      await processExecutionAutoLearning('fail-task', 'failed', { error: 'boom' });
+
+      const insertCall = mockPool.query.mock.calls[2];
+      expect(insertCall[0]).toContain('summary');
+      const params = insertCall[1];
+      const summaryParam = params[params.length - 1]; // summary 是最后一个参数
+      expect(typeof summaryParam).toBe('string');
+      expect(summaryParam.length).toBeGreaterThan(0);
+      expect(summaryParam.length).toBeLessThanOrEqual(100);
+    });
+
+    it('should reject noise categories in createAutoLearning', async () => {
+      const { createAutoLearning } = await import('../auto-learning.js');
+      const result = await createAutoLearning({
+        title: 'noise',
+        category: 'task_completion',
+        content: 'x',
+        triggerEvent: 'task_completed',
+        metadata: {},
+      });
+      expect(result).toBeNull();
+      expect(mockPool.query).not.toHaveBeenCalled();
     });
 
     it('should create learning for failed feature task', async () => {
@@ -481,43 +482,6 @@ describe('Auto Learning Module', () => {
   });
 
   describe('Metadata and structure', () => {
-    it('should include correct metadata for completed task', async () => {
-      const { processExecutionAutoLearning } = await import('../auto-learning.js');
-
-      mockPool.query
-        .mockResolvedValueOnce({
-          rows: [{ task_type: 'dev', title: 'Test task' }]
-        })
-        .mockResolvedValueOnce({
-          rows: []
-        })
-        .mockResolvedValueOnce({
-          rows: [{ id: 'learning-meta', title: '任务完成：meta-task' }]
-        });
-
-      await processExecutionAutoLearning(
-        'meta-task',
-        'completed',
-        'success',
-        {
-          trigger_source: 'execution_callback',
-          metadata: { run_id: 'run-456' }
-        }
-      );
-
-      const insertCall = mockPool.query.mock.calls[2];
-      const metadataJson = insertCall[1][4];
-      const metadata = JSON.parse(metadataJson);
-
-      expect(metadata).toMatchObject({
-        task_id: 'meta-task',
-        task_type: 'dev',
-        trigger_source: 'execution_callback',
-        auto_generated: true,
-        created_at: expect.any(String)
-      });
-    });
-
     it('should include retry count for failed task', async () => {
       const { processExecutionAutoLearning } = await import('../auto-learning.js');
 
