@@ -1,9 +1,6 @@
-# DoD — 刀A：nightly 全量回归闸
-- [x] [BEHAVIOR] nightly workflow 存在：schedule 北京 03:30 + workflow_dispatch(fire_test) + 无 pull_request 触发
+# DoD — nightly 去重 + 三把刀三件套守卫
+- [x] [BEHAVIOR] 重复的 nightly-full-regression.yml 已删除（#3717 nightly-regression.yml 为幸存刀A）
+  Test: manual: node -e "const fs=require('fs');if(fs.existsSync('.github/workflows/nightly-full-regression.yml'))process.exit(1);if(!fs.existsSync('.github/workflows/nightly-regression.yml'))process.exit(1)"
+- [x] [BEHAVIOR] 三把刀三件套受守卫测试保护（刀A schedule+issue/刀B 真Postgres/刀C nightly_gate+脚本指向存活文件）
   Test: tests/ → packages/brain/src/__tests__/nightly-regression-config.test.js
-- [x] [BEHAVIOR] integration/**（真 Postgres+全量 migrations）有专属执行点（PR CI 从不跑这组）
-  Test: tests/ → packages/brain/src/__tests__/nightly-regression-config.test.js
-- [x] [BEHAVIOR] 红时开 [nightly-red] Issue（按日去重）不阻塞 PR
-  Test: manual: node -e "const s=require('fs').readFileSync('.github/workflows/nightly-full-regression.yml','utf8');if(!s.includes('nightly-red')||s.includes('pull_request:'))process.exit(1)"
-- [x] merge 后 proven-to-fire：workflow_dispatch fire_test=1 亲见红+Issue 开出
 - [x] CI 全绿
