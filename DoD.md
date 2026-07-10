@@ -1,11 +1,6 @@
-# DoD — 刀B：cecelia 跨组件 integration nightly
-- [x] [BEHAVIOR] integration-nightly workflow 存在：schedule UTC 20:30 + workflow_dispatch(fire_test) + Postgres service + Brain 容器
-  Test: node -e "const s=require('fs').readFileSync('.github/workflows/integration-nightly.yml','utf8');if(!s.includes('20 * * *')||!s.includes('fire_test')||!s.includes('postgres')||!s.includes('cecelia-brain'))process.exit(1);console.log('OK')"
-- [x] [BEHAVIOR] integration-nightly.sh 覆盖 7 个断言点（健康/task-types/POST tasks/route-task/PATCH 回调/executor_kind/ci_patrol路由）
-  Test: node -e "const s=require('fs').readFileSync('packages/brain/scripts/integration/integration-nightly.sh','utf8');if(!s.includes('tick/status')||!s.includes('task-types')||!s.includes('POST')||!s.includes('route-task')||!s.includes('PATCH')||!s.includes('executor_kind')||!s.includes('ci_patrol'))process.exit(1);console.log('OK')"
-- [x] [BEHAVIOR] 任务创建使用合法优先级 P2（非 P3，P3 触发 400）
-  Test: node -e "const s=require('fs').readFileSync('packages/brain/scripts/integration/integration-nightly.sh','utf8');if(s.includes('P3')||!s.includes('P2'))process.exit(1);console.log('OK')"
-- [x] [BEHAVIOR] 红 → 开 [integration-red] Issue；绿 → 关闭 open issue
-  Test: node -e "const s=require('fs').readFileSync('.github/workflows/integration-nightly.yml','utf8');if(!s.includes('integration-red')||!s.includes('close-issue-on-success'))process.exit(1);console.log('OK')"
-- [x] merge 后 proven-to-fire：workflow_dispatch fire_test=1 亲见红 + [integration-red] Issue 开出
+# DoD — nightly 去重 + 三把刀三件套守卫
+- [x] [BEHAVIOR] 重复的 nightly-full-regression.yml 已删除（#3717 nightly-regression.yml 为幸存刀A）
+  Test: manual: node -e "const fs=require('fs');if(fs.existsSync('.github/workflows/nightly-full-regression.yml'))process.exit(1);if(!fs.existsSync('.github/workflows/nightly-regression.yml'))process.exit(1)"
+- [x] [BEHAVIOR] 三把刀三件套受守卫测试保护（刀A schedule+issue/刀B 真Postgres/刀C nightly_gate+脚本指向存活文件）
+  Test: tests/ → packages/brain/src/__tests__/nightly-regression-config.test.js
 - [x] CI 全绿
