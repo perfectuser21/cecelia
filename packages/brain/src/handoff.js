@@ -12,6 +12,7 @@
  */
 import fs from 'node:fs';
 import path from 'node:path';
+import { pushCaptureAtom } from './capture-inbox.js';
 
 export const HANDOFF_SCHEMA_VERSION = 1;
 
@@ -109,6 +110,24 @@ export async function saveHandoff({ pool }, handoff) {
   );
   // task 不存在 → UPDATE 影响 0 行：抛错（也就不写镜像），防"DB 没写成却有镜像"的分裂态
   if (res.rowCount === 0) throw new Error(`saveHandoff: task not found: ${handoff.task_id}`);
+  // T10 统一收件箱：DB 主写成功后顺手推一条 atom（吞错，不阻塞镜像与返回）
+  const hasRealNextSteps =
+    handoff.next_steps.length > 0 &&
+    !(handoff.next_steps.length === 1 && handoff.next_steps[0] === '完成，无下一步');
+  const subtype = handoff.verdict === 'PASS' && hasRealNextSteps ? 'PASS+NEXT' : (handoff.verdict ?? 'UNKNOWN');
+  await pushCaptureAtom(pool, {
+    content: [
+      `handoff: ${handoff.title || handoff.task_id}`,
+      `verdict=${handoff.verdict ?? 'N/A'}`,
+      handoff.done.length ? `完成: ${handoff.done.join('; ')}` : '',
+      handoff.not_done.length ? `未完成: ${handoff.not_done.join('; ')}` : '',
+      handoff.next_steps.length ? `下一步: ${handoff.next_steps.join('; ')}` : '',
+    ].filter(Boolean).join('\n'),
+    targetType: 'handoff',
+    targetSubtype: subtype,
+    routedToTable: 'tasks',
+    routedToId: handoff.task_id,
+  });
   let mirrorPath = null;
   try {
     const dir = process.env.HANDOFF_DOCS_DIR || DEFAULT_DOCS_DIR;
