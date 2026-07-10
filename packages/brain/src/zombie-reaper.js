@@ -31,6 +31,31 @@ export const ZOMBIE_REAPER_INTERVAL_MS = 5 * 60 * 1000; // 每 5 分钟扫一次
 const DEFAULT_IDLE_MINUTES = parseInt(process.env.ZOMBIE_REAPER_IDLE_MIN || '60', 10);
 
 /**
+ * T7 第二判活信号：initiative_run_events 最后心跳（skill-relay 阶段自报）。
+ * initiative_id 镜像 harness-skill-relay 的 fallback：payload.initiative_id || task.id。
+ * 查询失败或无心跳一律返回 false（回退到 updated_at 单信号，不影响原处置）。
+ */
+async function hasFreshPhaseEventHeartbeat(pool, task, idleMinutes) {
+  const initiativeId = task.payload_initiative_id || task.id;
+  try {
+    const { rows } = await pool.query(
+      `SELECT GREATEST(COALESCE(MAX(ts), 0), COALESCE(MAX(ts_end), 0)) AS last_hb
+       FROM initiative_run_events
+       WHERE initiative_id = $1::uuid`,
+      [initiativeId]
+    );
+    const lastHb = Number(rows?.[0]?.last_hb || 0);
+    if (!lastHb) return false;
+    return Math.floor(Date.now() / 1000) - lastHb < idleMinutes * 60;
+  } catch (err) {
+    console.warn(
+      `[zombie-reaper] heartbeat check failed task=${task.id}: ${err.message} — fallback to updated_at only`
+    );
+    return false;
+  }
+}
+
+/**
  * 扫描并按执行者合同处置 zombie in_progress tasks。
  *
  * @param {object} [opts]
@@ -48,7 +73,8 @@ export async function reapZombies({ pool = defaultPool, idleMinutes = DEFAULT_ID
   let zombies;
   try {
     const selectResult = await pool.query(
-      `SELECT id, title, task_type, executor_kind, last_attempt_at, claimed_by, updated_at
+      `SELECT id, title, task_type, executor_kind, last_attempt_at, claimed_by, updated_at,
+              payload->>'initiative_id' AS payload_initiative_id
        FROM tasks
        WHERE status = 'in_progress'
          AND updated_at < NOW() - INTERVAL '${idleMinutes} minutes'
@@ -79,6 +105,12 @@ export async function reapZombies({ pool = defaultPool, idleMinutes = DEFAULT_ID
       // alive / unknown → fail-open，跳过
       if (liveness.verdict === 'alive' || liveness.verdict === 'unknown') {
         console.log(`[zombie-reaper] Skip task id=${task.id} verdict=${liveness.verdict}`);
+        continue;
+      }
+
+      // T7: 第二判活信号——phase-event 心跳新鲜则不杀（任一信号活即不判死）
+      if (await hasFreshPhaseEventHeartbeat(pool, task, idleMinutes)) {
+        console.log(`[zombie-reaper] Skip task id=${task.id} — phase-event heartbeat fresh`);
         continue;
       }
 
