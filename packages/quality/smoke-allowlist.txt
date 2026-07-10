@@ -42,6 +42,7 @@ tasks-ability-id-smoke.sh
 version-endpoint-smoke.sh
 warroom-readonly-api-smoke.sh
 warroom-smoke.sh
+zenithjoy-db-pool-smoke.sh
 codex-headed-dispatch-smoke.sh
 staging-unknown-line-smoke.sh
 skill-eval-smoke.sh
