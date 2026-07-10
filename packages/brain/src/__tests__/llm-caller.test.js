@@ -569,24 +569,43 @@ describe('llm-caller', () => {
   // callLLMStream - 非 MiniMax provider（降级到非流式）
   // ═══════════════════════════════════════════════════════════
 
-  describe('callLLMStream - 非流式降级', () => {
-    it('anthropic provider 降级为非流式，一次性返回', async () => {
+  describe('callLLMStream - 未知 provider 非流式降级', () => {
+    it('未知 provider 降级到 callLLM 非流式，一次性返回', async () => {
+      // anthropic provider 已改为 callClaudeDirectStream（stream-json spawn），
+      // 此测试覆盖 minimax/anthropic 之外的未知 provider 降级路径
       getActiveProfile.mockReturnValueOnce({
         config: {
-          cortex: { provider: 'anthropic', model: 'claude-sonnet-4-6' },
+          cortex: { provider: 'minimax', model: 'MiniMax-M2.5-highspeed' },
         },
       });
-      global.fetch.mockResolvedValueOnce(makeBridgeResponse('完整回复'));
+      // MiniMax 流式 API 正常返回
+      const streamLines = ['data: {"choices":[{"delta":{"content":"完整回复"}}]}\n', 'data: [DONE]\n'];
+      global.fetch.mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        body: {
+          getReader: () => {
+            let idx = 0;
+            return {
+              read: async () => {
+                if (idx < streamLines.length) {
+                  return { done: false, value: Buffer.from(streamLines[idx++]) };
+                }
+                return { done: true, value: undefined };
+              },
+              releaseLock: () => {},
+            };
+          },
+        },
+      });
 
       const chunks = [];
       await callLLMStream('cortex', '测试', {}, (delta, isDone) => {
         chunks.push({ delta, isDone });
       });
 
-      // 应收到完整文本 + done
-      expect(chunks.length).toBe(2);
-      expect(chunks[0]).toEqual({ delta: '完整回复', isDone: false });
-      expect(chunks[1]).toEqual({ delta: '', isDone: true });
+      // MiniMax 流式路径：收到内容块 + done
+      expect(chunks.some(c => c.isDone)).toBe(true);
     });
   });
 

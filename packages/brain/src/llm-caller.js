@@ -553,6 +553,81 @@ async function callMiniMaxAPIStream(prompt, model, timeout, onChunk) {
 }
 
 /**
+ * 直接 spawn claude --output-format stream-json，流式解析真实 NDJSON 格式。
+ *
+ * 真实输出格式（非平铺）：
+ *   {type:'assistant', message:{content:[{type:'text',text:'...'}]}}
+ *
+ * 使用 selectBestAccount() 选 account1/2，避免默认 claude 账号 OAuth 过期问题。
+ */
+async function callClaudeDirectStream(prompt, model, timeout, onChunk) {
+  const claudeModel = CLAUDE_MODEL_FLAG[model] || 'haiku';
+  const FALLBACK_ACCOUNT = process.env.CECELIA_FALLBACK_ACCOUNT || 'account1';
+  let accountId = FALLBACK_ACCOUNT;
+  try {
+    const selection = await selectBestAccount({ model: claudeModel });
+    if (selection) {
+      accountId = selection.accountId;
+    } else {
+      console.warn(`[llm-caller] callClaudeDirectStream: selectBestAccount null, fallback=${FALLBACK_ACCOUNT}`);
+    }
+  } catch (err) {
+    console.warn('[llm-caller] callClaudeDirectStream: selectBestAccount failed:', err.message);
+  }
+
+  const configDir = join(homedir(), `.claude-${accountId}`);
+  const env = { ...process.env, CLAUDE_CONFIG_DIR: configDir };
+
+  return new Promise((resolve, reject) => {
+    const child = spawn('claude', [
+      '-p', prompt,
+      '--output-format', 'stream-json',
+      '--model', claudeModel,
+    ], { stdio: ['ignore', 'pipe', 'pipe'], env });
+
+    const timer = setTimeout(() => {
+      child.kill();
+      reject(new Error(`callClaudeDirectStream timeout after ${timeout}ms`));
+    }, timeout);
+
+    let buf = '';
+    let stderr = '';
+
+    child.stdout.on('data', (chunk) => {
+      buf += chunk.toString();
+      const lines = buf.split('\n');
+      buf = lines.pop(); // 最后一段可能不完整，留到下次
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed) continue;
+        let obj;
+        try { obj = JSON.parse(trimmed); } catch { continue; }
+        // 真实 stream-json 格式：{type:'assistant',message:{content:[{type:'text',text}]}}
+        if (obj.type === 'assistant' && Array.isArray(obj.message?.content)) {
+          for (const block of obj.message.content) {
+            if (block.type === 'text' && block.text) {
+              onChunk(block.text, false);
+            }
+          }
+        }
+      }
+    });
+
+    child.stderr.on('data', (d) => { stderr += d.toString(); });
+
+    child.on('close', (code) => {
+      clearTimeout(timer);
+      if (code !== 0) {
+        reject(new Error(`claude stream-json exit ${code}: ${stderr.slice(0, 200)}`));
+      } else {
+        onChunk('', true);
+        resolve();
+      }
+    });
+  });
+}
+
+/**
  * 流式 LLM 调用入口
  * @param {string} agentId - agent ID
  * @param {string} prompt - 完整 prompt
@@ -568,10 +643,11 @@ export async function callLLMStream(agentId, prompt, options = {}, onChunk) {
 
   if (provider === 'minimax') {
     await callMiniMaxAPIStream(prompt, model, timeout, onChunk);
+  } else if (provider === 'anthropic' || provider === 'anthropic-api') {
+    await callClaudeDirectStream(prompt, model, timeout, onChunk);
   } else {
-    // Anthropic via bridge 不支持流式 → 降级到非流式，一次性返回
-    console.warn(`[llm-caller] callLLMStream: provider ${provider} does not support streaming, falling back`);
-    const text = await callClaudeViaBridge(prompt, model, timeout);
+    console.warn(`[llm-caller] callLLMStream: provider ${provider} not supported for streaming`);
+    const { text } = await callLLM(agentId, prompt, options);
     onChunk(text, false);
     onChunk('', true);
   }
