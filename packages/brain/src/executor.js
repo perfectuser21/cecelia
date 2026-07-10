@@ -22,6 +22,7 @@ import path from 'path';
 import { v4 as uuidv4 } from 'uuid';
 import pool from './db.js';
 import { buildLearningContext } from './learning-retriever.js';
+import { generateL0Summary } from './memory-utils.js';
 import { getDecisionsSummary } from './decisions-context.js';
 import { recordExpectedReward } from './dopamine.js';
 import { getActiveProfile, FALLBACK_PROFILE } from './model-profile.js';
@@ -1102,14 +1103,15 @@ async function requeueTask(taskId, reason, evidence = {}) {
 
     if (existing.rows.length === 0) {
       await pool.query(`
-        INSERT INTO learnings (title, category, trigger_event, content, metadata, content_hash, version, is_latest, digested, task_id)
-        VALUES ($1, 'failure_pattern', 'watchdog_kill', $2, $3, $4, 1, true, false, $5)
+        INSERT INTO learnings (title, category, trigger_event, content, metadata, content_hash, version, is_latest, digested, task_id, summary)
+        VALUES ($1, 'failure_pattern', 'watchdog_kill', $2, $3, $4, 1, true, false, $5, $6)
       `, [
         failureTitle,
         failureContent,
         JSON.stringify({ task_id: taskId, task_type: task_type || null, project_id: project_id || null }),
         contentHash,
         taskId || null,
+        generateL0Summary(`${failureTitle} ${failureContent}`),
       ]);
     } else {
       console.log(`[executor] Skipping duplicate failure_pattern (hash=${contentHash})`);
