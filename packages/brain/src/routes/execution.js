@@ -21,6 +21,7 @@ import { REVIEW_TASK_TYPES } from '../lib/review-task-types.js';
 import { updateDesireFromTask } from '../desire-feedback.js';
 import { checkAndCreateCodeReviewTrigger } from '../code-review-trigger.js';
 import { resolveRelatedFailureMemories } from './shared.js';
+import { getZenithjoyPool } from '../zenithjoy-db.js';
 import {
   readVerdictWithRetry,
   persistVerdictTimeout,
@@ -556,6 +557,7 @@ router.post('/execution-callback', async (req, res) => {
       // content_publish 完成 → 写入 zenithjoy.publish_logs（fire-and-forget）
       Promise.resolve().then(async () => {
         try {
+          const zjPool = getZenithjoyPool();
           const pubTaskRow = await pool.query(
             'SELECT task_type, payload FROM tasks WHERE id = $1',
             [task_id]
@@ -589,7 +591,7 @@ router.post('/execution-callback', async (req, res) => {
           const workTitle = pipeline_keyword || `pipeline:${parent_pipeline_id || task_id}`;
           const contentId = parent_pipeline_id || task_id;
 
-          const workUpsert = await pool.query(
+          const workUpsert = await zjPool.query(
             `INSERT INTO zenithjoy.works (content_id, title, content_type, status)
              VALUES ($1, $2, $3, 'published')
              ON CONFLICT (content_id) DO UPDATE SET
@@ -602,7 +604,7 @@ router.post('/execution-callback', async (req, res) => {
           if (!workId) return;
 
           // 幂等检查 publish_logs（同一 work_id + platform 不重复写）
-          const existing = await pool.query(
+          const existing = await zjPool.query(
             `SELECT id FROM zenithjoy.publish_logs WHERE work_id = $1 AND platform = $2`,
             [workId, platform]
           );
@@ -616,7 +618,7 @@ router.post('/execution-callback', async (req, res) => {
             ? (result.platform_post_id || result.msg_id || result.media_id || result.url || null)
             : null;
 
-          await pool.query(
+          await zjPool.query(
             `INSERT INTO zenithjoy.publish_logs
                (work_id, platform, status, published_at, response, platform_post_id)
              VALUES ($1, $2, 'published', NOW(), $3, $4)`,
