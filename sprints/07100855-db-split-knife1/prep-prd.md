@@ -3,7 +3,7 @@
 ## 改什么
 
 **PR-A（cecelia repo）Brain 解耦（方案一：独立 pool，用户已拍）**
-1. 新增 `packages/brain/src/zenithjoy-db.js`：懒初始化独立 Pool——env `ZENITHJOY_DATABASE_NAME` 已设→连独立库（host/port/user/password 各带 `ZENITHJOY_DATABASE_*` 覆盖，默认回落 Brain 现有 DB 配置的同名项）；env 未设→返回 Brain 现有 pool（**行为不变，向后兼容**）。
+1. 新增 `packages/brain/src/zenithjoy-db.js`：懒初始化独立 Pool——env `ZENITHJOY_DB_NAME` 已设→连独立库（host/port/user/password 各带 `ZENITHJOY_DB_*` 覆盖，默认回落 Brain 现有 DB 配置的同名项）；env 未设→返回 Brain 现有 pool（**行为不变，向后兼容**）。
 2. `packages/brain/src/routes/execution.js:556-637`：三处 `zenithjoy.works`/`zenithjoy.publish_logs` SQL 改用该 pool。
 3. `packages/brain/scripts/backfill-publish-logs.js`：连接目标参数化（同一 env）。
 4. `packages/brain/migrations/277`：不动历史文件，但在 `zenithjoy-db.js` 注释里声明 zenithjoy.publish_logs 表定义以 ZJ 侧 migrations 为准（Brain 277 是历史双写残留）。
@@ -15,7 +15,7 @@
 3. `scripts/sync-scraper-to-works.sh` / `scripts/publish-by-content-id.sh`：`PGDATABASE` 硬编码 cecelia → env 可覆盖、默认 `zenithjoy`。
 4. `apps/api/src/db/connection.ts:9` 默认库名**本刀不动**（本地 dev 剥离属刀2）；CI 十几处 `DATABASE_NAME=cecelia`（一次性容器内库名）**本刀不动**。
 
-**切换 runbook（文档，随 PR-B 入库 docs/runbooks/db-split-cutover.md）**：建库→pg_dump -n zenithjoy | restore→停写窗口→生产 plist/env 加 `DATABASE_NAME=zenithjoy` + Brain 容器加 `ZENITHJOY_DATABASE_NAME=zenithjoy`→重启验证（/health+发布回执冒烟+n8n 目标库改）→旧 schema `ALTER SCHEMA zenithjoy RENAME TO zenithjoy_frozen_20260710` 观察一周→删。
+**切换 runbook（文档，随 PR-B 入库 docs/runbooks/db-split-cutover.md）**：建库→pg_dump -n zenithjoy | restore→停写窗口→生产 plist/env 加 `DATABASE_NAME=zenithjoy` + Brain 容器加 `ZENITHJOY_DB_NAME=zenithjoy`→重启验证（/health+发布回执冒烟+n8n 目标库改）→旧 schema `ALTER SCHEMA zenithjoy RENAME TO zenithjoy_frozen_20260710` 观察一周→删。
 
 ## 为什么改
 环境隔离决策（0710）：cecelia 库同时装着 Cecelia 生产 + ZJ 生产（schema 合租），爆炸半径覆盖两产品；且为刀3（ZJ 迁 HK）铺路——迁独立库比现场剥 schema 干净一个量级。调研坐实：68 表 9.8MB、零跨 schema FK、migrations 自足；唯一 P0 耦合 = Brain execution.js 跨 schema 写发布回执（迁库后静默丢数据）。
