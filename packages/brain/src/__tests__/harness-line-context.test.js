@@ -10,6 +10,7 @@ import {
   formatLineContextForPrompt,
   fetchAndFormatLineContext,
   INVARIANT_SECTION_HEADER,
+  LINE_LEDGER_SECTION_HEADER,
 } from '../harness-line-context.js';
 
 const TASK_ID = '11111111-2222-3333-4444-555555555555';
@@ -18,7 +19,7 @@ const JOURNEY_ID = 'ffffffff-0000-1111-2222-333333333333';
 
 // 按 SQL 内容路由的 mock pool：step 查询 join golden_path，feature/area 查 decisions，
 // FR 查 journey_features，taskRow 查 tasks 行（fetchAndFormatLineContext GAN 场景补齐用）
-function makePool({ step = [], feature = [], area = [], fr = [], taskRow = null, fail = {} } = {}) {
+function makePool({ step = [], feature = [], area = [], fr = [], taskRow = null, ledger = null, fail = {} } = {}) {
   return {
     query: vi.fn(async (sql, params) => {
       if (/FROM tasks WHERE id=\$1/.test(sql)) {
@@ -41,6 +42,10 @@ function makePool({ step = [], feature = [], area = [], fr = [], taskRow = null,
         if (fail.fr) throw new Error('fr query down');
         return { rows: fr };
       }
+      if (/FROM design_docs/.test(sql)) {
+        if (fail.ledger) throw new Error('ledger query down');
+        return { rows: ledger ? [ledger] : [] };
+      }
       throw new Error(`unexpected SQL: ${sql}`);
     }),
   };
@@ -59,10 +64,10 @@ afterEach(() => {
 });
 
 describe('fetchLineContext — 三源 invariant SQL（与 routes/abilities.js 同源）', () => {
-  it('三参齐全 → 发 4 路查询，step SQL 与 tasks/:id/golden-path-decisions 同源', async () => {
+  it('三参齐全 → 发 5 路查询，step SQL 与 tasks/:id/golden-path-decisions 同源', async () => {
     const pool = makePool();
     await fetchLineContext({ pool }, { taskId: TASK_ID, abilityId: ABILITY_ID, journeyId: JOURNEY_ID });
-    expect(pool.query).toHaveBeenCalledTimes(4);
+    expect(pool.query).toHaveBeenCalledTimes(5);
 
     const stepCall = findCall(pool, /JOIN golden_path gp ON gp\.id = d\.target_id/);
     expect(stepCall).toBeTruthy();
@@ -120,7 +125,7 @@ describe('fetchLineContext — 三源 invariant SQL（与 routes/abilities.js �
     const r = await fetchLineContext({ pool }, {});
     expect(pool.query).toHaveBeenCalledTimes(1);
     expect(findCall(pool, /level=\$1/)).toBeTruthy();
-    expect(r).toEqual({ invariants: [], cumulativeFR: [] });
+    expect(r).toEqual({ invariants: [], cumulativeFR: [], ledger: null });
   });
 
   it('taskId 缺省 → 不发 step 查询；journeyId 缺省 → 不发 FR 查询', async () => {
@@ -179,13 +184,13 @@ describe('fetchLineContext — 三源 invariant SQL（与 routes/abilities.js �
     expect(warned).toContain('(non-fatal)');
   });
 
-  it('全路失败 → { invariants: [], cumulativeFR: [] }，绝不 throw', async () => {
-    const pool = makePool({ fail: { step: true, feature: true, area: true, fr: true } });
+  it('全路失败 → { invariants: [], cumulativeFR: [], ledger: null }，绝不 throw', async () => {
+    const pool = makePool({ fail: { step: true, feature: true, area: true, fr: true, ledger: true } });
     const r = await fetchLineContext(
       { pool }, { taskId: TASK_ID, abilityId: ABILITY_ID, journeyId: JOURNEY_ID }
     );
-    expect(r).toEqual({ invariants: [], cumulativeFR: [] });
-    expect(warnSpy).toHaveBeenCalledTimes(4);
+    expect(r).toEqual({ invariants: [], cumulativeFR: [], ledger: null });
+    expect(warnSpy).toHaveBeenCalledTimes(5);
   });
 });
 
@@ -296,13 +301,13 @@ describe('formatLineContextForPrompt — 与 planner Step 0.4 逐字同构（E1 
     expect(line.endsWith('…')).toBe(true);
   });
 
-  it('>20 个 ability 截断并加注', () => {
-    const cumulativeFR = Array.from({ length: 25 }, (_, i) => ({
+  it('>50 个 ability 截断并加注', () => {
+    const cumulativeFR = Array.from({ length: 55 }, (_, i) => ({
       ability_name: `能力${i}`, steps: [{ order_no: 1, note: 'x' }],
     }));
     const text = formatLineContextForPrompt({ invariants: [], cumulativeFR });
     const frLines = text.split('\n').filter((l) => l.startsWith('- ') && l.includes('能力'));
-    expect(frLines).toHaveLength(20);
+    expect(frLines).toHaveLength(50);
     expect(text).toContain('另有 5 个 ability 略');
   });
 
@@ -322,11 +327,78 @@ describe('formatLineContextForPrompt — 与 planner Step 0.4 逐字同构（E1 
     expect(onlyFR).not.toContain('## Invariant 约束');
   });
 
-  it('总长兜底 ≤4000 字截断', () => {
-    const invariants = Array.from({ length: 40 }, (_, i) => ({
+  it('总长兜底 ≤12000 字截断', () => {
+    const invariants = Array.from({ length: 100 }, (_, i) => ({
       id: `d${i}`, topic: `[X]t${i}`, decision: 'z'.repeat(190), source_level: 'area',
     }));
     const text = formatLineContextForPrompt({ invariants, cumulativeFR: [] });
-    expect(text.length).toBeLessThanOrEqual(4001); // 4000 + '…'
+    expect(text.length).toBeLessThanOrEqual(12001); // 12000 + '…'
+    expect(text.length).toBeGreaterThan(4001); // 证明不是旧 4000 上限
+  });
+});
+
+describe('line_ledger 蒸馏接线（T3）', () => {
+  it('journeyId 存在 → 发 ledger 查询（design_docs type=line_ledger 最新一条），返回 {content, created_at}', async () => {
+    const pool = makePool({ ledger: { content: '# X — 24h 账本\n## 决策\n- 拍板A', created_at: '2026-07-10T21:00:00Z' } });
+    const r = await fetchLineContext({ pool }, { journeyId: JOURNEY_ID });
+    const call = findCall(pool, /FROM design_docs/);
+    expect(call).toBeTruthy();
+    const [sql, params] = call;
+    expect(sql).toMatch(/type='line_ledger'/);
+    expect(sql).toMatch(/journey_id=\$1/);
+    expect(sql).toMatch(/ORDER BY created_at DESC/);
+    expect(sql).toMatch(/LIMIT 1/);
+    expect(params).toEqual([JOURNEY_ID]);
+    expect(r.ledger).toEqual({ content: '# X — 24h 账本\n## 决策\n- 拍板A', created_at: '2026-07-10T21:00:00Z' });
+  });
+
+  it('journeyId 缺省 → 不发 ledger 查询，ledger=null', async () => {
+    const pool = makePool();
+    const r = await fetchLineContext({ pool }, { abilityId: ABILITY_ID });
+    expect(findCall(pool, /FROM design_docs/)).toBeUndefined();
+    expect(r.ledger).toBeNull();
+  });
+
+  it('ledger 查询失败 → ledger=null + warn，其余路不受影响', async () => {
+    const pool = makePool({
+      area: [{ id: 'd9', topic: '[全局]租户隔离', decision: '按租户隔离' }],
+      fail: { ledger: true },
+    });
+    const r = await fetchLineContext({ pool }, { journeyId: JOURNEY_ID });
+    expect(r.ledger).toBeNull();
+    expect(r.invariants).toHaveLength(1);
+    expect(warnSpy).toHaveBeenCalled();
+  });
+
+  it('format：有 ledger 出段且排最后，内容 clamp 4000', () => {
+    const text = formatLineContextForPrompt({
+      invariants: [{ id: 'd1', topic: '[X]a', decision: 'b', source_level: 'area' }],
+      cumulativeFR: [],
+      ledger: { content: 'L'.repeat(5000), created_at: '2026-07-10T21:00:00Z' },
+    });
+    expect(text).toContain(LINE_LEDGER_SECTION_HEADER);
+    expect(text.indexOf(LINE_LEDGER_SECTION_HEADER)).toBeGreaterThan(text.indexOf(INVARIANT_SECTION_HEADER));
+    expect(text).toContain('L'.repeat(4000) + '…');
+    expect(text).not.toContain('L'.repeat(4001));
+  });
+
+  it('format：无 ledger（null/缺字段）不出段，且不影响旧两段输出', () => {
+    const noLedger = formatLineContextForPrompt({
+      invariants: [{ id: 'd1', topic: '[X]a', decision: 'b', source_level: 'area' }],
+      cumulativeFR: [],
+      ledger: null,
+    });
+    expect(noLedger).not.toContain(LINE_LEDGER_SECTION_HEADER);
+    expect(noLedger).toContain(INVARIANT_SECTION_HEADER);
+  });
+
+  it('format：只有 ledger 也成段（三段皆空才返回 ""）', () => {
+    const onlyLedger = formatLineContextForPrompt({
+      invariants: [], cumulativeFR: [],
+      ledger: { content: '# 账本', created_at: 'x' },
+    });
+    expect(onlyLedger).toContain(LINE_LEDGER_SECTION_HEADER);
+    expect(onlyLedger).toContain('# 账本');
+    expect(formatLineContextForPrompt({ invariants: [], cumulativeFR: [], ledger: null })).toBe('');
   });
 });
