@@ -60,3 +60,4 @@ ws3-ire-module-smoke.sh
 protocol-hygiene-smoke.sh
 task-tasks-dedup-smoke.sh
 line-dreaming-smoke.sh
+bluegreen-bark-nojq-smoke.sh
