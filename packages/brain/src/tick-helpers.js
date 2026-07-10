@@ -18,6 +18,7 @@ import { handleTaskFailure } from './quarantine.js';
 import { emit } from './event-bus.js';
 import { getCurrentAlertness, ALERTNESS_LEVELS } from './alertness/index.js';
 import { isPostDrainCooldown } from './drain.js';
+import { assessTaskLiveness } from './executor-contracts.js';
 
 // ─── 配置常量（从 tick.js 同步迁过来）────────────────────────────────────
 const DISPATCH_TIMEOUT_MINUTES = parseInt(process.env.DISPATCH_TIMEOUT_MINUTES || '100', 10);
@@ -112,9 +113,11 @@ export async function releaseBlockedTasks() {
  * Checks if task should be quarantined after failure.
  *
  * @param {Object[]} inProgressTasks - Tasks currently in_progress (must include payload, started_at)
+ * @param {Object} [opts] - 选项
+ * @param {Object} [opts.ctx] - 运行上下文，透传给 assessTaskLiveness
  * @returns {Promise<Object[]>} - Actions taken
  */
-export async function autoFailTimedOutTasks(inProgressTasks) {
+export async function autoFailTimedOutTasks(inProgressTasks, opts = {}) {
   const actions = [];
   for (const task of inProgressTasks) {
     const triggeredAt = task.payload?.run_triggered_at || task.started_at;
@@ -122,8 +125,16 @@ export async function autoFailTimedOutTasks(inProgressTasks) {
 
     const elapsed = (Date.now() - new Date(triggeredAt).getTime()) / (1000 * 60);
     if (elapsed > DISPATCH_TIMEOUT_MINUTES) {
-      // Kill the actual process before marking failed to prevent orphans
-      killProcess(task.id);
+      // 先调 assessTaskLiveness，alive/unknown → 跳过（fail-open）
+      const liveness = await assessTaskLiveness(task, opts.ctx || {});
+      if (liveness.verdict === 'alive' || liveness.verdict === 'unknown') {
+        continue;
+      }
+
+      // dead — 仅 brain-local 才 killProcess（其他执行者进程生命周期不由 Brain 直接管）
+      if (task.executor_kind === 'brain-local') {
+        killProcess(task.id);
+      }
       // Write structured error details for retry-analyzer
       const errorDetails = {
         type: 'timeout',
