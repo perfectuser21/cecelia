@@ -466,6 +466,13 @@ router.patch('/tasks/:task_id', async (req, res) => {
 
       // 任务完成时自动触发 KR 进度重算
       if (status === 'completed') {
+        // T2. harness merged 终态 → 累积 FR 冻结（fail-open；harness-report Step 1 走此路径）
+        try {
+          const { promoteRegressionOnHarnessMerged } = await import('../lib/callback-postprocess.js');
+          await promoteRegressionOnHarnessMerged(task_id, req.body.result || null, req.body.pr_url || null, pool);
+        } catch (promoteErr) {
+          console.warn(`[tasks-patch] promoteRegressionOnHarnessMerged 失败 (non-fatal): ${promoteErr.message}`);
+        }
         try {
           const initiativeRow = await pool.query(
             'SELECT okr_initiative_id FROM tasks WHERE id = $1',

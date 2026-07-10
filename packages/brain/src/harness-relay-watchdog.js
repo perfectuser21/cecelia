@@ -162,6 +162,12 @@ export async function resumeStalledRelayRuns(deps = {}) {
                 WHERE id=$1 AND status='in_progress'`,
               [run.initiative_id]
             );
+            try {
+              const { promoteRegressionOnHarnessMerged } = await import('./lib/callback-postprocess.js');
+              await promoteRegressionOnHarnessMerged(run.initiative_id, null, effectivePrUrl, dbPool);
+            } catch (promoteErr) {
+              console.warn(`[relay-watchdog] promoteRegressionOnHarnessMerged 失败 (non-fatal): ${promoteErr.message}`);
+            }
             out.mergedPr++;
             console.log(`[relay-watchdog] PR 已 MERGED → 标 completed initiative=${run.initiative_id} pr=${effectivePrUrl}`);
             continue;
@@ -201,6 +207,12 @@ export async function resumeStalledRelayRuns(deps = {}) {
               WHERE id=$1 AND status='in_progress'`,
             [run.initiative_id, discovered.url]
           );
+          try {
+            const { promoteRegressionOnHarnessMerged } = await import('./lib/callback-postprocess.js');
+            await promoteRegressionOnHarnessMerged(run.initiative_id, null, discovered.url, dbPool);
+          } catch (promoteErr) {
+            console.warn(`[relay-watchdog] promoteRegressionOnHarnessMerged 失败 (non-fatal): ${promoteErr.message}`);
+          }
           out.mergedPr++;
           console.log(`[relay-watchdog] GitHub 发现已 MERGED PR → 标 completed initiative=${run.initiative_id} pr=${discovered.url}`);
           continue;
