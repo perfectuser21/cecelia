@@ -20,10 +20,10 @@ describe('nightly-full-regression workflow', () => {
     expect(WF).toMatch(/workflow_dispatch:/);
     expect(WF).toMatch(/fire_test/);
   });
-  it('跑 brain 全量测试且包含 integration/**（PR CI 从不跑这组）', () => {
+  it('跑 brain 全量测试且 integration/** 有专属执行点（PR CI 从不跑这组）', () => {
     expect(WF).toMatch(/vitest run/);
-    expect(WF).toMatch(/src\/__tests__\/integration/);
-    expect(WF).not.toMatch(/--exclude='src\/__tests__\/integration/);
+    // integration 必须作为 vitest 执行目标出现（独立 job），不能只出现在 exclude 里
+    expect(WF).toMatch(/vitest run 'src\/__tests__\/integration\/\*\*'/);
   });
   it('起真 Postgres service 并跑全量 migrations', () => {
     expect(WF).toMatch(/postgres/);
