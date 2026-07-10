@@ -372,7 +372,7 @@ router.post('/:id/claim', async (req, res) => {
     const result = await pool.query(
       `UPDATE tasks SET claimed_by = $1, claimed_at = NOW(), executor_kind = COALESCE(executor_kind, $3)
        WHERE id = $2 AND claimed_by IS NULL
-       RETURNING id, claimed_by, claimed_at`,
+       RETURNING id, claimed_by, claimed_at, executor_kind`,
       [claimer, id, executorKind]
     );
 
