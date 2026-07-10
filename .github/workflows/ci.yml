@@ -460,6 +460,16 @@ jobs:
       - name: Self-test (deploy-effect assertion 三态)
         run: bash scripts/ci/__tests__/assert-deploy-effect.test.sh
 
+  # 守卫 release-gate-check.sh：刀C Release Gate 六种判定（近期绿/空/只有失败/太旧/最新失败有旧绿/无效JSON）。
+  # 保证 promote 前的 nightly 绿证据检查逻辑在任何代码变更后仍正确。
+  lint-release-gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - uses: actions/checkout@v4
+      - name: Self-test (Release Gate 六种判定)
+        run: bash scripts/ci/__tests__/release-gate.test.sh
+
   # ─── Brain: Unit Tests (4-shard matrix + Test Impact Analysis) ─
   # PR 模式：vitest --changed 仅跑被改文件影响的 test（Gate 1 升级，目标 < 5 min）
   # push 模式：跑全量 test 保 main 绿
