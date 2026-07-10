@@ -55,3 +55,4 @@ journey-id-entry-points-smoke.sh
 line-strategist-dispatch-smoke.sh
 ws3-ire-module-smoke.sh
 protocol-hygiene-smoke.sh
+task-tasks-dedup-smoke.sh
