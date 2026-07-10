@@ -1,9 +1,9 @@
 /**
- * harness-line-context-wiring.test.js — A-1 三处注入接线测试。
+ * harness-line-context-wiring.test.js — A-1 注入接线测试。
  *
- * 覆盖：proposer（harness-gan.graph.js）/ generator spawnNode / evaluator
- * evaluateContractNode（harness-task.graph.js）各两用例：
- *   有数据 → prompt 含段头 + 角色指令句；fetch 抛错或返回 '' → spawn/评估照常且不含段头。
+ * 现状：仅 harness-gan.graph.js proposer 单点注入（原 harness-task.graph.js
+ * generator/evaluator 注入点已随该文件删除）。用例：
+ *   有数据 → prompt 含段头 + 角色指令句；fetch 抛错或返回 '' → 流程照常且不含段头。
  * 另测 runGanContractGraph 入口 fetch 一次（GAN 多轮复用，只传 {id: taskId} 交 helper 补齐）。
  *
  * mock 前导参照 harness-task-spawn-base-repo.test.js + harness-handoff-wiring.test.js；

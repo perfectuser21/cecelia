@@ -67,13 +67,15 @@ async function safeRows(queryPromise, label) {
 }
 
 /**
- * 拉一条 line 的 24h 六段切片：decisions/推进项/issues/runs/learnings/军师留痕。
+ * 拉一条 line 的六段切片：decisions/推进项/issues/runs/learnings/军师留痕。
+ * 时间窗口：传 since 则取"自 since 起"；不传（null）回落 24h 窗口（与旧行为一致）。
  * @param {import('pg').Pool} pool
  * @param {string} journeyId
  * @param {string} journeyName
+ * @param {{since?: string|Date|null}} [opts] since=增量起点（如 ledger 蒸馏时刻），null=24h 窗口
  * @returns {Promise<{decisions: Array, advancementItems: Array, issues: Array, runs: Array, learnings: Array, strategistNotes: Array}>}
  */
-export async function buildLineDreamData(pool, journeyId, journeyName) {
+export async function buildLineDreamData(pool, journeyId, journeyName, { since = null } = {}) {
   const [decisions, advancementItems, issues, runs, learnings, strategistNotes] = await Promise.all([
     safeRows(
       pool.query(
@@ -82,9 +84,9 @@ export async function buildLineDreamData(pool, journeyId, journeyName) {
          JOIN journey_features jf ON d.target_id = jf.id
          WHERE d.target_type = 'journey_feature'
            AND jf.journey_id = $1
-           AND d.created_at >= NOW() - INTERVAL '24 hours'
+           AND d.created_at >= COALESCE($2::timestamptz, NOW() - INTERVAL '24 hours')
          ORDER BY d.created_at DESC`,
-        [journeyId]
+        [journeyId, since]
       ),
       'decisions'
     ),
@@ -93,9 +95,9 @@ export async function buildLineDreamData(pool, journeyId, journeyName) {
         `SELECT id, title, status, priority, updated_at
          FROM advancement_items
          WHERE journey_id = $1
-           AND updated_at >= NOW() - INTERVAL '24 hours'
+           AND updated_at >= COALESCE($2::timestamptz, NOW() - INTERVAL '24 hours')
          ORDER BY updated_at DESC`,
-        [journeyId]
+        [journeyId, since]
       ),
       'advancement_items'
     ),
@@ -104,9 +106,9 @@ export async function buildLineDreamData(pool, journeyId, journeyName) {
         `SELECT id, title, priority, status, updated_at
          FROM issues
          WHERE journey_id = $1
-           AND updated_at >= NOW() - INTERVAL '24 hours'
+           AND updated_at >= COALESCE($2::timestamptz, NOW() - INTERVAL '24 hours')
          ORDER BY updated_at DESC`,
-        [journeyId]
+        [journeyId, since]
       ),
       'issues'
     ),
@@ -115,9 +117,9 @@ export async function buildLineDreamData(pool, journeyId, journeyName) {
         `SELECT id, phase, failure_reason, created_at
          FROM initiative_runs
          WHERE journey_id = $1
-           AND created_at >= NOW() - INTERVAL '24 hours'
+           AND created_at >= COALESCE($2::timestamptz, NOW() - INTERVAL '24 hours')
          ORDER BY created_at DESC`,
-        [journeyId]
+        [journeyId, since]
       ),
       'initiative_runs'
     ),
@@ -127,9 +129,9 @@ export async function buildLineDreamData(pool, journeyId, journeyName) {
          FROM learnings l
          JOIN tasks t ON l.task_id = t.id
          WHERE t.payload->>'journey_id' = $1
-           AND l.created_at >= NOW() - INTERVAL '24 hours'
+           AND l.created_at >= COALESCE($2::timestamptz, NOW() - INTERVAL '24 hours')
          ORDER BY l.created_at DESC`,
-        [journeyId]
+        [journeyId, since]
       ),
       'learnings'
     ),
@@ -138,9 +140,9 @@ export async function buildLineDreamData(pool, journeyId, journeyName) {
         `SELECT id, title, content, created_at
          FROM notes
          WHERE title LIKE $1
-           AND created_at >= NOW() - INTERVAL '24 hours'
+           AND created_at >= COALESCE($2::timestamptz, NOW() - INTERVAL '24 hours')
          ORDER BY created_at DESC`,
-        [`军师决策[${journeyName}]%`]
+        [`军师决策[${journeyName}]%`, since]
       ),
       'strategist_notes'
     ),

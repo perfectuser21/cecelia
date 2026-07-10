@@ -98,6 +98,31 @@ describe('buildLineDreamData — 六段 24h 切片，单段失败不影响其他
   });
 });
 
+describe('buildLineDreamData since 参数（T3）', () => {
+  it('传 since → 六段 SQL 均带 COALESCE($2::timestamptz, ...) 且参数含 since 值', async () => {
+    const calls = [];
+    const pool = { query: vi.fn(async (sql, params) => { calls.push([sql, params]); return { rows: [] }; }) };
+    const since = '2026-07-09T21:00:00Z';
+    await buildLineDreamData(pool, 'j1', 'LineX', { since });
+    expect(calls).toHaveLength(6);
+    for (const [sql, params] of calls) {
+      expect(sql).toMatch(/COALESCE\(\$\d::timestamptz, NOW\(\) - INTERVAL '24 hours'\)/);
+      expect(params).toContain(since);
+    }
+  });
+
+  it('不传 since → 参数位为 null（COALESCE 回落 24h，与旧行为一致）', async () => {
+    const calls = [];
+    const pool = { query: vi.fn(async (sql, params) => { calls.push([sql, params]); return { rows: [] }; }) };
+    const data = await buildLineDreamData(pool, 'j1', 'LineX');
+    expect(calls).toHaveLength(6);
+    for (const [, params] of calls) expect(params).toContain(null);
+    expect(data).toEqual({
+      decisions: [], advancementItems: [], issues: [], runs: [], learnings: [], strategistNotes: [],
+    });
+  });
+});
+
 describe('renderLineLedgerMarkdown — 空段渲染"暂无"，有数据渲染条目', () => {
   it('全空 → 每段都是"暂无"', () => {
     const md = renderLineLedgerMarkdown('Line A', {

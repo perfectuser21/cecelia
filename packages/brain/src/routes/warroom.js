@@ -16,6 +16,8 @@ import {
   normStatus,
 } from '../warroom-classify.js';
 import { buildPipelineRecord } from './status.js';
+import { fetchLineContext, formatLineContextForPrompt } from '../harness-line-context.js';
+import { buildLineDreamData } from '../line-dreaming.js';
 
 const router = Router();
 
@@ -551,6 +553,63 @@ router.get('/line/:id/command', async (req, res) => {
     });
   } catch (err) {
     console.error('[GET /warroom/line/:id/command]', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * GET /api/brain/warroom/line/:id/context-manifest
+ *   planner Step 0.4 一次拉全（九要素 T3）：
+ *   - ledger: 最新 line_ledger 蒸馏摘要（design_docs，dreaming L1 每晚产出）
+ *   - delta: 自 ledger 时刻起的六段增量事实（无 ledger 回落 24h 窗口）
+ *   - invariants / cumulative_fr: 与三角色注入同源（fetchLineContext）
+ *   - prompt_block: formatLineContextForPrompt 直出，skill 可整段注入
+ */
+router.get('/line/:id/context-manifest', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { rows: jrows } = await pool.query(
+      `SELECT id, name, status, maturity FROM journeys WHERE id = $1`,
+      [id]
+    );
+    if (jrows.length === 0) return res.status(404).json({ error: 'journey not found' });
+    const journey = jrows[0];
+
+    const ctx = await fetchLineContext({ pool }, { journeyId: journey.id });
+
+    let delta;
+    try {
+      delta = await buildLineDreamData(pool, journey.id, journey.name, {
+        since: ctx.ledger?.created_at ?? null,
+      });
+    } catch (e) {
+      console.warn('[warroom] context-manifest delta failed (non-fatal):', e.message);
+      delta = { decisions: [], advancementItems: [], issues: [], runs: [], learnings: [], strategistNotes: [] };
+    }
+
+    res.json({
+      line: {
+        id: journey.id,
+        name: journey.name,
+        status: journey.status,
+        maturity: journey.maturity,
+      },
+      ledger: ctx.ledger ?? null,
+      delta: {
+        decisions: delta.decisions,
+        advancement_items: delta.advancementItems,
+        issues: delta.issues,
+        runs: delta.runs,
+        learnings: delta.learnings,
+        strategist_notes: delta.strategistNotes,
+      },
+      invariants: ctx.invariants,
+      cumulative_fr: ctx.cumulativeFR,
+      prompt_block: formatLineContextForPrompt(ctx),
+      generated_at: new Date().toISOString(),
+    });
+  } catch (err) {
+    console.error('[GET /warroom/line/:id/context-manifest]', err.message);
     res.status(500).json({ error: err.message });
   }
 });
