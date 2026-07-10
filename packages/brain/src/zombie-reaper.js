@@ -31,6 +31,31 @@ export const ZOMBIE_REAPER_INTERVAL_MS = 5 * 60 * 1000; // 每 5 分钟扫一次
 const DEFAULT_IDLE_MINUTES = parseInt(process.env.ZOMBIE_REAPER_IDLE_MIN || '60', 10);
 
 /**
+ * 查 initiative_run_events 最后一条心跳时间（T7 phase-event 复活）。
+ * 返回 true 表示近期有活动（在 idleMinutes 窗口内），可作为"任务存活"的第二判据。
+ * 查询失败一律返回 false（fail-open：不因查询失败而误判死）。
+ *
+ * @param {import('pg').Pool} pool
+ * @param {string} taskId
+ * @param {number} idleMinutes
+ * @returns {Promise<boolean>}
+ */
+async function checkPhaseEventHeartbeat(pool, taskId, idleMinutes) {
+  try {
+    const { rows } = await pool.query(
+      `SELECT MAX(ts) AS last_ts FROM initiative_run_events WHERE initiative_id = $1`,
+      [taskId]
+    );
+    const lastTs = rows[0]?.last_ts;
+    if (lastTs == null) return false;
+    const elapsedSeconds = Math.floor(Date.now() / 1000) - Number(lastTs);
+    return elapsedSeconds < idleMinutes * 60;
+  } catch {
+    return false;
+  }
+}
+
+/**
  * 扫描并按执行者合同处置 zombie in_progress tasks。
  *
  * @param {object} [opts]
@@ -80,6 +105,18 @@ export async function reapZombies({ pool = defaultPool, idleMinutes = DEFAULT_ID
       if (liveness.verdict === 'alive' || liveness.verdict === 'unknown') {
         console.log(`[zombie-reaper] Skip task id=${task.id} verdict=${liveness.verdict}`);
         continue;
+      }
+
+      // dead — T7 叠加 phase-event 心跳判活（initiative_run_events 第二判据）
+      // harness_initiative 任务若近期写过 phase-event，说明 session 仍在活动，不误杀
+      if (task.task_type === 'harness_initiative') {
+        const hasHeartbeat = await checkPhaseEventHeartbeat(pool, task.id, idleMinutes);
+        if (hasHeartbeat) {
+          console.log(
+            `[zombie-reaper] Skip task id=${task.id} — phase-event heartbeat fresh (harness_initiative alive override)`
+          );
+          continue;
+        }
       }
 
       // dead — 按 onStale 分支处置

@@ -7,9 +7,10 @@ description: |
   移植 Superpowers 6.0 subagent-driven-development 零件：进度台账 / 文件接力 / 四态出口协议 / 单评审双裁决 / compaction 恢复。
   点火方：Brain harness dispatch（无头）或人工前台（同一份 skill 两种触发，行为一致）。
   /dev 仍是唯一需求入口：本 skill 消费 /dev 路径C 的交接契约（PrepPRD + 铁律清单 + NFR），不做需求对抗。
-version: 1.4.0
+version: 1.5.0
 created: 2026-07-04
 changelog:
+  - 1.5.0: T7 phase-event 自报——Step 0 新增 phase-event 协议（POST/PATCH /harness/phase-event），Steps 1/2/3/4/7 各阶段 subagent 调用前后记录细粒度追踪事件；zombie-reaper 叠加 initiative_run_events 心跳判活防误杀
   - 1.4.0: Step 0 新增 0.3 前台点火防护（07-06 infrastructure 任务 8e281976 实证分裂：payload 缺 orchestrator 字段被 Brain 41 秒标 terminal failed，前台 session 浑然不觉继续裸跑）——人工前台接管必做两步：a.确认任务未被标 failed（missing_orchestrator_flag 秒杀）b.PATCH status=in_progress 认领防 tick 双 spawn；并写明前台无 initiative_run 行时 relay-runs 上报 404 是预期行为
   - 1.3.2: Step 3 generator 验收 PR 存在后立即早上报 pr_url（PATCH relay-runs phase=generate + pr_url，非阻塞；端点未上线时 400 忽略）；CI 配套硬规矩 + Step 3 prompt 测试文件措辞改为"由 evaluator CONTRACT-IS-LAW 与 judge 复核把关；CI 机械闸 lint-contract-test-immutability 落地后由其强制"（消除虚假 CI 强校验宣称，对齐 zenithjoy 当前 lint 实际能力）
   - 1.3.1: description 更新 — 由"替代 LangGraph 图的编排位置"改为"唯一编排路径"（cecelia #3554 硬校验 orchestrator=skill-relay，图废弃进入观察期）
@@ -109,6 +110,28 @@ curl -s -m 10 -X PATCH "$BRAIN/api/brain/orchestrator/relay-runs/${HARNESS_INITI
   -H "Content-Type: application/json" -d '{"phase":"<下一阶段:planning|gan|generate|evaluate>"}' || true
 ```
 
+**phase-event 自报（第三个动作，T7 复活 initiative_run_events 细粒度追踪）**：
+每个 Skill(subagent) 调用前后各打一次 phase-event。Brain 的 zombie-reaper 依赖这个信号判断任务是否真的活着，静默≠死亡。调用失败不阻塞流程（`|| true` 吞掉）。
+
+```bash
+# ── phase-event START（派 subagent 前执行）──────────────────────────────────
+# <node> 取值：planner | proposer | reviewer | generator | evaluator | report
+PHASE_EVT_ID=$(curl -s -m 10 -X POST "$BRAIN/api/brain/harness/phase-event" \
+  -H "Content-Type: application/json" \
+  -d "{\"initiative_id\":\"$HARNESS_TASK_ID\",\"node\":\"<node>\",\"status\":\"running\"}" \
+  2>/dev/null | jq -r '.id // empty' 2>/dev/null) || PHASE_EVT_ID=""
+
+# … 派 subagent，等待其完成，读取 cost_usd（从 subagent 报告或估算）…
+
+# ── phase-event END（subagent 返回后执行）──────────────────────────────────
+# status: completed（成功/PASS/APPROVED）| failed（FAIL/BLOCKED 终局）
+[ -n "$PHASE_EVT_ID" ] && curl -s -m 10 -X PATCH "$BRAIN/api/brain/harness/phase-event/$PHASE_EVT_ID" \
+  -H "Content-Type: application/json" \
+  -d "{\"status\":\"completed\",\"ts_end\":$(date +%s),\"cost_usd\":<cost_or_0>}" || true
+```
+
+> 恢复场景（台账有 done 行跳过该阶段）：已跳过的阶段不需要补报 phase-event，直接继续下一阶段。
+
 ## Step 1: Planner（写 PRD）
 
 派 fresh subagent（Task tool，模型=标准档）：
@@ -127,14 +150,15 @@ prompt: 调用 Skill(harness-planner)。上下文：
   2. **NFR 段**：含 `## NFR` 段，或显式写明"NFR: N/A"（静默缺失不算过）
   3. **PRD 行数（thin-slice 上限）**：`wc -l` 校验不超 thin-slice 上限（run4 曾 278 行失守）；超限 → 打回要求裁剪或标注"不计入"理由
 - 四态处置：见「四态协议」节
+- **phase-event**：派 subagent 前 `POST phase-event node=planner`；subagent 返回后 `PATCH phase-event/:id status=completed`（或 failed）
 - 完成 → 台账 append → Step 2
 
 ## Step 2: GAN（合同对抗，proposer × reviewer 循环）
 
 循环（无硬轮数上限——刻意设计，禁加 MAX_ROUNDS；守护 = 预算/streak，见下）：
 
-1. 派 **proposer** fresh subagent：`调用 Skill(harness-contract-proposer)`，输入 = sprint-prd.md 路径 + 上轮 reviewer feedback 文件路径（首轮无）。产出 contract-draft.md + contract-dod.md + tests/ 推到 propose 分支
-2. 派 **reviewer** fresh subagent：`调用 Skill(harness-contract-reviewer)`，输入 = PRD + 合同路径。产出 rubric 打分 + verdict
+1. 派 **proposer** fresh subagent（`POST phase-event node=proposer` 前，`PATCH` 后）：`调用 Skill(harness-contract-proposer)`，输入 = sprint-prd.md 路径 + 上轮 reviewer feedback 文件路径（首轮无）。产出 contract-draft.md + contract-dod.md + tests/ 推到 propose 分支
+2. 派 **reviewer** fresh subagent（`POST phase-event node=reviewer` 前，`PATCH` 后）：`调用 Skill(harness-contract-reviewer)`，输入 = PRD + 合同路径。产出 rubric 打分 + verdict
 3. **controller 只认结构化 verdict**：APPROVED → 出环；REVISION → feedback 落文件、回 1
 4. **铁律覆盖硬检查（controller 自查，不信 reviewer 自觉）**：PrepPRD 交接的每条铁律，在 contract-dod.md 里 grep 到对应断言才算过；缺 → 作为 feedback 打回 proposer（这是"0→1 积累必须加载"的机械保证）
 5. **合同格式硬检查（确定性 bash，机器卡，不靠自觉）**：铁律覆盖只查"内容有没有"，本条查"格式对不对"——run4 实证：contract-dod.md 无一条 `[BEHAVIOR]` 也通过了旧检查。以下三项任一不过 → 打回 proposer 重出，**不许进 Step 3**：
@@ -167,6 +191,7 @@ prompt: 调用 Skill(harness-generator)。CONTRACT_BRANCH=<branch> SPRINT_DIR=<d
   报告：四态 + pr_url + Red/Green commit SHA
 ```
 
+- **phase-event**：`POST phase-event node=generator` 在派 subagent 前；`PATCH phase-event/:id status=completed` 在 CI 全绿验收通过后
 - generator 内部 TDD 纪律由 harness-generator skill 承载（不变）；controller 验收三件事：**PR 真实存在**（gh pr view）、**commit 顺序含 (Red)/(Green)**、**CI 在跑**
 - **PR 存在后立即早上报 pr_url**（验收 `gh pr view` 成功后执行，非阻塞；端点未上线返回 400 忽略即可）：
 
@@ -188,7 +213,7 @@ fi
 - ARTIFACT 门：合同 [ARTIFACT] Test 命令逐条 bash 真跑，失败 → 直接判 FAIL 回 generator fix
 - Contract Gate 反作弊（弱 oracle/mock 环境/exit-0 兜底红线）：命中 → `contract_invalid` 终局（责任在 GAN，不进 fix loop）
 
-双门过 → 派 evaluator fresh subagent：`调用 Skill(harness-evaluator)`（target_environment 路由由 evaluator skill 自带）。
+双门过 → 派 evaluator fresh subagent（`POST phase-event node=evaluator` 前，`PATCH` 后）：`调用 Skill(harness-evaluator)`（target_environment 路由由 evaluator skill 自带）。
 - **verdict 锚定 PR head SHA 记入台账**；PR 后续有新 commit → 旧 verdict 作废必须重评
 - FIXED 按 PASS 归一（前科语义）；FAIL → 带 feedback 回 Step 3 fix
 - **evaluator 报 unverifiable[] 非空时（T5 第三态）**：controller 必须逐条兜底——用自己掌握的跨阶段上下文核对（查合同原意/看 PR diff/必要时派 Research subagent 实测）；确认是真缺口 → 按 FAIL 处理回 Step 3；确认可放行 → 记台账后继续。**禁止不核对就当 PASS 放行**
@@ -216,7 +241,7 @@ fi
 
 ## Step 7: Report（收尾六步）
 
-调用 Skill(harness-report)（Phase A/B 不变：回写 Brain task 状态 → Dashboard → Notion → 飞书 → 本地备份 → Sprint 状态同步）。
+派 fresh subagent（`POST phase-event node=report` 前，`PATCH phase-event/:id` 在 report 全部收尾完成后）：调用 Skill(harness-report)（Phase A/B 不变：回写 Brain task 状态 → Dashboard → Notion → 飞书 → 本地备份 → Sprint 状态同步）。
 
 **追加硬性动作——回写 initiative_runs 终态**（否则 Brain 巡逻把 run 误判为 Stuck at Planner 并派干预任务，N4 实证）：
 

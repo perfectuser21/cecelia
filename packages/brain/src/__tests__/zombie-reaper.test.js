@@ -134,6 +134,77 @@ describe('reapZombies', () => {
     expect(result.reaped).toBe(0);
   });
 
+  it('(h) T7: harness_initiative dead verdict 但 phase-event 心跳新鲜 → 跳过不杀', async () => {
+    // assessTaskLiveness 返回 dead（例如 docker ps 空）
+    assessTaskLiveness.mockResolvedValue({ verdict: 'dead', onStale: 'reignite', kind: 'relay-container' });
+
+    const task = {
+      id: 'harness-task-1',
+      title: 'harness initiative',
+      task_type: 'harness_initiative',
+      executor_kind: 'relay-container',
+      updated_at: new Date(Date.now() - 90 * 60 * 1000).toISOString(), // 90 min idle（超阈值）
+      last_attempt_at: null,
+      claimed_by: null,
+    };
+    const recentTs = Math.floor(Date.now() / 1000) - 5 * 60; // 5 min ago（在 60 min 阈值内）
+    pool.query
+      .mockResolvedValueOnce({ rows: [task], rowCount: 1 })              // SELECT zombies
+      .mockResolvedValueOnce({ rows: [{ last_ts: recentTs }], rowCount: 1 }); // initiative_run_events MAX(ts)
+
+    const result = await reapZombies({ pool, idleMinutes: 60 });
+
+    // SELECT + heartbeat 查询，但没有 UPDATE
+    expect(pool.query).toHaveBeenCalledTimes(2);
+    // 心跳新鲜 → 不杀
+    expect(result.reaped).toBe(0);
+    expect(result.errors).toHaveLength(0);
+  });
+
+  it('(i) T7: harness_initiative dead verdict 且 phase-event 心跳过期 → onStale=reignite 跳过（不由 reaper 处理）', async () => {
+    assessTaskLiveness.mockResolvedValue({ verdict: 'dead', onStale: 'reignite', kind: 'relay-container' });
+
+    const task = {
+      id: 'harness-task-2',
+      title: 'harness initiative stale',
+      task_type: 'harness_initiative',
+      executor_kind: 'relay-container',
+      updated_at: new Date(Date.now() - 90 * 60 * 1000).toISOString(),
+      last_attempt_at: null,
+      claimed_by: null,
+    };
+    const staleTs = Math.floor(Date.now() / 1000) - 120 * 60; // 120 min ago（超阈值）
+    pool.query
+      .mockResolvedValueOnce({ rows: [task], rowCount: 1 })              // SELECT zombies
+      .mockResolvedValueOnce({ rows: [{ last_ts: staleTs }], rowCount: 1 }); // initiative_run_events stale
+
+    const result = await reapZombies({ pool, idleMinutes: 60 });
+
+    // onStale=reignite 由 relay-watchdog 处理，reaper 不动
+    expect(result.reaped).toBe(0);
+  });
+
+  it('(j) T7: harness_initiative dead verdict 且 phase-event 无记录 → onStale=reignite 跳过', async () => {
+    assessTaskLiveness.mockResolvedValue({ verdict: 'dead', onStale: 'reignite', kind: 'relay-container' });
+
+    const task = {
+      id: 'harness-task-3',
+      title: 'harness initiative no events',
+      task_type: 'harness_initiative',
+      executor_kind: 'relay-container',
+      updated_at: new Date(Date.now() - 90 * 60 * 1000).toISOString(),
+      last_attempt_at: null,
+      claimed_by: null,
+    };
+    pool.query
+      .mockResolvedValueOnce({ rows: [task], rowCount: 1 })              // SELECT zombies
+      .mockResolvedValueOnce({ rows: [{ last_ts: null }], rowCount: 1 }); // no phase-events
+
+    const result = await reapZombies({ pool, idleMinutes: 60 });
+
+    expect(result.reaped).toBe(0);
+  });
+
   it('(f) UPDATE 失败时记录 error 但继续处理下一个 zombie', async () => {
     const zombies = [
       { id: 'task-uuid-1', title: 'zombie 1', executor_kind: 'brain-local', updated_at: new Date(Date.now() - 31 * 60 * 1000).toISOString(), last_attempt_at: null, claimed_by: null },
