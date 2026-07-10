@@ -3962,7 +3962,54 @@ async function reAttachActiveExecutors(dbPool) {
     console.warn('[reattach] docker relay scan failed (non-fatal):', err.message);
   }
 
-  // ── 3. Touch updated_at — 给 zombie-reaper 续命 ───────────────────────────
+  // ── 3. Docker task container scan (cecelia-task-*) ──────────────────────────
+  // docker-executor 派发的任务容器命名：cecelia-task-{short12}-{rand}
+  // short12 = task.id 去掉连字符后取前 12 字符
+  try {
+    const dockerTaskOut = execSync(
+      "docker ps --filter 'name=cecelia-task-' --format '{{.Names}}'",
+      { encoding: 'utf-8', timeout: 8000, stdio: 'pipe' }
+    ).trim();
+    const taskContainerNames = dockerTaskOut ? dockerTaskOut.split('\n').filter(Boolean) : [];
+
+    if (taskContainerNames.length > 0) {
+      const short12Set = new Set();
+      for (const name of taskContainerNames) {
+        const match = name.match(/^cecelia-task-([0-9a-f]{12})/i);
+        if (match) short12Set.add(match[1].toLowerCase());
+      }
+
+      if (short12Set.size > 0) {
+        const prefixes = Array.from(short12Set);
+        const { rows: taskRows } = await dbPool.query(
+          `SELECT id, started_at, payload
+             FROM tasks
+            WHERE status = 'in_progress'
+              AND LEFT(REPLACE(id::text, '-', ''), 12) = ANY($1::text[])`,
+          [prefixes]
+        );
+        for (const row of taskRows) {
+          if (!activeProcesses.has(row.id)) {
+            activeProcesses.set(row.id, {
+              pid: null,
+              startedAt: row.started_at || new Date().toISOString(),
+              runId: row.payload?.current_run_id || null,
+              docker: true,
+              source: 'reattach_docker_task',
+            });
+            result.reattached++;
+            taskIdsToTouch.add(row.id);
+            console.log(`[reattach] docker task container: task=${row.id}`);
+          }
+        }
+      }
+    }
+  } catch (err) {
+    result.errors.push(`docker_task_scan: ${err.message}`);
+    console.warn('[reattach] docker task scan failed (non-fatal):', err.message);
+  }
+
+  // ── 4. Touch updated_at — 给 zombie-reaper 续命 ───────────────────────────
   if (taskIdsToTouch.size > 0) {
     try {
       const ids = Array.from(taskIdsToTouch);
@@ -4039,6 +4086,13 @@ async function syncOrphanTasksOnStartup() {
       );
       requeued++;
       console.log(`[startup-sync] LangGraph task re-queued for checkpoint resume: task=${task.id} type=${task.task_type} title="${task.title}"`);
+      continue;
+    }
+
+    // reAttachActiveExecutors 已认领（如 docker-executor 的 cecelia-task-* 容器）→ 跳过孤儿检测
+    if (activeProcesses.has(task.id)) {
+      rebuilt++;
+      console.log(`[startup-sync] Already reattached by reAttachActiveExecutors: task=${task.id} title="${task.title}"`);
       continue;
     }
 

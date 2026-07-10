@@ -51,8 +51,21 @@ export const EXECUTOR_CONTRACTS = {
     probe: async (task, ctx) => {
       const info = ctx?.activeProcesses?.get(task.id);
       if (!info) return 'unknown';
-      // bridge/docker 路径不走 pid 探活
-      if (info.bridge || info.docker) return 'unknown';
+      // bridge 路径不走 pid 探活（LangGraph/bridge 自管活性）
+      if (info.bridge) return 'unknown';
+      // docker-executor 派发的 cecelia-task-* 容器：docker ps 前缀匹配探活
+      if (info.docker) {
+        const short12 = String(task.id).replace(/-/g, '').slice(0, 12);
+        try {
+          const out = execSync(
+            `docker ps --filter "name=cecelia-task-${short12}" --format "{{.Names}}"`,
+            { encoding: 'utf-8', timeout: 5000, stdio: 'pipe' }
+          ).trim();
+          return out ? 'alive' : 'dead';
+        } catch {
+          return 'unknown';
+        }
+      }
       const pid = info.pid;
       if (!pid || typeof pid !== 'number' || pid <= 0) return 'unknown';
       try {

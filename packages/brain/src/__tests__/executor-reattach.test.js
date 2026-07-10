@@ -8,6 +8,7 @@
  *   4. lock dir 不存在（ENOENT）→ 不抛错，reattached=0
  *   5. docker ps 抛错 → 不抛错，errors 中有记录，不误标任务
  *   6. 已在 activeProcesses 的 task → 不重复认领（幂等）
+ *   7. cecelia-task-* 容器活跃（docker-executor 派发）→ docker=true 登记 + touch（#bluegreen-suicide-guard-v2 bugfix）
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -316,5 +317,47 @@ describe('reAttachActiveExecutors', () => {
     expect(r2.reattached).toBe(0);
 
     vi.restoreAllMocks();
+  });
+
+  it('cecelia-task-* 容器活跃 → docker=true 登记 + updated_at touch', async () => {
+    // task id: df5959a0-1234-5678-abcd-ef0123456789
+    // short12 (no dashes, first 12): df5959a01234
+    const TASK_ID = 'df5959a0-1234-5678-abcd-ef0123456789';
+    const CONTAINER_NAME = 'cecelia-task-df5959a01234-ab12cd34';
+
+    mockReaddirSync.mockReturnValue([]); // 无 lock slot
+
+    // docker ps：relay 查询返空，task 查询返容器名
+    mockExecSync.mockImplementation((cmd) => {
+      if (typeof cmd === 'string' && cmd.includes('cecelia-relay-')) return '';
+      if (typeof cmd === 'string' && cmd.includes('cecelia-task-')) return CONTAINER_NAME;
+      return '';
+    });
+
+    // relay 容器为空 → 不触发 relay DB 查询；第一个 DB 查询来自 task scan
+    mockQuery
+      .mockResolvedValueOnce({
+        rows: [{
+          id: TASK_ID,
+          started_at: new Date().toISOString(),
+          payload: { current_run_id: 'run-docker-001' },
+        }],
+      })
+      .mockResolvedValue({ rows: [], rowCount: 1 }); // touch updated_at
+
+    const { reAttachActiveExecutors } = await import('../executor.js');
+    const pool = { query: mockQuery };
+    const result = await reAttachActiveExecutors(pool);
+
+    expect(result.reattached).toBeGreaterThanOrEqual(1);
+    expect(result.touched).toBeGreaterThanOrEqual(1);
+    expect(result.errors.filter(e => e.includes('docker_task_scan'))).toHaveLength(0);
+
+    // updated_at 被 touch 且包含该 task id
+    const touchCall = mockQuery.mock.calls.find(
+      call => typeof call[0] === 'string' && call[0].includes('updated_at = NOW()')
+    );
+    expect(touchCall).toBeTruthy();
+    expect(touchCall[1][0]).toContain(TASK_ID);
   });
 });
