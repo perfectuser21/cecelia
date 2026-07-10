@@ -22,6 +22,7 @@ import {
   killProcessTwoStage,
   getBillingPause,
 } from './executor.js';
+import { markExecutorKind } from './executor-contracts.js';
 import { calculateSlotBudget } from './slot-allocator.js';
 import { shouldDowngrade } from './token-budget-planner.js';
 import { emit } from './event-bus.js';
@@ -650,6 +651,8 @@ export async function dispatchNextTask(goalIds) {
   if (v2Result.handled) {
     // Wave-2 断链修复：派发成功计入当日 actions（fire-and-forget，吞错）
     incrementActionsToday(1).catch(() => {});
+    // T1 暂标：dev via LangGraph 最终落 brain-local spawn，executor_kind 提前打标供守护刀用
+    markExecutorKind(taskToDispatch.id, 'brain-local').catch(() => {});
     return {
       dispatched: true,
       task_id: v2Result.task_id,

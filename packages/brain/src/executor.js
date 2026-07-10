@@ -34,6 +34,7 @@ import { getAccountUsage } from './account-usage.js';
 import { writeDockerCallback, resolveResourceTier, isDockerAvailable } from './docker-executor.js';
 import { loadSkillContent, assertSprintDir } from './harness-shared.js';
 import { spawn as spawnDocker } from './spawn/index.js';
+import { markExecutorKind } from './executor-contracts.js';
 import { REVIEW_TASK_TYPES } from './lib/review-task-types.js';
 import {
   sampleCpuUsage as platformSampleCpuUsage,
@@ -2832,6 +2833,7 @@ async function triggerLocalCodexExec(task) {
     proc.unref();
 
     console.log(`[executor] Local Codex spawned task=${task.id} pid=${proc.pid} slot=${path.basename(slotPath)}`);
+    markExecutorKind(task.id, 'brain-local').catch(() => {});
     return { success: true, taskId: task.id, runId, executor: 'local-codex', pid: proc.pid };
   } catch (err) {
     console.error(`[executor] Local Codex error for task=${task.id}: ${err.message}`);
@@ -3165,6 +3167,14 @@ async function triggerCeceliaRun(task) {
   if (!forceUsClaude && location === 'xian') {
     const src = dynamicLocation ? 'dynamic-cache' : 'location-map';
     console.log(`[executor] 路由决策: task_type=${task.task_type} → Codex Bridge (location=xian, src=${src})`);
+    // content-pipeline 及子 stage 由 ZJ pipeline-worker 外部编排 → external-worker
+    const _CONTENT_PIPELINE_TYPES = new Set([
+      'content-pipeline', 'content-research', 'content-copywriting',
+      'content-copy-review', 'content-generate', 'content-image-review', 'content-export',
+    ]);
+    if (_CONTENT_PIPELINE_TYPES.has(task.task_type) || task.payload?.pipeline_orchestrated === true) {
+      markExecutorKind(task.id, 'external-worker').catch(() => {});
+    }
     return triggerCodexBridge(task);
   }
 
@@ -3192,6 +3202,8 @@ async function triggerCeceliaRun(task) {
   // 实现下沉到 runHarnessInitiativeRouter，便于测试 + 复用。
   if (task.task_type === 'harness_initiative') {
     console.log(`[executor] 路由决策: task_type=${task.task_type} → Harness Full Graph (A+B+C)`);
+    // harness_initiative 全部走 skill-relay docker session → relay-container
+    markExecutorKind(task.id, 'relay-container').catch(() => {});
 
     // OAuth token 自动刷新，无需 session ≥ 4h 的 pre-check
 
@@ -3534,6 +3546,7 @@ async function triggerCeceliaRun(task) {
     });
     // spawn 已真实发生（bridge 已接单），此后即使 return 前抛异常也不 release dedupe key
     spawned = true;
+    markExecutorKind(task.id, 'bridge').catch(() => {});
 
     console.log(`[executor] Bridge dispatched task=${task.id} checkpoint=${checkpointId}`);
 
