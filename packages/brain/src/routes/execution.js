@@ -28,6 +28,7 @@ import {
   handleEvaluateSessionCrash,
 } from '../execution.js';
 import { normalizeCallbackStatus, extractPrNumber, maybeMarkCompletedNoPr, buildExecMetaJson, buildFailureFields, extractFindingsValue, buildLastRunResult } from '../lib/callback-utils.js';
+import { isTransientClass } from '../lib/retry-policy.js';
 
 const router = Router();
 const execAsync = promisify(exec);
@@ -691,15 +692,14 @@ router.post('/execution-callback', async (req, res) => {
         failureTaskType = taskType;
         const classification = classifyFailure(errorMsg, { payload: taskPayload });
         isBillingCap = classification.class === 'billing_cap';
-        // rate_limit / network / auth 均不代表 cecelia-run 系统故障，跳过熔断计数：
-        //   rate_limit — 429 限流，外部 API 问题
-        //   network    — 网络抖动，外部环境问题
-        //   auth       — 凭据过期/无效（如 OAuth token expired），是凭据问题而非 cecelia-run 健康问题
+        // rate_limit / network / timeout / server_error / auth 均不代表 cecelia-run 系统故障，跳过熔断计数：
+        //   rate_limit    — 429 限流，外部 API 问题
+        //   network       — 网络抖动，外部环境问题
+        //   timeout       — 外部依赖超时（原并入 network，见 quarantine.js 拆分）
+        //   server_error  — 外部依赖 5xx（原并入 network，见 quarantine.js 拆分）
+        //   auth          — 凭据过期/无效（如 OAuth token expired），是凭据问题而非 cecelia-run 健康问题
         // exit=137 (SIGKILL/cgroup OOM) — 资源配置问题，首次重试通常可解决
-        isTransientApiError = classification.class === 'rate_limit'
-          || classification.class === 'network'
-          || classification.class === 'auth'
-          || exit_code === 137;
+        isTransientApiError = isTransientClass(classification.class) || exit_code === 137;
         isReviewTask = REVIEW_TASK_TYPES.includes(taskType);
 
         console.log(`[execution-callback] Failure classified: task=${task_id} class=${classification.class} pattern=${classification.pattern}`);
@@ -841,7 +841,7 @@ router.post('/execution-callback', async (req, res) => {
       //   auth         — 凭据过期/无效（OAuth token expired 等），是凭据问题而非系统故障
       //   review tasks — 走本机 Codex CLI，执行主体不是 cecelia-run
       if (isBillingCap || isTransientApiError) {
-        const bypassReason = isBillingCap ? 'billing_cap' : (isTransientApiError ? 'rate_limit/network/auth' : 'unknown');
+        const bypassReason = isBillingCap ? 'billing_cap' : (isTransientApiError ? 'transient(rate_limit/network/timeout/server_error/auth)' : 'unknown');
         console.log(`[execution-callback] 外部/凭据错误（${bypassReason}）：跳过熔断计数（task=${task_id}）`);
       } else if (isReviewTask) {
         console.log(`[execution-callback] review 类任务（${failureTaskType}）失败，跳过 cecelia-run 熔断计数（task=${task_id}）`);
@@ -855,7 +855,7 @@ router.post('/execution-callback', async (req, res) => {
       // auth/network/rate_limit 属于外部错误，skipCount=true 只 requeue 不累计失败次数
       if (!failureHandled) {
         try {
-          const skipCount = isTransientApiError; // rate_limit / network / auth / oom_killed(exit=137)
+          const skipCount = isTransientApiError; // rate_limit / network / timeout / server_error / auth / oom_killed(exit=137)
           const quarantineResult = await handleTaskFailure(task_id, { skipCount });
           if (quarantineResult.skipped_count) {
             console.log(`[execution-callback] 外部错误跳过失败计数，任务已 requeue（task=${task_id}）`);

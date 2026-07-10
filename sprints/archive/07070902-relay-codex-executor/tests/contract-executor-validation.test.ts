@@ -54,14 +54,16 @@ describe('B1: executor 白名单校验', () => {
 
   beforeEach(async () => {
     vi.clearAllMocks();
-    // 区分去重查询（含 status IN）和 INSERT，避免 dedup 护栏误判为重复
-    mockPool.query.mockImplementation((sql: string) => {
-      if (typeof sql === 'string' && sql.includes('status IN')) {
-        return Promise.resolve({ rows: [] }); // dedup check → 无重复
-      }
-      return Promise.resolve({
-        rows: [{ id: 'test-uuid-1234', title: 'test', status: 'queued', task_type: 'harness_initiative' }],
-      });
+    // mockReset 而非只 clearAllMocks：本文件里前几个测试（executor 校验失败）
+    // 从不真正调用 pool.query，若只 clearAllMocks，上一轮排队的 mockResolvedValueOnce
+    // 会残留到下一个测试，跟这里新排的队错位。mockReset 连队列一起清空，保证每个
+    // 测试都是干净的两次调用（去重 SELECT + INSERT）。
+    mockPool.query.mockReset();
+    // C3 去重护栏（issue 655691d2）：POST /tasks 现在先跑一次去重 SELECT 再 INSERT。
+    // 第一次调用（去重查询）返回空结果（无命中），后续调用（INSERT）沿用原有 mock。
+    mockPool.query.mockResolvedValueOnce({ rows: [] });
+    mockPool.query.mockResolvedValue({
+      rows: [{ id: 'test-uuid-1234', title: 'test', status: 'queued', task_type: 'harness_initiative' }],
     });
 
     app = express();

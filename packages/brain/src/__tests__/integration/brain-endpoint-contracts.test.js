@@ -164,9 +164,7 @@ describe('Brain Endpoint Contracts — Integration (mock DB)', () => {
   describe('POST /api/brain/tasks — 创建任务契约', () => {
     it('成功创建任务，返回 201 和包含 id 的任务对象', async () => {
       const newTask = { id: 'task-new-001', ...SAMPLE_TASK, status: 'queued' };
-      // 1st query: dedup check → 无重复
-      pool.query.mockResolvedValueOnce({ rows: [] });
-      // 2nd query: INSERT → 返回新任务
+      pool.query.mockResolvedValueOnce({ rows: [] }); // C3 去重护栏：dedup 无命中
       pool.query.mockResolvedValueOnce({ rows: [newTask] });
 
       const res = await request(makeApp())

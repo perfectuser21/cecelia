@@ -56,28 +56,19 @@ function mockReqRes(body) {
   return { req, res };
 }
 
-const TASK_ROW = {
-  id: 'test-uuid', title: 'Test', status: 'queued', task_type: 'dev',
-  priority: 'P2', project_id: null, area_id: null, goal_id: null,
-  okr_initiative_id: null, created_at: '2026-04-16T00:00:00Z',
-};
-
-// 使用 mockImplementation 区分去重查询（含 "status IN"）和 INSERT，
-// 避免每个测试都需要手动 mock 两次 query。
-// 各测试可通过 mockResolvedValueOnce 覆盖 INSERT 的返回值。
-function setupDefaultMocks(insertRows = [TASK_ROW]) {
-  mockQuery.mockReset();
-  mockQuery.mockImplementation((sql) => {
-    if (typeof sql === 'string' && sql.includes('status IN')) {
-      return Promise.resolve({ rows: [] }); // dedup check → 无重复
-    }
-    return Promise.resolve({ rows: insertRows }); // INSERT
-  });
-}
-
 describe('POST /tasks schema normalize (C2)', () => {
   beforeEach(() => {
-    setupDefaultMocks();
+    mockQuery.mockReset();
+    // C3 去重护栏（issue 655691d2）：POST /tasks 现在先跑一次去重 SELECT 再 INSERT。
+    // 第一次调用（去重查询）返回空结果（无命中），后续调用（INSERT）沿用原有 mock。
+    mockQuery.mockResolvedValueOnce({ rows: [] });
+    mockQuery.mockResolvedValue({
+      rows: [{
+        id: 'test-uuid', title: 'Test', status: 'queued', task_type: 'dev',
+        priority: 'P2', project_id: null, area_id: null, goal_id: null,
+        okr_initiative_id: null, created_at: '2026-04-16T00:00:00Z',
+      }],
+    });
   });
 
   describe('payload.prd_summary → description fallback', () => {
@@ -89,7 +80,7 @@ describe('POST /tasks schema normalize (C2)', () => {
       });
       await postHandler(req, res);
       expect(res._status).toBe(201);
-      // INSERT 是第二次 query call（index 1）
+      // description is param index 1 (title=0, description=1)
       const params = mockQuery.mock.calls[1][1];
       expect(params[1]).toBe('PRD from payload field');
     });
@@ -144,7 +135,13 @@ describe('POST /tasks schema normalize (C2)', () => {
 
     it('passes P0/P1/P2 through unchanged', async () => {
       for (const p of ['P0', 'P1', 'P2']) {
-        setupDefaultMocks([{ ...TASK_ROW, priority: p }]);
+        // 每轮 reset 干净重来：beforeEach 的默认队列在循环里会累积错位，
+        // 显式给每轮准备「去重miss + insert」两个 once 值，一一对应本轮的两次 query 调用。
+        mockQuery.mockReset();
+        mockQuery.mockResolvedValueOnce({ rows: [] }); // dedup: 无命中
+        mockQuery.mockResolvedValueOnce({
+          rows: [{ id: 'x', title: 'T', status: 'queued', task_type: 'dev', priority: p, project_id: null, area_id: null, goal_id: null, okr_initiative_id: null, created_at: '2026' }],
+        });
         const { req, res } = mockReqRes({ title: 'Test', priority: p });
         await postHandler(req, res);
         expect(res._status).toBe(201);
@@ -157,7 +154,6 @@ describe('POST /tasks schema normalize (C2)', () => {
       expect(res._status).toBe(400);
       expect(res._json.error).toContain('Invalid priority');
       expect(res._json.allowed).toEqual(['P0', 'P1', 'P2']);
-      // 优先级校验在去重查询之前，不应触发任何 DB 查询
       expect(mockQuery).not.toHaveBeenCalled();
     });
   });

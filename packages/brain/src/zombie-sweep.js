@@ -181,19 +181,20 @@ async function sweepStaleWorktrees() {
       continue;
     }
 
-    // Guard A: 未提交改动 → skip（照抄 cleanup-merged-worktrees.sh Guard A 模式）
+    // Safety: 有未提交改动的 worktree 不删（数据丢失防护，2026-07-09 真实丢过一次工作）
+    // 检查本身失败（如 .git 损坏）也保守 skip，不冒险删除
     try {
-      const dirty = execSync(`git -C "${wt.path}" status --porcelain`, {
+      const gitStatus = execSync(`git -C "${wt.path}" status --porcelain`, {
         encoding: 'utf8',
-        timeout: 5000
-      });
-      if (dirty.trim()) {
-        console.log(`[zombie-sweep] Skipping ${wt.path} — has uncommitted changes`);
+        timeout: 10000
+      }).trim();
+      if (gitStatus) {
+        console.log(`[zombie-sweep] Skip ${wt.path}: 有未提交改动，不删`);
         result.skipped++;
         continue;
       }
-    } catch {
-      // git status 失败（路径不存在等）→ 保守 skip
+    } catch (err) {
+      console.log(`[zombie-sweep] Skip ${wt.path}: git status 检查失败（${err.message}），保守不删`);
       result.skipped++;
       continue;
     }

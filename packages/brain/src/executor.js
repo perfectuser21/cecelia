@@ -1296,6 +1296,7 @@ function getSkillForTaskType(taskType, payload) {
     'research': '',          // 研究：完全只读，不挂 skill，由 preparePrompt 直接构建 prompt
     'dept_heartbeat': '/repo-lead heartbeat', // 部门主管心跳：MiniMax
     'code_review': '/code-review', // 代码审查：Sonnet + /code-review skill
+    'ci_patrol': '/ci-patrol', // CI/CD 巡检：每日按 line 报硬伤（ci-patrol skill）
     // Initiative 执行循环
     'initiative_plan': '/decomp',     // Phase 2 规划下一个 PR：/decomp
     'initiative_verify': '/architect', // Initiative 收尾验收 → /architect Mode 3
@@ -2165,6 +2166,30 @@ ${task.description || task.title}`;
   ].join('\n');
 }
 
+function _prepareCiPatrolPrompt(task) {
+  // 容器内 headless claude -p 不展开 slash command（同 harness-report Bug B），
+  // 裸 /ci-patrol 会让巡检 agent 零 SKILL 指令即兴发挥——日报只留 stdout、notes/棘轮全丢、任务假 completed。
+  const skillContent = loadSkillContent('ci-patrol');
+  const payload = task.payload || {};
+  const paramsBlock = `## CI/CD 巡检任务
+
+BRAIN_TASK_ID: ${task.id}
+DATE: ${payload.date || ''}
+TRIGGER: ${payload.trigger || 'manual'}
+
+${task.description || task.title}`;
+
+  return [
+    '你是 ci-patrol 巡检员 session。按下面 SKILL 指令完成一次巡检。',
+    '',
+    skillContent,
+    '',
+    '---',
+    '',
+    paramsBlock,
+  ].join('\n');
+}
+
 function _prepareHarnessPlannerPrompt(task, _taskType) {
   // harness_planner task_type 已退役（retire-harness-planner PR），此函数仅 sprint_planner 调用
   const sprintDir = assertSprintDir(task.payload?.sprint_dir, '_prepareHarnessPlannerPrompt');
@@ -2276,6 +2301,7 @@ const _TASK_ROUTES = {
   research:                 _prepareResearchPrompt,
   code_review:              _prepareCodeReviewArgs,
   strategist_decision:      _prepareStrategistDecisionPrompt,
+  ci_patrol:                _prepareCiPatrolPrompt,
 };
 
 // ─── preparePrompt 主入口（dispatcher）────────────────────────────────────────
@@ -3246,6 +3272,11 @@ async function triggerCeceliaRun(task) {
     },
   });
 
+  // 协议卫生包：spawnClaim/releaseDedupeKey 需要在外层 catch 里也可见（fail 路径要 release）
+  let spawnClaim = null;
+  let releaseDedupeKey = null;
+  let spawned = false; // spawn 真实发生后置 true，outer catch 不再 release（防提前打开重入窗口）
+
   try {
     // Start trace
     await trace.start();
@@ -3287,6 +3318,20 @@ async function triggerCeceliaRun(task) {
         metrics: resources.metrics,
       };
     }
+
+    // 协议卫生包：DB 级 spawn 幂等（跨进程/跨重启防 tick 重入双 spawn；120s 短 TTL）
+    // 内存 activeProcesses 检查覆盖同进程场景；本检查覆盖蓝绿窗口期双 Brain / 重启后状态丢失场景。
+    // ⚠️ 不碰 harness-callback.js 的 containerId claim（那是 callback 重入幂等，语义不同）。
+    // 放在资源检查之后：资源过载路径不 spawn，不该占用 dedupe key（挪之前泄漏 key 120s）。
+    const dedupeMod = await import('./lib/dedupe.js');
+    releaseDedupeKey = dedupeMod.releaseDedupeKey;
+    spawnClaim = await dedupeMod.claimDedupeKey('spawn', String(task.id), 120);
+    if (!spawnClaim.claimed) {
+      console.log(`[executor] Task ${task.id} spawn dedupe hit (DB), skipping`);
+      await trace.end({ status: STATUS.FAILED, error: new Error('Spawn deduplicated') });
+      return { success: false, taskId: task.id, reason: 'spawn_deduplicated' };
+    }
+
     const checkpointId = `cp-${task.id.slice(0, 8)}`;
 
     // 检查 task_type 合理性（warning 级别，不阻塞执行）
@@ -3407,6 +3452,9 @@ async function triggerCeceliaRun(task) {
         docker: true,
         container: dockerResult.container,
       });
+      // spawn 已真实发生（容器跑过），不 release dedupe key——即使 exit_code≠0 也一样：
+      // release 会打开 120s 内重复 spawn 窗口；TTL 自然过期兜底。
+      spawned = true;
 
       // 完成后写 callback_queue（保持下游路径兼容）
       try {
@@ -3466,6 +3514,8 @@ async function triggerCeceliaRun(task) {
 
     if (!result.ok) {
       console.log(`[executor] Bridge rejected: ${result.error}`);
+      // 协议卫生包：spawn 没起来（bridge 拒绝），释放 dedupe key 让 120s 内的合法重派不被误挡
+      if (spawnClaim && !spawnClaim.degraded) await releaseDedupeKey('spawn', String(task.id)).catch(() => {});
       return {
         success: false,
         taskId: task.id,
@@ -3482,6 +3532,8 @@ async function triggerCeceliaRun(task) {
       checkpointId,
       bridge: true
     });
+    // spawn 已真实发生（bridge 已接单），此后即使 return 前抛异常也不 release dedupe key
+    spawned = true;
 
     console.log(`[executor] Bridge dispatched task=${task.id} checkpoint=${checkpointId}`);
 
@@ -3518,6 +3570,10 @@ async function triggerCeceliaRun(task) {
       status: STATUS.FAILED,
       error: err,
     });
+
+    // 协议卫生包：spawn 未真实发生时才释放 dedupe key，让 120s 内的合法重派不被误挡；
+    // spawned=true 说明进程/容器已起，release 反而打开重入窗口。
+    if (spawnClaim && !spawnClaim.degraded && releaseDedupeKey && !spawned) await releaseDedupeKey('spawn', String(task.id)).catch(() => {});
 
     return {
       success: false,

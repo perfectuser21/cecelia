@@ -95,13 +95,33 @@ async function sendFeishuOpenAPI(text) {
  * Send a message to Feishu
  * 优先走 Webhook；Webhook 未配置时降级到 Open API 私信给 Alex
  * @param {string} text - Message content
+ * @param {{dedupeKey?: string, dedupeTtlSec?: number}} [opts] - 可选 DB 级幂等
  * @returns {Promise<boolean>}
  */
-async function sendFeishu(text) {
+async function sendFeishu(text, opts = {}) {
   if (isMuted()) {
     console.log('[notifier] muted → skip outbound (feishu webhook):', text.slice(0, 80));
     return false;
   }
+
+  // 协议卫生包：可选 DB 级幂等（与下方 60s 内存限流共存：限流是频控，这是跨重启幂等）
+  // claim 异常全吞照发——notifier 铁律 never breaks main flow，通知宁可重复不可丢。
+  // 注：dedupe.js 内部 raise('P2', 'dedupe_degraded', ...) → alerting → sendFeishu 看似成环，
+  // 实际不成立：P2 走 buffer 聚合，不即时调 sendFeishu；且此处 claim 失败路径只 console.error
+  // 不再 raise，两头都不触发对方，环断开。
+  if (opts.dedupeKey) {
+    try {
+      const { claimDedupeKey } = await import('./lib/dedupe.js');
+      const claim = await claimDedupeKey('notify', opts.dedupeKey, opts.dedupeTtlSec || 600);
+      if (!claim.claimed) {
+        console.log(`[notifier] dedupe hit → skip (feishu): ${opts.dedupeKey}`);
+        return false;
+      }
+    } catch (err) {
+      console.error('[notifier] dedupe claim 异常，照发:', err.message);
+    }
+  }
+
   // 渠道 1：Webhook（群机器人）
   if (FEISHU_WEBHOOK_URL) {
     try {
@@ -130,10 +150,26 @@ async function sendFeishu(text) {
  * 通过 Bark 推送到 Alex 手机（iOS App）
  * @param {string} title
  * @param {string} body
+ * @param {{dedupeKey?: string, dedupeTtlSec?: number}} [opts] - 可选 DB 级幂等
  * @returns {Promise<boolean>}
  */
-async function sendBark(title, body) {
+async function sendBark(title, body, opts = {}) {
   if (!BARK_TOKEN) return false;
+
+  // 协议卫生包：可选 DB 级幂等，同 sendFeishu 处理法（claim 异常全吞照发，环不成立见上）。
+  if (opts.dedupeKey) {
+    try {
+      const { claimDedupeKey } = await import('./lib/dedupe.js');
+      const claim = await claimDedupeKey('notify', opts.dedupeKey, opts.dedupeTtlSec || 600);
+      if (!claim.claimed) {
+        console.log(`[notifier] dedupe hit → skip (bark): ${opts.dedupeKey}`);
+        return false;
+      }
+    } catch (err) {
+      console.error('[notifier] dedupe claim 异常，照发:', err.message);
+    }
+  }
+
   try {
     const url = `https://api.day.app/${BARK_TOKEN}/${encodeURIComponent(title)}/${encodeURIComponent(body)}`;
     const resp = await fetch(url, { signal: AbortSignal.timeout(8000) });

@@ -268,31 +268,36 @@ branch refs/heads/cp-02020000-active-task`;
       expect(result.removed).toBe(0);
     });
 
-    it('Guard A: worktree 有未提交改动 → skip，不删除', async () => {
-      pool.query.mockResolvedValueOnce({ rows: [] }); // no in_progress tasks
-
-      // stat: both worktrees older than grace period
+    it('有未提交改动的 stale worktree 不删除（数据丢失防护）', async () => {
+      // active-wt 通过 Channel 1 branch 匹配跳过（保持跟其它测试一致的 DB mock 方式），
+      // stale-wt 无对应 in_progress 任务，走到新加的 git status 检查
+      pool.query.mockResolvedValueOnce({
+        rows: [{ branch: 'cp-02020000-active-task', id: '1', status: 'in_progress' }]
+      });
       statSync.mockReturnValue({ birthtimeMs: Date.now() - GRACE_PERIOD_MS - 1000 });
 
-      // git status --porcelain 返回非空（有改动）
       execSync.mockImplementation((cmd) => {
         if (cmd.includes('rev-parse --show-toplevel')) return MAIN_REPO + '\n';
         if (cmd.includes('worktree list --porcelain')) return PORCELAIN_OUTPUT;
-        if (cmd.includes('status --porcelain')) return ' M some-file.js\n'; // dirty
+        if (cmd.includes('status --porcelain')) return ' M some-file.js\n'; // stale-wt 有未提交改动
         return '';
       });
 
       const result = await sweepStaleWorktrees();
 
+      // 两个 worktree 都不应被删除：active-wt 因 branch 匹配跳过，stale-wt 因未提交改动跳过
       expect(result.removed).toBe(0);
-      expect(result.skipped).toBe(2); // 两个 worktree 都因 dirty 被跳过
-      const removeCalls = execSync.mock.calls.filter(c => c[0].includes('worktree remove'));
+      expect(result.skipped).toBe(2);
+      const removeCalls = execSync.mock.calls.filter(c =>
+        String(c[0]).includes('worktree remove') && String(c[0]).includes('/tmp/stale-wt')
+      );
       expect(removeCalls).toHaveLength(0);
     });
 
-    it('Guard A: git status 抛出异常 → 保守 skip，不删除', async () => {
-      pool.query.mockResolvedValueOnce({ rows: [] });
-
+    it('git status 检查本身失败时保守跳过不删除', async () => {
+      pool.query.mockResolvedValueOnce({
+        rows: [{ branch: 'cp-02020000-active-task', id: '1', status: 'in_progress' }]
+      });
       statSync.mockReturnValue({ birthtimeMs: Date.now() - GRACE_PERIOD_MS - 1000 });
 
       execSync.mockImplementation((cmd) => {
@@ -303,13 +308,11 @@ branch refs/heads/cp-02020000-active-task`;
       });
 
       const result = await sweepStaleWorktrees();
-
-      expect(result.removed).toBe(0);
-      const removeCalls = execSync.mock.calls.filter(c => c[0].includes('worktree remove'));
+      const removeCalls = execSync.mock.calls.filter(c => String(c[0]).includes('worktree remove'));
       expect(removeCalls).toHaveLength(0);
     });
 
-    it('Guard A: clean worktree → 正常删除（guard 不阻断）', async () => {
+    it('clean worktree 正常删除（git status 守卫不阻断）', async () => {
       pool.query.mockResolvedValueOnce({ rows: [] }); // no in_progress tasks
 
       statSync.mockReturnValue({ birthtimeMs: Date.now() - GRACE_PERIOD_MS - 1000 });

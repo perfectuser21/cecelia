@@ -230,19 +230,21 @@ async function cleanupOrphanWorktrees(pool) {
       const ageMin = Math.round(ageMs / 60000);
       console.log(`[zombie-cleaner] Orphan worktree: ${wtPath} age=${ageMin}min taskId=${taskId || 'unknown'}`);
 
-      // Guard A: 未提交改动 → skip（照抄 cleanup-merged-worktrees.sh Guard A 模式）
+      // Safety: 有未提交改动的 worktree 不删（数据丢失防护，2026-07-09 真实丢过一次工作）
+      // 检查本身失败（如 .git 损坏）也保守 skip，不冒险删除（含 rmSync fallback 路径，因为
+      // fallback 在下面 withLock 回调内，这里的 continue 会让它整个不进入）
       try {
-        const dirty = execSync(`git -C "${wtPath}" status --porcelain`, {
+        const gitStatus = execSync(`git -C "${wtPath}" status --porcelain`, {
+          cwd: REPO_ROOT,
           encoding: 'utf8',
-          timeout: 5000,
-          stdio: 'pipe',
-        });
-        if (dirty.trim()) {
-          console.log(`[zombie-cleaner] Skipping ${wtPath} — has uncommitted changes`);
+          timeout: 10000,
+        }).trim();
+        if (gitStatus) {
+          console.log(`[zombie-cleaner] Skip ${wtPath}: 有未提交改动，不删`);
           continue;
         }
-      } catch {
-        // git status 失败（路径不存在等）→ 保守 skip
+      } catch (err) {
+        console.log(`[zombie-cleaner] Skip ${wtPath}: git status 检查失败（${err.message}），保守不删`);
         continue;
       }
 
@@ -340,5 +342,4 @@ export {
   STALE_SLOT_MIN_AGE_MS,
   ORPHAN_WORKTREE_MIN_AGE_MS,
   ACTIVE_WORKTREE_SIGNAL_THRESHOLD_MS,
-  WORKTREE_BASE,
 };
