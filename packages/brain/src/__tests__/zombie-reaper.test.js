@@ -2,11 +2,13 @@
  * Tests for zombie-reaper.js
  *
  * 覆盖：
- *   (a) 30+ min idle 的 in_progress task → 标 failed
- *   (b) < 30 min idle 的 in_progress task → 不动
- *   (c) 已是 completed/failed 状态的 task → 不动
+ *   (a) brain-local probe=dead → 标 failed（assessTaskLiveness 返回 dead + onStale=fail）
+ *   (b) < 30 min idle in_progress → 不动（SELECT 返回空）
+ *   (c) 已是 completed/failed 状态 → SELECT 不返回（WHERE status='in_progress'）
  *   (d) ENV ZOMBIE_REAPER_IDLE_MIN 自定义阈值生效
  *   (e) startZombieReaper 返回 interval ID（不为 null）
+ *   (f) UPDATE 失败时记录 error 但继续处理下一个
+ *   (g) alive → 跳过不杀（T2 核心：exemptTypes 改为 assessTaskLiveness）
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
@@ -18,7 +20,13 @@ vi.mock('../db.js', () => ({
   },
 }));
 
+// Mock executor-contracts.js — 默认返回 dead+fail，测试内可覆盖
+vi.mock('../executor-contracts.js', () => ({
+  assessTaskLiveness: vi.fn().mockResolvedValue({ verdict: 'dead', onStale: 'fail', kind: 'brain-local' }),
+}));
+
 import pool from '../db.js';
+import { assessTaskLiveness } from '../executor-contracts.js';
 import { reapZombies, startZombieReaper, ZOMBIE_REAPER_INTERVAL_MS } from '../zombie-reaper.js';
 
 // ============================================================
@@ -28,10 +36,12 @@ import { reapZombies, startZombieReaper, ZOMBIE_REAPER_INTERVAL_MS } from '../zo
 describe('reapZombies', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    // 默认：assessTaskLiveness 返回 dead+fail（brain-local 场景）
+    assessTaskLiveness.mockResolvedValue({ verdict: 'dead', onStale: 'fail', kind: 'brain-local' });
   });
 
-  it('(a) 30+ min idle in_progress → 标 failed', async () => {
-    const zombieRow = { id: 'task-uuid-1', title: 'stuck task' };
+  it('(a) brain-local probe=dead → 标 failed', async () => {
+    const zombieRow = { id: 'task-uuid-1', title: 'stuck task', executor_kind: 'brain-local', updated_at: new Date(Date.now() - 31 * 60 * 1000).toISOString(), last_attempt_at: null, claimed_by: null };
     // 第一个 query 返回 zombie 行（SELECT），后续 query 是 UPDATE
     pool.query
       .mockResolvedValueOnce({ rows: [zombieRow], rowCount: 1 })  // SELECT zombies
@@ -95,10 +105,10 @@ describe('reapZombies', () => {
     expect(selectCall).toMatch(/60/);
   });
 
-  it('(e) 多个 zombie task 全部标 failed', async () => {
+  it('(e) 多个 brain-local dead zombie 全部标 failed', async () => {
     const zombies = [
-      { id: 'task-uuid-1', title: 'zombie 1' },
-      { id: 'task-uuid-2', title: 'zombie 2' },
+      { id: 'task-uuid-1', title: 'zombie 1', executor_kind: 'brain-local', updated_at: new Date(Date.now() - 31 * 60 * 1000).toISOString(), last_attempt_at: null, claimed_by: null },
+      { id: 'task-uuid-2', title: 'zombie 2', executor_kind: 'brain-local', updated_at: new Date(Date.now() - 31 * 60 * 1000).toISOString(), last_attempt_at: null, claimed_by: null },
     ];
     pool.query
       .mockResolvedValueOnce({ rows: zombies, rowCount: 2 })  // SELECT
@@ -111,18 +121,23 @@ describe('reapZombies', () => {
     expect(pool.query).toHaveBeenCalledTimes(3);
   });
 
-  it('(g) B8: exemptTypes 通过 SQL NOT IN 排除天然长跑 task_type', async () => {
-    pool.query.mockResolvedValueOnce({ rows: [], rowCount: 0 });
-    await reapZombies({ pool, idleMinutes: 60, exemptTypes: ['harness_initiative', 'harness_task'] });
-    const sqlCall = pool.query.mock.calls[0];
-    expect(sqlCall[0]).toMatch(/task_type\s*!=\s*ALL/);
-    expect(sqlCall[1]).toEqual([['harness_initiative', 'harness_task']]);
+  it('(g) T2: alive verdict → 跳过不杀（替代旧 exemptTypes SQL 过滤）', async () => {
+    assessTaskLiveness.mockResolvedValue({ verdict: 'alive', onStale: 'release-claim-and-alert' });
+
+    const task = { id: 'task-alive-1', title: 'alive task', executor_kind: 'headed-session', updated_at: new Date(Date.now() - 70 * 60 * 1000).toISOString(), last_attempt_at: null, claimed_by: 'session:alive' };
+    pool.query.mockResolvedValueOnce({ rows: [task], rowCount: 1 });
+
+    const result = await reapZombies({ pool, idleMinutes: 60 });
+
+    // 只有 SELECT，没有 UPDATE
+    expect(pool.query).toHaveBeenCalledTimes(1);
+    expect(result.reaped).toBe(0);
   });
 
   it('(f) UPDATE 失败时记录 error 但继续处理下一个 zombie', async () => {
     const zombies = [
-      { id: 'task-uuid-1', title: 'zombie 1' },
-      { id: 'task-uuid-2', title: 'zombie 2' },
+      { id: 'task-uuid-1', title: 'zombie 1', executor_kind: 'brain-local', updated_at: new Date(Date.now() - 31 * 60 * 1000).toISOString(), last_attempt_at: null, claimed_by: null },
+      { id: 'task-uuid-2', title: 'zombie 2', executor_kind: 'brain-local', updated_at: new Date(Date.now() - 31 * 60 * 1000).toISOString(), last_attempt_at: null, claimed_by: null },
     ];
     pool.query
       .mockResolvedValueOnce({ rows: zombies, rowCount: 2 })           // SELECT
