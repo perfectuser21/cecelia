@@ -10,6 +10,7 @@
  * 指标定义见 docs/architecture/2026-07-10-nine-elements-integrity/architecture.md。
  */
 import { sendBark } from './notifier.js';
+import { pushCaptureAtom } from './capture-inbox.js';
 
 /** 每晚触发窗口（UTC）= 北京时间 05:10-05:15 */
 const LEDGER_HYGIENE_HOUR_UTC = 21;
@@ -223,7 +224,7 @@ async function saveRatchet(pool, state) {
 }
 
 /** 击穿告警：开 issue（streak≥3 升 P1 + Bark）。失败只 warn 不阻断。 */
-async function raiseBreachAlerts(pool, breaches, today) {
+export async function raiseBreachAlerts(pool, breaches, today) {
   for (const b of breaches) {
     const escalated = b.streak >= 3;
     const priority = escalated ? 'P1' : 'P2';
@@ -237,9 +238,9 @@ async function raiseBreachAlerts(pool, breaches, today) {
         [`[ledger-hygiene] ${b.name}%`]
       );
       if (dup.length > 0) continue;
-      await pool.query(
+      const { rows: inserted } = await pool.query(
         `INSERT INTO issues (title, priority, status, sub_area, body, journey_id)
-         VALUES ($1, $2, 'In progress', 'brain', $3, NULL)`,
+         VALUES ($1, $2, 'In progress', 'brain', $3, NULL) RETURNING id`,
         [
           title,
           priority,
@@ -248,6 +249,14 @@ async function raiseBreachAlerts(pool, breaches, today) {
             `当日分数卡见 design_docs(type='ledger_hygiene')。`,
         ]
       );
+      // T10 统一收件箱：issue 落库后顺手进箱
+      await pushCaptureAtom(pool, {
+        content: `issue: ${title}`,
+        targetType: 'issue',
+        targetSubtype: priority,
+        routedToTable: 'issues',
+        routedToId: inserted[0]?.id ?? null,
+      });
     } catch (err) {
       console.warn('[ledger-hygiene] issue 写入失败:', err.message);
     }
