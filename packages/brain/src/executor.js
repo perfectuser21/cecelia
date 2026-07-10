@@ -3023,10 +3023,10 @@ export function computeHarnessInitiativeOk(final) {
  * 场景尤其危险：意味着仍在跑的 relay 任务会被判定为终态，反而制造新的重复 spawn 触发点。
  *
  * 雷8（headed 变体·2856dada R4 首航实证）：_spawnHeadedSession 成功时返回
- * mode='skill-relay-codex-headed'（HEADED_ORCHESTRATOR_HOST 常量），严格等值判断
- * `=== 'skill-relay'` 不命中 → 落到最终 `if (result?.ok) return 'completed'`，
- * headed session 刚 spawn（还在跑）就被秒标 completed。改用前缀匹配，
- * 同时覆盖现有 headless 'skill-relay' 与新增 headed 'skill-relay-codex-headed' 两种 mode。
+ * mode 为 HEADED_HOSTS 映射值（'skill-relay-codex-headed' / 'skill-relay-claude-headed'，
+ * 见 harness-skill-relay.js），严格等值判断 `=== 'skill-relay'` 不命中 → 落到最终
+ * `if (result?.ok) return 'completed'`，headed session 刚 spawn（还在跑）就被秒标
+ * completed。改用前缀匹配，同时覆盖 headless 'skill-relay' 与两个 headed host 值。
  *
  * @param {{ok: boolean|null, mode?: string, deferred?: boolean}} result
  * @returns {'waiting'|'relay_spawned'|'deferred'|'completed'|'failed'}

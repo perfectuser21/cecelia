@@ -73,11 +73,6 @@ export async function spawnSkillRelaySession(task, deps = {}) {
   const isCodex = task.payload?.executor === 'codex';
   const isHeaded = task.payload?.mode === 'headed';
 
-  // claude+headed 防御层（入口层已拦，这里是 spawnSkillRelaySession 内部防御）
-  if (isHeaded && task.payload?.executor !== 'codex') {
-    return { ok: false, mode: 'skill-relay', error: `executor=${task.payload?.executor} 不支持 headed 模式，仅 codex 支持` };
-  }
-
   // ─── headed 分支：ssh+tmux 路径 ──────────────────────────────────────────
   if (isHeaded) {
     return _spawnHeadedSession(task, { dbPool, now, short, initiativeId, deps });
@@ -303,29 +298,44 @@ export async function spawnSkillRelaySession(task, deps = {}) {
 
 // ─── headed 分支实现 ──────────────────────────────────────────────────────────
 
-const HEADED_ORCHESTRATOR_HOST = 'skill-relay-codex-headed';
+// T6（88e0b448）：headed tmux 链路从 codex-only 泛化为 codex|claude。
+// host 值与 tmux session 前缀按 executor 映射；watchdog（harness-relay-watchdog.js）
+// 用同一映射做存活检测/收窗，两边改动必须同步。
+const HEADED_HOSTS = {
+  codex: 'skill-relay-codex-headed',
+  claude: 'skill-relay-claude-headed',
+};
+const HEADED_TMUX_PREFIXES = { codex: 'codex-relay-', claude: 'claude-relay-' };
 const HEADED_RELAY_DEADLINE_HOURS = 8;
 
+export { HEADED_HOSTS, HEADED_TMUX_PREFIXES };
+
 /**
- * headed 模式：ssh 逃逸宿主，tmux new-session 启动 codex TUI。
+ * headed 模式：ssh 逃逸宿主，tmux new-session 启动 codex TUI / claude-launch.sh。
  * 不走 docker，不产生 extraMounts，不注入 GITHUB_TOKEN 进 tmux 命令串。
  */
 async function _spawnHeadedSession(task, { dbPool, now, short, initiativeId, deps }) {
+  const headedExecutor = task.payload?.executor === 'claude' ? 'claude' : 'codex'; // executor 缺省时按 codex 处理（入口白名单已限 claude/codex/缺省）
+  const headedHost = HEADED_HOSTS[headedExecutor];
+  const isClaudeHeaded = headedExecutor === 'claude';
+
   // B6 门禁在 headed 分支同样生效（headed 早退绕过了 spawnSkillRelaySession 主体里的
-  // CODEX_RELAY_HOME 检查——headed 恒为 codex executor，缺凭据目录同样不能裸 spawn）。
+  // CODEX_RELAY_HOME 检查——codex headed 需凭据目录；claude headed 不适用）。
   // 未配置（undefined）→ 放行（本地/测试环境）；显式配置为空字符串 → loud-fail。
   const codexRelayHome = process.env.CODEX_RELAY_HOME;
-  if (codexRelayHome !== undefined && !codexRelayHome) {
-    console.error('[skill-relay][headed][ALERT] CODEX_RELAY_HOME 未配置，codex executor 无法挂载凭据');
-    try {
-      await dbPool.query(
-        `UPDATE tasks SET status='queued', claimed_by=NULL, claimed_at=NULL WHERE id=$1`,
-        [task.id]
-      );
-    } catch (rollbackErr) {
-      console.warn(`[skill-relay][headed] task 回滚失败（non-fatal）: ${rollbackErr.message}`);
+  if (!isClaudeHeaded) {
+    if (codexRelayHome !== undefined && !codexRelayHome) {
+      console.error('[skill-relay][headed][ALERT] CODEX_RELAY_HOME 未配置，codex executor 无法挂载凭据');
+      try {
+        await dbPool.query(
+          `UPDATE tasks SET status='queued', claimed_by=NULL, claimed_at=NULL WHERE id=$1`,
+          [task.id]
+        );
+      } catch (rollbackErr) {
+        console.warn(`[skill-relay][headed] task 回滚失败（non-fatal）: ${rollbackErr.message}`);
+      }
+      return { ok: false, mode: headedHost, error: 'CODEX_RELAY_HOME 未配置' };
     }
-    return { ok: false, mode: HEADED_ORCHESTRATOR_HOST, error: 'CODEX_RELAY_HOME 未配置' };
   }
 
   const sprintDir = task.payload?.sprint_dir
@@ -346,7 +356,7 @@ async function _spawnHeadedSession(task, { dbPool, now, short, initiativeId, dep
   };
   const sshKey = (deps.sshKeyFn || defaultSshKeyFn)();
   const SSH_OPTS = `${sshKey ? `-i ${sshKey} ` : ''}-o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null`;
-  const tmuxSession = `codex-relay-${short}`;
+  const tmuxSession = `${HEADED_TMUX_PREFIXES[headedExecutor]}${short}`;
   const promptFile = `/tmp/cecelia-host-prompts/${task.id}.${short}.prompt`;
 
   // 降级：real ssh 执行（生产路径）。用文件顶部已 import 的 execSync（ESM 下 require 未定义会直接崩）。
@@ -370,7 +380,7 @@ async function _spawnHeadedSession(task, { dbPool, now, short, initiativeId, dep
     );
     if (String(guardOut).includes('TMUX_ALIVE')) {
       console.warn(`[skill-relay][headed][GUARD] live tmux session exists, skip duplicate spawn: task=${task.id} session=${tmuxSession}`);
-      return { ok: false, mode: HEADED_ORCHESTRATOR_HOST, deferred: true, reason: 'live_tmux_guard', tmuxSession };
+      return { ok: false, mode: headedHost, deferred: true, reason: 'live_tmux_guard', tmuxSession };
     }
   } catch (err) {
     console.warn(`[skill-relay][headed][GUARD] tmux 存活检查失败（保守放行 spawn）: ${err.message}`);
@@ -391,6 +401,9 @@ async function _spawnHeadedSession(task, { dbPool, now, short, initiativeId, dep
     baseRepo: task.payload?.base_repo,
   });
 
+  // claude-launch.sh 在宿主直跑，host.docker.internal 对宿主进程不可达是已知形态；
+  // codex 原值不动防回归。
+  const brainUrl = isClaudeHeaded ? 'http://localhost:5221' : 'http://host.docker.internal:5221';
   const prompt = [
     `你是 harness-controller session（headed 模式）。按下面 SKILL 指令跑完整条 sprint。`,
     ``,
@@ -400,7 +413,7 @@ async function _spawnHeadedSession(task, { dbPool, now, short, initiativeId, dep
     `## 本次上下文`,
     `HARNESS_TASK_ID=${task.id}`,
     `SPRINT_DIR=${sprintDir}`,
-    `BRAIN_URL=http://host.docker.internal:5221`,
+    `BRAIN_URL=${brainUrl}`,
     `任务标题：${task.title || ''}`,
   ].join('\n');
 
@@ -410,7 +423,7 @@ async function _spawnHeadedSession(task, { dbPool, now, short, initiativeId, dep
   // 在起 tmux 之前，经同一条 ssh 通道幂等预写 trust 段：
   //   ①config.toml 不存在（账号未初始化）→ 跳过 + warn，不硬造文件，让 codex 自己处理
   //   ②该 worktree 表已存在 → grep 命中跳过，不产生重复 TOML 表
-  if (codexRelayHome) {
+  if (!isClaudeHeaded && codexRelayHome) {
     const codexConfigPath = `${codexRelayHome}/config.toml`;
     try {
       execFn(
@@ -419,7 +432,7 @@ async function _spawnHeadedSession(task, { dbPool, now, short, initiativeId, dep
     } catch (trustErr) {
       console.warn(`[skill-relay][headed] trust preseed 失败（non-fatal，交给 codex 自行处理交互确认）: ${trustErr.message}`);
     }
-  } else {
+  } else if (!isClaudeHeaded) {
     console.warn('[skill-relay][headed] CODEX_RELAY_HOME 未配置，跳过 trust preseed');
   }
 
@@ -438,7 +451,7 @@ async function _spawnHeadedSession(task, { dbPool, now, short, initiativeId, dep
         `UPDATE tasks SET status='queued', claimed_by=NULL, claimed_at=NULL WHERE id=$1`,
         [task.id]
       );
-      return { ok: false, mode: HEADED_ORCHESTRATOR_HOST, error: `prompt write failed: ${err.message}` };
+      return { ok: false, mode: headedHost, error: `prompt write failed: ${err.message}` };
     }
     // tmux new-session：cd 进 worktree + 注入 CODEX_HOME（不注入=烧宿主默认账号）+
     // codex 位置参数从远端文件展开（--prompt-file 是编造的 flag，codex TUI 只吃 [PROMPT] 位置参数）
@@ -448,9 +461,19 @@ async function _spawnHeadedSession(task, { dbPool, now, short, initiativeId, dep
     // --dangerously-bypass-approvals-and-sandbox，一个 flag 跳过 trust 确认 + shell 命令
     // 批准 + MCP 工具批准，与无头 docker 里 claude 的 --dangerously-skip-permissions 对等
     // （worktree 隔离 + 有头可 esc 打断 = externally sandboxed 受控环境，适用场景成立）。
+    // claude headed：宿主 claude-launch.sh（自动补 --session-id，位置参数=交互初始 prompt，
+    // tmux 提供 TTY——youtou-dispatch-pattern 首航实证）。宿主 repo 根可被 CECELIA_HOST_REPO
+    // 覆盖（对齐 spawn/host-executor.js 先例）；HEADED_CLAUDE_CONFIG_DIR 可显式指定账号目录，
+    // 未配置时由 launcher 按 .active-account-dir 路由（会烧当前交互账号，主理人知情接受）。
+    const hostRepo = process.env.CECELIA_HOST_REPO || '/Users/administrator/perfect21/cecelia';
+    const claudeCfgPrefix = process.env.HEADED_CLAUDE_CONFIG_DIR
+      ? `CLAUDE_CONFIG_DIR=${process.env.HEADED_CLAUDE_CONFIG_DIR} ` : '';
+    const innerCmd = isClaudeHeaded
+      ? `cd ${worktreePath} && ${claudeCfgPrefix}bash ${hostRepo}/scripts/claude-launch.sh --dangerously-skip-permissions \\"\\$(cat ${promptFile})\\"`
+      : `cd ${worktreePath} && CODEX_HOME=${codexRelayHome || ''} codex --dangerously-bypass-approvals-and-sandbox \\"\\$(cat ${promptFile})\\"`;
     try {
       execFn(
-        `ssh ${SSH_OPTS} ${sshHost} "tmux new-session -d -s ${tmuxSession} 'cd ${worktreePath} && CODEX_HOME=${codexRelayHome || ''} codex --dangerously-bypass-approvals-and-sandbox \\"\\$(cat ${promptFile})\\"'"`
+        `ssh ${SSH_OPTS} ${sshHost} "tmux new-session -d -s ${tmuxSession} '${innerCmd}'"`
       );
     } catch (spawnErr) {
       console.error(`[skill-relay][headed][ALERT] ssh tmux spawn failed: ${spawnErr.message}`);
@@ -458,7 +481,7 @@ async function _spawnHeadedSession(task, { dbPool, now, short, initiativeId, dep
         `UPDATE tasks SET status='queued', claimed_by=NULL, claimed_at=NULL WHERE id=$1`,
         [task.id]
       );
-      return { ok: false, mode: HEADED_ORCHESTRATOR_HOST, error: `ssh spawn failed: ${spawnErr.message}` };
+      return { ok: false, mode: headedHost, error: `ssh spawn failed: ${spawnErr.message}` };
     }
   } else {
     // 测试注入路径
@@ -477,16 +500,17 @@ async function _spawnHeadedSession(task, { dbPool, now, short, initiativeId, dep
           [task.id]
         );
       } catch { /* non-fatal */ }
-      return { ok: false, mode: HEADED_ORCHESTRATOR_HOST, error: `ssh: ${spawnErr.message}` };
+      return { ok: false, mode: headedHost, error: `ssh: ${spawnErr.message}` };
     }
   }
 
-  // initiative_runs 落行（orchestrator_host='skill-relay-codex-headed' 内联，便于测试断言）
+  // initiative_runs 落行（orchestrator_host 按 executor 映射内联，便于测试断言；
+  // headedHost 来自 HEADED_HOSTS 固定映射，无注入面）
   const headedAbilityId = task.ability_id || task.payload?.ability_id || null;
   await dbPool.query(
     `INSERT INTO initiative_runs
        (initiative_id, phase, journey_id, orchestrator_version, orchestrator_host, deadline_at, ability_id)
-     VALUES ($1, 'A_planning', $2, 'v2', 'skill-relay-codex-headed', NOW() + INTERVAL '${HEADED_RELAY_DEADLINE_HOURS} hours', $3)`,
+     VALUES ($1, 'A_planning', $2, 'v2', '${headedHost}', NOW() + INTERVAL '${HEADED_RELAY_DEADLINE_HOURS} hours', $3)`,
     [initiativeId, task.payload?.journey_id || null, headedAbilityId]
   );
 
@@ -505,5 +529,5 @@ async function _spawnHeadedSession(task, { dbPool, now, short, initiativeId, dep
   }
 
   console.log(`[skill-relay][headed] session spawned: tmux=${tmuxSession} sprint=${sprintDir} host=${sshHost}`);
-  return { ok: true, mode: HEADED_ORCHESTRATOR_HOST, tmuxSession, sprintDir, extraMounts: undefined };
+  return { ok: true, mode: headedHost, tmuxSession, sprintDir, extraMounts: undefined };
 }

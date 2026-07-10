@@ -237,3 +237,61 @@ describe('maybeGenerateBattleReport — 窗口 + 去重自 gate', () => {
     expect(sendFeishu).toHaveBeenCalledTimes(1);
   });
 });
+
+describe('军师决策节（T6）', () => {
+  it('buildBattleReportData 查询 notes 军师决策并返回 strategistDecisions', async () => {
+    const pool = {
+      query: vi.fn(async (sql) => {
+        if (/FROM notes/i.test(sql)) {
+          return { rows: [
+            { title: '军师决策[内容线]: 停发短贴改测长文', content: 'x', created_at: '2026-07-10T01:00:00Z' },
+            { title: '军师决策[发布线]: 快手渠道降频', content: 'y', created_at: '2026-07-10T02:00:00Z' },
+          ] };
+        }
+        return { rows: [] };
+      }),
+    };
+    const data = await buildBattleReportData(pool);
+    expect(data.strategistDecisions).toHaveLength(2);
+    const notesSql = pool.query.mock.calls.map(c => c[0]).find(s => /FROM notes/i.test(s));
+    expect(notesSql).toMatch(/type\s*=\s*'Decision'/);
+    expect(notesSql).toMatch(/军师决策\[/);
+    expect(notesSql).toMatch(/24 hours/);
+  });
+
+  it('notes 查询抛错 → 降级空数组，其余节不受影响', async () => {
+    const pool = {
+      query: vi.fn(async (sql) => {
+        if (/FROM notes/i.test(sql)) throw new Error('relation notes does not exist');
+        return { rows: [] };
+      }),
+    };
+    const data = await buildBattleReportData(pool);
+    expect(data.strategistDecisions).toEqual([]);
+    expect(data.journeyRuns).toEqual([]);
+  });
+
+  it('渲染：按 Line 分组 + 标题剥前缀', () => {
+    const md = renderBattleReportMarkdown({
+      mergedPrs: [], journeyRuns: [], userDecisions: [],
+      strategistDecisions: [
+        { title: '军师决策[内容线]: 停发短贴改测长文', created_at: '2026-07-10T01:00:00Z' },
+        { title: '军师决策[内容线]: 长文每日一篇', created_at: '2026-07-10T00:30:00Z' },
+        { title: '军师决策[发布线]: 快手渠道降频', created_at: '2026-07-10T02:00:00Z' },
+      ],
+      sentinel: { jobs: [], expected: null, healthy: false },
+    });
+    expect(md).toContain('## 军师决策（24h）');
+    expect(md).toContain('### 内容线');
+    expect(md).toContain('### 发布线');
+    expect(md).toContain('- 停发短贴改测长文');
+    expect(md).not.toContain('军师决策[内容线]');
+  });
+
+  it('渲染：无军师决策 → 暂无；strategistDecisions 缺省（旧数据形状）不炸', () => {
+    const base = { mergedPrs: [], journeyRuns: [], userDecisions: [], sentinel: { jobs: [], expected: null, healthy: false } };
+    const md1 = renderBattleReportMarkdown({ ...base, strategistDecisions: [] });
+    expect(md1).toMatch(/## 军师决策（24h）\n暂无/);
+    expect(() => renderBattleReportMarkdown(base)).not.toThrow();
+  });
+});
