@@ -12,7 +12,7 @@
 
 ## 组件
 
-### 1. `packages/brain/migrations/330_design_docs_ledger_hygiene.sql`（新建）
+### 1. `packages/brain/migrations/331_design_docs_ledger_hygiene.sql`（新建）
 
 `design_docs.type` CHECK 约束加 `'ledger_hygiene'`（先例：328 加 `line_ledger` 同法）。
 零新表、golden_path 结构不动，符合 A1 精神。

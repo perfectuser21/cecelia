@@ -3,7 +3,7 @@
 # 验证：
 #   1. ledger-hygiene.js 存在且含必要导出 + 5 指标 SQL 关键结构
 #   2. scheduler-jobs.js 已注册 ledger-hygiene job
-#   3. migration 330 已加 ledger_hygiene 类型
+#   3. migration 331 已加 ledger_hygiene 类型
 set -euo pipefail
 
 echo "[ledger-hygiene-smoke] 1. ledger-hygiene.js 存在且含必要导出"
@@ -43,15 +43,15 @@ if (!src.includes(\"name: 'ledger-hygiene'\") || !src.includes('maybeRunLedgerHy
 console.log('scheduler-jobs.js 已注册 ledger-hygiene ✓');
 "
 
-echo "[ledger-hygiene-smoke] 3. migration 330 已加 ledger_hygiene 类型"
+echo "[ledger-hygiene-smoke] 3. migration 331 已加 ledger_hygiene 类型"
 node -e "
 const fs = require('fs');
-const src = fs.readFileSync('packages/brain/migrations/330_design_docs_ledger_hygiene.sql', 'utf8');
+const src = fs.readFileSync('packages/brain/migrations/331_design_docs_ledger_hygiene.sql', 'utf8');
 if (!src.includes(\"'ledger_hygiene'\") || !src.includes('design_docs_type_check')) {
-  console.error('FAIL: migration 330 缺 ledger_hygiene CHECK 值');
+  console.error('FAIL: migration 331 缺 ledger_hygiene CHECK 值');
   process.exit(1);
 }
-console.log('migration 330 正确 ✓');
+console.log('migration 331 正确 ✓');
 "
 
 echo "[ledger-hygiene-smoke] 全部检查通过 ✓"
