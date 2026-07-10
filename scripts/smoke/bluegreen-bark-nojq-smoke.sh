@@ -23,7 +23,7 @@ fail() { echo -e "${RED}[X]${NC} $1"; FAILED=$((FAILED + 1)); }
 echo "=== bluegreen.sh bark non-fatal（无 jq 依赖）smoke ==="
 echo ""
 
-[[ -f "$BLUEGREEN" ]] && pass "bluegreen.sh 存在" || { fail "bluegreen.sh 不存在（$BLUEGREEN）"; exit 1; }
+[[ -f "$BLUEGREEN" ]] && pass "bluegreen.sh 存在" || { fail "bluegreen.sh 不存在（${BLUEGREEN}）"; exit 1; }
 echo ""
 
 # ── 共用测试函数 ──
@@ -45,7 +45,7 @@ run_bark_test() {
   if [[ $rc -eq 0 ]]; then
     pass "${label}：send_bark 退 0（non-fatal）"
   else
-    fail "${label}：send_bark 退 $rc（fatal！）"
+    fail "${label}：send_bark 退 ${rc}（fatal！）"
     echo "    输出: $out"
   fi
 }
