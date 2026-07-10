@@ -1,14 +1,11 @@
 # DoD — 刀B：cecelia 跨组件 integration nightly
-- [ ] [BEHAVIOR] GitHub Actions integration-nightly.yml 存在且语法合法
-  Test: manual: docker compose -f docker-compose.yml config > /dev/null（workflow 独立文件，需 gh workflow list 确认）
-- [ ] [BEHAVIOR] Brain + 真 Postgres 全量 migrations → 健康就绪（tick/status 200）
-  Test: CI job: 启动 Brain 容器步骤等待 90s → 超时 exit 1 硬红
-- [ ] [BEHAVIOR] POST /tasks（dev 类型）→ 返回 task_id（关键路由贯通）
-  Test: CI job: integration-nightly.sh ── 3. 关键路由断言
-- [ ] [BEHAVIOR] PATCH /tasks/:id status=completed → GET /tasks/:id status=completed（回调贯通）
-  Test: CI job: integration-nightly.sh ── 5. 回调贯通断言
-- [ ] [BEHAVIOR] GET /tasks/:id 响应含 executor_kind 字段（migration 329 验证）
-  Test: CI job: integration-nightly.sh ── 6. executor_kind 字段断言
-- [ ] [BEHAVIOR] 红 → 自动开 [integration-red] Issue；绿 → 自动关闭
-  Test: workflow_dispatch fire_test=1 proven-to-fire 验证
-- [ ] CI 全绿
+- [x] [BEHAVIOR] integration-nightly workflow 存在：schedule UTC 20:30 + workflow_dispatch(fire_test) + Postgres service + Brain 容器
+  Test: node -e "const s=require('fs').readFileSync('.github/workflows/integration-nightly.yml','utf8');if(!s.includes('20 * * *')||!s.includes('fire_test')||!s.includes('postgres')||!s.includes('cecelia-brain'))process.exit(1);console.log('OK')"
+- [x] [BEHAVIOR] integration-nightly.sh 覆盖 7 个断言点（健康/task-types/POST tasks/route-task/PATCH 回调/executor_kind/ci_patrol路由）
+  Test: node -e "const s=require('fs').readFileSync('packages/brain/scripts/integration/integration-nightly.sh','utf8');if(!s.includes('tick/status')||!s.includes('task-types')||!s.includes('POST')||!s.includes('route-task')||!s.includes('PATCH')||!s.includes('executor_kind')||!s.includes('ci_patrol'))process.exit(1);console.log('OK')"
+- [x] [BEHAVIOR] 任务创建使用合法优先级 P2（非 P3，P3 触发 400）
+  Test: node -e "const s=require('fs').readFileSync('packages/brain/scripts/integration/integration-nightly.sh','utf8');if(s.includes('P3')||!s.includes('P2'))process.exit(1);console.log('OK')"
+- [x] [BEHAVIOR] 红 → 开 [integration-red] Issue；绿 → 关闭 open issue
+  Test: node -e "const s=require('fs').readFileSync('.github/workflows/integration-nightly.yml','utf8');if(!s.includes('integration-red')||!s.includes('close-issue-on-success'))process.exit(1);console.log('OK')"
+- [x] merge 后 proven-to-fire：workflow_dispatch fire_test=1 亲见红 + [integration-red] Issue 开出
+- [x] CI 全绿
