@@ -306,9 +306,9 @@ export async function triggerArchReview(pool, now = new Date()) {
   try {
     const timestamp = now.toISOString().slice(0, 16).replace('T', ' ');
     const lineLedgerDigest = await fetchAllLineLedgersDigest(pool).catch(() => '');
-    const prdSummary = lineLedgerDigest
-      ? `架构巡检：扫描 ${timestamp} UTC 时点的 drift / 未收敛模式 / 依赖异常，输出 4A/4B 报告供复盘。\n\n## 各线 24h 账本（line_ledger 摘要）\n${lineLedgerDigest}`
-      : `架构巡检：扫描 ${timestamp} UTC 时点的 drift / 未收敛模式 / 依赖异常，输出 4A/4B 报告供复盘。`;
+    const digestSuffix = lineLedgerDigest
+      ? ('\n\n## 各线 24h 账本（line_ledger 摘要）\n' + lineLedgerDigest)
+      : '';
     const { rows } = await pool.query(
       `INSERT INTO tasks (title, task_type, status, priority, created_by, payload, trigger_source, location)
        VALUES ($1, 'arch_review', 'queued', 'P2', 'cecelia-brain', $2, 'brain_auto', 'xian')
@@ -318,7 +318,7 @@ export async function triggerArchReview(pool, now = new Date()) {
         JSON.stringify({
           scope: 'scheduled',
           trigger: '4h',
-          prd_summary: prdSummary,
+          prd_summary: `架构巡检：扫描 ${timestamp} UTC 时点的 drift / 未收敛模式 / 依赖异常，输出 4A/4B 报告供复盘。${digestSuffix}`,
         }),
       ]
     );
