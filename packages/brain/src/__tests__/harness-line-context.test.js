@@ -107,8 +107,8 @@ describe('fetchLineContext — 三源 invariant SQL（与 routes/abilities.js �
     const [sql, params] = call;
     expect(sql).toMatch(/SELECT jf\.id AS ability_id, jf\.name AS ability_name, jf\.status AS ability_status/);
     expect(sql).toMatch(/FROM golden_path gp/);
-    expect(sql).toMatch(/JOIN tasks t ON gp\.owner_task_id = t\.id/);
-    expect(sql).toMatch(/JOIN journey_features jf ON t\.ability_id = jf\.id/);
+    expect(sql).toContain('JOIN journey_features jf ON gp.feature_id = jf.id');
+    expect(sql).not.toContain('JOIN tasks t');
     expect(sql).toMatch(/jf\.journey_id = \$1/);
     expect(sql).toMatch(/jf\.status IN \('done','working'\)/);
     expect(sql).toMatch(/ORDER BY gp\.owner_task_id, gp\.order_no ASC/);
@@ -150,9 +150,9 @@ describe('fetchLineContext — 三源 invariant SQL（与 routes/abilities.js �
   it('累积 FR：按 owner_task_id 分组，steps 保序', async () => {
     const pool = makePool({
       fr: [
-        { ability_id: 'a1', ability_name: '发视频', ability_status: 'done', owner_task_id: 't1', id: 'g1', order_no: 1, feature_id: 'f1', note: '打开页面' },
-        { ability_id: 'a1', ability_name: '发视频', ability_status: 'done', owner_task_id: 't1', id: 'g2', order_no: 2, feature_id: 'f2', note: '点击发布' },
-        { ability_id: 'a2', ability_name: '登录', ability_status: 'working', owner_task_id: 't2', id: 'g3', order_no: 1, feature_id: 'f3', note: '扫码' },
+        { ability_id: 'a1', ability_name: '发视频', ability_status: 'done', owner_task_id: 't1', id: 'g1', order_no: 1, feature_id: 'a1', note: '打开页面' },
+        { ability_id: 'a1', ability_name: '发视频', ability_status: 'done', owner_task_id: 't1', id: 'g2', order_no: 2, feature_id: 'a1', note: '点击发布' },
+        { ability_id: 'a2', ability_name: '登录', ability_status: 'working', owner_task_id: 't2', id: 'g3', order_no: 1, feature_id: 'a2', note: '扫码' },
       ],
     });
     const { cumulativeFR } = await fetchLineContext({ pool }, { journeyId: JOURNEY_ID });

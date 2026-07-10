@@ -18,7 +18,7 @@ import { raise } from '../alerting.js';
 import { handleTaskFailure } from '../quarantine.js';
 import { triggerCeceliaRun } from '../executor.js';
 import { REVIEW_TASK_TYPES } from '../lib/review-task-types.js';
-import { serialUnlockNext, writeReviewResult } from '../lib/callback-postprocess.js';
+import { serialUnlockNext, writeReviewResult, promoteRegressionOnHarnessMerged } from '../lib/callback-postprocess.js';
 import { updateDesireFromTask } from '../desire-feedback.js';
 import { checkAndCreateCodeReviewTrigger } from '../code-review-trigger.js';
 import { resolveRelatedFailureMemories } from './shared.js';
@@ -1473,6 +1473,11 @@ ${resultStr.substring(0, 2000)}
       // 5c11. 串行调度: dev task 完成 → 解锁下一个 blocked 串行 task（共享后处理管道）
       await serialUnlockNext(task_id, result, pr_url, pool).catch(err =>
         console.error(`[execution-callback] serialUnlockNext 失败 (non-fatal): ${err.message}`)
+      );
+
+      // T2. harness merged 终态 → 累积 FR 冻结（共享后处理管道，dbOnly）
+      await promoteRegressionOnHarnessMerged(task_id, result, pr_url, pool).catch(err =>
+        console.error(`[execution-callback] promoteRegressionOnHarnessMerged 失败 (non-fatal): ${err.message}`)
       );
 
       // 5c-harness. Harness v4.0 断链（对标 Anthropic 论文）
