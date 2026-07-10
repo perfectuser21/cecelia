@@ -4,13 +4,14 @@
  *   BattleBanner   战况横幅（/harness/stats?by=journey&days=30）+ 哨兵灯（/sentinel/health）
  *   HandoffStream  接力史流（/api/brain/handoffs）
  *   DecisionStream 决策流（/api/brain/decisions?made_by=user）
+ *   IssuesPanel   Issues 面板（/api/brain/issues）
  *
  * 每板块独立 fetch + 60s 轮询 + 失败静默降级（返回 null / 空态，不影响主 feed）。
  * 纯函数导出供单测；relativeTime/verdictMeta/absoluteShanghai 复用 WarRoomPage 导出
  * （循环 import 安全：均为函数声明，仅在渲染期调用，无模块初始化期引用）。
  */
 import { useEffect, useState } from 'react';
-import { Gavel, ArrowRightLeft } from 'lucide-react';
+import { Gavel, ArrowRightLeft, Bug } from 'lucide-react';
 import { relativeTime, verdictMeta, absoluteShanghai } from './WarRoomPage';
 
 // ====================== 纯函数（单测覆盖） ======================
@@ -77,6 +78,31 @@ export function decisionRows(rows: unknown): DecisionRow[] {
     topic: String(d?.topic ?? ''),
     date: absoluteShanghai(d?.created_at ?? null).slice(0, 10),
   }));
+}
+
+export interface IssueRow {
+  id: string; title: string; priority: string; status: string; sub_area: string; created_at: string | null;
+}
+
+/** /api/brain/issues 响应（{issues} 包装）→ 面板行 */
+export function issueRows(resp: unknown): IssueRow[] {
+  const list = (resp as { issues?: unknown })?.issues;
+  if (!Array.isArray(list)) return [];
+  return list.map((i) => ({
+    id: String(i?.id ?? ''),
+    title: String(i?.title ?? ''),
+    priority: typeof i?.priority === 'string' ? i.priority : '',
+    status: typeof i?.status === 'string' ? i.status : '',
+    sub_area: typeof i?.sub_area === 'string' ? i.sub_area : '',
+    created_at: i?.created_at ?? null,
+  }));
+}
+
+/** priority → 徽标样式（P0 红 / P1 琥珀 / 其余灰） */
+export function issuePriorityPill(priority: string): string {
+  if (priority === 'P0') return 'bg-red-500/15 text-red-400';
+  if (priority === 'P1') return 'bg-amber-500/15 text-amber-400';
+  return 'bg-slate-700/40 text-slate-400';
 }
 
 export type SentinelColor = 'green' | 'yellow';
@@ -248,6 +274,35 @@ export function DecisionStream() {
             <div key={d.id} className="flex items-center gap-2 text-[12px]">
               <span className="text-slate-300 truncate" title={d.topic}>{d.topic}</span>
               <span className="ml-auto text-slate-700 font-mono flex-shrink-0">{d.date}</span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** Issues 面板：全局最近 issues（战斗室指挥台，T6） */
+export function IssuesPanel() {
+  const resp = usePolled<unknown>('/api/brain/issues?limit=8');
+  const rows = issueRows(resp);
+  return (
+    <div className="rounded-lg border border-slate-800/60 bg-slate-900/20 p-3">
+      <div className="flex items-center gap-2 mb-2">
+        <Bug className="w-3.5 h-3.5 text-red-400" />
+        <span className="text-[12px] tracking-[0.1em] uppercase text-slate-400 font-bold">Issues</span>
+        <span className="text-[11px] text-slate-700 font-mono">{rows.length} 条</span>
+      </div>
+      {rows.length === 0 ? (
+        <div className="text-[12px] text-slate-700">暂无 issue</div>
+      ) : (
+        <div className="space-y-1.5 max-h-44 overflow-y-auto pr-1">
+          {rows.map((i) => (
+            <div key={i.id} className="flex items-center gap-1.5 text-[12px]">
+              <span className={`text-[10px] tracking-wide px-1 py-px rounded font-bold flex-shrink-0 ${issuePriorityPill(i.priority)}`}>{i.priority || '—'}</span>
+              <span className="text-slate-300 truncate" title={i.title}>{i.title}</span>
+              {i.sub_area && <span className="text-slate-600 flex-shrink-0">{i.sub_area}</span>}
+              <span className="ml-auto text-slate-700 flex-shrink-0" title={i.created_at ? absoluteShanghai(i.created_at) : ''}>{i.created_at ? relativeTime(i.created_at) : ''}</span>
             </div>
           ))}
         </div>
