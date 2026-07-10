@@ -266,6 +266,32 @@ describe('promoteToRegression', () => {
     expect(ins.params[2]).toBe(abilityId); // 第 3 个参数 = feature_id 回退到 ability_id
   });
 
+  it('payload.feature_id 存在但 journey_features 查不到 → 回退 ability_id', async () => {
+    const badFeatureId = 'fe999999-9999-9999-9999-999999999999';
+    const abilityId = 'ab000000-0000-0000-0000-000000000009';
+    const task = {
+      id: TASK.id,
+      ability_id: abilityId,
+      payload: { journey_id: TASK.payload.journey_id, feature_id: badFeatureId },
+    };
+    const d = makeDeps({ files: GOOD_FILES });
+    // 按入参 id 路由：feature_id 候选查不到（rows 空），ability_id 候选存在
+    d.client.query.mockImplementation(async (sql, params) => {
+      d.queries.push({ sql, params });
+      if (/SELECT id FROM journey_features/i.test(sql)) {
+        return params[0] === abilityId ? { rows: [{ id: params[0] }] } : { rows: [] };
+      }
+      return { rows: [] };
+    });
+    const r = await promoteToRegression(
+      { pool: d.poolMock, execFile: d.execFileMock, fsImpl: d.fsMock },
+      { task, sprintDir: SPRINT_DIR, subTasks: [], worktreePath: WT },
+    );
+    expect(r.dbWritten).toBe(true);
+    const ins = d.queries.find((q) => /INSERT INTO golden_path/i.test(q.sql));
+    expect(ins.params[2]).toBe(abilityId); // 无效 feature_id 被跳过，回退 ability_id
+  });
+
   it('DB 阶段抛错 → ROLLBACK 且不抛出（best-effort，返回 ok:false）', async () => {
     const d = makeDeps({ files: GOOD_FILES });
     d.client.query.mockImplementation(async (sql) => {

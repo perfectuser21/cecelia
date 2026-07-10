@@ -162,7 +162,7 @@ export async function promoteToRegression(deps = {}, params = {}) {
         try {
           const fe = await client.query('SELECT id FROM journey_features WHERE id=$1', [cand]);
           if (fe.rows[0]?.id) { featureId = fe.rows[0].id; break; }
-        } catch { /* keep null */ }
+        } catch { /* try next candidate */ }
       }
       await client.query('DELETE FROM golden_path WHERE owner_task_id=$1', [taskId]);
       for (const s of steps) {
