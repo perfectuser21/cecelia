@@ -96,6 +96,59 @@ run_post_deploy_smoke() {
     return 0
 }
 
+# ── drain_before_swap：swap 前停派发 + 等回调收尾 ────────────────────────────
+# 调用 POST /api/brain/tick/drain → 轮询 drain-status.remaining === 0
+# 超时（DRAIN_TIMEOUT_SECS，默认 120s）→ 告警 + 继续（non-fatal，不阻止部署）
+# Brain 未在线时静默跳过（首次部署/迁移场景无需 drain）
+DRAIN_TIMEOUT_SECS="${DRAIN_TIMEOUT_SECS:-120}"
+
+drain_before_swap() {
+    local brain_url="http://localhost:5221"
+
+    if [[ "$DRY_RUN" == true ]]; then
+        echo "  [dry-run] POST ${brain_url}/api/brain/tick/drain  # 进入 drain 模式"
+        echo "  [dry-run] poll GET ${brain_url}/api/brain/tick/drain-status (timeout=${DRAIN_TIMEOUT_SECS}s)"
+        return 0
+    fi
+
+    # Brain 不在线则跳过（首次部署无旧实例）
+    if ! curl -sf --max-time 3 "${brain_url}/api/brain/tick/status" >/dev/null 2>&1; then
+        echo "  [drain] Brain 未响应，跳过 drain（首次部署或离线场景）"
+        return 0
+    fi
+
+    echo "  [drain] 发送 drain 请求..."
+    local drain_resp
+    drain_resp=$(curl -sf --max-time 10 -X POST "${brain_url}/api/brain/tick/drain" 2>&1) || {
+        echo "  [drain] drain 请求失败（non-fatal），继续部署"
+        return 0
+    }
+    echo "  [drain] drain 已激活: $(echo "$drain_resp" | grep -o '"remaining":[0-9]*' | head -1 || echo 'ok')"
+
+    # 轮询等待 in_progress 归零
+    local elapsed=0 remaining=-1
+    while [[ "$elapsed" -lt "$DRAIN_TIMEOUT_SECS" ]]; do
+        local status_resp
+        status_resp=$(curl -sf --max-time 5 "${brain_url}/api/brain/tick/drain-status" 2>/dev/null || echo "")
+        if [[ -n "$status_resp" ]]; then
+            remaining=$(echo "$status_resp" | grep -o '"remaining":[0-9]*' | grep -o '[0-9]*' | head -1 || echo "-1")
+            if [[ "$remaining" == "0" ]]; then
+                echo "  [drain] ✅ in_progress 已归零（${elapsed}s），可安全 swap"
+                return 0
+            fi
+            echo "  [drain] 等待中... remaining=${remaining} (${elapsed}s/${DRAIN_TIMEOUT_SECS}s)"
+        fi
+        sleep 5
+        elapsed=$((elapsed + 5))
+    done
+
+    # 超时：告警但继续
+    local warn_msg="brain-deploy drain 超时 ${DRAIN_TIMEOUT_SECS}s，remaining=${remaining}，强制继续 swap——可能有回调丢失，请检查 in_progress 任务"
+    echo "  [drain] ⚠️  $warn_msg"
+    send_bark "$warn_msg"
+    return 0  # non-fatal，继续部署
+}
+
 # ── 参数解析 ─────────────────────────────────────────────────────────────────
 DRY_RUN=false
 for arg in "$@"; do
@@ -230,6 +283,11 @@ if [[ "$DEPLOY_MODE" == "docker" ]]; then
     # green 失败则 blue(5221) 原封不动 + Bark 告警 + 终止部署（exit 1）。
     # （bluegreen.sh 已在脚本顶层 source）
     if [[ "$DRY_RUN" == false ]] && docker inspect cecelia-node-brain >/dev/null 2>&1; then
+        # swap 前：drain 旧 Brain（停派发 + 等 in_progress 回调收尾）
+        echo "  [7/8] drain 旧 Brain（等 in_progress 归零，超时 ${DRAIN_TIMEOUT_SECS}s）..."
+        drain_before_swap
+        echo ""
+
         # blue 在跑 → 走 canary。GREEN_RUN_ARGS 复用 blue 的 env/mounts（同配置验镜像）。
         # blue 是 bridge 网络（docker ps 显示 0.0.0.0:5221->5221），green 用 bridge + -p 5223:5221，
         # 不加 --network host（否则 green 抢占 host 5221 与 blue 冲突）。
@@ -239,11 +297,18 @@ if [[ "$DEPLOY_MODE" == "docker" ]]; then
         if ! TARGET_VERSION="${VERSION}" BLUE_NAME=cecelia-node-brain \
              GREEN_NAME=cecelia-node-brain-green TEMP_PORT=5223 HEALTH_TIMEOUT=90 bluegreen_swap; then
             echo "[FAIL] green canary 未通过，已保留旧生产容器(5221 不受影响)，终止部署"
+            # blue 仍在运行且已进入 drain 模式 → 恢复正常派发
+            echo "  [drain] green 未通过，恢复旧 Brain 派发..."
+            curl -sf --max-time 5 -X POST "http://localhost:5221/api/brain/tick/drain-cancel" >/dev/null 2>&1 || true
             exit 1
         fi
     else
         # 无 blue（首次部署）→ 无 outage 风险，跳过 canary 直接起
         echo "  [首次部署] 无旧生产容器，跳过 canary，直接起新容器"
+        # dry-run 时仍输出 drain 调用序列（验顺序用）
+        if [[ "$DRY_RUN" == true ]]; then
+            drain_before_swap
+        fi
     fi
 
     if [[ "$DRY_RUN" == true ]]; then
@@ -331,6 +396,11 @@ if [[ "$DEPLOY_MODE" == "launchd" ]]; then
 
     # 7. Restart via launchd
     echo "[7/8] Restarting Brain via launchd (kickstart -k)..."
+    # swap 前：drain 旧 Brain（停派发 + 等 in_progress 回调收尾）
+    echo "  drain 旧 Brain（等 in_progress 归零，超时 ${DRAIN_TIMEOUT_SECS}s）..."
+    drain_before_swap
+    echo ""
+
     if [[ "$DRY_RUN" == true ]]; then
         echo "  [dry-run] launchctl kickstart -k gui/$(id -u)/${LAUNCHD_SERVICE}"
     else
