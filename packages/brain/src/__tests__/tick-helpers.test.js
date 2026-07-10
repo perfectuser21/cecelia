@@ -43,6 +43,11 @@ vi.mock('../drain.js', () => ({
   isPostDrainCooldown: (...args) => mockIsPostDrainCooldown(...args),
 }));
 
+const mockAssessTaskLiveness = vi.fn();
+vi.mock('../executor-contracts.js', () => ({
+  assessTaskLiveness: (...args) => mockAssessTaskLiveness(...args),
+}));
+
 import {
   routeTask,
   releaseBlockedTasks,
@@ -59,6 +64,8 @@ describe('tick-helpers', () => {
     mockGetCurrentAlertness.mockReturnValue({ level: 0, levelName: 'CALM' });
     mockIsPostDrainCooldown.mockReturnValue(false);
     mockHandleTaskFailure.mockResolvedValue({ quarantined: false, failure_count: 1 });
+    // 默认：超时任务按 brain-local dead 处理（旧测试未设 executor_kind，兼容原有断言）
+    mockAssessTaskLiveness.mockResolvedValue({ verdict: 'dead', onStale: 'fail', kind: 'brain-local' });
   });
 
   // ─── routeTask ─────────────────────────────────────────────
@@ -140,7 +147,7 @@ describe('tick-helpers', () => {
 
     it('超时任务 → kill + handleTaskFailure + requeue', async () => {
       const old = new Date(Date.now() - 120 * 60 * 1000).toISOString(); // 120 min ago (> 100min default)
-      const tasks = [{ id: 't2', title: 'stuck', started_at: old, payload: {} }];
+      const tasks = [{ id: 't2', title: 'stuck', executor_kind: 'brain-local', started_at: old, payload: {} }];
 
       mockQuery.mockResolvedValue({ rows: [] });
       mockHandleTaskFailure.mockResolvedValueOnce({ quarantined: false, failure_count: 1 });
@@ -157,7 +164,7 @@ describe('tick-helpers', () => {
 
     it('超时 + quarantine 触发 → action = quarantine', async () => {
       const old = new Date(Date.now() - 120 * 60 * 1000).toISOString();
-      const tasks = [{ id: 't3', title: 'q-stuck', started_at: old, payload: {} }];
+      const tasks = [{ id: 't3', title: 'q-stuck', executor_kind: 'brain-local', started_at: old, payload: {} }];
 
       mockQuery.mockResolvedValue({ rows: [] });
       mockHandleTaskFailure.mockResolvedValueOnce({

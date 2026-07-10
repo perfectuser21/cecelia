@@ -24,45 +24,36 @@
  */
 
 import defaultPool from './db.js';
+import { assessTaskLiveness } from './executor-contracts.js';
 
 // ───── 配置 ─────
 export const ZOMBIE_REAPER_INTERVAL_MS = 5 * 60 * 1000; // 每 5 分钟扫一次
 const DEFAULT_IDLE_MINUTES = parseInt(process.env.ZOMBIE_REAPER_IDLE_MIN || '60', 10);
 
-// B8 (Walking Skeleton P1 cascade fix): 豁免天然长跑的 task_type。
-// W29 实证：harness_initiative 跑 GAN + generator + CI 可达 1+ 小时；中间 LangGraph
-// 节点 transition / 容器 spawn 不更新 tasks.updated_at（只 status 转换时变），reaper
-// 看 updated_at 误判 active task 为 zombie。spawn 时序 31min 持续 + updated_at 41min
-// 不变 → 被 reaper 误杀。
-export const DEFAULT_EXEMPT_TASK_TYPES = (process.env.ZOMBIE_REAPER_EXEMPT_TYPES ||
-  'harness_initiative,harness_task,harness_evaluate,harness_contract_propose,harness_contract_review,harness_planner,harness_generator'
-).split(',').map(s => s.trim()).filter(Boolean);
-
 /**
- * 扫描并标记 zombie in_progress tasks 为 failed。
+ * 扫描并按执行者合同处置 zombie in_progress tasks。
  *
  * @param {object} [opts]
  * @param {import('pg').Pool} [opts.pool] - PostgreSQL 连接池（测试可注入 mock）
- * @param {number} [opts.idleMinutes] - idle 阈值（分钟，默认 ZOMBIE_REAPER_IDLE_MIN env 或 30）
+ * @param {number} [opts.idleMinutes] - idle 阈值（分钟，默认 ZOMBIE_REAPER_IDLE_MIN env 或 60）
+ * @param {object} [opts.ctx] - 运行上下文（activeProcesses Map 等，透传给 assessTaskLiveness）
  * @returns {Promise<{ reaped: number, scanned: number, errors: string[] }>}
  */
-export async function reapZombies({ pool = defaultPool, idleMinutes = DEFAULT_IDLE_MINUTES, exemptTypes = DEFAULT_EXEMPT_TASK_TYPES } = {}) {
+export async function reapZombies({ pool = defaultPool, idleMinutes = DEFAULT_IDLE_MINUTES, ctx = {} } = {}) {
   const result = { reaped: 0, scanned: 0, errors: [] };
 
-  console.log(`[zombie-reaper] Scanning for zombie in_progress tasks (idle > ${idleMinutes} min, exempt: ${exemptTypes.join(',')})...`);
+  console.log(`[zombie-reaper] Scanning for zombie in_progress tasks (idle > ${idleMinutes} min)...`);
 
-  // SELECT: 找出所有超时 in_progress 任务（豁免 task_type 用 SQL NOT IN 提前过滤）
+  // SELECT: 找出所有超时 in_progress 任务，SELECT 含 executor_kind/last_attempt_at/claimed_by 供 assessTaskLiveness 使用
   let zombies;
   try {
     const selectResult = await pool.query(
-      `SELECT id, title, task_type
+      `SELECT id, title, task_type, executor_kind, last_attempt_at, claimed_by, updated_at
        FROM tasks
        WHERE status = 'in_progress'
          AND updated_at < NOW() - INTERVAL '${idleMinutes} minutes'
-         AND (task_type IS NULL OR task_type != ALL($1::text[]))
        ORDER BY updated_at ASC
-       LIMIT 100`,
-      [exemptTypes]
+       LIMIT 100`
     );
     zombies = selectResult.rows;
     result.scanned = zombies.length;
@@ -78,27 +69,54 @@ export async function reapZombies({ pool = defaultPool, idleMinutes = DEFAULT_ID
     return result;
   }
 
-  console.warn(`[zombie-reaper] Found ${zombies.length} zombie task(s) — marking failed`);
+  console.warn(`[zombie-reaper] Found ${zombies.length} zombie task(s) — assessing liveness`);
 
-  // UPDATE: 逐行标 failed（独立 try/catch，单行失败不阻断）
+  // UPDATE: 逐行按合同处置（独立 try/catch，单行失败不阻断）
   for (const task of zombies) {
     try {
-      await pool.query(
-        `UPDATE tasks
-         SET status = 'failed',
-             error_message = $1,
-             completed_at = NOW(),
-             updated_at = NOW()
-         WHERE id = $2
-           AND status = 'in_progress'`,
-        [`[reaper] zombie: in_progress idle >${idleMinutes}min`, task.id]
-      );
-      result.reaped++;
-      console.warn(
-        `[zombie-reaper] Reaped zombie task id=${task.id} title=${JSON.stringify(task.title || '')}`
-      );
+      const liveness = await assessTaskLiveness(task, ctx);
+
+      // alive / unknown → fail-open，跳过
+      if (liveness.verdict === 'alive' || liveness.verdict === 'unknown') {
+        console.log(`[zombie-reaper] Skip task id=${task.id} verdict=${liveness.verdict}`);
+        continue;
+      }
+
+      // dead — 按 onStale 分支处置
+      if (liveness.onStale === 'fail') {
+        await pool.query(
+          `UPDATE tasks
+           SET status = 'failed',
+               error_message = $1,
+               completed_at = NOW(),
+               updated_at = NOW()
+           WHERE id = $2
+             AND status = 'in_progress'`,
+          [`[reaper] zombie: in_progress idle >${idleMinutes}min`, task.id]
+        );
+        result.reaped++;
+        console.warn(
+          `[zombie-reaper] Reaped (failed) zombie task id=${task.id} title=${JSON.stringify(task.title || '')}`
+        );
+      } else if (liveness.onStale === 'release-claim-and-alert') {
+        await pool.query(
+          `UPDATE tasks
+           SET status = 'queued',
+               claimed_by = NULL,
+               claimed_at = NULL,
+               updated_at = NOW()
+           WHERE id = $1
+             AND status = 'in_progress'`,
+          [task.id]
+        );
+        result.reaped++;
+        console.warn(`[reaper] headed-session stale: released claim id=${task.id}`);
+      } else {
+        // 其他 onStale（requeue/reignite/never 等）→ 跳过，由专属守护刀处理
+        console.log(`[zombie-reaper] Skip task id=${task.id} onStale=${liveness.onStale} (not handled by reaper)`);
+      }
     } catch (err) {
-      const msg = `UPDATE failed for task ${task.id}: ${err.message}`;
+      const msg = `task ${task.id}: ${err.message}`;
       result.errors.push(msg);
       console.error(`[zombie-reaper] ${msg}`);
     }
@@ -119,10 +137,10 @@ export async function reapZombies({ pool = defaultPool, idleMinutes = DEFAULT_ID
  * @param {number} [opts.idleMinutes] - idle 阈值（分钟）
  * @returns {NodeJS.Timeout} setInterval 返回的 timer ID
  */
-export function startZombieReaper({ pool = defaultPool, idleMinutes = DEFAULT_IDLE_MINUTES, exemptTypes = DEFAULT_EXEMPT_TASK_TYPES } = {}) {
+export function startZombieReaper({ pool = defaultPool, idleMinutes = DEFAULT_IDLE_MINUTES, ctx = {} } = {}) {
   const timer = setInterval(async () => {
     try {
-      await reapZombies({ pool, idleMinutes, exemptTypes });
+      await reapZombies({ pool, idleMinutes, ctx });
     } catch (err) {
       console.error('[zombie-reaper] Unexpected error during reap:', err.message);
     }

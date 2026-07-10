@@ -1287,12 +1287,8 @@ async function executeTick() {
   }
 
   // 6.6. Dead task reset — execution_attempts=0 stuck tasks (in_progress/queued > 10min) → queued
-  //      排除 skill-relay 任务（P1 bug 39b97ade / 今日两次实证 a3d61486、4cedf175）：
-  //      skill-relay 路径（harness-skill-relay.js::spawnSkillRelaySession）不走 LangGraph 的
-  //      fresh-start 分支，execution_attempts 永远停在 0；relay session 靠外部容器自证存活，
-  //      tasks.updated_at 长时间不动是正常态、不是"死"——这条通用扫描会误伤活着的 relay 任务，
-  //      被重新 claim 后再次 spawn，撞上仍在跑的旧容器（双 spawn 抽走原 session 工作目录）。
-  //      对齐 #3594 harness-watchdog.js 区段A/B 先例排除写法。
+  //      T2: 改用 executor_kind 白名单（brain-local / bridge）精确限定范围，
+  //      避免误伤 relay-container / headed-session / external-worker 等执行者。
   try {
     const deadResult = await pool.query(`
       UPDATE tasks
@@ -1300,7 +1296,7 @@ async function executeTick() {
       WHERE execution_attempts = 0
         AND status IN ('in_progress', 'queued')
         AND updated_at < NOW() - INTERVAL '10 minutes'
-        AND (payload->>'orchestrator') IS DISTINCT FROM 'skill-relay'
+        AND executor_kind IN ('brain-local', 'bridge')
       RETURNING id, title
     `);
     if (deadResult.rowCount > 0) {

@@ -77,4 +77,24 @@ describe('bluegreen_swap', () => {
     expect(calls).toMatch(/rm -f cecelia-node-brain(?!-green)/); // blue 被删
     expect(code).toBe(0);
   });
+
+  it('send_bark 在无 jq 的 PATH 下 source + 调用不非零退出（无 BARK_TOKEN 静默跳过）', () => {
+    // PATH 仅保留 /usr/bin:/bin，排除任何带 jq 的目录
+    let code = 0;
+    let stdout = '';
+    try {
+      stdout = execSync(
+        `bash -c 'set -e; source "${BG_LIB}"; send_bark "test-no-jq"'`,
+        {
+          env: { ...process.env, HOME: tmp, PATH: '/usr/bin:/bin' },
+          stdio: 'pipe',
+        }
+      ).toString();
+    } catch (e) {
+      code = e.status || 1;
+      stdout = (e.stdout || '').toString() + (e.stderr || '').toString();
+    }
+    expect(code).toBe(0);
+    expect(stdout).toMatch(/跳过推送|已推送|推送失败/);
+  });
 });
