@@ -85,3 +85,16 @@ describe('generateDecision 写入去重（T8）', () => {
     expect(result.decision_id).toBe('new-decision-id');
   });
 });
+
+describe('migration 330 清理条件（T8）', () => {
+  it('DELETE 必须同时限定 topic 空 + decision 空 + trigger 白名单三重条件', async () => {
+    const { readFileSync } = await import('node:fs');
+    const sql = readFileSync(
+      new URL('../../migrations/330_decisions_blank_cleanup.sql', import.meta.url),
+      'utf8'
+    );
+    expect(sql).toContain("(topic IS NULL OR topic = '')");
+    expect(sql).toContain("(decision IS NULL OR decision = '')");
+    expect(sql).toContain("trigger IN ('tick', 'consciousness_loop')");
+  });
+});
