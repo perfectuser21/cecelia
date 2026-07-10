@@ -17,6 +17,8 @@ import { readdirSync, readFileSync, existsSync } from 'fs';
 import pool from '../db.js';
 import { emit } from '../event-bus.js';
 import { processExists } from '../platform-utils.js';
+import { assessTaskLiveness } from '../executor-contracts.js';
+import { sendFeishu } from '../notifier.js';
 
 const execAsync = promisify(exec);
 
@@ -614,13 +616,12 @@ async function archiveOldTasks() {
 async function restartStuckExecutors() {
   const client = await pool.connect();
   try {
-    // 扫描卡住的任务
+    // T2：删 content-pipeline 硬编码特判，改用 assessTaskLiveness 合同判活
     const stuckTasksResult = await client.query(`
-      SELECT id, title, started_at, payload
+      SELECT id, title, started_at, payload, executor_kind, updated_at, claimed_by, last_attempt_at
       FROM tasks
       WHERE status = 'in_progress'
         AND updated_at < NOW() - INTERVAL '30 minutes'
-        AND task_type != 'content-pipeline'
     `);
 
     if (stuckTasksResult.rows.length === 0) {
@@ -628,48 +629,64 @@ async function restartStuckExecutors() {
       return { executorsRestarted: 0 };
     }
 
-    // 读取 slot 信息获取 PID 映射
+    // 读取 slot 信息获取 PID 映射（供 brain-local probe 使用）
     const slotInfo = readSlotInfo();
+    const activeProcesses = new Map();
+    for (const [taskId, info] of slotInfo.entries()) {
+      activeProcesses.set(taskId, { pid: info.pid });
+    }
 
     let restartedCount = 0;
     let stuckButAliveCount = 0;
+    let releasedCount = 0;
 
     for (const task of stuckTasksResult.rows) {
-      const info = slotInfo.get(task.id);
-      const pid = info?.pid;
+      const { verdict, onStale, kind } = await assessTaskLiveness(task, { activeProcesses });
 
-      if (!pid) {
-        // 没有 PID 记录，直接重置
-        await client.query(`
-          UPDATE tasks
-          SET status = 'queued', claimed_by = NULL, claimed_at = NULL, started_at = NULL, updated_at = NOW()
-          WHERE id = $1
-        `, [task.id]);
-        console.log(`[Healing] Reset stuck task without PID: ${task.title}`);
-        restartedCount++;
+      if (verdict === 'alive') {
+        console.log(`[Healing] Task alive (kind=${kind}): ${task.title}`);
+        stuckButAliveCount++;
         continue;
       }
 
-      // 检查进程是否存活
-      const isAlive = isProcessAlive(pid);
+      if (verdict === 'unknown') {
+        // fail-open：unknown 一律不杀，仅告警
+        console.warn(`[Healing] Task liveness unknown (kind=${kind}), skipping: ${task.id}`);
+        continue;
+      }
 
-      if (!isAlive) {
-        // 进程已死，重置任务
+      // verdict=dead
+      if (onStale === 'fail') {
+        // brain-local：重置回 queued
         await client.query(`
           UPDATE tasks
           SET status = 'queued', claimed_by = NULL, claimed_at = NULL, started_at = NULL, updated_at = NOW()
           WHERE id = $1
         `, [task.id]);
-        console.log(`[Healing] Restarted stuck executor (process dead): ${task.title} (pid=${pid})`);
+        console.log(`[Healing] Restarted stuck executor (kind=${kind}, probe=dead): ${task.title}`);
         restartedCount++;
+
+      } else if (onStale === 'release-claim-and-alert') {
+        // headed-session：绝不 failed，释放 claim 回 queued + 飞书告警
+        await client.query(`
+          UPDATE tasks
+          SET status = 'queued', claimed_by = NULL, claimed_at = NULL, started_at = NULL, updated_at = NOW()
+          WHERE id = $1
+        `, [task.id]);
+        releasedCount++;
+        const alertMsg = `[healing] headed-session 已断开，释放 claim → queued: task=${task.id} title=${task.title}`;
+        console.warn(`[Healing] ${alertMsg}`);
+        sendFeishu(alertMsg).catch(e =>
+          console.error('[Healing] feishu alert failed:', e.message)
+        );
+
       } else {
-        // 进程存活但卡住，记录日志
-        console.log(`[Healing] Task stuck but process alive (needs attention): ${task.title} (pid=${pid})`);
-        stuckButAliveCount++;
+        // reignite/requeue/never → 专属组件负责
+        console.log(`[Healing] task=${task.id} kind=${kind} onStale=${onStale} — skip`);
       }
     }
 
-    console.log(`[Healing] restart_stuck_executors: restarted=${restartedCount}, stuck_but_alive=${stuckButAliveCount}`);
+    console.log(`[Healing] restart_stuck_executors: restarted=${restartedCount}, released=${releasedCount}, stuck_but_alive=${stuckButAliveCount}`);
     return { executorsRestarted: restartedCount };
   } catch (error) {
     console.error('[Healing] Failed to restart stuck executors:', error.message);

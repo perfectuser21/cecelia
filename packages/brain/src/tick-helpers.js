@@ -122,8 +122,13 @@ export async function autoFailTimedOutTasks(inProgressTasks) {
 
     const elapsed = (Date.now() - new Date(triggeredAt).getTime()) / (1000 * 60);
     if (elapsed > DISPATCH_TIMEOUT_MINUTES) {
-      // Kill the actual process before marking failed to prevent orphans
-      killProcess(task.id);
+      // headed-session 绝不自动 failed（07-10 决策：用户走了任务没坏，zombie-reaper 负责释放 claim）
+      if (task.executor_kind === 'headed-session') continue;
+
+      // Kill the actual process before marking failed to prevent orphans（仅 brain-local）
+      if (!task.executor_kind || task.executor_kind === 'brain-local') {
+        killProcess(task.id);
+      }
       // Write structured error details for retry-analyzer
       const errorDetails = {
         type: 'timeout',
