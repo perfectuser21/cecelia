@@ -211,8 +211,13 @@ for _retry in 1 2 3 4 5; do
     break
   fi
   if [[ $_retry -lt 5 ]]; then
-    _sleep=$(( (_retry - 1) * 3 + 3 ))
-    echo "[entrypoint] harness callback attempt ${_retry}/5 失败，${_sleep}s 后重试..."
+    case $_retry in
+      1) _sleep=3 ;;
+      2) _sleep=6 ;;
+      3) _sleep=12 ;;
+      *) _sleep=24 ;;
+    esac
+    echo "[entrypoint] harness callback attempt ${_retry}/5 失败，${_sleep}s 后重试（指数退避）..."
     sleep "$_sleep"
   fi
 done

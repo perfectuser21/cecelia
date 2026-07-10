@@ -326,8 +326,8 @@ SQLEOF
   fi
 
   # ── HTTP POST fallback（原有 curl 逻辑）────────────────────────────────────
-  # 重试逻辑：最多 3 次，指数退避（sleep 2 / sleep 4 / sleep 8）
-  local max_retries=3
+  # 重试逻辑：最多 5 次，指数退避（覆盖 brain 蓝绿切换 ~60s 不可用窗口）
+  local max_retries=5
   local retry=0
   local curl_exit=1
 
@@ -354,12 +354,13 @@ SQLEOF
 
     retry=$((retry + 1))
     if [[ $retry -lt $max_retries ]]; then
-      # 指数退避：retry 1 → sleep 2, retry 2 → sleep 4, retry 3 → sleep 8
+      # 指数退避：3 / 6 / 12 / 24s — 5 次总覆盖 >60s 不可用窗口
       local delay
       case $retry in
-        1) delay=2 ;; # sleep 2
-        2) delay=4 ;; # sleep 4
-        *) delay=8 ;; # sleep 8
+        1) delay=3 ;;
+        2) delay=6 ;;
+        3) delay=12 ;;
+        *) delay=24 ;;
       esac
       echo "[cecelia-run] webhook 回调失败 (curl exit=$curl_exit), ${delay}s 后重试 ($retry/$max_retries)..." >&2
       sleep $delay
