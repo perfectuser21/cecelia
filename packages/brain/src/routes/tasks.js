@@ -6,6 +6,7 @@ import { routeTask, TASK_TYPE_AGENT_MAP } from '../tick-helpers.js';
 import { identifyWorkType, getTaskLocation as _getTaskLocation, routeTaskCreate, getValidTaskTypes, LOCATION_MAP, diagnoseKR } from '../task-router.js';
 import { getTaskWeights as _getTaskWeights } from '../task-weight.js';
 import { classifyLearningType } from './shared.js';
+import { generateL0Summary } from '../memory-utils.js';
 import { publishTaskCreated as _publishTaskCreated } from '../events/taskEvents.js';
 import { getQuarantinedTasks, getQuarantineStats, releaseTask, quarantineTask, QUARANTINE_REASONS, REVIEW_ACTIONS } from '../quarantine.js';
 import { triggerCeceliaRun, checkCeceliaRunAvailable } from '../executor.js';
@@ -279,11 +280,11 @@ router.post('/learnings-received', async (req, res) => {
         const { rows } = await pool.query(
           `INSERT INTO learnings
              (title, category, content, trigger_source, trigger_event, digested,
-              source_branch, source_pr, repo, task_id)
+              source_branch, source_pr, repo, task_id, summary)
            VALUES ($1, 'dev_experience', $2, 'dev_workflow', 'learnings_received', false,
-                   $3, $4, $5, $6)
+                   $3, $4, $5, $6, $7)
            RETURNING id`,
-          [title, step, branch_name || null, pr_number ? String(pr_number) : null, repo, task_id || null]
+          [title, step, branch_name || null, pr_number ? String(pr_number) : null, repo, task_id || null, generateL0Summary(step)]
         );
         if (rows[0]?.id) {
           results.learnings_inserted.push(rows[0].id);
