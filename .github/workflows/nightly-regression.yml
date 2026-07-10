@@ -395,26 +395,23 @@ jobs:
             esac
           }
 
-          BODY="## Nightly 刀A 全量回归失败
-
-**日期**: $TODAY
-**Run**: $RUN_URL
-
-### 各 Job 结果
-
-$(format_result "Brain Unit 全量 (4 shards)" "$BRAIN_UNIT")
-$(format_result "Brain Integration" "$BRAIN_INT")
-$(format_result "E2E 贯通冒烟" "$E2E")
-$(format_result "Real-Env Smoke (Brain 容器)" "$REAL_ENV")
-$(format_result "Workspace Tests" "$WS")
-
-### 处理方式
-
-- 排查上方失败 job 的日志
-- 若是 flaky test：在 re-run 通过后关闭此 Issue
-- 若是真实 regression：在 fix PR 合并后关闭此 Issue
-
-> 此 Issue 由 Nightly Regression Gate (刀A) 自动创建，不阻塞 PR 合并。"
+          # 不能在 run 块里写顶格多行字符串——YAML 把顶格 "**日期**" 解析成 alias，
+          # 整个 workflow 文件 unparseable（每次 push 产生 0-job startup failure，
+          # 刀A 完全失效且 dispatch 422，2026-07-10 实锤）。用 $'\n' 拼接。
+          BODY="## Nightly 刀A 全量回归失败"
+          BODY="$BODY"$'\n\n'"**日期**: $TODAY"
+          BODY="$BODY"$'\n'"**Run**: $RUN_URL"
+          BODY="$BODY"$'\n\n'"### 各 Job 结果"$'\n'
+          BODY="$BODY"$'\n'"$(format_result "Brain Unit 全量 (4 shards)" "$BRAIN_UNIT")"
+          BODY="$BODY"$'\n'"$(format_result "Brain Integration" "$BRAIN_INT")"
+          BODY="$BODY"$'\n'"$(format_result "E2E 贯通冒烟" "$E2E")"
+          BODY="$BODY"$'\n'"$(format_result "Real-Env Smoke (Brain 容器)" "$REAL_ENV")"
+          BODY="$BODY"$'\n'"$(format_result "Workspace Tests" "$WS")"
+          BODY="$BODY"$'\n\n'"### 处理方式"$'\n'
+          BODY="$BODY"$'\n'"- 排查上方失败 job 的日志"
+          BODY="$BODY"$'\n'"- 若是 flaky test：在 re-run 通过后关闭此 Issue"
+          BODY="$BODY"$'\n'"- 若是真实 regression：在 fix PR 合并后关闭此 Issue"
+          BODY="$BODY"$'\n\n'"> 此 Issue 由 Nightly Regression Gate (刀A) 自动创建，不阻塞 PR 合并。"
 
           gh issue create \
             --repo "${{ github.repository }}" \

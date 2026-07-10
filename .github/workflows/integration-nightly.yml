@@ -165,24 +165,22 @@ jobs:
             exit 0
           fi
 
-          BODY="## Integration Nightly 失败报告
-
-**日期**: ${TODAY}
-**CI Run**: ${RUN_URL}
-
-### 覆盖范围（刀B：跨组件 E2E）
-- Brain + 真 Postgres 全量 migrations
-- 关键路由：POST /tasks / POST /route-task
-- 回调贯通：PATCH /tasks/:id → DB 最终态
-- executor_kind 字段（migration 329）
-
-### 排查建议
-1. 查看 CI Run 日志中的 ❌ 失败项
-2. 确认全量 migrations 完整（migration 329 executor_kind）
-3. 确认 Brain 容器正常启动（Brain 就绪步骤日志）
-4. 确认关键路由端点响应正常
-
-> 本 Issue 由 integration-nightly.yml 自动创建。修复后将在下次绿跑时自动关闭。"
+          # 不能在 run 块里写顶格多行字符串——YAML 把顶格 "**日期**" 解析成 alias，
+          # 整个 workflow unparseable（0-job startup failure，刀B 完全失效，07-10 实锤）。
+          BODY="## Integration Nightly 失败报告"
+          BODY="$BODY"$'\n\n'"**日期**: ${TODAY}"
+          BODY="$BODY"$'\n'"**CI Run**: ${RUN_URL}"
+          BODY="$BODY"$'\n\n'"### 覆盖范围（刀B：跨组件 E2E）"
+          BODY="$BODY"$'\n'"- Brain + 真 Postgres 全量 migrations"
+          BODY="$BODY"$'\n'"- 关键路由：POST /tasks / POST /route-task"
+          BODY="$BODY"$'\n'"- 回调贯通：PATCH /tasks/:id → DB 最终态"
+          BODY="$BODY"$'\n'"- executor_kind 字段（migration 329）"
+          BODY="$BODY"$'\n\n'"### 排查建议"
+          BODY="$BODY"$'\n'"1. 查看 CI Run 日志中的 ❌ 失败项"
+          BODY="$BODY"$'\n'"2. 确认全量 migrations 完整（migration 329 executor_kind）"
+          BODY="$BODY"$'\n'"3. 确认 Brain 容器正常启动（Brain 就绪步骤日志）"
+          BODY="$BODY"$'\n'"4. 确认关键路由端点响应正常"
+          BODY="$BODY"$'\n\n'"> 本 Issue 由 integration-nightly.yml 自动创建。修复后将在下次绿跑时自动关闭。"
 
           gh issue create \
             --repo "${REPO}" \
