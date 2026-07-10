@@ -12,7 +12,7 @@ WEBHOOK_URL="${WEBHOOK_URL:-http://localhost:5221/api/brain/execution-callback}"
 shopt -s nullglob
 
 for f in "$QUEUE_DIR"/*.json; do
-  if curl -sS "$WEBHOOK_URL" -X POST \
+  if curl -sS --fail "$WEBHOOK_URL" -X POST \
       -H "Content-Type: application/json" \
       ${WEBHOOK_TOKEN:+-H "X-Cecilia-Token: $WEBHOOK_TOKEN"} \
       -d @"$f" --max-time 10 >/dev/null 2>&1; then

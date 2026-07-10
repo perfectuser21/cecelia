@@ -50,6 +50,17 @@ describe('flush-callback-queue.sh 死信队列自愈', () => {
     expect(existsSync(join(dir, 'task-a.json'))).toBe(false);
   });
 
+  it('webhook 返回 500:文件保留,exit 仍 0(验证 curl --fail 生效)', async () => {
+    writeFileSync(join(dir, 'task-e.json'), '{"task_id":"e"}');
+    const srv = createServer((req, res) => { res.writeHead(500); res.end('{"error":"boom"}'); });
+    await new Promise((r) => srv.listen(0, '127.0.0.1', r));
+    const port = srv.address().port;
+    const out = await runFlushAsync(dir, `http://127.0.0.1:${port}/cb`);
+    srv.close();
+    expect(out.status).toBe(0);
+    expect(existsSync(join(dir, 'task-e.json'))).toBe(true);
+  });
+
   it('webhook 不可达:文件保留,exit 仍 0 不阻断主流程', () => {
     writeFileSync(join(dir, 'task-b.json'), '{"task_id":"b"}');
     const out = runFlush(dir, 'http://127.0.0.1:1/cb');
