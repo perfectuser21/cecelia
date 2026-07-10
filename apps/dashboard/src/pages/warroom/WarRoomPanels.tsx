@@ -282,9 +282,9 @@ export function DecisionStream() {
   );
 }
 
-/** Issues 面板：全局最近 issues（战斗室指挥台，T6） */
+/** Issues 面板：全局 open issues（战斗室指挥台，T6；status=open=未关闭，避免被历史已关 issue 淹没） */
 export function IssuesPanel() {
-  const resp = usePolled<unknown>('/api/brain/issues?limit=8');
+  const resp = usePolled<unknown>('/api/brain/issues?status=open&limit=8');
   const rows = issueRows(resp);
   return (
     <div className="rounded-lg border border-slate-800/60 bg-slate-900/20 p-3">
