@@ -55,6 +55,7 @@ skill-relay-smoke.sh
 slot-accounting-smoke.sh
 staging-e2e-endpoint-smoke.sh
 staging-unknown-line-smoke.sh
+t2-cumulative-fr-smoke.sh
 t2-liveness-four-blades-smoke.sh
 t4-claim-protocol-smoke.sh
 t6-battle-command-smoke.sh
