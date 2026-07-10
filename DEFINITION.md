@@ -469,6 +469,7 @@ queued → in_progress → completed
 | review | US | 审查员 (/review) | Sonnet / M2.5-highspeed | 默认 minimax |
 | qa | US | 小检 (/qa) | Sonnet / M2.5-highspeed | 默认 minimax |
 | audit | US | 小审 (/audit) | Sonnet / M2.5-highspeed | 默认 minimax |
+| ci_patrol | US | CI/CD 巡检 (/ci-patrol) | Sonnet / - | 默认 anthropic |
 | explore | HK | 快速调研 (/explore) | - / M2.1 | 固定 minimax |
 | knowledge | US | 知识记录 (/knowledge) | Sonnet / - | 默认 anthropic |
 | codex_qa | 西安 | Codex 免疫检查 | Codex | 固定 openai |
