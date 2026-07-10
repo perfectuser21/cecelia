@@ -396,6 +396,11 @@ main() {
 
   # 获取锁
   SLOT="$(get_lock)"
+
+  # 死信队列自愈:补投上次 HTTP 回调全败的 payload(失败不阻断)
+  WEBHOOK_URL="$WEBHOOK_URL" WEBHOOK_TOKEN="${WEBHOOK_TOKEN:-}" \
+    bash "$(dirname "${BASH_SOURCE[0]}")/flush-callback-queue.sh" || true
+
   CLEANUP_WORKTREE=""
   CHILD_PID=""
 
