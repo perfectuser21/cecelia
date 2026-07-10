@@ -1,14 +1,12 @@
-// B44 — Red commit marker
+// B44 — bug regression test: GAN 改回同步，修复 propose_branch 丢失导致 pipeline 全卡 (#3199)
 import { describe, it, expect } from 'vitest';
-import { fileURLToPath } from 'url';
 import { readFileSync } from 'fs';
 import { resolve } from 'path';
 
-const __filename = fileURLToPath(import.meta.url);
-const REPO_ROOT = resolve(__filename, '..', '..', '..', '..');
-const SRC = resolve(REPO_ROOT, 'packages/brain/src/workflows/harness-gan.graph.js');
+// vitest 从 packages/brain/ 运行，process.cwd() = packages/brain/
+const SRC = resolve(process.cwd(), 'src/workflows/harness-gan.graph.js');
 
-describe('B44 — harness pipeline sync regression [BEHAVIOR] (Red)', () => {
+describe('B44 — harness pipeline sync regression [BEHAVIOR]', () => {
   it('harness-gan.graph.js 不含 kickoff:true 返回（WS3 async 回退）', () => {
     const src = readFileSync(SRC, 'utf8');
     expect(src).not.toMatch(/kickoff:\s*true/);

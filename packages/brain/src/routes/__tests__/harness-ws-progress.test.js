@@ -4,13 +4,13 @@ import request from 'supertest';
 
 // Mock db.js before importing router (vi.mock is hoisted automatically)
 const mockPool = vi.hoisted(() => ({ query: vi.fn() }));
-vi.mock('../../../../packages/brain/src/db.js', () => ({ default: mockPool }));
+vi.mock('../../db.js', () => ({ default: mockPool }));
 
 let router;
 
 beforeAll(async () => {
   vi.resetModules();
-  const mod = await import('../../../../packages/brain/src/routes/harness.js');
+  const mod = await import('../harness.js');
   router = mod.default;
 });
 
@@ -29,8 +29,8 @@ describe('Brain API — GET /initiative/:id/ws-progress [BEHAVIOR]', () => {
   it('schema 完整性: 返回顶层 keys 精确等于 ["initiative_id","workstreams"]', async () => {
     const testId = '11111111-1111-1111-1111-111111111111';
     mockPool.query
-      .mockResolvedValueOnce({ rows: [{ id: testId }] })  // initiative exists
-      .mockResolvedValueOnce({ rows: [] });                // no checkpoints
+      .mockResolvedValueOnce({ rows: [{ id: testId }] })
+      .mockResolvedValueOnce({ rows: [] });
 
     const app = createApp();
     const res = await request(app).get(`/initiative/${testId}/ws-progress`);
@@ -80,8 +80,8 @@ describe('Brain API — GET /initiative/:id/ws-progress [BEHAVIOR]', () => {
     mockPool.query
       .mockResolvedValueOnce({ rows: [{ id: testId }] })
       .mockResolvedValueOnce({ rows: [{ thread_id: `harness-task:${testId}:ws1` }] })
-      .mockResolvedValueOnce({ rows: [] })  // blob rows
-      .mockResolvedValueOnce({ rows: [] }); // thread_lookup fallback
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [] });
 
     const app = createApp();
     const res = await request(app).get(`/initiative/${testId}/ws-progress`);
