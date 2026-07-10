@@ -16,6 +16,7 @@ import { generateLearningEmbeddingAsync } from './embedding-service.js';
 import { generateL0Summary } from './memory-utils.js';
 import { callLLM } from './llm-caller.js';
 import { createTask } from './actions.js';
+import { pushCaptureAtom } from './capture-inbox.js';
 
 // Strategy adjustment whitelist (safety measure)
 const ADJUSTABLE_PARAMS = {
@@ -115,6 +116,15 @@ export async function recordLearning(analysis) {
 
     const learning = result.rows[0];
     console.log(`[learning] Recorded learning: ${learning.id}`);
+
+    // T10 统一收件箱：真 learning（噪音已在入口拦截）落库后顺手进箱
+    await pushCaptureAtom(pool, {
+      content: `learning: ${title}\n${learning.summary || ''}`,
+      targetType: 'learning',
+      targetSubtype: learning.category || category,
+      routedToTable: 'learnings',
+      routedToId: learning.id,
+    });
 
     // 强制绑定：RCA learning 触发 dev task（Insight-to-Action 闭环）
     // T9: 加 confidence 门槛——低置信 RCA 只落 learning 不建任务，防任务队列噪音

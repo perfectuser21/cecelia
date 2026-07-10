@@ -25,6 +25,9 @@ vi.mock('../line-dreaming.js', () => ({
 vi.mock('../ledger-hygiene.js', () => ({
   maybeRunLedgerHygiene: vi.fn().mockResolvedValue({ triggered: false }),
 }));
+vi.mock('../capture-triage.js', () => ({
+  runCaptureTriage: vi.fn().mockResolvedValue({ skipped: true, processed: 0, failed: 0 }),
+}));
 
 import {
   runSchedulerJobsOnce,
@@ -41,6 +44,7 @@ import { scheduleDailyBackup } from '../daily-backup-scheduler.js';
 import { maybeGenerateBattleReport } from '../battle-report.js';
 import { maybeRunLineDreaming } from '../line-dreaming.js';
 import { maybeRunLedgerHygiene } from '../ledger-hygiene.js';
+import { runCaptureTriage } from '../capture-triage.js';
 
 function makePool() {
   return { query: vi.fn().mockResolvedValue({ rows: [] }) };
@@ -51,9 +55,9 @@ describe('scheduler-jobs 注册表', () => {
     vi.clearAllMocks();
   });
 
-  it('JOBS 注册了 9 个 job', () => {
+  it('JOBS 注册了 10 个 job', () => {
     expect(JOBS.map((j) => j.name)).toEqual([
-      'arch-review', 'ci-patrol', 'strategy-trigger', 'conversation-digest', 'capture-digestion', 'daily-backup', 'line-dreaming', 'ledger-hygiene', 'battle-report',
+      'arch-review', 'ci-patrol', 'strategy-trigger', 'conversation-digest', 'capture-digestion', 'daily-backup', 'line-dreaming', 'ledger-hygiene', 'battle-report', 'capture-triage',
     ]);
   });
 
@@ -69,7 +73,8 @@ describe('scheduler-jobs 注册表', () => {
     expect(maybeRunLineDreaming).toHaveBeenCalledWith(pool);
     expect(maybeRunLedgerHygiene).toHaveBeenCalledWith(pool);
     expect(maybeGenerateBattleReport).toHaveBeenCalledWith(pool);
-    expect(results).toHaveLength(9);
+    expect(runCaptureTriage).toHaveBeenCalledWith(pool);
+    expect(results).toHaveLength(10);
     expect(results.every((r) => r.ok)).toBe(true);
   });
 
@@ -79,7 +84,7 @@ describe('scheduler-jobs 注册表', () => {
     const results = await runSchedulerJobsOnce(pool);
     expect(results[0]).toMatchObject({ name: 'arch-review', ok: false, error: 'boom' });
     expect(results.slice(1).every((r) => r.ok)).toBe(true);
-    expect(results).toHaveLength(9);
+    expect(results).toHaveLength(10);
     expect(runCaptureDigestion).toHaveBeenCalled();
   });
 
@@ -98,7 +103,7 @@ describe('scheduler-jobs 注册表', () => {
     const pool = makePool();
     await runSchedulerJobsOnce(pool);
     const sentinelCalls = pool.query.mock.calls.filter(([sql]) => sql.includes('working_memory'));
-    expect(sentinelCalls).toHaveLength(9);
+    expect(sentinelCalls).toHaveLength(10);
     expect(sentinelCalls[0][0]).toMatch(/ON CONFLICT \(key\) DO UPDATE/);
     expect(sentinelCalls[0][1][0]).toBe(`${SENTINEL_KEY_PREFIX}arch-review`);
     const payload = JSON.parse(sentinelCalls[0][1][1]);
@@ -109,7 +114,7 @@ describe('scheduler-jobs 注册表', () => {
   it('哨兵写入失败不影响 job 结果也不抛', async () => {
     const pool = { query: vi.fn().mockRejectedValue(new Error('db down')) };
     const results = await runSchedulerJobsOnce(pool);
-    expect(results).toHaveLength(9);
+    expect(results).toHaveLength(10);
     expect(results.every((r) => r.ok)).toBe(true);
   });
 });
@@ -169,6 +174,15 @@ describe('scheduler-jobs loop 幂等与重入守卫', () => {
     stopSchedulerJobsLoop();
     await vi.advanceTimersByTimeAsync(60 * 1000);
     expect(triggerArchReview).not.toHaveBeenCalled();
+  });
+});
+
+describe('capture-triage job 注册', () => {
+  it('capture-triage 已注册（needsPool=true）', () => {
+    const job = JOBS.find((j) => j.name === 'capture-triage');
+    expect(job).toBeTruthy();
+    expect(job.needsPool).toBe(true);
+    expect(typeof job.handler).toBe('function');
   });
 });
 
