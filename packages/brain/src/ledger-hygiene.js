@@ -301,7 +301,8 @@ export async function maybeRunLedgerHygiene(pool, now = new Date()) {
     return { triggered: true, skipped: true };
   }
 
-  const today = now.toISOString().slice(0, 10);
+  // 北京日期（与 battle-report 先例一致）：UTC 21:10 已是北京次日凌晨
+  const today = new Intl.DateTimeFormat('sv-SE', { timeZone: 'Asia/Shanghai' }).format(now);
   const metrics = await computeMetrics(pool);
   const prev = await loadRatchet(pool);
   const { state, breaches } = evaluateRatchet(metrics, prev, today);
