@@ -608,12 +608,22 @@ async function onBrainListening() {
   }
 
   // Log concurrency ceiling configuration for observability
-  const { MAX_SEATS, INTERACTIVE_RESERVE, syncOrphanTasksOnStartup, _startResourcePolling } = await import('./src/executor.js');
+  const { MAX_SEATS, INTERACTIVE_RESERVE, reAttachActiveExecutors, syncOrphanTasksOnStartup, _startResourcePolling } = await import('./src/executor.js');
   console.log(`[Server] Concurrency config: MAX_SEATS=${MAX_SEATS} INTERACTIVE_RESERVE=${INTERACTIVE_RESERVE}`);
 
   // Start async resource polling — prevents execSync blocking the event loop
   _startResourcePolling();
   console.log('[Server] Resource polling started (15s interval) - async sysctl/vm_stat, no event loop block');
+
+  // Re-attach step: 从 lock slot + docker relay 容器重建 activeProcesses，
+  // 给守护器官续命（touch updated_at），防止 zombie-reaper 误杀仍活着的执行者。
+  // 必须在 syncOrphanTasksOnStartup 之前调用，确保孤儿检测能正确跳过已认领任务。
+  try {
+    const reattachResult = await reAttachActiveExecutors(pool);
+    console.log(`[Server] Re-attach: reattached=${reattachResult.reattached} touched=${reattachResult.touched} errors=${reattachResult.errors.length}`);
+  } catch (reattachErr) {
+    console.error('[Server] Re-attach failed (non-fatal):', reattachErr.message);
+  }
 
   // Sync orphan in_progress tasks with actual processes (requeue vs fail with process check)
   try {

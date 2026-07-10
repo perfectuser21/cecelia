@@ -236,4 +236,25 @@ describe('task-tasks routes — C3 服务端去重护栏（issue 655691d2）', (
     const dedupParams = mockPool.query.mock.calls[0][1];
     expect(dedupParams).toContain('goal-b');
   });
+
+  it('title 命中 in_progress 任务 → 200 + deduplicated:true', async () => {
+    const existing = { id: 'dup-2', title: 'Running Task', status: 'in_progress', task_type: 'dev', priority: 'P1', created_at: '2026-01-01T00:00:00Z' };
+    mockPool.query.mockResolvedValueOnce({ rows: [existing] });
+    const res = await request(app).post('/tasks').send({ title: 'Running Task' });
+    expect(res.status).toBe(200);
+    expect(res.body.deduplicated).toBe(true);
+    expect(res.body.status).toBe('in_progress');
+  });
+
+  it('去重查询使用正确的参数（title + goal_id + project_id）', async () => {
+    mockPool.query
+      .mockResolvedValueOnce({ rows: [] }) // dedup check
+      .mockResolvedValueOnce({ rows: [{ id: 'new-4', title: 'Task', status: 'queued', task_type: 'dev' }] });
+    await request(app).post('/tasks').send({ title: 'Task', goal_id: 'g-1', project_id: 'p-1' });
+    const [dedupSql, dedupParams] = mockPool.query.mock.calls[0];
+    expect(dedupSql).toMatch(/status IN[\s\S]*queued[\s\S]*in_progress/);
+    expect(dedupParams[0]).toBe('Task');
+    expect(dedupParams[1]).toBe('g-1');
+    expect(dedupParams[2]).toBe('p-1');
+  });
 });

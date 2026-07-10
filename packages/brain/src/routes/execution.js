@@ -131,6 +131,23 @@ router.post('/execution-callback', async (req, res) => {
     // P1-1: Dev task completed without PR → completed_no_pr
     newStatus = await maybeMarkCompletedNoPr(newStatus, pr_url, task_id, pool, 'execution-callback');
 
+    // 通用终态幂等守卫：任务已 terminal 时迟到回调返回 200 跳过，不报错
+    // 场景：brain-deploy 蓝绿 10s 不可用 → 执行者重试 → 任务已被 zombie-reaper 标 failed → 回调应静默接受
+    {
+      const TERMINAL_STATUSES = ['completed', 'completed_no_pr', 'failed', 'quota_exhausted'];
+      try {
+        const taskRow = await pool.query(
+          `SELECT status FROM tasks WHERE id = $1 LIMIT 1`, [task_id]
+        );
+        if (taskRow.rows.length > 0 && TERMINAL_STATUSES.includes(taskRow.rows[0].status)) {
+          console.log(`[execution-callback] 迟到回调跳过: task=${task_id} 已是终态 ${taskRow.rows[0].status}`);
+          return res.json({ success: true, skipped: true, reason: 'late_callback_terminal', current_status: taskRow.rows[0].status });
+        }
+      } catch (terminalGuardErr) {
+        console.warn(`[execution-callback] 终态检查失败（降级继续）: ${terminalGuardErr.message}`);
+      }
+    }
+
     // P1-0: terminal failure guard — 不允许 execution-callback 覆盖 pipeline_terminal_failure 终态
     // 场景：orchestrator 在 Xian 执行期间将 content-pipeline 设为 failed + failure_class=pipeline_terminal_failure，
     //       Xian 完成后调用 execution-callback(AI Done) 试图将状态改回 completed。
@@ -187,7 +204,10 @@ router.post('/execution-callback', async (req, res) => {
           pr_url = COALESCE($5::text, pr_url),
           pr_status = CASE WHEN $5::text IS NOT NULL THEN 'open' ELSE pr_status END,
           error_message = CASE WHEN $9::text IS NOT NULL THEN $9::text ELSE error_message END,
-          blocked_detail = CASE WHEN $10::jsonb IS NOT NULL THEN $10::jsonb ELSE blocked_detail END
+          blocked_detail = CASE WHEN $10::jsonb IS NOT NULL THEN $10::jsonb ELSE blocked_detail END,
+          updated_at = NOW(),
+          claimed_by = NULL,
+          claimed_at = NULL
         WHERE id = $1 AND status IN ('in_progress', 'queued', 'dispatched')
       `, [task_id, newStatus, JSON.stringify(lastRunResult), status, pr_url || null, isCompleted, findingsValue, prNumber, errorMessage, blockedDetail, isQuotaExhausted, execMetaJson]);
 

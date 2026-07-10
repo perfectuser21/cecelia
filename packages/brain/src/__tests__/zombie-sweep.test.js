@@ -311,6 +311,25 @@ branch refs/heads/cp-02020000-active-task`;
       const removeCalls = execSync.mock.calls.filter(c => String(c[0]).includes('worktree remove'));
       expect(removeCalls).toHaveLength(0);
     });
+
+    it('clean worktree 正常删除（git status 守卫不阻断）', async () => {
+      pool.query.mockResolvedValueOnce({ rows: [] }); // no in_progress tasks
+
+      statSync.mockReturnValue({ birthtimeMs: Date.now() - GRACE_PERIOD_MS - 1000 });
+
+      execSync.mockImplementation((cmd) => {
+        if (cmd.includes('rev-parse --show-toplevel')) return MAIN_REPO + '\n';
+        if (cmd.includes('worktree list --porcelain')) return PORCELAIN_OUTPUT;
+        if (cmd.includes('status --porcelain')) return ''; // clean
+        if (cmd.includes('worktree remove')) return '';
+        return '';
+      });
+
+      const result = await sweepStaleWorktrees();
+
+      expect(result.removed).toBe(2);
+      expect(result.skipped).toBe(0);
+    });
   });
 
   // ─── sweepOrphanProcesses ─────────────────────────────────────────────────
