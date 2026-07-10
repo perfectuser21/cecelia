@@ -7,6 +7,7 @@
  * 当前包含：
  *   - serialUnlockNext   (5c11) dev task 完成→按 sequence_order 解锁下一个 blocked task
  *   - writeReviewResult  (5c8b) 审查任务完成→写入 review_result 字段
+ *   - promoteRegressionOnHarnessMerged (T2) harness 任务 merged 终态→golden_path 冻结（dbOnly）
  */
 
 import { REVIEW_TASK_TYPES as REVIEW_TASK_TYPES_ARRAY } from './review-task-types.js';
@@ -108,4 +109,63 @@ export async function writeReviewResult(task_id, result, pool) {
   } else {
     console.warn(`[callback-postprocess] writeReviewResult: ${reviewTask.task_type} ${task_id} 无 parent_task_id，仅写入自身`);
   }
+}
+
+/**
+ * T2. harness 任务 merged 终态 → promoteToRegression（累积 FR 通电，九要素 T2）
+ *
+ * 只写 golden_path 表（dbOnly:true），yaml PR ② 本版不通电（架构文档风险条）。
+ * 多路触发幂等安全：promoteToRegression ① 为 DELETE by owner_task_id + INSERT 覆盖写。
+ * 调用点（4 处，全部 .catch 只 warn）：callback-processor.js / routes/execution.js /
+ * routes/tasks.js PATCH completed / harness-relay-watchdog.js 两处直写。
+ *
+ * @param {string} task_id
+ * @param {any}    result  - callback/PATCH body 里的 result（可 null）
+ * @param {string} pr_url  - 已知 merged PR URL（可 null，回退 tasks.pr_url / result.pr_url）
+ * @param {object} pool    - pg Pool
+ */
+export async function promoteRegressionOnHarnessMerged(task_id, result, pr_url, pool) {
+  const { rows } = await pool.query(
+    'SELECT id, task_type, ability_id, payload, pr_url FROM tasks WHERE id = $1',
+    [task_id]
+  );
+  const task = rows[0];
+  if (!task || task.task_type !== 'harness_initiative') return;
+
+  const resultObj = typeof result === 'object' && result !== null ? result : {};
+  const effectivePrUrl = pr_url || task.pr_url || resultObj.pr_url || null;
+  if (!effectivePrUrl && !resultObj.merged) {
+    console.warn(`[callback-postprocess] promoteRegression: task=${task_id} 无 merged PR 证据，跳过`);
+    return;
+  }
+
+  const payload = typeof task.payload === 'string' ? JSON.parse(task.payload) : (task.payload || {});
+  const sprintDir = payload.sprint_dir;
+  if (!sprintDir) {
+    console.warn(`[callback-postprocess] promoteRegression: task=${task_id} payload 缺 sprint_dir，跳过`);
+    return;
+  }
+
+  const { promoteToRegression } = await import('../harness-promote-regression.js');
+  const { harnessTaskWorktreePath, DEFAULT_BASE_REPO } = await import('../harness-worktree.js');
+  const { existsSync } = await import('node:fs');
+  const { join } = await import('node:path');
+  // worktree 可能已被收割 → 回退主仓（merge 后 sprint 文件已在 main；主仓常驻 main）
+  let worktreePath = payload.worktree_path || harnessTaskWorktreePath(task_id);
+  if (!existsSync(join(worktreePath, sprintDir, 'sprint-prd.md'))
+      && existsSync(join(DEFAULT_BASE_REPO, sprintDir, 'sprint-prd.md'))) {
+    worktreePath = DEFAULT_BASE_REPO;
+  }
+
+  const outcome = await promoteToRegression(
+    { pool },
+    {
+      task: { id: task.id, ability_id: task.ability_id, payload },
+      sprintDir,
+      subTasks: [{ pr_url: effectivePrUrl }],
+      worktreePath,
+      dbOnly: true,
+    }
+  );
+  console.log(`[callback-postprocess] promoteRegression: task=${task_id} dbWritten=${outcome?.dbWritten ?? false} reason=${outcome?.reason || 'ok'}`);
 }
