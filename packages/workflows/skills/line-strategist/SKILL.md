@@ -8,6 +8,7 @@ description: >
   触发场景:Brain 派发 task_type=strategist_decision 的任务;用户说"军师"、"这条线下一步做什么"、
   "帮 Line XX 决定下一个任务"、"line-strategist"、"替我判断这条线该修 bug 还是继续推进"。
   只针对单条 line 决策,不做全局分配,不做产能仲裁,不写代码。
+version: 1.1.0
 ---
 
 > **语言规则:所有输出必须使用简体中文。**
@@ -70,6 +71,10 @@ curl -s "localhost:5221/api/brain/harness/initiative-runs/$TRIGGER_TASK_ID"
 - 大量 issue 的 `journey_id` 为空(元数据卫生债)。归属判定纪律:先用 `journey_id`/`sub_area` 硬字段;为空时才允许语义推断,且推断归属的 issue 必须在留痕"快照事实"里标注"归属靠语义推断",confidence 相应下调。
 
 把快照浓缩成一段事实清单(每条带证据),写进后面的留痕里。
+
+### 手册阅读纪律(skill 分层,2026-07-10 P0 起)
+
+需要本 line 的领域背景时,只读**操作层**:本 line 的作战手册 skill(如 Line04 = `wechat-cs-troubleshooting`)+ 相关全局操作 skill(如 `windows-agent-diagnostics`)。**不读台账层**——Notion Notes `[LineXX][台账]`、learnings、历史 handoff 是"定期重写手册"的原材料,不是决策输入;拿台账当输入会放大过期结论、拖慢决策。手册里查不到的事实,回到 Step 1 的 API 快照,不要翻历史卷宗。
 
 ## Step 2:决策(优先级阶梯,从上往下第一个命中即停)
 
