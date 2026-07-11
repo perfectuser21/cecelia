@@ -133,13 +133,13 @@ describe('runCaptureTriage 四路落地', () => {
     expect(upd.params).toContain('jrn-1');
   });
 
-  it('line_backlog：createTask 未返回 task id → atom 不标 confirmed，ai_reason 标 task_create_failed', async () => {
-    createTask.mockResolvedValue({ success: true, deduplicated: true });
+  it('line_backlog：createTask dedupe_key 命中（无 task 字段）→ atom 不标 confirmed，不打 [triage:] 前缀，留待下轮重试', async () => {
+    createTask.mockResolvedValue({ success: true, deduplicated: true, dedupe_key_hit: true });
     const pool = makePool([{ id: 'a2d', target_type: 'handoff', target_subtype: 'FAIL', content: 'x', routed_to_table: 'tasks', routed_to_id: 't1' }]);
     await runCaptureTriage(pool);
     const upd = pool.updates[0];
     expect(upd.sql).not.toMatch(/status = 'confirmed'/);
-    expect(upd.params.join(' ')).toContain('[triage:task_create_failed]');
+    expect(upd.params.join(' ')).not.toMatch(/\[triage:/);
   });
 
   it('line_backlog 但源 task 无 journey_id → 留 pending_review，ai_reason 标 no_journey', async () => {

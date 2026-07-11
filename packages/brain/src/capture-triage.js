@@ -125,7 +125,9 @@ async function routeAtom(pool, atom, verdict, opts) {
     });
     const taskId = result?.task?.id;
     if (!taskId) {
-      return updateAtom(pool, atom.id, { confidence, aiReason: `[triage:task_create_failed] createTask 未返回 task id。${reason}` });
+      // dedupe_key 命中（并发/重试场景，task 大概率已存在或即将由并发方建好）：
+      // 不打 [triage:] 前缀，留待下一轮分诊重新拾取重试，避免与已存在的 task 失联却被永久归档进人工队列
+      return updateAtom(pool, atom.id, { confidence, aiReason: `createTask dedupe_key 命中，留待下轮重试。${reason}` });
     }
     return updateAtom(pool, atom.id, { status: 'confirmed', routedToTable: 'tasks', routedToId: taskId, confidence, aiReason: `[triage:line_backlog] 自动创建 task ${taskId}。${reason}` });
   }
