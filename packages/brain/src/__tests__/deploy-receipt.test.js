@@ -1,0 +1,152 @@
+/**
+ * deploy-receipt.test.js — 九要素 T4：deploy webhook 回执接线
+ *
+ * 验证 POST /api/brain/deploy 的 production / staging 两分支：
+ * - 发起部署时写 pending 回执（kind=deploy, target=production|staging）
+ * - 按真实结果核销 confirmed / failed
+ * - 鉴权失败不写回执
+ */
+
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { mkdtempSync, unlinkSync } from 'fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import express from 'express';
+import request from 'supertest';
+
+let capturedSpawnArgs = null;
+let spawnCloseHandler = null;
+
+const { recordActionReceipt, resolveActionReceipt } = vi.hoisted(() => ({
+  recordActionReceipt: vi.fn().mockResolvedValue('r-dep'),
+  resolveActionReceipt: vi.fn().mockResolvedValue(true),
+}));
+vi.mock('../receipt-collector.js', () => ({ recordActionReceipt, resolveActionReceipt }));
+
+vi.mock('../db.js', () => ({ default: { query: vi.fn() } }));
+vi.mock('../actions.js', () => ({ createTask: vi.fn(), updateTask: vi.fn() }));
+vi.mock('../llm-caller.js', () => ({ callLLM: vi.fn(), callLLMStream: vi.fn() }));
+vi.mock('../orchestrator-chat.js', () => ({ handleChat: vi.fn() }));
+vi.mock('../tick.js', () => ({ check48hReport: vi.fn() }));
+vi.mock('../task-weight.js', () => ({ getTaskWeights: vi.fn() }));
+vi.mock('../task-cleanup.js', () => ({
+  getCleanupStats: vi.fn(),
+  runTaskCleanup: vi.fn(),
+  getCleanupAuditLog: vi.fn(),
+}));
+vi.mock('../dispatch-stats.js', () => ({ getDispatchStats: vi.fn() }));
+vi.mock('../thalamus.js', () => ({ processEvent: vi.fn(), EVENT_TYPES: {} }));
+vi.mock('../decision-executor.js', () => ({ executeDecision: vi.fn() }));
+vi.mock('../suggestion-triage.js', () => ({
+  createSuggestion: vi.fn(),
+  executeTriage: vi.fn(),
+  getTopPrioritySuggestions: vi.fn(),
+  updateSuggestionStatus: vi.fn(),
+  cleanupExpiredSuggestions: vi.fn(),
+  getTriageStats: vi.fn(),
+}));
+vi.mock('../decomposition-checker.js', () => ({ runDecompositionChecks: vi.fn() }));
+vi.mock('../pr-callback-handler.js', () => ({
+  verifyWebhookSignature: vi.fn(),
+  extractPrInfo: vi.fn(),
+  handlePrMerged: vi.fn(),
+}));
+vi.mock('./shared.js', () => ({
+  resolveRelatedFailureMemories: vi.fn(),
+  getActiveExecutionPaths: vi.fn(),
+  INVENTORY_CONFIG: {},
+}));
+vi.mock('child_process', () => ({
+  spawn: (...args) => {
+    capturedSpawnArgs = args;
+    return {
+      unref: vi.fn(),
+      on: (event, handler) => { if (event === 'close') spawnCloseHandler = handler; },
+    };
+  },
+  execSync: vi.fn().mockReturnValue(Buffer.from('ok')),
+}));
+
+describe('deploy webhook 回执接线（T4）', () => {
+  const ORIG_REPO_ROOT = process.env.REPO_ROOT;
+  let app;
+
+  beforeEach(async () => {
+    vi.clearAllMocks();
+    recordActionReceipt.mockResolvedValue('r-dep');
+    resolveActionReceipt.mockResolvedValue(true);
+    capturedSpawnArgs = null;
+    spawnCloseHandler = null;
+    process.env.DEPLOY_TOKEN = 'tok';
+    // 用临时目录做 REPO_ROOT，避免 production 分支在真实仓库里落 log 文件
+    process.env.REPO_ROOT = mkdtempSync(join(tmpdir(), 'deploy-receipt-test-'));
+    // 清掉残留状态文件，否则模块启动读到 running → 409
+    try { unlinkSync('/tmp/cecelia-deploy-status.json'); } catch { /* noop */ }
+    vi.resetModules();
+    const { default: opsRouter } = await import('../routes/ops.js');
+    app = express();
+    app.use(express.json());
+    app.use('/api/brain', opsRouter);
+  });
+
+  afterEach(() => {
+    delete process.env.DEPLOY_TOKEN;
+    if (ORIG_REPO_ROOT === undefined) {
+      delete process.env.REPO_ROOT;
+    } else {
+      process.env.REPO_ROOT = ORIG_REPO_ROOT;
+    }
+    try { unlinkSync('/tmp/cecelia-deploy-status.json'); } catch { /* noop */ }
+  });
+
+  it('production deploy → 写 pending(kind=deploy/target=production)，close(0) 核销 confirmed', async () => {
+    const res = await request(app)
+      .post('/api/brain/deploy')
+      .set('Authorization', 'Bearer tok')
+      .send({ changed_paths: ['packages/brain/src/x.js'] });
+    expect(res.status).toBe(202);
+    await new Promise((r) => setTimeout(r, 50));
+    expect(recordActionReceipt).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: 'deploy', target: 'production' })
+    );
+    expect(spawnCloseHandler).toBeTypeOf('function');
+    spawnCloseHandler(0, null);
+    await new Promise((r) => setTimeout(r, 20));
+    expect(resolveActionReceipt).toHaveBeenCalledWith(
+      'r-dep', 'confirmed', expect.objectContaining({ exit_code: 0 })
+    );
+  });
+
+  it('production deploy close(1) → 核销 failed', async () => {
+    await request(app).post('/api/brain/deploy').set('Authorization', 'Bearer tok').send({});
+    await new Promise((r) => setTimeout(r, 50));
+    expect(spawnCloseHandler).toBeTypeOf('function');
+    spawnCloseHandler(1, null);
+    await new Promise((r) => setTimeout(r, 20));
+    expect(resolveActionReceipt).toHaveBeenCalledWith(
+      'r-dep', 'failed', expect.objectContaining({ exit_code: 1 })
+    );
+  });
+
+  it('鉴权失败 → 不写回执', async () => {
+    const res = await request(app)
+      .post('/api/brain/deploy')
+      .set('Authorization', 'Bearer wrong')
+      .send({});
+    expect(res.status).toBe(401);
+    await new Promise((r) => setTimeout(r, 20));
+    expect(recordActionReceipt).not.toHaveBeenCalled();
+  });
+
+  it('staging deploy 成功 → record(deploy/staging) + confirmed', async () => {
+    await request(app)
+      .post('/api/brain/deploy')
+      .set('Authorization', 'Bearer tok')
+      .send({ mode: 'staging' });
+    await new Promise((r) => setTimeout(r, 50));
+    expect(recordActionReceipt).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: 'deploy', target: 'staging' })
+    );
+    expect(resolveActionReceipt).toHaveBeenCalledWith('r-dep', 'confirmed', expect.anything());
+  });
+});
