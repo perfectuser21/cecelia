@@ -31,9 +31,9 @@ echo "[relay-verdict-writeback-smoke] 2. 归一化块无 400 拒绝（防 watchd
 node -e "
 const fs = require('fs');
 const src = fs.readFileSync('packages/brain/src/routes/initiatives.js', 'utf8');
-const start = src.indexOf('verdict/cost best-effort');
-const end = src.indexOf('UPDATE initiative_runs', start);
-if (start < 0 || end < 0) { console.error('FAIL: 找不到归一化块'); process.exit(1); }
+const start = src.indexOf('function parseVerdictCostFields');
+const end = src.indexOf('return { warnings', start);
+if (start < 0 || end < 0) { console.error('FAIL: 找不到 parseVerdictCostFields 函数体'); process.exit(1); }
 const block = src.slice(start, end);
 if (block.includes('status(400)')) {
   console.error('FAIL: 归一化块出现 400 拒绝——违反 BLOCKER-1 铁律（会打回 phase=done 终态写入）');
