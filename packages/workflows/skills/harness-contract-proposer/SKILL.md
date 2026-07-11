@@ -4,10 +4,11 @@ description: |
   Harness Contract Proposer — Harness v5 GAN Layer 2a：
   读 PRD，GAN 对抗写 Golden Path 合同（每步含真实验证命令）；
   Reviewer APPROVED 后倒推拆 task-plan.json。
-version: 9.7.0
+version: 9.8.0
 created: 2026-04-08
-updated: 2026-07-08
+updated: 2026-07-10
 changelog:
+  - 9.8.0: 判定点登记表机器可解析约定（九要素 T5 — decisions e035dad8）— 登记表即数据：合同 APPROVED 后 reviewer Step 5 逐行解析写入 decisions category=judgment（账本保鲜「判定点活性」指标数据源）；每行自含语义（判定点列禁写「同上/...」）；示例行保留「（示例：」前缀供解析跳过；误判后果严重（静默丢数据/直接面客错误）的行在判定点名前标 ⚠️——⚠️ 行属「升拍板点主动请教用户」级别（e035dad8 第②条），PrepPRD/对齐会未拍过的 ⚠️ 判定点要在合同 notes 里标注待确认
   - 9.7.0: 跨 repo 化刀3 — (a) Contract Gate 速查表补第三方 repo 显式跳过规则：packages/brain/src/lib/contract-gate.js 不存在（第三方 repo / 非 cecelia worktree）→ 跳过代码层 Contract Gate，仅执行 skill 内置规则审查，并在合同 notes 记一行 contract-gate: skipped (file not found, third-party repo)，cecelia 场景原逻辑不动；(b) Step 1 DB 连接串参数化 ${DB_URL:-postgresql://localhost/cecelia}，第三方 repo 必须显式传 $DB_URL，不得假设 cecelia 库存在
   - 9.6.0: 八要素 checklist + 判定点登记表 + 失败语义 + 输入对抗面（decisions 27b57469/e035dad8/cf998025）— 新增 Step 1.6 强制段：合同 contract-draft.md 必须内嵌八要素 checklist（逐项必答可 N/A）+ 判定点登记表（候选方法/所选/依据/误判后果）+ 失败语义声明 + 输入对抗面（对外暴露 agent 任务必填）；Reviewer 审查缺段打回
   - 9.5.0: EVA 提分三件套（GAPS #1/#9）— (a) GAP #1①：Step 2b 后新增「合同格式确定性自查」bash 脚本块（grep -c [BEHAVIOR] ≥4 / contract-draft.md 存在 ## E2E 验收 段 / contract-dod.md 无预勾 [x] / BEHAVIOR 条目带 Test: manual:），任一不过必须重写，禁止交付脱模板合同——机器卡，不靠自觉；(b) GAP #1③：Test Contract 表新增「BEHAVIOR 覆盖名必须是对应 it()/测试名的子串」规则进正文 + 正反例（07-04 四跑 4/4 踩坑）；(c) GAP #9：文末新增「Relay 模式出口协议」附录（RELAY_STATUS 四态，照抄 generator T5 格式）；.brain-result.json 路径改 ${WORKSPACE_PATH:-/workspace} 宿主 fallback（对齐 evaluator 写法）
@@ -317,6 +318,14 @@ curl -sf "localhost:5221/api/brain/registry?type=test&limit=30" > /tmp/test_regi
 | ... | | | | |
 
 > 若本次任务无接缝判定点，显式写：`（本任务无接缝判定点，N/A）`
+
+**登记表即数据（v9.8 — 九要素 T5 通电）**：合同 APPROVED 后，reviewer Step 5 会逐行解析本表写入
+`decisions category=judgment`（账本保鲜守卫「判定点活性」指标的数据源）。因此：
+- 每行必须自含语义：判定点列禁止写「同上」「...」等指代；
+- 示例行保留「（示例：」前缀（解析器靠它跳过）；
+- **误判后果严重**（静默丢数据 / 直接面客错误 / 不可逆动作）的判定点，在判定点名前标 `⚠️`——
+  这类判定点属「升拍板点主动请教用户」级别（e035dad8 第②条，用户常有更优土办法）；若 PrepPRD /
+  对齐会没拍过，在合同 notes 里加一行 `judgment-pending-user: <判定点名>` 待确认。
 
 ### 失败语义声明
 
