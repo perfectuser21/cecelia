@@ -5,6 +5,9 @@ const resolveActionReceipt = vi.fn().mockResolvedValue(true);
 vi.mock('../receipt-collector.js', () => ({ recordActionReceipt, resolveActionReceipt }));
 vi.mock('../muted-guard.js', () => ({ isMuted: vi.fn().mockReturnValue(false) }));
 
+const claimDedupeKey = vi.fn().mockResolvedValue({ claimed: true });
+vi.mock('../lib/dedupe.js', () => ({ claimDedupeKey }));
+
 import { isMuted } from '../muted-guard.js';
 
 const ENV_KEYS = ['FEISHU_BOT_WEBHOOK', 'BARK_TOKEN', 'FEISHU_APP_ID', 'FEISHU_APP_SECRET', 'FEISHU_OWNER_OPEN_IDS'];
@@ -96,6 +99,65 @@ describe('notifier 回执接线（T4）', () => {
     delete process.env.BARK_TOKEN;
     const mod2 = await import('../notifier.js');
     await mod2.sendBark('t', 'b');
+    expect(recordActionReceipt).not.toHaveBeenCalled();
+  });
+
+  it('sendFeishu open_api 成功 → record(feishu/open_api) 恰一条 + resolve confirmed', async () => {
+    global.fetch = vi.fn()
+      .mockResolvedValueOnce({ json: async () => ({ code: 0, tenant_access_token: 't' }) })
+      .mockResolvedValueOnce({ json: async () => ({ code: 0 }) });
+    const { mod, restore } = await loadNotifier({
+      FEISHU_APP_ID: 'app-id',
+      FEISHU_APP_SECRET: 'app-secret',
+      FEISHU_OWNER_OPEN_IDS: 'ou_alex'
+    });
+    const ok = await mod.sendFeishu('hello');
+    restore();
+    expect(ok).toBe(true);
+    expect(recordActionReceipt).toHaveBeenCalledTimes(1);
+    expect(recordActionReceipt).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: 'feishu', target: 'open_api' })
+    );
+    expect(resolveActionReceipt).toHaveBeenCalledWith('r-1', 'confirmed', expect.objectContaining({ code: 0 }));
+  });
+
+  it('sendFeishu open_api token 失败 → resolve failed（stage: token）', async () => {
+    global.fetch = vi.fn()
+      .mockResolvedValueOnce({ json: async () => ({ code: 99991663, msg: 'bad' }) });
+    const { mod, restore } = await loadNotifier({
+      FEISHU_APP_ID: 'app-id',
+      FEISHU_APP_SECRET: 'app-secret',
+      FEISHU_OWNER_OPEN_IDS: 'ou_alex'
+    });
+    const ok = await mod.sendFeishu('hello');
+    restore();
+    expect(ok).toBe(false);
+    expect(resolveActionReceipt).toHaveBeenCalledWith('r-1', 'failed', expect.objectContaining({ stage: 'token' }));
+  });
+
+  it('sendFeishu open_api 私信失败 → resolve failed（stage: send）', async () => {
+    global.fetch = vi.fn()
+      .mockResolvedValueOnce({ json: async () => ({ code: 0, tenant_access_token: 't' }) })
+      .mockResolvedValueOnce({ json: async () => ({ code: 230001, msg: 'x' }) });
+    const { mod, restore } = await loadNotifier({
+      FEISHU_APP_ID: 'app-id',
+      FEISHU_APP_SECRET: 'app-secret',
+      FEISHU_OWNER_OPEN_IDS: 'ou_alex'
+    });
+    const ok = await mod.sendFeishu('hello');
+    restore();
+    expect(ok).toBe(false);
+    expect(resolveActionReceipt).toHaveBeenCalledWith('r-1', 'failed', expect.objectContaining({ stage: 'send' }));
+  });
+
+  it('dedupe 命中跳过 → 不写回执', async () => {
+    claimDedupeKey.mockResolvedValue({ claimed: false });
+    global.fetch = vi.fn();
+    const { mod, restore } = await loadNotifier({ FEISHU_BOT_WEBHOOK: 'https://feishu.example/hook' });
+    const ok = await mod.sendFeishu('x', { dedupeKey: 'k' });
+    restore();
+    expect(ok).toBe(false);
+    expect(global.fetch).not.toHaveBeenCalled();
     expect(recordActionReceipt).not.toHaveBeenCalled();
   });
 
