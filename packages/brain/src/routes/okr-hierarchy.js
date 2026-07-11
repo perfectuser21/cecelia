@@ -10,6 +10,7 @@
 
 import { Router } from 'express';
 import pool from '../db.js';
+import { computeProgress } from '../advancement-progress.js';
 
 const router = Router();
 
@@ -409,6 +410,56 @@ router.post('/backfill-current-values', async (req, res) => {
     const { resetAllKrProgress } = await import('../kr-verifier.js');
     const result = await resetAllKrProgress();
     res.json({ success: true, ...result });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ─── T6 两轴衔接：KR↔Ability 对账视图 ─────────────────────────────────────────
+
+/**
+ * GET /api/brain/okr/kr/:id/ability-progress
+ * 读 key_results.metadata.target_abilities，join journey_features(thickness) +
+ * advancement_items 完成度，输出对账视图。失联引用进 missing_ability_ids。
+ * 写入口：PATCH /api/brain/goals/:id（metadata merge）；
+ * 禁用 PATCH /okr/key-results/:id 改 metadata（整体覆盖会吞掉 target_abilities）。
+ */
+router.get('/kr/:id/ability-progress', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const krResult = await pool.query('SELECT id, title, metadata FROM key_results WHERE id = $1', [id]);
+    if (!krResult.rows.length) {
+      return res.status(404).json({ success: false, error: 'KeyResult not found' });
+    }
+    const kr = krResult.rows[0];
+    const targetIds = Array.isArray(kr.metadata?.target_abilities) ? kr.metadata.target_abilities : [];
+    if (targetIds.length === 0) {
+      return res.json({
+        success: true, kr_id: kr.id, kr_title: kr.title,
+        abilities: [], missing_ability_ids: [],
+        hint: '该 KR 未登记 metadata.target_abilities（decomp 拆 KR 时写入）',
+      });
+    }
+
+    const { rows } = await pool.query(`
+      SELECT jf.id AS ability_id, jf.name, jf.thickness, jf.status,
+             COUNT(ai.id) FILTER (WHERE ai.status = 'done')  AS done,
+             COUNT(ai.id) FILTER (WHERE ai.status = 'doing') AS doing,
+             COUNT(ai.id) FILTER (WHERE ai.status = 'todo')  AS todo
+      FROM journey_features jf
+      LEFT JOIN advancement_items ai ON ai.ability_id = jf.id
+      WHERE jf.id = ANY($1) AND jf.kind = 'ability'
+      GROUP BY jf.id, jf.name, jf.thickness, jf.status
+    `, [targetIds]);
+
+    const abilities = rows.map(r => ({
+      ability_id: r.ability_id, name: r.name, thickness: r.thickness, status: r.status,
+      advancement: computeProgress({ done: +r.done, doing: +r.doing, todo: +r.todo }),
+    }));
+    const foundIds = new Set(rows.map(r => r.ability_id));
+    const missing_ability_ids = targetIds.filter(tid => !foundIds.has(tid));
+
+    res.json({ success: true, kr_id: kr.id, kr_title: kr.title, abilities, missing_ability_ids });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }
