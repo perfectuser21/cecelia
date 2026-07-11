@@ -6,10 +6,11 @@ description: |
   evaluator 在 CI 绿之后、PR merge 之前真启服务 + 跑 contract 的 manual:bash 命令验真行为。
   PASS → 允许 merge；FAIL → 不 merge，带反馈打回 Generator 在 PR 分支 fix loop（main 不变动）。
   单模式（harness v2 始终 IS_FINAL_E2E=true）：读 contract-draft.md 的 ## E2E 验收 脚本，按 target_environment 派发跑 Golden Path 端到端真实行为。
-version: 1.20.0
+version: 1.21.0
 created: 2026-05-06
-updated: 2026-07-05
+updated: 2026-07-08
 changelog:
+  - 1.21.0: 跨 repo 化刀3——①变量表 DB 行改为优先 $DB_URL（payload/env 注入），postgresql://localhost/cecelia 仅作 cecelia 本机 fallback；②url_validation gate 按 repo 注入：cecelia 默认仍 grep localhost:5221|psql cecelia，第三方 repo 以 $EXPECTED_API_HOST/$DB_URL 为准，两者都未提供时对第三方 repo 降级 WARN 而非 FAIL（避免假 FAIL）；③windows 分支与 Step B-2.6 的 REPO 不再写死默认仓库：fallback 顺序 $GITHUB_REPO → payload.base_repo URL 解析 owner/repo → 两者都缺才回退旧默认并打 WARN
   - 1.20.0: EVA 提分（GAPS #2）——新增「Relay 入口协议」（对称 T5 出口段）：controller 用 Task 派发时从 prompt 参数取 SPRINT_DIR/PR_BRANCH/TARGET_ENV/合同路径，env 与 prompt 参数二选一均可启动，Step 0 FATAL 仅限 v1 env 路径；反作弊红线显式接回 relay 路径（E2E 段缺失/[BEHAVIOR] manual:bash 从未真跑 → 必 FAIL，禁拿 vitest 结果冒充 Golden Path 验收）；WORKSPACE 解析补宿主 fallback（/workspace 不存在时落 $PWD）。additive，双门/SHA锚定/verdict JSON 语义不变
   - 1.19.0: 追加「Relay 出口 + CANNOT_VERIFY 第三态」（T5，additive）——无法验证的断言进 unverifiable[] 交 controller 兜底，禁止臆断 FAIL（治误判 FAIL→无限 fix loop 谱系）；verdict JSON 结构不变（v1 双轨兼容）
   - 1.18.0: Slice3 固化 — bash/mac_web/local_api 分支补 cp+git add e2e-verify.sh 进 sprint 目录（镜像 windows 分支），让 bash golden-path E2E 脚本随 PR 永久入库、merge 后进回归套件重跑（堵"脚本只活 /tmp 跑一次蒸发"的地基洞主洞）
@@ -84,7 +85,7 @@ generator 写代码 + push PR
 | `WORKSPACE_PATH` | 结果文件写入目录。**mac_web 宿主执行时由 host-executor 注入**（值为 worktreePath）；Docker 默认不注入，脚本 fallback `/workspace` |
 | `WINDOWS_CLOUD_WORKFLOW` | GHA workflow 文件名（harness-initiative.graph.js 根据 base_repo 注入：zenithjoy → `agent-e2e-video.yml`，否则 `e2e-windows.yml`）|
 | `WECHAT_RPA_WORKFLOW` | windows_wechat 专用 GHA workflow 文件名，**由 `evaluateContractNode` 注入，缺省 `e2e-wechat-rpa.yml`**；在 xian-rog self-hosted runner（微信已登录）上运行 |
-| `DB` | PostgreSQL 连接串，如 `postgresql://localhost/cecelia` |
+| `DB` | PostgreSQL 连接串——优先用 payload/env 注入的 `$DB_URL`（第三方 repo 必须显式提供）；`postgresql://localhost/cecelia` 仅作 cecelia 本机 fallback，第三方 repo 禁止假设 cecelia 库存在 |
 
 **注**：DoD 文件中的 `Test:` 命令若引用 `$TARGET_TASK_ID`，该 ID 来自 DoD 文件内部（合同写入时硬编码或由 Generator 写入），Evaluator 直接执行 DoD 中的命令原文，不需单独注入。
 
@@ -331,14 +332,29 @@ BREOF
     exit 0
   fi
 else
-  # 真实功能 sprint：autonomous journey_type 必须包含真实 Brain API URL
+  # 真实功能 sprint：autonomous journey_type 必须包含真实验证目标（API URL / DB）
   # windows_cloud/windows_wechat 的 E2E 是 PowerShell，通过 GHA 运行，不直接调 localhost:5221，跳过此检测
   if [[ "$JOURNEY_TYPE" == "autonomous" && "$TARGET_ENV" != "windows_cloud" && "$TARGET_ENV" != "windows_wechat" ]]; then
-    if ! grep -qE "localhost:5221/api/brain/|psql.*cecelia" /tmp/e2e-verify.sh; then
-      cat > "$WORKSPACE/.brain-result.json" << BREOF
+    # 跨 repo 化刀3：验证目标按 repo 注入——cecelia（base_repo 缺省或含 cecelia）默认仍是 localhost:5221 / psql cecelia；
+    # 第三方 repo 以 payload/env 提供的 $EXPECTED_API_HOST / $DB_URL 为准
+    if [[ -z "$BASE_REPO" || "$BASE_REPO" == *"cecelia"* ]]; then
+      if ! grep -qE "localhost:5221/api/brain/|psql.*cecelia" /tmp/e2e-verify.sh; then
+        cat > "$WORKSPACE/.brain-result.json" << BREOF
 {"verdict":"FAIL","task_id":"$TASK_ID","failed_step":"url_validation","log_excerpt":"autonomous sprint 的 E2E 脚本未测真实 Brain API (localhost:5221) 或 DB，检测到可能测了 playground 或未知目标，请改为 curl localhost:5221/api/brain/... 验证真实行为"}
 BREOF
-      exit 0
+        exit 0
+      fi
+    elif [[ -n "$EXPECTED_API_HOST" || -n "$DB_URL" ]]; then
+      if ! grep -qF -e "${EXPECTED_API_HOST:-__unset__}" -e "${DB_URL:-__unset__}" /tmp/e2e-verify.sh; then
+        cat > "$WORKSPACE/.brain-result.json" << BREOF
+{"verdict":"FAIL","task_id":"$TASK_ID","failed_step":"url_validation","log_excerpt":"autonomous sprint 的 E2E 脚本未测 payload 指定的验证目标（EXPECTED_API_HOST/$DB_URL 已注入但脚本未引用），请让 E2E 真打该 API/DB"}
+BREOF
+        exit 0
+      fi
+    else
+      # 第三方 repo 且 EXPECTED_API_HOST / DB_URL 都未提供 → 本 gate 降级 WARN 放行（不 FAIL），
+      # 避免拿 cecelia 专属目标假 FAIL 第三方 sprint；验证责任落回合同 [BEHAVIOR] 真跑
+      echo "WARN: [url_validation] 第三方 repo（$BASE_REPO）未注入 EXPECTED_API_HOST/DB_URL，无法机械校验 E2E 目标，本 gate 降级为 WARN"
     fi
   fi
 fi
@@ -532,8 +548,16 @@ case "$TARGET_ENV" in
     # windows_wechat → xian-rog self-hosted runner（微信已登录的 Windows 环境）
     # 合同 e2e 脚本必须是 .ps1 格式（见 proposer windows_cloud 模板）
     # 等待结果：轮询 run 状态，最长 10 分钟
-    # GITHUB_REPO 由 harness-initiative.graph.js 注入，base_repo 含 zenithjoy → perfectuser21/zenithjoy-workspace
-    REPO="${GITHUB_REPO:-perfectuser21/cecelia}"
+    # GITHUB_REPO 由 Brain 注入，且必须源于 payload.base_repo（跨 repo 化刀3，禁止写死 cecelia）
+    # fallback 顺序：$GITHUB_REPO → 从 base_repo URL 解析 owner/repo → 两者都缺才用 perfectuser21/cecelia 并打 WARN
+    if [[ -n "$GITHUB_REPO" ]]; then
+      REPO="$GITHUB_REPO"
+    elif [[ -n "$BASE_REPO" ]]; then
+      REPO=$(echo "$BASE_REPO" | sed -E 's#^(git@github\.com:|https?://github\.com/)##; s#\.git$##')
+    else
+      REPO="perfectuser21/cecelia"
+      echo "WARN: GITHUB_REPO 与 base_repo 均缺失，回退 perfectuser21/cecelia（第三方 repo 会指向错误仓库）"
+    fi
     if [[ "$TARGET_ENV" == "windows_wechat" ]]; then
       WORKFLOW="${WECHAT_RPA_WORKFLOW:-e2e-wechat-rpa.yml}"
     else
@@ -689,7 +713,15 @@ fi
 
 ```bash
 if [[ "$TARGET_ENV" == "windows_cloud" || "$TARGET_ENV" == "windows_wechat" ]]; then
-  REPO="${GITHUB_REPO:-perfectuser21/zenithjoy-workspace}"
+  # GITHUB_REPO 必须源于 payload.base_repo（跨 repo 化刀3）；fallback：$GITHUB_REPO → base_repo 解析 → 两者都缺才回退默认并打 WARN
+  if [[ -n "$GITHUB_REPO" ]]; then
+    REPO="$GITHUB_REPO"
+  elif [[ -n "$BASE_REPO" ]]; then
+    REPO=$(echo "$BASE_REPO" | sed -E 's#^(git@github\.com:|https?://github\.com/)##; s#\.git$##')
+  else
+    REPO="perfectuser21/zenithjoy-workspace"
+    echo "WARN: GITHUB_REPO 与 base_repo 均缺失，回退 perfectuser21/zenithjoy-workspace（第三方 repo 会指向错误仓库）"
+  fi
   if [[ "$TARGET_ENV" == "windows_wechat" ]]; then
     WORKFLOW="${WECHAT_RPA_WORKFLOW:-e2e-wechat-rpa.yml}"
   else
