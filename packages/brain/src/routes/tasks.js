@@ -11,6 +11,7 @@ import { publishTaskCreated as _publishTaskCreated } from '../events/taskEvents.
 import { getQuarantinedTasks, getQuarantineStats, releaseTask, quarantineTask, QUARANTINE_REASONS, REVIEW_ACTIONS } from '../quarantine.js';
 import { triggerCeceliaRun, checkCeceliaRunAvailable } from '../executor.js';
 import { emit as emitEvent } from '../event-bus.js';
+import { pushCaptureAtom } from '../capture-inbox.js';
 
 const router = Router();
 
@@ -289,6 +290,15 @@ router.post('/learnings-received', async (req, res) => {
         if (rows[0]?.id) {
           results.learnings_inserted.push(rows[0].id);
           insertedItems.push({ id: rows[0].id, content: step });
+
+          // T12: 统一收件箱补线——dev workflow 标准出口，非 recordLearning() 那条 RCA 路径
+          await pushCaptureAtom(pool, {
+            content: `learning: ${title}\n${step}`,
+            targetType: 'learning',
+            targetSubtype: 'dev_experience',
+            routedToTable: 'learnings',
+            routedToId: rows[0].id,
+          });
         }
       } catch (dbErr) {
         console.warn(`[learnings-received] learnings INSERT failed: ${dbErr.message}`);
