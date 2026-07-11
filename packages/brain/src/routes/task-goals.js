@@ -221,7 +221,7 @@ router.get('/:id', async (req, res) => {
 // PATCH /goals/:id — 先更新 objectives，0 行受影响再更新 key_results
 router.patch('/:id', async (req, res) => {
   try {
-    const { title, status, area_id, owner_role, custom_props } = req.body;
+    const { title, status, area_id, owner_role, custom_props, metadata } = req.body;
 
     const setClauses = [];
     const params = [];
@@ -246,6 +246,11 @@ router.patch('/:id', async (req, res) => {
     if (custom_props !== undefined) {
       setClauses.push(`custom_props = custom_props || $${paramIndex++}::jsonb`);
       params.push(JSON.stringify(custom_props));
+    }
+    if (metadata !== undefined) {
+      // COALESCE 必须：objectives/key_results 的 metadata 列可空无默认，NULL || jsonb = NULL 会静默吞写
+      setClauses.push(`metadata = COALESCE(metadata, '{}'::jsonb) || $${paramIndex++}::jsonb`);
+      params.push(JSON.stringify(metadata));
     }
 
     if (setClauses.length === 0) {
