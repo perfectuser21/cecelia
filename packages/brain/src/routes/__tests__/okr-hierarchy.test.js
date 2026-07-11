@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeAll, beforeEach } from 'vitest';
 
 const mockPool = vi.hoisted(() => ({ query: vi.fn() }));
-vi.mock('../db.js', () => ({ default: mockPool }));
+vi.mock('../../db.js', () => ({ default: mockPool }));
 
 let routes;
 const AB1 = '11111111-1111-4111-8111-111111111111';
@@ -24,7 +24,7 @@ function getHandler(method, path) {
 describe('GET /kr/:id/ability-progress (T6 两轴对账)', () => {
   beforeAll(async () => {
     vi.resetModules();
-    routes = (await import('../routes/okr-hierarchy.js')).default;
+    routes = (await import('../okr-hierarchy.js')).default;
   });
   beforeEach(() => mockPool.query.mockReset());
 
