@@ -22,7 +22,7 @@ export const ROUTES = ['urgent', 'line_backlog', 'invariant', 'okr'];
 export const LLM_CONFIDENCE_FLOOR = 0.7;
 
 // 决策57d296a1护栏：命中生产环境相关关键词的 atom 不走自动建 task，留人工排期
-const PRODUCTION_SENSITIVE_PATTERN = /生产环境|生产|production|prod\s*env|LLM渠道切换/i;
+const PRODUCTION_SENSITIVE_PATTERN = /生产环境|\bproduction\b|prod\s*env|LLM渠道切换/i;
 
 /** 是否命中生产环境护栏（决策57d296a1）。命中 → 不自动建 task，留原有仅标记流程。 */
 export function isProductionSensitive(atom) {
@@ -114,6 +114,7 @@ async function routeAtom(pool, atom, verdict, opts) {
       task_type: 'harness_initiative',
       priority,
       trigger_source: 'cortex',
+      dedupe_key: `capture-triage-line-backlog-${atom.id}`,
       payload: {
         orchestrator: 'skill-relay',
         executor: 'claude',

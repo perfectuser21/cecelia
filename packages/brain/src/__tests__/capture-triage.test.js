@@ -46,6 +46,12 @@ describe('isProductionSensitive（决策57d296a1生产护栏）', () => {
   it('普通内容 → false', () => {
     expect(isProductionSensitive({ content: '修复一个测试用例', target_subtype: 'FAIL' })).toBe(false);
   });
+  it('"生产力"/"reproduction" 等超集词不应误判为 true（正则误伤回归）', () => {
+    expect(isProductionSensitive({ content: '生产力工具优化', target_subtype: '' })).toBe(false);
+    expect(isProductionSensitive({ content: '国内生产总值GDP', target_subtype: '' })).toBe(false);
+    expect(isProductionSensitive({ content: 'reproduction steps for the bug', target_subtype: '' })).toBe(false);
+    expect(isProductionSensitive({ content: 'coproduction deal', target_subtype: '' })).toBe(false);
+  });
 });
 
 function makePool(atoms, extra = {}) {
@@ -105,6 +111,7 @@ describe('runCaptureTriage 四路落地', () => {
       mode: 'headed',
       journey_id: 'jrn-1',
     });
+    expect(callArg.dedupe_key).toBe('capture-triage-line-backlog-a2');
     const upd = pool.updates[0];
     expect(upd.sql).toMatch(/status = 'confirmed'/);
     expect(upd.params).toContain('tasks');
