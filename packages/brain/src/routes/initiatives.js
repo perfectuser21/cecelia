@@ -395,6 +395,35 @@ router.post('/relay-runs/:initiative_id', async (req, res) => {
   }
 });
 
+// ---- verdict/cost best-effort 归一（P1 裁决结构化回写）----
+// 铁律：非法值忽略+warn，绝不 400——400 会连带打回 phase=done 终态写入，
+// watchdog（phase NOT IN done/failed 判据）会把已完成 run 重新点火（spec BLOCKER-1）。
+function parseVerdictCostFields(body) {
+  const warnings = [];
+  const normVerdict = (raw, allowed, field) => {
+    if (raw === undefined || raw === null) return null;
+    const v = String(raw).trim().toUpperCase();
+    if (allowed.includes(v)) return v;
+    console.warn(`[PATCH /orchestrator/relay-runs] ${field} 非法值被忽略: ${JSON.stringify(raw)}`);
+    warnings.push(`${field}_ignored`);
+    return null;
+  };
+  const judgeVerdict = normVerdict(body?.verdict, ['PASS', 'FAIL'], 'verdict');
+  const evaluateVerdict = normVerdict(body?.evaluate_verdict, ['PASS', 'FAIL', 'FIXED'], 'evaluate_verdict');
+  let costUsd = null;
+  const rawCost = body?.cost;
+  if (rawCost !== undefined && rawCost !== null) {
+    const n = Number(rawCost);
+    if (Number.isFinite(n) && n >= 0) {
+      costUsd = n;
+    } else {
+      console.warn(`[PATCH /orchestrator/relay-runs] cost 非法值被忽略: ${JSON.stringify(rawCost)}`);
+      warnings.push('cost_ignored');
+    }
+  }
+  return { warnings, evaluateVerdict, judgeVerdict, costUsd };
+}
+
 /**
  * PATCH /api/brain/orchestrator/relay-runs/:initiative_id
  *
@@ -416,31 +445,7 @@ router.patch('/relay-runs/:initiative_id', async (req, res) => {
       return res.status(400).json({ error: 'pr_url 非法，须以 https://github.com/ 开头' });
     }
   }
-  // ---- verdict/cost best-effort 归一（P1 裁决结构化回写）----
-  // 铁律：非法值忽略+warn，绝不 400——400 会连带打回 phase=done 终态写入，
-  // watchdog（phase NOT IN done/failed 判据）会把已完成 run 重新点火（spec BLOCKER-1）。
-  const warnings = [];
-  const normVerdict = (raw, allowed, field) => {
-    if (raw === undefined || raw === null) return null;
-    const v = String(raw).trim().toUpperCase();
-    if (allowed.includes(v)) return v;
-    console.warn(`[PATCH /orchestrator/relay-runs] ${field} 非法值被忽略: ${JSON.stringify(raw)}`);
-    warnings.push(`${field}_ignored`);
-    return null;
-  };
-  const judgeVerdict = normVerdict(req.body?.verdict, ['PASS', 'FAIL'], 'verdict');
-  const evaluateVerdict = normVerdict(req.body?.evaluate_verdict, ['PASS', 'FAIL', 'FIXED'], 'evaluate_verdict');
-  let costUsd = null;
-  const rawCost = req.body?.cost;
-  if (rawCost !== undefined && rawCost !== null) {
-    const n = Number(rawCost);
-    if (Number.isFinite(n) && n >= 0) {
-      costUsd = n;
-    } else {
-      console.warn(`[PATCH /orchestrator/relay-runs] cost 非法值被忽略: ${JSON.stringify(rawCost)}`);
-      warnings.push('cost_ignored');
-    }
-  }
+  const { warnings, evaluateVerdict, judgeVerdict, costUsd } = parseVerdictCostFields(req.body);
   try {
     const result = await pool.query(
       `UPDATE initiative_runs
