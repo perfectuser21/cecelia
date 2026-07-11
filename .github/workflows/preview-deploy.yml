@@ -1,8 +1,8 @@
 name: Preview Deploy
 
 # per-branch 预览环境部署
-# PR push → 构建 apps/dashboard → SSH 部署到 hk-vps 唯一端口 → health check → PR 评论写 URL
-# main 分支推送不触发（pull_request 事件仅在 PR head branch 触发，main 作为 base 不触发）
+# PR push → 构建 apps/dashboard → SSH(Tailscale) 部署到 hk-vps 唯一端口 → health check(公网) → PR 评论写 URL
+# SSH: HK_VPS_SSH_HOST(Tailscale IP) | 预览 URL: HK_VPS_HOST(公网 IP)
 
 on:
   pull_request:
@@ -22,6 +22,11 @@ jobs:
       pull-requests: write
 
     steps:
+      - name: Connect to Tailscale
+        uses: tailscale/github-action@v2
+        with:
+          authkey: ${{ secrets.TS_AUTHKEY }}
+
       - name: Checkout 代码
         uses: actions/checkout@v4
 
@@ -53,57 +58,49 @@ jobs:
             echo "SSH secrets 已配置，继续部署"
           else
             echo "configured=false" >> $GITHUB_OUTPUT
-            echo "⚠️ HK_VPS_HOST secret 未配置，跳过 SSH 部署（预览功能需在 repo secrets 中配置）"
+            echo "⚠️ HK_VPS_HOST secret 未配置，跳过 SSH 部署（需在 repo secrets 中配置 HK_VPS_HOST/HK_VPS_SSH_HOST/HK_VPS_USER/HK_VPS_SSH_KEY）"
           fi
         env:
           SECRET_HOST: ${{ secrets.HK_VPS_HOST }}
 
-      - name: SSH 部署到 hk-vps
+      - name: 停止旧预览进程 + 准备目录
         if: steps.check_secrets.outputs.configured == 'true'
         uses: appleboy/ssh-action@v1.0.0
         with:
-          host: ${{ secrets.HK_VPS_HOST }}
+          host: ${{ secrets.HK_VPS_SSH_HOST }}
           username: ${{ secrets.HK_VPS_USER }}
           key: ${{ secrets.HK_VPS_SSH_KEY }}
-          port: ${{ secrets.HK_VPS_PORT || 22 }}
-          command_timeout: 120s
+          port: 22
+          command_timeout: 60s
           script: |
-            bash ~/scripts/preview-deploy.sh --print-port "${{ github.head_ref }}" || true
             PORT=$(bash ~/scripts/preview-deploy.sh --print-port "${{ github.head_ref }}")
             mkdir -p ~/previews/$PORT
-            cd ~/previews/$PORT
-            # 停止已有进程（幂等）
             [ -f /tmp/preview-${PORT}.pid ] && kill $(cat /tmp/preview-${PORT}.pid) 2>/dev/null || true
+            rm -f /tmp/preview-${PORT}.pid /tmp/preview-${PORT}.branch
 
       - name: 上传构建产物到 hk-vps
         if: steps.check_secrets.outputs.configured == 'true'
         uses: appleboy/scp-action@v0.1.7
         with:
-          host: ${{ secrets.HK_VPS_HOST }}
+          host: ${{ secrets.HK_VPS_SSH_HOST }}
           username: ${{ secrets.HK_VPS_USER }}
           key: ${{ secrets.HK_VPS_SSH_KEY }}
-          port: ${{ secrets.HK_VPS_PORT || 22 }}
+          port: 22
           source: "apps/dashboard/dist/*"
           target: "~/previews/${{ steps.port.outputs.port }}"
           strip_components: 3
 
-      - name: 启动静态服务并写 PID
+      - name: 启动 preview-server（Node.js + Brain API 代理）
         if: steps.check_secrets.outputs.configured == 'true'
         uses: appleboy/ssh-action@v1.0.0
         with:
-          host: ${{ secrets.HK_VPS_HOST }}
+          host: ${{ secrets.HK_VPS_SSH_HOST }}
           username: ${{ secrets.HK_VPS_USER }}
           key: ${{ secrets.HK_VPS_SSH_KEY }}
-          port: ${{ secrets.HK_VPS_PORT || 22 }}
+          port: 22
           command_timeout: 120s
           script: |
-            PORT=${{ steps.port.outputs.port }}
-            cd ~/previews/$PORT
-            nohup python3 -m http.server $PORT > /tmp/preview-${PORT}.log 2>&1 &
-            echo $! > /tmp/preview-${PORT}.pid
-            echo "${{ github.head_ref }}" > /tmp/preview-${PORT}.branch
-            sleep 2
-            kill -0 $(cat /tmp/preview-${PORT}.pid) || { echo "服务启动失败"; exit 1; }
+            PREVIEW_BRANCH="${{ github.head_ref }}" bash ~/scripts/preview-deploy.sh
 
       - name: Preview URL health check（HTTP 200）
         id: healthcheck
@@ -113,7 +110,6 @@ jobs:
           HOST="${{ secrets.HK_VPS_HOST }}"
           PREVIEW_URL="http://${HOST}:${PORT}"
           echo "health_check URL: $PREVIEW_URL"
-          # 最多重试 10 次，每次等 3 秒
           for i in $(seq 1 10); do
             STATUS=$(curl -sf -o /dev/null -w "%{http_code}" --connect-timeout 5 "$PREVIEW_URL" 2>/dev/null || echo "000")
             if [ "$STATUS" = "200" ]; then
@@ -155,7 +151,7 @@ jobs:
               owner: context.repo.owner,
               repo: context.repo.repo,
               issue_number: context.issue.number,
-              body: `## ⚠️ 预览环境未部署\n\n**Branch**: \`${branch}\` | **Port**: ${port}\n\n预览功能需在 repo secrets 中配置 \`HK_VPS_HOST\`、\`HK_VPS_USER\`、\`HK_VPS_SSH_KEY\`。`,
+              body: `## ⚠️ 预览环境未部署\n\n**Branch**: \`${branch}\` | **Port**: ${port}\n\n预览功能需在 repo secrets 中配置 \`HK_VPS_HOST\`、\`HK_VPS_SSH_HOST\`、\`HK_VPS_USER\`、\`HK_VPS_SSH_KEY\`。`,
             });
 
       - name: PR 评论写入失败原因

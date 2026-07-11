@@ -1,6 +1,7 @@
 name: Preview Cleanup
 
 # PR merge 或 close → 清理对应的预览环境（停止进程 + 释放端口）
+# SSH 走 Tailscale(HK_VPS_SSH_HOST)，与 preview-deploy.yml 对齐
 
 on:
   pull_request:
@@ -16,12 +17,14 @@ jobs:
       pull-requests: write
 
     steps:
+      - name: Connect to Tailscale
+        uses: tailscale/github-action@v2
+        with:
+          authkey: ${{ secrets.TS_AUTHKEY }}
+
       - name: Checkout 代码
         uses: actions/checkout@v4
 
-      # 与 preview-deploy 同款兜底（2026-07-06）：HK_VPS secrets 未配置时 deploy 本来就没
-      # 部署任何东西（跳过 SSH），cleanup 再去 SSH 必失败——21 连红即此因。secrets 配齐前
-      # 干净跳过；预览体系真启用/删除待拍板（Brain issue 39452ad0）。
       - name: 检查 SSH secrets 是否配置
         id: check_secrets
         run: |
@@ -46,10 +49,10 @@ jobs:
         if: steps.check_secrets.outputs.configured == 'true'
         uses: appleboy/ssh-action@v1.0.0
         with:
-          host: ${{ secrets.HK_VPS_HOST }}
+          host: ${{ secrets.HK_VPS_SSH_HOST }}
           username: ${{ secrets.HK_VPS_USER }}
           key: ${{ secrets.HK_VPS_SSH_KEY }}
-          port: ${{ secrets.HK_VPS_PORT || 22 }}
+          port: 22
           command_timeout: 60s
           script: |
             bash ~/scripts/preview-cleanup.sh ${{ steps.port.outputs.port }} "${{ github.head_ref }}"

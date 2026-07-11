@@ -73,9 +73,17 @@ fi
 # 创建部署目录
 mkdir -p "$DEPLOY_DIR"
 
-# 启动静态文件服务
-cd "$DEPLOY_DIR"
-nohup python3 -m http.server "$PORT" > "/tmp/preview-${PORT}.log" 2>&1 &
+# 确认 preview-server.js 存在
+PREVIEW_SERVER="${HOME}/scripts/preview-server.js"
+if [ ! -f "$PREVIEW_SERVER" ]; then
+  echo "ERROR: $PREVIEW_SERVER 不存在，请先同步脚本到 hk-vps" >&2
+  exit 1
+fi
+
+# 启动 Node.js 静态文件 + API 代理服务
+BRAIN_API="${BRAIN_API_URL:-http://localhost:5221}"
+nohup node "$PREVIEW_SERVER" "$PORT" "$DEPLOY_DIR" "$BRAIN_API" \
+  > "/tmp/preview-${PORT}.log" 2>&1 &
 echo $! > "/tmp/preview-${PORT}.pid"
 echo "$BRANCH_NAME" > "/tmp/preview-${PORT}.branch"
 
@@ -83,9 +91,10 @@ sleep 2
 
 # 验证进程存活
 if ! kill -0 "$(cat "/tmp/preview-${PORT}.pid")" 2>/dev/null; then
-  echo "ERROR: 静态服务启动失败，查看日志 /tmp/preview-${PORT}.log" >&2
+  echo "ERROR: preview-server 启动失败，查看日志 /tmp/preview-${PORT}.log" >&2
+  cat "/tmp/preview-${PORT}.log" >&2
   exit 1
 fi
 
-echo "[preview-deploy] ✅ 预览服务已启动 port=$PORT pid=$(cat "/tmp/preview-${PORT}.pid")"
+echo "[preview-deploy] ✅ 预览服务已启动 port=$PORT pid=$(cat "/tmp/preview-${PORT}.pid") brain=$BRAIN_API"
 echo "PREVIEW_URL=http://${HK_VPS_HOST:-localhost}:${PORT}"
