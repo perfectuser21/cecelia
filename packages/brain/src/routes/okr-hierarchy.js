@@ -441,6 +441,18 @@ router.get('/kr/:id/ability-progress', async (req, res) => {
       });
     }
 
+    // 格式非法的 id（非 UUID）不进 SQL（避免 invalid input syntax for type uuid 炸 500），
+    // 直接归入 missing_ability_ids——端点本职就是暴露坏引用
+    const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    const validIds = targetIds.filter(tid => UUID_RE.test(tid));
+    const invalidIds = targetIds.filter(tid => !UUID_RE.test(tid));
+    if (validIds.length === 0) {
+      return res.json({
+        success: true, kr_id: kr.id, kr_title: kr.title,
+        abilities: [], missing_ability_ids: invalidIds,
+      });
+    }
+
     const { rows } = await pool.query(`
       SELECT jf.id AS ability_id, jf.name, jf.thickness, jf.status,
              COUNT(ai.id) FILTER (WHERE ai.status = 'done')  AS done,
@@ -450,14 +462,14 @@ router.get('/kr/:id/ability-progress', async (req, res) => {
       LEFT JOIN advancement_items ai ON ai.ability_id = jf.id
       WHERE jf.id = ANY($1) AND jf.kind = 'ability'
       GROUP BY jf.id, jf.name, jf.thickness, jf.status
-    `, [targetIds]);
+    `, [validIds]);
 
     const abilities = rows.map(r => ({
       ability_id: r.ability_id, name: r.name, thickness: r.thickness, status: r.status,
       advancement: computeProgress({ done: +r.done, doing: +r.doing, todo: +r.todo }),
     }));
     const foundIds = new Set(rows.map(r => r.ability_id));
-    const missing_ability_ids = targetIds.filter(tid => !foundIds.has(tid));
+    const missing_ability_ids = [...invalidIds, ...validIds.filter(tid => !foundIds.has(tid))];
 
     res.json({ success: true, kr_id: kr.id, kr_title: kr.title, abilities, missing_ability_ids });
   } catch (err) {

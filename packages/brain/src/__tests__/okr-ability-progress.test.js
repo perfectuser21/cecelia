@@ -4,6 +4,8 @@ const mockPool = vi.hoisted(() => ({ query: vi.fn() }));
 vi.mock('../db.js', () => ({ default: mockPool }));
 
 let routes;
+const AB1 = '11111111-1111-4111-8111-111111111111';
+const AB2 = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
 function mockReqRes(body = {}, params = {}, query = {}) {
   const req = { body, params, query };
   const res = {
@@ -28,10 +30,10 @@ describe('GET /kr/:id/ability-progress (T6 两轴对账)', () => {
 
   it('正常 join：abilities 带 thickness + advancement 聚合', async () => {
     mockPool.query
-      .mockResolvedValueOnce({ rows: [{ id: 'kr1', title: 'KR一', metadata: { target_abilities: ['ab1', 'ab2'] } }] })
+      .mockResolvedValueOnce({ rows: [{ id: 'kr1', title: 'KR一', metadata: { target_abilities: [AB1, AB2] } }] })
       .mockResolvedValueOnce({ rows: [
-        { ability_id: 'ab1', name: '抖音发布', thickness: 'medium', status: 'working', done: '2', doing: '1', todo: '3' },
-        { ability_id: 'ab2', name: '快手发布', thickness: 'thin', status: 'planned', done: '0', doing: '0', todo: '0' },
+        { ability_id: AB1, name: '抖音发布', thickness: 'medium', status: 'working', done: '2', doing: '1', todo: '3' },
+        { ability_id: AB2, name: '快手发布', thickness: 'thin', status: 'planned', done: '0', doing: '0', todo: '0' },
       ] });
     const handler = getHandler('get', '/kr/:id/ability-progress');
     const { req, res } = mockReqRes({}, { id: 'kr1' });
@@ -41,7 +43,7 @@ describe('GET /kr/:id/ability-progress (T6 两轴对账)', () => {
     expect(res._data.kr_title).toBe('KR一');
     expect(res._data.abilities).toHaveLength(2);
     expect(res._data.abilities[0]).toMatchObject({
-      ability_id: 'ab1', thickness: 'medium',
+      ability_id: AB1, thickness: 'medium',
       advancement: { done: 2, doing: 1, todo: 3, total: 6, pct: 33 },
     });
     expect(res._data.missing_ability_ids).toEqual([]);
@@ -49,7 +51,7 @@ describe('GET /kr/:id/ability-progress (T6 两轴对账)', () => {
     expect(sql).toContain('journey_features');
     expect(sql).toContain('advancement_items');
     expect(sql).toContain("kind = 'ability'");
-    expect(params).toEqual([['ab1', 'ab2']]);
+    expect(params).toEqual([[AB1, AB2]]);
   });
 
   it('metadata 无 target_abilities → 空 abilities + hint，不发第二条 SQL', async () => {
@@ -66,9 +68,9 @@ describe('GET /kr/:id/ability-progress (T6 两轴对账)', () => {
   it('失联 ability id（格式合法但库里查无此人）→ 归入 missing_ability_ids', async () => {
     const missingUuid = '22222222-2222-4222-8222-222222222222';
     mockPool.query
-      .mockResolvedValueOnce({ rows: [{ id: 'kr1', title: 'KR一', metadata: { target_abilities: ['ab1', missingUuid] } }] })
+      .mockResolvedValueOnce({ rows: [{ id: 'kr1', title: 'KR一', metadata: { target_abilities: [AB1, missingUuid] } }] })
       .mockResolvedValueOnce({ rows: [
-        { ability_id: 'ab1', name: '抖音发布', thickness: 'thin', status: 'working', done: '0', doing: '0', todo: '1' },
+        { ability_id: AB1, name: '抖音发布', thickness: 'thin', status: 'working', done: '0', doing: '0', todo: '1' },
       ] });
     const handler = getHandler('get', '/kr/:id/ability-progress');
     const { req, res } = mockReqRes({}, { id: 'kr1' });
