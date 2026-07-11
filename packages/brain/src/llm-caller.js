@@ -635,7 +635,10 @@ async function callCodexHeadless(prompt, model, options = {}) {
   }
 
   return new Promise((resolve, reject) => {
-    const child = spawn('codex', ['exec', '-m', actualModel, prompt], {
+    // --skip-git-repo-check: brain 进程 cwd 不是 git 仓库（容器内 /app），
+    // 缺这个 flag 时 codex exec 立即 exit 1（"Not inside a trusted directory"），
+    // 该错误文本被截断后常被误读成前面无害的 PATH 只读警告。
+    const child = spawn('codex', ['exec', '--skip-git-repo-check', '-m', actualModel, prompt], {
       stdio: ['ignore', 'pipe', 'pipe'],
       env,
     });
