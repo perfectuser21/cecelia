@@ -7,12 +7,14 @@
  *   ③ 24h 用户决策（decisions made_by='user'）
  *   ④ 哨兵摘要（同 routes/sentinel.js 口径：ok && age<=1800）
  *   ⑤ 军师决策（notes 表 line-strategist 落痕：type='Decision' + 标题前缀"军师决策["，按 Line 分组）
+ *   ⑥ 未确认动作（action_receipts 24h 内 pending/timeout/failed，T4 回执台账）
  * 落 design_docs(type='battle_report') + 飞书链接（best-effort，失败不回滚）。
  *
  * 调度：scheduler-jobs.js 60s 轮询 + 本模块自 gate（窗口 + 20h 去重），
  * 照 daily-backup-scheduler.js 先例。
  */
 import { sendFeishu } from './notifier.js';
+import { getUnconfirmedReceipts } from './receipt-collector.js';
 
 /** 每日触发小时（UTC）= 北京时间 06:00 */
 const BATTLE_REPORT_HOUR_UTC = 22;
@@ -47,9 +49,9 @@ export async function alreadyGeneratedToday(pool) {
 }
 
 /**
- * 采集 24h 窗口五段数据。
+ * 采集 24h 窗口六段数据。
  * @param {import('pg').Pool} pool
- * @returns {Promise<{mergedPrs: Array, journeyRuns: Array, userDecisions: Array, strategistDecisions: Array, sentinel: object}>}
+ * @returns {Promise<{mergedPrs: Array, journeyRuns: Array, userDecisions: Array, strategistDecisions: Array, sentinel: object, unconfirmedActions: Array}>}
  */
 export async function buildBattleReportData(pool) {
   // ① merged PR（dev_records 断供容忍：恒空则渲染"暂无"）
@@ -150,7 +152,15 @@ export async function buildBattleReportData(pool) {
     console.warn(`[battle-report] 军师决策查询失败（降级空）: ${err.message}`);
   }
 
-  return { mergedPrs, journeyRuns, userDecisions, strategistDecisions, sentinel: { jobs, expected, healthy } };
+  // ⑥ 未确认动作（action_receipts，T4；照军师决策段 try/catch 降级——查询失败不拖垮整份日报）
+  let unconfirmedActions = [];
+  try {
+    unconfirmedActions = await getUnconfirmedReceipts(pool);
+  } catch (err) {
+    console.warn(`[battle-report] 未确认动作查询失败（降级空）: ${err.message}`);
+  }
+
+  return { mergedPrs, journeyRuns, userDecisions, strategistDecisions, sentinel: { jobs, expected, healthy }, unconfirmedActions };
 }
 
 /** 上海日 YYYY-MM-DD（sv-SE locale 即 ISO 格式） */
@@ -176,7 +186,7 @@ function formatShanghaiShort(date) {
 }
 
 /**
- * 渲染 L1 Summary 五段 markdown，空段渲染"暂无"。
+ * 渲染 L1 Summary 六段 markdown，空段渲染"暂无"。
  * @param {Awaited<ReturnType<typeof buildBattleReportData>>} data
  * @returns {string}
  */
@@ -233,6 +243,17 @@ export function renderBattleReportMarkdown(data) {
         const summary = (n.title || '').replace(/^军师决策\[[^\]]*\]:?\s*/, '') || '(无标题)';
         lines.push(`- ${summary}（${formatShanghaiShort(n.created_at)}）`);
       }
+    }
+  }
+
+  lines.push('');
+  lines.push('## 未确认动作（24h）');
+  const ua = data.unconfirmedActions || [];
+  if (ua.length === 0) {
+    lines.push('暂无');
+  } else {
+    for (const r of ua) {
+      lines.push(`- ${r.kind ?? '未知'} → ${r.target ?? '-'}：${r.receipt_status ?? '?'}（${formatShanghaiShort(r.sent_at)}）`);
     }
   }
 

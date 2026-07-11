@@ -35,6 +35,29 @@ function _pruneExpired(now) {
   }
 }
 
+// ── 回执台账（九要素 T4）────────────────────────────────────────────────
+// 动态 import 照 dedupe 先例：notifier 保持 DB-free import 图，测试无需 mock db。
+// 全路径 fail-open：回执写不进去绝不打断通知主流程。
+async function recordReceipt(kind, target, evidence = {}) {
+  try {
+    const { recordActionReceipt } = await import('./receipt-collector.js');
+    return await recordActionReceipt({ kind, target, evidence });
+  } catch (err) {
+    console.warn('[notifier] 回执写入失败（fail-open）:', err.message);
+    return null;
+  }
+}
+
+async function resolveReceipt(id, status, evidence = {}) {
+  if (!id) return;
+  try {
+    const { resolveActionReceipt } = await import('./receipt-collector.js');
+    await resolveActionReceipt(id, status, evidence);
+  } catch (err) {
+    console.warn('[notifier] 回执核销失败（fail-open）:', err.message);
+  }
+}
+
 /**
  * 通过飞书 Open API 发私信给 Alex
  * @param {string} text
@@ -50,8 +73,10 @@ async function sendFeishuOpenAPI(text) {
     return false;
   }
 
+  let receiptId = null;
   try {
     // 1. 获取 tenant_access_token
+    receiptId = await recordReceipt('feishu', 'open_api');
     const authResp = await fetch('https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -61,6 +86,7 @@ async function sendFeishuOpenAPI(text) {
     const auth = await authResp.json();
     if (auth.code !== 0) {
       console.error('[notifier] 获取飞书 token 失败:', auth.msg);
+      await resolveReceipt(receiptId, 'failed', { stage: 'token', msg: auth.msg });
       return false;
     }
 
@@ -81,12 +107,15 @@ async function sendFeishuOpenAPI(text) {
     const sendResult = await sendResp.json();
     if (sendResult.code !== 0) {
       console.error('[notifier] 飞书私信发送失败:', sendResult.msg);
+      await resolveReceipt(receiptId, 'failed', { stage: 'send', msg: sendResult.msg });
       return false;
     }
     console.log('[notifier] 飞书私信发送成功（Open API）');
+    await resolveReceipt(receiptId, 'confirmed', { code: 0 });
     return true;
   } catch (err) {
     console.error('[notifier] Open API 发送异常:', err.message);
+    await resolveReceipt(receiptId, 'failed', { error: err.message });
     return false;
   }
 }
@@ -124,6 +153,7 @@ async function sendFeishu(text, opts = {}) {
 
   // 渠道 1：Webhook（群机器人）
   if (FEISHU_WEBHOOK_URL) {
+    const receiptId = await recordReceipt('feishu', 'webhook');
     try {
       const resp = await fetch(FEISHU_WEBHOOK_URL, {
         method: 'POST',
@@ -133,11 +163,14 @@ async function sendFeishu(text, opts = {}) {
       });
       if (!resp.ok) {
         console.error(`[notifier] Feishu webhook returned ${resp.status}`);
+        await resolveReceipt(receiptId, 'failed', { http_status: resp.status });
         return false;
       }
+      await resolveReceipt(receiptId, 'confirmed', { http_status: resp.status });
       return true;
     } catch (err) {
       console.error('[notifier] Webhook 发送失败:', err.message);
+      await resolveReceipt(receiptId, 'failed', { error: err.message });
       return false;
     }
   }
@@ -170,17 +203,22 @@ async function sendBark(title, body, opts = {}) {
     }
   }
 
+  let receiptId = null;
   try {
     const url = `https://api.day.app/${BARK_TOKEN}/${encodeURIComponent(title)}/${encodeURIComponent(body)}`;
+    receiptId = await recordReceipt('bark', 'bark');
     const resp = await fetch(url, { signal: AbortSignal.timeout(8000) });
     const result = await resp.json();
     if (result.code !== 200) {
       console.error('[notifier] Bark 推送失败:', result.message);
+      await resolveReceipt(receiptId, 'failed', { code: result.code, message: result.message });
       return false;
     }
+    await resolveReceipt(receiptId, 'confirmed', { code: result.code });
     return true;
   } catch (err) {
     console.error('[notifier] Bark 推送异常:', err.message);
+    await resolveReceipt(receiptId, 'failed', { error: err.message });
     return false;
   }
 }

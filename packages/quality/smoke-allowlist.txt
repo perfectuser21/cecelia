@@ -60,6 +60,7 @@ t2-cumulative-fr-smoke.sh
 t2-liveness-four-blades-smoke.sh
 t4-claim-protocol-smoke.sh
 t3-context-manifest-smoke.sh
+t4-receipt-collector-smoke.sh
 t6-battle-command-smoke.sh
 t6-dev-dispatch-migration-smoke.sh
 task-tasks-dedup-smoke.sh
