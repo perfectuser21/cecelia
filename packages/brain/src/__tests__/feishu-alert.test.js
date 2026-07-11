@@ -13,6 +13,13 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 const mockFetch = vi.fn();
 vi.stubGlobal('fetch', mockFetch);
 
+// ─── Mock receipt-collector（T4 回执接线）───────────────────────────────────
+// sendToFeishu 内部动态 import；真模块的 pool.query 在假定时器下会挂起，必须 mock。
+vi.mock('../receipt-collector.js', () => ({
+  recordActionReceipt: vi.fn().mockResolvedValue('r-test'),
+  resolveActionReceipt: vi.fn().mockResolvedValue(true),
+}));
+
 // ─── 导入被测模块 ────────────────────────────────────────────────────────────
 // feishu-alert.js 使用模块级变量（alertBuffer / flushTimer），
 // 每次测试需要通过 vi.resetModules() + 重新 import 隔离状态。
