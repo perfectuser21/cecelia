@@ -1,8 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { applyCheapRules, runCaptureTriage, updateAtom, __resetCaptureTriageForTest } from '../capture-triage.js';
+import { applyCheapRules, isProductionSensitive, runCaptureTriage, updateAtom, __resetCaptureTriageForTest } from '../capture-triage.js';
 
 vi.mock('../invariant-gate.js', () => ({ checkInvariantCandidate: vi.fn() }));
 import { checkInvariantCandidate } from '../invariant-gate.js';
+
+vi.mock('../actions.js', () => ({ createTask: vi.fn() }));
+import { createTask } from '../actions.js';
 
 describe('applyCheapRules（addendum 便宜规则表）', () => {
   it('issue P0/P1 → urgent conf 1.0', () => {
@@ -26,6 +29,28 @@ describe('applyCheapRules（addendum 便宜规则表）', () => {
   });
   it('handoff PASS（无下一步）→ null', () => {
     expect(applyCheapRules({ target_type: 'handoff', target_subtype: 'PASS', content: '' })).toBeNull();
+  });
+});
+
+describe('isProductionSensitive（决策57d296a1生产护栏）', () => {
+  it('content 含"生产环境" → true', () => {
+    expect(isProductionSensitive({ content: '这是生产环境变更', target_subtype: '' })).toBe(true);
+  });
+  it('content 含 "production" / "prod env"（大小写不敏感）→ true', () => {
+    expect(isProductionSensitive({ content: 'touching Production DB', target_subtype: '' })).toBe(true);
+    expect(isProductionSensitive({ content: 'switch prod env config', target_subtype: '' })).toBe(true);
+  });
+  it('target_subtype 含 "LLM渠道切换" → true', () => {
+    expect(isProductionSensitive({ content: 'x', target_subtype: 'LLM渠道切换' })).toBe(true);
+  });
+  it('普通内容 → false', () => {
+    expect(isProductionSensitive({ content: '修复一个测试用例', target_subtype: 'FAIL' })).toBe(false);
+  });
+  it('"生产力"/"reproduction" 等超集词不应误判为 true（正则误伤回归）', () => {
+    expect(isProductionSensitive({ content: '生产力工具优化', target_subtype: '' })).toBe(false);
+    expect(isProductionSensitive({ content: '国内生产总值GDP', target_subtype: '' })).toBe(false);
+    expect(isProductionSensitive({ content: 'reproduction steps for the bug', target_subtype: '' })).toBe(false);
+    expect(isProductionSensitive({ content: 'coproduction deal', target_subtype: '' })).toBe(false);
   });
 });
 
@@ -56,7 +81,12 @@ function makePool(atoms, extra = {}) {
 }
 
 describe('runCaptureTriage 四路落地', () => {
-  beforeEach(() => { __resetCaptureTriageForTest(); checkInvariantCandidate.mockReset(); });
+  beforeEach(() => {
+    __resetCaptureTriageForTest();
+    checkInvariantCandidate.mockReset();
+    createTask.mockReset();
+    createTask.mockResolvedValue({ success: true, task: { id: 'new-task-1' } });
+  });
 
   it('urgent：issue P1 → status=confirmed，ai_reason 带 [triage:urgent]，routed 保持源指针', async () => {
     const pool = makePool([{ id: 'a1', target_type: 'issue', target_subtype: 'P1', content: 'x', routed_to_table: 'issues', routed_to_id: 'i1' }]);
@@ -67,12 +97,49 @@ describe('runCaptureTriage 四路落地', () => {
     expect(upd.params.join(' ')).toContain('[triage:urgent]');
   });
 
-  it('line_backlog：handoff FAIL → routed 改写为 journeys/journey_id', async () => {
+  it('line_backlog：handoff FAIL → 真调用 createTask 建 harness_initiative，atom 改写为 tasks/新task id', async () => {
     const pool = makePool([{ id: 'a2', target_type: 'handoff', target_subtype: 'FAIL', content: 'x', routed_to_table: 'tasks', routed_to_id: 't1' }]);
     await runCaptureTriage(pool);
+    expect(createTask).toHaveBeenCalledTimes(1);
+    const callArg = createTask.mock.calls[0][0];
+    expect(callArg.task_type).toBe('harness_initiative');
+    expect(callArg.trigger_source).toBe('cortex');
+    expect(callArg.priority).toBe('P1');
+    expect(callArg.payload).toMatchObject({
+      orchestrator: 'skill-relay',
+      executor: 'claude',
+      mode: 'headed',
+      journey_id: 'jrn-1',
+    });
+    expect(callArg.dedupe_key).toBe('capture-triage-line-backlog-a2');
+    const upd = pool.updates[0];
+    expect(upd.sql).toMatch(/status = 'confirmed'/);
+    expect(upd.params).toContain('tasks');
+    expect(upd.params).toContain('new-task-1');
+  });
+
+  it('line_backlog：handoff PASS+NEXT → createTask priority 默认 P2', async () => {
+    const pool = makePool([{ id: 'a2b', target_type: 'handoff', target_subtype: 'PASS+NEXT', content: 'x', routed_to_table: 'tasks', routed_to_id: 't1' }]);
+    await runCaptureTriage(pool);
+    expect(createTask.mock.calls[0][0].priority).toBe('P2');
+  });
+
+  it('line_backlog：content 含"生产环境"命中护栏 → 不调用 createTask，走原 journeys 标记流程', async () => {
+    const pool = makePool([{ id: 'a2c', target_type: 'handoff', target_subtype: 'FAIL', content: '这是生产环境的紧急变更', routed_to_table: 'tasks', routed_to_id: 't1' }]);
+    await runCaptureTriage(pool);
+    expect(createTask).not.toHaveBeenCalled();
     const upd = pool.updates[0];
     expect(upd.params).toContain('journeys');
     expect(upd.params).toContain('jrn-1');
+  });
+
+  it('line_backlog：createTask dedupe_key 命中（无 task 字段）→ atom 不标 confirmed，不打 [triage:] 前缀，留待下轮重试', async () => {
+    createTask.mockResolvedValue({ success: true, deduplicated: true, dedupe_key_hit: true });
+    const pool = makePool([{ id: 'a2d', target_type: 'handoff', target_subtype: 'FAIL', content: 'x', routed_to_table: 'tasks', routed_to_id: 't1' }]);
+    await runCaptureTriage(pool);
+    const upd = pool.updates[0];
+    expect(upd.sql).not.toMatch(/status = 'confirmed'/);
+    expect(upd.params.join(' ')).not.toMatch(/\[triage:/);
   });
 
   it('line_backlog 但源 task 无 journey_id → 留 pending_review，ai_reason 标 no_journey', async () => {

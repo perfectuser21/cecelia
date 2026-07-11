@@ -15,10 +15,20 @@
  */
 import { callLLM } from './llm-caller.js';
 import { checkInvariantCandidate } from './invariant-gate.js';
+import { createTask } from './actions.js';
 
 export const TRIAGE_SOURCE_TYPES = ['handoff', 'learning', 'issue'];
 export const ROUTES = ['urgent', 'line_backlog', 'invariant', 'okr'];
 export const LLM_CONFIDENCE_FLOOR = 0.7;
+
+// 决策57d296a1护栏：命中生产环境相关关键词的 atom 不走自动建 task，留人工排期
+const PRODUCTION_SENSITIVE_PATTERN = /生产环境|\bproduction\b|prod\s*env|LLM渠道切换/i;
+
+/** 是否命中生产环境护栏（决策57d296a1）。命中 → 不自动建 task，留原有仅标记流程。 */
+export function isProductionSensitive(atom) {
+  const text = `${atom.content || ''} ${atom.target_subtype || ''}`;
+  return PRODUCTION_SENSITIVE_PATTERN.test(text);
+}
 
 /** 便宜规则层（addendum 规则表 1:1）。命中 → {route, confidence}，不命中 → null。 */
 export function applyCheapRules(atom) {
@@ -94,7 +104,32 @@ async function routeAtom(pool, atom, verdict, opts) {
     if (!journeyId) {
       return updateAtom(pool, atom.id, { confidence, aiReason: `[triage:no_journey] 源无 journey_id，留人工复核。${reason}` });
     }
-    return updateAtom(pool, atom.id, { status: 'confirmed', routedToTable: 'journeys', routedToId: journeyId, confidence, aiReason: `[triage:line_backlog] ${reason}` });
+    if (isProductionSensitive(atom)) {
+      return updateAtom(pool, atom.id, { status: 'confirmed', routedToTable: 'journeys', routedToId: journeyId, confidence, aiReason: `[triage:line_backlog] 命中生产护栏，留人工排期。${reason}` });
+    }
+    const priority = atom.target_subtype === 'FAIL' ? 'P1' : 'P2';
+    const result = await createTask({
+      title: `[自动派工] ${atom.content.slice(0, 80)}`,
+      description: `系统自动创建（来源: capture_atoms分诊, atom_id=${atom.id}）\n\n${atom.content}`,
+      task_type: 'harness_initiative',
+      priority,
+      trigger_source: 'cortex',
+      dedupe_key: `capture-triage-line-backlog-${atom.id}`,
+      payload: {
+        orchestrator: 'skill-relay',
+        executor: 'claude',
+        mode: 'headed',
+        journey_id: journeyId,
+        thin_prd: atom.content,
+      },
+    });
+    const taskId = result?.task?.id;
+    if (!taskId) {
+      // dedupe_key 命中（并发/重试场景，task 大概率已存在或即将由并发方建好）：
+      // 不打 [triage:] 前缀，留待下一轮分诊重新拾取重试，避免与已存在的 task 失联却被永久归档进人工队列
+      return updateAtom(pool, atom.id, { confidence, aiReason: `createTask dedupe_key 命中，留待下轮重试。${reason}` });
+    }
+    return updateAtom(pool, atom.id, { status: 'confirmed', routedToTable: 'tasks', routedToId: taskId, confidence, aiReason: `[triage:line_backlog] 自动创建 task ${taskId}。${reason}` });
   }
   if (route === 'invariant') {
     const gate = await checkInvariantCandidate(pool, atom, opts);
