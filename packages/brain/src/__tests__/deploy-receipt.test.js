@@ -8,7 +8,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, unlinkSync } from 'fs';
+import { mkdtempSync, unlinkSync, rmSync } from 'fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import express from 'express';
@@ -17,9 +17,10 @@ import request from 'supertest';
 let capturedSpawnArgs = null;
 let spawnCloseHandler = null;
 
-const { recordActionReceipt, resolveActionReceipt } = vi.hoisted(() => ({
+const { recordActionReceipt, resolveActionReceipt, execSyncMock } = vi.hoisted(() => ({
   recordActionReceipt: vi.fn().mockResolvedValue('r-dep'),
   resolveActionReceipt: vi.fn().mockResolvedValue(true),
+  execSyncMock: vi.fn().mockReturnValue(Buffer.from('ok')),
 }));
 vi.mock('../receipt-collector.js', () => ({ recordActionReceipt, resolveActionReceipt }));
 
@@ -64,22 +65,25 @@ vi.mock('child_process', () => ({
       on: (event, handler) => { if (event === 'close') spawnCloseHandler = handler; },
     };
   },
-  execSync: vi.fn().mockReturnValue(Buffer.from('ok')),
+  execSync: execSyncMock,
 }));
 
 describe('deploy webhook 回执接线（T4）', () => {
   const ORIG_REPO_ROOT = process.env.REPO_ROOT;
   let app;
+  let tmpRepoRoot;
 
   beforeEach(async () => {
     vi.clearAllMocks();
     recordActionReceipt.mockResolvedValue('r-dep');
     resolveActionReceipt.mockResolvedValue(true);
+    execSyncMock.mockReturnValue(Buffer.from('ok'));
     capturedSpawnArgs = null;
     spawnCloseHandler = null;
     process.env.DEPLOY_TOKEN = 'tok';
     // 用临时目录做 REPO_ROOT，避免 production 分支在真实仓库里落 log 文件
-    process.env.REPO_ROOT = mkdtempSync(join(tmpdir(), 'deploy-receipt-test-'));
+    tmpRepoRoot = mkdtempSync(join(tmpdir(), 'deploy-receipt-test-'));
+    process.env.REPO_ROOT = tmpRepoRoot;
     // 清掉残留状态文件，否则模块启动读到 running → 409
     try { unlinkSync('/tmp/cecelia-deploy-status.json'); } catch { /* noop */ }
     vi.resetModules();
@@ -91,6 +95,10 @@ describe('deploy webhook 回执接线（T4）', () => {
 
   afterEach(() => {
     delete process.env.DEPLOY_TOKEN;
+    if (tmpRepoRoot) {
+      try { rmSync(tmpRepoRoot, { recursive: true, force: true }); } catch { /* noop */ }
+      tmpRepoRoot = null;
+    }
     if (ORIG_REPO_ROOT === undefined) {
       delete process.env.REPO_ROOT;
     } else {
@@ -148,5 +156,32 @@ describe('deploy webhook 回执接线（T4）', () => {
       expect.objectContaining({ kind: 'deploy', target: 'staging' })
     );
     expect(resolveActionReceipt).toHaveBeenCalledWith('r-dep', 'confirmed', expect.anything());
+  });
+
+  it('staging execSync 抛错 → 核销 failed（含 error）', async () => {
+    execSyncMock.mockImplementation(() => { throw new Error('boom'); });
+    await request(app)
+      .post('/api/brain/deploy')
+      .set('Authorization', 'Bearer tok')
+      .send({ mode: 'staging' });
+    await new Promise((r) => setTimeout(r, 50));
+    expect(recordActionReceipt).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: 'deploy', target: 'staging' })
+    );
+    expect(resolveActionReceipt).toHaveBeenCalledWith(
+      'r-dep', 'failed', expect.objectContaining({ error: 'boom' })
+    );
+  });
+
+  it('staging 输出 STAGING_SKIP_REASON=no_docker → confirmed 且 evidence 含 skip_reason', async () => {
+    execSyncMock.mockReturnValue(Buffer.from('STAGING_SKIP_REASON=no_docker\n'));
+    await request(app)
+      .post('/api/brain/deploy')
+      .set('Authorization', 'Bearer tok')
+      .send({ mode: 'staging' });
+    await new Promise((r) => setTimeout(r, 50));
+    expect(resolveActionReceipt).toHaveBeenCalledWith(
+      'r-dep', 'confirmed', expect.objectContaining({ skip_reason: 'no_docker' })
+    );
   });
 });
