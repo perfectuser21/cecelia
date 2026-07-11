@@ -4,6 +4,10 @@ vi.mock('../notifier.js', () => ({
   sendFeishu: vi.fn().mockResolvedValue(true),
 }));
 
+vi.mock('../receipt-collector.js', () => ({
+  getUnconfirmedReceipts: vi.fn().mockResolvedValue([]),
+}));
+
 import {
   isInBattleReportWindow,
   alreadyGeneratedToday,
@@ -13,6 +17,7 @@ import {
   maybeGenerateBattleReport,
 } from '../battle-report.js';
 import { sendFeishu } from '../notifier.js';
+import { getUnconfirmedReceipts } from '../receipt-collector.js';
 
 /** mock pool：INSERT design_docs 返回 id，其余空行 */
 function makePool({ insertedId = 'doc-1' } = {}) {
@@ -292,6 +297,48 @@ describe('军师决策节（T6）', () => {
     const base = { mergedPrs: [], journeyRuns: [], userDecisions: [], sentinel: { jobs: [], expected: null, healthy: false } };
     const md1 = renderBattleReportMarkdown({ ...base, strategistDecisions: [] });
     expect(md1).toMatch(/## 军师决策（24h）\n暂无/);
+    expect(() => renderBattleReportMarkdown(base)).not.toThrow();
+  });
+});
+
+describe('未确认动作段（T4）', () => {
+  it('buildBattleReportData 调 getUnconfirmedReceipts 并透传结果', async () => {
+    const receipts = [
+      { kind: 'deploy', target: 'production', receipt_status: 'timeout', sent_at: new Date('2026-07-10T12:00:00Z') },
+    ];
+    getUnconfirmedReceipts.mockResolvedValueOnce(receipts);
+    const pool = makePool();
+    const data = await buildBattleReportData(pool);
+    expect(getUnconfirmedReceipts).toHaveBeenCalledWith(pool);
+    expect(data.unconfirmedActions).toEqual(receipts);
+  });
+
+  it('查询抛错 → 降级空数组不炸', async () => {
+    getUnconfirmedReceipts.mockRejectedValueOnce(new Error('boom'));
+    const pool = makePool();
+    const data = await buildBattleReportData(pool);
+    expect(data.unconfirmedActions).toEqual([]);
+  });
+
+  it('渲染：有未确认动作 → 列出 kind/target/status', () => {
+    const md = renderBattleReportMarkdown({
+      mergedPrs: [], journeyRuns: [], userDecisions: [], strategistDecisions: [],
+      sentinel: { jobs: [], expected: null, healthy: false },
+      unconfirmedActions: [
+        { kind: 'feishu', target: 'webhook', receipt_status: 'timeout', sent_at: new Date('2026-07-10T12:00:00Z') },
+      ],
+    });
+    expect(md).toContain('## 未确认动作（24h）');
+    expect(md).toMatch(/feishu → webhook：timeout/);
+  });
+
+  it('渲染：无未确认动作 → 暂无；字段缺省（旧数据形状）不炸', () => {
+    const base = {
+      mergedPrs: [], journeyRuns: [], userDecisions: [], strategistDecisions: [],
+      sentinel: { jobs: [], expected: null, healthy: false },
+    };
+    const md = renderBattleReportMarkdown({ ...base, unconfirmedActions: [] });
+    expect(md).toContain('## 未确认动作（24h）');
     expect(() => renderBattleReportMarkdown(base)).not.toThrow();
   });
 });
