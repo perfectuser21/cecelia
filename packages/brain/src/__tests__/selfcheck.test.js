@@ -176,8 +176,10 @@ describe('selfcheck', () => {
   // （表不存在则 fail-open 降级恒触发，三入口幂等全部失效——同类接缝），故推进地板到 326。
   // 331（learnings 谱系两列 + summary backfill + task_completion 清理）为 T9 学习账本
   // 可靠性依赖（parent_learning_id/verified_effective 列缺失则谱系写入整句报错被吞），故推进地板到 331。
-  it('EXPECTED_SCHEMA_VERSION should be 331 (floor, bumped for learnings lineage)', () => {
-    expect(EXPECTED_SCHEMA_VERSION).toBe('331');
+  // 333（areas 去重 + KR1/KR2 metadata.target_abilities 挂载）为 OKR 数据卫生一次性迁移，
+  // 推进地板到 333 防止未跑该迁移的旧 DB 误判 KR ability-progress 端点为已生效。
+  it('EXPECTED_SCHEMA_VERSION should be 333 (floor, bumped for OKR areas/ability data hygiene)', () => {
+    expect(EXPECTED_SCHEMA_VERSION).toBe('333');
   });
 
   it('should pass when DB schema version is ahead of expected (>= check)', async () => {
