@@ -63,16 +63,35 @@ describe('GET /kr/:id/ability-progress (T6 两轴对账)', () => {
     expect(mockPool.query).toHaveBeenCalledTimes(1);
   });
 
-  it('失联 ability id → 归入 missing_ability_ids', async () => {
+  it('失联 ability id（格式合法但库里查无此人）→ 归入 missing_ability_ids', async () => {
+    const missingUuid = '22222222-2222-4222-8222-222222222222';
     mockPool.query
-      .mockResolvedValueOnce({ rows: [{ id: 'kr1', title: 'KR一', metadata: { target_abilities: ['ab1', 'ghost'] } }] })
+      .mockResolvedValueOnce({ rows: [{ id: 'kr1', title: 'KR一', metadata: { target_abilities: ['ab1', missingUuid] } }] })
       .mockResolvedValueOnce({ rows: [
         { ability_id: 'ab1', name: '抖音发布', thickness: 'thin', status: 'working', done: '0', doing: '0', todo: '1' },
       ] });
     const handler = getHandler('get', '/kr/:id/ability-progress');
     const { req, res } = mockReqRes({}, { id: 'kr1' });
     await handler(req, res);
-    expect(res._data.missing_ability_ids).toEqual(['ghost']);
+    expect(res._data.missing_ability_ids).toEqual([missingUuid]);
+  });
+
+  it('格式非法的 ability id 不进 SQL 参数，直接归入 missing_ability_ids', async () => {
+    const validUuid = '11111111-1111-4111-8111-111111111111';
+    mockPool.query
+      .mockResolvedValueOnce({ rows: [{ id: 'kr1', title: 'KR一', metadata: { target_abilities: [validUuid, 'ghost'] } }] })
+      .mockResolvedValueOnce({ rows: [
+        { ability_id: validUuid, name: '抖音发布', thickness: 'thin', status: 'working', done: '0', doing: '0', todo: '1' },
+      ] });
+    const handler = getHandler('get', '/kr/:id/ability-progress');
+    const { req, res } = mockReqRes({}, { id: 'kr1' });
+    await handler(req, res);
+    expect(res._status).toBe(200);
+    expect(res._data.success).toBe(true);
+    const [, params] = mockPool.query.mock.calls[1];
+    expect(params).toEqual([[validUuid]]);
+    expect(res._data.missing_ability_ids).toContain('ghost');
+    expect(res._data.abilities).toHaveLength(1);
   });
 
   it('KR 不存在 → 404', async () => {
