@@ -78,6 +78,7 @@ describe('classifyScope（scope 分诊 cheap rules，修订 57d296a1）', () => 
 function makePool(atoms, extra = {}) {
   const updates = [];
   const inserts = [];
+  const gpInserts = [];
   const txStatements = [];
   const handle = async (sql, params) => {
     if (/^(BEGIN|COMMIT|ROLLBACK)/.test(sql)) { txStatements.push(sql); return {}; }
@@ -87,6 +88,12 @@ function makePool(atoms, extra = {}) {
       if (extra.updateThrows) throw new Error('update boom');
       return { rowCount: 1 };
     }
+    if (/SELECT id FROM golden_paths/.test(sql)) return { rows: extra.existingGpId ? [{ id: extra.existingGpId }] : [] };
+    if (/INSERT INTO golden_paths/.test(sql)) {
+      gpInserts.push({ sql, params });
+      if (extra.gpInsertThrows) throw new Error(extra.gpInsertThrows);
+      return { rows: [{ id: 'gp-1' }] };
+    }
     if (/SELECT id FROM decisions/.test(sql)) return { rows: extra.existingDecisionId ? [{ id: extra.existingDecisionId }] : [] };
     if (/INSERT INTO decisions/.test(sql)) { inserts.push({ sql, params }); return { rows: [{ id: 'dec-1' }] }; }
     if (/SELECT payload->>'journey_id'/.test(sql)) return { rows: [{ journey_id: extra.journeyId !== undefined ? extra.journeyId : 'jrn-1' }] };
@@ -94,7 +101,7 @@ function makePool(atoms, extra = {}) {
   };
   const client = { query: vi.fn(handle), release: vi.fn() };
   const pool = {
-    updates, inserts, txStatements, client,
+    updates, inserts, gpInserts, txStatements, client,
     query: vi.fn(handle),
     connect: vi.fn(async () => client),
   };
@@ -280,6 +287,59 @@ describe('runCaptureTriage 四路落地', () => {
     const r2 = await runCaptureTriage(pool);
     expect(r2.skipped).toBe(true);
     expect(pool.query).toHaveBeenCalledTimes(1);
+  });
+
+  it('capability：handoff 含新平台语义 → 不 createTask，写 golden_paths(candidate, capture_triage)，atom 标 [triage:capability]', async () => {
+    const pool = makePool([{ id: 'a-cap', target_type: 'handoff', target_subtype: 'PASS+NEXT', content: '建议做一个新平台的自动发布能力', routed_to_table: 'tasks', routed_to_id: 't1' }]);
+    const r = await runCaptureTriage(pool);
+    expect(r.failed).toBe(0);
+    expect(createTask).not.toHaveBeenCalled();
+    expect(pool.gpInserts).toHaveLength(1);
+    const ins = pool.gpInserts[0];
+    expect(ins.sql).toMatch(/'candidate'/);
+    expect(ins.sql).toMatch(/'capture_triage'/);
+    expect(ins.params[0]).toBe('建议做一个新平台的自动发布能力'.slice(0, 80)); // title
+    expect(ins.params[2]).toBe('jrn-1');                                        // journey_id
+    expect(ins.params[3]).toContain('atom:a-cap');                              // status_reason 幂等锚
+    const upd = pool.updates[0];
+    expect(upd.sql).toMatch(/status = 'confirmed'/);
+    expect(upd.params).toContain('golden_paths');
+    expect(upd.params).toContain('gp-1');
+    expect(upd.params.join(' ')).toContain('[triage:capability]');
+    expect(pool.txStatements).toEqual(['BEGIN', 'COMMIT']);
+  });
+
+  it('capability 判定优先于生产护栏：含新平台+生产环境 → 仍走 GP 收编不留箱', async () => {
+    const pool = makePool([{ id: 'a-cap2', target_type: 'handoff', target_subtype: 'FAIL', content: '生产环境需要一个新平台监控能力', routed_to_table: 'tasks', routed_to_id: 't1' }]);
+    await runCaptureTriage(pool);
+    expect(createTask).not.toHaveBeenCalled();
+    expect(pool.gpInserts).toHaveLength(1);
+    expect(pool.updates[0].params.join(' ')).toContain('[triage:capability]');
+  });
+
+  it('capability 幂等：同 atom 锚已有 golden_paths → 不重复 INSERT，只补 atom 指针', async () => {
+    const pool = makePool(
+      [{ id: 'a-cap3', target_type: 'handoff', target_subtype: 'PASS+NEXT', content: '新平台候选重试', routed_to_table: 'tasks', routed_to_id: 't1' }],
+      { existingGpId: 'gp-old' }
+    );
+    await runCaptureTriage(pool);
+    expect(pool.gpInserts).toHaveLength(0);
+    const upd = pool.updates[0];
+    expect(upd.params).toContain('gp-old');
+    expect(upd.params.join(' ')).toContain('[triage:capability]');
+  });
+
+  it('capability FK 容错：INSERT 抛 FK/uuid 错误 → ROLLBACK 且按 no_journey 语义留箱', async () => {
+    const pool = makePool(
+      [{ id: 'a-cap4', target_type: 'handoff', target_subtype: 'PASS+NEXT', content: '新平台但 journey 脏了', routed_to_table: 'tasks', routed_to_id: 't1' }],
+      { gpInsertThrows: 'insert or update on table "golden_paths" violates foreign key constraint' }
+    );
+    const r = await runCaptureTriage(pool);
+    expect(r.failed).toBe(0);
+    expect(pool.txStatements).toContain('ROLLBACK');
+    const upd = pool.updates[0];
+    expect(upd.sql).not.toMatch(/status = 'confirmed'/);
+    expect(upd.params.join(' ')).toContain('[triage:no_journey]');
   });
 
   it('单条失败不中断其余条目', async () => {
