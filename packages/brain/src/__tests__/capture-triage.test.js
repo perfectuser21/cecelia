@@ -395,4 +395,11 @@ describe('runCaptureTriage 四路落地', () => {
     expect(pool.txStatements).toContain('ROLLBACK');
     expect(pool.updates).toHaveLength(0);
   });
+
+  it('repair 回归锁：createTask title 以 [自动派工] 前缀开头（晨报 T6 查询口径 title LIKE）', async () => {
+    const pool = makePool([{ id: 'a-rep', target_type: 'handoff', target_subtype: 'FAIL', content: '修复解析函数的回归', routed_to_table: 'tasks', routed_to_id: 't1' }]);
+    await runCaptureTriage(pool);
+    expect(createTask).toHaveBeenCalledTimes(1);
+    expect(createTask.mock.calls[0][0].title.startsWith('[自动派工] ')).toBe(true);
+  });
 });
