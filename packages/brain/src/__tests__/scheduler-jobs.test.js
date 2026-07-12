@@ -37,6 +37,9 @@ vi.mock('../launchd-patrol.js', () => ({
 vi.mock('../direction-proposer.js', () => ({
   maybeRunDirectionProposer: vi.fn().mockResolvedValue({ triggered: false }),
 }));
+vi.mock('../postdeploy-verifier.js', () => ({
+  runPostdeployVerifier: vi.fn().mockResolvedValue({ triggered: false }),
+}));
 
 import {
   runSchedulerJobsOnce,
@@ -57,6 +60,7 @@ import { runCaptureTriage } from '../capture-triage.js';
 import { runReceiptCollector } from '../receipt-collector.js';
 import { runLaunchdPatrol } from '../launchd-patrol.js';
 import { maybeRunDirectionProposer } from '../direction-proposer.js';
+import { runPostdeployVerifier } from '../postdeploy-verifier.js';
 
 function makePool() {
   return { query: vi.fn().mockResolvedValue({ rows: [] }) };
@@ -67,9 +71,9 @@ describe('scheduler-jobs 注册表', () => {
     vi.clearAllMocks();
   });
 
-  it('JOBS 注册了 14 个 job', () => {
+  it('JOBS 注册了 15 个 job（含 postdeploy-verifier）', () => {
     expect(JOBS.map((j) => j.name)).toEqual([
-      'arch-review', 'ci-patrol', 'strategy-trigger', 'conversation-digest', 'capture-digestion', 'daily-backup', 'line-dreaming', 'ledger-hygiene', 'battle-report', 'capture-triage', 'receipt-collector', 'gp-shelf-life', 'launchd-patrol', 'direction-proposer',
+      'arch-review', 'ci-patrol', 'strategy-trigger', 'conversation-digest', 'capture-digestion', 'daily-backup', 'line-dreaming', 'ledger-hygiene', 'battle-report', 'capture-triage', 'receipt-collector', 'gp-shelf-life', 'launchd-patrol', 'direction-proposer', 'postdeploy-verifier',
     ]);
   });
 
@@ -89,7 +93,8 @@ describe('scheduler-jobs 注册表', () => {
     expect(runReceiptCollector).toHaveBeenCalledWith(pool);
     expect(runLaunchdPatrol).toHaveBeenCalledWith();
     expect(maybeRunDirectionProposer).toHaveBeenCalledWith(pool);
-    expect(results).toHaveLength(14);
+    expect(runPostdeployVerifier).toHaveBeenCalledWith(pool);
+    expect(results).toHaveLength(15);
     expect(results.every((r) => r.ok)).toBe(true);
   });
 
@@ -99,7 +104,7 @@ describe('scheduler-jobs 注册表', () => {
     const results = await runSchedulerJobsOnce(pool);
     expect(results[0]).toMatchObject({ name: 'arch-review', ok: false, error: 'boom' });
     expect(results.slice(1).every((r) => r.ok)).toBe(true);
-    expect(results).toHaveLength(14);
+    expect(results).toHaveLength(15);
     expect(runCaptureDigestion).toHaveBeenCalled();
   });
 
@@ -118,7 +123,7 @@ describe('scheduler-jobs 注册表', () => {
     const pool = makePool();
     await runSchedulerJobsOnce(pool);
     const sentinelCalls = pool.query.mock.calls.filter(([sql]) => sql.includes('working_memory'));
-    expect(sentinelCalls).toHaveLength(14);
+    expect(sentinelCalls).toHaveLength(15);
     expect(sentinelCalls[0][0]).toMatch(/ON CONFLICT \(key\) DO UPDATE/);
     expect(sentinelCalls[0][1][0]).toBe(`${SENTINEL_KEY_PREFIX}arch-review`);
     const payload = JSON.parse(sentinelCalls[0][1][1]);
@@ -129,7 +134,7 @@ describe('scheduler-jobs 注册表', () => {
   it('哨兵写入失败不影响 job 结果也不抛', async () => {
     const pool = { query: vi.fn().mockRejectedValue(new Error('db down')) };
     const results = await runSchedulerJobsOnce(pool);
-    expect(results).toHaveLength(14);
+    expect(results).toHaveLength(15);
     expect(results.every((r) => r.ok)).toBe(true);
   });
 });

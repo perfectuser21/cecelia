@@ -48,6 +48,7 @@ router.post('/', async (req, res) => {
       prd = null,
       priority = 'P2',
       task_type = 'dev',
+      status: statusInput = null,
       project_id = null,
       area_id = null,
       goal_id = null,
@@ -123,6 +124,10 @@ router.post('/', async (req, res) => {
       payload = { ...(payload ?? {}), journey_id };
     }
 
+    // 允许创建时指定 pending_postdeploy 状态（第5环门禁协议），其余状态创建时一律 queued
+    const ALLOWED_CREATE_STATUSES = ['queued', 'pending_postdeploy'];
+    const initialStatus = statusInput && ALLOWED_CREATE_STATUSES.includes(statusInput) ? statusInput : 'queued';
+
     // B51: harness_initiative 任务缺 journey_id 会导致 initiative_runs + Notion 游离，提前 warn
     const warnings = [];
     if (task_type === 'harness_initiative' && !(payload?.journey_id)) {
@@ -152,13 +157,14 @@ router.post('/', async (req, res) => {
          project_id, area_id, goal_id, location,
          payload, trigger_source, domain, okr_initiative_id, ability_id
        )
-       VALUES ($1, $2, $3, $4, 'queued', $5, $6, $7, $8, $9, $10, $11, $12, $13)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
        RETURNING id, title, status, task_type, priority, project_id, area_id, goal_id, okr_initiative_id, ability_id, payload, created_at`,
       [
         title.trim(),
         description,
         priority,
         task_type,
+        initialStatus,
         project_id,
         area_id,
         goal_id,
