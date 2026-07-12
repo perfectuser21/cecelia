@@ -264,6 +264,56 @@ describe('placeholder detection — regression tests (D1/D2/D3)', () => {
   });
 });
 
+// D4: 真实标识符里的 xxx 不是占位符（regression: task 51dafd1e，arch_review 管线三振瘫痪）
+describe('placeholder detection — identifier false-positive regression (D4)', () => {
+  const base = { title: 'Fix parser bug in response handler', priority: 'P1' };
+
+  it('D4: camelCase identifier parseXxxResponse should NOT trigger', async () => {
+    const result = await preFlightCheck({
+      ...base,
+      description: 'Refactor parseXxxResponse to handle empty payloads and add unit coverage for the parser module.'
+    });
+    expect(result.passed).toBe(true);
+    expect(result.issues).not.toContain('Description contains placeholder text');
+  });
+
+  it('D4: identifiers _setXxx() and checkXxxAvailable() should NOT trigger', async () => {
+    const result = await preFlightCheck({
+      ...base,
+      description: 'The helper _setXxx() must be called before checkXxxAvailable() to avoid stale state in the scheduler.'
+    });
+    expect(result.passed).toBe(true);
+    expect(result.issues).not.toContain('Description contains placeholder text');
+  });
+
+  it('D4: prefix camelCase identifier xxxHandler should NOT trigger', async () => {
+    const result = await preFlightCheck({
+      ...base,
+      description: 'Register xxxHandler in the dispatcher table so retry events reach the correct consumer.'
+    });
+    expect(result.passed).toBe(true);
+    expect(result.issues).not.toContain('Description contains placeholder text');
+  });
+
+  it('D4: snake_case identifier set_xxx_flag should NOT trigger', async () => {
+    const result = await preFlightCheck({
+      ...base,
+      description: 'Python helper set_xxx_flag toggles the feature gate and persists it to the settings table.'
+    });
+    expect(result.passed).toBe(true);
+    expect(result.issues).not.toContain('Description contains placeholder text');
+  });
+
+  it('D4: standalone xxx with punctuation neighbors (xxx) should still trigger', async () => {
+    const result = await preFlightCheck({
+      ...base,
+      description: 'Deploy the service to the target host (xxx) and verify the health endpoint responds correctly.'
+    });
+    expect(result.passed).toBe(false);
+    expect(result.issues).toContain('Description contains placeholder text');
+  });
+});
+
 describe('system task type exemption', () => {
   it('dept_heartbeat passes pre-flight without description', async () => {
     const task = { title: '[heartbeat] zenithjoy', priority: 'P1', task_type: 'dept_heartbeat' };
