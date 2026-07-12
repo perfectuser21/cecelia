@@ -8,13 +8,20 @@ const PORT_MAX = 5399;
  * 返回 { port, db_name }。
  */
 export async function allocatePreview(prNumber, branchName, baseRepo = 'cecelia', dbPool = pool) {
-  // 已存在活跃记录时复用（幂等，支持重推）
+  // 已存在活跃记录时复用端口/DB名（幂等，支持重推），但必须把 status 重置为 'starting'——
+  // 否则同一 PR 重新 push 触发时，外部 CI 轮询 GET /status 会立刻看到上一轮遗留的 'active'
+  // 提前判定"已就绪"，而这时 preview-env-start.sh 新一轮才刚 spawn（旧 Brain 进程正被 kill、
+  // 新进程还没 ready），紧跟着的健康检查直接扑空（PR#3810 CI 实测复现）。
   const existing = await dbPool.query(
     `SELECT port, db_name FROM preview_environments
      WHERE pr_number = $1 AND status != 'inactive'`,
     [prNumber],
   );
   if (existing.rows.length > 0) {
+    await dbPool.query(
+      `UPDATE preview_environments SET status = 'starting', updated_at = NOW() WHERE pr_number = $1`,
+      [prNumber],
+    );
     return { port: existing.rows[0].port, db_name: existing.rows[0].db_name };
   }
 
