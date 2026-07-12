@@ -49,6 +49,7 @@ if git -C "$REPO_ROOT" worktree list | grep -q "$WORK_DIR"; then
 fi
 rm -rf "$WORK_DIR"
 
+git -C "$REPO_ROOT" worktree prune 2>/dev/null || true
 git -C "$REPO_ROOT" fetch origin "${BRANCH_NAME}" 2>>"$LOG_FILE" || {
   log "ERROR: git fetch origin ${BRANCH_NAME} 失败"
   exit 1
