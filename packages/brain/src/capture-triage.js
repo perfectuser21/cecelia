@@ -42,6 +42,19 @@ export function applyCheapRules(atom) {
   return null;
 }
 
+export const SCOPES = ['repair', 'capability'];
+
+// scope 分诊 cheap rules（修订 57d296a1，decisions b2eeb1b5）。
+// capability 关键词优先于 FAIL/PASS+NEXT：误收进 GP 菜单可由人工圈选恢复，反向误判=自动开工本应批审的方向。
+const CAPABILITY_SCOPE_PATTERN = /新方向|新能力|新平台|新业务|从零|立项|new\s+(capability|platform|direction)/i;
+
+/** line_backlog 的 scope 判定：'capability' | 'repair' | null（拿不准，走 LLM 兜底）。 */
+export function classifyScope(atom) {
+  if (CAPABILITY_SCOPE_PATTERN.test(atom.content || '')) return 'capability';
+  if (atom.target_subtype === 'FAIL' || atom.target_subtype === 'PASS+NEXT') return 'repair';
+  return null;
+}
+
 const INTERVAL_MS = parseInt(process.env.CECELIA_CAPTURE_TRIAGE_INTERVAL_MS || String(10 * 60 * 1000), 10);
 const BATCH = parseInt(process.env.CECELIA_CAPTURE_TRIAGE_BATCH || '20', 10);
 const LLM_ENABLED = process.env.CECELIA_CAPTURE_TRIAGE_LLM !== 'off';
@@ -63,7 +76,8 @@ const TRIAGE_LLM_PROMPT = (atom) => `你是 Cecelia 的收件箱分诊员。一�
 ${atom.content}
 \`\`\`
 
-只输出 JSON：{"route":"urgent|line_backlog|invariant|okr","confidence":0.0-1.0,"reason":"一句话"}`;
+只输出 JSON：{"route":"urgent|line_backlog|invariant|okr","confidence":0.0-1.0,"reason":"一句话","scope":"repair|capability"}
+scope 仅在 route=line_backlog 时必填：repair=修复/回归/既有能力小改；capability=新方向/新能力/新平台/新业务。其他 route 可省略。`;
 
 const ATOM_UPDATE_STATUSES = ['confirmed', 'pending_review'];
 
@@ -83,6 +97,50 @@ export async function updateAtom(db, id, { status = null, routedToTable = null, 
   await db.query(`UPDATE capture_atoms SET ${sets.join(', ')} WHERE id = $1`, params);
 }
 
+/** capability 级收编（修订 57d296a1，decisions b2eeb1b5）：写 golden_paths(candidate)，不自动开工。
+ *  INSERT 与 atom UPDATE 同事务（照 invariant 路模式）；status_reason 内嵌 atom:<id> 做幂等锚。 */
+async function routeCapability(pool, atom, verdict, journeyId) {
+  const { confidence, reason = '' } = verdict;
+  const atomUpdate = { status: 'confirmed', routedToTable: 'golden_paths', confidence };
+  const { rows: existing } = await pool.query(
+    `SELECT id FROM golden_paths WHERE source = 'capture_triage' AND status_reason LIKE $1 LIMIT 1`,
+    [`%atom:${atom.id}%`]
+  );
+  if (existing.length) {
+    return updateAtom(pool, atom.id, { ...atomUpdate, routedToId: existing[0].id, aiReason: `[triage:capability] 已收编 GP 候选 ${existing[0].id}。${reason}` });
+  }
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const { rows } = await client.query(
+      `INSERT INTO golden_paths (title, one_liner, journey_id, status, source, status_reason)
+       VALUES ($1,$2,$3,'candidate','capture_triage',$4) RETURNING id`,
+      [atom.content.slice(0, 80), atom.content.slice(0, 200), journeyId, `capture-triage atom:${atom.id}`]
+    );
+    await updateAtom(client, atom.id, { ...atomUpdate, routedToId: rows[0].id, aiReason: `[triage:capability] 收编 GP 候选 ${rows[0].id}。${reason}` });
+    await client.query('COMMIT');
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    // journey_id 来自 tasks.payload（text，无 FK 保证）：FK/uuid 违约按 no_journey 语义留箱，避免脏数据反复占用重试
+    if (/foreign key|invalid input syntax/i.test(err.message)) {
+      return updateAtom(pool, atom.id, { confidence, aiReason: `[triage:no_journey] golden_paths 写入失败（journey_id 非法）：${err.message.slice(0, 120)}。${reason}` });
+    }
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
+/** line_backlog 的 scope 解析：verdict 自带（LLM 路由已在同一次调用里给出 scope）→ cheap rule → 默认 repair
+ *  （维持 57d296a1 现状，误判有 isProductionSensitive 护栏 + CI + code-review + 次日验货三层事后兜底）。
+ *  注：cheap rule 路由的 line_backlog（handoff FAIL/PASS+NEXT）classifyScope 必有结论；默认分支只服务
+ *  LLM 路由但 scope 缺失/非法的 verdict——不二次调用 LLM（同 prompt 重问大概率同样失败，徒增成本）。
+ *  优先级判定点：LLM 给出的 scope 压过 capability 关键词（全文语义优于关键词命中）。 */
+function resolveScope(atom, verdict) {
+  if (SCOPES.includes(verdict.scope)) return verdict.scope;
+  return classifyScope(atom) ?? 'repair';
+}
+
 /** 四路落地。返回该条是否成功处理。 */
 async function routeAtom(pool, atom, verdict, opts) {
   const { route, confidence, reason = '' } = verdict;
@@ -97,6 +155,10 @@ async function routeAtom(pool, atom, verdict, opts) {
     }
     if (!journeyId) {
       return updateAtom(pool, atom.id, { confidence, aiReason: `[triage:no_journey] 源无 journey_id，留人工复核。${reason}` });
+    }
+    const scope = resolveScope(atom, verdict);
+    if (scope === 'capability') {
+      return routeCapability(pool, atom, verdict, journeyId);
     }
     if (isProductionSensitive(atom)) {
       return updateAtom(pool, atom.id, { status: 'confirmed', routedToTable: 'journeys', routedToId: journeyId, confidence, aiReason: `[triage:line_backlog] 命中生产护栏，留人工排期。${reason}` });
@@ -211,7 +273,7 @@ export async function runCaptureTriage(pool, { llm = callLLM } = {}) {
           await updateAtom(pool, atom.id, { confidence: parsed.confidence, aiReason: `[triage:low_confidence] ${parsed.reason || ''}` });
           continue;
         }
-        verdict = { route: parsed.route, confidence: parsed.confidence, reason: parsed.reason || '' };
+        verdict = { route: parsed.route, confidence: parsed.confidence, reason: parsed.reason || '', scope: parsed.scope };
       }
       await routeAtom(pool, atom, verdict, { llm });
     } catch (err) {

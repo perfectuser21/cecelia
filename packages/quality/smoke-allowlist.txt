@@ -13,6 +13,7 @@ bluegreen-bark-nojq-smoke.sh
 callback-postprocess-smoke.sh
 capture-inbox-smoke.sh
 capture-triage-line-backlog-autotask-smoke.sh
+capture-triage-scope-smoke.sh
 ci-patrol-wiring-smoke.sh
 circuit-breaker-persist-smoke.sh
 circuit-breaker-reset-smoke.sh

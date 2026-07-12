@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { applyCheapRules, isProductionSensitive, runCaptureTriage, updateAtom, __resetCaptureTriageForTest } from '../capture-triage.js';
+import { applyCheapRules, classifyScope, isProductionSensitive, runCaptureTriage, updateAtom, __resetCaptureTriageForTest } from '../capture-triage.js';
 
 vi.mock('../invariant-gate.js', () => ({ checkInvariantCandidate: vi.fn() }));
 import { checkInvariantCandidate } from '../invariant-gate.js';
@@ -54,9 +54,31 @@ describe('isProductionSensitive（决策57d296a1生产护栏）', () => {
   });
 });
 
+describe('classifyScope（scope 分诊 cheap rules，修订 57d296a1）', () => {
+  it('内容含新平台/新方向/新能力/从零/立项 → capability', () => {
+    expect(classifyScope({ target_subtype: 'PASS+NEXT', content: '建议开一个新平台的发布器' })).toBe('capability');
+    expect(classifyScope({ target_subtype: 'FAIL', content: '这是个新方向，值得立项' })).toBe('capability');
+    expect(classifyScope({ target_subtype: null, content: '需要从零做一套新能力' })).toBe('capability');
+  });
+  it('capability 关键词优先于 FAIL（含新方向的失败交接进 GP 菜单）', () => {
+    expect(classifyScope({ target_subtype: 'FAIL', content: '失败了，根因是缺一个新平台适配层' })).toBe('capability');
+  });
+  it('handoff FAIL 普通内容 → repair', () => {
+    expect(classifyScope({ target_subtype: 'FAIL', content: '回归测试挂了，修一下解析函数' })).toBe('repair');
+  });
+  it('handoff PASS+NEXT 普通内容 → repair（cheap rule 直接判，不走 LLM）', () => {
+    expect(classifyScope({ target_subtype: 'PASS+NEXT', content: '下一步补齐既有 ability 的错误处理' })).toBe('repair');
+  });
+  it('非 FAIL/PASS+NEXT 且无关键词 → null（拿不准）', () => {
+    expect(classifyScope({ target_subtype: 'failure_pattern', content: '一条普通教训' })).toBeNull();
+    expect(classifyScope({ target_subtype: null, content: '' })).toBeNull();
+  });
+});
+
 function makePool(atoms, extra = {}) {
   const updates = [];
   const inserts = [];
+  const gpInserts = [];
   const txStatements = [];
   const handle = async (sql, params) => {
     if (/^(BEGIN|COMMIT|ROLLBACK)/.test(sql)) { txStatements.push(sql); return {}; }
@@ -66,6 +88,12 @@ function makePool(atoms, extra = {}) {
       if (extra.updateThrows) throw new Error('update boom');
       return { rowCount: 1 };
     }
+    if (/SELECT id FROM golden_paths/.test(sql)) return { rows: extra.existingGpId ? [{ id: extra.existingGpId }] : [] };
+    if (/INSERT INTO golden_paths/.test(sql)) {
+      gpInserts.push({ sql, params });
+      if (extra.gpInsertThrows) throw new Error(extra.gpInsertThrows);
+      return { rows: [{ id: 'gp-1' }] };
+    }
     if (/SELECT id FROM decisions/.test(sql)) return { rows: extra.existingDecisionId ? [{ id: extra.existingDecisionId }] : [] };
     if (/INSERT INTO decisions/.test(sql)) { inserts.push({ sql, params }); return { rows: [{ id: 'dec-1' }] }; }
     if (/SELECT payload->>'journey_id'/.test(sql)) return { rows: [{ journey_id: extra.journeyId !== undefined ? extra.journeyId : 'jrn-1' }] };
@@ -73,7 +101,7 @@ function makePool(atoms, extra = {}) {
   };
   const client = { query: vi.fn(handle), release: vi.fn() };
   const pool = {
-    updates, inserts, txStatements, client,
+    updates, inserts, gpInserts, txStatements, client,
     query: vi.fn(handle),
     connect: vi.fn(async () => client),
   };
@@ -261,6 +289,59 @@ describe('runCaptureTriage 四路落地', () => {
     expect(pool.query).toHaveBeenCalledTimes(1);
   });
 
+  it('capability：handoff 含新平台语义 → 不 createTask，写 golden_paths(candidate, capture_triage)，atom 标 [triage:capability]', async () => {
+    const pool = makePool([{ id: 'a-cap', target_type: 'handoff', target_subtype: 'PASS+NEXT', content: '建议做一个新平台的自动发布能力', routed_to_table: 'tasks', routed_to_id: 't1' }]);
+    const r = await runCaptureTriage(pool);
+    expect(r.failed).toBe(0);
+    expect(createTask).not.toHaveBeenCalled();
+    expect(pool.gpInserts).toHaveLength(1);
+    const ins = pool.gpInserts[0];
+    expect(ins.sql).toMatch(/'candidate'/);
+    expect(ins.sql).toMatch(/'capture_triage'/);
+    expect(ins.params[0]).toBe('建议做一个新平台的自动发布能力'.slice(0, 80)); // title
+    expect(ins.params[2]).toBe('jrn-1');                                        // journey_id
+    expect(ins.params[3]).toContain('atom:a-cap');                              // status_reason 幂等锚
+    const upd = pool.updates[0];
+    expect(upd.sql).toMatch(/status = 'confirmed'/);
+    expect(upd.params).toContain('golden_paths');
+    expect(upd.params).toContain('gp-1');
+    expect(upd.params.join(' ')).toContain('[triage:capability]');
+    expect(pool.txStatements).toEqual(['BEGIN', 'COMMIT']);
+  });
+
+  it('capability 判定优先于生产护栏：含新平台+生产环境 → 仍走 GP 收编不留箱', async () => {
+    const pool = makePool([{ id: 'a-cap2', target_type: 'handoff', target_subtype: 'FAIL', content: '生产环境需要一个新平台监控能力', routed_to_table: 'tasks', routed_to_id: 't1' }]);
+    await runCaptureTriage(pool);
+    expect(createTask).not.toHaveBeenCalled();
+    expect(pool.gpInserts).toHaveLength(1);
+    expect(pool.updates[0].params.join(' ')).toContain('[triage:capability]');
+  });
+
+  it('capability 幂等：同 atom 锚已有 golden_paths → 不重复 INSERT，只补 atom 指针', async () => {
+    const pool = makePool(
+      [{ id: 'a-cap3', target_type: 'handoff', target_subtype: 'PASS+NEXT', content: '新平台候选重试', routed_to_table: 'tasks', routed_to_id: 't1' }],
+      { existingGpId: 'gp-old' }
+    );
+    await runCaptureTriage(pool);
+    expect(pool.gpInserts).toHaveLength(0);
+    const upd = pool.updates[0];
+    expect(upd.params).toContain('gp-old');
+    expect(upd.params.join(' ')).toContain('[triage:capability]');
+  });
+
+  it('capability FK 容错：INSERT 抛 FK/uuid 错误 → ROLLBACK 且按 no_journey 语义留箱', async () => {
+    const pool = makePool(
+      [{ id: 'a-cap4', target_type: 'handoff', target_subtype: 'PASS+NEXT', content: '新平台但 journey 脏了', routed_to_table: 'tasks', routed_to_id: 't1' }],
+      { gpInsertThrows: 'insert or update on table "golden_paths" violates foreign key constraint' }
+    );
+    const r = await runCaptureTriage(pool);
+    expect(r.failed).toBe(0);
+    expect(pool.txStatements).toContain('ROLLBACK');
+    const upd = pool.updates[0];
+    expect(upd.sql).not.toMatch(/status = 'confirmed'/);
+    expect(upd.params.join(' ')).toContain('[triage:no_journey]');
+  });
+
   it('单条失败不中断其余条目', async () => {
     const atoms = [
       { id: 'b1', target_type: 'handoff', target_subtype: 'FAIL', content: 'x', routed_to_table: 'tasks', routed_to_id: 't1' },
@@ -276,5 +357,49 @@ describe('runCaptureTriage 四路落地', () => {
     const r = await runCaptureTriage(pool);
     expect(r.processed).toBe(2);
     expect(r.failed).toBe(1);
+  });
+
+  it('LLM scope 兜底：cheap rule 拿不准（learning 无关键词路由 line_backlog）→ LLM 判 capability 走 GP 收编', async () => {
+    const pool = makePool([{ id: 'a-llm1', target_type: 'learning', target_subtype: 'note', content: '值得考虑的一块业务空白', routed_to_table: 'tasks', routed_to_id: 't1' }]);
+    const llm = vi.fn().mockResolvedValue({ text: JSON.stringify({ route: 'line_backlog', confidence: 0.9, reason: 'x', scope: 'capability' }) });
+    await runCaptureTriage(pool, { llm });
+    expect(createTask).not.toHaveBeenCalled();
+    expect(pool.gpInserts).toHaveLength(1);
+    expect(llm).toHaveBeenCalledTimes(1);
+  });
+
+  it('LLM scope 兜底：LLM 路由 line_backlog 但 scope 非法/缺失 → 默认 repair 走 createTask（57d296a1 现状）', async () => {
+    const pool = makePool([{ id: 'a-llm2', target_type: 'learning', target_subtype: 'note', content: '一条模糊教训', routed_to_table: 'tasks', routed_to_id: 't1' }]);
+    const llm = vi.fn().mockResolvedValue({ text: JSON.stringify({ route: 'line_backlog', confidence: 0.9, reason: 'x' }) });
+    await runCaptureTriage(pool, { llm });
+    expect(createTask).toHaveBeenCalledTimes(1);
+    expect(pool.gpInserts).toHaveLength(0);
+    expect(llm).toHaveBeenCalledTimes(1);
+  });
+
+  it('TRIAGE_LLM_PROMPT 含 scope 字段要求（repair|capability）', async () => {
+    const pool = makePool([{ id: 'a-llm3', target_type: 'learning', target_subtype: 'note', content: 'x', routed_to_table: null, routed_to_id: null }]);
+    const llm = vi.fn().mockResolvedValue({ text: JSON.stringify({ route: 'okr', confidence: 0.9, reason: 'x' }) });
+    await runCaptureTriage(pool, { llm });
+    expect(llm.mock.calls[0][1]).toMatch(/scope/);
+    expect(llm.mock.calls[0][1]).toMatch(/repair\|capability/);
+  });
+
+  it('capability 非 FK 错误：INSERT 抛通用错误 → ROLLBACK + rethrow，failed 计 1 且 atom 不被标记（下轮重拾）', async () => {
+    const pool = makePool(
+      [{ id: 'a-cap5', target_type: 'handoff', target_subtype: 'PASS+NEXT', content: '新平台但库炸了', routed_to_table: 'tasks', routed_to_id: 't1' }],
+      { gpInsertThrows: 'connection terminated unexpectedly' }
+    );
+    const r = await runCaptureTriage(pool);
+    expect(r.failed).toBe(1);
+    expect(pool.txStatements).toContain('ROLLBACK');
+    expect(pool.updates).toHaveLength(0);
+  });
+
+  it('repair 回归锁：createTask title 以 [自动派工] 前缀开头（晨报 T6 查询口径 title LIKE）', async () => {
+    const pool = makePool([{ id: 'a-rep', target_type: 'handoff', target_subtype: 'FAIL', content: '修复解析函数的回归', routed_to_table: 'tasks', routed_to_id: 't1' }]);
+    await runCaptureTriage(pool);
+    expect(createTask).toHaveBeenCalledTimes(1);
+    expect(createTask.mock.calls[0][0].title.startsWith('[自动派工] ')).toBe(true);
   });
 });

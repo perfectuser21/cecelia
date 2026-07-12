@@ -1041,7 +1041,7 @@
     "harness_final_e2e": "/harness-evaluator",
     "golden_path_proposal": "/golden-path-controller"
   },
-  "generatedAt": "2026-07-12T05:45:27.953Z",
+  "generatedAt": "2026-07-12T06:03:19.814Z",
   "generatedBy": "packages/brain/scripts/generate-manifest.mjs",
   "sourceFiles": [
     "src/brain-manifest.js",
