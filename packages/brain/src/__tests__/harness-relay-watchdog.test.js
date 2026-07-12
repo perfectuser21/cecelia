@@ -9,8 +9,10 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 const { mockPool } = vi.hoisted(() => ({ mockPool: { query: vi.fn() } }));
 vi.mock('../db.js', () => ({ default: mockPool }));
+vi.mock('../notifier.js', () => ({ sendBark: vi.fn().mockResolvedValue(true) }));
 
 import { resumeStalledRelayRuns, MAX_RELAY_ATTEMPTS } from '../harness-relay-watchdog.js';
+import { sendBark } from '../notifier.js';
 
 const TASK_ID = 'aaaabbbb-cccc-dddd-eeee-ffff00001111';
 const SHORT = 'aaaabbbb';
@@ -52,7 +54,10 @@ function makeDeps({
   };
 }
 
-beforeEach(() => mockPool.query.mockReset());
+beforeEach(() => {
+  mockPool.query.mockReset();
+  sendBark.mockClear();
+});
 
 describe('resumeStalledRelayRuns', () => {
   it('in_progress + 无在跑容器 + attempts < 上限 → 重点火一次', async () => {
@@ -167,6 +172,8 @@ describe('resumeStalledRelayRuns', () => {
     expect(updates.some(s => /UPDATE initiative_runs/.test(s) && /'done'/.test(s) && /failure_reason/.test(s) && /merged_without_evaluator_gate/.test(s))).toBe(true);
     expect(updates.some(s => /UPDATE tasks/.test(s) && /'completed'/.test(s))).toBe(true);
     expect(r.mergedWithoutGate).toBe(1);
+    expect(updates.some(s => /INSERT INTO issues/.test(s))).toBe(true);
+    expect(sendBark).toHaveBeenCalled();
   });
 });
 

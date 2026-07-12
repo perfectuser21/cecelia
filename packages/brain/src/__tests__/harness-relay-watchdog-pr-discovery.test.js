@@ -9,12 +9,14 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 const { mockPool } = vi.hoisted(() => ({ mockPool: { query: vi.fn() } }));
 vi.mock('../db.js', () => ({ default: mockPool }));
+vi.mock('../notifier.js', () => ({ sendBark: vi.fn().mockResolvedValue(true) }));
 
 import {
   resumeStalledRelayRuns,
   _parseBaseRepo,
   _discoverPrFromGithub,
 } from '../harness-relay-watchdog.js';
+import { sendBark } from '../notifier.js';
 
 const TASK_ID = 'aaaabbbb-cccc-dddd-eeee-ffff00001111';
 const SHORT = 'aaaabbbb';
@@ -55,7 +57,10 @@ function makeDeps({
   return { pool, execFn, spawnFn: vi.fn().mockResolvedValue({ ok: true, containerId: 'x' }) };
 }
 
-beforeEach(() => mockPool.query.mockReset());
+beforeEach(() => {
+  mockPool.query.mockReset();
+  sendBark.mockClear();
+});
 
 describe('watchdog PR 发现护栏', () => {
   it('gh 发现含 short 的 OPEN PR → 不重点火 + 回写 pr_url 到 run 与 task', async () => {
@@ -82,10 +87,13 @@ describe('watchdog PR 发现护栏', () => {
     const deps = makeDeps({ ghList: [MERGED_PR], evaluatorGate: false });
     const r = await resumeStalledRelayRuns(deps);
     expect(deps.spawnFn).not.toHaveBeenCalled();
-    const updates = deps.pool.query.mock.calls.filter((c) => /UPDATE/.test(c[0]));
+    const allCalls = deps.pool.query.mock.calls;
+    const updates = allCalls.filter((c) => /UPDATE/.test(c[0]));
     expect(updates.some((c) => /initiative_runs/.test(c[0]) && /'done'/.test(c[0]) && /merged_without_evaluator_gate/.test(c[0]))).toBe(true);
     expect(updates.some((c) => /UPDATE tasks/.test(c[0]) && /'completed'/.test(c[0]))).toBe(true);
     expect(r.mergedWithoutGate).toBe(1);
+    expect(allCalls.some((c) => /INSERT INTO issues/.test(c[0]))).toBe(true);
+    expect(sendBark).toHaveBeenCalled();
   });
 
   it('无匹配分支（含 CLOSED 命中不算）→ 原行为：重点火', async () => {

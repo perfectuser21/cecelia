@@ -127,7 +127,7 @@ export async function _finalizeMergedRun(dbPool, initiativeId, prUrl, out, opts 
     }
     console.log(`[relay-watchdog] PR 已 MERGED（evaluator 已验收）→ 标 completed initiative=${initiativeId} pr=${prUrl}`);
   } else {
-    out.mergedWithoutGate = (out.mergedWithoutGate || 0) + 1;
+    out.mergedWithoutGate++;
     await _raiseUngatedMergeAlert(dbPool, initiativeId, prUrl);
     console.warn(`[relay-watchdog] PR 已 MERGED 但 evaluator 未执行 → 标 done+未验收告警 initiative=${initiativeId} pr=${prUrl}`);
   }
@@ -140,7 +140,7 @@ export async function _finalizeMergedRun(dbPool, initiativeId, prUrl, out, opts 
 export async function resumeStalledRelayRuns(deps = {}) {
   const dbPool = deps.pool || pool;
   const execFn = deps.execFn || ((cmd) => execSync(cmd, { encoding: 'utf8', timeout: 10000 }));
-  const out = { scanned: 0, resumed: 0, capped: 0, housekept: 0, mergedPr: 0 };
+  const out = { scanned: 0, resumed: 0, capped: 0, housekept: 0, mergedPr: 0, mergedWithoutGate: 0 };
 
   // 每个 initiative 取最新一行 + 点火次数（每次 spawn INSERT 一行 = attempts 天然计数）
   // 已知缺口（Notion Issue 1ea53e09-b088-4d2a-b03a-ad8c976bbc6c）：这个计数只统计
