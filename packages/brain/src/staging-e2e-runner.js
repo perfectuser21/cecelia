@@ -749,7 +749,9 @@ export async function runStagingE2E(task, opts = {}) {
 
     // Slice6: staging 单实例串行 — deploy 前抢 advisory lock，防 N 路并发互相 docker rm 顶掉。
     // 抢不到（别路正占同端口实例）→ SKIP staging_busy（不部署）；抢到 → finally 必释放。
-    const lockPort = line === 'internal' ? DASHBOARD_STAGING_PORT : STAGING_PORT;
+    // customer line 用 ZJ_STAGING_PORT(5201) 作锁 key，防并发 ZenithJoy staging E2E 互相干扰，
+    // 且不与 Cecelia Brain staging(STAGING_PORT=5222) 产生假冲突（两者独立端口、独立资源）。
+    const lockPort = line === 'internal' ? DASHBOARD_STAGING_PORT : line === 'customer' ? ZJ_STAGING_PORT : STAGING_PORT;
     const acquireLock = opts.acquireStagingLock || acquireStagingLock;
     const lock = await acquireLock(dbPool, lockPort);
     if (!lock) return await finalize('SKIP', 'staging_busy');
