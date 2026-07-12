@@ -440,7 +440,8 @@ describe('selfcheck schema version', () => {
     // 326 = migration 326 side_effect_dedupe 表（lib/dedupe.js claimDedupeKey INSERT..ON CONFLICT 直接依赖，
     // 表不存在则 fail-open 降级恒触发）；
     // 331 = migration 331 learnings 谱系两列 + summary backfill（T9 学习账本可靠性依赖），故推进地板到 331。
-    // 333 = migration 333 areas 去重 + KR1/KR2 metadata.target_abilities（OKR 数据卫生），故推进地板到 333。
-    expect(EXPECTED_SCHEMA_VERSION).toBe('333');
+    // 333 = migration 333 areas 去重 + KR1/KR2 metadata.target_abilities（OKR 数据卫生）；
+    // 334 = migration 334 golden_paths 表（routes/golden-paths.js 与 gp-shelf-life.js 直接依赖），故推进地板到 334。
+    expect(EXPECTED_SCHEMA_VERSION).toBe('334');
   });
 });

@@ -178,8 +178,10 @@ describe('selfcheck', () => {
   // 可靠性依赖（parent_learning_id/verified_effective 列缺失则谱系写入整句报错被吞），故推进地板到 331。
   // 333（areas 去重 + KR1/KR2 metadata.target_abilities 挂载）为 OKR 数据卫生一次性迁移，
   // 推进地板到 333 防止未跑该迁移的旧 DB 误判 KR ability-progress 端点为已生效。
-  it('EXPECTED_SCHEMA_VERSION should be 333 (floor, bumped for OKR areas/ability data hygiene)', () => {
-    expect(EXPECTED_SCHEMA_VERSION).toBe('333');
+  // 334（golden_paths 表 + 状态机端点 + 保质期 delta job）为 GP1/T1 底座迁移，
+  // 推进地板到 334 防止未跑该迁移的旧 DB 误判 golden-paths 路由/gp-shelf-life job 为已生效。
+  it('EXPECTED_SCHEMA_VERSION should be 334 (floor, bumped for golden_paths foundation)', () => {
+    expect(EXPECTED_SCHEMA_VERSION).toBe('334');
   });
 
   it('should pass when DB schema version is ahead of expected (>= check)', async () => {
