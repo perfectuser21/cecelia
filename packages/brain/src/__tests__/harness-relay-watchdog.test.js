@@ -25,6 +25,7 @@ function makeDeps({
   prUrl = null,
   prState = null,   // 'MERGED' | 'OPEN' | 'CLOSED' | null（execFn 返回的 gh pr view JSON）
   orchestratorHost = 'skill-relay-session',
+  evaluatorGate = true, // initiative_run_events 是否存在 node='evaluator' AND status='done'
 } = {}) {
   const pool = { query: vi.fn() };
   pool.query.mockImplementation(async (sql) => {
@@ -33,6 +34,9 @@ function makeDeps({
     }
     if (/FROM tasks/.test(sql)) {
       return { rows: [{ id: TASK_ID, status: taskStatus, title: 't', payload: { orchestrator } }] };
+    }
+    if (/FROM initiative_run_events/.test(sql)) {
+      return { rows: evaluatorGate ? [{ x: 1 }] : [] };
     }
     return { rows: [] };
   });
@@ -153,6 +157,16 @@ describe('resumeStalledRelayRuns', () => {
     const ghCall = deps.execFn.mock.calls.find(c => /gh pr view/.test(c[0]));
     expect(ghCall).toBeFalsy();
     expect(deps.spawnFn).toHaveBeenCalledOnce();
+  });
+
+  it('容器消失 + pr_url 存在 + PR MERGED + evaluator 从未执行 → 标 done 但打 failure_reason，不触发 regression 提升，发告警', async () => {
+    const deps = makeDeps({ prUrl: PR_URL, prState: 'MERGED', evaluatorGate: false });
+    const r = await resumeStalledRelayRuns(deps);
+    expect(deps.spawnFn).not.toHaveBeenCalled();
+    const updates = deps.pool.query.mock.calls.map(c => c[0]);
+    expect(updates.some(s => /UPDATE initiative_runs/.test(s) && /'done'/.test(s) && /failure_reason/.test(s) && /merged_without_evaluator_gate/.test(s))).toBe(true);
+    expect(updates.some(s => /UPDATE tasks/.test(s) && /'completed'/.test(s))).toBe(true);
+    expect(r.mergedWithoutGate).toBe(1);
   });
 });
 
