@@ -30,3 +30,28 @@ describe('executor: golden_path_proposal 派发接线', () => {
     );
   });
 });
+
+const DISPATCHER_SRC = readFileSync(
+  join(dirname(fileURLToPath(import.meta.url)), '../dispatcher.js'), 'utf8'
+);
+
+describe('dispatcher: golden_path_proposal 防线接线', () => {
+  it('并发 cap 计数 SQL 口径含 golden_path_proposal', () => {
+    expect(DISPATCHER_SRC).toMatch(
+      /task_type IN \('harness_initiative', 'golden_path_proposal'\)/
+    );
+  });
+  it('INITIATIVE_LOCK_TASK_TYPES 含 golden_path_proposal', () => {
+    const lockBlock = DISPATCHER_SRC.match(/INITIATIVE_LOCK_TASK_TYPES = \[[\s\S]*?\]/)[0];
+    expect(lockBlock).toContain("'golden_path_proposal',");
+  });
+  it('needsBridgeCheck 豁免 golden_path_proposal（relay 不依赖 bridge）', () => {
+    expect(DISPATCHER_SRC).toMatch(
+      /nextTask\.task_type !== 'harness_initiative'\s*&&\s*nextTask\.task_type !== 'golden_path_proposal'/
+    );
+  });
+  it('绝不在 retired 集合（加了 = 派发即 terminal failed）', () => {
+    const retiredBlock = DISPATCHER_SRC.match(/_RETIRED_HARNESS_TYPES_DISPATCH = new Set\(\[[\s\S]*?\]\)/)[0];
+    expect(retiredBlock).not.toContain('golden_path_proposal');
+  });
+});
