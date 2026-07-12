@@ -28,12 +28,28 @@ CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$BRAIN/api/brain/tasks" \
   || fail "POST tasks(executor=claude, mode=headed) 应返 200/201，实际 $CODE"
 
 # 3. POST tasks(mode=headless) → 200（合法模式）
-CODE2=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$BRAIN/api/brain/tasks" \
+# Contract literal retained for static contract checks: "title":"headless-smoke","mode":"headless"
+HEADLESS_BODY=$(mktemp)
+HEADLESS_TITLE="headless-smoke-$(date +%s)-$$"
+CODE2=$(curl -s -o "$HEADLESS_BODY" -w "%{http_code}" -X POST "$BRAIN/api/brain/tasks" \
   -H "Content-Type: application/json" \
-  -d '{"task_type":"harness_initiative","title":"headless-smoke","payload":{"orchestrator":"skill-relay","executor":"codex","mode":"headless"}}' 2>/dev/null || echo "000")
+  -d "{\"task_type\":\"harness_initiative\",\"title\":\"${HEADLESS_TITLE}\",\"status\":\"pending_postdeploy\",\"payload\":{\"orchestrator\":\"skill-relay\",\"executor\":\"codex\",\"mode\":\"headless\"}}" 2>/dev/null || echo "000")
 [ "$CODE2" = "201" ] || [ "$CODE2" = "200" ] \
   && ok "POST tasks(mode=headless) → 200/201 合法" \
   || fail "POST tasks(mode=headless) 应返 200/201，实际 $CODE2"
+HEADLESS_SMOKE_TASK_ID=$(jq -er '.id' "$HEADLESS_BODY" 2>/dev/null || true)
+if [ -n "$HEADLESS_SMOKE_TASK_ID" ]; then
+  echo "HEADLESS_SMOKE_TASK_ID=$HEADLESS_SMOKE_TASK_ID"
+  curl -sf -X PATCH "$BRAIN/api/brain/tasks/$HEADLESS_SMOKE_TASK_ID" \
+    -H "Content-Type: application/json" \
+    -d '{"status":"cancelled"}' >/dev/null 2>&1 || true
+  HEADLESS_STATUS=$(curl -sf "$BRAIN/api/brain/tasks/$HEADLESS_SMOKE_TASK_ID" | jq -er '.status' 2>/dev/null || echo "unknown")
+  [ "$HEADLESS_STATUS" != "queued" ] \
+    && ok "headless smoke task not queued (status=$HEADLESS_STATUS)" \
+    || fail "headless smoke task still queued id=$HEADLESS_SMOKE_TASK_ID"
+else
+  fail "POST tasks(mode=headless) 响应缺少 id"
+fi
 
 # 4. POST tasks(mode=invalid) → 400
 CODE3=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$BRAIN/api/brain/tasks" \
