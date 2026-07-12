@@ -32,7 +32,7 @@ import { loadCache as _loadCache, getCachedLocation, getCachedConfig, refreshCac
 import { updateTaskStatus, updateTaskProgress as _updateTaskProgress } from './task-updater.js';
 import { traceStep, LAYER, STATUS, EXECUTOR_HOSTS } from './trace.js';
 import { getAccountUsage } from './account-usage.js';
-import { writeDockerCallback, resolveResourceTier, isDockerAvailable } from './docker-executor.js';
+import { writeDockerCallback, resolveResourceTier, isDockerAvailable, resolveBrainBaseUrl } from './docker-executor.js';
 import { loadSkillContent, assertSprintDir } from './harness-shared.js';
 import { spawn as spawnDocker } from './spawn/index.js';
 import { REVIEW_TASK_TYPES } from './lib/review-task-types.js';
@@ -3453,10 +3453,13 @@ async function triggerCeceliaRun(task) {
       );
 
       // 注入 webhook + 上下文（与 cecelia-run 行为对齐）
+      // bridge 容器内 localhost:5221 不可达（issue 219a9efc），base 默认 host.docker.internal
+      const brainBase = resolveBrainBaseUrl();
       const dockerEnv = {
         ...extraEnv,
-        WEBHOOK_URL: `${process.env.BRAIN_URL || 'http://localhost:5221'}/api/brain/execution-callback`,
-        CECELIA_CORE_API: process.env.BRAIN_URL || 'http://localhost:5221',
+        WEBHOOK_URL: `${brainBase}/api/brain/execution-callback`,
+        CECELIA_CORE_API: brainBase,
+        BRAIN_URL: brainBase,
         CECELIA_PERMISSION_MODE: permissionMode,
         CECELIA_TASK_TYPE: taskType,
       };

@@ -644,6 +644,35 @@ describe('actions.js', () => {
       expect(sql).toContain('claimed_by = NULL');
       expect(sql).toContain('claimed_at = NULL');
     });
+
+    it('转 queued 时 WHERE 带终态守卫（completed/cancelled 不可被打回）', async () => {
+      const fakeTask = { id: 'task-requeue2', status: 'queued' };
+      mockQuery.mockResolvedValueOnce({ rows: [fakeTask] });
+
+      await updateTask({ task_id: 'task-requeue2', status: 'queued' });
+
+      const sql = mockQuery.mock.calls[0][0];
+      expect(sql).toContain(`status NOT IN ('completed', 'cancelled')`);
+    });
+
+    it('completed 任务转 queued 被拒（0 行命中返回 error）', async () => {
+      mockQuery.mockResolvedValueOnce({ rows: [] });
+
+      const result = await updateTask({ task_id: 'task-done', status: 'queued' });
+
+      expect(result.success).toBe(false);
+      expect(result.error).toMatch(/terminal state/);
+    });
+
+    it('转 in_progress / completed 不受终态守卫影响', async () => {
+      const fakeTask = { id: 'task-c', status: 'completed' };
+      mockQuery.mockResolvedValueOnce({ rows: [fakeTask] });
+
+      await updateTask({ task_id: 'task-c', status: 'completed' });
+
+      const sql = mockQuery.mock.calls[0][0];
+      expect(sql).not.toContain(`status NOT IN`);
+    });
   });
 
   // ========== createGoal ==========
