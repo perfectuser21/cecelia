@@ -241,17 +241,17 @@ describe('Golden Path E2E — Brain 3 条核心链路（真实 PostgreSQL）', (
   });
 
   afterAll(async () => {
-    // 清理本次测试写入的所有数据
-    if (insertedTaskIds.length > 0) {
-      await testPool.query('DELETE FROM tasks WHERE id = ANY($1)', [insertedTaskIds]);
-    }
+    // 清理顺序受外键约束：golden_paths.proposal_task_id → tasks，
+    // 必须先清 decisions/golden_paths，最后才能删 tasks
     if (insertedGpIds.length > 0) {
-      // decisions/tasks 可能由 gp 外键引用，先清 gp 再清其他
       await testPool.query(
         "DELETE FROM decisions WHERE reason LIKE ANY(SELECT 'gp:' || id || '%' FROM golden_paths WHERE id = ANY($1))",
         [insertedGpIds],
       ).catch(() => {});
       await testPool.query('DELETE FROM golden_paths WHERE id = ANY($1)', [insertedGpIds]).catch(() => {});
+    }
+    if (insertedTaskIds.length > 0) {
+      await testPool.query('DELETE FROM tasks WHERE id = ANY($1)', [insertedTaskIds]);
     }
     await testPool.end();
   });
