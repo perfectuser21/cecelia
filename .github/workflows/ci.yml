@@ -47,6 +47,7 @@ jobs:
             echo "engine=true" >> $GITHUB_OUTPUT
             echo "workspace=true" >> $GITHUB_OUTPUT
             echo "compose=true" >> $GITHUB_OUTPUT
+            echo "quality=true" >> $GITHUB_OUTPUT
             exit 0
           fi
           CHANGED=$(git diff --name-only "$BASE_REF"...HEAD 2>/dev/null || echo "")
@@ -57,6 +58,7 @@ jobs:
           echo "workspace=$(echo "$CHANGED" | grep -qE '^apps/' && echo true || echo false)" >> $GITHUB_OUTPUT
           echo "compose=$(echo "$CHANGED" | grep -qE '^(docker-compose\.yml|packages/brain/Dockerfile|scripts/brain-(docker-up|docker-down|build)\.sh)$' && echo true || echo false)" >> $GITHUB_OUTPUT
           echo "dod=$(echo "$CHANGED" | grep -qE '^(DoD\.md|DoD\.cp-|task-card\.md|task-card-|\.task-|\.dod-|TASK_CARD\.cp-|PRD\.cp-)' && echo true || echo false)" >> $GITHUB_OUTPUT
+          echo "quality=$(echo "$CHANGED" | grep -qE '^packages/quality/' && echo true || echo false)" >> $GITHUB_OUTPUT
 
   # ─── Docker Infrastructure Smoke ──────────────────────────
   # 保护 Brain 容器化基础设施（compose / Dockerfile / up/down 脚本）
@@ -1496,6 +1498,8 @@ jobs:
           check "dashboard-staging-gate-smoke" "${{ needs.dashboard-staging-gate-smoke.result }}"
           check "lint-migration-unique-version" "${{ needs.lint-migration-unique-version.result }}"
           check "lint-auto-merge-decision" "${{ needs.lint-auto-merge-decision.result }}"
+          check "lint-fs-guard-selection" "${{ needs.lint-fs-guard-selection.result }}"
+          check "lint-deploy-effect-assert" "${{ needs.lint-deploy-effect-assert.result }}"
           check "brain-unit"          "${{ needs.brain-unit.result }}"
           check "brain-unit-all"      "${{ needs.brain-unit-all.result }}"
           check "brain-diff-coverage" "${{ needs.brain-diff-coverage.result }}"
@@ -1521,6 +1525,8 @@ jobs:
           check "lint-test-quality"      "${{ needs.lint-test-quality.result }}"
           check "lint-no-mock-only-test" "${{ needs.lint-no-mock-only-test.result }}"
           check "lint-no-fake-test"      "${{ needs.lint-no-fake-test.result }}"
+          check "lint-single-exit"       "${{ needs.lint-single-exit.result }}"
+          check "lint-bypass-not-committed" "${{ needs.lint-bypass-not-committed.result }}"
           check "real-env-smoke"         "${{ needs.real-env-smoke.result }}"
           check "workspace-api-smoke"    "${{ needs.workspace-api-smoke.result }}"
           check "quality-tests"         "${{ needs.quality-tests.result }}"
