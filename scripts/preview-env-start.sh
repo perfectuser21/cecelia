@@ -61,32 +61,42 @@ log "  ✓ worktree 创建完成: ${WORK_DIR}"
 
 # ── 2. node_modules symlink（Brain 运行时用，生产依赖即可，无需 devDeps）──────────
 log "Step 2: 链接 node_modules（Brain 运行时）..."
-# Brain
-if [ -d "${REPO_ROOT}/packages/brain/node_modules" ]; then
-  ln -sfn "${REPO_ROOT}/packages/brain/node_modules" "${WORK_DIR}/packages/brain/node_modules"
-  log "  ✓ Brain node_modules 已链接"
+# 优先用容器镜像内置的 /repo/node_modules（Dockerfile Stage1 npm ci --omit=dev 构建，
+# 始终包含 Brain 全部生产依赖，包括 dotenv）。REPO_ROOT 指向 cecelia-deploy-main，
+# 该目录通常不单独跑 npm ci，node_modules 可能缺失或不完整（PR#3810 实测根因之一）。
+BRAIN_NM_TARGET="/repo/node_modules"
+BRAIN_BRAIN_NM_TARGET="/repo/packages/brain/node_modules"
+if [ ! -d "$BRAIN_NM_TARGET" ] && [ -d "${REPO_ROOT}/node_modules" ]; then
+  BRAIN_NM_TARGET="${REPO_ROOT}/node_modules"
+  BRAIN_BRAIN_NM_TARGET="${REPO_ROOT}/packages/brain/node_modules"
 fi
-# 根 node_modules（workspace hoist）
-if [ -d "${REPO_ROOT}/node_modules" ]; then
-  ln -sfn "${REPO_ROOT}/node_modules" "${WORK_DIR}/node_modules"
-  log "  ✓ 根 node_modules 已链接"
+ln -sfn "$BRAIN_NM_TARGET" "${WORK_DIR}/node_modules"
+log "  ✓ 根 node_modules 已链接 → ${BRAIN_NM_TARGET}"
+if [ -d "$BRAIN_BRAIN_NM_TARGET" ]; then
+  ln -sfn "$BRAIN_BRAIN_NM_TARGET" "${WORK_DIR}/packages/brain/node_modules"
+  log "  ✓ Brain node_modules 已链接 → ${BRAIN_BRAIN_NM_TARGET}"
 fi
 
 # ── 3. 构建前端 ───────────────────────────────────────────────────────────────
-# REPO_ROOT（容器内 deploy 挂载）和生产 Brain 镜像的 node_modules 都只装了生产依赖
-# （--omit=dev），没有 vite 等构建工具，symlink 会导致 "vite: not found"（PR#3801 实测）。
-# 前端构建必须用含 devDeps 的全量依赖，且要匹配这个 PR 自己的 package.json（万一 PR 改了依赖），
-# 所以在 worktree 内单独 npm ci，不复用容器/REPO_ROOT 的 node_modules。
-log "Step 3: 构建 apps/dashboard（worktree 内独立 npm ci，含 devDeps）..."
+# 改为在 apps/dashboard 目录内单独跑 npm ci（非从 root --workspace=apps/dashboard）。
+# 原因：从 root 跑 workspace 安装会 reify 根 node_modules（npm 整体重构），在 ENOSPC 或
+# 并发场景下会破坏 root node_modules symlink，导致 Brain 找不到 dotenv 崩溃（PR#3810 实测）。
+# dashboard 无 workspace 内部依赖，在自己目录 npm ci 等价且安全。
+# npm cache 显式指定到 /tmp 下，避免容器 HOME=/Users/administrator npm 默认 cache 路径 ENOENT。
+log "Step 3: 构建 apps/dashboard（dashboard 目录内独立 npm ci，含 devDeps）..."
 DASH_DIR="${WORK_DIR}/apps/dashboard"
 DIST_DIR="${DASH_DIR}/dist"
+NPM_CACHE_DIR="/tmp/npm-cache-preview-${PR_NUMBER}"
+mkdir -p "$NPM_CACHE_DIR"
 
-if (cd "$WORK_DIR" && npm ci --workspace=apps/dashboard >> "$LOG_FILE" 2>&1 \
-    && cd "$DASH_DIR" && npm run build >> "$LOG_FILE" 2>&1); then
+if (cd "$DASH_DIR" && npm ci --cache "$NPM_CACHE_DIR" >> "$LOG_FILE" 2>&1 \
+    && npm run build >> "$LOG_FILE" 2>&1); then
   log "  ✓ 前端构建完成: ${DIST_DIR}"
 else
   log "  ⚠ 前端构建失败，预览 Brain 将无 UI（API 仍可用）"
   DIST_DIR=""
+  # 确保 root node_modules symlink 始终指向可用的生产依赖（以防 npm ci 中途损坏了 symlink）
+  ln -sfn "$BRAIN_NM_TARGET" "${WORK_DIR}/node_modules" 2>/dev/null || true
 fi
 
 # ── 4. 克隆生产数据库 ─────────────────────────────────────────────────────────
