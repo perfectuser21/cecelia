@@ -38,6 +38,7 @@ initiative-lifecycle-smoke.sh
 journey-id-entry-points-smoke.sh
 judge-api-smoke.sh
 kr1-kr2-updater-smoke.sh
+launchd-patrol-smoke.sh
 ledger-hygiene-smoke.sh
 line-context-smoke.sh
 line-dreaming-smoke.sh
