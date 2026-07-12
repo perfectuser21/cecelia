@@ -20,6 +20,7 @@ codex-headed-dispatch-smoke.sh
 compute-ssh-reachability-smoke.sh
 decision-system-smoke.sh
 decisions-dedup-smoke.sh
+direction-proposer-t4-smoke.sh
 executor-liveness-t1-smoke.sh
 feature-registry-smoke.sh
 golden-path-proposal-smoke.sh
