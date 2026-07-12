@@ -30,7 +30,7 @@ fi
 
 echo "── 3. 验证任务可通过 GET 查到（状态字段正确） ──"
 if [ -n "$TASK_ID" ]; then
-  STATUS=$(curl -s "$API/tasks/$TASK_ID" | node -e "let d='';process.stdin.on('data',c=>d+=c);process.stdin.on('end',()=>{try{console.log(JSON.parse(d).status||'')}catch{}}")
+  STATUS=$(curl -s "$API/tasks/$TASK_ID" | node -e "let d='';process.stdin.on('data',c=>d+=c);process.stdin.on('end',()=>{try{console.log(JSON.parse(d).status||'')}catch{}})")
   [[ "$STATUS" == "pending_postdeploy" ]] \
     && ok "任务状态字段 = pending_postdeploy" \
     || fail "任务状态字段 = $STATUS（期望 pending_postdeploy）"
