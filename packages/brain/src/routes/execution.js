@@ -168,6 +168,37 @@ router.post('/execution-callback', async (req, res) => {
       }
     }
 
+    // P1-5 五环终态门禁: postdeploy_check（第5环——部署验证前置）
+    // 任务 payload.postdeploy_check.command 存在且非 exempt → 改为 pending_postdeploy，
+    // 等 postdeploy-verifier tick 执行验证后再落 completed。
+    // 同一收口点实现 219a9efc: dev 任务 result 为空时写软守卫标记（audit trail）。
+    if (newStatus === 'completed') {
+      try {
+        const pdRow = await pool.query(
+          `SELECT task_type, payload FROM tasks WHERE id = $1`,
+          [task_id]
+        );
+        const pdTask = pdRow.rows[0];
+        const postdeployCheck = pdTask?.payload?.postdeploy_check;
+
+        if (postdeployCheck && postdeployCheck.exempt !== true && postdeployCheck.command) {
+          newStatus = 'pending_postdeploy';
+          console.log(
+            `[execution-callback] pending_postdeploy 拦截: task=${task_id} ` +
+            `command="${String(postdeployCheck.command).substring(0, 80)}"`
+          );
+        }
+
+        // 219a9efc 收口：dev 任务 completed 时 result 为空，写 payload 软守卫标记（不阻断）
+        if (pdTask?.task_type === 'dev' && !result && postdeployCheck?.exempt !== true) {
+          console.warn(`[execution-callback] 219a9efc: task=${task_id} dev 任务 completed 时 result 为空`);
+          // result_empty_guard 随主 UPDATE 的 payload 合并写入（见下方 jsonb_build_object）
+        }
+      } catch (pdCheckErr) {
+        console.error(`[execution-callback] postdeploy check 读取失败（降级继续）: ${pdCheckErr.message}`);
+      }
+    }
+
     // 2. Build the update payload
     const lastRunResult = buildLastRunResult({ run_id, checkpoint_id, status, duration_ms, iterations, pr_url, result });
 
