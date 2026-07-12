@@ -25,6 +25,8 @@ export const VALID_EXECUTOR_KINDS = [
 export const EXECUTOR_KIND_FOR = {
   // harness_initiative 由 runHarnessInitiativeRouter → spawnSkillRelaySession 跑 relay-container
   harness_initiative: 'relay-container',
+  // golden_path_proposal 同走 runHarnessInitiativeRouter → spawnSkillRelaySession（GP2/T2）
+  golden_path_proposal: 'relay-container',
   // dev 由 dispatcher 暂标 brain-local（迁离 LangGraph 后，走 triggerCeceliaRun 本地 spawn）
   dev: 'brain-local',
   // content-pipeline 系列由外部 ZJ pipeline-worker 管，不探活

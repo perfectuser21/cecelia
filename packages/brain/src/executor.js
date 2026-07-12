@@ -2960,7 +2960,7 @@ async function _driveHarnessInitiative(task, opts = {}) {
       dbPool,
       task.id,
       'missing_orchestrator_flag',
-      `harness_initiative requires payload.orchestrator==='skill-relay'; got: ${task?.payload?.orchestrator ?? '(missing)'}`
+      `${task?.task_type ?? 'harness_initiative'} requires payload.orchestrator==='skill-relay'; got: ${task?.payload?.orchestrator ?? '(missing)'}`
     );
     console.error(
       `[executor] task=${task.id} 缺少/非法 orchestrator flag（值=${task?.payload?.orchestrator ?? '(missing)'}），标 terminal failed（不再降级走 LangGraph 图）`
@@ -3156,6 +3156,7 @@ async function triggerCeceliaRun(task) {
   if (
     (task.payload?.machine || task.payload?.executor) &&
     task.task_type !== 'harness_initiative' &&
+    task.task_type !== 'golden_path_proposal' &&
     !_RETIRED_HARNESS_TYPES.has(task.task_type)
   ) {
     let route;
@@ -3215,10 +3216,10 @@ async function triggerCeceliaRun(task) {
   // 2.85 Harness Full Graph (Phase A+B+C) — 一个 graph 跑到底，默认路径。
   // W1 (thread_id 版本化) + W3 (AbortSignal + watchdog) + W4 (streamMode events)
   // 实现下沉到 runHarnessInitiativeRouter，便于测试 + 复用。
-  if (task.task_type === 'harness_initiative') {
+  if (task.task_type === 'harness_initiative' || task.task_type === 'golden_path_proposal') {
     console.log(`[executor] 路由决策: task_type=${task.task_type} → Harness Full Graph (A+B+C)`);
-    // 打标：harness_initiative 走 skill-relay docker session → relay-container
-    await setExecutorKind(task.id, EXECUTOR_KIND_FOR.harness_initiative);
+    // 打标：harness_initiative / golden_path_proposal 走 skill-relay docker session → relay-container
+    await setExecutorKind(task.id, EXECUTOR_KIND_FOR[task.task_type]);
 
     // OAuth token 自动刷新，无需 session ≥ 4h 的 pre-check
 
