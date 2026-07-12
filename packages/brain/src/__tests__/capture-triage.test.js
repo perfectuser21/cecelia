@@ -358,4 +358,39 @@ describe('runCaptureTriage 四路落地', () => {
     expect(r.processed).toBe(2);
     expect(r.failed).toBe(1);
   });
+
+  it('LLM scope 兜底：cheap rule 拿不准（learning 无关键词路由 line_backlog）→ LLM 判 capability 走 GP 收编', async () => {
+    const pool = makePool([{ id: 'a-llm1', target_type: 'learning', target_subtype: 'note', content: '值得考虑的一块业务空白', routed_to_table: 'tasks', routed_to_id: 't1' }]);
+    const llm = vi.fn().mockResolvedValue({ text: JSON.stringify({ route: 'line_backlog', confidence: 0.9, reason: 'x', scope: 'capability' }) });
+    await runCaptureTriage(pool, { llm });
+    expect(createTask).not.toHaveBeenCalled();
+    expect(pool.gpInserts).toHaveLength(1);
+  });
+
+  it('LLM scope 兜底：LLM 路由 line_backlog 但 scope 非法/缺失 → 默认 repair 走 createTask（57d296a1 现状）', async () => {
+    const pool = makePool([{ id: 'a-llm2', target_type: 'learning', target_subtype: 'note', content: '一条模糊教训', routed_to_table: 'tasks', routed_to_id: 't1' }]);
+    const llm = vi.fn().mockResolvedValue({ text: JSON.stringify({ route: 'line_backlog', confidence: 0.9, reason: 'x' }) });
+    await runCaptureTriage(pool, { llm });
+    expect(createTask).toHaveBeenCalledTimes(1);
+    expect(pool.gpInserts).toHaveLength(0);
+  });
+
+  it('TRIAGE_LLM_PROMPT 含 scope 字段要求（repair|capability）', async () => {
+    const pool = makePool([{ id: 'a-llm3', target_type: 'learning', target_subtype: 'note', content: 'x', routed_to_table: null, routed_to_id: null }]);
+    const llm = vi.fn().mockResolvedValue({ text: JSON.stringify({ route: 'okr', confidence: 0.9, reason: 'x' }) });
+    await runCaptureTriage(pool, { llm });
+    expect(llm.mock.calls[0][1]).toMatch(/scope/);
+    expect(llm.mock.calls[0][1]).toMatch(/repair\|capability/);
+  });
+
+  it('capability 非 FK 错误：INSERT 抛通用错误 → ROLLBACK + rethrow，failed 计 1 且 atom 不被标记（下轮重拾）', async () => {
+    const pool = makePool(
+      [{ id: 'a-cap5', target_type: 'handoff', target_subtype: 'PASS+NEXT', content: '新平台但库炸了', routed_to_table: 'tasks', routed_to_id: 't1' }],
+      { gpInsertThrows: 'connection terminated unexpectedly' }
+    );
+    const r = await runCaptureTriage(pool);
+    expect(r.failed).toBe(1);
+    expect(pool.txStatements).toContain('ROLLBACK');
+    expect(pool.updates).toHaveLength(0);
+  });
 });
