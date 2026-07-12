@@ -76,7 +76,14 @@ if (!/最后已知 staging SHA/.test(runner)) {
   process.exit(1);
 }
 
-console.log('[smoke] L1 PASS: ZJ_STAGING_PORT + 健康检查路径 + zj_staging_unhealthy + 端口重写 + 5次重试参数 + 诊断输出 + stagingSha + SHA诊断通知');
+// lockPort: customer line 必须用 ZJ_STAGING_PORT 作锁 key，不与 Cecelia Brain staging(5222) 冲突
+// 回归守卫：防止 customer line → ZJ_STAGING_PORT 分支丢失导致 ZJ staging_e2e 被 Brain staging 假冲突
+if (!/line\s*===\s*['\"]customer['\"]\s*\?\s*ZJ_STAGING_PORT/.test(runner)) {
+  console.error('L1 FAIL: lockPort 缺少 customer line → ZJ_STAGING_PORT 分支（ZJ staging 会与 Cecelia Brain staging 假冲突）');
+  process.exit(1);
+}
+
+console.log('[smoke] L1 PASS: ZJ_STAGING_PORT + 健康检查路径 + zj_staging_unhealthy + 端口重写 + 5次重试参数 + 诊断输出 + stagingSha + SHA诊断通知 + lockPort隔离');
 " || exit 1
 
 # ZJ_STAGING_HOST 必须在 docker-compose.yml 中配置（容器内 localhost 无法访问宿主 :5201）
