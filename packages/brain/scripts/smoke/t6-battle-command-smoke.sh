@@ -1,26 +1,25 @@
 #!/usr/bin/env bash
-# Smoke: T6 指挥台配套（88e0b448）
+# Smoke: T6 指挥台配套（88e0b448；军师节 v1→v2 后第 1 项随 golden-path-mode GP6 更新）
 # 验证：
-#   1. battle-report.js 含军师决策节（notes 查询 + 渲染段）
+#   1. battle-report.js 含军师决策节 v2（v1 notes 明细已被五段取代，深度断言见 battle-report-v2-smoke.sh）
 #   2. journeys.js 含 GET /issues 列表路由（status=open 特判）
 #   3. task-tasks.js 已放开 claude+headed（无拒绝分支）
 #   4. harness-skill-relay.js headed 分支泛化（HEADED_HOSTS 映射 + claude-launch.sh）
 #   5. harness-relay-watchdog.js 识别两个 headed host
 set -euo pipefail
 
-echo "[t6-battle-command-smoke] 1. battle-report.js 军师决策节"
+echo "[t6-battle-command-smoke] 1. battle-report.js 军师决策节 v2"
 node -e "
 const fs = require('fs');
 const src = fs.readFileSync('packages/brain/src/battle-report.js', 'utf8');
 const checks = [
-  [\"title LIKE '军师决策[%'\", 'notes 军师决策前缀查询'],
-  [\"type = 'Decision'\", 'notes type 过滤'],
-  ['## 军师决策（24h）', '渲染节标题'],
-  ['strategistDecisions', '数据字段'],
+  ['## 军师决策节 v2', 'v2 渲染节标题'],
+  ['goldenPathMode', 'v2 数据字段'],
 ];
 const missing = checks.filter(([p]) => !src.includes(p));
 if (missing.length) { missing.forEach(([,d]) => console.error('FAIL: 缺少 ' + d)); process.exit(1); }
-console.log('battle-report.js 军师决策节 ✓');
+if (src.includes('strategistDecisions')) { console.error('FAIL: v1 notes 明细残留'); process.exit(1); }
+console.log('battle-report.js 军师决策节 v2 ✓');
 "
 
 echo "[t6-battle-command-smoke] 2. journeys.js GET /issues"
