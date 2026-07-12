@@ -13,7 +13,7 @@
 # 架构：
 #   1. git worktree add 检出 PR 代码
 #   2. CREATE DATABASE ... TEMPLATE cecelia 克隆生产快照（隔离数据）
-#   3. 构建前端（symlink node_modules 加速）
+#   3. 构建前端（worktree 内独立 npm ci，含 devDeps）
 #   4. 以预览端口 + 预览 DB + 前端 dist 目录启动 Brain 进程
 
 set -euo pipefail
@@ -54,8 +54,8 @@ git -C "$REPO_ROOT" worktree add "$WORK_DIR" "origin/${BRANCH_NAME}" 2>>"$LOG_FI
 }
 log "  ✓ worktree 创建完成: ${WORK_DIR}"
 
-# ── 2. node_modules symlink（加速，避免 npm ci）───────────────────────────────
-log "Step 2: 链接 node_modules..."
+# ── 2. node_modules symlink（Brain 运行时用，生产依赖即可，无需 devDeps）──────────
+log "Step 2: 链接 node_modules（Brain 运行时）..."
 # Brain
 if [ -d "${REPO_ROOT}/packages/brain/node_modules" ]; then
   ln -sfn "${REPO_ROOT}/packages/brain/node_modules" "${WORK_DIR}/packages/brain/node_modules"
@@ -68,16 +68,16 @@ if [ -d "${REPO_ROOT}/node_modules" ]; then
 fi
 
 # ── 3. 构建前端 ───────────────────────────────────────────────────────────────
-log "Step 3: 构建 apps/dashboard..."
+# REPO_ROOT（容器内 deploy 挂载）和生产 Brain 镜像的 node_modules 都只装了生产依赖
+# （--omit=dev），没有 vite 等构建工具，symlink 会导致 "vite: not found"（PR#3801 实测）。
+# 前端构建必须用含 devDeps 的全量依赖，且要匹配这个 PR 自己的 package.json（万一 PR 改了依赖），
+# 所以在 worktree 内单独 npm ci，不复用容器/REPO_ROOT 的 node_modules。
+log "Step 3: 构建 apps/dashboard（worktree 内独立 npm ci，含 devDeps）..."
 DASH_DIR="${WORK_DIR}/apps/dashboard"
 DIST_DIR="${DASH_DIR}/dist"
 
-if [ -d "${REPO_ROOT}/apps/dashboard/node_modules" ]; then
-  ln -sfn "${REPO_ROOT}/apps/dashboard/node_modules" "${DASH_DIR}/node_modules"
-fi
-
-# vite build — VITE_BRAIN_PREVIEW_PORT 供将来前端读取预览标记用（本期不用）
-if (cd "$DASH_DIR" && npm run build >> "$LOG_FILE" 2>&1); then
+if (cd "$WORK_DIR" && npm ci --workspace=apps/dashboard >> "$LOG_FILE" 2>&1 \
+    && cd "$DASH_DIR" && npm run build >> "$LOG_FILE" 2>&1); then
   log "  ✓ 前端构建完成: ${DIST_DIR}"
 else
   log "  ⚠ 前端构建失败，预览 Brain 将无 UI（API 仍可用）"
