@@ -37,6 +37,16 @@ describe('headless-smoke no-dispatch contract [BEHAVIOR]', () => {
     expect(verifiesNonQueued).toBe(true);
   });
 
+  it('headless smoke 脚本必须捕获脚本创建的 task id 并输出 HEADLESS_SMOKE_TASK_ID', () => {
+    const src = smokeSource();
+    const headlessCase = src.slice(src.indexOf('# 3. POST tasks(mode=headless)'));
+
+    expect(headlessCase).not.toMatch(/curl[\s\S]{0,240}-o\s+\/dev\/null[\s\S]{0,240}"title":"headless-smoke"/);
+    expect(headlessCase).toMatch(/RESP|HEADLESS|TASK_ID|ID/);
+    expect(headlessCase).toMatch(/HEADLESS_SMOKE_TASK_ID/);
+    expect(headlessCase).toMatch(/jq\s+-[a-z]*r[a-z]*\s+['"]\.id|python3[\s\S]*get\(['"]id['"]\)/);
+  });
+
   it('非法 mode 白名单校验必须保留', () => {
     const src = smokeSource();
 

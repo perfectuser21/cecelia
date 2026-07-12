@@ -10,6 +10,7 @@
       "dod": [
         "[BEHAVIOR] 合法 headless/codex POST 校验必须保留",
         "[BEHAVIOR] valid headless smoke task 创建后必须被取消或创建为非 queued",
+        "[BEHAVIOR] headless smoke 脚本必须捕获脚本创建的 task id 并输出 HEADLESS_SMOKE_TASK_ID",
         "[BEHAVIOR] 非法 mode 白名单校验必须保留",
         "[ARTIFACT] 不修改业务 executor 或真实 relay 流程"
       ],
