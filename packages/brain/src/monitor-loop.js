@@ -306,7 +306,8 @@ async function handleStuckRun(stuck) {
              ELSE priority
            END,
            retry_count = retry_count + 1
-       WHERE id = $1`,
+       WHERE id = $1
+         AND status NOT IN ('completed', 'cancelled')`,
       [stuck.task_id]
     );
     

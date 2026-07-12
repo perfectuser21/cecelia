@@ -57,9 +57,15 @@ git config --global --add safe.directory '*'
 # bridge 容器内 localhost 是容器自己 → 所有写库 curl 静默失败、skill 照常 exit 0。
 # 此处把容器内 127.0.0.1:5221 转发到宿主（--add-host host.docker.internal:host-gateway
 # 由 docker-executor 注入）。host.docker.internal 不可解析时跳过（非 Brain 派发场景）。
+# 转发目标端口跟随 BRAIN_URL（staging 5222 / 预览 brain 派发时不得把硬编码流量倒进生产 5221）。
 if getent hosts host.docker.internal >/dev/null 2>&1; then
-  socat TCP-LISTEN:5221,bind=127.0.0.1,fork,reuseaddr TCP:host.docker.internal:5221 &
-  echo "[entrypoint] loopback forward 127.0.0.1:5221 -> host.docker.internal:5221 (pid $!)"
+  BRAIN_TARGET_PORT=5221
+  if [[ -n "${BRAIN_URL:-}" ]]; then
+    _brain_port="${BRAIN_URL##*:}"
+    [[ "$_brain_port" =~ ^[0-9]+$ ]] && BRAIN_TARGET_PORT="$_brain_port"
+  fi
+  socat TCP-LISTEN:5221,bind=127.0.0.1,fork,reuseaddr TCP:host.docker.internal:${BRAIN_TARGET_PORT} &
+  echo "[entrypoint] loopback forward 127.0.0.1:5221 -> host.docker.internal:${BRAIN_TARGET_PORT} (pid $!)"
 fi
 
 # 3.5 v6 P1-D：容器内 git remote 自动重写
