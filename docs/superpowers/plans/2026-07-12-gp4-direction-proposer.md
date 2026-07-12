@@ -836,7 +836,7 @@ git commit -m "chore(brain): version bump 1.256.0（GP4/T4 direction-proposer）
 
 ## DoD（push 前全部勾 [x]）
 
-- [ ] [BEHAVIOR] 每周窗口聚合三源产出候选与全景 — Test: `tests/ packages/brain/src/__tests__/direction-proposer.test.js`
-- [ ] [BEHAVIOR] scheduler-jobs 第 14 个 job 登记生效 — Test: `tests/ packages/brain/src/__tests__/scheduler-jobs.test.js`
-- [ ] [BEHAVIOR] DoD F11 真库验证 — Test: `manual: bash packages/brain/scripts/smoke/direction-proposer-t4-smoke.sh`
-- [ ] CI 全绿
+- [x] [BEHAVIOR] 每周窗口聚合三源产出候选与全景 — Test: `tests/ packages/brain/src/__tests__/direction-proposer.test.js`
+- [x] [BEHAVIOR] scheduler-jobs 第 14 个 job 登记生效 — Test: `tests/ packages/brain/src/__tests__/scheduler-jobs.test.js`
+- [x] [BEHAVIOR] DoD F11 真库验证 — Test: `manual: bash packages/brain/scripts/smoke/direction-proposer-t4-smoke.sh`
+- [x] CI 全绿

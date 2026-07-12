@@ -16,7 +16,7 @@ fi
 cd "$(dirname "$0")/../.." || exit 1
 OUT=$(DATABASE_URL="$DB" node --input-type=module -e "
 import pg from 'pg';
-import { maybeRunDirectionProposer, GAP_PANORAMA_KEY } from './src/direction-proposer.js';
+import { maybeRunDirectionProposer } from './src/direction-proposer.js';
 const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL });
 const fakeLlm = async () => ({ text: JSON.stringify({ candidates: [{ title: 'smoke GP T4', one_liner: 'smoke 用例', kr_id: null, journey_id: null, est_scale: '烟测' }] }) });
 const r = await maybeRunDirectionProposer(pool, { now: new Date(Date.UTC(2026, 6, 12, 21, 31)), llm: fakeLlm });
@@ -37,8 +37,10 @@ if echo "$OUT" | grep -q '"skipped":true'; then
 else
   psql "$DB" -tAc "SELECT 1 FROM golden_paths WHERE title='smoke GP T4' AND source='strategist'" | grep -q 1 \
     && ok "golden_paths 出 strategist candidate" || fail "candidate 未写入"
-  # 清理烟测数据
+  # 清理烟测数据 + 哨兵回拨：smoke 首跑刷新了 gp_gap_panorama 的 updated_at，
+  # 不回拨会让 20h 去重吞掉最近一个真实周一窗口的方向菜单
   psql "$DB" -tAc "DELETE FROM golden_paths WHERE title='smoke GP T4'" >/dev/null 2>&1
+  psql "$DB" -tAc "UPDATE working_memory SET updated_at = NOW() - INTERVAL '21 hours' WHERE key='gp_gap_panorama'" >/dev/null 2>&1
 fi
 
 echo "── smoke 结果: PASS=$PASS FAIL=$FAIL ──"
