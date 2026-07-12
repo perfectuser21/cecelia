@@ -6,7 +6,7 @@
  *   ② 24h 按线 run 聚合（同 routes/harness.js ?by=journey 口径）
  *   ③ 24h 用户决策（decisions made_by='user'）
  *   ④ 哨兵摘要（同 routes/sentinel.js 口径：ok && age<=1800）
- *   ⑤ 军师决策（notes 表 line-strategist 落痕：type='Decision' + 标题前缀"军师决策["，按 Line 分组）
+ *   ⑤ 军师决策节 v2 五段（GP 批审桌）
  *   ⑥ 未确认动作（action_receipts 24h 内 pending/timeout/failed，T4 回执台账）
  * 落 design_docs(type='battle_report') + 飞书链接（best-effort，失败不回滚）。
  *
@@ -51,9 +51,10 @@ export async function alreadyGeneratedToday(pool) {
 /**
  * 采集 24h 窗口六段数据。
  * @param {import('pg').Pool} pool
- * @returns {Promise<{mergedPrs: Array, journeyRuns: Array, userDecisions: Array, strategistDecisions: Array, sentinel: object, unconfirmedActions: Array}>}
+ * @param {Date} [now] 当前时间（军师节 v2 周一判断用，可注入测试）
+ * @returns {Promise<{mergedPrs: Array, journeyRuns: Array, userDecisions: Array, sentinel: object, unconfirmedActions: Array, goldenPathMode: object|null}>}
  */
-export async function buildBattleReportData(pool) {
+export async function buildBattleReportData(pool, now = new Date()) {
   // ① merged PR（dev_records 断供容忍：恒空则渲染"暂无"）
   const { rows: mergedPrs } = await pool.query(
     `SELECT pr_title, pr_url, merged_at
@@ -134,25 +135,7 @@ export async function buildBattleReportData(pool) {
     jobs.length >= expected &&
     jobs.every((j) => j.ok && j.age_seconds <= SENTINEL_STALE_SECONDS);
 
-  // ⑤ 军师决策（notes 表，line-strategist 落痕：type='Decision' + 标题前缀"军师决策["；
-  //    照 warroom.js:404 先例 try/catch 降级——notes 表缺失/查询失败不拖垮整份日报）
-  let strategistDecisions = [];
-  try {
-    const { rows } = await pool.query(
-      `SELECT title, content, created_at
-       FROM notes
-       WHERE type = 'Decision'
-         AND title LIKE '军师决策[%'
-         AND created_at >= NOW() - interval '24 hours'
-       ORDER BY created_at DESC
-       LIMIT 50`
-    );
-    strategistDecisions = rows;
-  } catch (err) {
-    console.warn(`[battle-report] 军师决策查询失败（降级空）: ${err.message}`);
-  }
-
-  // ⑥ 未确认动作（action_receipts，T4；照军师决策段 try/catch 降级——查询失败不拖垮整份日报）
+  // ⑥ 未确认动作（action_receipts，T4；try/catch 降级——查询失败不拖垮整份日报）
   let unconfirmedActions = [];
   try {
     unconfirmedActions = await getUnconfirmedReceipts(pool);
@@ -160,7 +143,64 @@ export async function buildBattleReportData(pool) {
     console.warn(`[battle-report] 未确认动作查询失败（降级空）: ${err.message}`);
   }
 
-  return { mergedPrs, journeyRuns, userDecisions, strategistDecisions, sentinel: { jobs, expected, healthy }, unconfirmedActions };
+  // ⑤ 军师节 v2 · GP 批审桌取数（golden_paths + gp_gap_panorama + [自动派工] 台账；取数放⑥后不影响段序；
+  //    整块降级 null——golden_paths 表缺失/查询失败不拖垮整份日报）
+  let goldenPathMode = null;
+  try {
+    const { rows: candidates } = await pool.query(
+      `SELECT id, title, one_liner, est_scale, kr_id
+       FROM golden_paths WHERE status = 'candidate' ORDER BY created_at ASC`
+    );
+    const { rows: convergedRows } = await pool.query(
+      `SELECT id, title, demo_url, proposal_doc
+       FROM golden_paths WHERE status = 'converged' ORDER BY created_at ASC`
+    );
+    const converged = convergedRows.map((g) => ({
+      id: g.id, title: g.title, demo_url: g.demo_url,
+      has_novel: hasNovelJudgment(g.proposal_doc),
+    }));
+    const { rows: autoReleases } = await pool.query(
+      `SELECT id, title, veto_deadline, demo_url
+       FROM golden_paths
+       WHERE auto_release = TRUE AND veto_deadline IS NOT NULL AND veto_deadline > NOW()
+         AND status NOT IN ('rejected','superseded')
+       ORDER BY veto_deadline ASC`
+    );
+    const { rows: priorReleased } = await pool.query(
+      `SELECT COUNT(*)::int AS n FROM golden_paths
+       WHERE auto_release = TRUE AND approved_at IS NOT NULL`
+    );
+    const { rows: stock } = await pool.query(
+      `SELECT status, COUNT(*)::int AS count,
+              (ARRAY_AGG(status_reason ORDER BY updated_at DESC)
+                 FILTER (WHERE status_reason IS NOT NULL))[1] AS latest_reason
+       FROM golden_paths GROUP BY status ORDER BY status`
+    );
+    const { rows: gapRows } = await pool.query(
+      `SELECT value_json FROM working_memory WHERE key = $1`, ['gp_gap_panorama']
+    );
+    const { rows: dispatchLedger } = await pool.query(
+      `SELECT title, status, created_at FROM tasks
+       WHERE title LIKE '[自动派工]%' AND created_at >= NOW() - interval '24 hours'
+       ORDER BY created_at DESC`
+    );
+    goldenPathMode = {
+      isMonday: isShanghaiMonday(now),
+      candidates, converged, autoReleases,
+      firstRelease: (parseInt(priorReleased[0]?.n, 10) || 0) === 0 && autoReleases.length > 0,
+      stock, dispatchLedger,
+      gapPanorama: gapRows[0]?.value_json ?? null,
+    };
+  } catch (err) {
+    console.warn(`[battle-report] 军师节 v2 取数失败（降级 null）: ${err.message}`);
+  }
+
+  return { mergedPrs, journeyRuns, userDecisions, sentinel: { jobs, expected, healthy }, unconfirmedActions, goldenPathMode };
+}
+
+/** 上海时区是否周一 */
+function isShanghaiMonday(now = new Date()) {
+  return new Intl.DateTimeFormat('en-US', { timeZone: 'Asia/Shanghai', weekday: 'short' }).format(now) === 'Mon';
 }
 
 /** 上海日 YYYY-MM-DD（sv-SE locale 即 ISO 格式） */
@@ -183,6 +223,65 @@ function formatShanghaiShort(date) {
   }).formatToParts(d);
   const get = (t) => parts.find((p) => p.type === t)?.value ?? '';
   return `${get('month')}-${get('day')} ${get('hour')}:${get('minute')}`;
+}
+
+const UUID_RE = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i;
+
+/**
+ * 判定 GP 提案是否含新型判定点（批审段排序用，设计文档实现级决策1）。
+ * DB 无结构化列，从 proposal_doc 的「判定点登记表」markdown 表格解析：
+ * 存在既无先例 decision uuid 又无「先例」字样的登记行 → 新型。
+ * 文档缺失/无登记表 → 保守返回 true（排前重点看）。
+ * @param {string|null} proposalDoc
+ * @returns {boolean}
+ */
+export function hasNovelJudgment(proposalDoc) {
+  if (!proposalDoc) return true;
+  const lines = proposalDoc.split('\n');
+  const start = lines.findIndex((l) => l.includes('判定点登记表'));
+  if (start === -1) return true;
+  const rows = [];
+  for (let i = start + 1; i < lines.length; i++) {
+    const l = lines[i].trim();
+    if (/^#/.test(l)) break;
+    if (!l.startsWith('|')) continue;
+    if (/^\|[\s\-:|]+\|$/.test(l)) continue;           // 分隔行
+    if (/判定点/.test(l) && /候选/.test(l)) continue;   // 表头行
+    rows.push(l);
+  }
+  if (rows.length === 0) return true;
+  if (rows.every((r) => /N\/A|无接缝/.test(r))) return false;
+  return rows.some((r) => !UUID_RE.test(r) && !r.includes('先例'));
+}
+
+/** 需 Alex 动作条目硬上限（规格 v2 解法⑤） */
+const MAX_ALEX_ACTIONS = 7;
+
+/**
+ * 汇总需 Alex 动作条目并按优先级排序（新型判定点 > 首次放行 > 全先例批审折叠 > 圈选；
+ * 抽检=优先级4，棘轮范围外本期恒空。报备段否决窗条目属被动知情不在此列）。
+ */
+function buildGpActionItems(gp) {
+  const items = [];
+  for (const g of gp.converged.filter((x) => x.has_novel)) {
+    items.push({ priority: 1, segment: 'review', text: `【批审·新型判定点】${g.title}${g.demo_url ? ` — ${g.demo_url}` : ''}` });
+  }
+  if (gp.firstRelease) {
+    for (const r of gp.autoReleases) {
+      items.push({ priority: 2, segment: 'release', releaseId: r.id, text: `【首次放行】${r.title}（否决窗至 ${formatShanghaiShort(r.veto_deadline)}）` });
+    }
+  }
+  const precedent = gp.converged.filter((x) => !x.has_novel);
+  if (precedent.length > 0) {
+    items.push({ priority: 2.5, segment: 'review', text: `【批审·全先例】${precedent.map((x) => x.title).join('、')}（${precedent.length} 条快速过）` });
+  }
+  if (gp.isMonday) {
+    gp.candidates.forEach((c, i) => {
+      items.push({ priority: 3, segment: 'selection', text: `【圈选 ${i + 1}】${c.title} — ${c.one_liner}${c.est_scale ? `（${c.est_scale}）` : ''}` });
+    });
+  }
+  items.sort((a, b) => a.priority - b.priority);
+  return items;
 }
 
 /**
@@ -225,25 +324,77 @@ export function renderBattleReportMarkdown(data) {
   }
 
   lines.push('');
-  lines.push('## 军师决策（24h）');
-  const sd = data.strategistDecisions || [];
-  if (sd.length === 0) {
+  lines.push('## 军师决策节 v2 · GP 批审桌');
+  const gp = data.goldenPathMode || null;
+  const actions = gp ? buildGpActionItems(gp) : [];
+  const survivors = new Set(actions.slice(0, MAX_ALEX_ACTIONS));
+  const overflow = actions.length - Math.min(actions.length, MAX_ALEX_ACTIONS);
+  const pick = (segment) => actions.filter((a) => survivors.has(a) && a.segment === segment);
+
+  lines.push('');
+  lines.push('### 方向圈选段（每周一）');
+  if (!gp) {
     lines.push('暂无');
+  } else if (!gp.isMonday) {
+    lines.push('本段每周一更新');
   } else {
-    const byLine = new Map();
-    for (const n of sd) {
-      const m = /^军师决策\[([^\]]*)\]/.exec(n.title || '');
-      const lineName = (m && m[1]) || '未知线';
-      if (!byLine.has(lineName)) byLine.set(lineName, []);
-      byLine.get(lineName).push(n);
-    }
-    for (const [lineName, items] of byLine) {
-      lines.push(`### ${lineName}`);
-      for (const n of items) {
-        const summary = (n.title || '').replace(/^军师决策\[[^\]]*\]:?\s*/, '') || '(无标题)';
-        lines.push(`- ${summary}（${formatShanghaiShort(n.created_at)}）`);
+    const sel = pick('selection');
+    if (sel.length === 0 && !gp.gapPanorama) {
+      lines.push('暂无');
+    } else {
+      for (const a of sel) lines.push(`- ${a.text}`);
+      const gaps = gp.gapPanorama?.gaps || [];
+      if (gaps.length > 0) {
+        lines.push('OKR 缺口全景（本周无候选覆盖的空白）：');
+        for (const g of gaps) lines.push(`- ${g.kr_title ?? g.kr_id}：${g.reason ?? ''}`);
       }
     }
+  }
+
+  lines.push('');
+  lines.push('### GP 批审段');
+  const review = gp ? pick('review') : [];
+  if (review.length === 0) {
+    lines.push('暂无');
+  } else {
+    for (const a of review) lines.push(`- ${a.text}`);
+  }
+
+  lines.push('');
+  lines.push('### 报备段（24h 否决窗）');
+  const releaseActions = gp ? pick('release') : [];
+  // 否决窗条目属被动知情必须始终可见：非首次放行全走被动行；首次放行被 ≤7 截断的也回落为被动行
+  const survivedReleaseIds = new Set(releaseActions.map((a) => a.releaseId));
+  const passiveReleases = gp ? gp.autoReleases.filter((r) => !survivedReleaseIds.has(r.id)) : [];
+  const ledger = gp?.dispatchLedger || [];
+  if (releaseActions.length === 0 && passiveReleases.length === 0 && ledger.length === 0) {
+    lines.push('暂无');
+  } else {
+    for (const a of releaseActions) lines.push(`- ${a.text}`);
+    for (const r of passiveReleases) {
+      lines.push(`- ${r.title}（否决窗至 ${formatShanghaiShort(r.veto_deadline)}，不否决即生效）`);
+    }
+    if (ledger.length > 0) {
+      lines.push('昨日自动派工台账：');
+      for (const t of ledger) lines.push(`- ${t.title}（${t.status ?? '?'}，${formatShanghaiShort(t.created_at)}）`);
+    }
+  }
+
+  lines.push('');
+  lines.push('### GP 库存水位段');
+  const stock = gp?.stock || [];
+  if (stock.length === 0) {
+    lines.push('暂无');
+  } else {
+    lines.push(stock.map((s) => {
+      const reason = ['rejected', 'blocked_gate'].includes(s.status) && s.latest_reason ? `（${s.latest_reason}）` : '';
+      return `${s.status} ${s.count}${reason}`;
+    }).join(' · '));
+  }
+
+  if (overflow > 0) {
+    lines.push('');
+    lines.push(`⏳ 需动作条目超限（>${MAX_ALEX_ACTIONS}），${overflow} 条顺延次日（堆积水位 ${overflow}）`);
   }
 
   lines.push('');
