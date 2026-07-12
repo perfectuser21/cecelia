@@ -179,8 +179,8 @@ echo "$BRAIN_PID" > "$PID_FILE"
 log "  Brain PID=${BRAIN_PID} 已写入 ${PID_FILE}"
 
 # ── 6. 等待 Brain 健康 ────────────────────────────────────────────────────────
-log "Step 6: 等待 Brain 健康 (max 300s)..."
-MAX_WAIT=300
+log "Step 6: 等待 Brain 健康 (max 600s)..."
+MAX_WAIT=600
 INTERVAL=5
 ELAPSED=0
 HEALTH_URL="http://localhost:${PORT}/"
