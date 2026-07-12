@@ -3,6 +3,9 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 const mockQuery = vi.fn();
 vi.mock('../../db.js', () => ({ default: { query: mockQuery } }));
 
+// 默认 1 slot（capacity gate: batchLimit = 1）
+vi.mock('../../fleet-resource-cache.js', () => ({ getTotalEffectiveSlots: vi.fn(() => 1) }));
+
 async function makeApp() {
   const { default: router } = await import('../golden-paths.js');
   const express = (await import('express')).default;
@@ -13,7 +16,7 @@ async function makeApp() {
 }
 const req = async () => (await import('supertest')).default;
 
-const GP_ROW = { id: 'gp-1', title: '朋友圈GP', one_liner: '一句话', status: 'candidate', source: 'strategist' };
+const GP_ROW = { id: 'gp-1', title: '朋友圈GP', one_liner: '一句话', status: 'candidate', source: 'strategist', auto_release: false, proposal_doc: null };
 
 describe('golden-paths routes（GP 蓝图级实体，区别于既有 golden_path FR 台账）', () => {
   beforeEach(() => mockQuery.mockReset());
@@ -140,6 +143,138 @@ describe('golden-paths routes（GP 蓝图级实体，区别于既有 golden_path
       expect(res.body.code).toBe('CONCURRENT_MODIFICATION');
       const updateSql = mockQuery.mock.calls[1][0];
       expect(updateSql).toMatch(/AND status = \$/);
+    });
+  });
+
+  // ── T7 拍板端点 ────────────────────────────────────────────────────────────
+
+  describe('POST /golden-paths/:id/select — 圈选端点（DoD F3/F4）', () => {
+    it('F3: candidate→proposed 且建 golden_path_proposal 任务', async () => {
+      mockQuery.mockResolvedValueOnce({ rows: [{ ...GP_ROW, status: 'candidate' }] }); // SELECT gp
+      mockQuery.mockResolvedValueOnce({ rows: [{ cnt: 0 }] });                          // COUNT in-flight
+      mockQuery.mockResolvedValueOnce({ rows: [{ id: 'task-abc' }] });                  // INSERT task
+      mockQuery.mockResolvedValueOnce({ rows: [{ ...GP_ROW, status: 'proposed', proposal_task_id: 'task-abc' }] }); // UPDATE gp
+      const res = await (await req())(await makeApp())
+        .post('/api/brain/golden-paths/gp-1/select').send({});
+      expect(res.status).toBe(200);
+      expect(res.body.golden_path.status).toBe('proposed');
+      expect(res.body.proposal_task_id).toBe('task-abc');
+      const taskInsertSql = mockQuery.mock.calls[2][0];
+      expect(taskInsertSql).toMatch(/INSERT INTO tasks/);
+      expect(taskInsertSql).toMatch(/golden_path_proposal/);
+    });
+
+    it('F4: 容量已满（in_flight >= batchLimit=1）→ 409 CAPACITY_EXCEEDED', async () => {
+      mockQuery.mockResolvedValueOnce({ rows: [{ ...GP_ROW, status: 'candidate' }] }); // SELECT gp
+      mockQuery.mockResolvedValueOnce({ rows: [{ cnt: 1 }] });                          // COUNT in-flight = 1 (=batchLimit)
+      const res = await (await req())(await makeApp())
+        .post('/api/brain/golden-paths/gp-1/select').send({});
+      expect(res.status).toBe(409);
+      expect(res.body.code).toBe('CAPACITY_EXCEEDED');
+      expect(res.body.batch_limit).toBe(1);
+    });
+
+    it('非 candidate 状态 → 409 INVALID_TRANSITION', async () => {
+      mockQuery.mockResolvedValueOnce({ rows: [{ ...GP_ROW, status: 'proposed' }] });
+      const res = await (await req())(await makeApp())
+        .post('/api/brain/golden-paths/gp-1/select').send({});
+      expect(res.status).toBe(409);
+      expect(res.body.code).toBe('INVALID_TRANSITION');
+    });
+
+    it('不存在 id → 404', async () => {
+      mockQuery.mockResolvedValueOnce({ rows: [] });
+      const res = await (await req())(await makeApp())
+        .post('/api/brain/golden-paths/nope/select').send({});
+      expect(res.status).toBe(404);
+    });
+  });
+
+  describe('POST /golden-paths/:id/approve — 批准端点（DoD F5）', () => {
+    it('F5: converged→approved，写 decisions(judgment)，judgment_decision_id 存在', async () => {
+      mockQuery.mockResolvedValueOnce({ rows: [{ ...GP_ROW, status: 'converged' }] });    // SELECT gp
+      mockQuery.mockResolvedValueOnce({ rows: [{ id: 'dec-1' }] });                        // INSERT decisions
+      mockQuery.mockResolvedValueOnce({ rows: [{ id: 'task-h1' }] });                      // INSERT harness task
+      mockQuery.mockResolvedValueOnce({ rows: [{ ...GP_ROW, status: 'approved', judgment_refs: ['dec-1'] }] }); // UPDATE gp
+      const res = await (await req())(await makeApp())
+        .post('/api/brain/golden-paths/gp-1/approve').send({});
+      expect(res.status).toBe(200);
+      expect(res.body.golden_path.status).toBe('approved');
+      expect(res.body.judgment_decision_id).toBe('dec-1');
+      expect(res.body.harness_task_id).toBe('task-h1');
+      const decSql = mockQuery.mock.calls[1][0];
+      expect(decSql).toMatch(/INSERT INTO decisions/);
+      expect(decSql).toMatch(/judgment/);
+      expect(decSql).toMatch(/review_after/);
+      const decParams = mockQuery.mock.calls[1][1];
+      expect(decParams[0]).toMatch(/^gp:/);
+    });
+
+    it('reason 字段含 gp:<id>（DoD F5 精确断言）', async () => {
+      mockQuery.mockResolvedValueOnce({ rows: [{ ...GP_ROW, status: 'converged' }] });
+      mockQuery.mockResolvedValueOnce({ rows: [{ id: 'dec-2' }] });
+      mockQuery.mockResolvedValueOnce({ rows: [{ id: 'task-h2' }] });
+      mockQuery.mockResolvedValueOnce({ rows: [{ ...GP_ROW, status: 'approved' }] });
+      await (await req())(await makeApp()).post('/api/brain/golden-paths/gp-1/approve').send({});
+      const reasonParam = mockQuery.mock.calls[1][1][1]; // reason 是第二个 VALUES 参数
+      expect(reasonParam).toMatch(/gp:gp-1/);
+    });
+
+    it('非 converged/proposed 状态 → 409 INVALID_TRANSITION', async () => {
+      mockQuery.mockResolvedValueOnce({ rows: [{ ...GP_ROW, status: 'candidate' }] });
+      const res = await (await req())(await makeApp())
+        .post('/api/brain/golden-paths/gp-1/approve').send({});
+      expect(res.status).toBe(409);
+      expect(res.body.code).toBe('INVALID_TRANSITION');
+    });
+
+    it('不存在 id → 404', async () => {
+      mockQuery.mockResolvedValueOnce({ rows: [] });
+      const res = await (await req())(await makeApp())
+        .post('/api/brain/golden-paths/nope/approve').send({});
+      expect(res.status).toBe(404);
+    });
+  });
+
+  describe('POST /golden-paths/:id/veto — 否决端点', () => {
+    it('报备中（proposed + auto_release）→ converged 回批审', async () => {
+      mockQuery.mockResolvedValueOnce({ rows: [{ ...GP_ROW, status: 'proposed', auto_release: true }] });
+      mockQuery.mockResolvedValueOnce({ rows: [{ ...GP_ROW, status: 'converged', status_reason: '用户否决' }] });
+      const res = await (await req())(await makeApp())
+        .post('/api/brain/golden-paths/gp-1/veto').send({ status_reason: '用户否决' });
+      expect(res.status).toBe(200);
+      expect(res.body.golden_path.status).toBe('converged');
+    });
+
+    it('批审中（converged）→ rejected + status_reason', async () => {
+      mockQuery.mockResolvedValueOnce({ rows: [{ ...GP_ROW, status: 'converged', auto_release: false }] });
+      mockQuery.mockResolvedValueOnce({ rows: [{ ...GP_ROW, status: 'rejected', status_reason: '不够好' }] });
+      const res = await (await req())(await makeApp())
+        .post('/api/brain/golden-paths/gp-1/veto').send({ status_reason: '不够好' });
+      expect(res.status).toBe(200);
+      expect(res.body.golden_path.status).toBe('rejected');
+    });
+
+    it('普通 proposed（非 auto_release）→ 409 INVALID_TRANSITION', async () => {
+      mockQuery.mockResolvedValueOnce({ rows: [{ ...GP_ROW, status: 'proposed', auto_release: false }] });
+      const res = await (await req())(await makeApp())
+        .post('/api/brain/golden-paths/gp-1/veto').send({});
+      expect(res.status).toBe(409);
+      expect(res.body.code).toBe('INVALID_TRANSITION');
+    });
+
+    it('approved 状态 → 409 INVALID_TRANSITION（不能否决已批准）', async () => {
+      mockQuery.mockResolvedValueOnce({ rows: [{ ...GP_ROW, status: 'approved' }] });
+      const res = await (await req())(await makeApp())
+        .post('/api/brain/golden-paths/gp-1/veto').send({});
+      expect(res.status).toBe(409);
+    });
+
+    it('不存在 id → 404', async () => {
+      mockQuery.mockResolvedValueOnce({ rows: [] });
+      const res = await (await req())(await makeApp())
+        .post('/api/brain/golden-paths/nope/veto').send({});
+      expect(res.status).toBe(404);
     });
   });
 });
