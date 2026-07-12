@@ -6,44 +6,101 @@ const mockPool = {
 
 vi.mock('../db.js', () => ({ default: mockPool }));
 
-const { allocatePort, stopPreview } = await import('../preview-manager.js');
+const { allocatePreview, allocatePort, stopPreview, markPreviewInactive, getPreview } = await import('../preview-manager.js');
 
-describe('allocatePort', () => {
+describe('allocatePreview', () => {
   beforeEach(() => vi.clearAllMocks());
 
   it('allocates first free port in 5300-5399 range', async () => {
     mockPool.query
-      .mockResolvedValueOnce({ rows: [] })  // SELECT used ports → empty
-      .mockResolvedValueOnce({ rows: [] });  // INSERT
-    const port = await allocatePort(1, 'test-branch', 'cecelia');
-    expect(port).toBe(5300);
-    expect(mockPool.query).toHaveBeenCalledTimes(2);
+      .mockResolvedValueOnce({ rows: [] })  // SELECT existing active for this PR → none
+      .mockResolvedValueOnce({ rows: [] })  // SELECT all active ports → empty
+      .mockResolvedValueOnce({ rows: [] }); // INSERT
+    const result = await allocatePreview(1, 'test-branch', 'cecelia');
+    expect(result.port).toBe(5300);
+    expect(result.db_name).toBe('cecelia_preview_1');
+    expect(mockPool.query).toHaveBeenCalledTimes(3);
+  });
+
+  it('returns existing allocation when same PR already has active record (idempotent)', async () => {
+    mockPool.query
+      .mockResolvedValueOnce({ rows: [{ port: 5342, db_name: 'cecelia_preview_1' }] }); // SELECT existing
+    const result = await allocatePreview(1, 'test-branch', 'cecelia');
+    expect(result.port).toBe(5342);
+    expect(result.db_name).toBe('cecelia_preview_1');
+    expect(mockPool.query).toHaveBeenCalledTimes(1);
   });
 
   it('skips used ports', async () => {
     mockPool.query
-      .mockResolvedValueOnce({ rows: [{ port: 5300 }, { port: 5301 }] })
-      .mockResolvedValueOnce({ rows: [] });
-    const port = await allocatePort(2, 'test-branch', 'cecelia');
-    expect(port).toBe(5302);
+      .mockResolvedValueOnce({ rows: [] })  // SELECT existing → none
+      .mockResolvedValueOnce({ rows: [{ port: 5300 }, { port: 5301 }] }) // used ports
+      .mockResolvedValueOnce({ rows: [] }); // INSERT
+    const result = await allocatePreview(2, 'test-branch', 'cecelia');
+    expect(result.port).toBe(5302);
   });
 
   it('throws when all ports are used', async () => {
     const allPorts = Array.from({ length: 100 }, (_, i) => ({ port: 5300 + i }));
-    mockPool.query.mockResolvedValueOnce({ rows: allPorts });
-    await expect(allocatePort(3, 'test-branch', 'cecelia')).rejects.toThrow('exhausted');
+    mockPool.query
+      .mockResolvedValueOnce({ rows: [] })       // SELECT existing → none
+      .mockResolvedValueOnce({ rows: allPorts }); // all ports used
+    await expect(allocatePreview(3, 'test-branch', 'cecelia')).rejects.toThrow('exhausted');
   });
 });
 
-describe('stopPreview', () => {
+describe('allocatePort (deprecated compat)', () => {
   beforeEach(() => vi.clearAllMocks());
 
-  it('deletes the row to release the port', async () => {
+  it('returns port number (wraps allocatePreview)', async () => {
+    mockPool.query
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [] });
+    const port = await allocatePort(1, 'test-branch', 'cecelia');
+    expect(port).toBe(5300);
+  });
+});
+
+describe('stopPreview (deprecated compat)', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it('marks preview inactive', async () => {
     mockPool.query.mockResolvedValue({ rows: [] });
     await stopPreview(1);
     expect(mockPool.query).toHaveBeenCalledWith(
-      expect.stringMatching(/DELETE FROM preview_environments/i),
-      [1]
+      expect.stringMatching(/UPDATE preview_environments SET status = 'inactive'/i),
+      [1],
     );
+  });
+});
+
+describe('markPreviewInactive', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it('updates status to inactive', async () => {
+    mockPool.query.mockResolvedValue({ rows: [] });
+    await markPreviewInactive(5);
+    expect(mockPool.query).toHaveBeenCalledWith(
+      expect.stringMatching(/UPDATE preview_environments SET status = 'inactive'/i),
+      [5],
+    );
+  });
+});
+
+describe('getPreview', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it('returns the preview row when found', async () => {
+    const fake = { id: 'abc', pr_number: 1, port: 5300, status: 'active' };
+    mockPool.query.mockResolvedValue({ rows: [fake] });
+    const result = await getPreview(1);
+    expect(result).toEqual(fake);
+  });
+
+  it('returns null when not found', async () => {
+    mockPool.query.mockResolvedValue({ rows: [] });
+    const result = await getPreview(999);
+    expect(result).toBeNull();
   });
 });
