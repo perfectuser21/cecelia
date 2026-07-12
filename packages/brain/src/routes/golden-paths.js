@@ -38,6 +38,7 @@ router.get('/golden-paths', async (req, res) => {
       : await pool.query('SELECT * FROM golden_paths ORDER BY created_at DESC');
     res.json({ success: true, golden_paths: rows });
   } catch (err) {
+    console.error('[golden-paths] GET 失败:', err);
     res.status(500).json({ success: false, error: err.message });
   }
 });
@@ -59,6 +60,7 @@ router.post('/golden-paths', async (req, res) => {
     );
     res.status(201).json({ success: true, golden_path: rows[0] });
   } catch (err) {
+    console.error('[golden-paths] POST 失败:', err);
     res.status(500).json({ success: false, error: err.message });
   }
 });
@@ -105,11 +107,20 @@ router.patch('/golden-paths/:id', async (req, res) => {
       return res.status(400).json({ success: false, error: '无可更新字段' });
     }
     sets.push('updated_at = now()');
-    vals.push(id);
+    vals.push(id, currentStatus);
+    // compare-and-swap：SELECT 与 UPDATE 之间状态可能被 gp-shelf-life job 翻转，守卫住旧状态
     const { rows } = await pool.query(
-      `UPDATE golden_paths SET ${sets.join(', ')} WHERE id = $${i} RETURNING *`, vals);
+      `UPDATE golden_paths SET ${sets.join(', ')} WHERE id = $${i} AND status = $${i + 1} RETURNING *`, vals);
+    if (rows.length === 0) {
+      return res.status(409).json({
+        success: false,
+        error: 'golden_path 状态已被并发修改，请重读后重试',
+        code: 'CONCURRENT_MODIFICATION'
+      });
+    }
     res.json({ success: true, golden_path: rows[0] });
   } catch (err) {
+    console.error('[golden-paths] PATCH 失败:', err);
     res.status(500).json({ success: false, error: err.message });
   }
 });

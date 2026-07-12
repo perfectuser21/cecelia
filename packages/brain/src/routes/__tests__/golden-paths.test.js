@@ -130,5 +130,16 @@ describe('golden-paths routes（GP 蓝图级实体，区别于既有 golden_path
         .patch('/api/brain/golden-paths/gp-1').send({});
       expect(res.status).toBe(400);
     });
+
+    it('并发修改：UPDATE 时状态已被别处改走 → 409 CONCURRENT_MODIFICATION', async () => {
+      mockQuery.mockResolvedValueOnce({ rows: [{ status: 'approved' }] });
+      mockQuery.mockResolvedValueOnce({ rows: [] });
+      const res = await (await req())(await makeApp())
+        .patch('/api/brain/golden-paths/gp-1').send({ status: 'in_dev' });
+      expect(res.status).toBe(409);
+      expect(res.body.code).toBe('CONCURRENT_MODIFICATION');
+      const updateSql = mockQuery.mock.calls[1][0];
+      expect(updateSql).toMatch(/AND status = \$/);
+    });
   });
 });
