@@ -430,10 +430,27 @@ app.post('/api/brain/orchestrator/chat', async (req, res) => {
   }
 });
 
-// Health check at root
+// Health check at root (also used by preview healthcheck)
 app.get('/', (_req, res) => {
   res.json({ service: 'cecelia-brain', status: 'running', port: PORT });
 });
+
+// 预览模式：PREVIEW_STATIC_DIR 设置时把 Brain 同时当静态文件服务器
+// 前端 SPA 的 /api/brain/* 请求直接被上面路由处理，其余路径提供静态文件
+if (process.env.PREVIEW_STATIC_DIR) {
+  const { existsSync } = await import('node:fs');
+  const staticDir = process.env.PREVIEW_STATIC_DIR;
+  if (existsSync(staticDir)) {
+    app.use(express.static(staticDir));
+    // SPA fallback — 未命中静态文件的非 API 路径回退到 index.html
+    app.get(/^(?!\/api\/).*/, (_req, res) => {
+      res.sendFile(join(staticDir, 'index.html'));
+    });
+    console.log(`[Preview] Serving static files from ${staticDir}`);
+  } else {
+    console.warn(`[Preview] PREVIEW_STATIC_DIR=${staticDir} does not exist — static serving skipped`);
+  }
+}
 
 // Error handler
 app.use((err, _req, res, _next) => {
