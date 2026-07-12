@@ -24,11 +24,22 @@ describe('allocatePreview', () => {
 
   it('returns existing allocation when same PR already has active record (idempotent)', async () => {
     mockPool.query
-      .mockResolvedValueOnce({ rows: [{ port: 5342, db_name: 'cecelia_preview_1' }] }); // SELECT existing
+      .mockResolvedValueOnce({ rows: [{ port: 5342, db_name: 'cecelia_preview_1' }] }) // SELECT existing
+      .mockResolvedValueOnce({ rows: [] }); // UPDATE status='starting'
     const result = await allocatePreview(1, 'test-branch', 'cecelia');
     expect(result.port).toBe(5342);
     expect(result.db_name).toBe('cecelia_preview_1');
-    expect(mockPool.query).toHaveBeenCalledTimes(1);
+    expect(mockPool.query).toHaveBeenCalledTimes(2);
+  });
+
+  it('resets status to starting on reuse (regression: PR#3810 CI 实测——重推同一PR时外部轮询看到上一轮遗留的active提前判定就绪，健康检查扑空)', async () => {
+    mockPool.query
+      .mockResolvedValueOnce({ rows: [{ port: 5342, db_name: 'cecelia_preview_1' }] }) // SELECT existing
+      .mockResolvedValueOnce({ rows: [] }); // UPDATE
+    await allocatePreview(1, 'test-branch', 'cecelia');
+    const updateCall = mockPool.query.mock.calls[1];
+    expect(updateCall[0]).toMatch(/UPDATE preview_environments SET status = 'starting'/);
+    expect(updateCall[1]).toEqual([1]);
   });
 
   it('skips used ports', async () => {
