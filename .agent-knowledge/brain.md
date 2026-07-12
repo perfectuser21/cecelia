@@ -224,6 +224,8 @@ await initOtel();
 | `scripts/dedup-baseline.json` | KR coding dedup 基线数据（2026-05-14）：duplication_pct=1.3%，duplicate_blocks=122，目标降至 <1.0%。Phase 2 重构参考：top offenders 为 callback-processor.js、routes/execution.js、decomposition-checker.js。 |
 | `scripts/smoke/gate5-b1-b2-smoke.sh` | Gate 5 B1+B2 真环境 smoke 验证脚本（CI real-env-smoke 跑）：检查文件存在 + 语法正确 + tick-runner 接入 + bridge 端点 + 时间窗口逻辑正确（6 项验证）。 |
 | `src/__tests__/credentials-health-scheduler.test.js` | B1 单元测试（25 个）：覆盖 isInCredentialsHealthWindow 窗口判断、checkClaudeCredentials 状态分级（ok/warning/critical/expired/missing/unknown/error）、checkNotebookLmAuth/checkCodexAuth、runCredentialsHealthCheck 主流程（窗口外/去重/各凭据失效→告警+任务）。 |
+| `src/__tests__/docker-executor-brain-url.test.js` | 回归测试（4 个）：验证 buildDockerArgs 注入 BRAIN_URL=http://host.docker.internal:5221 + --add-host host-gateway，确保 line-strategist 容器内 curl Brain API 可达（bug1 零落库修复）。 |
+| `src/__tests__/monitor-loop-strategist-stuck-threshold.test.js` | 回归测试（4 个）：source inspection 验证 strategist_decision/ci_patrol 进入 HARNESS_TASK_TYPES（30 分钟 stuck 阈值），防止 5 分钟默认阈值误判容器为卡住并触发振荡（bug2 补充修复）。 |
 | `src/cron/__tests__/daily-real-business-smoke.test.js` | B2 单元测试（31 个）：覆盖 isInSmokeWindow、hasTodaySmoke、createSmokeTask(ON CONFLICT)、findFailedStage、assertSmokeOutput、handleSmokeFailure、archiveOldSmokePipelines、runDailySmoke（触发/跳过/失败）、waitAndAssertSmoke（完成/failed/超时）。 |
 
 tick-runner.js 接入点：
