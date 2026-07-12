@@ -25,7 +25,12 @@ DB_NAME="${4:?DB_NAME 必须提供}"
 
 # 找主仓库（Brain container 内 REPO_ROOT 指向 deploy root；宿主直调走 git）
 REPO_ROOT="${REPO_ROOT:-/Users/administrator/perfect21/cecelia}"
-WORK_DIR="/tmp/cecelia-preview-${PR_NUMBER}"
+# 容器 /tmp 是 tmpfs:size=100M（docker-compose.yml read_only 安全边界），前端全量 npm ci
+# （含 devDeps，几百 MB）会撑爆导致 ENOSPC（PR#3807 实测）。worktree 挪到
+# /Users/administrator/worktrees（docker-compose 已 rw 挂载，宿主真实磁盘，非 tmpfs）。
+PREVIEW_BASE_DIR="${PREVIEW_BASE_DIR:-/Users/administrator/worktrees/cecelia-previews}"
+mkdir -p "$PREVIEW_BASE_DIR"
+WORK_DIR="${PREVIEW_BASE_DIR}/preview-${PR_NUMBER}"
 LOG_FILE="/tmp/preview-${PR_NUMBER}.log"
 PID_FILE="/tmp/preview-${PR_NUMBER}.pid"
 

@@ -14,7 +14,8 @@ PORT="${2:?PORT 必须提供}"
 DB_NAME="${3:?DB_NAME 必须提供}"
 
 REPO_ROOT="${REPO_ROOT:-/Users/administrator/perfect21/cecelia}"
-WORK_DIR="/tmp/cecelia-preview-${PR_NUMBER}"
+PREVIEW_BASE_DIR="${PREVIEW_BASE_DIR:-/Users/administrator/worktrees/cecelia-previews}"
+WORK_DIR="${PREVIEW_BASE_DIR}/preview-${PR_NUMBER}"
 LOG_FILE="/tmp/preview-${PR_NUMBER}-stop.log"
 PID_FILE="/tmp/preview-${PR_NUMBER}.pid"
 
