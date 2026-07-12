@@ -6,6 +6,7 @@
  * 任一查挂 / LLM 解析失败 → pass=false（fail-closed：宁可留箱人工复核，不放脏铁律进账本）。
  */
 import { callLLM } from './llm-caller.js';
+import { extractJsonObject } from './json-utils.js';
 
 const GATE_PROMPT = (candidate, invariants) => `你是 Cecelia 的铁律准入审查官。一条候选铁律想写入 decisions(category='invariant')，请做四查并只输出 JSON。
 
@@ -28,13 +29,6 @@ ${candidate}
 - fr_contradiction: 与系统已交付功能的既有行为矛盾（true=矛盾）
 
 只输出 JSON：{"conflict":bool,"verifiable":bool,"scope_ok":bool,"fr_contradiction":bool,"reason":"一句话理由"}`;
-
-function extractJsonObject(text) {
-  try { const p = JSON.parse(text); if (p && typeof p === 'object') return p; } catch {}
-  const m = text.match(/\{[\s\S]*\}/);
-  if (m) { try { return JSON.parse(m[0]); } catch {} }
-  return null;
-}
 
 /**
  * @returns {Promise<{pass: boolean, checks: object|null, reason: string}>}

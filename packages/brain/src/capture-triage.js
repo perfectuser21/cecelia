@@ -16,6 +16,7 @@
 import { callLLM } from './llm-caller.js';
 import { checkInvariantCandidate } from './invariant-gate.js';
 import { createTask } from './actions.js';
+import { extractJsonObject } from './json-utils.js';
 
 export const TRIAGE_SOURCE_TYPES = ['handoff', 'learning', 'issue'];
 export const ROUTES = ['urgent', 'line_backlog', 'invariant', 'okr'];
@@ -63,13 +64,6 @@ ${atom.content}
 \`\`\`
 
 只输出 JSON：{"route":"urgent|line_backlog|invariant|okr","confidence":0.0-1.0,"reason":"一句话"}`;
-
-function extractJsonObject(text) {
-  try { const p = JSON.parse(text); if (p && typeof p === 'object' && !Array.isArray(p)) return p; } catch {}
-  const m = text.match(/\{[\s\S]*\}/);
-  if (m) { try { return JSON.parse(m[0]); } catch {} }
-  return null;
-}
 
 const ATOM_UPDATE_STATUSES = ['confirmed', 'pending_review'];
 
