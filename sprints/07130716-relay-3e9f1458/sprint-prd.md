@@ -4,31 +4,33 @@
 
 - **对应 KR**：Cecelia 基础稳固 — 系统可信赖、算力全开、管家闭环
 - **当前进度**：82%
-- **本次推进预期**：验证 headed 改动后，headless codex relay 仍可被 Brain API 接受且不误入 headed 分支
+- **本次推进预期**：修正 headless smoke，使合法 headless/codex payload 仍被接受，但不遗留 queued 可调度 harness task
 
 ## 背景
 
-本 sprint 使用 Research 补料作为 PrepPRD 代料。来源锚定为 `packages/brain/scripts/smoke/codex-headed-dispatch-smoke.sh` 第 3 个 smoke case：创建 `title=headless-smoke`，payload 仅包含 `orchestrator=skill-relay`、`executor=codex`、`mode=headless`，验收 `POST /api/brain/tasks` 返回 200/201。历史上下文只用于防回归，不扩大本 sprint 范围。
+本 sprint 使用 Research 补料作为 PrepPRD 代料。来源锚定为 `packages/brain/scripts/smoke/codex-headed-dispatch-smoke.sh` 第 30-36 行：脚本直接 POST 一个 `harness_initiative`，`title=headless-smoke`，payload 只有 `orchestrator=skill-relay`、`executor=codex`、`mode=headless`。这个 smoke 原本只想验证 route 接受 headless/codex payload，但成功创建的 queued task 会被 dispatcher claim 并进入真实 relay，违反 harness-controller “/dev 是唯一需求入口，消费 prep_prd_body”的契约。
 
 ## Golden Path（核心场景）
 
-用户/系统从本地 Brain API 创建 `headless-smoke` harness initiative → 经过任务 payload 校验 → 到达可观测的 task id 返回，且 headless 不进入 headed/tmux host。
+用户/系统从 smoke 脚本提交 `headless-smoke` harness initiative → 经过合法/非法 payload 校验 → 到达可观测的 task id 返回，且成功创建的 valid smoke task 不留下 queued 可调度 harness task。
 
 具体：
 1. 调用方 POST `/api/brain/tasks`，创建 `harness_initiative`，payload 为 `executor=codex`、`orchestrator=skill-relay`、`mode=headless`。
 2. Brain 接受合法 headless codex relay payload，返回 200/201 与新 task `id`。
-3. 调用方提交非法 `mode` 时，Brain 返回 400；如触发 tick 处理，headless 任务不得落到 `orchestrator_host=skill-relay-codex-headed`。
+3. smoke 对新 task 执行自清理或等价防调度机制，使该 task 不处于 dispatcher 可 claim 的 queued 状态。
+4. 调用方提交非法 `mode` 时，Brain 返回 400；smoke 不点火完整 harness-controller，不要求真实业务 sprint 执行。
 
 ## 边界情况
 
 - `executor=codex` 缺少 `orchestrator=skill-relay` 时，不应被当作本合法路径。
 - `mode` 只能接受 `headless|headed`，其他值返回 400。
+- valid smoke task 可接受出口：创建后解析 id 并 PATCH `status=cancelled`，或创建时使用不被 dispatcher 取走的合法初始状态（如 `pending_postdeploy`），或等价机制。
 - headless smoke 不要求真实 codex 完成 PR，也不要求 headed/tmux/tui.log 或人工 review 闭环。
 
 ## 范围限定
 
-**在范围内**：本地 API 创建 harness initiative；合法 headless codex relay payload 返回 200/201 + id；非法 mode 返回 400；可选 tick 处理时确认未落到 headed host。  
-**不在范围内**：headed 模式扩展；tmux/tui.log 验证；真实 codex 产出 PR；合同、测试或实现代码编写；人审闭环。
+**在范围内**：修订 `packages/brain/scripts/smoke/codex-headed-dispatch-smoke.sh`；保留合法 headless/codex POST 校验和非法 mode 白名单校验；确保成功创建的 valid smoke task 不留下 queued 可调度 harness task；合同应能验证这一点。  
+**不在范围内**：让薄 payload 绕过 `/dev` 跑完整业务 sprint；headed 模式扩展；tmux/tui.log 验证；真实 codex 产出 PR；合同、测试或实现代码编写；人审闭环。
 
 ## 假设
 
@@ -38,13 +40,13 @@
 
 ## 预期受影响文件
 
-- `packages/brain/src/routes/task-tasks.js`: 本地 API payload 校验的行为锚点。
-- `packages/brain/scripts/smoke/codex-headed-dispatch-smoke.sh`: headless smoke case 的来源与回归锚点。
+- `packages/brain/scripts/smoke/codex-headed-dispatch-smoke.sh`: headless smoke case 的唯一修订目标与回归锚点。
+- `packages/brain/src/routes/task-tasks.js`: 仅作为本地 API payload 校验行为锚点，不作为本 sprint 默认改动目标。
 
 ## NFR
 
 - 零回归优先：headless 仍是合法模式，且不得因 headed 改动被拒绝。
-- 分支隔离：headless 不得触发 headed host、tmux 或 headed 专用日志路径。
+- 调度隔离：smoke 不得遗留 queued 可调度 harness task，不得触发完整 harness-controller relay。
 - 安全与日志：不得把凭据、PII 或敏感 payload 明文写入日志。
 - 资源纪律：尊重 codex relay quota 与并发守门，不为 smoke 扩大执行面。
 - 验收环境：API 本地验收，避免依赖外部 runner 或真实 PR 完成。
@@ -77,7 +79,7 @@
 
 ```bash
 # 占位：proposer 将按 target_environment=local_api 填入真实脚本。
-# 期望验收点：POST /api/brain/tasks 对合法 headless codex relay payload 返回 200/201 + id；非法 mode 返回 400；可选 tick 后不进入 skill-relay-codex-headed。
+# 期望验收点：smoke 对合法 headless/codex payload 返回 200/201 + id，随后该 id 不处于 queued 可调度状态；非法 mode 返回 400；不触发完整 harness-controller relay。
 ```
 
 ## 元数据
