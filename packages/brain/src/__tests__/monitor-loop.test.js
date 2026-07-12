@@ -557,6 +557,31 @@ describe('monitor-loop', () => {
       expect(retryMarkCall).toBeDefined();
       vi.clearAllTimers();
     });
+
+    it('retry SQL 含 completed 保护守卫（回归：bug2 振荡打回 retry 路径修复）', async () => {
+      // 根因：retry_count=1 直接走 SQL 而非 updateTask()，
+      // 原来无 AND status != 'completed' 守卫，completed 任务会被打回 queued。
+      const stuck = makeStuckRun({ task_id: 'task-retry-guard', run_id: 'run-guard' });
+
+      let queryIndex = 0;
+      mockPool.query.mockImplementation((sql) => {
+        queryIndex++;
+        if (queryIndex === 1) return Promise.resolve({ rows: [stuck] });
+        if (queryIndex === 2) return Promise.resolve({ rows: [{ retry_count: 1 }] });
+        if (queryIndex === 3) return Promise.resolve({ rows: [{ task_type: 'dev', payload: {} }] });
+        return Promise.resolve({ rows: [{ failed_count: '0', total_count: '5', failure_rate: '0' }] });
+      });
+
+      startMonitorLoop();
+      await flushCycle();
+
+      const priorityUpdateCall = mockPool.query.mock.calls.find(([sql]) =>
+        typeof sql === 'string' && sql.includes('priority') && sql.includes('retry_count')
+      );
+      expect(priorityUpdateCall).toBeDefined();
+      expect(priorityUpdateCall[0]).toContain("status != 'completed'");
+      vi.clearAllTimers();
+    });
   });
 
   describe('handleStuckRun - retry_count >= 2（第三次卡住：QUARANTINE）', () => {

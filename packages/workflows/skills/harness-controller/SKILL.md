@@ -7,9 +7,10 @@ description: |
   移植 Superpowers 6.0 subagent-driven-development 零件：进度台账 / 文件接力 / 四态出口协议 / 单评审双裁决 / compaction 恢复。
   点火方：Brain harness dispatch（无头）或人工前台（同一份 skill 两种触发，行为一致）。
   /dev 仍是唯一需求入口：本 skill 消费 /dev 路径C 的交接契约（PrepPRD + 铁律清单 + NFR），不做需求对抗。
-version: 1.9.0
+version: 2.0.0
 created: 2026-07-04
 changelog:
+  - 2.0.0: 五环第5环协议层机器化——Step 2 合同格式硬检查新增第④项：task payload 必须声明 postdeploy_check（部署后验证命令）或 postdeploy_exemption（豁免原因）；行为型 PR 两者皆空 → FAIL 打回 proposer 不得进 Step 3；watchdog 在 PR MERGED 后执行 postdeploy_check，pass才标 completed，fail 标 failed+P1 告警；与 Brain routes/tasks.js PATCH completed gate（issue 219a9efc 同收口）联动
   - 1.9.0: Step 4 新增 evaluate_verdict 上报硬性动作——evaluator 出裁决后立刻 PATCH relay-runs 带 evaluate_verdict（PASS/FAIL/FIXED 原样发，cecelia#3754 起写侧接住落 initiative_runs.evaluate_verdict；此前该列全 NULL=裁决只活在台账文本里，机器不可读）；fix loop 每轮重评后同样上报（COALESCE 覆盖语义，最后一次为准）
   - 1.8.1: fix——phase-event 自报两条 curl 加 -m 10 超时与 || true best-effort，PATCH 前加 EVT_ID 空值守卫（POST 失败则跳过 PATCH，防打到无 :id 的 URL），与文档既有 relay-runs best-effort curl 风格一致
   - 1.8.0: T7 phase-event复活——每阶段派 subagent 前后 POST/PATCH /api/brain/harness/phase-event 自报，让 initiative_run_events 重新有写入方（07-04 LangGraph→relay 切换后断供），同时给 cecelia 侧 zombie-reaper 心跳判活提供第二信号（防长阶段被 updated_at 单信号误杀）；HARNESS_INITIATIVE_ID 缺失（前台手跑）时整段跳过不阻塞
@@ -174,9 +175,19 @@ DRAFT="<SPRINT_DIR>/contract-draft.md"
 grep -q '## E2E 验收' "$DRAFT" || { echo "FAIL: contract-draft.md 缺 ## E2E 验收 段"; }
 # ③ 含 manual:bash 可执行验收命令（住 dod）
 grep -q 'manual:bash' "$DOD" || { echo "FAIL: 缺 manual:bash 验收命令"; }
+# ④ 五环第5环协议：task payload 必须声明 postdeploy_check 或 postdeploy_exemption（两者皆空 = 机器无法执行部署验证）
+PDC=$(echo "$TASK" | jq -r '.payload.postdeploy_check // empty')
+PDE=$(echo "$TASK" | jq -r '.payload.postdeploy_exemption // empty')
+if [ -z "$PDC" ] && [ -z "$PDE" ]; then
+  echo "FAIL: task payload 缺少 postdeploy_check（部署后验证命令）或 postdeploy_exemption（豁免原因）。"\
+    "行为型 PR（含新运行时逻辑）必须填 postdeploy_check；纯 docs/重构填 postdeploy_exemption='docs-only'|'refactor-only'。"\
+    "参见 /dev SKILL.md 路径C 任务创建模板。"
+fi
 ```
 
-任一行输出 FAIL → 把 FAIL 原文作为 feedback 落文件、回本节第 1 步重派 proposer；三项全过才允许台账记 gan done
+任一行输出 FAIL → 把 FAIL 原文作为 feedback 落文件、回本节第 1 步重派 proposer；四项全过才允许台账记 gan done
+
+> **⑤ postdeploy_check 协议延伸（GAN 通过后执行，非阻塞）**：GAN 完成后，若 task payload 中 `postdeploy_check` 已有值，无需再操作；若当前为空但合同中补充了验证命令，用以下命令把它写入 task payload（如 Brain PATCH endpoint 支持 payload 字段更新）。**watchdog 在 PR MERGED 后读 task.payload.postdeploy_check 执行验证**；通过才标 completed，失败标 failed+P1 告警（五环第 5 环机器强制）。
 
 守护（照抄旧图语义）：proposer 连续 2 轮没 push 产物 / reviewer 连续 3 轮无 verdict / 成本超预算 → 终局 FAIL 上报
 
