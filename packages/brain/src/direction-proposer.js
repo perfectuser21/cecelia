@@ -42,9 +42,10 @@ export function isInDirectionProposerWindow(now = new Date()) {
 export async function alreadyProposedThisWeek(pool) {
   const { rows } = await pool.query(
     `SELECT 1 FROM working_memory
-     WHERE key = '${GAP_PANORAMA_KEY}'
+     WHERE key = $1
        AND updated_at >= NOW() - INTERVAL '20 hours'
-     LIMIT 1`
+     LIMIT 1`,
+    [GAP_PANORAMA_KEY]
   );
   return rows.length > 0;
 }
@@ -202,25 +203,27 @@ export async function proposeCandidates(llm, { gaps, exhausted, direct }) {
 }
 
 /**
- * 候选写库：同 title 已存在活跃态 → skip 防重复；非法 UUID 引用置 null；单条失败不阻断。
- * @returns {Promise<{inserted: Array<{id: string, kr_id: string|null}>, skippedDuplicates: number, failed: number}>}
+ * 候选写库：同 title 已存在活跃态 → skip 防重复（其 kr_id 校验后仍返回，供主入口计入覆盖）；
+ * 非法 UUID 引用置 null；单条失败不阻断。
+ * @returns {Promise<{inserted: Array<{id: string, kr_id: string|null}>, skipped: Array<{kr_id: string|null}>, skippedDuplicates: number, failed: number}>}
  */
 export async function insertCandidates(pool, candidates) {
   const inserted = [];
-  let skippedDuplicates = 0;
+  const skipped = [];
   let failed = 0;
   for (const c of candidates) {
     try {
+      const krId = c.kr_id && UUID_RE.test(c.kr_id) ? c.kr_id : null;
+      const journeyId = c.journey_id && UUID_RE.test(c.journey_id) ? c.journey_id : null;
       const { rows: dup } = await pool.query(
         `SELECT 1 FROM golden_paths WHERE title = $1 AND status = ANY($2) LIMIT 1`,
         [c.title, ACTIVE_GP_STATUSES]
       );
       if (dup.length > 0) {
-        skippedDuplicates++;
+        // 被活跃同名 GP 覆盖的 KR 不该虚报为未覆盖缺口
+        skipped.push({ kr_id: krId });
         continue;
       }
-      const krId = c.kr_id && UUID_RE.test(c.kr_id) ? c.kr_id : null;
-      const journeyId = c.journey_id && UUID_RE.test(c.journey_id) ? c.journey_id : null;
       const { rows } = await pool.query(
         `INSERT INTO golden_paths (title, one_liner, journey_id, kr_id, est_scale, source)
          VALUES ($1, $2, $3, $4, $5, 'strategist')
@@ -233,7 +236,7 @@ export async function insertCandidates(pool, candidates) {
       failed++;
     }
   }
-  return { inserted, skippedDuplicates, failed };
+  return { inserted, skipped, skippedDuplicates: skipped.length, failed };
 }
 
 /**
@@ -242,15 +245,25 @@ export async function insertCandidates(pool, candidates) {
  */
 export async function writeGapPanorama(pool, gaps, coveredKrIds) {
   const uncovered = gaps.filter((g) => !coveredKrIds.has(g.kr_id));
-  const value = { generated_at: new Date().toISOString(), gaps: uncovered };
+  await upsertPanoramaValue(pool, { generated_at: new Date().toISOString(), gaps: uncovered });
+  return uncovered.length;
+}
+
+/** 全景 upsert 共用（claim 占位与真值覆盖走同一条 SQL）。 */
+async function upsertPanoramaValue(pool, value) {
   await pool.query(
     `INSERT INTO working_memory (key, value_json, updated_at)
      VALUES ($1, $2, NOW())
      ON CONFLICT (key) DO UPDATE SET value_json = $2, updated_at = NOW()`,
     [GAP_PANORAMA_KEY, JSON.stringify(value)]
   );
-  return uncovered.length;
 }
+
+/** 窗口外 / 未触发时的全字段零值形状（与 line-dreaming 返回形状先例一致）。 */
+const ZERO_RESULT = Object.freeze({
+  triggered: false, proposed: 0, skippedDuplicates: 0, failed: 0,
+  gapsTotal: 0, gapsUncovered: 0, exhaustedLines: 0, llmFailed: false,
+});
 
 /**
  * 主入口（scheduler-jobs handler）：窗口 gate → 20h 去重 → 三源聚合 → 一次 LLM → 写候选 → 写全景。
@@ -259,11 +272,15 @@ export async function writeGapPanorama(pool, gaps, coveredKrIds) {
  */
 export async function maybeRunDirectionProposer(pool, { now = new Date(), llm = callLLM } = {}) {
   if (!isInDirectionProposerWindow(now)) {
-    return { triggered: false };
+    return { ...ZERO_RESULT };
   }
   if (await alreadyProposedThisWeek(pool)) {
     return { triggered: true, skipped: true };
   }
+
+  // claim-first 幂等哨兵：聚合前先占位（gaps:[] + claiming），窗口内重试被 20h 去重挡住；
+  // 半途失败 → 本周菜单缺失可接受（scheduler 哨兵 ok:false 可观测），流程末尾真值覆盖。
+  await upsertPanoramaValue(pool, { generated_at: new Date().toISOString(), gaps: [], claiming: true });
 
   const [gaps, exhausted, direct] = await Promise.all([
     collectKrGaps(pool),
@@ -272,11 +289,15 @@ export async function maybeRunDirectionProposer(pool, { now = new Date(), llm = 
   ]);
 
   const { candidates, llmFailed } = await proposeCandidates(llm, { gaps, exhausted, direct });
-  const { inserted, skippedDuplicates, failed } = await insertCandidates(pool, candidates);
+  const { inserted, skipped, skippedDuplicates, failed } = await insertCandidates(pool, candidates);
 
-  // 覆盖 = 本次新候选 + 直投池既有 candidate 的 kr_id 命中
+  // 覆盖 = 本次新候选 + 同名活跃 GP skip 的候选 + 直投池既有 candidate 的 kr_id 命中
   const coveredKrIds = new Set(
-    [...inserted.map((i) => i.kr_id), ...direct.map((d) => d.kr_id)].filter(Boolean)
+    [
+      ...inserted.map((i) => i.kr_id),
+      ...skipped.map((s) => s.kr_id),
+      ...direct.map((d) => d.kr_id),
+    ].filter(Boolean)
   );
   const gapsUncovered = await writeGapPanorama(pool, gaps, coveredKrIds);
 

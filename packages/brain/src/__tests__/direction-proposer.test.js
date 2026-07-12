@@ -46,12 +46,13 @@ describe('isInDirectionProposerWindow — UTC 周日 21:30-21:35 = 北京周一 
 });
 
 describe('alreadyProposedThisWeek — working_memory gp_gap_panorama 20h 内已更新 → true', () => {
-  it('有记录 → true，SQL 含 gp_gap_panorama/20 hours', async () => {
+  it('有记录 → true，key 参数化传 gp_gap_panorama，SQL 含 20 hours', async () => {
     const pool = { query: vi.fn().mockResolvedValue({ rows: [{ '?column?': 1 }] }) };
     await expect(alreadyProposedThisWeek(pool)).resolves.toBe(true);
-    const [sql] = pool.query.mock.calls[0];
-    expect(sql).toMatch(/gp_gap_panorama/);
+    const [sql, params] = pool.query.mock.calls[0];
     expect(sql).toMatch(/20 hours/);
+    expect(sql).not.toMatch(/gp_gap_panorama/); // 参数化，不模板内插
+    expect(params).toEqual(['gp_gap_panorama']);
   });
   it('无记录 → false', async () => {
     const pool = { query: vi.fn().mockResolvedValue({ rows: [] }) };
@@ -165,12 +166,15 @@ describe('insertCandidates — 写 golden_paths(candidate, strategist) + 防重�
         return { rows: [{ id: 'new-gp' }] };
       }),
     };
+    const dupKrId = '66666666-6666-6666-6666-666666666666';
     const r = await insertCandidates(pool, [
       { title: '新GP', one_liner: 'x', kr_id: null, journey_id: null, est_scale: null },
-      { title: '重复GP', one_liner: 'y', kr_id: null, journey_id: null, est_scale: null },
+      { title: '重复GP', one_liner: 'y', kr_id: dupKrId, journey_id: null, est_scale: null },
     ]);
     expect(r.inserted).toHaveLength(1);
     expect(r.skippedDuplicates).toBe(1);
+    // skip 条目也返回其 kr_id（UUID 校验后），供主入口计入覆盖
+    expect(r.skipped).toEqual([{ kr_id: dupKrId }]);
     const insertCall = pool.query.mock.calls.find(([sql]) => sql.includes('INSERT INTO golden_paths'));
     expect(insertCall[0]).toMatch(/strategist/);
   });
@@ -226,7 +230,11 @@ describe('maybeRunDirectionProposer — 主入口', () => {
   it('窗口外不触发', async () => {
     const pool = { query: vi.fn() };
     const r = await maybeRunDirectionProposer(pool, { now: new Date(Date.UTC(2026, 6, 12, 20, 0)) });
-    expect(r.triggered).toBe(false);
+    // 与 line-dreaming 一致的全字段零值形状
+    expect(r).toEqual({
+      triggered: false, proposed: 0, skippedDuplicates: 0, failed: 0,
+      gapsTotal: 0, gapsUncovered: 0, exhaustedLines: 0, llmFailed: false,
+    });
     expect(pool.query).not.toHaveBeenCalled();
   });
   it('20h 内已跑 → skip', async () => {
@@ -251,5 +259,40 @@ describe('maybeRunDirectionProposer — 主入口', () => {
     expect(r).toMatchObject({ triggered: true, proposed: 1, gapsTotal: 1, gapsUncovered: 0, llmFailed: false });
     const upsert = pool.query.mock.calls.find(([sql]) => sql.includes('ON CONFLICT'));
     expect(JSON.parse(upsert[1][1]).gaps).toEqual([]);
+  });
+  it('claim-first：聚合查询前先写占位哨兵（防窗口内重试重复投候选）', async () => {
+    const pool = mockPool([
+      ['NOT EXISTS', { rows: [] }],
+      ["source IN ('alex_direct', 'capture_triage')", { rows: [] }],
+    ]);
+    const llm = vi.fn();
+    await maybeRunDirectionProposer(pool, { now: inWindow, llm });
+    const sqls = pool.query.mock.calls.map(([sql]) => sql);
+    const claimIdx = sqls.findIndex((s) => s.includes('ON CONFLICT'));
+    const krIdx = sqls.findIndex((s) => s.includes('FROM key_results'));
+    expect(claimIdx).toBeGreaterThanOrEqual(0);
+    expect(krIdx).toBeGreaterThanOrEqual(0);
+    expect(claimIdx).toBeLessThan(krIdx); // 占位 upsert 必须先于聚合查询
+    const claimCall = pool.query.mock.calls[claimIdx];
+    expect(claimCall[1][0]).toBe('gp_gap_panorama');
+    const claimValue = JSON.parse(claimCall[1][1]);
+    expect(claimValue.claiming).toBe(true);
+    expect(claimValue.gaps).toEqual([]);
+    // 流程末尾真值覆盖（最后一次 ON CONFLICT 无 claiming）
+    const lastUpsertIdx = sqls.map((s, i) => (s.includes('ON CONFLICT') ? i : -1)).filter((i) => i >= 0).pop();
+    expect(lastUpsertIdx).toBeGreaterThan(claimIdx);
+    expect(JSON.parse(pool.query.mock.calls[lastUpsertIdx][1][1]).claiming).toBeUndefined();
+  });
+  it('同名活跃 GP skip 的 kr_id 也计入覆盖（不虚报未覆盖缺口）', async () => {
+    const krId = 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb';
+    const pool = mockPool([
+      ['FROM key_results', { rows: [{ id: krId, title: 'KR被覆盖', metadata: {} }] }],
+      ['NOT EXISTS', { rows: [] }],
+      ['SELECT 1 FROM golden_paths', { rows: [{ '?column?': 1 }] }], // 同名活跃 GP → skip
+      ["source IN ('alex_direct', 'capture_triage')", { rows: [] }],
+    ]);
+    const llm = vi.fn().mockResolvedValue({ text: `{"candidates":[{"title":"已有GP","one_liner":"x","kr_id":"${krId}","journey_id":null,"est_scale":"1周"}]}` });
+    const r = await maybeRunDirectionProposer(pool, { now: inWindow, llm });
+    expect(r).toMatchObject({ triggered: true, proposed: 0, skippedDuplicates: 1, gapsTotal: 1, gapsUncovered: 0 });
   });
 });
