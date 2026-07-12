@@ -365,6 +365,7 @@ describe('runCaptureTriage 四路落地', () => {
     await runCaptureTriage(pool, { llm });
     expect(createTask).not.toHaveBeenCalled();
     expect(pool.gpInserts).toHaveLength(1);
+    expect(llm).toHaveBeenCalledTimes(1);
   });
 
   it('LLM scope 兜底：LLM 路由 line_backlog 但 scope 非法/缺失 → 默认 repair 走 createTask（57d296a1 现状）', async () => {
@@ -373,6 +374,7 @@ describe('runCaptureTriage 四路落地', () => {
     await runCaptureTriage(pool, { llm });
     expect(createTask).toHaveBeenCalledTimes(1);
     expect(pool.gpInserts).toHaveLength(0);
+    expect(llm).toHaveBeenCalledTimes(1);
   });
 
   it('TRIAGE_LLM_PROMPT 含 scope 字段要求（repair|capability）', async () => {

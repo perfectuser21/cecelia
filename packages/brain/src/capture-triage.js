@@ -131,20 +131,13 @@ async function routeCapability(pool, atom, verdict, journeyId) {
   }
 }
 
-/** line_backlog 的 scope 解析：verdict 自带 → cheap rule → LLM 兜底 → 默认 repair（维持 57d296a1 现状，
- *  误判有 isProductionSensitive 护栏 + CI + code-review + 次日验货三层事后兜底）。 */
-async function resolveScope(atom, verdict, { llm } = {}) {
+/** line_backlog 的 scope 解析：verdict 自带（LLM 路由已在同一次调用里给出 scope）→ cheap rule → 默认 repair
+ *  （维持 57d296a1 现状，误判有 isProductionSensitive 护栏 + CI + code-review + 次日验货三层事后兜底）。
+ *  注：cheap rule 路由的 line_backlog（handoff FAIL/PASS+NEXT）classifyScope 必有结论；默认分支只服务
+ *  LLM 路由但 scope 缺失/非法的 verdict——不二次调用 LLM（同 prompt 重问大概率同样失败，徒增成本）。 */
+function resolveScope(atom, verdict) {
   if (SCOPES.includes(verdict.scope)) return verdict.scope;
-  const ruled = classifyScope(atom);
-  if (ruled) return ruled;
-  if (LLM_ENABLED && llm) {
-    try {
-      const { text } = await llm('thalamus', TRIAGE_LLM_PROMPT(atom), { maxTokens: 256 });
-      const parsed = extractJsonObject(text);
-      if (parsed && SCOPES.includes(parsed.scope)) return parsed.scope;
-    } catch { /* 兜底走默认 */ }
-  }
-  return 'repair';
+  return classifyScope(atom) ?? 'repair';
 }
 
 /** 四路落地。返回该条是否成功处理。 */
@@ -162,7 +155,7 @@ async function routeAtom(pool, atom, verdict, opts) {
     if (!journeyId) {
       return updateAtom(pool, atom.id, { confidence, aiReason: `[triage:no_journey] 源无 journey_id，留人工复核。${reason}` });
     }
-    const scope = await resolveScope(atom, verdict, opts);
+    const scope = resolveScope(atom, verdict);
     if (scope === 'capability') {
       return routeCapability(pool, atom, verdict, journeyId);
     }
