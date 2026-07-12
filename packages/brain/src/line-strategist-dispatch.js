@@ -26,7 +26,7 @@ export async function dispatchStrategistDecisions(pool, { windowMinutes = 10 } =
 
   const terminalTasks = scanResult.rows;
   if (terminalTasks.length === 0) {
-    return { scanned: 0, dispatched: 0, skipped_duplicate: 0, marked: 0 };
+    return { scanned: 0, dispatched: 0, skipped_duplicate: 0, marked: 0, failed: 0 };
   }
 
   // 按 journey_id 分组
@@ -38,38 +38,44 @@ export async function dispatchStrategistDecisions(pool, { windowMinutes = 10 } =
 
   let dispatched = 0;
   let skippedDuplicate = 0;
+  let failed = 0;
 
   for (const [journeyId, group] of byJourney) {
-    const dupCheck = await pool.query(
-      `SELECT 1 FROM tasks
-       WHERE status = 'queued' AND task_type = 'strategist_decision'
-         AND payload->>'journey_id' = $1
-       LIMIT 1`,
-      [journeyId]
-    );
-
-    if (dupCheck.rows.length > 0) {
-      skippedDuplicate++;
-    } else {
-      await pool.query(
-        `INSERT INTO tasks (title, description, task_type, priority, status, payload, trigger_source)
-         VALUES ($1, $2, $3, $4, $5, $6, $7)
-         RETURNING id`,
-        [
-          `Line 军师决策 — journey ${journeyId}`,
-          `任务终态触发（run_terminal），line-strategist 分析该 line 近期完成/失败任务并给出决策`,
-          'strategist_decision',
-          'P2',
-          'queued',
-          JSON.stringify({
-            journey_id: journeyId,
-            trigger: 'run_terminal',
-            trigger_context: { terminal_task_ids: group.map(t => t.id) },
-          }),
-          'brain_auto',
-        ]
+    try {
+      const dupCheck = await pool.query(
+        `SELECT 1 FROM tasks
+         WHERE status = 'queued' AND task_type = 'strategist_decision'
+           AND payload->>'journey_id' = $1
+         LIMIT 1`,
+        [journeyId]
       );
-      dispatched++;
+
+      if (dupCheck.rows.length > 0) {
+        skippedDuplicate++;
+      } else {
+        await pool.query(
+          `INSERT INTO tasks (title, description, task_type, priority, status, payload, trigger_source)
+           VALUES ($1, $2, $3, $4, $5, $6, $7)
+           RETURNING id`,
+          [
+            `Line 军师决策 — journey ${journeyId}`,
+            `任务终态触发（run_terminal），line-strategist 分析该 line 近期完成/失败任务并给出决策`,
+            'strategist_decision',
+            'P2',
+            'queued',
+            JSON.stringify({
+              journey_id: journeyId,
+              trigger: 'run_terminal',
+              trigger_context: { terminal_task_ids: group.map(t => t.id) },
+            }),
+            'brain_auto',
+          ]
+        );
+        dispatched++;
+      }
+    } catch (err) {
+      failed++;
+      console.error(`[line-strategist-dispatch] journey ${journeyId} 派发失败（非致命，本轮仍标记源任务，避免死循环重试）:`, err.message);
     }
   }
 
@@ -84,5 +90,5 @@ export async function dispatchStrategistDecisions(pool, { windowMinutes = 10 } =
     marked++;
   }
 
-  return { scanned: terminalTasks.length, dispatched, skipped_duplicate: skippedDuplicate, marked };
+  return { scanned: terminalTasks.length, dispatched, skipped_duplicate: skippedDuplicate, marked, failed };
 }
