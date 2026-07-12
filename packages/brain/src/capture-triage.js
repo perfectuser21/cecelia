@@ -134,7 +134,8 @@ async function routeCapability(pool, atom, verdict, journeyId) {
 /** line_backlog 的 scope 解析：verdict 自带（LLM 路由已在同一次调用里给出 scope）→ cheap rule → 默认 repair
  *  （维持 57d296a1 现状，误判有 isProductionSensitive 护栏 + CI + code-review + 次日验货三层事后兜底）。
  *  注：cheap rule 路由的 line_backlog（handoff FAIL/PASS+NEXT）classifyScope 必有结论；默认分支只服务
- *  LLM 路由但 scope 缺失/非法的 verdict——不二次调用 LLM（同 prompt 重问大概率同样失败，徒增成本）。 */
+ *  LLM 路由但 scope 缺失/非法的 verdict——不二次调用 LLM（同 prompt 重问大概率同样失败，徒增成本）。
+ *  优先级判定点：LLM 给出的 scope 压过 capability 关键词（全文语义优于关键词命中）。 */
 function resolveScope(atom, verdict) {
   if (SCOPES.includes(verdict.scope)) return verdict.scope;
   return classifyScope(atom) ?? 'repair';
