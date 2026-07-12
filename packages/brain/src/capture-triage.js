@@ -76,7 +76,8 @@ const TRIAGE_LLM_PROMPT = (atom) => `你是 Cecelia 的收件箱分诊员。一�
 ${atom.content}
 \`\`\`
 
-只输出 JSON：{"route":"urgent|line_backlog|invariant|okr","confidence":0.0-1.0,"reason":"一句话"}`;
+只输出 JSON：{"route":"urgent|line_backlog|invariant|okr","confidence":0.0-1.0,"reason":"一句话","scope":"repair|capability"}
+scope 仅在 route=line_backlog 时必填：repair=修复/回归/既有能力小改；capability=新方向/新能力/新平台/新业务。其他 route 可省略。`;
 
 const ATOM_UPDATE_STATUSES = ['confirmed', 'pending_review'];
 
@@ -102,7 +103,7 @@ async function routeCapability(pool, atom, verdict, journeyId) {
   const { confidence, reason = '' } = verdict;
   const atomUpdate = { status: 'confirmed', routedToTable: 'golden_paths', confidence };
   const { rows: existing } = await pool.query(
-    `SELECT id FROM golden_paths WHERE status_reason LIKE $1 LIMIT 1`,
+    `SELECT id FROM golden_paths WHERE source = 'capture_triage' AND status_reason LIKE $1 LIMIT 1`,
     [`%atom:${atom.id}%`]
   );
   if (existing.length) {
@@ -130,10 +131,20 @@ async function routeCapability(pool, atom, verdict, journeyId) {
   }
 }
 
-/** line_backlog 的 scope 解析：verdict 自带 → cheap rule → （Task 3 加 LLM 兜底）→ 默认 repair 维持 57d296a1 现状。 */
-async function resolveScope(atom, verdict, _opts) {
+/** line_backlog 的 scope 解析：verdict 自带 → cheap rule → LLM 兜底 → 默认 repair（维持 57d296a1 现状，
+ *  误判有 isProductionSensitive 护栏 + CI + code-review + 次日验货三层事后兜底）。 */
+async function resolveScope(atom, verdict, { llm } = {}) {
   if (SCOPES.includes(verdict.scope)) return verdict.scope;
-  return classifyScope(atom) ?? 'repair';
+  const ruled = classifyScope(atom);
+  if (ruled) return ruled;
+  if (LLM_ENABLED && llm) {
+    try {
+      const { text } = await llm('thalamus', TRIAGE_LLM_PROMPT(atom), { maxTokens: 256 });
+      const parsed = extractJsonObject(text);
+      if (parsed && SCOPES.includes(parsed.scope)) return parsed.scope;
+    } catch { /* 兜底走默认 */ }
+  }
+  return 'repair';
 }
 
 /** 四路落地。返回该条是否成功处理。 */
@@ -268,7 +279,7 @@ export async function runCaptureTriage(pool, { llm = callLLM } = {}) {
           await updateAtom(pool, atom.id, { confidence: parsed.confidence, aiReason: `[triage:low_confidence] ${parsed.reason || ''}` });
           continue;
         }
-        verdict = { route: parsed.route, confidence: parsed.confidence, reason: parsed.reason || '' };
+        verdict = { route: parsed.route, confidence: parsed.confidence, reason: parsed.reason || '', scope: parsed.scope };
       }
       await routeAtom(pool, atom, verdict, { llm });
     } catch (err) {
