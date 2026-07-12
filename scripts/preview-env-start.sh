@@ -203,7 +203,8 @@ INTERVAL=5
 ELAPSED=0
 HEALTH_URL="http://localhost:${PORT}/"
 while [ "$ELAPSED" -lt "$MAX_WAIT" ]; do
-  STATUS=$(curl -sf --connect-timeout 3 --max-time 5 "$HEALTH_URL" 2>/dev/null | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('status',''))" 2>/dev/null || echo "")
+  # python3 在容器内不一定可用（PR#3803 实测），改用 grep 提取 "status":"running"
+  STATUS=$(curl -sf --connect-timeout 3 --max-time 5 "$HEALTH_URL" 2>/dev/null | grep -o '"status":"[^"]*"' | grep -o '"[^"]*"$' | tr -d '"' 2>/dev/null || echo "")
   if [ "$STATUS" = "running" ]; then
     log "  ✓ Brain 健康 (${ELAPSED}s)"
     break
