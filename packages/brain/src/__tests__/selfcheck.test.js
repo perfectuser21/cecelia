@@ -180,8 +180,10 @@ describe('selfcheck', () => {
   // 推进地板到 333 防止未跑该迁移的旧 DB 误判 KR ability-progress 端点为已生效。
   // 334（golden_paths 表 + 状态机端点 + 保质期 delta job）为 GP1/T1 底座迁移，
   // 推进地板到 334 防止未跑该迁移的旧 DB 误判 golden-paths 路由/gp-shelf-life job 为已生效。
-  it('EXPECTED_SCHEMA_VERSION should be 334 (floor, bumped for golden_paths foundation)', () => {
-    expect(EXPECTED_SCHEMA_VERSION).toBe('334');
+  // 335（golden_path_proposal 加入 tasks_task_type_check）为 GP2/T2 派发链前置，
+  // 推进地板到 335 防止未跑该迁移的旧 DB 上圈选建任务被 CHECK 拒。
+  it('EXPECTED_SCHEMA_VERSION should be 335 (floor, bumped for golden_path_proposal task_type)', () => {
+    expect(EXPECTED_SCHEMA_VERSION).toBe('335');
   });
 
   it('should pass when DB schema version is ahead of expected (>= check)', async () => {
