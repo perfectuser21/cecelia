@@ -393,4 +393,107 @@ Expected: PASS
 Run: `cd packages/brain && npx vitest run`
 Expected: 全部 PASS
 
+---
+
+### Task 5（追加需求）：CI 守卫——task-router.js VALID_TASK_TYPES 必须是 DB CHECK 约束值集合的子集
+
+**背景**：本 bug 的根因层是"两张白名单"——`task-router.js` 的 `VALID_TASK_TYPES`（JS 层登记）与 `tasks_task_type_check`（DB 层登记）各自独立维护，`strategist_decision` 在 JS 层登记了，DB 层漏登记，且没有任何机器闸门会发现这种脱节，只能靠生产环境实际 INSERT 失败才暴露。本任务加一个真实 postgres 集成测试，直接从 `information_schema`/`pg_constraint` 解析 DB 约束当前允许的值集合，断言 `VALID_TASK_TYPES` 是它的子集——任何以后再出现"JS 登记了、DB 没登记"的新 task_type，这个测试立即红灯，不用等生产环境真实失败才发现。
+
+**Files:**
+- Create: `packages/brain/src/__tests__/integration/task-type-registry-consistency.integration.test.js`
+
+**Interfaces:**
+- Consumes: `VALID_TASK_TYPES` from `packages/brain/src/task-router.js`（该文件末尾已 `export { ..., VALID_TASK_TYPES, ... }`，见 `packages/brain/src/task-router.js:937`）
+- Consumes: `DB_DEFAULTS` from `packages/brain/src/db-config.js`
+- Produces: 无（叶子测试文件）
+
+- [ ] **Step 1: 写 failing test（先确认能从真实 DB 解析出约束值集合）**
+
+```js
+/**
+ * task-type-registry-consistency Integration Test（真实 PostgreSQL）
+ *
+ * 根因守卫：task-router.js 的 VALID_TASK_TYPES（JS 层白名单）与
+ * tasks_task_type_check（DB 层白名单）是两份独立维护的清单，此前
+ * strategist_decision 在 JS 层登记但 DB 层漏登记，导致生产环境
+ * INSERT 静默失败到暴露为止无人发现。
+ *
+ * 本测试直接从真实 DB 的 pg_constraint 解析 tasks_task_type_check
+ * 当前允许的值集合，断言 VALID_TASK_TYPES 是它的子集——任何以后
+ * 再次出现"JS 登记、DB 未登记"的新 task_type，本测试立即失败，
+ * 不必等生产环境真实 INSERT 失败才发现。
+ *
+ * 运行环境：CI brain-unit job（含真实 PostgreSQL 服务），不 mock db.js。
+ */
+
+import { describe, it, expect, afterAll } from 'vitest';
+import pg from 'pg';
+import { DB_DEFAULTS } from '../../db-config.js';
+import { VALID_TASK_TYPES } from '../../task-router.js';
+
+const testPool = new pg.Pool({ ...DB_DEFAULTS, max: 3 });
+
+afterAll(async () => {
+  await testPool.end();
+});
+
+async function getDbAllowedTaskTypes() {
+  const result = await testPool.query(
+    `SELECT pg_get_constraintdef(oid) AS def
+     FROM pg_constraint
+     WHERE conname = 'tasks_task_type_check'`
+  );
+  if (result.rows.length === 0) {
+    throw new Error('tasks_task_type_check 约束不存在——DB 未跑到位或约束被重命名');
+  }
+  const def = result.rows[0].def;
+  // pg_get_constraintdef 输出形如: CHECK ((task_type = ANY (ARRAY['dev'::text, 'review'::text, ...])))
+  const matches = [...def.matchAll(/'([^']+)'::text/g)];
+  return new Set(matches.map(m => m[1]));
+}
+
+describe('task-type-registry-consistency Integration Test（真实 PostgreSQL）', () => {
+  it('VALID_TASK_TYPES（JS 层白名单）必须是 tasks_task_type_check（DB 层白名单）的子集', async () => {
+    const dbAllowed = await getDbAllowedTaskTypes();
+    expect(dbAllowed.size).toBeGreaterThan(0);
+
+    const missingFromDb = VALID_TASK_TYPES.filter(t => !dbAllowed.has(t));
+
+    expect(
+      missingFromDb,
+      `以下 task_type 在 task-router.js VALID_TASK_TYPES 登记但 tasks_task_type_check 约束未登记，` +
+      `真实 INSERT 会被 DB 拒绝：${missingFromDb.join(', ')}。` +
+      `修法：仿 packages/brain/migrations/336_strategist_decision_task_type.sql 加一条新 migration。`
+    ).toEqual([]);
+  });
+});
+```
+
+- [ ] **Step 2: 跑测试，确认此刻（Task 1-4 已修完）通过**
+
+Run: `cd packages/brain && npx vitest run src/__tests__/integration/task-type-registry-consistency.integration.test.js`
+Expected: PASS（因为 Task 1 的 migration 336 已经把 strategist_decision 补进 DB 约束）
+
+- [ ] **Step 3: 验证守卫真的会报红（proven-to-fire）——临时在 VALID_TASK_TYPES 里加一个 DB 没有的假值，确认测试失败**
+
+临时编辑 `packages/brain/src/task-router.js`，在 `VALID_TASK_TYPES` 数组末尾临时加一项 `'__guard_proof_nonexistent_type__'`，重跑：
+
+Run: `cd packages/brain && npx vitest run src/__tests__/integration/task-type-registry-consistency.integration.test.js`
+Expected: FAIL，错误信息包含 `__guard_proof_nonexistent_type__`
+
+确认报红后，撤销这个临时改动（`git checkout -- src/task-router.js` 或手动删除那一行），恢复干净状态。
+
+- [ ] **Step 4: 恢复后重跑确认变绿**
+
+Run: `cd packages/brain && npx vitest run src/__tests__/integration/task-type-registry-consistency.integration.test.js`
+Expected: PASS
+
+- [ ] **Step 5: 确认 `git status` 干净（无临时改动残留），Commit**
+
+```bash
+git status --short
+git add packages/brain/src/__tests__/integration/task-type-registry-consistency.integration.test.js
+git commit -m "test(brain): 根因守卫——VALID_TASK_TYPES 必须是 tasks_task_type_check 的子集"
+```
+
 - [ ] **Step 3: 无需额外 commit（本任务只验证）**
