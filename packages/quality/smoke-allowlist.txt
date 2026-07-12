@@ -73,3 +73,4 @@ warroom-readonly-api-smoke.sh
 warroom-smoke.sh
 ws3-ire-module-smoke.sh
 zenithjoy-db-pool-smoke.sh
+gp1-golden-paths-api-smoke.sh

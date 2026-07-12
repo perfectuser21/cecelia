@@ -56,6 +56,7 @@ import strategicDecisionsRoutes from './src/routes/strategic-decisions.js';
 import createDecisionsMatchRouter from './src/routes/decisions.js';
 import conversationCapturesRoutes from './src/routes/conversation-captures.js';
 import captureAtomsRoutes from './src/routes/capture-atoms.js';
+import goldenPathsRoutes from './src/routes/golden-paths.js';
 import contentPipelineRoutes from './src/routes/content-pipeline.js';
 import canRunRoutes from './src/routes/can-run.js';
 import okrHierarchyRoutes from './src/routes/okr-hierarchy.js';
@@ -318,6 +319,7 @@ app.get('/api/brain/decisions', async (req, res) => {
 });
 app.use('/api/brain/conversation-captures', conversationCapturesRoutes);
 app.use('/api/brain/capture-atoms', captureAtomsRoutes);
+app.use('/api/brain/golden-paths', goldenPathsRoutes);
 // Notion 写入端点：POST /notes, POST /notion/project, POST /notion/task
 app.use('/api/brain', notesRoutes);
 
