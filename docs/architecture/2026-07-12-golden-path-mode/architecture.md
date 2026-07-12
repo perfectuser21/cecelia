@@ -140,3 +140,15 @@ approved 超 review_after 未开工 ──delta检查有漂移──▶ expired�
 ## 实施记录
 
 （Mode 3 验收时追加）
+
+## 实施记录（/architect verify，2026-07-12 15:38 北京）
+
+**总体裁决：PASS**（两项备注见下）。GP1-7 全部 merged：#3779（底座）/#3780（接线）/zjs#131（controller 三件套）/#3785（方向菜单）/#3784（scope 分诊）/#3783（晨报五段）/#3787（拍板回路）。
+
+**验收明细**：F1/F3/F4/F5/F6 生产活体实测通过（探针数据已清）；F2/F7-F12 代码级+CI 集成测试验证；F13 修订决策已落库；F14 朋友圈样例入 zjs examples；I1 CI Path 4 E2E 全过 + 本地活体复走；I2 两闸全绿；A1-A3 无偏离。
+
+**实施偏差与备注**：
+1. initiative 级 code_review(scope=initiative) 未执行——每 PR 独立过 CI+审查，跨 PR 集成审查缺位（流程债，非功能缺陷）
+2. veto reason 未写入 status_reason（issue 35294752，P2）
+3. GP7 出现有头/无头执行权竞争，由 Brain 无头容器最终交付；控制会话补两刀 CI 修复（清理顺序+allowlist 登记）
+4. 首航验证待自然发生：晨报五段（明早 06:00）、direction-proposer（下周一 05:30）、第一条真实 GP 提案走完对抗
