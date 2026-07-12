@@ -114,4 +114,19 @@ describe('getPreview', () => {
     const result = await getPreview(999);
     expect(result).toBeNull();
   });
+
+  it('returns null when rows is empty array (no matching PR)', async () => {
+    mockPool.query.mockResolvedValue({ rows: [] });
+    const result = await getPreview(42);
+    expect(result).toBeNull();
+  });
+
+  it('db_name follows cecelia_preview_<pr_number> convention', async () => {
+    mockPool.query
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [] });
+    const { db_name } = await allocatePreview(99, 'e2e-verify', 'cecelia');
+    expect(db_name).toBe('cecelia_preview_99');
+  });
 });

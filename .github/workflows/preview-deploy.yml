@@ -23,7 +23,7 @@ jobs:
   preview_deploy:
     name: Deploy Preview Environment
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 25
     permissions:
       contents: read
       pull-requests: write
@@ -76,7 +76,7 @@ jobs:
           echo "port=$PORT" >> $GITHUB_OUTPUT
           echo "预览端口已分配: $PORT"
 
-      - name: 轮询 preview 状态直到 active（max 180s）
+      - name: 轮询 preview 状态直到 active（max 600s）
         id: wait_active
         if: steps.check_ts.outputs.configured == 'true'
         env:
@@ -85,7 +85,7 @@ jobs:
         run: |
           set -uo pipefail
           PORT=${{ steps.start_preview.outputs.port }}
-          MAX_WAIT=180; INTERVAL=10; ELAPSED=0
+          MAX_WAIT=600; INTERVAL=10; ELAPSED=0
           STATUS=""
           while [ $ELAPSED -lt $MAX_WAIT ]; do
             STATUS=$(curl -sf --connect-timeout 5 --max-time 10 \
