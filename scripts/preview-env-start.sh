@@ -176,8 +176,8 @@ echo "$BRAIN_PID" > "$PID_FILE"
 log "  Brain PID=${BRAIN_PID} 已写入 ${PID_FILE}"
 
 # ── 6. 等待 Brain 健康 ────────────────────────────────────────────────────────
-log "Step 6: 等待 Brain 健康 (max 120s)..."
-MAX_WAIT=120
+log "Step 6: 等待 Brain 健康 (max 300s)..."
+MAX_WAIT=300
 INTERVAL=5
 ELAPSED=0
 HEALTH_URL="http://localhost:${PORT}/"
@@ -194,7 +194,6 @@ done
 if [ "$STATUS" != "running" ]; then
   log "ERROR: Brain 在 ${MAX_WAIT}s 内未就绪，最后 10 行日志:"
   tail -10 "$LOG_FILE" >&2
-  # 不 exit 1 — 让 Brain API 状态保持 starting，CI 可重试
 fi
 
 # ── 7. 回写 Brain API 状态 ────────────────────────────────────────────────────
