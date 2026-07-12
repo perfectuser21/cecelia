@@ -37,6 +37,7 @@ RUN apt-get update \
        postgresql-client \
        python3 \
        python3-minimal \
+       socat \
   && mkdir -p -m 755 /etc/apt/keyrings \
   && curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
        | tee /etc/apt/keyrings/githubcli-archive-keyring.gpg >/dev/null \
