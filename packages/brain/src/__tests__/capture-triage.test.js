@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { applyCheapRules, isProductionSensitive, runCaptureTriage, updateAtom, __resetCaptureTriageForTest } from '../capture-triage.js';
+import { applyCheapRules, classifyScope, isProductionSensitive, runCaptureTriage, updateAtom, __resetCaptureTriageForTest } from '../capture-triage.js';
 
 vi.mock('../invariant-gate.js', () => ({ checkInvariantCandidate: vi.fn() }));
 import { checkInvariantCandidate } from '../invariant-gate.js';
@@ -51,6 +51,27 @@ describe('isProductionSensitive（决策57d296a1生产护栏）', () => {
     expect(isProductionSensitive({ content: '国内生产总值GDP', target_subtype: '' })).toBe(false);
     expect(isProductionSensitive({ content: 'reproduction steps for the bug', target_subtype: '' })).toBe(false);
     expect(isProductionSensitive({ content: 'coproduction deal', target_subtype: '' })).toBe(false);
+  });
+});
+
+describe('classifyScope（scope 分诊 cheap rules，修订 57d296a1）', () => {
+  it('内容含新平台/新方向/新能力/从零/立项 → capability', () => {
+    expect(classifyScope({ target_subtype: 'PASS+NEXT', content: '建议开一个新平台的发布器' })).toBe('capability');
+    expect(classifyScope({ target_subtype: 'FAIL', content: '这是个新方向，值得立项' })).toBe('capability');
+    expect(classifyScope({ target_subtype: null, content: '需要从零做一套新能力' })).toBe('capability');
+  });
+  it('capability 关键词优先于 FAIL（含新方向的失败交接进 GP 菜单）', () => {
+    expect(classifyScope({ target_subtype: 'FAIL', content: '失败了，根因是缺一个新平台适配层' })).toBe('capability');
+  });
+  it('handoff FAIL 普通内容 → repair', () => {
+    expect(classifyScope({ target_subtype: 'FAIL', content: '回归测试挂了，修一下解析函数' })).toBe('repair');
+  });
+  it('handoff PASS+NEXT 普通内容 → repair（cheap rule 直接判，不走 LLM）', () => {
+    expect(classifyScope({ target_subtype: 'PASS+NEXT', content: '下一步补齐既有 ability 的错误处理' })).toBe('repair');
+  });
+  it('非 FAIL/PASS+NEXT 且无关键词 → null（拿不准）', () => {
+    expect(classifyScope({ target_subtype: 'failure_pattern', content: '一条普通教训' })).toBeNull();
+    expect(classifyScope({ target_subtype: null, content: '' })).toBeNull();
   });
 });
 
