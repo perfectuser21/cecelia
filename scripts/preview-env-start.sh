@@ -33,6 +33,24 @@ mkdir -p "$PREVIEW_BASE_DIR"
 WORK_DIR="${PREVIEW_BASE_DIR}/preview-${PR_NUMBER}"
 LOG_FILE="/tmp/preview-${PR_NUMBER}.log"
 PID_FILE="/tmp/preview-${PR_NUMBER}.pid"
+# 脚本实例锁：同一 PR 只允许一个 preview-env-start.sh 实例运行。
+# 并发场景：re-push 触发新 CI run 时，新 spawn 与上一 CI run 遗留的旧 spawn 同时运行，
+# 两者争抢同一 WORK_DIR/DB_NAME 会互相破坏，双方均失败退出（PR#3803 实测三次）。
+SCRIPT_LOCK="/tmp/preview-script-lock-${PR_NUMBER}"
+if [ -f "$SCRIPT_LOCK" ]; then
+  OLD_PID=$(cat "$SCRIPT_LOCK" 2>/dev/null || echo "")
+  if [ -n "$OLD_PID" ] && kill -0 "$OLD_PID" 2>/dev/null; then
+    echo "[preview-start PR#${PR_NUMBER}] 杀死旧实例 PID=${OLD_PID}..." | tee -a "$LOG_FILE"
+    kill "$OLD_PID" 2>/dev/null || true
+    for i in 1 2 3 4 5; do
+      kill -0 "$OLD_PID" 2>/dev/null || break
+      sleep 1
+    done
+  fi
+  rm -f "$SCRIPT_LOCK"
+fi
+echo "$$" > "$SCRIPT_LOCK"
+trap "rm -f '$SCRIPT_LOCK'" EXIT INT TERM
 
 # Brain API 地址（本机）
 BRAIN_API="http://localhost:${BRAIN_PORT:-5221}"
@@ -49,6 +67,7 @@ if git -C "$REPO_ROOT" worktree list | grep -q "$WORK_DIR"; then
 fi
 rm -rf "$WORK_DIR"
 
+git -C "$REPO_ROOT" worktree prune 2>/dev/null || true
 git -C "$REPO_ROOT" fetch origin "${BRANCH_NAME}" 2>>"$LOG_FILE" || {
   log "ERROR: git fetch origin ${BRANCH_NAME} 失败"
   exit 1
@@ -178,13 +197,14 @@ echo "$BRAIN_PID" > "$PID_FILE"
 log "  Brain PID=${BRAIN_PID} 已写入 ${PID_FILE}"
 
 # ── 6. 等待 Brain 健康 ────────────────────────────────────────────────────────
-log "Step 6: 等待 Brain 健康 (max 300s)..."
-MAX_WAIT=300
+log "Step 6: 等待 Brain 健康 (max 600s)..."
+MAX_WAIT=600
 INTERVAL=5
 ELAPSED=0
 HEALTH_URL="http://localhost:${PORT}/"
 while [ "$ELAPSED" -lt "$MAX_WAIT" ]; do
-  STATUS=$(curl -sf --connect-timeout 3 --max-time 5 "$HEALTH_URL" 2>/dev/null | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('status',''))" 2>/dev/null || echo "")
+  # python3 在容器内不一定可用（PR#3803 实测），改用 grep 提取 "status":"running"
+  STATUS=$(curl -sf --connect-timeout 3 --max-time 5 "$HEALTH_URL" 2>/dev/null | grep -o '"status":"[^"]*"' | grep -o '"[^"]*"$' | tr -d '"' 2>/dev/null || echo "")
   if [ "$STATUS" = "running" ]; then
     log "  ✓ Brain 健康 (${ELAPSED}s)"
     break
