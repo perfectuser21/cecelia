@@ -429,6 +429,26 @@ describe('runStagingE2E', () => {
     expect(release).toHaveBeenCalledTimes(1);
   });
 
+  it('Slice6 lockPort: customer line 用 ZJ_STAGING_PORT(5201) 作锁 key，不与 Cecelia Brain staging 冲突', async () => {
+    const pool = makeMockPool();
+    const capturedLockKey = [];
+    const acquireStagingLock = async (_, key) => { capturedLockKey.push(key); return { release: async () => {} }; };
+    const deploy = () => ({ status: 'skipped', reason: 'no_docker', output: '' });
+    const zjTask = { id: 'task-zj-lock', payload: { initiative_id: 'init-zj', pr_url: 'https://pr/zj-lock', base_repo: 'perfectuser21/zenithjoy' } };
+    await runStagingE2E(zjTask, { pool, deploy, loadAcceptance: async () => ACCEPTANCE, acquireStagingLock });
+    expect(capturedLockKey[0]).toBe(ZJ_STAGING_PORT);
+  });
+
+  it('Slice6 lockPort: default(brain) line 用 STAGING_PORT(5222) 作锁 key', async () => {
+    const pool = makeMockPool();
+    const capturedLockKey = [];
+    const acquireStagingLock = async (_, key) => { capturedLockKey.push(key); return { release: async () => {} }; };
+    const deploy = () => ({ status: 'skipped', reason: 'no_docker', output: '' });
+    // task 无 base_repo → legacy cecelia line → STAGING_PORT
+    await runStagingE2E(task, { pool, deploy, loadAcceptance: async () => ACCEPTANCE, acquireStagingLock });
+    expect(capturedLockKey[0]).toBe(STAGING_PORT);
+  });
+
   // Slice9: staging 实测的 git SHA 落库（tested_sha），promote 时比对防 SHA 漂移。
   it('Slice9: PASS 落库含 tested_sha（git SHA 锚定）', async () => {
     const pool = makeMockPool();
