@@ -316,10 +316,22 @@ curl -s -X POST localhost:5221/api/brain/tasks \
       \"journey_id\": \"<notion_journey_id>\",
       \"feature_id\": \"<notion_feature_id>\",
       \"base_repo\": \"<见下方规则>\",
-      \"target_environment\": \"<windows_cloud|mac_web|local_api>\"
+      \"target_environment\": \"<windows_cloud|mac_web|local_api>\",
+      \"postdeploy_check\": \"<五环第5环：PR merge后watchdog执行的部署验证命令，如 curl -sf http://localhost:5221/health | jq -e .status==\\\"ok\\\">\",
+      \"orchestrator\": \"skill-relay\"
     }
   }"
 ```
+
+**`postdeploy_check` 规则（五环机器化，必填）：**
+
+| 场景 | 填法 |
+|---|---|
+| 新增运行时行为（新端点/新 DB 逻辑/新调度器） | 填一条可在 cecelia 机上执行的验证命令（curl/psql/日志 grep），PR merge+部署后 watchdog 执行通过才标 completed |
+| 纯 docs / 纯重构（无运行时变化） | 改填 `"postdeploy_exemption": "docs-only"` 或 `"refactor-only"`，并删除 `postdeploy_check` |
+| 未声明（既无 postdeploy_check 又无 postdeploy_exemption） | **harness-controller Step 2 格式检查会 FAIL，GAN 无法通过** |
+
+> ⚠️ `postdeploy_check` 命令失败 → watchdog 标任务 `failed`（不标 `completed`），须修命令或修部署后重触发。
 
 **`base_repo` 规则：**
 
