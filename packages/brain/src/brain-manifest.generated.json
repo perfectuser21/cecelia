@@ -1038,9 +1038,10 @@
     "platform_scraper": "/media-scraping",
     "harness_initiative": "/harness-planner",
     "harness_task": "/_internal",
-    "harness_final_e2e": "/harness-evaluator"
+    "harness_final_e2e": "/harness-evaluator",
+    "golden_path_proposal": "/golden-path-controller"
   },
-  "generatedAt": "2026-07-10T02:50:19.884Z",
+  "generatedAt": "2026-07-12T05:45:27.953Z",
   "generatedBy": "packages/brain/scripts/generate-manifest.mjs",
   "sourceFiles": [
     "src/brain-manifest.js",
