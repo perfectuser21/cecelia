@@ -96,6 +96,46 @@ export async function updateAtom(db, id, { status = null, routedToTable = null, 
   await db.query(`UPDATE capture_atoms SET ${sets.join(', ')} WHERE id = $1`, params);
 }
 
+/** capability 级收编（修订 57d296a1，decisions b2eeb1b5）：写 golden_paths(candidate)，不自动开工。
+ *  INSERT 与 atom UPDATE 同事务（照 invariant 路模式）；status_reason 内嵌 atom:<id> 做幂等锚。 */
+async function routeCapability(pool, atom, verdict, journeyId) {
+  const { confidence, reason = '' } = verdict;
+  const atomUpdate = { status: 'confirmed', routedToTable: 'golden_paths', confidence };
+  const { rows: existing } = await pool.query(
+    `SELECT id FROM golden_paths WHERE status_reason LIKE $1 LIMIT 1`,
+    [`%atom:${atom.id}%`]
+  );
+  if (existing.length) {
+    return updateAtom(pool, atom.id, { ...atomUpdate, routedToId: existing[0].id, aiReason: `[triage:capability] 已收编 GP 候选 ${existing[0].id}。${reason}` });
+  }
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const { rows } = await client.query(
+      `INSERT INTO golden_paths (title, one_liner, journey_id, status, source, status_reason)
+       VALUES ($1,$2,$3,'candidate','capture_triage',$4) RETURNING id`,
+      [atom.content.slice(0, 80), atom.content.slice(0, 200), journeyId, `capture-triage atom:${atom.id}`]
+    );
+    await updateAtom(client, atom.id, { ...atomUpdate, routedToId: rows[0].id, aiReason: `[triage:capability] 收编 GP 候选 ${rows[0].id}。${reason}` });
+    await client.query('COMMIT');
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    // journey_id 来自 tasks.payload（text，无 FK 保证）：FK/uuid 违约按 no_journey 语义留箱，避免脏数据反复占用重试
+    if (/foreign key|invalid input syntax/i.test(err.message)) {
+      return updateAtom(pool, atom.id, { confidence, aiReason: `[triage:no_journey] golden_paths 写入失败（journey_id 非法）：${err.message.slice(0, 120)}。${reason}` });
+    }
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
+/** line_backlog 的 scope 解析：verdict 自带 → cheap rule → （Task 3 加 LLM 兜底）→ 默认 repair 维持 57d296a1 现状。 */
+async function resolveScope(atom, verdict, _opts) {
+  if (SCOPES.includes(verdict.scope)) return verdict.scope;
+  return classifyScope(atom) ?? 'repair';
+}
+
 /** 四路落地。返回该条是否成功处理。 */
 async function routeAtom(pool, atom, verdict, opts) {
   const { route, confidence, reason = '' } = verdict;
@@ -110,6 +150,10 @@ async function routeAtom(pool, atom, verdict, opts) {
     }
     if (!journeyId) {
       return updateAtom(pool, atom.id, { confidence, aiReason: `[triage:no_journey] 源无 journey_id，留人工复核。${reason}` });
+    }
+    const scope = await resolveScope(atom, verdict, opts);
+    if (scope === 'capability') {
+      return routeCapability(pool, atom, verdict, journeyId);
     }
     if (isProductionSensitive(atom)) {
       return updateAtom(pool, atom.id, { status: 'confirmed', routedToTable: 'journeys', routedToId: journeyId, confidence, aiReason: `[triage:line_backlog] 命中生产护栏，留人工排期。${reason}` });
