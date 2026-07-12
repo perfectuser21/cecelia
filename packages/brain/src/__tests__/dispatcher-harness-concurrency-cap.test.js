@@ -15,6 +15,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { shouldApplyHarnessCap } from '../dispatcher.js';
 
 const mockQuery = vi.fn();
 vi.mock('../db.js', () => ({
@@ -172,5 +173,17 @@ describe('dispatcher — 全局 harness_initiative 并发上限', () => {
     expect(harnessConcurrencyExceeded(MAX_CONCURRENT_HARNESS_INITIATIVES, MAX_CONCURRENT_HARNESS_INITIATIVES)).toBe(true);
     expect(harnessConcurrencyExceeded(MAX_CONCURRENT_HARNESS_INITIATIVES - 1, MAX_CONCURRENT_HARNESS_INITIATIVES)).toBe(false);
     expect(harnessConcurrencyExceeded(MAX_CONCURRENT_HARNESS_INITIATIVES + 1, MAX_CONCURRENT_HARNESS_INITIATIVES)).toBe(true);
+  });
+});
+
+describe('shouldApplyHarnessCap: golden_path_proposal 纳入同一并发防线（GP2/T2）', () => {
+  it('golden_path_proposal 非 resume → true', () => {
+    expect(shouldApplyHarnessCap({ task_type: 'golden_path_proposal', payload: {} })).toBe(true);
+  });
+  it('golden_path_proposal resume → false', () => {
+    expect(shouldApplyHarnessCap({
+      task_type: 'golden_path_proposal',
+      payload: { resume_from_checkpoint: true },
+    })).toBe(false);
   });
 });

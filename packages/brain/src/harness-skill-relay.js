@@ -46,6 +46,15 @@ export function isSkillRelayTask(task) {
   return task?.payload?.orchestrator === RELAY_FLAG;
 }
 
+/**
+ * controllerSkillFor — 按 task_type 选 relay session 要跑的 controller skill（GP2/T2）。
+ * golden-path-controller 本体在 skills repo T3 落地；未部署时 loadSkillContent 会带
+ * skill 名 throw（harness-shared.js:62），spawn 硬失败不起半截 session——即"明确报错"。
+ */
+export function controllerSkillFor(taskType) {
+  return taskType === 'golden_path_proposal' ? 'golden-path-controller' : 'harness-controller';
+}
+
 function shortId(id) {
   return String(id).replace(/-/g, '').slice(0, 8);
 }
@@ -159,7 +168,7 @@ export async function spawnSkillRelaySession(task, deps = {}) {
     // 1. skill 全文（skill 未部署 = 硬失败，不 spawn 半截 session）
     const loadSkill = deps.loadSkill
       || (await import('./harness-shared.js')).loadSkillContent;
-    const skillContent = loadSkill('harness-controller');
+    const skillContent = loadSkill(controllerSkillFor(task.task_type));
 
     // 2. worktree（幂等）
     const ensureWt = deps.ensureWt
@@ -389,7 +398,7 @@ async function _spawnHeadedSession(task, { dbPool, now, short, initiativeId, dep
 
   const loadSkill = deps.loadSkill
     || (await import('./harness-shared.js')).loadSkillContent;
-  const skillContent = loadSkill('harness-controller');
+  const skillContent = loadSkill(controllerSkillFor(task.task_type));
 
   // worktree（幂等；headed 分支之前漏调，codex 会在宿主 $HOME 裸奔——worktree 路径经
   // compose rw 挂载容器内外一致，宿主可直接 cd 进去）
