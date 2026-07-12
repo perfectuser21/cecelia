@@ -136,9 +136,23 @@ describe('launchd-patrol gate 与 ssh 逃逸', () => {
 
   it('容器内（inContainer:true）所有命令包 ssh BatchMode 三件套', async () => {
     const exec = makeExec();
-    await runLaunchdPatrol({ exec, inContainer: true });
+    await runLaunchdPatrol({ exec, inContainer: true, keyExistsFn: (p) => p.endsWith('id_ed25519') });
     for (const [cmd] of exec.mock.calls) {
       expect(cmd).toMatch(/^ssh -i .*id_ed25519 -o StrictHostKeyChecking=no -o UserKnownHostsFile=\/dev\/null -o BatchMode=yes -o ConnectTimeout=10 administrator@host\.docker\.internal '/);
     }
+  });
+
+  it('ssh 密钥发现式回退：无 id_ed25519 时用 id_rsa（生产实证：宿主只有 id_rsa，2026-07-12 首跑 Permission denied）', async () => {
+    const exec = makeExec();
+    await runLaunchdPatrol({ exec, inContainer: true, keyExistsFn: (p) => p.endsWith('id_rsa') });
+    for (const [cmd] of exec.mock.calls) {
+      expect(cmd).toMatch(/^ssh -i \S+\/\.ssh\/id_rsa -o /);
+    }
+  });
+
+  it('ssh 密钥一个都不存在时回退 id_ed25519（保持可诊断的错误信息）', async () => {
+    const exec = makeExec();
+    await runLaunchdPatrol({ exec, inContainer: true, keyExistsFn: () => false });
+    expect(exec.mock.calls[0][0]).toMatch(/id_ed25519/);
   });
 });
