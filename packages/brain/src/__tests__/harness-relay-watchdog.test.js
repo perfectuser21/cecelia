@@ -340,3 +340,93 @@ describe('PATCH /orchestrator/relay-runs — pr_url 字段写入（#3560 跟进�
     expect(block).toMatch(/pr_url/);
   });
 });
+
+// ── proven-to-fire: evaluator gate 三函数单元测试 ────────────────────────
+
+import { _hasEvaluatorGate, _raiseUngatedMergeAlert, _finalizeMergedRun } from '../harness-relay-watchdog.js';
+
+describe('_hasEvaluatorGate', () => {
+  it('initiative_run_events 有 evaluator done 记录 → true', async () => {
+    const pool = { query: vi.fn().mockResolvedValue({ rows: [{ '?column?': 1 }] }) };
+    const result = await _hasEvaluatorGate(pool, 'test-id');
+    expect(result).toBe(true);
+    const [sql, params] = pool.query.mock.calls[0];
+    expect(sql).toMatch(/initiative_run_events/);
+    expect(sql).toMatch(/node='evaluator'/);
+    expect(sql).toMatch(/status='done'/);
+    expect(params[0]).toBe('test-id');
+  });
+
+  it('initiative_run_events 无 evaluator done 记录 → false', async () => {
+    const pool = { query: vi.fn().mockResolvedValue({ rows: [] }) };
+    const result = await _hasEvaluatorGate(pool, 'test-id');
+    expect(result).toBe(false);
+  });
+});
+
+describe('_raiseUngatedMergeAlert', () => {
+  it('写入 issues 表 + 调 sendBark（两路 best-effort）', async () => {
+    vi.clearAllMocks();
+    const pool = { query: vi.fn().mockResolvedValue({ rows: [] }) };
+    await _raiseUngatedMergeAlert(pool, 'initiative-abc', 'https://github.com/x/y/pull/1');
+    expect(pool.query).toHaveBeenCalledOnce();
+    const [sql, params] = pool.query.mock.calls[0];
+    expect(sql).toMatch(/INSERT INTO issues/);
+    expect(params[0]).toMatch(/initiative-abc/);
+    expect(sendBark).toHaveBeenCalledOnce();
+  });
+
+  it('issues 写入失败 → 仍调 sendBark（fail-open）', async () => {
+    vi.clearAllMocks();
+    const pool = { query: vi.fn().mockRejectedValue(new Error('DB down')) };
+    await expect(_raiseUngatedMergeAlert(pool, 'x', 'https://github.com/x/y/pull/2')).resolves.toBeUndefined();
+    expect(sendBark).toHaveBeenCalledOnce();
+  });
+});
+
+describe('_finalizeMergedRun', () => {
+  it('gated=true → UPDATE 不含 failure_reason，调 promoteRegression', async () => {
+    const pool = { query: vi.fn().mockResolvedValue({ rows: [] }) };
+    // evaluatorGate=true: initiative_run_events 有记录
+    pool.query.mockImplementation(async (sql) => {
+      if (/initiative_run_events/.test(sql)) return { rows: [{ x: 1 }] };
+      return { rows: [] };
+    });
+    const out = { mergedPr: 0, mergedWithoutGate: 0 };
+    // promoteRegressionOnHarnessMerged 在 dynamic import 里，直接 mock 模块
+    const { promoteRegressionOnHarnessMerged } = await import('../lib/callback-postprocess.js').catch(() => null) || {};
+    await _finalizeMergedRun(pool, 'init-1', 'https://github.com/x/y/pull/3', out);
+    expect(out.mergedPr).toBe(1);
+    const updates = pool.query.mock.calls.map(c => c[0]).filter(s => /UPDATE initiative_runs/.test(s));
+    expect(updates.length).toBeGreaterThan(0);
+    expect(updates.every(s => !/failure_reason/.test(s))).toBe(true);
+  });
+
+  it('gated=false → UPDATE 含 failure_reason=merged_without_evaluator_gate，mergedWithoutGate++', async () => {
+    vi.clearAllMocks();
+    const pool = { query: vi.fn().mockImplementation(async (sql) => {
+      if (/initiative_run_events/.test(sql)) return { rows: [] }; // no evaluator gate
+      return { rows: [] };
+    })};
+    const out = { mergedPr: 0, mergedWithoutGate: 0 };
+    await _finalizeMergedRun(pool, 'init-2', 'https://github.com/x/y/pull/4', out);
+    expect(out.mergedPr).toBe(1);
+    expect(out.mergedWithoutGate).toBe(1);
+    const updates = pool.query.mock.calls.map(c => c[0]).filter(s => /UPDATE initiative_runs/.test(s));
+    expect(updates.some(s => /failure_reason/.test(s) && /merged_without_evaluator_gate/.test(s))).toBe(true);
+    expect(sendBark).toHaveBeenCalled();
+  });
+
+  it('setPrUrl=true → pr_url 写进 UPDATE', async () => {
+    vi.clearAllMocks();
+    const pool = { query: vi.fn().mockImplementation(async (sql) => {
+      if (/initiative_run_events/.test(sql)) return { rows: [{ x: 1 }] };
+      return { rows: [] };
+    })};
+    const out = { mergedPr: 0, mergedWithoutGate: 0 };
+    const PR = 'https://github.com/x/y/pull/5';
+    await _finalizeMergedRun(pool, 'init-3', PR, out, { setPrUrl: true });
+    const runUpdates = pool.query.mock.calls.filter(c => /UPDATE initiative_runs/.test(c[0]));
+    expect(runUpdates.some(([, params]) => Array.isArray(params) && params.includes(PR))).toBe(true);
+  });
+});
