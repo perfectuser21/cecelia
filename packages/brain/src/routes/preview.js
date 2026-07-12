@@ -18,11 +18,9 @@ import { fileURLToPath } from 'url';
 import pool from '../db.js';
 import {
   allocatePreview,
-  markPreviewActive,
   markPreviewInactive,
   getPreview,
   allocatePort,
-  stopPreview,
 } from '../preview-manager.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));

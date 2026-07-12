@@ -51,6 +51,7 @@ line-context-smoke.sh
 line-dreaming-smoke.sh
 line-strategist-dispatch-smoke.sh
 okr-initiative-mirror-smoke.sh
+preview-env-smoke.sh
 protocol-hygiene-smoke.sh
 relay-runs-filter-smoke.sh
 relay-runs-since-smoke.sh
