@@ -137,7 +137,29 @@ export async function computeMetrics(pool) {
     return { key: 'm5', name: '判定点活性', value: cnt, debt: cnt === 0 ? 1 : 0, enabled: true, absolute: true };
   }, { key: 'm5', name: '判定点活性', value: null, debt: 0 });
 
-  return { m1, m2, m3, m4, m5 };
+  const m6 = await safeMetric(async () => {
+    // evaluator 门禁覆盖率：近 7 天 v2 relay run 里 phase='done' 的行，
+    // 有多少缺失 initiative_run_events(node='evaluator', status='done')——
+    // 缺失即"PR 合并但从未经 evaluator 验收"（c36326c8 machine gate 配套指标）。
+    const { rows } = await pool.query(
+      `SELECT count(*) AS total,
+              count(*) FILTER (
+                WHERE NOT EXISTS (
+                  SELECT 1 FROM initiative_run_events e
+                  WHERE e.initiative_id = r.initiative_id AND e.node = 'evaluator' AND e.status = 'done'
+                )
+              ) AS debt
+       FROM initiative_runs r
+       WHERE r.orchestrator_version = 'v2'
+         AND r.phase = 'done'
+         AND r.completed_at >= NOW() - INTERVAL '7 days'`
+    );
+    const total = toInt(rows[0]?.total);
+    const debt = toInt(rows[0]?.debt);
+    return { key: 'm6', name: 'evaluator门禁覆盖率', value: total === 0 ? 1 : (total - debt) / total, debt, enabled: true };
+  }, { key: 'm6', name: 'evaluator门禁覆盖率', value: null, debt: 0 });
+
+  return { m1, m2, m3, m4, m5, m6 };
 }
 
 /**

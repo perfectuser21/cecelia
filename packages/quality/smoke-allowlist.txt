@@ -29,6 +29,7 @@ golden-paths-t1-smoke.sh
 golden-paths-t7-e2e-smoke.sh
 harness-detail-smoke.sh
 harness-echo-smoke.sh
+harness-evaluator-gate-smoke.sh
 harness-ping-smoke.sh
 harness-planner-async-smoke.sh
 harness-planner-v8-smoke.sh

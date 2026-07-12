@@ -46,7 +46,7 @@ describe('isInLedgerHygieneWindow — UTC 21:10-21:15（北京 05:10）', () => 
   });
 });
 
-describe('computeMetrics — 5 项指标', () => {
+describe('computeMetrics — 6 项指标', () => {
   it('m1 FR沉淀率：3 个 merged run，1 个无 golden_path 行 → value=2/3, debt=1', async () => {
     const pool = makePool([
       { match: 'FROM tasks t', rows: [{ total: '3', debt: '1' }] },
@@ -129,6 +129,25 @@ describe('computeMetrics — 5 项指标', () => {
     const m = await computeMetrics(pool);
     expect(m.m1.enabled).toBe(false);
     expect(m.m4.debt).toBe(5);
+  });
+
+  it('m6 evaluator 门禁覆盖率：4 个 done run，1 个无 evaluator 事件 → value=3/4, debt=1', async () => {
+    const pool = makePool([
+      { match: 'FROM initiative_runs r', rows: [{ total: '4', debt: '1' }] },
+    ]);
+    const m = await computeMetrics(pool);
+    expect(m.m6.debt).toBe(1);
+    expect(m.m6.value).toBeCloseTo(3 / 4);
+    expect(m.m6.enabled).toBe(true);
+  });
+
+  it('m6 近7天无 done run → value=1, debt=0（真空真值）', async () => {
+    const pool = makePool([
+      { match: 'FROM initiative_runs r', rows: [{ total: '0', debt: '0' }] },
+    ]);
+    const m = await computeMetrics(pool);
+    expect(m.m6.value).toBe(1);
+    expect(m.m6.debt).toBe(0);
   });
 });
 
