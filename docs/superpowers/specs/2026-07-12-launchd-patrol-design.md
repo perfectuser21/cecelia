@@ -34,13 +34,13 @@ T17 三根因复发核对：bridge enabled+loaded ✅ / keepalive 脚本域名�
 
 ## 设计
 
-新文件 `packages/brain/src/launchd-patrol.js`，注册进 `scheduler-jobs.js` JOBS（`needsPool: true`）。
+新文件 `packages/brain/src/launchd-patrol.js`，注册进 `scheduler-jobs.js` JOBS（`needsPool: false`（handler 不直接用 pool；Bark 去重走 notifier 自己的 DB 通道））。
 
 ### 巡检逻辑（每 15min，模块自 gate）
 
 1. **Gate**：模块级 `lastRunAt` 内存间隔 gate（照 receipt-collector.js:78-81），env `LAUNCHD_PATROL_INTERVAL_MS` 可覆盖，`__resetLaunchdPatrolForTest()` 供测试复位。
 2. **宿主执行**：`/.dockerenv` 存在 → ssh 逃逸（`CECELIA_HOST_EXEC_SSH || administrator@host.docker.internal`，`-i ~/.ssh/id_ed25519`，BatchMode 三件套 + ConnectTimeout=10，照 staging-e2e-runner.js:640-666）；否则本地直跑。execFn 参数注入供单测 mock。已验证：容器带 openssh-client（Dockerfile:24）、`.ssh` 只读挂载（docker-compose.yml:56）、relay 生产同链路反复跑通、非 root 可读系统域（宿主实测 exit 0）。
-3. **核对项**（manifest 内置常量，可 env 覆盖仅用于测试）：
+3. **核对项**（manifest 内置常量；测试通过 exec 注入 fake，不需要 env 覆盖）：
    - `MUST_RUN_DAEMONS = ['com.cecelia.bridge']`：`launchctl print system/<label>` 须 `state = running`；且不在 `launchctl print-disabled system` 的 disabled 集合。
    - `MUST_LOAD_DAEMONS = ['com.cecelia.bridge-keepalive', 'com.cecelia.token-refresh', 'com.cecelia.pf-firewall']`（周期型，无常驻 pid）：`launchctl print system/<label>` exit 0 且不 disabled。
    - `MUST_LISTEN_PORTS = [{port:3457, name:'cecelia-bridge'}, {port:5200, name:'zenithjoy-api'}]`：宿主 `nc -z localhost <port>`（双信号判定点决策 d172e54a：端口探测抓 launchd 管不到的 nohup 孤儿宕机）。

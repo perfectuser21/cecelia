@@ -34,6 +34,7 @@ export const MUST_LISTEN_PORTS = [
   { port: 3457, name: 'cecelia-bridge' },
   { port: 5200, name: 'zenithjoy-api' },
 ];
+// 仅声明用途（manifest 文档），运行逻辑不消费：不告警来自"不在必查名单"
 export const EXPECTED_DISABLED = ['com.cecelia.frontend', 'com.n8n'];
 
 const INTERVAL_MS = parseInt(
