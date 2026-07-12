@@ -58,6 +58,7 @@ const VALID_TASK_TYPES = [
   'harness_intervention', // 人工干预任务类型（US 本机处理）
   'staging_e2e',          // Slice9: staging E2E native 执行（executor 短路），补登防未知类型拒
   'ci_patrol',            // CI/CD 巡检员：每日按 line 报 4 硬伤 + 棘轮 guard（daily-review-scheduler triggerCiPatrol）
+  'golden_path_proposal',  // GP loop：AI 自提 Golden Path 提案（圈选后走 relay 跑 golden-path-controller）
   'strategist_decision',  // Line 军师决策：task 落终态后按 line 派发（line-strategist-dispatch-plugin.js）
 ];
 
@@ -151,6 +152,7 @@ const SKILL_WHITELIST = {
   'harness_initiative': '/harness-planner',   // 阶段 A — M1 复用 planner skill
   'harness_task': '/_internal',               // 阶段 B — Brain tick 内部状态机，不派 agent
   'harness_final_e2e': '/harness-evaluator',  // 阶段 C — M1 复用 evaluator skill
+  'golden_path_proposal': '/golden-path-controller', // GP 提案 — relay 实际 spawn skill 由 harness-skill-relay 映射
 };
 
 // Internal task handlers — Brain tick 内联处理的 task_type（skill='/_internal'），
@@ -296,6 +298,7 @@ const LOCATION_MAP = {
   'platform_scraper': 'us',       // 数据采集任务 → Brain 内部处理（不走外部 executor，见 post-publish-data-collector.js）
   // Harness v2 → US 本机
   'harness_initiative': 'us',     // 阶段 A 入口（复用 planner skill 运行 /dev）
+  'golden_path_proposal': 'us',   // GP 提案 → US 本机 relay（同 harness_initiative 路径）
   'harness_task': 'us',           // 阶段 B 单 Task（tick 内部，US Brain 处理）
   'harness_final_e2e': 'us',      // 阶段 C 最终 E2E（复用 evaluator skill）
   'harness_evaluate': 'us',      // Layer 3e: Evaluator 对抗性功能验收 → US
@@ -376,6 +379,7 @@ const TASK_REQUIREMENTS = {
   'harness_report':           ['has_git'],
   // Harness v2 — 需要 git 访问（US M4）
   'harness_initiative':       ['has_git'],
+  'golden_path_proposal':     ['has_git'],
   'harness_task':             ['has_git'],
   'harness_final_e2e':        ['has_git'],
 };
