@@ -1,0 +1,24 @@
+{
+  "initiative_id": "3e9f1458-9a1c-468e-9c33-0c7c3dc0613b",
+  "journey_type": "autonomous",
+  "journey_type_reason": "PRD 目标是本地 Brain API smoke 脚本校验与任务状态防调度，无前端用户路径。",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "修正 headless/codex smoke 创建后不遗留 queued harness task",
+      "scope": "仅修订 codex-headed-dispatch-smoke.sh 的 headless case：保留合法 POST 与非法 mode 校验，并确保 valid smoke task 创建后被取消或以非 queued 状态创建。",
+      "dod": [
+        "[BEHAVIOR] 合法 headless/codex POST 校验必须保留",
+        "[BEHAVIOR] valid headless smoke task 创建后必须被取消或创建为非 queued",
+        "[BEHAVIOR] 非法 mode 白名单校验必须保留",
+        "[ARTIFACT] 不修改业务 executor 或真实 relay 流程"
+      ],
+      "files": [
+        "packages/brain/scripts/smoke/codex-headed-dispatch-smoke.sh"
+      ],
+      "depends_on": [],
+      "complexity": "S",
+      "estimated_minutes": 45
+    }
+  ]
+}
