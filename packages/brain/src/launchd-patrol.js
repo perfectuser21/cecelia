@@ -57,11 +57,21 @@ function defaultExec(cmd) {
   });
 }
 
+/** 密钥发现式回退（照 spawn/host-executor.js 先例）：宿主实际只有 id_rsa，硬编码 ed25519 会 Permission denied */
+function discoverSshKey(keyExistsFn = existsSync) {
+  const dir = `${homedir()}/.ssh`;
+  for (const name of ['id_ed25519', 'id_rsa']) {
+    const candidate = `${dir}/${name}`;
+    if (keyExistsFn(candidate)) return candidate;
+  }
+  return `${dir}/id_ed25519`;
+}
+
 /** 容器内包 ssh 逃逸宿主（staging-e2e-runner.js spawnReviewPreview 同款三件套），宿主直跑原样返回 */
-function buildHostCmd(cmd, inContainer) {
+function buildHostCmd(cmd, inContainer, keyExistsFn) {
   if (!inContainer) return cmd;
   const target = process.env.CECELIA_HOST_EXEC_SSH || 'administrator@host.docker.internal';
-  const key = `${homedir()}/.ssh/id_ed25519`;
+  const key = discoverSshKey(keyExistsFn);
   const quoted = `'${cmd.replace(/'/g, `'\\''`)}'`;
   return `ssh -i ${key} -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o BatchMode=yes -o ConnectTimeout=10 ${target} ${quoted}`;
 }
@@ -83,7 +93,7 @@ export async function runLaunchdPatrol(opts = {}) {
 
   const exec = opts.exec || defaultExec;
   const inContainer = opts.inContainer ?? existsSync('/.dockerenv');
-  const run = (cmd) => exec(buildHostCmd(cmd, inContainer));
+  const run = (cmd) => exec(buildHostCmd(cmd, inContainer, opts.keyExistsFn));
 
   // 首条命令兼做连通性探针：宿主不可达 → fail-open（不告警服务异常）
   let disabledOut;
