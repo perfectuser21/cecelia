@@ -79,7 +79,9 @@ export function harnessConcurrencyExceeded(runningCount, max = MAX_CONCURRENT_HA
  * @returns {boolean} true=应套用并发 cap 检查
  */
 export function shouldApplyHarnessCap(candidate) {
-  if (!candidate || candidate.task_type !== 'harness_initiative') return false;
+  if (!candidate) return false;
+  if (candidate.task_type !== 'harness_initiative'
+      && candidate.task_type !== 'golden_path_proposal') return false;
   if (candidate.payload?.resume_from_checkpoint === true) return false;
   return true;
 }
@@ -94,6 +96,7 @@ const INITIATIVE_LOCK_TASK_TYPES = [
   'harness_contract_review',
   'harness_fix',
   'harness_initiative',
+  'golden_path_proposal',
 ];
 
 // Retired harness task types — 全部归入 harness_initiative full-graph sub-graph。
@@ -467,7 +470,7 @@ export async function dispatchNextTask(goalIds) {
     if (shouldApplyHarnessCap(candidate)) {
       const capRes = await pool.query(
         `SELECT count(*)::int AS n FROM tasks
-           WHERE task_type = 'harness_initiative'
+           WHERE task_type IN ('harness_initiative', 'golden_path_proposal')
              AND status = 'in_progress'
              AND id != $1`,
         [candidate.id]
@@ -595,7 +598,8 @@ export async function dispatchNextTask(goalIds) {
   // 5. Check executor availability and trigger
   // harness_initiative 走 Docker spawn 路径，完全不依赖 cecelia-bridge。
   // 跳过 bridge check，否则 bridge 不在时 harness 会被错误 revert 到 queued。
-  const needsBridgeCheck = nextTask.task_type !== 'harness_initiative';
+  const needsBridgeCheck = nextTask.task_type !== 'harness_initiative'
+    && nextTask.task_type !== 'golden_path_proposal';
 
   // Circuit breaker — 只对依赖 cecelia-bridge 的任务生效（harness_initiative 豁免）
   // 注意：此检查在 atomic claim 和 mark in_progress 之后，
