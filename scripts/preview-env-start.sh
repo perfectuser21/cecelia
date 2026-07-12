@@ -92,9 +92,11 @@ if [ ! -d "$BRAIN_NM_TARGET" ] && [ -d "${REPO_ROOT}/node_modules" ]; then
   BRAIN_NM_TARGET="${REPO_ROOT}/node_modules"
   BRAIN_BRAIN_NM_TARGET="${REPO_ROOT}/packages/brain/node_modules"
 fi
+rm -rf "${WORK_DIR}/node_modules"
 ln -sfn "$BRAIN_NM_TARGET" "${WORK_DIR}/node_modules"
 log "  ✓ 根 node_modules 已链接 → ${BRAIN_NM_TARGET}"
 if [ -d "$BRAIN_BRAIN_NM_TARGET" ]; then
+  rm -rf "${WORK_DIR}/packages/brain/node_modules"
   ln -sfn "$BRAIN_BRAIN_NM_TARGET" "${WORK_DIR}/packages/brain/node_modules"
   log "  ✓ Brain node_modules 已链接 → ${BRAIN_BRAIN_NM_TARGET}"
 fi
