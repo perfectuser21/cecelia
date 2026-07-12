@@ -13,6 +13,9 @@ services:
     # macOS/OrbStack: network_mode:host 不支持，用 bridge + port forward
     ports:
       - "5221:5221"
+      # 预览 Brain 端口范围（per-PR preview environments，由 preview-env-start.sh 在容器内启动）
+      # 容器内的预览 Brain 进程绑定到 5300-5399，需对外暴露才能被 GitHub Actions 健康检查到（via Tailscale）
+      - "5300-5399:5300-5399"
     read_only: true
     tmpfs:
       - /tmp:size=100M
