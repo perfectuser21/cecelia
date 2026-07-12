@@ -113,7 +113,9 @@ async function detectFailureSpike() {
   };
 }
 
-export { detectFailureSpike, handleStuckRun };
+export { detectFailureSpike };
+// handleStuckRun 导出供 monitor-stuck-terminal.test.js 直接调（issue 219a9efc 终态调和回归）
+export { handleStuckRun };
 
 /**
  * Detector: Resource Pressure
