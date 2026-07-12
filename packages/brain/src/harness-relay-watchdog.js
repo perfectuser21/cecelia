@@ -261,24 +261,7 @@ export async function resumeStalledRelayRuns(deps = {}) {
           continue;
         }
         if (discovered && discovered.state === 'MERGED') {
-          await dbPool.query(
-            `UPDATE initiative_runs SET phase='done', completed_at=NOW(), pr_url=$2
-              WHERE initiative_id=$1 AND orchestrator_version='v2' AND phase NOT IN ('done','failed')`,
-            [run.initiative_id, discovered.url]
-          );
-          await dbPool.query(
-            `UPDATE tasks SET status='completed', completed_at=NOW(), pr_url=$2
-              WHERE id=$1 AND status='in_progress'`,
-            [run.initiative_id, discovered.url]
-          );
-          try {
-            const { promoteRegressionOnHarnessMerged } = await import('./lib/callback-postprocess.js');
-            await promoteRegressionOnHarnessMerged(run.initiative_id, null, discovered.url, dbPool);
-          } catch (promoteErr) {
-            console.warn(`[relay-watchdog] promoteRegressionOnHarnessMerged 失败 (non-fatal): ${promoteErr.message}`);
-          }
-          out.mergedPr++;
-          console.log(`[relay-watchdog] GitHub 发现已 MERGED PR → 标 completed initiative=${run.initiative_id} pr=${discovered.url}`);
+          await _finalizeMergedRun(dbPool, run.initiative_id, discovered.url, out, { setPrUrl: true });
           continue;
         }
         if (discovered && discovered.state === 'OPEN') {
