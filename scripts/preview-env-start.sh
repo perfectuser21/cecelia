@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # preview-env-start.sh — 在 US VPS 上启动完整 per-PR 预览环境
 #
+# 最终 E2E 验证 v4（2026-07-12，PR#3805/3806/3807/3811/3814/3816 六个基础设施修复全部部署后）：本 PR 用于触发一次真实预览部署验证，不merge。
+#
 # 调用方：Brain API POST /api/brain/preview/start（异步触发）
 # 参数：
 #   $1  PR_NUMBER    — GitHub PR 编号
