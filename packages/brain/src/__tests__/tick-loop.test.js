@@ -50,6 +50,25 @@ vi.mock('../pipeline-patrol-loop.js', () => ({
   startPipelinePatrolLoop: (...args) => mockStartPipelinePatrolLoop(...args),
   stopPipelinePatrolLoop: (...args) => mockStopPipelinePatrolLoop(...args),
 }));
+// P0 修复（2026-06-27）：独立任务恢复循环由 startTickLoop 启动。mock 以验证接线 + 防真实 timer 泄漏。
+// 根因：cleanupStaleClaims/checkStuckPipelines/autoFailTimedOutTasks 原只挂废弃 executeTick →
+// runScheduler 迁移后全断，harness 安全网七天来零执行（issue 808bec91）。
+const mockStartRecoveryLoop = vi.fn().mockReturnValue(true);
+const mockStopRecoveryLoop = vi.fn();
+vi.mock('../recovery-loop.js', () => ({
+  startRecoveryLoop: (...args) => mockStartRecoveryLoop(...args),
+  stopRecoveryLoop: (...args) => mockStopRecoveryLoop(...args),
+}));
+// line-strategist-loop / capability-probe：mock 防真实 timer 泄漏，不需要接线断言。
+const mockStartLineStrategistLoop = vi.fn().mockReturnValue(true);
+const mockStopLineStrategistLoop = vi.fn();
+vi.mock('../line-strategist-loop.js', () => ({
+  startLineStrategistLoop: (...args) => mockStartLineStrategistLoop(...args),
+  stopLineStrategistLoop: (...args) => mockStopLineStrategistLoop(...args),
+}));
+vi.mock('../capability-probe.js', () => ({
+  startProbeLoop: vi.fn(),
+}));
 
 import {
   runTickSafe,
@@ -231,6 +250,22 @@ describe('tick-loop', () => {
       startTickLoop();
       stopTickLoop();
       expect(mockStopPipelinePatrolLoop).toHaveBeenCalledTimes(1);
+    });
+
+    // P0 回归（2026-06-27）：任务恢复循环必须由 startTickLoop 接上独立循环。
+    // 根因：cleanupStaleClaims/checkStuckPipelines/autoFailTimedOutTasks 原只挂废弃 executeTick，
+    // runScheduler 迁移后全断 → queued+stale-claim 永久卡死、pipeline spin 无人 cancel（issue 808bec91）。
+    it('startTickLoop 启动独立恢复循环（startRecoveryLoop 被调用）', () => {
+      mockStartRecoveryLoop.mockClear();
+      startTickLoop();
+      expect(mockStartRecoveryLoop).toHaveBeenCalledTimes(1);
+    });
+
+    it('stopTickLoop 同步停掉恢复循环（start/stop 对称）', () => {
+      mockStopRecoveryLoop.mockClear();
+      startTickLoop();
+      stopTickLoop();
+      expect(mockStopRecoveryLoop).toHaveBeenCalledTimes(1);
     });
   });
 });
