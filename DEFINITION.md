@@ -6,7 +6,7 @@
 
 
 
-**Brain 版本**: 1.254.0
+**Brain 版本**: 1.255.0
 
 **状态**: 生产运行中
 
@@ -441,7 +441,7 @@ Global OKR → Area OKR → KR → Project → Initiative → Task
 | **topic_decision_feedback** | 选题热度反馈（migration 214，week_key + topic_keyword 唯一索引，高热话题注入选题 Prompt） |
 | **topic_suggestions** | 选题推荐审核队列（migration 217，pending/approved/rejected/auto_promoted，2h 自动晋级） |
 | **llm_usage_snapshots** | LLM 算力消耗快照（migration 218，每日定时采集账号用量，供周报趋势分析） |
-| **schema_version** | 迁移版本追踪 | Schema 版本: 334 |
+| **schema_version** | 迁移版本追踪 | Schema 版本: 335 |
 | **initiative_run_events** | Harness pipeline 节点状态流（migration 279，initiative_id/node/status/attempt/ts BIGINT） |
 | **publish_success_daily** | 每日每平台发布成功率快照（migration 276，platform/date UNIQUE，Brain tick 写入） |
 | **janitor_runs** | Janitor 任务执行记录（migration 272，job_name/status/output/duration） |
@@ -524,6 +524,7 @@ queued → in_progress → completed
 | harness_deploy_watch | US | Harness v4.0 Deploy 监控 — 等待部署结果 | Sonnet / - | 默认 anthropic |
 | harness_report | US | Harness v4.0 Reporter — 生成最终报告 (/sprint-report) | Sonnet / - | 默认 anthropic |
 | harness_initiative | US | Harness v2 阶段 A — Initiative 规划 + DAG 调度入口 (/harness-planner) | Sonnet / - | 默认 anthropic |
+| golden_path_proposal | US | GP loop — AI 自提 Golden Path 提案（圈选后走 relay 跑 /golden-path-controller，同 harness_initiative 路径） | Sonnet / - | 默认 anthropic |
 | harness_task | US | Harness v2 阶段 B — Task 级执行（内部 Generator/CI/Evaluator 状态机） | Sonnet / - | 默认 anthropic |
 | harness_final_e2e | US | Harness v2 阶段 C — Initiative 级真实 E2E 验收 | Sonnet / - | 默认 anthropic |
 | harness_intervention | US | Harness 巡逻干预任务（卡住检测 + 自动重置） | - | /_internal |
