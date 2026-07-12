@@ -130,3 +130,33 @@ describe('getPreview', () => {
     expect(db_name).toBe('cecelia_preview_99');
   });
 });
+
+// 回归：WS1 预览闸 6 基础设施修复验证（PR#3805-3821）
+// 根因：re-push 触发 CI 时旧 preview 残留 active 状态导致外部轮询误判就绪，
+// 健康检查扑空（PR#3814）；python3 不在容器 PATH 导致健康检查永远空（PR#3821）；
+// 并发 spawn 争抢 WORK_DIR 互相破坏（PR#3821）；worktree 残留注册阻止 add（PR#3821）。
+describe('allocatePreview regression: re-push cycle', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it('resets active preview to starting when re-pushed (regression: CI 轮询不得看到旧 active)', async () => {
+    // 第一次 CI: 分配并标记 active
+    mockPool.query
+      .mockResolvedValueOnce({ rows: [{ port: 5305, db_name: 'cecelia_preview_7' }] }) // existing
+      .mockResolvedValueOnce({ rows: [] }); // UPDATE status='starting'
+    const r1 = await allocatePreview(7, 'fix-branch', 'cecelia');
+    expect(r1.port).toBe(5305);
+    const updateSql = mockPool.query.mock.calls[1][0];
+    expect(updateSql).toMatch(/status = 'starting'/);
+    expect(mockPool.query.mock.calls[1][1]).toEqual([7]);
+  });
+
+  it('allocates port 5300 when no existing record and no ports used', async () => {
+    mockPool.query
+      .mockResolvedValueOnce({ rows: [] })  // no existing
+      .mockResolvedValueOnce({ rows: [] })  // no ports in use
+      .mockResolvedValueOnce({ rows: [] }); // INSERT
+    const r = await allocatePreview(100, 'e2e-v5', 'cecelia');
+    expect(r.port).toBe(5300);
+    expect(r.db_name).toBe('cecelia_preview_100');
+  });
+});
