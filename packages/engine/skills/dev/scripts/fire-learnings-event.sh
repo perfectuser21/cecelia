@@ -60,19 +60,35 @@ if [[ -z "$LEARNINGS_FILE" ]]; then
   fi
 fi
 
-# ── 提取 next_steps_suggested（来自 LEARNINGS.md 最后一节的预防措施）─
+# ── 提取 next_steps_suggested（仅本次 commit 新增的 ### 下次预防 条目）─
+# 用 git diff 作为游标，防止历史小节在每次触发时重复发送
 extract_next_steps() {
   if [[ ! -f "$LEARNINGS_FILE" ]]; then
     echo "[]"
     return
   fi
 
-  # 直接全文搜索 ### 下次预防 节（不预先限制到"最后一节"）
-  awk '
-    /^### 下次预防/ { in_section=1; next }
-    in_section && /^- / { print substr($0, 3) }
-    in_section && /^### / { in_section=0 }
-  ' "$LEARNINGS_FILE" 2>/dev/null | jq -R . | jq -s . 2>/dev/null || echo "[]"
+  local diff_output=""
+  if git rev-parse --verify HEAD~1 >/dev/null 2>&1; then
+    # 正常情况：只看本次 commit 对 LEARNINGS 文件的增量
+    diff_output=$(git diff HEAD~1 HEAD -- "$LEARNINGS_FILE" 2>/dev/null || echo "")
+  else
+    # 仓库首次 commit：把整个文件内容视为新增
+    diff_output=$(awk '{ print "+" $0 }' "$LEARNINGS_FILE" 2>/dev/null || echo "")
+  fi
+
+  if [[ -z "$diff_output" ]]; then
+    echo "[]"
+    return
+  fi
+
+  # 只从 diff 的 "+" 行（新增行）中提取 ### 下次预防 节的子项
+  echo "$diff_output" | awk '
+    /^\+\+\+ / { next }
+    /^\+### 下次预防/ { in_section=1; next }
+    in_section && /^\+### / { in_section=0 }
+    in_section && /^\+- / { print substr($0, 4) }
+  ' | jq -R . | jq -s . 2>/dev/null || echo "[]"
 }
 
 # ── 构建 payload ──────────────────────────────────────────────────────
