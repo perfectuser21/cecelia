@@ -42,6 +42,19 @@ export function applyCheapRules(atom) {
   return null;
 }
 
+export const SCOPES = ['repair', 'capability'];
+
+// scope 分诊 cheap rules（修订 57d296a1，decisions b2eeb1b5）。
+// capability 关键词优先于 FAIL/PASS+NEXT：误收进 GP 菜单可由人工圈选恢复，反向误判=自动开工本应批审的方向。
+const CAPABILITY_SCOPE_PATTERN = /新方向|新能力|新平台|新业务|从零|立项|new\s+(capability|platform|direction)/i;
+
+/** line_backlog 的 scope 判定：'capability' | 'repair' | null（拿不准，走 LLM 兜底）。 */
+export function classifyScope(atom) {
+  if (CAPABILITY_SCOPE_PATTERN.test(atom.content || '')) return 'capability';
+  if (atom.target_subtype === 'FAIL' || atom.target_subtype === 'PASS+NEXT') return 'repair';
+  return null;
+}
+
 const INTERVAL_MS = parseInt(process.env.CECELIA_CAPTURE_TRIAGE_INTERVAL_MS || String(10 * 60 * 1000), 10);
 const BATCH = parseInt(process.env.CECELIA_CAPTURE_TRIAGE_BATCH || '20', 10);
 const LLM_ENABLED = process.env.CECELIA_CAPTURE_TRIAGE_LLM !== 'off';
