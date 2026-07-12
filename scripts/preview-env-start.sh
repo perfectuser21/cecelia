@@ -59,31 +59,14 @@ git -C "$REPO_ROOT" worktree add "$WORK_DIR" "origin/${BRANCH_NAME}" 2>>"$LOG_FI
 }
 log "  ✓ worktree 创建完成: ${WORK_DIR}"
 
-# ── 2. node_modules symlink（Brain 运行时用，生产依赖即可，无需 devDeps）──────────
-log "Step 2: 链接 node_modules（Brain 运行时）..."
-# 优先用容器镜像内置的 /repo/node_modules（Dockerfile Stage1 npm ci --omit=dev 构建，
-# 始终包含 Brain 全部生产依赖，包括 dotenv）。REPO_ROOT 指向 cecelia-deploy-main，
-# 该目录通常不单独跑 npm ci，node_modules 可能缺失或不完整（PR#3810 实测根因之一）。
-BRAIN_NM_TARGET="/repo/node_modules"
-BRAIN_BRAIN_NM_TARGET="/repo/packages/brain/node_modules"
-if [ ! -d "$BRAIN_NM_TARGET" ] && [ -d "${REPO_ROOT}/node_modules" ]; then
-  BRAIN_NM_TARGET="${REPO_ROOT}/node_modules"
-  BRAIN_BRAIN_NM_TARGET="${REPO_ROOT}/packages/brain/node_modules"
-fi
-ln -sfn "$BRAIN_NM_TARGET" "${WORK_DIR}/node_modules"
-log "  ✓ 根 node_modules 已链接 → ${BRAIN_NM_TARGET}"
-if [ -d "$BRAIN_BRAIN_NM_TARGET" ]; then
-  ln -sfn "$BRAIN_BRAIN_NM_TARGET" "${WORK_DIR}/packages/brain/node_modules"
-  log "  ✓ Brain node_modules 已链接 → ${BRAIN_BRAIN_NM_TARGET}"
-fi
-
-# ── 3. 构建前端 ───────────────────────────────────────────────────────────────
-# 改为在 apps/dashboard 目录内单独跑 npm ci（非从 root --workspace=apps/dashboard）。
-# 原因：从 root 跑 workspace 安装会 reify 根 node_modules（npm 整体重构），在 ENOSPC 或
-# 并发场景下会破坏 root node_modules symlink，导致 Brain 找不到 dotenv 崩溃（PR#3810 实测）。
-# dashboard 无 workspace 内部依赖，在自己目录 npm ci 等价且安全。
-# npm cache 显式指定到 /tmp 下，避免容器 HOME=/Users/administrator npm 默认 cache 路径 ENOENT。
-log "Step 3: 构建 apps/dashboard（dashboard 目录内独立 npm ci，含 devDeps）..."
+# ── 2. 构建前端 ───────────────────────────────────────────────────────────────
+# 在干净 worktree（无 packages/brain/node_modules symlink）中构建前端。
+# 关键约束：/repo/packages/brain/node_modules 在容器镜像内是只读的。
+# 若先建了 packages/brain/node_modules → /repo/packages/brain/node_modules symlink，
+# 再跑 npm ci，npm workspace resolve 会尝试 rmdir/写入该只读路径，
+# 导致 EROFS: read-only file system（PR#3812 实测）。
+# 解法：npm cache 显式指定到 /tmp 下（避免默认 ~/.npm ENOENT），且先构建后链接。
+log "Step 2: 构建 apps/dashboard（dashboard 目录独立 npm ci，含 devDeps）..."
 DASH_DIR="${WORK_DIR}/apps/dashboard"
 DIST_DIR="${DASH_DIR}/dist"
 NPM_CACHE_DIR="/tmp/npm-cache-preview-${PR_NUMBER}"
@@ -95,8 +78,25 @@ if (cd "$DASH_DIR" && npm ci --cache "$NPM_CACHE_DIR" >> "$LOG_FILE" 2>&1 \
 else
   log "  ⚠ 前端构建失败，预览 Brain 将无 UI（API 仍可用）"
   DIST_DIR=""
-  # 确保 root node_modules symlink 始终指向可用的生产依赖（以防 npm ci 中途损坏了 symlink）
-  ln -sfn "$BRAIN_NM_TARGET" "${WORK_DIR}/node_modules" 2>/dev/null || true
+fi
+
+# ── 3. node_modules symlink（Brain 运行时用，生产依赖即可）────────────────────
+# 在前端构建完成后再建 Brain node_modules symlink，避免 npm ci 触碰只读路径。
+# 优先用容器镜像内置的 /repo/node_modules（Dockerfile Stage1 npm ci --omit=dev 构建，
+# 始终包含 Brain 全部生产依赖，包括 dotenv）。REPO_ROOT 指向 cecelia-deploy-main，
+# 该目录通常不单独跑 npm ci，node_modules 可能缺失或不完整（PR#3810 实测根因之一）。
+log "Step 3: 链接 node_modules（Brain 运行时）..."
+BRAIN_NM_TARGET="/repo/node_modules"
+BRAIN_BRAIN_NM_TARGET="/repo/packages/brain/node_modules"
+if [ ! -d "$BRAIN_NM_TARGET" ] && [ -d "${REPO_ROOT}/node_modules" ]; then
+  BRAIN_NM_TARGET="${REPO_ROOT}/node_modules"
+  BRAIN_BRAIN_NM_TARGET="${REPO_ROOT}/packages/brain/node_modules"
+fi
+ln -sfn "$BRAIN_NM_TARGET" "${WORK_DIR}/node_modules"
+log "  ✓ 根 node_modules 已链接 → ${BRAIN_NM_TARGET}"
+if [ -d "$BRAIN_BRAIN_NM_TARGET" ]; then
+  ln -sfn "$BRAIN_BRAIN_NM_TARGET" "${WORK_DIR}/packages/brain/node_modules"
+  log "  ✓ Brain node_modules 已链接 → ${BRAIN_BRAIN_NM_TARGET}"
 fi
 
 # ── 4. 克隆生产数据库 ─────────────────────────────────────────────────────────
@@ -194,16 +194,14 @@ done
 if [ "$STATUS" != "running" ]; then
   log "ERROR: Brain 在 ${MAX_WAIT}s 内未就绪，最后 10 行日志:"
   tail -10 "$LOG_FILE" >&2
+  # Brain 未就绪 — 状态保持 starting，CI 会超时后报错
+  exit 1
 fi
 
-# ── 7. 回写 Brain API 状态 ────────────────────────────────────────────────────
-log "Step 7: 回写 preview 状态为 active..."
-curl -sf -X POST "${BRAIN_API}/api/brain/preview/start" \
-  -H "Content-Type: application/json" \
-  -d "{\"pr_number\":${PR_NUMBER},\"branch_name\":\"${BRANCH_NAME}\",\"_mark_active\":true}" \
-  2>>"$LOG_FILE" || true
+# ── 7. 回写 Brain API 状态（仅 Brain 健康时才 active）────────────────────────
+log "Step 7: Brain 健康，回写 preview 状态为 active..."
 
-# 直接用 DB 更新（Brain 已起可能是不同实例的5221）
+# 直接用 DB 更新（比 API 更可靠，避免同一机器上不同 Brain 实例的 5221 响应问题）
 PGPASSWORD="${DB_PASSWORD:-cecelia}" psql \
   -h "${DB_HOST:-localhost}" -U "${DB_USER:-cecelia}" cecelia \
   -c "UPDATE preview_environments SET status='active', updated_at=NOW() WHERE pr_number=${PR_NUMBER};" \
