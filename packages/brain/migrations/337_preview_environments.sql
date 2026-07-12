@@ -1,4 +1,4 @@
--- Migration 334: preview_environments 表
+-- Migration 337: preview_environments 表
 -- 用于 per-PR 完整预览环境（预览Brain + 隔离数据库）端口池管理
 -- 接通预览闸模型 WS1（决策 48331b37）
 
