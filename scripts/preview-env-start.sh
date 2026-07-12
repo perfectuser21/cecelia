@@ -90,7 +90,12 @@ else
 fi
 
 # ── 4. 克隆生产数据库 ─────────────────────────────────────────────────────────
-log "Step 4: 克隆数据库 cecelia → ${DB_NAME}..."
+# createdb -T cecelia（CREATE DATABASE...TEMPLATE）要求模板库无活跃连接，
+# 但 cecelia 是持续在跑的生产库（Brain 自己一直连着），这个前提永远不成立，
+# 实测必现 "source database is being accessed by other users"（PR#3809验证发现）。
+# 改用 pg_dump | pg_restore 管道直传：不依赖模板库无连接，也不落盘（避免容器 tmpfs 限制）。
+# 临时方案——2.5GB 库约 50s+，后续用定期刷新的无连接快照库当 TEMPLATE 做真正的快速克隆（另立任务）。
+log "Step 4: 克隆数据库 cecelia → ${DB_NAME}（pg_dump|pg_restore）..."
 # 先检查/删除旧库（幂等）
 PGPASSWORD="${DB_PASSWORD:-cecelia}" dropdb \
   -h "${DB_HOST:-localhost}" -U "${DB_USER:-cecelia}" \
@@ -98,11 +103,28 @@ PGPASSWORD="${DB_PASSWORD:-cecelia}" dropdb \
 
 PGPASSWORD="${DB_PASSWORD:-cecelia}" createdb \
   -h "${DB_HOST:-localhost}" -U "${DB_USER:-cecelia}" \
-  -T cecelia "$DB_NAME" 2>>"$LOG_FILE" || {
-  log "ERROR: createdb -T cecelia ${DB_NAME} 失败"
+  "$DB_NAME" 2>>"$LOG_FILE" || {
+  log "ERROR: createdb ${DB_NAME} 失败"
   exit 1
 }
-log "  ✓ 数据库 ${DB_NAME} 克隆完成"
+
+if PGPASSWORD="${DB_PASSWORD:-cecelia}" pg_dump \
+    -h "${DB_HOST:-localhost}" -U "${DB_USER:-cecelia}" -Fc cecelia 2>>"$LOG_FILE" \
+    | PGPASSWORD="${DB_PASSWORD:-cecelia}" pg_restore \
+      -h "${DB_HOST:-localhost}" -U "${DB_USER:-cecelia}" \
+      --no-owner --no-acl -d "$DB_NAME" 2>>"$LOG_FILE"; then
+  log "  ✓ 数据库 ${DB_NAME} 克隆完成"
+else
+  # pg_restore 对非致命警告（如已存在的扩展/权限对象）也会返回非0，只有目标库确实为空表才算真失败
+  TABLE_COUNT=$(PGPASSWORD="${DB_PASSWORD:-cecelia}" psql -h "${DB_HOST:-localhost}" -U "${DB_USER:-cecelia}" \
+    -d "$DB_NAME" -tAc "SELECT count(*) FROM information_schema.tables WHERE table_schema='public'" 2>>"$LOG_FILE" || echo 0)
+  if [ "${TABLE_COUNT:-0}" -gt 0 ]; then
+    log "  ⚠ pg_restore 有非致命警告，但 ${DB_NAME} 已有 ${TABLE_COUNT} 张表，视为成功"
+  else
+    log "ERROR: pg_dump|pg_restore 克隆 ${DB_NAME} 失败（目标库无表）"
+    exit 1
+  fi
+fi
 
 # ── 5. 启动预览 Brain ─────────────────────────────────────────────────────────
 log "Step 5: 启动预览 Brain on port=${PORT}..."
