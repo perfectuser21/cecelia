@@ -16,7 +16,7 @@
 
 2. **task-router.js 四处**
    - VALID_TASK_TYPES（:54 区）加 'golden_path_proposal'
-   - SKILL_WHITELIST（:151 区）加 `'golden_path_proposal': '/harness-controller'`（校验用途；relay 实际 spawn skill 由 harness-skill-relay 映射决定）
+   - SKILL_WHITELIST（:151 区）加 `'golden_path_proposal': '/golden-path-controller'`（校验用途；relay 实际 spawn skill 由 harness-skill-relay 映射决定）
    - LOCATION_MAP（:298 区）加 `'golden_path_proposal': 'us'`
    - CAPABILITY_REQUIREMENTS（:378 区）加 `['has_git']`
 
