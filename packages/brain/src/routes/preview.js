@@ -9,6 +9,8 @@
  * 已废弃（向后兼容保留）:
  * POST   /api/brain/preview/allocate     — 仅分配端口
  * DELETE /api/brain/preview/:pr_number   — 旧停止接口
+ *
+ * E2E 端到端验证于 2026-07-12（PR #3794 合并后）：本 PR 用于触发一次真实预览部署验证。
  */
 
 import { Router } from 'express';
