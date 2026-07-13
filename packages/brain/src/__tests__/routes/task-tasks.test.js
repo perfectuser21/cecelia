@@ -187,9 +187,9 @@ describe('task-tasks routes', () => {
 
       await request(app).post('/tasks').send({ title: 'T' });
 
-      // params 顺序：title, description, priority, task_type, project_id, area_id, goal_id, location, payload, trigger_source
+      // params 顺序：title, description, priority, task_type, initialStatus, project_id, area_id, goal_id, location, payload, trigger_source
       const [, params] = mockPool.query.mock.calls[1];
-      expect(params[7]).toBe('us'); // location 在第8个位置（index 7）
+      expect(params[8]).toBe('us'); // location 在第9个位置（index 8）——task-tasks.js增initialStatus后+1
     });
 
     it('[Bug3] 不传 trigger_source → INSERT params 包含 "auto"（不是 "api"）', async () => {

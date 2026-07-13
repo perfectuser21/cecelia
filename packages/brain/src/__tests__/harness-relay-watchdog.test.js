@@ -11,7 +11,7 @@ const { mockPool } = vi.hoisted(() => ({ mockPool: { query: vi.fn() } }));
 vi.mock('../db.js', () => ({ default: mockPool }));
 vi.mock('../notifier.js', () => ({ sendBark: vi.fn().mockResolvedValue(true) }));
 
-import { resumeStalledRelayRuns, MAX_RELAY_ATTEMPTS } from '../harness-relay-watchdog.js';
+import { resumeStalledRelayRuns, MAX_RELAY_ATTEMPTS, scanStuckHarness } from '../harness-relay-watchdog.js';
 import { sendBark } from '../notifier.js';
 
 const TASK_ID = 'aaaabbbb-cccc-dddd-eeee-ffff00001111';
@@ -57,6 +57,17 @@ function makeDeps({
 beforeEach(() => {
   mockPool.query.mockReset();
   sendBark.mockClear();
+});
+
+describe('scanStuckHarness — 逾期收尸 host 覆盖', () => {
+  it('SQL host 过滤覆盖所有 skill-relay host(含 claude-headed/session)，非写死 skill-relay-codex = RED', async () => {
+    const pool = { query: vi.fn().mockResolvedValue({ rows: [] }) };
+    await scanStuckHarness({ pool });
+    const sql = pool.query.mock.calls[0]?.[0] || '';
+    // 当前 WHERE orchestrator_host = 'skill-relay-codex' → claude-headed/session 逾期永不收尸
+    expect(sql).toMatch(/skill-relay%/);                  // 期望 LIKE 'skill-relay%' 覆盖全部 host
+    expect(sql).not.toMatch(/=\s*'skill-relay-codex'/);   // 不应写死单一 codex host
+  });
 });
 
 describe('resumeStalledRelayRuns', () => {

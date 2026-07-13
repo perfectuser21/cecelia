@@ -15,20 +15,22 @@ import { runRecoveryOnce } from '../recovery-loop.js';
 const fakePool = { query: async () => ({ rows: [] }) };
 
 describe('recovery-loop', () => {
-  it('一次执行调用全部三条恢复网', async () => {
+  it('一次执行调用全部四条恢复网（含 probeTaskLiveness）', async () => {
     const cleanupStaleClaims = vi.fn(async () => ({ cleaned: 2 }));
     const checkStuckPipelines = vi.fn(async () => ({ canceled: [{ id: 'p1' }] }));
     const autoFailTimedOutTasks = vi.fn(async () => [{ action: 'auto-requeue-timeout' }]);
     const fetchInProgress = vi.fn(async () => []);
+    const probeTaskLiveness = vi.fn(async () => []);
 
     const r = await runRecoveryOnce({
-      pool: fakePool, cleanupStaleClaims, checkStuckPipelines, autoFailTimedOutTasks, fetchInProgress,
+      pool: fakePool, cleanupStaleClaims, checkStuckPipelines, autoFailTimedOutTasks, fetchInProgress, probeTaskLiveness,
     });
 
     expect(cleanupStaleClaims).toHaveBeenCalledTimes(1);
     expect(checkStuckPipelines).toHaveBeenCalledTimes(1);
     expect(autoFailTimedOutTasks).toHaveBeenCalledTimes(1);
-    expect(r).toMatchObject({ staleReleased: 2 });
+    expect(probeTaskLiveness).toHaveBeenCalledTimes(1);
+    expect(r).toMatchObject({ staleReleased: 2, orphansRequeued: 0 });
   });
 
   it('autoFailTimedOutTasks 只收到非-harness 任务（harness 由 harness-watchdog 专管，不被 wall-clock 误杀）', async () => {
@@ -47,6 +49,7 @@ describe('recovery-loop', () => {
       checkStuckPipelines: async () => ({ canceled: [] }),
       autoFailTimedOutTasks,
       fetchInProgress: async () => inProgress,
+      probeTaskLiveness: async () => [],
     });
 
     const ids = received.map((t) => t.id);
@@ -65,6 +68,7 @@ describe('recovery-loop', () => {
       checkStuckPipelines,
       autoFailTimedOutTasks,
       fetchInProgress: async () => [],
+      probeTaskLiveness: async () => [],
     });
 
     // cleanupStaleClaims 抛错，但另两条照常被调
