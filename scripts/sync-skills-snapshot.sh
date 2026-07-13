@@ -29,6 +29,10 @@ SKILLS=(
   harness-generator
   harness-evaluator
   harness-report
+  line-strategist
+  golden-path-controller
+  golden-path-proposer
+  golden-path-reviewer
 )
 
 if [[ ! -d "$SSOT_DIR" ]]; then

@@ -13,6 +13,8 @@
  * Cortex Insight: 7670a6c3-0455-4831-b1f8-a487a38071fa
  */
 
+import { fetchAllLineLedgersDigest } from './daily-review-scheduler.js';
+
 const COOLDOWN_HOURS = 24;
 const LEARNING_ID = '7670a6c3-0455-4831-b1f8-a487a38071fa';
 
@@ -57,6 +59,8 @@ export async function maybeTriggerStrategySession(pool) {
     return { created: false, reason: 'recent_strategy_session_in_cooldown' };
   }
 
+  const lineContext = await fetchAllLineLedgersDigest(pool).catch(() => '');
+
   const insertResult = await pool.query(`
     INSERT INTO tasks (title, description, status, priority, task_type, payload, trigger_source)
     VALUES ($1, $2, 'queued', 'P0', 'strategy_session', $3, 'active_goals_zero')
@@ -68,6 +72,7 @@ export async function maybeTriggerStrategySession(pool) {
       reason: 'active_goals_zero',
       triggered_by: 'tick-runner',
       learning_id: LEARNING_ID,
+      line_context: lineContext,
     }),
   ]);
 

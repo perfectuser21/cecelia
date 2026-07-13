@@ -706,6 +706,7 @@ describe('triggerArchReview', () => {
         .mockResolvedValueOnce({ rows: [] })                               // hasRecentArchReview -> false
         .mockResolvedValueOnce({ rows: [{ created_at: lastReviewTime }] }) // 上次 arch_review
         .mockResolvedValueOnce({ rows: [{ id: 'dev-completed' }] })        // guard 通过
+        .mockResolvedValueOnce({ rows: [] })                               // fetchAllLineLedgersDigest
         .mockResolvedValueOnce({ rows: [{ id: 'arch-task-new' }] }),       // INSERT
     };
     const triggerTime = new Date('2026-03-23T04:02:00Z');
@@ -722,11 +723,12 @@ describe('triggerArchReview', () => {
       query: vi.fn()
         .mockResolvedValueOnce({ rows: [] })      // hasRecentArchReview -> false
         .mockResolvedValueOnce({ rows: [] })      // 从未 arch_review → guard 通过
+        .mockResolvedValueOnce({ rows: [] })      // fetchAllLineLedgersDigest
         .mockResolvedValueOnce({ rows: [{ id: 'new-ar' }] }), // INSERT
     };
     const triggerTime = new Date('2026-03-23T08:00:00Z');
     await triggerArchReview(pool, triggerTime);
-    const insertSQL = pool.query.mock.calls[2][0];
+    const insertSQL = pool.query.mock.calls[3][0];
     expect(insertSQL).toContain("'arch_review'");
     expect(insertSQL).toContain("'xian'");
     expect(insertSQL).toContain("'brain_auto'");
@@ -738,11 +740,12 @@ describe('triggerArchReview', () => {
       query: vi.fn()
         .mockResolvedValueOnce({ rows: [] })
         .mockResolvedValueOnce({ rows: [] })
+        .mockResolvedValueOnce({ rows: [] })      // fetchAllLineLedgersDigest
         .mockResolvedValueOnce({ rows: [{ id: 'ar-title-test' }] }),
     };
     const triggerTime = new Date('2026-03-23T12:03:00Z');
     await triggerArchReview(pool, triggerTime);
-    const params = pool.query.mock.calls[2][1];
+    const params = pool.query.mock.calls[3][1];
     expect(params[0]).toContain('[arch-review]');
     expect(params[0]).toContain('2026-03-23');
   });
@@ -752,11 +755,12 @@ describe('triggerArchReview', () => {
       query: vi.fn()
         .mockResolvedValueOnce({ rows: [] })
         .mockResolvedValueOnce({ rows: [] })
+        .mockResolvedValueOnce({ rows: [] })      // fetchAllLineLedgersDigest
         .mockResolvedValueOnce({ rows: [{ id: 'ar-payload-test' }] }),
     };
     const triggerTime = new Date('2026-03-23T16:00:00Z');
     await triggerArchReview(pool, triggerTime);
-    const params = pool.query.mock.calls[2][1];
+    const params = pool.query.mock.calls[3][1];
     const payload = JSON.parse(params[1]);
     expect(payload.scope).toBe('scheduled');
     expect(payload.trigger).toBe('4h');
@@ -767,6 +771,7 @@ describe('triggerArchReview', () => {
       query: vi.fn()
         .mockResolvedValueOnce({ rows: [] })  // hasRecentArchReview -> false
         .mockResolvedValueOnce({ rows: [] })  // 无历史 arch_review → guard 通过
+        .mockResolvedValueOnce({ rows: [] })  // fetchAllLineLedgersDigest
         .mockResolvedValueOnce({ rows: [{ id: 'first-ar' }] }),
     };
     const triggerTime = new Date('2026-03-23T00:01:00Z');
@@ -780,6 +785,7 @@ describe('triggerArchReview', () => {
       query: vi.fn()
         .mockRejectedValueOnce(new Error('dedup DB error'))  // hasRecentArchReview 失败
         .mockResolvedValueOnce({ rows: [] })                 // guard: 无历史 → 通过
+        .mockResolvedValueOnce({ rows: [] })                 // fetchAllLineLedgersDigest
         .mockResolvedValueOnce({ rows: [{ id: 'ar-after-dedup-fail' }] }),
     };
     const triggerTime = new Date('2026-03-23T04:00:00Z');
@@ -792,6 +798,7 @@ describe('triggerArchReview', () => {
       query: vi.fn()
         .mockResolvedValueOnce({ rows: [] })
         .mockResolvedValueOnce({ rows: [] })
+        .mockResolvedValueOnce({ rows: [] })      // fetchAllLineLedgersDigest
         .mockRejectedValueOnce(new Error('INSERT constraint')),
     };
     const triggerTime = new Date('2026-03-23T08:01:00Z');

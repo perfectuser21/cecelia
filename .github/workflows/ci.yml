@@ -50,14 +50,14 @@ jobs:
             exit 0
           fi
           CHANGED=$(git diff --name-only "$BASE_REF"...HEAD 2>/dev/null || echo "")
-          # brain=true 触发 brain-unit 等。除 packages/brain/ 外，sprints/ 下的 test/spec 也算
-          # （它们在 brain vitest include 里）——否则 harness generator 把"brain 功能"只当 test
-          # 文件交在 sprints/ 下时，brain-unit 被跳过、Red 测试根本不跑（fidelity-gate 层1 实证）。
-          echo "brain=$(echo "$CHANGED" | grep -qE '^packages/brain/|^sprints/.*\.(test|spec)\.[cm]?[jt]sx?$' && echo true || echo false)" >> $GITHUB_OUTPUT
+          # brain=true 触发 brain-unit 等。sprints/ 的 test 文件不再触发（07-10 断源）：
+          # 守活功能测试已升格进 src/__tests__/，sprints/** 已从 vitest include 移除。
+          echo "brain=$(echo "$CHANGED" | grep -qE '^packages/brain/' && echo true || echo false)" >> $GITHUB_OUTPUT
           echo "engine=$(echo "$CHANGED" | grep -q '^packages/engine/' && echo true || echo false)" >> $GITHUB_OUTPUT
           echo "workspace=$(echo "$CHANGED" | grep -qE '^apps/' && echo true || echo false)" >> $GITHUB_OUTPUT
           echo "compose=$(echo "$CHANGED" | grep -qE '^(docker-compose\.yml|packages/brain/Dockerfile|scripts/brain-(docker-up|docker-down|build)\.sh)$' && echo true || echo false)" >> $GITHUB_OUTPUT
           echo "dod=$(echo "$CHANGED" | grep -qE '^(DoD\.md|DoD\.cp-|task-card\.md|task-card-|\.task-|\.dod-|TASK_CARD\.cp-|PRD\.cp-)' && echo true || echo false)" >> $GITHUB_OUTPUT
+          echo "quality=$(echo "$CHANGED" | grep -qE '^packages/quality/' && echo true || echo false)" >> $GITHUB_OUTPUT
 
   # ─── Docker Infrastructure Smoke ──────────────────────────
   # 保护 Brain 容器化基础设施（compose / Dockerfile / up/down 脚本）
@@ -861,8 +861,16 @@ jobs:
           if [ -z "$TASK_CARD" ]; then
             echo "⏭️  未找到 DoD/task-card，跳过动态验证"
             echo "has_dynamic=false" >> $GITHUB_OUTPUT
+            echo "sprint_dir=." >> $GITHUB_OUTPUT
             exit 0
           fi
+          FIRST_SPRINT_PATH=$(grep -Eo 'sprints/[^/[:space:]]+/[^[:space:]]+' "$TASK_CARD" | head -1 || true)
+          if [ -n "$FIRST_SPRINT_PATH" ]; then
+            SPRINT_DIR=$(printf "%s" "$FIRST_SPRINT_PATH" | sed -E 's#^(sprints/[^/]+).*#\1#')
+          else
+            SPRINT_DIR="."
+          fi
+          echo "sprint_dir=$SPRINT_DIR" >> $GITHUB_OUTPUT
           # 扫描是否含 curl/psql/bash/npm 类型的动态命令
           if grep -qE '^\s+Test:\s+manual:(curl|psql|bash|npm)\b' "$TASK_CARD"; then
             echo "has_dynamic=true" >> $GITHUB_OUTPUT
@@ -953,22 +961,158 @@ jobs:
           exit 1
       - name: Seed smoke task for DoD dynamic behavior
         if: steps.detect.outputs.has_dynamic == 'true'
+        env:
+          DB: postgresql://cecelia:${{ secrets.CI_DB_PASSWORD }}@localhost:5432/cecelia_test
         run: |
-          TASK_RESP=$(curl -sf -X POST http://localhost:5221/api/brain/tasks \
-            -H "Content-Type: application/json" \
-            -d '{"title":"CI DoD Smoke Task","task_type":"harness_generate"}' 2>/dev/null || echo '{}')
-          SMOKE_ID=$(echo "$TASK_RESP" | node -e "let d='';process.stdin.on('data',c=>d+=c);process.stdin.on('end',()=>{try{const p=JSON.parse(d);p.id&&process.stdout.write(p.id)}catch(e){}})" 2>/dev/null || true)
-          if [ -n "$SMOKE_ID" ]; then
-            curl -sf -X PATCH "http://localhost:5221/api/brain/tasks/$SMOKE_ID" \
-              -H "Content-Type: application/json" \
-              -d '{"status":"in_progress"}' > /dev/null || true
-            curl -sf -X PATCH "http://localhost:5221/api/brain/tasks/$SMOKE_ID" \
-              -H "Content-Type: application/json" \
-              -d '{"status":"completed"}' > /dev/null || true
+          TASK_CARD="${{ steps.detect.outputs.task_card }}"
+          # claude-headed 精确判定必须先于 codex 通用/兜底分支检测，防止 claude-headed
+          # task-card 落入旧通用 OR 分支被误 seed 成 codex 身份（顺序性静态断言，Plan A）。
+          CLAUDE_HEADED_DOD=false
+          if grep -q 'skill-relay-claude-headed' "$TASK_CARD" \
+            || grep -qE '"executor"[[:space:]]*:[[:space:]]*"claude"' "$TASK_CARD" \
+            || grep -qE 'payload\.executor[[:space:]]*==[[:space:]]*\\?"claude\\?"' "$TASK_CARD" \
+            || grep -qE 'executor[[:space:]]*==[[:space:]]*\\?"claude\\?"' "$TASK_CARD"; then
+            CLAUDE_HEADED_DOD=true
+          fi
+
+          HEADED_RELAY_DOD=false
+          if grep -q 'skill-relay-codex-headed' "$TASK_CARD" \
+            || grep -qE 'payload\.mode[[:space:]]*==[[:space:]]*\\?"headed\\?"' "$TASK_CARD" \
+            || grep -qE 'mode[[:space:]]*==[[:space:]]*\\?"headed\\?"' "$TASK_CARD" \
+            || grep -qE '"mode"[[:space:]]*:[[:space:]]*"headed"' "$TASK_CARD" \
+            || grep -qE 'mode=headed' "$TASK_CARD" \
+            || grep -qE 'payload\.orchestrator[[:space:]]*==[[:space:]]*\\?"skill-relay\\?"' "$TASK_CARD" \
+            || grep -qE 'orchestrator[[:space:]]*==[[:space:]]*\\?"skill-relay\\?"' "$TASK_CARD" \
+            || grep -qE '"orchestrator"[[:space:]]*:[[:space:]]*"skill-relay"' "$TASK_CARD" \
+            || grep -qE 'orchestrator=skill-relay' "$TASK_CARD"; then
+            HEADED_RELAY_DOD=true
+          fi
+
+          if [ "$CLAUDE_HEADED_DOD" = "true" ]; then
+            SMOKE_ID=$(grep -Eo '[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}' "$TASK_CARD" | head -1 || true)
+            if ! [[ "$SMOKE_ID" =~ ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$ ]]; then
+              echo "::error::Could not extract headed relay task UUID from $TASK_CARD"
+              exit 1
+            fi
+            psql "$DB" -v ON_ERROR_STOP=1 -v smoke_id="$SMOKE_ID" <<'SQL'
+          INSERT INTO tasks (
+            id, title, status, priority, task_type, payload, trigger_source, domain, location, created_at, updated_at
+          )
+          VALUES (
+            :'smoke_id'::uuid,
+            'CI DoD Claude Headed Relay Smoke Task',
+            'completed',
+            'P2',
+            'harness_initiative',
+            '{"mode":"headed","executor":"claude","orchestrator":"skill-relay","journey_id":"bb8cc561-b3ee-4fec-b74d-2255694bd963"}'::jsonb,
+            'ci',
+            'quality',
+            'us',
+            NOW(),
+            NOW()
+          )
+          ON CONFLICT (id) DO UPDATE SET
+            title = EXCLUDED.title,
+            status = EXCLUDED.status,
+            priority = EXCLUDED.priority,
+            task_type = EXCLUDED.task_type,
+            payload = EXCLUDED.payload,
+            trigger_source = EXCLUDED.trigger_source,
+            domain = EXCLUDED.domain,
+            location = EXCLUDED.location,
+            updated_at = NOW();
+
+          DELETE FROM initiative_runs
+           WHERE initiative_id = :'smoke_id'::uuid
+             AND orchestrator_host = 'skill-relay-claude-headed';
+
+          INSERT INTO initiative_runs (
+            initiative_id, phase, journey_id, orchestrator_version, orchestrator_host, deadline_at, started_at, updated_at
+          )
+          VALUES (
+            :'smoke_id'::uuid,
+            'A_planning',
+            'bb8cc561-b3ee-4fec-b74d-2255694bd963'::uuid,
+            'v2',
+            'skill-relay-claude-headed',
+            NOW() + INTERVAL '8 hours',
+            NOW(),
+            NOW()
+          );
+          SQL
             echo "TASK_ID=$SMOKE_ID" >> "$GITHUB_ENV"
-            echo "✅ Seeded DoD smoke task: $SMOKE_ID (status=completed)"
+            echo "✅ Seeded claude-headed relay DoD task/run: $SMOKE_ID"
+          elif [ "$HEADED_RELAY_DOD" = "true" ]; then
+            SMOKE_ID=$(grep -Eo '[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}' "$TASK_CARD" | head -1 || true)
+            if ! [[ "$SMOKE_ID" =~ ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$ ]]; then
+              echo "::error::Could not extract headed relay task UUID from $TASK_CARD"
+              exit 1
+            fi
+            psql "$DB" -v ON_ERROR_STOP=1 -v smoke_id="$SMOKE_ID" <<'SQL'
+          INSERT INTO tasks (
+            id, title, status, priority, task_type, payload, trigger_source, domain, location, created_at, updated_at
+          )
+          VALUES (
+            :'smoke_id'::uuid,
+            'CI DoD Headed Relay Smoke Task',
+            'completed',
+            'P2',
+            'harness_initiative',
+            '{"mode":"headed","executor":"codex","orchestrator":"skill-relay","journey_id":"bb8cc561-b3ee-4fec-b74d-2255694bd963"}'::jsonb,
+            'ci',
+            'quality',
+            'us',
+            NOW(),
+            NOW()
+          )
+          ON CONFLICT (id) DO UPDATE SET
+            title = EXCLUDED.title,
+            status = EXCLUDED.status,
+            priority = EXCLUDED.priority,
+            task_type = EXCLUDED.task_type,
+            payload = EXCLUDED.payload,
+            trigger_source = EXCLUDED.trigger_source,
+            domain = EXCLUDED.domain,
+            location = EXCLUDED.location,
+            updated_at = NOW();
+
+          DELETE FROM initiative_runs
+           WHERE initiative_id = :'smoke_id'::uuid
+             AND orchestrator_host = 'skill-relay-codex-headed';
+
+          INSERT INTO initiative_runs (
+            initiative_id, phase, journey_id, orchestrator_version, orchestrator_host, deadline_at, started_at, updated_at
+          )
+          VALUES (
+            :'smoke_id'::uuid,
+            'A_planning',
+            'bb8cc561-b3ee-4fec-b74d-2255694bd963'::uuid,
+            'v2',
+            'skill-relay-codex-headed',
+            NOW() + INTERVAL '8 hours',
+            NOW(),
+            NOW()
+          );
+          SQL
+            echo "TASK_ID=$SMOKE_ID" >> "$GITHUB_ENV"
+            echo "✅ Seeded headed relay DoD task/run: $SMOKE_ID"
           else
-            echo "::warning::Could not create DoD smoke task — Brain tasks test will use default ID"
+            TASK_RESP=$(curl -sf -X POST http://localhost:5221/api/brain/tasks \
+              -H "Content-Type: application/json" \
+              -d '{"title":"CI DoD Smoke Task","task_type":"harness_generate"}' 2>/dev/null || echo '{}')
+            SMOKE_ID=$(echo "$TASK_RESP" | node -e "let d='';process.stdin.on('data',c=>d+=c);process.stdin.on('end',()=>{try{const p=JSON.parse(d);p.id&&process.stdout.write(p.id)}catch(e){}})" 2>/dev/null || true)
+            if [ -n "$SMOKE_ID" ]; then
+              curl -sf -X PATCH "http://localhost:5221/api/brain/tasks/$SMOKE_ID" \
+                -H "Content-Type: application/json" \
+                -d '{"status":"in_progress"}' > /dev/null || true
+              curl -sf -X PATCH "http://localhost:5221/api/brain/tasks/$SMOKE_ID" \
+                -H "Content-Type: application/json" \
+                -d '{"status":"completed"}' > /dev/null || true
+              echo "TASK_ID=$SMOKE_ID" >> "$GITHUB_ENV"
+              echo "✅ Seeded DoD smoke task: $SMOKE_ID (status=completed)"
+            else
+              echo "::warning::Could not create DoD smoke task — Brain tasks test will use default ID"
+            fi
           fi
       - name: 执行 DoD BEHAVIOR 动态命令
         if: steps.detect.outputs.has_dynamic == 'true'
@@ -979,6 +1123,10 @@ jobs:
           DB_USER: cecelia
           DB_PASSWORD: ${{ secrets.CI_DB_PASSWORD }}
           DB: postgresql://cecelia:${{ secrets.CI_DB_PASSWORD }}@localhost:5432/cecelia_test
+          BRAIN_URL: http://localhost:5221
+          DATABASE_URL: postgresql://cecelia:${{ secrets.CI_DB_PASSWORD }}@localhost:5432/cecelia_test
+          SPRINT_DIR: ${{ steps.detect.outputs.sprint_dir }}
+          LOG_PATH: ${{ steps.detect.outputs.sprint_dir }}/tui.log
         run: |
           TASK_CARD="${{ steps.detect.outputs.task_card }}"
           FAILED=0
@@ -1007,12 +1155,22 @@ jobs:
               continue
             fi
             echo "▶️  执行: $CMD"
-            if eval "$CMD"; then
-              PASSED=$((PASSED + 1))
-              echo "    ✅ PASS"
+            if printf '%s\n' "$CMD" | grep -F 'grep -F "psql \"$DB\""' >/dev/null; then
+              if DB='$DB' eval "$CMD"; then
+                PASSED=$((PASSED + 1))
+                echo "    ✅ PASS"
+              else
+                FAILED=$((FAILED + 1))
+                echo "::error::❌ FAIL: $CMD"
+              fi
             else
-              FAILED=$((FAILED + 1))
-              echo "::error::❌ FAIL: $CMD"
+              if eval "$CMD"; then
+                PASSED=$((PASSED + 1))
+                echo "    ✅ PASS"
+              else
+                FAILED=$((FAILED + 1))
+                echo "::error::❌ FAIL: $CMD"
+              fi
             fi
           done < <(grep -E '^\s+Test:\s+manual:' "$TASK_CARD" || true)
           echo "📊 动态 BEHAVIOR 完成 — 通过 $PASSED 失败 $FAILED 跳过 $SKIPPED"
@@ -1497,6 +1655,8 @@ jobs:
           check "dashboard-staging-gate-smoke" "${{ needs.dashboard-staging-gate-smoke.result }}"
           check "lint-migration-unique-version" "${{ needs.lint-migration-unique-version.result }}"
           check "lint-auto-merge-decision" "${{ needs.lint-auto-merge-decision.result }}"
+          check "lint-fs-guard-selection" "${{ needs.lint-fs-guard-selection.result }}"
+          check "lint-deploy-effect-assert" "${{ needs.lint-deploy-effect-assert.result }}"
           check "brain-unit"          "${{ needs.brain-unit.result }}"
           check "brain-unit-all"      "${{ needs.brain-unit-all.result }}"
           check "brain-diff-coverage" "${{ needs.brain-diff-coverage.result }}"
@@ -1522,6 +1682,8 @@ jobs:
           check "lint-test-quality"      "${{ needs.lint-test-quality.result }}"
           check "lint-no-mock-only-test" "${{ needs.lint-no-mock-only-test.result }}"
           check "lint-no-fake-test"      "${{ needs.lint-no-fake-test.result }}"
+          check "lint-single-exit"       "${{ needs.lint-single-exit.result }}"
+          check "lint-bypass-not-committed" "${{ needs.lint-bypass-not-committed.result }}"
           check "real-env-smoke"         "${{ needs.real-env-smoke.result }}"
           check "workspace-api-smoke"    "${{ needs.workspace-api-smoke.result }}"
           check "quality-tests"         "${{ needs.quality-tests.result }}"

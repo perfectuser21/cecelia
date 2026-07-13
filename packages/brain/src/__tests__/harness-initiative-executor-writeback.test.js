@@ -187,10 +187,6 @@ vi.mock('../auto-learning.js', () => ({
 
 const mockCompiled = { stream: vi.fn() };
 
-vi.mock('../workflows/harness-initiative.graph.js', () => ({
-  compileHarnessFullGraph: vi.fn().mockResolvedValue(mockCompiled),
-}));
-
 vi.mock('../orchestrator/pg-checkpointer.js', () => ({
   getPgCheckpointer: vi.fn().mockResolvedValue({
     get: vi.fn().mockResolvedValue(null),  // null = fresh start

@@ -22,6 +22,7 @@ import { startConsciousnessLoop } from './consciousness-loop.js';
 import { startHarnessWatchdogLoop, stopHarnessWatchdogLoop } from './harness-watchdog-loop.js';
 import { startRecoveryLoop, stopRecoveryLoop } from './recovery-loop.js';
 import { startPipelinePatrolLoop, stopPipelinePatrolLoop } from './pipeline-patrol-loop.js';
+import { startLineStrategistLoop, stopLineStrategistLoop } from './line-strategist-loop.js';
 import { publishCognitiveState } from './events/taskEvents.js';
 import { startProbeLoop } from './capability-probe.js';
 
@@ -170,6 +171,10 @@ export function startTickLoop() {
   // executeTick → 从不运行 → 干预通道整条死代码。仿 recovery-loop / harness-watchdog-loop 接回。
   startPipelinePatrolLoop();
 
+  // Line 军师终态派发：line-strategist-dispatch 若像 pipeline-patrol 一样挂在废弃 executeTick 上
+  // 会从不执行 → 仿 pipeline-patrol-loop.js 用独立 setInterval 接回。
+  startLineStrategistLoop();
+
   // Wave-2 断链修复：capability-probe 复活（模块自带 1h interval + 幂等 guard）
   startProbeLoop();
 
@@ -192,6 +197,7 @@ export function stopTickLoop() {
   stopHarnessWatchdogLoop();
   stopRecoveryLoop();
   stopPipelinePatrolLoop();
+  stopLineStrategistLoop();
   tickLog('[tick-loop] Stopped');
   return true;
 }

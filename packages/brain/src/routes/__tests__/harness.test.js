@@ -280,13 +280,11 @@ describe('[BEHAVIOR] migration + executor 文件检查', () => {
     expect(src).toMatch(/completed/i);
   });
 
-  it('executor.js 保留 writeInitiativeRunEvent failed (non-fatal) warn 字符串', () => {
-    const src = fs.readFileSync(
-      new URL('../../executor.js', import.meta.url),
-      'utf8'
-    );
-    expect(src).toMatch(/writeInitiativeRunEvent failed \(non-fatal\)/);
-  });
+  // 注：原有"executor.js 保留 writeInitiativeRunEvent failed (non-fatal) warn 字符串"
+  // 用例已删除（刀4阶段3 Task 3，2026-07-09）——该字符串位于 _driveHarnessInitiative
+  // 函数内 orchestrator 硬校验后的不可达 LangGraph 死代码块，随死代码块一并物理删除。
+  // events/initiativeRunEvents.js 的 owner 断言（下一条用例）已覆盖 writeInitiativeRunEvent
+  // 活代码路径，无需额外补充。
 
   // ── initiative_run_events / phase metrics 的 owner 是 Brain 侧，不是 skill ───────────
   // SSOT 链路审计（zenithjoy-skills #50，2026-06）确认：harness skill 自 06-04 起已无

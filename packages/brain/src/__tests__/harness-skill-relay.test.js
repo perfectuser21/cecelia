@@ -6,7 +6,7 @@
  * PrepPRD: sprints/07041621-harness-skill-relay-wiring/prep-prd.md
  */
 import { describe, it, expect, vi } from 'vitest';
-import { spawnSkillRelaySession, isSkillRelayTask } from '../harness-skill-relay.js';
+import { spawnSkillRelaySession, isSkillRelayTask, controllerSkillFor } from '../harness-skill-relay.js';
 
 const TASK = {
   id: 'aaaabbbb-cccc-dddd-eeee-ffff00001111',
@@ -281,5 +281,31 @@ describe('deriveReviewRequired(P2-1:新功能人审/非新功能 auto merge)', (
     // prompt 注入
     const prompt = deps.spawnFn.mock.calls[0][0].prompt;
     expect(prompt).toMatch(/REVIEW_REQUIRED=true/);
+  });
+});
+
+describe('controllerSkillFor（GP2/T2：按 task_type 选 controller skill）', () => {
+  it('golden_path_proposal → golden-path-controller', () => {
+    expect(controllerSkillFor('golden_path_proposal')).toBe('golden-path-controller');
+  });
+  it('harness_initiative / 未知类型 → harness-controller（默认不变）', () => {
+    expect(controllerSkillFor('harness_initiative')).toBe('harness-controller');
+    expect(controllerSkillFor(undefined)).toBe('harness-controller');
+  });
+});
+
+describe('spawnSkillRelaySession: golden_path_proposal 选中 golden-path-controller', () => {
+  it('loadSkill 被以 golden-path-controller 调用', async () => {
+    const deps = makeDeps();
+    const gpTask = { ...TASK, task_type: 'golden_path_proposal' };
+    const r = await spawnSkillRelaySession(gpTask, deps);
+    expect(r.ok).toBe(true);
+    expect(deps.loadSkill).toHaveBeenCalledWith('golden-path-controller');
+  });
+
+  it('harness_initiative 默认仍是 harness-controller（零回归）', async () => {
+    const deps = makeDeps();
+    await spawnSkillRelaySession({ ...TASK, task_type: 'harness_initiative' }, deps);
+    expect(deps.loadSkill).toHaveBeenCalledWith('harness-controller');
   });
 });

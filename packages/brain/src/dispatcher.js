@@ -1,16 +1,14 @@
 /**
- * Brain v2 Phase D Part 1.5 — dispatchNextTask + _dispatchViaWorkflowRuntime 抽出。
+ * Brain v2 Phase D Part 1.5 — dispatchNextTask 抽出。
  *
- * 原在 tick.js L706-L1115（dispatchNextTask）+ L3020-L3061（_dispatchViaWorkflowRuntime
- * — dev 任务走 L2 workflow runtime），瘦身抽出独立模块。
+ * 原在 tick.js L706-L1115（dispatchNextTask），瘦身抽出独立模块。
+ * dev 任务与其他 task_type 一样走 triggerCeceliaRun 本地 spawn（活性信号已通）。
  *
  * 模块状态：
- * - `_lastDispatchTime` 私有计时器（旧逻辑只写不读，留作潜在 telemetry hook，未来若确认死代码可清）
+ * - `_lastDispatchTime` 私有计时器（旧逻辑只写不读，留作潜在 telemetry hook）
  *
  * 本模块复制 tickLog / logTickDecision 两个 helper（tick.js 内部 helper，无 module 状态依赖），
  * 保持原 [tick]/[dispatch] 日志前缀不变。
- *
- * tick.js 通过 import + re-export 维持既有 caller 兼容（_dispatchViaWorkflowRuntime test）。
  */
 
 import pool from './db.js';
@@ -81,7 +79,9 @@ export function harnessConcurrencyExceeded(runningCount, max = MAX_CONCURRENT_HA
  * @returns {boolean} true=应套用并发 cap 检查
  */
 export function shouldApplyHarnessCap(candidate) {
-  if (!candidate || candidate.task_type !== 'harness_initiative') return false;
+  if (!candidate) return false;
+  if (candidate.task_type !== 'harness_initiative'
+      && candidate.task_type !== 'golden_path_proposal') return false;
   if (candidate.payload?.resume_from_checkpoint === true) return false;
   return true;
 }
@@ -96,6 +96,7 @@ const INITIATIVE_LOCK_TASK_TYPES = [
   'harness_contract_review',
   'harness_fix',
   'harness_initiative',
+  'golden_path_proposal',
 ];
 
 // Retired harness task types — 全部归入 harness_initiative full-graph sub-graph。
@@ -387,20 +388,50 @@ export async function dispatchNextTask(goalIds) {
     // 3b. Pre-flight Check — validate task quality before dispatch
     const checkResult = await preFlightCheck(candidate);
     if (!checkResult.passed) {
-      // Pre-flight failed — record and skip to next candidate
-      console.warn(`[dispatch] Pre-flight check failed for task ${candidate.id} (attempt ${attempt + 1}/${MAX_PRE_FLIGHT_RETRIES + 1}):`, checkResult.issues);
-      await pool.query(
-        `UPDATE tasks SET metadata = COALESCE(metadata, '{}'::jsonb) || $2::jsonb WHERE id = $1`,
-        [candidate.id, JSON.stringify({
-          pre_flight_failed: true,
-          pre_flight_issues: checkResult.issues,
-          pre_flight_suggestions: checkResult.suggestions,
-          failed_at: new Date().toISOString()
-        })]
-      );
+      const currentStrikes = (candidate.metadata?.pre_flight_fail_count ?? 0);
+      const newStrikes = currentStrikes + 1;
+      const PRE_FLIGHT_MAX_STRIKES = 3;
+
+      console.warn(`[dispatch] Pre-flight check failed for task ${candidate.id} (strike ${newStrikes}/${PRE_FLIGHT_MAX_STRIKES}):`, checkResult.issues);
+
+      if (newStrikes >= PRE_FLIGHT_MAX_STRIKES) {
+        // 三振出局：置 blocked，告警一次后因 blocked 不再入候选，自然止血
+        const blockedDetail = {
+          issues: checkResult.issues,
+          suggestions: checkResult.suggestions,
+          strikes: newStrikes,
+        };
+        await pool.query(
+          `UPDATE tasks
+           SET status = 'blocked',
+               blocked_reason = 'pre_flight_rejected',
+               blocked_at = NOW(),
+               blocked_detail = $2::jsonb,
+               metadata = COALESCE(metadata, '{}'::jsonb) || $3::jsonb
+           WHERE id = $1`,
+          [
+            candidate.id,
+            JSON.stringify(blockedDetail),
+            JSON.stringify({ pre_flight_fail_count: newStrikes, pre_flight_issues: checkResult.issues }),
+          ]
+        );
+        await alertOnPreFlightFail(pool, candidate, { ...checkResult, strikes: newStrikes, blocked: true });
+      } else {
+        // 尚未三振：累加计数，继续跳过
+        await pool.query(
+          `UPDATE tasks SET metadata = COALESCE(metadata, '{}'::jsonb) || $2::jsonb WHERE id = $1`,
+          [candidate.id, JSON.stringify({
+            pre_flight_fail_count: newStrikes,
+            pre_flight_failed: true,
+            pre_flight_issues: checkResult.issues,
+            pre_flight_suggestions: checkResult.suggestions,
+            failed_at: new Date().toISOString()
+          })]
+        );
+        await alertOnPreFlightFail(pool, candidate, checkResult);
+      }
+
       await recordDispatchResult(pool, false, 'pre_flight_check_failed');
-      // C4: 通过飞书告警推送 pre-flight cancel，防止任务静默堆积（不抛异常，不影响 dispatch）
-      await alertOnPreFlightFail(pool, candidate, checkResult);
       preFlightFailedIds.push(candidate.id);
       continue;
     }
@@ -439,7 +470,7 @@ export async function dispatchNextTask(goalIds) {
     if (shouldApplyHarnessCap(candidate)) {
       const capRes = await pool.query(
         `SELECT count(*)::int AS n FROM tasks
-           WHERE task_type = 'harness_initiative'
+           WHERE task_type IN ('harness_initiative', 'golden_path_proposal')
              AND status = 'in_progress'
              AND id != $1`,
         [candidate.id]
@@ -567,7 +598,8 @@ export async function dispatchNextTask(goalIds) {
   // 5. Check executor availability and trigger
   // harness_initiative 走 Docker spawn 路径，完全不依赖 cecelia-bridge。
   // 跳过 bridge check，否则 bridge 不在时 harness 会被错误 revert 到 queued。
-  const needsBridgeCheck = nextTask.task_type !== 'harness_initiative';
+  const needsBridgeCheck = nextTask.task_type !== 'harness_initiative'
+    && nextTask.task_type !== 'golden_path_proposal';
 
   // Circuit breaker — 只对依赖 cecelia-bridge 的任务生效（harness_initiative 豁免）
   // 注意：此检查在 atomic claim 和 mark in_progress 之后，
@@ -645,19 +677,6 @@ export async function dispatchNextTask(goalIds) {
     console.warn(`[dispatch] shouldDowngrade check failed: ${err.message}, proceeding with original executor`);
   }
 
-  // dev 任务走 L2 workflow runtime → runWorkflow 接线（fire-and-forget）
-  const v2Result = await _dispatchViaWorkflowRuntime(taskToDispatch);
-  if (v2Result.handled) {
-    // Wave-2 断链修复：派发成功计入当日 actions（fire-and-forget，吞错）
-    incrementActionsToday(1).catch(() => {});
-    return {
-      dispatched: true,
-      task_id: v2Result.task_id,
-      runtime: 'v2',
-      actions: [...actions, ...v2Result.actions],
-    };
-  }
-
   execResult = await triggerCeceliaRun(taskToDispatch);
 
   // 5a. Check if executor actually succeeded — revert to queued if not
@@ -672,8 +691,12 @@ export async function dispatchNextTask(goalIds) {
     );
     // configError 表示系统配置错误（如容器漏装 codex CLI），不属于运行时执行失败，
     // 不应累积 cecelia-run breaker（否则配置漂移会 trip breaker 阻断所有 dispatch）。
+    // spawn_deduplicated 是 DB 级去重命中（良性防重入，跨进程/跨重启防双 spawn），
+    // 不是执行故障，同样不应计入熔断（否则抖动期的正常去重会误停派全系统）。
     if (execResult.configError) {
       console.warn(`[dispatch] configError detected (reason=${execResult.reason}) — skipping cecelia-run breaker count`);
+    } else if (execResult.reason === 'spawn_deduplicated') {
+      console.warn(`[dispatch] spawn_deduplicated detected — skipping cecelia-run breaker count`);
     } else {
       await recordFailure('cecelia-run');
     }
@@ -772,53 +795,3 @@ export async function dispatchNextTask(goalIds) {
   return { dispatched: true, task_id: nextTask.id, run_id: execResult.runId, actions };
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
-
-/**
- * task_type=dev 任务一律走 L2 orchestrator runWorkflow('dev-task')，
- * fire-and-forget 派发。其他 task_type 返回 {handled:false} 让 caller fall through。
- *
- * @param {object} taskToDispatch Brain task row（含 id / task_type / retry_count 等）
- * @returns {Promise<{handled:boolean, runtime?:string, task_id?:string, actions?:Array}>}
- */
-export async function _dispatchViaWorkflowRuntime(taskToDispatch) {
-  if (taskToDispatch?.task_type !== 'dev') return { handled: false };
-
-  const { runWorkflow } = await import('./orchestrator/graph-runtime.js');
-  const attemptN = (taskToDispatch.payload?.attempt_n ?? taskToDispatch.retry_count ?? 0) + 1;
-
-  // fire-and-forget：graph 层 pg checkpointer 负责崩溃 resume；.catch 落 logTickDecision 排障
-  runWorkflow('dev-task', taskToDispatch.id, attemptN, { task: taskToDispatch })
-    .catch((err) => {
-      logTickDecision(
-        'tick',
-        `runWorkflow dev-task failed: ${err.message}`,
-        {
-          action: 'workflow_runtime_error',
-          task_id: taskToDispatch.id,
-          runtime: 'v2',
-          attemptN,
-          error: err.message,
-        },
-        { success: false },
-      );
-    });
-
-  _lastDispatchTime = Date.now();
-  await recordDispatchResult(pool, true, 'workflow_runtime_v2');
-  await emit('task_dispatched', 'tick', {
-    task_id: taskToDispatch.id,
-    title: taskToDispatch.title,
-    runtime: 'v2',
-    success: true,
-  });
-
-  const actions = [{
-    action: 'dispatch_v2_workflow',
-    task_id: taskToDispatch.id,
-    runtime: 'v2',
-    attemptN,
-  }];
-
-  return { handled: true, runtime: 'v2', task_id: taskToDispatch.id, actions };
-}

@@ -151,3 +151,22 @@ describe('枚举漂移回归（judgment point：什么算活跃 OKR）', () => {
     expect(result).toEqual({ created: false, reason: 'active_goals_present' });
   });
 });
+
+// ─── line_ledger 上下文注入（Task 9）────────────────────────────────────────
+describe('maybeTriggerStrategySession — payload 携带 line_context', () => {
+  it('active_goals=0 时建任务，payload.line_context 来自 line_ledger digest', async () => {
+    const pool = {
+      query: vi.fn(async (sql) => {
+        if (/FROM objectives/.test(sql)) return { rows: [{ cnt: '0' }] };
+        if (/task_type = 'strategy_session'/.test(sql)) return { rows: [] };
+        if (/FROM design_docs/.test(sql)) return { rows: [{ title: 'Line A — 24h 账本', content: '摘要A' }] };
+        if (/INSERT INTO tasks/.test(sql)) return { rows: [{ id: 'task-1' }] };
+        return { rows: [] };
+      }),
+    };
+    await maybeTriggerStrategySession(pool);
+    const insertCall = pool.query.mock.calls.find((c) => /INSERT INTO tasks/.test(c[0]));
+    const payload = JSON.parse(insertCall[1][2]);
+    expect(payload.line_context).toContain('Line A — 24h 账本');
+  });
+});

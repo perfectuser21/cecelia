@@ -6,12 +6,12 @@
 
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 let pool;
-let recordLearning, applyStrategyAdjustments, getRecentLearnings, shouldTriggerLearning, createLearningTask, ADJUSTABLE_PARAMS, upsertLearning;
+let recordLearning, applyStrategyAdjustments, getRecentLearnings, shouldTriggerLearning, createLearningTask, ADJUSTABLE_PARAMS, upsertLearning, NOISE_LEARNING_CATEGORIES, isNoiseLearningCategory;
 
 beforeAll(async () => {
   vi.resetModules();
   pool = (await import('../db.js')).default;
-  ({ recordLearning, applyStrategyAdjustments, getRecentLearnings, shouldTriggerLearning, createLearningTask, ADJUSTABLE_PARAMS, upsertLearning } = await import('../learning.js'));
+  ({ recordLearning, applyStrategyAdjustments, getRecentLearnings, shouldTriggerLearning, createLearningTask, ADJUSTABLE_PARAMS, upsertLearning, NOISE_LEARNING_CATEGORIES, isNoiseLearningCategory } = await import('../learning.js'));
 });
 
 describe('Learning Loop', () => {
@@ -40,6 +40,8 @@ describe('Learning Loop', () => {
     // Clean up test data (use file-specific prefix to avoid parallel test conflicts)
     await pool.query("DELETE FROM learnings WHERE title LIKE 'lu-test:%' OR title LIKE 'RCA Learning:%'");
     await pool.query("DELETE FROM tasks WHERE title LIKE 'Learning -%'");
+    await pool.query("DELETE FROM tasks WHERE title LIKE '[Insight修复] RCA Learning: lu-test%'");
+    await pool.query("DELETE FROM tasks WHERE title LIKE 'lu-test src task%'");
     await pool.query("DELETE FROM brain_config WHERE key LIKE 'test.%'");
     await pool.query("DELETE FROM brain_config WHERE key = 'alertness.emergency_threshold'");
   });
@@ -48,6 +50,8 @@ describe('Learning Loop', () => {
     // Clean up test data
     await pool.query("DELETE FROM learnings WHERE title LIKE 'lu-test:%' OR title LIKE 'RCA Learning:%'");
     await pool.query("DELETE FROM tasks WHERE title LIKE 'Learning -%'");
+    await pool.query("DELETE FROM tasks WHERE title LIKE '[Insight修复] RCA Learning: lu-test%'");
+    await pool.query("DELETE FROM tasks WHERE title LIKE 'lu-test src task%'");
     await pool.query("DELETE FROM brain_config WHERE key LIKE 'test.%'");
   });
 
@@ -80,6 +84,52 @@ describe('Learning Loop', () => {
       const parsedContent = JSON.parse(learning.content);
       expect(parsedContent.root_cause).toBe('High concurrent task load causing resource exhaustion');
       expect(parsedContent.learnings).toEqual(['Resource limits should be more conservative']);
+    });
+
+    it('should export noise category blacklist and helper', () => {
+      expect(NOISE_LEARNING_CATEGORIES).toContain('task_completion');
+      expect(isNoiseLearningCategory('task_completion')).toBe(true);
+      expect(isNoiseLearningCategory('failure_pattern')).toBe(false);
+    });
+
+    it('should NOT create [Insight修复] task when confidence < 0.7', async () => {
+      // learnings.task_id 是 uuid 列且有 FK 到 tasks，先造一条真实触发任务
+      const srcTask = await pool.query(
+        `INSERT INTO tasks (title, task_type, priority, status) VALUES ('lu-test src task A', 'dev', 'P2', 'completed') RETURNING id`
+      );
+      const analysis = {
+        task_id: srcTask.rows[0].id,
+        analysis: { root_cause: 'lu-test: low confidence root cause unique-A', contributing_factors: [] },
+        recommended_actions: [],
+        learnings: ['lu-test learning A'],
+        confidence: 0.5,
+      };
+      const learning = await recordLearning(analysis);
+      expect(learning).toBeDefined();
+      const tasks = await pool.query(
+        `SELECT id FROM tasks WHERE payload->>'insight_learning_id' = $1`,
+        [learning.id]
+      );
+      expect(tasks.rows).toHaveLength(0);
+    });
+
+    it('should create [Insight修复] task when confidence >= 0.7', async () => {
+      const srcTask = await pool.query(
+        `INSERT INTO tasks (title, task_type, priority, status) VALUES ('lu-test src task B', 'dev', 'P2', 'completed') RETURNING id`
+      );
+      const analysis = {
+        task_id: srcTask.rows[0].id,
+        analysis: { root_cause: 'lu-test: high confidence root cause unique-B', contributing_factors: [] },
+        recommended_actions: [],
+        learnings: ['lu-test learning B'],
+        confidence: 0.8,
+      };
+      const learning = await recordLearning(analysis);
+      const tasks = await pool.query(
+        `SELECT id FROM tasks WHERE payload->>'insight_learning_id' = $1`,
+        [learning.id]
+      );
+      expect(tasks.rows).toHaveLength(1);
     });
   });
 

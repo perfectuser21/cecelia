@@ -1,6 +1,8 @@
 name: Preview Cleanup
 
-# PR merge 或 close → 清理对应的预览环境（停止进程 + 释放端口）
+# PR merge or close: 清理对应的完整预览环境
+# 调 Brain API /preview/stop/:pr -> 触发 preview-env-stop.sh（异步）
+# stop 脚本执行：kill Brain 进程 + DROP DATABASE + 删除 git worktree + 释放端口
 
 on:
   pull_request:
@@ -19,52 +21,50 @@ jobs:
       - name: Checkout 代码
         uses: actions/checkout@v4
 
-      # 与 preview-deploy 同款兜底（2026-07-06）：HK_VPS secrets 未配置时 deploy 本来就没
-      # 部署任何东西（跳过 SSH），cleanup 再去 SSH 必失败——21 连红即此因。secrets 配齐前
-      # 干净跳过；预览体系真启用/删除待拍板（Brain issue 39452ad0）。
-      - name: 检查 SSH secrets 是否配置
-        id: check_secrets
+      - name: 检查 Tailscale secret 是否配置
+        id: check_ts
         run: |
-          if [ -n "$SECRET_HOST" ]; then
+          if [ -n "$SECRET_TS" ]; then
             echo "configured=true" >> $GITHUB_OUTPUT
           else
             echo "configured=false" >> $GITHUB_OUTPUT
-            echo "⚠️ HK_VPS_HOST secret 未配置，跳过清理（与 preview-deploy 的跳过行为对齐）"
+            echo "TS_AUTHKEY 未配置，跳过清理"
           fi
         env:
-          SECRET_HOST: ${{ secrets.HK_VPS_HOST }}
+          SECRET_TS: ${{ secrets.TS_AUTHKEY }}
 
-      - name: 计算预览端口
-        if: steps.check_secrets.outputs.configured == 'true'
-        id: port
-        run: |
-          PORT=$(bash scripts/preview-deploy.sh --print-port "${{ github.head_ref }}")
-          echo "port=$PORT" >> $GITHUB_OUTPUT
-          echo "清理端口: $PORT (branch: ${{ github.head_ref }})"
-
-      - name: SSH 清理 hk-vps 预览进程
-        if: steps.check_secrets.outputs.configured == 'true'
-        uses: appleboy/ssh-action@v1.0.0
+      - name: Connect to Tailscale
+        if: steps.check_ts.outputs.configured == 'true'
+        uses: tailscale/github-action@v2
         with:
-          host: ${{ secrets.HK_VPS_HOST }}
-          username: ${{ secrets.HK_VPS_USER }}
-          key: ${{ secrets.HK_VPS_SSH_KEY }}
-          port: ${{ secrets.HK_VPS_PORT || 22 }}
-          command_timeout: 60s
-          script: |
-            bash ~/scripts/preview-cleanup.sh ${{ steps.port.outputs.port }} "${{ github.head_ref }}"
+          authkey: ${{ secrets.TS_AUTHKEY }}
+
+      - name: 调 Brain API 停止预览环境
+        if: steps.check_ts.outputs.configured == 'true'
+        env:
+          BRAIN_URL: ${{ secrets.BRAIN_DEPLOY_URL || 'http://100.71.151.105:5221' }}
+          DEPLOY_TOKEN: ${{ secrets.DEPLOY_TOKEN }}
+          PR_NUMBER: ${{ github.event.number }}
+        run: |
+          set -uo pipefail
+          echo "调用 Brain API /preview/stop/${PR_NUMBER}..."
+          RESP=$(curl -sf --connect-timeout 15 --max-time 30 \
+            -X POST "${BRAIN_URL}/api/brain/preview/stop/${PR_NUMBER}" \
+            -H "Content-Type: application/json" \
+            -H "Authorization: Bearer ${DEPLOY_TOKEN}" \
+            2>/dev/null || echo '{"stopped":false,"error":"请求失败"}')
+          echo "Brain 响应: $RESP"
 
       - name: PR 评论写入清理结果
-        if: always() && steps.check_secrets.outputs.configured == 'true'
+        if: always() && steps.check_ts.outputs.configured == 'true'
         uses: actions/github-script@v7
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
             const branch = '${{ github.head_ref }}';
-            const port = '${{ steps.port.outputs.port }}';
             await github.rest.issues.createComment({
               owner: context.repo.owner,
               repo: context.repo.repo,
               issue_number: context.issue.number,
-              body: `## 🧹 预览环境已清理\n\n**Branch**: \`${branch}\`\n**Port**: ${port} 已释放`,
+              body: `## 🧹 预览环境已清理\n\n**Branch**: \`${branch}\`\n\n预览 Brain 已停止，预览数据库已删除，端口已释放。`,
             });

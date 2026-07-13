@@ -52,6 +52,22 @@ export GIT_CONFIG_GLOBAL="$WRITABLE_GIT_CONFIG"
 # 不再用 `|| true` 静默失败——现在 gitconfig 可写，这条必须真正成功
 git config --global --add safe.directory '*'
 
+# 3.2 Brain API 回环转发（issue 219a9efc 零落库根修·通治层）
+# 众多 SKILL.md（line-strategist / ci-patrol / db-update…）硬编码 localhost:5221，
+# bridge 容器内 localhost 是容器自己 → 所有写库 curl 静默失败、skill 照常 exit 0。
+# 此处把容器内 127.0.0.1:5221 转发到宿主（--add-host host.docker.internal:host-gateway
+# 由 docker-executor 注入）。host.docker.internal 不可解析时跳过（非 Brain 派发场景）。
+# 转发目标端口跟随 BRAIN_URL（staging 5222 / 预览 brain 派发时不得把硬编码流量倒进生产 5221）。
+if getent hosts host.docker.internal >/dev/null 2>&1; then
+  BRAIN_TARGET_PORT=5221
+  if [[ -n "${BRAIN_URL:-}" ]]; then
+    _brain_port="${BRAIN_URL##*:}"
+    [[ "$_brain_port" =~ ^[0-9]+$ ]] && BRAIN_TARGET_PORT="$_brain_port"
+  fi
+  socat TCP-LISTEN:5221,bind=127.0.0.1,fork,reuseaddr TCP:host.docker.internal:${BRAIN_TARGET_PORT} &
+  echo "[entrypoint] loopback forward 127.0.0.1:5221 -> host.docker.internal:${BRAIN_TARGET_PORT} (pid $!)"
+fi
+
 # 3.5 v6 P1-D：容器内 git remote 自动重写
 # 宿主以 worktree 形式把 /workspace 挂进来时，origin URL 是宿主绝对路径
 # (/Users/...)，容器里 git fetch / push 直接挂 "does not appear to be a git repo"。
@@ -211,8 +227,13 @@ for _retry in 1 2 3 4 5; do
     break
   fi
   if [[ $_retry -lt 5 ]]; then
-    _sleep=$(( (_retry - 1) * 3 + 3 ))
-    echo "[entrypoint] harness callback attempt ${_retry}/5 失败，${_sleep}s 后重试..."
+    case $_retry in
+      1) _sleep=3 ;;
+      2) _sleep=6 ;;
+      3) _sleep=12 ;;
+      *) _sleep=24 ;;
+    esac
+    echo "[entrypoint] harness callback attempt ${_retry}/5 失败，${_sleep}s 后重试（指数退避）..."
     sleep "$_sleep"
   fi
 done

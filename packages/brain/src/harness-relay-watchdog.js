@@ -12,6 +12,9 @@
  */
 import pool from './db.js';
 import { execSync } from 'node:child_process';
+import { HEADED_HOSTS, HEADED_TMUX_PREFIXES } from './harness-skill-relay.js';
+
+const HEADED_HOST_VALUES = Object.values(HEADED_HOSTS); // ['skill-relay-codex-headed','skill-relay-claude-headed']
 
 export const MAX_RELAY_ATTEMPTS = 5;
 // B6: codex 路径上限更低（外部 codex API 更贵，不允许无限重试）
@@ -50,13 +53,94 @@ export function _discoverPrFromGithub(task, short, execFn) {
 }
 
 /**
+ * 查 initiative_run_events 是否存在 evaluator 已完成的心跳记录——
+ * "PR 已 MERGED" 不等于"harness 验收流程走完了"，这是唯一能区分两者的机器信号。
+ */
+export async function _hasEvaluatorGate(dbPool, initiativeId) {
+  const { rows } = await dbPool.query(
+    `SELECT 1 FROM initiative_run_events WHERE initiative_id=$1 AND node='evaluator' AND status='done' LIMIT 1`,
+    [initiativeId]
+  );
+  return rows.length > 0;
+}
+
+/**
+ * PR 在 evaluator 从未执行时被合并（大概率人工看 CI 绿手动 merge）——开 P1 Issue + Bark。
+ * best-effort：写入失败只 warn，绝不让告警失败拖垮 watchdog 主循环。
+ */
+export async function _raiseUngatedMergeAlert(dbPool, initiativeId, prUrl) {
+  try {
+    await dbPool.query(
+      `INSERT INTO issues (title, priority, status, sub_area, body, journey_id)
+       VALUES ($1, 'P1', 'In progress', 'brain', $2, NULL)`,
+      [
+        `[harness] initiative ${initiativeId} 的 PR 在 evaluator 未执行时被合并`,
+        `PR ${prUrl} 已 MERGED，但 initiative_run_events 里从未出现 node='evaluator' AND status='done' 的记录——` +
+          `这次合并绕过了 harness 的 evaluator+judge 验收流程（很可能是人工看 CI 绿之后手动合并）。` +
+          `relay-watchdog 已把该 run 标 done 但打上 failure_reason='merged_without_evaluator_gate'，` +
+          `不会触发 promoteRegressionOnHarnessMerged。请人工复核这份改动是否需要补验收。`,
+      ]
+    );
+  } catch (err) {
+    console.warn(`[relay-watchdog] 未验收合并 issue 写入失败 (non-fatal): ${err.message}`);
+  }
+  try {
+    const { sendBark } = await import('./notifier.js');
+    await sendBark(
+      '⚠️ Harness PR 未经 evaluator 验收被合并',
+      `initiative=${initiativeId}\nPR=${prUrl}\n请立即核查这份改动是否符合合同验收标准。`
+    );
+  } catch (err) {
+    console.warn(`[relay-watchdog] 未验收合并 Bark 发送失败 (non-fatal): ${err.message}`);
+  }
+}
+
+/**
+ * PR 已确认 MERGED 时的统一收口：门禁通过 → 原行为（标 done/completed + 触发 regression 提升）；
+ * 门禁未通过 → 仍标 done/completed（PR 客观已合并无法撤销）但打 failure_reason，跳过 regression
+ * 提升，并发未验收合并告警。opts.setPrUrl=true 用于 GitHub 反查分支（run 行本无 pr_url，顺手回写）。
+ */
+export async function _finalizeMergedRun(dbPool, initiativeId, prUrl, out, opts = {}) {
+  const { setPrUrl = false } = opts;
+  const gated = await _hasEvaluatorGate(dbPool, initiativeId);
+
+  const runSql = gated
+    ? `UPDATE initiative_runs SET phase='done', completed_at=NOW()${setPrUrl ? ', pr_url=$2' : ''}
+        WHERE initiative_id=$1 AND orchestrator_version='v2' AND phase NOT IN ('done','failed')`
+    : `UPDATE initiative_runs SET phase='done', completed_at=NOW(), failure_reason='merged_without_evaluator_gate'${setPrUrl ? ', pr_url=$2' : ''}
+        WHERE initiative_id=$1 AND orchestrator_version='v2' AND phase NOT IN ('done','failed')`;
+  await dbPool.query(runSql, setPrUrl ? [initiativeId, prUrl] : [initiativeId]);
+
+  const taskSql = setPrUrl
+    ? `UPDATE tasks SET status='completed', completed_at=NOW(), pr_url=$2 WHERE id=$1 AND status='in_progress'`
+    : `UPDATE tasks SET status='completed', completed_at=NOW() WHERE id=$1 AND status='in_progress'`;
+  await dbPool.query(taskSql, setPrUrl ? [initiativeId, prUrl] : [initiativeId]);
+
+  out.mergedPr++;
+
+  if (gated) {
+    try {
+      const { promoteRegressionOnHarnessMerged } = await import('./lib/callback-postprocess.js');
+      await promoteRegressionOnHarnessMerged(initiativeId, null, prUrl, dbPool);
+    } catch (promoteErr) {
+      console.warn(`[relay-watchdog] promoteRegressionOnHarnessMerged 失败 (non-fatal): ${promoteErr.message}`);
+    }
+    console.log(`[relay-watchdog] PR 已 MERGED（evaluator 已验收）→ 标 completed initiative=${initiativeId} pr=${prUrl}`);
+  } else {
+    out.mergedWithoutGate++;
+    await _raiseUngatedMergeAlert(dbPool, initiativeId, prUrl);
+    console.warn(`[relay-watchdog] PR 已 MERGED 但 evaluator 未执行 → 标 done+未验收告警 initiative=${initiativeId} pr=${prUrl}`);
+  }
+}
+
+/**
  * @param {{pool?: object, execFn?: (cmd:string)=>string, spawnFn?: Function}} deps
  * @returns {Promise<{scanned:number, resumed:number, capped:number, housekept:number}>}
  */
 export async function resumeStalledRelayRuns(deps = {}) {
   const dbPool = deps.pool || pool;
   const execFn = deps.execFn || ((cmd) => execSync(cmd, { encoding: 'utf8', timeout: 10000 }));
-  const out = { scanned: 0, resumed: 0, capped: 0, housekept: 0, mergedPr: 0 };
+  const out = { scanned: 0, resumed: 0, capped: 0, housekept: 0, mergedPr: 0, mergedWithoutGate: 0 };
 
   // 每个 initiative 取最新一行 + 点火次数（每次 spawn INSERT 一行 = attempts 天然计数）
   // 已知缺口（Notion Issue 1ea53e09-b088-4d2a-b03a-ad8c976bbc6c）：这个计数只统计
@@ -64,7 +148,7 @@ export async function resumeStalledRelayRuns(deps = {}) {
   // 从未写入 initiative_runs）不计数，可能导致 attempts 长期低估、MAX_RELAY_ATTEMPTS
   // 封顶判断失效，从而无限重跑不收敛。暂未修，先记录跟踪。
   const runsQ = await dbPool.query(
-    `SELECT DISTINCT ON (initiative_id) initiative_id, phase, deadline_at, pr_url, orchestrator_host, completed_at, tmux_killed_at, (SELECT COUNT(*) FROM initiative_runs r2 WHERE r2.initiative_id = r.initiative_id AND r2.orchestrator_version = 'v2') AS attempts FROM initiative_runs r WHERE orchestrator_version = 'v2' AND (phase NOT IN ('done', 'failed') OR (orchestrator_host = 'skill-relay-codex-headed' AND phase = 'done' AND tmux_killed_at IS NULL)) ORDER BY initiative_id, started_at DESC LIMIT 20`
+    `SELECT DISTINCT ON (initiative_id) initiative_id, phase, deadline_at, pr_url, orchestrator_host, completed_at, tmux_killed_at, (SELECT COUNT(*) FROM initiative_runs r2 WHERE r2.initiative_id = r.initiative_id AND r2.orchestrator_version = 'v2') AS attempts FROM initiative_runs r WHERE orchestrator_version = 'v2' AND (phase NOT IN ('done', 'failed') OR (orchestrator_host IN ('skill-relay-codex-headed','skill-relay-claude-headed') AND phase = 'done' AND tmux_killed_at IS NULL)) ORDER BY initiative_id, started_at DESC LIMIT 20`
   );
   // 护栏:注入的 pool 对未知 SQL 返回 undefined 时(集成测试 fake),按空处理
   const runs = runsQ && Array.isArray(runsQ.rows) ? runsQ.rows : [];
@@ -112,7 +196,7 @@ export async function resumeStalledRelayRuns(deps = {}) {
       const short = shortId(task.id);
 
       // ─── headed 分支：ssh+tmux 存活检测 + 收窗幂等 ────────────────────────
-      if (run.orchestrator_host === 'skill-relay-codex-headed') {
+      if (HEADED_HOST_VALUES.includes(run.orchestrator_host)) {
         const { needsRefire } = await _handleHeadedRun(run, task, { dbPool, execFn, short });
         if (needsRefire) {
           // session 消失 → 重点火（走 spawnFn，即 headed 路径）
@@ -149,18 +233,7 @@ export async function resumeStalledRelayRuns(deps = {}) {
           const ghOut = execFn(`gh pr view "${effectivePrUrl}" --json state`);
           const prState = JSON.parse(ghOut).state;
           if (prState === 'MERGED') {
-            await dbPool.query(
-              `UPDATE initiative_runs SET phase='done', completed_at=NOW()
-                WHERE initiative_id=$1 AND orchestrator_version='v2' AND phase NOT IN ('done','failed')`,
-              [run.initiative_id]
-            );
-            await dbPool.query(
-              `UPDATE tasks SET status='completed', completed_at=NOW()
-                WHERE id=$1 AND status='in_progress'`,
-              [run.initiative_id]
-            );
-            out.mergedPr++;
-            console.log(`[relay-watchdog] PR 已 MERGED → 标 completed initiative=${run.initiative_id} pr=${effectivePrUrl}`);
+            await _finalizeMergedRun(dbPool, run.initiative_id, effectivePrUrl, out);
             continue;
           }
           if (prState === 'OPEN') {
@@ -188,18 +261,7 @@ export async function resumeStalledRelayRuns(deps = {}) {
           continue;
         }
         if (discovered && discovered.state === 'MERGED') {
-          await dbPool.query(
-            `UPDATE initiative_runs SET phase='done', completed_at=NOW(), pr_url=$2
-              WHERE initiative_id=$1 AND orchestrator_version='v2' AND phase NOT IN ('done','failed')`,
-            [run.initiative_id, discovered.url]
-          );
-          await dbPool.query(
-            `UPDATE tasks SET status='completed', completed_at=NOW(), pr_url=$2
-              WHERE id=$1 AND status='in_progress'`,
-            [run.initiative_id, discovered.url]
-          );
-          out.mergedPr++;
-          console.log(`[relay-watchdog] GitHub 发现已 MERGED PR → 标 completed initiative=${run.initiative_id} pr=${discovered.url}`);
+          await _finalizeMergedRun(dbPool, run.initiative_id, discovered.url, out, { setPrUrl: true });
           continue;
         }
         if (discovered && discovered.state === 'OPEN') {
@@ -260,7 +322,6 @@ export async function resumeStalledRelayRuns(deps = {}) {
 
 // ─── headed 辅助：tmux 存活检测 + 收窗幂等 ───────────────────────────────────
 
-const HEADED_TMUX_SESSION_PREFIX = 'codex-relay-';
 // run done 后多久触发收窗（毫秒）
 const HEADED_KILL_AFTER_MS = 30 * 60 * 1000; // 30 分钟
 
@@ -277,7 +338,9 @@ const HEADED_KILL_AFTER_MS = 30 * 60 * 1000; // 30 分钟
  *    - session 存在 → 正常，不重点火
  */
 async function _handleHeadedRun(run, task, { dbPool, execFn, short }) {
-  const tmuxSession = `${HEADED_TMUX_SESSION_PREFIX}${short}`;
+  const prefix = run.orchestrator_host === HEADED_HOSTS.claude
+    ? HEADED_TMUX_PREFIXES.claude : HEADED_TMUX_PREFIXES.codex;
+  const tmuxSession = `${prefix}${short}`;
   const sshHost = task.payload?.ssh_host || process.env.HEADED_SSH_HOST || 'localhost';
 
   // 收窗逻辑：run done
@@ -306,8 +369,11 @@ async function _handleHeadedRun(run, task, { dbPool, execFn, short }) {
     return { needsRefire: false };
   }
 
-  // 存活检测：A_planning 阶段 → ssh tmux has-session（fail-open on ssh 连接错误）
-  if (run.phase === 'A_planning') {
+  // 存活检测：非终态活跃阶段（planning/gan/generate 等）→ ssh tmux has-session（fail-open on ssh 连接错误）
+  // 原写死 'A_planning' 是旧 LangGraph 图 phase 命名，relay 真实 phase 是 planning/gan/generate →
+  // 判据永不命中=死代码，中途死的 headed session 永远不被重点火。done 已在上方处理、failed 被上游
+  // query 过滤，此处剩的都是活跃 phase，故按非终态判定。
+  if (run.phase !== 'done' && run.phase !== 'failed') {
     try {
       execFn(`ssh ${sshHost} "tmux has-session -t ${tmuxSession}"`);
       // exit 0 → session 存在，正常
@@ -337,9 +403,11 @@ async function _handleHeadedRun(run, task, { dbPool, execFn, short }) {
 // ─── end headed ──────────────────────────────────────────────────────────────
 
 /**
- * B8 — 8h 逾期 scanStuckHarness 收尸（orchestrator_host='skill-relay-codex'）。
- * 扫描 deadline_at < NOW() 且 orchestrator_host='skill-relay-codex' 的 initiative_runs，
+ * B8 — 8h 逾期 scanStuckHarness 收尸（所有 skill-relay* host）。
+ * 扫描 deadline_at < NOW() 且 orchestrator_host LIKE 'skill-relay%' 的 initiative_runs，
  * 标 phase='failed', failure_reason='relay_deadline_exceeded' 并更新关联 task status='failed'。
+ * 原写死 'skill-relay-codex' → claude-headed/skill-relay-session 等 host 逾期永不收尸，
+ * 占死并发槽堵队列（claude-headed-smoke 逾期18h 实证）。
  */
 export async function scanStuckHarness(opts = {}) {
   const dbPool = opts.pool || pool;
@@ -347,7 +415,7 @@ export async function scanStuckHarness(opts = {}) {
   const overdueQ = await dbPool.query(
     `SELECT id, initiative_id, orchestrator_host, phase, deadline_at
        FROM initiative_runs
-      WHERE orchestrator_host = 'skill-relay-codex'
+      WHERE orchestrator_host LIKE 'skill-relay%'
         AND deadline_at < NOW()
         AND phase NOT IN ('done', 'failed')
         AND completed_at IS NULL

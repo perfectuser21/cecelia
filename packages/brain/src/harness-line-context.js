@@ -4,21 +4,25 @@
  * 把本 line 的 invariant 铁律 + 累积 FR（已验收行为）从"skill 里 curl 靠自觉"
  * 升级为 graph 节点代码注入（技术保证），供 proposer/generator/evaluator 三角色使用：
  *   - fetchLineContext：三源 invariant（step/journey_feature/area，按 decision id 去重）
- *     + 累积 FR（journey 下 ability_status IN ('done','working') 的 golden_path，按 owner_task_id 分组）。
+ *     + 累积 FR（journey 下 ability_status IN ('done','working') 的 golden_path，按 owner_task_id 分组；
+ *       读 key=golden_path.feature_id 直连，07-10 T2 对齐；不再绕 tasks.ability_id）
+ *     + 最新 line_ledger 蒸馏摘要（design_docs，T3 接线）。
  *     SQL 与 routes/abilities.js 对应端点同源（直接 pool 查询不走 HTTP）；
- *     任何一路失败 → 该路空数组 + warn，绝不 throw（角色注入是增强不是门禁）。
+ *     任何一路失败 → 该路降级（空数组/null）+ warn，绝不 throw（角色注入是增强不是门禁）。
  *   - formatLineContextForPrompt：行格式与 harness-planner v8.12.0 Step 0.4 逐字同构（E1 解析契约，不可变）。
  * Spec: docs/superpowers/specs/2026-07-02-a1-context-manifest-design.md
  */
 
 const MAX_INVARIANT_LEN = 200;   // 单条铁律文字截断
 const MAX_FR_LINE_LEN = 120;     // 累积 FR 单行截断
-const MAX_FR_ABILITIES = 20;     // 累积 FR 最多列 20 个 ability，超出加注
-const PROMPT_MAX_LEN = 4000;     // 总长兜底截断
+const MAX_FR_ABILITIES = 50;     // 累积 FR 最多列 50 个 ability，超出加注（T3 扩容）
+const PROMPT_MAX_LEN = 12000;    // 总长兜底截断（T3 扩容 4000→12000）
+const MAX_LEDGER_LEN = 4000;     // line_ledger 摘要段内容截断
 
 // E1 解析契约段头（与 spec 逐字一致，不可变）
 export const INVARIANT_SECTION_HEADER = '## Invariant 约束（铁律，本角色产出不得违反）';
 export const CUMULATIVE_FR_SECTION_HEADER = '## 累积 FR（本 line 已验收行为，不得回退/重复实现）';
+export const LINE_LEDGER_SECTION_HEADER = '## Line 账本（昨日蒸馏摘要）';
 
 function clamp(s, max) {
   const str = String(s ?? '');
@@ -28,7 +32,7 @@ function clamp(s, max) {
 /**
  * 拉取本 line 上下文。三源 invariant + 累积 FR，全部 best-effort：
  * 参数缺省跳过对应路；单路失败仅 warn 降级为空数组，绝不 throw。
- * @returns {Promise<{ invariants: object[], cumulativeFR: object[] }>}
+ * @returns {Promise<{ invariants: object[], cumulativeFR: object[], ledger: { content: string, created_at: string|Date }|null }>}
  */
 export async function fetchLineContext({ pool }, { taskId = null, abilityId = null, journeyId = null } = {}) {
   const safeQuery = async (label, sql, params) => {
@@ -82,8 +86,7 @@ export async function fetchLineContext({ pool }, { taskId = null, abilityId = nu
       SELECT jf.id AS ability_id, jf.name AS ability_name, jf.status AS ability_status,
              gp.owner_task_id, gp.id, gp.order_no, gp.feature_id, gp.note
       FROM golden_path gp
-      JOIN tasks t ON gp.owner_task_id = t.id
-      JOIN journey_features jf ON t.ability_id = jf.id
+      JOIN journey_features jf ON gp.feature_id = jf.id
       WHERE jf.journey_id = $1 AND jf.status IN ('done','working')
       ORDER BY gp.owner_task_id, gp.order_no ASC`, [journeyId]);
     const groups = new Map();
@@ -104,7 +107,19 @@ export async function fetchLineContext({ pool }, { taskId = null, abilityId = nu
     cumulativeFR = [...groups.values()];
   }
 
-  return { invariants, cumulativeFR };
+  // line_ledger 蒸馏摘要（T3 接线）：dreaming L1 每晚落 design_docs(type='line_ledger')，取最新一条
+  let ledger = null;
+  if (journeyId) {
+    const ledgerRows = await safeQuery('line ledger', `
+      SELECT content, created_at FROM design_docs
+      WHERE type='line_ledger' AND journey_id=$1
+      ORDER BY created_at DESC LIMIT 1`, [journeyId]);
+    if (ledgerRows[0]?.content) {
+      ledger = { content: ledgerRows[0].content, created_at: ledgerRows[0].created_at };
+    }
+  }
+
+  return { invariants, cumulativeFR, ledger };
 }
 
 /**
@@ -180,6 +195,11 @@ export function formatLineContextForPrompt(ctx) {
     });
     if (fr.length > MAX_FR_ABILITIES) lines.push(`（另有 ${fr.length - MAX_FR_ABILITIES} 个 ability 略）`);
     sections.push([CUMULATIVE_FR_SECTION_HEADER, ...lines].join('\n'));
+  }
+
+  // ledger 排最后：总长 clamp（PROMPT_MAX_LEN）时优先牺牲本段，保 E1 契约两段
+  if (ctx?.ledger?.content) {
+    sections.push([LINE_LEDGER_SECTION_HEADER, clamp(ctx.ledger.content, MAX_LEDGER_LEN)].join('\n'));
   }
 
   if (!sections.length) return '';
