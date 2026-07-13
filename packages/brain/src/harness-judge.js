@@ -358,7 +358,7 @@ export async function runMechanicalGate(ctx, deps = {}) {
 
   // 环境判定（log_tail 兜底口径 + 报告用）：查不到/异常 → 缺省 local_api（最宽口径，不误杀）。
   let env = 'local_api';
-  if (dbPool && dbPool.query) {
+  if (dbPool && dbPool.query && ctx.taskId) {
     try {
       const { rows } = await dbPool.query(
         `SELECT payload->>'target_environment' AS target_environment FROM tasks WHERE id = $1`,
@@ -408,7 +408,10 @@ export async function runMechanicalGate(ctx, deps = {}) {
   // ③ judgments_written 对账
   const declared = brainResult ? brainResult.judgments_written : undefined;
   if (declared !== undefined && declared !== null) {
-    if (dbPool && dbPool.query) {
+    // 非数字声明（如 "若干"）不得静默放行：NaN 视为 FAIL（无法对账即视作虚报）。
+    if (Number.isNaN(Number(declared))) {
+      reasons.push(`judgments_written 声明非数字（${JSON.stringify(declared)}），无法对账`);
+    } else if (dbPool && dbPool.query) {
       try {
         const { rows } = await dbPool.query(
           `SELECT COUNT(*)::int AS count FROM decisions WHERE category = 'judgment' AND source_ref = $1`,

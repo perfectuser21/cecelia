@@ -60,6 +60,12 @@ describe('runMechanicalGate（刀B：DeepSeek 前纯代码闸）', () => {
     expect(r.pass).toBe(false);
     expect(r.reasons.join()).toMatch(/judgments/);
   });
+  it('judgments_written 非数字声明（如 "abc"）→ FAIL 不静默放行', async () => {
+    const ctx = goodCtx(); ctx.brainResult.judgments_written = 'abc';
+    const r = await runMechanicalGate(ctx, makeDeps({ judgmentRows: 0 }));
+    expect(r.pass).toBe(false);
+    expect(r.reasons.join()).toMatch(/judgments/);
+  });
   it('无 judgments_written 声明 → 跳过不 FAIL', async () => {
     const ctx = goodCtx(); delete ctx.brainResult.judgments_written;
     const r = await runMechanicalGate(ctx, makeDeps({ judgmentRows: 0 }));
