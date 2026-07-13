@@ -1893,7 +1893,7 @@ router.post('/judge', async (req, res) => {
       promptDir: prompt_dir,
       transcript,
       instanceLabel: `judge-api-${String(task_id).slice(0, 8)}`,
-    });
+    }, { dbPool: pool });
     return res.json(result);
   } catch (err) {
     console.error('[POST /harness/judge]', err.message);
