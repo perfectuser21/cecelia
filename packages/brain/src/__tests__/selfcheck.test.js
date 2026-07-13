@@ -184,8 +184,10 @@ describe('selfcheck', () => {
   // 推进地板到 335 防止未跑该迁移的旧 DB 上圈选建任务被 CHECK 拒。
   // 340（idx_tasks_dedup_lookup 部分索引，供派发前标题判重查询使用）为 P1 6fc3bfe8 刀1底座，
   // 推进地板到 340。
-  it('EXPECTED_SCHEMA_VERSION should be 340 (floor, bumped for preview/strategist migrations)', () => {
-    expect(EXPECTED_SCHEMA_VERSION).toBe('340');
+  // 341（zenithjoy 裸表归位 schema，P0 事故修复版：删除 ALTER DATABASE 全局副作用）
+  // 推进地板到 341。
+  it('EXPECTED_SCHEMA_VERSION should be 341 (floor, bumped for zenithjoy schema migration)', () => {
+    expect(EXPECTED_SCHEMA_VERSION).toBe('341');
   });
 
   it('should pass when DB schema version is ahead of expected (>= check)', async () => {
