@@ -6,6 +6,25 @@ import { getTotalEffectiveSlots } from '../fleet-resource-cache.js';
 
 const router = express.Router();
 
+// 上海时区 MMDDHHNN（sprint_dir 生成用）
+function stampMMDDHHNN(now) {
+  const fmt = new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'Asia/Shanghai',
+    month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false,
+  });
+  const parts = Object.fromEntries(fmt.formatToParts(now).map((p) => [p.type, p.value]));
+  return `${parts.month}${parts.day}${parts.hour}${parts.minute}`;
+}
+
+// title → slug（sprint_dir 拼接用，非字母数字转短横线，压缩连续短横线）
+function slugify(title) {
+  return String(title)
+    .toLowerCase()
+    .replace(/[^a-z0-9一-龥]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 40) || 'gp';
+}
+
 export const GP_STATUSES = ['candidate', 'proposed', 'converged', 'approved', 'in_dev',
   'delivered', 'expired', 'rejected', 'blocked_gate', 'superseded'];
 export const GP_SOURCES = ['strategist', 'alex_direct', 'capture_triage'];
@@ -228,11 +247,14 @@ router.post('/golden-paths/:id/approve', async (req, res) => {
     // 冻结 proposal_doc（如果已有则保持，否则标记已批准时间点）
     const frozenDoc = gp.proposal_doc || null;
 
-    // 注册 harness 实现任务（golden_path_proposal 已在 task-router 注册）
+    // 注册 harness 实现任务：必须是 task_type=harness_initiative 才会被
+    // controllerSkillFor（harness-skill-relay.js）路由到 harness-controller 真正写代码。
+    // 用 golden_path_proposal 会被误路由回 golden-path-controller（只产提案文档，issue bfaac776）。
     const harnessTitle = `[GP harness] ${gp.title}`;
+    const sprintDir = `sprints/${stampMMDDHHNN(new Date())}-${slugify(gp.title)}`;
     const { rows: harnessRows } = await pool.query(
       `INSERT INTO tasks (title, description, task_type, status, priority, payload)
-       VALUES ($1, $2, 'golden_path_proposal', 'queued', 'P1', $3::jsonb)
+       VALUES ($1, $2, 'harness_initiative', 'queued', 'P1', $3::jsonb)
        RETURNING id`,
       [
         harnessTitle,
@@ -245,6 +267,12 @@ router.post('/golden-paths/:id/approve', async (req, res) => {
           judgment_decision_id: judgmentId,
           phase: 'implement',
           orchestrator: 'skill-relay',
+          sprint_dir: sprintDir,
+          thin_prd: gp.one_liner,
+          prep_prd_body: frozenDoc,
+          journey_id: gp.journey_id,
+          base_repo: 'https://github.com/perfectuser21/cecelia.git',
+          target_environment: 'local_api',
         }),
       ]
     );
