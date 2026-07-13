@@ -282,10 +282,11 @@ describe('deriveReviewRequired(P2-1:新功能人审/非新功能 auto merge)', (
     const prompt = deps.spawnFn.mock.calls[0][0].prompt;
     expect(prompt).toMatch(/REVIEW_REQUIRED=true/);
   });
+});
 
-  it('payload 无 sprint_dir 时 spawn 持久化生成的 sprint_dir（issue 45dd6925 重派漂移）', async () => {
-    const { spawnSkillRelaySession } = await import('../harness-skill-relay.js');
-    const deps = {
+describe('spawnSkillRelaySession — sprint_dir 持久化 (issue 45dd6925)', () => {
+  function makeSprintDirDeps(overrides = {}) {
+    return {
       pool: { query: vi.fn().mockResolvedValue({ rows: [] }) },
       spawnFn: vi.fn().mockResolvedValue({}),
       loadSkill: vi.fn().mockReturnValue('SKILL'),
@@ -293,31 +294,59 @@ describe('deriveReviewRequired(P2-1:新功能人审/非新功能 auto merge)', (
       resolveAccountFn: vi.fn().mockResolvedValue(undefined),
       tokenFn: vi.fn().mockResolvedValue('t'),
       now: () => new Date('2026-07-05T12:00:00Z'),
+      ...overrides,
     };
+  }
+  const findSprintDirUpdate = (deps) =>
+    deps.pool.query.mock.calls.find(([sql]) => /UPDATE tasks/.test(sql) && /sprint_dir/.test(sql));
+
+  it('payload 无 sprint_dir 时 spawn 持久化生成的 sprint_dir（重派漂移回归）', async () => {
+    const deps = makeSprintDirDeps();
     const task = { id: 'aaaabbbb-cccc-dddd-eeee-ffff00002222', title: 'feat: 无 sprint_dir 任务', payload: { orchestrator: 'skill-relay' } };
     const r = await spawnSkillRelaySession(task, deps);
     expect(r.ok).toBe(true);
-    const upd = deps.pool.query.mock.calls.find(([sql]) => /UPDATE tasks/.test(sql) && /sprint_dir/.test(sql));
+    const upd = findSprintDirUpdate(deps);
     expect(upd, '必须 UPDATE tasks payload.sprint_dir').toBeTruthy();
     expect(upd[1]).toContain(task.id);
     expect(String(upd[1][1])).toMatch(/^sprints\//);
   });
 
   it('payload 已有 sprint_dir 时不回写（不覆盖 /dev 交接值）', async () => {
-    const { spawnSkillRelaySession } = await import('../harness-skill-relay.js');
-    const deps = {
-      pool: { query: vi.fn().mockResolvedValue({ rows: [] }) },
-      spawnFn: vi.fn().mockResolvedValue({}),
-      loadSkill: vi.fn().mockReturnValue('SKILL'),
-      ensureWt: vi.fn().mockResolvedValue('/tmp/wt'),
-      resolveAccountFn: vi.fn().mockResolvedValue(undefined),
-      tokenFn: vi.fn().mockResolvedValue('t'),
-      now: () => new Date('2026-07-05T12:00:00Z'),
-    };
+    const deps = makeSprintDirDeps();
     const task = { id: 'aaaabbbb-cccc-dddd-eeee-ffff00003333', title: 'feat: 带 sprint_dir', payload: { orchestrator: 'skill-relay', sprint_dir: 'sprints/x' } };
     await spawnSkillRelaySession(task, deps);
-    const upd = deps.pool.query.mock.calls.find(([sql]) => /UPDATE tasks/.test(sql) && /sprint_dir/.test(sql));
-    expect(upd).toBeFalsy();
+    expect(findSprintDirUpdate(deps)).toBeFalsy();
+  });
+
+  it('headed 路径同样回写缺省 sprint_dir（雷11守卫放行后）', async () => {
+    const deps = makeSprintDirDeps({
+      // 雷11 tmux 探活：返回 TMUX_DEAD 放行 spawn；sshSpawnFn 注入避免真 ssh
+      execFn: vi.fn().mockReturnValue('TMUX_DEAD'),
+      sshSpawnFn: vi.fn().mockResolvedValue({}),
+    });
+    const task = { id: 'aaaabbbb-cccc-dddd-eeee-ffff00004444', title: 'feat: headed 无 sprint_dir', payload: { orchestrator: 'skill-relay', mode: 'headed' } };
+    const r = await spawnSkillRelaySession(task, deps);
+    expect(r.ok).toBe(true);
+    const upd = findSprintDirUpdate(deps);
+    expect(upd, 'headed 路径也必须 UPDATE tasks payload.sprint_dir').toBeTruthy();
+    expect(upd[1]).toContain(task.id);
+    const dir = String(upd[1][1]);
+    expect(dir).toMatch(/^sprints\//);
+    // 清理 tui.log 留痕真实创建的本地目录（相对测试 cwd）
+    const { rmSync } = await import('node:fs');
+    try { rmSync(dir, { recursive: true, force: true }); } catch { /* 忽略 */ }
+  });
+
+  it('headed 路径命中雷11守卫（TMUX_ALIVE）early-return 时不产生 sprint_dir 回写', async () => {
+    const deps = makeSprintDirDeps({
+      execFn: vi.fn().mockReturnValue('TMUX_ALIVE'),
+      sshSpawnFn: vi.fn().mockResolvedValue({}),
+    });
+    const task = { id: 'aaaabbbb-cccc-dddd-eeee-ffff00005555', title: 'feat: headed 撞名', payload: { orchestrator: 'skill-relay', mode: 'headed' } };
+    const r = await spawnSkillRelaySession(task, deps);
+    expect(r.ok).toBe(false);
+    expect(r.deferred).toBe(true);
+    expect(findSprintDirUpdate(deps)).toBeFalsy();
   });
 });
 

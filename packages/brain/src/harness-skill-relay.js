@@ -204,7 +204,7 @@ export async function spawnSkillRelaySession(task, deps = {}) {
           [task.id, sprintDir]
         );
       } catch (err) {
-        console.warn(`[skill-relay] sprint_dir 持久化失败（不阻塞）: ${err.message}`);
+        console.warn(`[skill-relay] sprint_dir 持久化失败（不阻塞，task=${task.id}）: ${err.message}`);
       }
     }
 
@@ -362,20 +362,6 @@ async function _spawnHeadedSession(task, { dbPool, now, short, initiativeId, dep
 
   const sprintDir = task.payload?.sprint_dir
     || `sprints/${stampMMDDHHNN(now())}-relay-${short}`;
-
-  // issue 45dd6925：缺省生成的 sprint_dir 必须回写 payload，否则重派换新目录（断点恢复产物路径漂移）
-  if (!task.payload?.sprint_dir) {
-    try {
-      await dbPool.query(
-        `UPDATE tasks SET payload = COALESCE(payload, '{}'::jsonb) || jsonb_build_object('sprint_dir', $2::text)
-          WHERE id = $1`,
-        [task.id, sprintDir]
-      );
-    } catch (err) {
-      console.warn(`[skill-relay] sprint_dir 持久化失败（不阻塞）: ${err.message}`);
-    }
-  }
-
   // 容器内 'localhost' = 容器自己（R2 8e2bbaef 实证 Connection refused）——对齐
   // spawn/host-executor.js 先例：/.dockerenv 存在时用宿主别名，ssh 加 BatchMode 三件套。
   const inDocker = (deps.inDockerFn || (() => { try { return existsSync('/.dockerenv'); } catch { return false; } }))();
@@ -422,6 +408,20 @@ async function _spawnHeadedSession(task, { dbPool, now, short, initiativeId, dep
     console.warn(`[skill-relay][headed][GUARD] tmux 存活检查失败（保守放行 spawn）: ${err.message}`);
   }
   // ─── end 雷11 ────────────────────────────────────────────────────────────────
+
+  // issue 45dd6925：缺省生成的 sprint_dir 必须回写 payload，否则重派换新目录（断点恢复产物路径漂移）。
+  // 放在雷11去重守卫之后：命中守卫 early-return 时不产生 DB 副作用。
+  if (!task.payload?.sprint_dir) {
+    try {
+      await dbPool.query(
+        `UPDATE tasks SET payload = COALESCE(payload, '{}'::jsonb) || jsonb_build_object('sprint_dir', $2::text)
+          WHERE id = $1`,
+        [task.id, sprintDir]
+      );
+    } catch (err) {
+      console.warn(`[skill-relay][headed] sprint_dir 持久化失败（不阻塞，task=${task.id}）: ${err.message}`);
+    }
+  }
 
   const loadSkill = deps.loadSkill
     || (await import('./harness-shared.js')).loadSkillContent;
