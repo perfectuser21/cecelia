@@ -1,8 +1,8 @@
 import express, { Router } from 'express';
 import pool from '../db.js';
-import { readFileSync, writeFileSync, openSync, writeSync, closeSync } from 'fs';
+import { recordActionReceipt, resolveActionReceipt } from '../receipt-collector.js';
+import { readFileSync, writeFileSync, openSync, writeSync, closeSync, mkdirSync } from 'fs';
 import { join as pathJoin } from 'node:path';
-import { tmpdir } from 'node:os';
 import { callLLM, callLLMStream } from '../llm-caller.js';
 import { handleChat } from '../orchestrator-chat.js';
 import { check48hReport } from '../tick.js';
@@ -2760,8 +2760,14 @@ router.post('/deploy', async (req, res) => {
     const { execSync } = await import('child_process');
     const repoRoot = process.env.REPO_ROOT || new URL('../../../..', import.meta.url).pathname;
     const startTime = Date.now();
+    let stagingReceiptId = null;
 
     try {
+      stagingReceiptId = await recordActionReceipt({
+        kind: 'deploy',
+        target: 'staging',
+        evidence: { changed_paths: changed_paths || [] },
+      });
       const stagingScript = `${repoRoot}/scripts/staging-deploy.sh`;
       const { existsSync } = await import('fs');
       let cmd;
@@ -2801,11 +2807,13 @@ router.post('/deploy', async (req, res) => {
         stagingDeployState.finished_at = new Date().toISOString();
         stagingDeployState.elapsed_ms = elapsed;
         stagingDeployState.skip_reason = skipReason;
+        await resolveActionReceipt(stagingReceiptId, 'confirmed', { elapsed_ms: elapsed, skip_reason: skipReason });
         console.log(`[staging-deploy] ⚠️ Staging 部署已跳过 (${skipReason}): production 部署不受阻断 (${(elapsed / 1000).toFixed(1)}s)`);
       } else {
         stagingDeployState.status = 'success';
         stagingDeployState.finished_at = new Date().toISOString();
         stagingDeployState.elapsed_ms = elapsed;
+        await resolveActionReceipt(stagingReceiptId, 'confirmed', { elapsed_ms: elapsed });
         console.log(`[staging-deploy] ✅ Staging 部署成功 (${(elapsed / 1000).toFixed(1)}s)`);
       }
     } catch (err) {
@@ -2814,6 +2822,7 @@ router.post('/deploy', async (req, res) => {
       stagingDeployState.finished_at = new Date().toISOString();
       stagingDeployState.elapsed_ms = elapsed;
       stagingDeployState.error = err.message;
+      await resolveActionReceipt(stagingReceiptId, 'failed', { elapsed_ms: elapsed, error: err.message });
       console.error(`[staging-deploy] ❌ Staging 部署失败（真实错误，非环境未配置）(${(elapsed / 1000).toFixed(1)}s):`, err.message);
     }
     return;
@@ -2854,11 +2863,12 @@ router.post('/deploy', async (req, res) => {
   }
   args.push('main');
 
-  // v1.1.0 (2026-05-05): 把 deploy-local.sh stdout/stderr 写到日志文件，
-  // 旧版 stdio:'ignore' 会丢掉 npm ci EUSAGE 等关键 error，运维只能看到
-  // "deploy-local.sh exited code=1" 没法调试。
+  // 部署日志写到宿主机挂载目录（repoRoot/logs/），容器死亡后日志不丢失。
+  // 历史：原先写 /tmp/（容器 tmpfs），brain 容器自杀后日志随容器消失，失败根因不可考。
   const logTimestamp = new Date().toISOString().replace(/[:.]/g, '-');
-  const logFile = pathJoin(tmpdir(), `cecelia-deploy-${logTimestamp}.log`);
+  const logsDir = pathJoin(repoRoot, 'logs');
+  try { mkdirSync(logsDir, { recursive: true }); } catch { /* 目录已存在 */ }
+  const logFile = pathJoin(logsDir, `cecelia-deploy-${logTimestamp}.log`);
   let logFd;
   try {
     logFd = openSync(logFile, 'a');
@@ -2871,6 +2881,12 @@ router.post('/deploy', async (req, res) => {
   }
   deployState.log_path = logFile;
   writeDeployStatusFile({ ...deployState });
+
+  const receiptId = await recordActionReceipt({
+    kind: 'deploy',
+    target: 'production',
+    evidence: { changed_paths: changed_paths || [], log_path: logFile },
+  });
 
   console.log(`[deploy-webhook] 开始部署（detached）: bash ${scriptDir}`);
   console.log(`[deploy-webhook] log: ${logFile}`);
@@ -2899,12 +2915,17 @@ router.post('/deploy', async (req, res) => {
       deployState.status = 'success';
       deployState.elapsed_ms = elapsed;
       deployState.finished_at = new Date().toISOString();
+      // close 回调是同步函数，不 await；Brain 若在 close 前重启 → 无人核销 → collector 30min 后标 timeout
+      resolveActionReceipt(receiptId, 'confirmed', { exit_code: code, elapsed_ms: elapsed })
+        .catch((e) => console.warn('[deploy-webhook] 回执核销失败:', e.message));
       console.log(`[deploy-webhook] ✅ 部署成功 (${(elapsed / 1000).toFixed(1)}s)`);
     } else {
       deployState.status = 'failed';
       deployState.error = `deploy-local.sh exited code=${code} signal=${signal}`;
       deployState.elapsed_ms = elapsed;
       deployState.finished_at = new Date().toISOString();
+      resolveActionReceipt(receiptId, 'failed', { exit_code: code, signal, elapsed_ms: elapsed })
+        .catch((e) => console.warn('[deploy-webhook] 回执核销失败:', e.message));
       console.error(`[deploy-webhook] ❌ 部署失败 code=${code} (${(elapsed / 1000).toFixed(1)}s)，log: ${logFile}`);
     }
     writeDeployStatusFile({ ...deployState });

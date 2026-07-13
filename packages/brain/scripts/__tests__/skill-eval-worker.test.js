@@ -1,9 +1,12 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 const { mockPool } = vi.hoisted(() => ({ mockPool: { query: vi.fn() } }));
 vi.mock('../../src/db.js', () => ({ default: mockPool }));
 
-import { sanitizeJsonString, extractReportJson, claimPendingTask } from '../skill-eval-worker.js';
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
+import { sanitizeJsonString, extractReportJson, claimPendingTask, downloadZipToTemp } from '../skill-eval-worker.js';
 
 describe('sanitizeJsonString — 清理字符串值内部未转义的双引号', () => {
   it('把夹在普通字符中间的英文双引号删掉，使原本非法的 JSON 变得可解析', () => {
@@ -111,5 +114,46 @@ describe('claimPendingTask — 原子取任务，消除并发竞态', () => {
       expect(sql).toMatch(/FOR UPDATE SKIP LOCKED/);
       expect(sql).toMatch(/RETURNING task_id::text, staging_path/);
     }
+  });
+});
+
+describe('downloadZipToTemp — worker 改走 HTTP 拉取 zip（不直接读容器文件系统）', () => {
+  const createdFiles = [];
+
+  beforeEach(() => {
+    vi.stubGlobal('fetch', vi.fn());
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    for (const f of createdFiles.splice(0)) {
+      fs.rmSync(f, { force: true });
+    }
+  });
+
+  it('对 BRAIN_BASE_URL 的 /api/skill-eval/staging/:task_id 发起 GET，带 X-Eval-Proxy-Token，把响应体写入本地临时文件并返回路径', async () => {
+    const fakeBytes = Buffer.from('fake zip content');
+    fetch.mockResolvedValueOnce({
+      ok: true,
+      arrayBuffer: async () => fakeBytes.buffer.slice(fakeBytes.byteOffset, fakeBytes.byteOffset + fakeBytes.byteLength),
+    });
+
+    const localPath = await downloadZipToTemp('task-abc');
+    createdFiles.push(localPath);
+
+    expect(fetch).toHaveBeenCalledTimes(1);
+    const [url, opts] = fetch.mock.calls[0];
+    expect(url).toMatch(/\/api\/skill-eval\/staging\/task-abc$/);
+    expect(opts.headers['X-Eval-Proxy-Token']).toBeDefined();
+
+    expect(fs.existsSync(localPath)).toBe(true);
+    expect(fs.readFileSync(localPath).toString()).toBe('fake zip content');
+    expect(path.extname(localPath)).toBe('.zip');
+  });
+
+  it('HTTP 非 2xx → 抛出带状态码的可读错误', async () => {
+    fetch.mockResolvedValueOnce({ ok: false, status: 404 });
+
+    await expect(downloadZipToTemp('task-missing')).rejects.toThrow(/404/);
   });
 });

@@ -111,18 +111,20 @@ describe('migration 271 — learnings.task_id 代码层强绑定', () => {
   });
 
   describe('createAutoLearning (任务回调路径)', () => {
-    it('metadata.task_id 是 UUID → 提升到 task_id 列', async () => {
+    // T9 起 completed 路径停写（事件层噪音），metadata.task_id 提升逻辑由 failed 路径承载验证
+    it('metadata.task_id 是 UUID → 提升到 task_id 列（failed 路径）', async () => {
       const autoLearning = await import('../src/auto-learning.js');
       const taskId = '22222222-2222-2222-2222-222222222222';
 
-      await autoLearning.handleTaskCompletedLearning(
-        taskId, 'dev', 'completed',
-        { exit_code: 0, summary: 'ok' },
+      await autoLearning.handleTaskFailedLearning(
+        taskId, 'dev', 'failed',
+        { exit_code: 1, error: 'boom' },
+        1,
         { trigger_source: 'unit_test' }
       );
 
       const insertCall = pool.calls.find(c => /INSERT INTO learnings/i.test(c.sql));
-      expect(insertCall, 'handleTaskCompletedLearning 应该调用 INSERT INTO learnings').toBeTruthy();
+      expect(insertCall, 'handleTaskFailedLearning 应该调用 INSERT INTO learnings').toBeTruthy();
       expect(insertCall.sql).toMatch(/task_id/);
       expect(insertCall.params).toContain(taskId);
     });
@@ -130,9 +132,10 @@ describe('migration 271 — learnings.task_id 代码层强绑定', () => {
     it('metadata.task_id 不是合法 UUID → task_id 列写 null（防 cast error）', async () => {
       const autoLearning = await import('../src/auto-learning.js');
 
-      await autoLearning.handleTaskCompletedLearning(
-        'not-a-uuid', 'dev', 'completed',
-        { exit_code: 0, summary: 'ok' },
+      await autoLearning.handleTaskFailedLearning(
+        'not-a-uuid', 'dev', 'failed',
+        { exit_code: 1, error: 'boom' },
+        1,
         {}
       );
 
@@ -140,6 +143,20 @@ describe('migration 271 — learnings.task_id 代码层强绑定', () => {
       expect(insertCall).toBeTruthy();
       // task_id 参数应该是 null
       expect(insertCall.params).toContain(null);
+    });
+
+    it('handleTaskCompletedLearning 已停写（T9）→ 返回 null 且不 INSERT', async () => {
+      const autoLearning = await import('../src/auto-learning.js');
+
+      const result = await autoLearning.handleTaskCompletedLearning(
+        '22222222-2222-2222-2222-222222222222', 'dev', 'completed',
+        { exit_code: 0, summary: 'ok' },
+        { trigger_source: 'unit_test' }
+      );
+
+      expect(result).toBeNull();
+      const insertCall = pool.calls.find(c => /INSERT INTO learnings/i.test(c.sql));
+      expect(insertCall).toBeUndefined();
     });
   });
 });

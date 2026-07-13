@@ -5,9 +5,8 @@
  * 多 workstream（WS）拆分——一个 Sprint 只 spawn 一个 Generator、只出一个 PR。
  * 这条铁律没有单一"常量"可断言，机制守卫散在三处源码契约，本脚本机械断言它们不倒退：
  *
- *  1. harness-task.graph.js 的 generator spawn env【活代码】不得注入
- *     WORKSTREAM_INDEX / WORKSTREAM_COUNT（v7.0+ 已移除，只允许留在注释里）——
- *     这两个 env 是旧多 WS 拆分机制的接线点，复活 = 一个 Sprint 拆多个并行 generator。
+ *  1. harness-task.graph.js（旧 WORKSTREAM_INDEX/COUNT 接线点所在文件）已在刀4阶段3
+ *     物理删除——本条断言改为「文件不得复活」，比"活代码无注入"更强（连死代码宿主都不许存在）。
  *  2. harness-skill-relay.js（SDD 单 session 编排）不得出现 WORKSTREAM 机制，
  *     且 spawnDockerDetached 调用点恰好 1 处——一个 relay 任务 = 单 session 单 Sprint，
  *     不循环 spawn 多容器。
@@ -38,16 +37,12 @@ function activeLines(src) {
 
 console.log('== CORE-INV-04 1 Sprint = 1 Generator = 1 PR（多 WS 拆分防倒退）==');
 
-// 1) harness-task.graph.js：generator env 不得复活 WORKSTREAM_INDEX/COUNT 注入
+// 1) harness-task.graph.js：文件本身已被物理删除，不得复活（比"活代码无注入"更强的不变量）
 const taskGraphPath = path.join(ROOT, 'packages/brain/src/workflows/harness-task.graph.js');
-const taskGraph = fs.readFileSync(taskGraphPath, 'utf8');
-const wsInjection = activeLines(taskGraph).filter((l) =>
-  /WORKSTREAM_(?:INDEX|COUNT)\s*:/.test(l)
-);
 check(
-  'harness-task.graph.js 活代码无 WORKSTREAM_INDEX/COUNT env 注入（多 WS 接线点未复活）',
-  wsInjection.length === 0,
-  `复活行: ${JSON.stringify(wsInjection.map((l) => l.trim()))}`
+  'harness-task.graph.js 保持已删除状态（WORKSTREAM_INDEX/COUNT 接线点连宿主文件都不存在）',
+  !fs.existsSync(taskGraphPath),
+  `文件复活: ${taskGraphPath}`
 );
 
 // 2) harness-skill-relay.js：单 session 单 Sprint，无 WS 机制、单一 spawn 调用点

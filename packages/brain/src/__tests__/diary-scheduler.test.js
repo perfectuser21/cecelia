@@ -1,5 +1,5 @@
-import { describe, it, expect } from 'vitest';
-import { shouldGenerateDiary, buildDiaryContent } from '../diary-scheduler.js';
+import { describe, it, expect, vi } from 'vitest';
+import { shouldGenerateDiary, buildDiaryContent, fetchLineLedgersSummary } from '../diary-scheduler.js';
 
 describe('diary-scheduler', () => {
   describe('shouldGenerateDiary()', () => {
@@ -74,6 +74,35 @@ describe('diary-scheduler', () => {
     it('krProgress 为空时显示暂无活跃 KR', () => {
       const content = buildDiaryContent({ ...baseStats, krProgress: [] });
       expect(content).toContain('暂无活跃 KR');
+    });
+  });
+
+  describe('fetchLineLedgersSummary — 拉 20h 内所有 line_ledger', () => {
+    it('SQL 含 line_ledger/20 hours', async () => {
+      const pool = { query: vi.fn().mockResolvedValue({ rows: [{ title: 'Line A — 24h 账本', content: '# ...' }] }) };
+      const result = await fetchLineLedgersSummary(pool);
+      expect(result).toEqual([{ title: 'Line A — 24h 账本', content: '# ...' }]);
+      const [sql] = pool.query.mock.calls[0];
+      expect(sql).toMatch(/line_ledger/);
+      expect(sql).toMatch(/20 hours/);
+    });
+  });
+
+  describe('buildDiaryContent — 各线动态段落', () => {
+    it('lineLedgers 为空 → "暂无各线动态"', () => {
+      const content = buildDiaryContent({
+        today: '2026-07-10', prs: 0, decisions: 0, completedTasks: 0, krProgress: [], failedTasks: 0, lineLedgers: [],
+      });
+      expect(content).toContain('## 各线动态');
+      expect(content).toContain('暂无各线动态');
+    });
+
+    it('lineLedgers 有数据 → 渲染 title', () => {
+      const content = buildDiaryContent({
+        today: '2026-07-10', prs: 0, decisions: 0, completedTasks: 0, krProgress: [], failedTasks: 0,
+        lineLedgers: [{ title: 'Line A — 24h 账本', content: '摘要内容' }],
+      });
+      expect(content).toContain('Line A — 24h 账本');
     });
   });
 });

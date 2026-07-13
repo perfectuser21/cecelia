@@ -57,7 +57,7 @@ if [ -z "$VER" ] || [ "$UP" = "-1" ]; then
 fi
 
 if [ "$VER" != "$EXPECTED" ]; then
-  echo "VERSION_MISMATCH：预期 $EXPECTED，实跑 $VER（部署未生效 / 跑旧代码）"
+  echo "VERSION_MISMATCH：预期 ${EXPECTED}，实跑 ${VER}（部署未生效 / 跑旧代码）"
   exit 2
 fi
 

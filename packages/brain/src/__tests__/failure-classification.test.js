@@ -102,9 +102,9 @@ describe('Failure Classification', () => {
       expect(result.class).toBe(FAILURE_CLASS.NETWORK);
     });
 
-    it('classifies 502 as NETWORK', () => {
+    it('classifies 502 as SERVER_ERROR（协议卫生包拆自 NETWORK）', () => {
       const result = classifyFailure('502 Bad Gateway');
-      expect(result.class).toBe(FAILURE_CLASS.NETWORK);
+      expect(result.class).toBe(FAILURE_CLASS.SERVER_ERROR);
     });
   });
 

@@ -13,6 +13,13 @@ if [[ -n "${VITEST:-}" ]] || [[ -n "${JEST_WORKER_ID:-}" ]]; then
     exit 0
 fi
 
+# zenithjoy-skills 是纯 skill SSOT 仓库，改 skill 走 skill-creator→PR，不走 /dev
+# （decision: pre-commit hook 对 zenithjoy-skills 仓库例外放行）
+ORIGIN_URL=$(git remote get-url origin 2>/dev/null || echo "")
+if [[ "$ORIGIN_URL" =~ /zenithjoy-skills(\.git)?/?$ ]]; then
+    exit 0
+fi
+
 CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
 # Fallback for repos without initial commit (HEAD is unborn)
 if [[ -z "$CURRENT_BRANCH" || "$CURRENT_BRANCH" == "HEAD" ]]; then

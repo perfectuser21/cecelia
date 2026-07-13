@@ -6,10 +6,11 @@ description: |
   而非"防作弊测试框架"。
   核心职责：(1) spec 对齐用户真需求 (2) criteria 可量化无歧义 (3) happy + error + 边界场景全覆盖
   GAN 对抗**多轮**直到双方达成共识。无硬轮数上限，但 Reviewer 真找不出实质 spec/产品漏洞时必须 APPROVED。
-version: 9.3.0
+version: 9.4.0
 created: 2026-04-08
-updated: 2026-07-07
+updated: 2026-07-10
 changelog:
+  - 9.4.0: 判定点写库通电（九要素 T5 — decisions e035dad8）— Step 5 APPROVED 后新增第 2 件事：逐行解析合同「判定点登记表」写入 decisions category=judgment（账本保鲜守卫「判定点活性」指标唯一数据源）；解析跳过表头/分隔线/示例行/N-A；失败只 WARN 不阻塞结果文件
   - 9.3.0: 八要素 checklist 审查 + 判定点登记表打回规则（decisions 27b57469/e035dad8）— Golden Path 覆盖审查新增第 11/12/13 条：(11) 合同 ## 八要素需求规范 段缺失 → 第 1 维扣分（proposer 9.6.0 起必含此段）；(12) 涉及真机/RPA/外部状态推断任务缺判定点登记表 → 打回；(13) 失败语义和效果确认要素留空/N/A 而任务明显有对外动作 → 第 5/6 维扣分；输入对抗面：对外暴露 agent 任务缺此项 → 打回
   - 9.2.0: 补「接缝断言」打回信号（修真环境逐个炸根因）— Golden Path 覆盖审查段新增两条强制打回信号：(9)「接缝只用 mock 断言 → 打回」：涉及真机 UIA/生产 env/真实调用方的 [BEHAVIOR]，若 DoD 只用 mock/CI 断言、无真目标验证项 → 第 1 维/第 6 维扣分/打回，要求补接缝断言或显式标 logic-done-pending；(10)「写死环境假设值无真验 → 打回」：引入屏幕坐标/UIA 阈值/假设调用方传值/假设 env 有值等环境假设且无真机校准/真验证项 → 打回，要求从环境推导或真机校准。第 6 维 verification_oracle_completeness 领域验证核对清单同步新增「真机 RPA/生产 env 集成」一行。**未改任何维度名**——7 个维度名（dod_machineability/scope_match_prd/test_is_red/internal_consistency/risk_registered/verification_oracle_completeness/ci_workflow_alignment）是与 Brain ReviewerOutputSchema 的接口约定，一个都没动，只在维度描述/审查项里加内容
   - 9.1.0: 链路审计修复 3 项 — (a) Golden Path 覆盖审查检测信号补「只检查文件存在/大小而无内容验证 → 第 1 维直接 0 分」+「逐项核对 proposer 作弊反例清单」；(b) 强化 N/A 规则表述：windows_wechat 第 7 维必须实审 e2e-wechat-rpa.yml 不可填 10，N/A 只适用非 windows_cloud/windows_wechat/linux_server；(c) 第 6 维 verification_oracle_completeness 审查项加入领域验证规则核对（视频 ffprobe / 发布真实出现 / DB 时间窗 / UI 可见断言）+ [BEHAVIOR] ≥ 4 数量检查明确归此维。注意：7 个维度名是与 Brain ReviewerOutputSchema 的接口约定，一个都没改
@@ -317,9 +318,11 @@ REVISION 时 feedback 必须含具体修改方向。
 
 ---
 
-### Step 5: APPROVED → 写 Brain DB（planned 条目）
+### Step 5: APPROVED → 写 Brain DB（planned 条目 + 判定点 judgment）
 
-**仅在 verdict = APPROVED 时执行**。把合同里定义的 API endpoints + DB tables 写入本地 Brain DB，status=planned，供 Report 阶段对比实际完成情况。
+**仅在 verdict = APPROVED 时执行**。做两件事：
+1. 把合同里定义的 API endpoints + DB tables 写入本地 Brain DB，status=planned，供 Report 阶段对比实际完成情况。
+2. 逐行解析合同「判定点登记表」，写入 `decisions category=judgment`（九要素 T5 — decisions e035dad8；账本保鲜守卫「判定点活性」指标的唯一数据源，30 天 0 新增 = 学习回路断电告警）。
 
 ```javascript
 // 读 SPRINT_DIR 从 env 注入（与 Step 1 一致）
@@ -376,6 +379,36 @@ async function writePlanned() {
       console.log('✅ db_schema_registry planned:', table);
     } catch(e) { console.warn('WARN db_schema_registry:', e.message); }
   }
+
+  // 判定点登记表 → decisions category=judgment（九要素 T5 — decisions e035dad8）
+  // 解析规则：取「### 判定点登记表」到下一个 ### 之间的表格行；跳过表头/分隔线/示例行/占位行/N-A 行
+  const jpSection = (contract.split(/###\s*判定点登记表[^\n]*\n/)[1] || '').split(/\n###\s/)[0];
+  const jpRows = [...jpSection.matchAll(/^\|([^|\n]+)\|([^|\n]+)\|([^|\n]+)\|([^|\n]+)\|([^|\n]+)\|\s*$/gm)]
+    .map(m => m.slice(1, 6).map(s => s.trim()))
+    .filter(([jp, , chosen]) => jp && chosen
+      && jp !== '判定点'
+      && !/^[-—:\s]+$/.test(jp)
+      && !jp.startsWith('（示例')
+      && jp !== '...'
+      && !/^N\/?A$/i.test(jp));
+  for (const [jp, candidates, chosen, basis, consequence] of jpRows) {
+    try {
+      await fetch(`${BRAIN}/api/brain/strategic-decisions`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          category: 'judgment',   // ⚠️ 必须是 category=judgment，禁止改成 type（type 被 Brain API 忽略）
+          topic: `判定点: ${jp.replace(/^⚠️\s*/, '')}`,
+          decision: `所选方法: ${chosen}｜候选: ${candidates}`,
+          reason: `依据: ${basis}｜误判后果: ${consequence}｜task_id=${SPRINT_ID}`,
+          author: 'harness-contract-reviewer',
+          made_by: 'cecelia'   // ⚠️ decisions_made_by_check 只允许 user|cecelia|system，'ai' 会被 DB 拒
+        })
+      });
+      console.log('✅ judgment 写入:', jp);
+    } catch(e) { console.warn('WARN judgment:', e.message); }
+  }
+  console.log('判定点写入完成：', jpRows.length, '条 judgment');
 }
 
 writePlanned().then(() => console.log('Step 5 完成：', apis.length, 'API +', tables.length, 'tables 写入 planned'));
@@ -384,6 +417,8 @@ writePlanned().then(() => console.log('Step 5 完成：', apis.length, 'API +', 
 **注意**：
 - 写入失败只 WARN，不阻塞结果文件（Brain 的 APPROVED 判定以 `/workspace/.brain-result.json` 为准）
 - Report 阶段（harness-sprint-state）会把 planned → done 状态更新 + 推 Notion
+- 判定点写入是幂等宽松的（同名重复写只是多一条记录，不炸）；合同无登记表或全 N/A → 0 条，正常
+- ⚠️ 判定点被 Alex/用户纠正（❌ 打回换方法）时，纠正后的方法走 Invariant Gate 升铁律（e035dad8 第④条），不在本 Step 处理
 
 ---
 

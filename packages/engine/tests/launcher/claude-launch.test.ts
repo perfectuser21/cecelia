@@ -215,6 +215,58 @@ describe('Phase 7.7 claude-launch.sh 自动 worktree — 真实建立与清理',
     expect(out.trim()).toBe(expectedWt);
     expect(existsSync(join(expectedWt, 'uncommitted.txt'))).toBe(true);
   });
+
+  it('孤儿 worktree（目录残留但注册已被摘除）→ 自愈重建，旧内容备份不丢失', () => {
+    // 注意：不能用纯 `pwd; exit 0`——干净退出会被脚本自身的"干净退出清理"逻辑
+    // 在第一次 execSync 返回前就把 worktree 删掉（脚本第 181-199 行既有行为），
+    // 导致孤儿场景根本无法搭建出来。留一个未提交文件让 worktree 保持"脏"，
+    // 复用本文件里"worktree 内有未提交改动"用例的同一手法。
+    writeMockClaude(`#!/usr/bin/env bash\necho dirty > seed-dirty.txt\npwd\nexit 0\n`);
+    const sid = 'orphan001-1111-2222-3333-444444444444';
+    const env: Record<string, string> = {
+      ...process.env,
+      PATH: `${mockDir}:${process.env.PATH}`,
+      CLAUDE_SESSION_ID: sid,
+      WORKTREE_BASE: worktreeBase,
+      CLAUDE_PROJECTS_ROOT: projectsRoot,
+    };
+    delete env.CLAUDE_CODE_EXECPATH;
+    delete env.CECELIA_NO_AUTO_WORKTREE;
+
+    // 第一次启动：正常建立 worktree
+    execSync(`bash "${LAUNCHER}"`, { cwd: mainRepo, env });
+    const expectedWt = join(worktreeBase, 'main', `session-${sid.slice(0, 8)}`);
+    expect(existsSync(expectedWt)).toBe(true);
+    writeFileSync(join(expectedWt, 'precious.txt'), 'do-not-lose-me');
+
+    // 模拟孤儿：手动摘除主仓侧的 worktree 元数据登记，但保留目录内容
+    // （git worktree remove 会连目录一起删；这里只删 .git/worktrees/<branch>
+    //  这一份元数据，模拟"注册被摘除、目录残留"这个真实故障模式）
+    const branchName = `session-${sid.slice(0, 8)}`;
+    const wtMetaDir = join(mainRepo, '.git', 'worktrees', branchName);
+    expect(existsSync(wtMetaDir)).toBe(true);
+    rmSync(wtMetaDir, { recursive: true, force: true });
+
+    // 此时旧目录仍在但已不被主仓承认
+    const wtListBefore = execSync('git worktree list --porcelain', { cwd: mainRepo }).toString();
+    expect(wtListBefore).not.toContain(expectedWt);
+
+    // 第二次启动同一 session_id：应检测孤儿并自愈重建
+    const out = execSync(`bash "${LAUNCHER}"`, { cwd: mainRepo, env }).toString();
+    expect(out.trim()).toBe(expectedWt);
+
+    // 重建后的目录必须是主仓登记的合法 worktree
+    const wtListAfter = execSync('git worktree list --porcelain', { cwd: mainRepo }).toString();
+    const expectedWtPhys = realpathSync(expectedWt);
+    expect(wtListAfter).toContain(`worktree ${expectedWtPhys}`);
+
+    // 旧内容必须被搬进备份路径，没有丢失
+    const backupDirs = require('node:fs').readdirSync(join(worktreeBase, 'main'))
+      .filter((n: string) => n.startsWith(`${branchName}.orphan-`));
+    expect(backupDirs.length).toBe(1);
+    const backupPath = join(worktreeBase, 'main', backupDirs[0]);
+    expect(existsSync(join(backupPath, 'precious.txt'))).toBe(true);
+  });
 });
 
 describe('账号切换（cs/cn）— guard 应区分 headless 与嵌套继承', () => {

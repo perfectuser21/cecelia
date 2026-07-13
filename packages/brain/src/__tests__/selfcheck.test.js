@@ -44,12 +44,21 @@ function makeMockPool(overrides = {}) {
   };
 }
 
+// 桩掉 checkComputeSshReachability 的 execFn，避免单测真实 ssh 到 Tailscale 内网 IP
+// （原因见 packages/brain/src/__tests__/selfcheck-ssh-reachability.test.js 的注入点设计）
+function mockSshExecFn() {
+  return vi.fn().mockResolvedValue({ stdout: 'ok\n', stderr: '' });
+}
+
 describe('selfcheck', () => {
+  let sshExecFn;
+
   beforeEach(() => {
     vi.stubEnv('ENV_REGION', 'us');
     vi.stubEnv('DB_HOST', 'localhost');
     vi.stubEnv('DB_PORT', '5432');
     vi.stubEnv('DB_NAME', 'cecelia');
+    sshExecFn = mockSshExecFn();
   });
 
   afterEach(() => {
@@ -58,20 +67,20 @@ describe('selfcheck', () => {
 
   it('should pass all checks with correct config', async () => {
     const pool = makeMockPool();
-    const ok = await runSelfCheck(pool, { envRegion: 'us' });
+    const ok = await runSelfCheck(pool, { envRegion: 'us', sshReachability: { execFn: sshExecFn } });
     expect(ok).toBe(true);
   });
 
   it('should fail when ENV_REGION is missing', async () => {
     vi.stubEnv('ENV_REGION', '');
     const pool = makeMockPool();
-    const ok = await runSelfCheck(pool, { envRegion: '' });
+    const ok = await runSelfCheck(pool, { envRegion: '', sshReachability: { execFn: sshExecFn } });
     expect(ok).toBe(false);
   });
 
   it('should fail when ENV_REGION is invalid', async () => {
     const pool = makeMockPool();
-    const ok = await runSelfCheck(pool, { envRegion: 'eu' });
+    const ok = await runSelfCheck(pool, { envRegion: 'eu', sshReachability: { execFn: sshExecFn } });
     expect(ok).toBe(false);
   });
 
@@ -84,7 +93,7 @@ describe('selfcheck', () => {
       return { rows: [] };
     });
 
-    const ok = await runSelfCheck(pool, { envRegion: 'us' });
+    const ok = await runSelfCheck(pool, { envRegion: 'us', sshReachability: { execFn: sshExecFn } });
     expect(ok).toBe(false);
   });
 
@@ -92,7 +101,7 @@ describe('selfcheck', () => {
     const pool = makeMockPool({
       'brain_config_region': { rows: [{ value: 'hk' }] },
     });
-    const ok = await runSelfCheck(pool, { envRegion: 'us' });
+    const ok = await runSelfCheck(pool, { envRegion: 'us', sshReachability: { execFn: sshExecFn } });
     expect(ok).toBe(false);
   });
 
@@ -104,7 +113,7 @@ describe('selfcheck', () => {
         // missing the rest
       ]},
     });
-    const ok = await runSelfCheck(pool, { envRegion: 'us' });
+    const ok = await runSelfCheck(pool, { envRegion: 'us', sshReachability: { execFn: sshExecFn } });
     expect(ok).toBe(false);
   });
 
@@ -112,7 +121,7 @@ describe('selfcheck', () => {
     const pool = makeMockPool({
       'schema_version': { rows: [{ max_ver: '003' }] },
     });
-    const ok = await runSelfCheck(pool, { envRegion: 'us' });
+    const ok = await runSelfCheck(pool, { envRegion: 'us', sshReachability: { execFn: sshExecFn } });
     expect(ok).toBe(false);
   });
 
@@ -126,7 +135,7 @@ describe('selfcheck', () => {
     const pool = makeMockPool({
       'config_fingerprint': { rows: [{ value: fp }] },
     });
-    const ok = await runSelfCheck(pool, { envRegion: 'us' });
+    const ok = await runSelfCheck(pool, { envRegion: 'us', sshReachability: { execFn: sshExecFn } });
     expect(ok).toBe(true);
   });
 
@@ -135,7 +144,7 @@ describe('selfcheck', () => {
       'config_fingerprint': { rows: [{ value: 'old_fingerprint' }] },
     });
     // Fingerprint mismatch is a warning, not a failure
-    const ok = await runSelfCheck(pool, { envRegion: 'us' });
+    const ok = await runSelfCheck(pool, { envRegion: 'us', sshReachability: { execFn: sshExecFn } });
     expect(ok).toBe(true);
   });
 
@@ -143,7 +152,7 @@ describe('selfcheck', () => {
     // Simulate: MAX(version) WHERE version ~ '^[0-9]{1,4}$' returns correct migration number
     // even when dirty entries like '20260305' exist (filtered by regex)
     const pool = makeMockPool();
-    const ok = await runSelfCheck(pool, { envRegion: 'us' });
+    const ok = await runSelfCheck(pool, { envRegion: 'us', sshReachability: { execFn: sshExecFn } });
     expect(ok).toBe(true);
   });
 
@@ -157,15 +166,31 @@ describe('selfcheck', () => {
   // facts-check 校验地板 <= 最高 migration（316 <= 316 通过）。
   // 317（initiative_runs.tmux_killed_at）被 harness-relay-watchdog 收窗 UPDATE 直接依赖
   // （列不存在则 UPDATE 整句报错被吞，收窗永不生效——与上述 314 事故同类），故推进地板到 317。
-  it('EXPECTED_SCHEMA_VERSION should be 317 (floor, bumped for tmux_killed_at headed 收窗)', () => {
-    expect(EXPECTED_SCHEMA_VERSION).toBe('317');
+  // 322（issues.journey_id）被 warroom.js /line/:id/command 全景图查询直接依赖
+  // （列不存在则 SELECT 整句报错被吞，open_issues 恒为空——同类接缝），故推进地板到 322。
+  // 323（initiative_runs.ability_id）被 harness-skill-relay.js spawn 时的 INSERT 直接依赖
+  // （列不存在则 INSERT 整句报错被吞，ability_id 落行永不生效——同类接缝）。
+  // 324（advancement_items.notion_synced_at）被 notion-push-sync.js 的 pushAdvancementItems
+  // 去重查询直接依赖（列不存在则 SELECT/UPDATE 整句报错被吞，去重恒不生效），故推进地板到 324。
+  // 326（side_effect_dedupe 表）被 lib/dedupe.js claimDedupeKey 的 INSERT..ON CONFLICT 直接依赖
+  // （表不存在则 fail-open 降级恒触发，三入口幂等全部失效——同类接缝），故推进地板到 326。
+  // 331（learnings 谱系两列 + summary backfill + task_completion 清理）为 T9 学习账本
+  // 可靠性依赖（parent_learning_id/verified_effective 列缺失则谱系写入整句报错被吞），故推进地板到 331。
+  // 333（areas 去重 + KR1/KR2 metadata.target_abilities 挂载）为 OKR 数据卫生一次性迁移，
+  // 推进地板到 333 防止未跑该迁移的旧 DB 误判 KR ability-progress 端点为已生效。
+  // 334（golden_paths 表 + 状态机端点 + 保质期 delta job）为 GP1/T1 底座迁移，
+  // 推进地板到 334 防止未跑该迁移的旧 DB 误判 golden-paths 路由/gp-shelf-life job 为已生效。
+  // 335（golden_path_proposal 加入 tasks_task_type_check）为 GP2/T2 派发链前置，
+  // 推进地板到 335 防止未跑该迁移的旧 DB 上圈选建任务被 CHECK 拒。
+  it('EXPECTED_SCHEMA_VERSION should be 338 (floor, bumped for preview/strategist migrations)', () => {
+    expect(EXPECTED_SCHEMA_VERSION).toBe('338');
   });
 
   it('should pass when DB schema version is ahead of expected (>= check)', async () => {
     const pool = makeMockPool({
       'schema_version': { rows: [{ max_ver: '999' }] },
     });
-    const ok = await runSelfCheck(pool, { envRegion: 'us' });
+    const ok = await runSelfCheck(pool, { envRegion: 'us', sshReachability: { execFn: sshExecFn } });
     expect(ok).toBe(true);
   });
 
@@ -176,6 +201,7 @@ describe('selfcheck', () => {
       await runSelfCheck(pool, {
         envRegion: 'us',
         watchdogThresholds: { total_mem_mb: 16384, rss_kill_mb: 2400 },
+        sshReachability: { execFn: sshExecFn },
       });
       const infoLines = logSpy.mock.calls.flat().filter(s => typeof s === 'string' && s.includes('Watchdog RSS Sanity 通过'));
       expect(infoLines.length).toBeGreaterThan(0);
@@ -188,6 +214,7 @@ describe('selfcheck', () => {
       await runSelfCheck(pool, {
         envRegion: 'us',
         watchdogThresholds: { total_mem_mb: 256, rss_kill_mb: 89 },
+        sshReachability: { execFn: sshExecFn },
       });
       const warnLines = warnSpy.mock.calls.flat().filter(s => typeof s === 'string' && s.includes('total_mem_mb=256'));
       expect(warnLines.length).toBeGreaterThan(0);
@@ -200,6 +227,7 @@ describe('selfcheck', () => {
       await runSelfCheck(pool, {
         envRegion: 'us',
         watchdogThresholds: { total_mem_mb: 1024, rss_kill_mb: 10 },
+        sshReachability: { execFn: sshExecFn },
       });
       const warnLines = warnSpy.mock.calls.flat().filter(s => typeof s === 'string' && s.includes('rss_kill_mb=10'));
       expect(warnLines.length).toBeGreaterThan(0);
@@ -211,6 +239,7 @@ describe('selfcheck', () => {
       const ok = await runSelfCheck(pool, {
         envRegion: 'us',
         watchdogThresholds: { total_mem_mb: 128, rss_kill_mb: 5 },
+        sshReachability: { execFn: sshExecFn },
       });
       // Watchdog RSS sanity is WARN-only, must not block overall selfcheck result
       expect(ok).toBe(true);

@@ -12,14 +12,40 @@ on:
         description: '输入 PROMOTE 确认放行到生产'
         required: true
         default: ''
+      bypass_nightly_gate:
+        description: '输入 BYPASS 跳过 nightly 绿色检查（紧急通道，需知晓风险）'
+        required: false
+        default: ''
 
 concurrency:
   group: promote-dashboard-prod
   cancel-in-progress: false
 
 jobs:
+  # ─── 刀C Release Gate：promote 前检查最近 nightly 绿色证据 ────────────────
+  nightly_gate:
+    name: 刀C Release Gate (nightly 绿色检查)
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    if: github.event.inputs.confirm == 'PROMOTE'
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+      - name: 检查最近 nightly 绿色证据
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          WINDOW_HOURS: '48'
+          BYPASS_NIGHTLY_GATE: ${{ github.event.inputs.bypass_nightly_gate == 'BYPASS' && '1' || '0' }}
+        run: bash scripts/ci/check-nightly-green.sh
+
   promote:
     name: Promote Dashboard → Production
+    needs: nightly_gate
     runs-on: ubuntu-latest
     timeout-minutes: 10
     if: github.event.inputs.confirm == 'PROMOTE'

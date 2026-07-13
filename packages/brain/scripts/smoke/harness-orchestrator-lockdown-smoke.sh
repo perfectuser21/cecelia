@@ -3,7 +3,9 @@
 #
 # 3 层验证：
 #   L1 (静态)  : executor.js 的 _driveHarnessInitiative 含 orchestrator 硬校验锚点
-#                （missing_orchestrator_flag 判断先于 compileHarnessFullGraph import）
+#                （missing_orchestrator_flag 判断先于 spawnSkillRelaySession 分支；
+#                LangGraph 图调用 compileHarnessFullGraph 死代码已在刀4阶段3
+#                物理删除——2026-07-09，确认源码不再引用该符号）
 #   L2 (gate)  : Brain 健康 + DB 可连；不可达 SKIP exit 0 with reason
 #   L3 (真验)  : INSERT 一个不带 orchestrator 的 harness_initiative task → 真调
 #                runHarnessInitiativeRouter → 断言立即 terminal failed（不 invoke
@@ -29,11 +31,13 @@ const fnMatch=src.match(/async function _driveHarnessInitiative[\s\S]*?\n}\n/);
 if(!fnMatch){console.error('_driveHarnessInitiative 函数找不到');process.exit(1)}
 const body=fnMatch[0];
 const guardIdx=body.indexOf('missing_orchestrator_flag');
-const graphImportIdx=body.indexOf('compileHarnessFullGraph');
+const relayIdx=body.indexOf('spawnSkillRelaySession');
 if(guardIdx===-1){console.error('L1 FAIL: 缺 missing_orchestrator_flag 硬校验锚点');process.exit(1)}
-if(graphImportIdx===-1){console.error('L1 FAIL: compileHarnessFullGraph import 找不到（不应被删除，只应变不可达）');process.exit(1)}
-if(guardIdx>=graphImportIdx){console.error('L1 FAIL: 硬校验必须先于 compileHarnessFullGraph import（否则不能拦截所有非法 payload）');process.exit(1)}
-console.log('[smoke] L1 PASS: orchestrator 硬校验先于 LangGraph 图 import');
+if(relayIdx===-1){console.error('L1 FAIL: spawnSkillRelaySession 分支找不到');process.exit(1)}
+if(guardIdx>=relayIdx){console.error('L1 FAIL: 硬校验必须先于 spawnSkillRelaySession 分支（否则不能拦截所有非法 payload）');process.exit(1)}
+// 刀4阶段3：compileHarnessFullGraph 死代码已物理删除，不应再出现在源码中
+if(src.includes('compileHarnessFullGraph')){console.error('L1 FAIL: compileHarnessFullGraph 应已被物理删除，但仍在源码中出现');process.exit(1)}
+console.log('[smoke] L1 PASS: orchestrator 硬校验先于 skill-relay 分支，LangGraph 图调用已确认物理删除');
 " || exit 1
 
 # ── L2 Brain health gate ───────────────────────────────────────────────

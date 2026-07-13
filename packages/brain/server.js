@@ -79,6 +79,7 @@ import featuresRoutes from './src/routes/features.js';
 import clipsRoutes from './src/routes/clips.js';
 import journeysRouter from './src/routes/journeys.js';
 import abilitiesRouter from './src/routes/abilities.js';
+import goldenPathsRouter from './src/routes/golden-paths.js';
 import skillEvalRoutes from './src/routes/eval.js';
 import { internalAuth } from './src/middleware/internal-auth.js';
 import createAutonomousRouter from './src/routes/autonomous.js';
@@ -361,6 +362,7 @@ app.get('/api/brain/issues', async (req, res) => {
   }
 });
 app.use('/api/brain', abilitiesRouter);
+app.use('/api/brain', goldenPathsRouter);
 app.use('/api/brain/harness', harnessRoutesRouter);
 app.use('/api/brain/harness', harnessRoutes);
 app.use('/api/brain/harness-interrupts', harnessInterruptsRouter);
@@ -430,10 +432,27 @@ app.post('/api/brain/orchestrator/chat', async (req, res) => {
   }
 });
 
-// Health check at root
+// Health check at root (also used by preview healthcheck)
 app.get('/', (_req, res) => {
   res.json({ service: 'cecelia-brain', status: 'running', port: PORT });
 });
+
+// 预览模式：PREVIEW_STATIC_DIR 设置时把 Brain 同时当静态文件服务器
+// 前端 SPA 的 /api/brain/* 请求直接被上面路由处理，其余路径提供静态文件
+if (process.env.PREVIEW_STATIC_DIR) {
+  const { existsSync } = await import('node:fs');
+  const staticDir = process.env.PREVIEW_STATIC_DIR;
+  if (existsSync(staticDir)) {
+    app.use(express.static(staticDir));
+    // SPA fallback — 未命中静态文件的非 API 路径回退到 index.html
+    app.get(/^(?!\/api\/).*/, (_req, res) => {
+      res.sendFile(join(staticDir, 'index.html'));
+    });
+    console.log(`[Preview] Serving static files from ${staticDir}`);
+  } else {
+    console.warn(`[Preview] PREVIEW_STATIC_DIR=${staticDir} does not exist — static serving skipped`);
+  }
+}
 
 // Error handler
 app.use((err, _req, res, _next) => {
@@ -608,12 +627,22 @@ async function onBrainListening() {
   }
 
   // Log concurrency ceiling configuration for observability
-  const { MAX_SEATS, INTERACTIVE_RESERVE, syncOrphanTasksOnStartup, _startResourcePolling } = await import('./src/executor.js');
+  const { MAX_SEATS, INTERACTIVE_RESERVE, reAttachActiveExecutors, syncOrphanTasksOnStartup, _startResourcePolling } = await import('./src/executor.js');
   console.log(`[Server] Concurrency config: MAX_SEATS=${MAX_SEATS} INTERACTIVE_RESERVE=${INTERACTIVE_RESERVE}`);
 
   // Start async resource polling — prevents execSync blocking the event loop
   _startResourcePolling();
   console.log('[Server] Resource polling started (15s interval) - async sysctl/vm_stat, no event loop block');
+
+  // Re-attach step: 从 lock slot + docker relay 容器重建 activeProcesses，
+  // 给守护器官续命（touch updated_at），防止 zombie-reaper 误杀仍活着的执行者。
+  // 必须在 syncOrphanTasksOnStartup 之前调用，确保孤儿检测能正确跳过已认领任务。
+  try {
+    const reattachResult = await reAttachActiveExecutors(pool);
+    console.log(`[Server] Re-attach: reattached=${reattachResult.reattached} touched=${reattachResult.touched} errors=${reattachResult.errors.length}`);
+  } catch (reattachErr) {
+    console.error('[Server] Re-attach failed (non-fatal):', reattachErr.message);
+  }
 
   // Sync orphan in_progress tasks with actual processes (requeue vs fail with process check)
   try {

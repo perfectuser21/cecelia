@@ -33,7 +33,7 @@ function extractDeadTaskResetBlock(src) {
   return src.slice(startIdx, endIdx);
 }
 
-describe('tick-runner.js — 6.6 Dead task reset 排除 skill-relay 任务', () => {
+describe('tick-runner.js — 6.6 Dead task reset executor_kind 白名单（T2 回归）', () => {
   const block = extractDeadTaskResetBlock(SRC);
 
   it('WHERE 子句仍保留原有判据（execution_attempts=0 / status IN (...) / updated_at 陈旧）', () => {
@@ -42,13 +42,17 @@ describe('tick-runner.js — 6.6 Dead task reset 排除 skill-relay 任务', () 
     expect(block).toMatch(/updated_at < NOW\(\) - INTERVAL '10 minutes'/);
   });
 
-  it('WHERE 子句新增 skill-relay 排除条件（回归核心断言）', () => {
-    expect(block).toMatch(/\(payload->>'orchestrator'\)\s+IS DISTINCT FROM\s+'skill-relay'/);
+  it('WHERE 子句改用 executor_kind IN 白名单（T2 核心断言）', () => {
+    expect(block).toMatch(/executor_kind\s+IN\s+\(\s*'brain-local'\s*,\s*'bridge'\s*\)/);
   });
 
-  it('排除条件位于同一条 UPDATE 语句内（在 RETURNING 之前）', () => {
+  it('不再包含 IS DISTINCT FROM skill-relay（旧排除写法已删除）', () => {
+    expect(block).not.toMatch(/IS DISTINCT FROM\s+'skill-relay'/);
+  });
+
+  it('白名单条件位于同一条 UPDATE 语句内（在 RETURNING 之前）', () => {
     const updateIdx = block.indexOf('UPDATE tasks');
-    const excludeIdx = block.indexOf("IS DISTINCT FROM 'skill-relay'");
+    const excludeIdx = block.indexOf("executor_kind IN");
     const returningIdx = block.indexOf('RETURNING');
     expect(updateIdx).toBeGreaterThan(-1);
     expect(excludeIdx).toBeGreaterThan(updateIdx);

@@ -155,9 +155,9 @@ describe('chaos-hardening', () => {
       expect(result.class).toBe(FAILURE_CLASS.RATE_LIMIT);
     });
 
-    it('should classify 500 Internal Server Error as NETWORK', () => {
+    it('should classify 500 Internal Server Error as SERVER_ERROR（协议卫生包拆自 NETWORK）', () => {
       const result = classifyFailure('HTTP 500 Internal Server Error');
-      expect(result.class).toBe(FAILURE_CLASS.NETWORK);
+      expect(result.class).toBe(FAILURE_CLASS.SERVER_ERROR);
     });
 
     it('should classify ENOMEM as RESOURCE', () => {

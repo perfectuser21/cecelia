@@ -35,6 +35,78 @@ function makeZipBuf(size = 100) {
   return buf;
 }
 
+/**
+ * 生成最小合法 ZIP Buffer（STORED，CRC=0）。
+ * 不依赖系统 zip 命令，可在 CI 离线环境运行。
+ * @param {Record<string, string | Buffer>} files - 文件名 → 内容
+ */
+function buildMinimalZip(files) {
+  const localParts = [];
+  const centralParts = [];
+  let localOffset = 0;
+
+  for (const [name, content] of Object.entries(files)) {
+    const data = Buffer.isBuffer(content) ? content : Buffer.from(content, 'utf8');
+    const nameBuf = Buffer.from(name, 'utf8');
+
+    // Local file header (30 bytes + name)
+    const local = Buffer.alloc(30 + nameBuf.length);
+    local.writeUInt32LE(0x04034b50, 0); // PK\x03\x04
+    local.writeUInt16LE(20, 4);         // version needed: 2.0
+    local.writeUInt16LE(0, 6);          // flags
+    local.writeUInt16LE(0, 8);          // compression: STORED
+    local.writeUInt16LE(0, 10);         // mod time
+    local.writeUInt16LE(0, 12);         // mod date
+    local.writeUInt32LE(0, 14);         // CRC-32 (0 = not validated by unzipper on Open.buffer path)
+    local.writeUInt32LE(data.length, 18); // compressed size
+    local.writeUInt32LE(data.length, 22); // uncompressed size
+    local.writeUInt16LE(nameBuf.length, 26); // filename len
+    local.writeUInt16LE(0, 28);         // extra field len
+    nameBuf.copy(local, 30);
+
+    // Central directory entry (46 bytes + name)
+    const cd = Buffer.alloc(46 + nameBuf.length);
+    cd.writeUInt32LE(0x02014b50, 0); // PK\x01\x02
+    cd.writeUInt16LE(20, 4);         // version made by
+    cd.writeUInt16LE(20, 6);         // version needed
+    cd.writeUInt16LE(0, 8);          // flags
+    cd.writeUInt16LE(0, 10);         // compression: STORED
+    cd.writeUInt16LE(0, 12);         // mod time
+    cd.writeUInt16LE(0, 14);         // mod date
+    cd.writeUInt32LE(0, 16);         // CRC-32
+    cd.writeUInt32LE(data.length, 20); // compressed size
+    cd.writeUInt32LE(data.length, 24); // uncompressed size
+    cd.writeUInt16LE(nameBuf.length, 28); // filename len
+    cd.writeUInt16LE(0, 30);         // extra field len
+    cd.writeUInt16LE(0, 32);         // file comment len
+    cd.writeUInt16LE(0, 34);         // disk number start
+    cd.writeUInt16LE(0, 36);         // internal attrs
+    cd.writeUInt32LE(0, 38);         // external attrs
+    cd.writeUInt32LE(localOffset, 42); // offset of local header
+    nameBuf.copy(cd, 46);
+
+    localParts.push(local, data);
+    centralParts.push(cd);
+    localOffset += 30 + nameBuf.length + data.length;
+  }
+
+  const centralDirBuf = Buffer.concat(centralParts);
+  const count = centralParts.length;
+
+  // End of central directory (22 bytes)
+  const eocd = Buffer.alloc(22);
+  eocd.writeUInt32LE(0x06054b50, 0); // PK\x05\x06
+  eocd.writeUInt16LE(0, 4);          // disk number
+  eocd.writeUInt16LE(0, 6);          // disk with central dir
+  eocd.writeUInt16LE(count, 8);      // entries on disk
+  eocd.writeUInt16LE(count, 10);     // total entries
+  eocd.writeUInt32LE(centralDirBuf.length, 12); // central dir size
+  eocd.writeUInt32LE(localOffset, 16); // central dir offset
+  eocd.writeUInt16LE(0, 20);         // comment length
+
+  return Buffer.concat([...localParts, centralDirBuf, eocd]);
+}
+
 // ─── validateZipBuffer ─────────────────────────────────────────────────────
 
 describe('skill-eval-validator.js — validateZipBuffer', () => {
@@ -112,6 +184,23 @@ describe('skill-eval-validator.js — validateZipBuffer', () => {
     });
     expect(result.valid).toBe(false);
     expect(result.error).toMatch(/too many entries/);
+  });
+
+  it('真实 zip（含根层 SKILL.md）→ valid（回归：Readable.from pipe 在 Node 20 下返回空 entries）', async () => {
+    // 这个测试在旧的 Readable.from(buf).pipe(unzipper.Parse()) 实现下必然失败：
+    // Node 20 下该路径 entries 为空 → validateZipBuffer 返回 "missing SKILL.md" 422 错误
+    // 修复后改用 unzipper.Open.buffer，正确读取 Central Directory
+    const zipBuf = buildMinimalZip({ 'SKILL.md': '# Test Skill\n', 'index.js': 'export default {};\n' });
+    const result = await validateZipBuffer(zipBuf);
+    expect(result.valid).toBe(true);
+    expect(result.entries).toBeDefined();
+    expect(result.entries.some(e => e === 'SKILL.md' || e.endsWith('/SKILL.md'))).toBe(true);
+  });
+
+  it('真实 zip（SKILL.md 在子目录）→ valid', async () => {
+    const zipBuf = buildMinimalZip({ 'my-skill/SKILL.md': '# Sub Skill\n', 'my-skill/impl.js': '' });
+    const result = await validateZipBuffer(zipBuf);
+    expect(result.valid).toBe(true);
   });
 });
 

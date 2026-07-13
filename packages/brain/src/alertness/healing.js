@@ -16,7 +16,7 @@ import { promisify } from 'util';
 import { readdirSync, readFileSync, existsSync } from 'fs';
 import pool from '../db.js';
 import { emit } from '../event-bus.js';
-import { processExists } from '../platform-utils.js';
+import { assessTaskLiveness } from '../executor-contracts.js';
 
 const execAsync = promisify(exec);
 
@@ -32,11 +32,6 @@ const LOCK_DIR = '/tmp/cecelia-locks';
 // 不可重试的失败类别
 const NON_RETRYABLE_FAILURE_CLASSES = ['auth', 'resource', 'code_error', 'pipeline_terminal_failure'];
 
-// ============================================================
-// 进程存活检测（跨平台）— 统一使用 platform-utils.processExists()
-// ============================================================
-
-const isProcessAlive = processExists;
 
 /**
  * 读取 slot 目录获取 task_id 到 pid 的映射
@@ -614,13 +609,12 @@ async function archiveOldTasks() {
 async function restartStuckExecutors() {
   const client = await pool.connect();
   try {
-    // 扫描卡住的任务
+    // 扫描卡住的任务，SELECT 含 executor_kind/last_attempt_at/claimed_by 供 assessTaskLiveness 使用
     const stuckTasksResult = await client.query(`
-      SELECT id, title, started_at, payload
+      SELECT id, title, started_at, payload, executor_kind, last_attempt_at, claimed_by, updated_at
       FROM tasks
       WHERE status = 'in_progress'
         AND updated_at < NOW() - INTERVAL '30 minutes'
-        AND task_type != 'content-pipeline'
     `);
 
     if (stuckTasksResult.rows.length === 0) {
@@ -628,44 +622,41 @@ async function restartStuckExecutors() {
       return { executorsRestarted: 0 };
     }
 
-    // 读取 slot 信息获取 PID 映射
+    // 读取 slot 信息供 assessTaskLiveness ctx 使用（activeProcesses）
     const slotInfo = readSlotInfo();
 
     let restartedCount = 0;
     let stuckButAliveCount = 0;
 
     for (const task of stuckTasksResult.rows) {
-      const info = slotInfo.get(task.id);
-      const pid = info?.pid;
+      const liveness = await assessTaskLiveness(task, { activeProcesses: slotInfo });
 
-      if (!pid) {
-        // 没有 PID 记录，直接重置
-        await client.query(`
-          UPDATE tasks
-          SET status = 'queued', claimed_by = NULL, claimed_at = NULL, started_at = NULL, updated_at = NOW()
-          WHERE id = $1
-        `, [task.id]);
-        console.log(`[Healing] Reset stuck task without PID: ${task.title}`);
-        restartedCount++;
+      if (liveness.verdict === 'alive' || liveness.verdict === 'unknown') {
+        console.log(`[Healing] Task alive/unknown, skip: ${task.title} (verdict=${liveness.verdict})`);
+        stuckButAliveCount++;
         continue;
       }
 
-      // 检查进程是否存活
-      const isAlive = isProcessAlive(pid);
-
-      if (!isAlive) {
-        // 进程已死，重置任务
+      // dead — 按 onStale 分支处置
+      if (liveness.onStale === 'fail' || liveness.onStale === 'requeue') {
         await client.query(`
           UPDATE tasks
           SET status = 'queued', claimed_by = NULL, claimed_at = NULL, started_at = NULL, updated_at = NOW()
           WHERE id = $1
         `, [task.id]);
-        console.log(`[Healing] Restarted stuck executor (process dead): ${task.title} (pid=${pid})`);
+        console.log(`[Healing] Restarted stuck executor (dead): ${task.title}`);
+        restartedCount++;
+      } else if (liveness.onStale === 'release-claim-and-alert') {
+        await client.query(`
+          UPDATE tasks
+          SET status = 'queued', claimed_by = NULL, claimed_at = NULL, started_at = NULL, updated_at = NOW()
+          WHERE id = $1
+        `, [task.id]);
+        console.warn(`[Healing] headed-session stale: released claim id=${task.id}`);
         restartedCount++;
       } else {
-        // 进程存活但卡住，记录日志
-        console.log(`[Healing] Task stuck but process alive (needs attention): ${task.title} (pid=${pid})`);
-        stuckButAliveCount++;
+        // never / reignite / 其他 → 跳过
+        console.log(`[Healing] Skip task id=${task.id} onStale=${liveness.onStale}`);
       }
     }
 
