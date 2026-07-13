@@ -43,6 +43,8 @@ describe('PATCH /api/brain/tasks/:task_id — result 补写 [BEHAVIOR]', () => {
     expect(res.status).toBe(200);
     const updCall = mockQuery.mock.calls.find(([sql]) => /UPDATE tasks/.test(sql));
     expect(updCall[0]).toMatch(/result = COALESCE\(result, '\{\}'::jsonb\) \|\|/);
+    // 参数绑定：result 对象序列化后确实进了 params
+    expect(updCall[1]).toContain(JSON.stringify({ pr_url: 'https://x/pr/1', merged: true }));
     // 幂等 no-op：不追加 status_history
     expect(updCall[0]).not.toMatch(/status_history/);
   });
@@ -98,11 +100,21 @@ describe('PATCH /api/brain/tasks/:task_id — result 补写 [BEHAVIOR]', () => {
     expect(res.body.code).toBe('MISSING_FIELD');
   });
 
-  it('result 非对象（数组/字符串）→ 400', async () => {
-    const res = await request(app)
+  it('result 非对象（数组/字符串/null）→ 400', async () => {
+    const resArr = await request(app)
       .patch('/api/brain/tasks/t6')
       .send({ result: [1, 2] });
-    expect(res.status).toBe(400);
+    expect(resArr.status).toBe(400);
+
+    const resStr = await request(app)
+      .patch('/api/brain/tasks/t6')
+      .send({ result: 'x' });
+    expect(resStr.status).toBe(400);
+
+    const resNull = await request(app)
+      .patch('/api/brain/tasks/t6')
+      .send({ result: null });
+    expect(resNull.status).toBe(400);
   });
 
   it('回归哨兵：completed → failed 仍 409（终态间迁移不放行）', async () => {

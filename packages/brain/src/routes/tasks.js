@@ -405,6 +405,7 @@ router.patch('/tasks/:task_id', async (req, res) => {
     const currentStatus = task.status;
 
     // status === currentStatus → 幂等 no-op：跳过 transition 校验与事件，仅应用 result 等字段
+    // no-op 不重触发 promoteRegression/KR 重算——补写场景 promote 已由 callback 4 终态路径承接（spec 有意设计，非遗漏）
     const isStatusNoop = Boolean(status) && status === currentStatus;
 
     // Validate status transition if status is being changed
@@ -473,7 +474,6 @@ router.patch('/tasks/:task_id', async (req, res) => {
       params.push(JSON.stringify(result));
     }
 
-
     params.push(task_id);
     const updateResult = await pool.query(
       `UPDATE tasks SET ${setClauses.join(', ')} WHERE id = $${paramIdx} RETURNING status, updated_at`,
@@ -496,7 +496,7 @@ router.patch('/tasks/:task_id', async (req, res) => {
         // T2. harness merged 终态 → 累积 FR 冻结（fail-open；harness-report Step 1 走此路径）
         try {
           const { promoteRegressionOnHarnessMerged } = await import('../lib/callback-postprocess.js');
-          await promoteRegressionOnHarnessMerged(task_id, req.body.result || null, req.body.pr_url || null, pool);
+          await promoteRegressionOnHarnessMerged(task_id, result || null, req.body.pr_url || null, pool);
         } catch (promoteErr) {
           console.warn(`[tasks-patch] promoteRegressionOnHarnessMerged 失败 (non-fatal): ${promoteErr.message}`);
         }
