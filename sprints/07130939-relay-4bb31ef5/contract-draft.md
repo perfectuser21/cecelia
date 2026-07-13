@@ -274,7 +274,7 @@ echo "OK headed smoke regression verified for $TASK_ID"
 | 当前 initiative run | `tests/headed-smoke-contract.test.ts` | `initiative_runs 含 skill-relay-claude-headed 且 phase 拒绝 failed/unknown` | `e2e-verify.sh` 尚未存在，测试失败 |
 | CI seed 分支一致性（顺序性静态断言）| `tests/headed-smoke-contract.test.ts` | `ci.yml claude-headed 分支 seed executor=claude 且不回归 codex-headed 既有分支`；`ci.yml claude-headed 精确分支优先于 codex 通用/兜底分支` | `e2e-verify.sh` 尚未存在，测试失败；ci.yml 当前无 `skill-relay-claude-headed`，行号比较断言同样失败 |
 | 当前 sprint 日志 | `tests/headed-smoke-contract.test.ts` | `tui.log 存在则验真，缺失则验留痕机制且不伪造` | `e2e-verify.sh` 尚未存在，测试失败 |
-| DoD.md 记录本 sprint DoD | `tests/headed-smoke-contract.test.ts` | `DoD.md 已记录本 sprint claude-headed relay DoD` | `e2e-verify.sh` 尚未存在，测试失败 |
+| DoD.md 记录本 sprint DoD | `tests/headed-smoke-contract.test.ts` | `DoD.md 已记录本 sprint 的 claude-headed relay DoD` | `e2e-verify.sh` 尚未存在，测试失败 |
 | local_api E2E wrapper | `tests/headed-smoke-contract.test.ts` | `local_api E2E wrapper 完整验证当前 task/run/log/ci-seed 外部真相` | `e2e-verify.sh` 尚未存在，测试失败 |
 
 ## Notes
