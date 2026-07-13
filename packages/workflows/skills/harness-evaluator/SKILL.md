@@ -6,10 +6,11 @@ description: |
   evaluator 在 CI 绿之后、PR merge 之前真启服务 + 跑 contract 的 manual:bash 命令验真行为。
   PASS → 允许 merge；FAIL → 不 merge，带反馈打回 Generator 在 PR 分支 fix loop（main 不变动）。
   单模式（harness v2 始终 IS_FINAL_E2E=true）：读 contract-draft.md 的 ## E2E 验收 脚本，按 target_environment 派发跑 Golden Path 端到端真实行为。
-version: 1.22.0
+version: 1.23.0
 created: 2026-05-06
-updated: 2026-07-08
+updated: 2026-07-14
 changelog:
+  - 1.23.0: EVA v2 审计四修——(E1) verdict 必带真跑证据：behavior_tests 每条必须是对象 {command, exit_code, log_tail}（log_tail=命令输出末 5 行），缺任一 = 该条视为未跑禁 PASS（a85e0582 实证 verdict 只列命令原文无法区分真跑/声称跑过）；(E4) Step B-1 固化段加分支判断：detached HEAD（post-merge 补验模式）跳过 commit/push 并在 verdict notes 说明，普通路径 push 失败输出 WARN 记入 notes（删静默吞掉）；(E5) 三处 awk 标题正则放宽为 /^##+[[:space:]]*E2E[[:space:]]*验收/（### 或带空格变体不再整段漏空）；(E7) 注入变量表补 PR_BRANCH 行
   - 1.22.0: a638f840 三修——(a) Step 0a 支持"PR 已 merge/分支已删"场景：checkout 失败时查 gh pr state，MERGED 则在 merge commit/origin/main 上补验（post-merge 模式），仅 PR 非 MERGED 时才 FATAL；(b) Step B-1 三处 awk 改为提取 E2E 段内全部代码块（拼接至下一个 ## 标题，旧版只取第一块，多块合同 Step 2-9 被静默丢弃）；(c) bash 固化前加 bash -n 语法门，语法坏脚本在 setup 就 FAIL 不入库
   - 1.21.0: 跨 repo 化刀3——①变量表 DB 行改为优先 $DB_URL（payload/env 注入），postgresql://localhost/cecelia 仅作 cecelia 本机 fallback；②url_validation gate 按 repo 注入：cecelia 默认仍 grep localhost:5221|psql cecelia，第三方 repo 以 $EXPECTED_API_HOST/$DB_URL 为准，两者都未提供时对第三方 repo 降级 WARN 而非 FAIL（避免假 FAIL）；③windows 分支与 Step B-2.6 的 REPO 不再写死默认仓库：fallback 顺序 $GITHUB_REPO → payload.base_repo URL 解析 owner/repo → 两者都缺才回退旧默认并打 WARN
   - 1.20.0: EVA 提分（GAPS #2）——新增「Relay 入口协议」（对称 T5 出口段）：controller 用 Task 派发时从 prompt 参数取 SPRINT_DIR/PR_BRANCH/TARGET_ENV/合同路径，env 与 prompt 参数二选一均可启动，Step 0 FATAL 仅限 v1 env 路径；反作弊红线显式接回 relay 路径（E2E 段缺失/[BEHAVIOR] manual:bash 从未真跑 → 必 FAIL，禁拿 vitest 结果冒充 Golden Path 验收）；WORKSPACE 解析补宿主 fallback（/workspace 不存在时落 $PWD）。additive，双门/SHA锚定/verdict JSON 语义不变
@@ -81,6 +82,7 @@ generator 写代码 + push PR
 | `IS_FINAL_E2E` | harness v2 始终注入 `true`（单模式 E2E）；v1 env 路径下缺失或非 `true` = Brain dispatch 异常，直接 FATAL（见 Step 0）；**relay prompt 派发时必然缺失，视为 `true`，不 FATAL**（见「Relay 入口协议」） |
 | `SPRINT_DIR` | Sprint 目录，如 `sprints/run-20260506-1400` |
 | `TASK_ID` | Brain 中当前 evaluate task 的 UUID |
+| `PR_BRANCH` | 待验证 PR 分支名——Brain evaluateContractNode 注入 / relay prompt 提供（Step 0a 消费）（EVA v2 E7 补） |
 | `JOURNEY_TYPE` | `user_facing` / `autonomous` / `dev_pipeline` / `agent_remote` |
 | `TARGET_ENV` | `mac_web` / `windows_cloud` / `windows_wechat` / `linux_server` / `local_api` / `playground`（来自 PRD `target_environment` 字段；`mac_web` = 在宿主 Mac 直跑（非 Docker），Playwright 可达 localhost:5174；`windows_wechat` = xian-rog self-hosted，微信已登录；`windows_cloud` = GHA windows-latest 云端）|
 | `WORKSPACE_PATH` | 结果文件写入目录。**mac_web 宿主执行时由 host-executor 注入**（值为 worktreePath）；Docker 默认不注入，脚本 fallback `/workspace` |
@@ -287,11 +289,11 @@ if [[ "$TARGET_ENV" == "windows_cloud" || "$TARGET_ENV" == "windows_wechat" ]]; 
   # 提取「## E2E 验收」段内全部 ps1/powershell 代码块（拼接，直到下一个 ## 标题为止）。
   # 修 a638f840：旧版在第一个块结束就 exit——合同 Step 1-9 九个独立代码块时只提取 Step 1，
   # Step 2-9（核心验收内容）全被静默丢弃，"真实执行"变成幻觉。
-  awk '/^## E2E 验收/{found=1; next} found && /^## /{exit} found && /^```(powershell|ps1)/{in_block=1; next} in_block && /^```/{in_block=0; next} in_block{print}' \
+  awk '/^##+[[:space:]]*E2E[[:space:]]*验收/{found=1; next} found && /^## /{exit} found && /^```(powershell|ps1)/{in_block=1; next} in_block && /^```/{in_block=0; next} in_block{print}' \
     "$CONTRACT" > /tmp/e2e-verify.ps1
   if [[ ! -s /tmp/e2e-verify.ps1 ]]; then
     # fallback：尝试 bash 块（兼容旧合同格式）
-    awk '/^## E2E 验收/{found=1; next} found && /^## /{exit} found && /^```bash/{in_block=1; next} in_block && /^```/{in_block=0; next} in_block{print}' \
+    awk '/^##+[[:space:]]*E2E[[:space:]]*验收/{found=1; next} found && /^## /{exit} found && /^```bash/{in_block=1; next} in_block && /^```/{in_block=0; next} in_block{print}' \
       "$CONTRACT" > /tmp/e2e-verify.ps1
   fi
   if [[ ! -s /tmp/e2e-verify.ps1 ]]; then
@@ -302,12 +304,23 @@ BREOF
   fi
   # 写入 sprint_dir 并 push 到 PR 分支，GHA workflow checkout 后直接运行
   cp /tmp/e2e-verify.ps1 "${SPRINT_DIR}/e2e-verify.ps1"
-  git add "${SPRINT_DIR}/e2e-verify.ps1" 2>/dev/null || true
-  git commit -m "chore(harness): add e2e-verify.ps1 for windows_cloud runner" --no-verify 2>/dev/null || true
-  git push origin HEAD 2>/dev/null || true
+  # EVA v2 E4：post-merge 补验模式（Step 0a checkout merge commit = detached HEAD）下跳过 commit/push——
+  # 固化脚本已随原 PR 入库，无分支可推也无需重推；写入 E2E_FIXATION_NOTE 供 verdict notes 使用。
+  if git symbolic-ref -q HEAD >/dev/null 2>&1; then
+    git add "${SPRINT_DIR}/e2e-verify.ps1" 2>/dev/null || true
+    git commit -m "chore(harness): add e2e-verify.ps1 for windows_cloud runner" --no-verify 2>/dev/null || true
+    # EVA v2 E4：push 失败不再静默吞掉——输出 WARN 并记入 verdict notes（固化未入库 = merge 后无回归守护）
+    if ! git push origin HEAD 2>/tmp/e2e-push-err; then
+      echo "WARN: e2e-verify.ps1 固化 push 失败：$(head -c 200 /tmp/e2e-push-err | tr '\n' ' ')" >&2
+      E2E_FIXATION_NOTE="e2e-verify.ps1 固化 push 失败，脚本未随 PR 入库（详见 evaluator 日志）"
+    fi
+  else
+    echo "post-merge 补验模式（detached HEAD），跳过 commit/push" >&2
+    E2E_FIXATION_NOTE="post-merge 补验，固化脚本已随原 PR 入库无需重推"
+  fi
 else
   # 提取 "## E2E 验收" 区块内全部 bash 代码块（拼接，直到下一个 ## 标题；修 a638f840 只取第一块 bug）
-  awk '/^## E2E 验收/{found=1; next} found && /^## /{exit} found && /^```bash/{in_block=1; next} in_block && /^```/{in_block=0; next} in_block{print}' \
+  awk '/^##+[[:space:]]*E2E[[:space:]]*验收/{found=1; next} found && /^## /{exit} found && /^```bash/{in_block=1; next} in_block && /^```/{in_block=0; next} in_block{print}' \
     "$CONTRACT" > /tmp/e2e-verify.sh
   if [[ ! -s /tmp/e2e-verify.sh ]]; then
     cat > "$WORKSPACE/.brain-result.json" << BREOF
@@ -328,11 +341,22 @@ BREOF
   # Slice3 固化：把 bash golden-path E2E 脚本 cp 进 sprint 目录随 PR 一起 merge（镜像上方 windows 分支），
   # 否则脚本只活在 /tmp 跑一次就蒸发、merge 后无任何东西守护端到端行为（地基洞主洞）。
   cp /tmp/e2e-verify.sh "${SPRINT_DIR}/e2e-verify.sh"
-  git add "${SPRINT_DIR}/e2e-verify.sh" 2>/dev/null || true
-  git commit -m "chore(harness): 固化 e2e-verify.sh 进 sprint（回归套件，merge 后永久重跑）" --no-verify 2>/dev/null || true
-  git push origin HEAD 2>/dev/null || true
+  # EVA v2 E4：同 windows 分支——detached HEAD（post-merge 补验）跳过 commit/push；push 失败 WARN 不静默。
+  if git symbolic-ref -q HEAD >/dev/null 2>&1; then
+    git add "${SPRINT_DIR}/e2e-verify.sh" 2>/dev/null || true
+    git commit -m "chore(harness): 固化 e2e-verify.sh 进 sprint（回归套件，merge 后永久重跑）" --no-verify 2>/dev/null || true
+    if ! git push origin HEAD 2>/tmp/e2e-push-err; then
+      echo "WARN: e2e-verify.sh 固化 push 失败：$(head -c 200 /tmp/e2e-push-err | tr '\n' ' ')" >&2
+      E2E_FIXATION_NOTE="e2e-verify.sh 固化 push 失败，脚本未随 PR 入库（详见 evaluator 日志）"
+    fi
+  else
+    echo "post-merge 补验模式（detached HEAD），跳过 commit/push" >&2
+    E2E_FIXATION_NOTE="post-merge 补验，固化脚本已随原 PR 入库无需重推"
+  fi
 fi
 ```
+
+> **EVA v2 E4**：上面两个分支写入的 `$E2E_FIXATION_NOTE` 非空时，Step B-3 / 输出规范写 verdict JSON 必须追加 `"notes":"$E2E_FIXATION_NOTE"` 字段（v1 消费方忽略未知字段无害），让"固化是否真入库/为何不推"从 verdict 本身可见。
 
 #### Step B-1.5: E2E 命令位置词验证（B33 v1.6 — playground-aware）
 
@@ -805,6 +829,12 @@ BREOF
 
 **输出协议（v1.5.0+ — 文件协议）**：最终结果写入 `"$WORKSPACE/.brain-result.json"`（Docker 默认 `/workspace/.brain-result.json`，mac_web host 执行时为 `$WORKSPACE_PATH/.brain-result.json`，relay 宿主执行且两者皆无时 fallback `$PWD/.brain-result.json`，见 Step 0），Brain 读文件不读 stdout。
 
+**behavior_tests 真跑证据（EVA v2 E1 硬要求）**：verdict JSON 必须带 `behavior_tests` 数组，**每条必须是对象 `{command, exit_code, log_tail}`**——`log_tail` = 该命令输出末 5 行（如 `tail -5 /tmp/e2e-result.log`）。缺 `exit_code` 或 `log_tail` 任一 = 该条视为未跑，**禁 PASS**。a85e0582 实证：verdict 只列命令原文时，"真跑"与"声称跑过"从 verdict 本身无法区分——退出码和真实输出尾巴是唯一能自证真跑的东西。
+
+```json
+{"verdict":"PASS","behavior_tests":[{"command":"curl -sf localhost:5221/api/brain/ping | jq -e '.ok==true'","exit_code":0,"log_tail":"{\"ok\":true}"}], ...}
+```
+
 示例（PASS）：
 
 ```bash
@@ -832,7 +862,7 @@ BREOF
 1. **验证命令用 mock 或 dry-run** → 必须连接真实服务（brain 端口 5221，真实 DB）
 2. **feedback 笼统** → 必须指明具体文件/函数/值，附修复方向
 3. **输出带 markdown 代码块** → Brain 解析 verdict 字段时会失败
-4. **E2E 脚本提取不全** → 确认 `contract-draft.md` 的 `## E2E 验收` 区块边界正确，提取后 `/tmp/e2e-verify.sh`（或 `.ps1`）非空
+4. **E2E 脚本提取不全** → 确认 `contract-draft.md` 的 `## E2E 验收` 区块边界正确（EVA v2 E5 起标题匹配已放宽至 `###`/带空格变体），提取后 `/tmp/e2e-verify.sh`（或 `.ps1`）非空
 5. **跳过环境预检直接执行** → 执行前必跑 Step B-1.6（环境预检）/ B-1.8（Golden Path 覆盖）/ B-1.9（Machine Probe）：工具缺失 = `env_missing` FAIL（禁止降级），硬编码路径 = FAIL，Golden Path 有步骤未覆盖 = FAIL
 
 

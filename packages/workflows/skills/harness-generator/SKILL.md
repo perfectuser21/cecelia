@@ -5,10 +5,11 @@ description: |
   读取 GAN 对抗已批准的 contract-draft.md + tests/*.test.ts + contract-dod.md，按 TDD 纪律两次 commit（commit 1 = 测试 Red / commit 2 = 实现 Green）。
   融入 4 个 superpowers：test-driven-development / verification-before-completion / systematic-debugging / requesting-code-review。
   CONTRACT IS LAW：合同里有的全实现，合同外一字不加；测试文件从合同原样复制，commit 1 后不可修改（由 evaluator CONTRACT-IS-LAW 与 judge 复核把关；CI 机械闸 lint-contract-test-immutability 落地后由其强制）。一个 Sprint = 一个 Generator = 一个 PR。
-version: 7.8.0
+version: 7.9.0
 created: 2026-04-08
-updated: 2026-07-05
+updated: 2026-07-14
 changelog:
+  - 7.9.0: EVA v2 审计五处修法 — G1 Red 阶段 relay 现实双分支（合同测试已随 contract import 存在则 Red commit=DoD.md+red-evidence 摘要，不重复 checkout；Red 验证按测试类型分派，.test.sh 合同逐个 bash 执行预期非零退出码即为红，替代 numTotalTests=0 即 exit 1 的死路）；G2 防事后补标（(Red) commit committer date 必须早于实现 commit）+ lint-tdd-commit-order 表述如实化（只校验文件序不校验标签顺序）；G3 新增 Step 6.7 push 前 CI 门禁自查（smoke 存在且登记/DoD 全勾/[BEHAVIOR] 测试覆盖，3827 实证）；G4 BEHIND 统一 gh pr update-branch，禁 merge commit 限定开工 rebase 阶段；G5 MAX_FIXES 用尽接线 Step 8 FAILED verdict + RELAY_STATUS BLOCKED
   - 7.8.0: 新增 Step 5.5 RPA 真机自验——碰 RPA 执行路径的 sprint 在 push 前必须经快验通道(POST /api/brain/rpa/dev-verify)在研发机真跑一次动作并把回执贴进 Test Evidence；根治 generator 盲写 RPA 代码(容器内 vitest 绿≠真机能跑)
   - 7.7.0: Step 6 Code Review 由「调 requesting-code-review 派 review subagent」改为「generator 内联自审 diff」（NESTED-SUB-AUDIT-20260705 F1/F2）——relay 下 generator 是 controller 的 sub，无 Task 工具不能再派 sub，原步骤静默跳过导致 push 前 code review 漏检进 PR；内联版按同一检查清单自审。Step 7 PR body 模板同步（F2）
   - 7.6.0: 追加「Relay 模式出口协议」（T5，additive）——被 harness-controller 派发时在报告末尾输出 RELAY_STATUS 四态；原 verdict JSON 一字不变（v1 LangGraph 双轨兼容；图路径 2026-07-05 起已废弃，relay 为唯一编排）
@@ -132,7 +133,7 @@ git merge-base --is-ancestor origin/main HEAD || {
 
 **禁止事项**：
 - 禁止跳过 rebase 直接开工
-- 禁止用 `git merge origin/main` 代替 rebase（会产生 merge commit 污染历史）
+- 禁止用 `git merge origin/main` 代替 rebase（会产生 merge commit 污染历史）——此禁令仅适用于**开工 rebase 阶段**；PR 阶段 BEHIND 用 `gh pr update-branch` 产生的 merge commit 不违规（EVA v2 G4）
 
 ### Step 1: 读合同 + 测试文件清单
 
@@ -186,8 +187,17 @@ git checkout -b "$BRANCH"
 **调用 skill: `superpowers:test-driven-development`** — 遵循 Red-Green-Refactor 铁律。
 
 ```bash
-# 从合同 branch 原样 checkout 测试文件（禁止修改）
-git checkout "origin/${CONTRACT_BRANCH}" -- "${SPRINT_DIR}/tests/"
+# EVA v2（G1）Red 双分支：先判合同测试是否已随 contract import 存在于当前分支
+# 若合同 tests 已随 contract import（GAN 分支）存在于当前分支：Red commit = DoD.md + /tmp/red-evidence
+# 摘要文件（记录合同测试执行输出），不再重复 checkout 测试文件——这是 relay 的常态（a85e0582 实证）
+if [ -n "$(ls -A "${SPRINT_DIR}/tests/" 2>/dev/null)" ]; then
+  TESTS_ALREADY_PRESENT=true
+  echo "[red] 合同测试已随 contract import 存在于当前分支（relay 常态），不重复 checkout"
+else
+  TESTS_ALREADY_PRESENT=false
+  # 从合同 branch 原样 checkout 测试文件（禁止修改）
+  git checkout "origin/${CONTRACT_BRANCH}" -- "${SPRINT_DIR}/tests/"
+fi
 
 # 原样复制 DoD（contract-dod.md → DoD.md，加 contract 来源 header）
 CONTRACT_DOD=$(git show "origin/${CONTRACT_BRANCH}:${SPRINT_DIR}/contract-dod.md")
@@ -198,30 +208,62 @@ sprint_dir: ${SPRINT_DIR}
 ${CONTRACT_DOD}
 DODEOF
 
-# commit 1 只能 touch：sprints/*/tests/**/*.test.ts + DoD.md
-# 禁含 packages/ apps/ 等实现目录
-git add "${SPRINT_DIR}/tests/" DoD.md
-git commit -m "test(harness): sprint failing tests (Red)"
-
 # verify Red：跑测试看红（预期 FAIL，因实现还不存在）
-# 用 --reporter=json 拿确定性统计，不再 grep 日志里的 FAIL/✗/× 符号（受颜色码/语言/格式干扰，会误判）
-npx vitest run "${SPRINT_DIR}/tests/" --reporter=json --outputFile=/tmp/red-report.json 2>&1 | tee /tmp/red-evidence.txt || true
+# EVA v2（G1）：Red 验证按测试类型分派——.test.sh 合同不进 vitest（原 numTotalTests=0 就 exit 1 是死路）
+: > /tmp/red-evidence.txt
 
-# 从 JSON 读 failed/passed/total（确定性）
-FAILED_RED=$(node -e "const r=require('/tmp/red-report.json');process.stdout.write(String(r.numFailedTests ?? 0))" 2>/dev/null || echo 0)
-PASSED_RED=$(node -e "const r=require('/tmp/red-report.json');process.stdout.write(String(r.numPassedTests ?? 0))" 2>/dev/null || echo 0)
-TOTAL_RED=$(node -e "const r=require('/tmp/red-report.json');process.stdout.write(String(r.numTotalTests ?? 0))" 2>/dev/null || echo 0)
+# ① .test.ts / .test.js：走现有 vitest JSON 数值判定
+# 用 --reporter=json 拿确定性统计，不 grep 日志里的 FAIL/✗/× 符号（受颜色码/语言/格式干扰，会误判）
+TS_TESTS=$(find "${SPRINT_DIR}/tests/" \( -name "*.test.ts" -o -name "*.test.js" \) 2>/dev/null)
+if [ -n "$TS_TESTS" ]; then
+  npx vitest run "${SPRINT_DIR}/tests/" --reporter=json --outputFile=/tmp/red-report.json 2>&1 | tee -a /tmp/red-evidence.txt || true
 
-# Red 阶段：实现还不存在，所有测试都应 FAIL
-if [ "$TOTAL_RED" -eq 0 ]; then
-  echo "ERROR: vitest numTotalTests=0 — 测试文件路径错或未被收集"
+  # 从 JSON 读 failed/passed/total（确定性）
+  FAILED_RED=$(node -e "const r=require('/tmp/red-report.json');process.stdout.write(String(r.numFailedTests ?? 0))" 2>/dev/null || echo 0)
+  PASSED_RED=$(node -e "const r=require('/tmp/red-report.json');process.stdout.write(String(r.numPassedTests ?? 0))" 2>/dev/null || echo 0)
+  TOTAL_RED=$(node -e "const r=require('/tmp/red-report.json');process.stdout.write(String(r.numTotalTests ?? 0))" 2>/dev/null || echo 0)
+
+  # Red 阶段：实现还不存在，所有测试都应 FAIL
+  if [ "$TOTAL_RED" -eq 0 ]; then
+    echo "ERROR: vitest numTotalTests=0 — 测试文件路径错或未被收集"
+    exit 1
+  fi
+  if [ "$PASSED_RED" -gt 0 ]; then
+    echo "ERROR: Red 阶段有 $PASSED_RED 个测试已通过（应全红）— 实现还没写就能过 = import 错或断言太弱"
+    exit 1
+  fi
+  echo "Red 证据（vitest）：$FAILED_RED/$TOTAL_RED failed（全红，符合预期）" | tee -a /tmp/red-evidence.txt
+fi
+
+# ② .test.sh 合同（EVA v2：3845 实证 5 个里 4 个是 .sh）：逐个 bash 执行，预期非零退出码即为红
+SH_TESTS=$(find "${SPRINT_DIR}/tests/" -name "*.test.sh" 2>/dev/null)
+if [ -n "$SH_TESTS" ]; then
+  for t in $SH_TESTS; do
+    echo "[red] bash $t" >> /tmp/red-evidence.txt
+    if bash "$t" >> /tmp/red-evidence.txt 2>&1; then
+      echo "ERROR: Red 阶段 $t 退出码 0（应非零）— 实现还没写就能过 = 断言太弱或测试打错目标"
+      exit 1
+    fi
+    echo "[red] $t 非零退出码（红，符合预期）" | tee -a /tmp/red-evidence.txt
+  done
+fi
+
+# 两类测试都没有 → 才是真的收集失败
+if [ -z "$TS_TESTS" ] && [ -z "$SH_TESTS" ]; then
+  echo "ERROR: ${SPRINT_DIR}/tests/ 下未发现 .test.ts/.test.js/.test.sh 测试文件"
   exit 1
 fi
-if [ "$PASSED_RED" -gt 0 ]; then
-  echo "ERROR: Red 阶段有 $PASSED_RED 个测试已通过（应全红）— 实现还没写就能过 = import 错或断言太弱"
-  exit 1
+
+# commit 1（Red）——按双分支（EVA v2 G1），先验红再 commit（红证据要进 commit）：
+if [ "$TESTS_ALREADY_PRESENT" = "true" ]; then
+  # relay 常态：测试文件已在分支上，Red commit = DoD.md + red-evidence 摘要（记录合同测试执行输出）
+  head -80 /tmp/red-evidence.txt > "${SPRINT_DIR}/red-evidence.md"
+  git add DoD.md "${SPRINT_DIR}/red-evidence.md"
+else
+  # commit 1 只能 touch：sprints/*/tests/** + DoD.md，禁含 packages/ apps/ 等实现目录
+  git add "${SPRINT_DIR}/tests/" DoD.md
 fi
-echo "Red 证据：$FAILED_RED/$TOTAL_RED failed（全红，符合预期）"
+git commit -m "test(harness): sprint failing tests (Red)"
 ```
 
 **Red 证据贴进 commit 1 的 git notes 或临时保存在 /tmp/red-evidence.txt，后面进 PR body。**
@@ -252,7 +294,9 @@ git commit -m "feat(harness): sprint implementation (Green)"
 
 1. commit 1 之后，任何 commit 都**不许修改** `sprints/*/tests/**/*.test.ts`（由 evaluator CONTRACT-IS-LAW 与 judge 复核把关；CI 机械闸 lint-contract-test-immutability 落地后由其强制）
 2. commit 2+ 必须包含实现代码（`packages/` 或 `apps/` 目录变更），不能只改 docs
-3. commit 1 message 含 `(Red)`（lint-tdd-commit-order CI 校验），commit 2 message 含 `(Green)`
+3. commit 1 message 含 `(Red)`，commit 2 message 含 `(Green)`
+4. **（EVA v2 死规则）含 `(Red)` 的 commit 的 committer date 必须早于任何实现 commit；禁止实现完成后补一个标 `(Red)` 的标记 commit**（3845 实证漂移：Green 11:44 早于补标的 Red 11:47）
+   > 如实说明：lint-tdd-commit-order 只校验文件序（test 文件先于 src），不校验 (Red)/(Green) 标签顺序，且存在同 commit 共存与 smoke.sh 计为测试先行两条可被穿透的豁免——标签顺序目前由 evaluator/judge 复核把关
 
 **Skeleton 模式**：`IS_SKELETON=true` 时：
 - commit message 改为：`feat(harness): skeleton implementation (Skeleton Green)`
@@ -397,6 +441,39 @@ fi
 
 **死规则**：重试期间**只能改实现代码**，绝不允许改 contract / 改测试文件来迁就（违反 CONTRACT IS LAW，测试文件不可改由 evaluator CONTRACT-IS-LAW 与 judge 复核把关；CI 机械闸 lint-contract-test-immutability 落地后由其强制）。
 
+### Step 6.7: ★ push 前 CI 门禁自查（EVA v2：3827 实证缺这步多烧 2 个 fix commit）
+
+**目的**：把 CI 必挂项左移到 push 前自查。以下三条任一缺 → 补完（补 smoke / 勾 DoD / 补测试映射）再 push，禁止带着已知 CI 必挂项 push。
+
+```bash
+# ① smoke 脚本存在且登记（按 base_repo 分派）
+FEATURE=<本 sprint 的 feature 名>
+if [ -d packages/brain ]; then
+  # cecelia
+  test -f "packages/brain/scripts/smoke/${FEATURE}-smoke.sh" \
+    || echo "❌ 缺 smoke 脚本：packages/brain/scripts/smoke/${FEATURE}-smoke.sh"
+  grep -q "${FEATURE}-smoke.sh" packages/quality/smoke-allowlist.txt \
+    || echo "❌ smoke 未登记：packages/quality/smoke-allowlist.txt"
+else
+  # zenithjoy
+  test -f ".github/workflows/scripts/smoke/${FEATURE}-smoke.sh" \
+    || echo "❌ 缺 smoke 脚本：.github/workflows/scripts/smoke/${FEATURE}-smoke.sh"
+  grep -q "${FEATURE}-smoke.sh" smoke-baseline.txt \
+    || echo "❌ smoke 未登记：smoke-baseline.txt"
+fi
+
+# ② DoD 条目全部 [x]（存在未勾 [ ] 条目 = 不许 push）
+! grep -q '\- \[ \]' "${SPRINT_DIR}/contract-dod.md" || { echo "❌ DoD 有未勾 [ ] 条目"; exit 1; }
+
+# ③ [BEHAVIOR] 覆盖：每条 [BEHAVIOR] 的覆盖文本必须能与测试 it()/文件名子串匹配
+grep -oE '\[BEHAVIOR\][^|]*' "${SPRINT_DIR}/contract-dod.md" | while read -r b; do
+  KEY=$(echo "$b" | sed 's/\[BEHAVIOR\]//' | awk '{print $1}')
+  grep -rq "$KEY" "${SPRINT_DIR}/tests/" || echo "❌ [BEHAVIOR] 未见测试覆盖：$b"
+done
+```
+
+**规则**：出现任何 ❌ → 不准 push，补完对应项后重跑本 step 直到无 ❌（EVA v2：3827 实证缺这步多烧 2 个 fix commit）。
+
 ### Step 7: Push + PR
 
 ```bash
@@ -464,6 +541,9 @@ while true; do
     if [ "$FIX_COUNT" -ge "$MAX_FIXES" ]; then
       echo "CI failed $MAX_FIXES times, giving up"
       rm -f "$FIX_COUNT_FILE"
+      # EVA v2（G5）：giving up 不是流程真空——break 后立即执行 Step 8 输出
+      # {"verdict":"FAILED","pr_url":"<url>","reason":"<最后一轮 CI 失败摘要>"}
+      # relay 模式下报告末尾输出 RELAY_STATUS: BLOCKED
       break
     fi
     FIX_COUNT=$((FIX_COUNT+1))
@@ -479,8 +559,10 @@ while true; do
   fi
 
   [ "$MERGE_STATE" = "BEHIND" ] && {
-    echo "branch behind main, rebasing..."
-    git fetch origin main && git rebase origin/main && git push origin HEAD --force-with-lease
+    # EVA v2（G4）：BEHIND 统一走 gh pr update-branch（与 controller 实践/全局规范对齐），
+    # 不再本地 rebase + force-with-lease push
+    echo "branch behind main, update-branch..."
+    gh pr update-branch "$PR_NUMBER" --repo "$REPO"
     continue
   }
 
@@ -496,6 +578,8 @@ done
 ```
 
 > **说明**：Bash 工具单次 timeout 上限 600000ms（10 分钟）。超时后立刻重新发 Bash 调用继续轮询，不输出任何文字，不结束 turn。直到 CI 全绿为止。
+
+> **EVA v2（G5）MAX_FIXES 用尽出口（死规则）**：CI 修复 3 次用尽走到 `giving up` 分支后，禁止静默结束——**立即执行 Step 8**，输出 `{"verdict":"FAILED","pr_url":"<url>","reason":"<最后一轮 CI 失败摘要>"}`；relay 模式下报告末尾输出 `RELAY_STATUS: BLOCKED`。消除 break 后的流程真空。
 
 ### Step 8: 输出 verdict JSON（⚠️ Brain 通过此提取 pr_url，CI 全绿后执行）
 
@@ -598,7 +682,7 @@ commit 2: feat(harness): skeleton implementation (Skeleton Green)
 | 想法 | 真相 |
 |---|---|
 | "测试写得太严，改一下让它能过" | 改测试 = 违反 CONTRACT IS LAW，push 时 CI 会抓 |
-| "我知道 BEHAVIOR 应该是啥，不看测试直接写实现" | 违反 TDD Red-Green 顺序，commit 顺序检查会挂 |
+| "我知道 BEHAVIOR 应该是啥，不看测试直接写实现" | 违反 TDD Red-Green 顺序，evaluator/judge 复核会抓（lint-tdd-commit-order 只校验文件序，不校验标签顺序——EVA v2）|
 | "先让一个测试过，其他等 CI 告诉我" | 违反 verification-before-completion，必须本地先全绿 |
 | "合同写漏了一个功能，顺手加上" | 违反合同外不加，只能写进 PR description 上报 |
 | "跑测试挺慢，跳过这一步吧" | 违反 verification-before-completion，禁止"看起来应该过了"的假设 |
