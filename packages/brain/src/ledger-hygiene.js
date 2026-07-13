@@ -137,7 +137,82 @@ export async function computeMetrics(pool) {
     return { key: 'm5', name: '判定点活性', value: cnt, debt: cnt === 0 ? 1 : 0, enabled: true, absolute: true };
   }, { key: 'm5', name: '判定点活性', value: null, debt: 0 });
 
-  return { m1, m2, m3, m4, m5 };
+  const m6 = await safeMetric(async () => {
+    // evaluator 门禁覆盖率：近 7 天 v2 relay run 里 phase='done' 的行，
+    // 有多少缺失 initiative_run_events(node='evaluator', status='done')——
+    // 缺失即"PR 合并但从未经 evaluator 验收"（c36326c8 machine gate 配套指标）。
+    const { rows } = await pool.query(
+      `SELECT count(*) AS total,
+              count(*) FILTER (
+                WHERE NOT EXISTS (
+                  SELECT 1 FROM initiative_run_events e
+                  WHERE e.initiative_id = r.initiative_id AND e.node = 'evaluator' AND e.status = 'done'
+                )
+              ) AS debt
+       FROM initiative_runs r
+       WHERE r.orchestrator_version = 'v2'
+         AND r.phase = 'done'
+         AND r.completed_at >= NOW() - INTERVAL '7 days'`
+    );
+    const total = toInt(rows[0]?.total);
+    const debt = toInt(rows[0]?.debt);
+    return { key: 'm6', name: 'evaluator门禁覆盖率', value: total === 0 ? 1 : (total - debt) / total, debt, enabled: true };
+  }, { key: 'm6', name: 'evaluator门禁覆盖率', value: null, debt: 0 });
+
+  const m7 = await safeMetric(async () => {
+    // 自主循环零产出：过去 24h 内，下列"应产出"循环是否出现零产出天——
+    // (a) strategist：design_docs(type='strategy_session') 行数
+    // (b) capture：capture_atoms 行数（T10 通电后才激活）
+    // 规则：各项探针先查"历史上有没有产出过"，从未产出=未激活(enabled=false)；
+    // 激活后 24h 零产出 → debt+1（absolute 棘轮，首发即击穿）。
+
+    // (a) strategist 近 24h
+    const strat = await pool.query(
+      `SELECT count(*) AS cnt FROM design_docs
+       WHERE type = 'strategy_session'
+         AND created_at >= NOW() - INTERVAL '24 hours'`
+    );
+    const stratEver = await pool.query(
+      `SELECT 1 FROM design_docs WHERE type = 'strategy_session' LIMIT 1`
+    );
+    const stratActivated = stratEver.rows.length > 0;
+    const stratDebt = stratActivated && toInt(strat.rows[0]?.cnt) === 0 ? 1 : 0;
+
+    // (b) capture_atoms 近 24h
+    let captureActivated = false;
+    let captureDebt = 0;
+    try {
+      const capEver = await pool.query(
+        `SELECT 1 FROM capture_atoms LIMIT 1`
+      );
+      captureActivated = capEver.rows.length > 0;
+      if (captureActivated) {
+        const cap = await pool.query(
+          `SELECT count(*) AS cnt FROM capture_atoms
+           WHERE created_at >= NOW() - INTERVAL '24 hours'`
+        );
+        captureDebt = toInt(cap.rows[0]?.cnt) === 0 ? 1 : 0;
+      }
+    } catch {
+      // capture_atoms 表可能未激活，忽略
+    }
+
+    const totalDebt = stratDebt + captureDebt;
+    const activated = stratActivated || captureActivated;
+    if (!activated) {
+      return { key: 'm7', name: '自主循环零产出', value: null, debt: 0, enabled: false };
+    }
+    return {
+      key: 'm7',
+      name: '自主循环零产出',
+      value: { stratDebt, captureDebt },
+      debt: totalDebt,
+      enabled: true,
+      absolute: true,
+    };
+  }, { key: 'm7', name: '自主循环零产出', value: null, debt: 0 });
+
+  return { m1, m2, m3, m4, m5, m6, m7 };
 }
 
 /**
@@ -173,16 +248,21 @@ export function evaluateRatchet(metrics, prev, today) {
   return { state, breaches };
 }
 
-/** 渲染卫生分 markdown（5 指标表格 + 击穿段）。 */
+/** 渲染卫生分 markdown（m1-m7 指标表格 + 击穿段）。 */
 export function renderHygieneMarkdown(today, metrics, breaches) {
   const lines = [`# 账本卫生分 ${today}`, ''];
   lines.push('| 指标 | 值 | 欠账 | 状态 |');
   lines.push('|---|---|---|---|');
   for (const m of Object.values(metrics)) {
-    const value =
-      typeof m.value === 'number' && m.value <= 1 && m.key !== 'm5'
-        ? `${Math.round(m.value * 100)}%`
-        : (m.value ?? '—');
+    let value;
+    if (typeof m.value === 'object' && m.value !== null && m.key === 'm7') {
+      // m7 value 是 { stratDebt, captureDebt } 对象
+      value = JSON.stringify(m.value);
+    } else if (typeof m.value === 'number' && m.value <= 1 && !['m5', 'm7'].includes(m.key)) {
+      value = `${Math.round(m.value * 100)}%`;
+    } else {
+      value = m.value ?? '—';
+    }
     lines.push(`| ${m.name} | ${value} | ${m.debt} | ${m.enabled ? '启用' : '未启用'} |`);
   }
   lines.push('');

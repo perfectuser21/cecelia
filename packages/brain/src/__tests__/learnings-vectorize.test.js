@@ -443,6 +443,7 @@ describe('selfcheck schema version', () => {
     // 333 = migration 333 areas 去重 + KR1/KR2 metadata.target_abilities（OKR 数据卫生）；
     // 334 = migration 334 golden_paths 表（routes/golden-paths.js 与 gp-shelf-life.js 直接依赖）；
     // 335 = migration 335 golden_path_proposal task_type（GP2/T2 派发链直接依赖），故推进地板到 335。
-    expect(EXPECTED_SCHEMA_VERSION).toBe('335');
+    // 338 = migration 338 tasks.status 部分索引（postdeploy-verifier pending_postdeploy 扫描查询直接依赖）。
+    expect(EXPECTED_SCHEMA_VERSION).toBe('338');
   });
 });

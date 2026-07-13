@@ -131,6 +131,33 @@ describe('watchdog headed 分支', () => {
       const result = await resumeStalledRelayRuns(deps);
       expect(result.resumed).toBeGreaterThan(0);
     });
+
+    it('headed run phase=gan(relay 真实 phase)+ session 消失 → 触发重点火（存活检测写死 A_planning 漏掉 gan/generate = RED）', async () => {
+      const run = makeHeadedRun({ phase: 'gan' });
+      const task = makeHeadedTask();
+      const pool = {
+        query: vi.fn().mockImplementation((sql) => {
+          if (/SELECT DISTINCT ON.*initiative_runs/.test(sql)) return Promise.resolve({ rows: [run] });
+          if (/SELECT.*FROM tasks WHERE id/.test(sql)) return Promise.resolve({ rows: [task] });
+          return Promise.resolve({ rows: [] });
+        }),
+      };
+      const execFn = vi.fn().mockImplementation((cmd) => {
+        if (cmd.includes('tmux has-session')) {
+          const err = new Error("can't find session codex-relay-bbbbcccc");
+          err.status = 1; // session 不存在（exit 1，非 ssh 连接失败）
+          throw err;
+        }
+        return '0';
+      });
+      const spawnFn = vi.fn().mockResolvedValue({ ok: true, containerId: 'cid' });
+
+      const result = await resumeStalledRelayRuns({ pool, execFn, spawnFn });
+
+      // relay 真实 phase 是 planning/gan/generate，不是旧 LangGraph 图的 A_planning；
+      // gan 阶段 session 消失也必须重点火，否则中途死的 headed session 永远无人救。
+      expect(result.resumed).toBeGreaterThan(0);
+    });
   });
 
   describe('2. 收窗幂等 — run done 后 kill session，已收过不重复 kill', () => {

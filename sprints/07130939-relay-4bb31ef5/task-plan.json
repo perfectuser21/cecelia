@@ -1,0 +1,32 @@
+{
+  "initiative_id": "4bb31ef5-e140-41f4-9daf-9ca4a9e51216",
+  "journey_type": "autonomous",
+  "journey_type_reason": "PRD 指定 target_environment=local_api，验收对象为 Brain API、PostgreSQL initiative_runs、CI seed 步骤静态文本与本机 sprint 日志证据。",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "固化 claude-headed-smoke 回归验收 wrapper + CI seed 分支补齐",
+      "scope": "新增与 codex 版对称的 packages/brain/scripts/smoke/claude-headed-dispatch-smoke.sh 并登记 packages/quality/smoke-allowlist.txt；补充 sprint-local e2e-verify.sh，定点验证当前 task payload、initiative_runs 真实列上的 headed relay 状态；payload 必须拒绝 token/github_token/anthropic_token/thin_prd；phase 仅接受 A_planning|planning|gan|generate|evaluate|done，failed 或 unknown 必须失败；修补 .github/workflows/ci.yml 的 DoD 动态 seed 步骤，新增 claude-headed 分支 seed orchestrator_host=skill-relay-claude-headed + payload.executor=claude，且不破坏 codex-headed 既有分支；tui.log 存在且非空时验 headed relay 信号和无 token，缺失时输出 WARN/evidence、验证 harness-skill-relay.js 留痕机制且不伪造日志；更新 DoD.md 记录本 sprint claude-headed relay DoD。",
+      "dod": [
+        "[BEHAVIOR] e2e wrapper 调用 claude-headed-dispatch-smoke.sh",
+        "[BEHAVIOR] payload 包含 mode=headed、executor=claude、orchestrator=skill-relay 且禁用 token/github_token/anthropic_token/thin_prd",
+        "[BEHAVIOR] initiative_runs 含 skill-relay-claude-headed 且 phase 拒绝 failed/unknown",
+        "[BEHAVIOR] ci.yml DoD 动态 seed 步骤补齐 claude-headed 分支，且 codex-headed 既有分支不回归",
+        "[BEHAVIOR] tui.log 存在则验真，缺失则验留痕机制且不伪造",
+        "[BEHAVIOR] local_api E2E wrapper 完整验证当前 task/run/log/ci-seed 外部真相",
+        "[ARTIFACT] sprints/07130939-relay-4bb31ef5/e2e-verify.sh 存在且不包含 token/thin_prd 或 remote 凭据",
+        "[ARTIFACT] packages/brain/scripts/smoke/claude-headed-dispatch-smoke.sh 存在并登记 smoke-allowlist.txt"
+      ],
+      "files": [
+        "sprints/07130939-relay-4bb31ef5/e2e-verify.sh",
+        "packages/brain/scripts/smoke/claude-headed-dispatch-smoke.sh",
+        "packages/quality/smoke-allowlist.txt",
+        ".github/workflows/ci.yml",
+        "DoD.md"
+      ],
+      "depends_on": [],
+      "complexity": "M",
+      "estimated_minutes": 60
+    }
+  ]
+}

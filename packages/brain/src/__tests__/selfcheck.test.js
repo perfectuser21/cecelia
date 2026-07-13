@@ -182,8 +182,8 @@ describe('selfcheck', () => {
   // 推进地板到 334 防止未跑该迁移的旧 DB 误判 golden-paths 路由/gp-shelf-life job 为已生效。
   // 335（golden_path_proposal 加入 tasks_task_type_check）为 GP2/T2 派发链前置，
   // 推进地板到 335 防止未跑该迁移的旧 DB 上圈选建任务被 CHECK 拒。
-  it('EXPECTED_SCHEMA_VERSION should be 335 (floor, bumped for golden_path_proposal task_type)', () => {
-    expect(EXPECTED_SCHEMA_VERSION).toBe('335');
+  it('EXPECTED_SCHEMA_VERSION should be 338 (floor, bumped for preview/strategist migrations)', () => {
+    expect(EXPECTED_SCHEMA_VERSION).toBe('338');
   });
 
   it('should pass when DB schema version is ahead of expected (>= check)', async () => {

@@ -17,6 +17,7 @@ capture-triage-scope-smoke.sh
 ci-patrol-wiring-smoke.sh
 circuit-breaker-persist-smoke.sh
 circuit-breaker-reset-smoke.sh
+claude-headed-dispatch-smoke.sh
 codex-headed-dispatch-smoke.sh
 compute-ssh-reachability-smoke.sh
 decision-system-smoke.sh
@@ -29,6 +30,7 @@ golden-paths-t1-smoke.sh
 golden-paths-t7-e2e-smoke.sh
 harness-detail-smoke.sh
 harness-echo-smoke.sh
+harness-evaluator-gate-smoke.sh
 harness-ping-smoke.sh
 harness-planner-async-smoke.sh
 harness-planner-v8-smoke.sh
@@ -50,6 +52,8 @@ line-context-smoke.sh
 line-dreaming-smoke.sh
 line-strategist-dispatch-smoke.sh
 okr-initiative-mirror-smoke.sh
+postdeploy-verifier-smoke.sh
+preview-env-smoke.sh
 protocol-hygiene-smoke.sh
 relay-runs-filter-smoke.sh
 relay-runs-since-smoke.sh
@@ -81,3 +85,4 @@ warroom-readonly-api-smoke.sh
 warroom-smoke.sh
 ws3-ire-module-smoke.sh
 zenithjoy-db-pool-smoke.sh
+relay-smoke-v220-smoke.sh

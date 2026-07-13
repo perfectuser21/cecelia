@@ -360,11 +360,17 @@ async function updateTask({ task_id, status, priority }) {
   }
 
   values.push(task_id);
-  // Atomic guard: when transitioning to in_progress, only update if still queued
-  // This prevents double-dispatch race conditions
-  const whereClause = status === 'in_progress'
-    ? `id = $${idx} AND status = 'queued'`
-    : `id = $${idx}`;
+  // Atomic guards:
+  // - in_progress: only from queued (prevents double-dispatch race)
+  // - queued: never from terminal states (completed/cancelled) — monitor/retry
+  //   callers must not resurrect finished tasks (issue 219a9efc oscillation);
+  //   explicit manual psql bypasses this by design
+  let whereClause = `id = $${idx}`;
+  if (status === 'in_progress') {
+    whereClause += ` AND status = 'queued'`;
+  } else if (status === 'queued') {
+    whereClause += ` AND status NOT IN ('completed', 'cancelled')`;
+  }
   const result = await pool.query(`
     UPDATE tasks SET ${updates.join(', ')}
     WHERE ${whereClause}
@@ -372,7 +378,12 @@ async function updateTask({ task_id, status, priority }) {
   `, values);
 
   if (result.rows.length === 0) {
-    return { success: false, error: status === 'in_progress' ? 'Task not found or already dispatched' : 'Task not found' };
+    const error = status === 'in_progress'
+      ? 'Task not found or already dispatched'
+      : (status === 'queued'
+          ? 'Task not found or in terminal state (completed/cancelled cannot be requeued)'
+          : 'Task not found');
+    return { success: false, error };
   }
 
   const task = result.rows[0];

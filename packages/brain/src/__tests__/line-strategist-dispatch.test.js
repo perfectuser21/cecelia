@@ -22,7 +22,7 @@ describe('dispatchStrategistDecisions', () => {
 
     const result = await dispatchStrategistDecisions(mockPool);
 
-    expect(result).toEqual({ scanned: 1, dispatched: 1, skipped_duplicate: 0, marked: 1 });
+    expect(result).toEqual({ scanned: 1, dispatched: 1, skipped_duplicate: 0, marked: 1, failed: 0 });
 
     const [insertSql, insertParams] = mockPool.query.mock.calls[2];
     expect(insertSql).toMatch(/INSERT INTO tasks/);
@@ -42,7 +42,7 @@ describe('dispatchStrategistDecisions', () => {
 
     const result = await dispatchStrategistDecisions(mockPool);
 
-    expect(result).toEqual({ scanned: 1, dispatched: 0, skipped_duplicate: 1, marked: 1 });
+    expect(result).toEqual({ scanned: 1, dispatched: 0, skipped_duplicate: 1, marked: 1, failed: 0 });
     expect(mockPool.query).toHaveBeenCalledTimes(3); // 无 INSERT 调用
   });
 
@@ -51,7 +51,7 @@ describe('dispatchStrategistDecisions', () => {
 
     const result = await dispatchStrategistDecisions(mockPool);
 
-    expect(result).toEqual({ scanned: 0, dispatched: 0, skipped_duplicate: 0, marked: 0 });
+    expect(result).toEqual({ scanned: 0, dispatched: 0, skipped_duplicate: 0, marked: 0, failed: 0 });
     expect(mockPool.query).toHaveBeenCalledTimes(1); // 只有扫描查询，无后续
   });
 
@@ -69,7 +69,7 @@ describe('dispatchStrategistDecisions', () => {
 
     const result = await dispatchStrategistDecisions(mockPool);
 
-    expect(result).toEqual({ scanned: 2, dispatched: 1, skipped_duplicate: 0, marked: 2 });
+    expect(result).toEqual({ scanned: 2, dispatched: 1, skipped_duplicate: 0, marked: 2, failed: 0 });
   });
 
   it('excludes strategist_decision tasks themselves from the scan to prevent a self-perpetuating loop', async () => {
@@ -77,5 +77,29 @@ describe('dispatchStrategistDecisions', () => {
     await dispatchStrategistDecisions(mockPool);
     const [scanSql] = mockPool.query.mock.calls[0];
     expect(scanSql).toMatch(/task_type\s*<>\s*'strategist_decision'/);
+  });
+
+  it('一个 journey 的 INSERT 失败不影响其它 journey 派发，且失败 journey 的源任务仍被标记', async () => {
+    mockPool.query.mockResolvedValueOnce({
+      rows: [
+        { id: 'task-fail', journey_id: 'journey-fail', status: 'completed' },
+        { id: 'task-ok', journey_id: 'journey-ok', status: 'completed' },
+      ],
+    });
+    // journey-fail: 查重通过，INSERT 抛错
+    mockPool.query.mockResolvedValueOnce({ rows: [] }); // 查重 journey-fail
+    mockPool.query.mockRejectedValueOnce(new Error('violates check constraint tasks_task_type_check')); // INSERT 失败
+    // journey-ok: 查重通过，INSERT 成功
+    mockPool.query.mockResolvedValueOnce({ rows: [] }); // 查重 journey-ok
+    mockPool.query.mockResolvedValueOnce({ rows: [{ id: 'new-task-id' }] }); // INSERT 成功
+    // 标记两条源任务
+    mockPool.query.mockResolvedValueOnce({ rows: [] }); // 标记 task-fail
+    mockPool.query.mockResolvedValueOnce({ rows: [] }); // 标记 task-ok
+
+    const result = await dispatchStrategistDecisions(mockPool);
+
+    expect(result).toEqual({
+      scanned: 2, dispatched: 1, skipped_duplicate: 0, marked: 2, failed: 1,
+    });
   });
 });
