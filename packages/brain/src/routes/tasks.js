@@ -357,14 +357,23 @@ router.post('/learnings-received', async (req, res) => {
 router.patch('/tasks/:task_id', async (req, res) => {
   try {
     const { task_id } = req.params;
-    const { status } = req.body;
+    const { status, result } = req.body;
 
-    // Require status
-    if (!status) {
+    // Require status or result（result 纯补写合法 — issue a638f840 report Step1 场景）
+    if (!status && result === undefined) {
       return res.status(400).json({
         success: false,
-        error: 'Missing required field: status',
+        error: 'Missing required field: status or result',
         code: 'MISSING_FIELD'
+      });
+    }
+
+    // result 必须是普通对象（jsonb || 合并语义）
+    if (result !== undefined && (result === null || typeof result !== 'object' || Array.isArray(result))) {
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid result: must be a JSON object',
+        code: 'INVALID_RESULT'
       });
     }
 
@@ -395,8 +404,12 @@ router.patch('/tasks/:task_id', async (req, res) => {
     const task = taskResult.rows[0];
     const currentStatus = task.status;
 
+    // status === currentStatus → 幂等 no-op：跳过 transition 校验与事件，仅应用 result 等字段
+    // no-op 不重触发 promoteRegression/KR 重算——补写场景 promote 已由 callback 4 终态路径承接（spec 有意设计，非遗漏）
+    const isStatusNoop = Boolean(status) && status === currentStatus;
+
     // Validate status transition if status is being changed
-    if (status) {
+    if (status && !isStatusNoop) {
       const allowedTransitions = {
         'pending': ['in_progress'],
         'queued': ['in_progress'],
@@ -428,7 +441,7 @@ router.patch('/tasks/:task_id', async (req, res) => {
     const params = [];
     let paramIdx = 1;
 
-    if (status) {
+    if (status && !isStatusNoop) {
       const changedAt = new Date().toISOString();
       const historyEntry = { from: currentStatus, to: status, changed_at: changedAt, source: 'engine' };
       setClauses.push(`status = $${paramIdx++}`);
@@ -456,6 +469,10 @@ router.patch('/tasks/:task_id', async (req, res) => {
       }
     }
 
+    if (result !== undefined) {
+      setClauses.push(`result = COALESCE(result, '{}'::jsonb) || $${paramIdx++}::jsonb`);
+      params.push(JSON.stringify(result));
+    }
 
     params.push(task_id);
     const updateResult = await pool.query(
@@ -465,7 +482,7 @@ router.patch('/tasks/:task_id', async (req, res) => {
 
     const updatedTask = updateResult.rows[0];
 
-    if (status) {
+    if (status && !isStatusNoop) {
       await emitEvent('task_status_changed', {
         task_id,
         from: currentStatus,
@@ -479,7 +496,7 @@ router.patch('/tasks/:task_id', async (req, res) => {
         // T2. harness merged 终态 → 累积 FR 冻结（fail-open；harness-report Step 1 走此路径）
         try {
           const { promoteRegressionOnHarnessMerged } = await import('../lib/callback-postprocess.js');
-          await promoteRegressionOnHarnessMerged(task_id, req.body.result || null, req.body.pr_url || null, pool);
+          await promoteRegressionOnHarnessMerged(task_id, result || null, req.body.pr_url || null, pool);
         } catch (promoteErr) {
           console.warn(`[tasks-patch] promoteRegressionOnHarnessMerged 失败 (non-fatal): ${promoteErr.message}`);
         }

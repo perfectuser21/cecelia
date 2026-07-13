@@ -195,6 +195,19 @@ export async function spawnSkillRelaySession(task, deps = {}) {
       console.warn(`[skill-relay] review_required 持久化失败（不阻塞，controller 以 prompt 头为准）: ${err.message}`);
     }
 
+    // issue 45dd6925：缺省生成的 sprint_dir 必须回写 payload，否则重派换新目录（断点恢复产物路径漂移）
+    if (!task.payload?.sprint_dir) {
+      try {
+        await dbPool.query(
+          `UPDATE tasks SET payload = COALESCE(payload, '{}'::jsonb) || jsonb_build_object('sprint_dir', $2::text)
+            WHERE id = $1`,
+          [task.id, sprintDir]
+        );
+      } catch (err) {
+        console.warn(`[skill-relay] sprint_dir 持久化失败（不阻塞，task=${task.id}）: ${err.message}`);
+      }
+    }
+
     // 4. 账号轮换/熔断（原地改 env）
     const acctOpts = { env: {} };
     const resolveAccountFn = deps.resolveAccountFn
@@ -395,6 +408,20 @@ async function _spawnHeadedSession(task, { dbPool, now, short, initiativeId, dep
     console.warn(`[skill-relay][headed][GUARD] tmux 存活检查失败（保守放行 spawn）: ${err.message}`);
   }
   // ─── end 雷11 ────────────────────────────────────────────────────────────────
+
+  // issue 45dd6925：缺省生成的 sprint_dir 必须回写 payload，否则重派换新目录（断点恢复产物路径漂移）。
+  // 放在雷11去重守卫之后：命中守卫 early-return 时不产生 DB 副作用。
+  if (!task.payload?.sprint_dir) {
+    try {
+      await dbPool.query(
+        `UPDATE tasks SET payload = COALESCE(payload, '{}'::jsonb) || jsonb_build_object('sprint_dir', $2::text)
+          WHERE id = $1`,
+        [task.id, sprintDir]
+      );
+    } catch (err) {
+      console.warn(`[skill-relay][headed] sprint_dir 持久化失败（不阻塞，task=${task.id}）: ${err.message}`);
+    }
+  }
 
   const loadSkill = deps.loadSkill
     || (await import('./harness-shared.js')).loadSkillContent;
