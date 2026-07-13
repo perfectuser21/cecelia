@@ -445,6 +445,8 @@ describe('selfcheck schema version', () => {
     // 335 = migration 335 golden_path_proposal task_type（GP2/T2 派发链直接依赖），故推进地板到 335。
     // 338 = migration 338 tasks.status 部分索引（postdeploy-verifier pending_postdeploy 扫描查询直接依赖）；
     // 339 = migration 339 DROP 死表 abilities + golden_paths priority/live 态（schema 清理/增强），故推进地板到 339。
-    expect(EXPECTED_SCHEMA_VERSION).toBe('339');
+    // 340 = migration 340 idx_tasks_dedup_lookup 部分索引（dispatcher.js 派发前标题判重查询
+    // 直接依赖，避免全表扫描），故推进地板到 340。
+    expect(EXPECTED_SCHEMA_VERSION).toBe('340');
   });
 });
