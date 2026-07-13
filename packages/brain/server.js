@@ -80,6 +80,7 @@ import clipsRoutes from './src/routes/clips.js';
 import journeysRouter from './src/routes/journeys.js';
 import abilitiesRouter from './src/routes/abilities.js';
 import goldenPathsRouter from './src/routes/golden-paths.js';
+import abilityGroupsRouter from './src/routes/ability-groups.js';
 import skillEvalRoutes from './src/routes/eval.js';
 import { internalAuth } from './src/middleware/internal-auth.js';
 import createAutonomousRouter from './src/routes/autonomous.js';
@@ -363,6 +364,7 @@ app.get('/api/brain/issues', async (req, res) => {
 });
 app.use('/api/brain', abilitiesRouter);
 app.use('/api/brain', goldenPathsRouter);
+app.use('/api/brain', abilityGroupsRouter);
 app.use('/api/brain/harness', harnessRoutesRouter);
 app.use('/api/brain/harness', harnessRoutes);
 app.use('/api/brain/harness-interrupts', harnessInterruptsRouter);
