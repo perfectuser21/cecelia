@@ -19,7 +19,9 @@ const router = Router();
 // ─── 安全白名单：按 line 限制允许的 action ────────────────────────────────────
 
 const ACTION_WHITELIST = {
-  wechat: new Set(['health_check', 'send_message', 'screenshot', 'click', 'read_inbox']),
+  // 动作名与 Agent 已注册动作对齐(zenithjoy-workspace services/agent DEV_VERIFY_WHITELIST)。
+  // Agent 侧是执行权威闸,这里名字不一致 = E2E 必被 Agent 拒(not_whitelisted)。
+  wechat: new Set(['health_check', 'wechat_private_chat_send', 'wechat_moments_send', 'wechat_qr_bind']),
   douyin: new Set(['health_check', 'broadcast', 'status']),
   publish: new Set(['health_check', 'cdp_click', 'cdp_screenshot', 'cdp_navigate']),
 };
