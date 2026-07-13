@@ -76,6 +76,7 @@ router.post('/', async (req, res) => {
       category, topic, decision, reason, status = 'active',
       author = 'user', made_by = 'user', priority = 'P2',
       area = null, alternatives = null, decided_at = null,
+      source_ref = null,
     } = req.body;
 
     if (!topic || !decision) {
@@ -88,11 +89,11 @@ router.post('/', async (req, res) => {
 
     const result = await pool.query(
       `INSERT INTO decisions
-         (category, topic, decision, reason, status, trigger, author, made_by, priority, area, alternatives, decided_at)
-       VALUES ($1, $2, $3, $4, $5, 'user', $6, $7, $8, $9, $10, $11)
+         (category, topic, decision, reason, status, trigger, author, made_by, priority, area, alternatives, decided_at, source_ref)
+       VALUES ($1, $2, $3, $4, $5, 'user', $6, $7, $8, $9, $10, $11, $12)
        RETURNING id, category, topic, decision, reason, status, author, made_by, priority, created_at`,
       [category || 'general', topic, decision, reason || null, status,
-       author, made_by, priority, area, alternatives, decided_at]
+       author, made_by, priority, area, alternatives, decided_at, source_ref]
     );
 
     res.status(201).json({ success: true, data: result.rows[0] });
