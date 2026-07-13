@@ -3786,6 +3786,18 @@ async function probeTaskLiveness() {
       continue;
     }
 
+    // harness_* 任务由 harness-watchdog-loop（心跳判据）专管，运行在 Docker 容器内无 OS 进程，
+    // reAttachActiveExecutors 未能重建其 activeProcesses 条目时会被误判为死进程。
+    // 统一排除，避免 wall-clock 孤儿探针与心跳看门狗双重处理同一任务。
+    const HARNESS_LIVENESS_EXEMPT_TYPES = new Set([
+      'harness_initiative', 'harness_task', 'harness_evaluate',
+      'harness_contract_propose', 'harness_contract_review',
+      'harness_planner', 'harness_generator', 'harness_generate', 'harness_fix',
+    ]);
+    if (HARNESS_LIVENESS_EXEMPT_TYPES.has(task.task_type)) {
+      continue;
+    }
+
     // Decomposition tasks (/decomp) and initiative_plan/initiative_verify tasks run for
     // 3-10+ minutes — apply extended grace period to avoid false-positive failures.
     // initiative_plan/initiative_verify are always dispatched via bridge where task_id
