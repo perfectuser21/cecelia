@@ -447,6 +447,8 @@ describe('selfcheck schema version', () => {
     // 339 = migration 339 DROP 死表 abilities + golden_paths priority/live 态（schema 清理/增强），故推进地板到 339。
     // 340 = migration 340 idx_tasks_dedup_lookup 部分索引（dispatcher.js 派发前标题判重查询
     // 直接依赖，避免全表扫描），故推进地板到 340。
-    expect(EXPECTED_SCHEMA_VERSION).toBe('340');
+    // 341 = migration 341 zenithjoy 裸表归位 schema（P0 事故修复版，无 ALTER DATABASE 副作用），
+    // 故推进地板到 341。
+    expect(EXPECTED_SCHEMA_VERSION).toBe('341');
   });
 });
