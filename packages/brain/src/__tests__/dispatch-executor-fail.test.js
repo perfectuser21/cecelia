@@ -130,6 +130,8 @@ describe('Bug #1: triggerCeceliaRun 失败时 revert 任务并返回 dispatched=
     mockQuery.mockResolvedValueOnce({ rows: [] });
     // 1. selectNextDispatchableTask → returns task
     mockQuery.mockResolvedValueOnce({ rows: [task] });
+    // 1.5 (本 PR 加) 派发前语义查重: SELECT id,title FROM tasks WHERE task_type=... → 无 sibling
+    mockQuery.mockResolvedValueOnce({ rows: [] });
     // 2. C1 atomic claim: UPDATE tasks SET claimed_by ... RETURNING id
     mockQuery.mockResolvedValueOnce({ rows: [{ id: task.id }] });
     // 3. SELECT * FROM tasks (full task for triggerCeceliaRun)
@@ -177,6 +179,8 @@ describe('Bug #1: triggerCeceliaRun 失败时 revert 任务并返回 dispatched=
     mockQuery.mockResolvedValueOnce({ rows: [] });
     // 1. selectNextDispatchableTask
     mockQuery.mockResolvedValueOnce({ rows: [task] });
+    // 1.5 (本 PR 加) 派发前语义查重: SELECT id,title FROM tasks WHERE task_type=... → 无 sibling
+    mockQuery.mockResolvedValueOnce({ rows: [] });
     // 2. C1 atomic claim
     mockQuery.mockResolvedValueOnce({ rows: [{ id: task.id }] });
     // 3. SELECT * FROM tasks
@@ -317,6 +321,7 @@ describe('Bug 回归: harness_initiative bridge guard bypass', () => {
 
     mockQuery.mockResolvedValueOnce({ rows: [] });                    // retired drain
     mockQuery.mockResolvedValueOnce({ rows: [harnessTask] });        // candidate tasks
+    mockQuery.mockResolvedValueOnce({ rows: [] });                    // 派发前语义查重（本 PR 加）→ 无 sibling
     mockQuery.mockResolvedValueOnce({ rows: [{ n: 0 }] });           // 全局 harness 并发计数（本 PR 加）→ 0 < cap
     mockQuery.mockResolvedValueOnce({ rows: [{ id: harnessTask.id }] }); // C1 claim
     mockQuery.mockResolvedValueOnce({ rows: [harnessTask] });        // full task fetch
@@ -353,6 +358,7 @@ describe('Bug 回归: harness_initiative bridge guard bypass', () => {
 
     mockQuery.mockResolvedValueOnce({ rows: [] });
     mockQuery.mockResolvedValueOnce({ rows: [devTask] });
+    mockQuery.mockResolvedValueOnce({ rows: [] });                    // 派发前语义查重（本 PR 加）→ 无 sibling
     mockQuery.mockResolvedValueOnce({ rows: [{ id: devTask.id }] });
     mockQuery.mockResolvedValueOnce({ rows: [devTask] });
     mockQuery.mockResolvedValue({ rows: [], rowCount: 1 });

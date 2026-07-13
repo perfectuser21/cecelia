@@ -31,6 +31,7 @@ import { proactiveTokenCheck } from './account-usage.js';
 import { checkQuotaGuard } from './quota-guard.js';
 import { updateTask } from './actions.js';
 import { selectNextDispatchableTask, processCortexTask } from './dispatch-helpers.js';
+import { findDuplicateSibling } from './dispatch-dedup.js';
 
 const MINIMAL_MODE = process.env.BRAIN_MINIMAL_MODE === 'true';
 const TICK_LAST_DISPATCH_KEY = 'tick_last_dispatch';
@@ -134,6 +135,53 @@ async function logTickDecision(trigger, inputSummary, decision, result) {
     result,
     result?.success ? 'success' : 'failed',
   ]);
+}
+
+// 6 小时：保守估计——同一件事被重复创建 task 通常在同一批派发/规划动作内发生（分钟级到
+// 小时级），6 小时留足余量覆盖"人工补录/次日晨会补建"等滞后场景，同时不至于把几天后
+// 恰好撞标题的无关任务误判为重复。暂无更精确的历史撞车时间差数据支撑这个数字，
+// 如线上观测到误判率偏高（漏判或错杀）应基于实际案例回填数据后再收紧。
+const DUPLICATE_TASK_WINDOW_HOURS = 6;
+const DUPLICATE_TASK_TITLE_THRESHOLD = 0.6;
+
+/**
+ * 派发前判重：同 task_type 且状态 queued/in_progress 的任务里，
+ * 找创建时间窗口内标题高度相似的 sibling。查询失败保守放行（返回 null），
+ * 不能因为一次 DB 抖动阻塞整个派发循环。
+ */
+export async function _internals_findDuplicateTaskSibling(candidate) {
+  try {
+    // SELECT 列顺序/别名与下方 initiative-lock 查询（"SELECT id, title FROM tasks"）刻意区分，
+    // 避免两条查询的 SQL 指纹在测试里按字符串前缀匹配时被混淆（同一 dispatchNextTask 内两条
+    // 语义不同的查询都含 "task_type" + "SELECT ... FROM tasks"，纯前缀匹配无法区分）。
+    const { rows } = await pool.query(
+      `SELECT tasks.id AS id, tasks.title AS title
+        FROM tasks
+        WHERE tasks.task_type = $1
+          AND tasks.status IN ('queued', 'in_progress')
+          AND tasks.id != $2
+          AND tasks.created_at BETWEEN $3::timestamptz - INTERVAL '${DUPLICATE_TASK_WINDOW_HOURS} hours'
+                                    AND $3::timestamptz + INTERVAL '${DUPLICATE_TASK_WINDOW_HOURS} hours'
+        LIMIT 20`,
+      [candidate.task_type, candidate.id, candidate.created_at]
+    );
+    return findDuplicateSibling(candidate.title || '', rows, {
+      threshold: DUPLICATE_TASK_TITLE_THRESHOLD,
+      keyFn: (r) => r.title || '',
+    });
+  } catch (err) {
+    console.warn(`[dispatch] duplicate-task lookup failed (non-fatal, fail-open): ${err.message}`);
+    // 降级行为不变（仍返回 null 放行），但要计数进滚动统计，
+    // 否则这个查询长期挂掉也不会有人发现（静默降级）。
+    // recordDispatchResult 自身也走 pool.query——若同一次 DB 抖动导致它也失败，
+    // 绝不能让这里的失败向上抛出并破坏 fail-open 承诺，吞掉即可。
+    try {
+      await recordDispatchResult(pool, false, 'duplicate_check_query_failed');
+    } catch (statsErr) {
+      console.warn(`[dispatch] recordDispatchResult failed while reporting duplicate_check_query_failed (non-fatal): ${statsErr.message}`);
+    }
+    return null;
+  }
 }
 
 /**
@@ -335,6 +383,7 @@ export async function dispatchNextTask(goalIds) {
   const preFlightFailedIds = [];
   const holSkipIds = [];        // IDs skipped due to HOL blocking (codex pool full, non-P0)
   const noExecutorSkipIds = []; // IDs skipped due to executor/bridge unavailable (0014cd42)
+  const duplicateSkipIds = []; // IDs skipped due to duplicate-title sibling already queued/in_progress
   let nextTask = null;
 
   const { preFlightCheck, alertOnPreFlightFail } = await import('./pre-flight-check.js');
@@ -369,7 +418,7 @@ export async function dispatchNextTask(goalIds) {
   dispatchLoop: for (;;) {
   nextTask = null;
   for (let attempt = 0; attempt <= MAX_PRE_FLIGHT_RETRIES; attempt++) {
-    const skipIds = [...preFlightFailedIds, ...holSkipIds, ...noExecutorSkipIds];
+    const skipIds = [...preFlightFailedIds, ...holSkipIds, ...noExecutorSkipIds, ...duplicateSkipIds];
     const candidate = await selectNextDispatchableTask(goalIds, skipIds, { priorityFilter: _quotaPriorityFilter });
     if (!candidate) {
       if (noExecutorSkipIds.length > 0) {
@@ -433,6 +482,28 @@ export async function dispatchNextTask(goalIds) {
 
       await recordDispatchResult(pool, false, 'pre_flight_check_failed');
       preFlightFailedIds.push(candidate.id);
+      continue;
+    }
+
+    // 3a'. 派发前语义查重（P1 6fc3bfe8 刀1）：同 task_type 时间窗口内标题高度相似的
+    //      sibling 已 queued/in_progress → 大概率是同一件事被独立创建了两个 task 行，
+    //      跳过本候选，让已在办的那个继续走，避免重复派发出两个几乎相同的 PR。
+    const duplicateSibling = await _internals_findDuplicateTaskSibling(candidate);
+    if (duplicateSibling) {
+      tickLog(`[dispatch] task ${candidate.id} 与 sibling ${duplicateSibling.id} 标题高度相似，判定重复，跳过: ${candidate.title}`);
+      await recordDispatchResult(pool, false, 'duplicate_task_title_match');
+      duplicateSkipIds.push(candidate.id);
+      // 与下方 HOL skip（line ~602 "HOL skip does not count against pre-flight attempt limit"）
+      // 同类语义：候选本身没问题，只是暂不该选它，换下一个——不应消耗 pre-flight attempt
+      // 预算，否则排在重复候选后面的合法候选可能被 all_candidates_failed_pre_flight 误判放弃。
+      // 但和 HOL/no-executor 一样需要硬上限：异常场景下（如批量重复创建）单 tick 内
+      // 判重命中可能连续很多个，每个都要多一次 DB round-trip，无上限会拖长单 tick 耗时。
+      if (duplicateSkipIds.length >= MAX_SKIP_HEAD_FOR_BLOCKED) {
+        tickLog(`[dispatch] duplicate skip cap reached (${MAX_SKIP_HEAD_FOR_BLOCKED}), giving up this tick`);
+        await recordDispatchResult(pool, false, 'duplicate_skip_cap_exceeded');
+        return { dispatched: false, reason: 'duplicate_skip_cap_exceeded', duplicate_skipped: duplicateSkipIds.length, actions };
+      }
+      attempt--;
       continue;
     }
 
