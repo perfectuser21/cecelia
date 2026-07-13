@@ -1,0 +1,14 @@
+{
+  "phase": "evaluate",
+  "verdict": "PASS",
+  "sha": "11f0beb",
+  "tests_new": {"total": 6, "passed": 6, "failed": 0},
+  "tests_regression": {"total": 374, "passed": 374, "failed": 0},
+  "behavior_gate": "PASS",
+  "regression_gate": "PASS",
+  "unverifiable": [],
+  "dod": {
+    "D1": "PASS", "D2": "PASS", "D3": "PASS",
+    "D4": "PASS", "D5": "PASS", "D6": "PASS"
+  }
+}

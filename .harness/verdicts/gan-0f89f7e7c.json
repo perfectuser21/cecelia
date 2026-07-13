@@ -1,0 +1,18 @@
+{
+  "phase": "gan",
+  "verdict": "APPROVED",
+  "round": 2,
+  "total_score": "34/35",
+  "judgments_written": 5,
+  "rubric_scores": {
+    "可测试性": 5,
+    "完整性": 5,
+    "铁律覆盖": 5,
+    "边界条件": 4,
+    "回归防护": 5,
+    "范围约束": 5,
+    "格式合规": 5
+  },
+  "contract_branch": "cp-07140111-ws-f35db586",
+  "铁律覆盖": "4/4"
+}
