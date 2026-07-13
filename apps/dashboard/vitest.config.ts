@@ -20,6 +20,7 @@ export default defineConfig({
   resolve: {
     alias: {
       '@': path.resolve(__dirname, './src'),
+      '@features/core': path.resolve(__dirname, '../api/features'),
       // 强制 React 单实例（含 react/jsx-runtime 子路径），锁到 dashboard 本地 React 18。
       // 否则 monorepo 会把 react-markdown 的 react peer 提升到根（React 19），
       // 与组件用的 React 18 撞车 → "Objects are not valid as a React child"。
