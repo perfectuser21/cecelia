@@ -99,6 +99,16 @@ describe('routes/harness-callback — relay 容器认证失败 Bark 告警', () 
     expect(sendBark).not.toHaveBeenCalled();
   });
 
+  it('relay 容器不传 exit_code（undefined）即使 result 含"not logged in"字样 → 不触发告警（回归守卫：Number(undefined)===NaN，NaN!==0 恒真会误判）', async () => {
+    const cid = 'cecelia-relay-noexit001-dddddddd';
+    const body = { result: 'log line mentions not logged in as part of unrelated output' };
+
+    const res = await request(app).post(`/api/brain/harness/callback/${cid}`).send(body);
+
+    expect(res.status).toBe(200);
+    expect(sendBark).not.toHaveBeenCalled();
+  });
+
   it('sendBark 内部抛错也不影响原有 200 relayAck 行为（告警失败不能拖累 ack）', async () => {
     sendBark.mockRejectedValueOnce(new Error('bark network down'));
     const cid = 'cecelia-relay-barkfail01-cccccccc';

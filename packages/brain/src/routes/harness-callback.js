@@ -85,9 +85,11 @@ router.post('/harness/callback/:containerId', async (req, res) => {
     console.log(`[harness-callback] relay 容器 ${containerId} 回调 ack（exit=${exit_code ?? '?'}，无 resume）`);
 
     // 认证失败告警（catch 兜底——告警本身失败不能拖累原有 200 ack 行为）。
-    const exitCodeNum = Number(exit_code);
+    // exit_code 未提供时不判定为失败——Number(undefined)===NaN，NaN!==0 恒真，会把"没传
+    // exit_code 但 result/stdout 里恰好出现相关字样"误判成登录失效（例如日志回显场景）。
+    const hasFailureExitCode = exit_code !== undefined && Number(exit_code) !== 0;
     const failureText = [result, error, stdout].filter(Boolean).join(' ');
-    if (exitCodeNum !== 0 && AUTH_FAILURE_PATTERN.test(failureText)) {
+    if (hasFailureExitCode && AUTH_FAILURE_PATTERN.test(failureText)) {
       try {
         const task = await _lookupTaskTitleByContainerId(containerId);
         const taskLabel = task ? `${task.title}（${task.id}）` : containerId;
