@@ -22,6 +22,7 @@ import { runLaunchdPatrol } from './launchd-patrol.js';
 import { runGpShelfLife } from './gp-shelf-life.js';
 import { maybeRunDirectionProposer } from './direction-proposer.js';
 import { runPostdeployVerifier } from './postdeploy-verifier.js';
+import { runZenithjoyDbDriftMonitor } from './zenithjoy-db-drift-monitor.js';
 
 const LOOP_INTERVAL_MS = 60 * 1000;
 const DEFAULT_TIMEOUT_MS = 5 * 60 * 1000;
@@ -43,6 +44,7 @@ export const JOBS = [
   { name: 'launchd-patrol', needsPool: false, timeoutMs: DEFAULT_TIMEOUT_MS, handler: runLaunchdPatrol, description: '宿主 launchd 服务巡检（自带15min gate，manifest核对，异常P1+Bark，a5a6209a）' },
   { name: 'direction-proposer', needsPool: true, timeoutMs: DEFAULT_TIMEOUT_MS, handler: maybeRunDirectionProposer, description: '每周方向菜单（自带北京周一05:30窗口+20h去重，候选写golden_paths+缺口全景写working_memory，GP4/T4）' },
   { name: 'postdeploy-verifier', needsPool: true, timeoutMs: 2 * 60 * 1000, handler: runPostdeployVerifier, description: '第5环部署验证（自带5min节流gate，扫 pending_postdeploy 任务执行 postdeploy_check.command，通过→completed，失败3次→P1）' },
+  { name: 'zenithjoy-db-drift-monitor', needsPool: true, timeoutMs: DEFAULT_TIMEOUT_MS, handler: runZenithjoyDbDriftMonitor, description: '刀1c/1d 双写验证期漂移监控（自带6h gate，ZENITHJOY_DB_NAME 未设时 no-op）' },
 ];
 
 function raceWithTimeout(promise, timeoutMs) {
