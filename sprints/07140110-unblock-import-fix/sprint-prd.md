@@ -88,3 +88,16 @@ Step 5: PR → merge
 - **禁止**修改 `unblockTask` / `blockTask` 业务实现
 - **禁止**删除新增的 regression test
 - **禁止** `gh pr merge --admin` 绕过 CI
+
+---
+
+## NFR
+
+- 单元测试不依赖外部服务（vi.mock 隔离）
+- 修复 diff 行数 < 10 行（scope 最小化）
+- 测试文件与既有 routes/__tests__/ 命名风格一致
+
+---
+
+journey_type: bug_fix
+target_environment: brain
