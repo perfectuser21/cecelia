@@ -647,22 +647,38 @@ describe('Golden Path E2E — Brain 3 条核心链路（真实 PostgreSQL）', (
       expect(decRow.rows[0].review_after).not.toBeNull();
       expect(decRow.rows[0].status).toBe('active');
 
-      // DB: harness tasks(task_type=golden_path_proposal, payload 含 phase=implement)
+      // DB: harness tasks(task_type=harness_initiative，真正走实现路由，不是 golden_path_proposal)
       const harnessRow = await testPool.query(
         'SELECT task_type, status, payload FROM tasks WHERE id = $1',
         [harnessTaskId],
       );
-      expect(harnessRow.rows[0].task_type).toBe('golden_path_proposal');
+      expect(harnessRow.rows[0].task_type).toBe('harness_initiative');
       expect(harnessRow.rows[0].status).toBe('queued');
       expect(harnessRow.rows[0].payload.phase).toBe('implement');
       expect(harnessRow.rows[0].payload.golden_path_id).toBe(gpId);
     });
 
-    it('/approve 建的 harness golden_path_proposal 任务 payload 含 orchestrator=skill-relay（回归守卫：缺此字段会被 executor 硬校验判 missing_orchestrator_flag terminal failed）', async () => {
+    it('/approve 建的 harness 任务 payload 含 orchestrator=skill-relay（回归守卫：缺此字段会被 executor 硬校验判 missing_orchestrator_flag terminal failed）', async () => {
       expect(harnessTaskId).toBeDefined();
 
       const harnessRow = await testPool.query('SELECT payload FROM tasks WHERE id = $1', [harnessTaskId]);
       expect(harnessRow.rows[0].payload.orchestrator).toBe('skill-relay');
+    });
+
+    it('/approve 建的任务 task_type=harness_initiative 且必需字段齐全（回归守卫：修前 task_type=golden_path_proposal 会被 controllerSkillFor 误路由回 golden-path-controller，只产提案文档不写代码，issue bfaac776）', async () => {
+      expect(harnessTaskId).toBeDefined();
+
+      const harnessRow = await testPool.query(
+        'SELECT task_type, payload FROM tasks WHERE id = $1',
+        [harnessTaskId],
+      );
+      expect(harnessRow.rows[0].task_type).toBe('harness_initiative');
+      const payload = harnessRow.rows[0].payload;
+      expect(payload.sprint_dir).toBeTruthy();
+      expect(payload.thin_prd).toBeTruthy();
+      expect(payload.prep_prd_body).toBeTruthy();
+      expect(payload.base_repo).toBe('https://github.com/perfectuser21/cecelia.git');
+      expect(payload.target_environment).toBe('local_api');
     });
 
     it('/select 容量闸：非 candidate 状态 → 409 INVALID_TRANSITION', async () => {
