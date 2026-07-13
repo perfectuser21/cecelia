@@ -34,7 +34,7 @@ echo "[smoke] 夹具：journey → journey_feature(ability) → task(ability_id)
 JOURNEY_ID=$(uuid "INSERT INTO journeys (name) VALUES ('gp-agg-smoke-journey-' || gen_random_uuid()) RETURNING id")
 ABILITY_ID=$(uuid "INSERT INTO journey_features (name, journey_id, kind, status) VALUES ('gp-agg-smoke-ability', '$JOURNEY_ID', 'ability', 'done') RETURNING id")
 TASK_ID=$(uuid "INSERT INTO tasks (title, ability_id) VALUES ('gp-agg-smoke-task-' || gen_random_uuid(), '$ABILITY_ID') RETURNING id")
-psql "$DB_URL" -c "INSERT INTO golden_path (owner_task_id, order_no, note) VALUES ('$TASK_ID', 1, 'smoke step one'), ('$TASK_ID', 2, 'smoke step two')" >/dev/null
+psql "$DB_URL" -c "INSERT INTO golden_path (owner_task_id, order_no, feature_id, note) VALUES ('$TASK_ID', 1, '$ABILITY_ID', 'smoke step one'), ('$TASK_ID', 2, '$ABILITY_ID', 'smoke step two')" >/dev/null
 echo "  JOURNEY_ID=$JOURNEY_ID ABILITY_ID=$ABILITY_ID TASK_ID=$TASK_ID (+2 golden_path 步)"
 
 echo "[smoke] === 端点 1 Step 1: GET /journeys/:jid/golden-paths 聚合形态 ==="

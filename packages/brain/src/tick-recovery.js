@@ -98,6 +98,16 @@ async function tryRecoverTickLoop() {
     return;
   }
 
+  // staging 隔离硬关：hard-off 时 recovery 也绝不拉起 loop（否则硬关只关一半）
+  if (process.env.CECELIA_TICK_HARD_OFF === '1') {
+    tickLog('[tick-loop] Recovery skipped: CECELIA_TICK_HARD_OFF=1（env 硬关，staging 隔离）');
+    if (tickState.recoveryTimer) {
+      clearInterval(tickState.recoveryTimer);
+      tickState.recoveryTimer = null;
+    }
+    return;
+  }
+
   tickLog('[tick-loop] Recovery: attempting to start tick loop...');
 
   try {
@@ -138,6 +148,20 @@ async function tryRecoverTickLoop() {
  * every INIT_RECOVERY_INTERVAL_MS until tick loop is successfully started.
  */
 async function initTickLoop() {
+  // BRAIN_DEPLOY_CANARY=1：蓝绿部署的 green canary 只验证镜像健康，绝不跑 tick——
+  // 否则 green 与 blue 连同一 DB 会 double-dispatch 抢任务（issue f38f989f）。
+  // 必须在 auto-enable / alertness / watchdog 之前早返。
+  if (process.env.BRAIN_DEPLOY_CANARY === '1') {
+    tickLog('[tick-loop] BRAIN_DEPLOY_CANARY=1 — canary 模式，跳过 tick loop 启动');
+    return { success: true, enabled: false, loop_running: false, canary: true };
+  }
+  // staging 隔离硬关（2026-07-06）：CECELIA_TICK_HARD_OFF=1 = 绝不启动 loop/watchdog/auto-recover，
+  // 无论 DB 怎么说。真实事故：staging 容器 tick 越权跑，任务调度打到生产 bridge(3457)。
+  // （CECELIA_TICK_ENABLED=false 保持原语义"不自动开启"，CI real-env 依赖 API 动态 enableTick。）
+  if (process.env.CECELIA_TICK_HARD_OFF === '1') {
+    tickLog('[tick-loop] CECELIA_TICK_HARD_OFF=1 — env 硬关（staging 隔离），跳过 tick loop/watchdog 启动');
+    return { success: true, enabled: false, loop_running: false, env_hard_off: true };
+  }
   try {
     // Initialize alertness system
     try {

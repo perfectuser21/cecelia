@@ -6,6 +6,15 @@
  * 验证：runHarnessInitiativeRouter 收到 deadline_at 已过的 initiative_run，
  *       AbortController 触发 abort，runner 标 task.failure_class='watchdog_deadline'
  *       且返回 { ok:false, error:'watchdog_deadline' }，不抛错。
+ *
+ * ── 2026-07-05 更新（orchestrator 硬校验落地后）──────────────────
+ * `_driveHarnessInitiative` 加了 orchestrator 硬校验：task.payload.orchestrator
+ * !== 'skill-relay' 会在函数最顶部被拒绝（terminal failed，
+ * failure_class='missing_orchestrator_flag'），不再到达本文件测试的 W3
+ * AbortSignal watchdog 图内部行为。本文件 2 个用例测的场景（task 不带
+ * orchestrator 时仍能到达 watchdog/graph invoke 逻辑）在新现实下已不可能
+ * 发生，现在是永久不可达代码（保留待观察期后物理清理），已改为 it.skip
+ * 并说明原因，不删除，保留骨架待未来这套保护迁移到 skill-relay 路径时复用。
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -71,7 +80,7 @@ beforeEach(async () => {
 });
 
 describe('harness watchdog AbortSignal（W3）', () => {
-  it('deadline_at 已过 → 6h fallback → AbortController 在 6h 后触发 → 返回 watchdog_deadline 不抛错', async () => {
+  it.skip('deadline_at 已过 → 6h fallback → AbortController 在 6h 后触发 → 返回 watchdog_deadline 不抛错（2026-07-05 orchestrator 硬校验后已不可达，skip）', async () => {
     // Fix: 过期 deadline 使用 6h fallback（不再用 Math.max(60_000, negative) = 60_000）
     // 测试：设置 2 秒后到期的 deadline（未来），推进 2001ms，watchdog 触发
     vi.useFakeTimers();
@@ -111,7 +120,7 @@ describe('harness watchdog AbortSignal（W3）', () => {
     }
   });
 
-  it('正常完成 stream → ok=true 无 abort', async () => {
+  it.skip('正常完成 stream → ok=true 无 abort（2026-07-05 orchestrator 硬校验后已不可达，skip）', async () => {
     mockPoolQuery.mockImplementation(async (sql) => {
       if (typeof sql === 'string' && /SELECT\s+deadline_at/i.test(sql)) {
         return { rows: [{ deadline_at: new Date(Date.now() + 6 * 3600 * 1000).toISOString() }] };

@@ -4,7 +4,7 @@
 # 3 层验证：
 #   L1 (静态)  : staging-e2e-runner.js 导出 runStagingE2E/deployStaging；
 #                executor.js 含 staging_e2e native 短路；
-#                reportNode 在 PASS 路径含 staging_e2e 派生 SQL；
+#                routes/harness.js POST /staging-e2e 端点按 payload->>'pr_url' WHERE NOT EXISTS 幂等去重；
 #                migration 304 含 staging_e2e_results 表 + task_type 约束追加。
 #   L2 (gate)  : Brain 健康；不可达 SKIP exit 0。
 #   L3 (真验)  : DB 里 staging_e2e_results 表存在 + task_type 约束接受 'staging_e2e'
@@ -13,8 +13,7 @@ set -euo pipefail
 
 RUNNER_FILE="packages/brain/src/staging-e2e-runner.js"
 EXECUTOR_FILE="packages/brain/src/executor.js"
-INIT_GRAPH_FILE="packages/brain/src/workflows/harness-initiative.graph.js"
-TASK_GRAPH_FILE="packages/brain/src/workflows/harness-task.graph.js"
+ROUTE_FILE="packages/brain/src/routes/harness.js"
 MIGRATION_FILE="packages/brain/migrations/304_staging_e2e_results.sql"
 MIGRATION305_FILE="packages/brain/migrations/305_staging_e2e_pr_url_unique.sql"
 BRAIN="${BRAIN_URL:-http://localhost:5221}"
@@ -22,7 +21,7 @@ DB="${DATABASE_URL:-postgresql://cecelia:cecelia@localhost:5432/cecelia}"
 
 # ── L1 静态断言（无网络，永远跑）─────────────────────────────────────────
 echo "[smoke] L1: 静态拓扑断言"
-for f in "$RUNNER_FILE" "$EXECUTOR_FILE" "$INIT_GRAPH_FILE" "$TASK_GRAPH_FILE" "$MIGRATION_FILE" "$MIGRATION305_FILE"; do
+for f in "$RUNNER_FILE" "$EXECUTOR_FILE" "$ROUTE_FILE" "$MIGRATION_FILE" "$MIGRATION305_FILE"; do
   test -f "$f" || { echo "[smoke] L1 FAIL: $f 不存在"; exit 1; }
 done
 
@@ -30,7 +29,7 @@ node -e "
 const fs=require('fs');
 const runner=fs.readFileSync('$RUNNER_FILE','utf8');
 if(!/export async function runStagingE2E/.test(runner)){console.error('L1 FAIL: runStagingE2E 未导出');process.exit(1)}
-if(!/export function deployStaging/.test(runner)){console.error('L1 FAIL: deployStaging 未导出');process.exit(1)}
+if(!/export (?:async )?function deployStaging/.test(runner)){console.error('L1 FAIL: deployStaging 未导出');process.exit(1)}
 if(!/staging_e2e_results/.test(runner)){console.error('L1 FAIL: runner 未写 staging_e2e_results');process.exit(1)}
 // 修正3：verdict 落库幂等 ON CONFLICT(pr_url) DO NOTHING
 if(!/INSERT INTO staging_e2e_results[\s\S]{0,400}ON CONFLICT[\s\S]{0,40}pr_url[\s\S]{0,40}DO NOTHING/i.test(runner)){
@@ -42,22 +41,16 @@ const exec=fs.readFileSync('$EXECUTOR_FILE','utf8');
 if(!/task_type === 'staging_e2e'/.test(exec) || !/staging-e2e-runner\.js/.test(exec)){
   console.error('L1 FAIL: executor 缺 staging_e2e native 短路');process.exit(1)}
 
-// 修正1：reportNode 不再派生 staging_e2e（回归守卫）
-const initGraph=fs.readFileSync('$INIT_GRAPH_FILE','utf8');
-const rfn=initGraph.match(/export async function reportNode[\s\S]*?\n}\n/);
-if(rfn && /INSERT INTO tasks[\s\S]{0,200}'staging_e2e'/.test(rfn[0])){
-  console.error('L1 FAIL: reportNode 仍含 staging_e2e 派生（应已挪到 mergePrNode）');process.exit(1)}
-
-// 修正2：mergePrNode per-merge 派生 + 幂等 NOT EXISTS by pr_url
-const taskGraph=fs.readFileSync('$TASK_GRAPH_FILE','utf8');
-const i=taskGraph.indexOf('async function _spawnStagingE2eTask');
-if(i<0){console.error('L1 FAIL: harness-task.graph.js 缺 _spawnStagingE2eTask helper');process.exit(1)}
-const helper=taskGraph.slice(i, taskGraph.indexOf('export async function mergePrNode', i));
-if(!/(NOT EXISTS|ON CONFLICT)/i.test(helper) || !/pr_url/.test(helper)){
-  console.error('L1 FAIL: _spawnStagingE2eTask 缺 pr_url 幂等去重');process.exit(1)}
-if(/\bthrow\b/.test(helper)){console.error('L1 FAIL: _spawnStagingE2eTask 含 throw（应 best-effort 永不 throw）');process.exit(1)}
-const callN=(taskGraph.match(/_spawnStagingE2eTask\(state, opts\)/g)||[]).length;
-if(callN<2){console.error('L1 FAIL: mergePrNode 未在两条 merged 分支都派生（calls='+callN+'）');process.exit(1)}
+// 修正1+2（刀4阶段1，决策76ab76ea）：staging_e2e 派生已迁到 routes/harness.js POST /staging-e2e
+// 端点，按 payload->>'pr_url' WHERE NOT EXISTS 幂等去重，供 controller merge 成功后调用。
+const route=fs.readFileSync('$ROUTE_FILE','utf8');
+const ri=route.indexOf(\"router.post('/staging-e2e'\");
+if(ri<0){console.error('L1 FAIL: routes/harness.js 缺 POST /staging-e2e 端点');process.exit(1)}
+const rh=route.slice(ri, route.indexOf('router.', ri+20));
+if(!/WHERE NOT EXISTS/i.test(rh) || !/payload->>'pr_url'/.test(rh)){
+  console.error('L1 FAIL: POST /staging-e2e 缺 pr_url 幂等去重（WHERE NOT EXISTS payload->>pr_url）');process.exit(1)}
+if(!/task_type\s*=\s*'staging_e2e'/.test(rh)){
+  console.error('L1 FAIL: POST /staging-e2e 未派生 task_type=staging_e2e');process.exit(1)}
 
 const mig=fs.readFileSync('$MIGRATION_FILE','utf8');
 if(!/CREATE TABLE IF NOT EXISTS staging_e2e_results/.test(mig)){console.error('L1 FAIL: migration 缺建表');process.exit(1)}
@@ -66,7 +59,7 @@ if(!/'staging_e2e'/.test(mig)){console.error('L1 FAIL: migration 未把 staging_
 const mig305=fs.readFileSync('$MIGRATION305_FILE','utf8');
 if(/CREATE TABLE/i.test(mig305)){console.error('L1 FAIL: 305 不该 CREATE TABLE（应 ALTER 已合 304 表）');process.exit(1)}
 if(!/UNIQUE/i.test(mig305) || !/pr_url/.test(mig305)){console.error('L1 FAIL: 305 缺 pr_url UNIQUE');process.exit(1)}
-console.log('[smoke] L1 PASS: runner+executor+mergePrNode(per-merge幂等)+reportNode无派生+migration304/305 拓扑齐全');
+console.log('[smoke] L1 PASS: runner+executor+POST /staging-e2e(pr_url幂等)+migration304/305 拓扑齐全');
 " || exit 1
 
 # ── L2 Brain health gate ───────────────────────────────────────────────

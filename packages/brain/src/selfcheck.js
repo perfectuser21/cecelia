@@ -13,14 +13,19 @@
  */
 
 import crypto from 'crypto';
+import { promisify } from 'util';
+import { exec } from 'child_process';
 import { validateAllContentTypes } from './content-types/content-type-validator.js';
+import { SERVERS, COMPUTE_SERVERS, buildSshCommand } from './routes/infra-status.js';
+
+const _execAsync = promisify(exec);
 
 // Minimum acceptable Watchdog thresholds for sanity check
 const WATCHDOG_MIN_TOTAL_MEM_MB = 512;
 const WATCHDOG_MIN_RSS_KILL_MB = 50;
 
 /** Minimum acceptable migration version (DB must be >= this) */
-export const EXPECTED_SCHEMA_VERSION = '293';
+export const EXPECTED_SCHEMA_VERSION = '338';
 
 const CORE_TABLES = [
   'tasks',
@@ -38,6 +43,9 @@ const CORE_TABLES = [
  * @param {string} [opts.envRegion] - override ENV_REGION (for testing)
  * @param {object} [opts.watchdogThresholds] - override watchdog thresholds for testing
  *   { total_mem_mb, rss_kill_mb }
+ * @param {object} [opts.sshReachability] - injected opts passed through to
+ *   checkComputeSshReachability(opts.sshReachability)，测试用于注入 execFn 桩，
+ *   避免单测真实 ssh 到内网机器
  * @returns {Promise<boolean>} true if all checks pass
  */
 export async function runSelfCheck(pool, opts = {}) {
@@ -222,8 +230,40 @@ export async function runSelfCheck(pool, opts = {}) {
     console.warn(`  [WARN] Watchdog RSS Sanity 检查失败：${err.message}`);
   }
 
+  // 9. Compute SSH Reachability (non-blocking WARN，同 7/8 既有模式)
+  try {
+    const { ok: sshOk, unreachable } = await checkComputeSshReachability(opts.sshReachability);
+    if (!sshOk) {
+      console.warn(`  [WARN] compute_ssh_reachability: 以下机器 ssh 不可达 — ${unreachable.map(u => `${u.id}(${u.error})`).join('; ')}`);
+    } else {
+      console.log(`  [INFO] compute_ssh_reachability 通过`);
+    }
+  } catch (err) {
+    console.warn(`  [WARN] compute_ssh_reachability 检查失败：${err.message}`);
+  }
+
   printSummary(results, allPassed);
   return allPassed;
+}
+
+/**
+ * 环境守卫:COMPUTE_SERVERS 容器内 ssh 可达性自检。
+ * 失败不阻塞启动,只降级可见(红日志 + 结果并入 /health warnings)。
+ * 为什么在真环境跑:这是环境接缝(容器→外部机器),CI 干净环境测不到。
+ */
+export async function checkComputeSshReachability({ execFn = _execAsync } = {}) {
+  const targets = SERVERS.filter(s => COMPUTE_SERVERS.includes(s.id) && !s.isLocal);
+  const unreachable = [];
+  for (const server of targets) {
+    try {
+      await execFn(buildSshCommand(server, 'echo ok'), { timeout: 8000 });
+    } catch (err) {
+      unreachable.push({ id: server.id, error: String(err.message || err) });
+    }
+  }
+  const ok = unreachable.length === 0;
+  if (!ok) console.error(`[selfcheck] ❌ compute ssh 不可达: ${unreachable.map(u => u.id).join(', ')}`);
+  return { ok, unreachable };
 }
 
 function printSummary(results, allPassed) {

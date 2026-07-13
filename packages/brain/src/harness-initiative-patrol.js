@@ -192,6 +192,7 @@ export async function runHarnessInitiativePatrol(dbPool = pool) {
        FROM initiative_runs
       WHERE completed_at IS NULL
         AND phase NOT IN ('done', 'failed')
+        AND orchestrator_version IS DISTINCT FROM 'v2'  -- v2(skill-relay) 归 harness-relay-watchdog 独占管辖
       ORDER BY started_at ASC
       LIMIT ${MAX_SCAN}`
   );

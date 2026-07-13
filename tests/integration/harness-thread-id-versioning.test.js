@@ -7,6 +7,15 @@
  *  - attemptN=1 第一次跑：fresh start 用 thread :1
  *  - 同 attemptN 已有 checkpoint + resume_from_checkpoint=false → 升 :N+1 fresh
  *  - payload.resume_from_checkpoint=true 显式续 → input=null 用旧 thread
+ *
+ * ── 2026-07-05 更新（orchestrator 硬校验落地后）──────────────────
+ * `_driveHarnessInitiative` 加了 orchestrator 硬校验：task.payload.orchestrator
+ * !== 'skill-relay' 会在函数最顶部被拒绝（terminal failed，
+ * failure_class='missing_orchestrator_flag'），不再到达本文件测试的 W1
+ * thread_id 版本化图内部行为。本文件 3 个用例测的场景（task 不带
+ * orchestrator 时仍能到达 thread_id 版本化逻辑）在新现实下已不可能发生，
+ * 现在是永久不可达代码（保留待观察期后物理清理），已改为 it.skip 并说明
+ * 原因，不删除，保留骨架待未来这套保护迁移到 skill-relay 路径时复用。
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -69,7 +78,7 @@ beforeEach(async () => {
 });
 
 describe('harness initiative thread_id 版本化（W1）', () => {
-  it('attemptN=1 第一次跑：fresh start 用 thread :1，input={task}', async () => {
+  it.skip('attemptN=1 第一次跑：fresh start 用 thread :1，input={task}（2026-07-05 orchestrator 硬校验后已不可达，skip）', async () => {
     mockCheckpointerGet.mockResolvedValueOnce(null);  // 无 checkpoint
 
     const task = {
@@ -90,7 +99,7 @@ describe('harness initiative thread_id 版本化（W1）', () => {
     expect(config.streamMode).toBe('updates');
   });
 
-  it('同 attemptN 已有 checkpoint + resume_from_checkpoint=false → 升 :N+1 fresh', async () => {
+  it.skip('同 attemptN 已有 checkpoint + resume_from_checkpoint=false → 升 :N+1 fresh（2026-07-05 orchestrator 硬校验后已不可达，skip）', async () => {
     // execution_attempts=1 → baseAttemptN=2，先 checkpointer.get 命中 → 升到 :3
     mockCheckpointerGet.mockResolvedValueOnce({ v: 1 });  // 有 checkpoint
 
@@ -119,7 +128,7 @@ describe('harness initiative thread_id 版本化（W1）', () => {
     expect(config.configurable.thread_id).toBe(`harness-initiative:${task.id}:3`);
   });
 
-  it('payload.resume_from_checkpoint=true 显式续 → input=null 用旧 thread', async () => {
+  it.skip('payload.resume_from_checkpoint=true 显式续 → input=null 用旧 thread（2026-07-05 orchestrator 硬校验后已不可达，skip）', async () => {
     mockCheckpointerGet.mockResolvedValueOnce({ v: 1 });  // 有 checkpoint
 
     const task = {

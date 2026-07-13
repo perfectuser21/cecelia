@@ -16,6 +16,7 @@ import { generateLearningEmbeddingAsync } from './embedding-service.js';
 import { generateL0Summary } from './memory-utils.js';
 import { callLLM } from './llm-caller.js';
 import { createTask } from './actions.js';
+import { pushCaptureAtom } from './capture-inbox.js';
 
 // Strategy adjustment whitelist (safety measure)
 const ADJUSTABLE_PARAMS = {
@@ -26,6 +27,15 @@ const ADJUSTABLE_PARAMS = {
   'resource.max_concurrent': { min: 1, max: 20, type: 'number' },
   'resource.memory_threshold_mb': { min: 500, max: 4000, type: 'number' },
 };
+
+// T9 噪音类目黑名单：事件层记录（与 tasks 表信息重复）不配进 learnings 原子准则层账本。
+// 真实拦截点在 auto-learning.js createAutoLearning；recordLearning 入口守卫是纵深防御
+//（其 category 当前硬编码 failure_pattern，正常不触发）。
+export const NOISE_LEARNING_CATEGORIES = ['task_completion'];
+
+export function isNoiseLearningCategory(category) {
+  return NOISE_LEARNING_CATEGORIES.includes(category);
+}
 
 /**
  * Record learning from Cortex RCA analysis
@@ -46,6 +56,10 @@ export async function recordLearning(analysis) {
 
   const title = `RCA Learning: ${rcaAnalysis.root_cause?.slice(0, 100)}`;
   const category = 'failure_pattern';
+  if (isNoiseLearningCategory(category)) {
+    console.log(`[learning] Skipping noise category learning: ${category}`);
+    return null;
+  }
   const triggerEvent = 'systemic_failure';
 
   const content = JSON.stringify({
@@ -103,32 +117,47 @@ export async function recordLearning(analysis) {
     const learning = result.rows[0];
     console.log(`[learning] Recorded learning: ${learning.id}`);
 
-    // 强制绑定：RCA learning 必须触发 dev task（Insight-to-Action 闭环）
-    try {
-      const taskDedup = await pool.query(
-        `SELECT id FROM tasks WHERE payload->>'insight_learning_id' = $1 AND status != 'cancelled' LIMIT 1`,
-        [learning.id]
-      );
-      if (taskDedup.rows.length === 0) {
-        await createTask({
-          title: `[Insight修复] ${title.slice(0, 120)}`,
-          description: `由 RCA Learning 自动生成的修复任务。\n\nlearning_id: ${learning.id}\n\n${content}`,
-          priority: 'P2',
-          task_type: 'dev',
-          trigger_source: 'cortex',
-          payload: {
-            insight_learning_id: learning.id,
-            event_type: triggerEvent,
-          },
-        });
-        await pool.query(
-          `UPDATE learnings SET applied = true, applied_at = NOW() WHERE id = $1`,
+    // T10 统一收件箱：真 learning（噪音已在入口拦截）落库后顺手进箱
+    await pushCaptureAtom(pool, {
+      content: `learning: ${title}\n${learning.summary || ''}`,
+      targetType: 'learning',
+      targetSubtype: learning.category || category,
+      routedToTable: 'learnings',
+      routedToId: learning.id,
+    });
+
+    // 强制绑定：RCA learning 触发 dev task（Insight-to-Action 闭环）
+    // T9: 加 confidence 门槛——低置信 RCA 只落 learning 不建任务，防任务队列噪音
+    const INSIGHT_TASK_MIN_CONFIDENCE = 0.7;
+    if ((analysis.confidence ?? 0) >= INSIGHT_TASK_MIN_CONFIDENCE) {
+      try {
+        const taskDedup = await pool.query(
+          `SELECT id FROM tasks WHERE payload->>'insight_learning_id' = $1 AND status != 'cancelled' LIMIT 1`,
           [learning.id]
         );
-        console.log(`[learning] Auto-created dev task for RCA learning ${learning.id}`);
+        if (taskDedup.rows.length === 0) {
+          await createTask({
+            title: `[Insight修复] ${title.slice(0, 120)}`,
+            description: `由 RCA Learning 自动生成的修复任务。\n\nlearning_id: ${learning.id}\n\n${content}`,
+            priority: 'P2',
+            task_type: 'dev',
+            trigger_source: 'cortex',
+            payload: {
+              insight_learning_id: learning.id,
+              event_type: triggerEvent,
+            },
+          });
+          await pool.query(
+            `UPDATE learnings SET applied = true, applied_at = NOW() WHERE id = $1`,
+            [learning.id]
+          );
+          console.log(`[learning] Auto-created dev task for RCA learning ${learning.id}`);
+        }
+      } catch (taskErr) {
+        console.warn(`[learning] Failed to create task for learning ${learning.id} (non-fatal):`, taskErr.message);
       }
-    } catch (taskErr) {
-      console.warn(`[learning] Failed to create task for learning ${learning.id} (non-fatal):`, taskErr.message);
+    } else {
+      console.log(`[learning] Skip insight task creation: confidence=${analysis.confidence} < ${INSIGHT_TASK_MIN_CONFIDENCE}`);
     }
 
     // 写 memory_stream 记录，建立闭环链条（failure_pattern → memory_stream active）

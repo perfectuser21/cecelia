@@ -23,6 +23,7 @@ import { emit } from './event-bus.js';
 import { upsertLearning } from './learning.js';
 import { hasActiveSignal } from './quarantine-active-signal.js';
 import { resolveResourceTier } from './spawn/middleware/resource-tier.js';
+import { getBackoffMs, getMaxRetries } from './lib/retry-policy.js';
 
 const execFile = promisify(execFileCb);
 
@@ -38,10 +39,6 @@ const MAX_PRD_LENGTH = 50000;
 
 // 任务最大 payload 大小（字符）：超过视为可疑
 const MAX_PAYLOAD_SIZE = 100000;
-
-// 网络错误重试基础延迟（ms）：5 分钟起步，支持环境变量覆盖
-// 短间隔暴力重试会消耗 Claude 额度并产生重复 error learning
-const NETWORK_RETRY_DELAY_MS = parseInt(process.env.NETWORK_RETRY_DELAY_MS) || 5 * 60 * 1000;
 
 // 活跃信号检测窗口：过去多少分钟内有 LangGraph checkpoint 视为活跃
 // 用于 shepherd/handleTaskFailure 避免误伤正在运行的任务
@@ -65,6 +62,8 @@ const FAILURE_CLASS = {
   RATE_LIMIT: 'rate_limit',       // 429 限流 - 指数退避
   AUTH: 'auth',                   // 权限/认证 - 不重试，通知人
   NETWORK: 'network',             // 网络 - 5min+ 延迟重试（避免暴力重试）
+  TIMEOUT: 'timeout',             // 超时 - 3/6/12min 退避（协议卫生包拆自 NETWORK）
+  SERVER_ERROR: 'server_error',   // 5xx 服务器错误 - 1/5/15min 退避（协议卫生包拆自 NETWORK）
   RESOURCE: 'resource',           // 资源不足 - 不重试，通知人
   TASK_ERROR: 'task_error',       // 任务本身问题 - 正常失败计数
   // 向后兼容
@@ -100,15 +99,29 @@ const AUTH_PATTERNS = [
 ];
 
 const NETWORK_PATTERNS = [
-  /ECONNREFUSED|ETIMEDOUT|ENOTFOUND|ENETUNREACH/i,
+  /ECONNREFUSED|ENOTFOUND|ENETUNREACH/i,
   /connection\s+refused|connection\s+reset/i,
   /network\s+error|socket\s+hang\s+up/i,
   /ECONNRESET/i,
+  /database.*connection|pool.*exhausted/i,
+  /deadlock\s+detected/i,
+  // 外部 API 流中断（如 chatgpt.com stream disconnected）
+  /stream\s+disconnect(ed)?|disconnected\s+from\s+stream/i,
+  /SSE.*error|EventSource.*close|event.?stream.*abort/i,
+];
+
+// 协议卫生包：从 NETWORK_PATTERNS 拆出的 5xx 服务器错误
+const SERVER_ERROR_PATTERNS = [
   /5\d{2}\s+error|internal\s+server\s+error/i,
   /service\s+unavailable|bad\s+gateway/i,
   /upstream\s+connect\s+error/i,
-  /database.*connection|pool.*exhausted/i,
-  /deadlock\s+detected|lock\s+timeout/i,
+];
+
+// 协议卫生包：从 NETWORK_PATTERNS 拆出的超时错误
+const TIMEOUT_PATTERNS = [
+  /ETIMEDOUT/i,
+  /timed?\s*out/i,
+  /lock\s+timeout/i,
 ];
 
 const RESOURCE_PATTERNS = [
@@ -124,6 +137,8 @@ const SYSTEMIC_PATTERNS = [
   ...RATE_LIMIT_PATTERNS,
   ...AUTH_PATTERNS,
   ...NETWORK_PATTERNS,
+  ...SERVER_ERROR_PATTERNS,
+  ...TIMEOUT_PATTERNS,
   ...RESOURCE_PATTERNS,
 ];
 
@@ -174,6 +189,8 @@ async function quarantineTask(taskId, reason, details = {}) {
       billing_cap: null,                       // 等待 reset_time，由 details.reset_time 决定
       rate_limit: 30 * 60 * 1000,             // 30 分钟
       network: 30 * 60 * 1000,                // 30 分钟
+      timeout: 30 * 60 * 1000,                // 30 分钟（协议卫生包：拆自 network，TTL 同源）
+      server_error: 30 * 60 * 1000,           // 30 分钟（协议卫生包：拆自 network，TTL 同源）
       resource: 60 * 60 * 1000,               // 1 小时
       repeated_failure: 24 * 60 * 60 * 1000,  // 24 小时
     };
@@ -739,11 +756,10 @@ function getRetryStrategy(failureClass, options = {}) {
     }
 
     case FAILURE_CLASS.RATE_LIMIT: {
-      if (retryCount >= 3) {
+      const backoffMs = getBackoffMs(FAILURE_CLASS.RATE_LIMIT, retryCount);
+      if (backoffMs === null) {
         return { should_retry: false, needs_human_review: true, reason: 'Rate limit retries exhausted (3/3)' };
       }
-      // 指数退避: 2min → 4min → 8min
-      const backoffMs = Math.pow(2, retryCount + 1) * 60 * 1000;
       return {
         should_retry: true,
         next_run_at: new Date(Date.now() + backoffMs).toISOString(),
@@ -752,15 +768,27 @@ function getRetryStrategy(failureClass, options = {}) {
     }
 
     case FAILURE_CLASS.NETWORK: {
-      if (retryCount >= 3) {
+      const backoffMs = getBackoffMs(FAILURE_CLASS.NETWORK, retryCount);
+      if (backoffMs === null) {
         return { should_retry: false, needs_human_review: true, reason: 'Network retries exhausted (3/3)' };
       }
-      // 长延迟: 5min → 10min → 15min（避免短间隔暴力重试消耗 Claude 额度）
-      const backoffMs = (retryCount + 1) * NETWORK_RETRY_DELAY_MS;
       return {
         should_retry: true,
         next_run_at: new Date(Date.now() + backoffMs).toISOString(),
         reason: `Network error, retry #${retryCount + 1} in ${backoffMs / 60000}min`,
+      };
+    }
+
+    case FAILURE_CLASS.TIMEOUT:
+    case FAILURE_CLASS.SERVER_ERROR: {
+      const backoffMs = getBackoffMs(failureClass, retryCount);
+      if (backoffMs === null) {
+        return { should_retry: false, needs_human_review: true, reason: `${failureClass} retries exhausted (${getMaxRetries(failureClass)}/${getMaxRetries(failureClass)})` };
+      }
+      return {
+        should_retry: true,
+        next_run_at: new Date(Date.now() + backoffMs).toISOString(),
+        reason: `${failureClass}, retry #${retryCount + 1} in ${backoffMs / 60000}min`,
       };
     }
 
@@ -819,6 +847,8 @@ function classifyFailure(error, task = null, evidence = null) {
   const patternGroups = [
     { patterns: BILLING_CAP_PATTERNS, class: FAILURE_CLASS.BILLING_CAP },
     { patterns: RATE_LIMIT_PATTERNS, class: FAILURE_CLASS.RATE_LIMIT },
+    { patterns: SERVER_ERROR_PATTERNS, class: FAILURE_CLASS.SERVER_ERROR },
+    { patterns: TIMEOUT_PATTERNS, class: FAILURE_CLASS.TIMEOUT },
     { patterns: AUTH_PATTERNS, class: FAILURE_CLASS.AUTH },
     { patterns: RESOURCE_PATTERNS, class: FAILURE_CLASS.RESOURCE },
     { patterns: NETWORK_PATTERNS, class: FAILURE_CLASS.NETWORK },
@@ -879,7 +909,7 @@ async function checkSystemicFailurePattern() {
     const classCounts = {};
     for (const c of classifications) {
       // 只统计系统性失败类型（不包括 TASK_ERROR/AUTH/UNKNOWN）
-      if ([FAILURE_CLASS.NETWORK, FAILURE_CLASS.RATE_LIMIT, FAILURE_CLASS.BILLING_CAP, FAILURE_CLASS.RESOURCE].includes(c.class)) {
+      if ([FAILURE_CLASS.NETWORK, FAILURE_CLASS.TIMEOUT, FAILURE_CLASS.SERVER_ERROR, FAILURE_CLASS.RATE_LIMIT, FAILURE_CLASS.BILLING_CAP, FAILURE_CLASS.RESOURCE].includes(c.class)) {
         classCounts[c.class] = (classCounts[c.class] || 0) + 1;
       }
     }
@@ -1306,5 +1336,7 @@ export {
   RATE_LIMIT_PATTERNS,
   AUTH_PATTERNS,
   NETWORK_PATTERNS,
+  TIMEOUT_PATTERNS,
+  SERVER_ERROR_PATTERNS,
   RESOURCE_PATTERNS,
 };

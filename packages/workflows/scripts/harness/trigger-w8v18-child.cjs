@@ -70,7 +70,7 @@ function buildPayload({ parentId, childPrdPath }) {
     task_type: 'harness_initiative',
     title: '[W8 v18 child] 真端到端最小验证 — append README timestamp',
     priority: 'P1',
-    payload: { prd_text: prdText },
+    payload: { prd_text: prdText, orchestrator: 'skill-relay' },
     metadata: {
       parent_initiative_id: parentId,
       child_prd_path: childPrdPath,

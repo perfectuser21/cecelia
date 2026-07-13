@@ -6,10 +6,12 @@ import { routeTask, TASK_TYPE_AGENT_MAP } from '../tick-helpers.js';
 import { identifyWorkType, getTaskLocation as _getTaskLocation, routeTaskCreate, getValidTaskTypes, LOCATION_MAP, diagnoseKR } from '../task-router.js';
 import { getTaskWeights as _getTaskWeights } from '../task-weight.js';
 import { classifyLearningType } from './shared.js';
+import { generateL0Summary } from '../memory-utils.js';
 import { publishTaskCreated as _publishTaskCreated } from '../events/taskEvents.js';
 import { getQuarantinedTasks, getQuarantineStats, releaseTask, quarantineTask, QUARANTINE_REASONS, REVIEW_ACTIONS } from '../quarantine.js';
 import { triggerCeceliaRun, checkCeceliaRunAvailable } from '../executor.js';
 import { emit as emitEvent } from '../event-bus.js';
+import { pushCaptureAtom } from '../capture-inbox.js';
 
 const router = Router();
 
@@ -279,15 +281,24 @@ router.post('/learnings-received', async (req, res) => {
         const { rows } = await pool.query(
           `INSERT INTO learnings
              (title, category, content, trigger_source, trigger_event, digested,
-              source_branch, source_pr, repo, task_id)
+              source_branch, source_pr, repo, task_id, summary)
            VALUES ($1, 'dev_experience', $2, 'dev_workflow', 'learnings_received', false,
-                   $3, $4, $5, $6)
+                   $3, $4, $5, $6, $7)
            RETURNING id`,
-          [title, step, branch_name || null, pr_number ? String(pr_number) : null, repo, task_id || null]
+          [title, step, branch_name || null, pr_number ? String(pr_number) : null, repo, task_id || null, generateL0Summary(step)]
         );
         if (rows[0]?.id) {
           results.learnings_inserted.push(rows[0].id);
           insertedItems.push({ id: rows[0].id, content: step });
+
+          // T12: 统一收件箱补线——dev workflow 标准出口，非 recordLearning() 那条 RCA 路径
+          await pushCaptureAtom(pool, {
+            content: `learning: ${title}\n${step}`,
+            targetType: 'learning',
+            targetSubtype: 'dev_experience',
+            routedToTable: 'learnings',
+            routedToId: rows[0].id,
+          });
         }
       } catch (dbErr) {
         console.warn(`[learnings-received] learnings INSERT failed: ${dbErr.message}`);
@@ -372,7 +383,7 @@ router.patch('/tasks/:task_id', async (req, res) => {
 
 
     // Get current task
-    const taskResult = await pool.query('SELECT id, status FROM tasks WHERE id = $1', [task_id]);
+    const taskResult = await pool.query('SELECT id, status, claimed_by, executor_kind FROM tasks WHERE id = $1', [task_id]);
     if (taskResult.rows.length === 0) {
       return res.status(404).json({
         success: false,
@@ -392,11 +403,12 @@ router.patch('/tasks/:task_id', async (req, res) => {
         'in_progress': ['completed', 'failed'],
         'completed': [],
         'failed': [],
-        // 补齐 quarantined / paused 两态出路，消除 allowed:[] 死锁
-        // 场景：PR 已合 main 但 Brain 内部 task 被 quarantine/pause，无 API 可回写 completed
+        // 补齐 quarantined / paused / canceled 三态出路，消除 allowed:[] 死锁
+        // 场景：PR 已合 main 但 Brain 内部 task 被 quarantine/pause/cancel，无 API 可回写 completed
         // quarantine release API 只能回 queued，paused 完全无 release API
         'quarantined': ['queued', 'completed', 'failed', 'cancelled'],
-        'paused': ['queued', 'in_progress', 'completed', 'failed', 'cancelled']
+        'paused': ['queued', 'in_progress', 'completed', 'failed', 'cancelled'],
+        'canceled': ['queued', 'completed', 'failed', 'cancelled']
       };
 
       if (!allowedTransitions[currentStatus]?.includes(status)) {
@@ -429,6 +441,19 @@ router.patch('/tasks/:task_id', async (req, res) => {
         setClauses.push('claimed_by = NULL');
         setClauses.push('claimed_at = NULL');
       }
+      // 认领协议统一（T4）: in_progress 时自动写 claimed_by + executor_kind
+      // 防止 dispatcher selectNextDispatchableTask(claimed_by IS NULL 过滤)重复抢跑
+      if (status === 'in_progress') {
+        const sessionId = req.headers['x-session-id'] || 'engine-patch';
+        setClauses.push(`claimed_by = COALESCE(claimed_by, $${paramIdx++})`);
+        params.push(`session:${sessionId}`);
+        setClauses.push(`claimed_at = COALESCE(claimed_at, NOW())`);
+        // 仅在 executor_kind 为 NULL 时打标，不覆盖 Brain 已设置的 kind
+        if (task.executor_kind === null || task.executor_kind === undefined) {
+          setClauses.push(`executor_kind = $${paramIdx++}`);
+          params.push('headed-session');
+        }
+      }
     }
 
 
@@ -451,6 +476,13 @@ router.patch('/tasks/:task_id', async (req, res) => {
 
       // 任务完成时自动触发 KR 进度重算
       if (status === 'completed') {
+        // T2. harness merged 终态 → 累积 FR 冻结（fail-open；harness-report Step 1 走此路径）
+        try {
+          const { promoteRegressionOnHarnessMerged } = await import('../lib/callback-postprocess.js');
+          await promoteRegressionOnHarnessMerged(task_id, req.body.result || null, req.body.pr_url || null, pool);
+        } catch (promoteErr) {
+          console.warn(`[tasks-patch] promoteRegressionOnHarnessMerged 失败 (non-fatal): ${promoteErr.message}`);
+        }
         try {
           const initiativeRow = await pool.query(
             'SELECT okr_initiative_id FROM tasks WHERE id = $1',

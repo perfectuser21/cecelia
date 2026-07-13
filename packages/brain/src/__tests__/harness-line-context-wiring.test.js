@@ -1,9 +1,9 @@
 /**
- * harness-line-context-wiring.test.js — A-1 三处注入接线测试。
+ * harness-line-context-wiring.test.js — A-1 注入接线测试。
  *
- * 覆盖：proposer（harness-gan.graph.js）/ generator spawnNode / evaluator
- * evaluateContractNode（harness-task.graph.js）各两用例：
- *   有数据 → prompt 含段头 + 角色指令句；fetch 抛错或返回 '' → spawn/评估照常且不含段头。
+ * 现状：仅 harness-gan.graph.js proposer 单点注入（原 harness-task.graph.js
+ * generator/evaluator 注入点已随该文件删除）。用例：
+ *   有数据 → prompt 含段头 + 角色指令句；fetch 抛错或返回 '' → 流程照常且不含段头。
  * 另测 runGanContractGraph 入口 fetch 一次（GAN 多轮复用，只传 {id: taskId} 交 helper 补齐）。
  *
  * mock 前导参照 harness-task-spawn-base-repo.test.js + harness-handoff-wiring.test.js；
@@ -88,13 +88,10 @@ vi.mock('@langchain/langgraph', () => {
   };
 });
 
-import { spawnNode, evaluateContractNode } from '../workflows/harness-task.graph.js';
 import { createGanContractNodes, runGanContractGraph } from '../workflows/harness-gan.graph.js';
 import { INVARIANT_SECTION_HEADER } from '../harness-line-context.js';
 
 const PROPOSER_RULE = '合同的 [BEHAVIOR] 断言不得与上述铁律冲突；已验收行为只能引用不得重做。';
-const GENERATOR_RULE = '实现代码不得违反上述铁律。';
-const EVALUATOR_RULE = 'PASS 判定前逐条自查上述 Invariant：任何一条被违反 → 必须 FAIL 并在 feedback 指明违反哪条。';
 const CTX_TEXT = `${INVARIANT_SECTION_HEADER}\n- [不进群] 只私聊；群聊一律跳过（来源: journey_feature）`;
 
 function makePool() {
@@ -172,108 +169,3 @@ describe('runGanContractGraph 入口 fetch（GAN 多轮复用一次查询）', (
   });
 });
 
-// ── generator（harness-task.graph.js spawnNode）─────────────────────────────
-
-function genState() {
-  return {
-    task: {
-      id: 'ws1', title: '任务', ability_id: 'ab-1',
-      payload: { journey_id: 'j-1', sprint_dir: 'sprints/x' },
-    },
-    initiativeId: 'abcdef12-0000-0000-0000-000000000000',
-    worktreePath: '/tmp/wt', githubToken: 'tok',
-    baseRepo: null, contractBranch: null, containerId: null,
-  };
-}
-
-function genOpts(spawnDetached, pool) {
-  return {
-    spawnDetached,
-    ensureWorktree: vi.fn(async () => '/tmp/wt'),
-    resolveToken: vi.fn(async () => 'tok'),
-    poolOverride: pool,
-    execFile: vi.fn(async () => ({ stdout: '', stderr: '' })),
-    resolveExecutor: vi.fn(async () => ({ executor: 'claude' })),
-    isInitiativeTerminal: vi.fn(async () => ({ terminal: false })),
-  };
-}
-
-describe('generator 注入（spawnNode buildGeneratorPrompt 后 append）', () => {
-  it('有数据 → spawnDetached prompt 含段头 + generator 指令句；helper 收到 state.task', async () => {
-    lineCtxMock.mockResolvedValueOnce(CTX_TEXT);
-    const spawnDetached = vi.fn(async () => 'cid');
-    const pool = makePool();
-    const state = genState();
-    await spawnNode(state, genOpts(spawnDetached, pool));
-    expect(lineCtxMock).toHaveBeenCalledWith({ pool }, state.task);
-    expect(spawnDetached).toHaveBeenCalledTimes(1);
-    const { prompt } = spawnDetached.mock.calls[0][0];
-    expect(prompt).toContain(INVARIANT_SECTION_HEADER);
-    expect(prompt).toContain(GENERATOR_RULE);
-  });
-
-  it('fetch 抛错 → spawn 照常，prompt 不含段头', async () => {
-    lineCtxMock.mockRejectedValueOnce(new Error('db down'));
-    const spawnDetached = vi.fn(async () => 'cid');
-    const r = await spawnNode(genState(), genOpts(spawnDetached, makePool()));
-    expect(spawnDetached).toHaveBeenCalledTimes(1);
-    const { prompt } = spawnDetached.mock.calls[0][0];
-    expect(prompt).not.toContain(INVARIANT_SECTION_HEADER);
-    expect(prompt).not.toContain(GENERATOR_RULE);
-    expect(r.containerId).toBeTruthy();
-  });
-});
-
-// ── evaluator（harness-task.graph.js evaluateContractNode）──────────────────
-
-function evalState() {
-  return {
-    task: {
-      id: 'ws1', title: '任务', ability_id: 'ab-1',
-      payload: { journey_id: 'j-1', sprint_dir: 'sprints/x', target_environment: 'mac_web' },
-    },
-    initiativeId: 'abcdef12-0000-0000-0000-000000000000',
-    worktreePath: null,   // gateDir=null → 跳过 Contract Gate
-    pr_branch: 'cp-x',    // 跳过 gh pr view 反查
-    pr_url: null,         // 跳过 merged-short-circuit
-    githubToken: 'tok',
-    fix_round: 0,
-  };
-}
-
-function evalOpts(executeOnHost, pool) {
-  return {
-    isInitiativeTerminal: vi.fn(async () => ({ terminal: false })),
-    resolveToken: vi.fn(async () => 'tok'),
-    verifyArtifacts: vi.fn(async () => ({ ran: false })),
-    executeOnHost,
-    poolOverride: pool,
-  };
-}
-
-describe('evaluator 注入（evaluateContractNode evaluatePrompt append）', () => {
-  it('有数据 → evaluatePrompt 含段头 + 红线自查指令句；helper 收到 state.task', async () => {
-    lineCtxMock.mockResolvedValueOnce(CTX_TEXT);
-    // exit_code=1 → 节点提前返回 FAIL，不进入 brain-result 解析（prompt 已捕获，足够断言）
-    const executeOnHost = vi.fn(async () => ({ exit_code: 1 }));
-    const pool = makePool();
-    const state = evalState();
-    await evaluateContractNode(state, evalOpts(executeOnHost, pool));
-    expect(lineCtxMock).toHaveBeenCalledWith({ pool }, state.task);
-    expect(executeOnHost).toHaveBeenCalledTimes(1);
-    const { prompt } = executeOnHost.mock.calls[0][0];
-    expect(prompt).toContain(INVARIANT_SECTION_HEADER);
-    expect(prompt).toContain(EVALUATOR_RULE);
-  });
-
-  it('fetch 抛错 → 评估照常（executeOnHost 仍被调），prompt 不含段头', async () => {
-    lineCtxMock.mockRejectedValueOnce(new Error('db down'));
-    const executeOnHost = vi.fn(async () => ({ exit_code: 1 }));
-    const r = await evaluateContractNode(evalState(), evalOpts(executeOnHost, makePool()));
-    expect(executeOnHost).toHaveBeenCalledTimes(1);
-    const { prompt } = executeOnHost.mock.calls[0][0];
-    expect(prompt).not.toContain(INVARIANT_SECTION_HEADER);
-    expect(prompt).not.toContain(EVALUATOR_RULE);
-    expect(r.evaluate_verdict).toBe('FAIL');
-  });
-});

@@ -16,6 +16,8 @@ import {
   normStatus,
 } from '../warroom-classify.js';
 import { buildPipelineRecord } from './status.js';
+import { fetchLineContext, formatLineContextForPrompt } from '../harness-line-context.js';
+import { buildLineDreamData } from '../line-dreaming.js';
 
 const router = Router();
 
@@ -351,6 +353,263 @@ router.get('/line/:id', async (req, res) => {
     });
   } catch (err) {
     console.error('[GET /warroom/line/:id]', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * GET /api/brain/warroom/line/:id/advancements
+ *   该 Line（journey_id=:id）下所有 kind='ability' 的 journey_features 名下 advancement_items 扁平列表，
+ *   带 ability_id + ability_name，供前端按 ability 分组渲染进度条。
+ *   返回 { line_id, items }；无推进项返回空数组（200）。
+ */
+router.get('/line/:id/advancements', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { rows } = await pool.query(
+      `SELECT ai.id, ai.ability_id, jf.name AS ability_name,
+              ai.title, ai.status, ai.priority, ai.pr_url, ai.created_at
+       FROM advancement_items ai
+       JOIN journey_features jf ON jf.id = ai.ability_id
+       WHERE jf.journey_id = $1 AND jf.kind = 'ability'
+       ORDER BY jf.name,
+                CASE ai.priority WHEN 'P0' THEN 0 WHEN 'P1' THEN 1 WHEN 'P2' THEN 2 ELSE 3 END,
+                ai.created_at`,
+      [id]
+    );
+    res.json({ line_id: id, items: rows });
+  } catch (err) {
+    console.error('[GET /warroom/line/:id/advancements]', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * GET /api/brain/warroom/line/:id/command
+ *   Line 指挥页聚合数据，返回三块：
+ *   - decisions: notes 表中 title LIKE '军师决策[<line名>]%' 的记录，时间倒序
+ *   - connections: journey_features(abilities/features) + advancements + in_progress tasks + open issues + recent harness runs
+ *   - health: 近30天 run 成功率、PR 频率、是否停线
+ */
+router.get('/line/:id/command', async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    // 1. journey 本体
+    const { rows: jrows } = await pool.query(
+      `SELECT id, notion_id, name, description, status, maturity FROM journeys WHERE id = $1`,
+      [id]
+    );
+    if (jrows.length === 0) return res.status(404).json({ error: 'journey not found' });
+    const journey = jrows[0];
+    const keys = journeyIdKeys(journey);
+
+    // 2. 军师决策流水（notes 表，title 前缀 '军师决策[<line名>]'，时间倒序）
+    let decisions = [];
+    try {
+      const prefix = `军师决策[${journey.name}]`;
+      const { rows: noteRows } = await pool.query(
+        `SELECT id, title, content, type, created_at
+         FROM notes
+         WHERE title LIKE $1
+         ORDER BY created_at DESC
+         LIMIT 50`,
+        [`${prefix}%`]
+      );
+      decisions = noteRows.map((n) => ({
+        id: n.id,
+        title: n.title,
+        content: n.content || null,
+        type: n.type || null,
+        created_at: n.created_at,
+      }));
+    } catch { /* notes 表缺失优雅降级 */ }
+
+    // 3. 连接全景 — abilities/features
+    let abilities = [], features = [];
+    try {
+      const { rows: jfRows } = await pool.query(
+        `SELECT id, name, kind, status, group_name, created_at
+         FROM journey_features
+         WHERE journey_id = $1
+         ORDER BY kind, name`,
+        [journey.id]
+      );
+      abilities = jfRows.filter((r) => r.kind === 'ability');
+      features = jfRows.filter((r) => r.kind === 'feature');
+    } catch { /* journey_features 缺失优雅降级 */ }
+
+    // 4. 推进项（advancement_items）按 ability 聚合
+    let advancements = [];
+    try {
+      const { rows: aiRows } = await pool.query(
+        `SELECT ai.id, ai.ability_id, jf.name AS ability_name,
+                ai.title, ai.status, ai.priority, ai.pr_url, ai.created_at
+         FROM advancement_items ai
+         JOIN journey_features jf ON jf.id = ai.ability_id
+         WHERE jf.journey_id = $1 AND jf.kind = 'ability'
+         ORDER BY jf.name, CASE ai.priority WHEN 'P0' THEN 0 WHEN 'P1' THEN 1 WHEN 'P2' THEN 2 ELSE 3 END, ai.created_at`,
+        [journey.id]
+      );
+      advancements = aiRows;
+    } catch { /* advancement_items 缺失优雅降级 */ }
+
+    // 5. 进行中任务（该 journey 关联，status=in_progress）
+    let activeTasks = [];
+    try {
+      const { rows: atRows } = await pool.query(
+        `SELECT id, title, task_type, status, priority, created_at, updated_at, pr_url
+         FROM tasks
+         WHERE task_type = ANY($1)
+           AND payload->>'journey_id' = ANY($2)
+           AND status = 'in_progress'
+         ORDER BY updated_at DESC
+         LIMIT 20`,
+        [FEED_TYPES, keys]
+      );
+      activeTasks = atRows;
+    } catch { /* tasks 查询失败优雅降级 */ }
+
+    // 6. open issues（该 journey 关联）
+    let openIssues = [];
+    try {
+      const { rows: issueRows } = await pool.query(
+        `SELECT id, title, priority, status, created_at
+         FROM issues
+         WHERE journey_id = $1
+           AND status NOT IN ('closed', 'resolved')
+         ORDER BY created_at DESC
+         LIMIT 20`,
+        [journey.id]
+      );
+      openIssues = issueRows;
+    } catch { /* issues 表缺失优雅降级 */ }
+
+    // 7. 最近 harness runs（initiative_runs，该 journey，时间倒序）
+    let recentRuns = [];
+    try {
+      const { rows: runRows } = await pool.query(
+        `SELECT id, status, started_at, completed_at, result, created_at
+         FROM initiative_runs
+         WHERE journey_id = $1
+         ORDER BY created_at DESC
+         LIMIT 10`,
+        [journey.id]
+      );
+      recentRuns = runRows;
+    } catch { /* initiative_runs 缺失优雅降级 */ }
+
+    // 8. 健康度计算（近30天）
+    let health = { run_total: 0, run_success: 0, success_rate: null, pr_count: 0, is_stopped: false };
+    try {
+      const { rows: healthRows } = await pool.query(
+        `SELECT id, status, result, created_at
+         FROM initiative_runs
+         WHERE journey_id = $1
+           AND created_at > NOW() - INTERVAL '30 days'`,
+        [journey.id]
+      );
+      const runTotal = healthRows.length;
+      const runSuccess = healthRows.filter((r) => r.status === 'completed').length;
+
+      // PR 频率：近30天该 journey 相关任务有 pr_url
+      const { rows: prRows } = await pool.query(
+        `SELECT COUNT(*) AS cnt FROM tasks
+         WHERE payload->>'journey_id' = ANY($1)
+           AND pr_url IS NOT NULL
+           AND created_at > NOW() - INTERVAL '30 days'`,
+        [keys]
+      );
+      const prCount = parseInt(prRows[0]?.cnt || '0', 10);
+
+      health = {
+        run_total: runTotal,
+        run_success: runSuccess,
+        success_rate: runTotal > 0 ? Math.round((runSuccess / runTotal) * 100) : null,
+        pr_count: prCount,
+        is_stopped: journey.status === 'paused' || journey.status === 'stopped',
+      };
+    } catch { /* health 计算失败优雅降级 */ }
+
+    res.json({
+      line: {
+        id: journey.id,
+        name: journey.name,
+        description: journey.description || null,
+        status: journey.status,
+        maturity: journey.maturity,
+      },
+      decisions,
+      connections: {
+        abilities,
+        features,
+        advancements,
+        active_tasks: activeTasks,
+        open_issues: openIssues,
+        recent_runs: recentRuns,
+      },
+      health,
+      generated_at: new Date().toISOString(),
+    });
+  } catch (err) {
+    console.error('[GET /warroom/line/:id/command]', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * GET /api/brain/warroom/line/:id/context-manifest
+ *   planner Step 0.4 一次拉全（九要素 T3）：
+ *   - ledger: 最新 line_ledger 蒸馏摘要（design_docs，dreaming L1 每晚产出）
+ *   - delta: 自 ledger 时刻起的六段增量事实（无 ledger 回落 24h 窗口）
+ *   - invariants / cumulative_fr: 与三角色注入同源（fetchLineContext）
+ *   - prompt_block: formatLineContextForPrompt 直出，skill 可整段注入
+ */
+router.get('/line/:id/context-manifest', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { rows: jrows } = await pool.query(
+      `SELECT id, name, status, maturity FROM journeys WHERE id = $1`,
+      [id]
+    );
+    if (jrows.length === 0) return res.status(404).json({ error: 'journey not found' });
+    const journey = jrows[0];
+
+    const ctx = await fetchLineContext({ pool }, { journeyId: journey.id });
+
+    let delta;
+    try {
+      delta = await buildLineDreamData(pool, journey.id, journey.name, {
+        since: ctx.ledger?.created_at ?? null,
+      });
+    } catch (e) {
+      console.warn('[warroom] context-manifest delta failed (non-fatal):', e.message);
+      delta = { decisions: [], advancementItems: [], issues: [], runs: [], learnings: [], strategistNotes: [] };
+    }
+
+    res.json({
+      line: {
+        id: journey.id,
+        name: journey.name,
+        status: journey.status,
+        maturity: journey.maturity,
+      },
+      ledger: ctx.ledger ?? null,
+      delta: {
+        decisions: delta.decisions,
+        advancement_items: delta.advancementItems,
+        issues: delta.issues,
+        runs: delta.runs,
+        learnings: delta.learnings,
+        strategist_notes: delta.strategistNotes,
+      },
+      invariants: ctx.invariants,
+      cumulative_fr: ctx.cumulativeFR,
+      prompt_block: formatLineContextForPrompt(ctx),
+      generated_at: new Date().toISOString(),
+    });
+  } catch (err) {
+    console.error('[GET /warroom/line/:id/context-manifest]', err.message);
     res.status(500).json({ error: err.message });
   }
 });

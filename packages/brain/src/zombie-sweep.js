@@ -17,7 +17,7 @@ import path from 'path';
 import pool from './db.js';
 import { emit } from './event-bus.js';
 import { getActiveProcesses } from './executor.js';
-import { listProcessesWithPpid } from './platform-utils.js';
+import { listProcessesWithPpid, anyProcessHasCwdUnder } from './platform-utils.js';
 import { findTaskIdForWorktree, isWorktreeActive } from './zombie-cleaner.js';
 import { withLock } from './utils/cleanup-lock.js';
 
@@ -177,6 +177,73 @@ async function sweepStaleWorktrees() {
     // 覆盖 payload.branch 为空的大量 task（Phase B2 forensic 发现 30-50% 漏检）
     const taskId = findTaskIdForWorktree(wt.path);
     if (taskId && inProgressTaskIds.has(taskId) && isWorktreeActive(wt.path)) {
+      result.skipped++;
+      continue;
+    }
+
+    // Safety: 有未提交改动的 worktree 不删（数据丢失防护，2026-07-09 真实丢过一次工作）
+    // 检查本身失败（如 .git 损坏）也保守 skip，不冒险删除
+    try {
+      const gitStatus = execSync(`git -C "${wt.path}" status --porcelain`, {
+        encoding: 'utf8',
+        timeout: 10000
+      }).trim();
+      if (gitStatus) {
+        console.log(`[zombie-sweep] Skip ${wt.path}: 有未提交改动，不删`);
+        result.skipped++;
+        continue;
+      }
+    } catch (err) {
+      console.log(`[zombie-sweep] Skip ${wt.path}: git status 检查失败（${err.message}），保守不删`);
+      result.skipped++;
+      continue;
+    }
+
+    // Guard C: 活任务/活进程双检查（Guard A 语义盲区：全 commit 的活跃 worktree 在 Guard A 眼里干净可删）
+    // 07-10 实证：有头会话全部 commit 后 .dev-mode mtime 过期，Channel 2 miss，Guard A 通过 → 连删两次
+    //
+    // C-1: owning-task 检查（in_progress 无需 mtime，或 claimed_by 非空）
+    if (taskId && inProgressTaskIds.has(taskId)) {
+      // Task in_progress 但 isWorktreeActive 已过期（mtime stale），补正交保护
+      console.log(`[zombie-sweep] Guard C-1: skip ${wt.path} — task ${taskId} in_progress (mtime-exempt)`);
+      result.skipped++;
+      continue;
+    }
+    try {
+      let isClaimed = false;
+      if (taskId) {
+        const r = await pool.query(
+          `SELECT id FROM tasks WHERE id = $1 AND claimed_by IS NOT NULL`,
+          [taskId]
+        );
+        isClaimed = r.rows.length > 0;
+      }
+      if (!isClaimed && wt.branch) {
+        const r = await pool.query(
+          `SELECT id FROM tasks WHERE payload->>'branch' = $1 AND claimed_by IS NOT NULL`,
+          [wt.branch]
+        );
+        isClaimed = r.rows.length > 0;
+      }
+      if (isClaimed) {
+        console.log(`[zombie-sweep] Guard C-1: skip ${wt.path} — task is claimed`);
+        result.skipped++;
+        continue;
+      }
+    } catch (err) {
+      console.log(`[zombie-sweep] Guard C-1: claimed_by check failed (${err.message}), 保守 skip`);
+      result.skipped++;
+      continue;
+    }
+    // C-2: 活进程持有 cwd 检查
+    try {
+      if (anyProcessHasCwdUnder(wt.path)) {
+        console.log(`[zombie-sweep] Guard C-2: skip ${wt.path} — live process holds cwd`);
+        result.skipped++;
+        continue;
+      }
+    } catch (err) {
+      console.log(`[zombie-sweep] Guard C-2: cwd check failed (${err.message}), 保守 skip`);
       result.skipped++;
       continue;
     }

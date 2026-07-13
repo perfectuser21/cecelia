@@ -27,3 +27,64 @@ golden_paths:
     method: auto
     test_command: "node --check packages/brain/server.js"
     must_never_break: true
+
+  - id: CORE-002
+    name: "brain-keepalive 在极简 PATH 下能找到 docker 且区分命令缺失/daemon不可用"
+    priority: P0
+    trigger: [PR, Release]
+    method: auto
+    test_command: "bash scripts/__tests__/brain-keepalive-path.test.sh"
+    must_never_break: true
+
+  # ── 五条 P0 铁律（主理人圈定，HANDOFF-cicd-closeloop.md PR-1）──────────────
+  # DoD：故意破任一条 → core-regression job 必红
+  #
+  # invariant_ids（CL-2 invariant→契约桥，additive 可选字段）：
+  #   关联 Brain decisions 表 invariant 的稳定 uuid（快照 config/invariants-snapshot.json）。
+  #   scripts/ci/check-invariant-coverage.mjs 用它对账「有红线无守卫 = 裸奔」。
+  #   注：CORE-INV-03/04/05 守卫的是 harness 行为铁律（memory/学习产物），
+  #   Brain decisions 表暂无对应 invariant 条目，故不挂 id。
+
+  - id: CORE-INV-01
+    name: "铁律1 真环境非mock：contract-gate mock 红线 proven-to-fire（违规合同命中 / 干净合同不误伤）"
+    priority: P0
+    trigger: [PR, Release]
+    method: auto
+    test_command: "node scripts/ci/invariants/core-inv-01-no-mock-env.mjs"
+    must_never_break: true
+    invariant_ids: [3c30394c-ee76-4ff9-b087-bafa137e1d75]  # [系统]真环境验证才算done
+
+  - id: CORE-INV-02
+    name: "铁律2 租户隔离：contract-gate 租户隔离红线 proven-to-fire（跨租户 DB 探测命中 / 带 tenant_id 约束不误伤）"
+    priority: P0
+    trigger: [PR, Release]
+    method: auto
+    test_command: "node scripts/ci/invariants/core-inv-02-tenant-isolation.mjs"
+    must_never_break: true
+    invariant_ids:
+      - 68976b17-3f9b-4ffb-9c23-83ae1d2ce4c0  # [系统]租户隔离
+      - 55b8eb46-2b50-4a75-ba96-f84436ba08e8  # [系统]测试默认多租户
+
+  - id: CORE-INV-03
+    name: "铁律3 FIXED 不直通 merge：FIXED 归一为 PASS 允许，但 mergeGate 无 judge 复核必拒（双裁决才 allow）"
+    priority: P0
+    trigger: [PR, Release]
+    method: auto
+    test_command: "node scripts/ci/invariants/core-inv-03-fixed-needs-judge.mjs"
+    must_never_break: true
+
+  - id: CORE-INV-04
+    name: "铁律4 1 Sprint = 1 Generator = 1 PR：多 workstream 拆分机制不得复活（源码契约防倒退）"
+    priority: P0
+    trigger: [PR, Release]
+    method: auto
+    test_command: "node scripts/ci/invariants/core-inv-04-one-sprint-one-pr.mjs"
+    must_never_break: true
+
+  - id: CORE-INV-05
+    name: "铁律5 GAN 收敛守护：streak/budget 硬保护存在且未放松，且无 MAX_GAN_ROUNDS 硬轮数上限（刻意设计）"
+    priority: P0
+    trigger: [PR, Release]
+    method: auto
+    test_command: "node scripts/ci/invariants/core-inv-05-gan-convergence.mjs"
+    must_never_break: true

@@ -50,6 +50,22 @@ export async function getActiveRepoPaths(pool) {
   return rows.map(r => r.repo_path);
 }
 
+/**
+ * 拉 20h 内所有 line_ledger，拼成一段纯文本摘要（供 arch_review/strategy_session
+ * 任务的 prd_summary 注入，替代各自重新调研 24h 事实）。
+ * @param {import('pg').Pool} pool
+ * @returns {Promise<string>}
+ */
+export async function fetchAllLineLedgersDigest(pool) {
+  const { rows } = await pool.query(
+    `SELECT title, content FROM design_docs
+     WHERE type = 'line_ledger' AND created_at >= NOW() - INTERVAL '20 hours'
+     ORDER BY title`
+  );
+  if (rows.length === 0) return '';
+  return rows.map((r) => `### ${r.title}\n${r.content}`).join('\n\n');
+}
+
 /** @module daily-review-scheduler
  * 检查今天是否已经为某个 repo 创建过 code_review task
  * @param {import('pg').Pool} pool
@@ -289,6 +305,10 @@ export async function triggerArchReview(pool, now = new Date()) {
 
   try {
     const timestamp = now.toISOString().slice(0, 16).replace('T', ' ');
+    const lineLedgerDigest = await fetchAllLineLedgersDigest(pool).catch(() => '');
+    const digestSuffix = lineLedgerDigest
+      ? ('\n\n## 各线 24h 账本（line_ledger 摘要）\n' + lineLedgerDigest)
+      : '';
     const { rows } = await pool.query(
       `INSERT INTO tasks (title, task_type, status, priority, created_by, payload, trigger_source, location)
        VALUES ($1, 'arch_review', 'queued', 'P2', 'cecelia-brain', $2, 'brain_auto', 'xian')
@@ -298,7 +318,7 @@ export async function triggerArchReview(pool, now = new Date()) {
         JSON.stringify({
           scope: 'scheduled',
           trigger: '4h',
-          prd_summary: `架构巡检：扫描 ${timestamp} UTC 时点的 drift / 未收敛模式 / 依赖异常，输出 4A/4B 报告供复盘。`,
+          prd_summary: `架构巡检：扫描 ${timestamp} UTC 时点的 drift / 未收敛模式 / 依赖异常，输出 4A/4B 报告供复盘。${digestSuffix}`,
         }),
       ]
     );
@@ -356,4 +376,77 @@ export async function triggerDailyReview(pool, now = new Date()) {
   }
 
   return { triggered, skipped, skipped_window: false, results };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ci_patrol 调度器（每日北京 08:00 = UTC 00:00，等 03:00 刀A + 04:30 刀B nightly 跑完）
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * 判断当前 UTC 时间是否在 ci_patrol 每日触发窗口内（00:00-00:05 UTC）
+ * @param {Date} [now] - 可注入时间（测试用）
+ * @returns {boolean}
+ */
+export function isInCiPatrolWindow(now = new Date()) {
+  return now.getUTCHours() === 0 && now.getUTCMinutes() < 5;
+}
+
+/**
+ * 检查今天是否已创建过 ci_patrol 任务（当日去重）
+ * @param {import('pg').Pool} pool
+ * @returns {Promise<boolean>}
+ */
+export async function hasTodayCiPatrol(pool) {
+  const { rows } = await pool.query(
+    `SELECT id FROM tasks
+     WHERE task_type = 'ci_patrol'
+       AND created_at >= CURRENT_DATE::timestamptz
+       AND created_at < (CURRENT_DATE + INTERVAL '1 day')::timestamptz
+     LIMIT 1`
+  );
+  return rows.length > 0;
+}
+
+/**
+ * ci_patrol 定时调度入口（每日，scheduler-jobs 60s 轮询调用，自带窗口+当日去重）
+ * @param {import('pg').Pool} pool
+ * @param {Date} [now] - 可注入时间（测试用）
+ * @returns {Promise<{ triggered: boolean, skipped_window: boolean, skipped_recent: boolean }>}
+ */
+export async function triggerCiPatrol(pool, now = new Date()) {
+  if (!isInCiPatrolWindow(now)) {
+    return { triggered: false, skipped_window: true, skipped_recent: false };
+  }
+
+  try {
+    if (await hasTodayCiPatrol(pool)) {
+      return { triggered: false, skipped_window: false, skipped_recent: true };
+    }
+  } catch (err) {
+    console.warn('[ci-patrol] 去重检查失败（继续执行）:', err.message);
+  }
+
+  try {
+    const today = now.toISOString().slice(0, 10);
+    const { rows } = await pool.query(
+      `INSERT INTO tasks (title, task_type, status, priority, created_by, payload, trigger_source, location)
+       VALUES ($1, 'ci_patrol', 'queued', 'P2', 'cecelia-brain', $2, 'brain_auto', 'us')
+       RETURNING id`,
+      [
+        `[ci-patrol] CI/CD 巡检日报 ${today}`,
+        JSON.stringify({
+          scope: 'scheduled',
+          trigger: 'daily',
+          date: today,
+          prd_summary: `每日 CI/CD 巡检：按 line 报 4 硬伤（没写/写了没进CI/假绿/正在红），产出日报到 AI Notes + 棘轮 guard。`,
+        }),
+      ]
+    );
+    const task_id = rows[0].id;
+    console.log(`[ci-patrol] Created ci_patrol task ${task_id}`);
+    return { triggered: true, skipped_window: false, skipped_recent: false, task_id };
+  } catch (err) {
+    console.error('[ci-patrol] 创建任务失败:', err.message);
+    return { triggered: false, skipped_window: false, skipped_recent: false, error: err.message };
+  }
 }

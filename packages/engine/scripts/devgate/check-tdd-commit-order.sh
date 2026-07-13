@@ -46,7 +46,9 @@ if [ -z "$COMMITS" ]; then
 fi
 
 # 判断这是不是 harness PR：看 PR 里有没有 sprints/*/tests/**/*.test.ts 改动
-HARNESS_TEST_CHANGES=$(git diff --name-only "${BASE}...${HEAD}" | grep -E '^sprints/[^/]+/tests/.*\.test\.ts$' || true)
+# 只算仍存在的文件：纯删除/移出 sprints/ 的清理 PR（如测试大扫除、升格进 src/）不是 harness 产出，
+# 若把删除也算作"改测试"，会把清理 commit 误判成 Red commit 触发 TDD 顺序违规。
+HARNESS_TEST_CHANGES=$(git diff --name-only "${BASE}...${HEAD}" | grep -E '^sprints/[^/]+/tests/.*\.test\.ts$' | while IFS= read -r f; do [ -f "$f" ] && printf '%s\n' "$f"; done || true)
 if [ -z "$HARNESS_TEST_CHANGES" ]; then
   echo -e "${YELLOW}ℹ️  无 sprints/*/tests/*.test.ts 改动，非 harness PR，跳过${RESET}"
   exit 0

@@ -7,7 +7,9 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { unlinkSync, existsSync, readFileSync } from 'fs';
+import { mkdtempSync, unlinkSync, existsSync, readFileSync, rmSync } from 'fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import express from 'express';
 import request from 'supertest';
 
@@ -56,11 +58,14 @@ vi.mock('child_process', () => ({
 
 describe('deploy-webhook-log (v1.1.0 log 落盘)', () => {
   const ORIG_REPO_ROOT = process.env.REPO_ROOT;
+  let tmpRepoRoot;
 
   beforeEach(async () => {
     capturedSpawnArgs = null;
     process.env.DEPLOY_TOKEN = 'test-token';
-    process.env.REPO_ROOT = '/custom/repo/root';
+    // 用真实可写的临时目录，确保 logs/ 子目录能被创建，logFd 得到真实 fd 而非 'ignore'
+    tmpRepoRoot = mkdtempSync(join(tmpdir(), 'deploy-test-'));
+    process.env.REPO_ROOT = tmpRepoRoot;
     // 关键：测试前清掉残留 status 文件，否则 module 启动时读到 running 状态 → 409
     try { unlinkSync('/tmp/cecelia-deploy-status.json'); } catch {}
     vi.resetModules();
@@ -73,6 +78,7 @@ describe('deploy-webhook-log (v1.1.0 log 落盘)', () => {
       process.env.REPO_ROOT = ORIG_REPO_ROOT;
     }
     try { unlinkSync('/tmp/cecelia-deploy-status.json'); } catch {}
+    try { rmSync(tmpRepoRoot, { recursive: true, force: true }); } catch {}
   });
 
   it('spawn stdio 不再用 "ignore"，改为数组 [ignore, fd, fd] 让 stdout/stderr 落盘', async () => {
@@ -101,7 +107,7 @@ describe('deploy-webhook-log (v1.1.0 log 落盘)', () => {
     expect(typeof opts.stdio[2]).toBe('number');
   });
 
-  it('deploy 状态文件含 log_path 字段指向 /tmp/cecelia-deploy-*.log', async () => {
+  it('deploy 状态文件含 log_path 字段（cecelia-deploy-*.log）', async () => {
     const mod = await import('../routes/ops.js');
     const app = express();
     app.use(express.json());
@@ -138,9 +144,9 @@ describe('deploy-webhook-log (v1.1.0 log 落盘)', () => {
     // log 应该含启动 metadata，让运维知道这是哪次 deploy 的输出
     expect(content).toMatch(/\[deploy-webhook\] starting at/);
     expect(content).toMatch(/\[deploy-webhook\] cmd:.*deploy-local\.sh/);
-    expect(content).toMatch(/\[deploy-webhook\] cwd: \/custom\/repo\/root/);
+    // cwd 动态指向 tmpRepoRoot（即 process.env.REPO_ROOT）
+    expect(content).toMatch(new RegExp(`\\[deploy-webhook\\] cwd: ${tmpRepoRoot.replace(/[/\\]/g, '[/\\\\]')}`));
 
-    // 清理测试产生的日志文件
-    try { unlinkSync(logPath); } catch {}
+    // 日志文件在 afterEach 清理 tmpRepoRoot 时一起删除
   });
 });

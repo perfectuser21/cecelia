@@ -64,9 +64,9 @@ describe('quarantine', () => {
       expect(result.class).toBe(FAILURE_CLASS.RESOURCE);
     });
 
-    it('should classify 500 error as NETWORK', () => {
+    it('should classify 500 error as SERVER_ERROR（协议卫生包：拆自 NETWORK）', () => {
       const result = classifyFailure('500 Internal Server Error');
-      expect(result.class).toBe(FAILURE_CLASS.NETWORK);
+      expect(result.class).toBe(FAILURE_CLASS.SERVER_ERROR);
     });
 
     it('should classify database connection error as NETWORK', () => {
@@ -83,6 +83,51 @@ describe('quarantine', () => {
       const result = classifyFailure('TypeError: cannot read property foo');
       expect(result.class).toBe(FAILURE_CLASS.TASK_ERROR);
       expect(result.confidence).toBe(0.5);
+    });
+
+    // Regression: OOM kill(exit=137) vs stream disconnect 应分路处理，不应同归 REPEATED_FAILURE quarantine
+    // exit=137 由 callback-processor 直接检测（isOomKilled），不经过 classifyFailure 模式匹配
+    // stream disconnect 由 classifyFailure NETWORK_PATTERNS 检测 → NETWORK class → skipCount=true
+    describe('stream disconnect 分类（外部 API 流中断）', () => {
+      it('classifyFailure("stream disconnected") → NETWORK', () => {
+        const result = classifyFailure('stream disconnected from chatgpt.com');
+        expect(result.class).toBe(FAILURE_CLASS.NETWORK);
+        expect(result.confidence).toBeGreaterThanOrEqual(0.9);
+      });
+
+      it('classifyFailure("disconnected from stream") → NETWORK', () => {
+        const result = classifyFailure('Error: disconnected from stream after 30s');
+        expect(result.class).toBe(FAILURE_CLASS.NETWORK);
+      });
+
+      it('classifyFailure("SSE error") → NETWORK', () => {
+        const result = classifyFailure('SSE error: server sent unexpected close');
+        expect(result.class).toBe(FAILURE_CLASS.NETWORK);
+      });
+
+      it('classifyFailure("EventSource close") → NETWORK', () => {
+        const result = classifyFailure('EventSource close event received');
+        expect(result.class).toBe(FAILURE_CLASS.NETWORK);
+      });
+
+      it('classifyFailure("event stream abort") → NETWORK', () => {
+        const result = classifyFailure('event-stream abort signal detected');
+        expect(result.class).toBe(FAILURE_CLASS.NETWORK);
+      });
+
+      it('stream disconnect retry_strategy 有 should_retry=true（延迟重试，不立即 quarantine）', () => {
+        const result = classifyFailure('stream disconnected');
+        expect(result.class).toBe(FAILURE_CLASS.NETWORK);
+        expect(result.retry_strategy.should_retry).toBe(true);
+        expect(result.retry_strategy.next_run_at).toBeDefined();
+      });
+
+      it('UNKNOWN_ERROR 字面量不匹配 NETWORK，走 TASK_ERROR（OOM/stream 不能靠 status 字符串区分）', () => {
+        // 这正是 insight 描述的痛点：两种失败都可能只呈现 UNKNOWN_ERROR
+        // OOM 靠 exit_code=137 区分，stream disconnect 靠实际错误消息区分
+        const result = classifyFailure('UNKNOWN_ERROR');
+        expect(result.class).toBe(FAILURE_CLASS.TASK_ERROR);
+      });
     });
 
     it('should handle Error objects', () => {

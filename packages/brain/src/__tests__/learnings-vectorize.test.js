@@ -431,7 +431,19 @@ describe('selfcheck schema version', () => {
     }));
 
     const { EXPECTED_SCHEMA_VERSION } = await import('../selfcheck.js');
-    // 293 是地板，加 migration 不要 bump（issue 14d66027）。
-    expect(EXPECTED_SCHEMA_VERSION).toBe('293');
+    // 316 = migration 316 design_docs type 白名单加 battle_report（battle-report.js INSERT 依赖）；
+    // 地板随 migration 号推进（facts-check selfcheck_version_sync 卡：地板 <= 最高 migration）。
+    // issue 14d66027 语义不变：只有代码/schema 依赖才 bump。
+    // 322 = migration 322 issues.journey_id（warroom.js 全景图查询直接依赖），故推进地板到 322。
+    // 323 = migration 323 initiative_runs.ability_id（harness-skill-relay.js spawn INSERT 直接依赖）；
+    // 324 = migration 324 advancement_items.notion_synced_at（pushAdvancementItems 去重查询直接依赖）；
+    // 326 = migration 326 side_effect_dedupe 表（lib/dedupe.js claimDedupeKey INSERT..ON CONFLICT 直接依赖，
+    // 表不存在则 fail-open 降级恒触发）；
+    // 331 = migration 331 learnings 谱系两列 + summary backfill（T9 学习账本可靠性依赖），故推进地板到 331。
+    // 333 = migration 333 areas 去重 + KR1/KR2 metadata.target_abilities（OKR 数据卫生）；
+    // 334 = migration 334 golden_paths 表（routes/golden-paths.js 与 gp-shelf-life.js 直接依赖）；
+    // 335 = migration 335 golden_path_proposal task_type（GP2/T2 派发链直接依赖），故推进地板到 335。
+    // 338 = migration 338 tasks.status 部分索引（postdeploy-verifier pending_postdeploy 扫描查询直接依赖）。
+    expect(EXPECTED_SCHEMA_VERSION).toBe('338');
   });
 });

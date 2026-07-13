@@ -73,7 +73,22 @@ disown $! 2>/dev/null || true
 
 # ===== 孤儿 Worktree 自动清理（已合并 PR → git worktree remove，失败不阻塞）=====
 # 遍历所有 git worktree，检测对应 PR 是否已 merged，是则自动清理孤儿 worktree
+# Guard A（对齐 zombie-sweep.js/zombie-cleaner.js，2026-07-10 补）：
+#   1. flock 互斥 —— 本机同时多个 worktree session 各自触发 stop.sh，全部无锁在同一份
+#      共享 .git/worktrees 元数据上操作会互相撕坏（Brain 侧 startup-recovery.js 注释已言明此风险）
+#   2. git status --porcelain 未提交改动检查 —— 非空则跳过，不强制删
+#   3. .dev-lock.* / .dev-mode.* 活跃锁检查 —— 存在则跳过（活跃 dev session 不删）
+#      判定逻辑抽取到 lib/worktree-guard.sh，与 tests/stop-worktree-guard.manual-test.sh 共用同一份
+#      （2026-07-10 审查修复：此前测试脚本手抄了一份独立逻辑，与本文件不同步）
+source "$SCRIPT_DIR/lib/worktree-guard.sh"
 {
+    _orphan_git_common="$(git -C "$PROJECT_ROOT" rev-parse --git-common-dir 2>/dev/null || echo "$PROJECT_ROOT/.git")"
+    _orphan_lock_file="${_orphan_git_common}/stop-worktree-cleanup.lock"
+    if command -v flock >/dev/null 2>&1; then
+        exec 201>"${_orphan_lock_file}"
+        flock -w 5 201 || exit 0
+    fi
+
     _orphan_wt_path=""
     while IFS= read -r _orphan_line; do
         if [[ "$_orphan_line" == "worktree "* ]]; then
@@ -82,6 +97,11 @@ disown $! 2>/dev/null || true
             _orphan_wt_branch="${_orphan_line#branch refs/heads/}"
             # 跳过主仓库自身（不清理主仓库）
             [[ "$_orphan_wt_path" == "$PROJECT_ROOT" ]] && continue
+            # 跳过有活跃锁（.dev-lock.* / .dev-mode.*）或未提交改动的 worktree
+            # （不强制删活跃 dev session 正在用的 worktree）
+            if stop_hook_should_skip_worktree "$_orphan_wt_path" >/dev/null; then
+                continue
+            fi
             # 检查该 worktree 对应的 PR 是否已 merged
             _orphan_pr_state=$(gh pr view "$_orphan_wt_branch" --json state --jq '.state' 2>/dev/null || echo "")
             if [[ "$_orphan_pr_state" == "MERGED" ]]; then

@@ -77,10 +77,12 @@ describe('alertness/diagnosis', () => {
     it('MEMORY_LEAK：内存持续上涨 > 50MB/分钟 且 RSS > 200MB 时触发', async () => {
       const now = Date.now();
       const metrics = { memory: { value: 350, status: 'danger' } };
-      // 构造10条历史，timeDiff约1分钟，增长量 > 50MB
+      // 构造10条历史，跨度 2.1 分钟（>= 2 分钟最小采样窗口，见
+      // diagnosis.js MEMORY_LEAK 的 timeDiffMinutes < 2 防噪声保护），
+      // 增长量 135MB/2.1分钟 ≈ 64MB/分钟 > 50MB/分钟 阈值
       const history = Array.from({ length: 10 }, (_, i) => ({
-        metrics: { memory: { value: 100 + i * 7 } },
-        timestamp: now - (9 - i) * 6000 // 54秒跨度
+        metrics: { memory: { value: 100 + i * 15 } },
+        timestamp: now - (9 - i) * 14000 // 126秒跨度
       }));
       const result = await diagnoseProblem(metrics, history);
       expect(result.issues).toContain('memory_leak');

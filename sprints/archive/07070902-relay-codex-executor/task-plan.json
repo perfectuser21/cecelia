@@ -1,0 +1,19 @@
+{
+  "initiative_id": "a3d61486-01bc-4bd0-a4b8-999475d7c4ff",
+  "tasks": [
+    {
+      "id": "ws1",
+      "title": "harness relay executor=codex 兼容层实现",
+      "description": "在 harness-skill-relay.js 添加 executor=codex 路径（额度软闸+双层守门+codex 容器名/8h deadline/spawn回滚）；更新 harness-relay-watchdog.js 按 orchestrator_host 分支限制 attempts；在 task-tasks.js POST 添加 executor 白名单+组合校验；更新 Dockerfile 安装 @openai/codex；更新 entrypoint.sh 添加 CECELIA_EXECUTOR=codex 分支+PIPESTATUS+错误关键词改判+token洗敏；补充 /tmp/cecelia-prompts 14天清理 cron",
+      "files": [
+        "packages/brain/src/harness-skill-relay.js",
+        "packages/brain/src/harness-relay-watchdog.js",
+        "packages/brain/src/routes/task-tasks.js",
+        "packages/brain/src/docker-executor.js",
+        "docker/cecelia-runner/Dockerfile",
+        "docker/cecelia-runner/entrypoint.sh"
+      ],
+      "depends_on": []
+    }
+  ]
+}

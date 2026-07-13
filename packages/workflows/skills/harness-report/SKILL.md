@@ -5,12 +5,14 @@ description: |
   Phase A（6步交付）：回写Brain任务状态 → 更新中台Dashboard → 写Notion AI Notes（GAN标注表+截图）
   → 更新Notion Feature Registry → 飞书通知 → 写本地harness-report.md备份。
   Phase B（Sprint状态同步）：写本地Brain DB → 通过 db-update skill 触发 notion-push-sync.js 的 8 个 push 函数（journeys/journey_features/issues/skill_registry/journey_steps/journey_step_links/decisions/initiative_contracts）→ git commit。
-  由 harness-evaluator PASS 后 Brain reportNode 自动 spawn；也可手动触发补同步。
-version: 6.3.0
+  由 harness-evaluator PASS 后 Brain reportNode 自动 spawn；relay 模式由 harness-controller 调 Skill 触发（变量走「Relay 入口段」自取）；也可手动触发补同步。
+version: 6.5.0
 created: 2026-04-08
-updated: 2026-06-11
+updated: 2026-07-10
 changelog:
-  - 6.3.0: 新增 golden-smoke 回归沉淀确认步骤 — evaluator PASS + merge 后验证 packages/quality/tests/regression/ 已包含本 Sprint 的 golden-smoke 文件，缺失则补写
+  - 6.5.0: 九要素 T11 learning 模板修真 — (a) Step 8 废除 heredoc 静态占位符模板，改为 AI 回顾台账/GAN 轮次/fix 记录/CI 往返后亲自撰写真实复盘，类目无内容写「无（本次未遇到）」，预防清单必须从本次真实问题提炼；(b) Step 8c 占位符守卫：命中「（无 / 填写」或硬编码预防清单三条整段照抄 → CONCERN（关键步），配套 zenithjoy-skills CI 闸门 lint-learning-placeholders 双保险；(c) Step 8e 接通 learnings 数据管道：原子条目提炼进 learning-atoms.json 后 POST /api/brain/learnings-received（必带 task_id，谱系经 task 挂 journey/ability；issues_found 故意不传防多余 fix task）；(d) Step 8f capture_atoms 探测式 best-effort 写入（非关键步，T10 入口落地后自愈）；(e) 运行指标追加 TOTAL_COST，token/耗时留 TODO 挂 T7 phase-event
+  - 6.4.0: 跨 repo 化刀3 — Step 3 截图上传宿主与 Step 9 访问地址参数化：新增 REPORT_HOST_SSH（默认 us-vps）/ REPORT_HOST_URL（默认 http://38.23.47.81:9998），正文引用变量，默认值保持现值（cecelia 本机场景零变化），第三方 repo 用 env 覆盖即可换报告宿主；Brain API（localhost:5221）调用不动（主理人拍板：Brain 是唯一中枢）
+  - 6.3.0: EVA 提分（GAPS #4）— (a) 新增「Relay 入口段」：注入变量断供时自取而非 WARN 跳过（PR_URL←台账/gh pr view、FEATURE_NAME←sprint-prd 标题、TOTAL_COST←relay-runs API、SCREENSHOTS←sprint 目录扫描、FEATURE_ID/SUB_AREA/HARNESS_INITIATIVE_ID←task API），env 注入与自取二选一；(b) 出口协议改三态：关键步（task.result 回写 / harness-report.md / learning.md）失败 → DONE_WITH_CONCERNS，不再静默 DONE；非关键步（Notion/飞书/Dashboard）失败仍可 DONE 但必须在结果里列明；(c) Phase A 完成标志改为事后核验实际产物（查 task.result、探文件存在）而非信任过程 echo
   - 6.2.0: 链路审计修复 5 项 — (a)「同步 8 个 Notion DB」改为明确清单（notion-push-sync.js 的 8 个 push 函数）+ 注明入口是 db-update skill；(b) journey_steps 措辞改"保留只读兼容（仍同步存量），新增数据禁止写入"；(c) 开头加「触发条件」（evaluator PASS 后 Brain reportNode 自动 spawn；手动用于补同步）；(d) Phase A 开头加前置文件存在性检查（缺失则对应步骤跳过 + WARN）；(e) 路径拼装统一 ${SPRINT_DIR%/}/xxx 防双斜杠
   - 6.1.0: 新增Step6全量Registry回写+Step7结构化Learning+Step8 index.html可视化；截图路径统一到SPRINT_DIR/screenshots/
   - 6.0.0: 合并 harness-sprint-state → 统一为"交付报告+状态同步"单一 skill，删除独立的 harness-sprint-state skill
@@ -34,6 +36,80 @@ changelog:
 
 - **自动**：harness-evaluator 输出 `verdict=PASS` 后，由 Brain `reportNode` 自动 spawn 本 skill（`task_type=harness_report`），无需人工介入。
 - **手动**：当某次 Sprint 的 Notion/DB 同步漏掉或失败，可手动触发本 skill **补同步**（Phase A 会按文件存在性跳过已无意义的步骤，Phase B 走 db-update 重推）。
+- **relay 模式**：harness-controller 单 session 接力时直接调 `Skill(harness-report)`，**不注入 v1 那套变量** → 必须先执行下方「Relay 入口段」自取变量，再进 Phase A。
+
+---
+
+## Relay 入口段（变量自取 — Phase A 之前必跑）
+
+**变量供给二选一，禁止第三种状态（变量为空却继续跑）：**
+
+1. **v1 注入路径**（cecelia-run / Brain reportNode spawn）：TASK_ID、SPRINT_DIR、FEATURE_NAME、PR_URL 等已通过 prompt/env 注入 → 核对非空后跳过本段。
+2. **v2 relay 自取路径**（controller 调 Skill，或手动补同步）：上述变量部分/全部缺失 → **逐个按下表 fallback 自取**。缺变量不是跳过步骤的理由；只有自取也失败才允许降级，且必须计入 concerns（见「Phase A 完成标志」）。
+
+**判定**：`FEATURE_NAME` 或 `PR_URL` 任一为空 → 走自取。
+
+| 变量 | fallback 来源（按优先级） |
+|---|---|
+| SPRINT_DIR | ① controller 台账 `.harness/progress.md` 里的 `sprints/<slug>` 路径 ② `sprints/` 下最新目录 |
+| TASK_ID | ① 台账 `.harness/progress.md` 里的 task UUID ② 调用方 prompt 里的 BRAIN_TASK_ID |
+| FEATURE_NAME | `${SPRINT_DIR}/sprint-prd.md` 的一级标题（`# ` 行） |
+| PR_URL | ① 台账里最后一个 GitHub PR 链接 ② `gh pr view --json url`（当前分支） |
+| TOTAL_COST | relay-runs API：`/api/brain/relay-runs?task_id=$TASK_ID` 各行 cost_usd 求和 |
+| SCREENSHOTS | 扫描 `${SPRINT_DIR}/screenshots/*.png` 组 JSON 数组 |
+| FEATURE_ID / SUB_AREA / HARNESS_INITIATIVE_ID | task API：`/api/brain/tasks/$TASK_ID` 的 ability_id / sub_area / initiative_id |
+
+```bash
+# ===== Relay 入口段：变量缺失时自取（v1 注入齐全则整段跳过）=====
+if [ -z "$FEATURE_NAME" ] || [ -z "$PR_URL" ]; then
+  echo "[relay-entry] 检测到注入变量断供，走自取路径"
+
+  # SPRINT_DIR：台账 → sprints/ 最新目录
+  if [ -z "$SPRINT_DIR" ]; then
+    SPRINT_DIR=$(grep -oE 'sprints/[0-9]{8}[0-9]*-[A-Za-z0-9._-]+' .harness/progress.md 2>/dev/null | head -1)
+    [ -z "$SPRINT_DIR" ] && SPRINT_DIR=$(ls -dt sprints/*/ 2>/dev/null | head -1)
+  fi
+  SPRINT_DIR="${SPRINT_DIR%/}"
+
+  # TASK_ID：台账里的 UUID
+  [ -z "$TASK_ID" ] && TASK_ID=$(grep -oiE '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}' .harness/progress.md 2>/dev/null | head -1)
+
+  # FEATURE_NAME：sprint-prd.md 一级标题
+  [ -z "$FEATURE_NAME" ] && FEATURE_NAME=$(grep -m1 '^# ' "${SPRINT_DIR}/sprint-prd.md" 2>/dev/null | sed 's/^# *//')
+
+  # PR_URL：台账 → gh pr view
+  [ -z "$PR_URL" ] && PR_URL=$(grep -oE 'https://github.com/[^ )>]+/pull/[0-9]+' .harness/progress.md 2>/dev/null | tail -1)
+  [ -z "$PR_URL" ] && PR_URL=$(gh pr view --json url -q .url 2>/dev/null || echo "")
+
+  # TOTAL_COST：relay-runs API 求和
+  if [ -z "$TOTAL_COST" ] && [ -n "$TASK_ID" ]; then
+    TOTAL_COST=$(curl -s "localhost:5221/api/brain/relay-runs?task_id=$TASK_ID" 2>/dev/null \
+      | jq '[.[]?.cost_usd // 0] | add // 0' 2>/dev/null || echo 0)
+  fi
+  TOTAL_COST="${TOTAL_COST:-0}"
+
+  # SCREENSHOTS：扫描 sprint 截图目录
+  if [ -z "$SCREENSHOTS" ] || [ "$SCREENSHOTS" = "[]" ]; then
+    SCREENSHOTS=$(ls "${SPRINT_DIR}/screenshots/"*.png 2>/dev/null | jq -R . | jq -sc . 2>/dev/null)
+    [ -z "$SCREENSHOTS" ] && SCREENSHOTS="[]"
+  fi
+
+  # FEATURE_ID / SUB_AREA / HARNESS_INITIATIVE_ID：task API
+  if [ -n "$TASK_ID" ]; then
+    TASK_JSON=$(curl -s "localhost:5221/api/brain/tasks/$TASK_ID" 2>/dev/null || echo "{}")
+    [ -z "$FEATURE_ID" ] && FEATURE_ID=$(echo "$TASK_JSON" | jq -r '.ability_id // empty' 2>/dev/null)
+    [ -z "$SUB_AREA" ] && SUB_AREA=$(echo "$TASK_JSON" | jq -r '.sub_area // "brain"' 2>/dev/null)
+    [ -z "$HARNESS_INITIATIVE_ID" ] && HARNESS_INITIATIVE_ID=$(echo "$TASK_JSON" | jq -r '.initiative_id // empty' 2>/dev/null)
+  fi
+
+  # 自取结果自检：TASK_ID / SPRINT_DIR 仍为空 = 关键变量断供，记入 concerns（出口不得报纯 DONE）
+  RELAY_ENTRY_CONCERNS=""
+  [ -z "$TASK_ID" ]    && RELAY_ENTRY_CONCERNS="${RELAY_ENTRY_CONCERNS}TASK_ID自取失败;"
+  [ -z "$SPRINT_DIR" ] && RELAY_ENTRY_CONCERNS="${RELAY_ENTRY_CONCERNS}SPRINT_DIR自取失败;"
+  echo "[relay-entry] TASK_ID=$TASK_ID SPRINT_DIR=$SPRINT_DIR FEATURE_NAME=$FEATURE_NAME PR_URL=$PR_URL TOTAL_COST=$TOTAL_COST"
+  [ -n "$RELAY_ENTRY_CONCERNS" ] && echo "CONCERN: $RELAY_ENTRY_CONCERNS" >> "${SPRINT_DIR:-/tmp}/.report-concerns"
+fi
+```
 
 ---
 
@@ -53,8 +129,10 @@ Phase B: Sprint 状态同步 → 把本次 Sprint 产出的 API/DB/Tests/Feature
 ### 注入变量
 
 ```bash
-# TASK_ID、SPRINT_DIR、PROJECT_ID、FEATURE_ID、FEATURE_NAME、SUB_AREA、
-# PR_URL、TOTAL_COST、SCREENSHOTS、HARNESS_INITIATIVE_ID 由 cecelia-run 通过 prompt 注入，直接使用
+# 变量供给二选一（见开头「Relay 入口段」）：
+# ① v1：TASK_ID、SPRINT_DIR、PROJECT_ID、FEATURE_ID、FEATURE_NAME、SUB_AREA、
+#    PR_URL、TOTAL_COST、SCREENSHOTS、HARNESS_INITIATIVE_ID 由 cecelia-run 通过 prompt 注入，直接使用
+# ② v2 relay：controller 不注入上述变量 → 必须已执行「Relay 入口段」自取；进入本 Phase 时变量应已就绪
 SPRINT_DIR="${SPRINT_DIR%/}"   # 统一去尾斜杠：后续所有 ${SPRINT_DIR}/xxx 拼装防双斜杠（每个 bash 块开头都应保留此规约）
 FIRST_SCREENSHOT_URL=$(echo "$SCREENSHOTS" | jq -r '.[0] // ""')
 TOTAL_COST="${TOTAL_COST:-0}"
@@ -77,6 +155,10 @@ echo "[harness-report] 前置文件：prd=$HAS_PRD contract=$HAS_CONTRACT dod=$H
 ```
 
 > 后续 Step 3.5 / Step 7 已各自带 `[ ! -f ... ] && ... continue` 防御；本检查是 Phase A 入口的统一前置探测，便于一眼看清哪些步骤会跳过。
+
+> **WARN 落痕规约（v6.3）**：Phase A 任何步骤打出 `WARN:` 的同时，必须追加一行到 concerns 文件：
+> `echo "CONCERN: <StepN>:<原因>" >> "${SPRINT_DIR}/.report-concerns"`
+> 出口的「Phase A 完成标志」会汇总该文件决定 DONE / DONE_WITH_CONCERNS。只 echo WARN 不落文件 = 无痕吞掉，禁止。
 
 ---
 
@@ -139,14 +221,17 @@ echo "✅ Step 2.5: Notion Task Notes 已写入（status=Done）"
 ### Step 3: 上传截图 + 写 Report Note
 
 ```bash
-# 上传截图到 us-vps
+# 上传截图到报告宿主（跨 repo 化刀3 参数化：默认 us-vps / 38.23.47.81 保持 cecelia 本机场景零变化，
+# 第三方 repo 用 env 覆盖 REPORT_HOST_SSH / REPORT_HOST_URL 即可换宿主）
+REPORT_HOST_SSH="${REPORT_HOST_SSH:-us-vps}"
+REPORT_HOST_URL="${REPORT_HOST_URL:-http://38.23.47.81:9998}"
 SPRINT_SLUG=$(basename "$SPRINT_DIR")
 VPS_SCREENSHOT_DIR="/opt/zenithjoy/screenshots/${SPRINT_SLUG}"
 SCREENSHOT_URLS=""
-ssh us-vps "mkdir -p ${VPS_SCREENSHOT_DIR}" 2>/dev/null || echo "WARN: VPS 目录创建失败（非阻断）"
+ssh "$REPORT_HOST_SSH" "mkdir -p ${VPS_SCREENSHOT_DIR}" 2>/dev/null || echo "WARN: 报告宿主目录创建失败（非阻断）"
 for f in "${SPRINT_DIR}/screenshots/"*.png; do
   [ -f "$f" ] || continue
-  scp "$f" "us-vps:${VPS_SCREENSHOT_DIR}/" 2>/dev/null || echo "WARN: 截图上传失败 $f（非阻断）"
+  scp "$f" "${REPORT_HOST_SSH}:${VPS_SCREENSHOT_DIR}/" 2>/dev/null || echo "WARN: 截图上传失败 $f（非阻断）"
   FNAME=$(basename "$f")
   SCREENSHOT_URLS="${SCREENSHOT_URLS} https://api.zenithjoy.com/screenshots/${SPRINT_SLUG}/${FNAME}"
 done
@@ -338,7 +423,13 @@ fi
 
 ---
 
-### Step 8: 生成结构化 Learning
+### Step 8: 生成结构化 Learning（真实复盘，禁止占位符模板）
+
+> **修真规约（v6.5，九要素 T11）**：learning.md 是**你（AI）基于本次 sprint 真实记录写的复盘**，
+> 不是 heredoc 模板填充。占位符 learning = 假总结，会被 Step 8c 守卫和 CI 闸门
+> （lint-learning-placeholders）双双拦下，直接导致出口降级 DONE_WITH_CONCERNS。
+
+**Step 8a — 收集真实素材：**
 
 ```bash
 # 统计 GAN 轮次和 Evaluator fix 次数
@@ -348,52 +439,139 @@ GAN_ROUNDS=$(curl -s "localhost:5221/api/brain/tasks/$TASK_ID" 2>/dev/null \
 EVAL_FIX_COUNT=$GAN_ROUNDS
 SPRINT_NAME=$(basename "$SPRINT_DIR")
 COMPLETED_AT_SHORT=$(TZ=Asia/Shanghai date '+%m%d%H%M')
+```
 
-cat > "${SPRINT_DIR}/learning.md" << LEARNING_EOF
-# Learning — ${FEATURE_NAME}
+写作前**必须回顾**以下素材（存在才读，读不到的在 learning 里如实说明）：
+
+1. 进度台账 / relay 各 phase 记录（GAN 对抗轮次、reviewer 挑了什么、proposer 怎么改的）
+2. generator / evaluator 阶段的失败与修复过程（本 session 上下文、fix commit 记录）
+3. PR 的 CI 失败与 review 往返（`gh pr view "$PR_URL" --comments` / checks 记录）
+4. `${SPRINT_DIR}/contract-draft.md` 对抗批注与 `${SPRINT_DIR}/.report-concerns`（如有）
+
+**Step 8b — AI 亲自撰写 learning.md**（用 Write 工具写 `${SPRINT_DIR}/learning.md`，骨架如下）：
+
+```markdown
+# Learning — <FEATURE_NAME>
 
 ## 运行指标
 
-- GAN 轮次：${GAN_ROUNDS}
-- Evaluator Fix 次数：${EVAL_FIX_COUNT}
-- PR：${PR_URL}
-- Sprint Dir：${SPRINT_DIR}
+- GAN 轮次：<GAN_ROUNDS>
+- Evaluator Fix 次数：<EVAL_FIX_COUNT>
+- 总成本：<TOTAL_COST，Relay 入口段已自取；无值写「未采集」>
+- PR：<PR_URL>
+- Sprint Dir：<SPRINT_DIR>
+<!-- TODO(九要素 T7): phase-event 复活后追加 token 用量 / 各 phase 耗时字段 -->
 
 ## 发现的问题
 
 ### [PROMPT] Prompt 类问题
-
-- （无 / 填写本次遇到的 prompt 设计问题）
-
 ### [BUG] 代码缺陷
-
-- （无 / 填写本次修复的 bug）
-
 ### [INFRA] 基础设施问题
-
-- （无 / 填写本次遇到的 CI/环境/工具链问题）
-
 ### [DESIGN] 设计缺陷
 
-- （无 / 填写本次发现的架构或设计问题）
-
 ## 下次预防清单
+```
 
-- [ ] 检查 contract-draft.md 格式是否符合 evaluator 预期
-- [ ] 确认 DoD 所有 [BEHAVIOR] 条目有对应测试
-- [ ] GAN 轮次 > 2 时复盘 evaluator prompt 是否过严
-LEARNING_EOF
-echo "✅ Step 8a: learning.md 已生成到 ${SPRINT_DIR}/learning.md"
+硬规则（违反任何一条 = learning 无效）：
 
-# 复制到 docs/learnings/ 永久保留
+- 每个类目：有真实问题 → 写「现象 → 根因 → 修法」一条一行；确实没有 → 写「无（本次未遇到）」。
+- **禁止出现占位符原文**「（无 / 填写」——这是旧模板指纹，CI 见到即红。
+- 「下次预防清单」必须从**本次真实问题**提炼 `- [ ]` 条目；四类目全为「无」时写「-（本次无新增预防项）」。
+  禁止照抄历史通用三条（contract-draft 格式检查 / DoD [BEHAVIOR] 对应测试 / GAN>2 复盘 evaluator prompt 同时出现 = CI 红）。
+- 内容里禁止再用尖括号占位（`<GAN_ROUNDS>` 等骨架变量必须替换为真实值）。
+
+**Step 8c — 占位符守卫（关键步，proven-to-fire）：**
+
+```bash
+if grep -q "（无 / 填写" "${SPRINT_DIR}/learning.md" 2>/dev/null; then
+  echo "WARN: learning.md 含占位符原文，视为无效复盘"
+  echo "CONCERN: Step8:learning.md含占位符" >> "${SPRINT_DIR}/.report-concerns"
+fi
+if grep -q "检查 contract-draft.md 格式是否符合 evaluator 预期" "${SPRINT_DIR}/learning.md" 2>/dev/null \
+   && grep -q "确认 DoD 所有 \[BEHAVIOR\] 条目有对应测试" "${SPRINT_DIR}/learning.md" 2>/dev/null \
+   && grep -q "GAN 轮次 > 2 时复盘 evaluator prompt 是否过严" "${SPRINT_DIR}/learning.md" 2>/dev/null; then
+  echo "WARN: learning.md 下次预防清单为硬编码模板照抄，视为无效复盘"
+  echo "CONCERN: Step8:预防清单模板照抄" >> "${SPRINT_DIR}/.report-concerns"
+fi
+```
+
+**Step 8d — 复制到 docs/learnings/ 永久保留：**
+
+```bash
 REPO_ROOT=$(git -C "$SPRINT_DIR" rev-parse --show-toplevel 2>/dev/null || echo "")
 if [ -n "$REPO_ROOT" ]; then
   mkdir -p "${REPO_ROOT}/docs/learnings"
   LEARNING_DEST="${REPO_ROOT}/docs/learnings/cp-${COMPLETED_AT_SHORT}-${SPRINT_NAME}.md"
   cp "${SPRINT_DIR}/learning.md" "$LEARNING_DEST"
-  echo "✅ Step 8b: learning.md 已复制到 $LEARNING_DEST"
+  echo "✅ Step 8d: learning.md 已复制到 $LEARNING_DEST"
 else
   echo "WARN: 无法定位 git 根目录，跳过 docs/learnings 复制"
+  echo "CONCERN: Step8:docs/learnings复制跳过" >> "${SPRINT_DIR}/.report-concerns"
+fi
+```
+
+**Step 8e — 写入 Brain learnings 表（关键步）：**
+
+先把 learning.md 里的结论提炼成**原子条目**写入 `${SPRINT_DIR}/learning-atoms.json`
+（用 Write 工具；每条 = 一句可独立成立的经验/预防措施，1–5 条；四类目全「无」且无预防项 → 空数组）：
+
+```json
+{"next_steps_suggested": ["<原子经验条目1>", "<原子经验条目2>"]}
+```
+
+然后 POST 到 Brain（learnings 表无 journey/ability 列，谱系经 `task_id` 挂载——task 行携带
+journey_id/ability_id，migration 271 对缺 task_id 有告警防御，**必须带**）：
+
+```bash
+BRANCH_NAME=$(git -C "$SPRINT_DIR" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
+PR_NUMBER=$(echo "$PR_URL" | grep -oE '[0-9]+$' || echo "")
+REPO_NAME=$(basename "$(git -C "$SPRINT_DIR" remote get-url origin 2>/dev/null)" .git 2>/dev/null || echo "cecelia")
+
+ATOM_COUNT=$(python3 -c "import json;print(len(json.load(open('${SPRINT_DIR}/learning-atoms.json')).get('next_steps_suggested',[])))" 2>/dev/null || echo 0)
+if [ "$ATOM_COUNT" -gt 0 ]; then
+  LR_RESP=$(python3 -c "
+import json
+atoms = json.load(open('${SPRINT_DIR}/learning-atoms.json')).get('next_steps_suggested', [])
+print(json.dumps({'next_steps_suggested': atoms, 'task_id': '$TASK_ID',
+                  'branch_name': '$BRANCH_NAME' or None, 'pr_number': '$PR_NUMBER' or None,
+                  'repo': '$REPO_NAME'}))" \
+    | curl -s -X POST "localhost:5221/api/brain/learnings-received" \
+        -H "Content-Type: application/json" -d @- 2>/dev/null)
+  INSERTED=$(echo "$LR_RESP" | python3 -c "import sys,json;print(len(json.load(sys.stdin).get('results',{}).get('learnings_inserted',[])))" 2>/dev/null || echo 0)
+  if [ "$INSERTED" -gt 0 ]; then
+    echo "✅ Step 8e: $INSERTED 条 learning 已写入 Brain learnings 表（task_id=$TASK_ID）"
+  else
+    echo "WARN: learnings-received 写入失败或 0 条入库（resp: $(echo "$LR_RESP" | head -c 200)）"
+    echo "CONCERN: Step8e:learnings表写入失败" >> "${SPRINT_DIR}/.report-concerns"
+  fi
+else
+  echo "ℹ️ Step 8e: 本次无原子经验条目，跳过 learnings 表写入"
+fi
+```
+
+> ⚠️ `issues_found` 字段**故意不传**：harness 的问题在 merge 前已修完，传了会开多余的 P1 fix task。
+
+**Step 8f — capture_atoms 顺手写（非关键步，best-effort）：**
+
+统一收件箱入口（九要素 T10）在 Brain 侧建设中：Brain 现无 `POST /api/brain/capture-atoms`。
+探测式写入，非 2xx 只 WARN 不降级，T10 落地兼容入口后自愈：
+
+```bash
+if [ "$ATOM_COUNT" -gt 0 ]; then
+  CA_CODE=$(python3 -c "
+import json
+atoms = json.load(open('${SPRINT_DIR}/learning-atoms.json')).get('next_steps_suggested', [])
+print(json.dumps({'atoms': [{'content': a, 'target_type': 'knowledge',
+                             'target_subtype': 'harness_learning', 'confidence': 0.8,
+                             'ai_reason': 'harness-report Step8 真实复盘提炼'} for a in atoms],
+                  'task_id': '$TASK_ID'}))" \
+    | curl -s -o /dev/null -w "%{http_code}" -X POST "localhost:5221/api/brain/capture-atoms" \
+        -H "Content-Type: application/json" -d @- 2>/dev/null || echo 000)
+  case "$CA_CODE" in
+    2*) echo "✅ Step 8f: capture_atoms 已写入" ;;
+    *)  echo "WARN: capture_atoms 写入不可用（HTTP $CA_CODE，T10 入口未落地属预期）"
+        echo "CONCERN: Step8f:capture_atoms未写入(HTTP $CA_CODE)" >> "${SPRINT_DIR}/.report-concerns" ;;
+  esac
 fi
 ```
 
@@ -494,20 +672,43 @@ fs.writeFileSync(path.join(sprintDir, 'index.html'), html, 'utf8');
 console.log('index.html generated');
 " && echo "✅ Step 9a: index.html 已生成到 ${SPRINT_DIR}/index.html"
 
-echo "📎 访问地址: http://38.23.47.81:9998/sprints/${SPRINT_NAME}/index.html"
+echo "📎 访问地址: ${REPORT_HOST_URL:-http://38.23.47.81:9998}/sprints/${SPRINT_NAME}/index.html"
 ```
 
 ---
 
-### Phase A 完成标志
+### Phase A 完成标志（三态出口：事后核验产物，禁止「全 WARN 仍 DONE」）
+
+**关键步 vs 非关键步：**
+
+- **关键步**（失败 → 出口降级 `DONE_WITH_CONCERNS`，不许静默 DONE）：Step 1 task.result 回写、Step 6 本地 harness-report.md、Step 8 learning.md（存在 + 无占位符）、Step 8e learnings 表写入、以及「Relay 入口段」关键变量自取失败。
+- **非关键步**（失败仍可 DONE，但必须在 concerns 里列明，不许无痕吞掉）：Step 2 Dashboard、Step 2.5/3/3.5 Notion Notes、Step 4 Feature Registry、Step 5 飞书。
+
+核验方式是**事后查实际产物**（curl 查 task.result、探文件存在），不信任各步骤的 `✅ echo`：
 
 ```bash
+CONCERNS=""
+
+# 关键步核验
+TASK_RESULT=$(curl -s "localhost:5221/api/brain/tasks/$TASK_ID" 2>/dev/null | jq -r '.result // empty' 2>/dev/null)
+[ -z "$TASK_RESULT" ]                       && CONCERNS="${CONCERNS}Step1:task.result未回写;"
+[ ! -f "${SPRINT_DIR}/harness-report.md" ]  && CONCERNS="${CONCERNS}Step6:harness-report.md缺失;"
+[ ! -f "${SPRINT_DIR}/learning.md" ]        && CONCERNS="${CONCERNS}Step8:learning.md缺失;"
+grep -q "（无 / 填写" "${SPRINT_DIR}/learning.md" 2>/dev/null && CONCERNS="${CONCERNS}Step8:learning.md含占位符;"
+
+# 汇入过程中记录的 concerns（含 Relay 入口段变量自取失败、非关键步 WARN）
+[ -f "${SPRINT_DIR}/.report-concerns" ] && CONCERNS="${CONCERNS}$(tr '\n' ';' < "${SPRINT_DIR}/.report-concerns")"
+
+if [ -n "$CONCERNS" ]; then VERDICT="DONE_WITH_CONCERNS"; else VERDICT="DONE"; fi
+
 WORKSPACE="${WORKSPACE_PATH:-${WORKSPACE:-/workspace}}"
 cat > "$WORKSPACE/.brain-result.json" << BREOF
-{"verdict":"DONE","task_id":"$TASK_ID","report_path":"${SPRINT_DIR}/harness-report.md","pr_url":"$PR_URL","screenshots":$SCREENSHOTS}
+{"verdict":"$VERDICT","task_id":"$TASK_ID","report_path":"${SPRINT_DIR}/harness-report.md","pr_url":"$PR_URL","screenshots":$SCREENSHOTS,"concerns":$(echo "$CONCERNS" | jq -Rs . 2>/dev/null || echo '""')}
 BREOF
-echo "[harness-report Phase A] 9步交付完成"
+echo "[harness-report Phase A] 交付完成，verdict=$VERDICT${CONCERNS:+，concerns: $CONCERNS}"
 ```
+
+> **给调用方（controller / Brain）的约定**：`DONE_WITH_CONCERNS` ≠ 失败，PR 已合并、流程可收尾，但表示交付报告不完整——controller 应把 concerns 原样写入台账，最终报告必须列明，不得折叠成 DONE。非关键步（Notion/飞书）失败同样要出现在最终报告的列明清单里。
 
 ---
 

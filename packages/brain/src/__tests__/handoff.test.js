@@ -12,6 +12,10 @@ import {
   HANDOFF_SCHEMA_VERSION, BASELINE_DATA_SOURCES,
 } from '../handoff.js';
 
+// T10：mock capture-inbox（ESM export 无法 vi.spyOn，用工厂 mock；等价断言）
+vi.mock('../capture-inbox.js', () => ({ pushCaptureAtom: vi.fn().mockResolvedValue('atom-1') }));
+import { pushCaptureAtom } from '../capture-inbox.js';
+
 const TASK_ID = '11111111-2222-3333-4444-555555555555';
 
 describe('buildHandoff', () => {
@@ -114,6 +118,53 @@ describe('saveHandoff', () => {
     const r = await saveHandoff({ pool }, buildHandoff({ task_id: TASK_ID }));
     expect(r.dbWritten).toBe(true);
     expect(r.mirrorPath).toBeNull();
+  });
+});
+
+describe('saveHandoff → capture_atoms 推送（T10）', () => {
+  let tmpDir;
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'handoff-capture-test-'));
+    process.env.HANDOFF_DOCS_DIR = tmpDir;
+    pushCaptureAtom.mockClear();
+  });
+  afterEach(() => {
+    delete process.env.HANDOFF_DOCS_DIR;
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it('DB 写成功后推送 atom：verdict=FAIL → subtype=FAIL，来源指针指向 tasks/task_id', async () => {
+    const pool = { query: vi.fn().mockResolvedValue({ rowCount: 1 }) };
+    const h = buildHandoff({ task_id: '11111111-1111-1111-1111-111111111111', title: 'T', verdict: 'FAIL', not_done: ['x'] });
+    await saveHandoff({ pool }, h);
+    expect(pushCaptureAtom).toHaveBeenCalledTimes(1);
+    const [, fields] = pushCaptureAtom.mock.calls[0];
+    expect(fields.targetType).toBe('handoff');
+    expect(fields.targetSubtype).toBe('FAIL');
+    expect(fields.routedToTable).toBe('tasks');
+    expect(fields.routedToId).toBe('11111111-1111-1111-1111-111111111111');
+    expect(fields.content).toContain('T');
+  });
+
+  it('PASS 且 next_steps 非「完成，无下一步」→ subtype=PASS+NEXT', async () => {
+    const pool = { query: vi.fn().mockResolvedValue({ rowCount: 1 }) };
+    const h = buildHandoff({ task_id: '11111111-1111-1111-1111-111111111111', verdict: 'PASS', next_steps: ['继续 T11'] });
+    await saveHandoff({ pool }, h);
+    expect(pushCaptureAtom.mock.calls[0][1].targetSubtype).toBe('PASS+NEXT');
+  });
+
+  it('PASS 且 next_steps=[「完成，无下一步」] → subtype=PASS', async () => {
+    const pool = { query: vi.fn().mockResolvedValue({ rowCount: 1 }) };
+    const h = buildHandoff({ task_id: '11111111-1111-1111-1111-111111111111', verdict: 'PASS', next_steps: ['完成，无下一步'] });
+    await saveHandoff({ pool }, h);
+    expect(pushCaptureAtom.mock.calls[0][1].targetSubtype).toBe('PASS');
+  });
+
+  it('DB 写失败（task 不存在）→ 不推送', async () => {
+    const pool = { query: vi.fn().mockResolvedValue({ rowCount: 0 }) };
+    const h = buildHandoff({ task_id: '11111111-1111-1111-1111-111111111111' });
+    await expect(saveHandoff({ pool }, h)).rejects.toThrow(/task not found/);
+    expect(pushCaptureAtom).not.toHaveBeenCalled();
   });
 });
 

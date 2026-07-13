@@ -46,7 +46,10 @@ const ANOMALY_PATTERNS = {
       const lastMem = recentMemory[recentMemory.length - 1];
       const timeDiffMinutes = (lastMem.timestamp - firstMem.timestamp) / 60000;
 
-      if (timeDiffMinutes === 0) return false;
+      // 采样窗口小于 2 分钟时，短间隔 tick 的正常波动会被放大成虚高的
+      // MB/分钟速率（如 6 秒内涨 10MB 算出来是 100MB/分钟）。真正的内存
+      // 泄漏是持续性的，2 分钟窗口足够把这类噪声滤掉。
+      if (timeDiffMinutes < 2) return false;
 
       const memGrowthRate = (lastMem.value - firstMem.value) / timeDiffMinutes;
       return memGrowthRate > 50; // 50MB/分钟（Node.js GC 波动不会到这个量级）

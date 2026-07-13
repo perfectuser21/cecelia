@@ -22,12 +22,17 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 DEST_DIR="$REPO_ROOT/packages/workflows/skills"
 
 SKILLS=(
+  harness-controller
   harness-planner
   harness-contract-proposer
   harness-contract-reviewer
   harness-generator
   harness-evaluator
   harness-report
+  line-strategist
+  golden-path-controller
+  golden-path-proposer
+  golden-path-reviewer
 )
 
 if [[ ! -d "$SSOT_DIR" ]]; then

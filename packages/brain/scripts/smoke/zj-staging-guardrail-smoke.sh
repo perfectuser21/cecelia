@@ -48,8 +48,51 @@ if (!/ZJ_STAGING_PORT[\s\S]{0,100}localhost:5200/.test(runner) &&
   process.exit(1);
 }
 
-console.log('[smoke] L1 PASS: ZJ_STAGING_PORT + 健康检查路径 + zj_staging_unhealthy + 端口重写');
+// 默认重试参数：maxAttempts >= 5 且 retryDelayMs >= 30000（总窗口 >= 4.5 分钟，覆盖 ZJ CI 部署时间）
+if (!/maxAttempts\s*\?\?\s*5/.test(runner)) {
+  console.error('L1 FAIL: 默认 maxAttempts 未升级到 5（当前不够覆盖 ZJ CI 2-3 分钟部署窗口）');
+  process.exit(1);
+}
+if (!/retryDelayMs\s*\?\?\s*30_000/.test(runner)) {
+  console.error('L1 FAIL: 默认 retryDelayMs 未升级到 30_000（当前 20s 间隔不足）');
+  process.exit(1);
+}
+
+// 失败 output 包含尝试次数说明
+if (!/尝试.*次均失败/.test(runner)) {
+  console.error('L1 FAIL: 重试耗尽 output 缺少诊断信息（尝试 N 次均失败）');
+  process.exit(1);
+}
+
+// 成功时提取 stagingSha（健康检查 JSON 中的 build.sha，护栏通知和审计用）
+if (!/stagingSha/.test(runner)) {
+  console.error('L1 FAIL: deployStaging 缺少 stagingSha 返回字段（候选 SHA 可见性）');
+  process.exit(1);
+}
+
+// 护栏 FAIL 通知含最后已知 SHA 诊断
+if (!/最后已知 staging SHA/.test(runner)) {
+  console.error('L1 FAIL: handlePromote FAIL 通知缺少最后已知 staging SHA 诊断行');
+  process.exit(1);
+}
+
+// lockPort: customer line 必须用 ZJ_STAGING_PORT 作锁 key，不与 Cecelia Brain staging(5222) 冲突
+// 回归守卫：防止 customer line → ZJ_STAGING_PORT 分支丢失导致 ZJ staging_e2e 被 Brain staging 假冲突
+if (!/line\s*===\s*['\"]customer['\"]\s*\?\s*ZJ_STAGING_PORT/.test(runner)) {
+  console.error('L1 FAIL: lockPort 缺少 customer line → ZJ_STAGING_PORT 分支（ZJ staging 会与 Cecelia Brain staging 假冲突）');
+  process.exit(1);
+}
+
+console.log('[smoke] L1 PASS: ZJ_STAGING_PORT + 健康检查路径 + zj_staging_unhealthy + 端口重写 + 5次重试参数 + 诊断输出 + stagingSha + SHA诊断通知 + lockPort隔离');
 " || exit 1
+
+# ZJ_STAGING_HOST 必须在 docker-compose.yml 中配置（容器内 localhost 无法访问宿主 :5201）
+COMPOSE_FILE="docker-compose.yml"
+if ! grep -q "ZJ_STAGING_HOST" "$COMPOSE_FILE" 2>/dev/null; then
+  echo "[smoke] L1 FAIL: ZJ_STAGING_HOST 未在 $COMPOSE_FILE 中配置（Brain 容器内 localhost 不通宿主 :5201）"
+  exit 1
+fi
+echo "[smoke] L1 PASS: ZJ_STAGING_HOST 已在 docker-compose.yml 配置"
 
 # ── L2 Brain health gate ─────────────────────────────────────────────────
 if ! curl -sf "$BRAIN/api/brain/health" >/dev/null 2>&1; then

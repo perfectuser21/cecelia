@@ -844,6 +844,9 @@ function createFallbackDecision(event, reason) {
 // 同 fingerprint ≥ 3 次 → 立即 quarantine+rca，永不 retry
 // ============================================================
 
+// TODO(协议卫生包 follow-up): 本表是 quarantine.js/retry-policy.js 分类表的独立重复实现，与其不一致（5xx/timeout 在这里仍映射 'network'）。
+// 短期接受（丘脑分类只影响 thalamus 决策文案，不进 failure_classification 落库链路）；
+// 迁移方向：删本表改调 quarantine.classifyFailure。
 // 外部依赖故障的内联模式匹配（避免引入循环依赖）
 const _EXT_DEP_PATTERNS = [
   // 网络类
@@ -851,6 +854,9 @@ const _EXT_DEP_PATTERNS = [
   { re: /connection\s+refused|connection\s+reset|network\s+error|socket\s+hang\s+up/i, class: 'network' },
   { re: /service\s+unavailable|bad\s+gateway|upstream\s+connect/i, class: 'network' },
   { re: /5\d{2}\s+error|internal\s+server\s+error/i, class: 'network' },
+  // 外部 API 流中断（如 chatgpt.com stream disconnected）—— 属于外部依赖网络故障
+  { re: /stream\s+disconnect(ed)?|disconnected\s+from\s+stream/i, class: 'network' },
+  { re: /SSE.*error|EventSource.*close|event.?stream.*abort/i, class: 'network' },
   // 限流类
   { re: /too\s+many\s+requests|rate\s+limit|429|overloaded|quota\s+exceeded/i, class: 'rate_limit' },
   // 账单上限

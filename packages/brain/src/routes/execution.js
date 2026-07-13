@@ -17,9 +17,12 @@ import { getAvailableMemoryMB } from '../platform-utils.js';
 import { raise } from '../alerting.js';
 import { handleTaskFailure } from '../quarantine.js';
 import { triggerCeceliaRun } from '../executor.js';
+import { REVIEW_TASK_TYPES } from '../lib/review-task-types.js';
+import { serialUnlockNext, writeReviewResult, promoteRegressionOnHarnessMerged } from '../lib/callback-postprocess.js';
 import { updateDesireFromTask } from '../desire-feedback.js';
 import { checkAndCreateCodeReviewTrigger } from '../code-review-trigger.js';
 import { resolveRelatedFailureMemories } from './shared.js';
+import { getZenithjoyPool } from '../zenithjoy-db.js';
 import {
   readVerdictWithRetry,
   persistVerdictTimeout,
@@ -27,6 +30,7 @@ import {
   handleEvaluateSessionCrash,
 } from '../execution.js';
 import { normalizeCallbackStatus, extractPrNumber, maybeMarkCompletedNoPr, buildExecMetaJson, buildFailureFields, extractFindingsValue, buildLastRunResult } from '../lib/callback-utils.js';
+import { isTransientClass } from '../lib/retry-policy.js';
 
 const router = Router();
 const execAsync = promisify(exec);
@@ -128,6 +132,23 @@ router.post('/execution-callback', async (req, res) => {
     // P1-1: Dev task completed without PR → completed_no_pr
     newStatus = await maybeMarkCompletedNoPr(newStatus, pr_url, task_id, pool, 'execution-callback');
 
+    // 通用终态幂等守卫：任务已 terminal 时迟到回调返回 200 跳过，不报错
+    // 场景：brain-deploy 蓝绿 10s 不可用 → 执行者重试 → 任务已被 zombie-reaper 标 failed → 回调应静默接受
+    {
+      const TERMINAL_STATUSES = ['completed', 'completed_no_pr', 'failed', 'quota_exhausted'];
+      try {
+        const taskRow = await pool.query(
+          `SELECT status FROM tasks WHERE id = $1 LIMIT 1`, [task_id]
+        );
+        if (taskRow.rows.length > 0 && TERMINAL_STATUSES.includes(taskRow.rows[0].status)) {
+          console.log(`[execution-callback] 迟到回调跳过: task=${task_id} 已是终态 ${taskRow.rows[0].status}`);
+          return res.json({ success: true, skipped: true, reason: 'late_callback_terminal', current_status: taskRow.rows[0].status });
+        }
+      } catch (terminalGuardErr) {
+        console.warn(`[execution-callback] 终态检查失败（降级继续）: ${terminalGuardErr.message}`);
+      }
+    }
+
     // P1-0: terminal failure guard — 不允许 execution-callback 覆盖 pipeline_terminal_failure 终态
     // 场景：orchestrator 在 Xian 执行期间将 content-pipeline 设为 failed + failure_class=pipeline_terminal_failure，
     //       Xian 完成后调用 execution-callback(AI Done) 试图将状态改回 completed。
@@ -144,6 +165,37 @@ router.post('/execution-callback', async (req, res) => {
         }
       } catch (terminalCheckErr) {
         console.error(`[execution-callback] terminal failure check error（降级继续）: ${terminalCheckErr.message}`);
+      }
+    }
+
+    // P1-5 五环终态门禁: postdeploy_check（第5环——部署验证前置）
+    // 任务 payload.postdeploy_check.command 存在且非 exempt → 改为 pending_postdeploy，
+    // 等 postdeploy-verifier tick 执行验证后再落 completed。
+    // 同一收口点实现 219a9efc: dev 任务 result 为空时写软守卫标记（audit trail）。
+    if (newStatus === 'completed') {
+      try {
+        const pdRow = await pool.query(
+          `SELECT task_type, payload FROM tasks WHERE id = $1`,
+          [task_id]
+        );
+        const pdTask = pdRow.rows[0];
+        const postdeployCheck = pdTask?.payload?.postdeploy_check;
+
+        if (postdeployCheck && postdeployCheck.exempt !== true && postdeployCheck.command) {
+          newStatus = 'pending_postdeploy';
+          console.log(
+            `[execution-callback] pending_postdeploy 拦截: task=${task_id} ` +
+            `command="${String(postdeployCheck.command).substring(0, 80)}"`
+          );
+        }
+
+        // 219a9efc 收口：dev 任务 completed 时 result 为空，写 payload 软守卫标记（不阻断）
+        if (pdTask?.task_type === 'dev' && !result && postdeployCheck?.exempt !== true) {
+          console.warn(`[execution-callback] 219a9efc: task=${task_id} dev 任务 completed 时 result 为空`);
+          // result_empty_guard 随主 UPDATE 的 payload 合并写入（见下方 jsonb_build_object）
+        }
+      } catch (pdCheckErr) {
+        console.error(`[execution-callback] postdeploy check 读取失败（降级继续）: ${pdCheckErr.message}`);
       }
     }
 
@@ -184,7 +236,10 @@ router.post('/execution-callback', async (req, res) => {
           pr_url = COALESCE($5::text, pr_url),
           pr_status = CASE WHEN $5::text IS NOT NULL THEN 'open' ELSE pr_status END,
           error_message = CASE WHEN $9::text IS NOT NULL THEN $9::text ELSE error_message END,
-          blocked_detail = CASE WHEN $10::jsonb IS NOT NULL THEN $10::jsonb ELSE blocked_detail END
+          blocked_detail = CASE WHEN $10::jsonb IS NOT NULL THEN $10::jsonb ELSE blocked_detail END,
+          updated_at = NOW(),
+          claimed_by = NULL,
+          claimed_at = NULL
         WHERE id = $1 AND status IN ('in_progress', 'queued', 'dispatched')
       `, [task_id, newStatus, JSON.stringify(lastRunResult), status, pr_url || null, isCompleted, findingsValue, prNumber, errorMessage, blockedDetail, isQuotaExhausted, execMetaJson]);
 
@@ -507,53 +562,13 @@ router.post('/execution-callback', async (req, res) => {
         console.warn(`[execution-callback] desire feedback failed (non-fatal): ${err.message}`)
       );
 
-      // 任务完成 → learnings 闭环：把完成结果写入 learnings 表（让反刍系统消化）
-      try {
-        const taskMeta = await pool.query(
-          'SELECT title, task_type, description FROM tasks WHERE id = $1',
-          [task_id]
-        );
-        if (taskMeta.rows[0]) {
-          const { title: taskTitle, task_type: taskType } = taskMeta.rows[0];
-          // findingsValue 原在上方 try 块内作用域，此处不可达（历史遗留）；保持实际行为：summary 为 null
-          const findingsSummary = null;
-          const learningContent = [
-            `任务完成：${taskTitle}`,
-            `类型：${taskType}`,
-            findingsSummary ? `产出摘要：${findingsSummary}` : null,
-            pr_url ? `PR：${pr_url}` : null,
-          ].filter(Boolean).join('\n');
-
-          const crypto = await import('crypto');
-          const contentHash = crypto.createHash('sha256').update(learningContent).digest('hex');
-
-          // 去重：同一 hash 不重复写
-          const existing = await pool.query(
-            'SELECT id FROM learnings WHERE content_hash = $1 AND is_latest = true LIMIT 1',
-            [contentHash]
-          );
-          if (!existing.rows.length) {
-            await pool.query(
-              `INSERT INTO learnings (title, category, trigger_event, content, metadata, content_hash, version, is_latest, digested, task_id)
-               VALUES ($1, 'task_completion', 'task_completed', $2, $3, $4, 1, true, false, $5)`,
-              [
-                `完成：${taskTitle}`,
-                learningContent,
-                JSON.stringify({ task_id, task_type: taskType, pr_url: pr_url || null }),
-                contentHash,
-                task_id || null,
-              ]
-            );
-            console.log(`[execution-callback] 任务完成写入 learnings: ${taskTitle}`);
-          }
-        }
-      } catch (learningErr) {
-        console.warn(`[execution-callback] learnings 写入失败（非致命）: ${learningErr.message}`);
-      }
+      // T9（addendum-01）：原 task_completion learnings 写入块已删除——
+      // 事件层记录与 tasks 表信息完全重复，属纯噪音源头，禁止复活。
 
       // content_publish 完成 → 写入 zenithjoy.publish_logs（fire-and-forget）
       Promise.resolve().then(async () => {
         try {
+          const zjPool = getZenithjoyPool();
           const pubTaskRow = await pool.query(
             'SELECT task_type, payload FROM tasks WHERE id = $1',
             [task_id]
@@ -587,7 +602,7 @@ router.post('/execution-callback', async (req, res) => {
           const workTitle = pipeline_keyword || `pipeline:${parent_pipeline_id || task_id}`;
           const contentId = parent_pipeline_id || task_id;
 
-          const workUpsert = await pool.query(
+          const workUpsert = await zjPool.query(
             `INSERT INTO zenithjoy.works (content_id, title, content_type, status)
              VALUES ($1, $2, $3, 'published')
              ON CONFLICT (content_id) DO UPDATE SET
@@ -600,7 +615,7 @@ router.post('/execution-callback', async (req, res) => {
           if (!workId) return;
 
           // 幂等检查 publish_logs（同一 work_id + platform 不重复写）
-          const existing = await pool.query(
+          const existing = await zjPool.query(
             `SELECT id FROM zenithjoy.publish_logs WHERE work_id = $1 AND platform = $2`,
             [workId, platform]
           );
@@ -614,7 +629,7 @@ router.post('/execution-callback', async (req, res) => {
             ? (result.platform_post_id || result.msg_id || result.media_id || result.url || null)
             : null;
 
-          await pool.query(
+          await zjPool.query(
             `INSERT INTO zenithjoy.publish_logs
                (work_id, platform, status, published_at, response, platform_post_id)
              VALUES ($1, $2, 'published', NOW(), $3, $4)`,
@@ -652,6 +667,8 @@ router.post('/execution-callback', async (req, res) => {
       let quarantined = false;
       let isBillingCap = false;
       let isTransientApiError = false;
+      let isReviewTask = false;
+      let failureTaskType = null;
       try {
         // Extract error message from result
         // Note: typeof null === 'object', so we must check result !== null first
@@ -665,15 +682,18 @@ router.post('/execution-callback', async (req, res) => {
         const taskRow = await pool.query('SELECT task_type, payload FROM tasks WHERE id = $1', [task_id]);
         const taskPayload = taskRow.rows[0]?.payload || {};
         const taskType = taskRow.rows[0]?.task_type;
+        failureTaskType = taskType;
         const classification = classifyFailure(errorMsg, { payload: taskPayload });
         isBillingCap = classification.class === 'billing_cap';
-        // rate_limit / network / auth 均不代表 cecelia-run 系统故障，跳过熔断计数：
-        //   rate_limit — 429 限流，外部 API 问题
-        //   network    — 网络抖动，外部环境问题
-        //   auth       — 凭据过期/无效（如 OAuth token expired），是凭据问题而非 cecelia-run 健康问题
-        isTransientApiError = classification.class === 'rate_limit'
-          || classification.class === 'network'
-          || classification.class === 'auth';
+        // rate_limit / network / timeout / server_error / auth 均不代表 cecelia-run 系统故障，跳过熔断计数：
+        //   rate_limit    — 429 限流，外部 API 问题
+        //   network       — 网络抖动，外部环境问题
+        //   timeout       — 外部依赖超时（原并入 network，见 quarantine.js 拆分）
+        //   server_error  — 外部依赖 5xx（原并入 network，见 quarantine.js 拆分）
+        //   auth          — 凭据过期/无效（如 OAuth token expired），是凭据问题而非 cecelia-run 健康问题
+        // exit=137 (SIGKILL/cgroup OOM) — 资源配置问题，首次重试通常可解决
+        isTransientApiError = isTransientClass(classification.class) || exit_code === 137;
+        isReviewTask = REVIEW_TASK_TYPES.includes(taskType);
 
         console.log(`[execution-callback] Failure classified: task=${task_id} class=${classification.class} pattern=${classification.pattern}`);
 
@@ -812,9 +832,13 @@ router.post('/execution-callback', async (req, res) => {
       //   rate_limit   — 429 限流，指数退避后自动恢复
       //   network      — 网络抖动，与 cecelia-run 健康状况无关
       //   auth         — 凭据过期/无效（OAuth token expired 等），是凭据问题而非系统故障
+      //   review tasks — 走本机 Codex CLI，执行主体不是 cecelia-run
       if (isBillingCap || isTransientApiError) {
-        const bypassReason = isBillingCap ? 'billing_cap' : (isTransientApiError ? 'rate_limit/network/auth' : 'unknown');
+        const bypassReason = isBillingCap ? 'billing_cap' : (isTransientApiError ? 'transient(rate_limit/network/timeout/server_error/auth)' : 'unknown');
         console.log(`[execution-callback] 外部/凭据错误（${bypassReason}）：跳过熔断计数（task=${task_id}）`);
+      } else if (isReviewTask) {
+        console.log(`[execution-callback] review 类任务（${failureTaskType}）失败，跳过 cecelia-run 熔断计数（task=${task_id}）`);
+        raise('P2', 'task_failed', `任务失败：${task_id}（${status}）`).catch(err => console.error('[routes] silent error:', err));
       } else {
         await cbFailure('cecelia-run');
         raise('P2', 'task_failed', `任务失败：${task_id}（${status}）`).catch(err => console.error('[routes] silent error:', err));
@@ -824,7 +848,7 @@ router.post('/execution-callback', async (req, res) => {
       // auth/network/rate_limit 属于外部错误，skipCount=true 只 requeue 不累计失败次数
       if (!failureHandled) {
         try {
-          const skipCount = isTransientApiError; // rate_limit / network / auth
+          const skipCount = isTransientApiError; // rate_limit / network / timeout / server_error / auth / oom_killed(exit=137)
           const quarantineResult = await handleTaskFailure(task_id, { skipCount });
           if (quarantineResult.skipped_count) {
             console.log(`[execution-callback] 外部错误跳过失败计数，任务已 requeue（task=${task_id}）`);
@@ -1472,106 +1496,20 @@ ${resultStr.substring(0, 2000)}
         console.error(`[execution-callback] code_review routing failed (non-fatal): ${crErr.message}`);
       }
 
-      // 5c8b. Codex Gate 审查任务完成 → 将审查结论写入任务自身 + 父任务的 review_result
-      // 适用类型：prd_review, spec_review, code_review_gate, initiative_review
-      const REVIEW_TASK_TYPES = new Set(['prd_review', 'spec_review', 'code_review_gate', 'initiative_review']);
-      try {
-        const reviewRow = await pool.query(
-          'SELECT task_type, payload FROM tasks WHERE id = $1',
-          [task_id]
-        );
-        const reviewTask = reviewRow.rows[0];
+      // 5c8b. 审查任务完成 → 写入 review_result（共享后处理管道）
+      await writeReviewResult(task_id, result, pool).catch(err =>
+        console.error(`[execution-callback] writeReviewResult 失败 (non-fatal): ${err.message}`)
+      );
 
-        if (reviewTask && REVIEW_TASK_TYPES.has(reviewTask.task_type)) {
-          const reviewPayload = reviewTask.payload || {};
-          const parentTaskId = reviewPayload.parent_task_id;
+      // 5c11. 串行调度: dev task 完成 → 解锁下一个 blocked 串行 task（共享后处理管道）
+      await serialUnlockNext(task_id, result, pr_url, pool).catch(err =>
+        console.error(`[execution-callback] serialUnlockNext 失败 (non-fatal): ${err.message}`)
+      );
 
-          // 从 req.body 提取审查结论
-          const resultObj = typeof result === 'object' && result !== null ? result : {};
-          const decision = resultObj.decision || (typeof result === 'string' ? result : 'PASS');
-          const summary = resultObj.summary || (typeof result === 'string' ? result : '');
-          const l1Count = resultObj.l1_count ?? 0;
-          const l2Count = resultObj.l2_count ?? 0;
-
-          // 构建 review_result 字符串
-          const reviewResultText = [
-            `决定: ${decision}`,
-            summary ? `摘要: ${summary}` : '',
-            `L1问题: ${l1Count}, L2问题: ${l2Count}`,
-          ].filter(Boolean).join('\n');
-
-          // 1. 写入审查任务自身的 review_result
-          await pool.query(
-            'UPDATE tasks SET review_result = $1 WHERE id = $2',
-            [reviewResultText, task_id]
-          );
-          console.log(`[execution-callback] review_result 写入 ${reviewTask.task_type} task ${task_id}, decision=${decision}`);
-
-          // 2. 写入父任务的 review_result（供父任务查看审查结论）
-          if (parentTaskId) {
-            await pool.query(
-              'UPDATE tasks SET review_result = $1 WHERE id = $2',
-              [reviewResultText, parentTaskId]
-            );
-            console.log(`[execution-callback] review_result 写入 parent task ${parentTaskId}, decision=${decision}`);
-          } else {
-            console.warn(`[execution-callback] ${reviewTask.task_type} ${task_id} 无 parent_task_id，仅写入自身 review_result`);
-          }
-        }
-      } catch (reviewErr) {
-        console.error(`[execution-callback] review_result 写入失败 (non-fatal): ${reviewErr.message}`);
-      }
-
-      // 5c11. 串行调度: dev task 完成（有 sequence_order）→ 解锁并注入上下文到下一个串行 task
-      // 适用场景：Initiative 内有明确依赖顺序的 dev tasks
-      // 触发条件：payload.sequence_order != null && payload.depends_on_prev = true（由下一个 task 携带）
-      // 独立 task（sequence_order=null）直接走断链#5，不受影响
-      try {
-        const seqRow = await pool.query(
-          'SELECT task_type, project_id, goal_id, title, payload FROM tasks WHERE id = $1',
-          [task_id]
-        );
-        const seqTask = seqRow.rows[0];
-        if (seqTask?.task_type === 'dev' && seqTask.project_id && seqTask.payload?.sequence_order != null) {
-          const projectId = seqTask.project_id;
-          const currentSeq = Number(seqTask.payload.sequence_order);
-          // 找 sequence_order = currentSeq + 1 且 status = 'blocked' 且 depends_on_prev = true 的下一个 task
-          const nextTaskRow = await pool.query(
-            `SELECT id, title, payload FROM tasks
-             WHERE project_id = $1 AND task_type = 'dev' AND status = 'blocked'
-               AND (payload->>'sequence_order')::int = $2
-               AND payload->>'depends_on_prev' = 'true'
-             LIMIT 1`,
-            [projectId, currentSeq + 1]
-          );
-          if (nextTaskRow.rows.length > 0) {
-            const nextTask = nextTaskRow.rows[0];
-            // 构建 prev_task_result 上下文（注入到下一个 task 的 payload）
-            const prevTaskResult = {
-              task_id: task_id,
-              summary: typeof result === 'object' && result !== null
-                ? (result.summary || result.findings || 'completed')
-                : String(result || 'completed'),
-              pr_url: pr_url || null,
-              sequence_order: currentSeq
-            };
-            const newPayload = { ...(nextTask.payload || {}), prev_task_result: prevTaskResult };
-            // 原子性：更新 payload + unblock（blocked → queued）
-            await pool.query(
-              `UPDATE tasks SET status = 'queued', claimed_by = NULL, claimed_at = NULL, payload = $1::jsonb,
-               blocked_at = NULL, blocked_reason = NULL, blocked_detail = NULL,
-               blocked_until = NULL, started_at = NULL, updated_at = NOW()
-               WHERE id = $2 AND status = 'blocked'`,
-              [JSON.stringify(newPayload), nextTask.id]
-            );
-            console.log(`[execution-callback] 串行调度: task=${task_id} (seq=${currentSeq}) → 解锁 next=${nextTask.id} (seq=${currentSeq + 1}) with prev_task_result`);
-          } else {
-            console.log(`[execution-callback] 串行调度: task=${task_id} (seq=${currentSeq}) 无下一个串行 task，由断链#5 继续`);
-          }
-        }
-      } catch (serialErr) {
-        console.error(`[execution-callback] dev 串行调度失败 (non-fatal): ${serialErr.message}`);
-      }
+      // T2. harness merged 终态 → 累积 FR 冻结（共享后处理管道，dbOnly）
+      await promoteRegressionOnHarnessMerged(task_id, result, pr_url, pool).catch(err =>
+        console.error(`[execution-callback] promoteRegressionOnHarnessMerged 失败 (non-fatal): ${err.message}`)
+      );
 
       // 5c-harness. Harness v4.0 断链（对标 Anthropic 论文）
       // Planner → GAN 对抗 → Generator 写代码 → CI watch → Evaluator 验证 diff → auto-merge → Deploy watch → Report

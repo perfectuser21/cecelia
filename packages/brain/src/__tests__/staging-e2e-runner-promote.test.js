@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 vi.mock('../db.js', () => ({ default: { query: vi.fn().mockResolvedValue({ rows: [] }) } }));
 vi.mock('../task-updater.js', () => ({ updateTaskStatus: vi.fn().mockResolvedValue(undefined) }));
-vi.mock('../notifier.js', () => ({ sendFeishu: vi.fn().mockResolvedValue(undefined) }));
+vi.mock('../notifier.js', () => ({ sendFeishu: vi.fn().mockResolvedValue(undefined), sendBark: vi.fn().mockResolvedValue(false) }));
 
 import { runStagingE2E } from '../staging-e2e-runner.js';
 
@@ -24,6 +24,9 @@ function passDeps(extra = {}) {
     })),
     deploy: vi.fn(() => ({ status: 'success', output: 'deployed' })),
     exec: vi.fn(() => 'ok'), // runStagingCommand 用；命令成功（exitCode 0）
+    // 必须注入：不注入会真扫 packages/quality/tests/regression/*.golden-smoke.test.ts 并 spawn vitest
+    // 打 staging 端口（07-04 #3538 冻结首个 golden 文件后，单测环境无 staging 必 FAIL）
+    runGoldenSmokeRegression: vi.fn(() => ({ verdict: 'SKIP', total: 0, passed: 0, failed: 0, skipped: 0, files: [] })),
     ...extra,
   };
 }

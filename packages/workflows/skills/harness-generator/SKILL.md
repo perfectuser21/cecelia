@@ -4,12 +4,13 @@ description: |
   Harness Generator — 严格合同执行者 × Superpowers 融合。
   读取 GAN 对抗已批准的 contract-draft.md + tests/*.test.ts + contract-dod.md，按 TDD 纪律两次 commit（commit 1 = 测试 Red / commit 2 = 实现 Green）。
   融入 4 个 superpowers：test-driven-development / verification-before-completion / systematic-debugging / requesting-code-review。
-  CONTRACT IS LAW：合同里有的全实现，合同外一字不加；测试文件从合同原样复制，commit 1 后不可修改（CI 强校验）。一个 Sprint = 一个 Generator = 一个 PR。
-version: 7.6.0
+  CONTRACT IS LAW：合同里有的全实现，合同外一字不加；测试文件从合同原样复制，commit 1 后不可修改（由 evaluator CONTRACT-IS-LAW 与 judge 复核把关；CI 机械闸 lint-contract-test-immutability 落地后由其强制）。一个 Sprint = 一个 Generator = 一个 PR。
+version: 7.7.0
 created: 2026-04-08
-updated: 2026-06-11
+updated: 2026-07-05
 changelog:
-  - 7.5.0 → 7.6.0: 新增 Step 2.5 golden-smoke.test.ts — TDD Red 阶段从 ## E2E 验收 生成持久化 happy path 测试文件
+  - 7.7.0: Step 6 Code Review 由「调 requesting-code-review 派 review subagent」改为「generator 内联自审 diff」（NESTED-SUB-AUDIT-20260705 F1/F2）——relay 下 generator 是 controller 的 sub，无 Task 工具不能再派 sub，原步骤静默跳过导致 push 前 code review 漏检进 PR；内联版按同一检查清单自审。Step 7 PR body 模板同步（F2）
+  - 7.6.0: 追加「Relay 模式出口协议」（T5，additive）——被 harness-controller 派发时在报告末尾输出 RELAY_STATUS 四态；原 verdict JSON 一字不变（v1 LangGraph 双轨兼容；图路径 2026-07-05 起已废弃，relay 为唯一编排）
   - 7.5.0: 🚫 删除 Step 7.5 的 gh pr merge --auto 自合并 — generator 职责到 CI 全绿为止，merge 由 Brain mergePrNode 在 evaluator PASS 后执行；否则 evaluator pre-merge gate 被绕过（2026-06-11 PR #3342 实证：CI 绿即自动合并，evaluator 从未运行）。循环退出条件从 MERGED 改为 CI 全绿（保留 MERGED/CLOSED 容错出口）
   - 7.4.0: 链路审计修复 5 项 — (a) 回流「防照抄示例占位 PR URL」保护到 Step 8（含 verdict JSON schema 表 DONE/FIXED/FAILED 三态）；(b) Step 6.5 镜像注释改指向 evaluator 新增 Step B-1.6（名称引用，不写行号）；(c) Step 3 Red 验证从 grep 日志符号改为 `npx vitest run --reporter=json` 统计 failed/passed（确定性）；(d) Step 6.5 失败补「重试工作流」（修实现→commit→重跑，连续 3 轮仍 FAIL 标 [BEHAVIOR_FAIL] 并 push 交 evaluator）
   - 7.3.0: Step 6.5 加 localhost→host.docker.internal 替换逻辑（与 Evaluator 镜像，修复容器内 Brain API BEHAVIOR 命令必然超时 FAIL 的问题）
@@ -43,7 +44,7 @@ changelog:
 ```
 合同里有的：全部实现
 合同里没有的：一个字不加
-测试文件（从合同 checkout）：commit 1 后绝对不可修改，CI 强校验
+测试文件（从合同 checkout）：commit 1 后绝对不可修改，由 evaluator CONTRACT-IS-LAW 与 judge 复核把关；CI 机械闸 lint-contract-test-immutability 落地后由其强制
 发现其他问题：写进 PR description，不实现
 ```
 
@@ -179,155 +180,6 @@ git checkout -b "$BRANCH"
 - 禁止用 `harness-v2/...`、`feature/...`、`fix/...` 等前缀（本仓库只放行 `cp-*`）
 - 禁止跳过合法性自检直接 checkout
 
-
-### Step 2.5: ★ golden-smoke 沉淀（post-CI，push 前执行）
-
-**目的**：把本次 Sprint 通过 evaluator 验证的 E2E happy path 沉淀为可回归的 `golden-smoke.test.ts`，复制到 `packages/quality/tests/regression/` 永久保存，随 PR 一同合并进 main，让所有后续 PR 都自动回归。
-
-**触发条件**：Generator 本地跑完 [BEHAVIOR] 自验（Step 6.5 全部 PASS）之后、`git push` 之前执行。
-
-```bash
-SPRINT_DIR="${SPRINT_DIR%/}"
-
-# ── 1. 从合同提取 golden-smoke 元信息 ─────────────────────────────────
-CONTRACT_FILE="${SPRINT_DIR}/contract-draft.md"
-if [ ! -f "$CONTRACT_FILE" ]; then
-  echo "WARN: contract-draft.md 不存在，跳过 golden-smoke 沉淀"
-  exit 0
-fi
-
-# 读 ability_slug（来自 <!-- GOLDEN_SMOKE_ABILITY_SLUG: xxx --> 注释）
-ABILITY_SLUG=$(grep -oP '(?<=GOLDEN_SMOKE_ABILITY_SLUG: )[a-z0-9][a-z0-9-]*' "$CONTRACT_FILE" | head -1)
-if [ -z "$ABILITY_SLUG" ]; then
-  echo "WARN: contract-draft.md 缺少 GOLDEN_SMOKE_ABILITY_SLUG 注释，跳过 golden-smoke 沉淀"
-  exit 0
-fi
-
-# 读 target_env
-TARGET_ENV=$(grep -oP '(?<=GOLDEN_SMOKE_TARGET_ENV: )\S+' "$CONTRACT_FILE" | head -1)
-TARGET_ENV="${TARGET_ENV:-local_api}"
-
-REGRESSION_DIR="packages/quality/tests/regression"
-mkdir -p "$REGRESSION_DIR"
-GOLDEN_FILE="${REGRESSION_DIR}/${ABILITY_SLUG}.golden-smoke.test.ts"
-
-echo "📦 golden-smoke 沉淀: $ABILITY_SLUG → $GOLDEN_FILE (env=$TARGET_ENV)"
-
-# ── 2. 从合同提取所有 Scenario，生成 golden-smoke.test.ts ─────────────
-GENERATED_AT=$(TZ=Asia/Shanghai date '+%Y-%m-%d %H:%M:%S %Z')
-
-# 用 node 脚本从合同解析 Scenario 块，生成 TypeScript 测试文件
-node - "$CONTRACT_FILE" "$ABILITY_SLUG" "$TARGET_ENV" "$GENERATED_AT" "$SPRINT_DIR" "$PR_URL" << 'NODEEOF'
-const fs = require('fs');
-const [, , contractFile, abilitySlug, targetEnv, generatedAt, sprintDir, prUrl] = process.argv;
-const src = fs.readFileSync(contractFile, 'utf8');
-
-// 解析所有 Scenario 块
-const scenarios = [];
-const scenarioRe = /###\s+Scenario\s+\d+:\s+(.+?)\n[\s\S]*?<!--\s*GOLDEN_SMOKE_SCENARIO:\s*([^\s>]+)\s*-->[\s\S]*?```bash([\s\S]*?)```/g;
-const skipRe = /GOLDEN_SMOKE_SKIP_IN_CI:\s*true/;
-let m;
-while ((m = scenarioRe.exec(src)) !== null) {
-  const fullBlock = src.slice(m.index, scenarioRe.lastIndex);
-  scenarios.push({
-    title: m[1].trim(),
-    name: m[2].trim(),
-    bash: m[3].trim(),
-    skipInCI: skipRe.test(fullBlock),
-  });
-}
-
-if (scenarios.length === 0) {
-  console.error('ERROR: 合同 ## E2E 验收 中未找到任何 GOLDEN_SMOKE_SCENARIO 标记的 Scenario，golden-smoke 沉淀中止');
-  process.exit(1);
-}
-
-const CI_SKIP_ENVS = ['windows_cloud', 'windows_wechat'];
-const suiteShouldSkip = CI_SKIP_ENVS.includes(targetEnv);
-
-const itBlocks = scenarios.map((s, idx) => {
-  // 每个 windows 场景或整个 suite skip 时，用 it.skip
-  const itFn = (s.skipInCI || suiteShouldSkip) ? 'it.skip' : 'it';
-  // bash 命令换成单引号模板字符串，防止 $ 被 TS 插值
-  const bashEscaped = s.bash.replace(/\\/g, '\\\\')'.replace(/`/g, '\\`').replace(/\$\{/g, '\\${')';
-  return `
-  // ── Scenario ${idx + 1}: ${s.title} ${ s.skipInCI ? '(windows — CI skip)' : '' }
-  ${itFn}('${s.name}', { timeout: 90_000 }, () => {
-    const r = runBash(\`${bashEscaped}\`, 80_000);
-    expect(r.ok, diag(r)).toBe(true);
-  });`;
-}).join('\n');
-
-const output = `/**
- * Golden Smoke Test — ${abilitySlug}
- *
- * 自动生成：harness-generator Step 2.5 沉淀（勿手动编辑，下次 Sprint 会覆盖）
- * 来源 Sprint : ${sprintDir}
- * 来源 PR     : ${prUrl || '(pending)'}
- * 生成时间    : ${generatedAt}
- * target_env  : ${targetEnv}
- */
-import { describe, it, expect } from 'vitest';
-import { spawnSync } from 'child_process';
-
-const TARGET_ENV = '${targetEnv}' as const;
-const CI_SKIP_ENVS = ['windows_cloud', 'windows_wechat'] as const;
-const shouldSkip = (CI_SKIP_ENVS as readonly string[]).includes(TARGET_ENV);
-
-interface RunResult { ok: boolean; stdout: string; stderr: string; status: number | null; }
-
-function runBash(cmd: string, timeoutMs = 60_000): RunResult {
-  const result = spawnSync('bash', ['-c', cmd], {
-    encoding: 'utf8',
-    timeout: timeoutMs,
-    env: { ...process.env, BRAIN_URL: process.env.BRAIN_URL ?? 'http://localhost:5221' },
-  });
-  return { ok: result.status === 0 && result.error == null, stdout: result.stdout ?? '', stderr: result.stderr ?? '', status: result.status };
-}
-
-function diag(r: RunResult): string {
-  return \`exit=\${r.status}\\n--- stdout ---\\n\${r.stdout.slice(-2000)}\\n--- stderr ---\\n\${r.stderr.slice(-2000)}\`;
-}
-
-describe${suiteShouldSkip ? '.skip' : '.skipIf(shouldSkip)'}(\`[golden-smoke] ${abilitySlug} (\${TARGET_ENV})\`, () => {
-${itBlocks}
-});
-`;
-
-fs.writeFileSync(process.argv[2].replace('contract-draft.md', '') + '../../packages/quality/tests/regression/' + abilitySlug + '.golden-smoke.test.ts', output);
-// 同时写到相对路径（以防 SPRINT_DIR 相对位置不确定）
-const outPath = process.env.GOLDEN_FILE_PATH;
-if (outPath) fs.writeFileSync(outPath, output);
-console.log('✅ golden-smoke.test.ts 生成完成，scenarios=' + scenarios.length);
-NODEEOF
-
-# ── 3. 验证生成文件存在且能被 TypeScript 解析 ────────────────────────
-if [ ! -f "$GOLDEN_FILE" ]; then
-  echo "WARN: golden-smoke.test.ts 生成失败（node 脚本未写出文件），跳过 git add"
-  exit 0
-fi
-
-# 语法检查（tsc --noEmit 的轻量替代，只检查 import/export 语法）
-node --input-type=module << 'SYNTAXCHECK'
-import { readFileSync } from 'fs';
-const src = readFileSync(process.env.GOLDEN_FILE_PATH, 'utf8');
-// 最低限度：确保 describe/it/expect 关键字存在
-const ok = src.includes('describe') && src.includes('it(') && src.includes('expect');
-if (!ok) { console.error('ERROR: golden-smoke 文件缺少必要 vitest 结构'); process.exit(1); }
-console.log('✅ golden-smoke 语法检查通过');
-SYNTAXCHECK
-
-# ── 4. git add（随 PR commit 一起进 main）────────────────────────────
-git add "$GOLDEN_FILE"
-echo "✅ Step 2.5: golden-smoke 已沉淀 → $GOLDEN_FILE（将随 PR commit 合并进 main）"
-```
-
-**禁止事项**：
-- 禁止在 golden-smoke.test.ts 里引用 `$SPRINT_DIR`、`$TASK_ID`、`$CONTRACT_BRANCH` 等 harness 专属变量
-- 禁止手动编辑已生成的 `.golden-smoke.test.ts`（下次 Sprint 会覆盖）
-- 禁止将 `windows_cloud` / `windows_wechat` 的 Scenario 改为非 skip（需真实 runner）
-- 禁止跳过本步骤（合同有 `GOLDEN_SMOKE_ABILITY_SLUG` 标记时必须执行）
-
 ### Step 3: ★ TDD Red 阶段（commit 1 = 测试文件 + DoD，禁含实现）
 
 **调用 skill: `superpowers:test-driven-development`** — 遵循 Red-Green-Refactor 铁律。
@@ -395,11 +247,11 @@ git add <实现文件> docs/learnings/cp-*.md <配置文件>
 git commit -m "feat(harness): sprint implementation (Green)"
 ```
 
-**硬约束**（CI 强校验）：
+**硬约束**：
 
-1. commit 1 之后，任何 commit 都**不许修改** `sprints/*/tests/**/*.test.ts`
+1. commit 1 之后，任何 commit 都**不许修改** `sprints/*/tests/**/*.test.ts`（由 evaluator CONTRACT-IS-LAW 与 judge 复核把关；CI 机械闸 lint-contract-test-immutability 落地后由其强制）
 2. commit 2+ 必须包含实现代码（`packages/` 或 `apps/` 目录变更），不能只改 docs
-3. commit 1 message 含 `(Red)`，commit 2 message 含 `(Green)`
+3. commit 1 message 含 `(Red)`（lint-tdd-commit-order CI 校验），commit 2 message 含 `(Green)`
 
 **Skeleton 模式**：`IS_SKELETON=true` 时：
 - commit message 改为：`feat(harness): skeleton implementation (Skeleton Green)`
@@ -422,17 +274,21 @@ npx vitest run "${SPRINT_DIR}/tests/" --reporter=verbose 2>&1 | tee /tmp/green-e
 
 Test Evidence 要贴进 PR body 的 `## Test Evidence` 章节（Red → Green 对比）。
 
-### Step 6: ★ Code Review 阶段（push 前调 subagent 审 diff）
+### Step 6: ★ Code Review 阶段（push 前内联自审 diff）
 
-**调用 skill: `superpowers:requesting-code-review`** — 调 review subagent 审 diff。
+> **relay 铁律**：你（generator）是 controller 派出的 **sub-agent，没有 Task 工具，不能再派 sub**。因此这里**不调 `superpowers:requesting-code-review`（它会 dispatch 一个 review 子 agent，在 relay 下物理失效、静默跳过 → high 级问题漏检进 PR）**。改由你**自己内联**按 requesting-code-review 的检查清单审自己的 diff。
 
 ```bash
 git diff origin/main...HEAD -- . ':!DoD.md' ':!docs/learnings/'
-# subagent 返回 issues list（high/medium/low 分级）
-# high → 修；medium → PR 里记录；low → 忽略
 ```
 
-Review Summary 贴进 PR body。
+对上面 diff 逐条自审（requesting-code-review 检查清单内联版）：
+- **正确性**：边界/空值/并发/错误路径是否处理；有没有把测试写宽松放水
+- **安全**：凭据硬编码、SQL 注入、租户/权限缺失、日志泄密
+- **可维护**：重复代码、命名、死代码、未用 import、遗留 console.log
+- **测试**：新逻辑是否被合同测试真正覆盖（不是只加行数）
+
+分级处理：**high → 当场修**（修完重跑 Step 3/6.5 验证）；**medium → 记进 PR body 的 Review Summary**；**low → 忽略**。自审结论（含 high 修了什么 / medium 遗留项）写进 PR body。
 
 ### Step 6.5: ★ Contract Self-Verification（v6.1 新增 — push 前必须自跑合同 [BEHAVIOR] 全过）
 
@@ -521,7 +377,7 @@ if [ "$ROUND" -ge 3 ]; then
 fi
 ```
 
-**死规则**：重试期间**只能改实现代码**，绝不允许改 contract / 改测试文件来迁就（违反 CONTRACT IS LAW，CI 强校验测试 diff）。
+**死规则**：重试期间**只能改实现代码**，绝不允许改 contract / 改测试文件来迁就（违反 CONTRACT IS LAW，测试文件不可改由 evaluator CONTRACT-IS-LAW 与 judge 复核把关；CI 机械闸 lint-contract-test-immutability 落地后由其强制）。
 
 ### Step 7: Push + PR
 
@@ -545,7 +401,7 @@ PR_URL=$(gh pr create --title "feat(harness): <Sprint 目标>" --body "$(cat <<'
 \`\`\`
 
 ## Review Summary
-<贴 subagent 的 high/medium issues 摘要>
+<贴 Step 6 内联自审的 high（已修）/medium（遗留）issues 摘要>
 
 ## Learning
 docs/learnings/cp-xxx-xxx.md
@@ -712,7 +568,7 @@ commit 2: feat(harness): skeleton implementation (Skeleton Green)
 
 1. **禁止自写 contract-draft.md** —— 合同是上游 GAN 阶段产出，Generator 只读
 2. **禁止加合同外内容** —— 安全阀/额外测试/顺手修复全不加；测试文件也是合同一部分
-3. **禁止修改从合同 checkout 的测试文件** —— 测试一旦 commit 1 Red，就**不可改**（CI 强校验 git log：测试文件 diff 在 commit 2+ 里必须为空）
+3. **禁止修改从合同 checkout 的测试文件** —— 测试一旦 commit 1 Red，就**不可改**（由 evaluator CONTRACT-IS-LAW 与 judge 复核把关；CI 机械闸 lint-contract-test-immutability 落地后由其强制）
 4. **禁止自判 PASS** —— Evaluator / CI 才是判官
 5. **禁止在 main 分支操作**
 6. **禁止广泛文件搜索** —— `find /Users`、`find /home` 或任何绝对路径搜索；只能在当前目录内（`find .`）
@@ -730,3 +586,24 @@ commit 2: feat(harness): skeleton implementation (Skeleton Green)
 | "跑测试挺慢，跳过这一步吧" | 违反 verification-before-completion，禁止"看起来应该过了"的假设 |
 
 # GREEN commit 前真验：见 Step 6.5 Contract Self-Verification（v6.1+）
+
+
+---
+
+## Relay 模式出口协议（T5，harness-controller 派发时生效）
+
+当你是 harness-controller 的 subagent（派发 prompt 声明"按 Relay 出口协议报告"）时：
+**上面所有流程与 verdict JSON 输出一字不变**（双轨期 v1 图仍消费原 JSON），只在报告最末尾追加一行：
+
+```
+RELAY_STATUS: DONE | DONE_WITH_CONCERNS | NEEDS_CONTEXT | BLOCKED
+```
+
+| 状态 | 何时用 | 必须附带 |
+|---|---|---|
+| DONE | 完成且验收证据齐（PR 存在/Red-Green/自验过） | pr_url + 两个 commit SHA |
+| DONE_WITH_CONCERNS | 完成但有疑虑（如 [BEHAVIOR_FAIL] 标记 push、文件超 500 行） | 疑虑清单 |
+| NEEDS_CONTEXT | 缺信息无法开工/继续 | 确切缺什么（controller 补料后原模型重派） |
+| BLOCKED | 干不了 | 原因分类：缺上下文 / 需更强推理 / 任务太大该拆 / 合同本身错该上报 |
+
+**铁律**：卡住绝不静默原地重试——报 BLOCKED 让 controller 改变某样东西（补料/换模型/拆任务），这是"绝不让同一 agent 无变化重试"协议的工人侧义务。
