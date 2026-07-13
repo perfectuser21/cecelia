@@ -15,8 +15,10 @@ LLM 只管创造段（规划/合同/写码/修复）；生命周期与记账由 
 
 位置：`packages/brain/src/harness-judge.js` `runJudgeGate`，在调 DeepSeek 之前插入纯代码闸（新增独立函数 `runMechanicalGate`，便于单测注入）。机械闸任一 FAIL → 返回 `{verdict:'FAIL', judged:true, feedback:<缺项明细>}`，**不再调 DeepSeek**（judgeFn 零调用，省成本）。
 
-1. **behavior_tests 非空**：以 `join(worktreePath, sprintDir)` 为根（对齐 harness-judge.js:133 现有口径），扫 `tests/*.test.{ts,js,sh}` 与 `**/__tests__/*.test.{js,ts}`；fallback 数 contract-dod.md 的 `[BEHAVIOR]` 条目。计 0 → FAIL。
-2. **verdict 证据完整**：`.brain-result.json` 需含 `exit_code`（允许 0）且 `log_tail`（或等价 stdout 字段）非空。按 target_environment 校准（铁律 9216d107）：从 `tasks.payload->>'target_environment'` 读（judge 需自查 `SELECT payload FROM tasks WHERE id=$1`），缺省 `local_api`（最宽）；真机类环境（windows_wechat 等）要求设备日志类证据，local_api 命令输出即满足。现状 harness-judge.js 从未读过该字段，此为全新逻辑。
+1. **behavior_tests 声明（E1 机械化）**：`brainResult.behavior_tests` 必须是非空数组（evaluator 1.23.0 E1 硬要求产出 `behavior_tests:[{command, exit_code, log_tail}]`），缺失/空 → FAIL（理由含 `behavior_tests`，这是治「behavior_tests=0 照样 PASS」的正主）。每条目：`exit_code` 为 undefined/null → FAIL（0 合法）；`log_tail` 缺/空 → 按环境校准（真机 env∈windows_wechat 必须设备日志；本机 API 类 env 靠 `ctx.agentStdout||ctx.transcript` 命令输出兜底，全空才 FAIL）。**注意 exit_code/log_tail 是 behavior_tests 条目级字段——`.brain-result.json` 顶层 schema 只有 `{verdict, task_id, failed_step, log_excerpt}`，顶层无这两个字段；早期设计误查顶层会把 100% 合规 run 打死，已修正。**
+2. **sprint 测试文件存在性**：以 `join(worktreePath, sprintDir)` 为根递归扫 `*.test.{ts,js,mjs,sh}`；fallback 数 contract-dod.md 的 `[BEHAVIOR]` 条目。两者全 0 → FAIL（理由关键词 `contract_tests`，与①的 behavior_tests 区分）。
+> target_environment 校准（铁律 9216d107）：从 `tasks.payload->>'target_environment'` 读（`SELECT ... FROM tasks WHERE id=$1`，带 taskId guard），缺省 `local_api`（最宽口径，查不到/异常不误杀）。
+
 3. **judgments_written 对账**：声明值取 `.brain-result.json.judgments_written`（reviewer skill 现成产出，无需改 skill）；无声明 → 跳过本项（不假收敛）。有声明 N → 回读 `decisions WHERE category='judgment' AND source_ref=$task_id` 计数，N > 回读数 → FAIL。
    - **migration 342**：decisions 表加 `source_ref TEXT` 列（现库无此列；migration 302 只有 level/target_type/target_id/scope）。
    - `strategic-decisions.js:90` POST 的 INSERT 补 source_ref 可选字段写入口。
@@ -61,7 +63,7 @@ LLM 只管创造段（规划/合同/写码/修复）；生命周期与记账由 
 
 范式取 `harness-relay-watchdog.test.js`（vi.hoisted + 按 SQL 分派 mock query）。每闸先 failing test（commit-1 红 / commit-2 绿），永久留 CI：
 
-- 刀B：behavior_tests=0→FAIL；exit_code 缺→FAIL；声明 5 回读 0→FAIL；无声明→跳过；local_api 无真机日志有命令输出→PASS 不误杀；机械闸 FAIL 时 judgeFn spy 零调用
+- 刀B：behavior_tests 声明空数组→FAIL；条目缺 exit_code→FAIL；条目 log_tail 空真机→FAIL；contract_tests=0（无测试文件+无[BEHAVIOR]）→FAIL；judgments 声明 5 回读 0→FAIL；非数字声明→FAIL；无声明→跳过；local_api 条目无 log_tail 有命令输出→PASS 不误杀；机械闸 FAIL 时 judgeFn spy 零调用
 - migration 342：迁移后 INSERT 带 source_ref 可写可查
 - C1：INSERT SQL 断言含 current_task_id；C2：judge 调用后 UPDATE 落库、PASS 不被 FAIL 回退、0 行 non-fatal；C3：三口收尾后 running 计数=0
 - 收账：callback completed→in_progress+generator_done；真相成立（MERGED+gate）→completed；无真相→200 accepted:false 非 409；/harness/complete 同拦；generator_done 重点火短路；6h 超时→failed

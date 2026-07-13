@@ -1,12 +1,19 @@
 import { describe, it, expect, vi } from 'vitest';
 import { runMechanicalGate, runJudgeGate } from '../harness-judge.js';
 
+// evaluator 1.23.0 E1 schema：exit_code/log_tail 是 behavior_tests 条目级字段，
+// .brain-result.json 顶层只有 {verdict, task_id, failed_step, log_excerpt}。
 function goodCtx(overrides = {}) {
   return {
     taskId: 'task-1111',
     worktreePath: '/wt',
     sprintDir: 'sprints/x',
-    brainResult: { verdict: 'PASS', exit_code: 0, log_tail: 'npm test ok', judgments_written: 2, ...(overrides.brainResult || {}) },
+    brainResult: {
+      verdict: 'PASS',
+      behavior_tests: [{ command: 'npm test', exit_code: 0, log_tail: 'ok' }],
+      judgments_written: 2,
+      ...(overrides.brainResult || {}),
+    },
     ...overrides,
   };
 }
@@ -31,28 +38,40 @@ describe('runMechanicalGate（刀B：DeepSeek 前纯代码闸）', () => {
     const r = await runMechanicalGate(goodCtx(), makeDeps());
     expect(r.pass).toBe(true);
   });
-  it('behavior_tests=0（无测试文件且 contract-dod 无 [BEHAVIOR]）→ FAIL', async () => {
-    const deps = makeDeps({ testFiles: [] });
-    deps.readFileFn = vi.fn(async () => { throw new Error('ENOENT'); });
-    const r = await runMechanicalGate(goodCtx(), deps);
+  it('behavior_tests 声明缺失/空数组 → FAIL 理由含 behavior_tests', async () => {
+    const ctx = goodCtx({ brainResult: { behavior_tests: [] } });
+    const r = await runMechanicalGate(ctx, makeDeps());
     expect(r.pass).toBe(false);
     expect(r.reasons.join()).toMatch(/behavior_tests/);
   });
-  it('.brain-result.json 缺 exit_code → FAIL', async () => {
-    const ctx = goodCtx(); delete ctx.brainResult.exit_code;
+  it('behavior_tests 条目缺 exit_code → FAIL 理由含 exit_code', async () => {
+    const ctx = goodCtx({ brainResult: { behavior_tests: [{ command: 'x', log_tail: 'ok' }] } });
     const r = await runMechanicalGate(ctx, makeDeps());
     expect(r.pass).toBe(false);
     expect(r.reasons.join()).toMatch(/exit_code/);
   });
-  it('local_api 环境 log_tail 空但有命令输出（agentStdout）→ 不误杀', async () => {
-    const ctx = goodCtx({ agentStdout: '$ npm test\nall pass' }); ctx.brainResult.log_tail = '';
+  it('local_api 环境条目 log_tail 空但有命令输出（agentStdout）→ 不误杀', async () => {
+    const ctx = goodCtx({
+      brainResult: { behavior_tests: [{ command: 'x', exit_code: 0, log_tail: '' }] },
+      agentStdout: '$ npm test\nall pass',
+    });
     const r = await runMechanicalGate(ctx, makeDeps({ env: 'local_api' }));
     expect(r.pass).toBe(true);
   });
-  it('windows_wechat 真机环境 log_tail 空 → FAIL', async () => {
-    const ctx = goodCtx({ agentStdout: 'x' }); ctx.brainResult.log_tail = '';
+  it('windows_wechat 真机环境条目 log_tail 空 → FAIL', async () => {
+    const ctx = goodCtx({
+      brainResult: { behavior_tests: [{ command: 'x', exit_code: 0, log_tail: '' }] },
+      agentStdout: 'x',
+    });
     const r = await runMechanicalGate(ctx, makeDeps({ env: 'windows_wechat' }));
     expect(r.pass).toBe(false);
+  });
+  it('sprint 无测试文件且 contract-dod 无 [BEHAVIOR] → FAIL 理由含 contract_tests', async () => {
+    const deps = makeDeps({ testFiles: [] });
+    deps.readFileFn = vi.fn(async () => { throw new Error('ENOENT'); });
+    const r = await runMechanicalGate(goodCtx(), deps);
+    expect(r.pass).toBe(false);
+    expect(r.reasons.join()).toMatch(/contract_tests/);
   });
   it('judgments_written=5 声明 > decisions 回读 0 → FAIL', async () => {
     const ctx = goodCtx(); ctx.brainResult.judgments_written = 5;
@@ -78,22 +97,25 @@ describe('runMechanicalGate（刀B：DeepSeek 前纯代码闸）', () => {
       if (/COUNT.*FROM decisions/is.test(sql)) return { rows: [{ count: 2 }] };
       return { rows: [] };
     });
-    const ctx = goodCtx({ agentStdout: 'cmd out' }); ctx.brainResult.log_tail = '';
+    const ctx = goodCtx({
+      brainResult: { behavior_tests: [{ command: 'x', exit_code: 0, log_tail: '' }], judgments_written: 2 },
+      agentStdout: 'cmd out',
+    });
     const r = await runMechanicalGate(ctx, deps);
     expect(r.pass).toBe(true);
   });
 });
 
 describe('runJudgeGate 接线：机械闸 FAIL → 不调 DeepSeek', () => {
-  it('behavior_tests=0 时 judgeFn 零调用且 verdict=FAIL judged=true', async () => {
+  it('contract_tests=0 时 judgeFn 零调用且 verdict=FAIL judged=true', async () => {
     const judgeFn = vi.fn();
+    const compliantBR = { verdict: 'PASS', behavior_tests: [{ command: 'npm test', exit_code: 0, log_tail: 'ok' }] };
     const r = await runJudgeGate(
-      { agentVerdict: 'PASS', worktreePath: '/wt', sprintDir: 'sprints/x', taskId: 't1',
-        brainResult: { verdict: 'PASS', exit_code: 0, log_tail: 'ok' } },
+      { agentVerdict: 'PASS', worktreePath: '/wt', sprintDir: 'sprints/x', taskId: 't1', brainResult: compliantBR },
       {
         judgeFn,
         listTestFilesFn: async () => [],
-        collectEvidence: async () => ({ contractE2E: 'e2e', goldenPathSteps: ['s1'], transcript: '', agentStdout: '', brainResult: { verdict: 'PASS', exit_code: 0, log_tail: 'ok' } }),
+        collectEvidence: async () => ({ contractE2E: 'e2e', goldenPathSteps: ['s1'], transcript: '', agentStdout: '', brainResult: compliantBR }),
         readFileFn: async () => { throw new Error('ENOENT'); },
         dbPool: { query: async () => ({ rows: [] }) },
         writeFileFn: async () => {},
