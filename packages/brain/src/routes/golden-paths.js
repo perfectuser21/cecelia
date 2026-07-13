@@ -3,8 +3,25 @@
 import express from 'express';
 import pool from '../db.js';
 import { getTotalEffectiveSlots } from '../fleet-resource-cache.js';
+import { stampMMDDHHNN, shortId } from '../harness-skill-relay.js';
 
 const router = express.Router();
+
+// title → slug（sprint_dir 拼接用，非字母数字转短横线，压缩连续短横线）
+function slugify(title) {
+  return String(title)
+    .toLowerCase()
+    .replace(/[^a-z0-9一-龥]+/g, '-')
+    .slice(0, 40)
+    .replace(/^-+|-+$/g, '') || 'gp';
+}
+
+// GP approve 目前只覆盖 Cecelia monorepo 范围（决策1c6232b7后续 ZenithJoy 侧另立GP前不适用）。
+// 用 GitHub URL 而非本地路径：harness-controller 里 windows_cloud/linux_server 等
+// target_environment 强制要求可远端 clone 的 GitHub URL，此处统一走该规则，不依赖本地路径存在。
+const GP_HARNESS_BASE_REPO = 'https://github.com/perfectuser21/cecelia.git';
+// GP 验证目前都是本机 curl/docker/psql 层面，不涉及 GUI/RPA/远程真机。
+const GP_HARNESS_TARGET_ENVIRONMENT = 'local_api';
 
 export const GP_STATUSES = ['candidate', 'proposed', 'converged', 'approved', 'in_dev',
   'delivered', 'expired', 'rejected', 'blocked_gate', 'superseded'];
@@ -228,11 +245,14 @@ router.post('/golden-paths/:id/approve', async (req, res) => {
     // 冻结 proposal_doc（如果已有则保持，否则标记已批准时间点）
     const frozenDoc = gp.proposal_doc || null;
 
-    // 注册 harness 实现任务（golden_path_proposal 已在 task-router 注册）
+    // 注册 harness 实现任务：必须是 task_type=harness_initiative 才会被
+    // controllerSkillFor（harness-skill-relay.js）路由到 harness-controller 真正写代码。
+    // 用 golden_path_proposal 会被误路由回 golden-path-controller（只产提案文档，issue bfaac776）。
     const harnessTitle = `[GP harness] ${gp.title}`;
+    const sprintDir = `sprints/${stampMMDDHHNN(new Date())}-${slugify(gp.title)}-${shortId(id)}`;
     const { rows: harnessRows } = await pool.query(
       `INSERT INTO tasks (title, description, task_type, status, priority, payload)
-       VALUES ($1, $2, 'golden_path_proposal', 'queued', 'P1', $3::jsonb)
+       VALUES ($1, $2, 'harness_initiative', 'queued', 'P1', $3::jsonb)
        RETURNING id`,
       [
         harnessTitle,
@@ -245,6 +265,12 @@ router.post('/golden-paths/:id/approve', async (req, res) => {
           judgment_decision_id: judgmentId,
           phase: 'implement',
           orchestrator: 'skill-relay',
+          sprint_dir: sprintDir,
+          thin_prd: gp.one_liner,
+          prep_prd_body: frozenDoc,
+          journey_id: gp.journey_id,
+          base_repo: GP_HARNESS_BASE_REPO,
+          target_environment: GP_HARNESS_TARGET_ENVIRONMENT,
         }),
       ]
     );

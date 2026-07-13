@@ -55,12 +55,12 @@ export function controllerSkillFor(taskType) {
   return taskType === 'golden_path_proposal' ? 'golden-path-controller' : 'harness-controller';
 }
 
-function shortId(id) {
+export function shortId(id) {
   return String(id).replace(/-/g, '').slice(0, 8);
 }
 
 /** 上海时区 MMDDHHNN（sprint_dir 缺省生成用；now 注入保持可测确定性） */
-function stampMMDDHHNN(now) {
+export function stampMMDDHHNN(now) {
   const fmt = new Intl.DateTimeFormat('en-GB', {
     timeZone: 'Asia/Shanghai',
     month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false,
