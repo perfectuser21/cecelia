@@ -6,7 +6,7 @@
 
 
 
-**Brain 版本**: 1.258.5
+**Brain 版本**: 1.258.6
 
 **状态**: 生产运行中
 
@@ -516,7 +516,7 @@ AI提议 / 人提议 ──批准──▶ 未开始 ──▶ 进行中 ──�
 | **topic_decision_feedback** | 选题热度反馈（migration 214，week_key + topic_keyword 唯一索引，高热话题注入选题 Prompt） |
 | **topic_suggestions** | 选题推荐审核队列（migration 217，pending/approved/rejected/auto_promoted，2h 自动晋级） |
 | **llm_usage_snapshots** | LLM 算力消耗快照（migration 218，每日定时采集账号用量，供周报趋势分析） |
-| **schema_version** | 迁移版本追踪 | Schema 版本: 338 |
+| **schema_version** | 迁移版本追踪 | Schema 版本: 339 |
 | **initiative_run_events** | Harness pipeline 节点状态流（migration 279，initiative_id/node/status/attempt/ts BIGINT） |
 | **publish_success_daily** | 每日每平台发布成功率快照（migration 276，platform/date UNIQUE，Brain tick 写入） |
 | **janitor_runs** | Janitor 任务执行记录（migration 272，job_name/status/output/duration） |
