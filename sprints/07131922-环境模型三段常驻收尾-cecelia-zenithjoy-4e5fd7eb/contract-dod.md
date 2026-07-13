@@ -9,7 +9,7 @@ created_at: 2026-07-13
 
 ## [BEHAVIOR] 条目
 
-### [BEHAVIOR-01] Staging 容器宿主重启后自动恢复（FR-01 / INV-3）
+### [BEHAVIOR][BEHAVIOR-01] Staging 容器宿主重启后自动恢复（FR-01 / INV-3）
 
 **触发**：宿主机重启或 `docker stop cecelia-node-brain-staging` 后等待 15 秒
 
@@ -27,7 +27,7 @@ manual:bash grep "CECELIA_TICK_ENABLED=false" /workspace/docker-compose.staging.
 
 ---
 
-### [BEHAVIOR-02] Production 5221 全程不中断（INV-2）
+### [BEHAVIOR][BEHAVIOR-02] Production 5221 全程不中断（INV-2）
 
 **触发**：任何 FR-01 至 FR-06 的实施操作期间
 
@@ -43,7 +43,7 @@ manual:bash curl -sf http://localhost:5221/api/brain/health | jq -e '.status == 
 
 ---
 
-### [BEHAVIOR-03] Develop 部署脚本：备份优先、migrate 幂等（FR-02 / INV-4）
+### [BEHAVIOR][BEHAVIOR-03] Develop 部署脚本：备份优先、migrate 幂等（FR-02 / INV-4）
 
 **触发**：二次运行 `bash scripts/dev-deploy.sh` 时
 
@@ -65,7 +65,7 @@ manual:bash grep -n "exit.*[^0]\|exit 1\|exit 2" /workspace/scripts/dev-deploy.s
 
 ---
 
-### [BEHAVIOR-04] Develop 健康状态可观测：5220 宕机后 10 分钟内产生 alert（FR-05）
+### [BEHAVIOR][BEHAVIOR-04] Develop 健康状态可观测：5220 宕机后 10 分钟内产生 alert（FR-05）
 
 **触发**：`docker stop cecelia-node-brain-dev` 后等待 ≤ 10 分钟
 
@@ -83,7 +83,7 @@ manual:bash grep -n "5220" /workspace/docker-compose.dev.yml | grep -i "healthch
 
 ---
 
-### [BEHAVIOR-05] Brain Deploy 端点：触发 dev 部署并可查询状态（FR-03 / INV-5）
+### [BEHAVIOR][BEHAVIOR-05] Brain Deploy 端点：触发 dev 部署并可查询状态（FR-03 / INV-5）
 
 **触发**：调用 `POST /api/brain/deploy {dev:true}`
 
@@ -101,7 +101,7 @@ manual:bash find /workspace/packages/brain/src/__tests__ -name "*.test.*" | xarg
 
 ---
 
-### [BEHAVIOR-06] Staging Tick 永远硬关（INV-3，回归防护）
+### [BEHAVIOR][BEHAVIOR-06] Staging Tick 永远硬关（INV-3，回归防护）
 
 **触发**：任何对 `docker-compose.staging.yml` 的修改后
 
@@ -117,7 +117,7 @@ manual:bash grep -c "CECELIA_TICK_HARD_OFF=1\|CECELIA_TICK_ENABLED=false" /works
 
 ---
 
-### [BEHAVIOR-07] ZenithJoy 侧不修改 + 联动占位存在（FR-06 / INV-6）
+### [BEHAVIOR][BEHAVIOR-07] ZenithJoy 侧不修改 + 联动占位存在（FR-06 / INV-6）
 
 **触发**：Sprint 完成后
 
