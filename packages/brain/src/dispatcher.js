@@ -151,13 +151,17 @@ const DUPLICATE_TASK_TITLE_THRESHOLD = 0.6;
  */
 export async function _internals_findDuplicateTaskSibling(candidate) {
   try {
+    // SELECT 列顺序/别名与下方 initiative-lock 查询（"SELECT id, title FROM tasks"）刻意区分，
+    // 避免两条查询的 SQL 指纹在测试里按字符串前缀匹配时被混淆（同一 dispatchNextTask 内两条
+    // 语义不同的查询都含 "task_type" + "SELECT ... FROM tasks"，纯前缀匹配无法区分）。
     const { rows } = await pool.query(
-      `SELECT id, title FROM tasks
-        WHERE task_type = $1
-          AND status IN ('queued', 'in_progress')
-          AND id != $2
-          AND created_at BETWEEN $3::timestamptz - INTERVAL '${DUPLICATE_TASK_WINDOW_HOURS} hours'
-                              AND $3::timestamptz + INTERVAL '${DUPLICATE_TASK_WINDOW_HOURS} hours'
+      `SELECT tasks.id AS id, tasks.title AS title
+        FROM tasks
+        WHERE tasks.task_type = $1
+          AND tasks.status IN ('queued', 'in_progress')
+          AND tasks.id != $2
+          AND tasks.created_at BETWEEN $3::timestamptz - INTERVAL '${DUPLICATE_TASK_WINDOW_HOURS} hours'
+                                    AND $3::timestamptz + INTERVAL '${DUPLICATE_TASK_WINDOW_HOURS} hours'
         LIMIT 20`,
       [candidate.task_type, candidate.id, candidate.created_at]
     );

@@ -172,12 +172,14 @@ describe('dispatchNextTask — 判重跳过不消耗 pre-flight attempt 预算�
     _candidatePool = [...dupCandidates, legitCandidate];
 
     // pool.query 通用路由：
-    // - 判重查询（SELECT id, title FROM tasks WHERE task_type ...）：dup-* 候选返回一个 sibling
-    //   （判定为重复），legit-1 返回空（不重复）。
+    // - 判重查询（SELECT tasks.id AS id... WHERE tasks.task_type ... created_at BETWEEN ...）：
+    //   用 'created_at BETWEEN' 作为唯一指纹匹配（SELECT 列名/别名与下方 initiative-lock 查询
+    //   刻意区分，不能再用 'SELECT id, title FROM tasks' 子串，两条查询都含这个前缀会撞车）：
+    //   dup-* 候选返回一个 sibling（判定为重复），legit-1 返回空（不重复）。
     // - claim（UPDATE tasks SET claimed_by ...RETURNING id）：总是成功返回该 id。
     // - 其他一律返回空 rows，不影响流程（都在 try/catch 里被吞掉或走 .rows[0] ?? default）。
     mockQuery.mockImplementation(async (sql, params) => {
-      if (typeof sql === 'string' && sql.includes('SELECT id, title FROM tasks')) {
+      if (typeof sql === 'string' && sql.includes('created_at BETWEEN')) {
         const candidateId = params?.[1];
         if (String(candidateId).startsWith('dup-')) {
           // findDuplicateSibling 是真实实现（未 mock），必须让 sibling 标题与候选标题真正

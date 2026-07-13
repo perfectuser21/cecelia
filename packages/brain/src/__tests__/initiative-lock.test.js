@@ -144,6 +144,8 @@ describe('dispatchNextTask: Initiative 二次锁检查', () => {
     mockQuery.mockResolvedValueOnce({ rows: [] });
     // 1. selectNextDispatchableTask 主查询 → 返回候选
     mockQuery.mockResolvedValueOnce({ rows: [candidateTask] });
+    // 1.5 派发前语义查重（本 PR 加）→ 无 sibling
+    mockQuery.mockResolvedValueOnce({ rows: [] });
     // 2. 全局 harness 并发计数（本 PR 加）→ 0 < cap，放行
     mockQuery.mockResolvedValueOnce({ rows: [{ n: 0 }] });
     // 3. Initiative 二次锁检查 → 发现已有 in_progress 任务
@@ -178,6 +180,8 @@ describe('dispatchNextTask: Initiative 二次锁检查', () => {
     mockQuery.mockResolvedValueOnce({ rows: [] });
     // 1. 主查询 → 候选（无 initiative 锁检查，project_id 为 null）
     mockQuery.mockResolvedValueOnce({ rows: [candidateTask] });
+    // 1.5 派发前语义查重（本 PR 加）→ 无 sibling
+    mockQuery.mockResolvedValueOnce({ rows: [] });
     // 2. C1 claim: UPDATE tasks SET claimed_by ... RETURNING id
     mockQuery.mockResolvedValueOnce({ rows: [{ id: candidateTask.id }] });
     // 3. SELECT * FROM tasks（fullTaskResult，dispatch 继续执行时）
@@ -214,6 +218,8 @@ describe('dispatchNextTask: Initiative 二次锁检查', () => {
     mockQuery.mockResolvedValueOnce({ rows: [] });
     // 1. 主查询 → 候选
     mockQuery.mockResolvedValueOnce({ rows: [candidateTask] });
+    // 1.5 派发前语义查重（本 PR 加）→ 无 sibling
+    mockQuery.mockResolvedValueOnce({ rows: [] });
     // 2. 全局 harness 并发计数（本 PR 加）→ 0 < cap，放行
     mockQuery.mockResolvedValueOnce({ rows: [{ n: 0 }] });
     // 3. Initiative 锁检查 → 无 in_progress 任务（锁通过）
