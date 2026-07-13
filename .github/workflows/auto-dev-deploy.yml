@@ -1,0 +1,128 @@
+name: Auto Dev Deploy
+
+# develop 分支 push → 自动部署到 develop 环境（端口 5220）
+# 与 auto-staging-deploy.yml 使用同一并发组 deploy-environment 串行，
+# 防止 staging/develop 同时部署互相踩踏。
+#
+# 与 auto-staging-deploy.yml 的关系：
+#   - auto-staging-deploy.yml = main push → staging (5222)，不阻断
+#   - 本 workflow = develop push → develop (5220)，PR 前的本地验证环境
+#
+# Brain 端点：POST /api/brain/deploy {dev:true} → GET /api/brain/deploy/dev/status
+
+on:
+  push:
+    branches: [develop]
+    paths:
+      - 'packages/brain/**'
+      - 'docker-compose.dev.yml'
+      - 'scripts/dev-deploy.sh'
+      - 'scripts/dev-verify.sh'
+      - '.github/workflows/auto-dev-deploy.yml'
+  workflow_dispatch: {}
+
+# 与 staging 同一并发组，串行（不取消在途部署）
+concurrency:
+  group: deploy-environment
+  cancel-in-progress: false
+
+jobs:
+  dev_deploy:
+    name: Deploy to Dev (5220)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - name: Connect to Tailscale
+        uses: tailscale/github-action@v2
+        with:
+          authkey: ${{ secrets.TS_AUTHKEY }}
+
+      - name: Checkout（取脚本）
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: 触发 Dev 部署（dev:true）
+        env:
+          DEPLOY_TOKEN: ${{ secrets.DEPLOY_TOKEN }}
+          BRAIN_URL: ${{ secrets.BRAIN_DEPLOY_URL || 'http://100.71.151.105:5221' }}
+        run: |
+          set -uo pipefail
+          if [ -z "${DEPLOY_TOKEN:-}" ]; then
+            echo "::error::DEPLOY_TOKEN secret 未配置"
+            exit 1
+          fi
+
+          echo "develop push → 触发 dev 部署（端口 5220）"
+          echo "  URL: ${BRAIN_URL}/api/brain/deploy  (dev:true)"
+
+          HTTP_CODE=$(curl -s -o /tmp/dev_deploy_resp.txt -w "%{http_code}" \
+            -X POST "${BRAIN_URL}/api/brain/deploy" \
+            -H "Authorization: Bearer ${DEPLOY_TOKEN}" \
+            -H "Content-Type: application/json" \
+            -d '{"dev": true}' \
+            --connect-timeout 30 --max-time 60)
+
+          echo "Response code: $HTTP_CODE"
+          cat /tmp/dev_deploy_resp.txt 2>/dev/null || true
+          echo ""
+
+          if [ "$HTTP_CODE" -ge 200 ] && [ "$HTTP_CODE" -lt 300 ]; then
+            echo "✅ dev 部署 webhook 已触发"
+          else
+            echo "::error::dev 部署 webhook 失败 (HTTP $HTTP_CODE)"
+            exit 1
+          fi
+
+      - name: 等待 Dev 部署完成
+        env:
+          BRAIN_URL: ${{ secrets.BRAIN_DEPLOY_URL || 'http://100.71.151.105:5221' }}
+        run: |
+          set -uo pipefail
+          echo "轮询 /api/brain/deploy/dev/status (max 300s)..."
+          MAX_WAIT=300; INTERVAL=10; ELAPSED=0
+          while [ $ELAPSED -lt $MAX_WAIT ]; do
+            STATUS_JSON=$(curl -s --connect-timeout 10 --max-time 15 \
+              "${BRAIN_URL}/api/brain/deploy/dev/status" 2>/dev/null || echo '{"status":"unknown"}')
+            STATUS=$(echo "$STATUS_JSON" | jq -r '.status // "unknown"' 2>/dev/null || echo "unknown")
+            echo "  [${ELAPSED}s] dev deploy status=${STATUS}"
+
+            if [ "$STATUS" = "success" ]; then
+              echo "✅ dev 部署成功"
+              exit 0
+            elif [ "$STATUS" = "failed" ]; then
+              ERR=$(echo "$STATUS_JSON" | jq -r '.error // "unknown"' 2>/dev/null || echo "unknown")
+              echo "::error::dev 部署失败: $ERR"
+              exit 1
+            elif [ "$STATUS" = "idle" ] && [ $ELAPSED -gt 60 ]; then
+              echo "::warning::dev deploy status idle after ${ELAPSED}s — 可能未触发"
+              exit 1
+            fi
+            sleep $INTERVAL; ELAPSED=$((ELAPSED + INTERVAL))
+          done
+          echo "::error::dev 部署轮询超时 (${MAX_WAIT}s)"
+          exit 1
+
+      - name: Dev 健康验证（5220）
+        env:
+          BRAIN_URL: ${{ secrets.BRAIN_DEPLOY_URL || 'http://100.71.151.105:5221' }}
+        run: |
+          set -uo pipefail
+          HOST=$(echo "$BRAIN_URL" | sed -E 's#^https?://##; s#:[0-9]+$##')
+          echo "验证 dev ${HOST}:5220 健康..."
+          MAX_RETRY=5; DELAY=10
+          for i in $(seq 1 $MAX_RETRY); do
+            if curl -sf "http://${HOST}:5220/api/brain/health" > /tmp/dev_health.json 2>/dev/null; then
+              STATUS=$(jq -r '.status // "unknown"' /tmp/dev_health.json 2>/dev/null || echo "unknown")
+              if [ "$STATUS" = "healthy" ]; then
+                echo "✅ dev 5220 健康，status=healthy"
+                exit 0
+              fi
+            fi
+            echo "  尝试 $i/$MAX_RETRY 失败，等待 ${DELAY}s..."
+            sleep $DELAY
+          done
+          echo "::error::dev 5220 健康检查最终失败"
+          exit 1

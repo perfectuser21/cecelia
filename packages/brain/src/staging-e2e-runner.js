@@ -31,6 +31,9 @@ export const STAGING_PORT = 5222;
 export const DASHBOARD_STAGING_PORT = 5223;
 // ZenithJoy 蓝绿护栏：:5200=生产，:5201=staging（ZenithJoy CI push:main→:5201 自动部署）。
 export const ZJ_STAGING_PORT = 5201;
+// ZenithJoy develop 环境端口占位（FR-06 / Sprint 07131922）。
+// 实际部署端口待 ZenithJoy 侧决策后更新，默认 5230。
+export const ZJ_DEV_PORT = process.env.ZJ_DEV_PORT ? parseInt(process.env.ZJ_DEV_PORT, 10) : 5230;
 const DEPLOY_TIMEOUT_MS = 10 * 60 * 1000;
 const SCENARIO_TIMEOUT_MS = 5 * 60 * 1000;
 const REGRESSION_TIMEOUT_MS = 5 * 60 * 1000;

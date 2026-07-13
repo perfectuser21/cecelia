@@ -1195,3 +1195,31 @@ bash brain/scripts/goldenpath-check.sh
 | MiniMax M2.1 | $0.15/M | $1.20/M | L1 丘脑（事件路由）、exploratory |
 
 每次 L1/L2 调用记录 token 使用到 cecelia_events 表。
+
+---
+
+## 附录：三段常驻环境模型（Sprint 07131922）
+
+Cecelia 运行三个独立 Brain 实例，常驻于宿主机。
+
+| 环境 | 端口 | DB | restart 策略 | tick |
+|------|------|----|--------------|------|
+| Production | 5221 | cecelia | unless-stopped | 启用 |
+| Staging | 5222 | cecelia_staging | unless-stopped | HARD_OFF（双保险）|
+| Develop | 5220 | cecelia_dev | unless-stopped | 默认关 |
+
+### Develop 环境
+
+- **用途**：PR 前本地验证，开发者日常测试
+- **端口**：5220（Brain）
+- **DB**：cecelia_dev（独立 postgres 数据库）
+- **部署**：`bash scripts/dev-deploy.sh`（含 pg_dump 备份 + migrate 幂等）
+- **验证**：`bash scripts/dev-verify.sh`
+- **健康监控**：`scripts/dev-healthcheck.sh`（每 5 分钟轮询 5220，宕机 10 分钟后向 5221 创建 alert 任务）
+- **CI 自动部署**：develop 分支 push 触发 `.github/workflows/auto-dev-deploy.yml`
+
+### ZenithJoy 联动占位
+
+- Cecelia develop 环境与 ZenithJoy develop 环境（`ZJ_DEV_PORT=5230`，待 ZJ 侧确认）配合
+- `staging-e2e-runner.js` 导出 `ZJ_DEV_PORT` 常量（默认 5230，可通过环境变量覆盖）
+- 本 Sprint 不修改任何 ZenithJoy 仓库文件，联动在后续 Sprint 实施

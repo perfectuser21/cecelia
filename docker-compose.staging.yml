@@ -76,7 +76,7 @@ services:
           memory: 4G
         reservations:
           memory: 1G
-    restart: "no"
+    restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:5222/api/brain/tick/status"]
       interval: 15s
