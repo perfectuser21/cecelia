@@ -1,0 +1,48 @@
+{
+  "round": 1,
+  "verdict": "REVISION",
+  "target_environment": "local_api",
+  "rubric_scores": {
+    "dod_machineability": 8,
+    "scope_match_prd": 6,
+    "test_is_red": 8,
+    "internal_consistency": 8,
+    "risk_registered": 8,
+    "verification_oracle_completeness": 5,
+    "ci_workflow_alignment": 10
+  },
+  "evidence": {
+    "dod_machineability": "绝大多数 DoD 条目是 manual:bash -c '...; exit 1' 形式，能转成明确 exit code，无 echo/自然语言弱检查。",
+    "scope_match_prd": "PRD「范围限定」明确要求'更新 DoD.md 记录本 sprint 的 claude-headed relay DoD'，且 DoD.md 列入'预期受影响文件'。但 contract-draft.md（Golden Path 5 步 + E2E 验收）和 contract-dod.md（全部 ARTIFACT/BEHAVIOR 条目）没有一处提及 DoD.md，验证：grep -rn 'DoD.md' contract-draft.md contract-dod.md 无命中。这是 PRD 明写范围内条目的真实遗漏，非锦上添花。",
+    "test_is_red": "sprints/07130939-relay-4bb31ef5/e2e-verify.sh 当前不存在（confirmed: test -f 返回 false），headed-smoke-contract.test.ts 每个 it() 都以 readFileSync(wrapperPath) 开头，文件缺失会抛 ENOENT 使全部用例失败，构成合法 TDD Red 基线。worktree 内 vitest 未安装（node_modules 缺失）导致本地无法直接跑通 vitest 验证运行时输出，但逻辑推导充分。",
+    "internal_consistency": "contract-draft.md Step2/3/4 的验证命令与 contract-dod.md 对应 BEHAVIOR 的 manual: 命令内容基本一致（同一套 curl/jq/psql/grep 逻辑），未见字段定义前后矛盾。",
+    "risk_registered": "失败语义声明表 + Invariant 覆盖条目覆盖了 Brain API 不可达/DB 缺行/tui.log 缺失/smoke 失败/ci.yml 分支未命中 5 类真实风险，且各有 mitigation，覆盖任务实际风险面。",
+    "verification_oracle_completeness": "curl localhost:5221/api/brain/tasks/4bb31ef5-e140-41f4-9daf-9ca4a9e51216 与 psql initiative_runs 查询已核实：payload={mode:headed,executor:claude,orchestrator:skill-relay}（无 token/thin_prd），orchestrator_host=skill-relay-claude-headed，phase=gan，均与合同断言一致，Step2/Step3 oracle 扎实。但 Step4（本 sprint 与 codex 版最大差异点：CI seed 一致性）的验证只用 4 条 grep -F 检查字符串是否*存在于文件任意位置*（contract-draft.md/contract-dod.md/test 三处均如此）。实读 .github/workflows/ci.yml:962-1034 发现现有 bug 与合同「已知约束」描述一致：detect 逻辑用宽松 OR（mode=headed / orchestrator=skill-relay 等通用模式）无条件把任何 headed 任务 seed 成 codex 身份。静态字符串存在性检查无法证明 generator 真的修复了检测优先级/互斥逻辑——只要文件里任意位置（含注释或死分支）同时出现 4 个目标字符串即可 PASS，无法证伪 claude-headed 任务仍被误路由到 codex 分支这一真实回归风险。"
+  },
+  "block_items": [
+    {
+      "dimension": "scope_match_prd",
+      "current_score": 6,
+      "target_score": 7,
+      "title": "补齐 DoD.md 更新的合同覆盖（PRD 范围内条目缺失）",
+      "description": "PRD『范围限定』第 4 条明确要求'更新 DoD.md 记录本 sprint 的 claude-headed relay DoD'，且 DoD.md 在『预期受影响文件』中列出。当前 contract-draft.md 的 Golden Path/E2E 验收与 contract-dod.md 的 ARTIFACT/BEHAVIOR 条目完全未提及 DoD.md，属真实欠覆盖。",
+      "fix": "在 Golden Path 增补一个 Step（或并入 Step 1），并在 contract-dod.md 新增至少一条 [ARTIFACT] 检查：DoD.md 是否含本 sprint claude-headed relay 的记录标记（例如 grep -F 特定 sprint 标题/日期字符串），确保这一 PRD 明写的范围内产出不被静默丢弃。"
+    },
+    {
+      "dimension": "verification_oracle_completeness",
+      "current_score": 5,
+      "target_score": 7,
+      "title": "CI seed 分支互斥性验证过弱，无法证伪核心回归 bug",
+      "description": "Step4 的验证（合同 Step4 命令 + contract-dod.md 对应 BEHAVIOR + test 文件）都只是 grep -F 检查 4 个字符串（skill-relay-claude-headed / skill-relay-codex-headed / \"executor\":\"claude\" / \"executor\":\"codex\"）是否存在于 ci.yml 文件任意位置。实读 ci.yml:962-1034 确认现存 detect 逻辑用宽松 OR 条件无条件把任何含 mode=headed+orchestrator=skill-relay 的任务 seed 成 codex 身份——这正是合同『已知约束』自述、也是本 sprint 相对 codex 版最大差异的核心 bug。静态字符串存在性检查无法证明该路由优先级/互斥逻辑被真实修复：generator 只需在文件任意处（甚至注释或死分支）堆出 4 个目标字符串即可让 DoD 全绿，而 claude-headed 任务被误 seed 成 codex 的回归 bug 可能原封不动地保留。",
+      "fix": "至少二选一（推荐两者都做）：(a) 增加运行时行为验证——复用/内联 ci.yml 该 step 的 detect 判定逻辑到本地可执行脚本，分别灌入模拟的 claude-headed task-card 与 codex-headed task-card 文本，断言各自精确解析出预期 executor/orchestrator_host，互不串号；(b) 增加顺序性静态断言，用 grep -n 获取 skill-relay-claude-headed 精确匹配分支相对于原通用 OR 检测的代码行位置关系，防止 generator 只在文件尾部堆字符串敷衍过关。"
+    }
+  ],
+  "convergence": {
+    "round": 1,
+    "prior_blocking_count": null,
+    "resolved_this_round": null,
+    "still_blocking": 2,
+    "new_blocking_this_round": 2,
+    "contract_lines_trend": "N/A (round 1，无历史对比)"
+  }
+}
