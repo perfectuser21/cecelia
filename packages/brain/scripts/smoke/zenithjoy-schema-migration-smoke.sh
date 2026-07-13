@@ -24,6 +24,10 @@ for table in operator_sessions verification account session; do
     exit 1
   fi
 done
+if ! grep -qi 'ALTER TABLE public."user" SET SCHEMA zenithjoy' "$MIGRATION_FILE"; then
+  echo "FAIL: 缺少 user 的 SET SCHEMA zenithjoy 语句"
+  exit 1
+fi
 echo "OK: 5 张裸表归位语句完整"
 
 echo "✅ zenithjoy-schema-migration-smoke 全部通过"
