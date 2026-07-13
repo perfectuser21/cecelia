@@ -68,4 +68,12 @@ describe('GET /relay-runs?task_id=', () => {
     expect(res.status).toBe(200);
     expect(res.body[0].current_task_id).toBe(TASK_ID);
   });
+
+  it('不带 task_id 请求时 SQL 不含 current_task_id 条件（防未来重构恒加条件）', async () => {
+    const app = await buildApp();
+    const res = await request(app).get('/api/brain/orchestrator/relay-runs');
+    expect(res.status).toBe(200);
+    const [sql] = mockPool.query.mock.calls[0];
+    expect(sql).not.toMatch(/current_task_id = \$/);
+  });
 });
