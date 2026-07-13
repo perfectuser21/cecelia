@@ -123,12 +123,12 @@ git diff HEAD~1..HEAD -- packages/brain/src/routes/tasks.js | \
 
 | # | DoD 条目 | 验证方式 | 状态 |
 |---|----------|----------|------|
-| D1 | `[failing-test]` commit 存在，CI 可见 FAIL | `git log --oneline \| grep failing-test` | - |
-| D2 | `[fix]` commit 后 `tasks-unblock.test.js` 全绿 | vitest 输出 PASS | - |
+| D1 | `[failing-test]` commit 存在，CI 可见 FAIL | `git log --oneline \| grep failing-test` | [x] |
+| D2 | `[fix]` commit 后 `tasks-unblock.test.js` 全绿 | vitest 输出 PASS | [x] |
 | D3 | 既有 4 个 tasks 测试套件全绿（无回归） | `pnpm test` 全绿 | - |
 | D4 | CI brain-ci.yml 全绿 | GitHub Actions green | - |
-| D5 | diff 只含 3 行路径变更 | manual:bash 命令 5 | - |
-| D6 | `tasks-unblock.test.js` 已进 CI（不可删） | 文件存在于 `routes/__tests__/` | - |
+| D5 | diff 只含 3 行路径变更 | manual:bash 命令 5 | [x] |
+| D6 | `tasks-unblock.test.js` 已进 CI（不可删） | 文件存在于 `routes/__tests__/` | [x] |
 
 ---
 

@@ -597,7 +597,7 @@ router.get('/tasks/blocked', async (req, res) => {
 router.post('/tasks/:taskId/unblock', async (req, res) => {
   try {
     const { taskId } = req.params;
-    const { unblockTask } = await import('./task-updater.js');
+    const { unblockTask } = await import('../task-updater.js');
     const result = await unblockTask(taskId);
     if (!result.success) {
       return res.status(400).json({ error: result.error });
@@ -1116,7 +1116,7 @@ router.post('/tasks/:id/block', async (req, res) => {
     const { id } = req.params;
     const { reason = 'manual', detail = null, until = null } = req.body || {};
 
-    const { blockTask } = await import('./task-updater.js');
+    const { blockTask } = await import('../task-updater.js');
     const result = await blockTask(id, { reason, detail, until: until ? new Date(until) : null });
 
     if (!result.success) {
@@ -1144,7 +1144,7 @@ router.post('/tasks/:id/unblock', async (req, res) => {
   try {
     const { id } = req.params;
 
-    const { unblockTask } = await import('./task-updater.js');
+    const { unblockTask } = await import('../task-updater.js');
     const result = await unblockTask(id);
 
     if (!result.success) {
