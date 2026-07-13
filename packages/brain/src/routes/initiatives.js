@@ -245,6 +245,13 @@ router.get('/relay-runs', async (req, res) => {
     sinceDate = rawSince;
   }
 
+  // 解析并校验 task_id 参数（issue a638f840：report TOTAL_COST 按 task 求和）
+  const rawTaskId = req.query.task_id;
+  const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  if (rawTaskId !== undefined && !UUID_RE.test(rawTaskId)) {
+    return res.status(400).json({ error: 'task_id 参数必须为合法 UUID' });
+  }
+
   try {
     // 构建动态 WHERE 条件数组（conditions + params）
     let result;
@@ -263,6 +270,11 @@ router.get('/relay-runs', async (req, res) => {
         conditions.push(`phase = $${params.length}`);
       }
 
+      if (rawTaskId !== undefined) {
+        params.push(rawTaskId);
+        conditions.push(`current_task_id = $${params.length}`);
+      }
+
       params.push(limit);
       const limitParam = `$${params.length}`;
 
@@ -272,7 +284,7 @@ router.get('/relay-runs', async (req, res) => {
     try {
       const { conditions, params, limitParam } = buildConditionsAndParams();
       result = await pool.query(
-        `SELECT id, initiative_id, phase,
+        `SELECT id, initiative_id, phase, current_task_id,
                 orchestrator_heartbeat_at, orchestrator_host,
                 pr_url, started_at, deadline_at,
                 evaluate_verdict, judge_verdict, cost_usd, completed_at, failure_reason
@@ -287,7 +299,7 @@ router.get('/relay-runs', async (req, res) => {
         // pr_url 列不存在，回退（FR-24：回退路径中 since 条件同样生效）
         const { conditions, params, limitParam } = buildConditionsAndParams();
         result = await pool.query(
-          `SELECT id, initiative_id, phase,
+          `SELECT id, initiative_id, phase, current_task_id,
                   orchestrator_heartbeat_at, orchestrator_host,
                   started_at, deadline_at,
                   evaluate_verdict, judge_verdict, cost_usd, completed_at, failure_reason
