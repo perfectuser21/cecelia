@@ -28,8 +28,32 @@
 import { Router } from 'express';
 import { Command } from '@langchain/langgraph';
 import { lookupHarnessThread } from '../lib/harness-thread-lookup.js';
+import { sendBark } from '../notifier.js';
+import pool from '../db.js';
 
 const router = Router();
+
+// relay 容器认证失败特征（Claude Code CLI 未登录/token 失效时的典型话术）。
+// 只聚焦"未登录"这个具体信号，不做通用失败分类——那是 quarantine.js 的事，
+// 且 quarantine.js 的分类路径本来就打不到 cecelia-relay-* 容器的 callback（见下方分支说明）。
+const AUTH_FAILURE_PATTERN = /not\s+logged\s+in|please\s+run\s*\/?login/i;
+
+// containerId 格式 cecelia-relay-<short8>-<suffix>（见 harness-skill-relay.js shortId）。
+// 反查 task 标题给告警信息用；查不到就只带 containerId，不阻塞告警本身。
+async function _lookupTaskTitleByContainerId(containerId) {
+  const match = containerId.match(/^cecelia-relay-([a-f0-9]{8})-/);
+  if (!match) return null;
+  try {
+    const { rows } = await pool.query(
+      `SELECT id, title FROM tasks WHERE REPLACE(id::text, '-', '') LIKE $1 LIMIT 1`,
+      [`${match[1]}%`]
+    );
+    return rows[0] || null;
+  } catch (err) {
+    console.warn(`[harness-callback] 反查任务标题失败（不影响告警本身）: ${err.message}`);
+    return null;
+  }
+}
 
 // containerId -> claimedAtMs。已 claim 的 containerId 的回调不再重入 resume。
 const _claimedCallbacks = new Map();
@@ -59,6 +83,24 @@ router.post('/harness/callback/:containerId', async (req, res) => {
   // stdout 落盘由 entrypoint tee 完成，状态回写由 controller 的 report 步骤走 PATCH relay-runs。
   if (containerId.startsWith('cecelia-relay-')) {
     console.log(`[harness-callback] relay 容器 ${containerId} 回调 ack（exit=${exit_code ?? '?'}，无 resume）`);
+
+    // 认证失败告警（catch 兜底——告警本身失败不能拖累原有 200 ack 行为）。
+    const exitCodeNum = Number(exit_code);
+    const failureText = [result, error, stdout].filter(Boolean).join(' ');
+    if (exitCodeNum !== 0 && AUTH_FAILURE_PATTERN.test(failureText)) {
+      try {
+        const task = await _lookupTaskTitleByContainerId(containerId);
+        const taskLabel = task ? `${task.title}（${task.id}）` : containerId;
+        await sendBark(
+          '⚠️ Harness session 登录失效',
+          `${taskLabel} 的 relay session 因未登录崩溃，需要人工检查账号状态并可能重新登录`,
+          { dedupeKey: `harness-auth-fail-${containerId}`, dedupeTtlSec: 3600 }
+        );
+      } catch (err) {
+        console.error(`[harness-callback] 认证失败告警发送异常（不影响 ack）: ${err.message}`);
+      }
+    }
+
     return res.json({ ok: true, relayAck: true, containerId });
   }
 
