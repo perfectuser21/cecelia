@@ -28,7 +28,7 @@ journey_type: autonomous
   期望: OK
 
 - [x] [BEHAVIOR] 合法 headless/codex 响应不得要求真实 relay/headed 产物字段
-  Test: manual:bash -c 'set -euo pipefail; BRAIN="${BRAIN_URL:-http://localhost:5221}"; RESP=$(curl -sf -X POST "$BRAIN/api/brain/tasks" -H "Content-Type: application/json" -d "{\"task_type\":\"harness_initiative\",\"title\":\"headless-smoke-dod-schema-$(date +%s)-$$\",\"status\":\"pending_postdeploy\",\"payload\":{\"orchestrator\":\"skill-relay\",\"executor\":\"codex\",\"mode\":\"headless\",\"journey_id\":\"dod-headless\"}}"); echo "$RESP" | jq -e "has(\"relay_run_id\") | not and has(\"tmux_session\") | not and has(\"tui_log\") | not and has(\"pr_url\") | not" >/dev/null; ID=$(echo "$RESP" | jq -r ".id"); curl -sf -X PATCH "$BRAIN/api/brain/tasks/$ID" -H "Content-Type: application/json" -d "{\"status\":\"cancelled\"}" >/dev/null || true; echo OK'
+  Test: manual:bash -c 'set -euo pipefail; BRAIN="${BRAIN_URL:-http://localhost:5221}"; RESP=$(curl -sf -X POST "$BRAIN/api/brain/tasks" -H "Content-Type: application/json" -d "{\"task_type\":\"harness_initiative\",\"title\":\"headless-smoke-dod-schema-$(date +%s)-$$\",\"status\":\"pending_postdeploy\",\"payload\":{\"orchestrator\":\"skill-relay\",\"executor\":\"codex\",\"mode\":\"headless\",\"journey_id\":\"dod-headless\"}}"); echo "$RESP" | jq -e "((has(\"relay_run_id\") | not) and (has(\"tmux_session\") | not) and (has(\"tui_log\") | not) and (has(\"pr_url\") | not))" >/dev/null; ID=$(echo "$RESP" | jq -r ".id"); curl -sf -X PATCH "$BRAIN/api/brain/tasks/$ID" -H "Content-Type: application/json" -d "{\"status\":\"cancelled\"}" >/dev/null || true; echo OK'
   期望: OK
 
 - [x] [BEHAVIOR] GET/PATCH task schema 必须完整 codify

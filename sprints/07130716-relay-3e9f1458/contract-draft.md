@@ -194,7 +194,7 @@ TASK_ID=$(echo "$RESP" | jq -er '.id | select(type=="string" and length>0)')
 echo "$RESP" | jq -e '.status | type == "string"'
 echo "$RESP" | jq -e '.task_type == "harness_initiative"'
 echo "$RESP" | jq -e ".title == \"${SMOKE_TITLE}\""
-echo "$RESP" | jq -e 'has("relay_run_id") | not and has("tmux_session") | not and has("tui_log") | not and has("pr_url") | not'
+echo "$RESP" | jq -e '((has("relay_run_id") | not) and (has("tmux_session") | not) and (has("tui_log") | not) and (has("pr_url") | not))'
 GET_RESP=$(curl -sf "$BRAIN/api/brain/tasks/$TASK_ID")
 echo "$GET_RESP" | TASK_ID="$TASK_ID" jq -e '.id == env.TASK_ID and (.status | type == "string")'
 PATCH_RESP=$(curl -sf -X PATCH "$BRAIN/api/brain/tasks/$TASK_ID" -H "Content-Type: application/json" -d '{"status":"cancelled"}')
