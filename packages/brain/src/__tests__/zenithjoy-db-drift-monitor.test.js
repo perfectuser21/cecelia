@@ -23,10 +23,10 @@ function makePool(countsByTable) {
 
 vi.mock('../db.js', () => ({ default: null }));
 vi.mock('../zenithjoy-db.js', () => ({ getZenithjoyPool: vi.fn() }));
-vi.mock('../sendBark.js', () => ({ sendBark: vi.fn() }));
+vi.mock('../notifier.js', () => ({ sendBark: vi.fn() }));
 
 const { getZenithjoyPool } = await import('../zenithjoy-db.js');
-const { sendBark } = await import('../sendBark.js');
+const { sendBark } = await import('../notifier.js');
 const { runZenithjoyDbDriftMonitor } = await import('../zenithjoy-db-drift-monitor.js');
 
 describe('runZenithjoyDbDriftMonitor', () => {
@@ -64,7 +64,7 @@ describe('runZenithjoyDbDriftMonitor', () => {
     expect(result.drift).toHaveLength(0);
     expect(sendBark).not.toHaveBeenCalled();
     // sentinel 写入 working_memory
-    const sentinelCall = mainPool.query.mock.calls.find((c) => c[0].includes('working_memory'));
+    const sentinelCall = mainPool.query.mock.calls.find((c) => c[0].includes('working_memory') && c[0].includes('INSERT'));
     expect(sentinelCall).toBeDefined();
     const sentinelValue = JSON.parse(sentinelCall[1][1]);
     expect(sentinelValue.ok).toBe(true);
@@ -84,7 +84,7 @@ describe('runZenithjoyDbDriftMonitor', () => {
     expect(result.drift.length).toBeGreaterThan(0);
     expect(result.drift[0].table).toBeDefined();
     expect(sendBark).toHaveBeenCalledOnce();
-    const [_token, title] = sendBark.mock.calls[0];
+    const [title] = sendBark.mock.calls[0];
     expect(title).toContain('drift');
   });
 

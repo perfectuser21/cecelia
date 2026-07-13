@@ -116,6 +116,9 @@ services:
       - BRAIN_API=http://host.docker.internal:5200
       # ZenithJoy 蓝绿护栏：staging-e2e-runner.js 健康检查 :5201，需指向宿主（容器内 localhost 不通宿主端口）
       - ZJ_STAGING_HOST=host.docker.internal
+      # 刀1d：zenithjoy 独立库切换——设置后 Brain 的 zenithjoy.works/publish_logs 写入独立 zenithjoy 库
+      # 未设时行为不变（写 cecelia 库）。在 .env.docker 设 ZENITHJOY_DB_NAME=zenithjoy 后生效。
+      - ZENITHJOY_DB_NAME=${ZENITHJOY_DB_NAME:-}
       # OPENAI_API_KEY is provided via env_file (.env.docker) — do NOT override here
       # Overriding with ${OPENAI_API_KEY} causes empty string when host shell has no export
       # FEISHU_OWNER_OPEN_IDS is provided via env_file (.env.docker) — same reason, do NOT override here

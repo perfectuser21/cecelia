@@ -84,6 +84,7 @@ warroom-line-command-smoke.sh
 warroom-readonly-api-smoke.sh
 warroom-smoke.sh
 ws3-ire-module-smoke.sh
+zenithjoy-db-drift-monitor-smoke.sh
 zenithjoy-db-pool-smoke.sh
 zenithjoy-schema-migration-smoke.sh
 relay-smoke-v220-smoke.sh
