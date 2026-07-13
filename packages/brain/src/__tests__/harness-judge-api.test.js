@@ -59,7 +59,7 @@ describe('POST /api/brain/harness/judge', () => {
       worktreePath: wt,
       sprintDir: 'sprints/x',
       instanceLabel: 'judge-api-aaaabbbb',
-    }));
+    }), expect.objectContaining({ dbPool: expect.anything() }));
   });
 
   it('agent_verdict 缺省 → 从 <worktree>/.brain-result.json 读', async () => {
@@ -72,7 +72,7 @@ describe('POST /api/brain/harness/judge', () => {
     expect(r.status).toBe(200);
     expect(mockRunJudgeGate).toHaveBeenCalledWith(expect.objectContaining({
       agentVerdict: 'PASS', agentFeedback: 'ok',
-    }));
+    }), expect.objectContaining({ dbPool: expect.anything() }));
   });
 
   it('agent_verdict 缺省且 .brain-result.json 不存在 → 400', async () => {
