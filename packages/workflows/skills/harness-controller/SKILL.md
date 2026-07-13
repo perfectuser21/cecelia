@@ -7,9 +7,11 @@ description: |
   移植 Superpowers 6.0 subagent-driven-development 零件：进度台账 / 文件接力 / 四态出口协议 / 单评审双裁决 / compaction 恢复。
   点火方：Brain harness dispatch（无头）或人工前台（同一份 skill 两种触发，行为一致）。
   /dev 仍是唯一需求入口：本 skill 消费 /dev 路径C 的交接契约（PrepPRD + 铁律清单 + NFR），不做需求对抗。
-version: 2.1.0
+version: 2.3.0
 created: 2026-07-04
 changelog:
+  - 2.3.0: refactor Step 3 CI 阻塞等待——抽共享 scripts/ci-poll.sh（退出码 0=全绿/10=有失败/11=BEHIND，sleep 30 在脚本内），Step 3 循环体改为调用脚本，出口动作不变（绿→evaluator，失败→fix subagent）；engine-pr-watchdog Step 2 同步改造，单一 SSOT 不漂移
+  - 2.2.0: 治 relay 断链头号死因「结束发言等 CI」——新增硬约束 7（等外部事件必须前台阻塞轮询，禁止"等通知"后停止输出：headless -p 模式结束输出=进程退出=session 自杀）+ Step 3 新增「CI 阻塞等待」机械段（同步 bash sleep 30 轮询循环，Bash 超时立刻重发不结束 turn，绝不 run_in_background；照抄 engine-pr-watchdog 已验证模式）。07-12 实证：31e29c09/a1bf1ba5/4bb31ef5 三条 relay 均在 generator 开出 PR 后说"等待 CI 结果通知"正常退出（45 turns/18min，离任何资源墙都远），evaluator/judge/merge/report 全链 0 执行、任务假 done；watchdog 重点火的恢复 session 又以"CI 在跑等信号"1 turn 再死。对照组 a85e0582 全程未撒手，1h47m 八节点全通——链本身是通的，死因只此一处
   - 2.1.0: Step 7 收尾追加自杀式 tmux 关窗——检测 $TMUX/读会话名/后台延迟 kill-session，非 tmux 或读不到会话名降级为提示不阻塞（07-08/09 T2/T3/T4 三个有头任务收尾后 tmux 窗口不自关，空转两天没人关；cecelia #4c6c6ca5 配套）
   - 2.0.0: 重写（自我进化 P3→P5 试点）——吸收 1.0.0~1.9.0 全部踩坑修订后整体重组：横切纪律（台账/进度上报/phase-event/文件接力）归拢为独立一节不再散落各 Step；历史事故叙事压缩为短引用；操作规则、bash 块、API 契约字符串全部保留。规则零新增零删除，纯结构重组
   - 1.9.0: Step 4 新增 evaluate_verdict 上报硬性动作——evaluator 出裁决后立刻 PATCH relay-runs 带 evaluate_verdict（PASS/FAIL/FIXED 原样发，cecelia#3754 起写侧接住落 initiative_runs.evaluate_verdict；此前该列全 NULL=裁决只活在台账文本里，机器不可读）；fix loop 每轮重评后同样上报（COALESCE 覆盖语义，最后一次为准）
@@ -49,6 +51,7 @@ Step 0 装载/恢复 → 1 planner → 2 GAN(proposer×reviewer) → 3 generator
 4. **台账先行**：每个阶段完成立刻 append 台账，永远信台账+git/PR 外部真相，不信自己记忆
 5. **零人为交互**（无头模式）：任何不确定 → 派 Research subagent 查（代码/decisions/learnings）代答；仅 review_required 的人工门除外
 6. **完成判据 = PR MERGED + report done，两者齐才许结束 session**：修完 CI、推完 commit 都不算完——`gh pr view` 显示 MERGED 之前，你没有任何理由输出完成结论或停止工作（N4 run-3 实证：恢复 session 修完 CI 自判完成早退，害整条 run 多点火一次）
+7. **等任何外部事件（CI/部署/审批）必须前台阻塞轮询，禁止"结束发言等通知"**：headless `claude -p` 模式下你结束输出的那一刻进程就退出了，没有任何人会来"通知"你——说"等待 CI 结果通知"然后停止输出 = session 自杀（07-12 实证：31e29c09/a1bf1ba5/4bb31ef5 三条 relay 全断在 generator 后"等 CI"，evaluator/judge/merge/report 全链 0 执行，任务假 done；被 watchdog 重点火的恢复 session 又说一句"CI 在跑等信号"1 turn 再死）。等待方式只有一种：同步 bash sleep 轮询循环（机械做法见 Step 3「CI 阻塞等待」），单次 Bash 调用超时就立刻发起下一次调用，绝不 run_in_background，绝不输出"等待…"后停手
 
 ## 横切纪律（每个阶段都适用的硬性动作）
 
@@ -242,6 +245,30 @@ fi
 - **CI 门禁三件套 push 前自查**（N4 三跑全在 CI 才踩这些门，各浪费一轮修复——左移到此）：①contract-draft.md 含 Test Contract 表且 [BEHAVIOR] 覆盖文本与测试 it() 名称子串匹配 ②feat 改动带本 repo 约定的 smoke 脚本（按 base_repo 映射：cecelia = packages/brain/scripts/smoke/<feature>-smoke.sh 且登记 packages/quality/smoke-allowlist.txt；zenithjoy = .github/workflows/scripts/smoke/<feature>-smoke.sh 且进 smoke-baseline.txt 棘轮；其他第三方 repo 无此约定 → 本条跳过，以该 repo CI 实际门禁为准）③DoD 条目全勾 [x]。任一缺失 → 让 generator 补完再 push
 - CI 失败 → 派 fix subagent（同 skill Mode 2，带失败日志），fix 轮次计入台账，上限 20
 - 完成（CI 全绿）→ 台账 append → Step 4
+
+**CI 阻塞等待（硬约束 7 的机械做法——这是等 CI 的唯一合法方式）**
+
+PR push 后 CI 要跑若干分钟。**禁止**输出"等待 CI 结果/等通知"然后停止——headless 下你一停进程就退出，整条 relay 死在这里（07-12 三条 run 实证，这是 relay 断链的头号死因）。必须用同步 Bash 轮询循环把自己钉在前台：
+
+```bash
+# 同步执行（绝不 run_in_background），Bash timeout 设 600000（工具上限 10 分钟）
+# CI 轮询委托给共享脚本（SSOT：~/perfect21/zenithjoy-skills/scripts/ci-poll.sh）
+# 退出码 0=全绿 10=有失败 11=BEHIND；BEHIND 时继续等，直到非 BEHIND 为止
+CI_STATUS="PENDING"
+until [ "$CI_STATUS" != "PENDING" ]; do
+  bash ~/perfect21/zenithjoy-skills/scripts/ci-poll.sh "$PR_NUM" "$REPO"
+  case $? in
+    0) CI_STATUS="GREEN" ;;
+    10) CI_STATUS="FAILED" ;;
+    11) CI_STATUS="PENDING" ;;
+  esac
+done
+if [ "$CI_STATUS" = "GREEN" ]; then echo "CI_GREEN"; else echo "CI_FAILED"; fi
+```
+
+- 单次 Bash 调用到 10 分钟超时被截断 → **不输出任何文字，立刻发起下一次同样的 Bash 调用**继续轮询（turn 不结束，进程就不会死）
+- 循环退出后立刻走对应分支（绿→Step 4 / 失败→fix subagent），中间不停顿
+- 同规则适用于一切外部等待：deploy 完成、审批事件、workflow run——凡是"要等"，一律 sleep 循环，绝无例外
 
 ## Step 4: Evaluator（真跑验收）
 
