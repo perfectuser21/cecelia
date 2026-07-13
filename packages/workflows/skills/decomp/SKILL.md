@@ -801,19 +801,143 @@ curl -s -X POST http://localhost:5221/api/brain/action/create-scope \
 
 ---
 
-## 质检集成（decomp-check 联动）
+## 内置质检子阶段（原 decomp-check，v3.0.0 合并）
 
-**KR 以下层级**（Project/Initiative/Task 创建）必须经过 decomp-check：
+> **v3.0.0 起**：decomp-check 不再是独立 skill，质检逻辑内联在 Stage 4b 执行。
+
+**质检流程**：
 
 ```
-秋米拆解 → decomp-check 质检 → approved → 写入 DB → Brain 派发
+秋米拆解 → Stage 4b 内置质检 → approved → Stage 4c 写入 DB → Brain 派发
                               ↓
-                        needs_revision → 修改 → 重新质检
+                        needs_revision → 修改 → 重新质检（最多 3 次）
                               ↓
-                          rejected → 从头重拆
+                          rejected → 从头重拆（3 次后 → needs_human_review）
 ```
 
 **OKR 层级**：拆解后标记 needs_human_review，等待人工确认后再写入。
+
+---
+
+### 审查前必须执行：获取产能预算
+
+```bash
+BRAIN_URL="${BRAIN_URL:-http://localhost:5221}"
+CAPACITY=$(curl -s "$BRAIN_URL/api/brain/capacity-budget" 2>/dev/null)
+# 读取 layer_budgets 和 confidence
+```
+
+### 质检标准（按层级）
+
+#### OKR → KR
+
+| 检查项 | 通过条件 | 失败信号 |
+|--------|----------|----------|
+| **数量** | 2-5 个 KR | < 2 或 > 5 |
+| **可量化** | 每个 KR 有 from/to 数字 | "提升"、"优化"等无数字描述 |
+| **格式** | 动词 + 对象 + 从X到Y | 缺少基线值或目标值 |
+| **度量可行性** | 度量方式可实际执行 | "用户满意度"等无法查询的指标 |
+| **覆盖度** | KR 全部达成 → OKR 目标实现 | 明显遗漏关键结果领域 |
+| **独立性** | 各 KR 独立，无重叠 | 两个 KR 本质上测同一件事 |
+
+#### KR → Project
+
+| 检查项 | 通过条件 | 失败信号 |
+|--------|----------|----------|
+| **数量** | 1 个 KR → 3-4 个 Project | < 3 → **needs_revision**；> 6 → **needs_revision** |
+| **因果链** | 每个 Project 有具体"推动方式"说明 | "有助于提升"等空洞描述 |
+| **覆盖度** | 所有 Project 加起来能推动指标 from→to | 做完这些明显不够达到目标值 |
+| **命名具体** | 名称是可交付的功能模块 | "研究XXX"、"优化YYY"等模糊名称 |
+| **验收标准** | 每个 Project 有可测试的验收条件 | 验收标准不可测试 |
+| **战略对齐** | Project 方向与 KR 一致 | Project 和 KR 关联牵强 |
+
+#### Project → Scope
+
+| 检查项 | 通过条件 | 失败信号 |
+|--------|----------|----------|
+| **数量** | 3-4 个 Scope（每个 2-3 天） | < 2 → **rejected**；> 6 → **needs_revision** |
+| **功能边界** | 按用户可感知的功能边界分组 | 按技术分层（"前端"/"后端"/"数据库"） |
+| **命名清晰** | 用交付物命名，如"用户能提交订单" | "处理逻辑"、"完善功能"等无内容词 |
+| **覆盖度** | 所有 Scope 做完 → Project 验收条件全过 | 明显遗漏关键功能 |
+| **独立性** | 各 Scope 之间低耦合 | 两个 Scope 强依赖、必须严格串行 |
+| **时间粒度** | 每个 Scope 2-3 天可完成 | 某个 Scope 需要整周（应拆分） |
+| **type 字段** | 每个 child 的 type = 'scope' | type 为其他值 |
+| **无层级跳跃** | children 中不存在 type='initiative' | 出现 type='initiative' 说明跳过了 Scope 层 |
+
+#### Scope → Initiative
+
+| 检查项 | 通过条件 | 失败信号 |
+|--------|----------|----------|
+| **数量** | 3-7 个 Initiative | < 3 → **needs_revision**；> 10 → **needs_revision** |
+| **内部串联依赖** | Initiative 内的 Task 有顺序依赖 | Task 之间无依赖关系 |
+| **Initiative 间可并行** | 不同 Initiative 之间可以并行执行 | Initiative 之间强串联依赖 |
+| **DoD 明确** | 每个 Initiative 有清晰完成定义 | DoD 是"做完XXX"这种无法验证的描述 |
+| **Test 字段** | 每个 DoD 条目有 test: 字段 | DoD 纯文字描述，无 test 字段 |
+| **覆盖度** | 所有 Initiative 做完 → Scope 交付物实现 | 明显遗漏关键步骤 |
+| **命名可执行** | 名称明确说明交付什么 | "处理"、"完善"、"优化"等无内容词 |
+| **层级正确** | Initiative 下是 Task，不是另一个 Initiative | 层级错误（Initiative 嵌套） |
+| **type 字段正确** | 每个 child 的 type = 'initiative' | type 为其他错误值 |
+| **SPIDR 切割** | 使用了合理的切割维度（Spike/Path/Interface/Data/Rules） | 切割随意，无明确维度 |
+
+#### Initiative → Task（Task 数量检查）
+
+| 检查项 | 通过条件 | 失败信号 |
+|--------|----------|----------|
+| **Task 数量下限** | 每个 Initiative 至少 4 个 Task | < 4 → **rejected** |
+| **Task 数量上限** | 每个 Initiative 最多 8 个 Task | > 8 → **needs_revision** |
+| **Task 串联依赖** | Task 之间有明确的顺序依赖 | Task 之间完全独立无依赖 |
+
+#### PR 数量校验（动态产能校准）
+
+| 检查项 | 通过条件 | 失败信号 |
+|--------|----------|----------|
+| **Initiative PR 数量** | 在 `layer_budgets.initiative.pr_count_per_slot` 容差内 | 偏差超出容差 |
+| **Scope PR 总量** | 接近 `layer_budgets.scope.pr_count_per_slot` | 偏差超出容差 |
+| **Project PR 总量** | 接近 `layer_budgets.project.pr_count_per_slot` | 偏差超出容差 |
+
+**容差规则（基于 confidence）**：
+- `confidence: theoretical` → ±50%；`low` → ±40%；`medium` → ±30%；`high` → ±20%
+- Brain 不可用时：跳过 PR 数量校验，仅做结构性检查
+
+**PR 数量失败处理**：偏低/高超过容差 → `needs_revision`；极端偏离（>2x 或 <0.3x）→ `rejected`
+
+### 裁决规则
+
+**approved ✅**：所有检查项通过。
+
+**needs_revision ⚠️**：1-2 个轻微问题（命名模糊、数量轻微不足、DoD 少量缺 test 字段）。秋米在原基础上修正。
+
+**rejected ❌**（以下任一立即打回）：
+- 因果链断裂 / KR 无数字 / 拆解与父层不相关
+- 层级错误：Initiative 嵌套，或 Project 直接包含 Initiative 跳过 Scope
+- 子项全是空洞名称，无法执行
+- **DoD 无 Test 字段**（所有 DoD 都是纯文字）
+- **层级跳跃**（Project children 出现 type='initiative'）
+- **Initiative Task 不足**（Task < 4）
+- **Scope 按技术分层**（"前端/后端"而非功能边界）
+- **PR 数量极端偏离**（>2x 或 <0.3x capacity-budget 预算）
+
+### 质检输出格式（内部记录）
+
+```json
+{
+  "verdict": "approved | needs_revision | rejected",
+  "score": 1-10,
+  "decomp_type": "project_to_scope",
+  "findings": {
+    "因果链": "对齐 / 断裂（原因）",
+    "覆盖度": "完整 / 遗漏（具体遗漏什么）",
+    "命名质量": "清晰 / 模糊（哪几个，为什么）",
+    "数量": "合理（N个）/ 过少 / 过多",
+    "功能边界": "正确（按功能分）/ 错误（按技术分层）",
+    "战略对齐": "对齐 / 偏离",
+    "PR 数量": "合理 / 偏低 / 偏高 / 跳过（Brain 不可用）"
+  },
+  "issues": ["具体问题1", "具体问题2"],
+  "summary": "一句话总结",
+  "next_action": "proceed | revise | redispatched_to_autumnrice"
+}
+```
 
 ---
 
@@ -834,8 +958,9 @@ VALUES ('...', 'initiative', '[scope_id]', '...', 2);
 
 -- tasks 表（task_type: dev / initiative_plan / scope_plan / project_plan）
 -- project_id 指向 Initiative（dev任务）、Scope（scope_plan）或 Project（project_plan）
-INSERT INTO tasks (title, task_type, project_id, description, priority, status)
-VALUES ('...', 'dev', '[initiative_id]', '[PRD]', 'P1', 'queued');
+-- ability_id: 来自 CECELIA_ABILITY_ID 环境变量，NULL 表示未挂载到具体 Ability（双轴模型 GTD↔能力台账十字边）
+INSERT INTO tasks (title, task_type, project_id, description, priority, status, ability_id)
+VALUES ('...', 'dev', '[initiative_id]', '[PRD]', 'P1', 'queued', NULL);
 ```
 
 ---
