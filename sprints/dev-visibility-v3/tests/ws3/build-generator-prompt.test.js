@@ -2,8 +2,11 @@ import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'fs';
 
 const UTILS_FILE = 'packages/brain/src/harness-utils.js';
-const INIT_GRAPH  = 'packages/brain/src/workflows/harness-initiative.graph.js';
-const TASK_GRAPH  = 'packages/brain/src/workflows/harness-task.graph.js';
+
+// 刀4阶段3：harness-task.graph.js / harness-initiative.graph.js 已物理删除
+// （LangGraph 图路径废弃，orchestrator 硬校验后不可达）。原本断言这两个死图
+// 文件里 prdContent 传递的 3 个用例随之删除，buildGeneratorPrompt 本体（活代码，
+// harness-utils.js）的 3 个用例保留。
 
 describe('WS3 — buildGeneratorPrompt prdContent + runSubTaskNode 传递 [BEHAVIOR]', () => {
   it('harness-utils.js buildGeneratorPrompt 含 prdContent 参数', () => {
@@ -27,26 +30,5 @@ describe('WS3 — buildGeneratorPrompt prdContent + runSubTaskNode 传递 [BEHAV
       c.includes('prdContent = null') ||
       c.includes('prdContent = undefined');
     expect(hasGuard).toBe(true);
-  });
-
-  it('harness-task.graph.js TaskState 含 prdContent Annotation', () => {
-    const c = readFileSync(TASK_GRAPH, 'utf8');
-    expect(c).toContain('prdContent');
-  });
-
-  it('harness-task.graph.js buildGeneratorPrompt 调用点传 prdContent', () => {
-    const c = readFileSync(TASK_GRAPH, 'utf8');
-    const callIdx = c.indexOf('buildGeneratorPrompt(');
-    expect(callIdx).toBeGreaterThan(-1);
-    const callCtx = c.slice(callIdx, callIdx + 200);
-    expect(callCtx).toContain('prdContent');
-  });
-
-  it('harness-initiative.graph.js runSubTaskNode 函数体含 prdContent 传递', () => {
-    const c = readFileSync(INIT_GRAPH, 'utf8');
-    const fnIdx = c.indexOf('export async function runSubTaskNode');
-    expect(fnIdx).toBeGreaterThan(-1);
-    const body = c.slice(fnIdx, fnIdx + 3000);
-    expect(body).toContain('prdContent');
   });
 });

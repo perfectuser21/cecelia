@@ -22,6 +22,7 @@ import path from 'path';
 import { v4 as uuidv4 } from 'uuid';
 import pool from './db.js';
 import { buildLearningContext } from './learning-retriever.js';
+import { generateL0Summary } from './memory-utils.js';
 import { getDecisionsSummary } from './decisions-context.js';
 import { recordExpectedReward } from './dopamine.js';
 import { getActiveProfile, FALLBACK_PROFILE } from './model-profile.js';
@@ -31,10 +32,11 @@ import { loadCache as _loadCache, getCachedLocation, getCachedConfig, refreshCac
 import { updateTaskStatus, updateTaskProgress as _updateTaskProgress } from './task-updater.js';
 import { traceStep, LAYER, STATUS, EXECUTOR_HOSTS } from './trace.js';
 import { getAccountUsage } from './account-usage.js';
-import { writeDockerCallback, resolveResourceTier, isDockerAvailable } from './docker-executor.js';
+import { writeDockerCallback, resolveResourceTier, isDockerAvailable, resolveBrainBaseUrl } from './docker-executor.js';
 import { loadSkillContent, assertSprintDir } from './harness-shared.js';
-import { writeInitiativeRunEvent } from './events/initiativeRunEvents.js';
 import { spawn as spawnDocker } from './spawn/index.js';
+import { REVIEW_TASK_TYPES } from './lib/review-task-types.js';
+import { EXECUTOR_KIND_FOR } from './executor-contracts.js';
 import {
   sampleCpuUsage as platformSampleCpuUsage,
   _resetCpuSampler as platformResetCpuSampler,
@@ -57,6 +59,21 @@ export function computeDeadlineMs(deadlineAt) {
   if (!deadlineAt) return 6 * 3600 * 1000;
   const remaining = new Date(deadlineAt).getTime() - Date.now();
   return remaining > 0 ? remaining : 6 * 3600 * 1000;
+}
+
+/**
+ * 打标助手：在派发点写入 executor_kind，让守护刀用合同判活。
+ * P3 级别：失败不阻塞派发。
+ */
+async function setExecutorKind(taskId, kind) {
+  try {
+    await pool.query(
+      `UPDATE tasks SET executor_kind = $1, updated_at = NOW() WHERE id = $2`,
+      [kind, taskId]
+    );
+  } catch (err) {
+    console.warn(`[executor] setExecutorKind failed task=${taskId} kind=${kind}: ${err.message}`);
+  }
 }
 
 // ─── Resource Cache ─────────────────────────────────────────────────────────
@@ -235,15 +252,7 @@ const CODEX_REVIEW_LOCK_DIR = '/tmp/codex-review-locks';
 const CODEX_REVIEW_MAX = 2;
 
 // 审查任务类型列表（由 triggerCodexReview 以本机 codex CLI 执行，走独立 codex-review-locks 池）
-// 编码类 B類任务（需读代码上下文）也走本机 Codex，不走 cecelia-run（Claude Code）
-const REVIEW_TASK_TYPES = [
-  // Gate 审查（原有）
-  'spec_review', 'code_review_gate', 'prd_review', 'initiative_review',
-  // 编码类 B類（新增：需读代码，US 本机 Codex CLI 执行）
-  'code_review', 'decomp_review',
-  'initiative_plan', 'initiative_verify',
-  'arch_review', 'architecture_design', 'architecture_scan',
-];
+// REVIEW_TASK_TYPES 从 lib/review-task-types.js（SSOT）导入
 
 // ==================== Diagnostic Functions ====================
 
@@ -1094,14 +1103,15 @@ async function requeueTask(taskId, reason, evidence = {}) {
 
     if (existing.rows.length === 0) {
       await pool.query(`
-        INSERT INTO learnings (title, category, trigger_event, content, metadata, content_hash, version, is_latest, digested, task_id)
-        VALUES ($1, 'failure_pattern', 'watchdog_kill', $2, $3, $4, 1, true, false, $5)
+        INSERT INTO learnings (title, category, trigger_event, content, metadata, content_hash, version, is_latest, digested, task_id, summary)
+        VALUES ($1, 'failure_pattern', 'watchdog_kill', $2, $3, $4, 1, true, false, $5, $6)
       `, [
         failureTitle,
         failureContent,
         JSON.stringify({ task_id: taskId, task_type: task_type || null, project_id: project_id || null }),
         contentHash,
         taskId || null,
+        generateL0Summary(`${failureTitle} ${failureContent}`),
       ]);
     } else {
       console.log(`[executor] Skipping duplicate failure_pattern (hash=${contentHash})`);
@@ -1304,6 +1314,7 @@ function getSkillForTaskType(taskType, payload) {
     'research': '',          // 研究：完全只读，不挂 skill，由 preparePrompt 直接构建 prompt
     'dept_heartbeat': '/repo-lead heartbeat', // 部门主管心跳：MiniMax
     'code_review': '/code-review', // 代码审查：Sonnet + /code-review skill
+    'ci_patrol': '/ci-patrol', // CI/CD 巡检：每日按 line 报硬伤（ci-patrol skill）
     // Initiative 执行循环
     'initiative_plan': '/decomp',     // Phase 2 规划下一个 PR：/decomp
     'initiative_verify': '/architect', // Initiative 收尾验收 → /architect Mode 3
@@ -1343,6 +1354,7 @@ function getSkillForTaskType(taskType, payload) {
     'pipeline_rescue': '/dev',       // 卡住的 pipeline 接管修复 → /dev 全流程
     'codex_test_gen': '/codex-test-gen',  // Codex 自动生成测试 → 西安 M4
     'platform_scraper': '/media-scraping', // 平台数据采集 → CN Mac mini (/media-scraping skill)
+    'strategist_decision': '/line-strategist',  // Line 军师决策（PR3674 终态钩子派发，见 line-strategist-dispatch.js）
     // 注意：harness_generate/harness_fix 等不在此处
     // 它们由 preparePrompt() 提前路由，不经过 skillMap。
     // 实际路由见 task-router.js LOCATION_MAP。
@@ -2148,6 +2160,54 @@ function _prepareHarnessReportPrompt(task, taskType) {
   return `/sprint-report\n\n${paramsBlock}`;
 }
 
+function _prepareStrategistDecisionPrompt(task) {
+  const skillContent = loadSkillContent('line-strategist');
+  const payload = task.payload || {};
+  const paramsBlock = `## Line 军师决策任务
+
+LINE_ID: ${payload.journey_id || ''}
+TRIGGER: ${payload.trigger || 'manual'}
+TRIGGER_CONTEXT: ${JSON.stringify(payload.trigger_context || {})}
+BRAIN_TASK_ID: ${task.id}
+DRY_RUN: false
+
+${task.description || task.title}`;
+
+  return [
+    '你是 line-strategist session。按下面 SKILL 指令完成一次决策。',
+    '',
+    skillContent,
+    '',
+    '---',
+    '',
+    paramsBlock,
+  ].join('\n');
+}
+
+function _prepareCiPatrolPrompt(task) {
+  // 容器内 headless claude -p 不展开 slash command（同 harness-report Bug B），
+  // 裸 /ci-patrol 会让巡检 agent 零 SKILL 指令即兴发挥——日报只留 stdout、notes/棘轮全丢、任务假 completed。
+  const skillContent = loadSkillContent('ci-patrol');
+  const payload = task.payload || {};
+  const paramsBlock = `## CI/CD 巡检任务
+
+BRAIN_TASK_ID: ${task.id}
+DATE: ${payload.date || ''}
+TRIGGER: ${payload.trigger || 'manual'}
+
+${task.description || task.title}`;
+
+  return [
+    '你是 ci-patrol 巡检员 session。按下面 SKILL 指令完成一次巡检。',
+    '',
+    skillContent,
+    '',
+    '---',
+    '',
+    paramsBlock,
+  ].join('\n');
+}
+
 function _prepareHarnessPlannerPrompt(task, _taskType) {
   // harness_planner task_type 已退役（retire-harness-planner PR），此函数仅 sprint_planner 调用
   const sprintDir = assertSprintDir(task.payload?.sprint_dir, '_prepareHarnessPlannerPrompt');
@@ -2258,6 +2318,8 @@ const _TASK_ROUTES = {
   audit:                    _prepareCodeReviewArgs,
   research:                 _prepareResearchPrompt,
   code_review:              _prepareCodeReviewArgs,
+  strategist_decision:      _prepareStrategistDecisionPrompt,
+  ci_patrol:                _prepareCiPatrolPrompt,
 };
 
 // ─── preparePrompt 主入口（dispatcher）────────────────────────────────────────
@@ -2786,6 +2848,8 @@ async function triggerLocalCodexExec(task) {
 
     const proc = spawn('bash', [tmpScriptFile], { detached: true, stdio: 'ignore' });
     proc.unref();
+    // 打标：本地 codex-bin spawn → brain-local
+    await setExecutorKind(task.id, EXECUTOR_KIND_FOR.__local_spawn);
 
     console.log(`[executor] Local Codex spawned task=${task.id} pid=${proc.pid} slot=${path.basename(slotPath)}`);
     return { success: true, taskId: task.id, runId, executor: 'local-codex', pid: proc.pid };
@@ -2886,34 +2950,29 @@ export async function runHarnessInitiativeRouter(task, opts = {}) {
 
 async function _driveHarnessInitiative(task, opts = {}) {
   const dbPool = opts.pool || pool;
-  const { compileHarnessFullGraph } = await import('./workflows/harness-initiative.graph.js');
-  const { getPgCheckpointer } = await import('./orchestrator/pg-checkpointer.js');
-  const { emitGraphNodeUpdate } = await import('./events/taskEvents.js');
-  const compiled = opts.compiled || await compileHarnessFullGraph();
-  const initiativeId = task.payload?.initiative_id || task.id;
 
-  // W1 — thread_id 版本化
-  const baseAttemptN = (task.execution_attempts || 0) + 1;
-  let attemptN = baseAttemptN;
-  let threadId = `harness-initiative:${initiativeId}:${attemptN}`;
-
-  // 全局 fresh-start 上限 — execution_attempts 已达上限 → 不再 fresh-start / 不 invoke graph，
-  // 直接 terminal failed，杜绝坏 checkpoint 导致的无限重跑（20+ planner 容器、永不收敛）。
-  if ((task.execution_attempts || 0) >= MAX_INITIATIVE_FRESH_STARTS) {
+  // N4 orchestrator 硬校验（主理人 2026-07-05 拍板，见 memory harness-skill-relay-pivot）：
+  // skill-relay 已验证优于 LangGraph 图（3/3~4/4 merged vs 旧图 30 天基线 21.7%），
+  // 不再允许 orchestrator 缺省时隐式降级到 LangGraph 图——必须显式声明 skill-relay，
+  // 否则直接 terminal failed。LangGraph 图调用死代码已在刀4阶段3物理删除。
+  if (task?.payload?.orchestrator !== 'skill-relay') {
     await markInitiativeTerminalFailed(
       dbPool,
       task.id,
-      'max_fresh_starts_exceeded',
-      `max_fresh_starts_exceeded: execution_attempts=${task.execution_attempts} >= ${MAX_INITIATIVE_FRESH_STARTS}`
+      'missing_orchestrator_flag',
+      `${task?.task_type ?? 'harness_initiative'} requires payload.orchestrator==='skill-relay'; got: ${task?.payload?.orchestrator ?? '(missing)'}`
     );
     console.error(
-      `[startup-sync] task=${task.id} 达 fresh-start 上限 ${MAX_INITIATIVE_FRESH_STARTS}，标 terminal failed（停止重跑）`
+      `[executor] task=${task.id} 缺少/非法 orchestrator flag（值=${task?.payload?.orchestrator ?? '(missing)'}），标 terminal failed（不再降级走 LangGraph 图）`
     );
-    return { ok: false, error: 'max_fresh_starts_exceeded', terminal: true, threadId, attemptN };
+    return { ok: false, error: 'missing_orchestrator_flag', terminal: true };
   }
 
   // 2b-2b: harness 开跑 → 镜像同步对应 okr_initiative → running（non-fatal，best-effort，
-  // 解析/新建对应 okr_initiatives 行使规划侧 Initiative 成为实时真相；绝不阻断 harness）
+  // 解析/新建对应 okr_initiatives 行使规划侧 Initiative 成为实时真相；绝不阻断 harness）。
+  // 刀4阶段3发现：此调用原本躺在物理不可达的旧图调用死代码块里（orchestrator 硬校验后
+  // 从未真正执行过），随死代码一并被删除时才暴露这层同步早已失效，移到硬校验通过后的
+  // 活路径上，让它真正生效。
   try {
     const { syncOkrInitiativeStatus } = await import('./okr-initiative-sync.js');
     await syncOkrInitiativeStatus(dbPool, task.id, 'running');
@@ -2921,135 +2980,23 @@ async function _driveHarnessInitiative(task, opts = {}) {
     console.warn(`[executor] okr-initiative sync(running) non-fatal: ${syncErr.message}`);
   }
 
-  const checkpointer = await getPgCheckpointer();
-  const existing = await checkpointer.get({ configurable: { thread_id: threadId } });
-  const resumeRequested = task.payload?.resume_from_checkpoint === true;
-  let input;
-  if (existing && resumeRequested) {
-    // Wave 2b 钩子：checkpoint 显式标 error.terminal===true → 永久失败，不再 fresh-start。
-    // 即便现在没人 set 也无害（普通 error 仍走下方 fresh-start 分支）。
-    if (existing.channel_values?.error?.terminal === true) {
-      await markInitiativeTerminalFailed(
-        dbPool,
-        task.id,
-        'checkpoint_terminal',
-        'checkpoint marked terminal (error.terminal=true)'
-      );
-      console.error(
-        `[startup-sync] task=${task.id} checkpoint 标 terminal，标 terminal failed（停止重跑）`
-      );
-      return { ok: false, error: 'checkpoint_terminal', terminal: true, threadId, attemptN };
-    }
-    // 检查 checkpoint 是否处于 error 状态（如 ganLoop 节点执行失败）
-    // 若 error 有值，resume 会立即路由到 END → final=null → task failed → 每 2min 死循环
-    const ckError = existing.channel_values?.error;
-    if (ckError) {
-      // 坏 checkpoint：升 N，fresh start，避免无限 resume→END→loop
-      attemptN = baseAttemptN + 1;
-      threadId = `harness-initiative:${initiativeId}:${attemptN}`;
-      input = { task };
-      await dbPool.query('UPDATE tasks SET execution_attempts=$1 WHERE id=$2', [attemptN, task.id]);
-      console.log(`[startup-sync] Bad checkpoint (error state) for task=${task.id}, fresh start attempt=${attemptN}`);
-    } else {
-      input = null;  // 显式 resume from checkpoint
-    }
-  } else if (existing && !resumeRequested) {
-    // 同 attemptN 已有 checkpoint 但未 resume → 升 N，留旧 checkpoint 诊断
-    attemptN = baseAttemptN + 1;
-    threadId = `harness-initiative:${initiativeId}:${attemptN}`;
-    input = { task };
-    await dbPool.query('UPDATE tasks SET execution_attempts=$1 WHERE id=$2', [attemptN, task.id]);
-  } else {
-    input = { task };  // fresh start
-  }
-
-  // W3 — AbortSignal + watchdog
-  const deadlineRow = await dbPool.query(
-    'SELECT deadline_at FROM initiative_runs WHERE initiative_id=$1 ORDER BY created_at DESC LIMIT 1',
-    [initiativeId]
-  );
-  const deadlineAt = deadlineRow.rows[0]?.deadline_at;
-  const deadlineMs = computeDeadlineMs(deadlineAt);
-  const ctrl = new AbortController();
-  const timer = setTimeout(
-    () => ctrl.abort(new Error(`harness_watchdog: deadline exceeded for ${initiativeId} thread=${threadId}`)),
-    deadlineMs
-  );
-
-  // OPEN-2：驱动开始即写一次心跳，标记「本 brain 进程正在驱动该 graph」。
-  const { writeDriverHeartbeat } = await import('./harness-heartbeat.js');
-  await writeDriverHeartbeat(dbPool, initiativeId);
-
-  let final = null;
+  // W4 initiative_run_events 留痕（供 GET /api/brain/harness/stream SSE 消费）：
+  // 旧图逐节点（pick_sub_task/run_sub_task/...）写事件的模式随图一起删除——skill-relay
+  // 单 session 模型没有离散节点，改在 spawn 这个粗粒度节点上留一条 running 记录，
+  // 让该 SSE 流对 skill-relay initiative 至少还有起点信号（non-fatal，best-effort）。
   try {
-    // W4 — streamMode='updates' 逐节点推 task_events
-    const stream = await compiled.stream(input, {
-      configurable: { thread_id: threadId },
-      recursionLimit: 500,
-      signal: ctrl.signal,
-      streamMode: 'updates',
-    });
-    let nodeCount = 0;
-    const MAX_EVENTS = 100;  // 防写爆
-    for await (const update of stream) {
-      // OPEN-2：每个 node 推进都刷心跳，覆盖节点间的 gap（pick_sub_task→run_sub_task 等）。
-      await writeDriverHeartbeat(dbPool, initiativeId);
-      for (const [nodeName, partialState] of Object.entries(update || {})) {
-        if (nodeCount < MAX_EVENTS) {
-          try {
-            await emitGraphNodeUpdate({
-              taskId: task.id,
-              initiativeId,
-              threadId,
-              nodeName,
-              attemptN,
-              payloadSummary: summarizeNodeState(partialState),
-            });
-          } catch (emitErr) {
-            console.warn(`[executor] emitGraphNodeUpdate failed (non-fatal): ${emitErr.message}`);
-          }
-          try {
-            await writeInitiativeRunEvent({ initiativeId, node: nodeName, status: 'done', attempt: attemptN });
-          } catch (ireErr) {
-            console.warn(`[executor] writeInitiativeRunEvent failed (non-fatal): ${ireErr.message}`);
-          }
-          nodeCount++;
-        }
-        final = { ...(final || {}), ...partialState };
-      }
-    }
-  } catch (err) {
-    if (err.name === 'AbortError' || /watchdog/i.test(err.message)) {
-      try {
-        await dbPool.query(
-          `UPDATE tasks SET error_message=$1,
-             custom_props = jsonb_set(COALESCE(custom_props,'{}'::jsonb), '{failure_class}', '"watchdog_deadline"'::jsonb)
-           WHERE id=$2`,
-          [`watchdog deadline at ${new Date().toISOString()}`, task.id]
-        );
-      } catch (markErr) {
-        console.warn(`[executor] mark watchdog failure failed (non-fatal): ${markErr.message}`);
-      }
-      return { ok: false, threadId, attemptN, error: 'watchdog_deadline' };
-    }
-    throw err;
-  } finally {
-    clearTimeout(timer);
+    const { writeInitiativeRunEvent } = await import('./events/initiativeRunEvents.js');
+    const initiativeId = task.payload?.initiative_id || task.id;
+    await writeInitiativeRunEvent({ initiativeId, node: 'skill-relay-spawn', status: 'running', dbPool });
+  } catch (ireErr) {
+    console.warn(`[executor] writeInitiativeRunEvent failed (non-fatal): ${ireErr.message}`);
   }
 
-  return {
-    ok: computeHarnessInitiativeOk(final),
-    error: computeHarnessInitiativeError(final),
-    threadId,
-    attemptN,
-    finalState: {
-      initiativeId,
-      sub_tasks: final?.sub_tasks,
-      final_e2e_verdict: final?.final_e2e_verdict,
-      final_e2e_failed_scenarios: final?.final_e2e_failed_scenarios,
-      error: final?.error,
-    },
-  };
+  // N3 skill-relay 分支（主理人 2026-07-04 拍板）：spawn 单 claude session 跑
+  // harness-controller skill，不 compile / 不 invoke 图。
+  const { spawnSkillRelaySession } = await import('./harness-skill-relay.js');
+  const relayDeps = { pool: dbPool, ...(opts.skillRelayDeps || {}) };
+  return await spawnSkillRelaySession(task, relayDeps);
 }
 
 /**
@@ -3068,6 +3015,30 @@ export function computeHarnessInitiativeOk(final) {
   // 有 report_path（reportNode 完成写入）或有 final_e2e_verdict（老路径显式设置）→ true。
   if (!final.report_path && !final.final_e2e_verdict) return null;
   return true;
+}
+
+/**
+ * P1 bug 39b97ade 修复：runHarnessInitiativeRouter 结果 → dispatch 分支动作分类（纯函数，便于测试）。
+ *
+ * 之前 result.deferred（codex_concurrent_limit / codex_quota_low / spawnSkillRelaySession 新增的
+ * live_container_guard）没有专门分支，ok=false 直接落到最终 else 被标 failed —— 对 live_container_guard
+ * 场景尤其危险：意味着仍在跑的 relay 任务会被判定为终态，反而制造新的重复 spawn 触发点。
+ *
+ * 雷8（headed 变体·2856dada R4 首航实证）：_spawnHeadedSession 成功时返回
+ * mode 为 HEADED_HOSTS 映射值（'skill-relay-codex-headed' / 'skill-relay-claude-headed'，
+ * 见 harness-skill-relay.js），严格等值判断 `=== 'skill-relay'` 不命中 → 落到最终
+ * `if (result?.ok) return 'completed'`，headed session 刚 spawn（还在跑）就被秒标
+ * completed。改用前缀匹配，同时覆盖 headless 'skill-relay' 与两个 headed host 值。
+ *
+ * @param {{ok: boolean|null, mode?: string, deferred?: boolean}} result
+ * @returns {'waiting'|'relay_spawned'|'deferred'|'completed'|'failed'}
+ */
+export function classifyHarnessRelayAction(result) {
+  if (result?.ok === null) return 'waiting';
+  if (result?.ok && typeof result?.mode === 'string' && result.mode.startsWith('skill-relay')) return 'relay_spawned';
+  if (result?.deferred) return 'deferred';
+  if (result?.ok) return 'completed';
+  return 'failed';
 }
 
 /**
@@ -3185,6 +3156,7 @@ async function triggerCeceliaRun(task) {
   if (
     (task.payload?.machine || task.payload?.executor) &&
     task.task_type !== 'harness_initiative' &&
+    task.task_type !== 'golden_path_proposal' &&
     !_RETIRED_HARNESS_TYPES.has(task.task_type)
   ) {
     let route;
@@ -3214,6 +3186,11 @@ async function triggerCeceliaRun(task) {
   if (!forceUsClaude && location === 'xian') {
     const src = dynamicLocation ? 'dynamic-cache' : 'location-map';
     console.log(`[executor] 路由决策: task_type=${task.task_type} → Codex Bridge (location=xian, src=${src})`);
+    // 打标：content-pipeline 系由外部 ZJ pipeline-worker 管 → external-worker；其余 xian 任务 → bridge
+    const xianKind = Object.prototype.hasOwnProperty.call(EXECUTOR_KIND_FOR, task.task_type)
+      ? EXECUTOR_KIND_FOR[task.task_type]
+      : EXECUTOR_KIND_FOR.__bridge_path;
+    await setExecutorKind(task.id, xianKind);
     return triggerCodexBridge(task);
   }
 
@@ -3239,18 +3216,25 @@ async function triggerCeceliaRun(task) {
   // 2.85 Harness Full Graph (Phase A+B+C) — 一个 graph 跑到底，默认路径。
   // W1 (thread_id 版本化) + W3 (AbortSignal + watchdog) + W4 (streamMode events)
   // 实现下沉到 runHarnessInitiativeRouter，便于测试 + 复用。
-  if (task.task_type === 'harness_initiative') {
+  if (task.task_type === 'harness_initiative' || task.task_type === 'golden_path_proposal') {
     console.log(`[executor] 路由决策: task_type=${task.task_type} → Harness Full Graph (A+B+C)`);
+    // 打标：harness_initiative / golden_path_proposal 走 skill-relay docker session → relay-container
+    await setExecutorKind(task.id, EXECUTOR_KIND_FOR[task.task_type]);
 
     // OAuth token 自动刷新，无需 session ≥ 4h 的 pre-check
 
     try {
       const result = await runHarnessInitiativeRouter(task);
-      // B48: ok=null → graph 在 interrupt 等待（planner/callback 还没回来），
-      // 留 in_progress，reportNode B1 fix 会在完成时回写 completed/failed。
-      if (result.ok === null) {
+      // B48 ok=null=waiting；relay_spawned=spawn成功非完成（Issue df107724）；
+      // deferred=软闸/去重护栏非失败（P1 bug 39b97ade，见 classifyHarnessRelayAction）。
+      const action = classifyHarnessRelayAction(result);
+      if (action === 'waiting') {
         console.log(`[executor] harness graph interrupted/waiting task=${task.id} thread=${result.threadId}, leaving in_progress`);
-      } else if (result.ok) {
+      } else if (action === 'relay_spawned') {
+        console.log(`[executor] skill-relay session spawned task=${task.id} container=${result.containerId}, leaving in_progress`);
+      } else if (action === 'deferred') {
+        console.log(`[executor] skill-relay session deferred task=${task.id} reason=${result.reason || 'unknown'}, leaving in_progress`);
+      } else if (action === 'completed') {
         await updateTaskStatus(task.id, 'completed');
       } else {
         await updateTaskStatus(task.id, 'failed', { error_message: String(result.error || 'harness graph failed').slice(0, 500) });
@@ -3316,6 +3300,11 @@ async function triggerCeceliaRun(task) {
     },
   });
 
+  // 协议卫生包：spawnClaim/releaseDedupeKey 需要在外层 catch 里也可见（fail 路径要 release）
+  let spawnClaim = null;
+  let releaseDedupeKey = null;
+  let spawned = false; // spawn 真实发生后置 true，outer catch 不再 release（防提前打开重入窗口）
+
   try {
     // Start trace
     await trace.start();
@@ -3357,6 +3346,20 @@ async function triggerCeceliaRun(task) {
         metrics: resources.metrics,
       };
     }
+
+    // 协议卫生包：DB 级 spawn 幂等（跨进程/跨重启防 tick 重入双 spawn；120s 短 TTL）
+    // 内存 activeProcesses 检查覆盖同进程场景；本检查覆盖蓝绿窗口期双 Brain / 重启后状态丢失场景。
+    // ⚠️ 不碰 harness-callback.js 的 containerId claim（那是 callback 重入幂等，语义不同）。
+    // 放在资源检查之后：资源过载路径不 spawn，不该占用 dedupe key（挪之前泄漏 key 120s）。
+    const dedupeMod = await import('./lib/dedupe.js');
+    releaseDedupeKey = dedupeMod.releaseDedupeKey;
+    spawnClaim = await dedupeMod.claimDedupeKey('spawn', String(task.id), 120);
+    if (!spawnClaim.claimed) {
+      console.log(`[executor] Task ${task.id} spawn dedupe hit (DB), skipping`);
+      await trace.end({ status: STATUS.FAILED, error: new Error('Spawn deduplicated') });
+      return { success: false, taskId: task.id, reason: 'spawn_deduplicated' };
+    }
+
     const checkpointId = `cp-${task.id.slice(0, 8)}`;
 
     // 检查 task_type 合理性（warning 级别，不阻塞执行）
@@ -3450,10 +3453,13 @@ async function triggerCeceliaRun(task) {
       );
 
       // 注入 webhook + 上下文（与 cecelia-run 行为对齐）
+      // bridge 容器内 localhost:5221 不可达（issue 219a9efc），base 默认 host.docker.internal
+      const brainBase = resolveBrainBaseUrl();
       const dockerEnv = {
         ...extraEnv,
-        WEBHOOK_URL: `${process.env.BRAIN_URL || 'http://localhost:5221'}/api/brain/execution-callback`,
-        CECELIA_CORE_API: process.env.BRAIN_URL || 'http://localhost:5221',
+        WEBHOOK_URL: `${brainBase}/api/brain/execution-callback`,
+        CECELIA_CORE_API: brainBase,
+        BRAIN_URL: brainBase,
         CECELIA_PERMISSION_MODE: permissionMode,
         CECELIA_TASK_TYPE: taskType,
       };
@@ -3477,6 +3483,9 @@ async function triggerCeceliaRun(task) {
         docker: true,
         container: dockerResult.container,
       });
+      // spawn 已真实发生（容器跑过），不 release dedupe key——即使 exit_code≠0 也一样：
+      // release 会打开 120s 内重复 spawn 窗口；TTL 自然过期兜底。
+      spawned = true;
 
       // 完成后写 callback_queue（保持下游路径兼容）
       try {
@@ -3536,6 +3545,8 @@ async function triggerCeceliaRun(task) {
 
     if (!result.ok) {
       console.log(`[executor] Bridge rejected: ${result.error}`);
+      // 协议卫生包：spawn 没起来（bridge 拒绝），释放 dedupe key 让 120s 内的合法重派不被误挡
+      if (spawnClaim && !spawnClaim.degraded) await releaseDedupeKey('spawn', String(task.id)).catch(() => {});
       return {
         success: false,
         taskId: task.id,
@@ -3552,6 +3563,10 @@ async function triggerCeceliaRun(task) {
       checkpointId,
       bridge: true
     });
+    // spawn 已真实发生（bridge 已接单），此后即使 return 前抛异常也不 release dedupe key
+    spawned = true;
+    // 打标：cecelia-bridge(localhost:3457) 派发 → bridge
+    await setExecutorKind(task.id, EXECUTOR_KIND_FOR.__bridge_path);
 
     console.log(`[executor] Bridge dispatched task=${task.id} checkpoint=${checkpointId}`);
 
@@ -3588,6 +3603,10 @@ async function triggerCeceliaRun(task) {
       status: STATUS.FAILED,
       error: err,
     });
+
+    // 协议卫生包：spawn 未真实发生时才释放 dedupe key，让 120s 内的合法重派不被误挡；
+    // spawned=true 说明进程/容器已起，release 反而打开重入窗口。
+    if (spawnClaim && !spawnClaim.degraded && releaseDedupeKey && !spawned) await releaseDedupeKey('spawn', String(task.id)).catch(() => {});
 
     return {
       success: false,
@@ -3767,6 +3786,18 @@ async function probeTaskLiveness() {
       continue;
     }
 
+    // harness_* 任务由 harness-watchdog-loop（心跳判据）专管，运行在 Docker 容器内无 OS 进程，
+    // reAttachActiveExecutors 未能重建其 activeProcesses 条目时会被误判为死进程。
+    // 统一排除，避免 wall-clock 孤儿探针与心跳看门狗双重处理同一任务。
+    const HARNESS_LIVENESS_EXEMPT_TYPES = new Set([
+      'harness_initiative', 'harness_task', 'harness_evaluate',
+      'harness_contract_propose', 'harness_contract_review',
+      'harness_planner', 'harness_generator', 'harness_generate', 'harness_fix',
+    ]);
+    if (HARNESS_LIVENESS_EXEMPT_TYPES.has(task.task_type)) {
+      continue;
+    }
+
     // Decomposition tasks (/decomp) and initiative_plan/initiative_verify tasks run for
     // 3-10+ minutes — apply extended grace period to avoid false-positive failures.
     // initiative_plan/initiative_verify are always dispatched via bridge where task_id
@@ -3843,6 +3874,183 @@ async function probeTaskLiveness() {
 }
 
 /**
+ * Brain 重启后从 lock slot + docker relay 容器重建 activeProcesses Map。
+ * 在 syncOrphanTasksOnStartup 之前调用，使后续孤儿检测能正确区分
+ * "进程还活着" vs "真正消失"，避免误杀友军。
+ *
+ * 认领策略：
+ *   1. /tmp/cecelia-locks/slot-* /info.json → pid/child_pid 直接探活
+ *   2. docker ps --filter name=cecelia-relay- → relay 容器存活
+ *   3. touch tasks.updated_at → 给 zombie-reaper / recovery-loop 续命
+ *
+ * fail-open：docker/fs 探测失败只 warn，不抛错，不误标任务死亡。
+ *
+ * @param {object} dbPool - pg Pool 实例
+ * @returns {Promise<{ reattached: number, touched: number, errors: string[] }>}
+ */
+async function reAttachActiveExecutors(dbPool) {
+  const result = { reattached: 0, touched: 0, errors: [] };
+  const taskIdsToTouch = new Set();
+  const lockDir = process.env.LOCK_DIR || '/tmp/cecelia-locks';
+
+  // ── 1. Lock slot scan ────────────────────────────────────────────────────
+  try {
+    const entries = readdirSync(lockDir, { withFileTypes: true });
+    for (const entry of entries) {
+      if (!entry.isDirectory() || !entry.name.startsWith('slot-')) continue;
+      const infoPath = path.join(lockDir, entry.name, 'info.json');
+      try {
+        const info = JSON.parse(readFileSync(infoPath, 'utf-8'));
+        const taskId = info.task_id;
+        if (!taskId || typeof taskId !== 'string') continue;
+
+        // child_pid 优先（更精确），fallback pid
+        let alivePid = null;
+        for (const p of [info.child_pid, info.pid]) {
+          const n = p ? Number(p) : NaN;
+          if (Number.isFinite(n) && n > 0 && isProcessAlive(n)) { alivePid = n; break; }
+        }
+        if (!alivePid) continue;
+
+        if (!activeProcesses.has(taskId)) {
+          activeProcesses.set(taskId, {
+            pid: alivePid,
+            pgid: info.pgid ? Number(info.pgid) : alivePid,
+            startedAt: info.started || new Date().toISOString(),
+            runId: null,
+            bridge: false,
+            source: 'reattach_slot',
+          });
+          result.reattached++;
+          taskIdsToTouch.add(taskId);
+          console.log(`[reattach] slot ${entry.name}: task=${taskId} pid=${alivePid}`);
+        }
+      } catch { /* corrupt info.json 或 slot 已清理 */ }
+    }
+  } catch (err) {
+    if (err.code !== 'ENOENT') {
+      result.errors.push(`slot_scan: ${err.message}`);
+      console.warn('[reattach] lock slot scan failed (non-fatal):', err.message);
+    }
+  }
+
+  // ── 2. Docker relay container scan ────────────────────────────────────────
+  try {
+    const dockerOut = execSync(
+      "docker ps --filter 'name=cecelia-relay-' --format '{{.Names}}'",
+      { encoding: 'utf-8', timeout: 8000, stdio: 'pipe' }
+    ).trim();
+    const containerNames = dockerOut ? dockerOut.split('\n').filter(Boolean) : [];
+
+    if (containerNames.length > 0) {
+      // 命名规约: cecelia-relay-<short8>[-cx|-<rand>]，short8 = task.id 前 8 字符
+      const shortPrefixes = new Set();
+      for (const name of containerNames) {
+        const match = name.match(/^cecelia-relay-([0-9a-f]{8})/i);
+        if (match) shortPrefixes.add(match[1].toLowerCase());
+      }
+
+      if (shortPrefixes.size > 0) {
+        const prefixArr = Array.from(shortPrefixes);
+        const { rows } = await dbPool.query(
+          `SELECT id, started_at, payload
+             FROM tasks
+            WHERE status = 'in_progress'
+              AND LEFT(id::text, 8) = ANY($1::text[])`,
+          [prefixArr]
+        );
+        for (const row of rows) {
+          if (!activeProcesses.has(row.id)) {
+            activeProcesses.set(row.id, {
+              pid: null,
+              startedAt: row.started_at || new Date().toISOString(),
+              runId: row.payload?.current_run_id || null,
+              bridge: true,
+              source: 'reattach_docker',
+            });
+            result.reattached++;
+            taskIdsToTouch.add(row.id);
+            console.log(`[reattach] docker relay: task=${row.id}`);
+          }
+        }
+      }
+    }
+  } catch (err) {
+    result.errors.push(`docker_scan: ${err.message}`);
+    console.warn('[reattach] docker relay scan failed (non-fatal):', err.message);
+  }
+
+  // ── 3. Docker task container scan (cecelia-task-*) ──────────────────────────
+  // docker-executor 派发的任务容器命名：cecelia-task-{short12}-{rand}
+  // short12 = task.id 去掉连字符后取前 12 字符
+  try {
+    const dockerTaskOut = execSync(
+      "docker ps --filter 'name=cecelia-task-' --format '{{.Names}}'",
+      { encoding: 'utf-8', timeout: 8000, stdio: 'pipe' }
+    ).trim();
+    const taskContainerNames = dockerTaskOut ? dockerTaskOut.split('\n').filter(Boolean) : [];
+
+    if (taskContainerNames.length > 0) {
+      const short12Set = new Set();
+      for (const name of taskContainerNames) {
+        const match = name.match(/^cecelia-task-([0-9a-f]{12})/i);
+        if (match) short12Set.add(match[1].toLowerCase());
+      }
+
+      if (short12Set.size > 0) {
+        const prefixes = Array.from(short12Set);
+        const { rows: taskRows } = await dbPool.query(
+          `SELECT id, started_at, payload
+             FROM tasks
+            WHERE status = 'in_progress'
+              AND LEFT(REPLACE(id::text, '-', ''), 12) = ANY($1::text[])`,
+          [prefixes]
+        );
+        for (const row of taskRows) {
+          if (!activeProcesses.has(row.id)) {
+            activeProcesses.set(row.id, {
+              pid: null,
+              startedAt: row.started_at || new Date().toISOString(),
+              runId: row.payload?.current_run_id || null,
+              docker: true,
+              source: 'reattach_docker_task',
+            });
+            result.reattached++;
+            taskIdsToTouch.add(row.id);
+            console.log(`[reattach] docker task container: task=${row.id}`);
+          }
+        }
+      }
+    }
+  } catch (err) {
+    result.errors.push(`docker_task_scan: ${err.message}`);
+    console.warn('[reattach] docker task scan failed (non-fatal):', err.message);
+  }
+
+  // ── 4. Touch updated_at — 给 zombie-reaper 续命 ───────────────────────────
+  if (taskIdsToTouch.size > 0) {
+    try {
+      const ids = Array.from(taskIdsToTouch);
+      const touchResult = await dbPool.query(
+        `UPDATE tasks SET updated_at = NOW()
+          WHERE id = ANY($1::uuid[])
+            AND status = 'in_progress'
+          RETURNING id`,
+        [ids]
+      );
+      result.touched = touchResult.rowCount || 0;
+      console.log(`[reattach] updated_at touched for ${result.touched} tasks`);
+    } catch (err) {
+      result.errors.push(`touch_updated_at: ${err.message}`);
+      console.warn('[reattach] touch updated_at failed (non-fatal):', err.message);
+    }
+  }
+
+  console.log(`[reattach] done reattached=${result.reattached} touched=${result.touched} errors=${result.errors.length}`);
+  return result;
+}
+
+/**
  * Synchronize DB state with actual processes on Brain startup.
  * Finds all in_progress tasks and checks if they have matching processes.
  * Tasks without processes are marked as failed (orphan_detected).
@@ -3866,6 +4074,19 @@ async function syncOrphanTasksOnStartup() {
   const LANGGRAPH_TYPES = new Set(['harness_initiative']);
 
   for (const task of result.rows) {
+    // 雷11（R5 首航实证 39b97ade/a3d61486/4cedf175/174dea35 同源）：
+    // skill-relay（payload.orchestrator==='skill-relay'）虽然 task_type 也是
+    // harness_initiative，但它不是 LangGraph（已废弃）——它有真实进程（无头=docker
+    // 容器 / 有头=宿主 tmux），存活恢复归 harness-relay-watchdog.js::resumeStalledRelayRuns
+    // 专管（该函数已对 skill-relay 任务做完整的容器/tmux 存活检测 + PR 状态检查 +
+    // 重点火上限熔断）。startup-sync 若把它当 LangGraph 无脑 requeue，会导致 dispatcher
+    // 重新 claim 并再次 spawn，与仍存活的旧进程撞名（headed 分支 tmux new-session 报错），
+    // 第二次 spawn 失败标 task=failed，而第一次的真 session 还活着，无人知道。
+    // → 整个跳过，交给 harness-relay-watchdog 处理，不 requeue、不清 claim、不计数。
+    if (task.payload?.orchestrator === 'skill-relay') {
+      console.log(`[startup-sync] skip skill-relay task=${task.id} title="${task.title}"（归 harness-relay-watchdog 管）`);
+      continue;
+    }
     if (LANGGRAPH_TYPES.has(task.task_type)) {
       // Bug A fix: requeue 时必须清 claim 三件套，否则死 runner 残留的 claimed_by
       // 让 dispatch-helpers.js 的 `AND t.claimed_by IS NULL` 永远选不出该任务，
@@ -3883,6 +4104,13 @@ async function syncOrphanTasksOnStartup() {
       );
       requeued++;
       console.log(`[startup-sync] LangGraph task re-queued for checkpoint resume: task=${task.id} type=${task.task_type} title="${task.title}"`);
+      continue;
+    }
+
+    // reAttachActiveExecutors 已认领（如 docker-executor 的 cecelia-task-* 容器）→ 跳过孤儿检测
+    if (activeProcesses.has(task.id)) {
+      rebuilt++;
+      console.log(`[startup-sync] Already reattached by reAttachActiveExecutors: task=${task.id} title="${task.title}"`);
       continue;
     }
 
@@ -4050,6 +4278,7 @@ export {
   XIAN_CODEX_BRIDGE_URL,
   // v4: State drift elimination
   probeTaskLiveness,
+  reAttachActiveExecutors,
   syncOrphanTasksOnStartup,
   recordHeartbeat,
   isRunIdProcessAlive,

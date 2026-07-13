@@ -110,7 +110,7 @@ echo ""
 
 # ── 1 起 staging slot（与生产同款静态 server 行为：SPA fallback）────────────
 echo "[1] 起 staging slot 服务"
-SLOT_LOG="$(mktemp -t dashboard-slot.XXXXXX.log)"
+SLOT_LOG="$(mktemp "${TMPDIR:-/tmp}/dashboard-slot.XXXXXX")"
 DIST_DIR="$DIST_DIR" SLOT_PORT="$SLOT_PORT" node "$SCRIPT_DIR/dashboard-slot-server.cjs" > "$SLOT_LOG" 2>&1 &
 SLOT_PID=$!
 
@@ -142,7 +142,7 @@ BASE="http://localhost:${SLOT_PORT}"
 
 # ── 3 首页真 URL 200 + 不白屏（入口资产可达）────────────────────────────────
 echo "[3] 首页 200 + 不白屏（入口资产可达）"
-INDEX_HTML="$(mktemp -t slot-index.XXXXXX.html)"
+INDEX_HTML="$(mktemp "${TMPDIR:-/tmp}/slot-index.XXXXXX")"
 HTTP_CODE=$(curl -s -o "$INDEX_HTML" -w "%{http_code}" "${BASE}/" --max-time 10 2>/dev/null || echo "000")
 if [[ "$HTTP_CODE" == "200" ]]; then
   pass "GET / -> HTTP 200"
@@ -181,7 +181,7 @@ echo ""
 
 # ── 4 核心路由 smoke（深层路由不被打回错误页 + 命名静态页可开）───────────────
 echo "[4] 核心路由 smoke"
-ROUTE_HTML="$(mktemp -t slot-route.XXXXXX.html)"
+ROUTE_HTML="$(mktemp "${TMPDIR:-/tmp}/slot-route.XXXXXX")"
 R_CODE=$(curl -s -o "$ROUTE_HTML" -w "%{http_code}" "${BASE}/clips" --max-time 10 2>/dev/null || echo "000")
 if [[ "$R_CODE" == "200" ]] && grep -q 'id="root"' "$ROUTE_HTML"; then
   pass "深层路由 /clips -> 200 + SPA shell（未被打回错误页）"

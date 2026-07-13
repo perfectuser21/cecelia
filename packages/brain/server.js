@@ -16,7 +16,6 @@ import langfuseRoutes from './src/routes/langfuse.js';
 import memoryRoutes from './src/routes/memory.js';
 import settingsRoutes from './src/routes/settings.js';
 import janitorRoutes from './src/routes/janitor.js';
-import { runJob } from './src/janitor.js';
 import profileFactsRoutes from './src/routes/profile-facts.js';
 import clusterRoutes from './src/routes/cluster.js';
 import vpsMonitorRoutes from './src/routes/vps-monitor.js';
@@ -36,6 +35,8 @@ import perceptionSignalsRoutes from './src/routes/perception-signals.js';
 import architectureRoutes from './src/routes/architecture.js';
 import taskRouterDiagnoseRoutes from './src/routes/task-router-diagnose.js';
 import licenseRoutes from './src/routes/license.js';
+import agentCreditRoutes from './src/routes/agent-credit.js';
+import acquisitionRoutes from './src/routes/acquisition.js';
 import notebookAuditRoutes from './src/routes/notebook-audit.js';
 import alertingRoutes from './src/routes/alerting.js';
 import systemReportsRoutes from './src/routes/system-reports.js';
@@ -78,6 +79,8 @@ import featuresRoutes from './src/routes/features.js';
 import clipsRoutes from './src/routes/clips.js';
 import journeysRouter from './src/routes/journeys.js';
 import abilitiesRouter from './src/routes/abilities.js';
+import goldenPathsRouter from './src/routes/golden-paths.js';
+import skillEvalRoutes from './src/routes/eval.js';
 import { internalAuth } from './src/middleware/internal-auth.js';
 import createAutonomousRouter from './src/routes/autonomous.js';
 import { initTickLoop } from './src/tick.js';
@@ -338,6 +341,8 @@ app.use('/api/brain/registry', registryRoutes);
 // 而 harnessRoutes 挂在 /api/brain/harness 路径，没有 callback 子路径不会冲突，
 // 但保险起见仍按照先 specific 后 generic 的顺序排列。
 app.use('/api/brain', harnessCallbackRouter);
+// Skill Evaluator 端点（POST /upload 需 X-Eval-Proxy-Token，GET /status 无需 token）
+app.use('/api/skill-eval', skillEvalRoutes);
 app.use('/api/brain', walkingSkeletonRouter);
 app.use('/api/brain', journeysRouter);
 // GET /api/brain/issues — skills 期望的端点（journey_features 里有 issues，此处提供独立路由）
@@ -357,11 +362,13 @@ app.get('/api/brain/issues', async (req, res) => {
   }
 });
 app.use('/api/brain', abilitiesRouter);
+app.use('/api/brain', goldenPathsRouter);
 app.use('/api/brain/harness', harnessRoutesRouter);
 app.use('/api/brain/harness', harnessRoutes);
 app.use('/api/brain/harness-interrupts', harnessInterruptsRouter);
 app.use('/api/brain/harness/pending-reviews', harnessReviewsRouter);
 app.use('/api/brain/initiatives', initiativesRoutes);
+app.use('/api/brain/orchestrator', initiativesRoutes);
 app.use('/api/brain/backup', backupRoutes);
 
 // LLM 服务对外入口（供 zenithjoy pipeline-worker 等内部系统调用）
@@ -378,6 +385,8 @@ app.get('/api/brain/autonomous/sessions', createAutonomousRouter(join(dirname(fi
 app.use('/api/brain/tasks', taskTasksRoutes);
 
 app.use('/api/brain', licenseRoutes);
+app.use('/api/brain', agentCreditRoutes);
+app.use('/api/brain', acquisitionRoutes);
 
 // Mount cecelia task execution routes
 app.use('/api/cecelia', ceceliaRoutes);
@@ -423,10 +432,27 @@ app.post('/api/brain/orchestrator/chat', async (req, res) => {
   }
 });
 
-// Health check at root
+// Health check at root (also used by preview healthcheck)
 app.get('/', (_req, res) => {
   res.json({ service: 'cecelia-brain', status: 'running', port: PORT });
 });
+
+// 预览模式：PREVIEW_STATIC_DIR 设置时把 Brain 同时当静态文件服务器
+// 前端 SPA 的 /api/brain/* 请求直接被上面路由处理，其余路径提供静态文件
+if (process.env.PREVIEW_STATIC_DIR) {
+  const { existsSync } = await import('node:fs');
+  const staticDir = process.env.PREVIEW_STATIC_DIR;
+  if (existsSync(staticDir)) {
+    app.use(express.static(staticDir));
+    // SPA fallback — 未命中静态文件的非 API 路径回退到 index.html
+    app.get(/^(?!\/api\/).*/, (_req, res) => {
+      res.sendFile(join(staticDir, 'index.html'));
+    });
+    console.log(`[Preview] Serving static files from ${staticDir}`);
+  } else {
+    console.warn(`[Preview] PREVIEW_STATIC_DIR=${staticDir} does not exist — static serving skipped`);
+  }
+}
 
 // Error handler
 app.use((err, _req, res, _next) => {
@@ -601,12 +627,22 @@ async function onBrainListening() {
   }
 
   // Log concurrency ceiling configuration for observability
-  const { MAX_SEATS, INTERACTIVE_RESERVE, syncOrphanTasksOnStartup, _startResourcePolling } = await import('./src/executor.js');
+  const { MAX_SEATS, INTERACTIVE_RESERVE, reAttachActiveExecutors, syncOrphanTasksOnStartup, _startResourcePolling } = await import('./src/executor.js');
   console.log(`[Server] Concurrency config: MAX_SEATS=${MAX_SEATS} INTERACTIVE_RESERVE=${INTERACTIVE_RESERVE}`);
 
   // Start async resource polling — prevents execSync blocking the event loop
   _startResourcePolling();
   console.log('[Server] Resource polling started (15s interval) - async sysctl/vm_stat, no event loop block');
+
+  // Re-attach step: 从 lock slot + docker relay 容器重建 activeProcesses，
+  // 给守护器官续命（touch updated_at），防止 zombie-reaper 误杀仍活着的执行者。
+  // 必须在 syncOrphanTasksOnStartup 之前调用，确保孤儿检测能正确跳过已认领任务。
+  try {
+    const reattachResult = await reAttachActiveExecutors(pool);
+    console.log(`[Server] Re-attach: reattached=${reattachResult.reattached} touched=${reattachResult.touched} errors=${reattachResult.errors.length}`);
+  } catch (reattachErr) {
+    console.error('[Server] Re-attach failed (non-fatal):', reattachErr.message);
+  }
 
   // Sync orphan in_progress tasks with actual processes (requeue vs fail with process check)
   try {
@@ -794,6 +830,14 @@ async function onBrainListening() {
     console.warn('[Server] Notion Push Sync init failed (non-fatal):', e.message);
   }
 
+  // scheduler-jobs：声明式定时任务注册表（作战循环 P1-PR1，恢复 Wave 2 断掉的定时任务）
+  try {
+    const { startSchedulerJobsLoop } = await import('./src/scheduler-jobs.js');
+    startSchedulerJobsLoop(pool);
+  } catch (e) {
+    console.warn('[Server] scheduler-jobs init failed (non-fatal):', e.message);
+  }
+
   // Initialize Daily Memory Consolidation (每 30 分钟轮询，内部 elapsed-time 闸门按 CONSOLIDATION_INTERVAL_HOURS 节流)
   // Wave 2 重构后 tick-runner.js 已废弃，原 step 10.x 调用断点；此处恢复独立调度，修 PROBE_FAIL_CONSOLIDATION 真因
   // 初次 setTimeout 用 5s（小于 capability-probe 的 30s 首发延迟），避免 cold-start 上 probe 先于 consolidation 跑
@@ -837,19 +881,8 @@ async function onBrainListening() {
   // Auto-start cecelia-bridge if not already running
   await startCeceliaBridge();
 
-  // Janitor 自动调度：每 6h 清理 docker 容器/镜像，启动时立即跑一次清遗留容器
-  try {
-    const JANITOR_DOCKER_PRUNE_INTERVAL_MS = 6 * 60 * 60 * 1000;
-    const runDockerPrune = () =>
-      runJob(pool, 'docker-prune').catch(e =>
-        console.warn('[janitor-auto] docker-prune failed:', e.message)
-      );
-    runDockerPrune();
-    setInterval(runDockerPrune, JANITOR_DOCKER_PRUNE_INTERVAL_MS);
-    console.log('[Server] Janitor docker-prune scheduled (startup + 6h interval)');
-  } catch (e) {
-    console.warn('[Server] Janitor auto-schedule init failed (non-fatal):', e.message);
-  }
+  // Janitor docker-prune 自动调度已取消（2026-07-08 用户拍板：旧机制 + 部署自杀竞态 Issue 97cf5a41）。
+  // REGISTRY 已清空（src/janitor.js），janitor 框架保留，新 job 接入时在此补调度即可。
 
   // Sync Learning rules into learnings table (non-blocking, best-effort)
   // Ensures learning-retriever.js has data to inject into /dev task prompts

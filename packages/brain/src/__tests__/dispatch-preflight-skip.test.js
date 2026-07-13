@@ -75,6 +75,13 @@ vi.mock('../dispatch-stats.js', () => ({
   getDispatchStats: vi.fn().mockResolvedValue({})
 }));
 
+// tick-stats: 回归覆盖——派发成功接线点必须调用 incrementActionsToday（Wave-2 断链修复）。
+const mockIncrementActionsToday = vi.fn().mockResolvedValue(1);
+vi.mock('../tick-stats.js', () => ({
+  incrementActionsToday: (...args) => mockIncrementActionsToday(...args),
+  recordTickExecution: vi.fn().mockResolvedValue(undefined),
+}));
+
 const mockPreFlightCheck = vi.fn();
 const mockGetPreFlightStats = vi.fn().mockResolvedValue({
   totalChecked: 0, passed: 0, failed: 0, passRate: '0%'
@@ -144,6 +151,7 @@ describe('selectNextDispatchableTask: excludeIds 参数', () => {
 describe('dispatchNextTask: pre-flight 失败时跳过并尝试下一个任务', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockIncrementActionsToday.mockResolvedValue(1);
   });
 
   it('第一个任务 pre-flight 失败后，第二个任务被成功选中派发', async () => {
@@ -183,6 +191,11 @@ describe('dispatchNextTask: pre-flight 失败时跳过并尝试下一个任务',
 
     expect(result.dispatched).toBe(true);
     expect(result.task_id).toBe('task-good');
+
+    // Wave-2 断链修复回归：派发成功后必须调用 incrementActionsToday 计入当日 actions
+    // （历史 bug：写入方只挂在废弃 executeTick，runScheduler 活路径从不调用）。
+    expect(mockIncrementActionsToday).toHaveBeenCalledTimes(1);
+    expect(mockIncrementActionsToday).toHaveBeenCalledWith(1);
 
     // Verify preFlightCheck was called twice
     expect(mockPreFlightCheck).toHaveBeenCalledTimes(2);

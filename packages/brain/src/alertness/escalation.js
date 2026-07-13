@@ -83,6 +83,24 @@ export const CANCEL_EXEMPT_TYPES = [
 ];
 
 // ============================================================
+// 系统自产 trigger_source 白名单
+// escalation 的批量 pause/cancel 动作只准碰这里列出的来源。
+// manual/user*/owner_input/chat_mouth/test 等用户或人工来源天然被排除，
+// 不需要单独维护黑名单——新增来源默认视为"不可动"，比默认视为"可动"更安全。
+// 见 Issue 9db1da44：白名单缺失导致用户注册任务被静默取消。
+// ============================================================
+
+export const SYSTEM_AUTO_TRIGGER_SOURCES = [
+  'brain_auto', 'auto',
+  'content_pipeline_orchestrator', 'content_pipeline_api',
+  'execution_callback_harness', 'execution_callback_harness_serial',
+  'self_drive', 'cortex', 'auto_fix', 'recurring', 'api',
+  'harness_task_dispatch', 'harness_watcher', 'harness_deploy_watch',
+  'brain_cron_smoke_alert', 'brain_cron_daily_smoke',
+  'rca', 'active_goals_zero', 'accumulation_trigger',
+];
+
+// ============================================================
 // 升级状态管理
 // ============================================================
 
@@ -337,12 +355,20 @@ async function pauseLowPriorityTasks(priorities) {
     // harness_* 系列：harness v2 DAG 的 Initiative / Planner / Contract /
     // Generator / Evaluator 等阶段任务（upsertTaskPlan 默认创建为 P0，
     // 但此处做 task_type 层双保险，避免未来误改回 P2 再次踩坑）。
+    //
+    // trigger_source = ANY($3)：只准碰系统自产任务（见 SYSTEM_AUTO_TRIGGER_SOURCES 注释），
+    // 用户/人工注册的任务（manual/user*/owner_input 等）天然不在白名单内，不会被 pause。
     const result = await client.query(`
       UPDATE tasks
       SET status = 'paused',
+          error_message = $3,
+          status_history = status_history || jsonb_build_array(
+            jsonb_build_object('from', status, 'to', 'paused', 'changed_at', NOW(), 'source', $3)
+          ),
           updated_at = NOW()
       WHERE status IN ('queued', 'pending')
         AND priority = ANY($1)
+        AND trigger_source = ANY($2)
         AND task_type NOT IN (
           'sprint_planner', 'sprint_contract_propose', 'sprint_contract_review',
           'sprint_generate', 'sprint_evaluate', 'sprint_fix', 'arch_review',
@@ -354,7 +380,7 @@ async function pauseLowPriorityTasks(priorities) {
           'harness_ci_watch', 'harness_deploy_watch', 'harness_report'
         )
       RETURNING id
-    `, [priorities]);
+    `, [priorities, SYSTEM_AUTO_TRIGGER_SOURCES, 'escalation_graceful_degrade']);
 
     console.log(`[Escalation] Paused ${result.rowCount} low priority tasks`);
     return result.rowCount;
@@ -372,12 +398,22 @@ async function stopDispatch() {
 async function cancelPendingTasks(keepCritical) {
   const client = await pool.connect();
   try {
+    // 2026-07-09 修复(Issue 9db1da44)：不再 SET status = 'canceled'（终态，
+    // 一旦误伤无法恢复），改为可逆的 'paused'，并加 trigger_source 白名单
+    // 过滤（只碰系统自产任务）+ error_message/status_history 留痕。
+    // jsonb_build_object 里的 'status' 引用的是 UPDATE 前的旧值（Postgres
+    // SET 子句求值语义），天然拿到正确的 from。
     let query = `
       UPDATE tasks
-      SET status = 'canceled',
+      SET status = 'paused',
+          error_message = $3,
+          status_history = status_history || jsonb_build_array(
+            jsonb_build_object('from', status, 'to', 'paused', 'changed_at', NOW(), 'source', $3)
+          ),
           updated_at = NOW()
       WHERE status IN ('queued', 'pending')
         AND NOT (task_type = ANY($1))
+        AND trigger_source = ANY($2)
     `;
 
     if (keepCritical) {
@@ -386,8 +422,8 @@ async function cancelPendingTasks(keepCritical) {
 
     query += ` RETURNING id`;
 
-    const result = await client.query(query, [CANCEL_EXEMPT_TYPES]);
-    console.log(`[Escalation] Canceled ${result.rowCount} pending tasks`);
+    const result = await client.query(query, [CANCEL_EXEMPT_TYPES, SYSTEM_AUTO_TRIGGER_SOURCES, 'escalation_emergency_brake']);
+    console.log(`[Escalation] Paused (was: canceled) ${result.rowCount} pending tasks`);
     return result.rowCount;
   } finally {
     client.release();

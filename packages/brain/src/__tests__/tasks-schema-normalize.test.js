@@ -59,6 +59,9 @@ function mockReqRes(body) {
 describe('POST /tasks schema normalize (C2)', () => {
   beforeEach(() => {
     mockQuery.mockReset();
+    // C3 去重护栏（issue 655691d2）：POST /tasks 现在先跑一次去重 SELECT 再 INSERT。
+    // 第一次调用（去重查询）返回空结果（无命中），后续调用（INSERT）沿用原有 mock。
+    mockQuery.mockResolvedValueOnce({ rows: [] });
     mockQuery.mockResolvedValue({
       rows: [{
         id: 'test-uuid', title: 'Test', status: 'queued', task_type: 'dev',
@@ -78,7 +81,7 @@ describe('POST /tasks schema normalize (C2)', () => {
       await postHandler(req, res);
       expect(res._status).toBe(201);
       // description is param index 1 (title=0, description=1)
-      const params = mockQuery.mock.calls[0][1];
+      const params = mockQuery.mock.calls[1][1];
       expect(params[1]).toBe('PRD from payload field');
     });
 
@@ -90,14 +93,14 @@ describe('POST /tasks schema normalize (C2)', () => {
       });
       await postHandler(req, res);
       expect(res._status).toBe(201);
-      expect(mockQuery.mock.calls[0][1][1]).toBe('Original');
+      expect(mockQuery.mock.calls[1][1][1]).toBe('Original');
     });
 
     it('leaves description null when both are absent', async () => {
       const { req, res } = mockReqRes({ title: 'Test' });
       await postHandler(req, res);
       expect(res._status).toBe(201);
-      expect(mockQuery.mock.calls[0][1][1]).toBeNull();
+      expect(mockQuery.mock.calls[1][1][1]).toBeNull();
     });
   });
 
@@ -106,32 +109,36 @@ describe('POST /tasks schema normalize (C2)', () => {
       const { req, res } = mockReqRes({ title: 'Test', priority: 'normal' });
       await postHandler(req, res);
       expect(res._status).toBe(201);
-      expect(mockQuery.mock.calls[0][1][2]).toBe('P2');
+      expect(mockQuery.mock.calls[1][1][2]).toBe('P2');
     });
 
     it('normalizes "high" to P1', async () => {
       const { req, res } = mockReqRes({ title: 'Test', priority: 'high' });
       await postHandler(req, res);
       expect(res._status).toBe(201);
-      expect(mockQuery.mock.calls[0][1][2]).toBe('P1');
+      expect(mockQuery.mock.calls[1][1][2]).toBe('P1');
     });
 
     it('normalizes "urgent" to P0', async () => {
       const { req, res } = mockReqRes({ title: 'Test', priority: 'urgent' });
       await postHandler(req, res);
       expect(res._status).toBe(201);
-      expect(mockQuery.mock.calls[0][1][2]).toBe('P0');
+      expect(mockQuery.mock.calls[1][1][2]).toBe('P0');
     });
 
     it('normalizes "Critical" to P0 (case-insensitive)', async () => {
       const { req, res } = mockReqRes({ title: 'Test', priority: 'Critical' });
       await postHandler(req, res);
       expect(res._status).toBe(201);
-      expect(mockQuery.mock.calls[0][1][2]).toBe('P0');
+      expect(mockQuery.mock.calls[1][1][2]).toBe('P0');
     });
 
     it('passes P0/P1/P2 through unchanged', async () => {
       for (const p of ['P0', 'P1', 'P2']) {
+        // 每轮 reset 干净重来：beforeEach 的默认队列在循环里会累积错位，
+        // 显式给每轮准备「去重miss + insert」两个 once 值，一一对应本轮的两次 query 调用。
+        mockQuery.mockReset();
+        mockQuery.mockResolvedValueOnce({ rows: [] }); // dedup: 无命中
         mockQuery.mockResolvedValueOnce({
           rows: [{ id: 'x', title: 'T', status: 'queued', task_type: 'dev', priority: p, project_id: null, area_id: null, goal_id: null, okr_initiative_id: null, created_at: '2026' }],
         });

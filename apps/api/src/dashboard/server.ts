@@ -256,6 +256,12 @@ app.use(express.static(frontendPath, {
   etag: true,
 }));
 
+// 蓝绿护栏健康检查端点 — staging-e2e-runner.js 检查 :5201/health 用。
+// 必须在 SPA fallback 前注册，否则被 app.get('*') 截获返回 HTML → 护栏误判。
+app.get('/health', (_req, res) => {
+  res.json({ status: 'ok', service: 'zenithjoy-api', sha: process.env.COMMIT_SHA || 'unknown' });
+});
+
 // SPA fallback — no cache for index.html
 app.get('*', (_req, res) => {
   res.setHeader('Cache-Control', 'no-cache');

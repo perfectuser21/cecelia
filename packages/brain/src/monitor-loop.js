@@ -114,6 +114,8 @@ async function detectFailureSpike() {
 }
 
 export { detectFailureSpike };
+// handleStuckRun 导出供 monitor-stuck-terminal.test.js 直接调（issue 219a9efc 终态调和回归）
+export { handleStuckRun };
 
 /**
  * Detector: Resource Pressure
@@ -159,18 +161,39 @@ async function detectResourcePressure() {
 async function handleStuckRun(stuck) {
   const minutesStuck = parseFloat(stuck.minutes_since_heartbeat) || 0;
   console.log(`[Monitor] Stuck detected: task=${stuck.task_id}, run=${stuck.run_id}, stuck_for=${minutesStuck.toFixed(1)}min`);
-  
-  // Get task retry count
+
+  // Get task retry count + status
   const taskQuery = await pool.query(
-    'SELECT retry_count FROM tasks WHERE id = $1',
+    'SELECT retry_count, status FROM tasks WHERE id = $1',
     [stuck.task_id]
   );
-  
+
   if (taskQuery.rows.length === 0) {
     console.log(`[Monitor] Task ${stuck.task_id} not found, skipping`);
     return;
   }
-  
+
+  // 终态调和（issue 219a9efc）：任务已终态但 run_events 没关（callback 路径漏关）
+  // → 只关闭 stale run，绝不 requeue。completed 任务被打回 queued 会造成
+  // completed↔queued 振荡 + 同任务重复执行。
+  const taskStatus = taskQuery.rows[0].status;
+  if (['completed', 'cancelled', 'failed'].includes(taskStatus)) {
+    console.log(
+      `[Monitor] Task ${stuck.task_id} already terminal (${taskStatus}), ` +
+      `closing stale run ${stuck.run_id} as reconciled instead of restarting`
+    );
+    await pool.query(
+      `UPDATE run_events
+       SET status = $2,
+           ts_end = NOW(),
+           reason_code = 'MONITOR_STALE_RUN_RECONCILED',
+           reason_kind = 'RECONCILED'
+       WHERE run_id = $1 AND status = 'running'`,
+      [stuck.run_id, taskStatus === 'completed' ? 'completed' : 'failed']
+    );
+    return;
+  }
+
   const retryCount = taskQuery.rows[0].retry_count || 0;
 
   // harness 链式任务感知：检查是否已有下游任务
@@ -285,7 +308,8 @@ async function handleStuckRun(stuck) {
              ELSE priority
            END,
            retry_count = retry_count + 1
-       WHERE id = $1`,
+       WHERE id = $1
+         AND status NOT IN ('completed', 'cancelled')`,
       [stuck.task_id]
     );
     

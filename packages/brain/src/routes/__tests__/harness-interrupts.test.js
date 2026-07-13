@@ -1,8 +1,12 @@
 /**
  * routes/harness-interrupts.test.js — exact-name pairing stub for lint-test-pairing
  *
- * 真实集成测试在 tests/integration/harness-interrupt-resume.test.ts。
  * 此文件做模块结构断言（路由方法 + 路径注册），不接 DB / 真 LangGraph。
+ *
+ * 注（刀4阶段3 Task 3，2026-07-09）：原"使用 LangGraph Command 类型（Command resume）"
+ * 用例已删除——该断言测的是 resume 用 harness-initiative.graph.js 重新 stream 的死代码，
+ * interrupt_pending 事件只由该死图写入，orchestrator 硬校验落地后不再产生，resume 分支
+ * 物理不可达，已随之物理删除（不再 import @langchain/langgraph 的 Command）。
  */
 import { describe, it, expect, vi } from 'vitest';
 
@@ -24,12 +28,5 @@ describe('routes/harness-interrupts (W5)', () => {
     const paths = stack.map((l) => l.route?.path).filter(Boolean);
     expect(paths).toContain('/');
     expect(paths.some((p) => p.includes(':taskId') && p.includes('resume'))).toBe(true);
-  });
-
-  it('使用 LangGraph Command 类型（Command resume）', async () => {
-    const fs = await import('node:fs');
-    const src = fs.readFileSync(new URL('../harness-interrupts.js', import.meta.url), 'utf8');
-    expect(src).toMatch(/Command\s*\(\s*\{\s*resume:/);
-    expect(src).toMatch(/from\s+['"]@langchain\/langgraph['"]/);
   });
 });

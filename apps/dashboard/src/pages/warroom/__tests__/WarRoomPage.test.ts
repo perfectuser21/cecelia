@@ -28,6 +28,8 @@ import {
   stepStatusMeta,
   roadmapRows,
   normalizeLineAreas,
+  groupAdvancementsByAbility,
+  type LineAdvancementItem,
   type FeedArea,
   type FeedTask,
   type FeedStage,
@@ -628,5 +630,40 @@ describe('normalizeLineAreas（Area 分组规整）', () => {
       { areaKey: 'empty', areaName: 'Empty', lines: [] },
     ]);
     expect(out.find((a) => a.areaKey === 'empty')).toBeUndefined();
+  });
+});
+
+describe('groupAdvancementsByAbility', () => {
+  const mk = (
+    ability_id: string,
+    ability_name: string,
+    id: string,
+    status: LineAdvancementItem['status'],
+  ): LineAdvancementItem => ({ id, title: id, status, ability_id, ability_name });
+
+  it('空列表 → 空数组', () => {
+    expect(groupAdvancementsByAbility([])).toEqual([]);
+  });
+
+  it('同 ability 多项聚成一组，跨 ability 分多组，保持后端顺序', () => {
+    // 后端已按 ability_name 排序：能力A 在前、能力B 在后
+    const out = groupAdvancementsByAbility([
+      mk('ab-a', '能力A', 'a1', 'done'),
+      mk('ab-a', '能力A', 'a2', 'todo'),
+      mk('ab-b', '能力B', 'b1', 'doing'),
+    ]);
+    expect(out).toHaveLength(2);
+    expect(out[0].ability_id).toBe('ab-a');
+    expect(out[0].ability_name).toBe('能力A');
+    expect(out[0].items).toHaveLength(2);
+    expect(out[1].ability_id).toBe('ab-b');
+    expect(out[1].items).toHaveLength(1);
+  });
+
+  it('items 只保留投影字段（剥掉 ability_id/ability_name）', () => {
+    const [g] = groupAdvancementsByAbility([mk('ab-a', '能力A', 'a1', 'done')]);
+    expect(g.items[0]).toEqual({ id: 'a1', title: 'a1', status: 'done', priority: undefined, pr_url: undefined });
+    expect(g.items[0]).not.toHaveProperty('ability_id');
+    expect(g.items[0]).not.toHaveProperty('ability_name');
   });
 });

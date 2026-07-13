@@ -19,6 +19,9 @@ import {
   FileText, ExternalLink, Activity, CircleDot, Maximize, Minimize,
   Crosshair, Archive, EyeOff, Map as MapIcon, ChevronRight,
 } from 'lucide-react';
+import { BattleBanner, HandoffStream, DecisionStream, IssuesPanel } from './WarRoomPanels';
+import { AbilityProgress } from './AbilityProgress';
+import type { AdvancementItem } from './advancement-util';
 
 const ARCHIVE_LS_KEY = 'warroom:archived:v1';
 // 时间范围选项 → 后端 ?days=
@@ -171,6 +174,34 @@ export interface LineDetail {
   };
   steps: LineStep[];
   tasks: FeedTask[];
+}
+
+/** /warroom/line/:id/advancements 返回的扁平推进项（带 ability_id/ability_name） */
+export interface LineAdvancementItem extends AdvancementItem {
+  ability_id: string;
+  ability_name: string;
+}
+/** 按 ability 分组后的推进项（喂给 AbilityProgress 逐个渲染） */
+export interface AbilityAdvancementGroup {
+  ability_id: string;
+  ability_name: string;
+  items: AdvancementItem[];
+}
+
+/** 把扁平推进项按 ability_id 分组，保持后端返回顺序（已按 ability_name + priority 排序）。 */
+export function groupAdvancementsByAbility(items: LineAdvancementItem[]): AbilityAdvancementGroup[] {
+  const order: string[] = [];
+  const byId = new Map<string, AbilityAdvancementGroup>();
+  for (const it of items) {
+    let g = byId.get(it.ability_id);
+    if (!g) {
+      g = { ability_id: it.ability_id, ability_name: it.ability_name, items: [] };
+      byId.set(it.ability_id, g);
+      order.push(it.ability_id);
+    }
+    g.items.push({ id: it.id, title: it.title, status: it.status, priority: it.priority, pr_url: it.pr_url });
+  }
+  return order.map((k) => byId.get(k)!);
 }
 
 // ====================== 纯展示函数（单测覆盖）======================
@@ -886,29 +917,38 @@ function DetailPanel({ task, onOpen }: { task: FeedTask | null; onOpen: (t: Feed
 
 // ====================== Line 视图子组件（PR-B）======================
 
-/** 左栏单条 Line：名称 + roadmap 进度(done/total) + running 数（在跑高亮） */
-function LineNavItem({ line, active, onSelect }: {
+/** 左栏单条 Line：名称 + roadmap 进度(done/total) + running 数（在跑高亮） + 下钻入口 */
+function LineNavItem({ line, active, onSelect, onDrillDown }: {
   line: LineSummary; active: boolean; onSelect: (l: LineSummary) => void;
+  onDrillDown: (l: LineSummary) => void;
 }) {
   const prog = lineProgress(line);
   const running = Number(line.running) || 0;
   const hot = running > 0;
   return (
-    <button
-      onClick={() => onSelect(line)}
-      className={`w-full flex flex-col gap-1 px-2 py-1.5 rounded text-[12px] transition-colors ${
-        active ? 'bg-blue-500/15 text-blue-200' : 'hover:bg-slate-400/5 text-slate-400'
-      }`}
-    >
-      <div className="flex items-center gap-1.5 w-full">
+    <div className={`group relative w-full flex flex-col gap-1 px-2 py-1.5 rounded text-[12px] transition-colors ${
+      active ? 'bg-blue-500/15 text-blue-200' : 'hover:bg-slate-400/5 text-slate-400'
+    }`}>
+      <button
+        onClick={() => onSelect(line)}
+        className="flex items-center gap-1.5 w-full text-left"
+      >
         <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${hot ? 'bg-blue-400 wr-pulse' : 'bg-slate-600/50'}`} />
-        <span className={`truncate ${active ? 'font-semibold' : ''}`}>{line.name}</span>
+        <span className={`truncate flex-1 ${active ? 'font-semibold' : ''}`}>{line.name}</span>
         {hot && (
-          <span className="ml-auto flex-shrink-0 text-[11px] font-mono px-1 rounded bg-blue-500/15 text-blue-300 border border-blue-500/25">
+          <span className="flex-shrink-0 text-[11px] font-mono px-1 rounded bg-blue-500/15 text-blue-300 border border-blue-500/25">
             {running} 跑
           </span>
         )}
-      </div>
+      </button>
+      {/* 下钻入口：hover 时出现 → 指挥页 */}
+      <button
+        onClick={(e) => { e.stopPropagation(); onDrillDown(line); }}
+        className="absolute right-1 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 transition-opacity p-1 rounded hover:bg-slate-600/40 text-slate-500 hover:text-slate-200"
+        title="打开指挥页"
+      >
+        <ChevronRight className="w-3 h-3" />
+      </button>
       {prog.total > 0 && (
         <div className="flex items-center gap-1.5 w-full pl-3">
           <div className="h-[3px] flex-1 rounded-full bg-slate-800 overflow-hidden">
@@ -917,13 +957,14 @@ function LineNavItem({ line, active, onSelect }: {
           <span className="text-[11px] text-slate-600 font-mono flex-shrink-0">{prog.done}/{prog.total}</span>
         </div>
       )}
-    </button>
+    </div>
   );
 }
 
 /** 中栏 Line 视图：头部 + Roadmap + 正在跑（左右两栏，复用 FeedRow） */
 function LineView({
   detail, loading, selectedId, onSelectTask, onArchive, archivedSet,
+  advancements, advancementsError,
 }: {
   detail: LineDetail | null;
   loading: boolean;
@@ -931,6 +972,8 @@ function LineView({
   onSelectTask: (t: FeedTask) => void;
   onArchive: (id: string) => void;
   archivedSet: Set<string>;
+  advancements: AbilityAdvancementGroup[];
+  advancementsError: boolean;
 }) {
   if (loading && !detail) {
     return (
@@ -1034,6 +1077,28 @@ function LineView({
         )}
       </div>
       </div>
+
+      {/* 推进项（各 ability 完成度进度条 + 三栏） */}
+      <div className="mt-6 rounded-lg border border-slate-800/60 bg-slate-900/20 p-4">
+        <div className="flex items-center gap-2 mb-3">
+          <Activity className="w-4 h-4 text-emerald-400" />
+          <span className="text-[13px] tracking-[0.1em] uppercase text-slate-300 font-bold">推进项 · 完成度</span>
+          {advancements.length > 0 && (
+            <span className="text-[12px] text-slate-600 font-mono">{advancements.length} 个 Ability</span>
+          )}
+        </div>
+        {advancementsError ? (
+          <div className="text-[13px] text-amber-500/80 pl-6 py-2">进度加载失败</div>
+        ) : advancements.length === 0 ? (
+          <div className="text-[13px] text-slate-700 pl-6 py-2">暂无推进项</div>
+        ) : (
+          <div className="rounded border border-slate-800/60 overflow-hidden">
+            {advancements.map((a) => (
+              <AbilityProgress key={a.ability_id} abilityName={a.ability_name} items={a.items} />
+            ))}
+          </div>
+        )}
+      </div>
     </div>
   );
 }
@@ -1091,6 +1156,8 @@ export default function WarRoomPage() {
   const [selectedLineId, setSelectedLineId] = useState<string | null>(null); // null = "全部"（跨线总览）
   const [lineDetail, setLineDetail] = useState<LineDetail | null>(null);
   const [lineDetailLoading, setLineDetailLoading] = useState(false);
+  const [lineAdvancements, setLineAdvancements] = useState<AbilityAdvancementGroup[]>([]);
+  const [lineAdvancementsError, setLineAdvancementsError] = useState(false);
 
   const toggleArchive = useCallback((id: string) => {
     setHidden((prev) => {
@@ -1172,6 +1239,29 @@ export default function WarRoomPage() {
     };
     load();
     const poll = setInterval(() => load(true), 15_000);
+    return () => { alive = false; clearInterval(poll); };
+  }, [selectedLineId]);
+
+  // ── 选中一条 Line → 拉推进项（/warroom/line/:id/advancements）按 ability 分组；选回"全部"清空 ──
+  useEffect(() => {
+    if (!selectedLineId) { setLineAdvancements([]); setLineAdvancementsError(false); return; }
+    let alive = true;
+    const load = async () => {
+      try {
+        const res = await fetch(`/api/brain/warroom/line/${encodeURIComponent(selectedLineId)}/advancements`);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const json: { items?: LineAdvancementItem[] } = await res.json();
+        if (alive) {
+          setLineAdvancements(groupAdvancementsByAbility(Array.isArray(json?.items) ? json.items : []));
+          setLineAdvancementsError(false);
+        }
+      } catch {
+        // 推进项加载失败：置错误标志，中栏显示占位而非白屏
+        if (alive) { setLineAdvancements([]); setLineAdvancementsError(true); }
+      }
+    };
+    load();
+    const poll = setInterval(load, 15_000);
     return () => { alive = false; clearInterval(poll); };
   }, [selectedLineId]);
 
@@ -1326,6 +1416,8 @@ export default function WarRoomPage() {
         </div>
       </div>
 
+      <BattleBanner />
+
       {/* ── 三栏 ── */}
       <div className="flex flex-1 overflow-hidden">
         {/* 左：筛选 + Area 导航 */}
@@ -1424,6 +1516,7 @@ export default function WarRoomPage() {
                       line={l}
                       active={selectedLineId === l.id}
                       onSelect={(line) => selectLine(line.id)}
+                      onDrillDown={(line) => navigate(`/warroom/line/${encodeURIComponent(line.id)}`)}
                     />
                   ))}
                 </div>
@@ -1506,9 +1599,16 @@ export default function WarRoomPage() {
               onSelectTask={setSelected}
               onArchive={toggleArchive}
               archivedSet={hidden}
+              advancements={lineAdvancements}
+              advancementsError={lineAdvancementsError}
             />
           ) : (
             <>
+              <div className="grid grid-cols-1 xl:grid-cols-3 gap-3 px-4 pt-3">
+                <HandoffStream />
+                <DecisionStream />
+                <IssuesPanel />
+              </div>
               {loading && !data && (
                 <div className="flex items-center gap-2 px-4 py-8 text-slate-600 text-sm">
                   <div className="w-4 h-4 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" /> 加载中…

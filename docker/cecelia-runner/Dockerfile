@@ -37,6 +37,7 @@ RUN apt-get update \
        postgresql-client \
        python3 \
        python3-minimal \
+       socat \
   && mkdir -p -m 755 /etc/apt/keyrings \
   && curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
        | tee /etc/apt/keyrings/githubcli-archive-keyring.gpg >/dev/null \
@@ -62,6 +63,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN (curl -fsSL https://claude.ai/install.sh | sh) \
     || npm install -g @anthropic-ai/claude-code \
     || true
+
+# A1: 安装 @openai/codex（executor=codex 路径需要）
+# codex --version 冒烟断言：build 失败时快速暴露（对应 contract-dod.md A1）
+RUN npm i -g @openai/codex && codex --version
 
 # V6 图生成依赖 — 全局装 linux 版 @resvg/resvg-js
 # 用途：content pipeline generate 节点调 ~/claude-output/scripts/gen-v6-person.mjs

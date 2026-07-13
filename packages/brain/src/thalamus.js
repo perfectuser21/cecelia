@@ -844,6 +844,9 @@ function createFallbackDecision(event, reason) {
 // 同 fingerprint ≥ 3 次 → 立即 quarantine+rca，永不 retry
 // ============================================================
 
+// TODO(协议卫生包 follow-up): 本表是 quarantine.js/retry-policy.js 分类表的独立重复实现，与其不一致（5xx/timeout 在这里仍映射 'network'）。
+// 短期接受（丘脑分类只影响 thalamus 决策文案，不进 failure_classification 落库链路）；
+// 迁移方向：删本表改调 quarantine.classifyFailure。
 // 外部依赖故障的内联模式匹配（避免引入循环依赖）
 const _EXT_DEP_PATTERNS = [
   // 网络类

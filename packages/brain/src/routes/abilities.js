@@ -1,11 +1,13 @@
 import express from 'express';
 import pool from '../db.js';
+import { computeProgress } from '../advancement-progress.js';
 
 const router = express.Router();
 
 const ABILITY_KINDS = ['ability', 'feature'];
 const ABILITY_STATUS = ['working', 'broken', 'planned', 'building', 'done', 'deprecated'];
 const DECISION_LEVELS = ['area', 'ability', 'feature', 'step'];
+const ADVANCEMENT_STATUS = ['todo', 'doing', 'done'];
 
 // ---------- abilities (基于 journey_features WHERE kind 筛选) ----------
 
@@ -271,7 +273,7 @@ router.get('/tasks/:id/golden-path-decisions', async (req, res) => {
 
 // GET /api/brain/journeys/:journey_id/golden-paths?status=done
 //   按 line 聚合已验收 ability 的 golden_path（累积 FR）。
-//   桥：golden_path.owner_task_id → tasks.ability_id → journey_features.journey_id。
+//   键：golden_path.feature_id → journey_features（T2 对齐，与 harness-line-context.js 同源）。
 //   按 owner_task_id 分组（ability:run=1:N，按 ability 分组会让不同 task 的 order_no 交错）。
 //   无匹配返回空数组（200，不报错）。
 router.get('/journeys/:journey_id/golden-paths', async (req, res) => {
@@ -284,8 +286,7 @@ router.get('/journeys/:journey_id/golden-paths', async (req, res) => {
       SELECT jf.id AS ability_id, jf.name AS ability_name, jf.status AS ability_status,
              gp.owner_task_id, gp.id, gp.order_no, gp.feature_id, gp.note
       FROM golden_path gp
-      JOIN tasks t ON gp.owner_task_id = t.id
-      JOIN journey_features jf ON t.ability_id = jf.id
+      JOIN journey_features jf ON gp.feature_id = jf.id
       WHERE jf.journey_id = $1`;
     if (status) { params.push(status); sql += ` AND jf.status = $${params.length}`; }
     sql += ` ORDER BY gp.owner_task_id, gp.order_no ASC`;
@@ -337,6 +338,84 @@ router.get('/invariants', async (req, res) => {
     res.json(rows);
   } catch (err) {
     console.error('[abilities] GET /invariants error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ---------- advancement_items (推进项账本) ----------
+
+// GET /api/brain/abilities/:id/advancements — 列表 + 现算进度
+router.get('/abilities/:id/advancements', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const ab = await pool.query(`SELECT id FROM journey_features WHERE id=$1 AND kind='ability'`, [id]);
+    if (ab.rows.length === 0) return res.status(404).json({ error: 'ability not found' });
+    const items = await pool.query(
+      `SELECT * FROM advancement_items WHERE ability_id=$1
+       ORDER BY CASE priority WHEN 'P0' THEN 0 WHEN 'P1' THEN 1 WHEN 'P2' THEN 2 ELSE 3 END, created_at ASC`,
+      [id]
+    );
+    const counts = await pool.query(
+      `SELECT COUNT(*) FILTER (WHERE status='done')  AS done,
+              COUNT(*) FILTER (WHERE status='doing') AS doing,
+              COUNT(*) FILTER (WHERE status='todo')  AS todo
+       FROM advancement_items WHERE ability_id=$1`,
+      [id]
+    );
+    const c = counts.rows[0];
+    const progress = computeProgress({ done: +c.done, doing: +c.doing, todo: +c.todo });
+    res.json({ ability_id: id, items: items.rows, progress });
+  } catch (err) {
+    console.error('[abilities] GET advancements error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/brain/abilities/:id/advancements — 建推进项
+router.post('/abilities/:id/advancements', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { title, priority } = req.body;
+    if (!title) return res.status(400).json({ error: 'title is required' });
+    const ab = await pool.query(`SELECT id FROM journey_features WHERE id=$1 AND kind='ability'`, [id]);
+    if (ab.rows.length === 0) return res.status(404).json({ error: 'ability not found' });
+    const { rows } = await pool.query(
+      `INSERT INTO advancement_items (ability_id, title, priority)
+       VALUES ($1,$2,$3) RETURNING *`,
+      [id, title, priority || 'P1']
+    );
+    res.status(201).json(rows[0]);
+  } catch (err) {
+    console.error('[abilities] POST advancements error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// PATCH /api/brain/advancements/:itemId — 改 status/pr_url/title/priority
+router.patch('/advancements/:itemId', async (req, res) => {
+  try {
+    const { itemId } = req.params;
+    const { status, pr_url, title, priority } = req.body;
+    if (status && !ADVANCEMENT_STATUS.includes(status))
+      return res.status(400).json({ error: `status must be one of: ${ADVANCEMENT_STATUS.join(',')}` });
+    const sets = [];
+    const params = [];
+    if (status !== undefined) {
+      params.push(status); sets.push(`status=$${params.length}`);
+      sets.push(status === 'done' ? `done_at=now()` : `done_at=NULL`);
+    }
+    if (pr_url !== undefined)   { params.push(pr_url);   sets.push(`pr_url=$${params.length}`); }
+    if (title !== undefined)    { params.push(title);    sets.push(`title=$${params.length}`); }
+    if (priority !== undefined) { params.push(priority); sets.push(`priority=$${params.length}`); }
+    if (sets.length === 0) return res.status(400).json({ error: 'no updatable fields' });
+    params.push(itemId);
+    const { rows } = await pool.query(
+      `UPDATE advancement_items SET ${sets.join(', ')} WHERE id=$${params.length} RETURNING *`, params
+    );
+    if (rows.length === 0) return res.status(404).json({ error: 'advancement item not found' });
+    res.json(rows[0]);
+  } catch (err) {
+    console.error('[abilities] PATCH advancement error:', err.message);
     res.status(500).json({ error: err.message });
   }
 });

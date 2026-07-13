@@ -15,6 +15,7 @@ import { join } from 'path';
 import { homedir } from 'os';
 import { randomUUID } from 'crypto';
 import pool from '../db.js';
+import { runJudgeGate } from '../harness-judge.js';
 
 const router = Router();
 
@@ -1337,6 +1338,48 @@ router.get('/stream', async (req, res) => {
  */
 router.get('/stats', async (req, res) => {
   try {
+    // ── 战况室数据层（P2）：?by=journey 按 Line 聚合 run 数 / 成功率 / 最近战况 / 卡点 ──
+    // 数据卫生：INNER JOIN journeys 天然排除无 journey 孤儿 run；再显式过滤 smoke-* 测试任务。
+    if (req.query.by === 'journey') {
+      let days = parseInt(req.query.days, 10);
+      if (!Number.isInteger(days) || days < 1 || days > 365) days = 30;
+      const { rows } = await pool.query(`
+        SELECT j.id   AS journey_id,
+               j.name AS journey_name,
+               COUNT(*)                                     AS runs,
+               COUNT(*) FILTER (WHERE ir.phase = 'done')    AS done,
+               COUNT(*) FILTER (WHERE ir.phase = 'failed')  AS failed,
+               MAX(ir.created_at)                           AS last_run_at,
+               (ARRAY_AGG(ir.failure_reason ORDER BY ir.created_at DESC)
+                  FILTER (WHERE ir.failure_reason IS NOT NULL))[1] AS last_failure
+        FROM initiative_runs ir
+        JOIN journeys j ON j.id = ir.journey_id
+        LEFT JOIN tasks t ON t.id = ir.initiative_id
+        WHERE ir.created_at >= NOW() - make_interval(days => $1)
+          AND ir.journey_id IS NOT NULL                    -- 排除无 journey 孤儿 run
+          AND (t.title IS NULL OR t.title NOT ILIKE 'smoke-%')  -- 过滤 smoke-* 测试任务
+        GROUP BY j.id, j.name
+        ORDER BY runs DESC, last_run_at DESC NULLS LAST
+      `, [days]);
+      const journeys = rows.map((r) => {
+        const done = parseInt(r.done, 10) || 0;
+        const failed = parseInt(r.failed, 10) || 0;
+        const terminal = done + failed;
+        return {
+          journey_id: r.journey_id,
+          journey_name: r.journey_name,
+          runs: parseInt(r.runs, 10) || 0,
+          done,
+          failed,
+          // 成功率 = done/(done+failed)（只算终态 run，进行中不计入分母）
+          success_rate: terminal > 0 ? Math.round((done / terminal) * 100) / 100 : 0,
+          last_run_at: r.last_run_at,
+          last_failure: r.last_failure || null,
+        };
+      });
+      return res.json({ by: 'journey', period_days: days, journeys });
+    }
+
     // 最近 30 天 pipeline 总数
     // 注：harness_planner 已退役（PR retire-harness-planner），改用 harness_initiative 作为 pipeline 主轴
     const { rows: totalRows } = await pool.query(`
@@ -1800,6 +1843,102 @@ router.post('/promote/:resultId', async (req, res) => {
     return res.status(500).json({ error: err.message });
   } finally {
     client.release();
+  }
+});
+
+/**
+ * POST /api/brain/harness/judge — judge 环 API 化（跨 repo 刀2）。
+ * 语义镜像 scripts/harness-judge-cli.mjs main()（该 CLI 保留兼容）：
+ * 三必填校验 → verdict 回退读 .brain-result.json → FIXED 归一 PASS → runJudgeGate 透传。
+ * HTTP 恒 200 承载裁决（等价 CLI exit 0/2 由调用方按 body.verdict 分支）。
+ */
+router.post('/judge', async (req, res) => {
+  const { task_id, sprint_dir, worktree, agent_verdict, agent_feedback, prompt_dir, transcript_file } = req.body || {};
+  if (!task_id || !sprint_dir || !worktree) {
+    return res.status(400).json({ error: 'task_id/sprint_dir/worktree 必填' });
+  }
+  if (typeof worktree !== 'string' || !worktree.startsWith('/')) {
+    return res.status(400).json({ error: 'worktree 必须是绝对路径' });
+  }
+  try { await access(worktree); } catch {
+    return res.status(400).json({ error: 'worktree 目录不存在' });
+  }
+
+  let verdict = agent_verdict;
+  let feedback = agent_feedback;
+  if (!verdict) {
+    try {
+      const br = JSON.parse(await readFile(join(worktree, '.brain-result.json'), 'utf8'));
+      verdict = br.verdict;
+      if (feedback === undefined) feedback = br.feedback;
+    } catch { /* 下方统一 400 */ }
+  }
+  if (!verdict) {
+    return res.status(400).json({ error: 'agent_verdict 缺失且 .brain-result.json 不可读' });
+  }
+  if (verdict === 'FIXED') verdict = 'PASS'; // 前科语义归一（memory: harness-evaluator-verdict-bug）
+
+  let transcript;
+  if (transcript_file) {
+    try { transcript = await readFile(transcript_file, 'utf8'); } catch { /* 读失败不阻塞，与 CLI 一致 */ }
+  }
+
+  try {
+    const result = await runJudgeGate({
+      agentVerdict: verdict,
+      agentFeedback: feedback,
+      worktreePath: worktree,
+      sprintDir: sprint_dir,
+      taskId: task_id,
+      promptDir: prompt_dir,
+      transcript,
+      instanceLabel: `judge-api-${String(task_id).slice(0, 8)}`,
+    });
+    return res.json(result);
+  } catch (err) {
+    console.error('[POST /harness/judge]', err.message);
+    return res.status(500).json({ error: 'internal error' });
+  }
+});
+
+/**
+ * POST /staging-e2e — staging_e2e 派生端点（刀4 重构阶段1，决策 76ab76ea）。
+ * 背景：原派生源 mergePrNode._spawnStagingE2eTask 属 LangGraph 图，skill-relay 迁移后图不跑
+ * → staging→production 放行层悬空。本端点把派生迁到图外，供 controller merge 成功后调用；
+ * 删图（阶段3）后成为唯一生产者。幂等：按 payload->>'pr_url' WHERE NOT EXISTS 去重（复刻原逻辑）。
+ */
+router.post('/staging-e2e', async (req, res) => {
+  const { pr_url, pr_branch, sub_task_id, initiative_id, journey_id, base_repo, project_id } = req.body || {};
+  if (!pr_url) return res.status(400).json({ error: 'pr_url 必填' });
+  const payload = {
+    pr_url,
+    pr_branch: pr_branch || '',
+    sub_task_id: sub_task_id || '',
+    initiative_id: initiative_id || '',
+    journey_id: journey_id || '',
+    base_repo: base_repo || '',
+    project_id: project_id || '',
+  };
+  try {
+    const r = await pool.query(
+      `INSERT INTO tasks (title, description, task_type, status, priority, payload)
+       SELECT $1, $2, 'staging_e2e', 'queued', 'P2', $3::jsonb
+       WHERE NOT EXISTS (
+         SELECT 1 FROM tasks WHERE task_type = 'staging_e2e' AND payload->>'pr_url' = $4
+       )`,
+      [
+        `[Staging E2E] ${pr_branch || pr_url}`,
+        `Auto-spawned by controller relay (post-merge): deploy :5222 + contract E2E for ${pr_url}`,
+        JSON.stringify(payload),
+        pr_url,
+      ]
+    );
+    const created = r.rowCount > 0;
+    if (created) console.log(`[staging-e2e endpoint] spawned staging_e2e task for pr=${pr_url}`);
+    return res.json(created ? { created: true } : { created: false, reason: 'already_exists' });
+  } catch (err) {
+    console.error('[POST /harness/staging-e2e]', err.message);
+    return res.status(500).json({ error: 'internal error' });
   }
 });
 

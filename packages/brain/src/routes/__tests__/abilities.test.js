@@ -77,9 +77,9 @@ describe('abilities routes', () => {
     it('按 owner_task_id 分组聚合，附 ability 元数据，组内按 order_no 排序', async () => {
       mockQuery.mockResolvedValueOnce({
         rows: [
-          { ability_id: 'ab1', ability_name: '发抖音视频', ability_status: 'done', owner_task_id: 't1', id: 'g1', order_no: 1, feature_id: 'f1', note: 'step1' },
-          { ability_id: 'ab1', ability_name: '发抖音视频', ability_status: 'done', owner_task_id: 't1', id: 'g2', order_no: 2, feature_id: 'f2', note: 'step2' },
-          { ability_id: 'ab2', ability_name: '快手发布', ability_status: 'done', owner_task_id: 't2', id: 'g3', order_no: 1, feature_id: 'f3', note: 'other' },
+          { ability_id: 'ab1', ability_name: '发抖音视频', ability_status: 'done', owner_task_id: 't1', id: 'g1', order_no: 1, feature_id: 'ab1', note: 'step1' },
+          { ability_id: 'ab1', ability_name: '发抖音视频', ability_status: 'done', owner_task_id: 't1', id: 'g2', order_no: 2, feature_id: 'ab1', note: 'step2' },
+          { ability_id: 'ab2', ability_name: '快手发布', ability_status: 'done', owner_task_id: 't2', id: 'g3', order_no: 1, feature_id: 'ab2', note: 'other' },
         ],
       });
       const res = await (await req())(await makeApp()).get('/api/brain/journeys/bb8cc561-b3ee-4fec-b74d-2255694bd963/golden-paths');
@@ -90,10 +90,11 @@ describe('abilities routes', () => {
       expect(t1.ability_name).toBe('发抖音视频');
       expect(t1.ability_status).toBe('done');
       expect(t1.steps.map((s) => s.order_no)).toEqual([1, 2]);
-      expect(t1.steps[0]).toEqual({ id: 'g1', order_no: 1, feature_id: 'f1', note: 'step1' });
-      // SQL 走三表桥：golden_path → tasks(ability_id) → journey_features(journey_id)
+      expect(t1.steps[0]).toEqual({ id: 'g1', order_no: 1, feature_id: 'ab1', note: 'step1' });
+      // SQL 走 feature_id 直连：golden_path.feature_id → journey_features（T2 对齐，不再绕 tasks.ability_id）
       const sql = mockQuery.mock.calls[0][0];
-      expect(sql).toMatch(/JOIN\s+tasks/i);
+      expect(sql).toContain('JOIN journey_features jf ON gp.feature_id = jf.id');
+      expect(sql).not.toMatch(/JOIN\s+tasks/i);
       expect(sql).toMatch(/JOIN\s+journey_features/i);
       expect(sql).toMatch(/journey_id/);
     });

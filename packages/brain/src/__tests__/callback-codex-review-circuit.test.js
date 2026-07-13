@@ -1,9 +1,9 @@
 /**
- * codex-review callback 不应触发 cecelia-run 熔断器
+ * review 类任务 callback 不应触发 cecelia-run 熔断器
  *
- * 根因：triggerCodexReview 在 Docker 里找不到 codex binary（ENOENT），
- * 发回 coding_type='codex-review' 的失败 callback，但原代码无条件调用
- * cbFailure('cecelia-run')，导致 8 次后熔断，阻塞所有 dev 任务派发。
+ * 根因：arch_review / code_review / initiative_review 等走本机 Codex CLI（非 cecelia-run），
+ * 失败时无条件调用 cbFailure('cecelia-run')，污染熔断器，反复 OPEN 致 brain degraded。
+ * 修复：callback-processor.js 加 REVIEW_TASK_TYPES 豁免（SSOT: lib/review-task-types.js）。
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
@@ -27,22 +27,20 @@ vi.mock('../dev-failure-classifier.js', () => ({ classifyDevFailure: vi.fn() }))
 
 import * as circuitBreaker from '../circuit-breaker.js';
 
-const mockClient = {
-  query: vi.fn().mockResolvedValue({ rows: [], rowCount: 0 }),
-  release: vi.fn(),
-};
+function makePool(task_type) {
+  const mockClient = {
+    query: vi.fn().mockResolvedValue({ rows: [], rowCount: 0 }),
+    release: vi.fn(),
+  };
+  return {
+    query: vi.fn().mockResolvedValue({ rows: [{ task_type, payload: {} }], rowCount: 1 }),
+    connect: vi.fn().mockResolvedValue(mockClient),
+  };
+}
 
-const mockPool = {
-  query: vi.fn().mockResolvedValue({ rows: [{ task_type: 'arch_review', payload: {} }], rowCount: 1 }),
-  connect: vi.fn().mockResolvedValue(mockClient),
-};
-
-describe('codex-review callback 熔断隔离', () => {
+describe('review 类任务 callback 熔断隔离', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mockClient.query.mockResolvedValue({ rows: [], rowCount: 0 });
-    mockPool.query.mockResolvedValue({ rows: [{ task_type: 'arch_review', payload: {} }], rowCount: 1 });
-    mockPool.connect.mockResolvedValue(mockClient);
   });
 
   it('coding_type=codex-review 失败不调用 cbFailure(cecelia-run)', async () => {
@@ -54,14 +52,52 @@ describe('codex-review callback 熔断隔离', () => {
       status: 'AI Failed',
       result: { verdict: 'FAIL', summary: 'codex binary not found: spawn /opt/homebrew/bin/codex ENOENT' },
       coding_type: 'codex-review',
-    }, mockPool).catch(() => {});
+    }, makePool('arch_review')).catch(() => {});
 
     expect(circuitBreaker.recordFailure).not.toHaveBeenCalledWith('cecelia-run');
-    // codex-review 失败也不应记录 cecelia-run 成功
     expect(circuitBreaker.recordSuccess).not.toHaveBeenCalledWith('cecelia-run');
   });
 
-  it('coding_type 未设置（普通 dev 任务）正常调用 cbFailure(cecelia-run)', async () => {
+  it('task_type=arch_review 失败不调用 cbFailure(cecelia-run)', async () => {
+    const { processExecutionCallback } = await import('../callback-processor.js');
+
+    await processExecutionCallback({
+      task_id: 'aaaaaaaa-0000-0000-0000-000000000003',
+      run_id: 'run-003',
+      status: 'AI Failed',
+      result: { error: 'arch_review codex CLI error' },
+    }, makePool('arch_review')).catch(() => {});
+
+    expect(circuitBreaker.recordFailure).not.toHaveBeenCalledWith('cecelia-run');
+  });
+
+  it('task_type=code_review 失败不调用 cbFailure(cecelia-run)', async () => {
+    const { processExecutionCallback } = await import('../callback-processor.js');
+
+    await processExecutionCallback({
+      task_id: 'aaaaaaaa-0000-0000-0000-000000000004',
+      run_id: 'run-004',
+      status: 'AI Failed',
+      result: { error: 'code_review failed' },
+    }, makePool('code_review')).catch(() => {});
+
+    expect(circuitBreaker.recordFailure).not.toHaveBeenCalledWith('cecelia-run');
+  });
+
+  it('task_type=initiative_review 失败不调用 cbFailure(cecelia-run)', async () => {
+    const { processExecutionCallback } = await import('../callback-processor.js');
+
+    await processExecutionCallback({
+      task_id: 'aaaaaaaa-0000-0000-0000-000000000005',
+      run_id: 'run-005',
+      status: 'AI Failed',
+      result: { error: 'initiative_review failed' },
+    }, makePool('initiative_review')).catch(() => {});
+
+    expect(circuitBreaker.recordFailure).not.toHaveBeenCalledWith('cecelia-run');
+  });
+
+  it('task_type=dev（非 review）失败正常调用 cbFailure(cecelia-run)', async () => {
     const { processExecutionCallback } = await import('../callback-processor.js');
 
     await processExecutionCallback({
@@ -69,7 +105,7 @@ describe('codex-review callback 熔断隔离', () => {
       run_id: 'run-002',
       status: 'AI Failed',
       result: { error: 'some dev task error' },
-    }, mockPool).catch(() => {});
+    }, makePool('dev')).catch(() => {});
 
     expect(circuitBreaker.recordFailure).toHaveBeenCalledWith('cecelia-run');
   });

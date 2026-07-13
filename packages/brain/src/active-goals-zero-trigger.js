@@ -13,6 +13,8 @@
  * Cortex Insight: 7670a6c3-0455-4831-b1f8-a487a38071fa
  */
 
+import { fetchAllLineLedgersDigest } from './daily-review-scheduler.js';
+
 const COOLDOWN_HOURS = 24;
 const LEARNING_ID = '7670a6c3-0455-4831-b1f8-a487a38071fa';
 
@@ -23,10 +25,13 @@ const LEARNING_ID = '7670a6c3-0455-4831-b1f8-a487a38071fa';
  * @returns {Promise<{ created: boolean, taskId?: string, reason?: string }>}
  */
 export async function maybeTriggerStrategySession(pool) {
+  // 判定点（2026-07-06 P1-PR2 修复）：什么算"活跃 OKR"——生产 objectives 枚举是
+  // active/archived/cancelled；旧查询只认 in_progress，枚举漂移后有活跃 OKR 也数到 0，
+  // 复活当天 60s 内即误触发 P0 战略会。兼容两种枚举。
   const goalsResult = await pool.query(`
     SELECT COUNT(*) AS cnt
     FROM objectives
-    WHERE status = 'in_progress'
+    WHERE status IN ('active', 'in_progress')
   `);
   const activeGoals = parseInt(goalsResult.rows[0]?.cnt ?? '0', 10);
   if (activeGoals > 0) {
@@ -54,17 +59,20 @@ export async function maybeTriggerStrategySession(pool) {
     return { created: false, reason: 'recent_strategy_session_in_cooldown' };
   }
 
+  const lineContext = await fetchAllLineLedgersDigest(pool).catch(() => '');
+
   const insertResult = await pool.query(`
     INSERT INTO tasks (title, description, status, priority, task_type, payload, trigger_source)
     VALUES ($1, $2, 'queued', 'P0', 'strategy_session', $3, 'active_goals_zero')
     RETURNING id
   `, [
     'active_goals=0 自救：召开战略会议生成新 OKR',
-    'Brain 检测到 active_goals=0（无 in_progress objective），方向性崩溃前置信号触发。请召开战略会议产出新一轮 OKR，恢复系统目标驱动。',
+    'Brain 检测到 active_goals=0（无 active/in_progress objective），方向性崩溃前置信号触发。请召开战略会议产出新一轮 OKR，恢复系统目标驱动。',
     JSON.stringify({
       reason: 'active_goals_zero',
       triggered_by: 'tick-runner',
       learning_id: LEARNING_ID,
+      line_context: lineContext,
     }),
   ]);
 

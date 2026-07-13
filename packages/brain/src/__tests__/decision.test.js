@@ -92,7 +92,9 @@ describe('decision engine', () => {
         .mockResolvedValueOnce({
           rows: [{ id: 'task-1', title: 'Failed Task', goal_id: null }]
         })
-        // 3rd call: INSERT INTO decisions
+        // 3rd call: dedup 前置查询（无前置记录）
+        .mockResolvedValueOnce({ rows: [] })
+        // 4th call: INSERT INTO decisions
         .mockResolvedValueOnce({
           rows: [{ id: 'decision-123' }]
         });
@@ -114,6 +116,7 @@ describe('decision engine', () => {
       pool.query
         .mockResolvedValueOnce({ rows: [] })         // goals
         .mockResolvedValueOnce({ rows: [] })          // failed tasks (filtered by retry_count < 3)
+        .mockResolvedValueOnce({ rows: [] })          // dedup 前置查询
         .mockResolvedValueOnce({                      // INSERT
           rows: [{ id: 'decision-456' }]
         });
@@ -158,6 +161,8 @@ describe('decision engine', () => {
         .mockResolvedValueOnce({
           rows: [{ id: 'failed-task', title: 'Failed B', goal_id: null }]
         })
+        // dedup 前置查询
+        .mockResolvedValueOnce({ rows: [] })
         // INSERT
         .mockResolvedValueOnce({
           rows: [{ id: 'decision-789' }]
@@ -181,14 +186,15 @@ describe('decision engine', () => {
       const insertSpy = pool.query
         .mockResolvedValueOnce({ rows: [] })         // goals
         .mockResolvedValueOnce({ rows: [] })          // failed tasks
+        .mockResolvedValueOnce({ rows: [] })          // dedup 前置查询
         .mockResolvedValueOnce({                      // INSERT
           rows: [{ id: 'decision-ok' }]
         });
 
       await generateDecision({ trigger: 'tick' });
 
-      // The INSERT call is the 3rd one
-      const insertCall = insertSpy.mock.calls[2];
+      // The INSERT call is the 4th one
+      const insertCall = insertSpy.mock.calls[3];
       // 5th param is status
       expect(insertCall[1][4]).toBe('approved');
     });

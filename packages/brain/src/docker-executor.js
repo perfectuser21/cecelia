@@ -397,6 +397,14 @@ export function buildDockerArgs(opts, ctx = {}) {
   if (existsFn(hostSshDir)) {
     extraVolumes.push('-v', `${hostSshDir}:/home/cecelia/.ssh:ro`);
   }
+  // caller 透传的额外挂载（如 codex relay 凭据目录：harness-skill-relay.js 传
+  // opts.extraMounts=[`${CODEX_RELAY_HOME}:/home/cecelia/.codex:rw`]）。
+  // 逐项原样拼进 `-v`，不做路径校验/改写——校验责任在 caller。
+  if (Array.isArray(opts.extraMounts)) {
+    for (const mount of opts.extraMounts) {
+      extraVolumes.push('-v', mount);
+    }
+  }
 
   // 宿主侧取证路径（prompt/cid）含 runInstance 后缀；容器内 stdout 路径也同名。
   // HOST_PROMPT_DIR 是宿主视角路径（docker -v mount 源），DEFAULT_PROMPT_DIR 是容器内挂载目标（/tmp/cecelia-prompts）。
@@ -536,6 +544,16 @@ export async function executeInDocker(opts) {
   logger.logEnd(result);
 
   return result;
+}
+
+/**
+ * 容器视角的 Brain API base URL。
+ * bridge 网络容器内 localhost 指向容器自己（issue 219a9efc：strategist 零落库根因），
+ * 默认必须走 host.docker.internal（spawn 参数已带 --add-host host.docker.internal:host-gateway）。
+ * BRAIN_URL 显式设置时尊重覆盖（远端部署等场景）。
+ */
+export function resolveBrainBaseUrl(env = process.env) {
+  return env.BRAIN_URL || 'http://host.docker.internal:5221';
 }
 
 /**

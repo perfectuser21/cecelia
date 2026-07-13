@@ -6,6 +6,8 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { mergeReportSources } from './report-sources';
+import type { MergedReport } from './report-sources';
 
 interface Report {
   id: string;
@@ -33,6 +35,7 @@ const TYPE_LABELS: Record<string, string> = {
   'daily_report': '日报',
   'weekly_report': '周报',
   'manual': '手动生成',
+  'battle_report': '作战日报',
 };
 
 function formatRelativeTime(dateStr: string): string {
@@ -55,6 +58,7 @@ function formatRelativeTime(dateStr: string): string {
 export default function ReportsListPage() {
   const navigate = useNavigate();
   const [data, setData] = useState<ReportsResponse | null>(null);
+  const [merged, setMerged] = useState<MergedReport[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [generating, setGenerating] = useState(false);
@@ -63,10 +67,17 @@ export default function ReportsListPage() {
   const fetchReports = useCallback(async () => {
     try {
       setError(null);
-      const res = await fetch('/api/brain/reports?limit=20&offset=0');
+      // 系统简报（主源，失败照旧报错）；作战日报（design_docs 源，失败静默当空）
+      const sysPromise = fetch('/api/brain/reports?limit=20&offset=0');
+      const docsPromise = fetch('/api/brain/design-docs?type=battle_report&limit=20')
+        .then((r) => (r.ok ? r.json() : null))
+        .catch(() => null);
+      const res = await sysPromise;
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const json = await res.json();
+      const docsJson = await docsPromise;
       setData(json);
+      setMerged(mergeReportSources(json, docsJson));
     } catch (err) {
       setError(err instanceof Error ? err.message : '加载失败');
     } finally {
@@ -219,7 +230,7 @@ export default function ReportsListPage() {
       )}
 
       {/* 简报列表 */}
-      {data && data.reports.length === 0 && !loading && (
+      {data && merged.length === 0 && !loading && (
         <div style={{
           textAlign: 'center',
           color: '#8b949e',
@@ -236,12 +247,16 @@ export default function ReportsListPage() {
         </div>
       )}
 
-      {data && data.reports.length > 0 && (
+      {data && merged.length > 0 && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-          {data.reports.map((report) => (
+          {merged.map((report) => (
             <div
-              key={report.id}
-              onClick={() => navigate(`/reports/${report.id}`)}
+              key={`${report.source}-${report.id}`}
+              onClick={() => navigate(
+                report.source === 'design_docs'
+                  ? `/reports/${report.id}?source=design_docs`
+                  : `/reports/${report.id}`
+              )}
               style={{
                 padding: '16px 20px',
                 borderRadius: '10px',

@@ -39,6 +39,7 @@ describe('generateDecision — 完整决策生成链路', () => {
     pool.query
       .mockResolvedValueOnce({ rows: [] })                   // goals query: 无目标
       .mockResolvedValueOnce({ rows: [] })                   // failed tasks: 无
+      .mockResolvedValueOnce({ rows: [] })                   // dedup 前置查询: 无前置记录
       .mockResolvedValueOnce({ rows: [{ id: 'dec-001' }] }); // INSERT decision
 
     const result = await generateDecision({ trigger: 'tick' });
@@ -75,6 +76,7 @@ describe('generateDecision — 完整决策生成链路', () => {
       })
       .mockResolvedValueOnce({ rows: [] })                    // pending tasks for reprioritize
       .mockResolvedValueOnce({ rows: [] })                    // failed tasks
+      .mockResolvedValueOnce({ rows: [] })                    // dedup 前置查询: 无前置记录
       .mockResolvedValueOnce({ rows: [{ id: 'dec-002' }] }); // INSERT
 
     const result = await generateDecision({ trigger: 'manual' });
@@ -100,6 +102,7 @@ describe('generateDecision — 完整决策生成链路', () => {
           { id: 'task-fail-2', title: '失败任务B', goal_id: null },
         ]
       })
+      .mockResolvedValueOnce({ rows: [] })                   // dedup 前置查询: 无前置记录
       .mockResolvedValueOnce({ rows: [{ id: 'dec-003' }] }); // INSERT
 
     const result = await generateDecision({ trigger: 'retry_scan' });
@@ -135,6 +138,7 @@ describe('generateDecision — 完整决策生成链路', () => {
       })
       .mockResolvedValueOnce({ rows: [{ id: 'pend-task', title: 'Pending', priority: 'P2' }] }) // pending tasks
       .mockResolvedValueOnce({ rows: [{ id: 'failed-task', title: '失败', goal_id: null }] })   // failed tasks
+      .mockResolvedValueOnce({ rows: [] })                   // dedup 前置查询: 无前置记录
       .mockResolvedValueOnce({ rows: [{ id: 'dec-004' }] });
 
     const result = await generateDecision({ trigger: 'analysis' });
@@ -362,6 +366,7 @@ describe('决策生命周期链路 — 从创建到执行', () => {
     pool.query
       .mockResolvedValueOnce({ rows: [] })                   // goals
       .mockResolvedValueOnce({ rows: [] })                   // failed tasks
+      .mockResolvedValueOnce({ rows: [] })                   // dedup 前置查询: 无前置记录
       .mockResolvedValueOnce({
         rows: [{ id: 'lifecycle-001' }]
       });
@@ -401,6 +406,7 @@ describe('决策生命周期链路 — 从创建到执行', () => {
       })
       .mockResolvedValueOnce({ rows: [] })                    // pending tasks
       .mockResolvedValueOnce({ rows: [] })                    // failed tasks
+      .mockResolvedValueOnce({ rows: [] })                    // dedup 前置查询: 无前置记录
       .mockResolvedValueOnce({ rows: [{ id: 'lifecycle-002' }] });
 
     const result = await generateDecision({ trigger: 'analysis' });

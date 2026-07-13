@@ -256,4 +256,31 @@ describe('task-goals routes', () => {
       expect(res.body.summary.no_initiatives).toBe(1);
     });
   });
+
+  describe('PATCH /goals/:id metadata merge (T6 两轴衔接)', () => {
+    it('带 metadata → SQL 用 COALESCE merge 且参数为 JSON 字符串', async () => {
+      mockPool.query.mockResolvedValueOnce({
+        rows: [{ id: 'kr1', metadata: { target_abilities: ['ab1'] } }],
+      });
+
+      const res = await request(app)
+        .patch('/goals/kr1')
+        .send({ metadata: { target_abilities: ['ab1'] } });
+
+      expect(res.status).toBe(200);
+      const [sql, params] = mockPool.query.mock.calls[0];
+      expect(sql).toContain("metadata = COALESCE(metadata, '{}'::jsonb) ||");
+      expect(params).toContain(JSON.stringify({ target_abilities: ['ab1'] }));
+    });
+
+    it('不带 metadata → SQL 不含 metadata（回归保护）', async () => {
+      mockPool.query.mockResolvedValueOnce({ rows: [{ id: 'kr1', title: 'x' }] });
+
+      const res = await request(app).patch('/goals/kr1').send({ title: 'x' });
+
+      expect(res.status).toBe(200);
+      const [sql] = mockPool.query.mock.calls[0];
+      expect(sql).not.toContain('metadata');
+    });
+  });
 });

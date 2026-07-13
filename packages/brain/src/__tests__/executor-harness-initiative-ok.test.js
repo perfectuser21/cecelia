@@ -23,6 +23,7 @@ import { describe, it, expect } from 'vitest';
 import {
   computeHarnessInitiativeOk,
   computeHarnessInitiativeError,
+  classifyHarnessRelayAction,
 } from '../executor.js';
 
 describe('computeHarnessInitiativeOk', () => {
@@ -155,5 +156,41 @@ describe('computeHarnessInitiativeOk — B48 interrupt detection', () => {
   it('B48: returns false when error set (even with report_path)', () => {
     const errored = { report_path: 'sprints/test/report.json', error: { node: 'planner', message: 'fail' } };
     expect(computeHarnessInitiativeOk(errored)).toBe(false);
+  });
+});
+
+describe('classifyHarnessRelayAction — P1 bug 39b97ade：deferred 结果之前落在最终 else 被误标 failed', () => {
+  it('ok=null → waiting（graph interrupt，留 in_progress）', () => {
+    expect(classifyHarnessRelayAction({ ok: null })).toBe('waiting');
+  });
+
+  it('ok=true + mode=skill-relay → relay_spawned（留 in_progress，等 harness-report 回写）', () => {
+    expect(classifyHarnessRelayAction({ ok: true, mode: 'skill-relay', containerId: 'c1' })).toBe('relay_spawned');
+  });
+
+  it('deferred=true（codex_concurrent_limit）→ deferred，不是 failed', () => {
+    expect(classifyHarnessRelayAction({ ok: false, deferred: true, reason: 'codex_concurrent_limit' })).toBe('deferred');
+  });
+
+  it('deferred=true（live_container_guard，本次新增）→ deferred，不是 failed（回归修复核心）', () => {
+    expect(classifyHarnessRelayAction({ ok: false, mode: 'skill-relay', deferred: true, reason: 'live_container_guard' })).toBe('deferred');
+  });
+
+  it('ok=true 非 skill-relay 模式 → completed', () => {
+    expect(classifyHarnessRelayAction({ ok: true })).toBe('completed');
+  });
+
+  it('雷8（headed 变体·2856dada R4 实证）：ok=true + mode=skill-relay-codex-headed → relay_spawned，不是 completed', () => {
+    expect(
+      classifyHarnessRelayAction({ ok: true, mode: 'skill-relay-codex-headed', tmuxSession: 'codex-relay-abc' })
+    ).toBe('relay_spawned');
+  });
+
+  it('ok=false 且非 deferred → failed', () => {
+    expect(classifyHarnessRelayAction({ ok: false, error: 'boom' })).toBe('failed');
+  });
+
+  it('result 为 undefined → failed（防御，不抛异常）', () => {
+    expect(classifyHarnessRelayAction(undefined)).toBe('failed');
   });
 });
