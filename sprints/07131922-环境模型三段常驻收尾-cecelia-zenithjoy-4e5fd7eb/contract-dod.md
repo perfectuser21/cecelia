@@ -152,13 +152,13 @@ manual:bash grep -in "develop.*环境\|develop environment" /workspace/DEFINITIO
 
 以下全部满足才视为 DoD DONE：
 
-- [ ] BEHAVIOR-01：staging restart=unless-stopped + tick 硬关双保险
-- [ ] BEHAVIOR-02：production 5221 health 全程 HTTP 200
-- [ ] BEHAVIOR-03：dev-deploy.sh 存在，含 pg_dump + /opt/cecelia-backups
-- [ ] BEHAVIOR-04：healthcheck 脚本存在，docker-compose.dev.yml 含 5220 healthcheck
-- [ ] BEHAVIOR-05：Brain deploy/dev 端点存在，有单元测试
-- [ ] BEHAVIOR-06：staging tick 两个环境变量同时存在（grep count = 2）
-- [ ] BEHAVIOR-07：ZJ_DEV_PORT 占位存在，DEFINITION.md 含 develop 章节
+- [x] BEHAVIOR-01：staging restart=unless-stopped + tick 硬关双保险
+- [x] BEHAVIOR-02：production 5221 health 全程 HTTP 200
+- [x] BEHAVIOR-03：dev-deploy.sh 存在，含 pg_dump + /opt/cecelia-backups
+- [x] BEHAVIOR-04：healthcheck 脚本存在，docker-compose.dev.yml 含 5220 healthcheck
+- [x] BEHAVIOR-05：Brain deploy/dev 端点存在，有单元测试
+- [x] BEHAVIOR-06：staging tick 两个环境变量同时存在（grep count = 2）
+- [x] BEHAVIOR-07：ZJ_DEV_PORT 占位存在，DEFINITION.md 含 develop 章节
 
 ---
 
