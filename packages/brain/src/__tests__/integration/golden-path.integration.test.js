@@ -679,6 +679,8 @@ describe('Golden Path E2E — Brain 3 条核心链路（真实 PostgreSQL）', (
       expect(payload.prep_prd_body).toBeTruthy();
       expect(payload.base_repo).toBe('https://github.com/perfectuser21/cecelia.git');
       expect(payload.target_environment).toBe('local_api');
+      // sprint_dir 必须带 gpId 短串后缀防撞（同一分钟内相同/相似标题重试或并发 approve 时不会撞目录）
+      expect(payload.sprint_dir).toContain(gpId.replace(/-/g, '').slice(0, 8));
     });
 
     it('/select 容量闸：非 candidate 状态 → 409 INVALID_TRANSITION', async () => {
