@@ -19,6 +19,14 @@ vi.mock('../events/taskEvents.js', () => ({
   publishCognitiveState: vi.fn(),
 }));
 
+// tick-stats：回归覆盖耗时基准接线（fix：局部时间戳，禁依赖可被 force-release 置 null 的
+// 共享状态 tickState.tickLockTime）。
+const mockRecordTickExecution = vi.fn().mockResolvedValue(undefined);
+vi.mock('../tick-stats.js', () => ({
+  recordTickExecution: (...args) => mockRecordTickExecution(...args),
+  incrementActionsToday: vi.fn().mockResolvedValue(1),
+}));
+
 const mockRunScheduler = vi.fn().mockResolvedValue({ dispatched: true, actions: [], elapsed_ms: 10, guidance_found: false });
 vi.mock('../tick-scheduler.js', () => ({
   runScheduler: (...args) => mockRunScheduler(...args),
@@ -58,6 +66,8 @@ describe('tick-loop', () => {
     resetTickStateForTests();
     mockExecuteTick.mockReset();
     mockRunScheduler.mockReset();
+    mockRecordTickExecution.mockReset();
+    mockRecordTickExecution.mockResolvedValue(undefined);
   });
 
   afterEach(() => {
@@ -145,6 +155,24 @@ describe('tick-loop', () => {
       mockRunScheduler.mockResolvedValueOnce({ dispatched: true, actions_taken: [] });
       await runTickSafe('manual');
       expect(mockRunScheduler).toHaveBeenCalledTimes(1);
+    });
+
+    // 回归（耗时基准边界 bug）：recordTickExecution 必须调一次，且参数是合理的毫秒数
+    // （不能因 tickState.tickLockTime 被异步置 null 而污染成 Date.now() 量级的天文数字）。
+    it('doTick 成功 → recordTickExecution 被调一次，参数为合理耗时（< 60s）', async () => {
+      const tickFn = vi.fn().mockResolvedValue({ actions_taken: ['x'] });
+      await runTickSafe('manual', tickFn);
+      expect(mockRecordTickExecution).toHaveBeenCalledTimes(1);
+      expect(mockRecordTickExecution).toHaveBeenCalledWith(expect.any(Number));
+      const durationArg = mockRecordTickExecution.mock.calls[0][0];
+      expect(durationArg).toBeLessThan(60_000);
+      expect(durationArg).toBeGreaterThanOrEqual(0);
+    });
+
+    it('doTick 抛错 → recordTickExecution 不被调用', async () => {
+      const tickFn = vi.fn().mockRejectedValue(new Error('boom'));
+      await runTickSafe('manual', tickFn);
+      expect(mockRecordTickExecution).not.toHaveBeenCalled();
     });
   });
 

@@ -25,7 +25,7 @@ function makePool({
       calls.push({ sql: sql.trim(), params });
       const s = sql.trim();
 
-      if (s.includes('FROM objectives') && s.includes("status = 'in_progress'")) {
+      if (s.includes('FROM objectives') && s.includes("status IN ('active', 'in_progress')")) {
         return { rows: [{ cnt: String(activeGoals) }] };
       }
 
@@ -125,5 +125,48 @@ describe('maybeTriggerStrategySession', () => {
     const payload = JSON.parse(payloadParam);
     expect(payload.reason).toBe('active_goals_zero');
     expect(payload.learning_id).toBe('7670a6c3-0455-4831-b1f8-a487a38071fa');
+  });
+});
+
+// ─── 回归：objectives 状态枚举漂移（2026-07-06 生产实况误触发，P1-PR2 修复）──────
+// 生产 objectives 表的活跃枚举是 'active'（active/archived/cancelled），不是 'in_progress'。
+// 旧 gate 只查 in_progress → 永远数到 0 → 有活跃 OKR 也误触发 P0 战略会。
+describe('枚举漂移回归（judgment point：什么算活跃 OKR）', () => {
+  it("生产实况：2 条 status='active' 的 objectives 存在时，不得触发战略会", async () => {
+    const pool = {
+      query: vi.fn().mockImplementation(async (sql) => {
+        const s = sql.trim();
+        if (s.includes('FROM objectives')) {
+          // 模拟真实库：只有当查询把 'active' 计入活跃时才能数到 2
+          const countsActiveEnum = s.includes("'active'");
+          return { rows: [{ cnt: countsActiveEnum ? '2' : '0' }] };
+        }
+        if (s.includes('INSERT INTO tasks')) {
+          return { rows: [{ id: 'should-not-happen' }] };
+        }
+        return { rows: [] };
+      }),
+    };
+    const result = await maybeTriggerStrategySession(pool);
+    expect(result).toEqual({ created: false, reason: 'active_goals_present' });
+  });
+});
+
+// ─── line_ledger 上下文注入（Task 9）────────────────────────────────────────
+describe('maybeTriggerStrategySession — payload 携带 line_context', () => {
+  it('active_goals=0 时建任务，payload.line_context 来自 line_ledger digest', async () => {
+    const pool = {
+      query: vi.fn(async (sql) => {
+        if (/FROM objectives/.test(sql)) return { rows: [{ cnt: '0' }] };
+        if (/task_type = 'strategy_session'/.test(sql)) return { rows: [] };
+        if (/FROM design_docs/.test(sql)) return { rows: [{ title: 'Line A — 24h 账本', content: '摘要A' }] };
+        if (/INSERT INTO tasks/.test(sql)) return { rows: [{ id: 'task-1' }] };
+        return { rows: [] };
+      }),
+    };
+    await maybeTriggerStrategySession(pool);
+    const insertCall = pool.query.mock.calls.find((c) => /INSERT INTO tasks/.test(c[0]));
+    const payload = JSON.parse(insertCall[1][2]);
+    expect(payload.line_context).toContain('Line A — 24h 账本');
   });
 });

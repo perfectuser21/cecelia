@@ -9,31 +9,66 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 const { mockPool } = vi.hoisted(() => ({ mockPool: { query: vi.fn() } }));
 vi.mock('../db.js', () => ({ default: mockPool }));
+vi.mock('../notifier.js', () => ({ sendBark: vi.fn().mockResolvedValue(true) }));
 
-import { resumeStalledRelayRuns, MAX_RELAY_ATTEMPTS } from '../harness-relay-watchdog.js';
+import { resumeStalledRelayRuns, MAX_RELAY_ATTEMPTS, scanStuckHarness } from '../harness-relay-watchdog.js';
+import { sendBark } from '../notifier.js';
 
 const TASK_ID = 'aaaabbbb-cccc-dddd-eeee-ffff00001111';
 const SHORT = 'aaaabbbb';
 
-function makeDeps({ taskStatus = 'in_progress', attempts = 2, containerRunning = false, orchestrator = 'skill-relay' } = {}) {
+const PR_URL = 'https://github.com/org/repo/pull/42';
+
+function makeDeps({
+  taskStatus = 'in_progress',
+  attempts = 2,
+  containerRunning = false,
+  orchestrator = 'skill-relay',
+  prUrl = null,
+  prState = null,   // 'MERGED' | 'OPEN' | 'CLOSED' | null（execFn 返回的 gh pr view JSON）
+  orchestratorHost = 'skill-relay-session',
+  evaluatorGate = true, // initiative_run_events 是否存在 node='evaluator' AND status='done'
+} = {}) {
   const pool = { query: vi.fn() };
   pool.query.mockImplementation(async (sql) => {
     if (/DISTINCT ON \(initiative_id\)/.test(sql)) {
-      return { rows: [{ initiative_id: TASK_ID, phase: 'planning', attempts: String(attempts), deadline_at: new Date(Date.now() + 3600e3).toISOString() }] };
+      return { rows: [{ initiative_id: TASK_ID, phase: 'planning', attempts: String(attempts), deadline_at: new Date(Date.now() + 3600e3).toISOString(), pr_url: prUrl, orchestrator_host: orchestratorHost }] };
     }
     if (/FROM tasks/.test(sql)) {
       return { rows: [{ id: TASK_ID, status: taskStatus, title: 't', payload: { orchestrator } }] };
     }
+    if (/FROM initiative_run_events/.test(sql)) {
+      return { rows: evaluatorGate ? [{ x: 1 }] : [] };
+    }
     return { rows: [] };
+  });
+  const execFn = vi.fn().mockImplementation((cmd) => {
+    if (/docker ps/.test(cmd)) return containerRunning ? 'abc123\n' : '';
+    if (/gh pr view/.test(cmd) && prState) return JSON.stringify({ state: prState });
+    return '';
   });
   return {
     pool,
-    execFn: vi.fn().mockReturnValue(containerRunning ? 'abc123\n' : ''),
+    execFn,
     spawnFn: vi.fn().mockResolvedValue({ ok: true, containerId: 'cecelia-relay-x' }),
   };
 }
 
-beforeEach(() => mockPool.query.mockReset());
+beforeEach(() => {
+  mockPool.query.mockReset();
+  sendBark.mockClear();
+});
+
+describe('scanStuckHarness — 逾期收尸 host 覆盖', () => {
+  it('SQL host 过滤覆盖所有 skill-relay host(含 claude-headed/session)，非写死 skill-relay-codex = RED', async () => {
+    const pool = { query: vi.fn().mockResolvedValue({ rows: [] }) };
+    await scanStuckHarness({ pool });
+    const sql = pool.query.mock.calls[0]?.[0] || '';
+    // 当前 WHERE orchestrator_host = 'skill-relay-codex' → claude-headed/session 逾期永不收尸
+    expect(sql).toMatch(/skill-relay%/);                  // 期望 LIKE 'skill-relay%' 覆盖全部 host
+    expect(sql).not.toMatch(/=\s*'skill-relay-codex'/);   // 不应写死单一 codex host
+  });
+});
 
 describe('resumeStalledRelayRuns', () => {
   it('in_progress + 无在跑容器 + attempts < 上限 → 重点火一次', async () => {
@@ -86,6 +121,86 @@ describe('resumeStalledRelayRuns', () => {
     const r = await resumeStalledRelayRuns(deps);
     expect(deps.spawnFn).not.toHaveBeenCalled();
   });
+
+  it('容器消失 + pr_url 存在 + PR MERGED → 标 completed/done，不重点火', async () => {
+    const deps = makeDeps({ prUrl: PR_URL, prState: 'MERGED' });
+    const r = await resumeStalledRelayRuns(deps);
+    expect(deps.spawnFn).not.toHaveBeenCalled();
+    expect(r.resumed).toBe(0);
+    // 必须调用 gh pr view 查状态
+    const ghCall = deps.execFn.mock.calls.find(c => /gh pr view/.test(c[0]));
+    expect(ghCall).toBeTruthy();
+    expect(ghCall[0]).toContain(PR_URL);
+    // task → completed
+    const updates = deps.pool.query.mock.calls.map(c => c[0]);
+    expect(updates.some(s => /UPDATE tasks/.test(s) && /'completed'/.test(s))).toBe(true);
+    // run → done
+    expect(updates.some(s => /UPDATE initiative_runs/.test(s) && /'done'/.test(s))).toBe(true);
+    expect(r.mergedPr).toBe(1);
+  });
+
+  it('容器消失 + pr_url 存在 + PR OPEN → 跳过不重点火（在途 PR 等 CI/merge）', async () => {
+    const deps = makeDeps({ prUrl: PR_URL, prState: 'OPEN' });
+    const r = await resumeStalledRelayRuns(deps);
+    expect(deps.spawnFn).not.toHaveBeenCalled();
+    expect(r.resumed).toBe(0);
+    expect(r.mergedPr).toBe(0);
+  });
+
+  it('容器消失 + pr_url 存在 + gh pr view 抛错 → 保守跳过（不盲目重点火）', async () => {
+    const pool = makeDeps().pool;
+    pool.query.mockImplementation(async (sql) => {
+      if (/DISTINCT ON \(initiative_id\)/.test(sql)) {
+        return { rows: [{ initiative_id: TASK_ID, phase: 'planning', attempts: '2', deadline_at: new Date(Date.now() + 3600e3).toISOString(), pr_url: PR_URL }] };
+      }
+      if (/FROM tasks/.test(sql)) {
+        return { rows: [{ id: TASK_ID, status: 'in_progress', title: 't', payload: { orchestrator: 'skill-relay' } }] };
+      }
+      return { rows: [] };
+    });
+    const execFn = vi.fn().mockImplementation((cmd) => {
+      if (/docker ps/.test(cmd)) return '';
+      if (/gh pr view/.test(cmd)) throw new Error('gh: not found');
+    });
+    const r = await resumeStalledRelayRuns({ pool, execFn, spawnFn: vi.fn() });
+    expect(r.resumed).toBe(0);
+    expect(r.mergedPr).toBe(0);
+  });
+
+  it('容器消失 + pr_url 为 null → 直接走重点火（不调 gh pr view）', async () => {
+    const deps = makeDeps({ prUrl: null });
+    const r = await resumeStalledRelayRuns(deps);
+    const ghCall = deps.execFn.mock.calls.find(c => /gh pr view/.test(c[0]));
+    expect(ghCall).toBeFalsy();
+    expect(deps.spawnFn).toHaveBeenCalledOnce();
+  });
+
+  it('容器消失 + pr_url 存在 + PR MERGED + evaluator 从未执行 → 标 done 但打 failure_reason，不触发 regression 提升，发告警', async () => {
+    const deps = makeDeps({ prUrl: PR_URL, prState: 'MERGED', evaluatorGate: false });
+    const r = await resumeStalledRelayRuns(deps);
+    expect(deps.spawnFn).not.toHaveBeenCalled();
+    const updates = deps.pool.query.mock.calls.map(c => c[0]);
+    expect(updates.some(s => /UPDATE initiative_runs/.test(s) && /'done'/.test(s) && /failure_reason/.test(s) && /merged_without_evaluator_gate/.test(s))).toBe(true);
+    expect(updates.some(s => /UPDATE tasks/.test(s) && /'completed'/.test(s))).toBe(true);
+    expect(r.mergedWithoutGate).toBe(1);
+    expect(updates.some(s => /INSERT INTO issues/.test(s))).toBe(true);
+    expect(sendBark).toHaveBeenCalled();
+  });
+});
+
+describe('foreground 护栏（刀2：前台建档 run 不得被重点火）', () => {
+  it('orchestrator_host=foreground 且容器消失 → 跳过，不 spawn', async () => {
+    const deps = makeDeps({ orchestratorHost: 'foreground', containerRunning: false });
+    const out = await resumeStalledRelayRuns(deps);
+    expect(deps.spawnFn).not.toHaveBeenCalled();
+    expect(out.resumed).toBe(0);
+  });
+
+  it('对照：普通 relay run 容器消失仍会重点火（护栏不误伤）', async () => {
+    const deps = makeDeps({ orchestratorHost: 'skill-relay-session', containerRunning: false });
+    await resumeStalledRelayRuns(deps);
+    expect(deps.spawnFn).toHaveBeenCalled();
+  });
 });
 
 describe('patrol 排除 v2（relay watchdog 独占管辖）', () => {
@@ -113,5 +228,126 @@ describe('PATCH phase 白名单扩展（进度条数据源）', () => {
     for (const ph of ['planning', 'gan', 'generate', 'evaluate', 'done', 'failed']) {
       expect(src, `PATCH 白名单缺 ${ph}`).toMatch(new RegExp(`ALLOWED[^\\]]*'${ph}'`));
     }
+  });
+});
+
+// ── 新增：pr_url fallback 链 + PATCH pr_url 写入 ─────────────────────
+
+describe('resumeStalledRelayRuns — pr_url fallback 链（#3560 跟进）', () => {
+  it('taskQ SELECT 含 pr_url 列', async () => {
+    // run.pr_url=null → 需要从 tasks.pr_url 取，所以 SELECT 必须含该列
+    const taskSqls = [];
+    const pool = {
+      query: vi.fn(async (sql) => {
+        if (/DISTINCT ON \(initiative_id\)/.test(sql)) {
+          return { rows: [{ initiative_id: TASK_ID, phase: 'generate', attempts: '1', deadline_at: null, pr_url: null }] };
+        }
+        if (/FROM tasks/.test(sql)) {
+          taskSqls.push(sql);
+          return { rows: [{ id: TASK_ID, status: 'in_progress', title: 't', pr_url: null, payload: { orchestrator: 'skill-relay' } }] };
+        }
+        return { rows: [] };
+      }),
+    };
+    const execFn = vi.fn((cmd) => {
+      if (/docker ps/.test(cmd)) return '';
+      return '';
+    });
+    await resumeStalledRelayRuns({ pool, execFn, spawnFn: vi.fn().mockResolvedValue({ ok: true }) });
+    expect(taskSqls.length).toBeGreaterThan(0);
+    expect(taskSqls[0]).toMatch(/\bpr_url\b/);
+  });
+
+  it('run.pr_url=null，tasks.pr_url 有值 → MERGED → 标 completed，不重点火', async () => {
+    const TASK_PR = 'https://github.com/owner/repo/pull/42';
+    const updates = [];
+    const pool = {
+      query: vi.fn(async (sql, params) => {
+        if (/DISTINCT ON \(initiative_id\)/.test(sql)) {
+          return { rows: [{ initiative_id: TASK_ID, phase: 'generate', attempts: '1', deadline_at: null, pr_url: null }] };
+        }
+        if (/FROM tasks/.test(sql)) {
+          return { rows: [{ id: TASK_ID, status: 'in_progress', title: 't', pr_url: TASK_PR, payload: { orchestrator: 'skill-relay' } }] };
+        }
+        if (/UPDATE/.test(sql)) { updates.push(sql); return { rows: [{ id: TASK_ID }] }; }
+        return { rows: [] };
+      }),
+    };
+    const ghCalls = [];
+    const execFn = vi.fn((cmd) => {
+      if (/docker ps/.test(cmd)) return '';
+      if (/gh pr view/.test(cmd)) { ghCalls.push(cmd); return JSON.stringify({ state: 'MERGED' }); }
+      return '';
+    });
+    const spawnFn = vi.fn().mockResolvedValue({ ok: true });
+
+    const out = await resumeStalledRelayRuns({ pool, execFn, spawnFn });
+
+    expect(ghCalls.length).toBeGreaterThan(0);
+    expect(ghCalls[0]).toContain(TASK_PR);
+    expect(spawnFn).not.toHaveBeenCalled();
+    expect(out.mergedPr).toBe(1);
+    expect(updates.some((s) => /initiative_runs/.test(s) && /'done'/.test(s))).toBe(true);
+    expect(updates.some((s) => /UPDATE tasks/.test(s) && /'completed'/.test(s))).toBe(true);
+  });
+
+  it('run.pr_url=null, tasks.pr_url=null, payload.pr_url 有值 → MERGED → 标 completed', async () => {
+    const PAYLOAD_PR = 'https://github.com/owner/repo/pull/99';
+    const updates = [];
+    const pool = {
+      query: vi.fn(async (sql, params) => {
+        if (/DISTINCT ON \(initiative_id\)/.test(sql)) {
+          return { rows: [{ initiative_id: TASK_ID, phase: 'generate', attempts: '1', deadline_at: null, pr_url: null }] };
+        }
+        if (/FROM tasks/.test(sql)) {
+          return { rows: [{ id: TASK_ID, status: 'in_progress', title: 't', pr_url: null, payload: { orchestrator: 'skill-relay', pr_url: PAYLOAD_PR } }] };
+        }
+        if (/UPDATE/.test(sql)) { updates.push(sql); return { rows: [{ id: TASK_ID }] }; }
+        return { rows: [] };
+      }),
+    };
+    const ghCalls = [];
+    const execFn = vi.fn((cmd) => {
+      if (/docker ps/.test(cmd)) return '';
+      if (/gh pr view/.test(cmd)) { ghCalls.push(cmd); return JSON.stringify({ state: 'MERGED' }); }
+      return '';
+    });
+    const spawnFn = vi.fn().mockResolvedValue({ ok: true });
+
+    const out = await resumeStalledRelayRuns({ pool, execFn, spawnFn });
+
+    expect(ghCalls.length).toBeGreaterThan(0);
+    expect(ghCalls[0]).toContain(PAYLOAD_PR);
+    expect(spawnFn).not.toHaveBeenCalled();
+    expect(out.mergedPr).toBe(1);
+  });
+});
+
+describe('PATCH /orchestrator/relay-runs — pr_url 字段写入（#3560 跟进）', () => {
+  it('PATCH handler 从 req.body 解构 pr_url', async () => {
+    const { readFileSync } = await import('node:fs');
+    const src = readFileSync(new URL('../routes/initiatives.js', import.meta.url), 'utf8');
+    const patchIdx = src.indexOf("router.patch('/relay-runs/");
+    expect(patchIdx).toBeGreaterThan(-1);
+    const block = src.slice(patchIdx, patchIdx + 1500);
+    expect(block).toMatch(/pr_url/);
+  });
+
+  it('PATCH handler 校验 pr_url 须以 https://github.com/ 开头（非法时 400）', async () => {
+    const { readFileSync } = await import('node:fs');
+    const src = readFileSync(new URL('../routes/initiatives.js', import.meta.url), 'utf8');
+    const patchIdx = src.indexOf("router.patch('/relay-runs/");
+    const block = src.slice(patchIdx, patchIdx + 1500);
+    expect(block).toMatch(/https:\/\/github\.com\//);
+    expect(block).toMatch(/400/);
+  });
+
+  it('PATCH UPDATE SQL 用 COALESCE 保护 pr_url（只增不清）', async () => {
+    const { readFileSync } = await import('node:fs');
+    const src = readFileSync(new URL('../routes/initiatives.js', import.meta.url), 'utf8');
+    const patchIdx = src.indexOf("router.patch('/relay-runs/");
+    const block = src.slice(patchIdx, patchIdx + 1500);
+    expect(block).toMatch(/COALESCE/i);
+    expect(block).toMatch(/pr_url/);
   });
 });

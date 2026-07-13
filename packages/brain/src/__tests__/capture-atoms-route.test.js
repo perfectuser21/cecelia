@@ -185,6 +185,8 @@ describe('capture-atoms route', () => {
       expect(res.body.error).toContain('confirmed');
     });
 
+    // T10 confirm 自动分诊来源守卫测试已就近配对至 src/routes/capture-atoms.test.js
+
     it('confirm 操作路由 task atom 到 tasks 表', async () => {
       const mockClient = {
         query: vi.fn(),

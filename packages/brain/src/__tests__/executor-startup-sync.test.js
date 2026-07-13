@@ -279,6 +279,37 @@ describe('syncOrphanTasksOnStartup requeue 行为', () => {
     expect(failedCall).toBeUndefined();
   });
 
+  // 雷11：startup-sync 把 skill-relay 当 LangGraph requeue 导致双 spawn（R5 首航实证）。
+  // skill-relay（payload.orchestrator==='skill-relay'，无头 docker 或有头 tmux）不是
+  // LangGraph（已废弃），有真实进程，存活恢复归 harness-relay-watchdog 专管。
+  // startup-sync 必须整个跳过它，不 requeue、不清 claim、不计数。
+  it('雷11: orchestrator=skill-relay 的 harness_initiative 任务 → startup-sync 完全跳过（不 requeue）', async () => {
+    mockQuery.mockResolvedValueOnce({
+      rows: [{
+        id: 'skill-relay-task-1',
+        title: 'headed skill-relay task',
+        payload: { orchestrator: 'skill-relay', mode: 'headed', watchdog_retry_count: 0 },
+        started_at: new Date().toISOString(),
+        error_message: null,
+        task_type: 'harness_initiative',
+      }]
+    });
+    mockQuery.mockResolvedValue({ rows: [], rowCount: 1 });
+
+    const { syncOrphanTasksOnStartup } = await import('../executor.js');
+    const result = await syncOrphanTasksOnStartup();
+
+    // 不计入 requeued/orphans_found（整个跳过，不是 requeue 判0）
+    expect(result.requeued).toBe(0);
+    expect(result.orphans_found).toBe(0);
+
+    // 除了最初的 SELECT，不应再对该任务发起任何 UPDATE
+    const updateCalls = mockQuery.mock.calls.filter(
+      (call) => typeof call[0] === 'string' && /^\s*UPDATE tasks/i.test(call[0])
+    );
+    expect(updateCalls.length).toBe(0);
+  });
+
   // Bug A: claim 锁泄漏 — harness_initiative requeue 时必须清 claim 字段，
   // 否则死 runner 残留的 claimed_by 让 dispatch-helpers.js 的
   // `AND t.claimed_by IS NULL` 永远选不出该任务 → Brain 重启后死锁在 queued。

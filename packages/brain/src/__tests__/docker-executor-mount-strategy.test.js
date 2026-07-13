@@ -77,4 +77,28 @@ describe('buildDockerArgs — CLAUDE_CONFIG_DIR 挂载策略', () => {
     const flatArgs = args.join(' ');
     expect(flatArgs).not.toContain(':/host-claude-config:ro');
   });
+
+  it('opts.extraMounts → 原样透传为 -v 参数（codex relay 凭据挂载接线，demo task a150998c）', () => {
+    const { args } = buildDockerArgs(
+      { ...baseOpts, env: {}, extraMounts: ['/tmp/fake-codex-home:/home/cecelia/.codex:rw'] },
+      {
+        homedir: '/home/fake',
+        existsSyncFn: () => false,
+      },
+    );
+    const flatArgs = args.join(' ');
+    expect(flatArgs).toContain('-v /tmp/fake-codex-home:/home/cecelia/.codex:rw');
+  });
+
+  it('无 opts.extraMounts → 不受影响，无多余 -v', () => {
+    const { args } = buildDockerArgs(
+      { ...baseOpts, env: {} },
+      {
+        homedir: '/home/fake',
+        existsSyncFn: () => false,
+      },
+    );
+    const flatArgs = args.join(' ');
+    expect(flatArgs).not.toContain('/home/cecelia/.codex');
+  });
 });

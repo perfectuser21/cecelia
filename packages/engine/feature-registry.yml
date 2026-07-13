@@ -126,6 +126,20 @@ features:
 # Changelog（细粒度改动历史）
 # ============================================================================
 changelog:
+  - version: "19.4.4"
+    date: "2026-07-09"
+    change: '[CONFIG] pre-commit hook zenithjoy-skills 豁免收紧 + 测试接入CI'
+    description: "PR #3666 final review 的两个 nice-to-have：① zenithjoy-skills 判断从子串匹配收紧为 basename 锚定正则（`/zenithjoy-skills(\\.git)?/?$`），避免误豁免 zenithjoy-skills-v2 等同前缀仓库；② 测试文件从 tests/hooks/test-pre-commit.sh 迁移到 packages/engine/tests/integration/pre-commit.test.sh，被既有 engine-tests-shell job 的 glob 自动捡起，成为 ci-passed 必过项（不新增 workflow，不改 ci.yml 的 needs 数组）。"
+    files:
+      - packages/engine/hooks/pre-commit
+      - packages/engine/tests/integration/pre-commit.test.sh
+  - version: "19.4.3"
+    date: "2026-07-09"
+    change: '[CONFIG] pre-commit hook 对 zenithjoy-skills 仓库例外放行'
+    description: "全局 pre-commit hook（通过 ~/.git-hooks 对所有仓库生效）新增仓库识别：git remote origin 匹配 zenithjoy-skills 时直接 exit 0 放行，跳过 cp-*分支名+.dev-mode 强制检查。zenithjoy-skills 是纯 skill SSOT 仓库，按既有决策改 skill 走 skill-creator→PR 不走 /dev（branch-protect.sh 已有同类先例但本 hook 之前未跟进迁移），导致该仓库任何提交被误拦。"
+    files:
+      - packages/engine/hooks/pre-commit
+      - packages/engine/tests/integration/pre-commit.test.sh
   - version: "19.2.4"
     date: 2026-06-03
     change: '[CONFIG] harness-report SKILL Step 6 查 Brain API 写真实 harness-report.md/learning.md'
@@ -1160,6 +1174,16 @@ changelog:
     date: "2026-05-29"
     type: "feat"
     description: "engine-ship 从 packages/engine/skills/ 移除（已在 zenithjoy-skills）。engine-ship TERMINAL IMPERATIVE 改为调用 engine-pr-watchdog（PR 合并守卫）。dev/SKILL.md 接力链补全 engine-pr-watchdog。write-current-state 测试移除对 engine-ship 路径的硬引用。"
+  - version: "19.3.0"
+    date: "2026-07-05"
+    type: "feat"
+    description: "session 隔离根治（cp-0705181610）— claude-launch.sh 交互模式 + cwd=主仓工作树时自动建/复用 per-session worktree（session-<sid8>，base=origin/main，幂等复用，干净退出自动清理/脏保留），headless(-p)/已在worktree/CECELIA_NO_AUTO_WORKTREE=1 跳过；判主仓统一用 git-dir==git-common-dir 判据。新增 main-repo-write-guard.sh PreToolUse hook（backstop）：主仓工作树内 Write/Edit/git commit/git add → block，只读放行，worktree 内放行。根治多交互 session 共用主仓目录互踩（2026-07-05 上午实测打架数小时）。11+8 case TDD 契约测试。"
+    files:
+      - "../../scripts/claude-launch.sh (自动 worktree 建立/复用/清理)"
+      - "packages/engine/hooks/main-repo-write-guard.sh (新建 — 主仓写拦截)"
+      - "packages/engine/tests/launcher/claude-launch.test.ts (加 7 case)"
+      - "packages/engine/tests/hooks/main-repo-write-guard.test.ts (新建 8 case)"
+      - "Engine 6 处版本文件 19.3.0"
   - version: "19.2.6"
     date: "2026-07-04"
     type: "feat"
@@ -1167,3 +1191,22 @@ changelog:
     files:
       - "packages/engine/runners/android/e2e-verify-android-template.sh"
       - "../../.github/workflows/e2e-android-realdevice.yml"
+  - version: "19.4.0"
+    date: "2026-07-06"
+    type: "feat"
+    description: "resume 历史软链（cp-07061211）— claude-launch.sh 建 per-session worktree 后把 ~/.claude/projects/<wt_key> 软链到主仓 key（key 按物理路径派生，孤儿真实目录先迁移合并），干净退出随 worktree 清理软链（_PROJ_LINK_CREATED 记账只删自己建的链），--dry-run 追加 ln -s 契约行，CLAUDE_PROJECTS_ROOT 可覆盖供测试沙箱。修 #3557 副作用：/resume 按 cwd 过滤导致历史全部不可见。全段 best-effort 不阻断启动（含只读 root 守卫测试）。8 case TDD + 既有真实执行测试补沙箱。"
+    files:
+      - "../../scripts/claude-launch.sh (projects key 软链建立/迁移/清理)"
+  - version: "19.4.1"
+    date: "2026-07-06"
+    type: "fix"
+    description: "launcher 检测 --resume/-r/--continue/-c 自动追加 --fork-session，修 claude --resume 经 launcher 启动秒退"
+    files:
+      - "../../scripts/claude-launch.sh (resume/continue fork-session 检测)"
+  - version: "19.4.2"
+    date: "2026-07-06"
+    type: "fix"
+    description: "账号切换（claude-switch cs/cn）guard 从「CLAUDE_CONFIG_DIR 是否已设置」改判「是否 headless」。旧 guard 无法区分 headless 显式设置与从父 claude 进程继承（嵌套 shell/session），导致嵌套场景下 CLAUDE_CONFIG_DIR 早已非空、switch 文件永远读不到，账号切换永久失效。headless（-p/--print）继续保留显式传入值不被覆盖。"
+    files:
+      - "../../scripts/claude-launch.sh (账号切换 guard 改判 _is_headless)"
+      - "packages/engine/tests/launcher/claude-launch.test.ts (加 2 case)"

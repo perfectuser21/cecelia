@@ -40,10 +40,12 @@ fi
 
 # ─── helpers ────────────────────────────────────────────
 register_task() {
-  # $1=title $2=description $3=task_type $4=priority [$5=project_id]
+  # $1=title $2=description $3=task_type $4=priority [$5=project_id] [$6=extra_payload_json]
+  # $6 可选：一段 JSON 对象字符串，merge 进请求体的 'payload' 字段（如
+  # '{"orchestrator":"skill-relay"}'）。不传则行为与之前完全一致。
   local payload
-  payload=$(python3 -c "
-import json, sys
+  payload=$(EXTRA_PAYLOAD_JSON="${6:-}" python3 -c "
+import json, os, sys
 d = {
   'title': '$1',
   'description': '$2',
@@ -52,6 +54,10 @@ d = {
   'trigger_source': 'manual',
 }
 if '${5:-}': d['project_id'] = '${5:-}'
+extra = os.environ.get('EXTRA_PAYLOAD_JSON', '')
+if extra:
+    extra_obj = json.loads(extra)
+    d.setdefault('payload', {}).update(extra_obj)
 print(json.dumps(d))
 ")
   curl -sS -m 10 -X POST "${BRAIN_URL}/api/brain/tasks" \
@@ -142,8 +148,11 @@ echo "[Case C] initiative-lock — 同 project 并发 harness_initiative，只 1
 # 每次 smoke 用唯一 project_id 避免跨 run dedup 冲突；UUID 格式必须严格
 PROJ_HEX=$(printf '%012x' $((RANDOM * 32768 + RANDOM)))
 PROJ_ID="00000000-0000-0000-0000-${PROJ_HEX}"
-B1_TASK=$(register_task "[smoke-C1-${SMOKE_RUN_ID}] init B1 lock test" "Initiative B1 with sufficiently long description for pre-flight check passing" "harness_initiative" "P2" "$PROJ_ID")
-B2_TASK=$(register_task "[smoke-C2-${SMOKE_RUN_ID}] init B2 lock test" "Initiative B2 with sufficiently long description for pre-flight check passing" "harness_initiative" "P2" "$PROJ_ID")
+# N4 orchestrator 硬校验落地后，harness_initiative 任务必须带 payload.orchestrator='skill-relay'，
+# 否则 executor 直接标 terminal failed（不会进 in_progress），initiative-lock 断言会变假绿
+# （两个任务都秒 terminal failed，根本没机会被锁挡住，不是真的验证了锁）。
+B1_TASK=$(register_task "[smoke-C1-${SMOKE_RUN_ID}] init B1 lock test" "Initiative B1 with sufficiently long description for pre-flight check passing" "harness_initiative" "P2" "$PROJ_ID" '{"orchestrator":"skill-relay"}')
+B2_TASK=$(register_task "[smoke-C2-${SMOKE_RUN_ID}] init B2 lock test" "Initiative B2 with sufficiently long description for pre-flight check passing" "harness_initiative" "P2" "$PROJ_ID" '{"orchestrator":"skill-relay"}')
 
 if [ -z "$B1_TASK" ] || [ -z "$B2_TASK" ]; then
   fail "Case C: 注册失败 B1=$B1_TASK B2=$B2_TASK"

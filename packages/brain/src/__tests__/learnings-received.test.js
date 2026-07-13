@@ -106,6 +106,8 @@ vi.mock('../learning.js', () => ({ getRecentLearnings: vi.fn(() => []) }));
 vi.mock('../suggestion-triage.js', () => ({ createSuggestion: vi.fn(), PRIORITY_WEIGHTS: {} }));
 vi.mock('../suggestion-dispatcher.js', () => ({ dispatchSuggestions: vi.fn() }));
 vi.mock('fs', () => ({ readFileSync: vi.fn(() => ''), readdirSync: vi.fn(() => []) }));
+// T12: mock capture-inbox（ESM export 无法 vi.spyOn，用工厂 mock；等价断言，与 handoff.test.js 手法一致）
+vi.mock('../capture-inbox.js', () => ({ pushCaptureAtom: vi.fn().mockResolvedValue('atom-1') }));
 
 // ── 直接单测路由逻辑（不加载完整 routes.js）─────────────────
 
@@ -401,5 +403,67 @@ describe('learnings-received: migration 151 — 来源追踪字段', () => {
     // repo 默认值为 'cecelia'（不传 repo 时）
     const insertCall = mockQuery.mock.calls[0];
     expect(insertCall[1][4]).toBe('cecelia');
+  });
+});
+
+// ── T12: capture_atoms 收件箱补线 ──────────────────────────
+
+describe('learnings-received: T12 — capture_atoms 收件箱补线', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('next_steps_suggested 插入 learnings 成功后应调用 pushCaptureAtom', async () => {
+    const { pushCaptureAtom } = await import('../capture-inbox.js');
+    const router = (await import('../routes/tasks.js')).default;
+
+    mockQuery
+      .mockResolvedValueOnce({ rows: [{ id: 'learning-capture-1' }] }) // learnings INSERT
+      .mockResolvedValueOnce({ rows: [] }); // cecelia_events insert
+
+    const app = express();
+    app.use(express.json());
+    app.use('/api/brain', router);
+
+    const response = await request(app)
+      .post('/api/brain/learnings-received')
+      .send({
+        issues_found: [],
+        next_steps_suggested: ['每次改 migration 前先 fetch main 确认最大号'],
+        task_id: 'task-uuid-t12',
+      });
+
+    expect(response.status).toBe(200);
+    expect(response.body.learnings_inserted).toBe(1);
+    expect(pushCaptureAtom).toHaveBeenCalledTimes(1);
+    const [, fields] = pushCaptureAtom.mock.calls[0];
+    expect(fields.targetType).toBe('learning');
+    expect(fields.routedToTable).toBe('learnings');
+    expect(fields.routedToId).toBe('learning-capture-1');
+  });
+
+  it('pushCaptureAtom 抛错时不应影响 learnings-received 的成功响应', async () => {
+    const { pushCaptureAtom } = await import('../capture-inbox.js');
+    pushCaptureAtom.mockRejectedValueOnce(new Error('capture_atoms insert failed'));
+    const router = (await import('../routes/tasks.js')).default;
+
+    mockQuery
+      .mockResolvedValueOnce({ rows: [{ id: 'learning-capture-2' }] })
+      .mockResolvedValueOnce({ rows: [] });
+
+    const app = express();
+    app.use(express.json());
+    app.use('/api/brain', router);
+
+    const response = await request(app)
+      .post('/api/brain/learnings-received')
+      .send({
+        issues_found: [],
+        next_steps_suggested: ['测试 pushCaptureAtom 失败不阻塞主流程'],
+        task_id: 'task-uuid-t12b',
+      });
+
+    expect(response.status).toBe(200);
+    expect(response.body.learnings_inserted).toBe(1);
   });
 });

@@ -17,6 +17,10 @@ import { handleTaskFailure } from './quarantine.js';
 import { updateDesireFromTask } from './desire-feedback.js';
 import { resolveRelatedFailureMemories } from './routes/shared.js';
 import { normalizeCallbackStatus, extractPrNumber, maybeMarkCompletedNoPr, buildExecMetaJson, buildFailureFields, extractFindingsValue, buildLastRunResult } from './lib/callback-utils.js';
+import { REVIEW_TASK_TYPES } from './lib/review-task-types.js';
+import { serialUnlockNext, writeReviewResult, promoteRegressionOnHarnessMerged } from './lib/callback-postprocess.js';
+
+const TERMINAL_CALLBACK_STATUSES = new Set(['completed', 'completed_no_pr', 'failed', 'cancelled']);
 
 /**
  * processExecutionCallback(data, pool)
@@ -71,6 +75,7 @@ export async function processExecutionCallback(data, pool) {
   // 3. ATOMIC transaction: task UPDATE + decision_log + progress step
   const client = await pool.connect();
   let findingsValue = null;
+  let applied = false;
   try {
     await client.query('BEGIN');
 
@@ -84,10 +89,11 @@ export async function processExecutionCallback(data, pool) {
     const prNumber = extractPrNumber(pr_url);
 
     const isQuotaExhausted = newStatus === 'quota_exhausted';
+    const isTerminal = TERMINAL_CALLBACK_STATUSES.has(newStatus);
     const { errorMessage, blockedDetail } = buildFailureFields(newStatus, result, stderr, exit_code, task_id);
     const execMetaJson = buildExecMetaJson(result);
 
-    await client.query(`
+    const updRes = await client.query(`
       UPDATE tasks
       SET
         status = $2,
@@ -103,13 +109,20 @@ export async function processExecutionCallback(data, pool) {
         pr_url = COALESCE($5::text, pr_url),
         pr_status = CASE WHEN $5::text IS NOT NULL THEN 'open' ELSE pr_status END,
         error_message = CASE WHEN $9::text IS NOT NULL THEN $9::text ELSE error_message END,
-        blocked_detail = CASE WHEN $10::jsonb IS NOT NULL THEN $10::jsonb ELSE blocked_detail END
+        blocked_detail = CASE WHEN $10::jsonb IS NOT NULL THEN $10::jsonb ELSE blocked_detail END,
+        updated_at = NOW(),
+        claimed_by = CASE WHEN $13::boolean THEN NULL ELSE claimed_by END,
+        claimed_at = CASE WHEN $13::boolean THEN NULL ELSE claimed_at END
       WHERE id = $1 AND status IN ('in_progress', 'queued', 'dispatched')
     `, [
       task_id, newStatus, JSON.stringify(lastRunResult), status, pr_url || null,
       isCompleted, findingsValue, prNumber, errorMessage, blockedDetail,
-      isQuotaExhausted, execMetaJson,
+      isQuotaExhausted, execMetaJson, isTerminal,
     ]);
+    applied = (updRes.rowCount ?? 0) > 0;
+    if (!applied) {
+      console.warn(`[callback-processor] 迟到回调被守卫拦下(task=${task_id} 已非 in_progress/queued/dispatched),status=${newStatus} 未落地`);
+    }
 
     // decision_log（带 WHERE NOT EXISTS 防重复写入）
     await client.query(`
@@ -267,6 +280,21 @@ export async function processExecutionCallback(data, pool) {
       console.warn(`[callback-processor] code-review-trigger 失败（非致命）: ${err.message}`)
     );
 
+    // 5c8b. 审查任务完成 → 写入 review_result（共享后处理管道）
+    await writeReviewResult(task_id, result, pool).catch(err =>
+      console.error(`[callback-processor] writeReviewResult 失败 (non-fatal): ${err.message}`)
+    );
+
+    // 5c11. 串行调度：dev task 完成 → 解锁下一个 blocked 串行 task（共享后处理管道）
+    await serialUnlockNext(task_id, result, pr_url, pool).catch(err =>
+      console.error(`[callback-processor] serialUnlockNext 失败 (non-fatal): ${err.message}`)
+    );
+
+    // T2. harness merged 终态 → 累积 FR 冻结（共享后处理管道，dbOnly）
+    await promoteRegressionOnHarnessMerged(task_id, result, pr_url, pool).catch(err =>
+      console.error(`[callback-processor] promoteRegressionOnHarnessMerged 失败 (non-fatal): ${err.message}`)
+    );
+
   } else if (newStatus === 'failed') {
     await emitEvent('task_failed', 'executor', { task_id, run_id, status });
     publishTaskFailed(task_id, run_id, status);
@@ -275,23 +303,26 @@ export async function processExecutionCallback(data, pool) {
       const { classifyFailure } = await import('./quarantine.js');
       const taskRow = await pool.query('SELECT task_type, payload FROM tasks WHERE id = $1', [task_id]);
       const taskPayload = taskRow.rows[0]?.payload || {};
+      const taskType = taskRow.rows[0]?.task_type;
       const errorMsg = (result !== null && typeof result === 'object')
         ? (result.result || result.error || result.stderr || JSON.stringify(result))
         : String(result || status);
       const classification = classifyFailure(errorMsg, { payload: taskPayload });
-      const isTransientApiError = ['rate_limit', 'network', 'auth'].includes(classification.class);
+      const { isTransientClass } = await import('./lib/retry-policy.js');
+      const isTransientApiError = isTransientClass(classification.class);
       const isBillingCap = classification.class === 'billing_cap';
       // exit=137 = SIGKILL，通常是 cgroup OOM。资源配置问题，首次重试即可，不计入失败次数。
       const isOomKilled = exit_code === 137;
 
       const isCodexReview = coding_type === 'codex-review';
+      const isReviewTask = REVIEW_TASK_TYPES.includes(taskType);
 
       if (isBillingCap || isTransientApiError || isOomKilled) {
-        const bypassReason = isBillingCap ? 'billing_cap' : (isOomKilled ? 'oom_killed(exit=137)' : 'rate_limit/network/auth');
+        const bypassReason = isBillingCap ? 'billing_cap' : (isOomKilled ? 'oom_killed(exit=137)' : 'transient(rate_limit/network/timeout/server_error/auth)');
         console.log(`[callback-processor] 外部/资源错误（${bypassReason}）：跳过熔断计数（task=${task_id}）`);
-      } else if (isCodexReview) {
-        // codex-review 走独立执行池，失败不归因 cecelia-run 熔断器
-        console.log(`[callback-processor] codex-review 失败，跳过 cecelia-run 熔断计数（task=${task_id}）`);
+      } else if (isCodexReview || isReviewTask) {
+        // codex-review / review 类任务走本机 Codex CLI，失败不归因 cecelia-run 熔断器
+        console.log(`[callback-processor] review 类任务（${isCodexReview ? 'codex-review' : taskType}）失败，跳过 cecelia-run 熔断计数（task=${task_id}）`);
         raise('P2', 'task_failed', `任务失败：${task_id}（${status}）`).catch(() => {});
       } else {
         await cbFailure('cecelia-run');
@@ -356,5 +387,5 @@ export async function processExecutionCallback(data, pool) {
     }
   }
 
-  return { success: true, newStatus };
+  return { success: true, newStatus, applied };
 }

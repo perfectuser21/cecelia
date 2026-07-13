@@ -1,0 +1,421 @@
+name: Nightly Regression Gate (刀A)
+
+# 刀A：Cecelia 每晚全量回归闸
+# 北京时间 03:00（UTC 19:00）跑全量测试 + 贯通冒烟。
+# 红 → 开 GitHub Issue，不阻塞 PR 合并。
+#
+# ci-patrol 在北京 08:00（UTC 00:00）启动，届时刀A 已跑完。
+# 与 ZenithJoy 刀A/B/C 对齐（decision 92b5cd56）。
+#
+# 覆盖范围（vs PR CI 关键差异）：
+#   PR CI：只跑变更文件相关测试（--changed 过滤）
+#   刀A：无条件全量——brain-unit 全 4 shard + integration + e2e-smoke + real-env-smoke + workspace
+
+on:
+  schedule:
+    - cron: '0 19 * * *'  # UTC 19:00 = 北京 03:00
+  workflow_dispatch:
+    inputs:
+      reason:
+        description: '手动触发原因（可选）'
+        required: false
+        default: '手动触发'
+
+concurrency:
+  group: nightly-regression
+  cancel-in-progress: false  # 不取消已在跑的 nightly（让它跑完）
+
+env:
+  CODEX_RELAY_HOME: /tmp/ci-fake-codex-home
+
+permissions:
+  contents: read
+  issues: write  # 失败时开 GitHub Issue
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Job 1: Brain Unit Tests（全量 4 shard，无 --changed 过滤）
+# ──────────────────────────────────────────────────────────────────────────────
+jobs:
+  brain-unit-nightly:
+    name: Brain Unit (全量 shard ${{ matrix.shard }}/4)
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+      - run: cd packages/brain && npm ci
+      - name: Brain Unit Tests（全量 shard ${{ matrix.shard }}/4）
+        env:
+          NODE_OPTIONS: '--max-old-space-size=4096'
+        run: |
+          cd packages/brain
+          SHARD=${{ matrix.shard }}
+          set +e
+          npx vitest run --shard=$SHARD/4 \
+            --exclude='src/__tests__/integration/**' \
+            --reporter=verbose \
+            2>&1 | tee /tmp/vitest-nightly-$SHARD.txt
+          EXIT=${PIPESTATUS[0]}
+          if [ $EXIT -ne 0 ]; then
+            if grep -qE "Tests.*[0-9]+ passed" /tmp/vitest-nightly-$SHARD.txt && \
+               ! grep -qE "Tests.*[0-9]+ failed" /tmp/vitest-nightly-$SHARD.txt; then
+              echo "[nightly shard $SHARD/4] OOM worker exit, all tests passed — OK"
+              exit 0
+            fi
+            echo "::error::[nightly shard $SHARD/4] 测试失败"
+            cat /tmp/vitest-nightly-$SHARD.txt | grep -E "FAIL|×|✗" | tail -30 || true
+            exit $EXIT
+          fi
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Job 2: Brain Integration Tests（真 DB，全量集成测试）
+# ──────────────────────────────────────────────────────────────────────────────
+  brain-integration-nightly:
+    name: Brain Integration (全量)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: pgvector/pgvector:pg15
+        env:
+          POSTGRES_USER: cecelia
+          POSTGRES_PASSWORD: ${{ secrets.CI_DB_PASSWORD }}
+          POSTGRES_DB: cecelia_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+      - run: cd packages/brain && npm ci
+      - name: Run Migrations
+        env:
+          DB_HOST: localhost
+          DB_PORT: '5432'
+          DB_NAME: cecelia_test
+          DB_USER: cecelia
+          DB_PASSWORD: ${{ secrets.CI_DB_PASSWORD }}
+        run: cd packages/brain && node src/migrate.js
+      - name: Integration Tests
+        env:
+          DATABASE_URL: postgresql://cecelia:${{ secrets.CI_DB_PASSWORD }}@localhost:5432/cecelia_test
+          DB_HOST: localhost
+          DB_PORT: '5432'
+          DB_NAME: cecelia_test
+          DB_USER: cecelia
+          DB_PASSWORD: ${{ secrets.CI_DB_PASSWORD }}
+          NODE_ENV: test
+        run: cd packages/brain && npx vitest run src/__tests__/integration/ --reporter=verbose
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Job 3: E2E Smoke（golden-path + agent-lifecycle + dev-task-lifecycle）
+# ──────────────────────────────────────────────────────────────────────────────
+  e2e-smoke-nightly:
+    name: E2E 贯通冒烟
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: pgvector/pgvector:pg15
+        env:
+          POSTGRES_USER: cecelia
+          POSTGRES_PASSWORD: ${{ secrets.CI_DB_PASSWORD }}
+          POSTGRES_DB: cecelia_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+      - run: cd packages/brain && npm ci
+      - name: Run Migrations
+        env:
+          DB_HOST: localhost
+          DB_PORT: '5432'
+          DB_NAME: cecelia_test
+          DB_USER: cecelia
+          DB_PASSWORD: ${{ secrets.CI_DB_PASSWORD }}
+        run: cd packages/brain && node src/migrate.js
+      - name: E2E 贯通冒烟（golden-path + agent-lifecycle + dev-task-lifecycle）
+        env:
+          DATABASE_URL: postgresql://cecelia:${{ secrets.CI_DB_PASSWORD }}@localhost:5432/cecelia_test
+          DB_HOST: localhost
+          DB_PORT: '5432'
+          DB_NAME: cecelia_test
+          DB_USER: cecelia
+          DB_PASSWORD: ${{ secrets.CI_DB_PASSWORD }}
+          NODE_ENV: test
+        run: |
+          cd packages/brain && npx vitest run \
+            src/__tests__/integration/golden-path.integration.test.js \
+            src/__tests__/integration/agent-lifecycle.integration.test.js \
+            src/__tests__/integration/dev-task-lifecycle.e2e.test.js \
+            --reporter=verbose
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Job 4: Real-Env Smoke（真 Brain Docker 容器 + smoke.sh 全跑）
+# ──────────────────────────────────────────────────────────────────────────────
+  real-env-smoke-nightly:
+    name: Real-Env Smoke（Brain 容器）
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    services:
+      postgres:
+        image: pgvector/pgvector:pg15
+        env:
+          POSTGRES_USER: cecelia
+          POSTGRES_PASSWORD: ${{ secrets.CI_DB_PASSWORD }}
+          POSTGRES_DB: cecelia_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+      - name: Install Brain deps + run migrations
+        env:
+          DB_HOST: localhost
+          DB_PORT: '5432'
+          DB_NAME: cecelia_test
+          DB_USER: cecelia
+          DB_PASSWORD: ${{ secrets.CI_DB_PASSWORD }}
+        run: |
+          cd packages/brain
+          npm ci
+          node src/migrate.js
+      - name: Build cecelia-brain image
+        run: docker build -f packages/brain/Dockerfile -t cecelia-brain:ci .
+      - name: Start Brain container
+        run: |
+          docker run -d --name cecelia-brain-nightly \
+            --network host \
+            -e DB_HOST=localhost \
+            -e DB_PORT=5432 \
+            -e DB_NAME=cecelia_test \
+            -e DB_USER=cecelia \
+            -e DB_PASSWORD=${{ secrets.CI_DB_PASSWORD }} \
+            -e BRAIN_PORT=5221 \
+            -e NODE_ENV=test \
+            -e CECELIA_TICK_ENABLED=false \
+            -e ENV_REGION=us \
+            -e REPO_ROOT=/repo_root \
+            -v $GITHUB_WORKSPACE/packages/workflows:/repo_root/packages/workflows:ro \
+            cecelia-brain:ci
+          for i in $(seq 1 90); do
+            if curl -sf http://localhost:5221/api/brain/tick/status >/dev/null 2>&1; then
+              echo "✅ Brain healthy in ${i}s"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "::error::Brain not healthy in 90s"
+          docker logs cecelia-brain-nightly
+          exit 1
+      - name: Run smoke scripts
+        env:
+          BRAIN_URL: http://localhost:5221
+          DATABASE_URL: postgresql://cecelia:${{ secrets.CI_DB_PASSWORD }}@localhost:5432/cecelia_test
+          DB_HOST: localhost
+          DB_PORT: '5432'
+          DB_NAME: cecelia_test
+          DB_USER: cecelia
+          DB_PASSWORD: ${{ secrets.CI_DB_PASSWORD }}
+        run: |
+          SMOKE_DIR=packages/brain/scripts/smoke
+          if [ ! -d "$SMOKE_DIR" ]; then
+            echo "::error::$SMOKE_DIR 不存在"
+            exit 1
+          fi
+          shopt -s nullglob
+          SCRIPTS=("$SMOKE_DIR"/*.sh)
+          if [ ${#SCRIPTS[@]} -eq 0 ]; then
+            echo "::error::$SMOKE_DIR/*.sh 为空"
+            exit 1
+          fi
+          FAILED=0
+          PASSED=0
+          for script in "${SCRIPTS[@]}"; do
+            echo "── ▶️  $script"
+            if bash "$script"; then
+              PASSED=$((PASSED + 1))
+              echo "── ✅ PASS: $script"
+            else
+              FAILED=$((FAILED + 1))
+              echo "::error::❌ FAIL: $script"
+            fi
+          done
+          echo "📊 Smoke — 通过: $PASSED, 失败: $FAILED"
+          [ "$FAILED" -eq 0 ]
+      - name: Cleanup
+        if: always()
+        run: |
+          docker logs cecelia-brain-nightly 2>&1 | tail -50 || true
+          docker rm -f cecelia-brain-nightly 2>/dev/null || true
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Job 5: Workspace Tests（apps/api + apps/dashboard）
+# ──────────────────────────────────────────────────────────────────────────────
+  workspace-test-nightly:
+    name: Workspace Tests (全量)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: pgvector/pgvector:pg15
+        env:
+          POSTGRES_USER: cecelia
+          POSTGRES_PASSWORD: ${{ secrets.CI_DB_PASSWORD }}
+          POSTGRES_DB: cecelia_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+      - name: Install root deps
+        run: npm ci
+      - name: Test apps/api
+        run: cd apps/api && npm ci && npm test
+      - name: Test apps/dashboard
+        run: cd apps/dashboard && npm ci && npx vitest run
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Job 6: 失败汇总 + 开 GitHub Issue
+# 只要任意 test job 失败就触发（if: failure()）。
+# 用 GITHUB_TOKEN 开 Issue（无需 Tailscale / Brain 连接）。
+# ──────────────────────────────────────────────────────────────────────────────
+  open-issue-on-failure:
+    name: 失败开 Issue
+    if: failure()
+    needs:
+      - brain-unit-nightly
+      - brain-integration-nightly
+      - e2e-smoke-nightly
+      - real-env-smoke-nightly
+      - workspace-test-nightly
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      issues: write
+    steps:
+      - name: 确保 nightly-regression label 存在
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh label create "nightly-regression" \
+            --description "Nightly 刀A 回归闸失败" \
+            --color "d73a4a" \
+            --repo "${{ github.repository }}" 2>/dev/null || true
+          gh label create "ci-red" \
+            --description "CI 红灯" \
+            --color "b60205" \
+            --repo "${{ github.repository }}" 2>/dev/null || true
+
+      - name: 检查是否已有同日 open issue（去重）
+        id: dedup
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TODAY=$(date -u '+%Y-%m-%d')
+          TITLE="[Nightly 刀A] 全量回归失败 $TODAY"
+          echo "title=$TITLE" >> $GITHUB_OUTPUT
+          EXISTING=$(gh issue list \
+            --repo "${{ github.repository }}" \
+            --state open \
+            --label "nightly-regression" \
+            --json title \
+            --jq ".[].title" 2>/dev/null | grep -F "$TITLE" || true)
+          if [ -n "$EXISTING" ]; then
+            echo "skip=true" >> $GITHUB_OUTPUT
+            echo "ℹ️ 今日已有 open issue，跳过重复创建"
+          else
+            echo "skip=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: 开 GitHub Issue
+        if: steps.dedup.outputs.skip != 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          RUN_URL="https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          TODAY=$(date -u '+%Y-%m-%d')
+          TITLE="${{ steps.dedup.outputs.title }}"
+
+          # 诊断哪些 job 失败
+          BRAIN_UNIT="${{ needs.brain-unit-nightly.result }}"
+          BRAIN_INT="${{ needs.brain-integration-nightly.result }}"
+          E2E="${{ needs.e2e-smoke-nightly.result }}"
+          REAL_ENV="${{ needs.real-env-smoke-nightly.result }}"
+          WS="${{ needs.workspace-test-nightly.result }}"
+
+          format_result() {
+            local name="$1" result="$2"
+            case "$result" in
+              success) echo "✅ $name" ;;
+              failure) echo "❌ $name" ;;
+              skipped) echo "⏭️  $name (skipped)" ;;
+              *)       echo "⚠️  $name ($result)" ;;
+            esac
+          }
+
+          # 不能在 run 块里写顶格多行字符串——YAML 把顶格 "**日期**" 解析成 alias，
+          # 整个 workflow 文件 unparseable（每次 push 产生 0-job startup failure，
+          # 刀A 完全失效且 dispatch 422，2026-07-10 实锤）。用 $'\n' 拼接。
+          BODY="## Nightly 刀A 全量回归失败"
+          BODY="$BODY"$'\n\n'"**日期**: $TODAY"
+          BODY="$BODY"$'\n'"**Run**: $RUN_URL"
+          BODY="$BODY"$'\n\n'"### 各 Job 结果"$'\n'
+          BODY="$BODY"$'\n'"$(format_result "Brain Unit 全量 (4 shards)" "$BRAIN_UNIT")"
+          BODY="$BODY"$'\n'"$(format_result "Brain Integration" "$BRAIN_INT")"
+          BODY="$BODY"$'\n'"$(format_result "E2E 贯通冒烟" "$E2E")"
+          BODY="$BODY"$'\n'"$(format_result "Real-Env Smoke (Brain 容器)" "$REAL_ENV")"
+          BODY="$BODY"$'\n'"$(format_result "Workspace Tests" "$WS")"
+          BODY="$BODY"$'\n\n'"### 处理方式"$'\n'
+          BODY="$BODY"$'\n'"- 排查上方失败 job 的日志"
+          BODY="$BODY"$'\n'"- 若是 flaky test：在 re-run 通过后关闭此 Issue"
+          BODY="$BODY"$'\n'"- 若是真实 regression：在 fix PR 合并后关闭此 Issue"
+          BODY="$BODY"$'\n\n'"> 此 Issue 由 Nightly Regression Gate (刀A) 自动创建，不阻塞 PR 合并。"
+
+          gh issue create \
+            --repo "${{ github.repository }}" \
+            --title "$TITLE" \
+            --body "$BODY" \
+            --label "nightly-regression,ci-red"
+          echo "✅ Issue 已创建"

@@ -15,9 +15,12 @@
  *
  * ── 修复设计（仿 harness-watchdog-loop.js）──
  *   - 独立 setInterval，不依赖 runScheduler 跑完（不被 circuit_open / no_goals 早 return 跳过）。
- *   - 三条网各自独立 try-catch，一条抛错不影响另两条。
+ *   - 四条网各自独立 try-catch，一条抛错不影响另三条。
  *   - 每次无条件 log 一行可观测输出，即使全 0 也打（证明"我在跑"）。
  *   - 不受任何 LLM 门控 —— 纯恢复安全网，任何时候都该跑。
+ *   4. probeTaskLiveness —— 运行时孤儿回收（P0-v2，2026-07-13）：进程死亡但任务仍
+ *      in_progress 时，双确认后自动重排队。harness_* 已在 executor.js 内豁免，
+ *      不会与 harness-watchdog-loop 的心跳判据冲突。
  *
  * ── 关键不变量 ──
  *   autoFailTimedOutTasks 是 wall-clock 超时，会误杀**长跑的活跃 harness 任务**（planner +
@@ -51,7 +54,7 @@ async function defaultFetchInProgress(dbPool) {
 }
 
 /**
- * 单次恢复执行：三条网各自独立 try-catch，末尾无条件 log 可观测行。
+ * 单次恢复执行：四条网各自独立 try-catch，末尾无条件 log 可观测行。
  * 函数依赖可注入（测试用）；生产默认走动态 import。
  *
  * @param {object} [opts]
@@ -60,13 +63,15 @@ async function defaultFetchInProgress(dbPool) {
  * @param {Function} [opts.checkStuckPipelines]
  * @param {Function} [opts.autoFailTimedOutTasks]
  * @param {Function} [opts.fetchInProgress]
- * @returns {Promise<{staleReleased:number, pipelinesCancelled:number, tasksTimedOut:number}>}
+ * @param {Function} [opts.probeTaskLiveness]
+ * @returns {Promise<{staleReleased:number, pipelinesCancelled:number, tasksTimedOut:number, orphansRequeued:number}>}
  */
 export async function runRecoveryOnce(opts = {}) {
   const dbPool = opts.pool || pool;
   let staleReleased = 0;
   let pipelinesCancelled = 0;
   let tasksTimedOut = 0;
+  let orphansRequeued = 0;
 
   // 1. cleanupStaleClaims — 周期释放 stale claim（原仅 Brain 启动时跑一次）
   try {
@@ -102,12 +107,24 @@ export async function runRecoveryOnce(opts = {}) {
     console.warn(`[recovery-loop] autoFailTimedOutTasks failed (non-fatal): ${err.message}`);
   }
 
-  // 4. 无条件可观测性：每次执行都打一行"我在跑"，即使全 0
+  // 4. probeTaskLiveness — 运行时孤儿回收：进程已死但任务仍 in_progress → 双确认后重排队
+  //    harness 任务由 harness-watchdog-loop（心跳判据）专管，在 executor.probeTaskLiveness
+  //    内部已豁免（HARNESS_LIVENESS_EXEMPT_TYPES），此处无需再过滤。
+  try {
+    const fn = opts.probeTaskLiveness
+      || (await import('./executor.js')).probeTaskLiveness;
+    const actions = await fn();
+    orphansRequeued = Array.isArray(actions) ? actions.length : 0;
+  } catch (err) {
+    console.warn(`[recovery-loop] probeTaskLiveness failed (non-fatal): ${err.message}`);
+  }
+
+  // 5. 无条件可观测性：每次执行都打一行"我在跑"，即使全 0
   console.log(
-    `[recovery-loop] staleReleased=${staleReleased} pipelinesCancelled=${pipelinesCancelled} tasksTimedOut=${tasksTimedOut}`
+    `[recovery-loop] staleReleased=${staleReleased} pipelinesCancelled=${pipelinesCancelled} tasksTimedOut=${tasksTimedOut} orphansRequeued=${orphansRequeued}`
   );
 
-  return { staleReleased, pipelinesCancelled, tasksTimedOut };
+  return { staleReleased, pipelinesCancelled, tasksTimedOut, orphansRequeued };
 }
 
 /**

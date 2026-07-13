@@ -25,7 +25,10 @@ describe('pipeline-detail planner detection', () => {
 
 describe('buildLangGraphInfo db_context query', () => {
   it('task SELECT 不含 journey_id（列已移除，含该列会导致 db_context 全 null）', () => {
-    expect(src).not.toMatch(/SELECT title.*journey_id.*FROM tasks/s);
+    // 收紧：只在【同一条 SELECT..FROM tasks 语句】内检测 journey_id（列表在 SELECT 与 FROM 之间），
+    // 用负向前瞻禁止跨越中间的 FROM —— 否则会误匹配文件别处无关的 journey_id（如 /stats?by=journey
+    // 聚合查询里 `SELECT j.id AS journey_id ... FROM initiative_runs`，与 tasks 列无关）。
+    expect(src).not.toMatch(/SELECT title(?:(?!FROM)[\s\S])*?journey_id(?:(?!FROM)[\s\S])*?FROM tasks/);
     expect(src).toMatch(/SELECT title, description, payload FROM tasks/);
   });
   it('db_context 不含 journey_id 字段', () => {

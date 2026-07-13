@@ -107,6 +107,34 @@ describe('tick-status', () => {
       expect(status.enabled).toBe(false);
       expect(status.next_tick).toBeNull();
     });
+
+    // 2026-07-06 staging 隔离硬关：CECELIA_TICK_HARD_OFF=1 必须无视 DB 值与「key 缺失默认 true」。
+    // 真实事故：cecelia_staging 库无 tick_enabled key → ?? true → staging tick 越权跑，
+    // 把任务调度到生产 bridge(3457)，Auto Staging Deploy 因此 12 连红。
+    it('CECELIA_TICK_HARD_OFF=1 + DB 无 key（缺省本为 true）→ enabled=false', async () => {
+      process.env.CECELIA_TICK_HARD_OFF = '1';
+      try {
+        mockQuery.mockResolvedValueOnce({ rows: [] });
+        const status = await getTickStatus();
+        expect(status.enabled).toBe(false);
+        expect(status.next_tick).toBeNull();
+      } finally {
+        delete process.env.CECELIA_TICK_HARD_OFF;
+      }
+    });
+
+    it('CECELIA_TICK_HARD_OFF=1 + DB enabled=true → env 硬关优先，enabled=false', async () => {
+      process.env.CECELIA_TICK_HARD_OFF = '1';
+      try {
+        mockQuery.mockResolvedValueOnce({
+          rows: [{ key: 'tick_enabled', value_json: { enabled: true } }],
+        });
+        const status = await getTickStatus();
+        expect(status.enabled).toBe(false);
+      } finally {
+        delete process.env.CECELIA_TICK_HARD_OFF;
+      }
+    });
   });
 
   // ─── isStale ───────────────────────────────────────────────

@@ -55,30 +55,30 @@ beforeEach(() => {
 
 // ─── deployStaging ───────────────────────────────────────────────────────────
 describe('deployStaging', () => {
-  it('正常输出 → success', () => {
+  it('正常输出 → success', async () => {
     const exec = () => '=== Staging Deploy SUCCESS ===\n';
-    const r = deployStaging({ exec });
+    const r = await deployStaging({ exec });
     expect(r.status).toBe('success');
     expect(r.reason).toBeNull();
   });
 
-  it('STAGING_SKIP_REASON=no_docker → skipped（非失败）', () => {
+  it('STAGING_SKIP_REASON=no_docker → skipped（非失败）', async () => {
     const exec = () => 'blah\nSTAGING_SKIP_REASON=no_docker\n';
-    const r = deployStaging({ exec });
+    const r = await deployStaging({ exec });
     expect(r.status).toBe('skipped');
     expect(r.reason).toBe('no_docker');
   });
 
-  it('脚本抛错但 stdout 含 skip 原因 → 仍 skipped', () => {
+  it('脚本抛错但 stdout 含 skip 原因 → 仍 skipped', async () => {
     const exec = () => { const e = new Error('boom'); e.status = 1; e.stdout = 'STAGING_SKIP_REASON=no_env'; throw e; };
-    const r = deployStaging({ exec });
+    const r = await deployStaging({ exec });
     expect(r.status).toBe('skipped');
     expect(r.reason).toBe('no_env');
   });
 
-  it('脚本抛错且无 skip 原因 → failed', () => {
+  it('脚本抛错且无 skip 原因 → failed', async () => {
     const exec = () => { const e = new Error('real fail'); e.status = 1; throw e; };
-    const r = deployStaging({ exec });
+    const r = await deployStaging({ exec });
     expect(r.status).toBe('failed');
     expect(r.reason).toBe('deploy_failed');
   });
@@ -86,36 +86,139 @@ describe('deployStaging', () => {
 
 // ─── deployStaging — ZenithJoy customer line 蓝绿护栏 ─────────────────────────
 describe('deployStaging — ZenithJoy customer line（:5201 护栏）', () => {
-  it(':5201 健康响应 → success（护栏 pass，准备跑 E2E）', () => {
+  it(':5201 健康响应 → success（护栏 pass，准备跑 E2E）', async () => {
     let seen = null;
     const exec = (cmd) => { seen = cmd; return '{"status":"ok"}'; };
-    const r = deployStaging({ exec, line: 'customer' });
+    const r = await deployStaging({ exec, line: 'customer' });
     expect(r.status).toBe('success');
     expect(r.stagingPort).toBe(ZJ_STAGING_PORT);
     expect(seen).toContain(`:${ZJ_STAGING_PORT}`);
   });
 
-  it(':5201 健康检查失败（连接拒绝）→ failed，reason=zj_staging_unhealthy（护栏触发,:5200 不被触碰）', () => {
+  it(':5201 健康检查失败（连接拒绝）→ failed，reason=zj_staging_unhealthy（护栏触发,:5200 不被触碰）', async () => {
     const exec = () => { const e = new Error('connect ECONNREFUSED'); e.status = 7; throw e; };
-    const r = deployStaging({ exec, line: 'customer' });
+    const r = await deployStaging({ exec, line: 'customer', maxAttempts: 1, sleep: async () => {} });
     expect(r.status).toBe('failed');
     expect(r.reason).toBe('zj_staging_unhealthy');
     expect(r.stagingPort).toBe(ZJ_STAGING_PORT);
   });
 
-  it(':5201 健康检查超时 → failed', () => {
+  it(':5201 健康检查超时 → failed', async () => {
     const exec = () => { const e = new Error('ETIMEDOUT'); e.status = 28; e.stderr = 'curl timeout'; throw e; };
-    const r = deployStaging({ exec, line: 'customer' });
+    const r = await deployStaging({ exec, line: 'customer', maxAttempts: 1, sleep: async () => {} });
     expect(r.status).toBe('failed');
     expect(r.reason).toBe('zj_staging_unhealthy');
   });
 
-  it('opts.deployScript 有值时走 script（覆盖 customer 健康检查路径，供测试用）', () => {
+  it('opts.deployScript 有值时走 script（覆盖 customer 健康检查路径，供测试用）', async () => {
     let seen = null;
     const exec = (cmd) => { seen = cmd; return '=== Staging Deploy SUCCESS ===\n'; };
-    const r = deployStaging({ exec, line: 'customer', deployScript: '/tmp/my-zj-deploy.sh' });
+    const r = await deployStaging({ exec, line: 'customer', deployScript: '/tmp/my-zj-deploy.sh' });
     expect(r.status).toBe('success');
     expect(seen).toContain('/tmp/my-zj-deploy.sh');
+  });
+
+  it('重试：第 1 次失败（容器重启窗口），第 2 次成功 → success（ZJ CI deploy 时序竞争修复）', async () => {
+    let callCount = 0;
+    const exec = () => {
+      callCount++;
+      if (callCount === 1) { const e = new Error('connect ECONNREFUSED'); e.status = 7; throw e; }
+      return '{"status":"ok"}';
+    };
+    const r = await deployStaging({ exec, line: 'customer', maxAttempts: 3, sleep: async () => {} });
+    expect(r.status).toBe('success');
+    expect(callCount).toBe(2);
+  });
+
+  it('重试：全部 maxAttempts 次均失败 → failed，reason=zj_staging_unhealthy', async () => {
+    let callCount = 0;
+    const exec = () => { callCount++; const e = new Error('ECONNREFUSED'); e.status = 7; throw e; };
+    const r = await deployStaging({ exec, line: 'customer', maxAttempts: 3, sleep: async () => {} });
+    expect(r.status).toBe('failed');
+    expect(r.reason).toBe('zj_staging_unhealthy');
+    expect(callCount).toBe(3);
+  });
+
+  it('默认 maxAttempts=5（覆盖 ZJ CI 2-3 分钟部署窗口）', async () => {
+    let callCount = 0;
+    const exec = () => { callCount++; const e = new Error('ECONNREFUSED'); e.status = 7; throw e; };
+    const r = await deployStaging({ exec, line: 'customer', sleep: async () => {} });
+    expect(r.status).toBe('failed');
+    expect(callCount).toBe(5);
+  });
+
+  it('默认 retryDelayMs=30000（30s 间隔，注入 sleep 验证延迟参数）', async () => {
+    const delays = [];
+    const exec = () => { const e = new Error('ECONNREFUSED'); e.status = 7; throw e; };
+    const sleep = async (ms) => { delays.push(ms); };
+    await deployStaging({ exec, line: 'customer', sleep });
+    expect(delays.length).toBe(4); // maxAttempts=5，间隔 4 次
+    delays.forEach(d => expect(d).toBe(30_000));
+  });
+
+  it('全部重试失败 → output 包含尝试次数和总等待时间', async () => {
+    const exec = () => { const e = new Error('connect ECONNREFUSED :5201'); e.status = 7; throw e; };
+    const r = await deployStaging({ exec, line: 'customer', maxAttempts: 3, retryDelayMs: 30_000, sleep: async () => {} });
+    expect(r.output).toMatch(/尝试 3 次均失败/);
+    expect(r.output).toMatch(/总等待 60s/);
+  });
+
+  // JSON 层健康验证：防 SPA fallback 误判，同时提取 SHA
+  it(':5201/health 返回 { status:"ok", sha } → success，zjSha + stagingSha 均携带', async () => {
+    const exec = () => '{"status":"ok","sha":"abc123def456","service":"zenithjoy-api"}';
+    const r = await deployStaging({ exec, line: 'customer', sleep: async () => {} });
+    expect(r.status).toBe('success');
+    expect(r.zjSha).toBe('abc123def456');
+    expect(r.stagingSha).toBe('abc123def456');
+    expect(r.output).toContain('[ZJ staging SHA: abc123def456');
+  });
+
+  it(':5201/health 返回旧格式 { status:"ok", build.sha } → success，stagingSha 兼容提取', async () => {
+    const healthJson = JSON.stringify({
+      status: 'ok',
+      build: { sha: '8ecf9249378936b1a27395eb5a7efcb179a3fd23', buildTime: '2026-07-07T08:14:34Z' },
+    });
+    const exec = () => healthJson;
+    const r = await deployStaging({ exec, line: 'customer', sleep: async () => {} });
+    expect(r.status).toBe('success');
+    expect(r.stagingSha).toBe('8ecf9249378936b1a27395eb5a7efcb179a3fd23');
+    expect(r.zjSha).toBeNull();
+    expect(r.output).toContain('[ZJ staging SHA: 8ecf9249378936b1a27395eb5a7efcb179a3fd23');
+    expect(r.output).toContain('buildTime:2026-07-07T08:14:34Z');
+  });
+
+  it(':5201/health 返回 {"status":"ok"} 无 sha → success，zjSha=null stagingSha=null', async () => {
+    const exec = () => '{"status":"ok"}';
+    const r = await deployStaging({ exec, line: 'customer', sleep: async () => {} });
+    expect(r.status).toBe('success');
+    expect(r.zjSha).toBeNull();
+    expect(r.stagingSha).toBeNull();
+  });
+
+  it(':5201/health 返回 HTML（SPA fallback）→ failed，reason=zj_staging_html_fallback（护栏触发）', async () => {
+    const exec = () => '<!DOCTYPE html><html><head><title>ZenithJoy</title></head><body>app</body></html>';
+    const r = await deployStaging({ exec, line: 'customer', maxAttempts: 1, sleep: async () => {} });
+    expect(r.status).toBe('failed');
+    expect(r.reason).toBe('zj_staging_html_fallback');
+  });
+
+  it(':5201/health 返回 {"status":"starting"} → failed，reason=zj_staging_unhealthy（非 ok JSON）', async () => {
+    const exec = () => '{"status":"starting"}';
+    const r = await deployStaging({ exec, line: 'customer', maxAttempts: 1, sleep: async () => {} });
+    expect(r.status).toBe('failed');
+    expect(r.reason).toBe('zj_staging_unhealthy');
+  });
+
+  it('重试：前两次返回 HTML，第三次返回 ok → success（冷启动期）', async () => {
+    let callCount = 0;
+    const exec = () => {
+      callCount++;
+      if (callCount < 3) return '<!DOCTYPE html><html>app</html>';
+      return '{"status":"ok"}';
+    };
+    const r = await deployStaging({ exec, line: 'customer', maxAttempts: 5, sleep: async () => {} });
+    expect(r.status).toBe('success');
+    expect(callCount).toBe(3);
   });
 });
 
@@ -270,6 +373,9 @@ describe('runStagingE2E', () => {
     const deploy = () => ({ status: 'success', reason: null, output: 'SUCCESS' });
     const r = await runStagingE2E(task, {
       pool, deploy, loadAcceptance: async () => ACCEPTANCE, exec: () => 'ok',
+      // 必须注入：不注入会真扫 packages/quality/tests/regression/*.golden-smoke.test.ts 并 spawn vitest
+      // 打 staging 端口（07-04 #3538 冻结首个 golden 文件后，单测环境无 staging 必 FAIL）
+      runGoldenSmokeRegression: () => ({ verdict: 'SKIP', total: 0, passed: 0, failed: 0, skipped: 0, files: [] }),
     });
     expect(r.verdict).toBe('PASS');
     const ins = insertedResult(pool);
@@ -323,6 +429,26 @@ describe('runStagingE2E', () => {
     expect(release).toHaveBeenCalledTimes(1);
   });
 
+  it('Slice6 lockPort: customer line 用 ZJ_STAGING_PORT(5201) 作锁 key，不与 Cecelia Brain staging 冲突', async () => {
+    const pool = makeMockPool();
+    const capturedLockKey = [];
+    const acquireStagingLock = async (_, key) => { capturedLockKey.push(key); return { release: async () => {} }; };
+    const deploy = () => ({ status: 'skipped', reason: 'no_docker', output: '' });
+    const zjTask = { id: 'task-zj-lock', payload: { initiative_id: 'init-zj', pr_url: 'https://pr/zj-lock', base_repo: 'perfectuser21/zenithjoy' } };
+    await runStagingE2E(zjTask, { pool, deploy, loadAcceptance: async () => ACCEPTANCE, acquireStagingLock });
+    expect(capturedLockKey[0]).toBe(ZJ_STAGING_PORT);
+  });
+
+  it('Slice6 lockPort: default(brain) line 用 STAGING_PORT(5222) 作锁 key', async () => {
+    const pool = makeMockPool();
+    const capturedLockKey = [];
+    const acquireStagingLock = async (_, key) => { capturedLockKey.push(key); return { release: async () => {} }; };
+    const deploy = () => ({ status: 'skipped', reason: 'no_docker', output: '' });
+    // task 无 base_repo → legacy cecelia line → STAGING_PORT
+    await runStagingE2E(task, { pool, deploy, loadAcceptance: async () => ACCEPTANCE, acquireStagingLock });
+    expect(capturedLockKey[0]).toBe(STAGING_PORT);
+  });
+
   // Slice9: staging 实测的 git SHA 落库（tested_sha），promote 时比对防 SHA 漂移。
   it('Slice9: PASS 落库含 tested_sha（git SHA 锚定）', async () => {
     const pool = makeMockPool();
@@ -333,6 +459,44 @@ describe('runStagingE2E', () => {
     });
     const ins = insertedResult(pool);
     expect(ins.params).toContain('abc123def456');
+  });
+
+  it('base_repo=第三方 repo → 不 deploy，SKIP unknown_line + pending_promote + 飞书通知', async () => {
+    const pool = makeMockPool();
+    const deploy = vi.fn();
+    const notifyMsgs = [];
+    const notify = async (m) => notifyMsgs.push(m);
+    const acquireStagingLock = vi.fn();
+    const task3p = {
+      id: 'task-3p',
+      payload: { initiative_id: 'init-1', pr_url: 'https://pr/3p', base_repo: 'https://github.com/acme/other-product.git' },
+    };
+    const r = await runStagingE2E(task3p, { pool, deploy, loadAcceptance: async () => ACCEPTANCE, notify, acquireStagingLock });
+    // 不跑任何 deploy、不抢 staging 锁（cecelia 没有第三方 repo 的 staging 部署目标）
+    expect(deploy).not.toHaveBeenCalled();
+    expect(acquireStagingLock).not.toHaveBeenCalled();
+    expect(r.verdict).toBe('SKIP');
+    expect(r.reason).toBe('unknown_line');
+    expect(r.promoteStatus).toBe('pending_promote');
+    // verdict 落 staging_e2e_results
+    expect(insertedResult(pool).params[3]).toBe('SKIP');
+    // promote_status=pending_promote 落库
+    const upd = pool.calls.find((c) => /UPDATE staging_e2e_results/.test(c.sql) && /promote_status/.test(c.sql));
+    expect(upd).toBeTruthy();
+    expect(upd.params).toContain('pending_promote');
+    // 飞书通知一次，文案含 pending 语义
+    expect(notifyMsgs.length).toBe(1);
+    expect(notifyMsgs[0]).toMatch(/pending/i);
+    expect(updateTaskStatus).toHaveBeenCalledWith('task-3p', 'completed');
+  });
+
+  it('base_repo 为空（legacy）→ 保持旧行为，照常 deploy', async () => {
+    const pool = makeMockPool();
+    const deploy = vi.fn(() => ({ status: 'skipped', reason: 'no_docker', output: '' }));
+    // 复用文件顶部 task fixture（payload 无 base_repo）
+    const r = await runStagingE2E(task, { pool, deploy, loadAcceptance: async () => ACCEPTANCE });
+    expect(deploy).toHaveBeenCalledOnce();
+    expect(r.reason).toBe('no_docker');
   });
 });
 
@@ -445,6 +609,39 @@ describe('handlePromote — ZenithJoy staging FAIL 护栏通知', () => {
     expect(notifyMsgs[0]).toContain('Connection refused');
   });
 
+  it('FAIL + customer line + zjSha → 通知含候选 SHA（方便定位哪个 ZJ 版本坏了）', async () => {
+    const notifyMsgs = [];
+    const notify = async (msg) => { notifyMsgs.push(msg); };
+    const pool = { query: vi.fn(async () => ({ rows: [] })) };
+    await handlePromote(
+      pool,
+      {
+        verdict: 'FAIL',
+        baseRepo: 'perfectuser21/zenithjoy',
+        prUrl: 'https://github.com/pr/3',
+        initiativeId: 'init-zj-3',
+        zjSha: '8ecf9249378936b1a27395eb5a7efcb179a3fd23',
+      },
+      { notify },
+    );
+    expect(notifyMsgs).toHaveLength(1);
+    expect(notifyMsgs[0]).toContain('候选');
+    expect(notifyMsgs[0]).toContain('8ecf9249378936b1a27395eb5a7efcb179a3fd23');
+  });
+
+  it('FAIL + customer line + zjSha=unknown → 通知不含候选行（避免"候选: unknown"干扰）', async () => {
+    const notifyMsgs = [];
+    const notify = async (msg) => { notifyMsgs.push(msg); };
+    const pool = { query: vi.fn(async () => ({ rows: [] })) };
+    await handlePromote(
+      pool,
+      { verdict: 'FAIL', baseRepo: 'perfectuser21/zenithjoy', prUrl: 'p', initiativeId: 'i', zjSha: 'unknown' },
+      { notify },
+    );
+    expect(notifyMsgs).toHaveLength(1);
+    expect(notifyMsgs[0]).not.toContain('候选');
+  });
+
   it('SKIP + customer line → 不通知（配置缺省非真失败）', async () => {
     const notifyMsgs = [];
     const notify = async (msg) => { notifyMsgs.push(msg); };
@@ -469,6 +666,35 @@ describe('handlePromote — ZenithJoy staging FAIL 护栏通知', () => {
     );
     expect(status).toBe('n_a');
     expect(notifyMsgs).toHaveLength(0);
+  });
+
+  it('FAIL + deployOutput 含 ZJ staging SHA → 通知里出现最后已知 SHA（诊断可见）', async () => {
+    const notifyMsgs = [];
+    const notify = async (msg) => { notifyMsgs.push(msg); };
+    const pool = { query: vi.fn(async () => ({ rows: [] })) };
+    // deployOutput 模拟一次成功健康检查后的 output（含 SHA 诊断行），紧接着下一次失败
+    const deployOutput = 'ok\n[ZJ staging SHA: 8ecf9249378936b1a27395eb5a7efcb179a3fd23 buildTime:2026-07-07T08:14:34Z]';
+    await handlePromote(
+      pool,
+      { verdict: 'FAIL', baseRepo: 'perfectuser21/zenithjoy', prUrl: 'p', initiativeId: 'i', deployOutput },
+      { notify },
+    );
+    expect(notifyMsgs).toHaveLength(1);
+    expect(notifyMsgs[0]).toContain('最后已知 staging SHA: 8ecf9249');
+  });
+
+  it('FAIL + deployOutput 无 SHA → 通知不含 SHA 行（向前兼容）', async () => {
+    const notifyMsgs = [];
+    const notify = async (msg) => { notifyMsgs.push(msg); };
+    const pool = { query: vi.fn(async () => ({ rows: [] })) };
+    await handlePromote(
+      pool,
+      { verdict: 'FAIL', baseRepo: 'perfectuser21/zenithjoy', prUrl: 'p', initiativeId: 'i', deployOutput: 'curl: (7) ECONNREFUSED' },
+      { notify },
+    );
+    expect(notifyMsgs).toHaveLength(1);
+    expect(notifyMsgs[0]).not.toContain('最后已知 staging SHA');
+    expect(notifyMsgs[0]).toContain('ZJ 护栏触发');
   });
 });
 

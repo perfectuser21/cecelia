@@ -1,0 +1,26 @@
+{
+  "skill": { "name": "daily-report-cs", "version": "v1.0.0", "source": "ChatGPT", "type": "判断型 · prompt 内核", "area": "ZenithJoy", "line": "Line 04 私域AI接管", "ability": "客服判断", "submitter": "张三", "evaluatedAt": "2026-07-08" },
+  "verdict": { "level": "partial", "text": "逻辑·输出·红线达标；主路径输入未接真 DB，上线前必须先接。" },
+  "stats": { "功能线": "1", "依赖缺失": "1", "红线": "✓", "成熟度": "thin", "诚实度": "A+", "耗时": "12′" },
+  "anatomy": {
+    "inputs": [
+      { "name": "状态包", "fields": ["上一阶段","风险等级","推进状态","未完成事项","询价背景","禁忌话术","历史缺口","上次下一步"], "status": "red", "connected": false, "note": "8 字段无一真实填充" },
+      { "name": "客户最新一句话", "fields": [], "status": "green", "connected": true, "note": "真实测过" }
+    ],
+    "kernel": { "model": "gpt-5.4-mini", "promptNote": "SKILL.md · 判定逻辑 8 步（按序走）", "redlineGate": true,
+      "rules": [
+        { "name": "A1–A4 阶段", "hardGate": false }, { "name": "推进信号档", "hardGate": false },
+        { "name": "四感缺口", "hardGate": false }, { "name": "询价分级", "hardGate": false },
+        { "name": "回复自检", "hardGate": false }, { "name": "生产接入建议", "hardGate": false },
+        { "name": "事实边界", "hardGate": true }, { "name": "高风险转人工", "hardGate": true }
+      ] },
+    "outputs": [
+      { "name": "回复正文", "sub": "可直接发给客户", "fields": [] },
+      { "name": "判断标签 JSON", "sub": "", "fields": ["stage","signal","inquiry","risk","gap","escalate"] }
+    ]
+  },
+  "findings": [ { "name": "询价分级", "tag": "有缺陷史 47→87%", "severity": "flag" }, { "name": "收口优先", "tag": "向导已定义为第五值", "severity": "ok" } ],
+  "redlines": [ { "name": "事实边界", "tag": "一票否决" }, { "name": "回复自检 5 清单", "tag": "" }, { "name": "代码层编造检测", "tag": "" } ],
+  "maturity": { "生产接线": "0 条", "真实数据库": "未连接", "已验证": "15×3 遍", "模型选型": "gpt-5.4-mini", "诚实待办": "主动列出" },
+  "health": [ { "dim": "是什么", "state": "ok" }, { "dim": "输入", "state": "bad" }, { "dim": "逻辑", "state": "warn" }, { "dim": "输出", "state": "ok" }, { "dim": "红线", "state": "ok" }, { "dim": "成熟", "state": "neutral" } ]
+}

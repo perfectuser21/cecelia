@@ -9,8 +9,9 @@ import {
   ensureHarnessWorktree,
   DEFAULT_BASE_REPO,
 } from '../../packages/brain/src/harness-worktree.js';
-import { spawnNode } from '../../packages/brain/src/workflows/harness-task.graph.js';
-import { evaluateSubTaskNode } from '../../packages/brain/src/workflows/harness-initiative.graph.js';
+// 刀4阶段3：harness-task.graph.js / harness-initiative.graph.js 已物理删除（LangGraph 图路径
+// 废弃，orchestrator 硬校验后全走 skill-relay）。下方原先测 spawnNode/evaluateSubTaskNode
+// （死图节点）的用例已删除，只保留测 harness-worktree.js 活代码 helper 的用例。
 
 describe('H11 — harnessSubTaskWorktreePath helper', () => {
   test('返回 <baseRepo>/.claude/worktrees/harness-v2/task-<init8>-<logical>', () => {
@@ -79,56 +80,5 @@ describe('H11 — ensureHarnessWorktree wtKey override', () => {
         statFn,
       })
     ).resolves.toBeDefined();
-  });
-});
-
-describe('H11 — sub-graph spawnNode 用复合 wtKey 调 ensureWt', () => {
-  test('ensureWt 收到的 opts.wtKey = <init8>-<logical>', async () => {
-    const ensureWt = vi.fn(async (opts) => '/mock-wt');
-    const spawnDetached = vi.fn(async () => ({ exit_code: 0 }));
-    const resolveToken = vi.fn(async () => 'gh-token');
-    const poolOverride = { query: vi.fn().mockResolvedValue({ rows: [] }) };
-
-    const state = {
-      task: { id: 'ws1', title: 'Sub Task ws1', payload: { sprint_dir: 'sprints/h11-test' } },
-      initiativeId: 'feddcf5e-e054-4ee5-9a9d-c4a19418d30d',
-      githubToken: undefined,
-      worktreePath: undefined,
-      fix_round: 0,
-    };
-    const result = await spawnNode(state, { ensureWorktree: ensureWt, spawnDetached, resolveToken, poolOverride });
-
-    expect(ensureWt).toHaveBeenCalledOnce();
-    const wtKey = ensureWt.mock.calls[0][0].wtKey;
-    expect(wtKey).toBe('feddcf5e-ws1');
-    // 不应该直接传 'ws1' 作 wtKey（会被 shortTaskId 拒）
-    expect(wtKey).not.toBe('ws1');
-  });
-});
-
-describe('H11 — evaluateSubTaskNode worktreePath 用 harnessSubTaskWorktreePath', () => {
-  // evaluateSubTaskNode 已在 cp-0511182214 迁移为子图节点，不再单独 export
-  test.skip('worktreePath = harnessSubTaskWorktreePath(initiativeId, sub_task.id)', async () => {
-    const calls = [];
-    const spy = async (opts) => {
-      calls.push(opts);
-      return { exit_code: 0, stdout: '{"verdict":"PASS","feedback":null}', stderr: '', timed_out: false };
-    };
-    const state = {
-      task: { id: 'feddcf5e-e054-4ee5-9a9d-c4a19418d30d', payload: { sprint_dir: 'sprints/test' } },
-      sub_task: { id: 'ws1', title: 'sub' },
-      initiativeId: 'feddcf5e-e054-4ee5-9a9d-c4a19418d30d',
-      worktreePath: '/wrong/main/wt',  // 不该用这个
-      task_loop_index: 0,
-      taskPlan: { journey_type: 'autonomous' },
-      githubToken: 'gh',
-      evaluate_verdict: null,
-    };
-    // H15: mock verifyEvaluator pass，避免 stat 不存在的 contract-dod
-    await evaluateSubTaskNode(state, { executor: spy, verifyEvaluator: async () => undefined });
-    expect(calls.length).toBe(1);
-    const got = calls[0].worktreePath;
-    expect(got).toBe(harnessSubTaskWorktreePath(state.initiativeId, 'ws1'));
-    expect(got).not.toBe('/wrong/main/wt');
   });
 });

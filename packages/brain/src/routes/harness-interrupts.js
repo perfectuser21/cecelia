@@ -10,7 +10,6 @@
  */
 
 import { Router } from 'express';
-import { Command } from '@langchain/langgraph';
 import pool from '../db.js';
 
 const router = Router();
@@ -50,8 +49,11 @@ router.get('/', async (req, res) => {
  *
  * Body: { decision: { action: 'abort'|'extend_fix_rounds'|'accept_failed', ...meta } }
  *
- * 写一行 task_events.type='interrupt_resumed'，然后异步用 Command({resume:decision})
- * 重新 stream graph 续跑。HTTP 立即返回 202 不阻塞。
+ * 写一行 task_events.type='interrupt_resumed'，返回 202。
+ *
+ * 注（刀4阶段3，2026-07-09）：原「异步 Command({resume:decision}) 重新 stream
+ * harness-initiative.graph.js 续跑」逻辑已删除——interrupt_pending 事件只由该死图写入，
+ * orchestrator 硬校验落地后不再产生该事件，故 resume 分支物理不可达。
  */
 router.post('/:taskId/resume', async (req, res) => {
   const { taskId } = req.params;
@@ -84,7 +86,7 @@ router.post('/:taskId/resume', async (req, res) => {
   const attemptN = task.execution_attempts || 1;
   const threadId = `harness-initiative:${initiativeId}:${attemptN}`;
 
-  // 写 interrupt_resumed event（先记，再异步 stream）
+  // 写 interrupt_resumed event
   try {
     await dbPool.query(
       `INSERT INTO task_events (task_id, event_type, payload, created_at)
@@ -93,33 +95,7 @@ router.post('/:taskId/resume', async (req, res) => {
     );
   } catch (err) {
     console.warn(`[harness-interrupts][POST] write event failed: ${err.message}`);
-    // 继续尝试 resume，不阻断
   }
-
-  // 异步 stream — 不阻塞 HTTP（resume 整个 graph 可能跑很久）
-  setImmediate(async () => {
-    try {
-      const { compileHarnessFullGraph } = await import('../workflows/harness-initiative.graph.js');
-      const compiled = await compileHarnessFullGraph();
-      const stream = await compiled.stream(
-        new Command({ resume: decision }),
-        {
-          configurable: { thread_id: threadId },
-          recursionLimit: 500,
-          streamMode: 'updates',
-        }
-      );
-      // 消费 stream 让 graph 跑完（graph 内部节点会写 task_events）
-      for await (const update of stream) {
-        if (process.env.DEBUG_HARNESS_INTERRUPT === '1') {
-          console.log(`[harness-interrupts] resume update keys=${Object.keys(update || {}).join(',')}`);
-        }
-      }
-      console.log(`[harness-interrupts] resume done task=${task.id} thread=${threadId} action=${decision.action}`);
-    } catch (err) {
-      console.error(`[harness-interrupts] resume failed task=${task.id} thread=${threadId}: ${err.message}`);
-    }
-  });
 
   res.status(202).json({ ok: true, threadId, decision, taskId: task.id });
 });

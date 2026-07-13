@@ -95,6 +95,7 @@ import {
 import { triggerCodeQualityScan } from './task-generator-scheduler.js';
 import { zombieSweep } from './zombie-sweep.js';
 import * as pipelinePatrolPlugin from './pipeline-patrol-plugin.js';
+import * as lineStrategistDispatchPlugin from './line-strategist-dispatch-plugin.js';
 import * as pausedRequeuPlugin from './paused-requeuer-plugin.js';
 import * as pipelineWatchdogPlugin from './pipeline-watchdog-plugin.js';
 import * as krHealthDailyPlugin from './kr-health-daily-plugin.js';
@@ -351,6 +352,11 @@ async function executeTick() {
   // [感知] Pipeline Patrol 巡航：每 5 分钟检测卡住/孤儿 pipeline（D1.7c plugin）
   pipelinePatrolPlugin.tick({ pool, tickState, tickLog }).catch(err => {
     console.error('[tick] Pipeline patrol plugin failed (non-fatal):', err.message);
+  });
+
+  // [感知] Line 军师终态派发：每 10 分钟扫描落终态任务，按 line 建 strategist_decision
+  lineStrategistDispatchPlugin.tick({ pool, tickState, tickLog }).catch(err => {
+    console.error('[tick] Line-strategist dispatch plugin failed (non-fatal):', err.message);
   });
 
   // [恢复] Paused 任务重排：每 5 分钟扫 paused>1h+retry<3 → requeue；retry>=3 → archived
@@ -1040,6 +1046,7 @@ async function executeTick() {
     let zeroGoalsTrigger = null;
     try {
       const { maybeTriggerStrategySession } = await import('./active-goals-zero-trigger.js');
+      // DEPRECATED(P1-PR1 2026-07-06): 已迁移 scheduler-jobs.js。executeTick 自 Wave 2 起不被调用；若未来复活本函数，必须先移除此调用以防双跑。
       zeroGoalsTrigger = await maybeTriggerStrategySession(pool);
       if (zeroGoalsTrigger.created) {
         tickLog(`[tick] active_goals=0 trigger: dispatched strategy_session task ${zeroGoalsTrigger.taskId}`);
@@ -1280,6 +1287,8 @@ async function executeTick() {
   }
 
   // 6.6. Dead task reset — execution_attempts=0 stuck tasks (in_progress/queued > 10min) → queued
+  //      T2: 改用 executor_kind 白名单（brain-local / bridge）精确限定范围，
+  //      避免误伤 relay-container / headed-session / external-worker 等执行者。
   try {
     const deadResult = await pool.query(`
       UPDATE tasks
@@ -1287,6 +1296,7 @@ async function executeTick() {
       WHERE execution_attempts = 0
         AND status IN ('in_progress', 'queued')
         AND updated_at < NOW() - INTERVAL '10 minutes'
+        AND executor_kind IN ('brain-local', 'bridge')
       RETURNING id, title
     `);
     if (deadResult.rowCount > 0) {
@@ -1541,6 +1551,7 @@ async function executeTick() {
   }
 
   // 10.1 每4小时 arch_review 巡检（guard: 上次 review 后至少1个 dev 任务完成）
+  // DEPRECATED(P1-PR1 2026-07-06): 已迁移 scheduler-jobs.js。executeTick 自 Wave 2 起不被调用；若未来复活本函数，必须先移除此调用以防双跑。
   Promise.resolve().then(() => triggerArchReview(pool))
     .catch(e => console.warn('[tick] arch review scheduler 失败:', e.message));
 
@@ -1554,10 +1565,12 @@ async function executeTick() {
   if (isConsciousnessEnabled()) {
 
   // 10.3 对话日志提炼（每 5 分钟扫描 ~/.claude-account1/projects/ .jsonl 文件）
+  // DEPRECATED(P1-PR1 2026-07-06): 已迁移 scheduler-jobs.js。executeTick 自 Wave 2 起不被调用；若未来复活本函数，必须先移除此调用以防双跑。
   Promise.resolve().then(() => runConversationDigest())
     .catch(e => console.warn('[tick] conversation digest 失败:', e.message));
 
   // 10.4 Capture 消化（扫描 inbox captures → LLM 拆解为 atoms）
+  // DEPRECATED(P1-PR1 2026-07-06): 已迁移 scheduler-jobs.js。executeTick 自 Wave 2 起不被调用；若未来复活本函数，必须先移除此调用以防双跑。
   Promise.resolve().then(() => runCaptureDigestion())
     .catch(e => console.warn('[tick] capture digestion 失败:', e.message));
 

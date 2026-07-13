@@ -1,0 +1,31 @@
+{
+  "skill": {"name":"realtime-reply-cs","type":"判断型：边读边判实时生成客服回复","area":"ZenithJoy","line":"Line 04 私域AI接管","submitter":"张伟","evaluatedAt":"2026-07-08"},
+  "verdict": {"level":"partial","text":"边判边读设计合理但历史订单接口未接"},
+  "anatomy": {
+    "input": "客户消息",
+    "loadMode": "穿插判定",
+    "kernelName": "实时判意图给回复",
+    "pipeline": [
+      "load|当前会话|库|会话状态库|已接",
+      "judge|判客户意图",
+      "load|客户档案|文档|客户档案文档|已接",
+      "judge|判所处阶段",
+      "load|历史订单|API|订单查询接口|未接",
+      "judge|判询价类型",
+      "gate|敏感词拦截|拦截",
+      "load|产品库存|API|库存接口|已接",
+      "judge|判推进动作",
+      "gate|高风险转人工|转人工",
+      "judge|生成回复话术"
+    ],
+    "outputs": [
+      {"name":"回复话术","kind":"文本","role":"直接发给客户的一句话"},
+      {"name":"意图标签","kind":"数据","role":"写回会话状态供复盘"}
+    ]
+  },
+  "summary": "边判边读逻辑清晰，但历史订单接口没接通",
+  "nextSteps": [
+    {"issue":"历史订单 API 没接，第5步拿不到数据","fix":"接通订单查询接口再上线","severity":"high"},
+    {"issue":"敏感词库偏薄","fix":"补充行业敏感词再测","severity":"mid"}
+  ]
+}

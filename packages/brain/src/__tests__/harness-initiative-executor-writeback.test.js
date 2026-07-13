@@ -7,6 +7,19 @@
  * 修复前 bug：compiled.invoke() 成功后从不调用 updateTaskStatus，
  * 导致任务永远卡在 in_progress。
  * 修复 PR：#2816
+ *
+ * ── 2026-07-05 更新（orchestrator 硬校验落地后）──────────────────
+ * `_driveHarnessInitiative` 加了 orchestrator 硬校验：task.payload.orchestrator
+ * !== 'skill-relay' 会在函数最顶部被拒绝（terminal failed，
+ * failure_class='missing_orchestrator_flag'），graph 从不被 invoke。
+ * - 「graph ok=true → updateTaskStatus("completed")」和「graph 抛出异常 →
+ *   updateTaskStatus("failed")且带 LangGraph 错误信息」这两个用例依赖的
+ *   graph invoke 前提已不可达，改为 it.skip 并说明原因。
+ * - 「graph final.error 存在（ok=false）→ updateTaskStatus("failed")」这个
+ *   用例的断言只要求 updateTaskStatus 被调用且带任意字符串 error_message，
+ *   恰好与硬校验路径的 failed+error_message='missing_orchestrator_flag'
+ *   兼容，仍能通过，但它现在测的不再是 graph final.error 场景本身，而是
+ *   硬校验路径的 failed 回写；保留为 it()（未失败，不 skip），仅在此注明。
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -174,10 +187,6 @@ vi.mock('../auto-learning.js', () => ({
 
 const mockCompiled = { stream: vi.fn() };
 
-vi.mock('../workflows/harness-initiative.graph.js', () => ({
-  compileHarnessFullGraph: vi.fn().mockResolvedValue(mockCompiled),
-}));
-
 vi.mock('../orchestrator/pg-checkpointer.js', () => ({
   getPgCheckpointer: vi.fn().mockResolvedValue({
     get: vi.fn().mockResolvedValue(null),  // null = fresh start
@@ -186,6 +195,11 @@ vi.mock('../orchestrator/pg-checkpointer.js', () => ({
 
 vi.mock('../events/taskEvents.js', () => ({
   emitGraphNodeUpdate: vi.fn().mockResolvedValue(undefined),
+}));
+
+const mockSpawnRelay = vi.hoisted(() => vi.fn());
+vi.mock('../harness-skill-relay.js', () => ({
+  spawnSkillRelaySession: (...args) => mockSpawnRelay(...args),
 }));
 
 // ── 被测函数 ─────────────────────────────────────────────────
@@ -214,11 +228,17 @@ const HARNESS_TASK = {
   execution_attempts: 0,
 };
 
+const RELAY_TASK = {
+  ...HARNESS_TASK,
+  id: 'ccccdddd-1234-5678-9012-abcdef012345',
+  payload: { ...HARNESS_TASK.payload, orchestrator: 'skill-relay' },
+};
+
 // ── 测试 ─────────────────────────────────────────────────────
 
 describe('triggerCeceliaRun — harness_initiative 状态回写（PR #2816 fix）', () => {
 
-  it('graph ok=true → updateTaskStatus("completed") 被调用', async () => {
+  it.skip('graph ok=true → updateTaskStatus("completed") 被调用（2026-07-05 orchestrator 硬校验后已不可达，skip）', async () => {
     // graph stream 返回无 error 的 state，并包含 report_path（B48：标志 reportNode 完成）
     mockCompiled.stream.mockImplementation(async function* () {
       yield { dbUpsert: { sub_tasks: [{ task_id: 'ws1' }] } };
@@ -235,7 +255,7 @@ describe('triggerCeceliaRun — harness_initiative 状态回写（PR #2816 fix�
     );
   });
 
-  it('graph final.error 存在（ok=false）→ updateTaskStatus("failed") 被调用', async () => {
+  it('graph final.error 存在（ok=false）→ updateTaskStatus("failed") 被调用（2026-07-05 起：断言不依赖具体走的是哪条代码路径，硬校验的 failed 回写同样满足）', async () => {
     mockCompiled.stream.mockImplementation(async function* () {
       yield { prep: { error: 'plan generation failed' } };
     });
@@ -250,7 +270,7 @@ describe('triggerCeceliaRun — harness_initiative 状态回写（PR #2816 fix�
     );
   });
 
-  it('graph 抛出异常 → updateTaskStatus("failed") 被调用且 success=true', async () => {
+  it.skip('graph 抛出异常 → updateTaskStatus("failed") 被调用且 success=true（2026-07-05 orchestrator 硬校验后已不可达，skip）', async () => {
     mockCompiled.stream.mockImplementation(async function* () {
       throw new Error('LangGraph internal error');
     });
@@ -265,5 +285,37 @@ describe('triggerCeceliaRun — harness_initiative 状态回写（PR #2816 fix�
         error_message: expect.stringContaining('LangGraph internal error'),
       }),
     );
+  });
+});
+
+describe('triggerCeceliaRun — skill-relay spawn 语义（Issue df107724）', () => {
+  it('relay spawn 成功（ok=true, mode=skill-relay）→ 不得标 completed/failed，留 in_progress', async () => {
+    mockSpawnRelay.mockResolvedValue({ ok: true, mode: 'skill-relay', containerId: 'cecelia-relay-test-1' });
+    const result = await triggerCeceliaRun(RELAY_TASK);
+    expect(result.success).toBe(true);
+    expect(mockSpawnRelay).toHaveBeenCalledTimes(1);
+    const statuses = mockUpdateTaskStatus.mock.calls.map((c) => c[1]);
+    expect(statuses).not.toContain('completed');
+    expect(statuses).not.toContain('failed');
+  });
+
+  it('relay spawn 失败（ok=false）→ 照旧标 failed（既有行为守护）', async () => {
+    mockSpawnRelay.mockResolvedValue({ ok: false, mode: 'skill-relay', error: 'docker run failed' });
+    await triggerCeceliaRun(RELAY_TASK);
+    expect(mockUpdateTaskStatus).toHaveBeenCalledWith(
+      RELAY_TASK.id,
+      'failed',
+      expect.objectContaining({ error_message: expect.any(String) })
+    );
+  });
+
+  it('雷8（headed 变体·2856dada R4 实证）：relay spawn 成功（ok=true, mode=skill-relay-codex-headed）→ 不得标 completed/failed，留 in_progress', async () => {
+    mockSpawnRelay.mockResolvedValue({ ok: true, mode: 'skill-relay-codex-headed', tmuxSession: 'codex-relay-test-1' });
+    const result = await triggerCeceliaRun(RELAY_TASK);
+    expect(result.success).toBe(true);
+    expect(mockSpawnRelay).toHaveBeenCalledTimes(1);
+    const statuses = mockUpdateTaskStatus.mock.calls.map((c) => c[1]);
+    expect(statuses).not.toContain('completed');
+    expect(statuses).not.toContain('failed');
   });
 });

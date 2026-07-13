@@ -11,6 +11,8 @@
 
 import crypto from 'crypto';
 import pool from './db.js';
+import { generateL0Summary } from './memory-utils.js';
+import { isNoiseLearningCategory } from './learning.js';
 
 // ── 配置 ──────────────────────────────────────────────────
 export const DAILY_AUTO_LEARNING_BUDGET = 50;
@@ -64,7 +66,13 @@ async function isDuplicateLearning(contentHash, dbPool = pool) {
 /**
  * 创建自动学习记录
  */
-async function createAutoLearning({ title, category, content, triggerEvent, metadata }, dbPool = pool) {
+export async function createAutoLearning({ title, category, content, triggerEvent, metadata }, dbPool = pool) {
+  // T9 噪音类目拦截（真实执行点）
+  if (isNoiseLearningCategory(category)) {
+    console.log(`[auto-learning] Skipping noise category: ${category}`);
+    return null;
+  }
+
   // 预算检查
   if (!hasAutoLearningBudget()) {
     console.log(`[auto-learning] Daily budget exhausted (${DAILY_AUTO_LEARNING_BUDGET}), skipping learning creation`);
@@ -87,8 +95,8 @@ async function createAutoLearning({ title, category, content, triggerEvent, meta
 
   try {
     const result = await dbPool.query(`
-      INSERT INTO learnings (title, category, trigger_event, content, metadata, content_hash, version, is_latest, digested, task_id)
-      VALUES ($1, $2, $3, $4, $5, $6, 1, true, false, $7)
+      INSERT INTO learnings (title, category, trigger_event, content, metadata, content_hash, version, is_latest, digested, task_id, summary)
+      VALUES ($1, $2, $3, $4, $5, $6, 1, true, false, $7, $8)
       RETURNING id, title
     `, [
       title,
@@ -98,6 +106,7 @@ async function createAutoLearning({ title, category, content, triggerEvent, meta
       JSON.stringify(metadata || {}),
       contentHash,
       taskIdValid ? taskIdRaw : null,
+      generateL0Summary(`${title} ${content}`),
     ]);
 
     // 更新计数器
@@ -152,32 +161,11 @@ export function extractTaskSummary(result, maxLength = 500) {
 /**
  * 处理任务完成的自动学习
  */
-export async function handleTaskCompletedLearning(task_id, taskType, status, result, metadata = {}) {
-  // 只处理有价值的任务类型
-  if (!VALUABLE_TASK_TYPES.includes(taskType)) {
-    console.log(`[auto-learning] Skipping task_type=${taskType} (not in valuable list)`);
-    return null;
-  }
-
-  const title = `任务完成：${task_id}`;
-  const summary = extractTaskSummary(result);
-  const triggerSource = metadata.trigger_source || 'execution_callback';
-
-  const content = `任务成功完成。类型：${taskType}。触发来源：${triggerSource}。摘要：${summary}`;
-
-  return await createAutoLearning({
-    title,
-    category: 'execution_result',
-    content,
-    triggerEvent: 'task_completed_auto',
-    metadata: {
-      task_id,
-      task_type: taskType,
-      trigger_source: triggerSource,
-      auto_generated: true,
-      created_at: new Date().toISOString()
-    }
-  });
+export async function handleTaskCompletedLearning(task_id, taskType, _status, _result, _metadata = {}) {
+  // T9: 任务完成事件层记录与 tasks 表 result 完全重复，零原子准则价值，停写。
+  // 失败路径（handleTaskFailedLearning）保留——失败模式喂反刍系统。
+  console.log(`[auto-learning] Skipping completed-task learning for ${task_id} (type=${taskType}): event-layer noise (T9)`);
+  return null;
 }
 
 /**

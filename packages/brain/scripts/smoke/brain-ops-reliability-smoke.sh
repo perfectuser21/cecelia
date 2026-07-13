@@ -30,8 +30,9 @@ check "com.cecelia.brain-keepalive.plist 存在" \
   test -f "$REPO_ROOT/scripts/ops/com.cecelia.brain-keepalive.plist"
 
 # B. janitor API 可调用（要求 Brain 已运行）
-check "janitor jobs API 包含 docker-prune" \
-  bash -c "curl -sf '$BASE_URL/api/brain/janitor/jobs' | grep -q 'docker-prune'"
+# docker-prune 已取消——部署自杀竞态 Issue 97cf5a41，2026-07-08
+check "janitor jobs API 不含 docker-prune" \
+  bash -c "! curl -sf '$BASE_URL/api/brain/janitor/jobs' | grep -q 'docker-prune'"
 
 # C. account-usage.js 导出 selectBestAccount（静态检查，不连库）
 check "account-usage.js 含 selectBestAccount export" \

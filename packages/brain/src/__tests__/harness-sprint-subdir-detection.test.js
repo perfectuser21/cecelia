@@ -33,7 +33,6 @@ vi.mock('../harness-pg-checkpointer.js', () => ({ getPgCheckpointer: vi.fn() }))
 
 import fsPromises from 'node:fs/promises';
 import { defaultReadContractFile } from '../workflows/harness-gan.graph.js';
-import { parsePrdNode } from '../workflows/harness-initiative.graph.js';
 
 const ENOENT = Object.assign(new Error('no such file'), { code: 'ENOENT' });
 
@@ -65,47 +64,5 @@ describe('defaultReadContractFile: subdir scan (B34)', () => {
       { name: 'w44-walking-skeleton-b33', isDirectory: () => true },
     ]);
     await expect(defaultReadContractFile('/repo', 'sprints')).rejects.toThrow('contract file not found');
-  });
-});
-
-// ── parsePrdNode ────────────────────────────────────────────────────────────
-
-describe('parsePrdNode: subdir scan (B34)', () => {
-  it('finds sprint-prd.md in subdir and returns effectiveSprintDir', async () => {
-    // Flat read fails
-    fsPromises.readFile.mockRejectedValueOnce(ENOENT);
-    // readdir returns one subdir
-    fsPromises.readdir.mockResolvedValueOnce([
-      { name: 'w44-walking-skeleton-b33', isDirectory: () => true },
-    ]);
-    // Subdir sprint-prd.md found
-    fsPromises.readFile.mockResolvedValueOnce('# PRD content');
-
-    const state = {
-      task: { payload: { sprint_dir: 'sprints' } },
-      plannerOutput: 'fallback stdout',
-      worktreePath: '/repo',
-      initiativeId: 'init-1',
-    };
-    const result = await parsePrdNode(state);
-    expect(result.prdContent).toBe('# PRD content');
-    expect(result.sprintDir).toBe('sprints/w44-walking-skeleton-b33');
-  });
-
-  it('falls back to plannerOutput when no subdir has sprint-prd.md', async () => {
-    fsPromises.readFile.mockRejectedValue(ENOENT);
-    fsPromises.readdir.mockResolvedValueOnce([
-      { name: 'w44-walking-skeleton-b33', isDirectory: () => true },
-    ]);
-
-    const state = {
-      task: { payload: { sprint_dir: 'sprints' } },
-      plannerOutput: 'fallback stdout',
-      worktreePath: '/repo',
-      initiativeId: 'init-1',
-    };
-    const result = await parsePrdNode(state);
-    expect(result.prdContent).toBe('fallback stdout');
-    expect(result.sprintDir).toBe('sprints');
   });
 });

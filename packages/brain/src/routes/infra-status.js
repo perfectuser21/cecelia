@@ -6,7 +6,8 @@
 
 import { Router } from 'express';
 import os from 'os';
-import { readFileSync, existsSync } from 'fs';
+import fs from 'fs';
+import path from 'path';
 import { exec, execSync } from 'child_process';
 import { promisify } from 'util';
 import pool from '../db.js';
@@ -82,12 +83,25 @@ export const SERVERS = [
   },
 ];
 
+const DEFAULT_SSH_IDENTITY = () =>
+  process.env.CECELIA_SSH_IDENTITY || path.join(process.env.HOME || '', '.ssh', 'air2');
+
+/**
+ * 构造探针 ssh 命令(纯函数,可单测)。
+ * 约束:容器内 OpenSSH 按 /etc/passwd 找 root 家目录(/root/.ssh 只读且无 key),
+ * 不看 $HOME —— 所以 identity 必须显式 -i,known_hosts 必须指向 /dev/null。
+ */
+export function buildSshCommand(server, cmd, opts = {}) {
+  const identityPath = opts.identityPath ?? DEFAULT_SSH_IDENTITY();
+  const identityArg = (identityPath && fs.existsSync(identityPath)) ? `-i ${identityPath} ` : '';
+  return `ssh ${identityArg}-o ConnectTimeout=5 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o BatchMode=yes "${server.sshUser}@${server.tailscaleIp}" ${JSON.stringify(cmd)}`;
+}
+
 /**
  * 通过 SSH 执行远程命令，超时 5 秒
  */
 export async function sshExec(server, cmd) {
-  const sshCmd = `ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no -o BatchMode=yes "${server.sshUser}@${server.tailscaleIp}" ${JSON.stringify(cmd)}`;
-  const { stdout } = await execAsync(sshCmd, { timeout: 8000 });
+  const { stdout } = await execAsync(buildSshCommand(server, cmd), { timeout: 8000 });
   return stdout.trim();
 }
 
@@ -387,8 +401,8 @@ router.get('/health', async (req, res) => {
       let tokenExpiry = { token_expires_at: null, token_remaining_hours: null, token_status: 'unknown' };
       try {
         const credPath = `${os.homedir()}/.claude-${row.account_id}/.credentials.json`;
-        if (existsSync(credPath)) {
-          const raw = JSON.parse(readFileSync(credPath, 'utf8'));
+        if (fs.existsSync(credPath)) {
+          const raw = JSON.parse(fs.readFileSync(credPath, 'utf8'));
           const expiresAtMs = raw?.claudeAiOauth?.expiresAt;
           if (expiresAtMs) {
             const remainingMs = expiresAtMs - Date.now();

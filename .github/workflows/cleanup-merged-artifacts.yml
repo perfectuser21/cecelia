@@ -29,7 +29,8 @@ jobs:
           #   新命名：DoD.cp-*.md / PRD.cp-*.md / TASK_CARD.cp-*.md（大写、无前导点）
           # 不匹配 DoD.md / PRD.md（活跃 PR 使用，无 .cp- 后缀）
           # Phase 7.5: 补齐 .dod-* 前缀，之前漏抓导致 3 个 .dod-cp-* 残留积累
-          FILES=$(git ls-files | grep -E '^(\.prd-|\.task-|\.dod-|DoD\.cp-|PRD\.cp-|TASK_CARD\.cp-)' || true)
+          # 2026-07-06 补齐 .dev-mode./.dev-seal./.enriched-prd-（审计发现 main 积了 13 个此类残留）
+          FILES=$(git ls-files | grep -E '^(\.prd-|\.task-|\.dod-|\.dev-mode\.|\.dev-seal\.|\.enriched-prd-|DoD\.cp-|PRD\.cp-|TASK_CARD\.cp-)' || true)
 
           if [ -z "$FILES" ]; then
             echo "✅ 无 prd/task 残留文件，跳过"
@@ -47,13 +48,30 @@ jobs:
           echo "changed=true" >> "$GITHUB_OUTPUT"
           echo "count=$COUNT" >> "$GITHUB_OUTPUT"
 
-      - name: Commit cleanup
+      # 2026-07-06 根治：原「git push 直推 main + continue-on-error」在分支保护下永远被
+      # GH013 拒，continue-on-error 把红糊成绿 → 19 次"成功"实际一个文件没删过（积到 50 个）。
+      # 改为开清理 PR + auto-merge：用 DEPLOY_TOKEN（PAT）建 PR 才会触发 CI（GITHUB_TOKEN 建的
+      # PR 不触发 workflow → required ci-passed 永远 pending 卡死）。失败就红，不许糊。
+      - name: Commit cleanup via PR
         if: steps.cleanup.outputs.changed == 'true'
-        continue-on-error: true
         env:
           COUNT: ${{ steps.cleanup.outputs.count }}
+          # 必须是 GitHub PAT：DEPLOY_TOKEN 是 Brain API bearer 不是 PAT（0706 纠正）；
+          # GITHUB_TOKEN 建的 PR 不触发 CI → required checks 永远 pending 卡死 auto-merge。
+          GH_TOKEN: ${{ secrets.GH_PAT_BOT }}
         run: |
+          set -euo pipefail
+          if [ -z "${GH_TOKEN:-}" ]; then
+            echo "::error::GH_PAT_BOT secret 未配置（建清理 PR 必需 PAT）。请在 repo Settings → Secrets 添加。"
+            exit 1
+          fi
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git commit -m "chore(cleanup): 自动清理合并后的 prd/task 文件（${COUNT} 个）[bot]"
-          git push
+          BRANCH="cp-$(TZ=Asia/Shanghai date +%m%d%H%M)-cleanup-artifacts"
+          git checkout -b "$BRANCH"
+          git commit -m "chore(cleanup): 自动清理合并后的 prd/task 残留（${COUNT} 个）[bot]"
+          git push origin "$BRANCH"
+          gh pr create --head "$BRANCH" --base main \
+            --title "chore(cleanup): 自动清理合并后的 prd/task 残留（${COUNT} 个）" \
+            --body "由 cleanup-merged-artifacts.yml 自动创建。仅删除合并后残留的流程文件（.prd-*/.task-*/.dod-*/.dev-mode.*/.dev-seal.*/.enriched-prd-*/DoD.cp-*/PRD.cp-*/TASK_CARD.cp-*），不含任何代码改动。"
+          gh pr merge "$BRANCH" --auto --squash

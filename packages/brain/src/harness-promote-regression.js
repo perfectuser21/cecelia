@@ -113,7 +113,8 @@ export function mergeGoldenPaths(existing, fresh, taskPrefix) {
  * promoteToRegression — PASS 后冻结登记主函数（best-effort，绝不 throw）。
  *
  * @param {{pool?: object, execFile?: Function, fsImpl?: object, now?: string}} deps
- * @param {{task: object, sprintDir: string, subTasks: Array, worktreePath: string}} params
+ * @param {{task: object, sprintDir: string, subTasks: Array, worktreePath: string, dbOnly?: boolean}} params
+ *   dbOnly=true 时只执行 ① golden_path DB 写入，跳过 commit 校验与 yaml PR（九要素 T2 首版）
  * @returns {Promise<{ok: boolean, dbWritten: boolean, yamlPrUrl?: string|null, skipped?: boolean, reason?: string}>}
  */
 export async function promoteToRegression(deps = {}, params = {}) {
@@ -121,7 +122,7 @@ export async function promoteToRegression(deps = {}, params = {}) {
   const execFile = deps.execFile || defaultExecFile;
   const fsImpl = deps.fsImpl || fs;
   const now = deps.now || new Date().toISOString();
-  const { task, sprintDir, subTasks, worktreePath } = params;
+  const { task, sprintDir, subTasks, worktreePath, dbOnly = false } = params;
 
   const taskId = task?.id;
   if (!taskId || !sprintDir || !worktreePath) {
@@ -152,14 +153,16 @@ export async function promoteToRegression(deps = {}, params = {}) {
     const client = await dbPool.connect();
     try {
       await client.query('BEGIN');
-      // feature_id 验证存在，失败留 NULL（schema ON DELETE SET NULL 语义一致）
+      // feature_id 验证存在，失败留 NULL（schema ON DELETE SET NULL 语义一致）。
+      // payload.feature_id 缺失时回退 tasks.ability_id——读端 join gp.feature_id 直连，
+      // NULL 行会被滤掉，写端必须尽力落真 FK（九要素 T2）。
       let featureId = null;
-      const rawFeatureId = task?.payload?.feature_id;
-      if (rawFeatureId) {
+      for (const cand of [task?.payload?.feature_id, task?.ability_id]) {
+        if (!cand) continue;
         try {
-          const fe = await client.query('SELECT id FROM journey_features WHERE id=$1', [rawFeatureId]);
-          featureId = fe.rows[0]?.id || null;
-        } catch { featureId = null; }
+          const fe = await client.query('SELECT id FROM journey_features WHERE id=$1', [cand]);
+          if (fe.rows[0]?.id) { featureId = fe.rows[0].id; break; }
+        } catch { /* try next candidate */ }
       }
       await client.query('DELETE FROM golden_path WHERE owner_task_id=$1', [taskId]);
       for (const s of steps) {
@@ -180,6 +183,11 @@ export async function promoteToRegression(deps = {}, params = {}) {
     console.error(`[promote-regression] golden_path DB 写失败 task=${taskId}: ${err.message}`);
     await _alert(`A3 冻结 DB 写失败：task=${taskId} ${err.message}`);
     return { ok: false, dbWritten: false, reason: 'db_write_failed' };
+  }
+
+  if (dbOnly) {
+    console.log(`[promote-regression] dbOnly 完成 task=${taskId}（yaml PR 跳过）`);
+    return { ok: true, dbWritten, yamlPrUrl: null, reason: 'db_only' };
   }
 
   // ── ② commit 校验（防假卡）── behaviors 为空则没有 yaml 可冻，直接返回

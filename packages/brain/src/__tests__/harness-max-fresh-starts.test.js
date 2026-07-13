@@ -17,6 +17,24 @@
  * SC-102: execution_attempts < 上限 + error checkpoint → 仍正常 fresh start（stream 被调用、attemptN 升）
  * SC-103: existing.channel_values.error.terminal === true → terminal，stream 不被调用
  * SC-104: MAX_INITIATIVE_FRESH_STARTS 被导出且为正整数（默认 3）
+ *
+ * ── 2026-07-05 更新（orchestrator 硬校验落地后）──────────────────
+ * `_driveHarnessInitiative` 加了 orchestrator 硬校验（见 executor.js N4 注释）：
+ * `task.payload.orchestrator !== 'skill-relay'` 会在函数最顶部被拒绝
+ * （terminal failed，failure_class='missing_orchestrator_flag'），不再到达
+ * 本文件测试的 fresh-starts 保护逻辑。
+ *
+ * 因此本文件测的 MAX_INITIATIVE_FRESH_STARTS 逻辑现在是**永久不可达代码**
+ * （保留待观察期后物理清理）。SC-101/SC-102 原本测的场景——「orchestrator
+ * 缺失时仍能到达 fresh-starts 检查」——在新现实下已不可能发生：无论
+ * execution_attempts 是多少，都会先撞上硬校验直接拒绝。SC-101/SC-102 已
+ * 改为断言这个新现实。
+ *
+ * 已确认 skill-relay 路径的等价重试保护（harness-relay-watchdog.js 的
+ * MAX_RELAY_ATTEMPTS=5）覆盖场景更窄（只统计 spawn 成功的尝试，早期 spawn
+ * 失败不计数），这是一个已知独立缺口，见 Notion Issues
+ * issue_id=1ea53e09-b088-4d2a-b03a-ad8c976bbc6c（harness-relay-watchdog
+ * 重试计数不覆盖早期 spawn 失败场景）单独跟踪，不在本次改动修复范围内。
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -194,10 +212,6 @@ const mockCompiled = {
   }),
 };
 
-vi.mock('../workflows/harness-initiative.graph.js', () => ({
-  compileHarnessFullGraph: vi.fn().mockResolvedValue(mockCompiled),
-}));
-
 // mockCheckpointerGet 由各测试用例按需覆写
 const mockCheckpointerGet = vi.fn();
 vi.mock('../orchestrator/pg-checkpointer.js', () => ({
@@ -251,36 +265,37 @@ describe('runHarnessInitiativeRouter — 全局 fresh-start 上限', () => {
     expect(MAX_INITIATIVE_FRESH_STARTS).toBe(3);
   });
 
-  it('SC-101: execution_attempts==上限 + error checkpoint + resume → stream 从未被调用，task 标 terminal failed', async () => {
+  it.skip('SC-101[已失效 2026-07-05]: 已被 orchestrator 硬校验使其失效，断言逻辑现在与 harness-orchestrator-lockdown.test.js 的 SC-201 完全重复；保留骨架待 fresh-starts 保护迁移到 skill-relay 路径后复用或删除', async () => {
     const task = makeTask(MAX_INITIATIVE_FRESH_STARTS);
-    // 坏 checkpoint（error 有值），但已达上限，不应再 fresh start
+    // 坏 checkpoint（error 有值）——但即便如此，orchestrator 硬校验会先拦截，
+    // 根本不会走到 fresh-starts 检查逻辑
     mockCheckpointerGet.mockResolvedValue({
       channel_values: { error: 'ganLoop failed: executor timeout' },
     });
 
     const result = await runHarnessInitiativeRouter(task, { pool: { query: mockQuery } });
 
-    // 1) compiled.stream 从未被调用（没再 fresh-start / 没 invoke graph）
+    // 1) compiled.stream 从未被调用（硬校验在到达 graph invoke 之前就 return 了）
     expect(streamCallCount).toBe(0);
     expect(mockCompiled.stream).not.toHaveBeenCalled();
 
-    // 2) 返回 terminal
+    // 2) 返回 terminal，但 error 现在是 missing_orchestrator_flag（不再是 max_fresh_starts_exceeded）
     expect(result.terminal).toBe(true);
     expect(result.ok).toBe(false);
-    expect(result.error).toBe('max_fresh_starts_exceeded');
+    expect(result.error).toBe('missing_orchestrator_flag');
 
-    // 3) task 标 status=failed + failure_class=max_fresh_starts_exceeded
+    // 3) task 标 status=failed + failure_class=missing_orchestrator_flag
     const failCall = mockQuery.mock.calls.find(
       (call) => typeof call[0] === 'string' &&
         /UPDATE tasks SET[\s\S]*status\s*=\s*'failed'/.test(call[0]) &&
         Array.isArray(call[1]) &&
         call[1].includes(task.id) &&
-        call[1].some((p) => String(p).includes('max_fresh_starts_exceeded'))
+        call[1].some((p) => String(p).includes('missing_orchestrator_flag'))
     );
     expect(failCall).toBeTruthy();
   });
 
-  it('SC-102: execution_attempts<上限 + error checkpoint → 仍正常 fresh start（stream 被调用、attemptN 升）', async () => {
+  it.skip('SC-102[已失效 2026-07-05]: 已被 orchestrator 硬校验使其失效，断言逻辑现在与 harness-orchestrator-lockdown.test.js 的 SC-202 完全重复；保留骨架待 fresh-starts 保护迁移到 skill-relay 路径后复用或删除', async () => {
     const task = makeTask(MAX_INITIATIVE_FRESH_STARTS - 1); // 低于上限
     mockCheckpointerGet.mockResolvedValue({
       channel_values: { error: 'ganLoop failed: executor timeout' },
@@ -288,17 +303,16 @@ describe('runHarnessInitiativeRouter — 全局 fresh-start 上限', () => {
 
     const result = await runHarnessInitiativeRouter(task, { pool: { query: mockQuery } });
 
-    // 仍 fresh start：stream 被调用，且 input = { task }
-    expect(streamCallCount).toBe(1);
-    expect(capturedStreamInput).toEqual({ task });
+    // 不再 fresh start：无论 execution_attempts 是多少，缺 orchestrator 一律被硬校验拒绝
+    expect(streamCallCount).toBe(0);
+    expect(mockCompiled.stream).not.toHaveBeenCalled();
 
-    // attemptN 升：baseAttemptN = execution_attempts+1，坏 checkpoint → +1
-    const expectedAttemptN = (task.execution_attempts + 1) + 1;
-    expect(result.attemptN).toBe(expectedAttemptN);
-    expect(result.terminal).not.toBe(true);
+    expect(result.ok).toBe(false);
+    expect(result.terminal).toBe(true);
+    expect(result.error).toBe('missing_orchestrator_flag');
   });
 
-  it('SC-103: existing.channel_values.error.terminal === true → terminal，stream 不被调用', async () => {
+  it('SC-103: orchestrator 缺失 + existing.channel_values.error.terminal===true → 仍被硬校验先行拦截（terminal，stream 不被调用；断言不依赖具体走的是哪条代码路径）', async () => {
     const task = makeTask(0); // 远低于上限，但 checkpoint 标了 terminal
     mockCheckpointerGet.mockResolvedValue({
       channel_values: { error: { terminal: true, message: 'permanent failure' } },

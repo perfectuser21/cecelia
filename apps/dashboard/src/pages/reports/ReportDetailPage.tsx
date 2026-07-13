@@ -4,8 +4,8 @@
  * 展示简报完整内容（KR 进度、任务统计、系统健康、异常和风险）
  */
 
-import { useState, useEffect } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useState, useEffect, useCallback } from 'react';
+import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 
 interface KRProgress {
   id?: string;
@@ -66,6 +66,185 @@ interface Report {
   };
 }
 
+interface GoldenPath {
+  id: string;
+  title: string;
+  one_liner: string;
+  status: string;
+  auto_release: boolean;
+  est_scale?: string | null;
+}
+
+function GpActionPanel() {
+  const [gps, setGps] = useState<GoldenPath[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [actioning, setActioning] = useState<string | null>(null);
+  const [message, setMessage] = useState<string | null>(null);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+
+  const fetchGps = useCallback(async () => {
+    try {
+      const [cRes, vRes] = await Promise.all([
+        fetch('/api/brain/golden-paths?status=candidate'),
+        fetch('/api/brain/golden-paths?status=converged'),
+      ]);
+      const cData = cRes.ok ? await cRes.json() : { golden_paths: [] };
+      const vData = vRes.ok ? await vRes.json() : { golden_paths: [] };
+      // also check proposed+auto_release for veto
+      const prRes = await fetch('/api/brain/golden-paths?status=proposed');
+      const prData = prRes.ok ? await prRes.json() : { golden_paths: [] };
+      const autoReleases = (prData.golden_paths || []).filter((g: GoldenPath) => g.auto_release);
+      setGps([...(cData.golden_paths || []), ...(vData.golden_paths || []), ...autoReleases]);
+    } catch {
+      // silently fail - panel is non-critical
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => { fetchGps(); }, [fetchGps]);
+
+  const act = async (gpId: string, action: 'select' | 'approve' | 'veto', body?: object) => {
+    setActioning(gpId + ':' + action);
+    setMessage(null);
+    try {
+      const res = await fetch(`/api/brain/golden-paths/${gpId}/${action}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body || {}),
+      });
+      const json = await res.json();
+      if (res.ok) {
+        setMessage(`✅ ${action} 成功`);
+        await fetchGps();
+      } else {
+        setMessage(`❌ ${json.error || `${action} 失败`}`);
+      }
+    } catch (err) {
+      setMessage(`❌ 网络错误`);
+    } finally {
+      setActioning(null);
+    }
+  };
+
+  const handleBatchSelect = async () => {
+    for (const id of selected) {
+      await act(id, 'select');
+    }
+    setSelected(new Set());
+  };
+
+  const candidates = gps.filter(g => g.status === 'candidate');
+  const reviewable = gps.filter(g => g.status === 'converged' || (g.status === 'proposed' && g.auto_release));
+
+  if (loading) return null;
+  if (candidates.length === 0 && reviewable.length === 0) return null;
+
+  const btnStyle = (color: string, disabled: boolean): React.CSSProperties => ({
+    padding: '5px 12px',
+    borderRadius: '6px',
+    border: 'none',
+    background: disabled ? 'rgba(255,255,255,0.05)' : color,
+    color: disabled ? '#6e7681' : '#fff',
+    fontSize: '12px',
+    cursor: disabled ? 'not-allowed' : 'pointer',
+    fontWeight: 500,
+  });
+
+  return (
+    <div style={{
+      marginTop: '16px',
+      padding: '16px 20px',
+      borderRadius: '10px',
+      background: 'rgba(56,189,248,0.04)',
+      border: '1px solid rgba(56,189,248,0.15)',
+    }}>
+      <h3 style={{ fontSize: '13px', fontWeight: 600, color: '#38bdf8', margin: '0 0 12px 0', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+        GP 拍板控制台
+      </h3>
+
+      {message && (
+        <div style={{
+          padding: '8px 12px', borderRadius: '6px', marginBottom: '12px', fontSize: '13px',
+          background: message.startsWith('✅') ? 'rgba(63,185,80,0.1)' : 'rgba(248,81,73,0.1)',
+          border: message.startsWith('✅') ? '1px solid rgba(63,185,80,0.2)' : '1px solid rgba(248,81,73,0.2)',
+          color: message.startsWith('✅') ? '#3fb950' : '#f85149',
+        }}>
+          {message}
+        </div>
+      )}
+
+      {candidates.length > 0 && (
+        <div style={{ marginBottom: '12px' }}>
+          <div style={{ fontSize: '11px', color: '#6e7681', marginBottom: '8px' }}>候选方向（圈选）</div>
+          {candidates.map(g => (
+            <div key={g.id} style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '6px' }}>
+              <input
+                type="checkbox"
+                checked={selected.has(g.id)}
+                onChange={e => {
+                  const s = new Set(selected);
+                  if (e.target.checked) s.add(g.id); else s.delete(g.id);
+                  setSelected(s);
+                }}
+                style={{ accentColor: '#38bdf8', width: '14px', height: '14px', cursor: 'pointer' }}
+              />
+              <span style={{ fontSize: '13px', color: '#e6edf3', flex: 1 }}>
+                {g.title} <span style={{ color: '#6e7681' }}>— {g.one_liner}</span>
+                {g.est_scale && <span style={{ color: '#8b949e', fontSize: '11px' }}> ({g.est_scale})</span>}
+              </span>
+              <button
+                onClick={() => act(g.id, 'select')}
+                disabled={actioning === g.id + ':select'}
+                style={btnStyle('#2d6a9f', actioning === g.id + ':select')}
+              >
+                {actioning === g.id + ':select' ? '...' : '圈选'}
+              </button>
+            </div>
+          ))}
+          {selected.size > 0 && (
+            <button
+              onClick={handleBatchSelect}
+              disabled={!!actioning}
+              style={{ ...btnStyle('#2d6a9f', !!actioning), marginTop: '6px' }}
+            >
+              批量圈选（{selected.size} 条）
+            </button>
+          )}
+        </div>
+      )}
+
+      {reviewable.length > 0 && (
+        <div>
+          <div style={{ fontSize: '11px', color: '#6e7681', marginBottom: '8px' }}>待批审 / 报备</div>
+          {reviewable.map(g => (
+            <div key={g.id} style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '6px' }}>
+              <span style={{ fontSize: '13px', color: '#e6edf3', flex: 1 }}>
+                {g.title}
+                {g.auto_release && <span style={{ color: '#d29922', fontSize: '11px' }}> [报备]</span>}
+              </span>
+              <button
+                onClick={() => act(g.id, 'approve')}
+                disabled={!!actioning}
+                style={btnStyle('#1a6832', !!actioning)}
+              >
+                {actioning === g.id + ':approve' ? '...' : '批准'}
+              </button>
+              <button
+                onClick={() => act(g.id, 'veto', { status_reason: '否决' })}
+                disabled={!!actioning}
+                style={btnStyle('#6e2028', !!actioning)}
+              >
+                {actioning === g.id + ':veto' ? '...' : '否决'}
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <div style={{
@@ -98,15 +277,49 @@ function StatBox({ label, value, color = '#e6edf3' }: { label: string; value: nu
   );
 }
 
+interface DesignDoc {
+  id: string;
+  title: string | null;
+  content: string | null;
+  created_at: string;
+  [key: string]: unknown;
+}
+
 export default function ReportDetailPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const isDesignDoc = searchParams.get('source') === 'design_docs';
   const [report, setReport] = useState<Report | null>(null);
+  const [doc, setDoc] = useState<DesignDoc | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!id) return;
+
+    // design_docs 源（作战日报等）：独立获取路径，不动现有 reports 路径
+    if (isDesignDoc) {
+      const fetchDoc = async () => {
+        try {
+          setError(null);
+          const res = await fetch(`/api/brain/design-docs/${id}`);
+          if (res.status === 404) {
+            setError('简报不存在');
+            return;
+          }
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+          const json = await res.json();
+          setDoc(json.data ?? null);
+        } catch (err) {
+          setError(err instanceof Error ? err.message : '加载失败');
+        } finally {
+          setLoading(false);
+        }
+      };
+      fetchDoc();
+      return;
+    }
 
     const fetchReport = async () => {
       try {
@@ -127,7 +340,7 @@ export default function ReportDetailPage() {
     };
 
     fetchReport();
-  }, [id]);
+  }, [id, isDesignDoc]);
 
   if (loading) {
     return (
@@ -140,6 +353,83 @@ export default function ReportDetailPage() {
         color: '#8b949e',
       }}>
         加载中...
+      </div>
+    );
+  }
+
+  // ── design_docs 源渲染（作战日报）：独立早返回分支，不动现有渲染路径 ──────────
+  if (isDesignDoc) {
+    if (error || !doc) {
+      return (
+        <div style={{
+          minHeight: '100vh',
+          background: 'linear-gradient(135deg, #0d1117 0%, #161b22 100%)',
+          color: '#e6edf3',
+          padding: '32px',
+        }}>
+          <button
+            onClick={() => navigate('/reports')}
+            style={{
+              padding: '8px 16px',
+              borderRadius: '8px',
+              border: '1px solid rgba(255,255,255,0.1)',
+              background: 'rgba(255,255,255,0.05)',
+              color: '#8b949e',
+              fontSize: '13px',
+              cursor: 'pointer',
+              marginBottom: '24px',
+            }}
+          >
+            ← 返回列表
+          </button>
+          <div style={{
+            padding: '16px',
+            borderRadius: '8px',
+            background: 'rgba(248,81,73,0.1)',
+            border: '1px solid rgba(248,81,73,0.2)',
+            color: '#f85149',
+          }}>
+            ⚠️ {error || '简报不存在'}
+          </div>
+        </div>
+      );
+    }
+
+    const docCreatedAt = new Date(doc.created_at);
+    const docDate = `${docCreatedAt.getFullYear()}/${docCreatedAt.getMonth() + 1}/${docCreatedAt.getDate()} ${String(docCreatedAt.getHours()).padStart(2, '0')}:${String(docCreatedAt.getMinutes()).padStart(2, '0')}`;
+
+    return (
+      <div style={{
+        minHeight: '100vh',
+        background: 'linear-gradient(135deg, #0d1117 0%, #161b22 100%)',
+        color: '#e6edf3',
+        padding: '32px',
+      }}>
+        <button
+          onClick={() => navigate('/reports')}
+          style={{
+            padding: '8px 16px',
+            borderRadius: '8px',
+            border: '1px solid rgba(255,255,255,0.1)',
+            background: 'rgba(255,255,255,0.05)',
+            color: '#8b949e',
+            fontSize: '13px',
+            cursor: 'pointer',
+            marginBottom: '16px',
+          }}
+        >
+          ← 返回列表
+        </button>
+        <h1 style={{ fontSize: '22px', fontWeight: 700, color: '#e6edf3', margin: '0 0 4px 0' }}>
+          {doc.title || `简报 #${doc.id.slice(0, 8)}`}
+        </h1>
+        <div style={{ display: 'flex', gap: '16px', fontSize: '12px', color: '#6e7681', marginBottom: '24px' }}>
+          <span>生成时间：{docDate}</span>
+        </div>
+        <pre style={{ padding: '16px', borderRadius: '8px', background: 'rgba(0,0,0,0.3)', border: '1px solid rgba(255,255,255,0.06)', fontSize: '13px', color: '#e6edf3', overflow: 'auto', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+          {doc.content}
+        </pre>
+        {doc.content?.includes('军师决策节 v2') && <GpActionPanel />}
       </div>
     );
   }

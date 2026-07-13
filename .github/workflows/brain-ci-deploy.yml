@@ -178,23 +178,31 @@ jobs:
 
           echo "::warning::Deploy status 轮询超时（${MAX_WAIT}s）— webhook 已接受，结果未知"
 
-      - name: Smoke — Brain /health 检查
+      - name: Smoke — Brain 部署效果确认（版本 + 真重启）
         if: steps.trigger.outputs.skipped != 'true'
+        # 反"假成功"（2026-07-06 实证）：deploy/status=success 或 idle-视为成功 都可能谎报
+        # （容器 no-op 未重启，uptime 未变）。此处用 assert-deploy-effect.sh 做权威效果确认：
+        #   /health.version == 本次应上线版本  且  uptime 新鲜（容器真重启）
+        # 断言失败 => Gate3 失败，绝不谎报 success（backstop 上面 success/idle 两条乐观出口）。
         run: |
-          echo "Brain /health smoke..."
           sleep 5
+          EXPECTED_VERSION=$(node -p "require('./packages/brain/package.json').version")
+          echo "Brain 部署效果确认：期望版本=$EXPECTED_VERSION"
 
-          HTTP_CODE=$(curl -s -o /tmp/health_resp.txt -w "%{http_code}" \
-            "${BRAIN_URL}/api/brain/health" \
-            --connect-timeout 15 --max-time 30 2>/dev/null || echo "000")
-
-          if [ -f /tmp/health_resp.txt ]; then cat /tmp/health_resp.txt; fi
+          # 先打印 /health 原文便于排查
+          curl -s "${BRAIN_URL}/api/brain/health" --connect-timeout 15 --max-time 30 || true
           echo ""
 
-          if [ "$HTTP_CODE" -ge 200 ] && [ "$HTTP_CODE" -lt 300 ]; then
-            echo "✅ Brain /health 正常"
+          # 15min 内的 uptime 视为"本次部署新鲜重启"；病历里未重启的 uptime 是小时级
+          set +e
+          VERDICT=$(bash scripts/ci/assert-deploy-effect.sh "${BRAIN_URL}" "$EXPECTED_VERSION" 900)
+          CODE=$?
+          set -e
+          echo "$VERDICT"
+          if [ $CODE -eq 0 ]; then
+            echo "✅ 部署效果确认通过（版本正确 + 容器真重启）"
           else
-            echo "::error::Brain /health 异常（HTTP $HTTP_CODE）"
+            echo "::error::部署效果确认失败（$VERDICT）—— Gate3 不谎报 success，请检查容器是否真重启/版本是否上线"
             exit 1
           fi
 

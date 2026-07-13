@@ -11,6 +11,9 @@ import pool from '../db.js';
 
 const router = Router();
 
+// 三类系统产出来源（T10 统一收件箱）— 由 capture-triage tick 分诊，人工 confirm 不支持
+const AUTO_TRIAGE_SOURCE_TYPES = ['handoff', 'learning', 'issue'];
+
 // ─── GET /api/brain/capture-atoms ───────────────────────────────────────────
 
 router.get('/', async (req, res) => {
@@ -118,6 +121,16 @@ router.patch('/:id', async (req, res) => {
     const finalType = target_type || atom.target_type;
     const finalSubtype = target_subtype !== undefined ? target_subtype : atom.target_subtype;
     const finalAreaId = suggested_area_id !== undefined ? suggested_area_id : atom.suggested_area_id;
+
+    // T10：三类系统产出来源由 capture-triage tick 自动分诊，不走人工 confirm 路由。
+    // 守卫刻意检查请求覆盖后的 finalType（而非 atom.target_type）：人工改判 target_type
+    // 为非自动分诊类型后即可走本路由——这是 triage 留箱（pending_review）条目的人工复核出路。
+    if (AUTO_TRIAGE_SOURCE_TYPES.includes(finalType)) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({
+        error: `target_type=${finalType} 由 capture-triage 自动分诊，不支持人工 confirm 路由`,
+      });
+    }
 
     const { routedTable, routedId } = await routeAtomToTarget(client, atom, finalType, finalSubtype, finalAreaId);
 

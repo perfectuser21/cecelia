@@ -3,27 +3,52 @@ name: Harness v5 Checks
 # v5 Sprint C：合同纪律的 CI 硬校验
 # 观察期已过，全部切硬门禁（PR cp-0427095721 移除 continue-on-error）
 #
-# 触发范围：只在 harness 相关改动时跑
-#   - sprints/*/contract-*.md / contract-dod-ws*.md / tests/ws*/*.test.ts
+# 触发范围：合同相关改动才真跑（changes job 内部三点 diff 判定）。
+# 2026-07-06 required 化：required context 必须每个 PR 出结论 → 去掉 workflow 级 paths
+# 过滤，改为 changes 检测 + 各 job 条件 skip + 聚合 job「Harness V5 Gate Passed」
+# （success|skipped 放行）。不相关 PR 秒绿零成本。
 
 on:
   pull_request:
-    paths:
-      - 'sprints/**/contract-draft.md'
-      - 'sprints/**/sprint-contract.md'
-      - 'sprints/**/contract-dod-ws*.md'
-      - 'sprints/**/tests/**/*.test.ts'
-      - 'sprints/**/contract-dod-ws0.md'
-      # 排除归档：老 sprint 纯历史痕迹，格式可能不符 v5 规则，不应触发检查
-      - '!sprints/archive/**'
 
 permissions:
   contents: read
   pull-requests: read
 
 jobs:
+  # ─── Check 0: 变更路径检测（三点 diff = merge-base 语义，落后 main 的 PR 不误判）───
+  changes:
+    name: changes — 合同文件变更检测
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      contracts: ${{ steps.filter.outputs.contracts }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - id: filter
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" != "pull_request" ]; then
+            echo "contracts=true" >> "$GITHUB_OUTPUT"
+            echo "non-PR event: run all"
+            exit 0
+          fi
+          BASE="${{ github.event.pull_request.base.sha }}"
+          HEAD="${{ github.event.pull_request.head.sha }}"
+          FILES=$(git diff --name-only "$BASE...$HEAD")
+          echo "$FILES"
+          HIT=false
+          if echo "$FILES" | grep -vE '^sprints/archive/' | grep -qE '^(sprints/.*(contract-draft\.md|sprint-contract\.md|contract-dod-ws[0-9]+\.md)$|sprints/.*/tests/.*\.test\.ts$|\.github/workflows/harness-v5-checks\.yml$)'; then
+            HIT=true
+          fi
+          echo "contracts=$HIT" >> "$GITHUB_OUTPUT"
+
   # ─── Check 1: DoD 纯度（contract-dod-ws 禁 [BEHAVIOR]） ────────────
   dod-structure-purity:
+    needs: changes
+    if: needs.changes.outputs.contracts == 'true'
     name: DoD 纯度检查 (v5.0)
     runs-on: ubuntu-latest
     steps:
@@ -40,6 +65,8 @@ jobs:
 
   # ─── Check 2: Test Contract 覆盖（测试文件必须存在） ─────────────────
   test-coverage-for-behavior:
+    needs: changes
+    if: needs.changes.outputs.contracts == 'true'
     name: Test Contract 覆盖检查 (v5.0)
     runs-on: ubuntu-latest
     steps:
@@ -56,6 +83,8 @@ jobs:
 
   # ─── Check 3: TDD Red-Green commit 顺序 ───────────────────────────
   tdd-commit-order:
+    needs: changes
+    if: needs.changes.outputs.contracts == 'true'
     name: TDD Commit 顺序检查 (v5.0)
     runs-on: ubuntu-latest
     steps:
@@ -70,6 +99,8 @@ jobs:
 
   # ─── Check 4: 测试实际通过（Red → Green 验证） ─────────────────────
   tests-actually-pass:
+    needs: changes
+    if: needs.changes.outputs.contracts == 'true'
     name: Sprint Tests 实跑 (v5.0)
     runs-on: ubuntu-latest
     services:
@@ -100,7 +131,9 @@ jobs:
           BRANCH_NAME: ${{ github.head_ref }}
         run: |
           set -euo pipefail
-          ALL_TEST_FILES=$(git diff --name-only "${BASE_REF}...HEAD" | grep -E '^sprints/[^/]+/tests/.*\.test\.ts$' || true)
+          # 只保留仍存在的变更文件：删除/移出 sprints/ 的清理 PR（如测试大扫除）不应触发实跑，
+          # 否则 npx vitest run <已删文件> 必红。存在性过滤让纯删除/改名 PR 干净跳过。
+          ALL_TEST_FILES=$(git diff --name-only "${BASE_REF}...HEAD" | grep -E '^sprints/[^/]+/tests/.*\.test\.ts$' | while IFS= read -r f; do [ -f "$f" ] && printf '%s\n' "$f"; done || true)
           if [ -z "$ALL_TEST_FILES" ]; then
             echo "has_tests=false" >> $GITHUB_OUTPUT
             echo "ℹ️  无 sprint 测试变更，后续步骤会跳过"
@@ -203,6 +236,8 @@ jobs:
 
   # ─── Check 5: Skeleton 形状校验 ─────────────────────────────────────
   skeleton-shape-check:
+    needs: changes
+    if: needs.changes.outputs.contracts == 'true'
     name: Skeleton 测试形状校验 (v1.0)
     runs-on: ubuntu-latest
     steps:
@@ -216,3 +251,25 @@ jobs:
         env:
           BASE_REF: origin/${{ github.base_ref }}
         run: node packages/engine/scripts/devgate/skeleton-shape-check.cjs
+
+  # ─── Gate job（required context，与 ci-passed 同款聚合）────────────────────
+  harness-v5-gate:
+    name: Harness V5 Gate Passed
+    needs: [changes, dod-structure-purity, test-coverage-for-behavior, tdd-commit-order, tests-actually-pass, skeleton-shape-check]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Harness V5 Gate
+        run: |
+          echo "changes=${{ needs.changes.result }} dod=${{ needs.dod-structure-purity.result }} cov=${{ needs.test-coverage-for-behavior.result }} tdd=${{ needs.tdd-commit-order.result }} tests=${{ needs.tests-actually-pass.result }} shape=${{ needs.skeleton-shape-check.result }}"
+          if [ "${{ needs.changes.result }}" != "success" ]; then
+            echo "FAIL: changes 检测未成功"; exit 1
+          fi
+          for r in "${{ needs.dod-structure-purity.result }}" "${{ needs.test-coverage-for-behavior.result }}" "${{ needs.tdd-commit-order.result }}" "${{ needs.tests-actually-pass.result }}" "${{ needs.skeleton-shape-check.result }}"; do
+            case "$r" in
+              success|skipped) ;;
+              *) echo "FAIL: 有 check 结果为 $r"; exit 1 ;;
+            esac
+          done
+          echo "Harness V5 Gate Passed"

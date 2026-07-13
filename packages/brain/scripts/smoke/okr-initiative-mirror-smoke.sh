@@ -10,7 +10,6 @@ set -uo pipefail
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 SYNC="$ROOT/src/okr-initiative-sync.js"
 EXEC="$ROOT/src/executor.js"
-GRAPH="$ROOT/src/workflows/harness-initiative.graph.js"
 PASS=0; FAIL=0
 ok()   { echo "✅ $1"; ((PASS++)) || true; }
 fail() { echo "❌ $1"; ((FAIL++)) || true; }
@@ -34,20 +33,20 @@ import('file://$SYNC').then(async (m) => {
 " && ok "helper 导出两函数 + 拒绝非法生命周期值" || fail "helper 导出/防护不符"
 
 # 2. 接线点存在（grep 源码）
+# 注：原 Case 3/4（reportNode sync done/failed + initiative_runs 回填 okr_initiative_id）测的是
+# harness-initiative.graph.js 死图，随 orchestrator 硬校验失效（sprint done/failed 镜像同步缺口
+# 已登记 issue 6de4fd22，不在本任务修复范围）。只保留 executor.js 里仍活的两处接线。
 echo "── 接线点 ──"
 node -e "
 const fs=require('fs');
 const ex=fs.readFileSync('$EXEC','utf8');
-const gr=fs.readFileSync('$GRAPH','utf8');
 const checks=[
   [ex.includes(\"syncOkrInitiativeStatus(dbPool, task.id, 'running')\"), 'executor 起点 sync running'],
   [ex.includes(\"syncOkrInitiativeStatus(dbPool, taskId, 'failed')\"), 'markInitiativeTerminalFailed sync failed'],
-  [gr.includes('syncOkrInitiativeStatus(client, state.initiativeId'), 'reportNode sync done/failed'],
-  [gr.includes('okr_initiative_id') && gr.includes('harness_initiative_migration_map'), 'initiative_runs 回填 okr_initiative_id'],
 ];
 const miss=checks.filter(c=>!c[0]).map(c=>c[1]);
 if(miss.length){console.error('缺接线: '+miss.join('; '));process.exit(1)}
-" && ok "executor/graph 四处接线齐全（均 non-fatal）" || fail "接线点缺失"
+" && ok "executor 两处接线齐全（均 non-fatal）" || fail "接线点缺失"
 
 # 3. DB 不变量（CI 无 DB 自动跳过）
 PGPASSWORD="${PGPASSWORD:-cecelia}"; export PGPASSWORD

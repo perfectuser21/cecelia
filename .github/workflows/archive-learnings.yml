@@ -92,11 +92,20 @@ jobs:
       - name: 开 PR（harness 标签触发自动合并）
         if: steps.archive.outputs.changed == 'true'
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # 必须 PAT：GITHUB_TOKEN 的 gh pr create 报 "Resource not accessible by
+          # integration"（0701 月度 run 实锤），且 GITHUB_TOKEN 建的 PR 不触发 CI →
+          # required checks 永远 pending。孤儿分支 cp-archive-20260701-0534-learnings 即此因。
+          GH_TOKEN: ${{ secrets.GH_PAT_BOT }}
           TOTAL: ${{ steps.archive.outputs.total_archived }}
           BUCKETS: ${{ steps.archive.outputs.buckets }}
         run: |
-          BRANCH="cp-archive-$(date -u +%Y%m%d-%H%M)-learnings"
+          if [ -z "${GH_TOKEN:-}" ]; then
+            echo "::error::GH_PAT_BOT secret 未配置（开归档 PR 必需 PAT）"
+            exit 1
+          fi
+          # 分支名必须匹配 branch-naming lint 的 ^cp-[0-9]{8,10}-（0706 首次真跑到此路径才暴露：
+          # 旧格式 cp-archive-YYYYMMDD-HHMM 被 ci-passed 里的 branch-naming 拒 → PR 永远合不进）
+          BRANCH="cp-$(TZ=Asia/Shanghai date +%m%d%H%M)-archive-learnings"
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git checkout -b "$BRANCH"
