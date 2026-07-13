@@ -92,3 +92,4 @@ rpa-dev-verify-smoke.sh
 three-tier-smoke.sh
 task-result-backfill-smoke.sh
 dao1e-pipeline-events-smoke.sh
+content-pipeline-events-smoke.sh
