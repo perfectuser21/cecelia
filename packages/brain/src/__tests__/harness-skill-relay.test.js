@@ -282,6 +282,43 @@ describe('deriveReviewRequired(P2-1:新功能人审/非新功能 auto merge)', (
     const prompt = deps.spawnFn.mock.calls[0][0].prompt;
     expect(prompt).toMatch(/REVIEW_REQUIRED=true/);
   });
+
+  it('payload 无 sprint_dir 时 spawn 持久化生成的 sprint_dir（issue 45dd6925 重派漂移）', async () => {
+    const { spawnSkillRelaySession } = await import('../harness-skill-relay.js');
+    const deps = {
+      pool: { query: vi.fn().mockResolvedValue({ rows: [] }) },
+      spawnFn: vi.fn().mockResolvedValue({}),
+      loadSkill: vi.fn().mockReturnValue('SKILL'),
+      ensureWt: vi.fn().mockResolvedValue('/tmp/wt'),
+      resolveAccountFn: vi.fn().mockResolvedValue(undefined),
+      tokenFn: vi.fn().mockResolvedValue('t'),
+      now: () => new Date('2026-07-05T12:00:00Z'),
+    };
+    const task = { id: 'aaaabbbb-cccc-dddd-eeee-ffff00002222', title: 'feat: 无 sprint_dir 任务', payload: { orchestrator: 'skill-relay' } };
+    const r = await spawnSkillRelaySession(task, deps);
+    expect(r.ok).toBe(true);
+    const upd = deps.pool.query.mock.calls.find(([sql]) => /UPDATE tasks/.test(sql) && /sprint_dir/.test(sql));
+    expect(upd, '必须 UPDATE tasks payload.sprint_dir').toBeTruthy();
+    expect(upd[1]).toContain(task.id);
+    expect(String(upd[1][1])).toMatch(/^sprints\//);
+  });
+
+  it('payload 已有 sprint_dir 时不回写（不覆盖 /dev 交接值）', async () => {
+    const { spawnSkillRelaySession } = await import('../harness-skill-relay.js');
+    const deps = {
+      pool: { query: vi.fn().mockResolvedValue({ rows: [] }) },
+      spawnFn: vi.fn().mockResolvedValue({}),
+      loadSkill: vi.fn().mockReturnValue('SKILL'),
+      ensureWt: vi.fn().mockResolvedValue('/tmp/wt'),
+      resolveAccountFn: vi.fn().mockResolvedValue(undefined),
+      tokenFn: vi.fn().mockResolvedValue('t'),
+      now: () => new Date('2026-07-05T12:00:00Z'),
+    };
+    const task = { id: 'aaaabbbb-cccc-dddd-eeee-ffff00003333', title: 'feat: 带 sprint_dir', payload: { orchestrator: 'skill-relay', sprint_dir: 'sprints/x' } };
+    await spawnSkillRelaySession(task, deps);
+    const upd = deps.pool.query.mock.calls.find(([sql]) => /UPDATE tasks/.test(sql) && /sprint_dir/.test(sql));
+    expect(upd).toBeFalsy();
+  });
 });
 
 describe('controllerSkillFor（GP2/T2：按 task_type 选 controller skill）', () => {
