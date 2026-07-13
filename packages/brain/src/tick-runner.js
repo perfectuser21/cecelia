@@ -397,8 +397,8 @@ async function executeTick() {
   if (!MINIMAL_MODE && orphanPrWorkerElapsed >= ORPHAN_PR_WORKER_INTERVAL_MS) {
     tickState.lastOrphanPrWorkerTime = Date.now();
     import('./orphan-pr-worker.js').then(({ scanOrphanPrs }) => scanOrphanPrs(pool)).then(r => {
-      if (r.merged > 0 || r.labeled > 0) {
-        tickLog(`[tick] orphan-pr-worker: scanned=${r.scanned} merged=${r.merged} labeled=${r.labeled} skipped=${r.skipped}`);
+      if (r.merged > 0 || r.labeled > 0 || r.closed > 0) {
+        tickLog(`[tick] orphan-pr-worker: scanned=${r.scanned} merged=${r.merged} labeled=${r.labeled} closed=${r.closed} skipped=${r.skipped}`);
       }
     }).catch(err => {
       console.warn('[tick] orphan-pr-worker threw (non-fatal):', err.message);
