@@ -37,8 +37,9 @@ Cannot find module '/app/src/routes/task-updater.js'
 ### Step 1：Red Commit（Failing Test 先行）
 
 在 `packages/brain/src/routes/__tests__/tasks-unblock.test.js` 写测试，Mock `'../../task-updater.js'`（正确路径），验证：
-- `POST /tasks/:id/unblock` 返回 200 + `{ success: true, task_id, status: 'queued' }`
-- `POST /tasks/:id/block` 返回 200 + `{ success: true, task_id, status: 'blocked' }`
+- `POST /tasks/:taskId/unblock`（第 600 行路由）返回 200 + `{ success: true, task: <task_object> }`
+- `POST /tasks/:id/unblock`（第 1147 行路由）返回 200 + `{ success: true, task_id, status: 'queued' }`
+- `POST /tasks/:id/block`（第 1119 行路由）返回 200 + `{ success: true, task_id, status: 'blocked', reason, blocked_until }`
 
 此时路径未修，测试必须 FAIL。commit 消息含 `[failing-test]`。
 
@@ -52,9 +53,11 @@ Cannot find module '/app/src/routes/task-updater.js'
 
 ### 验收断言（技术层面）
 
-**断言 E2E-1**：`POST /api/brain/tasks/:id/unblock` 返回 HTTP 200，响应体包含 `{ success: true, task_id: <id>, status: 'queued' }`。（此前因 import 路径错误必然 500）
+**断言 E2E-1a**：`POST /api/brain/tasks/:taskId/unblock`（第 600 行路由）返回 HTTP 200，响应体包含 `{ success: true, task: { id: <id>, ... } }`（task 为完整对象）。（此前因 import 路径错误必然 500）
 
-**断言 E2E-2**：`POST /api/brain/tasks/:id/block` 返回 HTTP 200，响应体包含 `{ success: true, task_id: <id>, status: 'blocked' }`。（此前因 import 路径错误必然 500）
+**断言 E2E-1b**：`POST /api/brain/tasks/:id/unblock`（第 1147 行路由）返回 HTTP 200，响应体包含 `{ success: true, task_id: <id>, status: 'queued' }`。（此前因 import 路径错误必然 500）
+
+**断言 E2E-2**：`POST /api/brain/tasks/:id/block`（第 1119 行路由）返回 HTTP 200，响应体包含 `{ success: true, task_id: <id>, status: 'blocked', reason: <reason>, blocked_until: <timestamp_or_null> }`。（此前因 import 路径错误必然 500）
 
 **断言 E2E-3**：vitest 输出 `tasks-unblock.test.js` 全部测试 PASS，0 FAIL。
 

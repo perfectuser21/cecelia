@@ -8,9 +8,23 @@
 
 ## [BEHAVIOR] 条目
 
-### [BEHAVIOR] [BEHAVIOR-01] POST /tasks/:id/unblock 成功路径返回 200
+### [BEHAVIOR] [BEHAVIOR-01a] POST /tasks/:taskId/unblock（第 600 行路由）成功路径返回 200
 
-**描述**：当 `task-updater.js` 导入路径正确时，`POST /api/brain/tasks/:id/unblock` 调用 `unblockTask` 成功应返回 HTTP 200，响应体为 `{ success: true, task_id, status: 'queued' }`。
+**描述**：当 `task-updater.js` 导入路径正确时，`POST /api/brain/tasks/:taskId/unblock`（第 600 行路由）调用 `unblockTask` 成功应返回 HTTP 200，响应体为 `{ success: true, task: <task_object> }`（完整 task 对象）。
+
+**触发条件**：任务存在，`unblockTask` mock 返回成功并包含 task 对象。
+
+**期望结果**：
+- HTTP 状态码：200
+- 响应体：`{ success: true, task: { id: <id>, ... } }`（task 为完整对象，非仅 ID）
+
+**对应测试**：`tasks-unblock.test.js` → `POST /:taskId/unblock (line 600) — 成功时返回 200 + task 对象`
+
+---
+
+### [BEHAVIOR] [BEHAVIOR-01b] POST /tasks/:id/unblock（第 1147 行路由）成功路径返回 200
+
+**描述**：当 `task-updater.js` 导入路径正确时，`POST /api/brain/tasks/:id/unblock`（第 1147 行路由）调用 `unblockTask` 成功应返回 HTTP 200，响应体为 `{ success: true, task_id, status: 'queued' }`。
 
 **触发条件**：任务存在，`unblockTask` mock 返回成功。
 
@@ -18,21 +32,21 @@
 - HTTP 状态码：200
 - 响应体：`{ success: true, task_id: <id>, status: 'queued' }`
 
-**对应测试**：`tasks-unblock.test.js` → `POST /:id/unblock — 成功时返回 200`
+**对应测试**：`tasks-unblock.test.js` → `POST /:id/unblock (line 1147) — 成功时返回 200 + status queued`
 
 ---
 
-### [BEHAVIOR] [BEHAVIOR-02] POST /tasks/:id/block 成功路径返回 200
+### [BEHAVIOR] [BEHAVIOR-02] POST /tasks/:id/block（第 1119 行路由）成功路径返回 200
 
-**描述**：当 `task-updater.js` 导入路径正确时，`POST /api/brain/tasks/:id/block` 调用 `blockTask` 成功应返回 HTTP 200，响应体为 `{ success: true, task_id, status: 'blocked' }`。
+**描述**：当 `task-updater.js` 导入路径正确时，`POST /api/brain/tasks/:id/block`（第 1119 行路由）调用 `blockTask` 成功应返回 HTTP 200，响应体为 `{ success: true, task_id, status: 'blocked', reason, blocked_until }`。
 
 **触发条件**：任务存在，`blockTask` mock 返回成功。
 
 **期望结果**：
 - HTTP 状态码：200
-- 响应体：`{ success: true, task_id: <id>, status: 'blocked' }`
+- 响应体：`{ success: true, task_id: <id>, status: 'blocked', reason: <reason>, blocked_until: <timestamp_or_null> }`
 
-**对应测试**：`tasks-unblock.test.js` → `POST /:id/block — 成功时返回 200`
+**对应测试**：`tasks-unblock.test.js` → `POST /:id/block (line 1119) — 成功时返回 200 + status blocked`
 
 ---
 
