@@ -584,6 +584,13 @@ describe('Golden Path E2E — Brain 3 条核心链路（真实 PostgreSQL）', (
       expect(taskRow.rows[0].status).toBe('queued');
     });
 
+    it('/select 建的 golden_path_proposal 任务 payload 含 orchestrator=skill-relay（回归守卫：缺此字段会被 executor 硬校验判 missing_orchestrator_flag terminal failed）', async () => {
+      expect(proposalTaskId).toBeDefined();
+
+      const taskRow = await testPool.query('SELECT payload FROM tasks WHERE id = $1', [proposalTaskId]);
+      expect(taskRow.rows[0].payload.orchestrator).toBe('skill-relay');
+    });
+
     it('PATCH /api/brain/golden-paths/:id — 测试跳过对抗：proposed→converged', async () => {
       expect(gpId).toBeDefined();
 
@@ -649,6 +656,13 @@ describe('Golden Path E2E — Brain 3 条核心链路（真实 PostgreSQL）', (
       expect(harnessRow.rows[0].status).toBe('queued');
       expect(harnessRow.rows[0].payload.phase).toBe('implement');
       expect(harnessRow.rows[0].payload.golden_path_id).toBe(gpId);
+    });
+
+    it('/approve 建的 harness golden_path_proposal 任务 payload 含 orchestrator=skill-relay（回归守卫：缺此字段会被 executor 硬校验判 missing_orchestrator_flag terminal failed）', async () => {
+      expect(harnessTaskId).toBeDefined();
+
+      const harnessRow = await testPool.query('SELECT payload FROM tasks WHERE id = $1', [harnessTaskId]);
+      expect(harnessRow.rows[0].payload.orchestrator).toBe('skill-relay');
     });
 
     it('/select 容量闸：非 candidate 状态 → 409 INVALID_TRANSITION', async () => {
