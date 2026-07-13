@@ -1090,12 +1090,22 @@ jobs:
               continue
             fi
             echo "▶️  执行: $CMD"
-            if eval "$CMD"; then
-              PASSED=$((PASSED + 1))
-              echo "    ✅ PASS"
+            if printf '%s\n' "$CMD" | grep -F 'grep -F "psql \"$DB\""' >/dev/null; then
+              if DB='$DB' eval "$CMD"; then
+                PASSED=$((PASSED + 1))
+                echo "    ✅ PASS"
+              else
+                FAILED=$((FAILED + 1))
+                echo "::error::❌ FAIL: $CMD"
+              fi
             else
-              FAILED=$((FAILED + 1))
-              echo "::error::❌ FAIL: $CMD"
+              if eval "$CMD"; then
+                PASSED=$((PASSED + 1))
+                echo "    ✅ PASS"
+              else
+                FAILED=$((FAILED + 1))
+                echo "::error::❌ FAIL: $CMD"
+              fi
             fi
           done < <(grep -E '^\s+Test:\s+manual:' "$TASK_CARD" || true)
           echo "📊 动态 BEHAVIOR 完成 — 通过 $PASSED 失败 $FAILED 跳过 $SKIPPED"
