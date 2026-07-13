@@ -85,3 +85,4 @@ warroom-readonly-api-smoke.sh
 warroom-smoke.sh
 ws3-ire-module-smoke.sh
 zenithjoy-db-pool-smoke.sh
+relay-smoke-v220-smoke.sh
