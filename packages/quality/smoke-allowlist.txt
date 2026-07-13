@@ -87,3 +87,4 @@ ws3-ire-module-smoke.sh
 zenithjoy-db-pool-smoke.sh
 relay-smoke-v220-smoke.sh
 migration-339-drop-abilities-gp-priority-smoke.sh
+migration-340-ability-groups-smoke.sh
