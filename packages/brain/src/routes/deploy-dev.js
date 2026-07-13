@@ -57,7 +57,7 @@ router.post('/deploy', (req, res) => {
 
   // 异步执行部署脚本
   const scriptPath = join(SCRIPTS_DIR, 'dev-deploy.sh');
-  const child = execFile('bash', [scriptPath], { timeout: 300000 }, (err, stdout, stderr) => {
+  const child = execFile('bash', [scriptPath], { timeout: 300000 }, (err, _stdout, stderr) => {
     if (err) {
       devDeployState.status = 'failed';
       devDeployState.finished_at = new Date().toISOString();

@@ -13,7 +13,7 @@ vi.mock('child_process', () => {
     on: vi.fn(),
   };
   return {
-    execFile: vi.fn((_cmd, _args, _opts, callback) => {
+    execFile: vi.fn((_cmd, _args, _opts, _callback) => {
       // 默认不立刻调用 callback（模拟异步执行中）
       return emitter;
     }),
