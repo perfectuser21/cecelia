@@ -8,7 +8,7 @@
 
 ## [BEHAVIOR] 条目
 
-### [BEHAVIOR-01] POST /tasks/:id/unblock 成功路径返回 200
+### [BEHAVIOR] [BEHAVIOR-01] POST /tasks/:id/unblock 成功路径返回 200
 
 **描述**：当 `task-updater.js` 导入路径正确时，`POST /api/brain/tasks/:id/unblock` 调用 `unblockTask` 成功应返回 HTTP 200，响应体为 `{ success: true, task_id, status: 'queued' }`。
 
@@ -22,7 +22,7 @@
 
 ---
 
-### [BEHAVIOR-02] POST /tasks/:id/block 成功路径返回 200
+### [BEHAVIOR] [BEHAVIOR-02] POST /tasks/:id/block 成功路径返回 200
 
 **描述**：当 `task-updater.js` 导入路径正确时，`POST /api/brain/tasks/:id/block` 调用 `blockTask` 成功应返回 HTTP 200，响应体为 `{ success: true, task_id, status: 'blocked' }`。
 
@@ -36,7 +36,7 @@
 
 ---
 
-### [BEHAVIOR-03] import 路径错误时路由必须 500（Red 验证）
+### [BEHAVIOR] [BEHAVIOR-03] import 路径错误时路由必须 500（Red 验证）
 
 **描述**：在路径修复之前（`'./task-updater.js'` 仍错误），`POST /api/brain/tasks/:id/unblock` 因 `Cannot find module` 必须返回 500，验证 failing test 真正复现了 bug。
 
@@ -50,7 +50,7 @@
 
 ---
 
-### [BEHAVIOR-04] 既有 tasks 路由测试无回归
+### [BEHAVIOR] [BEHAVIOR-04] 既有 tasks 路由测试无回归
 
 **描述**：修复 import 路径后，既有全套 tasks 路由测试必须全部通过，证明路径修复不引入任何回归。
 
@@ -64,7 +64,7 @@
 
 ---
 
-### [BEHAVIOR-05] diff scope 最小化（只改路径字符串）
+### [BEHAVIOR] [BEHAVIOR-05] diff scope 最小化（只改路径字符串）
 
 **描述**：最终合并到 main 的 diff 中，`packages/brain/src/routes/tasks.js` 的变更只包含 3 行 import 路径字符串替换，不包含任何其他修改。
 
