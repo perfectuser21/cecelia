@@ -1,4 +1,5 @@
 import { notionReq, getToken } from './recurring-notion-sync.js';
+import { computeProgress } from './advancement-progress.js';
 
 const JOURNEY_DB = '358c40c2-ba63-8148-bde7-e313d789931a';
 const FEATURE_DB = '358c40c2-ba63-81e3-96c5-d762b3d34dff';
@@ -421,6 +422,67 @@ async function pushInitiativeContracts(pool, token) {
   }
 }
 
+async function pushAdvancementItems(pool, token) {
+  // 按 ability 聚合该 ability **全部**推进项的累积进度（非仅未同步子集）——
+  // WHERE 子查询只用来判断"这个 ability 这一轮有没有变化值得推"，
+  // 但 COUNT 必须覆盖全量行，否则 done/total 只反映本轮新增/变化的子集，
+  // 会把之前已推的正确进度（如 2/4=50%）覆盖成错误的子集进度（如 0/1=0%）。
+  const { rows } = await pool.query(`
+    SELECT ai.ability_id, jf.notion_id AS ability_notion_id,
+           COUNT(*) FILTER (WHERE ai.status='done')  AS done,
+           COUNT(*) FILTER (WHERE ai.status='doing') AS doing,
+           COUNT(*) FILTER (WHERE ai.status='todo')  AS todo
+    FROM advancement_items ai
+    JOIN journey_features jf ON jf.id = ai.ability_id
+    WHERE jf.notion_id IS NOT NULL
+      AND ai.ability_id IN (
+        SELECT ability_id FROM advancement_items WHERE notion_synced_at IS NULL
+      )
+    GROUP BY ai.ability_id, jf.notion_id
+    LIMIT 10
+  `);
+  if (rows.length === 0) return;
+
+  // 取一次 Feature 库 schema：只有目标属性真实存在才 PATCH，避免对未建列的库 400
+  // （同 pushDecisions 的 schema-check 安全模式）
+  let schemaProps = {};
+  try {
+    const schema = await notionReq(token, `/databases/${FEATURE_DB}`, 'GET');
+    schemaProps = schema?.properties || {};
+  } catch {
+    schemaProps = {};
+  }
+  const progressProp = Object.keys(schemaProps).find((k) => /advancement.*progress/i.test(k));
+
+  for (const r of rows) {
+    try {
+      if (progressProp) {
+        const { done, total, pct } = computeProgress({
+          done: Number(r.done), doing: Number(r.doing), todo: Number(r.todo),
+        });
+        await notionReq(token, `/pages/${r.ability_notion_id}`, 'PATCH', {
+          properties: {
+            [progressProp]: { rich_text: buildRichText(`${done}/${total} 完成 (${pct}%)`) },
+          },
+        });
+      }
+      // 无论是否真的发了 PATCH（属性不存在时跳过），都标记已同步——
+      // 属性缺失是"Notion 库未建列"的运维状态，不是"应无限重试"的瞬时错误
+      // 已知限制（PR3 前提）：PATCH /api/brain/advancements/:itemId（routes/abilities.js）
+      // 改 status 时不会把 notion_synced_at 重置回 NULL，所以已同步过的推进项状态再变化
+      // 不会触发下一轮重新推送——这需要改 abilities.js 的 PATCH 端点（本 PR 范围外，不动
+      // 现有三个 advancement 端点），留给 PR3 军师上游 producer 一并接线。
+      await pool.query(
+        `UPDATE advancement_items SET notion_synced_at=NOW() WHERE ability_id=$1 AND notion_synced_at IS NULL`,
+        [r.ability_id]
+      );
+    } catch (err) {
+      console.warn(`[notion-push-sync] advancement ability ${r.ability_id} 推送失败: ${err.message}`);
+      await logSyncError(pool, err.message);
+    }
+  }
+}
+
 export async function runNotionPushSync(pool) {
   let token;
   try {
@@ -437,4 +499,5 @@ export async function runNotionPushSync(pool) {
   await pushJourneyStepLinks(pool, token);
   await pushDecisions(pool, token);
   await pushInitiativeContracts(pool, token);
+  await pushAdvancementItems(pool, token);
 }

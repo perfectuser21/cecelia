@@ -6,10 +6,9 @@
  *
  * consciousness graph 不走 runWorkflow（无 task 语义），不注册到 registry，
  * 但在此预热单例（compileGraph + pg-checkpointer setup），避免首次 consciousness tick 延迟。
+ *
+ * dev-task 已迁离 LangGraph（T6），走 triggerCeceliaRun 本地 spawn，不再注册。
  */
-import { registerWorkflow, listWorkflows } from '../orchestrator/workflow-registry.js';
-import { compileDevTaskGraph } from './dev-task.graph.js';
-import { compileHarnessInitiativeGraph } from './harness-initiative.graph.js';
 import { getCompiledConsciousnessGraph } from './consciousness.graph.js';
 
 let _initialized = false;
@@ -20,18 +19,6 @@ let _initialized = false;
  */
 export async function initializeWorkflows() {
   if (_initialized) return;
-
-  const existing = listWorkflows();
-
-  if (!existing.includes('dev-task')) {
-    const devTaskGraph = await compileDevTaskGraph();
-    registerWorkflow('dev-task', devTaskGraph);
-  }
-
-  if (!existing.includes('harness-initiative')) {
-    const harnessInitiativeGraph = await compileHarnessInitiativeGraph();
-    registerWorkflow('harness-initiative', harnessInitiativeGraph);
-  }
 
   // 预热 consciousness graph（不注册到 registry，由 consciousness-loop.js 直接调用）
   await getCompiledConsciousnessGraph();

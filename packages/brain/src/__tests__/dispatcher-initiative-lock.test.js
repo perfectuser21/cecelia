@@ -131,7 +131,7 @@ describe('dispatcher initiative-lock — task_type 白名单', () => {
     expect(lockCheckCalls).toHaveLength(0);
   });
 
-  it('case 3: harness_initiative vs dev blocker → SQL 含 task_type=ANY 过滤，参数含 6 项白名单', async () => {
+  it('case 3: harness_initiative vs dev blocker → SQL 含 task_type=ANY 过滤，参数含白名单内类型', async () => {
     mockSelectNextDispatchableTask.mockResolvedValue({
       id: 'task-H',
       task_type: 'harness_initiative',

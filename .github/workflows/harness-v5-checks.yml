@@ -131,7 +131,9 @@ jobs:
           BRANCH_NAME: ${{ github.head_ref }}
         run: |
           set -euo pipefail
-          ALL_TEST_FILES=$(git diff --name-only "${BASE_REF}...HEAD" | grep -E '^sprints/[^/]+/tests/.*\.test\.ts$' || true)
+          # 只保留仍存在的变更文件：删除/移出 sprints/ 的清理 PR（如测试大扫除）不应触发实跑，
+          # 否则 npx vitest run <已删文件> 必红。存在性过滤让纯删除/改名 PR 干净跳过。
+          ALL_TEST_FILES=$(git diff --name-only "${BASE_REF}...HEAD" | grep -E '^sprints/[^/]+/tests/.*\.test\.ts$' | while IFS= read -r f; do [ -f "$f" ] && printf '%s\n' "$f"; done || true)
           if [ -z "$ALL_TEST_FILES" ]; then
             echo "has_tests=false" >> $GITHUB_OUTPUT
             echo "ℹ️  无 sprint 测试变更，后续步骤会跳过"

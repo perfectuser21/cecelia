@@ -166,8 +166,24 @@ describe('selfcheck', () => {
   // facts-check 校验地板 <= 最高 migration（316 <= 316 通过）。
   // 317（initiative_runs.tmux_killed_at）被 harness-relay-watchdog 收窗 UPDATE 直接依赖
   // （列不存在则 UPDATE 整句报错被吞，收窗永不生效——与上述 314 事故同类），故推进地板到 317。
-  it('EXPECTED_SCHEMA_VERSION should be 317 (floor, bumped for tmux_killed_at headed 收窗)', () => {
-    expect(EXPECTED_SCHEMA_VERSION).toBe('317');
+  // 322（issues.journey_id）被 warroom.js /line/:id/command 全景图查询直接依赖
+  // （列不存在则 SELECT 整句报错被吞，open_issues 恒为空——同类接缝），故推进地板到 322。
+  // 323（initiative_runs.ability_id）被 harness-skill-relay.js spawn 时的 INSERT 直接依赖
+  // （列不存在则 INSERT 整句报错被吞，ability_id 落行永不生效——同类接缝）。
+  // 324（advancement_items.notion_synced_at）被 notion-push-sync.js 的 pushAdvancementItems
+  // 去重查询直接依赖（列不存在则 SELECT/UPDATE 整句报错被吞，去重恒不生效），故推进地板到 324。
+  // 326（side_effect_dedupe 表）被 lib/dedupe.js claimDedupeKey 的 INSERT..ON CONFLICT 直接依赖
+  // （表不存在则 fail-open 降级恒触发，三入口幂等全部失效——同类接缝），故推进地板到 326。
+  // 331（learnings 谱系两列 + summary backfill + task_completion 清理）为 T9 学习账本
+  // 可靠性依赖（parent_learning_id/verified_effective 列缺失则谱系写入整句报错被吞），故推进地板到 331。
+  // 333（areas 去重 + KR1/KR2 metadata.target_abilities 挂载）为 OKR 数据卫生一次性迁移，
+  // 推进地板到 333 防止未跑该迁移的旧 DB 误判 KR ability-progress 端点为已生效。
+  // 334（golden_paths 表 + 状态机端点 + 保质期 delta job）为 GP1/T1 底座迁移，
+  // 推进地板到 334 防止未跑该迁移的旧 DB 误判 golden-paths 路由/gp-shelf-life job 为已生效。
+  // 335（golden_path_proposal 加入 tasks_task_type_check）为 GP2/T2 派发链前置，
+  // 推进地板到 335 防止未跑该迁移的旧 DB 上圈选建任务被 CHECK 拒。
+  it('EXPECTED_SCHEMA_VERSION should be 338 (floor, bumped for preview/strategist migrations)', () => {
+    expect(EXPECTED_SCHEMA_VERSION).toBe('338');
   });
 
   it('should pass when DB schema version is ahead of expected (>= check)', async () => {

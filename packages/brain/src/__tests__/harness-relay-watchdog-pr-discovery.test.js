@@ -9,12 +9,14 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 const { mockPool } = vi.hoisted(() => ({ mockPool: { query: vi.fn() } }));
 vi.mock('../db.js', () => ({ default: mockPool }));
+vi.mock('../notifier.js', () => ({ sendBark: vi.fn().mockResolvedValue(true) }));
 
 import {
   resumeStalledRelayRuns,
   _parseBaseRepo,
   _discoverPrFromGithub,
 } from '../harness-relay-watchdog.js';
+import { sendBark } from '../notifier.js';
 
 const TASK_ID = 'aaaabbbb-cccc-dddd-eeee-ffff00001111';
 const SHORT = 'aaaabbbb';
@@ -28,6 +30,7 @@ function makeDeps({
   ghListThrows = false,
   runPrUrl = null,     // 第二轮回归：模拟 DB 里 run.pr_url 已非空（第一轮已发现并回写）
   prViewState = null,  // 配合 runPrUrl：execFn 对 `gh pr view` 的返回 state
+  evaluatorGate = true, // initiative_run_events 是否存在 node='evaluator' AND status='done'
 } = {}) {
   const pool = { query: vi.fn() };
   pool.query.mockImplementation(async (sql) => {
@@ -36,6 +39,9 @@ function makeDeps({
     }
     if (/FROM tasks/.test(sql)) {
       return { rows: [{ id: TASK_ID, status: 'in_progress', title: 't', pr_url: null, payload: { orchestrator: 'skill-relay', base_repo: baseRepo } }] };
+    }
+    if (/FROM initiative_run_events/.test(sql)) {
+      return { rows: evaluatorGate ? [{ x: 1 }] : [] };
     }
     return { rows: [] };
   });
@@ -51,7 +57,10 @@ function makeDeps({
   return { pool, execFn, spawnFn: vi.fn().mockResolvedValue({ ok: true, containerId: 'x' }) };
 }
 
-beforeEach(() => mockPool.query.mockReset());
+beforeEach(() => {
+  mockPool.query.mockReset();
+  sendBark.mockClear();
+});
 
 describe('watchdog PR 发现护栏', () => {
   it('gh 发现含 short 的 OPEN PR → 不重点火 + 回写 pr_url 到 run 与 task', async () => {
@@ -72,6 +81,19 @@ describe('watchdog PR 发现护栏', () => {
     const updates = deps.pool.query.mock.calls.filter((c) => /UPDATE/.test(c[0]));
     expect(updates.some((c) => /initiative_runs/.test(c[0]) && /'done'/.test(c[0]))).toBe(true);
     expect(updates.some((c) => /UPDATE tasks/.test(c[0]) && /'completed'/.test(c[0]))).toBe(true);
+  });
+
+  it('gh 发现含 short 的 MERGED PR 但 evaluator 从未执行 → 标 done 打 failure_reason，不重点火', async () => {
+    const deps = makeDeps({ ghList: [MERGED_PR], evaluatorGate: false });
+    const r = await resumeStalledRelayRuns(deps);
+    expect(deps.spawnFn).not.toHaveBeenCalled();
+    const allCalls = deps.pool.query.mock.calls;
+    const updates = allCalls.filter((c) => /UPDATE/.test(c[0]));
+    expect(updates.some((c) => /initiative_runs/.test(c[0]) && /'done'/.test(c[0]) && /merged_without_evaluator_gate/.test(c[0]))).toBe(true);
+    expect(updates.some((c) => /UPDATE tasks/.test(c[0]) && /'completed'/.test(c[0]))).toBe(true);
+    expect(r.mergedWithoutGate).toBe(1);
+    expect(allCalls.some((c) => /INSERT INTO issues/.test(c[0]))).toBe(true);
+    expect(sendBark).toHaveBeenCalled();
   });
 
   it('无匹配分支（含 CLOSED 命中不算）→ 原行为：重点火', async () => {

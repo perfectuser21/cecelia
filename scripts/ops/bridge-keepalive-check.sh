@@ -13,7 +13,6 @@ REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 BRIDGE_SCRIPT="$REPO_ROOT/packages/brain/scripts/cecelia-bridge.cjs"
 BRIDGE_LOG="/tmp/bridge-keepalive-spawn.log"
 BRIDGE_PLIST_LABEL="com.cecelia.bridge"
-USER_ID=$(id -u)
 
 send_feishu() {
   local msg="$1"
@@ -40,9 +39,11 @@ is_bridge_healthy() {
 }
 
 attempt_restart() {
+  # com.cecelia.bridge 是 /Library/LaunchDaemons 下的 LaunchDaemon，跑在 system domain，
+  # 不是 gui domain（UserName=administrator 只是运行身份，不改变 domain 归属）。
   # 优先尝试 launchctl kickstart（利用已有 plist）
-  echo "$LOG_PREFIX Trying launchctl kickstart gui/${USER_ID}/${BRIDGE_PLIST_LABEL}..."
-  if launchctl kickstart "gui/${USER_ID}/${BRIDGE_PLIST_LABEL}" 2>/dev/null; then
+  echo "$LOG_PREFIX Trying launchctl kickstart system/${BRIDGE_PLIST_LABEL}..."
+  if launchctl kickstart "system/${BRIDGE_PLIST_LABEL}" 2>/dev/null; then
     sleep "$RESTART_WAIT"
     if is_bridge_healthy; then
       echo "$LOG_PREFIX RESTARTED via launchctl"

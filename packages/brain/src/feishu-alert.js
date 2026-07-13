@@ -108,10 +108,28 @@ function buildEscalateMessage(mode, buf, detail) {
 
 async function sendToFeishu(payload) {
   if (!FEISHU_WEBHOOK_URL) {
-    // 未配置 webhook → 只写本地日志（兜底）
+    // 未配置 webhook → 只写本地日志（兜底）；没有对外动作，不写回执
     console.warn('[feishu-alert] FEISHU_SKILL_EVAL_WEBHOOK not set, logging locally:', JSON.stringify(payload));
     return;
   }
+
+  // 回执台账（九要素 T4）：动态 import + fail-open，照 notifier 先例
+  let receiptId = null;
+  try {
+    const { recordActionReceipt } = await import('./receipt-collector.js');
+    receiptId = await recordActionReceipt({ kind: 'feishu', target: 'skill_eval_webhook' });
+  } catch (err) {
+    console.warn('[feishu-alert] 回执写入失败（fail-open）:', err.message);
+  }
+  const resolveReceipt = async (status, evidence) => {
+    if (!receiptId) return;
+    try {
+      const { resolveActionReceipt } = await import('./receipt-collector.js');
+      await resolveActionReceipt(receiptId, status, evidence);
+    } catch (err) {
+      console.warn('[feishu-alert] 回执核销失败（fail-open）:', err.message);
+    }
+  };
 
   try {
     const resp = await fetch(FEISHU_WEBHOOK_URL, {
@@ -121,10 +139,14 @@ async function sendToFeishu(payload) {
     });
     if (!resp.ok) {
       console.error(`[feishu-alert] webhook responded ${resp.status}`);
+      await resolveReceipt('failed', { http_status: resp.status });
+      return;
     }
+    await resolveReceipt('confirmed', { http_status: resp.status });
   } catch (err) {
     // 飞书 webhook 挂 → 本地日志兜底
     console.error('[feishu-alert] send failed (falling back to local log):', err.message);
     console.log('[feishu-alert] payload:', JSON.stringify(payload));
+    await resolveReceipt('failed', { error: err.message });
   }
 }

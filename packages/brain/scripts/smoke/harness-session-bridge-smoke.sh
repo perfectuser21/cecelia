@@ -25,10 +25,6 @@ check "harness-session-bridge.js 存在" \
 check "reconnectOrSpawn 已 export" \
   node -e "const c=require('fs').readFileSync('$REPO_ROOT/packages/brain/src/harness-session-bridge.js','utf8');if(!c.includes('export async function reconnectOrSpawn'))process.exit(1)"
 
-# C4: InitiativeState 含 planner_session 字段
-check "InitiativeState 含 planner_session" \
-  node -e "const c=require('fs').readFileSync('$REPO_ROOT/packages/brain/src/workflows/harness-initiative.graph.js','utf8');if(!c.includes('planner_session'))process.exit(1)"
-
 # C5: GanContractState 含 session_map 字段
 check "GanContractState 含 session_map" \
   node -e "const c=require('fs').readFileSync('$REPO_ROOT/packages/brain/src/workflows/harness-gan.graph.js','utf8');if(!c.includes('session_map'))process.exit(1)"

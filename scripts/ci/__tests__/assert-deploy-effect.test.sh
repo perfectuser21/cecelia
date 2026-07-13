@@ -22,7 +22,7 @@ run_case() {
   if echo "$out" | grep -q "$want_verdict" && [ "$code" -eq "$want_exit" ]; then
     echo "  ✅ $name → $want_verdict (exit $code)"
   else
-    echo "  ❌ $name：期望 $want_verdict/exit$want_exit，实得 [$out] exit=$code"; FAIL=1
+    echo "  ❌ ${name}：期望 $want_verdict/exit${want_exit}，实得 [$out] exit=$code"; FAIL=1
   fi
 }
 

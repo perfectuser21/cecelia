@@ -179,21 +179,12 @@ vi.mock('../auto-learning.js', () => ({
   processExecutionAutoLearning: vi.fn().mockResolvedValue(undefined),
 }));
 
-// ── mock harness graph 动态导入 ─────────────────────────────────
-
-let streamCallCount = 0;
-
-const mockCompiled = {
-  stream: vi.fn(async function* (input) {
-    streamCallCount++;
-    yield { dbUpsert: { sub_tasks: [] } };
-  }),
-};
-
-const mockCompileHarnessFullGraph = vi.fn().mockResolvedValue(mockCompiled);
-vi.mock('../workflows/harness-initiative.graph.js', () => ({
-  compileHarnessFullGraph: (...args) => mockCompileHarnessFullGraph(...args),
-}));
+// ── LangGraph 图早已不再被 executor.js 动态 import（刀4阶段3删码前，Task 3 已把
+//    executor.js 里那段动态 import harness-initiative.graph.js 的不可达代码块整个删掉）。
+//    这里不再 vi.mock 该模块——mock 一个已经没人 import 的模块没有意义。
+//    mockCompileHarnessFullGraph 仅保留为断言锚点：下面 SC-201/202/203 用它验证
+//    "图路径完全没被触达"，作为 executor.js 不再依赖图逻辑的回归哨兵。
+const mockCompileHarnessFullGraph = vi.fn();
 
 vi.mock('../orchestrator/pg-checkpointer.js', () => ({
   getPgCheckpointer: vi.fn().mockResolvedValue({
@@ -217,7 +208,6 @@ let runHarnessInitiativeRouter;
 
 beforeEach(async () => {
   vi.clearAllMocks();
-  streamCallCount = 0;
   mockQuery.mockResolvedValue({ rows: [] });
   mockUpdateTaskStatus.mockResolvedValue(undefined);
   mockSpawnSkillRelaySession.mockResolvedValue({ ok: true, relay: true });
@@ -249,7 +239,6 @@ describe('_driveHarnessInitiative — orchestrator 硬校验', () => {
     const result = await runHarnessInitiativeRouter(task, { pool: { query: mockQuery } });
 
     expect(mockCompileHarnessFullGraph).not.toHaveBeenCalled();
-    expect(streamCallCount).toBe(0);
     expect(result.ok).toBe(false);
     expect(result.terminal).toBe(true);
     expect(result.error).toBe('missing_orchestrator_flag');
