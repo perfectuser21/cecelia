@@ -5,11 +5,9 @@
  * （undefined → fallback 空数组），卡在这个状态的任务永远无法通过 PATCH API
  * 改写任何状态，是个死锁。补 canceled 条目照抄 quarantined/paused 模式。
  *
- * 注：allowedStatuses 门（本文件同 route 的更早一道校验）只放行
- * ['in_progress', 'completed', 'failed'] 作为请求体里的目标状态值，
- * 'queued'/'cancelled' 即便进了 allowedTransitions 表也会被这道更早的门拦住
- * （quarantined/paused 条目里的 queued/cancelled 同样受此限制，非本次改动引入）。
- * 因此本测试验证 canceled → completed / failed 这两条实际可达的路径。
+ * 本路由是 server.js 实际挂载到 /api/brain 的任务 PATCH API。
+ * 合同要求 PATCH {"status":"cancelled"} 可取消 headless smoke 创建的任务，
+ * 因此取消态必须同时通过早期 allowedStatuses 门与状态流转表。
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import express from 'express';
@@ -55,6 +53,37 @@ describe('PATCH /api/brain/tasks/:task_id — canceled 状态出口 [BEHAVIOR]',
       .send({ status: 'failed' });
 
     expect(res.status).toBe(200);
+  });
+
+  it('pending_postdeploy → cancelled 应返回 200 并回传 cancelled', async () => {
+    mockQuery
+      .mockResolvedValueOnce({ rows: [{ id: 'task-headless-1', status: 'pending_postdeploy' }] })
+      .mockResolvedValueOnce({ rows: [{ id: 'task-headless-1', status: 'cancelled', updated_at: '2026-07-13T00:00:00Z' }] });
+
+    const res = await request(app)
+      .patch('/api/brain/tasks/task-headless-1')
+      .send({ status: 'cancelled' });
+
+    expect(res.status).toBe(200);
+    expect(res.body.id).toBe('task-headless-1');
+    expect(res.body.status).toBe('cancelled');
+  });
+
+  it('queued → cancelled 应返回 200 并清理 claim 字段', async () => {
+    mockQuery
+      .mockResolvedValueOnce({ rows: [{ id: 'task-headless-2', status: 'queued' }] })
+      .mockResolvedValueOnce({ rows: [{ id: 'task-headless-2', status: 'cancelled', updated_at: '2026-07-13T00:00:00Z' }] });
+
+    const res = await request(app)
+      .patch('/api/brain/tasks/task-headless-2')
+      .send({ status: 'cancelled' });
+
+    expect(res.status).toBe(200);
+    const updateCall = mockQuery.mock.calls.find(([sql]) =>
+      typeof sql === 'string' && sql.includes('UPDATE tasks SET')
+    );
+    expect(updateCall[0]).toMatch(/claimed_by = NULL/);
+    expect(updateCall[0]).toMatch(/claimed_at = NULL/);
   });
 
   it('回归哨兵：quarantined → completed 仍然通过（不因本次改动破坏既有出口）', async () => {

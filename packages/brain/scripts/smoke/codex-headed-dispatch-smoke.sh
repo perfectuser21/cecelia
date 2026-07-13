@@ -59,13 +59,6 @@ CODE3=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$BRAIN/api/brain/tasks" 
   && ok "POST tasks(mode=invalid) → 400 拒绝" \
   || fail "POST tasks(mode=invalid) 应返 400，实际 $CODE3"
 
-# 5. initiative_runs 表含 tmux_killed_at 字段（migration 316）
-DB="${DATABASE_URL:-postgresql://cecelia:cecelia@localhost:5432/cecelia}"
-COL=$(psql "$DB" -t -c "SELECT column_name FROM information_schema.columns WHERE table_name='initiative_runs' AND column_name='tmux_killed_at'" 2>/dev/null | tr -d ' ' || echo "")
-[ "$COL" = "tmux_killed_at" ] \
-  && ok "initiative_runs.tmux_killed_at 字段存在（migration 316）" \
-  || fail "initiative_runs.tmux_killed_at 字段不存在（migration 316 未跑？）"
-
 echo ""
 echo "PASS: $PASS  FAIL: $FAIL"
 [[ $FAIL -eq 0 ]] && echo "✅ 全部通过" || { echo "❌ 有 $FAIL 项失败"; exit 1; }

@@ -370,7 +370,7 @@ router.patch('/tasks/:task_id', async (req, res) => {
 
     // Validate status value if provided
     if (status) {
-      const allowedStatuses = ['in_progress', 'completed', 'failed'];
+      const allowedStatuses = ['in_progress', 'completed', 'failed', 'cancelled'];
       if (!allowedStatuses.includes(status)) {
         return res.status(400).json({
           success: false,
@@ -399,9 +399,11 @@ router.patch('/tasks/:task_id', async (req, res) => {
     if (status) {
       const allowedTransitions = {
         'pending': ['in_progress'],
-        'queued': ['in_progress'],
-        'in_progress': ['completed', 'failed'],
+        'pending_postdeploy': ['in_progress', 'cancelled'],
+        'queued': ['in_progress', 'cancelled'],
+        'in_progress': ['completed', 'failed', 'cancelled'],
         'completed': [],
+        'cancelled': [],
         'failed': [],
         // 补齐 quarantined / paused / canceled 三态出路，消除 allowed:[] 死锁
         // 场景：PR 已合 main 但 Brain 内部 task 被 quarantine/pause/cancel，无 API 可回写 completed
@@ -437,7 +439,7 @@ router.patch('/tasks/:task_id', async (req, res) => {
       params.push(JSON.stringify([historyEntry]));
       // Clear claim on terminal states — prevents zombie locks where claimed_by residue
       // blocks selectNextDispatchableTask (which filters claimed_by IS NULL)
-      if (status === 'failed' || status === 'completed') {
+      if (status === 'failed' || status === 'completed' || status === 'cancelled') {
         setClauses.push('claimed_by = NULL');
         setClauses.push('claimed_at = NULL');
       }
@@ -535,6 +537,7 @@ router.patch('/tasks/:task_id', async (req, res) => {
 
     res.json({
       success: true,
+      id: task_id,
       task_id,
       status: updatedTask.status,
       updated_at: updatedTask.updated_at
