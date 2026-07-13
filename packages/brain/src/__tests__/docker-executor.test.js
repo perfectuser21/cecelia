@@ -60,6 +60,13 @@ describe('resolveResourceTier', () => {
   it('harness_planner → pipeline-heavy (Opus prompt cache > 1M token)', () => {
     expect(resolveResourceTier('harness_planner').tier).toBe('pipeline-heavy');
   });
+
+  it('harness_report → normal (1 GB / 1 core, journey history + decisions 重上下文 OOM 防护)', () => {
+    const r = resolveResourceTier('harness_report');
+    expect(r.tier).toBe('normal');
+    expect(r.memoryMB).toBe(1024);
+    expect(r.cpuCores).toBe(1);
+  });
 });
 
 describe('containerName', () => {

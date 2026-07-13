@@ -30,6 +30,8 @@ const MEM_PER_TASK_MB_BY_TYPE = {
   // normal tier（1024MB）
   content_copy_review: 1024,
   content_image_review: 1024,
+  // normal tier（1024MB）— harness_report 加载 journey 历史 + decisions 重上下文
+  harness_report: 1024,
   // light tier（512MB）
   content_export: 512,
   planner: 512,
@@ -37,7 +39,6 @@ const MEM_PER_TASK_MB_BY_TYPE = {
   harness_planner: 512,
   report: 512,
   sprint_report: 512,
-  harness_report: 512,
   daily_report: 512,
   briefing: 512,
 };
