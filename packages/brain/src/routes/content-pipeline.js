@@ -20,6 +20,7 @@
  * POST /api/brain/pipelines/batch-e2e-trigger  批量创建（同上）
  * POST /api/brain/pipelines/:id/run            重置 + 等 ZJ pipeline-worker 拉到（202 Accepted）
  * POST /api/brain/pipelines/:id/pre-publish-check  发布前内容质量检查
+ * GET  /api/brain/pipelines/:id/events         查询 pipeline cecelia_events 列表（供 ZJ API 替代跨库直查）
  * GET  /api/brain/pipelines/:id/stages         查询 pipeline 子任务进度
  * GET  /api/brain/pipelines/:id/output         查询 pipeline 产出物（manifest）
  * GET  /api/brain/pipelines/:id/publish-status 查询 pipeline 各平台分发状态（KR5-P1）
@@ -276,21 +277,49 @@ router.get('/daily-stats', async (req, res) => {
 /**
  * GET /
  * 列出 content-pipeline 任务，按 created_at 倒序，默认最近 50 条
+ *
+ * Query params:
+ *   limit           {number}  默认 50，最大 100
+ *   offset          {number}  默认 0
+ *   with_last_event {1|true}  携带每条任务的最后一个 cecelia_events 事件（node/error），
+ *                             供 ZenithJoy API 的 listLangGraphOnlyRuns 使用
  */
 router.get('/', async (req, res) => {
   const limit = Math.min(parseInt(req.query.limit) || 50, 100);
   const offset = parseInt(req.query.offset) || 0;
+  const withLastEvent = req.query.with_last_event === '1' || req.query.with_last_event === 'true';
 
   try {
-    const result = await pool.query(
-      `SELECT id, title, status, priority, payload,
-              created_at, started_at, completed_at, error_message
-       FROM tasks
-       WHERE task_type = 'content-pipeline'
-       ORDER BY created_at DESC
-       LIMIT $1 OFFSET $2`,
-      [limit, offset]
-    );
+    let result;
+    if (withLastEvent) {
+      result = await pool.query(
+        `SELECT t.id, t.title, t.status, t.priority, t.payload,
+                t.created_at, t.started_at, t.completed_at, t.error_message,
+                COALESCE(t.updated_at, t.created_at) AS updated_at,
+                last_e.payload->>'node'  AS last_node,
+                last_e.payload->>'error' AS last_error
+         FROM tasks t
+         LEFT JOIN LATERAL (
+           SELECT payload FROM cecelia_events
+           WHERE task_id = t.id AND event_type = 'content_pipeline_step'
+           ORDER BY id DESC LIMIT 1
+         ) last_e ON TRUE
+         WHERE t.task_type = 'content-pipeline'
+         ORDER BY t.created_at DESC
+         LIMIT $1 OFFSET $2`,
+        [limit, offset]
+      );
+    } else {
+      result = await pool.query(
+        `SELECT id, title, status, priority, payload,
+                created_at, started_at, completed_at, error_message
+         FROM tasks
+         WHERE task_type = 'content-pipeline'
+         ORDER BY created_at DESC
+         LIMIT $1 OFFSET $2`,
+        [limit, offset]
+      );
+    }
     res.json(result.rows);
   } catch (err) {
     console.error('[routes/content-pipeline] GET / error:', err.message);
@@ -536,6 +565,28 @@ router.post('/:id/run', async (req, res) => {
     });
   } catch (err) {
     console.error('[routes/content-pipeline] POST /:id/run error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * GET /:id/events
+ * 返回指定 pipeline 任务的 cecelia_events（content_pipeline_step 类型），按 id 升序。
+ * 供 ZenithJoy API（langgraph-adapter）替代跨库直查使用。
+ */
+router.get('/:id/events', async (req, res) => {
+  const { id } = req.params;
+  try {
+    const result = await pool.query(
+      `SELECT id, payload, created_at
+       FROM cecelia_events
+       WHERE event_type = 'content_pipeline_step' AND task_id = $1
+       ORDER BY id`,
+      [id]
+    );
+    res.json(result.rows);
+  } catch (err) {
+    console.error('[routes/content-pipeline] GET /:id/events error:', err.message);
     res.status(500).json({ error: err.message });
   }
 });
