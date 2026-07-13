@@ -24,7 +24,10 @@
 - harness-skill-relay 测试：payload 无 sprint_dir 时 spawn 后 payload.sprint_dir 已持久化
 
 ## 验收标准
-- [ ] failing test 先 commit（commit-1）
-- [ ] 修复代码让 test 变绿（commit-2）
-- [ ] 守卫：以上 regression tests 永久进 CI（逻辑接缝，CI test 即守卫形态）
-- [ ] CI 全绿
+- [x] failing test 先 commit（commit-1：69f1d443/e87eadaa3/2bc29c878）
+- [x] 修复代码让 test 变绿（commit-2：78e797da/f7e21af6a/0032e8700）
+- [x] [BEHAVIOR] PATCH tasks result 持久化+幂等补写 Test: manual: node -e "const fs=require('fs');const t=fs.readFileSync('packages/brain/src/routes/tasks.js','utf8');if(!t.includes('isStatusNoop')||!t.includes(\"COALESCE(result, '{}'::jsonb)\"))process.exit(1);console.log('ok')"
+- [x] [BEHAVIOR] relay-runs task_id 过滤 Test: manual: node -e "const fs=require('fs');if(!fs.readFileSync('packages/brain/src/routes/initiatives.js','utf8').includes('current_task_id = '))process.exit(1);console.log('ok')"
+- [x] [BEHAVIOR] spawn 持久化 sprint_dir（两路径）Test: manual: node -e "const fs=require('fs');const r=fs.readFileSync('packages/brain/src/harness-skill-relay.js','utf8');if((r.match(/jsonb_build_object\('sprint_dir'/g)||[]).length<2)process.exit(1);console.log('ok')"
+- [x] 守卫：regression tests 永久进 CI + task-result-backfill-smoke.sh（proven-to-fire 已亲验报红）
+- [x] CI 全绿（push 后由 watchdog 确认）
