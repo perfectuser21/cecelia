@@ -340,10 +340,15 @@ async function defaultListTestFiles(rootDir) {
 
 /**
  * runMechanicalGate — DeepSeek 前的纯代码机械闸（三断言，全过才 pass）。
- *   ① behavior_tests 非空：sprint 目录递归有测试文件，或 contract-dod.md 含 [BEHAVIOR]。
- *   ② verdict 证据完整：brainResult.exit_code 有值（0 合法）；log_tail 空时按环境校准
- *      （真机必须设备日志；本机 API 类靠 agentStdout/transcript 兜底）。
- *   ③ judgments_written 对账：声明数不得 > decisions 表回读数（无声明则跳过）。
+ *   ① behavior_tests 声明（E1 机械化）：brainResult.behavior_tests 必须是非空数组
+ *      （evaluator 1.23.0 E1 硬要求产出 behavior_tests:[{command,exit_code,log_tail}]）；
+ *      每条目 exit_code 有值（0 合法）；log_tail 空时按环境校准（真机必须设备日志；
+ *      本机 API 类靠 ctx.agentStdout/transcript 命令输出兜底）。这是治「behavior_tests=0
+ *      照样 PASS」的正主。注意 exit_code/log_tail 是条目级字段，.brain-result.json 顶层
+ *      schema 只有 {verdict, task_id, failed_step, log_excerpt}，顶层无这两个字段。
+ *   ② sprint 测试文件存在性：sprint 目录递归有测试文件，或 contract-dod.md 含 [BEHAVIOR]，
+ *      两者全 0 → FAIL（理由关键词 contract_tests，与①的 behavior_tests 区分）。
+ *   ③ judgments_written 对账：声明数不得 > decisions 表回读数（无声明则跳过；非数字声明 → FAIL）。
  *
  * @param {object} ctx {taskId, worktreePath, sprintDir, brainResult, agentStdout, transcript}
  * @param {object} deps {readFileFn?, listTestFilesFn?, dbPool?}
@@ -370,7 +375,31 @@ export async function runMechanicalGate(ctx, deps = {}) {
     }
   }
 
-  // ① behavior_tests 非空
+  // ① behavior_tests 声明（E1 机械化）：evaluator 1.23.0 产出 behavior_tests:[{command,exit_code,log_tail}]。
+  //    exit_code/log_tail 是条目级字段（.brain-result.json 顶层 schema 无此二字段）。
+  const behaviorTests = brainResult && Array.isArray(brainResult.behavior_tests) ? brainResult.behavior_tests : null;
+  if (!behaviorTests || behaviorTests.length === 0) {
+    reasons.push('behavior_tests 声明为空（.brain-result.json 无 behavior_tests 数组或空数组——「无测试照样 PASS」漏洞的正主）');
+  } else {
+    // 命令输出兜底（log_tail 空时用）：agentStdout 或 callback transcript 非空即可。
+    const hasCmdOut = String(ctx.agentStdout || '').trim() || String(ctx.transcript || '').trim();
+    for (let i = 0; i < behaviorTests.length; i++) {
+      const bt = behaviorTests[i] || {};
+      if (bt.exit_code === undefined || bt.exit_code === null) {
+        reasons.push(`behavior_tests[${i}] 缺 exit_code（无退出码证据；0 合法）`);
+      }
+      const lt = bt.log_tail != null ? String(bt.log_tail).trim() : '';
+      if (!lt) {
+        if (DEVICE_LOG_ENVS.has(env)) {
+          reasons.push(`behavior_tests[${i}] log_tail 为空且环境=${env}（真机必须设备日志证据）`);
+        } else if (!hasCmdOut) {
+          reasons.push(`behavior_tests[${i}] log_tail 为空且无 agentStdout/transcript 命令输出兜底（无执行证据）`);
+        }
+      }
+    }
+  }
+
+  // ② sprint 测试文件存在性：文件扫描 + contract-dod [BEHAVIOR] fallback，两者全 0 → FAIL（关键词 contract_tests）。
   const sprintRoot = path.join(ctx.worktreePath || '', ctx.sprintDir || '');
   let testCount = 0;
   try {
@@ -384,24 +413,7 @@ export async function runMechanicalGate(ctx, deps = {}) {
       behaviorCount = (String(dod).match(/\[BEHAVIOR\]/g) || []).length;
     } catch { behaviorCount = 0; }
     if (behaviorCount === 0) {
-      reasons.push('behavior_tests 为 0（sprint 目录无 *.test.{ts,js,mjs,sh}，contract-dod.md 亦无 [BEHAVIOR]）');
-    }
-  }
-
-  // ② verdict 证据完整：exit_code 必须有值（0 合法）
-  if (!brainResult || brainResult.exit_code === undefined || brainResult.exit_code === null) {
-    reasons.push('brainResult.exit_code 缺失（无退出码证据，.brain-result.json 未落盘或字段缺）');
-  }
-  // log_tail 空 → 按环境校准
-  const logTail = brainResult && brainResult.log_tail != null ? String(brainResult.log_tail).trim() : '';
-  if (!logTail) {
-    if (DEVICE_LOG_ENVS.has(env)) {
-      reasons.push(`log_tail 为空且环境=${env}（真机必须设备日志证据）`);
-    } else {
-      const hasCmdOut = String(ctx.agentStdout || '').trim() || String(ctx.transcript || '').trim();
-      if (!hasCmdOut) {
-        reasons.push('log_tail 为空且无 agentStdout/transcript 命令输出兜底（无执行证据）');
-      }
+      reasons.push('contract_tests 为 0（sprint 目录无 *.test.{ts,js,mjs,sh}，contract-dod.md 亦无 [BEHAVIOR]）');
     }
   }
 

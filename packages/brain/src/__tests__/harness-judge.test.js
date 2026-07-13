@@ -26,8 +26,8 @@ function fakeEvidence(goldenPathSteps = ['step A', 'step B']) {
     contractE2E: '## E2E\ncurl localhost',
     goldenPathSteps,
     transcript: 'PASS: did A\nPASS: did B',
-    // 机械闸（刀B dc18d43d）合规字段：exit_code 有值 + log_tail 非空
-    brainResult: { verdict: 'PASS', exit_code: 0, log_tail: 'npm test ok' },
+    // 机械闸（刀B dc18d43d）合规字段：behavior_tests 条目级 exit_code + log_tail（E1 schema）
+    brainResult: { verdict: 'PASS', behavior_tests: [{ command: 'npm test', exit_code: 0, log_tail: 'ok' }] },
   });
 }
 
@@ -133,7 +133,7 @@ describe('runJudgeGate — 三权分立裁判门', () => {
 
   it('无合同/Golden Path 证据 → 证据门跳过裁判，保留 agent verdict（不误杀单测/无证据 run）', async () => {
     const judgeFn = vi.fn();
-    const emptyEvidence = async () => ({ contractE2E: '', goldenPathSteps: [], transcript: 'x', brainResult: { verdict: 'PASS', exit_code: 0, log_tail: 'ok' } });
+    const emptyEvidence = async () => ({ contractE2E: '', goldenPathSteps: [], transcript: 'x', brainResult: { verdict: 'PASS', behavior_tests: [{ command: 'x', exit_code: 0, log_tail: 'ok' }] } });
     const res = await runJudgeGate(
       { ...baseCtx, agentVerdict: 'PASS', agentFeedback: null },
       { judgeFn, collectEvidence: emptyEvidence, ...noopWrite }
@@ -363,7 +363,7 @@ describe('buildJudgePrompt — 含 agentStdout + 接受命令 stdout 即证据�
 describe('runJudgeGate — 把 promptDir/taskId 透传给 collectEvidence', () => {
   it('collectEvidence 收到 promptDir + taskId', async () => {
     const collect = vi.fn().mockResolvedValue({
-      contractE2E: '## E2E\ncurl', goldenPathSteps: ['A'], transcript: 't', agentStdout: 's', brainResult: { verdict: 'PASS', exit_code: 0, log_tail: 'ok' },
+      contractE2E: '## E2E\ncurl', goldenPathSteps: ['A'], transcript: 't', agentStdout: 's', brainResult: { verdict: 'PASS', behavior_tests: [{ command: 'x', exit_code: 0, log_tail: 'ok' }] },
     });
     const judgeFn = vi.fn().mockResolvedValue({ verdict: 'PASS', coverage: [{ step: 'A', passed: true }], feedback: null });
     const res = await runJudgeGate(
