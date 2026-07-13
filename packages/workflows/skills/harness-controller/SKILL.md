@@ -7,9 +7,11 @@ description: |
   移植 Superpowers 6.0 subagent-driven-development 零件：进度台账 / 文件接力 / 四态出口协议 / 单评审双裁决 / compaction 恢复。
   点火方：Brain harness dispatch（无头）或人工前台（同一份 skill 两种触发，行为一致）。
   /dev 仍是唯一需求入口：本 skill 消费 /dev 路径C 的交接契约（PrepPRD + 铁律清单 + NFR），不做需求对抗。
-version: 2.4.0
+version: 2.6.0
 created: 2026-07-04
 changelog:
+  - 2.5.0: 规则C配套（handoff 0714 刀2，proposer 9.10.0/reviewer 9.5.0）——Step 3 generator 验收新增「未覆盖真实链路清单转呈」：合同含 ## 未覆盖真实链路清单 段（非 N/A）必须原样进 PR 描述（缺则让 generator gh pr edit 补上）；Step 7 report 同步把该清单转呈最终报告/通知正文。mock 豁免必须呈现给用户，禁止静默
+  - 2.6.0: EVA v2 审计六处修法——①Step 7 cost 条文诚实化（controller 拿不到 subagent 真实成本，30 条实证 29 条恒 0：有真实数据才填，否则填 0 并台账注明 cost=unsettled，Brain 侧 session 用量结算是正解已立案）②Step 5 judge VERDICT 对称上报 relay-runs judge_verdict（DB 30 条仅 2 非空的病根）③Step 3 PR 开出即台账 append 中间态 generator: pr_opened 行（31e29c09 实证死亡窗口台账止步 gan）④Step 3 controller 验收扩为四件：PR body/title 必须 grep 到 task id（Step 0.4 外部真相重建依赖此约定）⑤横切纪律 A 加 gan 附件质量门（rubric 必须标准 7 维，d063b3e5 实证自创 5 维）+ gan done 行登记 judgments_written=N ⑥report 台账行带明细 verdict/learnings_inserted/concerns（a85e0582 实证裸行无从审计）
   - 2.4.0: 治断点恢复失忆（issue 45dd6925）——Step 0.4 新增「台账缺失 ≠ 新 sprint」外部真相重建：.harness/progress.md 是 gitignore 本地文件，worktree 收割/重建后必然蒸发（07-13 d063b3e5 实证重派=全新 clone，恢复 session 重跑 planner+GAN 白烧 $7+）；台账不存在时先查 gh pr list（open→重建台账续跑 / merged→直跳 merge 后半程）+ relay-runs phase 佐证，全无外部真相才许当新 sprint
   - 2.3.0: refactor Step 3 CI 阻塞等待——抽共享 scripts/ci-poll.sh（退出码 0=全绿/10=有失败/11=BEHIND，sleep 30 在脚本内），Step 3 循环体改为调用脚本，出口动作不变（绿→evaluator，失败→fix subagent）；engine-pr-watchdog Step 2 同步改造，单一 SSOT 不漂移
   - 2.2.0: 治 relay 断链头号死因「结束发言等 CI」——新增硬约束 7（等外部事件必须前台阻塞轮询，禁止"等通知"后停止输出：headless -p 模式结束输出=进程退出=session 自杀）+ Step 3 新增「CI 阻塞等待」机械段（同步 bash sleep 30 轮询循环，Bash 超时立刻重发不结束 turn，绝不 run_in_background；照抄 engine-pr-watchdog 已验证模式）。07-12 实证：31e29c09/a1bf1ba5/4bb31ef5 三条 relay 均在 generator 开出 PR 后说"等待 CI 结果通知"正常退出（45 turns/18min，离任何资源墙都远），evaluator/judge/merge/report 全链 0 执行、任务假 done；watchdog 重点火的恢复 session 又以"CI 在跑等信号"1 turn 再死。对照组 a85e0582 全程未撒手，1h47m 八节点全通——链本身是通的，死因只此一处
@@ -74,18 +76,20 @@ curl -s -m 10 -X PATCH "$BRAIN/api/brain/orchestrator/relay-runs/${HARNESS_INITI
 
 ```
 planner: done (sprint-prd.md@<commit7>, invariants=N, fr=N)
-gan: done (contract-draft.md@<branch> r<N>, verdict=APPROVED, 铁律覆盖=N/N, rubric=.harness/verdicts/gan-<sha7>.json)
+gan: done (contract-draft.md@<branch> r<N>, verdict=APPROVED, 铁律覆盖=N/N, judgments_written=N, rubric=.harness/verdicts/gan-<sha7>.json)
 generator: done (pr=#<num>, red=<sha7>, green=<sha7>)
 evaluator: done (verdict=PASS, sha=<pr_head7>, verdict_file=.harness/verdicts/evaluate-<sha7>.json)
 judge: done (verdict=PASS, sha=<pr_head7>)
 merge: done (pr=#<num> MERGED)
-report: done
+report: done (verdict=<v>, learnings_inserted=<N>, concerns=<无|数量>)
 ```
 
 **附件约定（裁决留痕归档，把 N/A 变成分）**——relay 各棒的结构化产出（rubric scores、Golden Path 对照表、unverifiable[]、双门结果）只活在 subagent 报告文本里就等于没发生，评不了也审计不了：
 - 附件路径统一 `.harness/verdicts/<phase>-<sha7>.json`（phase = gan / evaluate 等，sha7 = 锚定 commit 前 7 位），**随 PR 入库**
 - gan 行必附 reviewer 最终轮 rubric JSON 路径；evaluator 行必附 verdict JSON 路径（含 verdict/unverifiable[]/双门结果）
 - controller 在验收对应阶段时负责把 subagent 报告里的结构化 JSON 落到该路径，再写台账行——**没有附件文件的 gan/evaluator done 行视为台账不完整**
+- **gan 附件质量门（EVA v2）**：gan 附件的 rubric JSON 必须含标准 7 维 `rubric_scores`——缺维/自创维度 = 无效 verdict，打回 reviewer 重出（d063b3e5 实证 reviewer 自创 5 维照样被当有效 verdict 收下）
+- **判定点回执（EVA v2）**：gan done 行必须登记 `judgments_written=N`（从 reviewer 报告取）；合同有判定点登记表但 N=0 → 台账记一行 WARN，不静默放过
 - 为让 verdicts 随 PR 入库，Step 0 的 `.harness/.gitignore` 需放行该目录（见 Step 0 代码）
 
 **外部真相优先**：台账说 generator done 但 `gh pr view` 说 PR 不存在 → 信 gh，重跑该阶段并在台账 append 更正行（不删旧行）。
@@ -259,8 +263,8 @@ prompt: 调用 Skill(harness-generator)。CONTRACT_BRANCH=<branch> SPRINT_DIR=<d
   报告：四态 + pr_url + Red/Green commit SHA
 ```
 
-- generator 内部 TDD 纪律由 harness-generator skill 承载（不变）；controller 验收三件事：**PR 真实存在**（gh pr view）、**commit 顺序含 (Red)/(Green)**、**CI 在跑**
-- **PR 存在后立即早上报 pr_url**（验收 `gh pr view` 成功后执行，非阻塞；端点未上线返回 400 忽略即可）：
+- generator 内部 TDD 纪律由 harness-generator skill 承载（不变）；controller 验收四件事（EVA v2 由三扩四）：**PR 真实存在**（gh pr view）、**commit 顺序含 (Red)/(Green)**、**CI 在跑**、**PR 带 task id**——第四件机械 grep 不烧 LLM：`gh pr view <pr> --json body,title | grep -q $HARNESS_TASK_ID`，不中即让 generator 在 PR body 补一行 task id。Step 0.4 的外部真相重建（`gh pr list --search $HARNESS_TASK_ID`）全靠这个约定，漏带则重建落空
+- **PR 存在后立即早上报 pr_url + 台账中间态留痕（EVA v2）**（验收 `gh pr view` 成功后执行，非阻塞；端点未上线返回 400 忽略即可）：
 
 ```bash
 PR_URL_EARLY=$(gh pr view --json url -q .url 2>/dev/null || echo "")
@@ -268,10 +272,15 @@ if [ -n "$PR_URL_EARLY" ]; then
   curl -s -m 10 -X PATCH "$BRAIN/api/brain/orchestrator/relay-runs/${HARNESS_INITIATIVE_ID}" \
     -H "Content-Type: application/json" \
     -d "{\"phase\":\"generate\",\"pr_url\":\"$PR_URL_EARLY\"}" || true
+  # 台账同步 append 中间态行（EVA v2）——31e29c09 实证「开 PR→CI 绿」窗口死亡则台账止步 gan，恢复只能靠 Step 0.4 兜底
+  echo "generator: pr_opened (#<num>, red=<sha7>)" >> .harness/progress.md
 fi
 ```
 
+  中间态行与既有「更正行不删旧行」语义一致：后续 CI 全绿完成时照常再 append 正式 `generator: done` 行，不删 pr_opened 行。
+
 - **CI 门禁三件套 push 前自查**（N4 三跑全在 CI 才踩这些门，各浪费一轮修复——左移到此）：①contract-draft.md 含 Test Contract 表且 [BEHAVIOR] 覆盖文本与测试 it() 名称子串匹配 ②feat 改动带本 repo 约定的 smoke 脚本（按 base_repo 映射：cecelia = packages/brain/scripts/smoke/<feature>-smoke.sh 且登记 packages/quality/smoke-allowlist.txt；zenithjoy = .github/workflows/scripts/smoke/<feature>-smoke.sh 且进 smoke-baseline.txt 棘轮；其他第三方 repo 无此约定 → 本条跳过，以该 repo CI 实际门禁为准）③DoD 条目全勾 [x]。任一缺失 → 让 generator 补完再 push
+- **未覆盖真实链路清单转呈（规则C配套，proposer 9.10.0）**：contract-draft.md 含 `## 未覆盖真实链路清单` 段且非 N/A → 验收时必须确认 PR 描述已原样附上该段（缺 → 让 generator `gh pr edit --body-file` 补上）。该清单是用户看见"哪些真实链路没测到"的唯一通道，禁止静默吞掉 mock 豁免
 - CI 失败 → 派 fix subagent（同 skill Mode 2，带失败日志），fix 轮次计入台账，上限 20
 - 完成（CI 全绿）→ 台账 append → Step 4
 
@@ -338,6 +347,14 @@ FEEDBACK=$(echo "$JUDGE_RESP" | jq -r '.feedback // ""')
 # HTTP 恒 200：VERDICT=PASS（API 已把 FIXED 归一为 PASS）→ 放行；FAIL/ERROR/空 → 一律按 FAIL 处理
 ```
 
+- **judge_verdict 上报（硬性动作，EVA v2，与 Step 4 evaluate_verdict 对称）**——拿到 VERDICT 后立刻 best-effort 上报（DB 实证：judge_verdict 30 条仅 2 非空，病根就是此处从未上报，裁决只活在台账文本里）：
+
+```bash
+curl -s -m 10 -X PATCH "$BRAIN/api/brain/orchestrator/relay-runs/${HARNESS_INITIATIVE_ID}" \
+  -H "Content-Type: application/json" \
+  -d "{\"judge_verdict\":\"$VERDICT\"}" || true
+```
+
 - agent_verdict 缺省时 API 自读 `<worktree>/.brain-result.json`；可选字段：agent_verdict / agent_feedback / prompt_dir / transcript_file
 - 兜底（仅 cecelia 本机直跑且 Brain API 不可达时）：`node scripts/harness-judge-cli.mjs --task-id <id> --sprint-dir <dir> --pr <url>`（CLI 保留不删，但第三方 repo 容器内不得作为主路径）
 - judge FAIL → 带 feedback 回 Step 3（打回重写）；judge PASS → 台账 append（锚 sha）→ Step 6
@@ -372,7 +389,7 @@ curl -s -m 15 -X POST "$BRAIN_URL/api/brain/harness/staging-e2e" \
 
 ## Step 7: Report（收尾六步）
 
-调用 Skill(harness-report)（Phase A/B 不变：回写 Brain task 状态 → Dashboard → Notion → 飞书 → 本地备份 → Sprint 状态同步）。派发前后按「横切纪律 B」自报 node=report。
+调用 Skill(harness-report)（Phase A/B 不变：回写 Brain task 状态 → Dashboard → Notion → 飞书 → 本地备份 → Sprint 状态同步）。派发前后按「横切纪律 B」自报 node=report。合同含 `## 未覆盖真实链路清单`（非 N/A）→ 把该清单原样转呈进最终报告与通知正文（规则C配套，禁止静默吞掉 mock 豁免）。
 
 **追加硬性动作——回写 initiative_runs 终态**（否则 Brain 巡逻把 run 误判为 Stuck at Planner 并派干预任务，N4 实证）：
 
@@ -383,9 +400,11 @@ curl -s -X PATCH "$BRAIN/api/brain/orchestrator/relay-runs/${HARNESS_INITIATIVE_
   # 终局失败改 {"phase":"failed","failure_reason":"<一句话>","verdict":"FAIL","cost":<总成本>,"pr_url":"<有PR则填>"}
 ```
 
-**PATCH body 三个字段是硬性要求，不许只 PATCH phase**（#3540 为此加的字段，1.2.1 及以前只写 phase → dashboard verdict 全空、cost 全 0）：`verdict` = 最终裁决（PASS/FAIL）、`cost` = 全程累计成本、`pr_url` = PR 链接（从台账/`gh pr view --json url` 取）。`evaluate_verdict` 已在 Step 4 出裁决时上报过，此处不必重发（要重发也无害，COALESCE 覆盖）。
+**PATCH body 三个字段是硬性要求，不许只 PATCH phase**（#3540 为此加的字段，1.2.1 及以前只写 phase → dashboard verdict 全空、cost 全 0）：`verdict` = 最终裁决（PASS/FAIL）、`cost` = 成本字段（见下）、`pr_url` = PR 链接（从台账/`gh pr view --json url` 取）。
 
-台账 append `report: done`，确认 PR 状态 = MERGED（硬约束 6），输出最终摘要。
+**cost 字段的诚实边界（EVA v2）**：cost 字段仍带，但 controller **无法可靠获得 subagent 真实成本**（30 条实证 29 条恒 0）——有真实数据（如 subagent 报告尾部自带 cost_usd）才填真实值，否则填 0 并在台账注明 `cost=unsettled`；Brain 侧从 session 用量结算才是正解（已立案），不要为凑数字编造成本。`evaluate_verdict` 已在 Step 4 出裁决时上报过，此处不必重发（要重发也无害，COALESCE 覆盖）。
+
+台账 append `report: done (verdict=<v>, learnings_inserted=<N>, concerns=<无|数量>)`——**禁裸 `report: done` 行（EVA v2）**：verdict/learnings_inserted 从 harness-report 报告取，concerns 无则写"无"（a85e0582 实证裸行无从审计 report 真实产出）。确认 PR 状态 = MERGED（硬约束 6），输出最终摘要。
 
 **收尾最后一步——自杀式 tmux 关窗**（有头前台派发的 tmux 会话跑完不会自己关窗，全靠控制会话手动 `send-keys /exit`+`kill-session`，07-08/09 T2/T3/T4 三个任务因控制会话没盯到底空转两天没人关；无头 harness dispatch 通常没有 `$TMUX`，走 else 分支直接跳过，无害）：
 

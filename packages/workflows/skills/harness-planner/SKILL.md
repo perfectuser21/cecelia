@@ -7,10 +7,11 @@ description: |
   人类启动 harness/sprint 通过 /dev 路径C（POST localhost:5221/api/brain/tasks，payload 必须带 orchestrator=skill-relay）。
   直接调本 skill = 绕过 controller 接力链，违反 zero-human-gate 原则。
   （2026-07-05 cecelia #3554 起 LangGraph 图编排已废弃，"Brain executor Layer 1 节点"为过时语义。）
-version: 8.14.0
+version: 8.15.0
 created: 2026-04-08
-updated: 2026-07-08
+updated: 2026-07-14
 changelog:
+  - 8.15.0: EVA v2 审计五修 — ① 修 Step 0.3 THIN_PRD 引用未定义变量 bug（TASK_PAYLOAD→TASK_JSON）；② Step 2 后新增「发货前机械闸」（journey_type/target_environment 枚举 + Invariant/累积FR/NFR/journey_id/step_id 五段结构 + thin-slice 行数自查，任一 FAIL 禁进 Step 3，恢复/重跑同样过闸——d063b3e5 实证 299 行 PRD 穿透）；③ 执行规则加防漂移铁律（输入真相只来自 task payload API，Step 0-3 不可跳）；④ 累积 FR 段加语义反例（禁表格、禁写本 sprint 新行为）；⑤ Step 3 出口 JSON 增 status 四态（DONE/DONE_WITH_CONCERNS/NEEDS_CONTEXT/BLOCKED）
   - 8.14.0: 跨 repo 化刀3 — Step 0.5 环境映射加前置护栏：路径→环境映射表仅适用 base_repo=cecelia；zenithjoy 走既有布局约定（apps/dashboard→windows_cloud 等）；其他第三方 repo 禁止路径猜测，target_environment 必须由 payload 显式提供，缺失时 PRD 标注 environment: unresolved 交 controller 上报；映射表本体与 Brain API（localhost:5221）调用不动
   - 8.13.0: description 更新为 skill-relay 语义 — LangGraph 图编排已废弃（cecelia #3554，2026-07-05），本 skill 现由 harness-controller 单 session 接力调用，不再是 Brain executor 图节点；正文流程不变
   - 8.12.1: 补回 Step 3 最后一条消息的 review_required 字段 + 判断规则 — 该字段只存在于 cecelia 镜像（B22 时代直改镜像未进 SSOT 的历史漂移），v8.12.0 镜像同步时被覆盖丢失，b22-review-required-smoke 抓到；Brain graph 从 planner verdict JSON 消费此字段
@@ -34,6 +35,7 @@ changelog:
 
 > **语言规则: 所有输出必须使用简体中文。严禁日语、韩语或其他语言。**
 > **执行规则: 严格按照下面列出的步骤执行。不要搜索/查找其他 skill 文件，直接按本文档流程操作。**
+> **执行规则（EVA v2）: 无论派发 prompt 厚薄（含恢复/二次点火场景），Step 0-3 一步不可跳；本 skill 的输入真相只来自 task payload API（curl 自取），不来自派发 prompt 的转述。**
 
 # /harness-planner — Harness Initiative Planner（阶段 A · Layer 1）
 
@@ -212,7 +214,7 @@ else
 fi
 
 # 读取本 sprint 的 thin_prd（主源）
-THIN_PRD=$(echo "$TASK_PAYLOAD" | jq -r '.thin_prd // ""')
+THIN_PRD=$(echo "$TASK_JSON" | jq -r '.payload.thin_prd // ""')   # EVA v2：修未定义变量 TASK_PAYLOAD，复用上文 TASK_JSON
 ```
 
 **合并规则**（PrepPRD 主源 > decisions 副源）：
@@ -293,6 +295,7 @@ fi
 ## 累积 FR（本 line 已验收行为，本 sprint 不得回退/重复）
 
 <!-- 来源: 本 line 已完成 ability 的 golden_path，按 ability 分组、order_no 排序 -->
+<!-- EVA v2：累积 FR 段每行必须是 "- <ability名>: Step..." 或占位"（本 line 暂无历史）"；禁止表格、禁止把本 sprint 自己要新做的行为写进本段（那是 Golden Path 段的事）——EVA v2 实证 B run 误用 -->
 - <ability A>: Step1 ... → Step2 ... → Step3 ...
 - <ability B>: Step1 ... → Step2 ...
 ```
@@ -305,6 +308,7 @@ fi
 - [ ] `/tmp/inv_step.json` / `/tmp/inv_feature.json` / `/tmp/inv_area.json` / `/tmp/line_fr.json` 已读取（空数组也继续）
 - [ ] 三源 invariant 已按 decision `id` 去重合并
 - [ ] sprint-prd.md 含 `## Invariant 约束` 段与 `## 累积 FR` 段（无数据用占位文字，非空段）
+- [ ] 累积 FR 段每行必须是 "- <ability名>: Step..." 或占位"（本 line 暂无历史）"；禁止表格、禁止把本 sprint 自己要新做的行为写进本段（那是 Golden Path 段的事）——EVA v2 实证 B run 误用
 
 ---
 
@@ -445,6 +449,23 @@ mkdir -p "$SPRINT_DIR"
 ## step_id: <Step UUID 或 step code，如 L01-S5，来源 = PrepPRD Golden Path 锚定结果>
 ```
 
+### 发货前机械闸（EVA v2）
+
+任一 FAIL 禁止进 Step 3。恢复/重跑场景（d063b3e5 实证 299 行 PRD 穿透）同样必须过闸。
+
+```bash
+# 发货前机械闸（EVA v2：实战 2/3 跑枚举非法——feature/local/deploy 都出现过，下游 proposer 选模板/evaluator 派机器全瞎）
+grep -qE '^(## )?journey_type: (autonomous|user_facing|dev_pipeline|agent_remote)$' "$SPRINT_DIR/sprint-prd.md" || { echo "FAIL: journey_type 非法枚举"; exit 1; }
+grep -qE '^(## )?target_environment: (mac_web|windows_cloud|windows_wechat|linux_server|local_api|playground)$' "$SPRINT_DIR/sprint-prd.md" || { echo "FAIL: target_environment 非法枚举"; exit 1; }
+grep -q '## Invariant 约束' "$SPRINT_DIR/sprint-prd.md" || { echo "FAIL: 缺 Invariant 段"; exit 1; }
+grep -q '## 累积 FR' "$SPRINT_DIR/sprint-prd.md" || { echo "FAIL: 缺累积 FR 段"; exit 1; }
+grep -q '## NFR' "$SPRINT_DIR/sprint-prd.md" || { echo "FAIL: 缺 NFR 段"; exit 1; }
+grep -q '^## journey_id:' "$SPRINT_DIR/sprint-prd.md" || { echo "FAIL: 缺 journey_id 行（无值写 none）"; exit 1; }
+grep -q '^## step_id:' "$SPRINT_DIR/sprint-prd.md" || { echo "FAIL: 缺 step_id 行（无值写 none（PrepPRD 未锚定））"; exit 1; }
+BODY_LINES=$(sed '/^## Invariant 约束/,/^## [^I]/d' "$SPRINT_DIR/sprint-prd.md" | wc -l)
+[ "$BODY_LINES" -le 100 ] || { echo "FAIL: 正文超 thin-slice 100 行（扣除 Invariant/累积FR 段后 $BODY_LINES 行），裁剪后重发"; exit 1; }
+```
+
 ---
 
 ### Step 3: push + 返回
@@ -459,10 +480,14 @@ git push origin HEAD 2>/dev/null || echo "[harness-planner] push skipped (no cre
 **最后一条消息**：
 
 ```
-{"verdict": "DONE", "branch": "cp-...", "sprint_dir": "sprints/run-...", "planner_branch": "cp-...", "review_required": false}
+{"verdict": "DONE", "branch": "cp-...", "sprint_dir": "sprints/run-...", "planner_branch": "cp-...", "review_required": false, "status": "DONE"}
 ```
 
 说明：`planner_branch` 字段供 Brain `runGanLoopNode` 读取，作为 GAN proposer 的 `PLANNER_BRANCH` env，避免回退到 main 读 PRD。
+
+**`status` 四态出口（EVA v2）**：`DONE` / `DONE_WITH_CONCERNS` / `NEEDS_CONTEXT` / `BLOCKED`。
+- `NEEDS_CONTEXT` = payload 缺 thin_prd 且 PrepPRD 无法锚定 scope
+- `BLOCKED` = Brain API 全程不可达导致 Step 0.1/0.3/0.4 三步全空
 
 **`review_required` 判断规则**（Brain 从 planner verdict JSON 提取，决定 evaluator PASS 后是否需人工确认才 merge）：
 - `true` — 新功能、UI 变化、行为变更（evaluator PASS 后需人工确认才 merge）

@@ -6,10 +6,12 @@ description: |
   而非"防作弊测试框架"。
   核心职责：(1) spec 对齐用户真需求 (2) criteria 可量化无歧义 (3) happy + error + 边界场景全覆盖
   GAN 对抗**多轮**直到双方达成共识。无硬轮数上限，但 Reviewer 真找不出实质 spec/产品漏洞时必须 APPROVED。
-version: 9.4.0
+version: 9.6.0
 created: 2026-04-08
-updated: 2026-07-10
+updated: 2026-07-14
 changelog:
+  - 9.5.0: 真实链路四硬规则审查（handoff 0714 刀2 — #1267/#1269/#1271/#1256 实证，与 proposer 9.10.0 对齐）— Golden Path 覆盖审查新增第 14/15/16/17 条：(14) 设备/agent 调服务端缺「真实调用方请求 shape」段或 DoD 认证字段与生产调用方不逐字段一致 → 打回（规则A）；(15) 第三方 API 全 mock 零真调 → 打回（规则B）；(16) DoD 含 force_*/stub/假数据但无「未覆盖真实链路清单」段 → 打回（规则C）；(17) target_environment 与 ability 真实运行环境不匹配 → 第 7 维 0 分打回（规则D：微信 UI/RPA 必 windows_wechat；Android 通道未落地前真机段必登记未覆盖）；第 6 维领域验证核对清单同步补「真实调用方 shape」「第三方真调」两行
+  - 9.6.0: EVA v2 审计五修 — (R1) Step 5 判定点写库后必须回读自证，judgments_written 作为必含字段写进最终 verdict JSON，登记表有行但写入 0 条 → verdict 必带 WARN（a85e0582 实证 3 行登记表全静默漏写）；(R2) Step 4 结果文件路径参数化 RESULT_FILE=${BRAIN_RESULT_FILE:-/workspace/.brain-result.json}，headed/relay 由 controller 注入（gan-7b17211.json 实证）；(R3) Golden Path 覆盖审查新增第 18 条：e2e 脚本/manual:bash 必须 bash -n 通过 + 全角标点紧贴 $VAR 检测，命中即第 6 维低分（issue a638f840 实证）；(R4) 第 6 维口径收紧：PRD 无 HTTP 响应不自动满分，改审等价 oracle codify 与 E2E 真执行断言占比（d063b3e5 实证判例）；(R5) Step 3 明确 gan-feedback-rN.md 与 verdict feedback 字段必须简体中文（r4 全英文反馈实证违规）
   - 9.4.0: 判定点写库通电（九要素 T5 — decisions e035dad8）— Step 5 APPROVED 后新增第 2 件事：逐行解析合同「判定点登记表」写入 decisions category=judgment（账本保鲜守卫「判定点活性」指标唯一数据源）；解析跳过表头/分隔线/示例行/N-A；失败只 WARN 不阻塞结果文件
   - 9.3.0: 八要素 checklist 审查 + 判定点登记表打回规则（decisions 27b57469/e035dad8）— Golden Path 覆盖审查新增第 11/12/13 条：(11) 合同 ## 八要素需求规范 段缺失 → 第 1 维扣分（proposer 9.6.0 起必含此段）；(12) 涉及真机/RPA/外部状态推断任务缺判定点登记表 → 打回；(13) 失败语义和效果确认要素留空/N/A 而任务明显有对外动作 → 第 5/6 维扣分；输入对抗面：对外暴露 agent 任务缺此项 → 打回
   - 9.2.0: 补「接缝断言」打回信号（修真环境逐个炸根因）— Golden Path 覆盖审查段新增两条强制打回信号：(9)「接缝只用 mock 断言 → 打回」：涉及真机 UIA/生产 env/真实调用方的 [BEHAVIOR]，若 DoD 只用 mock/CI 断言、无真目标验证项 → 第 1 维/第 6 维扣分/打回，要求补接缝断言或显式标 logic-done-pending；(10)「写死环境假设值无真验 → 打回」：引入屏幕坐标/UIA 阈值/假设调用方传值/假设 env 有值等环境假设且无真机校准/真验证项 → 打回，要求从环境推导或真机校准。第 6 维 verification_oracle_completeness 领域验证核对清单同步新增「真机 RPA/生产 env 集成」一行。**未改任何维度名**——7 个维度名（dod_machineability/scope_match_prd/test_is_red/internal_consistency/risk_registered/verification_oracle_completeness/ci_workflow_alignment）是与 Brain ReviewerOutputSchema 的接口约定，一个都没动，只在维度描述/审查项里加内容
@@ -87,6 +89,11 @@ Proposer 产出的 `contract-draft.md` 格式是 **Golden Path Steps**：每步 
 11. **合同缺 ## 八要素需求规范 段 → 第 1 维扣分**（v9.3 强制 — decisions 27b57469）：proposer 9.6.0 起必须在 contract-draft.md 内嵌八要素 checklist 段；该段缺失或任一要素既无答案又无显式 N/A → 视为合同不完整，第 1 维 dod_machineability 扣分。轻微漏填（如 NFR 空白但任务明显无 NFR 要求）仅提醒，不强制打回。
 12. **涉及真机/RPA/外部状态推断任务缺判定点登记表 → 打回**（v9.3 强制 — decisions e035dad8）：凡 Golden Path 含「系统推断外部真实状态」（微信群是否发送 / RPA 当前状态 / API 返回解读 / 真机反馈识别），若合同 ## 八要素需求规范 → 判定点登记表 留空或写 N/A → 直接 REVISION，要求 proposer 逐条登记候选方法/所选/依据/误判后果。无接缝判定点的任务显式写「N/A」才算合规。
 13. **对外暴露 agent 缺输入对抗面 → 打回**（v9.3 强制 — decisions 27b57469 第9要素）：Golden Path 涉及「外部用户可写入 / 客服 agent 接收外部输入 / 爬虫内容入 pipeline」，若输入对抗面表留空（无信任等级/无 prompt injection 防护/无越权拒绝策略）→ REVISION；纯内部任务显式填 N/A 则放行。
+14. **设备/agent 调服务端缺「真实调用方请求 shape」或 DoD 与之不一致 → 打回**（v9.5 强制 — 规则A，#1267 实证：DoD 用 body 传 tenant_id，生产 Android agent 发 x-agent-id header，两条代码路径，测的永远绿、真的从没人碰）：凡 Golden Path 含真实调用方（Android/Windows agent、外部 webhook），合同必须内嵌 `## 真实调用方请求 shape` 段（来源：agent 源码/抓包/现网日志），且 DoD 断言构造请求的认证方式与关键字段（header/body、字段名）与该 shape 逐字段一致。段缺失 → 向 Proposer 索要真实调用方请求 shape 作为合同前提，REVISION；有段但 DoD 不一致 → 第 1 维/第 6 维低分打回。
+15. **第三方 API 全 mock 零真调 → 打回**（v9.5 强制 — 规则B，#1269/#1271 实证：5 处 judge-video 调用全 force_result/force_timeout/假图 data_b64，模型下线与 API 格式错全部漏过）：凡 ability 依赖第三方 API（LLM/支付/短信/平台），DoD 至少一条 [BEHAVIOR] 真 key 真请求真响应业务字段校验。`grep -nE 'force_|stub|data_b64' contract-dod.md` 命中且逐条核对后找不到任何一条真调断言 → 第 6 维低分 REVISION。
+16. **有 mock 豁免但无「未覆盖真实链路清单」→ 打回**（v9.5 强制 — 规则C）：DoD 出现 force_*/stub/假数据时，合同必须附 `## 未覆盖真实链路清单` 段（逐条：被顶替的真实链路点｜原因｜真验证补位计划）；缺段、或清单避重就轻漏列明显被 mock 的链路点 → REVISION。无 mock 时显式写 N/A 才合规。
+17. **target_environment 与 ability 真实运行环境不匹配 → 打回**（v9.5 强制 — 规则D，#1256 实证：windows_wechat 通道存在但 sprint 没路由过去，合并后真机爆 5 个致命 bug——"有枪没上膛"）：Reviewer 必须核对 PRD/合同的 target_environment 与 ability 真实运行环境：Line04 微信 UI/RPA ability → 必须 windows_wechat（xian-rog 真机 e2e-wechat-rpa.yml）；Android agent ability → Android 真机通道落地前必须在「未覆盖真实链路清单」显式登记「真机段未覆盖」；环境选错/漏选 → 第 7 维 0 分 REVISION。
+18. **e2e 脚本与 manual:bash 命令语法必过**（v9.6 强制 — EVA v2）：合同附带的 e2e 脚本与 manual:bash 命令必须 `bash -n` 通过 + 全角标点紧贴 $VAR 检测（`grep -E '[（）：，“”]\$'`）——命中任一即第 6 维低分。issue a638f840 实证：放行了带全角字符 bug 的脚本，跑到 BEHAVIOR-06 崩溃。
 
 少一项 → 第 2 维 scope_match_prd 或第 4 维 internal_consistency 扣分。Golden Path 断链 → 直接 REVISION 不打分。
 
@@ -101,7 +108,7 @@ Proposer 产出的 `contract-draft.md` 格式是 **Golden Path Steps**：每步 
 | 3 | **Test 真红** | 测试文件存在性 + 必须 FAIL 的假设成立 | 显式列 "测试文件在 `tests/...`，不动代码跑 → exit=1 with `at time.test.ts:N`" | 没列 test 文件路径，或无法判断"尚未实现时是否会 FAIL" |
 | 4 | **内部一致** | 合同本身术语 / 字段 / 命令无矛盾 | 每个字段 / 命令只定义一次，引用用稳定 ID | 合同前后定义不一致，或命令在多处粘贴可能漂移 |
 | 5 | **风险登记（相对任务）** | Risks 栏覆盖**该任务真实存在的**风险点 + 每条 mitigation。简单任务风险点少则少列，不强凑数 | 覆盖任务所有真实风险点，每条有 mitigation；简单任务 1 条真风险也算满分 | 无 Risks 栏，或漏掉明显风险点，或为凑数编造 PRD 无关的风险 |
-| 6 | **Verification Oracle 完整性**（v6.1）| contract-draft.md 中 ## Response Schema 推导段（由 Proposer Step 1.1 写入）是否被 contract-dod.md codify 成 jq -e 可执行 oracle；PRD 无 HTTP 响应时（写了 N/A）本维度自动满分 10 | contract-draft.md 有 Response Schema 推导段，且每个字段对应至少1条 jq -e 验证；或任务明确标注 N/A | contract-draft.md 有 Response Schema 推导段但合同无任何 jq -e 字段验证；或推导段缺失但任务明显有 HTTP 响应 |
+| 6 | **Verification Oracle 完整性**（v6.1，v9.5 — EVA v2 收紧）| contract-draft.md 中 ## Response Schema 推导段（由 Proposer Step 1.1 写入）是否被 contract-dod.md codify 成 jq -e 可执行 oracle。**PRD 无 HTTP 响应时不自动满分**——改审等价 oracle 是否 codify：CLI stdout 断言（`test "$OUT" =`）/ psql 值断言 / ffprobe 流断言；E2E 脚本真执行断言占比过低（几乎全是 grep 静态检查、真 curl/psql/docker 操作 ≤1 处）→ 本维低分（d063b3e5 实证判例） | contract-draft.md 有 Response Schema 推导段，且每个字段对应至少1条 jq -e 验证；非 HTTP 任务：等价 oracle（CLI stdout / psql / ffprobe）已 codify 且 E2E 脚本以真执行断言为主 | contract-draft.md 有 Response Schema 推导段但合同无任何 jq -e 字段验证；或推导段缺失但任务明显有 HTTP 响应 |
 | 7 | **CI Workflow 内容对齐**（windows_cloud/windows_wechat/linux_server 专属）| 凡合同引用 GHA workflow 作为 BEHAVIOR 断言，Reviewer 必须用 Bash 工具读取该 workflow 文件内容，确认 workflow steps 与合同 BEHAVIOR 的用户操作语义一致；对 windows_wechat 额外确认：workflow 跑在 self-hosted `wechat-capable` runner，无 `MOCK_*` 注入 | Reviewer 读了 workflow 文件，每条 BEHAVIOR 都能指向 workflow 里的一个真实业务 step | Reviewer 未读 workflow 文件直接批准；workflow 里全是文件大小/存在性检查；windows_wechat 合同用了 MOCK_WECHAT_VERSION 或 fakeChild。**非 windows_cloud/windows_wechat/linux_server 环境：填 10（N/A，无 GHA workflow 可审查）** |
 
 ### 阈值规则（代码判，Reviewer 不主观综合）
@@ -142,6 +149,8 @@ Proposer 产出的 `contract-draft.md` 格式是 **Golden Path Steps**：每步 
 - ❌ **DB 写入**类合同 `SELECT count(*)` 无 `created_at > NOW() - interval` 时间窗（历史数据冒充）
 - ❌ **UI 交互**类合同无 `toBeVisible` / `toHaveText` / 截图比对可见状态断言
 - ❌ **真机 RPA / 生产 env 集成**类（微信/抖音真机操控、依赖生产中台 env）合同的接缝点只用 mock/CI 断言、无真目标验证项（真机微信真收真回 / 生产 env 真出结果），且未标 `logic-done-pending` → 第 1 维 / 第 6 维低分（详见上方 Golden Path 覆盖审查第 9、10 条）
+- ❌ **设备/agent 调服务端**类合同缺 `## 真实调用方请求 shape` 段，或 DoD 断言的认证方式/字段名与生产调用方不逐字段一致（规则A — 详见 Golden Path 覆盖审查第 14 条）
+- ❌ **第三方 API**（LLM/支付/短信/平台）类合同 DoD 全部 force_*/stub/假数据，无一条真 key 真请求真响应校验断言（规则B — 详见 Golden Path 覆盖审查第 15 条）
 
 **[BEHAVIOR] ≥ 4 数量检查（归属第 6 维，v9.1 明确）**：`grep -c '^- \[ \] \[BEHAVIOR\]' contract-dod.md` < 4（至少覆盖 schema 字段 / keys 完整性 / 禁用字段反向 / error path 四类各一条）→ 第 6 维低分 REVISION。**此数量检查由第 6 维负责，不归第 7 维 ci_workflow_alignment**（第 7 维只审 CI Workflow 内容对齐）。
 
@@ -233,6 +242,8 @@ cat .github/workflows/<workflow文件名>.yml 2>/dev/null || echo "WORKFLOW_NOT_
 
 ### Step 3: 产出 Verdict
 
+> **反馈语言（v9.5 — EVA v2）**：`gan-feedback-rN.md` 与 verdict `feedback` 字段必须简体中文（r4 全英文反馈实证违规）。
+
 **必须输出 7 维度评分（JSON 结构化）**：
 
 ```markdown
@@ -290,25 +301,27 @@ Round N, 阈值固定 7/10（不随 round 衰减）。
 
 ### Step 4: 写结果文件（Brain 读文件而非 stdout）
 
-**输出协议（v6.6.0 — 强制 Bash 工具写文件）**：
+**输出协议（v6.6.0 — 强制 Bash 工具写文件；v9.5 — EVA v2 路径参数化）**：
 
-最终输出必须通过 **Bash 工具**写入 `/workspace/.brain-result.json`（Brain 读文件不读 stdout，文本输出的命令不生效）：
+最终输出必须通过 **Bash 工具**写入结果文件。路径不再写死：`RESULT_FILE="${BRAIN_RESULT_FILE:-/workspace/.brain-result.json}"`，headed/relay 本地场景由 controller 注入 `BRAIN_RESULT_FILE`（gan-7b17211.json 实证容器路径写失败靠 controller 代持久化）。Brain 读文件不读 stdout，文本输出的命令不生效：
 
 ⚠️ **关键：必须在 Claude Code 的 Bash 工具中执行以下命令，不能只在文本里描述它**
 
 ```bash
 # [必须通过 Bash 工具执行，不是文字描述] 写结果文件
-cat > /workspace/.brain-result.json << 'BREOF'
-{"verdict":"<APPROVED|REVISION>","rubric_scores":{"dod_machineability":X,"scope_match_prd":X,"test_is_red":X,"internal_consistency":X,"risk_registered":X,"verification_oracle_completeness":X,"ci_workflow_alignment":X},"feedback":"<feedback text or empty>"}
+RESULT_FILE="${BRAIN_RESULT_FILE:-/workspace/.brain-result.json}"
+cat > "$RESULT_FILE" << 'BREOF'
+{"verdict":"<APPROVED|REVISION>","rubric_scores":{"dod_machineability":X,"scope_match_prd":X,"test_is_red":X,"internal_consistency":X,"risk_registered":X,"verification_oracle_completeness":X,"ci_workflow_alignment":X},"judgments_written":0,"feedback":"<feedback text or empty>"}
 BREOF
 ```
 
-写完后用 Bash 工具验证文件存在：
+写完后用 Bash 工具验证文件存在（对 $RESULT_FILE 生效）：
 ```bash
-test -f /workspace/.brain-result.json && echo "OK: result file written" || echo "FAIL: file missing!"
+test -f "$RESULT_FILE" && echo "OK: result file written" || echo "FAIL: file missing!"
 ```
 
-REVISION 时 feedback 必须含具体修改方向。
+- `judgments_written` 是**必含字段**（v9.5 — EVA v2）：初始写 0；APPROVED 走 Step 5 判定点写库后回读真实条数更新此字段（见 Step 5「回读自证」段）；REVISION 保持 0。
+- REVISION 时 feedback 必须含具体修改方向。
 
 **ci_workflow_alignment 填值规则**：
 - `target_environment` 为 `windows_cloud` 或 `linux_server`：正常审查 workflow 文件后打分（0-10）
@@ -413,6 +426,19 @@ async function writePlanned() {
 
 writePlanned().then(() => console.log('Step 5 完成：', apis.length, 'API +', tables.length, 'tables 写入 planned'));
 ```
+
+**判定点写库回读自证（v9.5 — EVA v2，写完必做）**：不信任「写入成功」的 console.log，必须回读 Brain 真实条数，并把 `judgments_written: N` 更新进最终 verdict JSON（必含字段）：
+
+```bash
+# 回读本 task 的 judgment 条数（等价查询亦可）
+N=$(curl -s "$BRAIN/api/brain/decisions?category=judgment" | jq "[.[]|select(.reason|contains(\"$TASK_ID\"))] | length")
+# 把真实条数写回结果文件（对 $RESULT_FILE 生效，与 Step 4 同一路径）
+RESULT_FILE="${BRAIN_RESULT_FILE:-/workspace/.brain-result.json}"
+jq --argjson n "$N" '.judgments_written = $n' "$RESULT_FILE" > "$RESULT_FILE.tmp" && mv "$RESULT_FILE.tmp" "$RESULT_FILE"
+echo "judgments_written=$N"
+```
+
+- 合同有判定点登记表（非空、非全 N/A）但回读 N=0 → **verdict JSON 的 feedback 必须带 WARN 说明**（如 `WARN: 判定点登记表 3 行但写库 0 条，学习回路断电`）——a85e0582 实证 3 行登记表全静默漏写，「只 WARN 不阻塞」设计零感知，回读自证是唯一暴露口。
 
 **注意**：
 - 写入失败只 WARN，不阻塞结果文件（Brain 的 APPROVED 判定以 `/workspace/.brain-result.json` 为准）
