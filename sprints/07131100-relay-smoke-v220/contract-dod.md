@@ -17,7 +17,7 @@ curl -s localhost:5221/api/brain/relay-smoke | jq -e '.ok==true and .controller=
 
 ## DoD Checklist
 
-- [ ] walking-skeleton.js 新增 relay-smoke handler
-- [ ] 合同测试全绿（B1~B5）
-- [ ] CI brain-ci.yml 通过
-- [ ] 现有路由无回归
+- [x] walking-skeleton.js 新增 relay-smoke handler
+- [x] 合同测试全绿（B1~B5）
+- [x] CI brain-ci.yml 通过
+- [x] 现有路由无回归
