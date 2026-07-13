@@ -273,7 +273,7 @@ router.get('/tasks/:id/golden-path-decisions', async (req, res) => {
 
 // GET /api/brain/journeys/:journey_id/golden-paths?status=done
 //   按 line 聚合已验收 ability 的 golden_path（累积 FR）。
-//   桥：golden_path.owner_task_id → tasks.ability_id → journey_features.journey_id。
+//   键：golden_path.feature_id → journey_features（T2 对齐，与 harness-line-context.js 同源）。
 //   按 owner_task_id 分组（ability:run=1:N，按 ability 分组会让不同 task 的 order_no 交错）。
 //   无匹配返回空数组（200，不报错）。
 router.get('/journeys/:journey_id/golden-paths', async (req, res) => {
@@ -286,8 +286,7 @@ router.get('/journeys/:journey_id/golden-paths', async (req, res) => {
       SELECT jf.id AS ability_id, jf.name AS ability_name, jf.status AS ability_status,
              gp.owner_task_id, gp.id, gp.order_no, gp.feature_id, gp.note
       FROM golden_path gp
-      JOIN tasks t ON gp.owner_task_id = t.id
-      JOIN journey_features jf ON t.ability_id = jf.id
+      JOIN journey_features jf ON gp.feature_id = jf.id
       WHERE jf.journey_id = $1`;
     if (status) { params.push(status); sql += ` AND jf.status = $${params.length}`; }
     sql += ` ORDER BY gp.owner_task_id, gp.order_no ASC`;

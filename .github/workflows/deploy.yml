@@ -26,6 +26,10 @@ on:
         description: 'Release 原因（可选）'
         required: false
         default: '手动发布'
+      bypass_nightly_gate:
+        description: '输入 BYPASS 跳过 nightly 绿色检查（紧急通道，需知晓风险）'
+        required: false
+        default: ''
   schedule:
     # 北京时间 10:00 (UTC 02:00) 和 18:00 (UTC 10:00)
     - cron: '0 2 * * *'
@@ -119,11 +123,33 @@ jobs:
             echo "🟢 Fast Lane — 无高风险文件改动"
           fi
 
+  # ─── 刀C Release Gate：生产部署前检查最近 nightly 绿色证据 ─────────────────
+
+  nightly_gate:
+    name: 刀C Release Gate (nightly 绿色检查)
+    needs: changes
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+      - name: 检查最近 nightly 绿色证据
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          WINDOW_HOURS: '48'
+          BYPASS_NIGHTLY_GATE: ${{ github.event.inputs.bypass_nightly_gate == 'BYPASS' && '1' || '0' }}
+        run: bash scripts/ci/check-nightly-green.sh
+
   # ─── Risk Gate：Fast Lane 门禁（仅 risk_level=low 时执行）─────────────────
 
   risk_gate:
     name: Risk Gate (Fast Lane)
-    needs: changes
+    needs: [changes, nightly_gate]
     if: needs.changes.outputs.risk_level == 'low'
     runs-on: ubuntu-latest
     timeout-minutes: 2
@@ -137,7 +163,7 @@ jobs:
 
   staging_deploy:
     name: Staging Deploy (Safe Lane)
-    needs: changes
+    needs: [changes, nightly_gate]
     if: needs.changes.outputs.risk_level == 'high'
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -282,7 +308,7 @@ jobs:
 
   deploy:
     name: Trigger Deploy
-    needs: [changes, risk_gate, staging_deploy]
+    needs: [changes, nightly_gate, risk_gate, staging_deploy]
     # Fast Lane: risk_gate 通过（staging_deploy 跳过）
     # Safe Lane: staging_deploy 通过（risk_gate 跳过）
     # always() 配合条件判断，确保两种 lane 都能触发

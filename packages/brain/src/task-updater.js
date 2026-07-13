@@ -10,7 +10,7 @@ import { emit } from './event-bus.js';
 
 // Security: Whitelist of allowed columns for dynamic updates
 const ALLOWED_COLUMNS = ['assigned_to', 'priority', 'payload', 'error', 'artifacts', 'run_id', 'error_message'];
-const VALID_STATUSES = ['queued', 'in_progress', 'completed', 'failed'];
+const VALID_STATUSES = ['queued', 'in_progress', 'completed', 'failed', 'pending_postdeploy'];
 
 /**
  * Update task status and broadcast to WebSocket clients

@@ -13,6 +13,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { processExecutionCallback } from '../callback-processor.js';
 
 // ─── Mock DB pool（支持事务：pool.query + pool.connect + client）─────────────
 const mockClient = {
@@ -290,5 +291,169 @@ describe('callback-processor — docker contract status mapping', () => {
     );
     const update = findUpdateCall();
     expect(update[1][1]).toBe('completed');
+  });
+});
+
+describe('C1/C3: 回调写库协议(updated_at + terminal 清 claim + applied)', () => {
+  beforeEach(() => {
+    mockClient.query.mockReset();
+    mockClient.query.mockResolvedValue({ rows: [], rowCount: 1 });
+    mockPool.query.mockReset();
+    mockPool.query.mockResolvedValue({ rows: [], rowCount: 0 });
+  });
+
+  function findMainUpdate() {
+    return mockClient.query.mock.calls.find(
+      (c) => typeof c[0] === 'string' && /UPDATE tasks/.test(c[0]) && /status = \$2/.test(c[0])
+    );
+  }
+
+  it('completed 回调:UPDATE 必须刷 updated_at 且 terminal 参数为 true(清 claim)', async () => {
+    await processExecutionCallback(
+      { task_id: '11111111-1111-1111-1111-111111111111', run_id: 'r-1', status: 'AI Done', result: { ok: 1 } },
+      mockPool
+    );
+    const call = findMainUpdate();
+    expect(call).toBeTruthy();
+    expect(call[0]).toMatch(/updated_at = NOW\(\)/);
+    expect(call[0]).toMatch(/claimed_by = CASE WHEN \$13::boolean THEN NULL ELSE claimed_by END/);
+    expect(call[0]).toMatch(/claimed_at = CASE WHEN \$13::boolean THEN NULL ELSE claimed_at END/);
+    expect(call[1][12]).toBe(true);
+  });
+
+  it('quota_exhausted 回调:非 terminal,claim 参数为 false 不清', async () => {
+    await processExecutionCallback(
+      { task_id: '11111111-1111-1111-1111-111111111111', run_id: 'r-2', status: 'AI Quota Exhausted', result: {} },
+      mockPool
+    );
+    const call = findMainUpdate();
+    expect(call).toBeTruthy();
+    expect(call[1][12]).toBe(false);
+  });
+
+  it('rowCount=0(迟到回调被 WHERE 守卫拦下)返回 applied:false', async () => {
+    mockClient.query.mockResolvedValue({ rows: [], rowCount: 0 });
+    const ret = await processExecutionCallback(
+      { task_id: '11111111-1111-1111-1111-111111111111', run_id: 'r-3', status: 'AI Done', result: {} },
+      mockPool
+    );
+    expect(ret && ret.applied).toBe(false);
+  });
+
+  it('rowCount=1 正常落地返回 applied:true', async () => {
+    const ret = await processExecutionCallback(
+      { task_id: '11111111-1111-1111-1111-111111111111', run_id: 'r-4', status: 'AI Done', result: {} },
+      mockPool
+    );
+    expect(ret && ret.applied).toBe(true);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 5c11 回归：callback-processor 路径的串行解锁
+// 背景：processor 是 cecelia-run DB 直写消费者，历史上完全没有 serialUnlockNext 调用，
+//       导致 T2 完成后 T3 不自动解锁（2026-07-10 活性合同事故）。
+// ─────────────────────────────────────────────────────────────────────────────
+describe('5c11 回归: callback-processor 路径串行解锁', () => {
+  const seqTaskId = 'seq-task-1';
+  const nextTaskId = 'seq-task-2';
+  const projectId = 'proj-serial-regression';
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockPool.connect.mockResolvedValue(mockClient);
+    // 默认：事务内操作返回 rowCount=1
+    mockClient.query.mockResolvedValue({ rows: [], rowCount: 1 });
+  });
+
+  it('processor 路径：seq=N dev task 完成 → blocked seq=N+1 task 被解锁并注入 prev_task_result', async () => {
+    const prUrl = 'https://github.com/org/repo/pull/42';
+    const resultSummary = 'Feature Y implemented via processor path';
+
+    // pool.query 用于事务外查询（串行解锁、KR rollup 等）
+    mockPool.query.mockImplementation((sql, params) => {
+      // serialUnlockNext: 查当前 task 信息
+      if (typeof sql === 'string' && sql.includes('SELECT') && sql.includes('task_type') &&
+          sql.includes('project_id') && params?.[0] === seqTaskId) {
+        return Promise.resolve({
+          rows: [{
+            task_type: 'dev',
+            project_id: projectId,
+            goal_id: 'goal-001',
+            title: 'Seq Task 1',
+            payload: { sequence_order: 1 },
+          }]
+        });
+      }
+      // serialUnlockNext: 查 blocked 下一 task
+      if (typeof sql === 'string' && sql.includes("payload->>'sequence_order'") && sql.includes('blocked')) {
+        return Promise.resolve({
+          rows: [{ id: nextTaskId, title: 'Seq Task 2', payload: { sequence_order: 2, depends_on_prev: 'true' } }]
+        });
+      }
+      // serialUnlockNext: UPDATE blocked → queued
+      if (typeof sql === 'string' && sql.includes('UPDATE tasks') && sql.includes("status = 'queued'") &&
+          sql.includes('blocked_at = NULL')) {
+        return Promise.resolve({ rows: [], rowCount: 1 });
+      }
+      // writeReviewResult: 查 task_type（non-review task → 跳过）
+      if (typeof sql === 'string' && sql.includes('SELECT') && sql.includes('task_type') &&
+          sql.includes('payload') && params?.[0] === seqTaskId) {
+        return Promise.resolve({ rows: [{ task_type: 'dev', payload: {} }] });
+      }
+      return Promise.resolve({ rows: [], rowCount: 0 });
+    });
+
+    await processExecutionCallback(
+      {
+        task_id: seqTaskId,
+        run_id: 'run-serial-1',
+        status: 'AI Done',
+        result: { summary: resultSummary },
+        pr_url: prUrl,
+      },
+      mockPool
+    );
+
+    // 断言：pool.query 中有 UPDATE tasks SET status='queued' 针对 nextTaskId
+    const unlockCall = mockPool.query.mock.calls.find(
+      c => typeof c[0] === 'string' &&
+           c[0].includes('UPDATE tasks') &&
+           c[0].includes("status = 'queued'") &&
+           c[0].includes('blocked_at = NULL') &&
+           c[1]?.[1] === nextTaskId
+    );
+    expect(unlockCall, '5c11: blocked next task 应被解锁').toBeDefined();
+
+    // 断言：注入的 payload 含 prev_task_result 字段
+    const injectedPayload = JSON.parse(unlockCall[1][0]);
+    expect(injectedPayload.prev_task_result).toBeDefined();
+    expect(injectedPayload.prev_task_result.task_id).toBe(seqTaskId);
+    expect(injectedPayload.prev_task_result.summary).toBe(resultSummary);
+    expect(injectedPayload.prev_task_result.pr_url).toBe(prUrl);
+    expect(injectedPayload.prev_task_result.sequence_order).toBe(1);
+  });
+
+  it('processor 路径：独立 task（无 sequence_order）→ 不触发串行解锁', async () => {
+    mockPool.query.mockImplementation((sql, params) => {
+      if (typeof sql === 'string' && sql.includes('SELECT') && sql.includes('task_type') &&
+          sql.includes('project_id') && params?.[0] === 'independent-task') {
+        return Promise.resolve({
+          rows: [{ task_type: 'dev', project_id: projectId, goal_id: null, title: 'Standalone', payload: {} }]
+        });
+      }
+      return Promise.resolve({ rows: [], rowCount: 0 });
+    });
+
+    await processExecutionCallback(
+      { task_id: 'independent-task', run_id: 'run-ind-1', status: 'AI Done', result: { summary: 'done' } },
+      mockPool
+    );
+
+    // 不应有针对 blocked tasks 的解锁查询
+    const blockedQuery = mockPool.query.mock.calls.find(
+      c => typeof c[0] === 'string' && c[0].includes("payload->>'sequence_order'") && c[0].includes('blocked')
+    );
+    expect(blockedQuery, '独立 task 不应触发串行解锁查询').toBeUndefined();
   });
 });

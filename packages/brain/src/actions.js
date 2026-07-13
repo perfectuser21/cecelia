@@ -90,8 +90,10 @@ function buildInsertStatement(commonParams, { domainInput, ownerRoleInput, deliv
  * @param {Object} params.payload - Additional payload (initiative_id, kr_goal)
  * @param {string} params.domain - Business domain (coding/quality/agent_ops/...)
  * @param {string} params.owner_role - Role owning this task (auto-inferred from domain if omitted)
+ * @param {string} [params.dedupe_key] - DB 级幂等键，≤255 字符；超长调用方自行 hash（超长会抛错）
+ * @param {number} [params.dedupe_ttl_sec] - dedupe_key 的存活时长（秒），默认 3600
  */
-async function createTask({ title, description, priority, project_id, goal_id, tags, task_type, context, prd_content, execution_profile, payload, trigger_source, domain: domainInput, owner_role: ownerRoleInput, delivery_type, journey_id }) {
+async function createTask({ title, description, priority, project_id, goal_id, tags, task_type, context, prd_content, execution_profile, payload, trigger_source, domain: domainInput, owner_role: ownerRoleInput, delivery_type, journey_id, dedupe_key, dedupe_ttl_sec }) {
   // Validate goal_id (required for most tasks except system tasks)
   if (!goal_id && !isSystemTask(task_type, trigger_source)) {
     const error = `goal_id is required for task_type="${task_type}" trigger_source="${trigger_source}"`;
@@ -123,35 +125,55 @@ async function createTask({ title, description, priority, project_id, goal_id, t
     return { success: true, task: existing, deduplicated: true };
   }
 
-  const effectivePayload = journey_id ? { ...(payload ?? {}), journey_id } : payload;
-  const commonParams = buildCommonParams({ title, description, context, priority, project_id, goal_id, tags, task_type, prd_content, execution_profile, payload: effectivePayload, trigger_source });
-  const { sql, params } = buildInsertStatement(commonParams, { domainInput, ownerRoleInput, deliveryType: delivery_type, title, description, context });
-
-  const result = await pool.query(sql, params);
-
-  // ON CONFLICT DO NOTHING returns 0 rows on race-condition duplicate
-  if (result.rows.length === 0) {
-    const raceResult = await pool.query(`
-      SELECT * FROM tasks
-      WHERE title = $1
-        AND (goal_id IS NOT DISTINCT FROM $2)
-        AND (project_id IS NOT DISTINCT FROM $3)
-        AND status IN ('queued', 'in_progress')
-      LIMIT 1
-    `, [title, goal_id || null, project_id || null]);
-    if (raceResult.rows.length > 0) {
-      console.log(`[Action] Dedup (race): task "${title}" already exists (id: ${raceResult.rows[0].id})`);
-      return { success: true, task: raceResult.rows[0], deduplicated: true };
+  // 协议卫生包：DB 级 dedupe_key 幂等（可选，跨 Brain 重启持久）
+  let _dedupeClaimed = false;
+  if (dedupe_key) {
+    const { claimDedupeKey } = await import('./lib/dedupe.js');
+    const claim = await claimDedupeKey('create_task', dedupe_key, dedupe_ttl_sec || 3600);
+    if (!claim.claimed) {
+      console.log(`[Action] Dedup (dedupe_key): task "${title}" skipped (key=${dedupe_key})`);
+      return { success: true, deduplicated: true, dedupe_key_hit: true };
     }
+    _dedupeClaimed = !claim.degraded;
   }
 
-  const task = result.rows[0];
-  console.log(`[Action] Created task: ${task.id} - ${title} (type: ${task_type || 'dev'})`);
+  try {
+    const effectivePayload = journey_id ? { ...(payload ?? {}), journey_id } : payload;
+    const commonParams = buildCommonParams({ title, description, context, priority, project_id, goal_id, tags, task_type, prd_content, execution_profile, payload: effectivePayload, trigger_source });
+    const { sql, params } = buildInsertStatement(commonParams, { domainInput, ownerRoleInput, deliveryType: delivery_type, title, description, context });
 
-  // Broadcast task creation to WebSocket clients
-  await broadcastTaskState(task.id);
+    const result = await pool.query(sql, params);
 
-  return { success: true, task };
+    // ON CONFLICT DO NOTHING returns 0 rows on race-condition duplicate
+    if (result.rows.length === 0) {
+      const raceResult = await pool.query(`
+        SELECT * FROM tasks
+        WHERE title = $1
+          AND (goal_id IS NOT DISTINCT FROM $2)
+          AND (project_id IS NOT DISTINCT FROM $3)
+          AND status IN ('queued', 'in_progress')
+        LIMIT 1
+      `, [title, goal_id || null, project_id || null]);
+      if (raceResult.rows.length > 0) {
+        console.log(`[Action] Dedup (race): task "${title}" already exists (id: ${raceResult.rows[0].id})`);
+        return { success: true, task: raceResult.rows[0], deduplicated: true };
+      }
+    }
+
+    const task = result.rows[0];
+    console.log(`[Action] Created task: ${task.id} - ${title} (type: ${task_type || 'dev'})`);
+
+    // Broadcast task creation to WebSocket clients
+    await broadcastTaskState(task.id);
+
+    return { success: true, task };
+  } catch (err) {
+    if (_dedupeClaimed) {
+      const { releaseDedupeKey } = await import('./lib/dedupe.js');
+      await releaseDedupeKey('create_task', dedupe_key);
+    }
+    throw err;
+  }
 }
 
 /**
@@ -338,11 +360,17 @@ async function updateTask({ task_id, status, priority }) {
   }
 
   values.push(task_id);
-  // Atomic guard: when transitioning to in_progress, only update if still queued
-  // This prevents double-dispatch race conditions
-  const whereClause = status === 'in_progress'
-    ? `id = $${idx} AND status = 'queued'`
-    : `id = $${idx}`;
+  // Atomic guards:
+  // - in_progress: only from queued (prevents double-dispatch race)
+  // - queued: never from terminal states (completed/cancelled) — monitor/retry
+  //   callers must not resurrect finished tasks (issue 219a9efc oscillation);
+  //   explicit manual psql bypasses this by design
+  let whereClause = `id = $${idx}`;
+  if (status === 'in_progress') {
+    whereClause += ` AND status = 'queued'`;
+  } else if (status === 'queued') {
+    whereClause += ` AND status NOT IN ('completed', 'cancelled')`;
+  }
   const result = await pool.query(`
     UPDATE tasks SET ${updates.join(', ')}
     WHERE ${whereClause}
@@ -350,7 +378,12 @@ async function updateTask({ task_id, status, priority }) {
   `, values);
 
   if (result.rows.length === 0) {
-    return { success: false, error: status === 'in_progress' ? 'Task not found or already dispatched' : 'Task not found' };
+    const error = status === 'in_progress'
+      ? 'Task not found or already dispatched'
+      : (status === 'queued'
+          ? 'Task not found or in terminal state (completed/cancelled cannot be requeued)'
+          : 'Task not found');
+    return { success: false, error };
   }
 
   const task = result.rows[0];

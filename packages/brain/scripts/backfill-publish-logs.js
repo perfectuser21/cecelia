@@ -16,6 +16,9 @@
  */
 
 import pool from '../src/db.js';
+import { getZenithjoyPool } from '../src/zenithjoy-db.js';
+
+const zjPool = getZenithjoyPool();
 
 // ─── 配置 ─────────────────────────────────────────────────────────────────────
 
@@ -102,7 +105,7 @@ async function backfill() {
 
       try {
         // 2. Upsert zenithjoy.works
-        const workUpsert = await pool.query(
+        const workUpsert = await zjPool.query(
           `INSERT INTO zenithjoy.works (content_id, title, content_type, status)
            VALUES ($1, $2, $3, 'published')
            ON CONFLICT (content_id) DO UPDATE SET
@@ -119,7 +122,7 @@ async function backfill() {
         }
 
         // 3. 幂等检查 publish_logs
-        const existing = await pool.query(
+        const existing = await zjPool.query(
           `SELECT id FROM zenithjoy.publish_logs WHERE work_id = $1 AND platform = $2`,
           [workId, platform]
         );
@@ -131,7 +134,7 @@ async function backfill() {
 
         // 4. 写入 publish_logs
         const publishedAt = task.completed_at || new Date().toISOString();
-        await pool.query(
+        await zjPool.query(
           `INSERT INTO zenithjoy.publish_logs
              (work_id, platform, status, published_at, response)
            VALUES ($1, $2, 'published', $3, $4)`,

@@ -212,10 +212,6 @@ const mockCompiled = {
   }),
 };
 
-vi.mock('../workflows/harness-initiative.graph.js', () => ({
-  compileHarnessFullGraph: vi.fn().mockResolvedValue(mockCompiled),
-}));
-
 // mockCheckpointerGet 由各测试用例按需覆写
 const mockCheckpointerGet = vi.fn();
 vi.mock('../orchestrator/pg-checkpointer.js', () => ({

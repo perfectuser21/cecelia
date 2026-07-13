@@ -547,6 +547,16 @@ export async function executeInDocker(opts) {
 }
 
 /**
+ * 容器视角的 Brain API base URL。
+ * bridge 网络容器内 localhost 指向容器自己（issue 219a9efc：strategist 零落库根因），
+ * 默认必须走 host.docker.internal（spawn 参数已带 --add-host host.docker.internal:host-gateway）。
+ * BRAIN_URL 显式设置时尊重覆盖（远端部署等场景）。
+ */
+export function resolveBrainBaseUrl(env = process.env) {
+  return env.BRAIN_URL || 'http://host.docker.internal:5221';
+}
+
+/**
  * 把 docker 执行结果写入 callback_queue（与 bridge 路径完全兼容）
  * 下游 callback-worker.js 会自动 pickup → callback-processor.js
  *

@@ -114,9 +114,10 @@ export async function preFlightCheck(task, opts = {}) {
     // e.g. "TODO 记录" or "fixme this" in prose vs a bare "todo" / "tbd" as description.
     // `xxx` is only flagged when surrounded by non-CJK characters (avoids Chinese prose context).
     const hasWordPlaceholder = /\b(todo|tbd|fixme)\b/.test(desc);
-    // `xxx` flagged only as a standalone token (word boundary, not inside Chinese text)
+    // `xxx` flagged only as a standalone token: neighbors must not be ASCII alnum/underscore
+    // (identifiers like parseXxxResponse / set_xxx_flag) nor non-CJK-excluded non-ASCII (Chinese prose)
     // eslint-disable-next-line no-control-regex
-    const hasXxx = /(?<![^\u0000-\u007F])xxx(?![^\u0000-\u007F])/.test(stripped.toLowerCase());
+    const hasXxx = /(?<![a-z0-9_])(?<![^\u0000-\u007F])xxx(?![a-z0-9_])(?![^\u0000-\u007F])/.test(stripped.toLowerCase());
     const hasPlaceholder = hasWordPlaceholder || hasXxx;
 
     if (hasPlaceholder) {

@@ -24,6 +24,8 @@ function classifyFailure(...args) {
 // TTL 映射（毫秒）— 字符串字面量 key，不依赖 FAILURE_CLASS 枚举值
 const TTL_MAP = {
   network: 5 * 60 * 1000,
+  timeout: 5 * 60 * 1000,
+  server_error: 5 * 60 * 1000,
   rate_limit: 10 * 60 * 1000,
   billing_cap: 30 * 60 * 1000,
   auth: 15 * 60 * 1000,
@@ -32,7 +34,7 @@ const TTL_MAP = {
 
 // FAILURE_CLASS 内联常量（不从 quarantine.js 顶层 import 以避免 vitest mock 严格检查）
 const FAILURE_CLASS = {
-  NETWORK: 'network', RATE_LIMIT: 'rate_limit', BILLING_CAP: 'billing_cap',
+  NETWORK: 'network', TIMEOUT: 'timeout', SERVER_ERROR: 'server_error', RATE_LIMIT: 'rate_limit', BILLING_CAP: 'billing_cap',
   AUTH: 'auth', RESOURCE: 'resource', TASK_ERROR: 'task_error',
   SYSTEMIC: 'systemic', TASK_SPECIFIC: 'task_specific', UNKNOWN: 'unknown',
 };
@@ -46,6 +48,7 @@ router.post('/', async (req, res) => {
       prd = null,
       priority = 'P2',
       task_type = 'dev',
+      status: statusInput = null,
       project_id = null,
       area_id = null,
       goal_id = null,
@@ -107,12 +110,9 @@ router.post('/', async (req, res) => {
     if (executor === 'codex' && orchestrator !== 'skill-relay') {
       return res.status(400).json({ error: 'executor=codex requires orchestrator=skill-relay' });
     }
-    // mode 白名单校验：缺省/headless/headed 合法；claude+headed 不支持
+    // mode 白名单：缺省/headless/headed 合法（claude+headed 已解锁，T6 88e0b448）
     if (mode !== undefined && mode !== null && !['headless', 'headed'].includes(mode)) {
       return res.status(400).json({ error: `mode must be headless or headed, got: ${mode}` });
-    }
-    if (executor === 'claude' && mode === 'headed') {
-      return res.status(400).json({ error: 'executor=claude 不支持 mode=headed，headed 模式仅支持 executor=codex' });
     }
     // ─── end B1 ─────────────────────────────────────────────────────
 
@@ -124,10 +124,31 @@ router.post('/', async (req, res) => {
       payload = { ...(payload ?? {}), journey_id };
     }
 
+    // 允许创建时指定 pending_postdeploy 状态（第5环门禁协议），其余状态创建时一律 queued
+    const ALLOWED_CREATE_STATUSES = ['queued', 'pending_postdeploy'];
+    const initialStatus = statusInput && ALLOWED_CREATE_STATUSES.includes(statusInput) ? statusInput : 'queued';
+
     // B51: harness_initiative 任务缺 journey_id 会导致 initiative_runs + Notion 游离，提前 warn
     const warnings = [];
     if (task_type === 'harness_initiative' && !(payload?.journey_id)) {
       warnings.push('journey_id missing in payload — initiative_run.journey_id will be null, Notion Project will be orphaned');
+    }
+
+    // C3: 服务端去重护栏（issue 655691d2）——title 精确匹配 + goal_id/project_id 一致
+    // + 仍是活跃状态，命中则直接返回已有任务，不重新 INSERT。
+    // 防止外部 agent/人工反复对同一意图重新注册 task（2026-07-09 实测 5 个重复 PR 的根因）。
+    const dedupResult = await pool.query(
+      `SELECT id, title, status, task_type, priority, project_id, area_id, goal_id, okr_initiative_id, ability_id, payload, created_at
+       FROM tasks
+       WHERE title = $1
+         AND (goal_id IS NOT DISTINCT FROM $2)
+         AND (project_id IS NOT DISTINCT FROM $3)
+         AND status IN ('queued', 'in_progress')
+       LIMIT 1`,
+      [title.trim(), goal_id, project_id]
+    );
+    if (dedupResult.rows.length > 0) {
+      return res.status(200).json({ ...dedupResult.rows[0], deduplicated: true });
     }
 
     const result = await pool.query(
@@ -136,13 +157,14 @@ router.post('/', async (req, res) => {
          project_id, area_id, goal_id, location,
          payload, trigger_source, domain, okr_initiative_id, ability_id
        )
-       VALUES ($1, $2, $3, $4, 'queued', $5, $6, $7, $8, $9, $10, $11, $12, $13)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
        RETURNING id, title, status, task_type, priority, project_id, area_id, goal_id, okr_initiative_id, ability_id, payload, created_at`,
       [
         title.trim(),
         description,
         priority,
         task_type,
+        initialStatus,
         project_id,
         area_id,
         goal_id,
@@ -230,7 +252,7 @@ router.get('/:id', async (req, res) => {
 // PATCH /tasks/:id — 更新 task 字段
 router.patch('/:id', async (req, res) => {
   try {
-    const { status, priority, title, okr_initiative_id, pr_url, result: taskResult } = req.body;
+    const { status, priority, title, okr_initiative_id, pr_url, result: taskResult, description } = req.body;
 
     // 状态机保护：已终止的任务不能回退到非终止状态
     const TERMINAL_STATUSES = ['completed', 'cancelled'];
@@ -259,6 +281,13 @@ router.patch('/:id', async (req, res) => {
       // 自动设置时间戳
       if (status === 'in_progress') {
         setClauses.push(`started_at = COALESCE(started_at, NOW())`);
+        // 认领协议统一（T4）: in_progress 时补写 claimed_by + executor_kind
+        // 防止 dispatcher 重复抢跑（07-10 事故：注册后未 claim，Brain 几分钟内重复派发）
+        setClauses.push(`claimed_by = COALESCE(claimed_by, $${paramIndex++})`);
+        params.push(`session:${req.headers?.['x-session-id'] || 'engine-patch'}`);
+        setClauses.push(`claimed_at = COALESCE(claimed_at, NOW())`);
+        setClauses.push(`executor_kind = COALESCE(executor_kind, $${paramIndex++})`);
+        params.push('headed-session');
       }
       if (status === 'completed') {
         setClauses.push(`completed_at = COALESCE(completed_at, NOW())`);
@@ -271,6 +300,10 @@ router.patch('/:id', async (req, res) => {
     if (title !== undefined) {
       setClauses.push(`title = $${paramIndex++}`);
       params.push(title);
+    }
+    if (description !== undefined) {
+      setClauses.push(`description = $${paramIndex++}`);
+      params.push(description);
     }
     if (okr_initiative_id !== undefined) {
       setClauses.push(`okr_initiative_id = $${paramIndex++}`);
@@ -287,6 +320,30 @@ router.patch('/:id', async (req, res) => {
 
     if (setClauses.length === 0) {
       return res.status(400).json({ error: 'No fields to update' });
+    }
+
+    // 复活路径：description 被补齐时，若任务因 pre-flight 三振被 blocked，自动回 queued 并清零计数
+    if (description !== undefined && description) {
+      const currentTask = await pool.query(
+        'SELECT status, blocked_reason, metadata FROM tasks WHERE id = $1',
+        [req.params.id]
+      );
+      if (currentTask.rows.length > 0) {
+        const t = currentTask.rows[0];
+        if (t.status === 'blocked' && t.blocked_reason === 'pre_flight_rejected') {
+          setClauses.push(`status = 'queued'`);
+          setClauses.push(`blocked_reason = NULL`);
+          setClauses.push(`blocked_at = NULL`);
+          setClauses.push(`blocked_detail = NULL`);
+          const cleanedMeta = Object.assign({}, t.metadata || {});
+          delete cleanedMeta.pre_flight_fail_count;
+          delete cleanedMeta.pre_flight_failed;
+          delete cleanedMeta.pre_flight_issues;
+          delete cleanedMeta.pre_flight_suggestions;
+          setClauses.push(`metadata = $${paramIndex++}::jsonb`);
+          params.push(JSON.stringify(cleanedMeta));
+        }
+      }
     }
 
     setClauses.push(`updated_at = NOW()`);
@@ -312,16 +369,17 @@ router.patch('/:id', async (req, res) => {
 router.post('/:id/claim', async (req, res) => {
   try {
     const { id } = req.params;
-    const { claimer } = req.body || {};
+    const { claimer, executor_kind: rawExecutorKind } = req.body || {};
     if (!claimer) {
       return res.status(400).json({ error: 'claimer is required' });
     }
+    const executorKind = rawExecutorKind || 'headed-session';
 
     const result = await pool.query(
-      `UPDATE tasks SET claimed_by = $1, claimed_at = NOW()
+      `UPDATE tasks SET claimed_by = $1, claimed_at = NOW(), executor_kind = COALESCE(executor_kind, $3)
        WHERE id = $2 AND claimed_by IS NULL
-       RETURNING id, claimed_by, claimed_at`,
-      [claimer, id]
+       RETURNING id, claimed_by, claimed_at, executor_kind`,
+      [claimer, id, executorKind]
     );
 
     if (result.rows.length === 0) {
