@@ -17,7 +17,7 @@
 1. [核心定位](#1-核心定位)
 2. [架构总览](#2-架构总览)
 3. [三层大脑](#3-三层大脑)
-4. [数据模型](#4-数据模型)
+4. [数据模型](#4-数据模型)（执行轴 §4.1 · 能力轴 §4.2）
 5. [任务生命周期](#5-任务生命周期)
 6. [保护系统](#6-保护系统)
 7. [并发与资源管理](#7-并发与资源管理)
@@ -367,7 +367,13 @@ outputs: [{ type, count?, format?, platforms? }]  # 产出物定义
 
 ## 4. 数据模型
 
-### 4.1 六层结构
+> **两根正交的轴**：Cecelia 用两根互相独立（正交）的轴描述系统。
+> - **执行轴（GTD / OKR 轴）**：`OKR → Project → Initiative → Task`，回答"为达成目标，现在派谁去做哪件事"，是**调度视图**（见 §4.1）。
+> - **能力轴（能力 / 产品轴）**：`领域 → 子领域 → Golden Path(=Ability) → step → feature`，回答"这个产品由哪些能力组成、每个能力做到多熟"，是**产品视图**（见 §4.2）。
+>
+> 两根轴不是父子关系，也不互相包含：一个 Task（执行轴）可以推进某条 Golden Path 的某个 step（能力轴），但"能力轴层级"本身不随 OKR 拆解而生，它描述的是产品本身的结构。混淆这两根轴，正是历史上"Golden Path 分级模糊"的根因（详见 §4.2 与设计稿 `docs/superpowers/specs/2026-07-13-ability-axis-hierarchy-redefinition-design.md`，decision `13013a49`）。
+
+### 4.1 执行轴：六层结构（OKR→Task）
 
 ```
 goals (OKR 目标，3 种 type)
@@ -410,7 +416,64 @@ Global OKR → Area OKR → KR → Project → Initiative → Task
 - project_kr_links 表：Project ↔ KR 多对多关联
 - Repository = 独立概念，Project 可跨多个 Repo
 
-### 4.2 核心表
+### 4.2 能力轴层级（能力 / 产品轴）
+
+> **状态：本节 §4.2.1 的 5 层定义与 §4.2.2 的 Golden Path 生命周期是 2026-07-13 主理人拍板的\*\*目标模型\*\*（decision `13013a49`），schema 归并尚未落地。凡涉及"三表合一 / L2 激活 / 挂载层级调整"处均标注\*\*现状 vs 目标\*\*，不谎报已实现。完整设计与逐条 schema 待决项见 `docs/superpowers/specs/2026-07-13-ability-axis-hierarchy-redefinition-design.md`。**
+
+能力轴描述**产品本身的结构**（一个产品由哪些能力组成、每个能力做到多熟），与 §4.1 执行轴（OKR→Task 的调度视图）正交。
+
+#### 4.2.1 五层定义
+
+| 层 | 命名 | 系统落点（目标） | 例子（智能客服） |
+|---|---|---|---|
+| **L1** | **能力领域**（Journey） | `journeys` 表 | 智能客服、智能获客 |
+| **L2** | **子领域**（Ability Group） | `journey_features.group`（现为孤儿字段，目标提升为一等维度） | 微信客户沟通、社群运营 |
+| **L3** | **Golden Path = Ability = function** | Golden Path 主表（目标以 `golden_paths` 为唯一主表，见 §4.2.3） | 被动回复、建群 |
+| **L4** | **step** | `golden_path` 表（migration 303，目标正名为 step 表） | step1 接收理解 → step2 生成回复 → step3 发送 |
+| **L5** | **feature（使能件）** | `journey_features`（`kind='feature'`，经 `step_id` 挂到 L4） | 调 LLM、套知识库、敏感词过滤 |
+
+**一条 Golden Path 的边界判据**（三问全 yes）：独立触发 + 独立交付一个客户可见结果 + 独立可验收。L2 子领域不满足"独立交付"，故它是"筐"（分类）而非"路"（能力），不立为可交付实体。
+
+**FR / NFR / thickness 的归属**：
+
+- **FR（功能定义）= 这个 Ability 干什么。不单独立表、不单独立层**（YAGNI）——它就是 Golden Path/Ability 记录本身的功能描述（落在 ability 记录 / PrePRD 上），steps 即其功能展开。历史上把 `golden_path`(303) 叫"FR 台账"是**错名**：那张表是 step 表，不是 FR。
+- **NFR（非功能决策）= 挂在某个 step 上的决策**，不立层，复用现有 `decisions` 表：`category='nfr'`, `level='step'`, `target_type='golden_path'`, `target_id=<step id>`（例：topic=`前后台` / decision=`后台静默`）。**NFR 机制已存在，不新建。**
+- **thickness / maturity（深度轴）= 这条 Golden Path 做到多熟**（thin→mature）。"打深 1-5 → 6-10" = 往该 Golden Path 的 step 清单追加 step，做完一批升一档。
+
+**一条 Golden Path 内部的两根子轴**（这是"分级模糊"的解药，别再混为一谈）：
+
+- **广度 / 组成** = step 清单（这条路走哪几步、每步挂哪些 feature）。
+- **深度 / 成熟度** = thickness（这条路做到多熟）。
+
+**一个 E2E**：1 条 Golden Path = 1 个端到端测试 = 这个 Ability 的验收。
+
+#### 4.2.2 Golden Path 生命周期（不设独立"提案"实体）
+
+**一张 Golden Path 表（= Ability）+ 一个状态字段**。"提议"只是这条 Golden Path 处在早期状态；AI（GP-loop / direction-proposer）与主理人**都能提**，主理人**批准 + 排序**。
+
+```
+AI提议 / 人提议 ──批准──▶ 未开始 ──▶ 进行中 ──▶ 已完成 ──▶ 已上线
+  (source: ai / 人)     (主理人排序 priority)
+```
+
+- `source` 字段区分 AI 提 / 人提；批准 = 状态流转（提议→批准）；排序 = `priority` 字段（目标新增）。
+- "加深老 GP" = 追加 step（状态回"进行中"）；"开新方向" = 新建 GP（"提议"态）。两者都能提。
+
+#### 4.2.3 现状 vs 目标（schema 归并待落地）
+
+以下为**目标模型**，均**待 migration**，当前 schema **尚未**如此归并：
+
+| 待决项 | 现状 | 目标 | decision 依据 |
+|---|---|---|---|
+| **L3 三表归一** | 能力散在 `journey_features(kind='ability')` / `abilities`(migration 294) / `golden_paths`(migration 334) 三处无主 | 以 `golden_paths`(334，带状态机)为 Golden Path=Ability 唯一主表；`journey_features kind='ability'` 归并进来；`abilities`(294) DROP | 13013a49（设计稿 D1） |
+| **L2 子领域激活** | `journey_features.group`(migration 295) 是孤儿字段，无代码消费、Notion 从不推送 | 提升为一等实体 / 维度，代码消费 + Notion 推送 | 13013a49（D3） |
+| **golden_paths 挂载层级** | `golden_paths.journey_id` 直连 L1，跳过 L2 | 改挂 L2 子领域，L2 再挂 L1 | 13013a49（D2） |
+| **`golden_path`(303) 正名 step 表** | 现被叫"FR 台账"、挂 Task（`owner_task_id`） | 正名为 step 表，产品身份挂 Golden Path；Task 仍是执行视图；支持一 step 多 feature | 13013a49（D4） |
+| **状态机 + priority** | `golden_paths`(334) 有 candidate→approved→in_dev→delivered… 状态机 | 映射为用户 6 档（提议→未开始→进行中→已完成→已上线）+ 补 `已上线` 态 + `priority` 排序列 | 13013a49（D5） |
+
+> **注意**：设计稿明确 GP-loop（`golden_paths` 自提议流水线）**不改名、不推翻**，它就是"AI 往主表提议新 GP"的自动来源。范围外（本轮不做）：不重构 GP-loop 对抗/晨报逻辑、不动 harness per-Task 验收语义。
+
+### 4.3 核心表
 
 | 表 | 用途 | 关键字段 |
 |----|------|---------|
@@ -419,12 +482,24 @@ Global OKR → Area OKR → KR → Project → Initiative → Task
 | **projects** | 项目/Initiative | type(project/initiative), repo_path, parent_id, kr_id, plan_content |
 | **pr_plans** | 工程规划（PR 拆解层） | project_id→Initiative, dod, files, sequence, depends_on, complexity |
 | **project_repos** | 项目↔仓库关联 | project_id, repo_path, role |
-| **areas** | PARA 领域 | name, group_name |
+| **areas** | **PARA 领域（areas）** — GTD/PARA 分类维度，与能力轴 L1"能力领域(Journey)"是两个不同概念，勿混用（见 §4.2 术语澄清） | name, group_name |
 | **project_kr_links** | 项目↔KR 关联 | project_id, kr_id |
 
 > **注意**：`features` 表已在 Migration 027 中删除。Initiative 功能由 `projects` 表的 `parent_id` + `type='initiative'` 实现。
 
-### 4.3 系统表
+**能力轴相关表（现状登记，非本文档谎报已归并——目标模型见 §4.2.3）**：
+
+| 表 | 用途 | 现状 |
+|----|------|------|
+| **journeys** | 能力轴 L1 能力领域 | 已存在 |
+| **journey_features** | L5 feature 使能件（`kind='feature'` 经 `step_id` 挂 L4）；`kind='ability'` 行为历史遗留待归并；`group` 字段=L2 子领域槽位（孤儿） | 已存在，字段语义待整顿 |
+| **golden_path** (migration 303) | L4 step 台账（历史错名"FR 台账"），目标正名 step 表 | 已存在 |
+| **golden_paths** (migration 334) | Golden Path 方向级提案实体 + 状态机，目标认作 L3 Golden Path=Ability 唯一主表 | 已存在 |
+| **abilities** (migration 294) | 早期能力表，目标 DROP（归并进 `golden_paths`） | 已存在（死表，待清） |
+
+> ⚠️ 上表仅**登记现状**：三表归一 / L2 激活 / 正名 / 挂载调整均为**目标、待 migration**（§4.2.3），当前代码与 schema 尚未落地。`abilities` 表虽标为"待 DROP"但**尚未** DROP。
+
+### 4.4 系统表
 
 | 表 | 用途 |
 |----|------|
@@ -452,7 +527,7 @@ Global OKR → Area OKR → KR → Project → Initiative → Task
 | **kr_verifiers** | KR 指标自动验证（SQL 查询, threshold, current_value, 定时采集） |
 | **blocks** | 通用 block 存储 |
 
-### 4.4 任务状态
+### 4.5 任务状态
 
 ```
 queued → in_progress → completed
