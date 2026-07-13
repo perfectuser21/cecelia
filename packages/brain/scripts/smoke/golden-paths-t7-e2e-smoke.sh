@@ -126,12 +126,13 @@ if command -v psql >/dev/null 2>&1 && psql "$DB" -tAc "SELECT 1" >/dev/null 2>&1
       || fail "DB: decisions[$DEC_ID].review_after 为空"
   fi
 
-  # harness 任务存在且 task_type=golden_path_proposal
+  # harness 任务存在且 task_type=harness_initiative（真正路由到 harness-controller 写代码；
+  # 用 golden_path_proposal 会被 controllerSkillFor 误路由回只产提案文档的 golden-path-controller，issue bfaac776）
   if [[ -n "$HARNESS_ID" ]]; then
     h_tt=$(psql "$DB" -tAc "SELECT task_type FROM tasks WHERE id = '$HARNESS_ID'" | xargs)
-    [[ "$h_tt" == "golden_path_proposal" ]] \
-      && ok "DB: tasks[$HARNESS_ID].task_type=golden_path_proposal" \
-      || fail "DB: tasks[$HARNESS_ID].task_type 期望 golden_path_proposal，得 $h_tt"
+    [[ "$h_tt" == "harness_initiative" ]] \
+      && ok "DB: tasks[$HARNESS_ID].task_type=harness_initiative" \
+      || fail "DB: tasks[$HARNESS_ID].task_type 期望 harness_initiative，得 $h_tt"
   fi
 
   # GP review_after 已设置（approved_at + 14d）
