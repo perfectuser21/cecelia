@@ -8,13 +8,9 @@
 
 ## Test Contract
 
-| ID | Behavior | Test Name |
-|----|----------|-----------|
-| B1 | GET /api/brain/relay-smoke 返回 HTTP 200 | should return 200 OK |
-| B2 | 响应体含 ok:true | should have ok:true in response |
-| B3 | 响应体含 controller:"2.2.0" | should have controller 2.2.0 |
-| B4 | 响应 Content-Type 含 application/json | should respond with JSON |
-| B5 | 不影响现有端点（/api/brain/context 仍可访问）| should not break existing routes |
+| WS | Test File | BEHAVIOR 覆盖 | 预期红证据 |
+|----|-----------|--------------|------------|
+| WS1 | `tests/relay-smoke.contract.test.js` | should return 200 OK / should have ok:true in response / should have controller 2.2.0 / should respond with JSON / should not break existing routes | 路由未实现时 supertest 返回 404 |
 
 ## E2E 验收
 
