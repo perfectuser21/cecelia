@@ -88,3 +88,4 @@ zenithjoy-db-pool-smoke.sh
 relay-smoke-v220-smoke.sh
 migration-339-drop-abilities-gp-priority-smoke.sh
 rpa-dev-verify-smoke.sh
+three-tier-smoke.sh
