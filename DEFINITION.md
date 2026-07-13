@@ -428,7 +428,7 @@ Global OKR → Area OKR → KR → Project → Initiative → Task
 |---|---|---|---|
 | **L1** | **能力领域**（Journey） | `journeys` 表 | 智能客服、智能获客 |
 | **L2** | **子领域**（Ability Group） | `journey_features.group`（现为孤儿字段，目标提升为一等维度） | 微信客户沟通、社群运营 |
-| **L3** | **Golden Path = Ability = function** | Golden Path 主表（目标以 `golden_paths` 为唯一主表，见 §4.2.3） | 被动回复、建群 |
+| **L3** | **Golden Path = Ability = function** | `journey_features(kind='ability')` 为交付/FK 锚层；`golden_paths` 补提案态语义并以 FK 对齐（**不物理迁行**，见 §4.2.3） | 被动回复、建群 |
 | **L4** | **step** | `golden_path` 表（migration 303，目标正名为 step 表） | step1 接收理解 → step2 生成回复 → step3 发送 |
 | **L5** | **feature（使能件）** | `journey_features`（`kind='feature'`，经 `step_id` 挂到 L4） | 调 LLM、套知识库、敏感词过滤 |
 
@@ -465,7 +465,7 @@ AI提议 / 人提议 ──批准──▶ 未开始 ──▶ 进行中 ──�
 
 | 待决项 | 现状 | 目标 | decision 依据 |
 |---|---|---|---|
-| **L3 三表归一** | 能力散在 `journey_features(kind='ability')` / `abilities`(migration 294) / `golden_paths`(migration 334) 三处无主 | 以 `golden_paths`(334，带状态机)为 Golden Path=Ability 唯一主表；`journey_features kind='ability'` 归并进来；`abilities`(294) DROP | 13013a49（设计稿 D1） |
+| **L3 三表理顺** | 能力散在 `journey_features(kind='ability')` / `abilities`(migration 294) / `golden_paths`(migration 334) 三处无主 | **不物理迁行**：`journey_features(kind='ability')` 保留为交付/FK 锚层（`tasks`/`advancement_items`/`initiative_runs` 3 条硬 FK + 49 处引用）；`golden_paths`(334) 只补提案态语义 + 一条 FK `delivered_ability_id → journey_features.id` 对齐；"归一"落读视图 / Notion 层。`abilities`(294) 零引用死表，单独 DROP | 13013a49（设计稿 D1，方向修正见设计稿 §8） |
 | **L2 子领域激活** | `journey_features.group`(migration 295) 是孤儿字段，无代码消费、Notion 从不推送 | 提升为一等实体 / 维度，代码消费 + Notion 推送 | 13013a49（D3） |
 | **golden_paths 挂载层级** | `golden_paths.journey_id` 直连 L1，跳过 L2 | 改挂 L2 子领域，L2 再挂 L1 | 13013a49（D2） |
 | **`golden_path`(303) 正名 step 表** | 现被叫"FR 台账"、挂 Task（`owner_task_id`） | 正名为 step 表，产品身份挂 Golden Path；Task 仍是执行视图；支持一 step 多 feature | 13013a49（D4） |
@@ -492,10 +492,10 @@ AI提议 / 人提议 ──批准──▶ 未开始 ──▶ 进行中 ──�
 | 表 | 用途 | 现状 |
 |----|------|------|
 | **journeys** | 能力轴 L1 能力领域 | 已存在 |
-| **journey_features** | L5 feature 使能件（`kind='feature'` 经 `step_id` 挂 L4）；`kind='ability'` 行为历史遗留待归并；`group` 字段=L2 子领域槽位（孤儿） | 已存在，字段语义待整顿 |
+| **journey_features** | L5 feature 使能件（`kind='feature'` 经 `step_id` 挂 L4）；`kind='ability'` 行=能力轴 L3 交付/FK 锚层（保留不迁行）；`group` 字段=L2 子领域槽位（孤儿） | 已存在，字段语义待整顿 |
 | **golden_path** (migration 303) | L4 step 台账（历史错名"FR 台账"），目标正名 step 表 | 已存在 |
-| **golden_paths** (migration 334) | Golden Path 方向级提案实体 + 状态机，目标认作 L3 Golden Path=Ability 唯一主表 | 已存在 |
-| **abilities** (migration 294) | 早期能力表，目标 DROP（归并进 `golden_paths`） | 已存在（死表，待清） |
+| **golden_paths** (migration 334) | Golden Path 方向级提案实体 + 状态机，目标补提案态语义 + FK `delivered_ability_id → journey_features.id` 对齐 L3（**不作唯一主表**，L3 交付/FK 锚仍在 journey_features） | 已存在 |
+| **abilities** (migration 294) | 早期能力表，零活引用死表，目标单独 DROP（非迁行、非归并） | 已存在（死表，待清） |
 
 > ⚠️ 上表仅**登记现状**：三表归一 / L2 激活 / 正名 / 挂载调整均为**目标、待 migration**（§4.2.3），当前代码与 schema 尚未落地。`abilities` 表虽标为"待 DROP"但**尚未** DROP。
 
