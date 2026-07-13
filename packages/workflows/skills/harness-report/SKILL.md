@@ -6,10 +6,11 @@ description: |
   → 更新Notion Feature Registry → 飞书通知 → 写本地harness-report.md备份。
   Phase B（Sprint状态同步）：写本地Brain DB → 通过 db-update skill 触发 notion-push-sync.js 的 8 个 push 函数（journeys/journey_features/issues/skill_registry/journey_steps/journey_step_links/decisions/initiative_contracts）→ git commit。
   由 harness-evaluator PASS 后 Brain reportNode 自动 spawn；relay 模式由 harness-controller 调 Skill 触发（变量走「Relay 入口段」自取）；也可手动触发补同步。
-version: 6.5.0
+version: 6.6.0
 created: 2026-04-08
 updated: 2026-07-10
 changelog:
+  - 6.6.0: a638f840 两修——(a) TOTAL_COST fallback 端点修正为 /api/brain/orchestrator/relay-runs?task_id=（旧 URL 缺 orchestrator 前缀 Cannot GET，fallback 链空环；brain 1.259.0 起支持 task_id 过滤）；(b) Step 1 回写加降级链：status+result 被拒（老 brain 的 completed 409 / task 卡异常态）→ 纯 result 补写（brain 1.259.0 起合法）→ 仍失败才落 .report-concerns，pr_url/cost 不再静默丢失
   - 6.5.0: 九要素 T11 learning 模板修真 — (a) Step 8 废除 heredoc 静态占位符模板，改为 AI 回顾台账/GAN 轮次/fix 记录/CI 往返后亲自撰写真实复盘，类目无内容写「无（本次未遇到）」，预防清单必须从本次真实问题提炼；(b) Step 8c 占位符守卫：命中「（无 / 填写」或硬编码预防清单三条整段照抄 → CONCERN（关键步），配套 zenithjoy-skills CI 闸门 lint-learning-placeholders 双保险；(c) Step 8e 接通 learnings 数据管道：原子条目提炼进 learning-atoms.json 后 POST /api/brain/learnings-received（必带 task_id，谱系经 task 挂 journey/ability；issues_found 故意不传防多余 fix task）；(d) Step 8f capture_atoms 探测式 best-effort 写入（非关键步，T10 入口落地后自愈）；(e) 运行指标追加 TOTAL_COST，token/耗时留 TODO 挂 T7 phase-event
   - 6.4.0: 跨 repo 化刀3 — Step 3 截图上传宿主与 Step 9 访问地址参数化：新增 REPORT_HOST_SSH（默认 us-vps）/ REPORT_HOST_URL（默认 http://38.23.47.81:9998），正文引用变量，默认值保持现值（cecelia 本机场景零变化），第三方 repo 用 env 覆盖即可换报告宿主；Brain API（localhost:5221）调用不动（主理人拍板：Brain 是唯一中枢）
   - 6.3.0: EVA 提分（GAPS #4）— (a) 新增「Relay 入口段」：注入变量断供时自取而非 WARN 跳过（PR_URL←台账/gh pr view、FEATURE_NAME←sprint-prd 标题、TOTAL_COST←relay-runs API、SCREENSHOTS←sprint 目录扫描、FEATURE_ID/SUB_AREA/HARNESS_INITIATIVE_ID←task API），env 注入与自取二选一；(b) 出口协议改三态：关键步（task.result 回写 / harness-report.md / learning.md）失败 → DONE_WITH_CONCERNS，不再静默 DONE；非关键步（Notion/飞书/Dashboard）失败仍可 DONE 但必须在结果里列明；(c) Phase A 完成标志改为事后核验实际产物（查 task.result、探文件存在）而非信任过程 echo
@@ -55,7 +56,7 @@ changelog:
 | TASK_ID | ① 台账 `.harness/progress.md` 里的 task UUID ② 调用方 prompt 里的 BRAIN_TASK_ID |
 | FEATURE_NAME | `${SPRINT_DIR}/sprint-prd.md` 的一级标题（`# ` 行） |
 | PR_URL | ① 台账里最后一个 GitHub PR 链接 ② `gh pr view --json url`（当前分支） |
-| TOTAL_COST | relay-runs API：`/api/brain/relay-runs?task_id=$TASK_ID` 各行 cost_usd 求和 |
+| TOTAL_COST | relay-runs API：`/api/brain/orchestrator/relay-runs?task_id=$TASK_ID` 各行 cost_usd 求和（brain ≥1.259.0 支持 task_id 过滤；旧路径 /api/brain/relay-runs 不存在，a638f840 实证 Cannot GET） |
 | SCREENSHOTS | 扫描 `${SPRINT_DIR}/screenshots/*.png` 组 JSON 数组 |
 | FEATURE_ID / SUB_AREA / HARNESS_INITIATIVE_ID | task API：`/api/brain/tasks/$TASK_ID` 的 ability_id / sub_area / initiative_id |
 
@@ -83,7 +84,7 @@ if [ -z "$FEATURE_NAME" ] || [ -z "$PR_URL" ]; then
 
   # TOTAL_COST：relay-runs API 求和
   if [ -z "$TOTAL_COST" ] && [ -n "$TASK_ID" ]; then
-    TOTAL_COST=$(curl -s "localhost:5221/api/brain/relay-runs?task_id=$TASK_ID" 2>/dev/null \
+    TOTAL_COST=$(curl -s "localhost:5221/api/brain/orchestrator/relay-runs?task_id=$TASK_ID" 2>/dev/null \
       | jq '[.[]?.cost_usd // 0] | add // 0' 2>/dev/null || echo 0)
   fi
   TOTAL_COST="${TOTAL_COST:-0}"
@@ -165,18 +166,28 @@ echo "[harness-report] 前置文件：prd=$HAS_PRD contract=$HAS_CONTRACT dod=$H
 ### Step 1: 回写 Brain 任务状态
 
 ```bash
-curl -X PATCH "localhost:5221/api/brain/tasks/$TASK_ID" \
-  -H "Content-Type: application/json" \
-  -d "{
-    \"status\": \"completed\",
-    \"result\": {
+RESULT_BODY="{
       \"pr_url\": \"$PR_URL\",
       \"screenshots\": $SCREENSHOTS,
       \"total_cost_usd\": $TOTAL_COST,
       \"merged\": true
-    }
-  }"
-echo "✅ Step 1: Brain 任务状态已回写 completed"
+    }"
+STEP1_RESP=$(curl -s -X PATCH "localhost:5221/api/brain/tasks/$TASK_ID" \
+  -H "Content-Type: application/json" \
+  -d "{\"status\": \"completed\", \"result\": $RESULT_BODY}")
+if echo "$STEP1_RESP" | grep -q '"success":true'; then
+  echo "✅ Step 1: Brain 任务状态已回写 completed"
+else
+  # brain ≥1.259.0 起 completed→completed 是幂等 200（a638f840 修复），正常不会走到这里。
+  # 走到这里 = 老版本 brain 或状态机拒绝（如 task 被打成 blocked）→ 降级纯 result 补写
+  # （不带 status 字段，1.259.0 起合法），保住 pr_url/cost 数据不丢。
+  echo "⚠️ Step 1 status 回写被拒（$STEP1_RESP），降级纯 result 补写"
+  STEP1_RESP2=$(curl -s -X PATCH "localhost:5221/api/brain/tasks/$TASK_ID" \
+    -H "Content-Type: application/json" -d "{\"result\": $RESULT_BODY}")
+  echo "$STEP1_RESP2" | grep -q '"success":true' \
+    && echo "✅ Step 1(降级): result 已补写（status 未变，由上游状态机管）" \
+    || echo "CONCERN: Step1:task.result回写两次均失败;" >> "${SPRINT_DIR}/.report-concerns"
+fi
 ```
 
 ---

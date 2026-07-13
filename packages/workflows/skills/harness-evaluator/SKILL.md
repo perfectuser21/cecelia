@@ -6,10 +6,11 @@ description: |
   evaluator 在 CI 绿之后、PR merge 之前真启服务 + 跑 contract 的 manual:bash 命令验真行为。
   PASS → 允许 merge；FAIL → 不 merge，带反馈打回 Generator 在 PR 分支 fix loop（main 不变动）。
   单模式（harness v2 始终 IS_FINAL_E2E=true）：读 contract-draft.md 的 ## E2E 验收 脚本，按 target_environment 派发跑 Golden Path 端到端真实行为。
-version: 1.21.0
+version: 1.22.0
 created: 2026-05-06
 updated: 2026-07-08
 changelog:
+  - 1.22.0: a638f840 三修——(a) Step 0a 支持"PR 已 merge/分支已删"场景：checkout 失败时查 gh pr state，MERGED 则在 merge commit/origin/main 上补验（post-merge 模式），仅 PR 非 MERGED 时才 FATAL；(b) Step B-1 三处 awk 改为提取 E2E 段内全部代码块（拼接至下一个 ## 标题，旧版只取第一块，多块合同 Step 2-9 被静默丢弃）；(c) bash 固化前加 bash -n 语法门，语法坏脚本在 setup 就 FAIL 不入库
   - 1.21.0: 跨 repo 化刀3——①变量表 DB 行改为优先 $DB_URL（payload/env 注入），postgresql://localhost/cecelia 仅作 cecelia 本机 fallback；②url_validation gate 按 repo 注入：cecelia 默认仍 grep localhost:5221|psql cecelia，第三方 repo 以 $EXPECTED_API_HOST/$DB_URL 为准，两者都未提供时对第三方 repo 降级 WARN 而非 FAIL（避免假 FAIL）；③windows 分支与 Step B-2.6 的 REPO 不再写死默认仓库：fallback 顺序 $GITHUB_REPO → payload.base_repo URL 解析 owner/repo → 两者都缺才回退旧默认并打 WARN
   - 1.20.0: EVA 提分（GAPS #2）——新增「Relay 入口协议」（对称 T5 出口段）：controller 用 Task 派发时从 prompt 参数取 SPRINT_DIR/PR_BRANCH/TARGET_ENV/合同路径，env 与 prompt 参数二选一均可启动，Step 0 FATAL 仅限 v1 env 路径；反作弊红线显式接回 relay 路径（E2E 段缺失/[BEHAVIOR] manual:bash 从未真跑 → 必 FAIL，禁拿 vitest 结果冒充 Golden Path 验收）；WORKSPACE 解析补宿主 fallback（/workspace 不存在时落 $PWD）。additive，双门/SHA锚定/verdict JSON 语义不变
   - 1.19.0: 追加「Relay 出口 + CANNOT_VERIFY 第三态」（T5，additive）——无法验证的断言进 unverifiable[] 交 controller 兜底，禁止臆断 FAIL（治误判 FAIL→无限 fix loop 谱系）；verdict JSON 结构不变（v1 双轨兼容）
@@ -159,9 +160,22 @@ evaluator 必须先切到 PR 分支才能跑 server 验真行为。evaluator 跑
 
 ```bash
 if [ -n "$PR_BRANCH" ]; then
-  git fetch origin "$PR_BRANCH:$PR_BRANCH" 2>/dev/null || git fetch origin "$PR_BRANCH"
-  git checkout "$PR_BRANCH" || { echo "FATAL: checkout $PR_BRANCH failed"; exit 1; }
-  git reset --hard "origin/$PR_BRANCH" 2>/dev/null || true
+  if git fetch origin "$PR_BRANCH" 2>/dev/null && git checkout "$PR_BRANCH" 2>/dev/null; then
+    git reset --hard "origin/$PR_BRANCH" 2>/dev/null || true
+  else
+    # 分支不存在 ≠ 终局（issue a638f840 实证）：PR 一 merge GitHub 就自动删分支，任何验收时机
+    # 晚于合并的场景（重跑/补验/controller 异步派发慢于自动合并）都会走到这里。此时改在
+    # merge commit（拿不到就 origin/main）上验收——post-merge 补验模式，验收标准不变。
+    PR_INFO=$(gh pr view "$PR_BRANCH" --json state,mergeCommit -q '.state + " " + (.mergeCommit.oid // "")' 2>/dev/null || echo "")
+    MERGE_SHA=$(echo "$PR_INFO" | awk '{print $2}')
+    if echo "$PR_INFO" | grep -q '^MERGED'; then
+      git fetch origin main 2>/dev/null || true
+      git checkout "${MERGE_SHA:-origin/main}" || { echo "FATAL: PR 已 merge 但 checkout ${MERGE_SHA:-origin/main} 失败"; exit 1; }
+      echo "PR 已 merge（分支已删），在 ${MERGE_SHA:-origin/main} 上验收（post-merge 补验模式）"
+    else
+      echo "FATAL: checkout $PR_BRANCH failed 且 PR 非 MERGED（state=${PR_INFO:-unknown}）——分支丢失属真异常"; exit 1
+    fi
+  fi
 fi
 ```
 
@@ -270,11 +284,14 @@ TARGET_ENV="${TARGET_ENV:-local_api}"
 
 if [[ "$TARGET_ENV" == "windows_cloud" || "$TARGET_ENV" == "windows_wechat" ]]; then
   # windows_cloud / windows_wechat：提取 ps1/powershell 代码块写到 sprint_dir/e2e-verify.ps1，供 GHA runner 使用
-  awk '/^## E2E 验收/{found=1} found && /^```(powershell|ps1)/{in_block=1; next} in_block && /^```/{in_block=0; exit} in_block{print}' \
+  # 提取「## E2E 验收」段内全部 ps1/powershell 代码块（拼接，直到下一个 ## 标题为止）。
+  # 修 a638f840：旧版在第一个块结束就 exit——合同 Step 1-9 九个独立代码块时只提取 Step 1，
+  # Step 2-9（核心验收内容）全被静默丢弃，"真实执行"变成幻觉。
+  awk '/^## E2E 验收/{found=1; next} found && /^## /{exit} found && /^```(powershell|ps1)/{in_block=1; next} in_block && /^```/{in_block=0; next} in_block{print}' \
     "$CONTRACT" > /tmp/e2e-verify.ps1
   if [[ ! -s /tmp/e2e-verify.ps1 ]]; then
     # fallback：尝试 bash 块（兼容旧合同格式）
-    awk '/^## E2E 验收/{found=1} found && /^```bash/{in_block=1; next} in_block && /^```/{in_block=0; exit} in_block{print}' \
+    awk '/^## E2E 验收/{found=1; next} found && /^## /{exit} found && /^```bash/{in_block=1; next} in_block && /^```/{in_block=0; next} in_block{print}' \
       "$CONTRACT" > /tmp/e2e-verify.ps1
   fi
   if [[ ! -s /tmp/e2e-verify.ps1 ]]; then
@@ -289,8 +306,8 @@ BREOF
   git commit -m "chore(harness): add e2e-verify.ps1 for windows_cloud runner" --no-verify 2>/dev/null || true
   git push origin HEAD 2>/dev/null || true
 else
-  # 提取 "## E2E 验收" 区块内第一个 bash 代码块
-  awk '/^## E2E 验收/{found=1} found && /^```bash/{in_block=1; next} in_block && /^```/{in_block=0; exit} in_block{print}' \
+  # 提取 "## E2E 验收" 区块内全部 bash 代码块（拼接，直到下一个 ## 标题；修 a638f840 只取第一块 bug）
+  awk '/^## E2E 验收/{found=1; next} found && /^## /{exit} found && /^```bash/{in_block=1; next} in_block && /^```/{in_block=0; next} in_block{print}' \
     "$CONTRACT" > /tmp/e2e-verify.sh
   if [[ ! -s /tmp/e2e-verify.sh ]]; then
     cat > "$WORKSPACE/.brain-result.json" << BREOF
@@ -299,6 +316,15 @@ BREOF
     exit 0
   fi
   chmod +x /tmp/e2e-verify.sh
+  # 固化前语法门（issue a638f840：入库的 e2e-verify.sh 自带 bash bug（全角字符紧贴 $VAR 插值），
+  # 跑到一半 unbound variable 崩溃，7 项验收只跑完 1 项。bash -n 抓语法层问题，运行时问题由真跑兜住）
+  if ! bash -n /tmp/e2e-verify.sh 2>/tmp/e2e-syntax-err; then
+    ERR_EXCERPT=$(head -c 200 /tmp/e2e-syntax-err | tr '"' "'" | tr '\n' ' ')
+    cat > "$WORKSPACE/.brain-result.json" << BREOF
+{"verdict":"FAIL","task_id":"$TASK_ID","failed_step":"setup","log_excerpt":"E2E 脚本 bash -n 语法检查失败：$ERR_EXCERPT"}
+BREOF
+    exit 0
+  fi
   # Slice3 固化：把 bash golden-path E2E 脚本 cp 进 sprint 目录随 PR 一起 merge（镜像上方 windows 分支），
   # 否则脚本只活在 /tmp 跑一次就蒸发、merge 后无任何东西守护端到端行为（地基洞主洞）。
   cp /tmp/e2e-verify.sh "${SPRINT_DIR}/e2e-verify.sh"
