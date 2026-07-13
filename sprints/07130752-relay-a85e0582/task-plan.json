@@ -1,0 +1,26 @@
+{
+  "initiative_id": "a85e0582-5d88-4f0b-bce6-302d898b01e7",
+  "journey_type": "autonomous",
+  "journey_type_reason": "PRD 指定 target_environment=local_api，验收对象为 Brain API、PostgreSQL initiative_runs 与本机 sprint 日志证据。",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "固化 headed-smoke-test 回归验收 wrapper",
+      "scope": "补充 sprint-local e2e-verify.sh，使其复用既有 codex-headed-dispatch-smoke.sh，并定点验证当前 task payload、initiative_runs 真实列上的 headed relay 状态；payload 必须拒绝 token/github_token/codex_token/thin_prd；phase 仅接受 A_planning|planning|gan|generate|evaluate|done，failed 或 unknown 必须失败；tui.log 存在且非空时验 headed relay 信号和无 token，缺失时输出 WARN/evidence、验证 harness-skill-relay.js 留痕机制且不伪造日志。",
+      "dod": [
+        "[BEHAVIOR] e2e wrapper 调用 codex-headed-dispatch-smoke.sh",
+        "[BEHAVIOR] payload 包含 mode=headed、executor=codex、orchestrator=skill-relay 且禁用 token/github_token/codex_token/thin_prd",
+        "[BEHAVIOR] initiative_runs 含 skill-relay-codex-headed 且 phase 拒绝 failed/unknown",
+        "[BEHAVIOR] tui.log 存在则验真，缺失则验留痕机制且不伪造",
+        "[BEHAVIOR] local_api E2E wrapper 完整验证当前 task/run/log 外部真相",
+        "[ARTIFACT] sprints/07130752-relay-a85e0582/e2e-verify.sh 存在且不包含 token/thin_prd 或 remote 凭据"
+      ],
+      "files": [
+        "sprints/07130752-relay-a85e0582/e2e-verify.sh"
+      ],
+      "depends_on": [],
+      "complexity": "S",
+      "estimated_minutes": 45
+    }
+  ]
+}
