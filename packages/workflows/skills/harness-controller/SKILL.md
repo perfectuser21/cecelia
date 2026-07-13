@@ -7,9 +7,10 @@ description: |
   移植 Superpowers 6.0 subagent-driven-development 零件：进度台账 / 文件接力 / 四态出口协议 / 单评审双裁决 / compaction 恢复。
   点火方：Brain harness dispatch（无头）或人工前台（同一份 skill 两种触发，行为一致）。
   /dev 仍是唯一需求入口：本 skill 消费 /dev 路径C 的交接契约（PrepPRD + 铁律清单 + NFR），不做需求对抗。
-version: 2.3.0
+version: 2.4.0
 created: 2026-07-04
 changelog:
+  - 2.4.0: 治断点恢复失忆（issue 45dd6925）——Step 0.4 新增「台账缺失 ≠ 新 sprint」外部真相重建：.harness/progress.md 是 gitignore 本地文件，worktree 收割/重建后必然蒸发（07-13 d063b3e5 实证重派=全新 clone，恢复 session 重跑 planner+GAN 白烧 $7+）；台账不存在时先查 gh pr list（open→重建台账续跑 / merged→直跳 merge 后半程）+ relay-runs phase 佐证，全无外部真相才许当新 sprint
   - 2.3.0: refactor Step 3 CI 阻塞等待——抽共享 scripts/ci-poll.sh（退出码 0=全绿/10=有失败/11=BEHIND，sleep 30 在脚本内），Step 3 循环体改为调用脚本，出口动作不变（绿→evaluator，失败→fix subagent）；engine-pr-watchdog Step 2 同步改造，单一 SSOT 不漂移
   - 2.2.0: 治 relay 断链头号死因「结束发言等 CI」——新增硬约束 7（等外部事件必须前台阻塞轮询，禁止"等通知"后停止输出：headless -p 模式结束输出=进程退出=session 自杀）+ Step 3 新增「CI 阻塞等待」机械段（同步 bash sleep 30 轮询循环，Bash 超时立刻重发不结束 turn，绝不 run_in_background；照抄 engine-pr-watchdog 已验证模式）。07-12 实证：31e29c09/a1bf1ba5/4bb31ef5 三条 relay 均在 generator 开出 PR 后说"等待 CI 结果通知"正常退出（45 turns/18min，离任何资源墙都远），evaluator/judge/merge/report 全链 0 执行、任务假 done；watchdog 重点火的恢复 session 又以"CI 在跑等信号"1 turn 再死。对照组 a85e0582 全程未撒手，1h47m 八节点全通——链本身是通的，死因只此一处
   - 2.1.0: Step 7 收尾追加自杀式 tmux 关窗——检测 $TMUX/读会话名/后台延迟 kill-session，非 tmux 或读不到会话名降级为提示不阻塞（07-08/09 T2/T3/T4 三个有头任务收尾后 tmux 窗口不自关，空转两天没人关；cecelia #4c6c6ca5 配套）
@@ -161,6 +162,34 @@ fi
 ### 0.4 恢复规则
 
 台账里标 `done` 的阶段直接跳过；从第一个无记录阶段续跑。
+
+**台账缺失 ≠ 新 sprint（issue 45dd6925）**：`.harness/progress.md` 是 gitignore 的本地文件，worktree 被收割/重建后必然蒸发（07-13 实证：task d063b3e5 重派时 worktree 是全新 clone，恢复 session 浑然不觉重跑了 planner+GAN，两个 session 白烧 $7+，最后还是人工收尾）。台账不存在（或为空）时**禁止直接当新 sprint 开跑**——先查外部真相，能重建台账就重建：
+
+```bash
+if [ ! -s .harness/progress.md ]; then
+  # a. 找本任务的 PR（generator 阶段的外部真相；标题/正文带 task id 是 generator 约定）
+  PR_HIT=$(gh pr list --state open --search "$HARNESS_TASK_ID" --json number,headRefName -q '.[0]' 2>/dev/null)
+  [ -z "$PR_HIT" ] && PR_HIT=$(gh pr list --state open --search "${HARNESS_TASK_ID:0:8}" --json number,headRefName -q '.[0]' 2>/dev/null)
+  # b. Brain 侧 relay-runs phase 佐证（前台跑无 initiative_run 行则为空，不阻塞）
+  RUN_PHASE=$(curl -s -m 10 "$BRAIN/api/brain/orchestrator/relay-runs/${HARNESS_INITIATIVE_ID}" 2>/dev/null | jq -r '.phase // empty')
+
+  if [ -n "$PR_HIT" ]; then
+    PR_BRANCH=$(echo "$PR_HIT" | jq -r .headRefName); PR_NUM=$(echo "$PR_HIT" | jq -r .number)
+    git fetch origin "$PR_BRANCH" && git checkout "$PR_BRANCH"
+    # c. 按 PR 分支上的产物逐阶段重建台账行（verdicts/ 附件随 PR 入库，checkout 后一并找回）
+    [ -f "$SPRINT_DIR/sprint-prd.md" ] && echo "planner: done (rebuilt@$(git log -1 --format=%h -- "$SPRINT_DIR/sprint-prd.md"))" >> .harness/progress.md
+    [ -f "$SPRINT_DIR/contract-draft.md" ] && echo "gan: done (rebuilt@$(git log -1 --format=%h -- "$SPRINT_DIR/contract-draft.md"))" >> .harness/progress.md
+    echo "generator: done (rebuilt: pr=#$PR_NUM)" >> .harness/progress.md
+    ls .harness/verdicts/evaluate-*.json >/dev/null 2>&1 && echo "evaluator: done (rebuilt: verdicts/ 附件)" >> .harness/progress.md
+    echo "台账已从外部真相重建（relay-runs phase=$RUN_PHASE 佐证）："; cat .harness/progress.md
+  elif [ -n "$(gh pr list --state merged --search "$HARNESS_TASK_ID" --json number -q '.[0].number' 2>/dev/null)" ]; then
+    # PR 已 MERGED = planner→merge 全部完成过 → 直接进 Step 6 已合并路径（补 staging_e2e 派生）+ Step 7 report
+    echo "本任务 PR 已 MERGED——跳过 planner→judge，从 merge 后半程（staging_e2e 派生 + report）续跑，禁止从头重跑"
+  fi
+fi
+```
+
+重建出的台账照常适用"从第一个无记录阶段续跑"；重建的 `generator: done` 行同样要过下面的 TDD 纪律核对。重建不出任何外部真相（无 PR、无 relay-runs 行）才允许按新 sprint 从 Step 1 开跑。
 
 **恢复时 generator TDD 纪律核对**（#3540/#3542 实证：watchdog 重点火接续的跑无 (Red) commit——恢复 session 从中途接手时把"合同起草 commit"当 Red）。generator 阶段部分完成（PR 已存在但台账无 generator done 行）时，接续前先跑：
 

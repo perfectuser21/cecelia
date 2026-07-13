@@ -5,10 +5,11 @@ description: |
   读取 GAN 对抗已批准的 contract-draft.md + tests/*.test.ts + contract-dod.md，按 TDD 纪律两次 commit（commit 1 = 测试 Red / commit 2 = 实现 Green）。
   融入 4 个 superpowers：test-driven-development / verification-before-completion / systematic-debugging / requesting-code-review。
   CONTRACT IS LAW：合同里有的全实现，合同外一字不加；测试文件从合同原样复制，commit 1 后不可修改（由 evaluator CONTRACT-IS-LAW 与 judge 复核把关；CI 机械闸 lint-contract-test-immutability 落地后由其强制）。一个 Sprint = 一个 Generator = 一个 PR。
-version: 7.7.0
+version: 7.8.0
 created: 2026-04-08
 updated: 2026-07-05
 changelog:
+  - 7.8.0: 新增 Step 5.5 RPA 真机自验——碰 RPA 执行路径的 sprint 在 push 前必须经快验通道(POST /api/brain/rpa/dev-verify)在研发机真跑一次动作并把回执贴进 Test Evidence；根治 generator 盲写 RPA 代码(容器内 vitest 绿≠真机能跑)
   - 7.7.0: Step 6 Code Review 由「调 requesting-code-review 派 review subagent」改为「generator 内联自审 diff」（NESTED-SUB-AUDIT-20260705 F1/F2）——relay 下 generator 是 controller 的 sub，无 Task 工具不能再派 sub，原步骤静默跳过导致 push 前 code review 漏检进 PR；内联版按同一检查清单自审。Step 7 PR body 模板同步（F2）
   - 7.6.0: 追加「Relay 模式出口协议」（T5，additive）——被 harness-controller 派发时在报告末尾输出 RELAY_STATUS 四态；原 verdict JSON 一字不变（v1 LangGraph 双轨兼容；图路径 2026-07-05 起已废弃，relay 为唯一编排）
   - 7.5.0: 🚫 删除 Step 7.5 的 gh pr merge --auto 自合并 — generator 职责到 CI 全绿为止，merge 由 Brain mergePrNode 在 evaluator PASS 后执行；否则 evaluator pre-merge gate 被绕过（2026-06-11 PR #3342 实证：CI 绿即自动合并，evaluator 从未运行）。循环退出条件从 MERGED 改为 CI 全绿（保留 MERGED/CLOSED 容错出口）
@@ -273,6 +274,23 @@ npx vitest run "${SPRINT_DIR}/tests/" --reporter=verbose 2>&1 | tee /tmp/green-e
 ```
 
 Test Evidence 要贴进 PR body 的 `## Test Evidence` 章节（Red → Green 对比）。
+
+### Step 5.5: ★ RPA 代码真机自验（快验通道 dev-verify — target_environment=windows_wechat 等真机 RPA 必做）
+
+**为什么**：RPA 代码的验收位置在真机（微信 UIA 几何/ADB/CDP），vitest 绿照不到那里——这正是历史上"盲写二十几轮"的根因。现在有了快验通道，容器里一条 curl 就能在研发机(ROG)真跑一次动作并同步拿回完整 stdout + exit_code，没有理由再盲交。
+
+**判定是否适用**：本 sprint 改动碰了 RPA 执行路径（wechat-rpa/*.py、agent handlers、UIA/ADB/CDP 脚本）→ 必做；纯中台/UI/DB 代码 → 跳过本步。
+
+```bash
+# commit 2 之后、push 之前，至少真跑一次本次改动对应的动作：
+curl -s -m 65 -X POST localhost:5221/api/brain/rpa/dev-verify \
+  -H "Content-Type: application/json" \
+  -d '{"line":"wechat","action":"<本次改动的白名单动作>","params":{...},"timeout_ms":30000}'
+```
+
+- 白名单动作（Agent 侧 DEV_VERIFY_WHITELIST，两端已对齐）：`health_check` / `wechat_private_chat_send` / `wechat_moments_send` / `wechat_qr_bind`；白名单外必拒（`action_not_allowed`），不要试图绕
+- 回执读法：`ok:true` 且 `exit_code:0` = 真机执行成功，`stdout` 是脚本真实输出（按合同断言其内容）；`rejected:not_dev_machine` = 打到了生产机或研发机 env 未设，找 controller 报障而不是跳过；`error:agent_unreachable/timeout` = 通道故障，同样报障
+- 回执（完整 JSON）贴进 PR body 的 `## Test Evidence`，与 vitest Green 证据并列——**没有真机回执的 RPA 类 PR，evaluator 按合同会直接 FAIL**
 
 ### Step 6: ★ Code Review 阶段（push 前内联自审 diff）
 

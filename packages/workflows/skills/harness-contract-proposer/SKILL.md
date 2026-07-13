@@ -4,10 +4,11 @@ description: |
   Harness Contract Proposer — Harness v5 GAN Layer 2a：
   读 PRD，GAN 对抗写 Golden Path 合同（每步含真实验证命令）；
   Reviewer APPROVED 后倒推拆 task-plan.json。
-version: 9.8.0
+version: 9.9.0
 created: 2026-04-08
 updated: 2026-07-10
 changelog:
+  - 9.9.0: 领域验证规则新增「RPA 快验通道 dev-verify」小节——windows_wechat 等真机 RPA 类合同至少一条 [BEHAVIOR] 必须写成快验通道回执断言(exit_code=0+stdout 领域内容,可机检可复跑),给"真机真收真回"一个统一可执行 oracle
   - 9.8.0: 判定点登记表机器可解析约定（九要素 T5 — decisions e035dad8）— 登记表即数据：合同 APPROVED 后 reviewer Step 5 逐行解析写入 decisions category=judgment（账本保鲜「判定点活性」指标数据源）；每行自含语义（判定点列禁写「同上/...」）；示例行保留「（示例：」前缀供解析跳过；误判后果严重（静默丢数据/直接面客错误）的行在判定点名前标 ⚠️——⚠️ 行属「升拍板点主动请教用户」级别（e035dad8 第②条），PrepPRD/对齐会未拍过的 ⚠️ 判定点要在合同 notes 里标注待确认
   - 9.7.0: 跨 repo 化刀3 — (a) Contract Gate 速查表补第三方 repo 显式跳过规则：packages/brain/src/lib/contract-gate.js 不存在（第三方 repo / 非 cecelia worktree）→ 跳过代码层 Contract Gate，仅执行 skill 内置规则审查，并在合同 notes 记一行 contract-gate: skipped (file not found, third-party repo)，cecelia 场景原逻辑不动；(b) Step 1 DB 连接串参数化 ${DB_URL:-postgresql://localhost/cecelia}，第三方 repo 必须显式传 $DB_URL，不得假设 cecelia 库存在
   - 9.6.0: 八要素 checklist + 判定点登记表 + 失败语义 + 输入对抗面（decisions 27b57469/e035dad8/cf998025）— 新增 Step 1.6 强制段：合同 contract-draft.md 必须内嵌八要素 checklist（逐项必答可 N/A）+ 判定点登记表（候选方法/所选/依据/误判后果）+ 失败语义声明 + 输入对抗面（对外暴露 agent 任务必填）；Reviewer 审查缺段打回
@@ -124,6 +125,23 @@ GAN 收敛（Reviewer APPROVED）后输出第 4 件：
 | **真机 RPA / 生产环境集成**（微信/抖音真机操控、依赖生产中台 env 的链路）| Final E2E 必须在【真目标】上验证：真机微信真收真回（屏幕全程不闪）、生产 env 真返回结果（如 draft-generate 真出 reply），**不是 mock/CI 绿** | 假环境（CI/mock/开发机）跑绿就标 done；屏幕外坐标 / 假版本 / 假 env 值兜过 |
 
 判断领域以 Golden Path + journey_type + target_environment 为准。视频类合同缺 ffprobe、发布类缺真实出现验证、DB 类缺时间窗、UI 类缺可见断言、真机 RPA/生产 env 类缺真目标验证 → 合同不合格，必须补齐再交 Reviewer。
+
+### RPA 快验通道（dev-verify）— 真机 RPA 断言的标准可执行 oracle
+
+上表"真机 RPA"行要求真目标验证，过去难写成可机检断言（"真机真收真回"没有统一执行体）。现在有了快验通道：Brain 生产端点一条 curl 即可在研发机(ROG)真跑白名单动作并同步拿回 stdout + exit_code——**windows_wechat 等真机 RPA 类合同，DoD/Final E2E 至少一条 [BEHAVIOR] 断言必须写成快验通道回执形式**（可执行、可复跑、evaluator 可机检）：
+
+```bash
+# 合同断言模板（写进合同硬条款，evaluator 原样执行）：
+RESP=$(curl -s -m 65 -X POST localhost:5221/api/brain/rpa/dev-verify \
+  -H "Content-Type: application/json" \
+  -d '{"line":"wechat","action":"<动作>","params":{...},"timeout_ms":30000}')
+echo "$RESP" | grep -q '"ok":true' && echo "$RESP" | grep -q '"exit_code":0' || exit 1
+# 再按领域断言 stdout 内容（如回执 JSON 里含 message_id / sent ok）
+```
+
+- 白名单（两端已对齐，Agent 侧是执行权威闸）：`health_check` / `wechat_private_chat_send` / `wechat_moments_send` / `wechat_qr_bind`；合同里写白名单外动作 = 断言必挂，先去走动作注册
+- 防作弊：断言必须查 `exit_code:0` **且** stdout 领域内容,只查 HTTP 200 或 `ok` 字段不够（rejected 路径也返回 JSON）；`not_dev_machine`/`agent_unreachable` 属通道故障，不许当 PASS 兜过
+- 该通道只覆盖"动作在真机能跑通"这一层;合同若还要求业务侧效果（如对方真收到消息），仍按上表补平台侧/DB 侧 oracle,两层不互替
 
 ---
 
