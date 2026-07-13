@@ -168,7 +168,7 @@ router.post('/golden-paths/:id/select', async (req, res) => {
       [
         taskTitle,
         gp.one_liner || gp.title,
-        JSON.stringify({ golden_path_id: id, title: gp.title, one_liner: gp.one_liner }),
+        JSON.stringify({ golden_path_id: id, title: gp.title, one_liner: gp.one_liner, orchestrator: 'skill-relay' }),
       ]
     );
     const proposalTaskId = taskRows[0].id;
@@ -244,6 +244,7 @@ router.post('/golden-paths/:id/approve', async (req, res) => {
           proposal_doc: frozenDoc,
           judgment_decision_id: judgmentId,
           phase: 'implement',
+          orchestrator: 'skill-relay',
         }),
       ]
     );
