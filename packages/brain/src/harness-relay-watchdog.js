@@ -369,8 +369,11 @@ async function _handleHeadedRun(run, task, { dbPool, execFn, short }) {
     return { needsRefire: false };
   }
 
-  // 存活检测：A_planning 阶段 → ssh tmux has-session（fail-open on ssh 连接错误）
-  if (run.phase === 'A_planning') {
+  // 存活检测：非终态活跃阶段（planning/gan/generate 等）→ ssh tmux has-session（fail-open on ssh 连接错误）
+  // 原写死 'A_planning' 是旧 LangGraph 图 phase 命名，relay 真实 phase 是 planning/gan/generate →
+  // 判据永不命中=死代码，中途死的 headed session 永远不被重点火。done 已在上方处理、failed 被上游
+  // query 过滤，此处剩的都是活跃 phase，故按非终态判定。
+  if (run.phase !== 'done' && run.phase !== 'failed') {
     try {
       execFn(`ssh ${sshHost} "tmux has-session -t ${tmuxSession}"`);
       // exit 0 → session 存在，正常
@@ -400,9 +403,11 @@ async function _handleHeadedRun(run, task, { dbPool, execFn, short }) {
 // ─── end headed ──────────────────────────────────────────────────────────────
 
 /**
- * B8 — 8h 逾期 scanStuckHarness 收尸（orchestrator_host='skill-relay-codex'）。
- * 扫描 deadline_at < NOW() 且 orchestrator_host='skill-relay-codex' 的 initiative_runs，
+ * B8 — 8h 逾期 scanStuckHarness 收尸（所有 skill-relay* host）。
+ * 扫描 deadline_at < NOW() 且 orchestrator_host LIKE 'skill-relay%' 的 initiative_runs，
  * 标 phase='failed', failure_reason='relay_deadline_exceeded' 并更新关联 task status='failed'。
+ * 原写死 'skill-relay-codex' → claude-headed/skill-relay-session 等 host 逾期永不收尸，
+ * 占死并发槽堵队列（claude-headed-smoke 逾期18h 实证）。
  */
 export async function scanStuckHarness(opts = {}) {
   const dbPool = opts.pool || pool;
@@ -410,7 +415,7 @@ export async function scanStuckHarness(opts = {}) {
   const overdueQ = await dbPool.query(
     `SELECT id, initiative_id, orchestrator_host, phase, deadline_at
        FROM initiative_runs
-      WHERE orchestrator_host = 'skill-relay-codex'
+      WHERE orchestrator_host LIKE 'skill-relay%'
         AND deadline_at < NOW()
         AND phase NOT IN ('done', 'failed')
         AND completed_at IS NULL
