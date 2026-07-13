@@ -81,6 +81,7 @@ import journeysRouter from './src/routes/journeys.js';
 import abilitiesRouter from './src/routes/abilities.js';
 import goldenPathsRouter from './src/routes/golden-paths.js';
 import skillEvalRoutes from './src/routes/eval.js';
+import rpaDevVerifyRouter from './src/routes/rpa-dev-verify.js';
 import { internalAuth } from './src/middleware/internal-auth.js';
 import createAutonomousRouter from './src/routes/autonomous.js';
 import { initTickLoop } from './src/tick.js';
@@ -387,6 +388,9 @@ app.use('/api/brain/tasks', taskTasksRoutes);
 app.use('/api/brain', licenseRoutes);
 app.use('/api/brain', agentCreditRoutes);
 app.use('/api/brain', acquisitionRoutes);
+
+// RPA 开发快验通道（execFile channel）
+app.use('/api/brain/rpa', rpaDevVerifyRouter);
 
 // Mount cecelia task execution routes
 app.use('/api/cecelia', ceceliaRoutes);
