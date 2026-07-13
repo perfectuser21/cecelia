@@ -65,7 +65,7 @@ AI提议 / 人提议 ──批准──▶ 未开始 ──▶ 进行中 ──�
 
 | # | 待决项 | 推荐方案 | 影响面 |
 |---|---|---|---|
-| D1 | **L3 三表归一**：journey_features(kind=ability) / abilities(294) / golden_paths(334) 谁是主 | 以 **golden_paths(334)（带状态机）为 Golden Path=Ability 唯一主表**；journey_features kind='ability' 行归并进来；abilities(294) 死表 DROP | 中大，动 schema，需数据迁移评估 |
+| D1 | **L3 三表理顺**（⚠️调查修正见 §8，原"以 golden_paths 为主表迁行"方向反了） | **不物理迁行**：`journey_features(kind='ability')` 保留为交付/FK 锚层（tasks/advancement_items/initiative_runs 3 条硬 FK + 49 引用）；`golden_paths`(334) 只补提案态语义，用一条 FK `golden_paths.delivered_ability_id → journey_features.id` 对齐；"归一"落在读视图/Notion 层。`abilities`(294) 死表单独 DROP | 🔴高，须 /architect 定"补字段 vs 迁行" |
 | D2 | **golden_paths 挂载层级**：现 `journey_id` 直连 L1，跳过 L2 | 改挂 **子领域(L2 Ability Group)**，L2 再挂 L1 | 中，改 FK + GP-loop 写入 |
 | D3 | **L2 子领域激活**：group 字段是孤儿 | 把 group 提升为一等实体/维度，代码消费 + Notion 推送 | 中 |
 | D4 | **`golden_path`(303) 正名 step 表**，且改挂 Golden Path 而非 Task | 正名为 step；`owner_task_id` 语义澄清（Task 是执行视图，Golden Path 是产品实体）；step→feature 支持"一 step 多 feature" | 中，动 303 语义 + 端点 |
@@ -84,4 +84,25 @@ AI提议 / 人提议 ──批准──▶ 未开始 ──▶ 进行中 ──�
 
 ## 7. 后续
 
-定稿 → 写 `decisions` 记录（能力轴 5 层 + Golden Path 生命周期）→ 立 Initiative → /decomp 按 D1~D8 拆 PR → /dev 逐条实现。每条 schema 改动走 migration + DevGate。
+定稿 → 写 `decisions` 记录（能力轴 5 层 + Golden Path 生命周期）→ 立 Initiative → 按 §8 migration 拆分逐条 PR → 每条走 migration + DevGate。
+
+## 8. 实施调查修正（2026-07-13 schema 只读调查）
+
+**⚠️ 修正 D1 方向**：原稿"以 golden_paths 为主表、journey_features kind=ability 归并进去"**方向反了**。实证：`journey_features` 是全系统能力轴 FK 锚（`tasks.ability_id`/`advancement_items.ability_id`/`initiative_runs.ability_id` 3 条硬 FK + 49 处引用），`golden_paths`(334) 零入站 FK。迁行会砸断这些 FK（advancement_items 会 CASCADE 删）。
+**正确做法**：不物理迁行——journey_features(kind=ability) 保留交付/锚层；golden_paths 只补提案态语义 + 一条 FK `delivered_ability_id → journey_features.id` 对齐；"归一"落读视图/Notion 层。此点须 /architect 阶段定"补字段 vs 迁行"。
+
+**abilities(294) 确认死表可 DROP**：全仓零活引用（唯一入站 FK 早在 303 `DROP...CASCADE` 清掉）；`routes/abilities.js` 名叫 abilities 但全程操作 journey_features。DROP 前 `SELECT count(*)` 验 0 行即可。
+
+**migration 拆分与顺序（风险 🟢低/🟡中/🔴高）**：
+
+| # | migration | 依赖 | 风险 | 备注 |
+|---|---|---|---|---|
+| M1 | `DROP TABLE abilities`（294 死表） | 无 | 🟢 | 零引用，可立即独立做 |
+| M2 | journey_features.group（L2）激活：代码消费 + Notion 建库/同步 | 无 | 🟡 | 纯新增，列已存在 |
+| M3 | golden_paths 加 `priority` + `已上线` 态（D5） | 无 | 🟢 | 纯 ALTER 向后兼容 |
+| M4 | golden_paths.journey_id 改挂 L2（D2） | M2 | 🟡 | 写入侧 3 处：direction-proposer.js:228 / capture-triage.js:116 / golden-paths.js:56；读取侧零改。**碰 GP-loop 代码，需回归 GP-loop E2E** |
+| M5 | L3 三表理顺（D1，补字段非迁行） | M4 | 🔴 | /architect 先定方案，单独 initiative |
+
+**会碰昨天 GP-loop merge 的点**（M4/M5）：direction-proposer.js、capture-triage.js、routes/golden-paths.js、334 表结构。**本轮建议不碰**（§6 范围外）：battle-report.js、gp-shelf-life.js、状态机流转、dashboard ReportDetailPage——它们只按 status 读，M1~M4 对其透明。
+
+**推荐执行**：M1+M2+M3（互不依赖、低风险，先落）→ M4（中风险、碰 GP-loop 写入侧）→ M5（架构阶段定方案再拆，最高风险）。
