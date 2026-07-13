@@ -251,6 +251,75 @@ export async function callDeepSeekJudge(input, opts = {}) {
   };
 }
 
+// ── 机械预检（刀B root 杠杆，优先于 AI 裁判运行） ────────────────────────────
+/**
+ * 三项机械预检（同步）：行为测试/运行证据/判据完整性。
+ * 任一失败立即返回 {verdict:'FAIL', feedback, mechFail}，全通过返回 null。
+ *
+ * @param {object|null} brainResult  .brain-result.json 内容
+ * @returns {{verdict:'FAIL', feedback:string, mechFail:string}|null}
+ */
+export function runMechanicalPreflightChecks(brainResult) {
+  // 1. behavior_tests 非空：evaluator 必须上报测试结果
+  if (!Array.isArray(brainResult?.behavior_tests) || brainResult.behavior_tests.length === 0) {
+    return {
+      verdict: 'FAIL',
+      feedback: 'behavior_tests 为空：evaluator 未提供任何行为测试结果，无法验收',
+      mechFail: 'no_behavior_tests',
+    };
+  }
+  // 2. exit_code 必须存在：证明 evaluator 真实运行了测试命令
+  if (brainResult.exit_code == null) {
+    return {
+      verdict: 'FAIL',
+      feedback: 'verdict 缺 exit_code：evaluator 未提供测试运行退出码，无法确认测试已执行',
+      mechFail: 'missing_exit_code',
+    };
+  }
+  // 3. log_tail 必须存在：证明有命令输出日志
+  if (!brainResult.log_tail) {
+    return {
+      verdict: 'FAIL',
+      feedback: 'verdict 缺 log_tail：evaluator 未提供测试运行日志尾部，无法核实执行证据',
+      mechFail: 'missing_log_tail',
+    };
+  }
+  return null;
+}
+
+/**
+ * judgments_written 声明数 vs decisions 表回读数（异步，需 DB）。
+ * 只在 brainResult.judgments_written 已声明时触发；DB 查询失败时保守跳过（不 fail）。
+ *
+ * @param {object|null} brainResult
+ * @param {string} taskId  对应 decisions.made_by
+ * @param {object} dbPool  pg Pool
+ * @returns {Promise<{verdict:'FAIL', feedback:string, mechFail:string}|null>}
+ */
+export async function checkJudgmentsWritten(brainResult, taskId, dbPool) {
+  const declared = brainResult?.judgments_written;
+  if (declared == null) return null;
+  const n = Number(declared);
+  if (!Number.isInteger(n) || n < 0) return null;
+  try {
+    const { rows } = await dbPool.query(
+      `SELECT COUNT(*)::int AS cnt FROM decisions WHERE made_by = $1`,
+      [String(taskId)]
+    );
+    const actual = rows[0]?.cnt ?? 0;
+    if (actual !== n) {
+      return {
+        verdict: 'FAIL',
+        feedback: `judgments_written 声明 ${n} 条，decisions 表实查 ${actual} 条（made_by=${taskId}）`,
+        mechFail: 'judgments_written_mismatch',
+      };
+    }
+  } catch (err) {
+    console.warn(`[judge] checkJudgmentsWritten DB 查询失败（保守跳过）: ${err.message}`);
+  }
+  return null;
+}
+
 // ── coverage 覆盖校验（代码判，不信裁判文字） ────────────────────────────────
 export function validateCoverage(coverage, goldenPathSteps) {
   const cov = Array.isArray(coverage) ? coverage : [];

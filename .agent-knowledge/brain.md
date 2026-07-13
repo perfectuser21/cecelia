@@ -251,3 +251,17 @@ tick-runner.js 接入点：
 | 文件 | 职责 |
 |------|------|
 | `src/routes/social-trending.js` | 社媒热点 API 路由：GET /api/brain/social/trending（查询 TimescaleDB v_all_platforms 视图，支持 platform/limit/days 参数过滤）。使用独立 pg.Pool 连接 TimescaleDB（TIMESCALE_HOST/DB/USER/PASSWORD 环境变量）；TimescaleDB 不可达时降级返回空数组，不影响 Brain 其他功能。挂载路径：/social/trending。 |
+
+## 刀B+刀C+收账权收归 — harness 生命周期/记账/验收判据下沉（2026-07-14 新增）
+
+| 文件 | 职责 |
+|------|------|
+| `src/harness-judge.js` | 新增 `runMechanicalPreflightChecks(brainResult)` — 三项同步机械预检（behavior_tests 为空→FAIL/缺 exit_code→FAIL/缺 log_tail→FAIL）；新增 `checkJudgmentsWritten(brainResult, taskId, pool)` — 异步校验 judgments_written 声明数与 decisions 表 DB 回读数一致，不一致→FAIL（DB 异常保守跳过）。两函数均 export，judge 路由先调预检再调 AI 裁判。 |
+| `src/routes/harness.js` | POST /judge — 机械预检优先于 AI 裁判（runMechanicalPreflightChecks + checkJudgmentsWritten 任一 FAIL 直接返回，不调 runJudgeGate）；judge 完成后自写 initiative_runs.judge_verdict（non-fatal DB 失败不阻响应）。POST /complete — 收账权收归：检查 initiative_runs.phase，非 'done' 相→409 拒绝，保守：run 不存在/DB 报错时继续放行。 |
+| `src/harness-skill-relay.js` | headless/headed 两条 INSERT INTO initiative_runs 均加入 current_task_id 列（= initiative_id），修复 relay-runs ?task_id= 对 relay run 恒空的问题。 |
+| `src/executor.js` | spawnSkillRelaySession 调用后新增 initiative_run_events 终态回收（skill-relay-spawn 事件 status 改为 'done'/'failed'），消除 17 条永久 running 事件。 |
+| `src/__tests__/harness-judge-mechanical.test.js` | 刀B 单元测试（10 个）：runMechanicalPreflightChecks 5 个场景（null/空数组/缺 exit_code/缺 log_tail/全合法）；checkJudgmentsWritten 5 个场景（未声明跳过/数匹配/数不匹配→FAIL/DB 异常跳过/零声明合法）。 |
+| `src/__tests__/harness-judge-api-blades.test.js` | 刀B+刀C-2 集成测试（7 个）：mock runJudgeGate + pool，验证机械预检短路（behavior_tests 空/缺 exit_code/judgments_written 不匹配各自 FAIL 且不调 runJudgeGate）、预检全过时调 runJudgeGate、judge_verdict PASS/FAIL 各自 UPDATE initiative_runs、DB 更新失败 non-fatal 不阻 200。 |
+| `src/__tests__/harness-complete-account-guard.test.js` | 收账权收归测试（5 个）：phase=generate/evaluate→409 打回；phase=done→200；run 不存在→保守 200；DB 报错→保守 200。 |
+| `src/__tests__/harness-relay-current-task-id.test.js` | 刀C-1 静态分析测试（2 个）：通过 fs.readFileSync 扫描 harness-skill-relay.js 源码，验证全部 INSERT INTO initiative_runs 代码块均含 current_task_id 列。 |
+| `src/__tests__/harness-skill-relay-spawn-event.test.js` | 刀C-3 静态分析测试（2 个）：扫描 executor.js，验证 spawnSkillRelaySession 调用后代码含 initiative_run_events 终态 UPDATE（done/failed）或 helper 调用。 |
