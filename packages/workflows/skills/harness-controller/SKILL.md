@@ -7,9 +7,13 @@ description: |
   移植 Superpowers 6.0 subagent-driven-development 零件：进度台账 / 文件接力 / 四态出口协议 / 单评审双裁决 / compaction 恢复。
   点火方：Brain harness dispatch（无头）或人工前台（同一份 skill 两种触发，行为一致）。
   /dev 仍是唯一需求入口：本 skill 消费 /dev 路径C 的交接契约（PrepPRD + 铁律清单 + NFR），不做需求对抗。
-version: 1.9.0
+version: 2.2.1
 created: 2026-07-04
 changelog:
+  - 2.2.1: refactor——Step 3「CI 阻塞等待」循环体改为调用共享 zenithjoy-skills/scripts/ci-poll.sh（SSOT 单一出处），行为不变；exit 11（BEHIND）降级为继续等待（harness-controller 不做 rebase 决策，由 watchdog 负责）
+  - 2.2.0: 治 relay 断链头号死因「结束发言等 CI」——新增硬约束 7（等外部事件必须前台阻塞轮询，禁止"等通知"后停止输出：headless -p 模式结束输出=进程退出=session 自杀）+ Step 3 新增「CI 阻塞等待」机械段（同步 bash sleep 30 轮询循环，Bash 超时立刻重发不结束 turn，绝不 run_in_background；照抄 engine-pr-watchdog 已验证模式）。07-12 实证：31e29c09/a1bf1ba5/4bb31ef5 三条 relay 均在 generator 开出 PR 后说"等待 CI 结果通知"正常退出（45 turns/18min，离任何资源墙都远），evaluator/judge/merge/report 全链 0 执行、任务假 done；watchdog 重点火的恢复 session 又以"CI 在跑等信号"1 turn 再死。对照组 a85e0582 全程未撒手，1h47m 八节点全通——链本身是通的，死因只此一处
+  - 2.1.0: Step 7 收尾追加自杀式 tmux 关窗——检测 $TMUX/读会话名/后台延迟 kill-session，非 tmux 或读不到会话名降级为提示不阻塞（07-08/09 T2/T3/T4 三个有头任务收尾后 tmux 窗口不自关，空转两天没人关；cecelia #4c6c6ca5 配套）
+  - 2.0.0: 重写（自我进化 P3→P5 试点）——吸收 1.0.0~1.9.0 全部踩坑修订后整体重组：横切纪律（台账/进度上报/phase-event/文件接力）归拢为独立一节不再散落各 Step；历史事故叙事压缩为短引用；操作规则、bash 块、API 契约字符串全部保留。规则零新增零删除，纯结构重组
   - 1.9.0: Step 4 新增 evaluate_verdict 上报硬性动作——evaluator 出裁决后立刻 PATCH relay-runs 带 evaluate_verdict（PASS/FAIL/FIXED 原样发，cecelia#3754 起写侧接住落 initiative_runs.evaluate_verdict；此前该列全 NULL=裁决只活在台账文本里，机器不可读）；fix loop 每轮重评后同样上报（COALESCE 覆盖语义，最后一次为准）
   - 1.8.1: fix——phase-event 自报两条 curl 加 -m 10 超时与 || true best-effort，PATCH 前加 EVT_ID 空值守卫（POST 失败则跳过 PATCH，防打到无 :id 的 URL），与文档既有 relay-runs best-effort curl 风格一致
   - 1.8.0: T7 phase-event复活——每阶段派 subagent 前后 POST/PATCH /api/brain/harness/phase-event 自报，让 initiative_run_events 重新有写入方（07-04 LangGraph→relay 切换后断供），同时给 cecelia 侧 zombie-reaper 心跳判活提供第二信号（防长阶段被 updated_at 单信号误杀）；HARNESS_INITIATIVE_ID 缺失（前台手跑）时整段跳过不阻塞
@@ -32,6 +36,13 @@ changelog:
 
 # /harness-controller — PR-level 单 session 接力编排
 
+编排语义：skill-relay 单 session 接力（LangGraph 图已废弃，不再被 invoke）。流程主线：
+
+```
+Step 0 装载/恢复 → 1 planner → 2 GAN(proposer×reviewer) → 3 generator(TDD)
+→ 4 evaluator(双门+真跑) → 5 judge → 6 review门+merge(+staging_e2e派生) → 7 report
+```
+
 ## 硬约束（凌驾于一切阶段逻辑）
 
 1. **CONTRACT IS LAW**：合同批准后，任何阶段不得改合同/合同测试来迁就实现
@@ -39,7 +50,77 @@ changelog:
 3. **绝不让同一 subagent 无变化重试**：BLOCKED 必须改变某样东西（补上下文/换模型/拆任务/上报）
 4. **台账先行**：每个阶段完成立刻 append 台账，永远信台账+git/PR 外部真相，不信自己记忆
 5. **零人为交互**（无头模式）：任何不确定 → 派 Research subagent 查（代码/decisions/learnings）代答；仅 review_required 的人工门除外
-6. **完成判据 = PR MERGED + report done，两者齐才许结束 session**：修完 CI、推完 commit 都不算完——`gh pr view` 显示 MERGED 之前，你没有任何理由输出完成结论或停止工作（N4 run-3 实证：恢复 session 修完 CI 自判完成早退，害整条 run 多一次点火）
+6. **完成判据 = PR MERGED + report done，两者齐才许结束 session**：修完 CI、推完 commit 都不算完——`gh pr view` 显示 MERGED 之前，你没有任何理由输出完成结论或停止工作（N4 run-3 实证：恢复 session 修完 CI 自判完成早退，害整条 run 多点火一次）
+7. **等任何外部事件（CI/部署/审批）必须前台阻塞轮询，禁止"结束发言等通知"**：headless `claude -p` 模式下你结束输出的那一刻进程就退出了，没有任何人会来"通知"你——说"等待 CI 结果通知"然后停止输出 = session 自杀（07-12 实证：31e29c09/a1bf1ba5/4bb31ef5 三条 relay 全断在 generator 后"等 CI"，evaluator/judge/merge/report 全链 0 执行，任务假 done；被 watchdog 重点火的恢复 session 又说一句"CI 在跑等信号"1 turn 再死）。等待方式只有一种：同步 bash sleep 轮询循环（机械做法见 Step 3「CI 阻塞等待」），单次 Bash 调用超时就立刻发起下一次调用，绝不 run_in_background，绝不输出"等待…"后停手
+
+## 横切纪律（每个阶段都适用的硬性动作）
+
+### A. 台账（append-only，compaction/崩溃恢复的锚）
+
+台账 = `.harness/progress.md`。**每阶段完成必须执行两个动作**（台账写入是硬性动作不是可选项——N4 三跑均未写台账，恢复全靠翻 git）：
+
+```bash
+# 动作一：台账 append
+echo "<阶段>: done (<关键证据>)" >> .harness/progress.md
+# 动作二：进度上报（dashboard 进度条数据源。阶段→phase 映射：planner 完成→gan 开始报 gan;
+# GAN 完成→generate;generator 完成→evaluate;judge PASS 后→由 report 步骤报 done。
+# 失败终局报 failed。上报失败不阻塞流程,warn 即可）
+curl -s -m 10 -X PATCH "$BRAIN/api/brain/orchestrator/relay-runs/${HARNESS_INITIATIVE_ID}" \
+  -H "Content-Type: application/json" -d '{"phase":"<下一阶段:planning|gan|generate|evaluate>"}' || true
+```
+
+台账记录格式（每阶段一行，append-only）：
+
+```
+planner: done (sprint-prd.md@<commit7>, invariants=N, fr=N)
+gan: done (contract-draft.md@<branch> r<N>, verdict=APPROVED, 铁律覆盖=N/N, rubric=.harness/verdicts/gan-<sha7>.json)
+generator: done (pr=#<num>, red=<sha7>, green=<sha7>)
+evaluator: done (verdict=PASS, sha=<pr_head7>, verdict_file=.harness/verdicts/evaluate-<sha7>.json)
+judge: done (verdict=PASS, sha=<pr_head7>)
+merge: done (pr=#<num> MERGED)
+report: done
+```
+
+**附件约定（裁决留痕归档，把 N/A 变成分）**——relay 各棒的结构化产出（rubric scores、Golden Path 对照表、unverifiable[]、双门结果）只活在 subagent 报告文本里就等于没发生，评不了也审计不了：
+- 附件路径统一 `.harness/verdicts/<phase>-<sha7>.json`（phase = gan / evaluate 等，sha7 = 锚定 commit 前 7 位），**随 PR 入库**
+- gan 行必附 reviewer 最终轮 rubric JSON 路径；evaluator 行必附 verdict JSON 路径（含 verdict/unverifiable[]/双门结果）
+- controller 在验收对应阶段时负责把 subagent 报告里的结构化 JSON 落到该路径，再写台账行——**没有附件文件的 gan/evaluator done 行视为台账不完整**
+- 为让 verdicts 随 PR 入库，Step 0 的 `.harness/.gitignore` 需放行该目录（见 Step 0 代码）
+
+**外部真相优先**：台账说 generator done 但 `gh pr view` 说 PR 不存在 → 信 gh，重跑该阶段并在台账 append 更正行（不删旧行）。
+
+### B. phase-event 自报（T7，zombie-reaper 第二判活信号）
+
+每次派阶段 subagent **前后**各执行一条 curl，让 Brain 的 `initiative_run_events` 有细粒度阶段心跳（07-04 LangGraph→relay 切换后该表一度断供；zombie-reaper 以此作第二判活信号，防长阶段被 `updated_at` 单信号误杀）：
+
+```bash
+# 派发前（<node> = planner|proposer|reviewer|generator|evaluator|judge|merge|report）
+EVT_ID=$(curl -s -m 10 -X POST "$BRAIN/api/brain/harness/phase-event" \
+  -H "Content-Type: application/json" \
+  -d "{\"initiative_id\":\"$HARNESS_INITIATIVE_ID\",\"node\":\"<node>\",\"status\":\"running\",\"model\":\"<模型档>\"}" | jq -r .id || true)
+
+# subagent 返回后（成功 done / 失败 failed；cost_usd 可得才带）——EVT_ID 空（POST 失败）则跳过 PATCH
+[ -n "$EVT_ID" ] && curl -s -m 10 -X PATCH "$BRAIN/api/brain/harness/phase-event/$EVT_ID" \
+  -H "Content-Type: application/json" \
+  -d "{\"status\":\"done\",\"ts_end\":$(date +%s)}" || true
+```
+
+- `HARNESS_INITIATIVE_ID` 未注入（前台手跑）→ 整段跳过，不报错不阻塞
+- curl 失败 → 只记 log 继续，自报绝不阻塞主流程
+- GAN 循环里 proposer/reviewer 每轮各报一对
+
+### C. 文件接力（SDD 6.0）
+
+- 阶段间传**文件路径**，不往 subagent prompt 里粘贴大产物（合同/PRD/diff）
+- review 用的 diff 以"派发前记录的 BASE"生成，**绝不用 HEAD~1**（多 commit 会静默截断）——用本 skill 自带脚本，不手拼：
+
+```bash
+# 派 generator/review 前记录 BASE=$(git rev-parse HEAD)
+bash <skill目录>/scripts/review-package "$BASE" HEAD   # → .harness/review-<base7>..<head7>.diff(commits+stat+U10 diff 单文件)
+bash <skill目录>/scripts/task-brief <PLAN文件> <N>      # → .harness/task-N-brief.md(单任务切片,喂 subagent 用路径)
+```
+
+- controller 自己不读全量 diff/合同——保持协调上下文恒定小，长跑不 compaction；万一 compaction，Step 0 台账恢复
 
 ## Step 0: 上下文装载 + 台账检查（每次进入/恢复都先做）
 
@@ -58,9 +139,9 @@ printf '*\n!.gitignore\n!verdicts/\n!verdicts/**\n' > .harness/.gitignore
 cat "$LEDGER" 2>/dev/null || echo "(新 sprint，无台账)"
 ```
 
-**0.3 前台点火防护（人工前台接管必做；Brain dispatch 注入 env 的无头跑跳过）**
+### 0.3 前台点火防护（人工前台接管必做；Brain dispatch 注入 env 的无头跑跳过）
 
-前台点火 = 你自己 POST 注册了 harness_initiative 任务后，本 session 直接接管当 controller（不等 Brain tick 派发）。这条路径有两种分裂风险，07-06 infrastructure 任务 8e281976 实证过第一种：payload 缺 `orchestrator:"skill-relay"` 字段 → Brain executor 硬校验 41 秒把任务标 terminal failed（missing_orchestrator_flag），而前台 session 浑然不觉继续裸跑，Brain 记账与实际执行彻底分裂。第二种：任务停在 queued 会被下一个 tick 捡走 spawn 无头容器，与前台形成双跑。所以接管前必做：
+前台点火 = 你自己 POST 注册了 harness_initiative 任务后，本 session 直接接管当 controller（不等 Brain tick 派发）。两种分裂风险（第一种 07-06 任务 8e281976 实证）：①payload 缺 `orchestrator:"skill-relay"` 字段 → Brain executor 硬校验秒标 terminal failed（missing_orchestrator_flag），前台 session 浑然不觉继续裸跑，Brain 记账与实际执行彻底分裂；②任务停在 queued 会被下一个 tick 捡走 spawn 无头容器，与前台形成双跑。接管前必做：
 
 ```bash
 # a. 确认任务活着（payload 必须含 orchestrator:"skill-relay"，/dev v21.4.0+ 模板已带；缺了会被秒杀）
@@ -77,27 +158,11 @@ fi
 
 前台点火没有 initiative_runs 行（该行由 Brain spawnSkillRelaySession INSERT，前台不经过它），因此各阶段的进度上报 `PATCH relay-runs` 会 404（"v2 run not found"）——这是**预期行为**，`|| true` 吞掉即可，不代表流程出错，也不会被 relay-watchdog 误重点火（它只扫 initiative_runs 行）。Brain 侧前台建档端点落地后本段更新。
 
-**恢复规则**：台账里标 `done` 的阶段直接跳过；从第一个无记录阶段续跑。台账记录格式（每阶段一行，append-only）：
+### 0.4 恢复规则
 
-```
-planner: done (sprint-prd.md@<commit7>, invariants=N, fr=N)
-gan: done (contract-draft.md@<branch> r<N>, verdict=APPROVED, 铁律覆盖=N/N, rubric=.harness/verdicts/gan-<sha7>.json)
-generator: done (pr=#<num>, red=<sha7>, green=<sha7>)
-evaluator: done (verdict=PASS, sha=<pr_head7>, verdict_file=.harness/verdicts/evaluate-<sha7>.json)
-judge: done (verdict=PASS, sha=<pr_head7>)
-merge: done (pr=#<num> MERGED)
-report: done
-```
+台账里标 `done` 的阶段直接跳过；从第一个无记录阶段续跑。
 
-**台账升级：每阶段一行 + 附件（裁决留痕归档，把 N/A 变成分）**——relay 各棒的结构化产出（rubric scores、Golden Path 对照表、unverifiable[]、双门结果）只活在 subagent 报告文本里就等于没发生，评不了也审计不了。约定：
-- 附件路径统一 `.harness/verdicts/<phase>-<sha7>.json`（phase = gan / evaluate 等，sha7 = 锚定 commit 前 7 位），**随 PR 入库**
-- gan 行必附 reviewer 最终轮 rubric JSON 路径；evaluator 行必附 verdict JSON 路径（含 verdict/unverifiable[]/双门结果）
-- controller 在验收对应阶段时负责把 subagent 报告里的结构化 JSON 落到该路径，再写台账行——**没有附件文件的 gan/evaluator done 行视为台账不完整**
-- 为让 verdicts 随 PR 入库，Step 0 的 `.harness/.gitignore` 需放行该目录（见 Step 0 代码）
-
-**外部真相优先**：台账说 generator done 但 `gh pr view` 说 PR 不存在 → 信 gh，重跑该阶段并在台账 append 更正行（不删旧行）。
-
-**恢复时 generator TDD 纪律核对（#3540/#3542 实证：watchdog 重点火接续的跑无 (Red) commit——恢复 session 从中途接手时把"合同起草 commit"当 Red）**：generator 阶段部分完成（PR 已存在但台账无 generator done 行）时，接续前先跑：
+**恢复时 generator TDD 纪律核对**（#3540/#3542 实证：watchdog 重点火接续的跑无 (Red) commit——恢复 session 从中途接手时把"合同起草 commit"当 Red）。generator 阶段部分完成（PR 已存在但台账无 generator done 行）时，接续前先跑：
 
 ```bash
 git log --grep='(Red)' --oneline <PR分支>
@@ -105,39 +170,9 @@ git log --grep='(Red)' --oneline <PR分支>
 
 查不到 (Red) commit → **不默认通过**，派 fix 轮要求 generator 补 TDD 纪律说明（说明 Red 基线在哪个 commit / 为何缺失 + 补跑合同测试证明先红后绿），核对通过后才继续接手。
 
-**台账写入是硬性动作，不是可选项**（N4 三跑均未写台账，恢复全靠翻 git——本版修正）。每阶段完成必须执行**两个动作**（台账 + 进度上报，后者是 dashboard 进度条的数据源）：
-
-```bash
-echo "<阶段>: done (<关键证据>)" >> .harness/progress.md
-# 进度上报（阶段→phase 映射：planner 完成→gan 开始报 gan;GAN 完成→generate;generator 完成→evaluate;
-# judge PASS 后→由 report 步骤报 done。失败终局报 failed。上报失败不阻塞流程,warn 即可）
-curl -s -m 10 -X PATCH "$BRAIN/api/brain/orchestrator/relay-runs/${HARNESS_INITIATIVE_ID}" \
-  -H "Content-Type: application/json" -d '{"phase":"<下一阶段:planning|gan|generate|evaluate>"}' || true
-```
-
-## phase-event 自报（每阶段硬性动作，T7）
-
-每次派阶段 subagent **前后**各执行一条 curl，让 Brain 的 `initiative_run_events` 有细粒度阶段心跳（zombie-reaper 以此作第二判活信号，防止长阶段被 `updated_at` 单信号误杀）：
-
-```bash
-# 派发前（<node> = planner|proposer|reviewer|generator|evaluator|judge|merge|report）
-EVT_ID=$(curl -s -m 10 -X POST "$BRAIN/api/brain/harness/phase-event" \
-  -H "Content-Type: application/json" \
-  -d "{\"initiative_id\":\"$HARNESS_INITIATIVE_ID\",\"node\":\"<node>\",\"status\":\"running\",\"model\":\"<模型档>\"}" | jq -r .id || true)
-
-# subagent 返回后（成功 done / 失败 failed；cost_usd 可得才带）——EVT_ID 空（POST 失败）则跳过 PATCH
-[ -n "$EVT_ID" ] && curl -s -m 10 -X PATCH "$BRAIN/api/brain/harness/phase-event/$EVT_ID" \
-  -H "Content-Type: application/json" \
-  -d "{\"status\":\"done\",\"ts_end\":$(date +%s)}" || true
-```
-
-- `HARNESS_INITIATIVE_ID` 未注入（前台手跑）→ 整段跳过，不报错不阻塞
-- curl 失败 → 只记 log 继续，自报绝不阻塞主流程
-- GAN 循环里 proposer/reviewer 每轮各报一对
-
 ## Step 1: Planner（写 PRD）
 
-派 fresh subagent（Task tool，模型=标准档）：派发前后按「phase-event 自报」节自报 node=planner。
+派 fresh subagent（Task tool，模型=标准档）：派发前后按「横切纪律 B」自报 node=planner。
 
 ```
 prompt: 调用 Skill(harness-planner)。上下文：
@@ -147,23 +182,25 @@ prompt: 调用 Skill(harness-planner)。上下文：
   报告格式：status(DONE/DONE_WITH_CONCERNS/NEEDS_CONTEXT/BLOCKED) + 产物路径 + invariant/累积FR 加载数
 ```
 
-- harness-planner v8.12+ 自带整条 line 的 invariant 三源 + 累积 FR 加载——**验收时检查 sprint-prd.md 含「## Invariant 约束」「## 累积 FR」两段**，缺了 = planner 报告不实，打回重跑
-- **验收清单扩展（4 跑实证：仅走完整点火链的 run1 齐全，恢复/二次点火路径下 planner 拿薄 prompt 大面积漏项）**，以下四项与"两段"同权，任一缺 = planner 报告不实，打回重跑：
-  1. **尾部两字段**：PRD 末尾含 `journey_type:` 与 `target_environment:`（proposer 选模板、evaluator 派机器都依赖它们，缺了下游全瞎）
-  2. **NFR 段**：含 `## NFR` 段，或显式写明"NFR: N/A"（静默缺失不算过）
-  3. **PRD 行数（thin-slice 上限）**：`wc -l` 校验不超 thin-slice 上限（run4 曾 278 行失守）；超限 → 打回要求裁剪或标注"不计入"理由
-- 四态处置：见「四态协议」节
-- 完成 → 台账 append → Step 2
+**验收清单（五项同权，任一缺 = planner 报告不实，打回重跑）**——恢复/二次点火路径下 planner 拿薄 prompt 会大面积漏项（4 跑实证：仅走完整点火链的 run1 齐全）：
+
+1. **「## Invariant 约束」段**（harness-planner v8.12+ 自带整条 line 的 invariant 三源加载）
+2. **「## 累积 FR」段**
+3. **尾部两字段**：PRD 末尾含 `journey_type:` 与 `target_environment:`（proposer 选模板、evaluator 派机器都依赖它们，缺了下游全瞎）
+4. **NFR 段**：含 `## NFR` 段，或显式写明"NFR: N/A"（静默缺失不算过）
+5. **PRD 行数（thin-slice 上限）**：`wc -l` 校验不超 thin-slice 上限（run4 曾 278 行失守）；超限 → 打回要求裁剪或标注"不计入"理由
+
+四态处置：见「四态协议」节。完成 → 台账 append → Step 2。
 
 ## Step 2: GAN（合同对抗，proposer × reviewer 循环）
 
-循环（无硬轮数上限——刻意设计，禁加 MAX_ROUNDS；守护 = 预算/streak，见下）。每轮派 proposer/reviewer 前后按「phase-event 自报」节各自报一对（node=proposer / node=reviewer）：
+循环（无硬轮数上限——刻意设计，禁加 MAX_ROUNDS；守护 = 预算/streak，见下）。每轮派 proposer/reviewer 前后按「横切纪律 B」各自报一对（node=proposer / node=reviewer）：
 
 1. 派 **proposer** fresh subagent：`调用 Skill(harness-contract-proposer)`，输入 = sprint-prd.md 路径 + 上轮 reviewer feedback 文件路径（首轮无）。产出 contract-draft.md + contract-dod.md + tests/ 推到 propose 分支
 2. 派 **reviewer** fresh subagent：`调用 Skill(harness-contract-reviewer)`，输入 = PRD + 合同路径。产出 rubric 打分 + verdict
 3. **controller 只认结构化 verdict**：APPROVED → 出环；REVISION → feedback 落文件、回 1
 4. **铁律覆盖硬检查（controller 自查，不信 reviewer 自觉）**：PrepPRD 交接的每条铁律，在 contract-dod.md 里 grep 到对应断言才算过；缺 → 作为 feedback 打回 proposer（这是"0→1 积累必须加载"的机械保证）
-5. **合同格式硬检查（确定性 bash，机器卡，不靠自觉）**：铁律覆盖只查"内容有没有"，本条查"格式对不对"——run4 实证：contract-dod.md 无一条 `[BEHAVIOR]` 也通过了旧检查。以下三项任一不过 → 打回 proposer 重出，**不许进 Step 3**：
+5. **合同格式硬检查（确定性 bash，机器卡，不靠自觉）**：铁律覆盖只查"内容有没有"，本条查"格式对不对"（run4 实证：contract-dod.md 无一条 `[BEHAVIOR]` 也通过了旧检查）。以下三项任一不过 → 打回 proposer 重出，**不许进 Step 3**：
 
 ```bash
 DOD="<SPRINT_DIR>/contract-dod.md"
@@ -176,15 +213,15 @@ grep -q '## E2E 验收' "$DRAFT" || { echo "FAIL: contract-draft.md 缺 ## E2E �
 grep -q 'manual:bash' "$DOD" || { echo "FAIL: 缺 manual:bash 验收命令"; }
 ```
 
-任一行输出 FAIL → 把 FAIL 原文作为 feedback 落文件、回本节第 1 步重派 proposer；三项全过才允许台账记 gan done
+任一行输出 FAIL → 把 FAIL 原文作为 feedback 落文件、回本节第 1 步重派 proposer；三项全过才允许台账记 gan done。
 
-守护（照抄旧图语义）：proposer 连续 2 轮没 push 产物 / reviewer 连续 3 轮无 verdict / 成本超预算 → 终局 FAIL 上报
+守护（照抄旧图语义）：proposer 连续 2 轮没 push 产物 / reviewer 连续 3 轮无 verdict / 成本超预算 → 终局 FAIL 上报。
 
-完成 → 台账 append（含轮次、铁律覆盖 N/N）→ Step 3
+完成 → 台账 append（含轮次、铁律覆盖 N/N）→ Step 3。
 
 ## Step 3: Generator（TDD 实现，SDD×TDD 的接点）
 
-派 fresh subagent（模型=标准档）：派发前后按「phase-event 自报」节自报 node=generator。
+派 fresh subagent（模型=标准档）：派发前后按「横切纪律 B」自报 node=generator。
 
 ```
 prompt: 调用 Skill(harness-generator)。CONTRACT_BRANCH=<branch> SPRINT_DIR=<dir>。
@@ -204,9 +241,34 @@ if [ -n "$PR_URL_EARLY" ]; then
     -d "{\"phase\":\"generate\",\"pr_url\":\"$PR_URL_EARLY\"}" || true
 fi
 ```
+
 - **CI 门禁三件套 push 前自查**（N4 三跑全在 CI 才踩这些门，各浪费一轮修复——左移到此）：①contract-draft.md 含 Test Contract 表且 [BEHAVIOR] 覆盖文本与测试 it() 名称子串匹配 ②feat 改动带本 repo 约定的 smoke 脚本（按 base_repo 映射：cecelia = packages/brain/scripts/smoke/<feature>-smoke.sh 且登记 packages/quality/smoke-allowlist.txt；zenithjoy = .github/workflows/scripts/smoke/<feature>-smoke.sh 且进 smoke-baseline.txt 棘轮；其他第三方 repo 无此约定 → 本条跳过，以该 repo CI 实际门禁为准）③DoD 条目全勾 [x]。任一缺失 → 让 generator 补完再 push
 - CI 失败 → 派 fix subagent（同 skill Mode 2，带失败日志），fix 轮次计入台账，上限 20
 - 完成（CI 全绿）→ 台账 append → Step 4
+
+**CI 阻塞等待（硬约束 7 的机械做法——这是等 CI 的唯一合法方式）**
+
+PR push 后 CI 要跑若干分钟。**禁止**输出"等待 CI 结果/等通知"然后停止——headless 下你一停进程就退出，整条 relay 死在这里（07-12 三条 run 实证，这是 relay 断链的头号死因）。必须用同步 Bash 轮询循环把自己钉在前台：
+
+```bash
+# 同步执行（绝不 run_in_background），Bash timeout 设 600000（工具上限 10 分钟）
+# ci-poll.sh：zenithjoy-skills/scripts/ci-poll.sh（SSOT，watchdog 与 controller 共用）
+ZS_ROOT=$(python3 -c "import os; print(os.path.dirname(os.path.realpath(os.path.expanduser('~/.claude/skills/harness-controller'))))" 2>/dev/null)
+CI_POLL="$ZS_ROOT/scripts/ci-poll.sh"
+REPO=$(gh pr view "$PR_NUM" --json headRepository -q .headRepository.nameWithOwner 2>/dev/null || echo "")
+while true; do
+  bash "$CI_POLL" "$PR_NUM" "$REPO"
+  POLL_EXIT=$?
+  [ "$POLL_EXIT" -eq 0 ] && { echo "CI_GREEN"; break; }
+  [ "$POLL_EXIT" -eq 10 ] && { echo "CI_FAILED"; break; }
+  # exit 11（BEHIND）：controller 不做 rebase 决策，继续等待
+  sleep 30
+done
+```
+
+- 单次 Bash 调用到 10 分钟超时被截断 → **不输出任何文字，立刻发起下一次同样的 Bash 调用**继续轮询（turn 不结束，进程就不会死）
+- 循环退出后立刻走对应分支（绿→Step 4 / 失败→fix subagent），中间不停顿
+- 同规则适用于一切外部等待：deploy 完成、审批事件、workflow run——凡是"要等"，一律 sleep 循环，绝无例外
 
 ## Step 4: Evaluator（真跑验收）
 
@@ -214,12 +276,13 @@ fi
 - ARTIFACT 门：合同 [ARTIFACT] Test 命令逐条 bash 真跑，失败 → 直接判 FAIL 回 generator fix
 - Contract Gate 反作弊（弱 oracle/mock 环境/exit-0 兜底红线）：命中 → `contract_invalid` 终局（责任在 GAN，不进 fix loop）
 
-双门过 → 派 evaluator fresh subagent：`调用 Skill(harness-evaluator)`（target_environment 路由由 evaluator skill 自带）。派发前后按「phase-event 自报」节自报 node=evaluator。
+双门过 → 派 evaluator fresh subagent：`调用 Skill(harness-evaluator)`（target_environment 路由由 evaluator skill 自带）。派发前后按「横切纪律 B」自报 node=evaluator。
+
 - **verdict 锚定 PR head SHA 记入台账**；PR 后续有新 commit → 旧 verdict 作废必须重评
 - FIXED 按 PASS 归一（前科语义）；FAIL → 带 feedback 回 Step 3 fix
 - **evaluator 报 unverifiable[] 非空时（T5 第三态）**：controller 必须逐条兜底——用自己掌握的跨阶段上下文核对（查合同原意/看 PR diff/必要时派 Research subagent 实测）；确认是真缺口 → 按 FAIL 处理回 Step 3；确认可放行 → 记台账后继续。**禁止不核对就当 PASS 放行**
 
-**evaluate_verdict 上报（1.9.0 起硬性动作，与台账 append 同时做）**——evaluator 每次出裁决（含 fix loop 重评）后立刻 best-effort 上报，让 initiative_runs.evaluate_verdict 有结构化值（cecelia#3754 起 PATCH 接住该字段；非法值 Brain 只 warn 不 400，绝不阻塞）：
+**evaluate_verdict 上报（硬性动作，与台账 append 同时做）**——evaluator 每次出裁决（含 fix loop 重评）后立刻 best-effort 上报，让 initiative_runs.evaluate_verdict 有结构化值（cecelia#3754 起 PATCH 接住该字段；非法值 Brain 只 warn 不 400，绝不阻塞。此前该列全 NULL=裁决只活在台账文本里，机器不可读）：
 
 ```bash
 curl -s -m 10 -X PATCH "$BRAIN/api/brain/orchestrator/relay-runs/${HARNESS_INITIATIVE_ID}" \
@@ -232,7 +295,7 @@ curl -s -m 10 -X PATCH "$BRAIN/api/brain/orchestrator/relay-runs/${HARNESS_INITI
 
 ## Step 5: Judge（独立裁判，硬门禁）
 
-- 派发前后按「phase-event 自报」节自报 node=judge。
+- 派发前后按「横切纪律 B」自报 node=judge。
 - 只对 evaluator PASS 复核。**主路径：curl Brain judge API**（跨 repo 化刀3：controller 跑在 relay 容器/第三方 repo 时，cecelia 相对路径脚本不存在，API 是唯一稳定入口；DeepSeek + Golden Path 逐步覆盖校验，逻辑=harness-judge.js 原样）：
 
 ```bash
@@ -246,14 +309,14 @@ FEEDBACK=$(echo "$JUDGE_RESP" | jq -r '.feedback // ""')
 # HTTP 恒 200：VERDICT=PASS（API 已把 FIXED 归一为 PASS）→ 放行；FAIL/ERROR/空 → 一律按 FAIL 处理
 ```
 
-  - agent_verdict 缺省时 API 自读 `<worktree>/.brain-result.json`；可选字段：agent_verdict / agent_feedback / prompt_dir / transcript_file
-  - 兜底（仅 cecelia 本机直跑且 Brain API 不可达时）：`node scripts/harness-judge-cli.mjs --task-id <id> --sprint-dir <dir> --pr <url>`（CLI 保留不删，但第三方 repo 容器内不得作为主路径）
+- agent_verdict 缺省时 API 自读 `<worktree>/.brain-result.json`；可选字段：agent_verdict / agent_feedback / prompt_dir / transcript_file
+- 兜底（仅 cecelia 本机直跑且 Brain API 不可达时）：`node scripts/harness-judge-cli.mjs --task-id <id> --sprint-dir <dir> --pr <url>`（CLI 保留不删，但第三方 repo 容器内不得作为主路径）
 - judge FAIL → 带 feedback 回 Step 3（打回重写）；judge PASS → 台账 append（锚 sha）→ Step 6
 - **禁止**：跳过 judge / 替 judge 降级 / 在 judge 前 merge
 
 ## Step 6: Review 门（仅 review_required=true）+ Merge
 
-- merge 动作前后按「phase-event 自报」节自报 node=merge。
+- merge 动作前后按「横切纪律 B」自报 node=merge。
 - review_required → 起预览环境 + Bark 通知主理人（附 approve 命令），阻塞等 task_events 批准事件
 - **merge 前 SHA 锚定硬检查（确定性 bash，c66bbedc 实证：锚定后又进代码 commit、未重评直接 merge）**——"新 commit 旧 verdict 作废"不只写在 Step 4，merge 这里必须机械复核：
 
@@ -265,7 +328,7 @@ FEEDBACK=$(echo "$JUDGE_RESP" | jq -r '.feedback // ""')
 - merge（唯一权威路径）：evaluator PASS + judge PASS（+ 人工批准如需）→ `gh pr merge --squash --delete-branch`
   - BEHIND → `gh pr update-branch` ≤3 次；**update 改变 head sha → evaluator/judge verdict 以新 sha 重锚**（轻量 rebase 不重评，台账记 re-anchor 行）
   - CONFLICTING → 终局 FAIL 上报
-- **派生 staging_e2e（merge 确认后，best-effort，绝不阻塞）**：无论是本 session 自己 `gh pr merge` 成功、还是发现 PR 已被外部合并（`gh pr view` 直接是 MERGED），只要确认 MERGED 就派生一次——这是当前 staging→production 放行层唯一的产生入口，漏派会让这条 PR 永远进不了 staging E2E：
+- **派生 staging_e2e（merge 确认后，best-effort，绝不阻塞）**：无论是本 session 自己 `gh pr merge` 成功、还是发现 PR 已被外部合并（`gh pr view` 直接是 MERGED），只要确认 MERGED 就派生一次——这是当前 staging→production 放行层唯一的任务产生入口，漏派会让这条 PR 永远进不了 staging E2E：
 
 ```bash
 PR_URL=$(gh pr view <pr> --json url -q .url)
@@ -280,7 +343,7 @@ curl -s -m 15 -X POST "$BRAIN_URL/api/brain/harness/staging-e2e" \
 
 ## Step 7: Report（收尾六步）
 
-调用 Skill(harness-report)（Phase A/B 不变：回写 Brain task 状态 → Dashboard → Notion → 飞书 → 本地备份 → Sprint 状态同步）。派发前后按「phase-event 自报」节自报 node=report。
+调用 Skill(harness-report)（Phase A/B 不变：回写 Brain task 状态 → Dashboard → Notion → 飞书 → 本地备份 → Sprint 状态同步）。派发前后按「横切纪律 B」自报 node=report。
 
 **追加硬性动作——回写 initiative_runs 终态**（否则 Brain 巡逻把 run 误判为 Stuck at Planner 并派干预任务，N4 实证）：
 
@@ -291,9 +354,28 @@ curl -s -X PATCH "$BRAIN/api/brain/orchestrator/relay-runs/${HARNESS_INITIATIVE_
   # 终局失败改 {"phase":"failed","failure_reason":"<一句话>","verdict":"FAIL","cost":<总成本>,"pr_url":"<有PR则填>"}
 ```
 
-**PATCH body 三个新字段是硬性要求，不许只 PATCH phase**（#3540 为此加的字段，1.2.1 及以前只写 phase → dashboard verdict 全空、cost 全 0）：`verdict` = 最终裁决（PASS/FAIL）、`cost` = 全程累计成本、`pr_url` = PR 链接（从台账/`gh pr view --json url` 取）。`evaluate_verdict` 已在 Step 4 出裁决时上报过，此处不必重发（要重发也无害，COALESCE 覆盖）。
+**PATCH body 三个字段是硬性要求，不许只 PATCH phase**（#3540 为此加的字段，1.2.1 及以前只写 phase → dashboard verdict 全空、cost 全 0）：`verdict` = 最终裁决（PASS/FAIL）、`cost` = 全程累计成本、`pr_url` = PR 链接（从台账/`gh pr view --json url` 取）。`evaluate_verdict` 已在 Step 4 出裁决时上报过，此处不必重发（要重发也无害，COALESCE 覆盖）。
 
-台账 append `report: done`，确认 PR 状态 = MERGED（硬约束 6），输出最终摘要，session 结束。
+台账 append `report: done`，确认 PR 状态 = MERGED（硬约束 6），输出最终摘要。
+
+**收尾最后一步——自杀式 tmux 关窗**（有头前台派发的 tmux 会话跑完不会自己关窗，全靠控制会话手动 `send-keys /exit`+`kill-session`，07-08/09 T2/T3/T4 三个任务因控制会话没盯到底空转两天没人关；无头 harness dispatch 通常没有 `$TMUX`，走 else 分支直接跳过，无害）：
+
+```bash
+if [ -n "$TMUX" ]; then
+  SESSION_NAME=$(tmux display-message -p '#S' 2>/dev/null)
+  if [ -n "$SESSION_NAME" ]; then
+    (sleep 2 && tmux kill-session -t "$SESSION_NAME") >/dev/null 2>&1 &
+    disown
+    echo "✅ 已安排 2 秒后自杀 tmux 会话: $SESSION_NAME（收尾完成，自动关窗）"
+  else
+    echo "⚠️ tmux 环境检测到但无法读取会话名，跳过自动关窗（非阻塞）"
+  fi
+else
+  echo "ℹ️ 非 tmux 会话，跳过自动关窗步骤"
+fi
+```
+
+必须是本 Step 真正最后一个动作，确保上面的最终摘要已经完整输出后再执行——延迟 2 秒 + 后台 + `disown` 就是为了不截断。session 结束。
 
 ## 四态协议（所有 subagent 统一出口，处置表）
 
@@ -311,15 +393,3 @@ curl -s -X PATCH "$BRAIN/api/brain/orchestrator/relay-runs/${HARNESS_INITIATIVE_
 3. feat PR 必须带 smoke 脚本（CI lint 强制）；zenithjoy 侧该 smoke 必须同步加进 `.github/workflows/scripts/smoke-baseline.txt`（棘轮闸 baseline-lint 机械强制，PR #1156 起——新债不欠，漏加 = `Smoke Glob Gate Passed` 红合不进）
 4. **禁 `gh pr merge --admin`**，禁绕 CI
 5. **E2E 验收脚本必须有 CI 回归宿主**（与第 1 条对称——合同测试留 repo 还不够，E2E 脚本也不能"只活一次"）：merge 前确认 contract-draft.md `## E2E 验收` 落地的脚本（e2e-verify.ps1 / e2e-verify.sh）已随 PR 入库到 `sprints/<sprint_dir>/`，且被某个 workflow 收集（现有 e2e-*.yml 的 paths 命中、或 nightly e2e glob 收集范围内）。evaluator 跑过一次 ≠ 有人持续守着；查不到收集宿主 → 让 generator 补 workflow 接线后才许 merge
-
-## 文件接力纪律（SDD 6.0）
-
-- 阶段间传**文件路径**，不往 subagent prompt 里粘贴大产物（合同/PRD/diff）
-- review 用的 diff 以"派发前记录的 BASE"生成，**绝不用 HEAD~1**（多 commit 会静默截断）——用本 skill 自带脚本，不手拼：
-
-```bash
-# 派 generator/review 前记录 BASE=$(git rev-parse HEAD)
-bash <skill目录>/scripts/review-package "$BASE" HEAD   # → .harness/review-<base7>..<head7>.diff(commits+stat+U10 diff 单文件)
-bash <skill目录>/scripts/task-brief <PLAN文件> <N>      # → .harness/task-N-brief.md(单任务切片,喂 subagent 用路径)
-```
-- controller 自己不读全量 diff/合同——保持协调上下文恒定小，长跑不 compaction；万一 compaction，Step 0 台账恢复
