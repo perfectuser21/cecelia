@@ -43,6 +43,41 @@ services:
         max-size: "10m"
         max-file: "3"
 
+  node-brain-dev:
+    image: node:20-alpine
+    container_name: cecelia-node-brain-dev
+    network_mode: host
+    pid: host
+    working_dir: /app
+    volumes:
+      - ./packages/brain:/app
+    env_file:
+      - .env.docker
+    environment:
+      - DB_HOST=${DB_HOST:-localhost}
+      - DB_PORT=${DB_PORT:-5432}
+      - DB_NAME=cecelia_dev
+      - DB_USER=${DB_USER:-cecelia}
+      - DB_PASSWORD=${DB_PASSWORD}
+      - BRAIN_PORT=5220
+      - CECELIA_TICK_ENABLED=${CECELIA_TICK_ENABLED:-false}
+      - CECELIA_TICK_INTERVAL_MS=${CECELIA_TICK_INTERVAL_MS:-5000}
+      - DISPATCH_TIMEOUT_MINUTES=${DISPATCH_TIMEOUT_MINUTES:-60}
+      - FEISHU_BOT_WEBHOOK=${FEISHU_BOT_WEBHOOK:-}
+    command: sh -c "apk add --no-cache curl bash procps && (test -d node_modules || npm install --production) && node server.js"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5220/api/brain/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    restart: unless-stopped
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
   frontend:
     image: node:20-alpine
     container_name: cecelia-frontend
