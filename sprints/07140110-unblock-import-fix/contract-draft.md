@@ -94,6 +94,17 @@ git diff HEAD~1..HEAD -- src/routes/tasks.js | grep "^[+-]" | grep -v "^---\|^++
 
 ---
 
+## Test Contract
+
+| 功能 | Test File | BEHAVIOR 覆盖 | 预期 Red 证据 |
+|---|---|---|---|
+| unblock /:taskId/unblock（第 600 行）成功路径 | `packages/brain/src/routes/__tests__/tasks-unblock.test.js` | BEHAVIOR-01a: 返回 `{ success: true, task: <task_object> }` | → FAIL（import('./task-updater.js') 路径错误，路由抛 500） |
+| unblock /:id/unblock（第 1147 行）成功路径 | `packages/brain/src/routes/__tests__/tasks-unblock.test.js` | BEHAVIOR-01b: 返回 `{ success: true, task_id, status: 'queued' }` | → FAIL（import('./task-updater.js') 路径错误，路由抛 500） |
+| block /:id/block（第 1119 行）成功路径 | `packages/brain/src/routes/__tests__/tasks-unblock.test.js` | BEHAVIOR-02: 返回 `{ success: true, task_id, status: 'blocked', reason, blocked_until }` | → FAIL（import('./task-updater.js') 路径错误，路由抛 500） |
+| 既有 tasks 路由无回归 | `packages/brain/src/routes/__tests__/tasks.test.js` et al. | BEHAVIOR-04: 374/374 既有测试全绿 | → 无新 FAIL（修复不引入回归） |
+
+---
+
 ## 非功能要求
 
 - 修复 diff 行数 < 10 行
