@@ -105,17 +105,89 @@ print(v.get('finished_at', ''))
     needs: probe
     if: always() && needs.probe.outputs.health_ok != 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     permissions:
       issues: write
+
     steps:
-      - run: echo "alert"
+      - name: 开 GitHub Issue（去重）
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PROBE_URL: ${{ needs.probe.outputs.probe_url }}
+          HEALTH_OK: ${{ needs.probe.outputs.health_ok }}
+          KV_OK: ${{ needs.probe.outputs.kv_ok }}
+          KV_AGE: ${{ needs.probe.outputs.kv_age_minutes }}
+          RUN_URL: "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+        run: |
+          set -uo pipefail
+          TODAY=$(date -u +%Y-%m-%d)
+          TITLE="[heartbeat-sentinel] 生产探测失败 — ${TODAY}"
+          EXISTING=$(gh api "repos/${REPO}/issues?state=open&labels=${ISSUE_LABEL}&per_page=50" \
+            --jq '[.[] | select(.title=="'"${TITLE}"'")] | length' 2>/dev/null || echo "0")
+          if [ "$EXISTING" -gt 0 ]; then
+            echo "已有 open issue，跳过"
+          else
+            BODY="## Heartbeat Sentinel 告警
+日期: ${TODAY}
+Run: ${RUN_URL}
+目标: ${PROBE_URL}"
+            [ "$HEALTH_OK" != "true" ] && BODY="${BODY}
+- /api/brain/health 不可达"
+            [ "$KV_OK" != "true" ] && BODY="${BODY}
+- KV smoke-nightly-last-run 超期/不可达 (${KV_AGE}min)"
+            gh issue create --repo "${REPO}" --title "${TITLE}" --body "${BODY}" --label "${ISSUE_LABEL}" \
+              || gh issue create --repo "${REPO}" --title "${TITLE}" --body "${BODY}" \
+              || echo "::warning::Issue 创建失败"
+          fi
+
+      - name: Bark 推送
+        env:
+          BARK_URL: ${{ secrets.BARK_URL }}
+          BARK_TOKEN: ${{ secrets.BARK_TOKEN }}
+          PROBE_URL: ${{ needs.probe.outputs.probe_url }}
+          HEALTH_OK: ${{ needs.probe.outputs.health_ok }}
+          KV_OK: ${{ needs.probe.outputs.kv_ok }}
+          KV_AGE: ${{ needs.probe.outputs.kv_age_minutes }}
+        run: |
+          FAILURES=""
+          [ "$HEALTH_OK" != "true" ] && FAILURES="${FAILURES}Brain /health 不可达; "
+          [ "$KV_OK" != "true" ] && FAILURES="${FAILURES}nightly KV 超期 ${KV_AGE}min; "
+          TITLE="心跳哨兵告警"
+          BODY="生产探测失败: ${FAILURES}目标=${PROBE_URL}"
+          ET=$(python3 -c "import urllib.parse; print(urllib.parse.quote('$TITLE'))")
+          EB=$(python3 -c "import urllib.parse,sys; print(urllib.parse.quote(sys.argv[1]))" "$BODY")
+          if [[ -n "${BARK_URL:-}" ]]; then
+            curl -sf --max-time 10 "${BARK_URL}/${ET}/${EB}?group=heartbeat-sentinel&level=critical" \
+              >/dev/null 2>&1 && echo "Bark ok" || echo "::warning::Bark 失败"
+          elif [[ -n "${BARK_TOKEN:-}" ]]; then
+            curl -sf --max-time 10 "https://api.day.app/${BARK_TOKEN}/${ET}/${EB}?group=heartbeat-sentinel&level=critical" \
+              >/dev/null 2>&1 && echo "Bark ok" || echo "::warning::Bark 失败"
+          else
+            echo "::warning::未配 BARK_URL/BARK_TOKEN"
+          fi
 
   close-on-success:
     name: 恢复时关闭 Issue
     needs: probe
-    if: always() && needs.probe.outputs.health_ok == 'true'
+    if: always() && needs.probe.outputs.health_ok == 'true' && needs.probe.outputs.kv_ok == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     permissions:
       issues: write
+
     steps:
-      - run: echo "all ok"
+      - name: 关闭 open issues
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          RUN_URL: "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+        run: |
+          OPEN=$(gh api "repos/${REPO}/issues?state=open&labels=${ISSUE_LABEL}&per_page=50" \
+            --jq '.[].number' 2>/dev/null || echo "")
+          if [[ -z "$OPEN" ]]; then echo "无 open issues"; exit 0; fi
+          for NUM in $OPEN; do
+            gh issue close "$NUM" --repo "${REPO}" \
+              --comment "心跳哨兵恢复正常。Run: ${RUN_URL}" \
+              2>/dev/null && echo "已关闭 #$NUM" || echo "::warning::关闭 #$NUM 失败"
+          done
