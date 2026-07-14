@@ -144,12 +144,12 @@ git diff --name-only HEAD | grep -v "harness-relay-watchdog"
 
 ## 铁律核查清单
 
-- [ ] `MAX_RELAY_ATTEMPTS` 数值未改变
-- [ ] `MAX_CODEX_RELAY_ATTEMPTS` 数值未改变
-- [ ] MERGED 分支逻辑（`_finalizeMergedRun`）无改动
-- [ ] CLOSED 分支逻辑无改动
-- [ ] `_handleHeadedRun` 无改动
-- [ ] `foreground` 护栏无改动
-- [ ] 重点火唯一走 `deps.spawnFn || spawnSkillRelaySession`
-- [ ] CI 判断复用 `mapCiStatus` 逻辑（不重复造轮子）
-- [ ] `gh pr checks` 失败时保守跳过（不重点火）
+- [x] `MAX_RELAY_ATTEMPTS` 数值未改变
+- [x] `MAX_CODEX_RELAY_ATTEMPTS` 数值未改变
+- [x] MERGED 分支逻辑（`_finalizeMergedRun`）无改动
+- [x] CLOSED 分支逻辑无改动
+- [x] `_handleHeadedRun` 无改动
+- [x] `foreground` 护栏无改动
+- [x] 重点火唯一走 `deps.spawnFn || spawnSkillRelaySession`
+- [x] CI 判断复用 `mapCiStatus` 逻辑（不重复造轮子）
+- [x] `gh pr checks` 失败时保守跳过（不重点火）

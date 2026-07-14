@@ -136,6 +136,14 @@ cd /workspace && pnpm --filter brain test harness-relay-watchdog 2>&1 | tail -20
 
 ---
 
+## Test Contract
+
+| Workstream | Test File | BEHAVIOR 覆盖 | 预期红证据 |
+|------------|-----------|--------------|----------|
+| WS1 | `../../packages/brain/src/__tests__/harness-relay-watchdog.test.js` | GP-1/GP-2/GP-3/GP-4 | GP-1/GP-2/GP-4 Red commit 98df52c |
+
+---
+
 ## 开发顺序
 
 1. 先写 failing tests（GP-1 ~ GP-4）→ commit
