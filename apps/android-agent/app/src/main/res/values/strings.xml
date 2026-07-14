@@ -3,4 +3,5 @@
     <string name="app_name">ZenithJoy Agent</string>
     <string name="notification_channel_name">Agent 后台服务</string>
     <string name="notification_text">ZenithJoy Agent 运行中</string>
+    <string name="capture_accessibility_description">ZenithJoy 采集服务——读取抖音视频分享链接</string>
 </resources>
