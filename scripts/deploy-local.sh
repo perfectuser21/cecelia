@@ -68,6 +68,17 @@ if [[ -z "$CHANGED_FILES" ]]; then
     else
         CHANGED_FILES=$(git diff --name-only "$BASE_BRANCH"...HEAD 2>/dev/null || echo "")
     fi
+    # squash merge fallback：三点 diff 在 pull 后为空（origin/main === HEAD），
+    # 改用 HEAD~1..HEAD 检测最后一个提交的实际变更。
+    # 场景：CI squash merge → fetch-depth 浅历史 → changed_paths 传空 → ops.js 不传
+    # --changed → 此处三点 diff 也为空 → 假跳过。HEAD~1..HEAD 直接看最新提交即可。
+    if [[ -z "$CHANGED_FILES" ]] && git rev-parse HEAD~1 >/dev/null 2>&1; then
+        SQUASH_FALLBACK=$(git diff --name-only HEAD~1..HEAD 2>/dev/null || echo "")
+        if [[ -n "$SQUASH_FALLBACK" ]]; then
+            echo "⚠️  三点 diff 为空，fallback 到 HEAD~1..HEAD（squash merge 场景）"
+            CHANGED_FILES="$SQUASH_FALLBACK"
+        fi
+    fi
 fi
 
 echo "📋 改动范围："

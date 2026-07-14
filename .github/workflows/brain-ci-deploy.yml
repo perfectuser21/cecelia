@@ -95,7 +95,16 @@ jobs:
             CHANGED="packages/brain/"
           else
             CHANGED=$(git diff --name-only "$BEFORE" "$AFTER" 2>/dev/null \
-              | grep -E "^packages/brain/|^scripts/brain-deploy\.sh" | tr '\n' ' ' || echo "packages/brain/")
+              | grep -E "^packages/brain/|^scripts/brain-deploy\.sh" | tr '\n' ' ' || true)
+          fi
+
+          # squash merge 后 BEFORE 可能不在 fetch-depth=2 的浅历史里 → diff 静默失败
+          # → 经 grep 过滤后 CHANGED 为空（grep 无匹配时 exit 1 被 || true 吞掉）。
+          # 此 workflow 只在 brain 路径有改动时触发（on.push.paths），所以空 CHANGED
+          # 一定是检测失败而非真无变更，安全 fallback 到 packages/brain/。
+          if [ -z "$(echo "$CHANGED" | tr -d ' ')" ]; then
+            echo "⚠️ changed 检测为空（squash merge / fetch-depth 不足），fallback 到 packages/brain/"
+            CHANGED="packages/brain/"
           fi
 
           echo "changed_paths=$CHANGED" >> $GITHUB_OUTPUT
