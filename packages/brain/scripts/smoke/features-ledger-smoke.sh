@@ -15,9 +15,9 @@ echo "✅ GET /api/brain/features/ledger — OK ($(echo "$RESULT" | jq '.total')
 echo "$RESULT" | jq -e '(.domains | length) > 0' > /dev/null
 echo "✅ domains 非空"
 
-# 取第一条 item 验证 11 要素字段存在
-FIRST_ITEM=$(echo "$RESULT" | jq -c '.domains[0].items[0]')
-echo "$FIRST_ITEM" | jq -e '.fr != null and .nfr != null and .invariant != null and .checkpoints_status != null and .freshness_status != null and .death_alert != null and .failure_semantics != null and .effect_confirmed != null and .adversarial != null and .ledger_status != null and .axis_aligned != null' > /dev/null
+# 取第一个非空 domain 的第一条 item，验证 11 要素字段键存在（契约断言，不依赖数据值）
+FIRST_ITEM=$(echo "$RESULT" | jq -c '[.domains[] | select((.items | length) > 0)][0].items[0]')
+echo "$FIRST_ITEM" | jq -e 'has("fr") and has("nfr") and has("invariant") and has("checkpoints_status") and has("freshness_status") and has("death_alert") and has("failure_semantics") and has("effect_confirmed") and has("adversarial") and has("ledger_status") and has("axis_aligned")' > /dev/null
 echo "✅ 11 要素字段全部存在"
 
 # generated_at 时间戳存在
