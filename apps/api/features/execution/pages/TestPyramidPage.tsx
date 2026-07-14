@@ -47,6 +47,8 @@ interface RatchetData {
   available: boolean;
   registry?: RatchetMetric[];
   error?: string;
+}
+
 interface GuardEntry {
   id: string;
   name: string;
@@ -225,6 +227,9 @@ export default function TestPyramidPage() {
         setRatchet(body);
       } catch {
         if (!cancelled) setRatchet({ available: false });
+      }
+    }
+
     async function fetchGuardDrill() {
       try {
         const resp = await fetch('/api/brain/guard-drill/status');
@@ -519,6 +524,14 @@ export default function TestPyramidPage() {
                       {m.watermark}
                     </td>
                     <td style={{ padding: '8px 12px', color: '#6b7280', fontSize: '12px' }}>{m.guard}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
       {/* ── proven-to-fire 守卫验火台账 ── */}
       <div
         data-testid="proven-to-fire-section"
