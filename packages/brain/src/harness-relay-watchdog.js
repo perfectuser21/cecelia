@@ -20,6 +20,20 @@ export const MAX_RELAY_ATTEMPTS = 5;
 // B6: codex 路径上限更低（外部 codex API 更贵，不允许无限重试）
 export const MAX_CODEX_RELAY_ATTEMPTS = 2;
 
+// generator 完成后 6h 无 MERGED → failed（防 e90c0fbb pr_url 空永挂）
+export const GENERATOR_DONE_TIMEOUT_MS = 6 * 60 * 60 * 1000;
+
+/** C3：按 initiative 批量关闭 skill-relay-spawn 事件（写点在 executor.js spawn，写完即弃无 id 可用）。 */
+async function _closeSpawnEvents(dbPool, initiativeId, status) {
+  try {
+    await dbPool.query(
+      `UPDATE initiative_run_events SET status = $3, ts_end = $2
+        WHERE initiative_id = $1 AND node = 'skill-relay-spawn' AND status = 'running'`,
+      [initiativeId, Date.now(), status === 'done' ? 'done' : 'failed']
+    );
+  } catch (err) { console.warn(`[relay-watchdog] spawn 事件收尾失败（non-fatal）：${err.message}`); }
+}
+
 function shortId(id) {
   return String(id).replace(/-/g, '').slice(0, 8);
 }
@@ -115,6 +129,7 @@ export async function _finalizeMergedRun(dbPool, initiativeId, prUrl, out, opts 
     ? `UPDATE tasks SET status='completed', completed_at=NOW(), pr_url=$2 WHERE id=$1 AND status='in_progress'`
     : `UPDATE tasks SET status='completed', completed_at=NOW() WHERE id=$1 AND status='in_progress'`;
   await dbPool.query(taskSql, setPrUrl ? [initiativeId, prUrl] : [initiativeId]);
+  await _closeSpawnEvents(dbPool, initiativeId, 'done');
 
   out.mergedPr++;
 
@@ -148,7 +163,7 @@ export async function resumeStalledRelayRuns(deps = {}) {
   // 从未写入 initiative_runs）不计数，可能导致 attempts 长期低估、MAX_RELAY_ATTEMPTS
   // 封顶判断失效，从而无限重跑不收敛。暂未修，先记录跟踪。
   const runsQ = await dbPool.query(
-    `SELECT DISTINCT ON (initiative_id) initiative_id, phase, deadline_at, pr_url, orchestrator_host, completed_at, tmux_killed_at, (SELECT COUNT(*) FROM initiative_runs r2 WHERE r2.initiative_id = r.initiative_id AND r2.orchestrator_version = 'v2') AS attempts FROM initiative_runs r WHERE orchestrator_version = 'v2' AND (phase NOT IN ('done', 'failed') OR (orchestrator_host IN ('skill-relay-codex-headed','skill-relay-claude-headed') AND phase = 'done' AND tmux_killed_at IS NULL)) ORDER BY initiative_id, started_at DESC LIMIT 20`
+    `SELECT DISTINCT ON (initiative_id) initiative_id, phase, deadline_at, pr_url, orchestrator_host, completed_at, tmux_killed_at, started_at, (SELECT COUNT(*) FROM initiative_runs r2 WHERE r2.initiative_id = r.initiative_id AND r2.orchestrator_version = 'v2') AS attempts FROM initiative_runs r WHERE orchestrator_version = 'v2' AND (phase NOT IN ('done', 'failed') OR (orchestrator_host IN ('skill-relay-codex-headed','skill-relay-claude-headed') AND phase = 'done' AND tmux_killed_at IS NULL)) ORDER BY initiative_id, started_at DESC LIMIT 20`
   );
   // 护栏:注入的 pool 对未知 SQL 返回 undefined 时(集成测试 fake),按空处理
   const runs = runsQ && Array.isArray(runsQ.rows) ? runsQ.rows : [];
@@ -194,11 +209,15 @@ export async function resumeStalledRelayRuns(deps = {}) {
       if (run.deadline_at && new Date(run.deadline_at).getTime() < Date.now()) continue;
 
       const short = shortId(task.id);
+      // 收账权收归（Task 4 harness-finalize 降级标记）：generator 已完成 → 绝不二次 spawn（防重复 PR）。
+      const generatorDone = task.payload?.generator_done === true;
 
       // ─── headed 分支：ssh+tmux 存活检测 + 收窗幂等 ────────────────────────
       if (HEADED_HOST_VALUES.includes(run.orchestrator_host)) {
         const { needsRefire } = await _handleHeadedRun(run, task, { dbPool, execFn, short });
-        if (needsRefire) {
+        if (needsRefire && generatorDone) {
+          console.log(`[relay-watchdog][headed] generator_done=true → 跳过重点火 initiative=${run.initiative_id}`);
+        } else if (needsRefire) {
           // session 消失 → 重点火（走 spawnFn，即 headed 路径）
           const spawnFn = deps.spawnFn
             || (await import('./harness-skill-relay.js')).spawnSkillRelaySession;
@@ -221,6 +240,36 @@ export async function resumeStalledRelayRuns(deps = {}) {
         running = execFn(`docker ps -q --filter "name=cecelia-relay-${short}"`).trim();
       } catch { running = ''; /* docker 不可用时保守跳过（不盲目重点火） */ continue; }
       if (running) continue;
+
+      // 收账权收归超时兜底：generator 完成后超 GENERATOR_DONE_TIMEOUT_MS 仍无 MERGED → 标 failed 不永挂（e90c0fbb 缓解）。
+      // 未到期时不 continue——仍要跑下方 PR 前置检查（发现 MERGED 自然收口），只在 spawn 前拦"落到重点火"。
+      if (generatorDone) {
+        // 锚点优先 payload.generator_done_at；缺失/不可解析（NaN）时回退 run.started_at，防锚点丢失=永挂。
+        let doneAt = task.payload?.generator_done_at ? new Date(task.payload.generator_done_at).getTime() : 0;
+        if (!doneAt && run.started_at) doneAt = new Date(run.started_at).getTime();
+        if (doneAt && Date.now() - doneAt > GENERATOR_DONE_TIMEOUT_MS) {
+          // 到期前最后核一次 PR（有 url 才核；MERGED 走统一收口）
+          const rawPr = run.pr_url || task.pr_url || task.payload?.pr_url || null;
+          let mergedLate = false;
+          if (typeof rawPr === 'string' && rawPr.startsWith('https://github.com/')) {
+            try { mergedLate = JSON.parse(execFn(`gh pr view "${rawPr}" --json state`)).state === 'MERGED'; } catch { mergedLate = false; }
+          }
+          if (mergedLate) { await _finalizeMergedRun(dbPool, run.initiative_id, rawPr, out); continue; }
+          await dbPool.query(
+            `UPDATE initiative_runs SET phase='failed', completed_at=NOW(), failure_reason='generator_done_timeout'
+              WHERE initiative_id=$1 AND orchestrator_version='v2' AND phase NOT IN ('done','failed')`,
+            [run.initiative_id]);
+          await dbPool.query(
+            `UPDATE tasks SET status='failed', completed_at=NOW(),
+                    error_message='generator 完成后 ' || $2 || 'h 内 PR 未 MERGED（收账权收归超时兜底）'
+              WHERE id=$1 AND status='in_progress'`,
+            [run.initiative_id, String(GENERATOR_DONE_TIMEOUT_MS / 3600000)]);
+          await _closeSpawnEvents(dbPool, run.initiative_id, 'failed');
+          out.capped++;
+          console.warn(`[relay-watchdog] generator_done 超时 → 标 failed initiative=${run.initiative_id}`);
+          continue;
+        }
+      }
 
       // PR merge 状态前置检查：容器消失时，先查 PR 是否已 MERGED
       // fallback 链：run.pr_url → tasks.pr_url → task.payload.pr_url
@@ -298,8 +347,15 @@ export async function resumeStalledRelayRuns(deps = {}) {
             WHERE id=$1 AND status='in_progress'`,
           [run.initiative_id, String(attempts)]
         );
+        await _closeSpawnEvents(dbPool, run.initiative_id, 'failed');
         out.capped++;
         console.warn(`[relay-watchdog] initiative=${run.initiative_id} 达重点火上限(${attempts})，标 failed`);
+        continue;
+      }
+
+      // generator 已完成 → 跳过重点火（防重复 PR）。未到期的超时兜底放行到此，PR 检查已跑过。
+      if (generatorDone) {
+        console.log(`[relay-watchdog] generator_done=true → 跳过重点火 initiative=${run.initiative_id}`);
         continue;
       }
 
@@ -438,6 +494,7 @@ export async function scanStuckHarness(opts = {}) {
           WHERE id = $1 AND status NOT IN ('completed', 'cancelled', 'canceled')`,
         [row.initiative_id]
       );
+      await _closeSpawnEvents(dbPool, row.initiative_id, 'failed');
       console.warn(`[relay-watchdog] scanStuckHarness: overdue codex run id=${row.id} initiative=${row.initiative_id} deadline=${row.deadline_at}`);
     } catch (err) {
       console.error(`[relay-watchdog] scanStuckHarness cleanup failed for run ${row.id}: ${err.message}`);

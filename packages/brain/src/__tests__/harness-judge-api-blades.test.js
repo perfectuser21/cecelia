@@ -58,7 +58,7 @@ describe('POST /api/brain/harness/judge — 刀B 机械预检', () => {
     }));
     const app = await buildApp();
     const r = await request(app).post('/api/brain/harness/judge')
-      .send({ task_id: 'aaaabbbb-1111', sprint_dir: 'sprints/x', worktree: wt });
+      .send({ task_id: 'aaaabbbb-1111-2222-3333-444455556666', sprint_dir: 'sprints/x', worktree: wt });
     expect(r.status).toBe(200);
     expect(r.body.verdict).toBe('FAIL');
     expect(r.body.mechFail).toBe('no_behavior_tests');
@@ -78,7 +78,7 @@ describe('POST /api/brain/harness/judge — 刀B 机械预检', () => {
     }));
     const app = await buildApp();
     const r = await request(app).post('/api/brain/harness/judge')
-      .send({ task_id: 'aaaabbbb-1111', sprint_dir: 'sprints/x', worktree: wt });
+      .send({ task_id: 'aaaabbbb-1111-2222-3333-444455556666', sprint_dir: 'sprints/x', worktree: wt });
     expect(r.status).toBe(200);
     expect(r.body.verdict).toBe('FAIL');
     expect(r.body.mechFail).toBe('missing_exit_code');
@@ -101,7 +101,7 @@ describe('POST /api/brain/harness/judge — 刀B 机械预检', () => {
     }));
     const app = await buildApp();
     const r = await request(app).post('/api/brain/harness/judge')
-      .send({ task_id: 'aaaabbbb-1111', sprint_dir: 'sprints/x', worktree: wt });
+      .send({ task_id: 'aaaabbbb-1111-2222-3333-444455556666', sprint_dir: 'sprints/x', worktree: wt });
     expect(r.status).toBe(200);
     expect(r.body.verdict).toBe('FAIL');
     expect(r.body.mechFail).toBe('judgments_written_mismatch');
@@ -120,7 +120,7 @@ describe('POST /api/brain/harness/judge — 刀B 机械预检', () => {
     }));
     const app = await buildApp();
     const r = await request(app).post('/api/brain/harness/judge')
-      .send({ task_id: 'aaaabbbb-1111', sprint_dir: 'sprints/x', worktree: wt });
+      .send({ task_id: 'aaaabbbb-1111-2222-3333-444455556666', sprint_dir: 'sprints/x', worktree: wt });
     expect(r.status).toBe(200);
     expect(mockRunJudgeGate).toHaveBeenCalled();
   });

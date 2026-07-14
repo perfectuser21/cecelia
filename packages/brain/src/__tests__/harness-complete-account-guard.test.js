@@ -39,8 +39,9 @@ describe('POST /api/brain/harness/complete — 收账权收归', () => {
     const app = await buildApp();
     const r = await request(app).post('/api/brain/harness/complete')
       .send({ initiative_id: 'aaaabbbb-cccc-dddd-eeee-111122223333' });
-    expect(r.status).toBe(409);
-    expect(r.body.error).toMatch(/未达到.*done|prevent.*premature|提前收账|not.*done/i);
+    expect(r.status).toBe(200);
+    expect(r.body.accepted).toBe(false);
+    expect(r.body.reason).toMatch(/initiative_run_not_done/);
   });
 
   it('initiative_run.phase=evaluate（未 MERGED）→ 409 拒绝收账', async () => {
@@ -53,7 +54,8 @@ describe('POST /api/brain/harness/complete — 收账权收归', () => {
     const app = await buildApp();
     const r = await request(app).post('/api/brain/harness/complete')
       .send({ initiative_id: 'aaaabbbb-cccc-dddd-eeee-111122223333' });
-    expect(r.status).toBe(409);
+    expect(r.status).toBe(200);
+    expect(r.body.accepted).toBe(false);
   });
 
   it('initiative_run.phase=done（watchdog 已确认 MERGED）→ 允许收账，返回 200', async () => {
