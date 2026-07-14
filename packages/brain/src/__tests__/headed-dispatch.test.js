@@ -96,8 +96,11 @@ describe('mode=headed 路由分支', () => {
         ([sql]) => /INSERT INTO initiative_runs/.test(sql)
       );
       expect(insertCall, 'initiative_runs 必须 INSERT').toBeTruthy();
-      const [sql] = insertCall;
+      const [sql, params] = insertCall;
       expect(sql).toContain('skill-relay-codex-headed');
+      // 刀C1（决策 dc18d43d）：current_task_id 必须写入，否则 relay-runs?task_id= 过滤恒空
+      expect(sql).toMatch(/current_task_id/);
+      expect(params).toContain(HEADED_TASK.id);
     });
 
     it('headed spawn：prompt 写入宿主文件路径（不含 GITHUB_TOKEN 明文）', async () => {
@@ -233,6 +236,10 @@ describe('4. claude headed 分支（T6）', () => {
     const task = { id: '00000000-0000-0000-0000-00000000c1e0', title: 't', payload: { orchestrator: 'skill-relay', executor: 'claude', mode: 'headed' } };
     await spawnSkillRelaySession(task, makeDeps(calls, inserts));
     expect(JSON.stringify(inserts[0])).toContain('skill-relay-claude-headed');
+    // 刀C1（决策 dc18d43d）：current_task_id 必须写入
+    const [sql, params] = inserts[0];
+    expect(sql).toMatch(/current_task_id/);
+    expect(params).toContain(task.id);
   });
 
   it('executor 缺省（payload 无 executor）+ mode=headed → fallback 走 codex 分支', async () => {
