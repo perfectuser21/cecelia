@@ -221,7 +221,7 @@ describe('triggerCodexBridge — research 任务 — bridge 拒绝缺 callback_u
     getInternalTaskHandlerMock.mockReturnValue(null);
   });
 
-  it('bridge 返回 { ok:false, error:"task_id 和 callback_url 必填" } → success=false', async () => {
+  it('bridge 拒绝缺字段时返回 success=false（task_id 和 callback_url 必填）', async () => {
     const fetchMock = vi.fn(async () => ({
       ok: true,
       json: async () => ({ ok: false, error: 'task_id 和 callback_url 必填' }),

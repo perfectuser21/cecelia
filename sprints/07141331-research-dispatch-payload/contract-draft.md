@@ -16,15 +16,12 @@ callback_url: `${process.env.BRAIN_URL || 'http://localhost:5221'}/api/brain/exe
 
 **不动**：熔断器逻辑、dispatcher 候选选择、测试 fetch 不真调外部。
 
-## Test Contract 表
+## Test Contract
 
-| # | [BEHAVIOR] 描述 | 对应 it() 测试名称（子串） | 优先级 |
-|---|----------------|--------------------------|--------|
-| 1 | research 任务 payload 包含 callback_url | `research 任务的 payload 必须包含 callback_url` | P0 |
-| 2 | callback_url 指向 BRAIN_URL env | `callback_url 指向 BRAIN_URL env 配置的地址` | P0 |
-| 3 | BRAIN_URL 未设置时降级 localhost:5221 | `BRAIN_URL 未设置时 callback_url 降级到 localhost:5221` | P0 |
-| 4 | codex_dev 等其他 xian task_type 同样携带 callback_url | `其他 xian task_type 同样携带 callback_url` | P1 |
-| 5 | bridge 拒绝缺 callback_url 时 success=false（修复前 failing） | `bridge 拒绝缺 callback_url 时返回 success=false` | P0 |
+| Workstream | Test File | BEHAVIOR 覆盖 | 预期红证据 |
+|-----------|-----------|--------------|-----------|
+| B-1 callback_url 存在 | `../../packages/brain/src/__tests__/codex-bridge-payload-callback-url.test.js` | research 任务的 payload 必须包含 callback_url/callback_url 指向 BRAIN_URL env 配置的地址/BRAIN_URL 未设置时 callback_url 降级到 localhost:5221/其他 xian task_type 同样携带 callback_url | callback_url 为 undefined（修复前） |
+| B-5 bridge 拒绝路径 | `../../packages/brain/src/__tests__/codex-bridge-payload-callback-url.test.js` | bridge 拒绝缺字段时返回 success=false | success=true 错误（修复前） |
 
 ## E2E 验收
 
