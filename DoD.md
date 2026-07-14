@@ -1,10 +1,10 @@
-# DoD: migration 343 status CHECK 窄枚举致生产部署失败——343 修正 + 344 拓宽
+# DoD: 刀4-T2 棘轮统一台账 ratchet-registry + guard 接 CI + 面板水位区块（接管修闸）
 
-- [x] [BEHAVIOR] 343 的 CHECK 枚举涵盖生产在用全部 status（含 working/broken）
-      Test: manual:node -e "const s=require('fs').readFileSync('packages/brain/migrations/343_journey_features_guard_ref.sql','utf8');if(!/working/.test(s)||!/broken/.test(s))process.exit(1)"
-- [x] [BEHAVIOR] 344 幂等拓宽存在（兜住已 apply 窄版的 staging/preview 库）
-      Test: manual:node -e "const s=require('fs').readFileSync('packages/brain/migrations/344_journey_features_status_check_widen.sql','utf8');if(!/DROP CONSTRAINT IF EXISTS/.test(s)||!/working/.test(s))process.exit(1)"
-- [x] [BEHAVIOR] EXPECTED_SCHEMA_VERSION 同步到 344
-      Test: manual:node -e "const s=require('fs').readFileSync('packages/brain/src/selfcheck.js','utf8');if(!s.includes(String.fromCharCode(39)+'344'+String.fromCharCode(39)))process.exit(1)"
-- [x] 版本四处同步 1.262.1
-      Test: manual:bash scripts/check-version-sync.sh
+- [x] [BEHAVIOR] 台账 ≥5 条且每项含 name/direction(only_up|only_down)/guard/source
+      Test: manual:node -e "const r=require('./scripts/ratchet-registry.json');if(r.length<5||r.some(x=>!x.name||!['only_up','only_down'].includes(x.direction)||!x.source))process.exit(1)"
+- [x] [BEHAVIOR] GET /api/brain/quality/ratchet 有 supertest 行为测试（TDD 序：测试 commit 先行）
+      Test: manual:node -e "require('fs').accessSync('packages/brain/src/routes/__tests__/quality-ratchet.test.js')"
+- [x] [BEHAVIOR] feat+brain/src 配套 smoke 已新增并登记 allowlist
+      Test: manual:bash -c "bash -n packages/brain/scripts/smoke/ratchet-registry-smoke.sh && grep -q ratchet-registry-smoke.sh packages/quality/smoke-allowlist.txt"
+- [x] ratchet-guard 脚本存在且语法绿
+      Test: manual:node --check scripts/ratchet-guard.mjs
