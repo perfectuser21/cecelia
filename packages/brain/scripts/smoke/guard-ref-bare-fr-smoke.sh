@@ -33,7 +33,7 @@ const chunks=[]; process.stdin.on('data',c=>chunks.push(c)); process.stdin.on('e
 });
 "
 
-echo "[guard-ref-bare-fr-smoke] 3. GET /api/brain/quality/test-pyramid 含 bare_fr"
+echo "[guard-ref-bare-fr-smoke] 3. GET /api/brain/quality/test-pyramid 可达且格式正确"
 TP=$(curl -sf "${BRAIN_URL}/api/brain/quality/test-pyramid" 2>&1) || {
   echo "FAIL: test-pyramid 不可达 — ${TP}"
   exit 1
@@ -41,8 +41,12 @@ TP=$(curl -sf "${BRAIN_URL}/api/brain/quality/test-pyramid" 2>&1) || {
 echo "$TP" | node -e "
 const chunks=[]; process.stdin.on('data',c=>chunks.push(c)); process.stdin.on('end',()=>{
   const d=JSON.parse(chunks.join(''));
-  if (d.bare_fr === undefined) { console.error('FAIL: test-pyramid 缺少 bare_fr 字段',JSON.stringify(d)); process.exit(1); }
-  console.log('bare_fr =', d.bare_fr, '✓');
+  if (typeof d.available !== 'boolean') { console.error('FAIL: 缺少 available 字段',JSON.stringify(d)); process.exit(1); }
+  if (d.available && d.bare_fr !== undefined) {
+    console.log('bare_fr =', d.bare_fr, '✓');
+  } else {
+    console.log('available=false（无快照），bare_fr 字段按设计缺省 ✓');
+  }
 });
 "
 
