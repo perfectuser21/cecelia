@@ -90,7 +90,8 @@ describe('headed smoke contract [BEHAVIOR]', () => {
     expect(script).toContain('DoD.md');
     expect(script).toMatch(/skill-relay-claude-headed\|07130939-relay-4bb31ef5/);
 
-    const dod = readFileSync(path.join(ROOT, 'DoD.md'), 'utf8');
+    // 毕业适配：根 DoD.md 是"最新 sprint 卡"（随每个 PR 轮换），时效性断言改指本 sprint 的固定合同文件
+    const dod = readFileSync(path.join(ROOT, 'sprints/07130939-relay-4bb31ef5/contract-dod.md'), 'utf8');
     expect(dod).toMatch(/skill-relay-claude-headed|07130939-relay-4bb31ef5/);
   });
 
