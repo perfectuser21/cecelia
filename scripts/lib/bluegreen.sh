@@ -112,14 +112,21 @@ bluegreen_swap() {
   fi
 
   # poll green health（先 curl 临时端口，兜底 docker inspect health）
+  # 2026-07-14 事故：curl 判据必须校验 body 来自 green 本人——staging dashboard
+  # 槽位服务器（默认同占 5223）会把 /api/brain/* 代理回生产 5221，裸 curl -sf
+  # 会拿 blue 的 200 秒判 healthy，green 还没监听 smoke 就冲上去全灭。
+  # 改双保险：curl 命中还须 docker inspect 同时非 starting；等待期间容器已退出则提前止损。
   local elapsed=0 healthy=false
   while [ "$elapsed" -lt "$timeout" ]; do
-    if curl -sf "http://${canary_host}:${port}/api/brain/tick/status" >/dev/null 2>&1; then
-      healthy=true; break
-    fi
     local hs
     hs=$(docker inspect "$green" --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' 2>/dev/null || echo missing)
-    if [ "$hs" = "healthy" ]; then healthy=true; break; fi
+    if [ "$hs" = "missing" ] || [ "$(docker inspect "$green" --format '{{.State.Status}}' 2>/dev/null)" = "exited" ]; then
+      echo "[bluegreen] green 容器已退出/消失，提前止损"
+      break
+    fi
+    if [ "$hs" = "healthy" ] && curl -sf "http://${canary_host}:${port}/api/brain/tick/status" >/dev/null 2>&1; then
+      healthy=true; break
+    fi
     if [ "$hs" = "unhealthy" ]; then break; fi
     sleep 2; elapsed=$((elapsed + 2))
   done
@@ -141,6 +148,19 @@ bluegreen_swap() {
     echo "[bluegreen] ⚠️  SKIP_PRE_SWAP_SMOKE=1，跳过 pre-swap smoke（紧急模式）"
     send_bark "⚠️ brain-deploy 紧急模式：SKIP_PRE_SWAP_SMOKE=1，pre-swap smoke 已跳过，v${version}"
   elif [[ -n "${DEPLOY_ROOT_DIR:-}" && -f "$core_list" ]]; then
+    # smoke 前宿主端口就绪等待：docker health（容器内自检）≠ 宿主映射可达，
+    # green 启动含迁移检查需 ~20s，抢跑 = 0ms connect refused 全灭（2026-07-14 三连实证）
+    local _ready_wait=0
+    until curl -sf -m 2 "http://${canary_host}:${port}/api/brain/healthz" >/dev/null 2>&1; do
+      if [ "$_ready_wait" -ge 90 ]; then
+        echo "[bluegreen] ❌ 宿主端口 ${port} 90s 内未就绪，保留 blue 不切"
+        docker rm -f "$green" >/dev/null 2>&1 || true
+        send_bark "green v${version} 宿主端口 ${port} 未就绪，已保留旧版(5221不受影响)"
+        bluegreen_guard_blue "$blue"
+        return 1
+      fi
+      sleep 3; _ready_wait=$((_ready_wait + 3))
+    done
     echo "[bluegreen] 跑 pre-swap 核心 smoke（green:${port}，预算 ${SMOKE_CORE_TIMEOUT_SECS:-600}s）..."
     local _smoke_failed=0 _smoke_ran=0 _smoke_start _smoke_elapsed
     _smoke_start=$(date +%s)
