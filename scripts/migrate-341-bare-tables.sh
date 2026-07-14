@@ -8,10 +8,13 @@
 #
 # 用法：bash scripts/migrate-341-bare-tables.sh
 # 前提：本机可直连 localhost postgres，cecelia 库和独立 zenithjoy 库均已存在
+# 认证：本脚本依赖本机 psql/pg_dump 默认认证方式（如 .pgpass 或本地 peer/trust 认证），不显式传密码。
+# 失败续跑：若脚本中途失败，不要直接重跑整个脚本——Step 1 备份步骤在表已经不在
+# public schema 时会失败（因为已被 Step 2 迁移走），需要人工判断当前实际进度后从对应步骤续跑。
 
 set -euo pipefail
 
-PSQL="psql -q"
+PSQL="psql -q -v ON_ERROR_STOP=1"
 CECELIA_DB="cecelia"
 ZJ_DB="zenithjoy"
 TABLES=(operator_sessions verification account session "user")
@@ -19,6 +22,7 @@ BACKUP_DIR="/tmp/migrate-341-backup-$(date +%s)"
 MIGRATION_SQL="packages/brain/migrations/341_zenithjoy_schema_move.sql"
 
 mkdir -p "$BACKUP_DIR"
+chmod 700 "$BACKUP_DIR"
 echo "=== Step 1: 备份 cecelia 库 5 张裸表到 $BACKUP_DIR ==="
 for TABLE in "${TABLES[@]}"; do
   $PSQL -h localhost -U cecelia -d "$CECELIA_DB" \
@@ -58,6 +62,19 @@ echo "  ✅ 导出到 $DUMP_FILE"
 echo ""
 echo "=== Step 5: 导入独立 zenithjoy 库 ==="
 $PSQL -h localhost -U cecelia -d "$ZJ_DB" -c "CREATE SCHEMA IF NOT EXISTS zenithjoy;"
+
+echo "  --- 幂等检查：确认目标库尚无这5张表 ---"
+for TABLE in "${TABLES[@]}"; do
+  EXISTS=$($PSQL -h localhost -U cecelia -d "$ZJ_DB" -tc \
+    "SELECT count(*) FROM information_schema.tables WHERE table_schema='zenithjoy' AND table_name='$TABLE';" \
+    | tr -d ' ')
+  if [ "$EXISTS" != "0" ]; then
+    echo "  ❌ 目标库已有这些表，可能是重复执行，请人工确认是否需要先清理再重跑（表: zenithjoy.\"$TABLE\"）"
+    exit 1
+  fi
+done
+echo "  ✅ 幂等检查通过，目标库尚无这5张表"
+
 $PSQL -h localhost -U cecelia -d "$ZJ_DB" -f "$DUMP_FILE"
 echo "  ✅ 导入完成"
 
@@ -79,7 +96,8 @@ done
 
 echo ""
 if [ "$ALL_OK" = "true" ]; then
-  echo "✅ 迁移完成，两库数据一致。备份保留在 $BACKUP_DIR"
+  echo "✅ 迁移完成，两库数据一致。"
+  echo "备份文件位于 $BACKUP_DIR（权限已收敛为 700），内含明文数据，请人工核对无误后手动执行： rm -rf \"$BACKUP_DIR\" 清理，不要长期留存。"
   exit 0
 else
   echo "❌ 行数校验失败，请人工排查（备份在 $BACKUP_DIR，未自动回滚）"
