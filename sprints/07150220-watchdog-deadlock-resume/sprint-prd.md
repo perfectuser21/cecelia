@@ -203,3 +203,14 @@ it('PR OPEN + BEHIND + attempts >= 上限 → 不重点火（熔断优先）', a
 5. 运行全量测试：`pnpm --filter brain test harness-relay-watchdog`
 6. 确认既有 8 条 watchdog 测试全绿
 7. PR → CI 全绿 → merge
+
+---
+
+## NFR
+
+N/A（纯逻辑修复，无性能 / 可用性 NFR）
+
+---
+
+journey_type: bug_fix
+target_environment: local_api
