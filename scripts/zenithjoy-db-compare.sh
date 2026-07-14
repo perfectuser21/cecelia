@@ -99,3 +99,18 @@ echo "说明："
 echo "  • 双写验证期 ≥ 3 天后，若 cecelia.zenithjoy 无新写入可断开旧连接"
 echo "  • zenithjoy 库 count ≥ cecelia 库 count 为正常（新库持续接收写入）"
 echo "  • WARN↓ 表示新库数据少于旧库 5 条以上，需调查"
+
+echo ""
+echo "--- 裸表(Better Auth)行数比对（migration341补做守卫） ---"
+BARE_TABLES=(operator_sessions verification account session "user")
+for TABLE in "${BARE_TABLES[@]}"; do
+  CECELIA_BARE=$($PSQL -d "$CECELIA_DB" -tc \
+    "SELECT count(*) FROM zenithjoy.\"$TABLE\";" 2>/dev/null | tr -d ' ')
+  ZJ_BARE=$($PSQL -d "$ZJ_DB" -tc \
+    "SELECT count(*) FROM zenithjoy.\"$TABLE\";" 2>/dev/null | tr -d ' ')
+  if [ "$CECELIA_BARE" != "$ZJ_BARE" ]; then
+    echo "  ⚠️  $TABLE: cecelia=$CECELIA_BARE zenithjoy=$ZJ_BARE（不一致）"
+  else
+    echo "  ✅ $TABLE: $CECELIA_BARE（一致）"
+  fi
+done
