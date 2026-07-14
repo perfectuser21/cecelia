@@ -12,6 +12,26 @@ interface PyramidData {
   panel?: { fresh: boolean; generated: string };
 }
 
+interface RingResult {
+  ring: number;
+  label: string;
+  ok: boolean;
+  warn: boolean;
+  hard_flaw: boolean;
+  detail: string;
+}
+
+interface SevenRingData {
+  available: boolean;
+  updated_at?: string;
+  rings?: RingResult[];
+  hard_flaws?: number;
+  ratchet_max?: number;
+  ratchet_breached?: boolean;
+  pass?: boolean;
+  audited_at?: string;
+}
+
 type FetchState = 'loading' | 'done' | 'unavailable';
 
 function LayerCard({ label, count, testId, color }: { label: string; count: number; testId: string; color: string }) {
@@ -54,9 +74,41 @@ function StatCard({ label, count, testId }: { label: string; count: number; test
   );
 }
 
+function RingRow({ ring }: { ring: RingResult }) {
+  const icon = ring.ok ? (ring.warn ? '⚠️' : '✅') : '❌';
+  const bg = ring.ok ? (ring.warn ? '#fffbeb' : '#f0fdf4') : '#fef2f2';
+  const border = ring.ok ? (ring.warn ? '#fbbf24' : '#10b981') : '#ef4444';
+  return (
+    <div
+      data-testid={`seven-ring-row-${ring.ring}`}
+      style={{
+        display: 'flex',
+        alignItems: 'flex-start',
+        gap: '10px',
+        padding: '10px 14px',
+        borderRadius: '6px',
+        background: bg,
+        border: `1px solid ${border}`,
+        marginBottom: '6px',
+      }}
+    >
+      <span style={{ fontSize: '16px', lineHeight: '1.4' }}>{icon}</span>
+      <div>
+        <div style={{ fontSize: '13px', fontWeight: 600, color: '#111827' }}>
+          环{ring.ring}：{ring.label}
+        </div>
+        <div style={{ fontSize: '12px', color: '#6b7280', marginTop: '2px' }}>{ring.detail}</div>
+      </div>
+    </div>
+  );
+}
+
 export default function TestPyramidPage() {
   const [data, setData] = useState<PyramidData | null>(null);
   const [fetchState, setFetchState] = useState<FetchState>('loading');
+  const [sevenRing, setSevenRing] = useState<SevenRingData | null>(null);
+  const [sevenRingState, setSevenRingState] = useState<FetchState>('loading');
+  const [triggering, setTriggering] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -83,11 +135,45 @@ export default function TestPyramidPage() {
       }
     }
 
+    async function fetchSevenRing() {
+      try {
+        const resp = await fetch('/api/brain/quality/seven-ring');
+        if (cancelled) return;
+        if (!resp.ok) { setSevenRingState('unavailable'); return; }
+        const body: SevenRingData = await resp.json();
+        if (cancelled) return;
+        if (!body || body.available === false) {
+          setSevenRing(body ?? null);
+          setSevenRingState('unavailable');
+          return;
+        }
+        setSevenRing(body);
+        setSevenRingState('done');
+      } catch {
+        if (!cancelled) setSevenRingState('unavailable');
+      }
+    }
+
     fetchData();
-    return () => {
-      cancelled = true;
-    };
+    fetchSevenRing();
+    return () => { cancelled = true; };
   }, []);
+
+  async function triggerAudit() {
+    setTriggering(true);
+    try {
+      const resp = await fetch('/api/brain/quality/seven-ring/trigger', { method: 'POST' });
+      const body = await resp.json();
+      if (body.rings) {
+        setSevenRing({ available: true, ...body });
+        setSevenRingState('done');
+      }
+    } catch {
+      // ignore
+    } finally {
+      setTriggering(false);
+    }
+  }
 
   // 灰态：guard 数据不可用
   if (fetchState === 'unavailable') {
@@ -205,9 +291,82 @@ export default function TestPyramidPage() {
         <LayerCard label="E2E Smoke" count={smokeTotal} testId="pyramid-layer-e2e-smoke" color="#8b5cf6" />
       </div>
 
-      <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
+      <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap', marginBottom: '32px' }}>
         <StatCard label="孤儿测试" count={orphansTotal} testId="pyramid-orphans" />
         <StatCard label="smoke 未挂跑道" count={unwiredCount} testId="pyramid-unwired" />
+      </div>
+
+      {/* ── 七环对账区块 ─────────────────────────────────────────────── */}
+      <div data-testid="seven-ring-section" style={{ borderTop: '1px solid #e5e7eb', paddingTop: '24px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '14px', flexWrap: 'wrap' }}>
+          <h3 style={{ margin: 0, fontSize: '18px' }}>七环对账</h3>
+          {sevenRingState === 'done' && sevenRing && (
+            <>
+              {sevenRing.pass ? (
+                <span
+                  data-testid="seven-ring-pass"
+                  style={{ padding: '2px 10px', borderRadius: '4px', fontSize: '13px', fontWeight: 'bold', backgroundColor: '#10b981', color: '#fff' }}
+                >
+                  全环 PASS
+                </span>
+              ) : (
+                <span
+                  data-testid="seven-ring-fail"
+                  style={{ padding: '2px 10px', borderRadius: '4px', fontSize: '13px', fontWeight: 'bold', backgroundColor: '#ef4444', color: '#fff' }}
+                >
+                  硬伤 {sevenRing.hard_flaws}/{7}
+                </span>
+              )}
+              {sevenRing.ratchet_breached && (
+                <span
+                  data-testid="seven-ring-ratchet-breached"
+                  style={{ padding: '2px 10px', borderRadius: '4px', fontSize: '13px', fontWeight: 'bold', backgroundColor: '#7c3aed', color: '#fff' }}
+                >
+                  棘轮击穿 &gt; {sevenRing.ratchet_max}
+                </span>
+              )}
+              {sevenRing.audited_at && (
+                <span style={{ color: '#6b7280', fontSize: '13px' }}>
+                  对账时间 {sevenRing.audited_at.replace('T', ' ').slice(0, 16)}
+                </span>
+              )}
+            </>
+          )}
+          <button
+            data-testid="seven-ring-trigger-btn"
+            onClick={triggerAudit}
+            disabled={triggering}
+            style={{
+              marginLeft: 'auto',
+              padding: '4px 12px',
+              borderRadius: '4px',
+              fontSize: '13px',
+              border: '1px solid #d1d5db',
+              background: '#fff',
+              cursor: triggering ? 'not-allowed' : 'pointer',
+              color: '#374151',
+            }}
+          >
+            {triggering ? '审计中...' : '立即审计'}
+          </button>
+        </div>
+
+        {sevenRingState === 'loading' && <p style={{ color: '#6b7280', fontSize: '14px' }}>加载七环数据...</p>}
+        {sevenRingState === 'unavailable' && (
+          <div
+            data-testid="seven-ring-unavailable"
+            style={{ padding: '14px', border: '1px solid #d1d5db', borderRadius: '8px', background: '#f3f4f6', color: '#6b7280', fontSize: '13px' }}
+          >
+            暂无七环对账数据。点击「立即审计」触发首次运行，或等待每日调度（24h 自 gate）。
+          </div>
+        )}
+        {sevenRingState === 'done' && sevenRing?.rings && (
+          <div data-testid="seven-ring-rings">
+            {sevenRing.rings.map((ring) => (
+              <RingRow key={ring.ring} ring={ring} />
+            ))}
+          </div>
+        )}
       </div>
     </div>
   );

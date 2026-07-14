@@ -1,11 +1,14 @@
 /**
- * Quality API Routes — 测试金字塔快照存取
+ * Quality API Routes — 测试金字塔快照存取 + 七环对账 KV
  *
  * - POST /api/brain/quality/test-pyramid — 接收 test-pyramid-guard --json 输出，
  *   upsert 到 working_memory（key=quality_test_pyramid，含 updated_at）。
  *   数据源：scripts/write-current-state.sh 日更 best-effort POST。
  * - GET  /api/brain/quality/test-pyramid — 返回 {available:true, updated_at, ...快照}；
  *   无数据/DB 异常 → 200 {available:false[, error]}（Dashboard 面板灰态数据，不 500）。
+ * - GET  /api/brain/kv/:key — 通用 working_memory KV 读取（供外部巡检读取任意快照键）
+ * - GET  /api/brain/quality/seven-ring — 七环对账最新结果（来自 scheduler-jobs 日跑写入）
+ * - POST /api/brain/quality/seven-ring/trigger — 立即触发一次七环审计（跳过24h冷却）
  */
 
 import { Router } from 'express';
@@ -49,6 +52,45 @@ router.get('/test-pyramid', async (_req, res) => {
   } catch (err) {
     console.error('[quality/test-pyramid] GET failed:', err);
     res.json({ available: false, error: err.message });
+  }
+});
+
+// ── 七环对账路由 ──────────────────────────────────────────────────────────────
+
+const SEVEN_RING_KEY = 'seven_ring_audit_last';
+
+router.get('/seven-ring', async (_req, res) => {
+  try {
+    const result = await pool.query(
+      'SELECT value_json, updated_at FROM working_memory WHERE key = $1',
+      [SEVEN_RING_KEY],
+    );
+    const row = result.rows[0];
+    if (!row || !row.value_json) {
+      return res.json({ available: false });
+    }
+    res.json({ available: true, updated_at: row.updated_at, ...row.value_json });
+  } catch (err) {
+    console.error('[quality/seven-ring] GET failed:', err);
+    res.json({ available: false, error: err.message });
+  }
+});
+
+router.post('/seven-ring/trigger', async (_req, res) => {
+  try {
+    const { runSevenRingAudit, __resetSevenRingAuditForTest } = await import('../seven-ring-audit.js');
+    __resetSevenRingAuditForTest();
+    const result = await runSevenRingAudit(pool);
+    await pool.query(
+      `INSERT INTO working_memory (key, value_json, updated_at)
+       VALUES ($1, $2::jsonb, NOW())
+       ON CONFLICT (key) DO UPDATE SET value_json = $2::jsonb, updated_at = NOW()`,
+      [SEVEN_RING_KEY, JSON.stringify(result)],
+    );
+    res.json({ ok: true, ...result });
+  } catch (err) {
+    console.error('[quality/seven-ring/trigger] POST failed:', err);
+    res.status(500).json({ error: err.message });
   }
 });
 
