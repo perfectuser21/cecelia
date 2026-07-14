@@ -429,6 +429,23 @@ jobs:
       - name: 真跑守卫
         run: node scripts/test-pyramid-guard.mjs
 
+  # ─── 棘轮统一台账守卫（刀4-T2）────────────────────────────────
+  # 读 ratchet-registry.json，逐项断言健康数未越水位。
+  # Brain 依赖指标（bare_fr / seven_ring_hard_flaws）在 CI 中自动跳过。
+  ratchet-guard:
+    name: 棘轮统一台账守卫
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Guard 自测（proven-to-fire）
+        run: bash scripts/__tests__/ratchet-guard.test.sh
+      - name: 真跑守卫
+        run: node scripts/ratchet-guard.mjs
+
   # ─── Migration 同号守护 ───────────────────────────────────
   # 扫 packages/brain/migrations/*.sql 提取首数字前缀，发现同号即 fail。
   # 教训：W7.4 / 2026-05 事故 — 264_failure_type_dispatch / 264_fix_progress_ledger
