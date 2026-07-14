@@ -13,7 +13,7 @@
 | 入口 | `packages/brain/src/routes.js`（路由汇聚）|
 | Tick 间隔 | 每 5s 检查，每 2min 执行一次 tick |
 | 数据库 | PostgreSQL，库名 `cecelia` |
-| 源文件数 | ~171 个 .js 文件 |
+| 源文件数 | ~172 个 .js 文件 |
 
 ---
 

@@ -248,6 +248,26 @@ app.use(express.json({ limit: '4mb' }));
 app.use('/api/brain/memory', memoryRoutes);
 app.use('/api/brain/settings', settingsRoutes);
 app.use('/api/brain/quality', qualityRoutes);
+
+// KV 读接口：GET /api/brain/kv/:key → 读 working_memory（七环对账 DoD 要求）
+app.get('/api/brain/kv/:key', async (req, res) => {
+  const { key } = req.params;
+  try {
+    const dbPool = (await import('./src/db.js')).default;
+    const result = await dbPool.query(
+      'SELECT value_json, updated_at FROM working_memory WHERE key = $1',
+      [key],
+    );
+    const row = result.rows[0];
+    if (!row || !row.value_json) {
+      return res.status(404).json({ error: 'not found', key });
+    }
+    res.json({ key, updated_at: row.updated_at, ...row.value_json });
+  } catch (err) {
+    console.error('[/api/brain/kv] GET failed:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
 app.use('/api/brain/janitor', janitorRoutes);
 app.use('/api/brain/profile/facts', profileFactsRoutes);
 

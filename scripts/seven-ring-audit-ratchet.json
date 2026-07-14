@@ -1,0 +1,5 @@
+{
+  "hard_defects": 7,
+  "updated_at": "2026-07-14T00:00:00.000Z",
+  "_comment": "初始基线 = 7（七环全未满足，首跑即建基线）。硬伤数只许降不许升。由 seven-ring-audit.js 自动更新。"
+}

@@ -12,6 +12,25 @@ interface PyramidData {
   panel?: { fresh: boolean; generated: string };
 }
 
+interface RingResult {
+  ring: number;
+  label: string;
+  ok: boolean;
+  detail: string;
+}
+
+interface SevenRingData {
+  available: boolean;
+  updated_at?: string;
+  audited_at?: string;
+  rings?: RingResult[];
+  hard_defects?: number;
+  ratchet_baseline?: number;
+  ratchet_breached?: boolean;
+  pass?: boolean;
+  error?: string;
+}
+
 type FetchState = 'loading' | 'done' | 'unavailable';
 
 function LayerCard({ label, count, testId, color }: { label: string; count: number; testId: string; color: string }) {
@@ -54,9 +73,132 @@ function StatCard({ label, count, testId }: { label: string; count: number; test
   );
 }
 
+function SevenRingSection({ data }: { data: SevenRingData }) {
+  if (!data.available) {
+    return (
+      <div
+        data-testid="seven-ring-unavailable"
+        style={{
+          padding: '16px',
+          border: '1px solid #d1d5db',
+          borderRadius: '8px',
+          background: '#f3f4f6',
+          color: '#6b7280',
+          marginTop: '24px',
+        }}
+      >
+        七环对账数据不可用{data.error ? `：${data.error}` : ''}。
+        等调度器下次运行，或 POST /api/brain/quality/seven-ring-audit/run 手动触发。
+      </div>
+    );
+  }
+
+  const rings = data.rings ?? [];
+  const failedRings = rings.filter((r) => !r.ok);
+  const auditedAt = data.audited_at?.replace('T', ' ').slice(0, 19) ?? data.updated_at?.replace('T', ' ').slice(0, 19);
+
+  return (
+    <div data-testid="seven-ring-container" style={{ marginTop: '24px' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '12px', flexWrap: 'wrap' }}>
+        <h3 style={{ margin: 0 }}>七环对账</h3>
+        {data.pass ? (
+          <span
+            data-testid="seven-ring-pass"
+            style={{
+              padding: '2px 10px',
+              borderRadius: '4px',
+              fontSize: '13px',
+              fontWeight: 'bold',
+              backgroundColor: '#10b981',
+              color: '#fff',
+            }}
+          >
+            PASS
+          </span>
+        ) : (
+          <span
+            data-testid="seven-ring-fail"
+            style={{
+              padding: '2px 10px',
+              borderRadius: '4px',
+              fontSize: '13px',
+              fontWeight: 'bold',
+              backgroundColor: data.ratchet_breached ? '#dc2626' : '#f59e0b',
+              color: '#fff',
+            }}
+          >
+            {data.ratchet_breached ? '棘轮击穿' : `${data.hard_defects} 硬伤`}
+          </span>
+        )}
+        {auditedAt && (
+          <span data-testid="seven-ring-audited-at" style={{ color: '#6b7280', fontSize: '13px' }}>
+            核查于 {auditedAt}
+          </span>
+        )}
+        {data.ratchet_baseline !== undefined && (
+          <span style={{ color: '#6b7280', fontSize: '13px' }}>
+            棘轮基线 {data.ratchet_baseline}
+          </span>
+        )}
+      </div>
+
+      <div
+        data-testid="seven-ring-table"
+        style={{
+          border: '1px solid #e5e7eb',
+          borderRadius: '8px',
+          overflow: 'hidden',
+          background: '#fff',
+        }}
+      >
+        {rings.map((ring, idx) => (
+          <div
+            key={ring.ring}
+            data-testid={`ring-row-${ring.ring}`}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '12px',
+              padding: '10px 16px',
+              borderBottom: idx < rings.length - 1 ? '1px solid #f3f4f6' : 'none',
+              background: ring.ok ? '#fff' : '#fef9f0',
+            }}
+          >
+            <span style={{ fontSize: '18px' }}>{ring.ok ? '✅' : '❌'}</span>
+            <span style={{ minWidth: '24px', color: '#9ca3af', fontSize: '13px' }}>环{ring.ring}</span>
+            <span style={{ minWidth: '90px', fontWeight: ring.ok ? 'normal' : 'bold', fontSize: '14px' }}>
+              {ring.label}
+            </span>
+            <span style={{ color: '#6b7280', fontSize: '13px', flex: 1 }}>{ring.detail}</span>
+          </div>
+        ))}
+      </div>
+
+      {failedRings.length > 0 && (
+        <div
+          data-testid="seven-ring-failures"
+          style={{
+            marginTop: '8px',
+            padding: '10px 14px',
+            border: '1px solid #fca5a5',
+            borderLeft: '4px solid #ef4444',
+            borderRadius: '6px',
+            background: '#fef2f2',
+            color: '#b91c1c',
+            fontSize: '13px',
+          }}
+        >
+          硬伤 {failedRings.length} 个：{failedRings.map((r) => r.label).join(' / ')}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function TestPyramidPage() {
   const [data, setData] = useState<PyramidData | null>(null);
   const [fetchState, setFetchState] = useState<FetchState>('loading');
+  const [sevenRing, setSevenRing] = useState<SevenRingData>({ available: false });
 
   useEffect(() => {
     let cancelled = false;
@@ -83,7 +225,24 @@ export default function TestPyramidPage() {
       }
     }
 
+    async function fetchSevenRing() {
+      try {
+        const resp = await fetch('/api/brain/quality/seven-ring-audit');
+        if (cancelled) return;
+        if (!resp.ok) {
+          setSevenRing({ available: false });
+          return;
+        }
+        const body: SevenRingData = await resp.json();
+        if (cancelled) return;
+        setSevenRing(body ?? { available: false });
+      } catch {
+        if (!cancelled) setSevenRing({ available: false });
+      }
+    }
+
     fetchData();
+    fetchSevenRing();
     return () => {
       cancelled = true;
     };
@@ -107,6 +266,7 @@ export default function TestPyramidPage() {
           guard 数据不可用{data?.error ? `：${data.error}` : ''}。
           等每日 03:30 面板日更，或手动 bash scripts/write-current-state.sh 喂数据。
         </div>
+        <SevenRingSection data={sevenRing} />
       </div>
     );
   }
@@ -209,6 +369,8 @@ export default function TestPyramidPage() {
         <StatCard label="孤儿测试" count={orphansTotal} testId="pyramid-orphans" />
         <StatCard label="smoke 未挂跑道" count={unwiredCount} testId="pyramid-unwired" />
       </div>
+
+      <SevenRingSection data={sevenRing} />
     </div>
   );
 }
