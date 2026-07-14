@@ -322,4 +322,23 @@ ${existingList}
   }
 });
 
+/**
+ * GET /battle-report-html
+ * 生成最新作战日报的 PPT 卡片式 HTML，直接返回 text/html。
+ * 用于 HK VPS daily-report 页面的数据源。
+ */
+router.get('/battle-report-html', async (req, res) => {
+  try {
+    const { buildBattleReportData, renderBattleReportHTML } = await import('../battle-report.js');
+    const data = await buildBattleReportData(pool);
+    const day = new Intl.DateTimeFormat('sv-SE', { timeZone: 'Asia/Shanghai' }).format(new Date());
+    const html = renderBattleReportHTML(data, day);
+    res.set('Content-Type', 'text/html; charset=utf-8');
+    res.send(html);
+  } catch (err) {
+    console.error('[design-docs] GET /battle-report-html error:', err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 export default router;
