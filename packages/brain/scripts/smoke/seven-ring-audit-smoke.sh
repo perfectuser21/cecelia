@@ -52,7 +52,9 @@ KV_CODE=$(curl -s -o /dev/null -w "%{http_code}" "http://localhost:5221/api/brai
   || fail "KV 端点无数据（$KV_CODE）"
 
 echo "── 6. 棘轮文件存在 ──"
-RATCHET_FILE="$(dirname "$(dirname "$(dirname "$(dirname "$0")")")")/scripts/seven-ring-audit-ratchet.json"
+# smoke 脚本在 packages/brain/scripts/smoke/ → 4 级 dirname → repo root
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+RATCHET_FILE="$(cd "$SCRIPT_DIR/../../../.." && pwd)/scripts/seven-ring-audit-ratchet.json"
 if [ -f "$RATCHET_FILE" ]; then
   ok "棘轮文件存在: $RATCHET_FILE"
 else
