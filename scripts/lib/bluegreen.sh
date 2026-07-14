@@ -124,6 +124,55 @@ bluegreen_swap() {
     return 1
   fi
 
+  # ── Pre-swap 核心 smoke（T2 闸）─────────────────────────────────────────────
+  # green 健康后、切换前跑 smoke-core.txt，任一失败 → 保留 blue 不切。
+  # SKIP_PRE_SWAP_SMOKE=1 可紧急绕过（须 Bark 告警记录）。
+  local core_list="${DEPLOY_ROOT_DIR:-}/packages/quality/smoke-core.txt"
+  local smoke_dir="${DEPLOY_ROOT_DIR:-}/packages/brain/scripts/smoke"
+  if [[ "${SKIP_PRE_SWAP_SMOKE:-0}" == "1" ]]; then
+    echo "[bluegreen] ⚠️  SKIP_PRE_SWAP_SMOKE=1，跳过 pre-swap smoke（紧急模式）"
+    send_bark "⚠️ brain-deploy 紧急模式：SKIP_PRE_SWAP_SMOKE=1，pre-swap smoke 已跳过，v${version}"
+  elif [[ -n "${DEPLOY_ROOT_DIR:-}" && -f "$core_list" ]]; then
+    echo "[bluegreen] 跑 pre-swap 核心 smoke（green:${port}，预算 ${SMOKE_CORE_TIMEOUT_SECS:-600}s）..."
+    local _smoke_failed=0 _smoke_ran=0 _smoke_start _smoke_elapsed
+    _smoke_start=$(date +%s)
+    while IFS= read -r _script || [[ -n "$_script" ]]; do
+      [[ "$_script" =~ ^[[:space:]]*# ]] && continue
+      [[ -z "${_script// }" ]] && continue
+      local _sf="${smoke_dir}/${_script}"
+      if [[ ! -f "$_sf" ]]; then
+        echo "  [pre-swap-smoke] WARN: ${_script} 不存在，跳过"
+        continue
+      fi
+      _smoke_ran=$((_smoke_ran + 1))
+      _smoke_elapsed=$(( $(date +%s) - _smoke_start ))
+      if [[ "$_smoke_elapsed" -ge "${SMOKE_CORE_TIMEOUT_SECS:-600}" ]]; then
+        echo "  [pre-swap-smoke] ⏰ 超时 ${SMOKE_CORE_TIMEOUT_SECS:-600}s，中止 smoke"
+        _smoke_failed=$((_smoke_failed + 1))
+        break
+      fi
+      if BRAIN_URL="http://localhost:${port}" bash "$_sf"; then
+        echo "  [pre-swap-smoke] ✅ ${_script}"
+      else
+        echo "  [pre-swap-smoke] ❌ ${_script}"
+        _smoke_failed=$((_smoke_failed + 1))
+      fi
+    done < "$core_list"
+    _smoke_elapsed=$(( $(date +%s) - _smoke_start ))
+    echo "  [pre-swap-smoke] 共跑 ${_smoke_ran} 条，失败 ${_smoke_failed} 条，用时 ${_smoke_elapsed}s"
+    if [[ "$_smoke_failed" -gt 0 ]]; then
+      echo "[bluegreen] ❌ pre-swap smoke 未通过（${_smoke_failed} 条失败），保留 blue($blue) 不切"
+      docker rm -f "$green" >/dev/null 2>&1 || true
+      send_bark "pre-swap smoke 失败 v${version}（${_smoke_failed}/${_smoke_ran} 条），已保留 blue(5221不受影响)"
+      bluegreen_guard_blue "$blue"
+      return 1
+    fi
+    echo "[bluegreen] ✅ pre-swap smoke 全部通过（${_smoke_ran} 条，${_smoke_elapsed}s），继续切换"
+  else
+    echo "[bluegreen] ℹ️  smoke-core.txt 不存在或 DEPLOY_ROOT_DIR 未设，跳过 pre-swap smoke"
+  fi
+  # ─────────────────────────────────────────────────────────────────────────
+
   echo "[bluegreen] ✅ green 健康，切换：清 canary → 启 compose sidecar → 删 blue"
   docker rm -f "$green" >/dev/null 2>&1 || true   # canary 仅验证用，切换前清掉
 
