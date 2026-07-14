@@ -93,3 +93,4 @@ rpa-dev-verify-smoke.sh
 three-tier-smoke.sh
 task-result-backfill-smoke.sh
 dev-env-db-guard-smoke.sh
+blade-bc-harness-gates-smoke.sh

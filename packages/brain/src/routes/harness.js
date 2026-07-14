@@ -15,7 +15,7 @@ import { join } from 'path';
 import { homedir } from 'os';
 import { randomUUID } from 'crypto';
 import pool from '../db.js';
-import { runJudgeGate } from '../harness-judge.js';
+import { runJudgeGate, runMechanicalPreflightChecks, checkJudgmentsWritten } from '../harness-judge.js';
 
 const router = Router();
 
@@ -1485,6 +1485,31 @@ router.get('/sprint-docs', async (req, res) => {
 router.post('/complete', async (req, res) => {
   const { initiative_id, sprint_dir, pr_url, screenshots } = req.body ?? {};
   if (!initiative_id) return res.status(400).json({ error: 'initiative_id required' });
+
+  // 收账权收归（决策 dc18d43d）：终态只能来自 watchdog 确认 MERGED（phase=done）后的 report 回写。
+  // 防止 generator callback 提前收账（merged:false 实证）。历史任务无 relay run → 保守继续。
+  try {
+    const runQ = await pool.query(
+      `SELECT phase FROM initiative_runs
+        WHERE initiative_id = $1 AND orchestrator_version = 'v2'
+        ORDER BY started_at DESC LIMIT 1`,
+      [initiative_id]
+    );
+    if (runQ.rows.length > 0 && runQ.rows[0].phase !== 'done') {
+      // 绝不 409：冻结期 skill 把非 2xx 当可重试会造死循环（设计 2026-07-14-harness-lifecycle-gates
+      // 对抗审查明确否决 409）。与 finalize 拒绝同款 200 accepted:false 语义。
+      return res.json({
+        ok: true,
+        accepted: false,
+        reason: `initiative_run_not_done: phase=${runQ.rows[0].phase}`,
+        current_phase: runQ.rows[0].phase,
+        initiative_id,
+      });
+    }
+  } catch (err) {
+    console.warn(`[POST /harness/complete] 收账权检查失败（保守继续）: ${err.message}`);
+  }
+
   try {
     const result = { completed_at: new Date().toISOString() };
     if (pr_url) result.pr_url = pr_url;
@@ -1879,19 +1904,32 @@ router.post('/judge', async (req, res) => {
     return res.status(400).json({ error: 'worktree 目录不存在' });
   }
 
+  // 读取 .brain-result.json（完整对象，供机械预检 + runJudgeGate 使用）
+  let resolvedBrainResult = null;
   let verdict = agent_verdict;
   let feedback = agent_feedback;
-  if (!verdict) {
-    try {
-      const br = JSON.parse(await readFile(join(worktree, '.brain-result.json'), 'utf8'));
-      verdict = br.verdict;
-      if (feedback === undefined) feedback = br.feedback;
-    } catch { /* 下方统一 400 */ }
-  }
+  try {
+    resolvedBrainResult = JSON.parse(await readFile(join(worktree, '.brain-result.json'), 'utf8'));
+    if (!verdict) { verdict = resolvedBrainResult.verdict; }
+    if (feedback === undefined) { feedback = resolvedBrainResult.feedback; }
+  } catch { /* verdict 缺省路径下方统一 400 */ }
   if (!verdict) {
     return res.status(400).json({ error: 'agent_verdict 缺失且 .brain-result.json 不可读' });
   }
   if (verdict === 'FIXED') verdict = 'PASS'; // 前科语义归一（memory: harness-evaluator-verdict-bug）
+
+  // 刀B — 机械预检（同步，纯结构校验，不调 AI）
+  const mechFailSync = runMechanicalPreflightChecks(resolvedBrainResult);
+  if (mechFailSync) {
+    console.warn(`[POST /harness/judge] 机械预检 FAIL: ${mechFailSync.mechFail} task=${task_id}`);
+    return res.json({ ...mechFailSync, judged: false });
+  }
+  // 刀B — judgments_written 对账（异步，DB 查 decisions 表）
+  const mechFailAsync = await checkJudgmentsWritten(resolvedBrainResult, task_id, pool);
+  if (mechFailAsync) {
+    console.warn(`[POST /harness/judge] judgments_written 不匹配 FAIL task=${task_id}`);
+    return res.json({ ...mechFailAsync, judged: false });
+  }
 
   let transcript;
   if (transcript_file) {
@@ -1910,8 +1948,8 @@ router.post('/judge', async (req, res) => {
       instanceLabel: `judge-api-${String(task_id).slice(0, 8)}`,
     }, { dbPool: pool });
 
-    // C2（决策 dc18d43d）：judge 自写 judge_verdict，不依赖 controller 二次 curl 上报。
-    // 只写 judged=true 的真实裁决；FAIL→PASS 允许收敛，PASS 禁被回退；0 行/异常 non-fatal。
+    // 刀C-2：judge 判定后自写 judge_verdict 落库（不依赖 controller 容器内 curl 上报）
+    // 只写 judged=true 的真实裁决；PASS 禁被回退，FAIL→PASS 允许收敛；写失败 non-fatal
     if (result?.judged === true) {
       try {
         await pool.query(
@@ -1922,8 +1960,8 @@ router.post('/judge', async (req, res) => {
               AND judge_verdict IS DISTINCT FROM 'PASS'`,
           [result.verdict, String(task_id)]
         );
-      } catch (jvErr) {
-        console.warn(`[POST /harness/judge] judge_verdict 落库失败（non-fatal）：${jvErr.message}`);
+      } catch (dbErr) {
+        console.warn(`[POST /harness/judge] judge_verdict 落库失败（non-fatal）: ${dbErr.message}`);
       }
     }
 

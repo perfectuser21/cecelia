@@ -57,10 +57,11 @@ describe('POST /harness/complete', () => {
     });
     expect(res.status).toBe(200);
     expect(res.body.ok).toBe(true);
-    // 收账权收归后 /complete 会先跑 finalizeHarnessTask 的 SELECT（mock 返回空行 → applies:false 放行）
-    const updCall = mockQuery.mock.calls.find(([q]) => /UPDATE tasks/.test(q));
-    expect(updCall).toBeTruthy();
-    const [sql, params] = updCall;
+    // 收账权收归守卫先查 initiative_runs，再 UPDATE tasks → 至少 1 次调用
+    expect(mockQuery).toHaveBeenCalled();
+    const updateCall = mockQuery.mock.calls.find(([sql]) => /UPDATE tasks/i.test(String(sql)));
+    expect(updateCall).toBeDefined();
+    const [sql, params] = updateCall;
     expect(sql).toMatch(/UPDATE tasks/);
     expect(params[1]).toBe('test-init-001');
     const result = JSON.parse(params[0]);

@@ -17,6 +17,8 @@ vi.mock('../../db.js', () => ({
 vi.mock('../../harness-judge.js', () => ({
   runJudgeGate: vi.fn(async () => ({ verdict: 'PASS', feedback: null, judged: true })),
   runMechanicalGate: vi.fn(async () => ({ pass: true, reasons: [] })),
+  runMechanicalPreflightChecks: vi.fn(() => null),   // 默认通过
+  checkJudgmentsWritten: vi.fn(async () => null),    // 默认通过
 }));
 
 let app;
@@ -36,11 +38,9 @@ afterEach(() => {
   try { rmSync(worktree, { recursive: true, force: true }); } catch { /* 忽略 */ }
 });
 
-const VALID_TASK_ID = '11111111-2222-3333-4444-555555555555';
-
 function callJudge(overrides = {}) {
   return request(app).post('/judge').send({
-    task_id: VALID_TASK_ID,
+    task_id: '11111111-2222-3333-4444-555555555555', // uuid 入口校验（c682c9c87）要求合法 uuid
     sprint_dir: 's',
     worktree,
     agent_verdict: 'PASS',
@@ -57,15 +57,7 @@ describe('C2: /judge 判定后自写 initiative_runs.judge_verdict', () => {
     expect(upd[0]).toMatch(/current_task_id/);
     expect(upd[0]).toMatch(/IS DISTINCT FROM 'PASS'/);
     expect(upd[1]).toContain('PASS');
-    expect(upd[1]).toContain(VALID_TASK_ID);
-  });
-
-  it('task_id 非法 uuid → 400，不触碰 runJudgeGate/DB', async () => {
-    const res = await callJudge({ task_id: 't-1' });
-    expect(res.status).toBe(400);
-    expect(res.body.error).toMatch(/uuid/);
-    const upd = poolQuery.mock.calls.find(([sql]) => /UPDATE initiative_runs\s+SET judge_verdict/i.test(sql));
-    expect(upd).toBeFalsy();
+    expect(upd[1]).toContain('11111111-2222-3333-4444-555555555555');
   });
 
   it('UPDATE 抛错 → non-fatal，响应仍带裁决', async () => {

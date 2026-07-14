@@ -2996,7 +2996,34 @@ async function _driveHarnessInitiative(task, opts = {}) {
   // harness-controller skill，不 compile / 不 invoke 图。
   const { spawnSkillRelaySession } = await import('./harness-skill-relay.js');
   const relayDeps = { pool: dbPool, ...(opts.skillRelayDeps || {}) };
-  return await spawnSkillRelaySession(task, relayDeps);
+  const _ireInitiativeId = task.payload?.initiative_id || task.id;
+  let _relayResult;
+  try {
+    _relayResult = await spawnSkillRelaySession(task, relayDeps);
+  } catch (spawnErr) {
+    // 刀C-3：spawn 失败 → skill-relay-spawn 事件写终态 failed（解决 17 条永久 running）
+    try {
+      await dbPool.query(
+        `UPDATE initiative_run_events SET status = $1
+           WHERE initiative_id = $2 AND node = 'skill-relay-spawn' AND status = 'running'`,
+        ['failed', _ireInitiativeId]
+      );
+    } catch (ireErr) {
+      console.warn(`[executor] skill-relay-spawn event terminal update failed (non-fatal): ${ireErr.message}`);
+    }
+    throw spawnErr;
+  }
+  // 刀C-3：spawn 完成 → skill-relay-spawn 事件写终态 done（解决 17 条永久 running）
+  try {
+    await dbPool.query(
+      `UPDATE initiative_run_events SET status = $1
+         WHERE initiative_id = $2 AND node = 'skill-relay-spawn' AND status = 'running'`,
+      ['done', _ireInitiativeId]
+    );
+  } catch (ireErr) {
+    console.warn(`[executor] skill-relay-spawn event terminal update failed (non-fatal): ${ireErr.message}`);
+  }
+  return _relayResult;
 }
 
 /**

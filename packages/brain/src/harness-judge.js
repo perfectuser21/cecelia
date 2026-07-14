@@ -57,6 +57,47 @@ export function normalizeJudgeVerdict(v) {
   return 'FAIL';
 }
 
+// ── 刀B 机械预检（root 杠杆，决策 dc18d43d「无闸不成文」）────────────────────
+// 同步校验 brainResult 结构，任一项不满足即返回 FAIL 对象（null = 全过）。
+// 在 judge 路由最前执行，不进 AI 裁判。
+export function runMechanicalPreflightChecks(brainResult) {
+  if (!brainResult || !Array.isArray(brainResult.behavior_tests) || brainResult.behavior_tests.length === 0) {
+    return { verdict: 'FAIL', feedback: 'behavior_tests 为空：evaluator 未提供行为测试结果', mechFail: 'no_behavior_tests' };
+  }
+  if (brainResult.exit_code === undefined || brainResult.exit_code === null) {
+    return { verdict: 'FAIL', feedback: 'verdict 缺 exit_code：退出码证据缺失', mechFail: 'missing_exit_code' };
+  }
+  if (!brainResult.log_tail || String(brainResult.log_tail).trim() === '') {
+    return { verdict: 'FAIL', feedback: 'verdict 缺 log_tail：执行日志证据缺失', mechFail: 'missing_log_tail' };
+  }
+  return null;
+}
+
+// 异步对账 judgments_written 声明数 vs decisions 表实际写入数。
+// 声明 != 实查 → FAIL；未声明/DB 异常 → null（保守跳过）。
+export async function checkJudgmentsWritten(brainResult, taskId, pool) {
+  const declared = brainResult?.judgments_written;
+  if (declared === undefined || declared === null) return null;
+  try {
+    const { rows } = await pool.query(
+      `SELECT COUNT(*)::int AS cnt FROM decisions WHERE source_ref = $1 AND category = 'judgment'`,
+      [String(taskId)]
+    );
+    const actual = Number(rows[0]?.cnt ?? 0);
+    if (Number(declared) !== actual) {
+      return {
+        verdict: 'FAIL',
+        feedback: `judgments_written 声明 ${declared} 条，decisions 表实查 ${actual} 条`,
+        mechFail: 'judgments_written_mismatch',
+      };
+    }
+    return null;
+  } catch (err) {
+    console.warn(`[judge] checkJudgmentsWritten DB 查询失败（保守跳过）: ${err.message}`);
+    return null;
+  }
+}
+
 // ── 合同 / Golden Path 解析 ──────────────────────────────────────────────────
 // 从 contract-draft.md 提取 ## E2E 验收 段（裁判据此知道「该验什么」）。
 export function extractE2ESection(contractText) {
