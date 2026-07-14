@@ -3,7 +3,7 @@ import { FeatureManifest } from '../types';
 const manifest: FeatureManifest = {
   name: 'Cecelia',
   id: 'cecelia',
-  version: '1.3.0',
+  version: '1.4.0',
   source: 'core',
   instances: ['core'],
 
@@ -22,6 +22,7 @@ const manifest: FeatureManifest = {
           { path: '/cecelia/diary', label: '日记', icon: 'BookOpen', order: 2 },
           { path: '/cecelia/growth', label: '成长档案', icon: 'Sprout', order: 3 },
           { path: '/cecelia/evolution', label: '进化日志', icon: 'TrendingUp', order: 4 },
+          { path: '/cecelia/ledger', label: '11要素账本', icon: 'ClipboardList', order: 5 },
         ],
       },
     },
@@ -29,6 +30,7 @@ const manifest: FeatureManifest = {
     { path: '/cecelia/diary', component: 'DiaryPage' },
     { path: '/cecelia/growth', component: 'GrowthProfilePage' },
     { path: '/cecelia/evolution', component: 'EvolutionPage' },
+    { path: '/cecelia/ledger', component: 'FeatureLedgerPage' },
     { path: '/cecelia/config', redirect: '/system/team' },
   ],
 
@@ -38,6 +40,7 @@ const manifest: FeatureManifest = {
     DiaryPage: () => import('./pages/DiaryPage'),
     GrowthProfilePage: () => import('./pages/GrowthProfilePage'),
     EvolutionPage: () => import('./pages/EvolutionPage'),
+    FeatureLedgerPage: () => import('./pages/FeatureLedgerPage'),
   },
 };
 
