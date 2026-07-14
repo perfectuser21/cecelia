@@ -48,7 +48,7 @@ if psql -h "$DB_HOST" -p "$DB_PORT" -U "$DB_USER" -lqt 2>/dev/null | cut -d'|' -
     log_fail "cecelia_dev schema_version 表不存在或无记录"
   fi
 else
-  log_fail "cecelia_dev 数据库不可访问（psql -U $DB_USER -lqt | grep $DB_NAME）"
+  log_fail "cecelia_dev 数据库不可访问（psql -U ${DB_USER} -lqt | grep ${DB_NAME}）"
 fi
 
 echo ""

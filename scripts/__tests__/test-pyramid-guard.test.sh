@@ -13,7 +13,7 @@ check() { # $1=期望退出码 $2=描述
   if [ "$actual" -eq "$expect" ] || { [ "$expect" -ne 0 ] && [ "$actual" -ne 0 ]; }; then
     echo "✅ $desc"; PASS=$((PASS+1))
   else
-    echo "❌ $desc（期望 exit=$expect 实际 exit=$actual）"; FAIL=$((FAIL+1))
+    echo "❌ ${desc}（期望 exit=${expect} 实际 exit=${actual}）"; FAIL=$((FAIL+1))
   fi
 }
 

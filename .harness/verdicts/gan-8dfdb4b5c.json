@@ -1,0 +1,17 @@
+{
+  "verdict": "APPROVED",
+  "rubric_scores": {
+    "completeness": {"score": 5, "reason": "PRD 5个FR及6条Invariant均在contract-dod.md中一一对应"},
+    "testability": {"score": 5, "reason": "7条[BEHAVIOR]条目均有具体可执行的bash断言设计"},
+    "correctness": {"score": 5, "reason": "合同对根因描述与bug说明完全一致，修复方案精确对齐"},
+    "scope_discipline": {"score": 5, "reason": "明确限定只修改ci-poll.sh第18-19行，未引入范围蔓延"},
+    "stub_isolation": {"score": 5, "reason": "PATH前置fake gh脚本隔离，列出5条真实API排除说明"},
+    "regression_safety": {"score": 5, "reason": "退出码0/10/11三种协议均有对应[BEHAVIOR]和可执行测试"},
+    "e2e_coverage": {"score": 4, "reason": "全绿/失败/BEHIND三场景完整，PENDING场景未单独列E2E命令"}
+  },
+  "judgments_written": 7,
+  "concerns": [
+    "minor: PENDING场景未提供独立E2E命令，但PRD验收表也未要求",
+    "minor: stderr输出捕获方式建议用$?而非echo exit_code=追踪"
+  ]
+}
