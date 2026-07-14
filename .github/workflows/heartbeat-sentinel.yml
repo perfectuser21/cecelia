@@ -1,0 +1,226 @@
+name: Heartbeat Sentinel（机外死人开关——反向探测生产）
+
+# 机外心跳：GitHub runner 在地盘A，探测地盘B生产是否存活。
+# 整机死亡时本机所有守卫陪葬，本 workflow 是唯一能感知"寂静"的探测器。
+#
+# 探测两项：
+#   1. GET /api/brain/health → status == "healthy"
+#   2. KV smoke-nightly-last-run updated_at < 26h
+#
+# 任一失败 → 开 GitHub Issue（[heartbeat-sentinel]，已有 open 同款则跳过）+ Bark 推送
+# 探测 URL 走 workflow env（演习时传死端口，不停生产）
+
+on:
+  schedule:
+    # 每 30 分钟（UTC）
+    - cron: '*/30 * * * *'
+  workflow_dispatch:
+    inputs:
+      probe_url:
+        description: '演习用：覆盖探测 URL（如 http://100.71.151.105:19999 死端口）'
+        required: false
+        default: ''
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: heartbeat-sentinel
+  cancel-in-progress: false
+
+env:
+  # 正常用生产 URL（via secret），演习时 workflow_dispatch 传 probe_url 覆盖
+  BRAIN_PROBE_URL: ${{ github.event.inputs.probe_url || secrets.BRAIN_DEPLOY_URL || 'http://100.71.151.105:5221' }}
+
+jobs:
+  sentinel:
+    name: 机外心跳探测（Brain health + KV 时效）
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Connect to Tailscale
+        uses: tailscale/github-action@v2
+        with:
+          authkey: ${{ secrets.TS_AUTHKEY }}
+
+      - name: 探测 Brain /api/brain/health
+        id: health
+        run: |
+          set -uo pipefail
+          CODE=$(curl -sf -o /tmp/health.json -w "%{http_code}" -m 15 \
+            "${BRAIN_PROBE_URL}/api/brain/health" 2>/dev/null || echo "000")
+          echo "http_code=$CODE"
+
+          if [ "$CODE" = "200" ]; then
+            STATUS=$(python3 -c "
+          import json, sys
+          try:
+            d = json.load(open('/tmp/health.json'))
+            print(d.get('status', 'unknown'))
+          except Exception as e:
+            print('parse_failed')
+          ")
+            if [ "$STATUS" = "healthy" ]; then
+              echo "health_ok=true" >> $GITHUB_OUTPUT
+              echo "health_detail=HTTP 200, status=healthy" >> $GITHUB_OUTPUT
+              echo "OK: Brain /health healthy"
+            else
+              echo "health_ok=false" >> $GITHUB_OUTPUT
+              echo "health_detail=HTTP 200 但 status=${STATUS}（非 healthy）" >> $GITHUB_OUTPUT
+              echo "FAIL: Brain /health 不健康: status=${STATUS}"
+            fi
+          else
+            echo "health_ok=false" >> $GITHUB_OUTPUT
+            echo "health_detail=HTTP ${CODE}（不可达）" >> $GITHUB_OUTPUT
+            echo "FAIL: Brain /health HTTP ${CODE}"
+          fi
+
+      - name: 探测 KV smoke-nightly-last-run 时效（< 26h）
+        id: kv
+        run: |
+          set -uo pipefail
+          curl -sf -m 15 \
+            "${BRAIN_PROBE_URL}/api/brain/kv/smoke-nightly-last-run" \
+            -o /tmp/kv.json 2>/dev/null || echo '{}' > /tmp/kv.json
+
+          python3 - << 'PYEOF'
+          import json, sys, datetime
+          from datetime import timezone
+
+          with open('/tmp/kv.json') as f:
+            d = json.load(f)
+
+          ua = d.get('updated_at', '')
+          if not ua:
+            print('KV_OK=false')
+            print('KV_AGE_H=missing')
+            print('FAIL: KV smoke-nightly-last-run 不存在或无 updated_at')
+            sys.exit(0)
+
+          try:
+            dt = datetime.datetime.fromisoformat(ua.replace('Z', '+00:00'))
+            now = datetime.datetime.now(timezone.utc)
+            diff_h = (now - dt).total_seconds() / 3600
+            is_fresh = diff_h < 26
+            print(f'KV_OK={"true" if is_fresh else "false"}')
+            print(f'KV_AGE_H={diff_h:.1f}')
+            status = "OK" if is_fresh else "FAIL"
+            threshold = "< 26h" if is_fresh else "> 26h 已过期"
+            print(f'{status}: KV updated {diff_h:.1f}h 前（{threshold}）')
+          except Exception as e:
+            print('KV_OK=false')
+            print('KV_AGE_H=parse_error')
+            print(f'FAIL: KV 时间解析失败: {e}')
+          PYEOF
+
+          # 把 python 输出的 KEY=VALUE 写入 GITHUB_OUTPUT
+          python3 - << 'PYEOF' >> $GITHUB_OUTPUT
+          import json, datetime
+          from datetime import timezone
+
+          with open('/tmp/kv.json') as f:
+            d = json.load(f)
+
+          ua = d.get('updated_at', '')
+          if not ua:
+            print('kv_ok=false')
+            print('kv_age_h=missing')
+          else:
+            try:
+              dt = datetime.datetime.fromisoformat(ua.replace('Z', '+00:00'))
+              now = datetime.datetime.now(timezone.utc)
+              diff_h = (now - dt).total_seconds() / 3600
+              print(f'kv_ok={"true" if diff_h < 26 else "false"}')
+              print(f'kv_age_h={diff_h:.1f}')
+            except:
+              print('kv_ok=false')
+              print('kv_age_h=error')
+          PYEOF
+
+      - name: 汇总并决定告警
+        id: summary
+        run: |
+          HEALTH="${{ steps.health.outputs.health_ok }}"
+          KV="${{ steps.kv.outputs.kv_ok }}"
+
+          FAIL_REASONS=""
+          [ "$HEALTH" != "true" ] && FAIL_REASONS="${FAIL_REASONS}Brain/health异常(${{ steps.health.outputs.health_detail }}); "
+          [ "$KV" != "true" ] && FAIL_REASONS="${FAIL_REASONS}KV超期(${{ steps.kv.outputs.kv_age_h }}h); "
+
+          if [ "$HEALTH" = "true" ] && [ "$KV" = "true" ]; then
+            echo "all_ok=true" >> $GITHUB_OUTPUT
+            echo "fail_reasons=" >> $GITHUB_OUTPUT
+            echo "全部探测通过"
+          else
+            echo "all_ok=false" >> $GITHUB_OUTPUT
+            echo "fail_reasons=${FAIL_REASONS}" >> $GITHUB_OUTPUT
+            echo "探测失败: ${FAIL_REASONS}"
+          fi
+
+      - name: 确保 heartbeat-sentinel label 存在
+        if: steps.summary.outputs.all_ok == 'false'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh label create "heartbeat-sentinel" \
+            --color "D93F0B" \
+            --description "机外心跳哨兵告警" \
+            --repo "${{ github.repository }}" 2>/dev/null || true
+
+      - name: 开 GitHub Issue（去重：已有 open 同款则跳过）
+        if: steps.summary.outputs.all_ok == 'false'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          FAIL_REASONS: ${{ steps.summary.outputs.fail_reasons }}
+        run: |
+          set -uo pipefail
+          TITLE="[heartbeat-sentinel] 生产心跳异常"
+
+          # 去重：已有任意 open 的 [heartbeat-sentinel] issue → 跳过
+          EXISTING=$(gh api "repos/${REPO}/issues?state=open&labels=heartbeat-sentinel&per_page=50" \
+            --jq '[.[] | select(.title | startswith("[heartbeat-sentinel]"))] | length' \
+            2>/dev/null || echo "0")
+
+          if [ "${EXISTING:-0}" -gt 0 ]; then
+            echo "已有 open heartbeat-sentinel issue，跳过重复开 issue"
+            exit 0
+          fi
+
+          BODY="## 生产心跳探测失败"
+          BODY="$BODY"$'\n\n'"**时间**: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          BODY="$BODY"$'\n'"**失败原因**: ${FAIL_REASONS}"
+          BODY="$BODY"$'\n'"**探测 URL**: ${BRAIN_PROBE_URL}"
+          BODY="$BODY"$'\n'"**Brain /health**: ${{ steps.health.outputs.health_detail }}"
+          BODY="$BODY"$'\n'"**KV 时效**: ${{ steps.kv.outputs.kv_age_h }}h 前更新"
+          BODY="$BODY"$'\n\n'"**Run 链接**: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+
+          gh issue create \
+            --title "$TITLE" \
+            --body "$BODY" \
+            --label "heartbeat-sentinel" \
+            --repo "${REPO}"
+
+          echo "Issue 已创建"
+
+      - name: Bark 告警推送
+        if: steps.summary.outputs.all_ok == 'false'
+        env:
+          BARK_URL: ${{ secrets.BARK_URL }}
+          FAIL_REASONS: ${{ steps.summary.outputs.fail_reasons }}
+        run: |
+          if [ -z "${BARK_URL:-}" ]; then
+            echo "BARK_URL 未配置，跳过 Bark 推送"
+            exit 0
+          fi
+          TITLE="生产心跳异常"
+          BODY="${FAIL_REASONS}"
+          TITLE_ENC=$(python3 -c "import urllib.parse,sys; print(urllib.parse.quote(sys.argv[1]))" "$TITLE")
+          BODY_ENC=$(python3 -c "import urllib.parse,sys; print(urllib.parse.quote(sys.argv[1]))" "$BODY")
+          curl -sf --max-time 10 \
+            "${BARK_URL}/${TITLE_ENC}/${BODY_ENC}?group=heartbeat-sentinel&level=critical" \
+            -o /dev/null \
+            && echo "Bark 推送成功" \
+            || echo "Bark 推送失败（不阻断流程）"
