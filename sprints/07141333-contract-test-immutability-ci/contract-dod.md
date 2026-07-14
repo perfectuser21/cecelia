@@ -1,5 +1,7 @@
 # Contract DoD — lint-contract-test-immutability CI 机械闸
 
+<!-- [BEHAVIOR] 总计 5 条（编号形式 BEHAVIOR-1 至 BEHAVIOR-5） -->
+
 ## DoD 条目
 
 ### [BEHAVIOR-1] 违规测试文件 → exit 1 + 清单输出
