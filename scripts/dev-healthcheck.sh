@@ -87,7 +87,7 @@ do_healthcheck() {
       reset_fail_count
       return 0
     else
-      log_warn "5220 返回 200 但 status=$status（异常）"
+      log_warn "5220 返回 200 但 status=${status}（异常）"
       return 1
     fi
   else

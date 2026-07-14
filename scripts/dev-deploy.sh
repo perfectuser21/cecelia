@@ -68,12 +68,12 @@ CURRENT_VERSION="${CURRENT_VERSION:-0}"
 EXPECTED_VERSION=$(grep -o "EXPECTED_SCHEMA_VERSION[[:space:]]*=[[:space:]]*[0-9]*" \
   "$BRAIN_DIR/src/selfcheck.js" 2>/dev/null | grep -o "[0-9]*$" || echo "")
 
-log_info "当前 schema_version: $CURRENT_VERSION，期望: ${EXPECTED_VERSION:-未知}"
+log_info "当前 schema_version: ${CURRENT_VERSION}，期望: ${EXPECTED_VERSION:-未知}"
 
 # 若已有 .migrate-success 且版本匹配，跳过 migrate
 if [[ -f "$MIGRATE_SUCCESS_FLAG" ]] && [[ -n "$EXPECTED_VERSION" ]] && \
    [[ "$CURRENT_VERSION" == "$EXPECTED_VERSION" ]]; then
-  log_info "migrate 已完成（version=$CURRENT_VERSION），跳过"
+  log_info "migrate 已完成（version=${CURRENT_VERSION}），跳过"
 else
   log_info "开始执行 migrations..."
 
@@ -95,7 +95,7 @@ else
       log_error "  createdb -h $DB_HOST -p $DB_PORT -U $DB_USER $DB_NAME"
       log_error "  psql cecelia_dev < $LATEST_BACKUP"
     else
-      log_error "  （未找到备份文件，请检查 $BACKUP_DIR）"
+      log_error "  （未找到备份文件，请检查 ${BACKUP_DIR}）"
     fi
     log_error "=========================================="
     exit 1
