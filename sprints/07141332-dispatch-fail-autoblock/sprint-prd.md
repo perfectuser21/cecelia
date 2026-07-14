@@ -184,3 +184,6 @@ assert:  task.metadata.dispatch_fail_consecutive === 0（或未写）
 ---
 
 *生成时间：2026-07-14 | Brain Task: 7c5d6df8*
+
+journey_type: feature
+target_environment: local_api
