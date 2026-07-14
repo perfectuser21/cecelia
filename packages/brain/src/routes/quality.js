@@ -37,15 +37,21 @@ router.post('/test-pyramid', async (req, res) => {
 
 router.get('/test-pyramid', async (_req, res) => {
   try {
-    const result = await pool.query(
-      'SELECT value_json, updated_at FROM working_memory WHERE key = $1',
-      [MEMORY_KEY]
-    );
-    const row = result.rows[0];
+    const [snapshotResult, bareFrResult] = await Promise.all([
+      pool.query('SELECT value_json, updated_at FROM working_memory WHERE key = $1', [MEMORY_KEY]),
+      pool.query(`SELECT COUNT(*)::int AS count FROM journey_features WHERE guard_ref IS NULL AND status = 'live'`).catch(() => null),
+    ]);
+    const row = snapshotResult.rows[0];
     if (!row || !row.value_json) {
       return res.json({ available: false });
     }
-    res.json({ available: true, updated_at: row.updated_at, ...row.value_json });
+    const liveFrCount = bareFrResult?.rows?.[0]?.count ?? null;
+    const snapshotBareFr = row.value_json?.bare_fr ?? null;
+    // 用实时库查值覆盖快照计数，基线保留快照里的值
+    const bare_fr = liveFrCount !== null && snapshotBareFr !== null
+      ? { ...snapshotBareFr, count: liveFrCount }
+      : snapshotBareFr;
+    res.json({ available: true, updated_at: row.updated_at, ...row.value_json, bare_fr });
   } catch (err) {
     console.error('[quality/test-pyramid] GET failed:', err);
     res.json({ available: false, error: err.message });
