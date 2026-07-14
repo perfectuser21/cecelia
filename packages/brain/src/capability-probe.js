@@ -123,9 +123,29 @@ async function probeDatabase() {
 }
 
 async function probeDispatch() {
-  // Verify executor module is importable and skill map exists
-  const { getActiveProcessCount, MAX_SEATS } = await import('./executor.js');
-  const active = getActiveProcessCount();
+  // Verify executor module is importable and skill map exists.
+  // Wrap in try-catch so a missing/broken executor.js surfaces as ok=false in detail
+  // rather than propagating as an unhandled exception to the outer probe runner.
+  // This can happen when a preview worktree is based on a branch that predates executor.js.
+  let executorModule;
+  try {
+    executorModule = await import('./executor.js');
+  } catch (err) {
+    return {
+      ok: false,
+      detail: `executor module not importable: ${err.message.slice(0, 120)}`,
+    };
+  }
+  const { getActiveProcessCount, MAX_SEATS } = executorModule;
+  let active;
+  try {
+    active = getActiveProcessCount();
+  } catch (err) {
+    return {
+      ok: false,
+      detail: `executor.getActiveProcessCount failed: ${err.message.slice(0, 120)}`,
+    };
+  }
   return {
     ok: true,
     detail: `active=${active}/${MAX_SEATS}`,
