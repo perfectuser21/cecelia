@@ -137,3 +137,30 @@ describe('graduate 真搬', () => {
     expect(planGraduation(root, sprintDir)).toEqual(graduate(root, sprintDir, { dryRun: true }));
   });
 });
+
+describe('updateRefs', () => {
+  it('毕业后重写根 DoD.md 里的旧路径引用（updateRefs: true）', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'grad-refs-'));
+    try {
+      fs.mkdirSync(path.join(root, 'sprints/07130939-relay-x/tests'), { recursive: true });
+      fs.writeFileSync(path.join(root, 'sprints/07130939-relay-x/tests/a.test.ts'), '');
+      fs.writeFileSync(path.join(root, 'sprints/07130939-relay-x/e2e-verify.sh'), '');
+      fs.writeFileSync(path.join(root, 'DoD.md'),
+        'Test: manual:bash sprints/07130939-relay-x/e2e-verify.sh\n' +
+        'Test: sprints/07130939-relay-x/tests/a.test.ts\n');
+      graduate(root, 'sprints/07130939-relay-x', { updateRefs: true });
+      const dod = fs.readFileSync(path.join(root, 'DoD.md'), 'utf8');
+      expect(dod).toContain('scripts/smoke/e2e/relay-x.sh');
+      expect(dod).toContain('tests/regression/relay-x/a.test.ts');
+      expect(dod).not.toContain('sprints/07130939-relay-x/e2e-verify.sh');
+    } finally { fs.rmSync(root, { recursive: true, force: true }); }
+  });
+  it('无 DoD.md 时 updateRefs 静默跳过', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'grad-norefs-'));
+    try {
+      fs.mkdirSync(path.join(root, 'sprints/s1/tests'), { recursive: true });
+      fs.writeFileSync(path.join(root, 'sprints/s1/tests/a.test.ts'), '');
+      expect(() => graduate(root, 'sprints/s1', { updateRefs: true })).not.toThrow();
+    } finally { fs.rmSync(root, { recursive: true, force: true }); }
+  });
+});
