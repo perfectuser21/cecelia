@@ -41,7 +41,7 @@ for TABLE in "${TABLES[@]}"; do
     "SELECT table_schema FROM information_schema.tables WHERE table_name='$TABLE' AND table_schema IN ('public','zenithjoy');" \
     | tr -d ' ')
   if [ "$SCHEMA" != "zenithjoy" ]; then
-    echo "  ❌ $TABLE 迁移后仍不在 zenithjoy schema（实际: $SCHEMA），中止"
+    echo "  ❌ $TABLE 迁移后仍不在 zenithjoy schema（实际: ${SCHEMA}），中止"
     exit 1
   fi
   echo "  ✅ $TABLE 已在 zenithjoy schema"

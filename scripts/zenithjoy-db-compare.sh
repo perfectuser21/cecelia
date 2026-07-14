@@ -109,8 +109,8 @@ for TABLE in "${BARE_TABLES[@]}"; do
   ZJ_BARE=$($PSQL -d "$ZJ_DB" -tc \
     "SELECT count(*) FROM zenithjoy.\"$TABLE\";" 2>/dev/null | tr -d ' ')
   if [ "$CECELIA_BARE" != "$ZJ_BARE" ]; then
-    echo "  ⚠️  $TABLE: cecelia=$CECELIA_BARE zenithjoy=$ZJ_BARE（不一致）"
+    echo "  ⚠️  $TABLE: cecelia=$CECELIA_BARE zenithjoy=${ZJ_BARE}（不一致）"
   else
-    echo "  ✅ $TABLE: $CECELIA_BARE（一致）"
+    echo "  ✅ $TABLE: ${CECELIA_BARE}（一致）"
   fi
 done
