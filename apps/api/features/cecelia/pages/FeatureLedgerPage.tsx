@@ -12,6 +12,53 @@ import { RefreshCw, ChevronDown, ChevronRight, AlertTriangle, CheckCircle2, Circ
 
 type ElementStatus = 'ok' | 'partial' | 'missing' | 'stale' | 'alert' | 'unknown';
 
+interface RawFeature {
+  id: string;
+  name: string;
+  domain: string;
+  area: string | null;
+  priority: string | null;
+  status: string;
+  description: string | null;
+  smoke_cmd: string | null;
+  smoke_status: string | null;
+  smoke_last_run: string | null;
+  has_unit_test: boolean;
+  has_integration_test: boolean;
+  has_e2e: boolean;
+  last_verified: string | null;
+  notes: string | null;
+  updated_at: string;
+}
+
+function daysDiff(isoStr: string | null): number | null {
+  if (!isoStr) return null;
+  return Math.floor((Date.now() - new Date(isoStr).getTime()) / 86400000);
+}
+
+function computeLedgerClient(f: RawFeature): LedgerStatus {
+  const daysVerified = daysDiff(f.last_verified);
+  const daysUpdated = daysDiff(f.updated_at);
+  const testScore = (f.has_unit_test ? 1 : 0) + (f.has_integration_test ? 1 : 0) + (f.has_e2e ? 1 : 0);
+  return {
+    fr: f.description ? 'ok' : 'missing',
+    nfr: f.smoke_cmd ? 'partial' : 'missing',
+    invariant: (f.notes && /铁律|invariant/i.test(f.notes)) ? 'ok' : 'missing',
+    checkpoints: testScore,
+    checkpoints_max: 3,
+    checkpoints_status: testScore === 3 ? 'ok' : testScore > 0 ? 'partial' : 'missing',
+    freshness_days: daysVerified,
+    freshness_status: daysVerified === null ? 'missing' : daysVerified <= 30 ? 'ok' : daysVerified <= 90 ? 'partial' : 'stale',
+    death_alert: f.smoke_status === 'failing' ? 'alert' : f.smoke_status === 'passing' ? 'ok' : f.smoke_cmd ? 'unknown' : 'missing',
+    failure_semantics: f.notes ? 'ok' : 'missing',
+    effect_confirmed: f.smoke_status === 'passing' ? 'ok' : f.smoke_cmd ? 'partial' : 'missing',
+    adversarial: (f.notes && /对抗|adversar|攻击/i.test(f.notes)) ? 'ok' : 'missing',
+    ledger_age_days: daysUpdated,
+    ledger_status: daysUpdated === null ? 'missing' : daysUpdated <= 7 ? 'ok' : daysUpdated <= 30 ? 'partial' : 'stale',
+    axis_aligned: (f.priority && f.status === 'active') ? 'ok' : f.priority ? 'partial' : 'missing',
+  };
+}
+
 interface LedgerStatus {
   fr: ElementStatus;
   nfr: ElementStatus;
@@ -382,10 +429,34 @@ export default function FeatureLedgerPage() {
   const fetchData = async (showRefresh = false) => {
     if (showRefresh) setRefreshing(true);
     try {
+      // 优先尝试 Brain 预计算端点（需要 Brain 重启后才生效）
       const res = await fetch('/api/brain/features/ledger');
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const json = await res.json();
-      setData(json);
+      if (res.ok) {
+        const json = await res.json();
+        if (json.domains) {
+          setData(json);
+          setError(null);
+          return;
+        }
+      }
+      // 降级：从 /features 原始数据客户端计算
+      const r2 = await fetch('/api/brain/features?limit=500');
+      if (!r2.ok) throw new Error(`HTTP ${r2.status}`);
+      const raw = await r2.json();
+      const features: RawFeature[] = raw.features || [];
+      const grouped: Record<string, Feature[]> = {};
+      for (const f of features) {
+        const dom = f.domain || '(未分类)';
+        if (!grouped[dom]) grouped[dom] = [];
+        grouped[dom].push({ ...f, ledger: computeLedgerClient(f) });
+      }
+      setData({
+        domains: Object.entries(grouped)
+          .sort(([a], [b]) => a.localeCompare(b))
+          .map(([domain, items]) => ({ domain, items })),
+        total: features.length,
+        generated_at: new Date().toISOString(),
+      });
       setError(null);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
