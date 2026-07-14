@@ -450,6 +450,6 @@ describe('selfcheck schema version', () => {
     // 341 = migration 341 zenithjoy 裸表归位 schema（P0 事故修复版，无 ALTER DATABASE 副作用），
     // 342 = migration 342 decisions.source_ref 决策溯源列，故推进地板到 342。
     // 343 = migration 343 journey_features.guard_ref 裸奔 FR 守卫引用，故推进地板到 343。
-    expect(EXPECTED_SCHEMA_VERSION).toBe('343');
+    expect(EXPECTED_SCHEMA_VERSION).toBe('344');
   });
 });
