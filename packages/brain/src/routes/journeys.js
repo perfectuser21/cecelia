@@ -91,6 +91,19 @@ router.get('/journeys/:id', async (req, res) => {
   }
 });
 
+// GET /api/brain/journey_features/unguarded-count — 裸奔 FR 数（guard_ref IS NULL AND status='live'）
+router.get('/journey_features/unguarded-count', async (_req, res) => {
+  try {
+    const { rows } = await pool.query(
+      `SELECT COUNT(*)::int AS count FROM journey_features WHERE guard_ref IS NULL AND status = 'live'`
+    );
+    res.json({ count: rows[0].count });
+  } catch (err) {
+    console.error('[journeys] GET /journey_features/unguarded-count error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // GET /api/brain/journey_features
 router.get('/journey_features', async (req, res) => {
   try {
@@ -117,7 +130,7 @@ router.get('/journey_features', async (req, res) => {
 // POST /api/brain/journey_features
 router.post('/journey_features', async (req, res) => {
   try {
-    const { name, journey_id, thickness, status, area, unit_test_path, version, kind, workflow_ref } = req.body;
+    const { name, journey_id, thickness, status, area, unit_test_path, version, kind, workflow_ref, guard_ref } = req.body;
     if (!name) return res.status(400).json({ error: 'name is required' });
     if (thickness && !VALID_THICKNESS.includes(thickness)) {
       return res.status(400).json({ error: `thickness must be one of: ${VALID_THICKNESS.join(',')}` });
@@ -141,8 +154,8 @@ router.post('/journey_features', async (req, res) => {
 
     const { rows } = await pool.query(
       `INSERT INTO journey_features
-         (name, journey_id, thickness, status, area_id, unit_test_path, version, kind, workflow_ref, notion_synced_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,NULL)
+         (name, journey_id, thickness, status, area_id, unit_test_path, version, kind, workflow_ref, guard_ref, notion_synced_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,NULL)
        RETURNING *`,
       [
         name,
@@ -154,6 +167,7 @@ router.post('/journey_features', async (req, res) => {
         version || null,
         kind || 'feature',
         workflow_ref || null,
+        guard_ref || null,
       ]
     );
     res.status(201).json(rows[0]);
@@ -166,7 +180,7 @@ router.post('/journey_features', async (req, res) => {
 // PATCH /api/brain/journey_features/:id
 router.patch('/journey_features/:id', async (req, res) => {
   try {
-    const { thickness, status, unit_test_path, version } = req.body;
+    const { thickness, status, unit_test_path, version, guard_ref } = req.body;
     if (thickness && !VALID_THICKNESS.includes(thickness)) {
       return res.status(400).json({ error: `thickness must be one of: ${VALID_THICKNESS.join(',')}` });
     }
@@ -174,11 +188,12 @@ router.patch('/journey_features/:id', async (req, res) => {
     const sets = [];
     const vals = [];
     let idx = 1;
-    if (thickness)      { sets.push(`thickness=$${idx++}`);      vals.push(thickness); }
-    if (status)         { sets.push(`status=$${idx++}`);          vals.push(status); }
-    if (unit_test_path) { sets.push(`unit_test_path=$${idx++}`);  vals.push(unit_test_path); }
-    if (version)        { sets.push(`version=$${idx++}`);         vals.push(version); }
-    if (!sets.length)   return res.status(400).json({ error: 'no fields to update' });
+    if (thickness)                      { sets.push(`thickness=$${idx++}`);      vals.push(thickness); }
+    if (status)                         { sets.push(`status=$${idx++}`);          vals.push(status); }
+    if (unit_test_path)                 { sets.push(`unit_test_path=$${idx++}`);  vals.push(unit_test_path); }
+    if (version)                        { sets.push(`version=$${idx++}`);         vals.push(version); }
+    if (guard_ref !== undefined)        { sets.push(`guard_ref=$${idx++}`);       vals.push(guard_ref ?? null); }
+    if (!sets.length)                   return res.status(400).json({ error: 'no fields to update' });
 
     // thickness 变更 → 需重新推 Notion
     if (thickness) { sets.push(`notion_synced_at=NULL`); }

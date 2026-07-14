@@ -448,7 +448,8 @@ describe('selfcheck schema version', () => {
     // 340 = migration 340 idx_tasks_dedup_lookup 部分索引（dispatcher.js 派发前标题判重查询
     // 直接依赖，避免全表扫描），故推进地板到 340。
     // 341 = migration 341 zenithjoy 裸表归位 schema（P0 事故修复版，无 ALTER DATABASE 副作用），
-    // 故推进地板到 341。
-    expect(EXPECTED_SCHEMA_VERSION).toBe('341');
+    // 342 = migration 342 decisions.source_ref 决策溯源列，故推进地板到 342。
+    // 343 = migration 343 journey_features.guard_ref 裸奔 FR 守卫引用，故推进地板到 343。
+    expect(EXPECTED_SCHEMA_VERSION).toBe('343');
   });
 });

@@ -5,6 +5,7 @@
  *   1. 绿态：guard pass → 三层计数卡 + 孤儿数 + 未挂跑道数 + PASS 徽章 + generated 时间
  *   2. 红态：guard fail → 醒目红条 + failures 列表
  *   3. 灰态：fetch 失败或 available:false → "guard 数据不可用"
+ *   4. 裸奔 FR 数：bare_fr 存在时渲染 BareFrCard，超基线时警告
  *
  * 实现前这些测试 FAIL（TDD Red 证据），实现后全绿并永久留在 CI 作回归。
  */
@@ -248,5 +249,63 @@ describe('TestPyramidPage — 灰态（数据不可用）', () => {
     await waitFor(() => {
       expect(screen.getByTestId('pyramid-unavailable')).toBeInTheDocument();
     });
+  });
+});
+
+describe('TestPyramidPage — 裸奔 FR 数指标卡（BareFrCard）', () => {
+  it('bare_fr.count=0 基线=0 → 渲染 pyramid-bare-fr 卡片，显示 0 且无超限警告', async () => {
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: () => Promise.resolve({ ...passPayload, bare_fr: { count: 0, baseline: 0 } }),
+    }) as any;
+
+    const { default: TestPyramidPage } = await import('../TestPyramidPage');
+    await act(async () => { render(<TestPyramidPage />); });
+
+    await waitFor(() => {
+      expect(screen.getByTestId('pyramid-bare-fr')).toBeInTheDocument();
+    });
+
+    const card = screen.getByTestId('pyramid-bare-fr');
+    expect(card).toHaveTextContent('0');
+    expect(card).toHaveTextContent('基线 0，只许降');
+    expect(card).toHaveTextContent('裸奔 FR（无守卫 live）');
+  });
+
+  it('bare_fr.count=3 > baseline=0 → 卡片显示 3 且有超限警告样式', async () => {
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: () => Promise.resolve({ ...passPayload, bare_fr: { count: 3, baseline: 0 } }),
+    }) as any;
+
+    const { default: TestPyramidPage } = await import('../TestPyramidPage');
+    await act(async () => { render(<TestPyramidPage />); });
+
+    await waitFor(() => {
+      expect(screen.getByTestId('pyramid-bare-fr')).toBeInTheDocument();
+    });
+
+    const card = screen.getByTestId('pyramid-bare-fr');
+    expect(card).toHaveTextContent('3');
+    expect(card).toHaveTextContent('基线 0，只许降');
+  });
+
+  it('bare_fr 字段缺失 → 不渲染 pyramid-bare-fr', async () => {
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: () => Promise.resolve(passPayload),
+    }) as any;
+
+    const { default: TestPyramidPage } = await import('../TestPyramidPage');
+    await act(async () => { render(<TestPyramidPage />); });
+
+    await waitFor(() => {
+      expect(screen.getByTestId('pyramid-guard-pass')).toBeInTheDocument();
+    });
+
+    expect(screen.queryByTestId('pyramid-bare-fr')).not.toBeInTheDocument();
   });
 });

@@ -185,9 +185,10 @@ describe('selfcheck', () => {
   // 340（idx_tasks_dedup_lookup 部分索引，供派发前标题判重查询使用）为 P1 6fc3bfe8 刀1底座，
   // 推进地板到 340。
   // 341（zenithjoy 裸表归位 schema，P0 事故修复版：删除 ALTER DATABASE 全局副作用）
-  // 推进地板到 341。
-  it('EXPECTED_SCHEMA_VERSION should be 341 (floor, bumped for zenithjoy schema migration)', () => {
-    expect(EXPECTED_SCHEMA_VERSION).toBe('341');
+  // 342（decisions.source_ref 列，决策溯源链）推进地板到 342。
+  // 343（journey_features.guard_ref 列，裸奔 FR 守卫引用）推进地板到 343。
+  it('EXPECTED_SCHEMA_VERSION should be 343 (floor, bumped for guard_ref migration)', () => {
+    expect(EXPECTED_SCHEMA_VERSION).toBe('343');
   });
 
   it('should pass when DB schema version is ahead of expected (>= check)', async () => {
