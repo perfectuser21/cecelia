@@ -40,6 +40,9 @@ Thumbs.db
 *.bak
 *.backup
 
+# Tailscale cache
+tailscale-cache.json
+
 # Dev workflow state files（全部忽略，不进 git）
 .dev-mode*
 .dev-lock*
