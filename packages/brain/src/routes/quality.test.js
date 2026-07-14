@@ -101,14 +101,11 @@ describe('quality routes — test-pyramid 快照存取', () => {
 
   describe('GET /api/brain/quality/test-pyramid', () => {
     it('有数据 → {available:true, updated_at, ...存储的JSON}', async () => {
-      pool.query.mockResolvedValueOnce({
-        rows: [
-          {
-            value_json: guardPayload,
-            updated_at: '2026-07-14T07:00:00.000Z',
-          },
-        ],
-      });
+      pool.query
+        .mockResolvedValueOnce({
+          rows: [{ value_json: guardPayload, updated_at: '2026-07-14T07:00:00.000Z' }],
+        })
+        .mockResolvedValueOnce({ rows: [] });
 
       const res = await request(makeApp()).get('/api/brain/quality/test-pyramid');
 
@@ -122,6 +119,20 @@ describe('quality routes — test-pyramid 快照存取', () => {
       const [sql, params] = pool.query.mock.calls[0];
       expect(sql).toContain('working_memory');
       expect(params[0]).toBe('quality_test_pyramid');
+    });
+
+    it('GET 实时注入 bare_fr.count（覆盖快照值）', async () => {
+      const payloadWithBareFr = { ...guardPayload, bare_fr: { count: 3, baseline: 2 } };
+      pool.query
+        .mockResolvedValueOnce({
+          rows: [{ value_json: payloadWithBareFr, updated_at: '2026-07-14T07:00:00.000Z' }],
+        })
+        .mockResolvedValueOnce({ rows: [{ count: 5 }] }); // live DB 返回新值
+
+      const res = await request(makeApp()).get('/api/brain/quality/test-pyramid');
+
+      expect(res.status).toBe(200);
+      expect(res.body.bare_fr).toEqual({ count: 5, baseline: 2 });
     });
 
     it('无数据 → {available:false}', async () => {
