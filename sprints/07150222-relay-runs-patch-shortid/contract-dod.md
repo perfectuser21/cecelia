@@ -8,7 +8,7 @@
 
 ## [BEHAVIOR] 条目（≥4 条，可机器验证）
 
-### [BEHAVIOR-1] 8 位十六进制短号命中唯一活跃 v2 run → 200 + phase 更新落库
+### [BEHAVIOR] BEHAVIOR-1: 8 位十六进制短号命中唯一活跃 v2 run → 200 + phase 更新落库
 
 **场景**：initiative_id 以 `dd34e184` 开头、orchestrator_version='v2'、phase='planning' 的 run 在库中唯一。  
 **请求**：`PATCH /api/brain/orchestrator/relay-runs/dd34e184` body `{"phase":"done"}`  
@@ -19,7 +19,7 @@
 
 ---
 
-### [BEHAVIOR-2] 短号命中多条非终态 run → 取 started_at 最新的一条更新，其余不动
+### [BEHAVIOR] BEHAVIOR-2: 短号命中多条非终态 run → 取 started_at 最新的一条更新，其余不动
 
 **场景**：库中有两条 initiative_id 前缀均为 `aabb1122` 的 v2 run，phase 均非 done/failed。  
 **请求**：`PATCH /api/brain/orchestrator/relay-runs/aabb1122` body `{"phase":"evaluate"}`  
@@ -30,7 +30,7 @@
 
 ---
 
-### [BEHAVIOR-3] 短号命中 0 条活跃 v2 run → 404 且 error 含短号原值
+### [BEHAVIOR] BEHAVIOR-3: 短号命中 0 条活跃 v2 run → 404 且 error 含短号原值
 
 **场景**：库中无 initiative_id 前缀为 `00000000` 的 v2 run（或均为终态）。  
 **请求**：`PATCH /api/brain/orchestrator/relay-runs/00000000` body `{"phase":"done"}`  
@@ -40,7 +40,7 @@
 
 ---
 
-### [BEHAVIOR-4] 参数格式非法（既非完整 UUID 也非 8 位十六进制）→ 400
+### [BEHAVIOR] BEHAVIOR-4: 参数格式非法（既非完整 UUID 也非 8 位十六进制）→ 400
 
 **场景**：传入 `bad-id!`、`gggggggg`（非十六进制字符）或 `abcd`（长度不足）。  
 **请求**：`PATCH /api/brain/orchestrator/relay-runs/bad-id!` body `{"phase":"done"}`  
@@ -51,7 +51,7 @@
 
 ---
 
-### [BEHAVIOR-5] 完整 UUID 参数走既有逻辑，行为不回退
+### [BEHAVIOR] BEHAVIOR-5: 完整 UUID 参数走既有逻辑，行为不回退
 
 **场景**：传入合法 UUID 格式 `dd34e184-0000-0000-0000-000000000001`。  
 **请求**：`PATCH /api/brain/orchestrator/relay-runs/dd34e184-0000-0000-0000-000000000001` body `{"phase":"done"}`  
@@ -62,7 +62,7 @@
 
 ---
 
-### [BEHAVIOR-6] DB 查询抛异常 → 500 + console.warn 含短号上下文，不静默
+### [BEHAVIOR] BEHAVIOR-6: DB 查询抛异常 → 500 + console.warn 含短号上下文，不静默
 
 **场景**：模拟 pool.query 抛出 Error（如 `invalid input syntax for type uuid`）。  
 **请求**：`PATCH /api/brain/orchestrator/relay-runs/dd34e184` body `{"phase":"done"}`  
@@ -121,3 +121,11 @@ curl -s -w "\nHTTP:%{http_code}" \
 # 5. 单测全跑（含 failing test 验证 Red 阶段）
 cd /workspace && pnpm --filter brain test relay-runs-patch-shortid
 ```
+
+---
+
+## 防呆铁律（代码侧强制）
+
+- **不动 skill 文本**：短号解析防呆逻辑必须实现在代码侧（路由 handler），不得修改或依赖 skill 文本内容。
+- **防呆必须在代码侧**：格式校验、短号扩展 UUID、多条命中排序等防呆逻辑均在 `relay-runs` handler 中实现，skill 文件（如 `ci-patrol`、`deploy` 等）不受本次改动影响，且不允许在 skill 文件中增加绕过逻辑。
+- **单测覆盖防呆路径**：上述 6 个 BEHAVIOR 必须有对应单测，CI 红绿必须由代码逻辑控制，不得靠注释或 skip 蒙混。
