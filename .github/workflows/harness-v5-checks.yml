@@ -184,7 +184,6 @@ jobs:
           DB_USER: cecelia
           DB_PASSWORD: cecelia
           BRAIN_PORT: 5221
-          NODE_ENV: test
           CECELIA_TICK_ENABLED: 'false'
         run: |
           cd packages/brain && node server.js &
