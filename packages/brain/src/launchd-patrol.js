@@ -29,6 +29,7 @@ export const MUST_LOAD_DAEMONS = [
   'com.cecelia.bridge-keepalive',
   'com.cecelia.token-refresh',
   'com.cecelia.pf-firewall',
+  'com.cecelia.smoke-nightly',
 ];
 export const MUST_LISTEN_PORTS = [
   { port: 3457, name: 'cecelia-bridge' },

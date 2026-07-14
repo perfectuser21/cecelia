@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  系统域 LaunchDaemon — com.cecelia.smoke-nightly
+  安装位置：/Library/LaunchDaemons/com.cecelia.smoke-nightly.plist
+  加载命令：sudo launchctl load -w /Library/LaunchDaemons/com.cecelia.smoke-nightly.plist
+  巡检登记：launchd-patrol.js MUST_LOAD_DAEMONS（参见 PRD 刀3-T1）
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.cecelia.smoke-nightly</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>/Users/administrator/perfect21/cecelia/scripts/smoke/e2e-nightly.sh</string>
+  </array>
+  <!-- 每天 03:00 本地时间 -->
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Hour</key>
+    <integer>3</integer>
+    <key>Minute</key>
+    <integer>0</integer>
+  </dict>
+  <key>RunAtLoad</key>
+  <false/>
+  <key>StandardOutPath</key>
+  <string>/tmp/cecelia-smoke-nightly.log</string>
+  <key>StandardErrorPath</key>
+  <string>/tmp/cecelia-smoke-nightly.log</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>BRAIN_URL</key>
+    <string>http://localhost:5221</string>
+    <key>STAGING_URL</key>
+    <string>http://localhost:5222</string>
+    <key>HOME</key>
+    <string>/Users/administrator</string>
+  </dict>
+</dict>
+</plist>
