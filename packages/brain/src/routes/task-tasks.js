@@ -257,8 +257,13 @@ router.patch('/:id', async (req, res) => {
     // 状态机保护：已终止的任务不能回退到非终止状态
     const TERMINAL_STATUSES = ['completed', 'cancelled'];
     const _VALID_STATUSES = ['queued', 'in_progress', 'completed', 'cancelled', 'failed', 'blocked'];
+    let harnessDemoted = false;
+    let harnessDemoteReason = null;
     if (status !== undefined) {
-      const current = await pool.query('SELECT status FROM tasks WHERE id = $1', [req.params.id]);
+      const current = await pool.query(
+        "SELECT status, task_type, payload->>'orchestrator' AS orchestrator FROM tasks WHERE id = $1",
+        [req.params.id]
+      );
       if (!current.rows.length) {
         return res.status(404).json({ error: 'Task not found', id: req.params.id });
       }
@@ -269,13 +274,22 @@ router.patch('/:id', async (req, res) => {
           details: `Cannot transition from terminal status '${currentStatus}' to '${status}'`,
         });
       }
+      // 收账权收归（决策 dc18d43d）：harness_initiative(skill-relay) completed 一律申请，
+      // 外部真相核验不过 → 不写 status/时间戳，200 accepted:false，交给 watchdog 收口。
+      if (status === 'completed'
+          && current.rows[0].task_type === 'harness_initiative'
+          && current.rows[0].orchestrator === 'skill-relay') {
+        const { finalizeHarnessTask } = await import('../lib/harness-finalize.js');
+        const fin = await finalizeHarnessTask(req.params.id, { pool });
+        if (fin.applies && !fin.allow) { harnessDemoted = true; harnessDemoteReason = fin.reason; }
+      }
     }
 
     const setClauses = [];
     const params = [];
     let paramIndex = 1;
 
-    if (status !== undefined) {
+    if (status !== undefined && !harnessDemoted) {
       setClauses.push(`status = $${paramIndex++}`);
       params.push(status);
       // 自动设置时间戳
@@ -318,7 +332,7 @@ router.patch('/:id', async (req, res) => {
       params.push(JSON.stringify(taskResult));
     }
 
-    if (setClauses.length === 0) {
+    if (setClauses.length === 0 && !harnessDemoted) {
       return res.status(400).json({ error: 'No fields to update' });
     }
 
@@ -357,7 +371,9 @@ router.patch('/:id', async (req, res) => {
     if (!result.rows.length) {
       return res.status(404).json({ error: 'Task not found', id: req.params.id });
     }
-    res.json(result.rows[0]);
+    res.json(harnessDemoted
+      ? { ...result.rows[0], accepted: false, reason: harnessDemoteReason }
+      : result.rows[0]);
   } catch (err) {
     res.status(500).json({ error: 'Failed to update task', details: err.message });
   }

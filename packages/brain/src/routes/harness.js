@@ -1490,6 +1490,18 @@ router.post('/complete', async (req, res) => {
     if (pr_url) result.pr_url = pr_url;
     if (screenshots) result.screenshots = screenshots;
     if (sprint_dir) result.sprint_dir = sprint_dir;
+    // 收账权收归（决策 dc18d43d）：harness_initiative(skill-relay) completed 一律申请，
+    // 外部真相核验不过 → 不标 completed，但把 report 产物照记进 result（不丢信息），200 accepted:false。
+    const { finalizeHarnessTask } = await import('../lib/harness-finalize.js');
+    const fin = await finalizeHarnessTask(initiative_id, { pool });
+    if (fin.applies && !fin.allow) {
+      await pool.query(
+        `UPDATE tasks SET result = COALESCE(result, '{}'::jsonb) || $1::jsonb WHERE id::text = $2`,
+        [JSON.stringify(result), initiative_id]
+      );
+      console.warn(`[POST /harness/complete] initiative ${initiative_id} completed 申请被拒 → 降级（${fin.reason}）`);
+      return res.json({ ok: true, accepted: false, reason: fin.reason, initiative_id });
+    }
     const updateResult = await pool.query(
       `UPDATE tasks SET status='completed', completed_at=NOW(),
        result = COALESCE(result, '{}'::jsonb) || $1::jsonb

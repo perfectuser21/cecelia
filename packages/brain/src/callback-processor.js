@@ -60,12 +60,23 @@ export async function processExecutionCallback(data, pool) {
   // P1-0: terminal failure guard — DB 查询失败直接抛错，不再降级（防 stale completed 覆盖 failed）。
   if (newStatus === 'completed') {
     const terminalCheck = await pool.query(
-      `SELECT payload->>'failure_class' AS failure_class FROM tasks WHERE id = $1`,
+      `SELECT payload->>'failure_class' AS failure_class, task_type, payload->>'orchestrator' AS orchestrator FROM tasks WHERE id = $1`,
       [task_id]
     );
     if (terminalCheck.rows[0]?.failure_class === 'pipeline_terminal_failure') {
       console.warn(`[callback-processor] 终态守卫命中：task=${task_id} failure_class=pipeline_terminal_failure，拒绝覆盖为 completed`);
       return { skipped: true, reason: 'terminal_failure_guard' };
+    }
+    // 收账权收归（决策 dc18d43d）：harness_initiative(skill-relay) 的 completed 一律申请，
+    // Brain 核验外部真相（PR MERGED + evaluator gate）不过 → 降级 in_progress，交给 watchdog 收口。
+    if (terminalCheck.rows[0]?.task_type === 'harness_initiative'
+        && terminalCheck.rows[0]?.orchestrator === 'skill-relay') {
+      const { finalizeHarnessTask } = await import('./lib/harness-finalize.js');
+      const fin = await finalizeHarnessTask(task_id, { pool });
+      if (fin.applies && !fin.allow) {
+        console.warn(`[callback-processor] 收账权收归：task=${task_id} completed 降级 in_progress（${fin.reason}）`);
+        newStatus = 'in_progress';
+      }
     }
   }
 
