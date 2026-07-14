@@ -15,6 +15,7 @@ import traceRoutes from './src/trace-routes.js';
 import langfuseRoutes from './src/routes/langfuse.js';
 import memoryRoutes from './src/routes/memory.js';
 import settingsRoutes from './src/routes/settings.js';
+import qualityRoutes from './src/routes/quality.js';
 import janitorRoutes from './src/routes/janitor.js';
 import profileFactsRoutes from './src/routes/profile-facts.js';
 import clusterRoutes from './src/routes/cluster.js';
@@ -246,6 +247,7 @@ app.use(express.json({ limit: '4mb' }));
 // Mount memory routes (before brain routes to avoid conflicts)
 app.use('/api/brain/memory', memoryRoutes);
 app.use('/api/brain/settings', settingsRoutes);
+app.use('/api/brain/quality', qualityRoutes);
 app.use('/api/brain/janitor', janitorRoutes);
 app.use('/api/brain/profile/facts', profileFactsRoutes);
 
