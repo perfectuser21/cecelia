@@ -38,7 +38,6 @@ import n8nApiRoutes from '../n8n-api/routes.js';
 import analysisRoutes from '../analysis/routes.js';
 import clusterRoutes from '../cluster/routes.js';
 import agentOpsWechatRoutes from '../agent-ops/wechat.js';
-import testPyramidRoutes from '../quality/test-pyramid.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -77,10 +76,6 @@ app.use(compression() as unknown as express.RequestHandler);
 // Proxy /api/quality to cecelia-quality API
 // Note: Express strips the mount path, so /api/quality/state becomes /state in the middleware
 // We need to prepend /api to make it /api/state for the target server
-// 本地测试金字塔端点（注册在 proxy 之前，只占 /test-pyramid 一条路径，
-// 其余 /api/quality/* 继续走下方 quality proxy）
-app.use('/api/quality', testPyramidRoutes);
-
 app.use('/api/quality', createProxyMiddleware({
   target: QUALITY_API,
   changeOrigin: true,
