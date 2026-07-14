@@ -51,7 +51,7 @@ describe('launchd-patrol manifest 核对', () => {
     const r = await runLaunchdPatrol({ exec: makeExec(), inContainer: false });
     expect(r.ok).toBe(true);
     expect(r.anomalies).toEqual([]);
-    expect(r.checked).toBe(8); // 1 must-run + 4 must-load（含 smoke-nightly）+ 3 端口
+    expect(r.checked).toBe(9); // 1 must-run + 5 must-load（含 smoke-nightly + guard-drill）+ 3 端口
     expect(sendBark).not.toHaveBeenCalled();
     expect(raise).not.toHaveBeenCalled();
   });
