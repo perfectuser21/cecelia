@@ -1,8 +1,10 @@
-# DoD: pre-swap 核心 smoke 容器内 jq 缺失致 4 连假红——四脚本 node 兜底 shim
+# DoD: migration 343 status CHECK 窄枚举致生产部署失败——343 修正 + 344 拓宽
 
-- [x] [BEHAVIOR] 四条核心 smoke 在无 jq 环境全绿（node shim 兜底）
-      Test: manual:bash -c "mkdir -p /tmp/nojq-bin && for b in bash curl node grep cat printf dirname date; do ln -sf \$(command -v \$b) /tmp/nojq-bin/ 2>/dev/null; done; env PATH=/tmp/nojq-bin BRAIN_URL=http://localhost:5221 bash packages/brain/scripts/smoke/harness-ping-smoke.sh"
-- [x] [BEHAVIOR] 有 jq 环境行为不变（shim 仅在 jq 缺失时定义）
-      Test: manual:node -e "const s=require('fs').readFileSync('packages/brain/scripts/smoke/healthz-smoke.sh','utf8');if(!s.includes('command -v jq'))process.exit(1)"
-- [x] 四脚本 bash -n 语法绿
-      Test: manual:bash -c "for f in healthz-smoke version-endpoint-smoke harness-ping-smoke harness-echo-smoke; do bash -n packages/brain/scripts/smoke/\$f.sh || exit 1; done"
+- [x] [BEHAVIOR] 343 的 CHECK 枚举涵盖生产在用全部 status（含 working/broken）
+      Test: manual:node -e "const s=require('fs').readFileSync('packages/brain/migrations/343_journey_features_guard_ref.sql','utf8');if(!/working/.test(s)||!/broken/.test(s))process.exit(1)"
+- [x] [BEHAVIOR] 344 幂等拓宽存在（兜住已 apply 窄版的 staging/preview 库）
+      Test: manual:node -e "const s=require('fs').readFileSync('packages/brain/migrations/344_journey_features_status_check_widen.sql','utf8');if(!/DROP CONSTRAINT IF EXISTS/.test(s)||!/working/.test(s))process.exit(1)"
+- [x] [BEHAVIOR] EXPECTED_SCHEMA_VERSION 同步到 344
+      Test: manual:node -e "const s=require('fs').readFileSync('packages/brain/src/selfcheck.js','utf8');if(!s.includes(String.fromCharCode(39)+'344'+String.fromCharCode(39)))process.exit(1)"
+- [x] 版本四处同步 1.262.1
+      Test: manual:bash scripts/check-version-sync.sh
