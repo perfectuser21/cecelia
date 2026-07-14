@@ -1,0 +1,17 @@
+# smoke-core.txt — 蓝绿 swap 前必过的核心子集
+#
+# brain-deploy.sh 在 bluegreen_swap 中、green 容器健康后、实际切换前跑此列表。
+# 任一失败 → 保留 blue 不切 + Bark 告警 + 退出非零。
+#
+# 选入标准：
+#   1. 无外部依赖（不需要 Notion/WeChat/Staging 凭据）
+#   2. 速度快（< 10s 每条）
+#   3. 覆盖 Brain 核心控制面：health / version / harness 连通
+#   4. 支持 BRAIN_URL env 覆盖（所有列表脚本均已实现）
+#
+# 总时长预算：≤ 10min（SMOKE_CORE_TIMEOUT_SECS=600 硬超时）
+healthz-smoke.sh
+version-endpoint-smoke.sh
+harness-ping-smoke.sh
+harness-echo-smoke.sh
+harness-schema-validation-smoke.sh

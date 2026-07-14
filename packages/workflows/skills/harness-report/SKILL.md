@@ -6,10 +6,11 @@ description: |
   → 更新Notion Feature Registry → 飞书通知 → 写本地harness-report.md备份。
   Phase B（Sprint状态同步）：写本地Brain DB → 通过 db-update skill 触发 notion-push-sync.js 的 8 个 push 函数（journeys/journey_features/issues/skill_registry/journey_steps/journey_step_links/decisions/initiative_contracts）→ git commit。
   由 harness-evaluator PASS 后 Brain reportNode 自动 spawn；relay 模式由 harness-controller 调 Skill 触发（变量走「Relay 入口段」自取）；也可手动触发补同步。
-version: 6.8.0
+version: 6.9.0
 created: 2026-04-08
 updated: 2026-07-14
 changelog:
+  - 6.9.0: 刀3-T5 guard_ref 写回——Step 4b 从 evaluator .brain-result.json 取 guard_ref，PATCH journey_features.$FEATURE_ID；guard_ref 列缺失（T4 未完成）降级记 CONCERN 不阻断 Phase A 产出
   - 6.7.0: 翻牌义务（handoff 0714 刀3 — 台账只点火时写、交付后不翻牌根治）— Phase B 新增三件强制动作：(1) Feature 翻牌：本 sprint 推进的 journey_features 按 evaluator verdict 翻 status（PASS+merged→done / 真机段未验→working+logic-done-pending 备注 / 部分交付→working），禁止交付后仍留 planned；(2) Journey 回写：journey step 状态回写 + journeys.updated_at 刷新；description 与最新 decisions 冲突 → 标待人工确认并开 issue，不静默改写不静默跳过；(3) smoke 一致性核对：journey.e2e_test_path 指向的脚本是否还测现行方案（对照 decisions 近期废弃决策），测已废弃方案 → 开 issue。完成标志追加「翻牌清单」输出。实证：Path2/Path4 journeys.updated_at 停在 05-22、飞书版定义与 07-07 决策打架 46 天、「内容判定门槛」planned 而现实已合并 11 个 PR
   - 6.8.0: EVA v2 四修（背景：a85e0582 全通 run 里 harness-report.md/learning.md/notes 全是 Brain 侧 harness-report.mjs 降级脚本产的英文 Placeholder，本 skill 被架空；mjs 侧修复另立案，本条先修 skill 侧可自防部分）— (a) RP4 占位符守卫指纹扩大：Step 8c 与出口核验各加英文指纹 `grep -qi "placeholder"`（英文 "## Insights (Placeholder)" 字面逃逸中文守卫实证）；(b) RP5 .brain-result.json 落点参数化：BRAIN_RESULT_FILE 优先、默认 git 仓库根，headed mac 无 /workspace 场景出口协议不再无落地痕迹；(c) RP-learn 出口核验追加 learnings 表落库计数（全通 run learnings 表 0 条实证）；(d) RP6 新增「Phase B 核验」小节：journey_features/notes 各查一条本 sprint 记录，查不到记 concern；(e) 触发条件段声明与 mjs 降级脚本共存关系（以本 skill 产物为准 + 必留痕迹供区分来源）
   - 6.6.0: a638f840 两修——(a) TOTAL_COST fallback 端点修正为 /api/brain/orchestrator/relay-runs?task_id=（旧 URL 缺 orchestrator 前缀 Cannot GET，fallback 链空环；brain 1.259.0 起支持 task_id 过滤）；(b) Step 1 回写加降级链：status+result 被拒（老 brain 的 completed 409 / task 卡异常态）→ 纯 result 补写（brain 1.259.0 起合法）→ 仍失败才落 .report-concerns，pr_url/cost 不再静默丢失
@@ -314,6 +315,25 @@ echo "✅ Step 3.5: 文档归档完成（PrepPRD + Contract）"
   -H "Content-Type: application/json" \
   -d '{"thickness":"done","status":"done"}' >/dev/null 2>&1 || echo "WARN: Feature Registry 更新失败（非阻断）"
 echo "✅ Step 4: Notion Feature Registry status → done"
+
+# 刀3-T5 guard_ref 写回（依赖 T4 guard_ref 列已存在）
+# GUARD_REF 由 evaluator B-guard-check 提取并写入 .brain-result.json；此处从中取出
+if [ -z "$GUARD_REF" ]; then
+  GUARD_REF=$(cat "${WORKSPACE_PATH:-$PWD}/.brain-result.json" 2>/dev/null | jq -r '.guard_ref // ""' 2>/dev/null || echo "")
+fi
+if [ -n "$GUARD_REF" ] && [ -n "$FEATURE_ID" ]; then
+  GUARD_PATCH_RESP=$(curl -s -o /dev/null -w "%{http_code}" -X PATCH \
+    "localhost:5221/api/brain/journey_features/$FEATURE_ID" \
+    -H "Content-Type: application/json" \
+    -d "{\"guard_ref\": $(echo "$GUARD_REF" | jq -Rs .)}" 2>/dev/null)
+  if [[ "$GUARD_PATCH_RESP" == "200" ]]; then
+    echo "✅ Step 4b: guard_ref 已写回 journey_features: $GUARD_REF"
+  else
+    # guard_ref 列可能还未建（T4 未完成），降级记 concern 不阻断
+    echo "WARN: guard_ref 写回失败（HTTP $GUARD_PATCH_RESP）——T4 guard_ref 列未建或接口不支持，记 concern"
+    echo "CONCERN: Step4b:guard_ref写回失败(HTTP $GUARD_PATCH_RESP):GUARD_REF=$GUARD_REF" >> "${SPRINT_DIR}/.report-concerns"
+  fi
+fi
 ```
 
 ---
