@@ -111,3 +111,38 @@ describe('runGuard', () => {
     expect(r4.failures.some((f: string) => f.startsWith('A3'))).toBe(true);
   });
 });
+
+describe('A5 裸奔 FR 棘轮', () => {
+  const baselineWithBareFr = {
+    orphans: 3, permanent: 2,
+    permanent_roots: [{ path: 'perm/unit', layer: 'unit' }],
+    smoke_dir: 'scripts/smoke',
+    bare_fr: 2,
+  };
+
+  it('bareFrCount === null 时跳过 A5（Brain 不可达）', () => {
+    const r = runGuard(root, baselineWithBareFr, { ci: true, bareFrCount: null });
+    expect(r.bare_fr).toBeNull();
+    expect(r.failures.some((f: string) => f.startsWith('A5'))).toBe(false);
+  });
+
+  it('bareFrCount <= 基线 → 不触发 A5', () => {
+    const r = runGuard(root, baselineWithBareFr, { ci: true, bareFrCount: 2 });
+    expect(r.bare_fr).toEqual({ count: 2, baseline: 2 });
+    expect(r.failures.some((f: string) => f.startsWith('A5'))).toBe(false);
+  });
+
+  it('bareFrCount > 基线 → A5 fail（棘轮倒退）', () => {
+    const r = runGuard(root, baselineWithBareFr, { ci: true, bareFrCount: 5 });
+    expect(r.pass).toBe(false);
+    expect(r.failures.some((f: string) => f.startsWith('A5'))).toBe(true);
+    expect(r.bare_fr).toEqual({ count: 5, baseline: 2 });
+  });
+
+  it('baseline 无 bare_fr 字段时 bareFrCount 不触发 A5', () => {
+    const baselineNoBare = { ...baselineWithBareFr };
+    delete (baselineNoBare as any).bare_fr;
+    const r = runGuard(root, baselineNoBare, { ci: true, bareFrCount: 99 });
+    expect(r.failures.some((f: string) => f.startsWith('A5'))).toBe(false);
+  });
+});

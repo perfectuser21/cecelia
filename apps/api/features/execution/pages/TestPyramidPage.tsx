@@ -10,6 +10,7 @@ interface PyramidData {
   smoke?: { total: number; unwired: string[] };
   permanent?: { total: number; layers: { unit: number; integration: number } };
   panel?: { fresh: boolean; generated: string };
+  bare_fr?: { count: number; baseline: number } | null;
 }
 
 type FetchState = 'loading' | 'done' | 'unavailable';
@@ -50,6 +51,28 @@ function StatCard({ label, count, testId }: { label: string; count: number; test
     >
       <div style={{ fontSize: '13px', color: '#6b7280', marginBottom: '4px' }}>{label}</div>
       <div style={{ fontSize: '28px', fontWeight: 'bold', color: warn ? '#d97706' : '#111827' }}>{count}</div>
+    </div>
+  );
+}
+
+function BareFrCard({ count, baseline }: { count: number; baseline: number }) {
+  const exceeded = count > baseline;
+  return (
+    <div
+      data-testid="pyramid-bare-fr"
+      style={{
+        flex: 1,
+        minWidth: '140px',
+        padding: '16px',
+        border: `1px solid ${exceeded ? '#ef4444' : '#e5e7eb'}`,
+        borderTop: `3px solid ${exceeded ? '#ef4444' : '#f59e0b'}`,
+        borderRadius: '8px',
+        background: exceeded ? '#fef2f2' : '#fff',
+      }}
+    >
+      <div style={{ fontSize: '13px', color: '#6b7280', marginBottom: '4px' }}>裸奔 FR（无守卫 live）</div>
+      <div style={{ fontSize: '28px', fontWeight: 'bold', color: exceeded ? '#dc2626' : '#111827' }}>{count}</div>
+      <div style={{ fontSize: '11px', color: '#9ca3af', marginTop: '4px' }}>基线 {baseline}，只许降</div>
     </div>
   );
 }
@@ -126,6 +149,7 @@ export default function TestPyramidPage() {
   const smokeTotal = data.smoke?.total ?? 0;
   const unwiredCount = data.smoke?.unwired?.length ?? 0;
   const orphansTotal = data.orphans?.total ?? 0;
+  const bareFr = data.bare_fr ?? null;
 
   return (
     <div data-testid="pyramid-container" style={{ padding: '24px' }}>
@@ -208,6 +232,7 @@ export default function TestPyramidPage() {
       <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
         <StatCard label="孤儿测试" count={orphansTotal} testId="pyramid-orphans" />
         <StatCard label="smoke 未挂跑道" count={unwiredCount} testId="pyramid-unwired" />
+        {bareFr !== null && <BareFrCard count={bareFr.count} baseline={bareFr.baseline} />}
       </div>
     </div>
   );
