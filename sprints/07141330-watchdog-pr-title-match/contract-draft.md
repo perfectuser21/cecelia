@@ -50,7 +50,7 @@ EVA v2 纪律要求 PR 标题必须包含 `[短号]` 方括号形式（如 `fix(
 3. 再修改 `harness-relay-watchdog.js`，确认 FR-2 变 passing，FR-3/FR-4 全绿
 4. 运行 `cd packages/brain && npx vitest run src/__tests__/harness-relay-watchdog-pr-discovery.test.js`，全绿
 
-## Test Contract 表
+## 测试用例说明表（参考）
 
 | # | 测试描述 | 输入（mock execFn 返回） | short | 期望结果 | 对应 FR |
 |---|---------|------------------------|-------|----------|---------|
@@ -60,6 +60,14 @@ EVA v2 纪律要求 PR 标题必须包含 `[短号]` 方括号形式（如 `fix(
 | TC-4（回归）| MERGED 优先于 OPEN（均由分支名命中）| 已存在于现有测试 `_discoverPrFromGithub MERGED 优先于 OPEN` | `aaaabbbb` | 返回 MERGED | FR-4 回归 |
 | TC-5（回归）| 无匹配分支且无标题匹配 → 返回 null | `[{ headRefName: 'cp-unrelated', title: 'no match', url: 'u', state: 'OPEN' }]` | `aaaabbbb` | 返回 null | 边界 |
 | TC-6（回归）| 标题含 short 但不是 [short] 方括号形式（松散匹配防御）| `[{ headRefName: 'other', title: 'fix aaaabbbb done', url: 'u', state: 'OPEN' }]` | `aaaabbbb` | 返回 null | FR 铁律 |
+
+---
+
+## Test Contract
+
+| Workstream | Test File | BEHAVIOR 覆盖 | 预期红证据 |
+|---|---|---|---|
+| _discoverPrFromGithub 标题匹配 | `../../packages/brain/src/__tests__/harness-relay-watchdog-pr-discovery.test.js` | [BEHAVIOR-1]/[BEHAVIOR-2]/[BEHAVIOR-3]/[BEHAVIOR-4] | Red commit 56fce6fbc：BEHAVIOR-1 和 BEHAVIOR-3 failing |
 
 ---
 
