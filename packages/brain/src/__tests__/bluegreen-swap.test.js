@@ -58,6 +58,13 @@ esac
   writeFileSync(bin, script);
   chmodSync(bin, 0o755);
   writeFileSync(log, ''); // 预建空 log
+
+  // mock curl：健康时返回 0（dc3620297 引入双保险 docker inspect + curl）
+  const curlScript = `#!/usr/bin/env bash\nexit ${greenHealthy ? 0 : 1}\n`;
+  const curlBin = join(dir, 'curl');
+  writeFileSync(curlBin, curlScript);
+  chmodSync(curlBin, 0o755);
+
   return log;
 }
 
