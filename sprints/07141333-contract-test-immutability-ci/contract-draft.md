@@ -83,7 +83,7 @@ cd /workspace && rm -rf "$TMP"
 
 | Workstream | Test File | BEHAVIOR 覆盖 | 预期红证据 |
 |------------|-----------|---------------|------------|
-| WS1 | `../../tests/lint-contract-test-immutability.test.ts` | BEHAVIOR-1/BEHAVIOR-2/BEHAVIOR-3/BEHAVIOR-4 | 脚本未实现时 exit code 与期望不符 |
+| WS1 | `../../tests/lint-contract-test-immutability.test.ts` | 应当返回非 0 exit code / 应当返回 exit 0 / 应包含 WARN 字样 / 不误杀 | 脚本未实现时 exit code 与期望不符 |
 
 ## E2E 验收
 
