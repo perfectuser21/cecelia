@@ -52,15 +52,14 @@ vi.mock('child_process', () => ({ spawnSync: vi.fn() }));
 vi.mock('fs', () => ({ existsSync: vi.fn().mockReturnValue(true) }));
 
 // ── 辅助：按调用顺序返回 query 结果 ──────────────────────────
-// probeRumination 按顺序执行以下 queries：
+// probeRumination 实际执行的 query 顺序（共 7 条，无 72h 查询）：
 //   1. synthesis_archive 48h count
 //   2. synthesis_archive global max (last_run)
 //   3. learnings undigested count
 //   4. cecelia_events rumination_output 24h (recentRuns)
-//   5. synthesis_archive 72h count
-//   6. cecelia_events rumination_run 24h (heartbeats)
-//   7. cecelia_events rumination_invoke 24h (invocations)
-//   8. cecelia_events rumination_llm_failure last (for degraded_llm_failure)
+//   5. cecelia_events rumination_run 24h (heartbeats)
+//   6. cecelia_events rumination_invoke 24h (invocations)
+//   7. cecelia_events rumination_llm_failure last (for degraded_llm_failure)
 function setupDegradedBalanceLow({ balanceLow = true } = {}) {
   mockQuery
     // 1. 48h synthesis count = 0 → 进入阶段 2
@@ -71,13 +70,11 @@ function setupDegradedBalanceLow({ balanceLow = true } = {}) {
     .mockResolvedValueOnce({ rows: [{ cnt: '5' }] })
     // 4. rumination_output 24h = 0 → recentRuns = 0
     .mockResolvedValueOnce({ rows: [{ cnt: '0', last_event: null }] })
-    // 5. synthesis_archive 72h = 0 → within72h = 0
-    .mockResolvedValueOnce({ rows: [{ cnt: '0' }] })
-    // 6. rumination_run heartbeats 24h > 0 → degraded_llm_failure
+    // 5. rumination_run heartbeats 24h > 0 → degraded_llm_failure
     .mockResolvedValueOnce({ rows: [{ cnt: '3' }] })
-    // 7. rumination_invoke 24h
+    // 6. rumination_invoke 24h
     .mockResolvedValueOnce({ rows: [{ cnt: '3' }] })
-    // 8. last rumination_llm_failure event
+    // 7. last rumination_llm_failure event
     .mockResolvedValueOnce({
       rows: [{
         payload: {
@@ -97,7 +94,7 @@ function setupDegradedBalanceLow({ balanceLow = true } = {}) {
 describe('probeRumination — degraded_llm_failure + anthropic_balance_low', () => {
   beforeEach(() => {
     vi.resetModules();
-    vi.clearAllMocks();
+    vi.resetAllMocks();
   });
 
   it('API 余额耗尽时（anthropic_balance_low=true）probe 返回 ok: true，不触发 auto-fix', async () => {
