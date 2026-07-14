@@ -163,7 +163,7 @@ export async function resumeStalledRelayRuns(deps = {}) {
   // 从未写入 initiative_runs）不计数，可能导致 attempts 长期低估、MAX_RELAY_ATTEMPTS
   // 封顶判断失效，从而无限重跑不收敛。暂未修，先记录跟踪。
   const runsQ = await dbPool.query(
-    `SELECT DISTINCT ON (initiative_id) initiative_id, phase, deadline_at, pr_url, orchestrator_host, completed_at, tmux_killed_at, (SELECT COUNT(*) FROM initiative_runs r2 WHERE r2.initiative_id = r.initiative_id AND r2.orchestrator_version = 'v2') AS attempts FROM initiative_runs r WHERE orchestrator_version = 'v2' AND (phase NOT IN ('done', 'failed') OR (orchestrator_host IN ('skill-relay-codex-headed','skill-relay-claude-headed') AND phase = 'done' AND tmux_killed_at IS NULL)) ORDER BY initiative_id, started_at DESC LIMIT 20`
+    `SELECT DISTINCT ON (initiative_id) initiative_id, phase, deadline_at, pr_url, orchestrator_host, completed_at, tmux_killed_at, started_at, (SELECT COUNT(*) FROM initiative_runs r2 WHERE r2.initiative_id = r.initiative_id AND r2.orchestrator_version = 'v2') AS attempts FROM initiative_runs r WHERE orchestrator_version = 'v2' AND (phase NOT IN ('done', 'failed') OR (orchestrator_host IN ('skill-relay-codex-headed','skill-relay-claude-headed') AND phase = 'done' AND tmux_killed_at IS NULL)) ORDER BY initiative_id, started_at DESC LIMIT 20`
   );
   // 护栏:注入的 pool 对未知 SQL 返回 undefined 时(集成测试 fake),按空处理
   const runs = runsQ && Array.isArray(runsQ.rows) ? runsQ.rows : [];
@@ -244,7 +244,9 @@ export async function resumeStalledRelayRuns(deps = {}) {
       // 收账权收归超时兜底：generator 完成后超 GENERATOR_DONE_TIMEOUT_MS 仍无 MERGED → 标 failed 不永挂（e90c0fbb 缓解）。
       // 未到期时不 continue——仍要跑下方 PR 前置检查（发现 MERGED 自然收口），只在 spawn 前拦"落到重点火"。
       if (generatorDone) {
-        const doneAt = task.payload?.generator_done_at ? new Date(task.payload.generator_done_at).getTime() : 0;
+        // 锚点优先 payload.generator_done_at；缺失/不可解析（NaN）时回退 run.started_at，防锚点丢失=永挂。
+        let doneAt = task.payload?.generator_done_at ? new Date(task.payload.generator_done_at).getTime() : 0;
+        if (!doneAt && run.started_at) doneAt = new Date(run.started_at).getTime();
         if (doneAt && Date.now() - doneAt > GENERATOR_DONE_TIMEOUT_MS) {
           // 到期前最后核一次 PR（有 url 才核；MERGED 走统一收口）
           const rawPr = run.pr_url || task.pr_url || task.payload?.pr_url || null;

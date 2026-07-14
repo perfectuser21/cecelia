@@ -158,4 +158,54 @@ describe('A/B：generator_done 短路 + 超时兜底', () => {
     expect(updates.some((s) => /generator_done_timeout/.test(s))).toBe(false);
     expect(updates.some((s) => /UPDATE tasks/.test(s) && /'completed'/.test(s))).toBe(true);
   });
+
+  it('8) M1 headed 分支 generator_done=true + session 消失 -> spawnFn 零调用（headed 短路）', async () => {
+    const pool = { query: vi.fn().mockImplementation(async (sql) => {
+      if (/DISTINCT ON \(initiative_id\)/.test(sql)) {
+        return { rows: [{ initiative_id: TASK_ID, phase: 'planning', attempts: '1', deadline_at: new Date(Date.now() + 3600e3).toISOString(), pr_url: null, orchestrator_host: 'skill-relay-claude-headed', started_at: new Date(Date.now() - 3600e3).toISOString() }] };
+      }
+      if (/FROM tasks/.test(sql)) {
+        return { rows: [{ id: TASK_ID, status: 'in_progress', title: 't', pr_url: null, payload: { orchestrator: 'skill-relay', generator_done: true } }] };
+      }
+      return { rows: [] };
+    })};
+    const execFn = vi.fn((cmd) => {
+      // tmux has-session 抛非连接错误 = session 消失 -> needsRefire=true
+      if (/tmux has-session/.test(cmd)) throw new Error('exit status 1: session not found');
+      return '';
+    });
+    const spawnFn = vi.fn().mockResolvedValue({ ok: true });
+    const r = await resumeStalledRelayRuns({ pool, execFn, spawnFn });
+    expect(spawnFn).not.toHaveBeenCalled();
+    expect(r.resumed).toBe(0);
+  });
+
+  it('9) M2 generator_done=true 但 generator_done_at 缺失 -> 回退 run.started_at 判超时标 failed', async () => {
+    const oldStarted = new Date(Date.now() - (GENERATOR_DONE_TIMEOUT_MS + 60000)).toISOString();
+    const pool = { query: vi.fn().mockImplementation(async (sql) => {
+      if (/DISTINCT ON \(initiative_id\)/.test(sql)) {
+        return { rows: [{ initiative_id: TASK_ID, phase: 'planning', attempts: '1', deadline_at: new Date(Date.now() + 3600e3).toISOString(), pr_url: null, orchestrator_host: 'skill-relay-session', started_at: oldStarted }] };
+      }
+      if (/FROM tasks/.test(sql)) {
+        return { rows: [{ id: TASK_ID, status: 'in_progress', title: 't', pr_url: null, payload: { orchestrator: 'skill-relay', generator_done: true } }] };
+      }
+      if (/FROM initiative_run_events/.test(sql)) return { rows: [] };
+      return { rows: [] };
+    })};
+    const execFn = vi.fn((cmd) => { if (/docker ps/.test(cmd)) return ''; return ''; });
+    const spawnFn = vi.fn().mockResolvedValue({ ok: true });
+    const r = await resumeStalledRelayRuns({ pool, execFn, spawnFn });
+    expect(spawnFn).not.toHaveBeenCalled();
+    const updates = pool.query.mock.calls.map((c) => c[0]);
+    expect(updates.some((s) => /UPDATE tasks/.test(s) && /'failed'/.test(s))).toBe(true);
+    expect(updates.some((s) => /generator_done_timeout/.test(s))).toBe(true);
+    expect(r.capped).toBe(1);
+  });
+
+  it('10) M2 DISTINCT ON SELECT 选出 started_at 列', async () => {
+    const deps = makeDeps({ generatorDone: false });
+    await resumeStalledRelayRuns(deps);
+    const runsSql = deps.pool.query.mock.calls.map((c) => c[0]).find((s) => /DISTINCT ON \(initiative_id\)/.test(s));
+    expect(runsSql).toMatch(/started_at/);
+  });
 });
