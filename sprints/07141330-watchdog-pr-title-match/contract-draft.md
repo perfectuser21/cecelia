@@ -50,7 +50,7 @@ EVA v2 纪律要求 PR 标题必须包含 `[短号]` 方括号形式（如 `fix(
 3. 再修改 `harness-relay-watchdog.js`，确认 FR-2 变 passing，FR-3/FR-4 全绿
 4. 运行 `cd packages/brain && npx vitest run src/__tests__/harness-relay-watchdog-pr-discovery.test.js`，全绿
 
-### Test Contract 表
+## Test Contract 表
 
 | # | 测试描述 | 输入（mock execFn 返回） | short | 期望结果 | 对应 FR |
 |---|---------|------------------------|-------|----------|---------|
