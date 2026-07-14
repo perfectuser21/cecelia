@@ -2984,10 +2984,10 @@ async function _driveHarnessInitiative(task, opts = {}) {
   // 旧图逐节点（pick_sub_task/run_sub_task/...）写事件的模式随图一起删除——skill-relay
   // 单 session 模型没有离散节点，改在 spawn 这个粗粒度节点上留一条 running 记录，
   // 让该 SSE 流对 skill-relay initiative 至少还有起点信号（non-fatal，best-effort）。
+  const _relayInitiativeId = task.payload?.initiative_id || task.id;
   try {
     const { writeInitiativeRunEvent } = await import('./events/initiativeRunEvents.js');
-    const initiativeId = task.payload?.initiative_id || task.id;
-    await writeInitiativeRunEvent({ initiativeId, node: 'skill-relay-spawn', status: 'running', dbPool });
+    await writeInitiativeRunEvent({ initiativeId: _relayInitiativeId, node: 'skill-relay-spawn', status: 'running', dbPool });
   } catch (ireErr) {
     console.warn(`[executor] writeInitiativeRunEvent failed (non-fatal): ${ireErr.message}`);
   }
@@ -2996,7 +2996,22 @@ async function _driveHarnessInitiative(task, opts = {}) {
   // harness-controller skill，不 compile / 不 invoke 图。
   const { spawnSkillRelaySession } = await import('./harness-skill-relay.js');
   const relayDeps = { pool: dbPool, ...(opts.skillRelayDeps || {}) };
-  return await spawnSkillRelaySession(task, relayDeps);
+  const relayResult = await spawnSkillRelaySession(task, relayDeps);
+
+  // 刀C-3：spawn 完成后写终态（解决 17 条永久 running 的 skill-relay-spawn 事件）
+  try {
+    const terminalStatus = relayResult?.ok ? 'done' : 'failed';
+    await dbPool.query(
+      `UPDATE initiative_run_events
+          SET status = $1
+        WHERE initiative_id = $2 AND node = 'skill-relay-spawn' AND status = 'running'`,
+      [terminalStatus, _relayInitiativeId]
+    );
+  } catch (ireErr) {
+    console.warn(`[executor] skill-relay-spawn event terminal update failed (non-fatal): ${ireErr.message}`);
+  }
+
+  return relayResult;
 }
 
 /**

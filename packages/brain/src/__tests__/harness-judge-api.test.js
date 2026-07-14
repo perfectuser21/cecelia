@@ -15,7 +15,11 @@ const { mockPool, mockRunJudgeGate } = vi.hoisted(() => ({
   mockRunJudgeGate: vi.fn(),
 }));
 vi.mock('../db.js', () => ({ default: mockPool }));
-vi.mock('../harness-judge.js', () => ({ runJudgeGate: mockRunJudgeGate }));
+vi.mock('../harness-judge.js', () => ({
+  runJudgeGate: mockRunJudgeGate,
+  runMechanicalPreflightChecks: vi.fn(() => null),   // 默认通过预检
+  checkJudgmentsWritten: vi.fn(async () => null),    // 默认通过
+}));
 
 async function buildApp() {
   const { default: router } = await import('../routes/harness.js');

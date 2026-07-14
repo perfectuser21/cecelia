@@ -295,8 +295,8 @@ export async function spawnSkillRelaySession(task, deps = {}) {
     const abilityId = task.ability_id || task.payload?.ability_id || null;
     await dbPool.query(
       `INSERT INTO initiative_runs
-         (initiative_id, phase, journey_id, orchestrator_version, orchestrator_host, deadline_at, ability_id)
-       VALUES ($1, 'A_planning', $2, 'v2', $3, NOW() + INTERVAL '${deadlineHours} hours', $4)`,
+         (initiative_id, phase, journey_id, orchestrator_version, orchestrator_host, deadline_at, ability_id, current_task_id)
+       VALUES ($1, 'A_planning', $2, 'v2', $3, NOW() + INTERVAL '${deadlineHours} hours', $4, $1)`,
       [initiativeId, task.payload?.journey_id || null, orchestratorHost, abilityId]
     );
 
@@ -545,8 +545,8 @@ async function _spawnHeadedSession(task, { dbPool, now, short, initiativeId, dep
   const headedAbilityId = task.ability_id || task.payload?.ability_id || null;
   await dbPool.query(
     `INSERT INTO initiative_runs
-       (initiative_id, phase, journey_id, orchestrator_version, orchestrator_host, deadline_at, ability_id)
-     VALUES ($1, 'A_planning', $2, 'v2', '${headedHost}', NOW() + INTERVAL '${HEADED_RELAY_DEADLINE_HOURS} hours', $3)`,
+       (initiative_id, phase, journey_id, orchestrator_version, orchestrator_host, deadline_at, ability_id, current_task_id)
+     VALUES ($1, 'A_planning', $2, 'v2', '${headedHost}', NOW() + INTERVAL '${HEADED_RELAY_DEADLINE_HOURS} hours', $3, $1)`,
     [initiativeId, task.payload?.journey_id || null, headedAbilityId]
   );
 

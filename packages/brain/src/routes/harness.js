@@ -15,7 +15,7 @@ import { join } from 'path';
 import { homedir } from 'os';
 import { randomUUID } from 'crypto';
 import pool from '../db.js';
-import { runJudgeGate } from '../harness-judge.js';
+import { runJudgeGate, runMechanicalPreflightChecks, checkJudgmentsWritten } from '../harness-judge.js';
 
 const router = Router();
 
@@ -1485,6 +1485,26 @@ router.get('/sprint-docs', async (req, res) => {
 router.post('/complete', async (req, res) => {
   const { initiative_id, sprint_dir, pr_url, screenshots } = req.body ?? {};
   if (!initiative_id) return res.status(400).json({ error: 'initiative_id required' });
+
+  // 收账权收归：终态只能来自 watchdog 确认 MERGED（phase=done）后的 report 回写
+  // 防止 generator callback 提前收账（merged:false 实证 dc18d43d）
+  try {
+    const runQ = await pool.query(
+      `SELECT phase FROM initiative_runs
+        WHERE initiative_id = $1 AND orchestrator_version = 'v2'
+        ORDER BY started_at DESC LIMIT 1`,
+      [initiative_id]
+    );
+    if (runQ.rows.length > 0 && runQ.rows[0].phase !== 'done') {
+      return res.status(409).json({
+        error: 'initiative_run 未达到 done 终态，不允许提前收账（防 generator 提前收账）',
+        current_phase: runQ.rows[0].phase,
+      });
+    }
+  } catch (err) {
+    console.warn(`[POST /harness/complete] 收账权检查失败（保守继续）: ${err.message}`);
+  }
+
   try {
     const result = { completed_at: new Date().toISOString() };
     if (pr_url) result.pr_url = pr_url;
@@ -1866,17 +1886,35 @@ router.post('/judge', async (req, res) => {
 
   let verdict = agent_verdict;
   let feedback = agent_feedback;
+  let resolvedBrainResult = null;
   if (!verdict) {
     try {
-      const br = JSON.parse(await readFile(join(worktree, '.brain-result.json'), 'utf8'));
-      verdict = br.verdict;
-      if (feedback === undefined) feedback = br.feedback;
+      resolvedBrainResult = JSON.parse(await readFile(join(worktree, '.brain-result.json'), 'utf8'));
+      verdict = resolvedBrainResult.verdict;
+      if (feedback === undefined) feedback = resolvedBrainResult.feedback;
     } catch { /* 下方统一 400 */ }
+  } else {
+    // agent_verdict 已由调用方提供，仍尝试读 .brain-result.json 补充机械预检所需字段
+    try {
+      resolvedBrainResult = JSON.parse(await readFile(join(worktree, '.brain-result.json'), 'utf8'));
+    } catch { /* 读不到不阻塞，预检会因字段缺失而 FAIL 打回 */ }
   }
   if (!verdict) {
     return res.status(400).json({ error: 'agent_verdict 缺失且 .brain-result.json 不可读' });
   }
   if (verdict === 'FIXED') verdict = 'PASS'; // 前科语义归一（memory: harness-evaluator-verdict-bug）
+
+  // 刀B — 机械预检（优先于 AI 裁判，不经 LLM 直接打回）
+  const mechFailSync = runMechanicalPreflightChecks(resolvedBrainResult);
+  if (mechFailSync) {
+    console.warn(`[POST /harness/judge] 机械预检 FAIL: ${mechFailSync.mechFail} task=${task_id}`);
+    return res.json({ ...mechFailSync, judged: false });
+  }
+  const mechFailAsync = await checkJudgmentsWritten(resolvedBrainResult, task_id, pool);
+  if (mechFailAsync) {
+    console.warn(`[POST /harness/judge] judgments_written 不匹配 FAIL task=${task_id}`);
+    return res.json({ ...mechFailAsync, judged: false });
+  }
 
   let transcript;
   if (transcript_file) {
@@ -1894,6 +1932,19 @@ router.post('/judge', async (req, res) => {
       transcript,
       instanceLabel: `judge-api-${String(task_id).slice(0, 8)}`,
     });
+
+    // 刀C-2：judge 判定后自写 judge_verdict 落库（不依赖 controller 容器 curl 上报）
+    try {
+      await pool.query(
+        `UPDATE initiative_runs
+            SET judge_verdict = $1
+          WHERE initiative_id = $2::uuid AND orchestrator_version = 'v2'`,
+        [result.verdict, task_id]
+      );
+    } catch (dbErr) {
+      console.warn(`[POST /harness/judge] judge_verdict 落库失败（non-fatal）: ${dbErr.message}`);
+    }
+
     return res.json(result);
   } catch (err) {
     console.error('[POST /harness/judge]', err.message);

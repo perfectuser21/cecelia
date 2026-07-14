@@ -50,6 +50,9 @@ describe('POST /harness/complete', () => {
   });
 
   it('更新 task status=completed，写入 pr_url', async () => {
+    // 收账权收归：先 SELECT initiative_runs（phase 检查），再 UPDATE tasks
+    // mockQuery 按顺序：1) SELECT initiative_runs → 无行（保守继续），2) UPDATE tasks
+    mockQuery.mockResolvedValue({ rows: [], rowCount: 1 });
     const res = await request(app).post('/harness/complete').send({
       initiative_id: 'test-init-001',
       pr_url: 'https://github.com/org/repo/pull/100',
@@ -57,8 +60,11 @@ describe('POST /harness/complete', () => {
     });
     expect(res.status).toBe(200);
     expect(res.body.ok).toBe(true);
-    expect(mockQuery).toHaveBeenCalledOnce();
-    const [sql, params] = mockQuery.mock.calls[0];
+    // 现在有两次 query：SELECT initiative_runs + UPDATE tasks
+    expect(mockQuery).toHaveBeenCalledTimes(2);
+    const updateCall = mockQuery.mock.calls.find(([sql]) => /UPDATE tasks/.test(sql));
+    expect(updateCall).toBeTruthy();
+    const [sql, params] = updateCall;
     expect(sql).toMatch(/UPDATE tasks/);
     expect(params[1]).toBe('test-init-001');
     const result = JSON.parse(params[0]);
