@@ -3,7 +3,7 @@ import { readFileSync } from 'fs';
 import { resolve } from 'path';
 
 const src = readFileSync(
-  resolve(process.cwd(), 'packages/brain/src/routes/guard-drill.js'),
+  resolve(process.cwd(), 'src/routes/guard-drill.js'),
   'utf8'
 );
 
