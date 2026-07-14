@@ -4,12 +4,13 @@
  */
 import { runJudgeGate } from '../../../packages/brain/src/harness-judge.js';
 
-const noop = { writeFileFn: async () => {} };
+// 机械闸（刀B dc18d43d）前置：fixture 需带 E1 条目级合规证据 + 测试文件桩，聚焦裁判门本身
+const noop = { writeFileFn: async () => {}, listTestFilesFn: async () => ['a.test.ts'] };
 const evidence = (steps = ['step A', 'step B']) => async () => ({
   contractE2E: '## E2E\ncurl localhost',
   goldenPathSteps: steps,
   transcript: 'PASS: A\nPASS: B',
-  brainResult: { verdict: 'PASS' },
+  brainResult: { verdict: 'PASS', behavior_tests: [{ command: 'npm test', exit_code: 0, log_tail: 'ok' }] },
 });
 
 function assert(cond, msg) {

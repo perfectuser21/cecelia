@@ -28,7 +28,7 @@ export async function finalizeHarnessTask(taskId, deps = {}) {
   const ghFn = deps.ghFn || defaultGhFn;
 
   const { rows } = await pool.query(
-    `SELECT id, status, task_type, pr_url, payload FROM tasks WHERE id = $1`, [taskId]
+    `SELECT id, status, task_type, pr_url, payload FROM tasks WHERE id::text = $1`, [String(taskId)]
   );
   const task = rows[0];
   if (!task || !isHarnessRelayTask(task)) return { applies: false };
@@ -42,7 +42,7 @@ export async function finalizeHarnessTask(taskId, deps = {}) {
            || jsonb_build_object('generator_done', true)
            || CASE WHEN payload ? 'generator_done_at' THEN '{}'::jsonb
                    ELSE jsonb_build_object('generator_done_at', to_jsonb(NOW())) END
-         WHERE id = $1 AND status = 'in_progress'`, [taskId]
+         WHERE id::text = $1 AND status = 'in_progress'`, [String(taskId)]
       );
       if ((upd?.rowCount ?? 0) === 0) {
         console.warn(`[harness-finalize] task=${taskId} 降级标记未落库（rowCount=0，任务非 in_progress）：${reason}`);
