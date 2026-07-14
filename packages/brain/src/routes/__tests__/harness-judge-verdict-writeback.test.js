@@ -17,6 +17,8 @@ vi.mock('../../db.js', () => ({
 vi.mock('../../harness-judge.js', () => ({
   runJudgeGate: vi.fn(async () => ({ verdict: 'PASS', feedback: null, judged: true })),
   runMechanicalGate: vi.fn(async () => ({ pass: true, reasons: [] })),
+  runMechanicalPreflightChecks: vi.fn(() => null),   // 默认通过
+  checkJudgmentsWritten: vi.fn(async () => null),    // 默认通过
 }));
 
 let app;
