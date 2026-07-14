@@ -1,8 +1,10 @@
-# DoD: pre-swap 核心 smoke 容器内 jq 缺失致 4 连假红——四脚本 node 兜底 shim
+# DoD: 刀4-T2 棘轮统一台账 ratchet-registry + guard 接 CI + 面板水位区块（接管修闸）
 
-- [x] [BEHAVIOR] 四条核心 smoke 在无 jq 环境全绿（node shim 兜底）
-      Test: manual:bash -c "mkdir -p /tmp/nojq-bin && for b in bash curl node grep cat printf dirname date; do ln -sf \$(command -v \$b) /tmp/nojq-bin/ 2>/dev/null; done; env PATH=/tmp/nojq-bin BRAIN_URL=http://localhost:5221 bash packages/brain/scripts/smoke/harness-ping-smoke.sh"
-- [x] [BEHAVIOR] 有 jq 环境行为不变（shim 仅在 jq 缺失时定义）
-      Test: manual:node -e "const s=require('fs').readFileSync('packages/brain/scripts/smoke/healthz-smoke.sh','utf8');if(!s.includes('command -v jq'))process.exit(1)"
-- [x] 四脚本 bash -n 语法绿
-      Test: manual:bash -c "for f in healthz-smoke version-endpoint-smoke harness-ping-smoke harness-echo-smoke; do bash -n packages/brain/scripts/smoke/\$f.sh || exit 1; done"
+- [x] [BEHAVIOR] 台账 ≥5 条且每项含 name/direction(only_up|only_down)/guard/source
+      Test: manual:node -e "const r=require('./scripts/ratchet-registry.json');if(r.length<5||r.some(x=>!x.name||!['only_up','only_down'].includes(x.direction)||!x.source))process.exit(1)"
+- [x] [BEHAVIOR] GET /api/brain/quality/ratchet 有 supertest 行为测试（TDD 序：测试 commit 先行）
+      Test: manual:node -e "require('fs').accessSync('packages/brain/src/routes/__tests__/quality-ratchet.test.js')"
+- [x] [BEHAVIOR] feat+brain/src 配套 smoke 已新增并登记 allowlist
+      Test: manual:bash -c "bash -n packages/brain/scripts/smoke/ratchet-registry-smoke.sh && grep -q ratchet-registry-smoke.sh packages/quality/smoke-allowlist.txt"
+- [x] ratchet-guard 脚本存在且语法绿
+      Test: manual:node --check scripts/ratchet-guard.mjs

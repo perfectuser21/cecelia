@@ -3,20 +3,11 @@
 # 部署位置: hk-vps /opt/zenithjoy/db/docker-compose.yml
 # 启动: COMPOSE_PROJECT_NAME=zenithjoy-db docker compose up -d
 # 回滚: COMPOSE_PROJECT_NAME=zenithjoy-db docker compose down -v（见 T1 回滚表 T2-1）
-# T3 起加入 zenithjoy-net：staging API 容器按容器名 zenithjoy-db-postgres 直连，
-# 不再依赖宿主端口（127.0.0.1:5432 保留仅供本机运维/compare 用）。
-networks:
-  zenithjoy-net:
-    name: zenithjoy-net
-    external: true
-
 services:
   postgres:
     image: postgres:17
     container_name: zenithjoy-db-postgres
     restart: unless-stopped
-    networks:
-      - zenithjoy-net
     ports:
       - "127.0.0.1:5432:5432"
     environment:
