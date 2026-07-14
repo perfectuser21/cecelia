@@ -24,7 +24,7 @@ FROM node:20-alpine
 # postgresql-client (createdb/dropdb/psql)：WS1 预览闸 preview-env-start.sh 用
 # `createdb -T cecelia cecelia_preview_<PR>` 克隆生产快照做数据隔离，容器内此前没装过，
 # 实测(PR#3801) Step4 直接报 "createdb: command not found" 失败退出。
-RUN apk add --no-cache curl bash procps tini docker-cli docker-cli-compose git openssh-client ca-certificates github-cli postgresql-client \
+RUN apk add --no-cache curl bash jq procps tini docker-cli docker-cli-compose git openssh-client ca-certificates github-cli postgresql-client \
  && adduser -D -u 1001 cecelia
 
 # Install Codex CLI globally so triggerCodexReview() in executor.js can spawn it.
