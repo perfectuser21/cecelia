@@ -13,37 +13,44 @@ import { callLLM } from '../llm-caller.js';
 
 const router = Router();
 
+/** 构建列表查询的 WHERE 子句（纯逻辑，不含 DB 调用） */
+export function buildDesignDocsFilter(query) {
+  const params = [];
+  const conditions = [];
+
+  if (query.type) {
+    const types = query.type.split(',').map(t => t.trim()).filter(Boolean);
+    if (types.length === 1) {
+      params.push(types[0]);
+      conditions.push(`type = $${params.length}`);
+    } else if (types.length > 1) {
+      params.push(types);
+      conditions.push(`type = ANY($${params.length})`);
+    }
+  }
+
+  if (query.area) {
+    params.push(query.area);
+    conditions.push(`area = $${params.length}`);
+  }
+
+  if (query.status) {
+    params.push(query.status);
+    conditions.push(`status = $${params.length}`);
+  }
+
+  const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+  return { where, params };
+}
+
 /** GET / — 列表 */
 router.get('/', async (req, res) => {
   try {
     const limit = Math.min(parseInt(req.query.limit) || 30, 200);
     const offset = parseInt(req.query.offset) || 0;
-    const params = [];
-    const conditions = [];
 
-    if (req.query.type) {
-      // 支持逗号分隔多类型：?type=research,architecture
-      const types = req.query.type.split(',').map(t => t.trim()).filter(Boolean);
-      if (types.length === 1) {
-        params.push(types[0]);
-        conditions.push(`type = $${params.length}`);
-      } else if (types.length > 1) {
-        params.push(types);
-        conditions.push(`type = ANY($${params.length})`);
-      }
-    }
+    const { where: whereClause, params } = buildDesignDocsFilter(req.query);
 
-    if (req.query.area) {
-      params.push(req.query.area);
-      conditions.push(`area = $${params.length}`);
-    }
-
-    if (req.query.status) {
-      params.push(req.query.status);
-      conditions.push(`status = $${params.length}`);
-    }
-
-    const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
     params.push(limit, offset);
 
     const { rows } = await pool.query(
