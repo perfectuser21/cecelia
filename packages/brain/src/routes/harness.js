@@ -1496,9 +1496,14 @@ router.post('/complete', async (req, res) => {
       [initiative_id]
     );
     if (runQ.rows.length > 0 && runQ.rows[0].phase !== 'done') {
-      return res.status(409).json({
-        error: 'initiative_run 未达到 done 终态，不允许提前收账（防 generator 提前收账）',
+      // 绝不 409：冻结期 skill 把非 2xx 当可重试会造死循环（设计 2026-07-14-harness-lifecycle-gates
+      // 对抗审查明确否决 409）。与 finalize 拒绝同款 200 accepted:false 语义。
+      return res.json({
+        ok: true,
+        accepted: false,
+        reason: `initiative_run_not_done: phase=${runQ.rows[0].phase}`,
         current_phase: runQ.rows[0].phase,
+        initiative_id,
       });
     }
   } catch (err) {
@@ -1510,6 +1515,18 @@ router.post('/complete', async (req, res) => {
     if (pr_url) result.pr_url = pr_url;
     if (screenshots) result.screenshots = screenshots;
     if (sprint_dir) result.sprint_dir = sprint_dir;
+    // 收账权收归（决策 dc18d43d）：harness_initiative(skill-relay) completed 一律申请，
+    // 外部真相核验不过 → 不标 completed，但把 report 产物照记进 result（不丢信息），200 accepted:false。
+    const { finalizeHarnessTask } = await import('../lib/harness-finalize.js');
+    const fin = await finalizeHarnessTask(initiative_id, { pool });
+    if (fin.applies && !fin.allow) {
+      await pool.query(
+        `UPDATE tasks SET result = COALESCE(result, '{}'::jsonb) || $1::jsonb WHERE id::text = $2`,
+        [JSON.stringify(result), initiative_id]
+      );
+      console.warn(`[POST /harness/complete] initiative ${initiative_id} completed 申请被拒 → 降级（${fin.reason}）`);
+      return res.json({ ok: true, accepted: false, reason: fin.reason, initiative_id });
+    }
     const updateResult = await pool.query(
       `UPDATE tasks SET status='completed', completed_at=NOW(),
        result = COALESCE(result, '{}'::jsonb) || $1::jsonb
@@ -1876,6 +1893,9 @@ router.post('/judge', async (req, res) => {
   const { task_id, sprint_dir, worktree, agent_verdict, agent_feedback, prompt_dir, transcript_file } = req.body || {};
   if (!task_id || !sprint_dir || !worktree) {
     return res.status(400).json({ error: 'task_id/sprint_dir/worktree 必填' });
+  }
+  if (!UUID_RE.test(String(task_id))) {
+    return res.status(400).json({ error: 'task_id 必须是 uuid' });
   }
   if (typeof worktree !== 'string' || !worktree.startsWith('/')) {
     return res.status(400).json({ error: 'worktree 必须是绝对路径' });

@@ -40,7 +40,7 @@ afterEach(() => {
 
 function callJudge(overrides = {}) {
   return request(app).post('/judge').send({
-    task_id: 't-1',
+    task_id: '11111111-2222-3333-4444-555555555555', // uuid 入口校验（c682c9c87）要求合法 uuid
     sprint_dir: 's',
     worktree,
     agent_verdict: 'PASS',
@@ -57,7 +57,7 @@ describe('C2: /judge 判定后自写 initiative_runs.judge_verdict', () => {
     expect(upd[0]).toMatch(/current_task_id/);
     expect(upd[0]).toMatch(/IS DISTINCT FROM 'PASS'/);
     expect(upd[1]).toContain('PASS');
-    expect(upd[1]).toContain('t-1');
+    expect(upd[1]).toContain('11111111-2222-3333-4444-555555555555');
   });
 
   it('UPDATE 抛错 → non-fatal，响应仍带裁决', async () => {

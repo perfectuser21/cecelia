@@ -392,7 +392,7 @@ router.patch('/tasks/:task_id', async (req, res) => {
 
 
     // Get current task
-    const taskResult = await pool.query('SELECT id, status, claimed_by, executor_kind FROM tasks WHERE id = $1', [task_id]);
+    const taskResult = await pool.query("SELECT id, status, claimed_by, executor_kind, task_type, payload->>'orchestrator' AS orchestrator FROM tasks WHERE id = $1", [task_id]);
     if (taskResult.rows.length === 0) {
       return res.status(404).json({
         success: false,
@@ -436,12 +436,23 @@ router.patch('/tasks/:task_id', async (req, res) => {
       }
     }
 
+    // 收账权收归（决策 dc18d43d）：harness_initiative(skill-relay) completed 一律申请，
+    // Brain 核验外部真相不过 → 降级中间态（保持原状态 + 写 generator_done），200 accepted:false。
+    let harnessDemoted = false;
+    let harnessDemoteReason = null;
+    if (status === 'completed' && !isStatusNoop
+        && task.task_type === 'harness_initiative' && task.orchestrator === 'skill-relay') {
+      const { finalizeHarnessTask } = await import('../lib/harness-finalize.js');
+      const fin = await finalizeHarnessTask(task_id, { pool });
+      if (fin.applies && !fin.allow) { harnessDemoted = true; harnessDemoteReason = fin.reason; }
+    }
+
     // Build dynamic UPDATE query
     const setClauses = ['updated_at = NOW()'];
     const params = [];
     let paramIdx = 1;
 
-    if (status && !isStatusNoop) {
+    if (status && !isStatusNoop && !harnessDemoted) {
       const changedAt = new Date().toISOString();
       const historyEntry = { from: currentStatus, to: status, changed_at: changedAt, source: 'engine' };
       setClauses.push(`status = $${paramIdx++}`);
@@ -482,7 +493,7 @@ router.patch('/tasks/:task_id', async (req, res) => {
 
     const updatedTask = updateResult.rows[0];
 
-    if (status && !isStatusNoop) {
+    if (status && !isStatusNoop && !harnessDemoted) {
       await emitEvent('task_status_changed', {
         task_id,
         from: currentStatus,
@@ -552,6 +563,7 @@ router.patch('/tasks/:task_id', async (req, res) => {
 
     res.json({
       success: true,
+      ...(harnessDemoted ? { accepted: false, reason: harnessDemoteReason } : {}),
       task_id,
       status: updatedTask.status,
       updated_at: updatedTask.updated_at

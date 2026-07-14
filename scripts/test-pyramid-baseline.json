@@ -1,0 +1,12 @@
+{
+  "orphans": 0,
+  "permanent": 1121,
+  "permanent_roots": [
+    { "path": "packages/brain/src/__tests__", "layer": "unit" },
+    { "path": "packages/brain/tests", "layer": "integration" },
+    { "path": "tests", "layer": "integration" },
+    { "path": "packages/engine/tests", "layer": "unit" },
+    { "path": "packages/quality", "layer": "integration" }
+  ],
+  "smoke_dir": "scripts/smoke"
+}

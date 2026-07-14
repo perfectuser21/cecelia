@@ -410,6 +410,25 @@ jobs:
             echo "::error::scripts/smoke/*-smoke.sh 为空（放行闸守卫缺失）"; exit 1
           fi
 
+  # ─── 测试金字塔守卫（刀0）───────────────────────────────
+  # 孤儿棘轮/smoke挂跑道/永久池棘轮；自测先行（每次 PR proven-to-fire）。
+  # PRD: docs/prd/2026-07-14-ops-half-loop.prd.md
+  test-pyramid-guard:
+    name: 测试金字塔守卫
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Guard 自测（proven-to-fire）
+        run: bash scripts/__tests__/test-pyramid-guard.test.sh
+      - name: write-current-state 自测（原孤儿测试接入）
+        run: bash scripts/__tests__/write-current-state.test.sh
+      - name: 真跑守卫
+        run: node scripts/test-pyramid-guard.mjs
+
   # ─── Migration 同号守护 ───────────────────────────────────
   # 扫 packages/brain/migrations/*.sql 提取首数字前缀，发现同号即 fail。
   # 教训：W7.4 / 2026-05 事故 — 264_failure_type_dispatch / 264_fix_progress_ledger
