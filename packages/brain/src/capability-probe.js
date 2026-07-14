@@ -316,6 +316,7 @@ async function probeRumination() {
   // 取最近一次 rumination_llm_failure 事件，把根因带进 probe detail。
   // 这样 PROBE_FAIL_RUMINATION 触发时，运维不用再去 grep 日志，直接从 probe 输出就能看到 nb/llm 错误。
   let llmFailureSummary = '';
+  let isBalanceLow = false;
   if (livenessTag === 'degraded_llm_failure') {
     try {
       const { rows: failRows } = await pool.query(
@@ -328,6 +329,7 @@ async function probeRumination() {
       if (payload) {
         const nb = payload.notebook_error || '?';
         const llm = payload.llm_error || '?';
+        isBalanceLow = payload.anthropic_balance_low === true;
         llmFailureSummary = ` last_llm_failure: notebook=${String(nb).slice(0, 60)} llm=${String(llm).slice(0, 60)}`;
       }
     } catch (e) {
@@ -431,6 +433,14 @@ async function probeRumination() {
         }
       }
     }
+  }
+
+  // API 余额耗尽是账单问题，代码无法修复，不应触发 auto-fix 任务
+  if (livenessTag === 'degraded_llm_failure' && isBalanceLow) {
+    return {
+      ok: true,
+      detail: `48h_count=0 last_run=${lastRun || 'never'} undigested=${undigested} (api_balance_low: rumination degraded but not a code bug)${llmFailureSummary}`,
+    };
   }
 
   return {
