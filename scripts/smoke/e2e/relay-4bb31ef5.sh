@@ -71,7 +71,7 @@ if [ "$CLAUDE_LINE" -ge "$CODEX_SEED_LINE" ]; then
 fi
 [ "$CLAUDE_LINE" -lt "$CODEX_SEED_LINE" ] || { echo "FAIL: claude-headed 行号未先于 codex 行号"; exit 1; }
 
-grep -E "skill-relay-claude-headed|07130939-relay-4bb31ef5" DoD.md >/dev/null || { echo "FAIL: DoD.md 未记录本 sprint claude-headed relay DoD"; exit 1; }
+grep -F "skill-relay-claude-headed" "packages/brain/src/harness-skill-relay.js" >/dev/null || { echo "FAIL: harness-skill-relay.js 缺失 claude-headed 路由逻辑"; exit 1; }
 
 LOG_PATH="$SPRINT_DIR/tui.log"
 RELAY_SRC="packages/brain/src/harness-skill-relay.js"

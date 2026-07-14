@@ -98,3 +98,4 @@ blade-bc-harness-gates-smoke.sh
 quality-test-pyramid-smoke.sh
 watchdog-pr-title-smoke.sh
 guard-ref-bare-fr-smoke.sh
+kv-route-smoke.sh

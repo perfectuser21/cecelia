@@ -53,7 +53,11 @@ function globToRegExp(glob) {
 export function checkSmokeWiring(root, smokeDir) {
   const dir = path.join(root, smokeDir);
   let names = [];
-  try { names = fs.readdirSync(dir).filter((n) => n.endsWith('.sh')); } catch { /* 无 smoke 目录 */ }
+  try {
+    names = walk(dir)
+      .filter((f) => f.endsWith('.sh'))
+      .map((f) => path.relative(dir, f));
+  } catch { /* 无 smoke 目录 */ }
   const contents = runnerContents(root);
   // 收集 runner 里出现的 scripts/smoke/xxx 或 glob token
   const tokens = new Set();
