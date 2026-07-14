@@ -91,3 +91,4 @@ migration-339-drop-abilities-gp-priority-smoke.sh
 rpa-dev-verify-smoke.sh
 three-tier-smoke.sh
 task-result-backfill-smoke.sh
+dev-env-db-guard-smoke.sh
