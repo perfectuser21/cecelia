@@ -97,9 +97,9 @@ done
 echo ""
 if [ "$ALL_OK" = "true" ]; then
   echo "✅ 迁移完成，两库数据一致。"
-  echo "备份文件位于 $BACKUP_DIR（权限已收敛为 700），内含明文数据，请人工核对无误后手动执行： rm -rf \"$BACKUP_DIR\" 清理，不要长期留存。"
+  echo "备份文件位于 ${BACKUP_DIR}（权限已收敛为 700），内含明文数据，请人工核对无误后手动执行： rm -rf \"$BACKUP_DIR\" 清理，不要长期留存。"
   exit 0
 else
-  echo "❌ 行数校验失败，请人工排查（备份在 $BACKUP_DIR，未自动回滚）"
+  echo "❌ 行数校验失败，请人工排查（备份在 ${BACKUP_DIR}，未自动回滚）"
   exit 1
 fi
