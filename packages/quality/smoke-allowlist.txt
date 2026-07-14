@@ -99,4 +99,5 @@ quality-test-pyramid-smoke.sh
 watchdog-pr-title-smoke.sh
 seven-ring-audit-smoke.sh
 guard-ref-bare-fr-smoke.sh
+kv-route-smoke.sh
 dispatch-fail-autoblock-smoke.sh

@@ -249,21 +249,9 @@ app.use('/api/brain/memory', memoryRoutes);
 app.use('/api/brain/settings', settingsRoutes);
 app.use('/api/brain/quality', qualityRoutes);
 
-// 通用 KV 读取（working_memory 快照，供外部巡检：curl /api/brain/kv/seven-ring-audit-last）
-app.get('/api/brain/kv/:key', async (req, res) => {
-  const { key } = req.params;
-  try {
-    const { rows } = await pool.query(
-      'SELECT value_json, updated_at FROM working_memory WHERE key = $1',
-      [key.replace(/-/g, '_')], // URL 用 - 分隔，DB 用 _
-    );
-    const row = rows[0];
-    if (!row) return res.json({ available: false, key });
-    res.json({ available: true, key, updated_at: row.updated_at, data: row.value_json });
-  } catch (err) {
-    res.json({ available: false, key, error: err.message });
-  }
-});
+// KV 读写统一走 src/routes/kv.js（经 routes.js 挂 /api/brain/kv）。
+// 旧 app 级 GET（available 语义 + 连字符转下划线取键）已删：与 kv.js 双实现分脑——
+// POST 原样写 -、GET 转 _ 读，写进去的键永远读不到。
 app.use('/api/brain/janitor', janitorRoutes);
 app.use('/api/brain/profile/facts', profileFactsRoutes);
 

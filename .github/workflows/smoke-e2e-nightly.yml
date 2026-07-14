@@ -1,0 +1,80 @@
+name: Smoke E2E Nightly（staging 5222）
+
+# 每夜对真实 staging（5222）全量跑 scripts/smoke/e2e/ 池。
+# 失败发 Bark 晨报，结果写 Brain KV (smoke-nightly-last-run)。
+#
+# 真实执行路径：nightly-real-machine.yml 中 ssh 到宿主机执行
+# scripts/smoke/e2e-nightly.sh；本 workflow 负责 CI 跑道注册（A2 wiring）。
+#
+# A2 守卫登记的 e2e 脚本（smoke_dir 递归扫描后须全部在此引用）：
+#   scripts/smoke/e2e/env-model-cecelia-zenithjoy-4e5fd7eb.sh
+#   scripts/smoke/e2e/headed-r7.sh
+#   scripts/smoke/e2e/relay-4bb31ef5.sh
+#   scripts/smoke/e2e/relay-a85e0582.sh
+
+on:
+  schedule:
+    # 北京时间 03:00（UTC 19:00 前夜）
+    - cron: '0 19 * * *'
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Dry run（不实际跑，仅验证 wiring）'
+        required: false
+        default: 'false'
+
+concurrency:
+  group: smoke-e2e-nightly
+  cancel-in-progress: false
+
+jobs:
+  e2e-nightly:
+    name: E2E Smoke Nightly (Real Machine)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout（取 smoke 脚本）
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Connect to Tailscale
+        uses: tailscale/github-action@v2
+        with:
+          authkey: ${{ secrets.TS_AUTHKEY }}
+
+      - name: E2E Nightly Runner（真实 staging 5222）
+        if: ${{ github.event.inputs.dry_run != 'true' }}
+        env:
+          BRAIN_URL: ${{ secrets.BRAIN_DEPLOY_URL || 'http://100.71.151.105:5221' }}
+          BARK_TOKEN: ${{ secrets.BARK_TOKEN }}
+        run: |
+          set -uo pipefail
+          HOST=$(echo "$BRAIN_URL" | sed -E 's#^https?://##; s#:[0-9]+$##')
+          STAGING_URL="http://${HOST}:5222"
+          echo "staging: $STAGING_URL"
+
+          # 整池运行入口（内部循环 scripts/smoke/e2e/*.sh）
+          BRAIN_URL="$BRAIN_URL" STAGING_URL="$STAGING_URL" \
+            bash scripts/smoke/e2e-nightly.sh
+
+      - name: Dry Run 模式 — 仅验证脚本可访问
+        if: ${{ github.event.inputs.dry_run == 'true' }}
+        run: |
+          echo "dry_run=true: 列出 e2e 脚本池（不执行）"
+          for f in scripts/smoke/e2e/*.sh; do
+            echo "  [pool] $f"
+          done
+          echo "wiring OK"
+
+      - name: 失败诊断
+        if: failure()
+        env:
+          BRAIN_URL: ${{ secrets.BRAIN_DEPLOY_URL || 'http://100.71.151.105:5221' }}
+        run: |
+          HOST=$(echo "$BRAIN_URL" | sed -E 's#^https?://##; s#:[0-9]+$##')
+          echo "::error::E2E nightly smoke 失败 — 请检查 staging ${HOST}:5222"
+          curl -sf "http://${HOST}:5222/api/brain/health" 2>/dev/null \
+            && echo "staging /health 可达（脚本逻辑问题）" \
+            || echo "staging /health 不可达"
