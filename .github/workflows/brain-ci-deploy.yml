@@ -88,16 +88,7 @@ jobs:
       - name: 计算变更路径
         id: paths
         run: |
-          BEFORE="${{ github.event.before }}"
-          AFTER="${{ github.event.after }}"
-
-          if [ "$BEFORE" = "0000000000000000000000000000000000000000" ]; then
-            CHANGED="packages/brain/"
-          else
-            CHANGED=$(git diff --name-only "$BEFORE" "$AFTER" 2>/dev/null \
-              | grep -E "^packages/brain/|^scripts/brain-deploy\.sh" | tr '\n' ' ' || echo "packages/brain/")
-          fi
-
+          CHANGED=$(bash scripts/ci/gate3-changed-paths.sh "${{ github.event.before }}" "${{ github.event.after }}")
           echo "changed_paths=$CHANGED" >> $GITHUB_OUTPUT
           echo "Brain 变更路径: $CHANGED"
 
