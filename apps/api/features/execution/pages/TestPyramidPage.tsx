@@ -47,6 +47,24 @@ interface RatchetData {
   available: boolean;
   registry?: RatchetMetric[];
   error?: string;
+interface GuardEntry {
+  id: string;
+  name: string;
+  file: string;
+  auto: boolean;
+  boundary: string;
+  last_verified_at: string | null;
+  last_drill_at: string | null;
+  last_drill_fired: boolean | null;
+  stale: boolean;
+  days_since_verified: number | null;
+}
+
+interface GuardDrillStatus {
+  guards: GuardEntry[];
+  last_run: { drilled_guard: string; guard_name: string; fired: boolean; detail: string; ran_at: string } | null;
+  last_run_at: string | null;
+  stale_threshold_days: number;
 }
 
 type FetchState = 'loading' | 'done' | 'unavailable';
@@ -149,6 +167,9 @@ export default function TestPyramidPage() {
   const [sevenRingState, setSevenRingState] = useState<FetchState>('loading');
   const [ratchet, setRatchet] = useState<RatchetData | null>(null);
   const [triggering, setTriggering] = useState(false);
+  const [guardDrill, setGuardDrill] = useState<GuardDrillStatus | null>(null);
+  const [guardDrillState, setGuardDrillState] = useState<FetchState>('loading');
+  const [drillTriggering, setDrillTriggering] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -204,14 +225,42 @@ export default function TestPyramidPage() {
         setRatchet(body);
       } catch {
         if (!cancelled) setRatchet({ available: false });
+    async function fetchGuardDrill() {
+      try {
+        const resp = await fetch('/api/brain/guard-drill/status');
+        if (cancelled) return;
+        if (!resp.ok) { setGuardDrillState('unavailable'); return; }
+        const body: GuardDrillStatus = await resp.json();
+        if (cancelled) return;
+        setGuardDrill(body);
+        setGuardDrillState('done');
+      } catch {
+        if (!cancelled) setGuardDrillState('unavailable');
       }
     }
 
     fetchData();
     fetchSevenRing();
     fetchRatchet();
+    fetchGuardDrill();
     return () => { cancelled = true; };
   }, []);
+
+  async function triggerDrill() {
+    setDrillTriggering(true);
+    try {
+      const resp = await fetch('/api/brain/guard-drill/trigger', { method: 'POST' });
+      if (resp.ok) {
+        const body: GuardDrillStatus = await fetch('/api/brain/guard-drill/status').then((r) => r.json());
+        setGuardDrill(body);
+        setGuardDrillState('done');
+      }
+    } catch {
+      // ignore
+    } finally {
+      setDrillTriggering(false);
+    }
+  }
 
   async function triggerAudit() {
     setTriggering(true);
@@ -470,10 +519,138 @@ export default function TestPyramidPage() {
                       {m.watermark}
                     </td>
                     <td style={{ padding: '8px 12px', color: '#6b7280', fontSize: '12px' }}>{m.guard}</td>
+      {/* ── proven-to-fire 守卫验火台账 ── */}
+      <div
+        data-testid="proven-to-fire-section"
+        style={{
+          marginTop: '24px',
+          padding: '20px',
+          border: '1px solid #e5e7eb',
+          borderRadius: '12px',
+          background: '#fafafa',
+        }}
+      >
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '12px' }}>
+          <span style={{ fontSize: '16px', fontWeight: 700 }}>🔥 Proven-to-Fire 守卫验火台账</span>
+          {guardDrill?.last_run_at && (
+            <span style={{ color: '#6b7280', fontSize: '13px' }}>
+              上次演习：{guardDrill.last_run_at.replace('T', ' ').slice(0, 16)}
+            </span>
+          )}
+          <button
+            data-testid="guard-drill-trigger-btn"
+            onClick={triggerDrill}
+            disabled={drillTriggering}
+            style={{
+              marginLeft: 'auto',
+              padding: '4px 12px',
+              borderRadius: '4px',
+              fontSize: '13px',
+              border: '1px solid #d1d5db',
+              background: '#fff',
+              cursor: drillTriggering ? 'not-allowed' : 'pointer',
+              color: '#374151',
+            }}
+          >
+            {drillTriggering ? '演习中...' : '立即演习'}
+          </button>
+        </div>
+
+        {guardDrillState === 'loading' && (
+          <p style={{ color: '#6b7280', fontSize: '14px' }}>加载守卫台账...</p>
+        )}
+        {guardDrillState === 'unavailable' && (
+          <div
+            data-testid="guard-drill-unavailable"
+            style={{ padding: '14px', border: '1px solid #d1d5db', borderRadius: '8px', background: '#f3f4f6', color: '#6b7280', fontSize: '13px' }}
+          >
+            暂无守卫演习数据。点击「立即演习」触发首次运行，或等待每月自动调度。
+          </div>
+        )}
+        {guardDrillState === 'done' && guardDrill?.guards && (
+          <div data-testid="guard-drill-table">
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
+              <thead>
+                <tr style={{ borderBottom: '1px solid #e5e7eb' }}>
+                  <th style={{ textAlign: 'left', padding: '6px 8px', color: '#6b7280', fontWeight: 600 }}>守卫</th>
+                  <th style={{ textAlign: 'left', padding: '6px 8px', color: '#6b7280', fontWeight: 600 }}>模式</th>
+                  <th style={{ textAlign: 'left', padding: '6px 8px', color: '#6b7280', fontWeight: 600 }}>上次验火日期</th>
+                  <th style={{ textAlign: 'left', padding: '6px 8px', color: '#6b7280', fontWeight: 600 }}>距今</th>
+                  <th style={{ textAlign: 'left', padding: '6px 8px', color: '#6b7280', fontWeight: 600 }}>状态</th>
+                </tr>
+              </thead>
+              <tbody>
+                {guardDrill.guards.map((g) => (
+                  <tr
+                    key={g.id}
+                    data-testid={`guard-row-${g.id}`}
+                    style={{ borderBottom: '1px solid #f3f4f6' }}
+                  >
+                    <td style={{ padding: '8px', fontWeight: 500, color: '#111827' }}>
+                      {g.name}
+                      <div style={{ fontSize: '11px', color: '#9ca3af', marginTop: '2px' }}>{g.id}</div>
+                    </td>
+                    <td style={{ padding: '8px' }}>
+                      <span
+                        style={{
+                          padding: '2px 8px',
+                          borderRadius: '4px',
+                          fontSize: '11px',
+                          background: g.auto ? '#dbeafe' : '#f3f4f6',
+                          color: g.auto ? '#1d4ed8' : '#6b7280',
+                        }}
+                      >
+                        {g.auto ? '自动' : '手动'}
+                      </span>
+                    </td>
+                    <td style={{ padding: '8px', color: '#374151' }}>
+                      {g.last_verified_at
+                        ? g.last_verified_at.replace('T', ' ').slice(0, 10)
+                        : '—'}
+                    </td>
+                    <td style={{ padding: '8px', color: '#6b7280' }}>
+                      {g.days_since_verified !== null ? `${g.days_since_verified} 天` : '从未'}
+                    </td>
+                    <td style={{ padding: '8px' }}>
+                      {g.stale || g.last_verified_at === null ? (
+                        <span
+                          data-testid={`guard-stale-${g.id}`}
+                          style={{
+                            padding: '2px 10px',
+                            borderRadius: '4px',
+                            fontSize: '12px',
+                            fontWeight: 600,
+                            background: '#fef2f2',
+                            color: '#dc2626',
+                            border: '1px solid #fca5a5',
+                          }}
+                        >
+                          未验证
+                        </span>
+                      ) : (
+                        <span
+                          data-testid={`guard-ok-${g.id}`}
+                          style={{
+                            padding: '2px 10px',
+                            borderRadius: '4px',
+                            fontSize: '12px',
+                            fontWeight: 600,
+                            background: '#f0fdf4',
+                            color: '#16a34a',
+                            border: '1px solid #86efac',
+                          }}
+                        >
+                          已验火
+                        </span>
+                      )}
+                    </td>
                   </tr>
                 ))}
               </tbody>
             </table>
+            <p style={{ fontSize: '12px', color: '#9ca3af', marginTop: '8px' }}>
+              超过 {guardDrill.stale_threshold_days} 天未验火的守卫标红。自动守卫每月轮转演习；手动守卫须人工执行 runbook。
+            </p>
           </div>
         )}
       </div>

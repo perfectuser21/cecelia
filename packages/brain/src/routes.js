@@ -29,6 +29,7 @@ import sentinelRouter from './routes/sentinel.js';
 import dispatchRouter from './routes/dispatch.js';
 import previewRouter from './routes/preview.js';
 import kvRouter from './routes/kv.js';
+import guardDrillRouter from './routes/guard-drill.js';
 
 export { triggerAutoRCA } from './routes/brain-meta.js';
 export { resolveRelatedFailureMemories } from './routes/shared.js';
@@ -83,5 +84,8 @@ router.use('/preview', previewRouter);
 
 // 轻量键值存取 — GET/POST /kv/:key（working_memory 表，供七环巡检/ci-patrol 等脚本快照存取）
 router.use('/kv', kvRouter);
+
+// 月度守卫演习台账 — GET /guard-drill/status，POST /guard-drill/trigger
+router.use('/guard-drill', guardDrillRouter);
 
 export default router;
