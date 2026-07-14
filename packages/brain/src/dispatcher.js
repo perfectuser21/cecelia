@@ -797,7 +797,7 @@ export async function dispatchNextTask(goalIds) {
         const newCount = prevCount + 1;
 
         await pool.query(
-          `UPDATE tasks SET metadata = COALESCE(metadata, '{}'::jsonb) || jsonb_build_object('dispatch_fail_consecutive', $2) WHERE id = $1`,
+          `UPDATE tasks SET metadata = COALESCE(metadata, '{}'::jsonb) || jsonb_build_object('dispatch_fail_consecutive', $2::int) WHERE id = $1`,
           [nextTask.id, newCount]
         );
 
@@ -822,7 +822,7 @@ export async function dispatchNextTask(goalIds) {
           }
         }
       } catch (autoblockErr) {
-        console.error(`[dispatch] dispatch-fail-autoblock counter update failed (non-fatal): ${autoblockErr.message}`);
+        console.warn(`[dispatch] dispatch-fail-autoblock counter update failed (task ${nextTask.id}) (non-fatal): ${autoblockErr.message}`);
       }
     }
     await logTickDecision(
