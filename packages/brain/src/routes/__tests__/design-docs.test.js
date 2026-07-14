@@ -46,7 +46,7 @@ describe('design-docs route — buildDesignDocsFilter', () => {
   });
 
   it('trims whitespace from comma-separated types', () => {
-    const { where, params } = buildDesignDocsFilter({ type: ' diary , research ' });
+    const { params } = buildDesignDocsFilter({ type: ' diary , research ' });
     expect(params[0]).toEqual(['diary', 'research']);
   });
 });
