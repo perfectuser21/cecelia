@@ -89,6 +89,14 @@ bluegreen_swap() {
   local port="${TEMP_PORT:-5223}"
   local timeout="${HEALTH_TIMEOUT:-60}"
   local version="${TARGET_VERSION:?TARGET_VERSION 必填}"
+  # 金丝雀探活/smoke 目标主机：deploy-webhook 在 brain 容器内 spawn 本脚本时，
+  # 容器 localhost:${port} 无监听（端口映射在宿主）——必须走 host.docker.internal。
+  # 宿主直跑保持 localhost。可用 env CANARY_HOST 显式覆盖。
+  local canary_host="${CANARY_HOST:-}"
+  if [ -z "$canary_host" ]; then
+    if [ -f /.dockerenv ]; then canary_host="host.docker.internal"; else canary_host="localhost"; fi
+  fi
+  echo "[bluegreen] canary 探活主机: ${canary_host}（容器内=$( [ -f /.dockerenv ] && echo yes || echo no )）"
 
   echo "[bluegreen] 起 green canary（${green}，端口 ${port}，tick 关）..."
   docker rm -f "$green" >/dev/null 2>&1 || true
@@ -106,7 +114,7 @@ bluegreen_swap() {
   # poll green health（先 curl 临时端口，兜底 docker inspect health）
   local elapsed=0 healthy=false
   while [ "$elapsed" -lt "$timeout" ]; do
-    if curl -sf "http://localhost:${port}/api/brain/tick/status" >/dev/null 2>&1; then
+    if curl -sf "http://${canary_host}:${port}/api/brain/tick/status" >/dev/null 2>&1; then
       healthy=true; break
     fi
     local hs
@@ -151,7 +159,7 @@ bluegreen_swap() {
         _smoke_failed=$((_smoke_failed + 1))
         break
       fi
-      if BRAIN_URL="http://localhost:${port}" bash "$_sf"; then
+      if BRAIN_URL="http://${canary_host}:${port}" bash "$_sf"; then
         echo "  [pre-swap-smoke] ✅ ${_script}"
       else
         echo "  [pre-swap-smoke] ❌ ${_script}"
