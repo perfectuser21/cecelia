@@ -15,10 +15,18 @@ const router = Router();
 router.get('/:key', async (req, res) => {
   const { key } = req.params;
   try {
-    const result = await pool.query(
+    // 兼容旧 app 级路由的取键约定（URL 连字符 → DB 下划线，如 seven-ring-audit-last
+    // → seven_ring_audit_last）：先按原样查，未命中再查下划线变体
+    let result = await pool.query(
       'SELECT key, value_json, updated_at FROM working_memory WHERE key = $1',
       [key]
     );
+    if (!result.rows.length && key.includes('-')) {
+      result = await pool.query(
+        'SELECT key, value_json, updated_at FROM working_memory WHERE key = $1',
+        [key.replace(/-/g, '_')]
+      );
+    }
     if (!result.rows.length) {
       return res.status(404).json({ error: 'not_found', key });
     }
