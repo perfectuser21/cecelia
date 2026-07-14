@@ -1,11 +1,7 @@
 import { describe, it, expect } from 'vitest';
-import { readFileSync } from 'fs';
-import { resolve } from 'path';
+import fs from 'fs';
 
-const src = readFileSync(
-  resolve(process.cwd(), 'src/routes/guard-drill.js'),
-  'utf8'
-);
+const src = fs.readFileSync(new URL('../guard-drill.js', import.meta.url), 'utf8');
 
 describe('routes/guard-drill.js — 路由结构检查', () => {
   it('导出 default Router', () => {
