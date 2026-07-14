@@ -85,10 +85,12 @@ describe('headed smoke contract [BEHAVIOR]', () => {
     expect(claudeLineIdx).toBeLessThan(codexSeedLineIdx);
   });
 
-  it('DoD.md 已记录本 sprint 的 claude-headed relay DoD', () => {
+  it('wrapper 结构性锚点 + 本 sprint 合同已记录 claude-headed relay DoD', () => {
+    // 刀3-T1 起 wrapper 不再 grep 根 DoD.md（时效性断言与 DoD 卡轮换约定互斥），
+    // 改验结构性锚点：host 标识 + sprint 目录
     const script = readWrapper();
-    expect(script).toContain('DoD.md');
-    expect(script).toMatch(/skill-relay-claude-headed\|07130939-relay-4bb31ef5/);
+    expect(script).toContain('skill-relay-claude-headed');
+    expect(script).toContain('07130939-relay-4bb31ef5');
 
     // 毕业适配：根 DoD.md 是"最新 sprint 卡"（随每个 PR 轮换），时效性断言改指本 sprint 的固定合同文件
     const dod = readFileSync(path.join(ROOT, 'sprints/07130939-relay-4bb31ef5/contract-dod.md'), 'utf8');
