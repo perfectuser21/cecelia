@@ -1,0 +1,17 @@
+name: Heartbeat Sentinel Active
+
+on:
+  schedule:
+    - cron: "*/30 * * * *"
+  workflow_dispatch:
+    inputs:
+      probe_url:
+        description: "probe URL (empty = production; drill: dead port e.g. http://IP:9999)"
+        required: false
+        default: ""
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "Heartbeat Sentinel Active - minimal test"
