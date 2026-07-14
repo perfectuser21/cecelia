@@ -111,6 +111,8 @@ bluegreen_swap() {
 
   # poll green health（GREEN_URL 双模式：宿主执行走 localhost:${port}，容器内执行走
   # green_ip:5221 直连；兜底 docker inspect health）。锁定的 green_url 供 pre-swap smoke 复用。
+  # 注意：elapsed 只按 sleep 累加，两路 curl --max-time 3 + docker inspect 使每轮最坏墙钟 ~8s，
+  # HEALTH_TIMEOUT 是逻辑轮数预算而非精确墙钟（仅影响失败路径耗时，blue 不受影响）。
   local elapsed=0 healthy=false green_url="" green_ip=""
   while [ "$elapsed" -lt "$timeout" ]; do
     if curl -sf --max-time 3 "http://localhost:${port}/api/brain/tick/status" >/dev/null 2>&1; then
