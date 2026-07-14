@@ -111,23 +111,21 @@ print(v.get('finished_at', ''))
     timeout-minutes: 5
     permissions:
       issues: write
-    env:
-      GH_TOKEN: ${{ github.token }}
-      REPO: ${{ github.repository }}
-      RUN_ID: ${{ github.run_id }}
-      SERVER_URL: ${{ github.server_url }}
-      PROBE_URL: ${{ needs.probe.outputs.probe_url }}
-      HEALTH_OK: ${{ needs.probe.outputs.health_ok }}
-      KV_OK: ${{ needs.probe.outputs.kv_ok }}
-      KV_AGE: ${{ needs.probe.outputs.kv_age_minutes }}
 
     steps:
       - name: 开 GitHub Issue（去重）
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PROBE_URL: ${{ needs.probe.outputs.probe_url }}
+          HEALTH_OK: ${{ needs.probe.outputs.health_ok }}
+          KV_OK: ${{ needs.probe.outputs.kv_ok }}
+          KV_AGE: ${{ needs.probe.outputs.kv_age_minutes }}
+          RUN_URL: "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
         run: |
           set -uo pipefail
           TODAY=$(date -u +%Y-%m-%d)
           TITLE="[heartbeat-sentinel] 生产探测失败 — ${TODAY}"
-          RUN_URL="${SERVER_URL}/${REPO}/actions/runs/${RUN_ID}"
           EXISTING=$(gh api "repos/${REPO}/issues?state=open&labels=${ISSUE_LABEL}&per_page=50" \
             --jq '[.[] | select(.title=="'"${TITLE}"'")] | length' 2>/dev/null || echo "0")
           if [ "$EXISTING" -gt 0 ]; then
@@ -150,6 +148,10 @@ Run: ${RUN_URL}
         env:
           BARK_URL: ${{ secrets.BARK_URL }}
           BARK_TOKEN: ${{ secrets.BARK_TOKEN }}
+          PROBE_URL: ${{ needs.probe.outputs.probe_url }}
+          HEALTH_OK: ${{ needs.probe.outputs.health_ok }}
+          KV_OK: ${{ needs.probe.outputs.kv_ok }}
+          KV_AGE: ${{ needs.probe.outputs.kv_age_minutes }}
         run: |
           FAILURES=""
           [ "$HEALTH_OK" != "true" ] && FAILURES="${FAILURES}Brain /health 不可达; "
@@ -179,16 +181,14 @@ Run: ${RUN_URL}
     timeout-minutes: 5
     permissions:
       issues: write
-    env:
-      GH_TOKEN: ${{ github.token }}
-      REPO: ${{ github.repository }}
-      RUN_ID: ${{ github.run_id }}
-      SERVER_URL: ${{ github.server_url }}
 
     steps:
       - name: 关闭 open issues
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          RUN_URL: "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
         run: |
-          RUN_URL="${SERVER_URL}/${REPO}/actions/runs/${RUN_ID}"
           OPEN=$(gh api "repos/${REPO}/issues?state=open&labels=${ISSUE_LABEL}&per_page=50" \
             --jq '.[].number' 2>/dev/null || echo "")
           if [[ -z "$OPEN" ]]; then echo "无 open issues"; exit 0; fi
