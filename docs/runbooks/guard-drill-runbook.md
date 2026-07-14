@@ -264,9 +264,29 @@ psql $DATABASE_URL -c "DELETE FROM account_usage WHERE account_id='drill-account
 
 | 周期 | 演习内容 |
 |------|---------|
-| 月度（每月第一个周一） | 轮转所有 6 个守卫，每次至少验 2 个 |
-| 季度 | 全覆盖验火，更新本文档"上次验火日期" |
+| 月度（自动，Brain 调度） | `guard-drill` scheduler job 自动轮选 auto 守卫（守卫1/守卫2），全流程演习 |
+| 季度 | 手动验火 manual-only 守卫（守卫3-6），更新本文档"上次验火日期" |
 | 故障后 24h 内 | 必验受影响守卫是否已能感知同类问题 |
+
+### 自动演习（刀4-T4，2026-07-14 起生效）
+
+Brain scheduler-jobs 每 60s 轮询，`guard-drill` job 自带 **30天 gate**（月度节奏）：
+- **守卫1（heartbeat-sentinel）**：`gh workflow run heartbeat-sentinel.yml --field probe_url="http://127.0.0.1:19999"` → 轮询 5min 等新 Issue
+- **守卫2（test-pyramid-guard）**：注入孤儿测试文件 → `node scripts/test-pyramid-guard.mjs --root <tmpdir>` 验 exit 1
+- 守卫3-6：标记 `auto: false`（manual-only），不参与自动轮转
+
+**守卫未叫路径**：若 `drillFn` 返回 `fired: false` → 自动开 P1 Issue（issues 表）+ Bark 推送 + `raise('P1', ...)`.
+
+**台账查询**：
+```bash
+# 逐守卫 last_verified_at 台账
+curl localhost:5221/api/brain/guard-drill/status | jq '.guards[] | {id, last_verified_at, stale}'
+
+# 手动触发一次演习（重置 30天 gate）
+curl -X POST localhost:5221/api/brain/guard-drill/trigger
+```
+
+**Dashboard**：测试金字塔页底部"🔥 Proven-to-Fire 守卫验火台账"区块，>90天未验火标红。
 
 演习结果自动写 KV `guard-drill-last-run`，供仪表盘和下次演习参考。
 
