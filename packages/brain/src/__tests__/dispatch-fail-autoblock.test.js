@@ -256,7 +256,7 @@ function makeTask(overrides = {}) {
  *  7. [autoblock] UPDATE metadata (write new count)
  *  若达阈值：
  *  8. [autoblock] blockTask 内部 UPDATE（由 mockBlockTask 接管，不经 pool.query）
- *  余：logTickDecision INSERT → { rows: [] }
+ *  8/9. logTickDecision INSERT → { rows: [] }（必须显式注册 Once，避免与同批次第二次 setupQuerySequence 交叉消耗）
  */
 function setupQuerySequence(task, prevFailCount = 0, reachedThreshold = false) {
   mockQuery
@@ -274,7 +274,9 @@ function setupQuerySequence(task, prevFailCount = 0, reachedThreshold = false) {
     .mockResolvedValueOnce({ rows: [{ metadata: { dispatch_fail_consecutive: prevFailCount } }] })
     // 7. UPDATE metadata (write new count)
     .mockResolvedValueOnce({ rows: [], rowCount: 1 })
-    // fallback for logTickDecision INSERT and any remaining calls
+    // 8. logTickDecision INSERT（显式注册，防止被后续 setupQuerySequence 的 Once 挤占位置）
+    .mockResolvedValueOnce({ rows: [], rowCount: 1 })
+    // fallback for any additional bookkeeping calls
     .mockResolvedValue({ rows: [], rowCount: 1 });
 }
 
@@ -308,6 +310,8 @@ describe('GP-1 [BEHAVIOR-1]: 三连失败 → 自动 blocked', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    // mockReset 清除 Once 队列（vi.clearAllMocks 只清 calls，不清 Once 队列）
+    mockSelectNextDispatchableTask.mockReset();
     mockTriggerCeceliaRun.mockResolvedValue({
       success: false,
       error: 'payload missing callback_url',
@@ -396,6 +400,9 @@ describe('GP-2 [BEHAVIOR-2]: blocked 任务下一 tick 不再被选中', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    // mockReset 清除 Once 队列（vi.clearAllMocks 只清 calls，不清 Once 队列）
+    mockSelectNextDispatchableTask.mockReset();
+    mockTriggerCeceliaRun.mockReset().mockResolvedValue({ success: false }); // 默认值
     // selectNextDispatchableTask 已过滤 blocked，直接返回 taskB
     mockSelectNextDispatchableTask.mockResolvedValueOnce(taskB);
     mockTriggerCeceliaRun.mockResolvedValueOnce({
@@ -487,26 +494,28 @@ describe('GP-4 [BEHAVIOR-4]: 阈值 env DISPATCH_FAIL_AUTOBLOCK_THRESHOLD=2', ()
   });
 
   it('阈值=2：失败 2 次即触发 autoblock', async () => {
-    // 注意：DISPATCH_FAIL_AUTOBLOCK_THRESHOLD 是模块级常量，需在 afterEach vi.resetModules()
-    // 后重新 import 才能生效。此测试验证阈值逻辑在 dispatcher 内部计算正确。
-    mockSelectNextDispatchableTask
-      .mockResolvedValueOnce(task)
-      .mockResolvedValueOnce(task);
+    // 注意：DISPATCH_FAIL_AUTOBLOCK_THRESHOLD 是模块级常量，需在 vi.resetModules() 后
+    // 重新 import 才能生效。
+    // 关键：vi.clearAllMocks() 不清除 mockResolvedValueOnce 的 Once 队列，
+    // 因此两次 dispatchNextTask 调用之间必须分批注册 setupQuerySequence，
+    // 不能提前一次性注册两批（否则第一次 dispatch 的 logTickDecision 会消耗第二批的 drain Once）。
     mockTriggerCeceliaRun
       .mockResolvedValue({ success: false, error: 'err', reason: 'bridge_error' });
 
-    setupQuerySequence(task, 0, false); // fail#1 → count=1
-    setupQuerySequence(task, 1, true);  // fail#2 → count=2 → block
-
-    // 重新 import 以读取新 env
+    // 重新 import 以读取新 env（THRESHOLD=2）
     vi.resetModules();
     const { dispatchNextTask } = await import('../dispatcher.js');
+
+    // fail#1：只提前注册第一次的 query 序列
+    mockSelectNextDispatchableTask.mockReset().mockResolvedValueOnce(task);
+    setupQuerySequence(task, 0, false); // fail#1 → count=1（未达阈值 2）
     await dispatchNextTask(['goal-1']); // fail#1
+
     vi.clearAllMocks();
-    // 重置并再次 mock（模块重置后 mock 需重新注入，此处简化验证：直接检查第 2 次失败触发 block）
+    // fail#2：重新注册 mock 和 query 序列
     mockTriggerCeceliaRun.mockResolvedValue({ success: false, error: 'err', reason: 'bridge_error' });
-    mockSelectNextDispatchableTask.mockResolvedValueOnce(task);
-    setupQuerySequence(task, 1, true);
+    mockSelectNextDispatchableTask.mockReset().mockResolvedValueOnce(task);
+    setupQuerySequence(task, 1, true); // fail#2 → count=2 → block（达阈值 2）
     await dispatchNextTask(['goal-1']); // fail#2
 
     expect(mockBlockTask).toHaveBeenCalledTimes(1);
@@ -619,28 +628,28 @@ describe('[BEHAVIOR-7]: DISPATCH_FAIL_AUTOBLOCK_THRESHOLD 非法值回退默认 
     const task = makeTask();
     vi.clearAllMocks();
 
-    mockTriggerCeceliaRun.mockResolvedValue({ success: false, error: 'err', reason: 'bridge_error' });
-    mockSelectNextDispatchableTask
-      .mockResolvedValueOnce(task)
-      .mockResolvedValueOnce(task)
-      .mockResolvedValueOnce(task);
-
-    setupQuerySequence(task, 0, false); // fail#1
-    setupQuerySequence(task, 1, false); // fail#2
-    setupQuerySequence(task, 2, true);  // fail#3 → block
-
+    // 关键：必须分批注册 setupQuerySequence（每次 dispatch 前只注册当次的序列），
+    // 避免 vi.clearAllMocks() 不清除 Once 队列导致的交叉消耗。
     const { dispatchNextTask } = await import('../dispatcher.js');
-    await dispatchNextTask(['goal-1']); // count=1
-    vi.clearAllMocks();
+
+    // fail#1
     mockTriggerCeceliaRun.mockResolvedValue({ success: false, error: 'err', reason: 'bridge_error' });
-    mockSelectNextDispatchableTask.mockResolvedValueOnce(task);
+    mockSelectNextDispatchableTask.mockReset().mockResolvedValueOnce(task);
+    setupQuerySequence(task, 0, false);
+    await dispatchNextTask(['goal-1']); // count=1
+
+    vi.clearAllMocks();
+    // fail#2
+    mockTriggerCeceliaRun.mockResolvedValue({ success: false, error: 'err', reason: 'bridge_error' });
+    mockSelectNextDispatchableTask.mockReset().mockResolvedValueOnce(task);
     setupQuerySequence(task, 1, false);
     await dispatchNextTask(['goal-1']); // count=2 → 不 block
     expect(mockBlockTask).not.toHaveBeenCalled();
 
     vi.clearAllMocks();
+    // fail#3
     mockTriggerCeceliaRun.mockResolvedValue({ success: false, error: 'err', reason: 'bridge_error' });
-    mockSelectNextDispatchableTask.mockResolvedValueOnce(task);
+    mockSelectNextDispatchableTask.mockReset().mockResolvedValueOnce(task);
     setupQuerySequence(task, 2, true);
     await dispatchNextTask(['goal-1']); // count=3 → block
     expect(mockBlockTask).toHaveBeenCalledTimes(1);

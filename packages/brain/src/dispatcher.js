@@ -32,9 +32,23 @@ import { checkQuotaGuard } from './quota-guard.js';
 import { updateTask } from './actions.js';
 import { selectNextDispatchableTask, processCortexTask } from './dispatch-helpers.js';
 import { findDuplicateSibling } from './dispatch-dedup.js';
+import { blockTask } from './task-updater.js';
+import { raise } from './alerting.js';
 
 const MINIMAL_MODE = process.env.BRAIN_MINIMAL_MODE === 'true';
 const TICK_LAST_DISPATCH_KEY = 'tick_last_dispatch';
+
+// ============================================================
+// dispatch-fail-autoblock：连续派发失败自动隔离
+// ============================================================
+// 连续派发失败次数存储在 tasks.metadata.dispatch_fail_consecutive。
+// 达到阈值后自动将 task 置 blocked，防止坏任务持续占据调度器。
+// configError / spawn_deduplicated 类型失败不计入计数（非 executor 故障）。
+// env DISPATCH_FAIL_AUTOBLOCK_THRESHOLD 可覆盖阈值；非法值（NaN / <1）回退默认 3。
+export const DISPATCH_FAIL_AUTOBLOCK_THRESHOLD = (() => {
+  const raw = parseInt(process.env.DISPATCH_FAIL_AUTOBLOCK_THRESHOLD || '', 10);
+  return Number.isFinite(raw) && raw >= 1 ? raw : 3;
+})();
 
 // ============================================================
 // 全局 harness_initiative 并发上限（OPEN-1 OOM 防线）
@@ -770,6 +784,46 @@ export async function dispatchNextTask(goalIds) {
       console.warn(`[dispatch] spawn_deduplicated detected — skipping cecelia-run breaker count`);
     } else {
       await recordFailure('cecelia-run');
+
+      // dispatch-fail-autoblock：连续失败计数 + 自动隔离
+      // configError / spawn_deduplicated 已在上方 early-return，此处只处理真实执行失败。
+      try {
+        const metaRow = await pool.query(
+          `SELECT metadata FROM tasks WHERE id = $1`,
+          [nextTask.id]
+        );
+        const currentMeta = metaRow.rows[0]?.metadata || {};
+        const prevCount = currentMeta.dispatch_fail_consecutive ?? 0;
+        const newCount = prevCount + 1;
+
+        await pool.query(
+          `UPDATE tasks SET metadata = COALESCE(metadata, '{}'::jsonb) || jsonb_build_object('dispatch_fail_consecutive', $2) WHERE id = $1`,
+          [nextTask.id, newCount]
+        );
+
+        if (newCount >= DISPATCH_FAIL_AUTOBLOCK_THRESHOLD) {
+          console.warn(`[dispatch] task ${nextTask.id} hit dispatch_fail_autoblock threshold (${newCount}/${DISPATCH_FAIL_AUTOBLOCK_THRESHOLD}), blocking task`);
+          try {
+            await blockTask(nextTask.id, {
+              reason: 'dispatch_fail_autoblock',
+              detail: {
+                consecutive_failures: newCount,
+                last_error: String(execResult.error || execResult.reason || 'executor_failed'),
+                blocked_at_tick: new Date().toISOString(),
+              },
+            });
+          } catch (blockErr) {
+            console.error(`[dispatch] blockTask failed for task ${nextTask.id}: ${blockErr.message}`);
+          }
+          try {
+            await raise('P2', 'dispatch_fail_autoblock', `task ${nextTask.id} blocked after ${newCount} consecutive dispatch failures`);
+          } catch (raiseErr) {
+            console.error(`[dispatch] raise failed for dispatch_fail_autoblock (task ${nextTask.id}): ${raiseErr.message}`);
+          }
+        }
+      } catch (autoblockErr) {
+        console.error(`[dispatch] dispatch-fail-autoblock counter update failed (non-fatal): ${autoblockErr.message}`);
+      }
     }
     await logTickDecision(
       'tick',
@@ -790,6 +844,27 @@ export async function dispatchNextTask(goalIds) {
   // 触发释放 claim / 标 failed（否则下个 tick 会把已经在跑的同一个 task 重新派发一次，
   // 造成重复执行 —— 比修复前的死锁问题更糟）。只记日志，吞掉异常。
   // ─────────────────────────────────────────────────────────────────────────
+
+  // dispatch-fail-autoblock：派发成功 → 重置 dispatch_fail_consecutive 计数
+  // 放在 bookkeeping 块之前，与 setupSuccessQuerySequence 的 query 序列对齐。
+  try {
+    const metaRowSuccess = await pool.query(
+      `SELECT metadata FROM tasks WHERE id = $1`,
+      [nextTask.id]
+    );
+    const successMeta = metaRowSuccess.rows[0]?.metadata || {};
+    const prevFailCount = successMeta.dispatch_fail_consecutive ?? 0;
+    if (prevFailCount > 0) {
+      await pool.query(
+        `UPDATE tasks SET metadata = COALESCE(metadata, '{}'::jsonb) || $1::jsonb WHERE id = $2 -- dispatch_fail_consecutive reset`,
+        [{ dispatch_fail_consecutive: 0 }, nextTask.id]
+      );
+      tickLog(`[dispatch] task ${nextTask.id} dispatch succeeded, reset dispatch_fail_consecutive from ${prevFailCount} to 0`);
+    }
+  } catch (resetErr) {
+    console.error(`[dispatch] dispatch-fail-autoblock reset failed (non-fatal): ${resetErr.message}`);
+  }
+
   try {
     _lastDispatchTime = Date.now();
 
