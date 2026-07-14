@@ -22,6 +22,8 @@ BEGIN
 END;
 $$;
 
+-- 枚举必须涵盖生产真实在用的 status（2026-07-14 生产部署实证：working 28 行 / broken 3 行，
+-- 窄枚举导致 ATRewriteTable 23514 部署失败）；已 apply 窄版的库由 344 拓宽
 ALTER TABLE journey_features DROP CONSTRAINT IF EXISTS journey_features_status_check;
 ALTER TABLE journey_features ADD CONSTRAINT journey_features_status_check
-  CHECK (status IN ('planned','building','done','deprecated','live'));
+  CHECK (status IN ('planned','building','working','done','broken','deprecated','live'));
