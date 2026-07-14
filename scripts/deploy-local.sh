@@ -187,10 +187,15 @@ if [[ "$NEED_DASHBOARD" == true ]]; then
             cp -R "$STAGING_FIXTURE_DIST" "$STAGING_DIST"
         else
             # 确保当前平台的 native 模块已安装（容器 Linux 和宿主 macOS 可能不同）
+            # cache 挂 $MAIN_ROOT/.npm-cache（bind-mounted volume），避免 Brain /tmp 100MB tmpfs 被塞满
             cd "$MAIN_ROOT"
-            npm install --prefer-offline --cache /tmp/.npm-cache --silent 2>/dev/null \
-                || npm install --cache /tmp/.npm-cache --silent 2>/dev/null \
-                || true
+            NPM_CACHE_DIR="$MAIN_ROOT/.npm-cache"
+            if ! npm install --prefer-offline --cache "$NPM_CACHE_DIR" 2>&1; then
+                if ! npm install --cache "$NPM_CACHE_DIR" 2>&1; then
+                    echo "❌ npm install 失败，中止部署"
+                    exit 1
+                fi
+            fi
             # 构建到独立 staging 目录（--outDir），不覆盖 live dist/。
             # 关键：自检红时 live dist/ 必须原封不动 → 本机 5211 容器仍读旧版本。
             if [[ -f "/.dockerenv" ]] && command -v docker &>/dev/null; then

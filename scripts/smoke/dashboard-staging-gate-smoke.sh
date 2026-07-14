@@ -147,9 +147,10 @@ B_RC=$?
 grep -q "NEW_VERSION_SENTINEL" "$LIVE_DIST/index.html" 2>/dev/null \
   && pass "live dist/ 已换成新版（5211 生效）" || fail "live dist/ 未换成新版（promote 没生效）"
 [[ ! -f "$PENDING" ]] && pass ".staging-pending 已清（防重复 promote）" || fail ".staging-pending 未清"
-# HK 已移除：promote 不应再尝试同步 HK（匹配 HK 同步特征串，避免误命中路径里的 nohk）
+# CECELIA_SKIP_HK=1 → HK rsync/指纹校验被跳过；smoke 只验本机 dist/ swap。
+# 断言：smoke 环境 promote 日志不含旧式 HK 同步特征串（tar+ssh / 明文 IP）
 grep -qE "HK VPS|tar -czf.*ssh|100\.86\.118" "$TMP/b.log" 2>/dev/null \
-  && fail "promote 仍尝试同步 HK（应已移除，只换本机 5211）" || pass "promote 不再碰 HK（只换本机 5211）"
+  && fail "promote 日志含旧式 HK 同步特征（CECELIA_SKIP_HK=1 应已跳过）" || pass "promote HK 同步已跳过（CECELIA_SKIP_HK=1）"
 echo ""
 
 # 放行走命令行 promote-dashboard.sh（页面零交互，已在 [B] 覆盖），无页面 endpoint。
