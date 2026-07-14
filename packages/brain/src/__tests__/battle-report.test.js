@@ -13,6 +13,7 @@ import {
   alreadyGeneratedToday,
   buildBattleReportData,
   renderBattleReportMarkdown,
+  renderBattleReportHTML,
   generateBattleReport,
   maybeGenerateBattleReport,
   hasNovelJudgment,
@@ -465,5 +466,113 @@ describe('军师节 v2 渲染（GP6/T6）', () => {
       ],
     } });
     expect(md).toMatch(/candidate 2 · converged 1 · rejected 1（与现有GP重复） · blocked_gate 1（闸门X卡住）/);
+  });
+});
+
+describe('renderBattleReportHTML — PPT 卡片式 HTML 渲染', () => {
+  const baseData = {
+    mergedPrs: [],
+    journeyRuns: [],
+    userDecisions: [],
+    sentinel: { jobs: [], expected: null, healthy: false },
+    unconfirmedActions: [],
+    goldenPathMode: null,
+  };
+  const day = '2026-07-14';
+
+  it('输出完整 HTML 文档（含 doctype、title、统计区）', () => {
+    const html = renderBattleReportHTML(baseData, day);
+    expect(html).toMatch(/<!doctype html>/i);
+    expect(html).toContain('作战日报 2026-07-14');
+    expect(html).toContain('class="hero"');
+    expect(html).toContain('class="stats-row"');
+  });
+
+  it('各线战况：有 run 时渲染进度条 chip，成功率着色正确', () => {
+    const data = {
+      ...baseData,
+      journeyRuns: [
+        { journey_name: 'Line 05', runs: 4, done: 4, failed: 0, success_rate: 1, last_failure: null },
+        { journey_name: 'Line 07', runs: 3, done: 1, failed: 2, success_rate: 0.33, last_failure: 'timeout' },
+      ],
+    };
+    const html = renderBattleReportHTML(data, day);
+    expect(html).toContain('class="line-chip"');
+    expect(html).toContain('ok-bg');
+    expect(html).toContain('bad-bg');
+    expect(html).toContain('100%');
+    expect(html).toContain('33%');
+  });
+
+  it('空 run 时渲染 empty 占位', () => {
+    const html = renderBattleReportHTML(baseData, day);
+    expect(html).toContain('24h 内无 run 记录');
+  });
+
+  it('哨兵：健康 job 渲染 s-ok pill，过期 job 渲染 s-warn', () => {
+    const data = {
+      ...baseData,
+      sentinel: {
+        healthy: true,
+        expected: 2,
+        jobs: [
+          { name: 'arch-review', ok: true, age_seconds: 100 },
+          { name: 'daily-backup', ok: true, age_seconds: 2000 },
+        ],
+      },
+    };
+    const html = renderBattleReportHTML(data, day);
+    expect(html).toContain('s-ok');
+    expect(html).toContain('s-warn');
+    expect(html).toContain('arch-review');
+    expect(html).toContain('daily-backup');
+  });
+
+  it('XSS 转义：PR 标题含 HTML 字符时安全输出', () => {
+    const data = {
+      ...baseData,
+      mergedPrs: [{ pr_title: '<script>alert(1)</script>', pr_url: null }],
+    };
+    const html = renderBattleReportHTML(data, day);
+    expect(html).not.toContain('<script>');
+    expect(html).toContain('&lt;script&gt;');
+  });
+
+  it('用户决策超 8 条时显示折叠按钮', () => {
+    const data = {
+      ...baseData,
+      userDecisions: Array.from({ length: 10 }, (_, i) => ({
+        topic: `决策 ${i + 1}`,
+        created_at: new Date('2026-07-14T00:00:00Z'),
+      })),
+    };
+    const html = renderBattleReportHTML(data, day);
+    expect(html).toContain('hiddenDecs');
+    expect(html).toContain('展开另外 2 条');
+  });
+
+  it('GP 批审桌：有 converged GP 时渲染 tag-review 标签', () => {
+    const data = {
+      ...baseData,
+      goldenPathMode: {
+        isMonday: false,
+        candidates: [],
+        converged: [{ id: 'g1', title: '新型GP', demo_url: null, has_novel: true }],
+        autoReleases: [],
+        firstRelease: false,
+        stock: [],
+        dispatchLedger: [],
+        gapPanorama: null,
+      },
+    };
+    const html = renderBattleReportHTML(data, day);
+    expect(html).toContain('tag-review');
+    expect(html).toContain('新型GP');
+  });
+
+  it('暗色主题 CSS 变量存在', () => {
+    const html = renderBattleReportHTML(baseData, day);
+    expect(html).toContain('prefers-color-scheme:dark');
+    expect(html).toContain('--bg:#0f1520');
   });
 });

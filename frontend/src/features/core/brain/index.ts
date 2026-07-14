@@ -32,6 +32,11 @@ const manifest: FeatureManifest = {
       component: 'LangfuseObservability',
       navItem: { label: 'LLM 观测', icon: 'Activity', group: 'brain', order: 3 },
     },
+    {
+      path: '/ledger',
+      component: 'LedgerPage',
+      navItem: { label: '11要素账本', icon: 'BookOpen', group: 'brain', order: 4 },
+    },
   ],
 
   components: {
@@ -39,6 +44,7 @@ const manifest: FeatureManifest = {
     ServerDetail: () => import('./pages/ServerDetail'),
     SeatsStatus: () => import('./pages/SeatsStatus'),
     LangfuseObservability: () => import('./pages/LangfuseObservability'),
+    LedgerPage: () => import('./pages/LedgerPage'),
   },
 };
 

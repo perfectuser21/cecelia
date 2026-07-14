@@ -425,6 +425,250 @@ export function renderBattleReportMarkdown(data) {
 }
 
 /**
+ * PPT 卡片式 HTML 渲染器 — 将 buildBattleReportData 的结果转为可视化 HTML。
+ * 精简文案 + 卡片布局 + 颜色状态，代替原先纯文本 ul/li 排版。
+ * @param {Awaited<ReturnType<typeof buildBattleReportData>>} data
+ * @param {string} day - YYYY-MM-DD（北京时间）
+ * @returns {string} 完整 HTML 字符串
+ */
+export function renderBattleReportHTML(data, day) {
+  const e = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+  const trunc = (s, n) => { const str = String(s ?? ''); return str.length > n ? str.slice(0, n - 1) + '…' : str; };
+
+  const prCount = data.mergedPrs.length;
+  const decCount = data.userDecisions.length;
+  const { healthy, jobs = [], expected } = data.sentinel || {};
+  const healthLabel = healthy ? '✅ 哨兵健康' : '⚠️ 哨兵异常';
+  const healthClass = healthy ? 'stat-ok' : 'stat-warn';
+
+  // 各线战况卡
+  const linesHtml = data.journeyRuns.length === 0
+    ? '<p class="empty">24h 内无 run 记录</p>'
+    : data.journeyRuns.map((j) => {
+        const pct = Math.round(j.success_rate * 100);
+        const cls = pct >= 80 ? 'ok' : pct >= 50 ? 'warn' : 'bad';
+        const runs = j.runs;
+        const failNote = j.failed > 0 ? `<span class="fail-note">失败 ${j.failed}</span>` : '';
+        return `<div class="line-chip">
+  <div class="line-name">${e(trunc(j.journey_name, 16))}</div>
+  <div class="line-stats">
+    <div class="bar-track"><div class="bar-fill ${cls}-bg" style="width:${pct}%"></div></div>
+    <span class="pct ${cls}-c">${pct}%</span>
+    <span class="run-count">${runs}run</span>${failNote}
+  </div>
+</div>`;
+      }).join('');
+
+  // 哨兵状态卡
+  const sentinelHtml = jobs.length === 0
+    ? '<p class="empty">暂无哨兵数据</p>'
+    : jobs.map((j) => {
+        const stale = j.age_seconds > SENTINEL_STALE_SECONDS;
+        const cls = j.ok && !stale ? 's-ok' : stale ? 's-warn' : 's-bad';
+        const icon = j.ok && !stale ? '✓' : stale ? '⏱' : '✗';
+        return `<span class="s-pill ${cls}">${icon} ${e(j.name)}</span>`;
+      }).join('');
+
+  // 用户决策卡（显示前8条，超出折叠）
+  const MAX_DEC = 8;
+  const decisionsHtml = data.userDecisions.length === 0
+    ? '<p class="empty">24h 内无用户决策</p>'
+    : (() => {
+        const show = data.userDecisions.slice(0, MAX_DEC);
+        const hidden = data.userDecisions.slice(MAX_DEC);
+        const rows = show.map((d) => `<li>
+  <span class="dec-text">${e(trunc(d.topic, 60))}</span>
+  <span class="dec-time">${e(formatShanghaiShort(d.created_at))}</span>
+</li>`).join('');
+        const extra = hidden.length > 0
+          ? `<li class="more-row" id="moreToggle" onclick="document.getElementById('hiddenDecs').style.display='block';this.style.display='none'">
+  <span class="more-btn">+ 展开另外 ${hidden.length} 条 ▾</span>
+</li>
+<div id="hiddenDecs" style="display:none">${hidden.map((d) => `<li>
+  <span class="dec-text">${e(trunc(d.topic, 60))}</span>
+  <span class="dec-time">${e(formatShanghaiShort(d.created_at))}</span>
+</li>`).join('')}</div>`
+          : '';
+        return `<ul class="dec-list">${rows}${extra}</ul>`;
+      })();
+
+  // GP 批审桌卡
+  const gp = data.goldenPathMode || null;
+  const actions = gp ? buildGpActionItems(gp) : [];
+  const gpHtml = (() => {
+    if (!gp) return '<p class="empty">GP 数据不可用</p>';
+    if (actions.length === 0) return '<p class="empty">今日无需人工动作</p>';
+    const TAG = { review: '批审', release: '报备', selection: '圈选' };
+    const TAG_CLS = { review: 'tag-review', release: 'tag-release', selection: 'tag-select' };
+    return actions.slice(0, MAX_ALEX_ACTIONS).map((a) => `<div class="gp-item">
+  <span class="gp-tag ${TAG_CLS[a.segment] ?? ''}">${TAG[a.segment] ?? a.segment}</span>${e(trunc(a.text.replace(/^【[^】]+】/, ''), 80))}
+</div>`).join('');
+  })();
+
+  // GP 库存水位
+  const stock = gp?.stock || [];
+  const stockSummary = stock.length === 0 ? '' : stock.map((s) => `<span class="s-pill s-ok">${e(s.status)} ${s.count}</span>`).join('');
+
+  // 合并 PR 卡
+  const prsHtml = prCount === 0
+    ? '<p class="empty">24h 内无合并 PR</p>'
+    : data.mergedPrs.map((pr) => `<div class="pr-item">
+  ${pr.pr_url ? `<a href="${e(pr.pr_url)}" target="_blank">${e(trunc(pr.pr_title, 80))}</a>` : `<span>${e(trunc(pr.pr_title, 80))}</span>`}
+</div>`).join('');
+
+  const genTime = new Date().toLocaleTimeString('zh-CN', { timeZone: 'Asia/Shanghai', hour: '2-digit', minute: '2-digit' });
+
+  return `<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex,nofollow">
+<title>作战日报 ${e(day)}</title>
+<style>
+:root{--bg:#f0f4f8;--surface:#fff;--ink:#1a2233;--soft:#4d5a6e;--faint:#8a96a8;--border:#e2e8f0;
+  --accent:#2563eb;--accent-s:#eff6ff;--ok:#059669;--ok-s:#ecfdf5;--warn:#d97706;--warn-s:#fffbeb;
+  --bad:#dc2626;--bad-s:#fef2f2;
+  --sans:-apple-system,"PingFang SC","Hiragino Sans GB",system-ui,sans-serif;
+  --mono:ui-monospace,"SF Mono",Menlo,Consolas,monospace}
+@media(prefers-color-scheme:dark){:root{
+  --bg:#0f1520;--surface:#161d2b;--ink:#e2e8f0;--soft:#8ea0b5;--faint:#4d5f72;--border:#2a3648;
+  --accent:#7ba7f9;--accent-s:#1b2740;--ok:#34d399;--ok-s:#052e16;--warn:#fbbf24;--warn-s:#292100;--bad:#f87171;--bad-s:#2d0d0d}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);font-size:14px;line-height:1.6}
+.wrap{max-width:980px;margin:0 auto;padding:24px 16px 60px}
+
+/* Hero */
+.hero{background:linear-gradient(135deg,#1e3a5f 0%,#2563eb 100%);color:#fff;border-radius:16px;padding:26px 28px;margin-bottom:18px}
+.hero .eyebrow{font-family:var(--mono);font-size:11px;letter-spacing:.14em;text-transform:uppercase;opacity:.7;margin-bottom:6px}
+.hero h1{margin:0 0 18px;font-size:22px;font-weight:800}
+.stats-row{display:flex;gap:12px;flex-wrap:wrap}
+.stat{background:rgba(255,255,255,.15);backdrop-filter:blur(4px);border-radius:12px;padding:12px 16px;flex:1;min-width:90px;text-align:center}
+.stat .n{font-size:26px;font-weight:800;line-height:1.1}
+.stat .l{font-size:11px;opacity:.75;margin-top:3px}
+.stat-ok .n{color:#6ee7b7}
+.stat-warn .n{color:#fcd34d}
+
+/* Layout */
+.row{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:14px}
+@media(max-width:600px){.row{grid-template-columns:1fr}}
+.card{background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:18px 20px;margin-bottom:14px}
+.card-title{font-size:11px;font-weight:700;color:var(--faint);text-transform:uppercase;letter-spacing:.1em;margin-bottom:12px;display:flex;align-items:center;gap:6px}
+.card-title .ct-badge{font-family:var(--mono);font-size:10px;font-weight:800;background:var(--border);border-radius:9px;padding:1px 7px;color:var(--soft)}
+.empty{color:var(--faint);font-style:italic;font-size:13px;margin:0}
+
+/* Lines grid */
+.lines-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+@media(max-width:420px){.lines-grid{grid-template-columns:1fr}}
+.line-chip{background:var(--bg);border-radius:10px;padding:10px 12px}
+.line-name{font-size:12px;font-weight:700;margin-bottom:5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.line-stats{display:flex;align-items:center;gap:6px;font-size:11px}
+.bar-track{flex:1;height:5px;border-radius:3px;background:var(--border);overflow:hidden}
+.bar-fill{height:100%;border-radius:3px;transition:width .3s}
+.pct{font-family:var(--mono);font-size:11px;font-weight:700;min-width:30px;text-align:right}
+.run-count{color:var(--faint);min-width:28px}
+.fail-note{color:var(--bad);font-family:var(--mono)}
+.ok-c{color:var(--ok)}.warn-c{color:var(--warn)}.bad-c{color:var(--bad)}
+.ok-bg{background:var(--ok)}.warn-bg{background:var(--warn)}.bad-bg{background:var(--bad)}
+
+/* Sentinel */
+.s-pills{display:flex;flex-wrap:wrap;gap:6px}
+.s-pill{font-family:var(--mono);font-size:11px;padding:3px 9px;border-radius:20px;font-weight:600;white-space:nowrap}
+.s-ok{background:var(--ok-s);color:var(--ok)}.s-warn{background:var(--warn-s);color:var(--warn)}.s-bad{background:var(--bad-s);color:var(--bad)}
+
+/* Decisions */
+.dec-list{list-style:none;margin:0;padding:0}
+.dec-list li{display:flex;justify-content:space-between;align-items:flex-start;padding:7px 0;border-bottom:1px solid var(--border);gap:8px}
+.dec-list li:last-child,.more-row{border-bottom:none}
+.dec-text{flex:1;font-size:13px;color:var(--ink)}
+.dec-time{font-family:var(--mono);font-size:11px;color:var(--faint);white-space:nowrap;padding-top:2px}
+.more-btn{display:inline-block;margin-top:6px;font-size:12px;color:var(--accent);cursor:pointer;background:none;border:none;padding:0}
+
+/* GP cards */
+.gp-item{background:var(--accent-s);border-left:3px solid var(--accent);border-radius:0 8px 8px 0;padding:9px 12px;margin-bottom:7px;font-size:13px;color:var(--ink)}
+.gp-item:last-child{margin-bottom:0}
+.gp-tag{font-family:var(--mono);font-size:10px;font-weight:700;padding:1px 6px;border-radius:4px;margin-right:5px;vertical-align:middle}
+.tag-review{background:var(--warn-s);color:var(--warn)}.tag-release{background:var(--ok-s);color:var(--ok)}.tag-select{background:var(--accent-s);color:var(--accent)}
+
+/* PR list */
+.pr-item{padding:7px 0;border-bottom:1px solid var(--border);font-size:13px}
+.pr-item:last-child{border-bottom:none}
+.pr-item a{color:var(--accent);text-decoration:none}
+.pr-item a:hover{text-decoration:underline}
+
+footer{margin-top:20px;text-align:center;font-family:var(--mono);font-size:11px;color:var(--faint)}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<div class="hero">
+  <div class="eyebrow">Cecelia · Daily Battle Report</div>
+  <h1>作战日报 ${e(day)}</h1>
+  <div class="stats-row">
+    <div class="stat"><div class="n">${prCount}</div><div class="l">PR 合并</div></div>
+    <div class="stat"><div class="n">${decCount}</div><div class="l">用户决策</div></div>
+    <div class="stat ${healthClass}"><div class="n">${healthy ? jobs.length : '⚠'}</div><div class="l">${healthLabel}</div></div>
+    ${expected != null ? `<div class="stat"><div class="n">${jobs.length}/${expected}</div><div class="l">哨兵 job</div></div>` : ''}
+  </div>
+</div>
+
+<div class="row">
+  <div class="card">
+    <div class="card-title">各线战况 <span class="ct-badge">24h</span></div>
+    <div class="lines-grid">${linesHtml}</div>
+  </div>
+  <div class="card">
+    <div class="card-title">哨兵状态</div>
+    <div class="s-pills">${sentinelHtml}</div>
+    ${stockSummary ? `<div style="margin-top:10px"><div class="card-title" style="margin-bottom:6px">GP 库存水位</div><div class="s-pills">${stockSummary}</div></div>` : ''}
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-title">用户决策 <span class="ct-badge">${decCount} 条</span></div>
+  ${decisionsHtml}
+</div>
+
+<div class="card">
+  <div class="card-title">GP 批审桌</div>
+  ${gpHtml}
+</div>
+
+<div class="card">
+  <div class="card-title">合并 PR <span class="ct-badge">${prCount}</span></div>
+  ${prsHtml}
+</div>
+
+<footer>作战日报 ${e(day)} · 生成于北京时间 ${genTime} · Cecelia Brain 自动生成</footer>
+</div>
+</body>
+</html>`;
+}
+
+/**
+ * 尝试将 HTML 上传到 HK VPS /data/docs/daily-report/index.html（best-effort，失败不回滚）。
+ * @param {string} html
+ * @param {string} day
+ */
+async function uploadHtmlToHkVps(html, day) {
+  const { writeFileSync } = await import('fs');
+  const { execFileSync } = await import('child_process');
+  const tmp = `/tmp/battle-report-${day}.html`;
+  try {
+    writeFileSync(tmp, html, 'utf8');
+    execFileSync('ssh', [
+      '-o', 'StrictHostKeyChecking=no', '-o', 'ConnectTimeout=10',
+      'hk-vps',
+      `sudo mkdir -p /data/docs/daily-report && sudo tee /data/docs/daily-report/index.html > /dev/null`,
+    ], { input: html, timeout: 20000 });
+    console.log('[battle-report] HTML 已上传 HK VPS /data/docs/daily-report/');
+  } catch (err) {
+    console.warn('[battle-report] HTML 上传 HK VPS 失败（不回滚）:', err.message);
+  }
+}
+
+/**
  * 生成日报：采集 → 渲染 → INSERT design_docs → 飞书链接（best-effort，失败不回滚）。
  * @param {import('pg').Pool} pool
  * @returns {Promise<{id: string, url: string}>}
@@ -449,6 +693,9 @@ export async function generateBattleReport(pool) {
   } catch (err) {
     console.warn(`[battle-report] 飞书通知失败（不回滚）: ${err.message}`);
   }
+
+  const html = renderBattleReportHTML(data, day);
+  await uploadHtmlToHkVps(html, day);
 
   return { id, url };
 }
