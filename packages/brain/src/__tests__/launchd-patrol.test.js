@@ -51,7 +51,7 @@ describe('launchd-patrol manifest 核对', () => {
     const r = await runLaunchdPatrol({ exec: makeExec(), inContainer: false });
     expect(r.ok).toBe(true);
     expect(r.anomalies).toEqual([]);
-    expect(r.checked).toBe(6); // 1 must-run + 3 must-load + 2 端口
+    expect(r.checked).toBe(7); // 1 must-run + 3 must-load + 3 端口
     expect(sendBark).not.toHaveBeenCalled();
     expect(raise).not.toHaveBeenCalled();
   });
@@ -108,6 +108,14 @@ describe('launchd-patrol manifest 核对', () => {
       inContainer: false,
     });
     expect(r.anomalies).toEqual(['port_down:5200(zenithjoy-api)']);
+  });
+
+  it('staging 端口(5201)不通 → port_down 检出', async () => {
+    const r = await runLaunchdPatrol({
+      exec: makeExec({ portDown: [5201] }),
+      inContainer: false,
+    });
+    expect(r.anomalies).toEqual(['port_down:5201(zenithjoy-api-staging)']);
   });
 
   it('宿主不可达（连通性探针失败）→ fail-open，不产生服务异常不告警', async () => {
