@@ -79,6 +79,30 @@ services:
         max-size: "10m"
         max-file: "3"
 
+  frontend-dev:
+    image: node:20-alpine
+    container_name: cecelia-frontend-dev
+    network_mode: host
+    working_dir: /app
+    volumes:
+      - ./apps/dashboard/dist:/app
+      - /Users/administrator/perfect21/cecelia/apps/dashboard/dist:/Users/administrator/perfect21/cecelia/apps/dashboard/dist:ro
+      - ./frontend-proxy.js:/frontend-proxy.js:ro
+    environment:
+      - FRONTEND_PORT=5213
+      - BRAIN_PORT_TARGET=5220
+      - LANGFUSE_PROXY_PORT=3003
+    command: node /frontend-proxy.js
+    depends_on:
+      node-brain-dev:
+        condition: service_healthy
+    restart: unless-stopped
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "5m"
+        max-file: "2"
+
   frontend:
     image: node:20-alpine
     container_name: cecelia-frontend
