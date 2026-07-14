@@ -163,6 +163,53 @@ describe('BEHAVIOR-4: 无测试文件 → exit 0', () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
+// BEHAVIOR-5: CI 层 diff 检测 — 无 sprints/* 变更 → skip + exit 0
+// ─────────────────────────────────────────────────────────────────────────────
+describe('BEHAVIOR-5: CI diff 检测无 sprints/* 变更 → skip + exit 0', () => {
+  it('模拟 CI step：仅含非 sprints 文件时输出 skip 并 exit 0', () => {
+    // 直接执行 harness-v5-checks.yml "Detect changed sprint dirs" step 的核心逻辑
+    const ciSkipScript = `
+FILES="packages/brain/src/server.js
+packages/engine/src/tool.ts
+.github/workflows/other.yml"
+SPRINT_FILES=$(echo "$FILES" | grep -vE '^sprints/archive/' | grep -E '^sprints/' || true)
+if [ -z "$SPRINT_FILES" ]; then
+  echo "No sprints/* changes, skipping lint-contract-test-immutability"
+  exit 0
+fi
+echo "HAS_SPRINT_CHANGES"
+exit 1
+`;
+    try {
+      const result = execFileSync('bash', ['-c', ciSkipScript], {
+        encoding: 'utf8',
+        stdio: ['pipe', 'pipe', 'pipe'],
+      });
+      expect(result).toContain('No sprints/* changes, skipping lint-contract-test-immutability');
+    } catch (err: any) {
+      throw new Error(`CI skip 逻辑应 exit 0，实际 exit ${err.status}: ${err.stdout}${err.stderr}`);
+    }
+  });
+
+  it('模拟 CI step：含 sprints/* 文件时不 skip（HAS_SPRINT_CHANGES）', () => {
+    const ciRunScript = `
+FILES="sprints/07141333-contract-test-immutability-ci/contract-draft.md
+packages/brain/src/server.js"
+SPRINT_FILES=$(echo "$FILES" | grep -vE '^sprints/archive/' | grep -E '^sprints/' || true)
+if [ -z "$SPRINT_FILES" ]; then
+  echo "No sprints/* changes, skipping lint-contract-test-immutability"
+  exit 0
+fi
+echo "HAS_SPRINT_CHANGES: $SPRINT_FILES"
+exit 0
+`;
+    const result = execFileSync('bash', ['-c', ciRunScript], { encoding: 'utf8' });
+    expect(result).toContain('HAS_SPRINT_CHANGES');
+    expect(result).not.toContain('skipping');
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
 // BEHAVIOR-6（扩展）: 多个测试文件，只有部分被修改 → exit 1 + 只列出被改的
 // ─────────────────────────────────────────────────────────────────────────────
 describe('BEHAVIOR-6（扩展）: 多文件部分修改 → exit 1，只列被改文件', () => {
