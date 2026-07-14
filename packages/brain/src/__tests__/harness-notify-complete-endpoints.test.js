@@ -57,8 +57,10 @@ describe('POST /harness/complete', () => {
     });
     expect(res.status).toBe(200);
     expect(res.body.ok).toBe(true);
-    expect(mockQuery).toHaveBeenCalledOnce();
-    const [sql, params] = mockQuery.mock.calls[0];
+    // 收账权收归后 /complete 会先跑 finalizeHarnessTask 的 SELECT（mock 返回空行 → applies:false 放行）
+    const updCall = mockQuery.mock.calls.find(([q]) => /UPDATE tasks/.test(q));
+    expect(updCall).toBeTruthy();
+    const [sql, params] = updCall;
     expect(sql).toMatch(/UPDATE tasks/);
     expect(params[1]).toBe('test-init-001');
     const result = JSON.parse(params[0]);

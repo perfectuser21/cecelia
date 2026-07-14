@@ -34,7 +34,7 @@ describe('POST /api/brain/harness/judge', () => {
   it('缺必填字段 → 400', async () => {
     const app = await buildApp();
     const r = await request(app).post('/api/brain/harness/judge')
-      .send({ task_id: 't1', sprint_dir: 'sprints/x' }); // 缺 worktree
+      .send({ task_id: '11111111-2222-3333-4444-555555555555', sprint_dir: 'sprints/x' }); // 缺 worktree
     expect(r.status).toBe(400);
     expect(mockRunJudgeGate).not.toHaveBeenCalled();
   });
@@ -42,7 +42,7 @@ describe('POST /api/brain/harness/judge', () => {
   it('worktree 目录不存在 → 400', async () => {
     const app = await buildApp();
     const r = await request(app).post('/api/brain/harness/judge')
-      .send({ task_id: 't1', sprint_dir: 'sprints/x', worktree: '/nonexistent/path/xyz' });
+      .send({ task_id: '11111111-2222-3333-4444-555555555555', sprint_dir: 'sprints/x', worktree: '/nonexistent/path/xyz' });
     expect(r.status).toBe(400);
   });
 
@@ -51,7 +51,7 @@ describe('POST /api/brain/harness/judge', () => {
     mockRunJudgeGate.mockResolvedValue({ verdict: 'PASS', feedback: null, judged: true });
     const app = await buildApp();
     const r = await request(app).post('/api/brain/harness/judge')
-      .send({ task_id: 'aaaabbbb-1111', sprint_dir: 'sprints/x', worktree: wt, agent_verdict: 'FIXED' });
+      .send({ task_id: 'aaaabbbb-1111-2222-3333-444455556666', sprint_dir: 'sprints/x', worktree: wt, agent_verdict: 'FIXED' });
     expect(r.status).toBe(200);
     expect(r.body).toEqual({ verdict: 'PASS', feedback: null, judged: true });
     expect(mockRunJudgeGate).toHaveBeenCalledWith(expect.objectContaining({
@@ -68,7 +68,7 @@ describe('POST /api/brain/harness/judge', () => {
     mockRunJudgeGate.mockResolvedValue({ verdict: 'PASS', feedback: 'ok', judged: false });
     const app = await buildApp();
     const r = await request(app).post('/api/brain/harness/judge')
-      .send({ task_id: 't1', sprint_dir: 'sprints/x', worktree: wt });
+      .send({ task_id: '11111111-2222-3333-4444-555555555555', sprint_dir: 'sprints/x', worktree: wt });
     expect(r.status).toBe(200);
     expect(mockRunJudgeGate).toHaveBeenCalledWith(expect.objectContaining({
       agentVerdict: 'PASS', agentFeedback: 'ok',
@@ -79,7 +79,7 @@ describe('POST /api/brain/harness/judge', () => {
     const wt = await mkdtemp(join(tmpdir(), 'judge-api-'));
     const app = await buildApp();
     const r = await request(app).post('/api/brain/harness/judge')
-      .send({ task_id: 't1', sprint_dir: 'sprints/x', worktree: wt });
+      .send({ task_id: '11111111-2222-3333-4444-555555555555', sprint_dir: 'sprints/x', worktree: wt });
     expect(r.status).toBe(400);
     expect(mockRunJudgeGate).not.toHaveBeenCalled();
   });
@@ -89,7 +89,7 @@ describe('POST /api/brain/harness/judge', () => {
     mockRunJudgeGate.mockRejectedValue(new Error('secret internal'));
     const app = await buildApp();
     const r = await request(app).post('/api/brain/harness/judge')
-      .send({ task_id: 't1', sprint_dir: 'sprints/x', worktree: wt, agent_verdict: 'PASS' });
+      .send({ task_id: '11111111-2222-3333-4444-555555555555', sprint_dir: 'sprints/x', worktree: wt, agent_verdict: 'PASS' });
     expect(r.status).toBe(500);
     expect(JSON.stringify(r.body)).not.toContain('secret internal');
   });
