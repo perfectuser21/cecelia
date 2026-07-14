@@ -117,6 +117,35 @@ describe('probeRumination — last_run 真实化 + LLM forensic 透出', () => {
   });
 });
 
+describe('probeRumination — recentRuns 充分条件修复（RCA probe_rumination 350 次失败）', () => {
+  it('recent_outputs > 0 时直接返回 ok，不依赖 synthesis_archive within72h（移除双重门槛）', () => {
+    // 根因：synthesis_archive 写入是 non-blocking 异步，可能静默失败。
+    // rumination_output 事件写入成功才是 rumination 正常运行的充分证据。
+    // 修复前：recentRuns > 0 && within72h > 0 → synthesis 写失败时探针误报失败
+    // 修复后：recentRuns > 0 时直接 ok=true，无需 within72h
+    const runningOkIdx = ruminationFn.indexOf('running: recent_outputs=');
+    const within72hGateIdx = ruminationFn.indexOf('within72h > 0');
+    // 修复后 within72h 条件不存在（已移除）
+    expect(within72hGateIdx).toBe(-1);
+    // 成功路径中包含 recent_outputs 字段（运行中证据）
+    expect(runningOkIdx).toBeGreaterThanOrEqual(0);
+  });
+
+  it('last_run fallback 到 rumination_output 事件时间戳（synthesis_archive 为空时不显示 never）', () => {
+    // 修复前：lastRun || 'never' → synthesis_archive 空时显示 never（误导运维）
+    // 修复后：lastRun || lastEvent || 'never' → 有 output 事件时显示真实时间
+    expect(ruminationFn).toContain('lastRun || lastEvent || \'never\'');
+  });
+
+  it('running 路径 detail 同时包含 last_run 和 last_event 字段（完整可观测性）', () => {
+    // last_run: synthesis_archive 的历史写入时间（全局 max，无 INTERVAL 限制）
+    // last_event: 最近一次 rumination_output 事件时间
+    expect(ruminationFn).toContain('last_run=');
+    expect(ruminationFn).toContain('last_event=');
+    expect(ruminationFn).toContain('recent_outputs=');
+  });
+});
+
 describe('probeRumination — loop_dead 自愈机制（PROBE_FAIL_RUMINATION cp-05020002）', () => {
   it('probe 文件顶部导入 setConsciousnessEnabled 和 getConsciousnessStatus', () => {
     expect(content).toContain('setConsciousnessEnabled');

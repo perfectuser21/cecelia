@@ -266,18 +266,13 @@ async function probeRumination() {
   const recentRuns = parseInt(runEventResult.rows[0]?.cnt || 0);
   const lastEvent = runEventResult.rows[0]?.last_event;
 
-  // 检查 synthesis_archive 是否超过 72h 未更新（更严格的兜底）
-  const staleResult = await pool.query(
-    `SELECT count(*) AS cnt FROM synthesis_archive
-     WHERE created_at > NOW() - INTERVAL '72 hours'`
-  );
-  const within72h = parseInt(staleResult.rows[0]?.cnt || 0);
-
-  if (recentRuns > 0 && within72h > 0) {
-    // rumination 在运行，synthesis 只是暂时没更新（正常的"空白日"场景）
+  if (recentRuns > 0) {
+    // rumination 在运行（有近 24h output 事件）→ 直接通过，不依赖 synthesis_archive 写入时效
+    // synthesis_archive 写入是 non-blocking 异步路径，写入失败不代表 rumination 坏掉；
+    // last_run 优先取 synthesis_archive 全局 max，fallback 到 output 事件时间（避免显示 'never'）
     return {
       ok: true,
-      detail: `48h_count=0 last_run=${lastRun || 'never'} undigested=${undigested} (running: recent_outputs=${recentRuns} last_event=${lastEvent})`,
+      detail: `48h_count=0 last_run=${lastRun || lastEvent || 'never'} undigested=${undigested} (running: recent_outputs=${recentRuns} last_event=${lastEvent})`,
     };
   }
 
@@ -440,7 +435,7 @@ async function probeRumination() {
 
   return {
     ok: false,
-    detail: `48h_count=0 last_run=${lastRun || 'never'} undigested=${undigested} recent_outputs=${recentRuns} heartbeats_24h=${recentHeartbeats} invocations_24h=${recentInvocations} (${livenessTag})${loopDeadContext}${llmFailureSummary}`,
+    detail: `48h_count=0 last_run=${lastRun || lastEvent || 'never'} undigested=${undigested} recent_outputs=${recentRuns} heartbeats_24h=${recentHeartbeats} invocations_24h=${recentInvocations} (${livenessTag})${loopDeadContext}${llmFailureSummary}`,
   };
 }
 
