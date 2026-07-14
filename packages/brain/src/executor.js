@@ -2593,6 +2593,7 @@ function buildCodexRunnerConfig(task, taskBranch, isCodexDev, isCrystallize) {
 /** Assemble the full request body for the Codex Bridge /run endpoint. */
 function buildCodexBridgePayload(task, promptContent, taskBranch, injectedAccounts, isCodexDev, isCrystallize) {
   const { runner, runner_args } = buildCodexRunnerConfig(task, taskBranch, isCodexDev, isCrystallize);
+  const brainUrl = process.env.BRAIN_URL || 'http://localhost:5221';
   return {
     task_id: task.id,
     checkpoint_id: null,
@@ -2604,6 +2605,7 @@ function buildCodexBridgePayload(task, promptContent, taskBranch, injectedAccoun
     runner_args,
     branch: taskBranch,
     accounts: injectedAccounts.length > 0 ? injectedAccounts : undefined,
+    callback_url: `${brainUrl}/api/brain/execution-callback`,
   };
 }
 
