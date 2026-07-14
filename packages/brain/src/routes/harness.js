@@ -1894,6 +1894,24 @@ router.post('/judge', async (req, res) => {
       transcript,
       instanceLabel: `judge-api-${String(task_id).slice(0, 8)}`,
     }, { dbPool: pool });
+
+    // C2（决策 dc18d43d）：judge 自写 judge_verdict，不依赖 controller 二次 curl 上报。
+    // 只写 judged=true 的真实裁决；FAIL→PASS 允许收敛，PASS 禁被回退；0 行/异常 non-fatal。
+    if (result?.judged === true) {
+      try {
+        await pool.query(
+          `UPDATE initiative_runs SET judge_verdict = $1
+            WHERE id = (SELECT id FROM initiative_runs
+                         WHERE current_task_id = $2 AND orchestrator_version = 'v2'
+                         ORDER BY started_at DESC LIMIT 1)
+              AND judge_verdict IS DISTINCT FROM 'PASS'`,
+          [result.verdict, String(task_id)]
+        );
+      } catch (jvErr) {
+        console.warn(`[POST /harness/judge] judge_verdict 落库失败（non-fatal）：${jvErr.message}`);
+      }
+    }
+
     return res.json(result);
   } catch (err) {
     console.error('[POST /harness/judge]', err.message);
