@@ -3,7 +3,7 @@
 // （计划: docs/superpowers/plans/2026-07-14-test-graduation.md Task 1）
 // 把 sprint 的 tests/** 搬到 tests/regression/<slug>/（保留子目录结构），
 // e2e-verify.sh 搬到 scripts/smoke/e2e/<slug>.sh。目标已存在同名文件抛错不覆盖。
-// 用法：node scripts/graduate-sprint-tests.mjs --sprint <dir> [--dry-run]
+// 用法：node scripts/graduate-sprint-tests.mjs --sprint <dir> [--dry-run] [--update-refs]
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -50,7 +50,10 @@ export function planGraduation(root, sprintDir) {
 }
 
 // 执行搬运（dryRun=true 只出计划不落盘）。任一目标已存在 → 抛错，一个文件都不动。
-export function graduate(root, sprintDir, { dryRun = false } = {}) {
+// updateRefs=true：搬完后把根 DoD.md 里指向旧路径的引用重写为新路径
+//（根 DoD.md 是当前 sprint 卡，其 manual 断言常指向 sprints/<dir>/e2e-verify.sh——
+// 不重写则毕业 commit 会让 dod-behavior-dynamic 红、merge 被自己拦死，#3870 实证）。
+export function graduate(root, sprintDir, { dryRun = false, updateRefs = false } = {}) {
   const plan = planGraduation(root, sprintDir);
   const moves = [...plan.tests, ...plan.e2e];
   if (!dryRun) {
@@ -64,6 +67,14 @@ export function graduate(root, sprintDir, { dryRun = false } = {}) {
       fs.mkdirSync(path.dirname(to), { recursive: true });
       fs.renameSync(path.join(root, m.from), to);
     }
+    if (updateRefs && moves.length) {
+      const dodPath = path.join(root, 'DoD.md');
+      if (fs.existsSync(dodPath)) {
+        let dod = fs.readFileSync(dodPath, 'utf8');
+        for (const m of moves) dod = dod.split(m.from).join(m.to);
+        fs.writeFileSync(dodPath, dod);
+      }
+    }
   }
   return plan;
 }
@@ -74,12 +85,13 @@ if (isMain) {
   const i = args.indexOf('--sprint');
   const sprintDir = i >= 0 ? args[i + 1] : null;
   if (!sprintDir) {
-    console.error('用法: node scripts/graduate-sprint-tests.mjs --sprint <dir> [--dry-run]');
+    console.error('用法: node scripts/graduate-sprint-tests.mjs --sprint <dir> [--dry-run] [--update-refs]');
     process.exit(1);
   }
   const dryRun = args.includes('--dry-run');
+  const updateRefs = args.includes('--update-refs');
   const root = path.resolve(fileURLToPath(import.meta.url), '../..');
-  const plan = graduate(root, sprintDir, { dryRun });
+  const plan = graduate(root, sprintDir, { dryRun, updateRefs });
   const moves = [...plan.tests, ...plan.e2e];
   console.log(`毕业搬运${dryRun ? '（dry-run，未落盘）' : ''}: ${sprintDir}`);
   if (!moves.length) {
