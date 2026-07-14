@@ -153,7 +153,6 @@ services:
     working_dir: /app
     volumes:
       - ./apps/dashboard/dist:/app
-      - /Users/administrator/perfect21/cecelia/apps/dashboard/dist:/Users/administrator/perfect21/cecelia/apps/dashboard/dist:ro
       - ./frontend-proxy.js:/frontend-proxy.js:ro
     command: node /frontend-proxy.js
     depends_on:

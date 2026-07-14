@@ -11,7 +11,7 @@ const path = require('path');
 
 const PORT = process.env.FRONTEND_PORT || 5211;
 const BRAIN_PORT = process.env.BRAIN_PORT_TARGET || 5221;
-const STATIC_DIR = process.env.DASHBOARD_STATIC_DIR || '/Users/administrator/perfect21/cecelia/apps/dashboard/dist';
+const STATIC_DIR = process.env.DASHBOARD_STATIC_DIR || '/app';
 
 const MIME_TYPES = {
   '.html': 'text/html',
