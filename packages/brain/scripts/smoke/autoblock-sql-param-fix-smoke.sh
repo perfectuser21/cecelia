@@ -2,7 +2,7 @@
 # Smoke: autoblock SQL 参数类型修复验证（$2::int cast）
 set -euo pipefail
 BRAIN_DB_URL="${BRAIN_DB_URL:-${DATABASE_URL:-postgresql://localhost/cecelia}}"
-echo "🔍 smoke: autoblock-sql-param-fix ($2::int cast)"
+echo "🔍 smoke: autoblock-sql-param-fix (\$2::int cast)"
 # 验证修复后 SQL 执行无报错
 psql "$BRAIN_DB_URL" -c "
 DO \$\$
