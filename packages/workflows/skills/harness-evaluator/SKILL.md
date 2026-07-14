@@ -6,10 +6,11 @@ description: |
   evaluator 在 CI 绿之后、PR merge 之前真启服务 + 跑 contract 的 manual:bash 命令验真行为。
   PASS → 允许 merge；FAIL → 不 merge，带反馈打回 Generator 在 PR 分支 fix loop（main 不变动）。
   单模式（harness v2 始终 IS_FINAL_E2E=true）：读 contract-draft.md 的 ## E2E 验收 脚本，按 target_environment 派发跑 Golden Path 端到端真实行为。
-version: 1.23.0
+version: 1.24.0
 created: 2026-05-06
 updated: 2026-07-14
 changelog:
+  - 1.24.0: 刀3-T5 — 新增 Step B-1.7（B-guard-check）：核查 contract-draft.md 必含 ## 运行时守卫 段，段内须有 probe:（含可执行 bash 块）或 waiver:<decision_id>；两者都缺 → failed_step=guard_ref_missing FAIL；提取 GUARD_REF 写入 verdict JSON，report 收尾链消费写回 journey_features.guard_ref（依赖刀3-T4 列已存在）
   - 1.23.0: EVA v2 审计四修——(E1) verdict 必带真跑证据：behavior_tests 每条必须是对象 {command, exit_code, log_tail}（log_tail=命令输出末 5 行），缺任一 = 该条视为未跑禁 PASS（a85e0582 实证 verdict 只列命令原文无法区分真跑/声称跑过）；(E4) Step B-1 固化段加分支判断：detached HEAD（post-merge 补验模式）跳过 commit/push 并在 verdict notes 说明，普通路径 push 失败输出 WARN 记入 notes（删静默吞掉）；(E5) 三处 awk 标题正则放宽为 /^##+[[:space:]]*E2E[[:space:]]*验收/（### 或带空格变体不再整段漏空）；(E7) 注入变量表补 PR_BRANCH 行
   - 1.22.0: a638f840 三修——(a) Step 0a 支持"PR 已 merge/分支已删"场景：checkout 失败时查 gh pr state，MERGED 则在 merge commit/origin/main 上补验（post-merge 模式），仅 PR 非 MERGED 时才 FATAL；(b) Step B-1 三处 awk 改为提取 E2E 段内全部代码块（拼接至下一个 ## 标题，旧版只取第一块，多块合同 Step 2-9 被静默丢弃）；(c) bash 固化前加 bash -n 语法门，语法坏脚本在 setup 就 FAIL 不入库
   - 1.21.0: 跨 repo 化刀3——①变量表 DB 行改为优先 $DB_URL（payload/env 注入），postgresql://localhost/cecelia 仅作 cecelia 本机 fallback；②url_validation gate 按 repo 注入：cecelia 默认仍 grep localhost:5221|psql cecelia，第三方 repo 以 $EXPECTED_API_HOST/$DB_URL 为准，两者都未提供时对第三方 repo 降级 WARN 而非 FAIL（避免假 FAIL）；③windows 分支与 Step B-2.6 的 REPO 不再写死默认仓库：fallback 顺序 $GITHUB_REPO → payload.base_repo URL 解析 owner/repo → 两者都缺才回退旧默认并打 WARN
@@ -459,6 +460,58 @@ fi
 
 **死规则（加粗，必须遵守）**：**禁止在工具缺失时改写验证命令、降级验证、或跳过该步——`env_missing` 就是 FAIL，让 Brain 路由到正确环境，这不是 evaluator 该变通的事。** 例如脚本要 ffprobe 验视频但本机无 ffprobe → 直接 `env_missing` FAIL，绝不允许改成"检查文件大小"凑过。
 
+#### Step B-1.7: 运行时守卫段核查（B-guard-check — 刀3-T5 铁律）
+
+**检查 `contract-draft.md` 是否含有「运行时守卫」必填槽位，并提取 `GUARD_REF` 供收尾链回写。**
+
+```bash
+CONTRACT="${SPRINT_DIR}/contract-draft.md"
+GUARD_REF=""
+
+# 1. 检测 ## 运行时守卫 段是否存在
+if ! grep -q '^## 运行时守卫' "$CONTRACT" 2>/dev/null; then
+  cat > "$WORKSPACE/.brain-result.json" << BREOF
+{"verdict":"FAIL","task_id":"$TASK_ID","failed_step":"guard_ref_missing","log_excerpt":"contract-draft.md 缺 '## 运行时守卫' 段（刀3-T5 必填）。合同必须声明探针（probe:<标识符>+bash块）或显式豁免（waiver:<decision_id>+理由），两者都没有 = 合同不完整，无法确认功能停止时谁会发现。请在 contract-draft.md 中补写 ## 运行时守卫 段后重新提交。"}
+BREOF
+  exit 0
+fi
+
+# 2. 提取守卫段内容
+GUARD_SECTION=$(awk '/^## 运行时守卫/{f=1; next} f && /^## /{exit} f{print}' "$CONTRACT")
+
+# 3. 核查：必须含 probe: 或 waiver:
+HAS_PROBE=$(echo "$GUARD_SECTION" | grep -cE '^probe:[[:space:]]*\S' || true)
+HAS_WAIVER=$(echo "$GUARD_SECTION" | grep -cE '^waiver:[[:space:]]*[0-9a-f-]{36}' || true)
+
+if [[ "$HAS_PROBE" -eq 0 && "$HAS_WAIVER" -eq 0 ]]; then
+  # 检查是否有 probe: 但没有 bash 块（空探针）
+  BARE_PROBE=$(echo "$GUARD_SECTION" | grep -cE '^probe:' || true)
+  if [[ "$BARE_PROBE" -gt 0 ]]; then
+    cat > "$WORKSPACE/.brain-result.json" << BREOF
+{"verdict":"FAIL","task_id":"$TASK_ID","failed_step":"guard_ref_missing","log_excerpt":"'## 运行时守卫' 段有 probe: 声明但缺可执行 bash 块。探针必须含能独立跑的 bash 代码块（exit 0=健康，exit 1=故障），否则无法机检。"}
+BREOF
+  else
+    cat > "$WORKSPACE/.brain-result.json" << BREOF
+{"verdict":"FAIL","task_id":"$TASK_ID","failed_step":"guard_ref_missing","log_excerpt":"'## 运行时守卫' 段存在但既无 probe:<标识符> 也无 waiver:<decision_id>，属空架子。必须二选一：probe:（可执行探针）或 waiver:<UUID>（有据豁免）。"}
+BREOF
+  fi
+  exit 0
+fi
+
+# 4. 提取 GUARD_REF（供 verdict JSON + report 写回 journey_features.guard_ref）
+if [[ "$HAS_PROBE" -gt 0 ]]; then
+  GUARD_REF=$(echo "$GUARD_SECTION" | grep -oE '^probe:[[:space:]]*\S+' | head -1 | sed 's/^probe:[[:space:]]*//')
+elif [[ "$HAS_WAIVER" -gt 0 ]]; then
+  WAIVER_ID=$(echo "$GUARD_SECTION" | grep -oE '^waiver:[[:space:]]*[0-9a-f-]{36}' | head -1 | sed 's/^waiver:[[:space:]]*//')
+  GUARD_REF="waiver:${WAIVER_ID}"
+fi
+echo "[evaluator] B-guard-check 通过: GUARD_REF=${GUARD_REF}"
+```
+
+> **GUARD_REF 用途**：Step B-3 verdict JSON 追加 `"guard_ref":"$GUARD_REF"` 字段；harness-report Phase B 将其写回 `journey_features.guard_ref`（依赖刀3-T4 guard_ref 列已存在）。若 guard_ref 列未建（T4 未完成），report 降级记一行 concern，不阻断 PASS。
+
+---
+
 #### Step B-1.8: Golden Path 覆盖核对（LLM 判断步骤）
 
 **读 `${SPRINT_DIR}/sprint-prd.md` 的 Golden Path 段，逐步核对 E2E 脚本是否对每一步都有对应的真实命令 + 断言。任何一步未覆盖 → FAIL，feedback 列出未覆盖步骤。**
@@ -809,7 +862,7 @@ fi
 
 ```bash
 cat > "$WORKSPACE/.brain-result.json" << BREOF
-{"verdict":"PASS","task_id":"$TASK_ID","failed_step":null,"log_excerpt":null,"screenshots":${SCREENSHOTS_JSON:-[]}}
+{"verdict":"PASS","task_id":"$TASK_ID","failed_step":null,"log_excerpt":null,"screenshots":${SCREENSHOTS_JSON:-[]},"guard_ref":"${GUARD_REF:-}"}
 BREOF
 ```
 
