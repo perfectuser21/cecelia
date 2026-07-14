@@ -119,6 +119,20 @@ gh run view <latest_run_id>
 
 ---
 
+## Test Contract
+
+| 功能 | Test File | BEHAVIOR 覆盖 | 预期红证据 |
+|---|---|---|---|
+| GP-1 三连失败自动隔离 | `../../packages/brain/src/__tests__/dispatch-fail-autoblock.test.js` | dispatch_fail_consecutive 应写入 1 / blockTask 被调用，raise(P2) | blockTask 未实现 → FAIL |
+| GP-2 blocked 不入候选 | `../../packages/brain/src/__tests__/dispatch-fail-autoblock.test.js` | selectNextDispatchableTask | blocked task 仍被选中 → FAIL |
+| GP-3 成功重置计数 | `../../packages/brain/src/__tests__/dispatch-fail-autoblock.test.js` | dispatch_fail_consecutive 应归零 / 成功后再失败 2 次 | 计数未清零 → FAIL |
+| GP-4 阈值 env 覆盖 | `../../packages/brain/src/__tests__/dispatch-fail-autoblock.test.js` | 阈值=2：失败 2 次即触发 | 环境变量未读 → FAIL |
+| GP-5 configError 不计数 | `../../packages/brain/src/__tests__/dispatch-fail-autoblock.test.js` | configError 连续 3 次 | configError 也写计数 → FAIL |
+| BEHAVIOR-6 spawn_deduplicated 不计数 | `../../packages/brain/src/__tests__/dispatch-fail-autoblock.test.js` | spawn_deduplicated 连续 3 次 | spawn_deduplicated 也写计数 → FAIL |
+| BEHAVIOR-7 非法阈值回退默认 3 | `../../packages/brain/src/__tests__/dispatch-fail-autoblock.test.js` | THRESHOLD=abc（NaN）→ 回退 3 / THRESHOLD=0（< 1）→ 回退 3 | 非法值不回退 → FAIL |
+
+---
+
 ## 技术实现要点（供 Planner 参考）
 
 ### 改动文件
