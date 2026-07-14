@@ -14,36 +14,108 @@ concurrency:
   group: heartbeat-sentinel-active
   cancel-in-progress: false
 
+env:
+  DEFAULT_PROBE_URL: "http://100.71.151.105:5221"
+  ISSUE_LABEL: heartbeat-sentinel
+
 jobs:
   probe:
+    name: 反向探测生产 Brain
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     outputs:
       health_ok: ${{ steps.health.outputs.ok }}
       kv_ok: ${{ steps.kv.outputs.ok }}
+      probe_url: ${{ steps.resolve.outputs.url }}
+      kv_age_minutes: ${{ steps.kv.outputs.age_minutes }}
+
     steps:
-      - id: health
-        run: echo "ok=true" >> "$GITHUB_OUTPUT"
-      - id: kv
-        run: echo "ok=true" >> "$GITHUB_OUTPUT"
+      - name: 解析探测 URL
+        id: resolve
+        run: |
+          INPUT_URL="${{ github.event.inputs.probe_url }}"
+          if [[ -n "$INPUT_URL" ]]; then
+            echo "url=$INPUT_URL" >> "$GITHUB_OUTPUT"
+          else
+            echo "url=$DEFAULT_PROBE_URL" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Connect to Tailscale
+        uses: tailscale/github-action@v2
+        with:
+          authkey: ${{ secrets.TS_AUTHKEY }}
+
+      - name: 探测 /api/brain/health
+        id: health
+        env:
+          PROBE_URL: ${{ steps.resolve.outputs.url }}
+        run: |
+          set -uo pipefail
+          RESPONSE=$(curl -sf --max-time 15 "$PROBE_URL/api/brain/health" 2>/dev/null || echo "CURL_FAIL")
+          if [[ "$RESPONSE" == "CURL_FAIL" ]]; then
+            echo "ok=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          STATUS=$(echo "$RESPONSE" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('status','unknown'))" 2>/dev/null || echo "parse_error")
+          if [[ "$STATUS" == "healthy" || "$STATUS" == "ok" ]]; then
+            echo "ok=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "ok=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: 探测 KV smoke-nightly-last-run
+        id: kv
+        env:
+          PROBE_URL: ${{ steps.resolve.outputs.url }}
+        run: |
+          set -uo pipefail
+          MAX_AGE_SECONDS=$(( 26 * 3600 ))
+          RESPONSE=$(curl -sf --max-time 15 "$PROBE_URL/api/brain/kv/smoke-nightly-last-run" 2>/dev/null || echo "CURL_FAIL")
+          if [[ "$RESPONSE" == "CURL_FAIL" ]]; then
+            echo "ok=false" >> "$GITHUB_OUTPUT"
+            echo "age_minutes=-1" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          FINISHED_AT=$(echo "$RESPONSE" | python3 -c "
+import json, sys
+d = json.load(sys.stdin)
+v = d.get('value', d)
+if isinstance(v, str):
+    v = json.loads(v)
+print(v.get('finished_at', ''))
+" 2>/dev/null || echo "")
+          if [[ -z "$FINISHED_AT" ]]; then
+            echo "ok=false" >> "$GITHUB_OUTPUT"
+            echo "age_minutes=-1" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          NOW_EPOCH=$(date -u +%s)
+          FINISHED_EPOCH=$(date -u -d "$FINISHED_AT" +%s 2>/dev/null || python3 -c "from datetime import datetime; print(int(datetime.fromisoformat('$FINISHED_AT'.replace('Z','+00:00')).timestamp()))")
+          AGE_S=$(( NOW_EPOCH - FINISHED_EPOCH ))
+          AGE_MINUTES=$(( AGE_S / 60 ))
+          echo "age_minutes=$AGE_MINUTES" >> "$GITHUB_OUTPUT"
+          if (( AGE_S > MAX_AGE_SECONDS )); then
+            echo "ok=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "ok=true" >> "$GITHUB_OUTPUT"
+          fi
 
   alert:
+    name: 告警
     needs: probe
     if: always() && needs.probe.outputs.health_ok != 'true'
     runs-on: ubuntu-latest
     permissions:
       issues: write
     steps:
-      - env:
-          GH_TOKEN: ${{ github.token }}
-        run: echo "alert triggered"
+      - run: echo "alert"
 
   close-on-success:
+    name: 恢复时关闭 Issue
     needs: probe
     if: always() && needs.probe.outputs.health_ok == 'true'
     runs-on: ubuntu-latest
     permissions:
       issues: write
     steps:
-      - env:
-          GH_TOKEN: ${{ github.token }}
-        run: echo "all ok"
+      - run: echo "all ok"
