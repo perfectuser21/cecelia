@@ -184,7 +184,7 @@ server.listen(PORT, () => {
 // Langfuse TCP tunnel: port 3001 → 100.86.118.99:3000
 const LANGFUSE_HOST = '100.86.118.99';
 const LANGFUSE_PORT = 3000;
-const LANGFUSE_PROXY_PORT = 3001;
+const LANGFUSE_PROXY_PORT = process.env.LANGFUSE_PROXY_PORT || 3001;
 
 const langfuseTunnel = net.createServer((clientSocket) => {
   const targetSocket = net.createConnection(LANGFUSE_PORT, LANGFUSE_HOST, () => {
