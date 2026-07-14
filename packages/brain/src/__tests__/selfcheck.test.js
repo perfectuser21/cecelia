@@ -188,7 +188,7 @@ describe('selfcheck', () => {
   // 342（decisions.source_ref 列，决策溯源链）推进地板到 342。
   // 343（journey_features.guard_ref 列，裸奔 FR 守卫引用）推进地板到 343。
   it('EXPECTED_SCHEMA_VERSION should be 343 (floor, bumped for guard_ref migration)', () => {
-    expect(EXPECTED_SCHEMA_VERSION).toBe('343');
+    expect(EXPECTED_SCHEMA_VERSION).toBe('344');
   });
 
   it('should pass when DB schema version is ahead of expected (>= check)', async () => {
