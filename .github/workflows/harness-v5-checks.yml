@@ -251,21 +251,67 @@ jobs:
           BASE_REF: origin/${{ github.base_ref }}
         run: node packages/engine/scripts/devgate/skeleton-shape-check.cjs
 
+  # ─── Check 6: 测试文件不可变（commit1 后禁止修改）─────────────────────
+  lint-contract-test-immutability:
+    needs: changes
+    if: needs.changes.outputs.contracts == 'true'
+    name: 测试文件不可变校验 (v1.0)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Detect changed sprint dirs and check immutability
+        run: |
+          set -euo pipefail
+          BASE="${{ github.event.pull_request.base.sha }}"
+          HEAD="${{ github.event.pull_request.head.sha }}"
+
+          # 对于非 PR 事件，使用 HEAD~1 作为 base
+          if [ "${{ github.event_name }}" != "pull_request" ]; then
+            BASE="HEAD~1"
+            HEAD="HEAD"
+          fi
+
+          # 检测 PR diff 中是否含 sprints/* 变更
+          SPRINT_FILES=$(git diff --name-only "${BASE}...${HEAD}" 2>/dev/null | grep -vE '^sprints/archive/' | grep -E '^sprints/' || true)
+
+          if [ -z "$SPRINT_FILES" ]; then
+            echo "No sprints/* changes, skipping lint-contract-test-immutability"
+            exit 0
+          fi
+
+          # 提取唯一的 sprint 目录名
+          SPRINT_DIRS=$(echo "$SPRINT_FILES" | sed -E 's|^sprints/([^/]+)/.*|\1|' | sort -u)
+
+          echo "检测到 sprint 目录变更："
+          echo "$SPRINT_DIRS"
+          echo ""
+
+          OVERALL_EXIT=0
+          while IFS= read -r SPRINT; do
+            echo "=== 检查 sprint: $SPRINT ==="
+            bash scripts/lint-contract-test-immutability.sh "$GITHUB_WORKSPACE" "$SPRINT" || OVERALL_EXIT=1
+          done <<< "$SPRINT_DIRS"
+
+          exit $OVERALL_EXIT
+
   # ─── Gate job（required context，与 ci-passed 同款聚合）────────────────────
   harness-v5-gate:
     name: Harness V5 Gate Passed
-    needs: [changes, dod-structure-purity, test-coverage-for-behavior, tdd-commit-order, tests-actually-pass, skeleton-shape-check]
+    needs: [changes, dod-structure-purity, test-coverage-for-behavior, tdd-commit-order, tests-actually-pass, skeleton-shape-check, lint-contract-test-immutability]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
       - name: Harness V5 Gate
         run: |
-          echo "changes=${{ needs.changes.result }} dod=${{ needs.dod-structure-purity.result }} cov=${{ needs.test-coverage-for-behavior.result }} tdd=${{ needs.tdd-commit-order.result }} tests=${{ needs.tests-actually-pass.result }} shape=${{ needs.skeleton-shape-check.result }}"
+          echo "changes=${{ needs.changes.result }} dod=${{ needs.dod-structure-purity.result }} cov=${{ needs.test-coverage-for-behavior.result }} tdd=${{ needs.tdd-commit-order.result }} tests=${{ needs.tests-actually-pass.result }} shape=${{ needs.skeleton-shape-check.result }} immut=${{ needs.lint-contract-test-immutability.result }}"
           if [ "${{ needs.changes.result }}" != "success" ]; then
             echo "FAIL: changes 检测未成功"; exit 1
           fi
-          for r in "${{ needs.dod-structure-purity.result }}" "${{ needs.test-coverage-for-behavior.result }}" "${{ needs.tdd-commit-order.result }}" "${{ needs.tests-actually-pass.result }}" "${{ needs.skeleton-shape-check.result }}"; do
+          for r in "${{ needs.dod-structure-purity.result }}" "${{ needs.test-coverage-for-behavior.result }}" "${{ needs.tdd-commit-order.result }}" "${{ needs.tests-actually-pass.result }}" "${{ needs.skeleton-shape-check.result }}" "${{ needs.lint-contract-test-immutability.result }}"; do
             case "$r" in
               success|skipped) ;;
               *) echo "FAIL: 有 check 结果为 $r"; exit 1 ;;
