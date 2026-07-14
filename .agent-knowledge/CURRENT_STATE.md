@@ -1,12 +1,12 @@
 ---
-generated: 2026-07-14 10:48:54 CST
+generated: 2026-07-14 10:59:31 CST
 source: write-current-state.sh
 ---
 
 # Cecelia 系统当前状态
 
 > 由 `/dev` Stage 4 自动生成，每次 PR 合并后更新。
-> 生成时间：2026-07-14 10:48:54 CST
+> 生成时间：2026-07-14 10:59:31 CST
 
 ---
 
@@ -14,7 +14,7 @@ source: write-current-state.sh
 
 | 指标 | 状态 |
 |------|------|
-| Brain API | healthy |
+| Brain API | degraded |
 | 警觉等级 | 2 - AWARE |
 
 ---
@@ -86,11 +86,11 @@ source: write-current-state.sh
 
 | 状态 | 结论 | 工作流 | 分支 | 时间 |
 |------|------|--------|------|------|
+| ❌ completed | failure | Deploy | main | 2026-07-14 02:58 |
 | ✅ completed | success | CI | main | 2026-07-14 02:39 |
 | ✅ completed | success | Cleanup Merged Artifacts | main | 2026-07-14 02:39 |
 | ✅ completed | success | Preview Cleanup | cp-0714101351-migration34 | 2026-07-14 02:39 |
 | ✅ completed | success | Smoke Glob Runner（棘轮闸） | main | 2026-07-14 02:39 |
-| ✅ completed | success | Harness v5 Checks | cp-0714101351-migration34 | 2026-07-14 02:31 |
 
 ---
 

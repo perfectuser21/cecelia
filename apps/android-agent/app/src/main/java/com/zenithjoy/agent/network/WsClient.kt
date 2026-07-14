@@ -33,7 +33,7 @@ class WsClient(
     private var ws: WebSocket? = null
     private var backoffMs = 1_000L
     private var heartbeatRunning = false
-    private val heartbeatThread = Thread.ofVirtual().name("ws-heartbeat").unstarted(::heartbeatLoop)
+    private val heartbeatThread = Thread(::heartbeatLoop, "ws-heartbeat")
 
     fun connect() {
         val token = URLEncoder.encode(cfg.licenseKey, "UTF-8")
