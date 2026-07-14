@@ -33,6 +33,22 @@ interface SevenRingData {
   audited_at?: string;
 }
 
+interface RatchetMetric {
+  name: string;
+  label: string;
+  direction: 'only_up' | 'only_down';
+  watermark: number;
+  guard: string;
+  source: string;
+  skip_if_brain_unavailable?: boolean;
+}
+
+interface RatchetData {
+  available: boolean;
+  registry?: RatchetMetric[];
+  error?: string;
+}
+
 type FetchState = 'loading' | 'done' | 'unavailable';
 
 function LayerCard({ label, count, testId, color }: { label: string; count: number; testId: string; color: string }) {
@@ -131,6 +147,7 @@ export default function TestPyramidPage() {
   const [fetchState, setFetchState] = useState<FetchState>('loading');
   const [sevenRing, setSevenRing] = useState<SevenRingData | null>(null);
   const [sevenRingState, setSevenRingState] = useState<FetchState>('loading');
+  const [ratchet, setRatchet] = useState<RatchetData | null>(null);
   const [triggering, setTriggering] = useState(false);
 
   useEffect(() => {
@@ -177,8 +194,22 @@ export default function TestPyramidPage() {
       }
     }
 
+    async function fetchRatchet() {
+      try {
+        const resp = await fetch('/api/brain/quality/ratchet');
+        if (cancelled) return;
+        if (!resp.ok) { setRatchet({ available: false }); return; }
+        const body: RatchetData = await resp.json();
+        if (cancelled) return;
+        setRatchet(body);
+      } catch {
+        if (!cancelled) setRatchet({ available: false });
+      }
+    }
+
     fetchData();
     fetchSevenRing();
+    fetchRatchet();
     return () => { cancelled = true; };
   }, []);
 
@@ -390,6 +421,59 @@ export default function TestPyramidPage() {
             {sevenRing.rings.map((ring) => (
               <RingRow key={ring.ring} ring={ring} />
             ))}
+          </div>
+        )}
+      </div>
+
+      {/* ── 棘轮水位区块 ─────────────────────────────────────────────── */}
+      <div data-testid="ratchet-section" style={{ borderTop: '1px solid #e5e7eb', paddingTop: '24px', marginTop: '24px' }}>
+        <h3 style={{ margin: '0 0 14px', fontSize: '18px' }}>棘轮水位台账</h3>
+        {(!ratchet || !ratchet.available || !ratchet.registry) ? (
+          <div
+            data-testid="ratchet-unavailable"
+            style={{ padding: '14px', border: '1px solid #d1d5db', borderRadius: '8px', background: '#f3f4f6', color: '#6b7280', fontSize: '13px' }}
+          >
+            棘轮台账数据不可用。
+          </div>
+        ) : (
+          <div data-testid="ratchet-table" style={{ overflowX: 'auto' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
+              <thead>
+                <tr style={{ background: '#f9fafb', borderBottom: '1px solid #e5e7eb' }}>
+                  <th style={{ textAlign: 'left', padding: '8px 12px', color: '#6b7280', fontWeight: 600 }}>指标</th>
+                  <th style={{ textAlign: 'center', padding: '8px 12px', color: '#6b7280', fontWeight: 600 }}>方向</th>
+                  <th style={{ textAlign: 'right', padding: '8px 12px', color: '#6b7280', fontWeight: 600 }}>水位</th>
+                  <th style={{ textAlign: 'left', padding: '8px 12px', color: '#6b7280', fontWeight: 600 }}>守卫</th>
+                </tr>
+              </thead>
+              <tbody>
+                {ratchet.registry.map((m) => (
+                  <tr key={m.name} data-testid={`ratchet-row-${m.name}`} style={{ borderBottom: '1px solid #f3f4f6' }}>
+                    <td style={{ padding: '8px 12px', color: '#111827' }}>
+                      <span style={{ fontWeight: 500 }}>{m.label}</span>
+                      <span style={{ color: '#9ca3af', marginLeft: '6px', fontSize: '11px' }}>{m.name}</span>
+                    </td>
+                    <td style={{ textAlign: 'center', padding: '8px 12px' }}>
+                      <span style={{
+                        display: 'inline-block',
+                        padding: '1px 8px',
+                        borderRadius: '4px',
+                        fontSize: '11px',
+                        fontWeight: 600,
+                        background: m.direction === 'only_up' ? '#ecfdf5' : '#fff7ed',
+                        color: m.direction === 'only_up' ? '#059669' : '#d97706',
+                      }}>
+                        {m.direction === 'only_up' ? '↑只增' : '↓只降'}
+                      </span>
+                    </td>
+                    <td style={{ textAlign: 'right', padding: '8px 12px', fontWeight: 700, color: '#111827' }}>
+                      {m.watermark}
+                    </td>
+                    <td style={{ padding: '8px 12px', color: '#6b7280', fontSize: '12px' }}>{m.guard}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
         )}
       </div>

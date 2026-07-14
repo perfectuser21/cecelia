@@ -1,5 +1,5 @@
 /**
- * Quality API Routes — 测试金字塔快照存取 + 七环对账 KV
+ * Quality API Routes — 测试金字塔快照存取 + 七环对账 KV + 棘轮台账
  *
  * - POST /api/brain/quality/test-pyramid — 接收 test-pyramid-guard --json 输出，
  *   upsert 到 working_memory（key=quality_test_pyramid，含 updated_at）。
@@ -9,10 +9,17 @@
  * - GET  /api/brain/kv/:key — 通用 working_memory KV 读取（供外部巡检读取任意快照键）
  * - GET  /api/brain/quality/seven-ring — 七环对账最新结果（来自 scheduler-jobs 日跑写入）
  * - POST /api/brain/quality/seven-ring/trigger — 立即触发一次七环审计（跳过24h冷却）
+ * - GET  /api/brain/quality/ratchet — 棘轮台账（ratchet-registry.json）条目列表
  */
 
 import { Router } from 'express';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { dirname, join } from 'node:path';
 import pool from '../db.js';
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const RATCHET_REGISTRY_PATH = join(__dirname, '../../../../scripts/ratchet-registry.json');
 
 const MEMORY_KEY = 'quality_test_pyramid';
 
@@ -97,6 +104,17 @@ router.post('/seven-ring/trigger', async (_req, res) => {
   } catch (err) {
     console.error('[quality/seven-ring/trigger] POST failed:', err);
     res.status(500).json({ error: err.message });
+  }
+});
+
+// ── 棘轮台账路由 ──────────────────────────────────────────────────────────────
+
+router.get('/ratchet', (_req, res) => {
+  try {
+    const registry = JSON.parse(readFileSync(RATCHET_REGISTRY_PATH, 'utf8'));
+    res.json({ available: true, registry });
+  } catch (err) {
+    res.json({ available: false, error: err.message });
   }
 });
 

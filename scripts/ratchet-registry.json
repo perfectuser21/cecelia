@@ -1,0 +1,44 @@
+[
+  {
+    "name": "orphans",
+    "label": "sprints 孤儿测试数",
+    "direction": "only_down",
+    "watermark": 0,
+    "guard": "test-pyramid-guard A1",
+    "source": "countOrphans(root).total via test-pyramid-guard.mjs"
+  },
+  {
+    "name": "permanent_tests",
+    "label": "永久池测试总数",
+    "direction": "only_up",
+    "watermark": 1127,
+    "guard": "test-pyramid-guard A3",
+    "source": "countPermanent(root, roots).total via test-pyramid-guard.mjs"
+  },
+  {
+    "name": "bare_fr",
+    "label": "无守卫 live FR 数",
+    "direction": "only_down",
+    "watermark": 0,
+    "guard": "test-pyramid-guard A5",
+    "source": "GET /api/brain/journey_features/unguarded-count (Brain API)",
+    "skip_if_brain_unavailable": true
+  },
+  {
+    "name": "seven_ring_hard_flaws",
+    "label": "七环对账红项数",
+    "direction": "only_down",
+    "watermark": 0,
+    "guard": "seven-ring-audit / ci-patrol",
+    "source": "GET /api/brain/kv/seven_ring_audit_last → hard_flaws (Brain API)",
+    "skip_if_brain_unavailable": true
+  },
+  {
+    "name": "smoke_pool",
+    "label": "smoke 池脚本数",
+    "direction": "only_up",
+    "watermark": 9,
+    "guard": "ratchet-guard smoke_pool",
+    "source": "find scripts/smoke -name '*.sh' | wc -l"
+  }
+]
