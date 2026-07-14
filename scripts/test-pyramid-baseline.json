@@ -8,5 +8,6 @@
     { "path": "packages/engine/tests", "layer": "unit" },
     { "path": "packages/quality", "layer": "integration" }
   ],
-  "smoke_dir": "scripts/smoke"
+  "smoke_dir": "scripts/smoke",
+  "bare_fr": 0
 }

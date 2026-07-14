@@ -93,7 +93,7 @@ export function checkPanelFreshness(root, maxAgeHours) {
   return { fresh: age >= 0 && age < maxAgeHours, generated: m[1] };
 }
 
-export function runGuard(root, baseline, { ci = false, panelRoot } = {}) {
+export function runGuard(root, baseline, { ci = false, panelRoot, bareFrCount = null } = {}) {
   const failures = [];
   for (const k of ['orphans', 'permanent', 'permanent_roots', 'smoke_dir']) {
     if (baseline?.[k] === undefined) failures.push(`BASELINE: 基线缺字段 ${k}（宁红勿绿）`);
@@ -123,7 +123,38 @@ export function runGuard(root, baseline, { ci = false, panelRoot } = {}) {
     if (!panel.fresh) failures.push(`A4 面板活性: CURRENT_STATE.md generated=${panel.generated ?? '缺失'} 超过 48h（僵尸面板复发）`);
   }
 
-  return { pass: failures.length === 0, failures, orphans, smoke, permanent, panel };
+  // A5 裸奔 FR 棘轮：guard_ref IS NULL AND status=live 的 FR 数只许降
+  // bareFrCount 由调用方注入（main 从 Brain API 取，测试直接传）；null 表示 Brain 不可用则跳过
+  let bareFr = null;
+  if (bareFrCount !== null && typeof baseline.bare_fr === 'number') {
+    bareFr = { count: bareFrCount, baseline: baseline.bare_fr };
+    if (bareFrCount > baseline.bare_fr) {
+      failures.push(`A5 裸奔 FR 棘轮: 无守卫 live FR ${bareFrCount} > 基线 ${baseline.bare_fr}——新增 live FR 必须填 guard_ref，或降级为 planned`);
+    } else if (bareFrCount < baseline.bare_fr) {
+      console.error(`ℹ️ A5: 裸奔 FR ${bareFrCount} < 基线 ${baseline.bare_fr}，请把 scripts/test-pyramid-baseline.json 的 bare_fr 下调锁住战果`);
+    }
+  }
+
+  return { pass: failures.length === 0, failures, orphans, smoke, permanent, panel, bare_fr: bareFr };
+}
+
+async function fetchBareFrCount(brainUrl = 'http://localhost:5221') {
+  try {
+    const { default: http } = await import('node:http');
+    return await new Promise((resolve) => {
+      const req = http.get(`${brainUrl}/api/brain/journey_features/unguarded-count`, { timeout: 3000 }, (res) => {
+        let body = '';
+        res.on('data', (d) => { body += d; });
+        res.on('end', () => {
+          try { resolve(JSON.parse(body).count ?? null); } catch { resolve(null); }
+        });
+      });
+      req.on('error', () => resolve(null));
+      req.on('timeout', () => { req.destroy(); resolve(null); });
+    });
+  } catch {
+    return null;
+  }
 }
 
 const isMain = process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
@@ -141,7 +172,10 @@ if (isMain) {
     const resolved = path.resolve(root, common);
     if (path.basename(resolved) === '.git') panelRoot = path.dirname(resolved);
   } catch { /* 回退 root */ }
-  const result = runGuard(root, baseline, { ci: !!process.env.CI, panelRoot });
+  // A5 尝试从 Brain API 取裸奔 FR 数（Brain 不可达则跳过 A5）
+  const bareFrCount = await fetchBareFrCount();
+  if (bareFrCount === null) console.error('ℹ️ A5: Brain 不可达，跳过裸奔 FR 棘轮');
+  const result = runGuard(root, baseline, { ci: !!process.env.CI, panelRoot, bareFrCount });
   if (args.includes('--json')) {
     console.log(JSON.stringify(result, null, 2));
   } else {
@@ -150,6 +184,7 @@ if (isMain) {
     if (result.smoke) console.log(`  smoke: ${result.smoke.total} 条，未挂跑道 ${result.smoke.unwired.length}`);
     if (result.permanent) console.log(`  永久池: ${result.permanent.total} / 基线 ${baseline?.permanent} ｜ 分层 ${JSON.stringify(result.permanent.layers)}`);
     if (result.panel) console.log(`  面板: generated=${result.panel.generated} fresh=${result.panel.fresh}`);
+    if (result.bare_fr) console.log(`  裸奔 FR: ${result.bare_fr.count} / 基线 ${result.bare_fr.baseline}`);
     for (const f of result.failures) console.log(`  ❌ ${f}`);
     console.log(result.pass ? '✅ PASS' : '❌ FAIL');
   }
