@@ -1,14 +1,15 @@
 
-# Smoke PASS 基线（allowlist）
 # 列表内脚本失败 → CI 红（棘轮闸）
-# 新增脚本默认须加入此文件或 smoke-denylist.txt（新债不许欠）
 # 更新方式：在 CI 通过后从 smoke-debt.txt 迁移经确认能通过的脚本到此处
+# 新增脚本默认须加入此文件或 smoke-denylist.txt（新债不许欠）
+# Smoke PASS 基线（allowlist）
 abilities-api-smoke.sh
 ability-id-chain-pr2-smoke.sh
 advancement-items-smoke.sh
 agent-credit-smoke.sh
 battle-report-smoke.sh
 battle-report-v2-smoke.sh
+blade-bc-harness-gates-smoke.sh
 bluegreen-bark-nojq-smoke.sh
 callback-postprocess-smoke.sh
 capture-inbox-smoke.sh
@@ -22,6 +23,7 @@ codex-headed-dispatch-smoke.sh
 compute-ssh-reachability-smoke.sh
 decision-system-smoke.sh
 decisions-dedup-smoke.sh
+dev-env-db-guard-smoke.sh
 direction-proposer-t4-smoke.sh
 executor-liveness-t1-smoke.sh
 feature-registry-smoke.sh
@@ -52,16 +54,20 @@ ledger-hygiene-smoke.sh
 line-context-smoke.sh
 line-dreaming-smoke.sh
 line-strategist-dispatch-smoke.sh
+migration-339-drop-abilities-gp-priority-smoke.sh
 okr-initiative-mirror-smoke.sh
 postdeploy-verifier-smoke.sh
 preview-env-smoke.sh
 protocol-hygiene-smoke.sh
+quality-test-pyramid-smoke.sh
 relay-runs-filter-smoke.sh
 relay-runs-since-smoke.sh
 relay-runs-smoke.sh
 relay-runs-summary-smoke.sh
 relay-runs-verdicts-smoke.sh
+relay-smoke-v220-smoke.sh
 relay-verdict-writeback-smoke.sh
+rpa-dev-verify-smoke.sh
 scheduler-jobs-smoke.sh
 skill-eval-formb-smoke.sh
 skill-eval-report-smoke.sh
@@ -78,8 +84,10 @@ t4-receipt-collector-smoke.sh
 t6-ability-progress-smoke.sh
 t6-battle-command-smoke.sh
 t6-dev-dispatch-migration-smoke.sh
+task-result-backfill-smoke.sh
 task-tasks-dedup-smoke.sh
 tasks-ability-id-smoke.sh
+three-tier-smoke.sh
 version-endpoint-smoke.sh
 warroom-line-command-smoke.sh
 warroom-readonly-api-smoke.sh
@@ -87,10 +95,3 @@ warroom-smoke.sh
 ws3-ire-module-smoke.sh
 zenithjoy-db-pool-smoke.sh
 zenithjoy-schema-migration-smoke.sh
-relay-smoke-v220-smoke.sh
-migration-339-drop-abilities-gp-priority-smoke.sh
-rpa-dev-verify-smoke.sh
-three-tier-smoke.sh
-task-result-backfill-smoke.sh
-dev-env-db-guard-smoke.sh
-blade-bc-harness-gates-smoke.sh
