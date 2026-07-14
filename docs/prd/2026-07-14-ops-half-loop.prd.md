@@ -1,9 +1,10 @@
 # PRD：补齐 Ops 半环——让"我以为的"永远等于"现实的"
 
-> 日期：2026-07-14
+> 日期：2026-07-14（最终版，含刀 0/1/1b/2 收官后状态刷新）
 > 发起：Alex（本 PRD 由 2026-07-14 管家会话共识整理）
-> 层级：Project（下分 4 把刀，每把刀 = 1 个 Initiative，内部再拆 /dev 任务）
+> 层级：Project（下分 6 把刀，每把刀 = 1 个 Initiative，内部再拆 /dev 任务）
 > 关联决策：dc18d43d「无闸不成文」（本 PRD 是该铁律从"交付时"延长到"终身"的落地）
+> 状态：刀 0 ✅ (#3867) / 刀 1 ✅ (#3870) / 刀 1b ✅ (skills#145+#3874) / 刀 2 ✅ (skills#145) / 面板 ✅ (#3876+#3879)；刀 3/4/5 待开
 
 ---
 
@@ -56,9 +57,9 @@
 
 ---
 
-## 三、范围：四把刀（按依赖排序）
+## 三、范围：六把刀（按依赖排序；刀 0-3 本节，刀 4/5 见三.5）
 
-### 刀 0：先能看见——测试金字塔守卫 + 状态面板（最先，最小）
+### 刀 0：先能看见——测试金字塔守卫 + 状态面板 ✅ 已交付（#3867 守卫 + #3876/#3879 面板）
 
 不先看见就没法施工验收。机械守卫，不依赖任何人的声称。
 
@@ -74,18 +75,21 @@
 **用户能看到什么**：打开面板，一眼看到 L1/L2/L3 各有多少条、昨晚跑没跑、
 有没有孤儿。守卫红 = CI 拦 + Bark。
 
-### 刀 1：修枢纽——⑦ 测试自动入册（毕业自动化）
+### 刀 1：修枢纽——⑦ 测试自动入册（毕业自动化）✅ 已交付（#3870 + 刀 1b skills#145/#3874）
 
 **交付物**
-- harness 收尾（report/merge 后）自动搬运：本 sprint `tests/*.test.*` →
-  永久测试目录；`e2e-verify.sh` → `scripts/smoke/` 池。只搬 evaluator PASS
-  过的单子（天然过滤脚手架垃圾）。
-- 补搬 07-10 以来欠账（8 个测试 + 3 个 e2e 脚本），红的修绿再入册。
-- 有头 /dev 路径同规则（engine-ship 棒里加同一步）。
+- 毕业步在 merge **前**机械执行（时序勘误：不是"report/merge 后"）——
+  harness 路径 = controller 2.7.0 Step6（judge PASS 后、merge 前）跑
+  `graduate-sprint-tests.mjs --update-refs`：本 sprint `tests/*.test.*` →
+  永久测试目录 `tests/regression/`；`e2e-verify.sh` → `scripts/smoke/` 池。
+  只搬 judge PASS 过的单子（天然过滤脚手架垃圾）。
+- 补搬 07-10 以来欠账 ✅：42 孤儿全清偿（毕业 9 / 删重 1 / 归档 33），
+  orphans 棘轮锁死 0。
+- 有头 /dev 路径同规则 ✅（engine-ship 16.4.0 §1.5 同款毕业步）。
 
 **用户能看到什么**：任何一单 merge 后，刀 0 面板上的对应层计数 +1，孤儿数恒为 0。
 
-### 刀 2：补腰——③ TDD 接缝纪律（integration 层出生机制）
+### 刀 2：补腰——③ TDD 接缝纪律（integration 层出生机制）✅ 已交付（skills#145：proposer 9.12.0 / generator 7.10.0 / evaluator 1.24.0）
 
 **交付物**（zenithjoy-skills repo，走 skill-creator）
 - proposer/contract 模板加规则：凡改调度/状态机/跨模块传递/生命周期钩子，
@@ -100,6 +104,14 @@
 
 **交付物**
 - ⑧ 部署闸：brain-deploy 蓝绿 swap 前跑 smoke 池核心子集，挂了保留 blue 不切。
+  **dashboard 链同等补闸**：brain 链已有 assert-deploy-effect，dashboard 链
+  （promote-dashboard + HK 同步）目前零闸——补部署后指纹校验（build hash /
+  版本号对比），部署报 success 但实跑旧代码 = 红。
+- ⑧b 部署链四伤口根治（07-14 实录，止血已做，本刀内根治）：
+  1. cecelia-deploy-main 的 `npm install || true` 静默吞失败 → 改 loud-fail（deploy-local.sh:191）
+  2. brain 容器 /tmp=100MB tmpfs 被 npm cache 塞满 → cache 挪盘或 janitor 接管清理
+  3. promote-dashboard.sh 只管本机 5211 不同步 HK → 补 HK rsync 步
+  4. cecelia-frontend 服务主仓 dist 而非 deploy-main dist（运行时漂移）→ 统一服务根
 - ⑨ FR 守卫槽位制度：
   - 合同模板加必填段「运行时守卫」：回答"它死了，谁、多久内会发现"，
     要么给出具体探针，要么显式豁免+理由；答不上 = 合同不完整（无闸不成文终身版）。
@@ -113,6 +125,68 @@
 一条平安/异常汇总；任何功能死亡从"生产撞见"变为"分钟-小时级探针发现"。
 
 ---
+
+## 三.5、目标态：五级成熟度阶梯与 AI-Native 终点
+
+```
+L0 裸奔      手动部署，事故告诉你挂了               ← 3 个月前
+L1 自动化    CI/CD 自动部署，有基本面板              ← 现在（Dev 强 Ops 弱）
+L2 可观测    每个功能有探针+告警+runbook，
+             系统分钟级知道、人小时级知道            ← 刀 0-3 落完到这
+L2.5 守卫可信 心跳+棘轮+演习，守卫本身 proven-to-fire ← 刀 4
+L3/L4 自愈与 AI-Native：探针红 → Brain 分诊 →
+             AI 诊断 → 派 harness 修 → 验尸自动产新守卫 ← 刀 5
+```
+
+**L2 及格判据**：任何功能死掉，系统分钟级发现、Alex 小时级收到、修复有 runbook。
+
+**"确保守卫活着"三机制**（刀 4 的内容）：
+- **心跳（dead man's switch）**：每个守卫定期报平安，静默即最高告警。
+  **静默检测器必须在生产机之外**——手机 Bark 只能收推送、不能检测"没收到"，
+  生产机自查静默 = 整机死时守卫陪葬。落法：地盘 A（GitHub scheduled workflow）
+  机外反向探测生产 /health + 心跳记录，断了自动开 Issue + Bark 推送。
+  不补这笔 dead man's switch 是假的。
+- **棘轮（ratchet）**：关键健康数只许单向走（永久测试数只增、裸奔 FR 数只降、
+  巡检硬伤只降），倒退 = CI 红。ci-patrol 已有先例。
+- **演习（chaos drill / proven-to-fire 定期化）**：每月在 staging 故意弄死一个
+  东西，守卫 X 分钟内没叫 = 守卫本身记 P1。从没红过的守卫视为未验证。
+
+**AI-Native 回路**（刀 5，本 PRD 只立方向不展开，届时另开 PRD）：
+
+```
+探针红/心跳断 → ①感知(Brain tick,已有) → ②分诊(警觉阶梯,已有)
+→ ③诊断(AI巡检员+cecelia-harness-debug 七层filter,已有)
+→ ④修复: 见过的病→自愈动作(reaper/回滚,有雏形)
+         没见过的病→自动开 harness 任务让 Dev 机器修(缺:唯一断线)
+→ ⑤沉淀: 验尸自动写 learnings + 自动产出新守卫(缺制度)
+→ ⑥升级: 仅政策级 Bark Alex 拍板(通道已有)
+```
+
+**刀 5 护栏（不可豁免）**：探针红→自动开单必须带频控与日预算上限（同一探针
+24h 内只开一单、全系统日开单数封顶），且自动生成的修复走完整 GAN+judge 闸，
+不因"机器自己开的单"豁免任何闸——否则与「无闸不成文」（dc18d43d）自相矛盾。
+
+关键洞察：AI-Native Ops 的"手术室"就是已建成的 harness——传统公司到不了 L4
+是因为 Ops 发现问题后没有自动写代码的机器可调用；本系统两端都有，缺的只是
+把 Ops 输出端接到 Dev 输入端这一根线。另一个 AI-Native 独有武器：AI 巡检员
+可抓语义级异常（决策 db1b393b），机械探针只能抓数字越线。
+
+## 三.6、守卫拓扑（每个守卫住哪）
+
+```
+地盘 A GitHub 云(Actions,事件驱动+scheduled,不与生产同生共死)：
+   test-pyramid-guard PR 档、facts-check、DevGate、
+   心跳静默检测器(scheduled workflow 机外反向探测生产,刀 4)
+地盘 B 美国 Mac mini(生产,24/7)：
+   test-pyramid-guard 每日档、面板(5211)、smoke nightly(打staging 5222)、
+   部署闸(brain-deploy内)、FR 活性探针(Brain tick)、心跳发射端
+地盘 C 研发过程(engine hooks)：Stop Hook、write-guard（现状保留）
+地盘 D Alex 手机(Bark)：告警推送接收端（只收推送；静默检测在地盘 A，
+   手机检测不了"没收到"）
+```
+
+选址规则：CI 守卫守"改动"，运行时守卫守"活着"，心跳静默检测器必须在生产机之外。
+不需要任何新机器。
 
 ## 四、非目标（本期不做）
 
@@ -129,21 +203,30 @@
 3. 有人再干"07-10 摘 include"这种事时，CI 当场红，合并被拦。
 4. 任何 live 功能死掉，我在分钟-小时级收到通知，而不是撞见生产事故。
 5. 连续 30 天观察：「修机器」类 fix PR 占比从当前 ~95% 显著下降。
+   **数据源与判据**：机械启发式 = PR title 含 fix/修 且改动路径落在
+   packages/brain|packages/engine|.github/workflows 视为「修机器」，
+   由 ci-patrol 周报统计口径落地；启发式落地前本条降级为观察指标，
+   不作为验收硬闸。
 
 ## 六、排期建议（"什么时候干后半截"的回答）
 
-| 刀 | 何时 | 方式 | 预估 |
+| 刀 | 何时 | 方式 | 状态 |
 |---|---|---|---|
-| 刀 0 守卫+面板 | **立即，本周内** | 有头 /dev，1-2 个任务 | ~1 天 |
-| 刀 1 自动入册 | 紧随刀 0，本周内 | 有头 /dev，1 个任务 + 补欠账 | ~半天 |
-| 刀 2 TDD 纪律 | 下一批，可与刀 1 并行 | skills repo PR（skill-creator 流程） | ~1 天 |
-| 刀 3 Ops 制度 | 刀 0-2 落地后，与"刀B+C 收账权"错峰 | /decomp 拆成 4-6 个 /dev 任务 | ~1 周 |
+| 刀 0 守卫+面板 | 07-14 | 有头 /dev | ✅ #3867 + #3876/#3879 |
+| 刀 1 自动入册（含 1b 自动毕业步） | 07-14 | 有头 /dev + skills PR | ✅ #3870 + skills#145/#3874 |
+| 刀 2 TDD 纪律 | 07-14 | skills repo PR（skill-creator 流程） | ✅ skills#145 |
+| 刀 3 Ops 制度 | **当前工作面**（错峰条件已满足：刀B+C 收账权已上生产 brain 1.260.0） | /decomp 拆成 4-6 个 /dev 任务 | ~1 周 |
+| 刀 4 守卫可信（心跳/棘轮/演习） | 刀 3 落地后 | /dev 2-3 个任务 | ~2-3 天 |
+| 刀 5 AI-Native 闭环（探针红→harness 派单+验尸产守卫） | 刀 4 后另立 PRD | /architect → /decomp | 另计 |
 
 与在飞工作的关系：刀 0/1 不碰 harness 编排代码，与队列中「刀B+C 收账权收归」
 无冲突可先行；刀 3 的巡检扩容部分依赖收账权落地后的账本口径，排在其后。
 
 ## 七、开放问题（Contract 阶段需拍板）
 
-1. 永久测试目录选址：`src/__tests__/` 直进 vs 独立 `packages/quality/regression/`？
+1. ~~永久测试目录选址~~ ✅ 已拍板：`tests/regression/`（decision 在库 07-14），
+   brain vitest include 已接。
 2. smoke 池在 preview 闸跑"核心子集"的时长预算（建议 ≤10min）？
 3. FR 守卫豁免的审批口径：谁可以写"豁免"，记录在哪（decisions 表？）
+4. 演习（chaos drill）权限边界：只许打 staging（5222）？生产演习是否永久禁止？
+5. `guard_ref` 形态：脚本路径 / 探针端点 URL / 豁免 decision id——三种取值如何编码？
