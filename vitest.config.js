@@ -15,6 +15,8 @@ export default defineConfig({
     include: [
       'sprints/**/*.{test,spec}.?(c|m)[jt]s?(x)',
       'packages/brain/scripts/ci/__tests__/**/*.{test,spec}.?(c|m)[jt]s?(x)',
+      'tests/regression/**/*.{test,spec}.?(c|m)[jt]s?(x)',
+      'tests/**/*.{test,spec}.?(c|m)[jt]s?(x)',
     ],
     exclude: [
       'sprints/archive/**',
