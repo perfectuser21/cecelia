@@ -62,6 +62,12 @@ const manifest: FeatureManifest = {
       navItem: { label: '设备', icon: 'Server', group: 'system', order: 99 },
     },
     { path: '/machines/:name', component: 'MachineDetailPage' },
+    // 11要素账本
+    {
+      path: '/ledger',
+      component: 'LedgerPage',
+      navItem: { label: '11要素账本', icon: 'BookOpen', group: 'system', order: 7 },
+    },
   ],
 
   components: {
@@ -76,6 +82,7 @@ const manifest: FeatureManifest = {
     TracesPage: () => import('./pages/TracesPage'),
     MachinesPage: () => import('./pages/MachinesPage'),
     MachineDetailPage: () => import('./pages/MachineDetailPage'),
+    LedgerPage: () => import('./pages/LedgerPage'),
   },
 };
 
