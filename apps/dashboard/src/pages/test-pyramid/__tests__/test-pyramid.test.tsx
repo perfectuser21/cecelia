@@ -23,6 +23,7 @@ vi.mock('react-router-dom', () => ({
 
 const passPayload = {
   available: true,
+  updated_at: '2026-07-14T07:00:00.000Z',
   pass: true,
   failures: [],
   orphans: { tests: 0, e2e: 0, total: 3 },
@@ -110,6 +111,32 @@ describe('TestPyramidPage — 绿态（guard PASS）', () => {
 
     expect(screen.getByTestId('pyramid-generated')).toHaveTextContent('2026-07-14 10:59:31');
   });
+
+  it('数据源走 Brain：fetch /api/brain/quality/test-pyramid', async () => {
+    const { default: TestPyramidPage } = await import('../TestPyramidPage');
+
+    await act(async () => {
+      render(<TestPyramidPage />);
+    });
+
+    await waitFor(() => {
+      expect(global.fetch).toHaveBeenCalledWith('/api/brain/quality/test-pyramid');
+    });
+  });
+
+  it('updated_at 显示为数据时间', async () => {
+    const { default: TestPyramidPage } = await import('../TestPyramidPage');
+
+    await act(async () => {
+      render(<TestPyramidPage />);
+    });
+
+    await waitFor(() => {
+      expect(screen.getByTestId('pyramid-updated-at')).toBeInTheDocument();
+    });
+
+    expect(screen.getByTestId('pyramid-updated-at')).toHaveTextContent('2026-07-14');
+  });
 });
 
 describe('TestPyramidPage — 红态（guard FAIL）', () => {
@@ -186,6 +213,8 @@ describe('TestPyramidPage — 灰态（数据不可用）', () => {
     });
 
     expect(screen.getByTestId('pyramid-unavailable')).toHaveTextContent('guard 数据不可用');
+    expect(screen.getByTestId('pyramid-unavailable')).toHaveTextContent('03:30');
+    expect(screen.getByTestId('pyramid-unavailable')).toHaveTextContent('write-current-state.sh');
   });
 
   it('fetch !ok → 灰态，不崩溃', async () => {
