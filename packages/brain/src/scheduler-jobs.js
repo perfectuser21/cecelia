@@ -22,6 +22,7 @@ import { runLaunchdPatrol } from './launchd-patrol.js';
 import { runGpShelfLife } from './gp-shelf-life.js';
 import { maybeRunDirectionProposer } from './direction-proposer.js';
 import { runPostdeployVerifier } from './postdeploy-verifier.js';
+import { runSevenRingAuditJob } from './seven-ring-audit.js';
 
 const LOOP_INTERVAL_MS = 60 * 1000;
 const DEFAULT_TIMEOUT_MS = 5 * 60 * 1000;
@@ -43,6 +44,7 @@ export const JOBS = [
   { name: 'launchd-patrol', needsPool: false, timeoutMs: DEFAULT_TIMEOUT_MS, handler: runLaunchdPatrol, description: '宿主 launchd 服务巡检（自带15min gate，manifest核对，异常P1+Bark，a5a6209a）' },
   { name: 'direction-proposer', needsPool: true, timeoutMs: DEFAULT_TIMEOUT_MS, handler: maybeRunDirectionProposer, description: '每周方向菜单（自带北京周一05:30窗口+20h去重，候选写golden_paths+缺口全景写working_memory，GP4/T4）' },
   { name: 'postdeploy-verifier', needsPool: true, timeoutMs: 2 * 60 * 1000, handler: runPostdeployVerifier, description: '第5环部署验证（自带5min节流gate，扫 pending_postdeploy 任务执行 postdeploy_check.command，通过→completed，失败3次→P1）' },
+  { name: 'seven-ring-audit', needsPool: true, timeoutMs: DEFAULT_TIMEOUT_MS, handler: runSevenRingAuditJob, description: '七环对账日巡检（自带24h冷却，逐环核对测试入册/调度在跑/指纹新鲜/账本写对/产出消费/告警活着/面板新鲜，棘轮只许降，刀3-T6）' },
 ];
 
 function raceWithTimeout(promise, timeoutMs) {
