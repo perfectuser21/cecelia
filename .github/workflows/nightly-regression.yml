@@ -317,6 +317,27 @@ jobs:
         run: cd apps/dashboard && npm ci && npx vitest run
 
 # ──────────────────────────────────────────────────────────────────────────────
+# Job 5.5: 测试金字塔守卫（刀0）
+# 孤儿棘轮/smoke挂跑道/永久池棘轮；自测先行（proven-to-fire）。
+# PRD: docs/prd/2026-07-14-ops-half-loop.prd.md
+# ──────────────────────────────────────────────────────────────────────────────
+  test-pyramid-guard:
+    name: 测试金字塔守卫 (nightly)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Guard 自测（proven-to-fire）
+        run: bash scripts/__tests__/test-pyramid-guard.test.sh
+      - name: write-current-state 自测（原孤儿测试接入）
+        run: bash scripts/__tests__/write-current-state.test.sh
+      - name: 真跑守卫
+        run: node scripts/test-pyramid-guard.mjs
+
+# ──────────────────────────────────────────────────────────────────────────────
 # Job 6: 失败汇总 + 开 GitHub Issue
 # 只要任意 test job 失败就触发（if: failure()）。
 # 用 GITHUB_TOKEN 开 Issue（无需 Tailscale / Brain 连接）。
@@ -330,6 +351,7 @@ jobs:
       - e2e-smoke-nightly
       - real-env-smoke-nightly
       - workspace-test-nightly
+      - test-pyramid-guard
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
@@ -384,6 +406,7 @@ jobs:
           E2E="${{ needs.e2e-smoke-nightly.result }}"
           REAL_ENV="${{ needs.real-env-smoke-nightly.result }}"
           WS="${{ needs.workspace-test-nightly.result }}"
+          PYRAMID="${{ needs.test-pyramid-guard.result }}"
 
           format_result() {
             local name="$1" result="$2"
@@ -407,6 +430,7 @@ jobs:
           BODY="$BODY"$'\n'"$(format_result "E2E 贯通冒烟" "$E2E")"
           BODY="$BODY"$'\n'"$(format_result "Real-Env Smoke (Brain 容器)" "$REAL_ENV")"
           BODY="$BODY"$'\n'"$(format_result "Workspace Tests" "$WS")"
+          BODY="$BODY"$'\n'"$(format_result "测试金字塔守卫 (刀0)" "$PYRAMID")"
           BODY="$BODY"$'\n\n'"### 处理方式"$'\n'
           BODY="$BODY"$'\n'"- 排查上方失败 job 的日志"
           BODY="$BODY"$'\n'"- 若是 flaky test：在 re-run 通过后关闭此 Issue"

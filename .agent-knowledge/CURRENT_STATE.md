@@ -1,12 +1,12 @@
 ---
-generated: 2026-05-22 16:28:46 CST
+generated: 2026-07-14 10:48:54 CST
 source: write-current-state.sh
 ---
 
 # Cecelia 系统当前状态
 
 > 由 `/dev` Stage 4 自动生成，每次 PR 合并后更新。
-> 生成时间：2026-05-22 16:28:46 CST
+> 生成时间：2026-07-14 10:48:54 CST
 
 ---
 
@@ -15,32 +15,45 @@ source: write-current-state.sh
 | 指标 | 状态 |
 |------|------|
 | Brain API | healthy |
-| 警觉等级 | 1 - CALM |
+| 警觉等级 | 2 - AWARE |
+
+---
+
+## 测试金字塔
+
+| 层 | 数量 |
+|---|---|
+| unit | 1019 |
+| integration | 97 |
+| e2e/smoke | 2 |
+| 孤儿（sprints 未入册）| 42 |
+
+守卫: ✅ PASS
 
 ---
 
 ## Capability Probe（能力链路探针）
 
-> 最后探针时间：2026-05-22 08:07:24 UTC | 总计：10 | ✅ 通过：10 | ❌ 失败：0
+> 最后探针时间：2026-07-14 02:48:21 UTC | 总计：10 | ✅ 通过：10 | ❌ 失败：0
 
 | 探针名 | 描述 | 状态 | 耗时 |
 |--------|------|------|------|
-| `db` | 数据库连接+核心表可读 | ✅ | 13ms |
-| `dispatch` | 任务派发链路（tasks表可写+executor模块可import） | ✅ | 3ms |
+| `db` | 数据库连接+核心表可读 | ✅ | 35ms |
+| `dispatch` | 任务派发链路（tasks表可写+executor模块可import） | ✅ | 2ms |
 | `auto_fix` | auto-fix链路dry-run（shouldAutoFix函数可调用） | ✅ | 0ms |
-| `notify` | 飞书通知链路（alerting模块可import+函数可调用） | ✅ | 1ms |
+| `notify` | 飞书通知链路（alerting模块可import+函数可调用） | ✅ | 0ms |
 | `cortex` | CortexRCA链路（cortex模块可import） | ✅ | 0ms |
 | `monitor_loop` | MonitorLoop运行状态 | ✅ | 0ms |
 | `rumination` | 反刍系统（24h内是否有产出） | ✅ | 4ms |
-| `evolution` | 进化追踪（是否有evolution记录） | ✅ | 2ms |
-| `consolidation` | 记忆合并（48h内是否有合并记录） | ✅ | 0ms |
-| `geo_website` | geoSEO网站（zenithjoyai.com）可访问+blog+posts有内容 | ✅ | 469ms |
+| `evolution` | 进化追踪（是否有evolution记录） | ✅ | 4ms |
+| `consolidation` | 记忆合并（48h内是否有合并记录） | ✅ | 11ms |
+| `geo_website` | geoSEO网站（zenithjoyai.com）可访问+blog+posts有内容 | ✅ | 124ms |
 
 ---
 
 ## 进行中任务
 
-（无进行中任务）
+- [P2] codex-headed-smoke (harness_initiative)
 
 ---
 
@@ -56,16 +69,16 @@ source: write-current-state.sh
 
 ## P0 Issues
 
-- ❌ [failed] ZenithJoy API 部署失败 — [reaper] zombie: in_progress idle >60min
-- ❌ [failed] ZenithJoy 智能获客 — 新增 GET /api/acquisition/overview — Command failed: git clone --branch main --single-b
-- ❌ [failed] ZenithJoy API 部署失败
-- ❌ [failed] ZenithJoy 智能获客 — 新增 GET /api/acquisition/overview 端点 — verifyProposerOutput: cannot read GitHub URL from 
-- ❌ [failed] ZenithJoy API 部署失败 — [reaper] zombie: in_progress idle >60min
-- ❌ [failed] ZenithJoy 智能获客 — 新增 GET /api/acquisition/overview 端点 — Command failed: git clone --local --no-hardlinks -
-- ❌ [failed] ZenithJoy 智能获客能力概览 API（thin） — Command failed: git clone --local --no-hardlinks -
-- ❌ [failed] ZenithJoy 智能获客能力概览端点（harness 验证） — Command failed: git clone --local --no-hardlinks -
-- ❌ [failed] ZenithJoy Dashboard 部署失败
-- ❌ [failed] ZenithJoy API 部署失败 — [reaper] zombie: in_progress idle >60min
+- ❌ [blocked] 每日 DB 备份 — pre_flight_rejected
+- ❌ [blocked] fix: 安卓 APK 下载被腾讯云 COS 拦截(DownloadForbidden)——修复 APK 分发通道 — pre_flight_rejected
+- ❌ [blocked] [GP] E2E GP T7 smoke — pre_flight_rejected
+- ❌ [blocked] fix: [CI红灯] cecelia Deploy 连续失败（+ Preview Deploy / Nightly 同 — pre_flight_rejected
+- ❌ [blocked] [GP] E2E GP T7 smoke — pre_flight_rejected
+- ❌ [blocked] M2: 激活 L2 子领域 — 独立 ability_groups 表 + golden_paths.group_id  — pre_flight_rejected
+- ❌ [blocked] fix: harness mac_web 任务全部卡死——host-executor 容器内 spawn claude  — pre_flight_rejected
+- ❌ [blocked] fix: Brain 无外部看门狗——进程异常退出后 harness 静默卡死无告警 — pre_flight_rejected
+- ❌ [blocked] fix: 抖音搜索确认按钮无障碍不可点——改用手势坐标点击 — pre_flight_rejected
+- ❌ [blocked] 每日 DB 备份 — pre_flight_rejected
 
 ---
 
@@ -73,11 +86,11 @@ source: write-current-state.sh
 
 | 状态 | 结论 | 工作流 | 分支 | 时间 |
 |------|------|--------|------|------|
-| 🔄 in_progress | - | Brain CI Deploy (Gate 3) | main | 2026-05-22 08:28 |
-| ✅ completed | success | Auto Version | main | 2026-05-22 08:28 |
-| 🔄 queued | - | CI | main | 2026-05-22 08:28 |
-| ✅ completed | success | Cleanup Merged Artifacts | main | 2026-05-22 08:28 |
-| ❌ completed | failure | .github/workflows/archive-lear | main | 2026-05-22 08:28 |
+| ✅ completed | success | CI | main | 2026-07-14 02:39 |
+| ✅ completed | success | Cleanup Merged Artifacts | main | 2026-07-14 02:39 |
+| ✅ completed | success | Preview Cleanup | cp-0714101351-migration34 | 2026-07-14 02:39 |
+| ✅ completed | success | Smoke Glob Runner（棘轮闸） | main | 2026-07-14 02:39 |
+| ✅ completed | success | Harness v5 Checks | cp-0714101351-migration34 | 2026-07-14 02:31 |
 
 ---
 
