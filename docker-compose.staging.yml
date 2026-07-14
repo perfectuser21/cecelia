@@ -101,6 +101,7 @@ services:
     environment:
       - FRONTEND_PORT=5212
       - BRAIN_PORT_TARGET=5222
+      - LANGFUSE_PROXY_PORT=3002
     command: node /frontend-proxy.js
     depends_on:
       node-brain-staging:
