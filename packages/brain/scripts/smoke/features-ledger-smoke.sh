@@ -17,7 +17,7 @@ echo "✅ domains 非空"
 
 # 取第一个非空 domain 的第一条 item，验证 11 要素字段键存在（契约断言，不依赖数据值）
 FIRST_ITEM=$(echo "$RESULT" | jq -c '[.domains[] | select((.items | length) > 0)][0].items[0]')
-echo "$FIRST_ITEM" | jq -e 'has("fr") and has("nfr") and has("invariant") and has("checkpoints_status") and has("freshness_status") and has("death_alert") and has("failure_semantics") and has("effect_confirmed") and has("adversarial") and has("ledger_status") and has("axis_aligned")' > /dev/null
+echo "$FIRST_ITEM" | jq -e '.ledger | has("fr") and has("nfr") and has("invariant") and has("checkpoints_status") and has("freshness_status") and has("death_alert") and has("failure_semantics") and has("effect_confirmed") and has("adversarial") and has("ledger_status") and has("axis_aligned")' > /dev/null
 echo "✅ 11 要素字段全部存在"
 
 # generated_at 时间戳存在
