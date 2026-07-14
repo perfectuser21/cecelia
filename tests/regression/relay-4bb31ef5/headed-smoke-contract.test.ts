@@ -1,8 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
-const wrapperPath = 'sprints/07130939-relay-4bb31ef5/e2e-verify.sh';
-const ciYmlPath = '.github/workflows/ci.yml';
+// 毕业自 sprints/07130939-relay-4bb31ef5/tests/（刀1 测试入册），
+// wrapper 已同步毕业到 scripts/smoke/e2e/relay-4bb31ef5.sh。
+// 路径按 repo root 解析，兼容任意 cwd（brain vitest cwd=packages/brain）。
+const ROOT = path.resolve(fileURLToPath(import.meta.url), '../../../..');
+const wrapperPath = path.join(ROOT, 'scripts/smoke/e2e/relay-4bb31ef5.sh');
+const ciYmlPath = path.join(ROOT, '.github/workflows/ci.yml');
 
 function readWrapper(): string {
   return readFileSync(wrapperPath, 'utf8');
@@ -84,7 +90,7 @@ describe('headed smoke contract [BEHAVIOR]', () => {
     expect(script).toContain('DoD.md');
     expect(script).toMatch(/skill-relay-claude-headed\|07130939-relay-4bb31ef5/);
 
-    const dod = readFileSync('DoD.md', 'utf8');
+    const dod = readFileSync(path.join(ROOT, 'DoD.md'), 'utf8');
     expect(dod).toMatch(/skill-relay-claude-headed|07130939-relay-4bb31ef5/);
   });
 

@@ -6,8 +6,11 @@
  *   Scenario 1: 有活跃 relay 时渲染七棒进度条 + initiative 短码
  *   Scenario 2: 无活跃 relay 时显示空态文案（API 无数据时自动走此分支）
  *
+ * 毕业自 sprints/07050450-relay-progress-dashboard/tests/e2e-relay-progress.spec.ts（刀1 测试入册）。
+ * 依赖活的 Dashboard + Brain（本地实体环境），入 smoke 池不进 CI；刀3 接 nightly 后挂跑道。
+ *
  * 运行方式：
- *   npx playwright test sprints/07050450-relay-progress-dashboard/tests/e2e-relay-progress.spec.ts
+ *   npx playwright test scripts/smoke/e2e/relay-progress-dashboard.spec.ts
  *
  * 前提：
  *   - Cecelia Dashboard 已在 localhost:5174 运行（VITE_SKIP_AUTH=true）
@@ -23,7 +26,7 @@ import * as path from 'path';
 
 const BASE_URL = process.env.E2E_BASE_URL ?? 'http://localhost:5174';
 const BRAIN_URL = process.env.E2E_BRAIN_URL ?? 'http://localhost:5221';
-const SCREENSHOTS_DIR = path.resolve(__dirname, '../screenshots');
+const SCREENSHOTS_DIR = path.resolve(__dirname, 'relay-progress-screenshots');
 
 // 确保截图目录存在
 if (!fs.existsSync(SCREENSHOTS_DIR)) {

@@ -1,7 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
-const wrapperPath = 'sprints/07130752-relay-a85e0582/e2e-verify.sh';
+// 毕业自 sprints/07130752-relay-a85e0582/tests/（刀1 测试入册），
+// wrapper 已同步毕业到 scripts/smoke/e2e/relay-a85e0582.sh。
+// 路径按 repo root 解析，兼容任意 cwd（brain vitest cwd=packages/brain）。
+const ROOT = path.resolve(fileURLToPath(import.meta.url), '../../../..');
+const wrapperPath = path.join(ROOT, 'scripts/smoke/e2e/relay-a85e0582.sh');
 
 function readWrapper(): string {
   return readFileSync(wrapperPath, 'utf8');

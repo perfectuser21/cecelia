@@ -17,6 +17,9 @@ export default defineConfig({
       // sprints/** 已于 07-10 大扫除中移除：守活功能测试升格进 src/__tests__/，
       // 脚手架删除，活体依赖测试移入 tests/live/（手动跑）。
       // 新 sprint 测试若需进 CI，必须毕业进 src/ 或 packages/quality/。
+      // 刀1 毕业池（2026-07-14）：sprint 测试经 scripts/graduate-sprint-tests.mjs
+      // 毕业进 tests/regression/<sprint-slug>/，永久留 CI（test-pyramid-guard A1/A3 锁死）。
+      '../../tests/regression/**/*.{test,spec}.?(c|m)[jt]s?(x)',
     ],
     // 以下测试需要真实 PostgreSQL 连接或有其他 CI 环境 pre-existing 失败
     // brain-unit 跑纯单元测试（有 vi.mock('db.js') 的），集成测试走 brain-integration
