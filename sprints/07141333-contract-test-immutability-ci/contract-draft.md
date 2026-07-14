@@ -12,7 +12,7 @@
 |------|------|------|
 | 主检查脚本 | `scripts/lint-contract-test-immutability.sh` | 待实现 |
 | CI workflow 接线 | `.github/workflows/harness-v5-checks.yml`（新增 Check 6） | 待实现 |
-| Failing test（先 commit） | `tests/lint-contract-test-immutability.test.ts` | 先 commit |
+| Failing test（先 commit） | `../../tests/lint-contract-test-immutability.test.ts` | 先 commit |
 
 ## 行为规约
 
@@ -83,7 +83,7 @@ cd /workspace && rm -rf "$TMP"
 
 | Workstream | Test File | BEHAVIOR 覆盖 | 预期红证据 |
 |------------|-----------|---------------|------------|
-| WS1 | `tests/lint-contract-test-immutability.test.ts` | BEHAVIOR-1/BEHAVIOR-2/BEHAVIOR-3/BEHAVIOR-4 | 脚本未实现时 exit code 与期望不符 |
+| WS1 | `../../tests/lint-contract-test-immutability.test.ts` | BEHAVIOR-1/BEHAVIOR-2/BEHAVIOR-3/BEHAVIOR-4 | 脚本未实现时 exit code 与期望不符 |
 
 ## E2E 验收
 
