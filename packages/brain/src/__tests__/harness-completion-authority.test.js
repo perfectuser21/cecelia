@@ -172,6 +172,70 @@ describe('收账权收归 — PATCH /tasks/:id', () => {
   });
 });
 
+// ===== PATCH /task/:id（task-tasks.js，supertest）=====
+describe('收账权收归 — PATCH /task/:id（task-tasks.js）', () => {
+  const mockQuery = vi.fn();
+  let app;
+
+  beforeEach(async () => {
+    vi.resetModules();
+    mockQuery.mockReset();
+    mockQuery.mockResolvedValue({ rows: [] });
+    finalizeMock.mockReset();
+    vi.doMock('../db.js', () => ({ default: { query: (...a) => mockQuery(...a) } }));
+    vi.doMock('../lib/harness-finalize.js', () => ({ finalizeHarnessTask: finalizeMock }));
+    app = express();
+    app.use(express.json());
+    const { default: router } = await import('../routes/task-tasks.js');
+    app.use('/', router);
+  });
+
+  it('harness relay completed + finalize 拒 → 200 accepted:false 且 UPDATE 无 status/completed_at（不落 400）', async () => {
+    mockQuery
+      .mockResolvedValueOnce({ rows: [{ status: 'in_progress', task_type: 'harness_initiative', orchestrator: 'skill-relay' }] }) // 状态机 SELECT
+      .mockResolvedValueOnce({ rows: [{ id: 'tt1', status: 'in_progress' }] }); // UPDATE RETURNING *
+    finalizeMock.mockResolvedValue({ applies: true, allow: false, reason: 'pr_not_merged' });
+
+    const res = await request(app).patch('/tt1').send({ status: 'completed' });
+
+    expect(res.status).toBe(200);
+    expect(res.body.accepted).toBe(false);
+    expect(res.body.reason).toBe('pr_not_merged');
+    const upd = mockQuery.mock.calls.find(([sql]) => /UPDATE tasks/.test(sql));
+    expect(upd, 'UPDATE 应仍执行（updated_at 兜底），不落 400').toBeDefined();
+    expect(upd[0]).not.toMatch(/status = \$/);
+    expect(upd[0]).not.toMatch(/completed_at/);
+    expect(upd[0]).toMatch(/updated_at = NOW\(\)/);
+  });
+
+  it('harness relay completed + finalize 放行 → 原路径写 status/completed_at', async () => {
+    mockQuery
+      .mockResolvedValueOnce({ rows: [{ status: 'in_progress', task_type: 'harness_initiative', orchestrator: 'skill-relay' }] })
+      .mockResolvedValueOnce({ rows: [{ id: 'tt2', status: 'completed' }] });
+    finalizeMock.mockResolvedValue({ applies: true, allow: true });
+
+    const res = await request(app).patch('/tt2').send({ status: 'completed' });
+
+    expect(res.status).toBe(200);
+    const upd = mockQuery.mock.calls.find(([sql]) => /UPDATE tasks/.test(sql));
+    expect(upd[0]).toMatch(/status = \$/);
+    expect(upd[0]).toMatch(/completed_at/);
+  });
+
+  it('非 harness completed → 不调 finalize，原路径 status 子句', async () => {
+    mockQuery
+      .mockResolvedValueOnce({ rows: [{ status: 'in_progress', task_type: 'dev', orchestrator: null }] })
+      .mockResolvedValueOnce({ rows: [{ id: 'tt3', status: 'completed' }] });
+
+    const res = await request(app).patch('/tt3').send({ status: 'completed' });
+
+    expect(res.status).toBe(200);
+    expect(finalizeMock).not.toHaveBeenCalled();
+    const upd = mockQuery.mock.calls.find(([sql]) => /UPDATE tasks/.test(sql));
+    expect(upd[0]).toMatch(/status = \$/);
+  });
+});
+
 // ===== POST /harness/complete（supertest）=====
 describe('收账权收归 — POST /harness/complete', () => {
   const mockQuery = vi.fn();
