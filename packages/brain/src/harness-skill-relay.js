@@ -295,9 +295,9 @@ export async function spawnSkillRelaySession(task, deps = {}) {
     const abilityId = task.ability_id || task.payload?.ability_id || null;
     await dbPool.query(
       `INSERT INTO initiative_runs
-         (initiative_id, phase, journey_id, orchestrator_version, orchestrator_host, deadline_at, ability_id)
-       VALUES ($1, 'A_planning', $2, 'v2', $3, NOW() + INTERVAL '${deadlineHours} hours', $4)`,
-      [initiativeId, task.payload?.journey_id || null, orchestratorHost, abilityId]
+         (initiative_id, phase, journey_id, orchestrator_version, orchestrator_host, deadline_at, ability_id, current_task_id)
+       VALUES ($1, 'A_planning', $2, 'v2', $3, NOW() + INTERVAL '${deadlineHours} hours', $4, $5)`,
+      [initiativeId, task.payload?.journey_id || null, orchestratorHost, abilityId, task.id]
     );
 
     // 进程内守门计数
@@ -545,9 +545,9 @@ async function _spawnHeadedSession(task, { dbPool, now, short, initiativeId, dep
   const headedAbilityId = task.ability_id || task.payload?.ability_id || null;
   await dbPool.query(
     `INSERT INTO initiative_runs
-       (initiative_id, phase, journey_id, orchestrator_version, orchestrator_host, deadline_at, ability_id)
-     VALUES ($1, 'A_planning', $2, 'v2', '${headedHost}', NOW() + INTERVAL '${HEADED_RELAY_DEADLINE_HOURS} hours', $3)`,
-    [initiativeId, task.payload?.journey_id || null, headedAbilityId]
+       (initiative_id, phase, journey_id, orchestrator_version, orchestrator_host, deadline_at, ability_id, current_task_id)
+     VALUES ($1, 'A_planning', $2, 'v2', '${headedHost}', NOW() + INTERVAL '${HEADED_RELAY_DEADLINE_HOURS} hours', $3, $4)`,
+    [initiativeId, task.payload?.journey_id || null, headedAbilityId, task.id]
   );
 
   // tui.log 留痕（在 sprint_dir 目录写入，管道洗敏：不含 token）

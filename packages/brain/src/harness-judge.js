@@ -57,6 +57,47 @@ export function normalizeJudgeVerdict(v) {
   return 'FAIL';
 }
 
+// ── 刀B 机械预检（root 杠杆，决策 dc18d43d「无闸不成文」）────────────────────
+// 同步校验 brainResult 结构，任一项不满足即返回 FAIL 对象（null = 全过）。
+// 在 judge 路由最前执行，不进 AI 裁判。
+export function runMechanicalPreflightChecks(brainResult) {
+  if (!brainResult || !Array.isArray(brainResult.behavior_tests) || brainResult.behavior_tests.length === 0) {
+    return { verdict: 'FAIL', feedback: 'behavior_tests 为空：evaluator 未提供行为测试结果', mechFail: 'no_behavior_tests' };
+  }
+  if (brainResult.exit_code === undefined || brainResult.exit_code === null) {
+    return { verdict: 'FAIL', feedback: 'verdict 缺 exit_code：退出码证据缺失', mechFail: 'missing_exit_code' };
+  }
+  if (!brainResult.log_tail || String(brainResult.log_tail).trim() === '') {
+    return { verdict: 'FAIL', feedback: 'verdict 缺 log_tail：执行日志证据缺失', mechFail: 'missing_log_tail' };
+  }
+  return null;
+}
+
+// 异步对账 judgments_written 声明数 vs decisions 表实际写入数。
+// 声明 != 实查 → FAIL；未声明/DB 异常 → null（保守跳过）。
+export async function checkJudgmentsWritten(brainResult, taskId, pool) {
+  const declared = brainResult?.judgments_written;
+  if (declared === undefined || declared === null) return null;
+  try {
+    const { rows } = await pool.query(
+      `SELECT COUNT(*)::int AS cnt FROM decisions WHERE source_ref = $1 AND category = 'judgment'`,
+      [String(taskId)]
+    );
+    const actual = Number(rows[0]?.cnt ?? 0);
+    if (Number(declared) !== actual) {
+      return {
+        verdict: 'FAIL',
+        feedback: `judgments_written 声明 ${declared} 条，decisions 表实查 ${actual} 条`,
+        mechFail: 'judgments_written_mismatch',
+      };
+    }
+    return null;
+  } catch (err) {
+    console.warn(`[judge] checkJudgmentsWritten DB 查询失败（保守跳过）: ${err.message}`);
+    return null;
+  }
+}
+
 // ── 合同 / Golden Path 解析 ──────────────────────────────────────────────────
 // 从 contract-draft.md 提取 ## E2E 验收 段（裁判据此知道「该验什么」）。
 export function extractE2ESection(contractText) {
@@ -305,6 +346,144 @@ async function persistJudgeArtifact(ctx, deps = {}) {
   }
 }
 
+// ── 刀B：DeepSeek 前纯代码机械闸（决策 dc18d43d「无闸不成文」） ─────────────────
+// runJudgeGate 只做语义复核，dogfooding 实证 behavior_tests=0 照样 PASS、judgments_written 虚报。
+// 进 DeepSeek 前先插入纯代码闸：任一断言不过即 FAIL，不浪费裁判调用、堵住"无闸不成文"漏洞。
+
+// 真机环境：验收必须落设备日志，log_tail 空即无证据 → FAIL（本机 API 类环境靠命令输出兜底即可）。
+const DEVICE_LOG_ENVS = new Set(['windows_wechat']);
+const MECH_SCAN_MAX_DEPTH = 4;
+const TEST_FILE_RE = /\.test\.(ts|js|mjs|sh)$/;
+
+// 递归列 sprint 目录下测试文件（深度≤MECH_SCAN_MAX_DEPTH，跳 node_modules/.git）。
+async function defaultListTestFiles(rootDir) {
+  const found = [];
+  async function walk(dir, depth) {
+    if (depth > MECH_SCAN_MAX_DEPTH) return;
+    let entries;
+    try {
+      entries = await readdir(dir, { withFileTypes: true });
+    } catch { return; /* 目录不存在/不可读 → 视作无测试 */ }
+    for (const ent of entries) {
+      const name = ent.name;
+      if (name === 'node_modules' || name === '.git') continue;
+      const full = path.join(dir, name);
+      if (ent.isDirectory()) {
+        await walk(full, depth + 1);
+      } else if (TEST_FILE_RE.test(name)) {
+        found.push(full);
+      }
+    }
+  }
+  await walk(rootDir, 0);
+  return found;
+}
+
+/**
+ * runMechanicalGate — DeepSeek 前的纯代码机械闸（三断言，全过才 pass）。
+ *   ① behavior_tests 声明（E1 机械化）：brainResult.behavior_tests 必须是非空数组
+ *      （evaluator 1.23.0 E1 硬要求产出 behavior_tests:[{command,exit_code,log_tail}]）；
+ *      每条目 exit_code 有值（0 合法）；log_tail 空时按环境校准（真机必须设备日志；
+ *      本机 API 类靠 ctx.agentStdout/transcript 命令输出兜底）。这是治「behavior_tests=0
+ *      照样 PASS」的正主。注意 exit_code/log_tail 是条目级字段，.brain-result.json 顶层
+ *      schema 只有 {verdict, task_id, failed_step, log_excerpt}，顶层无这两个字段。
+ *   ② sprint 测试文件存在性：sprint 目录递归有测试文件，或 contract-dod.md 含 [BEHAVIOR]，
+ *      两者全 0 → FAIL（理由关键词 contract_tests，与①的 behavior_tests 区分）。
+ *   ③ judgments_written 对账：声明数不得 > decisions 表回读数（无声明则跳过；非数字声明 → FAIL）。
+ *
+ * @param {object} ctx {taskId, worktreePath, sprintDir, brainResult, agentStdout, transcript}
+ * @param {object} deps {readFileFn?, listTestFilesFn?, dbPool?}
+ * @returns {Promise<{pass:boolean, reasons:string[], env:string}>}
+ */
+export async function runMechanicalGate(ctx, deps = {}) {
+  const readFileFn = deps.readFileFn || ((p) => readFile(p, 'utf8'));
+  const listTestFilesFn = deps.listTestFilesFn || defaultListTestFiles;
+  const dbPool = deps.dbPool || null;
+  const reasons = [];
+  const brainResult = ctx.brainResult || null;
+
+  // 环境判定（log_tail 兜底口径 + 报告用）：查不到/异常 → 缺省 local_api（最宽口径，不误杀）。
+  let env = 'local_api';
+  if (dbPool && dbPool.query && ctx.taskId) {
+    try {
+      const { rows } = await dbPool.query(
+        `SELECT payload->>'target_environment' AS target_environment FROM tasks WHERE id = $1`,
+        [String(ctx.taskId)]
+      );
+      if (rows && rows[0] && rows[0].target_environment) env = rows[0].target_environment;
+    } catch (err) {
+      console.warn(`[judge] 机械闸查 target_environment 失败 → 缺省 local_api：${err.message}`);
+    }
+  }
+
+  // ① behavior_tests 声明（E1 机械化）：evaluator 1.23.0 产出 behavior_tests:[{command,exit_code,log_tail}]。
+  //    exit_code/log_tail 是条目级字段（.brain-result.json 顶层 schema 无此二字段）。
+  const behaviorTests = brainResult && Array.isArray(brainResult.behavior_tests) ? brainResult.behavior_tests : null;
+  if (!behaviorTests || behaviorTests.length === 0) {
+    reasons.push('behavior_tests 声明为空（.brain-result.json 无 behavior_tests 数组或空数组——「无测试照样 PASS」漏洞的正主）');
+  } else {
+    // 命令输出兜底（log_tail 空时用）：agentStdout 或 callback transcript 非空即可。
+    const hasCmdOut = String(ctx.agentStdout || '').trim() || String(ctx.transcript || '').trim();
+    for (let i = 0; i < behaviorTests.length; i++) {
+      const bt = behaviorTests[i] || {};
+      if (bt.exit_code === undefined || bt.exit_code === null) {
+        reasons.push(`behavior_tests[${i}] 缺 exit_code（无退出码证据；0 合法）`);
+      }
+      const lt = bt.log_tail != null ? String(bt.log_tail).trim() : '';
+      if (!lt) {
+        if (DEVICE_LOG_ENVS.has(env)) {
+          reasons.push(`behavior_tests[${i}] log_tail 为空且环境=${env}（真机必须设备日志证据）`);
+        } else if (!hasCmdOut) {
+          reasons.push(`behavior_tests[${i}] log_tail 为空且无 agentStdout/transcript 命令输出兜底（无执行证据）`);
+        }
+      }
+    }
+  }
+
+  // ② sprint 测试文件存在性：文件扫描 + contract-dod [BEHAVIOR] fallback，两者全 0 → FAIL（关键词 contract_tests）。
+  const sprintRoot = path.join(ctx.worktreePath || '', ctx.sprintDir || '');
+  let testCount = 0;
+  try {
+    const files = await listTestFilesFn(sprintRoot);
+    testCount = Array.isArray(files) ? files.length : 0;
+  } catch { testCount = 0; }
+  if (testCount === 0) {
+    let behaviorCount = 0;
+    try {
+      const dod = await readFileFn(path.join(ctx.worktreePath || '', ctx.sprintDir || '', 'contract-dod.md'));
+      behaviorCount = (String(dod).match(/\[BEHAVIOR\]/g) || []).length;
+    } catch { behaviorCount = 0; }
+    if (behaviorCount === 0) {
+      reasons.push('contract_tests 为 0（sprint 目录无 *.test.{ts,js,mjs,sh}，contract-dod.md 亦无 [BEHAVIOR]）');
+    }
+  }
+
+  // ③ judgments_written 对账
+  const declared = brainResult ? brainResult.judgments_written : undefined;
+  if (declared !== undefined && declared !== null) {
+    // 非数字声明（如 "若干"）不得静默放行：NaN 视为 FAIL（无法对账即视作虚报）。
+    if (Number.isNaN(Number(declared))) {
+      reasons.push(`judgments_written 声明非数字（${JSON.stringify(declared)}），无法对账`);
+    } else if (dbPool && dbPool.query) {
+      try {
+        const { rows } = await dbPool.query(
+          `SELECT COUNT(*)::int AS count FROM decisions WHERE category = 'judgment' AND source_ref = $1`,
+          [String(ctx.taskId)]
+        );
+        const count = rows && rows[0] ? Number(rows[0].count) : 0;
+        if (Number(declared) > count) {
+          reasons.push(`judgments_written 虚报：声明 ${declared} > decisions 回读 ${count}`);
+        }
+      } catch (err) {
+        console.warn(`[judge] 机械闸对账 judgments 查询异常 → 跳过该项（non-fatal）：${err.message}`);
+      }
+    }
+    // 无 dbPool → 无从对账，跳过（不误杀）
+  }
+
+  return { pass: reasons.length === 0, reasons, env };
+}
+
 /**
  * runJudgeGate — 独立裁判门。仅对 agent verdict===PASS 生效（运动员说 PASS 才需复核）。
  * 非 PASS（agent 已 FAIL）直接透传走现有 fix loop，不浪费裁判调用。
@@ -332,6 +511,22 @@ export async function runJudgeGate(ctx, opts = {}) {
     promptDir: ctx.promptDir,
     taskId: ctx.taskId,
   }, opts);
+
+  // 刀B：机械闸先行（纯代码，FAIL 不调 DeepSeek）——决策 dc18d43d「无闸不成文」
+  const mech = await runMechanicalGate(
+    { ...ctx, brainResult: ev.brainResult || ctx.brainResult, agentStdout: ev.agentStdout, transcript: ev.transcript },
+    opts
+  );
+  if (!mech.pass) {
+    const fb = `机械闸 FAIL（无闸不成文 dc18d43d）：\n- ${mech.reasons.join('\n- ')}`;
+    await persistJudgeArtifact({
+      worktreePath: ctx.worktreePath,
+      instanceLabel: ctx.instanceLabel,
+      payload: { agentVerdict, mechanicalGate: mech, finalVerdict: 'FAIL' },
+    }, opts);
+    console.warn(`[judge] 机械闸 FAIL → 不调 DeepSeek：${mech.reasons.join('；')}`);
+    return { verdict: 'FAIL', feedback: fb, judged: true };
+  }
 
   // 证据门：无合同 E2E 段且无 Golden Path 步骤 → 裁判没有「该验什么」的独立基准，无法做覆盖对照
   // → fail-open 保留 agent verdict（不浪费裁判调用，也不在缺证据时凭空否决运动员）。

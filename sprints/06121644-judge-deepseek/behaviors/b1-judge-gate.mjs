@@ -4,12 +4,16 @@
  */
 import { runJudgeGate } from '../../../packages/brain/src/harness-judge.js';
 
-const noop = { writeFileFn: async () => {} };
+// listTestFilesFn 注入：让机械闸②（sprint 测试文件）通过，不依赖真实目录
+const fakeListTestFiles = async () => ['fake.test.js'];
+const noop = { writeFileFn: async () => {}, listTestFilesFn: fakeListTestFiles };
+// behavior_tests 有效条目：让机械闸①通过（exit_code 有值，log_tail 空由 transcript 兜底）
+const validBehaviorTests = [{ command: 'curl localhost', exit_code: 0, log_tail: 'HTTP/1.1 200 OK' }];
 const evidence = (steps = ['step A', 'step B']) => async () => ({
   contractE2E: '## E2E\ncurl localhost',
   goldenPathSteps: steps,
   transcript: 'PASS: A\nPASS: B',
-  brainResult: { verdict: 'PASS' },
+  brainResult: { verdict: 'PASS', behavior_tests: validBehaviorTests },
 });
 
 function assert(cond, msg) {

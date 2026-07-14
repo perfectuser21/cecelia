@@ -15,7 +15,12 @@ const { mockPool, mockRunJudgeGate } = vi.hoisted(() => ({
   mockRunJudgeGate: vi.fn(),
 }));
 vi.mock('../db.js', () => ({ default: mockPool }));
-vi.mock('../harness-judge.js', () => ({ runJudgeGate: mockRunJudgeGate }));
+vi.mock('../harness-judge.js', () => ({
+  runJudgeGate: mockRunJudgeGate,
+  runMechanicalGate: vi.fn(async () => ({ pass: true, reasons: [] })),
+  runMechanicalPreflightChecks: vi.fn(() => null),
+  checkJudgmentsWritten: vi.fn(async () => null),
+}));
 
 async function buildApp() {
   const { default: router } = await import('../routes/harness.js');
@@ -59,7 +64,7 @@ describe('POST /api/brain/harness/judge', () => {
       worktreePath: wt,
       sprintDir: 'sprints/x',
       instanceLabel: 'judge-api-aaaabbbb',
-    }));
+    }), expect.objectContaining({ dbPool: expect.anything() }));
   });
 
   it('agent_verdict 缺省 → 从 <worktree>/.brain-result.json 读', async () => {
@@ -72,7 +77,7 @@ describe('POST /api/brain/harness/judge', () => {
     expect(r.status).toBe(200);
     expect(mockRunJudgeGate).toHaveBeenCalledWith(expect.objectContaining({
       agentVerdict: 'PASS', agentFeedback: 'ok',
-    }));
+    }), expect.objectContaining({ dbPool: expect.anything() }));
   });
 
   it('agent_verdict 缺省且 .brain-result.json 不存在 → 400', async () => {

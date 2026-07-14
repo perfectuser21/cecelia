@@ -72,10 +72,13 @@ describe('spawnSkillRelaySession', () => {
       ([sql]) => /INSERT INTO initiative_runs/.test(sql)
     );
     expect(insertCall, '必须 INSERT initiative_runs').toBeTruthy();
-    const [sql] = insertCall;
+    const [sql, params] = insertCall;
     expect(sql).toContain('A_planning');
     expect(sql).toMatch(/orchestrator_version/);
     expect(sql).toMatch(/deadline_at/);
+    // 刀C1（决策 dc18d43d）：current_task_id 必须写入，否则 relay-runs?task_id= 过滤恒空
+    expect(sql).toMatch(/current_task_id/);
+    expect(params).toContain(TASK.id);
   });
 
   it('task.ability_id 存在时，initiative_runs INSERT 带上 ability_id 参数', async () => {
