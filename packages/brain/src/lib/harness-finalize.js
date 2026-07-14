@@ -35,8 +35,12 @@ export async function finalizeHarnessTask(taskId, deps = {}) {
   };
 
   // 1. 定位 PR 并核验 MERGED：tasks.pr_url → payload.pr_url → GitHub 分支名反查
+  //    pr_url 是 LLM 自报值（本特性威胁模型正主）——采信条件用完整正则严格锚定，
+  //    与 _parseBaseRepo 白名单风格对齐，堵死 `..."; curl evil #` 破引号注入。
+  //    不匹配即视同无 pr_url，落到 GitHub 分支名反查路径（真相来自 GitHub 非请求体）。
+  const PR_URL_RE = /^https:\/\/github\.com\/[\w.-]+\/[\w.-]+\/pull\/\d+$/;
   let prUrl = [task.pr_url, task.payload?.pr_url].find(
-    (u) => typeof u === 'string' && u.startsWith('https://github.com/')
+    (u) => typeof u === 'string' && PR_URL_RE.test(u)
   ) || null;
   let prState = null;
   try {

