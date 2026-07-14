@@ -34,6 +34,7 @@ const manifest: FeatureManifest = {
           { path: '/viral-analysis', label: '爆款分析', icon: 'TrendingUp', order: 13 },
           { path: '/okr-roadmap', label: 'OKR Roadmap', icon: 'MapPin', order: 10 },
           { path: '/reports', label: 'Reports', icon: 'FileText', order: 14 },
+          { path: '/test-pyramid', label: '测试金字塔', icon: 'Triangle', order: 17 },
           { path: '/system/team', label: 'Team', icon: 'Users', order: 11 },
           { path: '/settings', label: '设置', icon: 'Settings', order: 20 },
         ],
