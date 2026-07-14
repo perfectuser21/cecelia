@@ -202,6 +202,25 @@ do_deploy() {
         fi
     fi
 
+    # ── HK 同步：rsync 本机 live dist → HK /opt/cecelia/frontend/dist/ ───────────
+    if [[ -z "${CECELIA_SKIP_HK:-}" ]]; then
+        echo "🌏 同步 HK（hk-vps）..."
+        local HK_DEST="hk-vps:/opt/cecelia/frontend/dist/"
+        if rsync -az --delete "$DIST_DIR/" "$HK_DEST" 2>&1; then
+            echo "✅ HK 已同步：$HK_DEST"
+        else
+            echo "⚠️  HK rsync 失败（本机 5211 已上线，HK 可能滞后——请手动补同步）"
+        fi
+    fi
+
+    # ── 部署后指纹校验：对比本机 5211 与 HK 的 index.html hash ─────────────────
+    if [[ -z "${CECELIA_SKIP_FINGERPRINT:-}" ]]; then
+        local FP_SCRIPT="$MAIN_ROOT/scripts/check-deploy-fingerprint.sh"
+        if [[ -f "$FP_SCRIPT" ]]; then
+            bash "$FP_SCRIPT" || echo "⚠️  指纹校验返回非零（见上方报告，请检查 HK 是否已同步）"
+        fi
+    fi
+
     # 停常驻 staging 服务 + 清放行标记/通知（防重复 promote）。
     if [[ -n "${STAGED_PID:-}" ]]; then kill "$STAGED_PID" 2>/dev/null || true; fi
     if [[ -f "$SLOT_PID_FILE" ]]; then
@@ -209,7 +228,7 @@ do_deploy() {
         rm -f "$SLOT_PID_FILE"
     fi
     rm -f "$PENDING_FILE" "$SLOT_LOG_FILE" "$DASH_DIR/.staging-notify.log" 2>/dev/null || true
-    echo "🎉 deploy 完成：本机 5211 已上线 ${tag}，staging 已停、标记已清。"
+    echo "🎉 deploy 完成：本机 5211 已上线 ${tag}，HK 已同步，staging 已停、标记已清。"
 }
 
 # ── arg parse ──────────────────────────────────────────────────────────────────
