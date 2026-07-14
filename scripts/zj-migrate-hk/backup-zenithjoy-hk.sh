@@ -14,12 +14,12 @@ mkdir -p "$BACKUP_DIR"
 echo "[$(date '+%F %T %Z')] 开始备份"
 
 # 动态枚举容器内全部 zenithjoy* 库
-DBS=$(docker exec -T "$CONTAINER" psql -U zenithjoy -d postgres -Atc \
+DBS=$(docker exec "$CONTAINER" psql -U zenithjoy -d postgres -Atc \
   "SELECT datname FROM pg_database WHERE datname LIKE 'zenithjoy%' AND datistemplate = false;")
 
 for DB in $DBS; do
   OUT="$BACKUP_DIR/${DB}-${STAMP}.dump"
-  docker exec -T "$CONTAINER" pg_dump -U zenithjoy -d "$DB" -Fc > "$OUT"
+  docker exec "$CONTAINER" pg_dump -U zenithjoy -d "$DB" -Fc > "$OUT"
   echo "[$(date '+%F %T %Z')] $DB -> $OUT ($(du -h "$OUT" | cut -f1))"
 done
 
