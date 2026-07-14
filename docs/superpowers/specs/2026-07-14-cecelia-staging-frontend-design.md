@@ -12,13 +12,14 @@ Cecelia staging 后端（Brain，5222端口，独立 `cecelia_staging` 库）已
 
 ## 方案
 
-1. `frontend-proxy.js` 三个硬编码常量改成环境变量可覆写，默认值保持不变（零风险，向后兼容）：
+1. `frontend-proxy.js` 四个硬编码常量改成环境变量可覆写，默认值保持不变（零风险，向后兼容）：
    ```js
    const PORT = process.env.FRONTEND_PORT || 5211;
    const BRAIN_PORT = process.env.BRAIN_PORT_TARGET || 5221;
    const STATIC_DIR = process.env.DASHBOARD_STATIC_DIR || '/Users/administrator/perfect21/cecelia/apps/dashboard/dist';
+   const LANGFUSE_PROXY_PORT = process.env.LANGFUSE_PROXY_PORT || 3001;
    ```
-   （变量名刻意不用 `PORT`/`BRAIN_PORT` 本身，避免和 Docker/Node 常见环境变量混淆）
+   （变量名刻意不用 `PORT`/`BRAIN_PORT` 本身，避免和 Docker/Node 常见环境变量混淆。`LANGFUSE_PROXY_PORT` 是部署验证阶段发现的第4个硬编码点——`network_mode: host` 下生产/staging 两个容器共享宿主机端口，不覆写会导致 staging 容器抢占生产 3001 端口反复崩溃，staging 侧改用 3002）
 
 2. `docker-compose.staging.yml` 新增 `frontend-staging` 服务，仿照生产 `docker-compose.yml` 里的 `frontend` 服务写法：
    - `container_name: cecelia-frontend-staging`
