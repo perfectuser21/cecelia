@@ -175,6 +175,16 @@ npx vitest run src/__tests__/dispatch-fail-autoblock.test.js --reporter=verbose
 
 ---
 
+## Test Contract
+
+| 功能 | Test File | BEHAVIOR 覆盖 | 预期红证据 |
+|------|-----------|--------------|-----------|
+| GP-1 计数SQL类型修复 | `packages/brain/src/__tests__/autoblock-sql-integration.test.js` | 修复后 SQL ($2::int) 不抛 PostgreSQL 类型错误/修复后 SQL 写入值为正确整数 1/连续调用 3 次，count 递增到 3 | 未修复时抛 `could not determine data type of parameter $2` |
+| GP-2 3次失败→blocked | `packages/brain/src/__tests__/autoblock-sql-integration.test.js` | 直接执行 3 次计数 SQL 后 count >= 3/达到阈值 3 后执行 blockTask SQL → status=blocked, blocked_reason=dispatch_fail_autoblock | count 始终为 0（SQL 类型错误导致写入失败） |
+| GP-3 reset无类型错误 | `packages/brain/src/__tests__/autoblock-sql-integration.test.js` | reset SQL ($1::jsonb) 不抛错/reset SQL 执行后 dispatch_fail_consecutive = 0/reset 后再次失败计数从 1 开始累计（不从旧值继续） | reset 路径 SQL 有隐患时会抛类型错误 |
+
+---
+
 ## 六、文件变更范围
 
 | 文件 | 改动类型 | 说明 |
