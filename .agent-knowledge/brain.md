@@ -251,3 +251,11 @@ tick-runner.js 接入点：
 | 文件 | 职责 |
 |------|------|
 | `src/routes/social-trending.js` | 社媒热点 API 路由：GET /api/brain/social/trending（查询 TimescaleDB v_all_platforms 视图，支持 platform/limit/days 参数过滤）。使用独立 pg.Pool 连接 TimescaleDB（TIMESCALE_HOST/DB/USER/PASSWORD 环境变量）；TimescaleDB 不可达时降级返回空数组，不影响 Brain 其他功能。挂载路径：/social/trending。 |
+
+## KV 存取路由 + 七环巡检（2026-07-14 新增）
+
+| 文件 | 职责 |
+|------|------|
+| `src/routes/kv.js` | working_memory 轻量 KV 路由：GET /api/brain/kv/:key（读快照）、POST /api/brain/kv/:key（upsert 快照）。供七环巡检、ci-patrol 等脚本存取审计结果。 |
+| `scripts/seven-ring-audit.js` | 七环巡检脚本：逐环核查测试入册/定时在跑/指纹新鲜/账本写对/产出消费/告警通道/面板新鲜，结果写 Brain KV seven-ring-audit-last + 更新棘轮文件。 |
+| `scripts/seven-ring-ratchet.json` | 七环硬伤棘轮基准：fail_count 只许降不许升，升了 exit 1。 |

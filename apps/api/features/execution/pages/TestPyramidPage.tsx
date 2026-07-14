@@ -10,6 +10,21 @@ interface PyramidData {
   smoke?: { total: number; unwired: string[] };
   permanent?: { total: number; layers: { unit: number; integration: number } };
   panel?: { fresh: boolean; generated: string };
+  bare_fr?: { count: number; baseline: number } | null;
+}
+
+interface SevenRing {
+  name: string;
+  ok: boolean | null;
+  detail: string;
+}
+
+interface SevenRingAudit {
+  run_at: string;
+  pass: boolean;
+  hard_fails: number;
+  unknowns: number;
+  rings: SevenRing[];
 }
 
 type FetchState = 'loading' | 'done' | 'unavailable';
@@ -54,12 +69,46 @@ function StatCard({ label, count, testId }: { label: string; count: number; test
   );
 }
 
+function BareFrCard({ count, baseline }: { count: number; baseline: number }) {
+  const exceeded = count > baseline;
+  return (
+    <div
+      data-testid="pyramid-bare-fr"
+      style={{
+        flex: 1,
+        minWidth: '140px',
+        padding: '16px',
+        border: `1px solid ${exceeded ? '#ef4444' : '#e5e7eb'}`,
+        borderTop: `3px solid ${exceeded ? '#ef4444' : '#f59e0b'}`,
+        borderRadius: '8px',
+        background: exceeded ? '#fef2f2' : '#fff',
+      }}
+    >
+      <div style={{ fontSize: '13px', color: '#6b7280', marginBottom: '4px' }}>裸奔 FR（无守卫 live）</div>
+      <div style={{ fontSize: '28px', fontWeight: 'bold', color: exceeded ? '#dc2626' : '#111827' }}>{count}</div>
+      <div style={{ fontSize: '11px', color: '#9ca3af', marginTop: '4px' }}>基线 {baseline}，只许降</div>
+    </div>
+  );
+}
+
 export default function TestPyramidPage() {
   const [data, setData] = useState<PyramidData | null>(null);
   const [fetchState, setFetchState] = useState<FetchState>('loading');
+  const [sevenRingAudit, setSevenRingAudit] = useState<SevenRingAudit | null>(null);
 
   useEffect(() => {
     let cancelled = false;
+
+    async function fetchSevenRing() {
+      try {
+        const resp = await fetch('/api/brain/kv/seven-ring-audit-last');
+        if (!resp.ok || cancelled) return;
+        const body = await resp.json();
+        if (!cancelled && body?.value) setSevenRingAudit(body.value as SevenRingAudit);
+      } catch {
+        // 静默失败，七环面板不可用时显示占位
+      }
+    }
 
     async function fetchData() {
       try {
@@ -84,6 +133,7 @@ export default function TestPyramidPage() {
     }
 
     fetchData();
+    fetchSevenRing();
     return () => {
       cancelled = true;
     };
@@ -126,6 +176,7 @@ export default function TestPyramidPage() {
   const smokeTotal = data.smoke?.total ?? 0;
   const unwiredCount = data.smoke?.unwired?.length ?? 0;
   const orphansTotal = data.orphans?.total ?? 0;
+  const bareFr = data.bare_fr ?? null;
 
   return (
     <div data-testid="pyramid-container" style={{ padding: '24px' }}>
@@ -208,6 +259,88 @@ export default function TestPyramidPage() {
       <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
         <StatCard label="孤儿测试" count={orphansTotal} testId="pyramid-orphans" />
         <StatCard label="smoke 未挂跑道" count={unwiredCount} testId="pyramid-unwired" />
+        {bareFr !== null && <BareFrCard count={bareFr.count} baseline={bareFr.baseline} />}
+      </div>
+
+      <SevenRingSection audit={sevenRingAudit} />
+    </div>
+  );
+}
+
+function SevenRingSection({ audit }: { audit: SevenRingAudit | null }) {
+  if (!audit) {
+    return (
+      <div
+        data-testid="seven-ring-unavailable"
+        style={{
+          marginTop: '24px',
+          padding: '16px',
+          border: '1px solid #e5e7eb',
+          borderRadius: '8px',
+          background: '#f9fafb',
+          color: '#9ca3af',
+          fontSize: '13px',
+        }}
+      >
+        七环对账：暂无数据（运行 <code>node scripts/seven-ring-audit.js</code> 初始化）
+      </div>
+    );
+  }
+
+  const passColor = audit.pass ? '#10b981' : '#ef4444';
+
+  return (
+    <div data-testid="seven-ring-section" style={{ marginTop: '24px' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '12px', flexWrap: 'wrap' }}>
+        <h3 style={{ margin: 0, fontSize: '16px' }}>七环对账</h3>
+        <span
+          data-testid="seven-ring-badge"
+          style={{
+            padding: '2px 10px',
+            borderRadius: '4px',
+            fontSize: '12px',
+            fontWeight: 'bold',
+            backgroundColor: passColor,
+            color: '#fff',
+          }}
+        >
+          {audit.pass ? 'PASS' : `FAIL (${audit.hard_fails} 硬伤)`}
+        </span>
+        <span style={{ color: '#9ca3af', fontSize: '12px' }}>
+          {audit.run_at ? `巡检于 ${audit.run_at.replace('T', ' ').slice(0, 19)}` : ''}
+        </span>
+      </div>
+
+      <div
+        data-testid="seven-ring-rings"
+        style={{
+          display: 'grid',
+          gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))',
+          gap: '8px',
+        }}
+      >
+        {audit.rings.map((r, i) => {
+          const ok = r.ok === true ? '#10b981' : r.ok === false ? '#ef4444' : '#f59e0b';
+          const icon = r.ok === true ? '✅' : r.ok === false ? '❌' : '⚠️';
+          return (
+            <div
+              key={i}
+              data-testid={`seven-ring-item-${i + 1}`}
+              style={{
+                padding: '10px 14px',
+                border: `1px solid ${r.ok === false ? '#fca5a5' : '#e5e7eb'}`,
+                borderLeft: `3px solid ${ok}`,
+                borderRadius: '6px',
+                background: r.ok === false ? '#fff7f7' : '#fff',
+              }}
+            >
+              <div style={{ fontSize: '13px', fontWeight: '500', marginBottom: '3px' }}>
+                {icon} {r.name}
+              </div>
+              <div style={{ fontSize: '11px', color: '#6b7280' }}>{r.detail}</div>
+            </div>
+          );
+        })}
       </div>
     </div>
   );
