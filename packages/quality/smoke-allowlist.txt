@@ -97,3 +97,4 @@ dev-env-db-guard-smoke.sh
 blade-bc-harness-gates-smoke.sh
 quality-test-pyramid-smoke.sh
 watchdog-pr-title-smoke.sh
+seven-ring-audit-smoke.sh
