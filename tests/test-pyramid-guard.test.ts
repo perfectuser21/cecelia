@@ -40,6 +40,11 @@ describe('countOrphans', () => {
   it('数 sprints 下测试+e2e，排除 archive', () => {
     expect(countOrphans(root)).toEqual({ tests: 2, e2e: 1, total: 3 });
   });
+  it('bash 测试 *.test.sh 也算孤儿（棘轮盲区修复）', () => {
+    writeFileSync(path.join(root, 'sprints/s1/tests/d.test.sh'), '');
+    expect(countOrphans(root).tests).toBe(3);
+    rmSync(path.join(root, 'sprints/s1/tests/d.test.sh'));
+  });
   it('sprints 不存在 → 0', () => {
     expect(countOrphans('/nonexistent-root')).toEqual({ tests: 0, e2e: 0, total: 0 });
   });

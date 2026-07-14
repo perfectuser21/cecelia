@@ -11,8 +11,10 @@
 
 set -uo pipefail
 
-SPRINT_DIR="$(cd "$(dirname "$0")" && pwd)"
-ROOT_DIR="$(cd "$SPRINT_DIR/../.." && pwd)"
+# 毕业自 sprints/07131922-环境模型三段常驻收尾-cecelia-zenithjoy-4e5fd7eb/e2e-verify.sh
+# （刀1 测试入册：脚本现位于 scripts/smoke/e2e/，ROOT 上三级）
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+ROOT_DIR="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 PASS=0
 FAIL=0
 SKIP=0
@@ -40,10 +42,10 @@ echo ""
 echo "=== BEHAVIOR-06: Staging Tick 永远硬关 ==="
 TICK_OFF_COUNT=$(grep -c "CECELIA_TICK_HARD_OFF=1\|CECELIA_TICK_ENABLED=false" \
   "$ROOT_DIR/docker-compose.staging.yml" 2>/dev/null || echo 0)
-if [[ "$TICK_OFF_COUNT" -ge 2 ]]; then
-  log_pass "BEHAVIOR-06: staging tick 双保险完整（count=$TICK_OFF_COUNT）"
+if [[ "${TICK_OFF_COUNT}" -ge 2 ]]; then
+  log_pass "BEHAVIOR-06: staging tick 双保险完整（count=${TICK_OFF_COUNT}）"
 else
-  log_fail "BEHAVIOR-06: staging tick 双保险不完整（count=$TICK_OFF_COUNT，期望>=2）"
+  log_fail "BEHAVIOR-06: staging tick 双保险不完整（count=${TICK_OFF_COUNT}，期望>=2）"
 fi
 
 # ---- BEHAVIOR-03: dev-deploy.sh ----

@@ -23,11 +23,14 @@ function walk(dir, out = []) {
   return out;
 }
 
+// bash 测试（*.test.sh/*.spec.sh）也算孤儿——刀1 审查发现的棘轮盲区
+const SH_TEST_RE = /\.(test|spec)\.sh$/;
+
 export function countOrphans(root) {
   const sprints = path.join(root, 'sprints');
   const archive = path.join(sprints, 'archive') + path.sep;
   const files = walk(sprints).filter((f) => !f.startsWith(archive));
-  const tests = files.filter((f) => TEST_RE.test(f)).length;
+  const tests = files.filter((f) => TEST_RE.test(f) || SH_TEST_RE.test(f)).length;
   const e2e = files.filter((f) => path.basename(f) === 'e2e-verify.sh').length;
   return { tests, e2e, total: tests + e2e };
 }
