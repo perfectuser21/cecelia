@@ -211,8 +211,11 @@ fi
 
 # ─── 测试金字塔（刀0，数据源 test-pyramid-guard --json） ─────────────────────
 # guard root 用脚本自身所在 checkout（worktree 里 MAIN_REPO 指主仓，主仓可能没有 guard 脚本）
+# PYRAMID_GUARD_ROOT 环境变量可覆盖（主要用于测试注入红 fixture）
 SCRIPT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-PYRAMID_JSON=$(CI=true node "$SCRIPT_ROOT/scripts/test-pyramid-guard.mjs" --root "$SCRIPT_ROOT" --json 2>/dev/null || echo '{}')
+PYRAMID_GUARD_ROOT="${PYRAMID_GUARD_ROOT:-$SCRIPT_ROOT}"
+# guard 红时 exit=1 但 JSON 已完整输出——用 || true 保留 stdout（不能 || echo '{}'，会把 '{}' 追加进 JSON 导致 parse 炸掉丢 FAIL 详情）
+PYRAMID_JSON=$(CI=true node "$SCRIPT_ROOT/scripts/test-pyramid-guard.mjs" --root "$PYRAMID_GUARD_ROOT" --json 2>/dev/null || true)
 PYRAMID_MD=$(node -e '
 const r = JSON.parse(process.argv[1] || "{}");
 if (!r.permanent) { console.log("（guard 数据不可用）"); process.exit(0); }

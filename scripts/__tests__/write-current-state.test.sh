@@ -105,6 +105,24 @@ else
 fi
 rm -rf "$TMPDIR_OUT"
 
+# ── 测试 10：guard FAIL 时面板段仍含 FAIL 详情（JSON 不被 '{}' 污染） ─────────
+FIX_RED=$(mktemp -d)
+TMPDIR_RED=$(mktemp -d)
+mkdir -p "$FIX_RED/scripts/smoke" "$FIX_RED/sprints/s1"
+touch "$FIX_RED/sprints/s1/x.test.ts"
+cat > "$FIX_RED/scripts/test-pyramid-baseline.json" <<'EOF'
+{"orphans":0,"permanent":0,"permanent_roots":[],"smoke_dir":"scripts/smoke"}
+EOF
+BRAIN_API_URL="http://localhost:19999" PYRAMID_GUARD_ROOT="$FIX_RED" \
+    CURRENT_STATE_OUTPUT_FILE="$TMPDIR_RED/CURRENT_STATE.md" \
+    bash "$SCRIPT" > "$TMPDIR_RED/run.log" 2>&1 || true
+if grep -q "守卫: ❌ FAIL" "$TMPDIR_RED/CURRENT_STATE.md" 2>/dev/null; then
+    pass "guard FAIL 时面板段含「守卫: ❌ FAIL」详情"
+else
+    fail "guard FAIL 时面板段丢失 FAIL 详情（JSON 被污染或降级为不可用）"
+fi
+rm -rf "$FIX_RED" "$TMPDIR_RED"
+
 # ── 结果汇总 ──────────────────────────────────────────────────────────────────
 echo ""
 echo "=== 测试结果 ==="

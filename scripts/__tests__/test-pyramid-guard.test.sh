@@ -38,6 +38,11 @@ check 0 "A2 按名挂跑道 → 绿"
 rm "$FIX/.github/workflows/w.yml"
 echo 'for s in scripts/smoke/*.sh; do bash "$s"; done' > "$FIX/.github/workflows/w.yml"
 check 0 "A2 glob 挂跑道 → 绿"
+rm "$FIX/.github/workflows/w.yml"
+
+# ── A2 左边界锚定：packages 下的 smoke glob 不能豁免根 scripts/smoke 裸脚本 ──
+echo 'for s in packages/x/scripts/smoke/*.sh; do bash "$s"; done' > "$FIX/.github/workflows/w.yml"
+check 1 "A2 packages 前缀 glob 不豁免根 smoke → 红（防截断假绿）"
 rm "$FIX/scripts/smoke/naked.sh" "$FIX/.github/workflows/w.yml"
 
 # ── A3: 删永久测试 ──

@@ -5,6 +5,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { execSync } from 'node:child_process';
 
 const TEST_RE = /\.(test|spec)\.[cm]?[jt]sx?$/;
 const SKIP_DIRS = new Set(['node_modules', 'dist', '.git']);
@@ -54,7 +55,8 @@ export function checkSmokeWiring(root, smokeDir) {
   // 收集 runner 里出现的 scripts/smoke/xxx 或 glob token
   const tokens = new Set();
   for (const c of contents) {
-    for (const m of c.matchAll(/scripts\/smoke\/[^\s"'`)\];]+/g)) tokens.add(m[0]);
+    // 左边界锚定：packages/x/scripts/smoke/... 不能被截成根 scripts/smoke token（否则 A2 假绿）
+    for (const m of c.matchAll(/(?<![\w./-])scripts\/smoke\/[^\s"'`)\];]+/g)) tokens.add(m[0]);
   }
   const unwired = names.filter((n) => {
     const full = `${smokeDir}/${n}`;
@@ -88,7 +90,7 @@ export function checkPanelFreshness(root, maxAgeHours) {
   return { fresh: age >= 0 && age < maxAgeHours, generated: m[1] };
 }
 
-export function runGuard(root, baseline, { ci = false } = {}) {
+export function runGuard(root, baseline, { ci = false, panelRoot } = {}) {
   const failures = [];
   for (const k of ['orphans', 'permanent', 'permanent_roots', 'smoke_dir']) {
     if (baseline?.[k] === undefined) failures.push(`BASELINE: 基线缺字段 ${k}（宁红勿绿）`);
@@ -114,7 +116,7 @@ export function runGuard(root, baseline, { ci = false } = {}) {
 
   let panel = null;
   if (!ci) {
-    panel = checkPanelFreshness(root, 48);
+    panel = checkPanelFreshness(panelRoot ?? root, 48);
     if (!panel.fresh) failures.push(`A4 面板活性: CURRENT_STATE.md generated=${panel.generated ?? '缺失'} 超过 48h（僵尸面板复发）`);
   }
 
@@ -129,7 +131,14 @@ if (isMain) {
   const baselinePath = path.join(root, 'scripts', 'test-pyramid-baseline.json');
   let baseline = null;
   try { baseline = JSON.parse(fs.readFileSync(baselinePath, 'utf8')); } catch { /* runGuard 会红 */ }
-  const result = runGuard(root, baseline, { ci: !!process.env.CI });
+  // A4 面板读主仓（worktree 副本必然过期误报）：git-common-dir 推主仓根，非 git 环境回退 root
+  let panelRoot = root;
+  try {
+    const common = execSync('git rev-parse --git-common-dir', { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
+    const resolved = path.resolve(root, common);
+    if (path.basename(resolved) === '.git') panelRoot = path.dirname(resolved);
+  } catch { /* 回退 root */ }
+  const result = runGuard(root, baseline, { ci: !!process.env.CI, panelRoot });
   if (args.includes('--json')) {
     console.log(JSON.stringify(result, null, 2));
   } else {
