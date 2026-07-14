@@ -132,6 +132,16 @@ EOF
 
 ---
 
+## Test Contract
+
+| 功能 | Test File | BEHAVIOR 覆盖 | 预期红证据 |
+|------|-----------|---------------|------------|
+| CI全绿退出 | `tests/ci-poll.test.ts` | CI全绿时应exit 0且stderr含CI_GREEN | → FAIL（当前 bug 下 timeout 超时，exit 124） |
+| CI失败退出 | `tests/ci-poll.test.ts` | CI有失败时应exit 10 | → FAIL（|| echo 0 导致 integer expression expected，exit code 不符） |
+| BEHIND退出 | `tests/ci-poll.test.ts` | BEHIND时应exit 11 | → FAIL（同 integer expression expected 根因） |
+
+---
+
 ## 不变量（Invariant）
 
 | # | 约束 |
