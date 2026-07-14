@@ -17,7 +17,7 @@
  */
 
 import { execSync } from 'child_process';
-import { mkdirSync, writeFileSync, rmSync, existsSync } from 'fs';
+import { mkdirSync, writeFileSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import pool from './db.js';
@@ -263,7 +263,6 @@ export async function runGuardDrill(opts = {}) {
 
   // 读取台账，决定本次演习哪个守卫
   const statusKv = (await kvGet('guard-drill-status')) ?? {};
-  const lastRunKv = (await kvGet('guard-drill-last-run')) ?? {};
 
   // 轮选：找最久未演习的 auto 守卫
   const sorted = AUTO_GUARDS.slice().sort((a, b) => {
