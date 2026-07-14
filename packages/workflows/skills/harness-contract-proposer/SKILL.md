@@ -4,12 +4,13 @@ description: |
   Harness Contract Proposer — Harness v5 GAN Layer 2a：
   读 PRD，GAN 对抗写 Golden Path 合同（每步含真实验证命令）；
   Reviewer APPROVED 后倒推拆 task-plan.json。
-version: 9.11.0
+version: 9.12.0
 created: 2026-04-08
 updated: 2026-07-14
 changelog:
-  - 9.10.0: 真实链路四硬规则（handoff 0714 刀2 — #1267/#1269/#1271/#1256 实证根因）— 规则A【真实调用方 shape】合同必含 ## 真实调用方请求 shape 段，DoD 认证方式/关键字段与生产调用方逐字段一致（禁 body 传 tenant_id 而生产走 x-agent-id header 的双路径分叉）；规则B【第三方真调一次】涉第三方 API 的 DoD 至少一条真 key 真请求真响应校验，禁全 force_*/mock；规则C【mock 豁免显式登记】DoD 含 force_*/stub/假数据 → 合同必附 ## 未覆盖真实链路清单 段，controller 呈现进 PR 描述不许静默；规则D【target_environment 强制路由】微信 UI/RPA 必 windows_wechat，Android 通道未落地前真机段必入未覆盖清单；自查 checklist 新增第 8 条
+  - 9.12.0: 刀3-T5 — 合同必填「运行时守卫」槽位：contract-draft.md 必须含 ## 运行时守卫 段，内嵌具体探针（probe:/script: 可机检执行块）或显式豁免（waiver:<decision_id>+理由）；两者都没有 = 合同不完整，Reviewer 打回；Step 2b-check 新增第 8 项 grep 机械验；evaluator B-guard-check 对应核查；report 收尾链把 guard_ref 写回 journey_features（依赖刀3-T4 列已存在）
   - 9.11.0: EVA v2 审计四刀（d063b3e5/a85e0582/a638f840 实证脱模板合同骗过自查）— (1) Step 2b-check 三处补丁：[BEHAVIOR] 计数锚定行首 checkbox 格式（标题式不计入）+ 第 5 项 E2E 段 bash 块 ≥1 + 第 6 项提取 E2E 块过 bash -n 与全角标点扫描；(2) E2E 多代码块拼接语义显式化（evaluator 1.22.0 全部 bash 块按序拼接，推荐单块，多块禁重复 shebang/set）；(3) 禁文本自证型 BEHAVIOR（grep 文件含字符串归 [ARTIFACT]，真执行断言 ≥2 条且占比 ≥50%）+ 自查第 7 项启发式分类计数；(4) 新增 Step 1.3 历史约束三源加载（铁律逐条映射 INV-N 条目或显式 N/A + context-manifest 累积 FR + 回归测试）
+  - 9.10.0: 真实链路四硬规则（handoff 0714 刀2 — #1267/#1269/#1271/#1256 实证根因）— 规则A【真实调用方 shape】合同必含 ## 真实调用方请求 shape 段，DoD 认证方式/关键字段与生产调用方逐字段一致（禁 body 传 tenant_id 而生产走 x-agent-id header 的双路径分叉）；规则B【第三方真调一次】涉第三方 API 的 DoD 至少一条真 key 真请求真响应校验，禁全 force_*/mock；规则C【mock 豁免显式登记】DoD 含 force_*/stub/假数据 → 合同必附 ## 未覆盖真实链路清单 段，controller 呈现进 PR 描述不许静默；规则D【target_environment 强制路由】微信 UI/RPA 必 windows_wechat，Android 通道未落地前真机段必入未覆盖清单；自查 checklist 新增第 8 条
   - 9.9.0: 领域验证规则新增「RPA 快验通道 dev-verify」小节——windows_wechat 等真机 RPA 类合同至少一条 [BEHAVIOR] 必须写成快验通道回执断言(exit_code=0+stdout 领域内容,可机检可复跑),给"真机真收真回"一个统一可执行 oracle
   - 9.8.0: 判定点登记表机器可解析约定（九要素 T5 — decisions e035dad8）— 登记表即数据：合同 APPROVED 后 reviewer Step 5 逐行解析写入 decisions category=judgment（账本保鲜「判定点活性」指标数据源）；每行自含语义（判定点列禁写「同上/...」）；示例行保留「（示例：」前缀供解析跳过；误判后果严重（静默丢数据/直接面客错误）的行在判定点名前标 ⚠️——⚠️ 行属「升拍板点主动请教用户」级别（e035dad8 第②条），PrepPRD/对齐会未拍过的 ⚠️ 判定点要在合同 notes 里标注待确认
   - 9.7.0: 跨 repo 化刀3 — (a) Contract Gate 速查表补第三方 repo 显式跳过规则：packages/brain/src/lib/contract-gate.js 不存在（第三方 repo / 非 cecelia worktree）→ 跳过代码层 Contract Gate，仅执行 skill 内置规则审查，并在合同 notes 记一行 contract-gate: skipped (file not found, third-party repo)，cecelia 场景原逻辑不动；(b) Step 1 DB 连接串参数化 ${DB_URL:-postgresql://localhost/cecelia}，第三方 repo 必须显式传 $DB_URL，不得假设 cecelia 库存在
@@ -214,6 +215,57 @@ Generator 写代码 + vitest 单元测试
 | 任意 journey_type | `echo "ok"` / `true` 假命令 | 真实 exit code 驱动的断言 |
 
 **playground sprint 例外**（`is_skeleton: true` 且 PRD 明确写"playground 训练 sprint"）：BEHAVIOR 命令可用 `node playground/server.js`，但 final-e2e 不能混用 Brain API（evaluator B33 检测）。
+
+---
+
+## ⚡ 运行时守卫（必填槽位 — 刀3-T5 铁律）
+
+> **根因**：「无闸不成文终身版」铁律（dc18d43d）——合同必须回答「它停了，谁、多久内会发现？」。不回答 = 合同有盲区，交付后永远不知道功能悄悄死掉。
+
+### 强制规则
+
+**每份 `contract-draft.md` 必须含 `## 运行时守卫` 段**，二选一写法：
+
+**选项 A — 探针**（推荐：可机检、可定期复跑）：
+
+```markdown
+## 运行时守卫
+
+probe: <探针标识符>（格式：<类型>/<名称>，如 brain-api/xxx-health、cron/daily-check）
+```bash
+# 可定期复跑的探针命令，exit 0 = 健康，exit 1 = 故障
+curl -sf localhost:5221/api/brain/{endpoint} | jq -e '.status == "ok"' || exit 1
+```
+发现延迟目标：<X 分钟内发现>
+发现者：<Brain 巡检 tick / 外部监控告警 / 推送渠道>
+```
+
+**选项 B — 显式豁免**（需决策支撑：必须有 decision_id）：
+
+```markdown
+## 运行时守卫
+
+waiver: <decision_id>
+理由：<为什么不需要独立探针——例：已由 Brain health-check 全量覆盖 / 一次性迁移任务无需常驻探针 / 已有外部监控每分钟告警>
+```
+
+### 不合格写法（Reviewer 打回）
+
+| 不合格写法 | 问题 |
+|---|---|
+| `## 运行时守卫` 段缺失 | 合同不完整，evaluator B-guard-check FAIL |
+| 段存在但无 `probe:` 也无 `waiver:` | 写了等于没写，机械检查 FAIL |
+| `waiver:` 后无 decision_id | 豁免无凭据，一句话理由 ≠ 决策 |
+| 探针是 `echo "ok"` 或 `true` 等假命令 | 假探针比没有探针更糟，属作弊 |
+| 把 `## 死亡告警` 或八要素里的「谁知道」字段当代替品 | 「谁知道」是描述，探针是可执行断言，二者不可替代 |
+
+### 判定规则（evaluator B-guard-check 执行）
+
+1. 读 `${SPRINT_DIR}/contract-draft.md`，检测 `## 运行时守卫` 段是否存在
+2. 段存在 → 检测：含 `probe:` 关键词（且有可执行 bash 块）**或** 含 `waiver:` 关键词（且后接 decision_id 格式 UUID）
+3. 两者都缺 → `failed_step: guard_ref_missing`，FAIL
+4. `probe:` 存在 → 提取 `GUARD_REF=<探针标识符>`，report 收尾链写回 `journey_features.guard_ref`
+5. `waiver:` 存在 → `GUARD_REF=waiver:<decision_id>`，同样写回
 
 ---
 
@@ -461,6 +513,26 @@ psql $DB -c "SELECT count(*) FROM brain_alerts WHERE task_id='$TASK_ID' AND crea
 **可观测行为**: {...}
 **验证命令**: `...`
 **硬阈值**: ...
+
+---
+
+## 运行时守卫（必填 — 见「⚡ 运行时守卫」规则段）
+
+> 回答「它停了，谁、多久内会发现？」。选项A（探针）或选项B（豁免），两者都没有 = 合同不完整。
+
+<!-- 选项 A — 探针（推荐，evaluator B-guard-check 机械核查）: -->
+probe: {类型/名称，如 brain-api/xxx-health}
+```bash
+# 探针命令示例，替换为本 sprint 实际可执行的健康检查
+curl -sf localhost:5221/api/brain/{endpoint} | jq -e '.status == "ok"' || exit 1
+```
+发现延迟目标: {X 分钟}
+发现者: {Brain 巡检 / 外部监控 / 告警渠道}
+
+<!-- 若选豁免（选项 B），删除上方探针内容，改写为：
+waiver: {decision_id（必须是真实的 UUID）}
+理由：{为什么不需要独立探针}
+-->
 
 ---
 
@@ -1249,6 +1321,23 @@ REAL_EXEC=$(grep 'Test: manual:' "${SPRINT_DIR}/contract-dod.md" | grep -cE "man
 GREP_ONLY=$(grep 'Test: manual:' "${SPRINT_DIR}/contract-dod.md" | grep -cE "manual:(bash -c ')?[[:space:]]*grep")
 [ "$REAL_EXEC" -ge 2 ] || { echo "SELF-CHECK FAIL: 真执行断言（curl/psql/bash/ffprobe/node 开头）仅 ${REAL_EXEC} 条（需 ≥2，启发式计数）"; SELF_CHECK_FAIL=1; }
 [ "$REAL_EXEC" -ge "$GREP_ONLY" ] || { echo "SELF-CHECK FAIL: grep 开头文本自证条数（${GREP_ONLY}）超过真执行条数（${REAL_EXEC}）——真执行占比 <50%（启发式计数）"; SELF_CHECK_FAIL=1; }
+
+# 8. 运行时守卫段核查（刀3-T5 — 必填槽位：probe: 或 waiver:，两者都没有 = 合同盲区）
+if ! grep -q '^## 运行时守卫' "${SPRINT_DIR}/contract-draft.md"; then
+  echo "SELF-CHECK FAIL: contract-draft.md 缺 '## 运行时守卫' 段（必填：probe:<标识符>+bash探针块 或 waiver:<decision_id>+理由）"; SELF_CHECK_FAIL=1
+else
+  # 段存在，核查内容：必须含 probe: 或 waiver:（两者都没有 = 空架子）
+  GUARD_SECTION=$(awk '/^## 运行时守卫/{f=1; next} f && /^## /{exit} f{print}' "${SPRINT_DIR}/contract-draft.md")
+  if ! echo "$GUARD_SECTION" | grep -qE '^(probe:|waiver:)'; then
+    echo "SELF-CHECK FAIL: '## 运行时守卫' 段存在但缺 probe:/waiver: 任一关键词（空架子不合格）"; SELF_CHECK_FAIL=1
+  fi
+  # waiver 必须带 decision_id（UUID 格式或明确指代）
+  if echo "$GUARD_SECTION" | grep -q '^waiver:'; then
+    if ! echo "$GUARD_SECTION" | grep -qE '^waiver:[[:space:]]*[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}'; then
+      echo "SELF-CHECK FAIL: waiver: 后必须跟 decision_id（UUID 格式），当前格式不符"; SELF_CHECK_FAIL=1
+    fi
+  fi
+fi
 
 [ "$SELF_CHECK_FAIL" -eq 0 ] && echo "✅ 合同格式自查通过" || { echo "❌ 合同脱模板，禁止交付——重写后重跑本脚本"; exit 1; }
 ```
