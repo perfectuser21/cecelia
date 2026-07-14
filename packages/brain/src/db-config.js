@@ -28,6 +28,15 @@ if (isTest && dbName === 'cecelia') {
   );
 }
 
+// Guard: 禁止 dev 环境连生产 DB（刀2，2026-07-13 zenithjoy 拆库 P0 事故后补）
+const isDev = process.env.NODE_ENV === 'development';
+if (isDev && dbName === 'cecelia') {
+  throw new Error(
+    '禁止在 dev 环境连接 cecelia 生产 DB。\n' +
+    '解决方式：显式设置 DB_NAME=cecelia_dev'
+  );
+}
+
 export const DB_DEFAULTS = {
   host: process.env.DB_HOST || 'localhost',
   port: parseInt(process.env.DB_PORT || '5432', 10),

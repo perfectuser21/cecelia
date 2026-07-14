@@ -54,6 +54,7 @@ services:
     env_file:
       - .env.docker
     environment:
+      - NODE_ENV=development
       - DB_HOST=${DB_HOST:-localhost}
       - DB_PORT=${DB_PORT:-5432}
       - DB_NAME=cecelia_dev
@@ -64,7 +65,7 @@ services:
       - CECELIA_TICK_INTERVAL_MS=${CECELIA_TICK_INTERVAL_MS:-5000}
       - DISPATCH_TIMEOUT_MINUTES=${DISPATCH_TIMEOUT_MINUTES:-60}
       - FEISHU_BOT_WEBHOOK=${FEISHU_BOT_WEBHOOK:-}
-    command: sh -c "apk add --no-cache curl bash procps && (test -d node_modules || npm install --production) && node server.js"
+    command: sh -c "apk add --no-cache curl bash procps && (test -d node_modules || npm install --production --legacy-peer-deps) && node server.js"
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:5220/api/brain/health"]
       interval: 30s
