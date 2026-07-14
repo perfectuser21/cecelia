@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 
 interface PyramidData {
   available: boolean;
+  updated_at?: string;
   error?: string;
   pass?: boolean;
   failures?: string[];
@@ -62,7 +63,7 @@ export default function TestPyramidPage() {
 
     async function fetchData() {
       try {
-        const resp = await fetch('/api/quality/test-pyramid');
+        const resp = await fetch('/api/brain/quality/test-pyramid');
         if (cancelled) return;
         if (!resp.ok) {
           setFetchState('unavailable');
@@ -103,7 +104,8 @@ export default function TestPyramidPage() {
             color: '#6b7280',
           }}
         >
-          guard 数据不可用{data?.error ? `：${data.error}` : ''}
+          guard 数据不可用{data?.error ? `：${data.error}` : ''}。
+          等每日 03:30 面板日更，或手动 bash scripts/write-current-state.sh 喂数据。
         </div>
       </div>
     );
@@ -160,6 +162,11 @@ export default function TestPyramidPage() {
         {data.panel?.generated && (
           <span data-testid="pyramid-generated" style={{ color: '#6b7280', fontSize: '13px' }}>
             面板生成于 {data.panel.generated}
+          </span>
+        )}
+        {data.updated_at && (
+          <span data-testid="pyramid-updated-at" style={{ color: '#6b7280', fontSize: '13px' }}>
+            数据时间 {data.updated_at.replace('T', ' ').slice(0, 19)}
           </span>
         )}
       </div>
