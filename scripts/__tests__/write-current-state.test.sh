@@ -66,7 +66,7 @@ fi
 
 # ── 测试 6：脚本执行不崩溃（Brain 离线时） ───────────────────────────────────
 TMPDIR_OUT=$(mktemp -d)
-if BRAIN_API_URL="http://localhost:19999" bash "$SCRIPT" > "$TMPDIR_OUT/run.log" 2>&1; then
+if BRAIN_API_URL="http://localhost:19999" CURRENT_STATE_OUTPUT_FILE="$TMPDIR_OUT/CURRENT_STATE.md" bash "$SCRIPT" > "$TMPDIR_OUT/run.log" 2>&1; then
     pass "Brain 离线时脚本正常退出（exit 0）"
 else
     EXIT_CODE=$?
@@ -76,7 +76,6 @@ else
         fail "Brain 离线时脚本崩溃（exit ${EXIT_CODE}）"
     fi
 fi
-rm -rf "$TMPDIR_OUT"
 
 # ── 测试 7：脚本包含最近 PR 章节输出逻辑 ────────────────────────────────────
 if grep -q "dev-records\|最近 PR\|PR_SECTION" "$SCRIPT" 2>/dev/null; then
@@ -91,6 +90,20 @@ if grep -q "P0.*blocked\|P0.*failed\|P0_SECTION" "$SCRIPT" 2>/dev/null; then
 else
     fail "脚本缺少 P0 Issues 章节逻辑"
 fi
+
+# ── 测试 9：生成产物含测试金字塔段（刀0 面板复活） ────────────────────────────
+GENERATED_FILE="$TMPDIR_OUT/CURRENT_STATE.md"
+if [[ -f "$GENERATED_FILE" ]] && grep -q "## 测试金字塔" "$GENERATED_FILE" 2>/dev/null; then
+    pass "生成产物含「## 测试金字塔」段"
+else
+    fail "生成产物缺少「## 测试金字塔」段"
+fi
+if [[ -f "$GENERATED_FILE" ]] && grep -q "孤儿" "$GENERATED_FILE" 2>/dev/null; then
+    pass "生成产物含孤儿计数行"
+else
+    fail "生成产物缺少孤儿计数行"
+fi
+rm -rf "$TMPDIR_OUT"
 
 # ── 结果汇总 ──────────────────────────────────────────────────────────────────
 echo ""

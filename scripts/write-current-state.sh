@@ -209,6 +209,24 @@ else
     CI_SECTION="（gh CLI 不可用，跳过 CI 状态查询）"
 fi
 
+# ─── 测试金字塔（刀0，数据源 test-pyramid-guard --json） ─────────────────────
+# guard root 用脚本自身所在 checkout（worktree 里 MAIN_REPO 指主仓，主仓可能没有 guard 脚本）
+SCRIPT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+PYRAMID_JSON=$(CI=true node "$SCRIPT_ROOT/scripts/test-pyramid-guard.mjs" --root "$SCRIPT_ROOT" --json 2>/dev/null || echo '{}')
+PYRAMID_MD=$(node -e '
+const r = JSON.parse(process.argv[1] || "{}");
+if (!r.permanent) { console.log("（guard 数据不可用）"); process.exit(0); }
+const L = r.permanent.layers || {};
+console.log("| 层 | 数量 |");
+console.log("|---|---|");
+console.log(`| unit | ${L.unit ?? 0} |`);
+console.log(`| integration | ${L.integration ?? 0} |`);
+console.log(`| e2e/smoke | ${r.smoke?.total ?? 0} |`);
+console.log(`| 孤儿（sprints 未入册）| ${r.orphans?.total ?? 0} |`);
+console.log("");
+console.log(r.pass ? "守卫: ✅ PASS" : "守卫: ❌ FAIL — " + (r.failures||[]).join("；"));
+' "$PYRAMID_JSON" 2>/dev/null || echo "（guard 数据不可用）")
+
 # ─── 写入 CURRENT_STATE.md ────────────────────────────────────────────────────
 cat > "$OUTPUT_FILE" <<STATEOF
 ---
@@ -229,6 +247,12 @@ source: write-current-state.sh
 |------|------|
 | Brain API | ${HEALTH_STATUS} |
 | 警觉等级 | ${ALERTNESS_NUM} - ${ALERTNESS_LEVEL} |
+
+---
+
+## 测试金字塔
+
+${PYRAMID_MD}
 
 ---
 
