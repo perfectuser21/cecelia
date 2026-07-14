@@ -1,4 +1,4 @@
-name: Heartbeat Sentinel（机外心跳反向探测）
+name: Heartbeat Sentinel
 
 # 机外哨兵：从 GitHub Actions 反向探测生产 Brain。
 # 生产机整体死亡时，住在地盘 B 的所有守卫陪葬——此 workflow 住地盘 A（GitHub）。
@@ -19,7 +19,7 @@ on:
   workflow_dispatch:
     inputs:
       probe_url:
-        description: '探测目标 URL（留空 = 生产；演习填死端口如 http://100.71.151.105:9999）'
+        description: 'probe URL (leave empty for production; drill: use dead port e.g. http://100.71.151.105:9999)'
         required: false
         default: ''
 
