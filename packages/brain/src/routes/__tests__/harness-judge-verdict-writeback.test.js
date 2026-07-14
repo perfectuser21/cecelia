@@ -36,9 +36,11 @@ afterEach(() => {
   try { rmSync(worktree, { recursive: true, force: true }); } catch { /* 忽略 */ }
 });
 
+const VALID_TASK_ID = '11111111-2222-3333-4444-555555555555';
+
 function callJudge(overrides = {}) {
   return request(app).post('/judge').send({
-    task_id: 't-1',
+    task_id: VALID_TASK_ID,
     sprint_dir: 's',
     worktree,
     agent_verdict: 'PASS',
@@ -55,7 +57,15 @@ describe('C2: /judge 判定后自写 initiative_runs.judge_verdict', () => {
     expect(upd[0]).toMatch(/current_task_id/);
     expect(upd[0]).toMatch(/IS DISTINCT FROM 'PASS'/);
     expect(upd[1]).toContain('PASS');
-    expect(upd[1]).toContain('t-1');
+    expect(upd[1]).toContain(VALID_TASK_ID);
+  });
+
+  it('task_id 非法 uuid → 400，不触碰 runJudgeGate/DB', async () => {
+    const res = await callJudge({ task_id: 't-1' });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/uuid/);
+    const upd = poolQuery.mock.calls.find(([sql]) => /UPDATE initiative_runs\s+SET judge_verdict/i.test(sql));
+    expect(upd).toBeFalsy();
   });
 
   it('UPDATE 抛错 → non-fatal，响应仍带裁决', async () => {

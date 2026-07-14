@@ -1857,6 +1857,9 @@ router.post('/judge', async (req, res) => {
   if (!task_id || !sprint_dir || !worktree) {
     return res.status(400).json({ error: 'task_id/sprint_dir/worktree 必填' });
   }
+  if (!UUID_RE.test(String(task_id))) {
+    return res.status(400).json({ error: 'task_id 必须是 uuid' });
+  }
   if (typeof worktree !== 'string' || !worktree.startsWith('/')) {
     return res.status(400).json({ error: 'worktree 必须是绝对路径' });
   }
