@@ -6,6 +6,7 @@ vi.mock('../alerting.js', () => ({ raise: vi.fn().mockResolvedValue(undefined) }
 import {
   runLaunchdPatrol,
   __resetLaunchdPatrolForTest,
+  MUST_LISTEN_PORTS,
 } from '../launchd-patrol.js';
 import { sendBark } from '../notifier.js';
 import { raise } from '../alerting.js';
@@ -51,7 +52,7 @@ describe('launchd-patrol manifest 核对', () => {
     const r = await runLaunchdPatrol({ exec: makeExec(), inContainer: false });
     expect(r.ok).toBe(true);
     expect(r.anomalies).toEqual([]);
-    expect(r.checked).toBe(9); // 1 must-run + 5 must-load（含 smoke-nightly + guard-drill）+ 3 端口
+    expect(r.checked).toBe(7); // 1 must-run + 5 must-load（含 smoke-nightly + guard-drill）+ 1 端口（5200/5201 已迁 HK 摘除）
     expect(sendBark).not.toHaveBeenCalled();
     expect(raise).not.toHaveBeenCalled();
   });
@@ -104,18 +105,16 @@ describe('launchd-patrol manifest 核对', () => {
 
   it('端口不通 → port_down 检出', async () => {
     const r = await runLaunchdPatrol({
-      exec: makeExec({ portDown: [5200] }),
+      exec: makeExec({ portDown: [3457] }),
       inContainer: false,
     });
-    expect(r.anomalies).toEqual(['port_down:5200(zenithjoy-api)']);
+    expect(r.anomalies).toEqual(['port_down:3457(cecelia-bridge)']);
   });
 
-  it('staging 端口(5201)不通 → port_down 检出', async () => {
-    const r = await runLaunchdPatrol({
-      exec: makeExec({ portDown: [5201] }),
-      inContainer: false,
-    });
-    expect(r.anomalies).toEqual(['port_down:5201(zenithjoy-api-staging)']);
+  it('5200/5201 已随刀3迁 HK，必查端口名单不得再包含（防误告警回归）', async () => {
+    const ports = MUST_LISTEN_PORTS.map((p) => p.port);
+    expect(ports).not.toContain(5200);
+    expect(ports).not.toContain(5201);
   });
 
   it('宿主不可达（连通性探针失败）→ fail-open，不产生服务异常不告警', async () => {

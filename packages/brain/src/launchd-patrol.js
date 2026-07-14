@@ -34,8 +34,8 @@ export const MUST_LOAD_DAEMONS = [
 ];
 export const MUST_LISTEN_PORTS = [
   { port: 3457, name: 'cecelia-bridge' },
-  { port: 5200, name: 'zenithjoy-api' },
-  { port: 5201, name: 'zenithjoy-api-staging' },
+  // 5200/5201 已随拆库刀3-T3/T5 整体迁 hk-vps docker（2026-07-15），本机不再监听。
+  // HK 侧存活由容器 healthcheck(unless-stopped) 保障；机外探测另行接入（刀3-T6 范围）。
 ];
 // 仅声明用途（manifest 文档），运行逻辑不消费：不告警来自"不在必查名单"
 export const EXPECTED_DISABLED = ['com.cecelia.frontend', 'com.n8n'];
