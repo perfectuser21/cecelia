@@ -1,0 +1,8 @@
+{
+  "established": "2026-07-14",
+  "max_hard_faults_allowed": 0,
+  "last_audit": "2026-07-14",
+  "last_hard_fault_count": 0,
+  "rings_failed": [],
+  "_note": "首跑前占位基准（max=7=全部）。首次真实运行后由 seven-ring-audit.js 覆盖写入实测值。棘轮只许降：若当日硬伤数 > max_hard_faults_allowed，巡检失败。"
+}

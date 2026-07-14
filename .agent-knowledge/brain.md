@@ -251,3 +251,10 @@ tick-runner.js 接入点：
 | 文件 | 职责 |
 |------|------|
 | `src/routes/social-trending.js` | 社媒热点 API 路由：GET /api/brain/social/trending（查询 TimescaleDB v_all_platforms 视图，支持 platform/limit/days 参数过滤）。使用独立 pg.Pool 连接 TimescaleDB（TIMESCALE_HOST/DB/USER/PASSWORD 环境变量）；TimescaleDB 不可达时降级返回空数组，不影响 Brain 其他功能。挂载路径：/social/trending。 |
+
+## 七环对账路由模块（2026-07-14 新增，刀3-T6）
+
+| 文件 | 职责 |
+|------|------|
+| `src/routes/kv.js` | 通用 KV 存取 API：GET /api/brain/kv/:key（读 working_memory，404 若不存在）、POST /api/brain/kv/:key（upsert working_memory）。供七环对账快照落库（key=seven-ring-audit-last）及其他 ad-hoc 快照存取。 |
+| `scripts/seven-ring-audit.js` | 七环对账巡检脚本。检查七环逐项（测试入册/定时循环在跑/部署指纹是新的/账本写对/产出有人消费/告警通道活着/面板数据新鲜），产出 POST /api/brain/kv/seven-ring-audit-last + 可选写日报 note。棘轮文件：packages/quality/ratchets/seven-ring-hard-faults.json（硬伤数只许降）。用法：`node packages/brain/scripts/seven-ring-audit.js [--note]` |

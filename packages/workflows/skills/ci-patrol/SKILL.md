@@ -139,9 +139,31 @@ curl -s -X POST $BRAIN/api/brain/notes -H "Content-Type: application/json" -d '{
 
 首跑无基准 → 只记录不告警，日报注明「首跑建基准」。
 
-## Step 5: 回写任务
+## Step 5: 七环对账（刀3-T6 交付）
 
-Brain 派发的任务（prompt 里带 task_id）→ `PATCH $BRAIN/api/brain/tasks/<id>` status=completed，result 带日报 note id + 两个棘轮数字。手动触发则跳过。
+日报写完后，追加运行七环对账巡检器：
+
+```bash
+# cecelia monorepo 路径（宿主或容器内挂载）
+CECELIA_DIR=/Users/administrator/perfect21/cecelia
+if [ ! -d "$CECELIA_DIR" ]; then
+  CECELIA_DIR=/tmp/cecelia-patrol
+  gh repo clone perfectuser21/cecelia "$CECELIA_DIR" -- --depth 1 || echo "⚠️ cecelia repo 不可达，跳过七环"
+fi
+
+if [ -d "$CECELIA_DIR" ]; then
+  node "$CECELIA_DIR/packages/brain/scripts/seven-ring-audit.js" --note || \
+    echo "⚠️ 七环对账异常（不阻塞日巡检）"
+fi
+```
+
+七环产出落 `$BRAIN/api/brain/kv/seven-ring-audit-last`，日报随即包含七环 summary 一节（`--note` 选项写）。
+
+七环棘轮文件：`packages/quality/ratchets/seven-ring-hard-faults.json`（硬伤数只许降，断裂 → exit 1）。
+
+## Step 6: 回写任务
+
+Brain 派发的任务（prompt 里带 task_id）→ `PATCH $BRAIN/api/brain/tasks/<id>` status=completed，result 带日报 note id + 两个棘轮数字 + 七环硬伤数。手动触发则跳过。
 
 ## 纪律
 

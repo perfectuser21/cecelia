@@ -1,5 +1,125 @@
 import { useState, useEffect } from 'react';
 
+// ─── 七环对账类型 ──────────────────────────────────────────────────────────
+
+interface SevenRing {
+  id: string;
+  name: string;
+  status: 'pass' | 'fail' | 'unknown';
+  detail: string;
+}
+
+interface SevenRingData {
+  available: boolean;
+  pass?: boolean;
+  hard_faults?: number;
+  unknowns?: number;
+  ratchet_broken?: boolean;
+  rings?: SevenRing[];
+  audited_at?: string;
+  error?: string;
+}
+
+function SevenRingSection() {
+  const [data, setData] = useState<SevenRingData | null>(null);
+  const [state, setState] = useState<'loading' | 'done' | 'unavailable'>('loading');
+
+  useEffect(() => {
+    let cancelled = false;
+    fetch('/api/brain/kv/seven-ring-audit-last')
+      .then(r => (r.ok ? r.json() : Promise.reject(r.status)))
+      .then(body => {
+        if (cancelled) return;
+        setData(body);
+        setState('done');
+      })
+      .catch(() => {
+        if (!cancelled) setState('unavailable');
+      });
+    return () => { cancelled = true; };
+  }, []);
+
+  const statusIcon = (s: string) => s === 'pass' ? '✅' : s === 'fail' ? '❌' : '⚠️';
+
+  return (
+    <div data-testid="seven-ring-section" style={{ marginTop: '32px' }}>
+      <h3 style={{ marginBottom: '12px', fontSize: '16px', fontWeight: 'bold', color: '#111827' }}>
+        七环对账
+      </h3>
+
+      {state === 'loading' && (
+        <p style={{ color: '#9ca3af', fontSize: '13px' }}>加载中...</p>
+      )}
+
+      {state === 'unavailable' && (
+        <div
+          data-testid="seven-ring-unavailable"
+          style={{ padding: '12px 16px', border: '1px solid #d1d5db', borderRadius: '8px', background: '#f3f4f6', color: '#6b7280', fontSize: '13px' }}
+        >
+          七环对账数据不可用。运行 <code>node packages/brain/scripts/seven-ring-audit.js</code> 喂数据。
+        </div>
+      )}
+
+      {state === 'done' && data && (
+        <>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '12px', flexWrap: 'wrap' }}>
+            <span
+              data-testid="seven-ring-badge"
+              style={{
+                padding: '2px 10px',
+                borderRadius: '4px',
+                fontSize: '13px',
+                fontWeight: 'bold',
+                backgroundColor: data.pass ? '#10b981' : '#ef4444',
+                color: '#fff',
+              }}
+            >
+              {data.pass ? 'PASS' : `FAIL（${data.hard_faults} 个硬伤）`}
+            </span>
+            {data.ratchet_broken && (
+              <span style={{ padding: '2px 8px', borderRadius: '4px', fontSize: '12px', backgroundColor: '#fef3c7', color: '#92400e', border: '1px solid #fcd34d' }}>
+                ⚠️ 棘轮断裂
+              </span>
+            )}
+            {data.audited_at && (
+              <span style={{ color: '#9ca3af', fontSize: '12px' }}>
+                巡检于 {data.audited_at.replace('T', ' ').slice(0, 16)}
+              </span>
+            )}
+          </div>
+
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+            {(data.rings || []).map(ring => (
+              <div
+                key={ring.id}
+                data-testid={`seven-ring-${ring.id}`}
+                style={{
+                  display: 'flex',
+                  alignItems: 'flex-start',
+                  gap: '8px',
+                  padding: '8px 12px',
+                  borderRadius: '6px',
+                  background: ring.status === 'fail' ? '#fef2f2' : ring.status === 'pass' ? '#f0fdf4' : '#fffbeb',
+                  border: `1px solid ${ring.status === 'fail' ? '#fecaca' : ring.status === 'pass' ? '#bbf7d0' : '#fde68a'}`,
+                  fontSize: '13px',
+                }}
+              >
+                <span style={{ flexShrink: 0, fontSize: '14px' }}>{statusIcon(ring.status)}</span>
+                <div>
+                  <span style={{ fontWeight: 'bold', color: '#374151' }}>{ring.name}</span>
+                  <span style={{ marginLeft: '8px', color: '#6b7280' }}>{ring.detail}</span>
+                </div>
+              </div>
+            ))}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+// ─── 测试金字塔类型 ────────────────────────────────────────────────────────
+
 interface PyramidData {
   available: boolean;
   updated_at?: string;
@@ -209,6 +329,8 @@ export default function TestPyramidPage() {
         <StatCard label="孤儿测试" count={orphansTotal} testId="pyramid-orphans" />
         <StatCard label="smoke 未挂跑道" count={unwiredCount} testId="pyramid-unwired" />
       </div>
+
+      <SevenRingSection />
     </div>
   );
 }

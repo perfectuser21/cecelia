@@ -28,6 +28,7 @@ import handoffsRouter from './routes/handoffs.js';
 import sentinelRouter from './routes/sentinel.js';
 import dispatchRouter from './routes/dispatch.js';
 import previewRouter from './routes/preview.js';
+import kvRouter from './routes/kv.js';
 
 export { triggerAutoRCA } from './routes/brain-meta.js';
 export { resolveRelatedFailureMemories } from './routes/shared.js';
@@ -79,5 +80,8 @@ router.use('/', dispatchRouter);
 
 // 预览环境端口分配 — POST/GET /preview, DELETE /preview/:pr_number
 router.use('/preview', previewRouter);
+
+// 通用 KV 存取 — GET/POST /kv/:key（七环对账等快照落库）
+router.use('/kv', kvRouter);
 
 export default router;
