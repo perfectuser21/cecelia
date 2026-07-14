@@ -123,6 +123,22 @@ else
 fi
 rm -rf "$FIX_RED" "$TMPDIR_RED"
 
+# ── 测试 11：金字塔快照 best-effort POST 喂 Brain（Dashboard 数据源） ─────────
+# 静态断言脚本含该 POST（真发由测试 6/10 的 BRAIN_API_URL=19999 离线跑覆盖：
+# best-effort || true 不崩溃即证明降级正确，无需 mock 真 Brain）
+if grep -q "quality/test-pyramid" "$SCRIPT" 2>/dev/null && \
+   grep -q 'PYRAMID_JSON' "$SCRIPT" 2>/dev/null && \
+   grep -qE 'curl.*-X POST.*quality/test-pyramid|curl.*quality/test-pyramid.*POST' "$SCRIPT" 2>/dev/null; then
+    pass "脚本含金字塔快照 POST → Brain /api/brain/quality/test-pyramid"
+else
+    fail "脚本缺少金字塔快照 POST（Dashboard /test-pyramid 页面将无数据）"
+fi
+if grep -A3 "quality/test-pyramid" "$SCRIPT" 2>/dev/null | grep -q "|| true"; then
+    pass "金字塔 POST 是 best-effort（|| true，Brain 离线不崩溃）"
+else
+    fail "金字塔 POST 缺少 || true 降级保护"
+fi
+
 # ── 结果汇总 ──────────────────────────────────────────────────────────────────
 echo ""
 echo "=== 测试结果 ==="

@@ -39,6 +39,8 @@ const manifest: FeatureManifest = {
     },
     // Relay 进度条页面
     { path: '/relay-progress', component: 'RelayProgressPage' },
+    // 测试金字塔面板（刀0：test-pyramid-guard --json 可视化）
+    { path: '/test-pyramid', component: 'TestPyramidPage' },
     // Orchestrator removed — use BrainDashboard
     { path: '/orchestrator', redirect: '/brain' },
     // Redirects from old /ops/* paths
@@ -67,6 +69,7 @@ const manifest: FeatureManifest = {
     N8nLiveStatusDetail: () => import('./pages/N8nLiveStatusDetail'),
     WorkersOverview: () => import('./pages/WorkersOverview'),
     RelayProgressPage: () => import('./pages/RelayProgressPage'),
+    TestPyramidPage: () => import('./pages/TestPyramidPage'),
   },
 };
 

@@ -216,6 +216,11 @@ SCRIPT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PYRAMID_GUARD_ROOT="${PYRAMID_GUARD_ROOT:-$SCRIPT_ROOT}"
 # guard 红时 exit=1 但 JSON 已完整输出——用 || true 保留 stdout（不能 || echo '{}'，会把 '{}' 追加进 JSON 导致 parse 炸掉丢 FAIL 详情）
 PYRAMID_JSON=$(CI=true node "$SCRIPT_ROOT/scripts/test-pyramid-guard.mjs" --root "$PYRAMID_GUARD_ROOT" --json 2>/dev/null || true)
+# best-effort 喂 Brain（Dashboard /test-pyramid 页面数据源；离线/失败不影响本脚本）
+if [[ -n "$PYRAMID_JSON" ]]; then
+    curl -s --max-time 5 -X POST "$BRAIN_URL/api/brain/quality/test-pyramid" \
+        -H "Content-Type: application/json" -d "$PYRAMID_JSON" >/dev/null 2>&1 || true
+fi
 PYRAMID_MD=$(node -e '
 const r = JSON.parse(process.argv[1] || "{}");
 if (!r.permanent) { console.log("（guard 数据不可用）"); process.exit(0); }
