@@ -59,11 +59,14 @@ export function _discoverPrFromGithub(task, short, execFn) {
   const repo = _parseBaseRepo(task.payload?.base_repo);
   if (!repo) return null;
   // limit 100（非 50）：高流量 repo 短时间内 PR 数多，窗口太小会把目标 PR 挤出结果
-  const raw = execFn(`gh pr list --repo "${repo}" --state all --limit 100 --json headRefName,url,state`);
+  const raw = execFn(`gh pr list --repo "${repo}" --state all --limit 100 --json headRefName,title,url,state`);
   const prs = JSON.parse(raw);
   if (!Array.isArray(prs)) return null;
-  const matches = prs.filter((p) => typeof p?.headRefName === 'string' && p.headRefName.includes(short));
-  return matches.find((p) => p.state === 'MERGED') || matches.find((p) => p.state === 'OPEN') || null;
+  const matches = prs.filter((p) =>
+    (typeof p?.headRefName === 'string' && p.headRefName.includes(short)) ||
+    (typeof p?.title === 'string' && p.title.includes('[' + short + ']'))
+  );
+  return matches.find((m) => m.state === 'MERGED') || matches.find((m) => m.state === 'OPEN') || null;
 }
 
 /**
