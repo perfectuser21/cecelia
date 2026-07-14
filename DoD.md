@@ -1,10 +1,8 @@
-# DoD: migration 343 status CHECK 窄枚举致生产部署失败——343 修正 + 344 拓宽
+# DoD: bluegreen 金丝雀探活/smoke 容器视角 localhost 假红——CANARY_HOST 修复
 
-- [x] [BEHAVIOR] 343 的 CHECK 枚举涵盖生产在用全部 status（含 working/broken）
-      Test: manual:node -e "const s=require('fs').readFileSync('packages/brain/migrations/343_journey_features_guard_ref.sql','utf8');if(!/working/.test(s)||!/broken/.test(s))process.exit(1)"
-- [x] [BEHAVIOR] 344 幂等拓宽存在（兜住已 apply 窄版的 staging/preview 库）
-      Test: manual:node -e "const s=require('fs').readFileSync('packages/brain/migrations/344_journey_features_status_check_widen.sql','utf8');if(!/DROP CONSTRAINT IF EXISTS/.test(s)||!/working/.test(s))process.exit(1)"
-- [x] [BEHAVIOR] EXPECTED_SCHEMA_VERSION 同步到 344
-      Test: manual:node -e "const s=require('fs').readFileSync('packages/brain/src/selfcheck.js','utf8');if(!s.includes(String.fromCharCode(39)+'344'+String.fromCharCode(39)))process.exit(1)"
-- [x] 版本四处同步 1.262.1
-      Test: manual:bash scripts/check-version-sync.sh
+- [x] [BEHAVIOR] bluegreen.sh 探活与 smoke 目标主机可配置：容器内(/.dockerenv)默认 host.docker.internal，宿主默认 localhost，CANARY_HOST 可覆盖
+      Test: manual:bash scripts/__tests__/bluegreen-canary-host.test.sh
+- [x] [BEHAVIOR] 不再存在写死 http://localhost:${port} 的金丝雀地址
+      Test: manual:bash -c "! grep -n 'http://localhost:\${port}' scripts/lib/bluegreen.sh"
+- [x] bluegreen.sh 语法有效
+      Test: manual:bash -n scripts/lib/bluegreen.sh
