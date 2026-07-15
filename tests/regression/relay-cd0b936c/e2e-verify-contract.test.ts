@@ -5,7 +5,9 @@ import path from 'node:path';
 
 const REPO_ROOT = path.resolve(__dirname, '../../..');
 const SPRINT_DIR = 'sprints/07151206-relay-cd0b936c';
-const SCRIPT = path.join(REPO_ROOT, SPRINT_DIR, 'e2e-verify.sh');
+// 毕业后（graduate-sprint-tests.mjs）脚本已搬到永久池 scripts/smoke/e2e/，
+// 不再位于原 sprint 目录；SPRINT_DIR 常量仅保留用于断言脚本内嵌的默认值字面量。
+const SCRIPT = path.join(REPO_ROOT, 'scripts/smoke/e2e/relay-cd0b936c.sh');
 const TASK_ID = 'cd0b936c-2891-4fed-a921-5636ca08d1e8';
 
 describe('e2e-verify.sh 契约 [BEHAVIOR]', () => {
