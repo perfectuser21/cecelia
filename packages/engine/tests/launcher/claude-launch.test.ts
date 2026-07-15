@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { execSync } from 'node:child_process';
-import { mkdtempSync, writeFileSync, chmodSync, rmSync, existsSync, statSync, mkdirSync, lstatSync, realpathSync, symlinkSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, chmodSync, rmSync, existsSync, statSync, mkdirSync, lstatSync, realpathSync, symlinkSync, readlinkSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 
@@ -332,7 +332,8 @@ describe('resume 历史软链 — per-session projects key 软链回主仓', () 
   let worktreeBasePhys: string;
   let projectsRoot: string;
 
-  const toKey = (p: string): string => p.replace(/[/.]/g, '-');
+  // 与 Claude Code 实测规则一致：非字母数字字符逐字符换 -，大小写与数字原样保留。
+  const toKey = (p: string): string => p.replace(/[^a-zA-Z0-9]/g, '-');
 
   beforeAll(() => {
     base = mkdtempSync(join(tmpdir(), 'claude-launch-symlink-'));
@@ -381,6 +382,18 @@ describe('resume 历史软链 — per-session projects key 软链回主仓', () 
     return env;
   }
 
+  it('key 算法：非字母数字字符（_ / 空格 / .）逐字符换 -，大小写保留', () => {
+    const sid = 'aaaa0007-1111-2222-3333-444444444444';
+    const oddBase = join(base, 'odd_Base Dir');
+    mkdirSync(oddBase, { recursive: true });
+    const env = { ...makeEnv(sid), WORKTREE_BASE: oddBase };
+    const out = execSync(`bash "${LAUNCHER}" --dry-run`, { cwd: mainRepo, env }).toString();
+    // dry-run 时 worktree 尚未建，脚本对 wt key 的 realpath 会 cd 失败并回退成 _WT_PATH
+    // 字面量（脚本内已注明「dry-run 是意图契约，可接受」）。而 _WT_PATH 正由上面传入的
+    // WORKTREE_BASE 原字符串拼成——两边同源，故不碰 realpath 也能锁完整 key。
+    expect(out).toContain(toKey(join(oddBase, 'main', `session-${sid.slice(0, 8)}`)));
+  });
+
   it('auto-worktree 启动 → claude 运行期内 <wt_key> 是指向 <main_key> 的软链', () => {
     const sid = 'aaaa0001-1111-2222-3333-444444444444';
     const wtPathPhys = join(worktreeBasePhys, 'main', `session-${sid.slice(0, 8)}`);
@@ -408,7 +421,7 @@ exit 0
     expect(existsSync(join(projectsRoot, toKey(mainRepoPhys), 'old-session.jsonl'))).toBe(true);
   });
 
-  it('干净退出 → 软链被删除，经软链写入主仓文件夹的 transcript 完好', () => {
+  it('干净退出 → 软链保留（共享资源，不随单个会话销毁），transcript 完好', () => {
     const sid = 'aaaa0003-1111-2222-3333-444444444444';
     const wtPathPhys = join(worktreeBasePhys, 'main', `session-${sid.slice(0, 8)}`);
     const link = join(projectsRoot, toKey(wtPathPhys));
@@ -417,9 +430,23 @@ echo '{"x":1}' > "${link}/${sid}.jsonl"
 exit 0
 `);
     execSync(`bash "${LAUNCHER}"`, { cwd: mainRepo, env: makeEnv(sid) });
-    expect(existsSync(link)).toBe(false);
-    expect(lstatSync(link, { throwIfNoEntry: false })).toBeUndefined();
+    // 软链是 per-worktree-path 共享资源：同一 key 可压多条会话，
+    // 删它会让仍在用该 key 的会话重建真目录 = 新孤儿。8 字节，留着零成本。
+    expect(lstatSync(link).isSymbolicLink()).toBe(true);
     expect(existsSync(join(projectsRoot, toKey(mainRepoPhys), `${sid}.jsonl`))).toBe(true);
+  });
+
+  it('同一 worktree key 多会话共用 → 前一个会话干净退出后，软链对后一个仍有效', () => {
+    const sidA = 'aaaa0011-1111-2222-3333-444444444444';
+    const wtPathPhys = join(worktreeBasePhys, 'main', `session-${sidA.slice(0, 8)}`);
+    const link = join(projectsRoot, toKey(wtPathPhys));
+    // 会话 A：干净退出（触发清理段）
+    writeMockClaude('#!/usr/bin/env bash\nexit 0\n');
+    execSync(`bash "${LAUNCHER}"`, { cwd: mainRepo, env: makeEnv(sidA) });
+    // 会话 B：复用同一 key 写入 → 必须仍落进主仓池，而不是重建真目录
+    expect(lstatSync(link).isSymbolicLink()).toBe(true);
+    writeFileSync(join(link, 'second-session.jsonl'), '{"y":2}\n');
+    expect(existsSync(join(projectsRoot, toKey(mainRepoPhys), 'second-session.jsonl'))).toBe(true);
   });
 
   it('脏 worktree 保留 → 软链同步保留', () => {
@@ -499,5 +526,127 @@ exit 0
 `);
     const out = execSync(`bash "${LAUNCHER}"`, { cwd: mainRepo, env: makeEnv(sid) }).toString();
     expect(out).toContain(`LINK_TARGET=${target}`);
+  });
+
+  it('cwd 已在外部建的 worktree 内 → dry-run 仍输出 ln -s 契约行（dry-run 契约）', () => {
+    const sid = 'aaaa0009-1111-2222-3333-444444444444';
+    // 模拟 slot 场景：worktree 由外部（非 launcher）建好，claude 从其内部启动
+    const extWt = join(base, 'external-wt');
+    execSync(`git -C "${mainRepo}" worktree add -q "${extWt}" -b ext-branch`, { stdio: 'ignore' });
+    const extWtPhys = realpathSync(extWt);
+    const out = execSync(`bash "${LAUNCHER}" --dry-run`, { cwd: extWt, env: makeEnv(sid) }).toString();
+    expect(out).toContain('ln -s');
+    expect(out).toContain(toKey(extWtPhys));           // link = 该 worktree 的 key
+    expect(out).toContain(toKey(mainRepoPhys));        // target = 主仓 key
+    expect(out).not.toContain('worktree add');         // 已在 worktree 内，不得再建
+  });
+
+  it('headless（-p）在 worktree 内 → dry-run 不输出 ln -s（dry-run 契约）', () => {
+    const sid = 'aaaa0010-1111-2222-3333-444444444444';
+    const extWt2 = join(base, 'external-wt2');
+    execSync(`git -C "${mainRepo}" worktree add -q "${extWt2}" -b ext-branch2`, { stdio: 'ignore' });
+    const out = execSync(`bash "${LAUNCHER}" -p hi --dry-run`, { cwd: extWt2, env: makeEnv(sid) }).toString();
+    expect(out).not.toContain('ln -s');
+  });
+
+  // ⚠️ 上面两条只守 dry-run 段（launcher 在那儿就 exit 0），钉的是 echo 出来的意图
+  // 字符串，**到不了真实建链门禁**——真实门禁改坏它们照样绿（审查两次实证）。
+  // dry-run 的 elif 分支本身是真实代码、有独立回归价值，故保留，但标题已改成
+  // 「dry-run 契约」，别再被"根因回归"骗成"根因已被守住"。
+  //
+  // 下面几条走**真实执行路径**，才是真守卫。每条都经变异验证 proven-to-fire：
+  //   删 `! _is_headless`            → headless 真实用例红
+  //   删 `_in_git_repo`              → 非 git 目录用例红
+  //   整个门禁改回 AUTO_WORKTREE=1   → 本条 + 既有 6 条红
+  //   删 _link_projects_dir 自指短路 → lossy key 碰撞用例红
+  // 加新用例时请照此自查：它到底走哪条路径？把它声称守的条件删掉，会不会红？
+  it('真实执行：cwd 在外部建的 worktree 内 → claude 运行期内 <wt_key> 是指向 <main_key> 的软链（根因回归·真实路径）', () => {
+    const sid = 'aaaa0016-1111-2222-3333-444444444444';
+    const extWt = join(base, 'external-wt-real');
+    execSync(`git -C "${mainRepo}" worktree add -q "${extWt}" -b ext-branch-real`, { stdio: 'ignore' });
+    const extWtPhys = realpathSync(extWt);
+    const link = join(projectsRoot, toKey(extWtPhys));
+    writeMockClaude(`#!/usr/bin/env bash
+if [[ -L "${link}" ]]; then echo "LINK_TARGET=$(readlink "${link}")"; else echo "LINK_TARGET=MISSING"; fi
+exit 0
+`);
+    const out = execSync(`bash "${LAUNCHER}"`, { cwd: extWt, env: makeEnv(sid) }).toString();
+    expect(out).toContain(`LINK_TARGET=${join(projectsRoot, toKey(mainRepoPhys))}`);
+  });
+
+  it('真实执行：headless（-p）在 worktree 内 → 运行期内无软链（机器人会话不灌主池）', () => {
+    const sid = 'aaaa0018-1111-2222-3333-444444444444';
+    const extWt = join(base, 'external-wt-headless');
+    execSync(`git -C "${mainRepo}" worktree add -q "${extWt}" -b ext-branch-headless`, { stdio: 'ignore' });
+    const extWtPhys = realpathSync(extWt);
+    const link = join(projectsRoot, toKey(extWtPhys));
+    writeMockClaude(`#!/usr/bin/env bash
+if [[ -L "${link}" ]]; then echo "LINK_TARGET=$(readlink "${link}")"; else echo "LINK_TARGET=MISSING"; fi
+exit 0
+`);
+    const out = execSync(`bash "${LAUNCHER}" -p hi`, { cwd: extWt, env: makeEnv(sid) }).toString();
+    expect(out).toContain('LINK_TARGET=MISSING');
+  });
+
+  // project key 是**有损多对一映射**（/ . _ 等非字母数字全塌成 -），所以两条不同路径
+  // 可以撞出同一个 key：主仓 <base>/coll-a-b 与 worktree <base>/coll-a/b 都塌成 …-coll-a-b。
+  // 此时 link == target，_link_projects_dir 的自指短路是承重的：没有它，
+  // mkdir -p "$target" 会让 [[ -d "$link" ]] 成真 → 走"孤儿目录"分支 → rmdir 掉池子
+  // → ln -s 造出一条**指向自己**的软链，且全程 best-effort 不报错（静默损坏）。
+  it('lossy key 碰撞（wt key == 主仓 key）→ 不得造出自指软链（静默损坏 /resume 池子）', () => {
+    const sid = 'aaaa0019-1111-2222-3333-444444444444';
+    const collMain = join(base, 'coll-a-b');
+    execSync(`git clone -q "${bareDir}" "${collMain}"`);
+    execSync('git config user.email test@test.com', { cwd: collMain });
+    execSync('git config user.name Test', { cwd: collMain });
+    const collWt = join(base, 'coll-a', 'b');
+    execSync(`git -C "${collMain}" worktree add -q "${collWt}" -b coll-branch`, { stdio: 'ignore' });
+    // 前置自证：两者 key 必须真撞上，否则本用例什么也没测
+    const collMainPhys = realpathSync(collMain);
+    const collWtPhys = realpathSync(collWt);
+    expect(toKey(collWtPhys)).toBe(toKey(collMainPhys));
+
+    const link = join(projectsRoot, toKey(collWtPhys));
+    writeMockClaude(`#!/usr/bin/env bash\necho "MOCK_RAN=yes"\nexit 0\n`);
+    const out = execSync(`bash "${LAUNCHER}"`, { cwd: collWt, env: makeEnv(sid) }).toString();
+    expect(out).toContain('MOCK_RAN=yes');
+
+    const st = lstatSync(link, { throwIfNoEntry: false });
+    const isSelfLink = st?.isSymbolicLink() === true && readlinkSync(link) === link;
+    expect(isSelfLink).toBe(false);
+  });
+
+  it('非 git 目录启动 → 不打印软链警告（无历史可共享），claude 正常执行且退出码透传', () => {
+    const sid = 'aaaa0017-1111-2222-3333-444444444444';
+    const nonGitDir = mkdtempSync(join(tmpdir(), 'claude-launch-nongit-'));
+    writeMockClaude(`#!/usr/bin/env bash\necho "MOCK_RAN=yes"\nexit 5\n`);
+    let status = -1;
+    let stdout = '';
+    let stderr = '';
+    try {
+      execSync(`bash "${LAUNCHER}"`, { cwd: nonGitDir, env: makeEnv(sid) });
+    } catch (e) {
+      const err = e as { status: number; stdout: Buffer; stderr: Buffer };
+      status = err.status;
+      stdout = err.stdout.toString();
+      stderr = err.stderr.toString();
+    }
+    rmSync(nonGitDir, { recursive: true, force: true });
+    expect(stdout).toContain('MOCK_RAN=yes');
+    expect(status).toBe(5);
+    expect(stderr).not.toContain('软链失败');
+  });
+
+  it('生产路径：未设 CLAUDE_PROJECTS_ROOT 时 root 由 CLAUDE_CONFIG_DIR 派生', () => {
+    const sid = 'aaaa0008-1111-2222-3333-444444444444';
+    const fakeHome = mkdtempSync(join(tmpdir(), 'claude-launch-home-'));
+    const acctDir = join(fakeHome, '.claude-acctX');
+    mkdirSync(join(acctDir, 'projects'), { recursive: true });
+    mkdirSync(join(fakeHome, '.claude'), { recursive: true });
+    // 不写 .active-account-dir → 账号解析段不覆盖，显式 CLAUDE_CONFIG_DIR 生效
+    const env = { ...makeEnv(sid), HOME: fakeHome, CLAUDE_CONFIG_DIR: acctDir };
+    delete env.CLAUDE_PROJECTS_ROOT;   // 关键：拔掉测试旋钮，逼它走生产派生
+    const out = execSync(`bash "${LAUNCHER}" --dry-run`, { cwd: mainRepo, env }).toString();
+    expect(out).toContain(join(acctDir, 'projects'));
   });
 });
