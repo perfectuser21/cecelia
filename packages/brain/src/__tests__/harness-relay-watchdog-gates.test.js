@@ -159,7 +159,7 @@ describe('A/B：generator_done 短路 + 超时兜底', () => {
     expect(updates.some((s) => /UPDATE tasks/.test(s) && /'completed'/.test(s))).toBe(true);
   });
 
-  it('8) M1 headed 分支 generator_done=true + session 消失 -> spawnFn 零调用（headed 短路）', async () => {
+  it('8) M1 headed 分支 generator_done=true + evaluator 已完成 + session 消失 → spawnFn 零调用（headed 短路）', async () => {
     const pool = { query: vi.fn().mockImplementation(async (sql) => {
       if (/DISTINCT ON \(initiative_id\)/.test(sql)) {
         return { rows: [{ initiative_id: TASK_ID, phase: 'planning', attempts: '1', deadline_at: new Date(Date.now() + 3600e3).toISOString(), pr_url: null, orchestrator_host: 'skill-relay-claude-headed', started_at: new Date(Date.now() - 3600e3).toISOString() }] };
@@ -167,6 +167,8 @@ describe('A/B：generator_done 短路 + 超时兜底', () => {
       if (/FROM tasks/.test(sql)) {
         return { rows: [{ id: TASK_ID, status: 'in_progress', title: 't', pr_url: null, payload: { orchestrator: 'skill-relay', generator_done: true } }] };
       }
+      // evaluator 已完成：_hasEvaluatorGate 返回 true
+      if (/FROM initiative_run_events/.test(sql)) return { rows: [{ x: 1 }] };
       return { rows: [] };
     })};
     const execFn = vi.fn((cmd) => {
@@ -178,6 +180,44 @@ describe('A/B：generator_done 短路 + 超时兜底', () => {
     const r = await resumeStalledRelayRuns({ pool, execFn, spawnFn });
     expect(spawnFn).not.toHaveBeenCalled();
     expect(r.resumed).toBe(0);
+  });
+
+  it('11) headless: generator_done=true + evaluator 未完成 + 容器消失 → 允许重点火（evaluator gate 修复）', async () => {
+    // failing test: 当前代码 generator_done=true → 跳过重点火，evaluator 永远不跑
+    // fix 后：evaluator 未完成时应允许重点火让 controller 从 Step 4 恢复
+    const deps = makeDeps({
+      generatorDone: true,
+      generatorDoneAt: Date.now(),
+      prUrl: null,
+      evaluatorGate: false, // evaluator 未完成
+    });
+    const r = await resumeStalledRelayRuns(deps);
+    expect(deps.spawnFn).toHaveBeenCalled();
+    expect(r.resumed).toBe(1);
+  });
+
+  it('12) headed: generator_done=true + evaluator 未完成 + session 消失 → 允许重点火（evaluator gate 修复）', async () => {
+    // failing test: 当前 headed 短路逻辑不检查 evaluator，session 死后 evaluator 永远不跑
+    // fix 后：evaluator 未完成时应重点火让 controller 从 Step 4 恢复
+    const pool = { query: vi.fn().mockImplementation(async (sql) => {
+      if (/DISTINCT ON \(initiative_id\)/.test(sql)) {
+        return { rows: [{ initiative_id: TASK_ID, phase: 'planning', attempts: '1', deadline_at: new Date(Date.now() + 3600e3).toISOString(), pr_url: null, orchestrator_host: 'skill-relay-claude-headed', started_at: new Date().toISOString() }] };
+      }
+      if (/FROM tasks/.test(sql)) {
+        return { rows: [{ id: TASK_ID, status: 'in_progress', title: 't', pr_url: null, payload: { orchestrator: 'skill-relay', generator_done: true } }] };
+      }
+      // evaluator 未完成：_hasEvaluatorGate 返回 false
+      if (/FROM initiative_run_events/.test(sql)) return { rows: [] };
+      return { rows: [] };
+    })};
+    const execFn = vi.fn((cmd) => {
+      if (/tmux has-session/.test(cmd)) throw new Error('exit status 1: session not found');
+      return '';
+    });
+    const spawnFn = vi.fn().mockResolvedValue({ ok: true });
+    const r = await resumeStalledRelayRuns({ pool, execFn, spawnFn });
+    expect(spawnFn).toHaveBeenCalled();
+    expect(r.resumed).toBe(1);
   });
 
   it('9) M2 generator_done=true 但 generator_done_at 缺失 -> 回退 run.started_at 判超时标 failed', async () => {
