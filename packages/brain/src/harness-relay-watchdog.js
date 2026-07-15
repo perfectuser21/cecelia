@@ -69,14 +69,55 @@ function shortId(id) {
 }
 
 /**
+ * 路径→仓库名静态映射（容器内宿主机绝对路径）。
+ * 可被 HARNESS_REPO_MAP 环境变量（JSON 对象）覆盖。
+ * key: 路径片段（basename 或路径包含检测），value: owner/repo
+ */
+const DEFAULT_REPO_MAP = {
+  cecelia: 'perfectuser21/cecelia',
+  zenithjoy: 'perfectuser21/zenithjoy-workspace',
+};
+
+function _buildRepoMap() {
+  const raw = process.env.HARNESS_REPO_MAP;
+  if (!raw) return DEFAULT_REPO_MAP;
+  try {
+    const parsed = JSON.parse(raw);
+    if (parsed && typeof parsed === 'object') return { ...DEFAULT_REPO_MAP, ...parsed };
+  } catch { /* JSON 解析失败 → 忽略 env，用默认 */ }
+  return DEFAULT_REPO_MAP;
+}
+
+/**
  * 从 payload.base_repo 解析 owner/repo。
- * 只放行 https://github.com/<owner>/<repo>[.git][/]，owner/repo 限 [\w.-]
- * （防 shell 注入——结果会拼进 execFn 命令）。其余返回 null。
+ * 优先放行 https://github.com/<owner>/<repo>[.git][/]，owner/repo 限 [\w.-]
+ * （防 shell 注入——结果会拼进 execFn 命令）。
+ * 其次尝试路径→仓库名静态映射（basename 或路径包含检测）：
+ *   - /Users/administrator/perfect21/cecelia → perfectuser21/cecelia
+ *   - /workspace → perfectuser21/cecelia（/workspace 等同 cecelia）
+ *   - 可被 HARNESS_REPO_MAP env（JSON）覆盖
+ * 未知路径 / null 输入返回 null。
  */
 export function _parseBaseRepo(baseRepo) {
   if (typeof baseRepo !== 'string') return null;
+  // 1. URL 格式优先
   const m = baseRepo.match(/^https:\/\/github\.com\/([\w.-]+\/[\w.-]+?)(?:\.git)?\/?$/);
-  return m ? m[1] : null;
+  if (m) return m[1];
+  // 2. 路径映射：先尝试 env 覆盖 map，再尝试 basename，最后尝试路径包含检测
+  const repoMap = _buildRepoMap();
+  // 2a. 精确 key 匹配（env 覆盖用例，如 'custom/path'）
+  if (repoMap[baseRepo]) return repoMap[baseRepo];
+  // 2b. basename 匹配（/Users/.../cecelia → basename=cecelia）
+  const base = baseRepo.split('/').filter(Boolean).pop() || '';
+  if (base && repoMap[base]) return repoMap[base];
+  // 2c. 路径包含匹配（/workspace → 包含 'workspace'，特殊映射到 cecelia）
+  if (baseRepo === '/workspace' || baseRepo.endsWith('/workspace')) return repoMap['cecelia'] || null;
+  // 2d. 路径片段包含检测（降序长度优先，防短 key 误匹配）
+  const keys = Object.keys(repoMap).sort((a, b) => b.length - a.length);
+  for (const key of keys) {
+    if (baseRepo.includes(key)) return repoMap[key];
+  }
+  return null;
 }
 
 /**
@@ -371,6 +412,9 @@ export async function resumeStalledRelayRuns(deps = {}) {
           continue;
         }
         if (discovered && discovered.state === 'MERGED') {
+          if (generatorDone) {
+            console.log(`[relay-watchdog] discovered_merged_via_fallback initiative=${run.initiative_id} pr=${discovered.url}`);
+          }
           await _finalizeMergedRun(dbPool, run.initiative_id, discovered.url, out, { setPrUrl: true });
           continue;
         }
@@ -415,7 +459,39 @@ export async function resumeStalledRelayRuns(deps = {}) {
       }
 
       // generator 已完成 → 跳过重点火（防重复 PR）。未到期的超时兜底放行到此，PR 检查已跑过。
+      // 修复（刀A2）：pr_url 为空时，先从 GitHub 反查 PR——relay session 不回写 pr_url，
+      // generator_done=true 时直接 continue 会导致 _discoverPrFromGithub 永不被调用，
+      // MERGED PR 无法自动收口，OPEN PR 无法回写。
       if (generatorDone) {
+        if (!effectivePrUrl) {
+          // pr_url 三处全空 → 先反查 GitHub，再 continue（不 spawn）
+          let discovered = null;
+          try {
+            discovered = _discoverPrFromGithub(task, short, execFn);
+          } catch (err) {
+            console.warn(`[relay-watchdog] generator_done 反查失败，initiative=${run.initiative_id} 保守跳过: ${err.message}`);
+            continue;
+          }
+          if (discovered && discovered.state === 'MERGED') {
+            console.log(`[relay-watchdog] discovered_merged_via_fallback initiative=${run.initiative_id} pr=${discovered.url}`);
+            await _finalizeMergedRun(dbPool, run.initiative_id, discovered.url, out, { setPrUrl: true });
+            continue;
+          }
+          if (discovered && discovered.state === 'OPEN') {
+            await dbPool.query(
+              `UPDATE initiative_runs SET pr_url=$2
+                WHERE initiative_id=$1 AND orchestrator_version='v2' AND phase NOT IN ('done','failed')`,
+              [run.initiative_id, discovered.url]
+            );
+            await dbPool.query(
+              `UPDATE tasks SET pr_url=$2 WHERE id=$1 AND pr_url IS NULL`,
+              [run.initiative_id, discovered.url]
+            );
+            console.log(`[relay-watchdog] generator_done 反查 OPEN → 回写 pr_url 跳过重点火 initiative=${run.initiative_id} pr=${discovered.url}`);
+            continue;
+          }
+          // 无命中 → 保持原 continue（不 spawn）
+        }
         console.log(`[relay-watchdog] generator_done=true → 跳过重点火 initiative=${run.initiative_id}`);
         continue;
       }
