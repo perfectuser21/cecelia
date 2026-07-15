@@ -10,12 +10,18 @@
  *   7. MAX_ATTEMPTS 边界（恰好 3 次）
  *   8. SPAWN_V2_ENABLED=false → 跳过所有外层 middleware
  *   9. SPAWN_V2_ENABLED=true → 外层 4 middleware 按 cost-cap → spawn-pre → logging → billing 顺序调用
+ *  10. target_environment=mac_web → 路由到 executeOnHost，不走 executeInDocker
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 const mockExecuteInDocker = vi.fn();
 vi.mock('../../docker-executor.js', () => ({
   executeInDocker: (...args) => mockExecuteInDocker(...args),
+}));
+
+const mockExecuteOnHost = vi.fn();
+vi.mock('../host-executor.js', () => ({
+  executeOnHost: (...args) => mockExecuteOnHost(...args),
 }));
 
 const mockShouldRetry = vi.fn();
@@ -81,6 +87,7 @@ function transient429() {
 describe('spawn() attempt-loop', () => {
   beforeEach(() => {
     mockExecuteInDocker.mockReset();
+    mockExecuteOnHost.mockReset();
     mockShouldRetry.mockReset();
     mockCheckCostCap.mockReset();
     mockPrepare.mockReset();
@@ -198,6 +205,18 @@ describe('spawn() attempt-loop', () => {
     } finally {
       delete process.env.SPAWN_V2_ENABLED;
     }
+  });
+
+  it('case 10: target_environment=mac_web → 路由到 executeOnHost，不走 executeInDocker', async () => {
+    const { spawn } = await import('../spawn.js');
+    mockExecuteOnHost.mockResolvedValueOnce(successResult());
+    const result = await spawn({
+      task: { id: 't10', task_type: 'dev', payload: { target_environment: 'mac_web' } },
+      prompt: 'headed test',
+    });
+    expect(mockExecuteOnHost).toHaveBeenCalledTimes(1);
+    expect(mockExecuteInDocker).not.toHaveBeenCalled();
+    expect(result.exit_code).toBe(0);
   });
 
   it('case 9: SPAWN_V2_ENABLED=true 时外层 middleware 按声明顺序调用 (cost-cap → spawn-pre → logging → billing)', async () => {

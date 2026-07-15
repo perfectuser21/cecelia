@@ -46,6 +46,7 @@
  * @returns {Promise<{ exit_code, stdout, stderr, duration_ms, ... }>}
  */
 import { executeInDocker } from '../docker-executor.js';
+import { executeOnHost } from './host-executor.js';
 import { classifyFailure, shouldRetry } from './middleware/retry-circuit.js';
 import { checkCostCap } from './middleware/cost-cap.js';
 import { preparePromptAndCidfile } from './middleware/spawn-pre.js';
@@ -60,6 +61,12 @@ function isSpawnV2Enabled() {
 }
 
 async function attemptLoop(opts) {
+  // mac_web 任务：Claude 必须在宿主 Mac 上跑（真实浏览器 + localhost:5174）。
+  // Brain 在容器内，直接 spawn('claude') → ENOENT。host-executor 处理 SSH 逃逸。
+  if (opts.task?.payload?.target_environment === 'mac_web') {
+    return executeOnHost(opts);
+  }
+
   let lastResult = null;
   for (let attempt = 0; attempt < SPAWN_MAX_ATTEMPTS; attempt++) {
     const result = await executeInDocker(opts);
