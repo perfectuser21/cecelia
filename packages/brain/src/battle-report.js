@@ -60,7 +60,7 @@ export async function buildBattleReportData(pool, now = new Date()) {
     `SELECT pr_title, pr_url, merged_at
      FROM dev_records
      WHERE merged_at >= NOW() - interval '24 hours'
-       AND (payload->>'canary') IS DISTINCT FROM 'true'
+       AND is_canary IS DISTINCT FROM TRUE
      ORDER BY merged_at DESC`
   );
 

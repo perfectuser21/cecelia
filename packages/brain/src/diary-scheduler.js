@@ -161,7 +161,7 @@ export async function generateDailyDiaryIfNeeded(pool) {
     // 并发查询所有数据
     const [prsResult, decisionsResult, tasksResult, krProgress, failedTasks, lineLedgers] = await Promise.all([
       pool.query(
-        `SELECT count(*) FROM dev_records WHERE merged_at::date = $1 AND (payload->>'canary') IS DISTINCT FROM 'true'`,
+        `SELECT count(*) FROM dev_records WHERE merged_at::date = $1 AND is_canary IS DISTINCT FROM TRUE`,
         [today]
       ),
       pool.query(

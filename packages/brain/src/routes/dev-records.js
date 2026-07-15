@@ -18,7 +18,7 @@ router.get('/', async (req, res) => {
     const limit = Math.min(parseInt(req.query.limit) || 50, 200);
     const offset = parseInt(req.query.offset) || 0;
     const params = [limit, offset];
-    const conditions = [`(payload->>'canary') IS DISTINCT FROM 'true'`];
+    const conditions = [`is_canary IS DISTINCT FROM TRUE`];
 
     if (req.query.since) {
       params.push(req.query.since);

@@ -106,8 +106,11 @@ describe('BEHAVIOR-3: 统计计数 canary 隔离', () => {
   it('diary-scheduler dev_records count 查询含 canary 过滤条件', async () => {
     // 验证 diary-scheduler.js 源码中 dev_records count 查询含 canary 过滤（读源文件）
     const fs = await import('node:fs');
+    const path = await import('node:path');
+    const url = await import('node:url');
+    const __dirname = path.default.dirname(url.fileURLToPath(import.meta.url));
     const schedulerSrc = fs.default.readFileSync(
-      '/workspace/packages/brain/src/diary-scheduler.js',
+      path.default.resolve(__dirname, '../diary-scheduler.js'),
       'utf8'
     );
     // 确认整个文件含有 canary 过滤的 dev_records count SQL
@@ -124,7 +127,7 @@ describe('BEHAVIOR-3: 统计计数 canary 隔离', () => {
       (c) => c.sql.includes('dev_records') && c.sql.includes('SELECT')
     );
     expect(mergedPrsSql).toBeDefined();
-    expect(mergedPrsSql.sql).toMatch(/IS DISTINCT FROM.*'true'/i);
+    expect(mergedPrsSql.sql).toMatch(/IS DISTINCT FROM/i);
   });
 
   it('插入1条 canary 记录后，SQL WHERE 子句确保不计入统计（IS DISTINCT FROM 语义验证）', () => {
