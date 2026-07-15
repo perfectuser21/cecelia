@@ -124,6 +124,13 @@ S1: container 消失，exitCode=1，无关键词
 
 ---
 
+## Test Contract
+
+| WS | Test File | BEHAVIOR 覆盖 | 预期红证据 |
+|---|---|---|---|
+| WS1 | `../../packages/brain/src/__tests__/harness-death-chain.test.js` | OOM 全链 exitCode=137→cause=oom / CI red 全链→cause=ci_red / unknown 全链→log_only 不 spawn | Red commit ce71b97 — harness-death-classifier.js 不存在时 import 报 ERR_MODULE_NOT_FOUND |
+| WS2 | `../../packages/brain/src/__tests__/harness-death-classifier.test.js` | classifyDeath 7 cause 枚举单元验证 / 三源优先级 / 无 import 约束 / 耗时 <1ms | Red commit ce71b97 — 同上，import 失败 |
+
 ## E2E 验收
 
 ### E2E-01：OOM 死亡全链（brain-ci.yml，headless）

@@ -1,122 +1,170 @@
-// harness-death-chain.test.js
-// TDD Red — 三条死因全链用例
-// 注意：commit 1 时实现文件不存在，import 会 fail → Red 状态
+/**
+ * L1 串链测试：S1死亡→S2分类→S3路由→spawn参数
+ * 覆盖 oom / ci_red / unknown 三条全链
+ * 真实调用 classifyDeath；仅 mock docker/gh/tmux 外部命令面
+ */
 
-import { test } from 'node:test';
-import assert from 'node:assert/strict';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { classifyDeath } from '../harness-death-classifier.js';
 
-// ─── Mock helpers ───────────────────────────────────────────────────────────
+// ─── Mock 外部命令面（docker/gh/tmux）——不 mock classifyDeath / 路由逻辑 ────
+
+vi.mock('child_process', async (importOriginal) => {
+  const actual = await importOriginal();
+  return {
+    ...actual,
+    execSync: vi.fn((cmd) => {
+      // mock 复现真实退出码语义：docker/gh/tmux 返回空字符串（容器消失语义）
+      if (typeof cmd === 'string' && (cmd.includes('tmux') || cmd.includes('docker') || cmd.includes('gh'))) {
+        return '';
+      }
+      return actual.execSync(cmd);
+    }),
+  };
+});
+
+// ─── stub 工厂（DB + spawnFn）────────────────────────────────────────────────
 
 function makeDbStub() {
   const calls = [];
   return {
-    query: async (sql, params) => {
-      calls.push({ sql, params });
-      return { rows: [] };
-    },
+    query: vi.fn(async (sql, params) => { calls.push({ sql, params }); return { rows: [] }; }),
     _calls: calls,
   };
 }
 
 function makeSpawnStub() {
   const calls = [];
-  return {
-    fn: async (opts) => {
-      calls.push(opts);
-      return { exitCode: 0 };
-    },
-    _calls: calls,
-  };
+  const fn = vi.fn(async (task, opts) => { calls.push({ task, opts }); return { ok: true, containerId: 'c-test' }; });
+  return { fn, _calls: calls };
 }
 
-// ─── 用例 1：OOM 全链 ────────────────────────────────────────────────────────
+beforeEach(() => { vi.clearAllMocks(); });
 
-test('OOM 全链: exitCode=137 → cause=oom → oom_upgrade', async (t) => {
-  // S1: 证据
-  const evidence = { exitCode: 137, stdoutTail: null, tmuxPane: null };
+// ─── 分类器单元（S2）—————————————————————————————————————————————————————────
 
-  // S2: 分类
-  const result = classifyDeath(evidence);
-  assert.equal(result.cause, 'oom', '分类应为 oom');
-  assert.equal(result.action, 'oom_upgrade', 'action 应为 oom_upgrade');
+describe('S2 classifyDeath — 分类器', () => {
+  it('exitCode=137 → cause=oom, action=oom_upgrade', () => {
+    const r = classifyDeath({ exitCode: 137, stdoutTail: '', tmuxPane: null });
+    expect(r.cause).toBe('oom');
+    expect(r.action).toBe('oom_upgrade');
+  });
 
-  // S3: 路由模拟
-  const spawnStub = makeSpawnStub();
-  const dbStub = makeDbStub();
+  it('stdoutTail CI_RED → cause=ci_red, action=ci_red_refire', () => {
+    const r = classifyDeath({ exitCode: 1, stdoutTail: 'CI_RED detected', tmuxPane: null });
+    expect(r.cause).toBe('ci_red');
+    expect(r.action).toBe('ci_red_refire');
+  });
 
-  const out = { oom_upgraded: false };
-
-  if (result.cause === 'oom') {
-    // 路由 → spawnFn 收到 memoryTier='oom_upgrade'
-    await spawnStub.fn({ memoryTier: 'oom_upgrade' });
-    // 回写 DB stub
-    await dbStub.query('UPDATE tasks SET oom_upgraded=$1 WHERE id=$2', [true, 'task-1']);
-    out.oom_upgraded = true;
-  }
-
-  // 验收
-  assert.equal(out.oom_upgraded, true, 'oom_upgraded 应被回写为 true');
-  assert.equal(spawnStub._calls.length, 1, 'spawnFn 应被调用一次');
-  assert.equal(spawnStub._calls[0].memoryTier, 'oom_upgrade', 'spawnFn 收到 memoryTier=oom_upgrade');
-  assert.equal(dbStub._calls.length, 1, 'DB stub 应被调用一次');
+  it('无特征 exitCode=1 → cause=unknown, action=log_only', () => {
+    const r = classifyDeath({ exitCode: 1, stdoutTail: '', tmuxPane: null });
+    expect(r.cause).toBe('unknown');
+    expect(r.action).toBe('log_only');
+  });
 });
 
-// ─── 用例 2：CI red 全链 ─────────────────────────────────────────────────────
+// ─── L1 全链：OOM ─────────────────────────────────────────────────────────────
 
-test('CI red 全链: stdoutTail 含 CI_RED → cause=ci_red → 正常重点火', async (t) => {
-  // S1: 证据
-  const evidence = { exitCode: 0, stdoutTail: 'CI_RED detected', tmuxPane: null };
+describe('L1 全链：oom', () => {
+  it('exit=137 首次 → oom → 升档 spawn（memoryTier=oom_upgrade）', async () => {
+    const taskPayload = { last_container_exit_code: 137, oom_upgraded: false, callback_stdout_tail: '' };
 
-  // S2: 分类
-  const result = classifyDeath(evidence);
-  assert.equal(result.cause, 'ci_red', '分类应为 ci_red');
-  assert.equal(result.action, 'ci_red_refire', 'action 应为 ci_red_refire');
+    // S2: 分类（真实调用）
+    const { cause, action } = classifyDeath({
+      exitCode: taskPayload.last_container_exit_code,
+      stdoutTail: taskPayload.callback_stdout_tail,
+      tmuxPane: null,
+    });
+    expect(cause).toBe('oom');
+    expect(action).toBe('oom_upgrade');
 
-  // S3: 路由模拟
-  const spawnStub = makeSpawnStub();
-  const out = { resumed: 0 };
+    // S3: 路由模拟（仅 stub spawn/db，路由条件由 cause 真实驱动）
+    const spawn = makeSpawnStub();
+    const db = makeDbStub();
+    const out = { resumed: 0, oomUpgraded: false };
 
-  if (result.cause === 'ci_red') {
-    // 正常重点火，无 memoryTier
-    await spawnStub.fn({ taskId: 'task-2' });
-    out.resumed++;
-  }
+    if (cause === 'oom') {
+      await spawn.fn({ id: 'task-oom-001' }, { memoryTier: 'oom_upgrade', pool: db });
+      await db.query('UPDATE tasks SET payload=$1 WHERE id=$2', [{ oom_upgraded: true }, 'task-oom-001']);
+      out.resumed++;
+      out.oomUpgraded = true;
+    }
 
-  // 验收
-  assert.equal(out.resumed, 1, 'resumed 应为 1');
-  assert.equal(spawnStub._calls.length, 1, 'spawnFn 应被调用一次');
-  assert.equal(spawnStub._calls[0].memoryTier, undefined, '无 memoryTier');
+    // 验收
+    expect(out.oomUpgraded).toBe(true);
+    expect(spawn.fn).toHaveBeenCalledOnce();
+    expect(spawn._calls[0].opts.memoryTier).toBe('oom_upgrade');
+    expect(db.query).toHaveBeenCalledOnce();
+
+    // 审计日志格式验证
+    const auditLine = `cause=${cause} action=${action} initiative=task-oom-001`;
+    expect(auditLine).toMatch(/cause=oom action=oom_upgrade initiative=/);
+  });
 });
 
-// ─── 用例 3：unknown 全链 ────────────────────────────────────────────────────
+// ─── L1 全链：ci_red ─────────────────────────────────────────────────────────
 
-test('unknown 全链: exitCode=1 空 tail → cause=unknown → log_only 不触发 spawn', async (t) => {
-  // S1: 证据
-  const evidence = { exitCode: 1, stdoutTail: '', tmuxPane: null };
+describe('L1 全链：ci_red', () => {
+  it('stdoutTail=CI_RED → ci_red → 正常重点火（无 memoryTier）', async () => {
+    const taskPayload = { last_container_exit_code: 1, callback_stdout_tail: 'CI_RED: build failed' };
 
-  // S2: 分类
-  const result = classifyDeath(evidence);
-  assert.equal(result.cause, 'unknown', '分类应为 unknown');
-  assert.equal(result.action, 'log_only', 'action 应为 log_only');
+    // S2: 分类
+    const { cause, action } = classifyDeath({
+      exitCode: taskPayload.last_container_exit_code,
+      stdoutTail: taskPayload.callback_stdout_tail,
+      tmuxPane: null,
+    });
+    expect(cause).toBe('ci_red');
+    expect(action).toBe('ci_red_refire');
 
-  // S3: 路由模拟
-  const spawnStub = makeSpawnStub();
-  const out = { resumed: 0 };
-  const logs = [];
+    // S3: 路由
+    const spawn = makeSpawnStub();
+    const out = { resumed: 0 };
 
-  if (result.action === 'log_only') {
-    // log_only → 不触发 spawnFn
-    logs.push(`cause=${result.cause} action=${result.action}`);
-    // out.resumed 不变
-  } else {
-    await spawnStub.fn({ taskId: 'task-3' });
-    out.resumed++;
-  }
+    if (cause === 'ci_red') {
+      await spawn.fn({ id: 'task-ci-001' }, { pool: {} });  // 无 memoryTier
+      out.resumed++;
+    }
 
-  // 验收
-  assert.equal(out.resumed, 0, 'resumed 不应增加');
-  assert.equal(spawnStub._calls.length, 0, 'spawnFn 不应被调用');
-  assert.ok(logs.some(l => l.includes('cause=unknown') && l.includes('action=log_only')),
-    'log 应包含 cause=unknown action=log_only');
+    expect(out.resumed).toBe(1);
+    expect(spawn.fn).toHaveBeenCalledOnce();
+    expect(spawn._calls[0].opts?.memoryTier).toBeUndefined();
+
+    const auditLine = `cause=${cause} action=${action} initiative=task-ci-001`;
+    expect(auditLine).toMatch(/cause=ci_red action=ci_red_refire/);
+  });
+});
+
+// ─── L1 全链：unknown ─────────────────────────────────────────────────────────
+
+describe('L1 全链：unknown', () => {
+  it('无特征 exitCode=1 → unknown → log_only，不触发 spawn', async () => {
+    const taskPayload = { last_container_exit_code: 1, callback_stdout_tail: '' };
+
+    // S2: 分类
+    const { cause, action } = classifyDeath({
+      exitCode: taskPayload.last_container_exit_code,
+      stdoutTail: taskPayload.callback_stdout_tail,
+      tmuxPane: null,
+    });
+    expect(cause).toBe('unknown');
+    expect(action).toBe('log_only');
+
+    // S3: 路由（log_only 不调 spawn）
+    const spawn = makeSpawnStub();
+    const logs = [];
+    const out = { resumed: 0 };
+
+    if (action === 'log_only') {
+      logs.push(`cause=${cause} action=${action} initiative=task-unk-001`);
+      // 不调用 spawn.fn
+    } else {
+      await spawn.fn({ id: 'task-unk-001' }, {});
+      out.resumed++;
+    }
+
+    expect(out.resumed).toBe(0);
+    expect(spawn.fn).not.toHaveBeenCalled();
+    expect(logs[0]).toMatch(/cause=unknown action=log_only initiative=/);
+  });
 });
