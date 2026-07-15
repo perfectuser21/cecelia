@@ -114,6 +114,16 @@ throw err;
 
 ---
 
+## Test Contract
+
+| 功能 | Test File | BEHAVIOR 覆盖 | 预期红证据 |
+|---|---|---|---|
+| execTolerant 兜底路径（GP-A/B/C）+ 回归保护 | `packages/brain/src/__tests__/harness-relay-watchdog.test.js` | GP-A: gh pr checks 非零退出+err.stdout含FAILURE → execTolerant兜底 → ciStatus=fail → spawnFn调用一次、GP-B: 非零退出+err.stdout全pending → ciStatus=pending → spawnFn不调用、GP-C: 非零退出+无stdout → execTolerant rethrow → 外层catch保守跳过 → spawnFn不调用 | → GP-A fail（spawnFn expected called once but got 0 times），禁用execTolerant stdout兜底后复现 |
+
+**gate-allow 记录**：无需豁免，全部命令按"mock断言/行为验证/负向测试捕获"标准写法。
+
+---
+
 ## E2E 验收
 
 target_environment: local_api（vitest 单测）
