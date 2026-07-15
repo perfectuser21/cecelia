@@ -68,8 +68,14 @@ _is_registered_worktree() {
     git -C "$main_repo" worktree list --porcelain 2>/dev/null | grep -Fqx "worktree $phys"
 }
 
-# Claude Code projects key：绝对路径中 / 和 . 逐字符替换为 -（纯 bash，免 fork）
-_path_to_project_key() { printf '%s' "${1//[\/.]/-}"; }
+# Claude Code projects key：绝对路径中**每个非字母数字字符**各替换为一个 -，
+# 大小写与数字原样保留，逐字符替换不合并连续分隔符（纯 bash，免 fork）。
+# 探针实证（2026-07-15）：
+#   cwd /private/tmp/keyprobe/key_Probe.Test A/sub_dir
+#   → -private-tmp-keyprobe-key-Probe-Test-A-sub-dir
+# 旧实现只换 / 和 .，路径一旦含 _ / 空格，链名与 Claude 真实 key 对不上 → 链指空，
+# 症状与"会话丢失"完全一致且极难归因。
+_path_to_project_key() { printf '%s' "${1//[^a-zA-Z0-9]/-}"; }
 
 AUTO_WORKTREE=0
 if ! _is_headless && [[ "${CECELIA_NO_AUTO_WORKTREE:-0}" != "1" ]] && _in_main_repo_worktree; then
