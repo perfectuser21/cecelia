@@ -214,3 +214,4 @@ N/A（纯逻辑修复，无性能 / 可用性 NFR）
 
 journey_type: bug_fix
 target_environment: local_api
+status: completed (merged 2026-07-15T01:48:23Z, pr=#3940)
