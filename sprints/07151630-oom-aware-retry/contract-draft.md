@@ -145,11 +145,9 @@ cd /workspace && npx vitest run packages/brain/src/__tests__/harness-relay-watch
 
 ## Test Contract
 
-| BEHAVIOR | Test File | Test Name Pattern |
-|----------|-----------|-------------------|
-| BEHAVIOR-1 exit=137 首次升档 | packages/brain/src/__tests__/oom-aware-retry.test.js | GP1 |
-| BEHAVIOR-2 oom_wall 禁止 spawn | packages/brain/src/__tests__/oom-aware-retry.test.js | GP2 |
-| BEHAVIOR-3 callback 落库 exit_code | 手工集成验收（E2E bash）| N/A |
-| BEHAVIOR-4 oom_wall 在 cap 前短路 | packages/brain/src/__tests__/oom-aware-retry.test.js | attempts=0 |
-| BEHAVIOR-5 exit=0/1/null 回归 | packages/brain/src/__tests__/harness-relay-watchdog.test.js | 既有测试 |
-| BEHAVIOR-6 日志三态 | packages/brain/src/__tests__/oom-aware-retry.test.js | 日志三态 |
+| WS | Test File | BEHAVIOR 覆盖 | 预期红证据 |
+|----|-----------|--------------|-----------|
+| B1 | `../../packages/brain/src/__tests__/oom-aware-retry.test.js` | `oom_upgrade 标记` | harness-relay-watchdog.js 尚无 OOM 升档分支 |
+| B2 | `../../packages/brain/src/__tests__/oom-aware-retry.test.js` | `spawnFn 未被调用` | watchdog 尚无 oom_wall 短路路径 |
+| B4 | `../../packages/brain/src/__tests__/oom-aware-retry.test.js` | `attempts=0` | cap 检查在 OOM 分支之前，无法短路 |
+| B6 | `../../packages/brain/src/__tests__/oom-aware-retry.test.js` | `resume_oom_upgraded` | 日志尚无三态区分 |
