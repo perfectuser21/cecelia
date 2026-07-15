@@ -546,7 +546,7 @@ export async function resumeStalledRelayRuns(deps = {}) {
           const { resolveAccount } = await import('./spawn/middleware/account-rotation.js');
           const { markAuthFailure } = await import('./account-usage.js');
           let barkFn = () => {};
-          try { barkFn = (await import('./notifier.js')).sendBark ?? barkFn; } catch (_) {}
+          try { barkFn = (await import('./notifier.js')).sendBark ?? barkFn; } catch { /* notifier 不可用，用默认空函数 */ }
           await handleAuth(task, {
             cause: classified.cause,
             spawnFn,

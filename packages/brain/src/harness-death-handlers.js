@@ -70,7 +70,7 @@ export async function handleAuth(task, {
  */
 export async function handleRateLimit(task, {
   cause,
-  spawnFn,
+  spawnFn: _spawnFn,
   pool,
 }) {
   const retryAfterTs = task.payload?.retry_after_ts;
@@ -105,7 +105,7 @@ export function shouldSkipDeferredTask(task) {
 export async function handleGreenWaitingMerge(task, {
   cause,
   spawnFn,
-  checkPrStatusFn = null,
+  checkPrStatusFn: _checkPrStatusFn = null,
   pool,
 }) {
   const prUrl = task.payload?.pr_url;

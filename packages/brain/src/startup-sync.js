@@ -21,7 +21,7 @@ import { classifyDeath } from './harness-death-classifier.js';
 export async function scanOrphanedRelayTasks({
   pool,
   spawnFn,
-  execFn = null,
+  execFn: _execFn = null,
   classifyFn = classifyDeath,
 } = {}) {
   // 查所有 in_progress 且 run 未完成的 skill-relay v2 任务
