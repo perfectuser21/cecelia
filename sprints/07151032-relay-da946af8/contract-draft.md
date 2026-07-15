@@ -195,6 +195,14 @@ echo "=== 全部验收通过 ==="
 
 ---
 
+## Test Contract
+
+| Workstream | Test File | BEHAVIOR 覆盖 | 预期红证据 |
+|------------|-----------|--------------|----------|
+| WS1 | `../../tests/regression/relay-da946af8/relay-smoke-executor.contract.test.js` | B6/B6-env/B6-default/B6-coexist | Red commit 07b456ff (executor 字段缺失致测试失败) |
+
+---
+
 ## 未覆盖真实链路清单
 
 （本合同无 mock 豁免，N/A）
