@@ -1,0 +1,19 @@
+{
+  "verdict": "PASS",
+  "task_id": "b5162377-4012-424a-ba2f-0b33003eb602",
+  "sprint_dir": "sprints/07151530-watchdog-ghchecks-exitcode",
+  "pr": "https://github.com/perfectuser21/cecelia/pull/3986",
+  "pr_head_sha": "f5a5c73a616810948de4853646b0a5f9cd94d954",
+  "behavior_tests": [
+    {"id": "GP-A", "name": "resume_ci_red", "result": "PASS", "exit_code": 0},
+    {"id": "GP-B", "name": "wait_ci_running", "result": "PASS", "exit_code": 0},
+    {"id": "GP-C", "name": "skip_query_failure", "result": "PASS", "exit_code": 0},
+    {"id": "GP-R", "name": "regression_46_tests", "result": "PASS", "exit_code": 0},
+    {"id": "GP-E", "name": "execTolerant_exists_line30_called_line371", "result": "PASS", "exit_code": 0}
+  ],
+  "unverifiable": [],
+  "artifact_gate": "PASS",
+  "contract_gate": "PASS",
+  "double_gate": "PASS",
+  "notes": "所有 DoD [BEHAVIOR] 断言真跑均 PASS。CI 全绿（46/46 tests passed）。execTolerant 第 30/371 行确认。合同范围内无超出改动。"
+}

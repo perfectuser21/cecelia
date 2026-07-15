@@ -1,0 +1,46 @@
+{
+  "agentVerdict": "PASS",
+  "judge": {
+    "verdict": "PASS",
+    "coverage": [
+      {
+        "step": "Step1-Red",
+        "passed": true,
+        "evidence": "behavior_tests[0] exit_code=1, log_tail 显示 'FAIL  ... GP-A: resume_ci_red ... AssertionError: expected \"spy\" to be called once, but got 0 times' 和 'Test Files  1 failed (1)'"
+      },
+      {
+        "step": "Step2-Green",
+        "passed": true,
+        "evidence": "behavior_tests[1] exit_code=0, log_tail 显示 'Test Files  1 passed (1)\\nTests  5 passed (5)'"
+      },
+      {
+        "step": "GP-A",
+        "passed": true,
+        "evidence": "behavior_tests[2] exit_code=0, log_tail 包含 'resume_ci_red initiative=...' 和 '✓ GP-A: ... spawnFn 调用一次'；同时 Step2-Green 全部5个测试通过"
+      },
+      {
+        "step": "GP-B",
+        "passed": true,
+        "evidence": "behavior_tests[3] exit_code=0, result=PASS；Step2-Green 全部5个测试通过；Step4 全套验收输出 51 tests passed"
+      },
+      {
+        "step": "GP-C",
+        "passed": true,
+        "evidence": "Step2-Green 全部5个测试通过（包括 GP-C）；Step4 全套验收输出 'Tests  51 passed (51)'，log_tail 含 'CI 状态查询失败'（通过间接推断）"
+      },
+      {
+        "step": "GP-R",
+        "passed": true,
+        "evidence": "Step4 命令同时运行新旧测试，输出 'Test Files  2 passed (2)\\nTests  51 passed (51)'，回归测试文件 harness-relay-watchdog.test.js 包含在内且无失败"
+      }
+    ],
+    "feedback": null
+  },
+  "coverageCheck": {
+    "ok": true,
+    "missing": [],
+    "failed": []
+  },
+  "goldenPathSteps": [],
+  "finalVerdict": "PASS"
+}
