@@ -489,6 +489,101 @@ describe('_finalizeMergedRun', () => {
   });
 });
 
+// ── 刀A5 — execTolerant 兜底路径（GP-A/GP-B/GP-C）────────────────────────────
+// 覆盖三条 Golden Path：
+//   GP-A (resume_ci_red)      — gh pr checks 非零退出 + err.stdout 含 FAILURE → 重点火
+//   GP-B (wait_ci_running)    — gh pr checks 非零退出 + err.stdout 全 pending → 等待不重点火
+//   GP-C (skip_query_failure) — gh pr checks 非零退出 + 无 stdout → rethrow → 保守跳过
+// Task: b5162377-4012-424a-ba2f-0b33003eb602
+
+describe('刀A5 — execTolerant 兜底路径（GP-A：resume_ci_red）', () => {
+  it('GP-A: gh pr checks 非零退出 + err.stdout 含 FAILURE JSON → execTolerant 兜底 → ciStatus=fail → spawnFn 调用一次', async () => {
+    const deps = makeDeps({ prUrl: PR_URL, prState: 'OPEN', mergeStateStatus: 'CLEAN' });
+    // 覆盖 execFn：让 gh pr checks 抛 err（携带 FAILURE stdout），其余命令正常
+    deps.execFn = vi.fn().mockImplementation((cmd) => {
+      if (/docker ps/.test(cmd)) return '';
+      if (/gh pr view/.test(cmd) && /mergeStateStatus/.test(cmd)) {
+        return JSON.stringify({ state: 'OPEN', mergeStateStatus: 'CLEAN' });
+      }
+      if (/gh pr view/.test(cmd)) {
+        return JSON.stringify({ state: 'OPEN' });
+      }
+      if (/gh pr checks/.test(cmd)) {
+        const err = new Error('Command failed: gh pr checks exit code 1');
+        err.stdout = JSON.stringify([{ name: 'brain-ci', state: 'FAILURE' }]);
+        err.stderr = '';
+        err.status = 1;
+        throw err;
+      }
+      return '';
+    });
+
+    const r = await resumeStalledRelayRuns(deps);
+
+    expect(deps.spawnFn).toHaveBeenCalledOnce();
+    expect(r.resumed).toBe(1);
+    const checksCalled = deps.execFn.mock.calls.some(([cmd]) => /gh pr checks/.test(cmd));
+    expect(checksCalled).toBe(true);
+  });
+});
+
+describe('刀A5 — execTolerant 兜底路径（GP-B：wait_ci_running）', () => {
+  it('GP-B: gh pr checks 非零退出 + err.stdout 全 pending JSON → execTolerant 兜底 → ciStatus=pending → spawnFn 不调用', async () => {
+    const deps = makeDeps({ prUrl: PR_URL, prState: 'OPEN', mergeStateStatus: 'CLEAN' });
+    deps.execFn = vi.fn().mockImplementation((cmd) => {
+      if (/docker ps/.test(cmd)) return '';
+      if (/gh pr view/.test(cmd) && /mergeStateStatus/.test(cmd)) {
+        return JSON.stringify({ state: 'OPEN', mergeStateStatus: 'CLEAN' });
+      }
+      if (/gh pr view/.test(cmd)) {
+        return JSON.stringify({ state: 'OPEN' });
+      }
+      if (/gh pr checks/.test(cmd)) {
+        const err = new Error('Command failed: gh pr checks exit code 8');
+        err.stdout = JSON.stringify([{ name: 'brain-ci', state: 'IN_PROGRESS' }]);
+        err.stderr = '';
+        err.status = 8;
+        throw err;
+      }
+      return '';
+    });
+
+    const r = await resumeStalledRelayRuns(deps);
+
+    expect(deps.spawnFn).not.toHaveBeenCalled();
+    expect(r.resumed).toBe(0);
+    const checksCalled = deps.execFn.mock.calls.some(([cmd]) => /gh pr checks/.test(cmd));
+    expect(checksCalled).toBe(true);
+  });
+});
+
+describe('刀A5 — execTolerant 兜底路径（GP-C：skip_query_failure）', () => {
+  it('GP-C: gh pr checks 非零退出 + 无 stdout 属性 → execTolerant rethrow → 外层 catch 保守跳过 → spawnFn 不调用', async () => {
+    const deps = makeDeps({ prUrl: PR_URL, prState: 'OPEN', mergeStateStatus: 'CLEAN' });
+    deps.execFn = vi.fn().mockImplementation((cmd) => {
+      if (/docker ps/.test(cmd)) return '';
+      if (/gh pr view/.test(cmd) && /mergeStateStatus/.test(cmd)) {
+        return JSON.stringify({ state: 'OPEN', mergeStateStatus: 'CLEAN' });
+      }
+      if (/gh pr view/.test(cmd)) {
+        return JSON.stringify({ state: 'OPEN' });
+      }
+      if (/gh pr checks/.test(cmd)) {
+        // 无 stdout：模拟真实网络/auth 失败，execTolerant 应 rethrow
+        const err = new Error('gh: authentication token not found');
+        err.stdout = '';
+        throw err;
+      }
+      return '';
+    });
+
+    const r = await resumeStalledRelayRuns(deps);
+
+    expect(deps.spawnFn).not.toHaveBeenCalled();
+    expect(r.resumed).toBe(0);
+  });
+});
+
 // ── 刀A2 — generator_done + pr_url 空 反查修复 ─────────────────────────────
 
 import { _parseBaseRepo } from '../harness-relay-watchdog.js';

@@ -205,12 +205,79 @@ export async function collectEvidence(ctx, deps = {}) {
   };
 }
 
+// ── brainResult 结构化压缩（修复整体头部截断误判问题） ──────────────────────
+/**
+ * compressBrainResult(brainResult) — 结构化压缩 .brain-result.json 证据。
+ *
+ * 修复 task ea20ba86：原 JSON.stringify(brainResult).slice(0,2000) 整体头部截断，
+ * 导致 behavior_tests 后排条目（index ≥ 1）对裁判完全不可见，引发误判 FAIL。
+ *
+ * 压缩规则：
+ *   - 顶层：verdict / exit_code / log_tail（截 500 字符）
+ *   - behavior_tests：逐条展开，每条 command（截 200）+ exit_code + log_tail（截 600）
+ *   - 条目上限：前 8 条，超出追加「另有 N 条已省略」
+ *   - 总预算：6000 字符
+ */
+export function compressBrainResult(brainResult) {
+  if (!brainResult) return '（无）';
+
+  const MAX_TOP_LOG = 500;
+  const MAX_CMD = 200;
+  const MAX_TEST_LOG = 600;
+  const MAX_ITEMS = 8;
+  const TRUNCATED_MARK = '…（已截断）';
+
+  const parts = [];
+
+  // 顶层字段
+  if (brainResult.verdict !== undefined) parts.push(`verdict: ${brainResult.verdict}`);
+  if (brainResult.exit_code !== undefined) parts.push(`exit_code: ${brainResult.exit_code}`);
+  if (brainResult.log_tail) {
+    const lt = String(brainResult.log_tail);
+    parts.push(`log_tail: ${lt.length > MAX_TOP_LOG ? lt.slice(0, MAX_TOP_LOG) + TRUNCATED_MARK : lt}`);
+  }
+
+  // behavior_tests 逐条展开
+  const tests = Array.isArray(brainResult.behavior_tests) ? brainResult.behavior_tests : [];
+  const shown = tests.slice(0, MAX_ITEMS);
+  const omitted = tests.length - shown.length;
+
+  shown.forEach((t, i) => {
+    const cmd = String(t.command || '');
+    const truncCmd = cmd.length > MAX_CMD ? cmd.slice(0, MAX_CMD) + TRUNCATED_MARK : cmd;
+    const lt = String(t.log_tail || '');
+    const truncLt = lt.length > MAX_TEST_LOG ? lt.slice(0, MAX_TEST_LOG) + TRUNCATED_MARK : lt;
+    parts.push(`[test-${i}] command: ${truncCmd} | exit_code: ${t.exit_code ?? ''} | log_tail: ${truncLt}`);
+  });
+
+  if (omitted > 0) {
+    parts.push(`另有 ${omitted} 条已省略`);
+  }
+
+  const result = parts.join('\n');
+  // 总预算 6000 字符（硬截）
+  return result.length > 6000 ? result.slice(0, 6000) : result;
+}
+
 // ── 裁判 prompt ─────────────────────────────────────────────────────────────
-export function buildJudgePrompt(input) {
-  const { contractE2E, goldenPathSteps, agentVerdict, transcript, agentStdout, brainResult } = input;
-  const gpLines = (goldenPathSteps && goldenPathSteps.length)
-    ? goldenPathSteps.map((s, i) => `${i + 1}. ${s}`).join('\n')
-    : '（PRD 未声明 Golden Path 步骤）';
+export function buildJudgePrompt(input, brainResultOverride) {
+  // 兼容两种调用形式：
+  //   buildJudgePrompt(input)                    — 标准路径，brainResult 在 input 内
+  //   buildJudgePrompt(meta, brainResult)        — 测试路径，第二参数为 brainResult
+  const {
+    contractE2E,
+    goldenPathSteps,
+    gpLines: gpLinesFromInput,
+    agentVerdict,
+    transcript,
+    agentStdout,
+    brainResult: brainResultFromInput,
+  } = input;
+  const brainResult = brainResultOverride !== undefined ? brainResultOverride : brainResultFromInput;
+  const gpLines = gpLinesFromInput
+    || ((goldenPathSteps && goldenPathSteps.length)
+      ? goldenPathSteps.map((s, i) => `${i + 1}. ${s}`).join('\n')
+      : '（PRD 未声明 Golden Path 步骤）');
   return [
     '你是独立验收裁判（裁判不执行任何命令，只读运动员留下的证据判读）。',
     '运动员（evaluator agent）已在真实环境亲手执行验证，并自报 verdict。你的职责是独立复核：',
@@ -230,7 +297,7 @@ export function buildJudgePrompt(input) {
     '### callback transcript（stdout 尾部，补充）',
     transcript || '（空）',
     '### .brain-result.json',
-    brainResult ? JSON.stringify(brainResult).slice(0, 2000) : '（无）',
+    brainResult ? compressBrainResult(brainResult) : '（无）',
     '',
     '## 裁判规则',
     '- 对 Golden Path 每一步，按顺序给出一条 coverage 条目（step 字段回显该步），passed=true/false。',

@@ -1,0 +1,22 @@
+{
+  "task_id": "610ecc9e-ff5b-4cee-9fac-c0c69e4af925",
+  "round": 1,
+  "contract_version": "v1.0",
+  "date": "2026-07-15",
+  "rubric_scores": {
+    "completeness": {"score": 8, "max": 10},
+    "correctness": {"score": 9, "max": 10},
+    "testability": {"score": 6, "max": 10},
+    "invariant_coverage": {"score": 9, "max": 10},
+    "e2e_coverage": {"score": 7, "max": 10},
+    "tdd_discipline": {"score": 6, "max": 10},
+    "scope_control": {"score": 10, "max": 10}
+  },
+  "total": "55/70",
+  "verdict": "REVISION",
+  "revision_items": [
+    "REVISION-1: CI常驻路径约定必须写进合同正文（contract-draft.md测试文件清单 + contract-dod.md DoD通过条件各加一句，禁止事项加红线）",
+    "REVISION-2: GP4测试骨架必须有真实failing断言（或BEHAVIOR-3改为E2E手工bash命令）",
+    "REVISION-3: BEHAVIOR-4验收命令正则 GP2.*attempts=0 与中文it名不匹配，需修正"
+  ]
+}
