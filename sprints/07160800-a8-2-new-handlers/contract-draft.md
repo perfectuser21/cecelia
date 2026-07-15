@@ -139,6 +139,20 @@
 
 ---
 
+## Test Contract
+
+| Workstream | Test File | BEHAVIOR 覆盖 | 预期红证据 |
+|------------|-----------|--------------|-----------|
+| WS1-auth-first | `../../tests/regression/a8-2-new-handlers/harness-death-handlers.contract.test.js` | auth_fail_count<2 → 换号 → spawnFn 调用1次 | spawnFn 调用1次，新账号 !== 旧账号 |
+| WS2-auth-blocked | `../../tests/regression/a8-2-new-handlers/harness-death-handlers.contract.test.js` | auth_fail_count≥2 → blocked + Bark，spawnFn 未调用 | task.status='blocked'，barkFn 调用1次 |
+| WS3-rate-limit | `../../tests/regression/a8-2-new-handlers/harness-death-handlers.contract.test.js` | cause=rate_limit + retry_after_ts 为空 → 不调 spawn → defer_until 写库 | defer_until 写库，spawnFn 未调用 |
+| WS4-defer-skip | `../../tests/regression/a8-2-new-handlers/harness-death-handlers.contract.test.js` | payload.defer_until 未到期 → 该 run 被跳过，spawnFn 未调用 | db 无状态写入 |
+| WS5-green-merge | `../../tests/regression/a8-2-new-handlers/harness-death-handlers.contract.test.js` | cause=green_waiting_merge + PR OPEN + CI pass → spawn 带 resume_stage=finish | resume_stage='finish' |
+| WS6-interactive | `../../tests/regression/a8-2-new-handlers/harness-death-handlers.contract.test.js` | cause=interactive_stuck → execFn 含 kill-session → spawnFn 调用1次 | execFn 含 kill-session |
+| WS7-s0-recovery | `../../tests/regression/a8-2-new-handlers/harness-death-handlers.contract.test.js` | 2条 in_progress run 容器消失 → scanOrphanedRelayTasks → spawnFn 调用次数匹配分类结果 | spawnFn 调用次数正确 |
+
+---
+
 ## E2E 验收
 
 > 因本 sprint 全为 headless 调度逻辑（无 UI 交互、无视频/媒体输出、无外部平台发布），
