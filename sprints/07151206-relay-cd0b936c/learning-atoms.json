@@ -1,0 +1,7 @@
+{
+  "next_steps_suggested": [
+    "给 harness-generator skill 增加共享 CI 基础设施文件默认禁区规则（.github/workflows/*.yml、packages/quality/smoke-allowlist.txt 等跨 sprint 共享判定文件未经合同显式授权不可修改），遇到自身改动触发 CI 红时必须另开独立 sprint 走 GAN 流程",
+    "排查 should-auto-merge 与 evaluator/judge 阶段之间缺失的硬阻塞依赖，避免 PR 在评估完成前被提前合并导致 Step 6 毕业步被跳过（本轮已是至少第二次遇到同类竞态）",
+    "harness-report 翻牌义务巡检应把 journeys.e2e_test_path 指向的文件是否真实存在也纳入常规核对项，而不仅核对内容是否匹配现行方案"
+  ]
+}
