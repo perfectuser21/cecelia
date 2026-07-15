@@ -103,4 +103,4 @@ guard-ref-bare-fr-smoke.sh
 kv-route-smoke.sh
 dispatch-fail-autoblock-smoke.sh
 ratchet-registry-smoke.sh
-packages/brain/scripts/smoke/relay-runs-patch-shortid-smoke.sh
+relay-runs-patch-shortid-smoke.sh

@@ -119,9 +119,9 @@ echo "ALL E2E PASS"
 
 | BEHAVIOR | Test File | it() 名称（子串匹配） |
 |----------|-----------|----------------------|
-| BEHAVIOR-1: 短号命中唯一活跃 run → 200 + phase 更新 | packages/brain/src/__tests__/relay-runs-patch-shortid.test.js | 短号命中唯一 |
-| BEHAVIOR-2: 多条命中取最新非终态 | packages/brain/src/__tests__/relay-runs-patch-shortid.test.js | 多条命中 |
-| BEHAVIOR-3: 0条命中 → 404 含短号 | packages/brain/src/__tests__/relay-runs-patch-shortid.test.js | 0 条命中 |
-| BEHAVIOR-4: 非法格式 → 400 | packages/brain/src/__tests__/relay-runs-patch-shortid.test.js | 非法格式 |
-| BEHAVIOR-5: 完整 UUID 行为不回退 | packages/brain/src/__tests__/relay-runs-patch-shortid.test.js | 完整 UUID |
-| BEHAVIOR-6: DB 异常 → 500 + console.warn | packages/brain/src/__tests__/relay-runs-patch-shortid.test.js | DB 抛异常 |
+| BEHAVIOR-1: 短号命中唯一活跃 run → 200 + phase 更新 | ../../packages/brain/src/__tests__/relay-runs-patch-shortid.test.js | 返回 200 且响应体含 phase |
+| BEHAVIOR-2: 多条命中取最新非终态 | ../../packages/brain/src/__tests__/relay-runs-patch-shortid.test.js | 更新的是 started_at 最新 |
+| BEHAVIOR-3: 0条命中 → 404 含短号 | ../../packages/brain/src/__tests__/relay-runs-patch-shortid.test.js | 命中 0 条 |
+| BEHAVIOR-4: 非法格式 → 400 | ../../packages/brain/src/__tests__/relay-runs-patch-shortid.test.js | 格式非法 |
+| BEHAVIOR-5: 完整 UUID 行为不回退 | ../../packages/brain/src/__tests__/relay-runs-patch-shortid.test.js | 完整 UUID |
+| BEHAVIOR-6: DB 异常 → 500 + console.warn | ../../packages/brain/src/__tests__/relay-runs-patch-shortid.test.js | DB 抛异常 |
