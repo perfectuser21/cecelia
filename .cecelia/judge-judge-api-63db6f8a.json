@@ -1,0 +1,35 @@
+{
+  "agentVerdict": "PASS",
+  "judge": {
+    "verdict": "PASS",
+    "coverage": [
+      {
+        "step": "[触发条件] task_id=63db6f8a-ea55-40fa-abd2-7dd63a2701e2 已由 Brain 以 task_type=harness_initiative、payload.mode=headed / executor=claude / orchestrator=skill-relay 派发",
+        "passed": true,
+        "evidence": "behavior_tests 最后一条命令 log_tail='e2e-verify.sh exit 0; 8/8 manual:bash 真跑... OK headed smoke regression verified for 63db6f8a...' 且脚本内包含 curl 断言检查 id、mode、executor、orchestrator 均通过"
+      },
+      {
+        "step": "[系统处理] e2e-verify.sh 依次调用 claude-headed-dispatch-smoke.sh、GET /api/brain/tasks/...、DB initiative_runs 核对",
+        "passed": true,
+        "evidence": "上述 log_tail 显示脚本 exit 0；同时 behavior_tests 有 'manual:bash e2e-verify.sh 调用 claude-headed-dispatch-smoke.sh 并校验 allowlist 登记' exit 0，以及 'manual:bash initiative_runs 含 skill-relay-claude-headed 或 foreground 且 phase 拒绝 failed/unknown' exit 0，证明 DB 核对也通过"
+      },
+      {
+        "step": "[可观测结果] 全部断言通过则脚本 exit 0 并打印 PASS",
+        "passed": true,
+        "evidence": "log_tail='e2e-verify.sh exit 0; 8/8 manual:bash 真跑... OK headed smoke regression verified for 63db6f8a...' 等价于 PASS"
+      }
+    ],
+    "feedback": "全部 Golden Path 步骤证据确凿，运动员自报 verdict 无误。"
+  },
+  "coverageCheck": {
+    "ok": true,
+    "missing": [],
+    "failed": []
+  },
+  "goldenPathSteps": [
+    "[触发条件] task_id=63db6f8a-ea55-40fa-abd2-7dd63a2701e2 已由 Brain 以 task_type=harness_initiative、payload.mode=headed / executor=claude / orchestrator=skill-relay 派发",
+    "[系统处理] e2e-verify.sh 依次：调用既有 `claude-headed-dispatch-smoke.sh`（不重实现）→ 查 `GET /api/brain/tasks/63db6f8a...` 核对 task 记录与敏感字段脱敏 → 查 DB `initiative_runs` 核对本次 initiative_id 的 orchestrator_host/phase",
+    "[可观测结果] 全部断言通过则脚本 exit 0 并打印 PASS；任一断言失败则 exit 1 并打印具体 FAIL 原因"
+  ],
+  "finalVerdict": "PASS"
+}

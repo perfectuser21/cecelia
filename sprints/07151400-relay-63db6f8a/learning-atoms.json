@@ -1,0 +1,9 @@
+{
+  "next_steps_suggested": [
+    "Proposer 复用历史合同模板（尤其E2E验收断言）时必须先核对本次任务的真实派发/执行历史，不能假设与先例路径相同——本次task 63db6f8a的自动headed spawn从未走通，若照抄049ebf93先例断言会误判FAIL",
+    "harness-report Step1/2遇到reason:pr_not_found时应优先尝试用户/controller指定的替代端点（如relay-runs端点），不要在同一失败端点上重复无效重试",
+    "routes/task-tasks.js的PATCH /:id（写tasks.pr_url列）与routes/tasks.js同路径挂载顺序冲突被静默遮蔽，实际不可达，需要后续排查是否合并/去重两端点职责",
+    "GAN reviewer写decisions等关键表后应做事后核验（select count确认真实落库），不能仅信任写入调用的返回值声明——本次实证judgments_written=2但decisions表实查为0",
+    "should-auto-merge.sh兜底机制存在在controller派发evaluator/judge之前抢先自动合并PR的风险,违反judge是merge唯一权威的硬约束2,需要专项排查触发条件"
+  ]
+}
