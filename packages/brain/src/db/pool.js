@@ -5,4 +5,6 @@
  * 实际 pool 实例在 ../db.js 初始化。
  * 本文件作为 mock 入口，使 vi.mock('...db/pool.js') 能精确拦截。
  */
-export { default, pool } from '../db.js';
+import _pool from '../db.js';
+export const pool = _pool;
+export default _pool;
