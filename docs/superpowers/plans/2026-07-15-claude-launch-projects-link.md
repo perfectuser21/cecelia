@@ -29,11 +29,19 @@
 2. **best-effort**：建链失败只 `>&2` 告警 + 继续，**绝不 `exit 1` 阻断 claude 启动**。既有 446 行用例盯着这条。
 3. **stdout 只属于 claude 本体**：新增的 `git rev-parse` 等一律 `2>/dev/null`，不得往 stdout 吐。唯一例外是 dry-run 段（它本就输出契约后 `exit 0`）。
 4. **macOS 无 `flock(1)`**：任何锁必须 mkdir fallback。
-5. 每个 Task 跑测试的命令统一为：
+5. **跑测试的命令（必须在 `packages/engine` 内跑）**：
    ```bash
-   cd /Users/administrator/worktrees/cecelia/fix-slot-session-orphan-key
-   npx vitest run packages/engine/tests/launcher/claude-launch.test.ts
+   cd /Users/administrator/worktrees/cecelia/fix-slot-session-orphan-key/packages/engine
+   npx vitest run tests/launcher/claude-launch.test.ts
    ```
+   > ⚠️ **不要在仓库根跑** `npx vitest run packages/engine/tests/...` —— 根 `vitest.config.js`
+   > 的 include 不覆盖 `packages/engine/tests/`，会输出 `No test files found, exiting with code 1`。
+   > 一旦管道给 `tail`/`grep`，`$?` 拿到的是管道末端的退出码（0），**看起来像跑绿了，实际一条都没跑**。
+   > `packages/engine` 有自己的 `vitest.config.ts`，必须在该目录内跑。
+   > （Task 1 实现者实测发现，2026-07-15）
+
+6. **worktree 首次跑测试前需 `npm install`**（worktree 无 node_modules）。装完 `package-lock.json`
+   可能变脏 → `git checkout -- package-lock.json` 还原，**绝不混进 commit**。
 
 ---
 
@@ -235,6 +243,18 @@ Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 | headless `-p` | 任意 | —— | 短路不建链 ✅ |
 
 > 逃生阀 `CECELIA_NO_AUTO_WORKTREE=1` 只管「不自动建 worktree」，**不参与建链判定**——否则它会变成新的丢会话入口。
+
+> ⚠️ **Task 1 实现者实测发现的既有缺陷，本 Task 顺带修掉**：dry-run 段 99 行
+> `_WT_PHYS="$(cd "$_WT_PATH" 2>/dev/null && pwd -P)" || _WT_PHYS="$_WT_PATH"` ——
+> dry-run 时 worktree 尚未建，`cd` **必败** → 回退成未 realpath 的逻辑路径（`-var-…` 而非
+> `-private-var-…`）。于是 dry-run 打印的 wt key 与真实运行时 `_link_projects_dir` 算出的 key
+> **对不上**。既有用例之所以没抓到，是因为它们只断言主仓 key（git 天然给物理路径），
+> 刻意绕开了 wt key。这个假输出让 dry-run 作为「意图契约」名不副实。
+> 修法：用已存在的 `_WT_BASE`（其父目录真实存在，可物理化）逐级拼出物理路径：
+> ```bash
+> _WT_PHYS="$(cd "$_WT_BASE" 2>/dev/null && pwd -P)/${_WT_BRANCH}"
+> ```
+> `_WT_BASE` 在 83 行由 `mkdir -p` 保证存在。若仍失败则硬失败（与改动 5 同纪律），不回退。
 
 - [ ] **Step 1: 写 failing test**
 
