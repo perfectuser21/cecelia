@@ -71,7 +71,12 @@ for N in $CANDIDATES; do
     PORT=$(printf '%s' "$ROW" | cut -d'|' -f2)
     ROW_DB=$(printf '%s' "$ROW" | cut -d'|' -f3)
   fi
+  # dropdb 白名单：db_name 必须形如 cecelia_preview_<N>，否则拒用（防表里脏数据指向主库）
   DB_NAME="${ROW_DB:-cecelia_preview_${N}}"
+  if ! printf '%s' "$DB_NAME" | grep -qE '^cecelia_preview_[0-9]+$'; then
+    warn "PR #${N} 表行 db_name='${DB_NAME}' 非法，拒删，回落默认名 cecelia_preview_${N}"
+    DB_NAME="cecelia_preview_${N}"
+  fi
   WORK_DIR="${PREVIEW_BASE_DIR}/preview-${N}"
 
   if [ "$DRY_RUN" = "1" ]; then

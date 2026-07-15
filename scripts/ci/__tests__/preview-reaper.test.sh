@@ -136,6 +136,18 @@ if dropdb_not_called; then pass "dropdb 未被调"; else fail "dry-run 却调用
 if grep -q "\[dry-run\]" "$SANDBOX/stdout"; then pass "stdout 有 [dry-run]"; else fail "stdout 缺 [dry-run] 报告"; fi
 teardown
 
+# ── 用例 6：脏 db_name 拒删（dropdb 白名单，防误删主库） ─────────────────────
+echo "用例 6: 脏 db_name 拒删（dropdb 白名单）"
+setup
+run_reaper GH_STATE_105=MERGED PSQL_DATNAMES="" PSQL_TABLE_ROWS="105|5305|cecelia"
+if [ ! -f "$MOCK_LOG_DIR/dropdb.log" ] || ! grep -qE '(^| )cecelia$' "$MOCK_LOG_DIR/dropdb.log"; then
+  pass "裸主库名 cecelia 未进 dropdb"
+else
+  fail "脏 db_name=cecelia 被传给了 dropdb（会删主库！）"
+fi
+if grep -qE "WARN|拒删" "$SANDBOX/stderr"; then pass "stderr 有 WARN/拒删提示"; else fail "stderr 缺非法 db_name 的 WARN"; fi
+teardown
+
 if [ "$FAILED" = 0 ]; then
   echo "preview-reaper.test.sh: OK"
 else
