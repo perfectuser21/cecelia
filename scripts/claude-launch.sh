@@ -57,12 +57,22 @@ _in_main_repo_worktree() {
     [[ "$gd" == "$cmn" ]]
 }
 
+# cwd 是否在任何 git 结构里。非 git 目录（cd ~; claude）压根没有历史要共享，
+# 建链段必须整个跳过——否则每次启动都打一条"软链失败"警告，误导且高频。
+_in_git_repo() { git rev-parse --git-dir &>/dev/null; }
+
 # 主仓物理路径正向求出（在 linked worktree 内也有效）：
 #   主仓：      git-dir == git-common-dir
 #   linked wt： git-dir = <main>/.git/worktrees/<n>，git-common-dir = <main>/.git
 # 判据与 packages/engine/hooks/main-repo-write-guard.sh 一致（cp-07051816 教训）。
 # 绝不反推 project key —— key 是有损多对一映射（/ . 和原生 - 全塌成 -），
 # 反推会把 zenithjoy-skills 的历史并进 zenithjoy 主池。
+#
+# ⚠️ 调用前置：仅在 _in_git_repo && ! _in_main_repo_worktree 为真时调用。
+# bare repo（git-common-dir 即仓库本身 → dirname 给出其父目录）与 submodule
+# （git-common-dir 在 .git/modules/<n> 下 → dirname 给出 modules 目录）都会返回
+# 错值；二者当前都被 _in_main_repo_worktree 挡在门外，属**巧合安全**。
+# 谁要改建链门禁，必须重新验这两种形态，别指望本函数自己兜底。
 _resolve_main_repo() {
     local cmn
     cmn="$(git rev-parse --git-common-dir 2>/dev/null)" || return 1
@@ -140,7 +150,7 @@ if [[ "$DRY_RUN" == "1" ]]; then
         # 未建，cd 失败回退原字符串——dry-run 是意图契约，可接受。
         _WT_PHYS="$(cd "$_WT_PATH" 2>/dev/null && pwd -P)" || _WT_PHYS="$_WT_PATH"
         echo "ln -s \"$_PROJ_ROOT/$(_path_to_project_key "$_MAIN_REPO")\" \"$_PROJ_ROOT/$(_path_to_project_key "$_WT_PHYS")\""
-    elif ! _is_headless && ! _in_main_repo_worktree; then
+    elif ! _is_headless && _in_git_repo && ! _in_main_repo_worktree; then
         # 已在外部建的 worktree 内：key 按当前 cwd 派生（cwd 真实存在，无需回退）
         _PROJ_ROOT="$(_proj_root)"
         _DR_MAIN="$(_resolve_main_repo)" && \
@@ -214,7 +224,7 @@ _link_projects_dir() {
 # 交互模式 + cwd 是 linked worktree → 建链，无论该 worktree 是 launcher 建的还是外部建的。
 # 逃生阀 CECELIA_NO_AUTO_WORKTREE 只管"不建 worktree"，不参与建链判定——否则它会变成
 # 新的丢会话入口（slot 复用 worktree 起 claude 时软链不建 → 历史落孤儿 key）。
-if ! _is_headless && ! _in_main_repo_worktree; then
+if ! _is_headless && _in_git_repo && ! _in_main_repo_worktree; then
     _link_projects_dir || echo "[claude-launch] ⚠️ projects 软链失败，本 session 历史将不共享（不影响启动）" >&2
 fi
 
