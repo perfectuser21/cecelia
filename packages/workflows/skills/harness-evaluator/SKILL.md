@@ -6,10 +6,11 @@ description: |
   evaluator 在 CI 绿之后、PR merge 之前真启服务 + 跑 contract 的 manual:bash 命令验真行为。
   PASS → 允许 merge；FAIL → 不 merge，带反馈打回 Generator 在 PR 分支 fix loop（main 不变动）。
   单模式（harness v2 始终 IS_FINAL_E2E=true）：读 contract-draft.md 的 ## E2E 验收 脚本，按 target_environment 派发跑 Golden Path 端到端真实行为。
-version: 1.24.0
+version: 1.25.0
 created: 2026-05-06
-updated: 2026-07-14
+updated: 2026-07-16
 changelog:
+  - 1.25.0: target_environment 加 android_realmachine（洞①）— TARGET_ENV 说明表 + 新增 ANDROID_REALMACHINE_WORKFLOW 变量；并入 windows_cloud|windows_wechat 的 GHA 派发桶（复用 xian-rog [self-hosted, wechat-capable] runner + REPO 解析/轮询/artifact 下载机制），WORKFLOW 选择加 elif 分支缺省 e2e-line02-android-collect.yml；E2E 脚本本身仍走 bash 提取（未走 ps1 分支），仅本地执行判断/环境预检跳过判断并入该三态；Path2 安卓获客真机验收此前无枚举可路由
   - 1.24.0: 刀3-T5 — 新增 Step B-1.7（B-guard-check）：核查 contract-draft.md 必含 ## 运行时守卫 段，段内须有 probe:（含可执行 bash 块）或 waiver:<decision_id>；两者都缺 → failed_step=guard_ref_missing FAIL；提取 GUARD_REF 写入 verdict JSON，report 收尾链消费写回 journey_features.guard_ref（依赖刀3-T4 列已存在）
   - 1.23.0: EVA v2 审计四修——(E1) verdict 必带真跑证据：behavior_tests 每条必须是对象 {command, exit_code, log_tail}（log_tail=命令输出末 5 行），缺任一 = 该条视为未跑禁 PASS（a85e0582 实证 verdict 只列命令原文无法区分真跑/声称跑过）；(E4) Step B-1 固化段加分支判断：detached HEAD（post-merge 补验模式）跳过 commit/push 并在 verdict notes 说明，普通路径 push 失败输出 WARN 记入 notes（删静默吞掉）；(E5) 三处 awk 标题正则放宽为 /^##+[[:space:]]*E2E[[:space:]]*验收/（### 或带空格变体不再整段漏空）；(E7) 注入变量表补 PR_BRANCH 行
   - 1.22.0: a638f840 三修——(a) Step 0a 支持"PR 已 merge/分支已删"场景：checkout 失败时查 gh pr state，MERGED 则在 merge commit/origin/main 上补验（post-merge 模式），仅 PR 非 MERGED 时才 FATAL；(b) Step B-1 三处 awk 改为提取 E2E 段内全部代码块（拼接至下一个 ## 标题，旧版只取第一块，多块合同 Step 2-9 被静默丢弃）；(c) bash 固化前加 bash -n 语法门，语法坏脚本在 setup 就 FAIL 不入库
@@ -85,10 +86,11 @@ generator 写代码 + push PR
 | `TASK_ID` | Brain 中当前 evaluate task 的 UUID |
 | `PR_BRANCH` | 待验证 PR 分支名——Brain evaluateContractNode 注入 / relay prompt 提供（Step 0a 消费）（EVA v2 E7 补） |
 | `JOURNEY_TYPE` | `user_facing` / `autonomous` / `dev_pipeline` / `agent_remote` |
-| `TARGET_ENV` | `mac_web` / `windows_cloud` / `windows_wechat` / `linux_server` / `local_api` / `playground`（来自 PRD `target_environment` 字段；`mac_web` = 在宿主 Mac 直跑（非 Docker），Playwright 可达 localhost:5174；`windows_wechat` = xian-rog self-hosted，微信已登录；`windows_cloud` = GHA windows-latest 云端）|
+| `TARGET_ENV` | `mac_web` / `windows_cloud` / `windows_wechat` / `linux_server` / `local_api` / `playground` / `android_realmachine`（来自 PRD `target_environment` 字段；`mac_web` = 在宿主 Mac 直跑（非 Docker），Playwright 可达 localhost:5174；`windows_wechat` = xian-rog self-hosted，微信已登录；`windows_cloud` = GHA windows-latest 云端；`android_realmachine` = xian-rog self-hosted，复用同一台机器上已连接的安卓真机（Path2 采集/判定/抓评论/私信）|
 | `WORKSPACE_PATH` | 结果文件写入目录。**mac_web 宿主执行时由 host-executor 注入**（值为 worktreePath）；Docker 默认不注入，脚本 fallback `/workspace` |
 | `WINDOWS_CLOUD_WORKFLOW` | GHA workflow 文件名（harness-initiative.graph.js 根据 base_repo 注入：zenithjoy → `agent-e2e-video.yml`，否则 `e2e-windows.yml`）|
 | `WECHAT_RPA_WORKFLOW` | windows_wechat 专用 GHA workflow 文件名，**由 `evaluateContractNode` 注入，缺省 `e2e-wechat-rpa.yml`**；在 xian-rog self-hosted runner（微信已登录）上运行 |
+| `ANDROID_REALMACHINE_WORKFLOW` | android_realmachine 专用 GHA workflow 文件名，**由 `evaluateContractNode` 注入，缺省 `e2e-line02-android-collect.yml`**；复用 `[self-hosted, wechat-capable]`（xian-rog）runner，脚本格式是 bash 不是 ps1（走下方 else 分支的 bash 提取路径，只在 GHA 派发桶里复用 dispatch/轮询机制）|
 | `DB` | PostgreSQL 连接串——优先用 payload/env 注入的 `$DB_URL`（第三方 repo 必须显式提供）；`postgresql://localhost/cecelia` 仅作 cecelia 本机 fallback，第三方 repo 禁止假设 cecelia 库存在 |
 
 **注**：DoD 文件中的 `Test:` 命令若引用 `$TARGET_TASK_ID`，该 ID 来自 DoD 文件内部（合同写入时硬编码或由 Generator 写入），Evaluator 直接执行 DoD 中的命令原文，不需单独注入。
@@ -385,7 +387,8 @@ BREOF
 else
   # 真实功能 sprint：autonomous journey_type 必须包含真实验证目标（API URL / DB）
   # windows_cloud/windows_wechat 的 E2E 是 PowerShell，通过 GHA 运行，不直接调 localhost:5221，跳过此检测
-  if [[ "$JOURNEY_TYPE" == "autonomous" && "$TARGET_ENV" != "windows_cloud" && "$TARGET_ENV" != "windows_wechat" ]]; then
+  # android_realmachine 同理走 GHA 运行（脚本是 bash 但在 xian-rog 远端 runner 执行，非本地容器），一并跳过
+  if [[ "$JOURNEY_TYPE" == "autonomous" && "$TARGET_ENV" != "windows_cloud" && "$TARGET_ENV" != "windows_wechat" && "$TARGET_ENV" != "android_realmachine" ]]; then
     # 跨 repo 化刀3：验证目标按 repo 注入——cecelia（base_repo 缺省或含 cecelia）默认仍是 localhost:5221 / psql cecelia；
     # 第三方 repo 以 payload/env 提供的 $EXPECTED_API_HOST / $DB_URL 为准
     if [[ -z "$BASE_REPO" || "$BASE_REPO" == *"cecelia"* ]]; then
@@ -421,10 +424,10 @@ fi
 
 #### Step B-1.6: 环境预检 + localhost 重写（执行前置，与 generator Step 6.5 镜像）
 
-**在执行 E2E 脚本前必须先做两件事：容器内 URL 重写 + 工具可用性预检。windows_cloud/windows_wechat 走 GHA runner，跳过本步（脚本是 .ps1，在远端机器执行）。**
+**在执行 E2E 脚本前必须先做两件事：容器内 URL 重写 + 工具可用性预检。windows_cloud/windows_wechat/android_realmachine 走 GHA runner，跳过本步（脚本在远端机器执行，不在本地容器）。**
 
 ```bash
-if [[ "$TARGET_ENV" != "windows_cloud" && "$TARGET_ENV" != "windows_wechat" ]]; then
+if [[ "$TARGET_ENV" != "windows_cloud" && "$TARGET_ENV" != "windows_wechat" && "$TARGET_ENV" != "android_realmachine" ]]; then
   # ── 1) 容器内 localhost 重写（$BRAIN_URL 含 host.docker.internal 说明在容器里跑）──
   # 与 harness-generator Step 6.5 的替换逻辑镜像，保证 evaluator 与 generator 自验环境一致
   if [[ "$BRAIN_URL" == *"host.docker.internal"* ]]; then
@@ -645,11 +648,12 @@ case "$TARGET_ENV" in
     EXIT_CODE=${PIPESTATUS[0]}
     ;;
 
-  windows_cloud|windows_wechat)
+  windows_cloud|windows_wechat|android_realmachine)
     # GitHub Actions runner（ZenithJoy Agent 等连公网产品）
-    # windows_cloud  → GHA windows-latest 云端 runner（全新干净 VM）
-    # windows_wechat → xian-rog self-hosted runner（微信已登录的 Windows 环境）
-    # 合同 e2e 脚本必须是 .ps1 格式（见 proposer windows_cloud 模板）
+    # windows_cloud       → GHA windows-latest 云端 runner（全新干净 VM）
+    # windows_wechat      → xian-rog self-hosted runner（微信已登录的 Windows 环境）
+    # android_realmachine → xian-rog self-hosted runner（同一台机器上连接的安卓真机，脚本是 bash 不是 ps1）
+    # 合同 e2e 脚本必须是 .ps1 格式（见 proposer windows_cloud 模板），android_realmachine 例外走 bash（Step B-1 else 分支已处理）
     # 等待结果：轮询 run 状态，最长 10 分钟
     # GITHUB_REPO 由 Brain 注入，且必须源于 payload.base_repo（跨 repo 化刀3，禁止写死 cecelia）
     # fallback 顺序：$GITHUB_REPO → 从 base_repo URL 解析 owner/repo → 两者都缺才用 perfectuser21/cecelia 并打 WARN
@@ -663,6 +667,8 @@ case "$TARGET_ENV" in
     fi
     if [[ "$TARGET_ENV" == "windows_wechat" ]]; then
       WORKFLOW="${WECHAT_RPA_WORKFLOW:-e2e-wechat-rpa.yml}"
+    elif [[ "$TARGET_ENV" == "android_realmachine" ]]; then
+      WORKFLOW="${ANDROID_REALMACHINE_WORKFLOW:-e2e-line02-android-collect.yml}"
     else
       WORKFLOW="${WINDOWS_CLOUD_WORKFLOW:-e2e-windows.yml}"
     fi
@@ -815,7 +821,7 @@ fi
 #### Step B-2.6: windows_cloud artifact 下载 + 视觉验证
 
 ```bash
-if [[ "$TARGET_ENV" == "windows_cloud" || "$TARGET_ENV" == "windows_wechat" ]]; then
+if [[ "$TARGET_ENV" == "windows_cloud" || "$TARGET_ENV" == "windows_wechat" || "$TARGET_ENV" == "android_realmachine" ]]; then
   # GITHUB_REPO 必须源于 payload.base_repo（跨 repo 化刀3）；fallback：$GITHUB_REPO → base_repo 解析 → 两者都缺才回退默认并打 WARN
   if [[ -n "$GITHUB_REPO" ]]; then
     REPO="$GITHUB_REPO"
@@ -827,6 +833,8 @@ if [[ "$TARGET_ENV" == "windows_cloud" || "$TARGET_ENV" == "windows_wechat" ]]; 
   fi
   if [[ "$TARGET_ENV" == "windows_wechat" ]]; then
     WORKFLOW="${WECHAT_RPA_WORKFLOW:-e2e-wechat-rpa.yml}"
+  elif [[ "$TARGET_ENV" == "android_realmachine" ]]; then
+    WORKFLOW="${ANDROID_REALMACHINE_WORKFLOW:-e2e-line02-android-collect.yml}"
   else
     WORKFLOW="${WINDOWS_CLOUD_WORKFLOW:-e2e-windows.yml}"
   fi
