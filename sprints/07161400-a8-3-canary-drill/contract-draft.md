@@ -201,14 +201,14 @@ cd /workspace && npx vitest run \
 
 | BEHAVIOR | Test File | it() 名称（子串） |
 |----------|-----------|-----------------|
-| BEHAVIOR-1 canary 隔离过滤 dev-records | ../../packages/brain/src/__tests__/canary-isolation.test.js | canary 隔离过滤 dev-records |
-| BEHAVIOR-2 canary 隔离过滤回归池 | ../../packages/brain/src/__tests__/canary-isolation.test.js | canary 隔离过滤回归池 |
-| BEHAVIOR-3 canary 隔离过滤统计计数 | ../../packages/brain/src/__tests__/canary-isolation.test.js | canary 隔离过滤统计计数 |
-| BEHAVIOR-4 演习脚本生产端口守卫 | ../../tests/regression/a8-3-canary-drill/canary-drill.contract.test.js | 演习脚本生产端口守卫 |
-| BEHAVIOR-5 OOM 注入分类断言 | ../../tests/regression/a8-3-canary-drill/canary-drill.contract.test.js | OOM 注入分类断言 |
-| BEHAVIOR-6 演习落档降级写 design_docs | ../../tests/regression/a8-3-canary-drill/canary-drill.contract.test.js | 演习落档降级 |
-| BEHAVIOR-7 Bark 失败告警 | ../../tests/regression/a8-3-canary-drill/canary-drill.contract.test.js | Bark 失败告警 |
-| BEHAVIOR-8 nightly tick job 注册 | ../../tests/regression/a8-3-canary-drill/canary-drill.contract.test.js | nightly tick job 注册 |
+| BEHAVIOR-1 canary 隔离过滤 dev-records | ../../packages/brain/src/__tests__/canary-isolation.test.js | dev_records 查询含 canary 过滤条件 |
+| BEHAVIOR-2 canary 隔离过滤回归池 | ../../packages/brain/src/__tests__/canary-isolation.test.js | promoteToRegression 跳过，不调用写库 |
+| BEHAVIOR-3 canary 隔离过滤统计计数 | ../../packages/brain/src/__tests__/canary-isolation.test.js | diary-scheduler dev_records count 查询含 canary |
+| BEHAVIOR-4 演习脚本生产端口守卫 | ../../tests/regression/a8-3-canary-drill/canary-drill.contract.test.js | STAGING_BRAIN_URL 含 :5221 |
+| BEHAVIOR-5 OOM 注入分类断言 | ../../tests/regression/a8-3-canary-drill/canary-drill.contract.test.js | exit_code=137 + oom_upgraded |
+| BEHAVIOR-6 演习落档降级写 design_docs | ../../tests/regression/a8-3-canary-drill/canary-drill.contract.test.js | POST /api/brain/incidents 返回 404 |
+| BEHAVIOR-7 Bark 失败告警 | ../../tests/regression/a8-3-canary-drill/canary-drill.contract.test.js | sendBark 调用1次 |
+| BEHAVIOR-8 nightly tick job 注册 | ../../tests/regression/a8-3-canary-drill/canary-drill.contract.test.js | UTC 19:25~19:35 窗口内 tick |
 
 ---
 
