@@ -41,13 +41,13 @@ describe('[BEHAVIOR-1] 截断复现（旧逻辑 bug 记录）', () => {
   it('旧截断逻辑：behavior_tests[1].log_tail 的 KEYMARK 被挤出 2000 字符外', () => {
     const brainResult = {
       behavior_tests: [
-        { command: 'test1', exit_code: 0, log_tail: 'A'.repeat(1500) },
+        { command: 'test1', exit_code: 0, log_tail: 'A'.repeat(2000) },
         { command: 'test2', exit_code: 0, log_tail: 'PREFIX_KEYMARK_SUFFIX' },
       ],
     };
     // 用旧逻辑复现 bug
     const oldSerialized = JSON.stringify(brainResult).slice(0, 2000);
-    // 断言旧逻辑确实丢失了 KEYMARK（KEYMARK 在 1500 字符之后）
+    // 断言旧逻辑确实丢失了 KEYMARK（KEYMARK 在 2000 字符之后）
     expect(oldSerialized.includes('KEYMARK')).toBe(false);
   });
 });
@@ -61,7 +61,7 @@ describe('[BEHAVIOR-2] 修复后 KEYMARK 可见', () => {
   it('compressBrainResult：behavior_tests[1].log_tail 的 KEYMARK 必须可见', () => {
     const brainResult = {
       behavior_tests: [
-        { command: 'test1', exit_code: 0, log_tail: 'A'.repeat(1500) },
+        { command: 'test1', exit_code: 0, log_tail: 'A'.repeat(2000) },
         { command: 'test2', exit_code: 0, log_tail: 'PREFIX_KEYMARK_SUFFIX' },
       ],
     };
@@ -72,7 +72,7 @@ describe('[BEHAVIOR-2] 修复后 KEYMARK 可见', () => {
   it('buildJudgePrompt：prompt 中包含 behavior_tests[0] 和 [1] 的 command', () => {
     const brainResult = {
       behavior_tests: [
-        { command: 'test1', exit_code: 0, log_tail: 'A'.repeat(1500) },
+        { command: 'test1', exit_code: 0, log_tail: 'A'.repeat(2000) },
         { command: 'test2', exit_code: 0, log_tail: 'PREFIX_KEYMARK_SUFFIX' },
       ],
     };
