@@ -92,9 +92,15 @@ bluegreen_swap() {
 
   echo "[bluegreen] 起 green canary（${green}，端口 ${port}，tick 关）..."
   docker rm -f "$green" >/dev/null 2>&1 || true
+  # green 必须加入 blue 所在网络：webhook 链路里本脚本在 blue 容器内执行，
+  # 容器内 localhost:${port} 是 blue 自己的 loopback 而非宿主端口；green 落默认
+  # bridge 则与 blue 跨网络隔离 → health/smoke 全部秒拒（2026-07-15 Gate3 全红根因）。
+  local blue_net="" net_args=""
+  blue_net=$(docker inspect "$blue" --format '{{range $k,$v := .NetworkSettings.Networks}}{{$k}} {{end}}' 2>/dev/null | awk '{print $1}') || true
+  [[ -n "$blue_net" ]] && net_args="--network ${blue_net}"
   # BRAIN_DEPLOY_CANARY=1 关 tick，避免 canary 与 blue 连同一 DB double-dispatch
   # shellcheck disable=SC2086
-  if ! docker run -d --name "$green" -p "${port}:5221" \
+  if ! docker run -d --name "$green" -p "${port}:5221" ${net_args} \
         -e BRAIN_DEPLOY_CANARY=1 ${GREEN_RUN_ARGS:-} "cecelia-brain:${version}" >/dev/null 2>&1; then
     echo "[bluegreen] green 起容器失败，保留 blue"
     docker rm -f "$green" >/dev/null 2>&1 || true
@@ -103,11 +109,18 @@ bluegreen_swap() {
     return 1
   fi
 
-  # poll green health（先 curl 临时端口，兜底 docker inspect health）
-  local elapsed=0 healthy=false
+  # poll green health（GREEN_URL 双模式：宿主执行走 localhost:${port}，容器内执行走
+  # green_ip:5221 直连；兜底 docker inspect health）。锁定的 green_url 供 pre-swap smoke 复用。
+  # 注意：elapsed 只按 sleep 累加，两路 curl --max-time 3 + docker inspect 使每轮最坏墙钟 ~8s，
+  # HEALTH_TIMEOUT 是逻辑轮数预算而非精确墙钟（仅影响失败路径耗时，blue 不受影响）。
+  local elapsed=0 healthy=false green_url="" green_ip=""
   while [ "$elapsed" -lt "$timeout" ]; do
-    if curl -sf "http://localhost:${port}/api/brain/tick/status" >/dev/null 2>&1; then
-      healthy=true; break
+    if curl -sf --max-time 3 "http://localhost:${port}/api/brain/tick/status" >/dev/null 2>&1; then
+      healthy=true; green_url="http://localhost:${port}"; break
+    fi
+    green_ip=$(docker inspect "$green" --format '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' 2>/dev/null) || true
+    if [[ -n "$green_ip" ]] && curl -sf --max-time 3 "http://${green_ip}:5221/api/brain/tick/status" >/dev/null 2>&1; then
+      healthy=true; green_url="http://${green_ip}:5221"; break
     fi
     local hs
     hs=$(docker inspect "$green" --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' 2>/dev/null || echo missing)
@@ -115,6 +128,11 @@ bluegreen_swap() {
     if [ "$hs" = "unhealthy" ]; then break; fi
     sleep 2; elapsed=$((elapsed + 2))
   done
+  # docker inspect 兜底通过（两路 curl 都没通）时默认 green_ip 直连（容器内场景最可能可达）
+  if [[ "$healthy" == true && -z "$green_url" ]]; then
+    [[ -z "$green_ip" ]] && green_ip=$(docker inspect "$green" --format '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' 2>/dev/null) || true
+    if [[ -n "$green_ip" ]]; then green_url="http://${green_ip}:5221"; else green_url="http://localhost:${port}"; fi
+  fi
 
   if [ "$healthy" != true ]; then
     echo "[bluegreen] ❌ green 健康检查未通过，保留 blue($blue) 原封不动"
@@ -133,7 +151,7 @@ bluegreen_swap() {
     echo "[bluegreen] ⚠️  SKIP_PRE_SWAP_SMOKE=1，跳过 pre-swap smoke（紧急模式）"
     send_bark "⚠️ brain-deploy 紧急模式：SKIP_PRE_SWAP_SMOKE=1，pre-swap smoke 已跳过，v${version}"
   elif [[ -n "${DEPLOY_ROOT_DIR:-}" && -f "$core_list" ]]; then
-    echo "[bluegreen] 跑 pre-swap 核心 smoke（green:${port}，预算 ${SMOKE_CORE_TIMEOUT_SECS:-600}s）..."
+    echo "[bluegreen] 跑 pre-swap 核心 smoke（${green_url}，预算 ${SMOKE_CORE_TIMEOUT_SECS:-600}s）..."
     local _smoke_failed=0 _smoke_ran=0 _smoke_start _smoke_elapsed
     _smoke_start=$(date +%s)
     while IFS= read -r _script || [[ -n "$_script" ]]; do
@@ -151,7 +169,7 @@ bluegreen_swap() {
         _smoke_failed=$((_smoke_failed + 1))
         break
       fi
-      if BRAIN_URL="http://localhost:${port}" bash "$_sf"; then
+      if BRAIN_URL="${green_url}" bash "$_sf"; then
         echo "  [pre-swap-smoke] ✅ ${_script}"
       else
         echo "  [pre-swap-smoke] ❌ ${_script}"

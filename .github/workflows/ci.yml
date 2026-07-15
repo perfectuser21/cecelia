@@ -495,6 +495,8 @@ jobs:
           node-version: '22'
       - name: Self-test (deploy-effect assertion 三态)
         run: bash scripts/ci/__tests__/assert-deploy-effect.test.sh
+      - name: gate3-changed-paths 回归测试
+        run: bash scripts/ci/__tests__/gate3-changed-paths.test.sh
 
   # ─── Brain: Unit Tests (4-shard matrix + Test Impact Analysis) ─
   # PR 模式：vitest --changed 仅跑被改文件影响的 test（Gate 1 升级，目标 < 5 min）
