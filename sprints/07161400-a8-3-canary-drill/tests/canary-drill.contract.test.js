@@ -158,43 +158,27 @@ describe('BEHAVIOR-6: 演习落档降级写 design_docs', () => {
 
 describe('BEHAVIOR-7: Bark 失败告警', () => {
   it('演习断言失败 → sendBark 调用1次，标题含 CanaryDrill Failed，内容含 task_id', async () => {
-    // Red：告警行为断言
-    const barkStub = makeBarkStub();
-
-    // TODO: 实现后替换为真实 import
+    // Red：notifyDrillFailure 尚未实现，先强制 Red
+    // TODO: 实现后替换为：
     // const { notifyDrillFailure } = await import('../../../scripts/canary-death-drill.mjs');
+    // const barkStub = makeBarkStub();
     // await notifyDrillFailure({ taskId: 'c-001', mode: 'oom', failedAssertions: ['cause !== oom'], barkFn: barkStub });
-
-    // 占位：验证 Bark 调用参数
-    await barkStub('[CanaryDrill Failed] oom', 'task_id=canary-001 失败断言=cause !== oom 死法=oom');
-
-    expect(barkStub).toHaveBeenCalledTimes(1);
-    expect(barkStub._calls[0].title).toContain('CanaryDrill Failed');
-    expect(barkStub._calls[0].body).toContain('task_id=');
+    // expect(barkStub).toHaveBeenCalledTimes(1);
+    // expect(barkStub._calls[0].title).toContain('CanaryDrill Failed');
+    // expect(barkStub._calls[0].body).toContain('task_id=');
+    throw new Error('not implemented: notifyDrillFailure not exported from scripts/canary-death-drill.mjs');
   });
 
   it('BARK_URL 未设时 log warn 不 throw（告警可选，演习继续 exit 1）', async () => {
-    // Red：BARK_URL 缺失时的容错行为
-
-    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
-
-    // TODO: 实现后替换为真实 import
+    // Red：notifyDrillFailure 尚未实现，先强制 Red
+    // TODO: 实现后替换为：
     // const { notifyDrillFailure } = await import('../../../scripts/canary-death-drill.mjs');
     // await expect(notifyDrillFailure({ taskId: 'c-001', mode: 'oom', failedAssertions: [], barkFn: null }))
     //   .resolves.not.toThrow();
-
-    // 占位：容错不 throw
-    const safeBark = async (barkFn, title, body) => {
-      if (!barkFn) {
-        console.warn('[canary-drill] BARK_URL 未设，跳过告警');
-        return;
-      }
-      await barkFn(title, body);
-    };
-
-    await expect(safeBark(null, 'test', 'test')).resolves.not.toThrow();
-    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('BARK_URL'));
-    warnSpy.mockRestore();
+    // const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    // expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('BARK_URL'));
+    // warnSpy.mockRestore();
+    throw new Error('not implemented: notifyDrillFailure not exported from scripts/canary-death-drill.mjs');
   });
 });
 
