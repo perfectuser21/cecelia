@@ -15,6 +15,12 @@ status: PROPOSED
 
 ---
 
+## Test Contract
+
+| WS | Test File | BEHAVIOR 覆盖 | 预期红证据 |
+|---|---|---|---|
+| WS1 | `../../packages/brain/src/__tests__/harness-relay-watchdog.test.js` | TC-1: discovered MERGED / TC-2: /Users/administrator/perfect21/cecelia → perfectuser21/cecelia / TC-5: discovered OPEN / TC-8: doneAt 超期 + 无 PR → phase=failed | Red commit 2236fc5 测试套件失败（9 个新测试全部 FAIL） |
+
 ## Test Contract 表
 
 | ID | 场景 | 输入条件 | 预期断言 | 测试形态 |
