@@ -218,8 +218,6 @@ _link_projects_dir() {
     else
         ln -s "$target" "$link" || return 1
     fi
-    # 存变量供清理段复用（清理时 worktree 可能已被 remove，无法二次物理化）
-    _PROJ_LINK_CREATED="$link"
 }
 # 交互模式 + cwd 是 linked worktree → 建链，无论该 worktree 是 launcher 建的还是外部建的。
 # 逃生阀 CECELIA_NO_AUTO_WORKTREE 只管"不建 worktree"，不参与建链判定——否则它会变成
@@ -267,10 +265,10 @@ if [[ "$_DIRTY" == "0" ]]; then
     if [[ -z "$_UNPUSHED" ]]; then
         git -C "$_MAIN_REPO" worktree remove "$_WT_PATH" --force >/dev/null 2>&1 || true
         git -C "$_MAIN_REPO" branch -D "$_WT_BRANCH" >/dev/null 2>&1 || true
-        # 只删软链本身（-L 先验），绝不跟随进主仓文件夹；路径复用建链时存的变量
-        if [[ -n "${_PROJ_LINK_CREATED:-}" && -L "$_PROJ_LINK_CREATED" ]]; then
-            rm "$_PROJ_LINK_CREATED" 2>/dev/null || true
-        fi
+        # 软链**不删**：它是 per-worktree-path 的共享资源（同一 key 可压多条会话），
+        # 不是 per-session 私有资源。删它会让仍在用该 key 的会话重建真目录 = 新孤儿。
+        # 生产实证：key -…-session-9cc9a05b 下压过 4 条会话。
+        # 一个软链 8 字节，留着零成本；要回收另跑 GC，不在会话退出路径上做。
     fi
 fi
 
