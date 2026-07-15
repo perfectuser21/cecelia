@@ -10,25 +10,25 @@
 
 ### BEHAVIOR 条目（功能行为断言）
 
-[BEHAVIOR-1] auth 首次换号重点火：cause=auth + auth_fail_count<2 → 调用 markAuthFailed(currentAccount) → 通过 resolveAccount/selectBestAccount 选出 newAccount（newAccount !== currentAccount）→ spawnFn 被调用1次，opts.env.CECELIA_CREDENTIALS === newAccount
+[BEHAVIOR] auth 首次换号重点火：cause=auth + auth_fail_count<2 → 调用 markAuthFailed(currentAccount) → 通过 resolveAccount/selectBestAccount 选出 newAccount（newAccount !== currentAccount）→ spawnFn 被调用1次，opts.env.CECELIA_CREDENTIALS === newAccount
 （对应 FR-04，INV-13）
 
-[BEHAVIOR-2] auth 连续 blocked：cause=auth + auth_fail_count≥2 → spawnFn 未被调用 → task.status='blocked' 写库 → barkFn 被调用1次且消息含 'blocked' 和 'codex-login'
+[BEHAVIOR] auth 连续 blocked：cause=auth + auth_fail_count≥2 → spawnFn 未被调用 → task.status='blocked' 写库 → barkFn 被调用1次且消息含 'blocked' 和 'codex-login'
 （对应 FR-05，INV-11）
 
-[BEHAVIOR-3] rate_limit defer 写库：cause=rate_limit + payload.retry_after_ts 为空 → spawnFn 未被调用 → dbQuery SQL 含 defer_until → 写入值 ≥ Date.now()+3599000（≈60min，±5min 容忍）
+[BEHAVIOR] rate_limit defer 写库：cause=rate_limit + payload.retry_after_ts 为空 → spawnFn 未被调用 → dbQuery SQL 含 defer_until → 写入值 ≥ Date.now()+3599000（≈60min，±5min 容忍）
 （对应 FR-06，INV-12）
 
-[BEHAVIOR-4] rate_limit defer 跳过：payload.defer_until = Date.now()+30*60*1000（未到期）→ watchdog tick 对该 run 执行 continue → spawnFn 未被调用 → dbQuery 无状态变更写入
+[BEHAVIOR] rate_limit defer 跳过：payload.defer_until = Date.now()+30*60*1000（未到期）→ watchdog tick 对该 run 执行 continue → spawnFn 未被调用 → dbQuery 无状态变更写入
 （对应 FR-06 watchdog 跳过逻辑）
 
-[BEHAVIOR-5] green_waiting_merge 收尾棒：cause=green_waiting_merge + pr_url 存在 + PR OPEN + CI pass → spawnFn 被调用1次 → opts.resume_stage === 'finish'
+[BEHAVIOR] green_waiting_merge 收尾棒：cause=green_waiting_merge + pr_url 存在 + PR OPEN + CI pass → spawnFn 被调用1次 → opts.resume_stage === 'finish'
 （对应 FR-07，INV-14）
 
-[BEHAVIOR-6] interactive_stuck kill+重点火：cause=interactive_stuck → execFn 含 'kill-session' → spawnFn 被调用1次（attempt+1）
+[BEHAVIOR] interactive_stuck kill+重点火：cause=interactive_stuck → execFn 含 'kill-session' → spawnFn 被调用1次（attempt+1）
 （对应 FR-08）
 
-[BEHAVIOR-7] S0 startup-sync 批量恢复：2条 in_progress run 容器已消失 → scanOrphanedRelayTasks() → classifyDeath 真实路由 → spawnFn 被调用次数 = 非 blocked/rate_limit 的 run 数（按分类结果）
+[BEHAVIOR] S0 startup-sync 批量恢复：2条 in_progress run 容器已消失 → scanOrphanedRelayTasks() → classifyDeath 真实路由 → spawnFn 被调用次数 = 非 blocked/rate_limit 的 run 数（按分类结果）
 （对应 FR-09）
 
 ---
@@ -60,7 +60,7 @@
 - [ ] `packages/brain/src/startup-sync.js` — 新建或修改，含 scanOrphanedRelayTasks()
 - [ ] `packages/brain/src/server.js` — 修改，startup-sync 处调用 scanOrphanedRelayTasks()（异步非阻塞）
 - [ ] `packages/brain/src/__tests__/harness-death-chain.test.js` — 修改，补齐 7+2 条用例（共9条）
-- [ ] `sprints/07160800-a8-2-new-handlers/tests/harness-death-handlers.contract.test.js` — 合同测试骨架（Red 占位）
+- [ ] `tests/regression/a8-2-new-handlers/ harness-death-handlers.contract.test.js` — 合同测试骨架（Red 占位）
 
 ---
 
@@ -72,4 +72,4 @@
 
 ---
 
-manual:bash cd /workspace && npx vitest run packages/brain/src/__tests__/harness-death-chain.test.js sprints/07160800-a8-2-new-handlers/tests/ --reporter=verbose 2>&1 | tail -30
+manual:bash cd /workspace && npx vitest run packages/brain/src/__tests__/harness-death-chain.test.js tests/regression/a8-2-new-handlers/  --reporter=verbose 2>&1 | tail -30
