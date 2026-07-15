@@ -1210,3 +1210,10 @@ changelog:
     files:
       - "../../scripts/claude-launch.sh (账号切换 guard 改判 _is_headless)"
       - "packages/engine/tests/launcher/claude-launch.test.ts (加 2 case)"
+  - version: "19.5.0"
+    date: "2026-07-15"
+    type: "fix"
+    description: "会话历史落孤儿 project key 根治（取代 19.4.0 的部分行为）。根因：_link_projects_dir 挂在 AUTO_WORKTREE=1 门禁下，而该门禁要求 cwd 在主仓；从已存在的 worktree 内启动 claude（slot 复用终端目录）→ 软链不建 → Claude Code 按 process.cwd() 派生 key 建真目录 → 历史落主池外 → 主仓 --resume 报 No conversation found。生产实证：会话 e2d67c75 的 key = -Users-administrator-worktrees-zenithjoy-session-9cc9a05b。四处改动：(1) 建链门禁解耦为按最终 cwd 判定（交互 + 在 git 内 + 非主仓 → 建链，无论 worktree 由谁创建；主仓用 git-common-dir 正向求出，绝不反推有损的 project key）；(2) 软链只建不删——它是 per-worktree-path 共享资源而非 per-session 私有（同一 key 生产实证压过 4 条会话），删链会让仍在用该 key 的会话重建真目录=新孤儿，故 19.4.0 的 _PROJ_LINK_CREATED 记账与清理段删链一并移除；(3) key 算法改为每个非字母数字字符各换一个 -（探针实证 claude 真实规则，旧实现只换 / 和 . ，路径含 _ 或空格即链名对不上→链指空，症状与会话丢失完全一致且极难归因）；(4) projects root 改由 CLAUDE_CONFIG_DIR 派生并把账号解析上移到建链之前——CLAUDE_PROJECTS_ROOT 经 strings 实证在 claude 二进制 0 命中，降级为测试专用注入旋钮。全段维持 best-effort 不阻断启动；非 git 目录启动不再打噪声警告。"
+    files:
+      - "../../scripts/claude-launch.sh (建链门禁解耦/软链只建不删/key 算法/root 派生)"
+      - "packages/engine/tests/launcher/claude-launch.test.ts (加 6 case，含真实执行路径守卫与 lossy key 碰撞自指软链；改判「干净退出→软链被删除」旧预期)"
