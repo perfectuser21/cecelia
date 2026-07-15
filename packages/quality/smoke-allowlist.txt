@@ -104,4 +104,5 @@ kv-route-smoke.sh
 dispatch-fail-autoblock-smoke.sh
 ratchet-registry-smoke.sh
 autoblock-sql-param-fix-smoke.sh
+watchdog-deadlock-resume-smoke.sh
 relay-runs-patch-shortid-smoke.sh
