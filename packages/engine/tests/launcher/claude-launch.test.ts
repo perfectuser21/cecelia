@@ -596,11 +596,13 @@ exit 0
   it('lossy key 碰撞（wt key == 主仓 key）→ 不得造出自指软链（静默损坏 /resume 池子）', () => {
     const sid = 'aaaa0019-1111-2222-3333-444444444444';
     const collMain = join(base, 'coll-a-b');
-    execSync(`git clone -q "${bareDir}" "${collMain}"`);
+    // 从 mainRepo（有有效 HEAD）clone，而非 bareDir（HEAD 指向 master 但无提交）
+    execSync(`git clone -q "${mainRepo}" "${collMain}"`);
     execSync('git config user.email test@test.com', { cwd: collMain });
     execSync('git config user.name Test', { cwd: collMain });
     const collWt = join(base, 'coll-a', 'b');
-    execSync(`git -C "${collMain}" worktree add -q "${collWt}" -b coll-branch`, { stdio: 'ignore' });
+    mkdirSync(join(base, 'coll-a'), { recursive: true });
+    execSync(`git -C "${collMain}" worktree add -q "${collWt}" -b coll-branch`);
     // 前置自证：两者 key 必须真撞上，否则本用例什么也没测
     const collMainPhys = realpathSync(collMain);
     const collWtPhys = realpathSync(collWt);
@@ -648,5 +650,127 @@ exit 0
     delete env.CLAUDE_PROJECTS_ROOT;   // 关键：拔掉测试旋钮，逼它走生产派生
     const out = execSync(`bash "${LAUNCHER}" --dry-run`, { cwd: mainRepo, env }).toString();
     expect(out).toContain(join(acctDir, 'projects'));
+  });
+});
+
+describe('启动时 sweep — 孤儿 worktree project key 并回主仓池', () => {
+  let base: string;
+  let bareDir: string;
+  let mainRepo: string;
+  let mainRepoPhys: string;
+  let mockDir: string;
+  let worktreeBase: string;
+  let worktreeBasePhys: string;
+  let projectsRoot: string;
+
+  const toKey = (p: string): string => p.replace(/[^a-zA-Z0-9]/g, '-');
+
+  beforeAll(() => {
+    base = mkdtempSync(join(tmpdir(), 'claude-launch-sweep-'));
+    bareDir = join(base, 'origin.git');
+    execSync(`git init -q --bare "${bareDir}"`);
+    mainRepo = join(base, 'main');
+    execSync(`git clone -q "${bareDir}" "${mainRepo}"`);
+    execSync('git config user.email test@test.com', { cwd: mainRepo });
+    execSync('git config user.name Test', { cwd: mainRepo });
+    writeFileSync(join(mainRepo, 'README.md'), 'x');
+    execSync('git add . && git commit -q -m init', { cwd: mainRepo });
+    execSync('git branch -M main', { cwd: mainRepo });
+    execSync('git push -q -u origin main', { cwd: mainRepo });
+    worktreeBase = join(base, 'worktrees-base');
+    projectsRoot = join(base, 'projects-root');
+    mkdirSync(worktreeBase, { recursive: true });
+    worktreeBasePhys = realpathSync(worktreeBase);
+    mainRepoPhys = realpathSync(mainRepo);
+    mockDir = mkdtempSync(join(tmpdir(), 'claude-launch-sweep-mock-'));
+  });
+
+  afterAll(() => {
+    rmSync(base, { recursive: true, force: true });
+    rmSync(mockDir, { recursive: true, force: true });
+  });
+
+  function writeMockClaude(script: string): void {
+    const mockClaude = join(mockDir, 'claude');
+    writeFileSync(mockClaude, script);
+    chmodSync(mockClaude, 0o755);
+  }
+
+  function makeEnv(sid: string): Record<string, string> {
+    const env: Record<string, string> = {
+      ...process.env,
+      PATH: `${mockDir}:${process.env.PATH}`,
+      CLAUDE_SESSION_ID: sid,
+      WORKTREE_BASE: worktreeBase,
+      CLAUDE_PROJECTS_ROOT: projectsRoot,
+    };
+    delete env.CLAUDE_CODE_EXECPATH;
+    delete env.CECELIA_NO_AUTO_WORKTREE;
+    return env;
+  }
+
+  it('启动时 sweep：多个历史孤儿真实目录 → 内容并入主仓池、原位替换为软链', () => {
+    // 模拟两个旧会话（launcher 早期版本无软链逻辑时直接建的真实目录）
+    const orphanSids = ['bb000001', 'cc000002'];
+    const mainTarget = join(projectsRoot, toKey(mainRepoPhys));
+    mkdirSync(mainTarget, { recursive: true });
+
+    const orphanDirs = orphanSids.map(shortId => {
+      const wtPath = join(worktreeBasePhys, 'main', `session-${shortId}`);
+      const key = join(projectsRoot, toKey(wtPath));
+      mkdirSync(key, { recursive: true });
+      writeFileSync(join(key, `${shortId}.jsonl`), `{"session":"${shortId}"}\n`);
+      return { key, shortId };
+    });
+
+    // 新 session 启动 → sweep 应在启动时自动触发
+    const newSid = 'dd000003-1111-2222-3333-444444444444';
+    writeMockClaude(`#!/usr/bin/env bash\nexit 0\n`);
+    execSync(`bash "${LAUNCHER}"`, { cwd: mainRepo, env: makeEnv(newSid) });
+
+    for (const { key, shortId } of orphanDirs) {
+      // 孤儿目录已变成软链
+      expect(lstatSync(key).isSymbolicLink()).toBe(true);
+      expect(realpathSync(key)).toBe(mainTarget);
+      // 内容已迁入主仓池
+      expect(existsSync(join(mainTarget, `${shortId}.jsonl`))).toBe(true);
+    }
+  });
+
+  it('启动时 sweep：目标已有同名文件 → 跳过不覆盖（ignore-existing）', () => {
+    const shortId = 'ee000004';
+    const wtPath = join(worktreeBasePhys, 'main', `session-${shortId}`);
+    const orphanKey = join(projectsRoot, toKey(wtPath));
+    const mainTarget = join(projectsRoot, toKey(mainRepoPhys));
+    mkdirSync(orphanKey, { recursive: true });
+    mkdirSync(mainTarget, { recursive: true });
+    // 孤儿里的会话文件
+    writeFileSync(join(orphanKey, 'shared.jsonl'), 'orphan-content\n');
+    // 主仓已存在同名文件（内容不同）
+    writeFileSync(join(mainTarget, 'shared.jsonl'), 'main-content\n');
+
+    const newSid = 'ff000005-1111-2222-3333-444444444444';
+    writeMockClaude(`#!/usr/bin/env bash\nexit 0\n`);
+    execSync(`bash "${LAUNCHER}"`, { cwd: mainRepo, env: makeEnv(newSid) });
+
+    // 主仓文件未被孤儿内容覆盖
+    const { readFileSync } = require('node:fs');
+    expect(readFileSync(join(mainTarget, 'shared.jsonl'), 'utf8')).toBe('main-content\n');
+    // 孤儿目录因有残留（shared.jsonl 冲突，未能 mv）仍是真实目录
+    expect(lstatSync(orphanKey).isSymbolicLink()).toBe(false);
+  });
+
+  it('启动时 sweep：不影响主仓 key 本身（不自我删除）', () => {
+    const mainTarget = join(projectsRoot, toKey(mainRepoPhys));
+    mkdirSync(mainTarget, { recursive: true });
+    writeFileSync(join(mainTarget, 'sentinel.jsonl'), 'keep-me\n');
+
+    const newSid = '11000006-1111-2222-3333-444444444444';
+    writeMockClaude(`#!/usr/bin/env bash\nexit 0\n`);
+    execSync(`bash "${LAUNCHER}"`, { cwd: mainRepo, env: makeEnv(newSid) });
+
+    // 主仓 key 仍是真实目录，内容完好
+    expect(lstatSync(mainTarget).isSymbolicLink()).toBe(false);
+    expect(existsSync(join(mainTarget, 'sentinel.jsonl'))).toBe(true);
   });
 });

@@ -105,6 +105,45 @@ _path_to_project_key() { printf '%s' "${1//[^a-zA-Z0-9]/-}"; }
 # 杜绝"测试绿、生产错"。
 _proj_root() { printf '%s' "${CLAUDE_PROJECTS_ROOT:-${CLAUDE_CONFIG_DIR:-$HOME/.claude}/projects}"; }
 
+# 启动时 sweep：扫描 projects root 中所有属于本项目 worktree key 的真实目录，
+# 并回主仓池子并替换为软链。兜底历史遗留孤儿（launcher 早期版本无软链逻辑时
+# Claude 直接在 worktree key 下建了真实目录，worktree 清理后永久卡在池外）。
+# --ignore-existing 语义：目标已有同名文件则跳过，不覆盖。
+# best-effort：任何失败只警告，绝不阻断 claude 启动。
+# ⚠️ 调用前置：仅在 AUTO_WORKTREE=1（已设 _MAIN_REPO / _WT_BASE）时调用。
+_sweep_orphan_wt_project_dirs() {
+    local root main_target wt_base_phys wt_base_key entry fname f
+    root="$(_proj_root)"
+    main_target="$root/$(_path_to_project_key "$_MAIN_REPO")"
+    mkdir -p "$main_target" 2>/dev/null || return 0
+    # 物理化 worktree base 路径（与 Claude Code process.cwd() 一致）
+    wt_base_phys="$(cd "$_WT_BASE" 2>/dev/null && pwd -P)" || wt_base_phys="$_WT_BASE"
+    wt_base_key="$(_path_to_project_key "$wt_base_phys")-"
+    local swept=0
+    for entry in "$root"/${wt_base_key}*; do
+        [[ -e "$entry" ]] || continue             # glob 无匹配时跳过
+        [[ -d "$entry" && ! -L "$entry" ]] || continue   # 只处理真实目录
+        [[ "$entry" == "$main_target" ]] && continue     # 跳过主仓自身
+        # 迁移内容（ignore-existing：目标已有同名文件则跳过）
+        for f in "$entry"/* "$entry"/.[!.]*; do
+            [[ -e "$f" ]] || continue
+            fname="$(basename "$f")"
+            if [[ ! -e "$main_target/$fname" ]]; then
+                mv "$f" "$main_target/" 2>/dev/null || true
+            fi
+        done
+        # 替换为软链（要求目录已为空）
+        if rmdir "$entry" 2>/dev/null; then
+            ln -s "$main_target" "$entry" 2>/dev/null && swept=1 || true
+        else
+            echo "[claude-launch] ⚠️ sweep: $entry 有残留（同名冲突），跳过软链替换" >&2
+        fi
+    done
+    if [[ "$swept" == "1" ]]; then
+        echo "[claude-launch] ✅ sweep: 孤儿 worktree project key 已并回主仓池" >&2
+    fi
+}
+
 AUTO_WORKTREE=0
 if ! _is_headless && [[ "${CECELIA_NO_AUTO_WORKTREE:-0}" != "1" ]] && _in_main_repo_worktree; then
     AUTO_WORKTREE=1
@@ -162,6 +201,7 @@ fi
 
 # 真实执行：交互模式 + 主仓工作树 → 建立/复用 per-session worktree 并 cd 进去
 if [[ "$AUTO_WORKTREE" == "1" ]]; then
+    _sweep_orphan_wt_project_dirs || true
     mkdir -p "$_WT_BASE"
 
     # 孤儿目录自愈：目录存在但已不是主仓登记的合法 worktree（例如注册被意外摘除、
@@ -208,17 +248,20 @@ _link_projects_dir() {
             ln -s "$target" "$link" || return 1
         fi
     elif [[ -d "$link" ]]; then
-        # 孤儿真实目录：内容并回主仓池子；任一 mv 失败则中止（保留真实目录，不建软链）
+        # 孤儿真实目录：内容并回主仓池子；同名冲突时跳过（不覆盖主仓版本）
+        local _fname
         for f in "$link"/* "$link"/.[!.]*; do
             [[ -e "$f" ]] || continue
-            mv "$f" "$target/" || return 1
+            _fname="$(basename "$f")"
+            [[ -e "$target/$_fname" ]] || mv "$f" "$target/" 2>/dev/null || true
         done
-        rmdir "$link" || return 1
+        rmdir "$link" 2>/dev/null || return 1
         ln -s "$target" "$link" || return 1
     else
         ln -s "$target" "$link" || return 1
     fi
 }
+
 # 交互模式 + cwd 是 linked worktree → 建链，无论该 worktree 是 launcher 建的还是外部建的。
 # 逃生阀 CECELIA_NO_AUTO_WORKTREE 只管"不建 worktree"，不参与建链判定——否则它会变成
 # 新的丢会话入口（slot 复用 worktree 起 claude 时软链不建 → 历史落孤儿 key）。
