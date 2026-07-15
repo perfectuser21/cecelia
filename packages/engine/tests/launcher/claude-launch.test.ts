@@ -514,6 +514,27 @@ exit 0
     expect(out).toContain(`LINK_TARGET=${target}`);
   });
 
+  it('cwd 已在外部建的 worktree 内 → dry-run 仍输出 ln -s 契约行（根因回归）', () => {
+    const sid = 'aaaa0009-1111-2222-3333-444444444444';
+    // 模拟 slot 场景：worktree 由外部（非 launcher）建好，claude 从其内部启动
+    const extWt = join(base, 'external-wt');
+    execSync(`git -C "${mainRepo}" worktree add -q "${extWt}" -b ext-branch`, { stdio: 'ignore' });
+    const extWtPhys = realpathSync(extWt);
+    const out = execSync(`bash "${LAUNCHER}" --dry-run`, { cwd: extWt, env: makeEnv(sid) }).toString();
+    expect(out).toContain('ln -s');
+    expect(out).toContain(toKey(extWtPhys));           // link = 该 worktree 的 key
+    expect(out).toContain(toKey(mainRepoPhys));        // target = 主仓 key
+    expect(out).not.toContain('worktree add');         // 已在 worktree 内，不得再建
+  });
+
+  it('headless（-p）在 worktree 内 → 仍不建链（机器人会话不灌主池）', () => {
+    const sid = 'aaaa0010-1111-2222-3333-444444444444';
+    const extWt2 = join(base, 'external-wt2');
+    execSync(`git -C "${mainRepo}" worktree add -q "${extWt2}" -b ext-branch2`, { stdio: 'ignore' });
+    const out = execSync(`bash "${LAUNCHER}" -p hi --dry-run`, { cwd: extWt2, env: makeEnv(sid) }).toString();
+    expect(out).not.toContain('ln -s');
+  });
+
   it('生产路径：未设 CLAUDE_PROJECTS_ROOT 时 root 由 CLAUDE_CONFIG_DIR 派生', () => {
     const sid = 'aaaa0008-1111-2222-3333-444444444444';
     const fakeHome = mkdtempSync(join(tmpdir(), 'claude-launch-home-'));
