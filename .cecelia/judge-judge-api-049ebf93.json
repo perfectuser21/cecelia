@@ -1,0 +1,35 @@
+{
+  "agentVerdict": "PASS",
+  "judge": {
+    "verdict": "PASS",
+    "coverage": [
+      {
+        "step": "[触发条件] task_id=049ebf93-fa61-4777-b619-5a44fcce296a 已由 Brain 以 task_type=harness_initiative、payload.mode=headed / executor=claude / orchestrator=skill-relay 派发",
+        "passed": true,
+        "evidence": "behavior_tests 中手动 curl 验证 payload 三元组及脱敏，log_tail='true\\ntrue\\ntrue\\nOK'，表明记录存在且字段正确。"
+      },
+      {
+        "step": "[系统处理] e2e-verify.sh 依次：调用既有 claude-headed-dispatch-smoke.sh（不重实现）→ 查 GET /api/brain/tasks/049ebf93... 核对 task 记录与敏感字段脱敏 → 查 DB initiative_runs 核对本次 initiative_id 的 orchestrator_host/phase",
+        "passed": true,
+        "evidence": "behavior_tests 中手动执行 allowlist 校验（exit_code=0, log_tail='OK'）、curl 校验（exit_code=0, log_tail='OK'）、psql 查询（exit_code=0, log_tail='OK'），以及完整 bash scripts/smoke/e2e/relay-049ebf93.sh 运行成功（exit_code=0, log_tail='PASS: 5 FAIL: 0'）覆盖所有子步骤。"
+      },
+      {
+        "step": "[可观测结果] 全部断言通过则脚本 exit 0 并打印 PASS；任一断言失败则 exit 1 并打印具体 FAIL 原因",
+        "passed": true,
+        "evidence": "behavior_tests 最后一条命令 exit_code=0，log_tail='PASS: 5 FAIL: 0\\nOK headed smoke verified for 049ebf93...'，符合通过条件。"
+      }
+    ],
+    "feedback": null
+  },
+  "coverageCheck": {
+    "ok": true,
+    "missing": [],
+    "failed": []
+  },
+  "goldenPathSteps": [
+    "[触发条件] task_id=049ebf93-fa61-4777-b619-5a44fcce296a 已由 Brain 以 task_type=harness_initiative、payload.mode=headed / executor=claude / orchestrator=skill-relay 派发",
+    "[系统处理] e2e-verify.sh 依次：调用既有 `claude-headed-dispatch-smoke.sh`（不重实现）→ 查 `GET /api/brain/tasks/049ebf93...` 核对 task 记录与敏感字段脱敏 → 查 DB `initiative_runs` 核对本次 initiative_id 的 orchestrator_host/phase",
+    "[可观测结果] 全部断言通过则脚本 exit 0 并打印 PASS；任一断言失败则 exit 1 并打印具体 FAIL 原因"
+  ],
+  "finalVerdict": "PASS"
+}

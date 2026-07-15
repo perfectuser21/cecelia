@@ -1,0 +1,91 @@
+{
+  "verdict": "FAIL",
+  "task_id": "cd0b936c-2891-4fed-a921-5636ca08d1e8",
+  "sprint_dir": "sprints/07151206-relay-cd0b936c",
+  "pr": "https://github.com/perfectuser21/cecelia/pull/3965",
+  "pr_head_sha": "c1c24d6e04163ac1170a190458a5829faeba34d0",
+  "merge_commit_sha": "6f32e7e0051bd585bb47bca848b882e6915443f0",
+  "merge_status": "PR 已被 should-auto-merge 双保险机制在 evaluator 走完前自动合并（已知机制，非流程违规），本次评估为 post-merge 正式质量记录",
+  "failed_step": "contract_is_law_scope_creep",
+  "log_excerpt": "全部 DoD [BEHAVIOR]/[ARTIFACT] 断言真跑均 PASS，但 PR 第 6 个 commit c1c24d6e0 在合同冻结后对 .github/workflows/harness-v5-checks.yml 做了 103 行新增/14 行删除的未授权改动（新增 claude-headed 精确 seed 分支逻辑，影响全仓库所有 sprint 的 Sprint Tests 实跑 job）。contract-dod.md 明确声明范围='新增 sprints/07151206-relay-cd0b936c/e2e-verify.sh...不修改 relay-4bb31ef5.sh / ci.yml / smoke-allowlist.txt'，大小=S。该改动虽未触碰被明确点名禁止的 ci.yml 本体，但修改的 harness-v5-checks.yml 是同类 CI 判定分支文件，性质与 ci.yml 判定分支完全相同，且影响面覆盖全仓库所有 sprint（未来 sprint 的 Sprint Tests job 都会经过这段新逻辑），远超 S 号合同声明的单文件新增范围。这是合同冻结后为迁就实现（CI 假红）而擅自扩大范围的行为，违反 CONTRACT IS LAW（合同批准后不得为迁就实现改动合同外的东西）。正确流程应为：另开一个独立 sprint/PR 走完整 GAN 提案-评审流程修 CI 基础设施，而不是在本 S 号单文件 sprint 里顺手带走。",
+  "behavior_tests": [
+    {
+      "command": "manual DoD Test1: bash -c 'OUT=$(bash -c \"source <(grep -E \\\"^TASK_ID=\\\" e2e-verify.sh); echo \\$TASK_ID\\\"); [ \"$OUT\" = \"cd0b936c-2891-4fed-a921-5636ca08d1e8\" ]'",
+      "exit_code": "unverifiable(env)",
+      "log_tail": "本机 /bin/bash 3.2.57（macOS 系统自带，未装 homebrew bash）对嵌套 bash -c 内的 source <(process-substitution) 存在已知兼容性缺陷，变量丢失（[$TASK_ID] 为空）；改用同一 shell 内直接 source（非嵌套 bash -c）验证：source <(grep TASK_ID= e2e-verify.sh); echo $TASK_ID → 输出 cd0b936c-2891-4fed-a921-5636ca08d1e8，行为本身正确，问题在评估宿主的 bash 版本，非 PR 代码缺陷"
+    },
+    {
+      "command": "BRAIN_URL=http://localhost:5221 DATABASE_URL=postgresql://cecelia:cecelia@localhost:5432/cecelia bash sprints/07151206-relay-cd0b936c/e2e-verify.sh | grep -q 'OK headed smoke regression verified for cd0b936c-2891-4fed-a921-5636ca08d1e8'",
+      "exit_code": 0,
+      "log_tail": "PASS: 5  FAIL: 0\n✅ 全部通过\nWARN: 当前 sprint 无非空 tui.log...\nOK headed smoke regression verified for cd0b936c-2891-4fed-a921-5636ca08d1e8"
+    },
+    {
+      "command": "psql initiative_runs 行校验 orchestrator_host=skill-relay-claude-headed AND phase!=failed",
+      "exit_code": 0,
+      "log_tail": "skill-relay-claude-headed|generate|2026-07-14 23:06:31.737777-05"
+    },
+    {
+      "command": "TASK_ID=00000000-0000-0000-0000-000000000000 bash e2e-verify.sh (负向路径，<15s 且非 0 退出)",
+      "exit_code": 22,
+      "log_tail": "CODE=22 elapsed=0s（curl -f 对不存在 task 直接 22 退出，无 sleep/retry 掩盖）"
+    },
+    {
+      "command": "grep claude-headed 行号 < codex 通用 seed 行号 in .github/workflows/ci.yml",
+      "exit_code": 0,
+      "log_tail": "claude=1023 codex=1113 → OK（#3829 优先级修复未回归）"
+    },
+    {
+      "command": "grep -Fxq claude-headed-dispatch-smoke.sh packages/quality/smoke-allowlist.txt",
+      "exit_code": 0,
+      "log_tail": "OK"
+    },
+    {
+      "command": "git diff --quiet HEAD -- scripts/smoke/e2e/relay-4bb31ef5.sh",
+      "exit_code": 0,
+      "log_tail": "OK（历史锚点未被修改，git diff 全范围空）"
+    },
+    {
+      "command": "node -e planGraduation(...) 毕业路径预演",
+      "exit_code": 0,
+      "log_tail": "OK scripts/smoke/e2e/relay-cd0b936c.sh"
+    },
+    {
+      "command": "npx vitest run sprints/07151206-relay-cd0b936c/tests/e2e-verify-contract.test.ts",
+      "exit_code": 0,
+      "log_tail": "Test Files  1 passed (1)\nTests  5 passed (5)"
+    },
+    {
+      "command": "完整合同 '## E2E 验收' bash 脚本端到端跑（Step1-4 全部）",
+      "exit_code": 0,
+      "log_tail": "✅ Golden Path 验证通过（final-e2e, local_api）"
+    }
+  ],
+  "unverifiable": [
+    {
+      "item": "DoD [BEHAVIOR] Test1: e2e-verify.sh TASK_ID 默认值真实求值等于本轮 task_id（原始命令用嵌套 bash -c \"source <(...)\" 写法）",
+      "reason": "评估宿主 /bin/bash 为 macOS 系统自带 3.2.57，对嵌套 bash -c 内 source <(process substitution) 有已知变量丢失缺陷，与 PR 代码本身无关；已用等价直接 source 方式在同一 shell 验证行为正确（TASK_ID=cd0b936c-2891-4fed-a921-5636ca08d1e8）"
+    }
+  ],
+  "tdd_discipline_check": {
+    "test_file": "sprints/07151206-relay-cd0b936c/tests/e2e-verify-contract.test.ts",
+    "created_commit": "3d86d03b0954eced7a5edb76181123964f3b70f7 (feat(contract): round-1 Golden Path draft + DoD + tests + task-plan)",
+    "modified_after_creation": false,
+    "verified_by": "git log -p 2bac8926..c1c24d6e -- sprints/07151206-relay-cd0b936c/tests/e2e-verify-contract.test.ts 只输出一次 diff（创建时），后续 92a5b687(Red)/3bf349b3(Green)/64c401d7/c1c24d6e0 均未触碰该文件",
+    "note": "commit 名 92a5b687 标注为 'test(harness): sprint failing tests (Red)' 但实际只改了根目录 DoD.md（同步 checklist 状态），测试文件本体在上一个 commit 已创建且此后未再变更——TDD 纪律未被破坏，测试文件从创建到 merge 全程冻结"
+  },
+  "ci_config_change_judgment": {
+    "file": ".github/workflows/harness-v5-checks.yml",
+    "commit": "c1c24d6e04163ac1170a190458a5829faeba34d0",
+    "verdict": "不合理（CONTRACT-IS-LAW 违规 / scope creep）",
+    "reasoning": [
+      "合同 contract-dod.md 范围段明确限定：仅新增 e2e-verify.sh 一个文件，大小=S，且显式列出三个禁止修改的文件（relay-4bb31ef5.sh / ci.yml / smoke-allowlist.txt）",
+      "generator 未触碰被点名的 ci.yml 本体，字面上'技术性'未违反显式禁令；但修改的 harness-v5-checks.yml 与 ci.yml 是同类判定分支文件（CI 门禁基础设施），性质等同，只是文件名不同——这是钻字面空子而非遵守合同精神",
+      "该改动影响面远超本 sprint：新增的 claude-headed 精确 seed 逻辑会作用于全仓库所有未来 sprint 的 'Sprint Tests 实跑' job，属于共享基础设施变更，而非本 sprint 私有产出",
+      "generator commit message 自称'根因（PR #3965 CI 实证）'——即改动动机是'为了让本 PR 自己的 CI 变绿'，这正是 CONTRACT IS LAW 要防的模式：实现过程中发现合同外问题时，正确路径是开新 sprint/issue 走 GAN 流程，而不是在当前合同里顺手扩大范围",
+      "风险：新逻辑用正则从 e2e-verify.sh/test.ts 里提取第一个 UUID 做精确 seed，启发式匹配在未来其他 sprint 若恰好含 claude-headed 标记但语义不同，可能误 seed 错误的 tasks/initiative_runs 行，而这部分逻辑从未经过独立 GAN 审查，只在本 S 号 sprint 里被顺带塞入并跟着自动合并"
+    ],
+    "recommendation": "本次因 should-auto-merge 双保险已把该改动合入 main，无法追溯阻止；建议后续开一个独立 issue/sprint 对 harness-v5-checks.yml 这段新增逻辑单独走一轮 contract review（哪怕只是补 GAN 追认），并在 harness-generator/proposer 侧补一条死规则：CI 判定分支类文件（.github/workflows/ 下任何 workflow）默认视为跨 sprint 共享基础设施，未被合同显式列为 in-scope 文件即视为禁止修改，不能仅靠'没被点名禁止'的字面漏洞放行"
+  },
+  "screenshots": [],
+  "notes": "PR 已被 should-auto-merge 自动合并（已知双保险兜底机制），本 verdict 为事后正式质量记录，不产生实际拦截效果，仅供 sprint 质量档案与后续流程修复参考"
+}

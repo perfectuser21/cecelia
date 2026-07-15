@@ -1,0 +1,9 @@
+{
+  "phase": "evaluate",
+  "verdict": "PASS",
+  "pr_head_sha": "4e4768889b3070d64341176652d525cf0456421f",
+  "behaviors_total": 8,
+  "behaviors_passed": 8,
+  "unverifiable": [],
+  "notes": "毕业后路径重新核对 ARTIFACT/BEHAVIOR，内容等价性已核实（非篡改，纯rename）；e2e-verify.sh 真跑 5/5 PASS"
+}

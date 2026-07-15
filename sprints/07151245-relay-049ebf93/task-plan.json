@@ -1,0 +1,22 @@
+{
+  "initiative_id": "049ebf93-fa61-4777-b619-5a44fcce296a",
+  "journey_type": "autonomous",
+  "journey_type_reason": "纯 Brain/harness 后端派发链路 smoke，无用户可见 UI 交互（PrepPRD 已明确标注）",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "锚定 task_id=049ebf93 的 headed relay e2e-verify.sh",
+      "scope": "新增 sprints/07151245-relay-049ebf93/e2e-verify.sh：复用（不重实现）packages/brain/scripts/smoke/claude-headed-dispatch-smoke.sh，校验其在 packages/quality/smoke-allowlist.txt 登记，查 GET /api/brain/tasks/049ebf93... 核对 payload 三元组与敏感字段脱敏，查 DB initiative_runs 核对当前 initiative_id 的 orchestrator_host/phase。",
+      "dod": [
+        "[BEHAVIOR] e2e-verify.sh 调用 claude-headed-dispatch-smoke.sh 并校验 allowlist 登记",
+        "[BEHAVIOR] task payload 三元组齐全且不含敏感字段",
+        "[BEHAVIOR] initiative_runs 含 skill-relay-claude-headed 且 phase 拒绝 failed/unknown",
+        "[ARTIFACT] sprints/07151245-relay-049ebf93/e2e-verify.sh 存在且锚定当前 task_id"
+      ],
+      "files": ["sprints/07151245-relay-049ebf93/e2e-verify.sh"],
+      "depends_on": [],
+      "complexity": "S",
+      "estimated_minutes": 30
+    }
+  ]
+}
