@@ -133,12 +133,25 @@ fi
 # key 一律按物理路径派生（Claude Code 用 process.cwd()=物理路径取 key，
 # ~/.claude/projects/ 实存 -private-tmp-* 条目为证；_MAIN_REPO 来自 git 已是物理路径）。
 # best-effort：任何失败只警告，绝不阻断 claude 启动。
+# 自包含：优先用预设 $_MAIN_REPO，否则从 --git-common-dir 推导；覆盖 headless-in-worktree 场景。
 _link_projects_dir() {
     local root="${CLAUDE_PROJECTS_ROOT:-$HOME/.claude/projects}"
-    local target link wt_phys f
-    target="$root/$(_path_to_project_key "$_MAIN_REPO")"
-    wt_phys="$(cd "$_WT_PATH" 2>/dev/null && pwd -P)" || wt_phys="$_WT_PATH"
-    link="$root/$(_path_to_project_key "$wt_phys")"
+    local target link cwd_phys main_root f fname
+    # 获取主仓物理路径：AUTO_WORKTREE=1 时已设置 $_MAIN_REPO；headless worktree 场景则推导
+    if [[ -n "${_MAIN_REPO:-}" ]]; then
+        main_root="$_MAIN_REPO"
+    else
+        local gcd
+        gcd="$(git rev-parse --git-common-dir 2>/dev/null)" || return 1
+        [[ "$gcd" == /* ]] || gcd="$(pwd)/$gcd"
+        main_root="${gcd%/.git}"
+        main_root="$(cd "$main_root" 2>/dev/null && pwd -P)" || return 1
+    fi
+    cwd_phys="$(pwd -P 2>/dev/null)" || return 1
+    target="$root/$(_path_to_project_key "$main_root")"
+    link="$root/$(_path_to_project_key "$cwd_phys")"
+    # cwd 就是主仓本身时无需建软链
+    [[ "$target" == "$link" ]] && return 0
     mkdir -p "$target" || return 1
     if [[ -L "$link" ]]; then
         if [[ "$(readlink "$link")" != "$target" ]]; then
@@ -146,10 +159,12 @@ _link_projects_dir() {
             ln -s "$target" "$link" || return 1
         fi
     elif [[ -d "$link" ]]; then
-        # 孤儿真实目录：内容并回主仓池子；任一 mv 失败则中止（保留真实目录，不建软链）
+        # 孤儿真实目录：内容并回主仓池子（no-clobber：跳过主池已有同名文件，不覆盖）
         for f in "$link"/* "$link"/.[!.]*; do
             [[ -e "$f" ]] || continue
-            mv "$f" "$target/" || return 1
+            fname="$(basename "$f")"
+            [[ -e "$target/$fname" ]] && continue
+            mv "$f" "$target/$fname" || return 1
         done
         rmdir "$link" || return 1
         ln -s "$target" "$link" || return 1
@@ -159,7 +174,77 @@ _link_projects_dir() {
     # 存变量供清理段复用（清理时 worktree 可能已被 remove，无法二次物理化）
     _PROJ_LINK_CREATED="$link"
 }
-if [[ "$AUTO_WORKTREE" == "1" ]]; then
+
+# 启动 sweep：扫描属于本主仓的孤儿 worktree project key 真实目录，并回主池后替换为软链。
+# 防止老版 launcher / 软链创建失败遗留的真实目录导致 --resume 找不到会话。best-effort。
+_sweep_worktree_project_keys() {
+    local root="${CLAUDE_PROJECTS_ROOT:-$HOME/.claude/projects}"
+    [[ -d "$root" ]] || return 0
+    local main_root main_key target gcd
+    if [[ -n "${_MAIN_REPO:-}" ]]; then
+        main_root="$_MAIN_REPO"
+    else
+        gcd="$(git rev-parse --git-common-dir 2>/dev/null)" || return 0
+        [[ "$gcd" == /* ]] || gcd="$(pwd)/$gcd"
+        main_root="${gcd%/.git}"
+        main_root="$(cd "$main_root" 2>/dev/null && pwd -P)" || return 0
+    fi
+    main_key="$(_path_to_project_key "$main_root")"
+    target="$root/$main_key"
+    mkdir -p "$target" 2>/dev/null || return 0
+
+    # 收集在册 active worktree 的 project key（跳过正在运行的 session）
+    local active_wt_keys
+    active_wt_keys="$(git -C "$main_root" worktree list --porcelain 2>/dev/null \
+        | awk '/^worktree /{print $2}' \
+        | while read -r wp; do
+            local wph
+            wph="$(cd "$wp" 2>/dev/null && pwd -P)" || continue
+            _path_to_project_key "$wph"
+        done)"
+
+    # 扫描前缀：(1) 主仓目录树内 worktrees（如 .claude/worktrees/cp-*）
+    #           (2) 外部 session worktrees（$_WT_BASE/session-*，若已知）
+    local -a scan_prefixes=("${main_key}-")
+    if [[ -n "${_WT_BASE:-}" ]]; then
+        local wt_base_key
+        wt_base_key="$(_path_to_project_key "$_WT_BASE")"
+        # 仅当 _WT_BASE 不在主仓目录树内时才额外添加（避免重复扫描）
+        [[ "$wt_base_key" != "${main_key}"* ]] && scan_prefixes+=("${wt_base_key}-")
+    fi
+
+    local d d_key f fname count_swept=0
+    for pfx in "${scan_prefixes[@]}"; do
+        for d in "$root"/${pfx}*; do
+            [[ -d "$d" && ! -L "$d" ]] || continue
+            d_key="$(basename "$d")"
+            # 跳过仍在主仓 worktree list 中的活跃目录
+            echo "$active_wt_keys" | grep -qFx "$d_key" && continue
+            # 并回主池（no-clobber）
+            for f in "$d"/* "$d"/.[!.]*; do
+                [[ -e "$f" ]] || continue
+                fname="$(basename "$f")"
+                [[ -e "$target/$fname" ]] && continue
+                mv "$f" "$target/$fname" 2>/dev/null || true
+            done
+            # 目录已清空才能 rmdir，否则保留（等下次 sweep 或人工处理）
+            if rmdir "$d" 2>/dev/null; then
+                ln -s "$target" "$d" 2>/dev/null || true
+                count_swept=$((count_swept + 1))
+            fi
+        done
+    done
+    [[ $count_swept -gt 0 ]] && \
+        echo "[claude-launch] 🔄 sweep: $count_swept 个孤儿 worktree key 并回主池" >&2
+    return 0
+}
+
+# 统一软链条件：无论 interactive（AUTO_WORKTREE=1，已 cd 进 worktree）还是 headless（cwd=cp-* worktree），
+# 只要当前 cwd 是某主仓的 linked worktree（而非主仓本身），就建软链并 sweep 孤儿 key。
+# 根因修复：旧版只在 AUTO_WORKTREE=1 时建链，Brain 派发的 headless cp-* session 完全跳过，
+# 导致 transcripts 写入真实目录而非主池，--resume 找不到会话。
+if git rev-parse --git-dir &>/dev/null 2>&1 && ! _in_main_repo_worktree 2>/dev/null; then
+    _sweep_worktree_project_keys
     _link_projects_dir || echo "[claude-launch] ⚠️ projects 软链失败，本 session 历史将不共享（不影响启动）" >&2
 fi
 
