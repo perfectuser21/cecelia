@@ -1,0 +1,14 @@
+{
+  "verdict": "APPROVED",
+  "rubric_scores": {
+    "dod_machineability": 9,
+    "scope_match_prd": 9,
+    "test_is_red": 9,
+    "internal_consistency": 9,
+    "risk_registered": 8,
+    "verification_oracle_completeness": 8,
+    "ci_workflow_alignment": 10
+  },
+  "judgments_written": 2,
+  "feedback": "WARN: 判定点登记表3行，回读写库仅2条——第3行\"phase 合法性判定\"候选方法列含转义竖线(A_planning\\\\|planning\\\\|...)撑爆SKILL内建正则的5列切分，导致该行未落库；非合同内容缺陷，是reviewer写库脚本的已知局限，判定点内容本身完整有效，不影响APPROVED。"
+}
