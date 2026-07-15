@@ -3,6 +3,9 @@ name: Preview Cleanup
 # PR merge or close: 清理对应的完整预览环境
 # 调 Brain API /preview/stop/:pr -> 触发 preview-env-stop.sh（异步）
 # stop 脚本执行：kill Brain 进程 + DROP DATABASE + 删除 git worktree + 释放端口
+#
+# 修复 2026-07-15：curl 失败旧版吞错仍 exit 0 → 评论谎报"已清理"导致孤儿堆积。
+# 现在：curl 失败 → step 红 + 评论如实写"Brain 不可达，reaper 兜底回收"。
 
 on:
   pull_request:
@@ -40,23 +43,24 @@ jobs:
           authkey: ${{ secrets.TS_AUTHKEY }}
 
       - name: 调 Brain API 停止预览环境
+        id: brain_stop
         if: steps.check_ts.outputs.configured == 'true'
         env:
           BRAIN_URL: ${{ secrets.BRAIN_DEPLOY_URL || 'http://100.71.151.105:5221' }}
           DEPLOY_TOKEN: ${{ secrets.DEPLOY_TOKEN }}
           PR_NUMBER: ${{ github.event.number }}
         run: |
-          set -uo pipefail
+          set -euo pipefail
           echo "调用 Brain API /preview/stop/${PR_NUMBER}..."
           RESP=$(curl -sf --connect-timeout 15 --max-time 30 \
             -X POST "${BRAIN_URL}/api/brain/preview/stop/${PR_NUMBER}" \
             -H "Content-Type: application/json" \
-            -H "Authorization: Bearer ${DEPLOY_TOKEN}" \
-            2>/dev/null || echo '{"stopped":false,"error":"请求失败"}')
+            -H "Authorization: Bearer ${DEPLOY_TOKEN}")
           echo "Brain 响应: $RESP"
+          echo "success=true" >> $GITHUB_OUTPUT
 
-      - name: PR 评论写入清理结果
-        if: always() && steps.check_ts.outputs.configured == 'true'
+      - name: PR 评论写入清理结果（成功）
+        if: steps.check_ts.outputs.configured == 'true' && steps.brain_stop.outputs.success == 'true'
         uses: actions/github-script@v7
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
@@ -67,4 +71,21 @@ jobs:
               repo: context.repo.repo,
               issue_number: context.issue.number,
               body: `## 🧹 预览环境已清理\n\n**Branch**: \`${branch}\`\n\n预览 Brain 已停止，预览数据库已删除，端口已释放。`,
+            });
+
+      - name: PR 评论写入清理结果（Brain 不可达）
+        if: >-
+          always() &&
+          steps.check_ts.outputs.configured == 'true' &&
+          steps.brain_stop.outcome == 'failure'
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const branch = '${{ github.head_ref }}';
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body: `## ⚠️ 预览环境清理失败（Brain 不可达）\n\n**Branch**: \`${branch}\`\n\nBrain API 调用失败（Tailscale 抖动/宕机）。**预览资源尚未回收**，将由宿主 preview-reaper 每小时自动对账清理。\n\n如需立即清理：\`bash scripts/preview-reaper.sh\``,
             });
