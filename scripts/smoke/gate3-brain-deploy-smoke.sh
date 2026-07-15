@@ -48,7 +48,7 @@ ORIGIN="$TMP/origin.git"
 git init -q --bare "$ORIGIN"
 git init -q -b main "$WORK"
 (
-  cd "$WORK"
+  cd "$WORK" || exit 1
   # 隔离 repo 禁用继承的全局 hooks（否则主仓库 branch-protect pre-commit 会拦 commit）
   git config core.hooksPath /dev/null
   git config user.email smoke@test.local
@@ -115,7 +115,7 @@ echo ""
 # ════════════════════════════════════════════════════════════════════════════
 echo "[D] feature 分支 diff 非空 → 照常部署（三点 diff 正常路径不回归）"
 (
-  cd "$WORK"
+  cd "$WORK" || exit 1
   git checkout -q -b cp-feature
   echo "// changed" >> packages/brain/src/server.js
   git commit -qam "brain change on feature"
