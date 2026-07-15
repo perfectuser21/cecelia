@@ -72,7 +72,7 @@ jobs:
     name: Deploy Brain (Gate 3)
     if: ${{ github.event_name == 'push' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     env:
       BRAIN_URL: ${{ secrets.BRAIN_DEPLOY_URL || 'http://100.71.151.105:5221' }}
       DEPLOY_TOKEN: ${{ secrets.DEPLOY_TOKEN }}
@@ -167,7 +167,7 @@ jobs:
             ELAPSED=$((ELAPSED + INTERVAL))
           done
 
-          echo "::warning::Deploy status 轮询超时（${MAX_WAIT}s）— webhook 已接受，结果未知"
+          echo "::warning::Deploy status 轮询超时（${MAX_WAIT}s）— webhook 已接受，结果未知；assert 步将继续等待最多 600s"
 
       - name: Smoke — Brain 部署效果确认（版本 + 真重启）
         if: steps.trigger.outputs.skipped != 'true'
@@ -185,8 +185,10 @@ jobs:
           echo ""
 
           # 15min 内的 uptime 视为"本次部署新鲜重启"；病历里未重启的 uptime 是小时级
+          # 第 4 参 600 = 等待预算：Gate3 部署实测 ~7min > 上一步 300s 轮询（2026-07-15 假红实证），
+          # 断言自带等待，预算内旧版本/不可达每 15s 重试，追上即 SUCCESS。
           set +e
-          VERDICT=$(bash scripts/ci/assert-deploy-effect.sh "${BRAIN_URL}" "$EXPECTED_VERSION" 900)
+          VERDICT=$(bash scripts/ci/assert-deploy-effect.sh "${BRAIN_URL}" "$EXPECTED_VERSION" 900 600)
           CODE=$?
           set -e
           echo "$VERDICT"
