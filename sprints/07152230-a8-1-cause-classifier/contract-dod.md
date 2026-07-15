@@ -3,6 +3,7 @@
 - task_id: 431d24b1-de5e-4002-8581-8740c8a73232
 - sprint_dir: sprints/07152230-a8-1-cause-classifier
 - 日期: 2026-07-15
+- 覆盖 [BEHAVIOR] 条目：8 项（[BEHAVIOR-01] ~ [BEHAVIOR-08]）
 
 ---
 

@@ -1,0 +1,36 @@
+{
+  "verdict": "PASS",
+  "sha": "c19ff325c072c586d5dffb93bd15e3c1ff34fa1b",
+  "behavior_coverage": {
+    "BEHAVIOR-01": "PASS",
+    "BEHAVIOR-02": "PASS",
+    "BEHAVIOR-03": "PASS",
+    "BEHAVIOR-04": "PASS",
+    "BEHAVIOR-05": "PASS",
+    "BEHAVIOR-06": "PASS",
+    "BEHAVIOR-07": "PASS",
+    "BEHAVIOR-08": "PASS"
+  },
+  "invariant_coverage": {
+    "INV-01": "PASS",
+    "INV-02": "PASS",
+    "INV-03": "PASS",
+    "INV-04": "PASS",
+    "INV-05": "PASS",
+    "INV-06": "PASS",
+    "INV-07": "PASS"
+  },
+  "tdd_order": "PASS",
+  "unverifiable": [
+    "BEHAVIOR-03 watchdog 审计日志真实打印（chain test 用内联模拟路由，非真实 watchdog 调用路径；需集成环境跑真实 resumeStalledRelayRuns）",
+    "BEHAVIOR-04 oom_upgraded DB 回写（chain test mock DB stub，非真实 PostgreSQL；需 brain-integration 环境）",
+    "BEHAVIOR-05 CI 红重点火全链（ci_red_refire 路径在 watchdog 中实际调用 spawnSkillRelaySession，需真实 Docker/Github API）",
+    "NFR-03 CI 全绿（brain-ci-deploy.yml 使用 changed-test-router.mjs 选测而非全量 vitest run，本地无法复现 CI 选测逻辑；已通过 PR checks 56+5 全绿可信任）"
+  ],
+  "concerns": [
+    "BEHAVIOR-06 contract-vs-PRD §5 矛盾：contract-dod.md BEHAVIOR-06 断言'spawnFn 不被调用'（for unknown/auth/rate_limit），但 PRD §5 铁律写'分类器判不出→保守走现行路径'（即继续 spawn）。fix commit 9e9e467ef 主动删除了 `continue` guard，使 unknown 等 cause 也走 spawn——与 PRD §5 铁律对齐，但与 BEHAVIOR-06 断言字面相悖。chain test 的 unknown 全链测试通过内联 if(action==='log_only') 模拟路由而非真实 watchdog，因此测试绿色不能证伪此矛盾。评估判定 PASS 理由：PRD §5 权威高于 contract 次级断言，且现行路径=spawn 是保守选择（不阻断现有行为）。建议 A8-2 时澄清 contract-dod 措辞，与 PRD §5 统一。",
+    "BEHAVIOR-08 CI 覆盖路径：brain-ci-deploy.yml 通过 changed-test-router.mjs 选测，harness-death-chain.test.js 和 harness-death-classifier.test.js 均在 vitest.config.js include 范围（src/**/*.test.js）且不在 exclude 列表，PR checks 56+5 全绿可作为 CI 覆盖证据。",
+    "watchdog 中 classifyDeath 以动态 import 调用（`await import('./harness-death-classifier.js')`），每次收尸均重新 import——Node.js 模块缓存应避免性能问题，但在高频收尸场景下值得关注（本期无 NFR 约束，可忽略）。"
+  ],
+  "feedback": "实现整体质量良好。classifyDeath 纯函数设计干净（58 行，无 import，无 async），三源优先级（exitCode > stdoutTail > tmuxPane）实现正确，枚举值域完整。watchdog 集成审计日志每次必打（INV-06 满足）。OOM 升档逻辑保留 oom_wall 墙（INV-02 满足）。TDD 顺序正确（Red commit ce71b9790 先于 Green commit 2515b07f1）。主要存疑点：BEHAVIOR-06 的'不触发 spawn'断言与 PRD §5'走现行路径'存在措辞矛盾，fix commit 选择了保守的 PRD §5 解释（不阻断现有 spawn），chain test 通过内联模拟规避了真实 watchdog 路径测试——建议 A8-2 在 contract 中统一措辞，并补充真实 watchdog 路由的集成测试用例。"
+}
