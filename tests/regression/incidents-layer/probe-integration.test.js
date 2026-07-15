@@ -15,8 +15,11 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { readFileSync } from 'fs';
 import { resolve } from 'path';
+import { fileURLToPath } from 'url';
 
-const BRAIN_SRC = resolve(process.cwd(), 'packages/brain/src');
+// 用 import.meta.url 定位源码目录（对 process.cwd() 免疫，brain-unit cwd=packages/brain 也正确）
+const __testDir = fileURLToPath(new URL('.', import.meta.url));
+const BRAIN_SRC = resolve(__testDir, '../../../packages/brain/src');
 
 // ── 静态检查：验证源码中存在 reportIncident 调用 ────────────────────────────
 describe('[BEHAVIOR-6] launchd-patrol 接入静态检查', () => {
@@ -58,12 +61,14 @@ describe('[BEHAVIOR-8] circuit-breaker 接入静态检查', () => {
 
 // ── incident-reporter 模块导出检查 ───────────────────────────────────────────
 describe('incident-reporter 模块接口检查', () => {
-  const mockQuery = vi.fn().mockResolvedValue({ rows: [] });
-
-  vi.mock('../../../packages/brain/src/db/pool.js', () => ({
-    default: { query: mockQuery },
-    pool: { query: mockQuery },
-  }));
+  // vi.mock 被 hoisted 到文件顶部，factory 内部必须自包含（不引用外部变量）
+  vi.mock('../../../packages/brain/src/db/pool.js', () => {
+    const q = vi.fn().mockResolvedValue({ rows: [] });
+    return {
+      default: { query: q },
+      pool: { query: q },
+    };
+  });
 
   it('应导出 reportIncident 函数', async () => {
     const mod = await import('../../../packages/brain/src/incident-reporter.js');
@@ -71,7 +76,6 @@ describe('incident-reporter 模块接口检查', () => {
   });
 
   it('reportIncident 应接受 4 个参数（probeId, fingerprint, severity, evidence）', async () => {
-    mockQuery.mockResolvedValueOnce({ rows: [] });
     const { reportIncident } = await import(
       '../../../packages/brain/src/incident-reporter.js'
     );
