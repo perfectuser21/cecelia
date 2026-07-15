@@ -56,7 +56,7 @@ while IFS= read -r TEST_FILE; do
   FIRST_COMMIT=$(git log --diff-filter=A --format="%H" -- "$REL_PATH" 2>/dev/null | tail -1 || true)
 
   if [ -z "$FIRST_COMMIT" ]; then
-    echo "WARN: 无法定位文件首次 commit: $REL_PATH（可能历史截断或未提交）— 跳过此文件 (exit 0)"
+    echo "WARN: 无法定位文件首次 commit: ${REL_PATH}（可能历史截断或未提交）— 跳过此文件 (exit 0)"
     continue
   fi
 

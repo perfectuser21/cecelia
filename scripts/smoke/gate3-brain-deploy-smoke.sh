@@ -65,7 +65,7 @@ git init -q -b main "$WORK"
 DIFF_ON_MAIN=$(cd "$WORK" && git diff --name-only origin/main...HEAD 2>/dev/null || echo "")
 [[ -z "$DIFF_ON_MAIN" ]] \
   && pass "前提成立：部署根 main 上三点 diff 为空（假跳过触发条件）" \
-  || fail "前提不成立：三点 diff 非空（$DIFF_ON_MAIN），场景没复现对"
+  || fail "前提不成立：三点 diff 非空（${DIFF_ON_MAIN}），场景没复现对"
 echo ""
 
 run_deploy() { # $1=env版本(空则不注入)  $2..=额外参数

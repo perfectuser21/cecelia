@@ -68,7 +68,7 @@ output="$(node "$GUARD" --registry "$FIXTURE_REG" 2>&1 || true)"
 if echo "$output" | grep -q "smoke_pool"; then
   echo "✅ 违规输出含指标名 smoke_pool"; PASS=$((PASS+1))
 else
-  echo "❌ 违规输出缺指标名 smoke_pool（实际: $output）"; FAIL=$((FAIL+1))
+  echo "❌ 违规输出缺指标名 smoke_pool（实际: ${output}）"; FAIL=$((FAIL+1))
 fi
 
 # ── 总结 ──────────────────────────────────────────────────────────────────────
