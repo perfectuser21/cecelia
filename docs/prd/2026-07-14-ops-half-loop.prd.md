@@ -4,7 +4,7 @@
 > 发起：Alex（本 PRD 由 2026-07-14 管家会话共识整理）
 > 层级：Project（下分 6 把刀，每把刀 = 1 个 Initiative，内部再拆 /dev 任务）
 > 关联决策：dc18d43d「无闸不成文」（本 PRD 是该铁律从"交付时"延长到"终身"的落地）
-> 状态：刀 0 ✅ (#3867) / 刀 1 ✅ (#3870) / 刀 1b ✅ (skills#145+#3874) / 刀 2 ✅ (skills#145) / 面板 ✅ (#3876+#3879) / 刀 3 ✅ (Initiative 08c27793 六任务) / 刀 4 ✅ (Initiative 6bc7760d：#3914/#3915/#3917)；仅剩刀 5（另立 PRD 走 /architect）
+> 状态：刀 0 ✅ (#3867) / 刀 1 ✅ (#3870) / 刀 1b ✅ (skills#145+#3874) / 刀 2 ✅ (skills#145) / 面板 ✅ (#3876+#3879) / 刀 3 ✅ (Initiative 08c27793 六任务) / 刀 4 ✅ (Initiative 6bc7760d：#3914/#3915/#3917)；刀 5 PRD 已立 → docs/prd/2026-07-15-ai-native-loop.prd.md（主理人拍板直接写，不走 /architect）
 
 ---
 
@@ -217,7 +217,7 @@ L3/L4 自愈与 AI-Native：探针红 → Brain 分诊 →
 | 刀 2 TDD 纪律 | 07-14 | skills repo PR（skill-creator 流程） | ✅ skills#145 |
 | 刀 3 Ops 制度 | **当前工作面**（错峰条件已满足：刀B+C 收账权已上生产 brain 1.260.0） | /decomp 拆成 4-6 个 /dev 任务 | ~1 周 |
 | 刀 4 守卫可信（心跳/棘轮/演习） | 刀 3 落地后 | /dev 2-3 个任务 | ~2-3 天 |
-| 刀 5 AI-Native 闭环（探针红→harness 派单+验尸产守卫） | 刀 4 后另立 PRD | /architect → /decomp | 另计 |
+| 刀 5 AI-Native 闭环（探针红→harness 派单+验尸产守卫） | PRD 已立 07-15 → docs/prd/2026-07-15-ai-native-loop.prd.md | 直接写 PRD（主理人拍板不走 /architect）→ /decomp | ~1-1.5 周 |
 
 与在飞工作的关系：刀 0/1 不碰 harness 编排代码，与队列中「刀B+C 收账权收归」
 无冲突可先行；刀 3 的巡检扩容部分依赖收账权落地后的账本口径，排在其后。

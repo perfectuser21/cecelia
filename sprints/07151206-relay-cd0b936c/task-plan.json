@@ -1,0 +1,24 @@
+{
+  "initiative_id": "cd0b936c-2891-4fed-a921-5636ca08d1e8",
+  "journey_type": "dev_pipeline",
+  "journey_type_reason": "journey bb8cc561 本体定义 journey_type=dev_pipeline，沿用既定分类",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "新增 sprints/07151206-relay-cd0b936c/e2e-verify.sh，绑定本轮 task_id 的 claude-headed 回归验证脚本",
+      "scope": "对齐 scripts/smoke/e2e/relay-4bb31ef5.sh 的验证项（claude-headed-dispatch-smoke.sh 复用 + smoke-allowlist.txt 登记复用检查 + ci.yml 分支优先级断言 + harness-skill-relay.js 路由标记 + initiative_runs 行校验），TASK_ID/SPRINT_DIR 默认值改绑 cd0b936c-2891-4fed-a921-5636ca08d1e8 / sprints/07151206-relay-cd0b936c。不修改 relay-4bb31ef5.sh、ci.yml、smoke-allowlist.txt。",
+      "dod": [
+        "[BEHAVIOR] e2e-verify.sh 的 TASK_ID 默认值真实求值等于 cd0b936c-2891-4fed-a921-5636ca08d1e8",
+        "[BEHAVIOR] e2e-verify.sh 对真实 Brain API + 真实 DB 全流程执行返回 OK headed smoke regression verified for cd0b936c-2891-4fed-a921-5636ca08d1e8",
+        "[BEHAVIOR] 陌生 task_id 下脚本 FAIL（exit 非 0）且不 sleep/retry 掩盖（<15s）",
+        "[ARTIFACT] relay-4bb31ef5.sh 未被修改"
+      ],
+      "files": [
+        "sprints/07151206-relay-cd0b936c/e2e-verify.sh"
+      ],
+      "depends_on": [],
+      "complexity": "S",
+      "estimated_minutes": 40
+    }
+  ]
+}

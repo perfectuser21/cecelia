@@ -198,22 +198,111 @@ jobs:
           exit 1
       - name: Seed smoke task for sprint tests
         if: steps.check-tests.outputs.has_tests == 'true'
+        env:
+          DB: postgresql://cecelia:cecelia@localhost:5432/cecelia
         run: |
-          TASK_RESP=$(curl -sf -X POST http://localhost:5221/api/brain/tasks \
-            -H "Content-Type: application/json" \
-            -d '{"title":"CI Smoke Task","task_type":"harness_generate"}' 2>/dev/null || echo '{}')
-          SMOKE_ID=$(echo "$TASK_RESP" | node -e "let d='';process.stdin.on('data',c=>d+=c);process.stdin.on('end',()=>{try{const p=JSON.parse(d);p.id&&process.stdout.write(p.id)}catch(e){}})" 2>/dev/null || true)
-          if [ -n "$SMOKE_ID" ]; then
-            curl -sf -X PATCH "http://localhost:5221/api/brain/tasks/$SMOKE_ID" \
+          # claude-headed relay 精确判定优先（镜像 ci.yml dod-behavior-dynamic 的既有 seed 逻辑，
+          # #3965 实证：该类 sprint 测试对固定 task_id 做 execSync 真实执行，
+          # 若走下方通用随机 UUID 分支，TASK_ID 会被通用 smoke task 污染 env，
+          # 导致脚本用错 task_id 查询 initiative_runs 而假红）。
+          # sprint 测试若是 execSync 真实执行 e2e-verify.sh（非静态 readFileSync 内容检查），
+          # claude-headed 标记不会出现在 *.test.ts 本体里，而在其同 sprint 目录的 e2e-verify.sh
+          # 中——按测试文件路径反推 sprint 目录、检查同目录 e2e-verify.sh。
+          TEST_FILES_RAW="${{ steps.check-tests.outputs.test_files }}"
+          SPRINT_DIRS=$(echo "$TEST_FILES_RAW" | sed -E 's#^(sprints/[^/]+)/.*#\1#' | sort -u)
+          CLAUDE_HEADED_DOD=false
+          CLAUDE_HEADED_E2E=""
+          for d in $SPRINT_DIRS; do
+            E2E="$d/e2e-verify.sh"
+            if [ -f "$E2E" ] && grep -q 'skill-relay-claude-headed' "$E2E"; then
+              CLAUDE_HEADED_DOD=true
+              CLAUDE_HEADED_E2E="$E2E"
+              break
+            fi
+          done
+          # 兼容静态 readFileSync 型测试（claude-headed 标记直接出现在 *.test.ts 本体）
+          if [ "$CLAUDE_HEADED_DOD" != "true" ] && echo "$TEST_FILES_RAW" | xargs -I{} grep -lq 'skill-relay-claude-headed' {} 2>/dev/null; then
+            CLAUDE_HEADED_DOD=true
+          fi
+
+          if [ "$CLAUDE_HEADED_DOD" = "true" ]; then
+            if [ -n "$CLAUDE_HEADED_E2E" ]; then
+              SMOKE_ID=$(grep -Eo '[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}' "$CLAUDE_HEADED_E2E" | head -1 || true)
+            else
+              SMOKE_ID=$(echo "$TEST_FILES_RAW" | xargs -I{} grep -Eo '[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}' {} 2>/dev/null | head -1 || true)
+            fi
+            if [[ "$SMOKE_ID" =~ ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$ ]]; then
+              psql "$DB" -v ON_ERROR_STOP=1 -v smoke_id="$SMOKE_ID" <<'SQL'
+          INSERT INTO tasks (
+            id, title, status, priority, task_type, payload, trigger_source, domain, location, created_at, updated_at
+          )
+          VALUES (
+            :'smoke_id'::uuid,
+            'CI Sprint-Tests Claude Headed Relay Smoke Task',
+            'completed',
+            'P2',
+            'harness_initiative',
+            '{"mode":"headed","executor":"claude","orchestrator":"skill-relay","journey_id":"bb8cc561-b3ee-4fec-b74d-2255694bd963"}'::jsonb,
+            'ci',
+            'quality',
+            'us',
+            NOW(),
+            NOW()
+          )
+          ON CONFLICT (id) DO UPDATE SET
+            title = EXCLUDED.title,
+            status = EXCLUDED.status,
+            priority = EXCLUDED.priority,
+            task_type = EXCLUDED.task_type,
+            payload = EXCLUDED.payload,
+            trigger_source = EXCLUDED.trigger_source,
+            domain = EXCLUDED.domain,
+            location = EXCLUDED.location,
+            updated_at = NOW();
+
+          DELETE FROM initiative_runs
+           WHERE initiative_id = :'smoke_id'::uuid
+             AND orchestrator_host = 'skill-relay-claude-headed';
+
+          INSERT INTO initiative_runs (
+            initiative_id, phase, journey_id, orchestrator_version, orchestrator_host, deadline_at, started_at, updated_at
+          )
+          VALUES (
+            :'smoke_id'::uuid,
+            'A_planning',
+            'bb8cc561-b3ee-4fec-b74d-2255694bd963'::uuid,
+            'v2',
+            'skill-relay-claude-headed',
+            NOW() + INTERVAL '8 hours',
+            NOW(),
+            NOW()
+          );
+          SQL
+              echo "TASK_ID=$SMOKE_ID" >> "$GITHUB_ENV"
+              echo "✅ Seeded claude-headed relay smoke task/run (精确匹配 sprint 测试内嵌 task_id): $SMOKE_ID"
+            else
+              echo "::warning::检测到 claude-headed pattern 但未能从测试文件提取 task_id UUID，回退通用分支"
+              CLAUDE_HEADED_DOD=false
+            fi
+          fi
+
+          if [ "$CLAUDE_HEADED_DOD" != "true" ]; then
+            TASK_RESP=$(curl -sf -X POST http://localhost:5221/api/brain/tasks \
               -H "Content-Type: application/json" \
-              -d '{"status":"in_progress"}' > /dev/null || true
-            curl -sf -X PATCH "http://localhost:5221/api/brain/tasks/$SMOKE_ID" \
-              -H "Content-Type: application/json" \
-              -d '{"status":"completed"}' > /dev/null || true
-            echo "TASK_ID=$SMOKE_ID" >> "$GITHUB_ENV"
-            echo "✅ Seeded smoke task: $SMOKE_ID (status=completed)"
-          else
-            echo "::warning::Could not create smoke task — Brain tasks test will use default ID"
+              -d '{"title":"CI Smoke Task","task_type":"harness_generate"}' 2>/dev/null || echo '{}')
+            SMOKE_ID=$(echo "$TASK_RESP" | node -e "let d='';process.stdin.on('data',c=>d+=c);process.stdin.on('end',()=>{try{const p=JSON.parse(d);p.id&&process.stdout.write(p.id)}catch(e){}})" 2>/dev/null || true)
+            if [ -n "$SMOKE_ID" ]; then
+              curl -sf -X PATCH "http://localhost:5221/api/brain/tasks/$SMOKE_ID" \
+                -H "Content-Type: application/json" \
+                -d '{"status":"in_progress"}' > /dev/null || true
+              curl -sf -X PATCH "http://localhost:5221/api/brain/tasks/$SMOKE_ID" \
+                -H "Content-Type: application/json" \
+                -d '{"status":"completed"}' > /dev/null || true
+              echo "TASK_ID=$SMOKE_ID" >> "$GITHUB_ENV"
+              echo "✅ Seeded smoke task: $SMOKE_ID (status=completed)"
+            else
+              echo "::warning::Could not create smoke task — Brain tasks test will use default ID"
+            fi
           fi
       - name: Run sprint tests
         if: steps.check-tests.outputs.has_tests == 'true'
