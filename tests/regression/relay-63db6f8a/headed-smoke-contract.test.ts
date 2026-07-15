@@ -34,11 +34,12 @@ describe('headed smoke contract (task 63db6f8a) [BEHAVIOR]', () => {
     expect(script).toContain('has("thin_prd") | not');
   });
 
-  it('initiative_runs 含 skill-relay-claude-headed 且 phase 拒绝 failed/unknown', () => {
+  it('initiative_runs 含 skill-relay-claude-headed 或 foreground 且 phase 拒绝 failed/unknown', () => {
     const script = readWrapper();
     expect(script).toContain('FROM initiative_runs');
     expect(script).toContain("initiative_id='${TASK_ID}'");
     expect(script).toContain('skill-relay-claude-headed');
+    expect(script).toContain('*skill-relay-claude-headed*|foreground');
     expect(script).toContain('A_planning|planning|gan|generate|evaluate|done');
     expect(script).toContain('if [ "$PHASE" = "failed" ]; then echo "FAIL: phase=failed"; exit 1; fi');
     expect(script).toContain('started_at');
