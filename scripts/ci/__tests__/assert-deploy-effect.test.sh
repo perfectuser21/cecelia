@@ -38,5 +38,47 @@ run_case "无version字段"   '{"uptime_seconds":5}'                          "1
 run_case "空响应"         ''                                              "1.238.2" 300 "UNREACHABLE"      3
 
 echo ""
+echo "== assert-deploy-effect 等待预算重试语义（Gate3 假红根治，2026-07-15 实证）=="
+# 背景：Gate3 部署 ~7min > workflow 等待步 300s，断言一锤子判定旧版本 → VERSION_MISMATCH 假红。
+# 修法：第 4 参 wait_budget_s>0 时在预算内重试（间隔 RETRY_INTERVAL_S env，默认 15s）。
+
+# R1: 预算内版本追上 → SUCCESS exit 0
+F="$TMP/health-r1.json"
+echo '{"version":"9.9.8","uptime_seconds":5000}' > "$F"
+( sleep 2; echo '{"version":"9.9.9","uptime_seconds":10}' > "$F" ) &
+OUT=$(HEALTH_JSON_OVERRIDE="$F" RETRY_INTERVAL_S=1 bash "$ASSERT" "http://x" "9.9.9" 300 20 2>&1)
+CODE=$?
+wait
+if echo "$OUT" | grep -q "SUCCESS" && [ "$CODE" -eq 0 ]; then
+  echo "  ✅ R1 预算内追上→SUCCESS (exit $CODE)"
+else
+  echo "  ❌ R1 预算内追上：期望 SUCCESS/exit0，实得 [$OUT] exit=$CODE"; FAIL=1
+fi
+
+# R2: 预算耗尽仍旧版 → VERSION_MISMATCH exit 2
+F2="$TMP/health-r2.json"
+echo '{"version":"9.9.8","uptime_seconds":5000}' > "$F2"
+OUT=$(HEALTH_JSON_OVERRIDE="$F2" RETRY_INTERVAL_S=1 bash "$ASSERT" "http://x" "9.9.9" 300 2 2>&1)
+CODE=$?
+if echo "$OUT" | grep -q "VERSION_MISMATCH" && [ "$CODE" -eq 2 ]; then
+  echo "  ✅ R2 预算耗尽仍旧版→VERSION_MISMATCH (exit $CODE)"
+else
+  echo "  ❌ R2 预算耗尽：期望 VERSION_MISMATCH/exit2，实得 [$OUT] exit=$CODE"; FAIL=1
+fi
+
+# R3: 不带第 4 参 = 现行为一锤子判定（不等待，整个调用 <3s）
+F3="$TMP/health-r3.json"
+echo '{"version":"9.9.8","uptime_seconds":5000}' > "$F3"
+T0=$SECONDS
+OUT=$(HEALTH_JSON_OVERRIDE="$F3" bash "$ASSERT" "http://x" "9.9.9" 300 2>&1)
+CODE=$?
+ELAPSED=$(( SECONDS - T0 ))
+if echo "$OUT" | grep -q "VERSION_MISMATCH" && [ "$CODE" -eq 2 ] && [ "$ELAPSED" -lt 3 ]; then
+  echo "  ✅ R3 不带第4参=现行为一锤 (exit $CODE, ${ELAPSED}s)"
+else
+  echo "  ❌ R3 兼容性：期望立即 VERSION_MISMATCH/exit2/<3s，实得 [$OUT] exit=$CODE elapsed=${ELAPSED}s"; FAIL=1
+fi
+
+echo ""
 if [ "$FAIL" -ne 0 ]; then echo "❌ assert-deploy-effect 回归测试失败"; exit 1; fi
 echo "✅ assert-deploy-effect 回归测试全部通过"
