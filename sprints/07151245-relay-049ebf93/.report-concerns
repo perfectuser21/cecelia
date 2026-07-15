@@ -1,0 +1,6 @@
+CONCERN: Step4:FEATURE_ID为空跳过FeatureRegistry
+CONCERN: Step5:飞书通知sent=false
+CONCERN: Step2:harness/complete rowsAffected=0(dashboard未匹配到行)
+CONCERN: Step8f:capture_atoms未写入(HTTP 404)
+CONCERN: PhaseB:journeys无PATCH端点journey.updated_at未能刷新(已开issue e6296472)
+CONCERN: PhaseB核验:GET/api/brain/notes不存在(404)，改用POST时返回的真实Notion页面ID(39ec40c2-...)作为落库证据

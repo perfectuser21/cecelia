@@ -1,0 +1,7 @@
+{
+  "next_steps_suggested": [
+    "harness-report Step 1 PATCH /api/brain/tasks/:id 返回 accepted:false reason:pr_not_found 时，先用 PATCH /api/brain/tasks/tasks/:id 单独写入 pr_url 列（finalizeHarnessTask 只信任 tasks.pr_url 列或 payload.pr_url，不信 result.pr_url），再重试 status=completed，不要重复无脑重试同一条请求",
+    "PR 被 should-auto-merge.sh 等 CI 侧兜底机制在 evaluator/judge 跑完前提前合并时，必须用 PR head SHA 核对 evaluator/judge verdict 文件锚定的 sha 与实际合并 sha 一致，确认无代码漂移后才能在报告中标注流程完整性未受损",
+    "routes/tasks.js 的 PATCH /tasks/:task_id 与 routes/task-tasks.js 的 PATCH /tasks/tasks/:id 挂载前缀重叠但字段能力不同（后者支持 pr_url/priority/title），因注册顺序前者优先命中，调用方需知道 /api/brain/tasks/tasks/:id 这条第二挂载点才能设置 pr_url"
+  ]
+}
