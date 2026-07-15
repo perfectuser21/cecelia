@@ -11,6 +11,8 @@
  * 防重复设计：如果该部门已有 queued/in_progress 的 heartbeat task，跳过。
  */
 
+import { reportIncident } from './incident-reporter.js';
+
 /**
  * 查询所有 enabled=true 的部门配置
  * @param {import('pg').Pool} pool
@@ -121,12 +123,25 @@ export async function triggerDeptHeartbeats(pool) {
     const depts = await getEnabledDepts(pool);
 
     for (const dept of depts) {
-      const result = await createDeptHeartbeatTask(pool, dept);
-      results.push({ dept: dept.dept_name, ...result });
+      try {
+        const result = await createDeptHeartbeatTask(pool, dept);
+        results.push({ dept: dept.dept_name, ...result });
 
-      if (result.created) {
-        triggered++;
-      } else {
+        if (result.created) {
+          triggered++;
+        } else {
+          skipped++;
+        }
+      } catch (deptErr) {
+        console.error(`[dept-heartbeat] createDeptHeartbeatTask error for ${dept.dept_name}:`, deptErr.message);
+        // 部门 heartbeat 创建失败：上报 heartbeat-silent incident
+        await reportIncident(
+          'dept-heartbeat',
+          `heartbeat-silent:${dept.dept_name}`,
+          'p2',
+          { dept_name: dept.dept_name, error: deptErr.message }
+        );
+        results.push({ dept: dept.dept_name, created: false, reason: 'error' });
         skipped++;
       }
     }
