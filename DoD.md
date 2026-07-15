@@ -1,6 +1,8 @@
-# DoD: Gate3 假红根治——assert-deploy-effect 等待预算重试
+# DoD: preview 泄漏根治①——preview-reaper 对账器 + cleanup 诚实化
 
-- [x] [BEHAVIOR] wait_budget_s 预算内版本追上 → SUCCESS；耗尽仍旧版 → VERSION_MISMATCH；不带参数 = 现行为一锤（8 case 全绿，TDD Red 先行）
-      Test: manual:bash scripts/ci/__tests__/assert-deploy-effect.test.sh
-- [x] workflow 断言步传 600s 预算 + job 超时 20min
-      Test: manual:bash -c "grep -q '900 600' .github/workflows/brain-ci-deploy.yml && grep -q 'timeout-minutes: 20' .github/workflows/brain-ci-deploy.yml"
+- [x] [BEHAVIOR] closed PR 三源回收 / open 不动 / 状态未知 fail-safe / 表行标 inactive / dry-run（5 case，TDD Red 先行）
+      Test: manual:bash scripts/ci/__tests__/preview-reaper.test.sh
+- [x] cleanup workflow curl 失败必红且评论如实
+      Test: manual:bash -c "grep -q 'exit 1' .github/workflows/preview-cleanup.yml && grep -q 'preview-reaper' .github/workflows/preview-cleanup.yml"
+- [x] reaper 测试已接线 ci.yml
+      Test: manual:bash -c "grep -q 'preview-reaper.test.sh' .github/workflows/ci.yml"
