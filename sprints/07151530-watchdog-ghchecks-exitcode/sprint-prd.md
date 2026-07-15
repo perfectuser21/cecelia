@@ -179,3 +179,26 @@ function execTolerant(execFn, cmd) {
 - `[ASSUMPTION: harness-relay-watchdog.js 的 execTolerant 实现（第 30-37 行）语义已正确，仅缺测试覆盖；若测试发现实现有误则就地修复]`
 - `[ASSUMPTION: makeDeps 内 execFn 可以在单个 test 中局部覆盖，无需修改公共工厂函数签名]`
 - `[ASSUMPTION: 现有 Brain CI（brain-ci.yml）会自动运行 harness-relay-watchdog.test.js]`
+
+---
+
+## NFR
+
+- 性能：无影响（仅测试补齐，不改线上路径）
+- 安全：无影响
+
+---
+
+## 累积 FR
+
+| # | 描述 |
+|---|------|
+| FR-1 | GP-A：gh pr checks 非零退出+stdout含FAILURE → resume_ci_red → spawnFn 调用 |
+| FR-2 | GP-B：gh pr checks 非零退出+stdout全pending → wait_ci_running → spawnFn 不调用 |
+| FR-3 | GP-C：gh pr checks 非零退出+无stdout（真失败）→ 保守跳过 → spawnFn 不调用 |
+| FR-4 | GP-R：既有正常路径测试全过（回归） |
+
+---
+
+journey_type: bugfix
+target_environment: local_api
