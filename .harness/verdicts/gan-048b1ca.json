@@ -1,0 +1,18 @@
+{
+  "verdict": "APPROVED",
+  "round": 2,
+  "rubric_scores": {
+    "dod_machineability": 9,
+    "scope_match_prd": 9,
+    "test_is_red": 9,
+    "internal_consistency": 9,
+    "risk_registered": 8,
+    "verification_oracle_completeness": 8,
+    "ci_workflow_alignment": 10
+  },
+  "judgments_written": 2,
+  "judgments_table_rows": 3,
+  "warn": "判定点第3行含转义竖线撑爆 reviewer 写库正则5列切分，未落库；内容完整有效，不影响 APPROVED",
+  "invariant_coverage": "7/7",
+  "format_checks": {"behavior_count": 8, "e2e_section": true, "manual_bash": true}
+}
