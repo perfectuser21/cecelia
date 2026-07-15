@@ -187,8 +187,10 @@ describe('selfcheck', () => {
   // 341（zenithjoy 裸表归位 schema，P0 事故修复版：删除 ALTER DATABASE 全局副作用）
   // 342（decisions.source_ref 列，决策溯源链）推进地板到 342。
   // 343（journey_features.guard_ref 列，裸奔 FR 守卫引用）推进地板到 343。
-  it('EXPECTED_SCHEMA_VERSION should be 343 (floor, bumped for guard_ref migration)', () => {
-    expect(EXPECTED_SCHEMA_VERSION).toBe('344');
+  // 344（journey_features status CHECK 拓宽）推进地板到 344。
+  // 345（dev_records.is_canary 列，金丝雀演习标记）推进地板到 345。
+  it('EXPECTED_SCHEMA_VERSION should be 345 (floor, bumped for dev_records_canary migration)', () => {
+    expect(EXPECTED_SCHEMA_VERSION).toBe('345');
   });
 
   it('should pass when DB schema version is ahead of expected (>= check)', async () => {
