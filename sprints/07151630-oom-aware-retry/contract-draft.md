@@ -140,3 +140,5 @@ cd /workspace && npx vitest run packages/brain/src/__tests__/harness-relay-watch
 | `sprints/07151630-oom-aware-retry/tests/oom-aware-retry.test.js` | GP1/GP2 单测骨架 | failing（待 impl） |
 | `packages/brain/src/__tests__/harness-relay-watchdog.test.js` | 既有测试 | 全绿不回归 |
 | `packages/brain/src/__tests__/harness-relay-watchdog-gates.test.js` | 既有测试 | 全绿不回归 |
+
+> **CI 常驻路径约定**：`sprints/` 目录的骨架仅作参照；实施阶段真实 failing tests 必须放 `packages/brain/src/__tests__/oom-aware-retry.test.js` 才进 CI 回归。

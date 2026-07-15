@@ -187,38 +187,16 @@ describe('GP2：oom_upgraded=true + exit=137 → oom_wall，禁止 spawn', () =>
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// GP4：callback 路由写入 last_container_exit_code（FAILING TEST — impl 前必须红）
+// GP4：callback 路由写入 last_container_exit_code（手工集成验收，非 CI 自动化）
+// 见 contract-dod.md BEHAVIOR-3：验收方式为手工 bash 命令，不走自动化测试
 // ─────────────────────────────────────────────────────────────────────────────
-describe('GP4：relay callback 写入 last_container_exit_code', () => {
+describe.skip('GP4：relay callback 写入 last_container_exit_code（手工验收，跳过 CI）', () => {
   it('exit_code=137 回调 → task payload 写入 last_container_exit_code=137', async () => {
-    // 直接测试 harness-callback 路由逻辑
-    // 模拟 req/res 对象，调用 route handler
-    const mockQuery = vi.fn().mockResolvedValue({ rows: [{ id: TASK_ID }] });
-    const mockRes = { json: vi.fn(), status: vi.fn().mockReturnThis() };
-    const mockReq = {
-      params: { containerId: `cecelia-relay-${SHORT}` },
-      body: {
-        result: 'completed',
-        exit_code: 137,
-        stdout: 'some output',
-      },
-    };
-
-    // 导入并测试路由（注意：需要 mock db 层）
-    // 此测试为骨架，impl 后完善 route handler 的直接调用
-    // 核心断言：DB PATCH payload.last_container_exit_code = 137
-    const patchCalls = mockQuery.mock.calls.filter(([sql]) =>
-      /last_container_exit_code/.test(String(sql))
-    );
-
-    // 骨架断言（impl 后替换为真实 route handler 调用）
-    // 目前：标记为 TODO，确认测试结构正确
-    // TODO: 引入真实 handler 后解注释
-    // expect(patchCalls.length).toBeGreaterThan(0);
-    // expect(patchCalls[0][1]).toContain(137);
-
-    // 暂时通过（骨架阶段）— impl 后此 it 应测真实行为
-    expect(true).toBe(true); // placeholder，impl 后删除
+    // 此 GP 按 PRD 标注为"不回归测试"，验收走手工集成验收
+    // 手工验收命令见 contract-dod.md BEHAVIOR-3
+    // curl -X POST localhost:5221/api/brain/harness/callback/cecelia-relay-aabbccdd-test \
+    //   -d '{"result":"completed","exit_code":137}' && \
+    //   curl localhost:5221/api/brain/tasks/<TASK_ID> | jq .payload.last_container_exit_code
   });
 });
 

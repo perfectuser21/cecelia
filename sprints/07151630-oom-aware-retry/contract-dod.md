@@ -42,14 +42,23 @@ cd /workspace && npx vitest run sprints/07151630-oom-aware-retry/tests/oom-aware
 
 **描述**：relay 容器（`cecelia-relay-*`）POST callback 时若 body 含 `exit_code`，路由将 `last_container_exit_code: Number(exit_code)` 合并写入 task payload，不影响 200 ack 响应。
 
-**验收命令（manual:bash）**：
+> **注**：GP4 按 PRD 标注为"不回归测试"，验收方式为手工集成验收（非 CI 自动化）。
+
+**验收命令（手工集成验收，非 CI 自动化）**：
 ```bash
-cd /workspace && npx vitest run sprints/07151630-oom-aware-retry/tests/oom-aware-retry.test.js \
-  --reporter=verbose -t "GP4"
-# 预期: ✓ GP4 测试通过，DB query 含 last_container_exit_code=137 写入
+# 1. 模拟 relay 容器回调（替换 TASK_ID 为真实任务 ID）
+TASK_ID="610ecc9e-ff5b-4cee-9fac-c0c69e4af925"
+curl -s -X POST "http://localhost:5221/api/brain/harness/callback/cecelia-relay-aabbccdd-test" \
+  -H "Content-Type: application/json" \
+  -d '{"result":"completed","exit_code":137,"stdout":"container exited"}' | jq .
+# 预期: {"ok":true,"relayAck":true,"containerId":"cecelia-relay-aabbccdd-test"}
+
+# 2. 查询 task payload 确认 last_container_exit_code 落库
+curl -s "localhost:5221/api/brain/tasks/${TASK_ID}" | jq '.payload.last_container_exit_code'
+# 预期: 137
 ```
 
-**失败判定**：DB PATCH 未调用 / `last_container_exit_code` 未写入 / 回调返回非 200
+**失败判定**：回调返回非 200 / `last_container_exit_code` 未写入 task payload
 
 ---
 
@@ -60,7 +69,7 @@ cd /workspace && npx vitest run sprints/07151630-oom-aware-retry/tests/oom-aware
 **验收命令（manual:bash）**：
 ```bash
 cd /workspace && npx vitest run sprints/07151630-oom-aware-retry/tests/oom-aware-retry.test.js \
-  --reporter=verbose -t "GP2.*attempts=0"
+  --reporter=verbose -t "attempts=0"
 # 预期: ✓ attempts=0 时也触发 oom_wall，不走 attempt cap 分支
 ```
 
@@ -105,6 +114,8 @@ cd /workspace && npx vitest run sprints/07151630-oom-aware-retry/tests/oom-aware
 
 所有 [BEHAVIOR-1..6] 验收命令返回 0 failures，且 CI brain-ci.yml 全绿。
 
+> **CI 常驻路径约定**：`sprints/` 目录的骨架仅作参照；实施阶段真实 failing tests 必须放 `packages/brain/src/__tests__/oom-aware-retry.test.js` 才进 CI 回归。
+
 ---
 
 ## 禁止事项（合同红线）
@@ -114,3 +125,4 @@ cd /workspace && npx vitest run sprints/07151630-oom-aware-retry/tests/oom-aware
 - 禁止修改 `MAX_RELAY_ATTEMPTS` 数值（IN-2）
 - 禁止在 oom_wall 路径调用 spawnFn（IN-1）
 - 禁止修改 headed 路径逻辑（NFR-4）
+- **禁止将最终 CI 常驻测试留在 `sprints/` 目录**（所有进 CI 回归的测试必须放 `packages/brain/src/__tests__/`）
