@@ -197,6 +197,21 @@ cd /workspace && npx vitest run \
 
 ---
 
+## Test Contract
+
+| BEHAVIOR | Test File | it() 名称（子串） |
+|----------|-----------|-----------------|
+| BEHAVIOR-1 canary 隔离过滤 dev-records | packages/brain/src/__tests__/canary-isolation.test.js | canary 隔离过滤 dev-records |
+| BEHAVIOR-2 canary 隔离过滤回归池 | packages/brain/src/__tests__/canary-isolation.test.js | canary 隔离过滤回归池 |
+| BEHAVIOR-3 canary 隔离过滤统计计数 | packages/brain/src/__tests__/canary-isolation.test.js | canary 隔离过滤统计计数 |
+| BEHAVIOR-4 演习脚本生产端口守卫 | tests/regression/a8-3-canary-drill/canary-drill.contract.test.js | 演习脚本生产端口守卫 |
+| BEHAVIOR-5 OOM 注入分类断言 | tests/regression/a8-3-canary-drill/canary-drill.contract.test.js | OOM 注入分类断言 |
+| BEHAVIOR-6 演习落档降级写 design_docs | tests/regression/a8-3-canary-drill/canary-drill.contract.test.js | 演习落档降级 |
+| BEHAVIOR-7 Bark 失败告警 | tests/regression/a8-3-canary-drill/canary-drill.contract.test.js | Bark 失败告警 |
+| BEHAVIOR-8 nightly tick job 注册 | tests/regression/a8-3-canary-drill/canary-drill.contract.test.js | nightly tick job 注册 |
+
+---
+
 ## 未覆盖真实链路清单
 
 | 链路 | Mock 范围 | 豁免理由 |
