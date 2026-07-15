@@ -1,11 +1,16 @@
 /**
  * L1 串链测试：S1死亡→S2分类→S3路由→spawn参数
- * 覆盖 oom / ci_red / unknown 三条全链
+ * 覆盖 oom / ci_red / unknown / auth / rate_limit / green_waiting_merge 全链
  * 真实调用 classifyDeath；仅 mock docker/gh/tmux 外部命令面
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { classifyDeath } from '../harness-death-classifier.js';
+import {
+  handleAuth,
+  handleRateLimit,
+  handleGreenWaitingMerge,
+} from '../harness-death-handlers.js';
 
 // ─── Mock 外部命令面（docker/gh/tmux）——不 mock classifyDeath / 路由逻辑 ────
 
@@ -166,5 +171,154 @@ describe('L1 全链：unknown', () => {
     expect(out.resumed).toBe(0);
     expect(spawn.fn).not.toHaveBeenCalled();
     expect(logs[0]).toMatch(/cause=unknown action=log_only initiative=/);
+  });
+});
+
+// ─── L1 全链：auth 首次 ──────────────────────────────────────────────────────
+
+describe('L1 全链：auth 首次换号重点火', () => {
+  it('stdoutTail=401 Unauthorized + auth_fail_count=0 → 换号 → spawnFn 调用1次，新账号 !== 旧账号', async () => {
+    // S2: 分类（真实调用）
+    const { cause, action } = classifyDeath({
+      exitCode: 1,
+      stdoutTail: '401 Unauthorized: invalid token',
+      tmuxPane: null,
+    });
+    expect(cause).toBe('auth');
+    expect(action).toBe('auth_retry');
+
+    // S3: 路由（真实调用 handleAuth）
+    const spawn = makeSpawnStub();
+    const db = makeDbStub();
+    const currentAccount = 'account1';
+    const newAccount = 'account2';
+    const markAuthFailedFn = vi.fn();
+    const resolveAccountFn = vi.fn(async (opts) => {
+      opts.env.CECELIA_CREDENTIALS = newAccount;
+    });
+
+    const task = {
+      id: 'task-auth-l1-001',
+      payload: { CECELIA_CREDENTIALS: currentAccount, auth_fail_count: 0 },
+    };
+
+    await handleAuth(task, {
+      cause,
+      spawnFn: spawn.fn,
+      markAuthFailedFn,
+      resolveAccountFn,
+      pool: db,
+    });
+
+    // 验收
+    expect(markAuthFailedFn).toHaveBeenCalledWith(currentAccount);
+    expect(spawn.fn).toHaveBeenCalledOnce();
+    const spawnOpts = spawn._calls[0].opts;
+    expect(spawnOpts.env.CECELIA_CREDENTIALS).toBe(newAccount);
+    expect(spawnOpts.env.CECELIA_CREDENTIALS).not.toBe(currentAccount);
+  });
+});
+
+// ─── L1 全链：auth 连续 blocked ──────────────────────────────────────────────
+
+describe('L1 全链：auth 连续 blocked', () => {
+  it('stdoutTail=401 + auth_fail_count=2 → blocked → DB 写 blocked + barkFn 调用，spawnFn 不调用', async () => {
+    // S2: 分类（真实调用）
+    const { cause } = classifyDeath({
+      exitCode: 1,
+      stdoutTail: '401 Unauthorized',
+      tmuxPane: null,
+    });
+    expect(cause).toBe('auth');
+
+    const spawn = makeSpawnStub();
+    const db = makeDbStub();
+    const barkMsgs = [];
+    const barkFn = vi.fn(async (msg) => { barkMsgs.push(msg); return { ok: true }; });
+
+    const task = {
+      id: 'task-auth-l1-blocked',
+      payload: { CECELIA_CREDENTIALS: 'account1', auth_fail_count: 2 },
+    };
+
+    await handleAuth(task, {
+      cause,
+      spawnFn: spawn.fn,
+      markAuthFailedFn: vi.fn(),
+      resolveAccountFn: vi.fn(),
+      pool: db,
+      barkFn,
+    });
+
+    // 验收
+    expect(spawn.fn).not.toHaveBeenCalled();
+    expect(barkFn).toHaveBeenCalledOnce();
+    expect(barkMsgs[0]).toMatch(/blocked/i);
+    expect(barkMsgs[0]).toMatch(/codex-login/i);
+    const statusUpdate = db._calls.find(c => c.sql.includes('blocked'));
+    expect(statusUpdate).toBeTruthy();
+  });
+});
+
+// ─── L1 全链：rate_limit defer ───────────────────────────────────────────────
+
+describe('L1 全链：rate_limit defer', () => {
+  it('stdoutTail=429 Too Many Requests → defer_until 写库 + 不 spawn', async () => {
+    // S2: 分类（真实调用）
+    const { cause, action } = classifyDeath({
+      exitCode: 1,
+      stdoutTail: '429 Too Many Requests',
+      tmuxPane: null,
+    });
+    expect(cause).toBe('rate_limit');
+    expect(action).toBe('rate_limit_defer');
+
+    const spawn = makeSpawnStub();
+    const db = makeDbStub();
+    const beforeTs = Date.now();
+
+    const task = { id: 'task-rl-l1-001', payload: {} };
+
+    await handleRateLimit(task, { cause, spawnFn: spawn.fn, pool: db });
+
+    // 验收
+    expect(spawn.fn).not.toHaveBeenCalled();
+    const deferCall = db._calls.find(c => c.sql.includes('defer_until'));
+    expect(deferCall).toBeTruthy();
+    // defer_until 参数值应 ≈ now+60min
+    const deferTs = deferCall.params[0];
+    expect(deferTs).toBeGreaterThanOrEqual(beforeTs + 3599000);
+  });
+});
+
+// ─── L1 全链：green_waiting_merge ────────────────────────────────────────────
+
+describe('L1 全链：green_waiting_merge', () => {
+  it('stdoutTail=GREEN_WAITING + pr_url 存在 → spawn 带 resume_stage=finish', async () => {
+    // S2: 分类（真实调用）
+    const { cause } = classifyDeath({
+      exitCode: 0,
+      stdoutTail: 'GREEN_WAITING: PR ready for merge',
+      tmuxPane: null,
+    });
+    expect(cause).toBe('green_waiting_merge');
+
+    const spawn = makeSpawnStub();
+    const db = makeDbStub();
+
+    const task = {
+      id: 'task-gwm-l1-001',
+      payload: { pr_url: 'https://github.com/org/repo/pull/99' },
+    };
+
+    await handleGreenWaitingMerge(task, {
+      cause,
+      spawnFn: spawn.fn,
+      pool: db,
+    });
+
+    // 验收
+    expect(spawn.fn).toHaveBeenCalledOnce();
+    expect(spawn._calls[0].opts.resume_stage).toBe('finish');
   });
 });

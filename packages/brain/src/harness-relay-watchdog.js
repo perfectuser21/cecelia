@@ -282,6 +282,12 @@ export async function resumeStalledRelayRuns(deps = {}) {
       // deadline 逾期归 scanStuckHarness
       if (run.deadline_at && new Date(run.deadline_at).getTime() < Date.now()) continue;
 
+      // defer_until 未到期 → 跳过（rate_limit 处置）
+      if (task.payload?.defer_until && task.payload.defer_until > Date.now()) {
+        console.log(`[relay-watchdog] defer_until 未到期，跳过 initiative=${run.initiative_id}`);
+        continue;
+      }
+
       const short = shortId(task.id);
       // 收账权收归（Task 4 harness-finalize 降级标记）：generator 已完成 → 绝不二次 spawn（防重复 PR）。
       const generatorDone = task.payload?.generator_done === true;
@@ -523,7 +529,7 @@ export async function resumeStalledRelayRuns(deps = {}) {
       const spawnFn = deps.spawnFn
         || (await import('./harness-skill-relay.js')).spawnSkillRelaySession;
 
-      // 死因分类器（刀A8-1）——仅用于审计日志与 OOM 路由；非 oom cause 走现行路径（不阻断 spawn）
+      // 死因分类器（刀A8-1/A8-2）—— 审计日志 + 路由处置
       {
         const { classifyDeath } = await import('./harness-death-classifier.js');
         const classified = classifyDeath({
@@ -533,7 +539,46 @@ export async function resumeStalledRelayRuns(deps = {}) {
         });
         // 审计日志（INV-06）—— 每次收尸必打
         console.log(`[relay-watchdog] cause=${classified.cause} action=${classified.action} initiative=${run.initiative_id}`);
-        // 注意：非 oom cause 继续走现行路径（不 continue）；oom 升档逻辑由下方 isOomExit 处理
+
+        // A8-2: 按 cause 路由处置器
+        if (classified.cause === 'auth') {
+          const { handleAuth } = await import('./harness-death-handlers.js');
+          const { resolveAccount } = await import('./spawn/middleware/account-rotation.js');
+          const { markAuthFailure } = await import('./account-usage.js');
+          let barkFn = () => {};
+          try { barkFn = (await import('./notifier.js')).sendBark ?? barkFn; } catch (_) {}
+          await handleAuth(task, {
+            cause: classified.cause,
+            spawnFn,
+            markAuthFailedFn: (account) => markAuthFailure(account, null, 'watchdog_auth'),
+            resolveAccountFn: resolveAccount,
+            pool: dbPool,
+            barkFn: async (msg) => barkFn('[Auth Blocked]', msg),
+          });
+          continue; // auth 处置完毕，不走下面的普通重点火
+        } else if (classified.cause === 'rate_limit') {
+          // defer_until 未到期时跳过已在外层 defer_until 检查处理；首次写入 defer_until
+          const { handleRateLimit } = await import('./harness-death-handlers.js');
+          await handleRateLimit(task, { cause: classified.cause, spawnFn, pool: dbPool });
+          continue; // rate_limit defer，不烧 attempt
+        } else if (classified.cause === 'green_waiting_merge') {
+          const { handleGreenWaitingMerge } = await import('./harness-death-handlers.js');
+          await handleGreenWaitingMerge(task, { cause: classified.cause, spawnFn, pool: dbPool });
+          continue;
+        } else if (classified.cause === 'interactive_stuck') {
+          const { handleInteractiveStuck } = await import('./harness-death-handlers.js');
+          const tmuxSession = run.tmux_session ?? null;
+          const { execSync } = await import('child_process');
+          await handleInteractiveStuck(task, {
+            cause: classified.cause,
+            spawnFn,
+            execFn: execSync,
+            pool: dbPool,
+            tmuxSession,
+          });
+          continue;
+        }
+        // unknown / ci_red / oom → 下面的现行路径（OOM 升档或普通重点火）
       }
 
       // GP1：exit=137 首次（oom_upgraded 为 false）→ 升档重点火（4096m）
