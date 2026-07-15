@@ -1,78 +1,65 @@
-contract_branch: cp-07151221-harness-propose-r1-cd0b936c
-sprint_dir: sprints/07151206-relay-cd0b936c
+contract_branch: cp-07151403-harness-prd
+sprint_dir: sprints/07151400-relay-63db6f8a
 
 ---
 skeleton: false
-journey_type: dev_pipeline
+journey_type: autonomous
+target_environment: local_api
 ---
-# Contract DoD — Sprint: claude-headed-smoke 回归冒烟（第二轮，扩展 nightly 池覆盖）
+# Contract DoD — Sprint: headed relay 派发链路自测（claude-headed, task 63db6f8a）
 
-**范围**: 新增 `scripts/smoke/e2e/relay-cd0b936c.sh`，内容对齐既有
-`scripts/smoke/e2e/relay-4bb31ef5.sh` 的验证项，TASK_ID/SPRINT_DIR 默认值改绑本轮
-task_id=cd0b936c-2891-4fed-a921-5636ca08d1e8。不修改 `relay-4bb31ef5.sh` / `ci.yml` /
-`smoke-allowlist.txt`。
+**范围**: 新增锚定 task_id=63db6f8a-ea55-40fa-abd2-7dd63a2701e2 的 `sprints/07151400-relay-63db6f8a/e2e-verify.sh`；复用（不重实现）`packages/brain/scripts/smoke/claude-headed-dispatch-smoke.sh`；只读校验 Brain task 记录与 `initiative_runs` 记录状态；不新增业务功能、dashboard/UI、migration，不改 `claude-headed-dispatch-smoke.sh` 本体，不改 `ci.yml`（4bb31ef5 已落地），不重复登记 allowlist。
 **大小**: S
 
 ## ARTIFACT 条目
 
-- [x] [ARTIFACT] `scripts/smoke/e2e/relay-cd0b936c.sh` 存在，结构对齐 relay-4bb31ef5.sh
-  Test: node -e "const c=require('fs').readFileSync('scripts/smoke/e2e/relay-cd0b936c.sh','utf8');if(!c.includes('claude-headed-dispatch-smoke.sh')||!c.includes('initiative_runs')||!c.includes('skill-relay-claude-headed'))process.exit(1)"
+- [ ] [ARTIFACT] contract draft 含 Golden Path 与 E2E 验收
+  Test: node -e "const fs=require('fs');const c=fs.readFileSync('sprints/07151400-relay-63db6f8a/contract-draft.md','utf8');if(!c.includes('## Golden Path')||!c.includes('## E2E 验收'))process.exit(1)"
 
-- [x] [ARTIFACT] `relay-4bb31ef5.sh` 未被修改（历史锚点保留）
-  Test: git diff --quiet HEAD -- scripts/smoke/e2e/relay-4bb31ef5.sh
+- [ ] [ARTIFACT] generator 补 sprint-local e2e wrapper，锚定当前 task_id
+  Test: node -e "const fs=require('fs');const p='sprints/07151400-relay-63db6f8a/e2e-verify.sh';const c=fs.readFileSync(p,'utf8');if(!c.includes('claude-headed-dispatch-smoke.sh')||!c.includes('63db6f8a-ea55-40fa-abd2-7dd63a2701e2'))process.exit(1)"
 
-## BEHAVIOR 条目（内嵌可执行 manual: 命令）
+- [ ] [ARTIFACT] 复用的 claude headed smoke 已在 allowlist 登记（不重复登记，只校验存在）
+  Test: grep -Fxq "claude-headed-dispatch-smoke.sh" packages/quality/smoke-allowlist.txt
 
-- [x] [BEHAVIOR] e2e-verify.sh 的 TASK_ID 默认值真实求值等于本轮 task_id（非照抄旧文件默认值）
-  Test: manual:bash -c 'OUT=$(bash -c "source <(grep -E \"^TASK_ID=\" scripts/smoke/e2e/relay-cd0b936c.sh); echo \$TASK_ID"); [ "$OUT" = "cd0b936c-2891-4fed-a921-5636ca08d1e8" ] || exit 1; echo OK'
+- [ ] [ARTIFACT] Invariant 端点鉴权 auth：N/A，本 sprint 不新增或修改 API 端点
+  Test: node -e "const fs=require('fs');const c=fs.readFileSync('sprints/07151400-relay-63db6f8a/contract-dod.md','utf8');if(!c.includes('端点鉴权 auth：N/A')||!c.includes('不新增或修改 API 端点'))process.exit(1)"
+
+- [ ] [ARTIFACT] Invariant 租户隔离 tenant：N/A，本 sprint 不查询或修改租户作用域数据
+  Test: node -e "const fs=require('fs');const c=fs.readFileSync('sprints/07151400-relay-63db6f8a/contract-dod.md','utf8');if(!c.includes('租户隔离 tenant：N/A')||!c.includes('不查询或修改租户作用域数据'))process.exit(1)"
+
+## Invariant 覆盖条目（PRD 铁律 1:1 映射，来源: area）
+
+- [ ] [BEHAVIOR] INV-1 单slot串行：wrapper 只做当前 sprint/task 只读验证，不并发写同一工作区
+  Test: manual:bash -c 'set -euo pipefail; SCRIPT="sprints/07151400-relay-63db6f8a/e2e-verify.sh"; [ -f "$SCRIPT" ] || { echo "FAIL: missing $SCRIPT"; exit 1; }; grep -F "TASK_ID=\"\${TASK_ID:-63db6f8a-ea55-40fa-abd2-7dd63a2701e2}\"" "$SCRIPT" >/dev/null || { echo "FAIL: wrapper 未绑定当前 task 默认值"; exit 1; }; grep -F "SPRINT_DIR=\"\${SPRINT_DIR:-sprints/07151400-relay-63db6f8a}\"" "$SCRIPT" >/dev/null || { echo "FAIL: wrapper 未绑定当前 sprint 默认值"; exit 1; }; ! grep -E "tmux[[:space:]]+new-session|tmux[[:space:]]+kill|killall|pkill" "$SCRIPT" >/dev/null || { echo "FAIL: wrapper 不得 spawn/kill 并发会话"; exit 1; }; echo OK'
   期望: OK
 
-- [x] [BEHAVIOR] e2e-verify.sh 对真实 Brain API + 真实 DB 全流程执行返回 PASS（正向路径，无 mock）
-  Test: manual:bash -c 'BRAIN_URL=http://localhost:5221 DATABASE_URL="${DATABASE_URL:-postgresql://cecelia:cecelia@localhost:5432/cecelia}" bash scripts/smoke/e2e/relay-cd0b936c.sh | grep -q "OK headed smoke regression verified for cd0b936c-2891-4fed-a921-5636ca08d1e8" || exit 1; echo OK'
+- [ ] [BEHAVIOR] INV-2 禁写死环境假设：端口、路径、DB、Brain URL 优先来自 env 或当前 workspace
+  Test: manual:bash -c 'set -euo pipefail; SCRIPT="sprints/07151400-relay-63db6f8a/e2e-verify.sh"; [ -f "$SCRIPT" ] || { echo "FAIL: missing $SCRIPT"; exit 1; }; grep -F "BRAIN_URL=\"\${BRAIN_URL:-http://localhost:5221}\"" "$SCRIPT" >/dev/null || { echo "FAIL: BRAIN_URL 未走 env 默认"; exit 1; }; grep -F "DB=\"\${DATABASE_URL:-postgresql://cecelia:cecelia@localhost:5432/cecelia}\"" "$SCRIPT" >/dev/null || { echo "FAIL: DATABASE_URL 未走 env 默认"; exit 1; }; ! grep -E "ssh[[:space:]]+|38\.23\.47\.81|/Users/administrator|/root/\.ssh|ghp_[A-Za-z0-9_]+" "$SCRIPT" >/dev/null || { echo "FAIL: wrapper 含写死环境假设或真实凭据痕迹"; exit 1; }; echo OK'
   期望: OK
 
-- [x] [BEHAVIOR] initiative_runs 真实查询：本轮 task_id 对应行 orchestrator_host=skill-relay-claude-headed 且 phase 非 failed
-  Test: manual:bash -c 'DB="${DATABASE_URL:-postgresql://cecelia:cecelia@localhost:5432/cecelia}"; ROW=$(psql "$DB" -XAt -F "|" -c "SELECT orchestrator_host, phase FROM initiative_runs WHERE initiative_id='"'"'cd0b936c-2891-4fed-a921-5636ca08d1e8'"'"' ORDER BY started_at DESC LIMIT 1"); HOST=$(echo "$ROW" | cut -d"|" -f1); PHASE=$(echo "$ROW" | cut -d"|" -f2); [ "$HOST" = "skill-relay-claude-headed" ] && [ "$PHASE" != "failed" ] || exit 1; echo OK'
+- [ ] [BEHAVIOR] INV-3 真环境验证才算done：必须打真实 Brain API + 真实 PostgreSQL + 真实 headed smoke，不允许 mock/stub/吞错
+  Test: manual:bash -c 'set -euo pipefail; SCRIPT="sprints/07151400-relay-63db6f8a/e2e-verify.sh"; [ -f "$SCRIPT" ] || { echo "FAIL: missing $SCRIPT"; exit 1; }; grep -F "claude-headed-dispatch-smoke.sh" "$SCRIPT" >/dev/null || { echo "FAIL: 未调用真实 headed smoke"; exit 1; }; grep -F "curl -sf \"$BRAIN_URL/api/brain/tasks/$TASK_ID\"" "$SCRIPT" >/dev/null || { echo "FAIL: 未 curl 真实 Brain task API"; exit 1; }; grep -F "psql \"$DB\"" "$SCRIPT" >/dev/null || { echo "FAIL: 未查询真实 PostgreSQL"; exit 1; }; ! grep -E "MOCK_|mock|stub|\|\|[[:space:]]*true|exit[[:space:]]+0[[:space:]]*(#.*)?$" "$SCRIPT" >/dev/null || { echo "FAIL: wrapper 含 mock/stub/吞错/无条件 exit 0"; exit 1; }; echo OK'
   期望: OK
 
-- [x] [BEHAVIOR] error path — 陌生 task_id 下脚本必须 FAIL（exit 非 0），且不 sleep/retry 掩盖（耗时 < 15s）
-  Test: manual:bash -c 'START=$(date +%s); TASK_ID=00000000-0000-0000-0000-000000000000 BRAIN_URL=http://localhost:5221 DATABASE_URL="${DATABASE_URL:-postgresql://cecelia:cecelia@localhost:5432/cecelia}" bash scripts/smoke/e2e/relay-cd0b936c.sh >/tmp/e2e-verify-neg.log 2>&1; CODE=$?; END=$(date +%s); [ "$CODE" -ne 0 ] && [ $((END-START)) -lt 15 ] || exit 1; echo OK'
+- [ ] [BEHAVIOR] INV-4/INV-5 凭据安全 + 日志脱敏：payload 必须拒绝 token/github_token/anthropic_token/thin_prd 明文字段
+  Test: manual:bash -c 'set -euo pipefail; SCRIPT="sprints/07151400-relay-63db6f8a/e2e-verify.sh"; [ -f "$SCRIPT" ] || { echo "FAIL: missing $SCRIPT"; exit 1; }; grep -F "has(\"token\") | not" "$SCRIPT" >/dev/null || { echo "FAIL: payload 未拒绝 token 字段"; exit 1; }; grep -F "has(\"github_token\") | not" "$SCRIPT" >/dev/null || { echo "FAIL: payload 未拒绝 github_token 字段"; exit 1; }; grep -F "has(\"anthropic_token\") | not" "$SCRIPT" >/dev/null || { echo "FAIL: payload 未拒绝 anthropic_token 字段"; exit 1; }; grep -F "has(\"thin_prd\") | not" "$SCRIPT" >/dev/null || { echo "FAIL: payload 未拒绝 thin_prd 字段"; exit 1; }; echo OK'
   期望: OK
 
-- [x] [BEHAVIOR] ci.yml 判定分支优先级断言未回归（claude-headed 精确判定行号早于 codex 通用兜底 seed 行号，#3829 修复未被破坏）
-  Test: manual:bash -c 'CLAUDE_LINE=$(grep -n "skill-relay-claude-headed" .github/workflows/ci.yml | head -1 | cut -d: -f1); CODEX_LINE=$(grep -n "\"executor\":\"codex\"" .github/workflows/ci.yml | head -1 | cut -d: -f1); [ -n "$CLAUDE_LINE" ] && [ -n "$CODEX_LINE" ] && [ "$CLAUDE_LINE" -lt "$CODEX_LINE" ] || exit 1; echo OK'
+## BEHAVIOR 条目（内嵌可执行 manual: 命令，local_api 本机执行）
+
+- [ ] [BEHAVIOR] e2e-verify.sh 调用 claude-headed-dispatch-smoke.sh 并校验 allowlist 登记
+  Test: manual:bash -c 'set -euo pipefail; SCRIPT="sprints/07151400-relay-63db6f8a/e2e-verify.sh"; [ -f "$SCRIPT" ] || { echo "FAIL: missing $SCRIPT"; exit 1; }; grep -F "packages/brain/scripts/smoke/claude-headed-dispatch-smoke.sh" "$SCRIPT" >/dev/null || { echo "FAIL: wrapper 未调用 headed smoke"; exit 1; }; grep -F "packages/quality/smoke-allowlist.txt" "$SCRIPT" >/dev/null || { echo "FAIL: wrapper 未校验 allowlist"; exit 1; }; echo OK'
   期望: OK
 
-- [x] [BEHAVIOR] allowlist 登记复用检查——claude-headed-dispatch-smoke.sh 仍登记在 smoke-allowlist.txt（本轮不新增不删除）
-  Test: manual:bash -c 'grep -Fxq "claude-headed-dispatch-smoke.sh" packages/quality/smoke-allowlist.txt || exit 1; echo OK'
+- [ ] [BEHAVIOR] task payload 三元组齐全且不含敏感字段（真实 curl 当前 task）
+  Test: manual:bash -c 'set -euo pipefail; TASK_ID="${TASK_ID:-63db6f8a-ea55-40fa-abd2-7dd63a2701e2}"; BRAIN_URL="${BRAIN_URL:-http://localhost:5221}"; RESP=$(curl -sf "$BRAIN_URL/api/brain/tasks/$TASK_ID"); echo "$RESP" | jq -e ".id == env.TASK_ID"; echo "$RESP" | jq -e ".payload.mode == \"headed\" and .payload.executor == \"claude\" and .payload.orchestrator == \"skill-relay\""; echo "$RESP" | jq -e "(.payload | has(\"token\") | not) and (.payload | has(\"github_token\") | not) and (.payload | has(\"anthropic_token\") | not) and (.payload | has(\"thin_prd\") | not)"; echo OK'
   期望: OK
 
-- [x] [BEHAVIOR] 毕业落地核对——sprint 已毕业（本 sprint 后续被 049ebf93 归档 PR 一并毕业），e2e 目标文件真实存在于 scripts/smoke/e2e/relay-cd0b936c.sh 且内容含本轮 task_id
-  Test: manual:bash -c '[ -f "scripts/smoke/e2e/relay-cd0b936c.sh" ] || exit 1; grep -q "cd0b936c-2891-4fed-a921-5636ca08d1e8" "scripts/smoke/e2e/relay-cd0b936c.sh" || exit 1; echo OK'
+- [ ] [BEHAVIOR] initiative_runs 含 skill-relay-claude-headed 或 foreground 且 phase 拒绝 failed/unknown（真实 psql 定点查当前 task；R2 修订：host 同时接受 Brain 自动 headed spawn 路径与官方补建档 foreground 路径，理由见 contract-draft.md「未覆盖真实链路清单」）
+  Test: manual:bash -c 'set -euo pipefail; TASK_ID="${TASK_ID:-63db6f8a-ea55-40fa-abd2-7dd63a2701e2}"; DB="${DATABASE_URL:-postgresql://cecelia:cecelia@localhost:5432/cecelia}"; ROW=$(psql "$DB" -XAt -F "|" -c "SELECT orchestrator_host, phase, started_at FROM initiative_runs WHERE initiative_id = \$\$${TASK_ID}\$\$ ORDER BY started_at DESC LIMIT 1"); [ -n "$ROW" ] || { echo "FAIL: initiative_runs 无当前 task run"; exit 1; }; HOST=$(printf "%s" "$ROW" | cut -d"|" -f1); PHASE=$(printf "%s" "$ROW" | cut -d"|" -f2); STARTED_AT=$(printf "%s" "$ROW" | cut -d"|" -f3); case "$HOST" in *skill-relay-claude-headed*|foreground) ;; *) echo "FAIL: host=$HOST"; exit 1 ;; esac; if [ "$PHASE" = "failed" ]; then echo "FAIL: phase=failed"; exit 1; fi; case "$PHASE" in A_planning|planning|gan|generate|evaluate|done) ;; *) echo "FAIL: phase=$PHASE"; exit 1 ;; esac; [ -n "$STARTED_AT" ] || { echo "FAIL: started_at 为空"; exit 1; }; echo OK'
   期望: OK
 
-## Invariant 覆盖条目（PRD 铁律清单逐条映射 — Step 1.3）
-
-- [x] [BEHAVIOR] INV-1 smoke 登记纪律：e2e-verify.sh 复用的 claude-headed-dispatch-smoke.sh 仍在 smoke-allowlist.txt 登记（不新增独立 smoke.sh，不触发新登记要求；复用同一条 BEHAVIOR 断言：allowlist 登记复用检查）
-  Test: manual:bash -c 'grep -Fxq "claude-headed-dispatch-smoke.sh" packages/quality/smoke-allowlist.txt || exit 1; echo OK'
+- [ ] [BEHAVIOR] local_api E2E wrapper 锚定当前 task_id 完整验证 smoke/task/run 外部真相
+  Test: manual:bash -c 'TASK_ID="${TASK_ID:-63db6f8a-ea55-40fa-abd2-7dd63a2701e2}" BRAIN_URL="${BRAIN_URL:-http://localhost:5221}" DATABASE_URL="${DATABASE_URL:-postgresql://cecelia:cecelia@localhost:5432/cecelia}" bash sprints/07151400-relay-63db6f8a/e2e-verify.sh'
   期望: OK
-
-- [x] [BEHAVIOR] INV-2 真环境验证才算done：e2e-verify.sh 全部断言直接打真实 Brain API（localhost:5221）与真实 PostgreSQL，无 force_*/mock/stub（复用「正向路径」BEHAVIOR 断言即验证此铁律）
-  Test: manual:bash -c 'grep -qE "MOCK_|force_result|force_timeout|jest\.mock|vi\.mock" scripts/smoke/e2e/relay-cd0b936c.sh && exit 1 || echo OK'
-  期望: OK
-
-- [x] INV-3 禁止写死环境假设值：N/A —— 本脚本无屏幕坐标/UIA阈值等环境假设值，仅使用可通过环境变量覆盖的 TASK_ID/SPRINT_DIR/BRAIN_URL/DATABASE_URL 默认值（均可被真实环境覆盖，非硬编码假设）
-
-- [x] [BEHAVIOR] INV-4 凭据安全：e2e-verify.sh 保留 payload 敏感字段反向检查（token/github_token/anthropic_token/thin_prd 不应出现在 payload）
-  Test: manual:bash -c 'grep -q "has(\"token\")" scripts/smoke/e2e/relay-cd0b936c.sh || exit 1; echo OK'
-  期望: OK
-
-- [x] [BEHAVIOR] INV-5 日志脱敏：e2e-verify.sh 保留 tui.log 敏感字段扫描（token|github_token|anthropic_token|thin_prd|ghp_ 不得明文出现）
-  Test: manual:bash -c 'grep -qE "token.*github_token.*anthropic_token.*thin_prd.*ghp_" scripts/smoke/e2e/relay-cd0b936c.sh || exit 1; echo OK'
-  期望: OK
-
-- [x] INV-6 单slot串行：N/A —— 本脚本是只读校验脚本，不派发/不调度任务，不涉及跨 slot 并行执行
-
-## BEHAVIOR:E2E 条目
-
-（dev_pipeline / local_api — 无 UI，不适用截图型 BEHAVIOR:E2E，模式 B final-e2e 见 contract-draft.md `## E2E 验收` 段的 bash 脚本）
