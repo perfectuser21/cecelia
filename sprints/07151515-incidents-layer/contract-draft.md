@@ -81,3 +81,18 @@ curl -s localhost:5221/api/brain/incidents
 - incidents 表的 UI（由刀5b/5c 完成）
 - task_id 回填（由刀5b 开单时完成）
 - 改动现有探针核心告警逻辑（只追加调用）
+
+---
+
+## Test Contract
+
+| Workstream | Test File | BEHAVIOR 覆盖 |
+|------------|-----------|---------------|
+| WS1 | `../../packages/brain/src/__tests__/incident-reporter.test.js` | 应执行 INSERT ON CONFLICT 语句 |
+| WS2 | `../../packages/brain/src/__tests__/incident-reporter.test.js` | 两次调用各发一条 SQL |
+| WS3 | `../../packages/brain/src/__tests__/incident-reporter.test.js` | DB 抛出异常时 Promise 应 resolve |
+| WS4 | `../../packages/brain/src/routes/__tests__/incidents.test.js` | 应返回 HTTP 200 |
+| WS5 | `../../packages/brain/src/routes/__tests__/incidents.test.js` | response body 应含 incidents 数组 |
+| WS6 | `../../tests/regression/incidents-layer/probe-integration.test.js` | launchd-patrol.js 应包含 reportIncident 调用 |
+| WS7 | `../../tests/regression/incidents-layer/probe-integration.test.js` | dept-heartbeat.js 应包含 reportIncident 调用 |
+| WS8 | `../../tests/regression/incidents-layer/probe-integration.test.js` | circuit-breaker.js 应包含 reportIncident 调用 |
