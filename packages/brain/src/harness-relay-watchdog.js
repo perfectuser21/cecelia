@@ -289,15 +289,25 @@ export async function resumeStalledRelayRuns(deps = {}) {
       }
 
       const short = shortId(task.id);
-      // 收账权收归（Task 4 harness-finalize 降级标记）：generator 已完成 → 绝不二次 spawn（防重复 PR）。
+      // 收账权收归（Task 4 harness-finalize 降级标记）：generator 已完成但 evaluator 未跑时仍需重点火。
+      // 只有 generator_done=true 且 evaluator 也已完成才跳过重点火（防重复 PR）。
       const generatorDone = task.payload?.generator_done === true;
 
       // ─── headed 分支：ssh+tmux 存活检测 + 收窗幂等 ────────────────────────
       if (HEADED_HOST_VALUES.includes(run.orchestrator_host)) {
         const { needsRefire } = await _handleHeadedRun(run, task, { dbPool, execFn, short });
+        let skipRefire = false;
         if (needsRefire && generatorDone) {
-          console.log(`[relay-watchdog][headed] generator_done=true → 跳过重点火 initiative=${run.initiative_id}`);
-        } else if (needsRefire) {
+          const evaluatorDone = await _hasEvaluatorGate(dbPool, run.initiative_id);
+          if (evaluatorDone) {
+            console.log(`[relay-watchdog][headed] generator_done=true + evaluator_done → 跳过重点火 initiative=${run.initiative_id}`);
+            skipRefire = true;
+          } else {
+            // generator 完成但 evaluator 未跑 → 重点火让 controller 从 Step 4 恢复
+            console.log(`[relay-watchdog][headed] generator_done=true 但 evaluator 未完成 → 允许重点火 initiative=${run.initiative_id}`);
+          }
+        }
+        if (needsRefire && !skipRefire) {
           // session 消失 → 重点火（走 spawnFn，即 headed 路径）
           const spawnFn = deps.spawnFn
             || (await import('./harness-skill-relay.js')).spawnSkillRelaySession;
@@ -393,9 +403,14 @@ export async function resumeStalledRelayRuns(deps = {}) {
               console.log(`[relay-watchdog] wait_ci_running initiative=${run.initiative_id} pr=${effectivePrUrl}`);
               continue;
             } else {
-              // CI 全绿 + 非 BEHIND → 等待 merge（现有行为保留）
-              console.log(`[relay-watchdog] skip_green_waiting_merge initiative=${run.initiative_id} pr=${effectivePrUrl}`);
-              continue;
+              // CI 全绿 + 非 BEHIND → evaluator 已完成则等待 merge；未完成则重点火（feat(harness): PR 不被 auto-merge）
+              const evaluatorDoneGreen = await _hasEvaluatorGate(dbPool, run.initiative_id);
+              if (evaluatorDoneGreen) {
+                console.log(`[relay-watchdog] skip_green_waiting_merge (evaluator已完成) initiative=${run.initiative_id} pr=${effectivePrUrl}`);
+                continue;
+              }
+              console.log(`[relay-watchdog] ci_green_evaluator_pending → 允许重点火 initiative=${run.initiative_id} pr=${effectivePrUrl}`);
+              // fall through — evaluator 未完成，需重点火让 controller 从 Step 4 恢复
             }
           }
           // CLOSED（工作被否决）→ 落穿走原逻辑，允许重跑
@@ -464,13 +479,14 @@ export async function resumeStalledRelayRuns(deps = {}) {
         continue;
       }
 
-      // generator 已完成 → 跳过重点火（防重复 PR）。未到期的超时兜底放行到此，PR 检查已跑过。
+      // generator 已完成 + evaluator 也已完成 → 跳过重点火（防重复 PR）。未到期的超时兜底放行到此，PR 检查已跑过。
       // 修复（刀A2）：pr_url 为空时，先从 GitHub 反查 PR——relay session 不回写 pr_url，
       // generator_done=true 时直接 continue 会导致 _discoverPrFromGithub 永不被调用，
       // MERGED PR 无法自动收口，OPEN PR 无法回写。
+      // 修复（evaluator gate）：evaluator 未完成时不能无条件跳过重点火，否则 evaluator stage 永远无法执行。
       if (generatorDone) {
         if (!effectivePrUrl) {
-          // pr_url 三处全空 → 先反查 GitHub，再 continue（不 spawn）
+          // pr_url 三处全空 → 先反查 GitHub，再决定是否 continue（不 spawn）
           let discovered = null;
           try {
             discovered = _discoverPrFromGithub(task, short, execFn);
@@ -496,10 +512,14 @@ export async function resumeStalledRelayRuns(deps = {}) {
             console.log(`[relay-watchdog] generator_done 反查 OPEN → 回写 pr_url 跳过重点火 initiative=${run.initiative_id} pr=${discovered.url}`);
             continue;
           }
-          // 无命中 → 保持原 continue（不 spawn）
+          // 无命中 → 落穿到下方 evaluator gate 判断
         }
-        console.log(`[relay-watchdog] generator_done=true → 跳过重点火 initiative=${run.initiative_id}`);
-        continue;
+        const evaluatorDone = await _hasEvaluatorGate(dbPool, run.initiative_id);
+        if (evaluatorDone) {
+          console.log(`[relay-watchdog] generator_done=true + evaluator_done → 跳过重点火 initiative=${run.initiative_id}`);
+          continue;
+        }
+        console.log(`[relay-watchdog] generator_done=true 但 evaluator 未完成 → 允许重点火 initiative=${run.initiative_id}`);
       }
 
       // OOM 感知重试（刀A7）
