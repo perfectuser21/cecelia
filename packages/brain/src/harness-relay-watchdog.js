@@ -496,13 +496,55 @@ export async function resumeStalledRelayRuns(deps = {}) {
         continue;
       }
 
+      // OOM 感知重试（刀A7）
+      const lastExitCode = task.payload?.last_container_exit_code;
+      const oomUpgraded = task.payload?.oom_upgraded === true;
+
+      // GP2：oom_upgraded=true + exit=137 → 禁止二次升档，直接标 failed/oom_wall
+      if (oomUpgraded && lastExitCode === 137) {
+        await dbPool.query(
+          `UPDATE initiative_runs SET phase='failed', completed_at=NOW(), failure_reason='oom_wall'
+            WHERE initiative_id=$1 AND orchestrator_version='v2' AND phase NOT IN ('done','failed')`,
+          [run.initiative_id]
+        );
+        await dbPool.query(
+          `UPDATE tasks SET status='failed', completed_at=NOW(),
+                  error_message='OOM 升档后仍 exit=137，撞墙终止（oom_wall）'
+            WHERE id=$1 AND status='in_progress'`,
+          [run.initiative_id]
+        );
+        await _closeSpawnEvents(dbPool, run.initiative_id, 'failed');
+        out.capped++;
+        console.warn(`[relay-watchdog] oom_wall initiative=${run.initiative_id} exit=137 after oom_upgrade → 标 failed`);
+        continue;
+      }
+
       // 重点火（spawnSkillRelaySession 会 INSERT 新 run 行 = attempts+1）
       const spawnFn = deps.spawnFn
         || (await import('./harness-skill-relay.js')).spawnSkillRelaySession;
-      const r = await spawnFn(task, { pool: dbPool });
+
+      // GP1：exit=137 首次（oom_upgraded 为 false）→ 升档重点火（4096m）
+      const isOomExit = lastExitCode === 137 && !oomUpgraded;
+      const spawnOpts = { pool: dbPool };
+      if (isOomExit) {
+        spawnOpts.memoryTier = 'oom_upgrade';
+        spawnOpts.env = { HARNESS_RELAY_MEMORY_OVERRIDE: '4096' };
+      }
+
+      const r = await spawnFn(task, spawnOpts);
       if (r?.ok) {
         out.resumed++;
-        console.log(`[relay-watchdog] 重点火 initiative=${run.initiative_id} attempt=${attempts + 1} container=${r.containerId}`);
+        if (isOomExit) {
+          // 升档后回写 oom_upgraded=true，防止第三次触发再次升档
+          await dbPool.query(
+            `UPDATE tasks SET payload = COALESCE(payload, '{}'::jsonb) || '{"oom_upgraded":true}'::jsonb
+              WHERE id=$1`,
+            [run.initiative_id]
+          );
+          console.log(`[relay-watchdog] resume_oom_upgraded initiative=${run.initiative_id} attempt=${attempts + 1} container=${r.containerId}`);
+        } else {
+          console.log(`[relay-watchdog] 重点火 initiative=${run.initiative_id} attempt=${attempts + 1} container=${r.containerId}`);
+        }
       } else {
         console.warn(`[relay-watchdog] 重点火失败 initiative=${run.initiative_id}: ${r?.error}`);
       }
