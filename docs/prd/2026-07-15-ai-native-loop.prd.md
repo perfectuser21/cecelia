@@ -182,16 +182,17 @@ playbook 直接自愈——**打地鼠循环从"人修"变成"系统每挨一刀
 
 ---
 
-## 七、开放问题（Contract 阶段需 Alex 拍板）
+## 七、开放问题（已拍板，2026-07-15）
 
-1. 日开单预算 N 默认值？（建议 3——当前 harness 日吞吐与人工队列平衡点）
-2. 自动单目标范围：一期只允许开 cecelia repo 的单？zenithjoy-skills 的 skill 层
-   bug 是否允许自动开单？（建议一期只 cecelia，skill 层病走告警人工）
-3. 验尸产出的探针/棘轮类守卫 PR：走 CI 闸自动合并，还是需人批？
-   （建议：走闸自动，与「无闸不成文」一致；政策类除外）
-4. `guard_ref` 编码形态（母 PRD 开放问题 5 顺延仍未拍板）：脚本路径 / 探针端点
-   URL / 豁免 decision id——三种取值如何编码？（建议 JSONB：`{type, ref}`）
-5. 首条端到端验火选哪只探针？（建议 smoke nightly 红：staging 可演习、低危、
-   证据链最完整）
-6. 自动单与人工队列的优先级关系：probe_auto 单默认 P2 排队，还是按 incident
-   severity 继承？（建议继承 severity，但 PANIC 静默已兜底不会挤兑）
+1. **日开单预算 N 默认值**：3（建议值，用户未反对）。decision `0f8e2780`。
+2. **自动单目标范围**：一期覆盖 cecelia + zenithjoy-skills 两个 repo（用户拍板：不局限
+   cecelia，skill 层 bug 也纳入自动开单——推翻原建议"仅 cecelia"）。decision `902df145`。
+3. **验尸产出的探针/棘轮类守卫 PR 合并权限**：走 CI 闸自动合并；政策类仍走 Bark 人批。
+   decision `89588cf2`。
+4. **`guard_ref` 编码形态**：JSONB `{type, ref}`。decision `612ab0db`。
+5. **首条端到端验火探针**：smoke nightly 红（建议值，用户未反对）。decision `b16ef682`。
+6. **自动单与人工队列优先级**：继承 incident severity；PANIC 时开单器静默兜底。
+   decision `814e05f2`。
+
+> 拍板已解除本 PRD 的 Contract 前置阻塞，可进入 /decomp 拆 Initiative（按六.排期建议
+> 顺序 5a → 5b → 5d/5c 并行）。
