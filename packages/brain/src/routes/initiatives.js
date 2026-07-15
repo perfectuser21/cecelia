@@ -440,6 +440,35 @@ function parseVerdictCostFields(body) {
 }
 
 /**
+ * 解析 :initiative_id 参数：完整 UUID 直返；8位十六进制短号 SELECT 解析；
+ * 非法格式抛 {status:400}；0命中抛 {status:404}
+ */
+const SHORT_ID_RE = /^[0-9a-f]{8}$/i;
+
+async function resolveRelayRunInitiativeId(rawId, pool) {
+  const isFullUUID = UUID_RE.test(rawId);
+  const isShortId = SHORT_ID_RE.test(rawId);
+  if (!isFullUUID && !isShortId) {
+    throw { status: 400, message: 'invalid id format' };
+  }
+  if (isFullUUID) return rawId;
+  // 短号解析：SELECT 找到最新非终态 v2 run 的完整 initiative_id
+  const resolveResult = await pool.query(
+    `SELECT initiative_id FROM initiative_runs
+      WHERE initiative_id::text LIKE $1
+        AND orchestrator_version = 'v2'
+        AND phase NOT IN ('done', 'failed')
+      ORDER BY started_at DESC
+      LIMIT 1`,
+    [`${rawId}%`]
+  );
+  if (resolveResult.rows.length === 0) {
+    throw { status: 404, message: `run not found for short id: ${rawId}` };
+  }
+  return resolveResult.rows[0].initiative_id;
+}
+
+/**
  * PATCH /api/brain/orchestrator/relay-runs/:initiative_id
  *
  * controller session report 步骤回写终态（skill v1.1.0 配套；治巡逻 Stuck 误报）。
@@ -448,10 +477,8 @@ function parseVerdictCostFields(body) {
  *
  * :initiative_id 支持两种格式：
  *   - 完整 UUID（xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx）→ 现有逻辑不变
- *   - 8 位十六进制短号（/^[0-9a-f]{8}$/i）→ 先 SELECT 解析到完整 UUID，再 UPDATE
+ *   - 8 位十六进制短号（/^[0-9a-f]{8}$/i）→ resolveRelayRunInitiativeId 解析到完整 UUID
  */
-const SHORT_ID_RE = /^[0-9a-f]{8}$/i;
-
 router.patch('/relay-runs/:initiative_id', async (req, res) => {
   const { initiative_id: rawId } = req.params;
   const { phase, failure_reason, pr_url } = req.body || {};
@@ -467,36 +494,16 @@ router.patch('/relay-runs/:initiative_id', async (req, res) => {
     }
   }
 
-  // 格式校验：既非完整 UUID 也非 8 位十六进制短号 → 400
-  const isFullUUID = UUID_RE.test(rawId);
-  const isShortId = SHORT_ID_RE.test(rawId);
-  if (!isFullUUID && !isShortId) {
-    return res.status(400).json({ error: 'invalid id format' });
-  }
-
   const { warnings, evaluateVerdict, judgeVerdict, costUsd } = parseVerdictCostFields(req.body);
 
-  // 短号解析：先 SELECT 找到完整 initiative_id
-  let initiative_id = rawId;
-  if (isShortId) {
-    try {
-      const resolveResult = await pool.query(
-        `SELECT initiative_id FROM initiative_runs
-          WHERE initiative_id::text LIKE $1
-            AND orchestrator_version = 'v2'
-            AND phase NOT IN ('done', 'failed')
-          ORDER BY started_at DESC
-          LIMIT 1`,
-        [`${rawId}%`]
-      );
-      if (resolveResult.rows.length === 0) {
-        return res.status(404).json({ error: `run not found for short id: ${rawId}` });
-      }
-      initiative_id = resolveResult.rows[0].initiative_id;
-    } catch (err) {
-      console.warn('[PATCH /orchestrator/relay-runs/:id] short-id resolve error', rawId, err.message);
-      return res.status(500).json({ error: 'internal error' });
-    }
+  let initiative_id;
+  try {
+    initiative_id = await resolveRelayRunInitiativeId(rawId, pool);
+  } catch (err) {
+    if (err.status === 400) return res.status(400).json({ error: err.message });
+    if (err.status === 404) return res.status(404).json({ error: err.message });
+    console.warn('[PATCH /orchestrator/relay-runs/:id] resolve error', rawId, err.message);
+    return res.status(500).json({ error: 'internal error' });
   }
 
   try {
@@ -520,7 +527,7 @@ router.patch('/relay-runs/:initiative_id', async (req, res) => {
     return res.json(warnings.length ? { ...result.rows[0], warnings } : result.rows[0]);
   } catch (err) {
     // 500 不暴露内部 err.message（信息卫生，run-2 同规矩）
-    console.warn('[PATCH /orchestrator/relay-runs/:id] update error', isShortId ? rawId : initiative_id, err.message);
+    console.warn('[PATCH /orchestrator/relay-runs/:id] update error', initiative_id, err.message);
     return res.status(500).json({ error: 'internal error' });
   }
 });
