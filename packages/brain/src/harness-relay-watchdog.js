@@ -523,21 +523,18 @@ export async function resumeStalledRelayRuns(deps = {}) {
       const spawnFn = deps.spawnFn
         || (await import('./harness-skill-relay.js')).spawnSkillRelaySession;
 
-      // 死因分类器（刀A8-1）
+      // 死因分类器（刀A8-1）——仅用于审计日志与 OOM 路由；非 oom cause 走现行路径（不阻断 spawn）
+      {
         const { classifyDeath } = await import('./harness-death-classifier.js');
         const classified = classifyDeath({
           exitCode: lastExitCode ?? null,
           stdoutTail: task.payload?.stdout_tail ?? null,
           tmuxPane: null, // headless 路径无 tmux
         });
-        // 审计日志（INV-06）
+        // 审计日志（INV-06）—— 每次收尸必打
         console.log(`[relay-watchdog] cause=${classified.cause} action=${classified.action} initiative=${run.initiative_id}`);
-
-        // 非 oom/ci_red cause → log_only，不触发 spawn
-        if (classified.cause !== 'oom' && classified.cause !== 'ci_red') {
-          // auth/rate_limit/interactive_stuck/green_waiting_merge/unknown → log_only
-          continue;
-        }
+        // 注意：非 oom cause 继续走现行路径（不 continue）；oom 升档逻辑由下方 isOomExit 处理
+      }
 
       // GP1：exit=137 首次（oom_upgraded 为 false）→ 升档重点火（4096m）
       const isOomExit = lastExitCode === 137 && !oomUpgraded;
