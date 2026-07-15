@@ -9,7 +9,7 @@ import { fileURLToPath } from 'node:url';
 // 不重实现 claude-headed-dispatch-smoke.sh、不改 ci.yml（4bb31ef5 已落地范围）。
 // 路径按 repo root 解析，兼容任意 cwd（brain vitest cwd=packages/brain）。
 const ROOT = path.resolve(fileURLToPath(import.meta.url), '../../../..');
-const wrapperPath = path.join(ROOT, 'sprints/07151245-relay-049ebf93/e2e-verify.sh');
+const wrapperPath = path.join(ROOT, 'scripts/smoke/e2e/relay-049ebf93.sh');
 
 function readWrapper(): string {
   return readFileSync(wrapperPath, 'utf8');
