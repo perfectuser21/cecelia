@@ -62,25 +62,25 @@
 
 ### 文件交付物
 
-- [ ] `scripts/canary-death-drill.mjs` — 新建，金丝雀注入器（注册+注入+轮询+落档+Bark），≤300 行
-- [ ] `packages/brain/src/canary-drill-scheduler.js` — 新建，tick job 03:30 CST 定时逻辑，含幂等保护
-- [ ] `packages/brain/src/__tests__/canary-isolation.test.js` — 新建，canary 隔离行为测试（BEHAVIOR-1/2/3）
-- [ ] `sprints/07161400-a8-3-canary-drill/tests/canary-drill.contract.test.js` — 新建，演习合同测试（BEHAVIOR-4/5/6/7/8，Red 骨架）
-- [ ] `packages/brain/src/cecelia-routes.js` — 修改，dev-records 查询加 canary 过滤
-- [ ] `packages/brain/src/battle-report.js` — 修改，dev_records 统计加 canary 过滤
-- [ ] `packages/brain/src/diary-scheduler.js` — 修改，count 查询加 canary 过滤
-- [ ] `packages/brain/src/harness-promote-regression.js` — 修改，入池逻辑加 canary 过滤
+- [x] `scripts/canary-death-drill.mjs` — 新建，金丝雀注入器（注册+注入+轮询+落档+Bark），≤300 行
+- [x] `packages/brain/src/canary-drill-scheduler.js` — 新建，tick job 03:30 CST 定时逻辑，含幂等保护
+- [x] `packages/brain/src/__tests__/canary-isolation.test.js` — 新建，canary 隔离行为测试（BEHAVIOR-1/2/3）
+- [x] `sprints/07161400-a8-3-canary-drill/tests/canary-drill.contract.test.js` — 新建，演习合同测试（BEHAVIOR-4/5/6/7/8，Red 骨架）
+- [x] `packages/brain/src/routes/dev-records.js` (实际路径) — 修改，dev-records 查询加 canary 过滤
+- [x] `packages/brain/src/battle-report.js` — 修改，dev_records 统计加 canary 过滤
+- [x] `packages/brain/src/diary-scheduler.js` — 修改，count 查询加 canary 过滤
+- [x] `packages/brain/src/harness-promote-regression.js` — 修改，入池逻辑加 canary 过滤
 - [ ] `launchd/cecelia.canary-drill.plist` — 可选，macOS 备选定时方案
 
 ---
 
 ### NFR 验收
 
-- [ ] NFR-01：演习脚本单次运行上限 20 分钟（TIMEOUT_MS = 20 * 60 * 1000，超时 exit 1）
-- [ ] NFR-02：脚本对 `:5221` 的守卫在 exit 前不发任何 HTTP 请求（BEHAVIOR-4 覆盖）
-- [ ] NFR-03：nightly tick job 幂等：同日历日内只触发一次（canary-drill-scheduler.js 有去重逻辑）
-- [ ] NFR-04：Bark 告警延迟 ≤ 60s（演习断言失败后立即调用，无额外等待）
-- [ ] NFR-05：canary 过滤 SQL 变更加注释说明无 schema 改动原因（payload 已为 JSONB 列）
+- [x] NFR-01：演习脚本单次运行上限 20 分钟（TIMEOUT_MS = 20 * 60 * 1000，超时 exit 1）
+- [x] NFR-02：脚本对 `:5221` 的守卫在 exit 前不发任何 HTTP 请求（BEHAVIOR-4 覆盖）
+- [x] NFR-03：nightly tick job 幂等：同日历日内只触发一次（canary-drill-scheduler.js 有去重逻辑）
+- [x] NFR-04：Bark 告警延迟 ≤ 60s（演习断言失败后立即调用，无额外等待）
+- [x] NFR-05：canary 过滤 SQL 变更加注释说明无 schema 改动原因（payload 已为 JSONB 列）
 
 ---
 

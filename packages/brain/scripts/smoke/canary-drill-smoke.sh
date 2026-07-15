@@ -3,7 +3,7 @@
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-DRILL_SCRIPT="${SCRIPT_DIR}/../../../scripts/canary-death-drill.mjs"
+DRILL_SCRIPT="${SCRIPT_DIR}/../../../../scripts/canary-death-drill.mjs"
 
 echo "[canary-drill-smoke] 验证守卫函数导出..."
 
