@@ -184,7 +184,7 @@ STAGING_BRAIN_URL=http://localhost:5222 \
 3. **卡交互演习** — 脚本 exit 0；Brain 任务 cause=interactive_stuck；tmux session 消失（`tmux ls` 不含 `canary-<task_id>`）
 4. **落档验证** — `curl http://localhost:5222/api/brain/design-docs?type=drill_report | jq '.[0].title'` 含 canary-drill 字样
 5. **隔离验证** — `curl http://localhost:5222/api/brain/dev-records | jq '[.[] | select(.payload.canary == true)] | length'` 返回 0
-6. **nightly 注册验证** — `curl http://localhost:5221/api/brain/tasks?type=canary_drill | jq '.[0].status'` 返回 scheduled 或 pending
+6. **nightly 注册验证** — `curl http://localhost:5222/api/brain/tasks?type=canary_drill | jq '.[0].status'` 返回 scheduled 或 pending
 
 **L1 vitest（隔离行为测试）**：
 

@@ -34,6 +34,12 @@
 [BEHAVIOR-8] nightly tick job 注册：canary-drill-scheduler.js 在 tick loop 中，当 UTC 时间 19:25~19:35 窗口内，调用一次 canary-death-drill.mjs（exec 或 spawn）；同一日历日内不重复触发（幂等保护）
 （对应 FR-12，NFR-03）
 
+[BEHAVIOR-9] kill-9 注入分类断言：canary-death-drill.mjs 以 mode=kill9 运行，启动 `docker run -d --name canary-<task_id> alpine sleep infinity` 后执行 `docker kill canary-<task_id>`；轮询断言 task.payload.cause 为 'oom'（exit 137）或 'unknown'，且 attempt 递增（重点火触发）；canary 任务不出现在 /api/brain/dev-records 返回
+（对应 FR-09，INV-17）
+
+[BEHAVIOR-10] 卡交互注入分类断言：canary-death-drill.mjs 以 mode=interactive_stuck 运行，启动 tmux session 使 pane 显示 `Press enter to continue`；轮询断言 task.payload.cause==='interactive_stuck'，`tmux kill-session -t canary-<task_id>` 被调用（session 消失），attempt 递增
+（对应 FR-10，INV-17）
+
 ---
 
 ### CONSTRAINT 条目（铁律绑定断言）
@@ -45,6 +51,10 @@
 [CONSTRAINT-INV16] canary 污染零容忍：BEHAVIOR-1/2/3 三条测试均在 canary 记录写入后断言统计结果不变；过滤条件使用 `IS DISTINCT FROM 'true'`（而非 `!= 'true'`，以正确处理 NULL）
 
 [CONSTRAINT-INV17] 注入方式固定三种：脚本 --mode 参数只允许 oom/kill9/interactive_stuck/random；random 从三种中随机选一；不得新增第四种注入方式
+
+[CONSTRAINT-INV05] L1 链路用例先于处置器：canary 隔离过滤的 L1 用例（BEHAVIOR-1/2/3）必须在对应处置器实现前作为 Red 测试提交；测试文件提交时间戳早于实现文件提交时间戳（git log 可验证）
+
+[CONSTRAINT-INV15-EARLY-EXIT] staging 5222 不在线时 early exit：canary-death-drill.mjs 脚本在注册任务前，先 GET `${STAGING_BRAIN_URL}/api/brain/context`；若返回非 2xx 或连接超时（3s），立即 exit 1 并输出 `[ERROR] staging brain not reachable at ${STAGING_BRAIN_URL}`，不继续执行任何注入操作
 
 [CONSTRAINT-INV18] 脚本不执行 harness 逻辑：canary-death-drill.mjs 不 import harness-relay-watchdog.js、harness-death-handlers.js 或任何 harness 执行模块；只通过 HTTP API 与 brain 交互
 
