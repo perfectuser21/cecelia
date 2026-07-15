@@ -284,9 +284,10 @@ export async function handlePrMerged(pool, prInfo) {
         'SELECT prd_content FROM tasks WHERE id = $1',
         [taskId]
       );
+      const isCanary = task.payload?.canary === true || task.payload?.canary === 'true';
       await pool.query(
-        `INSERT INTO dev_records (task_id, pr_title, pr_url, branch, merged_at, prd_content)
-         VALUES ($1, $2, $3, $4, $5, $6)
+        `INSERT INTO dev_records (task_id, pr_title, pr_url, branch, merged_at, prd_content, is_canary)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)
          ON CONFLICT DO NOTHING`,
         [
           taskId,
@@ -294,7 +295,8 @@ export async function handlePrMerged(pool, prInfo) {
           prUrl,
           branchName,
           mergedAt,
-          taskDetails.rows[0]?.prd_content || null
+          taskDetails.rows[0]?.prd_content || null,
+          isCanary
         ]
       );
       console.log(`[pr-callback] dev_records 已写入: task_id=${taskId}`);

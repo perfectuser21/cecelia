@@ -1,6 +1,6 @@
 {
   "orphans": 1,
-  "permanent": 1140,
+  "permanent": 1146,
   "permanent_roots": [
     { "path": "packages/brain/src/__tests__", "layer": "unit" },
     { "path": "packages/brain/tests", "layer": "integration" },
