@@ -535,6 +535,44 @@ exit 0
     expect(out).not.toContain('ln -s');
   });
 
+  // ⚠️ 上面两条走 --dry-run，launcher 在 dry-run 段就 exit 0，钉的只是 echo 出来的
+  // 意图字符串，**到不了真实建链门禁**——把真实门禁改坏它们照样绿（审查实证）。
+  // 真正的守卫是下面这条：走真实执行路径，在 claude 运行期内断言软链实存。
+  it('真实执行：cwd 在外部建的 worktree 内 → claude 运行期内 <wt_key> 是指向 <main_key> 的软链（根因回归·真实路径）', () => {
+    const sid = 'aaaa0016-1111-2222-3333-444444444444';
+    const extWt = join(base, 'external-wt-real');
+    execSync(`git -C "${mainRepo}" worktree add -q "${extWt}" -b ext-branch-real`, { stdio: 'ignore' });
+    const extWtPhys = realpathSync(extWt);
+    const link = join(projectsRoot, toKey(extWtPhys));
+    writeMockClaude(`#!/usr/bin/env bash
+if [[ -L "${link}" ]]; then echo "LINK_TARGET=$(readlink "${link}")"; else echo "LINK_TARGET=MISSING"; fi
+exit 0
+`);
+    const out = execSync(`bash "${LAUNCHER}"`, { cwd: extWt, env: makeEnv(sid) }).toString();
+    expect(out).toContain(`LINK_TARGET=${join(projectsRoot, toKey(mainRepoPhys))}`);
+  });
+
+  it('非 git 目录启动 → 不打印软链警告（无历史可共享），claude 正常执行且退出码透传', () => {
+    const sid = 'aaaa0017-1111-2222-3333-444444444444';
+    const nonGitDir = mkdtempSync(join(tmpdir(), 'claude-launch-nongit-'));
+    writeMockClaude(`#!/usr/bin/env bash\necho "MOCK_RAN=yes"\nexit 5\n`);
+    let status = -1;
+    let stdout = '';
+    let stderr = '';
+    try {
+      execSync(`bash "${LAUNCHER}"`, { cwd: nonGitDir, env: makeEnv(sid) });
+    } catch (e) {
+      const err = e as { status: number; stdout: Buffer; stderr: Buffer };
+      status = err.status;
+      stdout = err.stdout.toString();
+      stderr = err.stderr.toString();
+    }
+    rmSync(nonGitDir, { recursive: true, force: true });
+    expect(stdout).toContain('MOCK_RAN=yes');
+    expect(status).toBe(5);
+    expect(stderr).not.toContain('软链失败');
+  });
+
   it('生产路径：未设 CLAUDE_PROJECTS_ROOT 时 root 由 CLAUDE_CONFIG_DIR 派生', () => {
     const sid = 'aaaa0008-1111-2222-3333-444444444444';
     const fakeHome = mkdtempSync(join(tmpdir(), 'claude-launch-home-'));
