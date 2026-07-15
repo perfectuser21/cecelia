@@ -77,6 +77,11 @@ _is_registered_worktree() {
 # 症状与"会话丢失"完全一致且极难归因。
 _path_to_project_key() { printf '%s' "${1//[^a-zA-Z0-9]/-}"; }
 
+# projects 池根目录。CLAUDE_PROJECTS_ROOT **仅供测试注入**——Claude Code 本体不读它
+#（strings 实证 0 命中），生产必须由 CLAUDE_CONFIG_DIR 派生，与 claude 本体同源，
+# 杜绝"测试绿、生产错"。
+_proj_root() { printf '%s' "${CLAUDE_PROJECTS_ROOT:-${CLAUDE_CONFIG_DIR:-$HOME/.claude}/projects}"; }
+
 AUTO_WORKTREE=0
 if ! _is_headless && [[ "${CECELIA_NO_AUTO_WORKTREE:-0}" != "1" ]] && _in_main_repo_worktree; then
     AUTO_WORKTREE=1
@@ -91,6 +96,24 @@ if [[ "$AUTO_WORKTREE" == "1" ]]; then
     _WT_PATH="${_WT_BASE}/${_WT_BRANCH}"
 fi
 
+# 账号切换必须早于 projects 软链与 dry-run：软链的 root 由 CLAUDE_CONFIG_DIR 派生
+#（Claude Code 只认这个变量），解析晚于建链会把链建到错误账号池。
+#
+# 账号切换：claude-switch cs/cn 写入 ~/.claude/.active-account-dir
+# 用 _is_headless 判断而非"CLAUDE_CONFIG_DIR 是否已设置"——后者会被从父 claude 进程
+# 继承来的 env 误伤（嵌套 shell/session 里 CLAUDE_CONFIG_DIR 早已非空），导致
+# claude-switch 在这类场景下永久失效。headless 调用（-p/--print）始终保留其
+# 显式传入的 CLAUDE_CONFIG_DIR，不被 switch 文件覆盖。
+if ! _is_headless; then
+    _ACCT_DIR_FILE="$HOME/.claude/.active-account-dir"
+    if [[ -f "$_ACCT_DIR_FILE" ]]; then
+        _ACCT_DIR=$(cat "$_ACCT_DIR_FILE")
+        if [[ -d "$_ACCT_DIR" ]]; then
+            export CLAUDE_CONFIG_DIR="$_ACCT_DIR"
+        fi
+    fi
+fi
+
 # --dry-run 优先：CI / 测试环境无真 claude binary 也要能跑契约测试
 # 输出格式与正常 exec 一致，含 --session-id <uuid>；触发自动 worktree 时额外输出建立步骤
 if [[ "$DRY_RUN" == "1" ]]; then
@@ -99,7 +122,7 @@ if [[ "$DRY_RUN" == "1" ]]; then
         echo "git -C \"$_MAIN_REPO\" fetch origin main --quiet"
         echo "git -C \"$_MAIN_REPO\" worktree add \"$_WT_PATH\" -b \"$_WT_BRANCH\" origin/main"
         echo "cd \"$_WT_PATH\""
-        _PROJ_ROOT="${CLAUDE_PROJECTS_ROOT:-$HOME/.claude/projects}"
+        _PROJ_ROOT="$(_proj_root)"
         # key 按物理路径派生（与 Claude Code process.cwd() 一致）；dry-run 时 worktree
         # 未建，cd 失败回退原字符串——dry-run 是意图契约，可接受。
         _WT_PHYS="$(cd "$_WT_PATH" 2>/dev/null && pwd -P)" || _WT_PHYS="$_WT_PATH"
@@ -140,7 +163,7 @@ fi
 # ~/.claude/projects/ 实存 -private-tmp-* 条目为证；_MAIN_REPO 来自 git 已是物理路径）。
 # best-effort：任何失败只警告，绝不阻断 claude 启动。
 _link_projects_dir() {
-    local root="${CLAUDE_PROJECTS_ROOT:-$HOME/.claude/projects}"
+    local root; root="$(_proj_root)"
     local target link wt_phys f
     target="$root/$(_path_to_project_key "$_MAIN_REPO")"
     wt_phys="$(cd "$_WT_PATH" 2>/dev/null && pwd -P)" || wt_phys="$_WT_PATH"
@@ -180,21 +203,6 @@ fi
 if [[ -z "$_CLAUDE_BIN" || ! -x "$_CLAUDE_BIN" ]]; then
     echo "[claude-launch] ❌ 找不到真 claude 可执行文件（CLAUDE_CODE_EXECPATH/\$PATH 都不行）" >&2
     exit 127
-fi
-
-# 账号切换：claude-switch cs/cn 写入 ~/.claude/.active-account-dir
-# 用 _is_headless 判断而非"CLAUDE_CONFIG_DIR 是否已设置"——后者会被从父 claude 进程
-# 继承来的 env 误伤（嵌套 shell/session 里 CLAUDE_CONFIG_DIR 早已非空），导致
-# claude-switch 在这类场景下永久失效。headless 调用（-p/--print）始终保留其
-# 显式传入的 CLAUDE_CONFIG_DIR，不被 switch 文件覆盖。
-if ! _is_headless; then
-    _ACCT_DIR_FILE="$HOME/.claude/.active-account-dir"
-    if [[ -f "$_ACCT_DIR_FILE" ]]; then
-        _ACCT_DIR=$(cat "$_ACCT_DIR_FILE")
-        if [[ -d "$_ACCT_DIR" ]]; then
-            export CLAUDE_CONFIG_DIR="$_ACCT_DIR"
-        fi
-    fi
 fi
 
 FINAL_CMD=("$_CLAUDE_BIN" --session-id "$SID" "${ARGS[@]+"${ARGS[@]}"}")
