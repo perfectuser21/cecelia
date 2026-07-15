@@ -94,14 +94,14 @@ jobs:
           fi
 
           FINISHED_AT=$(echo "$RESPONSE" | python3 -c "
-import json, sys
-d = json.load(sys.stdin)
-v = d.get('value', d)
-if isinstance(v, str):
-    import json as j2
-    v = j2.loads(v)
-print(v.get('finished_at', ''))
-" 2>/dev/null || echo "")
+          import json, sys
+          d = json.load(sys.stdin)
+          v = d.get('value', d)
+          if isinstance(v, str):
+              import json as j2
+              v = j2.loads(v)
+          print(v.get('finished_at', ''))
+          " 2>/dev/null || echo "")
 
           if [[ -z "$FINISHED_AT" ]]; then
             echo "ok=false" >> "$GITHUB_OUTPUT"
