@@ -57,6 +57,19 @@ _in_main_repo_worktree() {
     [[ "$gd" == "$cmn" ]]
 }
 
+# 主仓物理路径正向求出（在 linked worktree 内也有效）：
+#   主仓：      git-dir == git-common-dir
+#   linked wt： git-dir = <main>/.git/worktrees/<n>，git-common-dir = <main>/.git
+# 判据与 packages/engine/hooks/main-repo-write-guard.sh 一致（cp-07051816 教训）。
+# 绝不反推 project key —— key 是有损多对一映射（/ . 和原生 - 全塌成 -），
+# 反推会把 zenithjoy-skills 的历史并进 zenithjoy 主池。
+_resolve_main_repo() {
+    local cmn
+    cmn="$(git rev-parse --git-common-dir 2>/dev/null)" || return 1
+    cmn="$(cd "$cmn" 2>/dev/null && pwd -P)" || return 1
+    dirname "$cmn"
+}
+
 # 判断 $1 是否为 $2（主仓）登记承认的合法 worktree。
 # 两个条件都要满足：目录自身认为在某个 git 结构里 + 主仓的 worktree 登记表里查得到它的物理路径。
 # 只查前者不够——孤儿目录里残留的 .git 文件可能指向已经不存在的元数据。
@@ -127,6 +140,11 @@ if [[ "$DRY_RUN" == "1" ]]; then
         # 未建，cd 失败回退原字符串——dry-run 是意图契约，可接受。
         _WT_PHYS="$(cd "$_WT_PATH" 2>/dev/null && pwd -P)" || _WT_PHYS="$_WT_PATH"
         echo "ln -s \"$_PROJ_ROOT/$(_path_to_project_key "$_MAIN_REPO")\" \"$_PROJ_ROOT/$(_path_to_project_key "$_WT_PHYS")\""
+    elif ! _is_headless && ! _in_main_repo_worktree; then
+        # 已在外部建的 worktree 内：key 按当前 cwd 派生（cwd 真实存在，无需回退）
+        _PROJ_ROOT="$(_proj_root)"
+        _DR_MAIN="$(_resolve_main_repo)" && \
+          echo "ln -s \"$_PROJ_ROOT/$(_path_to_project_key "$_DR_MAIN")\" \"$_PROJ_ROOT/$(_path_to_project_key "$(pwd -P)")\""
     fi
     echo "$_CLAUDE_BIN --session-id $SID ${ARGS[@]+${ARGS[@]}}"
     exit 0
@@ -163,11 +181,16 @@ fi
 # ~/.claude/projects/ 实存 -private-tmp-* 条目为证；_MAIN_REPO 来自 git 已是物理路径）。
 # best-effort：任何失败只警告，绝不阻断 claude 启动。
 _link_projects_dir() {
-    local root; root="$(_proj_root)"
-    local target link wt_phys f
-    target="$root/$(_path_to_project_key "$_MAIN_REPO")"
-    wt_phys="$(cd "$_WT_PATH" 2>/dev/null && pwd -P)" || wt_phys="$_WT_PATH"
+    local wt_phys main_repo root target link f
+    # 按最终 cwd 自解：调用点在 cd "$_WT_PATH" 之后，auto-worktree 路径同样正确。
+    # 不读 $_WT_PATH/$_MAIN_REPO —— 它们只在 AUTO_WORKTREE=1 时才有值。
+    wt_phys="$(pwd -P)" || return 1
+    main_repo="$(_resolve_main_repo)" || return 1
+    root="$(_proj_root)"
+    target="$root/$(_path_to_project_key "$main_repo")"
     link="$root/$(_path_to_project_key "$wt_phys")"
+    # 自指短路：link == target 时 ln -s X X 成环，/resume 遍历会 ELOOP
+    [[ "$link" == "$target" ]] && return 0
     mkdir -p "$target" || return 1
     if [[ -L "$link" ]]; then
         if [[ "$(readlink "$link")" != "$target" ]]; then
@@ -188,7 +211,10 @@ _link_projects_dir() {
     # 存变量供清理段复用（清理时 worktree 可能已被 remove，无法二次物理化）
     _PROJ_LINK_CREATED="$link"
 }
-if [[ "$AUTO_WORKTREE" == "1" ]]; then
+# 交互模式 + cwd 是 linked worktree → 建链，无论该 worktree 是 launcher 建的还是外部建的。
+# 逃生阀 CECELIA_NO_AUTO_WORKTREE 只管"不建 worktree"，不参与建链判定——否则它会变成
+# 新的丢会话入口（slot 复用 worktree 起 claude 时软链不建 → 历史落孤儿 key）。
+if ! _is_headless && ! _in_main_repo_worktree; then
     _link_projects_dir || echo "[claude-launch] ⚠️ projects 软链失败，本 session 历史将不共享（不影响启动）" >&2
 fi
 
