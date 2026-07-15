@@ -1,7 +1,10 @@
 #!/usr/bin/env bash
-# PostToolUse Hook: post-pr-create v2.0
-# 在 gh pr create 成功后触发 auto-merge；rewrite/* 分支跳过。
+# PostToolUse Hook: post-pr-create v2.1
+# 在 gh pr create 成功后触发 auto-merge；rewrite/* 分支 / harness relay 模式跳过。
 #
+# v2.1: harness relay 守门 — HARNESS_TASK_ID 非空时跳过 auto-merge；
+#       evaluator PASS 后由 harness-controller 手动 merge，禁止 hook 绕过 evaluator gate
+#       (P0 a638f840 根治：headed relay 的 tmux innerCmd export HARNESS_TASK_ID 配套)。
 # v2.0: fail-closed — gh 失败时用 git branch --show-current 兜底；
 #       两者均失败 → 保守跳过 auto-merge（不因信息缺失静默放行）。
 # v1.0: fail-open（已废弃）
@@ -66,6 +69,15 @@ fi
 # 两者均失败 → fail-closed
 if [[ -z "$HEAD_BRANCH" ]]; then
   echo "[post-pr-create] 无法获取分支名（gh 和 git 均失败），保守跳过 auto-merge (fail-closed)" >&2
+  exit 0
+fi
+
+# ===== Harness relay 模式守门 =====
+# evaluator PASS 后由 harness-controller 手动 merge，禁止 auto-merge 绕过 evaluator gate。
+# HARNESS_TASK_ID 由 headed relay 的 tmux innerCmd `export HARNESS_TASK_ID=<id>` 注入；
+# headless docker relay 由 spawnDockerDetached 的 -e 参数注入——两条路径均覆盖。
+if [[ -n "${HARNESS_TASK_ID:-}" ]]; then
+  echo "[post-pr-create] HARNESS_TASK_ID=${HARNESS_TASK_ID}: harness relay 模式——跳过 auto-merge（evaluator PASS 后由 controller merge）" >&2
   exit 0
 fi
 
