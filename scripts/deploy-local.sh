@@ -70,6 +70,29 @@ if [[ -z "$CHANGED_FILES" ]]; then
     fi
 fi
 
+# ── Gate3 假跳过根治（bug e0f21d36）─────────────────────────────────────────
+# Gate3 deploy webhook 在【部署根的 main 分支】上跑，HEAD 恒等于/落后 origin/main，
+# 上面三点 diff（merge-base→HEAD）恒为空 → NEED_BRAIN=false → 跳过真部署 → 生产跑旧代码
+# （squash merge 后必现，已三连发）。原脚本设计给 /dev 在领先 main 的 feature 分支调用，
+# 那时 diff 有内容才对；在 main 上自算不可靠。
+# 兜底：git diff 判空时用「brain 版本对比」判定——repo 的 packages/brain/package.json
+# version ≠ 生产运行版本 → 强制走 brain 部署路径。版本对比幂等、状态无关，比 reflog
+# (HEAD@{1}) 更鲁棒（不受 detached spawn / 多次 pull / worktree checkout 影响）。
+# 测试钩子 CECELIA_DEPLOYED_BRAIN_VERSION 注入生产版本，跳过真实 curl。
+if [[ -z "$CHANGED_FILES" ]]; then
+    REPO_BRAIN_VERSION=$(node -e "process.stdout.write(require('$MAIN_ROOT/packages/brain/package.json').version)" 2>/dev/null || echo "")
+    DEPLOYED_BRAIN_VERSION="${CECELIA_DEPLOYED_BRAIN_VERSION:-}"
+    if [[ -z "$DEPLOYED_BRAIN_VERSION" ]]; then
+        DEPLOYED_BRAIN_VERSION=$(curl -sf --max-time 5 "http://localhost:${BRAIN_PORT:-5221}/api/brain/version" 2>/dev/null \
+            | node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{try{process.stdout.write((JSON.parse(s).version)||'')}catch{process.stdout.write('')}})" 2>/dev/null || echo "")
+    fi
+    if [[ -n "$REPO_BRAIN_VERSION" && "$REPO_BRAIN_VERSION" != "$DEPLOYED_BRAIN_VERSION" ]]; then
+        echo "🔎 git diff 判空，但 brain 版本不一致（repo=$REPO_BRAIN_VERSION 生产=${DEPLOYED_BRAIN_VERSION:-未知}）"
+        echo "   → 强制走 brain 部署路径（Gate3 假跳过根治 bug e0f21d36）"
+        CHANGED_FILES="packages/brain/package.json"
+    fi
+fi
+
 echo "📋 改动范围："
 if [[ -z "$CHANGED_FILES" ]]; then
     echo "  (无改动)"

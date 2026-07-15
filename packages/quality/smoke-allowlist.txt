@@ -103,4 +103,5 @@ guard-ref-bare-fr-smoke.sh
 kv-route-smoke.sh
 dispatch-fail-autoblock-smoke.sh
 ratchet-registry-smoke.sh
+autoblock-sql-param-fix-smoke.sh
 relay-runs-patch-shortid-smoke.sh
