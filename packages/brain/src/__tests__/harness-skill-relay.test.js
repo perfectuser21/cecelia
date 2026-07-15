@@ -378,3 +378,70 @@ describe('spawnSkillRelaySession: golden_path_proposal 选中 golden-path-contro
     expect(deps.loadSkill).toHaveBeenCalledWith('harness-controller');
   });
 });
+
+// ─── evaluator gate 守门：headed claude relay 必须注入 HARNESS_TASK_ID ─────────────────
+//
+// 根因（P0 a638f840）：post-pr-create.sh hook 对所有 `gh pr create` 无条件启用
+// `gh pr merge --auto --squash`，导致 harness relay PR 在 CI 绿后立刻被 GitHub 自动合并，
+// evaluator 和 report stage 从未有机会执行。
+//
+// 修复路径：
+//  1. headed claude relay 的 tmux innerCmd 注入 HARNESS_TASK_ID（本测试守住）
+//  2. packages/quality/hooks/post-pr-create.sh 检测 HARNESS_TASK_ID 非空时跳过 auto-merge
+//
+// headless docker relay 已通过 spawnFn 的 env 参数注入 HARNESS_TASK_ID（原有行为，无需改）。
+describe('headed claude relay — HARNESS_TASK_ID 注入（evaluator gate 守门）', () => {
+  function makeHeadedTask(overrides = {}) {
+    return {
+      id: 'bbbbcccc-dddd-eeee-ffff-000011112222',
+      title: 'test: headed evaluator gate',
+      payload: {
+        orchestrator: 'skill-relay',
+        mode: 'headed',
+        executor: 'claude',
+        sprint_dir: 'sprints/test-headed-gate',
+      },
+      ...overrides,
+    };
+  }
+
+  it('headed claude relay tmux innerCmd 包含 HARNESS_TASK_ID——post-pr-create hook 的检测信号', async () => {
+    const execCallArgs = [];
+    const execFn = vi.fn((cmd, _opts) => {
+      execCallArgs.push(String(cmd));
+      // tmux 守卫探活：返回 TMUX_DEAD 放行 spawn
+      if (String(cmd).includes('tmux has-session')) return 'TMUX_DEAD';
+      // 其余 ssh 命令（prompt 写入 + tmux new-session）返回空字符串表示成功
+      return '';
+    });
+
+    const task = makeHeadedTask();
+    const deps = {
+      pool: { query: vi.fn().mockResolvedValue({ rows: [] }) },
+      execFn,
+      loadSkill: vi.fn().mockReturnValue('SKILL_CONTENT'),
+      ensureWt: vi.fn().mockResolvedValue('/tmp/wt/test-headed-gate'),
+      resolveAccountFn: vi.fn().mockResolvedValue(undefined),
+      tokenFn: vi.fn().mockResolvedValue('gh-token'),
+      now: () => new Date('2026-07-15T07:10:00Z'),
+      inDockerFn: () => false,
+      sshKeyFn: () => null,
+    };
+
+    const r = await spawnSkillRelaySession(task, deps);
+    expect(r.ok).toBe(true);
+
+    // 找 tmux new-session 调用（该命令携带 innerCmd，是 claude session 的启动命令）
+    const tmuxCalls = execCallArgs.filter(cmd => cmd.includes('tmux new-session'));
+    expect(tmuxCalls.length, 'tmux new-session 必须被调用').toBeGreaterThan(0);
+
+    // 核心断言：HARNESS_TASK_ID 必须在 tmux innerCmd 里
+    // 这是 post-pr-create.sh 检测 harness relay 模式、跳过 auto-merge 的唯一信号
+    expect(tmuxCalls[0], 'tmux innerCmd 必须含 HARNESS_TASK_ID 供 hook 检测').toContain('HARNESS_TASK_ID=');
+    expect(tmuxCalls[0]).toContain(task.id);
+
+    // 清理 tui.log 真实写入目录
+    const { rmSync } = await import('node:fs');
+    try { rmSync(task.payload.sprint_dir, { recursive: true, force: true }); } catch { /* 忽略 */ }
+  });
+});
