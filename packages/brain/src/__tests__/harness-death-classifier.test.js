@@ -111,4 +111,14 @@ describe('classifyDeath — 模块约束（INV-03/INV-07）', () => {
     const avg = (performance.now() - start) / 1000;
     expect(avg).toBeLessThan(1);
   });
+
+  it('无 import 约束 — 模块无任何 import 语句', async () => {
+    const { readFileSync } = await import('node:fs');
+    const { fileURLToPath } = await import('node:url');
+    const { dirname, join } = await import('node:path');
+    const dir = dirname(fileURLToPath(import.meta.url));
+    const src = readFileSync(join(dir, '../harness-death-classifier.js'), 'utf-8');
+    const importLines = src.split('\n').filter(l => /^import\s/.test(l));
+    expect(importLines).toHaveLength(0);
+  });
 });
