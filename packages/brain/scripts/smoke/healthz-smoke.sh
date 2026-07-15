@@ -6,6 +6,8 @@
 #   - HTTP code != 200 且 HTTP code != 503（任意状态均应有 JSON 响应）
 #   - 缺少 status / db / tick 字段
 #   - status 不是 ok/degraded/critical
+#
+# 依赖约束（蓝绿 pre-swap 在 brain 容器内跑）：只许 bash+curl+node，禁 jq。
 set -euo pipefail
 
 URL="${BRAIN_URL:-http://localhost:5221}/api/brain/healthz"
@@ -22,36 +24,19 @@ if [ "$HTTP_CODE" != "200" ] && [ "$HTTP_CODE" != "503" ]; then
   exit 1
 fi
 
-jq -e '.status | type == "string"' "$OUT" > /dev/null || {
-  printf '%s\n' "❌ Missing or non-string 'status' field"
-  jq . "$OUT"
-  exit 1
-}
+node -e '
+const fs=require("fs");
+let j; try { j=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); }
+catch(e){ console.error("❌ 响应不是合法 JSON: "+e.message); process.exit(1); }
+const fail=m=>{ console.error("❌ "+m); console.error(JSON.stringify(j,null,2)); process.exit(1); };
+if(typeof j.status!=="string") fail("Missing or non-string \"status\" field");
+if(typeof j.db!=="string") fail("Missing or non-string \"db\" field");
+if(typeof j.tick!=="string") fail("Missing or non-string \"tick\" field");
+if(!["ok","degraded","critical"].includes(j.status)) fail("status must be ok/degraded/critical, got: "+j.status);
+if(typeof j.checked_at!=="string") fail("Missing \"checked_at\" field");
+' "$OUT"
 
-jq -e '.db | type == "string"' "$OUT" > /dev/null || {
-  printf '%s\n' "❌ Missing or non-string 'db' field"
-  jq . "$OUT"
-  exit 1
-}
-
-jq -e '.tick | type == "string"' "$OUT" > /dev/null || {
-  printf '%s\n' "❌ Missing or non-string 'tick' field"
-  jq . "$OUT"
-  exit 1
-}
-
-STATUS=$(jq -r '.status' "$OUT")
-if [[ "$STATUS" != "ok" && "$STATUS" != "degraded" && "$STATUS" != "critical" ]]; then
-  printf '%s\n' "❌ status must be ok/degraded/critical, got: $STATUS"
-  jq . "$OUT"
-  exit 1
-fi
-
-jq -e '.checked_at | type == "string"' "$OUT" > /dev/null || {
-  printf '%s\n' "❌ Missing 'checked_at' field"
-  jq . "$OUT"
-  exit 1
-}
+STATUS=$(node -e 'console.log(JSON.parse(require("fs").readFileSync(process.argv[1],"utf8")).status)' "$OUT")
 
 printf '%s\n' "✅ smoke pass: $URL → HTTP $HTTP_CODE, status=$STATUS"
-jq . "$OUT"
+node -e 'console.log(JSON.stringify(JSON.parse(require("fs").readFileSync(process.argv[1],"utf8")),null,2))' "$OUT"
