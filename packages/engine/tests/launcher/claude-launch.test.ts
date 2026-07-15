@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { execSync } from 'node:child_process';
-import { mkdtempSync, writeFileSync, chmodSync, rmSync, existsSync, statSync, mkdirSync, lstatSync, realpathSync, symlinkSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, chmodSync, rmSync, existsSync, statSync, mkdirSync, lstatSync, realpathSync, symlinkSync, readlinkSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 
@@ -514,7 +514,7 @@ exit 0
     expect(out).toContain(`LINK_TARGET=${target}`);
   });
 
-  it('cwd 已在外部建的 worktree 内 → dry-run 仍输出 ln -s 契约行（根因回归）', () => {
+  it('cwd 已在外部建的 worktree 内 → dry-run 仍输出 ln -s 契约行（dry-run 契约）', () => {
     const sid = 'aaaa0009-1111-2222-3333-444444444444';
     // 模拟 slot 场景：worktree 由外部（非 launcher）建好，claude 从其内部启动
     const extWt = join(base, 'external-wt');
@@ -527,7 +527,7 @@ exit 0
     expect(out).not.toContain('worktree add');         // 已在 worktree 内，不得再建
   });
 
-  it('headless（-p）在 worktree 内 → 仍不建链（机器人会话不灌主池）', () => {
+  it('headless（-p）在 worktree 内 → dry-run 不输出 ln -s（dry-run 契约）', () => {
     const sid = 'aaaa0010-1111-2222-3333-444444444444';
     const extWt2 = join(base, 'external-wt2');
     execSync(`git -C "${mainRepo}" worktree add -q "${extWt2}" -b ext-branch2`, { stdio: 'ignore' });
@@ -535,9 +535,17 @@ exit 0
     expect(out).not.toContain('ln -s');
   });
 
-  // ⚠️ 上面两条走 --dry-run，launcher 在 dry-run 段就 exit 0，钉的只是 echo 出来的
-  // 意图字符串，**到不了真实建链门禁**——把真实门禁改坏它们照样绿（审查实证）。
-  // 真正的守卫是下面这条：走真实执行路径，在 claude 运行期内断言软链实存。
+  // ⚠️ 上面两条只守 dry-run 段（launcher 在那儿就 exit 0），钉的是 echo 出来的意图
+  // 字符串，**到不了真实建链门禁**——真实门禁改坏它们照样绿（审查两次实证）。
+  // dry-run 的 elif 分支本身是真实代码、有独立回归价值，故保留，但标题已改成
+  // 「dry-run 契约」，别再被"根因回归"骗成"根因已被守住"。
+  //
+  // 下面几条走**真实执行路径**，才是真守卫。每条都经变异验证 proven-to-fire：
+  //   删 `! _is_headless`            → headless 真实用例红
+  //   删 `_in_git_repo`              → 非 git 目录用例红
+  //   整个门禁改回 AUTO_WORKTREE=1   → 本条 + 既有 6 条红
+  //   删 _link_projects_dir 自指短路 → lossy key 碰撞用例红
+  // 加新用例时请照此自查：它到底走哪条路径？把它声称守的条件删掉，会不会红？
   it('真实执行：cwd 在外部建的 worktree 内 → claude 运行期内 <wt_key> 是指向 <main_key> 的软链（根因回归·真实路径）', () => {
     const sid = 'aaaa0016-1111-2222-3333-444444444444';
     const extWt = join(base, 'external-wt-real');
@@ -550,6 +558,48 @@ exit 0
 `);
     const out = execSync(`bash "${LAUNCHER}"`, { cwd: extWt, env: makeEnv(sid) }).toString();
     expect(out).toContain(`LINK_TARGET=${join(projectsRoot, toKey(mainRepoPhys))}`);
+  });
+
+  it('真实执行：headless（-p）在 worktree 内 → 运行期内无软链（机器人会话不灌主池）', () => {
+    const sid = 'aaaa0018-1111-2222-3333-444444444444';
+    const extWt = join(base, 'external-wt-headless');
+    execSync(`git -C "${mainRepo}" worktree add -q "${extWt}" -b ext-branch-headless`, { stdio: 'ignore' });
+    const extWtPhys = realpathSync(extWt);
+    const link = join(projectsRoot, toKey(extWtPhys));
+    writeMockClaude(`#!/usr/bin/env bash
+if [[ -L "${link}" ]]; then echo "LINK_TARGET=$(readlink "${link}")"; else echo "LINK_TARGET=MISSING"; fi
+exit 0
+`);
+    const out = execSync(`bash "${LAUNCHER}" -p hi`, { cwd: extWt, env: makeEnv(sid) }).toString();
+    expect(out).toContain('LINK_TARGET=MISSING');
+  });
+
+  // project key 是**有损多对一映射**（/ . _ 等非字母数字全塌成 -），所以两条不同路径
+  // 可以撞出同一个 key：主仓 <base>/coll-a-b 与 worktree <base>/coll-a/b 都塌成 …-coll-a-b。
+  // 此时 link == target，_link_projects_dir 的自指短路是承重的：没有它，
+  // mkdir -p "$target" 会让 [[ -d "$link" ]] 成真 → 走"孤儿目录"分支 → rmdir 掉池子
+  // → ln -s 造出一条**指向自己**的软链，且全程 best-effort 不报错（静默损坏）。
+  it('lossy key 碰撞（wt key == 主仓 key）→ 不得造出自指软链（静默损坏 /resume 池子）', () => {
+    const sid = 'aaaa0019-1111-2222-3333-444444444444';
+    const collMain = join(base, 'coll-a-b');
+    execSync(`git clone -q "${bareDir}" "${collMain}"`);
+    execSync('git config user.email test@test.com', { cwd: collMain });
+    execSync('git config user.name Test', { cwd: collMain });
+    const collWt = join(base, 'coll-a', 'b');
+    execSync(`git -C "${collMain}" worktree add -q "${collWt}" -b coll-branch`, { stdio: 'ignore' });
+    // 前置自证：两者 key 必须真撞上，否则本用例什么也没测
+    const collMainPhys = realpathSync(collMain);
+    const collWtPhys = realpathSync(collWt);
+    expect(toKey(collWtPhys)).toBe(toKey(collMainPhys));
+
+    const link = join(projectsRoot, toKey(collWtPhys));
+    writeMockClaude(`#!/usr/bin/env bash\necho "MOCK_RAN=yes"\nexit 0\n`);
+    const out = execSync(`bash "${LAUNCHER}"`, { cwd: collWt, env: makeEnv(sid) }).toString();
+    expect(out).toContain('MOCK_RAN=yes');
+
+    const st = lstatSync(link, { throwIfNoEntry: false });
+    const isSelfLink = st?.isSymbolicLink() === true && readlinkSync(link) === link;
+    expect(isSelfLink).toBe(false);
   });
 
   it('非 git 目录启动 → 不打印软链警告（无历史可共享），claude 正常执行且退出码透传', () => {
