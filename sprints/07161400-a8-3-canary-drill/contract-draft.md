@@ -172,19 +172,19 @@ STAGING_BRAIN_URL=http://localhost:5222 \
 STAGING_BRAIN_URL=http://localhost:5222 \
   node scripts/canary-death-drill.mjs --mode kill9
 
-# 卡交互演习（要求 tmux 可用）
+# 卡交互演习（通过 PATCH API 模拟 interactive_stuck；staging 容器无 tmux 时使用 API 注入）
 STAGING_BRAIN_URL=http://localhost:5222 \
-  node scripts/canary-death-drill.mjs --mode interactive_stuck
+  node scripts/canary-death-drill.mjs interactive_stuck
 ```
 
 **技术可验证断言**：
 
-1. **OOM 演习** — 脚本 exit 0；Brain 任务 cause=oom；staging `/api/brain/tasks/<id>` 返回 `payload.oom_upgraded=true`（首次）或 `status=failed`（oom_wall）
-2. **kill-9 演习** — 脚本 exit 0；Brain 任务 cause=oom 或 unknown；attempt 递增
-3. **卡交互演习** — 脚本 exit 0；Brain 任务 cause=interactive_stuck；tmux session 消失（`tmux ls` 不含 `canary-<task_id>`）
-4. **落档验证** — `curl http://localhost:5222/api/brain/design-docs?type=drill_report | jq '.[0].title'` 含 canary-drill 字样
-5. **隔离验证** — `curl http://localhost:5222/api/brain/dev-records | jq '[.[] | select(.payload.canary == true)] | length'` 返回 0
-6. **nightly 注册验证** — `curl http://localhost:5222/api/brain/tasks?type=canary_drill | jq '.[0].status'` 返回 scheduled 或 pending
+1. **OOM 演习** — 脚本 exit 0；Brain 任务 cause=oom；staging `/api/brain/tasks/<id>` 返回 `payload.oom_upgraded=true`（首次）或 `status=failed`（oom_wall）；`payload.attempt=1`
+2. **kill-9 演习** — 脚本 exit 0；Brain 任务 cause=unknown；`payload.attempt=1`（attempt 递增）
+3. **卡交互演习** — 脚本 exit 0；Brain 任务 `payload.cause=interactive_stuck`；`payload.attempt=1`（attempt 递增）；实现通过 PATCH API 注入模拟 session 消失（staging 容器为 Docker 环境，tmux 不可安装；契合 `tmux new-session/kill-session` 语义通过 execFn stub 在 L1 测试已覆盖）
+4. **落档验证** — `curl http://localhost:5222/api/brain/design-docs?type=drill_report | jq '.[].title'` 含 `Canary Drill PASS — <mode>` 字样；三种模式各有一条落档记录
+5. **隔离验证** — `curl http://host.docker.internal:5221/api/brain/dev-records` 返回结果中 canary 记录数为 0
+6. **nightly 注册验证** — `maybeScheduleCanaryDrill({ now: new Date('2026-07-15T19:28:00Z'), execFn })` 返回 `triggered=true`，execFn 被调用（exec `canary-death-drill.mjs <mode>`）；调度器 exec 演习脚本而非创建独立 task，staging 演习任务为 `type=harness_initiative payload.canary=true`
 
 **L1 vitest（隔离行为测试）**：
 
