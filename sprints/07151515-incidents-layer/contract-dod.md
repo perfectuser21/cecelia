@@ -7,9 +7,19 @@ created: 2026-07-15
 
 ---
 
+## Invariant 覆盖
+
+| Invariant | 约束内容 |
+|-----------|---------|
+| I-4 | status 状态机单向流转：open → triaged → fixing → resolved → postmortem_done，不可逆转 |
+| I-5 | migration 编号为 012（衔接现有最大编号 011），文件名 `012-incidents.sql` |
+| I-6 | GET /api/brain/incidents 端点必须注册在现有路由文件（packages/brain/src/server.js 或同级路由文件）中 |
+
+---
+
 ## [BEHAVIOR] 条目
 
-### [BEHAVIOR-1] 迁移脚本建表，字段完整
+### [BEHAVIOR] 1. 迁移脚本建表，字段完整
 
 **描述**：执行 `012-incidents.sql` 后，incidents 表存在且含 PRD I-3 规定的全部字段  
 **类型**：DB schema  
@@ -22,7 +32,7 @@ psql $DATABASE_URL -c "\d incidents" | grep -E "probe_id|fingerprint|severity|ev
 
 ---
 
-### [BEHAVIOR-2] reportIncident() 首次调用插入记录，evidence 非空
+### [BEHAVIOR] 2. reportIncident() 首次调用插入记录，evidence 非空
 
 **描述**：reportIncident() 首次调用时向 incidents 表插入 1 行，recurrence_count=1，evidence 为传入的 JSONB  
 **类型**：DB write + 幂等基准  
@@ -39,7 +49,7 @@ psql $DATABASE_URL -c "SELECT recurrence_count, evidence FROM incidents WHERE fi
 
 ---
 
-### [BEHAVIOR-3] 同 fingerprint 再次调用累加 recurrence_count，不新增行
+### [BEHAVIOR] 3. 同 fingerprint 再次调用累加 recurrence_count，不新增行
 
 **描述**：同一 fingerprint 第二次调用 reportIncident() 后，表中仍只有 1 行，recurrence_count=2  
 **类型**：幂等去重（I-1 核心约束）  
@@ -56,7 +66,7 @@ psql $DATABASE_URL -c "SELECT COUNT(*) as cnt, MAX(recurrence_count) as rc FROM 
 
 ---
 
-### [BEHAVIOR-4] GET /api/brain/incidents 返回 HTTP 200 含 incidents 数组
+### [BEHAVIOR] 4. GET /api/brain/incidents 返回 HTTP 200 含 incidents 数组
 
 **描述**：GET /api/brain/incidents 端点返回最近 50 条记录，含所有规定字段  
 **类型**：REST API  
@@ -77,7 +87,7 @@ console.log('PASS');
 
 ---
 
-### [BEHAVIOR-5] reportIncident() 失败不抛出，不阻塞调用方
+### [BEHAVIOR] 5. reportIncident() 失败不抛出，不阻塞调用方
 
 **描述**：DB 不可达时 reportIncident() 只 warn，不 throw，调用方 Promise 正常 resolve  
 **类型**：非阻塞容错（I-2 约束）  
@@ -93,7 +103,7 @@ reportIncident('test', 'test:x', 'p2', {}).then(() => { console.log('PASS'); pro
 
 ---
 
-### [BEHAVIOR-6] launchd-patrol 红触发路径调用 reportIncident()
+### [BEHAVIOR] 6. launchd-patrol 红触发路径调用 reportIncident()
 
 **描述**：launchd-patrol 在 P1 触发后调用 reportIncident()，fingerprint 格式为 `launchd-patrol:${daemonName}`  
 **类型**：探针接入  
@@ -105,7 +115,7 @@ grep -n "reportIncident" packages/brain/src/launchd-patrol.js
 
 ---
 
-### [BEHAVIOR-7] dept-heartbeat 超时告警后调用 reportIncident()
+### [BEHAVIOR] 7. dept-heartbeat 超时告警后调用 reportIncident()
 
 **描述**：dept-heartbeat.js 在超时告警后调用 reportIncident()，fingerprint = `heartbeat-silent:${deptName}`  
 **类型**：探针接入  
@@ -117,7 +127,7 @@ grep -n "reportIncident" packages/brain/src/dept-heartbeat.js
 
 ---
 
-### [BEHAVIOR-8] circuit-breaker OPEN 时调用 reportIncident()
+### [BEHAVIOR] 8. circuit-breaker OPEN 时调用 reportIncident()
 
 **描述**：circuit-breaker.js 在状态变为 OPEN 时调用 reportIncident()，fingerprint = `circuit-breaker-open:${workerKey}`  
 **类型**：探针接入  
