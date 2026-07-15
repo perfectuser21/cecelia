@@ -677,6 +677,14 @@ async function onBrainListening() {
     console.error('[Server] Startup stale-claim cleanup failed (non-fatal):', claimErr.message);
   }
 
+  // S0: batch-recover orphaned relay tasks after restart（A8-2）
+  import('./src/startup-sync.js').then(async ({ scanOrphanedRelayTasks }) => {
+    const { spawnSkillRelaySession } = await import('./src/harness-skill-relay.js');
+    return scanOrphanedRelayTasks({ pool, spawnFn: spawnSkillRelaySession });
+  }).then(r => {
+    console.log(`[startup-sync] relay orphan scan: scanned=${r.scanned} recovered=${r.recovered}`);
+  }).catch(err => console.warn(`[startup-sync] relay orphan scan failed (non-fatal): ${err.message}`));
+
   // Initialize Fleet Resource Cache (全局多机器资源感知)
   startFleetRefresh();
   console.log('[Server] Fleet Resource Cache started (30s interval) - 全局资源感知');
