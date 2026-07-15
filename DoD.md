@@ -47,8 +47,8 @@ task_id=cd0b936c-2891-4fed-a921-5636ca08d1e8。不修改 `relay-4bb31ef5.sh` / `
   Test: manual:bash -c 'grep -Fxq "claude-headed-dispatch-smoke.sh" packages/quality/smoke-allowlist.txt || exit 1; echo OK'
   期望: OK
 
-- [x] [BEHAVIOR] 毕业路径预演——graduate-sprint-tests.mjs 对本 sprint 目录的规划输出 e2e 目标路径字面等于 scripts/smoke/e2e/relay-cd0b936c.sh
-  Test: manual:bash -c 'node -e "import(\"./scripts/graduate-sprint-tests.mjs\").then(m=>{const p=m.planGraduation(process.cwd(),\"sprints/07151206-relay-cd0b936c\");const e=p.e2e[0];if(!e||e.to!==\"scripts/smoke/e2e/relay-cd0b936c.sh\"){console.error(\"FAIL\",e);process.exit(1)}console.log(\"OK\")})"'
+- [x] [BEHAVIOR] 毕业落地核对——sprint 已毕业（本 sprint 后续被 049ebf93 归档 PR 一并毕业），e2e 目标文件真实存在于 scripts/smoke/e2e/relay-cd0b936c.sh 且内容含本轮 task_id
+  Test: manual:bash -c '[ -f "scripts/smoke/e2e/relay-cd0b936c.sh" ] || exit 1; grep -q "cd0b936c-2891-4fed-a921-5636ca08d1e8" "scripts/smoke/e2e/relay-cd0b936c.sh" || exit 1; echo OK'
   期望: OK
 
 ## Invariant 覆盖条目（PRD 铁律清单逐条映射 — Step 1.3）
