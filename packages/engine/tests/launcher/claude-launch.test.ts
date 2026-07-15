@@ -421,7 +421,7 @@ exit 0
     expect(existsSync(join(projectsRoot, toKey(mainRepoPhys), 'old-session.jsonl'))).toBe(true);
   });
 
-  it('干净退出 → 软链被删除，经软链写入主仓文件夹的 transcript 完好', () => {
+  it('干净退出 → 软链保留（共享资源，不随单个会话销毁），transcript 完好', () => {
     const sid = 'aaaa0003-1111-2222-3333-444444444444';
     const wtPathPhys = join(worktreeBasePhys, 'main', `session-${sid.slice(0, 8)}`);
     const link = join(projectsRoot, toKey(wtPathPhys));
@@ -430,9 +430,23 @@ echo '{"x":1}' > "${link}/${sid}.jsonl"
 exit 0
 `);
     execSync(`bash "${LAUNCHER}"`, { cwd: mainRepo, env: makeEnv(sid) });
-    expect(existsSync(link)).toBe(false);
-    expect(lstatSync(link, { throwIfNoEntry: false })).toBeUndefined();
+    // 软链是 per-worktree-path 共享资源：同一 key 可压多条会话，
+    // 删它会让仍在用该 key 的会话重建真目录 = 新孤儿。8 字节，留着零成本。
+    expect(lstatSync(link).isSymbolicLink()).toBe(true);
     expect(existsSync(join(projectsRoot, toKey(mainRepoPhys), `${sid}.jsonl`))).toBe(true);
+  });
+
+  it('同一 worktree key 多会话共用 → 前一个会话干净退出后，软链对后一个仍有效', () => {
+    const sidA = 'aaaa0011-1111-2222-3333-444444444444';
+    const wtPathPhys = join(worktreeBasePhys, 'main', `session-${sidA.slice(0, 8)}`);
+    const link = join(projectsRoot, toKey(wtPathPhys));
+    // 会话 A：干净退出（触发清理段）
+    writeMockClaude('#!/usr/bin/env bash\nexit 0\n');
+    execSync(`bash "${LAUNCHER}"`, { cwd: mainRepo, env: makeEnv(sidA) });
+    // 会话 B：复用同一 key 写入 → 必须仍落进主仓池，而不是重建真目录
+    expect(lstatSync(link).isSymbolicLink()).toBe(true);
+    writeFileSync(join(link, 'second-session.jsonl'), '{"y":2}\n');
+    expect(existsSync(join(projectsRoot, toKey(mainRepoPhys), 'second-session.jsonl'))).toBe(true);
   });
 
   it('脏 worktree 保留 → 软链同步保留', () => {
