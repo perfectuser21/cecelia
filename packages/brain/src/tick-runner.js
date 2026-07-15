@@ -72,6 +72,7 @@ import { schedulePostPublishCollection } from './post-publish-data-collector.js'
 import { syncSocialMediaData } from './social-media-sync.js';
 import { runDesireSystem } from './desire/index.js';
 import { runRumination } from './rumination.js';
+import { runCanaryDrillIfNeeded } from './canary-drill-scheduler.js';
 import { runSynthesisSchedulerIfNeeded } from './rumination-scheduler.js';
 import { runSuggestionCycle } from './suggestion-cycle.js';
 import { runConversationConsolidator } from './conversation-consolidator.js';
@@ -1560,6 +1561,10 @@ async function executeTick() {
     Promise.resolve().then(() => generateDailyDiaryIfNeeded(pool))
       .catch(e => console.warn('[tick] diary scheduler 失败:', e.message));
   }
+
+  // A8-3: nightly 金丝雀演习（UTC 19:25~19:35，北京时间 03:25~03:35）
+  Promise.resolve().then(() => runCanaryDrillIfNeeded())
+    .catch(e => console.warn('[tick] canary-drill-scheduler error:', e.message));
 
   // 10.3–10.8 LLM 后台调用（CONSCIOUSNESS_ENABLED=false 时全部跳过）
   if (isConsciousnessEnabled()) {
