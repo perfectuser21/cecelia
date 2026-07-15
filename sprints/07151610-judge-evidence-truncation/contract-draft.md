@@ -108,11 +108,11 @@ git log --oneline packages/brain/src/__tests__/harness-judge-evidence-compress.t
 
 | BEHAVIOR | Test File | it() 描述 |
 |----------|-----------|-----------|
-| BEHAVIOR-1 截断复现 | packages/brain/src/__tests__/harness-judge-evidence-compress.test.js | 旧截断逻辑：behavior_tests[1].log_tail 的 KEYMARK 被挤出 2000 字符外 |
-| BEHAVIOR-2 修复后KEYMARK可见 | packages/brain/src/__tests__/harness-judge-evidence-compress.test.js | compressBrainResult：behavior_tests[1].log_tail 的 KEYMARK 必须可见 |
-| BEHAVIOR-2 buildJudgePrompt包含所有command | packages/brain/src/__tests__/harness-judge-evidence-compress.test.js | buildJudgePrompt：prompt 中包含 behavior_tests[0] 和 [1] 的 command |
-| BEHAVIOR-3 条目上限 | packages/brain/src/__tests__/harness-judge-evidence-compress.test.js | 前 8 条展开，第 9/10 条不展开，含「另有 2 条已省略」 |
-| BEHAVIOR-4 超长log_tail截断标记 | packages/brain/src/__tests__/harness-judge-evidence-compress.test.js | log_tail 超 600 字符时，截至 600 字符并追加「…（已截断）」 |
-| BEHAVIOR-5 总长度预算 | packages/brain/src/__tests__/harness-judge-evidence-compress.test.js | 最大压力输入下 compressBrainResult 输出长度不超过 6000 |
-| BEHAVIOR-7 命名导出 | packages/brain/src/__tests__/harness-judge-evidence-compress.test.js | compressBrainResult 是从 harness-judge.js 导出的函数 |
-| BEHAVIOR-7 null安全 | packages/brain/src/__tests__/harness-judge-evidence-compress.test.js | null/undefined brainResult 不崩溃，返回字符串 |
+| BEHAVIOR-1 截断复现 | ../../packages/brain/src/__tests__/harness-judge-evidence-compress.test.js | 旧截断逻辑：behavior_tests[1].log_tail 的 KEYMARK 被挤出 2000 字符外 |
+| BEHAVIOR-2 修复后KEYMARK可见 | ../../packages/brain/src/__tests__/harness-judge-evidence-compress.test.js | compressBrainResult：behavior_tests[1].log_tail 的 KEYMARK 必须可见 |
+| BEHAVIOR-2 buildJudgePrompt包含所有command | ../../packages/brain/src/__tests__/harness-judge-evidence-compress.test.js | buildJudgePrompt：prompt 中包含 behavior_tests[0] 和 [1] 的 command |
+| BEHAVIOR-3 条目上限 | ../../packages/brain/src/__tests__/harness-judge-evidence-compress.test.js | 前 8 条展开，第 9/10 条不展开，含「另有 2 条已省略」 |
+| BEHAVIOR-4 超长log_tail截断标记 | ../../packages/brain/src/__tests__/harness-judge-evidence-compress.test.js | log_tail 超 600 字符时，截至 600 字符并追加「…（已截断）」 |
+| BEHAVIOR-5 总长度预算 | ../../packages/brain/src/__tests__/harness-judge-evidence-compress.test.js | 最大压力输入下 compressBrainResult 输出长度不超过 6000 |
+| BEHAVIOR-7 命名导出 | ../../packages/brain/src/__tests__/harness-judge-evidence-compress.test.js | compressBrainResult 是从 harness-judge.js 导出的函数 |
+| BEHAVIOR-7 null安全 | ../../packages/brain/src/__tests__/harness-judge-evidence-compress.test.js | null/undefined brainResult 不崩溃，返回字符串 |
