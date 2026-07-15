@@ -1,5 +1,5 @@
 {
-  "orphans": 1,
+  "orphans": 2,
   "permanent": 1124,
   "permanent_roots": [
     { "path": "packages/brain/src/__tests__", "layer": "unit" },
