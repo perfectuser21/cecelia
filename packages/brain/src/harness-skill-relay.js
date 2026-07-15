@@ -504,8 +504,12 @@ async function _spawnHeadedSession(task, { dbPool, now, short, initiativeId, dep
     const hostRepo = process.env.CECELIA_HOST_REPO || '/Users/administrator/perfect21/cecelia';
     const claudeCfgPrefix = process.env.HEADED_CLAUDE_CONFIG_DIR
       ? `CLAUDE_CONFIG_DIR=${process.env.HEADED_CLAUDE_CONFIG_DIR} ` : '';
+    // export HARNESS_TASK_ID + HARNESS_NODE 到 claude session 环境——
+    // post-pr-create.sh hook 检测到该变量后跳过 auto-merge，保证 evaluator gate 不被绕过
+    // (P0 a638f840 根治：PR 在 evaluator 运行前被 GitHub 自动合并)。
+    // headless docker relay 已通过 spawnFn env 参数注入，此处仅补 headed 路径。
     const innerCmd = isClaudeHeaded
-      ? `cd ${worktreePath} && ${claudeCfgPrefix}bash ${hostRepo}/scripts/claude-launch.sh --dangerously-skip-permissions \\"\\$(cat ${promptFile})\\"`
+      ? `cd ${worktreePath} && export HARNESS_TASK_ID=${task.id} HARNESS_NODE=controller && ${claudeCfgPrefix}bash ${hostRepo}/scripts/claude-launch.sh --dangerously-skip-permissions \\"\\$(cat ${promptFile})\\"`
       : `cd ${worktreePath} && CODEX_HOME=${codexRelayHome || ''} codex --dangerously-bypass-approvals-and-sandbox \\"\\$(cat ${promptFile})\\"`;
     try {
       execFn(
