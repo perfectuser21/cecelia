@@ -217,6 +217,6 @@ echo "✅ Golden Path 验证通过（final-e2e, local_api）"
 
 | 功能 | Test File | BEHAVIOR 覆盖 | 预期红证据 |
 |---|---|---|---|
-| e2e-verify.sh 默认值绑定 + 全流程可执行 | `tests/e2e-verify-contract.test.ts` | TASK_ID 默认值精确等于本轮 task_id、e2e-verify.sh 全流程真实执行返回 OK headed smoke regression verified for cd0b936c、陌生 task_id 下脚本 FAIL 且不 sleep/retry 掩盖、毕业路径预演命名对齐 relay-cd0b936c.sh | → 4 failures（e2e-verify.sh 不存在） |
+| e2e-verify.sh 默认值绑定 + 全流程可执行 | `tests/e2e-verify-contract.test.ts` | TASK_ID 默认值精确等于本轮 task_id（非照抄旧文件默认值）、SPRINT_DIR 默认值精确等于本轮 sprint 目录、e2e-verify.sh 全流程真实执行返回 OK headed smoke regression verified for cd0b936c、陌生 task_id 下脚本必须 FAIL（exit 非 0），不 sleep/retry 掩盖、relay-4bb31ef5.sh 未被修改（历史锚点保留） | → 4 failures（e2e-verify.sh 不存在） |
 
 **gate-allow 记录**（Contract Gate 惯用法自查）：无需豁免，全部命令按"API 值断言/DB 时效防伪/负向测试捕获形态"标准写法。
