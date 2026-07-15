@@ -28,6 +28,8 @@ function makeDeps({
   prState = null,   // 'MERGED' | 'OPEN' | 'CLOSED' | null（execFn 返回的 gh pr view JSON）
   orchestratorHost = 'skill-relay-session',
   evaluatorGate = true, // initiative_run_events 是否存在 node='evaluator' AND status='done'
+  mergeStateStatus = undefined, // 'BEHIND' | 'CLEAN' | undefined（gh pr view mergeStateStatus）
+  ciChecks = undefined,         // CheckRow[] | undefined（gh pr checks --json state）
 } = {}) {
   const pool = { query: vi.fn() };
   pool.query.mockImplementation(async (sql) => {
@@ -44,7 +46,17 @@ function makeDeps({
   });
   const execFn = vi.fn().mockImplementation((cmd) => {
     if (/docker ps/.test(cmd)) return containerRunning ? 'abc123\n' : '';
-    if (/gh pr view/.test(cmd) && prState) return JSON.stringify({ state: prState });
+    if (/gh pr view/.test(cmd) && prState) {
+      // 若命令含 mergeStateStatus 字段请求，则回传 mergeStateStatus（如提供）
+      if (/mergeStateStatus/.test(cmd) && mergeStateStatus !== undefined) {
+        return JSON.stringify({ state: prState, mergeStateStatus });
+      }
+      return JSON.stringify({ state: prState });
+    }
+    if (/gh pr checks/.test(cmd)) {
+      if (ciChecks !== undefined) return JSON.stringify(ciChecks);
+      return JSON.stringify([]);
+    }
     return '';
   });
   return {
@@ -146,6 +158,41 @@ describe('resumeStalledRelayRuns', () => {
     expect(r.resumed).toBe(0);
     expect(r.mergedPr).toBe(0);
   });
+
+  // ── GP-1～GP-4：OPEN PR 死局解除（d3343415）────────────────────────────────
+
+  it('GP-1：容器消失 + PR OPEN + mergeStateStatus=BEHIND → 重点火（resume_ci_red）', async () => {
+    const deps = makeDeps({ prUrl: PR_URL, prState: 'OPEN', mergeStateStatus: 'BEHIND', ciChecks: [] });
+    const r = await resumeStalledRelayRuns(deps);
+    expect(deps.spawnFn).toHaveBeenCalledOnce();
+    expect(r.resumed).toBe(1);
+    const logCalls = deps.execFn.mock.calls.map(c => c[0]);
+    // 验证走了 mergeStateStatus 扩展查询
+    expect(logCalls.some(c => /mergeStateStatus/.test(c))).toBe(true);
+  });
+
+  it('GP-2：容器消失 + PR OPEN + CI FAILURE → 重点火（resume_ci_red）', async () => {
+    const deps = makeDeps({ prUrl: PR_URL, prState: 'OPEN', mergeStateStatus: 'CLEAN', ciChecks: [{ state: 'FAILURE' }] });
+    const r = await resumeStalledRelayRuns(deps);
+    expect(deps.spawnFn).toHaveBeenCalledOnce();
+    expect(r.resumed).toBe(1);
+  });
+
+  it('GP-3：容器消失 + PR OPEN + CI pending → 跳过（wait_ci_running）', async () => {
+    const deps = makeDeps({ prUrl: PR_URL, prState: 'OPEN', mergeStateStatus: 'CLEAN', ciChecks: [{ state: 'IN_PROGRESS' }] });
+    const r = await resumeStalledRelayRuns(deps);
+    expect(deps.spawnFn).not.toHaveBeenCalled();
+    expect(r.resumed).toBe(0);
+  });
+
+  it('GP-4：PR OPEN + BEHIND + attempts >= 上限 → 不重点火（熔断优先）', async () => {
+    const deps = makeDeps({ prUrl: PR_URL, prState: 'OPEN', mergeStateStatus: 'BEHIND', ciChecks: [], attempts: MAX_RELAY_ATTEMPTS });
+    const r = await resumeStalledRelayRuns(deps);
+    expect(deps.spawnFn).not.toHaveBeenCalled();
+    expect(r.capped).toBe(1);
+  });
+
+  // ── end GP-1～GP-4 ───────────────────────────────────────────────────────────
 
   it('容器消失 + pr_url 存在 + gh pr view 抛错 → 保守跳过（不盲目重点火）', async () => {
     const pool = makeDeps().pool;

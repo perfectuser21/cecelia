@@ -14,6 +14,36 @@ import pool from './db.js';
 import { execSync } from 'node:child_process';
 import { HEADED_HOSTS, HEADED_TMUX_PREFIXES } from './harness-skill-relay.js';
 
+// ── CI 状态映射（复用 ground-truth.js 的等价逻辑，不重复造轮子）────────────────
+const CI_FAIL_STATES = new Set(['FAILURE', 'ERROR', 'CANCELLED', 'TIMED_OUT', 'ACTION_REQUIRED', 'STARTUP_FAILURE']);
+const CI_PASS_STATES = new Set(['SUCCESS', 'SKIPPED', 'NEUTRAL']);
+
+/** gh check state → 三态 ci 映射（'fail' | 'pass' | 'pending'） */
+function mapCiStatus(checkRows) {
+  if (!Array.isArray(checkRows) || checkRows.length === 0) return 'pending';
+  if (checkRows.some((c) => CI_FAIL_STATES.has(c.state))) return 'fail';
+  if (checkRows.every((c) => CI_PASS_STATES.has(c.state))) return 'pass';
+  return 'pending';
+}
+
+/** execFn 容忍非零退出（gh pr checks 对 pending=8 / fail=1），用 err.stdout 兜底 */
+function execTolerant(execFn, cmd) {
+  try {
+    return execFn(cmd);
+  } catch (err) {
+    if (typeof err.stdout === 'string' && err.stdout.length > 0) return err.stdout;
+    throw err;
+  }
+}
+
+/** safe JSON parse，失败返回 null */
+function tryParseJson(value) {
+  if (value == null) return null;
+  if (typeof value !== 'string') return value;
+  try { return JSON.parse(value); } catch { return null; }
+}
+// ── end CI 状态映射 ──────────────────────────────────────────────────────────
+
 const HEADED_HOST_VALUES = Object.values(HEADED_HOSTS); // ['skill-relay-codex-headed','skill-relay-claude-headed']
 
 export const MAX_RELAY_ATTEMPTS = 5;
@@ -289,9 +319,37 @@ export async function resumeStalledRelayRuns(deps = {}) {
             continue;
           }
           if (prState === 'OPEN') {
-            // 在途 PR 等 CI/merge，不重点火（跨轮回归：避免第二轮重复点火出重复 PR）
-            console.log(`[relay-watchdog] PR 仍 OPEN，等 CI/merge → 跳过重点火 initiative=${run.initiative_id} pr=${effectivePrUrl}`);
-            continue;
+            // 死局检测：区分"CI 红/BEHIND（需 agent 介入）"和"CI 跑中/全绿（等待 merge）"
+            let isBehind = false;
+            let ciStatus = 'pending';
+            try {
+              // 追加 mergeStateStatus 字段（原有 state 字段保持兼容）
+              const prDetail = tryParseJson(execFn(`gh pr view "${effectivePrUrl}" --json state,mergeStateStatus`));
+              isBehind = prDetail?.mergeStateStatus === 'BEHIND';
+              // gh pr checks 非零退出时（pending=8/fail=1）用 err.stdout 兜底
+              const checksRaw = execTolerant(execFn, `gh pr checks "${effectivePrUrl}" --json state`);
+              const checkRows = tryParseJson(checksRaw) ?? [];
+              ciStatus = mapCiStatus(checkRows);
+            } catch (ciErr) {
+              // gh 调用失败 → 保守跳过（失败保守策略：不盲目重点火）
+              console.warn(`[relay-watchdog] CI 状态查询失败，initiative=${run.initiative_id} 保守跳过: ${ciErr.message}`);
+              continue;
+            }
+
+            if (isBehind || ciStatus === 'fail') {
+              // BEHIND 或 CI 红 → 需要 agent 介入，落穿到下方重点火逻辑
+              const reason = isBehind ? 'BEHIND' : 'CI_FAILURE';
+              console.log(`[relay-watchdog] resume_ci_red initiative=${run.initiative_id} pr=${effectivePrUrl} reason=${reason}`);
+              // fall through — 不 continue，走下方 cap 检查 → spawn
+            } else if (ciStatus === 'pending') {
+              // CI 跑中/pending → 等待，不重点火
+              console.log(`[relay-watchdog] wait_ci_running initiative=${run.initiative_id} pr=${effectivePrUrl}`);
+              continue;
+            } else {
+              // CI 全绿 + 非 BEHIND → 等待 merge（现有行为保留）
+              console.log(`[relay-watchdog] skip_green_waiting_merge initiative=${run.initiative_id} pr=${effectivePrUrl}`);
+              continue;
+            }
           }
           // CLOSED（工作被否决）→ 落穿走原逻辑，允许重跑
         } catch {
