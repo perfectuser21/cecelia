@@ -499,6 +499,8 @@ jobs:
         run: bash scripts/ci/__tests__/gate3-changed-paths.test.sh
       - name: smoke-core 依赖守卫（禁 jq）
         run: bash scripts/ci/__tests__/smoke-core-no-jq.test.sh
+      - name: preview-reaper 对账测试
+        run: bash scripts/ci/__tests__/preview-reaper.test.sh
 
   # ─── Brain: Unit Tests (4-shard matrix + Test Impact Analysis) ─
   # PR 模式：vitest --changed 仅跑被改文件影响的 test（Gate 1 升级，目标 < 5 min）

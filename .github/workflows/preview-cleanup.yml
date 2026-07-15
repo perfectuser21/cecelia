@@ -3,6 +3,7 @@ name: Preview Cleanup
 # PR merge or close: 清理对应的完整预览环境
 # 调 Brain API /preview/stop/:pr -> 触发 preview-env-stop.sh（异步）
 # stop 脚本执行：kill Brain 进程 + DROP DATABASE + 删除 git worktree + 释放端口
+# webhook 失败必红（可 rerun）；宿主 cron 的 preview-reaper 每小时对账兜底回收
 
 on:
   pull_request:
@@ -40,6 +41,7 @@ jobs:
           authkey: ${{ secrets.TS_AUTHKEY }}
 
       - name: 调 Brain API 停止预览环境
+        id: stop_preview
         if: steps.check_ts.outputs.configured == 'true'
         env:
           BRAIN_URL: ${{ secrets.BRAIN_DEPLOY_URL || 'http://100.71.151.105:5221' }}
@@ -48,11 +50,13 @@ jobs:
         run: |
           set -uo pipefail
           echo "调用 Brain API /preview/stop/${PR_NUMBER}..."
-          RESP=$(curl -sf --connect-timeout 15 --max-time 30 \
+          if ! RESP=$(curl -sf --connect-timeout 15 --max-time 30 \
             -X POST "${BRAIN_URL}/api/brain/preview/stop/${PR_NUMBER}" \
             -H "Content-Type: application/json" \
-            -H "Authorization: Bearer ${DEPLOY_TOKEN}" \
-            2>/dev/null || echo '{"stopped":false,"error":"请求失败"}')
+            -H "Authorization: Bearer ${DEPLOY_TOKEN}"); then
+            echo "::error::预览清理 webhook 失败（Brain 不可达或 HTTP 非 2xx）——可 rerun 本 job，preview-reaper 每小时兜底回收"
+            exit 1
+          fi
           echo "Brain 响应: $RESP"
 
       - name: PR 评论写入清理结果
@@ -62,9 +66,13 @@ jobs:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
             const branch = '${{ github.head_ref }}';
+            const ok = '${{ steps.stop_preview.outcome }}' === 'success';
+            const body = ok
+              ? `## 🧹 预览环境已清理\n\n**Branch**: \`${branch}\`\n\n预览 Brain 已停止，预览数据库已删除，端口已释放。`
+              : `## ⚠️ 清理 webhook 失败\n\n**Branch**: \`${branch}\`\n\n预览环境清理 webhook 未成功（Brain 不可达或非 2xx），可 rerun 本 workflow；preview-reaper 将在 1 小时内兜底回收。`;
             await github.rest.issues.createComment({
               owner: context.repo.owner,
               repo: context.repo.repo,
               issue_number: context.issue.number,
-              body: `## 🧹 预览环境已清理\n\n**Branch**: \`${branch}\`\n\n预览 Brain 已停止，预览数据库已删除，端口已释放。`,
+              body,
             });
