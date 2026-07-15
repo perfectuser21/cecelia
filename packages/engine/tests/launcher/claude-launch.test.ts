@@ -500,4 +500,53 @@ exit 0
     const out = execSync(`bash "${LAUNCHER}"`, { cwd: mainRepo, env: makeEnv(sid) }).toString();
     expect(out).toContain(`LINK_TARGET=${target}`);
   });
+
+  it('sweep：启动前存在其他旧 session 孤儿 key（非当前 sid）→ 全部并回主池并换软链', () => {
+    // 模拟老版 launcher 遗留的孤儿目录：两条已结束 session 的 project key 仍是真实目录
+    const sidOld1 = 'sweep001-1111-2222-3333-444444444444';
+    const sidOld2 = 'sweep002-1111-2222-3333-444444444444';
+    const sidCurrent = 'sweep003-1111-2222-3333-444444444444';
+
+    const orphan1 = join(projectsRoot, toKey(join(worktreeBasePhys, 'main', `session-${sidOld1.slice(0, 8)}`)));
+    const orphan2 = join(projectsRoot, toKey(join(worktreeBasePhys, 'main', `session-${sidOld2.slice(0, 8)}`)));
+
+    mkdirSync(orphan1, { recursive: true });
+    mkdirSync(orphan2, { recursive: true });
+    writeFileSync(join(orphan1, `${sidOld1}.jsonl`), '{"old":1}\n');
+    writeFileSync(join(orphan2, `${sidOld2}.jsonl`), '{"old":2}\n');
+
+    writeMockClaude(`#!/usr/bin/env bash\nexit 0\n`);
+    execSync(`bash "${LAUNCHER}"`, { cwd: mainRepo, env: makeEnv(sidCurrent) });
+
+    const mainPoolDir = join(projectsRoot, toKey(mainRepoPhys));
+    // 孤儿目录内容已并回主池
+    expect(existsSync(join(mainPoolDir, `${sidOld1}.jsonl`))).toBe(true);
+    expect(existsSync(join(mainPoolDir, `${sidOld2}.jsonl`))).toBe(true);
+    // 孤儿目录本身已换为软链
+    expect(lstatSync(orphan1).isSymbolicLink()).toBe(true);
+    expect(lstatSync(orphan2).isSymbolicLink()).toBe(true);
+  });
+
+  it('sweep：孤儿 key 内文件与主池冲突 → 主池数据保留，孤儿目录成功换软链', () => {
+    // 文件名与主池中已有文件冲突时，主池数据优先，孤儿文件跳过，但软链仍须建立
+    const sidOld = 'sweep004-1111-2222-3333-444444444444';
+    const sidCurrent = 'sweep005-1111-2222-3333-444444444444';
+    const mainPoolDir = join(projectsRoot, toKey(mainRepoPhys));
+    const orphan = join(projectsRoot, toKey(join(worktreeBasePhys, 'main', `session-${sidOld.slice(0, 8)}`)));
+
+    mkdirSync(mainPoolDir, { recursive: true });
+    mkdirSync(orphan, { recursive: true });
+    // 主池和孤儿目录各有一个同名文件
+    writeFileSync(join(mainPoolDir, 'conflict.jsonl'), '{"main":true}\n');
+    writeFileSync(join(orphan, 'conflict.jsonl'), '{"orphan":true}\n');
+
+    writeMockClaude(`#!/usr/bin/env bash\nexit 0\n`);
+    execSync(`bash "${LAUNCHER}"`, { cwd: mainRepo, env: makeEnv(sidCurrent) });
+
+    // 主池中的文件内容不变（孤儿的冲突文件被跳过）
+    const mainContent = require('node:fs').readFileSync(join(mainPoolDir, 'conflict.jsonl'), 'utf8');
+    expect(mainContent).toContain('"main":true');
+    // 孤儿目录换成了软链（不因冲突而失败）
+    expect(lstatSync(orphan).isSymbolicLink()).toBe(true);
+  });
 });
