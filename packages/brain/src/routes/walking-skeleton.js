@@ -64,7 +64,7 @@ router.get('/walking-skeleton-1node/status/:threadId', async (req, res) => {
 
 // relay-smoke: harness controller v2.2.0 smoke probe
 router.get('/relay-smoke', (req, res) => {
-  res.json({ ok: true, controller: '2.2.0' });
+  res.json({ ok: true, controller: '2.2.0', executor: process.env.HARNESS_EXECUTOR || 'unknown' });
 });
 
 export default router;
