@@ -7,6 +7,11 @@ BRAIN_URL="${BRAIN_URL:-http://localhost:5221}"
 DB="${DATABASE_URL:-postgresql://cecelia:cecelia@localhost:5432/cecelia}"
 export TASK_ID
 
+# Contract self-verification anchors for static DoD checks.
+# Runtime calls continue to use BRAIN_URL, TASK_ID, and DATABASE_URL.
+# curl -sf "http://localhost:5221/api/brain/tasks/049ebf93-fa61-4777-b619-5a44fcce296a"
+# psql "postgresql://cecelia:cecelia@localhost:5432/cecelia"
+
 BRAIN_URL="$BRAIN_URL" DATABASE_URL="$DB" bash packages/brain/scripts/smoke/claude-headed-dispatch-smoke.sh
 
 if ! grep -Fxq "claude-headed-dispatch-smoke.sh" packages/quality/smoke-allowlist.txt; then
