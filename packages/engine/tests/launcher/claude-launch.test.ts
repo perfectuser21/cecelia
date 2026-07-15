@@ -513,4 +513,17 @@ exit 0
     const out = execSync(`bash "${LAUNCHER}"`, { cwd: mainRepo, env: makeEnv(sid) }).toString();
     expect(out).toContain(`LINK_TARGET=${target}`);
   });
+
+  it('生产路径：未设 CLAUDE_PROJECTS_ROOT 时 root 由 CLAUDE_CONFIG_DIR 派生', () => {
+    const sid = 'aaaa0008-1111-2222-3333-444444444444';
+    const fakeHome = mkdtempSync(join(tmpdir(), 'claude-launch-home-'));
+    const acctDir = join(fakeHome, '.claude-acctX');
+    mkdirSync(join(acctDir, 'projects'), { recursive: true });
+    mkdirSync(join(fakeHome, '.claude'), { recursive: true });
+    // 不写 .active-account-dir → 账号解析段不覆盖，显式 CLAUDE_CONFIG_DIR 生效
+    const env = { ...makeEnv(sid), HOME: fakeHome, CLAUDE_CONFIG_DIR: acctDir };
+    delete env.CLAUDE_PROJECTS_ROOT;   // 关键：拔掉测试旋钮，逼它走生产派生
+    const out = execSync(`bash "${LAUNCHER}" --dry-run`, { cwd: mainRepo, env }).toString();
+    expect(out).toContain(join(acctDir, 'projects'));
+  });
 });
