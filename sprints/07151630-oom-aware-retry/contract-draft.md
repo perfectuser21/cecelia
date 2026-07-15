@@ -142,3 +142,14 @@ cd /workspace && npx vitest run packages/brain/src/__tests__/harness-relay-watch
 | `packages/brain/src/__tests__/harness-relay-watchdog-gates.test.js` | 既有测试 | 全绿不回归 |
 
 > **CI 常驻路径约定**：`sprints/` 目录的骨架仅作参照；实施阶段真实 failing tests 必须放 `packages/brain/src/__tests__/oom-aware-retry.test.js` 才进 CI 回归。
+
+## Test Contract
+
+| BEHAVIOR | Test File | Test Name Pattern |
+|----------|-----------|-------------------|
+| BEHAVIOR-1 exit=137 首次升档 | packages/brain/src/__tests__/oom-aware-retry.test.js | GP1 |
+| BEHAVIOR-2 oom_wall 禁止 spawn | packages/brain/src/__tests__/oom-aware-retry.test.js | GP2 |
+| BEHAVIOR-3 callback 落库 exit_code | 手工集成验收（E2E bash）| N/A |
+| BEHAVIOR-4 oom_wall 在 cap 前短路 | packages/brain/src/__tests__/oom-aware-retry.test.js | attempts=0 |
+| BEHAVIOR-5 exit=0/1/null 回归 | packages/brain/src/__tests__/harness-relay-watchdog.test.js | 既有测试 |
+| BEHAVIOR-6 日志三态 | packages/brain/src/__tests__/oom-aware-retry.test.js | 日志三态 |
