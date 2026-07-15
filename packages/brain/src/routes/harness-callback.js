@@ -84,6 +84,26 @@ router.post('/harness/callback/:containerId', async (req, res) => {
   if (containerId.startsWith('cecelia-relay-')) {
     console.log(`[harness-callback] relay 容器 ${containerId} 回调 ack（exit=${exit_code ?? '?'}，无 resume）`);
 
+    // 刀A7：exit_code 落库 → last_container_exit_code（watchdog OOM 感知重试用）
+    // 仅在 exit_code 存在且可解析时写入，不影响 200 ack 行为（best-effort）
+    if (exit_code !== undefined) {
+      const exitCodeNum = Number(exit_code);
+      if (!isNaN(exitCodeNum)) {
+        const match = containerId.match(/^cecelia-relay-([a-f0-9]{8})-/);
+        if (match) {
+          try {
+            await pool.query(
+              `UPDATE tasks SET payload = COALESCE(payload, '{}'::jsonb) || jsonb_build_object('last_container_exit_code', $2::int)
+                WHERE REPLACE(id::text, '-', '') LIKE $1`,
+              [`${match[1]}%`, exitCodeNum]
+            );
+          } catch (err) {
+            console.warn(`[harness-callback] last_container_exit_code 写入失败（non-fatal）: ${err.message}`);
+          }
+        }
+      }
+    }
+
     // 认证失败告警（catch 兜底——告警本身失败不能拖累原有 200 ack 行为）。
     // exit_code 未提供时不判定为失败——Number(undefined)===NaN，NaN!==0 恒真，会把"没传
     // exit_code 但 result/stdout 里恰好出现相关字样"误判成登录失效（例如日志回显场景）。
