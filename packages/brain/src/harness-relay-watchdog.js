@@ -523,6 +523,22 @@ export async function resumeStalledRelayRuns(deps = {}) {
       const spawnFn = deps.spawnFn
         || (await import('./harness-skill-relay.js')).spawnSkillRelaySession;
 
+      // 死因分类器（刀A8-1）
+        const { classifyDeath } = await import('./harness-death-classifier.js');
+        const classified = classifyDeath({
+          exitCode: lastExitCode ?? null,
+          stdoutTail: task.payload?.stdout_tail ?? null,
+          tmuxPane: null, // headless 路径无 tmux
+        });
+        // 审计日志（INV-06）
+        console.log(`[relay-watchdog] cause=${classified.cause} action=${classified.action} initiative=${run.initiative_id}`);
+
+        // 非 oom/ci_red cause → log_only，不触发 spawn
+        if (classified.cause !== 'oom' && classified.cause !== 'ci_red') {
+          // auth/rate_limit/interactive_stuck/green_waiting_merge/unknown → log_only
+          continue;
+        }
+
       // GP1：exit=137 首次（oom_upgraded 为 false）→ 升档重点火（4096m）
       const isOomExit = lastExitCode === 137 && !oomUpgraded;
       const spawnOpts = { pool: dbPool };
