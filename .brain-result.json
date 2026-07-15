@@ -1,66 +1,42 @@
 {
+  "task_id": "56d677a8-65e8-485c-9ec3-1ade28716ae9",
   "verdict": "PASS",
-  "task_id": "b5162377-4012-424a-ba2f-0b33003eb602",
-  "sprint_dir": "sprints/07151530-watchdog-ghchecks-exitcode",
+  "sprint_dir": "sprints/07161400-a8-3-canary-drill",
   "exit_code": 0,
-  "log_tail": "Step 4 全套验收输出：\nTest Files  2 passed (2)\nTests  51 passed (51)\nStart at  12:10:53\nDuration  680ms\n\nStep 1 红阶段（无 execTolerant stdout 兜底）：\nTest Files  1 failed (1)\nTests  1 failed | 4 passed (5)\nAssertionError: expected spy to be called once, but got 0 times",
+  "judgments_written": 12,
+  "log_tail": "evaluator verdict=PASS, 19/19 tests passed, CI全绿(ci-passed=SUCCESS)\ncanary-drill.contract.test.js: 10/10 PASS\ncanary-isolation.test.js: 9/9 PASS\ncanary-drill-smoke.sh: PASS",
   "behavior_tests": [
     {
-      "id": "Step1-Red",
-      "name": "TDD 红阶段（无 execTolerant stdout 兜底时合同测试失败）",
-      "command": "npx vitest run ../../sprints/07151530-watchdog-ghchecks-exitcode/tests/harness-relay-watchdog-exitcode.test.js",
-      "exit_code": 1,
-      "result": "FAIL_AS_EXPECTED",
-      "log_tail": "FAIL  ../../sprints/.../harness-relay-watchdog-exitcode.test.js > GP-A: resume_ci_red > execFn 对 gh pr checks 抛出 err → execTolerant 兜底 → ciStatus=fail → spawnFn 调用一次\nAssertionError: expected \"spy\" to be called once, but got 0 times\n Test Files  1 failed (1)\n Tests  1 failed | 4 passed (5)"
-    },
-    {
-      "id": "Step2-Green",
-      "name": "绿阶段——实现 execTolerant stdout 兜底后合同测试全绿",
-      "command": "cd /workspace/packages/brain && npx vitest run ../../sprints/07151530-watchdog-ghchecks-exitcode/tests/harness-relay-watchdog-exitcode.test.js",
+      "id": "BEHAVIOR-1/2/3-L1",
+      "name": "canary 隔离过滤（dev-records / 回归池 / 统计计数）L1 vitest",
+      "command": "cd /workspace/packages/brain && npx vitest run src/__tests__/canary-isolation.test.js --reporter=verbose",
       "exit_code": 0,
       "result": "PASS",
-      "log_tail": "Test Files  1 passed (1)\nTests  5 passed (5)\nStart at  12:10:52\nDuration  410ms"
+      "log_tail": "✓ BEHAVIOR-1: dev-records 查询 canary 隔离 > battle-report dev_records 查询含 canary 过滤条件\n✓ BEHAVIOR-1: canary=true 的 PR 写入 dev_records 后，dev-records 查询不返回该记录\n✓ BEHAVIOR-2: task.payload.canary=true 时 promoteToRegression 跳过\n✓ BEHAVIOR-2: task.payload.canary=true（字符串）时 promoteToRegression 也跳过\n✓ BEHAVIOR-2: task.payload.canary 未设 → 正常走后续路径\n✓ BEHAVIOR-3: diary-scheduler dev_records count 查询含 canary 过滤条件\n✓ BEHAVIOR-3: battle-report mergedPrs 查询加 canary 过滤后 SQL 正确\n✓ BEHAVIOR-3: 插入1条 canary 记录后，SQL WHERE 子句确保不计入统计\n✓ CONSTRAINT-INV16: payload.canary 为 NULL 的记录不应被过滤\nTest Files  1 passed (1)\nTests  9 passed (9)"
     },
     {
-      "id": "GP-A",
-      "name": "resume_ci_red",
-      "command": "cd /workspace/packages/brain && npx vitest run ../../sprints/07151530-watchdog-ghchecks-exitcode/tests/harness-relay-watchdog-exitcode.test.js --reporter=verbose 2>&1 | grep -E \"resume_ci_red|PASS|FAIL\"",
+      "id": "BEHAVIOR-4/5/6/7/8-contract",
+      "name": "演习脚本合同测试（BEHAVIOR-4/5/6/7/8）contract test",
+      "command": "npx vitest run tests/regression/a8-3-canary-drill/ --reporter=verbose",
       "exit_code": 0,
       "result": "PASS",
-      "log_tail": "stdout [relay-watchdog] resume_ci_red initiative=aaaabbbb... reason=CI_FAILURE\n✓ GP-A: execFn 对 gh pr checks 抛出 err（err.stdout 含 FAILURE JSON）→ execTolerant 兜底 → ciStatus=fail → spawnFn 调用一次\nTests  5 passed (5)"
+      "log_tail": "✓ BEHAVIOR-4: STAGING_BRAIN_URL 含 :5221 → 立即 exit 1，不发任何请求\n✓ BEHAVIOR-4: STAGING_BRAIN_URL 为 :5222 → 守卫通过，允许执行注册流程\n✓ BEHAVIOR-5: exit_code=137 + oom_upgraded 未设 → cause=oom + attempt 递增 + oom_upgraded=true\n✓ BEHAVIOR-5: oom_upgraded=true + exit_code=137 → cause=oom + task.status=failed\n✓ BEHAVIOR-6: POST /api/brain/incidents 返回 404 → 降级写 design_docs\n✓ BEHAVIOR-6: design_docs 写入内容含 injected_mode 和 results 字段\n✓ BEHAVIOR-7: 演习断言失败 → sendBark 调用1次，标题含 CanaryDrill Failed\n✓ BEHAVIOR-7: BARK_URL 未设时 log warn 不 throw\n✓ BEHAVIOR-8: UTC 19:25~19:35 窗口内 tick → 调用一次 canary-death-drill.mjs\n✓ BEHAVIOR-8: 同日历日第二次 tick → 不重复触发（幂等保护）\nTest Files  1 passed (1)\nTests  10 passed (10)"
     },
     {
-      "id": "GP-B",
-      "name": "wait_ci_running",
-      "command": "cd /workspace/packages/brain && npx vitest run ../../sprints/07151530-watchdog-ghchecks-exitcode/tests/harness-relay-watchdog-exitcode.test.js --reporter=verbose 2>&1 | grep -E \"wait_ci_running|PASS|FAIL\"",
+      "id": "smoke-validateStagingUrl",
+      "name": "canary-drill smoke: 守卫函数导出验证 + :5221/:5222 行为验证",
+      "command": "bash packages/brain/scripts/smoke/canary-drill-smoke.sh",
       "exit_code": 0,
       "result": "PASS",
-      "log_tail": "stdout [relay-watchdog] wait_ci_running initiative=aaaabbbb...\n✓ GP-B: execFn 对 gh pr checks 抛出 err（err.stdout 含 IN_PROGRESS JSON）→ execTolerant 兜底 → ciStatus=pending → spawnFn 不调用\n✓ GP-B(2): 含混合 pending+IN_PROGRESS → ciStatus=pending → spawnFn 不调用\nTests  5 passed (5)"
+      "log_tail": "OK: 所有导出验证通过\ncanary-drill smoke PASS"
     },
     {
-      "id": "GP-C",
-      "name": "skip_query_failure",
-      "command": "cd /workspace/packages/brain && npx vitest run ../../sprints/07151530-watchdog-ghchecks-exitcode/tests/harness-relay-watchdog-exitcode.test.js --reporter=verbose 2>&1 | grep -E \"skip_query_failure|PASS|FAIL\"",
+      "id": "CI-passed",
+      "name": "CI ci-passed 全绿（含 Sprint Tests 实跑 + 测试金字塔守卫 + Test Contract 覆盖）",
+      "command": "gh pr view 3992 --json statusCheckRollup -q '.statusCheckRollup[] | select(.name==\"ci-passed\") | .conclusion'",
       "exit_code": 0,
       "result": "PASS",
-      "log_tail": "✓ GP-C: execFn 对 gh pr checks 抛出无 stdout 属性的错误 → execTolerant rethrow → 外层 catch 保守跳过 → spawnFn 不调用\n✓ GP-C(2): 抛出没有 stdout 属性的纯 Error → execTolerant rethrow → 保守跳过\nTests  5 passed (5)"
-    },
-    {
-      "id": "Step3-Regression",
-      "name": "GP-R 既有回归测试（46 条全过）",
-      "command": "cd /workspace/packages/brain && npx vitest run src/__tests__/harness-relay-watchdog.test.js 2>&1 | tail -5",
-      "exit_code": 0,
-      "result": "PASS",
-      "log_tail": "Test Files  1 passed (1)\nTests  46 passed (46)\nStart at  12:10:53\nDuration  468ms"
-    },
-    {
-      "id": "Step4-AllInOne",
-      "name": "Step 4 一次性全套验收（两文件合并：Test Files 2 passed）",
-      "command": "cd /workspace/packages/brain && npx vitest run src/__tests__/harness-relay-watchdog.test.js ../../sprints/07151530-watchdog-ghchecks-exitcode/tests/harness-relay-watchdog-exitcode.test.js",
-      "exit_code": 0,
-      "result": "PASS",
-      "log_tail": "Test Files  2 passed (2)\nTests  51 passed (51)\nStart at  12:10:53\nDuration  680ms"
+      "log_tail": "ci-passed: SUCCESS\nSprint Tests 实跑 (v5.0): COMPLETED SUCCESS\n测试金字塔守卫: COMPLETED SUCCESS\nTest Contract 覆盖检查 (v5.0): COMPLETED SUCCESS\nTDD Commit 顺序检查 (v5.0): COMPLETED SUCCESS"
     }
-  ],
-  "judgments_written": 0
+  ]
 }

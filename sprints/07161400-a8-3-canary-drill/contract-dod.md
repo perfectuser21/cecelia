@@ -8,7 +8,7 @@
 
 ## DoD 检查清单
 
-### BEHAVIOR 条目（功能行为断言）
+### [BEHAVIOR] 条目（功能行为断言）
 
 [BEHAVIOR-1] canary 隔离过滤 dev-records：向 staging brain 注册 payload.canary=true 的任务，PR callback 写 dev_records 时，GET /api/brain/dev-records 返回的所有记录中，不存在 payload.canary==='true' 的条目（WHERE payload->>'canary' IS DISTINCT FROM 'true' 过滤有效）
 （对应 FR-14，INV-16）
