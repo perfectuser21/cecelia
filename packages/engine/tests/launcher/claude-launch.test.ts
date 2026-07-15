@@ -388,14 +388,10 @@ describe('resume 历史软链 — per-session projects key 软链回主仓', () 
     mkdirSync(oddBase, { recursive: true });
     const env = { ...makeEnv(sid), WORKTREE_BASE: oddBase };
     const out = execSync(`bash "${LAUNCHER}" --dry-run`, { cwd: mainRepo, env }).toString();
-    // dry-run 时 worktree 尚未建，脚本对 wt key 的 realpath 会 cd 失败并回退成未物理化的
-    // 原字符串（脚本内已注明「dry-run 是意图契约，可接受」）。故这里只断言 key 算法负责的
-    // 尾段，与 realpath 归一化解耦——本用例守的是"非字母数字逐字符换 -"，不是物理路径派生。
-    const tailKey = toKey(join('odd_Base Dir', 'main', `session-${sid.slice(0, 8)}`));
-    expect(out).toContain(tailKey);
-    expect(tailKey).not.toContain('_');
-    expect(tailKey).not.toContain(' ');
-    expect(tailKey).toContain('Base');   // 大写保留
+    // dry-run 时 worktree 尚未建，脚本对 wt key 的 realpath 会 cd 失败并回退成 _WT_PATH
+    // 字面量（脚本内已注明「dry-run 是意图契约，可接受」）。而 _WT_PATH 正由上面传入的
+    // WORKTREE_BASE 原字符串拼成——两边同源，故不碰 realpath 也能锁完整 key。
+    expect(out).toContain(toKey(join(oddBase, 'main', `session-${sid.slice(0, 8)}`)));
   });
 
   it('auto-worktree 启动 → claude 运行期内 <wt_key> 是指向 <main_key> 的软链', () => {
