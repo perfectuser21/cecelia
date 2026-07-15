@@ -108,4 +108,4 @@ watchdog-deadlock-resume-smoke.sh
 relay-runs-patch-shortid-smoke.sh
 judge-evidence-truncation-smoke.sh
 oom-aware-retry-smoke.sh
-packages/brain/scripts/smoke/harness-death-classifier-smoke.sh
+harness-death-classifier-smoke.sh
