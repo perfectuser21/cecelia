@@ -110,7 +110,7 @@ task 5e9c0496 收尾时，`.brain-result.json` 含三条完整 behavior_tests（
 4. **INV-4**：`buildJudgePrompt` 对外签名不变，调用方无感知。
 5. **INV-5**：behavior_tests 超出 8 条时，prompt 中必须出现「另有 N 条已省略」字样（N 为实际省略数）。
 
-## Functional Requirements（功能需求）
+## 累积 FR（功能需求）
 
 | # | 需求 | 验收断言 |
 |---|------|----------|
