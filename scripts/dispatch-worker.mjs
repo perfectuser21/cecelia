@@ -124,7 +124,7 @@ async function main() {
   const { brief, dir, vendor, maxRetries } = parsed;
   const usages = await Promise.all(ACCOUNT_POOL.map(queryUsage));
   const candidates = pickAccounts(usages, { vendor });
-  if (candidates.length === 0) { console.log(JSON.stringify({ ok: false, reason: 'no_usable_account', attempts: [] })); process.exit(1); }
+  if (candidates.length === 0) { console.log(JSON.stringify({ ok: false, reason: 'no_usable_account', vendor: null, account: null, attempts: [], output_file: null, exit_code: 1 })); process.exit(1); }
   const logFile = join(dir, `.dispatch-worker-${Date.now()}.log`);
   const result = await dispatchWithRotation({ candidates, brief, dir, maxRetries, runWorker: makeRealRunWorker(logFile) });
   console.log(JSON.stringify({ ...result, output_file: logFile }));
