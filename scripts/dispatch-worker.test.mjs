@@ -27,7 +27,7 @@ test('detectQuotaWall: 正常输出与空输入不误报', () => {
 test('buildCommand: codex 用 CODEX_HOME + exec --cd --sandbox workspace-write', () => {
   const c = buildCommand('codex', { home: '/h/.codex-team1' }, '任务书', '/w');
   assert.equal(c.cmd, 'codex');
-  assert.deepEqual(c.args, ['exec', '--cd', '/w', '--sandbox', 'workspace-write', '任务书']);
+  assert.deepEqual(c.args, ['exec', '--cd', '/w', '--sandbox', 'workspace-write', '--skip-git-repo-check', '任务书']);
   assert.equal(c.env.CODEX_HOME, '/h/.codex-team1');
   assert.equal(c.cwd, '/w');
 });
