@@ -1,0 +1,98 @@
+{
+  "schema_version": "1.0",
+  "evaluator": "harness-evaluator",
+  "pr": "https://github.com/perfectuser21/cecelia/pull/4016",
+  "pr_head_sha": "68ced93274674062464ac32cd2852e084daa6e7d",
+  "task_id": "b317ae29-9fbc-4d6f-abf0-016141d6c657",
+  "sprint_dir": "sprints/07161900-theater-mismatch-gate",
+  "evaluated_at": "2026-07-16T15:35:00Z",
+  "verdict": "PASS",
+
+  "test_results": {
+    "harness_judge_theater_suite": {
+      "file": "packages/brain/src/__tests__/harness-judge-theater.test.js",
+      "total": 15,
+      "passed": 15,
+      "failed": 0,
+      "status": "PASS"
+    },
+    "contract_test_suite": {
+      "file": "sprints/07161900-theater-mismatch-gate/tests/theater-mismatch-contract.test.js",
+      "total": 5,
+      "passed": 5,
+      "failed": 0,
+      "status": "PASS"
+    }
+  },
+
+  "dual_gate_results": {
+    "BEHAVIOR-1": {
+      "description": "theater_mismatch 微信+local_api",
+      "status": "PASS",
+      "source": "pre-confirmed by caller"
+    },
+    "BEHAVIOR-3": {
+      "description": "meta_verification_gap smoke+无L3",
+      "status": "PASS",
+      "source": "pre-confirmed by caller"
+    },
+    "BEHAVIOR-5": {
+      "description": "正常 local_api 不误伤",
+      "status": "PASS",
+      "source": "pre-confirmed by caller"
+    }
+  },
+
+  "tdd_commit_order": {
+    "red_commit": "06085e08b4dfcba81676e54afddd45d6ddeefc9a",
+    "green_commit": "095ec84560a5efc94ad8280afddd45d6ddeefc9a",
+    "head_sha": "68ced93274674062464ac32cd2852e084daa6e7d",
+    "order_correct": true,
+    "note": "Red=合同文件+failing tests(06085e0), Green=实现两闸(095ec84), HEAD=格式修复(68ced93)"
+  },
+
+  "dod_checklist": {
+    "THEATER_REAL_MACHINE_KEYWORDS_constant_added": "PASS",
+    "THEATER_KEYWORDS_EXTRA_env_extension": "PASS",
+    "theater_mismatch_gate_in_runMechanicalGate": "PASS",
+    "meta_verification_gap_gate_in_runMechanicalGate": "PASS",
+    "no_ai_call_under_5ms": "PASS",
+    "case_insensitive_matching": "PASS",
+    "tdd_failing_test_committed_first": "PASS",
+    "all_BEHAVIOR_commands_pass": "PASS",
+    "brain_ci_autodetects_test_file": "CONCERN",
+    "smoke_allowlist_registered": "PASS"
+  },
+
+  "dod_concern": {
+    "brain_ci_autodetects_test_file": "harness-judge-theater.test.js 在 packages/brain/src/__tests__/ 下，但 vitest.config.js include 为相对路径 src/**，从仓库根目录运行 `node --experimental-vm-modules node_modules/.bin/vitest run` 配合根目录 vitest.config.mjs 时找不到该文件（No test files found）。须从 packages/brain/ 目录运行才能正确发现。CI 配置需确认 brain-ci.yml 是否 cd packages/brain 后运行 vitest。"
+  },
+
+  "uncoverables": [
+    {
+      "id": "U-1",
+      "description": "THEATER_KEYWORDS_EXTRA 运行时 env 注入",
+      "reason": "env 变量在进程启动时解析，生产流水线的 env 传递路径未做端到端验证；测试通过进程级 process.env 设置覆盖，非真实流水线注入路径。"
+    },
+    {
+      "id": "U-2",
+      "description": "target_environment DB 查询失败降级行为",
+      "reason": "DB 查询异常时保守降级为 local_api，本 sprint 测试用 mock dbPool，未覆盖真实 PostgreSQL 连接超时场景。"
+    },
+    {
+      "id": "U-3",
+      "description": "sprint-prd.md 文件读取失败时的闸行为",
+      "reason": "若 readFileFn 对 sprint-prd.md 抛出 ENOENT，当前实现保守跳过（不误杀），该路径在集成层未测试。"
+    },
+    {
+      "id": "U-4",
+      "description": "contract-draft.md 含 THEATER 关键词但 sprint-prd 不含时的行为",
+      "reason": "FR-02 同时扫描 GP 段和 BEHAVIOR 命令文本，交叉场景（contract 含/sprint-prd 不含）未单独测试。"
+    }
+  ],
+
+  "pr_body_unverifiable_list_present": true,
+  "pr_body_unverifiable_count": 4,
+
+  "summary": "20/20 测试通过（harness-judge-theater 15/15 + contract 5/5）。TDD commit 顺序正确（Red=06085e0→Green=095ec84→HEAD=68ced93）。DoD 10 项中 9 项 PASS，1 项 CONCERN（CI 路径发现问题，须从 packages/brain/ 目录运行 vitest 才能发现该测试文件）。未覆盖真实链路 4 条已在 PR body 中记录。"
+}

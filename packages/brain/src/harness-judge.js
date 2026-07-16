@@ -57,6 +57,23 @@ export function normalizeJudgeVerdict(v) {
   return 'FAIL';
 }
 
+// ── 戏院错配闸（theater_mismatch）关键词配置 ─────────────────────────────────
+// FR-02: GP 或 contract BEHAVIOR 含真机关键词但 target_environment 属于「轻量」环境 → FAIL
+// 轻量环境：local_api / mac_web（不具备真机执行能力）
+// 关键词大小写不敏感；THEATER_KEYWORDS_EXTRA env 支持逗号分隔扩展词
+export const THEATER_REAL_MACHINE_KEYWORDS = [
+  '微信',
+  'UIA',
+  'xian-rog',
+  'windows_wechat',
+  '真机',
+  'RPA',
+  'adb',
+  'android',
+];
+
+const THEATER_LIGHT_ENVS = new Set(['local_api', 'mac_web']);
+
 // ── 刀B 机械预检（root 杠杆，决策 dc18d43d「无闸不成文」）────────────────────
 // 同步校验 brainResult 结构，任一项不满足即返回 FAIL 对象（null = 全过）。
 // 在 judge 路由最前执行，不进 AI 裁判。
@@ -598,6 +615,86 @@ export async function runMechanicalGate(ctx, deps = {}) {
       }
     }
     // 无 dbPool → 无从对账，跳过（不误杀）
+  }
+
+  // ④ 戏院错配闸（theater_mismatch）FR-02
+  // 仅在轻量环境（local_api / mac_web）下触发：若 sprint-prd GP 段或 contract BEHAVIOR 文本含真机关键词 → FAIL
+  if (THEATER_LIGHT_ENVS.has(env)) {
+    let prdTextForTheater = '';
+    let contractTextForTheater = '';
+    try {
+      prdTextForTheater = await readFileFn(path.join(ctx.worktreePath || '', ctx.sprintDir || '', 'sprint-prd.md'));
+    } catch { /* sprint-prd 缺失 → 保守跳过，不误杀 */ }
+    try {
+      contractTextForTheater = await readFileFn(path.join(ctx.worktreePath || '', ctx.sprintDir || '', 'contract-draft.md'));
+    } catch { /* contract 缺失 → 保守跳过 */ }
+
+    // 提取 GP 段
+    const gpMatch = prdTextForTheater.match(/##\s*Golden\s*Path[^\n]*\n([\s\S]*?)(?=\n##\s+|$)/i);
+    const gpSection = gpMatch ? gpMatch[1] : prdTextForTheater;
+
+    // 提取 BEHAVIOR 行（contract 命令文本）
+    const behaviorLines = contractTextForTheater.split('\n').filter((l) => l.includes('[BEHAVIOR]') || l.startsWith('Test:'));
+    const behaviorText = behaviorLines.join(' ');
+
+    // 合并扫描文本
+    const theaterScanText = (gpSection + ' ' + behaviorText).toLowerCase();
+
+    // 构建关键词列表（默认 + THEATER_KEYWORDS_EXTRA env 扩展）
+    const extraKws = (process.env.THEATER_KEYWORDS_EXTRA || '')
+      .split(',')
+      .map((k) => k.trim())
+      .filter((k) => k.length > 0);
+    const allTheaterKws = [...THEATER_REAL_MACHINE_KEYWORDS, ...extraKws];
+
+    const hitKw = allTheaterKws.find((kw) => theaterScanText.includes(kw.toLowerCase()));
+    if (hitKw) {
+      reasons.push(
+        `theater_mismatch: GP/contract BEHAVIOR 含真机关键词「${hitKw}」，` +
+        `但 target_environment=${env}（轻量环境，不具备真机执行能力）。` +
+        `应路由至 windows_wechat / xian-rog 等真机环境。`
+      );
+    }
+  }
+
+  // ⑤ 元验证补丁（meta_verification_gap）FR-03
+  // sprint-prd 标题或 GP 出口含 smoke/验证脚本/演习 关键词时，
+  // contract BEHAVIOR 中必须有至少一条含真机关键词或 verification_level: L3 → 否则 FAIL
+  const META_VERIFY_TRIGGER_KEYWORDS = ['smoke', '验证脚本', '演习'];
+  let prdTextForMeta = '';
+  let contractTextForMeta = '';
+  try {
+    prdTextForMeta = await readFileFn(path.join(ctx.worktreePath || '', ctx.sprintDir || '', 'sprint-prd.md'));
+  } catch { /* 缺失 → 跳过 */ }
+  try {
+    contractTextForMeta = await readFileFn(path.join(ctx.worktreePath || '', ctx.sprintDir || '', 'contract-draft.md'));
+  } catch { /* 缺失 → 跳过 */ }
+
+  // 检查标题（第一行）和 GP 段是否含触发词
+  const prdFirstLine = (prdTextForMeta.split('\n')[0] || '').toLowerCase();
+  const gpMatchMeta = prdTextForMeta.match(/##\s*Golden\s*Path[^\n]*\n([\s\S]*?)(?=\n##\s+|$)/i);
+  const gpSectionMeta = (gpMatchMeta ? gpMatchMeta[1] : '').toLowerCase();
+  const metaTriggerHit = META_VERIFY_TRIGGER_KEYWORDS.find(
+    (kw) => prdFirstLine.includes(kw.toLowerCase()) || gpSectionMeta.includes(kw.toLowerCase())
+  );
+
+  if (metaTriggerHit && prdTextForMeta) {
+    // contract BEHAVIOR 中必须有：真机关键词 或 verification_level: L3
+    const contractLower = contractTextForMeta.toLowerCase();
+    const extraKwsMeta = (process.env.THEATER_KEYWORDS_EXTRA || '')
+      .split(',')
+      .map((k) => k.trim())
+      .filter((k) => k.length > 0);
+    const allKwsMeta = [...THEATER_REAL_MACHINE_KEYWORDS, ...extraKwsMeta];
+    const hasTheaterKwInContract = allKwsMeta.some((kw) => contractLower.includes(kw.toLowerCase()));
+    const hasL3InContract = contractLower.includes('verification_level: l3');
+    if (!hasTheaterKwInContract && !hasL3InContract) {
+      reasons.push(
+        `meta_verification_gap: sprint-prd 含「${metaTriggerHit}」类标题/GP，` +
+        `但 contract [BEHAVIOR] 中无真机关键词（${THEATER_REAL_MACHINE_KEYWORDS.slice(0, 4).join('/')}…）` +
+        `也无 verification_level: L3 断言。smoke/演习类交付须有真目标复核断言。`
+      );
+    }
   }
 
   return { pass: reasons.length === 0, reasons, env };
