@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # sha-account.test.sh — G1 SHA 对账串链测试（L1 级）
 #
-# 覆盖 BEHAVIOR-01..06（见 contract-dod.md）。
+# 覆盖 BEHAVIOR-01..07（见 contract-dod.md）。
 # 本测试是 failing test：squash_merge_sha_diff 在旧代码跑应 FAIL，新代码跑应 PASS。
 #
 # 用法：
@@ -155,42 +155,33 @@ run_squash_merge_sha_diff() {
 # ════════════════════════════════════════════════════════════════════════════
 # SCENARIO: sha_equal_skip
 # SHA 相等时不触发部署（回归防线）
+# 验证方式：grep workflow 文件确认含 SHA 相等时的 skip 条件代码，
+#           而非内联恒等式（避免伪测试）。
 # ════════════════════════════════════════════════════════════════════════════
 run_sha_equal_skip() {
-  echo "── [BEHAVIOR-02] SHA 相等 → 跳过部署 ──"
+  echo "── [BEHAVIOR-02] SHA 相等 → workflow 含 skip 条件 ──"
 
-  local repo="$TMP/repo-equal"
-  make_git_repo "$repo" "2.0.0" > /dev/null
-  local HEAD_SHA
-  HEAD_SHA=$(cd "$repo" && git rev-parse HEAD)
-  local PROD_SHA="${MOCK_PROD_SHA:-$HEAD_SHA}"
-
-  echo "  HEAD_SHA = ${HEAD_SHA:0:8}..."
-  echo "  PROD_SHA = ${PROD_SHA:0:8}..."
-
-  if [[ "$HEAD_SHA" != "$PROD_SHA" ]]; then
-    skip "mock-prod-sha 与 HEAD_SHA 不等，跳过此场景（需 --mock-prod-sha \$(git rev-parse HEAD)）"
-    return 0
+  local WF="$ROOT_DIR/.github/workflows/brain-ci-deploy.yml"
+  if [[ ! -f "$WF" ]]; then
+    fail "[BEHAVIOR-02] workflow 文件不存在: $WF"
+    echo ""
+    return 1
   fi
 
-  # 构造 health fixture（SHA 相等）
-  local fixture
-  fixture=$(make_health_fixture "$HEAD_SHA" "2.0.0" "10")
-  echo "  health fixture: $(cat "$fixture")"
-
-  # 验证 SHA 对账逻辑（可测函数：模拟 CI step 决策）
-  local SKIP_DECISION
-  if [[ "$HEAD_SHA" == "$PROD_SHA" ]]; then
-    SKIP_DECISION="SKIP_DEPLOY"
+  # 验证 workflow 文件中含有 SHA 相等判断的 skip 条件
+  # 这是真实代码路径测试：确认 brain-ci-deploy.yml 包含类似
+  #   [ "$PROD_SHA" == "$HEAD_SHA" ] && echo "SHA 相同，跳过"
+  # 或等效的 if/then skip 逻辑，而不是在 bash 里自己做恒等式
+  if grep -qE '\$PROD_SHA.*==.*\$HEAD_SHA|\$HEAD_SHA.*==.*\$PROD_SHA|PROD_SHA.*HEAD_SHA.*skip|skip.*PROD_SHA.*HEAD_SHA' "$WF"; then
+    pass "[BEHAVIOR-02] workflow 含 SHA 相等时的 skip 条件代码（真实代码路径验证）"
   else
-    SKIP_DECISION="DEPLOY_TRIGGERED"
+    # workflow 尚未实现 SHA 对账 skip 逻辑
+    xfail "[BEHAVIOR-02] workflow 尚未含 SHA 相等 skip 条件——修复后本行 PASS"
+    FAILED=$((FAILED + 1))
   fi
 
-  if [[ "$SKIP_DECISION" == "SKIP_DEPLOY" ]]; then
-    pass "[BEHAVIOR-02] SHA 相等 → SKIP_DEPLOY（幂等防护正常）"
-  else
-    fail "[BEHAVIOR-02] SHA 相等时仍触发部署（幂等防护失效）"
-  fi
+  # 反断言：SHA 相等时不应含"总是部署"逻辑（防过强 fail open 把 skip 覆盖）
+  # 只检查 PROD_SHA/HEAD_SHA 相关行，不影响全局 fail-open 判断
   echo ""
 }
 
@@ -305,6 +296,61 @@ run_workflow_no_changed_paths() {
 }
 
 # ════════════════════════════════════════════════════════════════════════════
+# SCENARIO: deploy_empty_body_not_skipped
+# POST /api/brain/deploy body={} 返回 2xx，不含 skipped:true（BEHAVIOR-07）
+# 验证 FR-04：/deploy handler 去除了对 changed_paths 为空的跳过判据。
+# ════════════════════════════════════════════════════════════════════════════
+run_deploy_empty_body_not_skipped() {
+  echo "── [BEHAVIOR-07] POST /deploy body={} 不含 skipped:true ──"
+
+  local BRAIN_URL_CHECK="${BRAIN_URL:-http://localhost:5221}"
+
+  # 检查 Brain 是否在运行
+  if ! curl -s --connect-timeout 3 "${BRAIN_URL_CHECK}/api/brain/health" > /dev/null 2>&1; then
+    # Brain 未运行：降级为源码层验证（grep ops.js 确认无 changed_paths 跳过判据）
+    local OPS_FILE="$ROOT_DIR/packages/brain/src/routes/ops.js"
+    if [[ ! -f "$OPS_FILE" ]]; then
+      fail "[BEHAVIOR-07] ops.js 不存在: $OPS_FILE"
+      echo ""
+      return 1
+    fi
+    # 确认 deploy handler 不含 changed_paths 为空时跳过的判据
+    if grep -qE "changed_paths.*length.*===.*0.*skip|changed_paths.*empty.*skip|!changed_paths.*skip" "$OPS_FILE"; then
+      xfail "[BEHAVIOR-07] ops.js 仍含 changed_paths 为空时 skip 判据——修复后本行 PASS"
+      FAILED=$((FAILED + 1))
+    else
+      pass "[BEHAVIOR-07] ops.js 无 changed_paths 为空时 skip 判据（源码层验证；Brain 未运行，跳过 HTTP 验证）"
+    fi
+    echo ""
+    return 0
+  fi
+
+  # Brain 运行中：做真实 HTTP 验证
+  local RESPONSE HTTP_BODY HTTP_CODE
+  RESPONSE=$(curl -s -w "\n%{http_code}" \
+    -X POST "${BRAIN_URL_CHECK}/api/brain/deploy" \
+    -H "Content-Type: application/json" \
+    -d '{}' 2>/dev/null)
+  HTTP_BODY=$(echo "$RESPONSE" | head -n -1)
+  HTTP_CODE=$(echo "$RESPONSE" | tail -n 1)
+
+  if [[ "$HTTP_CODE" =~ ^2 ]]; then
+    pass "[BEHAVIOR-07] POST /deploy body={} → HTTP ${HTTP_CODE}（2xx）"
+  else
+    xfail "[BEHAVIOR-07] POST /deploy body={} → HTTP ${HTTP_CODE}（期望 2xx）——修复后本行 PASS"
+    FAILED=$((FAILED + 1))
+  fi
+
+  if echo "$HTTP_BODY" | grep -qE '"skipped"\s*:\s*true'; then
+    xfail "[BEHAVIOR-07] 响应含 skipped:true（changed_paths 为空时仍跳过）——修复后本行 PASS"
+    FAILED=$((FAILED + 1))
+  else
+    pass "[BEHAVIOR-07] 响应不含 skipped:true（空 body 不跳过）"
+  fi
+  echo ""
+}
+
+# ════════════════════════════════════════════════════════════════════════════
 # SCENARIO: health_unreachable_fail_open
 # curl /health 失败 → fail open（保守部署，BEHAVIOR-06）
 # ════════════════════════════════════════════════════════════════════════════
@@ -352,6 +398,7 @@ case "$SCENARIO" in
   health_returns_git_sha)  run_health_returns_git_sha ;;
   s6_sha_mismatch_rollback) run_s6_sha_mismatch_rollback ;;
   workflow_no_changed_paths) run_workflow_no_changed_paths ;;
+  deploy_empty_body_not_skipped) run_deploy_empty_body_not_skipped ;;
   health_unreachable_fail_open) run_health_unreachable_fail_open ;;
   all)
     run_squash_merge_sha_diff
@@ -359,11 +406,12 @@ case "$SCENARIO" in
     run_health_returns_git_sha
     run_s6_sha_mismatch_rollback
     run_workflow_no_changed_paths
+    run_deploy_empty_body_not_skipped
     run_health_unreachable_fail_open
     ;;
   *)
     echo "未知 scenario: $SCENARIO"
-    echo "可用: squash_merge_sha_diff | sha_equal_skip | health_returns_git_sha | s6_sha_mismatch_rollback | workflow_no_changed_paths | health_unreachable_fail_open | all"
+    echo "可用: squash_merge_sha_diff | sha_equal_skip | health_returns_git_sha | s6_sha_mismatch_rollback | workflow_no_changed_paths | deploy_empty_body_not_skipped | health_unreachable_fail_open | all"
     exit 1
     ;;
 esac

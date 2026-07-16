@@ -3,7 +3,7 @@
 - sprint_dir: sprints/07161500-gate3-sha-truth
 - task_id: 9039956f-cd80-4991-aa4c-f19960a028e1
 - 日期: 2026-07-16
-- 版本: v1（首轮，无 reviewer feedback）
+- 版本: v2（GAN Round 2，修复 F-01..F-05）
 
 ---
 
@@ -33,7 +33,7 @@
 | FR-02 | `packages/brain/src/routes/ops.js`（health handler） | 响应体加 `git_sha: process.env.GIT_SHA \|\| 'unknown'` |
 | FR-03 | `.github/workflows/brain-ci-deploy.yml` | 删「计算变更路径」step，替换为 SHA 对账（PROD_SHA vs HEAD_SHA） |
 | FR-04 | `packages/brain/src/routes/ops.js`（deploy handler） | 去除 `changed_paths` 为空时跳过部署的判据 |
-| FR-05 | `scripts/brain-deploy.sh` | 部署后 curl /health 取 git_sha，校验 == EXPECTED_SHA，不等 exit 1 + 既有回滚 |
+| FR-05 | `scripts/brain-deploy.sh` | 部署后 curl /health 取 git_sha，校验 == EXPECTED_SHA，不等 exit 1 + 既有回滚。**brain-deploy.sh 须支持 `--sha-check-only` flag**：传入该 flag 时，仅执行 S6 SHA 回读断言（接受 `HEALTH_JSON_OVERRIDE` 环境变量注入 fixture 文件路径替代真实 curl），不执行实际部署步骤；供测试注入使用（见 BEHAVIOR-04 验收命令）。 |
 | FR-06 | `sprints/07161500-gate3-sha-truth/tests/` | L1 串链测试（failing → passing + 回归） |
 | FR-07 | `scripts/smoke/gate3-brain-deploy-smoke.sh` | 升级：增 SHA 回读断言场景 |
 

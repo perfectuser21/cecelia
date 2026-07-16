@@ -3,6 +3,7 @@
 - sprint_dir: sprints/07161500-gate3-sha-truth
 - task_id: 9039956f-cd80-4991-aa4c-f19960a028e1
 - 日期: 2026-07-16
+- 版本: v2（GAN Round 2，修复 F-01..F-05）
 
 ---
 
@@ -149,6 +150,40 @@ bash sprints/07161500-gate3-sha-truth/tests/sha-account.test.sh \
 
 ---
 
+### [BEHAVIOR-07] /api/brain/deploy 空 body 返回 2xx，不含 skipped:true
+
+**描述**：`POST /api/brain/deploy` 请求 body 为空对象 `{}` 时，handler 必须返回 HTTP 2xx（202 Accepted 或 200），响应体不含 `skipped: true` 字段。此断言覆盖 FR-04（去除 `changed_paths` 为空时的跳过逻辑），与 BEHAVIOR-01（workflow 层）互补，专门验证 handler 层行为。
+
+**当前状态**：FAILING（`ops.js` deploy handler 当前对空 `changed_paths` 返回 skipped 或不触发部署）
+
+**验收命令（manual:bash）**：
+```bash
+# 前提：Brain 服务本地运行（localhost:5221）
+RESPONSE=$(curl -s -w "\n%{http_code}" \
+  -X POST http://localhost:5221/api/brain/deploy \
+  -H "Content-Type: application/json" \
+  -d '{}')
+
+HTTP_BODY=$(echo "$RESPONSE" | head -n -1)
+HTTP_CODE=$(echo "$RESPONSE" | tail -n 1)
+
+# 断言 1：HTTP 2xx
+if [[ "$HTTP_CODE" =~ ^2 ]]; then
+  echo "PASS: HTTP ${HTTP_CODE}"
+else
+  echo "FAIL: HTTP ${HTTP_CODE}（期望 2xx）"; exit 1
+fi
+
+# 断言 2：不含 skipped:true
+if echo "$HTTP_BODY" | grep -q '"skipped":true\|"skipped": true'; then
+  echo "FAIL: 响应含 skipped:true（changed_paths 为空时仍跳过部署）"; exit 1
+else
+  echo "PASS: 响应不含 skipped:true"
+fi
+```
+
+---
+
 ## 执行检查单（DoD Checklist）
 
 ```
@@ -157,14 +192,16 @@ bash sprints/07161500-gate3-sha-truth/tests/sha-account.test.sh \
 [ ] FR-02 /health 响应含 git_sha 字段（BEHAVIOR-03 通过）
 [ ] FR-03 brain-ci-deploy.yml 无 gate3-changed-paths.sh（BEHAVIOR-05 通过）
 [ ] FR-03 brain-ci-deploy.yml 含 SHA 对账 step（PROD_SHA vs HEAD_SHA）
-[ ] FR-04 /deploy handler 空 changed_paths 时不跳过（BEHAVIOR-01 通过）
+[ ] FR-04 /deploy handler 空 changed_paths 时不跳过（BEHAVIOR-01 + BEHAVIOR-07 通过）
 [ ] FR-05 brain-deploy.sh S6 SHA 回读断言（BEHAVIOR-04 通过）
+[ ] FR-05 brain-deploy.sh 支持 --sha-check-only flag（接受 HEALTH_JSON_OVERRIDE 注入，不执行实际部署）
 [ ] FR-06 sha-account.test.sh squash 场景旧路径 FAIL + 新路径 PASS
 [ ] FR-06 sha-account.test.sh SHA 相等跳过 PASS（BEHAVIOR-02 通过）
 [ ] FR-06 测试已加入 brain-ci-deploy.yml L1 矩阵
 [ ] FR-07 gate3-brain-deploy-smoke.sh 新增 SHA 回读 E 场景并全绿
 [ ] INV-02 蓝绿相关文件未改动（git diff --name-only 无 bluegreen.sh）
 [ ] INV-04 GIT_SHA ENV 在 runtime FROM 层（非仅 deps 层）
+[ ] INV-08 gate3-changed-paths.sh 删除后无死代码注释残骸（grep "gate3-changed-paths" brain-ci-deploy.yml 返回零行或仅有说明性注释；grep 活跃代码行返回零）
 ```
 
 ---
@@ -179,3 +216,5 @@ bash sprints/07161500-gate3-sha-truth/tests/sha-account.test.sh \
 | BEHAVIOR-04 | tests/sha-account.test.sh (s6_sha_mismatch_rollback) | brain-ci-deploy.yml L1 |
 | BEHAVIOR-05 | tests/sha-account.test.sh (workflow_no_changed_paths) | brain-ci-deploy.yml L1 |
 | BEHAVIOR-06 | tests/sha-account.test.sh (health_unreachable_fail_open) | brain-ci-deploy.yml L1 |
+| BEHAVIOR-07 | tests/sha-account.test.sh (deploy_empty_body_not_skipped) | brain-ci-deploy.yml L1 |
+| FR-07 | scripts/smoke/gate3-brain-deploy-smoke.sh（SHA 回读 E 场景） | brain-ci-deploy.yml smoke job |
