@@ -1,0 +1,20 @@
+{
+  "round": 2,
+  "verdict": "APPROVED",
+  "judgments_written": 5,
+  "rubric_scores": {
+    "correctness": {"score": 9},
+    "completeness": {"score": 9},
+    "testability": {"score": 9},
+    "clarity": {"score": 9},
+    "scope_control": {"score": 10},
+    "iron_law_coverage": {"score": 9},
+    "risk": {"score": 8}
+  },
+  "average": 9.0,
+  "f01_fixed": true,
+  "f02_fixed": true,
+  "f03_fixed": true,
+  "f04_fixed": true,
+  "f05_fixed": true
+}

@@ -32,10 +32,16 @@ git -C "$ROOT_DIR" fetch origin "$DEPLOY_BRANCH" 2>&1 | tail -3
 echo "  导出 origin/${DEPLOY_BRANCH} (FETCH_HEAD) 到临时 build context: $TEMP_BUILD"
 git -C "$ROOT_DIR" archive --format=tar FETCH_HEAD | tar -x -C "$TEMP_BUILD"
 
+# FR-01: 传 GIT_SHA build-arg（Gate3 SHA 对账）
+# 使用 FETCH_HEAD（origin/main 最新）作为构建期 SHA
+BUILD_SHA=$(git -C "$ROOT_DIR" rev-parse FETCH_HEAD 2>/dev/null || git -C "$ROOT_DIR" rev-parse HEAD 2>/dev/null || echo "unknown")
+echo "  GIT_SHA=${BUILD_SHA}"
+
 # 从干净的 origin/main 快照构建
 docker build \
   -t "cecelia-brain:${VERSION}" \
   -t "cecelia-brain:latest" \
+  --build-arg "GIT_SHA=${BUILD_SHA}" \
   -f "$TEMP_BUILD/packages/brain/Dockerfile" \
   "$TEMP_BUILD"
 
