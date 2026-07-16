@@ -1,0 +1,16 @@
+{
+  "phase": "gan",
+  "round": 1,
+  "verdict": "APPROVED",
+  "judgments_written": 8,
+  "rubric_scores": {
+    "necessity": 5,
+    "sufficiency": 4,
+    "verifiability": 5,
+    "atomicity": 5,
+    "independence": 4,
+    "completeness": 4,
+    "risk_coverage": 5
+  },
+  "notes": "INV-03 仅通过 B-07 间接覆盖; B-06 依赖 --dry-run-no-behavior 假设参数; FR-07 devgate 兼容在未覆盖链路表"
+}

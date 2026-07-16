@@ -1,42 +1,17 @@
 {
-  "task_id": "56d677a8-65e8-485c-9ec3-1ade28716ae9",
   "verdict": "PASS",
-  "sprint_dir": "sprints/07161400-a8-3-canary-drill",
   "exit_code": 0,
-  "judgments_written": 12,
-  "log_tail": "evaluator verdict=PASS, 19/19 tests passed, CI全绿(ci-passed=SUCCESS)\ncanary-drill.contract.test.js: 10/10 PASS\ncanary-isolation.test.js: 9/9 PASS\ncanary-drill-smoke.sh: PASS",
+  "log_tail": "harness-judge-theater.test.js: 15/15 PASS. contract tests: 5/5 PASS. theater_mismatch闸: 微信+local_api→FAIL, adb+mac_web→FAIL, 正常local_api→PASS. meta_verification_gap: smoke无L3→FAIL, 有L3→PASS.",
   "behavior_tests": [
     {
-      "id": "BEHAVIOR-1/2/3-L1",
-      "name": "canary 隔离过滤（dev-records / 回归池 / 统计计数）L1 vitest",
-      "command": "cd /workspace/packages/brain && npx vitest run src/__tests__/canary-isolation.test.js --reporter=verbose",
+      "command": "cd packages/brain && npx vitest run src/__tests__/harness-judge-theater.test.js --reporter=verbose",
       "exit_code": 0,
-      "result": "PASS",
-      "log_tail": "✓ BEHAVIOR-1: dev-records 查询 canary 隔离 > battle-report dev_records 查询含 canary 过滤条件\n✓ BEHAVIOR-1: canary=true 的 PR 写入 dev_records 后，dev-records 查询不返回该记录\n✓ BEHAVIOR-2: task.payload.canary=true 时 promoteToRegression 跳过\n✓ BEHAVIOR-2: task.payload.canary=true（字符串）时 promoteToRegression 也跳过\n✓ BEHAVIOR-2: task.payload.canary 未设 → 正常走后续路径\n✓ BEHAVIOR-3: diary-scheduler dev_records count 查询含 canary 过滤条件\n✓ BEHAVIOR-3: battle-report mergedPrs 查询加 canary 过滤后 SQL 正确\n✓ BEHAVIOR-3: 插入1条 canary 记录后，SQL WHERE 子句确保不计入统计\n✓ CONSTRAINT-INV16: payload.canary 为 NULL 的记录不应被过滤\nTest Files  1 passed (1)\nTests  9 passed (9)"
+      "log_tail": "Test Files 1 passed (1). Tests 15 passed (15). Duration 669ms.\n✓ theater_mismatch 微信+local_api PASS\n✓ meta_verification_gap smoke无L3 PASS\n✓ 正常local_api不误伤 PASS\n✓ adb+mac_web PASS\n✓ L3豁免 PASS\n✓ THEATER_KEYWORDS_EXTRA扩展 PASS\n✓ 大小写不敏感 PASS\n✓ [BEHAVIOR-1] theater_mismatch PASS\n✓ [BEHAVIOR-2] meta_verification_gap PASS\n✓ [BEHAVIOR-3] 正常合同不误伤 PASS"
     },
     {
-      "id": "BEHAVIOR-4/5/6/7/8-contract",
-      "name": "演习脚本合同测试（BEHAVIOR-4/5/6/7/8）contract test",
-      "command": "npx vitest run tests/regression/a8-3-canary-drill/ --reporter=verbose",
+      "command": "node --experimental-vm-modules node_modules/.bin/vitest run sprints/07161900-theater-mismatch-gate/tests/theater-mismatch-contract.test.js --reporter=verbose",
       "exit_code": 0,
-      "result": "PASS",
-      "log_tail": "✓ BEHAVIOR-4: STAGING_BRAIN_URL 含 :5221 → 立即 exit 1，不发任何请求\n✓ BEHAVIOR-4: STAGING_BRAIN_URL 为 :5222 → 守卫通过，允许执行注册流程\n✓ BEHAVIOR-5: exit_code=137 + oom_upgraded 未设 → cause=oom + attempt 递增 + oom_upgraded=true\n✓ BEHAVIOR-5: oom_upgraded=true + exit_code=137 → cause=oom + task.status=failed\n✓ BEHAVIOR-6: POST /api/brain/incidents 返回 404 → 降级写 design_docs\n✓ BEHAVIOR-6: design_docs 写入内容含 injected_mode 和 results 字段\n✓ BEHAVIOR-7: 演习断言失败 → sendBark 调用1次，标题含 CanaryDrill Failed\n✓ BEHAVIOR-7: BARK_URL 未设时 log warn 不 throw\n✓ BEHAVIOR-8: UTC 19:25~19:35 窗口内 tick → 调用一次 canary-death-drill.mjs\n✓ BEHAVIOR-8: 同日历日第二次 tick → 不重复触发（幂等保护）\nTest Files  1 passed (1)\nTests  10 passed (10)"
-    },
-    {
-      "id": "smoke-validateStagingUrl",
-      "name": "canary-drill smoke: 守卫函数导出验证 + :5221/:5222 行为验证",
-      "command": "bash packages/brain/scripts/smoke/canary-drill-smoke.sh",
-      "exit_code": 0,
-      "result": "PASS",
-      "log_tail": "OK: 所有导出验证通过\ncanary-drill smoke PASS"
-    },
-    {
-      "id": "CI-passed",
-      "name": "CI ci-passed 全绿（含 Sprint Tests 实跑 + 测试金字塔守卫 + Test Contract 覆盖）",
-      "command": "gh pr view 3992 --json statusCheckRollup -q '.statusCheckRollup[] | select(.name==\"ci-passed\") | .conclusion'",
-      "exit_code": 0,
-      "result": "PASS",
-      "log_tail": "ci-passed: SUCCESS\nSprint Tests 实跑 (v5.0): COMPLETED SUCCESS\n测试金字塔守卫: COMPLETED SUCCESS\nTest Contract 覆盖检查 (v5.0): COMPLETED SUCCESS\nTDD Commit 顺序检查 (v5.0): COMPLETED SUCCESS"
+      "log_tail": "Test Files 1 passed (1). Tests 5 passed (5). Duration 790ms.\n✓ TC-01 GP含微信真机+local_api→theater_mismatch PASS\n✓ TC-03 GP含adb+mac_web→theater_mismatch PASS\n✓ TC-04 smoke无L3→meta_verification_gap PASS\n✓ TC-05 smoke有L3→不误判 PASS\n✓ TC-06 正常local_api→pass:true PASS"
     }
   ]
 }

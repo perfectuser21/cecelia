@@ -3,14 +3,25 @@
 # - features: 每个完整 feature 一个 entry（用途/入口/依赖/contract/测试覆盖/闭环段）
 # - changelog: 每次改动追加（细粒度变更历史）
 
-version: "1.1.4"
-updated: "2026-06-02"
+version: "1.2.0"
+updated: "2026-07-16"
 
 # ============================================================================
 # Features 注册（v18.22.2 新增）
 # 每个 feature 是 Cecelia 的"完整能力单元"，比 changelog 单条改动粒度大
 # ============================================================================
 features:
+  - id: light-evaluator
+    type: script
+    path: packages/engine/scripts/devgate/light-evaluator.cjs
+    description: 轻量 Evaluator — push 前自动真跑 [BEHAVIOR] DoD 断言，无 BEHAVIOR 豁免，有失败阻断 push，结果写 verify-record.json
+    status: active
+    introduced_in: "19.5.0"
+    step_doc: packages/engine/skills/dev/steps/light-evaluator.md
+    task_id: 4950d174-cfcd-4a81-b078-0d695a78f103
+    changelog:
+      - version: "19.5.0"
+        change: 新增 — 决策 145014a4③「改行为必有 evaluator 真跑复核」，sprint W5 建制
   - id: dev-heartbeat-guardian
     type: lib
     path: packages/engine/lib/dev-heartbeat-guardian.sh

@@ -116,4 +116,5 @@ gate3-brain-deploy-smoke.sh
 git-sha-health-smoke.sh
 judge-level-smoke.sh
 drift-sentinel-smoke.sh
+theater-mismatch-smoke.sh
 scripts/smoke/e2e/deploy-daily-drill.sh
