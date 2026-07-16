@@ -130,12 +130,6 @@ docker run --rm cecelia-brain:test printenv GIT_SHA
 
 ## Test Contract
 
-| BEHAVIOR | Test File | 覆盖场景 |
-|----------|-----------|---------|
-| BEHAVIOR-01 | sprints/07161500-gate3-sha-truth/tests/sha-account.test.sh | squash_merge_sha_diff |
-| BEHAVIOR-02 | sprints/07161500-gate3-sha-truth/tests/sha-account.test.sh | sha_equal_skip |
-| BEHAVIOR-03 | sprints/07161500-gate3-sha-truth/tests/sha-account.test.sh | health_returns_git_sha |
-| BEHAVIOR-04 | sprints/07161500-gate3-sha-truth/tests/sha-account.test.sh | s6_sha_mismatch_rollback |
-| BEHAVIOR-05 | sprints/07161500-gate3-sha-truth/tests/sha-account.test.sh | workflow_no_changed_paths |
-| BEHAVIOR-06 | sprints/07161500-gate3-sha-truth/tests/sha-account.test.sh | health_unreachable_fail_open |
-| BEHAVIOR-07 | sprints/07161500-gate3-sha-truth/tests/sha-account.test.sh | deploy_empty_body_not_skipped |
+| Workstream | Test File | BEHAVIOR 覆盖 | 预期红证据 |
+|-----------|-----------|--------------|-----------|
+| G1 | `../../packages/brain/tests/gate3-sha-account.test.js` | BEHAVIOR-01..07 | CI 跑旧代码时 sha-account shell tests 失败 |
