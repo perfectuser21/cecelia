@@ -246,6 +246,14 @@ export async function spawnSkillRelaySession(task, deps = {}) {
     const spawnFn = deps.spawnFn
       || (await import('./spawn/detached.js')).spawnDockerDetached;
 
+    // 刀A7：OOM 升档内存覆盖（opts.memoryTier='oom_upgrade' 或 opts.env.HARNESS_RELAY_MEMORY_OVERRIDE）
+    const memoryOverride = deps.memoryOverride
+      || process.env.HARNESS_RELAY_MEMORY_OVERRIDE
+      || null;
+    const oomEnvOverride = deps.env?.HARNESS_RELAY_MEMORY_OVERRIDE
+      || null;
+    const effectiveMemoryOverride = memoryOverride || oomEnvOverride || null;
+
     // B4: spawn 失败回滚（在 spawn 前不落 initiative_runs 行）
     try {
       await spawnFn({
@@ -254,6 +262,7 @@ export async function spawnSkillRelaySession(task, deps = {}) {
         prompt,
         worktreePath,
         extraMounts: isCodex ? [`${codexRelayHome}:/home/cecelia/.codex:rw`] : undefined,
+        ...(effectiveMemoryOverride ? { memoryOverride: effectiveMemoryOverride } : {}),
         env: {
           ...acctOpts.env,
           CECELIA_TASK_TYPE: 'harness_controller',

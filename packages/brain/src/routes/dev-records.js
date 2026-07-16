@@ -18,12 +18,14 @@ router.get('/', async (req, res) => {
     const limit = Math.min(parseInt(req.query.limit) || 50, 200);
     const offset = parseInt(req.query.offset) || 0;
     const params = [limit, offset];
-    let whereClause = '';
+    const conditions = [`is_canary IS DISTINCT FROM TRUE`];
 
     if (req.query.since) {
       params.push(req.query.since);
-      whereClause = `WHERE merged_at >= $${params.length}`;
+      conditions.push(`merged_at >= $${params.length}`);
     }
+
+    const whereClause = `WHERE ${conditions.join(' AND ')}`;
 
     const { rows } = await pool.query(
       `SELECT id, task_id, pr_title, pr_url, branch, merged_at,
@@ -39,7 +41,7 @@ router.get('/', async (req, res) => {
 
     const { rows: countRows } = await pool.query(
       `SELECT count(*) FROM dev_records ${whereClause}`,
-      whereClause ? params.slice(2) : []
+      params.slice(2)
     );
 
     res.json({ success: true, data: rows, total: parseInt(countRows[0].count) });

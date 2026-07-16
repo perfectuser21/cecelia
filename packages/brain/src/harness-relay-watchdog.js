@@ -282,16 +282,32 @@ export async function resumeStalledRelayRuns(deps = {}) {
       // deadline 逾期归 scanStuckHarness
       if (run.deadline_at && new Date(run.deadline_at).getTime() < Date.now()) continue;
 
+      // defer_until 未到期 → 跳过（rate_limit 处置）
+      if (task.payload?.defer_until && task.payload.defer_until > Date.now()) {
+        console.log(`[relay-watchdog] defer_until 未到期，跳过 initiative=${run.initiative_id}`);
+        continue;
+      }
+
       const short = shortId(task.id);
-      // 收账权收归（Task 4 harness-finalize 降级标记）：generator 已完成 → 绝不二次 spawn（防重复 PR）。
+      // 收账权收归（Task 4 harness-finalize 降级标记）：generator 已完成但 evaluator 未跑时仍需重点火。
+      // 只有 generator_done=true 且 evaluator 也已完成才跳过重点火（防重复 PR）。
       const generatorDone = task.payload?.generator_done === true;
 
       // ─── headed 分支：ssh+tmux 存活检测 + 收窗幂等 ────────────────────────
       if (HEADED_HOST_VALUES.includes(run.orchestrator_host)) {
         const { needsRefire } = await _handleHeadedRun(run, task, { dbPool, execFn, short });
+        let skipRefire = false;
         if (needsRefire && generatorDone) {
-          console.log(`[relay-watchdog][headed] generator_done=true → 跳过重点火 initiative=${run.initiative_id}`);
-        } else if (needsRefire) {
+          const evaluatorDone = await _hasEvaluatorGate(dbPool, run.initiative_id);
+          if (evaluatorDone) {
+            console.log(`[relay-watchdog][headed] generator_done=true + evaluator_done → 跳过重点火 initiative=${run.initiative_id}`);
+            skipRefire = true;
+          } else {
+            // generator 完成但 evaluator 未跑 → 重点火让 controller 从 Step 4 恢复
+            console.log(`[relay-watchdog][headed] generator_done=true 但 evaluator 未完成 → 允许重点火 initiative=${run.initiative_id}`);
+          }
+        }
+        if (needsRefire && !skipRefire) {
           // session 消失 → 重点火（走 spawnFn，即 headed 路径）
           const spawnFn = deps.spawnFn
             || (await import('./harness-skill-relay.js')).spawnSkillRelaySession;
@@ -387,9 +403,14 @@ export async function resumeStalledRelayRuns(deps = {}) {
               console.log(`[relay-watchdog] wait_ci_running initiative=${run.initiative_id} pr=${effectivePrUrl}`);
               continue;
             } else {
-              // CI 全绿 + 非 BEHIND → 等待 merge（现有行为保留）
-              console.log(`[relay-watchdog] skip_green_waiting_merge initiative=${run.initiative_id} pr=${effectivePrUrl}`);
-              continue;
+              // CI 全绿 + 非 BEHIND → evaluator 已完成则等待 merge；未完成则重点火（feat(harness): PR 不被 auto-merge）
+              const evaluatorDoneGreen = await _hasEvaluatorGate(dbPool, run.initiative_id);
+              if (evaluatorDoneGreen) {
+                console.log(`[relay-watchdog] skip_green_waiting_merge (evaluator已完成) initiative=${run.initiative_id} pr=${effectivePrUrl}`);
+                continue;
+              }
+              console.log(`[relay-watchdog] ci_green_evaluator_pending → 允许重点火 initiative=${run.initiative_id} pr=${effectivePrUrl}`);
+              // fall through — evaluator 未完成，需重点火让 controller 从 Step 4 恢复
             }
           }
           // CLOSED（工作被否决）→ 落穿走原逻辑，允许重跑
@@ -458,13 +479,14 @@ export async function resumeStalledRelayRuns(deps = {}) {
         continue;
       }
 
-      // generator 已完成 → 跳过重点火（防重复 PR）。未到期的超时兜底放行到此，PR 检查已跑过。
+      // generator 已完成 + evaluator 也已完成 → 跳过重点火（防重复 PR）。未到期的超时兜底放行到此，PR 检查已跑过。
       // 修复（刀A2）：pr_url 为空时，先从 GitHub 反查 PR——relay session 不回写 pr_url，
       // generator_done=true 时直接 continue 会导致 _discoverPrFromGithub 永不被调用，
       // MERGED PR 无法自动收口，OPEN PR 无法回写。
+      // 修复（evaluator gate）：evaluator 未完成时不能无条件跳过重点火，否则 evaluator stage 永远无法执行。
       if (generatorDone) {
         if (!effectivePrUrl) {
-          // pr_url 三处全空 → 先反查 GitHub，再 continue（不 spawn）
+          // pr_url 三处全空 → 先反查 GitHub，再决定是否 continue（不 spawn）
           let discovered = null;
           try {
             discovered = _discoverPrFromGithub(task, short, execFn);
@@ -490,19 +512,117 @@ export async function resumeStalledRelayRuns(deps = {}) {
             console.log(`[relay-watchdog] generator_done 反查 OPEN → 回写 pr_url 跳过重点火 initiative=${run.initiative_id} pr=${discovered.url}`);
             continue;
           }
-          // 无命中 → 保持原 continue（不 spawn）
+          // 无命中 → 落穿到下方 evaluator gate 判断
         }
-        console.log(`[relay-watchdog] generator_done=true → 跳过重点火 initiative=${run.initiative_id}`);
+        const evaluatorDone = await _hasEvaluatorGate(dbPool, run.initiative_id);
+        if (evaluatorDone) {
+          console.log(`[relay-watchdog] generator_done=true + evaluator_done → 跳过重点火 initiative=${run.initiative_id}`);
+          continue;
+        }
+        console.log(`[relay-watchdog] generator_done=true 但 evaluator 未完成 → 允许重点火 initiative=${run.initiative_id}`);
+      }
+
+      // OOM 感知重试（刀A7）
+      const lastExitCode = task.payload?.last_container_exit_code;
+      const oomUpgraded = task.payload?.oom_upgraded === true;
+
+      // GP2：oom_upgraded=true + exit=137 → 禁止二次升档，直接标 failed/oom_wall
+      if (oomUpgraded && lastExitCode === 137) {
+        await dbPool.query(
+          `UPDATE initiative_runs SET phase='failed', completed_at=NOW(), failure_reason='oom_wall'
+            WHERE initiative_id=$1 AND orchestrator_version='v2' AND phase NOT IN ('done','failed')`,
+          [run.initiative_id]
+        );
+        await dbPool.query(
+          `UPDATE tasks SET status='failed', completed_at=NOW(),
+                  error_message='OOM 升档后仍 exit=137，撞墙终止（oom_wall）'
+            WHERE id=$1 AND status='in_progress'`,
+          [run.initiative_id]
+        );
+        await _closeSpawnEvents(dbPool, run.initiative_id, 'failed');
+        out.capped++;
+        console.warn(`[relay-watchdog] oom_wall initiative=${run.initiative_id} exit=137 after oom_upgrade → 标 failed`);
         continue;
       }
 
       // 重点火（spawnSkillRelaySession 会 INSERT 新 run 行 = attempts+1）
       const spawnFn = deps.spawnFn
         || (await import('./harness-skill-relay.js')).spawnSkillRelaySession;
-      const r = await spawnFn(task, { pool: dbPool });
+
+      // 死因分类器（刀A8-1/A8-2）—— 审计日志 + 路由处置
+      {
+        const { classifyDeath } = await import('./harness-death-classifier.js');
+        const classified = classifyDeath({
+          exitCode: lastExitCode ?? null,
+          stdoutTail: task.payload?.stdout_tail ?? null,
+          tmuxPane: null, // headless 路径无 tmux
+        });
+        // 审计日志（INV-06）—— 每次收尸必打
+        console.log(`[relay-watchdog] cause=${classified.cause} action=${classified.action} initiative=${run.initiative_id}`);
+
+        // A8-2: 按 cause 路由处置器
+        if (classified.cause === 'auth') {
+          const { handleAuth } = await import('./harness-death-handlers.js');
+          const { resolveAccount } = await import('./spawn/middleware/account-rotation.js');
+          const { markAuthFailure } = await import('./account-usage.js');
+          let barkFn = () => {};
+          try { barkFn = (await import('./notifier.js')).sendBark ?? barkFn; } catch { /* notifier 不可用，用默认空函数 */ }
+          await handleAuth(task, {
+            cause: classified.cause,
+            spawnFn,
+            markAuthFailedFn: (account) => markAuthFailure(account, null, 'watchdog_auth'),
+            resolveAccountFn: resolveAccount,
+            pool: dbPool,
+            barkFn: async (msg) => barkFn('[Auth Blocked]', msg),
+          });
+          continue; // auth 处置完毕，不走下面的普通重点火
+        } else if (classified.cause === 'rate_limit') {
+          // defer_until 未到期时跳过已在外层 defer_until 检查处理；首次写入 defer_until
+          const { handleRateLimit } = await import('./harness-death-handlers.js');
+          await handleRateLimit(task, { cause: classified.cause, spawnFn, pool: dbPool });
+          continue; // rate_limit defer，不烧 attempt
+        } else if (classified.cause === 'green_waiting_merge') {
+          const { handleGreenWaitingMerge } = await import('./harness-death-handlers.js');
+          await handleGreenWaitingMerge(task, { cause: classified.cause, spawnFn, pool: dbPool });
+          continue;
+        } else if (classified.cause === 'interactive_stuck') {
+          const { handleInteractiveStuck } = await import('./harness-death-handlers.js');
+          const tmuxSession = run.tmux_session ?? null;
+          const { execSync } = await import('child_process');
+          await handleInteractiveStuck(task, {
+            cause: classified.cause,
+            spawnFn,
+            execFn: execSync,
+            pool: dbPool,
+            tmuxSession,
+          });
+          continue;
+        }
+        // unknown / ci_red / oom → 下面的现行路径（OOM 升档或普通重点火）
+      }
+
+      // GP1：exit=137 首次（oom_upgraded 为 false）→ 升档重点火（4096m）
+      const isOomExit = lastExitCode === 137 && !oomUpgraded;
+      const spawnOpts = { pool: dbPool };
+      if (isOomExit) {
+        spawnOpts.memoryTier = 'oom_upgrade';
+        spawnOpts.env = { HARNESS_RELAY_MEMORY_OVERRIDE: '4096' };
+      }
+
+      const r = await spawnFn(task, spawnOpts);
       if (r?.ok) {
         out.resumed++;
-        console.log(`[relay-watchdog] 重点火 initiative=${run.initiative_id} attempt=${attempts + 1} container=${r.containerId}`);
+        if (isOomExit) {
+          // 升档后回写 oom_upgraded=true，防止第三次触发再次升档
+          await dbPool.query(
+            `UPDATE tasks SET payload = COALESCE(payload, '{}'::jsonb) || '{"oom_upgraded":true}'::jsonb
+              WHERE id=$1`,
+            [run.initiative_id]
+          );
+          console.log(`[relay-watchdog] resume_oom_upgraded initiative=${run.initiative_id} attempt=${attempts + 1} container=${r.containerId}`);
+        } else {
+          console.log(`[relay-watchdog] 重点火 initiative=${run.initiative_id} attempt=${attempts + 1} container=${r.containerId}`);
+        }
       } else {
         console.warn(`[relay-watchdog] 重点火失败 initiative=${run.initiative_id}: ${r?.error}`);
       }

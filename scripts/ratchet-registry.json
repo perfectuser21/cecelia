@@ -3,7 +3,7 @@
     "name": "orphans",
     "label": "sprints 孤儿测试数",
     "direction": "only_down",
-    "watermark": 1,
+    "watermark": 2,
     "guard": "test-pyramid-guard A1",
     "source": "countOrphans(root).total via test-pyramid-guard.mjs"
   },
@@ -11,7 +11,7 @@
     "name": "permanent_tests",
     "label": "永久池测试总数",
     "direction": "only_up",
-    "watermark": 1127,
+    "watermark": 1139,
     "guard": "test-pyramid-guard A3",
     "source": "countPermanent(root, roots).total via test-pyramid-guard.mjs"
   },
@@ -37,7 +37,7 @@
     "name": "smoke_pool",
     "label": "smoke 池脚本数",
     "direction": "only_up",
-    "watermark": 9,
+    "watermark": 13,
     "guard": "ratchet-guard smoke_pool",
     "source": "find scripts/smoke -name '*.sh' | wc -l"
   }

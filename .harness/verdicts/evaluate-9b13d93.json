@@ -1,0 +1,55 @@
+{
+  "task_id": "610ecc9e-ff5b-4cee-9fac-c0c69e4af925",
+  "sha": "9b13d9373017113414f93dba952e7b48997835bc",
+  "sha7": "9b13d93",
+  "pr_number": 3988,
+  "pr_url": "https://github.com/perfectuser21/cecelia/pull/3988",
+  "verdict": "PASS",
+  "evaluated_at": "2026-07-15",
+  "behaviors": {
+    "BEHAVIOR-1": {
+      "status": "PASS",
+      "description": "GP1：exit=137 首次触发升档重点火",
+      "evidence": "✓ spawnFn 收到 oom_upgrade 标记，日志含 resume_oom_upgraded | ✓ GP1 升档后 DB PATCH oom_upgraded=true"
+    },
+    "BEHAVIOR-2": {
+      "status": "PASS",
+      "description": "GP2：oom_upgraded=true + exit=137 → oom_wall，禁止 spawn",
+      "evidence": "✓ spawnFn 未被调用，DB PATCH status=failed / failure_reason=oom_wall | ✓ GP2 attempts=0 时也触发 oom_wall（短路在 cap 检查之前）"
+    },
+    "BEHAVIOR-3": {
+      "status": "PASS",
+      "description": "callback 路由将 exit_code=137 写入 task payload",
+      "evidence": "静态代码分析：packages/brain/src/routes/harness-callback.js L87-101 存在 last_container_exit_code 写入逻辑（COALESCE jsonb UPDATE），exit_code !== undefined 时 best-effort 落库",
+      "note": "集成验收（手工 curl）在本 headless-docker 环境下 Brain 运行于 host.docker.internal:5221，未实际 curl，采用静态代码分析代替"
+    },
+    "BEHAVIOR-4": {
+      "status": "PASS",
+      "description": "oom_wall 判定在 attempt cap 之前短路",
+      "evidence": "✓ GP2 attempts=0 时也触发 oom_wall（短路在 cap 检查之前）"
+    },
+    "BEHAVIOR-5": {
+      "status": "PASS",
+      "description": "exit=0/1/null 走既有路径，无升档副作用（回归守护）",
+      "evidence": "harness-relay-watchdog.test.js: 46/46 tests PASS | harness-relay-watchdog-gates.test.js: 10/10 tests PASS | 共 56 tests 全绿"
+    },
+    "BEHAVIOR-6": {
+      "status": "PASS",
+      "description": "日志三态可用 grep 区分",
+      "evidence": "✓ GP1 路径日志含 resume_oom_upgraded，GP2 路径日志含 oom_wall，GP3 无 OOM 前缀"
+    }
+  },
+  "test_summary": {
+    "oom-aware-retry.test.js": "8/8 PASS",
+    "harness-relay-watchdog.test.js": "46/46 PASS",
+    "harness-relay-watchdog-gates.test.js": "10/10 PASS",
+    "total": "64/64 PASS, 0 FAIL"
+  },
+  "contract_gate": {
+    "mock_check": "PASS - 测试直接 mock watchdog 内部 fetch/spawn，未 mock req.body.exit_code（BEHAVIOR-3 对应的真实路径通过代码审查确认）",
+    "real_path_integrity": "PASS"
+  },
+  "unverifiable": [
+    "BEHAVIOR-3 的手工 curl 集成验收（需真实 Brain 实例运行且任务 ID 存在），采用静态代码分析代替，代码路径 L87-101 逻辑明确"
+  ]
+}
