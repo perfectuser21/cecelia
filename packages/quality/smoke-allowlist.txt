@@ -112,3 +112,4 @@ harness-death-classifier-smoke.sh
 harness-death-handlers-smoke.sh
 canary-drill-smoke.sh
 gate3-brain-deploy-smoke.sh
+git-sha-health-smoke.sh

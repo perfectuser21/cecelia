@@ -125,3 +125,17 @@ docker run --rm cecelia-brain:test printenv GIT_SHA
 3. `docker run --rm cecelia-brain:$(git rev-parse --short HEAD) printenv GIT_SHA` 与 `git rev-parse HEAD` 前 40 位一致
 4. `bash scripts/smoke/gate3-brain-deploy-smoke.sh` 全绿（含新增 SHA 回读 E 场景）
 5. `brain-ci-deploy.yml` 不含 `gate3-changed-paths.sh` 调用，且含 SHA 对账 step
+
+---
+
+## Test Contract
+
+| BEHAVIOR | Test File | 覆盖场景 |
+|----------|-----------|---------|
+| BEHAVIOR-01 | sprints/07161500-gate3-sha-truth/tests/sha-account.test.sh | squash_merge_sha_diff |
+| BEHAVIOR-02 | sprints/07161500-gate3-sha-truth/tests/sha-account.test.sh | sha_equal_skip |
+| BEHAVIOR-03 | sprints/07161500-gate3-sha-truth/tests/sha-account.test.sh | health_returns_git_sha |
+| BEHAVIOR-04 | sprints/07161500-gate3-sha-truth/tests/sha-account.test.sh | s6_sha_mismatch_rollback |
+| BEHAVIOR-05 | sprints/07161500-gate3-sha-truth/tests/sha-account.test.sh | workflow_no_changed_paths |
+| BEHAVIOR-06 | sprints/07161500-gate3-sha-truth/tests/sha-account.test.sh | health_unreachable_fail_open |
+| BEHAVIOR-07 | sprints/07161500-gate3-sha-truth/tests/sha-account.test.sh | deploy_empty_body_not_skipped |
