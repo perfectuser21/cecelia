@@ -1,8 +1,7 @@
 /**
- * FR-15 failing test — G2 部署漂移哨兵
+ * FR-15 unit test — G2 部署漂移哨兵（packages/brain/src/cron/drift-sentinel.js）
  *
  * 先写规则（INV-04 + PRD 测试约束）：
- * - 本文件在 drift-sentinel.js 实现前必须 CI red
  * - 禁 mock isDrifted() 判定逻辑与 runDeploy() 调用之间的边
  * - 两端 SHA 差值和时间差由测试内部构造，不得绕过防抖逻辑
  *
@@ -25,7 +24,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 // mock db（KV 存取）
 const mockKvStore = new Map();
-vi.mock('../../../packages/brain/src/db.js', () => ({
+vi.mock('../../db.js', () => ({
   default: {
     query: vi.fn(async (sql, params) => {
       // 简单 KV 模拟：scheduler_jobs 或 brain_kv 表
@@ -49,18 +48,21 @@ vi.mock('../../../packages/brain/src/db.js', () => ({
 }));
 
 // mock alerting.js（raise 用于 P1 上报）
-vi.mock('../../../packages/brain/src/alerting.js', () => ({
+vi.mock('../../alerting.js', () => ({
   raise: vi.fn().mockResolvedValue(undefined),
 }));
 
-// mock notifier.js（sendBark）
-const mockSendBark = vi.fn().mockResolvedValue(undefined);
-vi.mock('../../../packages/brain/src/notifier.js', () => ({
+// mock notifier.js（sendBark）— vi.hoisted 确保 factory 引用时已初始化
+const { mockSendBark, mockExecDeploy: _hoistedExecDeploy } = vi.hoisted(() => ({
+  mockSendBark: vi.fn().mockResolvedValue(undefined),
+  mockExecDeploy: vi.fn().mockResolvedValue({ stdout: '', stderr: '' }),
+}));
+vi.mock('../../notifier.js', () => ({
   sendBark: mockSendBark,
 }));
 
 // mock child_process（exec brain-deploy.sh）—— 只 mock I/O 边界，不 mock 判定逻辑
-const mockExecDeploy = vi.fn().mockResolvedValue({ stdout: '', stderr: '' });
+const mockExecDeploy = _hoistedExecDeploy;
 vi.mock('child_process', async (importOriginal) => {
   const actual = await importOriginal();
   return {
@@ -76,13 +78,13 @@ vi.mock('child_process', async (importOriginal) => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 关键：导入 drift-sentinel.js（本文件实现前此 import 会失败 → CI red）
+// 关键：导入 drift-sentinel.js
 // ─────────────────────────────────────────────────────────────────────────────
 import {
   runDriftCheck,
   DRIFT_SENTINEL_INTERVAL_MS,
   DRIFT_WINDOW_MS,
-} from '../../../packages/brain/src/cron/drift-sentinel.js';
+} from '../drift-sentinel.js';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // 测试辅助：构造 SHA 拉取函数（替代真实网络调用，允许 mock 外部 I/O 边界）
@@ -128,7 +130,7 @@ describe('drift-sentinel — FR-15 contract tests', () => {
     mockKvStore.clear();
     mockExecDeploy.mockClear();
     mockSendBark.mockClear();
-    vi.mocked(await import('../../../packages/brain/src/alerting.js')).raise?.mockClear?.();
+    vi.mocked(await import('../../alerting.js')).raise?.mockClear?.();
   });
 
   // FR-15-ok：SHA 一致 → verdict=ok，deploy 不被调
@@ -181,7 +183,6 @@ describe('drift-sentinel — FR-15 contract tests', () => {
     expect(mockExecDeploy).toHaveBeenCalledWith(expect.stringContaining('brain-deploy.sh'));
     expect(mockSendBark).not.toHaveBeenCalled();
     // INV-10：二次核验 — redeploying 场景下 fetchProdSha 必须被调用 >=2 次（触发前再核验一次）
-    expect(opts._fetchProdShaSpy).toHaveBeenCalledTimes(expect.any(Number));
     expect(opts._fetchProdShaSpy.mock.calls.length).toBeGreaterThanOrEqual(2);
   });
 
