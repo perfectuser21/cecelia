@@ -60,6 +60,35 @@ export function normalizeJudgeVerdict(v) {
 // ── 刀B 机械预检（root 杠杆，决策 dc18d43d「无闸不成文」）────────────────────
 // 同步校验 brainResult 结构，任一项不满足即返回 FAIL 对象（null = 全过）。
 // 在 judge 路由最前执行，不进 AI 裁判。
+
+// L3 真机指纹关键词（满足其一即视为真机证据）：
+//   - 设备路径：/data/、/sdcard/、com.（Android 包名路径）
+//   - UIA 标识：UiSelector、UiAutomator、AccessibilityNodeInfo
+//   - adb 命令：adb shell
+//   - 截图：.png 或 .jpg 绝对路径（以 / 开头后跟非空路径含扩展名）
+const L3_DEVICE_KEYWORDS = [
+  '/data/',
+  '/sdcard/',
+  'UiSelector',
+  'UiAutomator',
+  'AccessibilityNodeInfo',
+  'adb shell',
+];
+const L3_SCREENSHOT_RE = /\/[^\s]+\.(png|jpg)/i;
+
+/**
+ * hasL3DeviceEvidence(text) — 判断 log_tail 或 screenshot 字段是否含真机指纹关键词。
+ * true = 含真机证据（PASS）；false = 无真机证据（L3 下应 FAIL）。
+ */
+function hasL3DeviceEvidence(logTail, screenshotPath) {
+  const combined = String(logTail || '') + ' ' + String(screenshotPath || '');
+  for (const kw of L3_DEVICE_KEYWORDS) {
+    if (combined.includes(kw)) return true;
+  }
+  if (L3_SCREENSHOT_RE.test(combined)) return true;
+  return false;
+}
+
 export function runMechanicalPreflightChecks(brainResult) {
   if (!brainResult || !Array.isArray(brainResult.behavior_tests) || brainResult.behavior_tests.length === 0) {
     return { verdict: 'FAIL', feedback: 'behavior_tests 为空：evaluator 未提供行为测试结果', mechFail: 'no_behavior_tests' };
@@ -70,6 +99,29 @@ export function runMechanicalPreflightChecks(brainResult) {
   if (!brainResult.log_tail || String(brainResult.log_tail).trim() === '') {
     return { verdict: 'FAIL', feedback: 'verdict 缺 log_tail：执行日志证据缺失', mechFail: 'missing_log_tail' };
   }
+
+  // ── L3 真机指纹执法（verification_level 分级校验） ──────────────────────────
+  // 顶层 verification_level 为默认继承值；条目级优先（条目显式声明时覆盖顶层）。
+  // 缺省（无任何 verification_level）视为 L2，不做真机指纹校验（存量兼容）。
+  const topLevel = brainResult.verification_level || null;
+
+  for (let i = 0; i < brainResult.behavior_tests.length; i++) {
+    const bt = brainResult.behavior_tests[i] || {};
+    // 条目级优先；无条目级则继承顶层；最终缺省 L2（不执法）
+    const effectiveLevel = bt.verification_level || topLevel || 'L2';
+
+    if (effectiveLevel === 'L3') {
+      // L3 要求 log_tail 或 screenshot 中含真机指纹关键词
+      if (!hasL3DeviceEvidence(bt.log_tail, bt.screenshot)) {
+        return {
+          verdict: 'FAIL',
+          feedback: `behavior_tests[${i}] 声明 L3 验证等级，但 log_tail 不含真机指纹关键词（adb shell / UiSelector / UiAutomator / AccessibilityNodeInfo / /data/ / /sdcard/ / 截图绝对路径）。纯 curl 或 vitest 输出不满足 L3 真机证据要求。`,
+          mechFail: 'level_evidence_mismatch',
+        };
+      }
+    }
+  }
+
   return null;
 }
 
