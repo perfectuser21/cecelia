@@ -29,15 +29,9 @@ generator 从 [sprint-prd 含 GP「微信真机发送消息」+ tasks.payload.ta
 
 ## Test Contract 表
 
-| # | 场景 | 输入 | 期望输出 | 真实链路验证要求 |
-|---|------|------|----------|------------------|
-| TC-01 | 戏院错配：GP 含「微信真机发送」+ local_api | sprint-prd GP 段含「微信真机发送消息」，DB target_environment=local_api | `pass:false`，`reasons` 含 `theater_mismatch` | 单元断言：`runMechanicalGate` 返回值结构校验 |
-| TC-02 | 戏院错配：GP 含 UIA 关键词 + local_api | sprint-prd GP 段含 UIA，DB target_environment=local_api | `pass:false`，`reasons` 含 `theater_mismatch` | 单元断言：关键词大小写不敏感 |
-| TC-03 | 戏院错配：GP 含 adb + mac_web | sprint-prd GP 段含 adb，DB target_environment=mac_web | `pass:false`，`reasons` 含 `theater_mismatch` | 单元断言：mac_web 同样触发 |
-| TC-04 | 元验证补丁：smoke 类标题 + contract 无 L3/THEATER 断言 | sprint-prd 标题含 smoke，contract BEHAVIOR 仅有普通 curl | `pass:false`，`reasons` 含 `meta_verification_gap` | 单元断言：`runMechanicalGate` 返回值 |
-| TC-05 | 元验证补丁：验证脚本类 + contract 含 L3 → 不误判 | sprint-prd 标题含「验证脚本」，contract BEHAVIOR 含 verification_level: L3 | `pass:true`（不误判） | 单元断言：pass 为 true |
-| TC-06 | 正常 local_api 服务端合同 → 不误伤 | sprint-prd 无真机关键词，正常 API 合同 | `pass:true` | 单元断言：回归保护 |
-| TC-07 | `THEATER_KEYWORDS_EXTRA` env 扩展关键词 | env 追加 `海外渠道`，GP 含「海外渠道投放」 | `pass:false`，`reasons` 含 `theater_mismatch` | 单元断言：可扩展性 |
+| Workstream | Test File | BEHAVIOR 覆盖 | 预期红证据 |
+|---|---|---|---|
+| W6-theater-mismatch | `tests/theater-mismatch-contract.test.js` | theater_mismatch/meta_verification_gap/正常 local_api | Red: 5 FAIL before impl（TC-01/03/04/05 fail, TC-06 fail on missing function）|
 
 ---
 
