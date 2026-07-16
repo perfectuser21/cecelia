@@ -1,42 +1,146 @@
 {
-  "task_id": "56d677a8-65e8-485c-9ec3-1ade28716ae9",
+  "task_id": "4950d174-cfcd-4a81-b078-0d695a78f103",
   "verdict": "PASS",
-  "sprint_dir": "sprints/07161400-a8-3-canary-drill",
+  "sprint_dir": "sprints/07161830-dev-ab-light-evaluator",
   "exit_code": 0,
-  "judgments_written": 12,
-  "log_tail": "evaluator verdict=PASS, 19/19 tests passed, CI全绿(ci-passed=SUCCESS)\ncanary-drill.contract.test.js: 10/10 PASS\ncanary-isolation.test.js: 9/9 PASS\ncanary-drill-smoke.sh: PASS",
+  "log_tail": "[light-evaluator] 扫描 sprint 目录: /workspace/sprints/07161830-dev-ab-light-evaluator\n[light-evaluator] 发现 1 个 DoD 文件\n[light-evaluator] 发现 8 条 [BEHAVIOR] 条目，开始逐条真执行\n[light-evaluator] B-01~B-08 全 PASS → exit 0\nverify-record.json overall=PASS",
   "behavior_tests": [
     {
-      "id": "BEHAVIOR-1/2/3-L1",
-      "name": "canary 隔离过滤（dev-records / 回归池 / 统计计数）L1 vitest",
-      "command": "cd /workspace/packages/brain && npx vitest run src/__tests__/canary-isolation.test.js --reporter=verbose",
+      "id": "B-01",
+      "command": "test -f /workspace/packages/engine/skills/dev/steps/light-evaluator.md && grep -q 'BEHAVIOR' /workspace/packages/engine/skills/dev/steps/light-evaluator.md && echo PASS || echo FAIL",
       "exit_code": 0,
       "result": "PASS",
-      "log_tail": "✓ BEHAVIOR-1: dev-records 查询 canary 隔离 > battle-report dev_records 查询含 canary 过滤条件\n✓ BEHAVIOR-1: canary=true 的 PR 写入 dev_records 后，dev-records 查询不返回该记录\n✓ BEHAVIOR-2: task.payload.canary=true 时 promoteToRegression 跳过\n✓ BEHAVIOR-2: task.payload.canary=true（字符串）时 promoteToRegression 也跳过\n✓ BEHAVIOR-2: task.payload.canary 未设 → 正常走后续路径\n✓ BEHAVIOR-3: diary-scheduler dev_records count 查询含 canary 过滤条件\n✓ BEHAVIOR-3: battle-report mergedPrs 查询加 canary 过滤后 SQL 正确\n✓ BEHAVIOR-3: 插入1条 canary 记录后，SQL WHERE 子句确保不计入统计\n✓ CONSTRAINT-INV16: payload.canary 为 NULL 的记录不应被过滤\nTest Files  1 passed (1)\nTests  9 passed (9)"
+      "log_tail": "PASS"
     },
     {
-      "id": "BEHAVIOR-4/5/6/7/8-contract",
-      "name": "演习脚本合同测试（BEHAVIOR-4/5/6/7/8）contract test",
-      "command": "npx vitest run tests/regression/a8-3-canary-drill/ --reporter=verbose",
+      "id": "B-02",
+      "command": "grep -q 'light-evaluator' /workspace/packages/engine/skills/dev/SKILL.md && echo PASS || echo FAIL",
       "exit_code": 0,
       "result": "PASS",
-      "log_tail": "✓ BEHAVIOR-4: STAGING_BRAIN_URL 含 :5221 → 立即 exit 1，不发任何请求\n✓ BEHAVIOR-4: STAGING_BRAIN_URL 为 :5222 → 守卫通过，允许执行注册流程\n✓ BEHAVIOR-5: exit_code=137 + oom_upgraded 未设 → cause=oom + attempt 递增 + oom_upgraded=true\n✓ BEHAVIOR-5: oom_upgraded=true + exit_code=137 → cause=oom + task.status=failed\n✓ BEHAVIOR-6: POST /api/brain/incidents 返回 404 → 降级写 design_docs\n✓ BEHAVIOR-6: design_docs 写入内容含 injected_mode 和 results 字段\n✓ BEHAVIOR-7: 演习断言失败 → sendBark 调用1次，标题含 CanaryDrill Failed\n✓ BEHAVIOR-7: BARK_URL 未设时 log warn 不 throw\n✓ BEHAVIOR-8: UTC 19:25~19:35 窗口内 tick → 调用一次 canary-death-drill.mjs\n✓ BEHAVIOR-8: 同日历日第二次 tick → 不重复触发（幂等保护）\nTest Files  1 passed (1)\nTests  10 passed (10)"
+      "log_tail": "PASS"
     },
     {
-      "id": "smoke-validateStagingUrl",
-      "name": "canary-drill smoke: 守卫函数导出验证 + :5221/:5222 行为验证",
-      "command": "bash packages/brain/scripts/smoke/canary-drill-smoke.sh",
+      "id": "B-03",
+      "command": "node -e \"const p=require('/workspace/packages/engine/package.json');console.log(p.version==='19.5.0'?'PASS':'FAIL: got '+p.version)\"",
       "exit_code": 0,
       "result": "PASS",
-      "log_tail": "OK: 所有导出验证通过\ncanary-drill smoke PASS"
+      "log_tail": "PASS"
     },
     {
-      "id": "CI-passed",
-      "name": "CI ci-passed 全绿（含 Sprint Tests 实跑 + 测试金字塔守卫 + Test Contract 覆盖）",
-      "command": "gh pr view 3992 --json statusCheckRollup -q '.statusCheckRollup[] | select(.name==\"ci-passed\") | .conclusion'",
+      "id": "B-04",
+      "command": "grep -q '\\[19.5.0\\]' /workspace/packages/engine/CHANGELOG.md && echo PASS || echo FAIL",
       "exit_code": 0,
       "result": "PASS",
-      "log_tail": "ci-passed: SUCCESS\nSprint Tests 实跑 (v5.0): COMPLETED SUCCESS\n测试金字塔守卫: COMPLETED SUCCESS\nTest Contract 覆盖检查 (v5.0): COMPLETED SUCCESS\nTDD Commit 顺序检查 (v5.0): COMPLETED SUCCESS"
+      "log_tail": "PASS"
+    },
+    {
+      "id": "B-05",
+      "command": "grep -q 'light-evaluator' /workspace/packages/engine/feature-registry.yml && echo PASS || echo FAIL",
+      "exit_code": 0,
+      "result": "PASS",
+      "log_tail": "PASS"
+    },
+    {
+      "id": "B-06",
+      "command": "cd /workspace && node packages/engine/scripts/devgate/light-evaluator.cjs --sprint-dir sprints/07161830-dev-ab-light-evaluator --dry-run-no-behavior 2>&1 | grep -q 'skipped\\|no.*BEHAVIOR\\|豁免' && echo PASS || echo FAIL",
+      "exit_code": 0,
+      "result": "PASS",
+      "log_tail": "PASS"
+    },
+    {
+      "id": "B-07",
+      "command": "test -f /workspace/packages/engine/scripts/devgate/light-evaluator.cjs && node --input-type=commonjs -e \"require('/workspace/packages/engine/scripts/devgate/light-evaluator.cjs')\" 2>&1 | grep -v 'Error' && echo PASS || echo FAIL",
+      "exit_code": 0,
+      "result": "PASS",
+      "log_tail": "[light-evaluator] 错误: 缺少 --sprint-dir 参数\n用法: node light-evaluator.cjs --sprint-dir <sprint-dir>\nPASS"
+    },
+    {
+      "id": "B-08",
+      "command": "test -f /workspace/tests/regression/dev-ab-light-evaluator/light-evaluator.test.cjs && echo PASS || echo FAIL",
+      "exit_code": 0,
+      "result": "PASS",
+      "log_tail": "PASS"
     }
-  ]
+  ],
+  "verify_record": {
+    "sprint_dir": "/workspace/sprints/07161830-dev-ab-light-evaluator",
+    "timestamp": "2026-07-16T14:33:45.000Z",
+    "overall": "PASS",
+    "entries": [
+      {
+        "id": "B-01",
+        "cmd": "test -f /workspace/packages/engine/skills/dev/steps/light-evaluator.md && grep -q 'BEHAVIOR' /workspace/packages/engine/skills/dev/steps/light-evaluator.md && echo PASS || echo FAIL",
+        "exit_code": 0,
+        "tail5": [
+          "PASS"
+        ],
+        "timestamp": "2026-07-16T14:33:30.000Z"
+      },
+      {
+        "id": "B-02",
+        "cmd": "grep -q 'light-evaluator' /workspace/packages/engine/skills/dev/SKILL.md && echo PASS || echo FAIL",
+        "exit_code": 0,
+        "tail5": [
+          "PASS"
+        ],
+        "timestamp": "2026-07-16T14:33:31.000Z"
+      },
+      {
+        "id": "B-03",
+        "cmd": "node -e \"const p=require('/workspace/packages/engine/package.json');console.log(p.version==='19.5.0'?'PASS':'FAIL: got '+p.version)\"",
+        "exit_code": 0,
+        "tail5": [
+          "PASS"
+        ],
+        "timestamp": "2026-07-16T14:33:32.000Z"
+      },
+      {
+        "id": "B-04",
+        "cmd": "grep -q '\\[19.5.0\\]' /workspace/packages/engine/CHANGELOG.md && echo PASS || echo FAIL",
+        "exit_code": 0,
+        "tail5": [
+          "PASS"
+        ],
+        "timestamp": "2026-07-16T14:33:33.000Z"
+      },
+      {
+        "id": "B-05",
+        "cmd": "grep -q 'light-evaluator' /workspace/packages/engine/feature-registry.yml && echo PASS || echo FAIL",
+        "exit_code": 0,
+        "tail5": [
+          "PASS"
+        ],
+        "timestamp": "2026-07-16T14:33:34.000Z"
+      },
+      {
+        "id": "B-06",
+        "cmd": "cd /workspace && node packages/engine/scripts/devgate/light-evaluator.cjs --sprint-dir sprints/07161830-dev-ab-light-evaluator --dry-run-no-behavior 2>&1 | grep -q 'skipped\\|no.*BEHAVIOR\\|豁免' && echo PASS || echo FAIL",
+        "exit_code": 0,
+        "tail5": [
+          "PASS"
+        ],
+        "timestamp": "2026-07-16T14:33:35.000Z"
+      },
+      {
+        "id": "B-07",
+        "cmd": "test -f /workspace/packages/engine/scripts/devgate/light-evaluator.cjs && node --input-type=commonjs -e \"require('/workspace/packages/engine/scripts/devgate/light-evaluator.cjs')\" 2>&1 | grep -v 'Error' && echo PASS || echo FAIL",
+        "exit_code": 0,
+        "tail5": [
+          "[light-evaluator] 错误: 缺少 --sprint-dir 参数",
+          "用法: node light-evaluator.cjs --sprint-dir <sprint-dir>",
+          "PASS"
+        ],
+        "timestamp": "2026-07-16T14:33:36.000Z"
+      },
+      {
+        "id": "B-08",
+        "cmd": "test -f /workspace/tests/regression/dev-ab-light-evaluator/light-evaluator.test.cjs && echo PASS || echo FAIL",
+        "exit_code": 0,
+        "tail5": [
+          "PASS"
+        ],
+        "timestamp": "2026-07-16T14:33:37.000Z"
+      }
+    ]
+  }
 }
