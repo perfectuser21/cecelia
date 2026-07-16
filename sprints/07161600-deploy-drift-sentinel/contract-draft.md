@@ -159,3 +159,17 @@
 - G3 每日演习（deploy record 时间线对账）
 - S1 感知层 webhook 修复
 - ZenithJoy 的部署漂移哨兵
+
+---
+
+## Test Contract
+
+| 功能 | Test File | BEHAVIOR 覆盖 | 预期 Red 证据 |
+|---|---|---|---|
+| SHA一致不触发部署 | `../../packages/brain/src/cron/__tests__/drift-sentinel.test.js` | FR-15-ok | Red commit：drift-sentinel.js 不存在时 import 报 MODULE_NOT_FOUND |
+| 防抖等待（<30min） | `../../packages/brain/src/cron/__tests__/drift-sentinel.test.js` | FR-15-debounce | 同上 |
+| 超30min自动补部署 | `../../packages/brain/src/cron/__tests__/drift-sentinel.test.js` | FR-15-redeploy | 同上 |
+| 连败2次Bark告警 | `../../packages/brain/src/cron/__tests__/drift-sentinel.test.js` | FR-15-escalate | 同上 |
+| 网络失败保守跳过 | `../../packages/brain/src/cron/__tests__/drift-sentinel.test.js` | FR-15-network-err | 同上 |
+| 生产不可达保守跳过 | `../../packages/brain/src/cron/__tests__/drift-sentinel.test.js` | FR-15-prod-unreach | 同上 |
+| 连续3次网络skip告警 | `../../packages/brain/src/cron/__tests__/drift-sentinel.test.js` | FR-15-network-skip-x3 | 同上 |

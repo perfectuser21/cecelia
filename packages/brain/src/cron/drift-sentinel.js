@@ -102,7 +102,6 @@ export async function defaultFetchMainSha() {
   } catch {
     // 降级到 gh api
   }
-  const prodUrl = process.env.BRAIN_PROD_URL || 'https://brain.cecelia.ai';
   const repo = process.env.GITHUB_REPO || 'chalexlch/cecelia';
   const { stdout } = await execAsync(
     `gh api repos/${repo}/commits/main --jq .sha`,
@@ -168,7 +167,7 @@ export async function runDriftCheck({
   let shaMain;
   try {
     shaMain = await fetchMainSha();
-  } catch (err) {
+  } catch {
     const newConsecutive = consecutiveNetworkErrors + 1;
     const newState = { ...state, consecutiveNetworkErrors: newConsecutive };
     if (!_testInitialState) await saveState(newState, db);
@@ -192,7 +191,7 @@ export async function runDriftCheck({
   let shaProd;
   try {
     shaProd = await fetchProdSha();
-  } catch (err) {
+  } catch {
     if (!_testInitialState) await saveState({ ...state, consecutiveNetworkErrors: 0 }, db);
     console.log(`[drift_check] sha_main=${shaMain} sha_prod=UNKNOWN verdict=prod_unreachable`);
     return { verdict: 'prod_unreachable', sha_main: shaMain };
