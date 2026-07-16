@@ -31,7 +31,7 @@ generator 从 [sprint-prd 含 GP「微信真机发送消息」+ tasks.payload.ta
 
 | Workstream | Test File | BEHAVIOR 覆盖 | 预期红证据 |
 |---|---|---|---|
-| W6-theater-mismatch | `tests/theater-mismatch-contract.test.js` | theater_mismatch/meta_verification_gap/正常 local_api | Red: 5 FAIL before impl（TC-01/03/04/05 fail, TC-06 fail on missing function）|
+| W6-theater-mismatch | `../../tests/regression/theater-mismatch-gate/theater-mismatch-contract.test.js` | theater_mismatch/meta_verification_gap/正常 local_api | Red: 5 FAIL before impl（TC-01/03/04/05 fail, TC-06 fail on missing function）|
 
 ---
 
