@@ -1,5 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { mkdtempSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join as pjoin } from 'node:path';
 import {
   detectQuotaWall, buildCommand, pickAccounts, dispatchWithRotation,
   ACCOUNT_POOL, USABLE_THRESHOLD,
@@ -121,4 +124,37 @@ test('ACCOUNT_POOL: 含本机四账号，claude 只有 account2（account1 是 c
   const names = ACCOUNT_POOL.map((a) => `${a.vendor}:${a.name}`);
   assert.deepEqual(names, ['codex:team1', 'codex:team2', 'claude:account2', 'grok:grok']);
   assert.equal(USABLE_THRESHOLD, 90);
+});
+
+test('parseArgs: 完整参数解析', async () => {
+  const { parseArgs } = await import('./dispatch-worker.mjs');
+  const d = mkdtempSync(pjoin(tmpdir(), 'dw-'));
+  const got = parseArgs(['--brief', '干活', '--dir', d, '--vendor', 'codex', '--max-retries', '3']);
+  assert.equal(got.brief, '干活');
+  assert.equal(got.dir, d);
+  assert.equal(got.vendor, 'codex');
+  assert.equal(got.maxRetries, 3);
+});
+
+test('parseArgs: brief 是存在的文件路径时读文件内容', async () => {
+  const { parseArgs } = await import('./dispatch-worker.mjs');
+  const d = mkdtempSync(pjoin(tmpdir(), 'dw-'));
+  const f = pjoin(d, 'brief.md');
+  writeFileSync(f, '任务书全文');
+  const got = parseArgs(['--brief', f, '--dir', d]);
+  assert.equal(got.brief, '任务书全文');
+});
+
+test('parseArgs: 默认 vendor=auto maxRetries=2', async () => {
+  const { parseArgs } = await import('./dispatch-worker.mjs');
+  const d = mkdtempSync(pjoin(tmpdir(), 'dw-'));
+  const got = parseArgs(['--brief', 'b', '--dir', d]);
+  assert.equal(got.vendor, 'auto');
+  assert.equal(got.maxRetries, 2);
+});
+
+test('parseArgs: 缺 brief 或 dir 不存在 → throw', async () => {
+  const { parseArgs } = await import('./dispatch-worker.mjs');
+  assert.throws(() => parseArgs(['--dir', '/tmp']), /--brief/);
+  assert.throws(() => parseArgs(['--brief', 'b', '--dir', '/不存在的路径xx']), /--dir/);
 });
