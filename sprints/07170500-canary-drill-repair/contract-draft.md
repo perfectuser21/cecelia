@@ -1,0 +1,63 @@
+# Test Contract — 07170500-canary-drill-repair
+
+**task_id**: f97f24dc-6779-43cb-b16d-229339f8c8f6
+**日期**: 2026-07-17
+
+---
+
+## 合同测试
+
+| ID | 描述 | 类型 | 测试文件 |
+|---|---|---|---|
+| CT-1 | queued 任务 → watchdog L275 过滤 → spawnFn 不调用（复现旧 bug） | unit | `packages/brain/src/__tests__/canary-drill-inject-form.test.js` |
+| CT-2 | in_progress + initiative_runs 行（orchestrator_version=v2, phase=running） → watchdog 调用 spawnFn | unit | `packages/brain/src/__tests__/canary-drill-inject-form.test.js` |
+| CT-3 | pollAssert 超时（timeoutMin=0）→ result.pass=false → archiveDrillResult content 含 verdict=FAIL → exit 1 | unit | `packages/brain/src/__tests__/canary-drill-assert-loop.test.js` |
+| CT-4 | 不存在脚本路径（ENOENT）→ 返回 {triggered:false, failed:true}，console.error 含 "script not found"（修复后行为） | unit | `packages/brain/src/__tests__/canary-drill-scheduler-path.test.js` |
+| CT-5 | CANARY_DRILL_SCRIPT env 存在 → execFn 使用该路径，不走 /app 默认路径 | unit | `packages/brain/src/__tests__/canary-drill-scheduler-path.test.js` |
+| CT-6 | 旧版本不存在路径返回 {triggered:true, error:...}（Red：复现旧 bug） | unit | `packages/brain/src/__tests__/canary-drill-scheduler-path.test.js` |
+
+---
+
+## 判定点登记
+
+| 场景 | 预期 | 测试 |
+|---|---|---|
+| registerCanaryTask() 注册后任务状态为 queued | watchdog L275 `task.status !== 'in_progress'` 过滤，spawnFn 0 次调用 | CT-1 |
+| registerCanaryTask() 注册后立即 PATCH status=in_progress | watchdog 进入处置分支，spawnFn 被调用 | CT-2 |
+| OOM mode 注入后轮询超时（watchdog 未处置） | result.pass=false，drill_report content.verdict="FAIL"，exit 1 | CT-3 |
+| canary-drill-scheduler.js 脚本路径不存在 | 返回 {triggered:false, failed:true}，日志含 [canary-drill-scheduler] failed | CT-4 |
+| CANARY_DRILL_SCRIPT=/custom/path/drill.mjs | execFn 入参为该路径 | CT-5 |
+| 旧版本 catch 块吞掉 ENOENT 返回 {triggered:true} | 复现旧 bug：triggered===true（Red 阶段验证） | CT-6 |
+
+---
+
+## E2E 验收
+
+**模式**：oom
+
+**命令**：
+```bash
+STAGING_BRAIN_URL=http://localhost:5222 node scripts/canary-death-drill.mjs oom
+```
+
+**验收标准**：
+- drill_report.verdict = PASS（或 FAIL 时 exit 1 且 Bark 告警发出）
+- drill_report.assertions 每条含 name/pass/detail 三字段
+- watchdog 处置日志含 `[harness-relay-watchdog]` 且有 initiative_id
+- exit 0（PASS）或 exit 1（FAIL）两态均合法，关键是断言真实发生
+
+**验证命令**：
+```bash
+# 查 drill_report 结构
+curl -s "localhost:5222/api/brain/design-docs?type=drill_report&limit=1" \
+  | jq '.data[0].content | fromjson | {verdict, mode, elapsed_ms, assertions_count: (.assertions | length)}'
+
+# 确认 watchdog 处置日志（贴原文入 PR）
+grep '\[harness-relay-watchdog\]' staging-brain.log | grep "$CANARY_TASK_ID" | tail -5
+```
+
+---
+
+## 未覆盖真实链路清单
+
+N/A（单测 + staging 实弹全覆盖）
