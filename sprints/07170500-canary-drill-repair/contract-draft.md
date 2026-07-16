@@ -41,23 +41,35 @@ STAGING_BRAIN_URL=http://localhost:5222 node scripts/canary-death-drill.mjs oom
 ```
 
 **验收标准**：
-- drill_report.verdict = PASS（或 FAIL 时 exit 1 且 Bark 告警发出）
-- drill_report.assertions 每条含 name/pass/detail 三字段
-- watchdog 处置日志含 `[harness-relay-watchdog]` 且有 initiative_id
-- exit 0（PASS）或 exit 1（FAIL）两态均合法，关键是断言真实发生
+
+1. **注入形态验证（INV-19）**：任务注册后必须同时满足三项：
+   - `task.status === 'in_progress'`
+   - `initiative_runs` 表中存在对应行（`orchestrator_version='v2'`，`payload.orchestrator='skill-relay'`，`canary=true`，`phase='running'`）
+   - `task.payload.last_container_exit_code === 137`（OOM 模式）
+
+2. **watchdog 处置验证（INV-20）**：演习 PASS 判据为 watchdog 真实修改了 `initiative_runs.phase`，禁止以 `task.status='failed'` 作为 PASS 判据
+
+3. **drill_report 结构验证（INV-21）**：`design_docs` 中写入的 `content` JSON 必含 `verdict`/`mode`/`assertions`/`elapsed_ms` 四字段
+
+4. **exit code**：`verdict=PASS` 时 exit 0；`verdict=FAIL` 时 exit 1（两态均合法，关键是断言真实发生，不得静默 exit 0 掩盖失败）
 
 **验证命令**：
 ```bash
-# 查 drill_report 结构
+# 查 drill_report 结构（贴原文入 PR）
 curl -s "localhost:5222/api/brain/design-docs?type=drill_report&limit=1" \
   | jq '.data[0].content | fromjson | {verdict, mode, elapsed_ms, assertions_count: (.assertions | length)}'
 
+# 确认 initiative_runs 行存在（watchdog 处置前）
+curl -s "localhost:5222/api/brain/tasks/$CANARY_TASK_ID" \
+  | jq '{status, orchestrator: .payload.orchestrator, canary: .payload.canary, exit_code: .payload.last_container_exit_code}'
+
 # 确认 watchdog 处置日志（贴原文入 PR）
-grep '\[harness-relay-watchdog\]' staging-brain.log | grep "$CANARY_TASK_ID" | tail -5
+grep '\[relay-watchdog\]' staging-brain.log | grep "$CANARY_TASK_ID" | tail -5
 ```
 
 ---
 
 ## 未覆盖真实链路清单
 
-N/A（单测 + staging 实弹全覆盖）
+- `interactive_stuck` 模式 tmux 会话（tmux 不可用时降为 payload-only 注入，不影响核心断言）
+- Bark 告警推送（BARK_URL 未设时跳过，不影响演习判定）
