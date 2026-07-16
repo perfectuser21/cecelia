@@ -17,11 +17,13 @@
 import { execFileSync } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { expect, it } from 'vitest';
 
 const ROOT = path.resolve(fileURLToPath(import.meta.url), '../../..');
-const SCRIPT = path.join(ROOT, 'sprints/07161500-gate3-sha-truth/tests/sha-account.test.sh');
+const SCRIPT = path.join(ROOT, 'tests/regression/gate3-sha-truth/sha-account.test.sh');
 
 it('sha-account shell tests pass (BEHAVIOR-01..07)', () => {
+  let exitCode = 0;
   try {
     execFileSync('bash', [SCRIPT], {
       cwd: ROOT,
@@ -29,6 +31,7 @@ it('sha-account shell tests pass (BEHAVIOR-01..07)', () => {
       timeout: 60_000,
     });
   } catch (err) {
-    throw new Error(`sha-account.test.sh exited with code ${err.status ?? 'unknown'}`);
+    exitCode = err.status ?? 1;
   }
+  expect(exitCode).toBe(0);
 }, 90_000);

@@ -238,7 +238,7 @@ jobs:
           fetch-depth: 0
       - name: 运行 SHA 对账串链测试（BEHAVIOR-01..07）
         run: |
-          bash sprints/07161500-gate3-sha-truth/tests/sha-account.test.sh
+          bash tests/regression/gate3-sha-truth/sha-account.test.sh
         env:
           BRAIN_URL: ""  # 无真实 Brain，降级源码层验证
 
