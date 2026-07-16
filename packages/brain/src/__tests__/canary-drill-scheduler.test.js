@@ -79,13 +79,13 @@ describe('FT-3: 调度器路径容错 — ENOENT→有日志 / 环境变量优�
     }
 
     // 修复前：只有 console.error 通用信息，无三态日志前缀
-    // 修复后：必须打印 [canary-drill] failed reason=ENOENT
-    const failedLog = logCalls.find(l => l.includes('[canary-drill] failed'));
+    // 修复后：必须打印 [canary-drill-scheduler] failed
+    const failedLog = logCalls.find(l => l.includes('[canary-drill-scheduler] failed'));
     expect(failedLog).toBeDefined();
-    expect(failedLog).toMatch(/\[canary-drill\] failed/);
+    expect(failedLog).toMatch(/\[canary-drill-scheduler\] failed/);
 
-    // 修复后 return 值含 failed: true
-    expect(result).toHaveProperty('triggered', true);
+    // 修复后 return 值含 failed: true，triggered: false（exec 抛异常未成功执行）
+    expect(result).toHaveProperty('triggered', false);
     // 修复后应有 failed 字段（修复前无此字段）
     expect(result).toHaveProperty('failed', true);
   });
@@ -134,7 +134,8 @@ describe('FT-3: 调度器路径容错 — ENOENT→有日志 / 环境变量优�
     const poolStub = { query: async () => ({ rows: [] }) };
 
     try {
-      await maybeScheduleCanaryDrill({ now: freshNow, execFn: captureExecFn, pool: poolStub });
+      // existsFn: () => true 模拟 /app/scripts/canary-death-drill.mjs 存在，让 exec 被调用
+      await maybeScheduleCanaryDrill({ now: freshNow, execFn: captureExecFn, pool: poolStub, existsFn: () => true });
     } finally {
       if (originalEnv !== undefined) {
         process.env.CANARY_DRILL_SCRIPT = originalEnv;

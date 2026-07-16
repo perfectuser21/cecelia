@@ -30,7 +30,7 @@ let lastDrillDate = null;
  * }} opts
  * @returns {Promise<{triggered: boolean, skipped?: boolean, reason?: string}>}
  */
-export async function maybeScheduleCanaryDrill({ now = new Date(), execFn = null, pool = null } = {}) {
+export async function maybeScheduleCanaryDrill({ now = new Date(), execFn = null, pool = null, existsFn = null } = {}) {
   const utcHour = now.getUTCHours();
   const utcMin  = now.getUTCMinutes();
   const todayUTC = now.toISOString().slice(0, 10); // YYYY-MM-DD
@@ -83,7 +83,8 @@ export async function maybeScheduleCanaryDrill({ now = new Date(), execFn = null
   });
 
   // 使用内置默认路径时做 existsSync 校验；CANARY_DRILL_SCRIPT 环境变量由调用方保证路径可达
-  if (!process.env.CANARY_DRILL_SCRIPT && !existsSync(drillScript)) {
+  const checkExists = existsFn || existsSync;
+  if (!process.env.CANARY_DRILL_SCRIPT && !checkExists(drillScript)) {
     console.error(`[canary-drill-scheduler] failed: script not found ${drillScript}`);
     return { triggered: false, failed: true };
   }

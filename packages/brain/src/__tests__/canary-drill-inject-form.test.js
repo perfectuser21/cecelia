@@ -1,5 +1,5 @@
 /**
- * FT-1: 注入形态验证
+ * FT-1: canary-drill-inject-form — 注入形态验证
  * Red 阶段 — 验证 queued 注入形态的 watchdog 过滤 bug，以及修复后 in_progress 形态能命中处置流程
  *
  * FT-1A: queued + 无 initiative_runs 行 → watchdog resumeStalledRelayRuns 不调用 spawnFn（复现旧行为）
