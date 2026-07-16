@@ -1,0 +1,16 @@
+{
+  "round": 1,
+  "verdict": "REVISION",
+  "judgments_written": 6,
+  "rubric_scores": {
+    "correctness": {"score": 9, "rationale": "FR-04 /deploy handler changed_paths 未独立 BEHAVIOR"},
+    "completeness": {"score": 8, "rationale": "INV-08 和 FR-07 CI 挂载点未列出"},
+    "testability": {"score": 7, "rationale": "BEHAVIOR-02 伪测试（恒等式）；BEHAVIOR-04 依赖未定义 flag"},
+    "clarity": {"score": 9, "rationale": "HEALTH_JSON_OVERRIDE 未标注为待实现接口"},
+    "scope_control": {"score": 10, "rationale": "G2/G3 明确排除"},
+    "iron_law_coverage": {"score": 8, "rationale": "INV-08 无 DoD 独立断言"},
+    "risk": {"score": 6, "rationale": "BEHAVIOR-02 伪测试；BEHAVIOR-04 永久 xfail 风险"}
+  },
+  "blocking_items": ["F-01: BEHAVIOR-02 伪测试", "F-02: BEHAVIOR-04 --sha-check-only 接口未定义"],
+  "non_blocking": ["F-03: FR-04 缺独立 BEHAVIOR", "F-04: INV-08 无 Checklist 项", "F-05: FR-07 CI 挂载点缺"]
+}
