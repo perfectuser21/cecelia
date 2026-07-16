@@ -9,7 +9,7 @@
 
 ## [BEHAVIOR] 条目
 
-### B-01：light-evaluator.md 步骤文件存在
+### [BEHAVIOR] B-01：light-evaluator.md 步骤文件存在
 
 步骤文件必须在指定路径存在，且包含豁免规则、记录格式、INV 约束说明。
 
@@ -17,7 +17,7 @@ Test: manual:bash -c "test -f /workspace/packages/engine/skills/dev/steps/light-
 
 ---
 
-### B-02：SKILL.md 引用了新步骤文件
+### [BEHAVIOR] B-02：SKILL.md 引用了新步骤文件
 
 主 SKILL.md 在 push 前步骤中必须包含对 `light-evaluator` 的引用（grep 可找到），确保步骤被纳入执行流程。
 
@@ -25,7 +25,7 @@ Test: manual:bash -c "grep -q 'light-evaluator' /workspace/packages/engine/skill
 
 ---
 
-### B-03：engine package.json 版本为 19.5.0
+### [BEHAVIOR] B-03：engine package.json 版本为 19.5.0
 
 版本 bump 5 文件同步规则（INV-06）的核心断言，package.json 是权威来源。
 
@@ -33,7 +33,7 @@ Test: manual:bash -c "node -e \"const p=require('/workspace/packages/engine/pack
 
 ---
 
-### B-04：CHANGELOG.md 顶部含 [19.5.0] 条目
+### [BEHAVIOR] B-04：CHANGELOG.md 顶部含 [19.5.0] 条目
 
 版本 bump 必须同步写 CHANGELOG，确保变更可追溯。
 
@@ -41,7 +41,7 @@ Test: manual:bash -c "grep -q '\\[19.5.0\\]' /workspace/packages/engine/CHANGELO
 
 ---
 
-### B-05：feature-registry.yml 含 light-evaluator 条目
+### [BEHAVIOR] B-05：feature-registry.yml 含 light-evaluator 条目
 
 feature 注册是 engine 侧新能力的 SSOT，必须写入 registry。
 
@@ -49,7 +49,7 @@ Test: manual:bash -c "grep -q 'light-evaluator' /workspace/packages/engine/featu
 
 ---
 
-### B-06：轻量 evaluator 对无 [BEHAVIOR] DoD 豁免（写 skipped 记录）
+### [BEHAVIOR] B-06：轻量 evaluator 对无 [BEHAVIOR] DoD 豁免（写 skipped 记录）
 
 INV-01 要求纯文档/配置改动必须豁免并留痕，不得阻断 push。
 
@@ -57,7 +57,7 @@ Test: manual:bash -c "cd /workspace && node packages/engine/scripts/devgate/ligh
 
 ---
 
-### B-07：轻量 evaluator 脚本存在且可执行
+### [BEHAVIOR] B-07：轻量 evaluator 脚本存在且可执行
 
 evaluator 主脚本（.cjs 或等效）必须在 devgate 目录下存在，node 可调用。
 
@@ -65,7 +65,7 @@ Test: manual:bash -c "test -f /workspace/packages/engine/scripts/devgate/light-e
 
 ---
 
-### B-08：Red 测试文件存在（TDD 合同 commit 1）
+### [BEHAVIOR] B-08：Red 测试文件存在（TDD 合同 commit 1）
 
 先写测试（Red 状态），确保 TDD 顺序：测试先于实现。
 
