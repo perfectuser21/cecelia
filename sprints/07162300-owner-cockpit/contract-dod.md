@@ -59,6 +59,11 @@ manual:bash: test -f owner-cockpit.png && wc -c owner-cockpit.png | awk '{if($1>
 manual:bash: npx playwright test sprints/07162300-owner-cockpit/tests/owner-cockpit.e2e.ts --reporter=line 2>&1; echo "Exit: $?"
 ```
 
+### FR-08 HK 公网可达性检查
+```
+manual:bash: curl -sf https://dashboard.zenithjoy.com/ && echo "PASS: HK URL reachable" || echo "FAIL: HK URL not reachable"
+```
+
 ### API 健康检查（前置条件）
 ```
 manual:bash: curl -sf "http://localhost:5221/api/brain/harness/stats" | python3 -c "import json,sys; d=json.load(sys.stdin); print('PASS: completion_rate='+str(d.get('completion_rate','MISSING'))+' total_pipelines='+str(d.get('total_pipelines','MISSING')))" 2>&1

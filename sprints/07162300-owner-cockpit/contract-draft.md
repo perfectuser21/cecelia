@@ -2,7 +2,7 @@
 
 **Task ID**: 80a5be84-059a-4d86-a55c-a1e38f84e043
 **Sprint Dir**: sprints/07162300-owner-cockpit
-**合同版本**: v1（第 1 轮，无上轮 reviewer feedback）
+**合同版本**: v2（第 2 轮，修复 Reviewer R1 REVISION 反馈）
 **日期**: 2026-07-16
 
 ---
@@ -31,6 +31,9 @@
 
 - 任意 API 失败时，对应卡片展示 `--`，不崩溃整页
 - 禁止硬编码 mock 数值；禁止使用 `data-testid="fake-*"` 占位符
+- **边界规则**：
+  - `guards` 数组为空时，`canary-green-days` 显示 `0`
+  - `merge-to-deploy` 时差为负值（数据异常）或无 dev_records 时，显示 `--`
 
 ### FR-03 作战板
 - 调用 `GET /api/brain/tasks?status=in_progress`、`?status=queued`、`?status=blocked` 获取任务列表

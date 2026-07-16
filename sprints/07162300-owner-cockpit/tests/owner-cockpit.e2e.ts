@@ -16,6 +16,12 @@
 
 import { test, expect, Page } from '@playwright/test';
 import * as path from 'path';
+import { fileURLToPath } from 'url';
+
+// ESM 兼容：__dirname 在 ESNext 模块中不可用，使用 import.meta.url 替代
+// 若运行时为 CommonJS（ts-jest/playwright commonjs 模式），__dirname 仍可用，此写法兼容两者
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 const BASE_URL = 'http://localhost:5174';
 const SCREENSHOT_PATH = path.resolve(process.cwd(), 'owner-cockpit.png');
@@ -77,6 +83,16 @@ test.describe('Owner Cockpit — 主理人指挥舱', () => {
 
   // ---- FR-03: 作战板 ----
   test('FR-03: 作战板至少 1 张战役卡片可见', async ({ page }) => {
+    // 先探查 Brain API，若无 in_progress 任务则显式 skip（依赖真实 DB 数据）
+    const resp = await page.request.get('http://localhost:5221/api/brain/tasks?status=in_progress');
+    const body = await resp.json();
+    const tasks = Array.isArray(body) ? body : (body?.tasks ?? []);
+    if (tasks.length === 0) {
+      // 依赖真实 DB 数据：DB 中无 in_progress 任务，跳过此测试
+      test.skip();
+      return;
+    }
+
     const battleCards = page.locator('[data-testid="battle-card"]');
     await expect(battleCards.first()).toBeVisible({ timeout: 10000 });
     const count = await battleCards.count();
@@ -85,22 +101,27 @@ test.describe('Owner Cockpit — 主理人指挥舱', () => {
 
   // ---- FR-03: 点击任务跳转 ----
   test('FR-03: 点击任务条目跳转 /harness-pipeline?task_id=', async ({ page }) => {
-    // 找第一个任务链接（在 battle-card 内部）
-    const taskLink = page.locator('[data-testid="battle-card"] a[data-testid^="task-link-"]').first();
-    const exists = await taskLink.count();
-    if (exists === 0) {
-      // 若无 task-link testid，退化为找 href 含 harness-pipeline 的链接
-      const fallbackLink = page.locator('[data-testid="battle-card"] a[href*="harness-pipeline"]').first();
-      await expect(fallbackLink).toBeVisible({ timeout: 10000 });
-      const href = await fallbackLink.getAttribute('href');
-      expect(href).toContain('harness-pipeline');
-      expect(href).toContain('task_id=');
-    } else {
-      await expect(taskLink).toBeVisible({ timeout: 10000 });
-      const href = await taskLink.getAttribute('href');
-      expect(href).toContain('harness-pipeline');
-      expect(href).toContain('task_id=');
+    // 先探查 Brain API，若无 in_progress 任务则显式 skip（依赖真实 DB 数据）
+    const resp = await page.request.get('http://localhost:5221/api/brain/tasks?status=in_progress');
+    const body = await resp.json();
+    const tasks = Array.isArray(body) ? body : (body?.tasks ?? []);
+    if (tasks.length === 0) {
+      // 依赖真实 DB 数据：DB 中无 in_progress 任务，跳过此测试
+      test.skip();
+      return;
     }
+
+    // 找第一个任务链接（在 battle-card 内部），用 click + URL 断言验证跳转
+    const taskLink = page.locator('[data-testid="battle-card"] a[data-testid^="task-link-"]').first();
+    const fallbackLink = page.locator('[data-testid="battle-card"] a[href*="harness-pipeline"]').first();
+
+    const primaryExists = await taskLink.count();
+    const linkToClick = primaryExists > 0 ? taskLink : fallbackLink;
+    await expect(linkToClick).toBeVisible({ timeout: 10000 });
+
+    // 使用 click + URL 断言（而非纯 href 检查）
+    await linkToClick.click();
+    await expect(page).toHaveURL(/harness-pipeline.*task_id=/, { timeout: 10000 });
   });
 
   // ---- FR-07: 移动端无水平滚动 ----
@@ -132,21 +153,28 @@ test.describe('Owner Cockpit — 主理人指挥舱', () => {
 
   // ---- FR-04: 晨报 Feed ----
   test('FR-04: 晨报 Feed 展示且可展开', async ({ page }) => {
+    // 先探查 Brain API，若无日报数据则显式 skip
+    // 豁免原因：晨报 Feed 依赖 Brain DB 中存在 design-docs(type=diary) 记录；
+    // 干净环境（CI / 空 DB）无日报时无法验证，需 seed 数据后方可启用。
+    const resp = await page.request.get('http://localhost:5221/api/brain/design-docs?type=diary&limit=7');
+    const body = await resp.json();
+    const docs = Array.isArray(body) ? body : (body?.docs ?? body?.data ?? []);
+    if (docs.length === 0) {
+      // 豁免：Brain DB 无日报记录，依赖真实 DB 数据，跳过此测试
+      test.skip();
+      return;
+    }
+
     // 找第一条日报条目（默认折叠）
     const diaryItem = page.locator('[data-testid^="diary-item-"]').first();
-    // 若 Brain 有日报数据则验证；否则 skip（容忍空状态）
-    const count = await diaryItem.count();
-    if (count > 0) {
-      await expect(diaryItem).toBeVisible({ timeout: 10000 });
-      // 点击展开
-      await diaryItem.click();
-      // 展开后应有正文内容（Markdown 渲染区）
-      const content = page.locator('[data-testid^="diary-item-"] .diary-content, [data-testid^="diary-item-"] [data-testid$="-content"]').first();
-      // 容忍：若无 data-testid 内容区，至少验证 item 展开后 innerText 变长
-      // 这里用宽松断言：展开后 diaryItem 的 innerText 非空
-      const text = await diaryItem.innerText();
-      expect(text.trim().length).toBeGreaterThan(0);
-    }
+    await expect(diaryItem).toBeVisible({ timeout: 10000 });
+
+    // 点击标题展开
+    await diaryItem.click();
+
+    // 用独立 content 元素可见性验证展开行为（而非 innerText 变化）
+    const contentEl = page.locator('[data-testid$="-content"]').first();
+    await expect(contentEl).toBeVisible({ timeout: 5000 });
   });
 
   // ---- FR-05: 演习状态条 ----
