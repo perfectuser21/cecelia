@@ -39,25 +39,22 @@ describe('FT-3: 调度器路径容错', () => {
     process.env = origEnv;
   });
 
-  it('A: 注入不存在脚本路径 → 现版本返回 {triggered:true, error:ENOENT}（Red: 这是 bug）', async () => {
+  it('A: 不存在脚本路径 → 修复后返回 {triggered:false, failed:true}（existsSync 拦截）', async () => {
     // 使用不同的日期避免幂等
     const now = new Date('2026-07-11T19:30:00.000Z');
     const pool = makePoolStub();
 
-    // execFn 模拟脚本不存在（throw ENOENT）
+    // execFn 不应被调用（existsSync 在 exec 前拦截，默认路径 /app/... 不存在）
     const execFn = vi.fn(async () => {
-      const err = new Error('spawn /nonexistent ENOENT');
-      err.code = 'ENOENT';
-      throw err;
+      throw new Error('should not be reached after fix');
     });
 
     const result = await maybeScheduleCanaryDrill({ now, execFn, pool });
 
-    // Red 阶段验证：现版本 catch 块返回 {triggered:true, error:...}，这是 bug
-    // 期望值：triggered 不应该为 true（修复后应为 false）
-    // 此 expect 验证旧 bug：现版本会 triggered=true
-    expect(result.triggered).toBe(true); // Red: 旧 bug，修复后此断言应改为 false
-    expect(result.error).toBeDefined();   // catch 块有 error 字段
+    // 修复后：existsSync 校验失败 → {triggered:false, failed:true}
+    expect(result.triggered).toBe(false);
+    expect(result.failed).toBe(true);
+    expect(result.error).toBeUndefined();
   });
 
   it('B: existsSync 校验后，不存在路径 → 返回 {triggered:false, failed:true}，console.error 含 script not found（Green after fix）', async () => {
