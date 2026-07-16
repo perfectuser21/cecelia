@@ -102,3 +102,14 @@ manual:bash: bash sprints/07161700-deploy-daily-drill/tests/deploy-daily-drill.t
 - [ ] INV-06：无 merge → exit 2 + no_merge_skip
 - [ ] INV-07：不建 DB 表，仅用 GH API
 - [ ] INV-08：违约 → exit 1 + Bark + incidents 落档
+
+### INV 合规声明
+
+- [x] INV-01: 对账脚本纯只读，不引入任何路径过滤判据，仅查 GH workflow run SHA 匹配（非路径判变）
+- [x] INV-02: 本 sprint 不修改蓝绿/pre-swap/post-deploy 机制（bluegreen.sh 未改动，仅查 deploy 结果）
+- [x] INV-03: 本 sprint 不调用 brain-deploy.sh，仅读取 deploy 时间线记录；补部署责任归 G2 drift-sentinel
+- [x] INV-04: 测试 fixture 通过环境变量注入 mock 数据，不 mock 真实 gh/docker 调用（脚本走真实 GH API）
+- [x] INV-05: GH API 失败 → exit 2 skip，fail open（B3 覆盖）
+- [x] INV-06: 无 merge 的日子 → no_merge_skip（B4 覆盖）
+- [x] INV-07: deploy_records 来源仅 GitHub Actions workflow runs API，不建 DB 表
+- [x] INV-08: 违约 → exit 1 + Bark + incidents 落档（B2/B5 覆盖）
