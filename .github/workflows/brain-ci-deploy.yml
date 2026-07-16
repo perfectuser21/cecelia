@@ -85,34 +85,61 @@ jobs:
         with:
           fetch-depth: 2
 
-      - name: 计算变更路径
-        id: paths
+      - name: SHA 对账（PROD_SHA vs HEAD_SHA）
+        # FR-03: 替换旧 gate3-changed-paths.sh 判变逻辑，改用 SHA 对账决定是否部署。
+        # squash merge 后 changed_paths 为空 → 旧路径假跳过 → 此修复从根本解决（C-01）。
+        # fail open 规则（C-06）：curl /health 失败或 git_sha=unknown → 视为"需部署"。
+        id: sha_check
         run: |
-          CHANGED=$(bash scripts/ci/gate3-changed-paths.sh "${{ github.event.before }}" "${{ github.event.after }}")
-          echo "changed_paths=$CHANGED" >> $GITHUB_OUTPUT
-          echo "Brain 变更路径: $CHANGED"
+          set +e
+          HEAD_SHA="${{ github.sha }}"
+          echo "HEAD_SHA=${HEAD_SHA}"
+
+          # 取生产容器当前 SHA（curl 失败或字段 unknown → fail open）
+          HEALTH_JSON=$(curl -sf --connect-timeout 10 --max-time 15 \
+            "${BRAIN_URL}/api/brain/health" 2>/dev/null || echo "")
+          if [ -z "$HEALTH_JSON" ]; then
+            echo "PROD_SHA=<unreachable>"
+            echo "⚠️  /health 不可达 → fail open，视为需部署（C-06 fail-open）"
+            echo "deploy_needed=true" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
+          PROD_SHA=$(echo "$HEALTH_JSON" | jq -r '.git_sha // "unknown"' 2>/dev/null || echo "unknown")
+          echo "PROD_SHA=${PROD_SHA}"
+
+          if [ "$PROD_SHA" = "unknown" ] || [ -z "$PROD_SHA" ] || [ "$PROD_SHA" = "null" ]; then
+            echo "⚠️  PROD_SHA=unknown → fail open，视为需部署（C-06 fail-open）"
+            echo "deploy_needed=true" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
+          if [ "$PROD_SHA" == "$HEAD_SHA" ]; then
+            echo "SHA 相同，跳过部署（C-02 幂等）"
+            echo "deploy_needed=false" >> $GITHUB_OUTPUT
+          else
+            echo "SHA 不等（PROD=$PROD_SHA HEAD=$HEAD_SHA）→ 触发部署（C-01）"
+            echo "deploy_needed=true" >> $GITHUB_OUTPUT
+          fi
 
       - name: 触发 Brain HTTP Deploy
         id: trigger
+        if: steps.sha_check.outputs.deploy_needed == 'true'
         run: |
           if [ -z "$DEPLOY_TOKEN" ]; then
             echo "::error::DEPLOY_TOKEN secret 未配置"
             exit 1
           fi
 
-          CHANGED_PATHS="${{ steps.paths.outputs.changed_paths }}"
-          JSON_PATHS=$(echo "$CHANGED_PATHS" | tr ' ' '\n' | grep -v '^$' | jq -R . | jq -sc .)
-
           echo "触发 Brain HTTP 部署..."
           echo "  URL: ${BRAIN_URL}/api/brain/deploy"
-          echo "  变更路径: $CHANGED_PATHS"
           echo ""
 
           HTTP_CODE=$(curl -s -o /tmp/deploy_resp.txt -w "%{http_code}" \
             -X POST "${BRAIN_URL}/api/brain/deploy" \
             -H "Authorization: Bearer ${DEPLOY_TOKEN}" \
             -H "Content-Type: application/json" \
-            -d "{\"changed_paths\": ${JSON_PATHS}}" \
+            -d '{}' \
             --connect-timeout 30 --max-time 60 2>/dev/null || echo "000")
 
           echo "HTTP 状态: $HTTP_CODE"
@@ -135,7 +162,7 @@ jobs:
           fi
 
       - name: 等待 Deploy 完成
-        if: steps.trigger.outputs.skipped != 'true'
+        if: steps.sha_check.outputs.deploy_needed == 'true' && steps.trigger.outputs.skipped != 'true'
         run: |
           echo "轮询 /api/brain/deploy/status（最多 300s）..."
           MAX_WAIT=300
@@ -170,7 +197,7 @@ jobs:
           echo "::warning::Deploy status 轮询超时（${MAX_WAIT}s）— webhook 已接受，结果未知；assert 步将继续等待最多 600s"
 
       - name: Smoke — Brain 部署效果确认（版本 + 真重启）
-        if: steps.trigger.outputs.skipped != 'true'
+        if: steps.sha_check.outputs.deploy_needed == 'true' && steps.trigger.outputs.skipped != 'true'
         # 反"假成功"（2026-07-06 实证）：deploy/status=success 或 idle-视为成功 都可能谎报
         # （容器 no-op 未重启，uptime 未变）。此处用 assert-deploy-effect.sh 做权威效果确认：
         #   /health.version == 本次应上线版本  且  uptime 新鲜（容器真重启）
@@ -198,6 +225,22 @@ jobs:
             echo "::error::部署效果确认失败（$VERDICT）—— Gate3 不谎报 success，请检查容器是否真重启/版本是否上线"
             exit 1
           fi
+
+  # ─── L1 SHA 对账串链测试（PR + push 都跑，INV-03）────────────────────────
+  sha-account-l1:
+    name: L1 SHA Account Tests (Gate3)
+    if: ${{ github.event_name == 'pull_request' || github.event_name == 'push' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: 运行 SHA 对账串链测试（BEHAVIOR-01..07）
+        run: |
+          bash tests/regression/gate3-sha-truth/sha-account.test.sh
+        env:
+          BRAIN_URL: ""  # 无真实 Brain，降级源码层验证
 
   # ─── Gate 2: 部署失败时创建 Brain P0 任务 ────────────────────────────────
   on_deploy_failure:

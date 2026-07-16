@@ -193,6 +193,8 @@ router.get('/health', async (req, res) => {
         planner: { status: 'v2' }
       },
       docker_runtime,
+      // FR-02: Gate3 SHA 对账——构建期烙入，运行时不可覆写
+      git_sha: process.env.GIT_SHA || 'unknown',
       timestamp: new Date().toISOString()
     });
   } catch (err) {

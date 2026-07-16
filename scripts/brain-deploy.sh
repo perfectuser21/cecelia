@@ -151,11 +151,60 @@ drain_before_swap() {
 
 # ── 参数解析 ─────────────────────────────────────────────────────────────────
 DRY_RUN=false
+SHA_CHECK_ONLY=false
 for arg in "$@"; do
     case $arg in
         --dry-run) DRY_RUN=true ;;
+        --sha-check-only) SHA_CHECK_ONLY=true ;;
     esac
 done
+
+# ── FR-05: S6 SHA 回读断言（--sha-check-only 模式）────────────────────────────
+# 用法：HEALTH_JSON_OVERRIDE=<fixture_file> EXPECTED_SHA=<sha> bash brain-deploy.sh --sha-check-only
+# 用途：测试注入（通过 HEALTH_JSON_OVERRIDE 注入 fixture 替代真实 curl），不执行实际部署
+if [[ "$SHA_CHECK_ONLY" == true ]]; then
+    BRAIN_URL_CHECK="${BRAIN_URL:-http://localhost:5221}"
+    local_expected_sha="${EXPECTED_SHA:-}"
+
+    if [[ -z "$local_expected_sha" ]]; then
+        echo "[SHA-CHECK] EXPECTED_SHA 未设置，从 git rev-parse HEAD 获取..."
+        local_expected_sha=$(git -C "$ROOT_DIR" rev-parse HEAD 2>/dev/null || echo "")
+    fi
+
+    echo "[SHA-CHECK] EXPECTED_SHA=${local_expected_sha}"
+
+    # 取健康端点 SHA（支持 HEALTH_JSON_OVERRIDE 注入 fixture 文件）
+    local_health_json=""
+    if [[ -n "${HEALTH_JSON_OVERRIDE:-}" && -f "${HEALTH_JSON_OVERRIDE}" ]]; then
+        echo "[SHA-CHECK] 使用 fixture: ${HEALTH_JSON_OVERRIDE}"
+        local_health_json=$(cat "${HEALTH_JSON_OVERRIDE}")
+    else
+        echo "[SHA-CHECK] curl ${BRAIN_URL_CHECK}/api/brain/health ..."
+        local_health_json=$(curl -sf --connect-timeout 10 --max-time 15 \
+            "${BRAIN_URL_CHECK}/api/brain/health" 2>/dev/null || echo "")
+    fi
+
+    if [[ -z "$local_health_json" ]]; then
+        echo "[SHA-CHECK] ❌ /health 不可达，SHA 无法验证"
+        exit 1
+    fi
+
+    local_actual_sha=$(echo "$local_health_json" | node -e "
+        const d=JSON.parse(require('fs').readFileSync(0,'utf8'));
+        process.stdout.write(d.git_sha||'unknown');
+    " 2>/dev/null || echo "unknown")
+
+    echo "[SHA-CHECK] ACTUAL_SHA=${local_actual_sha}"
+
+    if [[ "$local_actual_sha" != "$local_expected_sha" ]]; then
+        echo "[SHA-CHECK] ❌ SHA 不匹配：EXPECTED=${local_expected_sha} ACTUAL=${local_actual_sha}"
+        echo "[SHA-CHECK] ROLLBACK — 触发既有回滚流程，部署视为失败"
+        exit 1
+    fi
+
+    echo "[SHA-CHECK] ✅ SHA 一致：${local_actual_sha}"
+    exit 0
+fi
 
 # ── 部署模式检测：Docker vs launchd ─────────────────────────────────────────
 DEPLOY_MODE="docker"
@@ -441,6 +490,43 @@ while [ $TRIES -lt $MAX_TRIES ]; do
     DEPLOY_SUCCESS=true
     echo ""
     echo "=== Deploy SUCCESS: cecelia-brain v${VERSION} is healthy (${DEPLOY_MODE}) ==="
+
+    # S6: FR-05 SHA 回读断言（Gate3 C-05）
+    # 部署完成后读 /health.git_sha 与 EXPECTED_SHA 对比，不等则 ROLLBACK exit 1
+    echo ""
+    echo "[S6] SHA 回读断言（Gate3 C-05）..."
+    if [[ -z "${EXPECTED_SHA:-}" ]]; then
+        EXPECTED_SHA=$(git -C "$ROOT_DIR" rev-parse HEAD 2>/dev/null || echo "")
+    fi
+    if [[ -n "$EXPECTED_SHA" ]]; then
+        S6_HEALTH_JSON=""
+        if [[ -n "${HEALTH_JSON_OVERRIDE:-}" && -f "${HEALTH_JSON_OVERRIDE}" ]]; then
+            S6_HEALTH_JSON=$(cat "${HEALTH_JSON_OVERRIDE}")
+        else
+            S6_HEALTH_JSON=$(curl -sf --connect-timeout 10 --max-time 15 \
+                "http://localhost:5221/api/brain/health" 2>/dev/null || echo "")
+        fi
+        if [[ -n "$S6_HEALTH_JSON" ]]; then
+            ACTUAL_SHA=$(echo "$S6_HEALTH_JSON" | node -e "
+                const d=JSON.parse(require('fs').readFileSync(0,'utf8'));
+                process.stdout.write(d.git_sha||'unknown');
+            " 2>/dev/null || echo "unknown")
+            echo "  EXPECTED_SHA=${EXPECTED_SHA}"
+            echo "  ACTUAL_SHA  =${ACTUAL_SHA}"
+            if [[ "$ACTUAL_SHA" != "$EXPECTED_SHA" ]]; then
+                echo "[S6] ❌ SHA 不匹配：EXPECTED=${EXPECTED_SHA} ACTUAL=${ACTUAL_SHA}"
+                echo "[S6] ROLLBACK — 镜像 SHA 与 git HEAD 不一致，部署失败"
+                # 走既有回滚：exit 1（trap 写 failed 状态）
+                exit 1
+            else
+                echo "[S6] ✅ SHA 一致：${ACTUAL_SHA}"
+            fi
+        else
+            echo "[S6] ⚠️  /health 无响应，跳过 SHA 校验（non-fatal：服务已 healthy）"
+        fi
+    else
+        echo "[S6] ⚠️  无法获取 EXPECTED_SHA（非 git repo 环境），跳过 SHA 校验"
+    fi
 
     # 8. Update cecelia-run on host (self-update: keeps executor in sync with repo)
     echo ""

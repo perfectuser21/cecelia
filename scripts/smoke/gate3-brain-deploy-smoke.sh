@@ -130,9 +130,56 @@ else
 fi
 echo ""
 
+# ════════════════════════════════════════════════════════════════════════════
+# E: FR-07 SHA 回读断言场景（Gate3 C-05）
+# brain-deploy.sh --sha-check-only：HEALTH_JSON_OVERRIDE fixture 注入
+# 场景 E1：SHA 不匹配 → exit 1（ROLLBACK）
+# 场景 E2：SHA 一致  → exit 0
+echo "[E] SHA 回读断言（--sha-check-only）"
+BRAIN_DEPLOY="$ROOT_DIR/scripts/brain-deploy.sh"
+
+if [[ ! -f "$BRAIN_DEPLOY" ]]; then
+  fail "brain-deploy.sh 不存在：$BRAIN_DEPLOY"
+else
+  # E1: SHA 不匹配 → 应 exit 1（ROLLBACK）
+  EXPECTED_SHA="abc1234abc1234abc1234abc1234abc1234abc12"
+  WRONG_SHA="deadbeef00000000deadbeef00000000deadbeef"
+  FIXTURE_E1="$TMP/health-wrong-sha.json"
+  printf '{"ok":true,"version":"1.0.0","git_sha":"%s","uptime_seconds":5}' \
+    "$WRONG_SHA" > "$FIXTURE_E1"
+
+  E1_EXIT=0
+  E1_OUT=$(HEALTH_JSON_OVERRIDE="$FIXTURE_E1" EXPECTED_SHA="$EXPECTED_SHA" \
+    bash "$BRAIN_DEPLOY" --dry-run --sha-check-only 2>&1) || E1_EXIT=$?
+
+  if [[ $E1_EXIT -ne 0 ]]; then
+    pass "[E1] SHA 不匹配 → exit ${E1_EXIT}（ROLLBACK 触发）"
+  else
+    fail "[E1] SHA 不匹配时 exit 0（应 exit 1，ROLLBACK 未触发）"
+    echo "$E1_OUT" | sed 's/^/    /' | head -10
+  fi
+
+  # E2: SHA 一致 → 应 exit 0
+  FIXTURE_E2="$TMP/health-match-sha.json"
+  printf '{"ok":true,"version":"1.0.0","git_sha":"%s","uptime_seconds":5}' \
+    "$EXPECTED_SHA" > "$FIXTURE_E2"
+
+  E2_EXIT=0
+  E2_OUT=$(HEALTH_JSON_OVERRIDE="$FIXTURE_E2" EXPECTED_SHA="$EXPECTED_SHA" \
+    bash "$BRAIN_DEPLOY" --dry-run --sha-check-only 2>&1) || E2_EXIT=$?
+
+  if [[ $E2_EXIT -eq 0 ]]; then
+    pass "[E2] SHA 一致 → exit 0（部署视为正确）"
+  else
+    fail "[E2] SHA 一致时 exit ${E2_EXIT}（应 exit 0）"
+    echo "$E2_OUT" | sed 's/^/    /' | head -10
+  fi
+fi
+echo ""
+
 echo "========================================"
 if [[ "$FAILED" -eq 0 ]]; then
-  echo -e "${GREEN}GATE3_BRAIN_DEPLOY_SMOKE_OK${NC} — 假跳过已根治，四段全绿"
+  echo -e "${GREEN}GATE3_BRAIN_DEPLOY_SMOKE_OK${NC} — 假跳过已根治，五段全绿（含 E SHA 回读）"
   exit 0
 else
   echo -e "${RED}GATE3_BRAIN_DEPLOY_SMOKE_FAIL${NC} — ${FAILED} 项红"
