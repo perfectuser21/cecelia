@@ -30,16 +30,16 @@
 
 ## DoD 检查清单
 
-- [ ] `THEATER_REAL_MACHINE_KEYWORDS` 常量已添加到 `harness-judge.js`，默认含 8 个关键词
-- [ ] `THEATER_KEYWORDS_EXTRA` env 扩展支持（逗号分隔）已实现
-- [ ] `runMechanicalGate` 新增戏院错配闸（FR-02），读取 sprint-prd GP 段 + contract BEHAVIOR 文本
-- [ ] `runMechanicalGate` 新增元验证补丁（FR-03），检测 smoke/验证脚本/演习类标题
-- [ ] 两闸均不调 AI，耗时 < 5ms
-- [ ] 关键词匹配大小写不敏感
-- [ ] `packages/brain/src/__tests__/harness-judge-theater.test.js` failing test 先提交（TDD）
-- [ ] 所有 [BEHAVIOR] 验收命令通过（`PASS` 输出）
-- [ ] brain-ci.yml 回归中 `harness-judge-theater.test.js` 会自动被扫描
-- [ ] `THEATER_REAL_MACHINE_KEYWORDS` 常量若作为新导出需登记 smoke-allowlist.txt
+- [x] `THEATER_REAL_MACHINE_KEYWORDS` 常量已添加到 `harness-judge.js`，默认含 8 个关键词
+- [x] `THEATER_KEYWORDS_EXTRA` env 扩展支持（逗号分隔）已实现
+- [x] `runMechanicalGate` 新增戏院错配闸（FR-02），读取 sprint-prd GP 段 + contract BEHAVIOR 文本
+- [x] `runMechanicalGate` 新增元验证补丁（FR-03），检测 smoke/验证脚本/演习类标题
+- [x] 两闸均不调 AI，耗时 < 5ms
+- [x] 关键词匹配大小写不敏感
+- [x] `packages/brain/src/__tests__/harness-judge-theater.test.js` failing test 先提交（TDD）
+- [x] 所有 [BEHAVIOR] 验收命令通过（`PASS` 输出）
+- [x] brain-ci.yml 回归中 `harness-judge-theater.test.js` 会自动被扫描
+- [x] `THEATER_REAL_MACHINE_KEYWORDS` 常量若作为新导出需登记 smoke-allowlist.txt
 
 ---
 
