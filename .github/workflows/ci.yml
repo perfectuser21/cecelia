@@ -1802,3 +1802,16 @@ jobs:
             fi
             exit 1
           fi
+
+  # ─── dispatch-worker 纯函数层单测（scripts/ 测试无 glob 自动收集，不接=假绿）──────
+  dispatch-worker-test:
+    name: dispatch-worker 单测
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: dispatch-worker 单测
+        run: node --test scripts/dispatch-worker.test.mjs
