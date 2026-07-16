@@ -38,7 +38,7 @@ const manifest: FeatureManifest = {
     CommandCenter: () => import('../business/pages/CommandCenter'),
     PanoramaV3: () => import('../business/pages/PanoramaV3'),
     TeamDashboardV1: () => import('../business/pages/TeamDashboardV1'),
-    OwnerCockpitPage: () => import('../../dashboard/src/pages/owner-cockpit/OwnerCockpitPage'),
+    OwnerCockpitPage: () => import('../../../dashboard/src/pages/owner-cockpit/OwnerCockpitPage'),
   },
 };
 
