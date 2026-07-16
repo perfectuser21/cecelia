@@ -70,6 +70,10 @@ Brain (port 5221)
 │   ├── src/lib/harness-finalize.js     收账权收归（PR MERGED+evaluator gate 外部真相核验）
 │   └── scripts/canary-death-drill.mjs  金丝雀故障注入演习（nightly 03:30 staging 真死真救）
 │       PRD: docs/prd/2026-07-15-self-healing-golden-path.prd.md（决策 5b0690ca golden path 形态）
+├── G2 部署漂移哨兵（2026-07-16 上线，PR #4006）
+│   └── src/cron/drift-sentinel.js      每30min tick-runner调度，SHA对账（main vs /health git_sha），
+│       漂移>30min→brain-deploy.sh，连续2次→Bark P1，连续3次网络失败→Bark P2（INV-01~INV-10）
+│       PRD: docs/prd/2026-07-16-deploy-golden-path.prd.md §S0（L2实弹FR-16 post-merge）
 └── 辅助
     ├── src/watchdog.js             进程监护（Darwin 适配）
     ├── src/alertness/              警觉等级系统
