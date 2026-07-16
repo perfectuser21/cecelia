@@ -109,7 +109,8 @@ function makeRealRunWorker(logFile) {
     const { cmd, args, env, cwd } = buildCommand(account.vendor, account, brief, dir);
     const ws = createWriteStream(logFile, { flags: 'a' });
     ws.write(`\n===== worker ${account.vendor}:${account.name} @ ${new Date().toISOString()} =====\n`);
-    const child = spawn(cmd, args, { cwd, env: { ...process.env, ...env } });
+    // stdin 必须 ignore：codex exec 见 stdin 是 pipe 会停下等输入（冒烟实证挂死）
+    const child = spawn(cmd, args, { cwd, env: { ...process.env, ...env }, stdio: ['ignore', 'pipe', 'pipe'] });
     let output = '';
     for (const s of [child.stdout, child.stderr]) s.on('data', (c) => { output += c; ws.write(c); });
     child.on('close', (code) => { ws.end(); resolve({ output, exitCode: code ?? 1 }); });
