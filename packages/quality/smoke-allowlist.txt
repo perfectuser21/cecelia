@@ -115,3 +115,4 @@ canary-drill-smoke.sh
 gate3-brain-deploy-smoke.sh
 git-sha-health-smoke.sh
 judge-level-smoke.sh
+drift-sentinel-smoke.sh
