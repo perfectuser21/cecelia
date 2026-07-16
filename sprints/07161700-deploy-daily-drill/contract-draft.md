@@ -124,7 +124,7 @@ DRILL_MOCK_MERGES='[]' bash scripts/smoke/e2e/deploy-daily-drill.sh
 
 | 工作流 | Test File | BEHAVIOR 覆盖 | 预期红色证据 |
 |--------|-----------|--------------|------------|
-| G3-drill | `tests/regression/deploy-daily-drill/deploy-daily-drill.test.sh` | T1=B7(脚本存在), T2=B2(无deploy→exit1), T3=B4(无merge→no_merge_skip), T4=B3(GH API fail→exit2) | T1 FAIL when deploy-daily-drill.sh absent（初始 Red commit d5883f01b 验证） |
+| G3-drill | `../../tests/regression/deploy-daily-drill/deploy-daily-drill.test.js` | B7: deploy-daily-drill.sh 存在/B2: merge 后 15min 内无 deploy run → exit 1/B3: GH API 不可达 → exit 2 fail open/B4: 无 merge 的日子 → exit 2 + stdout 含 no_merge_skip | B7 FAIL when deploy-daily-drill.sh absent（初始 Red commit d5883f01b 验证） |
 
 ---
 
