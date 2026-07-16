@@ -69,7 +69,7 @@ Test: manual:bash -c "test -f /workspace/packages/engine/scripts/devgate/light-e
 
 先写测试（Red 状态），确保 TDD 顺序：测试先于实现。
 
-Test: manual:bash -c "test -f /workspace/sprints/07161830-dev-ab-light-evaluator/tests/light-evaluator.test.cjs && echo PASS || echo FAIL"
+Test: manual:bash -c "test -f /workspace/tests/regression/dev-ab-light-evaluator/light-evaluator.test.cjs && echo PASS || echo FAIL"
 
 ---
 
@@ -102,5 +102,5 @@ bash -c "grep -q '\[19.5.0\]' /workspace/packages/engine/CHANGELOG.md && echo PA
 bash -c "grep -q 'light-evaluator' /workspace/packages/engine/feature-registry.yml && echo PASS || echo FAIL"
 
 # B-08
-bash -c "test -f /workspace/sprints/07161830-dev-ab-light-evaluator/tests/light-evaluator.test.cjs && echo PASS || echo FAIL"
+bash -c "test -f /workspace/tests/regression/dev-ab-light-evaluator/light-evaluator.test.cjs && echo PASS || echo FAIL"
 ```

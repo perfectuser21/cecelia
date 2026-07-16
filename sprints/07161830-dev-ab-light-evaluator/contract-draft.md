@@ -97,3 +97,18 @@
 - INV-04：任一命令 exit_code ≠ 0 整步 FAIL，阻断 push（不允许继续）
 - INV-06：版本 bump 5 文件同步
 - 本 sprint 自身 DoD `[BEHAVIOR]` 条目按新规矩真跑，留 verify-record.json 证据（吃狗粮）
+
+---
+
+## Test Contract
+
+| BEHAVIOR | Test File | it() 描述（子串） |
+|----------|-----------|-----------------|
+| B-01 light-evaluator.md 存在 | tests/regression/dev-ab-light-evaluator/light-evaluator.test.cjs | B-01: light-evaluator.md 存在 |
+| B-02 SKILL.md 引用 | tests/regression/dev-ab-light-evaluator/light-evaluator.test.cjs | B-02: SKILL.md 引用 light-evaluator |
+| B-03 版本 19.5.0 | tests/regression/dev-ab-light-evaluator/light-evaluator.test.cjs | B-03: engine package.json 版本为 19.5.0 |
+| B-04 CHANGELOG 含 19.5.0 | tests/regression/dev-ab-light-evaluator/light-evaluator.test.cjs | B-04: CHANGELOG.md 含 [19.5.0] 条目 |
+| B-05 feature-registry 含 light-evaluator | tests/regression/dev-ab-light-evaluator/light-evaluator.test.cjs | B-05: feature-registry.yml 含 light-evaluator |
+| B-06 豁免写 skip 记录 | tests/regression/dev-ab-light-evaluator/light-evaluator.test.cjs | B-06b: 豁免路径输出 skipped 标记 |
+| B-07 脚本可 node 调用 | tests/regression/dev-ab-light-evaluator/light-evaluator.test.cjs | B-07: light-evaluator.cjs 存在 |
+| B-08 Red 测试文件存在 | tests/regression/dev-ab-light-evaluator/light-evaluator.test.cjs | B-08: 本 Red 测试文件存在 |
