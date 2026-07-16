@@ -7,14 +7,11 @@
 
 ## Test Contract
 
-| ID | 描述 | 类型 | 测试文件 |
+| Workstream | Test File | BEHAVIOR 覆盖 | 预期红证据 |
 |---|---|---|---|
-| CT-1 | queued 任务 → watchdog L275 过滤 → spawnFn 不调用（复现旧 bug） | unit | `packages/brain/src/__tests__/canary-drill-inject-form.test.js` |
-| CT-2 | in_progress + initiative_runs 行（orchestrator_version=v2, phase=running） → watchdog 调用 spawnFn | unit | `packages/brain/src/__tests__/canary-drill-inject-form.test.js` |
-| CT-3 | pollAssert 超时（timeoutMin=0）→ result.pass=false → archiveDrillResult content 含 verdict=FAIL → exit 1 | unit | `packages/brain/src/__tests__/canary-drill-assert-loop.test.js` |
-| CT-4 | 不存在脚本路径（ENOENT）→ 返回 {triggered:false, failed:true}，console.error 含 "script not found"（修复后行为） | unit | `packages/brain/src/__tests__/canary-drill-scheduler-path.test.js` |
-| CT-5 | CANARY_DRILL_SCRIPT env 存在 → execFn 使用该路径，不走 /app 默认路径 | unit | `packages/brain/src/__tests__/canary-drill-scheduler-path.test.js` |
-| CT-6 | 旧版本不存在路径返回 {triggered:true, error:...}（Red：复现旧 bug） | unit | `packages/brain/src/__tests__/canary-drill-scheduler-path.test.js` |
+| FT-1 | `../../tests/regression/canary-drill-repair/canary-drill-inject-form.test.js` | queued / in_progress | watchdog L275 过滤 bug |
+| FT-2 | `../../tests/regression/canary-drill-repair/canary-drill-assert-loop.test.js` | pollAssert | exit 0 静默 bug |
+| FT-3 | `../../tests/regression/canary-drill-repair/canary-drill-scheduler-path.test.js` | triggered:true / CANARY_DRILL_SCRIPT | 路径错误 bug |
 
 ---
 
