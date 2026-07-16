@@ -7,8 +7,6 @@
 
 ## Test Contract
 
-## 合同测试
-
 | ID | 描述 | 类型 | 测试文件 |
 |---|---|---|---|
 | CT-1 | queued 任务 → watchdog L275 过滤 → spawnFn 不调用（复现旧 bug） | unit | `packages/brain/src/__tests__/canary-drill-inject-form.test.js` |
