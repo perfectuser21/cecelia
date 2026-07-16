@@ -2,11 +2,11 @@
 
 - task_id: dfa89a0b-3cb9-4bdc-8d41-7b4ed80d997d
 - 日期: 2026-07-16
-- 合同轮次: 1
+- 合同轮次: 2（Round 2，reviewer feedback 修订版）
 
 ---
 
-## [BEHAVIOR] B1：SHA 一致时不触发部署
+## [BEHAVIOR] B1：SHA 一致时不触发部署（INV-09）
 
 **触发条件**：origin/main HEAD SHA 等于生产 /health git_sha
 
@@ -15,6 +15,7 @@
 - deploy 函数调用次数 = 0
 - driftFirstSeenAt 清除（若之前有设置）
 - 日志打印 `[drift_check] sha_main=<X> sha_prod=<X> verdict=ok`
+- 判定依据为 SHA 对账，不引入路径判据（INV-09：不得重新引入路径判据）
 
 **测试文件**：`sprints/07161600-deploy-drift-sentinel/tests/drift-sentinel.test.js`（FR-15-ok 用例）
 
@@ -25,11 +26,15 @@ grep -n "verdict.*ok\|verdict = 'ok'" packages/brain/src/cron/drift-sentinel.js
 
 # 验证日志格式
 docker logs cecelia-brain 2>&1 | grep "\[drift_check\]" | grep "verdict=ok" | tail -3
+
+# INV-01 验证：禁止引入路径判据（断言为 0）
+grep -rn "changed_paths\|file.*filter\|path.*filter" packages/brain/src/cron/drift-sentinel.js | wc -l
+# 预期输出: 0
 ```
 
 ---
 
-## [BEHAVIOR] B2：SHA 不等但未满 30min 时进入防抖等待
+## [BEHAVIOR] B2：SHA 不等但未满 30min 时进入防抖等待（INV-10）
 
 **触发条件**：origin/main HEAD SHA != 生产 SHA，且 driftFirstSeenAt 记录时间距现在 < 30min（模拟：29min59s）
 
@@ -38,6 +43,7 @@ docker logs cecelia-brain 2>&1 | grep "\[drift_check\]" | grep "verdict=ok" | ta
 - deploy 函数调用次数 = 0
 - driftFirstSeenAt 保留（不清除）
 - 日志打印 `[drift_check] sha_main=<X> sha_prod=<Y> verdict=drifting`
+- 防抖首见记时间戳以防止误触发（INV-10：补部署触发前须用 SHA 二次核验，防抖首见记时间戳）
 
 **测试文件**：`sprints/07161600-deploy-drift-sentinel/tests/drift-sentinel.test.js`（FR-15-debounce 用例）
 
@@ -58,7 +64,7 @@ console.log('expected 30min ms:', expected);
 
 ---
 
-## [BEHAVIOR] B3：SHA 不等且持续超 30min 时触发自动补部署
+## [BEHAVIOR] B3：SHA 不等且持续超 30min 时触发自动补部署（INV-10）
 
 **触发条件**：origin/main HEAD SHA != 生产 SHA，且 driftFirstSeenAt 记录时间距现在 >= 30min（模拟：30min01s）
 
@@ -68,6 +74,7 @@ console.log('expected 30min ms:', expected);
 - `redeployCount` 递增
 - 日志打印 `[drift_check] sha_main=<X> sha_prod=<Y> verdict=redeploying`
 - **禁止** mock isDrifted() 与 runDeploy() 之间的边（INV-04）
+- **补部署触发前必须执行 SHA 二次核验**（INV-10：fetchProdSha 调用次数 ≥2，防止防抖窗口内状态翻转导致误部署）
 
 **测试文件**：`sprints/07161600-deploy-drift-sentinel/tests/drift-sentinel.test.js`（FR-15-redeploy 用例）
 
@@ -171,6 +178,32 @@ grep -n "DRIFT_SENTINEL_INTERVAL_MS\|process.env.*DRIFT" packages/brain/src/cron
 
 ---
 
+## [BEHAVIOR] B8：连续 3 次网络 skip → P2 告警（INV-09）
+
+**触发条件**：`consecutiveNetworkErrors` 计数达到 3（连续 3 轮检查均返回 `verdict=network_error`）
+
+**预期行为**：
+- `verdict=network_error`（本轮仍 skip，不触发部署）
+- `sendBark` 被调用一次（dedupeKey 含 `network-skip`，告警等级 P2）
+- 日志打印 `[drift_check] ... verdict=network_error consecutive_network_errors=3`
+- **禁止**因网络连接失败触发任何部署动作（INV-09：S0 不得引入路径判据，保守 skip 优先）
+
+**测试文件**：`sprints/07161600-deploy-drift-sentinel/tests/drift-sentinel.test.js`（FR-15-network-skip-x3 用例）
+
+**manual:bash**：
+```bash
+# 验证连续网络失败计数逻辑存在
+grep -n "consecutiveNetworkErrors\|consecutive.*network\|network.*count" packages/brain/src/cron/drift-sentinel.js
+
+# 验证 P2 告警调用
+grep -n "network-skip\|P2\|network.*bark" packages/brain/src/cron/drift-sentinel.js
+
+# 模拟验证（断开网络后连续 3 轮观测）
+docker logs cecelia-brain 2>&1 | grep "verdict=network_error" | tail -5
+```
+
+---
+
 ## 完整 DoD 检查清单
 
 ### 实现检查
@@ -186,16 +219,22 @@ grep -n "DRIFT_SENTINEL_INTERVAL_MS\|process.env.*DRIFT" packages/brain/src/cron
 ### 测试检查
 
 - [ ] FR-15 failing test 在 merge 前 CI red（drift-sentinel.js 不存在时）
-- [ ] FR-15 实现后所有 7 个 [BEHAVIOR] 场景 CI green
+- [ ] FR-15 实现后所有 8 个 [BEHAVIOR] 场景 CI green（含 B8 network-skip-x3）
 - [ ] `brain-ci.yml` 测试矩阵包含 `drift-sentinel.test.js`（或 sprints/tests/）
 - [ ] 测试未 mock isDrifted() 与 runDeploy() 之间的边（INV-04）
+- [ ] FR-15-redeploy 用例断言 fetchProdSha 调用次数 ≥2（INV-10 二次核验）
+- [ ] FR-15-network-skip-x3 用例通过：第 3 次连续 network_error 时 sendBark 被调（B8）
 
 ### 系统约束检查
 
-- [ ] 不引入路径判据（INV-01）
+- [ ] 不引入路径判据（INV-01）：`grep -rn "changed_paths\|file.*filter\|path.*filter" packages/brain/src/cron/drift-sentinel.js | wc -l` 输出为 0
 - [ ] 补部署走 brain-deploy.sh 全闸（INV-02）
+- [ ] 蓝绿/pre-swap/post-deploy 现有机制一律不动（INV-03）：drift-sentinel.js 不得修改 bluegreen 相关文件
 - [ ] 告警走 sendBark + raise（INV-06）
 - [ ] PASS@L2 声明（INV-07）：FR-16 live-fire-report.md 完成后标记
+- [ ] S0 为 S1 感知层的深度防御兜底，不替代 S1（INV-08）：drift-sentinel.js 不禁用 webhook/S1 通路，仅作兜底
+- [ ] S0 不引入路径判据（INV-09）：告警与 skip 判定仅依赖 SHA 对账结果，不含路径过滤
+- [ ] 补部署触发前 SHA 二次核验（INV-10）：redeploying 分支执行前再次调用 fetchProdSha 确认漂移持续
 
 ### 手动 smoke 验证
 

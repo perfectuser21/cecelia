@@ -12,8 +12,9 @@
  *   FR-15-redeploy    : SHA 不等且满 30min01s → verdict=redeploying，deploy 被调 1 次
  *   FR-15-network-err : 拉取 main SHA 失败 → verdict=network_error，deploy 不被调
  *   FR-15-prod-unreach: 拉取 prod SHA 失败 → verdict=prod_unreachable，deploy 不被调
- *   FR-15-escalate    : redeployCount>=2 且仍漂移 → verdict=escalated，deploy 不被调，sendBark 被调 1 次
- *   FR-15-boundary    : 边界：29min59s 不触发，30min01s 触发
+ *   FR-15-escalate         : redeployCount>=2 且仍漂移 → verdict=escalated，deploy 不被调，sendBark 被调 1 次
+ *   FR-15-boundary         : 边界：29min59s 不触发，30min01s 触发
+ *   FR-15-network-skip-x3  : 连续 3 次 network_error → sendBark P2 告警被调（B8）
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -99,26 +100,31 @@ function makeOptions({
   now = new Date(),
   redeployCount = 0,
   driftFirstSeenAt = null,
+  consecutiveNetworkErrors = 0,
 } = {}) {
+  const fetchProdShaSpy = prodFails
+    ? vi.fn().mockRejectedValue(new Error('connection refused'))
+    : vi.fn().mockResolvedValue(prodSha);
+
   return {
     // 允许注入外部 I/O 函数（SHA 拉取），不 mock 判定逻辑
     fetchMainSha: mainFails
       ? async () => { throw new Error('network error'); }
       : async () => mainSha,
-    fetchProdSha: prodFails
-      ? async () => { throw new Error('connection refused'); }
-      : async () => prodSha,
+    fetchProdSha: fetchProdShaSpy,
     // 注入当前时间（测试时间控制）
     now,
-    // 注入初始 KV 状态（防抖时间戳和 redeployCount）
-    _testInitialState: { redeployCount, driftFirstSeenAt },
+    // 注入初始 KV 状态（防抖时间戳、redeployCount 和 consecutiveNetworkErrors）
+    _testInitialState: { redeployCount, driftFirstSeenAt, consecutiveNetworkErrors },
+    // 暴露 spy 供断言使用
+    _fetchProdShaSpy: fetchProdShaSpy,
   };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe('drift-sentinel — FR-15 contract tests', () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     mockKvStore.clear();
     mockExecDeploy.mockClear();
     mockSendBark.mockClear();
@@ -155,23 +161,28 @@ describe('drift-sentinel — FR-15 contract tests', () => {
   });
 
   // FR-15-redeploy：SHA 不等 + 满 30min01s → verdict=redeploying，deploy 被调 1 次
+  // INV-10：补部署触发前须做 SHA 二次核验（fetchProdSha 调用次数 >=2）
   it('FR-15-redeploy: SHA 不等且 driftFirstSeenAt 满 30min01s → verdict=redeploying，deploy 被调 1 次', async () => {
     const now = new Date('2026-07-16T10:00:00Z');
     // 首见时间 = 30min01s 前（满 30min）
     const driftFirstSeenAt = new Date(now.getTime() - (30 * 60 * 1000 + 1000)).toISOString(); // 30min01s
 
-    const result = await runDriftCheck(makeOptions({
+    const opts = makeOptions({
       mainSha: SHA_MAIN,
       prodSha: SHA_PROD,
       now,
       driftFirstSeenAt,
       redeployCount: 0,
-    }));
+    });
+    const result = await runDriftCheck(opts);
 
     expect(result.verdict).toBe('redeploying');
     expect(mockExecDeploy).toHaveBeenCalledTimes(1);
     expect(mockExecDeploy).toHaveBeenCalledWith(expect.stringContaining('brain-deploy.sh'));
     expect(mockSendBark).not.toHaveBeenCalled();
+    // INV-10：二次核验 — redeploying 场景下 fetchProdSha 必须被调用 >=2 次（触发前再核验一次）
+    expect(opts._fetchProdShaSpy).toHaveBeenCalledTimes(expect.any(Number));
+    expect(opts._fetchProdShaSpy.mock.calls.length).toBeGreaterThanOrEqual(2);
   });
 
   // FR-15-network-err：拉取 main SHA 失败 → verdict=network_error
@@ -263,6 +274,28 @@ describe('drift-sentinel — FR-15 contract tests', () => {
 
     expect(result.verdict).toBe('drifting');
     expect(mockExecDeploy).not.toHaveBeenCalled();
+  });
+
+  // FR-15-network-skip-x3：连续 3 次 network_error → sendBark P2 告警（B8）
+  // NFR: "连续 3 次 skip 打 P2 告警"（INV-09: 告警不引入路径判据）
+  it('FR-15-network-skip-x3: 连续 3 次 network_error → sendBark P2 告警被调 1 次', async () => {
+    // 模拟第 3 次连续网络失败（consecutiveNetworkErrors=2，此次再次失败变为 3）
+    const opts = makeOptions({
+      mainFails: true,
+      now: new Date(),
+      consecutiveNetworkErrors: 2, // 前 2 次已 skip，此次为第 3 次
+    });
+    const result = await runDriftCheck(opts);
+
+    expect(result.verdict).toBe('network_error');
+    expect(mockExecDeploy).not.toHaveBeenCalled();
+    // B8: 第 3 次连续 network_error 时 sendBark 必须被调（P2 告警）
+    expect(mockSendBark).toHaveBeenCalledTimes(1);
+    expect(mockSendBark).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.any(String),
+      expect.objectContaining({ dedupeKey: expect.stringMatching(/network.*skip|skip.*network/i) })
+    );
   });
 
   // 常量校验：DRIFT_SENTINEL_INTERVAL_MS 应为 30min

@@ -3,7 +3,7 @@
 - task_id: dfa89a0b-3cb9-4bdc-8d41-7b4ed80d997d
 - sprint_dir: sprints/07161600-deploy-drift-sentinel
 - 日期: 2026-07-16
-- 合同轮次: 1
+- 合同轮次: 2（Round 2，reviewer feedback 修订版）
 - 状态: PROPOSED
 
 ---
@@ -94,11 +94,13 @@
 - mock 两端 SHA 不等且 driftFirstSeenAt 已过 30min → 断言 deploy 函数被调
 - SHA 相等 → deploy 函数不被调（verdict=ok）
 - 首见未满 30min → deploy 函数不被调（verdict=drifting）
-- 连续 2 次仍漂移 → sendBark 被调
+- 连续 2 次仍漂移 → sendBark 被调（escalated）
+- **redeploying 场景下 fetchProdSha 调用次数 ≥2**（INV-10 二次核验）
+- **连续 3 次 network_error → sendBark P2 告警被调**（B8，INV-09 保守 skip 不引入路径判据）
 
 **验收**：
 - 实现前测试 CI red（drift-sentinel.js 不存在）
-- 实现后测试 CI green
+- 实现后测试 CI green（全部 8 个 [BEHAVIOR] 场景）
 - 测试文件在 brain-ci.yml 测试矩阵中显式列出
 
 ---
@@ -110,12 +112,13 @@
 **条件**：drift-sentinel.js 存在后，以下断言全部 PASS：
 
 ```
-1. SHA 相等场景：verdict=ok，deploy 函数调用次数=0
-2. SHA 不等 + driftFirstSeenAt 未达 30min：verdict=drifting，deploy 函数调用次数=0
-3. SHA 不等 + driftFirstSeenAt 已达 30min01s：verdict=redeploying，deploy 函数调用次数=1
-4. 网络错误：verdict=network_error，deploy 函数调用次数=0
-5. 生产不可达：verdict=prod_unreachable，deploy 函数调用次数=0
-6. redeployCount=2 + 仍漂移：verdict=escalated，deploy 函数调用次数=0，sendBark 调用次数=1
+1. SHA 相等场景：verdict=ok，deploy 函数调用次数=0（B1，INV-09）
+2. SHA 不等 + driftFirstSeenAt 未达 30min：verdict=drifting，deploy 函数调用次数=0（B2，INV-10）
+3. SHA 不等 + driftFirstSeenAt 已达 30min01s：verdict=redeploying，deploy 函数调用次数=1，fetchProdSha 调用次数≥2（B3，INV-10 二次核验）
+4. 网络错误：verdict=network_error，deploy 函数调用次数=0（B5）
+5. 生产不可达：verdict=prod_unreachable，deploy 函数调用次数=0（B6）
+6. redeployCount=2 + 仍漂移：verdict=escalated，deploy 函数调用次数=0，sendBark 调用次数=1（B4）
+7. 连续 3 次 network_error：verdict=network_error，deploy 函数调用次数=0，sendBark P2 告警调用次数=1（B8，INV-09）
 ```
 
 ### L2 实弹验收（手动，FR-16）
@@ -142,8 +145,10 @@
 |----|----------------|
 | 对账周期 30min±1min | 单测：DRIFT_SENTINEL_INTERVAL_MS=30*60*1000 常量可查 |
 | 网络容错 | 单测：网络失败 → skip，不触发部署 |
+| 连续 3 次网络 skip → P2 告警 | 单测：FR-15-network-skip-x3，sendBark P2 被调（B8，INV-09）|
 | 防误报窗口 | 单测：29min59s 不触发 |
 | 防风暴 | 单测：redeployCount>=2 不再部署 |
+| 补部署前二次核验 | 单测：redeploying 场景 fetchProdSha 调用次数≥2（INV-10）|
 | 审计可查 | smoke grep：`grep '[drift_check]'` |
 | CI 回归永驻 | brain-ci.yml 矩阵含 drift-sentinel.test.js |
 
