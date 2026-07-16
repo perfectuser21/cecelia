@@ -68,26 +68,36 @@ if [[ -n "$ERROR" && "$ERROR" != "None" && "$ERROR" != "" ]]; then
   exit 1
 fi
 
-echo "[daily-backup-smoke] 5. 验证 API 返回了有效的 taskId"
+echo "[daily-backup-smoke] 5. 验证 API 返回了有效的 taskId 或幂等 alreadyDone"
 TASK_ID=$(echo "$RESULT" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('taskId',''))" 2>/dev/null || echo "")
 TRIGGERED=$(echo "$RESULT" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('triggered',''))" 2>/dev/null || echo "")
-if [[ "$TRIGGERED" != "True" && "$TRIGGERED" != "true" ]]; then
-  echo "[daily-backup-smoke] FAIL: triggered=${TRIGGERED}，期望 true"
+ALREADY_DONE=$(echo "$RESULT" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('alreadyDone',''))" 2>/dev/null || echo "")
+if [[ "$TRIGGERED" == "True" || "$TRIGGERED" == "true" ]]; then
+  # 正常触发：taskId 必须有效
+  if [[ -z "$TASK_ID" || "$TASK_ID" == "None" ]]; then
+    echo "[daily-backup-smoke] FAIL: triggered=true 但 taskId 为空"
+    exit 1
+  fi
+  echo "[daily-backup-smoke] trigger_backup 任务已创建 taskId=${TASK_ID} ✓"
+elif [[ "$ALREADY_DONE" == "True" || "$ALREADY_DONE" == "true" ]]; then
+  # 幂等：Brain tick 已在同一时间窗口内自动创建过备份任务，调度器正确返回 alreadyDone=true
+  echo "[daily-backup-smoke] alreadyDone=true（Brain tick 已在窗口内自动触发），幂等验证通过 ✓"
+else
+  echo "[daily-backup-smoke] FAIL: triggered=${TRIGGERED} alreadyDone=${ALREADY_DONE}，期望其一为 true"
   exit 1
 fi
-if [[ -z "$TASK_ID" || "$TASK_ID" == "None" ]]; then
-  echo "[daily-backup-smoke] FAIL: taskId 为空"
-  exit 1
-fi
-echo "[daily-backup-smoke] trigger_backup 任务已创建 taskId=${TASK_ID} ✓"
 
-echo "[daily-backup-smoke] 6. 通过 Brain API 验证任务存在"
-TASK_RESULT=$(curl -sf "${BRAIN_URL}/api/brain/tasks/${TASK_ID}" 2>/dev/null || echo '{}')
-TASK_TYPE=$(echo "$TASK_RESULT" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('task_type','unknown'))" 2>/dev/null || echo "unknown")
-if [[ "$TASK_TYPE" != "trigger_backup" ]]; then
-  echo "[daily-backup-smoke] FAIL: 任务 task_type=${TASK_TYPE}，期望 trigger_backup"
-  exit 1
+if [[ -n "$TASK_ID" && "$TASK_ID" != "None" ]]; then
+  echo "[daily-backup-smoke] 6. 通过 Brain API 验证任务存在"
+  TASK_RESULT=$(curl -sf "${BRAIN_URL}/api/brain/tasks/${TASK_ID}" 2>/dev/null || echo '{}')
+  TASK_TYPE=$(echo "$TASK_RESULT" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('task_type','unknown'))" 2>/dev/null || echo "unknown")
+  if [[ "$TASK_TYPE" != "trigger_backup" ]]; then
+    echo "[daily-backup-smoke] FAIL: 任务 task_type=${TASK_TYPE}，期望 trigger_backup"
+    exit 1
+  fi
+  echo "[daily-backup-smoke] Brain API 任务验证通过 task_type=${TASK_TYPE} ✓"
+else
+  echo "[daily-backup-smoke] 6. 跳过任务验证（alreadyDone 路径，无新 taskId）✓"
 fi
-echo "[daily-backup-smoke] Brain API 任务验证通过 task_type=${TASK_TYPE} ✓"
 
 echo "[daily-backup-smoke] PASS ✓"

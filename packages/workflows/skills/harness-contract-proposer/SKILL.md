@@ -4,10 +4,11 @@ description: |
   Harness Contract Proposer — Harness v5 GAN Layer 2a：
   读 PRD，GAN 对抗写 Golden Path 合同（每步含真实验证命令）；
   Reviewer APPROVED 后倒推拆 task-plan.json。
-version: 9.12.0
+version: 9.13.0
 created: 2026-04-08
-updated: 2026-07-14
+updated: 2026-07-16
 changelog:
+  - 9.13.0: target_environment 枚举加 android_realmachine（洞①）— Path2 安卓获客真机验收（xian-rog）此前无枚举可用，E2E 模板行同步补
   - 9.12.0: 刀3-T5 — 合同必填「运行时守卫」槽位：contract-draft.md 必须含 ## 运行时守卫 段，内嵌具体探针（probe:/script: 可机检执行块）或显式豁免（waiver:<decision_id>+理由）；两者都没有 = 合同不完整，Reviewer 打回；Step 2b-check 新增第 8 项 grep 机械验；evaluator B-guard-check 对应核查；report 收尾链把 guard_ref 写回 journey_features（依赖刀3-T4 列已存在）
   - 9.11.0: EVA v2 审计四刀（d063b3e5/a85e0582/a638f840 实证脱模板合同骗过自查）— (1) Step 2b-check 三处补丁：[BEHAVIOR] 计数锚定行首 checkbox 格式（标题式不计入）+ 第 5 项 E2E 段 bash 块 ≥1 + 第 6 项提取 E2E 块过 bash -n 与全角标点扫描；(2) E2E 多代码块拼接语义显式化（evaluator 1.22.0 全部 bash 块按序拼接，推荐单块，多块禁重复 shebang/set）；(3) 禁文本自证型 BEHAVIOR（grep 文件含字符串归 [ARTIFACT]，真执行断言 ≥2 条且占比 ≥50%）+ 自查第 7 项启发式分类计数；(4) 新增 Step 1.3 历史约束三源加载（铁律逐条映射 INV-N 条目或显式 N/A + context-manifest 累积 FR + 回归测试）
   - 9.10.0: 真实链路四硬规则（handoff 0714 刀2 — #1267/#1269/#1271/#1256 实证根因）— 规则A【真实调用方 shape】合同必含 ## 真实调用方请求 shape 段，DoD 认证方式/关键字段与生产调用方逐字段一致（禁 body 传 tenant_id 而生产走 x-agent-id header 的双路径分叉）；规则B【第三方真调一次】涉第三方 API 的 DoD 至少一条真 key 真请求真响应校验，禁全 force_*/mock；规则C【mock 豁免显式登记】DoD 含 force_*/stub/假数据 → 合同必附 ## 未覆盖真实链路清单 段，controller 呈现进 PR 描述不许静默；规则D【target_environment 强制路由】微信 UI/RPA 必 windows_wechat，Android 通道未落地前真机段必入未覆盖清单；自查 checklist 新增第 8 条
@@ -539,7 +540,7 @@ waiver: {decision_id（必须是真实的 UUID）}
 ## E2E 验收（最终 final-e2e 跑 — 按 target_environment 选模板）
 
 **journey_type**: {autonomous|user_facing|dev_pipeline|agent_remote}
-**target_environment**: {local_api|mac_web|windows_cloud|windows_wechat|linux_server|playground}
+**target_environment**: {local_api|mac_web|windows_cloud|windows_wechat|linux_server|playground|android_realmachine}
 
 > **选模板规则**：看 PRD 末尾的 `target_environment` 字段，不是 `journey_type`。evaluator 模式B 按 `target_environment` SSH 派发到正确机器，合同 E2E 脚本必须与目标机器匹配。
 > `windows_wechat` 与 `windows_cloud` 的区别：前者走 xian-rog self-hosted runner（含真实微信 4.1.8），后者走 GHA windows-latest（无微信，适合 Agent 安装包/Publisher 测试）。

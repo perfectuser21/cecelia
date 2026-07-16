@@ -125,6 +125,13 @@ export async function promoteToRegression(deps = {}, params = {}) {
   const { task, sprintDir, subTasks, worktreePath, dbOnly = false } = params;
 
   const taskId = task?.id;
+
+  // canary 任务禁入回归池（INV-16）
+  if (task?.payload?.canary === 'true' || task?.payload?.canary === true) {
+    console.log(`[promote-regression] skipped: canary 任务不入回归池 (task=${taskId})`);
+    return { ok: true, dbWritten: false, skipped: true, reason: 'canary task excluded from regression pool' };
+  }
+
   if (!taskId || !sprintDir || !worktreePath) {
     console.warn(`[promote-regression] skipped: 缺 taskId/sprintDir/worktreePath (task=${taskId} sprintDir=${sprintDir} wt=${worktreePath})`);
     await _alert(`A3 冻结跳过：task=${taskId} 缺 sprintDir/worktreePath`);

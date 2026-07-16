@@ -106,3 +106,8 @@ ratchet-registry-smoke.sh
 autoblock-sql-param-fix-smoke.sh
 watchdog-deadlock-resume-smoke.sh
 relay-runs-patch-shortid-smoke.sh
+judge-evidence-truncation-smoke.sh
+oom-aware-retry-smoke.sh
+harness-death-classifier-smoke.sh
+harness-death-handlers-smoke.sh
+canary-drill-smoke.sh

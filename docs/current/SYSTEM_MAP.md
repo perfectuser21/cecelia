@@ -62,6 +62,14 @@ Brain (port 5221)
 ├── PostgreSQL
 │   ├── migrations/                 139 个 SQL 迁移文件
 │   └── src/selfcheck.js            EXPECTED_SCHEMA_VERSION = '139'
+├── Harness 自愈链（刀A1-A8，2026-07-16 上生产）
+│   ├── src/harness-relay-watchdog.js   收尸+死因路由+对因处置（CI红/BEHIND重点火、OOM升档、
+│   │                                   401换号、限流defer、绿灯死收尾棒、宿主团灭S0批量恢复）
+│   ├── src/harness-death-classifier.js 死因分类器（退出码/stdout关键词/tmux屏幕 三源取证）
+│   ├── src/harness-judge.js            机械预检+DeepSeek裁判（GP步骤逐条验覆盖）
+│   ├── src/lib/harness-finalize.js     收账权收归（PR MERGED+evaluator gate 外部真相核验）
+│   └── scripts/canary-death-drill.mjs  金丝雀故障注入演习（nightly 03:30 staging 真死真救）
+│       PRD: docs/prd/2026-07-15-self-healing-golden-path.prd.md（决策 5b0690ca golden path 形态）
 └── 辅助
     ├── src/watchdog.js             进程监护（Darwin 适配）
     ├── src/alertness/              警觉等级系统

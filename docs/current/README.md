@@ -61,6 +61,8 @@ updated: 2026-03-25
 | `arch_review` | LLM | Brain调度 | ❌ 几乎不跑（7天内1条canceled） | ❌ |
 | `code_review` | LLM | Brain调度 | ❌ 7天内0条 | ❌ |
 | Brain src 覆盖率 Check4 | 脚本 | PR CI（L3） | ✅ 2026-03-25 上线 | ❌ 无cron |
+| relay-watchdog 自愈链（死因分类→对因处置） | 代码 | Brain 每5min | ✅ 2026-07-16 上生产（刀A1-A8，PRD: docs/prd/2026-07-15-self-healing-golden-path.prd.md） | ✅ 处置失败→告警/blocked |
+| 金丝雀故障注入演习 canary-death-drill | 脚本 | nightly 03:30 CST（staging） | 🆕 2026-07-16 首跑待验（连续7天绿=验收） | ✅ 失败→Bark |
 
 **当前覆盖缺口（warning状态，未锁死）：**
 - Brain 普通模块：10/151 无测试

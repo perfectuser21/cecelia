@@ -1,1 +1,42 @@
-{"verdict":"DONE_WITH_CONCERNS","task_id":"63db6f8a-ea55-40fa-abd2-7dd63a2701e2","report_path":"sprints/07151400-relay-63db6f8a/harness-report.md","pr_url":"https://github.com/perfectuser21/cecelia/pull/3975","screenshots":[],"concerns":"CONCERN: 未覆盖真实链路:Brain自动headed spawn落initiative_runs(host=skill-relay-claude-headed)未验证,task 63db6f8a自动派发从未走通(一直queued),转走前台点火补建档端点(host=foreground),详见contract-draft.md「未覆盖真实链路清单」段;;CONCERN: 流程异常:PR#3975在controller派发evaluator/judge之前被should-auto-merge.sh兜底机制自动合并,违反硬约束2(judge是merge唯一权威);controller已做追溯性evaluator+judge审计,双PASS(evaluator见.harness/verdicts/evaluate-b714a1c.json,judge经Brain judge API确认PASS);已建Notion Issue 3810480d-259b-49ff-ac4c-0c087c33fc36(P1,追查should-auto-merge.sh触发条件);;CONCERN: GAN reviewer声明judgments_written=2但decisions表实查为0(写库链路断裂);已建Notion Issue 097886ee-6488-4b22-ba5c-124627d2876e(P2);;CONCERN: 附带发现:planner阶段发现harness worktree provisioning缺.dev-mode标记的已知问题;已建Notion Issue 71c80d11-14f8-4216-a70c-8338210cc862(P3),非本次核心;;CONCERN: cost字段无法获得真实subagent成本数据,按诚实边界填0,台账注明cost=unsettled;;CONCERN: Step1:task.status回写completed被harness-finalize拒绝(reason=pr_not_found)——task.pr_url列与payload.pr_url均未populate,PR分支名cp-07151403-harness-prd不含taskId短码(63db6f8a)故watchdog自动发现也未命中;task-tasks.js的PATCH /:id本可写pr_url列但被routes/tasks.js的同路径PATCH /tasks/:task_id(挂载顺序更早)遮蔽,实际不可达;result字段已成功补写(pr_url/cost/screenshots均落库),但status留在in_progress+payload.generator_done=true的降级中间态;非本次核心但建议后续开Notion Issue追查;;CONCERN: Step2:中台Dashboard更新被同一pr_not_found门禁拒绝(非关键步,已记录);;CONCERN: Step3.5:prep-prd.md不存在(本sprint是relay自测,无PrepPRD文档,已跳过);;CONCERN: Step4:FEATURE_ID为空,Feature Registry更新跳过;;CONCERN: Step5:飞书通知API返回sent:false,实际未送达(非关键步);;CONCERN: Step8f:capture_atoms未写入(HTTP 404);\n"}
+{
+  "task_id": "56d677a8-65e8-485c-9ec3-1ade28716ae9",
+  "verdict": "PASS",
+  "sprint_dir": "sprints/07161400-a8-3-canary-drill",
+  "exit_code": 0,
+  "judgments_written": 12,
+  "log_tail": "evaluator verdict=PASS, 19/19 tests passed, CI全绿(ci-passed=SUCCESS)\ncanary-drill.contract.test.js: 10/10 PASS\ncanary-isolation.test.js: 9/9 PASS\ncanary-drill-smoke.sh: PASS",
+  "behavior_tests": [
+    {
+      "id": "BEHAVIOR-1/2/3-L1",
+      "name": "canary 隔离过滤（dev-records / 回归池 / 统计计数）L1 vitest",
+      "command": "cd /workspace/packages/brain && npx vitest run src/__tests__/canary-isolation.test.js --reporter=verbose",
+      "exit_code": 0,
+      "result": "PASS",
+      "log_tail": "✓ BEHAVIOR-1: dev-records 查询 canary 隔离 > battle-report dev_records 查询含 canary 过滤条件\n✓ BEHAVIOR-1: canary=true 的 PR 写入 dev_records 后，dev-records 查询不返回该记录\n✓ BEHAVIOR-2: task.payload.canary=true 时 promoteToRegression 跳过\n✓ BEHAVIOR-2: task.payload.canary=true（字符串）时 promoteToRegression 也跳过\n✓ BEHAVIOR-2: task.payload.canary 未设 → 正常走后续路径\n✓ BEHAVIOR-3: diary-scheduler dev_records count 查询含 canary 过滤条件\n✓ BEHAVIOR-3: battle-report mergedPrs 查询加 canary 过滤后 SQL 正确\n✓ BEHAVIOR-3: 插入1条 canary 记录后，SQL WHERE 子句确保不计入统计\n✓ CONSTRAINT-INV16: payload.canary 为 NULL 的记录不应被过滤\nTest Files  1 passed (1)\nTests  9 passed (9)"
+    },
+    {
+      "id": "BEHAVIOR-4/5/6/7/8-contract",
+      "name": "演习脚本合同测试（BEHAVIOR-4/5/6/7/8）contract test",
+      "command": "npx vitest run tests/regression/a8-3-canary-drill/ --reporter=verbose",
+      "exit_code": 0,
+      "result": "PASS",
+      "log_tail": "✓ BEHAVIOR-4: STAGING_BRAIN_URL 含 :5221 → 立即 exit 1，不发任何请求\n✓ BEHAVIOR-4: STAGING_BRAIN_URL 为 :5222 → 守卫通过，允许执行注册流程\n✓ BEHAVIOR-5: exit_code=137 + oom_upgraded 未设 → cause=oom + attempt 递增 + oom_upgraded=true\n✓ BEHAVIOR-5: oom_upgraded=true + exit_code=137 → cause=oom + task.status=failed\n✓ BEHAVIOR-6: POST /api/brain/incidents 返回 404 → 降级写 design_docs\n✓ BEHAVIOR-6: design_docs 写入内容含 injected_mode 和 results 字段\n✓ BEHAVIOR-7: 演习断言失败 → sendBark 调用1次，标题含 CanaryDrill Failed\n✓ BEHAVIOR-7: BARK_URL 未设时 log warn 不 throw\n✓ BEHAVIOR-8: UTC 19:25~19:35 窗口内 tick → 调用一次 canary-death-drill.mjs\n✓ BEHAVIOR-8: 同日历日第二次 tick → 不重复触发（幂等保护）\nTest Files  1 passed (1)\nTests  10 passed (10)"
+    },
+    {
+      "id": "smoke-validateStagingUrl",
+      "name": "canary-drill smoke: 守卫函数导出验证 + :5221/:5222 行为验证",
+      "command": "bash packages/brain/scripts/smoke/canary-drill-smoke.sh",
+      "exit_code": 0,
+      "result": "PASS",
+      "log_tail": "OK: 所有导出验证通过\ncanary-drill smoke PASS"
+    },
+    {
+      "id": "CI-passed",
+      "name": "CI ci-passed 全绿（含 Sprint Tests 实跑 + 测试金字塔守卫 + Test Contract 覆盖）",
+      "command": "gh pr view 3992 --json statusCheckRollup -q '.statusCheckRollup[] | select(.name==\"ci-passed\") | .conclusion'",
+      "exit_code": 0,
+      "result": "PASS",
+      "log_tail": "ci-passed: SUCCESS\nSprint Tests 实跑 (v5.0): COMPLETED SUCCESS\n测试金字塔守卫: COMPLETED SUCCESS\nTest Contract 覆盖检查 (v5.0): COMPLETED SUCCESS\nTDD Commit 顺序检查 (v5.0): COMPLETED SUCCESS"
+    }
+  ]
+}
