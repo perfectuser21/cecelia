@@ -66,5 +66,18 @@ step-5  PR merge → 等次日 09:00 实弹 (FR-27)
 
 ---
 
+## Golden Path
+
+（pre-merge evaluator gate 验证范围；E2E-05 实弹为 post-merge async，排除在外）
+
+1. E2E-01：有 merge 且 15min 内有匹配 deploy run → exit 0，stdout 含 GREEN
+2. E2E-02：merge 后 15min 内无 deploy run → exit 1，stdout 含 DRILL_RED
+3. E2E-03：GH API 不可达（DRILL_GH_API_FAIL=1）→ exit 2，stdout 含 gh_api_error（fail open）
+4. E2E-04：无 merge 的日子（DRILL_MOCK_MERGES=[]）→ exit 2，stdout 含 no_merge_skip
+5. E2E-B6：nightly workflow cron 表达式为 0 1 * * *（UTC 01:00）
+6. E2E-B7：guard probe — deploy-daily-drill.sh 存在且可执行（exit 0）
+
+---
+
 journey_type: nightly_drill
 target_environment: local_api
