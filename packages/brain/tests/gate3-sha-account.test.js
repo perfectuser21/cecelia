@@ -19,7 +19,8 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { expect, it } from 'vitest';
 
-const ROOT = path.resolve(fileURLToPath(import.meta.url), '../../..');
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const ROOT = path.resolve(__dirname, '../../..'); // tests/ → brain/ → packages/ → repo root
 const SCRIPT = path.join(ROOT, 'tests/regression/gate3-sha-truth/sha-account.test.sh');
 
 it('sha-account shell tests pass (BEHAVIOR-01..07)', () => {
