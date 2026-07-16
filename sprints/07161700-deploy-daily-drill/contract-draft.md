@@ -120,6 +120,14 @@ DRILL_MOCK_MERGES='[]' bash scripts/smoke/e2e/deploy-daily-drill.sh
 
 ---
 
+## Test Contract
+
+| 工作流 | Test File | BEHAVIOR 覆盖 | 预期红色证据 |
+|--------|-----------|--------------|------------|
+| G3-drill | `tests/regression/deploy-daily-drill/deploy-daily-drill.test.sh` | T1=B7(脚本存在), T2=B2(无deploy→exit1), T3=B4(无merge→no_merge_skip), T4=B3(GH API fail→exit2) | T1 FAIL when deploy-daily-drill.sh absent（初始 Red commit d5883f01b 验证） |
+
+---
+
 ## 未覆盖真实链路清单
 
 以下项目使用 mock/fixture 而非真实外部依赖，豁免原因如下：
