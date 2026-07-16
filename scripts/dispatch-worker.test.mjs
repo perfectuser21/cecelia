@@ -24,6 +24,11 @@ test('detectQuotaWall: 正常输出与空输入不误报', () => {
   assert.equal(detectQuotaWall(null), false);
 });
 
+test('detectQuotaWall: quota 正则收窄——只命中真撞墙短语，不误判任务书提到 quota 一词', () => {
+  assert.equal(detectQuotaWall('quota exceeded'), true);
+  assert.equal(detectQuotaWall('本任务和 quota 配置表无关'), false);
+});
+
 test('buildCommand: codex 用 CODEX_HOME + exec --cd --sandbox workspace-write', () => {
   const c = buildCommand('codex', { home: '/h/.codex-team1' }, '任务书', '/w');
   assert.equal(c.cmd, 'codex');
@@ -95,6 +100,8 @@ test('dispatchWithRotation: 全池撞墙 → pool_exhausted', async () => {
   assert.equal(r.ok, false);
   assert.equal(r.reason, 'pool_exhausted');
   assert.equal(r.exit_code, 1);
+  assert.equal(r.vendor, null);
+  assert.equal(r.account, null);
 });
 
 test('dispatchWithRotation: 非零退出且非撞墙 → 不换账号原样返回', async () => {

@@ -18,7 +18,7 @@ export const ACCOUNT_POOL = [
   { vendor: 'grok', name: 'grok', home: join(homedir(), '.grok') },
 ];
 
-const QUOTA_WALL_PATTERNS = [/out of credits/i, /rate limit/i, /usage limit/i, /\b429\b/, /quota/i];
+const QUOTA_WALL_PATTERNS = [/out of credits/i, /rate limit/i, /usage limit/i, /\b429\b/, /quota\s+(exceeded|reached|limit)/i];
 
 export function detectQuotaWall(text) {
   if (!text) return false;
@@ -56,7 +56,7 @@ export async function dispatchWithRotation({ candidates, brief, dir, maxRetries 
     // 非撞墙的失败是任务问题不是额度问题，不换账号
     return { ok: exitCode === 0, vendor: cand.account.vendor, account: cand.account.name, attempts, exit_code: exitCode };
   }
-  return { ok: false, reason: 'pool_exhausted', attempts, exit_code: 1 };
+  return { ok: false, reason: 'pool_exhausted', attempts, exit_code: 1, vendor: null, account: null };
 }
 
 // ---------- 余量查询 ----------
