@@ -38,8 +38,10 @@ jobs:
           DRILL_GH_API_FAIL: ${{ github.event.inputs.dry_run == 'true' && '1' || '0' }}
         run: |
           chmod +x scripts/smoke/e2e/deploy-daily-drill.sh
+          set +e
           bash scripts/smoke/e2e/deploy-daily-drill.sh
           EXIT_CODE=$?
+          set -e
           if [ $EXIT_CODE -eq 0 ]; then
             echo "✅ 演习绿：所有 merge 均在 15min 内部署"
           elif [ $EXIT_CODE -eq 2 ]; then

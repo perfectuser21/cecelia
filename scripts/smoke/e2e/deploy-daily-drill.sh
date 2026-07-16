@@ -34,8 +34,8 @@ SINCE=$(_24h_ago_iso)
 if [ -n "${DRILL_MOCK_MERGES:-}" ]; then
   MERGES="$DRILL_MOCK_MERGES"
 else
-  MERGES=$(gh api "repos/$GH_REPO/pulls?state=closed&base=main&per_page=50" \
-    --timeout 10 2>/dev/null | \
+  MERGES=$(timeout 10 gh api "repos/$GH_REPO/pulls?state=closed&base=main&per_page=50" \
+    2>/dev/null | \
     jq --arg since "$SINCE" '[.[] | select(.merged_at != null and .merged_at > $since) | {number: .number, merge_commit_sha: .merge_commit_sha, merged_at: .merged_at, title: .title}]' \
     2>/dev/null) || {
     echo "gh_api_error: GH API 调用失败 → fail open → skip"
@@ -56,8 +56,8 @@ echo "发现 $MERGE_COUNT 个 merge，开始对账..."
 if [ -n "${DRILL_MOCK_RUNS:-}" ]; then
   RUNS="$DRILL_MOCK_RUNS"
 else
-  RUNS=$(gh api "repos/$GH_REPO/actions/workflows/brain-ci-deploy.yml/runs?per_page=50&created=>$SINCE" \
-    --timeout 10 2>/dev/null | \
+  RUNS=$(timeout 10 gh api "repos/$GH_REPO/actions/workflows/brain-ci-deploy.yml/runs?per_page=50" \
+    2>/dev/null | \
     jq '.workflow_runs | map({head_sha: .head_sha, conclusion: .conclusion, created_at: .created_at, updated_at: .updated_at, html_url: .html_url})' \
     2>/dev/null) || {
     echo "gh_api_error: workflow runs API 调用失败 → fail open → skip"
