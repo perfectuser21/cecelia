@@ -189,8 +189,9 @@ describe('selfcheck', () => {
   // 343（journey_features.guard_ref 列，裸奔 FR 守卫引用）推进地板到 343。
   // 344（journey_features status CHECK 拓宽）推进地板到 344。
   // 345（dev_records.is_canary 列，金丝雀演习标记）推进地板到 345。
-  it('EXPECTED_SCHEMA_VERSION should be 345 (floor, bumped for dev_records_canary migration)', () => {
-    expect(EXPECTED_SCHEMA_VERSION).toBe('345');
+  // 346（incidents 表，刀5a 事故归一层）推进地板到 346。
+  it('EXPECTED_SCHEMA_VERSION should be 346 (floor, bumped for incidents migration)', () => {
+    expect(EXPECTED_SCHEMA_VERSION).toBe('346');
   });
 
   it('should pass when DB schema version is ahead of expected (>= check)', async () => {

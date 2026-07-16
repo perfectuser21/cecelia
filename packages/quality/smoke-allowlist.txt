@@ -4,6 +4,7 @@
 # 新增脚本默认须加入此文件或 smoke-denylist.txt（新债不许欠）
 # 更新方式：在 CI 通过后从 smoke-debt.txt 迁移经确认能通过的脚本到此处
 abilities-api-smoke.sh
+incidents-smoke.sh
 guard-drill-smoke.sh
 ability-id-chain-pr2-smoke.sh
 advancement-items-smoke.sh
@@ -113,3 +114,4 @@ harness-death-handlers-smoke.sh
 canary-drill-smoke.sh
 gate3-brain-deploy-smoke.sh
 git-sha-health-smoke.sh
+judge-level-smoke.sh
