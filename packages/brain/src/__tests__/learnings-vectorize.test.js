@@ -452,6 +452,7 @@ describe('selfcheck schema version', () => {
     // 343 = migration 343 journey_features.guard_ref 裸奔 FR 守卫引用，故推进地板到 343。
     // 344 = migration 344 journey_features status CHECK 拓宽（修 343 窄枚举），故推进地板到 344。
     // 345 = migration 345 dev_records.is_canary 列（金丝雀演习任务标记），故推进地板到 345。
-    expect(EXPECTED_SCHEMA_VERSION).toBe('345');
+    // 346 = migration 346 incidents 表（刀5a 事故归一层），故推进地板到 346。
+    expect(EXPECTED_SCHEMA_VERSION).toBe('346');
   });
 });

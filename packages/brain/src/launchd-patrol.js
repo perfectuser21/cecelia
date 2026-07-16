@@ -23,6 +23,7 @@ import { execSync } from 'child_process';
 import { homedir } from 'os';
 import { raise } from './alerting.js';
 import { sendBark } from './notifier.js';
+import { reportIncident } from './incident-reporter.js';
 
 export const MUST_RUN_DAEMONS = ['com.cecelia.bridge'];
 export const MUST_LOAD_DAEMONS = [
@@ -153,6 +154,11 @@ export async function runLaunchdPatrol(opts = {}) {
       await raise('P1', 'launchd_patrol_anomaly', msg);
     } catch (e) {
       console.warn('[launchd-patrol] raise 失败：', e.message);
+    }
+    for (const anomaly of anomalies) {
+      // fingerprint 格式: launchd-patrol:<daemon_or_port>
+      const fp = `launchd-patrol:${anomaly.replace(/^[^:]+:/, '')}`;
+      await reportIncident('launchd-patrol', fp, 'p1', { anomaly, msg });
     }
   }
 
