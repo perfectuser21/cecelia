@@ -16,6 +16,7 @@
 import pool from './db.js';
 import { emit } from './event-bus.js';
 import { raise } from './alerting.js';
+import { reportIncident } from './incident-reporter.js';
 
 const FAILURE_THRESHOLD = 8;
 const OPEN_DURATION_MS = 5 * 60 * 1000; // 5 minutes
@@ -177,6 +178,7 @@ async function recordFailure(key = 'default') {
       failures: b.failures
     });
     raise('P0', `circuit_open_${key}`, `⚠️ 熔断触发：${key} 连续失败 ${b.failures} 次（半开探针失败），已暂停派发`).catch(err => console.error('[circuit-breaker] silent error:', err));
+    reportIncident('circuit-breaker', `circuit-breaker-open:${key}`, 'p0', { key, reason: 'half_open_probe_failed', failures: b.failures }).catch(() => {});
   } else if (b.failures >= FAILURE_THRESHOLD && b.state === 'CLOSED') {
     b.state = 'OPEN';
     b.openedAt = Date.now();
@@ -187,6 +189,7 @@ async function recordFailure(key = 'default') {
       failures: b.failures
     });
     raise('P0', `circuit_open_${key}`, `⚠️ 熔断触发：${key} 连续失败 ${b.failures} 次，已暂停派发`).catch(err => console.error('[circuit-breaker] silent error:', err));
+    reportIncident('circuit-breaker', `circuit-breaker-open:${key}`, 'p0', { key, reason: 'failure_threshold_reached', failures: b.failures }).catch(() => {});
   } else {
     await _persist(key);
   }
