@@ -2719,7 +2719,8 @@ router.get('/deploy/status', (req, res) => {
   if (fileStatus && fileStatus.status !== deployState.status) {
     Object.assign(deployState, fileStatus);
   }
-  res.json({ ...deployState });
+  // FR-02/Gate3 SHA 对账：deploy status 附带当前运行实例的 git_sha（构建期烙入）
+  res.json({ ...deployState, git_sha: process.env.GIT_SHA || 'unknown' });
 });
 
 // POST /api/brain/deploy — GitHub Actions 合并后触发本地部署

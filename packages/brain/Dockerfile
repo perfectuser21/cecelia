@@ -16,6 +16,10 @@ RUN npm ci --workspace=packages/brain --omit=dev --omit=optional --ignore-script
 
 # ── Stage 2: Runtime ──
 FROM node:20-alpine
+# FR-01: 构建期 GIT_SHA 烙入（Gate3 SHA 对账）
+# build: docker build --build-arg GIT_SHA=$(git rev-parse HEAD) ...
+ARG GIT_SHA=unknown
+ENV GIT_SHA=${GIT_SHA}
 # v1.228.2 (2026-05-05): 加 docker-cli-compose（docker compose plugin）。
 # 旧版只装 docker-cli → 缺 'docker compose' 子命令 → brain-deploy.sh 调
 # `docker compose -f docker-compose.yml up -d` 报 "unknown shorthand flag: 'f' in -f"
