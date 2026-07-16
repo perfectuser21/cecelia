@@ -76,6 +76,7 @@ function shortId(id) {
 const DEFAULT_REPO_MAP = {
   cecelia: 'perfectuser21/cecelia',
   zenithjoy: 'perfectuser21/zenithjoy-workspace',
+  'zenithjoy-skills': 'perfectuser21/zenithjoy-skills',
 };
 
 function _buildRepoMap() {
@@ -380,13 +381,11 @@ export async function resumeStalledRelayRuns(deps = {}) {
             let isBehind = false;
             let ciStatus = 'pending';
             try {
-              // 追加 mergeStateStatus 字段（原有 state 字段保持兼容）
-              const prDetail = tryParseJson(execFn(`gh pr view "${effectivePrUrl}" --json state,mergeStateStatus`));
+              // statusCheckRollup 替代 gh pr checks --json（容器内老版 gh 不支持 --json 标志）
+              const prDetail = tryParseJson(execFn(`gh pr view "${effectivePrUrl}" --json statusCheckRollup,mergeStateStatus`));
               isBehind = prDetail?.mergeStateStatus === 'BEHIND';
-              // gh pr checks 非零退出时（pending=8/fail=1）用 err.stdout 兜底
-              const checksRaw = execTolerant(execFn, `gh pr checks "${effectivePrUrl}" --json state`);
-              const checkRows = tryParseJson(checksRaw) ?? [];
-              ciStatus = mapCiStatus(checkRows);
+              const statusCheckRollup = prDetail?.statusCheckRollup ?? [];
+              ciStatus = mapCiStatus(statusCheckRollup);
             } catch (ciErr) {
               // gh 调用失败 → 保守跳过（失败保守策略：不盲目重点火）
               console.warn(`[relay-watchdog] CI 状态查询失败，initiative=${run.initiative_id} 保守跳过: ${ciErr.message}`);
