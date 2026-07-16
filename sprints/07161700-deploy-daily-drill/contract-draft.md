@@ -142,3 +142,14 @@ DRILL_MOCK_MERGES='[]' bash scripts/smoke/e2e/deploy-daily-drill.sh
 - exit code 语义（0/1/2）：测试直接验证真实 bash exit code，不 mock
 - SHA 对账逻辑：fixture 数据经过真实脚本逻辑处理，不绕过
 - 15min 时间窗计算：使用真实时间差计算，fixture 构造的时间戳需精确
+
+---
+
+## 运行时守卫
+
+probe: deploy-daily-drill-health
+
+```bash
+# 守卫探针：确认演习脚本存在且可执行（nightly_drill 无持续服务，以脚本可执行性为健康指标）
+test -x scripts/smoke/e2e/deploy-daily-drill.sh && echo "ok" && exit 0 || exit 1
+```
