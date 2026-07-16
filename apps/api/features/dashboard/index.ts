@@ -26,8 +26,8 @@ const manifest: FeatureManifest = {
       component: 'TeamDashboardV1',
       navItem: { label: '团队 Dashboard', icon: 'LayoutGrid', group: 'dashboard' },
     },
-    // Default route
-    { path: '/', redirect: '/dashboard' },
+    // Default route — 主理人指挥舱 (task:80a5be84)
+    { path: '/', component: 'OwnerCockpitPage', requireAuth: true },
     // Legacy redirects
     { path: '/command', redirect: '/dashboard/command' },
     { path: '/command/*', redirect: '/dashboard/command' },
@@ -38,6 +38,7 @@ const manifest: FeatureManifest = {
     CommandCenter: () => import('../business/pages/CommandCenter'),
     PanoramaV3: () => import('../business/pages/PanoramaV3'),
     TeamDashboardV1: () => import('../business/pages/TeamDashboardV1'),
+    OwnerCockpitPage: () => import('../../dashboard/src/pages/owner-cockpit/OwnerCockpitPage'),
   },
 };
 
