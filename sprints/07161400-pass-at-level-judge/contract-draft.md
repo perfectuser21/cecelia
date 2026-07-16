@@ -52,14 +52,9 @@ npx vitest run packages/brain/src/__tests__/harness-judge-level.test.js
 
 ## Test Contract
 
-| # | [BEHAVIOR] 覆盖描述 | 测试 it() 名称（子串） | 状态 |
+| WS | Test File | BEHAVIOR 覆盖 | 预期红证据 |
 |---|---|---|---|
-| 1 | [BEHAVIOR] L3 声明 + 纯 curl 证据 → FAIL mechFail=level_evidence_mismatch | L3 声明 + 纯 curl 证据 → 修复后应 FAIL mechFail=level_evidence_mismatch | ✅ |
-| 2 | [BEHAVIOR] L3 声明 + 纯 vitest 输出 → FAIL mechFail=level_evidence_mismatch | L3 声明 + 纯 vitest 输出 → 修复后应 FAIL mechFail=level_evidence_mismatch | ✅ |
-| 3 | [BEHAVIOR] 存量无 verification_level 字段 → 行为不变（L2 兼容回归） | 兼容回归：存量无 verification_level 字段 → 返回 null（不 FAIL） | ✅ |
-| 4 | [BEHAVIOR] L3 + 真机指纹关键词证据 → PASS（不过度拦截） | 真机指纹：L3 + adb shell 输出 → 返回 null（PASS） | ✅ |
-| 5 | [BEHAVIOR] 条目级 verification_level 优先于顶层声明 | 条目级优先：顶层 L2 + 条目 L3 + 纯 curl → 按条目 L3 执法 → FAIL | ✅ |
-| 6 | [BEHAVIOR] curl 前缀但同时含设备路径关键词 → PASS（边界不过度拦截） | curl混合设备路径：curl 前缀 + /data/ 设备路径 → 返回 null（不拦截） | ✅ |
+| WS1 | `../../packages/brain/src/__tests__/harness-judge-level.test.js` | 纯 curl 证据 → 修复后应 FAIL mechFail=level_evidence_mismatch/兼容回归：存量无 verification_level 字段 → 返回 null/真机指纹：L3 + adb shell 输出 → 返回 null/条目级优先：顶层 L2 + 条目 L3 + 纯 curl → 按条目 L3 执法/curl混合设备路径：curl 前缀 + /data/ 设备路径 → 返回 null | [RED] 4个 |
 
 ## 产物清单
 

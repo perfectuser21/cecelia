@@ -111,3 +111,4 @@ oom-aware-retry-smoke.sh
 harness-death-classifier-smoke.sh
 harness-death-handlers-smoke.sh
 canary-drill-smoke.sh
+judge-level-smoke.sh
