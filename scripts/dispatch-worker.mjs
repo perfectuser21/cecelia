@@ -27,7 +27,7 @@ export function detectQuotaWall(text) {
 
 export function buildCommand(vendor, account, brief, dir) {
   if (vendor === 'codex') {
-    return { cmd: 'codex', args: ['exec', '--cd', dir, '--sandbox', 'workspace-write', brief], env: { CODEX_HOME: account.home }, cwd: dir };
+    return { cmd: 'codex', args: ['exec', '--cd', dir, '--sandbox', 'workspace-write', '--skip-git-repo-check', brief], env: { CODEX_HOME: account.home }, cwd: dir };
   }
   if (vendor === 'claude') {
     // 必须用真身：裸 claude 被 claude-launch.sh alias 劫持，headless 报 _claude_launch not found
