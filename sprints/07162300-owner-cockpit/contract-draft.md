@@ -88,6 +88,19 @@
 
 ---
 
+## Test Contract
+
+| Workstream | Test File | BEHAVIOR 覆盖 | 预期红证据 |
+|---|---|---|---|
+| FR-01 | `tests/owner-cockpit.e2e.ts` | FR-01: 根路由渲染 OwnerCockpitPage | 缺 OwnerCockpitPage 组件时 test 超时红 |
+| FR-02 | `tests/owner-cockpit.e2e.ts` | FR-02: 六张指标卡均可见/FR-02: 六张指标卡数值均非空 | 缺 metric-card-* 元素或 innerText 为空时红 |
+| FR-03 | `tests/owner-cockpit.e2e.ts` | FR-03: 作战板至少 1 张战役卡片可见/FR-03: 点击任务条目跳转 | 缺 battle-card 元素时红 |
+| FR-07 | `tests/owner-cockpit.e2e.ts` | FR-07: 移动端（375px）无水平滚动条 | scrollWidth > 375 时断言失败 |
+| FR-09 | `tests/owner-cockpit.e2e.ts` | FR-09: morning-cockpit-bark job 已在 JOBS 数组中注册/FR-09: morning-cockpit-bark handler 无硬编码 BARK_TOKEN | JOBS 无条目或含硬编码 token 时红 |
+| FR-10 | `tests/owner-cockpit.e2e.ts` | FR-10: 截图存证（owner-cockpit.png） | 截图文件不存在时红 |
+
+---
+
 ## E2E 验收
 
 ### Playwright 脚本路径
