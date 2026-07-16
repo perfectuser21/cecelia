@@ -1,0 +1,70 @@
+{
+  "meta": {
+    "reviewer": "harness-contract-reviewer",
+    "task_id": "b317ae29-9fbc-4d6f-abf0-016141d6c657",
+    "sprint_dir": "sprints/07161900-theater-mismatch-gate",
+    "sha7": "06085e0",
+    "date": "2026-07-16",
+    "gan_round": 1
+  },
+  "verdict": "APPROVED",
+  "rubric": {
+    "dim1_gp_coverage": {
+      "score": 5,
+      "max": 5,
+      "notes": "合同 Golden Path 与 PRD 完全一致：generator→harness-judge 戏院错配闸→mechFail=theater_mismatch 三段均有对应 BEHAVIOR 条目。TC-01/TC-03 覆盖主路径，contract-dod.md 中 6 条 [BEHAVIOR] 条目均可追溯至 PRD FR-01~FR-06。"
+    },
+    "dim2_invariant_coverage": {
+      "score": 7,
+      "max": 8,
+      "notes": "INV-01(dc18d43d)✓ 两闸下沉代码闸。INV-02(9216d107)✓ target_environment 从 DB 读取。INV-03(6d11717d)✓ local_api 弱环境不放行。INV-04(09fb5c69)✓ BEHAVIOR 逐步映射 GP。INV-05(06950012)✓ 真机闸触发后 feedback 指明 windows_wechat 路由。INV-06(3efefc23)—DoD 第10条提到 smoke-allowlist 登记但仅作'可能'处理，不强制，轻微。INV-07(5e125909)✓ 关键词支持 env 扩展，不写死。INV-08(3c30394c)—meta_verification_gap 闸是结构校验而非真机验证，与 INV-08 有语义张力但 FR-04 明确声明纯结构校验，属设计决策，不扣分。扣 1 分因 INV-06 smoke-allowlist 登记要求在合同中表述为'可能更新'而非强制断言。"
+    },
+    "dim3_e2e_executability": {
+      "score": 5,
+      "max": 5,
+      "notes": "contract-draft.md 验收命令节提供了两条 node -e 快速冒烟命令以及完整 vitest 套件运行命令，均为真实可跑的 bash 命令。ESM import() 语法与项目 vitest+ESM 配置一致。手动命令格式符合 manual: 前缀规范。"
+    },
+    "dim4_tdd_discipline": {
+      "score": 5,
+      "max": 5,
+      "notes": "packages/brain/src/__tests__/harness-judge-theater.test.js 已存在，含明确 'TDD failing test：实现前此断言应当 FAIL' 注释。DoD 第7条明确要求 failing test 先提交。sprints/tests/theater-mismatch-contract.test.js 提供同步 contract 测试文件。测试先行纪律完整。"
+    },
+    "dim5_false_positive_risk": {
+      "score": 4,
+      "max": 5,
+      "notes": "SC-03/TC-06 明确保护正常 local_api 合同不误伤，SC-05/TC-05 保护 smoke+L3 不误判 meta_verification_gap，SC-06 第2个子用例验证空 THEATER_KEYWORDS_EXTRA 不误触发。主要误伤风险点：contract BEHAVIOR 文本（非 GP 段）含 'adb' 等技术词但实际是本地测试时的行为描述，FR-02 同时扫描 GP 段+BEHAVIOR 命令文本，存在误判可能。contract-draft 的'未覆盖真实链路清单'第4条已明确记录此交叉场景未单独测试。扣 1 分。"
+    },
+    "dim6_boundary_coverage": {
+      "score": 3,
+      "max": 5,
+      "notes": "已覆盖边界：env 关键词扩展(SC-06)、mac_web 环境(SC-04/TC-03)、大小写不敏感(SC-07)、L3 豁免(SC-05)。未覆盖边界（已在'未覆盖真实链路清单'中诚实列出）：sprint-prd.md 读取 ENOENT 时的保守跳过行为未单元测试；DB 查询失败降级 local_api 未测试；THEATER 关键词仅出现在 contract BEHAVIOR 而非 GP 时的行为（交叉场景，合同说同时扫描但测试未验证此交叉路径）。未覆盖边界数量 3 个，有一定风险但均已明确声明，扣 2 分。"
+    },
+    "dim7_commit_order": {
+      "score": 5,
+      "max": 5,
+      "notes": "DoD 第7条明确要求 'failing test 先提交（TDD）'，commit 顺序约束写入 DoD checklist 而非模糊表述。harness-judge-theater.test.js 内行注释区分 'TDD failing 状态'。FR-05 在 PRD 中明确三场景的 failing 语义。TDD commit 顺序要求清晰且可审计。"
+    }
+  },
+  "total_score": 34,
+  "max_score": 38,
+  "score_pct": 89,
+  "concerns": [
+    {
+      "level": "minor",
+      "dim": "dim2_invariant_coverage",
+      "detail": "INV-06 要求 feat+brain/src PR 开 PR 前必须带齐 smoke-allowlist 登记。合同 DoD 第10条将此写为'若作为新导出需登记'，属条件性而非强制断言。若新增 THEATER_REAL_MACHINE_KEYWORDS 作为模块导出，登记要求未在 contract 中形成可验证断言。建议 DoD 第10条改为强制检查：断言 smoke-allowlist.txt grep THEATER_REAL_MACHINE_KEYWORDS 存在。"
+    },
+    {
+      "level": "minor",
+      "dim": "dim6_boundary_coverage",
+      "detail": "contract BEHAVIOR 文本含真机关键词但 GP 不含时的行为（FR-02 声称同时扫描两处）未单独测试。若 readFileFn 读取 sprint-prd 失败（ENOENT）则闸保守跳过，此路径无单元测试。建议 Round 2 前增补这两个边界用例。"
+    },
+    {
+      "level": "minor",
+      "dim": "dim5_false_positive_risk",
+      "detail": "合同 BEHAVIOR 命令文本本身（如 'adb screenshot' 作为 Test 命令）同时被戏院错配闸扫描，若任务是为 windows_wechat 写 helper 但 target_environment 已正确标注为 windows_wechat 则不触发，路径正确。但若开发者在 local_api 任务的 contract 里写了 adb 命令作为测试步骤注释，可能误触发。此风险已知且可接受，属 minor。"
+    }
+  ],
+  "approved_conditions": [],
+  "feedback_file": null
+}
