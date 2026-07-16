@@ -277,6 +277,13 @@ Tier 1 固定默认：
 - 必须有 `packages/brain/scripts/smoke/<feature>-smoke.sh`
 - CI `real-env-smoke` 必须通过才能 merge
 
+**push 前：轻量 Evaluator（[BEHAVIOR] 真跑复核）：**
+- 调用 `node packages/engine/scripts/devgate/light-evaluator.cjs --sprint-dir <sprint-dir>`
+- 扫描 sprint DoD 中所有 `[BEHAVIOR]` 条目的 `Test:` 命令逐条真执行
+- 无 `[BEHAVIOR]` 条目 → 自动豁免（exit 0），写 skipped 记录
+- 任一命令 exit_code ≠ 0 → 阻断 push（exit 1），查看 verify-record.json
+- 详见步骤文件：`packages/engine/skills/dev/steps/light-evaluator.md`
+
 ---
 
 ### 路径 C：大功能（Harness）

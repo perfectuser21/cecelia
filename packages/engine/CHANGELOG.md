@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
+## [19.5.0] - 2026-07-16
+
+### Added
+- 新增轻量 Evaluator 步骤（light-evaluator）：push 前自动真跑 [BEHAVIOR] DoD 断言，exit_code≠0 阻断 push，留 verify-record.json 证据
+- 新增步骤文件 `packages/engine/skills/dev/steps/light-evaluator.md`（豁免规则、记录格式、INV 约束说明、verify-record.json schema）
+- 新增实现脚本 `packages/engine/scripts/devgate/light-evaluator.cjs`（支持 --sprint-dir / --dry-run-no-behavior）
+- SKILL.md push 前步骤插入 light-evaluator 调用说明
+- feature-registry.yml 注册 light-evaluator 条目
+
 ## [14.3.3] - 2026-04-05
 
 ### Fixed
