@@ -53,14 +53,17 @@ vi.mock('../../../packages/brain/src/alerting.js', () => ({
   raise: vi.fn().mockResolvedValue(undefined),
 }));
 
-// mock notifier.js（sendBark）
-const mockSendBark = vi.fn().mockResolvedValue(undefined);
+// mock notifier.js（sendBark）— vi.hoisted 确保 factory 引用时已初始化
+const { mockSendBark, mockExecDeploy: _hoistedExecDeploy } = vi.hoisted(() => ({
+  mockSendBark: vi.fn().mockResolvedValue(undefined),
+  mockExecDeploy: vi.fn().mockResolvedValue({ stdout: '', stderr: '' }),
+}));
 vi.mock('../../../packages/brain/src/notifier.js', () => ({
   sendBark: mockSendBark,
 }));
 
 // mock child_process（exec brain-deploy.sh）—— 只 mock I/O 边界，不 mock 判定逻辑
-const mockExecDeploy = vi.fn().mockResolvedValue({ stdout: '', stderr: '' });
+const mockExecDeploy = _hoistedExecDeploy;
 vi.mock('child_process', async (importOriginal) => {
   const actual = await importOriginal();
   return {
@@ -181,7 +184,7 @@ describe('drift-sentinel — FR-15 contract tests', () => {
     expect(mockExecDeploy).toHaveBeenCalledWith(expect.stringContaining('brain-deploy.sh'));
     expect(mockSendBark).not.toHaveBeenCalled();
     // INV-10：二次核验 — redeploying 场景下 fetchProdSha 必须被调用 >=2 次（触发前再核验一次）
-    expect(opts._fetchProdShaSpy).toHaveBeenCalledTimes(expect.any(Number));
+    // toHaveBeenCalledTimes 不支持 asymmetric matcher，直接用 calls.length 断言
     expect(opts._fetchProdShaSpy.mock.calls.length).toBeGreaterThanOrEqual(2);
   });
 

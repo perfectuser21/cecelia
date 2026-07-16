@@ -107,6 +107,7 @@ import { scheduleKR3ProgressReport } from './kr3-progress-scheduler.js';
 import { calculateAndWrite as calculateKR3Progress } from './kr3-progress-calculator.js';
 import { updatePublishSuccessKRs } from './kr1-kr2-updater.js';
 import { runDailySmoke } from './cron/daily-real-business-smoke.js';
+import { runDriftSentinel, DRIFT_SENTINEL_INTERVAL_MS } from './cron/drift-sentinel.js';
 import { runSkillDriftPatrol, isInPatrolWindow } from './cron/skill-drift-patrol.js';
 import { runTestLifecyclePatrol, isInPatrolWindow as isInTestLifecyclePatrolWindow } from './test-lifecycle-patrol.js';
 import { runCredentialsHealthCheck } from './credentials-health-scheduler.js';
@@ -1717,6 +1718,14 @@ async function executeTick() {
   if (isInPatrolWindow(now)) {
     Promise.resolve().then(() => runSkillDriftPatrol(pool))
       .catch(e => console.warn('[tick] skill-drift 巡检失败:', e.message));
+  }
+
+  // 10.25 deploy drift sentinel（G2 S0：每 30min SHA 对账，漂移超 30min → brain-deploy.sh，fire-and-forget）
+  const driftSentinelElapsed = Date.now() - tickState.lastDriftSentinelTime;
+  if (!MINIMAL_MODE && driftSentinelElapsed >= DRIFT_SENTINEL_INTERVAL_MS) {
+    tickState.lastDriftSentinelTime = Date.now();
+    Promise.resolve().then(() => runDriftSentinel(pool))
+      .catch(e => console.warn('[tick] drift-sentinel 失败:', e.message));
   }
 
   // 10.24 test 生命周期巡检（每天 UTC 02:00 = 北京时间 10:00，孤儿 test → orphan + 告警，fire-and-forget）
