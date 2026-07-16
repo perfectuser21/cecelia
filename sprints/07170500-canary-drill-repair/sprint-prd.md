@@ -170,3 +170,17 @@ Step 6: 贴 drill_report 原文 + watchdog 日志原文进 PR
 - `initiative_runs` 建行需要 staging Brain 的 `/api/brain/initiative-runs` 端点存在；若不存在，需通过直接 PATCH task.payload 模拟 watchdog 扫描条件
 - `last_container_exit_code` 必须写入 `payload`（非 `result`），因为 relay-watchdog L526 从 `task.payload?.last_container_exit_code` 读取
 - Staging 实弹前须确认 staging Brain（:5222）已启动且 relay-watchdog 循环在跑
+
+---
+
+## NFR
+
+- **N1**: staging 实弹演习 ≤15min 内完成（含注入+轮询+断言）
+- **N2**: drill_report 必须包含 mode/verdict/assertions/elapsed_ms 四字段
+- **N3**: 所有异常路径必须输出 `[canary-drill]` 前缀日志，禁止静默失败
+
+---
+
+<!-- 元数据字段（下游阶段依赖） -->
+journey_type: bugfix
+target_environment: local_api
