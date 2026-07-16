@@ -58,3 +58,80 @@ export async function dispatchWithRotation({ candidates, brief, dir, maxRetries 
   }
   return { ok: false, reason: 'pool_exhausted', attempts, exit_code: 1 };
 }
+
+// ---------- 余量查询 ----------
+export async function queryUsage(account) {
+  const fail = { account, usable: false, usedPercent: 100 };
+  try {
+    if (account.vendor === 'grok') {
+      // grok 无额度 API：登录了就恒可用，垫底候选
+      return { account, usable: existsSync(join(account.home, 'auth.json')), usedPercent: Infinity };
+    }
+    if (account.vendor === 'codex') {
+      const a = JSON.parse(readFileSync(join(account.home, 'auth.json'), 'utf8'));
+      const r = await fetch('https://chatgpt.com/backend-api/wham/usage', {
+        headers: { Authorization: `Bearer ${a.tokens?.access_token}`, 'ChatGPT-Account-Id': a.tokens?.account_id },
+        signal: AbortSignal.timeout(8000),
+      });
+      if (!r.ok) return fail;
+      const pct = (await r.json()).rate_limit?.primary_window?.used_percent ?? 100;
+      return { account, usable: pct < USABLE_THRESHOLD, usedPercent: pct };
+    }
+    if (account.vendor === 'claude') {
+      const c = JSON.parse(readFileSync(join(account.home, '.credentials.json'), 'utf8'));
+      const r = await fetch('https://api.anthropic.com/api/oauth/usage', {
+        headers: { Authorization: `Bearer ${c.claudeAiOauth?.accessToken}`, 'anthropic-beta': 'oauth-2025-04-20', Accept: 'application/json' },
+        signal: AbortSignal.timeout(8000),
+      });
+      if (!r.ok) return fail;
+      const pct = (await r.json()).five_hour?.utilization ?? 100;
+      return { account, usable: pct < USABLE_THRESHOLD, usedPercent: pct };
+    }
+    return fail;
+  } catch {
+    return fail; // 查询失败视为不可用，降级到下家
+  }
+}
+
+// ---------- CLI ----------
+export function parseArgs(argv) {
+  const get = (flag) => { const i = argv.indexOf(flag); return i >= 0 ? argv[i + 1] : undefined; };
+  let brief = get('--brief');
+  const dir = get('--dir');
+  if (!brief) throw new Error('缺少 --brief <任务书文件或字符串>');
+  if (!dir || !existsSync(dir)) throw new Error('缺少 --dir 或目录不存在（--dir <workdir>）');
+  if (existsSync(brief)) brief = readFileSync(brief, 'utf8');
+  return { brief, dir, vendor: get('--vendor') ?? 'auto', maxRetries: Number(get('--max-retries') ?? 2) };
+}
+
+function makeRealRunWorker(logFile) {
+  return (account, brief, dir) => new Promise((resolve) => {
+    const { cmd, args, env, cwd } = buildCommand(account.vendor, account, brief, dir);
+    const ws = createWriteStream(logFile, { flags: 'a' });
+    ws.write(`\n===== worker ${account.vendor}:${account.name} @ ${new Date().toISOString()} =====\n`);
+    const child = spawn(cmd, args, { cwd, env: { ...process.env, ...env } });
+    let output = '';
+    for (const s of [child.stdout, child.stderr]) s.on('data', (c) => { output += c; ws.write(c); });
+    child.on('close', (code) => { ws.end(); resolve({ output, exitCode: code ?? 1 }); });
+    child.on('error', (err) => { ws.end(); resolve({ output: output + String(err), exitCode: 127 }); });
+  });
+}
+
+async function main() {
+  let parsed;
+  try { parsed = parseArgs(process.argv.slice(2)); }
+  catch (e) { console.error(String(e.message)); process.exit(2); }
+  const { brief, dir, vendor, maxRetries } = parsed;
+  const usages = await Promise.all(ACCOUNT_POOL.map(queryUsage));
+  const candidates = pickAccounts(usages, { vendor });
+  if (candidates.length === 0) { console.log(JSON.stringify({ ok: false, reason: 'no_usable_account', attempts: [] })); process.exit(1); }
+  const logFile = join(dir, `.dispatch-worker-${Date.now()}.log`);
+  const result = await dispatchWithRotation({ candidates, brief, dir, maxRetries, runWorker: makeRealRunWorker(logFile) });
+  console.log(JSON.stringify({ ...result, output_file: logFile }));
+  process.exit(result.ok ? 0 : (result.exit_code || 1));
+}
+
+// 仅直接执行时进 main（被 import 测试时不跑）
+if (process.argv[1] && import.meta.url === `file://${process.argv[1]}`) {
+  await main();
+}
