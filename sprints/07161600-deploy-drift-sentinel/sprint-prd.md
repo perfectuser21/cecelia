@@ -84,6 +84,24 @@
 
 ---
 
+## Golden Path
+
+（L1 单元测试覆盖，预合并可验；L2 实弹 FR-16 为 post-merge 手动交付物）
+
+1. drift-sentinel.js 可正确 import，无模块报错（`import { runDriftCheck } from './cron/drift-sentinel.js'` 成功）
+2. SHA 相等场景：runDriftCheck() 返回 verdict=ok，deploy 函数调用次数=0（FR-15-ok 单测 PASS）
+3. SHA 不等 + <30min 防抖窗口：verdict=drifting，deploy 函数调用次数=0（FR-15-debounce 单测 PASS）
+4. SHA 不等 + ≥30min01s：verdict=redeploying，brain-deploy.sh exec 调用次数=1，fetchProdSha 调用≥2（FR-15-redeploy + INV-10 二次核验，单测 PASS）
+5. redeployCount≥2 且仍漂移：verdict=escalated，sendBark P1 调用次数=1，deploy 函数=0（FR-15-escalate 单测 PASS）
+6. main SHA 拉取失败（网络错误）：verdict=network_error，deploy 函数=0（FR-15-network-err 单测 PASS）
+7. 生产 /health 不可达：verdict=prod_unreachable，deploy 函数=0（FR-15-prod-unreach 单测 PASS）
+8. 连续 3 次 network_error：sendBark P2 告警被调 1 次（FR-15-network-skip-x3 单测 PASS，B8/INV-09）
+9. tick-runner.js 已 import runDriftSentinel 且注册到调度表（grep: `runDriftSentinel` 可见，FR-08/INV-05）
+
+> **L2 实弹验收（FR-16）**：post-merge 手动步骤，预期在代码部署生产后执行；产物为 live-fire-report.md，不在本 PR 范围内。
+
+---
+
 ## 检查清单（DoD）
 
 - [ ] drift-sentinel.js 注册进 tick-runner.js（grep 可见调用）
