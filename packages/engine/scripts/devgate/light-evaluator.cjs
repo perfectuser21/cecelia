@@ -21,7 +21,7 @@
 
 const fs = require("fs");
 const path = require("path");
-const { execSync } = require("child_process");
+const { spawnSync } = require("child_process");
 
 // ─────────────────────────────────────────────────────────────────────────────
 // CLI 参数解析
@@ -105,20 +105,17 @@ function extractBehaviorTests(content) {
  */
 function runCmd(cmd, timeoutMs) {
   timeoutMs = timeoutMs || 60000;
-  let output = "";
-  let exitCode = 0;
+  // cmd 来自合同 DoD 的 Test: manual:bash -c "..." 内部——设计上是在 bash double-quote
+  // 上下文里的字符串，所以 \\ → \，\" → "（shell double-quote unescape 一层）
+  const unescaped = cmd.replace(/\\\\/g, "\\").replace(/\\"/g, '"');
 
-  try {
-    output = execSync(`bash -c ${JSON.stringify(cmd)}`, {
-      encoding: "utf-8",
-      timeout: timeoutMs,
-      stdio: ["pipe", "pipe", "pipe"],
-    });
-  } catch (e) {
-    exitCode = e.status || 1;
-    output = (e.stdout || "") + (e.stderr || "");
-  }
+  const result = spawnSync("bash", ["-c", unescaped], {
+    encoding: "utf-8",
+    timeout: timeoutMs,
+  });
 
+  const exitCode = result.status !== null ? result.status : 1;
+  const output = (result.stdout || "") + (result.stderr || "");
   const lines = output.split("\n").filter((l) => l !== "");
   const tail5 = lines.slice(-5);
 
