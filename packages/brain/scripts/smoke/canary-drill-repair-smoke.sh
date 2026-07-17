@@ -11,7 +11,7 @@ curl -sf "${BRAIN_URL}/api/brain/health" > /dev/null && echo "Brain reachable: O
 
 # 2. canary-drill-scheduler 模块可正常 import，且 maybeScheduleCanaryDrill 已导出
 node -e "
-import('./src/canary-drill-scheduler.js').then(m => {
+import('./packages/brain/src/canary-drill-scheduler.js').then(m => {
   if (typeof m.maybeScheduleCanaryDrill !== 'function') throw new Error('maybeScheduleCanaryDrill not exported');
   if (typeof m.runCanaryDrillIfNeeded !== 'function') throw new Error('runCanaryDrillIfNeeded not exported');
   console.log('canary-drill-scheduler: exports OK');
@@ -20,7 +20,7 @@ import('./src/canary-drill-scheduler.js').then(m => {
 
 # 3. harness-relay-watchdog resumeStalledRelayRuns 可正常 import
 node -e "
-import('./src/harness-relay-watchdog.js').then(m => {
+import('./packages/brain/src/harness-relay-watchdog.js').then(m => {
   if (typeof m.resumeStalledRelayRuns !== 'function') throw new Error('resumeStalledRelayRuns not exported');
   console.log('harness-relay-watchdog: exports OK');
 }).catch(e => { console.error(e.message); process.exit(1); });
@@ -28,7 +28,7 @@ import('./src/harness-relay-watchdog.js').then(m => {
 
 # 4. canary-drill-scheduler 支持 existsFn 注入参数（接口兼容性）
 node -e "
-import('./src/canary-drill-scheduler.js').then(async m => {
+import('./packages/brain/src/canary-drill-scheduler.js').then(async m => {
   // 时间窗口外调用，不需要 existsFn 也能返回 skipped
   const result = await m.maybeScheduleCanaryDrill({ now: new Date('2026-01-01T00:00:00Z'), existsFn: () => false });
   if (!result || typeof result.triggered === 'undefined') throw new Error('bad return shape');

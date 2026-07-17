@@ -117,3 +117,4 @@ git-sha-health-smoke.sh
 judge-level-smoke.sh
 drift-sentinel-smoke.sh
 theater-mismatch-smoke.sh
+canary-drill-repair-smoke.sh
