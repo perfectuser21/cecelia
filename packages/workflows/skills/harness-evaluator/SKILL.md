@@ -6,10 +6,11 @@ description: |
   evaluator 在 CI 绿之后、PR merge 之前真启服务 + 跑 contract 的 manual:bash 命令验真行为。
   PASS → 允许 merge；FAIL → 不 merge，带反馈打回 Generator 在 PR 分支 fix loop（main 不变动）。
   单模式（harness v2 始终 IS_FINAL_E2E=true）：读 contract-draft.md 的 ## E2E 验收 脚本，按 target_environment 派发跑 Golden Path 端到端真实行为。
-version: 1.28.0
+version: 1.29.0
 created: 2026-05-06
 updated: 2026-07-17
 changelog:
+  - 1.29.0: MJ5 S3 联动清单（thin档，additive）——Step B-1.4 改用 payload.feature_id + GET /features/:id/blast-radius；评估可跑断言（tests/|manual:）并直接 PATCH cell_status=green；cascade_assertions 数组写入 verdict JSON 供 Brain execution.js Step 3.6 幂等备份；feature_id 缺失时跳过不 block（thin档不强制全跑）
   - 1.28.0: target_environment 加 android_realmachine 路由分支（洞①）— TARGET_ENV 表 + case 并入 windows_cloud|windows_wechat 桶 + ANDROID_REALMACHINE_WORKFLOW 变量
   - 1.27.0: gear 档位：「Relay 入口段」新增 SEGMENT_EVAL=<task_id> 段级轻验收（移植自 cecelia #4027 harness-gear 一体化 60a80ddc 决策5）——跳过 final-E2E，只跑该段 [BEHAVIOR]/tests 断言 + 复跑此前所有已绿段测试（回归棘轮：已绿变红 → 本段 FAIL 且失败摘要注明回归项）；verdict 输出格式不变，额外带 segment_eval 字段；default（未出现 SEGMENT_EVAL）保持全量模式原文行为不变
   - 1.26.0: 配套三段式剧本格式——evaluator 按剧本逐步执行：先执行「动作」，再 within 预算轮询「预期观察」，最后跑「验证命令」；behavior_tests 条目支持 action/expected 新字段（与 command/exit_code/log_tail 共存）
@@ -379,6 +380,83 @@ fi
 ```
 
 > **EVA v2 E4**：上面两个分支写入的 `$E2E_FIXATION_NOTE` 非空时，Step B-3 / 输出规范写 verdict JSON 必须追加 `"notes":"$E2E_FIXATION_NOTE"` 字段（v1 消费方忽略未知字段无害），让"固化是否真入库/为何不推"从 verdict 本身可见。
+
+#### Step B-1.4 (S3 联动清单，thin档 — MJ5 刀3)
+
+**从 task payload.feature_id → GET /features/:id/blast-radius → 逐条跑可运行断言并回写 cell_status。feature_id 缺失时跳过，不 block 主流程（thin档不强制全跑）。**
+
+```bash
+# S3 联动清单：feature_id + blast-radius 端点（v1.29）
+CASCADE_ASSERTIONS='[]'
+FEATURE_ID=$(curl -sf "http://localhost:5221/api/brain/tasks/$TASK_ID" 2>/dev/null \
+  | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('payload',{}).get('feature_id',''))" \
+  2>/dev/null || echo "")
+
+if [[ -z "$FEATURE_ID" ]]; then
+  echo "[S3联动] payload 无 feature_id，跳过联动清单"
+else
+  BLAST=$(curl -sf "http://localhost:5221/api/brain/features/$FEATURE_ID/blast-radius" \
+    2>/dev/null || echo '{"blast_radius":[]}')
+  BLAST_LEN=$(echo "$BLAST" | python3 -c "import sys,json; print(len(json.load(sys.stdin).get('blast_radius',[])))")
+  echo "[S3联动] 件 $FEATURE_ID 波及 $BLAST_LEN 个格子"
+
+  CASCADE_RAN=0
+  S3_ENTRIES=()
+
+  while IFS='|' read -r S3_LINK_ID S3_REF; do
+    [[ -z "$S3_LINK_ID" ]] && continue
+    S3_RAN=false
+    S3_RESULT=skip
+
+    if [[ "$S3_REF" == tests/* ]]; then
+      S3_RAN=true
+      if NODE_OPTIONS="--max-old-space-size=3072" npx vitest run "$S3_REF" 2>&1 | tail -5; then
+        S3_RESULT=pass
+      else
+        S3_RESULT=fail
+      fi
+    elif [[ "$S3_REF" == manual:* ]]; then
+      S3_RAN=true
+      S3_BARE="${S3_REF#manual:}"
+      if eval "$S3_BARE" 2>&1 | tail -5; then
+        S3_RESULT=pass
+      else
+        S3_RESULT=fail
+      fi
+    fi
+
+    # pass → 直接回写 cell_status=green（铁律一：账本写入必须是流水线副作用）
+    if [[ "$S3_RESULT" == pass ]]; then
+      curl -sf -X PATCH "http://localhost:5221/api/brain/journey_step_links/$S3_LINK_ID" \
+        -H "Content-Type: application/json" \
+        -d '{"cell_status":"green"}' >/dev/null \
+        && echo "[S3联动] ✓ link $S3_LINK_ID → green" \
+        || echo "[S3联动 WARN] 回写 $S3_LINK_ID 失败（Brain 不通，继续，Step 3.6 将幂等重试）"
+      CASCADE_RAN=$((CASCADE_RAN + 1))
+    fi
+
+    S3_ENTRIES+=("{\"link_id\":\"$S3_LINK_ID\",\"assertion_ref\":\"$S3_REF\",\"ran\":$S3_RAN,\"result\":\"$S3_RESULT\"}")
+  done < <(echo "$BLAST" | python3 -c "
+import sys, json
+for item in json.load(sys.stdin).get('blast_radius', []):
+    lid = item.get('link_id', '')
+    ref = item.get('assertion_ref') or ''
+    if lid:
+        print(lid + '|' + ref)
+")
+
+  if [[ ${#S3_ENTRIES[@]} -gt 0 ]]; then
+    CASCADE_ASSERTIONS=$(python3 -c "
+import sys, json
+entries = [json.loads(e) for e in sys.argv[1:]]
+print(json.dumps(entries))
+" "${S3_ENTRIES[@]}" 2>/dev/null || echo '[]')
+  fi
+  echo "[S3联动] 波及 $BLAST_LEN 格，跑了 $CASCADE_RAN 条（pass）"
+fi
+```
+
+> **S3 thin档规则**：清单进报告、可跑的顺手跑并直接回写 `cell_status=green`；跑不了的（真机 L3 等）列为"待 nightly 覆盖"。S3 失败不阻断本次 E2E verdict（强制档为 v2）。verdict JSON 新增 `cascade_assertions` 数组，供 Brain execution.js Step 3.6 幂等备份写回。
 
 #### Step B-1.5: E2E 命令位置词验证（B33 v1.6 — playground-aware）
 
@@ -861,7 +939,7 @@ fi
 
 ```bash
 cat > "$WORKSPACE/.brain-result.json" << BREOF
-{"verdict":"PASS","task_id":"$TASK_ID","failed_step":null,"log_excerpt":null,"screenshots":${SCREENSHOTS_JSON:-[]}}
+{"verdict":"PASS","task_id":"$TASK_ID","failed_step":null,"log_excerpt":null,"screenshots":${SCREENSHOTS_JSON:-[]},"cascade_assertions":${CASCADE_ASSERTIONS:-[]}}
 BREOF
 ```
 

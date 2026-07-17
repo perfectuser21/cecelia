@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import pool from '../db.js';
+import { buildCascadeReport } from '../cascade-list.js';
 
 const router = Router();
 
@@ -519,6 +520,46 @@ router.patch('/journey_step_links/:id', async (req, res) => {
   }
 });
 
+// GET /api/brain/journeys/steps/:step_id/impact — S3 联动清单（thin档）
+// evaluator 通过 anchor.step_id 查该步骤全部格子+断言锚点，生成联动清单
+router.get('/journeys/steps/:step_id/impact', async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      `SELECT
+         jsl.id           AS link_id,
+         jsl.feature_id,
+         jf.name          AS feature_name,
+         jf.kind          AS feature_kind,
+         jsl.cell_kind,
+         jsl.cell_status,
+         jsl.assertion_ref,
+         jsl.na_reason
+       FROM journey_step_links jsl
+       LEFT JOIN journey_features jf ON jf.id = jsl.feature_id
+       WHERE jsl.step_id = $1
+       ORDER BY jsl.step_order, jsl.id`,
+      [req.params.step_id]
+    );
+    const impacts = rows.map(r => ({
+      ...r,
+      needs_assertion: r.assertion_ref === null && r.na_reason === null,
+    }));
+    const runnable_count = impacts.filter(r =>
+      r.assertion_ref !== null &&
+      (r.assertion_ref.startsWith('tests/') || r.assertion_ref.startsWith('manual:'))
+    ).length;
+    res.json({
+      step_id: req.params.step_id,
+      total: impacts.length,
+      runnable_count,
+      impacts,
+    });
+  } catch (err) {
+    console.error('[journeys] GET /journeys/steps/:step_id/impact error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // GET /api/brain/features/:id/blast-radius
 // 返回"该件塌了哪些承诺红"：通过 journey_step_links 反查所有引用本件的步骤+承诺
 router.get('/features/:id/blast-radius', async (req, res) => {
@@ -555,6 +596,60 @@ router.get('/features/:id/blast-radius', async (req, res) => {
     });
   } catch (err) {
     console.error('[journeys] GET /features/:id/blast-radius error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/brain/cascade-list — S3 联动清单（thin档）
+// 输入：changed_files[]（PR 改动文件路径）
+// 输出：被影响的格子断言列表 + 分类摘要（可跑/待 nightly/未登记）
+router.post('/cascade-list', async (req, res) => {
+  try {
+    const { changed_files } = req.body;
+    if (!Array.isArray(changed_files) || changed_files.length === 0) {
+      return res.status(400).json({ error: 'changed_files 数组必填' });
+    }
+
+    // 1. 找到被改动文件涉及的格子（journey_step_links）
+    // 匹配策略（thin档）：
+    //   a) 格子 assertion_ref 与 changed_files 直接匹配
+    //   b) 所属 journey_features.unit_test_path 与 changed_files 匹配
+    const { rows: cells } = await pool.query(
+      `SELECT
+         jsl.id           AS link_id,
+         jsl.feature_id,
+         jsl.cell_kind,
+         jsl.cell_status,
+         jsl.assertion_ref,
+         jsl.na_reason,
+         jf.name          AS feature_name,
+         jf.unit_test_path,
+         js.id            AS step_id,
+         js.name          AS step_name,
+         js.promise,
+         js.step_number,
+         j.id             AS journey_id,
+         j.name           AS journey_name
+       FROM journey_step_links jsl
+       LEFT JOIN journey_features jf ON jf.id = jsl.feature_id
+       LEFT JOIN journey_steps    js ON js.id  = jsl.step_id
+       LEFT JOIN journeys          j ON j.id   = js.journey_id
+       WHERE
+         (jsl.assertion_ref = ANY($1::text[]))
+         OR (jf.unit_test_path = ANY($1::text[]))
+       ORDER BY j.name, js.step_number`,
+      [changed_files]
+    );
+
+    const report = buildCascadeReport(cells);
+
+    res.json({
+      changed_files_count: changed_files.length,
+      ...report,
+      cells,
+    });
+  } catch (err) {
+    console.error('[journeys] POST /cascade-list error:', err.message);
     res.status(500).json({ error: err.message });
   }
 });
