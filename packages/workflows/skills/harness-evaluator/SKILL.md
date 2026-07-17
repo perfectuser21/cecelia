@@ -6,10 +6,11 @@ description: |
   evaluator 在 CI 绿之后、PR merge 之前真启服务 + 跑 contract 的 manual:bash 命令验真行为。
   PASS → 允许 merge；FAIL → 不 merge，带反馈打回 Generator 在 PR 分支 fix loop（main 不变动）。
   单模式（harness v2 始终 IS_FINAL_E2E=true）：读 contract-draft.md 的 ## E2E 验收 脚本，按 target_environment 派发跑 Golden Path 端到端真实行为。
-version: 1.25.0
+version: 1.26.0
 created: 2026-05-06
-updated: 2026-07-16
+updated: 2026-07-17
 changelog:
+  - 1.26.0: harness gear 一体化（60a80ddc 决策5）— 「Relay 入口协议」段新增 SEGMENT_EVAL=<task_id> 段级轻验收：跳过 final-E2E，只跑该段 [BEHAVIOR]/tests 断言 + 复跑此前所有已绿段测试（回归棘轮：已绿变红 → 本段 FAIL 且失败摘要注明回归项）；verdict 输出格式不变，额外带 segment_eval 字段；default（未出现 SEGMENT_EVAL）保持全量模式原文行为不变
   - 1.25.0: target_environment 加 android_realmachine（洞①）— TARGET_ENV 说明表 + 新增 ANDROID_REALMACHINE_WORKFLOW 变量；并入 windows_cloud|windows_wechat 的 GHA 派发桶（复用 xian-rog [self-hosted, wechat-capable] runner + REPO 解析/轮询/artifact 下载机制），WORKFLOW 选择加 elif 分支缺省 e2e-line02-android-collect.yml；E2E 脚本本身仍走 bash 提取（未走 ps1 分支），仅本地执行判断/环境预检跳过判断并入该三态；Path2 安卓获客真机验收此前无枚举可路由
   - 1.24.0: 刀3-T5 — 新增 Step B-1.7（B-guard-check）：核查 contract-draft.md 必含 ## 运行时守卫 段，段内须有 probe:（含可执行 bash 块）或 waiver:<decision_id>；两者都缺 → failed_step=guard_ref_missing FAIL；提取 GUARD_REF 写入 verdict JSON，report 收尾链消费写回 journey_features.guard_ref（依赖刀3-T4 列已存在）
   - 1.23.0: EVA v2 审计四修——(E1) verdict 必带真跑证据：behavior_tests 每条必须是对象 {command, exit_code, log_tail}（log_tail=命令输出末 5 行），缺任一 = 该条视为未跑禁 PASS（a85e0582 实证 verdict 只列命令原文无法区分真跑/声称跑过）；(E4) Step B-1 固化段加分支判断：detached HEAD（post-merge 补验模式）跳过 commit/push 并在 verdict notes 说明，普通路径 push 失败输出 WARN 记入 notes（删静默吞掉）；(E5) 三处 awk 标题正则放宽为 /^##+[[:space:]]*E2E[[:space:]]*验收/（### 或带空格变体不再整段漏空）；(E7) 注入变量表补 PR_BRANCH 行
@@ -126,6 +127,22 @@ WORKSPACE="${WORKSPACE_PATH:-/workspace}"
 ### relay 下不许跳过的事（红线接回）
 
 **主体流程 Step 0a → B-3 在 relay 下照跑，一步不少**：切 PR 分支、E2E 段提取 + 固化（B-1 / Slice3 cp 进 sprint 目录）、位置词验证（B-1.5）、环境预检（B-1.6）、Golden Path 覆盖对照表（B-1.8）、领域死规则、真跑 E2E 脚本（B-2）、结果文件写入。**「反作弊红线」四条在 relay 路径同等生效**（见下节加粗段）。relay 不是简化模式——它只改变参数来源，不改变验收标准。
+
+### SEGMENT_EVAL 段级轻验收（segmented 档位 — harness gear 一体化 60a80ddc 决策5）
+
+> **default 声明**：`SEGMENT_EVAL` 未在派发参数（env 或 prompt）中出现时，本节不生效——按上面「relay 下的模式与 FATAL 边界」全量模式原文行为执行（`IS_FINAL_E2E` 视为 `true`，跑完整 final-E2E）。以下规则仅在 `SEGMENT_EVAL=<task_id>` 存在时启用。
+
+`SEGMENT_EVAL=<task_id>`（如 `ws2`）存在时，本次调用是 segmented 档位下**该段的段验**，不是总验：
+
+1. **跳过 final-E2E**：不执行「relay 下不许跳过的事」里的完整 Golden Path E2E 脚本真跑；改为只跑该段范围内的断言。
+2. **只跑该段 `[BEHAVIOR]`/`tests` 断言**：从 `${SPRINT_DIR}/task-plan.json` 用 `jq -e --arg ws "$SEGMENT_EVAL" '.tasks[] | select(.task_id==$ws)'` 取出本段 `dod[]`，逐条真跑其中 `[BEHAVIOR]` 的 `manual:bash` 命令（沿用上面「反作弊红线」四条，同等生效——不得因段验而放宽）；同时跑 `${SPRINT_DIR}/tests/` 里属于本段 `files` 范围的测试。
+3. **复跑此前所有已绿段的测试（回归棘轮）**：按 `task-plan.json` 中 `depends_on` 线性链，找出本段之前已判 PASS 的段（`ws1..ws(N-1)`），把它们各自的 `[BEHAVIOR]`/tests 断言重新真跑一遍。
+4. **回归棘轮判定**：
+   - 本段断言全过 **且** 所有已绿段断言仍全过 → `verdict: "PASS"`
+   - 本段断言有失败 → `verdict: "FAIL"`，`feedback` 指明本段哪条失败
+   - 本段断言全过但**某个已绿段的断言这次变红** → `verdict: "FAIL"`，且失败摘要必须**明确注明回归项**（哪个 `task_id` 的哪条断言从绿变红），不得与本段失败混为一谈——红灯只减不增是硬底线，已绿段回归即算本段责任
+5. **verdict 输出格式与全量模式一致**：仍是纯 JSON 对象（`verdict`/`feedback`/`failed_step` 等字段名不变），额外带 `"segment_eval": "<task_id>"` 字段供 controller 识别这是段验结果而非总验结果。
+6. **总验不受影响**：段验全部通过后，segmented Sprint 仍需走一次总验（`SEGMENT_EVAL` 不出现的调用），跑完整 final-E2E，判定标准与现行全量模式完全一致。
 
 ---
 

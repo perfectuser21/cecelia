@@ -1,8 +1,10 @@
 import { describe, it, expect } from 'vitest'
 import { readFileSync, existsSync } from 'fs'
-import { join } from 'path'
+import { join, dirname } from 'path'
+import { fileURLToPath } from 'url'
 
-const RTM_PATH = join(process.cwd(), 'docs/rtm/path4-customer-service.md')
+// 相对本测试文件定位，不依赖 process.cwd()（brain-unit 分片以 packages/brain 为 cwd 时曾 ENOENT）
+const RTM_PATH = join(dirname(fileURLToPath(import.meta.url)), '../../../docs/rtm/path4-customer-service.md')
 
 describe('[BEHAVIOR] Path4 RTM 文档结构验证', () => {
   it('RTM 文档存在', () => {

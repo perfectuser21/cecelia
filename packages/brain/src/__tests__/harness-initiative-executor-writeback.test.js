@@ -200,6 +200,13 @@ vi.mock('../events/taskEvents.js', () => ({
 const mockSpawnRelay = vi.hoisted(() => vi.fn());
 vi.mock('../harness-skill-relay.js', () => ({
   spawnSkillRelaySession: (...args) => mockSpawnRelay(...args),
+  // gear 硬校验（决策1）：task.payload.gear 缺省 → 'default'，不抛错，行为零回归。
+  deriveGear: (task) => {
+    const g = task?.payload?.gear;
+    if (g === undefined || g === null) return 'default';
+    if (['default', 'hotfix', 'segmented'].includes(g)) return g;
+    throw new Error(`invalid_gear: ${g}`);
+  },
 }));
 
 // ── 被测函数 ─────────────────────────────────────────────────
