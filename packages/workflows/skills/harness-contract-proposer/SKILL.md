@@ -4,10 +4,11 @@ description: |
   Harness Contract Proposer — Harness v5 GAN Layer 2a：
   读 PRD，GAN 对抗写 Golden Path 合同（每步含真实验证命令）；
   Reviewer APPROVED 后倒推拆 task-plan.json。
-version: 9.13.0
+version: 9.14.0
 created: 2026-04-08
 updated: 2026-07-16
 changelog:
+  - 9.14.0: harness gear 一体化（60a80ddc 决策6）— Step 3 后新增 Step 3.1：HARNESS_GEAR=segmented 档位分支，恢复 v7 前多 workstream task-plan.json schema（tasks[]/depends_on 线性链/estimated_minutes 20-60），段划分依据=Golden Path"后段依赖前段真机产物"接缝；default（缺省或非 segmented）保持单 ws1 现行为不变
   - 9.13.0: target_environment 枚举加 android_realmachine（洞①）— Path2 安卓获客真机验收（xian-rog）此前无枚举可用，E2E 模板行同步补
   - 9.12.0: 刀3-T5 — 合同必填「运行时守卫」槽位：contract-draft.md 必须含 ## 运行时守卫 段，内嵌具体探针（probe:/script: 可机检执行块）或显式豁免（waiver:<decision_id>+理由）；两者都没有 = 合同不完整，Reviewer 打回；Step 2b-check 新增第 8 项 grep 机械验；evaluator B-guard-check 对应核查；report 收尾链把 guard_ref 写回 journey_features（依赖刀3-T4 列已存在）
   - 9.11.0: EVA v2 审计四刀（d063b3e5/a85e0582/a638f840 实证脱模板合同骗过自查）— (1) Step 2b-check 三处补丁：[BEHAVIOR] 计数锚定行首 checkbox 格式（标题式不计入）+ 第 5 项 E2E 段 bash 块 ≥1 + 第 6 项提取 E2E 块过 bash -n 与全角标点扫描；(2) E2E 多代码块拼接语义显式化（evaluator 1.22.0 全部 bash 块按序拼接，推荐单块，多块禁重复 shebang/set）；(3) 禁文本自证型 BEHAVIOR（grep 文件含字符串归 [ARTIFACT]，真执行断言 ≥2 条且占比 ≥50%）+ 自查第 7 项启发式分类计数；(4) 新增 Step 1.3 历史约束三源加载（铁律逐条映射 INV-N 条目或显式 N/A + context-manifest 累积 FR + 回归测试）
@@ -1412,6 +1413,59 @@ JSONEOF
 - `task_id`: 固定 `ws1`（一个 Sprint 只有一个 task）
 - `estimated_minutes`: 30 ≤ n ≤ 120
 - `dod`: 至少 1 个 `[BEHAVIOR]`
+
+---
+
+### Step 3.1: HARNESS_GEAR=segmented 档位分支（多 workstream task-plan，v7 前 schema）
+
+> **default 声明**：`HARNESS_GEAR` 环境变量缺失，或值不等于 `segmented` 时，本节不生效——继续走上面 Step 3 的单 `ws1` 现行为，task-plan.json 只输出 1 个 task。以下规则仅在 `HARNESS_GEAR=segmented` 时启用。
+
+**触发条件**：controller 派发本 skill 时若在 prompt 头/env 传入 `HARNESS_GEAR=segmented`（真机 RPA / 骨架全红棋盘 + N 段串行点绿场景），Step 3 改为输出**多个 task**，schema 恢复 v7 前原样（`tasks[]` 数组，字段：`task_id`/`title`/`scope`/`dod[]`/`files[]`/`depends_on[]`/`complexity`/`estimated_minutes`）。
+
+**段划分依据**：按 Golden Path 步骤识别"后段依赖前段真机产物"的接缝——例如 Step 1-2（骨架/环境准备）产出的真机安装包/登录态，是 Step 3+（真机操作/断言）的前置输入，接缝处即切段。段数 = 接缝数 + 1，不强行均分。
+
+**线性链死规则**：
+- `task_id` 命名 `ws1`、`ws2`……`wsN`，编号即执行顺序
+- **只有 `ws1` 可以 `depends_on: []`**，`ws2` 起必须声明前置（至少含上一段 `task_id`，允许多前置）
+- `estimated_minutes`：20 ≤ n ≤ 60（segmented 档位比单段 Sprint 更细粒度，故区间收窄，与 Step 3 单 ws1 档 30-120 不同）
+- `dod`：每段至少 1 个 `[BEHAVIOR]`，且该 `[BEHAVIOR]` 必须是本段 scope 内可独立验证的断言（不得依赖后续段才存在的产物）
+
+**完整两段 JSON 示例**（真机 RPA 场景：ws1=骨架环境准备，ws2=真机操作断言）：
+
+```json
+{
+  "initiative_id": "${INITIATIVE_ID}",
+  "journey_type": "user_facing",
+  "journey_type_reason": "真机微信 RPA 操作需真实 UI 交互与截图验证",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "真机环境骨架 + 登录态准备",
+      "scope": "在 xian-rog 真机上准备微信登录态与目标窗口，产出后续段可复用的会话句柄",
+      "dod": [
+        "[BEHAVIOR] 真机微信进程存活且目标会话窗口可寻址，manual:bash 断言 pid + 窗口句柄非空",
+        "[ARTIFACT] session-handle.json 写入 SPRINT_DIR"
+      ],
+      "files": ["scripts/wechat-session-init.ps1"],
+      "depends_on": [],
+      "complexity": "S",
+      "estimated_minutes": 30
+    },
+    {
+      "task_id": "ws2",
+      "title": "真机消息发送 + 回执断言",
+      "scope": "基于 ws1 产出的会话句柄，触发真实消息发送并断言回执",
+      "dod": [
+        "[BEHAVIOR] 真机发送消息后目标会话出现新记录，manual:bash 断言 UIA 读取的消息内容匹配"
+      ],
+      "files": ["scripts/wechat-send-verify.ps1"],
+      "depends_on": ["ws1"],
+      "complexity": "M",
+      "estimated_minutes": 45
+    }
+  ]
+}
+```
 
 ---
 

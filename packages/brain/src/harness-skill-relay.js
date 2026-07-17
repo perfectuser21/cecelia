@@ -41,6 +41,25 @@ export function deriveReviewRequired(task) {
   return true;
 }
 
+/**
+ * harness gear 档位（07-17 一体化设计决策1）：default=现行为不动 / hotfix=免 planner/GAN 直通
+ * / segmented=骨架全红棋盘 + N 段串行点绿。
+ */
+export const GEAR_VALUES = ['default', 'hotfix', 'segmented'];
+
+/**
+ * deriveGear(task) — 纯函数，缺省/undefined/null → 'default'；∈GEAR_VALUES → 原值透传；
+ * 其余非法值 → throw（executor 层 catch 后同 missing_orchestrator_flag 形态标 terminal failed）。
+ * segmented 的段循环在 controller session 内完成，不新增 Brain 任务，不影响 dispatcher 并发模型
+ *（见 dispatcher.js:54-69 全局 harness_initiative 并发上限按 task 数计数，与 gear 值无关）。
+ */
+export function deriveGear(task) {
+  const gear = task?.payload?.gear;
+  if (gear === undefined || gear === null) return 'default';
+  if (GEAR_VALUES.includes(gear)) return gear;
+  throw new Error(`invalid_gear: ${gear}`);
+}
+
 /** 双轨路由判断：payload.orchestrator==='skill-relay' 才走 relay */
 export function isSkillRelayTask(task) {
   return task?.payload?.orchestrator === RELAY_FLAG;
@@ -185,6 +204,10 @@ export async function spawnSkillRelaySession(task, deps = {}) {
 
     // 3.5 P2-1 review 分级：点火时判定并持久化（controller 经 GET task 读 payload.review_required）
     const reviewRequired = deriveReviewRequired(task);
+
+    // 3.55 harness gear 档位（决策1）：executor 层已对非法值硬校验 terminal failed（本函数
+    // 直调时非法值仍会 throw，走既有通用回滚 catch——见函数尾部）。
+    const gear = deriveGear(task);
     try {
       await dbPool.query(
         `UPDATE tasks SET payload = COALESCE(payload, '{}'::jsonb) || jsonb_build_object('review_required', $2::boolean)
@@ -235,6 +258,7 @@ export async function spawnSkillRelaySession(task, deps = {}) {
       `SPRINT_DIR=${sprintDir}`,
       `BRAIN_URL=http://host.docker.internal:5221`,
       `REVIEW_REQUIRED=${reviewRequired}`,
+      `HARNESS_GEAR=${gear}`,
       `任务标题：${task.title || ''}`,
     ].join('\n');
 
@@ -274,6 +298,7 @@ export async function spawnSkillRelaySession(task, deps = {}) {
           HARNESS_TASK_ID: task.id,
           HARNESS_INITIATIVE_ID: initiativeId,
           HARNESS_SPRINT_DIR: sprintDir,
+          HARNESS_GEAR: gear,
           // 刀3（跨 repo 化）：宿主 worktree 绝对路径。controller 在容器内（cwd=/workspace），
           // Step 5 curl Brain judge API 时 worktree 参数必须传宿主路径——Brain 容器把
           // ~/perfect21/cecelia 与 .claude/worktrees 按宿主同路径挂载，judge 按此读 .brain-result.json。
