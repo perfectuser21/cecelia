@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import pool from '../db.js';
+import { buildCascadeReport } from '../cascade-list.js';
 
 const router = Router();
 
@@ -102,6 +103,35 @@ router.get('/journeys/:id', async (req, res) => {
   }
 });
 
+// PATCH /api/brain/journeys/:id — 承诺地图字段（mapper 落账用）
+router.patch('/journeys/:id', async (req, res) => {
+  try {
+    const { home, domain, trigger, endpoint, description, maturity } = req.body;
+    if (home && !VALID_HOME.includes(home)) {
+      return res.status(400).json({ error: `home must be one of: ${VALID_HOME.join(',')}` });
+    }
+    const sets = [];
+    const vals = [];
+    let idx = 1;
+    if (home !== undefined)        { sets.push(`home=$${idx++}`);        vals.push(home); }
+    if (domain !== undefined)      { sets.push(`domain=$${idx++}`);      vals.push(domain); }
+    if (trigger !== undefined)     { sets.push(`trigger=$${idx++}`);     vals.push(trigger); }
+    if (endpoint !== undefined)    { sets.push(`endpoint=$${idx++}`);    vals.push(endpoint); }
+    if (description !== undefined) { sets.push(`description=$${idx++}`); vals.push(description); }
+    if (maturity !== undefined)    { sets.push(`maturity=$${idx++}`);    vals.push(maturity); }
+    if (!sets.length) return res.status(400).json({ error: 'no fields to update' });
+    sets.push(`updated_at=NOW()`);
+    vals.push(req.params.id);
+    const { rows } = await pool.query(
+      `UPDATE journeys SET ${sets.join(',')} WHERE id=$${idx} RETURNING *`, vals);
+    if (!rows.length) return res.status(404).json({ error: 'not found' });
+    res.json(rows[0]);
+  } catch (err) {
+    console.error('[journeys] PATCH /journeys/:id error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // GET /api/brain/journey_features/unguarded-count — 裸奔 FR 数（guard_ref IS NULL AND status='live'）
 router.get('/journey_features/unguarded-count', async (_req, res) => {
   try {
@@ -111,6 +141,28 @@ router.get('/journey_features/unguarded-count', async (_req, res) => {
     res.json({ count: rows[0].count });
   } catch (err) {
     console.error('[journeys] GET /journey_features/unguarded-count error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/brain/journey_features/:id/blast-radius — 塌了哪些承诺红（MJ5 S1）
+// 注：挂 journey_features 前缀而非 PRD 原文 /features/:id（后者已被 feature-ledger 表占用）
+router.get('/journey_features/:id/blast-radius', async (req, res) => {
+  try {
+    const { rows: frows } = await pool.query(
+      `SELECT id, name, status, "group" FROM journey_features WHERE id=$1`, [req.params.id]);
+    if (!frows.length) return res.status(404).json({ error: 'feature not found' });
+    const { rows } = await pool.query(
+      `SELECT j.id AS journey_id, j.name AS journey_name, j.domain,
+              s.id AS step_id, s.name AS step_name, s.step_number, s.promise, l.cell_status
+       FROM journey_step_links l
+       JOIN journey_steps s ON s.id = l.step_id
+       JOIN journeys j ON j.id = s.journey_id
+       WHERE l.feature_id = $1 AND l.cell_kind = 'base_ref'
+       ORDER BY j.name, s.step_number`, [req.params.id]);
+    res.json({ feature: frows[0], blast_radius: rows, count: rows.length });
+  } catch (err) {
+    console.error('[journeys] GET blast-radius error:', err.message);
     res.status(500).json({ error: err.message });
   }
 });
@@ -184,7 +236,7 @@ router.post('/journey_features', async (req, res) => {
         kind || 'feature',
         workflow_ref || null,
         guard_ref || null,
-        softness || null,
+        softness || 'hard', // 349 起 softness NOT NULL DEFAULT 'hard'；显式传 NULL 会绕过 DEFAULT
       ]
     );
     res.status(201).json(rows[0]);
@@ -197,7 +249,7 @@ router.post('/journey_features', async (req, res) => {
 // PATCH /api/brain/journey_features/:id
 router.patch('/journey_features/:id', async (req, res) => {
   try {
-    const { thickness, status, unit_test_path, version, guard_ref, softness } = req.body;
+    const { thickness, status, unit_test_path, version, guard_ref, softness, group } = req.body;
     if (thickness && !VALID_THICKNESS.includes(thickness)) {
       return res.status(400).json({ error: `thickness must be one of: ${VALID_THICKNESS.join(',')}` });
     }
@@ -214,6 +266,7 @@ router.patch('/journey_features/:id', async (req, res) => {
     if (version)                        { sets.push(`version=$${idx++}`);         vals.push(version); }
     if (guard_ref !== undefined)        { sets.push(`guard_ref=$${idx++}`);       vals.push(guard_ref ?? null); }
     if (softness !== undefined)         { sets.push(`softness=$${idx++}`);        vals.push(softness ?? null); }
+    if (group !== undefined)            { sets.push(`"group"=$${idx++}`);         vals.push(group ?? null); }
     if (!sets.length)                   return res.status(400).json({ error: 'no fields to update' });
 
     // thickness 变更 → 需重新推 Notion
@@ -326,16 +379,15 @@ router.post('/journey_steps', async (req, res) => {
       return res.status(400).json({ error: 'journey_id, name, step_number are required' });
     }
     const { rows } = await pool.query(
-      `INSERT INTO journey_steps
-         (journey_id, name, step_number, description, status, promise, backbone_version, notion_synced_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,NULL)
+      `INSERT INTO journey_steps (journey_id, name, step_number, description, status, promise, backbone_version, notion_synced_at)
+       VALUES ($1,$2,$3,$4,$5,$6,COALESCE($7,'1.0'),NULL)
        ON CONFLICT (journey_id, step_number) DO UPDATE SET
          name=EXCLUDED.name, description=EXCLUDED.description,
-         promise=EXCLUDED.promise, backbone_version=EXCLUDED.backbone_version,
+         promise=COALESCE(EXCLUDED.promise, journey_steps.promise),
+         backbone_version=COALESCE($7, journey_steps.backbone_version),
          updated_at=NOW()
        RETURNING *`,
-      [journey_id, name, step_number, description || null, status || 'planned',
-       promise || null, backbone_version || '1.0']
+      [journey_id, name, step_number, description || null, status || 'planned', promise || null, backbone_version || null]
     );
     res.status(200).json(rows[0]);
   } catch (err) {
@@ -351,6 +403,14 @@ router.get('/journey_step_links', async (req, res) => {
     const params = [];
     const clauses = [];
     if (req.query.journey_id) { params.push(req.query.journey_id); clauses.push(`journey_id=$${params.length}`); }
+    if (req.query.cells === '1') {
+      // 格子视图：只要格子行，可再叠加 cell_kind 精筛
+      clauses.push(`cell_kind IS NOT NULL`);
+      if (req.query.cell_kind) { params.push(req.query.cell_kind); clauses.push(`cell_kind=$${params.length}`); }
+    } else {
+      // 默认视图：排除格子行，保持 348 前的返回形状（防 119 个格子行混进老消费方）
+      clauses.push(`cell_kind IS NULL`);
+    }
     const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
     params.push(limit);
     const { rows } = await pool.query(
@@ -364,31 +424,66 @@ router.get('/journey_step_links', async (req, res) => {
   }
 });
 
-// POST /api/brain/journey_step_links
+// POST /api/brain/journey_step_links —— legacy 连接行 + 格子行双通道
 router.post('/journey_step_links', async (req, res) => {
   try {
-    const { journey_id, step_id, step_order, status,
-            feature_id, cell_kind, cell_status, assertion_ref, na_reason } = req.body;
-    if (!journey_id || !step_id || step_order === undefined) {
-      return res.status(400).json({ error: 'journey_id, step_id, step_order are required' });
+    const {
+      journey_id, step_id, step_order, status,
+      cell_kind, cell_key, cell_status, feature_id, assertion_ref, na_reason,
+    } = req.body;
+    if (!journey_id || !step_id) {
+      return res.status(400).json({ error: 'journey_id, step_id are required' });
     }
-    if (cell_status && !VALID_CELL_STATUS.includes(cell_status)) {
-      return res.status(400).json({ error: `cell_status must be one of: ${VALID_CELL_STATUS.join(',')}` });
+
+    if (cell_kind) {
+      const VALID_CELL_KINDS = ['capability', 'element', 'scenario', 'base_ref'];
+      const VALID_CELL_STATUS = ['gray', 'red', 'pending', 'green'];
+      if (!VALID_CELL_KINDS.includes(cell_kind)) {
+        return res.status(400).json({ error: `cell_kind must be one of: ${VALID_CELL_KINDS.join(',')}` });
+      }
+      if (!cell_key) return res.status(400).json({ error: 'cell_key is required when cell_kind is set' });
+      if (cell_status && !VALID_CELL_STATUS.includes(cell_status)) {
+        return res.status(400).json({ error: `cell_status must be one of: ${VALID_CELL_STATUS.join(',')}` });
+      }
+      // base_ref 格子是 blast-radius 的锚，没有 feature_id 的底座引用查不到塌红范围
+      if (cell_kind === 'base_ref' && !feature_id) {
+        return res.status(400).json({ error: 'feature_id is required for base_ref cells' });
+      }
+
+      // 一致性护栏：格子行的 step_id 必须真实存在，且其 journey_id 必须与传入的 journey_id 一致
+      // （防止调用方传错 journey_id，格子挂到错误的 GP 下却无感知）
+      const { rows: steprows } = await pool.query(
+        `SELECT journey_id FROM journey_steps WHERE id=$1`, [step_id]
+      );
+      if (!steprows.length) return res.status(404).json({ error: 'step not found' });
+      if (String(steprows[0].journey_id) !== String(journey_id)) {
+        return res.status(400).json({ error: "journey_id does not match step's journey" });
+      }
+
+      const { rows } = await pool.query(
+        `INSERT INTO journey_step_links
+           (journey_id, step_id, cell_kind, cell_key, cell_status, feature_id, assertion_ref, na_reason, status, notion_synced_at)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'planned',NOW())
+         ON CONFLICT (step_id, cell_kind, cell_key) WHERE cell_kind IS NOT NULL DO UPDATE SET
+           cell_status=EXCLUDED.cell_status, feature_id=EXCLUDED.feature_id,
+           assertion_ref=EXCLUDED.assertion_ref, na_reason=EXCLUDED.na_reason
+         RETURNING *`,
+        [journey_id, step_id, cell_kind, cell_key, cell_status || 'gray',
+         feature_id || null, assertion_ref || null, na_reason || null]
+      );
+      return res.status(201).json(rows[0]);
+    }
+
+    if (step_order === undefined) {
+      return res.status(400).json({ error: 'step_order is required for non-cell links' });
     }
     const { rows } = await pool.query(
-      `INSERT INTO journey_step_links
-         (journey_id, step_id, step_order, status,
-          feature_id, cell_kind, cell_status, assertion_ref, na_reason, notion_synced_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,NULL)
-       ON CONFLICT (journey_id, step_id) DO UPDATE SET
-         step_order=EXCLUDED.step_order, status=EXCLUDED.status,
-         feature_id=EXCLUDED.feature_id, cell_kind=EXCLUDED.cell_kind,
-         cell_status=EXCLUDED.cell_status, assertion_ref=EXCLUDED.assertion_ref,
-         na_reason=EXCLUDED.na_reason
+      `INSERT INTO journey_step_links (journey_id, step_id, step_order, status, notion_synced_at)
+       VALUES ($1,$2,$3,$4,NULL)
+       ON CONFLICT (journey_id, step_id) WHERE cell_kind IS NULL DO UPDATE SET
+         step_order=EXCLUDED.step_order, status=EXCLUDED.status
        RETURNING *`,
-      [journey_id, step_id, step_order, status || 'planned',
-       feature_id || null, cell_kind || null, cell_status || 'gray',
-       assertion_ref || null, na_reason || null]
+      [journey_id, step_id, step_order, status || 'planned']
     );
     res.status(201).json(rows[0]);
   } catch (err) {
@@ -421,6 +516,46 @@ router.patch('/journey_step_links/:id', async (req, res) => {
     res.json(rows[0]);
   } catch (err) {
     console.error('[journeys] PATCH /journey_step_links/:id error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/brain/journeys/steps/:step_id/impact — S3 联动清单（thin档）
+// evaluator 通过 anchor.step_id 查该步骤全部格子+断言锚点，生成联动清单
+router.get('/journeys/steps/:step_id/impact', async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      `SELECT
+         jsl.id           AS link_id,
+         jsl.feature_id,
+         jf.name          AS feature_name,
+         jf.kind          AS feature_kind,
+         jsl.cell_kind,
+         jsl.cell_status,
+         jsl.assertion_ref,
+         jsl.na_reason
+       FROM journey_step_links jsl
+       LEFT JOIN journey_features jf ON jf.id = jsl.feature_id
+       WHERE jsl.step_id = $1
+       ORDER BY jsl.step_order, jsl.id`,
+      [req.params.step_id]
+    );
+    const impacts = rows.map(r => ({
+      ...r,
+      needs_assertion: r.assertion_ref === null && r.na_reason === null,
+    }));
+    const runnable_count = impacts.filter(r =>
+      r.assertion_ref !== null &&
+      (r.assertion_ref.startsWith('tests/') || r.assertion_ref.startsWith('manual:'))
+    ).length;
+    res.json({
+      step_id: req.params.step_id,
+      total: impacts.length,
+      runnable_count,
+      impacts,
+    });
+  } catch (err) {
+    console.error('[journeys] GET /journeys/steps/:step_id/impact error:', err.message);
     res.status(500).json({ error: err.message });
   }
 });
@@ -461,6 +596,60 @@ router.get('/features/:id/blast-radius', async (req, res) => {
     });
   } catch (err) {
     console.error('[journeys] GET /features/:id/blast-radius error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/brain/cascade-list — S3 联动清单（thin档）
+// 输入：changed_files[]（PR 改动文件路径）
+// 输出：被影响的格子断言列表 + 分类摘要（可跑/待 nightly/未登记）
+router.post('/cascade-list', async (req, res) => {
+  try {
+    const { changed_files } = req.body;
+    if (!Array.isArray(changed_files) || changed_files.length === 0) {
+      return res.status(400).json({ error: 'changed_files 数组必填' });
+    }
+
+    // 1. 找到被改动文件涉及的格子（journey_step_links）
+    // 匹配策略（thin档）：
+    //   a) 格子 assertion_ref 与 changed_files 直接匹配
+    //   b) 所属 journey_features.unit_test_path 与 changed_files 匹配
+    const { rows: cells } = await pool.query(
+      `SELECT
+         jsl.id           AS link_id,
+         jsl.feature_id,
+         jsl.cell_kind,
+         jsl.cell_status,
+         jsl.assertion_ref,
+         jsl.na_reason,
+         jf.name          AS feature_name,
+         jf.unit_test_path,
+         js.id            AS step_id,
+         js.name          AS step_name,
+         js.promise,
+         js.step_number,
+         j.id             AS journey_id,
+         j.name           AS journey_name
+       FROM journey_step_links jsl
+       LEFT JOIN journey_features jf ON jf.id = jsl.feature_id
+       LEFT JOIN journey_steps    js ON js.id  = jsl.step_id
+       LEFT JOIN journeys          j ON j.id   = js.journey_id
+       WHERE
+         (jsl.assertion_ref = ANY($1::text[]))
+         OR (jf.unit_test_path = ANY($1::text[]))
+       ORDER BY j.name, js.step_number`,
+      [changed_files]
+    );
+
+    const report = buildCascadeReport(cells);
+
+    res.json({
+      changed_files_count: changed_files.length,
+      ...report,
+      cells,
+    });
+  } catch (err) {
+    console.error('[journeys] POST /cascade-list error:', err.message);
     res.status(500).json({ error: err.message });
   }
 });

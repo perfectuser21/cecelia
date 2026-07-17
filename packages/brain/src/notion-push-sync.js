@@ -283,6 +283,7 @@ async function pushJourneyStepLinks(pool, token) {
     LEFT JOIN journeys j ON j.id = l.journey_id
     LEFT JOIN journey_steps s ON s.id = l.step_id
     WHERE l.notion_synced_at IS NULL
+      AND l.cell_kind IS NULL
       AND j.notion_id IS NOT NULL
       AND s.notion_id IS NOT NULL
     LIMIT 10

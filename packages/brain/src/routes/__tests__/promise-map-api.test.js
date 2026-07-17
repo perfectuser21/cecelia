@@ -126,20 +126,22 @@ describe('PATCH /api/brain/journey_features/:id — softness 字段', () => {
 describe('POST /api/brain/journey_step_links — cell 字段', () => {
   beforeEach(() => { mockQuery.mockReset(); });
 
-  it('写入 feature_id + cell_kind + cell_status=green + assertion_ref', async () => {
+  it('写入 feature_id + cell_kind + cell_status=green + assertion_ref（cell 通道，含 step 一致性预查）', async () => {
     const fakeRow = {
-      id: 'l1', journey_id: 'j1', step_id: 's1', step_order: 1,
-      feature_id: 'f1', cell_kind: '能力', cell_status: 'green',
+      id: 'l1', journey_id: 'j1', step_id: 's1',
+      feature_id: 'f1', cell_kind: 'capability', cell_key: '文字识别', cell_status: 'green',
       assertion_ref: 'tests/routes/crm.test.ts',
     };
+    // 349 双通道语义：cell 分支先查 step 归属做 journey_id 一致性校验，再 upsert
+    mockQuery.mockResolvedValueOnce({ rows: [{ journey_id: 'j1' }] });
     mockQuery.mockResolvedValueOnce({ rows: [fakeRow] });
     const app = await makeApp();
     const request = await import('supertest');
     const res = await request.default(app)
       .post('/api/brain/journey_step_links')
       .send({
-        journey_id: 'j1', step_id: 's1', step_order: 1,
-        feature_id: 'f1', cell_kind: '能力', cell_status: 'green',
+        journey_id: 'j1', step_id: 's1',
+        feature_id: 'f1', cell_kind: 'capability', cell_key: '文字识别', cell_status: 'green',
         assertion_ref: 'tests/routes/crm.test.ts',
       });
     expect(res.status).toBe(201);
@@ -152,7 +154,7 @@ describe('POST /api/brain/journey_step_links — cell 字段', () => {
     const request = await import('supertest');
     const res = await request.default(app)
       .post('/api/brain/journey_step_links')
-      .send({ journey_id: 'j1', step_id: 's1', step_order: 1, cell_status: 'yellow' });
+      .send({ journey_id: 'j1', step_id: 's1', cell_kind: 'capability', cell_key: 'x', cell_status: 'yellow' });
     expect(res.status).toBe(400);
     expect(res.body.error).toMatch(/cell_status must be one of/);
   });
