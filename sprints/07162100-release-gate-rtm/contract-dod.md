@@ -11,7 +11,7 @@
 
 ## BEHAVIOR 条目
 
-### [BEHAVIOR-01] 接缝步实际等级 < L3 → exit 1 + 缺口清单
+### [BEHAVIOR] BEHAVIOR-01: 接缝步实际等级 < L3 → exit 1 + 缺口清单
 
 **来源**：INV-02，FR02，铁律第2条
 
@@ -25,6 +25,7 @@
 - decisions 表**禁止**写入任何记录（无副作用）
 
 **验收命令**：
+manual:bash
 ```bash
 OUTPUT=$(node scripts/release-gate.mjs --rtm scripts/__tests__/__fixtures__/rtm-with-gaps.md 2>&1); \
 EXIT=$?; \
@@ -35,7 +36,7 @@ echo "$OUTPUT" | grep -q "S1" && echo "✓ S1 found" || echo "✗ S1 missing"
 
 ---
 
-### [BEHAVIOR-02] RTM 缺失 → exit 2，禁默认放行
+### [BEHAVIOR] BEHAVIOR-02: RTM 缺失 → exit 2，禁默认放行
 
 **来源**：INV-04，FR04，铁律第4条
 
@@ -47,6 +48,7 @@ echo "$OUTPUT" | grep -q "S1" && echo "✓ S1 found" || echo "✗ S1 missing"
 - decisions 表**禁止**写入任何记录
 
 **验收命令**：
+manual:bash
 ```bash
 OUTPUT=$(node scripts/release-gate.mjs --path nonexistent-path-xyz-$(date +%s) 2>&1); \
 EXIT=$?; \
@@ -57,7 +59,7 @@ echo "$OUTPUT" | grep -q "\[PASS\]" && echo "✓ no [PASS] (correct)" || echo "�
 
 ---
 
-### [BEHAVIOR-03] 全达标 → exit 0 + 写 decisions 判定记录
+### [BEHAVIOR] BEHAVIOR-03: 全达标 → exit 0 + 写 decisions 判定记录
 
 **来源**：INV-01，INV-06，FR03，FR05，铁律第5条
 
@@ -73,6 +75,7 @@ echo "$OUTPUT" | grep -q "\[PASS\]" && echo "✓ no [PASS] (correct)" || echo "�
   - `written_at` 为有效 ISO8601 时间戳
 
 **验收命令（需 Brain API 运行）**：
+manual:bash
 ```bash
 OUTPUT=$(node scripts/release-gate.mjs --rtm scripts/__tests__/__fixtures__/rtm-all-pass.md 2>&1); \
 EXIT=$?; \
@@ -81,6 +84,7 @@ echo "$OUTPUT" | grep -q "\[PASS\]" && echo "✓ [PASS] found" || echo "✗ [PAS
 ```
 
 **DB 验证（需 DB 可达）**：
+manual:bash
 ```bash
 VERDICT=$(psql "$DATABASE_URL" -tAc "SELECT verdict FROM decisions WHERE category='release-gate' ORDER BY written_at DESC LIMIT 1"); \
 [ "$VERDICT" = "PASS" ] && echo "✓ DB verdict=PASS" || echo "✗ DB verdict=$VERDICT"
@@ -88,7 +92,7 @@ VERDICT=$(psql "$DATABASE_URL" -tAc "SELECT verdict FROM decisions WHERE categor
 
 ---
 
-### [BEHAVIOR-04] 非接缝步 L0（承诺≠L0）→ exit 1
+### [BEHAVIOR] BEHAVIOR-04: 非接缝步 L0（承诺≠L0）→ exit 1
 
 **来源**：INV-03，FR09
 
@@ -100,6 +104,7 @@ VERDICT=$(psql "$DATABASE_URL" -tAc "SELECT verdict FROM decisions WHERE categor
 - stdout **必须** 含 `[BLOCKED]`
 
 **验收命令**：
+manual:bash
 ```bash
 OUTPUT=$(node scripts/release-gate.mjs --rtm scripts/__tests__/__fixtures__/rtm-l0-step.md 2>&1); \
 EXIT=$?; \
@@ -109,7 +114,7 @@ echo "$OUTPUT" | grep -q "\[BLOCKED\]" && echo "✓ [BLOCKED] found" || echo "�
 
 ---
 
-### [BEHAVIOR-05] Brain API 只读，POST → 405
+### [BEHAVIOR] BEHAVIOR-05: Brain API 只读，POST → 405
 
 **来源**：INV-07，FR07
 
@@ -120,6 +125,7 @@ echo "$OUTPUT" | grep -q "\[BLOCKED\]" && echo "✓ [BLOCKED] found" || echo "�
 - `PUT /api/brain/release-gate/path4-customer-service` → HTTP 405
 
 **验收命令**：
+manual:bash
 ```bash
 # GET 查账
 STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:5221/api/brain/release-gate/path4-customer-service); \
@@ -132,7 +138,7 @@ STATUS=$(curl -s -o /dev/null -w "%{http_code}" -X POST http://localhost:5221/ap
 
 ---
 
-### [BEHAVIOR-06] exit 1/exit 2 时禁止写 decisions 表（无副作用）
+### [BEHAVIOR] BEHAVIOR-06: exit 1/exit 2 时禁止写 decisions 表（无副作用）
 
 **来源**：INV-01，NFR02，铁律第1条
 
@@ -141,6 +147,7 @@ STATUS=$(curl -s -o /dev/null -w "%{http_code}" -X POST http://localhost:5221/ap
 - 运行 RTM 缺失（预期 exit 2）前后，decisions 表不增加任何行
 
 **验收命令（需 DB 可达）**：
+manual:bash
 ```bash
 COUNT_BEFORE=$(psql "$DATABASE_URL" -tAc "SELECT COUNT(*) FROM decisions WHERE category='release-gate'"); \
 node scripts/release-gate.mjs --rtm scripts/__tests__/__fixtures__/rtm-with-gaps.md > /dev/null 2>&1; \
