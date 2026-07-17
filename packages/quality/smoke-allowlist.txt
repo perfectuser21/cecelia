@@ -126,3 +126,4 @@ canary-drill-repair-smoke.sh
 release-gate-smoke.sh
 migration-346-idempotent-smoke.sh
 cockpit-route-wire-smoke.sh
+promise-map-ledger-smoke.sh
