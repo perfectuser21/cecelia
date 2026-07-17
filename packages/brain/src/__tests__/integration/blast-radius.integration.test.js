@@ -24,22 +24,24 @@ describe('blast-radius 查询（348 seed 数据上）', () => {
   });
 
   it('ON DELETE SET NULL：删 feature 后 cell 行 feature_id 置空不删行', async () => {
-    await pool.query('BEGIN');
+    // 事务必须独占一条物理连接：pool.query 每次可能换连接，BEGIN/ROLLBACK 会散架
+    const client = await pool.connect();
     try {
+      await client.query('BEGIN');
       // 造一个临时 feature
-      const { rows: frows } = await pool.query(
+      const { rows: frows } = await client.query(
         `INSERT INTO journey_features (name, thickness, status) VALUES ($1,'thin','planned') RETURNING id`,
         ['[test] 临时底座件-ON DELETE 探针']
       );
       const tempFeatureId = frows[0].id;
 
       // 挂在一个真实存在的 step 上（GP-B S1），用独有的 cell_key 避免撞 uq_jsl_cell
-      const { rows: srows } = await pool.query(
+      const { rows: srows } = await client.query(
         `SELECT id, journey_id FROM journey_steps WHERE journey_id='ac2e35bc-849a-48cd-917f-79d15c5ac886' AND step_number=1`
       );
       const step = srows[0];
 
-      const { rows: lrows } = await pool.query(
+      const { rows: lrows } = await client.query(
         `INSERT INTO journey_step_links
            (journey_id, step_id, cell_kind, cell_key, cell_status, feature_id, status, notion_synced_at)
          VALUES ($1,$2,'base_ref','[test] ON DELETE 探针','pending',$3,'planned',NOW())
@@ -49,16 +51,17 @@ describe('blast-radius 查询（348 seed 数据上）', () => {
       const linkId = lrows[0].id;
 
       // 删除 feature
-      await pool.query(`DELETE FROM journey_features WHERE id=$1`, [tempFeatureId]);
+      await client.query(`DELETE FROM journey_features WHERE id=$1`, [tempFeatureId]);
 
       // cell 行仍在，feature_id 已置空
-      const { rows: after } = await pool.query(
+      const { rows: after } = await client.query(
         `SELECT id, feature_id FROM journey_step_links WHERE id=$1`, [linkId]
       );
       expect(after).toHaveLength(1);
       expect(after[0].feature_id).toBeNull();
     } finally {
-      await pool.query('ROLLBACK');
+      await client.query('ROLLBACK');
+      client.release();
     }
   });
 });

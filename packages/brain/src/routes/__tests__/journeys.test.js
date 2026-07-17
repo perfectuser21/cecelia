@@ -293,6 +293,22 @@ describe('POST /journey_step_links cell 化', () => {
     expect(sql).toContain('ON CONFLICT (journey_id, step_id) WHERE cell_kind IS NULL');
   });
 
+  it('base_ref 格子缺 feature_id → 400（blast-radius 锚不可缺）', async () => {
+    const { default: router } = await import('../journeys.js');
+    const express = await import('express');
+    const app = express.default();
+    app.use(express.default.json());
+    app.use('/api/brain', router);
+
+    const request = await import('supertest');
+    const res = await request.default(app)
+      .post('/api/brain/journey_step_links')
+      .send({ journey_id: 'j1', step_id: 's1', cell_kind: 'base_ref', cell_key: 'CRM 表底座' });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toContain('feature_id');
+    expect(mockQuery).not.toHaveBeenCalled();
+  });
+
   it('cell 行走 cell 冲突目标且必须带 cell_key', async () => {
     const { default: router } = await import('../journeys.js');
     const express = await import('express');
@@ -334,7 +350,7 @@ describe('POST /journey_step_links cell 化', () => {
     const res = await request.default(app)
       .post('/api/brain/journey_step_links')
       .send({
-        journey_id: 'j1', step_id: 's1', cell_kind: 'base_ref', cell_key: 'CRM 表底座',
+        journey_id: 'j1', step_id: 's1', cell_kind: 'base_ref', cell_key: 'CRM 表底座', feature_id: 'f1',
       });
     expect(res.status).toBe(400);
     expect(res.body.error).toMatch(/journey_id does not match/);
@@ -352,7 +368,7 @@ describe('POST /journey_step_links cell 化', () => {
     const res = await request.default(app)
       .post('/api/brain/journey_step_links')
       .send({
-        journey_id: 'j1', step_id: 'ghost', cell_kind: 'base_ref', cell_key: 'CRM 表底座',
+        journey_id: 'j1', step_id: 'ghost', cell_kind: 'base_ref', cell_key: 'CRM 表底座', feature_id: 'f1',
       });
     expect(res.status).toBe(404);
     expect(res.body.error).toBe('step not found');

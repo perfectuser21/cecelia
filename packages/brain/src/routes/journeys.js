@@ -428,6 +428,10 @@ router.post('/journey_step_links', async (req, res) => {
       if (cell_status && !VALID_CELL_STATUS.includes(cell_status)) {
         return res.status(400).json({ error: `cell_status must be one of: ${VALID_CELL_STATUS.join(',')}` });
       }
+      // base_ref 格子是 blast-radius 的锚，没有 feature_id 的底座引用查不到塌红范围
+      if (cell_kind === 'base_ref' && !feature_id) {
+        return res.status(400).json({ error: 'feature_id is required for base_ref cells' });
+      }
 
       // 一致性护栏：格子行的 step_id 必须真实存在，且其 journey_id 必须与传入的 journey_id 一致
       // （防止调用方传错 journey_id，格子挂到错误的 GP 下却无感知）
