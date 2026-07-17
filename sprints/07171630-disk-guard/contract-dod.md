@@ -9,7 +9,7 @@
 
 ## [BEHAVIOR] 断言列表
 
-### [BEHAVIOR-1] T-01：高水位（≥85%）触发完整清理序列，序列严格按 INV-04 顺序
+### [BEHAVIOR] [BEHAVIOR-1] T-01：高水位（≥85%）触发完整清理序列，序列严格按 INV-04 顺序
 
 **场景**：mock `df /System/Volumes/Data` 返回 87%  
 **断言**：
@@ -24,7 +24,7 @@
 
 ---
 
-### [BEHAVIOR-2] T-02：低水位（<80%）不触发清理，打 action=none 日志
+### [BEHAVIOR] [BEHAVIOR-2] T-02：低水位（<80%）不触发清理，打 action=none 日志
 
 **场景**：mock `df /System/Volumes/Data` 返回 75%  
 **断言**：
@@ -37,7 +37,7 @@
 
 ---
 
-### [BEHAVIOR-3] T-03：中水位（80%~84%）触发飞书告警，不触发清理
+### [BEHAVIOR] [BEHAVIOR-3] T-03：中水位（80%~84%）触发飞书告警，不触发清理
 
 **场景**：mock `df /System/Volumes/Data` 返回 82%  
 **断言**：
@@ -50,7 +50,7 @@
 
 ---
 
-### [BEHAVIOR-4] T-04：清后复测仍≥90% 发 Bark 推送
+### [BEHAVIOR] [BEHAVIOR-4] T-04：清后复测仍≥90% 发 Bark 推送
 
 **场景**：mock df 首次返回 91%，清理后复测仍返回 90%  
 **断言**：
@@ -63,7 +63,7 @@
 
 ---
 
-### [BEHAVIOR-5] T-05（worktree）：终态任务超 24h worktree 被删除
+### [BEHAVIOR] [BEHAVIOR-5] T-05（worktree）：终态任务超 24h worktree 被删除
 
 **场景**：worktree 目录 `task-abc12345`，DB 查询返回 status=completed，updated_at 为 25h 前  
 **断言**：
@@ -75,7 +75,7 @@
 
 ---
 
-### [BEHAVIOR-6] T-06（INV-01 回归）：in_progress 任务 worktree 绝对不删除
+### [BEHAVIOR] [BEHAVIOR-6] T-06（INV-01 回归）：in_progress 任务 worktree 绝对不删除
 
 **场景**：worktree 目录 `task-xyz99999`，DB 查询返回 status=in_progress  
 **断言**：
@@ -87,7 +87,7 @@
 
 ---
 
-### [BEHAVIOR-7] T-07：worktree 目录名无法匹配任何 task → 跳过不删
+### [BEHAVIOR] [BEHAVIOR-7] T-07：worktree 目录名无法匹配任何 task → 跳过不删
 
 **场景**：worktree 目录 `task-unknown0`，DB 查询返回 404 / 空结果  
 **断言**：
@@ -99,7 +99,7 @@
 
 ---
 
-### [BEHAVIOR-8] T-08：scheduler-jobs 含 disk-guard 条目，参数符合规格
+### [BEHAVIOR] [BEHAVIOR-8] T-08：scheduler-jobs 含 disk-guard 条目，参数符合规格
 
 **场景**：直接 import JOBS 数组  
 **断言**：
@@ -113,7 +113,7 @@
 
 ---
 
-### [BEHAVIOR-9] INV-03：每轮执行必出 [disk_check] 日志（含出错时）
+### [BEHAVIOR] [BEHAVIOR-9] INV-03：每轮执行必出 [disk_check] 日志（含出错时）
 
 **场景**：mock df 命令抛出 Error  
 **断言**：
@@ -125,7 +125,7 @@
 
 ---
 
-### [BEHAVIOR-10] INV-05（节流）：15min 内重复调用不执行
+### [BEHAVIOR] [BEHAVIOR-10] INV-05（节流）：15min 内重复调用不执行
 
 **场景**：连续两次调用 `runDiskGuard()`，间隔 < 15min  
 **断言**：
