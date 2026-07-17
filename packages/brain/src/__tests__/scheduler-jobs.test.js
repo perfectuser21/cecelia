@@ -56,6 +56,12 @@ vi.mock('../promise-map-nightly.js', () => ({
   runPromiseMapNightly: vi.fn().mockResolvedValue({ ok: true, passed: 4, failed: 0 }),
 }));
 
+// disk-guard 真实 handler 会 ssh 逃逸宿主跑 df/worktree 收割——单测绝不能碰真机，
+// 且本地跑会超时（多 worktree × ConnectTimeout 叠加 >30s）。行为由 disk-guard 自己的测试覆盖。
+vi.mock('../cron/disk-guard.js', () => ({
+  runDiskGuard: vi.fn().mockResolvedValue({ ok: true, pct: 50, level: 'ok' }),
+}));
+
 // machine-vitals 真实 handler 会走 execFile(docker/df) 系统调用——在 fake timers 下
 // 不受 vi 的虚拟时钟驱动，会挂住整轮串行 job（machine-vitals 现排 JOBS 首位）。
 // 其行为本身由 machine-vitals.test.js / machine-vitals-wiring.test.js 覆盖，这里纯 mock 掉。
