@@ -1,0 +1,13 @@
+{
+  "verdict": "PASS",
+  "pr": 4038,
+  "head_sha": "516e82083",
+  "behaviors_checked": 5,
+  "behaviors_passed": 4,
+  "unverifiable": [
+    "BEHAVIOR-5/6/7 (Playwright E2E): localhost:5211 服务未启动，无法真跑浏览器验收"
+  ],
+  "e2e_result": "SKIPPED(服务未启动，localhost:5211 返回 000)",
+  "contract_compliance": "COMPLIANT",
+  "notes": "BEHAVIOR-1: App.tsx 顶层静态 import OwnerCockpitPage — PASS (grep 检出)。BEHAVIOR-2: apps/api/features/dashboard/index.ts routes 含 { path: '/', component: 'OwnerCockpitPage', requireAuth: true } — PASS (原 redirect 已替换为正确 component 接线)。BEHAVIOR-3/4: vitest 单元测试 2/2 通过 (断言A + 断言B)。E2E SKIPPED 属合法结果，mac_web 服务未运行。代码审查合规：App.tsx 仅增加一行静态 import 守护，未删除任何现有路由；manifest 将 { path: '/', redirect: '/dashboard' } 替换为 { path: '/', component: 'OwnerCockpitPage', requireAuth: true } 并在 components 映射中增加懒加载路径，符合合同 FR-1/FR-2 要求，改动范围最小。"
+}

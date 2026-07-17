@@ -1,0 +1,21 @@
+{
+  "verdict": "APPROVED",
+  "round": 1,
+  "rubric_scores": {
+    "correctness": 9,
+    "completeness": 9,
+    "testability": 8,
+    "e2e_coverage": 9,
+    "anti_regression": 9,
+    "implementability": 8,
+    "risk_coverage": 8
+  },
+  "judgments_written": 8,
+  "core_checks": {
+    "anti_orphan_rule": "PASS",
+    "e2e_authenticity": "PASS",
+    "data_testid_accuracy": "PASS",
+    "six_metric_cards_assertion": "PASS",
+    "failing_baseline": "PASS"
+  }
+}

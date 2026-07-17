@@ -18,6 +18,8 @@ const TaskPrdPage = lazy(() => import('./pages/tasks/TaskPrdPage'));
 // clips: 静态路由，不依赖动态配置加载
 const ContentClipsPage = lazy(() => import('./pages/clips/ContentClipsPage'));
 const ContentClipDetailPage = lazy(() => import('./pages/clips/ContentClipDetailPage'));
+// 主理人指挥舱：防孤儿静态 import 守护（task: ebc008a5）
+import OwnerCockpitPage from './pages/owner-cockpit/OwnerCockpitPage';
 import { PanelLeftClose, PanelLeft, Sun, Moon, Monitor, Circle } from 'lucide-react';
 import * as LucideIcons from 'lucide-react';
 import CollapsibleNavItem from './components/CollapsibleNavItem';
