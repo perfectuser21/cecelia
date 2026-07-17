@@ -8,7 +8,7 @@
  * 刀4 [S4-PF] S4 保鲜对账：base_ref 断线时 A3 实弹报红
  */
 
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, beforeAll } from 'vitest';
 import { checkAnchor, ANCHOR_LEGACY_CUTOFF } from '../../anchor-check.js';
 import { buildCascadeReport } from '../../cascade-list.js';
 import { buildNightlyAssertions } from '../../promise-map-nightly.js';
@@ -54,8 +54,7 @@ describe('[S2-PF] 锚点执法闸 proven-to-fire', () => {
     expect(result.blocked).toBe(false);
   });
 
-  it('B5 实弹：DB 中确认 dispatcher 代码已接入 checkAnchor（anchor-check.js 存在）', async () => {
-    // 验证 S2 闸文件在生产路径存在（三闸心跳 A4 的前置条件）
+  it('B5 S2 闸文件（anchor-check.js）在生产路径存在', async () => {
     const { existsSync } = await import('node:fs');
     const { fileURLToPath } = await import('node:url');
     const { join, dirname } = await import('node:path');
@@ -94,19 +93,13 @@ describe('[S3-PF] 联动清单 proven-to-fire', () => {
     expect(report.nightly_pending_count).toBe(0);
   });
 
-  it('实弹：改动文件命中 assertion_ref 后联动清单非空（直接查 DB）', async () => {
+  it('[S3-PF 刀3实弹] 改动文件命中 assertion_ref 后联动清单非空（直接查 DB）', async () => {
     const { rows: links } = await pool.query(
       `SELECT assertion_ref FROM journey_step_links WHERE assertion_ref IS NOT NULL LIMIT 3`
     );
-
-    if (links.length === 0) {
-      // 无 assertion_ref 数据时跳过（空库环境）
-      return;
-    }
+    if (links.length === 0) return; // 无 assertion_ref 数据时跳过
 
     const changedFiles = links.map(l => l.assertion_ref);
-
-    // 直接用 cascade-list SQL 查询（与路由逻辑一致）
     const { rows: cells } = await pool.query(
       `SELECT jsl.assertion_ref, jsl.na_reason, jsl.cell_kind
        FROM journey_step_links jsl
@@ -117,7 +110,6 @@ describe('[S3-PF] 联动清单 proven-to-fire', () => {
     );
 
     const report = buildCascadeReport(cells);
-    // 命中：至少 total > 0
     expect(report.total).toBeGreaterThan(0);
     expect(typeof report.report_text).toBe('string');
   });
@@ -138,7 +130,6 @@ describe('[S3-PF] 联动清单 proven-to-fire', () => {
       [step_id],
     );
 
-    // GP-B S1 seed 有多种格子（capability/element/scenario/base_ref）
     expect(impacts.length).toBeGreaterThan(0);
     const kinds = new Set(impacts.map(r => r.cell_kind).filter(Boolean));
     expect(kinds.size).toBeGreaterThan(0);
@@ -170,7 +161,6 @@ describe('[S4-PF] 保鲜对账 proven-to-fire', () => {
     try {
       await client.query('BEGIN');
 
-      // 找一个真实 step 插入临时 base_ref 格子（feature_id=NULL → blast-radius 断线）
       const { rows: steps } = await client.query(
         `SELECT id, journey_id FROM journey_steps LIMIT 1`
       );
@@ -191,7 +181,6 @@ describe('[S4-PF] 保鲜对账 proven-to-fire', () => {
         return; // 冲突跳过，不影响断言
       }
 
-      // 用真实 pool 调用 buildNightlyAssertions（在事务 client 内查到断线格子）
       const assertions = await buildNightlyAssertions(client);
       const a3 = assertions.find(a => a.key === 'ledger_integrity');
       expect(a3.ok).toBe(false);
