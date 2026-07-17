@@ -92,6 +92,17 @@
 
 ---
 
+## Test Contract
+
+| BEHAVIOR | 测试文件 | it() 覆盖项 |
+|----------|---------|------------|
+| GP-1（src 变更 + bump → exit 0） | tests/check-brain-version-bump.test.js | GP-1: 改 brain src 且 bump 了版本 → exit 0（门禁通过） |
+| GP-2（src 变更未 bump → exit 1 + fix 提示） | tests/check-brain-version-bump.test.js | GP-2: 改 brain src 未 bump 版本 → exit 1 且含 fix 提示（npm version patch） |
+| GP-3（非 src 变更 → exit 0 跳过） | tests/check-brain-version-bump.test.js | GP-3: 未改 brain src（仅改 tests/__tests__）→ exit 0（跳过检查） |
+| GP-4（semver 任意步长均通过） | tests/check-brain-version-bump.test.js | GP-4: semver 任意步长 bump 均通过（patch / minor / major） |
+
+---
+
 ## E2E 验收
 
 ### E2E-1：脚本本地独立运行（manual:bash）
