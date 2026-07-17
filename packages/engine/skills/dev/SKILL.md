@@ -1,7 +1,7 @@
 ---
 name: dev
-version: 19.3.0
-updated: 2026-05-30
+version: 19.6.0
+updated: 2026-07-17
 description: 统一开发点火入口。查 12 张 Brain DB 表拿上下文 → 判断类型（bug / 小改动 / 大功能）→ 生成 PrepPRD → 用户确认 → 路由执行。
 trigger: /dev, --task-id <id>, 我想做, 有个 bug, 改一下, 出问题了, walking skeleton, harness, journey, feature
 ---
@@ -229,6 +229,18 @@ Skill({"skill":"superpowers:systematic-debugging"})
 ```
 
 systematic-debugging → engine-worktree → Superpowers autonomous 接力链 → fix PR → engine-ship → engine-pr-watchdog
+
+### 复现或退场铁律（bug fix 强制门禁）
+
+在最新 main 上运行复现 failing test：
+1. **test 红 → 继续**：bug 存在，按正常 TDD 流程修复
+2. **test 不红（依旧绿）→ 强制退场**：bug 已被其他 PR 修复
+   - 禁止继续开发，立即停止
+   - 查找已修复的 PR（`gh pr list --state merged --search "<关键词>"`）
+   - 将任务标记为 `completed(duplicate)` 并留痕引用已有修复 PR
+   - 不得修改代码，不得开 PR
+3. **豁免**：纯新功能任务（非 bug fix）不受本铁律约束
+4. **留痕格式**：`任务已由 PR#N 完成（<PR标题>），标记 obsolete，不重复实现`
 
 ---
 

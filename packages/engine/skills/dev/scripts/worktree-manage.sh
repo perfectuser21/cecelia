@@ -140,6 +140,51 @@ cmd_create() {
         echo -e "${GREEN}✅ 清理后可用，继续创建 worktree${NC}" >&2
     fi
 
+    # v1.5.0: 撞车检查 — open PR + 近7天 merged PR
+    # 1) 检查 open PR（原有逻辑）
+    local _collision_open_num
+    _collision_open_num=$(gh pr list --state open --search "$task_name" \
+        --json number,title,headRefName 2>/dev/null \
+        | python3 -c "
+import json, sys
+data = json.load(sys.stdin)
+task = '$task_name'
+hits = [p for p in data if task in p.get('headRefName','') or task in p.get('title','')]
+print(hits[0]['number'] if hits else '')
+" 2>/dev/null || echo "")
+    if [[ -n "$_collision_open_num" ]]; then
+        echo -e "${RED}[COLLISION] 疑似已被 PR#${_collision_open_num} 完成——请核对后关闭本任务，禁止重复实现${NC}" >&2
+        exit 1
+    fi
+
+    # 2) 检查近7天内 merged PR（修复时间盲区）
+    local _collision_merged_num
+    _collision_merged_num=$(gh pr list --state merged --search "$task_name" \
+        --json number,title,mergedAt,headRefName 2>/dev/null \
+        | python3 -c "
+import json, sys
+from datetime import datetime, timezone, timedelta
+data = json.load(sys.stdin)
+cutoff = datetime.now(timezone.utc) - timedelta(days=7)
+task = '$task_name'
+for pr in data:
+    merged_at_str = pr.get('mergedAt', '')
+    if not merged_at_str:
+        continue
+    try:
+        merged_at = datetime.fromisoformat(merged_at_str.replace('Z', '+00:00'))
+    except Exception:
+        continue
+    name_match = task in pr.get('headRefName', '') or task in pr.get('title', '')
+    if merged_at >= cutoff and name_match:
+        print(pr['number'])
+        break
+" 2>/dev/null || echo "")
+    if [[ -n "$_collision_merged_num" ]]; then
+        echo -e "${RED}[COLLISION] 疑似已被 PR#${_collision_merged_num} 完成（7天内 merged）——请核对后关闭本任务，禁止重复实现${NC}" >&2
+        exit 1
+    fi
+
     # 生成分支名和 worktree 路径
     local timestamp
     timestamp=$(date +%m%d%H%M%S)
