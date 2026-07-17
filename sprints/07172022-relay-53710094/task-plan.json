@@ -12,6 +12,7 @@
         "[BEHAVIOR] e2e-verify.sh 校验 DB tasks 认领状态",
         "[BEHAVIOR] e2e-verify.sh 对 initiative_runs 采用可选 run 或 foreground path",
         "[BEHAVIOR] e2e-verify.sh 拒绝 failed 状态并不记录敏感字段",
+        "[BEHAVIOR] verification_level: L3 真目标复核",
         "[ARTIFACT] sprints/07172022-relay-53710094/e2e-verify.sh 存在且 bash -n 通过"
       ],
       "files": [

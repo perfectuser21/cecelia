@@ -134,6 +134,12 @@
 
 Concern: 当前 foreground takeover path 可能没有 `initiative_runs` 行；合同覆盖了该 path 的 task API/DB 认领 oracle，但 `initiative_runs` host/phase 只在 run 行存在时验证。
 
+## 验证等级断言
+
+- [BEHAVIOR] verification_level: L3 真目标复核：codex-headed-smoke 的 done 只能由真实 Brain API 与 PostgreSQL `tasks`/`initiative_runs` 接缝命令给出，不接受 mock/stub/fixture 或静态日志替代。
+  verification_level: L3
+  Test: manual:bash -c 'set -euo pipefail; SPRINT_DIR="${SPRINT_DIR:-sprints/07172022-relay-53710094}"; VERIFY="${VERIFY:-scripts/smoke/e2e/relay-53710094.sh}"; TASK_ID="${TASK_ID:-53710094-898c-452c-8cc3-a56149e8b0ac}"; BRAIN_URL="${BRAIN_URL:-http://localhost:5221}"; DB="${DATABASE_URL:-postgresql://cecelia:cecelia@localhost:5432/cecelia}"; bash "$VERIFY"'
+
 ## Golden Path
 
 Brain 当前 task `53710094-898c-452c-8cc3-a56149e8b0ac` → generator 实现 `scripts/smoke/e2e/relay-53710094.sh` → 脚本定点读取 Brain task API → 脚本定点读取 DB `tasks` → 若 `initiative_runs` 存在则校验 codex headed host/phase，若不存在则校验 foreground takeover 证据 → exit 0/1 成为 headed relay smoke oracle。
@@ -297,3 +303,4 @@ echo "PASS: codex headed relay smoke contract validated"
 | DB tasks 认领 | `../../tests/regression/relay-53710094/contract-red.test.sh` | e2e-verify.sh 校验 DB tasks 认领状态 | `e2e-verify.sh` 尚未实现时 FAIL |
 | run 或 foreground path | `../../tests/regression/relay-53710094/contract-red.test.sh` | e2e-verify.sh 对 initiative_runs 采用可选 run 或 foreground path | `e2e-verify.sh` 尚未实现时 FAIL |
 | failed/secrets 拒绝 | `../../tests/regression/relay-53710094/contract-red.test.sh` | e2e-verify.sh 拒绝 failed 状态并不记录敏感字段 | `e2e-verify.sh` 尚未实现时 FAIL |
+| L3 真目标复核 | `../../tests/regression/relay-53710094/contract-red.test.sh` | verification_level: L3 真目标复核 | `e2e-verify.sh` 尚未实现或使用 mock/stub 时 FAIL |

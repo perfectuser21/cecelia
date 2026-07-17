@@ -11,9 +11,13 @@ FAILURES=0
 
 run_test() {
   local name="$1"
-  local assert_name="$2"
+  local assert_name="${2:-}"
   echo "TEST: $name"
-  TASK_ID="$TASK_ID" BRAIN_URL="$BRAIN_URL" DATABASE_URL="$DATABASE_URL" SPRINT_DIR="$SPRINT_DIR" bash "$VERIFY" --assert "$assert_name"
+  if [ -n "$assert_name" ]; then
+    TASK_ID="$TASK_ID" BRAIN_URL="$BRAIN_URL" DATABASE_URL="$DATABASE_URL" SPRINT_DIR="$SPRINT_DIR" bash "$VERIFY" --assert "$assert_name"
+  else
+    TASK_ID="$TASK_ID" BRAIN_URL="$BRAIN_URL" DATABASE_URL="$DATABASE_URL" SPRINT_DIR="$SPRINT_DIR" bash "$VERIFY"
+  fi
   local code=$?
   if [ "$code" -eq 0 ]; then
     echo "PASS: $name"
@@ -27,6 +31,7 @@ run_test "e2e-verify.sh 校验 task API payload shape" "task-payload-shape"
 run_test "e2e-verify.sh 校验 DB tasks 认领状态" "db-tasks-claimed"
 run_test "e2e-verify.sh 对 initiative_runs 采用可选 run 或 foreground path" "run-or-foreground-path"
 run_test "e2e-verify.sh 拒绝 failed 状态并不记录敏感字段" "failed-and-secrets-rejected"
+run_test "verification_level: L3 真目标复核"
 
 if [ "$FAILURES" -ne 0 ]; then
   echo "FAIL: $FAILURES contract red assertions failed"

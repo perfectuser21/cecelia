@@ -13,7 +13,7 @@ journey_type: autonomous
   Test: node -e "const fs=require('fs');const p='scripts/smoke/e2e/relay-53710094.sh';const c=fs.readFileSync(p,'utf8');if(!c.includes('53710094-898c-452c-8cc3-a56149e8b0ac')||!c.includes('executor')||!c.includes('codex'))process.exit(1)"
 
 - [x] [ARTIFACT] red test 文件存在，覆盖名与 DoD BEHAVIOR 名字保持字面子串关系
-  Test: node -e "const fs=require('fs');const c=fs.readFileSync('tests/regression/relay-53710094/contract-red.test.sh','utf8');for(const s of ['e2e-verify.sh 校验 task API payload shape','e2e-verify.sh 校验 DB tasks 认领状态','e2e-verify.sh 对 initiative_runs 采用可选 run 或 foreground path','e2e-verify.sh 拒绝 failed 状态并不记录敏感字段']){if(!c.includes(s)){console.error('missing '+s);process.exit(1)}}"
+  Test: node -e "const fs=require('fs');const c=fs.readFileSync('tests/regression/relay-53710094/contract-red.test.sh','utf8');for(const s of ['e2e-verify.sh 校验 task API payload shape','e2e-verify.sh 校验 DB tasks 认领状态','e2e-verify.sh 对 initiative_runs 采用可选 run 或 foreground path','e2e-verify.sh 拒绝 failed 状态并不记录敏感字段','verification_level: L3 真目标复核']){if(!c.includes(s)){console.error('missing '+s);process.exit(1)}}"
 
 ## BEHAVIOR 条目（内嵌可执行 manual: 命令）
 
@@ -32,6 +32,11 @@ journey_type: autonomous
 - [x] [BEHAVIOR] e2e-verify.sh 拒绝 failed 状态并不记录敏感字段
   Test: manual:bash -c 'set -euo pipefail; SPRINT_DIR="${SPRINT_DIR:-sprints/07172022-relay-53710094}"; VERIFY="${VERIFY:-scripts/smoke/e2e/relay-53710094.sh}"; TASK_ID="${TASK_ID:-53710094-898c-452c-8cc3-a56149e8b0ac}"; BRAIN_URL="${BRAIN_URL:-http://localhost:5221}"; DB="${DATABASE_URL:-postgresql://cecelia:cecelia@localhost:5432/cecelia}"; bash "$VERIFY" --assert failed-and-secrets-rejected'
   期望: exit 0；task.status 不得是 failed，payload 不含 token/github_token/anthropic_token/openai_api_key，run 若存在不得 phase=failed
+
+- [x] [BEHAVIOR] verification_level: L3 真目标复核
+  verification_level: L3
+  Test: manual:bash -c 'set -euo pipefail; SPRINT_DIR="${SPRINT_DIR:-sprints/07172022-relay-53710094}"; VERIFY="${VERIFY:-scripts/smoke/e2e/relay-53710094.sh}"; TASK_ID="${TASK_ID:-53710094-898c-452c-8cc3-a56149e8b0ac}"; BRAIN_URL="${BRAIN_URL:-http://localhost:5221}"; DB="${DATABASE_URL:-postgresql://cecelia:cecelia@localhost:5432/cecelia}"; bash "$VERIFY"'
+  期望: exit 0；必须真实 curl Brain task API 并真实 psql 当前 `tasks`/`initiative_runs` 或 foreground takeover 证据，不接受 mock/stub/fixture 或静态日志替代
 
 ## Invariant 覆盖登记
 
