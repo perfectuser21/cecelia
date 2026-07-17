@@ -1,0 +1,57 @@
+{
+  "phase": "evaluate",
+  "status": "DONE_WITH_CONCERNS",
+  "verdict": "FIXED",
+  "normalized_verdict": "PASS",
+  "sha": "1f8ca584ff1047a7dfb42ed534d2626bdeb0b78a",
+  "pr": 4062,
+  "pr_url": "https://github.com/perfectuser21/cecelia/pull/4062",
+  "task_id": "53710094-898c-452c-8cc3-a56149e8b0ac",
+  "sprint_dir": "sprints/07172022-relay-53710094",
+  "evaluated_at": "2026-07-17T14:25:44Z",
+  "unverifiable": [
+    "initiative_runs host/phase could not be directly verified because DB count for TASK_ID is 0; accepted under the contract-defined foreground takeover oracle after Brain API and tasks DB claim evidence passed."
+  ],
+  "concerns": [
+    "scripts/smoke/e2e/relay-53710094.sh reports initiative_runs row missing, but validates foreground takeover path successfully.",
+    "PR diff includes a comment-only registration line in .github/workflows/smoke-e2e-nightly.yml while the contract says shared CI is not modified; accepted because it does not weaken contract tests or change workflow execution logic."
+  ],
+  "checks": {
+    "artifact_gate": {
+      "status": "PASS",
+      "evidence": "bash -n scripts/smoke/e2e/relay-53710094.sh and DoD artifact node checks exited 0"
+    },
+    "contract_gate": {
+      "status": "PASS",
+      "evidence": "bash tests/regression/relay-53710094/contract-red.test.sh exited 0 with 5/5 assertions passing"
+    },
+    "e2e": {
+      "status": "PASS",
+      "evidence": "bash scripts/smoke/e2e/relay-53710094.sh exited 0"
+    },
+    "manual_bash": {
+      "status": "PASS",
+      "evidence": "13/13 contract-dod.md manual:bash commands exited 0"
+    },
+    "artifact_tests": {
+      "status": "PASS",
+      "evidence": "2/2 artifact content checks plus shell syntax check passed"
+    },
+    "ci": {
+      "status": "PASS",
+      "evidence": "gh pr view/checks: headRefOid matched target SHA, mergeStateStatus=CLEAN, current non-skipped checks passed"
+    },
+    "judge_gap_fix": {
+      "status": "FIXED",
+      "evidence": "contract-draft.md and contract-dod.md contain exact verification_level: L3; contract-red.test.sh runs the full real Brain API + PostgreSQL smoke path with no mock/stub/fixture/force pass in script or test"
+    }
+  },
+  "controller_verification": {
+    "deterministic_gates": "PASS",
+    "local_smoke": "PASS",
+    "regression_smoke": "PASS",
+    "ci_green": true,
+    "merge_state": "CLEAN",
+    "source": "evaluator subagent 019f7078-3608-7ab3-805b-3607fd6cf60c plus controller deterministic gates"
+  }
+}
