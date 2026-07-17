@@ -12,6 +12,7 @@ import { execFile as _execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { existsSync } from 'node:fs';
 
 const execFileAsync = promisify(_execFile);
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -29,7 +30,7 @@ let lastDrillDate = null;
  * }} opts
  * @returns {Promise<{triggered: boolean, skipped?: boolean, reason?: string}>}
  */
-export async function maybeScheduleCanaryDrill({ now = new Date(), execFn = null, pool = null } = {}) {
+export async function maybeScheduleCanaryDrill({ now = new Date(), execFn = null, pool = null, existsFn = null } = {}) {
   const utcHour = now.getUTCHours();
   const utcMin  = now.getUTCMinutes();
   const todayUTC = now.toISOString().slice(0, 10); // YYYY-MM-DD
@@ -66,7 +67,7 @@ export async function maybeScheduleCanaryDrill({ now = new Date(), execFn = null
 
   lastDrillDate = todayUTC;
 
-  const drillScript = path.resolve(__dirname, '../../../scripts/canary-death-drill.mjs');
+  const drillScript = process.env.CANARY_DRILL_SCRIPT || '/app/scripts/canary-death-drill.mjs';
   const modes = ['oom', 'kill9', 'interactive_stuck'];
   // 按日期轮换 mode
   const dayIndex = Math.floor(now.getTime() / 86400000);
@@ -81,14 +82,20 @@ export async function maybeScheduleCanaryDrill({ now = new Date(), execFn = null
     });
   });
 
+  // 使用内置默认路径时做 existsSync 校验；CANARY_DRILL_SCRIPT 环境变量由调用方保证路径可达
+  const checkExists = existsFn || existsSync;
+  if (!process.env.CANARY_DRILL_SCRIPT && !checkExists(drillScript)) {
+    console.error(`[canary-drill-scheduler] failed: script not found ${drillScript}`);
+    return { triggered: false, failed: true };
+  }
+
   try {
     await exec(drillScript, [mode]);
     console.log('[canary-drill-scheduler] 演习完成 PASS');
     return { triggered: true };
   } catch (e) {
-    console.error('[canary-drill-scheduler] 演习失败:', e.message);
-    // Bark 告警由 canary-death-drill.mjs 本身触发
-    return { triggered: true, error: e.message };
+    console.error(`[canary-drill-scheduler] failed: ${e.message}`);
+    return { triggered: false, failed: true };
   }
 }
 

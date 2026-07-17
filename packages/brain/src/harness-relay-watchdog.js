@@ -228,7 +228,7 @@ export async function _finalizeMergedRun(dbPool, initiativeId, prUrl, out, opts 
  * @returns {Promise<{scanned:number, resumed:number, capped:number, housekept:number}>}
  */
 export async function resumeStalledRelayRuns(deps = {}) {
-  const dbPool = deps.pool || pool;
+  const dbPool = deps.pool || deps.dbPool || pool;
   const execFn = deps.execFn || ((cmd) => execSync(cmd, { encoding: 'utf8', timeout: 10000 }));
   const out = { scanned: 0, resumed: 0, capped: 0, housekept: 0, mergedPr: 0, mergedWithoutGate: 0 };
 
