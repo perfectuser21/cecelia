@@ -150,7 +150,7 @@ describe('dispatchNextTask — 判重跳过不消耗 pre-flight attempt 预算�
   });
 
   it('6 个判重命中候选排在合法候选前面时，合法候选仍应被成功派发（MAX_PRE_FLIGHT_RETRIES=5，若判重消耗预算则会在耗尽后 all_candidates_failed_pre_flight）', async () => {
-    const now = new Date().toISOString();
+    const now = '2026-07-16T00:00:00Z'; // 存量豁免：刀2上线前，不受 S2 锚点门禁
     // 6 个会被判重命中的候选（数量 > MAX_PRE_FLIGHT_RETRIES+1=6 的边界，刻意卡在
     // "如果判重消耗 attempt 预算，第 6 次 attempt 用完后循环退出，永远够不到合法候选" 这个场景）。
     const dupCandidates = Array.from({ length: 6 }, (_, i) => ({

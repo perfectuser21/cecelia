@@ -148,6 +148,7 @@ describe('dispatcher circuit-breaker — harness_initiative 豁免', () => {
       task_type: 'dev',
       project_id: 'proj-1',
       title: 'dev task',
+      created_at: '2026-07-16T00:00:00Z',
     });
 
     const { dispatchNextTask } = await import('../dispatcher.js');
