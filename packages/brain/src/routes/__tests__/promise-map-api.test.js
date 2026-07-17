@@ -23,8 +23,7 @@ describe('POST /api/brain/journeys — home 字段', () => {
   it('接受合法 home=factory 并写入', async () => {
     const fakeRow = { id: 'j1', name: 'Line04', home: 'factory', notion_synced_at: null };
     mockQuery
-      .mockResolvedValueOnce({ rows: [] })           // area lookup
-      .mockResolvedValueOnce({ rows: [fakeRow] });   // INSERT
+      .mockResolvedValueOnce({ rows: [fakeRow] });   // INSERT（body 无 area，lookup 跳过）
     const app = await makeApp();
     const request = await import('supertest');
     const res = await request.default(app)
@@ -50,8 +49,7 @@ describe('POST /api/brain/journeys — home 字段', () => {
       trigger: '主理人拍板', endpoint: '账本可查',
     };
     mockQuery
-      .mockResolvedValueOnce({ rows: [] })
-      .mockResolvedValueOnce({ rows: [fakeRow] });
+      .mockResolvedValueOnce({ rows: [fakeRow] });   // INSERT（body 无 area，lookup 跳过）
     const app = await makeApp();
     const request = await import('supertest');
     const res = await request.default(app)
@@ -89,9 +87,7 @@ describe('POST /api/brain/journey_features — softness 字段', () => {
   it('接受合法 softness=hard', async () => {
     const fakeRow = { id: 'f1', name: 'RPA引擎', softness: 'hard' };
     mockQuery
-      .mockResolvedValueOnce({ rows: [] })  // journey lookup
-      .mockResolvedValueOnce({ rows: [] })  // area lookup
-      .mockResolvedValueOnce({ rows: [fakeRow] });
+      .mockResolvedValueOnce({ rows: [fakeRow] });   // INSERT（body 无 journey_id/area，两个 lookup 跳过）
     const app = await makeApp();
     const request = await import('supertest');
     const res = await request.default(app)
