@@ -289,11 +289,21 @@ export async function runDriftCheck({
   return { verdict: 'redeploying', sha_main: shaMain, sha_prod: shaProd2, redeployCount: newRedeployCount };
 }
 
+/** 模块自 gate（同 launchd-patrol.js 模式）：scheduler-jobs 60s 轮询下保证每 30min 才真跑 */
+let lastRunAt = 0;
+/** 测试隔离钩子 */
+export function _resetLastRunAt() { lastRunAt = 0; }
+
 /**
- * tick-runner.js 调用入口（fire-and-forget 封装）
+ * scheduler-jobs.js 调用入口（含 30min 自 gate，fire-and-forget 封装）
  * @param {import('pg').Pool} [db]
  */
 export async function runDriftSentinel(db = pool) {
+  const now = Date.now();
+  if (now - lastRunAt < DRIFT_SENTINEL_INTERVAL_MS) {
+    return { skipped: true, reason: 'interval_not_reached' };
+  }
+  lastRunAt = now;
   try {
     const result = await runDriftCheck({ db });
     return result;
