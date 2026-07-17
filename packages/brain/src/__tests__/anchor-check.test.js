@@ -16,8 +16,10 @@
 import { describe, it, expect } from 'vitest';
 import { checkAnchor, ANCHOR_LEGACY_CUTOFF } from '../anchor-check.js';
 
+// 存量豁免为【日历日】边界（naive timestamp 跨时区解析防偏移，见 anchor-check.js 注释）：
+// 上线日当天及之后 = 强制；前一日及更早 = 豁免。
 const AFTER_CUTOFF = new Date(ANCHOR_LEGACY_CUTOFF.getTime() + 60000).toISOString();
-const BEFORE_CUTOFF = new Date(ANCHOR_LEGACY_CUTOFF.getTime() - 60000).toISOString();
+const BEFORE_CUTOFF = new Date(ANCHOR_LEGACY_CUTOFF.getTime() - 24 * 3600 * 1000).toISOString();
 
 const VALID_ANCHOR = { journey_id: 'j1', gp_id: 'gp1', step_id: 's1' };
 

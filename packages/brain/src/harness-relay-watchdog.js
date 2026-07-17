@@ -377,8 +377,9 @@ export async function resumeStalledRelayRuns(deps = {}) {
             continue;
           }
           if (prState === 'OPEN') {
-            // 死局检测：区分"CI 红/BEHIND（需 agent 介入）"和"CI 跑中/全绿（等待 merge）"
+            // 死局检测：区分"CI 红/BEHIND/DIRTY（需 agent 介入）"和"CI 跑中/全绿（等待 merge）"
             let isBehind = false;
+            let isDirty = false;
             let ciStatus = 'pending';
             try {
               try {
@@ -386,10 +387,11 @@ export async function resumeStalledRelayRuns(deps = {}) {
                 const checksOut = execTolerant(execFn, `gh pr checks "${effectivePrUrl}" --json state`);
                 const checkRows = Array.isArray(tryParseJson(checksOut)) ? tryParseJson(checksOut) : [];
                 ciStatus = mapCiStatus(checkRows);
-                // BEHIND 从 mergeStateStatus 独立查询（best-effort）
+                // BEHIND/DIRTY 从 mergeStateStatus 独立查询（best-effort）
                 try {
                   const viewDetail = tryParseJson(execFn(`gh pr view "${effectivePrUrl}" --json mergeStateStatus`));
                   isBehind = viewDetail?.mergeStateStatus === 'BEHIND';
+                  isDirty = viewDetail?.mergeStateStatus === 'DIRTY';
                 } catch { /* best-effort */ }
               } catch (checksErr) {
                 // fallback：老版 gh 不支持 --json 标志（err.stdout 为空 + message 含 unknown flag）
@@ -398,6 +400,7 @@ export async function resumeStalledRelayRuns(deps = {}) {
                   // statusCheckRollup 替代（容器内老版 gh 不支持 --json 标志）
                   const prDetail = tryParseJson(execFn(`gh pr view "${effectivePrUrl}" --json statusCheckRollup,mergeStateStatus`));
                   isBehind = prDetail?.mergeStateStatus === 'BEHIND';
+                  isDirty = prDetail?.mergeStateStatus === 'DIRTY';
                   const statusCheckRollup = prDetail?.statusCheckRollup ?? [];
                   ciStatus = mapCiStatus(statusCheckRollup);
                 } else {
@@ -410,13 +413,13 @@ export async function resumeStalledRelayRuns(deps = {}) {
               continue;
             }
 
-            if (isBehind || ciStatus === 'fail') {
-              // BEHIND 或 CI 红 → 需要 agent 介入，落穿到下方重点火逻辑
-              const reason = isBehind ? 'BEHIND' : 'CI_FAILURE';
+            if (isBehind || isDirty || ciStatus === 'fail') {
+              // BEHIND、DIRTY 或 CI 红 → 需要 agent 介入，落穿到下方重点火逻辑
+              const reason = isDirty ? 'resume_conflict' : (isBehind ? 'BEHIND' : 'CI_FAILURE');
               console.log(`[relay-watchdog] resume_ci_red initiative=${run.initiative_id} pr=${effectivePrUrl} reason=${reason}`);
               // fall through — 不 continue，走下方 cap 检查 → spawn
-            } else if (ciStatus === 'pending') {
-              // CI 跑中/pending → 等待，不重点火
+            } else if (!isDirty && ciStatus === 'pending') {
+              // CI 跑中/pending（非 DIRTY）→ 等待，不重点火
               console.log(`[relay-watchdog] wait_ci_running initiative=${run.initiative_id} pr=${effectivePrUrl}`);
               continue;
             } else {

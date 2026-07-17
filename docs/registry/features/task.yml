@@ -672,7 +672,7 @@ features:
     apis: []
     tests:
       unit:
-        - packages/brain/src/__tests__/capacity-budget.test.js
+        - packages/brain/src/routes/__tests__/capacity-budget.test.js
         - packages/brain/src/__tests__/capacity-endpoint.test.js
         - packages/brain/src/__tests__/capacity.test.js
         - packages/brain/src/__tests__/dual-capacity.test.js
@@ -688,7 +688,7 @@ features:
         maturity: 2
         tests:
           unit:
-            - packages/brain/src/__tests__/capacity-budget.test.js
+            - packages/brain/src/routes/__tests__/capacity-budget.test.js
             - packages/brain/src/__tests__/capacity-endpoint.test.js
             - packages/brain/src/__tests__/capacity.test.js
             - packages/brain/src/__tests__/dual-capacity.test.js

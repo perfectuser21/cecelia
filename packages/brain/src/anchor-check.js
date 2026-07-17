@@ -48,6 +48,19 @@ export const ANCHOR_EXEMPT_ACTIONS = new Set([
 // 存量豁免截止日（刀2 上线时刻，此前创建的任务走豁免期）
 export const ANCHOR_LEGACY_CUTOFF = new Date('2026-07-17T10:00:00Z');
 
+// 存量豁免按【日历日】判定（07-17 验火修正）：tasks.created_at 是无时区 timestamp
+// （DB 会话时区 -05），node-pg 按本机时区解析会产生 13h 偏移——精确时刻比较会把
+// 豁免窗拉长 13h。wall-clock 的日期部分跨时区解析不变形，用日界做豁免边界。
+export const ANCHOR_LEGACY_CUTOFF_DAY = '2026-07-17';
+
+function wallClockDay(value) {
+  const d = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(d.getTime())) return null;
+  const mm = String(d.getMonth() + 1).padStart(2, '0');
+  const dd = String(d.getDate()).padStart(2, '0');
+  return `${d.getFullYear()}-${mm}-${dd}`;
+}
+
 /**
  * 检查任务是否因缺锚而应被阻断。
  *
@@ -69,9 +82,10 @@ export function checkAnchor(task) {
     return { blocked: false };
   }
 
-  // 3. 存量豁免：刀2 上线前创建的任务不强制锚（判定点④：存量豁免+新任务强制）
-  const createdAt = task?.created_at ? new Date(task.created_at) : null;
-  if (createdAt && createdAt < ANCHOR_LEGACY_CUTOFF) {
+  // 3. 存量豁免：刀2 上线【日】之前创建的任务不强制锚（判定点④：存量豁免+新任务强制；
+  //    日历日边界防 naive timestamp 跨时区解析偏移，见 ANCHOR_LEGACY_CUTOFF_DAY 注释）
+  const createdDay = task?.created_at ? wallClockDay(task.created_at) : null;
+  if (createdDay && createdDay < ANCHOR_LEGACY_CUTOFF_DAY) {
     return { blocked: false };
   }
 

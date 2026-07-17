@@ -155,42 +155,22 @@ describe('[S4-PF] 保鲜对账 proven-to-fire', () => {
     expect(count).toBe(0);
   });
 
-  it('A3 实弹模拟：注入断线格子后 buildNightlyAssertions 报 A3 失败', async () => {
+  it('A3 实弹模拟：注入孤儿底座件（家③无链接）→ buildNightlyAssertions 报 A3 失败', async () => {
     const client = await pool.connect();
-    let linkId;
     try {
       await client.query('BEGIN');
 
-      const { rows: steps } = await client.query(
-        `SELECT id, journey_id FROM journey_steps LIMIT 1`
+      await client.query(
+        `INSERT INTO journey_features (name, "group") VALUES ($1, $2)`,
+        ['[test-pf] 孤儿底座件探针', '家③横切件池'],
       );
-      const step = steps[0];
-
-      const { rows: [row] } = await client.query(
-        `INSERT INTO journey_step_links
-           (journey_id, step_id, cell_kind, cell_key, cell_status, feature_id, status, notion_synced_at)
-         VALUES ($1,$2,'base_ref','[test-pf] blast-radius-断线探针','pending',NULL,'planned',NOW())
-         ON CONFLICT DO NOTHING
-         RETURNING id`,
-        [step.journey_id, step.id],
-      );
-      linkId = row?.id;
-
-      if (!linkId) {
-        await client.query('ROLLBACK');
-        return; // 冲突跳过，不影响断言
-      }
 
       const assertions = await buildNightlyAssertions(client);
       const a3 = assertions.find(a => a.key === 'ledger_integrity');
       expect(a3.ok).toBe(false);
-      expect(a3.detail).toMatch(/blast-radius.*断线/);
-
-      await client.query('ROLLBACK');
-    } catch (err) {
-      await client.query('ROLLBACK').catch(() => {});
-      throw err;
+      expect(a3.detail).toMatch(/底座件/);
     } finally {
+      await client.query('ROLLBACK');
       client.release();
     }
   });

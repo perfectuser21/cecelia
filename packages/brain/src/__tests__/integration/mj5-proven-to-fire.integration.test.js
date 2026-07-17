@@ -15,9 +15,9 @@
  *   B3-3: 不存在 step → 200 + impacts:[]
  *
  * [刀4] S4 nightly 对账（proven-to-fire）:
- *   B4-1: buildNightlyAssertions 对真实 DB，A3 不永绿（base_ref 格子全有 feature_id → pass）
+ *   B4-1: buildNightlyAssertions 对真实 DB，A3 不永绿（无孤儿底座件 → pass）
  *   B4-2: A4 三闸心跳在真实 FS 上通过
- *   B4-3: 制造 base_ref 断线（feature_id=NULL）→ A3 正确检出
+ *   B4-3: 制造孤儿底座件（家③无链接）→ A3 正确检出（非永绿验火）
  */
 
 import { describe, it, expect, beforeAll } from 'vitest';
@@ -140,25 +140,20 @@ describe('[刀4] S4 nightly 对账 proven-to-fire（真实 DB）', () => {
     expect(a4.detail).toMatch(/3.*闸/);
   });
 
-  it('[B4-3] 制造 base_ref 断线（feature_id=NULL）→ A3 正确检出', async () => {
+  it('[B4-3] 制造孤儿底座件（家③无链接）→ A3 正确检出（非永绿验火）', async () => {
     const client = await pool.connect();
     try {
       await client.query('BEGIN');
-      const { rows: srows } = await client.query(
-        `SELECT id, journey_id FROM journey_steps
-         WHERE journey_id=$1 AND step_number=1`, [GPB]);
-      const step = srows[0];
 
       await client.query(
-        `INSERT INTO journey_step_links
-           (journey_id, step_id, cell_kind, cell_key, cell_status, feature_id, status, notion_synced_at)
-         VALUES ($1,$2,'base_ref','[test-probe] 断线探针','gray',NULL,'planned',NOW())`,
-        [step.journey_id, step.id]);
+        `INSERT INTO journey_features (name, "group") VALUES ($1, $2)`,
+        ['[test-probe] 孤儿底座件探针', '家③横切件池'],
+      );
 
       const results = await buildNightlyAssertions(client);
       const a3 = results.find(r => r.key === 'ledger_integrity');
       expect(a3.ok).toBe(false);
-      expect(a3.detail).toMatch(/断线/);
+      expect(a3.detail).toMatch(/底座件/);
     } finally {
       await client.query('ROLLBACK');
       client.release();
