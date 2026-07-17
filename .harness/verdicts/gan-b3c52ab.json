@@ -1,0 +1,18 @@
+{
+  "phase": "gan",
+  "sha7": "b3c52ab",
+  "verdict": "APPROVED",
+  "rubric_scores": {
+    "behavior_coverage": 5,
+    "test_first_discipline": 5,
+    "invariant_coverage": 5,
+    "scope_precision": 5,
+    "e2e_section_present": 5,
+    "manual_bash_present": 5,
+    "format_compliance": 5
+  },
+  "behavior_count": 5,
+  "invariant_coverage": "2/2",
+  "judgments_written": 5,
+  "rebuilt_from": "external_truth_git_commit_b3c52ab"
+}

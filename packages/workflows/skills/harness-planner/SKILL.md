@@ -443,7 +443,7 @@ mkdir -p "$SPRINT_DIR"
 
 ## journey_type: autonomous|user_facing|dev_pipeline|agent_remote
 ## journey_type_reason: {1 句推断依据}
-## target_environment: mac_web|windows_cloud|windows_wechat|linux_server|local_api|playground
+## target_environment: mac_web|windows_cloud|windows_wechat|linux_server|local_api|playground|android_realmachine
 ## target_environment_reason: {1 句推断依据，含目标机器名（如 GitHub Actions、hk-vps、localhost:5174）}
 ## journey_id: <Journey UUID，来源 = task.payload.journey_id（/dev 路径 C 点火写入），缺则取 PrepPRD 锚定结果>
 ## step_id: <Step UUID 或 step code，如 L01-S5，来源 = PrepPRD Golden Path 锚定结果>
@@ -456,7 +456,7 @@ mkdir -p "$SPRINT_DIR"
 ```bash
 # 发货前机械闸（EVA v2：实战 2/3 跑枚举非法——feature/local/deploy 都出现过，下游 proposer 选模板/evaluator 派机器全瞎）
 grep -qE '^(## )?journey_type: (autonomous|user_facing|dev_pipeline|agent_remote)$' "$SPRINT_DIR/sprint-prd.md" || { echo "FAIL: journey_type 非法枚举"; exit 1; }
-grep -qE '^(## )?target_environment: (mac_web|windows_cloud|windows_wechat|linux_server|local_api|playground)$' "$SPRINT_DIR/sprint-prd.md" || { echo "FAIL: target_environment 非法枚举"; exit 1; }
+grep -qE '^(## )?target_environment: (mac_web|windows_cloud|windows_wechat|linux_server|local_api|playground|android_realmachine)$' "$SPRINT_DIR/sprint-prd.md" || { echo "FAIL: target_environment 非法枚举"; exit 1; }
 grep -q '## Invariant 约束' "$SPRINT_DIR/sprint-prd.md" || { echo "FAIL: 缺 Invariant 段"; exit 1; }
 grep -q '## 累积 FR' "$SPRINT_DIR/sprint-prd.md" || { echo "FAIL: 缺累积 FR 段"; exit 1; }
 grep -q '## NFR' "$SPRINT_DIR/sprint-prd.md" || { echo "FAIL: 缺 NFR 段"; exit 1; }

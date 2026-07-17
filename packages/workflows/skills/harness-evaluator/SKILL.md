@@ -88,10 +88,11 @@ generator 写代码 + push PR
 | `TASK_ID` | Brain 中当前 evaluate task 的 UUID |
 | `PR_BRANCH` | 待验证 PR 分支名——Brain evaluateContractNode 注入 / relay prompt 提供（Step 0a 消费）（EVA v2 E7 补） |
 | `JOURNEY_TYPE` | `user_facing` / `autonomous` / `dev_pipeline` / `agent_remote` |
-| `TARGET_ENV` | `mac_web` / `windows_cloud` / `windows_wechat` / `linux_server` / `local_api` / `playground`（来自 PRD `target_environment` 字段；`mac_web` = 在宿主 Mac 直跑（非 Docker），Playwright 可达 localhost:5174；`windows_wechat` = xian-rog self-hosted，微信已登录；`windows_cloud` = GHA windows-latest 云端）|
+| `TARGET_ENV` | `mac_web` / `windows_cloud` / `windows_wechat` / `linux_server` / `local_api` / `playground` / `android_realmachine`（来自 PRD `target_environment` 字段；`mac_web` = 在宿主 Mac 直跑（非 Docker），Playwright 可达 localhost:5174；`windows_wechat` = xian-rog self-hosted，微信已登录；`windows_cloud` = GHA windows-latest 云端；`android_realmachine` = xian-rog self-hosted，复用同一台机器上已连接的安卓真机）|
 | `WORKSPACE_PATH` | 结果文件写入目录。**mac_web 宿主执行时由 host-executor 注入**（值为 worktreePath）；Docker 默认不注入，脚本 fallback `/workspace` |
 | `WINDOWS_CLOUD_WORKFLOW` | GHA workflow 文件名（harness-initiative.graph.js 根据 base_repo 注入：zenithjoy → `agent-e2e-video.yml`，否则 `e2e-windows.yml`）|
 | `WECHAT_RPA_WORKFLOW` | windows_wechat 专用 GHA workflow 文件名，**由 `evaluateContractNode` 注入，缺省 `e2e-wechat-rpa.yml`**；在 xian-rog self-hosted runner（微信已登录）上运行 |
+| `ANDROID_REALMACHINE_WORKFLOW` | android_realmachine 专用 GHA workflow 文件名，**由 `evaluateContractNode` 注入，缺省 `e2e-line02-android-collect.yml`**；复用 `[self-hosted, wechat-capable]`（xian-rog）runner，脚本格式是 bash（走 else 分支的 bash 提取路径，只在 GHA 派发桶里复用 dispatch/轮询机制）|
 | `DB` | PostgreSQL 连接串——优先用 payload/env 注入的 `$DB_URL`（第三方 repo 必须显式提供）；`postgresql://localhost/cecelia` 仅作 cecelia 本机 fallback，第三方 repo 禁止假设 cecelia 库存在 |
 
 **注**：DoD 文件中的 `Test:` 命令若引用 `$TARGET_TASK_ID`，该 ID 来自 DoD 文件内部（合同写入时硬编码或由 Generator 写入），Evaluator 直接执行 DoD 中的命令原文，不需单独注入。
@@ -639,11 +640,12 @@ case "$TARGET_ENV" in
     EXIT_CODE=${PIPESTATUS[0]}
     ;;
 
-  windows_cloud|windows_wechat)
+  windows_cloud|windows_wechat|android_realmachine)
     # GitHub Actions runner（ZenithJoy Agent 等连公网产品）
     # windows_cloud  → GHA windows-latest 云端 runner（全新干净 VM）
     # windows_wechat → xian-rog self-hosted runner（微信已登录的 Windows 环境）
-    # 合同 e2e 脚本必须是 .ps1 格式（见 proposer windows_cloud 模板）
+    # android_realmachine → xian-rog self-hosted runner（同一台机器上已连接的安卓真机，脚本是 bash 不是 ps1）
+    # 合同 e2e 脚本：windows_cloud/wechat 必须是 .ps1 格式，android_realmachine 例外走 bash
     # 等待结果：轮询 run 状态，最长 10 分钟
     # GITHUB_REPO 由 Brain 注入，且必须源于 payload.base_repo（跨 repo 化刀3，禁止写死 cecelia）
     # fallback 顺序：$GITHUB_REPO → 从 base_repo URL 解析 owner/repo → 两者都缺才用 perfectuser21/cecelia 并打 WARN
@@ -657,6 +659,8 @@ case "$TARGET_ENV" in
     fi
     if [[ "$TARGET_ENV" == "windows_wechat" ]]; then
       WORKFLOW="${WECHAT_RPA_WORKFLOW:-e2e-wechat-rpa.yml}"
+    elif [[ "$TARGET_ENV" == "android_realmachine" ]]; then
+      WORKFLOW="${ANDROID_REALMACHINE_WORKFLOW:-e2e-line02-android-collect.yml}"
     else
       WORKFLOW="${WINDOWS_CLOUD_WORKFLOW:-e2e-windows.yml}"
     fi
