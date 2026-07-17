@@ -8,7 +8,7 @@
 
 ## [BEHAVIOR] 条目
 
-### [BEHAVIOR-01] SHA 不等时强制触发 Brain 部署（squash merge 场景）
+### [BEHAVIOR] B-01 SHA 不等时强制触发 Brain 部署（squash merge 场景）
 
 **前提条件**：
 - `CECELIA_PROD_GIT_SHA` 设为与当前 `origin/main HEAD` 不同的值（模拟生产跑旧代码）
@@ -35,7 +35,7 @@ grep -qE "brain-deploy|Brain 部署|Brain 改动" /tmp/dod-b01.log && echo "PASS
 
 ---
 
-### [BEHAVIOR-02] SHA 相等时跳过 Brain 部署（幂等保护）
+### [BEHAVIOR] B-02 SHA 相等时跳过 Brain 部署（幂等保护）
 
 **前提条件**：
 - `CECELIA_PROD_GIT_SHA` 设为与 `origin/main HEAD` 相同的值
@@ -62,7 +62,7 @@ grep -qE "一致|跳过" /tmp/dod-b02.log && echo "PASS: 幂等跳过行存在" 
 
 ---
 
-### [BEHAVIOR-03] --changed 含 brain src 路径时仍触发 Brain 部署（文件列表范围加法）
+### [BEHAVIOR] B-03 --changed 含 brain src 路径时仍触发 Brain 部署（文件列表范围加法）
 
 **前提条件**：
 - `CECELIA_PROD_GIT_SHA` 与 `origin/main HEAD` 相同（SHA 对账通过）
@@ -88,7 +88,7 @@ grep -qE "brain-deploy|Brain 改动|Brain 部署" /tmp/dod-b03.log && echo "PASS
 
 ---
 
-### [BEHAVIOR-04] 无 brain 改动 + SHA 相等 → 完全跳过
+### [BEHAVIOR] B-04 无 brain 改动 + SHA 相等 → 完全跳过
 
 **前提条件**：
 - `CECELIA_PROD_GIT_SHA` 与 `origin/main HEAD` 相同
@@ -117,7 +117,7 @@ grep -qE "brain-deploy|Brain 部署" /tmp/dod-b04.log && echo "FAIL: 不应触�
 
 ---
 
-### [BEHAVIOR-05] 脚本日志含两侧 SHA 值（可观测性要求）
+### [BEHAVIOR] B-05 脚本日志含两侧 SHA 值（可观测性要求）
 
 **前提条件**：任意调用场景（SHA 等或不等均适用）
 
