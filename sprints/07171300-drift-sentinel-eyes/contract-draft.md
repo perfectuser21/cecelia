@@ -103,6 +103,26 @@
 
 ## E2E 验收
 
+验收脚本：`sprints/07171300-drift-sentinel-eyes/e2e-verify.sh`
+
+```bash
+#!/bin/bash
+# 容器内执行：验证漂移哨兵探针修复
+cd /workspace
+node -e "
+import('./packages/brain/src/cron/drift-sentinel.js').then(async m => {
+  // 验证默认 fetchProdSha 使用 localhost
+  const src = (await import('fs')).readFileSync('./packages/brain/src/cron/drift-sentinel.js', 'utf8');
+  if (src.includes('localhost:5221')) { console.log('PASS: sha_prod 已改 localhost'); }
+  else { console.error('FAIL: sha_prod 未改 localhost'); process.exit(1); }
+  
+  // 验证 fetchMainSha 使用 github.com URL 而非 origin
+  if (src.includes('github.com/perfectuser21/cecelia.git')) { console.log('PASS: sha_main 已改公开 URL'); }
+  else { console.error('FAIL: sha_main 未改公开 URL'); process.exit(1); }
+});
+"
+```
+
 以下命令在工作区根目录（`/workspace`）执行，可在容器内或宿主机环境运行。
 
 ### 步骤 1：运行 smoke 脚本（静态代码检查）
@@ -168,6 +188,18 @@ curl -sf -X POST http://localhost:5221/api/brain/run-drift-check 2>/dev/null || 
 {"verdict":"ok","sha_main":"<40位SHA>","sha_prod":"<40位SHA>"}
 ```
 或 `verdict=drifting/redeploying`（当 SHA 真实不一致时），但不得为 `network_error` 或 `prod_unreachable`（在网络正常、Brain 运行的情况下）。
+
+---
+
+## Test Contract 表
+
+| 测试 ID | [BEHAVIOR] 描述 | 验收断言 | 修复前 | 修复后 |
+|---------|----------------|---------|--------|--------|
+| T1 | [BEHAVIOR] `defaultFetchMainSha()` 在 origin 不可达、gh 无 auth 时，通过 HTTPS URL `git ls-remote` 返回有效 SHA（≥7位） | `result.sha_main.length >= 7` 且 `result.verdict !== 'network_error'` | FAIL（走旧路径 origin/gh 失败） | PASS |
+| T2 | [BEHAVIOR] `defaultFetchMainSha()` 在 git 全部失败时，通过 `curl https://api.github.com/...` 降级返回 `.sha` 字段 | `sha` 来自 curl JSON 解析，`result.verdict !== 'network_error'` | FAIL（旧降级路径为 gh api） | PASS |
+| T3 | [BEHAVIOR] `defaultFetchProdSha()` 默认使用 `http://localhost:5221` 而非外网 URL | mock `localhost:5221/health` 返回 `{"git_sha":"def..."}` → `result.sha_prod === 'def...'` | FAIL（默认使用外网 URL 失败） | PASS |
+| T4 | [BEHAVIOR] 探针失败时 console.log 日志包含 `error=` 前缀和原始错误原文（来自 `err.message`） | spy `console.log` 参数匹配 `/error=.*ECONNREFUSED/` | FAIL（只打 `network_error`，无错误原文） | PASS |
+| T5 | [BEHAVIOR] 两探针均失败时，`runDriftCheck` 不抛出；返回 `verdict=network_error`；`consecutiveNetworkErrors` 递增 | `result.verdict === 'network_error'`，不 throw，状态递增 | PASS（保守跳过逻辑已存在） | PASS |
 
 ---
 
