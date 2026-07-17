@@ -20,7 +20,7 @@ import { join, resolve, dirname } from 'path';
 import { fileURLToPath } from 'url';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const SCRIPT = resolve(__dirname, '../scripts/ci/check-brain-version-bump.sh');
+const SCRIPT = resolve(__dirname, '../../../scripts/ci/check-brain-version-bump.sh');
 
 /**
  * 搭建临时 git 仓库 fixture：
