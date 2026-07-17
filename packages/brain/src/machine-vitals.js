@@ -19,6 +19,7 @@ let _cache = null;                            // { sampled_at, relay_containers,
 let _lastGoodAt = 0;
 let _firstAttemptAt = 0;                      // never-good 基线：模块首次采样尝试时间
 let _staleAlerted = false;
+let _peakState = null;                        // { date:'YYYY-MM-DD', peak:number } 当日容器数峰值内存镜像（de6d3582 T1）
 
 function run(cmd, args) {
   return new Promise((resolve, reject) => {
@@ -80,6 +81,37 @@ export async function sampleMachineVitals(pool) {
     if (wasAlerted && pool) {
       await writeVitalsSentinel(pool, { recovered_at: new Date(next.sampled_at).toISOString() });
     }
+    // 当日容器数峰值滚动（日报 admission 吞吐段数据源，de6d3582）
+    if (pool) {
+      try {
+        const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Shanghai' }).format(new Date());
+        if (!_peakState || _peakState.date !== today) {
+          // 内存镜像缺失/跨日（含 Brain 重启）：回读 DB 同日已存峰值取 max，防止重启后低容器数把当日峰值抹低
+          let dbPeak = 0;
+          const r = await pool.query(
+            `SELECT value_json FROM working_memory WHERE key = 'machine_vitals_daily_peak'`
+          );
+          const v = r.rows?.[0]?.value_json;
+          const parsed = typeof v === 'string' ? JSON.parse(v) : v;
+          if (parsed && parsed.date === today) dbPeak = parsed.peak || 0;
+          _peakState = { date: today, peak: Math.max(dbPeak, next.relay_count) };
+          await pool.query(
+            `INSERT INTO working_memory (key, value_json, updated_at) VALUES ('machine_vitals_daily_peak', $1, NOW())
+             ON CONFLICT (key) DO UPDATE SET value_json = $1, updated_at = NOW()`,
+            [JSON.stringify(_peakState)]
+          );
+        } else if (next.relay_count > _peakState.peak) {
+          _peakState = { date: today, peak: next.relay_count };
+          await pool.query(
+            `INSERT INTO working_memory (key, value_json, updated_at) VALUES ('machine_vitals_daily_peak', $1, NOW())
+             ON CONFLICT (key) DO UPDATE SET value_json = $1, updated_at = NOW()`,
+            [JSON.stringify(_peakState)]
+          );
+        }
+      } catch (err) {
+        console.warn(`[machine-vitals] 峰值写入失败(不影响采样): ${err.message}`);
+      }
+    }
   } catch (err) {
     next.error = err.message;
     // 持续采样失败超 15min → 升级告警（一次性，恢复后复位）。
@@ -123,5 +155,5 @@ export function getMachineVitals() {
   return { ..._cache, stale: Date.now() - _cache.sampled_at > STALE_MS };
 }
 
-export function _resetVitalsCacheForTest() { _cache = null; _lastGoodAt = 0; _firstAttemptAt = 0; _staleAlerted = false; }
+export function _resetVitalsCacheForTest() { _cache = null; _lastGoodAt = 0; _firstAttemptAt = 0; _staleAlerted = false; _peakState = null; }
 export function _setVitalsCacheForTest(obj) { _cache = obj; }

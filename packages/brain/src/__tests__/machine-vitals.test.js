@@ -94,7 +94,7 @@ describe('machine-vitals', () => {
       await sampleMachineVitals(pool);
 
       expect(errSpy).toHaveBeenCalled();
-      const sentinelCall = pool.query.mock.calls.find(([sql]) => sql.includes('working_memory') && sql.includes('INSERT'));
+      const sentinelCall = pool.query.mock.calls.find(([sql, params]) => sql.includes('working_memory') && sql.includes('INSERT') && params[0] === 'machine_vitals_stale_alert');
       expect(sentinelCall).toBeTruthy();
       expect(sentinelCall[1][0]).toBe('machine_vitals_stale_alert');
       const payload = JSON.parse(sentinelCall[1][1]);
@@ -116,7 +116,7 @@ describe('machine-vitals', () => {
       await sampleMachineVitals(pool);
 
       expect(errSpy).toHaveBeenCalled();
-      const sentinelCall = pool.query.mock.calls.find(([sql]) => sql.includes('working_memory') && sql.includes('INSERT'));
+      const sentinelCall = pool.query.mock.calls.find(([sql, params]) => sql.includes('working_memory') && sql.includes('INSERT') && params[0] === 'machine_vitals_stale_alert');
       expect(sentinelCall).toBeTruthy();
       expect(sentinelCall[1][0]).toBe('machine_vitals_stale_alert');
       errSpy.mockRestore();
@@ -138,6 +138,71 @@ describe('machine-vitals', () => {
       expect(deleteCall).toBeTruthy();
       expect(deleteCall[1][0]).toBe('machine_vitals_stale_alert');
       errSpy.mockRestore();
+    });
+  });
+
+  describe('machine_vitals_daily_peak 峰值滚动', () => {
+    function poolMock() { return { query: vi.fn().mockResolvedValue({ rows: [] }) }; }
+    function peakUpsertCalls(pool) {
+      // 只算 INSERT（回读 SELECT 同含键名，不计入写入次数）
+      return pool.query.mock.calls.filter(([sql]) => String(sql).includes('machine_vitals_daily_peak') && String(sql).includes('INSERT'));
+    }
+    function lastPeakValue(pool) {
+      const calls = peakUpsertCalls(pool);
+      const params = calls[calls.length - 1][1];
+      return JSON.parse(params[0]); // 实现里 key 写死在 SQL 内，$1=value_json，params[0]
+    }
+
+    it('同日两次采样 5→3：peak 保持 5', async () => {
+      const pool = poolMock();
+      stubDocker({ psNames: Array.from({length:5},(_,i)=>`cecelia-relay-x${i}-1`).join('\n') + '\n' });
+      await sampleMachineVitals(pool);
+      stubDocker({ psNames: 'cecelia-relay-a-1\ncecelia-relay-b-2\ncecelia-relay-c-3\n' });
+      await sampleMachineVitals(pool);
+      expect(lastPeakValue(pool).peak).toBe(5);
+      // 锁写入频次语义：非新峰不重复写（reviewer 建议）
+      expect(peakUpsertCalls(pool)).toHaveLength(1);
+    });
+
+    it('重启后回读 DB 同日峰值：内存镜像丢失 + DB 存 5 + 当前 2 容器 → 不抹低，写回 5（终审 P2）', async () => {
+      const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Shanghai' }).format(new Date());
+      const pool = {
+        query: vi.fn(async (sql) => {
+          if (String(sql).includes('SELECT') && String(sql).includes('machine_vitals_daily_peak')) {
+            return { rows: [{ value_json: { date: today, peak: 5 } }] };
+          }
+          return { rows: [] };
+        }),
+      };
+      stubDocker({ psNames: 'cecelia-relay-a-1\ncecelia-relay-b-2\n' });
+      await sampleMachineVitals(pool);
+      expect(lastPeakValue(pool).peak).toBe(5);
+    });
+
+    it('采样失败不写峰值', async () => {
+      const pool = poolMock();
+      stubDocker({ fail: 'docker down' });
+      await sampleMachineVitals(pool);
+      expect(peakUpsertCalls(pool)).toHaveLength(0);
+    });
+
+    it('无 pool 不抛错且不写', async () => {
+      stubDocker({ psNames: 'cecelia-relay-a-1\n' });
+      await expect(sampleMachineVitals()).resolves.toBeTruthy();
+    });
+
+    it('跨日重置：新一天首次采样 peak=当日值（不沿用前一日峰值）', async () => {
+      const pool = poolMock();
+      stubDocker({ psNames: Array.from({length:5},(_,i)=>`cecelia-relay-x${i}-1`).join('\n') + '\n' });
+      await sampleMachineVitals(pool);
+      expect(lastPeakValue(pool).peak).toBe(5);
+
+      // 模拟跨日：直接重置峰值内存态（等价于新一天首次采样前的状态）
+      _resetVitalsCacheForTest();
+      pool.query.mockClear();
+      stubDocker({ psNames: 'cecelia-relay-a-1\ncecelia-relay-b-2\n' });
+      await sampleMachineVitals(pool);
+      expect(lastPeakValue(pool).peak).toBe(2);
     });
   });
 });
