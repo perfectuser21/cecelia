@@ -97,6 +97,7 @@ const DEV_TASK = {
   priority: 'P1',
   title: 'dev task that needs cecelia-bridge',
   payload: {},
+  created_at: '2026-07-16T00:00:00Z',
 };
 const HARNESS_TASK = {
   id: '22222222-0000-0000-0000-000000000002',
@@ -116,6 +117,7 @@ function makeDevCandidates(n) {
     priority: 'P1',
     title: `dev candidate ${i + 1}`,
     payload: {},
+    created_at: '2026-07-16T00:00:00Z',
   }));
 }
 
