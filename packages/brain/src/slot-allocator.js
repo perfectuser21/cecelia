@@ -629,6 +629,9 @@ async function harnessSlotCheck({ candidate, _memHealthOverride } = {}) {
   const memFreeMB = (v.vm_total_mb ?? 0) - (v.vm_used_mb ?? 0);
   const mem_cap = Math.floor(memFreeMB / RELAY_TIER_MB);
   const acct_cap = getAvailableAccountCount() * PER_ACCOUNT_CONCURRENCY;
+  // max(1,…) 地板值 = 零容器时的探针放行逃生阀：VM used 可能全是前台/其他占用，
+  // 若 mem_cap<=0 就全锁死会让 harness 被 VM 内存算术永久饿死；零容器时放行 1 条探针，
+  // 已有容器时由下面 no_memory_headroom 分支拒绝叠加兜底。
   const cap = { mem_cap, acct_cap, hard_cap: HARNESS_HARD_CAP, effective: Math.max(1, Math.min(mem_cap, acct_cap, HARNESS_HARD_CAP)) };
 
   // 内存余量连 1 档都不够且已有容器在跑 → 不再叠加

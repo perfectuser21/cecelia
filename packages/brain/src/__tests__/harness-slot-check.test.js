@@ -57,6 +57,20 @@ describe('harnessSlotCheck 动态 cap（beeba317 主线）', () => {
     expect(r.cap.mem_cap).toBe(1);
   });
 
+  it('探针放行逃生阀：mem_cap<=0 且零容器 且 inflight=0 → 放行（effective 地板=1）', async () => {
+    _setVitalsCacheForTest(vitals({ vm_total_mb: 5000, vm_used_mb: 5400, relay_count: 0, relay_containers: [] }));  // mem_cap<=0
+    const r = await harnessSlotCheck({ candidate: { priority: 'P1' } });
+    expect(r.allow).toBe(true);
+    expect(r.cap.effective).toBe(1);
+  });
+
+  it('mem_cap<=0 且已有 1 个容器 → 拒 no_memory_headroom（锁死 reason）', async () => {
+    _setVitalsCacheForTest(vitals({ vm_total_mb: 5000, vm_used_mb: 5400, relay_count: 1, relay_containers: ['cecelia-relay-a-1'] }));
+    const r = await harnessSlotCheck({ candidate: { priority: 'P1' } });
+    expect(r.allow).toBe(false);
+    expect(r.reason).toBe('no_memory_headroom');
+  });
+
   it('盘 >85% → 拒 disk_pressure', async () => {
     _setVitalsCacheForTest(vitals({ host_disk_pct: 91 }));
     const r = await harnessSlotCheck({ candidate: { priority: 'P1' } });
