@@ -20,7 +20,7 @@ import {
   killProcessTwoStage,
   getBillingPause,
 } from './executor.js';
-import { calculateSlotBudget } from './slot-allocator.js';
+import { calculateSlotBudget, harnessSlotCheck } from './slot-allocator.js';
 import { shouldDowngrade } from './token-budget-planner.js';
 import { emit } from './event-bus.js';
 import { isAllowed, recordFailure } from './circuit-breaker.js';
@@ -52,36 +52,11 @@ export const DISPATCH_FAIL_AUTOBLOCK_THRESHOLD = (() => {
 })();
 
 // ============================================================
-// 全局 harness_initiative 并发上限（OPEN-1 OOM 防线）
+// harness 派发闸——判定唯一入口在 slot-allocator.harnessSlotCheck()（beeba317 收权）
+// 数活容器不数任务：任务生命周期一半在等 CI，容器已退仍占任务数位 = 纸面满机器空转。
+// 这里只留任务数纯兜底（docker 层全瞎时防无限叠加），阈值宽到正常永不触发。
 // ============================================================
-// 每条 harness_initiative graph 在 brain 容器内逐节点 spawn LLM agent 容器，
-// 其中 planner / GAN(proposer,reviewer) 是 pipeline-heavy 档位（--memory=2048m，
-// 见 spawn/middleware/resource-tier.js）。OrbStack VM 仅 ~13.6GB，4-5 条 harness
-// 并发各拉起一个 2GB agent + brain 自身 + 其他 dev/pipeline 任务 → 撑爆 VM →
-// docker OOM_killed (exit=137)，pipeline「一跑就卡」的主力杀手。
-//
-// dispatcher 原有的 project-scoped initiative lock 只挡「同 project」的 harness，
-// null / 跨 project 的 initiative 仍会无限叠加。这里用全局计数兜底：同时
-// in_progress 的 harness_initiative 达到上限时，新的 harness_initiative 延后派发
-// （下一 tick 重试），不影响 dev / content 等非 harness 任务。
-//
-// 默认 2：实测单 agent 峰值 ~2GB（pipeline-heavy 上限，且已观测到在 2048m 仍 OOM），
-// 2 条并发 ≈ 4GB harness + ~2GB brain + 其他任务，留 ~3.6GB headroom。
-// 可用 env MAX_CONCURRENT_HARNESS_INITIATIVES 覆盖（VM 扩容后调大）。
-export const MAX_CONCURRENT_HARNESS_INITIATIVES = (() => {
-  const raw = parseInt(process.env.MAX_CONCURRENT_HARNESS_INITIATIVES || '', 10);
-  return Number.isFinite(raw) && raw >= 1 ? raw : 2;
-})();
-
-/**
- * 纯判定：当前 in_progress 的 harness_initiative 数是否已达/超过上限。
- * @param {number} runningCount 当前 in_progress 的 harness_initiative 数（不含本候选）
- * @param {number} [max=MAX_CONCURRENT_HARNESS_INITIATIVES]
- * @returns {boolean} true=应延后派发
- */
-export function harnessConcurrencyExceeded(runningCount, max = MAX_CONCURRENT_HARNESS_INITIATIVES) {
-  return Number(runningCount) >= Number(max);
-}
+export const HARNESS_TASK_CAP_BACKSTOP = 12;
 
 /**
  * 纯判定：候选任务是否应受 harness 并发 cap 限制。
@@ -550,12 +525,10 @@ export async function dispatchNextTask(goalIds) {
       return { dispatched: false, reason: 'retired_task_type', task_id: candidate.id, task_type: candidate.task_type, retired: true, actions };
     }
 
-    // 3b''. 全局 harness_initiative 并发上限（OPEN-1 OOM 防线）。
-    //       放在原子 claim 之前 → 被 cap 时无需释放 claim。
-    //       只对 harness_initiative 生效；dev / content 等任务不受影响。
-    //       注意：达到上限时直接 return（不继续 try 下一候选），让本 tick 让位给非 harness
-    //       任务的下一次 tick 重新走完整 selectNext，避免在循环里反复计数。
+    // 3b''. harness admission —— 判定收归 slot-allocator（beeba317）。
+    //       放在原子 claim 之前 → 被拒时无需释放 claim；拒发直接 return 让位下一 tick。
     if (shouldApplyHarnessCap(candidate)) {
+      // 任务数纯兜底：docker 层全瞎时防无限叠加（正常永不触发）
       const capRes = await pool.query(
         `SELECT count(*)::int AS n FROM tasks
            WHERE task_type IN ('harness_initiative', 'golden_path_proposal')
@@ -564,17 +537,20 @@ export async function dispatchNextTask(goalIds) {
         [candidate.id]
       );
       const running = capRes.rows[0]?.n ?? 0;
-      if (harnessConcurrencyExceeded(running)) {
-        tickLog(`[dispatch] harness 并发上限 ${running}/${MAX_CONCURRENT_HARNESS_INITIATIVES}，延后派发 ${candidate.id} (${candidate.title})`);
-        await recordDispatchResult(pool, false, 'harness_concurrency_capped');
-        return {
-          dispatched: false,
-          reason: 'harness_concurrency_capped',
-          running,
-          max: MAX_CONCURRENT_HARNESS_INITIATIVES,
-          task_id: candidate.id,
-          actions,
-        };
+      if (running >= HARNESS_TASK_CAP_BACKSTOP) {
+        tickLog(`[dispatch] harness 任务数兜底 ${running}/${HARNESS_TASK_CAP_BACKSTOP}，延后派发 ${candidate.id}`);
+        await recordDispatchResult(pool, false, 'task_cap_backstop');
+        return { dispatched: false, reason: 'task_cap_backstop', running, task_id: candidate.id, actions };
+      }
+
+      const slotCheck = await harnessSlotCheck({ candidate });
+      const capStr = slotCheck.cap
+        ? `${slotCheck.cap.effective}(mem=${slotCheck.cap.mem_cap} acct=${slotCheck.cap.acct_cap} hard=${slotCheck.cap.hard_cap})`
+        : 'n/a';
+      tickLog(`[dispatch] slot_check containers=${slotCheck.containers} inflight=${slotCheck.inflight} cap=${capStr} stale=${slotCheck.stale} verdict=${slotCheck.allow ? 'allow' : `deny:${slotCheck.reason}`}`);
+      if (!slotCheck.allow) {
+        await recordDispatchResult(pool, false, slotCheck.reason);
+        return { dispatched: false, reason: slotCheck.reason, slot_check: slotCheck, task_id: candidate.id, actions };
       }
     }
 

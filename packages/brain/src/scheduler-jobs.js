@@ -26,13 +26,18 @@ import { runSevenRingAuditJob } from './seven-ring-audit.js';
 import { runGuardDrill } from './guard-drill.js';
 import { runMorningCockpitBark } from './morning-cockpit-bark.js';
 import { runDriftSentinel } from './cron/drift-sentinel.js';
+import { runDiskGuard } from './cron/disk-guard.js';
 import { runPromiseMapNightly } from './promise-map-nightly.js';
+import { sampleMachineVitals } from './machine-vitals.js';
 
 const LOOP_INTERVAL_MS = 60 * 1000;
 const DEFAULT_TIMEOUT_MS = 5 * 60 * 1000;
 export const SENTINEL_KEY_PREFIX = 'scheduler_job_last_run:';
 
 export const JOBS = [
+  // machine-vitals 必须排首位：串行轮内后面 19 个 job 的延迟会把采样推过 STALE_MS(180s)，
+  // harness 派发热路径读到的就是过期缓存（beeba317 终审 Fix 3）。
+  { name: 'machine-vitals', needsPool: true, timeoutMs: DEFAULT_TIMEOUT_MS, handler: (pool) => sampleMachineVitals(pool), description: '本机体征采样（docker容器数/VM内存/盘，60s，harness admission 数据源，beeba317）' },
   { name: 'arch-review', needsPool: true, timeoutMs: DEFAULT_TIMEOUT_MS, handler: triggerArchReview, description: '架构巡检（自带4h窗口+guard）' },
   { name: 'ci-patrol', needsPool: true, timeoutMs: DEFAULT_TIMEOUT_MS, handler: triggerCiPatrol, description: 'CI/CD 巡检（自带北京08:00窗口+当日去重）' },
   { name: 'strategy-trigger', needsPool: true, timeoutMs: DEFAULT_TIMEOUT_MS, handler: maybeTriggerStrategySession, description: '战略会应急触发（自带active_goals gate+24h冷却）' },
@@ -52,6 +57,7 @@ export const JOBS = [
   { name: 'guard-drill', needsPool: true, timeoutMs: 10 * 60 * 1000, handler: runGuardDrill, description: '月度守卫演习（自带30天gate，轮选 auto 守卫全流程弄死→验红→恢复，未叫→P1+Bark，刀4-T4）' },
   { name: 'morning-cockpit-bark', needsPool: true, timeoutMs: DEFAULT_TIMEOUT_MS, handler: runMorningCockpitBark, description: '主理人指挥舱晨报 Bark（北京08:30窗口+当日去重，推送指挥舱链接+完成率/任务数简报，task:80a5be84）' },
   { name: 'drift-sentinel', needsPool: false, timeoutMs: DEFAULT_TIMEOUT_MS, handler: runDriftSentinel, description: 'G2 部署漂移哨兵（自带30min自gate，SHA对账+自动补部署，G2 S0）' },
+  { name: 'disk-guard', needsPool: false, timeoutMs: 120_000, handler: runDiskGuard, description: '磁盘哨兵（15min自gate，宿主SSH逃逸df检测，80/85/90%三级响应，[disk_check]日志）' },
   { name: 'promise-map-nightly', needsPool: false, timeoutMs: DEFAULT_TIMEOUT_MS, handler: runPromiseMapNightly, description: 'MJ5 S4 承诺地图保鲜对账（每日 UTC 02:00，4 条断言，失败 Bark，刀4）' },
 ];
 

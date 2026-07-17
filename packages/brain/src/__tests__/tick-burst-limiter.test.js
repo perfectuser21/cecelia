@@ -39,6 +39,7 @@ vi.mock('../alertness/index.js', () => ({
 }));
 
 vi.mock('../slot-allocator.js', () => ({
+  harnessSlotCheck: vi.fn().mockResolvedValue({ allow: true, reason: 'ok', containers: 0, inflight: 0, cap: { effective: 4, mem_cap: 8, acct_cap: 4, hard_cap: 8 }, stale: false }),
   calculateSlotBudget: vi.fn(() => ({
     dispatchAllowed: true,
     taskPool: { budget: 10, available: 5 }, // 5 个 slot 可用

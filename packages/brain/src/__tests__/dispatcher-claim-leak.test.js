@@ -43,7 +43,15 @@ vi.mock('../slot-allocator.js', () => ({
     user: { mode: 'absent', used: 0 },
     codex: { available: true, running: 0, max: 5 },
     budgetState: { state: 'abundant' },
-  })
+  }),
+  harnessSlotCheck: vi.fn().mockResolvedValue({
+    allow: true,
+    reason: null,
+    containers: 0,
+    inflight: 0,
+    cap: { effective: 4, mem_cap: 4, acct_cap: 4, hard_cap: 4 },
+    stale: false,
+  }),
 }));
 vi.mock('../token-budget-planner.js', () => ({ shouldDowngrade: vi.fn(() => false) }));
 vi.mock('../event-bus.js', () => ({ emit: vi.fn().mockResolvedValue(undefined) }));

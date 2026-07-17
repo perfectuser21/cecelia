@@ -197,3 +197,72 @@ describe('[S4-N8] A4 三闸心跳——闸文件存在', () => {
     expect(a4.detail).toMatch(/缺失/);
   });
 });
+
+// ── [S4-N9] A3 底座件判定：家②/家③ group 而非 kind='base'（纸门修复）──
+// journey_features.kind CHECK 只允许 ability|feature——kind='base' 永远查空=断言永绿。
+describe('[S4-N9] A3 底座件按 group 家②/家③ 判定', () => {
+  it('孤儿底座件（家③，无任何链接）→ A3 fail', async () => {
+    const pool = makePool(vi.fn()
+      .mockResolvedValueOnce({ rows: [] })                       // A1 anchored PRs
+      .mockResolvedValueOnce({ rows: [{ count: '0' }] })         // A2
+      .mockResolvedValueOnce({ rows: [{ id: 'f1', name: '孤儿底座' }] }) // A3a 无链接底座件
+      .mockResolvedValueOnce({ rows: [] })                       // A3b promise 缺失
+    );
+    const assertions = await buildNightlyAssertions(pool);
+    const a3 = assertions.find(a => a.key === 'ledger_integrity');
+    expect(a3.ok).toBe(false);
+    expect(a3.detail).toMatch(/底座件/);
+  });
+
+  it('A3a 查询不再用 kind=base，按 group 家③/家② 收口', async () => {
+    let a3aSql = '';
+    const pool = makePool(vi.fn(async (sql) => {
+      if (typeof sql === 'string' && sql.includes('journey_features jf')) { a3aSql = sql; return { rows: [] }; }
+      if (typeof sql === 'string' && sql.includes('dev_records')) {
+        return sql.includes('COUNT(*)') ? { rows: [{ count: '0' }] } : { rows: [] };
+      }
+      return { rows: [] };
+    }));
+    await buildNightlyAssertions(pool);
+    expect(a3aSql).not.toContain("kind = 'base'");
+    expect(a3aSql).toContain('家③横切件池');
+    expect(a3aSql).toContain('家②共享前置');
+  });
+});
+
+// ── [S4-N10] A3 promise 缺失只查承诺地图域（存量 34 个无 promise 旧步骤豁免）──
+describe('[S4-N10] A3 promise 检查按域收口', () => {
+  it('promise IS NULL 查询限定 home/domain 非空的 journey', async () => {
+    let a3bSql = '';
+    const pool = makePool(vi.fn(async (sql) => {
+      if (typeof sql === 'string' && sql.includes('promise IS NULL')) { a3bSql = sql; return { rows: [] }; }
+      if (typeof sql === 'string' && sql.includes('dev_records')) {
+        return sql.includes('COUNT(*)') ? { rows: [{ count: '0' }] } : { rows: [] };
+      }
+      return { rows: [] };
+    }));
+    await buildNightlyAssertions(pool);
+    expect(a3bSql).toContain('JOIN journeys');
+    expect(a3bSql).toMatch(/home IS NOT NULL|domain IS NOT NULL/);
+  });
+});
+
+// ── [S4-N11] A2 对齐 S2 豁免语义（legacy cutoff + 豁免 task_type/action）──
+describe('[S4-N11] A2 旁路检测与 S2 闸同口径', () => {
+  it('A2 查询带 legacy cutoff 参数与豁免过滤', async () => {
+    let a2Sql = '';
+    let a2Params = null;
+    const pool = makePool(vi.fn(async (sql, params) => {
+      if (typeof sql === 'string' && sql.includes('COUNT(*)') && sql.includes('dev_records')) {
+        a2Sql = sql; a2Params = params; return { rows: [{ count: '0' }] };
+      }
+      if (typeof sql === 'string' && sql.includes('dev_records')) return { rows: [] };
+      return { rows: [] };
+    }));
+    await buildNightlyAssertions(pool);
+    expect(a2Sql).toContain('created_at');
+    expect(a2Sql).toContain('task_type');
+    expect(Array.isArray(a2Params)).toBe(true);
+    expect(a2Params.length).toBeGreaterThanOrEqual(3); // cutoff + exempt types + exempt actions
+  });
+});

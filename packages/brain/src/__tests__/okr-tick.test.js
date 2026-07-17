@@ -24,6 +24,7 @@ vi.mock('../actions.js', () => ({
 
 // Mock slot-allocator.js (used via dynamic import in triggerPlannerForGoal)
 vi.mock('../slot-allocator.js', () => ({
+  harnessSlotCheck: vi.fn().mockResolvedValue({ allow: true, reason: 'ok', containers: 0, inflight: 0, cap: { effective: 4, mem_cap: 8, acct_cap: 4, hard_cap: 8 }, stale: false }),
   calculateSlotBudget: vi.fn(() => Promise.resolve({ dispatchAllowed: true })),
   TOTAL_CAPACITY: 12,
   CECELIA_RESERVED: 2,

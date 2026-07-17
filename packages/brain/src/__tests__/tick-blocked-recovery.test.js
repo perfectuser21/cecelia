@@ -16,7 +16,7 @@ vi.mock('../executor.js', () => ({
   requeueTask: vi.fn(), MAX_SEATS: 4, INTERACTIVE_RESERVE: 2, getBillingPause: vi.fn().mockReturnValue(null),
   getActiveProcesses: vi.fn().mockReturnValue([]),
 }));
-vi.mock('../slot-allocator.js', () => ({ calculateSlotBudget: vi.fn().mockReturnValue({ budget: 2 }) }));
+vi.mock('../slot-allocator.js', () => ({ harnessSlotCheck: vi.fn().mockResolvedValue({ allow: true, reason: 'ok', containers: 0, inflight: 0, cap: { effective: 4, mem_cap: 8, acct_cap: 4, hard_cap: 8 }, stale: false }), calculateSlotBudget: vi.fn().mockReturnValue({ budget: 2 }) }));
 vi.mock('../decision.js', () => ({
   compareGoalProgress: vi.fn().mockResolvedValue({ overall_health: 'healthy', next_actions: [], goals: [] }),
   generateDecision: vi.fn(), executeDecision: vi.fn(), splitActionsBySafety: vi.fn().mockReturnValue({ safeActions: [], unsafeActions: [] }),

@@ -56,6 +56,19 @@ vi.mock('../promise-map-nightly.js', () => ({
   runPromiseMapNightly: vi.fn().mockResolvedValue({ ok: true, passed: 4, failed: 0 }),
 }));
 
+// disk-guard 真实 handler 会 ssh 逃逸宿主跑 df/worktree 收割——单测绝不能碰真机，
+// 且本地跑会超时（多 worktree × ConnectTimeout 叠加 >30s）。行为由 disk-guard 自己的测试覆盖。
+vi.mock('../cron/disk-guard.js', () => ({
+  runDiskGuard: vi.fn().mockResolvedValue({ ok: true, pct: 50, level: 'ok' }),
+}));
+
+// machine-vitals 真实 handler 会走 execFile(docker/df) 系统调用——在 fake timers 下
+// 不受 vi 的虚拟时钟驱动，会挂住整轮串行 job（machine-vitals 现排 JOBS 首位）。
+// 其行为本身由 machine-vitals.test.js / machine-vitals-wiring.test.js 覆盖，这里纯 mock 掉。
+vi.mock('../machine-vitals.js', () => ({
+  sampleMachineVitals: vi.fn().mockResolvedValue({ sampled_at: Date.now(), error: null }),
+}));
+
 import {
   runSchedulerJobsOnce,
   startSchedulerJobsLoop,
@@ -86,9 +99,9 @@ describe('scheduler-jobs 注册表', () => {
     vi.clearAllMocks();
   });
 
-  it('JOBS 注册了 20 个 job（含 postdeploy-verifier + seven-ring-audit + guard-drill + morning-cockpit-bark + drift-sentinel + promise-map-nightly）', () => {
+  it('JOBS 注册了 22 个 job（含 disk-guard + promise-map-nightly + machine-vitals）', () => {
     expect(JOBS.map((j) => j.name)).toEqual([
-      'arch-review', 'ci-patrol', 'strategy-trigger', 'conversation-digest', 'capture-digestion', 'daily-backup', 'line-dreaming', 'ledger-hygiene', 'battle-report', 'capture-triage', 'receipt-collector', 'gp-shelf-life', 'launchd-patrol', 'direction-proposer', 'postdeploy-verifier', 'seven-ring-audit', 'guard-drill', 'morning-cockpit-bark', 'drift-sentinel', 'promise-map-nightly',
+      'machine-vitals', 'arch-review', 'ci-patrol', 'strategy-trigger', 'conversation-digest', 'capture-digestion', 'daily-backup', 'line-dreaming', 'ledger-hygiene', 'battle-report', 'capture-triage', 'receipt-collector', 'gp-shelf-life', 'launchd-patrol', 'direction-proposer', 'postdeploy-verifier', 'seven-ring-audit', 'guard-drill', 'morning-cockpit-bark', 'drift-sentinel', 'disk-guard', 'promise-map-nightly',
     ]);
   });
 
@@ -109,7 +122,7 @@ describe('scheduler-jobs 注册表', () => {
     expect(runLaunchdPatrol).toHaveBeenCalledWith();
     expect(maybeRunDirectionProposer).toHaveBeenCalledWith(pool);
     expect(runPostdeployVerifier).toHaveBeenCalledWith(pool);
-    expect(results).toHaveLength(20);
+    expect(results).toHaveLength(22);
     expect(results.every((r) => r.ok)).toBe(true);
   });
 
@@ -117,9 +130,9 @@ describe('scheduler-jobs 注册表', () => {
     const pool = makePool();
     triggerArchReview.mockRejectedValueOnce(new Error('boom'));
     const results = await runSchedulerJobsOnce(pool);
-    expect(results[0]).toMatchObject({ name: 'arch-review', ok: false, error: 'boom' });
-    expect(results.slice(1).every((r) => r.ok)).toBe(true);
-    expect(results).toHaveLength(20);
+    expect(results.find((r) => r.name === 'arch-review')).toMatchObject({ ok: false, error: 'boom' });
+    expect(results.filter((r) => r.name !== 'arch-review').every((r) => r.ok)).toBe(true);
+    expect(results).toHaveLength(22);
     expect(runCaptureDigestion).toHaveBeenCalled();
   });
 
@@ -139,9 +152,9 @@ describe('scheduler-jobs 注册表', () => {
     await runSchedulerJobsOnce(pool);
     const sentinelCalls = pool.query.mock.calls.filter(([sql]) => sql.includes('working_memory'));
     expect(sentinelCalls).toHaveLength(JOBS.length);
-    expect(sentinelCalls[0][0]).toMatch(/ON CONFLICT \(key\) DO UPDATE/);
-    expect(sentinelCalls[0][1][0]).toBe(`${SENTINEL_KEY_PREFIX}arch-review`);
-    const payload = JSON.parse(sentinelCalls[0][1][1]);
+    const archReviewCall = sentinelCalls.find(([, params]) => params[0] === `${SENTINEL_KEY_PREFIX}arch-review`);
+    expect(archReviewCall[0]).toMatch(/ON CONFLICT \(key\) DO UPDATE/);
+    const payload = JSON.parse(archReviewCall[1][1]);
     expect(payload).toHaveProperty('at');
     expect(payload).toHaveProperty('ok');
   });

@@ -223,6 +223,15 @@ export function isAuthFailed(accountId) {
 }
 
 /**
+ * 可用 Claude 账号数（未 spending-cap 且未 auth-fail）。
+ * slot-allocator 动态 cap 的账号派生天花板数据源（beeba317）：
+ * cap_acct = 可用账号数 × 每账号安全并发。加账号 = ACCOUNTS 加一行，天花板自动涨。
+ */
+export function getAvailableAccountCount(accounts = ACCOUNTS) {
+  return accounts.filter(id => !isSpendingCapped(id) && !isAuthFailed(id)).length;
+}
+
+/**
  * 重置账号的 auth 失败退避计数（凭据已确认恢复时调用）
  * @param {string} accountId
  */
