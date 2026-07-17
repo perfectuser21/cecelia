@@ -225,10 +225,10 @@ console.log(`[PASS] ${pathId} 全部接缝步实际等级已达承诺等级，�
 try {
   const payload = {
     category: 'release-gate',
-    path_id: pathId,
-    verdict: 'PASS',
-    gaps: [],
-    written_at: new Date().toISOString(),
+    level: 'feature',
+    topic: pathId,
+    decision: 'PASS',
+    reason: 'All seam-steps meet L3 commit level; release gate approved.',
   };
 
   const res = await fetch(`${BRAIN_URL}/api/brain/decisions`, {
