@@ -11,6 +11,7 @@ name: Smoke E2E Nightly（staging 5222）
 #   scripts/smoke/e2e/headed-r7.sh
 #   scripts/smoke/e2e/relay-4bb31ef5.sh
 #   scripts/smoke/e2e/relay-a85e0582.sh
+#   scripts/smoke/e2e/deploy-daily-drill.sh
 
 on:
   schedule:
