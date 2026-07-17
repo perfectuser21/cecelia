@@ -88,41 +88,56 @@ async function clearDriftState(db = pool) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * 从 git ls-remote 或 gh api 获取 origin/main HEAD SHA
+ * 从 git ls-remote HTTPS URL 或 curl GitHub API 获取 origin/main HEAD SHA
+ * （容器内无 git remote 凭据、无 gh 认证，走公开 HTTPS URL）
  * @returns {Promise<string>} 40 位 SHA
  */
 export async function defaultFetchMainSha() {
+  const REPO_URL = 'https://github.com/perfectuser21/cecelia.git';
+  let gitErr;
   try {
     const { stdout } = await execAsync(
-      'git ls-remote origin HEAD refs/heads/main 2>/dev/null | head -1 | cut -f1',
+      `git ls-remote ${REPO_URL} refs/heads/main`,
       { timeout: 15000 }
     );
-    const sha = stdout.trim().split('\n')[0].trim();
+    const sha = stdout.trim().split(/\s+/)[0];
     if (sha && sha.length >= 7) return sha;
-  } catch {
-    // 降级到 gh api
+    gitErr = new Error(`git ls-remote returned empty or short: "${stdout.trim().slice(0, 100)}"`);
+  } catch (err) {
+    gitErr = err;
   }
-  const repo = process.env.GITHUB_REPO || 'chalexlch/cecelia';
-  const { stdout } = await execAsync(
-    `gh api repos/${repo}/commits/main --jq .sha`,
-    { timeout: 15000 }
-  );
-  return stdout.trim();
+  // 降级：curl GitHub API（公开，免 token）
+  try {
+    const { stdout: apiOut } = await execAsync(
+      `curl -sf --max-time 10 https://api.github.com/repos/perfectuser21/cecelia/commits/main`,
+      { timeout: 15000 }
+    );
+    const data = JSON.parse(apiOut);
+    if (data.sha) return data.sha;
+    throw new Error(`GitHub API missing .sha: ${apiOut.slice(0, 200)}`);
+  } catch (curlErr) {
+    throw new Error(`sha_main 两条路均失败: git=${gitErr.message}; curl=${curlErr.message}`);
+  }
 }
 
 /**
  * 调 /health 端点获取生产 git_sha
+ * 默认 URL 改为 http://localhost:5221/api/brain（容器内自身，health 端点 = /api/brain/health）
  * @returns {Promise<string>} git_sha 字段
  */
 export async function defaultFetchProdSha() {
-  const prodUrl = process.env.BRAIN_PROD_URL || 'https://brain.cecelia.ai';
-  const { stdout } = await execAsync(
-    `curl -sf --max-time 10 "${prodUrl}/health"`,
-    { timeout: 15000 }
-  );
-  const data = JSON.parse(stdout);
-  if (!data.git_sha) throw new Error('health endpoint missing git_sha');
-  return data.git_sha;
+  const prodUrl = process.env.BRAIN_PROD_URL || 'http://localhost:5221/api/brain';
+  try {
+    const { stdout } = await execAsync(
+      `curl -sf --max-time 10 "${prodUrl}/health"`,
+      { timeout: 15000 }
+    );
+    const data = JSON.parse(stdout);
+    if (!data.git_sha) throw new Error(`health endpoint missing git_sha: ${stdout.slice(0, 200)}`);
+    return data.git_sha;
+  } catch (err) {
+    throw new Error(`sha_prod fetch failed (${prodUrl}): ${err.message}`);
+  }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -167,7 +182,7 @@ export async function runDriftCheck({
   let shaMain;
   try {
     shaMain = await fetchMainSha();
-  } catch {
+  } catch (err) {
     const newConsecutive = consecutiveNetworkErrors + 1;
     const newState = { ...state, consecutiveNetworkErrors: newConsecutive };
     if (!_testInitialState) await saveState(newState, db);
@@ -175,14 +190,14 @@ export async function runDriftCheck({
     // B8: 连续 3 次 network_error → sendBark P2 告警
     if (newConsecutive >= NETWORK_ERROR_BARK_THRESHOLD) {
       const logSuffix = ` consecutive_network_errors=${newConsecutive}`;
-      console.log(`[drift_check] sha_main=UNKNOWN sha_prod=UNKNOWN verdict=network_error${logSuffix}`);
+      console.log(`[drift_check] sha_main=UNKNOWN sha_prod=UNKNOWN verdict=network_error${logSuffix} error=${err.message}`);
       await sendBark(
         '[drift-sentinel] 连续网络失败告警 P2',
         `连续 ${newConsecutive} 次无法获取 main SHA，漂移检查已跳过`,
         { dedupeKey: `network-skip-x${newConsecutive}`, level: 'P2' }
       );
     } else {
-      console.log('[drift_check] sha_main=UNKNOWN sha_prod=UNKNOWN verdict=network_error');
+      console.log(`[drift_check] sha_main=UNKNOWN sha_prod=UNKNOWN verdict=network_error error=${err.message}`);
     }
     return { verdict: 'network_error' };
   }

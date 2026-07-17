@@ -42,18 +42,31 @@ vi.mock('../../../packages/brain/src/notifier.js', () => ({
 }));
 
 // mock child_process.exec — 用于测试 defaultFetchMainSha / defaultFetchProdSha
+// 注：需要附加 util.promisify.custom，否则 promisify(exec) 只返回 stdout 字符串
+//     而不是 { stdout, stderr } 对象，导致解构赋值得到 undefined
+import { promisify } from 'util';
 const mockExec = vi.fn();
 vi.mock('child_process', async (importOriginal) => {
   const actual = await importOriginal();
+
+  function execMock(cmd, opts, cb) {
+    if (typeof opts === 'function') { cb = opts; opts = {}; }
+    mockExec(cmd).then(
+      (res) => cb && cb(null, res?.stdout ?? '', res?.stderr ?? ''),
+      (err) => cb && cb(err)
+    );
+  }
+
+  // 让 promisify(exec) 返回 { stdout, stderr } 对象
+  execMock[promisify.custom] = (cmd, opts) => {
+    return mockExec(cmd).then(
+      (res) => ({ stdout: res?.stdout ?? '', stderr: res?.stderr ?? '' }),
+    );
+  };
+
   return {
     ...actual,
-    exec: vi.fn((cmd, opts, cb) => {
-      if (typeof opts === 'function') { cb = opts; opts = {}; }
-      mockExec(cmd).then(
-        (res) => cb && cb(null, res?.stdout ?? '', res?.stderr ?? ''),
-        (err) => cb && cb(err)
-      );
-    }),
+    exec: execMock,
   };
 });
 
