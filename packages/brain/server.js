@@ -635,6 +635,18 @@ async function onBrainListening() {
     console.log('[Server] Narrative Timer SKIPPED (CONSCIOUSNESS_ENABLED=false)');
   }
 
+  // startup-reset: 前置幂等归零（进程/微信/环境/残骸/checklist）
+  try {
+    const { runStartupReset } = await import('./src/startup-reset.js');
+    const resetResult = await runStartupReset({ pool });
+    const ok = resetResult.steps.filter(s => s.ok === true).length;
+    const skip = resetResult.steps.filter(s => s.skipped === true).length;
+    const fail = resetResult.steps.filter(s => s.ok === false && !s.skipped).length;
+    console.log(`[Server] startup-reset done steps=${resetResult.steps.length} ok=${ok} skipped=${skip} failed=${fail}`);
+  } catch (resetErr) {
+    console.error('[Server] startup-reset failed (non-fatal):', resetErr.message);
+  }
+
   // Startup recovery: environment cleanup (worktree / lock slot / dev-mode files)
   try {
     const { runStartupRecovery } = await import('./src/startup-recovery.js');
