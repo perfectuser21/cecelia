@@ -1,0 +1,106 @@
+{
+  "evaluator": "harness-evaluator",
+  "sha": "4ef5f10a9b4b9a4c9a72b8616e434f2ce1b63c95",
+  "short_sha": "4ef5f10",
+  "task_id": "becfd554-adca-4fac-be69-f248de786716",
+  "sprint_dir": "sprints/07171130-deploy-local-sha",
+  "pr_num": 4044,
+  "pr_url": "https://github.com/perfectuser21/cecelia/pull/4044",
+  "evaluated_at": "2026-07-17T10:34:30Z",
+  "verdict": "PASS",
+
+  "behavior_gates": {
+    "B-01": {
+      "desc": "SHA 不等时强制触发 Brain 部署（squash merge 场景）",
+      "result": "PASS",
+      "evidence": [
+        "stdout 含 'SHA 对账：origin/main=... 生产=aaabbb000000 → 不等，强制走 Brain 部署'",
+        "stdout 含 'Brain 改动 → 执行 brain-deploy.sh'",
+        "exit 0"
+      ]
+    },
+    "B-02": {
+      "desc": "SHA 相等时跳过 Brain 部署（幂等保护）",
+      "result": "PASS",
+      "evidence": [
+        "stdout 含 'SHA 对账：origin/main=... 生产=... → 一致，Brain 无需重部署'",
+        "stdout 含 '⏭️  跳过：没有 Brain、Dashboard 或 Workflow Skills 改动，无需部署'",
+        "exit 0",
+        "无 'brain-deploy.sh' 触发行"
+      ]
+    },
+    "B-03": {
+      "desc": "--changed 含 brain src 路径时仍触发 Brain 部署（文件列表范围加法）",
+      "result": "PASS",
+      "evidence": [
+        "SHA 相等（对账通过），但 --changed=packages/brain/src/server.js 传入",
+        "stdout 含 'Brain 改动 → 执行 brain-deploy.sh'",
+        "exit 0"
+      ]
+    },
+    "B-04": {
+      "desc": "无 brain 改动 + SHA 相等 → 完全跳过",
+      "result": "PASS",
+      "evidence": [
+        "stdout 含 '跳过：没有 Brain、Dashboard 或 Workflow Skills 改动，无需部署'",
+        "exit 0",
+        "注：改动范围文件列表中 'gate3-brain-deploy-smoke.sh' 路径含字符串 'brain-deploy'，但该行是文件路径，不是 Brain 部署触发行；脚本实际跳过了部署。合同 grep 命令误判但行为正确。"
+      ]
+    },
+    "B-05": {
+      "desc": "脚本日志含两侧 SHA 值（可观测性要求）",
+      "result": "PASS",
+      "evidence": [
+        "stdout 含 'origin/main=cc4be31ab8f7e3cfbf31239a2974bfdd48b5bc66'",
+        "stdout 含 '生产=aaabbb000000'",
+        "SHA 不可获取时输出 '生产=N/A' — 合同要求含 N/A 也算通过"
+      ]
+    }
+  },
+
+  "vitest_gate": {
+    "result": "PASS",
+    "test_file": "packages/brain/src/__tests__/deploy-sha-gate.test.js",
+    "tests_passed": 4,
+    "tests_total": 4,
+    "runner": "npx vitest run src/__tests__/deploy-sha-gate.test.js (cwd=packages/brain)",
+    "details": [
+      "PASS: Case 1 [Red→Green]: CHANGED_FILES 为空 + 生产 SHA ≠ origin/main → 输出含 SHA 对账且触发 Brain 部署",
+      "PASS: Case 2: SHA 相等 → 输出含"一致"或"跳过"，不触发 Brain 部署",
+      "PASS: Case 3: --changed=packages/brain/src/server.js + SHA 相等 → 仍触发 Brain 改动（文件列表优先）",
+      "PASS: Case 4: 无 brain 改动 + SHA 相等 → 完全跳过，stdout 含"跳过""
+    ]
+  },
+
+  "ci_gate": {
+    "result": "PASS",
+    "evidence": "PR 4044 所有 checks 已通过（由 controller 预先验证）"
+  },
+
+  "tdd_discipline": {
+    "result": "PASS",
+    "red_commit": "6bbf3dc31",
+    "red_commit_msg": "test(deploy-local): [Red] SHA 对账判变失败用例（becfd554）",
+    "red_commit_files": ["packages/brain/src/__tests__/deploy-sha-gate.test.js"],
+    "green_commit": "1fea11c2c",
+    "green_commit_msg": "fix(deploy-local): SHA 对账取代版本号兜底判变（becfd554）",
+    "green_commit_files": ["scripts/deploy-local.sh"],
+    "sequence": "测试先（6bbf3dc31）→ 实现后（1fea11c2c）→ CI 修正（cdc7fb06c, 4ef5f10a9）",
+    "verdict": "Red→Green 纪律满足，spawnSync 驱动真实 bash 脚本，未使用 jest.mock/sinon"
+  },
+
+  "unverifiable": [],
+
+  "invariant_checks": {
+    "INV-1": "PASS: NEED_BRAIN 判变唯一来源为 SHA_MISMATCH（第 165 行）；文件列表用范围加法，不作跳过依据",
+    "INV-2": "PASS: 文件列表循环仅做 NEED_BRAIN/NEED_DASHBOARD/NEED_WORKFLOW_SKILLS 范围加法",
+    "INV-3": "PASS: 测试使用 spawnSync 驱动真实 bash，无 jest.mock/sinon",
+    "INV-4": "PASS: brain-deploy.sh 调用链保留不变（scripts/deploy-local.sh 第 179 行）",
+    "INV-5": "PASS: CECELIA_PROD_GIT_SHA 是唯一测试注入钩子"
+  },
+
+  "notes": [
+    "B-04 合同 manual:bash grep 命令因改动范围包含 'scripts/smoke/gate3-brain-deploy-smoke.sh'（路径含 'brain-deploy' 字符串）导致 grep 误报，但脚本实际行为正确（已完全跳过部署）。此为合同 grep 命令设计缺陷，不影响 PASS 判定；Vitest Case 4 对应测试无此误判问题。",
+    "smoke 脚本（gate3-brain-deploy-smoke.sh）已更新钩子从 CECELIA_DEPLOYED_BRAIN_VERSION 换为 CECELIA_PROD_GIT_SHA，与新实现一致。"
+  ]
+}
