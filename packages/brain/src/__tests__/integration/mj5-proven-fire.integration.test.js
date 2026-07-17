@@ -41,7 +41,7 @@ describe('[S2-PF] 锚点执法闸 proven-to-fire', () => {
   });
 
   it('B3 存量任务（刀2上线前）免锚放行', () => {
-    const beforeCutoff = new Date(ANCHOR_LEGACY_CUTOFF.getTime() - 60_000).toISOString();
+    const beforeCutoff = new Date(ANCHOR_LEGACY_CUTOFF.getTime() - 86_400_000).toISOString(); // 整日前：日历日 < ANCHOR_LEGACY_CUTOFF_DAY
     const task = { task_type: 'dev', created_at: beforeCutoff, payload: {} };
     const result = checkAnchor(task);
     expect(result.blocked).toBe(false);
