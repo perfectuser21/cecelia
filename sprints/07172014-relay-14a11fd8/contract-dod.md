@@ -128,7 +128,7 @@ target_environment: local_api
   期望: OK
 
 - [ ] [BEHAVIOR] payload 三元组与 journey_id 齐全且禁用 token/github_token/anthropic_token/thin_prd（真实 curl 当前 task）
-  Test: manual:bash -c 'set -euo pipefail; TASK_ID="${TASK_ID:-14a11fd8-0d2f-49e2-885b-9286fc1d76f7}"; BRAIN_URL="${BRAIN_URL:-http://localhost:5221}"; RESP=$(curl -sf "$BRAIN_URL/api/brain/tasks/$TASK_ID"); echo "$RESP" | jq -e ".id == env.TASK_ID"; echo "$RESP" | jq -e ".payload.mode == \"headed\" and .payload.executor == \"claude\" and .payload.orchestrator == \"skill-relay\""; echo "$RESP" | jq -e ".payload.journey_id == \"bb8cc561-b3ee-4fec-b74d-2255694bd963\""; echo "$RESP" | jq -e "(.payload | has(\"token\") | not) and (.payload | has(\"github_token\") | not) and (.payload | has(\"anthropic_token\") | not) and (.payload | has(\"thin_prd\") | not)"; echo OK'
+  Test: manual:bash -c 'set -euo pipefail; TASK_ID="${TASK_ID:-14a11fd8-0d2f-49e2-885b-9286fc1d76f7}"; export TASK_ID; BRAIN_URL="${BRAIN_URL:-http://localhost:5221}"; RESP=$(curl -sf "$BRAIN_URL/api/brain/tasks/$TASK_ID"); echo "$RESP" | jq -e ".id == env.TASK_ID"; echo "$RESP" | jq -e ".payload.mode == \"headed\" and .payload.executor == \"claude\" and .payload.orchestrator == \"skill-relay\""; echo "$RESP" | jq -e ".payload.journey_id == \"bb8cc561-b3ee-4fec-b74d-2255694bd963\""; echo "$RESP" | jq -e "(.payload | has(\"token\") | not) and (.payload | has(\"github_token\") | not) and (.payload | has(\"anthropic_token\") | not) and (.payload | has(\"thin_prd\") | not)"; echo OK'
   期望: OK
 
 - [ ] [BEHAVIOR] initiative_runs 含 skill-relay-claude-headed 且 phase 拒绝 failed/非法枚举（真实 psql 定点查当前 task）

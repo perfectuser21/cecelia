@@ -114,6 +114,7 @@ grep -Fxq "claude-headed-dispatch-smoke.sh" packages/quality/smoke-allowlist.txt
 **验证命令**:
 ```bash
 TASK_ID="${TASK_ID:-14a11fd8-0d2f-49e2-885b-9286fc1d76f7}"
+export TASK_ID
 BRAIN_URL="${BRAIN_URL:-http://localhost:5221}"
 RESP=$(curl -sf "$BRAIN_URL/api/brain/tasks/$TASK_ID")
 echo "$RESP" | jq -e '.id == env.TASK_ID'
@@ -260,3 +261,4 @@ echo "OK headed smoke regression verified for $TASK_ID"
 - judgment-pending-user: N/A，本任务只读验证现有 headed relay 证据，无高风险不可逆外部动作。
 - 27 条 PRD Invariant 全量映射见 `contract-dod.md` 「Invariant 覆盖条目」段（INV-1~INV-27），3 条 PrepPRD 来源铁律（复用不重写=INV-1/CI范围锁定=INV-2/禁止吞错=INV-3）均为真实可执行 manual:bash 断言，非 N/A。
 - self-check 已知假阳性：Step 2b-check 第 6 项全角标点检测正则对本机 grep 下任意 `"$VAR` 结尾行均可能误报（已毕业先例 `scripts/smoke/e2e/relay-4bb31ef5.sh`/`relay-049ebf93.sh` 同正则同样出现误报且均已过 GAN/evaluator/merge），本合同 E2E 脚本审阅未发现真实全角标点紧贴 `$VAR` 的实例，判定为环境性假阳性，不阻塞交付。
+- **Round 2 修复（Reviewer r1 阻塞项）**：Step 2 校验命令片段（`.id == env.TASK_ID`）在起草阶段被手工复制 3 处，其中 2 处（本文件 Step 2 文档块第 117 行前 / `contract-dod.md` 第 130-132 行 BEHAVIOR）缺 `export TASK_ID`，导致 `jq` 子进程读不到未导出的 shell 变量，`env.TASK_ID` 恒为 `null`——是坏掉的 oracle，与 Generator 实现是否正确无关。已在两处补 `export TASK_ID`（与本文件第 173-244 行最终 `e2e-verify.sh` 第 183 行的既有正确写法保持一致，三处现已一致）。修复后已真实执行验证：contract-dod.md 第 131 行提取出的命令单独真跑 4 条 jq -e 断言全部 `true` + `OK`，`REAL_EXIT=0`；contract-draft.md Step 2 文档块单独真跑同样 `REAL_EXIT=0`；最终 e2e-verify.sh 完整脚本重新真跑仍 `REAL_EXIT=0`（PASS: 5 FAIL: 0）。
