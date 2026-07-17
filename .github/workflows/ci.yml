@@ -250,13 +250,17 @@ jobs:
             exit 0
           fi
           # 兼容 8 位 (MMDDHHNN) 与 10 位 (MMDDHHMMSS) 时间戳
+          # 兼容 Brain 直接调度的描述性分支格式：cp-<project>-<taskid>-<desc>
           if echo "$BRANCH" | grep -qE '^cp-[0-9]{8,10}-[a-z0-9-]+$'; then
-            echo "✅ 分支命名规范: $BRANCH"
+            echo "✅ 分支命名规范（时间戳格式）: $BRANCH"
+          elif echo "$BRANCH" | grep -qE '^cp-[a-z][a-z0-9]*-[a-z0-9]+-[a-z0-9-]+$'; then
+            echo "✅ 分支命名规范（Brain 调度格式）: $BRANCH"
           else
             echo "::error::分支名 '$BRANCH' 不符合 /dev 工作流规范"
             echo "  当前分支: $BRANCH"
-            echo "  要求格式: cp-XXXXXXXX-task-name（8 或 10 位时间戳）"
-            echo "  所有代码改动必须通过 /dev 工作流创建分支"
+            echo "  要求格式1: cp-XXXXXXXX-task-name（8 或 10 位时间戳）"
+            echo "  要求格式2: cp-<project>-<taskid>-<desc>（Brain 调度格式）"
+            echo "  所有代码改动必须通过 /dev 工作流或 Brain 调度创建分支"
             exit 1
           fi
 

@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Smoke: MJ5 S4 保鲜对账（nightly）——结构校验
+# Smoke: MJ5 S4 保鲜对账（nightly）——结构校验 + A3 纸门修复验证（v2）
+# v2: 追加 kind='base' 纸门删除校验 + group 家②/家③ 收口校验
 set -e
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/../../../.." && pwd)"
@@ -65,5 +66,15 @@ if (!SENTINEL_KEY || typeof SENTINEL_KEY !== 'string') {
 console.log('OK: NIGHTLY_HOUR_UTC =', NIGHTLY_HOUR_UTC, ', SENTINEL_KEY =', SENTINEL_KEY);
 "
 
+# 7. A3 纸门修复校验（v2 追加）——kind='base' 已删，改用 group 家②/家③ 收口
+if grep -q "kind = 'base'" packages/brain/src/promise-map-nightly.js 2>/dev/null; then
+  echo "FAIL: A3 仍使用 kind='base'（永绿纸门），请改为按 group 家②/家③ 收口"; exit 1
+fi
+grep -q "家③横切件池" packages/brain/src/promise-map-nightly.js \
+  || { echo "FAIL: A3 SQL 缺少 '家③横切件池' group 收口"; exit 1; }
+grep -q "家②共享前置" packages/brain/src/promise-map-nightly.js \
+  || { echo "FAIL: A3 SQL 缺少 '家②共享前置' group 收口"; exit 1; }
+echo "OK: A3 纸门修复校验通过（group 家②/家③ 收口，无 kind='base'）"
+
 echo ""
-echo "✅ MJ5 S4 promise-map-nightly smoke 全部通过"
+echo "✅ MJ5 S4 promise-map-nightly smoke 全部通过（v2：A3 纸门修复已验证）"

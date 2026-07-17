@@ -48,15 +48,16 @@ if [ -z "$BRAIN_CHANGED" ]; then
   exit 0
 fi
 
-# 检查 PR 含新增 packages/brain/scripts/smoke/*.sh
-NEW_SMOKE=$(git diff --name-only --diff-filter=A "${BASE_REF}...HEAD" 2>/dev/null \
+# 检查 PR 含新增或修改 packages/brain/scripts/smoke/*.sh
+# 允许 A（新增）或 M（修改已有 smoke.sh 以覆盖新改动）
+NEW_SMOKE=$(git diff --name-only --diff-filter=AM "${BASE_REF}...HEAD" 2>/dev/null \
   | grep -E '^packages/brain/scripts/smoke/.+\.sh$' \
   || true)
 
 if [ -z "$NEW_SMOKE" ]; then
-  echo "::error::lint-feature-has-smoke 失败 — 此 feat: PR 触及 packages/brain/src 但未新增 smoke.sh"
+  echo "::error::lint-feature-has-smoke 失败 — 此 feat: PR 触及 packages/brain/src 但未新增或更新 smoke.sh"
   echo "  规则（见 packages/engine/skills/dev/SKILL.md）："
-  echo "    feat: + brain/src 改动 → 必须配套 packages/brain/scripts/smoke/<feature>-smoke.sh"
+  echo "    feat: + brain/src 改动 → 必须配套 packages/brain/scripts/smoke/<feature>-smoke.sh（新增或更新）"
   echo "  brain 改动的文件:"
   echo "$BRAIN_CHANGED" | sed 's/^/    /'
   exit 1
