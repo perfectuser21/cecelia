@@ -5,11 +5,12 @@ description: |
   读取 GAN 对抗已批准的 contract-draft.md + tests/*.test.ts + contract-dod.md，按 TDD 纪律两次 commit（commit 1 = 测试 Red / commit 2 = 实现 Green）。
   融入 4 个 superpowers：test-driven-development / verification-before-completion / systematic-debugging / requesting-code-review。
   CONTRACT IS LAW：合同里有的全实现，合同外一字不加；测试文件从合同原样复制，commit 1 后不可修改（由 evaluator CONTRACT-IS-LAW 与 judge 复核把关；CI 机械闸 lint-contract-test-immutability 落地后由其强制）。一个 Sprint = 一个 Generator = 一个 PR。
-version: 7.10.0
+version: 7.11.0
 created: 2026-04-08
 updated: 2026-07-17
 changelog:
-  - 7.10.0: harness gear 一体化（60a80ddc 决策7）— Step 0 IS_SKELETON 检测旁新增 WORKSTREAM_INDEX 检测：segmented 档位下存在时只实现 task-plan.json 对应段的 scope/files，禁碰其他段实现文件；测试棋盘共享只许点绿禁改断言（CONTRACT IS LAW 不变）；TDD 两 commit 纪律照旧；default（未设置）保持现行整份 Sprint 一口气实现不变
+  - 7.11.0: gear 档位：Step 0 IS_SKELETON 检测旁新增 WORKSTREAM_INDEX 检测（移植自 cecelia #4027 harness-gear 一体化 60a80ddc 决策7）——segmented 档位下存在时只实现 task-plan.json 对应段的 scope/files，禁碰其他段实现文件；测试棋盘共享只许点绿禁改断言（CONTRACT IS LAW 不变）；TDD 两 commit 纪律照旧；default（未设置）保持现行整份 Sprint 一口气实现不变
+  - 7.10.0: TDD 纪律新增「禁 mock 边执行规则」（刀2，配套 proposer 9.12.0）——合同 ## 禁 mock 边清单 列出的边，测试代码中 vi.mock/jest.mock/stub 命中即违约（CONTRACT IS LAW 的一部分，evaluator 机械 grep 核查，命中 = CONTRACT-IS-LAW FAIL）；需要真 PG 的测试按合同指定放 integration 命名/位置，CI 由 brain-integration job 起真 Postgres 跑
   - 7.9.0: EVA v2 审计五处修法 — G1 Red 阶段 relay 现实双分支（合同测试已随 contract import 存在则 Red commit=DoD.md+red-evidence 摘要，不重复 checkout；Red 验证按测试类型分派，.test.sh 合同逐个 bash 执行预期非零退出码即为红，替代 numTotalTests=0 即 exit 1 的死路）；G2 防事后补标（(Red) commit committer date 必须早于实现 commit）+ lint-tdd-commit-order 表述如实化（只校验文件序不校验标签顺序）；G3 新增 Step 6.7 push 前 CI 门禁自查（smoke 存在且登记/DoD 全勾/[BEHAVIOR] 测试覆盖，3827 实证）；G4 BEHIND 统一 gh pr update-branch，禁 merge commit 限定开工 rebase 阶段；G5 MAX_FIXES 用尽接线 Step 8 FAILED verdict + RELAY_STATUS BLOCKED
   - 7.8.0: 新增 Step 5.5 RPA 真机自验——碰 RPA 执行路径的 sprint 在 push 前必须经快验通道(POST /api/brain/rpa/dev-verify)在研发机真跑一次动作并把回执贴进 Test Evidence；根治 generator 盲写 RPA 代码(容器内 vitest 绿≠真机能跑)
   - 7.7.0: Step 6 Code Review 由「调 requesting-code-review 派 review subagent」改为「generator 内联自审 diff」（NESTED-SUB-AUDIT-20260705 F1/F2）——relay 下 generator 是 controller 的 sub，无 Task 工具不能再派 sub，原步骤静默跳过导致 push 前 code review 漏检进 PR；内联版按同一检查清单自审。Step 7 PR body 模板同步（F2）
@@ -50,6 +51,8 @@ changelog:
 测试文件（从合同 checkout）：commit 1 后绝对不可修改，由 evaluator CONTRACT-IS-LAW 与 judge 复核把关；CI 机械闸 lint-contract-test-immutability 落地后由其强制
 发现其他问题：写进 PR description，不实现
 ```
+
+**禁 mock 边执行规则（v7.10 — CONTRACT IS LAW 的一部分，配套 proposer 9.12.0）**：合同 `## 禁 mock 边清单` 列出的每条边（模块A↔模块B、代码↔DB表X），测试代码中 `vi.mock` / `jest.mock` / stub **命中即违约**——清单里说「代码↔DB表X 禁 mock」，测试就必须真 Postgres 验真行落库，不许 mock pg/db 模块；清单里说「模块A↔模块B 禁 mock」，测试就必须真调 B，只允许 mock 更外层的无关依赖。evaluator 会机械 grep 测试文件的 mock 目标对照清单，命中 = CONTRACT-IS-LAW FAIL。需要真 PG 的测试放 integration 命名/位置（按合同指定），CI 由 brain-integration job 起真 Postgres 跑，不要因"vitest 单测环境没有 DB"而回退成 mock。
 
 ---
 

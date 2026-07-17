@@ -6,13 +6,14 @@ description: |
   evaluator 在 CI 绿之后、PR merge 之前真启服务 + 跑 contract 的 manual:bash 命令验真行为。
   PASS → 允许 merge；FAIL → 不 merge，带反馈打回 Generator 在 PR 分支 fix loop（main 不变动）。
   单模式（harness v2 始终 IS_FINAL_E2E=true）：读 contract-draft.md 的 ## E2E 验收 脚本，按 target_environment 派发跑 Golden Path 端到端真实行为。
-version: 1.26.0
+version: 1.27.0
 created: 2026-05-06
 updated: 2026-07-17
 changelog:
-  - 1.26.0: harness gear 一体化（60a80ddc 决策5）— 「Relay 入口协议」段新增 SEGMENT_EVAL=<task_id> 段级轻验收：跳过 final-E2E，只跑该段 [BEHAVIOR]/tests 断言 + 复跑此前所有已绿段测试（回归棘轮：已绿变红 → 本段 FAIL 且失败摘要注明回归项）；verdict 输出格式不变，额外带 segment_eval 字段；default（未出现 SEGMENT_EVAL）保持全量模式原文行为不变
-  - 1.25.0: target_environment 加 android_realmachine（洞①）— TARGET_ENV 说明表 + 新增 ANDROID_REALMACHINE_WORKFLOW 变量；并入 windows_cloud|windows_wechat 的 GHA 派发桶（复用 xian-rog [self-hosted, wechat-capable] runner + REPO 解析/轮询/artifact 下载机制），WORKFLOW 选择加 elif 分支缺省 e2e-line02-android-collect.yml；E2E 脚本本身仍走 bash 提取（未走 ps1 分支），仅本地执行判断/环境预检跳过判断并入该三态；Path2 安卓获客真机验收此前无枚举可路由
-  - 1.24.0: 刀3-T5 — 新增 Step B-1.7（B-guard-check）：核查 contract-draft.md 必含 ## 运行时守卫 段，段内须有 probe:（含可执行 bash 块）或 waiver:<decision_id>；两者都缺 → failed_step=guard_ref_missing FAIL；提取 GUARD_REF 写入 verdict JSON，report 收尾链消费写回 journey_features.guard_ref（依赖刀3-T4 列已存在）
+  - 1.27.0: gear 档位：「Relay 入口段」新增 SEGMENT_EVAL=<task_id> 段级轻验收（移植自 cecelia #4027 harness-gear 一体化 60a80ddc 决策5）——跳过 final-E2E，只跑该段 [BEHAVIOR]/tests 断言 + 复跑此前所有已绿段测试（回归棘轮：已绿变红 → 本段 FAIL 且失败摘要注明回归项）；verdict 输出格式不变，额外带 segment_eval 字段；default（未出现 SEGMENT_EVAL）保持全量模式原文行为不变
+  - 1.26.0: 配套三段式剧本格式——evaluator 按剧本逐步执行：先执行「动作」，再 within 预算轮询「预期观察」，最后跑「验证命令」；behavior_tests 条目支持 action/expected 新字段（与 command/exit_code/log_tail 共存）
+  - 1.25.0: verdict 输出带 verification_level 字段（决策145014a4 W3）——.brain-result.json 顶层新增 verification_level 字段（缺省 L2），behavior_tests 条目新增 verification_level 字段；与 W2 judge #4004 解析约定对齐（behavior_tests[i].verification_level = 'L1'|'L2'|'L3'，brainResult.verification_level = 'L1'|'L2'|'L3'）
+  - 1.24.0: 新增 Step B-1.8b 禁 mock 边机械核查（刀2，配套 proposer 9.12.0/generator 7.10.0）——读合同 ## 禁 mock 边清单 → grep 本单测试文件的 vi.mock/jest.mock/stub 目标 → 命中清单内的边 → CONTRACT-IS-LAW FAIL（feedback 含证据文件+行号）；清单缺失但本单涉及调度/状态机/跨模块传递/生命周期钩子/DB写路径 → FAIL 归责 GAN；#3830/#3848/#3808/#3840 实证接缝层 bug 全 mock 单测结构性抓不到
   - 1.23.0: EVA v2 审计四修——(E1) verdict 必带真跑证据：behavior_tests 每条必须是对象 {command, exit_code, log_tail}（log_tail=命令输出末 5 行），缺任一 = 该条视为未跑禁 PASS（a85e0582 实证 verdict 只列命令原文无法区分真跑/声称跑过）；(E4) Step B-1 固化段加分支判断：detached HEAD（post-merge 补验模式）跳过 commit/push 并在 verdict notes 说明，普通路径 push 失败输出 WARN 记入 notes（删静默吞掉）；(E5) 三处 awk 标题正则放宽为 /^##+[[:space:]]*E2E[[:space:]]*验收/（### 或带空格变体不再整段漏空）；(E7) 注入变量表补 PR_BRANCH 行
   - 1.22.0: a638f840 三修——(a) Step 0a 支持"PR 已 merge/分支已删"场景：checkout 失败时查 gh pr state，MERGED 则在 merge commit/origin/main 上补验（post-merge 模式），仅 PR 非 MERGED 时才 FATAL；(b) Step B-1 三处 awk 改为提取 E2E 段内全部代码块（拼接至下一个 ## 标题，旧版只取第一块，多块合同 Step 2-9 被静默丢弃）；(c) bash 固化前加 bash -n 语法门，语法坏脚本在 setup 就 FAIL 不入库
   - 1.21.0: 跨 repo 化刀3——①变量表 DB 行改为优先 $DB_URL（payload/env 注入），postgresql://localhost/cecelia 仅作 cecelia 本机 fallback；②url_validation gate 按 repo 注入：cecelia 默认仍 grep localhost:5221|psql cecelia，第三方 repo 以 $EXPECTED_API_HOST/$DB_URL 为准，两者都未提供时对第三方 repo 降级 WARN 而非 FAIL（避免假 FAIL）；③windows 分支与 Step B-2.6 的 REPO 不再写死默认仓库：fallback 顺序 $GITHUB_REPO → payload.base_repo URL 解析 owner/repo → 两者都缺才回退旧默认并打 WARN
@@ -87,11 +88,10 @@ generator 写代码 + push PR
 | `TASK_ID` | Brain 中当前 evaluate task 的 UUID |
 | `PR_BRANCH` | 待验证 PR 分支名——Brain evaluateContractNode 注入 / relay prompt 提供（Step 0a 消费）（EVA v2 E7 补） |
 | `JOURNEY_TYPE` | `user_facing` / `autonomous` / `dev_pipeline` / `agent_remote` |
-| `TARGET_ENV` | `mac_web` / `windows_cloud` / `windows_wechat` / `linux_server` / `local_api` / `playground` / `android_realmachine`（来自 PRD `target_environment` 字段；`mac_web` = 在宿主 Mac 直跑（非 Docker），Playwright 可达 localhost:5174；`windows_wechat` = xian-rog self-hosted，微信已登录；`windows_cloud` = GHA windows-latest 云端；`android_realmachine` = xian-rog self-hosted，复用同一台机器上已连接的安卓真机（Path2 采集/判定/抓评论/私信）|
+| `TARGET_ENV` | `mac_web` / `windows_cloud` / `windows_wechat` / `linux_server` / `local_api` / `playground`（来自 PRD `target_environment` 字段；`mac_web` = 在宿主 Mac 直跑（非 Docker），Playwright 可达 localhost:5174；`windows_wechat` = xian-rog self-hosted，微信已登录；`windows_cloud` = GHA windows-latest 云端）|
 | `WORKSPACE_PATH` | 结果文件写入目录。**mac_web 宿主执行时由 host-executor 注入**（值为 worktreePath）；Docker 默认不注入，脚本 fallback `/workspace` |
 | `WINDOWS_CLOUD_WORKFLOW` | GHA workflow 文件名（harness-initiative.graph.js 根据 base_repo 注入：zenithjoy → `agent-e2e-video.yml`，否则 `e2e-windows.yml`）|
 | `WECHAT_RPA_WORKFLOW` | windows_wechat 专用 GHA workflow 文件名，**由 `evaluateContractNode` 注入，缺省 `e2e-wechat-rpa.yml`**；在 xian-rog self-hosted runner（微信已登录）上运行 |
-| `ANDROID_REALMACHINE_WORKFLOW` | android_realmachine 专用 GHA workflow 文件名，**由 `evaluateContractNode` 注入，缺省 `e2e-line02-android-collect.yml`**；复用 `[self-hosted, wechat-capable]`（xian-rog）runner，脚本格式是 bash 不是 ps1（走下方 else 分支的 bash 提取路径，只在 GHA 派发桶里复用 dispatch/轮询机制）|
 | `DB` | PostgreSQL 连接串——优先用 payload/env 注入的 `$DB_URL`（第三方 repo 必须显式提供）；`postgresql://localhost/cecelia` 仅作 cecelia 本机 fallback，第三方 repo 禁止假设 cecelia 库存在 |
 
 **注**：DoD 文件中的 `Test:` 命令若引用 `$TARGET_TASK_ID`，该 ID 来自 DoD 文件内部（合同写入时硬编码或由 Generator 写入），Evaluator 直接执行 DoD 中的命令原文，不需单独注入。
@@ -404,8 +404,7 @@ BREOF
 else
   # 真实功能 sprint：autonomous journey_type 必须包含真实验证目标（API URL / DB）
   # windows_cloud/windows_wechat 的 E2E 是 PowerShell，通过 GHA 运行，不直接调 localhost:5221，跳过此检测
-  # android_realmachine 同理走 GHA 运行（脚本是 bash 但在 xian-rog 远端 runner 执行，非本地容器），一并跳过
-  if [[ "$JOURNEY_TYPE" == "autonomous" && "$TARGET_ENV" != "windows_cloud" && "$TARGET_ENV" != "windows_wechat" && "$TARGET_ENV" != "android_realmachine" ]]; then
+  if [[ "$JOURNEY_TYPE" == "autonomous" && "$TARGET_ENV" != "windows_cloud" && "$TARGET_ENV" != "windows_wechat" ]]; then
     # 跨 repo 化刀3：验证目标按 repo 注入——cecelia（base_repo 缺省或含 cecelia）默认仍是 localhost:5221 / psql cecelia；
     # 第三方 repo 以 payload/env 提供的 $EXPECTED_API_HOST / $DB_URL 为准
     if [[ -z "$BASE_REPO" || "$BASE_REPO" == *"cecelia"* ]]; then
@@ -441,10 +440,10 @@ fi
 
 #### Step B-1.6: 环境预检 + localhost 重写（执行前置，与 generator Step 6.5 镜像）
 
-**在执行 E2E 脚本前必须先做两件事：容器内 URL 重写 + 工具可用性预检。windows_cloud/windows_wechat/android_realmachine 走 GHA runner，跳过本步（脚本在远端机器执行，不在本地容器）。**
+**在执行 E2E 脚本前必须先做两件事：容器内 URL 重写 + 工具可用性预检。windows_cloud/windows_wechat 走 GHA runner，跳过本步（脚本是 .ps1，在远端机器执行）。**
 
 ```bash
-if [[ "$TARGET_ENV" != "windows_cloud" && "$TARGET_ENV" != "windows_wechat" && "$TARGET_ENV" != "android_realmachine" ]]; then
+if [[ "$TARGET_ENV" != "windows_cloud" && "$TARGET_ENV" != "windows_wechat" ]]; then
   # ── 1) 容器内 localhost 重写（$BRAIN_URL 含 host.docker.internal 说明在容器里跑）──
   # 与 harness-generator Step 6.5 的替换逻辑镜像，保证 evaluator 与 generator 自验环境一致
   if [[ "$BRAIN_URL" == *"host.docker.internal"* ]]; then
@@ -480,58 +479,6 @@ fi
 
 **死规则（加粗，必须遵守）**：**禁止在工具缺失时改写验证命令、降级验证、或跳过该步——`env_missing` 就是 FAIL，让 Brain 路由到正确环境，这不是 evaluator 该变通的事。** 例如脚本要 ffprobe 验视频但本机无 ffprobe → 直接 `env_missing` FAIL，绝不允许改成"检查文件大小"凑过。
 
-#### Step B-1.7: 运行时守卫段核查（B-guard-check — 刀3-T5 铁律）
-
-**检查 `contract-draft.md` 是否含有「运行时守卫」必填槽位，并提取 `GUARD_REF` 供收尾链回写。**
-
-```bash
-CONTRACT="${SPRINT_DIR}/contract-draft.md"
-GUARD_REF=""
-
-# 1. 检测 ## 运行时守卫 段是否存在
-if ! grep -q '^## 运行时守卫' "$CONTRACT" 2>/dev/null; then
-  cat > "$WORKSPACE/.brain-result.json" << BREOF
-{"verdict":"FAIL","task_id":"$TASK_ID","failed_step":"guard_ref_missing","log_excerpt":"contract-draft.md 缺 '## 运行时守卫' 段（刀3-T5 必填）。合同必须声明探针（probe:<标识符>+bash块）或显式豁免（waiver:<decision_id>+理由），两者都没有 = 合同不完整，无法确认功能停止时谁会发现。请在 contract-draft.md 中补写 ## 运行时守卫 段后重新提交。"}
-BREOF
-  exit 0
-fi
-
-# 2. 提取守卫段内容
-GUARD_SECTION=$(awk '/^## 运行时守卫/{f=1; next} f && /^## /{exit} f{print}' "$CONTRACT")
-
-# 3. 核查：必须含 probe: 或 waiver:
-HAS_PROBE=$(echo "$GUARD_SECTION" | grep -cE '^probe:[[:space:]]*\S' || true)
-HAS_WAIVER=$(echo "$GUARD_SECTION" | grep -cE '^waiver:[[:space:]]*[0-9a-f-]{36}' || true)
-
-if [[ "$HAS_PROBE" -eq 0 && "$HAS_WAIVER" -eq 0 ]]; then
-  # 检查是否有 probe: 但没有 bash 块（空探针）
-  BARE_PROBE=$(echo "$GUARD_SECTION" | grep -cE '^probe:' || true)
-  if [[ "$BARE_PROBE" -gt 0 ]]; then
-    cat > "$WORKSPACE/.brain-result.json" << BREOF
-{"verdict":"FAIL","task_id":"$TASK_ID","failed_step":"guard_ref_missing","log_excerpt":"'## 运行时守卫' 段有 probe: 声明但缺可执行 bash 块。探针必须含能独立跑的 bash 代码块（exit 0=健康，exit 1=故障），否则无法机检。"}
-BREOF
-  else
-    cat > "$WORKSPACE/.brain-result.json" << BREOF
-{"verdict":"FAIL","task_id":"$TASK_ID","failed_step":"guard_ref_missing","log_excerpt":"'## 运行时守卫' 段存在但既无 probe:<标识符> 也无 waiver:<decision_id>，属空架子。必须二选一：probe:（可执行探针）或 waiver:<UUID>（有据豁免）。"}
-BREOF
-  fi
-  exit 0
-fi
-
-# 4. 提取 GUARD_REF（供 verdict JSON + report 写回 journey_features.guard_ref）
-if [[ "$HAS_PROBE" -gt 0 ]]; then
-  GUARD_REF=$(echo "$GUARD_SECTION" | grep -oE '^probe:[[:space:]]*\S+' | head -1 | sed 's/^probe:[[:space:]]*//')
-elif [[ "$HAS_WAIVER" -gt 0 ]]; then
-  WAIVER_ID=$(echo "$GUARD_SECTION" | grep -oE '^waiver:[[:space:]]*[0-9a-f-]{36}' | head -1 | sed 's/^waiver:[[:space:]]*//')
-  GUARD_REF="waiver:${WAIVER_ID}"
-fi
-echo "[evaluator] B-guard-check 通过: GUARD_REF=${GUARD_REF}"
-```
-
-> **GUARD_REF 用途**：Step B-3 verdict JSON 追加 `"guard_ref":"$GUARD_REF"` 字段；harness-report Phase B 将其写回 `journey_features.guard_ref`（依赖刀3-T4 guard_ref 列已存在）。若 guard_ref 列未建（T4 未完成），report 降级记一行 concern，不阻断 PASS。
-
----
-
 #### Step B-1.8: Golden Path 覆盖核对（LLM 判断步骤）
 
 **读 `${SPRINT_DIR}/sprint-prd.md` 的 Golden Path 段，逐步核对 E2E 脚本是否对每一步都有对应的真实命令 + 断言。任何一步未覆盖 → FAIL，feedback 列出未覆盖步骤。**
@@ -554,6 +501,33 @@ cat > "$WORKSPACE/.brain-result.json" << BREOF
 BREOF
 exit 0
 ```
+
+#### Step B-1.8b: 禁 mock 边机械核查（v1.24 — CONTRACT-IS-LAW 执法步）
+
+**读合同 `## 禁 mock 边清单`，机械 grep 本单测试文件的 mock 目标，命中清单内的边 → CONTRACT-IS-LAW FAIL（含证据行号）。** 背景：#3830/#3848/#3808/#3840 实证接缝层 bug（调度/状态机/跨模块传递/生命周期钩子/DB写路径）全 mock 单测结构性抓不到，proposer 9.12.0 起合同必含该清单。
+
+执行步骤：
+
+1. 读 `${SPRINT_DIR}/contract-draft.md` 的 `## 禁 mock 边清单` 段，提取每条边涉及的模块/表名关键词（如 `模块B`、`DB 表 X` → 关键词 `moduleB`、`pg`/`db`/表名）。
+2. 机械扫描本单测试文件的 mock 目标：
+
+```bash
+# 扫描 PR 内全部测试文件的 mock/stub 目标（带文件+行号作证据）
+grep -rnE "vi\.mock|jest\.mock|\bstub|createMock|mockImplementation" \
+  $(git diff --name-only "$(git merge-base origin/main HEAD)"..HEAD | grep -E '\.(test|spec)\.(ts|js|mjs|cjs)$') 2>/dev/null
+```
+
+3. 逐行对照：mock 目标命中清单内任一条边（被 mock 的模块路径/DB 客户端/表名属于清单所列的边）→ 违约：
+
+```bash
+cat > "$WORKSPACE/.brain-result.json" << BREOF
+{"verdict":"FAIL","task_id":"$TASK_ID","failed_step":"contract_is_law_mock_edge","log_excerpt":"合同禁 mock 边清单第 N 条「<边描述>」被 mock 顶替：<测试文件>:<行号> vi.mock('<目标>')。该边是本单被改的接缝，必须真调（真 Postgres/真相邻模块），只允许 mock 更外层无关依赖。"}
+BREOF
+exit 0
+```
+
+4. 清单为空且带合法理由（纯UI/纯文档类）→ 本步跳过记 notes；**清单段缺失**但本单改动明显涉及调度/状态机/跨模块数据传递/生命周期钩子/DB写路径 → FAIL（failed_step=contract_invalid，责任在 GAN 合同层，不进 generator fix loop）。
+5. 命中零条 → 本步 PASS，verdict notes 记 `mock_edge_check: clean（清单 N 条，扫描 M 个测试文件）`。
 
 #### 领域验证死规则（evaluator 侧卡点 — 执行前扫描，缺对应 oracle 直接 FAIL）
 
@@ -665,12 +639,11 @@ case "$TARGET_ENV" in
     EXIT_CODE=${PIPESTATUS[0]}
     ;;
 
-  windows_cloud|windows_wechat|android_realmachine)
+  windows_cloud|windows_wechat)
     # GitHub Actions runner（ZenithJoy Agent 等连公网产品）
-    # windows_cloud       → GHA windows-latest 云端 runner（全新干净 VM）
-    # windows_wechat      → xian-rog self-hosted runner（微信已登录的 Windows 环境）
-    # android_realmachine → xian-rog self-hosted runner（同一台机器上连接的安卓真机，脚本是 bash 不是 ps1）
-    # 合同 e2e 脚本必须是 .ps1 格式（见 proposer windows_cloud 模板），android_realmachine 例外走 bash（Step B-1 else 分支已处理）
+    # windows_cloud  → GHA windows-latest 云端 runner（全新干净 VM）
+    # windows_wechat → xian-rog self-hosted runner（微信已登录的 Windows 环境）
+    # 合同 e2e 脚本必须是 .ps1 格式（见 proposer windows_cloud 模板）
     # 等待结果：轮询 run 状态，最长 10 分钟
     # GITHUB_REPO 由 Brain 注入，且必须源于 payload.base_repo（跨 repo 化刀3，禁止写死 cecelia）
     # fallback 顺序：$GITHUB_REPO → 从 base_repo URL 解析 owner/repo → 两者都缺才用 perfectuser21/cecelia 并打 WARN
@@ -684,8 +657,6 @@ case "$TARGET_ENV" in
     fi
     if [[ "$TARGET_ENV" == "windows_wechat" ]]; then
       WORKFLOW="${WECHAT_RPA_WORKFLOW:-e2e-wechat-rpa.yml}"
-    elif [[ "$TARGET_ENV" == "android_realmachine" ]]; then
-      WORKFLOW="${ANDROID_REALMACHINE_WORKFLOW:-e2e-line02-android-collect.yml}"
     else
       WORKFLOW="${WINDOWS_CLOUD_WORKFLOW:-e2e-windows.yml}"
     fi
@@ -838,7 +809,7 @@ fi
 #### Step B-2.6: windows_cloud artifact 下载 + 视觉验证
 
 ```bash
-if [[ "$TARGET_ENV" == "windows_cloud" || "$TARGET_ENV" == "windows_wechat" || "$TARGET_ENV" == "android_realmachine" ]]; then
+if [[ "$TARGET_ENV" == "windows_cloud" || "$TARGET_ENV" == "windows_wechat" ]]; then
   # GITHUB_REPO 必须源于 payload.base_repo（跨 repo 化刀3）；fallback：$GITHUB_REPO → base_repo 解析 → 两者都缺才回退默认并打 WARN
   if [[ -n "$GITHUB_REPO" ]]; then
     REPO="$GITHUB_REPO"
@@ -850,8 +821,6 @@ if [[ "$TARGET_ENV" == "windows_cloud" || "$TARGET_ENV" == "windows_wechat" || "
   fi
   if [[ "$TARGET_ENV" == "windows_wechat" ]]; then
     WORKFLOW="${WECHAT_RPA_WORKFLOW:-e2e-wechat-rpa.yml}"
-  elif [[ "$TARGET_ENV" == "android_realmachine" ]]; then
-    WORKFLOW="${ANDROID_REALMACHINE_WORKFLOW:-e2e-line02-android-collect.yml}"
   else
     WORKFLOW="${WINDOWS_CLOUD_WORKFLOW:-e2e-windows.yml}"
   fi
@@ -887,7 +856,7 @@ fi
 
 ```bash
 cat > "$WORKSPACE/.brain-result.json" << BREOF
-{"verdict":"PASS","task_id":"$TASK_ID","failed_step":null,"log_excerpt":null,"screenshots":${SCREENSHOTS_JSON:-[]},"guard_ref":"${GUARD_REF:-}"}
+{"verdict":"PASS","task_id":"$TASK_ID","failed_step":null,"log_excerpt":null,"screenshots":${SCREENSHOTS_JSON:-[]}}
 BREOF
 ```
 
@@ -909,9 +878,40 @@ BREOF
 
 **behavior_tests 真跑证据（EVA v2 E1 硬要求）**：verdict JSON 必须带 `behavior_tests` 数组，**每条必须是对象 `{command, exit_code, log_tail}`**——`log_tail` = 该命令输出末 5 行（如 `tail -5 /tmp/e2e-result.log`）。缺 `exit_code` 或 `log_tail` 任一 = 该条视为未跑，**禁 PASS**。a85e0582 实证：verdict 只列命令原文时，"真跑"与"声称跑过"从 verdict 本身无法区分——退出码和真实输出尾巴是唯一能自证真跑的东西。
 
+**behavior_tests 三段式剧本字段（v1.26 新增，与 proposer 9.14 配套）**：合同条目含三段式格式（action/expected/验证命令）时，behavior_tests 条目新增 `action` 和 `expected` 字段，与 `command`/`exit_code`/`log_tail` 共存：
+
+- `action`：对应剧本「动作」段，记录 evaluator 实际执行的操作步骤（字符串）
+- `expected`：对应剧本「预期观察」段，记录期望状态描述（含 `within Ns` 等待预算声明）
+- `command`/`exit_code`/`log_tail`：对应剧本「验证命令」段，执行语义不变
+
+**evaluator 按剧本逐步执行流程（三段式合同）**：
+1. 先执行「动作」（action 字段命令）
+2. 再按「预期观察」中的 `within Ns` 预算 until-loop 轮询状态
+3. 最后跑「验证命令」（command 字段）并记录 exit_code + log_tail
+
+三段式示例条目：
 ```json
-{"verdict":"PASS","behavior_tests":[{"command":"curl -sf localhost:5221/api/brain/ping | jq -e '.ok==true'","exit_code":0,"log_tail":"{\"ok\":true}"}], ...}
+{
+  "command": "until psql $DB_URL -c \"SELECT 1 FROM messages WHERE type='settings_notify'\" | grep -q '1 row'; do sleep 2; done",
+  "exit_code": 0,
+  "log_tail": "1 row\nOK: within 60s 收到消息确认",
+  "verification_level": "L2",
+  "action": "POST /api/settings/save",
+  "expected": "within 60s 消息队列出现新条目"
+}
 ```
+
+非三段式（legacy 格式）条目只需 `command`/`exit_code`/`log_tail`，`action`/`expected` 可省略。
+
+```json
+{"verdict":"PASS","verification_level":"L2","behavior_tests":[{"command":"curl -sf localhost:5221/api/brain/ping | jq -e '.ok==true'","exit_code":0,"log_tail":"{\"ok\":true}","verification_level":"L2"}], ...}
+```
+
+**verification_level 字段（W3 新增，与 judge #4004 对齐）**：
+- 顶层 `verification_level`：本次验收整体达到的等级，缺省 `"L2"`
+- 条目级 `behavior_tests[i].verification_level`：每条 behavior_test 的等级，条目级优先于顶层
+- 取值：`"L1"`（替身）/ `"L2"`（服务端真验）/ `"L3"`（真机真验）
+- judge 读此字段执法：L3 要求 log_tail 含真机指纹关键词（adb shell/UiSelector 等）
 
 示例（PASS）：
 
