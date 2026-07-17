@@ -193,13 +193,9 @@ curl -sf -X POST http://localhost:5221/api/brain/run-drift-check 2>/dev/null || 
 
 ## Test Contract 表
 
-| 测试 ID | [BEHAVIOR] 描述 | 验收断言 | 修复前 | 修复后 |
-|---------|----------------|---------|--------|--------|
-| T1 | [BEHAVIOR] `defaultFetchMainSha()` 在 origin 不可达、gh 无 auth 时，通过 HTTPS URL `git ls-remote` 返回有效 SHA（≥7位） | `result.sha_main.length >= 7` 且 `result.verdict !== 'network_error'` | FAIL（走旧路径 origin/gh 失败） | PASS |
-| T2 | [BEHAVIOR] `defaultFetchMainSha()` 在 git 全部失败时，通过 `curl https://api.github.com/...` 降级返回 `.sha` 字段 | `sha` 来自 curl JSON 解析，`result.verdict !== 'network_error'` | FAIL（旧降级路径为 gh api） | PASS |
-| T3 | [BEHAVIOR] `defaultFetchProdSha()` 默认使用 `http://localhost:5221/api/brain/health` 而非外网 URL | mock `localhost:5221/api/brain/health` 返回 `{"git_sha":"def..."}` → `result.sha_prod === 'def...'` | FAIL（默认使用外网 URL 失败） | PASS |
-| T4 | [BEHAVIOR] 探针失败时 console.log 日志包含 `error=` 前缀和原始错误原文（来自 `err.message`） | spy `console.log` 参数匹配 `/error=.*ECONNREFUSED/` | FAIL（只打 `network_error`，无错误原文） | PASS |
-| T5 | [BEHAVIOR] 两探针均失败时，`runDriftCheck` 不抛出；返回 `verdict=network_error`；`consecutiveNetworkErrors` 递增 | `result.verdict === 'network_error'`，不 throw，状态递增 | PASS（保守跳过逻辑已存在） | PASS |
+| Workstream | Test File | BEHAVIOR 覆盖 | 预期红证据 |
+|---|---|---|---|
+| drift-sentinel-fix | `../../tests/regression/drift-sentinel-eyes/drift-sentinel-contract.test.js` | T1: origin 不可达 + gh 无 auth → HTTPS URL 路径返回有效 SHA / T2: git ls-remote 全部失败 → curl GitHub API 降级返回 .sha / T3: BRAIN_PROD_URL 未设置时，使用 localhost:5221 返回 git_sha / T4: 探针失败时 console.log 包含 error= 前缀和原始错误文本 / T5: 两探针均失败 → 不 throw，verdict=network_error，计数递增 | Red: T1/T2/T3/T4 FAIL（修复前），T5 PASS；修复后全部 PASS |
 
 ---
 
