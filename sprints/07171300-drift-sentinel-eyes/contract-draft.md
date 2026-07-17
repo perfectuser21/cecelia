@@ -39,18 +39,18 @@
 
 **行为描述**:
 
-1. `BRAIN_PROD_URL` 的默认值从 `'https://brain.cecelia.ai'`（外网，容器内不可达） 改为 `'http://localhost:5221'`（Brain 进程本身，容器内 localhost 可达）。
+1. `BRAIN_PROD_URL` 的默认值从 `'https://brain.cecelia.ai'`（外网，容器内不可达） 改为 `'http://localhost:5221/api/brain'`（含路径前缀）。curl 拼接 `/health` 后完整端点为 `http://localhost:5221/api/brain/health`——该端点由 `src/routes/goals.js` 的 `router.get('/health', ...)` 提供，经 `app.use('/api/brain', brainRoutes)` 挂载（参见 `packages/brain/server.js:337`）。
 
-2. 执行 `curl -sf --max-time 10 "${prodUrl}/health"`，解析 JSON `.git_sha` 字段。
+2. 执行 `curl -sf --max-time 10 "${prodUrl}/health"`（prodUrl 含 `/api/brain` 时 = `http://localhost:5221/api/brain/health`），解析 JSON `.git_sha` 字段。
    - 若 `.git_sha` 存在且非空，返回。
    - 若字段缺失，抛出错误：`health endpoint missing git_sha: <前 200 字节响应>`。
    - 若 curl 失败，抛出错误：`sha_prod fetch failed (${prodUrl}): <err.message>`。
 
-3. 仍支持环境变量 `BRAIN_PROD_URL` 覆盖（测试或多集群场景）。
+3. 仍支持环境变量 `BRAIN_PROD_URL` 覆盖（测试或多集群场景，覆盖时需包含路径前缀）。
 
 **期望结果**:
-- 容器内 Brain 进程运行中 → `defaultFetchProdSha()` 返回 `/health` 中的 `git_sha`，不再返回 UNKNOWN。
-- `BRAIN_PROD_URL` 显式设置时，沿用设置值（向后兼容）。
+- 容器内 Brain 进程运行中 → `defaultFetchProdSha()` 请求 `http://localhost:5221/api/brain/health` 返回 `git_sha`，不再返回 UNKNOWN。
+- `BRAIN_PROD_URL` 显式设置时，沿用设置值（向后兼容，调用方负责包含正确路径前缀）。
 
 ---
 
@@ -79,8 +79,8 @@
 | 测试 ID | mock 条件 | 期望结果 |
 |---------|-----------|---------|
 | FR-NEW-container-main | `origin` 不可达、`gh` 不可用；仅 `git ls-remote <HTTPS URL>` 和 `curl github api` 可用。**修复前**：函数走旧路径（origin / gh），两条路失败 → 抛异常 → `verdict=network_error`（failing test 先验证此行为）；**修复后**：走新路径返回有效 SHA | `verdict ≠ network_error`，`sha_main` 长度 >= 7 |
-| FR-NEW-container-prod | mock `http://localhost:5221/health` 可达，返回含 `git_sha` 的 JSON；当前代码默认使用外网 URL 失败（修复前为 failing test）；修复后使用 localhost 成功 | `sha_prod` 有效，`verdict ≠ prod_unreachable` |
-| FR-NEW-network-full-down | 所有路径均失败：`git ls-remote`、`curl github api`、`curl localhost:5221/health` 全部抛异常 | `verdict=network_error`（保守跳过，业务逻辑不改变） |
+| FR-NEW-container-prod | mock `http://localhost:5221/api/brain/health` 可达，返回含 `git_sha` 的 JSON；当前代码默认使用外网 URL 失败（修复前为 failing test）；修复后使用 localhost:5221/api/brain/health 成功 | `sha_prod` 有效，`verdict ≠ prod_unreachable` |
+| FR-NEW-network-full-down | 所有路径均失败：`git ls-remote`、`curl github api`、`curl localhost:5221/api/brain/health` 全部抛异常 | `verdict=network_error`（保守跳过，业务逻辑不改变） |
 | FR-NEW-error-log | `sha_main` 两条路均失败时，console.log 调用参数中必须包含 `error=` 字段和原始错误文本 | `console.log` 被调用且参数匹配 `/error=/` |
 
 **TDD 纪律**：
@@ -168,7 +168,7 @@ git ls-remote https://github.com/perfectuser21/cecelia.git refs/heads/main | cut
 ### 步骤 4：验证 sha_prod localhost 路径（Brain 进程运行中时）
 
 ```bash
-curl -sf http://localhost:5221/health | python3 -c "import sys,json; d=json.load(sys.stdin); print('OK:', d.get('git_sha','MISSING'))"
+curl -sf http://localhost:5221/api/brain/health | python3 -c "import sys,json; d=json.load(sys.stdin); print('OK:', d.get('git_sha','MISSING'))"
 ```
 
 期望输出：`OK: <40位SHA>`（或至少包含 git_sha 字段）。
@@ -197,7 +197,7 @@ curl -sf -X POST http://localhost:5221/api/brain/run-drift-check 2>/dev/null || 
 |---------|----------------|---------|--------|--------|
 | T1 | [BEHAVIOR] `defaultFetchMainSha()` 在 origin 不可达、gh 无 auth 时，通过 HTTPS URL `git ls-remote` 返回有效 SHA（≥7位） | `result.sha_main.length >= 7` 且 `result.verdict !== 'network_error'` | FAIL（走旧路径 origin/gh 失败） | PASS |
 | T2 | [BEHAVIOR] `defaultFetchMainSha()` 在 git 全部失败时，通过 `curl https://api.github.com/...` 降级返回 `.sha` 字段 | `sha` 来自 curl JSON 解析，`result.verdict !== 'network_error'` | FAIL（旧降级路径为 gh api） | PASS |
-| T3 | [BEHAVIOR] `defaultFetchProdSha()` 默认使用 `http://localhost:5221` 而非外网 URL | mock `localhost:5221/health` 返回 `{"git_sha":"def..."}` → `result.sha_prod === 'def...'` | FAIL（默认使用外网 URL 失败） | PASS |
+| T3 | [BEHAVIOR] `defaultFetchProdSha()` 默认使用 `http://localhost:5221/api/brain/health` 而非外网 URL | mock `localhost:5221/api/brain/health` 返回 `{"git_sha":"def..."}` → `result.sha_prod === 'def...'` | FAIL（默认使用外网 URL 失败） | PASS |
 | T4 | [BEHAVIOR] 探针失败时 console.log 日志包含 `error=` 前缀和原始错误原文（来自 `err.message`） | spy `console.log` 参数匹配 `/error=.*ECONNREFUSED/` | FAIL（只打 `network_error`，无错误原文） | PASS |
 | T5 | [BEHAVIOR] 两探针均失败时，`runDriftCheck` 不抛出；返回 `verdict=network_error`；`consecutiveNetworkErrors` 递增 | `result.verdict === 'network_error'`，不 throw，状态递增 | PASS（保守跳过逻辑已存在） | PASS |
 
@@ -209,7 +209,7 @@ curl -sf -X POST http://localhost:5221/api/brain/run-drift-check 2>/dev/null || 
 |------|-----------|----------------|
 | `git ls-remote https://github.com/perfectuser21/cecelia.git` | 是（单测） | CI 环境不保证外网 github.com 可达；通过步骤 3 手动验证覆盖真实路径 |
 | `curl https://api.github.com/repos/.../commits/main` | 是（单测） | 同上；步骤 3 降级路径可手动验证 |
-| `curl http://localhost:5221/health` | 是（单测） | 单测中 Brain 进程不运行；通过步骤 4 手动验证 |
+| `curl http://localhost:5221/api/brain/health` | 是（单测） | 单测中 Brain 进程不运行；通过步骤 4 手动验证（正确端点为 /api/brain/health，由 goals.js 提供） |
 | `brain-deploy.sh` 执行 | 是（mock child_process.exec） | 补部署脚本不应在单测中实际执行；INV-02 要求必须调用该脚本，由 mock 断言 `stringContaining('brain-deploy.sh')` 覆盖 |
 
 所有 mock 均为 I/O 边界豁免，不涉及判定逻辑（符合 INV-04）。
