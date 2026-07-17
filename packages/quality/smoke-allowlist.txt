@@ -134,3 +134,4 @@ promise-map-nightly-smoke.sh
 harness-xian-relay-smoke.sh
 xian-harness-relay-smoke.sh
 slot-admission-smoke.sh
+admission-report-smoke.sh
