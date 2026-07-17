@@ -11,10 +11,10 @@
 ### [BEHAVIOR-01] src 变更必须 bump 版本（核心门禁）
 
 **描述**：任何 `packages/brain/src/**` 的 PR diff，必须触发版本递增检查  
-**测试映射**: `tests/check-brain-version-bump.test.js` → GP-1、GP-2  
+**测试映射**: `tests/regression/version-gate-silent/check-brain-version-bump.test.js` → GP-1、GP-2  
 **验收命令**：
 ```bash
-cd /workspace && npx vitest run tests/check-brain-version-bump.test.js --reporter=verbose 2>&1 | grep -E "PASS|FAIL|GP-1|GP-2|改 brain src"
+cd /workspace && npx vitest run tests/regression/version-gate-silent/check-brain-version-bump.test.js --reporter=verbose 2>&1 | grep -E "PASS|FAIL|GP-1|GP-2|改 brain src"
 ```
 **预期输出**：GP-1（exit 0）和 GP-2（exit 1）测试均为 PASS
 
@@ -23,10 +23,10 @@ cd /workspace && npx vitest run tests/check-brain-version-bump.test.js --reporte
 ### [BEHAVIOR-02] 非 src 变更不触发门禁
 
 **描述**：仅改 `__tests__/`、`sprints/`、`*.md` 的 PR，门禁脚本跳过检查并 exit 0  
-**测试映射**: `tests/check-brain-version-bump.test.js` → GP-3  
+**测试映射**: `tests/regression/version-gate-silent/check-brain-version-bump.test.js` → GP-3  
 **验收命令**：
 ```bash
-cd /workspace && npx vitest run tests/check-brain-version-bump.test.js --reporter=verbose 2>&1 | grep -E "PASS|FAIL|GP-3|未改 brain src|跳过"
+cd /workspace && npx vitest run tests/regression/version-gate-silent/check-brain-version-bump.test.js --reporter=verbose 2>&1 | grep -E "PASS|FAIL|GP-3|未改 brain src|跳过"
 ```
 **预期输出**：GP-3 测试为 PASS
 
@@ -35,10 +35,10 @@ cd /workspace && npx vitest run tests/check-brain-version-bump.test.js --reporte
 ### [BEHAVIOR-03] semver 比较严格大于（支持任意步长）
 
 **描述**：patch/minor/major 三种 bump 步长均视为合法递增，降版本和同版本均拒绝  
-**测试映射**: `tests/check-brain-version-bump.test.js` → GP-4  
+**测试映射**: `tests/regression/version-gate-silent/check-brain-version-bump.test.js` → GP-4  
 **验收命令**：
 ```bash
-cd /workspace && npx vitest run tests/check-brain-version-bump.test.js --reporter=verbose 2>&1 | grep -E "PASS|FAIL|GP-4|semver|patch.*minor.*major"
+cd /workspace && npx vitest run tests/regression/version-gate-silent/check-brain-version-bump.test.js --reporter=verbose 2>&1 | grep -E "PASS|FAIL|GP-4|semver|patch.*minor.*major"
 ```
 **预期输出**：GP-4 测试为 PASS
 
@@ -47,10 +47,10 @@ cd /workspace && npx vitest run tests/check-brain-version-bump.test.js --reporte
 ### [BEHAVIOR-04] 门禁失败时输出可操作 fix 提示
 
 **描述**：exit 1 时，stdout/stderr 必须包含 `npm version patch --no-git-tag-version` 命令示例  
-**测试映射**: `tests/check-brain-version-bump.test.js` → GP-2 的 stdout 断言  
+**测试映射**: `tests/regression/version-gate-silent/check-brain-version-bump.test.js` → GP-2 的 stdout 断言  
 **验收命令**：
 ```bash
-cd /workspace && npx vitest run tests/check-brain-version-bump.test.js --reporter=verbose 2>&1 | grep -E "PASS|FAIL|fix 提示|npm version patch"
+cd /workspace && npx vitest run tests/regression/version-gate-silent/check-brain-version-bump.test.js --reporter=verbose 2>&1 | grep -E "PASS|FAIL|fix 提示|npm version patch"
 ```
 **预期输出**：包含 fix 提示的 GP-2 测试为 PASS
 
@@ -107,7 +107,7 @@ cd /workspace && npx vitest run tests/check-version-sync.test.js --reporter=verb
 
 ```bash
 # Step 1: 运行合同测试 GP-1 ~ GP-4
-cd /workspace && npx vitest run tests/check-brain-version-bump.test.js --reporter=verbose
+cd /workspace && npx vitest run tests/regression/version-gate-silent/check-brain-version-bump.test.js --reporter=verbose
 
 # Step 2: 回归测试（check-version-sync 不破坏）
 cd /workspace && npx vitest run tests/check-version-sync.test.js --reporter=verbose
