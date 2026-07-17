@@ -1721,7 +1721,7 @@ async function executeTick() {
   }
 
   // 10.25 deploy drift sentinel（G2 S0：每 30min SHA 对账，漂移超 30min → brain-deploy.sh，fire-and-forget）
-  const driftSentinelElapsed = Date.now() - tickState.lastDriftSentinelTime;
+  const driftSentinelElapsed = Date.now() - (tickState.lastDriftSentinelTime||0);
   if (!MINIMAL_MODE && driftSentinelElapsed >= DRIFT_SENTINEL_INTERVAL_MS) {
     tickState.lastDriftSentinelTime = Date.now();
     Promise.resolve().then(() => runDriftSentinel(pool))
