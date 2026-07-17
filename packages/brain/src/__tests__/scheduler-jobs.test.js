@@ -69,6 +69,10 @@ vi.mock('../machine-vitals.js', () => ({
   sampleMachineVitals: vi.fn().mockResolvedValue({ sampled_at: Date.now(), error: null }),
 }));
 
+vi.mock('../codex-test-gen.js', () => ({
+  runCodexTestGen: vi.fn().mockResolvedValue({ queued: [], count: 0 }),
+}));
+
 import {
   runSchedulerJobsOnce,
   startSchedulerJobsLoop,
@@ -99,9 +103,9 @@ describe('scheduler-jobs 注册表', () => {
     vi.clearAllMocks();
   });
 
-  it('JOBS 注册了 22 个 job（含 disk-guard + promise-map-nightly + machine-vitals）', () => {
+  it('JOBS 注册了 23 个 job（含 disk-guard + promise-map-nightly + machine-vitals + codex-test-gen）', () => {
     expect(JOBS.map((j) => j.name)).toEqual([
-      'machine-vitals', 'arch-review', 'ci-patrol', 'strategy-trigger', 'conversation-digest', 'capture-digestion', 'daily-backup', 'line-dreaming', 'ledger-hygiene', 'battle-report', 'capture-triage', 'receipt-collector', 'gp-shelf-life', 'launchd-patrol', 'direction-proposer', 'postdeploy-verifier', 'seven-ring-audit', 'guard-drill', 'morning-cockpit-bark', 'drift-sentinel', 'disk-guard', 'promise-map-nightly',
+      'machine-vitals', 'arch-review', 'ci-patrol', 'strategy-trigger', 'conversation-digest', 'capture-digestion', 'daily-backup', 'line-dreaming', 'ledger-hygiene', 'battle-report', 'capture-triage', 'receipt-collector', 'gp-shelf-life', 'launchd-patrol', 'direction-proposer', 'postdeploy-verifier', 'seven-ring-audit', 'guard-drill', 'morning-cockpit-bark', 'drift-sentinel', 'disk-guard', 'promise-map-nightly', 'codex-test-gen',
     ]);
   });
 
@@ -122,7 +126,7 @@ describe('scheduler-jobs 注册表', () => {
     expect(runLaunchdPatrol).toHaveBeenCalledWith();
     expect(maybeRunDirectionProposer).toHaveBeenCalledWith(pool);
     expect(runPostdeployVerifier).toHaveBeenCalledWith(pool);
-    expect(results).toHaveLength(22);
+    expect(results).toHaveLength(23);
     expect(results.every((r) => r.ok)).toBe(true);
   });
 
@@ -132,7 +136,7 @@ describe('scheduler-jobs 注册表', () => {
     const results = await runSchedulerJobsOnce(pool);
     expect(results.find((r) => r.name === 'arch-review')).toMatchObject({ ok: false, error: 'boom' });
     expect(results.filter((r) => r.name !== 'arch-review').every((r) => r.ok)).toBe(true);
-    expect(results).toHaveLength(22);
+    expect(results).toHaveLength(23);
     expect(runCaptureDigestion).toHaveBeenCalled();
   });
 
