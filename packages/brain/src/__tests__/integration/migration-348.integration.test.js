@@ -1,5 +1,5 @@
 /**
- * Migration 347 集成测试：承诺地图 schema 扩展
+ * Migration 348 集成测试：承诺地图 schema 扩展
  * 验证四表五扩展的列都成功落库
  */
 import { describe, it, expect, beforeAll } from 'vitest';
