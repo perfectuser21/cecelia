@@ -4,3 +4,4 @@
 planner: done (sprints/07171300-drift-sentinel-eyes/sprint-prd.md, invariants=2, fr=4, note=92行符合hotfix上限)
 planner: done (sprints/07171300-drift-sentinel-eyes/sprint-prd.md@43dee17, invariants=2, fr=4)
 gan: done (contract-draft.md@e96fb0aae r2, verdict=APPROVED, 铁律覆盖=5/5, judgments_written=5, rubric=.harness/verdicts/gan-e96fb0aae.json)
+gan: done (contract-draft.md@88738c7c r2, verdict=APPROVED, 铁律覆盖=2/2, judgments_written=8, rubric=.harness/verdicts/gan-88738c7c3.json)
