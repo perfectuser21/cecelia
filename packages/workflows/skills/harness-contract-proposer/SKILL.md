@@ -4,14 +4,16 @@ description: |
   Harness Contract Proposer — Harness v5 GAN Layer 2a：
   读 PRD，GAN 对抗写 Golden Path 合同（每步含真实验证命令）；
   Reviewer APPROVED 后倒推拆 task-plan.json。
-version: 9.13.0
+version: 9.15.0
 created: 2026-04-08
-updated: 2026-07-16
+updated: 2026-07-17
 changelog:
-  - 9.13.0: target_environment 枚举加 android_realmachine（洞①）— Path2 安卓获客真机验收（xian-rog）此前无枚举可用，E2E 模板行同步补
-  - 9.12.0: 刀3-T5 — 合同必填「运行时守卫」槽位：contract-draft.md 必须含 ## 运行时守卫 段，内嵌具体探针（probe:/script: 可机检执行块）或显式豁免（waiver:<decision_id>+理由）；两者都没有 = 合同不完整，Reviewer 打回；Step 2b-check 新增第 8 项 grep 机械验；evaluator B-guard-check 对应核查；report 收尾链把 guard_ref 写回 journey_features（依赖刀3-T4 列已存在）
-  - 9.11.0: EVA v2 审计四刀（d063b3e5/a85e0582/a638f840 实证脱模板合同骗过自查）— (1) Step 2b-check 三处补丁：[BEHAVIOR] 计数锚定行首 checkbox 格式（标题式不计入）+ 第 5 项 E2E 段 bash 块 ≥1 + 第 6 项提取 E2E 块过 bash -n 与全角标点扫描；(2) E2E 多代码块拼接语义显式化（evaluator 1.22.0 全部 bash 块按序拼接，推荐单块，多块禁重复 shebang/set）；(3) 禁文本自证型 BEHAVIOR（grep 文件含字符串归 [ARTIFACT]，真执行断言 ≥2 条且占比 ≥50%）+ 自查第 7 项启发式分类计数；(4) 新增 Step 1.3 历史约束三源加载（铁律逐条映射 INV-N 条目或显式 N/A + context-manifest 累积 FR + 回归测试）
+  - 9.15.0: gear 档位：新增 Step 3.1 HARNESS_GEAR=segmented 档位分支（移植自 cecelia #4027 harness-gear 一体化 60a80ddc 决策6），恢复 v7 前多 workstream task-plan.json schema（tasks[]/depends_on 线性链/estimated_minutes 20-60），段划分依据=Golden Path"后段依赖前段真机产物"接缝；default（缺省或非 segmented）保持单 ws1 现行为不变
+  - 9.14.0: 三段式 [BEHAVIOR] 剧本格式升级——每条 BEHAVIOR 须含三段：①「动作」（操作步骤）②「预期观察」（用户/系统可见状态变化）③「验证命令」（可执行断言）；新增 until-loop 等待预算范式（within 预算轮询，如 within 60s 收到消息确认）；legacy 兼容标记（存量纯命令写法保留但标为 legacy，不强制迁移）；样例剧本：点设置 → within 60s 收到消息
+  - 9.13.0: [BEHAVIOR] 格式加验证等级标记+锚定父路声明（决策145014a4 W3）——[BEHAVIOR] 条目格式新增 [L1|L2|L3] 标记（与 judge #4004 解析约定一致：behavior_tests[i].verification_level 字段，L1=替身/L2=服务端真验/L3=真机真验）；新增「锚定父路声明」硬规则：sprint GP 段首行必须写「覆盖父路 <golden_path名或id> 第 N-M 步」或「独立小路（无父路）」，禁留空
+  - 9.12.0: 新增硬规则「禁 mock 被改的边」（刀2 — #3830 recovery钩子剪断/#3848 sprint_dir跨节点丢/#3808 状态振荡/#3840 PR池不幂等实证：接缝层 bug 全 mock 单测结构性抓不到）——本单改动涉及调度/状态机/跨模块数据传递/生命周期钩子/DB写路径之一时，合同 failing test 必须不 mock 被改的那条边（真 Postgres、真相邻模块，只许 mock 更外层无关依赖）；合同必须输出「## 禁 mock 边清单」小节逐条列禁 mock 的边，空清单须写明理由（仅纯UI/纯文档类允许）；自查 checklist 新增第 9 条
   - 9.10.0: 真实链路四硬规则（handoff 0714 刀2 — #1267/#1269/#1271/#1256 实证根因）— 规则A【真实调用方 shape】合同必含 ## 真实调用方请求 shape 段，DoD 认证方式/关键字段与生产调用方逐字段一致（禁 body 传 tenant_id 而生产走 x-agent-id header 的双路径分叉）；规则B【第三方真调一次】涉第三方 API 的 DoD 至少一条真 key 真请求真响应校验，禁全 force_*/mock；规则C【mock 豁免显式登记】DoD 含 force_*/stub/假数据 → 合同必附 ## 未覆盖真实链路清单 段，controller 呈现进 PR 描述不许静默；规则D【target_environment 强制路由】微信 UI/RPA 必 windows_wechat，Android 通道未落地前真机段必入未覆盖清单；自查 checklist 新增第 8 条
+  - 9.11.0: EVA v2 审计四刀（d063b3e5/a85e0582/a638f840 实证脱模板合同骗过自查）— (1) Step 2b-check 三处补丁：[BEHAVIOR] 计数锚定行首 checkbox 格式（标题式不计入）+ 第 5 项 E2E 段 bash 块 ≥1 + 第 6 项提取 E2E 块过 bash -n 与全角标点扫描；(2) E2E 多代码块拼接语义显式化（evaluator 1.22.0 全部 bash 块按序拼接，推荐单块，多块禁重复 shebang/set）；(3) 禁文本自证型 BEHAVIOR（grep 文件含字符串归 [ARTIFACT]，真执行断言 ≥2 条且占比 ≥50%）+ 自查第 7 项启发式分类计数；(4) 新增 Step 1.3 历史约束三源加载（铁律逐条映射 INV-N 条目或显式 N/A + context-manifest 累积 FR + 回归测试）
   - 9.9.0: 领域验证规则新增「RPA 快验通道 dev-verify」小节——windows_wechat 等真机 RPA 类合同至少一条 [BEHAVIOR] 必须写成快验通道回执断言(exit_code=0+stdout 领域内容,可机检可复跑),给"真机真收真回"一个统一可执行 oracle
   - 9.8.0: 判定点登记表机器可解析约定（九要素 T5 — decisions e035dad8）— 登记表即数据：合同 APPROVED 后 reviewer Step 5 逐行解析写入 decisions category=judgment（账本保鲜「判定点活性」指标数据源）；每行自含语义（判定点列禁写「同上/...」）；示例行保留「（示例：」前缀供解析跳过；误判后果严重（静默丢数据/直接面客错误）的行在判定点名前标 ⚠️——⚠️ 行属「升拍板点主动请教用户」级别（e035dad8 第②条），PrepPRD/对齐会未拍过的 ⚠️ 判定点要在合同 notes 里标注待确认
   - 9.7.0: 跨 repo 化刀3 — (a) Contract Gate 速查表补第三方 repo 显式跳过规则：packages/brain/src/lib/contract-gate.js 不存在（第三方 repo / 非 cecelia worktree）→ 跳过代码层 Contract Gate，仅执行 skill 内置规则审查，并在合同 notes 记一行 contract-gate: skipped (file not found, third-party repo)，cecelia 场景原逻辑不动；(b) Step 1 DB 连接串参数化 ${DB_URL:-postgresql://localhost/cecelia}，第三方 repo 必须显式传 $DB_URL，不得假设 cecelia 库存在
@@ -191,6 +193,33 @@ target_environment 必须与 ability 的**真实运行环境**匹配——堵"�
 
 ---
 
+## ⚡ 硬规则：禁 mock 被改的边（v9.12 — #3830/#3848/#3808/#3840 实证根因）
+
+**根因实证**：近期四起生产事故全长在「接缝层」——#3830 recovery 钩子被剪断、#3848 sprint_dir 跨节点传递丢失、#3808 completed↔queued 状态振荡、#3840 PR 池不幂等。共同点：被改的那条边（模块↔模块、代码↔DB）在测试里被 mock 顶替，全 mock 单测**结构性抓不到**接缝断裂——mock 出来的邻居永远配合，真邻居才会翻脸。
+
+**规则本体**：凡本单改动涉及以下任一类——
+
+- 调度（tick/dispatcher/派发决策）
+- 状态机（状态迁移/终态判定）
+- 跨模块数据传递（参数/上下文在模块间接力）
+- 生命周期钩子（startup/recovery/shutdown/callback）
+- DB 写路径（INSERT/UPDATE/迁移触达的表）
+
+——合同的 failing test 必须**不 mock 被改的那条边**：真 Postgres、真相邻模块，只允许 mock 更外层的无关依赖（如更远的第三方 API、通知渠道）。改 A↔B 的接缝却 mock 掉 B = 合同不合格。
+
+**「禁 mock 边清单」小节（合同必含段）**：contract-draft.md 必须输出 `## 禁 mock 边清单` 小节，逐条列出本单哪些边禁 mock，格式：
+
+```markdown
+## 禁 mock 边清单
+
+- 模块A ↔ 模块B（本单改了两者间的 <数据/调用>，测试必须真调 B）
+- 代码 ↔ DB 表 X（本单改写路径，测试必须真 Postgres 验行落库）
+```
+
+空清单必须写明理由（仅纯 UI / 纯文档类改动允许为空，如 `（本单纯文档改动，无接缝边，N/A）`）。该清单是下游的执法依据：generator 测试中 vi.mock/stub 命中清单内的边即违约（CONTRACT IS LAW），evaluator 机械 grep 核查，命中 = CONTRACT-IS-LAW FAIL。需要真 PG 的测试按合同指定放 integration 命名/位置，CI 由 brain-integration job 起真 Postgres 跑。
+
+---
+
 ## ⚡ 两层验证架构（v7.8 强制 — 假阳性根因修复）
 
 **每个合同必须写两层验证命令，缺一层 Reviewer 直接 REVISION：**
@@ -219,57 +248,6 @@ Generator 写代码 + vitest 单元测试
 
 ---
 
-## ⚡ 运行时守卫（必填槽位 — 刀3-T5 铁律）
-
-> **根因**：「无闸不成文终身版」铁律（dc18d43d）——合同必须回答「它停了，谁、多久内会发现？」。不回答 = 合同有盲区，交付后永远不知道功能悄悄死掉。
-
-### 强制规则
-
-**每份 `contract-draft.md` 必须含 `## 运行时守卫` 段**，二选一写法：
-
-**选项 A — 探针**（推荐：可机检、可定期复跑）：
-
-```markdown
-## 运行时守卫
-
-probe: <探针标识符>（格式：<类型>/<名称>，如 brain-api/xxx-health、cron/daily-check）
-```bash
-# 可定期复跑的探针命令，exit 0 = 健康，exit 1 = 故障
-curl -sf localhost:5221/api/brain/{endpoint} | jq -e '.status == "ok"' || exit 1
-```
-发现延迟目标：<X 分钟内发现>
-发现者：<Brain 巡检 tick / 外部监控告警 / 推送渠道>
-```
-
-**选项 B — 显式豁免**（需决策支撑：必须有 decision_id）：
-
-```markdown
-## 运行时守卫
-
-waiver: <decision_id>
-理由：<为什么不需要独立探针——例：已由 Brain health-check 全量覆盖 / 一次性迁移任务无需常驻探针 / 已有外部监控每分钟告警>
-```
-
-### 不合格写法（Reviewer 打回）
-
-| 不合格写法 | 问题 |
-|---|---|
-| `## 运行时守卫` 段缺失 | 合同不完整，evaluator B-guard-check FAIL |
-| 段存在但无 `probe:` 也无 `waiver:` | 写了等于没写，机械检查 FAIL |
-| `waiver:` 后无 decision_id | 豁免无凭据，一句话理由 ≠ 决策 |
-| 探针是 `echo "ok"` 或 `true` 等假命令 | 假探针比没有探针更糟，属作弊 |
-| 把 `## 死亡告警` 或八要素里的「谁知道」字段当代替品 | 「谁知道」是描述，探针是可执行断言，二者不可替代 |
-
-### 判定规则（evaluator B-guard-check 执行）
-
-1. 读 `${SPRINT_DIR}/contract-draft.md`，检测 `## 运行时守卫` 段是否存在
-2. 段存在 → 检测：含 `probe:` 关键词（且有可执行 bash 块）**或** 含 `waiver:` 关键词（且后接 decision_id 格式 UUID）
-3. 两者都缺 → `failed_step: guard_ref_missing`，FAIL
-4. `probe:` 存在 → 提取 `GUARD_REF=<探针标识符>`，report 收尾链写回 `journey_features.guard_ref`
-5. `waiver:` 存在 → `GUARD_REF=waiver:<decision_id>`，同样写回
-
----
-
 ## DoD 分家规则（v7.4 修订 — 跟 evaluator v1.1 协议对齐）
 
 | 类型 | 住哪 | 说明 |
@@ -283,6 +261,82 @@ waiver: <decision_id>
 v7.3 错误把 BEHAVIOR 单独拆到 vitest 测试文件，但 evaluator v1.1 反作弊红线第 3 条要求"DoD 文件含 [BEHAVIOR] 标签 + manual: 命令"（不是 vitest 索引）。两个 skill 协议矛盾，W22 实证 4 次 sub-evaluator FAIL "缺 [BEHAVIOR]"。本版本统一：DoD 文件内嵌 [BEHAVIOR] 标签 + Test: manual:bash 命令，evaluator 直接执行。
 
 vitest 测试文件还要写（generator TDD red-green 用），但**不再被 evaluator 当 verdict 来源**。
+
+---
+
+## ⚡ [BEHAVIOR] 验证等级标记（v9.13 — [L1|L2|L3]，与 judge #4004 对齐）
+
+**验证等级标记（[L1|L2|L3]，必须在 [BEHAVIOR] 关键词后标注）**：
+- `[L1]`：替身验证（mock/stub，不碰真实系统）
+- `[L2]`：服务端真验（真实 DB / API，非替身，非真机）
+- `[L3]`：真机真验（UIA/adb 真机操控、生产 env 真实调用）
+与 judge #4004 解析约定一致：behavior_tests[i].verification_level = 'L1'|'L2'|'L3'
+示例：`- [ ] [BEHAVIOR] [L2] 任务完成后 DB 状态应更新 Test: manual:bash psql ... | grep completed`
+
+**每条 [BEHAVIOR] 必须标注等级，格式为 `[BEHAVIOR] [L1|L2|L3] <描述>`。**
+
+---
+
+## ⚡ 三段式 [BEHAVIOR] 剧本格式（v9.14 新增）
+
+**每条 [BEHAVIOR] 须按三段式剧本组织，缺任一段 Reviewer 打回：**
+
+| 段 | 说明 | 示例 |
+|---|---|---|
+| ①「动作」 | 用户/系统执行的操作步骤（点击/发送/调用等） | 用户点击「设置」按钮 |
+| ②「预期观察」 | 用户或系统可见的状态变化（界面变化/消息出现/DB 写入等） | within 60s 收到消息确认通知 |
+| ③「验证命令」 | 可执行的断言命令（manual:bash 形式，机器可跑） | `curl ... \| jq -e '.status=="ok"'` |
+
+### until-loop 等待预算范式
+
+涉及异步操作（消息发送、任务调度、文件生成等）时，「预期观察」段必须写明等待预算，并在「验证命令」段用 until-loop 实现轮询：
+
+```bash
+# within 60s 等待范式（标准写法）
+DEADLINE=$((SECONDS + 60))
+until curl -sf localhost:5221/api/brain/tasks/$TASK_ID | jq -e '.status=="completed"' >/dev/null 2>&1; do
+  [ $SECONDS -lt $DEADLINE ] || { echo "FAIL: timeout after 60s"; exit 1; }
+  sleep 2
+done
+echo "OK: within 60s 任务完成"
+```
+
+关键词约定：`within <N>s`（等待预算上限）/ `until`（轮询循环关键词）/ `60s`（样例预算值）。
+
+### 样例剧本（点设置 → within 60s 收到消息）
+
+```
+[BEHAVIOR] [L2] 用户点设置触发消息推送，within 60s 收到确认消息
+  动作: 调用 POST /api/settings/save 保存配置
+  预期观察: within 60s 消息队列出现新条目，用户侧收到推送确认
+  验证命令: Test: manual:bash
+    DEADLINE=$((SECONDS + 60))
+    until psql $DB_URL -c "SELECT 1 FROM messages WHERE type='settings_notify' AND created_at > NOW()-INTERVAL '5m'" | grep -q '1 row'; do
+      [ $SECONDS -lt $DEADLINE ] || { echo "FAIL: within 60s 未收到消息"; exit 1; }
+      sleep 2
+    done
+    echo "OK: within 60s 收到消息确认"
+```
+
+### legacy 兼容标记
+
+存量纯命令写法（未含三段式格式）保留有效，但标为 `[legacy]`，不强制迁移——新写条目必须三段式：
+
+```
+- [ ] [BEHAVIOR] [L2] [legacy] 检查接口响应 Test: manual:bash curl -sf localhost:5221/api/ping | jq -e '.ok==true'
+```
+
+---
+
+## ⚡ 锚定父路声明（硬规则 — v9.13 新增）
+
+### 锚定父路声明（硬规则）
+
+sprint GP 段首行必须写：
+- `覆盖父路 <golden_path名或id> 第 N-M 步` — 本 sprint 覆盖某条已有 Golden Path 的部分步骤
+- `独立小路（无父路）` — 本 sprint 是独立路径，无父路依赖
+
+禁留空。缺失 → reviewer 打回 proposer。
 
 ---
 
@@ -517,30 +571,10 @@ psql $DB -c "SELECT count(*) FROM brain_alerts WHERE task_id='$TASK_ID' AND crea
 
 ---
 
-## 运行时守卫（必填 — 见「⚡ 运行时守卫」规则段）
-
-> 回答「它停了，谁、多久内会发现？」。选项A（探针）或选项B（豁免），两者都没有 = 合同不完整。
-
-<!-- 选项 A — 探针（推荐，evaluator B-guard-check 机械核查）: -->
-probe: {类型/名称，如 brain-api/xxx-health}
-```bash
-# 探针命令示例，替换为本 sprint 实际可执行的健康检查
-curl -sf localhost:5221/api/brain/{endpoint} | jq -e '.status == "ok"' || exit 1
-```
-发现延迟目标: {X 分钟}
-发现者: {Brain 巡检 / 外部监控 / 告警渠道}
-
-<!-- 若选豁免（选项 B），删除上方探针内容，改写为：
-waiver: {decision_id（必须是真实的 UUID）}
-理由：{为什么不需要独立探针}
--->
-
----
-
 ## E2E 验收（最终 final-e2e 跑 — 按 target_environment 选模板）
 
 **journey_type**: {autonomous|user_facing|dev_pipeline|agent_remote}
-**target_environment**: {local_api|mac_web|windows_cloud|windows_wechat|linux_server|playground|android_realmachine}
+**target_environment**: {local_api|mac_web|windows_cloud|windows_wechat|linux_server|playground}
 
 > **选模板规则**：看 PRD 末尾的 `target_environment` 字段，不是 `journey_type`。evaluator 模式B 按 `target_environment` SSH 派发到正确机器，合同 E2E 脚本必须与目标机器匹配。
 > `windows_wechat` 与 `windows_cloud` 的区别：前者走 xian-rog self-hosted runner（含真实微信 4.1.8），后者走 GHA windows-latest（无微信，适合 Agent 安装包/Publisher 测试）。
@@ -1119,6 +1153,7 @@ PRD `## Response Schema` 段定义的字段名（key 字面值）是**不可改�
 6. **假绿自查（v7.12 新加 — Bug 10）**：对每条 `[BEHAVIOR]` 命令，心想"如果对应代码**一行都没写**，这条命令会 FAIL 吗？"。答案是 YES → 真红，合格；答案是 NO（mkdir/touch/health check/404-acceptable 都能通过）→ **假绿，必须改写**
 7. **Golden Path 溯源（v9.0 新加）**：对每条 `[BEHAVIOR]`，回答「这是 Golden Path 哪一步的用户可观察输出？」——答不出来 → 删掉该条目或补对应 Golden Path 步骤；命令里含 `MOCK_*` 环境变量或 mock 对象 → 不合格；Golden Path 含微信操作但 `target_environment` 写 `windows_cloud` → 路由错误，必须改 `windows_wechat`
 8. **真实链路四硬规则自查（v9.10 新加）**：①涉及设备/agent 调服务端 → contract-draft.md 有 `## 真实调用方请求 shape` 段，且 DoD 请求的认证方式/字段名与之逐字段一致；②涉及第三方 API → 至少一条 [BEHAVIOR] 真 key 真请求真响应校验；③DoD 含 `force_*`/stub/假数据 → 有 `## 未覆盖真实链路清单` 段（无 mock 则显式 N/A）；④target_environment 与 ability 真实运行环境匹配（微信 RPA = windows_wechat；Android 真机段未覆盖必须入清单）
+9. **禁 mock 边自查（v9.12 新加）**：contract-draft.md 有 `## 禁 mock 边清单` 段——本单涉及调度/状态机/跨模块数据传递/生命周期钩子/DB写路径之一 → 清单非空且逐条列被改的边（模块A↔模块B、代码↔DB表X），合同 tests/ 里这些边无 vi.mock/stub；空清单 → 写明理由（仅纯UI/纯文档类允许）
 
 任一断言 fail → contract 草案作废，**用 PRD 字面字段名 + ≥ 4 条 [BEHAVIOR] 重写**。
 
@@ -1323,23 +1358,6 @@ GREP_ONLY=$(grep 'Test: manual:' "${SPRINT_DIR}/contract-dod.md" | grep -cE "man
 [ "$REAL_EXEC" -ge 2 ] || { echo "SELF-CHECK FAIL: 真执行断言（curl/psql/bash/ffprobe/node 开头）仅 ${REAL_EXEC} 条（需 ≥2，启发式计数）"; SELF_CHECK_FAIL=1; }
 [ "$REAL_EXEC" -ge "$GREP_ONLY" ] || { echo "SELF-CHECK FAIL: grep 开头文本自证条数（${GREP_ONLY}）超过真执行条数（${REAL_EXEC}）——真执行占比 <50%（启发式计数）"; SELF_CHECK_FAIL=1; }
 
-# 8. 运行时守卫段核查（刀3-T5 — 必填槽位：probe: 或 waiver:，两者都没有 = 合同盲区）
-if ! grep -q '^## 运行时守卫' "${SPRINT_DIR}/contract-draft.md"; then
-  echo "SELF-CHECK FAIL: contract-draft.md 缺 '## 运行时守卫' 段（必填：probe:<标识符>+bash探针块 或 waiver:<decision_id>+理由）"; SELF_CHECK_FAIL=1
-else
-  # 段存在，核查内容：必须含 probe: 或 waiver:（两者都没有 = 空架子）
-  GUARD_SECTION=$(awk '/^## 运行时守卫/{f=1; next} f && /^## /{exit} f{print}' "${SPRINT_DIR}/contract-draft.md")
-  if ! echo "$GUARD_SECTION" | grep -qE '^(probe:|waiver:)'; then
-    echo "SELF-CHECK FAIL: '## 运行时守卫' 段存在但缺 probe:/waiver: 任一关键词（空架子不合格）"; SELF_CHECK_FAIL=1
-  fi
-  # waiver 必须带 decision_id（UUID 格式或明确指代）
-  if echo "$GUARD_SECTION" | grep -q '^waiver:'; then
-    if ! echo "$GUARD_SECTION" | grep -qE '^waiver:[[:space:]]*[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}'; then
-      echo "SELF-CHECK FAIL: waiver: 后必须跟 decision_id（UUID 格式），当前格式不符"; SELF_CHECK_FAIL=1
-    fi
-  fi
-fi
-
 [ "$SELF_CHECK_FAIL" -eq 0 ] && echo "✅ 合同格式自查通过" || { echo "❌ 合同脱模板，禁止交付——重写后重跑本脚本"; exit 1; }
 ```
 
@@ -1412,6 +1430,59 @@ JSONEOF
 - `task_id`: 固定 `ws1`（一个 Sprint 只有一个 task）
 - `estimated_minutes`: 30 ≤ n ≤ 120
 - `dod`: 至少 1 个 `[BEHAVIOR]`
+
+---
+
+### Step 3.1: HARNESS_GEAR=segmented 档位分支（多 workstream task-plan，v7 前 schema）
+
+> **default 声明**：`HARNESS_GEAR` 环境变量缺失，或值不等于 `segmented` 时，本节不生效——继续走上面 Step 3 的单 `ws1` 现行为，task-plan.json 只输出 1 个 task。以下规则仅在 `HARNESS_GEAR=segmented` 时启用。
+
+**触发条件**：controller 派发本 skill 时若在 prompt 头/env 传入 `HARNESS_GEAR=segmented`（真机 RPA / 骨架全红棋盘 + N 段串行点绿场景），Step 3 改为输出**多个 task**，schema 恢复 v7 前原样（`tasks[]` 数组，字段：`task_id`/`title`/`scope`/`dod[]`/`files[]`/`depends_on[]`/`complexity`/`estimated_minutes`）。
+
+**段划分依据**：按 Golden Path 步骤识别"后段依赖前段真机产物"的接缝——例如 Step 1-2（骨架/环境准备）产出的真机安装包/登录态，是 Step 3+（真机操作/断言）的前置输入，接缝处即切段。段数 = 接缝数 + 1，不强行均分。
+
+**线性链死规则**：
+- `task_id` 命名 `ws1`、`ws2`……`wsN`，编号即执行顺序
+- **只有 `ws1` 可以 `depends_on: []`**，`ws2` 起必须声明前置（至少含上一段 `task_id`，允许多前置）
+- `estimated_minutes`：20 ≤ n ≤ 60（segmented 档位比单段 Sprint 更细粒度，故区间收窄，与 Step 3 单 ws1 档 30-120 不同）
+- `dod`：每段至少 1 个 `[BEHAVIOR]`，且该 `[BEHAVIOR]` 必须是本段 scope 内可独立验证的断言（不得依赖后续段才存在的产物）
+
+**完整两段 JSON 示例**（真机 RPA 场景：ws1=骨架环境准备，ws2=真机操作断言）：
+
+```json
+{
+  "initiative_id": "${INITIATIVE_ID}",
+  "journey_type": "user_facing",
+  "journey_type_reason": "真机微信 RPA 操作需真实 UI 交互与截图验证",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "真机环境骨架 + 登录态准备",
+      "scope": "在 xian-rog 真机上准备微信登录态与目标窗口，产出后续段可复用的会话句柄",
+      "dod": [
+        "[BEHAVIOR] 真机微信进程存活且目标会话窗口可寻址，manual:bash 断言 pid + 窗口句柄非空",
+        "[ARTIFACT] session-handle.json 写入 SPRINT_DIR"
+      ],
+      "files": ["scripts/wechat-session-init.ps1"],
+      "depends_on": [],
+      "complexity": "S",
+      "estimated_minutes": 30
+    },
+    {
+      "task_id": "ws2",
+      "title": "真机消息发送 + 回执断言",
+      "scope": "基于 ws1 产出的会话句柄，触发真实消息发送并断言回执",
+      "dod": [
+        "[BEHAVIOR] 真机发送消息后目标会话出现新记录，manual:bash 断言 UIA 读取的消息内容匹配"
+      ],
+      "files": ["scripts/wechat-send-verify.ps1"],
+      "depends_on": ["ws1"],
+      "complexity": "M",
+      "estimated_minutes": 45
+    }
+  ]
+}
+```
 
 ---
 
