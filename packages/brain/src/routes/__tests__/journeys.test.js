@@ -308,6 +308,8 @@ describe('POST /journey_step_links cell 化', () => {
     expect(bad.status).toBe(400);
     expect(mockQuery).not.toHaveBeenCalled();
 
+    // step 存在性 + journey_id 一致性校验查询
+    mockQuery.mockResolvedValueOnce({ rows: [{ journey_id: 'j1' }] });
     mockQuery.mockResolvedValueOnce({ rows: [{ id: 'y' }] });
     const res = await request.default(app)
       .post('/api/brain/journey_step_links')
@@ -316,8 +318,203 @@ describe('POST /journey_step_links cell 化', () => {
         cell_status: 'pending', feature_id: 'f1',
       });
     expect(res.status).toBe(201);
-    const sql = mockQuery.mock.calls[0][0];
+    const sql = mockQuery.mock.calls[1][0];
     expect(sql).toContain('ON CONFLICT (step_id, cell_kind, cell_key) WHERE cell_kind IS NOT NULL');
+  });
+
+  it('journey_id 与 step 实际所属 journey 不一致 → 400', async () => {
+    const { default: router } = await import('../journeys.js');
+    const express = await import('express');
+    const app = express.default();
+    app.use(express.default.json());
+    app.use('/api/brain', router);
+
+    const request = await import('supertest');
+    mockQuery.mockResolvedValueOnce({ rows: [{ journey_id: 'j-other' }] });
+    const res = await request.default(app)
+      .post('/api/brain/journey_step_links')
+      .send({
+        journey_id: 'j1', step_id: 's1', cell_kind: 'base_ref', cell_key: 'CRM 表底座',
+      });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/journey_id does not match/);
+  });
+
+  it('cell 行引用的 step 不存在 → 404', async () => {
+    const { default: router } = await import('../journeys.js');
+    const express = await import('express');
+    const app = express.default();
+    app.use(express.default.json());
+    app.use('/api/brain', router);
+
+    const request = await import('supertest');
+    mockQuery.mockResolvedValueOnce({ rows: [] });
+    const res = await request.default(app)
+      .post('/api/brain/journey_step_links')
+      .send({
+        journey_id: 'j1', step_id: 'ghost', cell_kind: 'base_ref', cell_key: 'CRM 表底座',
+      });
+    expect(res.status).toBe(404);
+    expect(res.body.error).toBe('step not found');
+  });
+});
+
+describe('GET /journey_step_links cell 行过滤', () => {
+  beforeEach(() => { mockQuery.mockReset(); });
+
+  it('默认排除格子行（cell_kind IS NULL）', async () => {
+    mockQuery.mockResolvedValueOnce({ rows: [] });
+    const { default: router } = await import('../journeys.js');
+    const express = await import('express');
+    const app = express.default();
+    app.use(express.default.json());
+    app.use('/api/brain', router);
+
+    const request = await import('supertest');
+    const res = await request.default(app).get('/api/brain/journey_step_links');
+    expect(res.status).toBe(200);
+    const sql = mockQuery.mock.calls[0][0];
+    expect(sql).toContain('cell_kind IS NULL');
+  });
+
+  it('cells=1 时只返回格子行（cell_kind IS NOT NULL），可叠加 cell_kind 精筛', async () => {
+    mockQuery.mockResolvedValueOnce({ rows: [] });
+    const { default: router } = await import('../journeys.js');
+    const express = await import('express');
+    const app = express.default();
+    app.use(express.default.json());
+    app.use('/api/brain', router);
+
+    const request = await import('supertest');
+    const res = await request.default(app).get('/api/brain/journey_step_links?cells=1&cell_kind=base_ref');
+    expect(res.status).toBe(200);
+    const sql = mockQuery.mock.calls[0][0];
+    expect(sql).toContain('cell_kind IS NOT NULL');
+    expect(sql).toContain('cell_kind=');
+    const params = mockQuery.mock.calls[0][1];
+    expect(params).toContain('base_ref');
+  });
+});
+
+describe('GET /journey_features/:id/blast-radius', () => {
+  beforeEach(() => { mockQuery.mockReset(); });
+
+  it('返回 feature + 引用步骤清单', async () => {
+    mockQuery
+      .mockResolvedValueOnce({ rows: [{ id: 'f1', name: 'CRM 表底座', status: 'building', group: '家③横切件池' }] })
+      .mockResolvedValueOnce({ rows: [{ journey_id: 'j1', journey_name: 'GP-B', domain: '智能客服', step_id: 's1', step_name: '决定谁来答', step_number: 2, promise: 'x', cell_status: 'pending' }] });
+
+    const { default: router } = await import('../journeys.js');
+    const express = await import('express');
+    const app = express.default();
+    app.use(express.default.json());
+    app.use('/api/brain', router);
+
+    const request = await import('supertest');
+    const res = await request.default(app).get('/api/brain/journey_features/f1/blast-radius');
+    expect(res.status).toBe(200);
+    expect(res.body.feature.name).toBe('CRM 表底座');
+    expect(res.body.count).toBe(1);
+    expect(res.body.blast_radius[0].promise).toBe('x');
+  });
+
+  it('feature 不存在 → 404', async () => {
+    mockQuery.mockResolvedValueOnce({ rows: [] });
+
+    const { default: router } = await import('../journeys.js');
+    const express = await import('express');
+    const app = express.default();
+    app.use(express.default.json());
+    app.use('/api/brain', router);
+
+    const request = await import('supertest');
+    const res = await request.default(app).get('/api/brain/journey_features/nope/blast-radius');
+    expect(res.status).toBe(404);
+  });
+});
+
+describe('PATCH /journeys/:id 承诺地图字段', () => {
+  beforeEach(() => { mockQuery.mockReset(); });
+
+  it('白名单更新 home/domain/trigger/endpoint', async () => {
+    mockQuery.mockResolvedValueOnce({ rows: [{ id: 'j1', home: 'biz' }] });
+
+    const { default: router } = await import('../journeys.js');
+    const express = await import('express');
+    const app = express.default();
+    app.use(express.default.json());
+    app.use('/api/brain', router);
+
+    const request = await import('supertest');
+    const res = await request.default(app)
+      .patch('/api/brain/journeys/j1')
+      .send({ home: 'biz', domain: '智能客服', trigger: 't', endpoint: 'e' });
+    expect(res.status).toBe(200);
+  });
+
+  it('home 非法值 → 400', async () => {
+    const { default: router } = await import('../journeys.js');
+    const express = await import('express');
+    const app = express.default();
+    app.use(express.default.json());
+    app.use('/api/brain', router);
+
+    const request = await import('supertest');
+    const res = await request.default(app).patch('/api/brain/journeys/j1').send({ home: 'nope' });
+    expect(res.status).toBe(400);
+  });
+});
+
+describe('PATCH /journey_features/:id softness/group', () => {
+  beforeEach(() => { mockQuery.mockReset(); });
+
+  it('softness 白名单', async () => {
+    mockQuery.mockResolvedValueOnce({ rows: [{ id: 'f1', softness: 'soft' }] });
+
+    const { default: router } = await import('../journeys.js');
+    const express = await import('express');
+    const app = express.default();
+    app.use(express.default.json());
+    app.use('/api/brain', router);
+
+    const request = await import('supertest');
+    const res = await request.default(app).patch('/api/brain/journey_features/f1').send({ softness: 'soft' });
+    expect(res.status).toBe(200);
+  });
+
+  it('softness 非法值 → 400', async () => {
+    const { default: router } = await import('../journeys.js');
+    const express = await import('express');
+    const app = express.default();
+    app.use(express.default.json());
+    app.use('/api/brain', router);
+
+    const request = await import('supertest');
+    const res = await request.default(app).patch('/api/brain/journey_features/f1').send({ softness: 'fuzzy' });
+    expect(res.status).toBe(400);
+  });
+});
+
+describe('POST /journey_steps promise', () => {
+  beforeEach(() => { mockQuery.mockReset(); });
+
+  it('insert+update 都带 promise/backbone_version', async () => {
+    mockQuery.mockResolvedValueOnce({ rows: [{ id: 's1' }] });
+
+    const { default: router } = await import('../journeys.js');
+    const express = await import('express');
+    const app = express.default();
+    app.use(express.default.json());
+    app.use('/api/brain', router);
+
+    const request = await import('supertest');
+    const res = await request.default(app)
+      .post('/api/brain/journey_steps')
+      .send({ journey_id: 'j1', name: 'n', step_number: 1, promise: 'p' });
+    expect(res.status).toBe(200);
+    const sql = mockQuery.mock.calls[0][0];
+    expect(sql).toContain('promise');
+    expect(sql).toContain('backbone_version');
   });
 });
 
