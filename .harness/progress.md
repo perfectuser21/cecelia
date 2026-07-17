@@ -1,9 +1,4 @@
-planner: done (sprints/07162330-watchdog-gh-compat/sprint-prd.md@4a7efcd, invariants=2, fr=0)
-gan: done (contract-draft.md@b3c52ab r1, verdict=APPROVED, 铁律覆盖=2/2, judgments_written=5, rubric=.harness/verdicts/gan-b3c52ab.json)
-generator: pr_opened (#4024, red=b3c52ab, green=79f66ca)
-generator: done (pr=#4024, red=b3c52ab, green=79f66ca, head=47326b9)
-evaluator: done (verdict=PASS, sha=47326b9, verdict_file=.harness/verdicts/evaluate-47326b9.json)
-evaluator: done (re-anchor, verdict=PASS, sha=c75a703, verdict_file=.harness/verdicts/evaluate-c75a703.json)
-judge: done (verdict=PASS, sha=4bdb87a)
-evaluator: done (re-anchor, verdict=PASS, sha=c811b82, verdict_file=.harness/verdicts/evaluate-c811b82.json)
-judge: done (re-anchor, verdict=PASS, sha=c811b82)
+# Sprint: 07171300-drift-sentinel-eyes
+# Task: fe385921-603a-449f-ba88-606559fd2d43
+# Started: 2026-07-17
+planner: done (sprints/07171300-drift-sentinel-eyes/sprint-prd.md, invariants=2, fr=4, note=92行符合hotfix上限)
