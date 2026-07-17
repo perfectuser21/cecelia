@@ -205,7 +205,7 @@ export async function buildBattleReportData(pool, now = new Date()) {
   }
 
   // ⑦ harness admission 吞吐（beeba317 观察哨，de6d3582）
-  let admission = { dispatched_24h: 0, denies: [], peak: null, vitals: null };
+  let admission = { dispatched_24h: 0, denies: [], peak: null, vitals: null, codex_test_gen_24h: 0 };
   try {
     const { rows: dispRows } = await pool.query(
       `SELECT count(*)::int AS n FROM dispatch_events
@@ -222,11 +222,18 @@ export async function buildBattleReportData(pool, now = new Date()) {
     const { rows: peakRows } = await pool.query(
       `SELECT value_json FROM working_memory WHERE key = 'machine_vitals_daily_peak'`
     );
+    // codex_test_gen 24h 计数（07172225-codex-pool-activation）
+    const { rows: codexRows } = await pool.query(
+      `SELECT count(*)::int AS n FROM tasks
+        WHERE task_type = 'codex_test_gen'
+          AND created_at > NOW() - interval '24 hours'`
+    );
     admission = {
       dispatched_24h: dispRows[0]?.n ?? 0,
       denies: denyRows,
       peak: peakRows[0]?.value_json ?? null,
       vitals: getMachineVitals(),
+      codex_test_gen_24h: codexRows[0]?.n ?? 0,
     };
   } catch (err) {
     console.warn(`[battle-report] admission 段取数失败(渲染暂无): ${err.message}`);
@@ -352,7 +359,7 @@ export function renderBattleReportMarkdown(data) {
 
   lines.push('');
   lines.push('## Harness admission 吞吐（24h）');
-  const adm = data.admission || { dispatched_24h: 0, denies: [], peak: null, vitals: null };
+  const adm = data.admission || { dispatched_24h: 0, denies: [], peak: null, vitals: null, codex_test_gen_24h: 0 };
   const denyTotal = adm.denies.reduce((s, d) => s + (d.count || 0), 0);
   if (adm.dispatched_24h === 0 && denyTotal === 0 && !adm.peak) {
     lines.push('暂无');
@@ -364,6 +371,9 @@ export function renderBattleReportMarkdown(data) {
     lines.push(`- 派发 ${adm.dispatched_24h} 次｜admission 拒发 ${denyTotal} 次｜${peakStr}｜${vitalsStr}`);
     for (const d of adm.denies) lines.push(`  - ${d.reason}: ${d.count}`);
   }
+  // codex_test_gen 24h 计数段（07172225-codex-pool-activation）
+  const codexCount = adm.codex_test_gen_24h ?? 0;
+  lines.push(`- codex_test_gen 24h 入队：${codexCount} 个`);
 
   lines.push('');
   lines.push('## 用户决策（24h）');
