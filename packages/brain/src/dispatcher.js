@@ -34,6 +34,7 @@ import { selectNextDispatchableTask, processCortexTask } from './dispatch-helper
 import { findDuplicateSibling } from './dispatch-dedup.js';
 import { blockTask } from './task-updater.js';
 import { raise } from './alerting.js';
+import { checkAnchor } from './anchor-check.js';
 
 const MINIMAL_MODE = process.env.BRAIN_MINIMAL_MODE === 'true';
 const TICK_LAST_DISPATCH_KEY = 'tick_last_dispatch';
@@ -608,6 +609,27 @@ export async function dispatchNextTask(goalIds) {
       tickLog(`[dispatch] task ${candidate.id} already claimed by another runner, skipping`);
       await recordDispatchResult(pool, false, 'already_claimed');
       return { dispatched: false, reason: 'already_claimed', task_id: candidate.id, actions };
+    }
+
+    // 3c''. S2 锚点执法闸（MJ5 刀2）：新任务点火前校验 payload.anchor
+    // 缺锚 → terminal failed（reason=missing_anchor），与 invalid_gear 同级处理形态。
+    // 豁免：系统例行 task_type / 特殊 action / 存量任务（刀2上线前创建）。
+    const anchorResult = checkAnchor(candidate);
+    if (anchorResult.blocked) {
+      tickLog(`[dispatch] task ${candidate.id} missing_anchor → terminal failed`);
+      try {
+        await pool.query(
+          `UPDATE tasks SET status='failed', completed_at=NOW(),
+            error_message=$2,
+            payload = COALESCE(payload, '{}'::jsonb) || jsonb_build_object('failure_class', 'missing_anchor')
+           WHERE id=$1::uuid`,
+          [candidate.id, anchorResult.detail]
+        );
+      } catch (anchorMarkErr) {
+        console.error(`[dispatch] anchor mark failed (non-fatal): ${anchorMarkErr.message}`);
+      }
+      await recordDispatchResult(pool, false, 'missing_anchor');
+      return { dispatched: false, reason: 'missing_anchor', task_id: candidate.id, actions };
     }
 
     // 3d. Codex Pool D: check concurrent limit for Codex-native task types.
