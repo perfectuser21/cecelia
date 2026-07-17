@@ -122,6 +122,22 @@ grep -n "jest.fn\|jest.spyOn\|mock" /workspace/packages/brain/tests/dispatch-wor
 
 ---
 
+### [BEHAVIOR-7] dispatch-worker.mjs 代码不改动（不变式验证）
+
+**断言**：本 sprint 完成后，`scripts/dispatch-worker.mjs` 相对于 main 分支无任何 diff——该文件的现有链路（buildCommand/dispatchWithRotation/queryUsage/pickAccounts）保持原样，改动仅在 harness-skill-relay.js 和新增的测试文件。
+
+**验收命令（manual:bash）**：
+
+```bash
+git diff main..HEAD -- scripts/dispatch-worker.mjs | wc -l
+# 期望输出：0（无任何改动）
+# 实际检查：
+LINES=$(git diff main..HEAD -- scripts/dispatch-worker.mjs | wc -l)
+[ "$LINES" -eq 0 ] && echo "PASS: dispatch-worker.mjs 无改动" || echo "FAIL: dispatch-worker.mjs 被修改了 $LINES 行"
+```
+
+---
+
 ## 回归门禁
 
 所有已有测试不退：

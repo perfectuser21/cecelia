@@ -11,13 +11,20 @@
 
 ## 改动范围
 
-**唯一改动文件**：`packages/brain/src/harness-skill-relay.js`
+**修改文件**：`packages/brain/src/harness-skill-relay.js`
 
 - 在 `spawnSkillRelaySession` 函数中新增 `worker-pool` executor 分支
 - 在 B2+B3 守门之前（headed 分支之后）插入 `isWorkerPool` 判断
 - `worker-pool` 分支不走 docker spawn，改为调用 `dispatch-worker.mjs`（通过注入的 `dispatchWorkerFn` 或真实 `node scripts/dispatch-worker.mjs` 子进程）
 - `initiative_runs` 落行 `orchestrator_host='skill-relay-worker-pool'`，`phase='A_planning'`，`deadline=6h`
 - `worker-pool` 路径不计入 `_activeCodexRelays`（独立链路，独立额度管理）
+
+**新增文件**：`packages/brain/tests/dispatch-worker-relay.test.js`
+
+- T1：worker-pool 路由到 dispatchWorkerFn（不调用 spawnFn）
+- T2：核心任务护栏——base_repo=cecelia + packages/brain/src → terminal_failed
+- T3：白名单外 executor 值拒绝（不静默降级）
+- TDD commit 顺序：先提交 failing 测试（测试已写、实现未改），再提交接线实现（测试转 passing）
 
 **禁止改动文件**：`scripts/dispatch-worker.mjs`（2026-07-16 已实测链路，函数签名/内部逻辑冻结）
 
@@ -36,6 +43,9 @@
 5. spawn 失败（`ok: false`）→ task 回滚 queued，不落 `initiative_runs`
 6. spawn 成功 → 落 `initiative_runs` 行：`orchestrator_host='skill-relay-worker-pool'`，`phase='A_planning'`，`deadline=NOW()+6h`
 7. 不计入 `_activeCodexRelays`
+
+**容器路径说明**：worker-pool 路径调用 dispatch-worker.mjs 时，使用绝对路径构造：
+`path.resolve(__dirname, '../../../scripts/dispatch-worker.mjs')`（或等价的从 harness-skill-relay.js 所在目录出发的相对 resolve），避免容器内 cwd 歧义；宿主直跑时 cwd 已经是仓库根，两种路径均可达。
 
 ### FR-2: 调用命令格式
 
