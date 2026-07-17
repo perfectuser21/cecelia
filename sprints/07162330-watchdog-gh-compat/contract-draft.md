@@ -107,9 +107,9 @@ echo "=== 所有 E2E 验收通过 ==="
 
 | 功能 | Test File | BEHAVIOR 覆盖 | 预期红色证据 |
 |------|-----------|---------------|------------|
-| B1 老版gh fallback | `../../tests/regression/watchdog-gh-compat/harness-relay-watchdog-ghcompat.test.js` | [B1-fallback-ci-red] unknown-flag → pr view statusCheckRollup → CI红 → resumed=1 | 修复前 resumed=0（保守跳过），修复后 resumed=1 [FAILING 标注验证] |
-| B2 zenithjoy-skills映射 | `../../tests/regression/watchdog-gh-compat/harness-relay-watchdog-ghcompat.test.js` | [B2-exact] _parseBaseRepo zenithjoy-skills → perfectuser21/zenithjoy-skills | 修复前返回 null/wrong，修复后精确匹配 [FAILING 标注验证] |
-| B3 空statusCheckRollup | `../../tests/regression/watchdog-gh-compat/harness-relay-watchdog-ghcompat.test.js` | [B3-empty-statusCheckRollup] statusCheckRollup=[] → pending → resumed=0 | N/A（保守策略，不触发重点火） |
+| B1 老版gh fallback | `../../tests/regression/watchdog-gh-compat/harness-relay-watchdog-ghcompat.test.js` | [B1-fallback-ci-red] 老版gh报错 → fallback pr view statusCheckRollup → CI红 → resumed=1 [FAILING] | 修复前 resumed=0（保守跳过），修复后 resumed=1 [FAILING 标注验证] |
+| B2 zenithjoy-skills映射 | `../../tests/regression/watchdog-gh-compat/harness-relay-watchdog-ghcompat.test.js` | [B2-exact] _parseBaseRepo zenithjoy-skills 路径返回 perfectuser21/zenithjoy-skills [FAILING] | 修复前返回 null/wrong，修复后精确匹配 [FAILING 标注验证] |
+| B3 空statusCheckRollup | `../../tests/regression/watchdog-gh-compat/harness-relay-watchdog-ghcompat.test.js` | [B3-empty-statusCheckRollup] 空数组 statusCheckRollup → pending → resumed=0 | N/A（保守策略，不触发重点火） |
 
 ## 未覆盖真实链路清单
 
