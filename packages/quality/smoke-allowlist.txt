@@ -125,3 +125,5 @@ harness-gear-smoke.sh
 canary-drill-repair-smoke.sh
 release-gate-smoke.sh
 migration-346-idempotent-smoke.sh
+promise-map-step-impact-smoke.sh
+cascade-list-smoke.sh
