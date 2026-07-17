@@ -6,14 +6,21 @@ const router = Router();
 const VALID_JOURNEY_TYPES = ['user_facing', 'autonomous', 'dev_pipeline', 'agent_remote'];
 const VALID_THICKNESS     = ['thin', 'medium', 'thick', 'mature'];
 const VALID_PRIORITY      = ['P0', 'P1', 'P2', 'P3'];
+const VALID_HOME          = ['biz', 'pre', 'xcut', 'factory'];
+const VALID_SOFTNESS      = ['hard', 'soft'];
+const VALID_CELL_STATUS   = ['gray', 'red', 'pending', 'green'];
 
 // POST /api/brain/journeys
 router.post('/journeys', async (req, res) => {
   try {
-    const { name, journey_type, description, maturity, status, e2e_test_path, area, steps } = req.body;
+    const { name, journey_type, description, maturity, status, e2e_test_path, area, steps,
+            home, trigger, endpoint } = req.body;
     if (!name) return res.status(400).json({ error: 'name is required' });
     if (!journey_type || !VALID_JOURNEY_TYPES.includes(journey_type)) {
       return res.status(400).json({ error: `journey_type must be one of: ${VALID_JOURNEY_TYPES.join(',')}` });
+    }
+    if (home && !VALID_HOME.includes(home)) {
+      return res.status(400).json({ error: `home must be one of: ${VALID_HOME.join(',')}` });
     }
 
     // area name → area_id lookup
@@ -25,8 +32,9 @@ router.post('/journeys', async (req, res) => {
 
     const { rows } = await pool.query(
       `INSERT INTO journeys
-         (name, journey_type, description, maturity, status, e2e_test_path, area_id, notion_synced_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,NULL)
+         (name, journey_type, description, maturity, status, e2e_test_path, area_id,
+          home, trigger, endpoint, notion_synced_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,NULL)
        RETURNING *`,
       [
         name,
@@ -36,6 +44,9 @@ router.post('/journeys', async (req, res) => {
         status || 'active',
         e2e_test_path || null,
         areaId,
+        home || null,
+        trigger || null,
+        endpoint || null,
       ]
     );
     const journey = rows[0];
@@ -130,10 +141,14 @@ router.get('/journey_features', async (req, res) => {
 // POST /api/brain/journey_features
 router.post('/journey_features', async (req, res) => {
   try {
-    const { name, journey_id, thickness, status, area, unit_test_path, version, kind, workflow_ref, guard_ref } = req.body;
+    const { name, journey_id, thickness, status, area, unit_test_path, version, kind,
+            workflow_ref, guard_ref, softness } = req.body;
     if (!name) return res.status(400).json({ error: 'name is required' });
     if (thickness && !VALID_THICKNESS.includes(thickness)) {
       return res.status(400).json({ error: `thickness must be one of: ${VALID_THICKNESS.join(',')}` });
+    }
+    if (softness && !VALID_SOFTNESS.includes(softness)) {
+      return res.status(400).json({ error: `softness must be one of: ${VALID_SOFTNESS.join(',')}` });
     }
 
     // journey_id lookup（resolves UUID or notion_id）
@@ -154,8 +169,9 @@ router.post('/journey_features', async (req, res) => {
 
     const { rows } = await pool.query(
       `INSERT INTO journey_features
-         (name, journey_id, thickness, status, area_id, unit_test_path, version, kind, workflow_ref, guard_ref, notion_synced_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,NULL)
+         (name, journey_id, thickness, status, area_id, unit_test_path, version, kind,
+          workflow_ref, guard_ref, softness, notion_synced_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,NULL)
        RETURNING *`,
       [
         name,
@@ -168,6 +184,7 @@ router.post('/journey_features', async (req, res) => {
         kind || 'feature',
         workflow_ref || null,
         guard_ref || null,
+        softness || null,
       ]
     );
     res.status(201).json(rows[0]);
@@ -180,9 +197,12 @@ router.post('/journey_features', async (req, res) => {
 // PATCH /api/brain/journey_features/:id
 router.patch('/journey_features/:id', async (req, res) => {
   try {
-    const { thickness, status, unit_test_path, version, guard_ref } = req.body;
+    const { thickness, status, unit_test_path, version, guard_ref, softness } = req.body;
     if (thickness && !VALID_THICKNESS.includes(thickness)) {
       return res.status(400).json({ error: `thickness must be one of: ${VALID_THICKNESS.join(',')}` });
+    }
+    if (softness && !VALID_SOFTNESS.includes(softness)) {
+      return res.status(400).json({ error: `softness must be one of: ${VALID_SOFTNESS.join(',')}` });
     }
 
     const sets = [];
@@ -193,6 +213,7 @@ router.patch('/journey_features/:id', async (req, res) => {
     if (unit_test_path)                 { sets.push(`unit_test_path=$${idx++}`);  vals.push(unit_test_path); }
     if (version)                        { sets.push(`version=$${idx++}`);         vals.push(version); }
     if (guard_ref !== undefined)        { sets.push(`guard_ref=$${idx++}`);       vals.push(guard_ref ?? null); }
+    if (softness !== undefined)         { sets.push(`softness=$${idx++}`);        vals.push(softness ?? null); }
     if (!sets.length)                   return res.status(400).json({ error: 'no fields to update' });
 
     // thickness 变更 → 需重新推 Notion
@@ -300,17 +321,21 @@ router.get('/journey_steps', async (req, res) => {
 // POST /api/brain/journey_steps
 router.post('/journey_steps', async (req, res) => {
   try {
-    const { journey_id, name, step_number, description, status } = req.body;
+    const { journey_id, name, step_number, description, status, promise, backbone_version } = req.body;
     if (!journey_id || !name || step_number === undefined) {
       return res.status(400).json({ error: 'journey_id, name, step_number are required' });
     }
     const { rows } = await pool.query(
-      `INSERT INTO journey_steps (journey_id, name, step_number, description, status, notion_synced_at)
-       VALUES ($1,$2,$3,$4,$5,NULL)
+      `INSERT INTO journey_steps
+         (journey_id, name, step_number, description, status, promise, backbone_version, notion_synced_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,NULL)
        ON CONFLICT (journey_id, step_number) DO UPDATE SET
-         name=EXCLUDED.name, description=EXCLUDED.description, updated_at=NOW()
+         name=EXCLUDED.name, description=EXCLUDED.description,
+         promise=EXCLUDED.promise, backbone_version=EXCLUDED.backbone_version,
+         updated_at=NOW()
        RETURNING *`,
-      [journey_id, name, step_number, description || null, status || 'planned']
+      [journey_id, name, step_number, description || null, status || 'planned',
+       promise || null, backbone_version || '1.0']
     );
     res.status(200).json(rows[0]);
   } catch (err) {
@@ -342,21 +367,100 @@ router.get('/journey_step_links', async (req, res) => {
 // POST /api/brain/journey_step_links
 router.post('/journey_step_links', async (req, res) => {
   try {
-    const { journey_id, step_id, step_order, status } = req.body;
+    const { journey_id, step_id, step_order, status,
+            feature_id, cell_kind, cell_status, assertion_ref, na_reason } = req.body;
     if (!journey_id || !step_id || step_order === undefined) {
       return res.status(400).json({ error: 'journey_id, step_id, step_order are required' });
     }
+    if (cell_status && !VALID_CELL_STATUS.includes(cell_status)) {
+      return res.status(400).json({ error: `cell_status must be one of: ${VALID_CELL_STATUS.join(',')}` });
+    }
     const { rows } = await pool.query(
-      `INSERT INTO journey_step_links (journey_id, step_id, step_order, status, notion_synced_at)
-       VALUES ($1,$2,$3,$4,NULL)
+      `INSERT INTO journey_step_links
+         (journey_id, step_id, step_order, status,
+          feature_id, cell_kind, cell_status, assertion_ref, na_reason, notion_synced_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,NULL)
        ON CONFLICT (journey_id, step_id) DO UPDATE SET
-         step_order=EXCLUDED.step_order, status=EXCLUDED.status
+         step_order=EXCLUDED.step_order, status=EXCLUDED.status,
+         feature_id=EXCLUDED.feature_id, cell_kind=EXCLUDED.cell_kind,
+         cell_status=EXCLUDED.cell_status, assertion_ref=EXCLUDED.assertion_ref,
+         na_reason=EXCLUDED.na_reason
        RETURNING *`,
-      [journey_id, step_id, step_order, status || 'planned']
+      [journey_id, step_id, step_order, status || 'planned',
+       feature_id || null, cell_kind || null, cell_status || 'gray',
+       assertion_ref || null, na_reason || null]
     );
     res.status(201).json(rows[0]);
   } catch (err) {
     console.error('[journeys] POST /journey_step_links error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// PATCH /api/brain/journey_step_links/:id — 格子状态回写（evaluator S3联动 + S4保鲜用）
+router.patch('/journey_step_links/:id', async (req, res) => {
+  try {
+    const { cell_status, assertion_ref, na_reason, cell_kind } = req.body;
+    if (cell_status && !VALID_CELL_STATUS.includes(cell_status)) {
+      return res.status(400).json({ error: `cell_status must be one of: ${VALID_CELL_STATUS.join(',')}` });
+    }
+    const sets = [];
+    const vals = [];
+    let idx = 1;
+    if (cell_status)              { sets.push(`cell_status=$${idx++}`);    vals.push(cell_status); }
+    if (assertion_ref !== undefined) { sets.push(`assertion_ref=$${idx++}`); vals.push(assertion_ref ?? null); }
+    if (na_reason !== undefined)  { sets.push(`na_reason=$${idx++}`);      vals.push(na_reason ?? null); }
+    if (cell_kind !== undefined)  { sets.push(`cell_kind=$${idx++}`);      vals.push(cell_kind ?? null); }
+    if (!sets.length) return res.status(400).json({ error: 'no fields to update' });
+    vals.push(req.params.id);
+    const { rows } = await pool.query(
+      `UPDATE journey_step_links SET ${sets.join(',')} WHERE id=$${idx} RETURNING *`,
+      vals
+    );
+    if (!rows.length) return res.status(404).json({ error: 'not found' });
+    res.json(rows[0]);
+  } catch (err) {
+    console.error('[journeys] PATCH /journey_step_links/:id error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/brain/features/:id/blast-radius
+// 返回"该件塌了哪些承诺红"：通过 journey_step_links 反查所有引用本件的步骤+承诺
+router.get('/features/:id/blast-radius', async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      `SELECT
+         jsl.id          AS link_id,
+         jsl.cell_kind,
+         jsl.cell_status,
+         jsl.assertion_ref,
+         js.id           AS step_id,
+         js.name         AS step_name,
+         js.promise,
+         js.step_number,
+         j.id            AS journey_id,
+         j.name          AS journey_name,
+         j.home
+       FROM journey_step_links jsl
+       JOIN journey_steps js ON js.id = jsl.step_id
+       JOIN journeys j       ON j.id  = js.journey_id
+       WHERE jsl.feature_id = $1
+       ORDER BY j.name, js.step_number`,
+      [req.params.id]
+    );
+    const feature = await pool.query(
+      'SELECT id, name, kind, softness, thickness FROM journey_features WHERE id=$1',
+      [req.params.id]
+    );
+    if (!feature.rows.length) return res.status(404).json({ error: 'feature not found' });
+    res.json({
+      feature: feature.rows[0],
+      blast_radius: rows,
+      affected_journeys: [...new Set(rows.map(r => r.journey_name))],
+    });
+  } catch (err) {
+    console.error('[journeys] GET /features/:id/blast-radius error:', err.message);
     res.status(500).json({ error: err.message });
   }
 });
