@@ -24,11 +24,9 @@ grep -q "runnable_count" packages/brain/src/routes/journeys.js \
   || { echo "FAIL: journeys.js 缺少 runnable_count"; exit 1; }
 echo "OK: runnable_count 已计算"
 
-# 4. harness-evaluator SKILL.md 含 S3 步骤
-grep -q "Step B-1.S3" packages/workflows/skills/harness-evaluator/SKILL.md \
-  || { echo "FAIL: harness-evaluator SKILL.md 缺少 Step B-1.S3"; exit 1; }
-grep -q "s3_cascade" packages/workflows/skills/harness-evaluator/SKILL.md \
-  || { echo "FAIL: harness-evaluator SKILL.md 缺少 s3_cascade notes"; exit 1; }
+# 4. harness-evaluator SKILL.md 含 S3 联动清单步骤（B-1.4 扩展形态）
+grep -q "S3 联动清单\|cascade_assertions\|blast-radius" packages/workflows/skills/harness-evaluator/SKILL.md \
+  || { echo "FAIL: harness-evaluator SKILL.md 未含 S3 联动清单相关内容"; exit 1; }
 echo "OK: harness-evaluator SKILL.md 含 S3 联动清单步骤"
 
 # 5. TDD 测试文件存在
