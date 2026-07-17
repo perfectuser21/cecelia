@@ -207,9 +207,45 @@ fi
 
 ---
 
+## Invariant 约束
+
+来源三源（父路 PRD + decisions + golden-path 铁律）：
+
+1. **SHA 唯一判变真相**：`origin/main HEAD SHA vs 生产 git_sha`，任何文件列表/路径过滤禁作跳过依据（父路 PRD §4）
+2. **文件列表范围加法**：`NEED_DASHBOARD / NEED_WORKFLOW_SKILLS` 可继续用文件列表，`NEED_BRAIN` 判变禁用
+3. **禁 mock 退出码**：测试必须驱动真实 bash 脚本（spawnSync），git/curl 行为必须真实复现
+4. **蓝绿机制保留**：现有 pre-swap / post-deploy 流程不动
+
+---
+
+## 累积 FR
+
+本次 sprint 加载的 Functional Requirements（来自 PrepPRD + 父路 PRD）：
+
+- FR-01：`CHANGED_FILES` 为空且 SHA 不等 → `NEED_BRAIN=true`（squash merge 不 bump version 场景）
+- FR-02：SHA 相等 → Brain 不重部署（防幂等误触）
+- FR-03：`--changed` 含 brain src 路径 → 仍触发（文件列表范围加法路径不受影响）
+- FR-04：测试必须含 Case 1 先 failing 再 passing 的 TDD 顺序
+- FR-05：脚本输出含"SHA 对账"字样（供 webhook 日志断言）
+
+---
+
+## NFR
+
+- **性能**：SHA 对账 curl 超时 ≤5s（`--max-time 5`），与 G1 版本号 curl 一致
+- **幂等性**：SHA 相等时脚本退出 0 不重部署（防 Brain 重启风暴）
+- **可观测**：脚本必须打印两侧 SHA 值（origin= 和 生产=），便于运维 grep 日志
+
+---
+
 ## 铁律（继承自父路 PRD）
 
 - SHA 对账是唯一判变真相；禁再引入任何"文件列表/路径过滤"类判据作为跳过依据
 - 文件列表仅用于 Dashboard/Skills 的范围加法
 - 测试禁 mock 真实外部命令行为（git/curl 退出码语义必须真实复现）
 - 蓝绿/pre-swap/post-deploy 现有机制保留不动
+
+---
+
+journey_type: hotfix
+target_environment: local_api
