@@ -9,35 +9,35 @@ journey_type: autonomous
 
 ## ARTIFACT 条目
 
-- [ ] [ARTIFACT] `sprints/07172022-relay-53710094/e2e-verify.sh` 存在且 bash 语法正确，脚本内锚定当前 task id 与 `executor=codex`
-  Test: node -e "const fs=require('fs');const p='sprints/07172022-relay-53710094/e2e-verify.sh';const c=fs.readFileSync(p,'utf8');if(!c.includes('53710094-898c-452c-8cc3-a56149e8b0ac')||!c.includes('executor')||!c.includes('codex'))process.exit(1)"
+- [ ] [ARTIFACT] `scripts/smoke/e2e/relay-53710094.sh` 存在且 bash 语法正确，脚本内锚定当前 task id 与 `executor=codex`
+  Test: node -e "const fs=require('fs');const p='scripts/smoke/e2e/relay-53710094.sh';const c=fs.readFileSync(p,'utf8');if(!c.includes('53710094-898c-452c-8cc3-a56149e8b0ac')||!c.includes('executor')||!c.includes('codex'))process.exit(1)"
 
 - [ ] [ARTIFACT] red test 文件存在，覆盖名与 DoD BEHAVIOR 名字保持字面子串关系
-  Test: node -e "const fs=require('fs');const c=fs.readFileSync('sprints/07172022-relay-53710094/tests/contract-red.test.sh','utf8');for(const s of ['e2e-verify.sh 校验 task API payload shape','e2e-verify.sh 校验 DB tasks 认领状态','e2e-verify.sh 对 initiative_runs 采用可选 run 或 foreground path','e2e-verify.sh 拒绝 failed 状态并不记录敏感字段']){if(!c.includes(s)){console.error('missing '+s);process.exit(1)}}"
+  Test: node -e "const fs=require('fs');const c=fs.readFileSync('tests/regression/relay-53710094/contract-red.test.sh','utf8');for(const s of ['e2e-verify.sh 校验 task API payload shape','e2e-verify.sh 校验 DB tasks 认领状态','e2e-verify.sh 对 initiative_runs 采用可选 run 或 foreground path','e2e-verify.sh 拒绝 failed 状态并不记录敏感字段']){if(!c.includes(s)){console.error('missing '+s);process.exit(1)}}"
 
 ## BEHAVIOR 条目（内嵌可执行 manual: 命令）
 
 - [ ] [BEHAVIOR] e2e-verify.sh 校验 task API payload shape
-  Test: manual:bash -c 'set -euo pipefail; SPRINT_DIR="${SPRINT_DIR:-sprints/07172022-relay-53710094}"; TASK_ID="${TASK_ID:-53710094-898c-452c-8cc3-a56149e8b0ac}"; BRAIN_URL="${BRAIN_URL:-http://localhost:5221}"; bash "$SPRINT_DIR/e2e-verify.sh" --assert task-payload-shape'
+  Test: manual:bash -c 'set -euo pipefail; SPRINT_DIR="${SPRINT_DIR:-sprints/07172022-relay-53710094}"; VERIFY="${VERIFY:-scripts/smoke/e2e/relay-53710094.sh}"; TASK_ID="${TASK_ID:-53710094-898c-452c-8cc3-a56149e8b0ac}"; BRAIN_URL="${BRAIN_URL:-http://localhost:5221}"; bash "$VERIFY" --assert task-payload-shape'
   期望: exit 0，且真实 curl Brain task API 后校验 mode/executor/orchestrator/journey_id
 
 - [ ] [BEHAVIOR] e2e-verify.sh 校验 DB tasks 认领状态
-  Test: manual:bash -c 'set -euo pipefail; SPRINT_DIR="${SPRINT_DIR:-sprints/07172022-relay-53710094}"; TASK_ID="${TASK_ID:-53710094-898c-452c-8cc3-a56149e8b0ac}"; DB="${DATABASE_URL:-postgresql://cecelia:cecelia@localhost:5432/cecelia}"; bash "$SPRINT_DIR/e2e-verify.sh" --assert db-tasks-claimed'
+  Test: manual:bash -c 'set -euo pipefail; SPRINT_DIR="${SPRINT_DIR:-sprints/07172022-relay-53710094}"; VERIFY="${VERIFY:-scripts/smoke/e2e/relay-53710094.sh}"; TASK_ID="${TASK_ID:-53710094-898c-452c-8cc3-a56149e8b0ac}"; DB="${DATABASE_URL:-postgresql://cecelia:cecelia@localhost:5432/cecelia}"; bash "$VERIFY" --assert db-tasks-claimed'
   期望: exit 0，且真实 psql 定点读取 `tasks.id=TASK_ID`
 
 - [ ] [BEHAVIOR] e2e-verify.sh 对 initiative_runs 采用可选 run 或 foreground path
-  Test: manual:bash -c 'set -euo pipefail; SPRINT_DIR="${SPRINT_DIR:-sprints/07172022-relay-53710094}"; TASK_ID="${TASK_ID:-53710094-898c-452c-8cc3-a56149e8b0ac}"; DB="${DATABASE_URL:-postgresql://cecelia:cecelia@localhost:5432/cecelia}"; bash "$SPRINT_DIR/e2e-verify.sh" --assert run-or-foreground-path'
+  Test: manual:bash -c 'set -euo pipefail; SPRINT_DIR="${SPRINT_DIR:-sprints/07172022-relay-53710094}"; VERIFY="${VERIFY:-scripts/smoke/e2e/relay-53710094.sh}"; TASK_ID="${TASK_ID:-53710094-898c-452c-8cc3-a56149e8b0ac}"; DB="${DATABASE_URL:-postgresql://cecelia:cecelia@localhost:5432/cecelia}"; bash "$VERIFY" --assert run-or-foreground-path'
   期望: exit 0；存在 run 时校验 host/phase，不存在 run 时必须以前台接管证据放行并输出 concern
 
 - [ ] [BEHAVIOR] e2e-verify.sh 拒绝 failed 状态并不记录敏感字段
-  Test: manual:bash -c 'set -euo pipefail; SPRINT_DIR="${SPRINT_DIR:-sprints/07172022-relay-53710094}"; TASK_ID="${TASK_ID:-53710094-898c-452c-8cc3-a56149e8b0ac}"; BRAIN_URL="${BRAIN_URL:-http://localhost:5221}"; DB="${DATABASE_URL:-postgresql://cecelia:cecelia@localhost:5432/cecelia}"; bash "$SPRINT_DIR/e2e-verify.sh" --assert failed-and-secrets-rejected'
+  Test: manual:bash -c 'set -euo pipefail; SPRINT_DIR="${SPRINT_DIR:-sprints/07172022-relay-53710094}"; VERIFY="${VERIFY:-scripts/smoke/e2e/relay-53710094.sh}"; TASK_ID="${TASK_ID:-53710094-898c-452c-8cc3-a56149e8b0ac}"; BRAIN_URL="${BRAIN_URL:-http://localhost:5221}"; DB="${DATABASE_URL:-postgresql://cecelia:cecelia@localhost:5432/cecelia}"; bash "$VERIFY" --assert failed-and-secrets-rejected'
   期望: exit 0；task.status 不得是 failed，payload 不含 token/github_token/anthropic_token/openai_api_key，run 若存在不得 phase=failed
 
 ## Invariant 覆盖登记
 
 - N/A: [Lint异步] 本 sprint 不新增 lint 读源码逻辑。
 - [ ] [BEHAVIOR] INV-表格契约 Test Contract 表格固定 4 列，Test File 使用 backtick，第三列为测试路径可解析
-  Test: manual:bash -c 'set -euo pipefail; node -e "const fs=require(\"fs\");const c=fs.readFileSync(\"sprints/07172022-relay-53710094/contract-draft.md\",\"utf8\");const m=c.match(/## Test Contract[\\s\\S]*$/);if(!m)process.exit(1);const rows=m[0].split(/\\n/).filter(l=>l.startsWith(\"|\"));if(!rows.length)process.exit(1);for(const r of rows){const cells=r.split(\"|\").length-2;if(cells!==4){console.error(\"bad cells\",cells,r);process.exit(1)}}if(!m[0].includes(\"`sprints/07172022-relay-53710094/tests/contract-red.test.sh`\"))process.exit(1);"'
+  Test: manual:bash -c 'set -euo pipefail; node -e "const fs=require(\"fs\");const c=fs.readFileSync(\"sprints/07172022-relay-53710094/contract-draft.md\",\"utf8\");const m=c.match(/## Test Contract[\\s\\S]*$/);if(!m)process.exit(1);const rows=m[0].split(/\\n/).filter(l=>l.startsWith(\"|\"));if(!rows.length)process.exit(1);for(const r of rows){const cells=r.split(\"|\").length-2;if(cells!==4){console.error(\"bad cells\",cells,r);process.exit(1)}}const needle=String.fromCharCode(96)+\"../../tests/regression/relay-53710094/contract-red.test.sh\"+String.fromCharCode(96);if(!m[0].includes(needle))process.exit(1);"'
 - N/A: [Red提交] 当前 proposer commit 精确 add 合同路径，不执行 generator red commit。
 - [ ] [BEHAVIOR] INV-回归验证 使用真实 Brain API 与 DB 接缝，不以 mock 覆盖替代
   Test: manual:bash -c 'set -euo pipefail; grep -q "Brain task API" sprints/07172022-relay-53710094/contract-draft.md; grep -q "tasks" sprints/07172022-relay-53710094/contract-draft.md; grep -q "Headed relay" sprints/07172022-relay-53710094/contract-draft.md; grep -q "initiative_runs" sprints/07172022-relay-53710094/contract-draft.md'

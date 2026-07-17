@@ -60,7 +60,7 @@
 
 - [api_registry] `/api/brain/tasks` 已登记为 Brain 任务 CRUD；本 sprint 必须调用现有 API，不新增端点。
 - [db_schema] registry 未列出 `tasks`/`initiative_runs` 细节，但本机 `information_schema` 已确认 `tasks.id/status/payload/task_type/claimed_by/claimed_at/executor_kind` 与 `initiative_runs.initiative_id/orchestrator_host/phase/started_at/completed_at/failure_reason` 存在。
-- [test_registry] 现有测试风格包含 `vitest describe/it` 与 sprint 级 shell contract test；本 sprint 采用 `tests/contract-red.test.sh` 做 red 证据。
+- [test_registry] 现有测试风格包含 `vitest describe/it` 与永久池 shell contract test；本 sprint 采用 `tests/regression/relay-53710094/contract-red.test.sh` 做 red 证据。
 - [context-manifest] `GET /api/brain/line/bb8cc561-b3ee-4fec-b74d-2255694bd963/context-manifest` 当前返回 HTML 404；无累积 FR 可合并，登记为 concern。
 - [同类归档] `sprints/07151245-relay-049ebf93` 曾验证 claude headed relay；本任务只借鉴结构，不复用 task id，不要求 `initiative_runs` 必存在。
 - [当前实测] Brain API 返回 task `53710094-898c-452c-8cc3-a56149e8b0ac`，`status=in_progress`，payload 三元组为 `mode=headed/executor=codex/orchestrator=skill-relay`，`claimed_by=session:engine-patch`，`executor_kind=headed-session`。
@@ -70,7 +70,7 @@
 
 | 要素 | 说明 | 本次答案（必填，可 N/A） |
 |------|------|--------------------------|
-| **FR（做什么）** | 功能需求：系统对外承诺做什么 | 为当前 task `53710094-898c-452c-8cc3-a56149e8b0ac` 固化 codex headed skill-relay smoke 验收：实现 `sprints/07172022-relay-53710094/e2e-verify.sh`，验证 Brain task API、DB `tasks` 认领状态、可选 `initiative_runs` 或 foreground takeover 证据。 |
+| **FR（做什么）** | 功能需求：系统对外承诺做什么 | 为当前 task `53710094-898c-452c-8cc3-a56149e8b0ac` 固化 codex headed skill-relay smoke 验收：实现 `scripts/smoke/e2e/relay-53710094.sh`，验证 Brain task API、DB `tasks` 认领状态、可选 `initiative_runs` 或 foreground takeover 证据。 |
 | **NFR（做得多好）** | 非功能需求：性能/可靠性/并发阈值等 | 本地只读验证，30 秒内完成；不重复 spawn；不杀已有 headed session；失败必须输出明确 FAIL 原因；不输出 secret。 |
 | **Invariant（永不违反）** | 任何情况下不得打破的不变量 | 不修改业务代码、dashboard/UI、migration、shared CI；不扩大到 claude/headless；不把历史 run 冒充当前 task；payload 敏感字段不得进入报告。 |
 | **判定点（怎么知道）** | 对模糊现实的判断假设 | 见下方登记表。 |
@@ -136,7 +136,7 @@ Concern: 当前 foreground takeover path 可能没有 `initiative_runs` 行；�
 
 ## Golden Path
 
-Brain 当前 task `53710094-898c-452c-8cc3-a56149e8b0ac` → generator 实现 `e2e-verify.sh` → 脚本定点读取 Brain task API → 脚本定点读取 DB `tasks` → 若 `initiative_runs` 存在则校验 codex headed host/phase，若不存在则校验 foreground takeover 证据 → exit 0/1 成为 headed relay smoke oracle。
+Brain 当前 task `53710094-898c-452c-8cc3-a56149e8b0ac` → generator 实现 `scripts/smoke/e2e/relay-53710094.sh` → 脚本定点读取 Brain task API → 脚本定点读取 DB `tasks` → 若 `initiative_runs` 存在则校验 codex headed host/phase，若不存在则校验 foreground takeover 证据 → exit 0/1 成为 headed relay smoke oracle。
 
 ### Step 1: 当前 task payload shape 被 Brain API 真实返回
 
@@ -209,11 +209,11 @@ case "$PHASE" in A_planning|planning|gan|generate|evaluate|done|completed|runnin
 
 **硬阈值**: run 存在时 host/phase 合法且非 failed；run 缺失时不硬失败，但必须以前台接管 oracle 通过作为替代证据。
 
-### Step 4: `e2e-verify.sh` 成为单一可复跑 wrapper
+### Step 4: `scripts/smoke/e2e/relay-53710094.sh` 成为单一可复跑 wrapper
 
 **来源**: `[AI_ADDED]` — 防止 reviewer/evaluator 分散复制命令导致 scope 漂移；把同一 oracle 固化为 generator 可实现、evaluator 可直接执行的脚本。
 
-**可观测行为**: `bash sprints/07172022-relay-53710094/e2e-verify.sh` exit 0；`--assert` 子断言可分别覆盖 payload、tasks、run/foreground、failed/secrets。
+**可观测行为**: `bash scripts/smoke/e2e/relay-53710094.sh` exit 0；`--assert` 子断言可分别覆盖 payload、tasks、run/foreground、failed/secrets。
 
 **验证命令**:
 ```bash
@@ -221,10 +221,11 @@ SPRINT_DIR="${SPRINT_DIR:-sprints/07172022-relay-53710094}"
 TASK_ID="${TASK_ID:-53710094-898c-452c-8cc3-a56149e8b0ac}"
 BRAIN_URL="${BRAIN_URL:-http://localhost:5221}"
 DB="${DATABASE_URL:-postgresql://cecelia:cecelia@localhost:5432/cecelia}"
-bash "$SPRINT_DIR/e2e-verify.sh" --assert task-payload-shape
-bash "$SPRINT_DIR/e2e-verify.sh" --assert db-tasks-claimed
-bash "$SPRINT_DIR/e2e-verify.sh" --assert run-or-foreground-path
-bash "$SPRINT_DIR/e2e-verify.sh" --assert failed-and-secrets-rejected
+VERIFY="${VERIFY:-scripts/smoke/e2e/relay-53710094.sh}"
+bash "$VERIFY" --assert task-payload-shape
+bash "$VERIFY" --assert db-tasks-claimed
+bash "$VERIFY" --assert run-or-foreground-path
+bash "$VERIFY" --assert failed-and-secrets-rejected
 ```
 
 **硬阈值**: 四个子断言全部 exit 0；任一 FAIL 原因必须打印到 stderr/stdout；不得使用 mock/force/stub。
@@ -242,7 +243,7 @@ SPRINT_DIR="${SPRINT_DIR:-sprints/07172022-relay-53710094}"
 TASK_ID="${TASK_ID:-53710094-898c-452c-8cc3-a56149e8b0ac}"
 BRAIN_URL="${BRAIN_URL:-http://localhost:5221}"
 DB="${DATABASE_URL:-postgresql://cecelia:cecelia@localhost:5432/cecelia}"
-VERIFY="$SPRINT_DIR/e2e-verify.sh"
+VERIFY="${VERIFY:-scripts/smoke/e2e/relay-53710094.sh}"
 
 [ -f "$VERIFY" ] || { echo "FAIL: missing $VERIFY"; exit 1; }
 bash -n "$VERIFY"
@@ -292,7 +293,7 @@ echo "PASS: codex headed relay smoke contract validated"
 
 | 功能 | Test File | BEHAVIOR 覆盖 | 预期红证据 |
 |---|---|---|---|
-| task API payload | `sprints/07172022-relay-53710094/tests/contract-red.test.sh` | e2e-verify.sh 校验 task API payload shape | `e2e-verify.sh` 尚未实现时 FAIL |
-| DB tasks 认领 | `sprints/07172022-relay-53710094/tests/contract-red.test.sh` | e2e-verify.sh 校验 DB tasks 认领状态 | `e2e-verify.sh` 尚未实现时 FAIL |
-| run 或 foreground path | `sprints/07172022-relay-53710094/tests/contract-red.test.sh` | e2e-verify.sh 对 initiative_runs 采用可选 run 或 foreground path | `e2e-verify.sh` 尚未实现时 FAIL |
-| failed/secrets 拒绝 | `sprints/07172022-relay-53710094/tests/contract-red.test.sh` | e2e-verify.sh 拒绝 failed 状态并不记录敏感字段 | `e2e-verify.sh` 尚未实现时 FAIL |
+| task API payload | `../../tests/regression/relay-53710094/contract-red.test.sh` | e2e-verify.sh 校验 task API payload shape | `e2e-verify.sh` 尚未实现时 FAIL |
+| DB tasks 认领 | `../../tests/regression/relay-53710094/contract-red.test.sh` | e2e-verify.sh 校验 DB tasks 认领状态 | `e2e-verify.sh` 尚未实现时 FAIL |
+| run 或 foreground path | `../../tests/regression/relay-53710094/contract-red.test.sh` | e2e-verify.sh 对 initiative_runs 采用可选 run 或 foreground path | `e2e-verify.sh` 尚未实现时 FAIL |
+| failed/secrets 拒绝 | `../../tests/regression/relay-53710094/contract-red.test.sh` | e2e-verify.sh 拒绝 failed 状态并不记录敏感字段 | `e2e-verify.sh` 尚未实现时 FAIL |

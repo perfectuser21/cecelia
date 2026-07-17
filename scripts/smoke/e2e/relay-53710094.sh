@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-SPRINT_DIR="${SPRINT_DIR:-sprints/07172022-relay-53710094}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT_DIR="$(cd "$SCRIPT_DIR/../../.." && pwd)"
+SPRINT_DIR="${SPRINT_DIR:-$ROOT_DIR/sprints/07172022-relay-53710094}"
 TASK_ID="${TASK_ID:-53710094-898c-452c-8cc3-a56149e8b0ac}"
 BRAIN_URL="${BRAIN_URL:-http://localhost:5221}"
 DB="${DATABASE_URL:-postgresql://cecelia:cecelia@localhost:5432/cecelia}"
