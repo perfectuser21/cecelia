@@ -10,9 +10,11 @@
 
 import { describe, it, expect, vi } from 'vitest';
 import { readFileSync, existsSync } from 'fs';
-import { join } from 'path';
+import { join, dirname } from 'path';
+import { fileURLToPath } from 'url';
 
-const BRAIN_SRC = join(process.cwd(), 'packages/brain/src');
+const __dirname_test = dirname(fileURLToPath(import.meta.url));
+const BRAIN_SRC = join(__dirname_test, '../../../packages/brain/src');
 
 describe('battle-report codex_test_gen 计数注入 [BEHAVIOR]', () => {
   it('battle-report.js 文件含 codex_test_gen 字面量（注入标记）', () => {

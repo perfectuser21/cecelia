@@ -48,11 +48,11 @@ function isForbidden(filename) {
  * "缺测试配套"判据：src/ 目录下不存在同名 .test.js 且 src/__tests__/<name>.test.js 也不存在。
  *
  * @param {Object} [opts]
- * @param {boolean} [opts.dryRun] - 仅扫描，不查 DB
+ * @param {boolean} [opts._dryRun] - 仅扫描，不查 DB（保留参数槽，暂未使用）
  * @param {string} [opts.srcDir] - 可注入扫描目录（测试用）
  * @returns {Promise<string[]>} 需要生成测试的相对文件路径列表
  */
-export async function scanMissingTestFiles({ dryRun = false, srcDir } = {}) {
+export async function scanMissingTestFiles({ _dryRun = false, srcDir } = {}) {
   const brainSrc = srcDir || join(process.cwd(), 'packages/brain/src');
   if (!existsSync(brainSrc)) return [];
 

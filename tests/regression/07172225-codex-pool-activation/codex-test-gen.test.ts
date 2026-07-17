@@ -14,9 +14,11 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { readFileSync, existsSync } from 'fs';
-import { join } from 'path';
+import { join, dirname } from 'path';
+import { fileURLToPath } from 'url';
 
-const BRAIN_SRC = join(process.cwd(), 'packages/brain/src');
+const __dirname_test = dirname(fileURLToPath(import.meta.url));
+const BRAIN_SRC = join(__dirname_test, '../../../packages/brain/src');
 
 // ===== 模块存在性检查 =====
 

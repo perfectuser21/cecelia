@@ -368,8 +368,8 @@ echo "=== E2E 验收通过：codex 池已激活，任务入队，日报可观测
 
 | 功能 | Test File | BEHAVIOR 覆盖 | 预期红证据 |
 |---|---|---|---|
-| scheduler-jobs 含 codex-test-gen 注册 | `tests/codex-test-gen.test.ts` | `scheduler-jobs JOBS 包含 codex-test-gen 条目` | → 1 failure（模块未实现时 import 失败）|
-| codex-test-gen 入队逻辑 | `tests/codex-test-gen.test.ts` | `生成器调用后 tasks 表出现 codex_test_gen 记录` | → 1 failure（无新记录）|
-| 去重判断——7天内同文件跳过 | `tests/codex-test-gen.test.ts` | `同文件 7 天内重复调用返回 skipped:true` | → 1 failure（去重逻辑未实现）|
-| 禁核心文件过滤 | `tests/codex-test-gen.test.ts` | `dispatcher/slot-allocator 文件不出现在待扫描列表` | → 1 failure（过滤未实现）|
-| 日报含 codex 计数 | `tests/battle-report-codex.test.ts` | `battle-report 渲染结果含 codex_test_gen 计数行` | → 1 failure（渲染未注入）|
+| scheduler-jobs 含 codex-test-gen 注册 | `../../tests/regression/07172225-codex-pool-activation/codex-test-gen.test.ts` | `scheduler-jobs JOBS 包含 codex-test-gen 条目` | → 1 failure（模块未实现时 import 失败）|
+| codex-test-gen 入队逻辑 | `../../tests/regression/07172225-codex-pool-activation/codex-test-gen.test.ts` | `codex-test-gen.js 含 codex_test_gen task_type 字面量（入队逻辑）` | → 1 failure（无入队字面量）|
+| 去重判断——7天内同文件跳过 | `../../tests/regression/07172225-codex-pool-activation/codex-test-gen.test.ts` | `同文件 7 天内重复调用返回 skipped:true` | → 1 failure（去重逻辑未实现）|
+| 禁核心文件过滤 | `../../tests/regression/07172225-codex-pool-activation/codex-test-gen.test.ts` | `dispatcher/slot-allocator 文件不出现在待扫描列表` | → 1 failure（过滤未实现）|
+| 日报含 codex 计数 | `../../tests/regression/07172225-codex-pool-activation/battle-report-codex.test.ts` | `battle-report 渲染结果含 codex_test_gen 计数行` | → 1 failure（渲染未注入）|
