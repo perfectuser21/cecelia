@@ -652,7 +652,7 @@ async function harnessSlotCheck({ candidate, _memHealthOverride } = {}) {
       [INFLIGHT_GRACE_MS / 1000, v.relay_containers]
     );
     inflight = r.rows[0]?.n ?? 0;
-  } catch (err) {
+  } catch {
     return { ...base, cap, allow: false, reason: 'inflight_query_error' };
   }
 
