@@ -303,3 +303,18 @@ curl "http://localhost:5221/api/brain/tasks/$TASK_ID" | jq '{status: .status, re
 
 3. **Brain Tailscale IP 从 xian 容器内的可达性**  
    xian relay 容器内的 `brain_url` 设为 `http://100.86.57.69:5221`（Tailscale IP）。容器内 Tailscale 网络是否透传取决于 docker 网络模式（host vs bridge）。`host` 模式可透传；`bridge` 模式需宿主上 Tailscale 守护进程转发。需实机验证：在 xian 宿主上 `docker run --rm cecelia-claude curl http://100.86.57.69:5221/api/brain/ping` 是否成功。
+
+---
+
+## Test Contract
+
+| Workstream | 测试文件 | BEHAVIOR 覆盖 | 备注 |
+|------------|---------|--------------|------|
+| BEHAVIOR-1 | `../../packages/brain/src/__tests__/task-router-xian-harness.test.js` | task.location=xian + task_type=harness_initiative → returns xian | getTaskLocation 动态覆盖 |
+| BEHAVIOR-2 | `../../packages/brain/src/__tests__/harness-skill-relay-xian.test.js` | BEHAVIOR-2: task.location=xian 但 allow_xian 缺失 → loud 失败，不调 bridgeFn | allow_xian 白名单门禁 |
+| BEHAVIOR-3 | `../../packages/brain/src/__tests__/harness-skill-relay-xian.test.js` | BEHAVIOR-3: task.location=xian + allow_xian=true → 调 spawnCodexBridgeDetached 不调 spawnDockerDetached | xian 分支调 bridge |
+| BEHAVIOR-4 | `../../packages/brain/src/__tests__/harness-skill-relay-xian.test.js` | BEHAVIOR-4: bridge spawn 成功 → DB INSERT 含 skill-relay-xian | initiative_runs 落行 |
+| BEHAVIOR-5 | `../../packages/brain/src/__tests__/codex-bridge-health.test.js` | execSync("docker info") 成功 → docker_available=true | docker_available 字段 |
+| BEHAVIOR-6 | `../../packages/brain/src/__tests__/harness-skill-relay-xian.test.js` | BEHAVIOR-6: bridge 抛异常 → task 回滚为 queued，返回 {ok:false} | bridge 失败回滚 |
+| BEHAVIOR-7 | `../../packages/brain/src/__tests__/executor-xian-env-passthrough.test.js` | 源码完全不引用 HARNESS_XIAN_ENABLED / HARNESS_XIAN_BRIDGE_URL 字面量 | HARNESS_XIAN_ENABLED 禁用 |
+| BEHAVIOR-8 | `../../packages/brain/src/__tests__/dispatcher-xian-harness-bypass.test.js` | task.location=xian + task_type=harness_initiative → xianBypass=true（池满时仍 dispatch） | xianBypass 判断 |
