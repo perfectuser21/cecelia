@@ -92,15 +92,14 @@ VALUES
 
 ## Test Contract
 
-| BEHAVIOR | Test File | it() 覆盖 |
-|----------|-----------|-----------|
-| [BEHAVIOR-1] worker-pool 路由到 dispatchWorkerFn | packages/brain/tests/dispatch-worker-relay.test.js | worker-pool routes to dispatchWorkerFn, not spawnFn |
-| [BEHAVIOR-2] 核心任务护栏 cecelia + packages/brain/src → terminal_failed | packages/brain/tests/dispatch-worker-relay.test.js | core task guard rejects worker-pool with feedback_no_core_tasks_to_codex |
-| [BEHAVIOR-3] worker-pool 不计入 _activeCodexRelays | packages/brain/tests/dispatch-worker-relay.test.js | worker-pool does not increment _activeCodexRelays |
-| [BEHAVIOR-4] 白名单外 executor 拒绝 | packages/brain/tests/dispatch-worker-relay.test.js | unknown executor is rejected, no spawnFn called |
-| [BEHAVIOR-5] headed 分支不走 worker-pool | packages/brain/tests/dispatch-worker-relay.test.js | （headed 模式由 T1 init 路径覆盖，headed 分支本身不改动） |
-| [BEHAVIOR-6] 禁 mock dispatchWithRotation/buildCommand/queryUsage | packages/brain/tests/dispatch-worker-relay.test.js | 所有测试（lint 验证：核心函数不被 no-op stub） |
-| [BEHAVIOR-7] dispatch-worker.mjs diff 为 0 | scripts/dispatch-worker.mjs | git diff main..HEAD -- scripts/dispatch-worker.mjs \| wc -l → 0 |
+| Workstream | Test File | Behaviors |
+|---|---|---|
+| [BEHAVIOR-1] worker-pool 路由到 dispatchWorkerFn | `../../packages/brain/tests/dispatch-worker-relay.test.js` | worker-pool routes to dispatchWorkerFn |
+| [BEHAVIOR-2] 核心任务护栏 cecelia + brain/src → terminal_failed | `../../packages/brain/tests/dispatch-worker-relay.test.js` | core task guard rejects worker-pool with feedback_no_core_tasks_to_codex |
+| [BEHAVIOR-3] worker-pool 不计入 _activeCodexRelays | `../../packages/brain/tests/dispatch-worker-relay.test.js` | worker-pool does not increment _activeCodexRelays |
+| [BEHAVIOR-4] 白名单外 executor 拒绝（不静默降级） | `../../packages/brain/tests/dispatch-worker-relay.test.js` | unknown executor is rejected, no spawnFn called |
+| [BEHAVIOR-5] headed 分支保持只支持 claude/codex | `../../packages/brain/tests/dispatch-worker-relay.test.js` | worker-pool routes to dispatchWorkerFn |
+| [BEHAVIOR-6] 禁 mock dispatchWithRotation/buildCommand/queryUsage | `../../packages/brain/tests/dispatch-worker-relay.test.js` | unknown executor is rejected, no spawnFn called |
 
 ---
 

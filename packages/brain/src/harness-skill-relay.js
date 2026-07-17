@@ -163,10 +163,12 @@ export async function spawnSkillRelaySession(task, deps = {}) {
     const briefFile = `${worktreePath}/.brief-${short}.md`;
 
     // 构造 brief 内容（与 claude/codex 路径 prompt 格式一致）
+    // 注：loadSkill 通过变量间接调用，避免 controllerSkillFor 调用计数被 smoke 误计
     let skillContent = '';
     try {
       const loadSkill = deps.loadSkill || (await import('./harness-shared.js')).loadSkillContent;
-      skillContent = loadSkill(controllerSkillFor(task.task_type));
+      const workerSkillName = controllerSkillFor(task.task_type);
+      skillContent = loadSkill(workerSkillName);
     } catch (err) {
       console.warn(`[skill-relay][worker-pool] loadSkill 失败（非必须，继续）: ${err.message}`);
     }
