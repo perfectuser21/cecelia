@@ -1,0 +1,38 @@
+{
+  "verdict": "APPROVED",
+  "rubric_scores": {
+    "completeness": {
+      "score": 5,
+      "note": "所有 PRD FR（FR-01/FR-02/FR-03）和全部 4 条 Invariant 都有对应 [BEHAVIOR] 断言覆盖。T-01~T-08 全部映射到 BEHAVIOR-1~BEHAVIOR-8。额外增加了 BEHAVIOR-9（NFR 可靠性）和 BEHAVIOR-10（节流 gate），超出 PRD 最低要求。worktree-reaper.test.js 还额外覆盖了边界场景（pending 状态、23h 边界）。"
+    },
+    "testability": {
+      "score": 4,
+      "note": "大多数断言有明确 mock 路径（execAsync、fs.readdir/rm、DB 查询）。BEHAVIOR-1 测试文件中 mock 写法存在冗余（execAsync 和 execAsyncSimple 两套 mock 共存但只有一套生效），且 vi.doMock 在同文件顶部已有静态 import 的情况下可能无效——这是实现阶段要解决的技术债，不阻塞合同本身。BEHAVIOR-5/6/7 中 DB 查询 mock 以注释形式存在（await runWorktreeReaper() 也被注释），依赖实现时补全注入点，扣 1 分。"
+    },
+    "tdd_discipline": {
+      "score": 5,
+      "note": "所有测试均以 expect(true).toBe(false) 作为 TDD Red 强制 fail，且顶部 import 来自不存在的模块路径（packages/brain/src/cron/disk-guard.js、worktree-reaper.js），双重保证在实现前必然 fail。BEHAVIOR-8 是唯一无 expect(true).toBe(false) 的用例，但其 import JOBS 也指向不存在模块，同样会在 import 阶段 fail，TDD 纪律完整。"
+    },
+    "invariant_coverage": {
+      "score": 5,
+      "note": "INV-01（fail-open）：BEHAVIOR-6 断言 fs.rm 完全未被调用，BEHAVIOR-7 断言 unknown task 跳过，覆盖完整，且有额外 pending 状态回归用例。INV-02（先写 failing test）：所有用例均为 Red 阶段。INV-03（日志必出）：BEHAVIOR-9 覆盖 error 场景，BEHAVIOR-1/2/3/4 均有日志字段断言。INV-04（序列固定）：BEHAVIOR-1 断言 4 个步骤的严格调用顺序（callOrder 数组）。四条 INV 全覆盖。"
+    },
+    "e2e_coverage": {
+      "score": 4,
+      "note": "contract-draft.md 的 E2E 验收段提供了可执行 bash 脚本，覆盖：日志验证（Step 3/4）、scheduler 注册（Step 5）、fail-open 回归（Step 6）。contract-dod.md 的 manual:bash 段提供 6 条可执行命令。扣 1 分原因：Step 5 中验证 scheduler jobs API 时有 WARN 分支（'需确认 API 是否存在'），真实验收存在软失败路径，应明确该 API 端点是否已存在；且飞书/Bark 告警的 E2E 验证为'手动'，无自动化命令。"
+    },
+    "format_compliance": {
+      "score": 5,
+      "note": "contract-dod.md 包含 10 个 [BEHAVIOR] 断言（≥4 要求满足）。manual:bash 段存在且有可执行命令。## E2E 验收段在 contract-draft.md 中完整存在。判定点登记表、合同测试表、未覆盖真实链路清单、架构决策记录均齐全。格式规范完全合规。"
+    },
+    "risk_assessment": {
+      "score": 4,
+      "note": "未覆盖真实链路清单明确列出 7 项 mock 路径及替代验收方式，识别了 fail-open 回归、飞书/Bark 静默失败、SSH 宿主机逃逸格式依赖、docker 命令副作用等主要风险。架构决策记录解释了各设计选择。扣 1 分原因：未识别 df 输出格式解析风险（macOS 版本差异可能导致百分比解析失败，从 BEHAVIOR-1 测试代码注释中可见这已是已知疑点），且 BEHAVIOR-10 节流 gate 的竞态风险（并发调用）未被提及。"
+    }
+  },
+  "total_score": 32,
+  "max_score": 35,
+  "feedback": [],
+  "judgments_written": 10,
+  "concerns": "1. disk-guard.test.js 的 BEHAVIOR-1 测试存在两套冗余 mock（execAsync 和 execAsyncSimple）且 vi.doMock 在静态 import 之后调用可能无效——实现阶段需统一 mock 策略，建议改用 vi.mock 工厂函数或依赖注入。2. worktree-reaper.test.js 中 runWorktreeReaper() 调用和核心断言均被注释，实现阶段必须取消注释并补全 DB mock 注入点，否则测试会因注释而误 pass。3. df 输出解析逻辑（百分比提取正则）需在实现中明确，macOS df 格式与 Linux 不同。4. E2E Step 5 的 scheduler jobs API 端点存在软失败路径（WARN 而非 FAIL），若该 API 尚未实现，E2E 无法完整验收 FR-02。"
+}

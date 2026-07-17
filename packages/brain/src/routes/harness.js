@@ -1726,6 +1726,32 @@ router.get('/skill-drift/patrol-history', async (_req, res) => {
 });
 
 /**
+ * POST /disk-guard/trigger
+ * 手动触发一次 disk-guard 磁盘哨兵（供 E2E 测试使用，自动重置节流 gate）。
+ * Response 200: { triggered: true, used: number, action: string, log: string }
+ */
+router.post('/disk-guard/trigger', async (_req, res) => {
+  try {
+    const { runDiskGuard, __resetDiskGuardForTest } = await import('../cron/disk-guard.js');
+    __resetDiskGuardForTest(); // 重置节流 gate，确保本次触发不被跳过
+    const logs = [];
+    const origLog = console.log.bind(console);
+    console.log = (...args) => { logs.push(args.join(' ')); origLog(...args); };
+    let result;
+    try {
+      result = await runDiskGuard();
+    } finally {
+      console.log = origLog;
+    }
+    const diskCheckLog = logs.find(l => l.includes('[disk_check]')) || '';
+    return res.json({ triggered: true, result, log: diskCheckLog, all_logs: logs });
+  } catch (err) {
+    console.error('[POST /harness/disk-guard/trigger]', err.message);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+/**
  * POST /skill-drift/patrol-trigger
  * 手动触发一次 skill-drift 巡检（供 E2E 测试使用，无需等待每日窗口）。
  * Response 200: { triggered: true, message: string }

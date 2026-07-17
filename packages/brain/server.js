@@ -257,6 +257,10 @@ app.use('/api/brain/quality', qualityRoutes);
 app.use('/api/brain/janitor', janitorRoutes);
 app.use('/api/brain/profile/facts', profileFactsRoutes);
 
+// Cron 手动触发（E2E 测试用）
+const { default: cronRoutes } = await import('./src/routes/cron.js');
+app.use('/api/brain/cron', cronRoutes);
+
 // Phase E1: Observer state monitoring
 const { default: observerRoutes } = await import('./src/routes/observer.js');
 app.use('/api/brain/observer', observerRoutes);
