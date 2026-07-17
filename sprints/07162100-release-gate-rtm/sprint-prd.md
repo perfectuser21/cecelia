@@ -126,8 +126,8 @@ Fixture 位置：`scripts/__tests__/__fixtures__/`
 | `scripts/__tests__/release-gate.test.mjs` | 新建：测试套件（failing-first） |
 | `scripts/__tests__/__fixtures__/rtm-with-gaps.md` | 新建：含缺口 fixture |
 | `scripts/__tests__/__fixtures__/rtm-all-pass.md` | 新建：全达标 fixture |
-| `apps/api/src/routes/brain/release-gate.ts`（或现有 brain router 文件） | 新增 GET 端点 |
-| `apps/api/src/routes/brain/index.ts`（或 router 注册文件） | 注册新端点 |
+| `packages/brain/src/routes/release-gate.js` | 新增 GET 端点 |
+| `packages/brain/src/routes.js` | 注册新端点 |
 
 ---
 

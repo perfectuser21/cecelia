@@ -74,6 +74,7 @@ node scripts/release-gate.mjs --path nonexistent-path
 | `scripts/__tests__/release-gate.test.mjs` | 新建 | 测试套件（failing-first，vitest/node:test） |
 | `scripts/__tests__/__fixtures__/rtm-with-gaps.md` | 新建 | 含缺口 RTM fixture（S1 实际 L1，承诺 L3 接缝步） |
 | `scripts/__tests__/__fixtures__/rtm-all-pass.md` | 新建 | 全达标 RTM fixture（所有接缝步实际 L3） |
+| `scripts/__tests__/__fixtures__/rtm-l0-step.md` | 新建 | 非接缝步 L0 fixture（S10 承诺 L2 实际 L0，验证 BEHAVIOR-04 拦截） |
 | `packages/brain/src/routes/release-gate.js` | 新建 | Brain API GET 端点（只读查账） |
 | `packages/brain/src/routes.js` | 修改 | 注册 `/api/brain/release-gate/:pathId` 路由 |
 

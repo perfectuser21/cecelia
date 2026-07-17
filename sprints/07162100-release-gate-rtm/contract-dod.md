@@ -142,6 +142,10 @@ STATUS=$(curl -s -o /dev/null -w "%{http_code}" -X POST http://localhost:5221/ap
 
 **来源**：INV-01，NFR02，铁律第1条
 
+**测试分层说明**：
+- **单元测试层**：使用 mock DB（spy/stub decisions 写入函数），当 `DATABASE_URL` 环境变量不可达时自动跳过 psql 断言，验证 DB 写入函数未被调用
+- **E2E 门控**：使用真实 psql 连接（`DATABASE_URL` 必须可达），通过行数前后对比验证无实际写入
+
 **断言**：
 - 运行含缺口 fixture（预期 exit 1）前后，decisions 表中 `category='release-gate'` 行数不变
 - 运行 RTM 缺失（预期 exit 2）前后，decisions 表不增加任何行
