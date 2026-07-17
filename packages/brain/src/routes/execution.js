@@ -32,6 +32,7 @@ import {
 } from '../execution.js';
 import { normalizeCallbackStatus, extractPrNumber, maybeMarkCompletedNoPr, buildExecMetaJson, buildFailureFields, extractFindingsValue, buildLastRunResult } from '../lib/callback-utils.js';
 import { isTransientClass } from '../lib/retry-policy.js';
+import { checkAnchor } from '../anchor-check.js';
 
 const router = Router();
 const execAsync = promisify(exec);
@@ -3981,6 +3982,16 @@ router.post('/dispatch-now', async (req, res) => {
         error: `Task already ${task.status}`,
         id: task_id,
         status: task.status,
+      });
+    }
+
+    // S2 锚点闸（MJ5 刀2）：dispatch-now 与 tick 派发同闸——无锚不点火
+    // （07-17 验火发现本端点绕过 dispatcher 的 checkAnchor，闸必须站住所有必经之路）
+    const anchorResult = checkAnchor(task);
+    if (anchorResult.blocked) {
+      return res.status(422).json({
+        error: 'missing_anchor',
+        detail: anchorResult.detail,
       });
     }
 

@@ -12,6 +12,7 @@ import { getQuarantinedTasks, getQuarantineStats, releaseTask, quarantineTask, Q
 import { triggerCeceliaRun, checkCeceliaRunAvailable } from '../executor.js';
 import { emit as emitEvent } from '../event-bus.js';
 import { pushCaptureAtom } from '../capture-inbox.js';
+import { checkAnchor } from '../anchor-check.js';
 
 const router = Router();
 
@@ -1196,6 +1197,16 @@ router.post('/tasks/:id/dispatch', async (req, res) => {
       return res.status(409).json({
         error: `task status is '${task.status}', only 'queued' tasks can be dispatched`,
         current_status: task.status
+      });
+    }
+
+    // 2.5 S2 锚点闸（MJ5 刀2）：手动派发与 tick 派发同闸——无锚不点火
+    // （07-17 验火发现本端点绕过 dispatcher 的 checkAnchor，闸必须站住所有必经之路）
+    const anchorResult = checkAnchor(task);
+    if (anchorResult.blocked) {
+      return res.status(422).json({
+        error: 'missing_anchor',
+        detail: anchorResult.detail,
       });
     }
 
