@@ -73,19 +73,18 @@ describe('system-hub 路由退役（War Room PR-C）', () => {
 describe('execution 路由退役（War Room PR-C）', () => {
   const routes = execution.routes;
 
-  it('退役 /harness-pipeline → redirect /pipeline', () => {
+  it('退役 /harness-pipeline → 直接渲染 WarRoomPage（DynamicRouter 不支持 redirect，用 component 代替）', () => {
     const r = routeFor(routes, '/harness-pipeline');
-    expect(r?.redirect).toBe('/pipeline');
-    expect(r?.component).toBeUndefined();
+    expect(r?.component).toBe('WarRoomPage');
     expect(r?.navItem).toBeUndefined();
   });
 
-  it('退役 /harness-pipeline/:id → redirect /pipeline', () => {
-    expect(routeFor(routes, '/harness-pipeline/:id')?.redirect).toBe('/pipeline');
+  it('退役 /harness-pipeline/:id → 直接渲染 HarnessPipelineDetailPage', () => {
+    expect(routeFor(routes, '/harness-pipeline/:id')?.component).toBe('HarnessPipelineDetailPage');
   });
 
-  it('退役 /harness-pipeline/:id/step/:step → redirect /pipeline', () => {
-    expect(routeFor(routes, '/harness-pipeline/:id/step/:step')?.redirect).toBe('/pipeline');
+  it('退役 /harness-pipeline/:id/step/:step → 直接渲染 HarnessPipelineStepPage', () => {
+    expect(routeFor(routes, '/harness-pipeline/:id/step/:step')?.component).toBe('HarnessPipelineStepPage');
   });
 
   it('execution components 不再含 HarnessPipelinePage', () => {

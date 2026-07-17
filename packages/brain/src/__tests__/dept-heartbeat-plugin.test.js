@@ -9,15 +9,17 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
-// Mock consciousness-guard before importing plugin
-const mockIsConsciousnessEnabled = vi.fn();
+// vi.hoisted ensures these variables are initialized before vi.mock factories run
+const { mockIsConsciousnessEnabled, mockPool } = vi.hoisted(() => ({
+  mockIsConsciousnessEnabled: vi.fn(),
+  mockPool: { query: vi.fn() },
+}));
+
 vi.mock('../consciousness-guard.js', () => ({
   isConsciousnessEnabled: () => mockIsConsciousnessEnabled(),
   reloadConsciousnessCache: vi.fn(),
 }));
 
-// Mock db.js (pool)
-const mockPool = { query: vi.fn() };
 vi.mock('../db.js', () => ({
   default: mockPool,
 }));

@@ -15,8 +15,12 @@ import { describe, it, expect } from 'vitest';
 import { execSync } from 'child_process';
 import { existsSync } from 'fs';
 import { resolve } from 'path';
+import { fileURLToPath } from 'url';
 
-const SCRIPT = resolve(process.cwd(), 'scripts/smoke/e2e/deploy-daily-drill.sh');
+// 路径按 repo root 解析，兼容任意 cwd（brain vitest cwd=packages/brain）
+// 文件位于 tests/regression/deploy-daily-drill/，需上 4 级才到 repo root
+const ROOT = resolve(fileURLToPath(import.meta.url), '../../../..');
+const SCRIPT = resolve(ROOT, 'scripts/smoke/e2e/deploy-daily-drill.sh');
 
 function runDrill(env = {}) {
   try {

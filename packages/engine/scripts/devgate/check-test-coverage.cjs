@@ -74,8 +74,8 @@ function parseTestContract(content) {
     // 取 backtick 里的路径
     const m = testFileRaw.match(/`([^`]+)`/);
     const testFile = m ? m[1] : testFileRaw;
-    // 接受 .test.* 与 .spec.*（含 tsx/jsx）及 .sh 合同测试：前端组件 .test.tsx、e2e .spec.ts、shell 合同 .sh
-    if (!/\.(test|spec)\.[cm]?[jt]sx?$|\.sh$/.test(testFile)) continue;
+    // 接受 .test.* / .spec.* / .e2e.*（含 tsx/jsx）及 .sh 合同测试
+    if (!/\.(test|spec|e2e)\.[cm]?[jt]sx?$|\.sh$/.test(testFile)) continue;
     // behavior 覆盖用 '/' 分割
     const behaviors = behaviorsRaw
       .split(/[/,、]/)

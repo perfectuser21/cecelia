@@ -68,10 +68,14 @@ test("B-02: SKILL.md 引用 light-evaluator", () => {
 // ─────────────────────────────────────────────────────────────────────────────
 // B-03: engine package.json 版本为 19.5.0
 // ─────────────────────────────────────────────────────────────────────────────
-test("B-03: engine package.json 版本为 19.5.0", () => {
+test("B-03: engine package.json 版本 >= 19.5.0（light-evaluator 引入版本）", () => {
   const p = path.join(WORKSPACE, "packages/engine/package.json");
   const pkg = JSON.parse(fs.readFileSync(p, "utf-8"));
-  assert(pkg.version === "19.5.0", `版本不对: 期望 19.5.0，实际 ${pkg.version}`);
+  const parts = pkg.version.split(".").map(Number);
+  const base = [19, 5, 0];
+  const gte = parts[0] > base[0] || (parts[0] === base[0] && parts[1] > base[1]) ||
+    (parts[0] === base[0] && parts[1] === base[1] && parts[2] >= base[2]);
+  assert(gte, `版本不对: 期望 >= 19.5.0，实际 ${pkg.version}`);
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -137,8 +141,8 @@ test("B-07: light-evaluator.cjs 存在", () => {
 // ─────────────────────────────────────────────────────────────────────────────
 // B-08: 本测试文件自身存在（TDD 合同 commit 1 验证）
 // ─────────────────────────────────────────────────────────────────────────────
-test("B-08: 本 Red 测试文件存在", () => {
-  const p = path.join(WORKSPACE, "sprints/07161830-dev-ab-light-evaluator/tests/light-evaluator.test.cjs");
+test("B-08: 本测试文件已毕业至 regression 目录", () => {
+  const p = path.join(WORKSPACE, "tests/regression/dev-ab-light-evaluator/light-evaluator.test.cjs");
   assert(fs.existsSync(p), `测试文件不存在: ${p}`);
 });
 
