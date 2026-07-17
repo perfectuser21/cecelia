@@ -143,6 +143,7 @@ describe('POST /api/brain/dispatch-now', () => {
       title: 'Test Task',
       status: 'queued',
       task_type: 'dev',
+      created_at: '2026-07-01T00:00:00Z', // 锚点闸存量豁免（cutoff 之前）
     };
 
     // SELECT query
@@ -189,7 +190,7 @@ describe('POST /api/brain/dispatch-now', () => {
   });
 
   it('should rollback status on dispatch failure', async () => {
-    const mockTask = { id: 'fail-task', status: 'queued', task_type: 'dev' };
+    const mockTask = { id: 'fail-task', status: 'queued', task_type: 'dev', created_at: '2026-07-01T00:00:00Z' };
 
     mockQuery.mockResolvedValueOnce({ rows: [mockTask] });
     mockQuery.mockResolvedValueOnce({ rows: [] }); // UPDATE to in_progress
@@ -215,5 +216,38 @@ describe('POST /api/brain/dispatch-now', () => {
       'UPDATE tasks SET status = $1 WHERE id = $2',
       ['queued', 'fail-task']
     );
+  });
+});
+
+// ── S2 锚点闸站岗（MJ5 刀2 验火产物：dispatch-now 原本绕过 checkAnchor）──
+describe('POST /dispatch-now — S2 锚点闸', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('无锚新 dev 任务 → 422 missing_anchor，不点火不改状态', async () => {
+    const unanchored = {
+      id: 'anchor-drill-1',
+      task_type: 'dev',
+      status: 'queued',
+      created_at: new Date().toISOString(),
+      payload: {},
+    };
+    mockQuery.mockResolvedValueOnce({ rows: [unanchored] });
+
+    const { default: router } = await import('../routes/execution.js');
+    const handler = router.stack.find(l => l.route?.path === '/dispatch-now').route.stack[0].handle;
+
+    const req = { body: { task_id: 'anchor-drill-1' } };
+    const res = { status: vi.fn().mockReturnThis(), json: vi.fn() };
+    await handler(req, res);
+
+    expect(res.status).toHaveBeenCalledWith(422);
+    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ error: 'missing_anchor' }));
+    expect(mockTriggerCeceliaRun).not.toHaveBeenCalled();
+    const inProgressUpdate = mockQuery.mock.calls.find(
+      c => typeof c[0] === 'string' && c[0].includes('UPDATE tasks') && JSON.stringify(c[1] || []).includes('in_progress')
+    );
+    expect(inProgressUpdate).toBeUndefined();
   });
 });

@@ -89,9 +89,6 @@ services:
       - CECELIA_MAX_SEATS=10
       # CECELIA_BUDGET_SLOTS: budget-layer cap (< MAX_SEATS), reserves 3 slots for burst buffer + INTERACTIVE_RESERVE
       - CECELIA_BUDGET_SLOTS=7
-      # harness 并发上限：默认 2 是旧 LangGraph 逐节点 spawn 2GB 重档时代的 OOM 防线（dispatcher.js OPEN-1）；
-      # 现役 one-session relay 每条 initiative 只占一个 1GB 硬顶容器（实测 ~350MB），4 条并发 ≤4GB，VM 13.6GB 充裕
-      - MAX_CONCURRENT_HARNESS_INITIATIVES=${MAX_CONCURRENT_HARNESS_INITIATIVES:-4}
       - CECELIA_TICK_INTERVAL_MS=${CECELIA_TICK_INTERVAL_MS:-5000}
       - DISPATCH_TIMEOUT_MINUTES=${DISPATCH_TIMEOUT_MINUTES:-60}
       - FEISHU_BOT_WEBHOOK=${FEISHU_BOT_WEBHOOK:-}
