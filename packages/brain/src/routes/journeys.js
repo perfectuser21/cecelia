@@ -235,7 +235,7 @@ router.post('/journey_features', async (req, res) => {
         kind || 'feature',
         workflow_ref || null,
         guard_ref || null,
-        softness || null,
+        softness || 'hard', // 349 起 softness NOT NULL DEFAULT 'hard'；显式传 NULL 会绕过 DEFAULT
       ]
     );
     res.status(201).json(rows[0]);
