@@ -28,10 +28,10 @@ const manifest: FeatureManifest = {
     { path: '/n8n/workflows/:instance/:id', component: 'N8nWorkflowDetail' },
     { path: '/n8n/live-status', component: 'N8nLiveStatus' },
     { path: '/n8n/live-status/:instance/:executionId', component: 'N8nLiveStatusDetail' },
-    // Harness Pipeline 旧列表已退役（被战情室 /pipeline 取代）→ redirect 收口，避免老链接 404
-    { path: '/harness-pipeline', redirect: '/pipeline' },
-    { path: '/harness-pipeline/:id', redirect: '/pipeline' },
-    { path: '/harness-pipeline/:id/step/:step', redirect: '/pipeline' },
+    // Harness Pipeline 旧路径 → 直接渲染对应组件（redirect 被 DynamicRouter map 丢弃，用 component 代替）
+    { path: '/harness-pipeline', component: 'WarRoomPage' },
+    { path: '/harness-pipeline/:id', component: 'HarnessPipelineDetailPage' },
+    { path: '/harness-pipeline/:id/step/:step', component: 'HarnessPipelineStepPage' },
     // Workers
     {
       path: '/workers',
