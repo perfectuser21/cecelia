@@ -36,6 +36,16 @@ npx playwright test sprints/07171640-cockpit-route-wire/tests/e2e-verify.spec.ts
 
 ---
 
+## Test Contract
+
+| BEHAVIOR | 测试文件 | it() 描述 |
+|----------|---------|-----------|
+| App.tsx 顶层静态含 OwnerCockpitPage 引用（防孤儿断言） | tests/cockpit-route.test.ts | App.tsx 顶层静态含 OwnerCockpitPage 引用（防孤儿断言） |
+| manifest / 路由指向 OwnerCockpitPage（防孤儿 manifest 断言） | tests/cockpit-route.test.ts | manifest / 路由指向 OwnerCockpitPage（防孤儿 manifest 断言） |
+| 指挥舱首页 — 真首页渲染验收 | tests/e2e-verify.spec.ts | 指挥舱首页 — 真首页渲染验收 |
+
+---
+
 ## 实现约束
 
 1. **FR-1**：在 `apps/dashboard/src/App.tsx` 文件顶部 import 区域增加
