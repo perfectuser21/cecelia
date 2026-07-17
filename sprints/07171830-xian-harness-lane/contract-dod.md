@@ -15,8 +15,8 @@
 **回归**：`harness-skill-relay-xian.test.js` → `allow_xian 缺失` 用例通过
 
 [BEHAVIOR] BEHAVIOR-3：xian 分支调 bridge 不调 docker
-**描述**：`task.location='xian'` + `payload.allow_xian=true` 时，`spawnSkillRelaySession` 调用 `spawnCodexBridgeDetached('http://100.86.57.69:3458/run', ...)` 而不是 `spawnDockerDetached`；bridge payload 含 `task_type='harness_relay'` 且 `brain_url='http://100.86.57.69:5221'`（非 host.docker.internal）。  
-**回归**：`harness-skill-relay-xian.test.js` → `xian 派发路径` 用例通过
+**描述**：`task.location='xian'` + `payload.allow_xian=true` 时，`spawnSkillRelaySession` 调用 `spawnCodexBridgeDetached('http://100.86.57.69:3458/run', ...)` 而不是 `spawnDockerDetached`；bridge payload 含 `task_type='harness_relay'` 且 `brain_url` 来自 process.env.XIAN_BRAIN_URL（默认 'http://100.86.57.69:5221'）（非 host.docker.internal）。  
+**回归**：`harness-skill-relay-xian.test.js` → `xian 派发路径` 用例通过；断言改为 `expect(url).toMatch(/5221/)` 或 `expect.stringContaining('5221')`，不锁定具体 IP
 
 [BEHAVIOR] BEHAVIOR-4：xian spawn 落 initiative_runs `orchestrator_host=skill-relay-xian`
 **描述**：xian bridge spawn 成功后，`initiative_runs` 表插入一行，`orchestrator_host='skill-relay-xian'`，`phase='A_planning'`，`deadline_at = NOW() + 8h`。watchdog 和并发上限逻辑可感知此行（INV-6）。  
@@ -34,6 +34,11 @@
 **描述**：所有新增代码中不含 `HARNESS_XIAN_ENABLED` / `HARNESS_XIAN_BRIDGE_URL` 字面量。xian 路径完全由 `task.location` DB 字段驱动（INV-4）。  
 **回归**：现有 `executor-xian-env-passthrough.test.js` + smoke `harness-xian-spawn-smoke.sh` 仍全绿
 
+[BEHAVIOR] BEHAVIOR-8：dispatcher xianBypass 对 location=xian 的 harness_initiative 生效
+- Criteria: dispatcher.js 的 xianBypass 检查改为包含 `task.location === 'xian'` 直接判断（或等价方式），使 location=xian 的 harness_initiative 任务不受 task_pool 限制拦截
+- 实现要求: dispatcher.js peek task 完整对象时检查 task.location === 'xian'，而非依赖 getTaskLocation(nextType: string)
+- Test: vitest unit（dispatcher-xian-harness-bypass.test.js）—— mock task.location='xian' task_type='harness_initiative'，池满时任务仍被 dispatch，不被 dispatchAllowed=false 拦截
+
 ---
 
 ## [ARTIFACT] 产出物清单
@@ -48,6 +53,9 @@
 | ART-6 | smoke 脚本 | `scripts/harness-xian-relay-smoke.sh` | 静态验证 _spawnXianBridgeSession + skill-relay-xian 字面量存在；mock bridge POST |
 | ART-7 | 合同文档 | `sprints/07171830-xian-harness-lane/contract-draft.md` | 本次产出 |
 | ART-8 | DoD 文档 | `sprints/07171830-xian-harness-lane/contract-dod.md` | 本次产出 |
+| ART-9 | dispatcher.js 改动 | `packages/brain/src/dispatcher.js` | xianBypass 增加 task.location === 'xian' 直接判断 |
+| ART-10 | dispatcher-xian-harness-bypass.test.js | `packages/brain/src/__tests__/dispatcher-xian-harness-bypass.test.js` | BEHAVIOR-8 单元测试 |
+| ART-11 | codex-bridge.cjs BEHAVIOR-5 单元测试 | `packages/brain/src/__tests__/codex-bridge-health.test.js` | mock execSync → docker_available true/false |
 
 ---
 
