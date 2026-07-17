@@ -132,3 +132,4 @@ promise-map-step-impact-smoke.sh
 cascade-list-smoke.sh
 promise-map-nightly-smoke.sh
 slot-admission-smoke.sh
+dispatch-worker-relay-smoke.sh
