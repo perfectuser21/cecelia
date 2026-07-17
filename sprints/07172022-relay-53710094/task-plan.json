@@ -1,0 +1,26 @@
+{
+  "initiative_id": "53710094-898c-452c-8cc3-a56149e8b0ac",
+  "journey_type": "autonomous",
+  "journey_type_reason": "验收目标是本地 Brain API 和 PostgreSQL 上的 codex headed skill-relay smoke，无用户 UI 交互。",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "实现当前 codex headed relay smoke 的 e2e-verify wrapper",
+      "scope": "新增 sprints/07172022-relay-53710094/e2e-verify.sh，只读验证当前 task 的 Brain API payload、DB tasks 认领状态、可选 initiative_runs host/phase 或 foreground takeover 证据；不新增业务功能，不扩大到 claude/headless。",
+      "dod": [
+        "[BEHAVIOR] e2e-verify.sh 校验 task API payload shape",
+        "[BEHAVIOR] e2e-verify.sh 校验 DB tasks 认领状态",
+        "[BEHAVIOR] e2e-verify.sh 对 initiative_runs 采用可选 run 或 foreground path",
+        "[BEHAVIOR] e2e-verify.sh 拒绝 failed 状态并不记录敏感字段",
+        "[ARTIFACT] sprints/07172022-relay-53710094/e2e-verify.sh 存在且 bash -n 通过"
+      ],
+      "files": [
+        "sprints/07172022-relay-53710094/e2e-verify.sh",
+        "sprints/07172022-relay-53710094/tests/contract-red.test.sh"
+      ],
+      "depends_on": [],
+      "complexity": "S",
+      "estimated_minutes": 45
+    }
+  ]
+}
