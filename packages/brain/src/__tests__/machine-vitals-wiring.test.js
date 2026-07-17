@@ -17,13 +17,17 @@ describe('machine-vitals 接线', () => {
   it('JOBS 注册了 machine-vitals 采样 job', () => {
     const job = JOBS.find(j => j.name === 'machine-vitals');
     expect(job).toBeDefined();
-    expect(job.needsPool).toBe(false);
+    expect(job.needsPool).toBe(true);
+  });
+
+  it('machine-vitals 排在 JOBS 首位（串行轮内靠后会被推过 STALE_MS）', () => {
+    expect(JOBS[0].name).toBe('machine-vitals');
   });
 
   it('job handler 执行后缓存被填充', async () => {
     _resetVitalsCacheForTest();
     const job = JOBS.find(j => j.name === 'machine-vitals');
-    await job.handler();
+    await job.handler({ query: vi.fn().mockResolvedValue({ rows: [] }) });
     expect(getMachineVitals().error).toBeNull();
     expect(getMachineVitals().stale).toBe(false);
   });

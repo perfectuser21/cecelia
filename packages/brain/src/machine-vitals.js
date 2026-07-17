@@ -13,8 +13,11 @@ const STALE_ALERT_MS = 15 * 60 * 1000;       // 持续 stale 15min → 升级告
 const RELAY_PREFIX = 'cecelia-relay-';
 const CMD_TIMEOUT_MS = 10 * 1000;
 
+const SENTINEL_KEY = 'machine_vitals_stale_alert';
+
 let _cache = null;                            // { sampled_at, relay_containers, relay_count, vm_total_mb, vm_used_mb, host_disk_pct, docker_disk_pct, error }
 let _lastGoodAt = 0;
+let _firstAttemptAt = 0;                      // never-good 基线：模块首次采样尝试时间
 let _staleAlerted = false;
 
 function run(cmd, args) {
@@ -44,7 +47,12 @@ function parseDfPct(out) {
   return m ? parseInt(m[1], 10) : null;
 }
 
-export async function sampleMachineVitals() {
+/**
+ * @param {import('pg').Pool} [pool] 可选：传入时把 stale 告警/恢复写入 working_memory 哨兵键；
+ *   不传时跳过 DB 写（纯采样，不抛错——供无 pool 场景如测试/独立调用）。
+ */
+export async function sampleMachineVitals(pool) {
+  if (!_firstAttemptAt) _firstAttemptAt = Date.now();
   const next = {
     sampled_at: Date.now(),
     relay_containers: [], relay_count: 0,
@@ -67,17 +75,47 @@ export async function sampleMachineVitals() {
     // OrbStack data 盘与宿主同卷（APFS），docker_disk_pct 并入宿主口径（spec 约定的降级路径）
     next.docker_disk_pct = next.host_disk_pct;
     _lastGoodAt = next.sampled_at;
+    const wasAlerted = _staleAlerted;
     _staleAlerted = false;
+    if (wasAlerted && pool) {
+      await writeVitalsSentinel(pool, { recovered_at: new Date(next.sampled_at).toISOString() });
+    }
   } catch (err) {
     next.error = err.message;
-    // 持续采样失败超 15min → 升级告警（一次性，恢复后复位）
-    if (_lastGoodAt && Date.now() - _lastGoodAt > STALE_ALERT_MS && !_staleAlerted) {
+    // 持续采样失败超 15min → 升级告警（一次性，恢复后复位）。
+    // never-good（_lastGoodAt 仍为 0，冷启动 docker 坏时）用首次采样尝试时间作基线，
+    // 否则冷启动场景下 `_lastGoodAt &&` 门会让 stale 永不告警。
+    const baseline = _lastGoodAt || _firstAttemptAt;
+    if (Date.now() - baseline > STALE_ALERT_MS && !_staleAlerted) {
       _staleAlerted = true;
       console.error(`[machine-vitals] 采样持续失败超 ${STALE_ALERT_MS / 60000}min，harness 派发将保守拒发: ${err.message}`);
+      if (pool) {
+        await writeVitalsSentinel(pool, {
+          since: new Date(baseline).toISOString(),
+          last_error: err.message,
+        });
+      }
     }
   }
   _cache = next;
   return next;
+}
+
+async function writeVitalsSentinel(pool, record) {
+  try {
+    if (record.recovered_at) {
+      await pool.query(`DELETE FROM working_memory WHERE key = $1`, [SENTINEL_KEY]);
+      return;
+    }
+    await pool.query(
+      `INSERT INTO working_memory (key, value_json, updated_at)
+       VALUES ($1, $2, NOW())
+       ON CONFLICT (key) DO UPDATE SET value_json = $2, updated_at = NOW()`,
+      [SENTINEL_KEY, JSON.stringify(record)],
+    );
+  } catch (e) {
+    console.warn(`[machine-vitals] sentinel write failed:`, e.message);
+  }
 }
 
 export function getMachineVitals() {
@@ -85,5 +123,5 @@ export function getMachineVitals() {
   return { ..._cache, stale: Date.now() - _cache.sampled_at > STALE_MS };
 }
 
-export function _resetVitalsCacheForTest() { _cache = null; _lastGoodAt = 0; _staleAlerted = false; }
+export function _resetVitalsCacheForTest() { _cache = null; _lastGoodAt = 0; _firstAttemptAt = 0; _staleAlerted = false; }
 export function _setVitalsCacheForTest(obj) { _cache = obj; }
