@@ -179,9 +179,9 @@ curl -s -o /dev/null -w "%{http_code}" -X POST http://localhost:5221/api/brain/r
 
 | 测试场景 | 测试文件 | 覆盖 BEHAVIOR |
 |---------|---------|--------------|
-| 接缝步 L1 → exit 1 | sprints/07162100-release-gate-rtm/tests/release-gate-contract.test.mjs | BEHAVIOR-01 |
-| RTM 缺失 → exit 2 | sprints/07162100-release-gate-rtm/tests/release-gate-contract.test.mjs | BEHAVIOR-02 |
-| 全达标 → exit 0 | sprints/07162100-release-gate-rtm/tests/release-gate-contract.test.mjs | BEHAVIOR-03 |
-| 非接缝步 L0 → exit 1 | sprints/07162100-release-gate-rtm/tests/release-gate-contract.test.mjs | BEHAVIOR-04 |
-| Brain API GET 200 / POST 405 | sprints/07162100-release-gate-rtm/tests/release-gate-api-contract.test.mjs | BEHAVIOR-05 |
-| exit 1/2 时 decisions 无副作用 | sprints/07162100-release-gate-rtm/tests/release-gate-contract.test.mjs | BEHAVIOR-06 |
+| 接缝步 L1 → exit 1 | ../../tests/regression/release-gate-rtm/release-gate-contract.test.mjs | [BLOCKED] |
+| RTM 缺失 → exit 2 | ../../tests/regression/release-gate-rtm/release-gate-contract.test.mjs | [NO_RTM] |
+| 全达标 → exit 0 | ../../tests/regression/release-gate-rtm/release-gate-contract.test.mjs | [PASS] |
+| 非接缝步 L0 → exit 1 | ../../tests/regression/release-gate-rtm/release-gate-contract.test.mjs | L0 |
+| Brain API GET 200 / POST 405 | ../../tests/regression/release-gate-rtm/release-gate-api-contract.test.mjs | HTTP 405 |
+| exit 1/2 时 decisions 无副作用 | ../../tests/regression/release-gate-rtm/release-gate-contract.test.mjs | writeDecision |
