@@ -169,7 +169,7 @@ if (isBehind || isDirty || ciStatus === 'fail') {
 
 ---
 
-## 7. E2E 验收
+## E2E 验收
 
 ### 验收条件
 

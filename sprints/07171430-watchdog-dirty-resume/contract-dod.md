@@ -8,6 +8,14 @@
 
 ## [BEHAVIOR] 断言清单
 
+- [ ] [BEHAVIOR] DIRTY + 容器消失 → 重点火，out.resumed=1，日志含 resume_conflict（B1-核心）
+- [ ] [BEHAVIOR] BEHIND + 容器消失 → 重点火，日志含 BEHIND，不受 DIRTY 修改影响（B2-回归）
+- [ ] [BEHAVIOR] CI 全绿 + CLEAN + evaluator 完成 → 不重点火，skip_green_waiting_merge（B3-回归）
+- [ ] [BEHAVIOR] BLOCKED（非 DIRTY）+ CI pending → wait_ci_running，不重点火（B4-回归）
+- [ ] [BEHAVIOR] DIRTY + attempt cap 达上限 → 不重点火，out.capped++（B5-铁律）
+
+---
+
 ### [BEHAVIOR-1] DIRTY + 容器消失 → 触发有界重点火，日志含 resume_conflict
 
 **层级**: P0（核心 bug 修复）
