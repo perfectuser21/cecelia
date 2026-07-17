@@ -24,6 +24,7 @@ import { maybeRunDirectionProposer } from './direction-proposer.js';
 import { runPostdeployVerifier } from './postdeploy-verifier.js';
 import { runSevenRingAuditJob } from './seven-ring-audit.js';
 import { runGuardDrill } from './guard-drill.js';
+import { runMorningCockpitBark } from './morning-cockpit-bark.js';
 import { runDriftSentinel } from './cron/drift-sentinel.js';
 
 const LOOP_INTERVAL_MS = 60 * 1000;
@@ -48,6 +49,7 @@ export const JOBS = [
   { name: 'postdeploy-verifier', needsPool: true, timeoutMs: 2 * 60 * 1000, handler: runPostdeployVerifier, description: '第5环部署验证（自带5min节流gate，扫 pending_postdeploy 任务执行 postdeploy_check.command，通过→completed，失败3次→P1）' },
   { name: 'seven-ring-audit', needsPool: true, timeoutMs: DEFAULT_TIMEOUT_MS, handler: runSevenRingAuditJob, description: '七环对账日巡检（自带24h冷却，逐环核对测试入册/调度在跑/指纹新鲜/账本写对/产出消费/告警活着/面板新鲜，棘轮只许降，刀3-T6）' },
   { name: 'guard-drill', needsPool: true, timeoutMs: 10 * 60 * 1000, handler: runGuardDrill, description: '月度守卫演习（自带30天gate，轮选 auto 守卫全流程弄死→验红→恢复，未叫→P1+Bark，刀4-T4）' },
+  { name: 'morning-cockpit-bark', needsPool: true, timeoutMs: DEFAULT_TIMEOUT_MS, handler: runMorningCockpitBark, description: '主理人指挥舱晨报 Bark（北京08:30窗口+当日去重，推送指挥舱链接+完成率/任务数简报，task:80a5be84）' },
   { name: 'drift-sentinel', needsPool: false, timeoutMs: DEFAULT_TIMEOUT_MS, handler: runDriftSentinel, description: 'G2 部署漂移哨兵（自带30min自gate，SHA对账+自动补部署，G2 S0）' },
 ];
 

@@ -1,0 +1,12 @@
+{
+  "compilerOptions": {
+    "target": "ESNext",
+    "module": "ESNext",
+    "moduleResolution": "node",
+    "esModuleInterop": true,
+    "strict": false,
+    "allowJs": true,
+    "skipLibCheck": true
+  },
+  "include": ["*.e2e.ts"]
+}

@@ -78,6 +78,7 @@ export default function DynamicRouter({ children }: DynamicRouterProps) {
       path: route.path,
       component: route.component,
       requireAuth: route.requireAuth ?? true,
+      redirect: route.redirect,
     }));
   }, [coreConfig]);
 

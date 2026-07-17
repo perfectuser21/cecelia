@@ -5,6 +5,15 @@ import path from 'node:path';
 
 const REPO_ROOT = path.resolve(__dirname, '../../..');
 const SPRINT_DIR = 'sprints/07151206-relay-cd0b936c';
+
+const BRAIN_URL = process.env.BRAIN_URL || 'http://localhost:5221';
+let brainAvailable = false;
+try {
+  execSync(`curl -sf --max-time 2 ${BRAIN_URL}/health`, { stdio: 'pipe' });
+  brainAvailable = true;
+} catch {
+  brainAvailable = false;
+}
 // 毕业后（graduate-sprint-tests.mjs）脚本已搬到永久池 scripts/smoke/e2e/，
 // 不再位于原 sprint 目录；SPRINT_DIR 常量仅保留用于断言脚本内嵌的默认值字面量。
 const SCRIPT = path.join(REPO_ROOT, 'scripts/smoke/e2e/relay-cd0b936c.sh');
@@ -22,7 +31,7 @@ describe('e2e-verify.sh 契约 [BEHAVIOR]', () => {
     expect(content).toContain(`SPRINT_DIR:-${SPRINT_DIR}`);
   });
 
-  it('e2e-verify.sh 全流程真实执行返回 OK headed smoke regression verified for cd0b936c', () => {
+  it.skipIf(!brainAvailable)('e2e-verify.sh 全流程真实执行返回 OK headed smoke regression verified for cd0b936c', () => {
     const out = execSync(`bash ${SCRIPT}`, {
       cwd: REPO_ROOT,
       env: {
@@ -36,7 +45,7 @@ describe('e2e-verify.sh 契约 [BEHAVIOR]', () => {
     expect(out).toContain(`OK headed smoke regression verified for ${TASK_ID}`);
   });
 
-  it('陌生 task_id 下脚本必须 FAIL（exit 非 0），不 sleep/retry 掩盖', () => {
+  it.skipIf(!brainAvailable)('陌生 task_id 下脚本必须 FAIL（exit 非 0），不 sleep/retry 掩盖', () => {
     const start = Date.now();
     let failed = false;
     try {
