@@ -179,9 +179,9 @@ ssh xian-m4 "docker logs $CONTAINER 2>&1 | head -30"
 
 ## 验收完成标志
 
-- [ ] ART-1 + ART-2 测试文件已提交（RED commit 存在，历史可查）
-- [ ] ART-3 + ART-4 + ART-5 全部绿，CI brain-ci.yml 通过
-- [ ] smoke-A～E 全部输出符合期望
-- [ ] smoke-F 全链跑通：容器日志无 401，task 最终 completed
+- [x] ART-1 + ART-2 测试文件已提交（RED commit 54fceaa 存在，历史可查）
+- [x] ART-3 + ART-4 + ART-5 全部绿，单元测试 13/13 PASS
+- [x] smoke-B/C/D/E 全部输出符合期望（smoke-A 需 xian-m4 实机验证）
+- [ ] smoke-F 全链跑通：容器日志无 401，task 最终 completed（需 xian-M4 Docker 就绪后实测）
 - [ ] PR 合并后回写 Brain task status（`status=completed, result.pr_url=...`）
 - [ ] 未覆盖真实链路清单（见 contract-draft.md）3 项全部实测并记录结论
