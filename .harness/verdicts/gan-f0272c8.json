@@ -1,0 +1,26 @@
+{
+  "verdict": "REVISION",
+  "round": 2,
+  "rubric_scores": {
+    "铁律覆盖完整性": 7,
+    "可测试性": 8,
+    "技术可行性": 7,
+    "边界覆盖": 6,
+    "E2E验收完整性": 7,
+    "未覆盖真实链路清单": 8,
+    "零回归保证": 6
+  },
+  "critical_issues": [
+    "brain_url 'http://100.86.57.69:5221' 硬编码在代码中，Tailscale 漂移后需改代码重部署",
+    "dispatcher xianBypass 第 339 行调用字符串签名 getTaskLocation(nextType)，FR-2 改完后 harness_initiative xian 任务仍返回 'us'，bypass 不会生效",
+    "改动 D docker run 未说明 team3/4/5 凭据挂载机制，存在运行时 401 silent 失败风险"
+  ],
+  "revision_requests": [
+    "RV-1: 新增 BEHAVIOR-8，修复 dispatcher xianBypass 改为用 task 对象调 getTaskLocation 或直接判断 task.location==='xian'",
+    "RV-2: brain_url 改为 process.env.XIAN_BRAIN_URL 环境变量，测试断言不锁定具体 IP",
+    "RV-3: 改动 D 明确凭据挂载方式，E2E Step 4 增加无 401 精确断言",
+    "RV-4: BEHAVIOR-5 补单元测试覆盖 docker_available 字段逻辑",
+    "RV-5: E2E 前提条件补 cecelia-claude 镜像检查步骤"
+  ],
+  "judgments_written": 5
+}
