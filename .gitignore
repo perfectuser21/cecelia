@@ -116,3 +116,7 @@ apps/dashboard/.staging-notify.log
 apps/dashboard/.dist-dev/
 apps/dashboard/.dev-preview.pid
 apps/dashboard/.dev-preview.log
+
+# harness judge 每次运行写入的状态快照（纯运行时输出，追踪它会导致部署根
+# 反复变脏、卡住 scripts/brain-deploy.sh 的部署根守卫——07-16 生产滞后近24h 实证）
+.brain-result.json
