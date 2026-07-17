@@ -12,8 +12,8 @@ import { fileURLToPath } from 'node:url';
 import { join, dirname } from 'node:path';
 import pool from './db.js';
 import { sendBark } from './notifier.js';
-// A2 与 S2 锚点闸同口径（豁免/存量 cutoff 单一来源）
-import { ANCHOR_EXEMPT_TASK_TYPES, ANCHOR_EXEMPT_ACTIONS, ANCHOR_LEGACY_CUTOFF } from './anchor-check.js';
+// A2 与 S2 锚点闸同口径（豁免/存量 cutoff 单一来源；日历日边界防 naive timestamp 时区偏移）
+import { ANCHOR_EXEMPT_TASK_TYPES, ANCHOR_EXEMPT_ACTIONS, ANCHOR_LEGACY_CUTOFF_DAY } from './anchor-check.js';
 
 export const SENTINEL_KEY = 'promise-map-nightly';
 export const NIGHTLY_HOUR_UTC = 2;     // 北京时间 10:00
@@ -73,11 +73,11 @@ export async function buildNightlyAssertions(queryPool) {
     WHERE dr.merged_at > NOW() - INTERVAL '24 hours'
       AND (t.payload->'anchor'->>'step_id' IS NULL
            OR t.payload->>'anchor' IS NULL)
-      AND t.created_at >= $1
+      AND t.created_at >= $1::date
       AND NOT (t.task_type = ANY($2))
       AND NOT (COALESCE(t.payload->>'action','') = ANY($3))
   `, [
-    ANCHOR_LEGACY_CUTOFF.toISOString(),
+    ANCHOR_LEGACY_CUTOFF_DAY,
     [...ANCHOR_EXEMPT_TASK_TYPES],
     [...ANCHOR_EXEMPT_ACTIONS],
   ]);
