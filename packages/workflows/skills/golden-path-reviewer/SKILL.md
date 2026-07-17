@@ -7,9 +7,12 @@ description: |
   收敛轮兼裁 proposer 的 REFUTE 反驳是否成立。审查对象是提案文档质量（现状标注真实性/
   路径完整性/断言可验证性/判定点完备/风险与门），不是代码、不是合同测试。
   触发：GP 提案审查、镜头审查 golden path、裁决 REFUTE。
-version: 1.0.0
+version: 1.1.0
 created: 2026-07-12
 changelog:
+  - 1.1.0: rubric 5 维扩为 6 维（2026-07-17 主理人拍板口径，与 golden-path-mapper 首版/proposer
+    1.2.0 同批）——新增「骨干承诺纯度」维度：逐步骤检查步骤名可否翻译成客户/老板感知承诺，
+    发现工序词（识别/判定/检测/解析/校验/生成/调用等）当步骤名 = P1 finding，要求降级为挂片
   - 1.0.0: 首版（GP loop T3）——VERDICT+rubric 结构沿用 harness-contract-reviewer 9.4.0 骨架；
     维度换成 GP 提案专属 5 维；三镜头视角与 P0/P1 阻塞收敛判据来自朋友圈试点定稿
     （decisions cb6be3f6；技术镜头 27 次读代码 REJECTED 是本 skill 的标杆行为）
@@ -43,7 +46,7 @@ verdict 输出路径 — .harness/verdicts/gp-r<ROUND>-<LENS>.json
 - **risk（风险镜头）**：封号/资损/合规/不可逆动作——授权文书、灰度与熔断、fail-closed（校验失败
   绝不回落放行）、红线闸、kill switch、误发事故 SOP
 
-## Rubric（5 维，每维 0-10；全部 ≥7 → APPROVED，任一 <7 → REVISION）
+## Rubric（6 维，每维 0-10；全部 ≥7 → APPROVED，任一 <7 → REVISION）
 
 | # | 维度 | 10 分标准 | 0 分标准 |
 |---|---|---|---|
@@ -52,6 +55,7 @@ verdict 输出路径 — .harness/verdicts/gp-r<ROUND>-<LENS>.json
 | 3 | assertion_verifiability | 每条验收断言可转 exit-code 验证或可观察证据（psql/UIA 读回/截图/API），证据方式与路线条件自洽 | 断言是「功能正常」类空话，或证据方式在该路线下不可得 |
 | 4 | judgment_completeness | 所有「系统推断外部真实状态」的接缝逐条登记（候选/所选/依据/误判后果）；误判后果严重的标 ⚠️；无接缝显式 N/A | 有明显接缝判定点未登记，或登记表整体缺失 |
 | 5 | risk_gates | 不可逆动作全部有前置 Gate；校验路径 fail-closed；有熔断/灰度（碰真实客户时） | 碰真实客户号/对外发布无 Gate 无授权，或校验失败静默放行 |
+| 6 | commitment_purity（骨干承诺纯度，2026-07-17 新增） | 逐步骤检查步骤名是否都能翻译成客户/老板可感知的承诺，无一处工序词（识别/判定/检测/解析/校验/生成/调用等）直接当步骤名，工序细节均已下沉到【挂片】【分支/判定点】 | 存在工序词直接当步骤名（发现即 P1 finding，要求该步骤降级为挂片或分支） |
 
 **收敛纪律（B50 同精神）**：阻塞问题必须逐轮减少；新增 finding 只能是「路径真实漏洞」，
 「可以更严谨/更完整」不是阻塞项，不计入。ROUND ≥ 3 且总分无进步 → feedback 加 `[PIVOT]` 标记。
@@ -71,7 +75,7 @@ verdict 输出路径 — .harness/verdicts/gp-r<ROUND>-<LENS>.json
 cat > .harness/verdicts/gp-r<ROUND>-<LENS>.json << 'EOF'
 {"lens":"<LENS>","round":<N>,
  "rubric_scores":{"reality_of_status":X,"path_completeness":X,"assertion_verifiability":X,
-                  "judgment_completeness":X,"risk_gates":X},
+                  "judgment_completeness":X,"risk_gates":X,"commitment_purity":X},
  "verdict":"<APPROVED|REVISION>",
  "findings":[{"severity":"P0|P1|P2","finding":"<一句话>","evidence":"<文件:行号或数据>",
               "dimension":"<对应维度>","status":"OPEN|RESOLVED|REFUTED"}],
