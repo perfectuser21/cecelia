@@ -381,11 +381,29 @@ export async function resumeStalledRelayRuns(deps = {}) {
             let isBehind = false;
             let ciStatus = 'pending';
             try {
-              // statusCheckRollup 替代 gh pr checks --json（容器内老版 gh 不支持 --json 标志）
-              const prDetail = tryParseJson(execFn(`gh pr view "${effectivePrUrl}" --json statusCheckRollup,mergeStateStatus`));
-              isBehind = prDetail?.mergeStateStatus === 'BEHIND';
-              const statusCheckRollup = prDetail?.statusCheckRollup ?? [];
-              ciStatus = mapCiStatus(statusCheckRollup);
+              try {
+                // 主路径：gh pr checks --json（含 execTolerant 兜底，支持非零退出 + stdout 解析）
+                const checksOut = execTolerant(execFn, `gh pr checks "${effectivePrUrl}" --json state`);
+                const checkRows = Array.isArray(tryParseJson(checksOut)) ? tryParseJson(checksOut) : [];
+                ciStatus = mapCiStatus(checkRows);
+                // BEHIND 从 mergeStateStatus 独立查询（best-effort）
+                try {
+                  const viewDetail = tryParseJson(execFn(`gh pr view "${effectivePrUrl}" --json mergeStateStatus`));
+                  isBehind = viewDetail?.mergeStateStatus === 'BEHIND';
+                } catch { /* best-effort */ }
+              } catch (checksErr) {
+                // fallback：老版 gh 不支持 --json 标志（err.stdout 为空 + message 含 unknown flag）
+                // 其他错误（auth/network）→ 重抛 → 外层 catch 保守跳过
+                if (checksErr.message && (checksErr.message.includes('unknown flag') || checksErr.message.includes('flag provided but not defined'))) {
+                  // statusCheckRollup 替代（容器内老版 gh 不支持 --json 标志）
+                  const prDetail = tryParseJson(execFn(`gh pr view "${effectivePrUrl}" --json statusCheckRollup,mergeStateStatus`));
+                  isBehind = prDetail?.mergeStateStatus === 'BEHIND';
+                  const statusCheckRollup = prDetail?.statusCheckRollup ?? [];
+                  ciStatus = mapCiStatus(statusCheckRollup);
+                } else {
+                  throw checksErr;
+                }
+              }
             } catch (ciErr) {
               // gh 调用失败 → 保守跳过（失败保守策略：不盲目重点火）
               console.warn(`[relay-watchdog] CI 状态查询失败，initiative=${run.initiative_id} 保守跳过: ${ciErr.message}`);
