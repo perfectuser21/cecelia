@@ -21,14 +21,17 @@ check() {
   fi
 }
 
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+RELAY_JS="$(cd "$SCRIPT_DIR/../.." && pwd)/src/harness-skill-relay.js"
+
 SMOKE_DIR=$(mktemp -d /tmp/smoke-relay-XXXXXX)
 trap 'rm -rf "$SMOKE_DIR"' EXIT
 
 echo "[smoke] dispatch-worker-relay: FR-5 + FR-4"
 
 # FR-5: 白名单外 executor 拒绝
-cat > "$SMOKE_DIR/t3.mjs" << 'T3EOF'
-import { spawnSkillRelaySession } from '/workspace/packages/brain/src/harness-skill-relay.js';
+cat > "$SMOKE_DIR/t3.mjs" << T3EOF
+import { spawnSkillRelaySession } from '${RELAY_JS}';
 const r = await spawnSkillRelaySession(
   { id: 'smoke-t3', task_type: 'dev', title: 'smoke', payload: { orchestrator: 'skill-relay', executor: 'unknown-bot' } },
   {
@@ -46,8 +49,8 @@ check "unknown executor rejected (ok:false)" '"ok":false' "$OUT"
 check "unknown executor has error field" '"error"' "$OUT"
 
 # FR-4: 核心任务护栏
-cat > "$SMOKE_DIR/t2.mjs" << 'T2EOF'
-import { spawnSkillRelaySession } from '/workspace/packages/brain/src/harness-skill-relay.js';
+cat > "$SMOKE_DIR/t2.mjs" << T2EOF
+import { spawnSkillRelaySession } from '${RELAY_JS}';
 const r = await spawnSkillRelaySession(
   {
     id: 'smoke-t2',
