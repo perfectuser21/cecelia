@@ -17,6 +17,7 @@ import {
   generateBattleReport,
   maybeGenerateBattleReport,
   hasNovelJudgment,
+  ADMISSION_DENY_REASONS,
 } from '../battle-report.js';
 import { sendFeishu } from '../notifier.js';
 import { getUnconfirmedReceipts } from '../receipt-collector.js';
@@ -574,5 +575,62 @@ describe('renderBattleReportHTML — PPT 卡片式 HTML 渲染', () => {
     const html = renderBattleReportHTML(baseData, day);
     expect(html).toContain('prefers-color-scheme:dark');
     expect(html).toContain('--bg:#0f1520');
+  });
+});
+
+describe('admission 吞吐段（T2，de6d3582）', () => {
+  it('buildBattleReportData：派发数/拒发原因/容器峰值 落到 data.admission', async () => {
+    const pool = {
+      query: vi.fn(async (sql) => {
+        if (/dispatch_events/.test(sql) && /event_type = 'dispatched'/.test(sql)) {
+          return { rows: [{ n: 12 }] };
+        }
+        if (/dispatch_events/.test(sql) && /failed_dispatch/.test(sql)) {
+          return { rows: [{ reason: 'cap_reached', count: 3 }] };
+        }
+        if (/working_memory/.test(sql) && /machine_vitals_daily_peak/.test(sql)) {
+          return { rows: [{ value_json: { date: '2026-07-17', peak: 4 } }] };
+        }
+        return { rows: [] };
+      }),
+    };
+    const data = await buildBattleReportData(pool);
+
+    expect(data.admission.dispatched_24h).toBe(12);
+    expect(data.admission.denies).toEqual([{ reason: 'cap_reached', count: 3 }]);
+    expect(data.admission.peak).toEqual({ date: '2026-07-17', peak: 4 });
+    expect(data.admission).toHaveProperty('vitals');
+
+    // 拒发原因白名单必须走 SQL IN 参数，用导出常量断言
+    const denyCall = pool.query.mock.calls.find(([sql]) => /failed_dispatch/.test(sql));
+    expect(denyCall[1]).toEqual([ADMISSION_DENY_REASONS]);
+  });
+
+  it('render 有数据：段标题 + 派发次数 + 拒发原因明细 + 容器峰值', () => {
+    const md = renderBattleReportMarkdown({
+      mergedPrs: [], journeyRuns: [], userDecisions: [],
+      sentinel: { jobs: [], expected: null, healthy: false },
+      admission: {
+        dispatched_24h: 12,
+        denies: [{ reason: 'cap_reached', count: 3 }],
+        peak: { date: '2026-07-17', peak: 4 },
+        vitals: null,
+      },
+    });
+    expect(md).toContain('## Harness admission 吞吐（24h）');
+    expect(md).toMatch(/派发 12 次/);
+    expect(md).toMatch(/cap_reached: 3/);
+    expect(md).toMatch(/容器峰值 4/);
+  });
+
+  it('render 全空（dispatched=0/denies=[]/peak=null）→ 段内渲染暂无', () => {
+    const md = renderBattleReportMarkdown({
+      mergedPrs: [], journeyRuns: [], userDecisions: [],
+      sentinel: { jobs: [], expected: null, healthy: false },
+      admission: { dispatched_24h: 0, denies: [], peak: null, vitals: null },
+    });
+    const idx = md.indexOf('## Harness admission 吞吐（24h）');
+    expect(idx).toBeGreaterThanOrEqual(0);
+    expect(md.slice(idx)).toMatch(/^## Harness admission 吞吐（24h）\n暂无/);
   });
 });
