@@ -52,6 +52,9 @@ vi.mock('../morning-cockpit-bark.js', () => ({
 vi.mock('../cron/drift-sentinel.js', () => ({
   runDriftSentinel: vi.fn().mockResolvedValue({ skipped: true, reason: 'interval_not_reached' }),
 }));
+vi.mock('../promise-map-nightly.js', () => ({
+  runPromiseMapNightly: vi.fn().mockResolvedValue({ ok: true, passed: 4, failed: 0 }),
+}));
 
 import {
   runSchedulerJobsOnce,
@@ -83,9 +86,9 @@ describe('scheduler-jobs 注册表', () => {
     vi.clearAllMocks();
   });
 
-  it('JOBS 注册了 19 个 job（含 postdeploy-verifier + seven-ring-audit + guard-drill + morning-cockpit-bark + drift-sentinel）', () => {
+  it('JOBS 注册了 20 个 job（含 postdeploy-verifier + seven-ring-audit + guard-drill + morning-cockpit-bark + drift-sentinel + promise-map-nightly）', () => {
     expect(JOBS.map((j) => j.name)).toEqual([
-      'arch-review', 'ci-patrol', 'strategy-trigger', 'conversation-digest', 'capture-digestion', 'daily-backup', 'line-dreaming', 'ledger-hygiene', 'battle-report', 'capture-triage', 'receipt-collector', 'gp-shelf-life', 'launchd-patrol', 'direction-proposer', 'postdeploy-verifier', 'seven-ring-audit', 'guard-drill', 'morning-cockpit-bark', 'drift-sentinel',
+      'arch-review', 'ci-patrol', 'strategy-trigger', 'conversation-digest', 'capture-digestion', 'daily-backup', 'line-dreaming', 'ledger-hygiene', 'battle-report', 'capture-triage', 'receipt-collector', 'gp-shelf-life', 'launchd-patrol', 'direction-proposer', 'postdeploy-verifier', 'seven-ring-audit', 'guard-drill', 'morning-cockpit-bark', 'drift-sentinel', 'promise-map-nightly',
     ]);
   });
 
@@ -106,7 +109,7 @@ describe('scheduler-jobs 注册表', () => {
     expect(runLaunchdPatrol).toHaveBeenCalledWith();
     expect(maybeRunDirectionProposer).toHaveBeenCalledWith(pool);
     expect(runPostdeployVerifier).toHaveBeenCalledWith(pool);
-    expect(results).toHaveLength(19);
+    expect(results).toHaveLength(20);
     expect(results.every((r) => r.ok)).toBe(true);
   });
 
@@ -116,7 +119,7 @@ describe('scheduler-jobs 注册表', () => {
     const results = await runSchedulerJobsOnce(pool);
     expect(results[0]).toMatchObject({ name: 'arch-review', ok: false, error: 'boom' });
     expect(results.slice(1).every((r) => r.ok)).toBe(true);
-    expect(results).toHaveLength(19);
+    expect(results).toHaveLength(20);
     expect(runCaptureDigestion).toHaveBeenCalled();
   });
 
