@@ -1,0 +1,15 @@
+{
+  "verdict": "PASS",
+  "sha": "a0814a4",
+  "artifact_gate": "PASS",
+  "contract_gate": "PASS",
+  "tests_run": 33,
+  "tests_passed": 33,
+  "unverifiable": [
+    "생산 컨테이너 90초 내 [drift_check] 로그 출력 — 배포 후 E2E 검증 필요"
+  ],
+  "double_gate_result": {
+    "artifact": "PASS",
+    "anti_cheat": "PASS"
+  }
+}
