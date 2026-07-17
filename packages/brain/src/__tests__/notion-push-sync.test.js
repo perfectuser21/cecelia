@@ -114,6 +114,15 @@ describe('runNotionPushSync — new push functions', () => {
     expect(linksQuery).toBeTruthy();
   });
 
+  it('pushJourneyStepLinks SELECT 排除格子行（cell_kind IS NULL）— migration 347/348 后 seed 的 ~120 个格子行不能被当作待推送连接行', async () => {
+    const { runNotionPushSync } = await import('../notion-push-sync.js');
+    await runNotionPushSync({ query: mockQuery });
+    const calls = mockQuery.mock.calls.map(c => c[0]);
+    const linksQuery = calls.find(q => q && q.includes('journey_step_links') && q.includes('notion_synced_at IS NULL'));
+    expect(linksQuery).toBeTruthy();
+    expect(linksQuery).toContain('cell_kind IS NULL');
+  });
+
   it('pushes skill to Notion skill_registry DB when notion_synced_at is null', async () => {
     const mockSkill = {
       id: 'skill-1', name: '/dev', description: 'dev skill',
