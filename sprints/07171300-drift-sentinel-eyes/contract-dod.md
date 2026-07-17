@@ -9,7 +9,7 @@
 
 ## [BEHAVIOR] 条目
 
-### [BEHAVIOR-T1] sha_main 容器环境 — HTTPS URL 免凭据路径
+### [BEHAVIOR] T1 sha_main 容器环境 — HTTPS URL 免凭据路径
 
 - **触发条件**: 容器内 `git ls-remote origin` 不可达，`gh` CLI 无 auth
 - **期望行为**: `defaultFetchMainSha()` 改用 `git ls-remote https://github.com/perfectuser21/cecelia.git refs/heads/main`，返回 stdout 第一 token（≥7位 SHA）
@@ -19,7 +19,7 @@
 
 ---
 
-### [BEHAVIOR-T2] sha_main 二级降级 — curl GitHub API
+### [BEHAVIOR] T2 sha_main 二级降级 — curl GitHub API
 
 - **触发条件**: `git ls-remote <HTTPS URL>` 失败（exit non-zero 或 stdout 空）
 - **期望行为**: 降级执行 `curl -sf --max-time 10 https://api.github.com/repos/perfectuser21/cecelia/commits/main`，解析 `.sha` 字段返回
@@ -29,7 +29,7 @@
 
 ---
 
-### [BEHAVIOR-T3] sha_prod 使用 localhost 自查（正确端点：/api/brain/health）
+### [BEHAVIOR] T3 sha_prod 使用 localhost 自查（正确端点：/api/brain/health）
 
 - **触发条件**: `BRAIN_PROD_URL` 未设置（默认值生效）
 - **期望行为**: `defaultFetchProdSha()` 默认 URL 改为 `http://localhost:5221/api/brain`（包含 `/api/brain` 前缀），curl 拼接 `/health` 后完整路径为 `http://localhost:5221/api/brain/health`——此端点由 `routes/goals.js` 的 `/health` 路由提供，挂载在 `app.use('/api/brain', brainRoutes)` 下，返回 `git_sha` 字段
@@ -39,7 +39,7 @@
 
 ---
 
-### [BEHAVIOR-T4] 错误日志含原始错误文本
+### [BEHAVIOR] T4 错误日志含原始错误文本
 
 - **触发条件**: 探针抛 `Error('ECONNREFUSED 127.0.0.1:9999')`
 - **期望行为**: catch 块中 console.log 参数包含 `error=` 前缀 + 原始 `err.message` 内容（前200字符）
@@ -49,7 +49,7 @@
 
 ---
 
-### [BEHAVIOR-T5] 网络全断保守跳过回归
+### [BEHAVIOR] T5 网络全断保守跳过回归
 
 - **触发条件**: `fetchMainSha` 和 `fetchProdSha` 均抛出异常
 - **期望行为**: `runDriftCheck` 不 throw；返回 `{ verdict: 'network_error' }`；`consecutiveNetworkErrors` 计数递增
