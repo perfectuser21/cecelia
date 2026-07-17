@@ -383,80 +383,80 @@ fi
 
 #### Step B-1.4 (S3 联动清单，thin档 — MJ5 刀3)
 
-**拉取本次 PR 改动文件 → 查 Brain 账本 → 输出联动影响清单进报告。不强制全跑（thin档），可跑的顺手跑并回写格子状态。**
+**从 task payload.feature_id → GET /features/:id/blast-radius → 逐条跑可运行断言并回写 cell_status。feature_id 缺失时跳过，不 block 主流程（thin档不强制全跑）。**
 
 ```bash
-# 1. 获取本次 PR 改动文件列表
-CHANGED_FILES_JSON=$(git diff --name-only "$(git merge-base origin/main HEAD)" HEAD 2>/dev/null \
-  | jq -Rn '[inputs]' 2>/dev/null || echo '[]')
-CHANGED_COUNT=$(echo "$CHANGED_FILES_JSON" | jq 'length')
+# S3 联动清单：feature_id + blast-radius 端点（v1.29）
+CASCADE_ASSERTIONS='[]'
+FEATURE_ID=$(curl -sf "http://localhost:5221/api/brain/tasks/$TASK_ID" 2>/dev/null \
+  | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('payload',{}).get('feature_id',''))" \
+  2>/dev/null || echo "")
 
-if [[ "$CHANGED_COUNT" -gt 0 ]]; then
-  # 2. 查 Brain cascade-list API 拿联动清单
-  CASCADE_RESULT=$(curl -s -X POST "${BRAIN_URL:-localhost:5221}/api/brain/cascade-list" \
-    -H "Content-Type: application/json" \
-    -d "{\"changed_files\": $CHANGED_FILES_JSON}" 2>/dev/null || echo '{}')
-
-  CASCADE_TOTAL=$(echo "$CASCADE_RESULT" | jq -r '.total // 0')
-  CASCADE_RUNNABLE=$(echo "$CASCADE_RESULT" | jq -r '.runnable_count // 0')
-  CASCADE_NIGHTLY=$(echo "$CASCADE_RESULT" | jq -r '.nightly_pending_count // 0')
-  CASCADE_REPORT=$(echo "$CASCADE_RESULT" | jq -r '.report_text // "（账本暂无关联格子）"')
-
-  echo "[S3联动] $CASCADE_REPORT"
-
-  # 3. 顺手跑可运行断言（tests/ 路径或 manual: 命令）
-  CASCADE_RAN=0
-  CASCADE_FAILED=0
-  CELL_RESULTS="[]"
-
-  if [[ "$CASCADE_RUNNABLE" -gt 0 ]]; then
-    # 从 runnable_cells 逐条执行
-    RUNNABLE_CELLS=$(echo "$CASCADE_RESULT" | jq -c '.runnable_cells[]?' 2>/dev/null)
-    while IFS= read -r cell; do
-      [ -z "$cell" ] && continue
-      LINK_ID=$(echo "$cell" | jq -r '.link_id // ""')
-      ASSERTION=$(echo "$cell" | jq -r '.assertion_ref // ""')
-      STEP_NAME=$(echo "$cell" | jq -r '.step_name // "?"')
-
-      if [[ "$ASSERTION" == tests/* ]]; then
-        # vitest 测试文件
-        CMD="npx vitest run '$ASSERTION' 2>&1 | tail -5"
-        SET_EXIT=0
-        OUTPUT=$(eval "$CMD" 2>&1 | tail -5) || SET_EXIT=1
-      elif [[ "$ASSERTION" == manual:* ]]; then
-        # manual: 命令（strip 前缀）
-        BARE_CMD="${ASSERTION#manual:}"
-        OUTPUT=$(eval "$BARE_CMD" 2>&1 | tail -5) || SET_EXIT=1
-        SET_EXIT=$?
-      fi
-
-      if [[ "$SET_EXIT" -eq 0 ]]; then
-        CASCADE_RAN=$((CASCADE_RAN + 1))
-        # 回写格子状态 green（S3 联动执法铁律一）
-        [ -n "$LINK_ID" ] && curl -s -X PATCH \
-          "${BRAIN_URL:-localhost:5221}/api/brain/journey_step_links/$LINK_ID" \
-          -H "Content-Type: application/json" \
-          -d '{"cell_status":"green"}' > /dev/null 2>&1 || true
-        echo "[S3联动] ✓ $STEP_NAME ($ASSERTION)"
-      else
-        CASCADE_FAILED=$((CASCADE_FAILED + 1))
-        echo "[S3联动] ✗ $STEP_NAME ($ASSERTION): $OUTPUT"
-      fi
-    done <<< "$RUNNABLE_CELLS"
-  fi
-
-  echo "[S3联动] 跑了 $CASCADE_RAN/$CASCADE_RUNNABLE 个，$CASCADE_NIGHTLY 个待 nightly 覆盖"
-
-  # 4. S3 失败不阻断 E2E（thin档铁律：清单+报告，不强制全跑）
-  # 仅记录进 verdict 的 cascade_report 字段
-  CASCADE_SUMMARY="{\"report\":\"$CASCADE_REPORT\",\"ran\":$CASCADE_RAN,\"failed\":$CASCADE_FAILED,\"nightly_pending\":$CASCADE_NIGHTLY}"
+if [[ -z "$FEATURE_ID" ]]; then
+  echo "[S3联动] payload 无 feature_id，跳过联动清单"
 else
-  CASCADE_SUMMARY="{\"report\":\"changed_files 为空，跳过 S3 联动\",\"ran\":0,\"failed\":0,\"nightly_pending\":0}"
-  echo "[S3联动] changed_files 为空，跳过联动清单"
+  BLAST=$(curl -sf "http://localhost:5221/api/brain/features/$FEATURE_ID/blast-radius" \
+    2>/dev/null || echo '{"blast_radius":[]}')
+  BLAST_LEN=$(echo "$BLAST" | python3 -c "import sys,json; print(len(json.load(sys.stdin).get('blast_radius',[])))")
+  echo "[S3联动] 件 $FEATURE_ID 波及 $BLAST_LEN 个格子"
+
+  CASCADE_RAN=0
+  S3_ENTRIES=()
+
+  while IFS='|' read -r S3_LINK_ID S3_REF; do
+    [[ -z "$S3_LINK_ID" ]] && continue
+    S3_RAN=false
+    S3_RESULT=skip
+
+    if [[ "$S3_REF" == tests/* ]]; then
+      S3_RAN=true
+      if NODE_OPTIONS="--max-old-space-size=3072" npx vitest run "$S3_REF" 2>&1 | tail -5; then
+        S3_RESULT=pass
+      else
+        S3_RESULT=fail
+      fi
+    elif [[ "$S3_REF" == manual:* ]]; then
+      S3_RAN=true
+      S3_BARE="${S3_REF#manual:}"
+      if eval "$S3_BARE" 2>&1 | tail -5; then
+        S3_RESULT=pass
+      else
+        S3_RESULT=fail
+      fi
+    fi
+
+    # pass → 直接回写 cell_status=green（铁律一：账本写入必须是流水线副作用）
+    if [[ "$S3_RESULT" == pass ]]; then
+      curl -sf -X PATCH "http://localhost:5221/api/brain/journey_step_links/$S3_LINK_ID" \
+        -H "Content-Type: application/json" \
+        -d '{"cell_status":"green"}' >/dev/null \
+        && echo "[S3联动] ✓ link $S3_LINK_ID → green" \
+        || echo "[S3联动 WARN] 回写 $S3_LINK_ID 失败（Brain 不通，继续，Step 3.6 将幂等重试）"
+      CASCADE_RAN=$((CASCADE_RAN + 1))
+    fi
+
+    S3_ENTRIES+=("{\"link_id\":\"$S3_LINK_ID\",\"assertion_ref\":\"$S3_REF\",\"ran\":$S3_RAN,\"result\":\"$S3_RESULT\"}")
+  done < <(echo "$BLAST" | python3 -c "
+import sys, json
+for item in json.load(sys.stdin).get('blast_radius', []):
+    lid = item.get('link_id', '')
+    ref = item.get('assertion_ref') or ''
+    if lid:
+        print(lid + '|' + ref)
+")
+
+  if [[ ${#S3_ENTRIES[@]} -gt 0 ]]; then
+    CASCADE_ASSERTIONS=$(python3 -c "
+import sys, json
+entries = [json.loads(e) for e in sys.argv[1:]]
+print(json.dumps(entries))
+" "${S3_ENTRIES[@]}" 2>/dev/null || echo '[]')
+  fi
+  echo "[S3联动] 波及 $BLAST_LEN 格，跑了 $CASCADE_RAN 条（pass）"
 fi
 ```
 
-> **S3 thin档规则**：清单进报告、可跑的顺手跑并回写 `cell_status=green`；跑不了的列为"待 nightly 覆盖"。S3 失败不阻断本次 E2E verdict（强制档为 v2）。verdict JSON 新增 `cascade_report` 字段。
+> **S3 thin档规则**：清单进报告、可跑的顺手跑并直接回写 `cell_status=green`；跑不了的（真机 L3 等）列为"待 nightly 覆盖"。S3 失败不阻断本次 E2E verdict（强制档为 v2）。verdict JSON 新增 `cascade_assertions` 数组，供 Brain execution.js Step 3.6 幂等备份写回。
 
 #### Step B-1.5: E2E 命令位置词验证（B33 v1.6 — playground-aware）
 
@@ -621,57 +621,6 @@ exit 0
 | **UI 交互** | 可见状态断言：`toBeVisible` / `toHaveText` / 截图比对 | "UI 类 sprint 但脚本无可见状态断言（toBeVisible/toHaveText/截图）" |
 
 判断"sprint 涉及哪个领域"以 `${SPRINT_DIR}/sprint-prd.md` 的 Golden Path + journey_type + target_environment 为准。命中领域但脚本缺对应 oracle → FAIL，不允许放行。
-
-#### Step B-1.S3: MJ5 S3 联动清单（thin档，additive — v1.29）
-
-**仅当任务 `payload.anchor.step_id` 存在时执行；step_id 缺失 → 输出 `[S3] 跳过` 直接继续，主流程不受影响。thin 档：联动清单进 verdict notes，不 block PASS/FAIL。**
-
-1. **读锚点 step_id**：
-
-```bash
-ANCHOR_STEP_ID=$(curl -sf "http://localhost:5221/api/brain/tasks/$TASK_ID" 2>/dev/null \
-  | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('payload',{}).get('anchor',{}).get('step_id',''))" \
-  2>/dev/null || echo "")
-```
-
-`$ANCHOR_STEP_ID` 为空 → 输出 `[S3] 无锚点 step_id，跳过联动清单` → 继续 Step B-1.9，不 FAIL。
-
-2. **查联动清单**（Brain localhost:5221）：
-
-```bash
-IMPACT=$(curl -sf "http://localhost:5221/api/brain/journeys/steps/$ANCHOR_STEP_ID/impact" \
-  2>/dev/null || echo '{"total":0,"runnable_count":0,"impacts":[]}')
-S3_TOTAL=$(echo "$IMPACT" | python3 -c "import sys,json; print(json.load(sys.stdin).get('total',0))")
-S3_RUN=$(echo "$IMPACT" | python3 -c "import sys,json; print(json.load(sys.stdin).get('runnable_count',0))")
-echo "[S3] 联动清单：步骤 $ANCHOR_STEP_ID 波及 ${S3_TOTAL} 格，${S3_RUN} 条可跑断言"
-```
-
-3. **逐条跑可跑断言 + 回写 cell_status**（`tests/` → vitest，`manual:bash ` → bash）：
-
-```bash
-echo "$IMPACT" | python3 -c "
-import sys, json
-for item in json.load(sys.stdin).get('impacts', []):
-    ref = item.get('assertion_ref') or ''
-    if ref.startswith('tests/') or ref.startswith('manual:bash '):
-        print(item['link_id'] + '|' + ref)
-" | while IFS='|' read -r S3_LINK_ID S3_REF; do
-    if [[ "$S3_REF" == tests/* ]]; then
-        NODE_OPTIONS="--max-old-space-size=3072" npx vitest run "$S3_REF" 2>&1 \
-          && S3_STATUS=green || S3_STATUS=red
-    else
-        bash -c "${S3_REF#manual:bash }" 2>&1 \
-          && S3_STATUS=green || S3_STATUS=red
-    fi
-    curl -sf -X PATCH "http://localhost:5221/api/brain/journey_step_links/$S3_LINK_ID" \
-      -H "Content-Type: application/json" \
-      -d "{\"cell_status\":\"$S3_STATUS\"}" >/dev/null \
-      && echo "[S3] 回写 link $S3_LINK_ID → $S3_STATUS" \
-      || echo "[S3 WARN] Brain 回写失败 link $S3_LINK_ID（继续，不 FAIL）"
-done
-```
-
-4. **verdict notes 追加**：在 Step B-3 写 verdict JSON 时，`notes` 字段追加 `"s3_cascade":"波及${S3_TOTAL}格，跑${S3_RUN}条"`。Brain 不通 / step_id 缺失时该字段值为 `"s3_cascade":"skipped"`。
 
 #### Step B-1.9: Machine Probe（windows 环境规范化）
 
@@ -990,7 +939,7 @@ fi
 
 ```bash
 cat > "$WORKSPACE/.brain-result.json" << BREOF
-{"verdict":"PASS","task_id":"$TASK_ID","failed_step":null,"log_excerpt":null,"screenshots":${SCREENSHOTS_JSON:-[]}}
+{"verdict":"PASS","task_id":"$TASK_ID","failed_step":null,"log_excerpt":null,"screenshots":${SCREENSHOTS_JSON:-[]},"cascade_assertions":${CASCADE_ASSERTIONS:-[]}}
 BREOF
 ```
 
