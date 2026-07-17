@@ -124,3 +124,4 @@ scripts/smoke/e2e/deploy-daily-drill.sh
 harness-gear-smoke.sh
 canary-drill-repair-smoke.sh
 promise-map-step-impact-smoke.sh
+cascade-list-smoke.sh
