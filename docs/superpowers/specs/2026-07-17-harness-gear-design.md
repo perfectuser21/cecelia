@@ -1,6 +1,6 @@
 # harness gear 档位一体化 — 设计
 
-日期：2026-07-17｜Brain task: 60a80ddc（P0）｜PrepPRD: sprints/07170850-harness-gear/prep-prd.md｜研究裁决：APPROVE
+日期：2026-07-17｜Brain task: 60a80ddc（P0）｜PrepPRD: docs/prd/2026-07-17-harness-gear-prep-prd.md｜研究裁决：APPROVE
 
 ## 目标
 harness relay 增加 gear 维度：`default`（现行为不动）/ `hotfix`（图不变改行为的修复，免 planner/GAN 直通）/ `segmented`（RPA/真机：骨架全红棋盘 + N 段串行点绿 + 段验 + 总验）。
