@@ -1682,10 +1682,33 @@ jobs:
       - name: Stop Hook 单一出口守护
         run: bash scripts/check-single-exit.sh
 
+  # ─── Brain 版本递增门禁（仅 pull_request 事件，src 变更必须 bump）─────
+  # 修复：改 packages/brain/src/** 不 bump 版本，check-version-sync 全绿放行的漏洞
+  # 铁律：不改 scripts/check-version-sync.sh / auto-version.yml / brain-ci-deploy.yml
+  # Task ID: d8189a83-3bd3-4da3-ac70-f0ed2ba4ece4
+  brain-version-bump-gate:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+      - name: Install root deps（vitest 合同测试需要）
+        run: npm ci
+      - name: Brain Version Bump Gate
+        env:
+          BASE_REF: origin/${{ github.base_ref }}
+        run: bash scripts/ci/check-brain-version-bump.sh
+
   # ─── Gate: 所有检查通过才能合并 ─────────────────────────────
   ci-passed:
     if: always()
-    needs: [secrets-scan, dod-format-check, dep-audit, registry-lint, eslint, pr-size-check, branch-naming, engine-tests, engine-tests-shell, dashboard-staging-gate-smoke, lint-migration-unique-version, lint-auto-merge-decision, lint-fs-guard-selection, lint-deploy-effect-assert, brain-unit, brain-unit-all, brain-diff-coverage, brain-integration, workspace-build, workspace-test, e2e-smoke, core-regression, dod-behavior-dynamic, harness-dod-integrity, harness-contract-lint, docker-infra-smoke, lint-test-pairing, lint-feature-has-smoke, lint-base-fresh, lint-tdd-commit-order, lint-learning-constraint-coverage, lint-test-quality, lint-no-mock-only-test, lint-no-fake-test, lint-single-exit, lint-bypass-not-committed, real-env-smoke, workspace-api-smoke, quality-tests, dispatch-worker-test]
+    needs: [secrets-scan, dod-format-check, dep-audit, registry-lint, eslint, pr-size-check, branch-naming, engine-tests, engine-tests-shell, dashboard-staging-gate-smoke, lint-migration-unique-version, lint-auto-merge-decision, lint-fs-guard-selection, lint-deploy-effect-assert, brain-unit, brain-unit-all, brain-diff-coverage, brain-integration, workspace-build, workspace-test, e2e-smoke, core-regression, dod-behavior-dynamic, harness-dod-integrity, harness-contract-lint, docker-infra-smoke, lint-test-pairing, lint-feature-has-smoke, lint-base-fresh, lint-tdd-commit-order, lint-learning-constraint-coverage, lint-test-quality, lint-no-mock-only-test, lint-no-fake-test, lint-single-exit, lint-bypass-not-committed, real-env-smoke, workspace-api-smoke, quality-tests, dispatch-worker-test, brain-version-bump-gate]
     runs-on: ubuntu-latest
     timeout-minutes: 2
     steps:
@@ -1740,6 +1763,7 @@ jobs:
           check "workspace-api-smoke"    "${{ needs.workspace-api-smoke.result }}"
           check "quality-tests"         "${{ needs.quality-tests.result }}"
           check "dispatch-worker-test"   "${{ needs.dispatch-worker-test.result }}"
+          check "brain-version-bump-gate" "${{ needs.brain-version-bump-gate.result }}"
 
           if [ "$FAILED" = "true" ]; then
             echo ""; echo "❌ CI FAILED"; exit 1
