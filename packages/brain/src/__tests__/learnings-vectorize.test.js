@@ -454,7 +454,9 @@ describe('selfcheck schema version', () => {
     // 345 = migration 345 dev_records.is_canary 列（金丝雀演习任务标记），故推进地板到 345。
     // 346 = migration 346 incidents 表（刀5a 事故归一层），故推进地板到 346。
     // 347 = migration 347 design_docs CHECK 约束加 drill_report type（金丝雀演习修复 f97f24dc），故推进地板到 347。
-    // 348 = migration 348 承诺地图 schema（MJ5 刀1：journeys/steps/features/step_links 四表扩展），故推进地板到 348。
-    expect(EXPECTED_SCHEMA_VERSION).toBe('348');
+    // 348 = migration 348 承诺地图 schema thin 版（四表扩展，MJ5 刀1 容器首刀），故推进地板到 348。
+    // 349 = migration 349 MJ5 刀1 和解补齐（domain/cell_key/双 partial unique/FK SET NULL），故推进地板到 349。
+    // 350 = migration 350 智能客服+首次成功两域承诺地图 seed 数据，故推进地板到 350。
+    expect(EXPECTED_SCHEMA_VERSION).toBe('350');
   });
 });
