@@ -1,0 +1,31 @@
+{
+  "initiative_id": "7f3ea7bd-23aa-4a56-bcd8-f4b8fc7766ad",
+  "journey_type": "autonomous",
+  "journey_type_reason": "纯后端 Brain 内部调度任务（scheduler-jobs + codex-test-gen + battle-report），无 UI/Dashboard 涉及，验收用 curl localhost:5221 + psql",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "Codex 池激活——每日测试补齐生成器（codex_test_gen）全量实现",
+      "scope": "新建 codex-test-gen.js（扫描+去重+入队逻辑）；scheduler-jobs.js 注册 codex-test-gen job；确认 task-router.js 七点清单对齐（codex_test_gen 路由已有，确认无误）；battle-report.js admission 段注入 codex_test_gen 24h 计数",
+      "dod": [
+        "[BEHAVIOR] codex_test_gen 任务入队后 tasks 表 5min 内可见（带时间窗查询），manual:bash psql 验证 count >= 1",
+        "[BEHAVIOR] /api/brain/slots 返回 codex.max=5 + codex.running/available 字段结构正确",
+        "[BEHAVIOR] INV-1 核心文件过滤——dispatcher/slot-allocator/migrations 不出现在扫描候选",
+        "[BEHAVIOR] INV-4 去重——7 天内同 target_file 不重复入队",
+        "[BEHAVIOR] battle-report.js 注入 codex_test_gen 24h 计数逻辑",
+        "[ARTIFACT] packages/brain/src/codex-test-gen.js 存在且含 codex_test_gen 入队逻辑",
+        "[ARTIFACT] scheduler-jobs.js JOBS 含 codex-test-gen 条目",
+        "[ARTIFACT] battle-report.js 含 codex_test_gen 字面量"
+      ],
+      "files": [
+        "packages/brain/src/codex-test-gen.js",
+        "packages/brain/src/scheduler-jobs.js",
+        "packages/brain/src/task-router.js",
+        "packages/brain/src/battle-report.js"
+      ],
+      "depends_on": [],
+      "complexity": "M",
+      "estimated_minutes": 60
+    }
+  ]
+}
