@@ -8,6 +8,7 @@
  *   ④ 哨兵摘要（同 routes/sentinel.js 口径：ok && age<=1800）
  *   ⑤ 军师决策节 v2 五段（GP 批审桌）
  *   ⑥ 未确认动作（action_receipts 24h 内 pending/timeout/failed，T4 回执台账）
+ *   ⑦ harness admission 吞吐（dispatch_events 24h 派发/拒发 + machine_vitals_daily_peak 峰值，de6d3582 T2）
  * 落 design_docs(type='battle_report') + 飞书链接（best-effort，失败不回滚）。
  *
  * 调度：scheduler-jobs.js 60s 轮询 + 本模块自 gate（窗口 + 20h 去重），
@@ -15,9 +16,16 @@
  */
 import { sendFeishu } from './notifier.js';
 import { getUnconfirmedReceipts } from './receipt-collector.js';
+import { getMachineVitals } from './machine-vitals.js';
 
 /** 每日触发小时（UTC）= 北京时间 06:00 */
 const BATTLE_REPORT_HOUR_UTC = 22;
+
+// admission 拒发 reason 白名单（slot-allocator.harnessSlotCheck + dispatcher 兜底全集）
+export const ADMISSION_DENY_REASONS = [
+  'cap_reached', 'vitals_stale', 'vitals_error', 'disk_pressure', 'memory_pressure',
+  'no_memory_headroom', 'quota_critical', 'quota_low_priority', 'inflight_query_error', 'task_cap_backstop',
+];
 
 // 与 routes/sentinel.js 同口径（不 import，避免拖入 express 依赖链）
 const SENTINEL_KEY_PREFIX = 'scheduler_job_last_run:';
@@ -52,7 +60,7 @@ export async function alreadyGeneratedToday(pool) {
  * 采集 24h 窗口六段数据。
  * @param {import('pg').Pool} pool
  * @param {Date} [now] 当前时间（军师节 v2 周一判断用，可注入测试）
- * @returns {Promise<{mergedPrs: Array, journeyRuns: Array, userDecisions: Array, sentinel: object, unconfirmedActions: Array, goldenPathMode: object|null}>}
+ * @returns {Promise<{mergedPrs: Array, journeyRuns: Array, userDecisions: Array, sentinel: object, unconfirmedActions: Array, goldenPathMode: object|null, admission: object}>}
  */
 export async function buildBattleReportData(pool, now = new Date()) {
   // ① merged PR（dev_records 断供容忍：恒空则渲染"暂无"）
@@ -196,7 +204,35 @@ export async function buildBattleReportData(pool, now = new Date()) {
     console.warn(`[battle-report] 军师节 v2 取数失败（降级 null）: ${err.message}`);
   }
 
-  return { mergedPrs, journeyRuns, userDecisions, sentinel: { jobs, expected, healthy }, unconfirmedActions, goldenPathMode };
+  // ⑦ harness admission 吞吐（beeba317 观察哨，de6d3582）
+  let admission = { dispatched_24h: 0, denies: [], peak: null, vitals: null };
+  try {
+    const { rows: dispRows } = await pool.query(
+      `SELECT count(*)::int AS n FROM dispatch_events
+        WHERE event_type = 'dispatched' AND created_at >= NOW() - interval '24 hours'`
+    );
+    const { rows: denyRows } = await pool.query(
+      `SELECT reason, count(*)::int AS count FROM dispatch_events
+        WHERE event_type = 'failed_dispatch'
+          AND reason = ANY($1::text[])
+          AND created_at >= NOW() - interval '24 hours'
+        GROUP BY reason ORDER BY count DESC`,
+      [ADMISSION_DENY_REASONS]
+    );
+    const { rows: peakRows } = await pool.query(
+      `SELECT value_json FROM working_memory WHERE key = 'machine_vitals_daily_peak'`
+    );
+    admission = {
+      dispatched_24h: dispRows[0]?.n ?? 0,
+      denies: denyRows,
+      peak: peakRows[0]?.value_json ?? null,
+      vitals: getMachineVitals(),
+    };
+  } catch (err) {
+    console.warn(`[battle-report] admission 段取数失败(渲染暂无): ${err.message}`);
+  }
+
+  return { mergedPrs, journeyRuns, userDecisions, sentinel: { jobs, expected, healthy }, unconfirmedActions, goldenPathMode, admission };
 }
 
 /** 上海时区是否周一 */
@@ -312,6 +348,21 @@ export function renderBattleReportMarkdown(data) {
       const failure = j.last_failure ? `；最近卡点：${j.last_failure}` : '';
       lines.push(`- ${j.journey_name}：${j.runs} run（done ${j.done} / failed ${j.failed}，${rate}）${failure}`);
     }
+  }
+
+  lines.push('');
+  lines.push('## Harness admission 吞吐（24h）');
+  const adm = data.admission || { dispatched_24h: 0, denies: [], peak: null, vitals: null };
+  const denyTotal = adm.denies.reduce((s, d) => s + (d.count || 0), 0);
+  if (adm.dispatched_24h === 0 && denyTotal === 0 && !adm.peak) {
+    lines.push('暂无');
+  } else {
+    const peakStr = adm.peak ? `容器峰值 ${adm.peak.peak}` : '容器峰值 暂无';
+    const vitalsStr = adm.vitals && !adm.vitals.stale
+      ? `当前 ${adm.vitals.relay_count} 容器 / VM 余 ${Math.max(0, (adm.vitals.vm_total_mb ?? 0) - (adm.vitals.vm_used_mb ?? 0))}MB / 盘 ${adm.vitals.host_disk_pct}%`
+      : '当前体征 stale';
+    lines.push(`- 派发 ${adm.dispatched_24h} 次｜admission 拒发 ${denyTotal} 次｜${peakStr}｜${vitalsStr}`);
+    for (const d of adm.denies) lines.push(`  - ${d.reason}: ${d.count}`);
   }
 
   lines.push('');
