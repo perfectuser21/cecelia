@@ -474,6 +474,7 @@ async function _spawnHeadedSession(task, { dbPool, now, short, initiativeId, dep
   // claude-launch.sh 在宿主直跑，host.docker.internal 对宿主进程不可达是已知形态；
   // codex 原值不动防回归。
   const brainUrl = isClaudeHeaded ? 'http://localhost:5221' : 'http://host.docker.internal:5221';
+  const headedGear = task.payload?.gear || '';
   const prompt = [
     `你是 harness-controller session（headed 模式）。按下面 SKILL 指令跑完整条 sprint。`,
     ``,
@@ -484,6 +485,7 @@ async function _spawnHeadedSession(task, { dbPool, now, short, initiativeId, dep
     `HARNESS_TASK_ID=${task.id}`,
     `SPRINT_DIR=${sprintDir}`,
     `BRAIN_URL=${brainUrl}`,
+    `HARNESS_GEAR=${headedGear}`,
     `任务标题：${task.title || ''}`,
   ].join('\n');
 
