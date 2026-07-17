@@ -135,7 +135,7 @@ describe('scheduler-jobs 注册表', () => {
     const pool = makePool();
     await runSchedulerJobsOnce(pool);
     const sentinelCalls = pool.query.mock.calls.filter(([sql]) => sql.includes('working_memory'));
-    expect(sentinelCalls).toHaveLength(18);
+    expect(sentinelCalls).toHaveLength(JOBS.length);
     expect(sentinelCalls[0][0]).toMatch(/ON CONFLICT \(key\) DO UPDATE/);
     expect(sentinelCalls[0][1][0]).toBe(`${SENTINEL_KEY_PREFIX}arch-review`);
     const payload = JSON.parse(sentinelCalls[0][1][1]);
@@ -146,7 +146,7 @@ describe('scheduler-jobs 注册表', () => {
   it('哨兵写入失败不影响 job 结果也不抛', async () => {
     const pool = { query: vi.fn().mockRejectedValue(new Error('db down')) };
     const results = await runSchedulerJobsOnce(pool);
-    expect(results).toHaveLength(18);
+    expect(results).toHaveLength(JOBS.length);
     expect(results.every((r) => r.ok)).toBe(true);
   });
 });
