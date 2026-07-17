@@ -1,17 +1,14 @@
 {
   "verdict": "PASS",
   "exit_code": 0,
-  "log_tail": "harness-judge-theater.test.js: 15/15 PASS. contract tests: 5/5 PASS. theater_mismatch闸: 微信+local_api→FAIL, adb+mac_web→FAIL, 正常local_api→PASS. meta_verification_gap: smoke无L3→FAIL, 有L3→PASS.",
+  "sha": "a62fc04",
+  "sprint": "07162300-owner-cockpit",
+  "log_tail": "12 passed (17.2s) — owner-cockpit-noesm.e2e.ts 全部通过",
   "behavior_tests": [
     {
-      "command": "cd packages/brain && npx vitest run src/__tests__/harness-judge-theater.test.js --reporter=verbose",
+      "command": "node_modules/.bin/playwright test --config=sprints/07162300-owner-cockpit/playwright.config.js",
       "exit_code": 0,
-      "log_tail": "Test Files 1 passed (1). Tests 15 passed (15). Duration 669ms.\n✓ theater_mismatch 微信+local_api PASS\n✓ meta_verification_gap smoke无L3 PASS\n✓ 正常local_api不误伤 PASS\n✓ adb+mac_web PASS\n✓ L3豁免 PASS\n✓ THEATER_KEYWORDS_EXTRA扩展 PASS\n✓ 大小写不敏感 PASS\n✓ [BEHAVIOR-1] theater_mismatch PASS\n✓ [BEHAVIOR-2] meta_verification_gap PASS\n✓ [BEHAVIOR-3] 正常合同不误伤 PASS"
-    },
-    {
-      "command": "node --experimental-vm-modules node_modules/.bin/vitest run sprints/07161900-theater-mismatch-gate/tests/theater-mismatch-contract.test.js --reporter=verbose",
-      "exit_code": 0,
-      "log_tail": "Test Files 1 passed (1). Tests 5 passed (5). Duration 790ms.\n✓ TC-01 GP含微信真机+local_api→theater_mismatch PASS\n✓ TC-03 GP含adb+mac_web→theater_mismatch PASS\n✓ TC-04 smoke无L3→meta_verification_gap PASS\n✓ TC-05 smoke有L3→不误判 PASS\n✓ TC-06 正常local_api→pass:true PASS"
+      "log_tail": "Running 12 tests using 1 worker\n✓ FR-01: 根路由渲染 OwnerCockpitPage，不重定向 PASS\n✓ FR-02: 六张指标卡均可见 PASS\n✓ FR-02: 六张指标卡数值均非空（真实 API 数据）PASS\n✓ FR-03: 作战板至少 1 张战役卡片可见 PASS\n✓ FR-03: 点击任务条目跳转 /harness-pipeline?task_id= PASS\n✓ FR-07: 移动端（375px）无水平滚动条 PASS\n✓ FR-10: 截图存证（owner-cockpit.png）PASS\n✓ FR-04: 晨报 Feed 展示且可展开 PASS\n✓ FR-05: 演习状态条可见 PASS\n✓ FR-06: 导览区展示 16 个已有页面链接 PASS\n✓ FR-09: morning-cockpit-bark job 已在 JOBS 数组中注册 PASS\n✓ FR-09: morning-cockpit-bark handler 无硬编码 BARK_TOKEN PASS\n12 passed (17.2s)"
     }
   ]
 }

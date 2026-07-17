@@ -1,0 +1,52 @@
+name: Deploy Daily Drill（每日部署演习 G3）
+
+# G3 每日演习：每天北京 09:00（UTC 01:00）对账过去 24h 的 deploy 时间线
+# 不与已有 nightly 冲突：smoke-e2e-nightly=03:00, integration-nightly=04:30
+
+on:
+  schedule:
+    - cron: '0 1 * * *'    # UTC 01:00 = 北京 09:00
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Dry run（设 DRILL_GH_API_FAIL=1 跳过真实 API）'
+        required: false
+        default: 'false'
+
+concurrency:
+  group: deploy-daily-drill
+  cancel-in-progress: false
+
+jobs:
+  daily-drill:
+    name: 每日部署演习（deploy record 时间线对账）
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: 运行每日部署演习对账
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BARK_KEY: ${{ secrets.BARK_KEY }}
+          BRAIN_URL: ${{ secrets.BRAIN_DEPLOY_URL || 'http://100.71.151.105:5221' }}
+          GH_REPO: ${{ github.repository }}
+          DRILL_GH_API_FAIL: ${{ github.event.inputs.dry_run == 'true' && '1' || '0' }}
+        run: |
+          chmod +x scripts/smoke/e2e/deploy-daily-drill.sh
+          set +e
+          bash scripts/smoke/e2e/deploy-daily-drill.sh
+          EXIT_CODE=$?
+          set -e
+          if [ $EXIT_CODE -eq 0 ]; then
+            echo "✅ 演习绿：所有 merge 均在 15min 内部署"
+          elif [ $EXIT_CODE -eq 2 ]; then
+            echo "⏭️ 演习 skip：无 merge 或 GH API 不可达"
+          else
+            echo "❌ 演习红：有 merge 未在 15min 内部署"
+            exit 1
+          fi

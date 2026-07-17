@@ -210,3 +210,13 @@ POST /api/brain/execution-callback
 |------|------|
 | `hooks/` | `packages/engine/hooks/` |
 | `skills/` | `packages/engine/skills/` |
+
+---
+
+## 10. 交付轴 Golden Path（合并即上线）
+
+| 件 | 名称 | 实现路径 | 状态 |
+|----|------|---------|------|
+| G1 | SHA 对账判变（假跳过根治） | brain-ci-deploy.yml SHA 对账 + brain-deploy.sh SHA 回读断言 | ✅ 已上线 |
+| G2 | 漂移哨兵 | packages/brain/src/cron/drift-sentinel.js（每 30min 自动补部署） | ✅ 已上线 |
+| G3 | 每日演习 | scripts/smoke/e2e/deploy-daily-drill.sh（nightly 09:00 对账断言） | 🆕 本 PR |

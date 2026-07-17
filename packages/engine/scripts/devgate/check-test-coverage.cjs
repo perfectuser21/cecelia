@@ -74,8 +74,8 @@ function parseTestContract(content) {
     // 取 backtick 里的路径
     const m = testFileRaw.match(/`([^`]+)`/);
     const testFile = m ? m[1] : testFileRaw;
-    // 接受 .test.* / .spec.* / .e2e.*（含 tsx/jsx）：前端组件测试 .test.tsx、e2e 用 .spec.ts 或 .e2e.ts
-    if (!/\.(test|spec|e2e)\.[cm]?[jt]sx?$/.test(testFile)) continue;
+    // 接受 .test.* / .spec.* / .e2e.*（含 tsx/jsx）及 .sh 合同测试
+    if (!/\.(test|spec|e2e)\.[cm]?[jt]sx?$|\.sh$/.test(testFile)) continue;
     // behavior 覆盖用 '/' 分割
     const behaviors = behaviorsRaw
       .split(/[/,、]/)
@@ -107,6 +107,8 @@ function checkContract(contractPath) {
       );
       continue;
     }
+    // .sh 合同测试：可执行验收脚本，无 it()/test() 结构，跳过 behavior 匹配
+    if (row.testFile.endsWith(".sh")) continue;
     const testContent = fs.readFileSync(testFilePath, "utf-8");
     const itMatches = [...testContent.matchAll(/\b(?:it|test)\(['"]([^'"]+)['"]/g)];
     const itNames = itMatches.map((m) => m[1]);
