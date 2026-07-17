@@ -306,13 +306,15 @@ export async function dispatchNextTask(goalIds) {
         try {
           const { getTaskLocation } = await import('./task-router.js');
           const peekXian = await pool.query(`
-            SELECT task_type FROM tasks WHERE status = 'queued'
+            SELECT task_type, location FROM tasks WHERE status = 'queued'
             ORDER BY CASE priority WHEN 'P0' THEN 0 WHEN 'P1' THEN 1 ELSE 9 END, created_at ASC
             LIMIT 1
           `);
-          const nextType = peekXian.rows[0]?.task_type;
-          if (nextType && getTaskLocation(nextType) === 'xian') {
-            tickLog(`[tick] Codex xian bypass: task_pool full but codex pool available for task_type=${nextType}`);
+          const nextTask = peekXian.rows[0];
+          const nextType = nextTask?.task_type;
+          // BEHAVIOR-8: task.location='xian' 直接判断（DB 字段驱动），或 getTaskLocation 静态映射
+          if ((nextTask?.location === 'xian') || (nextType && getTaskLocation(nextType) === 'xian')) {
+            tickLog(`[tick] Codex xian bypass: task_pool full but codex pool available for task_type=${nextType} location=${nextTask?.location}`);
             xianBypass = true;
           }
         } catch (bypassErr) {
