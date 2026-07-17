@@ -103,6 +103,18 @@ echo "=== 所有 E2E 验收通过 ==="
 # 期望输出含 statusCheckRollup 数组，证明老版 gh 兼容新命令格式
 ```
 
+## Test Contract
+
+| 功能 | Test File | BEHAVIOR 覆盖 | 预期红色证据 |
+|------|-----------|---------------|------------|
+| B1 老版gh fallback | `../../tests/regression/watchdog-gh-compat/harness-relay-watchdog-ghcompat.test.js` | [B1-fallback-ci-red] unknown-flag → pr view statusCheckRollup → CI红 → resumed=1 | 修复前 resumed=0（保守跳过），修复后 resumed=1 [FAILING 标注验证] |
+| B2 zenithjoy-skills映射 | `../../tests/regression/watchdog-gh-compat/harness-relay-watchdog-ghcompat.test.js` | [B2-exact] _parseBaseRepo zenithjoy-skills → perfectuser21/zenithjoy-skills | 修复前返回 null/wrong，修复后精确匹配 [FAILING 标注验证] |
+| B3 空statusCheckRollup | `../../tests/regression/watchdog-gh-compat/harness-relay-watchdog-ghcompat.test.js` | [B3-empty-statusCheckRollup] statusCheckRollup=[] → pending → resumed=0 | N/A（保守策略，不触发重点火） |
+
+## 未覆盖真实链路清单
+
+N/A — 修改仅 watchdog 内部逻辑，mock execFn 已完整覆盖 gh 调用路径；无真实 gh CLI 集成路径需额外覆盖。
+
 ## 不变量（Invariants）
 
 - 禁止 mock 掉版本差异：测试中 `execFn` 必须真实模拟老版 gh 的报错原文（`unknown flag: --json`）
