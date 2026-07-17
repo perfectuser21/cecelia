@@ -162,7 +162,8 @@ describe('dispatchNextTask: pre-flight 失败时跳过并尝试下一个任务',
     const goodTask = {
       id: 'task-good', title: 'Fix login timeout in auth module',
       description: '修复登录超时问题，用户等待超过30秒后需要重新认证',
-      prd_content: null, status: 'queued', priority: 'P1', payload: {}
+      prd_content: null, status: 'queued', priority: 'P1', payload: {},
+      created_at: '2026-07-16T00:00:00Z',
     };
 
     // preFlightCheck: fail for bad, pass for good
