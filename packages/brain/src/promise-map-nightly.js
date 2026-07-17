@@ -12,6 +12,8 @@ import { fileURLToPath } from 'node:url';
 import { join, dirname } from 'node:path';
 import pool from './db.js';
 import { sendBark } from './notifier.js';
+// A2 与 S2 锚点闸同口径（豁免/存量 cutoff 单一来源）
+import { ANCHOR_EXEMPT_TASK_TYPES, ANCHOR_EXEMPT_ACTIONS, ANCHOR_LEGACY_CUTOFF } from './anchor-check.js';
 
 export const SENTINEL_KEY = 'promise-map-nightly';
 export const NIGHTLY_HOUR_UTC = 2;     // 北京时间 10:00
@@ -71,7 +73,14 @@ export async function buildNightlyAssertions(queryPool) {
     WHERE dr.merged_at > NOW() - INTERVAL '24 hours'
       AND (t.payload->'anchor'->>'step_id' IS NULL
            OR t.payload->>'anchor' IS NULL)
-  `);
+      AND t.created_at >= $1
+      AND NOT (t.task_type = ANY($2))
+      AND NOT (COALESCE(t.payload->>'action','') = ANY($3))
+  `, [
+    ANCHOR_LEGACY_CUTOFF.toISOString(),
+    [...ANCHOR_EXEMPT_TASK_TYPES],
+    [...ANCHOR_EXEMPT_ACTIONS],
+  ]);
   const unanchored = parseInt(unanchoredCount, 10);
   results.push({
     key: 'zero_unanchored_merges',
@@ -81,15 +90,22 @@ export async function buildNightlyAssertions(queryPool) {
   });
 
   // ── A3: 账本引用完整性 ────────────────────────────────────
+  // 底座件 = 家③横切件池 / 家②共享前置（journey_features.kind 枚举里没有 'base'——
+  // 用 kind='base' 是永远查空的纸门，07-17 验火修正）
   const { rows: baseFeaturesNoLinks } = await queryPool.query(`
     SELECT jf.id, jf.name FROM journey_features jf
-    WHERE jf.kind = 'base'
+    WHERE jf."group" IN ('家③横切件池','家②共享前置')
       AND NOT EXISTS (
         SELECT 1 FROM journey_step_links jsl WHERE jsl.feature_id = jf.id
       )
   `);
+  // promise 缺失只查承诺地图域（home/domain 非空）——全库存量步骤走豁免（判定点④同源）
   const { rows: stepsNoPromise } = await queryPool.query(`
-    SELECT id, name FROM journey_steps WHERE promise IS NULL LIMIT 10
+    SELECT js.id, js.name FROM journey_steps js
+    JOIN journeys j ON j.id = js.journey_id
+    WHERE js.promise IS NULL
+      AND (j.home IS NOT NULL OR j.domain IS NOT NULL)
+    LIMIT 10
   `);
 
   const a3Issues = [];
