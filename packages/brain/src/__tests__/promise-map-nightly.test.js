@@ -38,8 +38,9 @@ function makePool(queryImpl) {
 }
 
 beforeEach(() => {
-  vi.clearAllMocks();
+  vi.resetAllMocks();
   mockSendBark.mockResolvedValue(undefined);
+  existsSync.mockReturnValue(true);
 });
 
 // ── [S4-N1] 时间窗口外 → skipped ─────────────────────────
