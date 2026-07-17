@@ -30,6 +30,7 @@ import dispatchRouter from './routes/dispatch.js';
 import previewRouter from './routes/preview.js';
 import kvRouter from './routes/kv.js';
 import guardDrillRouter from './routes/guard-drill.js';
+import releaseGateRouter from './routes/release-gate.js';
 
 export { triggerAutoRCA } from './routes/brain-meta.js';
 export { resolveRelatedFailureMemories } from './routes/shared.js';
@@ -87,5 +88,8 @@ router.use('/kv', kvRouter);
 
 // 月度守卫演习台账 — GET /guard-drill/status，POST /guard-drill/trigger
 router.use('/guard-drill', guardDrillRouter);
+
+// 发布准入查账 — GET /release-gate/:pathId（只读，POST/PUT/PATCH → 405）
+router.use('/release-gate', releaseGateRouter);
 
 export default router;
