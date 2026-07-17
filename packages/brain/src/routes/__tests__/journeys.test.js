@@ -271,6 +271,56 @@ describe('POST /api/brain/journey_step_links', () => {
   });
 });
 
+describe('POST /journey_step_links cell 化', () => {
+  beforeEach(() => { mockQuery.mockReset(); });
+
+  it('legacy 行 upsert 用 partial index 冲突目标', async () => {
+    mockQuery.mockResolvedValueOnce({ rows: [{ id: 'x' }] });
+
+    const { default: router } = await import('../journeys.js');
+    const express = await import('express');
+    const app = express.default();
+    app.use(express.default.json());
+    app.use('/api/brain', router);
+
+    const request = await import('supertest');
+    const res = await request.default(app)
+      .post('/api/brain/journey_step_links')
+      .send({ journey_id: 'j1', step_id: 's1', step_order: 1 });
+
+    expect(res.status).toBe(201);
+    const sql = mockQuery.mock.calls[0][0];
+    expect(sql).toContain('ON CONFLICT (journey_id, step_id) WHERE cell_kind IS NULL');
+  });
+
+  it('cell 行走 cell 冲突目标且必须带 cell_key', async () => {
+    const { default: router } = await import('../journeys.js');
+    const express = await import('express');
+    const app = express.default();
+    app.use(express.default.json());
+    app.use('/api/brain', router);
+
+    const request = await import('supertest');
+
+    const bad = await request.default(app)
+      .post('/api/brain/journey_step_links')
+      .send({ journey_id: 'j1', step_id: 's1', cell_kind: 'capability' });
+    expect(bad.status).toBe(400);
+    expect(mockQuery).not.toHaveBeenCalled();
+
+    mockQuery.mockResolvedValueOnce({ rows: [{ id: 'y' }] });
+    const res = await request.default(app)
+      .post('/api/brain/journey_step_links')
+      .send({
+        journey_id: 'j1', step_id: 's1', cell_kind: 'base_ref', cell_key: 'CRM 表底座',
+        cell_status: 'pending', feature_id: 'f1',
+      });
+    expect(res.status).toBe(201);
+    const sql = mockQuery.mock.calls[0][0];
+    expect(sql).toContain('ON CONFLICT (step_id, cell_kind, cell_key) WHERE cell_kind IS NOT NULL');
+  });
+});
+
 describe('GET /journey_features kind 过滤', () => {
   beforeEach(() => { mockQuery.mockReset(); });
 

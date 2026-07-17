@@ -339,17 +339,48 @@ router.get('/journey_step_links', async (req, res) => {
   }
 });
 
-// POST /api/brain/journey_step_links
+// POST /api/brain/journey_step_links —— legacy 连接行 + 格子行双通道
 router.post('/journey_step_links', async (req, res) => {
   try {
-    const { journey_id, step_id, step_order, status } = req.body;
-    if (!journey_id || !step_id || step_order === undefined) {
-      return res.status(400).json({ error: 'journey_id, step_id, step_order are required' });
+    const {
+      journey_id, step_id, step_order, status,
+      cell_kind, cell_key, cell_status, feature_id, assertion_ref, na_reason,
+    } = req.body;
+    if (!journey_id || !step_id) {
+      return res.status(400).json({ error: 'journey_id, step_id are required' });
+    }
+
+    if (cell_kind) {
+      const VALID_CELL_KINDS = ['capability', 'element', 'scenario', 'base_ref'];
+      const VALID_CELL_STATUS = ['gray', 'red', 'pending', 'green'];
+      if (!VALID_CELL_KINDS.includes(cell_kind)) {
+        return res.status(400).json({ error: `cell_kind must be one of: ${VALID_CELL_KINDS.join(',')}` });
+      }
+      if (!cell_key) return res.status(400).json({ error: 'cell_key is required when cell_kind is set' });
+      if (cell_status && !VALID_CELL_STATUS.includes(cell_status)) {
+        return res.status(400).json({ error: `cell_status must be one of: ${VALID_CELL_STATUS.join(',')}` });
+      }
+      const { rows } = await pool.query(
+        `INSERT INTO journey_step_links
+           (journey_id, step_id, cell_kind, cell_key, cell_status, feature_id, assertion_ref, na_reason, status, notion_synced_at)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'planned',NOW())
+         ON CONFLICT (step_id, cell_kind, cell_key) WHERE cell_kind IS NOT NULL DO UPDATE SET
+           cell_status=EXCLUDED.cell_status, feature_id=EXCLUDED.feature_id,
+           assertion_ref=EXCLUDED.assertion_ref, na_reason=EXCLUDED.na_reason
+         RETURNING *`,
+        [journey_id, step_id, cell_kind, cell_key, cell_status || 'gray',
+         feature_id || null, assertion_ref || null, na_reason || null]
+      );
+      return res.status(201).json(rows[0]);
+    }
+
+    if (step_order === undefined) {
+      return res.status(400).json({ error: 'step_order is required for non-cell links' });
     }
     const { rows } = await pool.query(
       `INSERT INTO journey_step_links (journey_id, step_id, step_order, status, notion_synced_at)
        VALUES ($1,$2,$3,$4,NULL)
-       ON CONFLICT (journey_id, step_id) DO UPDATE SET
+       ON CONFLICT (journey_id, step_id) WHERE cell_kind IS NULL DO UPDATE SET
          step_order=EXCLUDED.step_order, status=EXCLUDED.status
        RETURNING *`,
       [journey_id, step_id, step_order, status || 'planned']
