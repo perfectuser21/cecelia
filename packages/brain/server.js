@@ -90,6 +90,7 @@ import createAutonomousRouter from './src/routes/autonomous.js';
 import { initTickLoop } from './src/tick.js';
 import { runSelfCheck } from './src/selfcheck.js';
 import { runMigrations } from './src/migrate.js';
+import { sendBark } from './src/notifier.js';
 import pool from './src/db.js';
 import { initNarrativeTimer } from './src/cognitive-core.js';
 import { isConsciousnessEnabled, logStartupDeclaration, initConsciousnessGuard } from './src/consciousness-guard.js';
@@ -487,6 +488,14 @@ if (process.env.SKIP_MIGRATIONS === 'true') {
     } catch (err) {
       if (attempt === 3) {
         console.error('[FATAL] Migration failed after 3 attempts:', err.message);
+        try {
+          await sendBark(
+            '[Brain FATAL] Migration 失败',
+            `迁移连续失败 3 次，Brain 即将退出。\n错误：${err.message}\n时间：${new Date().toISOString()}`
+          );
+        } catch (barkErr) {
+          console.error('[FATAL] sendBark 调用失败:', barkErr.message);
+        }
         process.exit(1);
       }
       console.warn(`[Server] Migration failed (attempt ${attempt}/3), retrying in 5s...`, err.message);
