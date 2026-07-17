@@ -114,7 +114,8 @@ describe('Bug #1: triggerCeceliaRun 失败时 revert 任务并返回 dispatched=
     const task = {
       id: 'task-exec-fail', title: 'Good task title here',
       description: '有完整描述的合法任务，应该通过 pre-flight',
-      status: 'queued', priority: 'P1', payload: {}
+      status: 'queued', priority: 'P1', payload: {},
+      created_at: '2026-07-16T00:00:00Z',
     };
 
     // triggerCeceliaRun 返回 success=false
@@ -166,7 +167,8 @@ describe('Bug #1: triggerCeceliaRun 失败时 revert 任务并返回 dispatched=
     const task = {
       id: 'task-exec-ok', title: 'Normal working task',
       description: '正常任务应该成功派发',
-      status: 'queued', priority: 'P1', payload: {}
+      status: 'queued', priority: 'P1', payload: {},
+      created_at: '2026-07-16T00:00:00Z',
     };
 
     mockTriggerCeceliaRun.mockResolvedValueOnce({
@@ -354,6 +356,7 @@ describe('Bug 回归: harness_initiative bridge guard bypass', () => {
       status: 'queued',
       priority: 'P1',
       payload: {},
+      created_at: '2026-07-16T00:00:00Z',
     };
 
     mockQuery.mockResolvedValueOnce({ rows: [] });
