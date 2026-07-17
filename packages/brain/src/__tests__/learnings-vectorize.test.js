@@ -453,6 +453,8 @@ describe('selfcheck schema version', () => {
     // 344 = migration 344 journey_features status CHECK 拓宽（修 343 窄枚举），故推进地板到 344。
     // 345 = migration 345 dev_records.is_canary 列（金丝雀演习任务标记），故推进地板到 345。
     // 346 = migration 346 incidents 表（刀5a 事故归一层），故推进地板到 346。
-    expect(EXPECTED_SCHEMA_VERSION).toBe('346');
+    // 347 = migration 347 design_docs CHECK 约束加 drill_report type（金丝雀演习修复 f97f24dc），故推进地板到 347。
+    // 348 = migration 348 承诺地图 schema（MJ5 刀1：journeys/steps/features/step_links 四表扩展），故推进地板到 348。
+    expect(EXPECTED_SCHEMA_VERSION).toBe('348');
   });
 });
