@@ -1,7 +1,7 @@
 ---
 name: dev
-version: 19.3.0
-updated: 2026-05-30
+version: 19.6.0
+updated: 2026-07-17
 description: 统一开发点火入口。查 12 张 Brain DB 表拿上下文 → 判断类型（bug / 小改动 / 大功能）→ 生成 PrepPRD → 用户确认 → 路由执行。
 trigger: /dev, --task-id <id>, 我想做, 有个 bug, 改一下, 出问题了, walking skeleton, harness, journey, feature
 ---
