@@ -111,6 +111,14 @@ Step 1: [用户如何知道出错了] → Step 2: [用户如何恢复]
 ## Regression Test 计划
 [一个能复现 bug 的 failing test，修完永久留 CI]
 
+## 锚点（S2执法必填，无锚不进 decision 写库步）
+- journey_id: [如 line04 / first-success-path]
+- gp_id: [如 GP-B]
+- step_id: [如 s1-connect / s2-bind]
+- cell_ref: [可选，如 cell-line04-s2-底座件A]
+
+> 豁免：action=spike/hotfix_emergency/displacement 可不填，但须在 action 字段说明。
+
 ## 验收标准
 - [ ] failing test 先 commit（commit-1）
 - [ ] 修复代码让 test 变绿（commit-2）
@@ -134,6 +142,11 @@ Step 1: [用户如何知道出错了] → Step 2: [用户如何恢复]
 
 ## 影响范围
 [会不会影响其他地方]
+
+## 锚点（S2执法必填，无锚不进 decision 写库步）
+- journey_id: [如 line04 / first-success-path]
+- gp_id: [如 GP-B]
+- step_id: [如 s1-connect / s2-bind]
 
 ## 验收标准
 - [ ] [可验证的条件]
@@ -201,6 +214,12 @@ Step 1: [用户如何知道出错了] → Step 2: [用户如何恢复]
 ### 基础设施
 - [ ] 需要：[服务/端口/环境变量/GHA secrets 名称]
 
+## 锚点（S2执法必填，无锚不进 decision 写库步）
+- journey_id: [如 line04 / first-success-path]
+- gp_id: [如 GP-B]
+- step_id: [如 s1-connect / s2-bind]
+- cell_ref: [可选]
+
 ## 用户确认的成功标准
 - [可验证的条件]
 ```
@@ -208,6 +227,8 @@ Step 1: [用户如何知道出错了] → Step 2: [用户如何恢复]
 ---
 
 ## 三条执行路径
+
+> **S2 锚点门禁**：PrepPRD 中"锚点"节未填写 journey_id/gp_id/step_id → 禁止执行以下 decision 写库命令，先补锚。豁免：action=spike/hotfix_emergency/displacement 或为系统任务。
 
 ### 路径 A：Bug
 

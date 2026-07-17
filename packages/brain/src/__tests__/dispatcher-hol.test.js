@@ -100,7 +100,7 @@ function makeCodexTask(id = 'codex-1', priority = 'P1') {
 }
 
 function makeClaudeTask(id = 'claude-1', priority = 'P1') {
-  return { id, task_type: 'dev', priority, title: `Claude task ${id}`, payload: {}, project_id: null };
+  return { id, task_type: 'dev', priority, title: `Claude task ${id}`, payload: {}, project_id: null, created_at: '2026-07-16T00:00:00Z' };
 }
 
 function setupQueryMocks(dispatchedTaskId) {
