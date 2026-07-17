@@ -38,11 +38,11 @@ npx playwright test sprints/07171640-cockpit-route-wire/tests/e2e-verify.spec.ts
 
 ## Test Contract
 
-| BEHAVIOR | 测试文件 | it() 描述 |
-|----------|---------|-----------|
-| App.tsx 顶层静态含 OwnerCockpitPage 引用（防孤儿断言） | tests/cockpit-route.test.ts | App.tsx 顶层静态含 OwnerCockpitPage 引用（防孤儿断言） |
-| manifest / 路由指向 OwnerCockpitPage（防孤儿 manifest 断言） | tests/cockpit-route.test.ts | manifest / 路由指向 OwnerCockpitPage（防孤儿 manifest 断言） |
-| 指挥舱首页 — 真首页渲染验收 | tests/e2e-verify.spec.ts | 指挥舱首页 — 真首页渲染验收 |
+| Workstream | Test File | BEHAVIOR 覆盖 | 预期红证据 |
+|-----------|-----------|--------------|-----------|
+| 防孤儿 import | `../../tests/regression/cockpit-route-wire/cockpit-route.test.ts` | App.tsx 顶层静态含 OwnerCockpitPage 引用（防孤儿断言） | App.tsx 无 import 时 test 红 |
+| 防孤儿 manifest | `../../tests/regression/cockpit-route-wire/cockpit-route.test.ts` | manifest / 路由指向 OwnerCockpitPage（防孤儿 manifest 断言） | manifest 无 / 路由时 test 红 |
+| Playwright E2E | `../../tests/regression/cockpit-route-wire/e2e-verify.spec.ts` | 指挥舱首页 — 真首页渲染验收 | 5211 无 owner-cockpit 时红 |
 
 ---
 
