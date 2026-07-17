@@ -23,8 +23,8 @@ import { test, describe } from 'node:test';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
-// 路径常量
-const REPO_ROOT = resolve(__dirname, '../../..');
+// 路径常量（本文件位于 scripts/__tests__/，故 ../.. 即 repo 根）
+const REPO_ROOT = resolve(__dirname, '../..');
 const SCRIPT = join(REPO_ROOT, 'scripts/release-gate.mjs');
 const FIXTURES_DIR = join(__dirname, '__fixtures__');
 const RTM_WITH_GAPS = join(FIXTURES_DIR, 'rtm-with-gaps.md');
