@@ -1,0 +1,26 @@
+{
+  "initiative_id": "14a11fd8-0d2f-49e2-885b-9286fc1d76f7",
+  "journey_type": "autonomous",
+  "journey_type_reason": "纯 Brain/harness 后端派发链路 smoke，无用户可见 UI 交互（PrepPRD 已明确标注）",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "锚定 task_id=14a11fd8 的 headed relay e2e-verify.sh + 契约测试",
+      "scope": "新增 sprints/07172014-relay-14a11fd8/e2e-verify.sh：复用（不重实现）packages/brain/scripts/smoke/claude-headed-dispatch-smoke.sh，校验其在 packages/quality/smoke-allowlist.txt 登记且脚本 sha256 未变，查 GET /api/brain/tasks/14a11fd8... 核对 payload 三元组/journey_id 与敏感字段脱敏，查 DB initiative_runs 核对当前 initiative_id 的 orchestrator_host/phase，校验本 sprint 未越权修改 .github/workflows/*.yml 或 smoke-allowlist.txt。",
+      "dod": [
+        "[BEHAVIOR] e2e-verify.sh 调用 claude-headed-dispatch-smoke.sh 并校验 allowlist 登记与脚本完整性",
+        "[BEHAVIOR] payload 三元组与 journey_id 齐全且禁用 token/github_token/anthropic_token/thin_prd",
+        "[BEHAVIOR] initiative_runs 含 skill-relay-claude-headed 且 phase 拒绝 failed/非法枚举",
+        "[BEHAVIOR] 不越权修改 CI workflow 或 smoke-allowlist",
+        "[ARTIFACT] sprints/07172014-relay-14a11fd8/e2e-verify.sh 存在且锚定当前 task_id"
+      ],
+      "files": [
+        "sprints/07172014-relay-14a11fd8/e2e-verify.sh",
+        "tests/regression/relay-14a11fd8/headed-smoke-contract.test.ts"
+      ],
+      "depends_on": [],
+      "complexity": "S",
+      "estimated_minutes": 30
+    }
+  ]
+}
