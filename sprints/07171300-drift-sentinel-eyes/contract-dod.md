@@ -97,11 +97,11 @@ grep 'brain.cecelia.ai' /workspace/packages/brain/src/cron/drift-sentinel.js \
 grep 'error=' /workspace/packages/brain/src/cron/drift-sentinel.js \
   && echo "PASS: FR-3 error= 字段存在" || echo "FAIL: FR-3"
 
-# 6. 运行合同测试（T1-T5）
-cd /workspace/packages/brain && npx vitest run ../../sprints/07171300-drift-sentinel-eyes/tests/drift-sentinel-contract.test.js --reporter=verbose 2>&1 | tail -30
+# 6. 运行合同测试（T1-T5，已毕业至 tests/regression/）
+cd /workspace/packages/brain && NODE_OPTIONS="--max-old-space-size=3072" /workspace/node_modules/.bin/vitest run '../../tests/regression/drift-sentinel-eyes/drift-sentinel-contract.test.js' --reporter=verbose 2>&1 | tail -30
 
 # 7. 零 regression（现有 FR-15 全量测试）
-cd /workspace/packages/brain && npx vitest run src/cron/__tests__/drift-sentinel.test.js --reporter=verbose 2>&1 | tail -20
+cd /workspace/packages/brain && NODE_OPTIONS="--max-old-space-size=3072" /workspace/node_modules/.bin/vitest run src/cron/__tests__/drift-sentinel.test.js --reporter=verbose 2>&1 | tail -20
 ```
 
 ---
