@@ -159,6 +159,8 @@ describe('machine-vitals', () => {
       stubDocker({ psNames: 'cecelia-relay-a-1\ncecelia-relay-b-2\ncecelia-relay-c-3\n' });
       await sampleMachineVitals(pool);
       expect(lastPeakValue(pool).peak).toBe(5);
+      // 锁写入频次语义：非新峰不重复写（reviewer 建议）
+      expect(peakUpsertCalls(pool)).toHaveLength(1);
     });
 
     it('采样失败不写峰值', async () => {
