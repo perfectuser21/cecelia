@@ -190,8 +190,10 @@ describe('selfcheck', () => {
   // 344（journey_features status CHECK 拓宽）推进地板到 344。
   // 345（dev_records.is_canary 列，金丝雀演习标记）推进地板到 345。
   // 346（incidents 表，刀5a 事故归一层）推进地板到 346。
-  it('EXPECTED_SCHEMA_VERSION should be 346 (floor, bumped for incidents migration)', () => {
-    expect(EXPECTED_SCHEMA_VERSION).toBe('346');
+  // 347（MJ5 刀1：承诺地图四表加列 + journey_step_links 格子化）推进地板到 347。
+  // 348（MJ5 刀1：智能客服+首次成功两域承诺地图 seed 数据）推进地板到 348。
+  it('EXPECTED_SCHEMA_VERSION should be 348 (floor, bumped for promise-map seed migration)', () => {
+    expect(EXPECTED_SCHEMA_VERSION).toBe('348');
   });
 
   it('should pass when DB schema version is ahead of expected (>= check)', async () => {
