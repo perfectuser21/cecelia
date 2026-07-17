@@ -129,3 +129,4 @@ cockpit-route-wire-smoke.sh
 promise-map-ledger-smoke.sh
 promise-map-step-impact-smoke.sh
 cascade-list-smoke.sh
+promise-map-nightly-smoke.sh
