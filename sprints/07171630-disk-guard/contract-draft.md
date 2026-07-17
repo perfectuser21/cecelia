@@ -118,6 +118,13 @@ echo "=== E2E 验收完成 ==="
 
 ---
 
+## Test Contract
+
+| WS | Test File | BEHAVIOR 覆盖 | 预期红证据 |
+|---|---|---|---|
+| WS1 | `../../packages/brain/src/cron/disk-guard.test.js` | BEHAVIOR-1 / BEHAVIOR-2 / BEHAVIOR-3 / BEHAVIOR-4 / BEHAVIOR-8 / BEHAVIOR-9 / BEHAVIOR-10 | Red commit 0041a79d3 测试套件失败（7 个新测试 FAIL） |
+| WS2 | `../../packages/brain/src/cron/worktree-reaper.test.js` | BEHAVIOR-5 / BEHAVIOR-6 / BEHAVIOR-7 | Red commit 0041a79d3 测试套件失败（5 个新测试 FAIL） |
+
 ## 架构决策记录
 
 | 决策 | 原因 |
