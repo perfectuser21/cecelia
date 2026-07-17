@@ -97,10 +97,11 @@ describe('codex-test-gen 去重机制 [BEHAVIOR]', () => {
       // @ts-ignore
       const mod = await import('../../../packages/brain/src/codex-test-gen.js');
       if (typeof mod.checkDedup === 'function') {
-        // 若有 checkDedup 函数，传入 target_file 和历史记录验证跳过逻辑
+        // 注入已知 recentFiles 集合（避免真实 DB），验证去重跳过逻辑
+        const targetFile = 'packages/brain/src/test-dedup-target.js';
         const result = await mod.checkDedup({
-          targetFile: 'packages/brain/src/test-dedup-target.js',
-          recentTasksWithinDays: 7,
+          targetFile,
+          recentFiles: new Set([targetFile]),
         });
         expect(result.skipped).toBe(true);
         expect(result.reason).toBeDefined();
