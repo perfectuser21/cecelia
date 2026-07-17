@@ -1,18 +1,18 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 // Mock dependencies before importing
-vi.mock('../db.js', () => ({
+vi.mock('../../db.js', () => ({
   default: {
     query: vi.fn().mockResolvedValue({ rows: [{ completed_prs: '0', avg_duration_min: '0', earliest: null, latest: null }] }),
   },
 }));
 
-vi.mock('../fleet-resource-cache.js', () => ({
+vi.mock('../../fleet-resource-cache.js', () => ({
   getTotalEffectiveSlots: vi.fn().mockReturnValue(0),
   getFleetStatus: vi.fn().mockReturnValue([]),
 }));
 
-vi.mock('../capacity.js', () => ({
+vi.mock('../../capacity.js', () => ({
   getMaxStreams: vi.fn().mockReturnValue(8),
 }));
 
@@ -21,7 +21,7 @@ describe('capacity-budget route', () => {
 
   beforeEach(async () => {
     vi.clearAllMocks();
-    const mod = await import('../routes/capacity-budget.js');
+    const mod = await import('../capacity-budget.js');
     router = mod.default;
   });
 
@@ -35,7 +35,7 @@ describe('capacity-budget route', () => {
   });
 
   it('should return theoretical confidence when no historical data', async () => {
-    const { default: pool } = await import('../db.js');
+    const { default: pool } = await import('../../db.js');
     pool.query.mockResolvedValueOnce({
       rows: [{ completed_prs: '0', avg_duration_min: '0', earliest: null, latest: null }],
     });
@@ -68,15 +68,18 @@ describe('capacity-budget route', () => {
     expect(result.pr_loc_threshold.soft).toBe(200);
     expect(result.pr_loc_threshold.hard).toBe(400);
     expect(result.pr_loc_threshold.source).toMatch(/smartbear|microsoft/i);
+    // machine_vitals 段：冷态未采样时必须含 stale 键（never_sampled 语义）
+    expect(result.machine_vitals).toBeDefined();
+    expect(result.machine_vitals).toHaveProperty('stale');
   });
 
   it('should use empirical data when sample_size >= 10', async () => {
-    const { default: pool } = await import('../db.js');
+    const { default: pool } = await import('../../db.js');
     pool.query.mockResolvedValueOnce({
       rows: [{ completed_prs: '80', avg_duration_min: '35', earliest: new Date(), latest: new Date() }],
     });
 
-    const { getMaxStreams } = await import('../capacity.js');
+    const { getMaxStreams } = await import('../../capacity.js');
     getMaxStreams.mockReturnValue(8);
 
     const getRoute = router.stack.find(

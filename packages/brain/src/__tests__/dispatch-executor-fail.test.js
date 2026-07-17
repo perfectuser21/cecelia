@@ -24,6 +24,12 @@ vi.mock('../slot-allocator.js', () => ({
     user: { mode: 'absent', used: 0 },
   }),
   shouldBypassBackpressure: vi.fn(() => false),
+  // harness admission 收权后（beeba317）dispatcher 会调 harnessSlotCheck；
+  // 本文件测的是 bridge guard bypass，admission 直接放行
+  harnessSlotCheck: vi.fn().mockResolvedValue({
+    allow: true, reason: 'ok', containers: 0, inflight: 0,
+    cap: { effective: 4, mem_cap: 8, acct_cap: 4, hard_cap: 8 }, stale: false,
+  }),
 }));
 
 const mockIsAllowed = vi.fn().mockReturnValue(true);
