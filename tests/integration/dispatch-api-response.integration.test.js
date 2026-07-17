@@ -49,7 +49,7 @@ describe('POST /api/brain/tasks/:id/dispatch — response contract (W7.7)', () =
 
     // 1) SELECT task → 返回 queued 任务
     mockPool.query.mockResolvedValueOnce({
-      rows: [{ id: taskId, status: 'queued', title: 'sample task' }],
+      rows: [{ id: taskId, status: 'queued', title: 'sample task', task_type: 'dev', payload: { anchor: { journey_id: 'j1', gp_id: 'g1', step_id: 's1' } } }],
     });
     // 2) UPDATE → in_progress
     mockPool.query.mockResolvedValueOnce({ rowCount: 1, rows: [] });
@@ -89,7 +89,7 @@ describe('POST /api/brain/tasks/:id/dispatch — response contract (W7.7)', () =
 
   it('executor 不可用 → 503，且回滚状态到 queued', async () => {
     mockPool.query.mockResolvedValueOnce({
-      rows: [{ id: 't3', status: 'queued', title: 't3' }],
+      rows: [{ id: 't3', status: 'queued', title: 't3', task_type: 'dev', payload: { anchor: { journey_id: 'j1', gp_id: 'g1', step_id: 's1' } } }],
     });
     mockPool.query.mockResolvedValueOnce({ rowCount: 1, rows: [] });
     mockPool.query.mockResolvedValueOnce({ rowCount: 1, rows: [] }); // rollback UPDATE
@@ -106,7 +106,7 @@ describe('POST /api/brain/tasks/:id/dispatch — response contract (W7.7)', () =
 
   it('triggerCeceliaRun 失败 → 5xx，且回滚状态', async () => {
     mockPool.query.mockResolvedValueOnce({
-      rows: [{ id: 't4', status: 'queued', title: 't4' }],
+      rows: [{ id: 't4', status: 'queued', title: 't4', task_type: 'dev', payload: { anchor: { journey_id: 'j1', gp_id: 'g1', step_id: 's1' } } }],
     });
     mockPool.query.mockResolvedValueOnce({ rowCount: 1, rows: [] });
     mockPool.query.mockResolvedValueOnce({ rowCount: 1, rows: [] }); // rollback UPDATE
