@@ -94,7 +94,7 @@ describe('machine-vitals', () => {
       await sampleMachineVitals(pool);
 
       expect(errSpy).toHaveBeenCalled();
-      const sentinelCall = pool.query.mock.calls.find(([sql]) => sql.includes('working_memory') && sql.includes('INSERT'));
+      const sentinelCall = pool.query.mock.calls.find(([sql, params]) => sql.includes('working_memory') && sql.includes('INSERT') && params[0] === 'machine_vitals_stale_alert');
       expect(sentinelCall).toBeTruthy();
       expect(sentinelCall[1][0]).toBe('machine_vitals_stale_alert');
       const payload = JSON.parse(sentinelCall[1][1]);
@@ -116,7 +116,7 @@ describe('machine-vitals', () => {
       await sampleMachineVitals(pool);
 
       expect(errSpy).toHaveBeenCalled();
-      const sentinelCall = pool.query.mock.calls.find(([sql]) => sql.includes('working_memory') && sql.includes('INSERT'));
+      const sentinelCall = pool.query.mock.calls.find(([sql, params]) => sql.includes('working_memory') && sql.includes('INSERT') && params[0] === 'machine_vitals_stale_alert');
       expect(sentinelCall).toBeTruthy();
       expect(sentinelCall[1][0]).toBe('machine_vitals_stale_alert');
       errSpy.mockRestore();
