@@ -40,10 +40,10 @@ status: proposed
 
 | 功能 | Test File | BEHAVIOR 覆盖 | 预期红证据 |
 |---|---|---|---|
-| 路径 A：空旧表改名+重建 | `../../packages/brain/src/__tests__/integration/migration-346.integration.test.js` | BEHAVIOR-1-a: fingerprint 列存在 / BEHAVIOR-1-b: NOT NULL / BEHAVIOR-1-c: 旧表改名 / BEHAVIOR-1-d: 数据不丢 / [BEHAVIOR-5] NOT NULL UNIQUE 成立 | → `column "fingerprint" does not exist` 或 `CREATE INDEX` 报错 |
-| 幂等性：第 2 次运行无错误 | `../../packages/brain/src/__tests__/integration/migration-346.integration.test.js` | BEHAVIOR-2-a: 不抛出错误 / BEHAVIOR-2-b: fingerprint 仍存在 / [BEHAVIOR-5] 重跑后约束仍成立 | → 第 2 次运行抛出 `column "fingerprint" already exists` 或索引冲突 |
-| 路径 B：非空旧表补列回填 | `../../packages/brain/src/__tests__/integration/migration-346.integration.test.js` | BEHAVIOR-3-a: fingerprint 列存在 / BEHAVIOR-3-b: 无 NULL / BEHAVIOR-3-c: 行数不变 / [BEHAVIOR-5] NOT NULL UNIQUE 成立 | → 现版本跳过 `IF NOT EXISTS`，非空表路径无法触达 |
-| Brain 重试上限 + Bark + exit(1) | `../../packages/brain/src/__tests__/integration/migration-346.integration.test.js` | BEHAVIOR-4: mock 3 次失败 → sendBark 含 `[Brain FATAL]` + exit(1) | → 现版本无上限循环，sendBark 调用次数为 0 |
+| 路径 A：空旧表改名+重建 | `../../packages/brain/src/__tests__/integration/migration-346.integration.test.js` | BEHAVIOR-1-a: incidents 表 fingerprint 列存在 / BEHAVIOR-1-b: fingerprint 列 NOT NULL / BEHAVIOR-1-c: 旧表已改名为 incidents_legacy_pre346 / BEHAVIOR-1-d: 旧表数据不丢失（0 行）/ [BEHAVIOR-5] 路径 A 后 fingerprint NOT NULL UNIQUE 成立 | → `column "fingerprint" does not exist` 或 `CREATE INDEX` 报错 |
+| 幂等性：第 2 次运行无错误 | `../../packages/brain/src/__tests__/integration/migration-346.integration.test.js` | BEHAVIOR-2-a: 第 2 次运行不抛出任何错误 / BEHAVIOR-2-b: 重跑后 fingerprint 列仍存在 / [BEHAVIOR-5] 幂等重跑后 fingerprint NOT NULL UNIQUE 仍成立 | → 第 2 次运行抛出 `column "fingerprint" already exists` 或索引冲突 |
+| 路径 B：非空旧表补列回填 | `../../packages/brain/src/__tests__/integration/migration-346.integration.test.js` | BEHAVIOR-3-a: fingerprint 列存在 / BEHAVIOR-3-b: 无 NULL fingerprint（全部回填）/ BEHAVIOR-3-c: 行数不变（原有 2 行不丢失）/ [BEHAVIOR-5] 路径 B 后 fingerprint NOT NULL UNIQUE 成立 | → 现版本跳过 `IF NOT EXISTS`，非空表路径无法触达 |
+| Brain 重试上限 + Bark + exit(1) | `../../packages/brain/src/__tests__/integration/migration-346.integration.test.js` | BEHAVIOR-4: mock runMigrations 3 次失败 → sendBark 调用含 [Brain FATAL] + exit(1) | → 现版本无上限循环，sendBark 调用次数为 0 |
 
 **gate-allow 记录**：BEHAVIOR-4 使用 mock runMigrations（验证重试上限行为），其余 BEHAVIOR-1~3 使用真实 PG（brain-integration CI job 提供 DATABASE_URL），禁 mock 迁移执行。
 
