@@ -43,7 +43,7 @@ vi.mock('../executor.js', () => ({
   killProcessTwoStage: vi.fn(), requeueTask: vi.fn(),
   MAX_SEATS: 4, INTERACTIVE_RESERVE: 1, getBillingPause: vi.fn().mockResolvedValue(false)
 }));
-vi.mock('../slot-allocator.js', () => ({ calculateSlotBudget: vi.fn().mockReturnValue({ available: 4 }) }));
+vi.mock('../slot-allocator.js', () => ({ harnessSlotCheck: vi.fn().mockResolvedValue({ allow: true, reason: 'ok', containers: 0, inflight: 0, cap: { effective: 4, mem_cap: 8, acct_cap: 4, hard_cap: 8 }, stale: false }), calculateSlotBudget: vi.fn().mockReturnValue({ available: 4 }) }));
 vi.mock('../event-bus.js', () => ({ emit: vi.fn() }));
 vi.mock('../circuit-breaker.js', () => ({
   isAllowed: vi.fn().mockReturnValue(true), recordSuccess: vi.fn(), recordFailure: vi.fn(), getAllStates: vi.fn().mockReturnValue({})

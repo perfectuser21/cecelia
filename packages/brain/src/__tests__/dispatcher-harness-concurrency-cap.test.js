@@ -1,37 +1,28 @@
-/**
- * dispatcher-harness-concurrency-cap — 全局 harness_initiative 并发上限（OPEN-1 OOM 防线）
- *
- * 根因：dispatcher 只有 project-scoped initiative lock（同 project 才挡），
- * 没有全局 harness_initiative 并发上限。null/跨 project 的 harness_initiative 会无限叠加，
- * 每条 graph spawn pipeline-heavy(2GB) 的 planner/GAN agent，4-5 条并发撑爆 13.6GB OrbStack VM
- * → docker OOM_killed (exit=137)。
- *
- * 验收：
- * - case 1: 已有 MAX 条 harness_initiative in_progress → 新 harness_initiative 被 cap，
- *           reason='harness_concurrency_capped'，不派发。
- * - case 2: 在 cap 以下（running < MAX）→ harness_initiative 正常派发。
- * - case 3: cap 只作用于 harness_initiative；dev task 不查 cap count SQL。
- * - case 4: pure predicate harnessConcurrencyExceeded(running, max) 边界正确。
- */
-
+// 主线A（收权）：in_progress 任务数不再是判定依据；判定走 harnessSlotCheck
+//
+// 终审 Fix 2（beeba317）：deny/兜底路径此前零行为测试。本文件的 mock 集合
+// 需要覆盖 dispatchNextTask 完整依赖图（复用 dispatcher-circuit-harness-exempt.test.js
+// 的手法），因为 vi.mock 按文件 hoist，同文件内所有 describe 共用同一份 mock。
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { shouldApplyHarnessCap } from '../dispatcher.js';
 
 const mockQuery = vi.fn();
 vi.mock('../db.js', () => ({
-  default: { query: (...args) => mockQuery(...args) }
+  default: { query: (...args) => mockQuery(...args) },
 }));
 
 vi.mock('../quota-cooling.js', () => ({
   isGlobalQuotaCooling: vi.fn(() => false),
   getQuotaCoolingState: vi.fn(() => ({ active: false })),
 }));
+
 vi.mock('../drain.js', () => ({
   isDraining: vi.fn(() => false),
   getDrainStartedAt: vi.fn(() => null),
 }));
+
+const mockTriggerCeceliaRun = vi.fn().mockResolvedValue({ success: true, pid: 12345 });
 vi.mock('../executor.js', () => ({
-  triggerCeceliaRun: vi.fn().mockResolvedValue({ success: true, pid: 12345, runId: 'run-1' }),
+  triggerCeceliaRun: (...args) => mockTriggerCeceliaRun(...args),
   checkCeceliaRunAvailable: vi.fn().mockResolvedValue({ available: true }),
   killProcessTwoStage: vi.fn(),
   getBillingPause: vi.fn(() => ({ active: false })),
@@ -39,23 +30,33 @@ vi.mock('../executor.js', () => ({
   MAX_SEATS: 12,
   INTERACTIVE_RESERVE: 2,
 }));
-vi.mock('../slot-allocator.js', () => ({
-  calculateSlotBudget: vi.fn().mockResolvedValue({
-    dispatchAllowed: true,
-    taskPool: { budget: 5, available: 3 },
-    user: { mode: 'absent', used: 0 },
-    codex: { available: true, running: 0, max: 5 },
-    budgetState: { state: 'abundant' },
-  })
-}));
+
+const mockHarnessSlotCheck = vi.fn();
+vi.mock('../slot-allocator.js', async (importOriginal) => {
+  const real = await importOriginal();
+  return {
+    ...real,
+    harnessSlotCheck: (...args) => mockHarnessSlotCheck(...args),
+    calculateSlotBudget: vi.fn().mockResolvedValue({
+      dispatchAllowed: true,
+      taskPool: { budget: 5, available: 3 },
+      user: { mode: 'absent', used: 0 },
+      codex: { available: true, running: 0, max: 5 },
+    }),
+  };
+});
+
 vi.mock('../token-budget-planner.js', () => ({ shouldDowngrade: vi.fn(() => false) }));
 vi.mock('../event-bus.js', () => ({ emit: vi.fn().mockResolvedValue(undefined) }));
+
+const mockIsAllowed = vi.fn(() => true);
 vi.mock('../circuit-breaker.js', () => ({
-  isAllowed: vi.fn(() => true),
+  isAllowed: (...args) => mockIsAllowed(...args),
   recordFailure: vi.fn(),
   recordSuccess: vi.fn(),
   getAllStates: vi.fn(() => ({})),
 }));
+
 vi.mock('../events/taskEvents.js', () => ({
   publishTaskStarted: vi.fn(),
   publishExecutorStatus: vi.fn(),
@@ -65,10 +66,10 @@ vi.mock('../dispatch-stats.js', () => ({
   getDispatchStats: vi.fn().mockResolvedValue({}),
 }));
 vi.mock('../account-usage.js', () => ({
-  proactiveTokenCheck: vi.fn().mockResolvedValue({ ok: true })
+  proactiveTokenCheck: vi.fn().mockResolvedValue({ ok: true }),
 }));
 vi.mock('../quota-guard.js', () => ({
-  checkQuotaGuard: vi.fn().mockResolvedValue({ allow: true })
+  checkQuotaGuard: vi.fn().mockResolvedValue({ allowed: true }),
 }));
 vi.mock('../actions.js', () => ({
   updateTask: vi.fn().mockResolvedValue({ success: true }),
@@ -80,110 +81,113 @@ vi.mock('../dispatch-helpers.js', () => ({
   selectNextDispatchableTask: (...args) => mockSelectNextDispatchableTask(...args),
   processCortexTask: vi.fn(),
 }));
+
 vi.mock('../pre-flight-check.js', () => ({
   preFlightCheck: vi.fn().mockResolvedValue({ passed: true, issues: [], suggestions: [] }),
   getPreFlightStats: vi.fn().mockResolvedValue({}),
   alertOnPreFlightFail: vi.fn().mockResolvedValue(undefined),
 }));
 
-// SQL 识别：全局 harness 并发计数 query（count(*) + harness_initiative + in_progress）
-function isHarnessCapCountSql(sql) {
-  return typeof sql === 'string'
-    && /count\(\*\)/i.test(sql)
-    && /harness_initiative/.test(sql)
-    && /in_progress/.test(sql);
-}
+import { shouldApplyHarnessCap, HARNESS_TASK_CAP_BACKSTOP, dispatchNextTask } from '../dispatcher.js';
 
-describe('dispatcher — 全局 harness_initiative 并发上限', () => {
+describe('harness cap 收权后语义（beeba317）', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockQuery.mockReset();
-  });
-
-  it('case 1: 已达并发上限 → harness_concurrency_capped，不派发', async () => {
-    mockSelectNextDispatchableTask.mockResolvedValue({
-      id: 'task-H',
-      task_type: 'harness_initiative',
-      project_id: null,
-      title: 'new harness',
-    });
-    mockQuery.mockImplementation((sql) => {
-      if (isHarnessCapCountSql(sql)) {
-        return Promise.resolve({ rows: [{ n: 2 }] }); // 已达默认 MAX=2
-      }
-      return Promise.resolve({ rows: [] });
-    });
-
-    const { dispatchNextTask } = await import('../dispatcher.js');
-    const result = await dispatchNextTask([]);
-
-    expect(result.dispatched).toBe(false);
-    expect(result.reason).toBe('harness_concurrency_capped');
-    expect(result.running).toBe(2);
-  });
-
-  it('case 2: 并发数低于上限 → harness_initiative 正常派发', async () => {
-    mockSelectNextDispatchableTask.mockResolvedValue({
-      id: 'task-H2',
-      task_type: 'harness_initiative',
-      project_id: null,
-      title: 'harness ok',
-    });
-    mockQuery.mockImplementation((sql) => {
-      if (isHarnessCapCountSql(sql)) {
-        return Promise.resolve({ rows: [{ n: 1 }] }); // 1 < 2
-      }
-      // 原子 claim UPDATE 必须返回一行，否则走 already_claimed 分支
-      if (/UPDATE tasks SET claimed_by/.test(sql)) {
-        return Promise.resolve({ rows: [{ id: 'task-H2' }] });
-      }
-      if (/SELECT \* FROM tasks WHERE id/.test(sql)) {
-        return Promise.resolve({ rows: [{ id: 'task-H2', task_type: 'harness_initiative', title: 'harness ok' }] });
-      }
-      return Promise.resolve({ rows: [] });
-    });
-
-    const { dispatchNextTask } = await import('../dispatcher.js');
-    const result = await dispatchNextTask([]);
-
-    expect(result.reason).not.toBe('harness_concurrency_capped');
-    expect(result.dispatched).toBe(true);
-  });
-
-  it('case 3: dev task 不受全局 harness cap 影响（不查 cap count SQL）', async () => {
-    mockSelectNextDispatchableTask.mockResolvedValue({
-      id: 'task-dev',
-      task_type: 'dev',
-      project_id: null,
-      title: 'dev',
-    });
     mockQuery.mockResolvedValue({ rows: [] });
-
-    const { dispatchNextTask } = await import('../dispatcher.js');
-    const result = await dispatchNextTask([]);
-
-    expect(result.reason).not.toBe('harness_concurrency_capped');
-    const capCalls = mockQuery.mock.calls.filter(([sql]) => isHarnessCapCountSql(sql));
-    expect(capCalls).toHaveLength(0);
+    mockIsAllowed.mockReturnValue(true);
   });
 
-  it('case 4: pure predicate harnessConcurrencyExceeded 边界', async () => {
-    const { harnessConcurrencyExceeded, MAX_CONCURRENT_HARNESS_INITIATIVES } = await import('../dispatcher.js');
-    expect(MAX_CONCURRENT_HARNESS_INITIATIVES).toBeGreaterThanOrEqual(1);
-    expect(harnessConcurrencyExceeded(MAX_CONCURRENT_HARNESS_INITIATIVES, MAX_CONCURRENT_HARNESS_INITIATIVES)).toBe(true);
-    expect(harnessConcurrencyExceeded(MAX_CONCURRENT_HARNESS_INITIATIVES - 1, MAX_CONCURRENT_HARNESS_INITIATIVES)).toBe(false);
-    expect(harnessConcurrencyExceeded(MAX_CONCURRENT_HARNESS_INITIATIVES + 1, MAX_CONCURRENT_HARNESS_INITIATIVES)).toBe(true);
+  it('MAX_CONCURRENT_HARNESS_INITIATIVES 已删除', async () => {
+    const mod = await import('../dispatcher.js');
+    expect(mod.MAX_CONCURRENT_HARNESS_INITIATIVES).toBeUndefined();
+    expect(mod.harnessConcurrencyExceeded).toBeUndefined();
+  });
+
+  it('TASK_CAP 兜底常量 = 12', () => {
+    expect(HARNESS_TASK_CAP_BACKSTOP).toBe(12);
+  });
+
+  it('shouldApplyHarnessCap 语义不变：harness_initiative 受控', () => {
+    expect(shouldApplyHarnessCap({ task_type: 'harness_initiative' })).toBe(true);
+    expect(shouldApplyHarnessCap({ task_type: 'golden_path_proposal' })).toBe(true);
+    expect(shouldApplyHarnessCap({ task_type: 'dev' })).toBe(false);
+  });
+
+  it('resume 豁免语义不变（回归：OPEN-2 自愈锁死案）', () => {
+    expect(shouldApplyHarnessCap({ task_type: 'harness_initiative', payload: { resume_from_checkpoint: true } })).toBe(false);
   });
 });
 
-describe('shouldApplyHarnessCap: golden_path_proposal 纳入同一并发防线（GP2/T2）', () => {
-  it('golden_path_proposal 非 resume → true', () => {
-    expect(shouldApplyHarnessCap({ task_type: 'golden_path_proposal', payload: {} })).toBe(true);
+// ============================================================
+// deny / 兜底路径行为测试（终审 Fix 2）：驱动完整 dispatchNextTask，
+// 让候选真的走到 3b'' 块，断言 dispatch 结果的 reason。
+// ============================================================
+describe('harness admission 3b\'\' 块 — deny/兜底路径行为（beeba317 终审 Fix 2）', () => {
+  function makeQueryMock({ taskId, runningCount }) {
+    return (sql) => {
+      if (/UPDATE tasks SET claimed_by/.test(sql)) {
+        return Promise.resolve({ rows: [{ id: taskId }] });
+      }
+      if (/SELECT \* FROM tasks WHERE id/.test(sql)) {
+        return Promise.resolve({ rows: [{ id: taskId, task_type: 'harness_initiative', title: 'harness sprint' }] });
+      }
+      if (/count\(\*\)/i.test(sql) && /harness_initiative/.test(sql)) {
+        return Promise.resolve({ rows: [{ n: runningCount }] });
+      }
+      return Promise.resolve({ rows: [] });
+    };
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockQuery.mockReset();
+    mockQuery.mockResolvedValue({ rows: [] });
+    mockIsAllowed.mockReturnValue(true);
+    mockTriggerCeceliaRun.mockResolvedValue({ success: true, pid: 12345 });
+    mockHarnessSlotCheck.mockReset();
+    mockSelectNextDispatchableTask.mockReset();
   });
-  it('golden_path_proposal resume → false', () => {
-    expect(shouldApplyHarnessCap({
-      task_type: 'golden_path_proposal',
-      payload: { resume_from_checkpoint: true },
-    })).toBe(false);
+
+  it('task_cap_backstop：in_progress 计数达 12 → 直接兜底拒发，不调 harnessSlotCheck', async () => {
+    mockQuery.mockImplementation(makeQueryMock({ taskId: 'task-cap-1', runningCount: 12 }));
+    mockSelectNextDispatchableTask.mockResolvedValue({
+      id: 'task-cap-1',
+      task_type: 'harness_initiative',
+      project_id: 'proj-cap-1',
+      title: 'harness sprint cap test',
+    });
+
+    const result = await dispatchNextTask([]);
+
+    expect(result.dispatched).toBe(false);
+    expect(result.reason).toBe('task_cap_backstop');
+    expect(result.running).toBe(12);
+    expect(mockHarnessSlotCheck).not.toHaveBeenCalled();
+  });
+
+  it('deny 路径：任务数未达兜底但 harnessSlotCheck 拒绝 → reason=cap_reached', async () => {
+    mockQuery.mockImplementation(makeQueryMock({ taskId: 'task-cap-2', runningCount: 4 }));
+    mockSelectNextDispatchableTask.mockResolvedValue({
+      id: 'task-cap-2',
+      task_type: 'harness_initiative',
+      project_id: 'proj-cap-2',
+      title: 'harness sprint deny test',
+    });
+    mockHarnessSlotCheck.mockResolvedValue({
+      allow: false,
+      reason: 'cap_reached',
+      containers: 4,
+      inflight: 0,
+      cap: { effective: 4, mem_cap: 4, acct_cap: 4, hard_cap: 4 },
+      stale: false,
+    });
+
+    const result = await dispatchNextTask([]);
+
+    expect(result.dispatched).toBe(false);
+    expect(result.reason).toBe('cap_reached');
+    expect(mockHarnessSlotCheck).toHaveBeenCalledTimes(1);
+    expect(result.slot_check).toMatchObject({ allow: false, reason: 'cap_reached', containers: 4, stale: false });
   });
 });

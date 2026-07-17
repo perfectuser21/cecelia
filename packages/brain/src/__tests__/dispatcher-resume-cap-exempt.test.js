@@ -3,7 +3,8 @@
  *
  * OPEN-2 看门狗与并发 cap 的交互（team-lead 点名必须覆盖）：
  * 看门狗把 parked in_progress → queued 重排（resume_from_checkpoint=true）后，
- * dispatcher 重新派发时**不能**把它当新 harness 任务被 MAX_CONCURRENT_HARNESS_INITIATIVES
+ * dispatcher 重新派发时**不能**把它当新 harness 任务被 harness admission 判定
+ * （slot-allocator.harnessSlotCheck + 任务数兜底 HARNESS_TASK_CAP_BACKSTOP）
  * 挡住——否则其它活跑占满 cap 时，自愈被 cap 永久锁死。
  *
  * shouldApplyHarnessCap(candidate)：

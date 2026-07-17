@@ -12,6 +12,7 @@ import pool from '../db.js';
 import { getTotalEffectiveSlots, getFleetStatus } from '../fleet-resource-cache.js';
 import { getMaxStreams } from '../capacity.js';
 import { PR_LOC_THRESHOLD } from '../constants/pr-thresholds.js';
+import { getMachineVitals } from '../machine-vitals.js';
 
 const router = Router();
 
@@ -158,6 +159,7 @@ async function computeCapacityBudget() {
     areas,
     layer_budgets: layerBudgets,
     pr_loc_threshold: PR_LOC_THRESHOLD,
+    machine_vitals: getMachineVitals(),
     fleet: fleet.map(s => ({
       id: s.id,
       online: s.online,
