@@ -289,30 +289,30 @@ prompt: 调用 Skill(harness-generator)。CONTRACT_BRANCH=<branch> SPRINT_DIR=<d
 
    对每个 ws_i：
 
-   a. 派 **generator**，prompt 头带 `WORKSTREAM_INDEX=<ws_id>`：
+   a. 派 **generator**，prompt 头带 `WORKSTREAM_INDEX=<task_id>`：
 
 ```
 prompt: 调用 Skill(harness-generator)。CONTRACT_BRANCH=<branch> SPRINT_DIR=<dir>。
-  WORKSTREAM_INDEX=<ws_id>
+  WORKSTREAM_INDEX=<task_id>
   只实现本段 scope（task-plan.json 该 ws 条目的 scope/files），禁碰他段实现文件；
   只点绿本段对应的棋盘测试，TDD 纪律（commit 顺序/测试不可改）与现行一致。
   报告：四态 + commit SHA + 本段点绿的测试清单
 ```
 
-   b. 段验：派 **evaluator**，prompt 头带 `SEGMENT_EVAL=<ws_id>`：
+   b. 段验：派 **evaluator**，prompt 头带 `SEGMENT_EVAL=<task_id>`：
 
 ```
-prompt: 调用 Skill(harness-evaluator)。SEGMENT_EVAL=<ws_id>
+prompt: 调用 Skill(harness-evaluator)。SEGMENT_EVAL=<task_id>
   跳 final-E2E，只跑本段 [BEHAVIOR]/tests 断言 + 复跑此前已绿段的测试
   （回归棘轮：已绿段测试变红 = 本段判 FAIL，失败摘要注明回归项）。
   报告：verdict(PASS/FAIL) + 明细
 ```
 
    c. 处置：
-      - PASS → 台账 append `segment: done (ws=<ws_id>, verdict=PASS)`，进入下一个 ws；全部 ws 跑完进入第 5 步
+      - PASS → 台账 append `segment: done (ws=<task_id>, verdict=PASS)`，进入下一个 ws；全部 ws 跑完进入第 5 步
       - FAIL → 重派该段 generator，prompt 附上失败摘要（同段第 2 次派发）；同一段**累计 2 次仍败** → 终局按现行「四态协议」BLOCKED/escalate 路径上报，绝不无变化第 3 次重试
 
-   骨架棒与每段 generator/evaluator 派发同样适用横切纪律 A（台账）/B（phase-event，node=generator/evaluator，可附加 ws_id 便于追踪）/C（文件接力，段间只传 task-N-brief.md 路径，不粘贴大产物）。
+   骨架棒与每段 generator/evaluator 派发同样适用横切纪律 A（台账）/B（phase-event，node=generator/evaluator，可附加 task_id 便于追踪）/C（文件接力，段间只传 task-N-brief.md 路径，不粘贴大产物）。
 
 5. **全段绿后派现行全量 evaluator 总验**（不带 `SEGMENT_EVAL`，走完整 final-E2E，与现行 Step 4 一字不改）；总验 PASS → 台账 append `evaluator: done (总验, verdict=PASS)` → 进入现行 Step 5 judge。
 
