@@ -12,6 +12,7 @@ import { fileURLToPath } from 'node:url';
 import { join, dirname } from 'node:path';
 import pool from './db.js';
 import { sendBark } from './notifier.js';
+import { ANCHOR_LEGACY_CUTOFF, ANCHOR_EXEMPT_TASK_TYPES } from './anchor-check.js';
 
 export const SENTINEL_KEY = 'promise-map-nightly';
 export const NIGHTLY_HOUR_UTC = 2;     // 北京时间 10:00
@@ -64,37 +65,45 @@ export async function buildNightlyAssertions(queryPool) {
     results.push({ key: 'anchor_cell_writeback', label: '带锚 PR 格子回写', ok: false, detail: `${a1Failed.length} 个带锚 PR 格子未回写：${a1Failed.join(', ')}` });
   }
 
-  // ── A2: 无锚 merge PR = 0 ─────────────────────────────────
-  const { rows: [{ count: unanchoredCount }] } = await queryPool.query(`
-    SELECT COUNT(*) FROM dev_records dr
-    JOIN tasks t ON t.id::text = dr.task_id::text
-    WHERE dr.merged_at > NOW() - INTERVAL '24 hours'
-      AND (t.payload->'anchor'->>'step_id' IS NULL
-           OR t.payload->>'anchor' IS NULL)
-  `);
+  // ── A2: 无锚 merge PR = 0（对齐 S2 豁免规则：存量截止日 + 豁免类型不计入）─────
+  // 与 checkAnchor() 对齐：存量任务（刀2上线前）+ 系统例行类型不要求锚，不应计入"违规"
+  const exemptTypes = [...ANCHOR_EXEMPT_TASK_TYPES];
+  const placeholders = exemptTypes.map((_, i) => `$${i + 2}`).join(', ');
+  const exemptClause = exemptTypes.length > 0 ? `AND t.task_type NOT IN (${placeholders})` : '';
+  const { rows: [{ count: unanchoredCount }] } = await queryPool.query(
+    `SELECT COUNT(*) FROM dev_records dr
+     JOIN tasks t ON t.id::text = dr.task_id::text
+     WHERE dr.merged_at > NOW() - INTERVAL '24 hours'
+       AND (t.payload->'anchor'->>'step_id' IS NULL
+            OR t.payload->>'anchor' IS NULL)
+       AND t.created_at >= $1
+       ${exemptClause}`,
+    [ANCHOR_LEGACY_CUTOFF.toISOString(), ...exemptTypes],
+  );
   const unanchored = parseInt(unanchoredCount, 10);
   results.push({
     key: 'zero_unanchored_merges',
     label: '无锚 merge PR 数',
     ok: unanchored === 0,
-    detail: unanchored === 0 ? '0 个无锚 merge（符合 S2 要求）' : `${unanchored} 个无锚 merge（S2 漏拦）`,
+    detail: unanchored === 0 ? '0 个无锚 merge（符合 S2 要求）' : `${unanchored} 个无锚 merge（S2 漏拦，已过豁免期且非豁免类型）`,
   });
 
   // ── A3: 账本引用完整性 ────────────────────────────────────
-  const { rows: baseFeaturesNoLinks } = await queryPool.query(`
-    SELECT jf.id, jf.name FROM journey_features jf
-    WHERE jf.kind = 'base'
-      AND NOT EXISTS (
-        SELECT 1 FROM journey_step_links jsl WHERE jsl.feature_id = jf.id
-      )
+  // A3.1: base_ref 格子必须有 feature_id（断线 = blast-radius 锚点断裂）
+  // 原实现用 kind='base' 查 journey_features，但 schema 中 kind 只有 'feature'/'ability'，
+  // 该条件永远匹配 0 行 → 永绿纸门。修复：改检测 base_ref 格子断线。
+  const { rows: [{ count: brokenBaseRefCount }] } = await queryPool.query(`
+    SELECT COUNT(*) FROM journey_step_links
+    WHERE cell_kind = 'base_ref' AND feature_id IS NULL
   `);
+  // A3.2: 步骤 promise 完整性（不变）
   const { rows: stepsNoPromise } = await queryPool.query(`
     SELECT id, name FROM journey_steps WHERE promise IS NULL LIMIT 10
   `);
 
   const a3Issues = [];
-  if (baseFeaturesNoLinks.length > 0) {
-    a3Issues.push(`${baseFeaturesNoLinks.length} 个底座件无链接（blast-radius 空）`);
+  if (parseInt(brokenBaseRefCount, 10) > 0) {
+    a3Issues.push(`${brokenBaseRefCount} 个 base_ref 格子 feature_id 为空（blast-radius 断线）`);
   }
   if (stepsNoPromise.length > 0) {
     a3Issues.push(`${stepsNoPromise.length} 个步骤无 promise`);
@@ -103,7 +112,7 @@ export async function buildNightlyAssertions(queryPool) {
     key: 'ledger_integrity',
     label: '账本引用完整性',
     ok: a3Issues.length === 0,
-    detail: a3Issues.length === 0 ? '底座件+步骤 promise 完整' : a3Issues.join('；'),
+    detail: a3Issues.length === 0 ? 'base_ref 格子+步骤 promise 完整' : a3Issues.join('；'),
   });
 
   // ── A4: 三闸心跳 ──────────────────────────────────────────
