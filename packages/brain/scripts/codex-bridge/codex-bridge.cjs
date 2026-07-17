@@ -486,7 +486,17 @@ const server = http.createServer(async (req, res) => {
     // GET /health — 健康检查
     } else if (req.method === 'GET' && req.url === '/health') {
       const { existsSync } = require('fs');
+      const { execSync } = require('child_process');
       const codexExists = existsSync(CODEX_BIN);
+
+      // BEHAVIOR-5: 探测 docker 是否可用
+      let dockerAvailable = false;
+      try {
+        execSync('docker info', { timeout: 3000, stdio: 'pipe' });
+        dockerAvailable = true;
+      } catch {
+        // docker 不可用，降级为 false，不影响 HTTP 200 主体
+      }
 
       let accountSummary;
       try {
@@ -506,6 +516,7 @@ const server = http.createServer(async (req, res) => {
         codex_bin: codexExists ? CODEX_BIN : 'NOT FOUND',
         brain_url: BRAIN_URL,
         port: PORT,
+        docker_available: dockerAvailable,
         accounts: accountSummary,
       });
 

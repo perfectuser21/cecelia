@@ -419,13 +419,21 @@ function identifyWorkType(input) {
  * @param {string} taskType - Task type (dev, review, talk, data, etc.)
  * @returns {'us' | 'hk'} - Location
  */
-function getTaskLocation(taskType) {
-  if (!taskType || typeof taskType !== 'string') {
+function getTaskLocation(taskTypeOrTask) {
+  // 对象入参：task.location DB 字段优先（非 null/undefined 才覆盖）
+  if (taskTypeOrTask && typeof taskTypeOrTask === 'object') {
+    if (taskTypeOrTask.location != null) {
+      return taskTypeOrTask.location;
+    }
+    // 对象但无 location 字段 → 回退到 task_type 静态映射
+    const taskType = taskTypeOrTask.task_type;
+    return LOCATION_MAP[taskType?.toLowerCase()] || DEFAULT_LOCATION;
+  }
+  // 原有字符串签名：零回归
+  if (!taskTypeOrTask || typeof taskTypeOrTask !== 'string') {
     return DEFAULT_LOCATION;
   }
-
-  const location = LOCATION_MAP[taskType.toLowerCase()];
-  return location || DEFAULT_LOCATION;
+  return LOCATION_MAP[taskTypeOrTask.toLowerCase()] || DEFAULT_LOCATION;
 }
 
 /**
