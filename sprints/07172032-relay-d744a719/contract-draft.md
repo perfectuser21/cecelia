@@ -22,17 +22,13 @@ Date: 2026-07-17
 
 ---
 
-## Test Contract 表格
+## Test Contract
 
-| FR ID | 描述 | 验证方式 | 通过条件 |
-|-------|------|---------|---------|
-| FR1 | 新建 headless-dispatch-smoke.sh | 文件存在 + 可执行 | `ls -la packages/brain/scripts/smoke/headless-dispatch-smoke.sh` exit 0 |
-| FR2-a | `task-tasks.js` mode=headless → 放行 | API 调用 | POST 返回 200/201 + id 字段 |
-| FR2-b | `task-tasks.js` mode=invalid → 拒绝 | API 调用 | POST 返回 400 |
-| FR3 | `docker-executor.js` 含 `CECELIA_HEADLESS: 'true'` 注入 | 源码 grep | grep 命中行（第 285 行） |
-| FR4 | `slot-allocator.js` 含 PPID CECELIA_HEADLESS 检测 | 源码 grep | grep 命中逻辑块（第 104-138 行） |
-| FR5 | `harness-skill-relay.js` headless → docker spawnFn | 源码 grep | grep 命中相关路径注释/逻辑 |
-| FR6 | 加入 smoke-allowlist.txt | 文件 grep | grep 命中 headless-dispatch-smoke.sh |
+覆盖父路：独立小路（headless dispatch smoke，无父 Golden Path）
+
+| WS | Test File | BEHAVIOR 覆盖 | 预期红证据 |
+|----|-----------|--------------|------------|
+| WS1 | `../../tests/regression/relay-d744a719/headless-dispatch-smoke.test.js` | FR1/FR2/FR3/FR4/FR5/FR6 | smoke 脚本不存在时 FR1/FR2/FR3/FR4/FR5 失败；allowlist 未追加时 FR6 失败 |
 
 ---
 
