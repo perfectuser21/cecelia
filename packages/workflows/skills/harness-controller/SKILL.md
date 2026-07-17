@@ -3,13 +3,15 @@ id: harness-controller-skill
 description: |
   Harness Controller — PR-level 单 session 编排者（SDD 模式）。2026-07-05 cecelia #3554 起为**唯一编排路径**：
   Brain 硬校验 payload.orchestrator==='skill-relay'，LangGraph 图已废弃（代码保留观察期但不再被 invoke）。
-  一个 claude session 从头跑完一条 sprint：planner → GAN(proposer×reviewer) → generator(TDD) → evaluator → judge → merge → report。
+  主流程：planner → GAN(proposer×reviewer) → generator(TDD) → evaluator → judge → merge → report。
+  gear 管道按 payload.gear 分叉：null=默认；hotfix=免GAN直通（planner→generator）；segmented=骨架先行+N段串行+段验+总验。
   移植 Superpowers 6.0 subagent-driven-development 零件：进度台账 / 文件接力 / 四态出口协议 / 单评审双裁决 / compaction 恢复。
   点火方：Brain harness dispatch（无头）或人工前台（同一份 skill 两种触发，行为一致）。
   /dev 仍是唯一需求入口：本 skill 消费 /dev 路径C 的交接契约（PrepPRD + 铁律清单 + NFR），不做需求对抗。
-version: 2.6.0
+version: 2.7.0
 created: 2026-07-04
 changelog:
+  - 2.7.0: gear 管道一体化——Step 0 读 $HARNESS_GEAR；hotfix 免 GAN 直通（planner→generator，跳过 Step 2）；segmented 骨架先行+N段串行+段验+总验（Step 3S 骨架→段验×N→Step 4 总验）；proposer 恢复多 workstream 输出；generator 恢复 workstream_index 定向；evaluator 加段级轻验收旗标（IS_SEGMENT=true→SEGMENT_PASS/FAIL）
   - 2.5.0: 规则C配套（handoff 0714 刀2，proposer 9.10.0/reviewer 9.5.0）——Step 3 generator 验收新增「未覆盖真实链路清单转呈」：合同含 ## 未覆盖真实链路清单 段（非 N/A）必须原样进 PR 描述（缺则让 generator gh pr edit 补上）；Step 7 report 同步把该清单转呈最终报告/通知正文。mock 豁免必须呈现给用户，禁止静默
   - 2.6.0: EVA v2 审计六处修法——①Step 7 cost 条文诚实化（controller 拿不到 subagent 真实成本，30 条实证 29 条恒 0：有真实数据才填，否则填 0 并台账注明 cost=unsettled，Brain 侧 session 用量结算是正解已立案）②Step 5 judge VERDICT 对称上报 relay-runs judge_verdict（DB 30 条仅 2 非空的病根）③Step 3 PR 开出即台账 append 中间态 generator: pr_opened 行（31e29c09 实证死亡窗口台账止步 gan）④Step 3 controller 验收扩为四件：PR body/title 必须 grep 到 task id（Step 0.4 外部真相重建依赖此约定）⑤横切纪律 A 加 gan 附件质量门（rubric 必须标准 7 维，d063b3e5 实证自创 5 维）+ gan done 行登记 judgments_written=N ⑥report 台账行带明细 verdict/learnings_inserted/concerns（a85e0582 实证裸行无从审计）
   - 2.4.0: 治断点恢复失忆（issue 45dd6925）——Step 0.4 新增「台账缺失 ≠ 新 sprint」外部真相重建：.harness/progress.md 是 gitignore 本地文件，worktree 收割/重建后必然蒸发（07-13 d063b3e5 实证重派=全新 clone，恢复 session 重跑 planner+GAN 白烧 $7+）；台账不存在时先查 gh pr list（open→重建台账续跑 / merged→直跳 merge 后半程）+ relay-runs phase 佐证，全无外部真相才许当新 sprint
@@ -39,11 +41,21 @@ changelog:
 
 # /harness-controller — PR-level 单 session 接力编排
 
-编排语义：skill-relay 单 session 接力（LangGraph 图已废弃，不再被 invoke）。流程主线：
+编排语义：skill-relay 单 session 接力（LangGraph 图已废弃，不再被 invoke）。**按 `$HARNESS_GEAR` 三分叉**：
 
 ```
+# 默认（gear=null/空）
 Step 0 装载/恢复 → 1 planner → 2 GAN(proposer×reviewer) → 3 generator(TDD)
 → 4 evaluator(双门+真跑) → 5 judge → 6 review门+merge(+staging_e2e派生) → 7 report
+
+# hotfix 档（gear=hotfix）—— 免 GAN 直通
+Step 0 → 1 planner → 3 generator(TDD)  ← Step 2 GAN 跳过
+→ 4 evaluator → 5 judge → 6 merge → 7 report
+
+# segmented 档（gear=segmented）—— 骨架先行 + N 段串行
+Step 0 → 1 planner → 2 GAN(proposer,多workstream) → 3S 骨架generator
+→ 3S-eval 段验(SEGMENT_PASS?) → [3-1 generator → 3-1-eval → ... → 3-N generator → 3-N-eval]
+→ 4 总评estimator(完整E2E) → 5 judge → 6 merge → 7 report
 ```
 
 ## 硬约束（凌驾于一切阶段逻辑）
@@ -136,6 +148,11 @@ BRAIN=${BRAIN_URL:-http://localhost:5221}
 TASK=$(curl -s "$BRAIN/api/brain/tasks/$HARNESS_TASK_ID")
 # payload 里应有：prep_prd_body（/dev 交接）、journey_id、review_required、target_environment、base_repo
 
+# 0.1b gear 档位（Brain spawn 注入 $HARNESS_GEAR；前台手跑可不传，缺省为默认流程）
+GEAR="${HARNESS_GEAR:-}"   # 合法值：'' / 'hotfix' / 'segmented'
+echo "[controller] GEAR=${GEAR:-<default>}"
+```
+
 # 0.2 台账（compaction/崩溃恢复的锚，SDD 6.0 模式）
 LEDGER=".harness/progress.md"
 mkdir -p .harness .harness/verdicts
@@ -223,9 +240,26 @@ prompt: 调用 Skill(harness-planner)。上下文：
 4. **NFR 段**：含 `## NFR` 段，或显式写明"NFR: N/A"（静默缺失不算过）
 5. **PRD 行数（thin-slice 上限）**：`wc -l` 校验不超 thin-slice 上限（run4 曾 278 行失守）；超限 → 打回要求裁剪或标注"不计入"理由
 
-四态处置：见「四态协议」节。完成 → 台账 append → Step 2。
+四态处置：见「四态协议」节。完成 → 台账 append。
+
+**gear 分叉（planner 完成后执行）**：
+```bash
+if [ "$GEAR" = "hotfix" ]; then
+  echo "[controller][hotfix] 免 GAN 直通——跳过 Step 2，直接进 Step 3"
+  echo "hotfix-bypass: GAN skipped (gear=hotfix)" >> .harness/progress.md
+  # 跳过 Step 2，跳至 Step 3（generator）
+elif [ "$GEAR" = "segmented" ]; then
+  echo "[controller][segmented] 多段串行模式——正常走 Step 2 GAN（proposer 输出多 workstream）"
+  # 继续 Step 2，proposer 会输出多 workstream task-plan.json
+fi
+# gear='' 默认流程：继续 Step 2
+```
+
+→ gear=hotfix：跳至 **Step 3**（跳过 Step 2）；其他：继续 Step 2。
 
 ## Step 2: GAN（合同对抗，proposer × reviewer 循环）
+
+> **注意**：`gear=hotfix` 任务不经过本节，从 Step 1 完成直接跳 Step 3。`gear=segmented` 时 proposer 须输出多 workstream task-plan.json（controller 在 Step 2 结束后读 workstream_count 决定 Step 3 分段数）。
 
 循环（无硬轮数上限——刻意设计，禁加 MAX_ROUNDS；守护 = 预算/streak，见下）。每轮派 proposer/reviewer 前后按「横切纪律 B」各自报一对（node=proposer / node=reviewer）：
 
@@ -253,6 +287,41 @@ grep -q 'manual:bash' "$DOD" || { echo "FAIL: 缺 manual:bash 验收命令"; }
 完成 → 台账 append（含轮次、铁律覆盖 N/N）→ Step 3。
 
 ## Step 3: Generator（TDD 实现，SDD×TDD 的接点）
+
+**`gear=segmented` 多段串行路径（Step 3S + 段验 × N）**：
+
+GAN 完成后读 task-plan.json 获取 workstream 数：
+```bash
+TASK_PLAN="${SPRINT_DIR}/task-plan.json"
+WS_COUNT=$(jq '.tasks | length' "$TASK_PLAN" 2>/dev/null || echo 1)
+echo "[controller][segmented] workstream_count=$WS_COUNT"
+```
+
+`WS_COUNT ≥ 2` 时进入分段执行（第一段 = 骨架，后续 = 各功能段）：
+```bash
+for WS_IDX in $(seq 1 "$WS_COUNT"); do
+  WS_TITLE=$(jq -r ".tasks[$((WS_IDX-1))].title // \"段$WS_IDX\"" "$TASK_PLAN")
+  echo "[controller][segmented] 段 $WS_IDX/$WS_COUNT: $WS_TITLE"
+
+  # 派 generator subagent，注入 WORKSTREAM_INDEX + WORKSTREAM_COUNT
+  # prompt: 调用 Skill(harness-generator)。CONTRACT_BRANCH=<branch> SPRINT_DIR=<dir>。
+  #   WORKSTREAM_INDEX=$WS_IDX WORKSTREAM_COUNT=$WS_COUNT（定向该段的 DoD 范围）
+  #   第一段（WS_IDX=1）是骨架，commit msg 含 (Skeleton Red)/(Skeleton Green)
+
+  # generator 完成后 → 段验（IS_SEGMENT=true 轻验收）：
+  # prompt: 调用 Skill(harness-evaluator)。
+  #   IS_SEGMENT=true WORKSTREAM_INDEX=$WS_IDX（只跑该段 [BEHAVIOR]，不跑完整 E2E）
+  #   段验 verdict = SEGMENT_PASS / SEGMENT_FAIL
+  # SEGMENT_FAIL → 带 feedback 回本段 generator fix（最多 3 轮）
+  # SEGMENT_PASS → 台账 append "segment-$WS_IDX: done" → 继续下一段
+
+  echo "segment-$WS_IDX: done (ws=$WS_TITLE)" >> .harness/progress.md
+done
+```
+
+`WS_COUNT=1`（默认单段）或 `gear≠segmented`：走下方标准 generator 路径（不分段）。
+
+---
 
 派 fresh subagent（模型=标准档）：派发前后按「横切纪律 B」自报 node=generator。
 

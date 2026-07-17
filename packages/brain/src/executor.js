@@ -2970,6 +2970,20 @@ async function _driveHarnessInitiative(task, opts = {}) {
     return { ok: false, error: 'missing_orchestrator_flag', terminal: true };
   }
 
+  // gear 枚举校验：null/undefined = 默认流程；hotfix = 免 GAN 直通；segmented = 骨架+多段串行
+  const _gear = task?.payload?.gear ?? null;
+  const ALLOWED_GEARS = new Set(['hotfix', 'segmented']);
+  if (_gear !== null && !ALLOWED_GEARS.has(_gear)) {
+    await markInitiativeTerminalFailed(
+      dbPool,
+      task.id,
+      'invalid_gear_flag',
+      `harness_initiative: invalid gear=${_gear}; allowed: hotfix|segmented or null/undefined`
+    );
+    console.error(`[executor] task=${task.id} 非法 gear 值（gear=${_gear}），标 terminal failed`);
+    return { ok: false, error: 'invalid_gear_flag', terminal: true };
+  }
+
   // 2b-2b: harness 开跑 → 镜像同步对应 okr_initiative → running（non-fatal，best-effort，
   // 解析/新建对应 okr_initiatives 行使规划侧 Initiative 成为实时真相；绝不阻断 harness）。
   // 刀4阶段3发现：此调用原本躺在物理不可达的旧图调用死代码块里（orchestrator 硬校验后

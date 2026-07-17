@@ -224,6 +224,7 @@ export async function spawnSkillRelaySession(task, deps = {}) {
     const githubToken = await tokenFn();
 
     // 6. prompt：skill 全文 inline + 上下文头（与图节点的 loadSkillContent 注入模式一致）
+    const gear = task.payload?.gear || '';
     const prompt = [
       `你是 harness-controller session。按下面 SKILL 指令跑完整条 sprint。`,
       ``,
@@ -235,6 +236,7 @@ export async function spawnSkillRelaySession(task, deps = {}) {
       `SPRINT_DIR=${sprintDir}`,
       `BRAIN_URL=http://host.docker.internal:5221`,
       `REVIEW_REQUIRED=${reviewRequired}`,
+      `HARNESS_GEAR=${gear}`,
       `任务标题：${task.title || ''}`,
     ].join('\n');
 
@@ -278,6 +280,7 @@ export async function spawnSkillRelaySession(task, deps = {}) {
           // Step 5 curl Brain judge API 时 worktree 参数必须传宿主路径——Brain 容器把
           // ~/perfect21/cecelia 与 .claude/worktrees 按宿主同路径挂载，judge 按此读 .brain-result.json。
           HARNESS_WORKTREE_HOST: worktreePath,
+          HARNESS_GEAR: gear,
           CECELIA_JOURNEY_ID: task.payload?.journey_id || '',
           CECELIA_ABILITY_ID: task.ability_id || task.payload?.ability_id || '',
           GITHUB_TOKEN: githubToken,
@@ -449,6 +452,7 @@ async function _spawnHeadedSession(task, { dbPool, now, short, initiativeId, dep
   // claude-launch.sh 在宿主直跑，host.docker.internal 对宿主进程不可达是已知形态；
   // codex 原值不动防回归。
   const brainUrl = isClaudeHeaded ? 'http://localhost:5221' : 'http://host.docker.internal:5221';
+  const headedGear = task.payload?.gear || '';
   const prompt = [
     `你是 harness-controller session（headed 模式）。按下面 SKILL 指令跑完整条 sprint。`,
     ``,
@@ -459,6 +463,7 @@ async function _spawnHeadedSession(task, { dbPool, now, short, initiativeId, dep
     `HARNESS_TASK_ID=${task.id}`,
     `SPRINT_DIR=${sprintDir}`,
     `BRAIN_URL=${brainUrl}`,
+    `HARNESS_GEAR=${headedGear}`,
     `任务标题：${task.title || ''}`,
   ].join('\n');
 

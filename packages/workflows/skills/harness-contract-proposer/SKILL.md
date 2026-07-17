@@ -4,10 +4,11 @@ description: |
   Harness Contract Proposer — Harness v5 GAN Layer 2a：
   读 PRD，GAN 对抗写 Golden Path 合同（每步含真实验证命令）；
   Reviewer APPROVED 后倒推拆 task-plan.json。
-version: 9.13.0
+version: 9.14.0
 created: 2026-04-08
-updated: 2026-07-16
+updated: 2026-07-17
 changelog:
+  - 9.14.0: gear=segmented 多 workstream 输出——Step 3 读 $HARNESS_GEAR，segmented 档输出 ws1（骨架）+ws2..wsN（功能段）串行依赖链；workstream_count 写入 .brain-result.json（controller 读以决定分段轮次）；默认/hotfix 档仍固定 ws1 单 task（向后兼容）
   - 9.13.0: target_environment 枚举加 android_realmachine（洞①）— Path2 安卓获客真机验收（xian-rog）此前无枚举可用，E2E 模板行同步补
   - 9.12.0: 刀3-T5 — 合同必填「运行时守卫」槽位：contract-draft.md 必须含 ## 运行时守卫 段，内嵌具体探针（probe:/script: 可机检执行块）或显式豁免（waiver:<decision_id>+理由）；两者都没有 = 合同不完整，Reviewer 打回；Step 2b-check 新增第 8 项 grep 机械验；evaluator B-guard-check 对应核查；report 收尾链把 guard_ref 写回 journey_features（依赖刀3-T4 列已存在）
   - 9.11.0: EVA v2 审计四刀（d063b3e5/a85e0582/a638f840 实证脱模板合同骗过自查）— (1) Step 2b-check 三处补丁：[BEHAVIOR] 计数锚定行首 checkbox 格式（标题式不计入）+ 第 5 项 E2E 段 bash 块 ≥1 + 第 6 项提取 E2E 块过 bash -n 与全角标点扫描；(2) E2E 多代码块拼接语义显式化（evaluator 1.22.0 全部 bash 块按序拼接，推荐单块，多块禁重复 shebang/set）；(3) 禁文本自证型 BEHAVIOR（grep 文件含字符串归 [ARTIFACT]，真执行断言 ≥2 条且占比 ≥50%）+ 自查第 7 项启发式分类计数；(4) 新增 Step 1.3 历史约束三源加载（铁律逐条映射 INV-N 条目或显式 N/A + context-manifest 累积 FR + 回归测试）
@@ -1381,10 +1382,57 @@ grep -E "FAIL|failed|✗" /tmp/sprint-red.log || { echo "ERROR: 测试未产生 
 
 **每轮都生成**（REVISION 轮的 task-plan 在被打回的分支上无害；APPROVED 即最后一轮 proposer 的分支，inferTaskPlan 从此读取）：
 
-一个 Sprint = 一个 Generator = 一个 PR。task-plan.json 始终只有一个 task（ws1），Generator 读合同后一口气实现全部功能。
+**`HARNESS_GEAR=segmented` 时输出多 workstream**（骨架+N段），其他情况固定 1 个 task（ws1）：
 
 ```bash
-cat > "${SPRINT_DIR}/task-plan.json" << 'JSONEOF'
+# 读档位（Brain spawn 注入；前台手跑可不传，缺省单 workstream）
+GEAR="${HARNESS_GEAR:-}"
+
+if [ "$GEAR" = "segmented" ]; then
+  # segmented 模式：ws1=骨架（整体结构+接口定义），ws2..wsN=各功能段（串行依赖链）
+  # N = Golden Path 中可独立落地的功能段数，由 proposer 从合同推断（建议 2~5 段）
+  # 每段有独立 [BEHAVIOR] 条目，generator 按 WORKSTREAM_INDEX 逐段实现
+  # depends_on 串行：ws2→[ws1], ws3→[ws2], ... wsN→[ws(N-1)]
+  cat > "${SPRINT_DIR}/task-plan.json" << 'JSONEOF'
+{
+  "initiative_id": "${INITIATIVE_ID}",
+  "journey_type": "{journey_type}",
+  "journey_type_reason": "{1 句推断依据}",
+  "gear": "segmented",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "骨架：{整体结构+接口定义，不含业务实现}",
+      "scope": "{建立代码骨架：文件结构/类型/路由签名，业务逻辑留 stub}",
+      "dod": [
+        "[ARTIFACT] {骨架文件存在且可编译/无语法错误}",
+        "[BEHAVIOR] {骨架端点返回 501 或 stub 响应}"
+      ],
+      "files": ["{骨架文件}"],
+      "depends_on": [],
+      "complexity": "S",
+      "estimated_minutes": 30
+    },
+    {
+      "task_id": "ws2",
+      "title": "{功能段 1 标题}",
+      "scope": "{该段实现范围，对应 Golden Path 步骤 N}",
+      "dod": [
+        "[BEHAVIOR] {该段可验证断言，对应合同验证命令}",
+        "[ARTIFACT] {该段产物}"
+      ],
+      "files": ["{该段受影响文件}"],
+      "depends_on": ["ws1"],
+      "complexity": "M",
+      "estimated_minutes": 60
+    }
+  ]
+}
+JSONEOF
+  WS_COUNT=$(jq '.tasks | length' "${SPRINT_DIR}/task-plan.json")
+else
+  # 默认/hotfix：单 workstream，一口气实现全部功能
+  cat > "${SPRINT_DIR}/task-plan.json" << 'JSONEOF'
 {
   "initiative_id": "${INITIATIVE_ID}",
   "journey_type": "{journey_type}",
@@ -1406,12 +1454,16 @@ cat > "${SPRINT_DIR}/task-plan.json" << 'JSONEOF'
   ]
 }
 JSONEOF
+  WS_COUNT=1
+fi
 ```
 
 **字段约束**：
-- `task_id`: 固定 `ws1`（一个 Sprint 只有一个 task）
-- `estimated_minutes`: 30 ≤ n ≤ 120
-- `dod`: 至少 1 个 `[BEHAVIOR]`
+- `task_id`: 默认固定 `ws1`；segmented 模式用 `ws1`（骨架）+`ws2..wsN`（功能段）
+- `estimated_minutes`: 30 ≤ n ≤ 120（每段）
+- `dod`: 每段至少 1 个 `[BEHAVIOR]`
+- `depends_on`: segmented 模式串行链（ws2→[ws1], ws3→[ws2]...）；单 ws 固定 `[]`
+- segmented 模式段数 N 由 proposer 从 Golden Path 功能边界推断，建议 2~5 段；超 5 段需在合同 notes 说明理由
 
 ---
 
@@ -1436,16 +1488,16 @@ git push origin "${PROPOSE_BRANCH}"
 ```bash
 # 写结果文件（Brain 读文件，不读 stdout；容器内 /workspace，宿主 fallback 用 WORKSPACE_PATH）
 cat > "${WORKSPACE_PATH:-/workspace}/.brain-result.json" << BREOF
-{"propose_branch":"${PROPOSE_BRANCH}","workstream_count":1,"task_plan_path":"${SPRINT_DIR}/task-plan.json"}
+{"propose_branch":"${PROPOSE_BRANCH}","workstream_count":${WS_COUNT},"task_plan_path":"${SPRINT_DIR}/task-plan.json"}
 BREOF
-echo "[proposer] .brain-result.json 写入完成 propose_branch=${PROPOSE_BRANCH}"
+echo "[proposer] .brain-result.json 写入完成 propose_branch=${PROPOSE_BRANCH} workstream_count=${WS_COUNT}"
 ```
 
-**输出契约（v8.0.0+ — 文件协议）**：
+**输出契约（v9.14.0+ — 文件协议）**：
 
 proposer 调用结束时必须向 `${WORKSPACE_PATH:-/workspace}/.brain-result.json` 写入 JSON（与 evaluator 同款宿主 fallback 写法）：
 - `propose_branch`：Brain 注入的 `$PROPOSE_BRANCH` 值
-- `workstream_count`：固定为 1（一个 Sprint = 一个 Generator）
+- `workstream_count`：默认=1；segmented 模式=实际段数（controller 用此值决定分段 generator 轮次）
 - `task_plan_path`：`${SPRINT_DIR}/task-plan.json`
 
 Brain 读此文件获取结果，不解析 stdout。`$PROPOSE_BRANCH` 由 Brain 注入，proposer 直接使用。
