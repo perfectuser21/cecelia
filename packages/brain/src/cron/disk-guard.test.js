@@ -4,9 +4,9 @@ import {
   runDiskGuard,
   __resetDiskGuardForTest,
   DISK_GUARD_INTERVAL_MS
-} from '../../../packages/brain/src/cron/disk-guard.js'
+} from './disk-guard.js'
 
-import { JOBS } from '../../../packages/brain/src/scheduler-jobs.js'
+import { JOBS } from '../scheduler-jobs.js'
 
 describe('disk-guard', () => {
   let callOrder

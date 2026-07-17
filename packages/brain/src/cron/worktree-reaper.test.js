@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 
-import { runWorktreeReaper } from '../../../packages/brain/src/cron/worktree-reaper.js'
+import { runWorktreeReaper } from './worktree-reaper.js'
 
 describe('worktree-reaper', () => {
   const WORKTREE_BASE = '/Users/administrator/perfect21/cecelia/.claude/worktrees/harness-v2'
