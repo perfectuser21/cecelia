@@ -32,12 +32,15 @@
 | 存量 journey 客户首次成功路径 | `6e63f204-e9fd-4a3b-b338-6b3616bfcc61` |
 
 **本地集成测试跑法（每个 integration task 通用）：**
+
+> ⚠️ **死规矩：必须用 `DB_NAME=cecelia_scratch`，严禁 `DATABASE_URL`。** db-config.js 不解析 DATABASE_URL，漏设 DB_NAME 会静默回落到本机 `cecelia` 库＝**生产库**（07-17 实弹事故：审查代理照旧 runbook 跑 migrate 把 347 打进了生产，已补偿回滚）。任何 `node src/migrate.js` 前先确认命令行里有 `DB_NAME=cecelia_scratch`。
+
 ```bash
 # 一次性建 scratch 库（已存在则先 dropdb cecelia_scratch）
 createdb -U cecelia cecelia_scratch 2>/dev/null || true
 cd packages/brain
-DATABASE_URL=postgresql://cecelia:cecelia@localhost:5432/cecelia_scratch node src/migrate.js
-DATABASE_URL=postgresql://cecelia:cecelia@localhost:5432/cecelia_scratch npx vitest run src/__tests__/integration/<file> 
+DB_NAME=cecelia_scratch node src/migrate.js
+DB_NAME=cecelia_scratch npx vitest run src/__tests__/integration/<file>
 ```
 
 ---
@@ -114,7 +117,7 @@ describe('migration 347: promise map schema', () => {
 
 - [ ] **Step 2: 跑测试确认失败**
 
-Run: `createdb -U cecelia cecelia_scratch 2>/dev/null || true && cd packages/brain && DATABASE_URL=postgresql://cecelia:cecelia@localhost:5432/cecelia_scratch node src/migrate.js && DATABASE_URL=postgresql://cecelia:cecelia@localhost:5432/cecelia_scratch npx vitest run src/__tests__/integration/migration-347.integration.test.js`
+Run: `createdb -U cecelia cecelia_scratch 2>/dev/null || true && cd packages/brain && DB_NAME=cecelia_scratch node src/migrate.js && DB_NAME=cecelia_scratch npx vitest run src/__tests__/integration/migration-347.integration.test.js`
 Expected: FAIL（home 列不存在）
 
 - [ ] **Step 3: 写 migration 347**
@@ -164,7 +167,7 @@ CREATE INDEX IF NOT EXISTS idx_jsl_feature ON journey_step_links(feature_id) WHE
 
 - [ ] **Step 4: 重建 scratch 库跑 migrate + 测试通过**
 
-Run: `dropdb -U cecelia cecelia_scratch && createdb -U cecelia cecelia_scratch && cd packages/brain && DATABASE_URL=postgresql://cecelia:cecelia@localhost:5432/cecelia_scratch node src/migrate.js && DATABASE_URL=postgresql://cecelia:cecelia@localhost:5432/cecelia_scratch npx vitest run src/__tests__/integration/migration-347.integration.test.js`
+Run: `dropdb -U cecelia cecelia_scratch && createdb -U cecelia cecelia_scratch && cd packages/brain && DB_NAME=cecelia_scratch node src/migrate.js && DB_NAME=cecelia_scratch npx vitest run src/__tests__/integration/migration-347.integration.test.js`
 Expected: PASS（6 个用例全绿）
 
 - [ ] **Step 5: Commit**
@@ -428,7 +431,7 @@ describe('migration 348: 承诺地图两域 seed', () => {
 
 - [ ] **Step 2: 跑测试确认失败**
 
-Run: `cd packages/brain && DATABASE_URL=postgresql://cecelia:cecelia@localhost:5432/cecelia_scratch npx vitest run src/__tests__/integration/migration-348.integration.test.js`
+Run: `cd packages/brain && DB_NAME=cecelia_scratch npx vitest run src/__tests__/integration/migration-348.integration.test.js`
 Expected: FAIL（0 journey 命中）
 
 - [ ] **Step 3: 写 migration 348**——完整 SQL 按下述结构，数据行照 spec §4.1 inventory 一字不差搬（承诺/触发器/终点/芯片名全部取三张图原文；本 Task 下方已给全量 VALUES）：
@@ -664,7 +667,7 @@ ON CONFLICT (step_id, cell_kind, cell_key) WHERE cell_kind IS NOT NULL DO UPDATE
 
 - [ ] **Step 4: 重建 scratch 库全量 migrate + 测试通过**
 
-Run: `dropdb -U cecelia cecelia_scratch && createdb -U cecelia cecelia_scratch && cd packages/brain && DATABASE_URL=postgresql://cecelia:cecelia@localhost:5432/cecelia_scratch node src/migrate.js && DATABASE_URL=postgresql://cecelia:cecelia@localhost:5432/cecelia_scratch npx vitest run src/__tests__/integration/migration-348.integration.test.js`
+Run: `dropdb -U cecelia cecelia_scratch && createdb -U cecelia cecelia_scratch && cd packages/brain && DB_NAME=cecelia_scratch node src/migrate.js && DB_NAME=cecelia_scratch npx vitest run src/__tests__/integration/migration-348.integration.test.js`
 Expected: PASS（8 用例全绿，含幂等重放）
 
 - [ ] **Step 5: Commit**
@@ -879,7 +882,7 @@ describe('blast-radius 查询（348 seed 数据上）', () => {
 });
 ```
 
-Run: `cd packages/brain && DATABASE_URL=postgresql://cecelia:cecelia@localhost:5432/cecelia_scratch npx vitest run src/__tests__/integration/blast-radius.integration.test.js`
+Run: `cd packages/brain && DB_NAME=cecelia_scratch npx vitest run src/__tests__/integration/blast-radius.integration.test.js`
 Expected: PASS
 
 - [ ] **Step 6: Commit**
