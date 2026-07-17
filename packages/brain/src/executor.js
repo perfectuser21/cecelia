@@ -2970,6 +2970,20 @@ async function _driveHarnessInitiative(task, opts = {}) {
     return { ok: false, error: 'missing_orchestrator_flag', terminal: true };
   }
 
+  // harness gear 档位硬校验（07-17 一体化设计决策1，同 missing_orchestrator_flag 处理形态）：
+  // payload.gear 非法值（不在 GEAR_VALUES 枚举）→ 点火即 terminal failed，不再继续往下走
+  // （不 spawn relay session）。缺省/合法值 → deriveGear 不抛错，行为与现行完全一致（零回归）。
+  try {
+    const { deriveGear } = await import('./harness-skill-relay.js');
+    deriveGear(task);
+  } catch (gearErr) {
+    await markInitiativeTerminalFailed(dbPool, task.id, 'invalid_gear', gearErr.message);
+    console.error(
+      `[executor] task=${task.id} 非法 gear（值=${task?.payload?.gear ?? '(missing)'}），标 terminal failed: ${gearErr.message}`
+    );
+    return { ok: false, error: 'invalid_gear', terminal: true };
+  }
+
   // 2b-2b: harness 开跑 → 镜像同步对应 okr_initiative → running（non-fatal，best-effort，
   // 解析/新建对应 okr_initiatives 行使规划侧 Initiative 成为实时真相；绝不阻断 harness）。
   // 刀4阶段3发现：此调用原本躺在物理不可达的旧图调用死代码块里（orchestrator 硬校验后

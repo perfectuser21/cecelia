@@ -198,8 +198,18 @@ vi.mock('../events/taskEvents.js', () => ({
 
 // mock spawnSkillRelaySession（skill-relay 分支依赖，验证 SC-203 时需要它被调用）
 const mockSpawnSkillRelaySession = vi.fn().mockResolvedValue({ ok: true, relay: true });
+// deriveGear 用真实语义的轻量重实现（不 mock 掉，executor 侧硬校验测试需要它真的抛错）——
+// 与 harness-skill-relay.js 里的实现保持同步（该文件自身有独立的 deriveGear 单测覆盖真实实现）。
+const GEAR_VALUES_FOR_TEST = ['default', 'hotfix', 'segmented'];
+function fakeDeriveGear(task) {
+  const g = task?.payload?.gear;
+  if (g === undefined || g === null) return 'default';
+  if (GEAR_VALUES_FOR_TEST.includes(g)) return g;
+  throw new Error(`invalid_gear: ${g}`);
+}
 vi.mock('../harness-skill-relay.js', () => ({
   spawnSkillRelaySession: (...args) => mockSpawnSkillRelaySession(...args),
+  deriveGear: (...args) => fakeDeriveGear(...args),
 }));
 
 // ── 被测函数 ──────────────────────────────────────────────────
@@ -272,5 +282,55 @@ describe('_driveHarnessInitiative — orchestrator 硬校验', () => {
     expect(mockSpawnSkillRelaySession).toHaveBeenCalledTimes(1);
     expect(mockCompileHarnessFullGraph).not.toHaveBeenCalled();
     expect(result).toEqual({ ok: true, relay: true });
+  });
+});
+
+// ─── gear 档位硬校验（harness gear 一体化设计决策1：非法值点火即 terminal failed，
+//     同 missing_orchestrator_flag 处理形态）────────────────────────────────
+describe('_driveHarnessInitiative — gear 硬校验', () => {
+  function makeGearTask(gear) {
+    return {
+      id: 'task-gear-lockdown-1',
+      task_type: 'harness_initiative',
+      title: 'harness init gear lockdown test',
+      payload: {
+        initiative_id: 'init-gear-lockdown-001',
+        orchestrator: 'skill-relay',
+        ...(gear !== undefined ? { gear } : {}),
+      },
+      status: 'in_progress',
+      retry_count: 0,
+      execution_attempts: 0,
+    };
+  }
+
+  it('SC-204: payload.gear 非法值 → 拒绝，不 spawn relay session，task 标 failed reason=invalid_gear', async () => {
+    const task = makeGearTask('turbo');
+
+    const result = await runHarnessInitiativeRouter(task, { pool: { query: mockQuery } });
+
+    expect(mockSpawnSkillRelaySession).not.toHaveBeenCalled();
+    expect(result.ok).toBe(false);
+    expect(result.terminal).toBe(true);
+    expect(result.error).toBe('invalid_gear');
+
+    const failCall = mockQuery.mock.calls.find(
+      (call) => typeof call[0] === 'string' &&
+        /UPDATE tasks SET[\s\S]*status\s*=\s*'failed'/.test(call[0]) &&
+        Array.isArray(call[1]) &&
+        call[1].includes(task.id) &&
+        call[1].some((p) => String(p).includes('invalid_gear'))
+    );
+    expect(failCall).toBeTruthy();
+  });
+
+  it('SC-205: payload.gear 缺省/合法值 → 正常调用 spawnSkillRelaySession（回归：零影响）', async () => {
+    for (const gear of [undefined, 'default', 'hotfix', 'segmented']) {
+      mockSpawnSkillRelaySession.mockClear();
+      const task = makeGearTask(gear);
+      const result = await runHarnessInitiativeRouter(task, { pool: { query: mockQuery } });
+      expect(mockSpawnSkillRelaySession, `gear=${gear}`).toHaveBeenCalledTimes(1);
+      expect(result, `gear=${gear}`).toEqual({ ok: true, relay: true });
+    }
   });
 });
