@@ -1,6 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 
-// 这些 import 会 fail（模块还不存在）— TDD Red 阶段
 import {
   runDiskGuard,
   __resetDiskGuardForTest,
@@ -9,16 +8,7 @@ import {
 
 import { JOBS } from '../../../packages/brain/src/scheduler-jobs.js'
 
-// Mock execAsync（SSH 宿主机 + docker 命令）
-vi.mock('../../../packages/brain/src/cron/disk-guard.js', async (importOriginal) => {
-  const actual = await importOriginal()
-  return actual
-})
-
 describe('disk-guard', () => {
-  let execAsyncMock
-  let feishuAlertMock
-  let barkPushMock
   let callOrder
 
   beforeEach(() => {
@@ -28,59 +18,156 @@ describe('disk-guard', () => {
   })
 
   it('[BEHAVIOR-1] df 87% 触发完整清理序列，序列按 INV-04 顺序', async () => {
-    // mock execAsync 序列：首次 df 返回 87%，清理命令各自 resolve，复测 df 返回 70%
-    const execAsync = vi.fn()
-      .mockImplementationOnce(async (cmd) => {
-        // df 输出（宿主机 macOS 格式）
-        if (cmd.includes('df')) {
-          return { stdout: 'Filesystem     512-blocks       Used Available Capacity iused      ifree %iused  Mounted on\n/dev/disk3s5s1 1953525104 1667897832 167042208    91%\n', stderr: '' }
-          // 注意：实现需解析 "91%" 但这里我们期望 87%，用简化输出
-          // 实际 mock 返回 87%：
-        }
-      })
-      // 修正：直接 mock 返回 87% 的简洁输出
-    const execAsyncSimple = vi.fn()
-      .mockResolvedValueOnce({ stdout: '87%\n', stderr: '' }) // df 首次
-      .mockResolvedValueOnce({ stdout: '', stderr: '' })      // docker container prune
-      .mockResolvedValueOnce({ stdout: '', stderr: '' })      // docker builder prune
-      .mockResolvedValueOnce({ stdout: '', stderr: '' })      // npm cache clean
-      .mockResolvedValueOnce({ stdout: '70%\n', stderr: '' }) // df 复测
+    // INV-04 顺序：docker container prune → builder prune → worktree_reaper → npm/brew cache
 
-    // 用模块级 spy 替换 execAsync
-    vi.doMock('../../../packages/brain/src/cron/disk-guard.js', async () => {
-      const { runDiskGuard: orig, __resetDiskGuardForTest: reset, DISK_GUARD_INTERVAL_MS: ms } =
-        await vi.importActual('../../../packages/brain/src/cron/disk-guard.js')
-      return { runDiskGuard: orig, __resetDiskGuardForTest: reset, DISK_GUARD_INTERVAL_MS: ms }
+    const execMock = vi.fn().mockImplementation(async (cmd) => {
+      if (cmd.includes('df ')) {
+        const dfCalls = execMock.mock.calls.filter(c => c[0].includes('df ')).length
+        if (dfCalls <= 1) {
+          callOrder.push('df_initial')
+          return { stdout: '87%\n', stderr: '' }
+        } else {
+          callOrder.push('df_retest')
+          return { stdout: '70%\n', stderr: '' }
+        }
+      }
+      if (cmd.includes('docker container prune')) {
+        callOrder.push('docker_container_prune')
+        return { stdout: '', stderr: '' }
+      }
+      if (cmd.includes('docker builder prune')) {
+        callOrder.push('docker_builder_prune')
+        return { stdout: '', stderr: '' }
+      }
+      if (cmd.includes('npm cache')) {
+        callOrder.push('npm_cache')
+        return { stdout: '', stderr: '' }
+      }
+      return { stdout: '', stderr: '' }
     })
 
-    // 此测试在实现存在前必然 fail（import 失败）
-    // 验证调用顺序的断言结构（实现后填充）：
-    // expect(callOrder).toEqual(['docker_container_prune', 'docker_builder_prune', 'worktree_reaper', 'npm_cache'])
-    expect(true).toBe(false) // TDD Red：强制 fail
+    const worktreeReaperMock = vi.fn(async () => {
+      callOrder.push('worktree_reaper')
+      return { results: [] }
+    })
+    const raiseMock = vi.fn().mockResolvedValue(undefined)
+    const barkMock = vi.fn().mockResolvedValue(undefined)
+
+    const result = await runDiskGuard({
+      execAsync: execMock,
+      raise: raiseMock,
+      sendBark: barkMock,
+      runWorktreeReaper: worktreeReaperMock,
+    })
+
+    // [BEHAVIOR-1]: df 87% → action=clean (retest=70% → no bark)
+    expect(result.used).toBe(87)
+    expect(result.action).toBe('clean')
+
+    // INV-04: 固定顺序断言
+    expect(callOrder).toEqual(['df_initial', 'docker_container_prune', 'docker_builder_prune', 'worktree_reaper', 'npm_cache', 'df_retest'])
+
+    // worktree reaper 被调用
+    expect(worktreeReaperMock).toHaveBeenCalledOnce()
+    // raise 被调用（清理后通知）
+    expect(raiseMock).toHaveBeenCalled()
   })
 
   it('[BEHAVIOR-2] df 75% 不触发清理，打 action=none 日志', async () => {
-    // mock df 返回 75%
-    // 断言：无清理命令被调用，日志含 action=none
-    expect(true).toBe(false) // TDD Red
+    const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
+    const execMock = vi.fn().mockResolvedValueOnce({ stdout: '75%\n', stderr: '' })
+    const raiseMock = vi.fn().mockResolvedValue(undefined)
+    const barkMock = vi.fn().mockResolvedValue(undefined)
+
+    const result = await runDiskGuard({
+      execAsync: execMock,
+      raise: raiseMock,
+      sendBark: barkMock,
+    })
+
+    expect(result.used).toBe(75)
+    expect(result.action).toBe('none')
+
+    // 断言：无清理命令被调用（只有 df 这一次）
+    expect(execMock).toHaveBeenCalledOnce()
+    // 飞书/Bark 未被调用
+    expect(raiseMock).not.toHaveBeenCalled()
+    expect(barkMock).not.toHaveBeenCalled()
+
+    // INV-03: [disk_check] 日志必出，含 action=none
+    expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('[disk_check]'))
+    expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('action=none'))
+
+    consoleSpy.mockRestore()
   })
 
   it('[BEHAVIOR-3] df 82% 仅发飞书告警，不触发清理序列', async () => {
-    // mock df 返回 82%
-    // 断言：飞书告警被调用，docker prune 未被调用
+    const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
+    const execMock = vi.fn().mockResolvedValueOnce({ stdout: '82%\n', stderr: '' })
+    const raiseMock = vi.fn().mockResolvedValue(undefined)
+    const barkMock = vi.fn().mockResolvedValue(undefined)
+
+    const result = await runDiskGuard({
+      execAsync: execMock,
+      raise: raiseMock,
+      sendBark: barkMock,
+    })
+
+    expect(result.used).toBe(82)
+    expect(result.action).toBe('warn')
+
+    // 飞书告警被调用（raise），Bark 未调用
+    expect(raiseMock).toHaveBeenCalledOnce()
+    expect(barkMock).not.toHaveBeenCalled()
+
+    // docker prune 未被调用（只有 df 一次）
+    expect(execMock).toHaveBeenCalledOnce()
+    expect(execMock).not.toHaveBeenCalledWith(expect.stringContaining('docker container prune'))
+    expect(execMock).not.toHaveBeenCalledWith(expect.stringContaining('docker builder prune'))
+
     // 日志含 [disk_check] used=82% action=warn
-    expect(true).toBe(false) // TDD Red
+    expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('[disk_check]'))
+    expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('used=82%'))
+    expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('action=warn'))
+
+    consoleSpy.mockRestore()
   })
 
   it('[BEHAVIOR-4] 清后复测仍 ≥90% 发 Bark 推送', async () => {
-    // mock df 首次返回 91%，清理后复测返回 90%
-    // 断言：Bark 推送函数被调用
-    // 断言：日志含 action=bark
-    expect(true).toBe(false) // TDD Red
+    const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
+    const execMock = vi.fn().mockImplementation(async (cmd) => {
+      if (cmd.includes('df ')) {
+        const dfCalls = execMock.mock.calls.filter(c => c[0].includes('df ')).length
+        if (dfCalls <= 1) return { stdout: '91%\n', stderr: '' } // 首次
+        return { stdout: '90%\n', stderr: '' } // 复测仍 ≥90%
+      }
+      return { stdout: '', stderr: '' }
+    })
+    const raiseMock = vi.fn().mockResolvedValue(undefined)
+    const barkMock = vi.fn().mockResolvedValue(undefined)
+    const reaperMock = vi.fn().mockResolvedValue({ results: [] })
+
+    const result = await runDiskGuard({
+      execAsync: execMock,
+      raise: raiseMock,
+      sendBark: barkMock,
+      runWorktreeReaper: reaperMock,
+    })
+
+    // 清后 ≥90% → action=bark
+    expect(result.action).toBe('bark')
+
+    // Bark 推送被调用
+    expect(barkMock).toHaveBeenCalledOnce()
+    expect(barkMock.mock.calls[0][0]).toContain('磁盘告急')
+
+    // 日志含 action=bark
+    expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('action=bark'))
+
+    consoleSpy.mockRestore()
   })
 
   it('[BEHAVIOR-8] scheduler-jobs JOBS 含 disk-guard，参数规格正确', async () => {
-    // 直接断言 JOBS 数组
     const diskGuardJob = JOBS.find(j => j.name === 'disk-guard')
     expect(diskGuardJob).toBeDefined()
     expect(diskGuardJob.timeoutMs).toBe(120_000)
@@ -89,17 +176,34 @@ describe('disk-guard', () => {
   })
 
   it('[BEHAVIOR-9] df 命令失败时 catch 并打 error 日志，不静默吞掉', async () => {
-    // mock execAsync 抛出 Error
-    // 断言：runDiskGuard() 不抛出
-    // 断言：日志含 [disk_check] error=...
-    expect(true).toBe(false) // TDD Red
+    const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
+    const execMock = vi.fn().mockRejectedValue(new Error('ssh: connect to host failed'))
+
+    // runDiskGuard 不应该抛出
+    const result = await runDiskGuard({ execAsync: execMock })
+    expect(result).toHaveProperty('error')
+
+    // 日志含 [disk_check] ... error=...
+    const callArgs = consoleSpy.mock.calls.map(c => c[0])
+    const errorLog = callArgs.find(s => s && s.includes('[disk_check]') && s.includes('error='))
+    expect(errorLog).toBeDefined()
+
+    consoleSpy.mockRestore()
   })
 
   it('[BEHAVIOR-10] 15min 内重复调用节流 gate，df 只执行一次', async () => {
-    // 第一次调用成功执行（mock df 返回 75%）
+    expect(DISK_GUARD_INTERVAL_MS).toBe(15 * 60 * 1000)
+
+    const execMock = vi.fn().mockResolvedValue({ stdout: '75%\n', stderr: '' })
+
+    // 第一次调用正常执行
+    await runDiskGuard({ execAsync: execMock })
     // 立即第二次调用（lastRunAt 刚更新，< INTERVAL_MS）
-    // 断言：df 命令只被执行 1 次
-    expect(DISK_GUARD_INTERVAL_MS).toBe(15 * 60 * 1000) // 验证常量值
-    expect(true).toBe(false) // TDD Red（实现前 import 失败）
+    const result2 = await runDiskGuard({ execAsync: execMock })
+
+    // df 命令只被执行 1 次
+    expect(execMock).toHaveBeenCalledOnce()
+    // 第二次返回 throttled
+    expect(result2).toEqual({ skipped: true, reason: 'throttled' })
   })
 })

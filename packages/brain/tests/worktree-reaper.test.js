@@ -1,11 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import * as fs from 'fs/promises'
 
-// 这些 import 会 fail（模块还不存在）— TDD Red 阶段
 import { runWorktreeReaper } from '../../../packages/brain/src/cron/worktree-reaper.js'
-
-// Mock fs 和 Brain DB 查询
-vi.mock('fs/promises')
 
 describe('worktree-reaper', () => {
   const WORKTREE_BASE = '/Users/administrator/perfect21/cecelia/.claude/worktrees/harness-v2'
@@ -14,94 +9,141 @@ describe('worktree-reaper', () => {
     vi.clearAllMocks()
   })
 
+  // Helper to build Dirent-like objects
+  function makeEntry(name, isDirectory = true) {
+    return { name, isDirectory: () => isDirectory }
+  }
+
   it('[BEHAVIOR-5] 终态任务 updated_at 超 25h，目录被删除', async () => {
-    // mock readdir 返回 ['task-abc12345']
-    vi.mocked(fs.readdir).mockResolvedValueOnce(['task-abc12345'])
-
-    // mock Brain DB 查询：status=completed，updated_at = 25h 前
     const twentyFiveHoursAgo = new Date(Date.now() - 25 * 60 * 60 * 1000).toISOString()
-    // （实现中通过 fetch 或 pool 查询，这里通过 vi.mock 或依赖注入覆盖）
 
-    // mock fs.rm 成功
-    vi.mocked(fs.rm).mockResolvedValueOnce(undefined)
+    const readdirMock = vi.fn().mockResolvedValue([makeEntry('task-abc12345')])
+    const rmMock = vi.fn().mockResolvedValue(undefined)
+    const dbMock = {
+      query: vi.fn().mockResolvedValue({
+        rows: [{ status: 'completed', updated_at: twentyFiveHoursAgo }]
+      })
+    }
 
-    // 注入 mock DB 查询（实现需支持注入，或通过 vi.mock 覆盖 db.js）
-    // 此处假设实现导出 __setDbQueryForTest 或通过 vi.mock('../../../packages/brain/src/db.js')
-
-    // 执行
-    // await runWorktreeReaper()
+    const result = await runWorktreeReaper({
+      readdir: readdirMock,
+      rm: rmMock,
+      db: dbMock,
+      base: WORKTREE_BASE,
+      existsSync: () => true,
+    })
 
     // 断言：fs.rm 被调用，路径匹配 task-abc12345
-    // expect(fs.rm).toHaveBeenCalledWith(
-    //   `${WORKTREE_BASE}/task-abc12345`,
-    //   { recursive: true, force: true }
-    // )
+    expect(rmMock).toHaveBeenCalledWith(
+      `${WORKTREE_BASE}/task-abc12345`,
+      { recursive: true, force: true }
+    )
 
-    // TDD Red：实现不存在，import 失败
-    expect(true).toBe(false)
+    // 结果含 action=deleted
+    expect(result.results).toHaveLength(1)
+    expect(result.results[0].action).toBe('deleted')
+    expect(result.results[0].status).toBe('completed')
   })
 
   it('[BEHAVIOR-6][回归] in_progress worktree 绝对不删（INV-01 防第 6 次误杀）', async () => {
-    // mock readdir 返回 ['task-xyz99999']
-    vi.mocked(fs.readdir).mockResolvedValueOnce(['task-xyz99999'])
+    const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
 
-    // mock DB 查询：status=in_progress
-    // （注入 mock，返回 { status: 'in_progress', updated_at: ... }）
+    const readdirMock = vi.fn().mockResolvedValue([makeEntry('task-xyz99999')])
+    const rmMock = vi.fn().mockResolvedValue(undefined)
+    const dbMock = {
+      query: vi.fn().mockResolvedValue({
+        rows: [{ status: 'in_progress', updated_at: new Date(Date.now() - 30 * 60 * 60 * 1000).toISOString() }]
+      })
+    }
 
-    // 执行
-    // await runWorktreeReaper()
+    await runWorktreeReaper({
+      readdir: readdirMock,
+      rm: rmMock,
+      db: dbMock,
+      base: WORKTREE_BASE,
+      existsSync: () => true,
+    })
 
     // 断言核心：fs.rm 完全未被调用（任何路径）
-    // expect(fs.rm).not.toHaveBeenCalled()
+    expect(rmMock).not.toHaveBeenCalled()
 
     // 断言日志含 action=skipped
-    // （通过 spy console.log 或捕获日志实现）
+    const logCalls = consoleSpy.mock.calls.map(c => c[0])
+    const skippedLog = logCalls.find(s => s && s.includes('action=skipped'))
+    expect(skippedLog).toBeDefined()
 
-    // TDD Red
-    expect(true).toBe(false)
+    consoleSpy.mockRestore()
   })
 
   it('[BEHAVIOR-7] task 查不到记录，跳过不删（fail-open）', async () => {
-    // mock readdir 返回 ['task-unknown0']
-    vi.mocked(fs.readdir).mockResolvedValueOnce(['task-unknown0'])
+    const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
 
-    // mock DB 查询：返回 404 / null / 空数组
-    // （注入 mock，返回 null 或抛出 NotFound）
+    const readdirMock = vi.fn().mockResolvedValue([makeEntry('task-unknown0')])
+    const rmMock = vi.fn().mockResolvedValue(undefined)
+    const dbMock = {
+      // 返回空数组 = 查不到记录
+      query: vi.fn().mockResolvedValue({ rows: [] })
+    }
 
-    // 执行
-    // await runWorktreeReaper()
+    await runWorktreeReaper({
+      readdir: readdirMock,
+      rm: rmMock,
+      db: dbMock,
+      base: WORKTREE_BASE,
+      existsSync: () => true,
+    })
 
     // 断言：fs.rm 未被调用（fail-open）
-    // expect(fs.rm).not.toHaveBeenCalled()
+    expect(rmMock).not.toHaveBeenCalled()
 
     // 断言日志含 status=unknown action=skipped
-    // expect(consoleSpy).toHaveBeenCalledWith(
-    //   expect.stringContaining('[worktree_reap] task=unknown0 status=unknown action=skipped')
-    // )
+    const logCalls = consoleSpy.mock.calls.map(c => c[0])
+    const unknownLog = logCalls.find(s => s && s.includes('status=unknown') && s.includes('action=skipped'))
+    expect(unknownLog).toBeDefined()
 
-    // TDD Red
-    expect(true).toBe(false)
+    consoleSpy.mockRestore()
   })
 
   it('[BEHAVIOR-6-extra] pending 任务 worktree 也绝对不删', async () => {
-    // 额外回归：pending 也属于活跃状态
-    vi.mocked(fs.readdir).mockResolvedValueOnce(['task-pend1234'])
+    const readdirMock = vi.fn().mockResolvedValue([makeEntry('task-pend1234')])
+    const rmMock = vi.fn().mockResolvedValue(undefined)
+    const dbMock = {
+      query: vi.fn().mockResolvedValue({
+        rows: [{ status: 'pending', updated_at: new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString() }]
+      })
+    }
 
-    // mock DB 查询：status=pending
-    // await runWorktreeReaper()
-    // expect(fs.rm).not.toHaveBeenCalled()
+    await runWorktreeReaper({
+      readdir: readdirMock,
+      rm: rmMock,
+      db: dbMock,
+      base: WORKTREE_BASE,
+      existsSync: () => true,
+    })
 
-    expect(true).toBe(false) // TDD Red
+    expect(rmMock).not.toHaveBeenCalled()
   })
 
   it('[BEHAVIOR-5-boundary] 终态任务但 updated_at 仅 23h，不删', async () => {
-    // 边界测试：completed 但时间不够 24h
-    vi.mocked(fs.readdir).mockResolvedValueOnce(['task-recent1'])
+    const twentyThreeHoursAgo = new Date(Date.now() - 23 * 60 * 60 * 1000).toISOString()
 
-    // mock DB 查询：status=completed，updated_at = 23h 前
-    // await runWorktreeReaper()
-    // expect(fs.rm).not.toHaveBeenCalled()
+    const readdirMock = vi.fn().mockResolvedValue([makeEntry('task-recent1')])
+    const rmMock = vi.fn().mockResolvedValue(undefined)
+    const dbMock = {
+      query: vi.fn().mockResolvedValue({
+        rows: [{ status: 'completed', updated_at: twentyThreeHoursAgo }]
+      })
+    }
 
-    expect(true).toBe(false) // TDD Red
+    await runWorktreeReaper({
+      readdir: readdirMock,
+      rm: rmMock,
+      db: dbMock,
+      base: WORKTREE_BASE,
+      existsSync: () => true,
+    })
+
+    // 边界：completed 但未满 24h → 不删
+    expect(rmMock).not.toHaveBeenCalled()
   })
 })
