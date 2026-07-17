@@ -140,4 +140,51 @@ describe('machine-vitals', () => {
       errSpy.mockRestore();
     });
   });
+
+  describe('machine_vitals_daily_peak 峰值滚动', () => {
+    function poolMock() { return { query: vi.fn().mockResolvedValue({ rows: [] }) }; }
+    function peakUpsertCalls(pool) {
+      return pool.query.mock.calls.filter(([sql]) => String(sql).includes('machine_vitals_daily_peak'));
+    }
+    function lastPeakValue(pool) {
+      const calls = peakUpsertCalls(pool);
+      const params = calls[calls.length - 1][1];
+      return JSON.parse(params[0]); // 实现里 key 写死在 SQL 内，$1=value_json，params[0]
+    }
+
+    it('同日两次采样 5→3：peak 保持 5', async () => {
+      const pool = poolMock();
+      stubDocker({ psNames: Array.from({length:5},(_,i)=>`cecelia-relay-x${i}-1`).join('\n') + '\n' });
+      await sampleMachineVitals(pool);
+      stubDocker({ psNames: 'cecelia-relay-a-1\ncecelia-relay-b-2\ncecelia-relay-c-3\n' });
+      await sampleMachineVitals(pool);
+      expect(lastPeakValue(pool).peak).toBe(5);
+    });
+
+    it('采样失败不写峰值', async () => {
+      const pool = poolMock();
+      stubDocker({ fail: 'docker down' });
+      await sampleMachineVitals(pool);
+      expect(peakUpsertCalls(pool)).toHaveLength(0);
+    });
+
+    it('无 pool 不抛错且不写', async () => {
+      stubDocker({ psNames: 'cecelia-relay-a-1\n' });
+      await expect(sampleMachineVitals()).resolves.toBeTruthy();
+    });
+
+    it('跨日重置：新一天首次采样 peak=当日值（不沿用前一日峰值）', async () => {
+      const pool = poolMock();
+      stubDocker({ psNames: Array.from({length:5},(_,i)=>`cecelia-relay-x${i}-1`).join('\n') + '\n' });
+      await sampleMachineVitals(pool);
+      expect(lastPeakValue(pool).peak).toBe(5);
+
+      // 模拟跨日：直接重置峰值内存态（等价于新一天首次采样前的状态）
+      _resetVitalsCacheForTest();
+      pool.query.mockClear();
+      stubDocker({ psNames: 'cecelia-relay-a-1\ncecelia-relay-b-2\n' });
+      await sampleMachineVitals(pool);
+      expect(lastPeakValue(pool).peak).toBe(2);
+    });
+  });
 });
