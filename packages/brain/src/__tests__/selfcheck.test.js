@@ -191,9 +191,11 @@ describe('selfcheck', () => {
   // 345（dev_records.is_canary 列，金丝雀演习标记）推进地板到 345。
   // 346（incidents 表，刀5a 事故归一层）推进地板到 346。
   // 347（design_docs CHECK 约束加 drill_report type，金丝雀演习修复 f97f24dc）推进地板到 347。
-  // 348（承诺地图 schema：journeys/journey_steps/journey_features/journey_step_links 四表扩展，MJ5 刀1）推进地板到 348。
-  it('EXPECTED_SCHEMA_VERSION should be 348 (floor, bumped for promise-map schema)', () => {
-    expect(EXPECTED_SCHEMA_VERSION).toBe('348');
+  // 348（承诺地图 schema thin 版：四表扩展，MJ5 刀1 容器首刀）推进地板到 348。
+  // 349（MJ5 刀1 和解补齐：domain/cell_key/双 partial unique/FK SET NULL/软硬列归一）推进地板到 349。
+  // 350（MJ5 刀1：智能客服+首次成功两域承诺地图 seed 数据）推进地板到 350。
+  it('EXPECTED_SCHEMA_VERSION should be 350 (floor, bumped for promise-map reconcile + seed)', () => {
+    expect(EXPECTED_SCHEMA_VERSION).toBe('350');
   });
 
   it('should pass when DB schema version is ahead of expected (>= check)', async () => {
