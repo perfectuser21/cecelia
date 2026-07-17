@@ -1,12 +1,12 @@
 ---
-generated: 2026-07-15 10:19:01 CST
+generated: 2026-07-17 21:38:16 CST
 source: write-current-state.sh
 ---
 
 # Cecelia 系统当前状态
 
 > 由 `/dev` Stage 4 自动生成，每次 PR 合并后更新。
-> 生成时间：2026-07-15 10:19:01 CST
+> 生成时间：2026-07-17 21:38:16 CST
 
 ---
 
@@ -14,7 +14,7 @@ source: write-current-state.sh
 
 | 指标 | 状态 |
 |------|------|
-| Brain API | degraded |
+| Brain API | healthy |
 | 警觉等级 | 1 - CALM |
 
 ---
@@ -23,9 +23,9 @@ source: write-current-state.sh
 
 | 层 | 数量 |
 |---|---|
-| unit | 1027 |
-| integration | 104 |
-| e2e/smoke | 10 |
+| unit | 1056 |
+| integration | 134 |
+| e2e/smoke | 16 |
 | 孤儿（sprints 未入册）| 0 |
 
 守卫: ✅ PASS
@@ -34,30 +34,18 @@ source: write-current-state.sh
 
 ## Capability Probe（能力链路探针）
 
-> 最后探针时间：2026-07-15 02:04:24 UTC | 总计：10 | ✅ 通过：10 | ❌ 失败：0
-
-| 探针名 | 描述 | 状态 | 耗时 |
-|--------|------|------|------|
-| `db` | 数据库连接+核心表可读 | ✅ | 48ms |
-| `dispatch` | 任务派发链路（tasks表可写+executor模块可import） | ✅ | 8ms |
-| `auto_fix` | auto-fix链路dry-run（shouldAutoFix函数可调用） | ✅ | 1ms |
-| `notify` | 飞书通知链路（alerting模块可import+函数可调用） | ✅ | 1ms |
-| `cortex` | CortexRCA链路（cortex模块可import） | ✅ | 0ms |
-| `monitor_loop` | MonitorLoop运行状态 | ✅ | 1ms |
-| `rumination` | 反刍系统（24h内是否有产出） | ✅ | 33ms |
-| `evolution` | 进化追踪（是否有evolution记录） | ✅ | 10ms |
-| `consolidation` | 记忆合并（48h内是否有合并记录） | ✅ | 167ms |
-| `geo_website` | geoSEO网站（zenithjoyai.com）可访问+blog+posts有内容 | ✅ | 756ms |
+（尚无探针数据，Brain 启动 30s 后首次探针）
 
 ---
 
 ## 进行中任务
 
-- [P1] 抓评论 lead 语义质量闸门(golden-path-2真机smoke加固) (harness_initiative)
-- [P1] 修复 claude-launch.sh 会话历史漏并回主池——slot 会话 --resume 找不到 (dev)
-- [P1] Line04 AI思考浮窗——补部署闭环+会话跟随画像卡（golden path 接续） (harness_initiative)
-- [P1] 刀A3: relay-runs 状态回写防呆——PATCH 接受任务短号解析 + 回写失败留痕告警 (harness_initiative)
-- [P1] 刀A1: watchdog 死局解除——PR OPEN+容器亡+CI红/BEHIND 时有界重点火续跑（三次实证） (harness_initiative)
+- [P1] 西安 harness 通道整备：xian-M4 docker 可用化 + location=xian 的 harness (harness_initiative)
+- [P2] 代理经济学仪表盘：修 cost_usd 记账断链（249事件全空）+ 每PR成本报表 + Langfuse凭据修复 (harness_initiative)
+- [P2] 修版本防线静默：改 packages/brain 的 PR 未 bump 版本 check-version-sync 全 (harness_initiative)
+- [P1] 建制W7: 合同 [BEHAVIOR] 剧本化——动作/预期观察/等待预算三段式格式，evaluator 按步操作逐步留 (harness_initiative)
+- [P2] codex-headed-smoke (harness_initiative)
+- [P2] headed-smoke-test (harness_initiative)
 
 ---
 
@@ -73,16 +61,16 @@ source: write-current-state.sh
 
 ## P0 Issues
 
-- ❌ [blocked] 刀A2: watchdog 收口顺序修正——MERGED 反查提到 generator_done 短路前 + 容器内 b — 与刀A1同文件(watchdog.js)防撞车串行,A1 merge后由管家监视自动unblock
-- ❌ [blocked] 刀3-T6: 本机 ZJ 退役收尾 + 巡检/文档覆盖 HK【blocked 依赖T5】
-- ❌ [blocked] fix(brain): PROBE_FAIL_RUMINATION auto-fix 机制故障诊断 — pre_flight_rejected
-- ❌ [blocked] 智能客服/智能获客 skill 缺口盘点（联合苏彦卿） — 派发连炸16次(reason undefined)开熔断堵死队列,autoblock计数SQL有bu
-- ❌ [blocked] 为日报/周报/月报等报告类输出加图标和图示，降低纯文字密度 — dispatch_fail_autoblock
-- ❌ [blocked] 整理 skill 分类体系（含苏彦卿的 skill）+ 输出待做清单 — 派发payload缺task_id/callback_url,连14+次失败触发熔断堵队列,修好后u
-- ❌ [blocked] 整理报告类 skill 分类体系 — dispatch_fail_autoblock
-- ❌ [blocked] 为面向老年用户的页面/内容加图表，改善视觉呈现 — dispatch_fail_autoblock
-- ❌ [blocked] 修复 HTML 页面字号过小问题 — codex bridge 派发反复失败烧熔断（同 07-15 晨检 008c23db 同病），手动隔
+- ❌ [blocked] fix(line04): 判群三道闸fail-open根治——绝对坐标改相对+回复闸fail-closed+_KNOWN — pre_flight_rejected
+- ❌ [blocked] 排查两个机器人对话循环无法停止的问题 — dispatch_fail_autoblock
+- ❌ [blocked] fix: [P0][line04] agent 2.0.28 UIA 找不到微信窗口（重启修复链） — pre_flight_rejected
 - ❌ [blocked] 每日 DB 备份 — pre_flight_rejected
+- ❌ [blocked] fix: [P0][line04] UIA死区重启漏杀WeChatAppEx.exe导致进程堆积+永久失联 — pre_flight_rejected
+- ❌ [blocked] fix: [P0][line04] agent 2.0.28 UIA 找不到微信窗口（重建修复，879896d8 已 b — pre_flight_rejected
+- ❌ [blocked] fix: harness 三条任务恢复安全网全死——迁移至 runScheduler 触发路径 — pre_flight_rejected
+- ❌ [blocked] fix(evaluator-relay-gate): evaluator+harness-report relay模式下 — pre_flight_rejected
+- ❌ [blocked] Golden Path 骨架串联——共享前门(注册/下载/归零，独立不挂任何Lane/Path) — pre_flight_rejected
+- ❌ [blocked] Golden Path 骨架串联——Path4「客户私域客服自动回复主链」ability(客服回复判断内核+对话记忆+C — pre_flight_rejected
 
 ---
 
@@ -90,11 +78,11 @@ source: write-current-state.sh
 
 | 状态 | 结论 | 工作流 | 分支 | 时间 |
 |------|------|--------|------|------|
-| 🔄 queued | - | CI | cp-0715100925-preview-rea | 2026-07-15 02:19 |
-| 🔄 queued | - | Preview Deploy | cp-0715100925-preview-rea | 2026-07-15 02:19 |
-| 🔄 queued | - | Harness v5 Checks | cp-0715100925-preview-rea | 2026-07-15 02:19 |
-| 🔄 queued | - | Smoke Glob Runner（棘轮闸） | cp-0715100925-preview-rea | 2026-07-15 02:19 |
-| 🔄 queued | - | PR Auto Review (DeepSeek) | cp-0715100925-preview-rea | 2026-07-15 02:19 |
+| 🔄 in_progress | - | Smoke Glob Runner（棘轮闸） | cp-07172022-ws-53710094 | 2026-07-17 13:37 |
+| 🔄 in_progress | - | CI | cp-07172022-ws-53710094 | 2026-07-17 13:37 |
+| 🔄 in_progress | - | Preview Deploy | cp-07172022-ws-53710094 | 2026-07-17 13:37 |
+| ✅ completed | success | PR Auto Review (DeepSeek) | cp-07172022-ws-53710094 | 2026-07-17 13:37 |
+| 🔄 queued | - | Harness v5 Checks | cp-07172022-ws-53710094 | 2026-07-17 13:37 |
 
 ---
 
