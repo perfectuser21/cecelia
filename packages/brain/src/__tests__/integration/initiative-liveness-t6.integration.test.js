@@ -116,6 +116,8 @@ function makeDevTask(overrides = {}) {
     execution_attempts: 0,
     last_attempt_at: null,
     updated_at: new Date(Date.now() - 30 * 60 * 1000),
+    // S2 锚点执法豁免：存量任务（刀2上线前创建），不受锚点门禁影响
+    created_at: '2026-07-16T00:00:00Z',
     ...overrides,
   };
 }
