@@ -88,9 +88,26 @@ export function stampMMDDHHNN(now) {
   return `${parts.month}${parts.day}${parts.hour}${parts.minute}`;
 }
 
+// executor 白名单（worker-pool 独立链路，不进 docker spawn 也不计入 _activeCodexRelays）
+const EXECUTOR_ALLOWLIST = new Set(['claude', 'codex', undefined, null, 'worker-pool']);
+
+/**
+ * 核心任务护栏：base_repo 解析为 cecelia 仓库且 contract_paths 含 packages/brain/src 时拒绝外派。
+ * @returns {boolean} true = 触发护栏（必须拒绝）
+ */
+function _isCoreTask(task) {
+  const baseRepo = task.payload?.base_repo;
+  if (!baseRepo) return false;
+  const isCeceliaRepo = String(baseRepo).includes('perfect21/cecelia') || baseRepo === 'cecelia';
+  if (!isCeceliaRepo) return false;
+  const contractPaths = task.payload?.contract_paths;
+  if (!Array.isArray(contractPaths) || contractPaths.length === 0) return false;
+  return contractPaths.some((p) => String(p).startsWith('packages/brain/src'));
+}
+
 /**
  * spawn 一个 skill-relay controller session。
- * deps 全注入（测试 fake）：{pool, spawnFn, sshSpawnFn, loadSkill, ensureWt, resolveAccountFn, tokenFn, now}
+ * deps 全注入（测试 fake）：{pool, spawnFn, sshSpawnFn, loadSkill, ensureWt, resolveAccountFn, tokenFn, now, dispatchWorkerFn}
  * @returns {Promise<{ok:boolean, mode:string, containerId?:string, error?:string}>}
  */
 export async function spawnSkillRelaySession(task, deps = {}) {
@@ -98,7 +115,9 @@ export async function spawnSkillRelaySession(task, deps = {}) {
   const now = deps.now || (() => new Date());
   const initiativeId = task.payload?.initiative_id || task.id; // B51: initiative_id = task.id
   const short = shortId(task.id);
-  const isCodex = task.payload?.executor === 'codex';
+  const executor = task.payload?.executor;
+  const isCodex = executor === 'codex';
+  const isWorkerPool = executor === 'worker-pool';
   const isHeaded = task.payload?.mode === 'headed';
 
   // ─── headed 分支：ssh+tmux 路径 ──────────────────────────────────────────
@@ -106,6 +125,141 @@ export async function spawnSkillRelaySession(task, deps = {}) {
     return _spawnHeadedSession(task, { dbPool, now, short, initiativeId, deps });
   }
   // ─── end headed ──────────────────────────────────────────────────────────
+
+  // FR-5: 白名单外 executor 值立即拒绝（不静默降级）
+  if (!EXECUTOR_ALLOWLIST.has(executor)) {
+    return { ok: false, mode: RELAY_FLAG, error: `invalid executor: ${executor}` };
+  }
+
+  // ─── worker-pool 分支（FR-1/FR-2/FR-3/FR-4）────────────────────────────
+  if (isWorkerPool) {
+    // FR-4: 核心任务护栏
+    if (_isCoreTask(task)) {
+      console.warn(`[skill-relay][worker-pool][GUARD] core task rejected: task=${task.id} base_repo=${task.payload?.base_repo}`);
+      try {
+        await dbPool.query(
+          `UPDATE tasks SET status='terminal_failed', claimed_by=NULL, claimed_at=NULL WHERE id=$1`,
+          [task.id]
+        );
+      } catch (err) {
+        console.warn(`[skill-relay][worker-pool] task terminal_failed 回写失败（non-fatal）: ${err.message}`);
+      }
+      return { ok: false, mode: RELAY_FLAG, error: 'feedback_no_core_tasks_to_codex' };
+    }
+
+    // 构造 worktree 路径（ensureWt 幂等）
+    const ensureWt = deps.ensureWt
+      || (await import('./harness-worktree.js')).ensureHarnessWorktree;
+    let worktreePath;
+    try {
+      worktreePath = await ensureWt({ taskId: task.id, initiativeId, baseRepo: task.payload?.base_repo });
+    } catch (err) {
+      console.error(`[skill-relay][worker-pool] ensureWt 失败: ${err.message}`);
+      return { ok: false, mode: RELAY_FLAG, error: `ensureWt failed: ${err.message}` };
+    }
+
+    // brief 文件路径（worker-pool 以 worktree 内文件传递 prompt）
+    const sprintDir = task.payload?.sprint_dir || `sprints/${stampMMDDHHNN(now())}-relay-${short}`;
+    const briefFile = `${worktreePath}/.brief-${short}.md`;
+
+    // 构造 brief 内容（与 claude/codex 路径 prompt 格式一致）
+    let skillContent = '';
+    try {
+      const loadSkill = deps.loadSkill || (await import('./harness-shared.js')).loadSkillContent;
+      skillContent = loadSkill(controllerSkillFor(task.task_type));
+    } catch (err) {
+      console.warn(`[skill-relay][worker-pool] loadSkill 失败（非必须，继续）: ${err.message}`);
+    }
+    const briefContent = [
+      `你是 harness-controller session。按下面 SKILL 指令跑完整条 sprint。`,
+      ``,
+      skillContent,
+      ``,
+      `---`,
+      `## 本次上下文`,
+      `HARNESS_TASK_ID=${task.id}`,
+      `SPRINT_DIR=${sprintDir}`,
+      `BRAIN_URL=http://host.docker.internal:5221`,
+      `任务标题：${task.title || ''}`,
+    ].join('\n');
+
+    // 写 brief 文件
+    try {
+      const { writeFileSync, mkdirSync } = await import('node:fs');
+      const { dirname } = await import('node:path');
+      mkdirSync(dirname(briefFile), { recursive: true });
+      writeFileSync(briefFile, briefContent, 'utf8');
+    } catch (err) {
+      console.warn(`[skill-relay][worker-pool] brief 文件写入失败（non-fatal）: ${err.message}`);
+    }
+
+    // FR-1/FR-2: 调用 dispatchWorkerFn（注入）或真实子进程
+    const { fileURLToPath } = await import('node:url');
+    const { resolve, dirname: pathDirname } = await import('node:path');
+    const __filename = fileURLToPath(import.meta.url);
+    const __dirnameLocal = pathDirname(__filename);
+    const dispatchWorkerScript = resolve(__dirnameLocal, '../../../scripts/dispatch-worker.mjs');
+
+    const _defaultDispatchWorker = async ({ briefFile: bf, dir }) => {
+      const { execFile } = await import('node:child_process');
+      const { promisify } = await import('node:util');
+      const execFileAsync = promisify(execFile);
+      try {
+        await execFileAsync('node', [dispatchWorkerScript, '--brief', bf, '--dir', dir], {
+          timeout: 300_000,
+          env: { ...process.env },
+        });
+        return { ok: true };
+      } catch (err) {
+        return { ok: false, error: err.message };
+      }
+    };
+
+    const dispatchWorkerFn = deps.dispatchWorkerFn || _defaultDispatchWorker;
+
+    let dispatchResult;
+    try {
+      dispatchResult = await dispatchWorkerFn({ briefFile, dir: worktreePath });
+    } catch (err) {
+      console.error(`[skill-relay][worker-pool][ALERT] dispatch failed: ${err.message}`);
+      try {
+        await dbPool.query(
+          `UPDATE tasks SET status='queued', claimed_by=NULL, claimed_at=NULL WHERE id=$1`,
+          [task.id]
+        );
+      } catch { /* non-fatal */ }
+      return { ok: false, mode: RELAY_FLAG, error: err.message };
+    }
+
+    if (!dispatchResult?.ok) {
+      console.error(`[skill-relay][worker-pool][ALERT] dispatch returned ok:false: task=${task.id}`);
+      try {
+        await dbPool.query(
+          `UPDATE tasks SET status='queued', claimed_by=NULL, claimed_at=NULL WHERE id=$1`,
+          [task.id]
+        );
+      } catch { /* non-fatal */ }
+      return { ok: false, mode: RELAY_FLAG, error: dispatchResult?.error || 'dispatch_worker_failed' };
+    }
+
+    // FR-3: initiative_runs 落行（worker-pool 独立 orchestratorHost）
+    const abilityId = task.ability_id || task.payload?.ability_id || null;
+    try {
+      await dbPool.query(
+        `INSERT INTO initiative_runs
+           (initiative_id, phase, journey_id, orchestrator_version, orchestrator_host, deadline_at, ability_id, current_task_id)
+         VALUES ($1, 'A_planning', $2, 'v2', 'skill-relay-worker-pool', NOW() + INTERVAL '${RELAY_DEADLINE_HOURS} hours', $3, $4)`,
+        [initiativeId, task.payload?.journey_id || null, abilityId, task.id]
+      );
+    } catch (err) {
+      console.warn(`[skill-relay][worker-pool] initiative_runs 落行失败（non-fatal）: ${err.message}`);
+    }
+
+    // 不递增 _activeCodexRelays（worker-pool 独立额度管理）
+    console.log(`[skill-relay][worker-pool] dispatch sent: task=${task.id} sprint=${sprintDir} worktree=${worktreePath}`);
+    return { ok: true, mode: RELAY_FLAG, orchestratorHost: 'skill-relay-worker-pool', sprintDir, worktreePath };
+  }
+  // ─── end worker-pool ─────────────────────────────────────────────────────
 
   // 去重守卫（P1 bug 39b97ade / 今日两次实证 a3d61486、4cedf175）：
   // Brain 重启后误 requeue 的存量 skill-relay 任务被 dispatcher 重新 claim 并再次调用本函数时，

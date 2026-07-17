@@ -164,12 +164,12 @@ node --experimental-vm-modules /workspace/packages/brain/node_modules/.bin/jest 
 
 ## 完成标准 Checklist
 
-- [ ] T1 先 failing（改动前），接线后 passing（提交顺序保证）
-- [ ] T2（核心任务护栏）回归绿
-- [ ] T3（白名单外 executor 拒绝）回归绿
+- [x] T1 先 failing（改动前），接线后 passing（提交顺序保证）
+- [x] T2（核心任务护栏）回归绿
+- [x] T3（白名单外 executor 拒绝）回归绿
 - [ ] T4（真实全链，behavior_test）可选运行，`.dispatch-worker-*.log` 含账号选择行
-- [ ] `scripts/dispatch-worker.mjs` 无任何改动（git diff 确认）
-- [ ] `_spawnHeadedSession` 无任何改动（headed 分支行为不变）
-- [ ] `_activeCodexRelays` 只在 `isCodex` 路径递增（worker-pool 路径不触碰该计数器）
+- [x] `scripts/dispatch-worker.mjs` 无任何改动（git diff 确认：0 行）
+- [x] `_spawnHeadedSession` 无任何改动（headed 分支行为不变）
+- [x] `_activeCodexRelays` 只在 `isCodex` 路径递增（worker-pool 路径不触碰该计数器）
 - [ ] `initiative_runs.orchestrator_host='skill-relay-worker-pool'` 落行（DB 可查）
 - [ ] CI `brain-ci.yml` 全绿
