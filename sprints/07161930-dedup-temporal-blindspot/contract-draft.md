@@ -17,15 +17,12 @@
 | `packages/engine/feature-registry.yml` | 新增 `dedup-temporal-check` 条目 |
 | `packages/engine/skills/dev/SKILL.md` frontmatter | 版本号同步至 19.6.0 |
 
-## Test Contract（测试合同表）
+## Test Contract
 
-| # | [BEHAVIOR] 行为描述 | 测试文件 | 期望 |
-|---|---|---|---|
-| 1 | [BEHAVIOR] mock gh 返回 open 无命中 + merged 有命中 → 现版本静默放行（证明 bug 存在） | `packages/engine/tests/dedup-temporal-check.sh` 场景 A | 现版本 exit 0（Red 阶段），修复后 exit 1（Green 阶段） |
-| 2 | [BEHAVIOR] mock gh 返回 open 无命中 + merged 有命中 → 修复后输出『疑似已被 PR#N 完成』并 exit 1 阻断 | `packages/engine/tests/dedup-temporal-check.sh` 场景 B | exit 1，stdout 含 `[COLLISION]` 和 PR 编号 |
-| 3 | [BEHAVIOR] mock gh 返回 open 无命中 + merged 无命中 → 两个版本均放行（正常路径不受影响） | `packages/engine/tests/dedup-temporal-check.sh` 场景 C | exit 0 |
-| 4 | [BEHAVIOR] SKILL.md 路径 A（bug fix 段）含『复现或退场』字样及 4 条铁律，纯新功能任务豁免条款明确写入 | `packages/engine/tests/dedup-temporal-check.sh` 场景 D | exit 0（grep 验证） |
-| 5 | [BEHAVIOR] 版本号 5 文件均为 19.6.0，无遗漏 | `packages/engine/tests/dedup-temporal-check.sh` 场景 E | exit 0（diff 验证） |
+| 功能 | Test File | BEHAVIOR 覆盖 | 预期红证据 |
+|------|-----------|---------------|------------|
+| 时间撞车检测 | `../../packages/engine/tests/scripts/dedup-temporal-check.sh` | merged命中→exit 1 [COLLISION] / 无命中→exit 0 | 未修复时场景B/C失败，现版本放行 merged 命中 |
+| SKILL.md 铁律 | `../../packages/engine/tests/scripts/dedup-temporal-check.sh` | 复现或退场铁律≥4条 / 版本号一致 | SKILL.md 缺铁律时场景D/E失败 |
 
 ## E2E 验收
 
