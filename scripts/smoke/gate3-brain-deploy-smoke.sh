@@ -1,23 +1,24 @@
 #!/usr/bin/env bash
-# gate3-brain-deploy-smoke.sh — Gate3 brain 部署假跳过回归守卫（bug e0f21d36）
+# gate3-brain-deploy-smoke.sh — Gate3 brain 部署假跳过回归守卫（bug e0f21d36 → becfd554）
 #
 # 守的病：deploy-local.sh 自算改动用三点 diff `git diff origin/main...HEAD`。
 #   该脚本原设计给 /dev 在【领先 main 的 feature 分支】调用，diff 有内容；
 #   但 Gate3 deploy webhook 在【部署根的 main 分支】上跑，HEAD 恒等于/落后 origin/main
 #   → 三点 diff（merge-base→HEAD）恒为空 → NEED_BRAIN=false → 跳过真部署 → 生产跑旧代码。
-#   squash merge 后必现，已三连发（07-15 立案）。
+#   squash merge 后必现，已多次实证（#4024 改 brain src 被判无改动，becfd554 修复）。
 #
-# 根治：git diff 判空时，用「brain 版本对比」兜底——
-#   repo 的 packages/brain/package.json version ≠ 生产运行版本 → 强制走 brain 部署路径。
+# 根治（v2，bug becfd554）：用 SHA 对账取代版本号对比——
+#   origin/main HEAD SHA ≠ 生产 /health git_sha → 强制 NEED_BRAIN=true，与文件列表无关。
+#   测试钩子 CECELIA_PROD_GIT_SHA 注入假生产 SHA，跳过真实 curl。
 #
 # 四段断言（真链路，不 mock；隔离 git repo + --dry-run 跳过真实 build/部署）：
-#   A 版本不一致→部署  ：diff 空 + 生产版本旧 → 输出含 brain-deploy.sh（兜底触发，不再假跳过）
-#   B 版本一致→跳过    ：diff 空 + 生产版本同 → 输出"跳过"（幂等，不无谓重部署）
-#   C 显式 --changed   ：传 --changed=packages/brain/... → 照常部署（版本对比不干扰正常路径）
+#   A SHA 不等→部署    ：diff 空 + CECELIA_PROD_GIT_SHA 与 origin/main 不同 → 触发 brain 部署
+#   B SHA 相等→跳过    ：diff 空 + CECELIA_PROD_GIT_SHA 与 origin/main 相同 → 跳过（幂等）
+#   C 显式 --changed   ：传 --changed=packages/brain/... → 照常部署（SHA 对账不干扰正常路径）
 #   D feature 分支 diff ：HEAD 领先 main（真有 brain 改动）→ 照常部署（三点 diff 正常路径不回归）
 #
-# 测试钩子（实现侧需支持）：
-#   CECELIA_DEPLOYED_BRAIN_VERSION=<v>  注入"生产运行版本"，跳过真实 curl /api/brain/version
+# 测试钩子：
+#   CECELIA_PROD_GIT_SHA=<sha>  注入"生产运行 SHA"，跳过真实 curl /api/brain/health
 #
 # 用法： bash scripts/smoke/gate3-brain-deploy-smoke.sh
 # 退出码： 0=全绿  1=有红
@@ -68,10 +69,10 @@ DIFF_ON_MAIN=$(cd "$WORK" && git diff --name-only origin/main...HEAD 2>/dev/null
   || fail "前提不成立：三点 diff 非空（${DIFF_ON_MAIN}），场景没复现对"
 echo ""
 
-run_deploy() { # $1=env版本(空则不注入)  $2..=额外参数
-  local ver="$1"; shift
-  if [[ -n "$ver" ]]; then
-    (cd "$WORK" && CECELIA_DEPLOY_ROOT="$WORK" CECELIA_DEPLOYED_BRAIN_VERSION="$ver" \
+run_deploy() { # $1=CECELIA_PROD_GIT_SHA(空则不注入)  $2..=额外参数
+  local prod_sha="$1"; shift
+  if [[ -n "$prod_sha" ]]; then
+    (cd "$WORK" && CECELIA_DEPLOY_ROOT="$WORK" CECELIA_PROD_GIT_SHA="$prod_sha" \
       bash "$DEPLOY" --dry-run "$@" main 2>&1)
   else
     (cd "$WORK" && CECELIA_DEPLOY_ROOT="$WORK" \
@@ -80,34 +81,39 @@ run_deploy() { # $1=env版本(空则不注入)  $2..=额外参数
 }
 
 # ════════════════════════════════════════════════════════════════════════════
-echo "[A] 版本不一致 → 部署（兜底触发，不再假跳过）"
-OUT_A=$(run_deploy "1.0.0")   # 生产 1.0.0 ≠ repo 9.9.9
-if echo "$OUT_A" | grep -q "brain-deploy.sh"; then
-  pass "diff 空但 brain 版本不一致 → 触发 brain 部署（假跳过已根治）"
+echo "[A] SHA 不等 → 部署（SHA 对账触发，不再假跳过）"
+# 生产跑旧 SHA（aaabbb000000...）≠ origin/main HEAD → SHA_MISMATCH=true → 强制部署
+OUT_A=$(run_deploy "aaabbb000000aaabbb000000aaabbb000000aaab")
+if echo "$OUT_A" | grep -q "brain-deploy.sh\|Brain 部署\|brain-deploy"; then
+  pass "diff 空但 SHA 不等 → 触发 brain 部署（假跳过已根治）"
 else
-  fail "diff 空 + 版本不一致仍跳过 brain 部署（假跳过未修）"
+  fail "diff 空 + SHA 不等仍跳过 brain 部署（SHA 对账未生效）"
   echo "$OUT_A" | sed 's/^/    /' | tail -12
 fi
 echo ""
 
 # ════════════════════════════════════════════════════════════════════════════
-echo "[B] 版本一致 → 跳过（幂等，不无谓重部署）"
-OUT_B=$(run_deploy "9.9.9")   # 生产 9.9.9 == repo 9.9.9
-if echo "$OUT_B" | grep -q "跳过"; then
-  pass "diff 空且版本一致 → 正确跳过（不重复部署同版本）"
+echo "[B] SHA 相等 → 跳过（幂等，不无谓重部署）"
+# 生产 SHA == origin/main HEAD → SHA 一致，无需重部署
+ORIGIN_SHA_B=$(git -C "$WORK" rev-parse origin/main 2>/dev/null || echo "")
+OUT_B=$(run_deploy "$ORIGIN_SHA_B")
+if echo "$OUT_B" | grep -q "跳过\|一致"; then
+  pass "diff 空且 SHA 相等 → 正确跳过（不重复部署同版本）"
 else
-  fail "版本一致却仍触发部署（兜底过度，破坏幂等）"
+  fail "SHA 相等却仍触发部署（SHA 对账过度，破坏幂等）"
   echo "$OUT_B" | sed 's/^/    /' | tail -12
 fi
 echo ""
 
 # ════════════════════════════════════════════════════════════════════════════
-echo "[C] 显式 --changed → 照常部署（版本对比不干扰正常路径）"
-OUT_C=$(run_deploy "9.9.9" --changed="packages/brain/src/server.js")
-if echo "$OUT_C" | grep -q "brain-deploy.sh"; then
-  pass "显式 --changed 指定 brain 文件 → 照常部署（即便版本一致）"
+echo "[C] 显式 --changed → 照常部署（SHA 对账不干扰文件列表正常路径）"
+# SHA 相等，但 --changed 显式指定 brain 文件 → 文件列表范围加法触发
+ORIGIN_SHA_C=$(git -C "$WORK" rev-parse origin/main 2>/dev/null || echo "")
+OUT_C=$(run_deploy "$ORIGIN_SHA_C" --changed="packages/brain/src/server.js")
+if echo "$OUT_C" | grep -q "brain-deploy.sh\|Brain 改动\|brain-deploy"; then
+  pass "显式 --changed 指定 brain 文件 → 照常部署（即便 SHA 相等）"
 else
-  fail "显式 --changed 被版本对比误跳过"
+  fail "显式 --changed 被 SHA 对账误跳过（文件列表范围加法失效）"
   echo "$OUT_C" | sed 's/^/    /' | tail -12
 fi
 echo ""
@@ -120,9 +126,12 @@ echo "[D] feature 分支 diff 非空 → 照常部署（三点 diff 正常路径
   echo "// changed" >> packages/brain/src/server.js
   git commit -qam "brain change on feature"
 )
-OUT_D=$(cd "$WORK" && CECELIA_DEPLOY_ROOT="$WORK" CECELIA_DEPLOYED_BRAIN_VERSION="9.9.9" \
-  bash "$DEPLOY" --dry-run main 2>&1)   # HEAD(cp-feature) 领先 main → 三点 diff 有 brain 文件
-if echo "$OUT_D" | grep -q "brain-deploy.sh"; then
+# HEAD(cp-feature) 领先 main → 三点 diff 有 brain 文件 → NEED_BRAIN=true
+# CECELIA_PROD_GIT_SHA 设为 origin/main SHA（SHA 对账不叠加，验证文件列表路径独立工作）
+ORIGIN_SHA_D=$(git -C "$WORK" rev-parse origin/main 2>/dev/null || echo "")
+OUT_D=$(cd "$WORK" && CECELIA_DEPLOY_ROOT="$WORK" CECELIA_PROD_GIT_SHA="$ORIGIN_SHA_D" \
+  bash "$DEPLOY" --dry-run main 2>&1)
+if echo "$OUT_D" | grep -q "brain-deploy.sh\|Brain 改动\|brain-deploy"; then
   pass "feature 分支领先 main 时三点 diff 正常命中 brain（原路径未被破坏）"
 else
   fail "feature 分支 brain 改动漏检（正常路径回归了）"

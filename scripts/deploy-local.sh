@@ -70,27 +70,29 @@ if [[ -z "$CHANGED_FILES" ]]; then
     fi
 fi
 
-# ── Gate3 假跳过根治（bug e0f21d36）─────────────────────────────────────────
-# Gate3 deploy webhook 在【部署根的 main 分支】上跑，HEAD 恒等于/落后 origin/main，
-# 上面三点 diff（merge-base→HEAD）恒为空 → NEED_BRAIN=false → 跳过真部署 → 生产跑旧代码
-# （squash merge 后必现，已三连发）。原脚本设计给 /dev 在领先 main 的 feature 分支调用，
-# 那时 diff 有内容才对；在 main 上自算不可靠。
-# 兜底：git diff 判空时用「brain 版本对比」判定——repo 的 packages/brain/package.json
-# version ≠ 生产运行版本 → 强制走 brain 部署路径。版本对比幂等、状态无关，比 reflog
-# (HEAD@{1}) 更鲁棒（不受 detached spawn / 多次 pull / worktree checkout 影响）。
-# 测试钩子 CECELIA_DEPLOYED_BRAIN_VERSION 注入生产版本，跳过真实 curl。
-if [[ -z "$CHANGED_FILES" ]]; then
-    REPO_BRAIN_VERSION=$(node -e "process.stdout.write(require('$MAIN_ROOT/packages/brain/package.json').version)" 2>/dev/null || echo "")
-    DEPLOYED_BRAIN_VERSION="${CECELIA_DEPLOYED_BRAIN_VERSION:-}"
-    if [[ -z "$DEPLOYED_BRAIN_VERSION" ]]; then
-        DEPLOYED_BRAIN_VERSION=$(curl -sf --max-time 5 "http://localhost:${BRAIN_PORT:-5221}/api/brain/version" 2>/dev/null \
-            | node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{try{process.stdout.write((JSON.parse(s).version)||'')}catch{process.stdout.write('')}})" 2>/dev/null || echo "")
+# ── Gate3 假跳过根治 v2（SHA 对账，bug becfd554）──────────────────────────
+# G1 版本号兜底在 squash merge 不 bump version 时失效（#4024 webhook 假跳过实证）。
+# 真正的判变真相：origin/main HEAD SHA vs 生产容器构建期烙入的 GIT_SHA。
+# 不等 = main 有新代码、生产跑旧镜像 → 必须部署；SHA 相等 = 幂等跳过。
+# 测试钩子：CECELIA_PROD_GIT_SHA 注入生产 SHA（跳过真实 curl）。
+SHA_MISMATCH=false
+ORIGIN_SHA=$(git -C "$MAIN_ROOT" rev-parse "origin/$BASE_BRANCH" 2>/dev/null || echo "")
+PROD_SHA="${CECELIA_PROD_GIT_SHA:-}"
+if [[ -z "$PROD_SHA" ]]; then
+    PROD_SHA=$(curl -sf --max-time 5 \
+        "http://localhost:${BRAIN_PORT:-5221}/api/brain/health" 2>/dev/null \
+        | node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{try{const j=JSON.parse(s);process.stdout.write(j.git_sha||'')}catch{process.stdout.write('')}})" \
+        2>/dev/null || echo "")
+fi
+if [[ -n "$ORIGIN_SHA" && -n "$PROD_SHA" && "$PROD_SHA" != "unknown" ]]; then
+    if [[ "$ORIGIN_SHA" != "$PROD_SHA" ]]; then
+        echo "🔎 SHA 对账：origin/main=$ORIGIN_SHA 生产=$PROD_SHA → 不等，强制走 Brain 部署"
+        SHA_MISMATCH=true
+    else
+        echo "✅ SHA 对账：origin/main=$ORIGIN_SHA 生产=$PROD_SHA → 一致，Brain 无需重部署"
     fi
-    if [[ -n "$REPO_BRAIN_VERSION" && "$REPO_BRAIN_VERSION" != "$DEPLOYED_BRAIN_VERSION" ]]; then
-        echo "🔎 git diff 判空，但 brain 版本不一致（repo=$REPO_BRAIN_VERSION 生产=${DEPLOYED_BRAIN_VERSION:-未知}）"
-        echo "   → 强制走 brain 部署路径（Gate3 假跳过根治 bug e0f21d36）"
-        CHANGED_FILES="packages/brain/package.json"
-    fi
+else
+    echo "⚠️  SHA 对账：无法获取完整 SHA（origin=$ORIGIN_SHA 生产=${PROD_SHA:-N/A}），跳过对账"
 fi
 
 echo "📋 改动范围："
@@ -158,6 +160,9 @@ while IFS= read -r file; do
     # workflow skills 变更 → 重新部署软链接
     [[ "$file" == packages/workflows/skills/* ]] && NEED_WORKFLOW_SKILLS=true
 done <<< "$CHANGED_FILES"
+
+# SHA 对账结果叠加（优先于文件列表，确保 squash merge 不 bump version 场景也触发）
+[[ "$SHA_MISMATCH" == true ]] && NEED_BRAIN=true
 
 # 没有相关改动，跳过
 if [[ "$NEED_BRAIN" == false && "$NEED_DASHBOARD" == false && "$NEED_WORKFLOW_SKILLS" == false ]]; then
