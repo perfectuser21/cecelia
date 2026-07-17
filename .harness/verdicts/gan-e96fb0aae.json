@@ -1,0 +1,48 @@
+{
+  "verdict": "APPROVED",
+  "rubric_scores": {
+    "correctness": 9,
+    "completeness": 9,
+    "testability": 8,
+    "feasibility": 9,
+    "invariant_compliance": 8,
+    "clarity": 8,
+    "e2e_coverage": 8
+  },
+  "total_score": 59,
+  "judgment_points": [
+    {
+      "id": "J1",
+      "aspect": "sha_main 修复方向",
+      "verdict": "正确",
+      "detail": "git ls-remote HTTPS URL + curl GitHub API 降级，废弃 origin/gh api，技术方向正确"
+    },
+    {
+      "id": "J2",
+      "aspect": "sha_prod localhost 修复",
+      "verdict": "正确（路径已修正）",
+      "detail": "默认 URL 改为 http://localhost:5221/api/brain，加上 /health 后为正确端点 /api/brain/health"
+    },
+    {
+      "id": "J3",
+      "aspect": "health 端点路径验证",
+      "verdict": "已修正",
+      "detail": "合同已明确说明端点为 /api/brain/health（goals.js 挂载在 /api/brain 前缀下）；draft 和 dod 均已更新"
+    },
+    {
+      "id": "J4",
+      "aspect": "TDD 纪律明确性",
+      "verdict": "足够",
+      "detail": "T1-T4 修复前FAIL/修复后PASS要求明确，T5 回归保护"
+    },
+    {
+      "id": "J5",
+      "aspect": "错误日志要求",
+      "verdict": "明确",
+      "detail": "error=<原始err.message>格式要求具体，单测 spy 断言可执行"
+    }
+  ],
+  "revision_required": false,
+  "round": "R2-approved-after-fix",
+  "feedback": "主要问题（health端点路径 J3）已通过合同修订解决。其余4维均通过。可进入 generator 阶段。"
+}

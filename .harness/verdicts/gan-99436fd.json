@@ -1,0 +1,47 @@
+{
+  "verdict": "REVISION",
+  "rubric_scores": {
+    "correctness": 7,
+    "completeness": 9,
+    "testability": 8,
+    "feasibility": 9,
+    "invariant_compliance": 8,
+    "clarity": 7,
+    "e2e_coverage": 6
+  },
+  "total_score": 54,
+  "judgment_points": [
+    {
+      "id": "J1",
+      "aspect": "sha_main 修复方向",
+      "verdict": "正确",
+      "detail": "合同正确指定优先路径为 `git ls-remote https://github.com/perfectuser21/cecelia.git refs/heads/main`（公开仓无需凭据），降级路径为 `curl -sf --max-time 10 https://api.github.com/repos/perfectuser21/cecelia/commits/main` 取 `.sha` 字段，废弃 `origin` 和 `gh api` 两条旧路径。FR-FIX-01 行为描述与 PRD FR-1 完全对齐，技术方向正确。"
+    },
+    {
+      "id": "J2",
+      "aspect": "sha_prod localhost 修复",
+      "verdict": "正确（但路径有误，见 J3）",
+      "detail": "将默认 URL 从 `https://brain.cecelia.ai` 改为 `http://localhost:5221` 方向正确，保留 `BRAIN_PROD_URL` 环境变量覆盖机制符合向后兼容要求。然而实际调用的 curl 路径写作 `${prodUrl}/health`，最终为 `http://localhost:5221/health`，这是错误端点——详见 J3。"
+    },
+    {
+      "id": "J3",
+      "aspect": "health 端点路径验证",
+      "verdict": "需修正",
+      "detail": "经代码验证：`goals.js` 中 `router.get('/health', ...)` 对应的是 Express Router 内部路径 `/health`；该 router 通过 `src/routes.js` 的 `router.stack.push(...goalsRouter.stack)` 合并，再以 `app.use('/api/brain', brainRoutes)` 挂载（server.js 第 337 行）。因此真实端点是 `http://localhost:5221/api/brain/health`，不是 `http://localhost:5221/health`。\n\n合同草稿第 44 行写作 `curl -sf --max-time 10 \"${prodUrl}/health\"`，当 `prodUrl=http://localhost:5221` 时实际请求 `http://localhost:5221/health`（404）。PRD 验收标准第 86 行已写正确路径 `http://localhost:5221/api/brain/health`，合同草稿与 PRD 自相矛盾。\n\n修正方案：`curl -sf --max-time 10 \"${prodUrl}/api/brain/health\"` 或使修复代码在默认 URL 中直接包含路径后缀，或将默认值改为 `http://localhost:5221/api/brain`。"
+    },
+    {
+      "id": "J4",
+      "aspect": "TDD 纪律明确性",
+      "verdict": "足够",
+      "detail": "contract-draft.md FR-FIX-04 和 contract-dod.md 均明确要求：先写 failing test（提交 failing 快照或 `// FAILING` 注释标记），再修实现，再确认 passing。T1/T2/T3/T4 明确标注修复前为 FAIL、修复后为 PASS，T5 标注全程 PASS（回归）。DoD Checklist 项目包含「T1-T4 合同测试：修复前 FAIL，修复后 PASS」，TDD 纪律描述清晰。"
+    },
+    {
+      "id": "J5",
+      "aspect": "错误日志要求",
+      "verdict": "明确",
+      "detail": "FR-FIX-03 明确要求：catch 块日志必须包含 `error=<原始错误信息>`（来自 `err.message`，前 200 字符），禁止只写模糊描述 `network_error`。提供了具体日志示例。单测 FR-NEW-error-log 要求 spy 断言参数匹配 `/error=.*ECONNREFUSED/`。静态检查命令（grep 'error=' ...）和 DoD INV 表中均有覆盖。要求足够具体，可直接写成测试。"
+    }
+  ],
+  "revision_required": true,
+  "feedback": "**主要问题（必须修正）：health 端点路径错误（J3）**\n\n合同草稿 FR-FIX-02 第 2 条写作 `curl -sf --max-time 10 \"${prodUrl}/health\"`，当默认 `prodUrl=http://localhost:5221` 时，实际请求 `http://localhost:5221/health`，该路径在 Brain 服务中不存在（404）。\n\n正确端点经代码核实为 `http://localhost:5221/api/brain/health`（goals.js router 通过 /api/brain 前缀挂载）。PRD 验收标准第 86 行已正确写出该路径，但合同草稿与 DoD 未跟进，导致：\n1. 实现代码若按合同写 `/health` 将始终返回 404 → `defaultFetchProdSha()` 永远抛错 → sha_prod 仍为 UNKNOWN\n2. E2E 步骤 4 的验证命令 `curl -sf http://localhost:5221/health` 也会 404，不能验证修复效果\n\n**次要问题（建议修正）：**\n- e2e-verify.sh 只做静态代码字符串检查（grep src 文件内容），未实际调用函数，无法证明修复代码真正可运行，属于弱验收。建议步骤 5 的 Final E2E 补充实际调用 `runDriftCheck()` 并断言返回值不含 UNKNOWN\n- INV-04（不 mock 判定逻辑边）在合同中通过注释提及，但 PRD 未定义 INV-04；contract-dod.md 最后的完成条件表第 13 行引用 INV-04，但铁律章节未定义该 invariant ID，需对齐或删除该引用\n\n**修正指令：**\n1. contract-draft.md FR-FIX-02 第 2 条将 `\"${prodUrl}/health\"` 改为 `\"${prodUrl}/api/brain/health\"`\n2. contract-dod.md BEHAVIOR-T3 将 `mock localhost:5221/health` 改为 `mock localhost:5221/api/brain/health`\n3. contract-draft.md 步骤 4 验证命令将 `http://localhost:5221/health` 改为 `http://localhost:5221/api/brain/health`\n4. contract-draft.md 所有 mock 说明中 `/health` 路径统一改为 `/api/brain/health`"
+}
