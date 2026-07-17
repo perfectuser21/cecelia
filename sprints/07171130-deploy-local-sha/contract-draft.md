@@ -82,6 +82,18 @@ grep "生产=" /tmp/deploy-sha-test.log
 
 ---
 
+## Test Contract
+
+| BEHAVIOR | Test File | it() 描述（子串） |
+|---|---|---|
+| [BEHAVIOR] B-01 SHA 不等时强制触发 Brain 部署 | `packages/brain/src/__tests__/deploy-sha-gate.test.js` | SHA 不等 |
+| [BEHAVIOR] B-02 SHA 相等时跳过 Brain 部署 | `packages/brain/src/__tests__/deploy-sha-gate.test.js` | SHA 相等 |
+| [BEHAVIOR] B-03 --changed 含 brain src 时仍触发 | `packages/brain/src/__tests__/deploy-sha-gate.test.js` | --changed 含 brain |
+| [BEHAVIOR] B-04 无 brain 改动 + SHA 相等完全跳过 | `packages/brain/src/__tests__/deploy-sha-gate.test.js` | 无 brain 改动 |
+| [BEHAVIOR] B-05 脚本日志含两侧 SHA 值 | `packages/brain/src/__tests__/deploy-sha-gate.test.js` | SHA 对账 |
+
+---
+
 ## 不在范围
 
 - Dashboard SHA 对账（无独立 /health git_sha 端点）
