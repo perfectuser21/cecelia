@@ -120,3 +120,4 @@ theater-mismatch-smoke.sh
 watchdog-gh-compat-smoke.sh
 scripts/smoke/e2e/deploy-daily-drill.sh
 harness-gear-smoke.sh
+canary-drill-repair-smoke.sh
