@@ -60,8 +60,8 @@ chmod +x "$MOCK_DIR/gh"
 if [[ ! -f "$COLLISION_CHECK" ]]; then
     fail "场景B: run-collision-check.sh 不存在（需先创建）"
 else
+    exit_code=0
     output=$(env PATH="$MOCK_DIR:$PATH" bash "$COLLISION_CHECK" "fix-dedup-temporal" 2>&1) || exit_code=$?
-    exit_code=${exit_code:-0}
     if [[ $exit_code -ne 0 ]] && echo "$output" | grep -q "\[COLLISION\]"; then
         pass "场景B: merged PR 有命中 → exit $exit_code 且含 [COLLISION]"
     else
@@ -87,8 +87,8 @@ chmod +x "$MOCK_DIR/gh"
 if [[ ! -f "$COLLISION_CHECK" ]]; then
     fail "场景C: run-collision-check.sh 不存在"
 else
+    exit_code=0
     output=$(env PATH="$MOCK_DIR:$PATH" bash "$COLLISION_CHECK" "some-unrelated-task" 2>&1) || exit_code=$?
-    exit_code=${exit_code:-0}
     if [[ $exit_code -eq 0 ]]; then
         pass "场景C: merged PR 无命中 → exit 0 放行"
     else
