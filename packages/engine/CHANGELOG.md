@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [19.6.0] - 2026-07-17
+
+### Fixed
+- 修复撞车检查时间盲区：`worktree-manage.sh` `cmd_create` 新增近7天内 merged PR 检测，merged 命中时输出 `[COLLISION]` 并 exit 1，阻止重复实现
+
+### Added
+- 新增辅助脚本 `packages/engine/tests/scripts/run-collision-check.sh`：隔离撞车检查逻辑，供测试 mock gh 覆盖
+- 新增合同测试 `packages/engine/tests/scripts/dedup-temporal-check.sh`：4 场景覆盖（B/C/D/E）
+- SKILL.md 路径 A 插入"复现或退场铁律"4 条（不红即退场，禁止重复实现）
+- feature-registry.yml 注册 dedup-temporal-check 条目
+
 ## [19.5.0] - 2026-07-16
 
 ### Added

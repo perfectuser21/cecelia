@@ -5,8 +5,8 @@
  *
  * PrepPRD: sprints/07041621-harness-skill-relay-wiring/prep-prd.md
  */
-import { describe, it, expect, vi } from 'vitest';
-import { spawnSkillRelaySession, isSkillRelayTask, controllerSkillFor } from '../harness-skill-relay.js';
+import { describe, it, expect, vi, beforeAll } from 'vitest';
+import { spawnSkillRelaySession, isSkillRelayTask, controllerSkillFor, deriveGear, GEAR_VALUES } from '../harness-skill-relay.js';
 
 const TASK = {
   id: 'aaaabbbb-cccc-dddd-eeee-ffff00001111',
@@ -284,6 +284,59 @@ describe('deriveReviewRequired(P2-1:新功能人审/非新功能 auto merge)', (
     // prompt 注入
     const prompt = deps.spawnFn.mock.calls[0][0].prompt;
     expect(prompt).toMatch(/REVIEW_REQUIRED=true/);
+  });
+});
+
+describe('deriveGear（harness gear 档位：default/hotfix/segmented）', () => {
+  it('payload.gear 缺省/undefined/null → default', () => {
+    expect(deriveGear({ payload: {} })).toBe('default');
+    expect(deriveGear({ payload: { gear: undefined } })).toBe('default');
+    expect(deriveGear({ payload: { gear: null } })).toBe('default');
+    expect(deriveGear({})).toBe('default');
+  });
+
+  it('payload.gear ∈ GEAR_VALUES → 原值透传', () => {
+    for (const g of GEAR_VALUES) {
+      expect(deriveGear({ payload: { gear: g } })).toBe(g);
+    }
+  });
+
+  it('GEAR_VALUES 枚举恰为 default/hotfix/segmented', () => {
+    expect(GEAR_VALUES).toEqual(['default', 'hotfix', 'segmented']);
+  });
+
+  it('非法值 → throw Error 含 invalid_gear', () => {
+    expect(() => deriveGear({ payload: { gear: 'turbo' } })).toThrow(/invalid_gear/);
+    expect(() => deriveGear({ payload: { gear: 'turbo' } })).toThrow(/turbo/);
+  });
+});
+
+describe('spawnSkillRelaySession — HARNESS_GEAR 注入（prompt 头 + env）', () => {
+  it('gear 缺省 → prompt/env 均为 default（回归：存量任务零影响）', async () => {
+    const deps = makeDeps();
+    const r = await spawnSkillRelaySession(TASK, deps);
+    expect(r.ok).toBe(true);
+    const spawnOpts = deps.spawnFn.mock.calls[0][0];
+    expect(spawnOpts.prompt).toMatch(/HARNESS_GEAR=default/);
+    expect(spawnOpts.env.HARNESS_GEAR).toBe('default');
+  });
+
+  it('显式 payload.gear=segmented → prompt/env 均透传 segmented', async () => {
+    const deps = makeDeps();
+    const task = { ...TASK, payload: { ...TASK.payload, gear: 'segmented' } };
+    const r = await spawnSkillRelaySession(task, deps);
+    expect(r.ok).toBe(true);
+    const spawnOpts = deps.spawnFn.mock.calls[0][0];
+    expect(spawnOpts.prompt).toMatch(/HARNESS_GEAR=segmented/);
+    expect(spawnOpts.env.HARNESS_GEAR).toBe('segmented');
+  });
+
+  it('HARNESS_GEAR 紧跟 REVIEW_REQUIRED 行（prompt 头顺序）', async () => {
+    const deps = makeDeps();
+    const r = await spawnSkillRelaySession(TASK, deps);
+    expect(r.ok).toBe(true);
+    const prompt = deps.spawnFn.mock.calls[0][0].prompt;
+    expect(prompt).toMatch(/REVIEW_REQUIRED=\w+\nHARNESS_GEAR=\w+/);
   });
 });
 

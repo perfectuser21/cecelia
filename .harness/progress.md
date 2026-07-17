@@ -1,2 +1,3 @@
-planner: done (sprints/07161600-deploy-drift-sentinel/sprint-prd.md@d7c674d, invariants=10, fr=16)
-contract-proposer: done (round=1, contract-draft.md=有E2E段, contract-dod.md=7x[BEHAVIOR]+manual:bash, tests/drift-sentinel.test.js=FR-15 failing)
+planner: done (sprints/07161700-deploy-daily-drill/sprint-prd.md@9533176c, invariants=8, fr=10)
+gan: done (contract-draft.md+contract-dod.md@d224fdc69, r2, verdict=APPROVED, 铁律覆盖=8/8, judgments_written=7, rubric=.harness/verdicts/gan-round1-d224fdc69.json)
+generator: pr_opened (#4015, red=d5883f01b)
