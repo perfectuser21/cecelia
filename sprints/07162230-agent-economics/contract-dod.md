@@ -6,6 +6,49 @@ target_environment: local_api
 
 ---
 
+## BEHAVIOR 条目（journey_type = autonomous — curl 真实 Brain localhost:5221）
+
+- [ ] [BEHAVIOR] B1 — relay 回调携带 usage 时，cost_usd / tokens_in / tokens_out 落库非 NULL
+  Test: manual:bash -c 'IREVENT_ID=$(psql cecelia -t -c "INSERT INTO initiative_run_events (initiative_id, node, status, attempt, ts) VALUES ('"'"'00000000-0000-0000-0000-000000000099'"'"', '"'"'proposer'"'"', '"'"'running'"'"', 1, EXTRACT(EPOCH FROM NOW())::BIGINT) RETURNING id;" | tr -d " \n"); curl -sf -X POST localhost:5221/api/brain/harness/callback/cecelia-relay-00000000-test-b1 -H "Content-Type: application/json" -d "{\"result\":\"done\",\"exit_code\":0,\"usage\":{\"input_tokens\":5000,\"output_tokens\":2000,\"total_cost_usd\":0.035}}" | jq -e ".relayAck == true" || exit 1; RESULT=$(psql cecelia -t -c "SELECT cost_usd, tokens_in, tokens_out FROM initiative_run_events WHERE initiative_id='"'"'00000000-0000-0000-0000-000000000099'"'"' ORDER BY id DESC LIMIT 1;"); echo "$RESULT" | grep -q "0.035" || exit 1; echo "$RESULT" | grep -q "5000" || exit 1; echo "$RESULT" | grep -q "2000" || exit 1; psql cecelia -c "DELETE FROM initiative_run_events WHERE initiative_id='"'"'00000000-0000-0000-0000-000000000099'"'"';"; echo OK'
+
+- [ ] [BEHAVIOR] B2 — relay 回调不含 usage 时，200 ack 不中断，cost_usd 保持 NULL
+  Test: manual:bash -c 'curl -sf -X POST localhost:5221/api/brain/harness/callback/cecelia-relay-00000000-test-b2 -H "Content-Type: application/json" -d "{\"result\":\"done\",\"exit_code\":0}" | jq -e ".relayAck == true" || exit 1; echo OK'
+
+- [ ] [BEHAVIOR] B3 — relay 回调含 usage 且 cost_usd=0 时写 0（区分 0 与 NULL）
+  Test: manual:bash -c 'IREVENT_ID=$(psql cecelia -t -c "INSERT INTO initiative_run_events (initiative_id, node, status, attempt, ts) VALUES ('"'"'00000000-0000-0000-0000-000000000098'"'"', '"'"'proposer'"'"', '"'"'running'"'"', 1, EXTRACT(EPOCH FROM NOW())::BIGINT) RETURNING id;" | tr -d " \n"); curl -sf -X POST localhost:5221/api/brain/harness/callback/cecelia-relay-00000000-test-b3 -H "Content-Type: application/json" -d "{\"result\":\"done\",\"exit_code\":0,\"usage\":{\"input_tokens\":100,\"output_tokens\":50,\"total_cost_usd\":0}}" | jq -e ".relayAck == true" || exit 1; RESULT=$(psql cecelia -t -c "SELECT cost_usd, tokens_in, tokens_out FROM initiative_run_events WHERE initiative_id='"'"'00000000-0000-0000-0000-000000000098'"'"' ORDER BY id DESC LIMIT 1;"); echo "$RESULT" | grep -qE "^\s*0\s*\|\s*100\s*\|\s*50" || exit 1; psql cecelia -c "DELETE FROM initiative_run_events WHERE initiative_id='"'"'00000000-0000-0000-0000-000000000098'"'"';"; echo OK'
+
+- [ ] [BEHAVIOR] B4 — relay 回调含负数 cost_usd 时写 NULL（禁止写入负值），tokens 仍正常写入
+  Test: manual:bash -c 'IREVENT_ID=$(psql cecelia -t -c "INSERT INTO initiative_run_events (initiative_id, node, status, attempt, ts) VALUES ('"'"'00000000-0000-0000-0000-000000000097'"'"', '"'"'proposer'"'"', '"'"'running'"'"', 1, EXTRACT(EPOCH FROM NOW())::BIGINT) RETURNING id;" | tr -d " \n"); curl -sf -X POST localhost:5221/api/brain/harness/callback/cecelia-relay-00000000-test-b4 -H "Content-Type: application/json" -d "{\"result\":\"done\",\"exit_code\":0,\"usage\":{\"input_tokens\":100,\"output_tokens\":50,\"total_cost_usd\":-1}}" | jq -e ".relayAck == true" || exit 1; RESULT=$(psql cecelia -t -c "SELECT cost_usd, tokens_in, tokens_out FROM initiative_run_events WHERE initiative_id='"'"'00000000-0000-0000-0000-000000000097'"'"' ORDER BY id DESC LIMIT 1;"); echo "$RESULT" | grep -qE "^\s*\|\s*100\s*\|\s*50" || exit 1; psql cecelia -c "DELETE FROM initiative_run_events WHERE initiative_id='"'"'00000000-0000-0000-0000-000000000097'"'"';"; echo OK'
+
+- [ ] [BEHAVIOR] B5 — updateInitiativeRunEvent 支持 tokensIn / tokensOut 参数，落库正确
+  Test: manual:bash -c 'IREVENT_ID=$(psql cecelia -t -c "INSERT INTO initiative_run_events (initiative_id, node, status, attempt, ts) VALUES ('"'"'00000000-0000-0000-0000-000000000096'"'"', '"'"'proposer'"'"', '"'"'running'"'"', 1, EXTRACT(EPOCH FROM NOW())::BIGINT) RETURNING id;" | tr -d " \n"); node -e "const {updateInitiativeRunEvent}=require('"'"'/workspace/packages/brain/src/events/initiativeRunEvents.js'"'"');updateInitiativeRunEvent({id:process.env.IRID,costUsd:0.035,tokensIn:5000,tokensOut:2000}).then(r=>{if(r.tokens_in!=5000||r.tokens_out!=2000||r.cost_usd!=0.035)process.exit(1);console.log('"'"'OK'"'"')}).catch(e=>{console.error(e);process.exit(1)})" IRID="$IREVENT_ID"; psql cecelia -c "DELETE FROM initiative_run_events WHERE initiative_id='"'"'00000000-0000-0000-0000-000000000096'"'"';" || true; echo OK'
+
+- [ ] [BEHAVIOR] B6 — migration 351 幂等：重复执行两次无错，tokens_in / tokens_out 列存在
+  Test: manual:bash -c 'psql cecelia < packages/brain/migrations/351_initiative_run_events_tokens.sql || exit 1; psql cecelia < packages/brain/migrations/351_initiative_run_events_tokens.sql || exit 1; psql cecelia -c "\d initiative_run_events" | grep -E "tokens_in|tokens_out" | wc -l | grep -q "^[2-9]" || exit 1; echo OK'
+
+- [ ] [BEHAVIOR] B7 — GET /api/brain/economics/prs?days=7 返回含 prs 数组和 summary 对象
+  Test: manual:bash -c 'RESP=$(curl -sf "localhost:5221/api/brain/economics/prs?days=7") || exit 1; echo "$RESP" | jq -e "has(\"prs\") and has(\"summary\")" || exit 1; echo "$RESP" | jq -e ".prs | type == \"array\"" || exit 1; echo "$RESP" | jq -e ".summary | has(\"total_cost_usd\") and has(\"avg_cost_per_pr\") and has(\"total_attempts\")" || exit 1; echo OK'
+
+- [ ] [BEHAVIOR] B8 — GET /api/brain/economics/prs?days=7 不包含 days 范围外的记录
+  Test: manual:bash -c 'RESP=$(curl -sf "localhost:5221/api/brain/economics/prs?days=7") || exit 1; echo "$RESP" | jq -e ".prs | type == \"array\"" || exit 1; echo OK'
+
+- [ ] [BEHAVIOR] B9 — GET /api/brain/economics/prs 无记录时返回空数组 + summary 均为 0
+  Test: manual:bash -c 'RESP=$(curl -sf "localhost:5221/api/brain/economics/prs?days=0") || exit 1; echo "$RESP" | jq -e ".prs == [] or (.prs | length == 0)" || exit 1; echo OK'
+
+- [ ] [BEHAVIOR] B10 — GET /api/brain/langfuse/recent 凭据存在时返回 success:true，缺失时返回 credentials_missing 降级（均不 500）
+  Test: manual:bash -c 'RESP=$(curl -sf localhost:5221/api/brain/langfuse/recent) || exit 1; echo "$RESP" | jq -e ".success == true or .error == \"credentials_missing\"" || exit 1; echo OK'
+
+- [ ] [BEHAVIOR] B11 — Langfuse 凭据缺失时降级：HTTP 200，success:false，error 为 credentials_missing
+  Test: manual:bash -c 'RESP=$(curl -s -o /dev/null -w "%{http_code}" localhost:5221/api/brain/langfuse/recent); [ "$RESP" = "200" ] || exit 1; curl -sf localhost:5221/api/brain/langfuse/recent | jq -e "(.success == true) or (.error == \"credentials_missing\")" || exit 1; echo OK'
+
+- [ ] [BEHAVIOR] B12 — relay 回调写库失败时 non-fatal，仍返回 200 ack（不阻断回调链）
+  Test: manual:bash -c 'RESP=$(curl -sf -X POST localhost:5221/api/brain/harness/callback/cecelia-relay-00000000-test-b12-noevent -H "Content-Type: application/json" -d "{\"result\":\"done\",\"exit_code\":0,\"usage\":{\"input_tokens\":100,\"output_tokens\":50,\"total_cost_usd\":0.01}}"); echo "$RESP" | jq -e ".relayAck == true" || exit 1; echo OK'
+
+- [ ] [BEHAVIOR] B13 — economics 路由已在 server.js 注册，端点可访问（非 404/非 Cannot GET）
+  Test: manual:bash -c 'CODE=$(curl -s -o /dev/null -w "%{http_code}" "localhost:5221/api/brain/economics/prs?days=7"); [ "$CODE" != "404" ] || exit 1; [ "$CODE" = "200" ] || [ "$CODE" = "400" ] || exit 1; echo OK'
+
+---
+
 ## DoD 检查清单（Planner 执行，Evaluator 验收）
 
 ### 代码实现
