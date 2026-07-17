@@ -131,4 +131,6 @@ promise-map-ledger-smoke.sh
 promise-map-step-impact-smoke.sh
 cascade-list-smoke.sh
 promise-map-nightly-smoke.sh
+harness-xian-relay-smoke.sh
+xian-harness-relay-smoke.sh
 slot-admission-smoke.sh

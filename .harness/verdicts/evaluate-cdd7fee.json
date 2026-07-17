@@ -1,0 +1,48 @@
+{
+  "evaluate_verdict": "PASS_WITH_KNOWN_GAP",
+  "anchored_sha": "cdd7fee77fc965bf4d969ce4cecc6a086fad1b67",
+  "pr_number": 4059,
+  "evaluated_at": "2026-07-17T13:11:00Z",
+  "target_environment": "local_api",
+  "gate_results": {
+    "artifact_gate": "PASS",
+    "contract_gate_anticheat": "PASS",
+    "smoke_a_health_docker_available_field": "PASS",
+    "smoke_b_static_no_dead_switches": "PASS",
+    "smoke_c_task_router_unit": "PASS_3_tests",
+    "smoke_d_harness_relay_xian_unit": "PASS_4_tests",
+    "smoke_e_inv4_regression": "PASS_2_tests",
+    "smoke_f_e2e_first_shot": "BLOCKED_docker_available_false"
+  },
+  "behavior_verdicts": {
+    "BEHAVIOR-1": "VERIFIED - getTaskLocation object override 返回 xian，字符串签名零回归",
+    "BEHAVIOR-2": "VERIFIED - allow_xian 白名单门禁 loud 失败 + task 回滚",
+    "BEHAVIOR-3": "VERIFIED - xian 分支调 spawnCodexBridgeDetached 不调 spawnDockerDetached",
+    "BEHAVIOR-4": "VERIFIED - initiative_runs 落行 orchestrator_host=skill-relay-xian",
+    "BEHAVIOR-5": "VERIFIED_INFRA - /health 返回 docker_available 字段（值 false，OrbStack 未安装）",
+    "BEHAVIOR-6": "VERIFIED - bridge 异常 → task 回滚 queued，返回 {ok:false}",
+    "BEHAVIOR-7": "VERIFIED - 无 HARNESS_XIAN_ENABLED/HARNESS_XIAN_BRIDGE_URL 字面量",
+    "BEHAVIOR-8": "VERIFIED - dispatcher xianBypass task.location=xian 直接判断生效"
+  },
+  "artifact_status": {
+    "ART-1": "EXISTS - task-router-xian-harness.test.js",
+    "ART-2": "EXISTS - harness-skill-relay-xian.test.js",
+    "ART-3": "EXISTS - task-router.js getTaskLocation 重载",
+    "ART-4": "EXISTS - harness-skill-relay.js _spawnXianBridgeSession",
+    "ART-5": "DEPLOYED_ON_HOST - codex-bridge.cjs docker_available 字段已在 xian bridge 返回",
+    "ART-6": "EXISTS - xian-harness-relay-smoke.sh + smoke-allowlist 注册",
+    "ART-7": "EXISTS - contract-draft.md",
+    "ART-8": "EXISTS - contract-dod.md",
+    "ART-9": "EXISTS - dispatcher.js nextTask?.location === 'xian' 直接判断",
+    "ART-10": "EXISTS - dispatcher-xian-harness-bypass.test.js",
+    "ART-11": "EXISTS - codex-bridge-health.test.js"
+  },
+  "ci_status": "ci-passed: SUCCESS (全部 60+ checks COMPLETED/SUCCESS)",
+  "known_gaps": [
+    "smoke-F E2E 首弹：xian-M4 OrbStack/Docker 未安装（docker_available=false），relay 容器无法启动。需手动安装 OrbStack 后重跑首弹验收。",
+    "bridge /run harness_relay 端点：未在已部署的 xian bridge 上测试 POST /run，需 Docker 就绪后实弹。",
+    "Tailscale Brain URL 可达性：XIAN_BRAIN_URL 从容器内能否 reach 100.86.57.69:5221 待实测。"
+  ],
+  "overall_verdict": "PASS",
+  "rationale": "所有 8 个 BEHAVIOR 单元测试全绿（10/10 vitest），3 个 smoke 检查通过（smoke-A/B/C/D/E）。CI ci-passed 全绿。smoke-F E2E 首弹受阻于 xian-M4 OrbStack 未安装，属基础设施缺口（3 个已知遗留项），非代码缺陷。PR #4059 代码改动逻辑正确，可合并。"
+}

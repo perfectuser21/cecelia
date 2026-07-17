@@ -123,6 +123,13 @@ export async function spawnSkillRelaySession(task, deps = {}) {
     console.warn(`[skill-relay][GUARD] docker ps 检查失败（保守放行 spawn）: ${err.message}`);
   }
 
+  // ─── xian 分支：task.location='xian' → bridge 派发 ─────────────────────────
+  const targetLocation = task.location ?? null;
+  if (targetLocation === 'xian') {
+    return _spawnXianBridgeSession(task, { dbPool, now, short, initiativeId, deps });
+  }
+  // ─── end xian ────────────────────────────────────────────────────────────────
+
   // B6: codex 容器凭据挂载（demo task a150998c 实证：容器内无任何凭据，
   // codex CLI `401 Unauthorized: Missing bearer` 秒退）。宿主 team2 codex 凭据目录
   // 由 CODEX_RELAY_HOME 指定（docker-compose 注入），挂到容器内 codex 默认读取路径
@@ -350,6 +357,96 @@ export async function spawnSkillRelaySession(task, deps = {}) {
     } catch { /* non-fatal */ }
     return { ok: false, mode: RELAY_FLAG, error: err.message };
   }
+}
+
+// ─── xian bridge 分支实现 ────────────────────────────────────────────────────
+
+const XIAN_RELAY_DEADLINE_HOURS = 8;
+const XIAN_BRIDGE_URL = 'http://100.86.57.69:3458';
+const XIAN_BRAIN_URL = 'http://100.86.57.69:5221';
+
+/**
+ * _spawnXianBridgeSession — xian-M4 bridge 派发路径。
+ * task.location='xian' 时，POST 到 xian codex bridge，非阻塞派发 harness 任务。
+ * INV-1: 白名单门禁（payload.allow_xian=true 才放行）
+ * INV-2: spawn 失败 loud 失败 + task 回滚
+ * INV-4: 路由完全由 task.location DB 字段驱动，不依赖 env 开关
+ */
+async function _spawnXianBridgeSession(task, { dbPool, now, short, initiativeId, deps }) {
+  // 1. 白名单门禁（INV-1）：allow_xian !== true → loud 失败
+  if (task.payload?.allow_xian !== true) {
+    console.error(`[skill-relay][xian][ALERT] task.location=xian 但 allow_xian 未授权: task=${task.id}`);
+    try {
+      await dbPool.query(
+        `UPDATE tasks SET status='queued', claimed_by=NULL, claimed_at=NULL WHERE id=$1`,
+        [task.id]
+      );
+    } catch (rollbackErr) {
+      console.warn(`[skill-relay][xian] task 回滚失败（non-fatal）: ${rollbackErr.message}`);
+    }
+    return { ok: false, mode: RELAY_FLAG, error: 'allow_xian 白名单未授权' };
+  }
+
+  const sprintDir = task.payload?.sprint_dir
+    || `sprints/${stampMMDDHHNN(now())}-relay-xian-${short}`;
+  const containerId = `cecelia-relay-xian-${short}-${Math.random().toString(16).slice(2, 6)}`;
+  const xianBrainUrl = process.env.XIAN_BRAIN_URL || XIAN_BRAIN_URL;
+  const bridgeBaseUrl = process.env.XIAN_CODEX_BRIDGE_URL || XIAN_BRIDGE_URL;
+
+  // 2. 取 github token（复用既有 harness-credentials.js）
+  let githubToken = '';
+  try {
+    const tokenFn = deps.tokenFn
+      || (await import('./harness-credentials.js')).resolveGitHubToken;
+    githubToken = await tokenFn();
+  } catch (tokenErr) {
+    console.warn(`[skill-relay][xian] resolveGitHubToken 失败（继续，bridge 侧用 account_id 凭据）: ${tokenErr.message}`);
+  }
+
+  // 3. bridge payload（改动 B 合同定义）
+  const bridgePayload = {
+    task_id: task.id,
+    task_type: 'harness_relay',
+    sprint_dir: sprintDir,
+    harness_task_id: task.id,
+    brain_url: xianBrainUrl,
+    callback_url: `${xianBrainUrl}/api/brain/harness/callback/${containerId}`,
+    account_id: task.payload?.xian_account_id || 'team3',
+    github_token: githubToken,
+    anthropic_api_key: process.env.ANTHROPIC_API_KEY || '',
+  };
+
+  // 4. 调 bridge（INV-3：所有 xian-M4 操作走 bridge 留痕）
+  const bridgeFn = deps.bridgeFn
+    || (await import('./spawn/detached.js')).spawnCodexBridgeDetached;
+
+  try {
+    await bridgeFn(`${bridgeBaseUrl}/run`, bridgePayload);
+  } catch (spawnErr) {
+    // 5. spawn 失败 → 回滚 task（INV-2：loud 失败，不静默降级）
+    console.error(`[skill-relay][xian][ALERT] bridge spawn 失败: ${spawnErr.message}`);
+    try {
+      await dbPool.query(
+        `UPDATE tasks SET status='queued', claimed_by=NULL, claimed_at=NULL WHERE id=$1`,
+        [task.id]
+      );
+    } catch (rollbackErr) {
+      console.warn(`[skill-relay][xian] task 回滚失败（non-fatal）: ${rollbackErr.message}`);
+    }
+    return { ok: false, mode: RELAY_FLAG, error: spawnErr.message };
+  }
+
+  // 6. 落 initiative_runs 行（INV-6：watchdog 可感知）
+  const abilityId = task.ability_id || task.payload?.ability_id || null;
+  await dbPool.query(
+    `INSERT INTO initiative_runs
+       (initiative_id, phase, journey_id, orchestrator_version, orchestrator_host, deadline_at, ability_id, current_task_id)
+     VALUES ($1, 'A_planning', $2, 'v2', $3, NOW() + INTERVAL '${XIAN_RELAY_DEADLINE_HOURS} hours', $4, $5)`,
+    [initiativeId, task.payload?.journey_id || null, 'skill-relay-xian', abilityId, task.id]
+  );
+
+  console.log(`[skill-relay][xian] bridge spawned: container=${containerId} sprint=${sprintDir}`);
+  return { ok: true, mode: RELAY_FLAG, containerId, sprintDir };
 }
 
 // ─── headed 分支实现 ──────────────────────────────────────────────────────────
