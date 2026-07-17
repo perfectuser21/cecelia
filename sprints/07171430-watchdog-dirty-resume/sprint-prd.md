@@ -134,3 +134,38 @@ else（全绿 + 非 DIRTY + 非 BEHIND）         → 等 merge
 - DIRTY 场景下的 rebase 自动化（Step0.4 人工 rebase 已足够，自动化留 A8 后续刀）
 - 其他 mergeStateStatus 值的处置（BLOCKED、DRAFT 等）
 - Bark 告警（DIRTY 不是 blocked，不需告警）
+
+---
+
+## Invariant 约束
+
+来源：自愈链 golden path S3（docs/prd/2026-07-15-self-healing-golden-path.prd.md）、合同铁律、历史 PR
+
+1. **attempt cap 不变**：DIRTY 路径必须遵守现有重点火次数上限，不得绕过
+2. **BEHIND 路径回归不变**：修复后 BEHIND 仍走 `resume_ci_red reason=BEHIND`，不受影响
+3. **测试不 mock 解析路径**：`execFn` 必须返回真实含 `mergeStateStatus` 字段的 JSON，由 watchdog 内部路径真实解析
+4. **容器消失是前提**：仅容器消失（无活跃 session）时才走 DIRTY → 重点火；容器存活时仍走现有存活检查
+
+---
+
+## 累积 FR
+
+| FR# | 描述 |
+|-----|------|
+| FR-1 | `mergeStateStatus=DIRTY` 且容器消失 → 走有界重点火，日志含 `resume_conflict` |
+| FR-2 | DIRTY 路径沿用 attempt cap，不新增豁免 |
+| FR-3 | BEHIND/CI 红/CI 全绿路径行为不变（回归） |
+| FR-4 | 新增回归测试 4 条（B1 failing→passing，B2/B3/B4 回归） |
+
+---
+
+## NFR
+
+- 无额外性能要求（仅增加已有 `mergeStateStatus` 字段的条件判断）
+- 不增加额外 gh CLI 调用
+- 测试用 vitest，与现有 brain-ci.yml regression 路径一致
+
+---
+
+journey_type: hotfix
+target_environment: local_api
