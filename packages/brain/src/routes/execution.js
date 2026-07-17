@@ -19,6 +19,7 @@ import { handleTaskFailure } from '../quarantine.js';
 import { triggerCeceliaRun } from '../executor.js';
 import { REVIEW_TASK_TYPES } from '../lib/review-task-types.js';
 import { serialUnlockNext, writeReviewResult, promoteRegressionOnHarnessMerged } from '../lib/callback-postprocess.js';
+import { writeCascadeCellStatuses } from '../lib/cascade-writeback.js';
 import { updateDesireFromTask } from '../desire-feedback.js';
 import { checkAndCreateCodeReviewTrigger } from '../code-review-trigger.js';
 import { resolveRelatedFailureMemories } from './shared.js';
@@ -2336,6 +2337,13 @@ ${resultStr.substring(0, 2000)}
               } catch (thickErr) {
                 console.warn(`[execution-callback] harness: thickness PATCH error (non-fatal): ${thickErr.message}`);
               }
+            }
+
+            // Step 3.6: 回写 cascade cell_status（S3 联动清单）
+            const cascadeAssertions = result?.cascade_assertions;
+            if (Array.isArray(cascadeAssertions) && cascadeAssertions.length > 0) {
+              const { written, skipped } = await writeCascadeCellStatuses(cascadeAssertions);
+              console.log(`[execution-callback] harness: cascade writeback complete (written=${written}, skipped=${skipped})`);
             }
 
             // Step 4: 创建 Report
