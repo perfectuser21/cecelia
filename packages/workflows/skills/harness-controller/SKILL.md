@@ -240,6 +240,7 @@ exit 1
    - `${SPRINT_DIR}/contract-dod.md`：含若干 `[BEHAVIOR]` 条目（对应 payload 描述里每个可验证行为）
    - `${SPRINT_DIR}/tests/`：落一份能复现当前失败的红测试文件（payload.failing_test 有现成描述时直接照抄场景写测试；只有 thin_prd 时按 PRD 描述反推最小复现测试）
    - 三件产物 commit 到 `CONTRACT_BRANCH`（与现行 GAN 产出走同一分支/同一位置约定，generator 读取逻辑零改动）
+   - **hotfix 档没有 proposer 建分支**（现行 `CONTRACT_BRANCH`=proposer 产出的 propose 分支，命名规则见 harness-contract-proposer Step 4：`cp-harness-propose-r${PROPOSE_ROUND}-${TASK_ID 前 8 位}`，由 Brain 注入）——本档位改由 controller 自建，沿用同一命名风格但去掉不存在的轮次概念：`CONTRACT_BRANCH="cp-harness-hotfix-${HARNESS_TASK_ID:0:8}"`（`git checkout -b` 建出后三件产物 commit+push 到该分支）；后续 Step 3 generator 仍按 `CONTRACT_BRANCH=<branch>` 读取，读取方式与现行 GAN 产出完全一致，不感知分支是谁建的
    - 台账 append 一行：`gan: done (hotfix合成, contract-draft.md@<branch>, 跳过GAN)`
 
 3. **合成后走现行 Step 2 的合同格式硬检查**（三项确定性 bash：`[BEHAVIOR]` 条目数量、`## E2E 验收` 段、`manual:bash`）——不过 → controller 自己补齐重写，不派 reviewer（本档位无 GAN 对抗方，硬检查由 controller 自己对自己合成的产物把关）。
@@ -321,6 +322,7 @@ prompt: 调用 Skill(harness-evaluator)。SEGMENT_EVAL=<ws_id>
 
 - Step 1 不变；Step 2 追加一行透传 + task-plan.json 多段格式核对
 - 新增骨架棒（一次）+ 段循环（N 次 generator+evaluator 配对），全部在 controller 本 session 内用 Task tool 派发，不产生额外 Brain 任务，dispatcher 并发模型不受影响
+- **骨架棒与全部段棒的实现 commit 都落在同一条 PR 分支**（沿用现行 harness-generator Step 2 的 PR 分支约定 `cp-$(date +%m%d%H%M)-${TASK_ID前8位}`——骨架棒首次调用建出该分支，后续每个 ws_i 的 generator 派发都在这条分支上续 commit，不为分段另开新分支）
 - 总验后 Step 5-7 与现行零差异
 
 ## Step 1: Planner（写 PRD）
