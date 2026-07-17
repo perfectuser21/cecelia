@@ -169,6 +169,18 @@ if (isBehind || isDirty || ciStatus === 'fail') {
 
 ---
 
+## Test Contract
+
+| 功能 | Test File | BEHAVIOR 覆盖 | 预期红证据 |
+|---|---|---|---|
+| DIRTY+容器消失→重点火 | `tests/regression/watchdog-dirty-resume/harness-relay-watchdog-dirty-resume.test.js` | B1: mergeStateStatus=DIRTY+容器消失 → out.resumed=1+日志resume_conflict（核心 bug 修复前 FAIL） | 修复前 ciStatus=pending 走 wait_ci_running → out.resumed=0 ≠ 1 → FAIL |
+| BEHIND 回归保护 | `tests/regression/watchdog-dirty-resume/harness-relay-watchdog-dirty-resume.test.js` | B2: mergeStateStatus=BEHIND → out.resumed=1+日志含BEHIND（不变） | BEHIND 分支被 DIRTY 补丁意外破坏 → resumed=0 → FAIL |
+| CI全绿+CLEAN→不重点火 | `tests/regression/watchdog-dirty-resume/harness-relay-watchdog-dirty-resume.test.js` | B3: mergeStateStatus=CLEAN+CI全绿+evaluator完成 → out.resumed=0（skip_green_waiting_merge） | 绿灯路径被重点火 → resumed=1 → FAIL |
+| BLOCKED+CI_pending→等待 | `tests/regression/watchdog-dirty-resume/harness-relay-watchdog-dirty-resume.test.js` | B4: mergeStateStatus=BLOCKED+CI_pending → out.resumed=0（wait_ci_running，非DIRTY） | BLOCKED 被误判 DIRTY → resumed=1 → FAIL |
+| DIRTY+attempt_cap→封顶 | `tests/regression/watchdog-dirty-resume/harness-relay-watchdog-dirty-resume.test.js` | B5: DIRTY+attempts≥cap → out.resumed=0，spawnFn不调用（铁律：cap不绕过） | DIRTY 绕过 cap → resumed=1 → FAIL |
+
+---
+
 ## E2E 验收
 
 ### 验收条件
