@@ -144,7 +144,8 @@ describe('machine-vitals', () => {
   describe('machine_vitals_daily_peak 峰值滚动', () => {
     function poolMock() { return { query: vi.fn().mockResolvedValue({ rows: [] }) }; }
     function peakUpsertCalls(pool) {
-      return pool.query.mock.calls.filter(([sql]) => String(sql).includes('machine_vitals_daily_peak'));
+      // 只算 INSERT（回读 SELECT 同含键名，不计入写入次数）
+      return pool.query.mock.calls.filter(([sql]) => String(sql).includes('machine_vitals_daily_peak') && String(sql).includes('INSERT'));
     }
     function lastPeakValue(pool) {
       const calls = peakUpsertCalls(pool);
@@ -161,6 +162,21 @@ describe('machine-vitals', () => {
       expect(lastPeakValue(pool).peak).toBe(5);
       // 锁写入频次语义：非新峰不重复写（reviewer 建议）
       expect(peakUpsertCalls(pool)).toHaveLength(1);
+    });
+
+    it('重启后回读 DB 同日峰值：内存镜像丢失 + DB 存 5 + 当前 2 容器 → 不抹低，写回 5（终审 P2）', async () => {
+      const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Shanghai' }).format(new Date());
+      const pool = {
+        query: vi.fn(async (sql) => {
+          if (String(sql).includes('SELECT') && String(sql).includes('machine_vitals_daily_peak')) {
+            return { rows: [{ value_json: { date: today, peak: 5 } }] };
+          }
+          return { rows: [] };
+        }),
+      };
+      stubDocker({ psNames: 'cecelia-relay-a-1\ncecelia-relay-b-2\n' });
+      await sampleMachineVitals(pool);
+      expect(lastPeakValue(pool).peak).toBe(5);
     });
 
     it('采样失败不写峰值', async () => {

@@ -85,8 +85,23 @@ export async function sampleMachineVitals(pool) {
     if (pool) {
       try {
         const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Shanghai' }).format(new Date());
-        if (!_peakState || _peakState.date !== today || next.relay_count > _peakState.peak) {
-          _peakState = { date: today, peak: (_peakState && _peakState.date === today) ? Math.max(_peakState.peak, next.relay_count) : next.relay_count };
+        if (!_peakState || _peakState.date !== today) {
+          // 内存镜像缺失/跨日（含 Brain 重启）：回读 DB 同日已存峰值取 max，防止重启后低容器数把当日峰值抹低
+          let dbPeak = 0;
+          const r = await pool.query(
+            `SELECT value_json FROM working_memory WHERE key = 'machine_vitals_daily_peak'`
+          );
+          const v = r.rows?.[0]?.value_json;
+          const parsed = typeof v === 'string' ? JSON.parse(v) : v;
+          if (parsed && parsed.date === today) dbPeak = parsed.peak || 0;
+          _peakState = { date: today, peak: Math.max(dbPeak, next.relay_count) };
+          await pool.query(
+            `INSERT INTO working_memory (key, value_json, updated_at) VALUES ('machine_vitals_daily_peak', $1, NOW())
+             ON CONFLICT (key) DO UPDATE SET value_json = $1, updated_at = NOW()`,
+            [JSON.stringify(_peakState)]
+          );
+        } else if (next.relay_count > _peakState.peak) {
+          _peakState = { date: today, peak: next.relay_count };
           await pool.query(
             `INSERT INTO working_memory (key, value_json, updated_at) VALUES ('machine_vitals_daily_peak', $1, NOW())
              ON CONFLICT (key) DO UPDATE SET value_json = $1, updated_at = NOW()`,
