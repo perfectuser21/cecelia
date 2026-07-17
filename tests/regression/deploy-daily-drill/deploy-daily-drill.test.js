@@ -18,7 +18,8 @@ import { resolve } from 'path';
 import { fileURLToPath } from 'url';
 
 // 路径按 repo root 解析，兼容任意 cwd（brain vitest cwd=packages/brain）
-const ROOT = resolve(fileURLToPath(import.meta.url), '../../..');
+// 文件位于 tests/regression/deploy-daily-drill/，需上 4 级才到 repo root
+const ROOT = resolve(fileURLToPath(import.meta.url), '../../../..');
 const SCRIPT = resolve(ROOT, 'scripts/smoke/e2e/deploy-daily-drill.sh');
 
 function runDrill(env = {}) {
