@@ -87,7 +87,13 @@ export async function archiveDrillResult({ taskId, mode, results, success, fetch
   const body = {
     type: 'drill_report',
     title: `Canary Drill ${success ? 'PASS' : 'FAIL'} — ${mode} — ${new Date().toISOString().slice(0, 10)}`,
-    content: JSON.stringify({ task_id: taskId, injected_mode: mode, results, success }),
+    content: JSON.stringify((() => {
+      const verdict = success ? 'PASS' : 'FAIL';
+      const assertions = Array.isArray(results?.assertions) ? results.assertions
+        : [{ name: mode, pass: success, detail: results?.reason || (success ? 'ok' : 'failed') }];
+      const elapsed_ms = typeof results?.elapsed_ms === 'number' ? results.elapsed_ms : 0;
+      return { verdict, mode, assertions, elapsed_ms, task_id: taskId, injected_mode: mode, results, success };
+    })()),
     tags: ['canary_drill', mode],
   };
   try {
