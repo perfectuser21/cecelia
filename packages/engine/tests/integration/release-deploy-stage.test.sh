@@ -28,7 +28,8 @@ stage() {  # <root> <content>
 }
 run() {  # <root> args...
     local R="$1"; shift
-    CECELIA_DEPLOY_ROOT="$R" CECELIA_SKIP_BRAIN_PROMOTE=1 bash "$PROMOTE" "$@" >/dev/null 2>&1
+    CECELIA_DEPLOY_ROOT="$R" CECELIA_SKIP_BRAIN_PROMOTE=1 CECELIA_SKIP_HK=1 CECELIA_SKIP_FINGERPRINT=1 \
+        bash "$PROMOTE" "$@" >/dev/null 2>&1
 }
 
 # ── 1) --release-only：冻结+tag+manifest，不动 live/current ────────────────────
