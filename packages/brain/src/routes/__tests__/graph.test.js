@@ -101,3 +101,39 @@ describe('GET /claim-status', () => {
     expect(res.body.verdict).toBe('isolated');
   });
 });
+
+describe('POST /radius', () => {
+  it('files 缺失/空 → 400', async () => {
+    expect((await request(app).post('/api/brain/graph/radius').send({})).status).toBe(400);
+    expect((await request(app).post('/api/brain/graph/radius').send({ files: [] })).status).toBe(400);
+  });
+
+  it('改 c.js → 反向波及 b/a/测试文件;锚定 c.js 的 F1 上榜并带 promise', async () => {
+    primeContext({ promiseRows: [{ feature_id: 'f1', step_name: 'S3', promise: '客户收到得体回复', journey_name: '客服线' }] });
+    const res = await request(app).post('/api/brain/graph/radius').send({ files: ['c.js'] });
+    expect(res.status).toBe(200);
+    expect(res.body.reached_count).toBe(4); // c,b,a,t
+    expect(res.body.affected_tests).toEqual(['x/__tests__/t.test.js']);
+    expect(res.body.affected_features[0].name).toBe('发布能力');
+    expect(res.body.affected_features[0].promises[0].journey_name).toBe('客服线');
+    expect(res.body.uncovered_anchor_features).toBe(1); // f2 有锚不匹
+  });
+
+  it('max_depth=1 收窄可达', async () => {
+    const res = await request(app).post('/api/brain/graph/radius').send({ files: ['c.js'], max_depth: 1 });
+    expect(res.body.reached_count).toBe(2); // c,b
+  });
+});
+
+describe('POST /island-check', () => {
+  it('files 非数组 → 400', async () => {
+    expect((await request(app).post('/api/brain/graph/island-check').send({ files: 'x' })).status).toBe(400);
+  });
+
+  it('三态裁决:锚区文件 claimed / 图外 isolated', async () => {
+    const res = await request(app).post('/api/brain/graph/island-check').send({ files: ['a.js', 'nowhere.js'] });
+    expect(res.body.results[0]).toMatchObject({ file: 'a.js', verdict: 'claimed' });
+    expect(res.body.results[1]).toMatchObject({ file: 'nowhere.js', verdict: 'isolated' });
+    expect(res.body.anchor_coverage.covered_by_graph).toBe(1);
+  });
+});
