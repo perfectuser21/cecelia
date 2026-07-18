@@ -125,7 +125,7 @@ export default function TaskPrdPage() {
         </h1>
         <p className="text-gray-600 dark:text-gray-400 mb-4">{state.message}</p>
         <p className="text-sm text-gray-500 dark:text-gray-500">
-          请确认 task id 正确，且 Brain（http://localhost:5221）正在运行。
+          请确认 task id 正确，且 Brain API（端口 5221）正在运行。
         </p>
       </div>
     );
