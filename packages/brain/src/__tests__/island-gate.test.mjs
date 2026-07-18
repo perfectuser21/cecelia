@@ -43,7 +43,7 @@ function runGate(fixtureFiles, extraEnv = {}) {
 
 // ─── B3: 无新增文件 → exit 0 跳过 ────────────────────────────────────────────
 describe('B3 — 无新增文件 → exit 0 跳过', () => {
-  it('--fixture-files="" 时 exit 0 并打 [ISLAND-GATE] SKIP', () => {
+  it('fixture-files 为空串时 exit 0 并打 [ISLAND-GATE] SKIP', () => {
     const { exitCode, stdout, stderr } = runGate('');
     const combined = stdout + stderr;
     expect(exitCode).toBe(0);

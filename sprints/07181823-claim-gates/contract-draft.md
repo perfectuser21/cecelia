@@ -236,6 +236,17 @@ print('PASS: fire_test 强制 ratio=1.0 OK')
 
 ---
 
+## Test Contract
+
+| Workstream | Test File | BEHAVIOR 覆盖 | 预期红证据 |
+|---|---|---|---|
+| B1 | `../../packages/brain/src/__tests__/island-gate.test.mjs` | [ISLAND-GATE] FAIL | 孤岛新文件（无 import）触发 exit 1，日志含 FAIL |
+| B2 | `../../packages/brain/src/__tests__/island-gate.test.mjs` | 含 import 的新增文件 | 带 import 新文件 exit 0 放行 |
+| B3 | `../../packages/brain/src/__tests__/island-gate.test.mjs` | [ISLAND-GATE] SKIP | 无新增文件时 exit 0 并打 SKIP |
+| B4 | `../../packages/brain/src/__tests__/island-gate.test.mjs` | [ACTION:挂起] | action-hint 按路径分类打标（__tests__/ → 挂起，/src/ 非测试 → 收编） |
+
+---
+
 ## 文件改动清单（本合同约束范围）
 
 | 文件 | 操作 | 约束 |
