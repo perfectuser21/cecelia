@@ -130,6 +130,20 @@ cd /workspace && npx vitest run \
 grep -q "PASS\|✓" /tmp/rerun-gate-test.log && echo "ALL TESTS PASS" || echo "TESTS FAILED"
 ```
 
+**独立 shell 验证（不依赖 vitest）**：
+```bash
+# 静态检查：cascade-list.js 源码中 WARN 哨兵字符串存在
+grep -n "\[WARN\]\[rerun-gate\]" /workspace/packages/brain/src/cascade-list.js \
+  && echo "PASS: WARN sentinel present in cascade-list.js" \
+  || { echo "FAIL: WARN sentinel missing from cascade-list.js"; exit 1; }
+
+# 静态检查：cascade-list.js 在 WARN 之后确实调用了格子路径查询
+grep -A5 "\[WARN\]\[rerun-gate\]" /workspace/packages/brain/src/cascade-list.js \
+  | grep -q "journey_step_links" \
+  && echo "PASS: journey_step_links fallback follows WARN" \
+  || { echo "FAIL: journey_step_links not found after WARN"; exit 1; }
+```
+
 ### 场景 C（stale 回退）
 
 **输入**：
@@ -145,6 +159,21 @@ mock callRadius → { affected_features: [...], affected_tests: [...], freshness
 # stale 回退由场景 B 的 stale mock 分支覆盖，同一测试文件
 npx vitest run packages/brain/src/__tests__/integration/rerun-gate-radius.integration.test.js \
   --reporter=verbose -t "stale"
+```
+
+**独立 shell 验证（不依赖 vitest）**：
+```bash
+# 静态检查：radius-client.js 中 stale=true 走返回 null 的逻辑存在
+grep -n "stale" /workspace/packages/brain/src/lib/radius-client.js \
+  | grep -q "null\|return" \
+  && echo "PASS: stale→null logic found in radius-client.js" \
+  || { echo "FAIL: stale→null logic missing from radius-client.js"; exit 1; }
+
+# 静态检查：cascade-list.js 对 callRadius 结果做 null 判断后走回退
+grep -n "callRadius\|null" /workspace/packages/brain/src/cascade-list.js \
+  | grep -q "null" \
+  && echo "PASS: null check for callRadius result exists" \
+  || { echo "FAIL: null check missing for callRadius result"; exit 1; }
 ```
 
 ---

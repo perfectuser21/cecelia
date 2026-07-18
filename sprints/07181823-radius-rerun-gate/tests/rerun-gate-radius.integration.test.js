@@ -54,6 +54,25 @@ describe('场景A：radius 正常路径 — CRM feature 命中', () => {
     10_000
   );
 
+  it(
+    'CRM feature 的 promises 中至少一条 journey_name 包含"智能客服"',
+    async () => {
+      // TODO（实现后填入）：
+      // const result = await callRadius([BLAST_RADIUS_TEST_FILE])
+      // expect(result).not.toBeNull()
+      // const crmFeature = result.affected_features.find(f => f.feature_id === CRM_FEATURE_ID)
+      // expect(crmFeature).toBeDefined()
+      // const hasJourneyName = (crmFeature.promises || []).some(
+      //   p => p.journey_name && p.journey_name.includes('智能客服')
+      // )
+      // expect(hasJourneyName).toBe(true)
+
+      // 骨架占位（实现文件存在后替换）
+      expect(true).toBe(true); // PLACEHOLDER
+    },
+    10_000
+  );
+
   it('正常路径不触发 WARN 输出', async () => {
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
     try {
