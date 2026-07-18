@@ -196,4 +196,16 @@ router.post('/island-check', async (req, res) => {
   }
 });
 
+// GET /api/brain/graph/anchor-coverage — 全量锚点覆盖率(nightly 断锚哨兵消费)
+router.get('/anchor-coverage', async (_req, res) => {
+  try {
+    const { anchor_coverage, freshness } = await loadGraphContext();
+    const broken = anchor_coverage.total_features - anchor_coverage.covered_by_graph;
+    res.json({ anchor_coverage, freshness, broken });
+  } catch (err) {
+    console.error('[graph] GET /anchor-coverage error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 export default router;
