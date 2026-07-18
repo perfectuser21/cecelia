@@ -40,10 +40,30 @@ fail() { echo -e "${RED}[X]${NC} $1"; FAILED=$((FAILED + 1)); }
 
 TMP="$(mktemp -d -t staging-gate-smoke.XXXXXX)"
 FIXTURE_NEW="$TMP/fixture-new"
+RELEASE_FILE="$ROOT_DIR/.production-release"
+RELEASES_DIR="$DASH/.dist-releases"
 
 cleanup() {
   [[ -f "$PID_FILE" ]] && kill "$(cat "$PID_FILE" 2>/dev/null)" 2>/dev/null || true
   [[ -f "$DASH/.dev-preview.pid" ]] && kill "$(cat "$DASH/.dev-preview.pid" 2>/dev/null)" 2>/dev/null || true
+  # 复原 promote 副产物：.production-release（指针文件）备份恢复 / smoke 前不存在则删
+  if [[ "${REL_FILE_PREEXISTED:-0}" == "1" ]]; then
+    cp "$TMP/.production-release.bak" "$RELEASE_FILE" 2>/dev/null || true
+  else
+    rm -f "$RELEASE_FILE" 2>/dev/null || true
+  fi
+  # .dist-releases：smoke 前已存在 → 只删 smoke 期间新增的条目（保真实回滚留存不被 fixture 污染/prune 挤掉）；
+  #                 smoke 前不存在 → 整删。
+  if [[ "${RELEASES_DIR_PREEXISTED:-0}" == "1" ]]; then
+    if [[ -d "$RELEASES_DIR" && -f "$TMP/dist-releases.snapshot" ]]; then
+      while IFS= read -r entry; do
+        [[ -n "$entry" ]] || continue
+        grep -qxF "$entry" "$TMP/dist-releases.snapshot" 2>/dev/null || rm -rf "${RELEASES_DIR:?}/$entry" 2>/dev/null || true
+      done < <(ls -1 "$RELEASES_DIR" 2>/dev/null)
+    fi
+  else
+    rm -rf "$RELEASES_DIR" 2>/dev/null || true
+  fi
   rm -rf "$TMP" "$STAGING_DIST" "$PENDING" "$PID_FILE" "$NOTIFY" "$DASH/.dist-dev" "$DASH/.dev-preview.pid" "$DASH/.dev-preview.log" 2>/dev/null || true
   # 复原 live dist/ 为 smoke 之前不存在的状态（live dist/ 是 gitignore 构建产物）
   [[ "${LIVE_DIST_PREEXISTED:-0}" == "0" ]] && rm -rf "$LIVE_DIST" 2>/dev/null || true
@@ -51,6 +71,13 @@ cleanup() {
 trap cleanup EXIT
 
 [[ -d "$LIVE_DIST" ]] && LIVE_DIST_PREEXISTED=1 || LIVE_DIST_PREEXISTED=0
+if [[ -d "$RELEASES_DIR" ]]; then
+  RELEASES_DIR_PREEXISTED=1
+  ls -1 "$RELEASES_DIR" > "$TMP/dist-releases.snapshot" 2>/dev/null || true
+else
+  RELEASES_DIR_PREEXISTED=0
+fi
+if [[ -f "$RELEASE_FILE" ]]; then cp "$RELEASE_FILE" "$TMP/.production-release.bak"; REL_FILE_PREEXISTED=1; else REL_FILE_PREEXISTED=0; fi
 
 # ── 造 fixture：一个能通过 selfcheck 的最小合法 dist（含 #root + 可达入口资产）──
 make_fixture() {
@@ -62,6 +89,7 @@ make_fixture() {
 <script type="module" src="/assets/app.js"></script>
 </head><body><div id="root"></div><!-- $marker --></body></html>
 HTML
+  printf '{"git_sha":"fixture-fake-sha","built_at":"1970-01-01T00:00:00Z"}' > "$dir/build-info.json"
 }
 
 # ── 造 live dist/ 旧版本哨兵 ──
@@ -141,7 +169,7 @@ echo ""
 
 # ════════════════════════════════════════════════════════════════════════════
 echo "[B] promote：人工放行才换入生产"
-CECELIA_DEPLOY_ROOT="$ROOT_DIR" CECELIA_SKIP_HK=1 DASHBOARD_STAGING_PORT="$PORT" bash "$PROMOTE" > "$TMP/b.log" 2>&1
+CECELIA_DEPLOY_ROOT="$ROOT_DIR" CECELIA_SKIP_BRAIN_PROMOTE=1 CECELIA_SKIP_HK=1 CECELIA_SKIP_FINGERPRINT=1 CECELIA_SKIP_GIT_TAG=1 DASHBOARD_STAGING_PORT="$PORT" bash "$PROMOTE" > "$TMP/b.log" 2>&1
 B_RC=$?
 [[ $B_RC -eq 0 ]] && pass "promote-dashboard.sh 退 0" || { fail "promote-dashboard.sh 退 $B_RC"; sed 's/^/    /' "$TMP/b.log" | tail -20; }
 grep -q "NEW_VERSION_SENTINEL" "$LIVE_DIST/index.html" 2>/dev/null \

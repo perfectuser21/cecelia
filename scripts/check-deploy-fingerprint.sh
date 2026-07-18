@@ -1,7 +1,10 @@
 #!/usr/bin/env bash
 # check-deploy-fingerprint.sh — 部署后双实例指纹校验
 #
-# 从本机 5211 和 HK（100.86.118.99:5211）各取 index.html，对比 SHA256。
+# 优先路径：取两端 /build-info.json 的 git_sha 对账（vite 产物烙印，语义化、可读）；
+#   可选 EXPECTED_GIT_SHA（promote 从新产物 build-info.json 读出后经 env 传入）——
+#   本机在服 sha ≠ 期望 sha 直接红（分家/陈旧 inode 病因二选一）。
+# 回退路径：build-info 取不到/非 JSON（旧产物/SPA fallback）→ 退回 index.html hash 对比。
 # 一致→绿色 PASS；不一致→红色 FAIL + Bark 推送 → 退出非零。
 #
 # 环境变量（可覆盖）：
@@ -33,6 +36,18 @@ _hash() {
     fi
 }
 
+# 取 build-info.json 的 git_sha；FETCH_FAIL=取不到，PARSE_FAIL=非 JSON（如 SPA fallback 的 HTML）
+# git_sha=unknown（构建时没注入 GIT_SHA）也归 PARSE_FAIL：与 deploy-local 判变端"unknown=拿不到"
+# 语义对齐，防止 unknown==unknown 三方对账假绿。
+_get_sha() {
+    local url="$1" body sha
+    body=$(curl -s --max-time "$TIMEOUT" "$url/build-info.json" 2>/dev/null) || { echo "FETCH_FAIL"; return; }
+    [[ -z "$body" ]] && { echo "FETCH_FAIL"; return; }
+    sha=$(printf '%s' "$body" | node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{try{const j=JSON.parse(s);process.stdout.write(j.git_sha||'PARSE_FAIL')}catch{process.stdout.write('PARSE_FAIL')}})" 2>/dev/null || echo "PARSE_FAIL")
+    [[ "$sha" == "unknown" ]] && sha="PARSE_FAIL"
+    echo "$sha"
+}
+
 _send_bark() {
     local title="$1" body="$2"
     local CREDS="$HOME/.credentials/bark.env"
@@ -47,6 +62,44 @@ _send_bark() {
 
 echo "=== 部署后指纹校验 ==="
 
+# ── 优先路径：build-info.json git_sha 对账 ─────────────────────────────────────
+LOCAL_SHA=$(_get_sha "$LOCAL_URL")
+if [[ "$LOCAL_SHA" != "FETCH_FAIL" && "$LOCAL_SHA" != "PARSE_FAIL" && -n "$LOCAL_SHA" ]]; then
+    echo "  本机 5211 git_sha: $LOCAL_SHA"
+    # 期望 sha（promote 从新产物 build-info.json 读出后经 env 传入）
+    if [[ -n "${EXPECTED_GIT_SHA:-}" && "$LOCAL_SHA" != "$EXPECTED_GIT_SHA" ]]; then
+        MSG="本机在服 sha=${LOCAL_SHA:0:12} ≠ 新产物 sha=${EXPECTED_GIT_SHA:0:12}——病因二选一：①分家（容器挂载目录≠部署根 dist）②inode 陈旧（mv 换目录后容器持旧 inode，重启 cecelia-frontend 后复查）"
+        echo "❌ $MSG"
+        _send_bark "Cecelia 部署对账 MISMATCH 🔴" "$MSG"
+        exit 1
+    fi
+    if [[ -n "${CECELIA_SKIP_HK:-}" ]]; then
+        echo "  CECELIA_SKIP_HK 已设，跳过 HK sha 对比"
+        echo "✅ sha 对账：本机 PASS（${LOCAL_SHA:0:12}…）"
+        exit 0
+    fi
+    HK_SHA=$(_get_sha "$HK_URL")
+    if [[ "$HK_SHA" != "FETCH_FAIL" && "$HK_SHA" != "PARSE_FAIL" && -n "$HK_SHA" ]]; then
+        echo "  HK    5211 git_sha: $HK_SHA"
+        if [[ "$LOCAL_SHA" == "$HK_SHA" ]]; then
+            echo "✅ sha 对账一致：本机 = HK（${LOCAL_SHA:0:12}…）"
+            exit 0
+        else
+            MSG="dashboard sha 不一致！local=${LOCAL_SHA:0:12} HK=${HK_SHA:0:12}——HK 未同步"
+            echo "❌ $MSG"
+            _send_bark "Cecelia sha MISMATCH 🔴" "$MSG"
+            exit 1
+        fi
+    fi
+    echo "  ⚠️ HK build-info 取不到（${HK_SHA}），退回 index hash 对比"
+else
+    echo "  ⚠️ build-info sha 不可用（旧产物/服务异常，本机=${LOCAL_SHA}），退回 index hash 对比"
+    if [[ -n "${EXPECTED_GIT_SHA:-}" ]]; then
+        echo "  ⚠️ 本机取不到 build-info（可能在服老产物 = 分家/容器 inode 陈旧——重启 cecelia-frontend 后复查），期望 sha 检查退化为 index hash 对比"
+    fi
+fi
+
+# ── 回退路径：index.html hash 对比 ─────────────────────────────────────────────
 LOCAL_HASH=$(_hash "$LOCAL_URL")
 echo "  本机 5211 hash: $LOCAL_HASH"
 

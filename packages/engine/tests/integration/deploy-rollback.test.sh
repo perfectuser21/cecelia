@@ -56,7 +56,9 @@ stage_version() {
 }
 
 run_promote() {
+    # SKIP_HK/SKIP_FINGERPRINT：CI ubuntu 无 hk-vps/无 5211，promote fatal 化后不跳必红
     CECELIA_DEPLOY_ROOT="$ROOT" CECELIA_SKIP_BRAIN_PROMOTE=1 \
+        CECELIA_SKIP_HK=1 CECELIA_SKIP_FINGERPRINT=1 \
         bash "$PROMOTE" >/dev/null 2>&1
 }
 
@@ -176,7 +178,8 @@ for i in 1 2 3 4 5 6 7 8; do
     rm -rf "$D2/.dist-staging"; mkdir -p "$D2/.dist-staging"
     echo "V$i" > "$D2/.dist-staging/index.html"
     { echo "staging_dist=$D2/.dist-staging"; echo "staging_port=5223"; echo "commit=t"; } > "$D2/.staging-pending"
-    CECELIA_DEPLOY_ROOT="$R2" CECELIA_SKIP_BRAIN_PROMOTE=1 bash "$PROMOTE" >/dev/null 2>&1
+    CECELIA_DEPLOY_ROOT="$R2" CECELIA_SKIP_BRAIN_PROMOTE=1 \
+        CECELIA_SKIP_HK=1 CECELIA_SKIP_FINGERPRINT=1 bash "$PROMOTE" >/dev/null 2>&1
 done
 # 8 次 promote → 留存的是被换下的旧版 v1..v7（共 7 个），按 5 份上限删到最近 5（v3..v7）。
 RETAINED=$(ls -1 "$D2/.dist-releases/" 2>/dev/null | grep -c '^prod-cecelia-v')

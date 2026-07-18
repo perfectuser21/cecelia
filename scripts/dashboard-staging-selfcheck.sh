@@ -4,15 +4,16 @@
 # 用途：
 #   在把 dashboard 新版本 promote 到生产（perfect21:5211 + HK）之前，
 #   先把构建产物（dist/）拉到一个【本机非生产端口的 staging slot】里跑起来，
-#   做 4 项部署前自检。全绿才允许 promote；任一项红 → 退出码 1，调用方不得碰生产。
+#   做 5 项部署前自检。全绿才允许 promote；任一项红 → 退出码 1，调用方不得碰生产。
 #
-# 4 项自检（对照 PrepPRD Golden Path step 3）：
+# 5 项自检（对照 PrepPRD Golden Path step 3）：
 #   1 服务/页面起得来      — slot http server 能 listen 并响应
 #   2 关键 env 齐          — 关键变量已设置（缺了/空了就红）
 #   3 首页真 URL 200 不白屏 — GET / 返回 200 且 index.html 引用的 JS/CSS 资产都 200
 #                            （白屏的真因 = 入口 bundle 404）
 #   4 核心路由 smoke       — 深层路由（/clips）返回 SPA shell 不被打回错误页；
 #                            命名静态页（line04-customer-service.html）能打开
+#   5 build-info.json 守卫 — 产物必含 build-info.json 且带 git_sha（判变对账数据源）
 #
 # 用法：
 #   bash scripts/dashboard-staging-selfcheck.sh <DIST_DIR> [PORT]
@@ -198,6 +199,21 @@ if [[ -f "$DIST_DIR/line04-customer-service.html" ]]; then
   fi
 else
   info "dist 无 line04-customer-service.html，跳过该页检查（非硬要求）"
+fi
+echo ""
+
+# ── 5 build-info.json 生成守卫（判变对账的数据源，缺失=对账退化为保守构建）────
+echo "[5] build-info.json 生成守卫"
+BUILD_INFO="$DIST_DIR/build-info.json"
+if [[ ! -f "$BUILD_INFO" ]]; then
+  fail "产物缺 build-info.json（vite build-info 插件没生效？判变对账将退化为保守构建）"
+else
+  BI_SHA=$(node -e "let s=require('fs').readFileSync('$BUILD_INFO','utf8');try{process.stdout.write(JSON.parse(s).git_sha||'')}catch{process.stdout.write('')}" 2>/dev/null || echo "")
+  if [[ -z "$BI_SHA" ]]; then
+    fail "build-info.json 无 git_sha 字段（对账缺数据源）"
+  else
+    pass "build-info.json git_sha=${BI_SHA:0:12}"
+  fi
 fi
 echo ""
 
