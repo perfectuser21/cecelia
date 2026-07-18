@@ -105,3 +105,24 @@ describe('B4 — action-hint 三分类逻辑', () => {
     expect(actionHint('packages/brain/scripts/ci/some-script.mjs')).toBe('[ACTION:挂起]');
   });
 });
+
+// ─── B9(2026-07-18 盲区回归锁): 零出边叶子模块被仓内生产文件引用 → 入边判连通 ──
+// 事故: PR#4090 的 radius-client.js(只用全局 fetch,零 import)被闸误杀,
+// 而它被 cascade-list.js(生产代码)引用。修法: 出边为零时补仓内入边静态扫描;
+// 测试文件不算入边源(只被自己单测引用的仍是孤岛,闸保牙)。
+describe('B9 — 入边盲区回归锁', () => {
+  it('radius-client.js(真实仓内叶子,被 cascade-list 引用)→ exit 0 且日志含 in-edge', () => {
+    const { exitCode, stdout, stderr } = runGate('packages/brain/src/lib/radius-client.js');
+    const combined = stdout + stderr;
+    expect(exitCode).toBe(0);
+    expect(combined).toMatch(/in-edge/);
+  });
+
+  it('真孤岛(仓内无人引用的 fixture)→ 仍 exit 1', () => {
+    const { exitCode } = runGate('packages/brain/src/lib/true-island-b9-xyz.js', {
+      FIXTURE_PATH_0: 'packages/brain/src/lib/true-island-b9-xyz.js',
+      FIXTURE_CONTENT_0: 'const x = 1; export default x;',
+    });
+    expect(exitCode).toBe(1);
+  });
+});
