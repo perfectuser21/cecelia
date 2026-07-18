@@ -133,6 +133,37 @@ jobs:
           fi
           exit $EXIT_CODE
 
+      - name: 无主比例统计 + 棘轮告警（claim-gates）
+        if: always()
+        env:
+          DB_HOST: localhost
+          DB_PORT: '5432'
+          DB_NAME: cecelia_test
+          DB_USER: cecelia
+          DB_PASSWORD: ${{ secrets.CI_DB_PASSWORD }}
+          BRAIN_URL: http://localhost:5221
+          GH_TOKEN: ${{ secrets.GH_PAT_BOT || secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          FIRE_TEST: ${{ github.event.inputs.fire_test || '0' }}
+        run: |
+          set +e
+          FIRE_FLAG=""
+          [ "$FIRE_TEST" = "1" ] && FIRE_FLAG="--fire-test"
+          node packages/brain/scripts/ci/unclaimed-ratio.mjs $FIRE_FLAG --output /tmp/unclaimed-ratio.jsonl
+          echo "unclaimed-ratio exit: $?"
+          echo "── unclaimed-ratio.jsonl 内容 ──"
+          cat /tmp/unclaimed-ratio.jsonl || echo "(文件不存在)"
+          set -e
+
+      - name: 上传无主比例产物
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: unclaimed-ratio-${{ github.run_id }}
+          path: /tmp/unclaimed-ratio.jsonl
+          retention-days: 30
+          if-no-files-found: warn
+
       - name: 清理 Brain 容器
         if: always()
         run: |
