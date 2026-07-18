@@ -222,7 +222,7 @@ if [[ "$NEED_DASHBOARD" == true ]]; then
         DEDUP_HEAD=$(git -C "$MAIN_ROOT" rev-parse --short "origin/$BASE_BRANCH" 2>/dev/null \
             || git -C "$MAIN_ROOT" rev-parse --short "$BASE_BRANCH" 2>/dev/null || echo "")
         if [[ -n "$DEDUP_COMMIT" && -n "$DEDUP_HEAD" && "$DEDUP_COMMIT" == "$DEDUP_HEAD" ]]; then
-            echo "⏸️  staging 已就绪（commit $DEDUP_COMMIT）等人工放行 → 跳过重建（防重复构建/Bark）"
+            echo "⏸️  staging 已就绪（commit ${DEDUP_COMMIT}）等人工放行 → 跳过重建（防重复构建/Bark）"
             NEED_DASHBOARD=false
         fi
     fi
