@@ -17,14 +17,19 @@ echo "── graph-photo-layer-smoke ──"
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../.." && pwd)"
 cd "$ROOT"
 
-# [1] graph_edges 表存在（migration 351 生效）
+# [1] migration 351 定义完整（静态断言,环境无关——real-env-smoke 的库不保证迁到最新,
+#     活库列数断言会误红;DB 级验证由 brain-integration 的 graph-edges-schema 测试兜底。
+#     姊妹先例:promise-map-ledger / guard-ref-bare-fr 均静态断言 migration 文件)
 echo ""
-echo "检查 graph_edges 表结构..."
-COLS=$(psql -t -c "SELECT count(*) FROM information_schema.columns WHERE table_name='graph_edges'" 2>/dev/null | tr -d ' ') || COLS="0"
-if [ "${COLS:-0}" -ge 7 ]; then
-  ok "graph_edges 表存在 (${COLS} 列)"
+echo "检查 migration 351 定义..."
+MIG="packages/brain/migrations/351_graph_edges.sql"
+if [ -f "$MIG" ] \
+  && /usr/bin/grep -q "CREATE TABLE IF NOT EXISTS graph_edges" "$MIG" \
+  && /usr/bin/grep -q "edge_type IN ('import', 'spawn', 'http')" "$MIG" \
+  && /usr/bin/grep -q "idx_graph_edges_dst" "$MIG"; then
+  ok "migration 351 定义完整(表+CHECK+索引)"
 else
-  fail "graph_edges 表缺失或列不全 (${COLS} 列)"
+  fail "migration 351 缺失或定义不全"
 fi
 
 # [2] 抽取器离线出边（纯逻辑，零依赖）
