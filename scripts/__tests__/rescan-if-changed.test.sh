@@ -31,17 +31,17 @@ fi
 
 # 2 SHA 未变 → 不触发扫描
 echo "$CUR_SHA" > "$STATE"; rm -f "$MARK"
-RESCAN_STATE_FILE="$STATE" RESCAN_SCAN_CMD="$STUB_OK" bash "$SCRIPT" >/dev/null 2>&1; RC=$?
+RC=0; RESCAN_STATE_FILE="$STATE" RESCAN_SCAN_CMD="$STUB_OK" bash "$SCRIPT" >/dev/null 2>&1 || RC=$?
 if [[ $RC -eq 0 && ! -f "$MARK" ]]; then pass "SHA 未变:exit 0 且未触发扫描"; else fail "SHA 未变却触发了扫描或退出码非 0(rc=$RC)"; fi
 
 # 3 SHA 变了 → 触发扫描且成功后记账
 echo "old-sha-000" > "$STATE"; rm -f "$MARK"
-RESCAN_STATE_FILE="$STATE" RESCAN_SCAN_CMD="$STUB_OK" bash "$SCRIPT" >/dev/null 2>&1; RC=$?
+RC=0; RESCAN_STATE_FILE="$STATE" RESCAN_SCAN_CMD="$STUB_OK" bash "$SCRIPT" >/dev/null 2>&1 || RC=$?
 if [[ $RC -eq 0 && -f "$MARK" && "$(cat "$STATE")" == "$CUR_SHA" ]]; then pass "SHA 变化:触发扫描且记账新 SHA"; else fail "SHA 变化路径异常(rc=$RC, mark=$([[ -f $MARK ]] && echo y || echo n), state=$(cat "$STATE"))"; fi
 
 # 4 扫描失败 → 不记账(下轮重试)且退出非 0
 echo "old-sha-000" > "$STATE"; rm -f "$MARK"
-RESCAN_STATE_FILE="$STATE" RESCAN_SCAN_CMD="$STUB_FAIL" bash "$SCRIPT" >/dev/null 2>&1; RC=$?
+RC=0; RESCAN_STATE_FILE="$STATE" RESCAN_SCAN_CMD="$STUB_FAIL" bash "$SCRIPT" >/dev/null 2>&1 || RC=$?
 if [[ $RC -ne 0 && "$(cat "$STATE")" == "old-sha-000" ]]; then pass "扫描失败:SHA 不记账且 exit 非 0"; else fail "失败路径异常(rc=$RC, state=$(cat "$STATE"))"; fi
 
 echo ""; echo "结果: PASS=$PASS FAIL=$ERRORS"
