@@ -1,0 +1,15 @@
+{
+  "rubric_scores": {
+    "correctness": 5,
+    "completeness": 5,
+    "testability": 5,
+    "precision": 4,
+    "risk_coverage": 4,
+    "scope_fit": 5,
+    "tdd_discipline": 5
+  },
+  "total": "33/35",
+  "verdict": "APPROVED",
+  "judgments_written": 8,
+  "feedback": "两处轻微不足：① precision：Step 6 smoke test 标注为可选导致最终验收边界模糊；② risk_coverage：B-3 对 candidate_test_paths 路径 stem 对应性只有描述没有 manual:bash 级断言。不影响 APPROVED 判定。"
+}

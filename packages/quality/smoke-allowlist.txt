@@ -136,3 +136,4 @@ harness-xian-relay-smoke.sh
 xian-harness-relay-smoke.sh
 slot-admission-smoke.sh
 admission-report-smoke.sh
+codex-gen-description-fix-smoke.sh
