@@ -34,4 +34,11 @@ describe('computeFreshness', () => {
   it('阈值常量为 24', () => {
     expect(PHOTO_STALE_THRESHOLD_HOURS).toBe(24);
   });
+
+  it('无效日期字符串 → stale:true(哨兵禁静默假新鲜)', () => {
+    const f = computeFreshness('not-a-date', now);
+    expect(f.stale).toBe(true);
+    expect(f.latest_scan).toBeNull();
+    expect(f.warning).toContain('无效');
+  });
 });
